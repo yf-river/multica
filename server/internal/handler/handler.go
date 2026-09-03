@@ -703,6 +703,15 @@ func (h *Handler) publish(eventType, workspaceID, actorType, actorID string, pay
 	})
 }
 
+// publishEvent delivers an event whose envelope was already committed to the
+// durable outbox. It deliberately bypasses any persistence hook: replaying a
+// committed event must never create a second outbox row.
+func (h *Handler) publishEvent(event events.Event) {
+	if h.Bus != nil {
+		h.Bus.PublishRecovered(event)
+	}
+}
+
 func (h *Handler) notifyDaemonWorkspacesChanged(userIDs ...string) {
 	if h.DaemonWorkspaceRefresh == nil {
 		return

@@ -22,7 +22,7 @@ import { readGoalTestEnvFile } from "./lib/goal-test-audit-env.mjs";
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const { runEnv, apiBase, browserURL, databaseURL } = loadChaosEnvironment();
 const account = process.env.GOAL_TEST_ACCOUNT || "develop";
-const password = process.env.GOAL_TEST_PASSWORD || "develop123";
+const password = process.env.GOAL_TEST_PASSWORD || "Develop123!";
 const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");

@@ -18,7 +18,8 @@ const typingEmoji = "Typing"
 
 // typingIndicatorMaxAge is how old a message can be before we skip the
 // typing indicator. This prevents stale reactions when a WebSocket
-// reconnect replays old events. Aligned with OpenClaw's 2-minute bound.
+// reconnect replays old events. The two-minute bound keeps replay windows
+// bounded while allowing a short network interruption to recover.
 const typingIndicatorMaxAge = 2 * time.Minute
 
 // TypingIndicatorState holds the identifiers needed to remove a reaction, plus

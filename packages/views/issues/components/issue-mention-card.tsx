@@ -50,7 +50,6 @@ export function IssueMentionCard({ issueId, fallbackLabel }: IssueMentionCardPro
     <IssueHoverCard issueId={issueId} fallbackLabel={fallbackLabel}>
       <AppLink
         href={p.issueDetail(issueId)}
-        newTabTitle={fallbackLabel}
         className="issue-mention align-middle"
       >
         <IssueChip

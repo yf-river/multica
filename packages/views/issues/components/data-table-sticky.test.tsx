@@ -99,7 +99,7 @@ describe("DataTable pinned columns", () => {
     const strip = document.querySelector("thead")!;
     // A backdrop-filter on a sticky element with content scrolling beneath it
     // recomputes its backdrop every frame while virtualisation churns the rows
-    // under it, and the strip flickers black (electron#12906). The mix resolves
+    // under it, and the strip flickers black. The mix resolves
     // to the same colour bg-muted/30 composited to.
     expect(strip).toHaveClass(
       "bg-[color-mix(in_oklab,var(--muted)_30%,var(--background))]",

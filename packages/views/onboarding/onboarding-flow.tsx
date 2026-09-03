@@ -18,7 +18,6 @@ import { StepWelcome } from "./steps/step-welcome";
 import { StepShell } from "./components/step-shell";
 import { StepAboutYou } from "./steps/step-about-you";
 import { StepWorkspace } from "./steps/step-workspace";
-import { StepRuntimeConnect } from "./steps/step-runtime-connect";
 import { StepPlatformFork } from "./steps/step-platform-fork";
 import { OnboardingLogoutButton } from "./components/onboarding-logout-button";
 import { getMikaOnboarding, pickContentLang } from "./templates";
@@ -113,15 +112,6 @@ interface OnboardingFlowProps {
    *  to change their mind and return to where they were. */
   onCancel?: () => void;
   runtimeInstructions?: React.ReactNode;
-  /** Desktop wires this to restart the bundled daemon so a freshly
-   *  installed agent CLI gets picked up on the runtime step. Web omits
-   *  it — its CLI install flow already runs on the user's machine and
-   *  the embedded picker reacts to daemon:register events. */
-  onRuntimeRefresh?: () => void | Promise<void>;
-  /** Desktop wires this to the local daemon's live status so the runtime
-   *  step doesn't flash "no runtime found" while the daemon is still booting
-   *  or probing CLI versions (MUL-5119). Web omits it. */
-  runtimesPending?: boolean;
 }
 
 export function OnboardingFlow(props: OnboardingFlowProps) {
@@ -133,8 +123,6 @@ function OnboardingStepFlow({
   mode = "first_run",
   onCancel,
   runtimeInstructions,
-  onRuntimeRefresh,
-  runtimesPending,
 }: OnboardingFlowProps) {
   const { t, i18n } = useT("onboarding");
   const user = useAuthStore((s) => s.user);
@@ -173,12 +161,6 @@ function OnboardingStepFlow({
     ? workspace
     : (workspace ?? workspaces[0] ?? null);
   const canSkipWelcome = workspacesReady && workspaces.length > 0;
-
-  // The `runtimeInstructions` slot is only plumbed by the web shell
-  // (desktop bundles a daemon, so a CLI install card would be noise
-  // there). We reuse its presence as the web signal rather than
-  // introducing a redundant prop.
-  const isWeb = !!runtimeInstructions;
 
   // Derive "what comes after `from`" from ONBOARDING_STEP_ORDER so
   // inserting/reordering a persisted step only requires editing the
@@ -361,7 +343,6 @@ function OnboardingStepFlow({
         <StepWelcome
           onNext={handleWelcomeNext}
           onSkip={canSkipWelcome ? handleWelcomeSkip : undefined}
-          isWeb={isWeb}
         />
       </>
     );
@@ -399,29 +380,16 @@ function OnboardingStepFlow({
         />
       )}
 
-      {/* Step 3 has two paths:
-            - Desktop (no cliInstructions slot) drives the local daemon's
-              runtime list directly.
-            - Web offers Download / CLI / Cloud; under the CLI path it embeds
-              the live probe, and Cloud is a soft exit via the waitlist. */}
+      {/* Step 3 connects a daemon through the CLI or leaves the user with a
+          cloud waitlist/skip path. */}
       {step === "runtime" &&
         workspace &&
-        (!runtimeInstructions ? (
-          <StepRuntimeConnect
-            wsId={workspace.id}
-            wsSlug={workspace.slug}
-            onNext={handleRuntimeNext}
-            onRefresh={onRuntimeRefresh}
-            runtimesPending={runtimesPending}
-          />
-        ) : (
-          <StepPlatformFork
-            wsId={workspace.id}
-            wsSlug={workspace.slug}
-            onNext={handleRuntimeNext}
-            cliInstructions={runtimeInstructions}
-          />
-        ))}
+        <StepPlatformFork
+          wsId={workspace.id}
+          wsSlug={workspace.slug}
+          onNext={handleRuntimeNext}
+          cliInstructions={runtimeInstructions}
+        />}
     </StepShell>
   );
 }

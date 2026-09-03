@@ -111,6 +111,126 @@ func runAutopilotFailureMonitor(ctx context.Context, queries *db.Queries, bus *e
 	}
 }
 
+// runAutopilotFailureMonitorDurable is the production monitor.  Every pause,
+// audit snapshot, inbox item, and realtime event is committed as one database
+// transaction so a crash cannot leave a paused rule without its explanation.
+func runAutopilotFailureMonitorDurable(ctx context.Context, queries *db.Queries, txStarter service.TxStarter, bus *events.Bus, cfg failureMonitorConfig) {
+	if cfg.Interval <= 0 {
+		slog.Info("autopilot failure monitor: disabled (interval <= 0)")
+		return
+	}
+	if txStarter == nil {
+		slog.Error("autopilot failure monitor: transaction starter is required")
+		return
+	}
+
+	slog.Info(
+		"autopilot failure monitor: starting",
+		"interval", cfg.Interval.String(),
+		"lookback", cfg.Lookback.String(),
+		"min_runs", cfg.MinRuns,
+		"fail_ratio", cfg.FailRatio,
+	)
+	if cfg.StartupDelay > 0 {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(cfg.StartupDelay):
+		}
+	}
+
+	tickAutopilotFailureMonitorDurable(ctx, queries, txStarter, bus, cfg)
+	ticker := time.NewTicker(cfg.Interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tickAutopilotFailureMonitorDurable(ctx, queries, txStarter, bus, cfg)
+		}
+	}
+}
+
+func tickAutopilotFailureMonitorDurable(ctx context.Context, queries *db.Queries, txStarter service.TxStarter, bus *events.Bus, cfg failureMonitorConfig) {
+	since := time.Now().Add(-cfg.Lookback)
+	candidates, err := queries.SelectAutopilotsExceedingFailureThreshold(ctx, db.SelectAutopilotsExceedingFailureThresholdParams{
+		MinRuns:            cfg.MinRuns,
+		FailRatioThreshold: cfg.FailRatio,
+		Since:              pgtype.Timestamptz{Time: since, Valid: true},
+	})
+	if err != nil {
+		slog.Warn("autopilot failure monitor: failed to query candidates", "error", err)
+		return
+	}
+	for _, candidate := range candidates {
+		tx, err := txStarter.Begin(ctx)
+		if err != nil {
+			slog.Warn("autopilot failure monitor: begin pause transaction failed", "autopilot_id", util.UUIDToString(candidate.ID), "error", err)
+			continue
+		}
+		qtx := queries.WithTx(tx)
+		paused, err := qtx.SystemPauseAutopilot(ctx, candidate.ID)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			if !isNoRows(err) {
+				slog.Warn("autopilot failure monitor: pause failed", "autopilot_id", util.UUIDToString(candidate.ID), "error", err)
+			}
+			continue
+		}
+
+		failPct := 100.0
+		if candidate.TotalRuns > 0 {
+			failPct = math.Round(float64(candidate.FailedRuns)/float64(candidate.TotalRuns)*1000) / 10
+		}
+		if err := service.RecordAutopilotRuleVersion(ctx, qtx, paused, "system", pgtype.UUID{}); err != nil {
+			_ = tx.Rollback(ctx)
+			slog.Warn("autopilot failure monitor: record rule version failed", "autopilot_id", util.UUIDToString(paused.ID), "error", err)
+			continue
+		}
+
+		outboxEvents, err := emitAutopilotPausedNotificationsTx(ctx, qtx, paused, candidate, cfg, failPct)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			slog.Warn("autopilot failure monitor: create pause notifications failed", "autopilot_id", util.UUIDToString(paused.ID), "error", err)
+			continue
+		}
+		updated := events.Event{
+			Type:           protocol.EventAutopilotUpdated,
+			IdempotencyKey: "autopilot:updated:" + util.UUIDToString(paused.ID) + ":" + util.TimestampToString(paused.UpdatedAt),
+			StreamKey:      "autopilot:" + util.UUIDToString(paused.ID),
+			WorkspaceID:    util.UUIDToString(paused.WorkspaceID),
+			ActorType:      "system",
+			Payload: map[string]any{
+				"autopilot": autopilotEventPayload(paused),
+				"reason":    "auto_paused_high_failure_rate",
+			},
+		}
+		persisted := make([]events.Event, 0, len(outboxEvents)+1)
+		for _, event := range append(outboxEvents, updated) {
+			persistedEvent, recordErr := service.RecordDurableEventTx(ctx, qtx, event)
+			if recordErr != nil {
+				_ = tx.Rollback(ctx)
+				slog.Warn("autopilot failure monitor: record durable event failed", "autopilot_id", util.UUIDToString(paused.ID), "event_type", event.Type, "error", recordErr)
+				persisted = nil
+				break
+			}
+			persisted = append(persisted, persistedEvent)
+		}
+		if persisted == nil {
+			continue
+		}
+		if err := tx.Commit(ctx); err != nil {
+			slog.Warn("autopilot failure monitor: commit pause transaction failed", "autopilot_id", util.UUIDToString(paused.ID), "error", err)
+			continue
+		}
+		for _, event := range persisted {
+			bus.PublishRecovered(event)
+		}
+		slog.Info("autopilot failure monitor: paused autopilot", "autopilot_id", util.UUIDToString(paused.ID), "workspace_id", util.UUIDToString(paused.WorkspaceID), "failed_runs", candidate.FailedRuns, "total_runs", candidate.TotalRuns, "fail_pct", failPct)
+	}
+}
+
 // tickAutopilotFailureMonitor performs a single sweep: query candidates,
 // attempt to pause each, and emit notifications + WS events on success.
 func tickAutopilotFailureMonitor(ctx context.Context, queries *db.Queries, bus *events.Bus, cfg failureMonitorConfig) {
@@ -212,9 +332,27 @@ func emitAutopilotPausedNotifications(
 	cfg failureMonitorConfig,
 	failPct float64,
 ) {
+	eventsToPublish, err := emitAutopilotPausedNotificationsTx(ctx, queries, autopilot, candidate, cfg, failPct)
+	if err != nil {
+		slog.Warn("autopilot failure monitor: create pause notifications failed", "autopilot_id", util.UUIDToString(autopilot.ID), "error", err)
+		return
+	}
+	for _, event := range eventsToPublish {
+		bus.Publish(event)
+	}
+}
+
+func emitAutopilotPausedNotificationsTx(
+	ctx context.Context,
+	queries *db.Queries,
+	autopilot db.Autopilot,
+	candidate db.SelectAutopilotsExceedingFailureThresholdRow,
+	cfg failureMonitorConfig,
+	failPct float64,
+) ([]events.Event, error) {
 	recipients := resolveAutopilotPausedRecipients(ctx, queries, autopilot)
 	if len(recipients) == 0 {
-		return
+		return nil, nil
 	}
 
 	title := fmt.Sprintf("Autopilot paused: %s", autopilot.Title)
@@ -235,9 +373,9 @@ func emitAutopilotPausedNotifications(
 	})
 
 	workspaceID := util.UUIDToString(autopilot.WorkspaceID)
-	autopilotIDStr := util.UUIDToString(autopilot.ID)
 
 	emitted := make(map[string]bool, len(recipients))
+	eventsToPublish := make([]events.Event, 0, len(recipients))
 	for _, r := range recipients {
 		key := r.Type + ":" + util.UUIDToString(r.ID)
 		if emitted[key] {
@@ -260,23 +398,20 @@ func emitAutopilotPausedNotifications(
 			Details:       details,
 		})
 		if err != nil {
-			slog.Warn("autopilot failure monitor: inbox write failed",
-				"autopilot_id", autopilotIDStr,
-				"recipient_type", r.Type,
-				"recipient_id", util.UUIDToString(r.ID),
-				"error", err,
-			)
-			continue
+			return nil, fmt.Errorf("create pause inbox for %s:%s: %w", r.Type, util.UUIDToString(r.ID), err)
 		}
 
-		bus.Publish(events.Event{
-			Type:        protocol.EventInboxNew,
-			WorkspaceID: workspaceID,
-			ActorType:   "system",
-			ActorID:     "",
-			Payload:     map[string]any{"item": inboxItemToResponse(item)},
+		eventsToPublish = append(eventsToPublish, events.Event{
+			Type:           protocol.EventInboxNew,
+			IdempotencyKey: "inbox:new:" + util.UUIDToString(item.ID),
+			StreamKey:      "inbox:" + util.UUIDToString(r.ID),
+			WorkspaceID:    workspaceID,
+			ActorType:      "system",
+			ActorID:        "",
+			Payload:        map[string]any{"item": service.InboxItemFields(item)},
 		})
 	}
+	return eventsToPublish, nil
 }
 
 // pausedRecipient identifies a single inbox_item recipient.

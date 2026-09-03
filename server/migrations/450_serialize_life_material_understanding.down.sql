@@ -1,1 +1,1 @@
-DROP INDEX IF EXISTS public.idx_life_single_running_material_understanding;
+-- The index is owned by migration 486 and is removed by its down migration.

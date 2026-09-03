@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -199,6 +200,11 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		return empty, err
 	}
 
+	member, err := qtx.GetMember(ctx, memberID)
+	if err != nil {
+		return empty, err
+	}
+
 	// autopilot_subscriber is another FK-free subscription template. Leaving
 	// stale rows here made the detail API return a user the member picker could
 	// no longer render; the next full-replace PATCH then failed membership
@@ -224,6 +230,32 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		return empty, err
 	}
 
+	// The task, agent and membership mutations above are one durable fact set.
+	// Record every event before commit; publication is deliberately deferred
+	// until the caller knows the transaction cannot roll back.
+	for _, task := range result.CancelledTasks {
+		event, eventErr := service.RecordTaskTerminalEventTx(ctx, qtx, protocol.EventTaskCancelled, task,
+			map[string]any{"reason": "member_revoked"})
+		if eventErr != nil {
+			return empty, eventErr
+		}
+		result.Events = append(result.Events, event)
+	}
+	for _, agent := range result.ArchivedAgents {
+		event, eventErr := service.RecordDurableEventTx(ctx, qtx, h.buildAgentDomainEvent(protocol.EventAgentArchived, agent, "member", uuidToString(archivedBy)))
+		if eventErr != nil {
+			return empty, eventErr
+		}
+		result.Events = append(result.Events, event)
+	}
+	memberEvent, eventErr := service.RecordDurableEventTx(ctx, qtx, buildMemberDomainEvent(
+		protocol.EventMemberRemoved, member, "member", uuidToString(archivedBy), map[string]any{"action": "revoked"},
+	))
+	if eventErr != nil {
+		return empty, eventErr
+	}
+	result.Events = append(result.Events, memberEvent)
+
 	if err := tx.Commit(ctx); err != nil {
 		return empty, err
 	}
@@ -241,6 +273,7 @@ type revocationResult struct {
 	CancelledTasks     []db.AgentTaskQueue
 	OfflineRuntimeIDs  []db.ForceOfflineRuntimesByIDsRow
 	RevokedTokenHashes []string
+	Events             []events.Event
 }
 
 func (r revocationResult) isEmpty() bool {
@@ -260,28 +293,25 @@ func (h *Handler) publishRevocation(ctx context.Context, result revocationResult
 		h.DaemonTokenCache.Invalidate(ctx, hash)
 	}
 
-	// Per-task cancellation: TaskService handles status reconciliation and
-	// per-task event broadcast. Run this before the agent:archived burst so
-	// subscribers see "task cancelled" before the parent agent disappears
-	// from active lists, matching the order ArchiveAgent uses.
-	if h.TaskService != nil && len(result.CancelledTasks) > 0 {
-		// Revocation only archives agents, so a per-task lookup would still
-		// resolve here; the workspace is passed for the same reason as
-		// everywhere else — it is known, and it is the one being revoked.
-		h.TaskService.BroadcastCancelledTasks(ctx, workspaceIDStr, result.CancelledTasks)
+	// Reconcile and publish in the same order as the old in-process path, but
+	// use the envelopes committed by revokeAndRemoveMember so a restart can
+	// replay the exact mutation set without inventing a second event.
+	if h.TaskService != nil {
+		for _, task := range result.CancelledTasks {
+			h.TaskService.CaptureCancelledTasks(ctx, []db.AgentTaskQueue{task})
+			h.TaskService.ReconcileAgentStatus(ctx, task.AgentID)
+		}
+		h.TaskService.NotifyTasksFinished(result.CancelledTasks)
 	}
-
-	for _, agent := range result.ArchivedAgents {
-		h.publish(protocol.EventAgentArchived, workspaceIDStr, actorType, actorIDStr, map[string]any{
-			"agent": h.agentToResponse(agent),
-		})
+	for _, event := range result.Events {
+		h.publishEvent(event)
 	}
 
 	// Tell connected clients to refresh the runtime list. We piggyback on
 	// EventDaemonRegister with a "revoke" action — same channel the runtime
 	// delete handler uses — so the frontend invalidates its cached list
-	// without us having to introduce a new event type the desktop app would
-	// need a build to learn about.
+	// without introducing a new event type that clients would need to learn
+	// about.
 	if len(result.OfflineRuntimeIDs) > 0 {
 		h.publish(protocol.EventDaemonRegister, workspaceIDStr, actorType, actorIDStr, map[string]any{
 			"action": "revoke",

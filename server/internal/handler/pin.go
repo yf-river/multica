@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -144,7 +145,14 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get max position to append at end
-	maxPos, err := h.Queries.GetMaxPinnedItemPosition(r.Context(), db.GetMaxPinnedItemPositionParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start pin transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	maxPos, err := qtx.GetMaxPinnedItemPosition(r.Context(), db.GetMaxPinnedItemPositionParams{
 		WorkspaceID: wsUUID,
 		UserID:      parseUUID(userID),
 	})
@@ -153,7 +161,7 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pin, err := h.Queries.CreatePinnedItem(r.Context(), db.CreatePinnedItemParams{
+	pin, err := qtx.CreatePinnedItem(r.Context(), db.CreatePinnedItemParams{
 		WorkspaceID: wsUUID,
 		UserID:      parseUUID(userID),
 		ItemType:    req.ItemType,
@@ -170,7 +178,19 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := pinnedItemToResponse(pin)
-	h.publish(protocol.EventPinCreated, workspaceID, "member", userID, map[string]any{"pin": resp})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildPinDomainEvent(
+		protocol.EventPinCreated, workspaceID, userID, "member", userID,
+		map[string]any{"pin": resp}, uuidToString(pin.ID),
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record pin event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit pin")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -192,7 +212,14 @@ func (h *Handler) DeletePin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.Queries.DeletePinnedItem(r.Context(), db.DeletePinnedItemParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start pin transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	err = qtx.DeletePinnedItem(r.Context(), db.DeletePinnedItemParams{
 		WorkspaceID: wsUUID,
 		UserID:      parseUUID(userID),
 		ItemType:    itemType,
@@ -203,10 +230,19 @@ func (h *Handler) DeletePin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(protocol.EventPinDeleted, workspaceID, "member", userID, map[string]any{
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildPinDomainEvent(protocol.EventPinDeleted, workspaceID, userID, "member", userID, map[string]any{
 		"item_type": itemType,
 		"item_id":   itemID,
-	})
+	}, itemType+":"+itemID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record pin event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit pin deletion")
+		return
+	}
+	h.publishEvent(event)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -228,12 +264,19 @@ func (h *Handler) ReorderPins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start pin transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
 	for _, item := range req.Items {
 		itemUUID, ok := parseUUIDOrBadRequest(w, item.ID, "items[].id")
 		if !ok {
 			return
 		}
-		if err := h.Queries.UpdatePinnedItemPosition(r.Context(), db.UpdatePinnedItemPositionParams{
+		if err := qtx.UpdatePinnedItemPosition(r.Context(), db.UpdatePinnedItemPositionParams{
 			Position:    item.Position,
 			ID:          itemUUID,
 			WorkspaceID: wsUUID,
@@ -247,7 +290,23 @@ func (h *Handler) ReorderPins(w http.ResponseWriter, r *http.Request) {
 	// Fan out so other sessions (web/desktop, or a second tab) refetch
 	// the pin list and pick up the new order. Without this, reorder is
 	// only consistent on the originating client until a hard refresh.
-	h.publish(protocol.EventPinReordered, workspaceID, "member", userID, map[string]any{"items": req.Items})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildPinDomainEvent(protocol.EventPinReordered, workspaceID, userID, "member", userID, map[string]any{"items": req.Items}, pinReorderKey(req.Items)))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record pin event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit pin reorder")
+		return
+	}
+	h.publishEvent(event)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func pinReorderKey(items []ReorderItem) string {
+	// The client sends the complete ordered list; JSON is stable for this
+	// concrete slice and gives retries of the same reorder one idempotency key.
+	b, _ := json.Marshal(items)
+	return string(b)
 }

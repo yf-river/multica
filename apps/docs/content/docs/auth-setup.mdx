@@ -1,15 +1,11 @@
 ---
 title: Sign-in and signup
-description: Configure email verification codes, Google sign-in, and who can sign up.
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Multica signs users in with email verification codes by default; Google OAuth can be added on top. Existing users can always sign in again — signup restrictions only decide whether new accounts can be created.
 
-## Email verification codes
 
-After the user enters an email address, Multica sends a 6-digit verification code. The code is valid for 10 minutes; once it verifies, the browser receives a sign-in cookie.
 
 Email can be delivered through Resend or SMTP. When both are configured, `SMTP_HOST` takes priority.
 
@@ -57,23 +53,17 @@ SMTP_EHLO_NAME=mail.example.com
 
 ### Behavior without an email service
 
-The server still starts, but verification codes and invitation links are only written to the log; no email is sent. This suits local development, not production.
 
 The startup log states whether the current mode is `Resend API`, `SMTP relay`, or `DEV mode`.
 
-## Fixed local verification code
 
-Local automated tests can set a fixed verification code:
 
 ```dotenv
 APP_ENV=development
-MULTICA_DEV_VERIFICATION_CODE=888888
 ```
 
-The code must be 6 digits. The fixed code is ignored when `APP_ENV=production`.
 
 <Callout type="warning">
-Do not enable a fixed code on a publicly reachable instance. The production combination is `APP_ENV=production` with an empty `MULTICA_DEV_VERIFICATION_CODE`.
 </Callout>
 
 ## Google sign-in

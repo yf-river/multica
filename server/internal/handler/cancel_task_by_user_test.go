@@ -493,9 +493,9 @@ func TestCancelTaskByUser_QuickCreate_Succeeds(t *testing.T) {
 	dbfx.QueryRow(t, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, issue_id, context)
 		VALUES ($1, (SELECT runtime_id FROM agent WHERE id = $1), 'running', 0, NULL,
-		        '{"type":"quick_create","workspace_id":"ws","prompt":"do a thing"}'::jsonb)
+		        jsonb_build_object('type', 'quick_create', 'workspace_id', $2::text, 'prompt', 'do a thing'))
 		RETURNING id
-	`, agentID).Scan(&taskID)
+	`, agentID, testWorkspaceID).Scan(&taskID)
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	w := httptest.NewRecorder()

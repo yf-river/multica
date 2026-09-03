@@ -11,9 +11,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/seatcapacity"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -171,31 +173,31 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
 	}
 	var inv db.WorkspaceInvitation
-	if h.seatCapacityEnabled() {
-		tx, txErr := h.TxStarter.Begin(r.Context())
-		if txErr != nil {
-			h.compensateCapacityIntent(r.Context(), invitationID)
-			writeError(w, http.StatusInternalServerError, "failed to create invitation")
-			return
-		}
-		defer tx.Rollback(r.Context())
-		qtx := h.Queries.WithTx(tx)
-		inv, err = qtx.CreateInvitation(r.Context(), createParams)
-		if err == nil {
-			err = qtx.DeleteSeatCapacityIntentForAction(r.Context(), db.DeleteSeatCapacityIntentForActionParams{
-				OperationToken: uuidToPG(invitationID), Action: seatcapacity.ActionReserveInvitation,
-			})
-		}
-		if err == nil {
-			err = tx.Commit(r.Context())
-		}
-		if err != nil {
-			// Release transaction locks before the out-of-transaction Cloud
-			// compensation below reads and transitions the durable intent.
-			_ = tx.Rollback(r.Context())
-		}
-	} else {
-		inv, err = h.Queries.CreateInvitation(r.Context(), createParams)
+	var createdEvent events.Event
+	tx, txErr := h.TxStarter.Begin(r.Context())
+	if txErr != nil {
+		h.compensateCapacityIntent(r.Context(), invitationID)
+		writeError(w, http.StatusInternalServerError, "failed to create invitation")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	inv, err = qtx.CreateInvitation(r.Context(), createParams)
+	if err == nil && h.seatCapacityEnabled() {
+		err = qtx.DeleteSeatCapacityIntentForAction(r.Context(), db.DeleteSeatCapacityIntentForActionParams{
+			OperationToken: uuidToPG(invitationID), Action: seatcapacity.ActionReserveInvitation,
+		})
+	}
+	if err == nil {
+		createdEvent, err = service.RecordDurableEventTx(r.Context(), qtx, buildInvitationDomainEvent(protocol.EventInvitationCreated, inv, "member", uuidToString(requester.UserID), "created", nil))
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		// Release transaction locks before the out-of-transaction Cloud
+		// compensation below reads and transitions the durable intent.
+		_ = tx.Rollback(r.Context())
 	}
 	if err != nil {
 		h.compensateCapacityIntent(r.Context(), invitationID)
@@ -213,14 +215,17 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 	resp := invitationToResponse(inv)
 
 	// Notify the invitee in real time if they are a registered user.
-	userID := requestUserID(r)
-	eventPayload := map[string]any{"invitation": resp}
 	var workspaceName string
 	if ws, err := h.Queries.GetWorkspace(r.Context(), requester.WorkspaceID); err == nil {
 		workspaceName = ws.Name
-		eventPayload["workspace_name"] = ws.Name
 	}
-	h.publish(protocol.EventInvitationCreated, uuidToString(requester.WorkspaceID), "member", userID, eventPayload)
+	// The invitation event was committed with the row. Add the optional
+	// workspace label only to the in-process response path; replay reads the
+	// canonical invitation by id.
+	if payload, ok := createdEvent.Payload.(map[string]any); ok && workspaceName != "" {
+		payload["workspace_name"] = workspaceName
+	}
+	h.publishEvent(createdEvent)
 
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.TeamInviteSent(
 		uuidToString(requester.UserID),
@@ -315,6 +320,7 @@ func (h *Handler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	var revokedEvent events.Event
 	rows, err := qtx.RevokeInvitation(r.Context(), inv.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to revoke invitation")
@@ -330,6 +336,13 @@ func (h *Handler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	revokedEvent, err = service.RecordDurableEventTx(r.Context(), qtx, buildInvitationDomainEvent(
+		protocol.EventInvitationRevoked, inv, "member", requestUserID(r), "revoked", nil,
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record invitation event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to revoke invitation")
 		return
@@ -340,12 +353,7 @@ func (h *Handler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("invitation revoked", "invitation_id", invitationID, "workspace_id", workspaceID)
 
-	userID := requestUserID(r)
-	h.publish(protocol.EventInvitationRevoked, uuidToString(workspaceUUID), "member", userID, map[string]any{
-		"invitation_id":   uuidToString(inv.ID),
-		"invitee_email":   inv.InviteeEmail,
-		"invitee_user_id": uuidToPtr(inv.InviteeUserID),
-	})
+	h.publishEvent(revokedEvent)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -503,6 +511,7 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 
 	qtx := h.Queries.WithTx(tx)
+	acceptedEvents := make([]events.Event, 0, 2)
 
 	accepted, err := qtx.AcceptInvitation(r.Context(), inv.ID)
 	if err != nil {
@@ -545,6 +554,27 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	memberResp := h.memberWithUserResponse(member, user)
+	memberEvent, eventErr := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+		Type:           protocol.EventMemberAdded,
+		IdempotencyKey: "member:" + protocol.EventMemberAdded + ":" + uuidToString(member.ID),
+		StreamKey:      "workspace:" + uuidToString(accepted.WorkspaceID),
+		WorkspaceID:    uuidToString(accepted.WorkspaceID), ActorType: "member", ActorID: userID,
+		Payload: map[string]any{"member": memberResp, "action": "invitation_accepted"},
+	})
+	if eventErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record membership event")
+		return
+	}
+	acceptedEvents = append(acceptedEvents, memberEvent)
+	acceptedEvent, eventErr := service.RecordDurableEventTx(r.Context(), qtx, buildInvitationDomainEvent(
+		protocol.EventInvitationAccepted, accepted, "member", userID, "accepted", map[string]any{"member": memberResp},
+	))
+	if eventErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record invitation event")
+		return
+	}
+	acceptedEvents = append(acceptedEvents, acceptedEvent)
 
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to accept invitation")
@@ -557,20 +587,11 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	slog.Info("invitation accepted", "invitation_id", invitationID, "user_id", userID, "workspace_id", uuidToString(accepted.WorkspaceID))
 
 	wsID := uuidToString(accepted.WorkspaceID)
-	memberResp := h.memberWithUserResponse(member, user)
 
-	// Broadcast member:added so existing clients update their member lists.
-	eventPayload := map[string]any{"member": memberResp}
-	if ws, err := h.Queries.GetWorkspace(r.Context(), accepted.WorkspaceID); err == nil {
-		eventPayload["workspace_name"] = ws.Name
+	for _, event := range acceptedEvents {
+		h.publishEvent(event)
 	}
-	h.publish(protocol.EventMemberAdded, wsID, "member", userID, eventPayload)
 
-	// Notify the workspace about the acceptance.
-	h.publish(protocol.EventInvitationAccepted, wsID, "member", userID, map[string]any{
-		"invitation_id": uuidToString(accepted.ID),
-		"member":        memberResp,
-	})
 	h.notifyDaemonWorkspacesChanged(userID)
 
 	// days_since_invite rounds down to whole days so the funnel segments
@@ -658,6 +679,13 @@ func (h *Handler) DeclineInvitation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	declinedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildInvitationDomainEvent(
+		protocol.EventInvitationDeclined, declined, "member", userID, "declined", nil,
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record invitation event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to decline invitation")
 		return
@@ -668,11 +696,7 @@ func (h *Handler) DeclineInvitation(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("invitation declined", "invitation_id", invitationID, "user_id", userID)
 
-	wsID := uuidToString(declined.WorkspaceID)
-	h.publish(protocol.EventInvitationDeclined, wsID, "member", userID, map[string]any{
-		"invitation_id": uuidToString(declined.ID),
-		"invitee_email": declined.InviteeEmail,
-	})
+	h.publishEvent(declinedEvent)
 
 	w.WriteHeader(http.StatusNoContent)
 }

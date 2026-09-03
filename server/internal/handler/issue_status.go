@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -179,7 +183,7 @@ func (h *Handler) CreateIssueStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	entry, badRequest, err := h.createIssueStatusEntry(r.Context(), wsUUID, db.CreateIssueStatusEntryParams{
+	entry, badRequest, persistedEvent, err := h.createIssueStatusEntry(r.Context(), wsUUID, member, db.CreateIssueStatusEntryParams{
 		WorkspaceID: wsUUID,
 		Key:         explicitKey,
 		Name:        name,
@@ -200,7 +204,7 @@ func (h *Handler) CreateIssueStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create issue status")
 		return
 	}
-	h.publishIssueStatusChanged(workspaceID, member, "created")
+	h.publishEvent(persistedEvent)
 	writeJSON(w, http.StatusCreated, issueStatusToResponse(entry))
 }
 
@@ -223,16 +227,16 @@ func (h *Handler) CreateIssueStatus(w http.ResponseWriter, r *http.Request) {
 //
 // A non-empty second return is a caller error the handler reports as 400,
 // distinct from a nil-error success and from an infrastructure failure.
-func (h *Handler) createIssueStatusEntry(ctx context.Context, workspaceID pgtype.UUID, arg db.CreateIssueStatusEntryParams) (db.IssueStatus, string, error) {
+func (h *Handler) createIssueStatusEntry(ctx context.Context, workspaceID pgtype.UUID, actor db.Member, arg db.CreateIssueStatusEntryParams) (db.IssueStatus, string, events.Event, error) {
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
-		return db.IssueStatus{}, "", err
+		return db.IssueStatus{}, "", events.Event{}, err
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
 
 	if err := qtx.LockIssueStatusCatalog(ctx, workspaceID); err != nil {
-		return db.IssueStatus{}, "", err
+		return db.IssueStatus{}, "", events.Event{}, err
 	}
 
 	if arg.Key == "" {
@@ -244,7 +248,7 @@ func (h *Handler) createIssueStatusEntry(ctx context.Context, workspaceID pgtype
 			IncludeArchived: true,
 		})
 		if err != nil {
-			return db.IssueStatus{}, "", err
+			return db.IssueStatus{}, "", events.Event{}, err
 		}
 		taken := make(map[string]bool, len(entries))
 		for _, e := range entries {
@@ -252,19 +256,24 @@ func (h *Handler) createIssueStatusEntry(ctx context.Context, workspaceID pgtype
 		}
 		key, err := issuestatus.DeriveKey(arg.Name, arg.Category, taken)
 		if err != nil {
-			return db.IssueStatus{}, err.Error(), nil
+			return db.IssueStatus{}, err.Error(), events.Event{}, nil
 		}
 		arg.Key = key
 	}
 
 	entry, err := qtx.CreateIssueStatusEntry(ctx, arg)
 	if err != nil {
-		return db.IssueStatus{}, "", err
+		return db.IssueStatus{}, "", events.Event{}, err
+	}
+	event := issueStatusChangedEvent(uuidToString(workspaceID), actor, "created", uuidToString(entry.ID))
+	event, err = eventoutbox.Enqueue(ctx, qtx, event)
+	if err != nil {
+		return db.IssueStatus{}, "", events.Event{}, fmt.Errorf("record issue status event: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return db.IssueStatus{}, "", err
+		return db.IssueStatus{}, "", events.Event{}, err
 	}
-	return entry, "", nil
+	return entry, "", event, nil
 }
 
 // UpdateIssueStatus edits a custom status's presentation. Built-in statuses are
@@ -322,13 +331,16 @@ func (h *Handler) UpdateIssueStatus(w http.ResponseWriter, r *http.Request) {
 		position = pgtype.Float8{Float64: *req.Position, Valid: true}
 	}
 
-	updated, err := h.Queries.UpdateIssueStatusEntry(r.Context(), db.UpdateIssueStatusEntryParams{
-		ID:          entry.ID,
-		WorkspaceID: wsUUID,
-		Name:        name,
-		Description: description,
-		Color:       color,
-		Position:    position,
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start status update")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.UpdateIssueStatusEntry(r.Context(), db.UpdateIssueStatusEntryParams{
+		ID: entry.ID, WorkspaceID: wsUUID, Name: name, Description: description,
+		Color: color, Position: position,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -345,7 +357,17 @@ func (h *Handler) UpdateIssueStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update issue status")
 		return
 	}
-	h.publishIssueStatusChanged(uuidToString(wsUUID), member, "updated")
+	persistedEvent, err := eventoutbox.Enqueue(r.Context(), qtx,
+		issueStatusChangedEvent(uuidToString(wsUUID), member, "updated", uuidToString(updated.ID)))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record status update")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit status update")
+		return
+	}
+	h.publishEvent(persistedEvent)
 	writeJSON(w, http.StatusOK, issueStatusToResponse(updated))
 }
 
@@ -407,6 +429,12 @@ func (h *Handler) ArchiveIssueStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to archive issue status")
 		return
 	}
+	persistedEvent, eventErr := eventoutbox.Enqueue(r.Context(), qtx,
+		issueStatusChangedEvent(uuidToString(wsUUID), member, "archived", uuidToString(archived.ID)))
+	if eventErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record status archive")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Warn("ArchiveIssueStatus commit failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to archive issue status")
@@ -415,7 +443,7 @@ func (h *Handler) ArchiveIssueStatus(w http.ResponseWriter, r *http.Request) {
 	// After the commit, never before: an event that announced a change the
 	// transaction then rolled back would have every other tab re-read the
 	// catalog and cache the pre-archive row as the new truth.
-	h.publishIssueStatusChanged(uuidToString(wsUUID), member, "archived")
+	h.publishEvent(persistedEvent)
 	writeJSON(w, http.StatusOK, issueStatusToResponse(archived))
 }
 
@@ -459,10 +487,14 @@ func (h *Handler) loadIssueStatusForAdmin(w http.ResponseWriter, r *http.Request
 // changed row travels here on purpose — a client that merged an entry out of
 // an event would have to reconcile it against a concurrent write it cannot
 // see, and the catalog is a handful of rows to re-read.
-func (h *Handler) publishIssueStatusChanged(workspaceID string, actor db.Member, action string) {
-	h.publish(protocol.EventIssueStatusChanged, workspaceID, "member", uuidToString(actor.UserID), map[string]any{
-		"action": action,
-	})
+func issueStatusChangedEvent(workspaceID string, actor db.Member, action, resourceID string) events.Event {
+	return events.Event{
+		Type: protocol.EventIssueStatusChanged, WorkspaceID: workspaceID,
+		ActorType: "member", ActorID: uuidToString(actor.UserID),
+		StreamKey:      "issue-status-catalog:" + workspaceID,
+		IdempotencyKey: "issue-status:" + action + ":" + resourceID + ":" + uuid.NewString(),
+		Payload:        map[string]any{"action": action, "status_id": resourceID},
+	}
 }
 
 // ReorderIssueStatusesRequest carries one category's custom statuses in their
@@ -630,12 +662,18 @@ func (h *Handler) ReorderIssueStatuses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list issue statuses")
 		return
 	}
+	persistedEvent, err := eventoutbox.Enqueue(r.Context(), qtx,
+		issueStatusChangedEvent(workspaceID, member, "reordered", strings.Join(req.IDs, ",")))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record status reorder")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Warn("ReorderIssueStatuses commit failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to reorder issue statuses")
 		return
 	}
-	h.publishIssueStatusChanged(workspaceID, member, "reordered")
+	h.publishEvent(persistedEvent)
 
 	resp := make([]IssueStatusResponse, len(entries))
 	for i, e := range entries {

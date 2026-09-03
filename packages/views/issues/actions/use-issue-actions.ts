@@ -119,13 +119,8 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     [issue, issueId, entryOf, surfaceActions, updateIssue, openModal, t],
   );
 
-  // Explicit "open it somewhere else" CTA, so the new tab takes focus
-  // (`activate: true`) — the user is asking to move into the new context, not
-  // to stash it for later the way modifier-click does. Same contract as the
-  // table row open and the attachment preview's "Open in new tab".
-  //
-  // Only desktop implements `openInNewTab`; on web it is undefined and we fall
-  // back to a real browser tab via the shareable URL.
+  // Explicit "open it somewhere else" CTA. The destination is the shareable
+  // issue URL so it works in the current browser without a second app shell.
   const openInNewTab = useCallback(() => {
     if (!issueId) return;
     // Identifier form, same as copyLink: on web this becomes a real browser
@@ -133,12 +128,6 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     // of the address bar. Opening on the UUID would also make the route
     // immediately rewrite the fresh tab's URL.
     const path = paths.issueDetail(issueIdentifier || issueId);
-    if (navigation.openInNewTab) {
-      navigation.openInNewTab(path, issueIdentifier ?? undefined, {
-        activate: true,
-      });
-      return;
-    }
     window.open(
       navigation.getShareableUrl(path),
       "_blank",

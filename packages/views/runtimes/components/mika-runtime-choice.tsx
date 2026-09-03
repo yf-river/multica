@@ -14,11 +14,9 @@ export interface MikaRuntimeSelection {
 /**
  * The one place that asks "which runtime should Mika use, and on which model".
  *
- * Three surfaces reach this same decision — desktop onboarding, the web CLI
- * dialog, and the Runtimes page — and they had drifted: two offered a model
- * and one did not, so connecting via the web CLI silently created Mika on the
- * runtime's default model while desktop let you choose. Two of them also
- * re-implemented the reset rule below and the third simply lacked it.
+ * The web CLI dialog and the Runtimes page reach this same decision and must
+ * agree on both the selected runtime and model. Keeping the reset rule here
+ * prevents a runtime switch from silently carrying an invalid model forward.
  *
  * `layout` exists because the presentation genuinely differs, not because the
  * logic does. The CLI dialog lists machines because that is the moment they

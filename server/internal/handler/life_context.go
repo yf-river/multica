@@ -76,7 +76,7 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 		})
 	}
 	result["confirmed_memories"] = memoryItems
-	candidates, err := h.Queries.ListLifeMemoriesByStatus(ctx, db.ListLifeMemoriesByStatusParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: "candidate"})
+	candidates, err := h.Queries.ListLifeMemoryCandidatesForContext(ctx, db.ListLifeMemoryCandidatesForContextParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: candidateLifeMemoryIndexLimit})
 	if err != nil {
 		return "", err
 	}
@@ -86,9 +86,7 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 	}
 	result["candidate_memories_not_facts"] = candidateItems
 
-	topics, err := h.Queries.ListLifeTopics(ctx, db.ListLifeTopicsParams{
-		WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: pgtype.Text{},
-	})
+	topics, err := h.Queries.ListLifeTopicsForContext(ctx, db.ListLifeTopicsForContextParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: lifeTopicIndexLimit})
 	if err != nil {
 		return "", err
 	}
@@ -108,9 +106,7 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 	}
 	result["current_topics"] = topicItems
 
-	commitments, err := h.Queries.ListLifeCommitments(ctx, db.ListLifeCommitmentsParams{
-		WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: pgtype.Text{},
-	})
+	commitments, err := h.Queries.ListLifeCommitmentsForContext(ctx, db.ListLifeCommitmentsForContextParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: lifeCommitmentIndexLimit})
 	if err != nil {
 		return "", err
 	}
@@ -129,7 +125,7 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 	}
 	result["confirmed_commitments"] = commitmentItems
 
-	modules, err := h.Queries.ListLifeModules(ctx, db.ListLifeModulesParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	modules, err := h.Queries.ListLifeModulesForContext(ctx, db.ListLifeModulesForContextParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: activeLifeModuleIndexLimit})
 	if err != nil {
 		return "", err
 	}
@@ -154,11 +150,11 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 	}
 	result["active_life_modules"] = moduleItems
 
-	experiments, err := h.Queries.ListLifeExperiments(ctx, db.ListLifeExperimentsParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	experiments, err := h.Queries.ListLifeExperimentsForContext(ctx, db.ListLifeExperimentsForContextParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: activeLifeExperimentIndexLimit})
 	if err != nil {
 		return "", err
 	}
-	rounds, err := h.Queries.ListLifeExperimentRounds(ctx, db.ListLifeExperimentRoundsParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	rounds, err := h.Queries.ListLifeExperimentRoundsForContext(ctx, db.ListLifeExperimentRoundsForContextParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: activeLifeExperimentIndexLimit})
 	if err != nil {
 		return "", err
 	}
@@ -195,8 +191,8 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 	}
 	result["recent_material_index"] = materialItems
 
-	chronicles, err := h.Queries.ListLifeChronicleContextEntries(ctx, db.ListLifeChronicleContextEntriesParams{
-		WorkspaceID: scope.workspaceID, UserID: scope.userID,
+	chronicles, err := h.Queries.ListLifeChronicleContextEntriesLimited(ctx, db.ListLifeChronicleContextEntriesLimitedParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: lifeYearChronicleIndexLimit + lifeMonthChronicleIndexLimit + lifeEventChronicleIndexLimit,
 	})
 	if err != nil {
 		return "", err
@@ -228,8 +224,8 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 	}
 	result["chronicle_index"] = chronicleItems
 
-	events, err := h.Queries.ListLifeRelationshipEvents(ctx, db.ListLifeRelationshipEventsParams{
-		WorkspaceID: scope.workspaceID, UserID: scope.userID,
+	events, err := h.Queries.ListOpenLifeRelationshipEventsForContext(ctx, db.ListOpenLifeRelationshipEventsForContextParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: lifeRelationshipEventIndexLimit,
 	})
 	if err != nil {
 		return "", err
@@ -285,7 +281,7 @@ func currentLifeJobInput(input json.RawMessage) (json.RawMessage, error) {
 }
 
 func (h *Handler) addLifeInternalThoughts(ctx context.Context, result map[string]any, scope lifeRequestScope, agentID pgtype.UUID) error {
-	thoughts, err := h.Queries.ListLifeInternalThoughts(ctx, db.ListLifeInternalThoughtsParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: agentID, Status: pgtype.Text{String: "active", Valid: true}})
+	thoughts, err := h.Queries.ListLifeInternalThoughtsForContext(ctx, db.ListLifeInternalThoughtsForContextParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: agentID, Limit: lifeInternalThoughtIndexLimit})
 	if err != nil {
 		return err
 	}
@@ -323,8 +319,8 @@ func (h *Handler) buildLifeJobContext(ctx context.Context, scope lifeRequestScop
 		if err := json.Unmarshal([]byte(governed), &result); err != nil {
 			return "", err
 		}
-		judgements, err := h.Queries.ListPublishedLifeObserverJudgements(ctx, db.ListPublishedLifeObserverJudgementsParams{
-			WorkspaceID: scope.workspaceID, UserID: scope.userID,
+		judgements, err := h.Queries.ListPublishedLifeObserverJudgementsForContext(ctx, db.ListPublishedLifeObserverJudgementsForContextParams{
+			WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: lifeObserverJudgementIndexLimit,
 		})
 		if err != nil {
 			return "", err
@@ -345,7 +341,7 @@ func (h *Handler) buildLifeJobContext(ctx context.Context, scope lifeRequestScop
 			})
 		}
 		result["published_observer_judgements"] = items
-		topics, err := h.Queries.ListLifeObservationTopics(ctx, db.ListLifeObservationTopicsParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+		topics, err := h.Queries.ListLifeObservationTopicsForContext(ctx, db.ListLifeObservationTopicsForContextParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: lifeObservationTopicIndexLimit})
 		if err != nil {
 			return "", err
 		}
@@ -391,7 +387,7 @@ func (h *Handler) buildLifeJobContext(ctx context.Context, scope lifeRequestScop
 	if err != nil {
 		return "", err
 	}
-	knowledge, err := h.Queries.ListLifeObserverKnowledge(ctx, observer.ID)
+	knowledge, err := h.Queries.ListLifeObserverKnowledgeForContext(ctx, db.ListLifeObserverKnowledgeForContextParams{ObserverID: observer.ID, Limit: lifeObserverKnowledgeIndexLimit})
 	if err != nil {
 		return "", err
 	}

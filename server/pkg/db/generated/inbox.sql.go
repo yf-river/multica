@@ -316,6 +316,134 @@ func (q *Queries) CreateInboxItem(ctx context.Context, arg CreateInboxItemParams
 	return i, err
 }
 
+const createProjectedInboxItem = `-- name: CreateProjectedInboxItem :one
+INSERT INTO inbox_item (
+    workspace_id, recipient_type, recipient_id,
+    type, severity, issue_id, title, body,
+    actor_type, actor_id, details, id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ON CONFLICT (id) DO UPDATE SET id = inbox_item.id
+RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details
+`
+
+type CreateProjectedInboxItemParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	RecipientType string      `json:"recipient_type"`
+	RecipientID   pgtype.UUID `json:"recipient_id"`
+	Type          string      `json:"type"`
+	Severity      string      `json:"severity"`
+	IssueID       pgtype.UUID `json:"issue_id"`
+	Title         string      `json:"title"`
+	Body          pgtype.Text `json:"body"`
+	ActorType     pgtype.Text `json:"actor_type"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+	Details       []byte      `json:"details"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+// Durable audience projections may be retried after a transaction rollback.
+// The projection identity is supplied by the source event, so a retry must
+// reuse the same inbox row instead of creating a second notification.
+func (q *Queries) CreateProjectedInboxItem(ctx context.Context, arg CreateProjectedInboxItemParams) (InboxItem, error) {
+	row := q.db.QueryRow(ctx, createProjectedInboxItem,
+		arg.WorkspaceID,
+		arg.RecipientType,
+		arg.RecipientID,
+		arg.Type,
+		arg.Severity,
+		arg.IssueID,
+		arg.Title,
+		arg.Body,
+		arg.ActorType,
+		arg.ActorID,
+		arg.Details,
+		arg.ID,
+	)
+	var i InboxItem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RecipientType,
+		&i.RecipientID,
+		&i.Type,
+		&i.Severity,
+		&i.IssueID,
+		&i.Title,
+		&i.Body,
+		&i.Read,
+		&i.Archived,
+		&i.CreatedAt,
+		&i.ActorType,
+		&i.ActorID,
+		&i.Details,
+	)
+	return i, err
+}
+
+const createQuickCreateOutcomeInbox = `-- name: CreateQuickCreateOutcomeInbox :one
+INSERT INTO inbox_item (
+    workspace_id, recipient_type, recipient_id,
+    type, severity, issue_id, title, body,
+    actor_type, actor_id, details, id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ON CONFLICT (id) DO UPDATE SET id = inbox_item.id
+RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details
+`
+
+type CreateQuickCreateOutcomeInboxParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	RecipientType string      `json:"recipient_type"`
+	RecipientID   pgtype.UUID `json:"recipient_id"`
+	Type          string      `json:"type"`
+	Severity      string      `json:"severity"`
+	IssueID       pgtype.UUID `json:"issue_id"`
+	Title         string      `json:"title"`
+	Body          pgtype.Text `json:"body"`
+	ActorType     pgtype.Text `json:"actor_type"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+	Details       []byte      `json:"details"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+// Quick-create completion is reconciled after the task transaction. Its
+// deterministic id makes a retry return the original row instead of creating
+// a second user-visible result.
+func (q *Queries) CreateQuickCreateOutcomeInbox(ctx context.Context, arg CreateQuickCreateOutcomeInboxParams) (InboxItem, error) {
+	row := q.db.QueryRow(ctx, createQuickCreateOutcomeInbox,
+		arg.WorkspaceID,
+		arg.RecipientType,
+		arg.RecipientID,
+		arg.Type,
+		arg.Severity,
+		arg.IssueID,
+		arg.Title,
+		arg.Body,
+		arg.ActorType,
+		arg.ActorID,
+		arg.Details,
+		arg.ID,
+	)
+	var i InboxItem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RecipientType,
+		&i.RecipientID,
+		&i.Type,
+		&i.Severity,
+		&i.IssueID,
+		&i.Title,
+		&i.Body,
+		&i.Read,
+		&i.Archived,
+		&i.CreatedAt,
+		&i.ActorType,
+		&i.ActorID,
+		&i.Details,
+	)
+	return i, err
+}
+
 const getInboxItem = `-- name: GetInboxItem :one
 SELECT id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details FROM inbox_item
 WHERE id = $1
@@ -588,6 +716,35 @@ func (q *Queries) ListInboxItems(ctx context.Context, arg ListInboxItemsParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockInboxItemForUpdate = `-- name: LockInboxItemForUpdate :one
+SELECT id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details FROM inbox_item
+WHERE id = $1
+FOR UPDATE
+`
+
+func (q *Queries) LockInboxItemForUpdate(ctx context.Context, id pgtype.UUID) (InboxItem, error) {
+	row := q.db.QueryRow(ctx, lockInboxItemForUpdate, id)
+	var i InboxItem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RecipientType,
+		&i.RecipientID,
+		&i.Type,
+		&i.Severity,
+		&i.IssueID,
+		&i.Title,
+		&i.Body,
+		&i.Read,
+		&i.Archived,
+		&i.CreatedAt,
+		&i.ActorType,
+		&i.ActorID,
+		&i.Details,
+	)
+	return i, err
 }
 
 const markAllInboxRead = `-- name: MarkAllInboxRead :execrows

@@ -73,7 +73,6 @@ export function RuntimePicker({
   const machines = useMemo(() => {
     const all = buildRuntimeMachines(filteredRuntimes, {
       now: Date.now(),
-      currentUserId,
     });
     return filterRuntimeMachines(all, search, "all");
   }, [filteredRuntimes, search, currentUserId]);

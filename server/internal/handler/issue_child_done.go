@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // notifyParentOfChildDone posts a top-level system comment on the parent
@@ -313,7 +313,20 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 	// author_type='system', author_id=zero UUID. The zero UUID is a valid 16
 	// byte value and the column is NOT NULL; frontend code should branch on
 	// author_type === 'system' rather than on the UUID value.
-	created, err := h.Queries.CreateComment(ctx, db.CreateCommentParams{
+	if h.TxStarter == nil {
+		slog.Warn("child done: transaction starter unavailable",
+			"child_id", childID, "parent_id", parentID)
+		return
+	}
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		slog.Warn("child done: begin comment transaction failed",
+			"error", err, "child_id", childID, "parent_id", parentID)
+		return
+	}
+	defer tx.Rollback(ctx)
+	qtx := h.Queries.WithTx(tx)
+	created, err := qtx.CreateComment(ctx, db.CreateCommentParams{
 		ID:          dbid.NewV7(),
 		IssueID:     parent.ID,
 		WorkspaceID: parent.WorkspaceID,
@@ -331,15 +344,19 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 		return
 	}
 	comment := created.Comment()
-
-	h.publish(protocol.EventCommentCreated, uuidToString(parent.WorkspaceID), "system", "", map[string]any{
-		"comment":             commentToResponse(comment, nil, nil),
-		"issue_title":         parent.Title,
-		"issue_assignee_type": textToPtr(parent.AssigneeType),
-		"issue_assignee_id":   uuidToPtr(parent.AssigneeID),
-		"issue_status":        parent.Status,
-		"issue_revision":      created.IssueRevision,
-	})
+	createdEvent, err := eventoutbox.Enqueue(ctx, qtx, buildCommentCreatedEvent(parent,
+		commentToResponse(comment, nil, nil), "system", ""))
+	if err != nil {
+		slog.Warn("child done: enqueue system comment event failed",
+			"error", err, "child_id", childID, "parent_id", parentID)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.Warn("child done: commit comment transaction failed",
+			"error", err, "child_id", childID, "parent_id", parentID)
+		return
+	}
+	h.publishEvent(createdEvent)
 
 	// Dispatch the explicit trigger / inbox row for the parent assignee.
 	// Listener-level mention parsing is intentionally NOT involved (the

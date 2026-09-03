@@ -66,6 +66,14 @@ LIMIT $2 OFFSET $3;
 SELECT * FROM issue
 WHERE id = $1;
 
+-- name: LockIssueForTaskFailureReset :one
+-- The failure reconciler checks active tasks and changes the issue status as
+-- one decision. Locking the issue row closes the gap where two terminal task
+-- callbacks could both observe an empty active set and emit competing resets.
+SELECT * FROM issue
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
+
 -- name: GetIssueGCStatus :one
 SELECT workspace_id, status, updated_at
 FROM issue

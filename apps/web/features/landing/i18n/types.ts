@@ -56,7 +56,7 @@ export type LandingDict = {
     headlineLine2: string;
     subheading: string;
     cta: string;
-    downloadDesktop: string;
+    installCli: string;
     talkToSales: string;
     worksWith: string;
     imageAlt: string;
@@ -135,47 +135,6 @@ export type LandingDict = {
     }[];
   };
   download: {
-    hero: {
-      macArm64: {
-        title: string;
-        sub: string;
-        primary: string;
-        altZip: string;
-      };
-      macIntel: {
-        title: string;
-        sub: string;
-        primary: string;
-        altZip: string;
-      };
-      winX64: { title: string; sub: string; primary: string };
-      winArm64: { title: string; sub: string; primary: string };
-      linux: {
-        title: string;
-        sub: string;
-        primary: string;
-        altFormats: string;
-      };
-      unknown: { title: string; sub: string };
-      safariMacHint: string;
-      archFallbackHint: string;
-    };
-    allPlatforms: {
-      title: string;
-      macArm64Label: string;
-      macX64Label: string;
-      winX64Label: string;
-      winArm64Label: string;
-      linuxX64Label: string;
-      linuxArm64Label: string;
-      formatDmg: string;
-      formatZip: string;
-      formatExe: string;
-      formatAppImage: string;
-      formatDeb: string;
-      formatRpm: string;
-      unavailable: string;
-    };
     cli: {
       title: string;
       sub: string;
@@ -186,12 +145,6 @@ export type LandingDict = {
       copiedLabel: string;
     };
     cloud: { title: string; sub: string };
-    footer: {
-      releaseNotes: string;
-      allReleases: string;
-      currentVersion: string;
-      versionUnavailable: string;
-    };
   };
   contactSales: {
     pageTitle: string;

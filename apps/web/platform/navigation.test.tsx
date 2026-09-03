@@ -3,7 +3,7 @@
  *
  * Shared content (comments, chat, issue descriptions) fires this event whenever
  * a link resolves to an in-app destination, including an absolute URL on this
- * deployment's own origin. Desktop answers it by opening a tab; the web must
+ * deployment's own origin. The web answers it by navigating within its origin;
  * answer it with a router push, or those links silently do nothing.
  */
 import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";

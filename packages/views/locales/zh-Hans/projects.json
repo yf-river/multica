@@ -118,7 +118,7 @@
     "local_validate_not_a_directory": "该路径不是目录。",
     "local_validate_not_readable": "目录不可读。",
     "local_validate_not_writable": "目录不可写。",
-    "local_validate_unsupported": "本地目录仅能在桌面端选择。",
+    "local_validate_unsupported": "浏览器无法选择本地目录，请通过守护进程或 CLI 添加。",
     "mode_dialog_title": "task 如何使用这个文件夹？",
     "mode_dialog_description": "这决定了你如何拿到智能体的工作成果，以及这个文件夹上的 task 能否同时运行。",
     "mode_in_place_title": "直接修改这个文件夹",

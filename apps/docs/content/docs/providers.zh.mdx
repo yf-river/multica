@@ -34,7 +34,6 @@ Multica 不会替代你使用的 AI 编程工具。运行时会调用电脑上�
 | Kimi CLI | `kimi` | ✓ | ✓ | `.kimi/skills/` |
 | Kiro CLI | `kiro-cli` | ✓ | ✓ | `.kiro/skills/` |
 | MiniMax Code | `mcode` | — | ✓ | `.minimax/skills/` |
-| OpenClaw | `openclaw` | ✓ | ✓ | `skills/` |
 | OpenCode | `opencode` | ✓ | ✓ | `.opencode/skills/` |
 | Pi | `pi` | ✓ | — | `.pi/skills/` |
 | Oh-My-Pi | `omp` | ✓ | — | `.omp/skills/` |
@@ -84,11 +83,10 @@ MCP server 的命令、参数和环境变量会随智能体配置保存在服务
 
 仓库里原本存在的 skill 不会被覆盖。如果名称冲突，Multica 会为注入的副本使用另一个目录名；执行结束后，只清理自己创建的文件。
 
-Codex、Hermes 和 OpenClaw 的处理稍有不同：
+Codex 和 Hermes 的处理稍有不同：
 
 - Codex 使用单次执行的 `CODEX_HOME`，不会把 skill 写进系统级 Codex 目录。
 - Hermes 使用单次执行的 `HERMES_HOME`。已有的本地配置仍然可以被读取，但绑定的 skill 与会话数据按 task 隔离。这套隔离只在智能体绑定了 skill 时启用，没有绑定 skill 的 task 使用本机原有的 Hermes 主目录。
-- OpenClaw 使用当前 task 工作目录下的 `skills/`，并由单次执行配置把该目录设为工作区。
 
 如何创建和绑定 skill，见 [Skills](/skills)。
 

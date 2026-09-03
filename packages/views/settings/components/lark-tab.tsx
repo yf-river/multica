@@ -4,13 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ChevronRight, ExternalLink, RefreshCw, Trash2 } from "lucide-react";
-// Named import, NOT default: react-qr-code is CJS, and electron-vite's
-// dep-optimizer default-import interop handed back the module namespace
-// object instead of the component, throwing "Element type is invalid …
-// got: object" the moment <QRCode> mounted (the QR step of the install
-// dialog) — desktop white-screened while web (Next.js, different interop)
-// was fine. The named export maps straight to `exports.QRCode` and
-// resolves correctly under both bundlers.
+// Named import, NOT default: react-qr-code is CJS and some bundlers expose
+// the module namespace for a default import. The named export maps directly
+// to `exports.QRCode`.
 import { QRCode } from "react-qr-code";
 import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";

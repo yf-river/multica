@@ -1,0 +1,2 @@
+-- Foreign keys are intentionally not recreated; application transactions own
+-- Life relationship validation and dependent cleanup.

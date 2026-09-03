@@ -159,7 +159,7 @@ exit 3
 // The fake exits straight away but leaves a descendant holding the stdout and
 // stderr write ends. cmd.Wait() cannot return until those close, and on Windows
 // what closes them is releaseProcessGroup — which runs after Wait. A probe that
-// waits for its own cleanup never returns, and checkOpenclawVersion runs on the
+// waits for its own cleanup never returns, and version detection runs on the
 // caller's context before any task timeout exists, so the task would hang until
 // someone cancelled it by hand.
 func TestProbeReturnsWhenLeaderExitsHoldingPipes(t *testing.T) {

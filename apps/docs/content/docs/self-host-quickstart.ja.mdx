@@ -194,19 +194,16 @@ curl -fsS https://app.example.com/api/config | grep -o '"daemon_server_url":"[^"
 
 ```bash
 docker compose -f docker-compose.selfhost.yml logs backend \
-  | grep "Verification code"
 ```
 
 ログには次のような行が出力されます。
 
 ```text
-[DEV] Verification code for you@example.com: 123456
 ```
 
 コードを入力して、最初のワークスペースを作成します。Resend または SMTP を設定すると認証コードはメールで送信され、メンバーがコンテナログを読む必要はなくなります。詳しくは[ログインとサインアップ設定](/auth-setup)を参照してください。
 
 <Callout type="warning">
-セルフホストのデプロイはデフォルトで `APP_ENV=production` を使い、固定の認証コードは有効になりません。公開インスタンスで `MULTICA_DEV_VERIFICATION_CODE` を設定しないでください。
 </Callout>
 
 ## 5. 実行用コンピュータを接続する
@@ -377,7 +374,6 @@ Helm には独自のアップグレード経路があります。values ファ�
 | 症状 | まず確認すること |
 |---|---|
 | `/readyz` が `ok` を返さない | `docker compose -f docker-compose.selfhost.yml logs backend postgres` を実行する。 |
-| 認証コードが届かない | コードを一度リクエストし、backend のログで `Verification code` を探す。 |
 | `setup self-host` が server に到達できないと報告する | 実行用コンピュータから `https://api.example.com/health` をリクエストし、DNS、TLS、リバースプロキシがすべて到達可能か確認する。404 が返る場合、プロキシが `/health` をこのパスを転送しない古い web リリースに向けているため、backend へ直接ルーティングすること（[トラブルシューティング](/troubleshooting#multica-setup-がサーバーに到達できないと報告する)）。 |
 | デーモンが `Agents` を表示しない | AI コーディングツールが `PATH` にありログイン済みであることを確認し、`multica daemon restart` を実行する。 |
 | タスクがキューにとどまり続ける | `multica daemon status` を実行し、デーモンが起動していてワークスペースに接続していることを確認する。 |
@@ -389,4 +385,3 @@ Helm には独自のアップグレード経路があります。values ファ�
 - [ログインとサインアップ設定](/auth-setup) — メール、Google ログイン、サインアップ範囲を設定する。
 - [環境変数](/environment-variables) — サーバー設定の完全なリファレンス。
 - [Self-hosting guide](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md) — Kubernetes、アップグレード、手動デプロイ。
-- [デスクトップアプリ](/desktop-app) — デスクトップアプリをセルフホストのサービスに接続する。

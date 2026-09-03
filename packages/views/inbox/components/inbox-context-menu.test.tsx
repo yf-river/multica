@@ -66,7 +66,6 @@ const navigationAdapter = {
   searchParams: new URLSearchParams(),
   hash: "",
   getShareableUrl: (p: string) => p,
-  openInNewTab: vi.fn(),
 };
 
 function wrap(ui: ReactNode) {
@@ -172,15 +171,16 @@ describe("inbox row context menu", () => {
   });
 
   it("offers Open in new tab as a foreground open when the row references an issue", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
     const { row } = renderRow({ entry: item({ issue_id: "issue-9" }) });
 
     fireEvent.contextMenu(row);
     fireEvent.click(await screen.findByText("Open in new tab"));
 
-    expect(navigationAdapter.openInNewTab).toHaveBeenCalledWith(
+    expect(open).toHaveBeenCalledWith(
       "/acme/issues/issue-9",
-      undefined,
-      { activate: true },
+      "_blank",
+      "noopener,noreferrer",
     );
   });
 
@@ -230,15 +230,16 @@ describe("inbox row compact menu", () => {
   });
 
   it("opens the referenced issue in a new tab", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
     renderRow({ entry: item({ issue_id: "issue-9" }) });
 
     openMenu();
     fireEvent.click(await screen.findByRole("menuitem", { name: "Open in new tab" }));
 
-    expect(navigationAdapter.openInNewTab).toHaveBeenCalledWith(
+    expect(open).toHaveBeenCalledWith(
       "/acme/issues/issue-9",
-      undefined,
-      { activate: true },
+      "_blank",
+      "noopener,noreferrer",
     );
   });
 

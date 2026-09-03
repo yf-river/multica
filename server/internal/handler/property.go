@@ -19,7 +19,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -729,14 +731,14 @@ func (h *Handler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 	}
 	var property db.IssueProperty
 	var capErr error
-	err = h.withPropertyLock(r, []string{"props:" + workspaceID}, func(q *db.Queries) error {
+	committedEvents, err := h.withPropertyLock(r, []string{"props:" + workspaceID}, func(q *db.Queries) ([]events.Event, error) {
 		active, err := q.CountActiveIssueProperties(r.Context(), wsUUID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if active >= maxActivePropertiesPerWorkspace {
 			capErr = fmt.Errorf("a workspace cannot have more than %d active properties; archive unused ones first", maxActivePropertiesPerWorkspace)
-			return capErr
+			return nil, capErr
 		}
 		property, err = q.CreateIssueProperty(r.Context(), db.CreateIssuePropertyParams{
 			WorkspaceID: wsUUID,
@@ -746,7 +748,7 @@ func (h *Handler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 			Icon:        icon,
 			Config:      configJSON,
 		})
-		return err
+		return []events.Event{buildPropertyDomainEvent(protocol.EventPropertyCreated, property, "member", userID)}, nil
 	})
 	if capErr != nil {
 		writeError(w, http.StatusBadRequest, capErr.Error())
@@ -762,7 +764,9 @@ func (h *Handler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := propertyToResponse(property, 0)
-	h.publish(protocol.EventPropertyCreated, workspaceID, "member", userID, map[string]any{"property": resp})
+	for _, event := range committedEvents {
+		h.publishEvent(event)
+	}
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -798,40 +802,40 @@ func (h *Handler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 		httpStatus, httpMsg = status, msg
 		return errClientRejected
 	}
-	err := h.withPropertyLock(r, []string{"props:" + workspaceID, "prop:" + uuidToString(idUUID)}, func(q *db.Queries) error {
+	committedEvents, err := h.withPropertyLock(r, []string{"props:" + workspaceID, "prop:" + uuidToString(idUUID)}, func(q *db.Queries) ([]events.Event, error) {
 		existing, err := q.GetIssueProperty(r.Context(), db.GetIssuePropertyParams{ID: idUUID, WorkspaceID: wsUUID})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return fail(http.StatusNotFound, "property not found")
+				return nil, fail(http.StatusNotFound, "property not found")
 			}
-			return err
+			return nil, err
 		}
 
 		params := db.UpdateIssuePropertyParams{ID: idUUID, WorkspaceID: wsUUID}
 		if req.Name != nil {
 			name, err := validatePropertyName(*req.Name)
 			if err != nil {
-				return fail(http.StatusBadRequest, err.Error())
+				return nil, fail(http.StatusBadRequest, err.Error())
 			}
 			params.Name = pgtype.Text{String: name, Valid: true}
 		}
 		if req.Description != nil {
 			if utf8.RuneCountInString(*req.Description) > maxPropertyDescriptionLen {
-				return fail(http.StatusBadRequest, fmt.Sprintf("description must be %d characters or fewer", maxPropertyDescriptionLen))
+				return nil, fail(http.StatusBadRequest, fmt.Sprintf("description must be %d characters or fewer", maxPropertyDescriptionLen))
 			}
 			params.Description = pgtype.Text{String: sanitizeNullBytes(strings.TrimSpace(*req.Description)), Valid: true}
 		}
 		if req.Icon != nil {
 			icon, err := validatePropertyIcon(*req.Icon)
 			if err != nil {
-				return fail(http.StatusBadRequest, err.Error())
+				return nil, fail(http.StatusBadRequest, err.Error())
 			}
 			params.Icon = pgtype.Text{String: icon, Valid: true}
 		}
 		if req.Config != nil {
 			configJSON, err := validatePropertyConfig(existing.Type, req.Config)
 			if err != nil {
-				return fail(http.StatusBadRequest, err.Error())
+				return nil, fail(http.StatusBadRequest, err.Error())
 			}
 			if removed := removedOptionIDs(existing.Config, configJSON); len(removed) > 0 {
 				rows, err := q.CountIssuesUsingPropertyOptions(r.Context(), db.CountIssuesUsingPropertyOptionsParams{
@@ -840,10 +844,10 @@ func (h *Handler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 					PropertyKey: uuidToString(existing.ID),
 				})
 				if err != nil {
-					return err
+					return nil, err
 				}
 				if len(rows) > 0 {
-					return fail(http.StatusConflict, describeOptionsInUse(existing.Config, rows))
+					return nil, fail(http.StatusConflict, describeOptionsInUse(existing.Config, rows))
 				}
 			}
 			params.Config = configJSON
@@ -855,10 +859,10 @@ func (h *Handler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 			} else if existing.ArchivedAt.Valid {
 				active, err := q.CountActiveIssueProperties(r.Context(), wsUUID)
 				if err != nil {
-					return err
+					return nil, err
 				}
 				if active >= maxActivePropertiesPerWorkspace {
-					return fail(http.StatusBadRequest, fmt.Sprintf("a workspace cannot have more than %d active properties; archive unused ones first", maxActivePropertiesPerWorkspace))
+					return nil, fail(http.StatusBadRequest, fmt.Sprintf("a workspace cannot have more than %d active properties; archive unused ones first", maxActivePropertiesPerWorkspace))
 				}
 			}
 		}
@@ -866,14 +870,14 @@ func (h *Handler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 		property, err = q.UpdateIssueProperty(r.Context(), params)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return fail(http.StatusNotFound, "property not found")
+				return nil, fail(http.StatusNotFound, "property not found")
 			}
 			if isUniqueViolation(err) {
-				return fail(http.StatusConflict, "a property with that name already exists")
+				return nil, fail(http.StatusConflict, "a property with that name already exists")
 			}
-			return err
+			return nil, err
 		}
-		return nil
+		return []events.Event{buildPropertyDomainEvent(protocol.EventPropertyUpdated, property, "member", userID)}, nil
 	})
 	if err != nil {
 		if errors.Is(err, errClientRejected) {
@@ -885,7 +889,9 @@ func (h *Handler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := propertyToResponse(property, 0)
-	h.publish(protocol.EventPropertyUpdated, workspaceID, "member", userID, map[string]any{"property": resp})
+	for _, event := range committedEvents {
+		h.publishEvent(event)
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -923,26 +929,28 @@ func (h *Handler) SetIssueProperty(w http.ResponseWriter, r *http.Request) {
 	// state that a concurrent config edit's usage census will see (TOCTOU,
 	// clean-room review F1).
 	var updated db.Issue
+	workspaceID := uuidToString(issue.WorkspaceID)
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	var httpStatus int
 	var httpMsg string
 	fail := func(status int, msg string) error {
 		httpStatus, httpMsg = status, msg
 		return errClientRejected
 	}
-	err := h.withPropertyLock(r, []string{"prop:" + uuidToString(propertyID)}, func(q *db.Queries) error {
+	committedEvents, err := h.withPropertyLock(r, []string{"prop:" + uuidToString(propertyID)}, func(q *db.Queries) ([]events.Event, error) {
 		def, err := q.GetIssueProperty(r.Context(), db.GetIssuePropertyParams{ID: propertyID, WorkspaceID: issue.WorkspaceID})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return fail(http.StatusNotFound, "property not found")
+				return nil, fail(http.StatusNotFound, "property not found")
 			}
-			return err
+			return nil, err
 		}
 		if def.ArchivedAt.Valid {
-			return fail(http.StatusBadRequest, fmt.Sprintf("property %q is archived and cannot receive new values", def.Name))
+			return nil, fail(http.StatusBadRequest, fmt.Sprintf("property %q is archived and cannot receive new values", def.Name))
 		}
 		value, err := validatePropertyValue(def, req.Value)
 		if err != nil {
-			return fail(http.StatusBadRequest, err.Error())
+			return nil, fail(http.StatusBadRequest, err.Error())
 		}
 		// Actor values point at another entity, so shape validation isn't
 		// enough: resolve each reference against this workspace before the
@@ -950,10 +958,10 @@ func (h *Handler) SetIssueProperty(w http.ResponseWriter, r *http.Request) {
 		if propertyTypeIsActor(def.Type) {
 			refs, err := actorRefsInValue(def.Type, value)
 			if err != nil {
-				return fail(http.StatusBadRequest, err.Error())
+				return nil, fail(http.StatusBadRequest, err.Error())
 			}
 			if status, msg := h.resolveActorRefs(r, uuidToString(issue.WorkspaceID), refs); status != 0 {
-				return fail(status, msg)
+				return nil, fail(status, msg)
 			}
 		}
 		updated, err = q.SetIssuePropertyValue(r.Context(), db.SetIssuePropertyValueParams{
@@ -964,11 +972,11 @@ func (h *Handler) SetIssueProperty(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			if isCheckViolation(err) {
-				return fail(http.StatusBadRequest, "issue properties exceed the 16KB size limit")
+				return nil, fail(http.StatusBadRequest, "issue properties exceed the 16KB size limit")
 			}
-			return err
+			return nil, err
 		}
-		return nil
+		return []events.Event{buildIssuePropertiesChangedEvent(updated, actorType, actorID, parseIssueProperties(updated.Properties))}, nil
 	})
 	if err != nil {
 		if errors.Is(err, errClientRejected) {
@@ -980,14 +988,10 @@ func (h *Handler) SetIssueProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workspaceID := uuidToString(updated.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	properties := parseIssueProperties(updated.Properties)
-	h.publish(protocol.EventIssuePropertiesChanged, workspaceID, actorType, actorID, map[string]any{
-		"issue_id":       uuidToString(updated.ID),
-		"properties":     properties,
-		"issue_revision": updated.Revision,
-	})
+	for _, event := range committedEvents {
+		h.publishEvent(event)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"properties": properties, "issue_revision": updated.Revision})
 }
 
@@ -1020,7 +1024,14 @@ func (h *Handler) DeleteIssueProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.Queries.DeleteIssuePropertyValue(r.Context(), db.DeleteIssuePropertyValueParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start property transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.DeleteIssuePropertyValue(r.Context(), db.DeleteIssuePropertyValueParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		Key:         uuidToString(propertyID),
@@ -1034,11 +1045,16 @@ func (h *Handler) DeleteIssueProperty(w http.ResponseWriter, r *http.Request) {
 	workspaceID := uuidToString(updated.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	properties := parseIssueProperties(updated.Properties)
-	h.publish(protocol.EventIssuePropertiesChanged, workspaceID, actorType, actorID, map[string]any{
-		"issue_id":       uuidToString(updated.ID),
-		"properties":     properties,
-		"issue_revision": updated.Revision,
-	})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildIssuePropertiesChangedEvent(updated, actorType, actorID, properties))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record property event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit property change")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusOK, map[string]any{"properties": properties, "issue_revision": updated.Revision})
 }
 
@@ -1048,23 +1064,34 @@ func (h *Handler) DeleteIssueProperty(w http.ResponseWriter, r *http.Request) {
 // otherwise interleave into a permanently orphaned option reference) and
 // definition creates/unarchives against each other (the 20-active cap and
 // MAX(position)+1 are read-then-write). Locks are transaction-scoped.
-func (h *Handler) withPropertyLock(r *http.Request, lockKeys []string, fn func(q *db.Queries) error) error {
+func (h *Handler) withPropertyLock(r *http.Request, lockKeys []string, fn func(q *db.Queries) ([]events.Event, error)) ([]events.Event, error) {
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback(r.Context())
 	// Callers pass keys in a fixed global order (workspace before property)
 	// so overlapping lock sets cannot deadlock.
 	for _, key := range lockKeys {
 		if _, err := tx.Exec(r.Context(), "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", key); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	if err := fn(h.Queries.WithTx(tx)); err != nil {
-		return err
+	committedEvents, err := fn(h.Queries.WithTx(tx))
+	if err != nil {
+		return nil, err
 	}
-	return tx.Commit(r.Context())
+	for i, event := range committedEvents {
+		persisted, err := service.RecordDurableEventTx(r.Context(), h.Queries.WithTx(tx), event)
+		if err != nil {
+			return nil, err
+		}
+		committedEvents[i] = persisted
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		return nil, err
+	}
+	return committedEvents, nil
 }
 
 // ---------------------------------------------------------------------------

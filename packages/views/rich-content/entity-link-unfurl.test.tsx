@@ -126,7 +126,8 @@ describe("bare entity URLs in readonly content", () => {
   });
 
   // The identifier form — NOT the UUID one — is what leaves the app:
-  // `copyLink` and `openInNewTab` build `paths.issueDetail(identifier || id)`,
+  // `copyLink` and the explicit browser-tab action build
+  // `paths.issueDetail(identifier || id)`,
   // and the issue route rewrites a UUID URL back to the identifier, so this is
   // the shape in the address bar too.
   it("renders a pasted identifier-form issue URL as an issue chip", () => {

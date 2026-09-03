@@ -145,7 +145,6 @@ function makeAdapter(
     searchParams: new URLSearchParams(),
     hash: "",
     getShareableUrl: (p) => p,
-    openInNewTab: vi.fn(),
     ...overrides,
   };
 }
@@ -186,7 +185,6 @@ describe("SkillsPage source link vs row navigation", () => {
     // The anchor's native middle-click open must survive: the row's auxclick
     // handler (which calls preventDefault) must never see the event.
     expect(event.defaultPrevented).toBe(false);
-    expect(adapter.openInNewTab).not.toHaveBeenCalled();
     expect(adapter.push).not.toHaveBeenCalled();
   });
 
@@ -199,21 +197,22 @@ describe("SkillsPage source link vs row navigation", () => {
     );
 
     expect(adapter.push).not.toHaveBeenCalled();
-    expect(adapter.openInNewTab).not.toHaveBeenCalled();
   });
 
   // Sanity check that the rig exercises the row's auxclick handler at all —
   // without this, the assertions above could pass vacuously.
   it("middle click elsewhere on the row still background-tabs the skill", async () => {
     const adapter = makeAdapter();
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
     renderPage(adapter);
 
     const event = middleClick(await screen.findByText("animations"));
 
     expect(event.defaultPrevented).toBe(true);
-    expect(adapter.openInNewTab).toHaveBeenCalledWith(
+    expect(open).toHaveBeenCalledWith(
       "/acme/skills/skill-1",
-      "animations",
+      "_blank",
+      "noopener,noreferrer",
     );
   });
 });

@@ -469,6 +469,61 @@ func (q *Queries) ListLifeExperimentRounds(ctx context.Context, arg ListLifeExpe
 	return items, nil
 }
 
+const listLifeExperimentRoundsForContext = `-- name: ListLifeExperimentRoundsForContext :many
+SELECT round.id, round.experiment_id, round.previous_round_id, round.proposal_id, round.issue_id, round.status, round.plan, round.starts_at, round.ends_at, round.stopped_at, round.stop_reason, round.confirmed_at, round.confirmed_by_id, round.review, round.reviewed_at, round.created_at, round.updated_at, round.review_draft FROM life_experiment_round round
+JOIN life_experiment experiment ON experiment.id = round.experiment_id
+WHERE experiment.workspace_id = $1
+  AND experiment.user_id = $2
+  AND round.status IN ('running', 'awaiting_review')
+ORDER BY round.created_at DESC, round.id DESC
+LIMIT $3::int
+`
+
+type ListLifeExperimentRoundsForContextParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListLifeExperimentRoundsForContext(ctx context.Context, arg ListLifeExperimentRoundsForContextParams) ([]LifeExperimentRound, error) {
+	rows, err := q.db.Query(ctx, listLifeExperimentRoundsForContext, arg.WorkspaceID, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeExperimentRound{}
+	for rows.Next() {
+		var i LifeExperimentRound
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExperimentID,
+			&i.PreviousRoundID,
+			&i.ProposalID,
+			&i.IssueID,
+			&i.Status,
+			&i.Plan,
+			&i.StartsAt,
+			&i.EndsAt,
+			&i.StoppedAt,
+			&i.StopReason,
+			&i.ConfirmedAt,
+			&i.ConfirmedByID,
+			&i.Review,
+			&i.ReviewedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ReviewDraft,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLifeExperiments = `-- name: ListLifeExperiments :many
 SELECT id, workspace_id, user_id, title, problem, hypothesis, method, created_by_type, created_by_id, created_at, updated_at FROM life_experiment
 WHERE workspace_id = $1 AND user_id = $2
@@ -482,6 +537,52 @@ type ListLifeExperimentsParams struct {
 
 func (q *Queries) ListLifeExperiments(ctx context.Context, arg ListLifeExperimentsParams) ([]LifeExperiment, error) {
 	rows, err := q.db.Query(ctx, listLifeExperiments, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeExperiment{}
+	for rows.Next() {
+		var i LifeExperiment
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.Title,
+			&i.Problem,
+			&i.Hypothesis,
+			&i.Method,
+			&i.CreatedByType,
+			&i.CreatedByID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLifeExperimentsForContext = `-- name: ListLifeExperimentsForContext :many
+SELECT id, workspace_id, user_id, title, problem, hypothesis, method, created_by_type, created_by_id, created_at, updated_at FROM life_experiment
+WHERE workspace_id = $1
+  AND user_id = $2
+ORDER BY updated_at DESC, id DESC
+LIMIT $3::int
+`
+
+type ListLifeExperimentsForContextParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListLifeExperimentsForContext(ctx context.Context, arg ListLifeExperimentsForContextParams) ([]LifeExperiment, error) {
+	rows, err := q.db.Query(ctx, listLifeExperimentsForContext, arg.WorkspaceID, arg.UserID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

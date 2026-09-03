@@ -12,14 +12,12 @@ describe("ROUTE_ICON_COMPONENTS", () => {
 });
 
 describe("routeIconForPath", () => {
-  // The invariant this whole contract exists for (MUL-4370): the sidebar and
-  // the desktop tab bar both resolve from a path, so the same route can never
-  // render two different icons.
+  // Every navigation surface resolves from the same route registry, so a route
+  // cannot render two different icons.
   it("gives a route the same component wherever it is rendered", () => {
     const p = paths.workspace("acme");
     for (const href of [p.projects(), p.autopilots(), p.chat(), p.squads(), p.usage()]) {
-      // Sidebar passes the bare nav href; a tab passes its own url, which for
-      // a sub-route carries extra segments.
+      // A sub-route carries extra segments but keeps its parent page icon.
       expect(routeIconForPath(`${href}/some-id`)).toBe(routeIconForPath(href));
     }
   });

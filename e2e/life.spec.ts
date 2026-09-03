@@ -14,7 +14,7 @@ test.describe("Life", () => {
   });
 
   test("life navigation and material flow survive refresh", async ({ page }) => {
-    await page.getByRole("link", { name: "记忆", exact: true }).click();
+    await page.locator('a[href$="/life?tab=memory"]').click();
     await expect(page).toHaveURL(/\/life\?tab=memory$/);
     await expect(page.getByRole("heading", { name: "人生", exact: true })).toBeVisible();
     await expect(page.getByRole("tab")).toHaveCount(0);
@@ -35,12 +35,12 @@ test.describe("Life", () => {
     expect((await readback).materials.some((item) => item.content === content)).toBe(true);
 
     for (const tab of lifeTabs.slice(1)) {
-      await page.getByRole("link", { name: tab.label, exact: true }).click();
+      await page.locator(`a[href$="/life?tab=${tab.value}"]`).click();
       await expect(page).toHaveURL(new RegExp(`\\/life\\?tab=${tab.value}$`));
       await expect(page.getByRole("heading", { name: tab.label, exact: true }).first()).toBeVisible();
     }
 
-    await page.getByRole("link", { name: "记忆", exact: true }).click();
+    await page.locator('a[href$="/life?tab=memory"]').click();
     await expect(page).toHaveURL(/\/life\?tab=memory$/);
     await page.reload();
     await waitForPageText(page, "随手留下材料");
@@ -53,12 +53,12 @@ test.describe("Life", () => {
     const sidebarTrigger = page.locator('[data-sidebar="trigger"]');
     await expect(sidebarTrigger).toBeVisible();
     await sidebarTrigger.click();
-    await expect(page.getByRole("link", { name: "记忆", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "搭子", exact: true })).toHaveCount(0);
-    await page.getByRole("link", { name: "观察席", exact: true }).click();
+    await expect(page.locator('a[href$="/life?tab=memory"]')).toBeVisible();
+    await expect(page.getByRole("link", { name: "Chat", exact: true })).toHaveCount(1);
+    await page.locator('a[href$="/life?tab=observers"]').click();
     await expect(page).toHaveURL(/\/life\?tab=observers$/);
-    await waitForPageText(page, "第三方视角");
+    await expect(page.getByRole("heading", { name: "观察席", exact: true })).toBeVisible();
 
-    await expect(page.getByTestId("chat-fab")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Ask Multica" })).toBeVisible();
   });
 });

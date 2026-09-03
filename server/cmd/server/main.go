@@ -302,16 +302,6 @@ func main() {
 	if os.Getenv("JWT_SECRET") == "" {
 		slog.Warn("JWT_SECRET is not set — using insecure dev default (allowed only because APP_ENV is not production).")
 	}
-	if os.Getenv("RESEND_API_KEY") == "" && strings.TrimSpace(os.Getenv("SMTP_HOST")) == "" {
-		slog.Warn("no email backend configured (RESEND_API_KEY and SMTP_HOST both empty) — verification codes will be printed to the log instead of emailed.")
-	}
-	if os.Getenv("MULTICA_DEV_VERIFICATION_CODE") != "" {
-		if strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "production") {
-			slog.Warn("MULTICA_DEV_VERIFICATION_CODE is set but ignored because APP_ENV=production.")
-		} else {
-			slog.Warn("MULTICA_DEV_VERIFICATION_CODE is enabled. Use it only for local development or private test instances.")
-		}
-	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -541,18 +531,29 @@ func main() {
 	defer analyticsClient.Close()
 
 	queries := db.New(pool)
-	bus.SetPersister(func(event events.Event) {
-		if _, err := eventoutbox.Enqueue(context.Background(), queries, event); err != nil {
-			slog.Warn("event outbox enqueue failed", "event_type", event.Type, "error", err)
-		}
-	})
 	hub.SetAuthorizer(newScopeAuthorizer(queries))
-	// Order matters: subscriber listeners must register BEFORE notification listeners.
-	// The notification listener queries the subscriber table to determine recipients,
-	// so subscribers must be written first within the same synchronous event dispatch.
-	registerSubscriberListeners(bus, pool)
-	registerActivityListeners(bus, queries)
-	registerNotificationListeners(bus, queries)
+	// Durable projections are registered on the outbox dispatcher. Business
+	// mutations enqueue their event in the same transaction; realtime listeners
+	// below only fan out the committed result.
+	eventDispatcher, err := eventoutbox.NewDispatcher(queries, pool, bus, fmt.Sprintf("api-%d", os.Getpid()))
+	if err != nil {
+		slog.Error("event outbox dispatcher unavailable", "error", err)
+		os.Exit(1)
+	}
+	for _, register := range []func(*eventoutbox.Dispatcher) error{
+		registerDurableAudienceConsumers,
+		registerDurableActivityConsumers,
+		registerDurableChatConsumers,
+		registerDurableQuickCreateConsumers,
+		registerDurableAutopilotConsumers,
+		registerDurableReactionConsumers,
+		registerDurableTerminalReceipts,
+	} {
+		if err := register(eventDispatcher); err != nil {
+			slog.Error("register durable event consumer failed", "error", err)
+			os.Exit(1)
+		}
+	}
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
 	var metricsServer *http.Server
@@ -563,11 +564,12 @@ func main() {
 	var wecomMetrics *obsmetrics.WecomMetrics
 	if metricsConfig.Enabled() {
 		metricsRegistry := obsmetrics.NewRegistry(obsmetrics.RegistryOptions{
-			Pool:     pool,
-			Realtime: realtime.M,
-			DaemonWS: daemonws.M,
-			Version:  version,
-			Commit:   commit,
+			Pool:       pool,
+			OutboxPool: pool,
+			Realtime:   realtime.M,
+			DaemonWS:   daemonws.M,
+			Version:    version,
+			Commit:     commit,
 		})
 		httpMetrics = metricsRegistry.HTTP
 		businessMetrics = metricsRegistry.Business
@@ -629,7 +631,6 @@ func main() {
 	// that cache's version, so an idle runtime could keep returning an empty
 	// claim until the cache TTL expires.
 	taskSvc, autopilotSvc := backgroundServices(h)
-	registerAutopilotListeners(bus, autopilotSvc)
 
 	// Construct a LivenessStore that mirrors the one wired into the HTTP
 	// handler. Both the heartbeat write path (handler) and the sweeper read
@@ -661,18 +662,14 @@ func main() {
 	// instead of a slot in the runtime sweep tick.
 	go runSourceContextSweeper(sweepCtx, taskSvc)
 	go heartbeatScheduler.Run(sweepCtx)
-	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
+	go runAutopilotFailureMonitorDurable(autopilotCtx, queries, pool, bus, envFailureMonitorConfig())
 	if autopilotSvc.QuotaEnabled() {
 		go runAutopilotQuotaReconciler(autopilotCtx, autopilotSvc)
 	}
 	go runDBStatsLogger(sweepCtx, pool)
-	if dispatcher, err := eventoutbox.NewDispatcher(queries, pool, bus, fmt.Sprintf("api-%d", os.Getpid())); err != nil {
-		slog.Warn("event outbox dispatcher disabled", "error", err)
-	} else {
-		go dispatcher.Run(sweepCtx)
-	}
+	go eventDispatcher.Run(sweepCtx)
 	go runLifeExperimentSweeper(sweepCtx, queries)
-	go runLifeCognitionWorker(sweepCtx, queries)
+	go runLifeCognitionWorker(sweepCtx, queries, pool)
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
 	}

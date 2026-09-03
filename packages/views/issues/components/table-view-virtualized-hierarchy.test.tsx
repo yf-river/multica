@@ -71,7 +71,6 @@ vi.mock("@multica/core/auth", () => ({
 const navigation = vi.hoisted(() => ({
   value: {
     push: () => {},
-    openInNewTab: () => {},
     getShareableUrl: (path: string) => `https://app.example${path}`,
     pathname: "/",
   },

@@ -51,6 +51,7 @@ export interface Member {
 export interface User {
   id: string;
   name: string;
+  account: string;
   email: string;
   avatar_url: string | null;
   onboarded_at: string | null;

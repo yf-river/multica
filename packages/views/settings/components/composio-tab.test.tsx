@@ -91,7 +91,6 @@ function renderTabStrict() {
 const NOTION: ComposioToolkit = {
   slug: "notion",
   name: "Notion",
-  connectable: true,
 };
 
 beforeEach(() => {

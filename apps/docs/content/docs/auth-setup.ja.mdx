@@ -67,13 +67,11 @@ SMTP_EHLO_NAME=mail.example.com
 
 ```dotenv
 APP_ENV=development
-MULTICA_DEV_VERIFICATION_CODE=888888
 ```
 
 認証コードは 6 桁の数字である必要があります。`APP_ENV=production` のときは固定コードは無視されます。
 
 <Callout type="warning">
-公開インスタンスで固定認証コードを有効にしないでください。プロダクションの組み合わせは `APP_ENV=production` と空の `MULTICA_DEV_VERIFICATION_CODE` です。
 </Callout>
 
 ## Google ログイン

@@ -130,7 +130,6 @@ Routing `/health` to the backend (port 8080) explicitly in your proxy works acro
 curl -fsS <server-url>/health
 ```
 
-## Verification code and invitation emails not delivered
 
 Check the backend startup log first. It states whether the server is using `SMTP relay`, `Resend API`, or `DEV mode`:
 
@@ -139,11 +138,10 @@ docker compose -f docker-compose.selfhost.yml logs backend \
   | grep "EmailService:"
 ```
 
-- **DEV mode**: no email is sent; verification codes and invitation links are only written to the backend log.
 - **Resend**: confirm the API key is valid and the sender address's domain is verified.
 - **SMTP**: confirm the host, port, credentials, and sender address, and use the error log to tell whether the failure happened at the connection, TLS, authentication, or delivery stage.
 
-When `SMTP_HOST` and Resend are both configured, Multica prefers SMTP. For configuration, see [Sign-in and signup](/auth-setup#email-verification-codes).
+When `SMTP_HOST` and Resend are both configured, Multica prefers SMTP for invitation and notification email. For configuration, see [Sign-in and signup](/auth-setup).
 
 <Callout type="warning">
 Do not rely on codes in the log in production, and do not enable the fixed local test code.

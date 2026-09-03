@@ -3,8 +3,8 @@
 /**
  * AttachmentPreviewPage — full-page HTML attachment viewer.
  *
- * Destination for `openInNewTab` from HtmlAttachmentPreview's toolbar. The
- * inline preview (HtmlAttachmentPreview) renders the same content in a 480px
+ * Destination for the browser-tab action from HtmlAttachmentPreview's
+ * toolbar. The inline preview (HtmlAttachmentPreview) renders the same content in a 480px
  * card with a hover toolbar; this is the same content edge-to-edge so the
  * user can resize / interact with the document at full size.
  *
@@ -21,7 +21,8 @@
 import { useEffect } from "react";
 import { useT } from "../i18n";
 import { useAttachmentHtmlText } from "../editor/hooks/use-attachment-html-text";
-import { useHtmlPreviewScrollRestore } from "./use-html-preview-scroll-restore";
+import { withFragmentNavShim } from "../editor/utils/iframe-fragment-nav";
+import { hashString } from "../editor/utils/hash-string";
 
 interface AttachmentPreviewPageProps {
   attachmentId: string;
@@ -39,16 +40,8 @@ export function AttachmentPreviewPage({
 
   const text = query.data?.text;
 
-  // Scroll-position restoration across desktop tab switches (multica-ai#6405).
-  // No-op on web (no desktop adapter). The iframe is keyed on contentKey so a
-  // content change (re-upload) structurally remounts a fresh document; the
-  // hook reports y=0 with the new key until that document scrolls, and
-  // messages from the previous document are dropped by token.
-  const { contentKey, buildSrcDoc, iframeRef, onLoad } =
-    useHtmlPreviewScrollRestore(text);
-
-  // Set document.title so desktop's MutationObserver-based tab title picks
-  // up the filename. Web shows the same string in the browser tab.
+  // Set the browser tab title and remount the sandbox when the attachment
+  // content changes.
   useEffect(() => {
     if (filename) document.title = filename;
   }, [filename]);
@@ -71,10 +64,8 @@ export function AttachmentPreviewPage({
         </div>
       ) : (
         <iframe
-          key={contentKey}
-          ref={iframeRef}
-          onLoad={onLoad}
-          srcDoc={buildSrcDoc(text as string)}
+          key={hashString(text as string)}
+          srcDoc={withFragmentNavShim(text as string)}
           sandbox="allow-scripts"
           title={filename ?? "HTML attachment"}
           className="flex-1 w-full border-0 bg-background"

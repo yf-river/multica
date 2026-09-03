@@ -16,10 +16,7 @@
  * board. The Runtimes page owns the follow-up Mika bootstrap once a runtime
  * appears, so this guide does not ask the member to copy an agent prompt.
  *
- * Note: server's deprecation shim (`onboarding_shim.go:noRuntimeIssueTitle`)
- * still uses the bare English string for its title-based dedupe — that
- * codepath only runs for pre-v3 desktop builds and never overlaps with
- * the v3 frontend population, so the two title-spaces drifting is fine.
+ * The title is stable so existing onboarding issues can be deduplicated.
  */
 export const INSTALL_RUNTIME_ISSUE_TITLE = {
   en: "Connect a runtime to start with Mika",
@@ -61,8 +58,6 @@ For English users, the fastest first path is Codex:
    installed CLIs every couple of minutes, so no restart is normally needed.
    To apply it immediately:
    multica daemon restart
-   In the desktop app, open any local runtime and click Restart. Quitting and
-   reopening the app is NOT enough — the daemon keeps running in the background.
 6. Return to Runtimes and refresh. You should see a Codex runtime online.
 7. Open Runtimes. The page will offer **Start with Mika**; use it to create Mika and open the guided first chat.
 
@@ -103,7 +98,6 @@ const zh = `欢迎来到 Multica。
 5. 等 Multica 识别到它。运行中的守护进程每隔几分钟会重新检查一次新装的 CLI,通常不需要重启。
    想立刻生效:
    multica daemon restart
-   桌面端请打开任意一个本机 runtime 并点 Restart。退出再打开 app 是不够的 —— 守护进程会继续在后台运行。
 6. 回到 Runtimes 页面刷新。你应该能看到一个在线的 Kimi 运行时。
 7. 打开"运行时"页面。页面会显示 **和 Mika 开始**；点击后会创建 Mika，并进入引导式的首次对话。
 
@@ -144,8 +138,6 @@ runtime이 준비되기 전에는 다음을 해볼 수 있습니다:
    다시 확인하므로 보통 재시작이 필요하지 않습니다.
    바로 적용하려면:
    multica daemon restart
-   데스크톱 앱에서는 아무 로컬 runtime을 열고 Restart를 누르세요. 앱을 종료하고 다시 여는
-   것만으로는 충분하지 않습니다 — daemon은 백그라운드에서 계속 실행됩니다.
 6. Runtimes로 돌아가 새로고침합니다. Codex runtime이 online으로 보여야 합니다.
 7. Runtimes를 엽니다. **Mika와 시작**을 눌러 Mika를 만들고 안내되는 첫 채팅을 시작합니다.
 
@@ -186,8 +178,6 @@ runtime が準備できる前に、次のことを試せます:
    CLI を再チェックするため、通常は再起動は不要です。
    すぐに反映したい場合:
    multica daemon restart
-   デスクトップアプリではローカル runtime を開いて Restart を押してください。アプリを終了して
-   開き直すだけでは不十分です — daemon はバックグラウンドで動き続けます。
 6. Runtimes に戻って再読み込みします。Codex runtime が online と表示されるはずです。
 7. Runtimes を開き、**Mika と始める**を選びます。Mika が作成され、案内付きの最初のチャットが開きます。
 

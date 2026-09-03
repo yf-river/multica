@@ -57,14 +57,11 @@ vi.mock("./use-download-attachment", () => ({
   useDownloadAttachment: () => downloadMock,
 }));
 
-// Module-level flags toggled per-test: simulate desktop (openInNewTab
-// adapter present) vs web (omitted), and the no-slug case where the
+// Module-level state for the shareable URL and the no-slug case where the
 // modal sits outside a workspace route.
-const { openInNewTabMock, getShareableUrlMock, navState, slugState } =
+const { getShareableUrlMock, slugState } =
   vi.hoisted(() => ({
-    openInNewTabMock: vi.fn(),
     getShareableUrlMock: vi.fn((p: string) => `https://app.example${p}`),
-    navState: { hasOpenInNewTab: true },
     slugState: { value: "acme" as string | null },
   }));
 
@@ -76,7 +73,6 @@ vi.mock("../navigation", () => ({
     pathname: "/acme/issues",
     searchParams: new URLSearchParams(),
     hash: "",
-    ...(navState.hasOpenInNewTab ? { openInNewTab: openInNewTabMock } : {}),
     getShareableUrl: getShareableUrlMock,
   }),
 }));
@@ -174,7 +170,6 @@ function ClosablePreview({ attachment }: { attachment: Attachment }) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  navState.hasOpenInNewTab = true;
   slugState.value = "acme";
   // Default to web's same-origin empty base so existing absolute-URL tests
   // remain unaffected by the relative-URL resolution added in normalize().
@@ -572,7 +567,7 @@ describe("AttachmentPreviewModal — open-in-new-tab (HTML only)", () => {
     expect(screen.getByTitle("Open in new tab")).toBeTruthy();
   });
 
-  it("invokes navigation.openInNewTab with the preview path and closes the modal (desktop)", async () => {
+  it("opens the preview path in a browser tab and closes the modal", async () => {
     getAttachmentTextContentMock.mockResolvedValueOnce({
       text: "<p>hi</p>",
       originalContentType: "text/html",
@@ -582,6 +577,7 @@ describe("AttachmentPreviewModal — open-in-new-tab (HTML only)", () => {
       content_type: "text/html",
     });
     const onClose = vi.fn();
+    const windowOpenSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
@@ -590,39 +586,8 @@ describe("AttachmentPreviewModal — open-in-new-tab (HTML only)", () => {
       />,
     );
     fireEvent.click(screen.getByTitle("Open in new tab"));
-    expect(openInNewTabMock).toHaveBeenCalledWith(
-      "/acme/attachments/att-1/preview?name=report.html",
-      "report.html",
-      { activate: true },
-    );
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("falls back to window.open against the shareable URL and closes the modal (web)", async () => {
-    navState.hasOpenInNewTab = false;
-    getAttachmentTextContentMock.mockResolvedValueOnce({
-      text: "<p>hi</p>",
-      originalContentType: "text/html",
-    });
-    const windowOpenSpy = vi
-      .spyOn(window, "open")
-      .mockImplementation(() => null);
-    const att = makeAttachment({
-      filename: "report.html",
-      content_type: "text/html",
-    });
-    const onClose = vi.fn();
-    render(
-      <AttachmentPreviewModal
-        source={{ kind: "full", attachment: att }}
-        open
-        onClose={onClose}
-      />,
-    );
-    fireEvent.click(screen.getByTitle("Open in new tab"));
-    expect(openInNewTabMock).not.toHaveBeenCalled();
     expect(windowOpenSpy).toHaveBeenCalledWith(
-      "https://app.example/acme/attachments/att-1/preview?name=report.html",
+      "/acme/attachments/att-1/preview?name=report.html",
       "_blank",
       "noopener,noreferrer",
     );

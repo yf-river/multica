@@ -158,7 +158,6 @@ export function AgentRowActions({
               intentNavigate(
                 paths.agentDetail(agent.id),
                 "foreground-tab",
-                agent.name,
               )
             }
           >

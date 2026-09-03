@@ -334,7 +334,7 @@ func TestHandleWebSocket_ClientIdentityFromQuery(t *testing.T) {
 	token := makeTestToken(t)
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") +
 		"/ws?workspace_id=" + testWorkspaceID +
-		"&client_platform=desktop&client_version=1.2.3&client_os=macos"
+		"&client_platform=web&client_version=1.2.3&client_os=macos"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -382,8 +382,8 @@ func TestHandleWebSocket_ClientIdentityFromQuery(t *testing.T) {
 	if found == nil {
 		t.Fatalf("did not observe \"websocket connected\" log entry; buffered logs:\n%s", buf.String())
 	}
-	if got, _ := found["client_platform"].(string); got != "desktop" {
-		t.Errorf("client_platform = %q, want %q", got, "desktop")
+	if got, _ := found["client_platform"].(string); got != "web" {
+		t.Errorf("client_platform = %q, want %q", got, "web")
 	}
 	if got, _ := found["client_version"].(string); got != "1.2.3" {
 		t.Errorf("client_version = %q, want %q", got, "1.2.3")

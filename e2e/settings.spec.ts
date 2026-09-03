@@ -22,10 +22,9 @@ test.describe("Settings", () => {
     const newName = "Renamed WS " + Date.now();
     await nameInput.fill(newName);
 
-    // Save
-    await page.locator("button", { hasText: "Save" }).click();
-
-    await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
+    // Workspace details are saved automatically on blur.
+    await nameInput.press("Tab");
+    await expect(page.getByText("Saved", { exact: true }).first()).toBeVisible({ timeout: 10000 });
 
     // Sidebar should reflect the new name WITHOUT page refresh
     await expect(page.getByRole("button", { name: new RegExp(newName) }).first()).toBeVisible();
@@ -33,8 +32,8 @@ test.describe("Settings", () => {
     // Restore original name so other tests aren't affected
     await nameInput.clear();
     await nameInput.fill(originalName.trim());
-    await page.locator("button", { hasText: "Save" }).click();
-    await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
+    await nameInput.press("Tab");
+    await expect(page.getByText("Saved", { exact: true }).first()).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole("button", { name: new RegExp(originalName) }).first()).toBeVisible();
   });
 
@@ -46,6 +45,10 @@ test.describe("Settings", () => {
   test("connecting a Composio toolkit shows a toast and refreshes the list", async ({
     page,
   }) => {
+    test.skip(
+      !process.env.COMPOSIO_API_KEY,
+      "Composio is disabled in this integration environment; enabled behavior is covered by component tests.",
+    );
     const workspaceSlug = await loginAsDefault(page);
     const settingsUrl = `/${workspaceSlug}/settings?tab=integrations`;
 

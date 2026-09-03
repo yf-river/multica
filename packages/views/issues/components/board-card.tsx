@@ -360,7 +360,6 @@ export const DraggableBoardCard = memo(function DraggableBoardCard({
       >
         <AppLink
           href={p.issueDetail(issue.id)}
-          newTabTitle={issue.identifier}
           className={`group block transition-colors ${isDragging ? "pointer-events-none" : ""}`}
         >
           <BoardCardContent

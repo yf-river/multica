@@ -899,7 +899,7 @@ export function AutopilotsPage() {
                       className={`cursor-pointer ${
                         selectedIds.has(autopilot.id) ? "bg-accent/30" : ""
                       }`}
-                      {...rowLink(wsPaths.autopilotDetail(autopilot.id), autopilot.title)}
+                      {...rowLink(wsPaths.autopilotDetail(autopilot.id))}
                     >
                       <CheckboxCell
                         checked={selectedIds.has(autopilot.id)}

@@ -151,7 +151,7 @@ Bot 只会响应明确 @ 它的频道消息。执行时，它会在权限允许�
 
 在与 Bot 的私聊中，发送 `/new` 会立即创建一个空的、可见的新 Chat；发送 `/new <消息>` 会把消息作为新 Chat 的第一轮。裸 `/new` 在第一条有效用户消息到来前显示为“新对话”，之后沿用现有的首条消息标题逻辑。
 
-旧 Chat 仍保留在 Multica 中，并可继续从 Web、桌面端或移动端发送消息；只有 Slack 这条外部会话的后续消息会切换到新 Chat。
+旧 Chat 仍保留在 Multica 中，并可继续从 Web 或移动端发送消息；只有 Slack 这条外部会话的后续消息会切换到新 Chat。
 
 在频道或 thread 中，Slack 原生 slash command 的 payload 不包含目标 thread。请在目标 thread 里发送 `@Multica /new [消息]`。
 

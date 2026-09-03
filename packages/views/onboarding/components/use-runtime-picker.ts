@@ -10,8 +10,7 @@ import {
 import type { AgentRuntime } from "@multica/core/types";
 
 /**
- * Step 3's runtime data layer, shared by Desktop (`StepRuntimeConnect`)
- * and Web (`StepPlatformFork`):
+ * Step 3's runtime data layer for `StepPlatformFork`:
  *
  *   - Polls every 2s while the list is empty so the UI flips to
  *     "found" the moment a runtime registers.

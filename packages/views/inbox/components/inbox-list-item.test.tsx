@@ -277,26 +277,32 @@ describe("InboxListItem link semantics", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("cmd-click opens the referenced issue in a background tab (desktop)", () => {
+  it("cmd-click opens the referenced issue in a browser tab", () => {
     const onClick = vi.fn();
-    const openInNewTab = vi.fn();
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
     renderRow({
       item: item(),
       view: "inbox",
       onClick,
-      adapter: makeAdapter({ openInNewTab }),
+      adapter: makeAdapter({
+        getShareableUrl: (path) => `https://app.example${path}`,
+      }),
     });
 
     fireEvent.click(screen.getByTestId("actor-avatar").closest('[role="button"]')!, {
       metaKey: true,
     });
-    expect(openInNewTab).toHaveBeenCalledWith("/acme/issues/issue-1", undefined);
+    expect(open).toHaveBeenCalledWith(
+      "https://app.example/acme/issues/issue-1",
+      "_blank",
+      "noopener,noreferrer",
+    );
     expect(onClick).not.toHaveBeenCalled();
   });
 
   it("middle click opens the referenced issue in a background tab", () => {
-    const openInNewTab = vi.fn();
-    renderRow({ item: item(), view: "inbox", adapter: makeAdapter({ openInNewTab }) });
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    renderRow({ item: item(), view: "inbox", adapter: makeAdapter() });
 
     const row = screen.getByTestId("actor-avatar").closest('[role="button"]')!;
     const event = new MouseEvent("auxclick", {
@@ -307,24 +313,28 @@ describe("InboxListItem link semantics", () => {
     row.dispatchEvent(event);
 
     expect(event.defaultPrevented).toBe(true);
-    expect(openInNewTab).toHaveBeenCalledWith("/acme/issues/issue-1", undefined);
+    expect(open).toHaveBeenCalledWith(
+      "/acme/issues/issue-1",
+      "_blank",
+      "noopener,noreferrer",
+    );
   });
 
   it("cmd-click on a row without an issue falls back to plain selection", () => {
     const onClick = vi.fn();
-    const openInNewTab = vi.fn();
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
     renderRow({
       item: item({ issue_id: null }),
       view: "inbox",
       onClick,
-      adapter: makeAdapter({ openInNewTab }),
+      adapter: makeAdapter(),
     });
 
     fireEvent.click(screen.getByTestId("actor-avatar").closest('[role="button"]')!, {
       metaKey: true,
     });
     expect(onClick).toHaveBeenCalledTimes(1);
-    expect(openInNewTab).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
   });
 });
 

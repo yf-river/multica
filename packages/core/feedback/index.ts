@@ -1,10 +1,8 @@
 export * from "./mutations";
-export { FEEDBACK_KINDS, isFeedbackContext } from "./types";
+export { FEEDBACK_KINDS } from "./types";
 export type {
   CreateFeedbackResponse,
-  DesktopRouteErrorFeedbackContext,
-  FeedbackContext,
-  FeedbackErrorContext,
   FeedbackKind,
+  DesktopRouteErrorFeedbackContext,
 } from "./types";
 export { useFeedbackDraftStore } from "./draft-store";

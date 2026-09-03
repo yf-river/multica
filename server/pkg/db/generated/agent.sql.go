@@ -1617,6 +1617,8 @@ WHERE id = (
                 AND active.issue_id IS NULL
                 AND active.chat_session_id IS NULL
                 AND active.autopilot_run_id IS NULL
+                AND atq.context->>'type' = 'quick_create'
+                AND active.context->>'type' = 'quick_create'
               )
             )
       )
@@ -1641,9 +1643,9 @@ type ClaimAgentTaskParams struct {
 // issue in parallel while preventing a single agent from running duplicate tasks.
 // Chat tasks (issue_id IS NULL) use chat_session_id for serialization instead.
 // Quick-create tasks have no issue / chat / autopilot link, so they serialize on
-// "any other quick-create-shaped task" (all four FKs NULL) for the same agent —
-// otherwise a user mashing the create button could fire concurrent quick-creates
-// whose completion lookup would race over "most recent issue by this agent".
+// another task with the explicit quick_create context marker.  Life cognition
+// tasks also have no source FK but are independent background jobs and must not
+// accidentally occupy the quick-create slot.
 func (q *Queries) ClaimAgentTask(ctx context.Context, arg ClaimAgentTaskParams) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, claimAgentTask,
 		arg.PrepareLeaseSecs,
@@ -6270,8 +6272,8 @@ WHERE a.workspace_id = $1
 //   - Each agent's most recent OUTCOME task (completed / failed) — NOT part of
 //     presence since #1823; it is the "last activity" line the Squad hover card
 //     renders (agent-live-peek-card.tsx). Kept in this response because shipped
-//     desktop builds read it from here; see MUL-5436 for the plan to move it to
-//     a dedicated lazy endpoint.
+//     workspace clients read it from here; see MUL-5436 for the plan to move it
+//     to a dedicated lazy endpoint.
 //
 // Cancelled tasks are excluded from the outcome half on purpose: cancel is a
 // procedural signal ("attempt aborted"), not an outcome. It tells us nothing

@@ -518,26 +518,6 @@
       "shared_warning": "이 에이전트는 공유되어 있습니다. 이 에이전트를 실행할 수 있는 사람은 여기서 활성화한 Composio 앱을 사용할 수 있습니다. 이러한 앱이 민감한 데이터를 노출한다면 Private로 설정하거나 접근 범위를 좁히세요.",
       "workspace_warning": "워크스페이스에 공개: 워크스페이스의 모든 구성원이 이 에이전트를 통해 이러한 Composio 앱을 사용할 수 있습니다."
     },
-    "runtime_config": {
-      "intro": "OpenClaw 런타임이 이 에이전트의 각 턴을 어떻게 실행할지 선택하세요. Local 모드는 에이전트를 daemon 프로세스 내부에서 실행합니다. Gateway 모드는 각 턴을 OpenClaw Gateway로 전달합니다 — daemon 호스트가 가벼운 조율기 역할을 하고 실제 작업은 더 강력한 머신에서 돌리고 싶을 때 유용합니다.",
-      "mode_label": "라우팅 모드",
-      "mode_local": "Local",
-      "mode_gateway": "Gateway",
-      "mode_local_hint": "기본값. daemon이 `openclaw agent --local …`을 실행하고 에이전트 루프가 이 호스트에서 동작합니다.",
-      "mode_gateway_hint": "daemon이 OpenClaw Gateway에 다이얼합니다. 엔드포인트 필드를 비워두면 daemon 호스트의 `~/.openclaw/openclaw.json`에서 상속받습니다.",
-      "gateway_legend": "Gateway 엔드포인트",
-      "host_label": "Host",
-      "host_placeholder": "gw.internal",
-      "port_label": "포트",
-      "port_invalid": "포트는 양의 정수여야 합니다.",
-      "token_label": "인증 토큰",
-      "token_placeholder": "Gateway가 발급한 bearer 토큰",
-      "token_masked_placeholder": "저장됨 — 회전하려면 새 값을 입력. 비워두면 유지됩니다",
-      "tls_label": "TLS 사용",
-      "tls_hint": "http:// 대신 https://로 다이얼",
-      "saved_toast": "라우팅 설정이 저장되었습니다",
-      "save_failed_toast": "라우팅 설정 저장 실패"
-    },
     "skills": {
       "assigned_title": "에이전트에 할당됨",
       "assigned_hint": "워크스페이스 스킬은 에이전트와 함께 이동합니다. 제거하지 않고 일시적으로 끌 수 있습니다.",
@@ -637,6 +617,26 @@
       "started_prefix": "{{when}} 시작됨",
       "dispatched_prefix": "{{when}} 디스패치됨",
       "queued_prefix": "{{when}} 대기 시작"
+    },
+    "runtime_config": {
+      "intro": "OpenClaw 런타임이 이 에이전트의 각 턴을 어떻게 실행할지 선택하세요. Local 모드는 에이전트를 daemon 프로세스 내부에서 실행합니다. Gateway 모드는 각 턴을 OpenClaw Gateway로 전달합니다 — daemon 호스트가 가벼운 조율기 역할을 하고 실제 작업은 더 강력한 머신에서 돌리고 싶을 때 유용합니다.",
+      "mode_label": "라우팅 모드",
+      "mode_local": "Local",
+      "mode_gateway": "Gateway",
+      "mode_local_hint": "기본값. daemon이 `openclaw agent --local …`을 실행하고 에이전트 루프가 이 호스트에서 동작합니다.",
+      "mode_gateway_hint": "daemon이 OpenClaw Gateway에 다이얼합니다. 엔드포인트 필드를 비워두면 daemon 호스트의 `~/.openclaw/openclaw.json`에서 상속받습니다.",
+      "gateway_legend": "Gateway 엔드포인트",
+      "host_label": "Host",
+      "host_placeholder": "gw.internal",
+      "port_label": "포트",
+      "port_invalid": "포트는 양의 정수여야 합니다.",
+      "token_label": "인증 토큰",
+      "token_placeholder": "Gateway가 발급한 bearer 토큰",
+      "token_masked_placeholder": "저장됨 — 회전하려면 새 값을 입력. 비워두면 유지됩니다",
+      "tls_label": "TLS 사용",
+      "tls_hint": "http:// 대신 https://로 다이얼",
+      "saved_toast": "라우팅 설정이 저장되었습니다",
+      "save_failed_toast": "라우팅 설정 저장 실패"
     }
   },
   "char_counter": {

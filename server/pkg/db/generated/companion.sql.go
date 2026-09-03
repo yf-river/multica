@@ -64,6 +64,33 @@ func (q *Queries) GetCompanionProfileForAgent(ctx context.Context, arg GetCompan
 	return i, err
 }
 
+const lockCompanionProfile = `-- name: LockCompanionProfile :one
+SELECT workspace_id, user_id, agent_id, created_at, updated_at, last_interaction_at, return_context, current_identity_version_id FROM companion_profile
+WHERE workspace_id = $1 AND user_id = $2
+FOR UPDATE
+`
+
+type LockCompanionProfileParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) LockCompanionProfile(ctx context.Context, arg LockCompanionProfileParams) (CompanionProfile, error) {
+	row := q.db.QueryRow(ctx, lockCompanionProfile, arg.WorkspaceID, arg.UserID)
+	var i CompanionProfile
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.AgentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastInteractionAt,
+		&i.ReturnContext,
+		&i.CurrentIdentityVersionID,
+	)
+	return i, err
+}
+
 const upsertCompanionProfile = `-- name: UpsertCompanionProfile :one
 INSERT INTO companion_profile (workspace_id, user_id, agent_id)
 VALUES ($1, $2, $3)

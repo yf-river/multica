@@ -1,8 +1,6 @@
 import {
   getShortcutPlatform,
-  getShortcutRuntime,
   type ShortcutPlatform,
-  type ShortcutRuntime,
 } from "./platform";
 
 export type ShortcutActionId =
@@ -100,10 +98,6 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = [
   // searches its text. `allowInEditable` because reaching another thread while
   // drafting a comment is the common case, not the exception.
   //
-  // Known gap: Chrome on Windows/Linux binds Ctrl+Shift+O to its bookmark
-  // manager, so on those web builds the default never reaches the page. It is
-  // recordable rather than reserved because the desktop app does receive it,
-  // and Settings → Keyboard shortcuts lets affected users rebind.
   {
     id: "openThreadNav",
     category: "general",
@@ -120,7 +114,7 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = [
   // Browser-style history navigation (Mod+[ / Mod+]). Neither bracket is
   // app-owned (PRIMARY_RESERVED_KEYS) nor browser-owned
   // (BROWSER_ONLY_PRIMARY_RESERVED_KEYS), so both are recordable on every
-  // platform and runtime. `allowInEditable` is false so the chord never steps
+  // platform. `allowInEditable` is false so the chord never steps
   // away from the page while the caret sits in an input, textarea, or editor.
   { id: "goBack", category: "navigation", defaultShortcut: primary("["), allowInEditable: false },
   { id: "goForward", category: "navigation", defaultShortcut: primary("]"), allowInEditable: false },
@@ -302,37 +296,28 @@ export function isPortalLayerShortcutTarget(target: EventTarget | null): boolean
 }
 
 const PRIMARY_RESERVED_KEYS = new Set([
-  // Window operations the app itself owns on every runtime: W closes the
-  // tab, R/F5 is the reload guard, Q quits.
+  // Browser and application window operations are not reliable page actions.
   "W", "R", "Q",
-  // Preferences: the desktop app opens Settings from the main process, and on
-  // web the browser opens its own settings — neither leaves the chord free for
-  // a product action.
+  // The browser owns its settings shortcut.
   ",",
   // Fundamental editing operations should never become product actions.
   "A", "C", "V", "X", "Y", "Z",
-  // Zoom accelerators: fixed app shortcuts on desktop, browser zoom on web.
+  // Browser zoom accelerators.
   "Equals", "Plus", "Minus", "Underscore", "0",
 ]);
 
 // Accelerators owned by the browser UI around a tab: print, address bar,
-// new tab/window, bookmark, view source. A web page cannot reliably own
-// them, but the Electron renderer receives the bare primary chords as plain
-// keydowns — neither Electron's default menu nor the desktop shell binds
-// any of them — so exactly those are recordable on desktop (MUL-4457).
-// Variants with extra modifiers stay reserved on both runtimes: several
-// belong to the OS or window manager (Option+Cmd+D toggles the macOS Dock,
-// Ctrl+Alt+T opens a terminal on common Linux desktops), which even the
-// desktop app cannot own.
+// new tab/window, bookmark, and view source. A web page cannot reliably own
+// them. Variants with extra modifiers stay reserved as well because several
+// belong to the OS or window manager.
 const BROWSER_ONLY_PRIMARY_RESERVED_KEYS = new Set([
   "P", "L", "T", "N", "D", "U",
 ]);
 
-/** Browser/window/OS accelerators the app cannot reliably own in `runtime`. */
+/** Browser/window/OS accelerators the app cannot reliably own. */
 export function isReservedShortcut(
   shortcut: ShortcutChord,
   platform: ShortcutPlatform = getShortcutPlatform(),
-  runtime: ShortcutRuntime = getShortcutRuntime(),
 ): boolean {
   const { modifiers, key } = shortcut;
   if (key === "F5") return true;
@@ -340,7 +325,7 @@ export function isReservedShortcut(
   if (modifiers.primary && BROWSER_ONLY_PRIMARY_RESERVED_KEYS.has(key)) {
     const barePrimary =
       !modifiers.control && !modifiers.meta && !modifiers.alt && !modifiers.shift;
-    if (runtime !== "desktop" || !barePrimary) return true;
+    if (!barePrimary) return true;
   }
 
   if (platform === "macos") {
@@ -383,10 +368,9 @@ export function isShortcutAllowedForAction(
   actionId: ShortcutActionId,
   shortcut: ShortcutChord,
   platform: ShortcutPlatform = getShortcutPlatform(),
-  runtime: ShortcutRuntime = getShortcutRuntime(),
 ): boolean {
   if (!isShortcutChordActionable(shortcut)) return false;
-  if (isReservedShortcut(shortcut, platform, runtime)) return false;
+  if (isReservedShortcut(shortcut, platform)) return false;
   // Tab is focus navigation (and Ctrl+Tab is browser tab navigation) on every
   // supported platform. It is never a dependable product-level binding.
   if (shortcut.key === "Tab") return false;

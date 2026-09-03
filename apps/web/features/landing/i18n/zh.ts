@@ -21,7 +21,7 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     subheading:
       "Multica \u662f\u4e00\u4e2a\u5f00\u6e90\u5e73\u53f0\uff0c\u5c06\u7f16\u7801 智能体 \u53d8\u6210\u771f\u6b63\u7684\u961f\u53cb\u3002\u5206\u914d\u4efb\u52a1\u3001\u8ddf\u8e2a\u8fdb\u5ea6\u3001\u79ef\u7d2f\u6280\u80fd\u2014\u2014\u5728\u4e00\u4e2a\u5730\u65b9\u7ba1\u7406\u4f60\u7684\u4eba\u7c7b + 智能体 \u56e2\u961f\u3002",
     cta: "免费开始",
-    downloadDesktop: "下载桌面端",
+    installCli: "安装 CLI",
     talkToSales: "联系商务",
     worksWith: "支持",
     imageAlt: "Multica \u770b\u677f\u89c6\u56fe\u2014\u2014\u4eba\u7c7b\u548c 智能体 \u534f\u540c\u7ba1\u7406\u4efb\u52a1",
@@ -116,7 +116,7 @@ export function createZhDict(allowSignup: boolean): LandingDict {
         {
           title: "\u9996\u6b21\u542f\u52a8\u81ea\u52a8\u6ce8\u518c",
           description:
-            "Multica \u626b\u63cf\u672c\u673a\u7684 26 \u6b3e\u652f\u6301\u7684 AI \u7f16\u7a0b\u5de5\u5177\u2014\u2014Antigravity\u3001Claude Code\u3001CodeBuddy\u3001CodeArts\u3001Codex\u3001Copilot\u3001Cursor\u3001DeepSeek Harness\u3001DevEco Code\u3001Dim\u3001Grok\u3001Hermes\u3001Kimi\u3001Kiro CLI\u3001MiniMax Code\u3001Oh-My-Pi\u3001OpenClaw\u3001OpenCode\u3001Pi\u3001Qoder\u3001Qoder CN\u3001Qwen Code\u3001QwenPaw\u3001Reasonix\u3001Trae CLI\u3001ZeroClaw\u2014\u2014\u5e76\u4e3a\u6bcf\u6b3e\u5df2\u5b89\u88c5\u7684\u5de5\u5177\u6ce8\u518c\u4e00\u4e2a\u8fd0\u884c\u65f6\u3002",
+            "Multica \u626b\u63cf\u672c\u673a\u7684 25 \u6b3e\u652f\u6301\u7684 AI \u7f16\u7a0b\u5de5\u5177\u2014\u2014Antigravity\u3001Claude Code\u3001CodeBuddy\u3001CodeArts\u3001Codex\u3001Copilot\u3001Cursor\u3001DeepSeek Harness\u3001DevEco Code\u3001Dim\u3001Grok\u3001Hermes\u3001Kimi\u3001Kiro CLI\u3001MiniMax Code\u3001Oh-My-Pi\u3001OpenCode\u3001Pi\u3001Qoder\u3001Qoder CN\u3001Qwen Code\u3001QwenPaw\u3001Reasonix\u3001Trae CLI\u3001ZeroClaw\u2014\u2014\u5e76\u4e3a\u6bcf\u6b3e\u5df2\u5b89\u88c5\u7684\u5de5\u5177\u6ce8\u518c\u4e00\u4e2a\u8fd0\u884c\u65f6\u3002",
         },
       ],
     },
@@ -136,7 +136,7 @@ export function createZhDict(allowSignup: boolean): LandingDict {
       {
         title: "\u5b89\u88c5 CLI \u5e76\u8fde\u63a5\u4f60\u7684\u673a\u5668",
         description:
-          "运行 multica setup——它会引导你完成 OAuth 登录、启动守护进程、并扫描 26 款支持的 AI 编程工具（Antigravity、Claude Code、CodeBuddy、CodeArts、Codex、Copilot、Cursor、DeepSeek Harness、DevEco Code、Dim、Grok、Hermes、Kimi、Kiro CLI、MiniMax Code、Oh-My-Pi、OpenClaw、OpenCode、Pi、Qoder、Qoder CN、Qwen Code、QwenPaw、Reasonix、Trae CLI、ZeroClaw）。本机已安装的工具会被自动注册成运行时。",
+          "运行 multica setup——它会引导你完成 OAuth 登录、启动守护进程、并扫描 25 款支持的 AI 编程工具（Antigravity、Claude Code、CodeBuddy、CodeArts、Codex、Copilot、Cursor、DeepSeek Harness、DevEco Code、Dim、Grok、Hermes、Kimi、Kiro CLI、MiniMax Code、Oh-My-Pi、OpenCode、Pi、Qoder、Qwen Code、QwenPaw、Reasonix、Trae CLI、ZeroClaw）。本机已安装的工具会被自动注册成运行时。",
       },
       {
         title: "\u521b\u5efa\u4f60\u7684\u7b2c\u4e00\u4e2a 智能体",
@@ -192,7 +192,7 @@ export function createZhDict(allowSignup: boolean): LandingDict {
       {
         question: "Multica \u652f\u6301\u54ea\u4e9b\u7f16\u7801 智能体\uff1f",
         answer:
-          "Multica \u5f00\u7bb1\u5373\u7528\u652f\u6301 26 \u6b3e AI \u7f16\u7a0b\u5de5\u5177\uff1aAntigravity\u3001Claude Code\u3001CodeBuddy\u3001CodeArts\u3001Codex\u3001Copilot\u3001Cursor\u3001DeepSeek Harness\u3001DevEco Code\u3001Dim\u3001Grok\u3001Hermes\u3001Kimi\u3001Kiro CLI\u3001MiniMax Code\u3001Oh-My-Pi\u3001OpenClaw\u3001OpenCode\u3001Pi\u3001Qoder\u3001Qoder CN\u3001Qwen Code\u3001QwenPaw\u3001Reasonix\u3001Trae CLI\u3001ZeroClaw\u3002\u5b88\u62a4\u8fdb\u7a0b\u4f1a\u81ea\u52a8\u68c0\u6d4b\u672c\u673a\u5df2\u5b89\u88c5\u7684 CLI \u5e76\u4e3a\u6bcf\u6b3e\u6ce8\u518c\u4e00\u4e2a\u8fd0\u884c\u65f6\u3002\u56e0\u4e3a\u5f00\u6e90\uff0c\u4f60\u4e5f\u53ef\u4ee5\u81ea\u5df1\u6dfb\u52a0\u540e\u7aef\u3002",
+          "Multica \u5f00\u7bb1\u5373\u7528\u652f\u6301 25 \u6b3e AI \u7f16\u7a0b\u5de5\u5177\uff1aAntigravity\u3001Claude Code\u3001CodeBuddy\u3001CodeArts\u3001Codex\u3001Copilot\u3001Cursor\u3001DeepSeek Harness\u3001DevEco Code\u3001Dim\u3001Grok\u3001Hermes\u3001Kimi\u3001Kiro CLI\u3001MiniMax Code\u3001Oh-My-Pi\u3001OpenCode\u3001Pi\u3001Qoder\u3001Qoder CN\u3001Qwen Code\u3001QwenPaw\u3001Reasonix\u3001Trae CLI\u3001ZeroClaw\u3002\u5b88\u62a4\u8fdb\u7a0b\u4f1a\u81ea\u52a8\u68c0\u6d4b\u672c\u673a\u5df2\u5b89\u88c5\u7684 CLI \u5e76\u4e3a\u6bcf\u6b3e\u6ce8\u518c\u4e00\u4e2a\u8fd0\u884c\u65f6\u3002\u56e0\u4e3a\u5f00\u6e90\uff0c\u4f60\u4e5f\u53ef\u4ee5\u81ea\u5df1\u6dfb\u52a0\u540e\u7aef\u3002",
       },
       {
         question: "\u9700\u8981\u81ea\u6258\u7ba1\u5417\uff0c\u8fd8\u662f\u6709\u4e91\u7248\u672c\uff1f",
@@ -353,8 +353,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "编辑冲突时，两个选项分别放在各自版本的内容下方。",
           "飞书的回复不会再因为凭证过期而一直卡住。",
           "Quick Create 恢复草稿时，高度会重新贴合内容。",
-          "OpenClaw 超时后会完全停止，不会留下残余进程。",
-          "配置 OpenClaw 时，不会再明明成功却提示失败。",
         ],
       },
       {
@@ -460,7 +458,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
         fixes: [
           "再次运行任务时，不会中断正在进行的工作。",
           "同时运行的任务不会再覆盖彼此的工作空间。",
-          "OpenClaw、Pi 和 OpenCode 可正常使用你配置的自定义提供商。",
           "切换工作区不会再中断实时更新或提及功能。",
           "普通 CLI 输出不再暴露 Autopilot Webhook 凭据。",
           "不用等无关编码任务结束，也能和智能体聊天。",
@@ -732,7 +729,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "企业微信里重复发同一个 /issue，会得到明确答复而不是重复建单。",
           "企业微信群里的斜杠命令现在都能用了。",
           "直接聊天里的 Codex 会话现在能接着上次继续。",
-          "Windows 上的 OpenClaw 智能体现在能读到你的配置。",
           "连着发好几条消息时，不会再有一条被漏掉。",
           "从飞书存下来的图片和文件，名字不会再出错。",
           "自托管时服务器地址填错，网页会明确报错而不是白屏。",
@@ -862,7 +858,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "任务里的「取消订阅」现在能够正常生效。",
           "在回复框中输入 / 同样能看到工作区的快捷操作。",
           "从任务头部打开运行中的执行日志，窗口不再立刻关闭。",
-          "OpenClaw 的回复在生成完成后立即送达，不再长时间等待。",
           "在 Slack、飞书中单独发送 /new，不再产生空消息和空运行。",
           "在新接入的聊天渠道里，智能体不再误报附件已发送。",
           "过长的项目名或标签名不再让属性标签占满一整行。",
@@ -989,7 +984,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "成员不再从用量看板看到私有智能体。",
           "会阻止 task 领取的并发数现在会被拒绝。",
           "ACP 智能体的渠道回复现在只包含最终答案。",
-          "Windows 上的 OpenClaw 静默失败现在会说明原因。",
         ],
       },
       {
@@ -1649,7 +1643,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "为每个服务商默认的智能体启动参数补齐说明文档，并下线了一次性的飞书切换开关——统一协作通道已经在生产环境完全接管",
         ],
         fixes: [
-          "OpenClaw 对配置文件差异更宽容，并且支持新版 2026.6.x 的 agents 配置格式，已有的 OpenClaw 运行时不会因此掉线",
           "把任务移动到其他项目时，会立刻从原来的项目列表里消失；并且在任务状态从看板视野外切换时，看板列上的数字也会正确同步",
           "当附件由不同来源的资源服务器提供时，预览也可以正常打开",
           "命令行智能体会等待守护进程就绪后再决定鉴权来源，避免悄悄回落到个人访问令牌；自托管环境配置流程也会沿用现有设置并清晰展示服务地址的变化",
@@ -1812,7 +1805,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
         features: [
           "智能体、自动任务、项目、运行环境、技能和小队的列表体验更快也更一致，行内容、筛选、选择和操作都更清楚",
           "命令行现在可以管理工作区仓库，本地智能体更容易拿到项目仓库上下文",
-          "Cursor 和 OpenClaw 更容易配置：Cursor 连接设置可以由 Multica 托管，OpenClaw 也可以连接已有网关",
           "编辑评论时，可以在保存前预览并控制哪些智能体或小队会开始运行",
         ],
         improvements: [
@@ -1880,7 +1872,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "任务讨论可以把某一条回复设为解决结论，长讨论收起后也能直接看到最终答案",
           "在 Lark 和飞书里和 Multica 对话时，会显示等待中的输入状态，回复发出后自动清除",
           "每次智能体 task 都会带上真实发起人信息，交接、审计和权限判断更准确",
-          "OpenClaw 可以从本地配置中读取自定义程序位置和数据目录",
         ],
         improvements: [
           "评论触发提示更安静、更清楚，遇到较长的智能体名称时也不容易拥挤",
@@ -2072,7 +2063,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "Multica 现在支持韩语界面、官网和文档，包含完整韩语文档与本地化日期显示",
           "任务页面会在标题附近固定显示正在工作的智能体，多智能体同时工作时也能更清楚地查看",
           "智能体读取任务讨论时可以先看到线程摘要、回复数量和最近活跃时间，更快找到需要跟进的上下文",
-          "OpenClaw 运行环境现在可以使用智能体里保存的 MCP 设置，Claude Opus 4.8 也可用于模型选择和用量估算",
         ],
         improvements: [
           "详情页统一了面包屑导航，任务、项目、运行环境、技能、智能体和小队的返回路径更清楚",
@@ -2748,7 +2738,7 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "Windows 下 Daemon 启动 Agent 不再拉起额外终端窗口；本地 Skill 上报在服务端瞬时错误时会自动重试",
           "`/api/config` 重新对未登录客户端可达，方便初次 bootstrap",
           "DeleteWorkspace 增加防御性 owner 校验；`/health/realtime` 指标限定授权访问（安全）",
-          "Hermes ACP Runtime 正确传递配置的模型；OpenClaw Agent 发现超时提高到 30s",
+          "Hermes ACP Runtime 正确传递配置的模型",
         ],
       },
       {
@@ -2790,7 +2780,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "本地 Daemon 对 Agent 执行强制端到端工作区隔离（安全）",
           "Windows 下 Daemon 终端关闭后继续常驻，后台 Agent 不再被意外终止",
           "看板卡片重新显示描述预览——列表查询不再丢掉 description 字段",
-          "OpenClaw Agent 改为从 Agent 元数据读取真实模型，不再回退到默认值",
           "评论 Markdown 全链路保留——移除会误伤格式的 HTML sanitizer",
         ],
       },
@@ -2824,7 +2813,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
         fixes: [
           "网页已登录时将会话交接给桌面应用",
           "修复 `?next=` 开放重定向漏洞",
-          "OpenClaw 停止传递不支持的参数，正确传递 AgentInstructions",
         ],
       },
       {
@@ -2912,7 +2900,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
         ],
         improvements: [
           "编辑器气泡菜单和链接预览重写",
-          "OpenClaw 后端 P0+P1 优化（多行 JSON、增量解析）",
           "自部署 WebSocket URL 自动适配局域网访问",
         ],
         fixes: [
@@ -2934,7 +2921,7 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "认证迁移至 HttpOnly Cookie，WebSocket 新增 Origin 白名单",
           "新工作区全屏引导向导",
           "Master Agent 聊天窗口可调整大小，会话历史体验优化",
-          "OpenCode、OpenClaw 和 Hermes 运行时 Token 用量日志扫描",
+          "OpenCode 和 Hermes 运行时 Token 用量日志扫描",
         ],
         fixes: [
           "WebSocket 首条消息认证安全修复",
@@ -2961,7 +2948,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "Daemon API 路由和附件上传新增工作区所有权校验",
           "Markdown 清洗器保留代码块不被 HTML 实体转义",
           "Next.js 升级至 ^16.2.3 修复 CVE-2026-23869",
-          "OpenClaw 后端重写以匹配实际 CLI 接口",
         ],
       },
       {
@@ -3020,7 +3006,7 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "'C' 快捷键快速创建任务",
           "聊天会话历史面板，查看已归档对话",
           "Daemon 新增 Claude Code 和 Codex 最低版本检查",
-          "官网新增 OpenClaw 和 OpenCode 展示",
+          "官网新增 OpenCode 展示",
           "`make dev` 一键本地开发环境搭建",
         ],
         improvements: [
@@ -3086,10 +3072,9 @@ export function createZhDict(allowSignup: boolean): LandingDict {
       {
         version: "0.1.18",
         date: "2026-04-07",
-        title: "OAuth、OpenClaw 与任务加载优化",
+        title: "OAuth 与任务加载优化",
         changes: [
           "支持 Google OAuth 登录",
-          "新增 OpenClaw 运行时，支持在 OpenClaw 基础设施上运行 Agent",
           "Agent 实时卡片重新设计——始终吸顶，支持手动展开/收起",
           "打开的任务不再分页限制全量加载，已关闭的任务滚动分页",
           "JWT 和 CloudFront Cookie 有效期从 72 小时延长至 30 天",
@@ -3221,61 +3206,9 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     ],
   },
   download: {
-    hero: {
-      macArm64: {
-        title: "Multica for macOS",
-        sub: "Apple Silicon · 内置 daemon，无需配置",
-        primary: "下载 (.dmg)",
-        altZip: "或下载 .zip",
-      },
-      macIntel: {
-        title: "Multica for macOS",
-        sub: "Intel · 内置守护进程，无需配置",
-        primary: "下载 (.dmg)",
-        altZip: "或下载 .zip",
-      },
-      winX64: {
-        title: "Multica for Windows",
-        sub: "内置 daemon，无需配置",
-        primary: "下载 (.exe)",
-      },
-      winArm64: {
-        title: "Multica for Windows",
-        sub: "ARM · 内置 daemon，无需配置",
-        primary: "下载 (.exe)",
-      },
-      linux: {
-        title: "Multica for Linux",
-        sub: "内置 daemon，无需配置",
-        primary: "下载 AppImage",
-        altFormats: "或 .deb / .rpm",
-      },
-      unknown: {
-        title: "选择你的平台",
-        sub: "下方是所有支持的安装包。",
-      },
-      safariMacHint: "在 Intel Mac 上？请在下方选择 Intel 版本。",
-      archFallbackHint: "架构不对？下方是所有可选格式。",
-    },
-    allPlatforms: {
-      title: "所有平台",
-      macArm64Label: "macOS · Apple Silicon",
-      macX64Label: "macOS · Intel",
-      winX64Label: "Windows · x64",
-      winArm64Label: "Windows · ARM64",
-      linuxX64Label: "Linux · x64",
-      linuxArm64Label: "Linux · ARM64",
-      formatDmg: ".dmg",
-      formatZip: ".zip",
-      formatExe: ".exe",
-      formatAppImage: ".AppImage",
-      formatDeb: ".deb",
-      formatRpm: ".rpm",
-      unavailable: "暂不可用",
-    },
     cli: {
       title: "想用 CLI？",
-      sub: "适合服务器、远程开发机、无图形界面环境。底层 daemon 与 Desktop 相同，通过终端安装。",
+      sub: "适合服务器、远程开发机和无图形界面环境。通过终端安装并运行 daemon。",
       installLabel: "安装",
       startLabel: "启动 daemon",
       sshNote: "已经在服务器上？通过 SSH 执行同样的命令即可。",
@@ -3285,12 +3218,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     cloud: {
       title: "Cloud runtime（等待名单）",
       sub: "我们将为你托管 runtime，目前尚未上线——留下邮箱，上线后通知你。",
-    },
-    footer: {
-      releaseNotes: "v{version} 更新内容",
-      allReleases: "查看所有版本",
-      currentVersion: "当前版本：{version}",
-      versionUnavailable: "版本获取失败——请前往 GitHub 查看",
     },
   },
   contactSales: {

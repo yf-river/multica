@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -255,6 +256,12 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "audit log write failed; env update rolled back")
 		return
 	}
+	actorType, actorID := h.resolveActor(r, uuidToString(member.UserID), uuidToString(agent.WorkspaceID))
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, h.buildAgentDomainEvent(protocol.EventAgentStatus, updated, actorType, actorID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record agent event")
+		return
+	}
 
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Error("agent_env update: tx commit failed",
@@ -274,8 +281,7 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
-	workspaceID := uuidToString(updated.WorkspaceID)
-	h.publish(protocol.EventAgentStatus, workspaceID, "member", uuidToString(member.UserID), map[string]any{"agent": broadcastAgentResponse(resp)})
+	h.publishEvent(updatedEvent)
 
 	writeJSON(w, http.StatusOK, AgentEnvResponse{
 		AgentID:   uuidToString(updated.ID),

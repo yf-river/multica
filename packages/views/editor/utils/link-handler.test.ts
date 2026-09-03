@@ -229,7 +229,7 @@ describe("parseWorkspaceEntityLink", () => {
     ).toBeNull();
   });
 
-  // `copyLink` / `openInNewTab` build `paths.issueDetail(identifier || id)` and
+  // `copyLink` / issue-link actions build `paths.issueDetail(identifier || id)` and
   // the issue route rewrites a UUID URL back to the identifier, so this — not
   // the UUID form — is what a user actually copies out of the app.
   it("parses an issue addressed by identifier", () => {

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -42,6 +43,102 @@ func TestCoalesceLifeMemoryEvidenceMergesOneSource(t *testing.T) {
 	})
 	if len(items) != 1 || !strings.Contains(items[0].Excerpt, "first") || !strings.Contains(items[0].Excerpt, "second") || items[0].Stance != "supports" {
 		t.Fatalf("coalesced evidence = %#v", items)
+	}
+}
+
+func TestLifeCognitionOrdinaryTerminalCallbacksStayAtomic(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "LifeTerminalFence", nil)
+	runtimeID := handlerTestRuntimeID(t)
+
+	tests := []struct {
+		name string
+		call func(pgtype.UUID) error
+	}{
+		{
+			name: "plain completion requires structured output",
+			call: func(taskID pgtype.UUID) error {
+				_, err := testHandler.TaskService.CompleteTask(ctx, taskID, []byte(`{"output":"plain text"}`), "", "", "", false, "", "")
+				if !errors.Is(err, service.ErrLifeStructuredOutputRequired) {
+					return fmt.Errorf("plain completion error = %v", err)
+				}
+				return nil
+			},
+		},
+		{
+			name: "daemon failure uses cognition retry only",
+			call: func(taskID pgtype.UUID) error {
+				_, err := testHandler.TaskService.FailTask(ctx, taskID, "provider timed out", "", "", "", "timeout", false, "", "")
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			claimToken := uuid.NewString()
+			contextVersion := int64(7)
+			var jobID, taskID pgtype.UUID
+			if err := testPool.QueryRow(ctx, `
+				INSERT INTO life_cognition_job (
+					workspace_id,user_id,companion_agent_id,job_type,status,dedupe_key,
+					started_at,attempt,max_attempts,claim_token,lease_until,context_version
+				) VALUES ($1,$2,$3,'understand_materials','running',$4,now(),1,3,$5,now()+interval '10 minutes',$6)
+				RETURNING id`, testWorkspaceID, testUserID, agentID, "terminal-fence:"+uuid.NewString(), claimToken, contextVersion).Scan(&jobID); err != nil {
+				t.Fatal(err)
+			}
+			contextJSON, err := json.Marshal(map[string]any{
+				"type": "life_cognition", "job_id": uuidToString(jobID),
+				"job_type": "understand_materials", "workspace_id": testWorkspaceID,
+				"user_id": testUserID, "claim_token": claimToken,
+				"context_version_number": contextVersion, "input": map[string]any{},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := testPool.QueryRow(ctx, `
+				INSERT INTO agent_task_queue (
+					agent_id,runtime_id,status,priority,initiator_user_id,started_at,context
+				) VALUES ($1,$2,'running',0,$3,now(),$4) RETURNING id`,
+				agentID, runtimeID, testUserID, contextJSON).Scan(&taskID); err != nil {
+				t.Fatal(err)
+			}
+			mustExec(t, ctx, `UPDATE life_cognition_job SET task_id=$2 WHERE id=$1`, jobID, taskID)
+			t.Cleanup(func() {
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM domain_event_delivery WHERE event_id IN (SELECT id FROM domain_event_outbox WHERE task_id=$1)`, uuidToString(taskID))
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE task_id=$1`, uuidToString(taskID))
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id=$1 OR parent_task_id=$1`, taskID)
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM life_cognition_job WHERE id=$1`, jobID)
+			})
+
+			if err := tt.call(taskID); err != nil {
+				t.Fatal(err)
+			}
+
+			var taskStatus, jobStatus string
+			var retainedTaskID pgtype.UUID
+			if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id=$1`, taskID).Scan(&taskStatus); err != nil {
+				t.Fatal(err)
+			}
+			if err := testPool.QueryRow(ctx, `SELECT status,task_id FROM life_cognition_job WHERE id=$1`, jobID).Scan(&jobStatus, &retainedTaskID); err != nil {
+				t.Fatal(err)
+			}
+			if taskStatus != "failed" || jobStatus != "failed" || retainedTaskID.Valid {
+				t.Fatalf("terminal states task=%q job=%q retained_task=%v", taskStatus, jobStatus, retainedTaskID.Valid)
+			}
+
+			var retryTasks, events int
+			if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE parent_task_id=$1`, taskID).Scan(&retryTasks); err != nil {
+				t.Fatal(err)
+			}
+			if err := testPool.QueryRow(ctx, `SELECT count(*) FROM domain_event_outbox WHERE task_id=$1 AND event_type='task:failed'`, uuidToString(taskID)).Scan(&events); err != nil {
+				t.Fatal(err)
+			}
+			if retryTasks != 0 || events != 1 {
+				t.Fatalf("ordinary retry tasks=%d durable events=%d", retryTasks, events)
+			}
+		})
 	}
 }
 

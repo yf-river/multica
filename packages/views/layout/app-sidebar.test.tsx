@@ -131,11 +131,13 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     agents: () => "/acme/agents",
     squads: () => "/acme/squads",
     usage: () => "/acme/usage",
+    life: () => "/acme/life",
     runtimes: () => "/acme/runtimes",
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",
     issueDetail: (id: string) => `/acme/issues/${id}`,
     projectDetail: (id: string) => `/acme/projects/${id}`,
+    lifeTab: (tab: string) => `/acme/life?tab=${tab}`,
   }),
 }));
 vi.mock("@multica/core/api", async (importOriginal) => {

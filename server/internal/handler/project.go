@@ -14,8 +14,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -380,20 +382,9 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		DueDate:     dueDate,
 	}
 
-	// Without resources, keep the simple non-tx path.
-	if len(req.Resources) == 0 {
-		project, err := h.Queries.CreateProject(r.Context(), createParams)
-		if err != nil {
-			h.writeProjectWriteError(w, r, err, "create")
-			return
-		}
-		resp := projectToResponse(project)
-		h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
-		writeJSON(w, http.StatusCreated, resp)
-		return
-	}
-
-	// Transactional path: project + all resources are atomic.
+	// Project and any bundled resources are committed together with their
+	// durable envelopes. A failed event insert therefore rolls the business
+	// mutation back instead of leaving an unobservable project.
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
@@ -438,6 +429,24 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		resourceRows = append(resourceRows, row)
 	}
+	projectEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildProjectDomainEvent(
+		protocol.EventProjectCreated, project, "member", userID, nil,
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record project event")
+		return
+	}
+	resourceEvents := make([]events.Event, 0, len(resourceRows))
+	for _, row := range resourceRows {
+		event, err := service.RecordDurableEventTx(r.Context(), qtx, buildProjectResourceDomainEvent(
+			protocol.EventProjectResourceCreated, row, "member", userID, nil,
+		))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to record project resource event")
+			return
+		}
+		resourceEvents = append(resourceEvents, event)
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit project create")
 		return
@@ -449,12 +458,13 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := projectToResponse(project)
 	resp.ResourceCount = int64(len(resourceResp))
-	h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
-	for _, rr := range resourceResp {
-		h.publish(protocol.EventProjectResourceCreated, workspaceID, "member", userID, map[string]any{
-			"resource":   rr,
-			"project_id": resp.ID,
-		})
+	h.publishEvent(projectEvent)
+	for _, event := range resourceEvents {
+		h.publishEvent(event)
+	}
+	if len(resourceResp) == 0 {
+		writeJSON(w, http.StatusCreated, resp)
+		return
 	}
 	// One-shot create echo: the parent ProjectResponse fields plus the just-
 	// created resources. This is a transient creation echo, not a contract for
@@ -585,7 +595,14 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 			params.DueDate = pgtype.Date{Valid: false} // explicit null = clear date
 		}
 	}
-	project, err := h.Queries.UpdateProject(r.Context(), params)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start project transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	project, err := qtx.UpdateProject(r.Context(), params)
 	if err != nil {
 		h.writeProjectWriteError(w, r, err, "update")
 		return
@@ -593,7 +610,18 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	resp := projectToResponse(project)
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), wsUUID, project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
-	h.publish(protocol.EventProjectUpdated, workspaceID, "member", userID, map[string]any{"project": resp})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildProjectDomainEvent(
+		protocol.EventProjectUpdated, project, "member", userID, nil,
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record project event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit project update")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -662,11 +690,18 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete project")
 		return
 	}
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildProjectDomainEvent(
+		protocol.EventProjectDeleted, project, "member", userID, nil,
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record project event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit project delete")
 		return
 	}
-	h.publish(protocol.EventProjectDeleted, workspaceID, "member", userID, map[string]any{"project_id": uuidToString(project.ID)})
+	h.publishEvent(event)
 	w.WriteHeader(http.StatusNoContent)
 }
 

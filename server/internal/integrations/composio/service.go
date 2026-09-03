@@ -200,20 +200,13 @@ type MCPSession struct {
 	Headers map[string]string
 }
 
-// ToolkitView is the API-facing descriptor for one Composio toolkit, carrying
-// exactly the fields the Settings UI renders plus a Connectable flag.
-//
-// Connectable means the project has an enabled auth config for the toolkit, so
-// BeginConnect would succeed. Since MUL-4009 ListToolkits only returns
-// connectable toolkits, so this is always true on the wire; the field is
-// retained for backward compatibility with older desktop clients that branch on
-// it (removing it would make them treat every entry as non-connectable).
+// ToolkitView is the API-facing descriptor for one Composio toolkit. Only
+// toolkits with an enabled project auth configuration are returned.
 type ToolkitView struct {
-	Slug        string `json:"slug"`
-	Name        string `json:"name"`
-	LogoURL     string `json:"logo,omitempty"`
-	Category    string `json:"category,omitempty"`
-	Connectable bool   `json:"connectable"`
+	Slug     string `json:"slug"`
+	Name     string `json:"name"`
+	LogoURL  string `json:"logo,omitempty"`
+	Category string `json:"category,omitempty"`
 }
 
 func toolkitLogoURL(slug, upstreamLogoURL string) string {
@@ -490,8 +483,8 @@ func rowToConnection(row db.UserComposioConnection) Connection {
 // button — dropping the entry removes the need for it. It fetches all pages
 // (capped by maxToolkitPages) so the UI gets the complete connectable list in
 // one call; the catalog is a few hundred entries, well within a single JSON
-// response. Every returned entry has Connectable == true, preserving Composio's
-// usage order.
+// response. Every returned entry has an enabled auth configuration by
+// construction.
 //
 // Unlike the previous behavior, a resolver error is NOT masked into an
 // everything-not-connectable catalog: with filtering in place that would render
@@ -542,10 +535,6 @@ func (s *Service) ListToolkits(ctx context.Context) ([]ToolkitView, error) {
 				Name:     tk.Name,
 				LogoURL:  toolkitLogoURL(slug, tk.LogoURL),
 				Category: category,
-				// Every surfaced toolkit is connectable by construction. The
-				// wire field is kept (see ComposioToolkitResponse) for backward
-				// compatibility with older desktop clients that branch on it.
-				Connectable: true,
 			})
 		}
 		if resp.NextCursor == "" {

@@ -58,7 +58,7 @@ export const ROUTE_ICON_COMPONENTS: Record<RouteIconName, LucideIcon> = {
 };
 
 /**
- * Resolve the icon component for a workspace-scoped path or full tab URL.
+ * Resolve the icon component for a workspace-scoped path or resource URL.
  *
  * This is the only entry point navigation surfaces should use: it takes the
  * path they already have rather than an icon name, so no caller has to hold,
@@ -66,8 +66,8 @@ export const ROUTE_ICON_COMPONENTS: Record<RouteIconName, LucideIcon> = {
  * valid name and the registry is total, so the result is never undefined — an
  * unknown route falls back to the default icon instead of rendering nothing.
  *
- * The sidebar nav and the desktop tab bar both call this, which is what keeps
- * a route's icon identical in both places.
+ * Navigation surfaces call this for their page-level icon, so a route has one
+ * fallback icon everywhere.
  */
 export function routeIconForPath(path: string): LucideIcon {
   return ROUTE_ICON_COMPONENTS[resolveRouteIconName(path)];

@@ -16,7 +16,7 @@ const E2E_WORKER =
   process.env.TEST_PARALLEL_INDEX ?? process.env.TEST_WORKER_INDEX ?? "0";
 const E2E_RUN_ID =
   process.env.E2E_RUN_ID ?? `${Date.now().toString(36)}-${process.pid.toString(36)}`;
-const EMAIL = `e2e-mcp-${E2E_WORKER}-${E2E_RUN_ID}@multica.ai`;
+const ACCOUNT = `e2e-mcp-${E2E_WORKER}-${E2E_RUN_ID}`;
 const NAME = "E2E MCP User";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
@@ -32,7 +32,7 @@ interface SetupResult {
  *  (or not) by this exact user. */
 async function loginCapturingUser(page: Page): Promise<SetupResult> {
   const api = new TestApiClient();
-  const data = await api.login(EMAIL, NAME);
+  const data = await api.login(ACCOUNT, NAME);
   const userId: string | undefined = data?.user?.id;
   if (!userId) throw new Error("login did not return a user id");
   const workspace = await api.ensureWorkspace(
@@ -150,6 +150,10 @@ async function mockApis(page: Page, ownerId: string) {
 }
 
 test.describe("Agent MCP tab (creator-only)", () => {
+  test.skip(
+    !process.env.COMPOSIO_API_KEY,
+    "Composio MCP is disabled in this integration environment; component tests cover the enabled path.",
+  );
   test("creator sees the MCP Apps tab and toggling a toolkit writes the allowlist", async ({
     page,
   }) => {

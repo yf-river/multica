@@ -210,6 +210,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     myIssues: () => "/ws-test/my-issues",
     issues: () => "/ws-test/issues",
     projects: () => "/ws-test/projects",
+    life: () => "/ws-test/life",
     autopilots: () => "/ws-test/autopilots",
     agents: () => "/ws-test/agents",
     squads: () => "/ws-test/squads",
@@ -217,6 +218,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     runtimes: () => "/ws-test/runtimes",
     skills: () => "/ws-test/skills",
     settings: () => "/ws-test/settings",
+    lifeTab: (tab: string) => `/ws-test/life?tab=${tab}`,
     issueDetail: (id: string) => `/ws-test/issues/${id}`,
     memberDetail: (id: string) => `/ws-test/members/${id}`,
     agentDetail: (id: string) => `/ws-test/agents/${id}`,
@@ -282,7 +284,7 @@ vi.mock("@tanstack/react-query", () => ({
 
 // Mock the context module, not the barrel: resolveClickIntent and
 // useIntentNavigate stay the REAL implementations and read this adapter
-// (no openInNewTab — the web shape, so tab intents go through window.open).
+// (tab intents use the browser's native behavior on anchors).
 vi.mock("../navigation/context", () => {
   const adapter = () => ({
     push: mockPush,

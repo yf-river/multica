@@ -89,12 +89,41 @@ WHERE id = $1;
 SELECT * FROM inbox_item
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: LockInboxItemForUpdate :one
+SELECT * FROM inbox_item
+WHERE id = $1
+FOR UPDATE;
+
 -- name: CreateInboxItem :one
 INSERT INTO inbox_item (
     workspace_id, recipient_type, recipient_id,
     type, severity, issue_id, title, body,
     actor_type, actor_id, details, id
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE(sqlc.narg('id')::uuid, gen_random_uuid()))
+RETURNING *;
+
+-- name: CreateProjectedInboxItem :one
+-- Durable audience projections may be retried after a transaction rollback.
+-- The projection identity is supplied by the source event, so a retry must
+-- reuse the same inbox row instead of creating a second notification.
+INSERT INTO inbox_item (
+    workspace_id, recipient_type, recipient_id,
+    type, severity, issue_id, title, body,
+    actor_type, actor_id, details, id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ON CONFLICT (id) DO UPDATE SET id = inbox_item.id
+RETURNING *;
+
+-- name: CreateQuickCreateOutcomeInbox :one
+-- Quick-create completion is reconciled after the task transaction. Its
+-- deterministic id makes a retry return the original row instead of creating
+-- a second user-visible result.
+INSERT INTO inbox_item (
+    workspace_id, recipient_type, recipient_id,
+    type, severity, issue_id, title, body,
+    actor_type, actor_id, details, id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ON CONFLICT (id) DO UPDATE SET id = inbox_item.id
 RETURNING *;
 
 -- name: MarkInboxRead :one

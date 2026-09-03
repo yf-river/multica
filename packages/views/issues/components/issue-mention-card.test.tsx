@@ -79,21 +79,19 @@ describe("IssueMentionCard", () => {
 
   it("plain click pushes in place", () => {
     const push = vi.fn();
-    const openInNewTab = vi.fn();
-    renderCard(makeAdapter({ push, openInNewTab }));
+    renderCard(makeAdapter({ push }));
 
     fireEvent.click(screen.getByTestId("issue-chip"));
     expect(push).toHaveBeenCalledWith("/acme/issues/issue-1");
-    expect(openInNewTab).not.toHaveBeenCalled();
   });
 
-  it("cmd-click opens a background tab labeled with the issue identifier (desktop)", () => {
+  it("leaves cmd-click to native browser navigation", () => {
     const push = vi.fn();
-    const openInNewTab = vi.fn();
-    renderCard(makeAdapter({ push, openInNewTab }));
+    renderCard(makeAdapter({ push }));
 
-    fireEvent.click(screen.getByTestId("issue-chip"), { metaKey: true });
-    expect(openInNewTab).toHaveBeenCalledWith("/acme/issues/issue-1", "MUL-7");
+    expect(
+      fireEvent.click(screen.getByTestId("issue-chip"), { metaKey: true }),
+    ).toBe(true);
     expect(push).not.toHaveBeenCalled();
   });
 

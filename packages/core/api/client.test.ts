@@ -1170,12 +1170,12 @@ describe("ApiClient", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const client = new ApiClient("https://api.example.test", {
-      identity: { platform: "desktop", version: "1.2.3", os: "macos" },
+      identity: { platform: "web", version: "1.2.3", os: "macos" },
     });
     await client.listWorkspaces();
 
     const headers = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
-    expect(headers["X-Client-Platform"]).toBe("desktop");
+    expect(headers["X-Client-Platform"]).toBe("web");
     expect(headers["X-Client-Version"]).toBe("1.2.3");
     expect(headers["X-Client-OS"]).toBe("macos");
   });
@@ -1209,19 +1209,10 @@ describe("ApiClient", () => {
 
     const client = new ApiClient("https://api.example.test");
     const response = await client.createFeedback({
-      message: "Desktop route crashed",
-      url: "app://desktop/acme/issues",
+      message: "The issue page needs a small improvement",
+      url: "https://app.example/acme/issues",
       workspace_id: "ws-1",
       kind: "bug",
-      context: {
-        kind: "desktop_route_error",
-        trigger: "route-errorElement",
-        error: {
-          name: "TypeError",
-          message: "Cannot read properties of undefined",
-          stack: "TypeError: Cannot read properties of undefined",
-        },
-      },
     });
 
     expect(response).toEqual({
@@ -1233,19 +1224,10 @@ describe("ApiClient", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
-          message: "Desktop route crashed",
-          url: "app://desktop/acme/issues",
+          message: "The issue page needs a small improvement",
+          url: "https://app.example/acme/issues",
           workspace_id: "ws-1",
           kind: "bug",
-          context: {
-            kind: "desktop_route_error",
-            trigger: "route-errorElement",
-            error: {
-              name: "TypeError",
-              message: "Cannot read properties of undefined",
-              stack: "TypeError: Cannot read properties of undefined",
-            },
-          },
         }),
       }),
     );

@@ -14,7 +14,7 @@ import (
 //
 //   - Both inputs are expected to be the Claude-style
 //     `{"mcpServers": {<name>: <object>}}` shape every supported runtime
-//     consumes via execenv's cursor / openclaw / opencode / codex / hermes
+//     consumes via execenv's cursor / opencode / codex / hermes
 //     sidecar generators. Anything not under `mcpServers` is preserved from
 //     the AGENT side only — overlays today only carry server entries and
 //     should not silently introduce other top-level keys.

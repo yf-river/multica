@@ -510,26 +510,6 @@
       "shared_warning": "このエージェントは共有されています。このエージェントを実行できる人は、ここで有効化した Composio アプリを利用できます。これらのアプリが機微なデータを扱う場合は、Private にするかアクセス範囲を絞ってください。",
       "workspace_warning": "ワークスペースに公開：ワークスペースの全メンバーがこのエージェントを通じてこれらの Composio アプリを利用できます。"
     },
-    "runtime_config": {
-      "intro": "OpenClaw ランタイムがこのエージェントの各ターンをどのように実行するかを選択します。Local モードはエージェントを daemon プロセス内で実行します。Gateway モードは各ターンを OpenClaw Gateway に転送します — daemon のホストが軽量な調整役で、エージェントの実作業はより強力なマシンで動かしたい場合に有用です。",
-      "mode_label": "ルーティングモード",
-      "mode_local": "Local",
-      "mode_gateway": "Gateway",
-      "mode_local_hint": "デフォルト。daemon は `openclaw agent --local …` を起動し、エージェントループがこのホストで実行されます。",
-      "mode_gateway_hint": "daemon は OpenClaw Gateway にダイヤルします。エンドポイントフィールドを空欄のままにすると daemon ホストの `~/.openclaw/openclaw.json` から継承します。",
-      "gateway_legend": "Gateway エンドポイント",
-      "host_label": "Host",
-      "host_placeholder": "gw.internal",
-      "port_label": "ポート",
-      "port_invalid": "ポートは正の整数である必要があります。",
-      "token_label": "認証トークン",
-      "token_placeholder": "Gateway が発行する bearer トークン",
-      "token_masked_placeholder": "保存済み — ローテーションするには新しい値を入力。空欄のままだと保持されます",
-      "tls_label": "TLS を使用",
-      "tls_hint": "http:// の代わりに https:// でダイヤル",
-      "saved_toast": "ルーティング設定を保存しました",
-      "save_failed_toast": "ルーティング設定の保存に失敗しました"
-    },
     "skills": {
       "assigned_title": "エージェントに割り当て済み",
       "assigned_hint": "ワークスペースのスキルはエージェントと一緒に移動します。削除せず一時的に無効化できます。",
@@ -629,6 +609,26 @@
       "started_prefix": "{{when}} に開始",
       "dispatched_prefix": "{{when}} にディスパッチ",
       "queued_prefix": "{{when}} に待機開始"
+    },
+    "runtime_config": {
+      "intro": "OpenClaw ランタイムがこのエージェントの各ターンをどのように実行するかを選択します。Local モードはエージェントを daemon プロセス内で実行します。Gateway モードは各ターンを OpenClaw Gateway に転送します — daemon のホストが軽量な調整役で、エージェントの実作業はより強力なマシンで動かしたい場合に有用です。",
+      "mode_label": "ルーティングモード",
+      "mode_local": "Local",
+      "mode_gateway": "Gateway",
+      "mode_local_hint": "デフォルト。daemon は `openclaw agent --local …` を起動し、エージェントループがこのホストで実行されます。",
+      "mode_gateway_hint": "daemon は OpenClaw Gateway にダイヤルします。エンドポイントフィールドを空欄のままにすると daemon ホストの `~/.openclaw/openclaw.json` から継承します。",
+      "gateway_legend": "Gateway エンドポイント",
+      "host_label": "Host",
+      "host_placeholder": "gw.internal",
+      "port_label": "ポート",
+      "port_invalid": "ポートは正の整数である必要があります。",
+      "token_label": "認証トークン",
+      "token_placeholder": "Gateway が発行する bearer トークン",
+      "token_masked_placeholder": "保存済み — ローテーションするには新しい値を入力。空欄のままだと保持されます",
+      "tls_label": "TLS を使用",
+      "tls_hint": "http:// の代わりに https:// でダイヤル",
+      "saved_toast": "ルーティング設定を保存しました",
+      "save_failed_toast": "ルーティング設定の保存に失敗しました"
     }
   },
   "char_counter": {

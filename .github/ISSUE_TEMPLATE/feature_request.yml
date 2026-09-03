@@ -25,7 +25,6 @@ body:
         maintainer directly; we route reports from here.
       options:
         - Web app
-        - Desktop app
         - Mobile app (iOS)
         - CLI
         - Agents and runtimes

@@ -215,4 +215,10 @@ const (
 	// front-ends invalidate the Telegram installations query on either.
 	EventTelegramInstallationCreated = "telegram_installation:created"
 	EventTelegramInstallationRevoked = "telegram_installation:revoked"
+
+	// Life events describe a committed change to the personal companion's
+	// governed state. The payload names the entity and action; the stream key
+	// keeps one user's Life timeline ordered while the outbox receipt closes
+	// the event after the originating transaction has already changed the row.
+	EventLifeChanged = "life:changed"
 )

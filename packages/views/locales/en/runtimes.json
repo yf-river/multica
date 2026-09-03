@@ -13,7 +13,7 @@
     "filter_all_description": "All runtimes in this view",
     "empty": {
       "title": "No runtimes yet",
-      "hint": "Desktop auto-scans this computer. To use another machine — a server, dev box, or any computer with a terminal — add it here."
+      "hint": "Connect a daemon on this computer or another machine — a server, dev box, or any computer with a terminal — to run agent sessions here."
     },
     "no_matches": {
       "title": "No matches",
@@ -264,8 +264,6 @@
   "update": {
     "cli_version_label": "CLI Version:",
     "version_unknown": "unknown",
-    "managed_by_desktop": "Managed by Desktop",
-    "managed_by_desktop_title": "The CLI binary is managed by Multica Desktop — update Desktop to upgrade the CLI.",
     "read_only": "Read-only",
     "read_only_title": "Only runtime owners and workspace admins can update the CLI.",
     "local_build": "Local build",
@@ -304,7 +302,7 @@
     "col_cost": "Cost · 7d",
     "col_cli": "CLI",
     "cost_delta_flat": "flat",
-    "cli_managed_badge": "Desktop",
+    "cli_managed_badge": "CLI",
     "row_actions_aria": "Row actions",
     "edit_action": "Edit custom runtime",
     "delete_action": "Delete",

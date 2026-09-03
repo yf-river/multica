@@ -203,10 +203,17 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 		writeError(w, http.StatusInternalServerError, "failed to save agent access")
 		return db.Agent{}, false, false
 	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	createdEvent, err := service.RecordDurableEventTx(r.Context(), qtx, h.buildAgentDomainEvent(protocol.EventAgentCreated, created, actorType, actorID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record agent event")
+		return db.Agent{}, false, false
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit agent create")
 		return db.Agent{}, false, false
 	}
+	h.publishEvent(createdEvent)
 	slog.Info("mika agent created", append(logger.RequestAttrs(r), "agent_id", uuidToString(created.ID), "workspace_id", workspaceID)...)
 
 	if runtime.Status == "online" {
@@ -225,11 +232,6 @@ func (h *Handler) writeMikaAgentResponse(w http.ResponseWriter, r *http.Request,
 	// Announced before the session step can fail, because the agent itself is
 	// already committed and other clients' agent lists are stale until they
 	// hear about it.
-	if created {
-		actorType, actorID := h.resolveActor(r, uuidToString(agent.OwnerID), workspaceID)
-		h.publish(protocol.EventAgentCreated, workspaceID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
-	}
-
 	session, err := h.getOrCreateMikaSession(r.Context(), agent, workspaceID, userID, sessionTitle)
 	if err != nil {
 		// Reporting success with the session omitted was worse than failing:

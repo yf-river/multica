@@ -61,36 +61,36 @@ export function CompanionPage() {
   }, [setExpanded, setOpen]);
 
   if (profileQuery.isLoading || agentsQuery.isLoading) {
-    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" />{t(($) => $.companion.loading)}</div>;
+    return <div className="flex h-full items-center justify-center text-body text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" />{t(($) => $.companion.loading)}</div>;
   }
 
   if (profile) {
     return (
       <div className="flex h-full flex-col bg-background">
-        <PageHeader><h1 className="text-sm font-medium">{t(($) => $.companion.title)}</h1></PageHeader>
-        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">{t(($) => $.companion.opening)}</div>
+        <PageHeader><h1 className="text-body font-medium">{t(($) => $.companion.title)}</h1></PageHeader>
+        <div className="flex flex-1 items-center justify-center text-body text-muted-foreground">{t(($) => $.companion.opening)}</div>
       </div>
     );
   }
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <PageHeader><h1 className="text-sm font-medium">{t(($) => $.companion.title)}</h1></PageHeader>
+      <PageHeader><h1 className="text-body font-medium">{t(($) => $.companion.title)}</h1></PageHeader>
       <main className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
         <div className="space-y-1">
-          <h2 className="text-base font-medium">{t(($) => $.companion.setup_title)}</h2>
-          <p className="text-sm text-muted-foreground">{t(($) => $.companion.setup_description)}</p>
+          <h2 className="text-title-sm font-medium">{t(($) => $.companion.setup_title)}</h2>
+          <p className="text-body text-muted-foreground">{t(($) => $.companion.setup_description)}</p>
         </div>
         {availableAgents.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t(($) => $.companion.empty_agents)}</p>
+          <p className="text-body text-muted-foreground">{t(($) => $.companion.empty_agents)}</p>
         ) : (
           <div className="space-y-2">
             {availableAgents.map((agent) => (
               <div key={agent.id} className="flex items-center gap-3 rounded-lg border p-3">
                 <ActorAvatar actorType="agent" actorId={agent.id} className="size-8" profileLink={false} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{agent.name}</div>
-                  <div className="truncate text-xs text-muted-foreground">{agent.description}</div>
+                  <div className="truncate text-body font-medium">{agent.name}</div>
+                  <div className="truncate text-caption text-muted-foreground">{agent.description}</div>
                 </div>
                 <Button size="sm" disabled={setProfile.isPending} onClick={() => setProfile.mutate(agent.id)}>
                   {t(($) => $.companion.confirm)}

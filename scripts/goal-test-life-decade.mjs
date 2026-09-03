@@ -10,12 +10,15 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const runEnv = readGoalTestEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env"));
 const apiBase = process.env.LIFE_DECADE_API_BASE || runEnv.REMOTE_API_URL || "http://127.0.0.1:18762";
 const databaseURL = process.env.LIFE_DECADE_DATABASE_URL || runEnv.DATABASE_URL;
-const runtimeProvider = process.env.LIFE_DECADE_RUNTIME_PROVIDER || "codex";
-const model = process.env.LIFE_DECADE_MODEL || "gpt-5.6-luna";
+// The decade run exercises the production Life model policy by default.  A
+// caller may still override both values explicitly when evaluating the
+// governed fallback, but the primary path must not silently start on Luna.
+const runtimeProvider = process.env.LIFE_DECADE_RUNTIME_PROVIDER || "codebuddy";
+const model = process.env.LIFE_DECADE_MODEL || "deepseek-v4-pro-ioa";
 const expectedDatabase = "multica_goal_test_int";
 const lifeJobQuiescence = 65_000;
 const account = process.env.E2E_ACCOUNT || "develop";
-const password = process.env.E2E_PASSWORD || "develop123";
+const password = process.env.E2E_PASSWORD || "Develop123!";
 const workspaceSlug = process.env.E2E_WORKSPACE || "ai-studio";
 const outputDir = path.join(repoRoot, "artifacts/acceptance/life-decade");
 let startedAt = new Date();

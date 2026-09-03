@@ -179,7 +179,7 @@ func TestProbeOutputOwnsItsProcessTree(t *testing.T) {
 // ends and its leader exits. cmd.Wait cannot return until those close, and on
 // Windows the thing that closes them is the Job Object going away — which is
 // the release that runs after Wait. Without a bound the probe waits for its own
-// cleanup forever, and checkOpenclawVersion runs before any task timeout
+// cleanup forever, and version detection runs before any task timeout
 // exists, so the task would hang until a human cancelled it.
 func TestProbeReturnsWhenLeaderExitsHoldingPipes(t *testing.T) {
 	exePath, pidPath := buildDescendantSpawner(t)

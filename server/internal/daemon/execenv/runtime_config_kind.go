@@ -12,6 +12,9 @@ package execenv
 type taskKind int
 
 const (
+	// kindLifeCognition is a governed background Life job. It has no
+	// repository, issue, or general platform mutation surface.
+	kindLifeCognition taskKind = iota
 	// kindIssue: this run operates on a real Multica issue. It deliberately
 	// does NOT distinguish comment-triggered from assignment-triggered runs.
 	//
@@ -23,7 +26,7 @@ const (
 	// fired THIS turn is per-turn state and now travels in the per-turn user
 	// message (daemon.BuildPrompt), which is appended after the cached
 	// prefix. See runtime_config_sections.go:writeWorkflowIssue.
-	kindIssue taskKind = iota
+	kindIssue
 	// kindAutopilotRunOnly: an autopilot fired in run-only mode (no
 	// issue created or attached).
 	kindAutopilotRunOnly
@@ -44,6 +47,8 @@ const (
 // change and the prompt cache is lost from messages[0] onward (MUL-5377).
 func classifyTask(ctx TaskContextForEnv) taskKind {
 	switch {
+	case ctx.LifeJobID != "":
+		return kindLifeCognition
 	case ctx.ChatSessionID != "":
 		return kindChat
 	case ctx.QuickCreatePrompt != "":

@@ -11,8 +11,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -287,7 +289,14 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		avatarURL = pgtype.Text{String: accepted, Valid: true}
 	}
 
-	squad, err := h.Queries.CreateSquad(r.Context(), db.CreateSquadParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start squad transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	squad, err := qtx.CreateSquad(r.Context(), db.CreateSquadParams{
 		WorkspaceID: wsUUID,
 		Name:        req.Name,
 		Description: req.Description,
@@ -301,19 +310,33 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auto-add leader as a member with role "leader".
-	h.Queries.AddSquadMember(r.Context(), db.AddSquadMemberParams{
+	if _, err := qtx.AddSquadMember(r.Context(), db.AddSquadMemberParams{
 		SquadID:    squad.ID,
 		MemberType: "agent",
 		MemberID:   leaderUUID,
 		Role:       "leader",
-	})
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add squad leader")
+		return
+	}
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildSquadDomainEvent(
+		protocol.EventSquadCreated, squad, "member", uuidToString(member.UserID), nil,
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record squad event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit squad")
+		return
+	}
 
 	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
 		return
 	}
-	h.publish(protocol.EventSquadCreated, workspaceID, "member", uuidToString(member.UserID), map[string]any{"squad": resp})
+	h.publishEvent(event)
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.SquadCreated(
 		uuidToString(member.UserID),
 		workspaceID,
@@ -461,6 +484,29 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	eventsToPublish := make([]events.Event, 0, 1+len(pausedAutopilots))
+	squadEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildSquadDomainEvent(
+		protocol.EventSquadUpdated, updated, "member", requestUserID(r), nil,
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record squad event")
+		return
+	}
+	eventsToPublish = append(eventsToPublish, squadEvent)
+	for _, autopilot := range pausedAutopilots {
+		autopilotEvent, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+			Type:           protocol.EventAutopilotUpdated,
+			IdempotencyKey: "autopilot:squad_pause:" + uuidToString(autopilot.ID) + ":" + autopilot.UpdatedAt.Time.UTC().Format("20060102150405.999999999"),
+			StreamKey:      "autopilot:" + uuidToString(autopilot.ID), WorkspaceID: workspaceID,
+			ActorType: "member", ActorID: requestUserID(r),
+			Payload: map[string]any{"autopilot": autopilotToResponse(autopilot, nil)},
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to record autopilot event")
+			return
+		}
+		eventsToPublish = append(eventsToPublish, autopilotEvent)
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update squad")
 		return
@@ -471,11 +517,8 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
 		return
 	}
-	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{"squad": resp})
-	for _, autopilot := range pausedAutopilots {
-		h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", requestUserID(r), map[string]any{
-			"autopilot": autopilotToResponse(autopilot, nil),
-		})
+	for _, event := range eventsToPublish {
+		h.publishEvent(event)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -501,12 +544,21 @@ func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Transfer issues assigned to this squad to the leader agent.
-	if err := h.Queries.TransferSquadAssignees(r.Context(), db.TransferSquadAssigneesParams{
+	// Transfer assignments and archive the squad in one transaction so the
+	// deletion event cannot race a consumer that still sees the old assignee.
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start squad transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.TransferSquadAssignees(r.Context(), db.TransferSquadAssigneesParams{
 		AssigneeID:   squad.ID,
 		AssigneeID_2: squad.LeaderID,
 	}); err != nil {
-		slog.Warn("transfer squad assignees failed", "squad_id", uuidToString(squad.ID), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to transfer squad assignees")
+		return
 	}
 
 	// Mirror the issue-assignee transfer for autopilots that target this
@@ -515,28 +567,37 @@ func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 	// "assignee squad is archived" — visible to ops but useless to the
 	// owner. Rewriting to the leader keeps the autopilot semantics
 	// unchanged (Path A from MUL-2429 is leader-only execution anyway).
-	if err := h.Queries.TransferSquadAutopilotsToLeader(r.Context(), db.TransferSquadAutopilotsToLeaderParams{
+	if err := qtx.TransferSquadAutopilotsToLeader(r.Context(), db.TransferSquadAutopilotsToLeaderParams{
 		AssigneeID:   squad.ID,
 		AssigneeID_2: squad.LeaderID,
 	}); err != nil {
-		slog.Warn("transfer squad autopilots failed", "squad_id", uuidToString(squad.ID), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to transfer squad autopilots")
+		return
 	}
 
 	userID := requestUserID(r)
 	userUUID, _ := parseUUIDOrBadRequest(w, userID, "user_id")
 
-	if _, err := h.Queries.ArchiveSquad(r.Context(), db.ArchiveSquadParams{
+	archived, err := qtx.ArchiveSquad(r.Context(), db.ArchiveSquadParams{
 		ID:         squad.ID,
 		ArchivedBy: userUUID,
-	}); err != nil {
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to archive squad")
 		return
 	}
-
-	h.publish(protocol.EventSquadDeleted, workspaceID, "member", userID, map[string]any{
-		"squad_id":  uuidToString(squad.ID),
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildSquadDomainEvent(protocol.EventSquadDeleted, archived, "member", userID, map[string]any{
 		"leader_id": uuidToString(squad.LeaderID),
-	})
+	}))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record squad event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit squad archive")
+		return
+	}
+	h.publishEvent(event)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -817,7 +878,14 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sm, err := h.Queries.AddSquadMember(r.Context(), db.AddSquadMemberParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start squad transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	sm, err := qtx.AddSquadMember(r.Context(), db.AddSquadMemberParams{
 		SquadID:    squad.ID,
 		MemberType: req.MemberType,
 		MemberID:   memberUUID,
@@ -831,11 +899,20 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to add squad member")
 		return
 	}
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildSquadMemberEvent(
+		protocol.EventSquadUpdated, uuidToString(squad.ID), workspaceID, req.MemberType, uuidToString(memberUUID), "member", requestUserID(r), "add",
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record squad event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit squad member")
+		return
+	}
 
 	writeJSON(w, http.StatusCreated, squadMemberToResponse(sm))
-	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{
-		"squad_id": uuidToString(squad.ID),
-	})
+	h.publishEvent(event)
 }
 
 func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
@@ -874,7 +951,14 @@ func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.Queries.RemoveSquadMember(r.Context(), db.RemoveSquadMemberParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start squad transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	rows, err := qtx.RemoveSquadMember(r.Context(), db.RemoveSquadMemberParams{
 		SquadID:    squad.ID,
 		MemberType: req.MemberType,
 		MemberID:   memberUUID,
@@ -887,10 +971,16 @@ func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "squad member not found")
 		return
 	}
-
-	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{
-		"squad_id": uuidToString(squad.ID),
-	})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildSquadMemberEvent(protocol.EventSquadUpdated, uuidToString(squad.ID), workspaceID, req.MemberType, uuidToString(memberUUID), "member", requestUserID(r), "remove"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record squad event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit squad member")
+		return
+	}
+	h.publishEvent(event)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -925,7 +1015,14 @@ func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	sm, err := h.Queries.UpdateSquadMemberRole(r.Context(), db.UpdateSquadMemberRoleParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start squad transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	sm, err := qtx.UpdateSquadMemberRole(r.Context(), db.UpdateSquadMemberRoleParams{
 		SquadID:    squad.ID,
 		MemberType: req.MemberType,
 		MemberID:   memberUUID,
@@ -935,10 +1032,16 @@ func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "squad member not found")
 		return
 	}
-
-	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{
-		"squad_id": uuidToString(squad.ID),
-	})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildSquadMemberEvent(protocol.EventSquadUpdated, uuidToString(squad.ID), workspaceID, req.MemberType, uuidToString(memberUUID), "member", requestUserID(r), "role"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record squad event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit squad member")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusOK, squadMemberToResponse(sm))
 }
 

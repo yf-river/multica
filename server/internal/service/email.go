@@ -233,8 +233,6 @@ func NewEmailService() *EmailService {
 		fmt.Printf("EmailService: SMTP relay %s:%s (%s) from=%s\n", smtpHost, smtpPort, tlsLabel, from)
 	case client != nil:
 		fmt.Printf("EmailService: Resend API from=%s\n", from)
-	default:
-		fmt.Println("EmailService: DEV mode — codes printed to stdout (set MULTICA_DEV_VERIFICATION_CODE in .env for a fixed local code)")
 	}
 
 	return &EmailService{
@@ -334,37 +332,6 @@ func (s *EmailService) sendSMTP(to, subject, htmlBody string) error {
 	return c.Quit()
 }
 
-// SendVerificationCode sends a one-time login code. The code is server-generated
-// (6-digit numeric) so no user-controlled text reaches the email body here.
-// Delivery priority: SMTP relay → Resend API → DEV stdout.
-func (s *EmailService) SendVerificationCode(to, code string) error {
-	body := fmt.Sprintf(
-		`<div style="font-family: sans-serif; max-width: 400px; margin: 0 auto;">
-			<h2>Your verification code</h2>
-			<p style="font-size: 32px; font-weight: bold; letter-spacing: 8px; margin: 24px 0;">%s</p>
-			<p>This code expires in 10 minutes.</p>
-			<p style="color: #666; font-size: 14px;">If you didn't request this code, you can safely ignore this email.</p>
-		</div>`, code)
-
-	if s.smtpHost != "" {
-		return s.sendSMTP(to, "Your Multica verification code", body)
-	}
-	if s.client == nil {
-		fmt.Printf("[DEV] Verification code for %s: %s\n", to, code)
-		return nil
-	}
-	params := &resend.SendEmailRequest{
-		From:    s.fromEmail,
-		To:      []string{to},
-		Subject: "Your Multica verification code",
-		Html:    body,
-	}
-	_, err := s.client.Emails.Send(params)
-	return err
-}
-
-// SendInvitationEmail notifies the invitee that they have been invited to a workspace.
-// invitationID is included in the URL so the email deep-links to /invite/{id}.
 func (s *EmailService) SendInvitationEmail(to, inviterName, workspaceName, invitationID string) error {
 	appURL := strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN"))
 	if appURL == "" {

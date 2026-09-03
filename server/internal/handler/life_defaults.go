@@ -12,11 +12,15 @@ import (
 )
 
 func (h *Handler) ensureCompanionLifeDefaults(ctx context.Context, scope lifeRequestScope) error {
-	identity, err := h.Queries.GetActiveLifeIdentity(ctx, db.GetActiveLifeIdentityParams{
+	return ensureCompanionLifeDefaultsWithQueries(ctx, h.Queries, scope)
+}
+
+func ensureCompanionLifeDefaultsWithQueries(ctx context.Context, q *db.Queries, scope lifeRequestScope) error {
+	identity, err := q.GetActiveLifeIdentity(ctx, db.GetActiveLifeIdentityParams{
 		WorkspaceID: scope.workspaceID, UserID: scope.userID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		identity, err = h.Queries.CreateLifeIdentityVersion(ctx, db.CreateLifeIdentityVersionParams{
+		identity, err = q.CreateLifeIdentityVersion(ctx, db.CreateLifeIdentityVersionParams{
 			WorkspaceID: scope.workspaceID, UserID: scope.userID, Version: 1, Status: "active",
 			StableCore: mustLifeJSON(map[string]any{
 				"traits":                []string{"热烈", "直接", "灵动", "好奇", "护短但不纵容", "有幽默感", "敢承认错误"},
@@ -43,12 +47,12 @@ func (h *Handler) ensureCompanionLifeDefaults(ctx context.Context, scope lifeReq
 	if err != nil {
 		return err
 	}
-	if err := h.Queries.SetCompanionCurrentIdentity(ctx, db.SetCompanionCurrentIdentityParams{
+	if err := q.SetCompanionCurrentIdentity(ctx, db.SetCompanionCurrentIdentityParams{
 		WorkspaceID: scope.workspaceID, UserID: scope.userID, CurrentIdentityVersionID: identity.ID,
 	}); err != nil {
 		return err
 	}
-	_, err = h.Queries.UpsertLifeProactivePolicy(ctx, db.UpsertLifeProactivePolicyParams{
+	_, err = q.UpsertLifeProactivePolicy(ctx, db.UpsertLifeProactivePolicyParams{
 		WorkspaceID: scope.workspaceID, UserID: scope.userID, Enabled: true,
 		Timezone: "Asia/Shanghai", QuietHours: []byte(`{"start":"23:00","end":"08:00"}`),
 		MinimumInterval: pgtype.Interval{Microseconds: int64((6 * time.Hour) / time.Microsecond), Valid: true},

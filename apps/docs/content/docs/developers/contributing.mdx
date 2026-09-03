@@ -34,7 +34,6 @@ Web: http://localhost:3000
 API: http://localhost:8080
 ```
 
-The fixed local verification code comes from the development configuration. Do not use a local `.env` for an internet-facing deployment.
 
 ## Developing in a worktree
 
@@ -70,7 +69,7 @@ Different worktrees share the PostgreSQL container, not the database. Do not sta
 ### Full workflow
 
 ```bash
-make up               # Start this checkout's environment (C=api,web,daemon,desktop)
+make up               # Start this checkout's environment (C=api,web,daemon)
 make status           # Show what is running and prove it is this environment
 make list             # List every environment on this machine
 make down             # Stop the processes, keep the database
@@ -81,13 +80,13 @@ make check            # Run the complete local verification workflow
 make build            # Build the server, CLI, and migrate binaries
 ```
 
-`make up` treats an environment as a named object: it allocates the API, Web and Desktop renderer ports,
+`make up` treats an environment as a named object: it allocates the API and Web ports,
 database name and CLI profile under a lock and records them in `~/.multica/dev/`,
 so two checkouts cannot land on the same slot without one of them being told.
 It verifies the database through `DATABASE_URL` and the backend through
 `GET /health`, which reports `pid`, `commit` and `started_at` — a 200 alone
 would also come from a leftover process on the same port. `make destroy`
-removes the database, CLI profile, daemon workspaces, Desktop userData and
+removes the database, CLI profile, daemon workspaces and
 registry entry; a failed deletion keeps the registry entry for retry. Temporary
 environments are collected best-effort on the next `make up` after their TTL.
 
@@ -96,7 +95,6 @@ environments are collected best-effort on the next `make up` after their TTL.
 ```bash
 pnpm install
 pnpm dev:web
-pnpm dev:desktop
 pnpm build
 pnpm typecheck
 pnpm lint
@@ -124,13 +122,13 @@ make cli ARGS="issue list"
 
 ## Changing frontend features
 
-Place features needed by both Web and Desktop according to responsibility:
+Place shared features according to responsibility:
 
 1. Put API types, queries, mutations, and platform-independent logic in `packages/core/`.
 2. Put foundational UI in `packages/ui/`; it must not depend on business code.
 3. Put business pages and components in `packages/views/`.
-4. Keep Next.js, Electron, and routing adapters in the corresponding app.
-5. Wire shared pages into both Web and Desktop.
+4. Keep Next.js and routing adapters in the corresponding app.
+5. Wire shared pages into Web and reuse only platform-independent types and functions in Mobile.
 
 TanStack Query owns server data. Zustand owns client state such as filters, drafts, and layout. See [Project architecture](/developers/architecture) and the root `CLAUDE.md` for the exact boundary.
 
@@ -155,7 +153,7 @@ Use an application transaction in the service layer when multiple writes must su
 | --- | --- |
 | Shared business logic, queries, stores | `packages/core/*.test.ts` |
 | Shared pages and components | `packages/views/*.test.tsx` |
-| Web or Desktop platform wiring | Corresponding `apps/*` directory |
+| Web or Mobile platform wiring | Corresponding `apps/*` directory |
 | End-to-end workflows | `e2e/*.spec.ts` |
 | Backend | `*_test.go` in the relevant Go package |
 

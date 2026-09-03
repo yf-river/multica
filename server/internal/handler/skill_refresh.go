@@ -11,8 +11,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/multica-ai/multica/server/pkg/protocol"
-
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -196,7 +194,5 @@ func (h *Handler) RefreshSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	h.publish(protocol.EventSkillUpdated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 	writeJSON(w, http.StatusOK, resp)
 }

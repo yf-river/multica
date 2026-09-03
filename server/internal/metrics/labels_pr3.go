@@ -13,7 +13,6 @@ var (
 	knownPlatforms = map[string]string{
 		"server":  "server",
 		"web":     "web",
-		"desktop": "desktop",
 		"cli":     "cli",
 		"mobile":  "mobile",
 		"ios":     "ios",

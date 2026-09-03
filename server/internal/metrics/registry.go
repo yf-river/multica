@@ -12,11 +12,14 @@ import (
 )
 
 type RegistryOptions struct {
-	Pool     *pgxpool.Pool
-	Realtime *realtime.Metrics
-	DaemonWS *daemonws.Metrics
-	Version  string
-	Commit   string
+	Pool *pgxpool.Pool
+	// OutboxPool may be a dedicated pool so metrics sampling cannot starve
+	// application queries. The application pool is a safe default.
+	OutboxPool *pgxpool.Pool
+	Realtime   *realtime.Metrics
+	DaemonWS   *daemonws.Metrics
+	Version    string
+	Commit     string
 }
 
 type Registry struct {
@@ -64,6 +67,9 @@ func NewRegistry(opts RegistryOptions) *Registry {
 	if opts.DaemonWS != nil {
 		reg.MustRegister(NewDaemonWSCollector(opts.DaemonWS))
 	}
+	if outbox := NewOutboxCollector(opts.OutboxPoolOrPool()); outbox != nil {
+		reg.MustRegister(outbox)
+	}
 
 	return &Registry{
 		Gatherer:     reg,
@@ -73,6 +79,13 @@ func NewRegistry(opts RegistryOptions) *Registry {
 		ChannelLease: channelLease,
 		Wecom:        wecomMetrics,
 	}
+}
+
+func (opts RegistryOptions) OutboxPoolOrPool() *pgxpool.Pool {
+	if opts.OutboxPool != nil {
+		return opts.OutboxPool
+	}
+	return opts.Pool
 }
 
 func defaultLabel(value, fallback string) string {

@@ -40,7 +40,7 @@ type fakeSDK struct {
 	acctMissing            bool
 	listAccountsErr        error
 	lastListAccounts       sdk.ListConnectedAccountsRequest
-	// auth-config resolution (BeginConnect / ListToolkits connectable flag).
+	// auth-config resolution (BeginConnect / ListToolkits filtering).
 	// authConfigs nil => a default single notion→ac_notion ENABLED config so
 	// existing connect tests keep resolving; set explicitly to override.
 	authConfigs    []sdk.AuthConfig
@@ -313,8 +313,7 @@ func TestBeginConnect_PrefersCustomAuthConfig(t *testing.T) {
 }
 
 // TestListToolkits_FiltersToConnectable: only toolkits with an enabled auth
-// config are returned (MUL-4009); the rest are dropped from the catalog, and
-// every surfaced entry is Connectable by construction.
+// config are returned (MUL-4009); the rest are dropped from the catalog.
 func TestListToolkits_FiltersToConnectable(t *testing.T) {
 	t.Parallel()
 	sdkFake := &fakeSDK{
@@ -340,9 +339,6 @@ func TestListToolkits_FiltersToConnectable(t *testing.T) {
 	}
 	bySlug := make(map[string]ToolkitView, len(tks))
 	for _, tk := range tks {
-		if !tk.Connectable {
-			t.Errorf("surfaced toolkit %q must be connectable", tk.Slug)
-		}
 		if tk.Slug == "github" {
 			t.Errorf("non-connectable toolkit %q should have been filtered out", tk.Slug)
 		}

@@ -84,16 +84,14 @@ diff，全都挂在同一个任务下——没人需要重新捋一遍上下文�
 - **[角色](https://multica.ai/docs/members-roles)与[使用权限](https://multica.ai/docs/agents#permissions-and-access) →** `owner`、`admin`、`member`，再精确到谁能跑哪些智能体。
 - **[安全模型](https://multica.ai/docs/security-model) →** 智能体碰得到什么，碰不到什么。
 - **[Slack、飞书、钉钉](https://multica.ai/docs/channels) →** 在团队本来就在聊天的地方，触发和跟进智能体的工作。钉钉由社区维护。
-- **[Web、桌面端、移动端](https://multica.ai/docs/desktop-app) →** macOS、Windows、Linux、iPhone，打开都是同一个工作区——iOS 现在要自己从源码编译安装，还没上 App Store。
+- **[Web 和移动端](https://multica.ai/docs) →** 在浏览器或 iOS 客户端使用同一个工作区。
 - **[CLI 与 API](https://multica.ai/docs/cli) →** 界面上能点的，CLI 和 API 里都能调。智能体操作 Multica，用的就是你那套 CLI。
 
 ---
 
 ## 开始使用
 
-不用打开终端：直接在 **[multica.ai](https://multica.ai)** 注册，或者下载
-**[Multica 桌面端](https://multica.ai/download)**（macOS / Windows / Linux）——打开它，这台电脑
-就自动成了一个运行时。
+不用打开终端：直接在 **[multica.ai](https://multica.ai)** 注册并使用浏览器。
 
 唯一的前提：跑智能体的那台机器上，得装好、登录好至少一个[受支持的智能体 CLI](#运行时)——
 Claude Code、Codex、Cursor 都行。Multica 负责驱动它们，但不替你安装。
@@ -120,12 +118,10 @@ Windows 上先设 `$env:MULTICA_MODE="with-server"`，再跑 PowerShell 安装�
 
 ## 五分钟跑通第一个智能体
 
-**1. 登录。** 在浏览器里打开 [multica.ai](https://multica.ai)，或者打开
-[Multica 桌面端](https://multica.ai/download)。
+**1. 登录。** 在浏览器里打开 [multica.ai](https://multica.ai)。
 
-**2. 接入一台电脑。** 所谓*运行时*，就是智能体干活用的机器——你的笔记本，或者一台云主机。用桌面端，
-这一步是自动的：它会注册好这台电脑，顺便检测装了哪些智能体 CLI。用网页版、或者想再接一台机器，就
-打开侧边栏的**运行时**，点右上角的**添加电脑**，把弹窗里的两条命令粘到那台机器的终端里。
+**2. 接入一台电脑。** 所谓*运行时*，就是智能体干活用的机器——你的笔记本，或者一台云主机。打开侧边栏的
+**运行时**，点右上角的**添加电脑**，把弹窗里的两条命令粘到那台机器的终端里。
 
 **3. 创建智能体。** 打开侧边栏的**智能体**，点**新建智能体**。选中刚接入的运行时，选一个提供方，
 起个名字——或者选**通过 AI 创建**，描述几句，配置自动生成。这个名字就是它之后在看板和评论里的身份。
@@ -146,17 +142,16 @@ Multica 不自带模型。它驱动的是你本来就装好、登录好的那些
 | --- | --- | --- | --- |
 | Claude Code | `claude` | OpenAI Codex | `codex` |
 | Cursor Agent | `cursor-agent` | GitHub Copilot CLI | `copilot` |
-| OpenCode | `opencode` | OpenClaw | `openclaw` |
-| Hermes | `hermes` | Pi | `pi` |
-| Antigravity | `agy` | CodeBuddy | `codebuddy` |
-| DevEco Code | `deveco` | Grok | `grok` |
-| Kimi | `kimi` | Kiro CLI | `kiro-cli` |
-| Qoder CLI | `qodercli` | Qoder CN | `qoderclicn` |
-| Qwen Code | `qwen` | QwenPaw | `qwenpaw` |
-| Reasonix | `reasonix` | Trae CLI | `traecli` |
-| DeepSeek Harness | `dsh` | Oh-My-Pi | `omp` |
-| MiniMax Code | `mcode` | Dim | `dim` |
-| 华为云 CodeArts | `codearts` | | |
+| OpenCode | `opencode` | Hermes | `hermes` |
+| Pi | `pi` | Antigravity | `agy` |
+| CodeBuddy | `codebuddy` | DevEco Code | `deveco` |
+| Grok | `grok` | Kimi | `kimi` |
+| Kiro CLI | `kiro-cli` | Qoder CLI | `qodercli` |
+| Qoder CN | `qoderclicn` | Qwen Code | `qwen` |
+| QwenPaw | `qwenpaw` | Reasonix | `reasonix` |
+| Trae CLI | `traecli` | DeepSeek Harness | `dsh` |
+| Oh-My-Pi | `omp` | MiniMax Code | `mcode` |
+| Dim | `dim` | 华为云 CodeArts | `codearts` |
 
 怎么装、怎么登录：[安装智能体运行时](https://multica.ai/docs/install-agent-runtime) ·
 [AI 编程工具对照](https://multica.ai/docs/providers)
@@ -182,9 +177,9 @@ Multica 不自带模型。它驱动的是你本来就装好、登录好的那些
 ## 架构
 
 ```
-        Web  ·  桌面端 (macOS/Windows/Linux)  ·  iOS
-                          │
-                          ▼
+        Web  ·  iOS
+               │
+               ▼
    ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐
    │   Next.js    │──>│   Go 后端    │──>│   PostgreSQL     │
    │    前端      │<──│  (Chi + WS)  │<──│   (17)           │
@@ -203,7 +198,6 @@ Multica 不自带模型。它驱动的是你本来就装好、登录好的那些
 | 层级 | 技术栈 |
 | --- | --- |
 | Web | Next.js 16 (App Router) |
-| 桌面端 | Electron，复用 Web 的 UI 包 |
 | 移动端 | Expo / React Native (iOS) |
 | 后端 | Go (Chi router, sqlc, gorilla/websocket) |
 | 数据库 | PostgreSQL 17（`pgcrypto` + `pg_trgm`） |

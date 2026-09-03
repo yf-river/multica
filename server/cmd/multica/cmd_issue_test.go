@@ -531,7 +531,7 @@ func TestRunIssueCreateSendsExistingAttachmentIDs(t *testing.T) {
 }
 
 func TestRunIssueCreateShowsDuplicateMessage(t *testing.T) {
-	want := "Active duplicate issue exists: YUA-36 SH-PM-SYNTH-01 Synthesize recommendation-to-shortlist planning outputs (status: in_progress). Set allow_duplicate=true or use --allow-duplicate to create another."
+	want := "Active duplicate issue exists: YUA-36 SH-COORD-SYNTH-01 Synthesize recommendation-to-shortlist planning outputs (status: in_progress). Set allow_duplicate=true or use --allow-duplicate to create another."
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/issues" {
 			http.NotFound(w, r)
@@ -555,7 +555,7 @@ func TestRunIssueCreateShowsDuplicateMessage(t *testing.T) {
 	t.Setenv("MULTICA_TOKEN", "test-token")
 
 	cmd := newIssueCreateTestCmd()
-	_ = cmd.Flags().Set("title", "SH-PM-SYNTH-01 Synthesize recommendation-to-shortlist planning outputs")
+	_ = cmd.Flags().Set("title", "SH-COORD-SYNTH-01 Synthesize recommendation-to-shortlist planning outputs")
 	err := runIssueCreate(cmd, nil)
 	if err == nil {
 		t.Fatal("runIssueCreate: expected duplicate error")
@@ -1671,7 +1671,7 @@ func TestResolveAssigneeByIDStrict(t *testing.T) {
 	}
 	agentsResp := []map[string]any{
 		{"id": "5fb87ac7-23b5-4a7a-81fa-ed295a54545d", "name": "J"},
-		{"id": "192b9cca-2222-2222-2222-222222222222", "name": "Open Claw - J"},
+		{"id": "192b9cca-2222-2222-2222-222222222222", "name": "Research Agent - J"},
 	}
 	squadsResp := []map[string]any{
 		{"id": "ccccccc1-2222-3333-4444-555555555555", "name": "Super Human"},

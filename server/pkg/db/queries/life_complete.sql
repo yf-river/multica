@@ -49,6 +49,14 @@ SELECT * FROM life_relationship_event
 WHERE workspace_id = $1 AND user_id = $2
 ORDER BY created_at DESC;
 
+-- name: ListOpenLifeRelationshipEventsForContext :many
+SELECT * FROM life_relationship_event
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND user_id = sqlc.arg(user_id)
+  AND status IN ('open', 'waiting')
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
+
 -- name: CreateLifeRelationshipEvent :one
 INSERT INTO life_relationship_event (
     workspace_id, user_id, event_type, status, user_position,
@@ -140,7 +148,11 @@ WHERE workspace_id = $1 AND user_id = $2
 ORDER BY occurred_at, id;
 
 -- name: ListMissingLifeChroniclePeriods :many
-WITH bounds AS (
+WITH cursor_hints AS (
+    SELECT period_kind, next_period_start
+    FROM life_chronicle_cursor
+    WHERE workspace_id = $1 AND user_id = $2
+), bounds AS (
     SELECT min(occurred_at) AS first_at, sqlc.arg(before_time)::timestamptz AS before_time
     FROM life_material
     WHERE workspace_id = $1 AND user_id = $2
@@ -232,7 +244,19 @@ WHERE NOT EXISTS (
           AND job.job_type = 'chronicle_generate'
           AND job.dedupe_key = period.period_kind || ':' || to_char(period.period_start AT TIME ZONE 'UTC', 'YYYY-MM-DD')
     )
-ORDER BY period_end, CASE period_kind WHEN 'day' THEN 1 WHEN 'week' THEN 2 WHEN 'month' THEN 3 ELSE 4 END
+-- The cursor is a scheduling hint, not an authority: all readiness and
+-- published-entry checks above remain in force, so an out-of-order worker or
+-- a repaired cursor can never hide an older missing period. Prioritising the
+-- range after the cursor lets a long-lived account catch up in bounded
+-- batches without changing that no-omission guarantee.
+ORDER BY
+    CASE WHEN EXISTS (
+        SELECT 1 FROM cursor_hints cursor_hint
+        WHERE cursor_hint.period_kind = period.period_kind
+          AND period.period_start >= cursor_hint.next_period_start
+    ) THEN 0 ELSE 1 END,
+    period_end,
+    CASE period_kind WHEN 'day' THEN 1 WHEN 'week' THEN 2 WHEN 'month' THEN 3 ELSE 4 END
 LIMIT sqlc.arg(max_periods)::int;
 
 -- name: DeleteLifeMaterialsByIDs :exec
@@ -320,6 +344,126 @@ SET context = jsonb_build_object('type', 'life_cognition', 'source_forgotten', t
     trigger_summary = '人生后台任务（来源已永久删除）'
 WHERE task.id IN (SELECT id FROM affected_tasks);
 
+-- name: ScrubLifeCognitionTasksByMemoryIDs :exec
+-- Memory deletion must fence every cognition copy, including a job that has
+-- already been claimed and a completed job whose output still contains the
+-- deleted memory. Walk the structured JSON documents instead of relying on a
+-- particular job type or field name; source ids may appear in nested evidence,
+-- context snapshots, or observer inputs.
+WITH RECURSIVE documents AS (
+    SELECT id AS job_id, input AS value
+    FROM life_cognition_job
+    WHERE life_cognition_job.workspace_id = $1 AND life_cognition_job.user_id = $2
+    UNION ALL
+    SELECT id AS job_id, output AS value
+    FROM life_cognition_job
+    WHERE life_cognition_job.workspace_id = $1 AND life_cognition_job.user_id = $2
+      AND output IS NOT NULL
+), json_values AS (
+    SELECT job_id, value FROM documents
+    UNION ALL
+    SELECT parent.job_id, child.value
+    FROM json_values parent
+    CROSS JOIN LATERAL (
+        SELECT object_value.value
+        FROM jsonb_each(
+            CASE WHEN jsonb_typeof(parent.value) = 'object'
+                 THEN parent.value ELSE '{}'::jsonb END
+        ) AS object_value(key, value)
+        UNION ALL
+        SELECT array_value.value
+        FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(parent.value) = 'array'
+                 THEN parent.value ELSE '[]'::jsonb END
+        ) AS array_value(value)
+    ) child
+), affected_jobs AS MATERIALIZED (
+    SELECT DISTINCT job_id
+    FROM json_values
+    WHERE value #>> '{}' = ANY($3::text[])
+       OR value #>> '{}' = ANY(
+            SELECT 'memory:' || memory_id
+            FROM unnest($3::text[]) AS memory_ids(memory_id)
+       )
+), affected_tasks AS MATERIALIZED (
+    SELECT DISTINCT task.id
+    FROM agent_task_queue task
+    JOIN life_cognition_job job ON job.task_id = task.id
+    WHERE job.id IN (SELECT job_id FROM affected_jobs)
+), scrubbed_jobs AS (
+    UPDATE life_cognition_job job
+    SET input = '{}'::jsonb,
+        output = NULL,
+        source_ids = '[]'::jsonb,
+        output_summary = NULL,
+        claim_token = NULL,
+        lease_until = NULL,
+        status = CASE WHEN job.status <> 'cancelled' THEN 'cancelled' ELSE job.status END,
+        error = 'source permanently forgotten',
+        completed_at = COALESCE(job.completed_at, now()),
+        updated_at = now()
+    WHERE job.id IN (SELECT job_id FROM affected_jobs)
+    RETURNING job.task_id
+)
+UPDATE agent_task_queue task
+SET context = jsonb_build_object('type', 'life_cognition', 'source_forgotten', true),
+    result = NULL,
+    status = CASE WHEN task.status <> 'cancelled' THEN 'cancelled' ELSE task.status END,
+    error = 'source permanently forgotten',
+    completed_at = COALESCE(task.completed_at, now()),
+    session_id = NULL,
+    work_dir = NULL,
+    trigger_summary = '人生后台任务（来源已永久删除）'
+WHERE task.id IN (SELECT id FROM affected_tasks);
+
+-- name: RedactLifeDomainEventsBySourceIDs :exec
+-- A queued or already processed envelope can still contain a deleted source
+-- id and its surrounding content. Redact the payload in place; pending rows
+-- are marked processed so a dispatcher cannot deliver the pre-deletion fact.
+WITH RECURSIVE documents AS (
+    SELECT id AS event_id, payload AS value
+    FROM domain_event_outbox
+    WHERE domain_event_outbox.workspace_id = $1
+    UNION ALL
+    SELECT parent.event_id, child.value
+    FROM documents parent
+    CROSS JOIN LATERAL (
+        SELECT object_value.value
+        FROM jsonb_each(
+            CASE WHEN jsonb_typeof(parent.value) = 'object'
+                 THEN parent.value ELSE '{}'::jsonb END
+        ) AS object_value(key, value)
+        UNION ALL
+        SELECT array_value.value
+        FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(parent.value) = 'array'
+                 THEN parent.value ELSE '[]'::jsonb END
+        ) AS array_value(value)
+    ) child
+), affected_events AS MATERIALIZED (
+    SELECT DISTINCT event_id
+    FROM documents
+    WHERE value #>> '{}' = ANY($2::text[])
+       OR value #>> '{}' = ANY(
+            SELECT 'memory:' || memory_id
+            FROM unnest($2::text[]) AS memory_ids(memory_id)
+       )
+    UNION
+    SELECT id FROM domain_event_outbox
+    WHERE domain_event_outbox.workspace_id = $1
+      AND (stream_key = ANY($2::text[]) OR stream_key = ANY(
+            SELECT 'memory:' || memory_id
+            FROM unnest($2::text[]) AS memory_ids(memory_id)
+          ))
+)
+UPDATE domain_event_outbox event
+SET payload = jsonb_build_object('redacted', true, 'reason', 'life source permanently forgotten'),
+    processed_at = COALESCE(event.processed_at, now()),
+    lease_owner = NULL,
+    lease_until = NULL,
+    last_error = NULL
+WHERE event.id IN (SELECT event_id FROM affected_events);
+
 -- name: DeleteLifeDerivedRecordsByTargets :exec
 WITH targets AS MATERIALIZED (
     SELECT target_type, target_id
@@ -340,6 +484,23 @@ WITH targets AS MATERIALIZED (
         status = CASE WHEN status = 'reviewed' THEN 'awaiting_review' ELSE status END,
         updated_at = now()
     WHERE id IN (SELECT target_id FROM targets WHERE target_type = 'experiment_round_review')
+), clear_round_proposal_links AS (
+    UPDATE life_experiment_round
+    SET proposal_id = NULL, updated_at = now()
+    WHERE proposal_id IN (SELECT target_id FROM targets WHERE target_type = 'action_proposal')
+), delete_chronicle_evidence AS (
+    DELETE FROM life_chronicle_evidence
+    WHERE entry_id IN (SELECT target_id FROM targets WHERE target_type = 'chronicle_entry')
+), delete_chronicle_revisions AS (
+    DELETE FROM life_chronicle_revision
+    WHERE entry_id IN (SELECT target_id FROM targets WHERE target_type = 'chronicle_entry')
+), delete_observation_topic_links AS (
+    DELETE FROM life_observation_topic_judgement
+    WHERE topic_id IN (SELECT target_id FROM targets WHERE target_type = 'observation_topic')
+       OR judgement_id IN (SELECT target_id FROM targets WHERE target_type = 'observer_judgement')
+), delete_topic_memory_links AS (
+    DELETE FROM life_topic_memory
+    WHERE topic_id IN (SELECT target_id FROM targets WHERE target_type = 'topic')
 ), delete_chronicles AS (
     DELETE FROM life_chronicle_entry WHERE id IN (SELECT target_id FROM targets WHERE target_type = 'chronicle_entry')
 ), delete_proactive_inbox AS (
@@ -438,6 +599,14 @@ WHERE workspace_id = $1 AND user_id = $2
   AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status))
 ORDER BY last_observed_at DESC;
 
+-- name: ListLifeTopicsForContext :many
+SELECT * FROM life_topic
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND user_id = sqlc.arg(user_id)
+  AND status NOT IN ('archived', 'resolved')
+ORDER BY last_observed_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
+
 -- name: GetLifeTopicForUser :one
 SELECT * FROM life_topic WHERE id = $1 AND workspace_id = $2 AND user_id = $3;
 
@@ -467,6 +636,14 @@ SELECT * FROM life_commitment
 WHERE workspace_id = $1 AND user_id = $2
   AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status))
 ORDER BY COALESCE(due_at, revisit_after, created_at) ASC;
+
+-- name: ListLifeCommitmentsForContext :many
+SELECT * FROM life_commitment
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND user_id = sqlc.arg(user_id)
+  AND status = 'confirmed'
+ORDER BY COALESCE(due_at, revisit_after, created_at) ASC, id ASC
+LIMIT sqlc.arg('limit')::int;
 
 -- name: CreateLifeCommitment :one
 INSERT INTO life_commitment (
@@ -534,6 +711,15 @@ SELECT * FROM life_internal_thought
 WHERE workspace_id = $1 AND user_id = $2 AND companion_agent_id = $3
   AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status))
 ORDER BY last_developed_at DESC;
+
+-- name: ListLifeInternalThoughtsForContext :many
+SELECT * FROM life_internal_thought
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND user_id = sqlc.arg(user_id)
+  AND companion_agent_id = sqlc.arg(companion_agent_id)
+  AND status = 'active'
+ORDER BY last_developed_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
 
 -- name: UpsertLifeInternalThought :one
 INSERT INTO life_internal_thought (
@@ -626,21 +812,77 @@ FROM due
 WHERE j.id = due.id
 RETURNING j.*;
 
+-- Fenced claim used by the cognition worker. The legacy claim above remains
+-- available to older integrations, while new work always carries a token and
+-- the context version observed at claim time.
+-- name: ClaimDueLifeCognitionJobsFenced :many
+WITH due AS (
+    SELECT candidate.id
+    FROM life_cognition_job candidate
+    WHERE candidate.status IN ('queued', 'failed')
+      AND candidate.scheduled_at <= now()
+      AND candidate.attempt < candidate.max_attempts
+      AND (candidate.lease_until IS NULL OR candidate.lease_until < now())
+      AND (
+          candidate.job_type <> 'understand_materials'
+          OR NOT EXISTS (
+              SELECT 1 FROM life_cognition_job running
+              WHERE running.workspace_id = candidate.workspace_id
+                AND running.user_id = candidate.user_id
+                AND running.job_type = 'understand_materials'
+                AND running.status = 'running'
+                AND running.lease_until > now()
+          )
+      )
+    ORDER BY candidate.scheduled_at, candidate.created_at, candidate.id
+    FOR UPDATE OF candidate SKIP LOCKED
+    LIMIT $1
+)
+UPDATE life_cognition_job j
+SET status = 'running', started_at = now(), attempt = j.attempt + 1,
+    error = '', claim_token = gen_random_uuid()::text,
+    lease_until = now() + interval '10 minutes',
+    context_version = COALESCE((
+        SELECT state.version FROM life_context_state state
+        WHERE state.workspace_id = j.workspace_id AND state.user_id = j.user_id
+    ), 1),
+    processing_cursor = COALESCE(j.input->>'processing_cursor', j.dedupe_key),
+    source_ids = COALESCE(j.input->'material_ids', j.input->'source_ids', '[]'::jsonb),
+    updated_at = now()
+FROM due
+WHERE j.id = due.id
+RETURNING j.*;
+
 -- name: AttachLifeCognitionJobTask :exec
 UPDATE life_cognition_job
 SET task_id = $2, updated_at = now()
 WHERE id = $1 AND status = 'running';
+
+-- name: AttachLifeCognitionJobTaskFenced :execrows
+UPDATE life_cognition_job
+SET task_id = sqlc.arg(task_id), updated_at = now()
+WHERE id = sqlc.arg(id) AND status = 'running' AND claim_token = sqlc.arg(claim_token)
+  AND lease_until > now() AND context_version = sqlc.arg(context_version);
 
 -- name: UpdateRunningLifeCognitionJobInput :exec
 UPDATE life_cognition_job
 SET input = $2, updated_at = now()
 WHERE id = $1 AND status = 'running';
 
+-- name: UpdateRunningLifeCognitionJobInputFenced :execrows
+UPDATE life_cognition_job
+SET input = sqlc.arg(input), updated_at = now()
+WHERE id = sqlc.arg(id) AND status = 'running' AND claim_token = sqlc.arg(claim_token)
+  AND lease_until > now() AND context_version = sqlc.arg(context_version);
+
 -- name: CreateLifeCognitionAgentTask :one
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, status, priority, context, initiator_user_id,
-    force_fresh_session, trigger_summary
-) VALUES ($1, $2, 'queued', 0, $3, $4, true, $5)
+    force_fresh_session, trigger_summary, id
+)
+SELECT $1, $2, 'queued', 0, $3, $4, true, $5,
+       COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
+WHERE lock_task_owner_rows($1, NULL, $2)
 RETURNING *;
 
 -- name: CompleteLifeCognitionJob :one
@@ -649,14 +891,125 @@ SET status = 'completed', output = $4, completed_at = now(), updated_at = now()
 WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND status = 'running'
 RETURNING *;
 
+-- name: CompleteLifeCognitionJobFenced :one
+UPDATE life_cognition_job
+SET status = 'completed', output = sqlc.arg(output), output_summary = sqlc.arg(output_summary),
+    completed_at = now(), claim_token = NULL, lease_until = NULL, updated_at = now()
+WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id) AND user_id = sqlc.arg(user_id) AND status = 'running'
+  AND claim_token = sqlc.arg(claim_token) AND lease_until > now()
+  AND context_version = sqlc.arg(context_version)
+RETURNING *;
+
 -- name: FailLifeCognitionJob :exec
 UPDATE life_cognition_job
 SET status = CASE WHEN attempt >= max_attempts THEN 'cancelled' ELSE 'failed' END,
-    error = $2, scheduled_at = now() + interval '5 minutes', updated_at = now()
+    error = $2, scheduled_at = now() + interval '5 minutes',
+    claim_token = NULL, lease_until = NULL, task_id = NULL, updated_at = now()
 WHERE id = $1;
+
+-- name: FailLifeCognitionJobFenced :execrows
+UPDATE life_cognition_job
+SET status = CASE WHEN attempt >= max_attempts THEN 'cancelled' ELSE 'failed' END,
+    error = sqlc.arg(error), scheduled_at = now() + interval '5 minutes',
+    claim_token = NULL, lease_until = NULL, task_id = NULL, updated_at = now()
+WHERE id = sqlc.arg(id) AND claim_token = sqlc.arg(claim_token) AND status = 'running'
+  AND lease_until > now() AND context_version = sqlc.arg(context_version);
+
+-- Recovery is deliberately split into three queries.  The worker wraps them
+-- in one transaction, which lets it record the task terminal event before the
+-- reclaimed claim becomes visible.  Keeping the row lock in the first query
+-- also makes two workers converge on one recovery winner.
+-- name: ClaimExpiredLifeCognitionJobForRecovery :one
+SELECT * FROM life_cognition_job
+WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= now()
+ORDER BY lease_until, id
+FOR UPDATE SKIP LOCKED
+LIMIT 1;
+
+-- name: RecoverExpiredLifeCognitionTask :one
+UPDATE agent_task_queue
+SET status = 'cancelled', completed_at = now(),
+    error = COALESCE(NULLIF(error, ''), 'life cognition lease expired and was reclaimed'),
+    failure_reason = COALESCE(NULLIF(failure_reason, ''), 'runtime_recovery'),
+    prepare_lease_expires_at = NULL
+WHERE id = $1
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+RETURNING *;
+
+-- name: RecoverExpiredLifeCognitionJob :one
+UPDATE life_cognition_job
+SET status = CASE WHEN attempt >= max_attempts THEN 'cancelled' ELSE 'failed' END,
+    error = 'cognition lease expired and was reclaimed',
+    scheduled_at = CASE WHEN attempt >= max_attempts THEN scheduled_at ELSE now() END,
+    claim_token = NULL, lease_until = NULL, task_id = NULL, updated_at = now()
+WHERE id = $1 AND status = 'running' AND lease_until IS NOT NULL AND lease_until <= now()
+RETURNING *;
+
+-- name: BumpLifeContextVersion :one
+INSERT INTO life_context_state (workspace_id, user_id, version, updated_at)
+VALUES (sqlc.arg(workspace_id), sqlc.arg(user_id), 2, now())
+ON CONFLICT (workspace_id, user_id) DO UPDATE
+SET version = life_context_state.version + 1, updated_at = now()
+RETURNING *;
+
+-- name: EnsureLifeContextState :exec
+INSERT INTO life_context_state (workspace_id, user_id, version)
+VALUES (sqlc.arg(workspace_id), sqlc.arg(user_id), 1)
+ON CONFLICT (workspace_id, user_id) DO NOTHING;
+
+-- name: LockLifeContextState :one
+SELECT * FROM life_context_state
+WHERE workspace_id = sqlc.arg(workspace_id) AND user_id = sqlc.arg(user_id)
+FOR UPDATE;
+
+-- name: UpsertLifeChronicleCursor :one
+INSERT INTO life_chronicle_cursor (
+    workspace_id, user_id, period_kind, next_period_start, last_processed_at
+) VALUES (
+    sqlc.arg(workspace_id), sqlc.arg(user_id), sqlc.arg(period_kind),
+    sqlc.arg(next_period_start), sqlc.narg(last_processed_at)
+)
+ON CONFLICT (workspace_id, user_id, period_kind) DO UPDATE
+SET next_period_start = GREATEST(life_chronicle_cursor.next_period_start, EXCLUDED.next_period_start),
+    last_processed_at = COALESCE(EXCLUDED.last_processed_at, life_chronicle_cursor.last_processed_at),
+    updated_at = now()
+RETURNING *;
+
+-- name: ListLifeChronicleCursors :many
+SELECT * FROM life_chronicle_cursor
+WHERE workspace_id = sqlc.arg(workspace_id) AND user_id = sqlc.arg(user_id)
+ORDER BY period_kind;
 
 -- name: GetLifeCognitionJobForTask :one
 SELECT * FROM life_cognition_job WHERE task_id = $1;
+
+-- name: GetLifeCognitionJobForTaskForUpdate :one
+-- Lock the job before a governed task terminal transition.  Structured Life
+-- completion and failure both use the job row as their fencing authority, so
+-- taking this lock first gives both paths one deterministic order.
+SELECT * FROM life_cognition_job WHERE task_id = $1 FOR UPDATE;
+
+-- name: FailLifeCognitionJobForTask :execrows
+-- Legacy Life claims have no token.  The task id and running status still
+-- fence the update so a stale daemon cannot fail a newer/reused job row.
+UPDATE life_cognition_job
+SET status = CASE WHEN attempt >= max_attempts THEN 'cancelled' ELSE 'failed' END,
+    error = sqlc.arg(error), scheduled_at = now() + interval '5 minutes',
+    claim_token = NULL, lease_until = NULL, task_id = NULL, updated_at = now()
+WHERE id = sqlc.arg(id) AND task_id = sqlc.arg(task_id) AND status = 'running';
+
+-- name: FailLifeCognitionJobForTaskFenced :execrows
+-- A claimed task may report a terminal provider error just after its lease
+-- deadline.  The claim token, task id and context version still prove which
+-- worker owns the row; unlike the polling failure query this terminal path
+-- intentionally does not require lease_until > now().
+UPDATE life_cognition_job
+SET status = CASE WHEN attempt >= max_attempts THEN 'cancelled' ELSE 'failed' END,
+    error = sqlc.arg(error), scheduled_at = now() + interval '5 minutes',
+    claim_token = NULL, lease_until = NULL, task_id = NULL, updated_at = now()
+WHERE id = sqlc.arg(id) AND task_id = sqlc.arg(task_id) AND status = 'running'
+  AND claim_token = sqlc.arg(claim_token)
+  AND context_version = sqlc.arg(context_version);
 
 -- name: ListRunningLifeCognitionJobsWithTask :many
 SELECT j.*, t.status AS task_status, t.error AS task_error, t.result AS task_result
@@ -675,7 +1028,9 @@ LIMIT $3;
 -- name: RetryLifeCognitionJob :one
 UPDATE life_cognition_job
 SET status = 'queued', attempt = 0, task_id = NULL, error = '',
-    scheduled_at = now(), started_at = NULL, completed_at = NULL, updated_at = now()
+    scheduled_at = now(), started_at = NULL, completed_at = NULL,
+    claim_token = NULL, lease_until = NULL, output = NULL, output_summary = NULL,
+    processing_cursor = '', source_ids = '[]'::jsonb, updated_at = now()
 WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND status = 'cancelled'
 RETURNING *;
 
@@ -775,6 +1130,14 @@ SELECT * FROM life_module
 WHERE workspace_id = $1 AND user_id = $2
 ORDER BY updated_at DESC;
 
+-- name: ListLifeModulesForContext :many
+SELECT * FROM life_module
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND user_id = sqlc.arg(user_id)
+  AND status = 'active'
+ORDER BY updated_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
+
 -- name: GetLifeModuleForUser :one
 SELECT * FROM life_module WHERE id = $1 AND workspace_id = $2 AND user_id = $3;
 
@@ -864,6 +1227,12 @@ WHERE o.id = $1;
 SELECT * FROM life_observer_knowledge
 WHERE observer_id = $1 ORDER BY created_at;
 
+-- name: ListLifeObserverKnowledgeForContext :many
+SELECT * FROM life_observer_knowledge
+WHERE observer_id = sqlc.arg(observer_id)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
+
 -- name: GetLifeObserverKnowledgeForUser :one
 SELECT k.* FROM life_observer_knowledge k
 JOIN life_observer o ON o.id = k.observer_id
@@ -887,6 +1256,16 @@ JOIN life_observer o ON o.id = j.observer_id
 WHERE o.workspace_id = $1 AND o.user_id = $2 AND j.status = 'published'
 ORDER BY j.published_at DESC;
 
+-- name: ListPublishedLifeObserverJudgementsForContext :many
+SELECT j.*, o.name AS observer_name
+FROM life_observer_judgement j
+JOIN life_observer o ON o.id = j.observer_id
+WHERE o.workspace_id = sqlc.arg(workspace_id)
+  AND o.user_id = sqlc.arg(user_id)
+  AND j.status = 'published'
+ORDER BY j.published_at DESC, j.id DESC
+LIMIT sqlc.arg('limit')::int;
+
 -- name: ListLifeObserverJudgementsForUser :many
 SELECT j.*, o.name AS observer_name
 FROM life_observer_judgement j
@@ -898,6 +1277,14 @@ ORDER BY j.created_at DESC;
 SELECT * FROM life_observation_topic
 WHERE workspace_id = $1 AND user_id = $2
 ORDER BY created_at DESC;
+
+-- name: ListLifeObservationTopicsForContext :many
+SELECT * FROM life_observation_topic
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND user_id = sqlc.arg(user_id)
+  AND status NOT IN ('archived', 'resolved')
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
 
 -- name: UpdateLifeObservationTopic :one
 UPDATE life_observation_topic
@@ -968,6 +1355,15 @@ WHERE workspace_id = $1 AND user_id = $2 AND status = 'published'
   AND (period_kind IN ('month', 'year', 'event') OR period_end >= now() - interval '90 days')
 ORDER BY period_start DESC, id DESC;
 
+-- name: ListLifeChronicleContextEntriesLimited :many
+SELECT * FROM life_chronicle_entry
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND user_id = sqlc.arg(user_id)
+  AND status = 'published'
+  AND (period_kind IN ('month', 'year', 'event') OR period_end >= now() - interval '90 days')
+ORDER BY period_start DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
+
 -- name: CreateLifeChronicleEvidenceLink :exec
 INSERT INTO life_chronicle_evidence (entry_id, source_type, source_id)
 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING;
@@ -994,3 +1390,31 @@ UPDATE life_upgrade_evaluation
 SET status = $4, result = $5, rollback_recommended = $6, completed_at = now()
 WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND status = 'running'
 RETURNING *;
+-- name: SetLifeAgentModel :execrows
+-- Life owns the model choice for its bound agents. This narrow write is used
+-- only while binding a CodeBuddy runtime whose model was left at runtime
+-- default; ordinary agent edits continue to use the normal Agent API.
+UPDATE agent
+SET model = sqlc.arg(model), updated_at = now()
+WHERE id = sqlc.arg(agent_id) AND workspace_id = sqlc.arg(workspace_id) AND kind = 'user';
+
+-- name: LockAgentForLifeBinding :one
+SELECT * FROM agent
+WHERE id = sqlc.arg(agent_id) AND workspace_id = sqlc.arg(workspace_id)
+  AND kind = 'user' AND archived_at IS NULL
+FOR UPDATE;
+
+-- name: GetLifeObserverJudgementForUser :one
+SELECT j.* FROM life_observer_judgement j
+JOIN life_observer o ON o.id = j.observer_id
+WHERE j.id = sqlc.arg(id) AND o.workspace_id = sqlc.arg(workspace_id)
+  AND o.user_id = sqlc.arg(user_id);
+
+-- name: IsLifeAgent :one
+SELECT EXISTS (
+    SELECT 1 FROM companion_profile profile
+    WHERE profile.workspace_id = sqlc.arg(workspace_id) AND profile.agent_id = sqlc.arg(agent_id)
+    UNION ALL
+    SELECT 1 FROM life_observer observer
+    WHERE observer.workspace_id = sqlc.arg(workspace_id) AND observer.agent_id = sqlc.arg(agent_id)
+);

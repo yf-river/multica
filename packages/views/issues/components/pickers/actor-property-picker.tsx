@@ -24,9 +24,8 @@ import { PropertyPicker, PickerItem, PickerSection, PickerEmpty } from "./proper
  * Two properties this must hold, both load-bearing:
  *
  *   1. `current` is the RAW stored list, so entries whose kind this build does
- *      not understand pass through untouched. An installed desktop client
- *      talking to a newer backend must not delete them just because the user
- *      ticked a member.
+ *      not understand pass through untouched. An installed client talking to a
+ *      newer backend must not delete them just because the user ticked a member.
  *   2. Insertion order survives. The server does not canonicalize actor lists
  *      (unlike multi_select), so the order here is the order that persists.
  */

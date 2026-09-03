@@ -11,20 +11,21 @@ import { useAuthStore } from "@/data/auth-store";
 import { mapAuthError } from "@/lib/auth-error";
 
 export default function Login() {
-  const sendCode = useAuthStore((s) => s.sendCode);
-  const [email, setEmail] = useState("");
+  const login = useAuthStore((s) => s.login);
+  const [account, setAccount] = useState("");
+  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const onSubmit = async () => {
-    const trimmed = email.trim();
-    if (!trimmed) return;
+    const trimmed = account.trim();
+    if (!trimmed || !password) return;
     void Haptics.selectionAsync();
     setSubmitting(true);
     setError(null);
     try {
-      await sendCode(trimmed);
-      router.push({ pathname: "/verify", params: { email: trimmed } });
+      await login(trimmed, password);
+      router.replace("/");
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       setError(mapAuthError(err, "Couldn't send the code. Try again."));
@@ -46,23 +47,20 @@ export default function Login() {
               <Text className="text-2xl font-semibold text-foreground">
                 Sign in to Multica
               </Text>
-              <Text className="text-sm text-muted-foreground text-center">
-                Enter your email and we&apos;ll send you a verification code.
-              </Text>
+              <Text className="text-sm text-muted-foreground text-center">Enter your account and password.</Text>
             </View>
           </View>
 
           <View className="gap-3">
             <TextField
               autoCapitalize="none"
-              autoComplete="email"
+              autoComplete="username"
               autoFocus
-              keyboardType="email-address"
-              placeholder="you@example.com"
-              value={email}
-              onChangeText={setEmail}
+              placeholder="Account"
+              value={account}
+              onChangeText={setAccount}
               onSubmitEditing={onSubmit}
-              returnKeyType="send"
+              returnKeyType="next"
               editable={!submitting}
               invalid={!!error}
             />
@@ -71,12 +69,13 @@ export default function Login() {
             ) : null}
           </View>
 
+          <TextField secureTextEntry placeholder="Password" value={password} onChangeText={setPassword} editable={!submitting} invalid={!!error} />
           <Button
             size="lg"
-            disabled={submitting || !email.trim()}
+            disabled={submitting || !account.trim() || !password}
             onPress={onSubmit}
           >
-            <Text>{submitting ? "Sending..." : "Send code"}</Text>
+            <Text>{submitting ? "Signing in..." : "Sign in"}</Text>
           </Button>
         </View>
       </KeyboardAvoidingView>

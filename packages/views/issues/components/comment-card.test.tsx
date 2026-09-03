@@ -16,9 +16,8 @@ vi.mock("@multica/core/api", () => ({
   PreviewUnsupportedError: class extends Error {},
 }));
 
-// HtmlAttachmentPreview (kind="html" dispatch from AttachmentBlock) reads
-// useNavigation() + useWorkspaceSlug() for the Open-in-new-tab button.
-// Mock both so the standalone-attachment-routes-to-iframe test does not
+// HtmlAttachmentPreview reads useNavigation() + useWorkspaceSlug() for the
+// browser-tab button. Mock both so the standalone-attachment-routes-to-iframe test does not
 // need the surrounding NavigationProvider / WorkspaceSlugProvider tree.
 vi.mock("../../navigation", () => ({
   useNavigation: () => ({
@@ -28,7 +27,6 @@ vi.mock("../../navigation", () => ({
     pathname: "/acme/issues",
     searchParams: new URLSearchParams(),
     hash: "",
-    openInNewTab: vi.fn(),
     getShareableUrl: (p: string) => `https://app.example${p}`,
   }),
 }));

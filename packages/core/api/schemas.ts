@@ -1035,6 +1035,7 @@ export const EMPTY_COMMENT: Comment = {
 const CommentTriggerPreviewAgentSchema = z.object({
   id: z.string(),
   name: z.string().default(""),
+  account: z.string().default(""),
   avatar_url: z.string().optional(),
   source: z.string().default(""),
   reason: z.string().default(""),
@@ -2364,6 +2365,7 @@ export const UserSchema = z.object({
 export const EMPTY_USER: User = {
   id: "",
   name: "",
+  account: "",
   email: "",
   avatar_url: null,
   onboarded_at: null,

@@ -20,6 +20,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -523,8 +525,6 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create skill: "+err.Error())
 		return
 	}
-	actorType, actorID := h.resolveActor(r, creatorID, workspaceID)
-	h.publish(protocol.EventSkillCreated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -645,18 +645,27 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit")
-		return
-	}
-
 	resp := SkillWithFilesResponse{
 		SkillResponse: skillToResponse(skill),
 		Files:         fileResps,
 	}
 	wsID := h.resolveWorkspaceID(r)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), wsID)
-	h.publish(protocol.EventSkillUpdated, wsID, actorType, actorID, map[string]any{"skill": resp})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+		Type:           protocol.EventSkillUpdated,
+		IdempotencyKey: "skill:updated:" + uuidToString(skill.ID) + ":" + skill.UpdatedAt.Time.UTC().Format("20060102150405.999999999"),
+		StreamKey:      "skill:" + uuidToString(skill.ID), WorkspaceID: wsID, ActorType: actorType, ActorID: actorID,
+		Payload: map[string]any{"skill": resp},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record skill event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -688,12 +697,22 @@ func (h *Handler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete skill")
 		return
 	}
+	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(skill.WorkspaceID))
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+		Type:           protocol.EventSkillDeleted,
+		IdempotencyKey: "skill:deleted:" + uuidToString(skill.ID),
+		StreamKey:      "skill:" + uuidToString(skill.ID), WorkspaceID: uuidToString(skill.WorkspaceID), ActorType: actorType, ActorID: actorID,
+		Payload: map[string]any{"skill_id": uuidToString(skill.ID)},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record skill event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit skill deletion")
 		return
 	}
-	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(skill.WorkspaceID))
-	h.publish(protocol.EventSkillDeleted, uuidToString(skill.WorkspaceID), actorType, actorID, map[string]any{"skill_id": uuidToString(skill.ID)})
+	h.publishEvent(event)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -2227,8 +2246,6 @@ func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Requ
 			})
 			return
 		}
-		actorType, actorID := h.resolveActor(r, creatorID, workspaceID)
-		h.publish(protocol.EventSkillUpdated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 		writeJSON(w, http.StatusOK, SkillImportResult{Status: "updated", Skill: &resp})
 	case importOnConflictRename:
 		resp, err := h.createRenamedImportedSkill(r.Context(), workspaceUUID, creatorUUID, name, imported, config, files)
@@ -2240,8 +2257,6 @@ func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Requ
 			})
 			return
 		}
-		actorType, actorID := h.resolveActor(r, creatorID, workspaceID)
-		h.publish(protocol.EventSkillCreated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 		writeJSON(w, http.StatusCreated, SkillImportResult{
 			Status:        "created",
 			Reason:        "renamed to avoid an existing skill",
@@ -2416,8 +2431,6 @@ func (h *Handler) finishSkillImport(w http.ResponseWriter, r *http.Request, work
 		writeError(w, http.StatusInternalServerError, "failed to create skill: "+err.Error())
 		return
 	}
-	actorType, actorID := h.resolveActor(r, creatorID, workspaceID)
-	h.publish(protocol.EventSkillCreated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 	if structuredResult {
 		writeJSON(w, http.StatusCreated, SkillImportResult{Status: "created", Skill: &resp})
 		return
@@ -2604,13 +2617,19 @@ func (h *Handler) SetAgentSkills(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAgentSkillsDomainEvent(agent, actorType, actorID, "set", skillUUIDs))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record agent skill event")
+		return
+	}
 
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit")
 		return
 	}
 
-	h.writeUpdatedAgentSkills(w, r, agent)
+	h.writeUpdatedAgentSkills(w, r, agent, updatedEvent)
 }
 
 func (h *Handler) AddAgentSkills(w http.ResponseWriter, r *http.Request) {
@@ -2653,13 +2672,19 @@ func (h *Handler) AddAgentSkills(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAgentSkillsDomainEvent(agent, actorType, actorID, "add", skillUUIDs))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record agent skill event")
+		return
+	}
 
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit")
 		return
 	}
 
-	h.writeUpdatedAgentSkills(w, r, agent)
+	h.writeUpdatedAgentSkills(w, r, agent, updatedEvent)
 }
 
 func (h *Handler) SetAgentSkillEnabled(w http.ResponseWriter, r *http.Request) {
@@ -2683,7 +2708,14 @@ func (h *Handler) SetAgentSkillEnabled(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "enabled is required")
 		return
 	}
-	rows, err := h.Queries.SetAgentSkillEnabled(r.Context(), db.SetAgentSkillEnabledParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	rows, err := qtx.SetAgentSkillEnabled(r.Context(), db.SetAgentSkillEnabledParams{
 		AgentID: agent.ID,
 		SkillID: skillID,
 		Enabled: *req.Enabled,
@@ -2696,8 +2728,18 @@ func (h *Handler) SetAgentSkillEnabled(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "agent skill not found")
 		return
 	}
+	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAgentSkillsDomainEvent(agent, actorType, actorID, "enable", []pgtype.UUID{skillID}))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record agent skill event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit")
+		return
+	}
 
-	h.writeUpdatedAgentSkills(w, r, agent)
+	h.writeUpdatedAgentSkills(w, r, agent, updatedEvent)
 }
 
 func (h *Handler) RemoveAgentSkill(w http.ResponseWriter, r *http.Request) {
@@ -2713,14 +2755,31 @@ func (h *Handler) RemoveAgentSkill(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.Queries.RemoveAgentSkill(r.Context(), db.RemoveAgentSkillParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.RemoveAgentSkill(r.Context(), db.RemoveAgentSkillParams{
 		AgentID: agent.ID,
 		SkillID: skillID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to remove agent skill")
 		return
 	}
-	h.writeUpdatedAgentSkills(w, r, agent)
+	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAgentSkillsDomainEvent(agent, actorType, actorID, "remove", []pgtype.UUID{skillID}))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record agent skill event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit")
+		return
+	}
+	h.writeUpdatedAgentSkills(w, r, agent, updatedEvent)
 }
 
 func (h *Handler) validateAgentSkillIDsInWorkspace(w http.ResponseWriter, r *http.Request, agent db.Agent, skillUUIDs []pgtype.UUID) bool {
@@ -2742,7 +2801,7 @@ func (h *Handler) validateAgentSkillIDsInWorkspace(w http.ResponseWriter, r *htt
 	return true
 }
 
-func (h *Handler) writeUpdatedAgentSkills(w http.ResponseWriter, r *http.Request, agent db.Agent) {
+func (h *Handler) writeUpdatedAgentSkills(w http.ResponseWriter, r *http.Request, agent db.Agent, event events.Event) {
 	skills, err := h.Queries.ListAgentSkillSummaries(r.Context(), agent.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agent skills")
@@ -2757,7 +2816,11 @@ func (h *Handler) writeUpdatedAgentSkills(w http.ResponseWriter, r *http.Request
 		)
 		resp[i].Enabled = &s.Enabled
 	}
-	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
-	h.publish(protocol.EventAgentStatus, uuidToString(agent.WorkspaceID), actorType, actorID, map[string]any{"agent_id": uuidToString(agent.ID), "skills": resp})
+	if event.Payload != nil {
+		if payload, ok := event.Payload.(map[string]any); ok {
+			payload["skills"] = resp
+		}
+		h.publishEvent(event)
+	}
 	writeJSON(w, http.StatusOK, resp)
 }

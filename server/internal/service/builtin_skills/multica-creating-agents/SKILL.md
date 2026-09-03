@@ -209,7 +209,7 @@ configured still shows three built-in generic defaults in that empty state, so
 
 `model` is a first-class persisted column the daemon reads directly.
 `custom_args` are normally raw provider CLI args. The CLI help notes that some
-providers (codex app-server, openclaw) reject `--model` inside `custom_args` —
+providers (including codex app-server) reject `--model` inside `custom_args` —
 but that is documented CLI guidance, not a server-enforced invariant; nothing
 in the create handler inspects `custom_args` for a model flag. Provider
 backends may consume protocol selectors before launch:

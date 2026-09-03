@@ -13,10 +13,7 @@ import {
 } from "./definitions";
 import {
   configureShortcutPlatform,
-  configureShortcutRuntime,
   detectShortcutPlatform,
-  detectShortcutRuntime,
-  getShortcutRuntime,
 } from "./platform";
 
 function keyEvent(
@@ -35,7 +32,6 @@ function keyEvent(
 
 afterEach(() => {
   configureShortcutPlatform(null);
-  configureShortcutRuntime(null);
   vi.unstubAllGlobals();
 });
 
@@ -194,94 +190,68 @@ describe("keyboard shortcut definitions", () => {
     ).toBe(false);
   });
 
-  it("reserves the preferences chord on every runtime", () => {
-    // Desktop opens Settings from the main process (before-input-event) and
-    // browsers open their own settings, so Mod+, can never be recorded for a
-    // product action.
+  it("reserves the preferences chord", () => {
+    // Browsers own their settings shortcut, so Mod+, can never be recorded
+    // for a product action.
     const chord = createShortcutChord(",", { primary: true });
-    expect(isReservedShortcut(chord, "macos", "desktop")).toBe(true);
-    expect(isReservedShortcut(chord, "macos", "web")).toBe(true);
-    expect(isReservedShortcut(chord, "windows", "desktop")).toBe(true);
-    expect(isShortcutAllowedForAction("goSettings", chord, "macos", "desktop")).toBe(false);
+    expect(isReservedShortcut(chord, "macos")).toBe(true);
+    expect(isReservedShortcut(chord, "windows")).toBe(true);
+    expect(isShortcutAllowedForAction("goSettings", chord, "macos")).toBe(false);
     // Only with the primary modifier — a bare comma stays typeable.
-    expect(isReservedShortcut(createShortcutChord(","), "macos", "desktop")).toBe(false);
+    expect(isReservedShortcut(createShortcutChord(","), "macos")).toBe(false);
   });
 
-  it("reserves browser-owned accelerators on web but frees the bare chords on desktop", () => {
+  it("reserves browser-owned accelerators", () => {
     for (const key of ["P", "L", "T", "N", "D", "U"]) {
       const chord = createShortcutChord(key, { primary: true });
-      expect(isReservedShortcut(chord, "macos", "web")).toBe(true);
-      expect(isReservedShortcut(chord, "windows", "web")).toBe(true);
-      expect(isReservedShortcut(chord, "macos", "desktop")).toBe(false);
-      expect(isReservedShortcut(chord, "windows", "desktop")).toBe(false);
-      // Only the bare primary chord opens up — extra modifiers keep the
-      // historical reservation on every runtime.
+      expect(isReservedShortcut(chord, "macos")).toBe(true);
+      expect(isReservedShortcut(chord, "windows")).toBe(true);
+      // Extra modifiers keep the reservation as well.
       for (const extra of [{ shift: true }, { alt: true }, { control: true }]) {
         const variant = createShortcutChord(key, { primary: true, ...extra });
-        expect(isReservedShortcut(variant, "macos", "desktop")).toBe(true);
-        expect(isReservedShortcut(variant, "macos", "web")).toBe(true);
+        expect(isReservedShortcut(variant, "macos")).toBe(true);
+        expect(isReservedShortcut(variant, "macos")).toBe(true);
       }
     }
-    // OS-owned combos that motivated the narrowing must stay reserved on
-    // desktop: Option+Cmd+D toggles the macOS Dock, Ctrl+Alt+T opens a
-    // terminal on common Linux desktops.
+    // OS-owned combos remain reserved.
     expect(
       isReservedShortcut(
         createShortcutChord("D", { primary: true, alt: true }),
         "macos",
-        "desktop",
       ),
     ).toBe(true);
     expect(
       isReservedShortcut(
         createShortcutChord("T", { primary: true, alt: true }),
         "linux",
-        "desktop",
       ),
     ).toBe(true);
   });
 
-  it("keeps app-owned and editing accelerators reserved on desktop", () => {
+  it("keeps app-owned and editing accelerators reserved", () => {
     for (const key of ["W", "R", "Q", "A", "C", "V", "X", "Y", "Z", "0", "Minus", "Plus"]) {
       expect(
-        isReservedShortcut(createShortcutChord(key, { primary: true }), "macos", "desktop"),
+        isReservedShortcut(createShortcutChord(key, { primary: true }), "macos"),
       ).toBe(true);
     }
-    expect(isReservedShortcut(createShortcutChord("F5"), "windows", "desktop")).toBe(true);
+    expect(isReservedShortcut(createShortcutChord("F5"), "windows")).toBe(true);
     expect(
-      isReservedShortcut(createShortcutChord("Space", { primary: true }), "macos", "desktop"),
+      isReservedShortcut(createShortcutChord("Space", { primary: true }), "macos"),
     ).toBe(true);
   });
 
-  it("allows recording bare Cmd/Ctrl+P for an action on desktop only", () => {
+  it("rejects browser-owned accelerators for product actions", () => {
     const cmdP = createShortcutChord("P", { primary: true });
-    expect(isShortcutAllowedForAction("openSearch", cmdP, "macos", "desktop")).toBe(true);
-    expect(isShortcutAllowedForAction("openSearch", cmdP, "macos", "web")).toBe(false);
-    expect(isShortcutAllowedForAction("goIssues", cmdP, "windows", "desktop")).toBe(true);
-    // Modifier variants keep the historical reservation even on desktop.
+    expect(isShortcutAllowedForAction("openSearch", cmdP, "macos")).toBe(false);
+    expect(isShortcutAllowedForAction("goIssues", cmdP, "windows")).toBe(false);
     expect(
       isShortcutAllowedForAction(
         "openSearch",
         createShortcutChord("P", { primary: true, shift: true }),
         "macos",
-        "desktop",
       ),
     ).toBe(false);
-    // Send stays locked to Enter / Mod+Enter regardless of runtime.
-    expect(isShortcutAllowedForAction("send", cmdP, "macos", "desktop")).toBe(false);
-  });
-
-  it("detects the desktop runtime from preload globals with a configure override", () => {
-    expect(detectShortcutRuntime()).toBe("web");
-    vi.stubGlobal("window", { desktopAPI: {} });
-    expect(detectShortcutRuntime()).toBe("desktop");
-    vi.stubGlobal("window", { electron: {} });
-    expect(detectShortcutRuntime()).toBe("desktop");
-    vi.stubGlobal("window", {});
-    expect(detectShortcutRuntime()).toBe("web");
-    expect(getShortcutRuntime()).toBe("web");
-    configureShortcutRuntime("desktop");
-    expect(getShortcutRuntime()).toBe("desktop");
+    expect(isShortcutAllowedForAction("send", cmdP, "macos")).toBe(false);
   });
 
   it("rejects modifier-only, composition-only, and unidentified key events", () => {

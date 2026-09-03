@@ -5,8 +5,8 @@ ALTER TABLE public.companion_profile
 
 CREATE TABLE public.life_identity_version (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     version integer NOT NULL,
     status text DEFAULT 'draft' NOT NULL,
     stable_core jsonb DEFAULT '{}' NOT NULL,
@@ -16,7 +16,7 @@ CREATE TABLE public.life_identity_version (
     interests jsonb DEFAULT '[]' NOT NULL,
     change_reason text DEFAULT '' NOT NULL,
     confirmed_at timestamptz,
-    confirmed_by_id uuid REFERENCES public."user"(id) ON DELETE SET NULL,
+    confirmed_by_id uuid,
     created_at timestamptz DEFAULT now() NOT NULL,
     CONSTRAINT life_identity_version_unique UNIQUE (workspace_id, user_id, version),
     CONSTRAINT life_identity_status_check CHECK (status = ANY (ARRAY['draft', 'active', 'superseded'])),
@@ -34,11 +34,8 @@ CREATE TABLE public.life_identity_version (
     )
 );
 
-CREATE UNIQUE INDEX life_identity_one_active
-    ON public.life_identity_version (workspace_id, user_id) WHERE status = 'active';
-
 ALTER TABLE public.companion_profile
-    ADD COLUMN current_identity_version_id uuid REFERENCES public.life_identity_version(id) ON DELETE SET NULL;
+    ADD COLUMN current_identity_version_id uuid;
 
 INSERT INTO public.life_identity_version (
     workspace_id, user_id, version, status, stable_core, relationship_contract,
@@ -70,8 +67,8 @@ WHERE v.workspace_id = cp.workspace_id
 
 CREATE TABLE public.life_relationship_event (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     event_type text NOT NULL,
     status text DEFAULT 'open' NOT NULL,
     user_position text DEFAULT '' NOT NULL,
@@ -79,7 +76,7 @@ CREATE TABLE public.life_relationship_event (
     context text DEFAULT '' NOT NULL,
     revisit_after timestamptz,
     resolution text DEFAULT '' NOT NULL,
-    relationship_change_proposal_id uuid REFERENCES public.life_action_proposal(id) ON DELETE SET NULL,
+    relationship_change_proposal_id uuid,
     resolved_at timestamptz,
     created_at timestamptz DEFAULT now() NOT NULL,
     updated_at timestamptz DEFAULT now() NOT NULL,
@@ -87,13 +84,10 @@ CREATE TABLE public.life_relationship_event (
     CONSTRAINT life_relationship_event_status_check CHECK (status = ANY (ARRAY['open', 'waiting', 'resolved', 'retained_difference']))
 );
 
-CREATE INDEX idx_life_relationship_event_open
-    ON public.life_relationship_event (workspace_id, user_id, status, revisit_after);
-
 CREATE TABLE public.life_material (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     source_type text NOT NULL,
     source_key text NOT NULL,
     source_revision text DEFAULT '1' NOT NULL,
@@ -107,15 +101,12 @@ CREATE TABLE public.life_material (
     CONSTRAINT life_material_source_unique UNIQUE (workspace_id, user_id, source_type, source_key, source_revision)
 );
 
-CREATE INDEX idx_life_material_user_time
-    ON public.life_material (workspace_id, user_id, occurred_at DESC);
-
 -- Every model-generated life record keeps the exact sources that justified it.
 -- This is the deletion graph: forgetting one source can remove every derived
 -- copy without relying on text matching or model judgement.
 CREATE TABLE public.life_derivation (
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     source_type text NOT NULL,
     source_id text NOT NULL,
     target_type text NOT NULL,
@@ -131,13 +122,10 @@ CREATE TABLE public.life_derivation (
     ]))
 );
 
-CREATE INDEX idx_life_derivation_target
-    ON public.life_derivation (workspace_id, user_id, target_type, target_id);
-
 CREATE TABLE public.life_forget_tombstone (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     source_type text NOT NULL,
     source_key text NOT NULL,
     content_hash text NOT NULL,
@@ -149,23 +137,23 @@ ALTER TABLE public.life_memory
     ADD COLUMN scope jsonb DEFAULT '{}' NOT NULL,
     ADD COLUMN last_reviewed_at timestamptz,
     ADD COLUMN review_after timestamptz,
-    ADD COLUMN superseded_by_id uuid REFERENCES public.life_memory(id) ON DELETE SET NULL,
+    ADD COLUMN superseded_by_id uuid,
     ADD CONSTRAINT life_memory_scope_check CHECK (jsonb_typeof(scope) = 'object');
 
 ALTER TABLE public.life_memory_evidence DROP CONSTRAINT life_memory_evidence_source_type_check;
 ALTER TABLE public.life_memory_evidence ADD CONSTRAINT life_memory_evidence_source_type_check
-    CHECK (source_type = ANY (ARRAY['chat_message', 'task', 'comment', 'project', 'manual', 'external', 'memory', 'experiment_round']));
+    CHECK (source_type = ANY (ARRAY['material', 'chat_message', 'task', 'comment', 'project', 'manual', 'external', 'memory', 'experiment_round', 'chronicle', 'observer_knowledge']));
 ALTER TABLE public.life_memory_evidence
     ADD COLUMN stance text DEFAULT 'supports' NOT NULL,
     ADD CONSTRAINT life_memory_evidence_stance_check CHECK (stance = ANY (ARRAY['supports', 'contradicts', 'context']));
 
 ALTER TABLE public.life_chronicle_evidence DROP CONSTRAINT life_chronicle_evidence_source_type_check;
 ALTER TABLE public.life_chronicle_evidence ADD CONSTRAINT life_chronicle_evidence_source_type_check
-    CHECK (source_type = ANY (ARRAY['chat_message', 'task', 'comment', 'project', 'manual', 'external', 'memory', 'experiment_round']));
+    CHECK (source_type = ANY (ARRAY['material', 'chat_message', 'task', 'comment', 'project', 'manual', 'external', 'memory', 'experiment_round', 'chronicle', 'observer_knowledge']));
 
 CREATE TABLE public.life_memory_revision (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    memory_id uuid NOT NULL REFERENCES public.life_memory(id) ON DELETE CASCADE,
+    memory_id uuid NOT NULL,
     revision integer NOT NULL,
     kind text NOT NULL,
     status text NOT NULL,
@@ -187,8 +175,8 @@ CREATE TABLE public.life_memory_revision (
 
 CREATE TABLE public.life_topic (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     title text NOT NULL,
     summary text DEFAULT '' NOT NULL,
     status text DEFAULT 'candidate' NOT NULL,
@@ -206,12 +194,9 @@ CREATE TABLE public.life_topic (
     CONSTRAINT life_topic_time_check CHECK (last_observed_at >= first_observed_at)
 );
 
-CREATE INDEX idx_life_topic_user_status
-    ON public.life_topic (workspace_id, user_id, status, last_observed_at DESC);
-
 CREATE TABLE public.life_topic_memory (
-    topic_id uuid NOT NULL REFERENCES public.life_topic(id) ON DELETE CASCADE,
-    memory_id uuid NOT NULL REFERENCES public.life_memory(id) ON DELETE CASCADE,
+    topic_id uuid NOT NULL,
+    memory_id uuid NOT NULL,
     relation text NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     PRIMARY KEY (topic_id, memory_id),
@@ -220,10 +205,10 @@ CREATE TABLE public.life_topic_memory (
 
 CREATE TABLE public.life_commitment (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
-    source_memory_id uuid REFERENCES public.life_memory(id) ON DELETE SET NULL,
-    issue_id uuid REFERENCES public.issue(id) ON DELETE SET NULL,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    source_memory_id uuid,
+    issue_id uuid,
     content text NOT NULL,
     status text DEFAULT 'candidate' NOT NULL,
     due_at timestamptz,
@@ -237,14 +222,11 @@ CREATE TABLE public.life_commitment (
     CONSTRAINT life_commitment_status_check CHECK (status = ANY (ARRAY['candidate', 'confirmed', 'completed', 'cancelled', 'expired']))
 );
 
-CREATE INDEX idx_life_commitment_due
-    ON public.life_commitment (workspace_id, user_id, status, due_at);
-
 CREATE TABLE public.life_internal_thought (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
-    companion_agent_id uuid NOT NULL REFERENCES public.agent(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    companion_agent_id uuid NOT NULL,
     thought_type text NOT NULL,
     title text NOT NULL,
     content text NOT NULL,
@@ -261,15 +243,15 @@ CREATE TABLE public.life_internal_thought (
 
 CREATE TABLE public.life_cognition_job (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
-    companion_agent_id uuid NOT NULL REFERENCES public.agent(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    companion_agent_id uuid NOT NULL,
     job_type text NOT NULL,
     status text DEFAULT 'queued' NOT NULL,
     dedupe_key text NOT NULL,
     input jsonb DEFAULT '{}' NOT NULL,
     output jsonb,
-    task_id uuid REFERENCES public.agent_task_queue(id) ON DELETE SET NULL,
+    task_id uuid,
     scheduled_at timestamptz DEFAULT now() NOT NULL,
     started_at timestamptz,
     completed_at timestamptz,
@@ -286,16 +268,10 @@ CREATE TABLE public.life_cognition_job (
     CONSTRAINT life_cognition_job_unique UNIQUE (workspace_id, user_id, job_type, dedupe_key)
 );
 
-ALTER TABLE public.life_derivation
-    ADD CONSTRAINT life_derivation_job_id_fkey
-    FOREIGN KEY (job_id) REFERENCES public.life_cognition_job(id) ON DELETE SET NULL;
-
-CREATE INDEX idx_life_cognition_job_due
-    ON public.life_cognition_job (status, scheduled_at) WHERE status IN ('queued', 'failed');
 
 CREATE TABLE public.life_proactive_policy (
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     enabled boolean DEFAULT true NOT NULL,
     timezone text DEFAULT 'Asia/Shanghai' NOT NULL,
     quiet_hours jsonb DEFAULT '{"start":"23:00","end":"08:00"}' NOT NULL,
@@ -333,8 +309,8 @@ ALTER TABLE public.life_action_proposal ADD CONSTRAINT life_action_proposal_type
 
 CREATE TABLE public.life_experiment_observation (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    round_id uuid NOT NULL REFERENCES public.life_experiment_round(id) ON DELETE CASCADE,
-    material_id uuid REFERENCES public.life_material(id) ON DELETE SET NULL,
+    round_id uuid NOT NULL,
+    material_id uuid,
     observation_type text NOT NULL,
     content text NOT NULL,
     captured_by text NOT NULL,
@@ -348,14 +324,11 @@ ALTER TABLE public.life_experiment_round
     ADD COLUMN review_draft jsonb,
     ADD CONSTRAINT life_experiment_round_review_draft_check CHECK (review_draft IS NULL OR jsonb_typeof(review_draft) = 'object');
 
-CREATE INDEX idx_life_experiment_observation_round
-    ON public.life_experiment_observation (round_id, observed_at);
-
 CREATE TABLE public.life_module (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
-    source_experiment_id uuid REFERENCES public.life_experiment(id) ON DELETE SET NULL,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    source_experiment_id uuid,
     name text NOT NULL,
     status text DEFAULT 'proposed' NOT NULL,
     current_version integer DEFAULT 1 NOT NULL,
@@ -369,12 +342,12 @@ CREATE TABLE public.life_module (
 );
 
 CREATE TABLE public.life_module_version (
-    module_id uuid NOT NULL REFERENCES public.life_module(id) ON DELETE CASCADE,
+    module_id uuid NOT NULL,
     version integer NOT NULL,
     definition jsonb NOT NULL,
     change_reason text DEFAULT '' NOT NULL,
     confirmed_at timestamptz NOT NULL,
-    confirmed_by_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE RESTRICT,
+    confirmed_by_id uuid NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     PRIMARY KEY (module_id, version),
     CONSTRAINT life_module_version_definition_check CHECK (jsonb_typeof(definition) = 'object'),
@@ -383,9 +356,9 @@ CREATE TABLE public.life_module_version (
 
 CREATE TABLE public.life_observer (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
-    agent_id uuid NOT NULL REFERENCES public.agent(id) ON DELETE RESTRICT,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
     name text NOT NULL,
     basis_type text NOT NULL,
     status text DEFAULT 'active' NOT NULL,
@@ -402,14 +375,14 @@ CREATE TABLE public.life_observer (
 );
 
 CREATE TABLE public.life_observer_version (
-    observer_id uuid NOT NULL REFERENCES public.life_observer(id) ON DELETE CASCADE,
+    observer_id uuid NOT NULL,
     version integer NOT NULL,
     personality jsonb DEFAULT '{}' NOT NULL,
     perspective jsonb DEFAULT '{}' NOT NULL,
     expression_profile jsonb DEFAULT '{}' NOT NULL,
     change_reason text DEFAULT '' NOT NULL,
     confirmed_at timestamptz NOT NULL,
-    confirmed_by_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE RESTRICT,
+    confirmed_by_id uuid NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     PRIMARY KEY (observer_id, version),
     CONSTRAINT life_observer_version_json_check CHECK (jsonb_typeof(personality) = 'object' AND jsonb_typeof(perspective) = 'object' AND jsonb_typeof(expression_profile) = 'object')
@@ -417,7 +390,7 @@ CREATE TABLE public.life_observer_version (
 
 CREATE TABLE public.life_observer_knowledge (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    observer_id uuid NOT NULL REFERENCES public.life_observer(id) ON DELETE CASCADE,
+    observer_id uuid NOT NULL,
     title text NOT NULL,
     content text NOT NULL,
     source text DEFAULT '' NOT NULL,
@@ -427,7 +400,7 @@ CREATE TABLE public.life_observer_knowledge (
 
 CREATE TABLE public.life_observer_judgement (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    observer_id uuid NOT NULL REFERENCES public.life_observer(id) ON DELETE CASCADE,
+    observer_id uuid NOT NULL,
     status text DEFAULT 'internal' NOT NULL,
     title text NOT NULL,
     content text NOT NULL,
@@ -441,13 +414,10 @@ CREATE TABLE public.life_observer_judgement (
     CONSTRAINT life_observer_judgement_confidence_check CHECK (confidence >= 0 AND confidence <= 1)
 );
 
-CREATE INDEX idx_life_observer_judgement_status
-    ON public.life_observer_judgement (observer_id, status, created_at DESC);
-
 CREATE TABLE public.life_observation_topic (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     title text NOT NULL,
     summary text DEFAULT '' NOT NULL,
     status text DEFAULT 'open' NOT NULL,
@@ -460,8 +430,8 @@ CREATE TABLE public.life_observation_topic (
 );
 
 CREATE TABLE public.life_observation_topic_judgement (
-    topic_id uuid NOT NULL REFERENCES public.life_observation_topic(id) ON DELETE CASCADE,
-    judgement_id uuid NOT NULL REFERENCES public.life_observer_judgement(id) ON DELETE CASCADE,
+    topic_id uuid NOT NULL,
+    judgement_id uuid NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     PRIMARY KEY (topic_id, judgement_id)
 );
@@ -477,13 +447,9 @@ ALTER TABLE public.life_chronicle_entry
     ADD CONSTRAINT life_chronicle_generated_by_check CHECK (generated_by = ANY (ARRAY['user', 'companion', 'system'])),
     ADD CONSTRAINT life_chronicle_revision_positive CHECK (revision > 0);
 
-CREATE UNIQUE INDEX life_chronicle_one_published_period
-    ON public.life_chronicle_entry (workspace_id, user_id, period_kind, period_start, period_end)
-    WHERE status = 'published';
-
 CREATE TABLE public.life_chronicle_revision (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    entry_id uuid NOT NULL REFERENCES public.life_chronicle_entry(id) ON DELETE CASCADE,
+    entry_id uuid NOT NULL,
     revision integer NOT NULL,
     facts text NOT NULL,
     feelings text NOT NULL,
@@ -497,9 +463,9 @@ CREATE TABLE public.life_chronicle_revision (
 
 CREATE TABLE public.life_upgrade_evaluation (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
-    identity_version_id uuid REFERENCES public.life_identity_version(id) ON DELETE SET NULL,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    identity_version_id uuid,
     candidate_label text NOT NULL,
     baseline_label text NOT NULL,
     scenarios jsonb NOT NULL,

@@ -62,13 +62,11 @@ function isWorkspaceScopedPath(pathname: string): boolean {
  * own app into the in-app path it addresses; `null` for anything else.
  *
  * An agent or a user pasting `https://<app-host>/acme/issues/123` means the same
- * destination as `/acme/issues/123`. Without this, the URL reads as external and
- * the desktop app hands it to the system browser instead of opening a tab
- * (MUL-5208).
+ * destination as `/acme/issues/123`. Without this, the URL is treated as
+ * external even though it belongs to the current deployment (MUL-5208).
  *
  * `appOrigin` is the deployment's public app URL, which only the platform layer
- * knows (web: the current origin; desktop: the connected environment's app URL).
- * See `useAppOrigin()`.
+ * knows. See `useAppOrigin()`.
  */
 export function toInternalAppPath(
   href: string,
@@ -124,7 +122,7 @@ const UUID_RE =
  *
  * A project is only ever addressed by UUID — it has no shorthand. An issue has
  * both, and the identifier form is the one that matters most: `copyLink` and
- * `openInNewTab` both build `paths.issueDetail(identifier || id)`, and the
+ * issue-link actions both build `paths.issueDetail(identifier || id)`, and the
  * issue route rewrites a UUID URL back to the identifier, so `MUL-123` is what
  * a user actually copies out of the app or the address bar. Accepting only the
  * UUID here would leave the shape people really paste as a raw URL.

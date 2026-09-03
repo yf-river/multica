@@ -25,11 +25,16 @@ type codebuddyBackend struct {
 // overridden by user-configured custom_args. Overriding these would break
 // the daemon↔codebuddy communication protocol.
 var codebuddyBlockedArgs = map[string]blockedArgMode{
-	"-p":                blockedStandalone, // non-interactive mode
-	"--output-format":   blockedWithValue,  // stream-json protocol
-	"--input-format":    blockedWithValue,  // stream-json protocol
-	"--permission-mode": blockedWithValue,  // bypassPermissions for autonomous operation
-	"--mcp-config":      blockedWithValue,  // set by daemon from agent.mcp_config
+	"-p":                       blockedStandalone, // non-interactive mode
+	"--output-format":          blockedWithValue,  // stream-json protocol
+	"--input-format":           blockedWithValue,  // stream-json protocol
+	"--permission-mode":        blockedWithValue,  // bypassPermissions for autonomous operation
+	"--mcp-config":             blockedWithValue,  // set by daemon from agent.mcp_config
+	"--tools":                  blockedWithValue,  // Life cognition may disable built-ins
+	"--allowedTools":           blockedWithValue,  // never let custom args widen Life access
+	"--disallowedTools":        blockedList,
+	"--strict-mcp-config":      blockedStandalone,
+	"--no-session-persistence": blockedStandalone,
 	// `--effort` is owned by the per-agent thinking_level picker so a
 	// user-supplied custom_arg cannot silently outvote it.
 	"--effort": blockedWithValue,
@@ -58,6 +63,12 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 		// (PermissionUtils.matchPermissionRules), so a comma-joined string
 		// would match nothing despite what the CLI's own help text claims.
 		"--disallowedTools", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
+	}
+	if opts.LifeCognition {
+		// A cognition job is not a coding task. Disable every built-in tool and
+		// load only the task-scoped Life MCP server; this keeps shell/filesystem
+		// access unavailable even when the agent's normal profile grants it.
+		args = append(args, "--tools", "", "--strict-mcp-config", "--no-session-persistence")
 	}
 	// NOTE: --strict-mcp-config is deliberately never passed. It means "only
 	// use servers from --mcp-config", which drops CodeBuddy's user, project

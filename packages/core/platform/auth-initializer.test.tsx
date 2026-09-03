@@ -73,12 +73,12 @@ function renderInitializer({
   api,
   storage = makeStorage({ multica_token: "token-1" }),
   cookieAuth = false,
-  platform = "desktop",
+  platform = "web",
 }: {
   api: ApiClient;
   storage?: StorageAdapter;
   cookieAuth?: boolean;
-  platform?: "desktop" | "web";
+  platform?: "web";
 }) {
   const onLogin = vi.fn();
   const onLogout = vi.fn();

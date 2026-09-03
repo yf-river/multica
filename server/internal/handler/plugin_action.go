@@ -10,13 +10,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
 
@@ -581,7 +582,18 @@ func (h *Handler) CreatePluginComment(w http.ResponseWriter, r *http.Request) {
 		authorID = caller.Installation.ID
 	}
 
-	createdComment, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
+	if h.TxStarter == nil {
+		publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to start comment transaction")
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to create the comment")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	createdComment, err := qtx.CreateComment(r.Context(), db.CreateCommentParams{
 		ID:          dbid.NewV7(),
 		IssueID:     issue.ID,
 		WorkspaceID: caller.WorkspaceID,
@@ -603,15 +615,36 @@ func (h *Handler) CreatePluginComment(w http.ResponseWriter, r *http.Request) {
 	// reply into a resolved thread without re-opening it — a comment that lands
 	// as the user should behave like the user's, minus only what was refused on
 	// purpose (mention dispatch).
-	h.publish(protocol.EventCommentCreated, uuidToString(caller.WorkspaceID), authorType, uuidToString(authorID), map[string]any{
-		"comment":             commentToResponse(comment, nil, nil),
-		"issue_title":         issue.Title,
-		"issue_assignee_type": textToPtr(issue.AssigneeType),
-		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),
-		"issue_status":        issue.Status,
-	})
+	commentResponse := commentToResponse(comment, nil, nil)
+	commentResponse.IssueRevision = createdComment.IssueRevision
+	createdEvent, err := eventoutbox.Enqueue(r.Context(), qtx, buildCommentCreatedEvent(issue, commentResponse, authorType, uuidToString(authorID)))
+	if err != nil {
+		publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to create the comment")
+		return
+	}
+	var unresolvedEvent events.Event
+	var reopened bool
 	if rootComment != nil {
-		h.TaskService.AutoUnresolveThreadOnReply(r.Context(), rootComment, uuidToString(caller.WorkspaceID), authorType, uuidToString(authorID))
+		unresolvedEvent, reopened, err = service.UnresolveThreadOnReply(r.Context(), qtx, rootComment, uuidToString(caller.WorkspaceID), authorType, uuidToString(authorID))
+		if err != nil {
+			publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to create the comment")
+			return
+		}
+		if reopened {
+			unresolvedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, unresolvedEvent)
+			if err != nil {
+				publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to create the comment")
+				return
+			}
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to create the comment")
+		return
+	}
+	h.publishEvent(createdEvent)
+	if reopened {
+		h.publishEvent(unresolvedEvent)
 	}
 
 	writeJSON(w, http.StatusCreated, publicPluginComment(comment))

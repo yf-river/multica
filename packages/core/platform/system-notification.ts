@@ -1,13 +1,10 @@
 "use client";
 
-// Native system notification bridge for the WEB app.
+// Browser notification bridge for the web app.
 //
-// The desktop app renders OS banners through its Electron main process
-// (`window.desktopAPI.showNotification`); the web app has no such bridge, so it
-// uses the browser Notification API here. `handleInboxNew` (realtime sync) is
-// the single decision point — it already gates on focus + the source
-// workspace's mute preference — and calls `showWebNotification` as the web path
-// when no `desktopAPI` is present.
+// `handleInboxNew` (realtime sync) is the single decision point — it already
+// gates on focus and the source workspace's mute preference — and calls
+// `showWebNotification` to render the banner.
 //
 // Lives in `packages/core` (not `packages/views`) because the caller
 // (`handleInboxNew`) lives in core and `views` cannot be imported from core
@@ -37,10 +34,9 @@ type ClickHandler = (payload: SystemNotificationPayload) => void;
 let clickHandler: ClickHandler | null = null;
 
 /**
- * Register how a clicked web notification routes (focus + navigate to the
- * source workspace's inbox, focused on the item). Called once by the web app
- * shell; pass `null` to unregister. Desktop does NOT use this — it routes
- * through its own Electron IPC bridge (`onInboxOpen`).
+ * Register how a clicked notification routes (focus and navigate to the source
+ * workspace's inbox, focused on the item). Called once by the web app shell;
+ * pass `null` to unregister.
  */
 export function registerSystemNotificationClickHandler(
   handler: ClickHandler | null,

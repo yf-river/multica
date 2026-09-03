@@ -305,9 +305,9 @@ func TestDaemonLifecycleCommandsRejectUnknownProfile(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			clearDaemonTaskEnv(t)
-			mkProfiles(t, "desktop-api.multica.ai")
+		mkProfiles(t, "desktop-api.multica.ai")
 
-			cmd := daemonStatusCmdFor(t, "desktop-api.multica", "")
+		cmd := daemonStatusCmdFor(t, "desktop-api.multica", "")
 			cmd.Flags().Bool("follow", false, "")
 			cmd.Flags().Int("lines", 50, "")
 

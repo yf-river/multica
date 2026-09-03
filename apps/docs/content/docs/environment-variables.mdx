@@ -20,10 +20,8 @@ MULTICA_APP_URL=https://multica.example.com
 MULTICA_PUBLIC_URL=https://api.multica.example.com
 ```
 
-You also need to pick an email service, otherwise verification codes and invitations are only written to the server log.
 
 <Callout type="warning">
-`JWT_SECRET` is required in production: with `APP_ENV=production` the backend refuses to boot if it is empty or a known placeholder (generate one with `openssl rand -hex 32`). Do not set `MULTICA_DEV_VERIFICATION_CODE`.
 </Callout>
 
 ## API and database
@@ -107,7 +105,6 @@ SMTP takes priority over Resend whenever `SMTP_HOST` is non-empty.
 | `ALLOWED_EMAILS` | empty | Full email addresses allowed to sign up, comma-separated |
 | `ALLOWED_EMAIL_DOMAINS` | empty | Email domains allowed to sign up, comma-separated |
 | `DISABLE_WORKSPACE_CREATION` | `false` | Blocks all users from creating workspaces; no owner/admin exception |
-| `MULTICA_DEV_VERIFICATION_CODE` | empty | Fixed 6-digit test code for non-production environments |
 
 For the exact allowlist evaluation order, see [Sign-in and signup](/auth-setup#signup-restrictions).
 
@@ -152,7 +149,6 @@ Use `ATTACHMENT_DOWNLOAD_MODE=proxy` when the endpoint — an internal MinIO, fo
 |---|---|---|
 | `REDIS_URL` | empty | Used for shared rate limiting, realtime events, and the token cache; when unset, realtime events and invitation limits fall back to in-process memory, while auth rate limiting is off |
 | `REDIS_DISABLE_CLIENT_NAME` | `false` | Set `true` when a managed Redis blocks `CLIENT SETNAME` |
-| `RATE_LIMIT_AUTH` | `5` | Per-IP requests per minute to send a verification code or start Google sign-in |
 | `RATE_LIMIT_AUTH_VERIFY` | `20` | Per-IP code verifications per minute |
 | `RATE_LIMIT_INVITATION_ACTOR_10M` | `10` | Workspace invitations each inviter may create per 10-minute sliding window; `0` disables this gate |
 | `RATE_LIMIT_INVITATION_WORKSPACE_24H` | `50` | Workspace invitations all admins may create per workspace per 24-hour sliding window; `0` disables this gate |

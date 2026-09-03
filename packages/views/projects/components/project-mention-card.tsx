@@ -39,7 +39,6 @@ export function ProjectMentionCard({
   return (
     <AppLink
       href={p.projectDetail(projectId)}
-      newTabTitle={fallbackLabel}
       className="project-mention inline-flex"
     >
       <ProjectChip

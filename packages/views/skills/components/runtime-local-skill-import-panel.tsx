@@ -535,7 +535,6 @@ export function RuntimeLocalSkillImportPanel({
     () =>
       buildRuntimeMachines(localRuntimes, {
         now: Date.now(),
-        currentUserId: userId,
       }),
     [localRuntimes, userId],
   );

@@ -784,146 +784,6 @@ describe("handleInboxNew", () => {
     };
   }
 
-  function stubDesktopAPI() {
-    const showNotification = vi.fn();
-    (globalThis as Record<string, unknown>).desktopAPI = { showNotification };
-    return showNotification;
-  }
-
-  afterEach(() => {
-    delete (globalThis as Record<string, unknown>).desktopAPI;
-  });
-
-  it("still shows the banner when the slug can't be resolved, with an empty slug so the click is a no-op", async () => {
-    const qc = createQueryClient();
-    // Workspace list is cached but doesn't contain the item's workspace.
-    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [
-      workspace({ id: "ws-b", slug: "workspace-b" }),
-    ]);
-    qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
-      preferences: { system_notifications: "all" },
-    });
-    const showNotification = stubDesktopAPI();
-
-    await handleInboxNew(qc, inboxItem());
-
-    expect(showNotification).toHaveBeenCalledWith({
-      slug: "",
-      itemId: "item-1",
-      issueKey: "issue-1",
-      title: "Mentioned you",
-      body: "in a comment",
-    });
-  });
-
-  it("invalidates the ITEM's workspace inbox cache and resolves its slug, not the active workspace's", async () => {
-    const qc = createQueryClient();
-    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [
-      workspace({ id: "ws-b", slug: "workspace-b" }),
-      workspace(),
-    ]);
-    qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
-      preferences: { system_notifications: "all" },
-    });
-    const invalidate = vi.spyOn(qc, "invalidateQueries");
-    const showNotification = stubDesktopAPI();
-
-    await handleInboxNew(qc, inboxItem());
-
-    // The workspace prefix, which covers both the main list and the archived
-    // one: a new notification on an archived issue revives it into the main
-    // inbox, so the archived list has to drop it in the same pass (MUL-3736).
-    expect(invalidate).toHaveBeenCalledWith({
-      queryKey: inboxKeys.all("ws-a"),
-    });
-    expect(showNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ slug: "workspace-a" }),
-    );
-  });
-
-  it("honors the SOURCE workspace's mute preference", async () => {
-    const qc = createQueryClient();
-    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [workspace()]);
-    qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
-      preferences: { system_notifications: "muted" },
-    });
-    const showNotification = stubDesktopAPI();
-
-    await handleInboxNew(qc, inboxItem());
-
-    expect(showNotification).not.toHaveBeenCalled();
-  });
-
-  // The tests below exercise the COLD-cache mute path (source preference not
-  // yet cached), where the request — not just the query key — must be scoped
-  // to the source workspace (#3766 follow-up). They install a fake API so the
-  // outgoing call's workspace argument is observable.
-  afterEach(() => {
-    setApiInstance(undefined as unknown as ApiClient);
-  });
-
-  it("fetches the SOURCE workspace's preference using its slug when the cache is cold", async () => {
-    const qc = createQueryClient();
-    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [
-      workspace({ id: "ws-b", slug: "workspace-b", name: "Workspace B" }),
-      workspace(),
-    ]);
-    // No cached preference for ws-a → the handler must fetch, and the fetch
-    // must target the source workspace's slug, not the active workspace's.
-    const getNotificationPreferences = vi
-      .fn()
-      .mockResolvedValue({ preferences: { system_notifications: "all" } });
-    setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
-    const showNotification = stubDesktopAPI();
-
-    await handleInboxNew(qc, inboxItem());
-
-    expect(getNotificationPreferences).toHaveBeenCalledWith("workspace-a");
-    expect(showNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ slug: "workspace-a" }),
-    );
-  });
-
-  it("suppresses the banner when the SOURCE workspace is muted on a cold cache", async () => {
-    const qc = createQueryClient();
-    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [workspace()]);
-    const getNotificationPreferences = vi
-      .fn()
-      .mockResolvedValue({ preferences: { system_notifications: "muted" } });
-    setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
-    const showNotification = stubDesktopAPI();
-
-    await handleInboxNew(qc, inboxItem());
-
-    expect(getNotificationPreferences).toHaveBeenCalledWith("workspace-a");
-    expect(showNotification).not.toHaveBeenCalled();
-  });
-
-  it("never fetches the active workspace's preference when the source slug can't be resolved", async () => {
-    const qc = createQueryClient();
-    // Item's workspace is absent from the cached list → slug unresolvable.
-    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [
-      workspace({ id: "ws-b", slug: "workspace-b" }),
-    ]);
-    const getNotificationPreferences = vi
-      .fn()
-      .mockResolvedValue({ preferences: { system_notifications: "muted" } });
-    setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
-    const showNotification = stubDesktopAPI();
-
-    await handleInboxNew(qc, inboxItem());
-
-    // Must NOT fall back to the active workspace's preference — that both
-    // mis-mutes and pollutes the source workspace's cache key (#3766).
-    expect(getNotificationPreferences).not.toHaveBeenCalled();
-    expect(showNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ slug: "" }),
-    );
-  });
-
-  // --- Web path: no desktopAPI → the browser Notification API ---
-  // Same focus/mute gating as desktop, but the desktop bridge is absent and a
-  // granted browser Notification stub is installed on `window`.
   let webBanners: { title: string; options?: NotificationOptions }[] = [];
   class FakeNotification {
     static permission: NotificationPermission = "granted";
@@ -947,11 +807,128 @@ describe("handleInboxNew", () => {
     };
   }
 
+  it("still shows the banner when the slug can't be resolved, with an empty slug so the click is a no-op", async () => {
+    const qc = createQueryClient();
+    // Workspace list is cached but doesn't contain the item's workspace.
+    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [
+      workspace({ id: "ws-b", slug: "workspace-b" }),
+    ]);
+    qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
+      preferences: { system_notifications: "all" },
+    });
+    installBrowserNotification();
+
+    await handleInboxNew(qc, inboxItem());
+
+    expect(webBanners).toEqual([
+      { title: "Mentioned you", options: { body: "in a comment", tag: "item-1" } },
+    ]);
+  });
+
+  it("invalidates the ITEM's workspace inbox cache and resolves its slug, not the active workspace's", async () => {
+    const qc = createQueryClient();
+    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [
+      workspace({ id: "ws-b", slug: "workspace-b" }),
+      workspace(),
+    ]);
+    qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
+      preferences: { system_notifications: "all" },
+    });
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    installBrowserNotification();
+
+    await handleInboxNew(qc, inboxItem());
+
+    // The workspace prefix, which covers both the main list and the archived
+    // one: a new notification on an archived issue revives it into the main
+    // inbox, so the archived list has to drop it in the same pass (MUL-3736).
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: inboxKeys.all("ws-a"),
+    });
+    expect(webBanners).toHaveLength(1);
+  });
+
+  it("honors the SOURCE workspace's mute preference", async () => {
+    const qc = createQueryClient();
+    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [workspace()]);
+    qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
+      preferences: { system_notifications: "muted" },
+    });
+    installBrowserNotification();
+
+    await handleInboxNew(qc, inboxItem());
+
+    expect(webBanners).toHaveLength(0);
+  });
+
+  // The tests below exercise the COLD-cache mute path (source preference not
+  // yet cached), where the request — not just the query key — must be scoped
+  // to the source workspace (#3766 follow-up). They install a fake API so the
+  // outgoing call's workspace argument is observable.
+  afterEach(() => {
+    setApiInstance(undefined as unknown as ApiClient);
+  });
+
+  it("fetches the SOURCE workspace's preference using its slug when the cache is cold", async () => {
+    const qc = createQueryClient();
+    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [
+      workspace({ id: "ws-b", slug: "workspace-b", name: "Workspace B" }),
+      workspace(),
+    ]);
+    // No cached preference for ws-a → the handler must fetch, and the fetch
+    // must target the source workspace's slug, not the active workspace's.
+    const getNotificationPreferences = vi
+      .fn()
+      .mockResolvedValue({ preferences: { system_notifications: "all" } });
+    setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
+    installBrowserNotification();
+
+    await handleInboxNew(qc, inboxItem());
+
+    expect(getNotificationPreferences).toHaveBeenCalledWith("workspace-a");
+    expect(webBanners).toHaveLength(1);
+  });
+
+  it("suppresses the banner when the SOURCE workspace is muted on a cold cache", async () => {
+    const qc = createQueryClient();
+    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [workspace()]);
+    const getNotificationPreferences = vi
+      .fn()
+      .mockResolvedValue({ preferences: { system_notifications: "muted" } });
+    setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
+    installBrowserNotification();
+
+    await handleInboxNew(qc, inboxItem());
+
+    expect(getNotificationPreferences).toHaveBeenCalledWith("workspace-a");
+    expect(webBanners).toHaveLength(0);
+  });
+
+  it("never fetches the active workspace's preference when the source slug can't be resolved", async () => {
+    const qc = createQueryClient();
+    // Item's workspace is absent from the cached list → slug unresolvable.
+    qc.setQueryData<Workspace[]>(workspaceKeys.list(), [
+      workspace({ id: "ws-b", slug: "workspace-b" }),
+    ]);
+    const getNotificationPreferences = vi
+      .fn()
+      .mockResolvedValue({ preferences: { system_notifications: "muted" } });
+    setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
+    installBrowserNotification();
+
+    await handleInboxNew(qc, inboxItem());
+
+    // Must NOT fall back to the active workspace's preference — that both
+    // mis-mutes and pollutes the source workspace's cache key (#3766).
+    expect(getNotificationPreferences).not.toHaveBeenCalled();
+    expect(webBanners).toHaveLength(1);
+  });
+
   afterEach(() => {
     delete (globalThis as Record<string, unknown>).window;
   });
 
-  it("shows a browser banner on web (no desktopAPI) when granted and not muted", async () => {
+  it("shows a browser banner when granted and not muted", async () => {
     const qc = createQueryClient();
     qc.setQueryData<Workspace[]>(workspaceKeys.list(), [workspace()]);
     qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {

@@ -16,7 +16,6 @@ Go backend + monorepo frontend (pnpm workspaces + Turborepo) with shared package
 
 - `server/` - Go backend (Chi router, sqlc, gorilla/websocket)
 - `apps/web/` - Next.js frontend (App Router)
-- `apps/desktop/` - Electron desktop app
 - `apps/mobile/` - Expo / React Native iOS app (read `apps/mobile/CLAUDE.md` first)
 - `apps/docs/` - Fumadocs documentation site
 - `packages/core/` - Headless business logic (Zustand stores, React Query hooks, API client)
@@ -28,7 +27,7 @@ Go backend + monorepo frontend (pnpm workspaces + Turborepo) with shared package
 ### State Management (critical)
 
 - **React Query** owns all server state (issues, members, agents, inbox, workspace list)
-- **Zustand** owns client/view state (view filters, drafts, modals, desktop tab state); current workspace identity is route-driven and only mirrored for platform plumbing
+- **Zustand** owns client/view state (view filters, drafts, modals, tab layout); current workspace identity is route-driven and only mirrored for platform plumbing
 - All Zustand stores live in `packages/core/` - never in `packages/views/` or app directories
 - WS events update React Query for server data; store writes are only for clearing client-owned pointers with a single responder/self-event guard
 

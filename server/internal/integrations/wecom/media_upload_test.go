@@ -296,10 +296,7 @@ func TestSendMedia_ReportsALostAckWithoutSendingAgain(t *testing.T) {
 	}
 }
 
-// The cap is 20 MiB, and it is WeCom's number rather than ours: the OpenClaw
-// plugin they publish (WecomTeam/wecom-openclaw-plugin src/const.ts) sets
-// FILE_MAX_BYTES to 20 MiB and defines ABSOLUTE_MAX_BYTES — the size past which
-// nothing can be sent — as the same value. The 50 MB the chunk arithmetic
+// The cap is 20 MiB, matching the platform limit. The 50 MB the chunk arithmetic
 // allows is what the FRAMING can describe, not what the platform takes.
 func TestSplitMediaChunks_RejectsWhatCannotBeUploaded(t *testing.T) {
 	t.Parallel()

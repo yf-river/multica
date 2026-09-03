@@ -77,7 +77,6 @@ import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { SubIssuesAgentWorkingChip } from "./sub-issues-agent-working-chip";
 import { ProjectPicker } from "../../projects/components/project-picker";
-import { LocalDirectoryHint } from "../../projects/components/local-directory-hint";
 import { CommentCard } from "./comment-card";
 import { SourceContextBadge } from "./source-context-viewer";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
@@ -3073,8 +3072,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 // `issueAttachments`, the renderer can't resolve it to a
                 // freshly-signed `download_url`, and the persisted auth-gated
                 // download endpoint fails to load as a native <img> on clients
-                // whose origin isn't the API host (Desktop/Electron, mobile
-                // webview) — while still working on web via the cookie/proxy.
+                // whose origin isn't the API host (for example, a mobile
+                // webview) while still working on web via the cookie/proxy.
                 // This mirrors the comment/reply/chat composers, which already
                 // bind via `contentReferencesAttachment` (MUL-3130 / MUL-3192).
                 const ids = descPendingAttachmentsRef.current
@@ -3411,7 +3410,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               </div>
             </div>
 
-            <LocalDirectoryHint projectId={issue?.project_id} />
 
             {/* The "agent is working" live signal now lives in the header
                 (IssueAgentHeaderChip) so it stays in one fixed place and

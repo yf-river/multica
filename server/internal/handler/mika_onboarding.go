@@ -174,7 +174,7 @@ func (h *Handler) StartMikaOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Other clients of the same member (a second tab, the desktop app) learn
+	// Other clients of the same member (a second tab or another browser) learn
 	// about the opening the same way they learn about any assistant message.
 	// The kickoff row is deliberately not broadcast: it is never a bubble.
 	messageID := uuidToString(opened.Opening.ID)

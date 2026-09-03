@@ -1905,6 +1905,45 @@ func (q *Queries) UnresolveComment(ctx context.Context, id pgtype.UUID) (Comment
 	return i, err
 }
 
+const unresolveCommentIfResolved = `-- name: UnresolveCommentIfResolved :one
+UPDATE comment SET
+    resolved_at = NULL,
+    resolved_by_type = NULL,
+    resolved_by_id = NULL,
+    revision = revision + 1,
+    updated_at = now()
+WHERE id = $1 AND resolved_at IS NOT NULL
+RETURNING id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id, quick_action_id, via_plugin_id, revision, recovery_settled_at
+`
+
+// Reply-triggered reopening must tell the caller whether a visible state
+// transition happened, so its durable event can be emitted exactly once.
+func (q *Queries) UnresolveCommentIfResolved(ctx context.Context, id pgtype.UUID) (Comment, error) {
+	row := q.db.QueryRow(ctx, unresolveCommentIfResolved, id)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.IssueID,
+		&i.AuthorType,
+		&i.AuthorID,
+		&i.Content,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+		&i.WorkspaceID,
+		&i.ResolvedAt,
+		&i.ResolvedByType,
+		&i.ResolvedByID,
+		&i.SourceTaskID,
+		&i.QuickActionID,
+		&i.ViaPluginID,
+		&i.Revision,
+		&i.RecoverySettledAt,
+	)
+	return i, err
+}
+
 const updateComment = `-- name: UpdateComment :one
 WITH locked_issue AS MATERIALIZED (
     -- Keep the global issue -> child lock order used by issue teardown. The

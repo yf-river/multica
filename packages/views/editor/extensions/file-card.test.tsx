@@ -46,7 +46,6 @@ vi.mock("../../navigation", () => ({
     pathname: "/acme/issues",
     searchParams: new URLSearchParams(),
     hash: "",
-    openInNewTab: vi.fn(),
     getShareableUrl: (p: string) => `https://app.example${p}`,
   }),
 }));

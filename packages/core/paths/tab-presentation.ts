@@ -1,5 +1,5 @@
 /**
- * Pure presentation resolver for desktop tabs.
+ * Pure presentation resolver for workspace navigation.
  *
  * Given a {@link TabSubject} (what the tab points at) and whatever entity data
  * is currently available from cache, produce the tab's leading *visual* and its

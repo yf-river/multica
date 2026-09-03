@@ -13,7 +13,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -216,7 +218,14 @@ func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	label, err := h.Queries.CreateLabel(r.Context(), db.CreateLabelParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start label transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	label, err := qtx.CreateLabel(r.Context(), db.CreateLabelParams{
 		WorkspaceID:  parseUUID(workspaceID),
 		ResourceType: resourceType,
 		Name:         name,
@@ -233,7 +242,16 @@ func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := labelToResponse(label)
-	h.publish(protocol.EventLabelCreated, workspaceID, "member", userID, map[string]any{"label": resp})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildLabelDomainEvent(protocol.EventLabelCreated, label, "member", userID, nil))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record label event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit label")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -287,7 +305,14 @@ func (h *Handler) UpdateLabel(w http.ResponseWriter, r *http.Request) {
 	// already enforces (id, workspace_id), so a missing row means either the
 	// label doesn't exist or it's not in this workspace. Dropping the prior
 	// GetLabel precheck removes a TOCTOU window and saves a round-trip.
-	label, err := h.Queries.UpdateLabel(r.Context(), params)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start label transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	label, err := qtx.UpdateLabel(r.Context(), params)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "label not found")
@@ -302,7 +327,16 @@ func (h *Handler) UpdateLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := labelToResponse(label)
-	h.publish(protocol.EventLabelUpdated, workspaceID, "member", userID, map[string]any{"label": resp})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildLabelDomainEvent(protocol.EventLabelUpdated, label, "member", userID, nil))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record label event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit label")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -356,11 +390,18 @@ func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete label")
 		return
 	}
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildLabelDomainEvent(protocol.EventLabelDeleted, db.IssueLabel{
+		ID: idUUID, WorkspaceID: wsUUID,
+	}, "member", userID, nil))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record label event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit label deletion")
 		return
 	}
-	h.publish(protocol.EventLabelDeleted, workspaceID, "member", userID, map[string]any{"label_id": uuidToString(idUUID)})
+	h.publishEvent(event)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -458,7 +499,14 @@ func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	attached, err := h.Queries.AttachLabelToIssue(r.Context(), db.AttachLabelToIssueParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start label transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	attached, err := qtx.AttachLabelToIssue(r.Context(), db.AttachLabelToIssueParams{
 		IssueID:     issue.ID,
 		LabelID:     labelID,
 		WorkspaceID: issue.WorkspaceID,
@@ -473,18 +521,26 @@ func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 	// committed — return success without a labels body (clients refetch via
 	// query invalidation) and skip the broadcast so we don't overwrite every
 	// subscriber's optimistic state with an incorrect empty list.
-	labels, ok2 := h.listLabelsForIssueSafe(r, issue.ID, issue.WorkspaceID)
-	if !ok2 {
-		writeJSON(w, http.StatusOK, map[string]any{})
+	labels, err := qtx.ListLabelsByIssue(r.Context(), db.ListLabelsByIssueParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load labels after attach")
 		return
 	}
 	resp := labelsToResponse(labels)
+	var event events.Event
 	if attached.Changed {
-		h.publish(protocol.EventIssueLabelsChanged, uuidToString(issue.WorkspaceID), "member", userID, map[string]any{
-			"issue_id":       uuidToString(issue.ID),
-			"labels":         resp,
-			"issue_revision": attached.IssueRevision,
-		})
+		event, err = service.RecordDurableEventTx(r.Context(), qtx, buildIssueLabelsChangedEvent(issue, "member", userID, resp, attached.IssueRevision))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to record label event")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit label change")
+		return
+	}
+	if attached.Changed {
+		h.publishEvent(event)
 	}
 	payload := map[string]any{"labels": resp}
 	if attached.IssueRevision > 0 {
@@ -531,7 +587,14 @@ func (h *Handler) DetachLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detached, err := h.Queries.DetachLabelFromIssue(r.Context(), db.DetachLabelFromIssueParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start label transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	detached, err := qtx.DetachLabelFromIssue(r.Context(), db.DetachLabelFromIssueParams{
 		IssueID:     issue.ID,
 		LabelID:     labelUUID,
 		WorkspaceID: issue.WorkspaceID,
@@ -542,18 +605,26 @@ func (h *Handler) DetachLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	labels, ok2 := h.listLabelsForIssueSafe(r, issue.ID, issue.WorkspaceID)
-	if !ok2 {
-		writeJSON(w, http.StatusOK, map[string]any{})
+	labels, err := qtx.ListLabelsByIssue(r.Context(), db.ListLabelsByIssueParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load labels after detach")
 		return
 	}
 	resp := labelsToResponse(labels)
+	var event events.Event
 	if detached.Changed {
-		h.publish(protocol.EventIssueLabelsChanged, uuidToString(issue.WorkspaceID), "member", userID, map[string]any{
-			"issue_id":       uuidToString(issue.ID),
-			"labels":         resp,
-			"issue_revision": detached.IssueRevision,
-		})
+		event, err = service.RecordDurableEventTx(r.Context(), qtx, buildIssueLabelsChangedEvent(issue, "member", userID, resp, detached.IssueRevision))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to record label event")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit label change")
+		return
+	}
+	if detached.Changed {
+		h.publishEvent(event)
 	}
 	payload := map[string]any{"labels": resp}
 	if detached.IssueRevision > 0 {
@@ -600,13 +671,35 @@ func (h *Handler) AttachLabelToAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "agent label not found")
 		return
 	}
-	if err := h.Queries.AttachLabelToAgent(r.Context(), db.AttachLabelToAgentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start label transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.AttachLabelToAgent(r.Context(), db.AttachLabelToAgentParams{
 		AgentID: agent.ID, LabelID: labelID, WorkspaceID: agent.WorkspaceID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to attach agent label")
 		return
 	}
-	h.publish(protocol.EventLabelUpdated, uuidToString(agent.WorkspaceID), "member", requestUserID(r), map[string]any{"label": labelToResponse(label)})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+		Type:           protocol.EventLabelUpdated,
+		IdempotencyKey: "label:agent_attach:" + uuidToString(agent.ID) + ":" + uuidToString(labelID),
+		StreamKey:      "agent:" + uuidToString(agent.ID), WorkspaceID: uuidToString(agent.WorkspaceID),
+		ActorType: "member", ActorID: requestUserID(r),
+		Payload: map[string]any{"label": labelToResponse(label), "resource_type": "agent", "agent_id": uuidToString(agent.ID)},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record label event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit label change")
+		return
+	}
+	h.publishEvent(event)
 	h.ListLabelsForAgent(w, r)
 }
 
@@ -619,13 +712,33 @@ func (h *Handler) DetachLabelFromAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.Queries.DetachLabelFromAgent(r.Context(), db.DetachLabelFromAgentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start label transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.DetachLabelFromAgent(r.Context(), db.DetachLabelFromAgentParams{
 		AgentID: agent.ID, LabelID: labelID, WorkspaceID: agent.WorkspaceID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to detach agent label")
 		return
 	}
-	h.publish(protocol.EventLabelUpdated, uuidToString(agent.WorkspaceID), "member", requestUserID(r), map[string]any{"label_id": uuidToString(labelID), "resource_type": "agent"})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+		Type: protocol.EventLabelUpdated, IdempotencyKey: "label:agent_detach:" + uuidToString(agent.ID) + ":" + uuidToString(labelID),
+		StreamKey: "agent:" + uuidToString(agent.ID), WorkspaceID: uuidToString(agent.WorkspaceID), ActorType: "member", ActorID: requestUserID(r),
+		Payload: map[string]any{"label_id": uuidToString(labelID), "resource_type": "agent", "agent_id": uuidToString(agent.ID)},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record label event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit label change")
+		return
+	}
+	h.publishEvent(event)
 	h.ListLabelsForAgent(w, r)
 }
 
@@ -663,13 +776,33 @@ func (h *Handler) AttachLabelToSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "skill label not found")
 		return
 	}
-	if err := h.Queries.AttachLabelToSkill(r.Context(), db.AttachLabelToSkillParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start label transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.AttachLabelToSkill(r.Context(), db.AttachLabelToSkillParams{
 		SkillID: skill.ID, LabelID: labelID, WorkspaceID: skill.WorkspaceID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to attach skill label")
 		return
 	}
-	h.publish(protocol.EventLabelUpdated, uuidToString(skill.WorkspaceID), "member", requestUserID(r), map[string]any{"label": labelToResponse(label)})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+		Type: protocol.EventLabelUpdated, IdempotencyKey: "label:skill_attach:" + uuidToString(skill.ID) + ":" + uuidToString(labelID),
+		StreamKey: "skill:" + uuidToString(skill.ID), WorkspaceID: uuidToString(skill.WorkspaceID), ActorType: "member", ActorID: requestUserID(r),
+		Payload: map[string]any{"label": labelToResponse(label), "resource_type": "skill", "skill_id": uuidToString(skill.ID)},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record label event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit label change")
+		return
+	}
+	h.publishEvent(event)
 	h.ListLabelsForSkill(w, r)
 }
 
@@ -682,12 +815,32 @@ func (h *Handler) DetachLabelFromSkill(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.Queries.DetachLabelFromSkill(r.Context(), db.DetachLabelFromSkillParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start label transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.DetachLabelFromSkill(r.Context(), db.DetachLabelFromSkillParams{
 		SkillID: skill.ID, LabelID: labelID, WorkspaceID: skill.WorkspaceID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to detach skill label")
 		return
 	}
-	h.publish(protocol.EventLabelUpdated, uuidToString(skill.WorkspaceID), "member", requestUserID(r), map[string]any{"label_id": uuidToString(labelID), "resource_type": "skill"})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+		Type: protocol.EventLabelUpdated, IdempotencyKey: "label:skill_detach:" + uuidToString(skill.ID) + ":" + uuidToString(labelID),
+		StreamKey: "skill:" + uuidToString(skill.ID), WorkspaceID: uuidToString(skill.WorkspaceID), ActorType: "member", ActorID: requestUserID(r),
+		Payload: map[string]any{"label_id": uuidToString(labelID), "resource_type": "skill", "skill_id": uuidToString(skill.ID)},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record label event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit label change")
+		return
+	}
+	h.publishEvent(event)
 	h.ListLabelsForSkill(w, r)
 }

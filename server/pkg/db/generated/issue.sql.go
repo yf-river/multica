@@ -1511,6 +1511,56 @@ func (q *Queries) LockIssueForDescriptionUpdate(ctx context.Context, arg LockIss
 	return i, err
 }
 
+const lockIssueForTaskFailureReset = `-- name: LockIssueForTaskFailureReset :one
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at FROM issue
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type LockIssueForTaskFailureResetParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// The failure reconciler checks active tasks and changes the issue status as
+// one decision. Locking the issue row closes the gap where two terminal task
+// callbacks could both observe an empty active set and emit competing resets.
+func (q *Queries) LockIssueForTaskFailureReset(ctx context.Context, arg LockIssueForTaskFailureResetParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, lockIssueForTaskFailureReset, arg.ID, arg.WorkspaceID)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+		&i.Properties,
+		&i.Revision,
+		&i.LastActivityAt,
+	)
+	return i, err
+}
+
 const markIssueFirstExecuted = `-- name: MarkIssueFirstExecuted :one
 UPDATE issue
 SET first_executed_at = now()

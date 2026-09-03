@@ -251,16 +251,23 @@ func (q *Queries) DeleteLifeActionProposalsByRoundIDs(ctx context.Context, dolla
 }
 
 const deleteLifeChronicleEntriesBySources = `-- name: DeleteLifeChronicleEntriesBySources :exec
-DELETE FROM life_chronicle_entry entry
-WHERE EXISTS (
-    SELECT 1
-    FROM life_chronicle_evidence evidence
-    WHERE evidence.entry_id = entry.id
-      AND (
-        (evidence.source_type = 'memory' AND evidence.source_id = ANY($1::uuid[]))
-        OR (evidence.source_type = 'experiment_round' AND evidence.source_id = ANY($2::uuid[]))
-      )
+WITH target_entries AS MATERIALIZED (
+    SELECT DISTINCT entry.id
+    FROM life_chronicle_entry entry
+    JOIN life_chronicle_evidence evidence ON evidence.entry_id = entry.id
+    WHERE (evidence.source_type = 'memory' AND evidence.source_id = ANY($1::uuid[]))
+       OR (evidence.source_type = 'experiment_round' AND evidence.source_id = ANY($2::uuid[]))
+), deleted_chronicle_evidence AS (
+    DELETE FROM life_chronicle_evidence
+    WHERE entry_id IN (SELECT id FROM target_entries)
+), deleted_chronicle_revisions AS (
+    DELETE FROM life_chronicle_revision
+    WHERE entry_id IN (SELECT id FROM target_entries)
+), deleted_entries AS (
+    DELETE FROM life_chronicle_entry
+    WHERE id IN (SELECT id FROM target_entries)
 )
+SELECT 1
 `
 
 type DeleteLifeChronicleEntriesBySourcesParams struct {
@@ -274,8 +281,28 @@ func (q *Queries) DeleteLifeChronicleEntriesBySources(ctx context.Context, arg D
 }
 
 const deleteLifeExperimentRoundsByIDs = `-- name: DeleteLifeExperimentRoundsByIDs :exec
-DELETE FROM life_experiment_round
-WHERE id = ANY($1::uuid[])
+WITH target_rounds AS MATERIALIZED (
+    SELECT id FROM life_experiment_round WHERE id = ANY($1::uuid[])
+), deleted_experiment_memories AS (
+    DELETE FROM life_experiment_memory
+    WHERE round_id IN (SELECT id FROM target_rounds)
+), deleted_experiment_observations AS (
+    DELETE FROM life_experiment_observation
+    WHERE round_id IN (SELECT id FROM target_rounds)
+), deleted_chronicle_evidence AS (
+    DELETE FROM life_chronicle_evidence
+    WHERE source_type = 'experiment_round'
+      AND source_id IN (SELECT id FROM target_rounds)
+), cleared_previous_rounds AS (
+    UPDATE life_experiment_round
+    SET previous_round_id = NULL, updated_at = now()
+    WHERE previous_round_id IN (SELECT id FROM target_rounds)
+      AND id NOT IN (SELECT id FROM target_rounds)
+), deleted_rounds AS (
+    DELETE FROM life_experiment_round
+    WHERE id IN (SELECT id FROM target_rounds)
+)
+SELECT 1
 `
 
 func (q *Queries) DeleteLifeExperimentRoundsByIDs(ctx context.Context, dollar_1 []pgtype.UUID) error {
@@ -284,8 +311,37 @@ func (q *Queries) DeleteLifeExperimentRoundsByIDs(ctx context.Context, dollar_1 
 }
 
 const deleteLifeMemoriesByIDs = `-- name: DeleteLifeMemoriesByIDs :exec
-DELETE FROM life_memory
-WHERE id = ANY($1::uuid[]) AND workspace_id = $2 AND user_id = $3
+WITH target_memories AS MATERIALIZED (
+    SELECT life_memory.id
+    FROM life_memory
+    WHERE life_memory.id = ANY($1::uuid[])
+      AND life_memory.workspace_id = $2
+      AND life_memory.user_id = $3
+), deleted_memory_evidence AS (
+    DELETE FROM life_memory_evidence
+    WHERE memory_id IN (SELECT id FROM target_memories)
+), deleted_memory_dependencies AS (
+    DELETE FROM life_memory_dependency
+    WHERE source_memory_id IN (SELECT id FROM target_memories)
+       OR derived_memory_id IN (SELECT id FROM target_memories)
+), deleted_memory_revisions AS (
+    DELETE FROM life_memory_revision
+    WHERE memory_id IN (SELECT id FROM target_memories)
+), deleted_experiment_memories AS (
+    DELETE FROM life_experiment_memory
+    WHERE memory_id IN (SELECT id FROM target_memories)
+), deleted_topic_memories AS (
+    DELETE FROM life_topic_memory
+    WHERE memory_id IN (SELECT id FROM target_memories)
+), deleted_chronicle_evidence AS (
+    DELETE FROM life_chronicle_evidence
+    WHERE source_type = 'memory'
+      AND source_id IN (SELECT id FROM target_memories)
+), deleted_memories AS (
+    DELETE FROM life_memory
+    WHERE id IN (SELECT id FROM target_memories)
+)
+SELECT 1
 `
 
 type DeleteLifeMemoriesByIDsParams struct {
@@ -620,6 +676,63 @@ type ListLifeMemoriesByStatusParams struct {
 
 func (q *Queries) ListLifeMemoriesByStatus(ctx context.Context, arg ListLifeMemoriesByStatusParams) ([]LifeMemory, error) {
 	rows, err := q.db.Query(ctx, listLifeMemoriesByStatus, arg.WorkspaceID, arg.UserID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeMemory{}
+	for rows.Next() {
+		var i LifeMemory
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.CreatedByType,
+			&i.CreatedByID,
+			&i.Kind,
+			&i.Status,
+			&i.Content,
+			&i.Confidence,
+			&i.Urgency,
+			&i.Uncertainty,
+			&i.ValidFrom,
+			&i.ValidTo,
+			&i.ConfirmedAt,
+			&i.ConfirmedByID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Scope,
+			&i.LastReviewedAt,
+			&i.ReviewAfter,
+			&i.SupersededByID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLifeMemoryCandidatesForContext = `-- name: ListLifeMemoryCandidatesForContext :many
+SELECT id, workspace_id, user_id, created_by_type, created_by_id, kind, status, content, confidence, urgency, uncertainty, valid_from, valid_to, confirmed_at, confirmed_by_id, created_at, updated_at, scope, last_reviewed_at, review_after, superseded_by_id FROM life_memory
+WHERE workspace_id = $1
+  AND user_id = $2
+  AND status = 'candidate'
+ORDER BY updated_at DESC, id DESC
+LIMIT $3::int
+`
+
+type ListLifeMemoryCandidatesForContextParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListLifeMemoryCandidatesForContext(ctx context.Context, arg ListLifeMemoryCandidatesForContextParams) ([]LifeMemory, error) {
+	rows, err := q.db.Query(ctx, listLifeMemoryCandidatesForContext, arg.WorkspaceID, arg.UserID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

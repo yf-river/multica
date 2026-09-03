@@ -35,14 +35,14 @@ describe("WSClient", () => {
 
   it("includes client identity in the upgrade URL when configured", () => {
     const ws = new WSClient("ws://example.test/ws", {
-      identity: { platform: "desktop", version: "1.2.3", os: "macos" },
+      identity: { platform: "web", version: "1.2.3", os: "macos" },
     });
     ws.setAuth("tok", "acme");
     ws.connect();
 
     const url = new URL(FakeWebSocket.lastUrl!);
     expect(url.searchParams.get("workspace_slug")).toBe("acme");
-    expect(url.searchParams.get("client_platform")).toBe("desktop");
+    expect(url.searchParams.get("client_platform")).toBe("web");
     expect(url.searchParams.get("client_version")).toBe("1.2.3");
     expect(url.searchParams.get("client_os")).toBe("macos");
     // Token must never appear in the URL — it is delivered as the first

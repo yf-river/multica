@@ -21,7 +21,7 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     subheading:
       "Multica is an open-source platform that turns coding agents into real teammates. Assign tasks, track progress, compound skills \u2014 manage your human + agent workforce in one place.",
     cta: "Start free trial",
-    downloadDesktop: "Download Desktop",
+    installCli: "Install the CLI",
     talkToSales: "Talk to sales",
     worksWith: "Works with",
     imageAlt: "Multica board view \u2014 issues managed by humans and agents",
@@ -116,7 +116,7 @@ export function createEnDict(allowSignup: boolean): LandingDict {
         {
           title: "Auto-detection on first run",
           description:
-            "Multica scans for 26 supported coding tools \u2014 Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, and ZeroClaw \u2014 and registers a runtime for each one it finds.",
+            "Multica scans for 25 supported coding tools \u2014 Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, and ZeroClaw \u2014 and registers a runtime for each one it finds.",
         },
       ],
     },
@@ -136,7 +136,7 @@ export function createEnDict(allowSignup: boolean): LandingDict {
       {
         title: "Install the CLI & connect your machine",
         description:
-          "Run multica setup \u2014 it walks you through OAuth, starts the daemon, and scans for the 26 supported coding tools (Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, ZeroClaw). Whichever ones you already have installed get registered as runtimes automatically.",
+          "Run multica setup \u2014 it walks you through OAuth, starts the daemon, and scans for the 25 supported coding tools (Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, ZeroClaw). Whichever ones you already have installed get registered as runtimes automatically.",
       },
       {
         title: "Create your first agent",
@@ -192,7 +192,7 @@ export function createEnDict(allowSignup: boolean): LandingDict {
       {
         question: "What coding agents does Multica support?",
         answer:
-          "Multica supports 26 coding tools out of the box: Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, and ZeroClaw. The daemon auto-detects whichever CLIs you already have installed and registers a runtime for each one. Since it's open source, you can also add your own backends.",
+          "Multica supports 25 coding tools out of the box: Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, and ZeroClaw. The daemon auto-detects whichever CLIs you already have installed and registers a runtime for each one. Since it's open source, you can also add your own backends.",
       },
       {
         question: "Do I need to self-host, or is there a cloud version?",
@@ -353,8 +353,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "When an edit conflicts, each choice sits right under the version it applies to.",
           "Lark replies no longer stall after a credential expires.",
           "Quick Create restores your draft at the right height again.",
-          "OpenClaw runs stop completely when they time out, leaving no processes behind.",
-          "Setting up OpenClaw no longer fails when it already had everything it needed.",
         ],
       },
       {
@@ -460,7 +458,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
         fixes: [
           "Running a task again no longer stops work already in progress.",
           "Tasks running at the same time no longer overwrite one another’s workspace.",
-          "OpenClaw, Pi, and OpenCode work with the custom providers you configure.",
           "Changing workspaces no longer interrupts live updates or @mentions.",
           "Autopilot webhook secrets stay out of normal CLI output.",
           "Chat with your agents without waiting for unrelated coding work to finish.",
@@ -736,7 +733,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "Sending the same /issue twice in WeCom gets an honest answer instead of a duplicate.",
           "Every slash command now works in a WeCom group.",
           "Codex sessions in direct chat now pick up where they left off.",
-          "OpenClaw agents on Windows now find your config.",
           "Sending several messages in a row no longer drops one of them.",
           "Images and files saved from Lark keep correct names.",
           "A wrong self-hosted server address now shows a clear error instead of a blank page.",
@@ -866,7 +862,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "Unsubscribing from an Issue now takes effect.",
           "Typing / in the reply box also lists your workspace's quick actions.",
           "Opening a running agent's log from the Issue header no longer closes it immediately.",
-          "OpenClaw replies arrive as soon as they are finished instead of waiting.",
           "Sending /new on its own in Slack or Feishu no longer creates an empty message and run.",
           "In newly connected chat channels, agents no longer report sending a file they cannot send.",
           "A long project or label name no longer stretches its pill across the whole row.",
@@ -993,7 +988,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "Members no longer see private agents in dashboard breakdowns.",
           "Agent concurrency settings now reject values that prevent task pickup.",
           "Channel replies from ACP agents now contain only the final answer.",
-          "Silent OpenClaw failures on Windows now explain what to check.",
         ],
       },
       {
@@ -1653,7 +1647,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "Provider-specific default agent arguments now have explicit documentation, and a one-time Lark cutover flag was retired now that the unified channel adapter is fully in production",
         ],
         fixes: [
-          "OpenClaw is more forgiving about config file mismatches and supports the newer 2026.6.x agents schema, keeping existing OpenClaw runtimes connected",
           "Moving an Issue between projects now removes it from the old project list right away, and board column counts stay accurate when an Issue's status changes off-screen",
           "Attachment previews open correctly even when files are served from a different origin",
           "Command line agents wait for the daemon to be ready before falling back to a personal access token, and the self-host setup flow now respects existing configuration and surfaces server URL changes",
@@ -1816,7 +1809,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
         features: [
           "Agents, autopilots, projects, runtimes, skills, and squads now use a faster, more consistent list experience with clearer rows, filters, selections, and actions",
           "The command line can now manage workspace repositories, so local agents can pick up project repo context more easily",
-          "Cursor and OpenClaw are easier to set up: Cursor connection settings can be managed for you, and OpenClaw can connect through an existing gateway",
           "When editing a comment, you can preview and control which agents or squads will run before saving",
         ],
         improvements: [
@@ -1884,7 +1876,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "Issue conversations can now resolve a specific reply, making long threads easier to close while keeping the final answer visible",
           "Lark and Feishu conversations now show a typing reaction while Multica is preparing a reply, then clear it before the answer is sent",
           "Agent runs now know who started each task, making handoffs, audit trails, and privacy-aware behavior more accurate",
-          "OpenClaw users can point Multica at a custom app location and data folder from their local configuration",
         ],
         improvements: [
           "Comment trigger indicators are quieter, clearer, and less likely to crowd long agent names",
@@ -2076,7 +2067,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "Multica now supports Korean across the app, public site, and documentation, including Korean docs pages and localized date formatting",
           "Issue pages now keep active agent work visible near the title, with a cleaner view when multiple agents are working at once",
           "Agents can scan Issue discussions faster with thread previews, reply counts, and recent activity before opening the full conversation",
-          "OpenClaw runtimes can use the MCP setup saved on an agent, and Claude Opus 4.8 is available in model selection and usage estimates",
         ],
         improvements: [
           "Detail pages now share clearer breadcrumb headers, making Issues, projects, runtimes, skills, agents, and squads feel more consistent",
@@ -2753,7 +2743,7 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "Daemon suppresses extra terminal windows when launching agents on Windows, and retries local-skill reports on transient server errors",
           "`/api/config` is publicly reachable again so unauthenticated clients can bootstrap",
           "Defense-in-depth owner check on workspace deletion, and `/health/realtime` metrics restricted to authorized callers (security)",
-          "Hermes ACP runtime now receives the configured model; OpenClaw agent discovery timeout raised to 30s",
+          "Hermes ACP runtime now receives the configured model",
         ],
       },
       {
@@ -2795,7 +2785,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "Workspace isolation enforced end-to-end for agent execution on the local daemon (security)",
           "Windows daemon stays alive after the terminal closes, so background agents keep running",
           "Board cards render their description preview again — list queries no longer strip the description field",
-          "OpenClaw agent runtime now reads the real model from agent metadata instead of falling back to a default",
           "Comment Markdown preserved end-to-end — the HTML sanitizer that was stripping formatting has been removed",
         ],
       },
@@ -2829,7 +2818,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
         fixes: [
           "Session hand-off to desktop when already logged in on web",
           "Open redirect vulnerability on `?next=` validated",
-          "OpenClaw stops passing unsupported flags and properly delivers AgentInstructions",
         ],
       },
       {
@@ -2917,7 +2905,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
         ],
         improvements: [
           "Editor bubble menu and link preview rewritten for reliability",
-          "OpenClaw backend P0+P1 improvements (multi-line JSON, incremental parsing)",
           "Self-hosted WebSocket URL auto-derived for LAN access",
         ],
         fixes: [
@@ -2939,7 +2926,7 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "Auth migrated to HttpOnly Cookie with WebSocket Origin whitelist",
           "Full-screen onboarding wizard for new workspaces",
           "Resizable Master Agent chat window with session history improvements",
-          "Token usage log scanning for OpenCode, OpenClaw, and Hermes runtimes",
+          "Token usage log scanning for OpenCode and Hermes runtimes",
         ],
         fixes: [
           "WebSocket first-message authentication security fix",
@@ -2966,7 +2953,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "Workspace ownership checks on daemon API routes and attachment uploads",
           "Markdown sanitizer preserves code blocks from HTML entity escaping",
           "Next.js upgraded to ^16.2.3 for CVE-2026-23869",
-          "OpenClaw backend rewritten to match actual CLI interface",
         ],
       },
       {
@@ -3025,7 +3011,7 @@ export function createEnDict(allowSignup: boolean): LandingDict {
           "'C' keyboard shortcut for quick issue creation",
           "Chat session history panel for archived conversations",
           "Minimum CLI version check in daemon for Claude Code and Codex",
-          "OpenClaw and OpenCode added to landing page",
+          "OpenCode added to landing page",
           "`make dev` one-command local development setup",
         ],
         improvements: [
@@ -3091,10 +3077,9 @@ export function createEnDict(allowSignup: boolean): LandingDict {
       {
         version: "0.1.18",
         date: "2026-04-07",
-        title: "OAuth, OpenClaw & Issue Loading",
+        title: "OAuth & Issue Loading",
         changes: [
           "Google OAuth login",
-          "OpenClaw runtime support for running agents on OpenClaw infrastructure",
           "Redesigned agent live card — always sticky with manual expand/collapse toggle",
           "Load all open issues without pagination limit; closed issues paginate on scroll",
           "JWT and CloudFront cookie expiration extended from 72 hours to 30 days",
@@ -3226,61 +3211,9 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     ],
   },
   download: {
-    hero: {
-      macArm64: {
-        title: "Multica for macOS",
-        sub: "Apple Silicon · bundled daemon, zero setup",
-        primary: "Download (.dmg)",
-        altZip: "or download .zip",
-      },
-      macIntel: {
-        title: "Multica for macOS",
-        sub: "Intel · bundled daemon, zero setup",
-        primary: "Download (.dmg)",
-        altZip: "or download .zip",
-      },
-      winX64: {
-        title: "Multica for Windows",
-        sub: "Bundled daemon, zero setup",
-        primary: "Download (.exe)",
-      },
-      winArm64: {
-        title: "Multica for Windows",
-        sub: "ARM · bundled daemon, zero setup",
-        primary: "Download (.exe)",
-      },
-      linux: {
-        title: "Multica for Linux",
-        sub: "Bundled daemon, zero setup",
-        primary: "Download AppImage",
-        altFormats: "or .deb / .rpm",
-      },
-      unknown: {
-        title: "Choose your platform",
-        sub: "All installers are listed below.",
-      },
-      safariMacHint: "On an Intel Mac? Choose the Intel download below.",
-      archFallbackHint: "Wrong architecture? See all formats below.",
-    },
-    allPlatforms: {
-      title: "All platforms",
-      macArm64Label: "macOS · Apple Silicon",
-      macX64Label: "macOS · Intel",
-      winX64Label: "Windows · x64",
-      winArm64Label: "Windows · ARM64",
-      linuxX64Label: "Linux · x64",
-      linuxArm64Label: "Linux · ARM64",
-      formatDmg: ".dmg",
-      formatZip: ".zip",
-      formatExe: ".exe",
-      formatAppImage: ".AppImage",
-      formatDeb: ".deb",
-      formatRpm: ".rpm",
-      unavailable: "Not available",
-    },
     cli: {
       title: "Prefer the CLI?",
-      sub: "For servers, remote dev boxes, and headless setups. Same daemon as Desktop, installed via terminal.",
+      sub: "For servers, remote dev boxes, and headless setups. Install and run the daemon from your terminal.",
       installLabel: "Install",
       startLabel: "Start daemon",
       sshNote: "Already on a server? Same commands work over SSH.",
@@ -3290,12 +3223,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     cloud: {
       title: "Cloud runtime (waitlist)",
       sub: "We’ll host the runtime for you. Not live yet — leave your email to be notified.",
-    },
-    footer: {
-      releaseNotes: "What’s new in {version}",
-      allReleases: "View all releases",
-      currentVersion: "Current version: {version}",
-      versionUnavailable: "Version unavailable — check GitHub",
     },
   },
   contactSales: {

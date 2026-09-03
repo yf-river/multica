@@ -15,9 +15,8 @@ interface ResolvedDownload {
   // this to decide whether the type is previewable and to feed the modal.
   resolveAttachment: (url: string) => Attachment | undefined;
   // Called by NodeView click handlers. Re-signs through `getAttachment` when
-  // the URL maps to a known attachment; falls back to `openExternal` for
-  // external URLs so Electron still routes through the IPC bridge instead of
-  // letting `window.open` hit the `setWindowOpenHandler` deny path.
+  // the URL maps to a known attachment; falls back to the shared external-link
+  // handler for URLs that are not managed by Multica.
   openByUrl: (url: string) => void;
 }
 

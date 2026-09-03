@@ -675,6 +675,18 @@ UPDATE comment SET
     updated_at = CASE WHEN resolved_at IS NOT NULL THEN now() ELSE updated_at END
 WHERE id = $1
 RETURNING *;
+
+-- name: UnresolveCommentIfResolved :one
+-- Reply-triggered reopening must tell the caller whether a visible state
+-- transition happened, so its durable event can be emitted exactly once.
+UPDATE comment SET
+    resolved_at = NULL,
+    resolved_by_type = NULL,
+    resolved_by_id = NULL,
+    revision = revision + 1,
+    updated_at = now()
+WHERE id = $1 AND resolved_at IS NOT NULL
+RETURNING *;
 -- name: ListCommentAncestorPath :many
 WITH RECURSIVE ancestor_path AS (
   SELECT c.*, ARRAY[c.id]::uuid[] AS visited_ids, 1::integer AS depth, false AS cycle

@@ -150,6 +150,58 @@ func (q *Queries) AttachLifeCognitionJobTask(ctx context.Context, arg AttachLife
 	return err
 }
 
+const attachLifeCognitionJobTaskFenced = `-- name: AttachLifeCognitionJobTaskFenced :execrows
+UPDATE life_cognition_job
+SET task_id = $1, updated_at = now()
+WHERE id = $2 AND status = 'running' AND claim_token = $3
+  AND lease_until > now() AND context_version = $4
+`
+
+type AttachLifeCognitionJobTaskFencedParams struct {
+	TaskID         pgtype.UUID `json:"task_id"`
+	ID             pgtype.UUID `json:"id"`
+	ClaimToken     pgtype.Text `json:"claim_token"`
+	ContextVersion int64       `json:"context_version"`
+}
+
+func (q *Queries) AttachLifeCognitionJobTaskFenced(ctx context.Context, arg AttachLifeCognitionJobTaskFencedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, attachLifeCognitionJobTaskFenced,
+		arg.TaskID,
+		arg.ID,
+		arg.ClaimToken,
+		arg.ContextVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const bumpLifeContextVersion = `-- name: BumpLifeContextVersion :one
+INSERT INTO life_context_state (workspace_id, user_id, version, updated_at)
+VALUES ($1, $2, 2, now())
+ON CONFLICT (workspace_id, user_id) DO UPDATE
+SET version = life_context_state.version + 1, updated_at = now()
+RETURNING workspace_id, user_id, version, updated_at
+`
+
+type BumpLifeContextVersionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) BumpLifeContextVersion(ctx context.Context, arg BumpLifeContextVersionParams) (LifeContextState, error) {
+	row := q.db.QueryRow(ctx, bumpLifeContextVersion, arg.WorkspaceID, arg.UserID)
+	var i LifeContextState
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Version,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const claimDueLifeCognitionJobs = `-- name: ClaimDueLifeCognitionJobs :many
 WITH due AS (
     SELECT candidate.id
@@ -191,7 +243,7 @@ SET status = 'running', started_at = now(), attempt = attempt + 1,
     error = '', updated_at = now()
 FROM due
 WHERE j.id = due.id
-RETURNING j.id, j.workspace_id, j.user_id, j.companion_agent_id, j.job_type, j.status, j.dedupe_key, j.input, j.output, j.task_id, j.scheduled_at, j.started_at, j.completed_at, j.attempt, j.max_attempts, j.error, j.created_at, j.updated_at
+RETURNING j.id, j.workspace_id, j.user_id, j.companion_agent_id, j.job_type, j.status, j.dedupe_key, j.input, j.output, j.task_id, j.scheduled_at, j.started_at, j.completed_at, j.attempt, j.max_attempts, j.error, j.created_at, j.updated_at, j.claim_token, j.lease_until, j.context_version, j.processing_cursor, j.source_ids, j.output_summary
 `
 
 func (q *Queries) ClaimDueLifeCognitionJobs(ctx context.Context, limit int32) ([]LifeCognitionJob, error) {
@@ -222,6 +274,12 @@ func (q *Queries) ClaimDueLifeCognitionJobs(ctx context.Context, limit int32) ([
 			&i.Error,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ClaimToken,
+			&i.LeaseUntil,
+			&i.ContextVersion,
+			&i.ProcessingCursor,
+			&i.SourceIds,
+			&i.OutputSummary,
 		); err != nil {
 			return nil, err
 		}
@@ -233,11 +291,142 @@ func (q *Queries) ClaimDueLifeCognitionJobs(ctx context.Context, limit int32) ([
 	return items, nil
 }
 
+const claimDueLifeCognitionJobsFenced = `-- name: ClaimDueLifeCognitionJobsFenced :many
+WITH due AS (
+    SELECT candidate.id
+    FROM life_cognition_job candidate
+    WHERE candidate.status IN ('queued', 'failed')
+      AND candidate.scheduled_at <= now()
+      AND candidate.attempt < candidate.max_attempts
+      AND (candidate.lease_until IS NULL OR candidate.lease_until < now())
+      AND (
+          candidate.job_type <> 'understand_materials'
+          OR NOT EXISTS (
+              SELECT 1 FROM life_cognition_job running
+              WHERE running.workspace_id = candidate.workspace_id
+                AND running.user_id = candidate.user_id
+                AND running.job_type = 'understand_materials'
+                AND running.status = 'running'
+                AND running.lease_until > now()
+          )
+      )
+    ORDER BY candidate.scheduled_at, candidate.created_at, candidate.id
+    FOR UPDATE OF candidate SKIP LOCKED
+    LIMIT $1
+)
+UPDATE life_cognition_job j
+SET status = 'running', started_at = now(), attempt = j.attempt + 1,
+    error = '', claim_token = gen_random_uuid()::text,
+    lease_until = now() + interval '10 minutes',
+    context_version = COALESCE((
+        SELECT state.version FROM life_context_state state
+        WHERE state.workspace_id = j.workspace_id AND state.user_id = j.user_id
+    ), 1),
+    processing_cursor = COALESCE(j.input->>'processing_cursor', j.dedupe_key),
+    source_ids = COALESCE(j.input->'material_ids', j.input->'source_ids', '[]'::jsonb),
+    updated_at = now()
+FROM due
+WHERE j.id = due.id
+RETURNING j.id, j.workspace_id, j.user_id, j.companion_agent_id, j.job_type, j.status, j.dedupe_key, j.input, j.output, j.task_id, j.scheduled_at, j.started_at, j.completed_at, j.attempt, j.max_attempts, j.error, j.created_at, j.updated_at, j.claim_token, j.lease_until, j.context_version, j.processing_cursor, j.source_ids, j.output_summary
+`
+
+// Fenced claim used by the cognition worker. The legacy claim above remains
+// available to older integrations, while new work always carries a token and
+// the context version observed at claim time.
+func (q *Queries) ClaimDueLifeCognitionJobsFenced(ctx context.Context, limit int32) ([]LifeCognitionJob, error) {
+	rows, err := q.db.Query(ctx, claimDueLifeCognitionJobsFenced, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeCognitionJob{}
+	for rows.Next() {
+		var i LifeCognitionJob
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.CompanionAgentID,
+			&i.JobType,
+			&i.Status,
+			&i.DedupeKey,
+			&i.Input,
+			&i.Output,
+			&i.TaskID,
+			&i.ScheduledAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.Error,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ClaimToken,
+			&i.LeaseUntil,
+			&i.ContextVersion,
+			&i.ProcessingCursor,
+			&i.SourceIds,
+			&i.OutputSummary,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimExpiredLifeCognitionJobForRecovery = `-- name: ClaimExpiredLifeCognitionJobForRecovery :one
+SELECT id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at, claim_token, lease_until, context_version, processing_cursor, source_ids, output_summary FROM life_cognition_job
+WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= now()
+ORDER BY lease_until, id
+FOR UPDATE SKIP LOCKED
+LIMIT 1
+`
+
+// Recovery is deliberately split into three queries.  The worker wraps them
+// in one transaction, which lets it record the task terminal event before the
+// reclaimed claim becomes visible.  Keeping the row lock in the first query
+// also makes two workers converge on one recovery winner.
+func (q *Queries) ClaimExpiredLifeCognitionJobForRecovery(ctx context.Context) (LifeCognitionJob, error) {
+	row := q.db.QueryRow(ctx, claimExpiredLifeCognitionJobForRecovery)
+	var i LifeCognitionJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.CompanionAgentID,
+		&i.JobType,
+		&i.Status,
+		&i.DedupeKey,
+		&i.Input,
+		&i.Output,
+		&i.TaskID,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+		&i.ContextVersion,
+		&i.ProcessingCursor,
+		&i.SourceIds,
+		&i.OutputSummary,
+	)
+	return i, err
+}
+
 const completeLifeCognitionJob = `-- name: CompleteLifeCognitionJob :one
 UPDATE life_cognition_job
 SET status = 'completed', output = $4, completed_at = now(), updated_at = now()
 WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND status = 'running'
-RETURNING id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at
+RETURNING id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at, claim_token, lease_until, context_version, processing_cursor, source_ids, output_summary
 `
 
 type CompleteLifeCognitionJobParams struct {
@@ -274,6 +463,72 @@ func (q *Queries) CompleteLifeCognitionJob(ctx context.Context, arg CompleteLife
 		&i.Error,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+		&i.ContextVersion,
+		&i.ProcessingCursor,
+		&i.SourceIds,
+		&i.OutputSummary,
+	)
+	return i, err
+}
+
+const completeLifeCognitionJobFenced = `-- name: CompleteLifeCognitionJobFenced :one
+UPDATE life_cognition_job
+SET status = 'completed', output = $1, output_summary = $2,
+    completed_at = now(), claim_token = NULL, lease_until = NULL, updated_at = now()
+WHERE id = $3 AND workspace_id = $4 AND user_id = $5 AND status = 'running'
+  AND claim_token = $6 AND lease_until > now()
+  AND context_version = $7
+RETURNING id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at, claim_token, lease_until, context_version, processing_cursor, source_ids, output_summary
+`
+
+type CompleteLifeCognitionJobFencedParams struct {
+	Output         []byte      `json:"output"`
+	OutputSummary  []byte      `json:"output_summary"`
+	ID             pgtype.UUID `json:"id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	UserID         pgtype.UUID `json:"user_id"`
+	ClaimToken     pgtype.Text `json:"claim_token"`
+	ContextVersion int64       `json:"context_version"`
+}
+
+func (q *Queries) CompleteLifeCognitionJobFenced(ctx context.Context, arg CompleteLifeCognitionJobFencedParams) (LifeCognitionJob, error) {
+	row := q.db.QueryRow(ctx, completeLifeCognitionJobFenced,
+		arg.Output,
+		arg.OutputSummary,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.ClaimToken,
+		arg.ContextVersion,
+	)
+	var i LifeCognitionJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.CompanionAgentID,
+		&i.JobType,
+		&i.Status,
+		&i.DedupeKey,
+		&i.Input,
+		&i.Output,
+		&i.TaskID,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+		&i.ContextVersion,
+		&i.ProcessingCursor,
+		&i.SourceIds,
+		&i.OutputSummary,
 	)
 	return i, err
 }
@@ -498,8 +753,11 @@ func (q *Queries) CreateLifeChronicleRevision(ctx context.Context, arg CreateLif
 const createLifeCognitionAgentTask = `-- name: CreateLifeCognitionAgentTask :one
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, status, priority, context, initiator_user_id,
-    force_fresh_session, trigger_summary
-) VALUES ($1, $2, 'queued', 0, $3, $4, true, $5)
+    force_fresh_session, trigger_summary, id
+)
+SELECT $1, $2, 'queued', 0, $3, $4, true, $5,
+       COALESCE($6::uuid, gen_random_uuid())
+WHERE lock_task_owner_rows($1, NULL, $2)
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision
 `
 
@@ -509,6 +767,7 @@ type CreateLifeCognitionAgentTaskParams struct {
 	Context         []byte      `json:"context"`
 	InitiatorUserID pgtype.UUID `json:"initiator_user_id"`
 	TriggerSummary  pgtype.Text `json:"trigger_summary"`
+	ID              pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) CreateLifeCognitionAgentTask(ctx context.Context, arg CreateLifeCognitionAgentTaskParams) (AgentTaskQueue, error) {
@@ -518,6 +777,7 @@ func (q *Queries) CreateLifeCognitionAgentTask(ctx context.Context, arg CreateLi
 		arg.Context,
 		arg.InitiatorUserID,
 		arg.TriggerSummary,
+		arg.ID,
 	)
 	var i AgentTaskQueue
 	err := row.Scan(
@@ -585,7 +845,7 @@ INSERT INTO life_cognition_job (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (workspace_id, user_id, job_type, dedupe_key)
 DO UPDATE SET scheduled_at = LEAST(life_cognition_job.scheduled_at, EXCLUDED.scheduled_at)
-RETURNING id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at
+RETURNING id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at, claim_token, lease_until, context_version, processing_cursor, source_ids, output_summary
 `
 
 type CreateLifeCognitionJobParams struct {
@@ -628,6 +888,12 @@ func (q *Queries) CreateLifeCognitionJob(ctx context.Context, arg CreateLifeCogn
 		&i.Error,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+		&i.ContextVersion,
+		&i.ProcessingCursor,
+		&i.SourceIds,
+		&i.OutputSummary,
 	)
 	return i, err
 }
@@ -1437,6 +1703,23 @@ WITH targets AS MATERIALIZED (
         status = CASE WHEN status = 'reviewed' THEN 'awaiting_review' ELSE status END,
         updated_at = now()
     WHERE id IN (SELECT target_id FROM targets WHERE target_type = 'experiment_round_review')
+), clear_round_proposal_links AS (
+    UPDATE life_experiment_round
+    SET proposal_id = NULL, updated_at = now()
+    WHERE proposal_id IN (SELECT target_id FROM targets WHERE target_type = 'action_proposal')
+), delete_chronicle_evidence AS (
+    DELETE FROM life_chronicle_evidence
+    WHERE entry_id IN (SELECT target_id FROM targets WHERE target_type = 'chronicle_entry')
+), delete_chronicle_revisions AS (
+    DELETE FROM life_chronicle_revision
+    WHERE entry_id IN (SELECT target_id FROM targets WHERE target_type = 'chronicle_entry')
+), delete_observation_topic_links AS (
+    DELETE FROM life_observation_topic_judgement
+    WHERE topic_id IN (SELECT target_id FROM targets WHERE target_type = 'observation_topic')
+       OR judgement_id IN (SELECT target_id FROM targets WHERE target_type = 'observer_judgement')
+), delete_topic_memory_links AS (
+    DELETE FROM life_topic_memory
+    WHERE topic_id IN (SELECT target_id FROM targets WHERE target_type = 'topic')
 ), delete_chronicles AS (
     DELETE FROM life_chronicle_entry WHERE id IN (SELECT target_id FROM targets WHERE target_type = 'chronicle_entry')
 ), delete_proactive_inbox AS (
@@ -1521,10 +1804,27 @@ func (q *Queries) DeleteLifeObserverJudgementsBySources(ctx context.Context, arg
 	return err
 }
 
+const ensureLifeContextState = `-- name: EnsureLifeContextState :exec
+INSERT INTO life_context_state (workspace_id, user_id, version)
+VALUES ($1, $2, 1)
+ON CONFLICT (workspace_id, user_id) DO NOTHING
+`
+
+type EnsureLifeContextStateParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) EnsureLifeContextState(ctx context.Context, arg EnsureLifeContextStateParams) error {
+	_, err := q.db.Exec(ctx, ensureLifeContextState, arg.WorkspaceID, arg.UserID)
+	return err
+}
+
 const failLifeCognitionJob = `-- name: FailLifeCognitionJob :exec
 UPDATE life_cognition_job
 SET status = CASE WHEN attempt >= max_attempts THEN 'cancelled' ELSE 'failed' END,
-    error = $2, scheduled_at = now() + interval '5 minutes', updated_at = now()
+    error = $2, scheduled_at = now() + interval '5 minutes',
+    claim_token = NULL, lease_until = NULL, task_id = NULL, updated_at = now()
 WHERE id = $1
 `
 
@@ -1536,6 +1836,95 @@ type FailLifeCognitionJobParams struct {
 func (q *Queries) FailLifeCognitionJob(ctx context.Context, arg FailLifeCognitionJobParams) error {
 	_, err := q.db.Exec(ctx, failLifeCognitionJob, arg.ID, arg.Error)
 	return err
+}
+
+const failLifeCognitionJobFenced = `-- name: FailLifeCognitionJobFenced :execrows
+UPDATE life_cognition_job
+SET status = CASE WHEN attempt >= max_attempts THEN 'cancelled' ELSE 'failed' END,
+    error = $1, scheduled_at = now() + interval '5 minutes',
+    claim_token = NULL, lease_until = NULL, task_id = NULL, updated_at = now()
+WHERE id = $2 AND claim_token = $3 AND status = 'running'
+  AND lease_until > now() AND context_version = $4
+`
+
+type FailLifeCognitionJobFencedParams struct {
+	Error          string      `json:"error"`
+	ID             pgtype.UUID `json:"id"`
+	ClaimToken     pgtype.Text `json:"claim_token"`
+	ContextVersion int64       `json:"context_version"`
+}
+
+func (q *Queries) FailLifeCognitionJobFenced(ctx context.Context, arg FailLifeCognitionJobFencedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failLifeCognitionJobFenced,
+		arg.Error,
+		arg.ID,
+		arg.ClaimToken,
+		arg.ContextVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const failLifeCognitionJobForTask = `-- name: FailLifeCognitionJobForTask :execrows
+UPDATE life_cognition_job
+SET status = CASE WHEN attempt >= max_attempts THEN 'cancelled' ELSE 'failed' END,
+    error = $1, scheduled_at = now() + interval '5 minutes',
+    claim_token = NULL, lease_until = NULL, task_id = NULL, updated_at = now()
+WHERE id = $2 AND task_id = $3 AND status = 'running'
+`
+
+type FailLifeCognitionJobForTaskParams struct {
+	Error  string      `json:"error"`
+	ID     pgtype.UUID `json:"id"`
+	TaskID pgtype.UUID `json:"task_id"`
+}
+
+// Legacy Life claims have no token.  The task id and running status still
+// fence the update so a stale daemon cannot fail a newer/reused job row.
+func (q *Queries) FailLifeCognitionJobForTask(ctx context.Context, arg FailLifeCognitionJobForTaskParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failLifeCognitionJobForTask, arg.Error, arg.ID, arg.TaskID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const failLifeCognitionJobForTaskFenced = `-- name: FailLifeCognitionJobForTaskFenced :execrows
+UPDATE life_cognition_job
+SET status = CASE WHEN attempt >= max_attempts THEN 'cancelled' ELSE 'failed' END,
+    error = $1, scheduled_at = now() + interval '5 minutes',
+    claim_token = NULL, lease_until = NULL, task_id = NULL, updated_at = now()
+WHERE id = $2 AND task_id = $3 AND status = 'running'
+  AND claim_token = $4
+  AND context_version = $5
+`
+
+type FailLifeCognitionJobForTaskFencedParams struct {
+	Error          string      `json:"error"`
+	ID             pgtype.UUID `json:"id"`
+	TaskID         pgtype.UUID `json:"task_id"`
+	ClaimToken     pgtype.Text `json:"claim_token"`
+	ContextVersion int64       `json:"context_version"`
+}
+
+// A claimed task may report a terminal provider error just after its lease
+// deadline.  The claim token, task id and context version still prove which
+// worker owns the row; unlike the polling failure query this terminal path
+// intentionally does not require lease_until > now().
+func (q *Queries) FailLifeCognitionJobForTaskFenced(ctx context.Context, arg FailLifeCognitionJobForTaskFencedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failLifeCognitionJobForTaskFenced,
+		arg.Error,
+		arg.ID,
+		arg.TaskID,
+		arg.ClaimToken,
+		arg.ContextVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getActiveLifeIdentity = `-- name: GetActiveLifeIdentity :one
@@ -1631,7 +2020,7 @@ func (q *Queries) GetLatestLifeMaterialBySource(ctx context.Context, arg GetLate
 }
 
 const getLifeCognitionJobForTask = `-- name: GetLifeCognitionJobForTask :one
-SELECT id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at FROM life_cognition_job WHERE task_id = $1
+SELECT id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at, claim_token, lease_until, context_version, processing_cursor, source_ids, output_summary FROM life_cognition_job WHERE task_id = $1
 `
 
 func (q *Queries) GetLifeCognitionJobForTask(ctx context.Context, taskID pgtype.UUID) (LifeCognitionJob, error) {
@@ -1656,6 +2045,51 @@ func (q *Queries) GetLifeCognitionJobForTask(ctx context.Context, taskID pgtype.
 		&i.Error,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+		&i.ContextVersion,
+		&i.ProcessingCursor,
+		&i.SourceIds,
+		&i.OutputSummary,
+	)
+	return i, err
+}
+
+const getLifeCognitionJobForTaskForUpdate = `-- name: GetLifeCognitionJobForTaskForUpdate :one
+SELECT id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at, claim_token, lease_until, context_version, processing_cursor, source_ids, output_summary FROM life_cognition_job WHERE task_id = $1 FOR UPDATE
+`
+
+// Lock the job before a governed task terminal transition.  Structured Life
+// completion and failure both use the job row as their fencing authority, so
+// taking this lock first gives both paths one deterministic order.
+func (q *Queries) GetLifeCognitionJobForTaskForUpdate(ctx context.Context, taskID pgtype.UUID) (LifeCognitionJob, error) {
+	row := q.db.QueryRow(ctx, getLifeCognitionJobForTaskForUpdate, taskID)
+	var i LifeCognitionJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.CompanionAgentID,
+		&i.JobType,
+		&i.Status,
+		&i.DedupeKey,
+		&i.Input,
+		&i.Output,
+		&i.TaskID,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+		&i.ContextVersion,
+		&i.ProcessingCursor,
+		&i.SourceIds,
+		&i.OutputSummary,
 	)
 	return i, err
 }
@@ -1851,6 +2285,37 @@ func (q *Queries) GetLifeObserverForUser(ctx context.Context, arg GetLifeObserve
 	return i, err
 }
 
+const getLifeObserverJudgementForUser = `-- name: GetLifeObserverJudgementForUser :one
+SELECT j.id, j.observer_id, j.status, j.title, j.content, j.evidence, j.confidence, j.uncertainty, j.published_at, j.created_at FROM life_observer_judgement j
+JOIN life_observer o ON o.id = j.observer_id
+WHERE j.id = $1 AND o.workspace_id = $2
+  AND o.user_id = $3
+`
+
+type GetLifeObserverJudgementForUserParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) GetLifeObserverJudgementForUser(ctx context.Context, arg GetLifeObserverJudgementForUserParams) (LifeObserverJudgement, error) {
+	row := q.db.QueryRow(ctx, getLifeObserverJudgementForUser, arg.ID, arg.WorkspaceID, arg.UserID)
+	var i LifeObserverJudgement
+	err := row.Scan(
+		&i.ID,
+		&i.ObserverID,
+		&i.Status,
+		&i.Title,
+		&i.Content,
+		&i.Evidence,
+		&i.Confidence,
+		&i.Uncertainty,
+		&i.PublishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getLifeObserverKnowledgeForUser = `-- name: GetLifeObserverKnowledgeForUser :one
 SELECT k.id, k.observer_id, k.title, k.content, k.source, k.created_at, k.updated_at FROM life_observer_knowledge k
 JOIN life_observer o ON o.id = k.observer_id
@@ -1998,6 +2463,28 @@ func (q *Queries) GetNextLifeObserverVersion(ctx context.Context, observerID pgt
 	var version int32
 	err := row.Scan(&version)
 	return version, err
+}
+
+const isLifeAgent = `-- name: IsLifeAgent :one
+SELECT EXISTS (
+    SELECT 1 FROM companion_profile profile
+    WHERE profile.workspace_id = $1 AND profile.agent_id = $2
+    UNION ALL
+    SELECT 1 FROM life_observer observer
+    WHERE observer.workspace_id = $1 AND observer.agent_id = $2
+)
+`
+
+type IsLifeAgentParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+}
+
+func (q *Queries) IsLifeAgent(ctx context.Context, arg IsLifeAgentParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isLifeAgent, arg.WorkspaceID, arg.AgentID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const isLifeMaterialForgotten = `-- name: IsLifeMaterialForgotten :one
@@ -2541,6 +3028,97 @@ func (q *Queries) ListLifeChronicleContextEntries(ctx context.Context, arg ListL
 	return items, nil
 }
 
+const listLifeChronicleContextEntriesLimited = `-- name: ListLifeChronicleContextEntriesLimited :many
+SELECT id, workspace_id, user_id, period_start, period_end, facts, feelings, understanding_then, understanding_later, created_at, updated_at, period_kind, actions, status, generated_by, revision FROM life_chronicle_entry
+WHERE workspace_id = $1
+  AND user_id = $2
+  AND status = 'published'
+  AND (period_kind IN ('month', 'year', 'event') OR period_end >= now() - interval '90 days')
+ORDER BY period_start DESC, id DESC
+LIMIT $3::int
+`
+
+type ListLifeChronicleContextEntriesLimitedParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListLifeChronicleContextEntriesLimited(ctx context.Context, arg ListLifeChronicleContextEntriesLimitedParams) ([]LifeChronicleEntry, error) {
+	rows, err := q.db.Query(ctx, listLifeChronicleContextEntriesLimited, arg.WorkspaceID, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeChronicleEntry{}
+	for rows.Next() {
+		var i LifeChronicleEntry
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.PeriodStart,
+			&i.PeriodEnd,
+			&i.Facts,
+			&i.Feelings,
+			&i.UnderstandingThen,
+			&i.UnderstandingLater,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PeriodKind,
+			&i.Actions,
+			&i.Status,
+			&i.GeneratedBy,
+			&i.Revision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLifeChronicleCursors = `-- name: ListLifeChronicleCursors :many
+SELECT workspace_id, user_id, period_kind, next_period_start, last_processed_at, updated_at FROM life_chronicle_cursor
+WHERE workspace_id = $1 AND user_id = $2
+ORDER BY period_kind
+`
+
+type ListLifeChronicleCursorsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) ListLifeChronicleCursors(ctx context.Context, arg ListLifeChronicleCursorsParams) ([]LifeChronicleCursor, error) {
+	rows, err := q.db.Query(ctx, listLifeChronicleCursors, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeChronicleCursor{}
+	for rows.Next() {
+		var i LifeChronicleCursor
+		if err := rows.Scan(
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.PeriodKind,
+			&i.NextPeriodStart,
+			&i.LastProcessedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLifeChroniclesInPeriod = `-- name: ListLifeChroniclesInPeriod :many
 SELECT id, workspace_id, user_id, period_start, period_end, facts, feelings, understanding_then, understanding_later, created_at, updated_at, period_kind, actions, status, generated_by, revision FROM life_chronicle_entry
 WHERE workspace_id = $1 AND user_id = $2 AND status = 'published'
@@ -2600,7 +3178,7 @@ func (q *Queries) ListLifeChroniclesInPeriod(ctx context.Context, arg ListLifeCh
 }
 
 const listLifeCognitionJobs = `-- name: ListLifeCognitionJobs :many
-SELECT id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at FROM life_cognition_job
+SELECT id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at, claim_token, lease_until, context_version, processing_cursor, source_ids, output_summary FROM life_cognition_job
 WHERE workspace_id = $1 AND user_id = $2
 ORDER BY created_at DESC
 LIMIT $3
@@ -2640,6 +3218,12 @@ func (q *Queries) ListLifeCognitionJobs(ctx context.Context, arg ListLifeCogniti
 			&i.Error,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ClaimToken,
+			&i.LeaseUntil,
+			&i.ContextVersion,
+			&i.ProcessingCursor,
+			&i.SourceIds,
+			&i.OutputSummary,
 		); err != nil {
 			return nil, err
 		}
@@ -2666,6 +3250,56 @@ type ListLifeCommitmentsParams struct {
 
 func (q *Queries) ListLifeCommitments(ctx context.Context, arg ListLifeCommitmentsParams) ([]LifeCommitment, error) {
 	rows, err := q.db.Query(ctx, listLifeCommitments, arg.WorkspaceID, arg.UserID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeCommitment{}
+	for rows.Next() {
+		var i LifeCommitment
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.SourceMemoryID,
+			&i.IssueID,
+			&i.Content,
+			&i.Status,
+			&i.DueAt,
+			&i.RevisitAfter,
+			&i.CompletedAt,
+			&i.CancelledAt,
+			&i.Outcome,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLifeCommitmentsForContext = `-- name: ListLifeCommitmentsForContext :many
+SELECT id, workspace_id, user_id, source_memory_id, issue_id, content, status, due_at, revisit_after, completed_at, cancelled_at, outcome, created_at, updated_at FROM life_commitment
+WHERE workspace_id = $1
+  AND user_id = $2
+  AND status = 'confirmed'
+ORDER BY COALESCE(due_at, revisit_after, created_at) ASC, id ASC
+LIMIT $3::int
+`
+
+type ListLifeCommitmentsForContextParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListLifeCommitmentsForContext(ctx context.Context, arg ListLifeCommitmentsForContextParams) ([]LifeCommitment, error) {
+	rows, err := q.db.Query(ctx, listLifeCommitmentsForContext, arg.WorkspaceID, arg.UserID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2840,6 +3474,61 @@ func (q *Queries) ListLifeInternalThoughts(ctx context.Context, arg ListLifeInte
 		arg.UserID,
 		arg.CompanionAgentID,
 		arg.Status,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeInternalThought{}
+	for rows.Next() {
+		var i LifeInternalThought
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.CompanionAgentID,
+			&i.ThoughtType,
+			&i.Title,
+			&i.Content,
+			&i.Status,
+			&i.Metadata,
+			&i.LastDevelopedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLifeInternalThoughtsForContext = `-- name: ListLifeInternalThoughtsForContext :many
+SELECT id, workspace_id, user_id, companion_agent_id, thought_type, title, content, status, metadata, last_developed_at, created_at, updated_at FROM life_internal_thought
+WHERE workspace_id = $1
+  AND user_id = $2
+  AND companion_agent_id = $3
+  AND status = 'active'
+ORDER BY last_developed_at DESC, id DESC
+LIMIT $4::int
+`
+
+type ListLifeInternalThoughtsForContextParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	UserID           pgtype.UUID `json:"user_id"`
+	CompanionAgentID pgtype.UUID `json:"companion_agent_id"`
+	Limit            int32       `json:"limit"`
+}
+
+func (q *Queries) ListLifeInternalThoughtsForContext(ctx context.Context, arg ListLifeInternalThoughtsForContextParams) ([]LifeInternalThought, error) {
+	rows, err := q.db.Query(ctx, listLifeInternalThoughtsForContext,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.CompanionAgentID,
+		arg.Limit,
 	)
 	if err != nil {
 		return nil, err
@@ -3186,6 +3875,53 @@ func (q *Queries) ListLifeModules(ctx context.Context, arg ListLifeModulesParams
 	return items, nil
 }
 
+const listLifeModulesForContext = `-- name: ListLifeModulesForContext :many
+SELECT id, workspace_id, user_id, source_experiment_id, name, status, current_version, enabled_at, disabled_at, created_at, updated_at FROM life_module
+WHERE workspace_id = $1
+  AND user_id = $2
+  AND status = 'active'
+ORDER BY updated_at DESC, id DESC
+LIMIT $3::int
+`
+
+type ListLifeModulesForContextParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListLifeModulesForContext(ctx context.Context, arg ListLifeModulesForContextParams) ([]LifeModule, error) {
+	rows, err := q.db.Query(ctx, listLifeModulesForContext, arg.WorkspaceID, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeModule{}
+	for rows.Next() {
+		var i LifeModule
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.SourceExperimentID,
+			&i.Name,
+			&i.Status,
+			&i.CurrentVersion,
+			&i.EnabledAt,
+			&i.DisabledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLifeObservationTopics = `-- name: ListLifeObservationTopics :many
 SELECT id, workspace_id, user_id, title, summary, status, companion_response, surfaced_at, resolved_at, created_at, updated_at FROM life_observation_topic
 WHERE workspace_id = $1 AND user_id = $2
@@ -3199,6 +3935,53 @@ type ListLifeObservationTopicsParams struct {
 
 func (q *Queries) ListLifeObservationTopics(ctx context.Context, arg ListLifeObservationTopicsParams) ([]LifeObservationTopic, error) {
 	rows, err := q.db.Query(ctx, listLifeObservationTopics, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeObservationTopic{}
+	for rows.Next() {
+		var i LifeObservationTopic
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.CompanionResponse,
+			&i.SurfacedAt,
+			&i.ResolvedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLifeObservationTopicsForContext = `-- name: ListLifeObservationTopicsForContext :many
+SELECT id, workspace_id, user_id, title, summary, status, companion_response, surfaced_at, resolved_at, created_at, updated_at FROM life_observation_topic
+WHERE workspace_id = $1
+  AND user_id = $2
+  AND status NOT IN ('archived', 'resolved')
+ORDER BY created_at DESC, id DESC
+LIMIT $3::int
+`
+
+type ListLifeObservationTopicsForContextParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListLifeObservationTopicsForContext(ctx context.Context, arg ListLifeObservationTopicsForContextParams) ([]LifeObservationTopic, error) {
+	rows, err := q.db.Query(ctx, listLifeObservationTopicsForContext, arg.WorkspaceID, arg.UserID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -3295,6 +4078,46 @@ WHERE observer_id = $1 ORDER BY created_at
 
 func (q *Queries) ListLifeObserverKnowledge(ctx context.Context, observerID pgtype.UUID) ([]LifeObserverKnowledge, error) {
 	rows, err := q.db.Query(ctx, listLifeObserverKnowledge, observerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeObserverKnowledge{}
+	for rows.Next() {
+		var i LifeObserverKnowledge
+		if err := rows.Scan(
+			&i.ID,
+			&i.ObserverID,
+			&i.Title,
+			&i.Content,
+			&i.Source,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLifeObserverKnowledgeForContext = `-- name: ListLifeObserverKnowledgeForContext :many
+SELECT id, observer_id, title, content, source, created_at, updated_at FROM life_observer_knowledge
+WHERE observer_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT $2::int
+`
+
+type ListLifeObserverKnowledgeForContextParams struct {
+	ObserverID pgtype.UUID `json:"observer_id"`
+	Limit      int32       `json:"limit"`
+}
+
+func (q *Queries) ListLifeObserverKnowledgeForContext(ctx context.Context, arg ListLifeObserverKnowledgeForContextParams) ([]LifeObserverKnowledge, error) {
+	rows, err := q.db.Query(ctx, listLifeObserverKnowledgeForContext, arg.ObserverID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -3493,6 +4316,56 @@ func (q *Queries) ListLifeTopics(ctx context.Context, arg ListLifeTopicsParams) 
 	return items, nil
 }
 
+const listLifeTopicsForContext = `-- name: ListLifeTopicsForContext :many
+SELECT id, workspace_id, user_id, title, summary, status, confidence, uncertainty, first_observed_at, last_observed_at, last_reviewed_at, review_after, created_at, updated_at FROM life_topic
+WHERE workspace_id = $1
+  AND user_id = $2
+  AND status NOT IN ('archived', 'resolved')
+ORDER BY last_observed_at DESC, id DESC
+LIMIT $3::int
+`
+
+type ListLifeTopicsForContextParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListLifeTopicsForContext(ctx context.Context, arg ListLifeTopicsForContextParams) ([]LifeTopic, error) {
+	rows, err := q.db.Query(ctx, listLifeTopicsForContext, arg.WorkspaceID, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeTopic{}
+	for rows.Next() {
+		var i LifeTopic
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.Confidence,
+			&i.Uncertainty,
+			&i.FirstObservedAt,
+			&i.LastObservedAt,
+			&i.LastReviewedAt,
+			&i.ReviewAfter,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLifeUpgradeEvaluations = `-- name: ListLifeUpgradeEvaluations :many
 SELECT id, workspace_id, user_id, identity_version_id, candidate_label, baseline_label, scenarios, result, status, rollback_recommended, started_at, completed_at, created_at FROM life_upgrade_evaluation
 WHERE workspace_id = $1 AND user_id = $2
@@ -3539,7 +4412,11 @@ func (q *Queries) ListLifeUpgradeEvaluations(ctx context.Context, arg ListLifeUp
 }
 
 const listMissingLifeChroniclePeriods = `-- name: ListMissingLifeChroniclePeriods :many
-WITH bounds AS (
+WITH cursor_hints AS (
+    SELECT period_kind, next_period_start
+    FROM life_chronicle_cursor
+    WHERE workspace_id = $1 AND user_id = $2
+), bounds AS (
     SELECT min(occurred_at) AS first_at, $4::timestamptz AS before_time
     FROM life_material
     WHERE workspace_id = $1 AND user_id = $2
@@ -3631,7 +4508,14 @@ WHERE NOT EXISTS (
           AND job.job_type = 'chronicle_generate'
           AND job.dedupe_key = period.period_kind || ':' || to_char(period.period_start AT TIME ZONE 'UTC', 'YYYY-MM-DD')
     )
-ORDER BY period_end, CASE period_kind WHEN 'day' THEN 1 WHEN 'week' THEN 2 WHEN 'month' THEN 3 ELSE 4 END
+ORDER BY
+    CASE WHEN EXISTS (
+        SELECT 1 FROM cursor_hints cursor_hint
+        WHERE cursor_hint.period_kind = period.period_kind
+          AND period.period_start >= cursor_hint.next_period_start
+    ) THEN 0 ELSE 1 END,
+    period_end,
+    CASE period_kind WHEN 'day' THEN 1 WHEN 'week' THEN 2 WHEN 'month' THEN 3 ELSE 4 END
 LIMIT $3::int
 `
 
@@ -3648,6 +4532,11 @@ type ListMissingLifeChroniclePeriodsRow struct {
 	PeriodEnd   pgtype.Timestamptz `json:"period_end"`
 }
 
+// The cursor is a scheduling hint, not an authority: all readiness and
+// published-entry checks above remain in force, so an out-of-order worker or
+// a repaired cursor can never hide an older missing period. Prioritising the
+// range after the cursor lets a long-lived account catch up in bounded
+// batches without changing that no-omission guarantee.
 func (q *Queries) ListMissingLifeChroniclePeriods(ctx context.Context, arg ListMissingLifeChroniclePeriodsParams) ([]ListMissingLifeChroniclePeriodsRow, error) {
 	rows, err := q.db.Query(ctx, listMissingLifeChroniclePeriods,
 		arg.WorkspaceID,
@@ -3663,6 +4552,56 @@ func (q *Queries) ListMissingLifeChroniclePeriods(ctx context.Context, arg ListM
 	for rows.Next() {
 		var i ListMissingLifeChroniclePeriodsRow
 		if err := rows.Scan(&i.PeriodKind, &i.PeriodStart, &i.PeriodEnd); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOpenLifeRelationshipEventsForContext = `-- name: ListOpenLifeRelationshipEventsForContext :many
+SELECT id, workspace_id, user_id, event_type, status, user_position, companion_position, context, revisit_after, resolution, relationship_change_proposal_id, resolved_at, created_at, updated_at FROM life_relationship_event
+WHERE workspace_id = $1
+  AND user_id = $2
+  AND status IN ('open', 'waiting')
+ORDER BY created_at DESC, id DESC
+LIMIT $3::int
+`
+
+type ListOpenLifeRelationshipEventsForContextParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListOpenLifeRelationshipEventsForContext(ctx context.Context, arg ListOpenLifeRelationshipEventsForContextParams) ([]LifeRelationshipEvent, error) {
+	rows, err := q.db.Query(ctx, listOpenLifeRelationshipEventsForContext, arg.WorkspaceID, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LifeRelationshipEvent{}
+	for rows.Next() {
+		var i LifeRelationshipEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.EventType,
+			&i.Status,
+			&i.UserPosition,
+			&i.CompanionPosition,
+			&i.Context,
+			&i.RevisitAfter,
+			&i.Resolution,
+			&i.RelationshipChangeProposalID,
+			&i.ResolvedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -3795,8 +4734,71 @@ func (q *Queries) ListPublishedLifeObserverJudgements(ctx context.Context, arg L
 	return items, nil
 }
 
+const listPublishedLifeObserverJudgementsForContext = `-- name: ListPublishedLifeObserverJudgementsForContext :many
+SELECT j.id, j.observer_id, j.status, j.title, j.content, j.evidence, j.confidence, j.uncertainty, j.published_at, j.created_at, o.name AS observer_name
+FROM life_observer_judgement j
+JOIN life_observer o ON o.id = j.observer_id
+WHERE o.workspace_id = $1
+  AND o.user_id = $2
+  AND j.status = 'published'
+ORDER BY j.published_at DESC, j.id DESC
+LIMIT $3::int
+`
+
+type ListPublishedLifeObserverJudgementsForContextParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Limit       int32       `json:"limit"`
+}
+
+type ListPublishedLifeObserverJudgementsForContextRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	ObserverID   pgtype.UUID        `json:"observer_id"`
+	Status       string             `json:"status"`
+	Title        string             `json:"title"`
+	Content      string             `json:"content"`
+	Evidence     []byte             `json:"evidence"`
+	Confidence   float64            `json:"confidence"`
+	Uncertainty  string             `json:"uncertainty"`
+	PublishedAt  pgtype.Timestamptz `json:"published_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	ObserverName string             `json:"observer_name"`
+}
+
+func (q *Queries) ListPublishedLifeObserverJudgementsForContext(ctx context.Context, arg ListPublishedLifeObserverJudgementsForContextParams) ([]ListPublishedLifeObserverJudgementsForContextRow, error) {
+	rows, err := q.db.Query(ctx, listPublishedLifeObserverJudgementsForContext, arg.WorkspaceID, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPublishedLifeObserverJudgementsForContextRow{}
+	for rows.Next() {
+		var i ListPublishedLifeObserverJudgementsForContextRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ObserverID,
+			&i.Status,
+			&i.Title,
+			&i.Content,
+			&i.Evidence,
+			&i.Confidence,
+			&i.Uncertainty,
+			&i.PublishedAt,
+			&i.CreatedAt,
+			&i.ObserverName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunningLifeCognitionJobsWithTask = `-- name: ListRunningLifeCognitionJobsWithTask :many
-SELECT j.id, j.workspace_id, j.user_id, j.companion_agent_id, j.job_type, j.status, j.dedupe_key, j.input, j.output, j.task_id, j.scheduled_at, j.started_at, j.completed_at, j.attempt, j.max_attempts, j.error, j.created_at, j.updated_at, t.status AS task_status, t.error AS task_error, t.result AS task_result
+SELECT j.id, j.workspace_id, j.user_id, j.companion_agent_id, j.job_type, j.status, j.dedupe_key, j.input, j.output, j.task_id, j.scheduled_at, j.started_at, j.completed_at, j.attempt, j.max_attempts, j.error, j.created_at, j.updated_at, j.claim_token, j.lease_until, j.context_version, j.processing_cursor, j.source_ids, j.output_summary, t.status AS task_status, t.error AS task_error, t.result AS task_result
 FROM life_cognition_job j
 JOIN agent_task_queue t ON t.id = j.task_id
 WHERE j.status = 'running' AND t.status IN ('completed', 'failed', 'cancelled')
@@ -3823,6 +4825,12 @@ type ListRunningLifeCognitionJobsWithTaskRow struct {
 	Error            string             `json:"error"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ClaimToken       pgtype.Text        `json:"claim_token"`
+	LeaseUntil       pgtype.Timestamptz `json:"lease_until"`
+	ContextVersion   int64              `json:"context_version"`
+	ProcessingCursor string             `json:"processing_cursor"`
+	SourceIds        []byte             `json:"source_ids"`
+	OutputSummary    []byte             `json:"output_summary"`
 	TaskStatus       string             `json:"task_status"`
 	TaskError        pgtype.Text        `json:"task_error"`
 	TaskResult       []byte             `json:"task_result"`
@@ -3856,6 +4864,12 @@ func (q *Queries) ListRunningLifeCognitionJobsWithTask(ctx context.Context, limi
 			&i.Error,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ClaimToken,
+			&i.LeaseUntil,
+			&i.ContextVersion,
+			&i.ProcessingCursor,
+			&i.SourceIds,
+			&i.OutputSummary,
 			&i.TaskStatus,
 			&i.TaskError,
 			&i.TaskResult,
@@ -3944,6 +4958,78 @@ func (q *Queries) ListRunningLifeExperimentRoundsForChecks(ctx context.Context, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAgentForLifeBinding = `-- name: LockAgentForLifeBinding :one
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters FROM agent
+WHERE id = $1 AND workspace_id = $2
+  AND kind = 'user' AND archived_at IS NULL
+FOR UPDATE
+`
+
+type LockAgentForLifeBindingParams struct {
+	AgentID     pgtype.UUID `json:"agent_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockAgentForLifeBinding(ctx context.Context, arg LockAgentForLifeBindingParams) (Agent, error) {
+	row := q.db.QueryRow(ctx, lockAgentForLifeBinding, arg.AgentID, arg.WorkspaceID)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.RuntimeMode,
+		&i.RuntimeConfig,
+		&i.Visibility,
+		&i.Status,
+		&i.MaxConcurrentTasks,
+		&i.OwnerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Description,
+		&i.RuntimeID,
+		&i.Instructions,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+		&i.CustomEnv,
+		&i.CustomArgs,
+		&i.McpConfig,
+		&i.Model,
+		&i.ThinkingLevel,
+		&i.ComposioToolkitAllowlist,
+		&i.PermissionMode,
+		&i.Kind,
+		&i.SystemKey,
+		&i.DisabledRuntimeSkills,
+		&i.ServiceTier,
+		&i.ConversationStarters,
+	)
+	return i, err
+}
+
+const lockLifeContextState = `-- name: LockLifeContextState :one
+SELECT workspace_id, user_id, version, updated_at FROM life_context_state
+WHERE workspace_id = $1 AND user_id = $2
+FOR UPDATE
+`
+
+type LockLifeContextStateParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) LockLifeContextState(ctx context.Context, arg LockLifeContextStateParams) (LifeContextState, error) {
+	row := q.db.QueryRow(ctx, lockLifeContextState, arg.WorkspaceID, arg.UserID)
+	var i LifeContextState
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Version,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const markLifeInternalThoughtScheduled = `-- name: MarkLifeInternalThoughtScheduled :exec
@@ -4130,6 +5216,180 @@ func (q *Queries) RecordLifeProactiveSpeech(ctx context.Context, arg RecordLifeP
 	return err
 }
 
+const recoverExpiredLifeCognitionJob = `-- name: RecoverExpiredLifeCognitionJob :one
+UPDATE life_cognition_job
+SET status = CASE WHEN attempt >= max_attempts THEN 'cancelled' ELSE 'failed' END,
+    error = 'cognition lease expired and was reclaimed',
+    scheduled_at = CASE WHEN attempt >= max_attempts THEN scheduled_at ELSE now() END,
+    claim_token = NULL, lease_until = NULL, task_id = NULL, updated_at = now()
+WHERE id = $1 AND status = 'running' AND lease_until IS NOT NULL AND lease_until <= now()
+RETURNING id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at, claim_token, lease_until, context_version, processing_cursor, source_ids, output_summary
+`
+
+func (q *Queries) RecoverExpiredLifeCognitionJob(ctx context.Context, id pgtype.UUID) (LifeCognitionJob, error) {
+	row := q.db.QueryRow(ctx, recoverExpiredLifeCognitionJob, id)
+	var i LifeCognitionJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.CompanionAgentID,
+		&i.JobType,
+		&i.Status,
+		&i.DedupeKey,
+		&i.Input,
+		&i.Output,
+		&i.TaskID,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+		&i.ContextVersion,
+		&i.ProcessingCursor,
+		&i.SourceIds,
+		&i.OutputSummary,
+	)
+	return i, err
+}
+
+const recoverExpiredLifeCognitionTask = `-- name: RecoverExpiredLifeCognitionTask :one
+UPDATE agent_task_queue
+SET status = 'cancelled', completed_at = now(),
+    error = COALESCE(NULLIF(error, ''), 'life cognition lease expired and was reclaimed'),
+    failure_reason = COALESCE(NULLIF(failure_reason, ''), 'runtime_recovery'),
+    prepare_lease_expires_at = NULL
+WHERE id = $1
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision
+`
+
+func (q *Queries) RecoverExpiredLifeCognitionTask(ctx context.Context, id pgtype.UUID) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, recoverExpiredLifeCognitionTask, id)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
+	)
+	return i, err
+}
+
+const redactLifeDomainEventsBySourceIDs = `-- name: RedactLifeDomainEventsBySourceIDs :exec
+WITH RECURSIVE documents AS (
+    SELECT id AS event_id, payload AS value
+    FROM domain_event_outbox
+    WHERE domain_event_outbox.workspace_id = $1
+    UNION ALL
+    SELECT parent.event_id, child.value
+    FROM documents parent
+    CROSS JOIN LATERAL (
+        SELECT object_value.value
+        FROM jsonb_each(
+            CASE WHEN jsonb_typeof(parent.value) = 'object'
+                 THEN parent.value ELSE '{}'::jsonb END
+        ) AS object_value(key, value)
+        UNION ALL
+        SELECT array_value.value
+        FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(parent.value) = 'array'
+                 THEN parent.value ELSE '[]'::jsonb END
+        ) AS array_value(value)
+    ) child
+), affected_events AS MATERIALIZED (
+    SELECT DISTINCT event_id
+    FROM documents
+    WHERE value #>> '{}' = ANY($2::text[])
+       OR value #>> '{}' = ANY(
+            SELECT 'memory:' || memory_id
+            FROM unnest($2::text[]) AS memory_ids(memory_id)
+       )
+    UNION
+    SELECT id FROM domain_event_outbox
+    WHERE domain_event_outbox.workspace_id = $1
+      AND (stream_key = ANY($2::text[]) OR stream_key = ANY(
+            SELECT 'memory:' || memory_id
+            FROM unnest($2::text[]) AS memory_ids(memory_id)
+          ))
+)
+UPDATE domain_event_outbox event
+SET payload = jsonb_build_object('redacted', true, 'reason', 'life source permanently forgotten'),
+    processed_at = COALESCE(event.processed_at, now()),
+    lease_owner = NULL,
+    lease_until = NULL,
+    last_error = NULL
+WHERE event.id IN (SELECT event_id FROM affected_events)
+`
+
+type RedactLifeDomainEventsBySourceIDsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Column2     []string    `json:"column_2"`
+}
+
+// A queued or already processed envelope can still contain a deleted source
+// id and its surrounding content. Redact the payload in place; pending rows
+// are marked processed so a dispatcher cannot deliver the pre-deletion fact.
+func (q *Queries) RedactLifeDomainEventsBySourceIDs(ctx context.Context, arg RedactLifeDomainEventsBySourceIDsParams) error {
+	_, err := q.db.Exec(ctx, redactLifeDomainEventsBySourceIDs, arg.WorkspaceID, arg.Column2)
+	return err
+}
+
 const resolveLifeRelationshipEvent = `-- name: ResolveLifeRelationshipEvent :one
 UPDATE life_relationship_event
 SET status = $4, resolution = $5, resolved_at = now(), updated_at = now()
@@ -4176,9 +5436,11 @@ func (q *Queries) ResolveLifeRelationshipEvent(ctx context.Context, arg ResolveL
 const retryLifeCognitionJob = `-- name: RetryLifeCognitionJob :one
 UPDATE life_cognition_job
 SET status = 'queued', attempt = 0, task_id = NULL, error = '',
-    scheduled_at = now(), started_at = NULL, completed_at = NULL, updated_at = now()
+    scheduled_at = now(), started_at = NULL, completed_at = NULL,
+    claim_token = NULL, lease_until = NULL, output = NULL, output_summary = NULL,
+    processing_cursor = '', source_ids = '[]'::jsonb, updated_at = now()
 WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND status = 'cancelled'
-RETURNING id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at
+RETURNING id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at, claim_token, lease_until, context_version, processing_cursor, source_ids, output_summary
 `
 
 type RetryLifeCognitionJobParams struct {
@@ -4209,6 +5471,12 @@ func (q *Queries) RetryLifeCognitionJob(ctx context.Context, arg RetryLifeCognit
 		&i.Error,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+		&i.ContextVersion,
+		&i.ProcessingCursor,
+		&i.SourceIds,
+		&i.OutputSummary,
 	)
 	return i, err
 }
@@ -4344,6 +5612,90 @@ func (q *Queries) ScrubLifeCognitionTasksByMaterialIDs(ctx context.Context, arg 
 	return err
 }
 
+const scrubLifeCognitionTasksByMemoryIDs = `-- name: ScrubLifeCognitionTasksByMemoryIDs :exec
+WITH RECURSIVE documents AS (
+    SELECT id AS job_id, input AS value
+    FROM life_cognition_job
+    WHERE life_cognition_job.workspace_id = $1 AND life_cognition_job.user_id = $2
+    UNION ALL
+    SELECT id AS job_id, output AS value
+    FROM life_cognition_job
+    WHERE life_cognition_job.workspace_id = $1 AND life_cognition_job.user_id = $2
+      AND output IS NOT NULL
+), json_values AS (
+    SELECT job_id, value FROM documents
+    UNION ALL
+    SELECT parent.job_id, child.value
+    FROM json_values parent
+    CROSS JOIN LATERAL (
+        SELECT object_value.value
+        FROM jsonb_each(
+            CASE WHEN jsonb_typeof(parent.value) = 'object'
+                 THEN parent.value ELSE '{}'::jsonb END
+        ) AS object_value(key, value)
+        UNION ALL
+        SELECT array_value.value
+        FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(parent.value) = 'array'
+                 THEN parent.value ELSE '[]'::jsonb END
+        ) AS array_value(value)
+    ) child
+), affected_jobs AS MATERIALIZED (
+    SELECT DISTINCT job_id
+    FROM json_values
+    WHERE value #>> '{}' = ANY($3::text[])
+       OR value #>> '{}' = ANY(
+            SELECT 'memory:' || memory_id
+            FROM unnest($3::text[]) AS memory_ids(memory_id)
+       )
+), affected_tasks AS MATERIALIZED (
+    SELECT DISTINCT task.id
+    FROM agent_task_queue task
+    JOIN life_cognition_job job ON job.task_id = task.id
+    WHERE job.id IN (SELECT job_id FROM affected_jobs)
+), scrubbed_jobs AS (
+    UPDATE life_cognition_job job
+    SET input = '{}'::jsonb,
+        output = NULL,
+        source_ids = '[]'::jsonb,
+        output_summary = NULL,
+        claim_token = NULL,
+        lease_until = NULL,
+        status = CASE WHEN job.status <> 'cancelled' THEN 'cancelled' ELSE job.status END,
+        error = 'source permanently forgotten',
+        completed_at = COALESCE(job.completed_at, now()),
+        updated_at = now()
+    WHERE job.id IN (SELECT job_id FROM affected_jobs)
+    RETURNING job.task_id
+)
+UPDATE agent_task_queue task
+SET context = jsonb_build_object('type', 'life_cognition', 'source_forgotten', true),
+    result = NULL,
+    status = CASE WHEN task.status <> 'cancelled' THEN 'cancelled' ELSE task.status END,
+    error = 'source permanently forgotten',
+    completed_at = COALESCE(task.completed_at, now()),
+    session_id = NULL,
+    work_dir = NULL,
+    trigger_summary = '人生后台任务（来源已永久删除）'
+WHERE task.id IN (SELECT id FROM affected_tasks)
+`
+
+type ScrubLifeCognitionTasksByMemoryIDsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Column3     []string    `json:"column_3"`
+}
+
+// Memory deletion must fence every cognition copy, including a job that has
+// already been claimed and a completed job whose output still contains the
+// deleted memory. Walk the structured JSON documents instead of relying on a
+// particular job type or field name; source ids may appear in nested evidence,
+// context snapshots, or observer inputs.
+func (q *Queries) ScrubLifeCognitionTasksByMemoryIDs(ctx context.Context, arg ScrubLifeCognitionTasksByMemoryIDsParams) error {
+	_, err := q.db.Exec(ctx, scrubLifeCognitionTasksByMemoryIDs, arg.WorkspaceID, arg.UserID, arg.Column3)
+	return err
+}
+
 const setCompanionCurrentIdentity = `-- name: SetCompanionCurrentIdentity :exec
 UPDATE companion_profile
 SET current_identity_version_id = $3, updated_at = now()
@@ -4359,6 +5711,29 @@ type SetCompanionCurrentIdentityParams struct {
 func (q *Queries) SetCompanionCurrentIdentity(ctx context.Context, arg SetCompanionCurrentIdentityParams) error {
 	_, err := q.db.Exec(ctx, setCompanionCurrentIdentity, arg.WorkspaceID, arg.UserID, arg.CurrentIdentityVersionID)
 	return err
+}
+
+const setLifeAgentModel = `-- name: SetLifeAgentModel :execrows
+UPDATE agent
+SET model = $1, updated_at = now()
+WHERE id = $2 AND workspace_id = $3 AND kind = 'user'
+`
+
+type SetLifeAgentModelParams struct {
+	Model       pgtype.Text `json:"model"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Life owns the model choice for its bound agents. This narrow write is used
+// only while binding a CodeBuddy runtime whose model was left at runtime
+// default; ordinary agent edits continue to use the normal Agent API.
+func (q *Queries) SetLifeAgentModel(ctx context.Context, arg SetLifeAgentModelParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setLifeAgentModel, arg.Model, arg.AgentID, arg.WorkspaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setLifeChronicleRevision = `-- name: SetLifeChronicleRevision :exec
@@ -4744,6 +6119,75 @@ type UpdateRunningLifeCognitionJobInputParams struct {
 func (q *Queries) UpdateRunningLifeCognitionJobInput(ctx context.Context, arg UpdateRunningLifeCognitionJobInputParams) error {
 	_, err := q.db.Exec(ctx, updateRunningLifeCognitionJobInput, arg.ID, arg.Input)
 	return err
+}
+
+const updateRunningLifeCognitionJobInputFenced = `-- name: UpdateRunningLifeCognitionJobInputFenced :execrows
+UPDATE life_cognition_job
+SET input = $1, updated_at = now()
+WHERE id = $2 AND status = 'running' AND claim_token = $3
+  AND lease_until > now() AND context_version = $4
+`
+
+type UpdateRunningLifeCognitionJobInputFencedParams struct {
+	Input          []byte      `json:"input"`
+	ID             pgtype.UUID `json:"id"`
+	ClaimToken     pgtype.Text `json:"claim_token"`
+	ContextVersion int64       `json:"context_version"`
+}
+
+func (q *Queries) UpdateRunningLifeCognitionJobInputFenced(ctx context.Context, arg UpdateRunningLifeCognitionJobInputFencedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateRunningLifeCognitionJobInputFenced,
+		arg.Input,
+		arg.ID,
+		arg.ClaimToken,
+		arg.ContextVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const upsertLifeChronicleCursor = `-- name: UpsertLifeChronicleCursor :one
+INSERT INTO life_chronicle_cursor (
+    workspace_id, user_id, period_kind, next_period_start, last_processed_at
+) VALUES (
+    $1, $2, $3,
+    $4, $5
+)
+ON CONFLICT (workspace_id, user_id, period_kind) DO UPDATE
+SET next_period_start = GREATEST(life_chronicle_cursor.next_period_start, EXCLUDED.next_period_start),
+    last_processed_at = COALESCE(EXCLUDED.last_processed_at, life_chronicle_cursor.last_processed_at),
+    updated_at = now()
+RETURNING workspace_id, user_id, period_kind, next_period_start, last_processed_at, updated_at
+`
+
+type UpsertLifeChronicleCursorParams struct {
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	PeriodKind      string             `json:"period_kind"`
+	NextPeriodStart pgtype.Timestamptz `json:"next_period_start"`
+	LastProcessedAt pgtype.Timestamptz `json:"last_processed_at"`
+}
+
+func (q *Queries) UpsertLifeChronicleCursor(ctx context.Context, arg UpsertLifeChronicleCursorParams) (LifeChronicleCursor, error) {
+	row := q.db.QueryRow(ctx, upsertLifeChronicleCursor,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.PeriodKind,
+		arg.NextPeriodStart,
+		arg.LastProcessedAt,
+	)
+	var i LifeChronicleCursor
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.PeriodKind,
+		&i.NextPeriodStart,
+		&i.LastProcessedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const upsertLifeInternalThought = `-- name: UpsertLifeInternalThought :one

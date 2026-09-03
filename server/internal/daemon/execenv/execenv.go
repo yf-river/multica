@@ -231,6 +231,11 @@ type TaskContextForEnv struct {
 	InitiatorID    string
 	InitiatorName  string
 	InitiatorEmail string
+	// Life fields identify governed background cognition tasks and their bounded context.
+	LifeContext string
+	LifeJobID string
+	LifeJobType string
+	LifeJobInput string
 }
 
 // SkillContextForEnv represents a skill to be written into the execution environment.

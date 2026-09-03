@@ -697,11 +697,16 @@ func trySend(ch chan<- Message, msg Message) {
 // overridden by user-configured custom_args. Overriding these would break
 // the daemon↔Claude communication protocol.
 var claudeBlockedArgs = map[string]blockedArgMode{
-	"-p":                blockedStandalone, // non-interactive mode
-	"--output-format":   blockedWithValue,  // stream-json protocol
-	"--input-format":    blockedWithValue,  // stream-json protocol
-	"--permission-mode": blockedWithValue,  // bypassPermissions for autonomous operation
-	"--mcp-config":      blockedWithValue,  // set by daemon from agent.mcp_config
+	"-p":                       blockedStandalone, // non-interactive mode
+	"--output-format":          blockedWithValue,  // stream-json protocol
+	"--input-format":           blockedWithValue,  // stream-json protocol
+	"--permission-mode":        blockedWithValue,  // bypassPermissions for autonomous operation
+	"--mcp-config":             blockedWithValue,  // set by daemon from agent.mcp_config
+	"--tools":                  blockedWithValue,
+	"--allowedTools":           blockedWithValue,
+	"--disallowedTools":        blockedList,
+	"--strict-mcp-config":      blockedStandalone,
+	"--no-session-persistence": blockedStandalone,
 	// `--effort` is owned by the per-agent thinking_level picker so a
 	// user-supplied custom_arg cannot silently outvote it. The daemon
 	// injects --effort only when opts.ThinkingLevel is set; if a user
@@ -725,6 +730,11 @@ func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
 		// never sees the question (see GitHub #2588). User-facing
 		// clarification belongs in an issue comment instead.
 		"--disallowedTools", "AskUserQuestion",
+	}
+	if opts.LifeCognition {
+		// Life cognition must not inherit coding tools or provider session state.
+		// MCP remains available through the explicitly managed Life server.
+		args = append(args, "--tools", "", "--strict-mcp-config", "--no-session-persistence")
 	}
 	if hasManagedMcpConfig(opts.McpConfig) {
 		// A saved agent-level config is authoritative, including an explicitly
@@ -973,6 +983,7 @@ const (
 	blockedWithValue     blockedArgMode = iota // flag takes a value (next arg or =value)
 	blockedStandalone                          // flag is boolean, no value
 	blockedOptionalValue                       // flag may take the next non-flag arg or =value
+	blockedList                                // flag consumes all following non-flag values
 )
 
 // filterCustomArgs removes protocol-critical flags from user-configured custom
@@ -1004,7 +1015,11 @@ func filterCustomArgs(args []string, blocked map[string]blockedArgMode, logger *
 		mode, isBlocked := blocked[flag]
 		if isBlocked {
 			logger.Warn("custom_args: blocked protocol-critical flag, skipping", "flag", flag)
-			if mode == blockedWithValue && !hasInlineValue {
+			if mode == blockedList && !hasInlineValue {
+				for i+1 < len(args) && !strings.HasPrefix(unshellQuoteArg(args[i+1]), "-") {
+					i++
+				}
+			} else if mode == blockedWithValue && !hasInlineValue {
 				// The next arg is the value for this flag — skip it too.
 				i++
 			} else if mode == blockedOptionalValue && !hasInlineValue && i+1 < len(args) &&
@@ -1112,8 +1127,7 @@ func detectCLIVersion(ctx context.Context, runtimeCmd Command) (string, error) {
 		}
 	}
 
-	// outputOwned, not the collector in run_collect_quiet.go, and the difference
-	// is which signal means "the answer is in". A broken CLI (node/bun shim) can
+	// outputOwned owns this probe. A broken CLI (node/bun shim) can
 	// leave grandchildren that inherited and still hold our stdout pipe open, and
 	// os/exec's Wait blocks until those pipes reach EOF — which is why this call
 	// carries a WaitDelay backstop, and why the deadline above needs one at all.
@@ -1175,10 +1189,8 @@ func detectCLIVersion(ctx context.Context, runtimeCmd Command) (string, error) {
 // It exists for one shape: the CLI printed what we asked for, and then something
 // about its *lifecycle* failed — a descendant held the output pipes past
 // cmd.WaitDelay (exec.ErrWaitDelay), so Wait reports failure over an answer that
-// is already in the buffer. OpenClaw does this on every invocation: it forks an
-// `openclaw-config` helper that inherits stdout. #6084 measured that shape,
-// tried a WaitDelay backstop, and reverted it on review precisely because the
-// call then fails; MUL-5467 is the follow-up.
+// is already in the buffer. The answer is safe to use only when the parser has
+// positively recognised it; an arbitrary partial banner is not evidence.
 //
 // Deliberately narrow, because "we have output" must never be confused with "we
 // have the answer":

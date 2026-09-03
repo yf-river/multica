@@ -255,46 +255,6 @@ describe("CallbackPage", () => {
     });
   });
 
-  it("redirects to CLI callback even when state also contains platform:desktop", async () => {
-    // cli_callback takes precedence over platform:desktop — the CLI flow
-    // is a specific user intent that should not be derailed by desktop flag.
-    const { api: mockedApi } = await import("@multica/core/api");
-    const mockGoogleLogin = mockedApi.googleLogin as ReturnType<typeof vi.fn>;
-
-    const hrefSetter = vi.fn();
-    const originalLocation = window.location;
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      writable: true,
-      value: { ...originalLocation, set href(value: string) { hrefSetter(value); } },
-    });
-
-    try {
-      mockSearchParams.set(
-        "state",
-        "platform:desktop,cli_callback:http://localhost:12345/callback,cli_state:mystate",
-      );
-      mockGoogleLogin.mockResolvedValue({ token: "mixed-jwt" });
-
-      render(<CallbackPage />);
-
-      await waitFor(() => {
-        expect(mockGoogleLogin).toHaveBeenCalled();
-      });
-
-      await waitFor(() => {
-        expect(hrefSetter).toHaveBeenCalledWith(
-          "http://localhost:12345/callback?token=mixed-jwt&state=mystate",
-        );
-      });
-    } finally {
-      Object.defineProperty(window, "location", {
-        configurable: true,
-        value: originalLocation,
-      });
-    }
-  });
-
   it("onboarded users with missing source land in the workspace; the source-backfill modal is mounted there", async () => {
     // Source attribution backfill is now an in-workspace modal — see
     // `<SourceBackfillModal />` mounted inside `DashboardLayout`. The

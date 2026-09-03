@@ -16,6 +16,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -1885,7 +1887,16 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	created, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		slog.Warn("begin create comment transaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create comment")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	created, err := qtx.CreateComment(r.Context(), db.CreateCommentParams{
 		ID:           dbid.NewV7(),
 		IssueID:      issue.ID,
 		WorkspaceID:  issue.WorkspaceID,
@@ -1903,30 +1914,58 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	comment := created.Comment()
 
-	// Link uploaded attachments to this comment.
-	if len(attachmentIDs) > 0 {
-		h.linkAttachmentsByIDs(r.Context(), comment.ID, issue.ID, attachmentIDs)
+	// Link uploaded attachments and verify the complete requested set while the
+	// comment transaction is still open. A partial claim must roll back the
+	// comment and its issue activity together.
+	attachments, err := linkAttachmentsToNewComment(r.Context(), qtx, comment, attachmentIDs)
+	if errors.Is(err, errCommentAttachmentsUnavailable) {
+		writeError(w, http.StatusBadRequest, "one or more attachments are unavailable for this comment")
+		return
+	}
+	if err != nil {
+		slog.Warn("link comment attachments failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create comment")
+		return
 	}
 
-	// Fetch linked attachments so the response includes them.
-	groupedAtt := h.groupAttachments(r, []pgtype.UUID{comment.ID})
-	resp := commentToResponse(comment, nil, groupedAtt[uuidToString(comment.ID)])
+	resp := commentToResponse(comment, nil, h.attachmentsToResponses(attachments))
 	resp.IssueRevision = created.IssueRevision
-	slog.Info("comment created", append(logger.RequestAttrs(r), "comment_id", uuidToString(comment.ID), "issue_id", issueID)...)
-	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), authorType, authorID, map[string]any{
-		"comment":             resp,
-		"issue_title":         issue.Title,
-		"issue_assignee_type": textToPtr(issue.AssigneeType),
-		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),
-		"issue_status":        issue.Status,
-		"issue_revision":      created.IssueRevision,
-	})
+	var unresolvedEvent events.Event
+	var threadReopened bool
+	unresolvedEvent, threadReopened, err = service.UnresolveThreadOnReply(
+		r.Context(), qtx, rootComment, uuidToString(issue.WorkspaceID), authorType, authorID,
+	)
+	if err != nil {
+		slog.Warn("reopen resolved comment thread failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create comment")
+		return
+	}
+	createdEvent := buildCommentCreatedEvent(issue, resp, authorType, authorID)
+	createdEvent, err = eventoutbox.Enqueue(r.Context(), qtx, createdEvent)
+	if err != nil {
+		slog.Warn("enqueue comment-created event failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create comment")
+		return
+	}
+	if threadReopened {
+		unresolvedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, unresolvedEvent)
+		if err != nil {
+			slog.Warn("enqueue comment-unresolved event failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+			writeError(w, http.StatusInternalServerError, "failed to create comment")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit create comment transaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create comment")
+		return
+	}
 
-	// A reply in a resolved thread re-opens it. Done after CreateComment commits
-	// so the reply is visible regardless of the unresolve outcome. Shared with
-	// the agent task path (TaskService.createAgentComment) — both reply paths
-	// must keep the resolved root in sync.
-	h.TaskService.AutoUnresolveThreadOnReply(r.Context(), rootComment, uuidToString(issue.WorkspaceID), authorType, authorID)
+	slog.Info("comment created", append(logger.RequestAttrs(r), "comment_id", uuidToString(comment.ID), "issue_id", issueID)...)
+	h.publishEvent(createdEvent)
+	if threadReopened {
+		h.publishEvent(unresolvedEvent)
+	}
 	if authorType == "agent" {
 		h.TaskService.CancelDeferredEscalationsForIssueAgent(r.Context(), issue.ID, comment.AuthorID)
 	}
@@ -3358,6 +3397,8 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	var comment db.Comment
 	var issueRevision int64
+	var persistedEvent events.Event
+	var cancelledEvents []events.Event
 	transactionalEdit := replaceAttachments || (oldContent != req.Content && strictContentEdit)
 	if transactionalEdit {
 		// Strict body edits, attachment-set edits, and cancellation of tasks built
@@ -3383,6 +3424,17 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 			if err == nil {
 				err = service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...)
 			}
+			if err == nil {
+				for _, task := range cancelled {
+					var event events.Event
+					event, err = service.RecordTaskTerminalEventTx(r.Context(), qtx, protocol.EventTaskCancelled, task,
+						map[string]any{"reason": "comment_edited"})
+					if err != nil {
+						break
+					}
+					cancelledEvents = append(cancelledEvents, event)
+				}
+			}
 		}
 		if err == nil && replaceAttachments {
 			var changed int64
@@ -3398,18 +3450,40 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
+		if err == nil && comment.Revision != existing.Revision {
+			persistedEvent, err = eventoutbox.Enqueue(r.Context(), qtx,
+				buildCommentMutationEvent(comment, protocol.EventCommentUpdated, actorType, actorID, issueRevision))
+		}
 		if err == nil {
 			err = tx.Commit(r.Context())
 		}
 		if err == nil {
-			h.TaskService.BroadcastCancelledTasks(r.Context(), uuidToString(existing.WorkspaceID), cancelled)
+			h.TaskService.BroadcastCancelledTasksWithEvents(r.Context(), uuidToString(existing.WorkspaceID), cancelled, cancelledEvents)
 		}
 	} else {
-		var updated db.UpdateCommentRow
-		updated, err = h.Queries.UpdateComment(r.Context(), updateParams)
-		if err == nil {
-			comment = updated.Comment()
-			issueRevision = updated.IssueRevision
+		// Even legacy/non-strict edits must record their event in the same
+		// transaction as the row update. This is the path most likely to be
+		// exercised by older clients, so leaving it as a direct write would
+		// reintroduce a mutation-without-replay gap.
+		tx, beginErr := h.TxStarter.Begin(r.Context())
+		if beginErr != nil {
+			err = beginErr
+		} else {
+			defer tx.Rollback(r.Context())
+			qtx := h.Queries.WithTx(tx)
+			var updated db.UpdateCommentRow
+			updated, err = qtx.UpdateComment(r.Context(), updateParams)
+			if err == nil {
+				comment = updated.Comment()
+				issueRevision = updated.IssueRevision
+				if comment.Revision != existing.Revision {
+					persistedEvent, err = eventoutbox.Enqueue(r.Context(), qtx,
+						buildCommentMutationEvent(comment, protocol.EventCommentUpdated, actorType, actorID, issueRevision))
+				}
+			}
+			if err == nil {
+				err = tx.Commit(r.Context())
+			}
 		}
 	}
 	if err != nil {
@@ -3466,11 +3540,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	resp := commentToResponse(comment, grouped[cid], groupedAtt[cid])
 	resp.IssueRevision = issueRevision
 	slog.Info("comment updated", append(logger.RequestAttrs(r), "comment_id", commentId)...)
-	eventPayload := map[string]any{"comment": resp}
-	if issueRevision > 0 {
-		eventPayload["issue_revision"] = issueRevision
+	if persistedEvent.ID != "" {
+		h.publishEvent(persistedEvent)
 	}
-	h.publish(protocol.EventCommentUpdated, workspaceID, actorType, actorID, eventPayload)
 
 	// The broadcast above intentionally omits trigger_outcomes — it is the
 	// editor's private feedback, not shared timeline state (MUL-4525 §2).
@@ -3545,10 +3617,31 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("cancel tasks for deleted trigger comment failed", append(logger.RequestAttrs(r), "error", cancelErr, "comment_id", commentId)...)
 	}
 
-	deleted, err := h.Queries.DeleteComment(r.Context(), db.DeleteCommentParams{
+	// Delete and its durable event share one transaction. Task cancellation is
+	// intentionally prepared before this transaction because the delete query
+	// may nullify trigger_comment_id through the existing relationship rules.
+	tx, beginErr := h.TxStarter.Begin(r.Context())
+	if beginErr != nil {
+		if hasIssue {
+			h.retriggerCancelledTaskSurvivors(r.Context(), issue, cancelled, pgtype.UUID{})
+		}
+		writeError(w, http.StatusInternalServerError, "failed to delete comment")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	deleted, err := qtx.DeleteComment(r.Context(), db.DeleteCommentParams{
 		ID:          comment.ID,
 		WorkspaceID: comment.WorkspaceID,
 	})
+	var persistedEvent events.Event
+	if err == nil && deleted.Changed {
+		persistedEvent, err = eventoutbox.Enqueue(r.Context(), qtx,
+			buildCommentDeletedEvent(comment, actorType, actorID, deleted.IssueRevision))
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
 	if err != nil || !deleted.Changed {
 		slog.Warn("delete comment failed", append(logger.RequestAttrs(r), "error", err, "changed", deleted.Changed, "comment_id", commentId)...)
 		// Cancellation already committed but deletion did not. If the parent
@@ -3567,14 +3660,9 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 
 	h.deleteS3Objects(r.Context(), attachmentURLs)
 	slog.Info("comment deleted", append(logger.RequestAttrs(r), "comment_id", commentId, "issue_id", uuidToString(comment.IssueID))...)
-	eventPayload := map[string]any{
-		"comment_id": uuidToString(comment.ID),
-		"issue_id":   uuidToString(comment.IssueID),
+	if persistedEvent.ID != "" {
+		h.publishEvent(persistedEvent)
 	}
-	if deleted.IssueRevision > 0 {
-		eventPayload["issue_revision"] = deleted.IssueRevision
-	}
-	h.publish(protocol.EventCommentDeleted, workspaceID, actorType, actorID, eventPayload)
 	if hasIssue {
 		h.retriggerCancelledTaskSurvivors(r.Context(), issue, cancelled, comment.ID)
 	}
@@ -3723,7 +3811,7 @@ func (h *Handler) loadCommentForActor(w http.ResponseWriter, r *http.Request) (d
 }
 
 func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
-	comment, workspaceID, actorType, actorID, ok := h.loadCommentForActor(w, r)
+	comment, _, actorType, actorID, ok := h.loadCommentForActor(w, r)
 	if !ok {
 		return
 	}
@@ -3757,6 +3845,17 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to resolve comment")
 		return
 	}
+	persistedEvents := make([]events.Event, 0, len(cleared)+1)
+	for _, clearedComment := range cleared {
+		event, enqueueErr := eventoutbox.Enqueue(r.Context(), qtx,
+			buildCommentMutationEvent(clearedComment, protocol.EventCommentUnresolved, actorType, actorID, 0))
+		if enqueueErr != nil {
+			slog.Warn("enqueue comment unresolved event failed", append(logger.RequestAttrs(r), "error", enqueueErr, "comment_id", uuidToString(clearedComment.ID))...)
+			writeError(w, http.StatusInternalServerError, "failed to resolve comment")
+			return
+		}
+		persistedEvents = append(persistedEvents, event)
+	}
 
 	updated, err := qtx.ResolveComment(r.Context(), db.ResolveCommentParams{
 		ID:             comment.ID,
@@ -3768,24 +3867,24 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to resolve comment")
 		return
 	}
+	if !wasResolved {
+		event, enqueueErr := eventoutbox.Enqueue(r.Context(), qtx,
+			buildCommentMutationEvent(updated, protocol.EventCommentResolved, actorType, actorID, 0))
+		if enqueueErr != nil {
+			slog.Warn("enqueue comment resolved event failed", append(logger.RequestAttrs(r), "error", enqueueErr, "comment_id", uuidToString(updated.ID))...)
+			writeError(w, http.StatusInternalServerError, "failed to resolve comment")
+			return
+		}
+		persistedEvents = append(persistedEvents, event)
+	}
 
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Warn("resolve comment commit failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
 		writeError(w, http.StatusInternalServerError, "failed to resolve comment")
 		return
 	}
-
-	// Emit a comment:unresolved per cleared sibling so granular realtime
-	// consumers (which patch a single comment in place) drop the stale
-	// resolution instead of showing two. Published after commit so no event ever
-	// describes an uncommitted state.
-	for _, c := range cleared {
-		clearedID := uuidToString(c.ID)
-		clearedReactions := h.groupReactions(r, []pgtype.UUID{c.ID})
-		clearedAtt := h.groupAttachments(r, []pgtype.UUID{c.ID})
-		clearedResp := commentToResponse(c, clearedReactions[clearedID], clearedAtt[clearedID])
-		slog.Info("comment unresolved (replaced)", append(logger.RequestAttrs(r), "comment_id", clearedID)...)
-		h.publish(protocol.EventCommentUnresolved, workspaceID, actorType, actorID, map[string]any{"comment": clearedResp})
+	for _, event := range persistedEvents {
+		h.publishEvent(event)
 	}
 
 	grouped := h.groupReactions(r, []pgtype.UUID{updated.ID})
@@ -3798,21 +3897,41 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 	// still get their own events above — those rows did change.
 	if !wasResolved {
 		slog.Info("comment resolved", append(logger.RequestAttrs(r), "comment_id", cid)...)
-		h.publish(protocol.EventCommentResolved, workspaceID, actorType, actorID, map[string]any{"comment": resp})
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) UnresolveComment(w http.ResponseWriter, r *http.Request) {
-	comment, workspaceID, actorType, actorID, ok := h.loadCommentForActor(w, r)
+	comment, _, actorType, actorID, ok := h.loadCommentForActor(w, r)
 	if !ok {
 		return
 	}
 	wasResolved := comment.ResolvedAt.Valid
 
-	updated, err := h.Queries.UnresolveComment(r.Context(), comment.ID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to unresolve comment")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.UnresolveComment(r.Context(), comment.ID)
 	if err != nil {
 		slog.Warn("unresolve comment failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to unresolve comment")
+		return
+	}
+	var persistedEvent events.Event
+	if wasResolved {
+		persistedEvent, err = eventoutbox.Enqueue(r.Context(), qtx,
+			buildCommentMutationEvent(updated, protocol.EventCommentUnresolved, actorType, actorID, 0))
+		if err != nil {
+			slog.Warn("enqueue comment unresolved event failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
+			writeError(w, http.StatusInternalServerError, "failed to unresolve comment")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to unresolve comment")
 		return
 	}
@@ -3824,7 +3943,7 @@ func (h *Handler) UnresolveComment(w http.ResponseWriter, r *http.Request) {
 
 	if wasResolved {
 		slog.Info("comment unresolved", append(logger.RequestAttrs(r), "comment_id", cid)...)
-		h.publish(protocol.EventCommentUnresolved, workspaceID, actorType, actorID, map[string]any{"comment": resp})
+		h.publishEvent(persistedEvent)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

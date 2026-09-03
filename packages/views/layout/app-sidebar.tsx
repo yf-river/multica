@@ -143,8 +143,8 @@ type NavLabelKey =
   | "life";
 
 // Nav icons are NOT declared here: they are derived from each item's
-// destination path at render time, so the sidebar and the desktop tab bar
-// always agree. See route-icon-components.tsx.
+// destination path at render time, so every resource navigation surface agrees.
+// See route-icon-components.tsx.
 const personalNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "inbox", labelKey: "inbox" },
   { key: "chat", labelKey: "chat" },
@@ -158,7 +158,6 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "agents", labelKey: "agents" },
   { key: "squads", labelKey: "squads" },
   { key: "usage", labelKey: "usage" },
-  { key: "life", labelKey: "life" },
 ];
 
 const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [
@@ -229,7 +228,7 @@ function SortablePinItem({
       <SidebarMenuButton
         size="sm"
         isActive={isActive}
-        render={<AppLink href={href} newTabTitle={label} draggable={false} />}
+        render={<AppLink href={href} draggable={false} />}
         onClick={(event) => {
           if (wasDragged.current) {
             wasDragged.current = false;
@@ -312,9 +311,9 @@ function PinRow({
 
   const triggeredRef = useRef(false);
   useEffect(() => {
-    // Views are exempt from 404-auto-unpin: an installed desktop client
-    // talking to an older backend without the view endpoints sees 404 for
-    // every view pin — auto-unpinning would permanently delete them all.
+    // Views are exempt from 404-auto-unpin: an installed client talking to an
+    // older backend without the view endpoints sees 404 for every view pin —
+    // auto-unpinning would permanently delete them all.
     // A deleted view's row simply hides instead.
     if (isView) return;
     const err = isIssue ? issueQuery.error : projectQuery.error;
@@ -422,7 +421,7 @@ function PinSkeleton() {
 }
 
 interface AppSidebarProps {
-  /** Rendered above SidebarHeader (e.g. desktop traffic light spacer) */
+  /** Rendered above SidebarHeader when a host supplies window chrome spacing */
   topSlot?: React.ReactNode;
   /** Rendered in the header between workspace switcher and new-issue button (e.g. search trigger) */
   searchSlot?: React.ReactNode;

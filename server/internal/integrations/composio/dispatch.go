@@ -25,7 +25,7 @@ const mcpOverlayServerName = "composio"
 
 // composioMCPServer is the wire shape of one MCP server entry in the
 // Claude-style `{"mcpServers": {...}}` config that every supported runtime
-// (Cursor, Codex, Claude, OpenCode, OpenClaw, Hermes/Kiro) consumes.
+// (Cursor, Codex, Claude, OpenCode, Hermes/Kiro) consumes.
 //
 // `type: http` is what marks the entry as a streamable HTTP MCP endpoint —
 // the form Composio's session helper returns. Headers carry the Composio API

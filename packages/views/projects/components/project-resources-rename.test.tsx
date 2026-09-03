@@ -42,28 +42,9 @@ vi.mock("@multica/core/projects", () => ({
   useDeleteProjectResource: () => ({ mutateAsync: vi.fn() }),
 }));
 
-// A backend that predates the capability signal: the client must assume it
-// would silently drop execution_mode.
-vi.mock("@multica/core/config", () => ({
-  useConfigStore: (selector: (state: { localWorktreeSupported: boolean }) => unknown) =>
-    selector({ localWorktreeSupported: false }),
-}));
-
-vi.mock("@multica/core/runtimes", () => ({
-  runtimeListOptions: () => ({ queryKey: ["runtimes"], queryFn: vi.fn() }),
-  runtimeAdvertisesLocalWorktree: () => true,
-}));
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ id: "workspace-1", slug: "ws", repos: [] }),
-}));
-vi.mock("../../platform/local-directory", () => ({
-  isDesktopShell: () => true,
-  pickDirectory: vi.fn(),
-  validateLocalDirectory: vi.fn(),
-}));
-vi.mock("../../platform/use-local-daemon-status", () => ({
-  useLocalDaemonStatus: () => ({ daemonId: "daemon-1", deviceName: "MacBook", running: true }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 

@@ -1,11 +1,225 @@
 -- Workspace deletion is application-owned. These statements form a fixed,
--- bottom-up deletion plan; the legacy foreign keys remain only as a
--- compatibility safety net during the expand phase.
+-- bottom-up deletion plan and do not depend on database relationship actions.
 
 -- name: SetWorkspaceTeardownMode :exec
 -- The setting is transaction-local. Migration 242 makes only the three DELETE
 -- dirty triggers skip their per-row work while this flag is on.
 SELECT set_config('multica.workspace_teardown', 'on', true);
+
+-- name: DeleteWorkspaceLifeData :exec
+-- Life records are workspace-scoped but several child tables intentionally
+-- carry only a parent id. Resolve every parent set first, then remove the
+-- complete graph in one transaction before source tasks, comments, projects,
+-- and chat rows are removed. Context state is removed by the following
+-- statement after all trigger sources have gone away.
+WITH
+ws_memories AS MATERIALIZED (
+    SELECT life_memory.id FROM life_memory WHERE life_memory.workspace_id = $1
+),
+ws_experiments AS MATERIALIZED (
+    SELECT life_experiment.id FROM life_experiment WHERE life_experiment.workspace_id = $1
+),
+ws_rounds AS MATERIALIZED (
+    SELECT round.id
+    FROM life_experiment_round round
+    JOIN ws_experiments experiment ON experiment.id = round.experiment_id
+),
+ws_entries AS MATERIALIZED (
+    SELECT life_chronicle_entry.id
+    FROM life_chronicle_entry
+    WHERE life_chronicle_entry.workspace_id = $1
+),
+ws_modules AS MATERIALIZED (
+    SELECT life_module.id FROM life_module WHERE life_module.workspace_id = $1
+),
+ws_observers AS MATERIALIZED (
+    SELECT life_observer.id FROM life_observer WHERE life_observer.workspace_id = $1
+),
+ws_topics AS MATERIALIZED (
+    SELECT life_topic.id FROM life_topic WHERE life_topic.workspace_id = $1
+),
+ws_judgements AS MATERIALIZED (
+    SELECT judgement.id
+    FROM life_observer_judgement judgement
+    JOIN ws_observers observer ON observer.id = judgement.observer_id
+),
+ws_observation_topics AS MATERIALIZED (
+    SELECT life_observation_topic.id
+    FROM life_observation_topic
+    WHERE life_observation_topic.workspace_id = $1
+),
+deleted_memory_evidence AS (
+    DELETE FROM life_memory_evidence
+    WHERE memory_id IN (SELECT id FROM ws_memories)
+),
+deleted_memory_dependencies AS (
+    DELETE FROM life_memory_dependency
+    WHERE source_memory_id IN (SELECT id FROM ws_memories)
+       OR derived_memory_id IN (SELECT id FROM ws_memories)
+),
+deleted_memory_revisions AS (
+    DELETE FROM life_memory_revision
+    WHERE memory_id IN (SELECT id FROM ws_memories)
+),
+deleted_experiment_memories AS (
+    DELETE FROM life_experiment_memory
+    WHERE round_id IN (SELECT id FROM ws_rounds)
+       OR memory_id IN (SELECT id FROM ws_memories)
+),
+deleted_experiment_observations AS (
+    DELETE FROM life_experiment_observation
+    WHERE round_id IN (SELECT id FROM ws_rounds)
+       OR material_id IN (
+            SELECT life_material.id
+            FROM life_material
+            WHERE life_material.workspace_id = $1
+       )
+),
+deleted_module_versions AS (
+    DELETE FROM life_module_version
+    WHERE module_id IN (SELECT id FROM ws_modules)
+),
+deleted_observer_versions AS (
+    DELETE FROM life_observer_version
+    WHERE observer_id IN (SELECT id FROM ws_observers)
+),
+deleted_observer_knowledge AS (
+    DELETE FROM life_observer_knowledge
+    WHERE observer_id IN (SELECT id FROM ws_observers)
+),
+deleted_observer_judgements AS (
+    DELETE FROM life_observer_judgement
+    WHERE observer_id IN (SELECT id FROM ws_observers)
+),
+deleted_topic_judgements AS (
+    DELETE FROM life_observation_topic_judgement
+    WHERE topic_id IN (SELECT id FROM ws_observation_topics)
+       OR judgement_id IN (SELECT id FROM ws_judgements)
+),
+deleted_chronicle_evidence AS (
+    DELETE FROM life_chronicle_evidence
+    WHERE entry_id IN (SELECT id FROM ws_entries)
+),
+deleted_chronicle_revisions AS (
+    DELETE FROM life_chronicle_revision
+    WHERE entry_id IN (SELECT id FROM ws_entries)
+),
+deleted_topic_memories AS (
+    DELETE FROM life_topic_memory
+    WHERE topic_id IN (
+        SELECT life_topic.id
+        FROM life_topic
+        WHERE life_topic.workspace_id = $1
+    )
+       OR memory_id IN (SELECT id FROM ws_memories)
+),
+deleted_topics AS (
+    DELETE FROM life_topic
+    WHERE id IN (SELECT id FROM ws_topics)
+),
+deleted_cognition_jobs AS (
+    DELETE FROM life_cognition_job WHERE workspace_id = $1
+),
+deleted_derivations AS (
+    DELETE FROM life_derivation WHERE workspace_id = $1
+),
+deleted_proactive_checks AS (
+    DELETE FROM life_proactive_check WHERE workspace_id = $1
+),
+deleted_relationship_events AS (
+    DELETE FROM life_relationship_event WHERE workspace_id = $1
+),
+deleted_commitments AS (
+    DELETE FROM life_commitment WHERE workspace_id = $1
+),
+deleted_internal_thoughts AS (
+    DELETE FROM life_internal_thought WHERE workspace_id = $1
+),
+deleted_action_proposals AS (
+    DELETE FROM life_action_proposal WHERE workspace_id = $1
+),
+deleted_policies AS (
+    DELETE FROM life_proactive_policy WHERE workspace_id = $1
+),
+deleted_upgrade_evaluations AS (
+    DELETE FROM life_upgrade_evaluation WHERE workspace_id = $1
+),
+deleted_observation_topics AS (
+    DELETE FROM life_observation_topic WHERE workspace_id = $1
+),
+deleted_observers AS (
+    DELETE FROM life_observer WHERE workspace_id = $1
+),
+deleted_modules AS (
+    DELETE FROM life_module WHERE workspace_id = $1
+),
+deleted_rounds AS (
+    DELETE FROM life_experiment_round
+    WHERE id IN (SELECT id FROM ws_rounds)
+),
+deleted_experiments AS (
+    DELETE FROM life_experiment WHERE workspace_id = $1
+),
+deleted_identity_versions AS (
+    DELETE FROM life_identity_version WHERE workspace_id = $1
+),
+deleted_companion_profiles AS (
+    DELETE FROM companion_profile WHERE workspace_id = $1
+),
+deleted_memories AS (
+    DELETE FROM life_memory WHERE workspace_id = $1
+),
+deleted_materials AS (
+    DELETE FROM life_material WHERE workspace_id = $1
+),
+deleted_tombstones AS (
+    DELETE FROM life_forget_tombstone WHERE workspace_id = $1
+),
+deleted_chronicles AS (
+    DELETE FROM life_chronicle_entry WHERE workspace_id = $1
+),
+deleted_chronicle_cursors AS (
+    DELETE FROM life_chronicle_cursor WHERE workspace_id = $1
+)
+SELECT 1;
+
+-- The context-version trigger may recreate a state row while the graph above
+-- is being deleted. Remove it in a separate statement after all trigger
+-- sources have gone away.
+-- name: DeleteWorkspaceLifeContextState :exec
+DELETE FROM life_context_state WHERE workspace_id = $1;
+
+-- name: DeleteWorkspaceDomainEvents :exec
+-- Durable events have no foreign keys by design. Remove deliveries before the
+-- events, including legacy rows that predate the workspace_id envelope and can
+-- only be scoped through their task or chat source.
+WITH target_events AS MATERIALIZED (
+    SELECT event.id
+    FROM domain_event_outbox event
+    WHERE event.workspace_id = $1
+    UNION
+    SELECT event.id
+    FROM domain_event_outbox event
+    JOIN agent_task_queue task ON task.id::text = event.task_id
+    LEFT JOIN agent owner_agent ON owner_agent.id = task.agent_id
+    LEFT JOIN issue owner_issue ON owner_issue.id = task.issue_id
+    LEFT JOIN agent_runtime owner_runtime ON owner_runtime.id = task.runtime_id
+    WHERE owner_agent.workspace_id = $1
+       OR owner_issue.workspace_id = $1
+       OR owner_runtime.workspace_id = $1
+    UNION
+    SELECT event.id
+    FROM domain_event_outbox event
+    JOIN chat_session session ON session.id::text = event.chat_session_id
+    WHERE session.workspace_id = $1
+), deleted_deliveries AS (
+    DELETE FROM domain_event_delivery delivery
+    USING target_events target
+    WHERE delivery.event_id = target.id
+)
+DELETE FROM domain_event_outbox event
+USING target_events target
+WHERE event.id = target.id;
 
 -- name: LockTaskUsageRollupForWorkspaceDelete :exec
 -- Advisory lock 4246 is the hourly rollup family's key: the rollup function

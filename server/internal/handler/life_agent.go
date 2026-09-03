@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -60,6 +63,32 @@ func (h *Handler) requireLifeJobTaskScope(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusForbidden, "life cognition job not found")
 		return lifeJobTaskScope{}, false
 	}
+	// The task token is bound to the human who owns the Life data.  Do not
+	// derive the scope from the job row alone: a forged/forwarded task header
+	// must never let one authenticated user complete another user's job.
+	if !strings.EqualFold(strings.TrimSpace(userID), uuidToString(job.UserID)) {
+		writeError(w, http.StatusForbidden, "life cognition job user mismatch")
+		return lifeJobTaskScope{}, false
+	}
+	if workspaceID := strings.TrimSpace(h.resolveWorkspaceID(r)); workspaceID != "" &&
+		!strings.EqualFold(workspaceID, uuidToString(job.WorkspaceID)) {
+		writeError(w, http.StatusForbidden, "life cognition job workspace mismatch")
+		return lifeJobTaskScope{}, false
+	}
+	// New worker claims carry an opaque token and context version in both the
+	// job row and task context.  Refuse a task whose context was copied from a
+	// different claim; legacy rows without a token remain readable so an
+	// upgrade can drain them, but their completion path uses the old CAS.
+	if job.ClaimToken.Valid {
+		var taskContext struct {
+			ClaimToken     string `json:"claim_token"`
+			ContextVersion int64  `json:"context_version_number"`
+		}
+		if json.Unmarshal(task.Context, &taskContext) != nil || taskContext.ClaimToken != job.ClaimToken.String || taskContext.ContextVersion != job.ContextVersion {
+			writeError(w, http.StatusConflict, "life cognition task claim is stale")
+			return lifeJobTaskScope{}, false
+		}
+	}
 	return lifeJobTaskScope{
 		lifeRequestScope: lifeRequestScope{workspaceID: job.WorkspaceID, userID: job.UserID},
 		agentID:          agentID, taskID: taskID, job: job,
@@ -108,6 +137,10 @@ func (h *Handler) requireCompanionTaskScope(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusConflict, "companion task has no attributable user")
 		return companionTaskScope{}, false
 	}
+	if !strings.EqualFold(strings.TrimSpace(userID), uuidToString(targetUserID)) {
+		writeError(w, http.StatusForbidden, "companion task user mismatch")
+		return companionTaskScope{}, false
+	}
 	if _, err := h.Queries.GetCompanionProfileForAgent(r.Context(), db.GetCompanionProfileForAgentParams{
 		WorkspaceID: workspaceID, UserID: targetUserID, AgentID: agentID,
 	}); err != nil {
@@ -149,6 +182,15 @@ func (h *Handler) requireLifeEvidenceTaskScope(w http.ResponseWriter, r *http.Re
 		return companionTaskScope{}, false
 	}
 	if job, err := h.Queries.GetLifeCognitionJobForTask(r.Context(), taskID); err == nil && job.CompanionAgentID == agentID {
+		if !strings.EqualFold(strings.TrimSpace(userID), uuidToString(job.UserID)) {
+			writeError(w, http.StatusForbidden, "life task user mismatch")
+			return companionTaskScope{}, false
+		}
+		if workspaceID := strings.TrimSpace(h.resolveWorkspaceID(r)); workspaceID != "" &&
+			!strings.EqualFold(workspaceID, uuidToString(job.WorkspaceID)) {
+			writeError(w, http.StatusForbidden, "life task workspace mismatch")
+			return companionTaskScope{}, false
+		}
 		return companionTaskScope{
 			lifeRequestScope: lifeRequestScope{workspaceID: job.WorkspaceID, userID: job.UserID},
 			agentID:          agentID, taskID: taskID,
@@ -169,6 +211,10 @@ func (h *Handler) requireLifeEvidenceTaskScope(w http.ResponseWriter, r *http.Re
 	}
 	if !targetUserID.Valid {
 		writeError(w, http.StatusConflict, "life task has no attributable user")
+		return companionTaskScope{}, false
+	}
+	if !strings.EqualFold(strings.TrimSpace(userID), uuidToString(targetUserID)) {
+		writeError(w, http.StatusForbidden, "life task user mismatch")
 		return companionTaskScope{}, false
 	}
 	_, companionErr := h.Queries.GetCompanionProfileForAgent(r.Context(), db.GetCompanionProfileForAgentParams{
@@ -194,6 +240,8 @@ func (h *Handler) ResolveLifeEvidence(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		References []lifeEvidenceReference `json:"references"`
+		Purpose    string                  `json:"purpose"`
+		Limit      int                     `json:"limit"`
 	}
 	if !decodeRequiredJSON(w, r, &req) {
 		return
@@ -202,8 +250,27 @@ func (h *Handler) ResolveLifeEvidence(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "references are required")
 		return
 	}
+	if len(req.References) > 32 {
+		writeError(w, http.StatusBadRequest, "at most 32 references are allowed")
+		return
+	}
+	if req.Limit <= 0 || req.Limit > len(req.References) {
+		req.Limit = len(req.References)
+	}
+	if strings.TrimSpace(req.Purpose) == "" {
+		req.Purpose = "life cognition"
+	}
 	items := make([]map[string]any, 0, len(req.References))
+	seen := make(map[string]struct{}, len(req.References))
 	for _, reference := range req.References {
+		if len(items) >= req.Limit {
+			break
+		}
+		key := reference.SourceType + ":" + reference.SourceID
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
 		id, err := parseLifeEvidenceID(reference.SourceID)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -216,8 +283,19 @@ func (h *Handler) ResolveLifeEvidence(w http.ResponseWriter, r *http.Request) {
 				ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID,
 			})
 			if loadErr == nil {
-				item["available"] = true
-				item["material"] = lifeMaterialResponse(material)
+				forgotten, forgottenErr := lifeMaterialForgottenForRequest(r.Context(), h.Queries, scope, material)
+				if forgottenErr != nil {
+					writeError(w, http.StatusInternalServerError, "failed to verify life material status")
+					return
+				}
+				if !forgotten {
+					item["available"] = true
+					resolved := lifeMaterialResponse(material)
+					if content, ok := resolved["content"].(string); ok {
+						resolved["content"] = lifeContextExcerpt(content, 4000)
+					}
+					item["material"] = resolved
+				}
 			} else if !errors.Is(loadErr, pgx.ErrNoRows) {
 				writeError(w, http.StatusInternalServerError, "failed to resolve life material")
 				return
@@ -242,7 +320,11 @@ func (h *Handler) ResolveLifeEvidence(w http.ResponseWriter, r *http.Request) {
 			memory, loadErr := h.Queries.GetLifeMemory(r.Context(), db.GetLifeMemoryParams{
 				ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID,
 			})
+			forgotten := false
 			if loadErr == nil {
+				forgotten, loadErr = lifeMemoryIsForgotten(r.Context(), h.Queries, scope.workspaceID, scope.userID, memory)
+			}
+			if loadErr == nil && !forgotten && memory.Status != "archived" {
 				resolved, resolveErr := h.lifeMemoryToResponse(r, memory)
 				if resolveErr != nil {
 					writeError(w, http.StatusInternalServerError, "failed to resolve memory evidence")
@@ -250,6 +332,9 @@ func (h *Handler) ResolveLifeEvidence(w http.ResponseWriter, r *http.Request) {
 				}
 				item["available"] = true
 				item["memory"] = resolved
+			} else if loadErr == nil {
+				// Archived memories are governance records, not valid evidence
+				// for new cognition. Keep the reference visible but unavailable.
 			} else if !errors.Is(loadErr, pgx.ErrNoRows) {
 				writeError(w, http.StatusInternalServerError, "failed to resolve life memory")
 				return
@@ -262,7 +347,7 @@ func (h *Handler) ResolveLifeEvidence(w http.ResponseWriter, r *http.Request) {
 				item["available"] = true
 				item["observer_knowledge"] = map[string]any{
 					"id": uuidToString(knowledge.ID), "observer_id": uuidToString(knowledge.ObserverID),
-					"title": knowledge.Title, "content": knowledge.Content, "source": knowledge.Source,
+					"title": knowledge.Title, "content": lifeContextExcerpt(knowledge.Content, 4000), "source": knowledge.Source,
 					"created_at": timestampToString(knowledge.CreatedAt), "updated_at": timestampToString(knowledge.UpdatedAt),
 				}
 			} else if !errors.Is(loadErr, pgx.ErrNoRows) {
@@ -275,7 +360,18 @@ func (h *Handler) ResolveLifeEvidence(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, item)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"evidence": items})
+	writeJSON(w, http.StatusOK, map[string]any{"purpose": req.Purpose, "context_version": lifeContextVersion, "evidence": items})
+}
+
+func lifeMaterialForgottenForRequest(ctx context.Context, q *db.Queries, scope companionTaskScope, material db.LifeMaterial) (bool, error) {
+	digest := sha256.Sum256([]byte(material.Content))
+	return q.IsLifeMaterialForgotten(ctx, db.IsLifeMaterialForgottenParams{
+		WorkspaceID: scope.workspaceID,
+		UserID:      scope.userID,
+		SourceType:  material.SourceType,
+		SourceKey:   material.SourceKey,
+		ContentHash: fmt.Sprintf("%x", digest[:]),
+	})
 }
 
 func parseLifeEvidenceID(raw string) (pgtype.UUID, error) {
@@ -326,7 +422,14 @@ func (h *Handler) CreateCompanionActionProposal(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "invalid proposal payload")
 		return
 	}
-	proposal, err := h.Queries.CreateLifeActionProposal(r.Context(), db.CreateLifeActionProposalParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start companion proposal")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	proposal, err := qtx.CreateLifeActionProposal(r.Context(), db.CreateLifeActionProposalParams{
 		WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: scope.agentID,
 		ProposalType: req.ProposalType, Status: req.Status, Title: strings.TrimSpace(req.Title),
 		Summary: strings.TrimSpace(req.Summary), Payload: payload, ExpiresAt: expiresAt,
@@ -335,6 +438,13 @@ func (h *Handler) CreateCompanionActionProposal(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to create companion proposal")
 		return
 	}
+	event, err := recordAndCommitLifeChangedAs(r.Context(), tx, qtx, scope.lifeRequestScope, "agent", scope.agentID,
+		"action_proposal", uuidToString(proposal.ID), "created", map[string]any{"proposal_type": proposal.ProposalType, "status": proposal.Status})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit companion proposal")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, http.StatusCreated, lifeProposalToResponse(proposal))
 }
 
@@ -354,7 +464,14 @@ func (h *Handler) PresentCompanionActionProposal(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "proposal not found")
 		return
 	}
-	presented, err := h.Queries.PresentLifeActionProposal(r.Context(), db.PresentLifeActionProposalParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start proposal presentation")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	presented, err := qtx.PresentLifeActionProposal(r.Context(), db.PresentLifeActionProposalParams{
 		ID: proposal.ID, WorkspaceID: scope.workspaceID, UserID: scope.userID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -365,6 +482,13 @@ func (h *Handler) PresentCompanionActionProposal(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to present proposal")
 		return
 	}
+	event, err := recordAndCommitLifeChangedAs(r.Context(), tx, qtx, scope.lifeRequestScope, "agent", scope.agentID,
+		"action_proposal", uuidToString(presented.ID), "presented", nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit proposal presentation")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, http.StatusOK, lifeProposalToResponse(presented))
 }
 
@@ -400,7 +524,14 @@ func (h *Handler) CreateCompanionProactiveCheck(w http.ResponseWriter, r *http.R
 		req.ContextSnapshot = map[string]any{}
 	}
 	contextSnapshot, _ := json.Marshal(req.ContextSnapshot)
-	check, err := h.Queries.CreateLifeProactiveCheck(r.Context(), db.CreateLifeProactiveCheckParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start proactive check")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	check, err := qtx.CreateLifeProactiveCheck(r.Context(), db.CreateLifeProactiveCheckParams{
 		WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: scope.agentID,
 		Status: req.Status, TriggerSource: req.TriggerSource, Reason: strings.TrimSpace(req.Reason), ContextSnapshot: contextSnapshot,
 	})
@@ -408,6 +539,13 @@ func (h *Handler) CreateCompanionProactiveCheck(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to record proactive check")
 		return
 	}
+	event, err := recordAndCommitLifeChangedAs(r.Context(), tx, qtx, scope.lifeRequestScope, "agent", scope.agentID,
+		"proactive_check", uuidToString(check.ID), "created", map[string]any{"status": check.Status, "trigger_source": check.TriggerSource})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit proactive check")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, http.StatusCreated, lifeProactiveCheckToResponse(check))
 }
 
@@ -438,7 +576,18 @@ func (h *Handler) CompleteCompanionCognitionJob(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "invalid output")
 		return
 	}
-	completed, err := h.completeLifeCognitionJob(r.Context(), scope, raw)
+	// Life output and the queue terminal transition share one transaction. A
+	// process failure between two independent commits could otherwise leave
+	// durable understanding without a completed task (or a task that can never
+	// be retried after its output was already applied).
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start life completion")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	completed, err := h.completeLifeCognitionJobInQueries(r.Context(), qtx, scope, raw)
 	var outputErr lifeJobOutputError
 	if errors.As(err, &outputErr) {
 		writeError(w, http.StatusUnprocessableEntity, outputErr.Error())
@@ -458,9 +607,26 @@ func (h *Handler) CompleteCompanionCognitionJob(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to complete life cognition job")
 		return
 	}
-	if _, err := h.TaskService.CompleteTask(r.Context(), scope.taskID, raw, "", "", "", false, "", ""); err != nil {
+	task, terminalEvent, err := h.TaskService.CompleteLifeTaskInTx(r.Context(), qtx, scope.taskID, raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "life cognition task is no longer running")
+			return
+		}
 		slog.Error("complete life cognition agent task failed", "job_id", chi.URLParam(r, "jobId"), "task_id", uuidToString(scope.taskID), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to complete life cognition task")
+		return
 	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit life completion")
+		return
+	}
+	// The durable event is now committed. Publish it after commit and refresh
+	// the agent's derived availability outside the transaction.
+	if terminalEvent.ID != "" {
+		h.TaskService.PublishCommittedEvent(terminalEvent)
+	}
+	h.TaskService.ReconcileAgentStatus(r.Context(), task.AgentID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": uuidToString(completed.ID), "status": completed.Status,
 		"completed_at": timestampToPtr(completed.CompletedAt), "output": req.Output,

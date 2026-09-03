@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 var (
@@ -86,6 +87,12 @@ func TeardownRuntime(ctx context.Context, qtx *db.Queries, runtimeID pgtype.UUID
 		}
 		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
 			return out, err
+		}
+		// Runtime deletion also removes system agents and their chat sessions.
+		// Record each cancellation before those links disappear so the durable
+		// event retains the original workspace and chat scope.
+		if _, err := enqueueTaskTerminalEvents(ctx, qtx, protocol.EventTaskCancelled, cancelled); err != nil {
+			return out, fmt.Errorf("record cancelled task events: %w", err)
 		}
 		out.CancelledTasks = cancelled
 	}

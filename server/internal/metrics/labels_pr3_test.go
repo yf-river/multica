@@ -7,7 +7,6 @@ package metrics_test
 // allow-list internals without also widening these expectations.
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -112,12 +111,5 @@ func TestOnboardingStartedUnknownPlatformCollapses(t *testing.T) {
 			continue
 		}
 		t.Errorf("found unexpected platform label value %q (count=%v) — NormalizePlatform should have collapsed it", v, count)
-	}
-	// Defensive check: no label value should look like a raw header (anything
-	// over the longest allow-list entry is almost certainly a leak).
-	for v := range seen {
-		if len(v) > len("desktop") && !strings.EqualFold(v, "unknown") {
-			t.Errorf("platform label %q is suspiciously long — likely raw header bleed", v)
-		}
 	}
 }

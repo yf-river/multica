@@ -429,8 +429,8 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     // about images the user just pasted/dropped — without a record in scope,
     // Attachment.normalize() can't swap the persisted /api/attachments/<id>/
     // download URL to a freshly-loadable one, and the <img> renders broken in
-    // any environment where the renderer's origin doesn't proxy /api to the
-    // API host (MUL-3192, Desktop/Electron).
+    // any environment where the document origin doesn't proxy /api to the
+    // API host (MUL-3192).
     const [sessionUploads, setSessionUploads] = useState<Attachment[]>([]);
     // Wrap the caller-supplied uploader so we can stash each successful result
     // in `sessionUploads`. The wrapper is rebuilt only when the underlying
@@ -660,8 +660,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
             return true;
           },
           // Middle click never produces a `click` event. Route it through the
-          // same path as a cmd-click (background tab) — on desktop the native
-          // window-open request dead-ends against the shell's deny handler.
+          // same path as a modifier-click so it opens a background tab.
           auxclick(_view, event) {
             if (event.button !== 1) return false;
             const target = event.target as HTMLElement;

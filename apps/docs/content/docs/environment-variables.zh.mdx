@@ -23,7 +23,6 @@ MULTICA_PUBLIC_URL=https://api.multica.example.com
 还需要选择一种邮件服务，否则验证码和邀请只会写入服务端日志。
 
 <Callout type="warning">
-`JWT_SECRET` 在生产环境为必填：当 `APP_ENV=production` 时，后端会在密钥为空或等于已知占位值时拒绝启动（用 `openssl rand -hex 32` 生成）。也不要在生产环境设置 `MULTICA_DEV_VERIFICATION_CODE`。
 </Callout>
 
 ## API 与数据库
@@ -107,7 +106,6 @@ MULTICA_PUBLIC_URL=https://api.multica.example.com
 | `ALLOWED_EMAILS` | 空 | 允许注册的完整邮箱，逗号分隔 |
 | `ALLOWED_EMAIL_DOMAINS` | 空 | 允许注册的邮箱域名，逗号分隔 |
 | `DISABLE_WORKSPACE_CREATION` | `false` | 禁止所有用户新建工作区；没有 owner/admin 例外 |
-| `MULTICA_DEV_VERIFICATION_CODE` | 空 | 非 production 环境使用的固定 6 位测试验证码 |
 
 白名单的准确判断顺序见[登录与注册](/auth-setup#注册范围控制)。
 

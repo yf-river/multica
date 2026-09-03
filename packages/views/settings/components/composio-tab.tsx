@@ -34,10 +34,7 @@ import { useNavigation } from "../../navigation";
 // Key UX rule (MUL-4009): the backend only returns toolkits with an enabled
 // auth config in the Composio project, so every card here is connectable —
 // toolkits with no auth config are filtered out server-side rather than shown
-// with a dead "not configured" hint. The `toolkit.connectable` guard on the
-// Connect button is kept as a client-side backstop (older/misbehaving servers
-// could still send a non-connectable entry); such an entry simply renders no
-// action affordance rather than a broken Connect button that would 400.
+// with a dead "not configured" hint.
 export function ComposioTab() {
   const { t } = useT("settings");
   const qc = useQueryClient();
@@ -346,7 +343,7 @@ function ToolkitCard({
               {connecting ? t(($) => $.composio.connecting) : t(($) => $.composio.reconnect)}
             </Button>
           </div>
-        ) : toolkit.connectable ? (
+        ) : (
           <Button size="sm" onClick={onConnect} disabled={anyConnecting}>
             {connecting ? (
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -355,7 +352,7 @@ function ToolkitCard({
             )}
             {connecting ? t(($) => $.composio.connecting) : t(($) => $.composio.connect)}
           </Button>
-        ) : null}
+        )}
       </CardContent>
     </Card>
   );

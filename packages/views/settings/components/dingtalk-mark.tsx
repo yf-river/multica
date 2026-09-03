@@ -1,7 +1,6 @@
-// The SVG path in DingTalkMark below is adapted from `docs/images/dingtalk.svg`
-// in DingTalk's official OpenClaw connector, used under the MIT License. Source:
-// https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/blob/5e2b4d9356ee8f80c4617142d823d2ca7de0f3d9/docs/images/dingtalk.svg
-// The original fixed fill was changed to currentColor for theme compatibility.
+// The SVG path in DingTalkMark below is adapted from DingTalk's official
+// connector artwork and used under the MIT License. The original fixed fill
+// was changed to currentColor for theme compatibility.
 //
 // Copyright (c) 2026 DingTalk Real Team
 //

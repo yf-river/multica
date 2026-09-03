@@ -12,10 +12,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // Issue Quick Actions (MUL-5465): workspace-level presets for "who to call and
@@ -886,7 +886,19 @@ func (h *Handler) RunQuickAction(w http.ResponseWriter, r *http.Request) {
 
 	body := sanitizeNullBytes(buildQuickActionBody(qa, target))
 
-	created, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
+	if h.TxStarter == nil {
+		writeError(w, http.StatusInternalServerError, "failed to start quick action transaction")
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		slog.Warn("quick action comment transaction begin failed", append(logger.RequestAttrs(r), "error", err, "quick_action_id", uuidToString(qa.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to run quick action")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	created, err := qtx.CreateComment(r.Context(), db.CreateCommentParams{
 		ID:          dbid.NewV7(),
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
@@ -909,14 +921,18 @@ func (h *Handler) RunQuickAction(w http.ResponseWriter, r *http.Request) {
 
 	resp := commentToResponse(comment, nil, nil)
 	resp.IssueRevision = created.IssueRevision
-	h.publish(protocol.EventCommentCreated, workspaceID, actorType, actorID, map[string]any{
-		"comment":             resp,
-		"issue_title":         issue.Title,
-		"issue_assignee_type": textToPtr(issue.AssigneeType),
-		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),
-		"issue_status":        issue.Status,
-		"issue_revision":      created.IssueRevision,
-	})
+	createdEvent, err := eventoutbox.Enqueue(r.Context(), qtx, buildCommentCreatedEvent(issue, resp, actorType, actorID))
+	if err != nil {
+		slog.Warn("quick action comment event enqueue failed", append(logger.RequestAttrs(r), "error", err, "quick_action_id", uuidToString(qa.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to run quick action")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("quick action comment transaction commit failed", append(logger.RequestAttrs(r), "error", err, "quick_action_id", uuidToString(qa.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to run quick action")
+		return
+	}
+	h.publishEvent(createdEvent)
 
 	delegationAuthority := h.autopilotDelegationAuthorityFromRequest(r, issue, actorType, actorID)
 	resp.TriggerOutcomes = h.triggerTasksForComment(r.Context(), issue, comment, nil, actorType, actorID, originatorUserID, delegationAuthority, nil)

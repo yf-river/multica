@@ -9,28 +9,28 @@ import { waitForPageText } from "./helpers";
 // email per run so the user is always a fresh, un-onboarded user
 // landing on /onboarding.
 
-const EMAIL = `onboarding-v3-${Date.now()}@localhost`;
+const ACCOUNT = `onboarding-v3-${Date.now()}`;
 const SHOTS_DIR = "../shots-rail";
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
 test("onboarding — welcome → about you (answer path)", async ({ page }) => {
   const api = new TestApiClient();
-  await api.login(EMAIL, "OBv3 Tester");
+  await api.login(ACCOUNT, "OBv3 Tester");
   const token = api.getToken();
 
   await page.addInitScript((t) => {
     localStorage.setItem("multica_token", t);
   }, token);
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-  await waitForPageText(page, "Continue on web");
+  await waitForPageText(page, "Start exploring");
 
   // 1. Welcome screen
-  await expect(page.getByRole("button", { name: "Continue on web" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "Start exploring" })).toBeVisible({ timeout: 15000 });
   await page.screenshot({ path: `${SHOTS_DIR}/01-welcome.png`, fullPage: false });
 
-  // Click Continue on web to advance to About you
-  await page.getByRole("button", { name: "Continue on web" }).click();
+  // Click Start exploring to advance to About you
+  await page.getByRole("button", { name: "Start exploring" }).click();
 
   // 2. About you step — both questions live on this one screen and the
   //    source question must NOT exist anywhere in the flow.
@@ -77,14 +77,14 @@ test("onboarding — welcome → about you (answer path)", async ({ page }) => {
 
 test("onboarding — one skip clears the whole questionnaire step", async ({ page }) => {
   const api = new TestApiClient();
-  await api.login(`skip-${Date.now()}@localhost`, "Skipper");
+  await api.login(`skip-${Date.now()}`, "Skipper");
   const token = api.getToken();
 
   await page.addInitScript((t) => localStorage.setItem("multica_token", t), token);
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-  await waitForPageText(page, "Continue on web");
+  await waitForPageText(page, "Start exploring");
 
-  await page.getByRole("button", { name: "Continue on web" }).click();
+  await page.getByRole("button", { name: "Start exploring" }).click();
   await expect(page.getByText("Tell us a bit about you.")).toBeVisible({ timeout: 10000 });
 
   // A single Skip covers role + use case — next stop is workspace.
@@ -103,18 +103,18 @@ test("onboarding — zh-Hans renders Chinese labels", async ({ page, context, ba
     },
   ]);
   const api = new TestApiClient();
-  await api.login(`zh-${Date.now()}@localhost`, "中文用户");
+  await api.login(`zh-${Date.now()}`, "中文用户");
   const token = api.getToken();
 
   await page.addInitScript((t) => localStorage.setItem("multica_token", t), token);
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-  await waitForPageText(page, "在 web 端继续");
+  await waitForPageText(page, "开始探索");
 
   // Click the CTA by name. `getByRole("button").first()` used to stand in for
   // it, but the welcome screen renders the pinned Log out button first in DOM
   // order — so this step was signing the user out and the assertions below
   // were waiting on a page that had already redirected to login.
-  await page.getByRole("button", { name: "在 web 端继续" }).click();
+  await page.getByRole("button", { name: "开始探索" }).click();
 
   // About-you screen — Chinese headline + both sub-questions.
   await expect(page.getByText("简单介绍一下你自己。")).toBeVisible({ timeout: 10000 });

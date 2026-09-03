@@ -13,8 +13,9 @@ import { SITE_TITLE, formatDocumentTitle } from "./document-title";
  * indistinguishable until you click into each one.
  *
  * The URL → title resolution is not ours: it is the same pure subject parser
- * plus cache-backed presentation hook that names desktop's tabs, so a browser
- * tab and a desktop tab for one URL always read identically, in the user's
+ * plus cache-backed presentation hook that names workspace documents, so a
+ * browser tab and a deep-linked document for one URL always read identically,
+ * in the user's
  * locale, and a renamed project or a changed issue title re-titles the tab
  * live. Every query behind it is cache-only, so this costs no extra request.
  *

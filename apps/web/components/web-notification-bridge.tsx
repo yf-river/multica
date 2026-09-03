@@ -10,9 +10,8 @@ import { useNavigation } from "@multica/views/navigation";
 
 /**
  * Routes browser notification clicks to the source workspace's inbox, focused
- * on the clicked item. The web counterpart of the desktop `DesktopInboxBridge`:
- * desktop receives the click via Electron IPC, web wires it through the
- * Notification API's `onclick` (registered here into the core singleton).
+ * on the clicked item. The Notification API's `onclick` is registered here
+ * into the core singleton.
  *
  * The route uses the `slug` the notification was emitted with — the SOURCE
  * workspace — not the active one, so a click always opens the right inbox even

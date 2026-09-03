@@ -4,9 +4,8 @@
  * The trigger is a `<span role="link">`, not an anchor — deliberately, so it
  * can sit inside rows and menus without nesting interactive elements. That
  * also means the browser has nothing native to fall back on: whatever the
- * handler does IS the behaviour. On web (no `openInNewTab` adapter) a
- * cmd/ctrl-click used to fall through to `push()` and navigate in place,
- * throwing away the user's "keep me here" intent.
+ * handler does IS the behaviour. Because this is a non-anchor profile chip,
+ * modifier clicks explicitly open a shareable browser tab.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
@@ -152,20 +151,7 @@ describe("ActorAvatar profile link", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("uses openInNewTab for cmd/ctrl click when available (desktop)", () => {
-    const push = vi.fn();
-    const openInNewTab = vi.fn();
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
-
-    renderAvatar(makeAdapter({ push, openInNewTab }));
-    fireEvent.click(screen.getByRole("link"), { metaKey: true });
-
-    expect(openInNewTab).toHaveBeenCalledWith(HREF, undefined);
-    expect(push).not.toHaveBeenCalled();
-    expect(open).not.toHaveBeenCalled();
-  });
-
-  it("opens a browser tab against the shareable URL when openInNewTab is absent (web)", () => {
+  it("opens a browser tab for modifier clicks", () => {
     const push = vi.fn();
     const open = vi.spyOn(window, "open").mockReturnValue(null);
 

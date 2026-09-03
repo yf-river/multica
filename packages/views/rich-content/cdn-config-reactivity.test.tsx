@@ -43,8 +43,8 @@ vi.mock("@multica/core/paths", () => ({
 }));
 
 vi.mock("../navigation", () => ({
-  useNavigation: () => ({ push: vi.fn(), openInNewTab: vi.fn() }),
-  useOptionalNavigation: () => ({ push: vi.fn(), openInNewTab: vi.fn() }),
+  useNavigation: () => ({ push: vi.fn() }),
+  useOptionalNavigation: () => ({ push: vi.fn() }),
   resolveClickIntent: () => "push",
   useAppOrigin: () => null,
   AppLink: ({ href, children }: { href: string; children: React.ReactNode }) => (

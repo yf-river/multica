@@ -326,14 +326,18 @@ func isBlacklistedLocalPath(absPath string) (reason string, blocked bool) {
 	if isDriveRoot(cleaned) {
 		return fmt.Sprintf("path is a drive root %q", cleaned), true
 	}
-	for _, banned := range systemRootBlacklist() {
-		if cleaned == banned {
-			return fmt.Sprintf("path is a protected system root %q", banned), true
-		}
-	}
+	// The user's home is a more specific policy violation than the generic
+	// system-root list (on Linux /root is both). Check it first so callers get
+	// the useful, stable reason even when the home directory happens to be
+	// listed as a protected root.
 	if home, err := os.UserHomeDir(); err == nil {
 		if cleaned == filepath.Clean(home) {
 			return "path is the user's home directory", true
+		}
+	}
+	for _, banned := range systemRootBlacklist() {
+		if cleaned == banned {
+			return fmt.Sprintf("path is a protected system root %q", banned), true
 		}
 	}
 	return "", false
@@ -352,17 +356,8 @@ func isBlacklistedRealPath(realPath string) (reason string, blocked bool) {
 	if isDriveRoot(realClean) {
 		return fmt.Sprintf("path is a drive root %q", realClean), true
 	}
-	for _, banned := range systemRootBlacklist() {
-		bannedClean := filepath.Clean(banned)
-		if realClean == bannedClean {
-			return fmt.Sprintf("path is a protected system root %q", banned), true
-		}
-		if r, err := filepath.EvalSymlinks(banned); err == nil {
-			if filepath.Clean(r) == realClean {
-				return fmt.Sprintf("path is a protected system root %q", banned), true
-			}
-		}
-	}
+	// Prefer the specific home-directory explanation when the home is also
+	// present in the generic system-root blacklist (for example /root).
 	if home, err := os.UserHomeDir(); err == nil {
 		homeClean := filepath.Clean(home)
 		if realClean == homeClean {
@@ -371,6 +366,17 @@ func isBlacklistedRealPath(realPath string) (reason string, blocked bool) {
 		if r, err := filepath.EvalSymlinks(home); err == nil {
 			if filepath.Clean(r) == realClean {
 				return "path is the user's home directory", true
+			}
+		}
+	}
+	for _, banned := range systemRootBlacklist() {
+		bannedClean := filepath.Clean(banned)
+		if realClean == bannedClean {
+			return fmt.Sprintf("path is a protected system root %q", banned), true
+		}
+		if r, err := filepath.EvalSymlinks(banned); err == nil {
+			if filepath.Clean(r) == realClean {
+				return fmt.Sprintf("path is a protected system root %q", banned), true
 			}
 		}
 	}

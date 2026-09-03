@@ -134,8 +134,8 @@ type AgentResponse struct {
 }
 
 // runtimeConfigGatewayTokenMask is the placeholder the API substitutes for
-// any non-empty `runtime_config.gateway.token` (openclaw gateway mode, issue
-// #3260). The token is a bearer credential; surfacing the real value through
+// any non-empty `runtime_config.gateway.token`. The token is a bearer
+// credential; surfacing the real value through
 // GET responses would let anyone with read access to the agent dump the
 // gateway secret. The mask is a sentinel — when the UI later PATCHes the
 // agent and submits the same mask verbatim under that field, the update
@@ -236,8 +236,8 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 }
 
 // maskGatewayToken replaces runtime_config.gateway.token with the public
-// mask sentinel when a non-empty value is present. No-op for any other
-// shape so non-openclaw / non-gateway agents pass through untouched.
+// mask sentinel when a non-empty value is present. It is a no-op for any
+// other shape.
 func maskGatewayToken(rc any) {
 	root, ok := rc.(map[string]any)
 	if !ok {
@@ -463,24 +463,32 @@ type AgentTaskResponse struct {
 	ChatType                 string                 `json:"chat_type,omitempty"`                   // channel_chat_session_binding.chat_type — "group" for a shared room, "p2p" for a 1:1 with the bot. Lets the per-turn prompt tell the agent who else can read its replies; empty for a web-only chat
 	ChatInThread             bool                   `json:"chat_in_thread,omitempty"`              // true when the latest @mention was a thread reply; tells the agent to start with `multica chat thread` vs `multica chat history`
 	ChatMessage              string                 `json:"chat_message,omitempty"`                // user message for chat tasks
+	ChatMessageIDs           []string               `json:"chat_message_ids,omitempty"`            // user message ids sealed into this chat turn
 	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`    // attachments on the user message — agent calls `multica attachment download <id>` per entry
 	ChatIntro                bool                   `json:"chat_intro,omitempty"`                  // legacy compatibility for historical is_agent_intro sessions; new agent creation no longer creates these chats
-	AutopilotRunID           string                 `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot-spawned tasks
-	AutopilotID              string                 `json:"autopilot_id,omitempty"`                // autopilot that spawned this task
-	AutopilotTitle           string                 `json:"autopilot_title,omitempty"`             // autopilot title used as task context
-	AutopilotDescription     string                 `json:"autopilot_description,omitempty"`       // autopilot description used as task prompt
-	AutopilotSource          string                 `json:"autopilot_source,omitempty"`            // manual, schedule, webhook, or api
-	AutopilotTriggerPayload  json.RawMessage        `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook/api runs
-	QuickCreatePrompt        string                 `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
-	QuickCreatePriority      string                 `json:"quick_create_priority,omitempty"`       // explicit priority selected in quick-create
-	QuickCreateDueDate       string                 `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
-	QuickCreateAttachmentIDs []string               `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
-	QuickCreateSourceContext json.RawMessage        `json:"quick_create_source_context,omitempty"` // immutable historical context for source-context quick-create
-	HandoffNote              string                 `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
-	SquadID                  string                 `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName                string                 `json:"squad_name,omitempty"`                  // display name for the picker squad
-	ParentIssueID            string                 `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier    string                 `json:"parent_issue_identifier,omitempty"`     // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+	// IsCompanion and LifeContext identify a governed Life chat/background run.
+	// The daemon reconstructs this context from Multica data on every run.
+	IsCompanion              bool            `json:"is_companion,omitempty"`
+	LifeContext              string          `json:"life_context,omitempty"`
+	LifeJobID                string          `json:"life_job_id,omitempty"`
+	LifeJobType              string          `json:"life_job_type,omitempty"`
+	LifeJobInput             json.RawMessage `json:"life_job_input,omitempty"`
+	AutopilotRunID           string          `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot-spawned tasks
+	AutopilotID              string          `json:"autopilot_id,omitempty"`                // autopilot that spawned this task
+	AutopilotTitle           string          `json:"autopilot_title,omitempty"`             // autopilot title used as task context
+	AutopilotDescription     string          `json:"autopilot_description,omitempty"`       // autopilot description used as task prompt
+	AutopilotSource          string          `json:"autopilot_source,omitempty"`            // manual, schedule, webhook, or api
+	AutopilotTriggerPayload  json.RawMessage `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook/api runs
+	QuickCreatePrompt        string          `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
+	QuickCreatePriority      string          `json:"quick_create_priority,omitempty"`       // explicit priority selected in quick-create
+	QuickCreateDueDate       string          `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
+	QuickCreateAttachmentIDs []string        `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
+	QuickCreateSourceContext json.RawMessage `json:"quick_create_source_context,omitempty"` // immutable historical context for source-context quick-create
+	HandoffNote              string          `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
+	SquadID                  string          `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
+	SquadName                string          `json:"squad_name,omitempty"`                  // display name for the picker squad
+	ParentIssueID            string          `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
+	ParentIssueIdentifier    string          `json:"parent_issue_identifier,omitempty"`     // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and
@@ -737,11 +745,8 @@ type TaskAgentData struct {
 	ThinkingLevel         string                      `json:"thinking_level,omitempty"`
 	ServiceTier           string                      `json:"service_tier,omitempty"`
 	DisabledRuntimeSkills []DisabledRuntimeSkill      `json:"disabled_runtime_skills,omitempty"`
-	// RuntimeConfig is the agent's saved runtime_config JSON as-is. The
-	// daemon decodes it per-provider — e.g. the openclaw backend reads
-	// `mode` + `gateway.*` to choose between embedded and gateway routing
-	// (issue #3260). Other providers ignore the payload entirely. Sent
-	// raw so the daemon can evolve its schema without a server roundtrip.
+	// RuntimeConfig is the agent's saved runtime_config JSON as-is. The daemon
+	// decodes provider-specific fields while preserving the server-owned schema.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
 
@@ -961,6 +966,9 @@ func basename(p string) string {
 // (no linked source — the agent is creating the issue itself) / direct
 // (assignee-driven task on an existing issue).
 func computeTaskKind(t db.AgentTaskQueue) string {
+	if _, ok := lifeCognitionContextForTask(t); ok {
+		return "life_cognition"
+	}
 	if uuidToString(t.ChatSessionID) != "" {
 		return "chat"
 	}
@@ -1448,6 +1456,12 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
+	createdEvent, err := service.RecordDurableEventTx(r.Context(), qtx, h.buildAgentDomainEvent(protocol.EventAgentCreated, created, actorType, actorID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record agent event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit agent create")
 		return
@@ -1466,8 +1480,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	if err := h.enrichAgentResponseWithTargets(r.Context(), &resp, created.ID); err != nil {
 		slog.Warn("create agent: load invocation targets for response failed", append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(created.ID))...)
 	}
-	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
-	h.publish(protocol.EventAgentCreated, workspaceID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
+	h.publishEvent(createdEvent)
 
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.AgentCreated(
 		ownerID,
@@ -1799,6 +1812,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// runtime to validate a thinking_level change. Resolve once and reuse.
 	targetRuntimeID := existing.RuntimeID
 	targetProvider := ""
+	if existing.RuntimeID.Valid {
+		if runtime, runtimeErr := h.getAgentRuntime(r.Context(), obsmetrics.RuntimeLookupSourceRuntimeAPI, existing.RuntimeID); runtimeErr == nil {
+			targetProvider = runtime.Provider
+		}
+	}
 	if req.RuntimeID != nil {
 		runtimeUUID, ok := parseUUIDOrBadRequest(w, *req.RuntimeID, "runtime_id")
 		if !ok {
@@ -1892,6 +1910,34 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// receiving an obvious foreign model ID (e.g. Claude Code -> Codex).
 		// Unknown/custom model strings are preserved by the helper.
 		params.Model = pgtype.Text{String: "", Valid: true}
+	}
+
+	// Life agents use one governed runtime/model pair. Ordinary agents retain
+	// the normal per-agent model rules; this check applies only when the agent
+	// is already bound as a companion or an independent observer.
+	var lifeAgent bool
+	if lifeAgent, err = h.Queries.IsLifeAgent(r.Context(), db.IsLifeAgentParams{
+		WorkspaceID: existing.WorkspaceID, AgentID: existing.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to validate Life agent")
+		return
+	}
+	if lifeAgent {
+		lifeAgentCandidate := existing
+		if params.RuntimeID.Valid {
+			lifeAgentCandidate.RuntimeID = params.RuntimeID
+		}
+		if params.Model.Valid {
+			lifeAgentCandidate.Model = params.Model
+		}
+		selection, selectionErr := h.lifeAgentSelection(r.Context(), lifeAgentCandidate, existing.WorkspaceID)
+		if selectionErr != nil {
+			writeError(w, http.StatusConflict, selectionErr.Error())
+			return
+		}
+		if selection.SetModel {
+			params.Model = pgtype.Text{String: selection.Model, Valid: true}
+		}
 	}
 
 	// thinking_level handling (MUL-2339). Tri-state semantics:
@@ -2043,7 +2089,15 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, err := h.Queries.UpdateAgent(r.Context(), params)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start agent update transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	updated, err := qtx.UpdateAgent(r.Context(), params)
 	if err != nil {
 		// Unique constraint on (workspace_id, name) — mirror CreateAgent and
 		// return a clear conflict instead of a 500 that leaks the raw
@@ -2069,7 +2123,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// clear the field. COALESCE in UpdateAgent cannot set a column to NULL, so
 	// mcp_config, thinking_level, and service_tier use dedicated clear queries.
 	if shouldClearMcpConfig {
-		updated, err = h.Queries.ClearAgentMcpConfig(r.Context(), updated.ID)
+		updated, err = qtx.ClearAgentMcpConfig(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent mcp_config failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear mcp_config: "+err.Error())
@@ -2077,7 +2131,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearThinkingLevel {
-		updated, err = h.Queries.ClearAgentThinkingLevel(r.Context(), updated.ID)
+		updated, err = qtx.ClearAgentThinkingLevel(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent thinking_level failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear thinking_level: "+err.Error())
@@ -2085,7 +2139,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearServiceTier {
-		updated, err = h.Queries.ClearAgentServiceTier(r.Context(), updated.ID)
+		updated, err = qtx.ClearAgentServiceTier(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent service_tier failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear service_tier: "+err.Error())
@@ -2093,7 +2147,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearComposioAllowlist {
-		updated, err = h.Queries.ClearAgentComposioToolkitAllowlist(r.Context(), updated.ID)
+		updated, err = qtx.ClearAgentComposioToolkitAllowlist(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent composio_toolkit_allowlist failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear composio_toolkit_allowlist: "+err.Error())
@@ -2105,11 +2159,22 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// permission. Done after the row update so a permission_mode flip and its
 	// targets land together.
 	if replacePermissionTargets {
-		if err := h.replaceInvocationTargets(r.Context(), updated.ID, parseUUID(requestUserID(r)), resolvedPerm.targets); err != nil {
+		if err := replaceInvocationTargetsWithQueries(r.Context(), qtx, updated.ID, parseUUID(requestUserID(r)), resolvedPerm.targets); err != nil {
 			slog.Warn("update agent: persist invocation targets failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to update invocation targets: "+err.Error())
 			return
 		}
+	}
+	userID := requestUserID(r)
+	actorType, actorID := h.resolveActor(r, userID, uuidToString(updated.WorkspaceID))
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, h.buildAgentDomainEvent(protocol.EventAgentStatus, updated, actorType, actorID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record agent event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent update")
+		return
 	}
 
 	resp := h.agentToResponse(updated)
@@ -2129,9 +2194,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("agent updated", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", uuidToString(updated.WorkspaceID))...)
-	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, uuidToString(updated.WorkspaceID))
-	h.publish(protocol.EventAgentStatus, uuidToString(updated.WorkspaceID), actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
+	h.publishEvent(updatedEvent)
 	redactAgentResponseForActor(&resp, actorType)
 	// Workspace admins / non-owner members pass canManageAgent for legitimate
 	// admin actions (e.g. bulk reassigning agents off a leaving member's
@@ -2342,13 +2405,30 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := requestUserID(r)
-	archived, err := h.Queries.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start agent archive transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	archived, err := qtx.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
 		ID:         agent.ID,
 		ArchivedBy: parseUUID(userID),
 	})
 	if err != nil {
 		slog.Warn("archive agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+	actorType, actorID := h.resolveActor(r, userID, uuidToString(archived.WorkspaceID))
+	archivedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, h.buildAgentDomainEvent(protocol.EventAgentArchived, archived, actorType, actorID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record agent event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent archive")
 		return
 	}
 
@@ -2371,8 +2451,7 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
-	actorType, actorID := h.resolveActor(r, userID, wsID)
-	h.publish(protocol.EventAgentArchived, wsID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
+	h.publishEvent(archivedEvent)
 	redactAgentResponseForActor(&resp, actorType)
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -2391,7 +2470,14 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	restored, err := h.Queries.RestoreAgent(r.Context(), agent.ID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start agent restore transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	restored, err := qtx.RestoreAgent(r.Context(), agent.ID)
 	if err != nil {
 		slog.Warn("restore agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to restore agent")
@@ -2399,6 +2485,17 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wsID := uuidToString(restored.WorkspaceID)
+	userID := requestUserID(r)
+	actorType, actorID := h.resolveActor(r, userID, wsID)
+	restoredEvent, err := service.RecordDurableEventTx(r.Context(), qtx, h.buildAgentDomainEvent(protocol.EventAgentRestored, restored, actorType, actorID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record agent event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent restore")
+		return
+	}
 	slog.Info("agent restored", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", wsID)...)
 	resp := h.agentToResponse(restored)
 	if err := h.attachAgentSkills(r.Context(), &resp, restored.ID); err != nil {
@@ -2406,9 +2503,7 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
-	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, wsID)
-	h.publish(protocol.EventAgentRestored, wsID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
+	h.publishEvent(restoredEvent)
 	redactAgentResponseForActor(&resp, actorType)
 	writeJSON(w, http.StatusOK, resp)
 }

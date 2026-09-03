@@ -110,12 +110,19 @@ func (h *Handler) CreateLifeIdentityVersion(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "identity sections must be valid JSON objects and interests must be an array")
 		return
 	}
-	version, err := h.Queries.GetNextLifeIdentityVersion(r.Context(), db.GetNextLifeIdentityVersionParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start identity transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	version, err := qtx.GetNextLifeIdentityVersion(r.Context(), db.GetNextLifeIdentityVersionParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to reserve identity version")
 		return
 	}
-	row, err := h.Queries.CreateLifeIdentityVersion(r.Context(), db.CreateLifeIdentityVersionParams{
+	row, err := qtx.CreateLifeIdentityVersion(r.Context(), db.CreateLifeIdentityVersionParams{
 		WorkspaceID: scope.workspaceID, UserID: scope.userID, Version: version, Status: "draft",
 		StableCore: req.StableCore, RelationshipContract: req.RelationshipContract, GrowthProfile: req.GrowthProfile,
 		ExpressionProfile: req.ExpressionProfile, Interests: req.Interests, ChangeReason: strings.TrimSpace(req.ChangeReason),
@@ -124,6 +131,12 @@ func (h *Handler) CreateLifeIdentityVersion(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to create identity version")
 		return
 	}
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "identity", uuidToString(row.ID), "created", map[string]any{"version": version, "status": row.Status})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit identity version")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, http.StatusCreated, lifeIdentityResponse(row))
 }
 
@@ -160,10 +173,12 @@ func (h *Handler) ActivateLifeIdentityVersion(w http.ResponseWriter, r *http.Req
 		writeError(w, 500, "failed to link active identity")
 		return
 	}
-	if err = tx.Commit(r.Context()); err != nil {
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, q, scope, "identity", uuidToString(row.ID), "activated", map[string]any{"version": row.Version})
+	if err != nil {
 		writeError(w, 500, "failed to commit identity activation")
 		return
 	}
+	h.publishLifeEvents(event)
 	writeJSON(w, http.StatusOK, lifeIdentityResponse(row))
 }
 
@@ -208,11 +223,24 @@ func (h *Handler) ResolveLifeRelationshipEvent(w http.ResponseWriter, r *http.Re
 		writeError(w, 400, "status must be resolved or retained_difference")
 		return
 	}
-	row, err := h.Queries.ResolveLifeRelationshipEvent(r.Context(), db.ResolveLifeRelationshipEventParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: req.Status, Resolution: strings.TrimSpace(req.Resolution)})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start relationship transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	row, err := qtx.ResolveLifeRelationshipEvent(r.Context(), db.ResolveLifeRelationshipEventParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: req.Status, Resolution: strings.TrimSpace(req.Resolution)})
 	if err != nil {
 		writeEntityLoadError(w, err, "relationship event", "event_id", chi.URLParam(r, "eventId"))
 		return
 	}
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "relationship_event", uuidToString(row.ID), "resolved", map[string]any{"status": row.Status})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit relationship event")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 200, map[string]any{"id": uuidToString(row.ID), "status": row.Status, "resolution": row.Resolution})
 }
 
@@ -268,19 +296,29 @@ func (h *Handler) CreateLifeMaterial(w http.ResponseWriter, r *http.Request) {
 		when = parsed
 	}
 	metadata, _ := json.Marshal(req.Metadata)
+	if string(metadata) == "null" {
+		metadata = []byte("{}")
+	}
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s", req.Content, when.UTC().Format(time.RFC3339Nano))))
-	row, err := h.Queries.UpsertLifeMaterial(r.Context(), db.UpsertLifeMaterialParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, SourceType: "manual", SourceKey: hex.EncodeToString(digest[:]), SourceRevision: "1", Content: req.Content, Metadata: metadata, OccurredAt: pgtype.Timestamptz{Time: when, Valid: true}})
+	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
-		writeError(w, 500, "failed to create life material")
+		writeError(w, http.StatusInternalServerError, "failed to start life material transaction")
 		return
 	}
-	profile, err := h.Queries.GetCompanionProfile(r.Context(), db.GetCompanionProfileParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	row, err := qtx.UpsertLifeMaterial(r.Context(), db.UpsertLifeMaterialParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, SourceType: "manual", SourceKey: hex.EncodeToString(digest[:]), SourceRevision: "1", Content: req.Content, Metadata: metadata, OccurredAt: pgtype.Timestamptz{Time: when, Valid: true}})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create life material")
+		return
+	}
+	profile, profileErr := qtx.GetCompanionProfile(r.Context(), db.GetCompanionProfileParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	if profileErr != nil && !errors.Is(profileErr, pgx.ErrNoRows) {
 		writeError(w, http.StatusInternalServerError, "failed to resolve life companion")
 		return
 	}
-	if err == nil {
-		if _, err = h.Queries.QueueLifeMaterialUnderstanding(r.Context(), db.QueueLifeMaterialUnderstandingParams{
+	if profileErr == nil {
+		if _, err = qtx.QueueLifeMaterialUnderstanding(r.Context(), db.QueueLifeMaterialUnderstandingParams{
 			WorkspaceID: scope.workspaceID, UserID: scope.userID,
 			CompanionAgentID: profile.AgentID, MaterialID: row.ID,
 		}); err != nil {
@@ -288,6 +326,16 @@ func (h *Handler) CreateLifeMaterial(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	event, err := recordLifeChangedTx(r.Context(), qtx, scope, "member", scope.userID, "material", uuidToString(row.ID), "recorded", map[string]any{"occurred_at": when.UTC().Format(time.RFC3339Nano)})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record life material event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit life material")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, 201, lifeMaterialResponse(row))
 }
 
@@ -346,11 +394,24 @@ func (h *Handler) UpdateLifeTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	updated, err := h.Queries.UpdateLifeTopic(r.Context(), db.UpdateLifeTopicParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Title: row.Title, Summary: row.Summary, Status: req.Status, Confidence: row.Confidence, Uncertainty: row.Uncertainty, LastObservedAt: row.LastObservedAt, LastReviewedAt: now, ReviewAfter: pgtype.Timestamptz{Time: time.Now().Add(30 * 24 * time.Hour), Valid: true}})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start topic transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.UpdateLifeTopic(r.Context(), db.UpdateLifeTopicParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Title: row.Title, Summary: row.Summary, Status: req.Status, Confidence: row.Confidence, Uncertainty: row.Uncertainty, LastObservedAt: row.LastObservedAt, LastReviewedAt: now, ReviewAfter: pgtype.Timestamptz{Time: time.Now().Add(30 * 24 * time.Hour), Valid: true}})
 	if err != nil {
 		writeError(w, 500, "failed to update topic")
 		return
 	}
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "topic", uuidToString(updated.ID), "updated", map[string]any{"status": updated.Status})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit topic")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 200, updated)
 }
 
@@ -385,8 +446,14 @@ func (h *Handler) UpdateLifeCommitment(w http.ResponseWriter, r *http.Request) {
 	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start commitment transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
 	var row db.LifeCommitment
-	var err error
 	switch req.Status {
 	case "confirmed":
 		due, ok := parseLifeOptionalTime(w, req.DueAt, "due_at")
@@ -397,9 +464,9 @@ func (h *Handler) UpdateLifeCommitment(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		row, err = h.Queries.ConfirmLifeCommitment(r.Context(), db.ConfirmLifeCommitmentParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, DueAt: due, RevisitAfter: revisit})
+		row, err = qtx.ConfirmLifeCommitment(r.Context(), db.ConfirmLifeCommitmentParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, DueAt: due, RevisitAfter: revisit})
 	case "completed", "cancelled", "expired":
-		row, err = h.Queries.UpdateLifeCommitmentStatus(r.Context(), db.UpdateLifeCommitmentStatusParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: req.Status, Outcome: strings.TrimSpace(req.Outcome)})
+		row, err = qtx.UpdateLifeCommitmentStatus(r.Context(), db.UpdateLifeCommitmentStatusParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: req.Status, Outcome: strings.TrimSpace(req.Outcome)})
 	default:
 		writeError(w, 400, "unsupported commitment status")
 		return
@@ -408,6 +475,12 @@ func (h *Handler) UpdateLifeCommitment(w http.ResponseWriter, r *http.Request) {
 		writeEntityLoadError(w, err, "commitment", "commitment_id", chi.URLParam(r, "commitmentId"))
 		return
 	}
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "commitment", uuidToString(row.ID), "updated", map[string]any{"status": row.Status})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit commitment")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 200, row)
 }
 
@@ -451,11 +524,24 @@ func (h *Handler) UpdateLifeProactivePolicy(w http.ResponseWriter, r *http.Reque
 	}
 	quiet, _ := json.Marshal(req.QuietHours)
 	now := time.Now()
-	row, err := h.Queries.UpsertLifeProactivePolicy(r.Context(), db.UpsertLifeProactivePolicyParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Enabled: req.Enabled, Timezone: req.Timezone, QuietHours: quiet, MinimumInterval: pgtype.Interval{Microseconds: req.MinimumIntervalHours * int64(time.Hour/time.Microsecond), Valid: true}, NextCheckAt: pgtype.Timestamptz{Time: now, Valid: true}})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start proactive policy transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	row, err := qtx.UpsertLifeProactivePolicy(r.Context(), db.UpsertLifeProactivePolicyParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Enabled: req.Enabled, Timezone: req.Timezone, QuietHours: quiet, MinimumInterval: pgtype.Interval{Microseconds: req.MinimumIntervalHours * int64(time.Hour/time.Microsecond), Valid: true}, NextCheckAt: pgtype.Timestamptz{Time: now, Valid: true}})
 	if err != nil {
 		writeError(w, 500, "failed to update proactive policy")
 		return
 	}
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "proactive_policy", uuidToString(scope.userID), "updated", map[string]any{"enabled": row.Enabled})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit proactive policy")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 200, row)
 }
 
@@ -476,11 +562,25 @@ func (h *Handler) ListLifeObservers(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		item := lifeObserverResponse(row)
-		version, _ := h.Queries.GetCurrentLifeObserverVersion(r.Context(), row.ID)
-		item["personality"] = json.RawMessage(version.Personality)
-		item["perspective"] = json.RawMessage(version.Perspective)
-		item["expression_profile"] = json.RawMessage(version.ExpressionProfile)
-		knowledge, _ := h.Queries.ListLifeObserverKnowledge(r.Context(), row.ID)
+		version, versionErr := h.Queries.GetCurrentLifeObserverVersion(r.Context(), row.ID)
+		if versionErr != nil && !errors.Is(versionErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "failed to load observer version")
+			return
+		}
+		if versionErr == nil {
+			item["personality"] = json.RawMessage(version.Personality)
+			item["perspective"] = json.RawMessage(version.Perspective)
+			item["expression_profile"] = json.RawMessage(version.ExpressionProfile)
+		} else {
+			item["personality"] = json.RawMessage(`{}`)
+			item["perspective"] = json.RawMessage(`{}`)
+			item["expression_profile"] = json.RawMessage(`{}`)
+		}
+		knowledge, knowledgeErr := h.Queries.ListLifeObserverKnowledge(r.Context(), row.ID)
+		if knowledgeErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load observer knowledge")
+			return
+		}
 		item["knowledge"] = knowledge
 		items = append(items, item)
 	}
@@ -533,16 +633,12 @@ func (h *Handler) CreateLifeObserver(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "the companion and an independent observer must use different agents")
 		return
 	}
+	if !h.requirePersonalAgentAccess(w, r, agent, "member", uuidToString(scope.userID), uuidToString(scope.workspaceID), "you do not have access to this agent") {
+		return
+	}
 	companion, err := h.Queries.GetAgent(r.Context(), profile.AgentID)
 	if err != nil || companion.ArchivedAt.Valid {
 		writeError(w, 409, "companion agent is unavailable")
-		return
-	}
-	if companion.RuntimeID != agent.RuntimeID || strings.TrimSpace(companion.Model.String) != strings.TrimSpace(agent.Model.String) {
-		writeError(w, 409, "observer runtime and model must match the companion")
-		return
-	}
-	if !h.requirePersonalAgentAccess(w, r, agent, "member", uuidToString(scope.userID), uuidToString(scope.workspaceID), "you do not have access to this agent") {
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -552,6 +648,15 @@ func (h *Handler) CreateLifeObserver(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	q := h.Queries.WithTx(tx)
+	lockedProfile, err := q.LockCompanionProfile(r.Context(), db.LockCompanionProfileParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	if err != nil || lockedProfile.AgentID != profile.AgentID {
+		writeError(w, http.StatusConflict, "companion changed while creating observer")
+		return
+	}
+	if _, err := h.applyLifeAgentSelections(r.Context(), q, scope.workspaceID, []pgtype.UUID{profile.AgentID, agentID}); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	observer, err := q.CreateLifeObserver(r.Context(), db.CreateLifeObserverParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, AgentID: agentID, Name: strings.TrimSpace(req.Name), BasisType: req.BasisType})
 	if err != nil {
 		writeError(w, 409, "observer already exists or is invalid")
@@ -562,10 +667,16 @@ func (h *Handler) CreateLifeObserver(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "failed to create observer personality")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), q, scope, "member", scope.userID, "observer", uuidToString(observer.ID), "created", map[string]any{"name": observer.Name, "basis_type": observer.BasisType})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record observer event")
+		return
+	}
 	if err = tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "failed to commit observer")
 		return
 	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 201, lifeObserverResponse(observer))
 }
 
@@ -588,11 +699,24 @@ func (h *Handler) UpdateLifeObserver(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid observer status")
 		return
 	}
-	row, err := h.Queries.UpdateLifeObserverStatus(r.Context(), db.UpdateLifeObserverStatusParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: req.Status})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start observer transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	row, err := qtx.UpdateLifeObserverStatus(r.Context(), db.UpdateLifeObserverStatusParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: req.Status})
 	if err != nil {
 		writeEntityLoadError(w, err, "observer", "observer_id", chi.URLParam(r, "observerId"))
 		return
 	}
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "observer", uuidToString(row.ID), "status_updated", map[string]any{"status": row.Status})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit observer")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 200, lifeObserverResponse(row))
 }
 
@@ -617,11 +741,24 @@ func (h *Handler) AddLifeObserverKnowledge(w http.ResponseWriter, r *http.Reques
 		writeError(w, 400, "title and content are required")
 		return
 	}
-	row, err := h.Queries.CreateLifeObserverKnowledge(r.Context(), db.CreateLifeObserverKnowledgeParams{ObserverID: id, Title: strings.TrimSpace(req.Title), Content: strings.TrimSpace(req.Content), Source: strings.TrimSpace(req.Source)})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start observer knowledge transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	row, err := qtx.CreateLifeObserverKnowledge(r.Context(), db.CreateLifeObserverKnowledgeParams{ObserverID: id, Title: strings.TrimSpace(req.Title), Content: strings.TrimSpace(req.Content), Source: strings.TrimSpace(req.Source)})
 	if err != nil {
 		writeError(w, 500, "failed to add observer knowledge")
 		return
 	}
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "observer_knowledge", uuidToString(row.ID), "created", map[string]any{"observer_id": uuidToString(id)})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit observer knowledge")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 201, row)
 }
 
@@ -672,10 +809,16 @@ func (h *Handler) CreateLifeObserverVersion(w http.ResponseWriter, r *http.Reque
 		writeError(w, 500, "failed to activate observer version")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), q, scope, "member", scope.userID, "observer", uuidToString(id), "version_created", map[string]any{"version": version})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record observer version event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "failed to commit observer version")
 		return
 	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 201, row)
 }
 
@@ -716,10 +859,16 @@ func (h *Handler) RunLifeObserver(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "failed to schedule observer")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), q, scope, "member", scope.userID, "observer", uuidToString(id), "run_requested", map[string]any{"job_id": uuidToString(job.ID)})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record observer run event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "failed to commit observer run")
 		return
 	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 202, map[string]any{"job_id": uuidToString(job.ID)})
 }
 
@@ -761,11 +910,24 @@ func (h *Handler) UpdateLifeObservationTopic(w http.ResponseWriter, r *http.Requ
 		writeError(w, 400, "invalid observation topic status")
 		return
 	}
-	row, err := h.Queries.UpdateLifeObservationTopic(r.Context(), db.UpdateLifeObservationTopicParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: req.Status, CompanionResponse: strings.TrimSpace(req.CompanionResponse)})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start observation topic transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	row, err := qtx.UpdateLifeObservationTopic(r.Context(), db.UpdateLifeObservationTopicParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: req.Status, CompanionResponse: strings.TrimSpace(req.CompanionResponse)})
 	if err != nil {
 		writeEntityLoadError(w, err, "observation topic", "topic_id", chi.URLParam(r, "topicId"))
 		return
 	}
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "observation_topic", uuidToString(row.ID), "updated", map[string]any{"status": row.Status})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit observation topic")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 200, row)
 }
 
@@ -801,11 +963,24 @@ func (h *Handler) UpdateLifeModule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid module status")
 		return
 	}
-	row, err := h.Queries.UpdateLifeModuleStatus(r.Context(), db.UpdateLifeModuleStatusParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: req.Status})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start module transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	row, err := qtx.UpdateLifeModuleStatus(r.Context(), db.UpdateLifeModuleStatusParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: req.Status})
 	if err != nil {
 		writeEntityLoadError(w, err, "module", "module_id", chi.URLParam(r, "moduleId"))
 		return
 	}
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "module", uuidToString(row.ID), "status_updated", map[string]any{"status": row.Status})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit module")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 200, row)
 }
 
@@ -857,7 +1032,14 @@ func (h *Handler) RetryLifeCognitionJob(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	job, err := h.Queries.RetryLifeCognitionJob(r.Context(), db.RetryLifeCognitionJobParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start cognition retry")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	job, err := qtx.RetryLifeCognitionJob(r.Context(), db.RetryLifeCognitionJobParams{
 		ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -868,6 +1050,12 @@ func (h *Handler) RetryLifeCognitionJob(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to retry cognition job")
 		return
 	}
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "cognition_job", uuidToString(job.ID), "retry_requested", map[string]any{"job_type": job.JobType})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit cognition retry")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, http.StatusAccepted, map[string]any{"id": uuidToString(job.ID), "status": job.Status})
 }
 
@@ -880,11 +1068,24 @@ func (h *Handler) RejectLifeActionProposal(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	row, err := h.Queries.RejectLifeActionProposal(r.Context(), db.RejectLifeActionProposalParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start proposal rejection")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	row, err := qtx.RejectLifeActionProposal(r.Context(), db.RejectLifeActionProposalParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID})
 	if err != nil {
 		writeEntityLoadError(w, err, "proposal", "proposal_id", chi.URLParam(r, "proposalId"))
 		return
 	}
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "action_proposal", uuidToString(row.ID), "rejected", nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit proposal rejection")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 200, lifeProposalToResponse(row))
 }
 
@@ -955,6 +1156,18 @@ func (h *Handler) CreateLifeUpgradeEvaluation(w http.ResponseWriter, r *http.Req
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	q := h.Queries.WithTx(tx)
+	if identityID.Valid {
+		if _, identityErr := q.GetLifeIdentityVersionForUser(r.Context(), db.GetLifeIdentityVersionForUserParams{
+			ID: identityID, WorkspaceID: scope.workspaceID, UserID: scope.userID,
+		}); identityErr != nil {
+			if errors.Is(identityErr, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "identity version not found")
+			} else {
+				writeError(w, http.StatusInternalServerError, "failed to validate identity version")
+			}
+			return
+		}
+	}
 	eval, err := q.CreateLifeUpgradeEvaluation(r.Context(), db.CreateLifeUpgradeEvaluationParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, IdentityVersionID: identityID, CandidateLabel: strings.TrimSpace(req.CandidateLabel), BaselineLabel: strings.TrimSpace(req.BaselineLabel), Scenarios: scenarios})
 	if err != nil {
 		writeError(w, 500, "failed to create upgrade evaluation")
@@ -971,10 +1184,16 @@ func (h *Handler) CreateLifeUpgradeEvaluation(w http.ResponseWriter, r *http.Req
 		writeError(w, 500, "failed to schedule upgrade evaluation")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), q, scope, "member", scope.userID, "upgrade_evaluation", uuidToString(eval.ID), "started", map[string]any{"candidate": eval.CandidateLabel, "baseline": eval.BaselineLabel})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record upgrade evaluation event")
+		return
+	}
 	if err = tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "failed to commit upgrade evaluation")
 		return
 	}
+	h.publishLifeEvents(event)
 	writeJSON(w, 202, lifeUpgradeEvaluationResponse(eval))
 }
 

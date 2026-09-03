@@ -17,12 +17,11 @@ Multica is an AI-native task management platform for small teams, with agents as
 
 - `server/`: Go backend, Chi router, sqlc, gorilla/websocket.
 - `apps/web/`: Next.js App Router.
-- `apps/desktop/`: Electron desktop app.
 - `apps/mobile/`: Expo / React Native iOS app. Read `apps/mobile/CLAUDE.md` before touching it.
 - `apps/docs/`: Fumadocs documentation site.
 - `packages/core/`: headless business logic, API client, React Query hooks, Zustand stores.
 - `packages/ui/`: atomic UI components only.
-- `packages/views/`: shared business pages/components for web and desktop.
+- `packages/views/`: shared business pages/components for the web application.
 - `packages/tsconfig/`: shared TypeScript config.
 - `packages/eslint-config/`: shared ESLint config.
 
@@ -54,17 +53,16 @@ These are hard constraints:
 - `packages/ui/`: no `@multica/core` imports and no business logic.
 - `packages/views/`: no `next/*`, no `react-router-dom`, no stores. Use `NavigationAdapter`, `useNavigation()`, and `<AppLink>`.
 - `apps/web/platform/`: only place for Next.js navigation/platform APIs.
-- `apps/desktop/src/renderer/src/platform/`: only place for `react-router-dom` navigation wiring.
 - Every workspace under `apps/` and `packages/` must declare directly imported external packages in its own `package.json`.
 - Shared dependencies use `catalog:` from `pnpm-workspace.yaml`; `apps/mobile/` pins Expo/React Native related versions directly.
 
 ## Sharing Rules
 
-Web and desktop share business logic, hooks, stores, components, and views through `packages/core/`, `packages/ui/`, and `packages/views/`.
+The web application shares business logic, hooks, stores, components, and views through `packages/core/`, `packages/ui/`, and `packages/views/`. Mobile remains an independent client and may import only the documented core types and pure functions.
 
-If the same logic exists in both web and desktop, extract it unless it depends on platform APIs:
+Keep logic in the lowest layer that owns it:
 
-1. Next.js, Electron, or router APIs stay in the app/platform layer.
+1. Next.js or router APIs stay in the app/platform layer.
 2. Headless logic belongs in `packages/core/`.
 3. Shared UI or business views belong in `packages/views/`.
 4. Shared primitives belong in `packages/ui/`.
@@ -76,7 +74,7 @@ Mobile is independent. It may import types and pure functions from `@multica/cor
 Use the repo scripts as the source of truth. Common commands:
 
 ```bash
-make up               # start this checkout's environment (C=api,web,daemon,desktop)
+make up               # start this checkout's environment (C=api,web,daemon)
 make status           # what is running, with pid/commit proof it is yours
 make list             # every development environment on this machine
 make down             # stop the processes, keep the database
@@ -92,7 +90,6 @@ make test             # Go tests
 make sqlc             # regenerate sqlc code after SQL changes
 pnpm install
 pnpm dev:web
-pnpm dev:desktop
 pnpm build
 pnpm typecheck
 pnpm lint
@@ -101,9 +98,9 @@ pnpm exec playwright test
 pnpm ui:add badge     # shadcn/Base UI component into packages/ui
 ```
 
-`make up` records each environment in `~/.multica/dev/`, allocates its API, Web and Desktop renderer ports plus database name under a lock instead of recomputing them from the path, and verifies the database through `DATABASE_URL` rather than `docker exec` — a `docker exec` create lands in the wrong server whenever a native PostgreSQL owns 5432. It reuses an API only when `/health` proves its listener pid, process group and commit belong to this checkout. `make down` keeps the data; `make destroy` consumes the database, profile, daemon workspaces, Desktop userData and registry entry. Agent-owned TTL environments are collected best-effort on the next `make up`, or explicitly with `make gc`.
+`make up` records each environment in `~/.multica/dev/`, allocates its API and Web ports plus database name under a lock instead of recomputing them from the path, and verifies the database through `DATABASE_URL` rather than `docker exec` — a `docker exec` create lands in the wrong server whenever a native PostgreSQL owns 5432. It reuses an API only when `/health` proves its listener pid, process group and commit belong to this checkout. `make down` keeps the data; `make destroy` consumes the database, profile, daemon workspaces and registry entry. Agent-owned TTL environments are collected best-effort on the next `make up`, or explicitly with `make gc`.
 
-Worktrees share one PostgreSQL container and get isolated DB names/ports via `.env.worktree`. `make dev` auto-detects this. For manual setup use `make worktree-env`, `make setup-worktree`, and `make start-worktree`. Direct `pnpm dev:desktop` self-isolates from the path; `make up C=desktop` overrides that fallback with the registry-allocated renderer port and app name so Desktop shares the environment ledger.
+Worktrees share one PostgreSQL container and get isolated DB names/ports via `.env.worktree`. `make dev` auto-detects this. For manual setup use `make worktree-env`, `make setup-worktree`, and `make start-worktree`.
 
 CI runs Node 22, the latest Go 1.26 patch, and a `pgvector/pgvector:pg17` PostgreSQL service.
 
@@ -123,7 +120,7 @@ These are hard requirements for every new or modified database design and produc
 - Prefer existing patterns/components over new parallel abstractions.
 - Avoid broad refactors unless required by the task.
 - For internal, non-boundary code, do not add compatibility layers, fallback paths, dual writes, legacy adapters, or temporary shims unless explicitly requested.
-- API boundaries are different: installed desktop clients can talk to newer backends, so response parsing must follow the API compatibility rules below.
+- API boundaries are different from internal calls: clients can talk to newer backends, so response parsing must follow the API compatibility rules below.
 - If a flow or API is being replaced and the product is not live, prefer removing the old path instead of preserving both.
 - New global pre-workspace routes must be a single word (`/login`, `/inbox`) or `/{noun}/{verb}` (`/workspaces/new`). Do not add hyphenated root routes like `/new-workspace`.
 - Reserved slugs live in `server/internal/handler/reserved_slugs.json`. Edit it, run `pnpm generate:reserved-slugs`, and commit the generated `packages/core/paths/reserved-slugs.ts`.
@@ -131,7 +128,7 @@ These are hard requirements for every new or modified database design and produc
 
 ## API Compatibility
 
-Frontend code must survive backend response drift, especially in installed desktop builds.
+Frontend code must survive backend response drift across supported clients.
 
 - Parse API JSON with `parseWithFallback` in `packages/core/api/schema.ts` and a zod schema. Do not cast network JSON to `T`.
 - Endpoint responses consumed by UI logic must pass through a schema before returning.
@@ -150,35 +147,18 @@ In `server/internal/handler/`, always know where a UUID came from before using i
 - Trusted UUID round-trips from sqlc results or test fixtures use `parseUUID(s)`, which panics on invalid input.
 - Outside handlers, `util.ParseUUID(s) (pgtype.UUID, error)` is the safe variant; always check the error.
 
-## Web/Desktop Features
+## Web Features
 
-When adding a shared page or feature for web and desktop:
+When adding a web page or feature:
 
 1. Put the page/component in `packages/views/<domain>/`.
-2. Add platform wiring in both `apps/web/app/` and the desktop router, unless the desktop flow is a transition overlay.
+2. Add route wiring in `apps/web/app/`.
 3. Use `useNavigation().push()` or `<AppLink>` in shared code.
 4. Use shared guards/providers such as `DashboardGuard` from `packages/views/layout/`.
 5. Keep platform-only UI in the app or inject it through props/slots.
 6. Hooks that need workspace context should accept `wsId`.
 
-CSS for web/desktop is shared from `packages/ui/styles/`. Use semantic tokens such as `bg-background` and `text-muted-foreground`; avoid hardcoded Tailwind colors and duplicated base styles.
-
-## Desktop Rules
-
-Desktop routing has three categories:
-
-- Session routes: workspace-scoped tab destinations such as `/:slug/issues`.
-- Transition flows: pre-workspace one-shot actions such as create workspace or accept invite. These are `WindowOverlay` state, not routes.
-- Error/stale states: stale workspace tabs should auto-heal by dropping stale tab groups, not render desktop error pages.
-
-More desktop constraints:
-
-- New pre-workspace desktop flows register a `WindowOverlay` type in `stores/window-overlay-store.ts`; do not add them to `routes.tsx`.
-- `setCurrentWorkspace(slug, uuid)` from `@multica/core/platform` mirrors the active route for headers, storage namespaces, and reconnects; workspace route layouts own setting it.
-- Code that leaves workspace context must call `setCurrentWorkspace(null, null)` explicitly.
-- Workspace delete must await the server before navigation/cleanup. Workspace leave currently clears/navigates before mutation only to avoid the `member:removed` realtime race; treat that as known debt, not a reusable pattern.
-- Cross-workspace navigation must go through the navigation adapter so it can call `switchWorkspace(slug, targetPath)`.
-- Full-window desktop views outside the dashboard shell must mount `<DragStrip />` from `@multica/views/platform` as the first flex child. Interactive controls in the top 48px need `WebkitAppRegion: "no-drag"`.
+CSS for the web is shared from `packages/ui/styles/`. Use semantic tokens such as `bg-background` and `text-muted-foreground`; avoid hardcoded Tailwind colors and duplicated base styles.
 
 ## Mobile Rules
 
@@ -187,7 +167,7 @@ Read `apps/mobile/CLAUDE.md` before touching `apps/mobile/`. It contains the man
 Root-level reminders:
 
 - Mobile shares only `@multica/core` types and pure functions.
-- Mobile must match web/desktop product semantics: counts, permissions, enums/transitions, and data identity.
+- Mobile must match web product semantics: counts, permissions, enums/transitions, and data identity.
 - Mobile may differ in UI/interaction when the phone context requires it.
 
 ## UI Rules
@@ -199,7 +179,7 @@ Root-level reminders:
 - An active/selected state must stay identifiable while hovered. Express it on a dimension hover does not touch (weight, text color), or define the `data-active:hover:` compound explicitly — otherwise hovering a selected row visually downgrades it to plain hover.
 - Do not introduce extra local state unless the design requires it.
 - Handle overflow, long text, scrolling, alignment, and spacing deliberately. Prefer more spacing over adding a divider.
-- If a component is identical between web and desktop, it belongs in a shared package.
+- If a component is shared by multiple clients, it belongs in a shared package.
 
 ## Testing
 
@@ -209,7 +189,7 @@ Tests follow the code:
 | --- | --- |
 | Shared business logic, stores, queries, hooks | `packages/core/*.test.ts` |
 | Shared UI components, pages, forms, modals | `packages/views/*.test.tsx` |
-| Platform wiring such as cookies, redirects, search params | `apps/web/*.test.tsx` or `apps/desktop/` |
+| Platform wiring such as cookies, redirects, search params | `apps/web/*.test.tsx` |
 | End-to-end flows | `e2e/*.spec.ts` |
 | Backend | `server/` Go tests |
 

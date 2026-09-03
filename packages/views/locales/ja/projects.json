@@ -118,7 +118,7 @@
     "local_validate_not_a_directory": "パスはディレクトリではありません。",
     "local_validate_not_readable": "ディレクトリを読み取れません。",
     "local_validate_not_writable": "ディレクトリに書き込めません。",
-    "local_validate_unsupported": "ローカルディレクトリはデスクトップアプリでのみ選択できます。",
+    "local_validate_unsupported": "このブラウザではローカルディレクトリを選択できません。デーモンまたは CLI から追加してください。",
     "mode_dialog_title": "作業はこのフォルダをどう使いますか？",
     "mode_dialog_description": "エージェントの成果物を受け取る方法と、このフォルダの作業を同時に実行できるかが決まります。",
     "mode_in_place_title": "このフォルダを直接編集する",

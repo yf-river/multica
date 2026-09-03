@@ -10,7 +10,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -168,7 +170,14 @@ func (h *Handler) SetIssueMetadataKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.Queries.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start metadata transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		Key:         key,
@@ -187,11 +196,28 @@ func (h *Handler) SetIssueMetadataKey(w http.ResponseWriter, r *http.Request) {
 	workspaceID := uuidToString(updated.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	metadata := parseIssueMetadata(updated.Metadata)
-	h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
-		"issue_id":       uuidToString(updated.ID),
-		"metadata":       metadata,
-		"issue_revision": updated.Revision,
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+		Type:           protocol.EventIssueMetadataChanged,
+		IdempotencyKey: "issue_metadata:changed:" + util.UUIDToString(updated.ID) + ":" + fmt.Sprint(updated.Revision),
+		StreamKey:      "issue:" + util.UUIDToString(updated.ID),
+		WorkspaceID:    workspaceID,
+		ActorType:      actorType,
+		ActorID:        actorID,
+		Payload: map[string]any{
+			"issue_id":       uuidToString(updated.ID),
+			"metadata":       metadata,
+			"issue_revision": updated.Revision,
+		},
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record metadata event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit metadata change")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusOK, map[string]any{"metadata": metadata, "issue_revision": updated.Revision})
 }
 
@@ -212,7 +238,14 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	updated, err := h.Queries.DeleteIssueMetadataKey(r.Context(), db.DeleteIssueMetadataKeyParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start metadata transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.DeleteIssueMetadataKey(r.Context(), db.DeleteIssueMetadataKeyParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		Key:         key,
@@ -230,10 +263,27 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 	workspaceID := uuidToString(updated.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	metadata := parseIssueMetadata(updated.Metadata)
-	h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
-		"issue_id":       uuidToString(updated.ID),
-		"metadata":       metadata,
-		"issue_revision": updated.Revision,
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+		Type:           protocol.EventIssueMetadataChanged,
+		IdempotencyKey: "issue_metadata:changed:" + util.UUIDToString(updated.ID) + ":" + fmt.Sprint(updated.Revision),
+		StreamKey:      "issue:" + util.UUIDToString(updated.ID),
+		WorkspaceID:    workspaceID,
+		ActorType:      actorType,
+		ActorID:        actorID,
+		Payload: map[string]any{
+			"issue_id":       uuidToString(updated.ID),
+			"metadata":       metadata,
+			"issue_revision": updated.Revision,
+		},
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record metadata event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit metadata change")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusOK, map[string]any{"metadata": metadata, "issue_revision": updated.Revision})
 }

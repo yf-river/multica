@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,7 +16,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -196,6 +200,19 @@ func (h *Handler) attachmentToResponse(a db.Attachment, mode attachmentURLMode) 
 		resp.ChatMessageID = &s
 	}
 	return resp
+}
+
+// attachmentsToResponses applies the ordinary response URL policy to a
+// transaction-loaded attachment snapshot.
+func (h *Handler) attachmentsToResponses(attachments []db.Attachment) []AttachmentResponse {
+	if len(attachments) == 0 {
+		return nil
+	}
+	responses := make([]AttachmentResponse, len(attachments))
+	for i, attachment := range attachments {
+		responses[i] = h.attachmentToResponse(attachment, attachmentURLModeSigned)
+	}
+	return responses
 }
 
 // buildMarkdownURL chooses the durable URL the client persists into
@@ -562,30 +579,65 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 		params.Url = link
 
-		att, err := h.Queries.CreateAttachment(r.Context(), params)
+		tx, beginErr := h.TxStarter.Begin(r.Context())
+		if beginErr != nil {
+			h.Storage.Delete(r.Context(), link)
+			slog.Error("failed to begin attachment transaction", "error", beginErr)
+			writeError(w, http.StatusInternalServerError, "upload failed")
+			return
+		}
+		defer tx.Rollback(r.Context())
+		qtx := h.Queries.WithTx(tx)
+		att, err := qtx.CreateAttachment(r.Context(), params)
 		if err != nil {
 			slog.Error("failed to create attachment record", "error", err)
-			// S3 upload succeeded but DB record failed — still return the link
-			// so the file is usable. Log the error for investigation.
+			h.Storage.Delete(r.Context(), link)
+			writeError(w, http.StatusInternalServerError, "upload failed")
+			return
 		} else {
+			persistedEvents := make([]events.Event, 0, 2)
 			if att.IssueRevision > 0 && att.IssueID.Valid {
-				h.publish(protocol.EventIssueAttachmentsChanged, workspaceID, uploaderType, uploaderID, map[string]any{
-					"issue_id":       uuidToString(att.IssueID),
-					"issue_revision": att.IssueRevision,
-				})
+				issue, issueErr := qtx.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: att.IssueID, WorkspaceID: att.WorkspaceID})
+				if issueErr != nil {
+					h.Storage.Delete(r.Context(), link)
+					slog.Error("failed to load attachment issue", "error", issueErr)
+					writeError(w, http.StatusInternalServerError, "upload failed")
+					return
+				}
+				event, eventErr := eventoutbox.Enqueue(r.Context(), qtx, buildIssueAttachmentsChangedEvent(issue, uploaderType, uploaderID))
+				if eventErr != nil {
+					h.Storage.Delete(r.Context(), link)
+					writeError(w, http.StatusInternalServerError, "upload failed")
+					return
+				}
+				persistedEvents = append(persistedEvents, event)
 			}
 			if att.CommentRevision > 0 && att.CommentID.Valid {
-				if comment, loadErr := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
+				if comment, loadErr := qtx.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
 					ID:          att.CommentID,
 					WorkspaceID: att.WorkspaceID,
 				}); loadErr == nil {
-					commentID := uuidToString(comment.ID)
-					reactions := h.groupReactions(r, []pgtype.UUID{comment.ID})
-					attachments := h.groupAttachments(r, []pgtype.UUID{comment.ID})
-					h.publish(protocol.EventCommentUpdated, workspaceID, uploaderType, uploaderID, map[string]any{
-						"comment": commentToResponse(comment, reactions[commentID], attachments[commentID]),
-					})
+					event, eventErr := eventoutbox.Enqueue(r.Context(), qtx,
+						buildCommentMutationEvent(comment, protocol.EventCommentUpdated, uploaderType, uploaderID, att.CommentRevision))
+					if eventErr != nil {
+						h.Storage.Delete(r.Context(), link)
+						writeError(w, http.StatusInternalServerError, "upload failed")
+						return
+					}
+					persistedEvents = append(persistedEvents, event)
+				} else {
+					h.Storage.Delete(r.Context(), link)
+					writeError(w, http.StatusInternalServerError, "upload failed")
+					return
 				}
+			}
+			if err := tx.Commit(r.Context()); err != nil {
+				h.Storage.Delete(r.Context(), link)
+				writeError(w, http.StatusInternalServerError, "upload failed")
+				return
+			}
+			for _, event := range persistedEvents {
+				h.publishEvent(event)
 			}
 			writeJSON(w, http.StatusOK, h.attachmentToResponse(att.Attachment(), attachmentURLModeFromRequest(r)))
 			return
@@ -1436,7 +1488,14 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deleted, err := h.Queries.DeleteAttachment(r.Context(), db.DeleteAttachmentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete attachment")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	deleted, err := qtx.DeleteAttachment(r.Context(), db.DeleteAttachmentParams{
 		ID:          att.ID,
 		WorkspaceID: att.WorkspaceID,
 	})
@@ -1445,24 +1504,44 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete attachment")
 		return
 	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	persistedEvents := make([]events.Event, 0, 2)
 	if deleted.Changed && att.IssueID.Valid {
-		h.publish(protocol.EventIssueAttachmentsChanged, workspaceID, "member", userID, map[string]any{
-			"issue_id":       uuidToString(att.IssueID),
-			"issue_revision": deleted.IssueRevision,
-		})
+		issue, loadErr := qtx.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: att.IssueID, WorkspaceID: att.WorkspaceID})
+		if loadErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete attachment")
+			return
+		}
+		event, eventErr := eventoutbox.Enqueue(r.Context(), qtx, buildIssueAttachmentsChangedEvent(issue, actorType, actorID))
+		if eventErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete attachment")
+			return
+		}
+		persistedEvents = append(persistedEvents, event)
 	}
 	if deleted.Changed && att.CommentID.Valid {
-		if comment, loadErr := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
+		if comment, loadErr := qtx.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
 			ID:          att.CommentID,
 			WorkspaceID: att.WorkspaceID,
 		}); loadErr == nil {
-			commentID := uuidToString(comment.ID)
-			reactions := h.groupReactions(r, []pgtype.UUID{comment.ID})
-			attachments := h.groupAttachments(r, []pgtype.UUID{comment.ID})
-			h.publish(protocol.EventCommentUpdated, workspaceID, "member", userID, map[string]any{
-				"comment": commentToResponse(comment, reactions[commentID], attachments[commentID]),
-			})
+			event, eventErr := eventoutbox.Enqueue(r.Context(), qtx,
+				buildCommentMutationEvent(comment, protocol.EventCommentUpdated, actorType, actorID, deleted.CommentRevision))
+			if eventErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to delete attachment")
+				return
+			}
+			persistedEvents = append(persistedEvents, event)
+		} else if !errors.Is(loadErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "failed to delete attachment")
+			return
 		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete attachment")
+		return
+	}
+	for _, event := range persistedEvents {
+		h.publishEvent(event)
 	}
 
 	h.deleteS3Object(r.Context(), att.Url)

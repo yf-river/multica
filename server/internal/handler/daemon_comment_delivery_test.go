@@ -111,12 +111,22 @@ type failNthBegin struct {
 	calls    int
 }
 
-type failDeleteCommentDB struct {
-	delegate db.DBTX
+type deleteCommentFaultTxStarter struct {
+	inner txStarter
+	zero  bool
 }
 
-type zeroDeleteCommentDB struct {
-	delegate db.DBTX
+func (s deleteCommentFaultTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.inner.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &deleteCommentFaultTx{Tx: tx, zero: s.zero}, nil
+}
+
+type deleteCommentFaultTx struct {
+	pgx.Tx
+	zero bool
 }
 
 type deleteCommentResultRow struct {
@@ -133,40 +143,24 @@ func (r deleteCommentResultRow) Scan(dest ...interface{}) error {
 	return nil
 }
 
-func (f *failDeleteCommentDB) Exec(ctx context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+func (f *deleteCommentFaultTx) Exec(ctx context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
 	if strings.Contains(query, "-- name: DeleteComment") {
+		if f.zero {
+			return pgconn.NewCommandTag("DELETE 0"), nil
+		}
 		return pgconn.CommandTag{}, errors.New("injected comment deletion failure")
 	}
-	return f.delegate.Exec(ctx, query, args...)
+	return f.Tx.Exec(ctx, query, args...)
 }
 
-func (f *failDeleteCommentDB) Query(ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
-	return f.delegate.Query(ctx, query, args...)
-}
-
-func (f *failDeleteCommentDB) QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row {
+func (f *deleteCommentFaultTx) QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row {
 	if strings.Contains(query, "-- name: DeleteComment") {
+		if f.zero {
+			return deleteCommentResultRow{changed: false}
+		}
 		return deleteCommentResultRow{err: errors.New("injected comment deletion failure")}
 	}
-	return f.delegate.QueryRow(ctx, query, args...)
-}
-
-func (z *zeroDeleteCommentDB) Exec(ctx context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
-	if strings.Contains(query, "-- name: DeleteComment") {
-		return pgconn.NewCommandTag("DELETE 0"), nil
-	}
-	return z.delegate.Exec(ctx, query, args...)
-}
-
-func (z *zeroDeleteCommentDB) Query(ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
-	return z.delegate.Query(ctx, query, args...)
-}
-
-func (z *zeroDeleteCommentDB) QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row {
-	if strings.Contains(query, "-- name: DeleteComment") {
-		return deleteCommentResultRow{changed: false}
-	}
-	return z.delegate.QueryRow(ctx, query, args...)
+	return f.Tx.QueryRow(ctx, query, args...)
 }
 
 func (f *failNthBegin) Begin(ctx context.Context) (pgx.Tx, error) {
@@ -482,7 +476,7 @@ func TestDeleteComment_FailureRestoresCancelledCompleteBatch(t *testing.T) {
 	}
 
 	failingHandler := *testHandler
-	failingHandler.Queries = db.New(&failDeleteCommentDB{delegate: testPool})
+	failingHandler.TxStarter = deleteCommentFaultTxStarter{inner: testHandler.TxStarter}
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodDelete, "/api/comments/"+fixture.commentID[2], nil)
 	req = withURLParam(req, "commentId", fixture.commentID[2])
@@ -511,7 +505,7 @@ func TestDeleteComment_ConcurrentNoOpIsReportedAndRestoresCancelledBatch(t *test
 	}
 
 	zeroHandler := *testHandler
-	zeroHandler.Queries = db.New(&zeroDeleteCommentDB{delegate: testPool})
+	zeroHandler.TxStarter = deleteCommentFaultTxStarter{inner: testHandler.TxStarter, zero: true}
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodDelete, "/api/comments/"+fixture.commentID[2], nil)
 	req = withURLParam(req, "commentId", fixture.commentID[2])

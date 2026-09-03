@@ -61,6 +61,13 @@ SELECT * FROM life_experiment
 WHERE workspace_id = $1 AND user_id = $2
 ORDER BY updated_at DESC, id DESC;
 
+-- name: ListLifeExperimentsForContext :many
+SELECT * FROM life_experiment
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND user_id = sqlc.arg(user_id)
+ORDER BY updated_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
+
 -- name: CreateLifeExperimentRound :one
 INSERT INTO life_experiment_round (
     experiment_id, previous_round_id, proposal_id, issue_id, status, plan,
@@ -83,6 +90,15 @@ SELECT round.* FROM life_experiment_round round
 JOIN life_experiment experiment ON experiment.id = round.experiment_id
 WHERE experiment.workspace_id = $1 AND experiment.user_id = $2
 ORDER BY round.created_at DESC, round.id DESC;
+
+-- name: ListLifeExperimentRoundsForContext :many
+SELECT round.* FROM life_experiment_round round
+JOIN life_experiment experiment ON experiment.id = round.experiment_id
+WHERE experiment.workspace_id = sqlc.arg(workspace_id)
+  AND experiment.user_id = sqlc.arg(user_id)
+  AND round.status IN ('running', 'awaiting_review')
+ORDER BY round.created_at DESC, round.id DESC
+LIMIT sqlc.arg('limit')::int;
 
 -- name: LinkLifeExperimentMemory :exec
 INSERT INTO life_experiment_memory (round_id, memory_id, role)

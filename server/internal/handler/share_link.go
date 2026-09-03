@@ -16,8 +16,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/seatcapacity"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -365,6 +367,17 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	memberEvent, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+		Type:           protocol.EventMemberAdded,
+		IdempotencyKey: "member:" + protocol.EventMemberAdded + ":" + uuidToString(member.ID),
+		StreamKey:      "workspace:" + uuidToString(link.WorkspaceID),
+		WorkspaceID:    uuidToString(link.WorkspaceID), ActorType: "member", ActorID: userID,
+		Payload: map[string]any{"member": h.memberWithUserResponse(member, user), "action": "share_link_join"},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record membership event")
+		return
+	}
 
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to join workspace")
@@ -384,9 +397,7 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	memberResp := h.memberWithUserResponse(member, user)
-	h.publish(protocol.EventMemberAdded, wsID, "member", userID, map[string]any{
-		"member": memberResp,
-	})
+	h.publishEvent(memberEvent)
 	h.notifyDaemonWorkspacesChanged(userID)
 
 	writeJSON(w, http.StatusOK, map[string]any{

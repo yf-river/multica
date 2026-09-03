@@ -246,18 +246,20 @@ describe("runtime list row menu", () => {
   });
 
   it("opens the row's detail in a foreground tab from the menu", () => {
-    const openInNewTab = vi.fn();
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
     renderActionsCell(makeRow(makeRuntime({ runtime_mode: "local" })), {
       detailHref: "/ws-1/runtimes/rt-1",
-      adapter: makeAdapter({ openInNewTab }),
+      adapter: makeAdapter(),
     });
 
     fireEvent.click(screen.getByLabelText("Row actions"));
     fireEvent.click(screen.getByText("Open in new tab"));
 
-    expect(openInNewTab).toHaveBeenCalledWith("/ws-1/runtimes/rt-1", undefined, {
-      activate: true,
-    });
+    expect(open).toHaveBeenCalledWith(
+      "/ws-1/runtimes/rt-1",
+      "_blank",
+      "noopener,noreferrer",
+    );
   });
 
   it("omits the new-tab entry for rows with no detail destination", () => {

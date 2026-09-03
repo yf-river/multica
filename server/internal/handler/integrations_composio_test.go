@@ -236,8 +236,8 @@ func TestComposio_ListToolkits(t *testing.T) {
 	if len(toolkits) != 1 {
 		t.Fatalf("expected 1 toolkit, got %d (%s)", len(toolkits), w.Body.String())
 	}
-	if toolkits[0].Slug != "notion" || !toolkits[0].Connectable {
-		t.Errorf("toolkit = %+v, want connectable notion", toolkits[0])
+	if toolkits[0].Slug != "notion" {
+		t.Errorf("toolkit = %+v, want notion", toolkits[0])
 	}
 	for _, tk := range toolkits {
 		if tk.Slug == "github" {

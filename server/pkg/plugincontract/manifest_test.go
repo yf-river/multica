@@ -25,7 +25,7 @@ const validManifest = `{
   "contributes": {
     "surfaces": [{
       "key": "hello", "type": "issue_panel", "name": "Hello",
-      "entry": "ui/main.js", "platforms": ["web", "desktop"]
+      "entry": "ui/main.js", "platforms": ["web"]
     }],
     "hooks": [{
       "key": "summarize_thread",

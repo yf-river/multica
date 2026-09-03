@@ -87,16 +87,14 @@ issue — so nobody reconstructs context, and nothing ships without a human sayi
 - **[Roles](https://multica.ai/docs/members-roles) and [access scopes](https://multica.ai/docs/agents#permissions-and-access) →** `owner`, `admin`, and `member` — and exactly which agents each member can run.
 - **[Security model](https://multica.ai/docs/security-model) →** What an agent can reach, and what it can't.
 - **[Slack, Lark, DingTalk, WeCom, and Telegram](https://multica.ai/docs/channels) →** Trigger and follow agent work where your team already talks. DingTalk, WeCom, and Telegram are [community-maintained](https://multica.ai/docs/community-maintained).
-- **[Web, desktop, and mobile](https://multica.ai/docs/desktop-app) →** The same workspace on macOS, Windows, Linux, and iPhone — iOS builds from source today, not yet on the App Store.
+- **[Web and mobile](https://multica.ai/docs) →** Use the same workspace from a browser or the iOS client.
 - **[CLI and API](https://multica.ai/docs/cli) →** Every surface is scriptable. Agents drive Multica through the same CLI you do.
 
 ---
 
 ## Get started
 
-No terminal required: sign up at **[multica.ai](https://multica.ai)**, or download
-**[Multica Desktop](https://multica.ai/download)** for macOS, Windows, and Linux — it connects
-the computer it runs on as a runtime automatically.
+No terminal required: sign up at **[multica.ai](https://multica.ai)** and use the browser.
 
 The one prerequisite: the machine that will run agents needs at least one
 [supported agent CLI](#runtimes) installed and signed in — Claude Code, Codex, Cursor, and
@@ -125,12 +123,10 @@ fall back to `make selfhost-build` from a checkout.
 
 ## Your first agent in five minutes
 
-**1. Sign in.** [multica.ai](https://multica.ai) in the browser, or open
-[Multica Desktop](https://multica.ai/download).
+**1. Sign in.** Open [multica.ai](https://multica.ai) in the browser.
 
 **2. Connect a computer.** A *runtime* is any machine agents can work on — your laptop, or a
-cloud box. Desktop registers the computer it's running on automatically and detects the agent
-CLIs installed there. On the web — or to add another machine — open **Runtimes** in the sidebar,
+cloud box. Open **Runtimes** in the sidebar,
 click **Add a computer**, and paste the two commands it shows into a terminal on that machine.
 
 **3. Create an agent.** Open **Agents** in the sidebar and click **New agent**. Pick the runtime
@@ -153,17 +149,16 @@ authenticated, so switching providers is a dropdown, not a migration.
 | --- | --- | --- | --- |
 | Claude Code | `claude` | OpenAI Codex | `codex` |
 | Cursor Agent | `cursor-agent` | GitHub Copilot CLI | `copilot` |
-| OpenCode | `opencode` | OpenClaw | `openclaw` |
-| Hermes | `hermes` | Pi | `pi` |
-| Antigravity | `agy` | CodeBuddy | `codebuddy` |
-| DevEco Code | `deveco` | Grok | `grok` |
-| Kimi | `kimi` | Kiro CLI | `kiro-cli` |
-| Qoder CLI | `qodercli` | Qoder CN | `qoderclicn` |
-| Qwen Code | `qwen` | QwenPaw | `qwenpaw` |
-| Reasonix | `reasonix` | Trae CLI | `traecli` |
-| DeepSeek Harness | `dsh` | Oh-My-Pi | `omp` |
-| MiniMax Code | `mcode` | Dim | `dim` |
-| Huawei Cloud CodeArts | `codearts` | — | — |
+| OpenCode | `opencode` | Hermes | `hermes` |
+| Pi | `pi` | Antigravity | `agy` |
+| CodeBuddy | `codebuddy` | DevEco Code | `deveco` |
+| Grok | `grok` | Kimi | `kimi` |
+| Kiro CLI | `kiro-cli` | Qoder CLI | `qodercli` |
+| Qoder CN | `qoderclicn` | Qwen Code | `qwen` |
+| QwenPaw | `qwenpaw` | Reasonix | `reasonix` |
+| Trae CLI | `traecli` | DeepSeek Harness | `dsh` |
+| Oh-My-Pi | `omp` | MiniMax Code | `mcode` |
+| Dim | `dim` | Huawei Cloud CodeArts | `codearts` |
 
 Installing and authenticating them: [Install an agent runtime](https://multica.ai/docs/install-agent-runtime) ·
 [Providers](https://multica.ai/docs/providers)
@@ -190,9 +185,9 @@ Installing and authenticating them: [Install an agent runtime](https://multica.a
 ## Architecture
 
 ```
-        Web  ·  Desktop (macOS/Windows/Linux)  ·  iOS
-                          │
-                          ▼
+        Web  ·  iOS
+               │
+               ▼
    ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐
    │   Next.js    │──>│  Go backend  │──>│   PostgreSQL     │
    │   frontend   │<──│  (Chi + WS)  │<──│   (17)           │
@@ -211,7 +206,6 @@ Installing and authenticating them: [Install an agent runtime](https://multica.a
 | Layer | Stack |
 | --- | --- |
 | Web | Next.js 16 (App Router) |
-| Desktop | Electron, sharing the web UI packages |
 | Mobile | Expo / React Native (iOS) |
 | Backend | Go (Chi router, sqlc, gorilla/websocket) |
 | Database | PostgreSQL 17 (`pgcrypto` + `pg_trgm`) |

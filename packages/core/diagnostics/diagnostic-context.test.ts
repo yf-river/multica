@@ -1,34 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import {
-  bucketDiagnosticPath,
-  getDiagnosticRoute,
-  resetDiagnosticContext,
-  setDiagnosticRoute,
-} from "./diagnostic-context";
+import { bucketDiagnosticPath } from "./diagnostic-context";
 import { paths } from "../paths";
-
-afterEach(() => {
-  resetDiagnosticContext();
-});
-
-describe("diagnostic route", () => {
-  it("holds the published route", () => {
-    setDiagnosticRoute("/:slug/issues");
-    expect(getDiagnosticRoute()).toBe("/:slug/issues");
-  });
-
-  it("treats empty and whitespace values as absent", () => {
-    setDiagnosticRoute("   ");
-    expect(getDiagnosticRoute()).toBeNull();
-  });
-
-  it("clears on null, so a window that leaves a route stops claiming it", () => {
-    setDiagnosticRoute("/:slug/issues");
-    setDiagnosticRoute(null);
-    expect(getDiagnosticRoute()).toBeNull();
-  });
-});
 
 describe("bucketDiagnosticPath", () => {
   it("replaces the workspace slug", () => {

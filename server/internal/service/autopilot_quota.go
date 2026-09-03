@@ -10,8 +10,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/dispatch"
 	"github.com/multica-ai/multica/server/internal/entitlement"
+	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // AutopilotQuotaMetrics deliberately accepts only bounded labels. Workspace
@@ -116,9 +120,44 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 		return db.AutopilotRun{}, false, fmt.Errorf("invalid autopilot execution source %q", source)
 	}
 	policy, enabled := s.quotaPolicy(ctx, workspaceID)
-	if !enabled {
+	// A run-start event describes the admission itself.  It must be recorded in
+	// the same transaction as the run row; otherwise a crash immediately after
+	// INSERT leaves an execution that cannot be replayed or audited.  The
+	// transaction starter is present in every server wiring.  A nil starter is
+	// retained only for small in-process test/embedding fixtures, where the
+	// historical synchronous bus behavior is the only available delivery path.
+	if !enabled && s.TxStarter == nil {
 		run, err := s.Queries.CreateAutopilotRun(ctx, params)
-		return run, false, err
+		if err != nil {
+			return db.AutopilotRun{}, false, err
+		}
+		s.publishAutopilotRunStart(ctx, workspaceID, source, run)
+		return run, false, nil
+	}
+	if s.TxStarter == nil {
+		return db.AutopilotRun{}, false, errors.New("autopilot run: transaction starter is required")
+	}
+
+	if !enabled {
+		tx, err := s.TxStarter.Begin(ctx)
+		if err != nil {
+			return db.AutopilotRun{}, false, fmt.Errorf("begin autopilot admission: %w", err)
+		}
+		defer tx.Rollback(ctx)
+		qtx := s.Queries.WithTx(tx)
+		run, err := qtx.CreateAutopilotRun(ctx, params)
+		if err != nil {
+			return db.AutopilotRun{}, false, err
+		}
+		start, err := recordDurableEventTx(ctx, qtx, autopilotRunStartEvent(workspaceID, source, run))
+		if err != nil {
+			return db.AutopilotRun{}, false, fmt.Errorf("record autopilot run start: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return db.AutopilotRun{}, false, fmt.Errorf("commit autopilot admission: %w", err)
+		}
+		publishCommittedEvent(s.Bus, start)
+		return run, false, nil
 	}
 
 	tx, err := s.TxStarter.Begin(ctx)
@@ -205,15 +244,46 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 	if err != nil {
 		return db.AutopilotRun{}, false, fmt.Errorf("create quota-linked run: %w", err)
 	}
+	start, err := recordDurableEventTx(ctx, qtx, autopilotRunStartEvent(workspaceID, source, run))
+	if err != nil {
+		return db.AutopilotRun{}, false, fmt.Errorf("record autopilot run start: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return db.AutopilotRun{}, false, fmt.Errorf("commit quota admission: %w", err)
 	}
+	publishCommittedEvent(s.Bus, start)
 	result := "admitted"
 	if wouldBlock {
 		result = "would_block"
 	}
 	s.recordAutopilotQuotaDecision(policy.action, source, result)
 	return run, false, nil
+}
+
+func autopilotRunStartEvent(workspaceID pgtype.UUID, source string, run db.AutopilotRun) events.Event {
+	return events.Event{
+		Type:           protocol.EventAutopilotRunStart,
+		IdempotencyKey: "autopilot:run-start:" + util.UUIDToString(run.ID),
+		StreamKey:      "autopilot:" + util.UUIDToString(run.AutopilotID),
+		WorkspaceID:    util.UUIDToString(workspaceID),
+		ActorType:      "system",
+		Payload: map[string]any{
+			"run_id":       util.UUIDToString(run.ID),
+			"autopilot_id": util.UUIDToString(run.AutopilotID),
+			"source":       source,
+			"status":       run.Status,
+		},
+	}
+}
+
+func (s *AutopilotService) publishAutopilotRunStart(ctx context.Context, workspaceID pgtype.UUID, source string, run db.AutopilotRun) {
+	if s == nil || s.Bus == nil {
+		return
+	}
+	event := autopilotRunStartEvent(workspaceID, source, run)
+	// This branch is intentionally limited to non-transactional fixtures.  A
+	// production service always takes the durable path above.
+	s.Bus.Publish(event)
 }
 
 func (s *AutopilotService) recordAutopilotQuotaDecision(action entitlement.Action, source, result string) {
@@ -280,6 +350,62 @@ func autopilotRunFromTerminalRow(row db.UpdateAutopilotRunTerminalWithQuotaRow) 
 	}
 }
 
+// settleAutopilotRunDurably performs a terminal run transition and records its
+// run_done envelope under the same database commit. It is used by dispatch
+// error/skip paths that are outside the durable task/issue projection worker.
+func (s *AutopilotService) settleAutopilotRunDurably(
+	ctx context.Context,
+	runID pgtype.UUID,
+	status string,
+	result []byte,
+	reason string,
+	reasonCode dispatch.ReasonCode,
+	bumpLastRun bool,
+) (db.AutopilotRun, events.Event, error) {
+	if s == nil || s.TxStarter == nil {
+		return db.AutopilotRun{}, events.Event{}, errors.New("autopilot terminal transition: transaction starter is required")
+	}
+	if status != "completed" && status != "failed" && status != "skipped" {
+		return db.AutopilotRun{}, events.Event{}, fmt.Errorf("autopilot terminal transition: invalid status %q", status)
+	}
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.AutopilotRun{}, events.Event{}, fmt.Errorf("begin autopilot terminal transition: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	row, err := qtx.UpdateAutopilotRunTerminalWithQuota(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
+		TerminalStatus: status,
+		Result:         result,
+		FailureReason:  pgtype.Text{String: reason, Valid: reason != ""},
+		ReasonCode:     pgtype.Text{String: string(reasonCode), Valid: reasonCode != ""},
+		RunID:          runID,
+		Consume:        status == "completed",
+	})
+	if err != nil {
+		return db.AutopilotRun{}, events.Event{}, fmt.Errorf("update autopilot run: %w", err)
+	}
+	run := autopilotRunFromTerminalRow(row)
+	autopilot, err := qtx.GetAutopilot(ctx, run.AutopilotID)
+	if err != nil {
+		return db.AutopilotRun{}, events.Event{}, fmt.Errorf("load autopilot for terminal event: %w", err)
+	}
+	if bumpLastRun {
+		if err := qtx.UpdateAutopilotLastRunAt(ctx, autopilot.ID); err != nil {
+			return db.AutopilotRun{}, events.Event{}, fmt.Errorf("update autopilot last run: %w", err)
+		}
+	}
+	event, err := recordDurableEventTx(ctx, qtx, autopilotRunDoneEvent(autopilot.WorkspaceID, run, status))
+	if err != nil {
+		return db.AutopilotRun{}, events.Event{}, fmt.Errorf("record autopilot run done: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.AutopilotRun{}, events.Event{}, fmt.Errorf("commit autopilot terminal transition: %w", err)
+	}
+	publishCommittedEvent(s.Bus, event)
+	return run, event, nil
+}
+
 func (s *AutopilotService) recoverPartialAutopilotRun(ctx context.Context, run db.AutopilotRun) (bool, error) {
 	rows, err := s.Queries.RecoverPartialAutopilotRun(ctx, run.ID)
 	return rows > 0, err
@@ -288,8 +414,52 @@ func (s *AutopilotService) recoverPartialAutopilotRun(ctx context.Context, run d
 // FailAutopilotRunsByIssue keeps create_issue consumption immutable while
 // releasing any still-reserved run_only slots before deletion clears issue_id.
 func (s *AutopilotService) FailAutopilotRunsByIssue(ctx context.Context, issueID pgtype.UUID) error {
-	_, err := s.Queries.FailAutopilotRunsByIssue(ctx, issueID)
-	return err
+	if s.TxStarter == nil {
+		_, err := s.Queries.FailAutopilotRunsByIssue(ctx, issueID)
+		return err
+	}
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin fail autopilot runs by issue: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	rows, err := qtx.FailAutopilotRunsByIssue(ctx, issueID)
+	if err != nil {
+		return fmt.Errorf("fail autopilot runs by issue: %w", err)
+	}
+	eventsToPublish := make([]events.Event, 0, len(rows))
+	for _, row := range rows {
+		run := autopilotRunFromFailedByIssueRow(row)
+		autopilot, loadErr := qtx.GetAutopilot(ctx, run.AutopilotID)
+		if loadErr != nil {
+			return fmt.Errorf("load autopilot for deleted issue run: %w", loadErr)
+		}
+		event, eventErr := recordDurableEventTx(ctx, qtx, autopilotRunDoneEvent(autopilot.WorkspaceID, run, "failed"))
+		if eventErr != nil {
+			return fmt.Errorf("record deleted issue run event: %w", eventErr)
+		}
+		eventsToPublish = append(eventsToPublish, event)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit failed autopilot runs by issue: %w", err)
+	}
+	for _, event := range eventsToPublish {
+		publishCommittedEvent(s.Bus, event)
+	}
+	return nil
+}
+
+func autopilotRunFromFailedByIssueRow(row db.FailAutopilotRunsByIssueRow) db.AutopilotRun {
+	return db.AutopilotRun{
+		ID: row.ID, AutopilotID: row.AutopilotID, TriggerID: row.TriggerID,
+		Source: row.Source, Status: row.Status, IssueID: row.IssueID, TaskID: row.TaskID,
+		TriggeredAt: row.TriggeredAt, CompletedAt: row.CompletedAt,
+		FailureReason: row.FailureReason, TriggerPayload: row.TriggerPayload,
+		Result: row.Result, CreatedAt: row.CreatedAt, SquadID: row.SquadID,
+		PlannedAt: row.PlannedAt, WebhookDeliveryID: row.WebhookDeliveryID,
+		QuotaReservationID: row.QuotaReservationID, ReasonCode: row.ReasonCode,
+	}
 }
 
 func (s *AutopilotService) AutopilotQuotaUsage(ctx context.Context, workspaceID pgtype.UUID) (AutopilotQuotaUsage, error) {

@@ -137,21 +137,29 @@ type Task struct {
 	ChatType                      string                 `json:"chat_type,omitempty"`                        // "group" when the channel conversation is a shared room, "p2p" for a 1:1 with the bot. Empty for a web chat or an old server; the per-turn prompt then reports unknown rather than guessing 1:1
 	ChatInThread                  bool                   `json:"chat_in_thread,omitempty"`                   // true when the latest @mention was a thread reply; selects which read command the prompt tells the agent to start with
 	ChatMessage                   string                 `json:"chat_message,omitempty"`                     // user message content for chat tasks
+	ChatMessageIDs                []string               `json:"chat_message_ids,omitempty"`                 // user message ids sealed into this chat turn
 	ChatMessageAttachments        []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`         // attachments linked to the chat message; agent uses these to `multica attachment download <id>`
 	ChatIntro                     bool                   `json:"chat_intro,omitempty"`                       // legacy compatibility for historical is_agent_intro sessions; new agent creation no longer creates these chats
-	RegenerateQuickActionsFor     string                 `json:"regenerate_quick_actions_for,omitempty"`     // set only by servers predating server-side quick-actions generation (MUL-5573). Read as a REFUSAL marker, never executed: see the guard in runTask
-	AutopilotRunID                string                 `json:"autopilot_run_id,omitempty"`                 // non-empty for autopilot run_only tasks
-	AutopilotID                   string                 `json:"autopilot_id,omitempty"`                     // autopilot that spawned this run
-	AutopilotTitle                string                 `json:"autopilot_title,omitempty"`                  // autopilot title used as task context
-	AutopilotDescription          string                 `json:"autopilot_description,omitempty"`            // autopilot description used as task prompt
-	AutopilotSource               string                 `json:"autopilot_source,omitempty"`                 // manual, schedule, webhook, or api
-	AutopilotTriggerPayload       json.RawMessage        `json:"autopilot_trigger_payload,omitempty"`        // optional trigger payload for webhook/api runs
-	QuickCreatePrompt             string                 `json:"quick_create_prompt,omitempty"`              // user's natural-language input for quick-create tasks
-	QuickCreatePriority           string                 `json:"quick_create_priority,omitempty"`            // explicit priority selected in quick-create
-	QuickCreateDueDate            string                 `json:"quick_create_due_date,omitempty"`            // explicit calendar due date selected in quick-create
-	QuickCreateAttachmentIDs      []string               `json:"quick_create_attachment_ids,omitempty"`      // attachments uploaded in the quick-create prompt and bound by issue create
-	QuickCreateSourceContext      json.RawMessage        `json:"quick_create_source_context,omitempty"`      // immutable historical context, separate from the new instruction
-	HandoffNote                   string                 `json:"handoff_note,omitempty"`                     // assignment handoff instruction; rendered into the opening prompt + issue_context.md
+	// IsCompanion marks a chat or background cognition task that must use the
+	// governed Life context rather than provider-owned history.
+	IsCompanion               bool            `json:"is_companion,omitempty"`
+	LifeContext               string          `json:"life_context,omitempty"`
+	LifeJobID                 string          `json:"life_job_id,omitempty"`
+	LifeJobType               string          `json:"life_job_type,omitempty"`
+	LifeJobInput              json.RawMessage `json:"life_job_input,omitempty"`
+	RegenerateQuickActionsFor string          `json:"regenerate_quick_actions_for,omitempty"` // set only by servers predating server-side quick-actions generation (MUL-5573). Read as a REFUSAL marker, never executed: see the guard in runTask
+	AutopilotRunID            string          `json:"autopilot_run_id,omitempty"`             // non-empty for autopilot run_only tasks
+	AutopilotID               string          `json:"autopilot_id,omitempty"`                 // autopilot that spawned this run
+	AutopilotTitle            string          `json:"autopilot_title,omitempty"`              // autopilot title used as task context
+	AutopilotDescription      string          `json:"autopilot_description,omitempty"`        // autopilot description used as task prompt
+	AutopilotSource           string          `json:"autopilot_source,omitempty"`             // manual, schedule, webhook, or api
+	AutopilotTriggerPayload   json.RawMessage `json:"autopilot_trigger_payload,omitempty"`    // optional trigger payload for webhook/api runs
+	QuickCreatePrompt         string          `json:"quick_create_prompt,omitempty"`          // user's natural-language input for quick-create tasks
+	QuickCreatePriority       string          `json:"quick_create_priority,omitempty"`        // explicit priority selected in quick-create
+	QuickCreateDueDate        string          `json:"quick_create_due_date,omitempty"`        // explicit calendar due date selected in quick-create
+	QuickCreateAttachmentIDs  []string        `json:"quick_create_attachment_ids,omitempty"`  // attachments uploaded in the quick-create prompt and bound by issue create
+	QuickCreateSourceContext  json.RawMessage `json:"quick_create_source_context,omitempty"`  // immutable historical context, separate from the new instruction
+	HandoffNote               string          `json:"handoff_note,omitempty"`                 // assignment handoff instruction; rendered into the opening prompt + issue_context.md
 
 	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
 	SquadName             string `json:"squad_name,omitempty"`              // display name for the picker squad, used in prompt text
@@ -227,9 +235,8 @@ type AgentData struct {
 	ServiceTier           string                     `json:"service_tier,omitempty"`
 	DisabledRuntimeSkills []DisabledRuntimeSkillData `json:"disabled_runtime_skills,omitempty"`
 	// RuntimeConfig is the per-provider runtime_config JSON as stored on
-	// the agent record, forwarded verbatim by the claim endpoint. The
-	// daemon decodes provider-specific fields (e.g. openclaw mode +
-	// gateway endpoint, see issue #3260); other backends ignore it.
+	// the agent record, forwarded verbatim by the claim endpoint. Each
+	// provider may decode its own fields; other backends ignore it.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
 

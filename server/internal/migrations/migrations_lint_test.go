@@ -106,6 +106,11 @@ func TestNewMigrationPrefixesStartAfterLegacyRange(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse migration prefix %q: %v", prefix, err)
 		}
+		// 000 is the current clean-install baseline; it intentionally
+		// precedes the frozen historical migration range.
+		if n == 0 && len(stems) == 1 && stems[0] == "000_initial_schema" {
+			continue
+		}
 		if n <= maxLegacyMigrationPrefix && !isKnownLegacyPrefix(prefix) {
 			t.Errorf("migration prefix %s is in the frozen legacy range 001-%03d: %v; new migrations must start at %03d", prefix, maxLegacyMigrationPrefix, stems, maxLegacyMigrationPrefix+1)
 		}

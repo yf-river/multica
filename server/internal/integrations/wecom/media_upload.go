@@ -78,10 +78,7 @@ const (
 //
 // The per-kind ceilings are applied a layer up in wecomMediaKind, which demotes
 // an oversize image to a file rather than offering the server something it will
-// refuse. Tencent's own OpenClaw plugin carries the same numbers
-// (WecomTeam/wecom-openclaw-plugin src/const.ts), which is corroboration rather
-// than the source: those are uncited client constants, and the docs above are
-// the authority.
+// refuse. The published channel limits above are the authority.
 //
 // Chunking a 40 MB file to be refused at the end costs eighty round trips, the
 // whole thing resident in memory, and a user who waits minutes to be told no.

@@ -21,13 +21,7 @@ INSERT INTO client_usage_daily (
     client_version,
     os,
     first_active_at,
-    last_active_at,
-    runtime_probed_at,
-    probe_result,
-    runtime_count,
-    provider_summary,
-    online_count,
-    offline_count
+    last_active_at
 ) VALUES (
     $1,
     $2,
@@ -37,42 +31,24 @@ INSERT INTO client_usage_daily (
     $5,
     $6,
     CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP,
-    CASE WHEN $7::boolean THEN CURRENT_TIMESTAMP ELSE NULL END,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12
+    CURRENT_TIMESTAMP
 )
 ON CONFLICT (user_id, client_type, install_id, activity_date) DO UPDATE SET
     workspace_id = COALESCE(EXCLUDED.workspace_id, client_usage_daily.workspace_id),
     client_version = EXCLUDED.client_version,
     os = EXCLUDED.os,
     last_active_at = EXCLUDED.last_active_at,
-    runtime_probed_at = CASE WHEN $7::boolean THEN EXCLUDED.runtime_probed_at ELSE client_usage_daily.runtime_probed_at END,
-    probe_result = CASE WHEN $7::boolean THEN EXCLUDED.probe_result ELSE client_usage_daily.probe_result END,
-    runtime_count = CASE WHEN $7::boolean THEN EXCLUDED.runtime_count ELSE client_usage_daily.runtime_count END,
-    provider_summary = CASE WHEN $7::boolean THEN EXCLUDED.provider_summary ELSE client_usage_daily.provider_summary END,
-    online_count = CASE WHEN $7::boolean THEN EXCLUDED.online_count ELSE client_usage_daily.online_count END,
-    offline_count = CASE WHEN $7::boolean THEN EXCLUDED.offline_count ELSE client_usage_daily.offline_count END,
     updated_at = CURRENT_TIMESTAMP
-RETURNING user_id, client_type, install_id, activity_date, workspace_id, client_version, os, first_active_at, last_active_at, runtime_probed_at, probe_result, runtime_count, provider_summary, online_count, offline_count, created_at, updated_at
+RETURNING user_id, client_type, install_id, activity_date, workspace_id, client_version, os, first_active_at, last_active_at, created_at, updated_at
 `
 
 type UpsertClientUsageDailyParams struct {
-	UserID          pgtype.UUID `json:"user_id"`
-	ClientType      string      `json:"client_type"`
-	InstallID       pgtype.UUID `json:"install_id"`
-	WorkspaceID     pgtype.UUID `json:"workspace_id"`
-	ClientVersion   string      `json:"client_version"`
-	Os              string      `json:"os"`
-	HasRuntimeProbe bool        `json:"has_runtime_probe"`
-	ProbeResult     pgtype.Text `json:"probe_result"`
-	RuntimeCount    pgtype.Int4 `json:"runtime_count"`
-	ProviderSummary []byte      `json:"provider_summary"`
-	OnlineCount     pgtype.Int4 `json:"online_count"`
-	OfflineCount    pgtype.Int4 `json:"offline_count"`
+	UserID        pgtype.UUID `json:"user_id"`
+	ClientType    string      `json:"client_type"`
+	InstallID     pgtype.UUID `json:"install_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ClientVersion string      `json:"client_version"`
+	Os            string      `json:"os"`
 }
 
 func (q *Queries) UpsertClientUsageDaily(ctx context.Context, arg UpsertClientUsageDailyParams) (ClientUsageDaily, error) {
@@ -83,12 +59,6 @@ func (q *Queries) UpsertClientUsageDaily(ctx context.Context, arg UpsertClientUs
 		arg.WorkspaceID,
 		arg.ClientVersion,
 		arg.Os,
-		arg.HasRuntimeProbe,
-		arg.ProbeResult,
-		arg.RuntimeCount,
-		arg.ProviderSummary,
-		arg.OnlineCount,
-		arg.OfflineCount,
 	)
 	var i ClientUsageDaily
 	err := row.Scan(
@@ -101,12 +71,6 @@ func (q *Queries) UpsertClientUsageDaily(ctx context.Context, arg UpsertClientUs
 		&i.Os,
 		&i.FirstActiveAt,
 		&i.LastActiveAt,
-		&i.RuntimeProbedAt,
-		&i.ProbeResult,
-		&i.RuntimeCount,
-		&i.ProviderSummary,
-		&i.OnlineCount,
-		&i.OfflineCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

@@ -183,7 +183,6 @@ type DaemonRegisterRequest struct {
 	LegacyDaemonIDs []string `json:"legacy_daemon_ids"`
 	DeviceName      string   `json:"device_name"`
 	CLIVersion      string   `json:"cli_version"` // multica CLI version
-	LaunchedBy      string   `json:"launched_by"` // "desktop" when spawned by the Electron app
 	Runtimes        []struct {
 		Name    string `json:"name"`
 		Type    string `json:"type"`
@@ -466,7 +465,6 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		metadata, _ := json.Marshal(map[string]any{
 			"version":      runtime.Version,
 			"cli_version":  req.CLIVersion,
-			"launched_by":  req.LaunchedBy,
 			"capabilities": requestClientCapabilities(r),
 		})
 
@@ -672,7 +670,6 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 				metadata, _ := json.Marshal(map[string]any{
 					"version":                            "",
 					"cli_version":                        req.CLIVersion,
-					"launched_by":                        req.LaunchedBy,
 					"capabilities":                       requestClientCapabilities(r),
 					"runtime_profile_registration_error": true,
 					"runtime_profile_failure_reason":     reason,
@@ -2000,6 +1997,17 @@ func claimResponseAgentIdentityMatches(resp AgentTaskResponse) bool {
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
+	if lifeCognitionContextDeclared(*task) {
+		if _, valid := lifeCognitionContextForTask(*task); !valid {
+			return resp, []pgtype.UUID{}, 0, 0, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task,
+				"人生后台任务上下文无效，请重新安排任务。",
+				taskfailure.ReasonAgentUnknown,
+				"error_life_context_invalid", http.StatusConflict,
+				"life cognition context is invalid",
+			)
+		}
+	}
 	var issueNumber int32
 	// Claim-only capability: this server resolves the squad-leader role on the
 	// wire (is_leader_task / squad_id), so the daemon must not re-derive it
@@ -2615,6 +2623,28 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		resp.ChatSessionID = uuidToString(cs.ID)
 		resp.ThreadName = cs.Title
+		// A companion chat is a governed Life conversation.  The chat transcript
+		// remains the user-visible history, while the bounded Life context is
+		// rebuilt from current, still-valid records for every turn.
+		if _, companionErr := h.Queries.GetCompanionProfileForAgent(r.Context(), db.GetCompanionProfileForAgentParams{
+			WorkspaceID: cs.WorkspaceID,
+			UserID:      cs.CreatorID,
+			AgentID:     cs.AgentID,
+		}); companionErr == nil {
+			resp.IsCompanion = true
+			lifeContext, contextErr := h.buildCompanionChatLifeContext(r.Context(), lifeRequestScope{
+				workspaceID: cs.WorkspaceID,
+				userID:      cs.CreatorID,
+			}, cs.AgentID)
+			if contextErr != nil {
+				return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount,
+					h.rejectClaimSourceLoad(r.Context(), task, contextErr, "life context", uuidToString(cs.ID))
+			}
+			resp.LifeContext = lifeContext
+		} else if !errors.Is(companionErr, pgx.ErrNoRows) {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount,
+				h.rejectClaimSourceLoad(r.Context(), task, companionErr, "companion profile", uuidToString(cs.AgentID))
+		}
 		// Legacy compatibility: agent creation no longer creates intro chats,
 		// but historical is_agent_intro sessions can still be resumed. Such a
 		// session carries no user message on its opening turn, so flag it for
@@ -2777,6 +2807,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 
 		parts := make([]string, 0, len(unanswered))
 		for _, m := range unanswered {
+			resp.ChatMessageIDs = append(resp.ChatMessageIDs, uuidToString(m.ID))
 			if strings.TrimSpace(m.Content) != "" {
 				parts = append(parts, m.Content)
 			}
@@ -2878,6 +2909,69 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 		projectCtx.applyTo(&resp)
+	}
+
+	// Life cognition tasks are durable background jobs created by the Life
+	// worker. Resolve and fence them before the generic quick-create branch so
+	// a malformed/cross-tenant context can never be dispatched as an ordinary
+	// issue-less task.
+	if lifeJobContext, hasLifeCognition := lifeCognitionContextForTask(*task); hasLifeCognition {
+		workspaceID, workspaceErr := util.ParseUUID(lifeJobContext.WorkspaceID)
+		userID, userErr := util.ParseUUID(lifeJobContext.UserID)
+		jobID, jobErr := util.ParseUUID(lifeJobContext.JobID)
+		if workspaceErr != nil || userErr != nil || jobErr != nil || lifeJobContext.JobType == "" || len(lifeJobContext.Input) == 0 {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task, "人生后台任务上下文无效，请重新安排任务。", taskfailure.ReasonAgentUnknown,
+				"error_life_context_invalid", http.StatusConflict, "life cognition context is invalid")
+		}
+		if !strings.EqualFold(lifeJobContext.WorkspaceID, runtimeWorkspaceID) {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task, "人生后台任务不属于当前运行环境。", taskfailure.ReasonAgentUnknown,
+				"error_life_workspace_mismatch", http.StatusForbidden, "life cognition workspace mismatch")
+		}
+		job, loadErr := h.Queries.GetLifeCognitionJobForTask(r.Context(), task.ID)
+		if loadErr != nil || job.ID != jobID || job.WorkspaceID != workspaceID || job.UserID != userID ||
+			job.CompanionAgentID != task.AgentID || job.Status != "running" ||
+			(job.ClaimToken.Valid && (lifeJobContext.ClaimToken != job.ClaimToken.String || lifeJobContext.ContextVersion != job.ContextVersion)) {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task, "人生后台任务已经过期或不再可执行。", taskfailure.ReasonAgentUnknown,
+				"error_life_context_stale", http.StatusConflict, "life cognition task context is stale")
+		}
+		lifeInput, inputErr := currentLifeJobInput(lifeJobContext.Input)
+		if inputErr != nil {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task, "人生后台任务输入无效，请重新安排任务。", taskfailure.ReasonAgentUnknown,
+				"error_life_input_invalid", http.StatusConflict, inputErr.Error())
+		}
+		var updated int64
+		if job.ClaimToken.Valid {
+			updated, inputErr = h.Queries.UpdateRunningLifeCognitionJobInputFenced(r.Context(), db.UpdateRunningLifeCognitionJobInputFencedParams{
+				ID: jobID, Input: lifeInput, ClaimToken: job.ClaimToken, ContextVersion: job.ContextVersion,
+			})
+		} else {
+			inputErr = h.Queries.UpdateRunningLifeCognitionJobInput(r.Context(), db.UpdateRunningLifeCognitionJobInputParams{ID: jobID, Input: lifeInput})
+			if inputErr == nil {
+				updated = 1
+			}
+		}
+		if inputErr != nil || updated != 1 {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task, "人生后台任务租约已失效，请稍后重试。", taskfailure.ReasonAgentUnknown,
+				"error_life_input_fence", http.StatusConflict, "life cognition lease lost while refreshing input")
+		}
+		resp.WorkspaceID = lifeJobContext.WorkspaceID
+		resp.ThreadName = "人生后台任务：" + lifeJobContext.JobType
+		resp.IsCompanion = true
+		resp.LifeJobID = lifeJobContext.JobID
+		resp.LifeJobType = lifeJobContext.JobType
+		resp.LifeJobInput = append(json.RawMessage(nil), lifeInput...)
+		lifeContext, contextErr := h.buildLifeJobContext(r.Context(), lifeRequestScope{workspaceID: workspaceID, userID: userID}, lifeJobContext.JobType, task.AgentID, lifeInput)
+		if contextErr != nil {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount,
+				h.rejectClaimSourceLoad(r.Context(), task, contextErr, "life cognition context", lifeJobContext.JobID)
+		}
+		resp.LifeContext = lifeContext
+		slog.Debug("life cognition context built", "task_id", uuidToString(task.ID), "job_type", lifeJobContext.JobType, "bytes", len(lifeContext))
 	}
 
 	// Handoff note (MUL-3375) is populated by taskToResponse (the shared mapper
@@ -3787,6 +3881,14 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	// missing continuity-gap flag.
 	task, err := h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.BranchName, req.SessionRolloutMissing, req.RetiredSessionID, req.DurableWorkDir)
 	if err != nil {
+		if errors.Is(err, service.ErrLifeStructuredOutputRequired) {
+			// The service has already failed the queue row and cognition job in
+			// one transaction.  A permanent 4xx tells the daemon not to retry the
+			// invalid ordinary completion callback; the Life worker owns the next
+			// attempt.
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		// A CompleteTask error is an infrastructure failure (transaction /
 		// assistant-outcome write), not a bad request: an already-finalized
 		// callback is treated as idempotent success and returns no error. Return

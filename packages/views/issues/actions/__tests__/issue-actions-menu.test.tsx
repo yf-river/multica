@@ -86,12 +86,8 @@ vi.mock("@multica/core/paths", async () => {
   };
 });
 
-// Module-level flag toggled per-test: desktop implements `openInNewTab`,
-// web omits it and the menu has to fall back to a real browser tab.
-const { openInNewTabMock, getShareableUrlMock, navState } = vi.hoisted(() => ({
-  openInNewTabMock: vi.fn(),
+const { getShareableUrlMock } = vi.hoisted(() => ({
   getShareableUrlMock: vi.fn((p: string) => `https://app.example${p}`),
-  navState: { hasOpenInNewTab: true },
 }));
 
 vi.mock("../../../navigation", () => ({
@@ -102,7 +98,6 @@ vi.mock("../../../navigation", () => ({
     hash: "",
     back: vi.fn(),
     replace: vi.fn(),
-    ...(navState.hasOpenInNewTab ? { openInNewTab: openInNewTabMock } : {}),
     getShareableUrl: getShareableUrlMock,
   }),
 }));
@@ -177,9 +172,7 @@ function wrap(ui: React.ReactNode) {
 
 beforeEach(() => {
   mockOpenModal.mockReset();
-  openInNewTabMock.mockReset();
   getShareableUrlMock.mockClear();
-  navState.hasOpenInNewTab = true;
   copyTextMock.mockReset();
   copyTextMock.mockResolvedValue(true);
   toastSuccessMock.mockReset();
@@ -371,36 +364,13 @@ describe("Open in new tab", () => {
     fireEvent.click(await screen.findByText("Open in new tab"));
   }
 
-  it("uses the desktop adapter and focuses the new tab", async () => {
+  it("opens the canonical issue URL in a browser tab", async () => {
     const windowOpen = vi
       .spyOn(window, "open")
       .mockReturnValue(null as unknown as Window);
 
     await openMenuAndClickOpenInNewTab();
 
-    // `activate: true` — an explicit CTA moves the user into the new context,
-    // unlike modifier-click, which stashes a background tab. The path carries
-    // the identifier, matching copyLink, so the opened tab is already on the
-    // canonical URL instead of being rewritten off the UUID after it lands.
-    expect(openInNewTabMock).toHaveBeenCalledWith(
-      "/test/issues/TES-1",
-      "TES-1",
-      { activate: true },
-    );
-    expect(windowOpen).not.toHaveBeenCalled();
-
-    windowOpen.mockRestore();
-  });
-
-  it("falls back to a browser tab when the adapter is absent (web)", async () => {
-    navState.hasOpenInNewTab = false;
-    const windowOpen = vi
-      .spyOn(window, "open")
-      .mockReturnValue(null as unknown as Window);
-
-    await openMenuAndClickOpenInNewTab();
-
-    expect(openInNewTabMock).not.toHaveBeenCalled();
     expect(getShareableUrlMock).toHaveBeenCalledWith("/test/issues/TES-1");
     expect(windowOpen).toHaveBeenCalledWith(
       "https://app.example/test/issues/TES-1",

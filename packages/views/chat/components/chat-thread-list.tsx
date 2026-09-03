@@ -103,10 +103,9 @@ export function ChatThreadList({
   const slug = useWorkspaceSlug();
   const sessionHref = (sessionId: string) =>
     slug ? `${paths.workspace(slug).chat()}?session=${sessionId}` : null;
-  // Optional: the list renders bare in tests; without an adapter the web
-  // modifier-click affordance stays off (desktop keeps selection anyway).
+  // The list can render outside a workspace route in tests; in that case the
+  // browser-tab affordance simply stays off.
   const navigation = useOptionalNavigation();
-  const openInNewTab = navigation?.openInNewTab;
   const getShareableUrl = navigation?.getShareableUrl;
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
 
@@ -324,16 +323,12 @@ export function ChatThreadList({
         tabIndex={0}
         onClick={(e) => {
           if (isConfirmingAction || e.defaultPrevented) return;
-          // Plain click keeps the master-detail selection. On web, a modifier
-          // click opens the session as its own browser tab. Desktop tabs
-          // dedupe chat by pathname (a session is view state, not a subject —
-          // see tab-store resourceKey), so a second chat tab cannot exist
-          // there; modifier clicks keep the selection behavior instead.
+          // Plain click keeps the master-detail selection. A modifier click
+          // opens the session as its own browser tab.
           const href = sessionHref(session.id);
           if (
             href &&
             getShareableUrl &&
-            !openInNewTab &&
             resolveClickIntent(e) !== "push"
           ) {
             window.open(
@@ -347,7 +342,6 @@ export function ChatThreadList({
         }}
         onAuxClick={(e) => {
           if (isConfirmingAction || e.defaultPrevented || e.button !== 1) return;
-          if (openInNewTab) return; // desktop: no second chat tab exists
           const href = sessionHref(session.id);
           if (!href || !getShareableUrl) return;
           e.preventDefault();

@@ -135,12 +135,15 @@ describe("project mention accessibility", () => {
     expect(push).toHaveBeenCalledWith(`/acme/projects/${PROJECT_ID}`);
   });
 
-  it("opens in a new tab on modifier-click, labelled with the mention text", () => {
-    const openInNewTab = vi.fn();
-    const { container } = renderMention(makeAdapter({ openInNewTab }));
+  it("leaves modifier-click to the browser", () => {
+    const push = vi.fn();
+    const { container } = renderMention(makeAdapter({ push }));
 
-    fireEvent.click(container.querySelector("a") as HTMLAnchorElement, { metaKey: true });
-
-    expect(openInNewTab).toHaveBeenCalledWith(`/acme/projects/${PROJECT_ID}`, "Roadmap");
+    expect(
+      fireEvent.click(container.querySelector("a") as HTMLAnchorElement, {
+        metaKey: true,
+      }),
+    ).toBe(true);
+    expect(push).not.toHaveBeenCalled();
   });
 });

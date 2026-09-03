@@ -525,11 +525,10 @@ export function applyWorkspaceUpdatedToCache(
  * Resolves the slug of the workspace an inbox item originated from, via the
  * cached workspace list (fetched once when the cache is cold).
  *
- * Desktop notification routing must pin to the *source* workspace of the
- * inbox item, not the currently active one: the user can be on workspace B
- * when an `inbox:new` for workspace A arrives, and macOS Notification Center
- * holds banners across workspace switches. Returns null when the workspace
- * cannot be resolved — callers must NOT fall back to the current slug (that
+ * Notification routing must pin to the *source* workspace of the inbox item,
+ * not the currently active one: the user can be on workspace B when an
+ * `inbox:new` for workspace A arrives. Returns null when the workspace cannot
+ * be resolved — callers must NOT fall back to the current slug (that
  * recreates the wrong-workspace routing this exists to prevent, #3766) and
  * should show the notification without a deep link instead.
  */
@@ -568,10 +567,9 @@ export async function handleInboxNew(
   // A new item in ANY workspace can light the workspace-switcher dot, so
   // refresh the cross-workspace summary regardless of the active workspace.
   onInboxSummaryInvalidate(qc);
-  // Fire a native OS notification only when the app isn't focused. When
-  // the user is already looking at Multica, the inbox sidebar's unread
-  // styling is enough — no need to interrupt with a banner. `desktopAPI`
-  // is injected by the preload script; its absence (web app) skips silently.
+  // Fire a browser notification only when the app isn't focused. When the
+  // user is already looking at Multica, the inbox sidebar's unread styling is
+  // enough — no need to interrupt with a banner.
   if (typeof document !== "undefined" && document.hasFocus()) return;
   // Resolve the source workspace's slug once: it pins BOTH the mute check
   // and the deep link to the workspace the inbox item BELONGS to, never the
@@ -617,20 +615,8 @@ export async function handleInboxNew(
     title: item.title,
     body: item.body ?? "",
   };
-  const desktopAPI = (
-    globalThis as unknown as {
-      desktopAPI?: {
-        showNotification?: (payload: SystemNotificationPayload) => void;
-      };
-    }
-  ).desktopAPI;
-  if (desktopAPI?.showNotification) {
-    // Desktop: native OS banner rendered by the Electron main process.
-    desktopAPI.showNotification(payload);
-    return;
-  }
-  // Web: the browser Notification API. No-op without granted permission or on
-  // SSR — the in-app inbox + unread badge still reflect the new item.
+  // No-op without granted permission or on SSR — the in-app inbox and unread
+  // badge still reflect the new item.
   showWebNotification(payload);
 }
 

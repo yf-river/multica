@@ -51,6 +51,12 @@ func (h *Handler) beginIssueTableSnapshot(ctx context.Context) (*Handler, pgx.Tx
 }
 
 func writeIssueTableQueryFailure(w http.ResponseWriter, r *http.Request, message string) {
+	// 客户端在查询完成前离开页面时，连接上下文会被取消；这不是服务端
+	// 故障，使用代理约定的 499 让日志和监控与真正的 5xx 区分开。
+	if errors.Is(r.Context().Err(), context.Canceled) {
+		writeError(w, 499, "request canceled")
+		return
+	}
 	if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
 		writeJSON(w, http.StatusGatewayTimeout, map[string]any{
 			"error":   "query_timeout",
@@ -81,21 +87,21 @@ type issueTableDateFilterRequest struct {
 }
 
 type issueTableFiltersRequest struct {
-	Statuses          []string                     `json:"statuses,omitempty"`
-	Priorities        []string                     `json:"priorities,omitempty"`
-	Assignees         []issueTableActorRef         `json:"assignees,omitempty"`
-	IncludeNoAssignee bool                         `json:"include_no_assignee,omitempty"`
-	Creators          []issueTableActorRef         `json:"creators,omitempty"`
-	ProjectIDs        []string                     `json:"project_ids,omitempty"`
-	IncludeNoProject  bool                         `json:"include_no_project,omitempty"`
-	LabelIDs          []string                     `json:"label_ids,omitempty"`
+	Statuses          []string             `json:"statuses,omitempty"`
+	Priorities        []string             `json:"priorities,omitempty"`
+	Assignees         []issueTableActorRef `json:"assignees,omitempty"`
+	IncludeNoAssignee bool                 `json:"include_no_assignee,omitempty"`
+	Creators          []issueTableActorRef `json:"creators,omitempty"`
+	ProjectIDs        []string             `json:"project_ids,omitempty"`
+	IncludeNoProject  bool                 `json:"include_no_project,omitempty"`
+	LabelIDs          []string             `json:"label_ids,omitempty"`
 	// Members are raw JSON so operator objects ({op, value}) and plain
 	// strings both survive the round-trip into parsePropertiesFilterParam.
-	Properties        map[string][]json.RawMessage `json:"properties,omitempty"`
-	Date              *issueTableDateFilterRequest `json:"date,omitempty"`
-	WorkingOnly       bool                         `json:"working_only,omitempty"`
-	WorkingIssueIDs   []string                     `json:"working_issue_ids,omitempty"`
-	IncludeSubIssues  *bool                        `json:"include_sub_issues,omitempty"`
+	Properties       map[string][]json.RawMessage `json:"properties,omitempty"`
+	Date             *issueTableDateFilterRequest `json:"date,omitempty"`
+	WorkingOnly      bool                         `json:"working_only,omitempty"`
+	WorkingIssueIDs  []string                     `json:"working_issue_ids,omitempty"`
+	IncludeSubIssues *bool                        `json:"include_sub_issues,omitempty"`
 }
 
 type issueTableSortRequest struct {

@@ -34,6 +34,14 @@ SELECT * FROM life_memory
 WHERE workspace_id = $1 AND user_id = $2 AND status = $3
 ORDER BY updated_at DESC, id DESC;
 
+-- name: ListLifeMemoryCandidatesForContext :many
+SELECT * FROM life_memory
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND user_id = sqlc.arg(user_id)
+  AND status = 'candidate'
+ORDER BY updated_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
+
 -- name: ListConfirmedLifeMemoriesForContext :many
 SELECT * FROM life_memory
 WHERE workspace_id = $1 AND user_id = $2 AND status = 'confirmed'
@@ -126,21 +134,77 @@ WHERE EXISTS (
 );
 
 -- name: DeleteLifeExperimentRoundsByIDs :exec
-DELETE FROM life_experiment_round
-WHERE id = ANY($1::uuid[]);
+WITH target_rounds AS MATERIALIZED (
+    SELECT id FROM life_experiment_round WHERE id = ANY($1::uuid[])
+), deleted_experiment_memories AS (
+    DELETE FROM life_experiment_memory
+    WHERE round_id IN (SELECT id FROM target_rounds)
+), deleted_experiment_observations AS (
+    DELETE FROM life_experiment_observation
+    WHERE round_id IN (SELECT id FROM target_rounds)
+), deleted_chronicle_evidence AS (
+    DELETE FROM life_chronicle_evidence
+    WHERE source_type = 'experiment_round'
+      AND source_id IN (SELECT id FROM target_rounds)
+), cleared_previous_rounds AS (
+    UPDATE life_experiment_round
+    SET previous_round_id = NULL, updated_at = now()
+    WHERE previous_round_id IN (SELECT id FROM target_rounds)
+      AND id NOT IN (SELECT id FROM target_rounds)
+), deleted_rounds AS (
+    DELETE FROM life_experiment_round
+    WHERE id IN (SELECT id FROM target_rounds)
+)
+SELECT 1;
 
 -- name: DeleteLifeChronicleEntriesBySources :exec
-DELETE FROM life_chronicle_entry entry
-WHERE EXISTS (
-    SELECT 1
-    FROM life_chronicle_evidence evidence
-    WHERE evidence.entry_id = entry.id
-      AND (
-        (evidence.source_type = 'memory' AND evidence.source_id = ANY($1::uuid[]))
-        OR (evidence.source_type = 'experiment_round' AND evidence.source_id = ANY($2::uuid[]))
-      )
-);
+WITH target_entries AS MATERIALIZED (
+    SELECT DISTINCT entry.id
+    FROM life_chronicle_entry entry
+    JOIN life_chronicle_evidence evidence ON evidence.entry_id = entry.id
+    WHERE (evidence.source_type = 'memory' AND evidence.source_id = ANY($1::uuid[]))
+       OR (evidence.source_type = 'experiment_round' AND evidence.source_id = ANY($2::uuid[]))
+), deleted_chronicle_evidence AS (
+    DELETE FROM life_chronicle_evidence
+    WHERE entry_id IN (SELECT id FROM target_entries)
+), deleted_chronicle_revisions AS (
+    DELETE FROM life_chronicle_revision
+    WHERE entry_id IN (SELECT id FROM target_entries)
+), deleted_entries AS (
+    DELETE FROM life_chronicle_entry
+    WHERE id IN (SELECT id FROM target_entries)
+)
+SELECT 1;
 
 -- name: DeleteLifeMemoriesByIDs :exec
-DELETE FROM life_memory
-WHERE id = ANY($1::uuid[]) AND workspace_id = $2 AND user_id = $3;
+WITH target_memories AS MATERIALIZED (
+    SELECT life_memory.id
+    FROM life_memory
+    WHERE life_memory.id = ANY($1::uuid[])
+      AND life_memory.workspace_id = $2
+      AND life_memory.user_id = $3
+), deleted_memory_evidence AS (
+    DELETE FROM life_memory_evidence
+    WHERE memory_id IN (SELECT id FROM target_memories)
+), deleted_memory_dependencies AS (
+    DELETE FROM life_memory_dependency
+    WHERE source_memory_id IN (SELECT id FROM target_memories)
+       OR derived_memory_id IN (SELECT id FROM target_memories)
+), deleted_memory_revisions AS (
+    DELETE FROM life_memory_revision
+    WHERE memory_id IN (SELECT id FROM target_memories)
+), deleted_experiment_memories AS (
+    DELETE FROM life_experiment_memory
+    WHERE memory_id IN (SELECT id FROM target_memories)
+), deleted_topic_memories AS (
+    DELETE FROM life_topic_memory
+    WHERE memory_id IN (SELECT id FROM target_memories)
+), deleted_chronicle_evidence AS (
+    DELETE FROM life_chronicle_evidence
+    WHERE source_type = 'memory'
+      AND source_id IN (SELECT id FROM target_memories)
+), deleted_memories AS (
+    DELETE FROM life_memory
+    WHERE id IN (SELECT id FROM target_memories)
+)
+SELECT 1;

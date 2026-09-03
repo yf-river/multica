@@ -32,6 +32,11 @@ import (
 // retries the hook + migration.
 type preMigrationHook func(ctx context.Context, pool *pgxpool.Pool) error
 
+// transactionalMigrationHook runs on the migration connection and shares a
+// transaction with the migration SQL and schema ledger update. This is for
+// data migrations whose marker must never be recorded without the data change.
+type transactionalMigrationHook func(ctx context.Context, tx pgx.Tx) error
+
 // migrationCondition decides whether a pending migration's SQL should execute.
 // A false result still records the migration as applied (or rolled back), which
 // lets one migration encode environment-specific DDL without blocking later
@@ -118,164 +123,191 @@ var commentContentBigramIndex = usableIndexRequirement{
 // they are still pending: a fresh self-hosted install, which is exactly where an
 // interrupted build would otherwise leave a permanently unusable index.
 var concurrentIndexCleanups = map[string]string{
-	"035_task_queue_issue_id_index":                             "idx_agent_task_queue_issue_id",
-	"067_task_queue_claim_candidate_index":                      "idx_agent_task_queue_claim_candidates",
-	"074_task_usage_updated_at_index":                           "idx_task_usage_updated_at",
-	"075_task_usage_created_at_index":                           "idx_task_usage_created_at",
-	"078_task_usage_created_at_legacy_index":                    "idx_task_usage_created_at_legacy",
-	"080_agent_task_queue_queued_index":                         "idx_agent_task_queue_queued_created_at",
-	"106_member_user_workspace_index":                           "idx_member_user_workspace",
-	"114_agent_task_queue_running_started_at_index":             "idx_agent_task_queue_running_started_at",
-	"115_agent_runtime_last_seen_at_index":                      "idx_agent_runtime_last_seen_at",
-	"119_user_created_at_index":                                 "idx_user_created_at",
-	"125_agent_task_queue_dispatched_prepare_index":             "idx_agent_task_queue_dispatched_prepare",
-	"135_comment_workspace_index":                               "idx_comment_workspace",
-	"138_issue_title_trgm_index":                                "idx_issue_title_trgm",
-	"139_issue_description_trgm_index":                          "idx_issue_description_trgm",
-	"140_comment_content_trgm_index":                            "idx_comment_content_trgm",
-	"141_project_title_trgm_index":                              "idx_project_title_trgm",
-	"142_project_description_trgm_index":                        "idx_project_description_trgm",
-	"143_agent_task_queue_chat_pending_v2":                      "idx_agent_task_queue_chat_pending_v2",
-	"153_chat_pinned_agent_user_ws_index":                       "idx_chat_pinned_agent_user_ws",
-	"156_chat_session_pinned_index":                             "idx_chat_session_pinned",
-	"160_chat_message_input_owner_index":                        "idx_chat_message_input_owner",
-	"165_attachment_task_id_index":                              "idx_attachment_task",
-	"167_resource_label_namespace_index":                        "issue_label_workspace_type_name_lower_idx",
-	"168_resource_label_type_index":                             "issue_label_workspace_type_idx",
-	"169_agent_label_lookup_index":                              "agent_to_label_label_idx",
-	"170_skill_label_lookup_index":                              "skill_to_label_label_idx",
-	"172_agent_system_identity_index":                           "agent_system_identity_unique",
-	"177_autopilot_run_webhook_delivery_index":                  "uq_autopilot_run_webhook_delivery",
-	"178_webhook_delivery_queue_index":                          "idx_webhook_delivery_queue",
-	"181_task_chat_finalize_deferred_index":                     "idx_task_chat_finalize_deferred",
-	"183_chat_draft_restore_index":                              "idx_chat_draft_restore_session",
-	"187_autopilot_rule_version_index":                          "idx_autopilot_rule_version_active",
-	"192_issue_properties_gin_index":                            "idx_issue_properties_gin",
-	"194_issue_property_workspace_name_index":                   "idx_issue_property_ws_name",
-	"195_issue_property_workspace_index":                        "idx_issue_property_workspace",
-	"200_inbox_archived_listing_index":                          "idx_inbox_recipient_archived_created",
-	"201_inbox_active_by_issue_index":                           "idx_inbox_active_by_issue",
-	"203_issue_workspace_assignee_index":                        "idx_issue_workspace_assignee",
-	"204_issue_workspace_parent_index":                          "idx_issue_workspace_parent",
-	"205_issue_workspace_position_index":                        "idx_issue_workspace_position",
-	"208_client_usage_daily_unique_index":                       "client_usage_daily_identity_date_uidx",
-	"210_client_usage_daily_query_index":                        "client_usage_daily_activity_client_user_idx",
-	"211_client_usage_daily_workspace_index":                    "client_usage_daily_workspace_idx",
-	"215_chat_session_project_index":                            "idx_chat_session_project",
-	"217_vcs_connection_workspace_index":                        "idx_vcs_connection_workspace",
-	"218_vcs_pull_request_workspace_index":                      "idx_vcs_pull_request_workspace",
-	"219_vcs_pull_request_connection_index":                     "idx_vcs_pull_request_connection",
-	"220_issue_vcs_pull_request_pr_index":                       "idx_issue_vcs_pull_request_pr",
-	"221_vcs_commit_status_lookup_index":                        "idx_vcs_commit_status_lookup",
-	"223_github_pr_check_run_pr_ordinal_index":                  "github_pull_request_check_run_pr_ordinal_idx",
-	"228_channel_media_pending_object_key_index":                "channel_media_pending_object_storage_key_uidx",
-	"230_channel_media_pending_object_claim_index":              "idx_channel_media_pending_object_claim",
-	"231_agent_task_queue_terminal_completed_at_index":          "idx_agent_task_queue_terminal_completed_at",
-	"232_channel_media_pending_object_due_index":                "idx_channel_media_pending_object_due",
-	"233_agent_task_queue_agent_terminal_latest_index":          "idx_agent_task_queue_agent_terminal_latest",
-	"238_quick_action_workspace_index":                          "idx_quick_action_workspace_status_usage",
-	"241_comment_parent_lookup_index":                           "idx_comment_workspace_issue_parent",
-	"244_issue_dependency_issue_index":                          "idx_issue_dependency_issue_id",
-	"245_issue_dependency_depends_on_index":                     "idx_issue_dependency_depends_on_issue_id",
-	"246_inbox_item_issue_index":                                "idx_inbox_item_issue_id",
-	"247_comment_parent_index":                                  "idx_comment_parent_id",
-	"248_agent_task_trigger_comment_index":                      "idx_agent_task_queue_trigger_comment_id",
-	"255_agent_task_queue_chat_pending_deferred_v3":             "idx_agent_task_queue_chat_pending_v3",
-	"257_agent_task_queue_channel_media_pending_unique_v2":      "idx_one_pending_task_per_issue_agent_v2",
-	"261_agent_task_queue_terminal_completed_at_v2":             "idx_agent_task_queue_terminal_completed_at_v2",
-	"266_issue_view_owner_index":                                "idx_issue_view_owner",
-	"267_issue_view_shared_index":                               "idx_issue_view_shared",
-	"273_agent_task_queue_runtime_id_index":                     "idx_agent_task_queue_runtime_id",
-	"274_task_token_workspace_id_index":                         "idx_task_token_workspace_id",
-	"275_task_token_agent_id_index":                             "idx_task_token_agent_id",
-	"276_chat_draft_restore_task_id_index":                      "idx_chat_draft_restore_task_id",
-	"277_autopilot_run_task_id_index":                           "idx_autopilot_run_task_id",
-	"278_agent_task_queue_agent_id_keyset_index":                "idx_agent_task_queue_agent_id_keyset",
-	"279_agent_task_queue_issue_id_keyset_index":                "idx_agent_task_queue_issue_id_keyset",
-	"281_agent_workspace_id_keyset_index":                       "idx_agent_workspace_id_keyset",
-	"282_issue_workspace_id_keyset_index":                       "idx_issue_workspace_id_keyset",
-	"283_agent_runtime_workspace_id_keyset_index":               "idx_agent_runtime_workspace_id_keyset",
-	"286_plugin_identity_key_index":                             "idx_plugin_identity_key",
-	"287_plugin_release_version_index":                          "idx_plugin_release_version",
-	"288_plugin_installation_workspace_plugin_index":            "idx_plugin_installation_workspace_plugin_active",
-	"289_plugin_contribution_key_index":                         "idx_plugin_contribution_release_key",
-	"290_plugin_contribution_ordinal_index":                     "idx_plugin_contribution_release_ordinal",
-	"291_plugin_grant_revision_index":                           "idx_plugin_grant_revision",
-	"292_plugin_binding_revision_index":                         "idx_plugin_binding_revision",
-	"293_plugin_installation_workspace_index":                   "idx_plugin_installation_workspace",
-	"295_plugin_artifact_file_index":                            "idx_plugin_artifact_file_release_path",
-	"296_plugin_snapshot_revision_index":                        "idx_plugin_snapshot_workspace_revision",
-	"297_plugin_execution_task_index":                           "idx_plugin_execution_manifest_task",
-	"298_plugin_health_index":                                   "idx_plugin_health_installation_observed",
-	"299_agent_task_plugin_manifest_index":                      "idx_agent_task_plugin_execution_manifest",
-	"305_dingtalk_group_route_installation_conversation_unique": "idx_dingtalk_group_route_installation_conversation",
-	"306_dingtalk_group_route_workspace_index":                  "idx_dingtalk_group_route_workspace",
-	"307_dingtalk_group_route_id_unique":                        "idx_dingtalk_group_route_id_unique",
-	"384_create_dingtalk_group_presence_identity_index":         "idx_dingtalk_group_presence_installation_conversation",
-	"385_create_dingtalk_group_presence_activity_index":         "idx_dingtalk_group_presence_workspace_activity",
-	"388_create_dingtalk_bot_identity_installation_index":       "idx_dingtalk_bot_identity_installation",
-	"309_agent_runtime_id_index":                                "idx_agent_runtime_id",
-	"311_plugin_identity_scoped_key_index":                      "idx_plugin_identity_scoped_key",
-	"316_workspace_mcp_server_name_unique":                      "idx_workspace_mcp_server_workspace_name",
-	"317_agent_mcp_server_server_index":                         "idx_agent_mcp_server_server",
-	"320_plugin_installation_config_revision_index":             "idx_plugin_installation_config_contribution_revision",
-	"321_plugin_installation_config_workspace_index":            "idx_plugin_installation_config_workspace",
-	"322_plugin_remote_mcp_secret_revision_index":               "idx_plugin_remote_mcp_secret_revision",
-	"323_plugin_remote_mcp_secret_workspace_index":              "idx_plugin_remote_mcp_secret_workspace",
-	"324_plugin_remote_mcp_one_active_secret_index":             "idx_plugin_remote_mcp_one_active_secret",
-	"326_plugin_remote_mcp_oauth_state_expiry_index":            "plugin_remote_mcp_oauth_state_expiry_idx",
-	"328_workspace_share_link_id_uidx":                          "workspace_share_link_pkey_uidx",
-	"330_workspace_share_link_active_ws_uidx":                   "workspace_share_link_active_ws_uidx",
-	"331_workspace_share_link_code_uidx":                        "workspace_share_link_code_uidx",
-	"333_issue_status_pkey_index":                               "issue_status_pkey_uidx",
-	"335_issue_status_workspace_key_index":                      "idx_issue_status_workspace_key",
-	"336_issue_status_workspace_name_index":                     "idx_issue_status_workspace_name_active",
-	"343_comment_delegated_failure_pending_index":               "idx_comment_delegated_failure_pending",
-	"345_plugin_installation_workspace_key_index":               "idx_plugin_installation_workspace_key",
-	"346_plugin_storage_scope_key_index":                        "idx_plugin_storage_scope_key",
-	"347_plugin_secret_installation_key_index":                  "idx_plugin_secret_installation_key",
-	"349_agent_task_queue_chat_terminal_resume_index":           "idx_agent_task_queue_chat_terminal_resume",
-	"350_agent_task_queue_chat_retired_session_index":           "idx_agent_task_queue_chat_retired_session",
-	"353_autopilot_quota_period_scope_index":                    "uq_autopilot_quota_period_scope",
-	"354_autopilot_quota_reservation_id_index":                  "autopilot_quota_reservation_pkey_uidx",
-	"355_autopilot_quota_reservation_key_index":                 "uq_autopilot_quota_reservation_key",
-	"356_autopilot_run_quota_reservation_index":                 "uq_autopilot_run_quota_reservation",
-	"357_webhook_delivery_replay_idempotency_index":             "uq_webhook_delivery_replay_idempotency",
-	"358_autopilot_quota_reservation_state_index":               "idx_autopilot_quota_reservation_state",
-	"361_issue_last_activity_index":                             "idx_issue_workspace_last_activity",
-	"363_plugin_invocation_installation_index":                  "idx_plugin_invocation_installation_created",
-	"364_plugin_invocation_created_at_index":                    "idx_plugin_invocation_created_at",
-	"378_channel_chat_context_generation_key":                   "channel_chat_context_generation_session_revision_idx",
-	"390_agent_task_queue_dispatched_reclaim_v2_index":          "idx_agent_task_queue_dispatched_reclaim_v2",
-	"393_plugin_package_workspace_key_index":                    "idx_plugin_package_workspace_key",
-	"394_plugin_package_version_unique_index":                   "idx_plugin_package_version_unique",
-	"395_plugin_package_version_package_index":                  "idx_plugin_package_version_package",
-	"396_plugin_package_file_path_index":                        "idx_plugin_package_file_path",
-	"397_plugin_installation_package_version_index":             "idx_plugin_installation_package_version",
-	"398_issue_workspace_status_position_index":                 "idx_issue_workspace_status_position",
-	"400_plugin_hook_schedule_installation_key_index":           "idx_plugin_hook_schedule_installation_key",
-	"401_plugin_hook_schedule_enabled_index":                    "idx_plugin_hook_schedule_enabled",
-	"408_issue_source_context_id_index":                         "idx_issue_source_context_id",
-	"409_issue_source_context_issue_index":                      "idx_issue_source_context_issue",
-	"410_issue_source_context_origin_task_index":                "idx_issue_source_context_origin_task",
-	"411_attachment_source_context_index":                       "idx_attachment_source_context",
-	"412_issue_source_context_object_intent_key_index":          "idx_issue_source_context_object_intent_key",
-	"413_issue_source_context_object_intent_due_index":          "idx_issue_source_context_object_intent_due",
-	"414_issue_source_context_object_intent_context_index":      "idx_issue_source_context_object_intent_context",
-	"416_seat_capacity_operation_token_index":                   "idx_seat_capacity_outbox_operation_token",
-	"418_seat_capacity_due_index":                               "idx_seat_capacity_outbox_due",
-	"419_seat_capacity_share_join_index":                        "idx_seat_capacity_outbox_share_join",
-	"421_channel_chat_active_route_index":                       "idx_channel_chat_session_binding_active_route",
-	"423_channel_task_delivery_pkey_index":                      "channel_task_delivery_pkey",
-	"426_channel_outbound_message_id_index":                     "idx_channel_outbound_message_id",
-	"428_channel_task_delivery_binding_index":                   "idx_channel_task_delivery_binding",
-	"429_channel_task_delivery_installation_index":              "idx_channel_task_delivery_installation",
-	"430_channel_outbound_message_binding_index":                "idx_channel_outbound_message_binding_route",
-	"438_agent_runtime_online_last_seen_index":                  "idx_agent_runtime_online_last_seen",
-	"439_agent_runtime_offline_last_seen_index":                 "idx_agent_runtime_offline_last_seen",
-	"440_github_pr_head_sha_index":                              "idx_github_pull_request_head_sha",
-	"443_issue_project_status_index":                            "idx_issue_project_status",
-	"445_comment_delegated_failure_unsettled_index":             "idx_comment_delegated_failure_unsettled",
+	"457_domain_event_outbox_pending_index":                                    "domain_event_outbox_pending_idx",
+	"458_domain_event_outbox_stream_index":                                     "domain_event_outbox_stream_idx",
+	"461_domain_event_idempotency_index":                                       "domain_event_outbox_idempotency_idx",
+	"463_life_idx_companion_profile_agent_concurrent_index":                    "idx_companion_profile_agent",
+	"464_life_idx_life_memory_user_status_updated_concurrent_index":            "idx_life_memory_user_status_updated",
+	"465_life_idx_life_memory_user_kind_updated_concurrent_index":              "idx_life_memory_user_kind_updated",
+	"466_life_idx_life_memory_evidence_source_concurrent_index":                "idx_life_memory_evidence_source",
+	"467_life_idx_life_memory_dependency_derived_concurrent_index":             "idx_life_memory_dependency_derived",
+	"468_life_idx_life_action_proposal_user_status_concurrent_index":           "idx_life_action_proposal_user_status",
+	"469_life_idx_life_experiment_user_updated_concurrent_index":               "idx_life_experiment_user_updated",
+	"470_life_idx_life_experiment_round_experiment_created_concurrent_index":   "idx_life_experiment_round_experiment_created",
+	"471_life_idx_life_experiment_round_status_ends_concurrent_index":          "idx_life_experiment_round_status_ends",
+	"472_life_idx_life_experiment_memory_memory_concurrent_index":              "idx_life_experiment_memory_memory",
+	"473_life_idx_life_proactive_check_user_checked_concurrent_index":          "idx_life_proactive_check_user_checked",
+	"474_life_idx_life_chronicle_user_period_concurrent_index":                 "idx_life_chronicle_user_period",
+	"475_life_idx_life_chronicle_evidence_source_concurrent_index":             "idx_life_chronicle_evidence_source",
+	"476_life_life_identity_one_active_concurrent_index":                       "life_identity_one_active",
+	"477_life_idx_life_relationship_event_open_concurrent_index":               "idx_life_relationship_event_open",
+	"478_life_idx_life_material_user_time_concurrent_index":                    "idx_life_material_user_time",
+	"479_life_idx_life_derivation_target_concurrent_index":                     "idx_life_derivation_target",
+	"480_life_idx_life_topic_user_status_concurrent_index":                     "idx_life_topic_user_status",
+	"481_life_idx_life_commitment_due_concurrent_index":                        "idx_life_commitment_due",
+	"482_life_idx_life_cognition_job_due_concurrent_index":                     "idx_life_cognition_job_due",
+	"483_life_idx_life_experiment_observation_round_concurrent_index":          "idx_life_experiment_observation_round",
+	"484_life_idx_life_observer_judgement_status_concurrent_index":             "idx_life_observer_judgement_status",
+	"485_life_life_chronicle_one_published_period_concurrent_index":            "life_chronicle_one_published_period",
+	"486_life_idx_life_single_running_material_understanding_concurrent_index": "idx_life_single_running_material_understanding",
+	"035_task_queue_issue_id_index":                                            "idx_agent_task_queue_issue_id",
+	"067_task_queue_claim_candidate_index":                                     "idx_agent_task_queue_claim_candidates",
+	"074_task_usage_updated_at_index":                                          "idx_task_usage_updated_at",
+	"075_task_usage_created_at_index":                                          "idx_task_usage_created_at",
+	"078_task_usage_created_at_legacy_index":                                   "idx_task_usage_created_at_legacy",
+	"080_agent_task_queue_queued_index":                                        "idx_agent_task_queue_queued_created_at",
+	"106_member_user_workspace_index":                                          "idx_member_user_workspace",
+	"114_agent_task_queue_running_started_at_index":                            "idx_agent_task_queue_running_started_at",
+	"115_agent_runtime_last_seen_at_index":                                     "idx_agent_runtime_last_seen_at",
+	"119_user_created_at_index":                                                "idx_user_created_at",
+	"125_agent_task_queue_dispatched_prepare_index":                            "idx_agent_task_queue_dispatched_prepare",
+	"135_comment_workspace_index":                                              "idx_comment_workspace",
+	"138_issue_title_trgm_index":                                               "idx_issue_title_trgm",
+	"139_issue_description_trgm_index":                                         "idx_issue_description_trgm",
+	"140_comment_content_trgm_index":                                           "idx_comment_content_trgm",
+	"141_project_title_trgm_index":                                             "idx_project_title_trgm",
+	"142_project_description_trgm_index":                                       "idx_project_description_trgm",
+	"143_agent_task_queue_chat_pending_v2":                                     "idx_agent_task_queue_chat_pending_v2",
+	"153_chat_pinned_agent_user_ws_index":                                      "idx_chat_pinned_agent_user_ws",
+	"156_chat_session_pinned_index":                                            "idx_chat_session_pinned",
+	"160_chat_message_input_owner_index":                                       "idx_chat_message_input_owner",
+	"165_attachment_task_id_index":                                             "idx_attachment_task",
+	"167_resource_label_namespace_index":                                       "issue_label_workspace_type_name_lower_idx",
+	"168_resource_label_type_index":                                            "issue_label_workspace_type_idx",
+	"169_agent_label_lookup_index":                                             "agent_to_label_label_idx",
+	"170_skill_label_lookup_index":                                             "skill_to_label_label_idx",
+	"172_agent_system_identity_index":                                          "agent_system_identity_unique",
+	"177_autopilot_run_webhook_delivery_index":                                 "uq_autopilot_run_webhook_delivery",
+	"178_webhook_delivery_queue_index":                                         "idx_webhook_delivery_queue",
+	"181_task_chat_finalize_deferred_index":                                    "idx_task_chat_finalize_deferred",
+	"183_chat_draft_restore_index":                                             "idx_chat_draft_restore_session",
+	"187_autopilot_rule_version_index":                                         "idx_autopilot_rule_version_active",
+	"192_issue_properties_gin_index":                                           "idx_issue_properties_gin",
+	"194_issue_property_workspace_name_index":                                  "idx_issue_property_ws_name",
+	"195_issue_property_workspace_index":                                       "idx_issue_property_workspace",
+	"200_inbox_archived_listing_index":                                         "idx_inbox_recipient_archived_created",
+	"201_inbox_active_by_issue_index":                                          "idx_inbox_active_by_issue",
+	"203_issue_workspace_assignee_index":                                       "idx_issue_workspace_assignee",
+	"204_issue_workspace_parent_index":                                         "idx_issue_workspace_parent",
+	"205_issue_workspace_position_index":                                       "idx_issue_workspace_position",
+	"208_client_usage_daily_unique_index":                                      "client_usage_daily_identity_date_uidx",
+	"210_client_usage_daily_query_index":                                       "client_usage_daily_activity_client_user_idx",
+	"211_client_usage_daily_workspace_index":                                   "client_usage_daily_workspace_idx",
+	"215_chat_session_project_index":                                           "idx_chat_session_project",
+	"217_vcs_connection_workspace_index":                                       "idx_vcs_connection_workspace",
+	"218_vcs_pull_request_workspace_index":                                     "idx_vcs_pull_request_workspace",
+	"219_vcs_pull_request_connection_index":                                    "idx_vcs_pull_request_connection",
+	"220_issue_vcs_pull_request_pr_index":                                      "idx_issue_vcs_pull_request_pr",
+	"221_vcs_commit_status_lookup_index":                                       "idx_vcs_commit_status_lookup",
+	"223_github_pr_check_run_pr_ordinal_index":                                 "github_pull_request_check_run_pr_ordinal_idx",
+	"228_channel_media_pending_object_key_index":                               "channel_media_pending_object_storage_key_uidx",
+	"230_channel_media_pending_object_claim_index":                             "idx_channel_media_pending_object_claim",
+	"231_agent_task_queue_terminal_completed_at_index":                         "idx_agent_task_queue_terminal_completed_at",
+	"232_channel_media_pending_object_due_index":                               "idx_channel_media_pending_object_due",
+	"233_agent_task_queue_agent_terminal_latest_index":                         "idx_agent_task_queue_agent_terminal_latest",
+	"238_quick_action_workspace_index":                                         "idx_quick_action_workspace_status_usage",
+	"241_comment_parent_lookup_index":                                          "idx_comment_workspace_issue_parent",
+	"244_issue_dependency_issue_index":                                         "idx_issue_dependency_issue_id",
+	"245_issue_dependency_depends_on_index":                                    "idx_issue_dependency_depends_on_issue_id",
+	"246_inbox_item_issue_index":                                               "idx_inbox_item_issue_id",
+	"247_comment_parent_index":                                                 "idx_comment_parent_id",
+	"248_agent_task_trigger_comment_index":                                     "idx_agent_task_queue_trigger_comment_id",
+	"255_agent_task_queue_chat_pending_deferred_v3":                            "idx_agent_task_queue_chat_pending_v3",
+	"257_agent_task_queue_channel_media_pending_unique_v2":                     "idx_one_pending_task_per_issue_agent_v2",
+	"261_agent_task_queue_terminal_completed_at_v2":                            "idx_agent_task_queue_terminal_completed_at_v2",
+	"266_issue_view_owner_index":                                               "idx_issue_view_owner",
+	"267_issue_view_shared_index":                                              "idx_issue_view_shared",
+	"273_agent_task_queue_runtime_id_index":                                    "idx_agent_task_queue_runtime_id",
+	"274_task_token_workspace_id_index":                                        "idx_task_token_workspace_id",
+	"275_task_token_agent_id_index":                                            "idx_task_token_agent_id",
+	"276_chat_draft_restore_task_id_index":                                     "idx_chat_draft_restore_task_id",
+	"277_autopilot_run_task_id_index":                                          "idx_autopilot_run_task_id",
+	"278_agent_task_queue_agent_id_keyset_index":                               "idx_agent_task_queue_agent_id_keyset",
+	"279_agent_task_queue_issue_id_keyset_index":                               "idx_agent_task_queue_issue_id_keyset",
+	"281_agent_workspace_id_keyset_index":                                      "idx_agent_workspace_id_keyset",
+	"282_issue_workspace_id_keyset_index":                                      "idx_issue_workspace_id_keyset",
+	"283_agent_runtime_workspace_id_keyset_index":                              "idx_agent_runtime_workspace_id_keyset",
+	"286_plugin_identity_key_index":                                            "idx_plugin_identity_key",
+	"287_plugin_release_version_index":                                         "idx_plugin_release_version",
+	"288_plugin_installation_workspace_plugin_index":                           "idx_plugin_installation_workspace_plugin_active",
+	"289_plugin_contribution_key_index":                                        "idx_plugin_contribution_release_key",
+	"290_plugin_contribution_ordinal_index":                                    "idx_plugin_contribution_release_ordinal",
+	"291_plugin_grant_revision_index":                                          "idx_plugin_grant_revision",
+	"292_plugin_binding_revision_index":                                        "idx_plugin_binding_revision",
+	"293_plugin_installation_workspace_index":                                  "idx_plugin_installation_workspace",
+	"295_plugin_artifact_file_index":                                           "idx_plugin_artifact_file_release_path",
+	"296_plugin_snapshot_revision_index":                                       "idx_plugin_snapshot_workspace_revision",
+	"297_plugin_execution_task_index":                                          "idx_plugin_execution_manifest_task",
+	"298_plugin_health_index":                                                  "idx_plugin_health_installation_observed",
+	"299_agent_task_plugin_manifest_index":                                     "idx_agent_task_plugin_execution_manifest",
+	"305_dingtalk_group_route_installation_conversation_unique":                "idx_dingtalk_group_route_installation_conversation",
+	"306_dingtalk_group_route_workspace_index":                                 "idx_dingtalk_group_route_workspace",
+	"307_dingtalk_group_route_id_unique":                                       "idx_dingtalk_group_route_id_unique",
+	"384_create_dingtalk_group_presence_identity_index":                        "idx_dingtalk_group_presence_installation_conversation",
+	"385_create_dingtalk_group_presence_activity_index":                        "idx_dingtalk_group_presence_workspace_activity",
+	"388_create_dingtalk_bot_identity_installation_index":                      "idx_dingtalk_bot_identity_installation",
+	"309_agent_runtime_id_index":                                               "idx_agent_runtime_id",
+	"311_plugin_identity_scoped_key_index":                                     "idx_plugin_identity_scoped_key",
+	"316_workspace_mcp_server_name_unique":                                     "idx_workspace_mcp_server_workspace_name",
+	"317_agent_mcp_server_server_index":                                        "idx_agent_mcp_server_server",
+	"320_plugin_installation_config_revision_index":                            "idx_plugin_installation_config_contribution_revision",
+	"321_plugin_installation_config_workspace_index":                           "idx_plugin_installation_config_workspace",
+	"322_plugin_remote_mcp_secret_revision_index":                              "idx_plugin_remote_mcp_secret_revision",
+	"323_plugin_remote_mcp_secret_workspace_index":                             "idx_plugin_remote_mcp_secret_workspace",
+	"324_plugin_remote_mcp_one_active_secret_index":                            "idx_plugin_remote_mcp_one_active_secret",
+	"326_plugin_remote_mcp_oauth_state_expiry_index":                           "plugin_remote_mcp_oauth_state_expiry_idx",
+	"328_workspace_share_link_id_uidx":                                         "workspace_share_link_pkey_uidx",
+	"330_workspace_share_link_active_ws_uidx":                                  "workspace_share_link_active_ws_uidx",
+	"331_workspace_share_link_code_uidx":                                       "workspace_share_link_code_uidx",
+	"333_issue_status_pkey_index":                                              "issue_status_pkey_uidx",
+	"335_issue_status_workspace_key_index":                                     "idx_issue_status_workspace_key",
+	"336_issue_status_workspace_name_index":                                    "idx_issue_status_workspace_name_active",
+	"343_comment_delegated_failure_pending_index":                              "idx_comment_delegated_failure_pending",
+	"345_plugin_installation_workspace_key_index":                              "idx_plugin_installation_workspace_key",
+	"346_plugin_storage_scope_key_index":                                       "idx_plugin_storage_scope_key",
+	"347_plugin_secret_installation_key_index":                                 "idx_plugin_secret_installation_key",
+	"349_agent_task_queue_chat_terminal_resume_index":                          "idx_agent_task_queue_chat_terminal_resume",
+	"350_agent_task_queue_chat_retired_session_index":                          "idx_agent_task_queue_chat_retired_session",
+	"353_autopilot_quota_period_scope_index":                                   "uq_autopilot_quota_period_scope",
+	"354_autopilot_quota_reservation_id_index":                                 "autopilot_quota_reservation_pkey_uidx",
+	"355_autopilot_quota_reservation_key_index":                                "uq_autopilot_quota_reservation_key",
+	"356_autopilot_run_quota_reservation_index":                                "uq_autopilot_run_quota_reservation",
+	"357_webhook_delivery_replay_idempotency_index":                            "uq_webhook_delivery_replay_idempotency",
+	"358_autopilot_quota_reservation_state_index":                              "idx_autopilot_quota_reservation_state",
+	"361_issue_last_activity_index":                                            "idx_issue_workspace_last_activity",
+	"363_plugin_invocation_installation_index":                                 "idx_plugin_invocation_installation_created",
+	"364_plugin_invocation_created_at_index":                                   "idx_plugin_invocation_created_at",
+	"378_channel_chat_context_generation_key":                                  "channel_chat_context_generation_session_revision_idx",
+	"390_agent_task_queue_dispatched_reclaim_v2_index":                         "idx_agent_task_queue_dispatched_reclaim_v2",
+	"393_plugin_package_workspace_key_index":                                   "idx_plugin_package_workspace_key",
+	"394_plugin_package_version_unique_index":                                  "idx_plugin_package_version_unique",
+	"395_plugin_package_version_package_index":                                 "idx_plugin_package_version_package",
+	"396_plugin_package_file_path_index":                                       "idx_plugin_package_file_path",
+	"397_plugin_installation_package_version_index":                            "idx_plugin_installation_package_version",
+	"398_issue_workspace_status_position_index":                                "idx_issue_workspace_status_position",
+	"400_plugin_hook_schedule_installation_key_index":                          "idx_plugin_hook_schedule_installation_key",
+	"401_plugin_hook_schedule_enabled_index":                                   "idx_plugin_hook_schedule_enabled",
+	"408_issue_source_context_id_index":                                        "idx_issue_source_context_id",
+	"409_issue_source_context_issue_index":                                     "idx_issue_source_context_issue",
+	"410_issue_source_context_origin_task_index":                               "idx_issue_source_context_origin_task",
+	"411_attachment_source_context_index":                                      "idx_attachment_source_context",
+	"412_issue_source_context_object_intent_key_index":                         "idx_issue_source_context_object_intent_key",
+	"413_issue_source_context_object_intent_due_index":                         "idx_issue_source_context_object_intent_due",
+	"414_issue_source_context_object_intent_context_index":                     "idx_issue_source_context_object_intent_context",
+	"416_seat_capacity_operation_token_index":                                  "idx_seat_capacity_outbox_operation_token",
+	"418_seat_capacity_due_index":                                              "idx_seat_capacity_outbox_due",
+	"419_seat_capacity_share_join_index":                                       "idx_seat_capacity_outbox_share_join",
+	"421_channel_chat_active_route_index":                                      "idx_channel_chat_session_binding_active_route",
+	"423_channel_task_delivery_pkey_index":                                     "channel_task_delivery_pkey",
+	"426_channel_outbound_message_id_index":                                    "idx_channel_outbound_message_id",
+	"428_channel_task_delivery_binding_index":                                  "idx_channel_task_delivery_binding",
+	"429_channel_task_delivery_installation_index":                             "idx_channel_task_delivery_installation",
+	"430_channel_outbound_message_binding_index":                               "idx_channel_outbound_message_binding_route",
+	"438_agent_runtime_online_last_seen_index":                                 "idx_agent_runtime_online_last_seen",
+	"439_agent_runtime_offline_last_seen_index":                                "idx_agent_runtime_offline_last_seen",
+	"440_github_pr_head_sha_index":                                             "idx_github_pull_request_head_sha",
+	"443_issue_project_status_index":                                           "idx_issue_project_status",
+	"445_comment_delegated_failure_unsettled_index":                            "idx_comment_delegated_failure_unsettled",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
@@ -294,7 +326,6 @@ var concurrentDownIndexCleanups = map[string]string{
 	"301_drop_redundant_sys_cron_job_plan_index":            "idx_sys_cron_exec_job_plan",
 	"302_drop_redundant_channel_chat_session_binding_index": "idx_channel_chat_session_binding_session",
 	"303_drop_redundant_lark_chat_session_binding_index":    "idx_lark_chat_session_binding_session",
-	"312_drop_global_plugin_identity_key_index":             "idx_plugin_identity_key",
 	"371_comment_content_search_index_strategy":             "idx_comment_content_trgm",
 	"375_drop_issue_last_activity_index":                    "idx_issue_workspace_last_activity",
 	"391_drop_agent_task_queue_dispatched_prepare_index":    "idx_agent_task_queue_dispatched_prepare",
@@ -313,6 +344,11 @@ var preMigrationHooks = func() map[string]preMigrationHook {
 	return hooks
 }()
 
+var transactionalMigrationHooks = map[string]transactionalMigrationHook{
+	"456_remove_retired_builtins": removeRetiredBuiltinsTx,
+	"488_remove_openclaw_runtime": removeOpenClawRuntimesWithTx,
+}
+
 var preRollbackHooks = func() map[string]preMigrationHook {
 	hooks := make(map[string]preMigrationHook, len(concurrentDownIndexCleanups)+len(sourceContextMigrationVersions)+1)
 	for version, index := range concurrentDownIndexCleanups {
@@ -324,6 +360,11 @@ var preRollbackHooks = func() map[string]preMigrationHook {
 	for _, version := range sourceContextMigrationVersions {
 		hooks[version] = ensureSourceContextRollbackSafe
 	}
+	// Migration 344 intentionally removed the V1 plugin tables.  If a rollback
+	// crosses that reset, migration 312's historical index target is absent;
+	// restore it only when the table still exists, outside the migration
+	// transaction so CREATE INDEX CONCURRENTLY remains valid.
+	hooks["312_drop_global_plugin_identity_key_index"] = restorePluginIdentityIndexIfPresent
 	hooks["430_channel_outbound_message_binding_index"] = refuseChannelChatRouteHistoryRollback
 	return hooks
 }()
@@ -337,6 +378,20 @@ var sourceContextMigrationVersions = []string{
 	"412_issue_source_context_object_intent_key_index",
 	"413_issue_source_context_object_intent_due_index",
 	"414_issue_source_context_object_intent_context_index",
+}
+
+func restorePluginIdentityIndexIfPresent(ctx context.Context, pool *pgxpool.Pool) error {
+	var exists bool
+	if err := pool.QueryRow(ctx, "SELECT to_regclass('public.plugin_identity') IS NOT NULL").Scan(&exists); err != nil {
+		return fmt.Errorf("check plugin identity table: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	if _, err := pool.Exec(ctx, "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_plugin_identity_key ON public.plugin_identity (plugin_key)"); err != nil {
+		return fmt.Errorf("restore plugin identity key index: %w", err)
+	}
+	return nil
 }
 
 type rowQuerier interface {
@@ -390,6 +445,13 @@ func hooksForDirection(direction string) map[string]preMigrationHook {
 	default:
 		return nil
 	}
+}
+
+func transactionalHooksForDirection(direction string) map[string]transactionalMigrationHook {
+	if direction == "up" {
+		return transactionalMigrationHooks
+	}
+	return nil
 }
 
 func ensureSourceContextRollbackSafe(ctx context.Context, pool *pgxpool.Pool) error {
@@ -614,6 +676,10 @@ type runOptions struct {
 	// passes the direction-specific hook map; tests leave this nil unless they
 	// exercise a hook.
 	Hooks map[string]preMigrationHook
+	// TransactionalHooks run together with the migration SQL and ledger row.
+	// They are intentionally separate because concurrent-index migrations
+	// cannot execute inside a transaction block.
+	TransactionalHooks map[string]transactionalMigrationHook
 	// Conditions maps migration version → a read-only gate that decides
 	// whether the SQL file should execute. A false result still advances the
 	// migration ledger, allowing later migrations to run in environments where
@@ -655,10 +721,11 @@ func main() {
 	}
 
 	options := runOptions{
-		Direction:  direction,
-		Files:      files,
-		Hooks:      hooksForDirection(direction),
-		Conditions: conditionsForDirection(direction),
+		Direction:          direction,
+		Files:              files,
+		Hooks:              hooksForDirection(direction),
+		TransactionalHooks: transactionalHooksForDirection(direction),
+		Conditions:         conditionsForDirection(direction),
 	}
 	startupCtx, stopStartup := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopStartup()
@@ -807,6 +874,22 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 			return fmt.Errorf("read migration %q: %w", file, err)
 		}
 
+		// Transactional data hooks are direction-specific. The retired built-in
+		// cleanup is an irreversible upgrade action; running it again during a
+		// down migration would silently delete newly-created data.
+		if opts.Direction == "up" {
+			if hook, ok := opts.TransactionalHooks[version]; ok && hook != nil {
+				if _, hasCondition := opts.Conditions[version]; hasCondition {
+					return fmt.Errorf("transactional migration %q cannot use a conditional SQL gate", version)
+				}
+				if err := runTransactionalMigration(ctx, conn, hook, string(sql), insertSQL, version); err != nil {
+					return err
+				}
+				fmt.Printf("  %s  %s\n", opts.Direction, version)
+				continue
+			}
+		}
+
 		// Run any pre-migration hook before the SQL file. Hooks
 		// receive the *pgxpool.Pool (not the loop's pinned conn), so
 		// they can acquire other session-level locks without
@@ -851,6 +934,35 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 		}
 	}
 
+	return nil
+}
+
+func runTransactionalMigration(ctx context.Context, conn *pgxpool.Conn, hook transactionalMigrationHook, sql, insertSQL, version string) error {
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transactional migration %q: %w", version, err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	slog.Info("running transactional migration hook", "version", version, "direction", "up")
+	if err := hook(ctx, tx); err != nil {
+		return fmt.Errorf("transactional migration hook for %q: %w", version, err)
+	}
+	if _, err := tx.Exec(ctx, sql); err != nil {
+		return fmt.Errorf("apply migration %q: %w", version, err)
+	}
+	if _, err := tx.Exec(ctx, insertSQL, version); err != nil {
+		return fmt.Errorf("record migration %q: %w", version, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit migration %q: %w", version, err)
+	}
+	committed = true
 	return nil
 }
 

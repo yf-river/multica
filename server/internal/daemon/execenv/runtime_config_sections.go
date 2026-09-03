@@ -919,6 +919,10 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	writeAgentIdentity(&b, ctx)
 	writeRequestingUser(&b, ctx)
 	writeWorkspaceContext(&b, ctx)
+	if kind == kindLifeCognition {
+		writeLifeCognitionBrief(&b, ctx)
+		return b.String()
+	}
 
 	switch kind {
 	case kindQuickCreate:
@@ -976,4 +980,21 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	writeOutput(&b, kind, ctx)
 
 	return b.String()
+}
+
+func writeLifeCognitionBrief(b *strings.Builder, ctx TaskContextForEnv) {
+	b.WriteString("## Life cognition boundary\n\n")
+	fmt.Fprintf(b, "This is a governed Life background job (`%s`, type `%s`). There is no repository or issue to inspect.\n\n", sanitizeBriefCodeToken(ctx.LifeJobID), sanitizeNameForBriefMarkdown(ctx.LifeJobType))
+	b.WriteString("Use only the Life MCP tools exposed for this task: `life_evidence_resolve` to read bounded evidence and `life_job_complete` to submit the validated result. Do not use shell, filesystem, repository, issue, comment, project, or other mutation tools. A proposal is not a confirmed change; shared memories, experiments, modules, schedules, and relationship data require the user's confirmation.\n\n")
+	if strings.TrimSpace(ctx.LifeJobInput) != "" {
+		b.WriteString("## Governed job input\n\n```json\n")
+		b.WriteString(ctx.LifeJobInput)
+		b.WriteString("\n```\n\n")
+	}
+	if strings.TrimSpace(ctx.LifeContext) != "" {
+		b.WriteString("## Governed Life context\n\n```json\n")
+		b.WriteString(ctx.LifeContext)
+		b.WriteString("\n```\n\n")
+	}
+	b.WriteString("A successful `life_job_complete` call is the whole task result. Do not leave work queued elsewhere or claim that an unsubmitted thought was persisted.\n\n")
 }

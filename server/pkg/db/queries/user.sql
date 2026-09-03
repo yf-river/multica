@@ -2,19 +2,25 @@
 SELECT * FROM "user"
 WHERE id = $1;
 
+-- name: GetUserByAccount :one
+SELECT * FROM "user"
+WHERE account = $1;
+
 -- name: GetUserByEmail :one
 SELECT * FROM "user"
 WHERE email = $1;
 
 -- name: GetUsersByIDs :many
--- Batch lookup from the GLOBAL user table (not gated on membership, so departed
--- members still render). Used to enrich attribution initiator / originator refs on
--- task responses without an N+1 (MUL-4302 §9). Returns only the display fields.
 SELECT id, name, email, avatar_url FROM "user"
 WHERE id = ANY(@ids::uuid[]);
 
 -- name: CreateUser :one
-INSERT INTO "user" (name, email, avatar_url)
+INSERT INTO "user" (name, account, email, avatar_url)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
+
+-- name: CreateUserWithPassword :one
+INSERT INTO "user" (name, account, password_hash)
 VALUES ($1, $2, $3)
 RETURNING *;
 
@@ -34,7 +40,7 @@ RETURNING *;
 UPDATE "user" SET
     name = COALESCE($2, name),
     avatar_url = COALESCE($3, avatar_url),
-    language = COALESCE($4, language),
+    language = COALESCE(sqlc.narg('language'), language),
     profile_description = COALESCE(sqlc.narg('profile_description'), profile_description),
     timezone = CASE
         WHEN sqlc.narg('timezone')::text IS NULL THEN timezone
@@ -53,10 +59,6 @@ WHERE id = $1
 RETURNING *;
 
 -- name: PatchUserOnboarding :one
--- Partial update of the user's onboarding decision fields. Currently only the
--- questionnaire JSONB is patchable — the v2 attempt at persisting Step 3
--- runtime choice on the user row was reverted; that state now lives in a
--- frontend Zustand transient store.
 UPDATE "user" SET
     onboarding_questionnaire = COALESCE(sqlc.narg('questionnaire'), onboarding_questionnaire),
     updated_at = now()
@@ -64,9 +66,6 @@ WHERE id = sqlc.arg('id')
 RETURNING *;
 
 -- name: JoinCloudWaitlist :one
--- Records interest in cloud runtimes. Does NOT mark onboarding
--- complete — the user still has to pick a real path (CLI / Skip)
--- in Step 3. Repeating the call overwrites email + reason.
 UPDATE "user" SET
     cloud_waitlist_email = $2,
     cloud_waitlist_reason = $3,
@@ -75,11 +74,6 @@ WHERE id = $1
 RETURNING *;
 
 -- name: SetStarterContentState :one
--- Atomically transition starter_content_state. The handler is
--- responsible for checking the current value first (to decide between
--- "transition NULL -> imported and run the seeding" vs "already
--- decided, short-circuit"). Using COALESCE here would swallow the
--- transition, so this is a straight assignment.
 UPDATE "user" SET
     starter_content_state = $2,
     updated_at = now()

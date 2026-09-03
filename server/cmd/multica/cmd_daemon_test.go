@@ -56,11 +56,10 @@ func TestDaemonLocalCommandsFailClosedInTaskContext(t *testing.T) {
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", filepath.Join(t.TempDir(), "task-multica"))
 
 	cases := map[string]func() error{
-		"probe-runtimes": func() error { return runDaemonProbeRuntimes(daemonProbeRuntimesCmd, nil) },
-		"start":          func() error { return runDaemonStart(daemonStartCmd, nil) },
-		"restart":        func() error { return runDaemonRestart(daemonRestartCmd, nil) },
-		"stop":           func() error { return runDaemonStop(daemonStopCmd, nil) },
-		"logs":           func() error { return runDaemonLogs(daemonLogsCmd, nil) },
+		"start":   func() error { return runDaemonStart(daemonStartCmd, nil) },
+		"restart": func() error { return runDaemonRestart(daemonRestartCmd, nil) },
+		"stop":    func() error { return runDaemonStop(daemonStopCmd, nil) },
+		"logs":    func() error { return runDaemonLogs(daemonLogsCmd, nil) },
 	}
 	for name, run := range cases {
 		err := run()
@@ -677,15 +676,15 @@ func TestPrintDiskUsageOtherRootsHintSuggestsProfilesWithTasks(t *testing.T) {
 
 // TestPrintDiskUsageOtherRootsHintFiresWhenCurrentRootNonEmpty is the core
 // MUL-3404 behavior: the hint must surface other roots even when the scanned
-// root already has tasks, otherwise the Desktop app's root stays hidden behind
+// root already has tasks, otherwise another profile's root stays hidden behind
 // a non-empty default root.
 func TestPrintDiskUsageOtherRootsHintFiresWhenCurrentRootNonEmpty(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("MULTICA_WORKSPACES_ROOT", "")
 
-	mkdirProfile(t, home, "desktop-host")
-	writeDiskUsageTaskFile(t, home, "desktop-host", "ws1", "task1", "workdir/main.go")
+	mkdirProfile(t, home, "secondary-host")
+	writeDiskUsageTaskFile(t, home, "secondary-host", "ws1", "task1", "workdir/main.go")
 
 	var out bytes.Buffer
 	printDiskUsageOtherRootsHint(&out, daemon.DiskUsageReport{
@@ -694,8 +693,8 @@ func TestPrintDiskUsageOtherRootsHintFiresWhenCurrentRootNonEmpty(t *testing.T) 
 	}, "", "", false)
 
 	got := out.String()
-	if !strings.Contains(got, "multica --profile desktop-host daemon disk-usage") {
-		t.Fatalf("hint output = %q, want desktop-host suggestion even with a non-empty current root", got)
+	if !strings.Contains(got, "multica --profile secondary-host daemon disk-usage") {
+		t.Fatalf("hint output = %q, want secondary-host suggestion even with a non-empty current root", got)
 	}
 }
 
@@ -766,9 +765,9 @@ func TestEnumerateDiskUsageRoots(t *testing.T) {
 
 	// Two profiles configured under ~/.multica/profiles, but only one has its
 	// workspaces root created on disk; the other (never-run) profile is skipped.
-	mkdirProfile(t, home, "desktop-host")
+	mkdirProfile(t, home, "secondary-host")
 	mkdirProfile(t, home, "never-ran")
-	writeDiskUsageTaskFile(t, home, "desktop-host", "ws1", "task1", "workdir/main.go")
+	writeDiskUsageTaskFile(t, home, "secondary-host", "ws1", "task1", "workdir/main.go")
 	writeDefaultDiskUsageTaskFile(t, home, "ws0", "task0", "workdir/main.go")
 
 	roots, err := enumerateDiskUsageRoots()
@@ -777,13 +776,13 @@ func TestEnumerateDiskUsageRoots(t *testing.T) {
 	}
 
 	if len(roots) != 2 {
-		t.Fatalf("roots = %+v, want default + desktop-host only", roots)
+		t.Fatalf("roots = %+v, want default + secondary-host only", roots)
 	}
 	if roots[0].Profile != "" || roots[0].Root != filepath.Join(home, "multica_workspaces") {
 		t.Fatalf("roots[0] = %+v, want default root first", roots[0])
 	}
-	if roots[1].Profile != "desktop-host" || roots[1].Root != filepath.Join(home, "multica_workspaces_desktop-host") {
-		t.Fatalf("roots[1] = %+v, want desktop-host root", roots[1])
+	if roots[1].Profile != "secondary-host" || roots[1].Root != filepath.Join(home, "multica_workspaces_secondary-host") {
+		t.Fatalf("roots[1] = %+v, want secondary-host root", roots[1])
 	}
 }
 
@@ -796,8 +795,8 @@ func TestPrintAggregateDiskUsageShowsRootsAndGrandTotal(t *testing.T) {
 				TotalTaskCount: 1,
 				TotalSizeBytes: 100,
 			}},
-			{Profile: "desktop-host", Report: daemon.DiskUsageReport{
-				WorkspacesRoot: "/home/u/multica_workspaces_desktop-host",
+			{Profile: "secondary-host", Report: daemon.DiskUsageReport{
+				WorkspacesRoot: "/home/u/multica_workspaces_secondary-host",
 				Tasks:          []daemon.TaskDiskUsage{{WorkspaceShort: "ws1", TaskShort: "t1", SizeBytes: 900}},
 				TotalTaskCount: 1,
 				TotalSizeBytes: 900,
@@ -814,11 +813,11 @@ func TestPrintAggregateDiskUsageShowsRootsAndGrandTotal(t *testing.T) {
 	if !strings.Contains(got, "Scanned 2 workspace root(s).") {
 		t.Fatalf("output = %q, want scanned-roots header", got)
 	}
-	if !strings.Contains(got, "[default]") || !strings.Contains(got, "[desktop-host]") {
+	if !strings.Contains(got, "[default]") || !strings.Contains(got, "[secondary-host]") {
 		t.Fatalf("output = %q, want per-root section labels", got)
 	}
-	if !strings.Contains(got, "/home/u/multica_workspaces_desktop-host") {
-		t.Fatalf("output = %q, want desktop root path", got)
+	if !strings.Contains(got, "/home/u/multica_workspaces_secondary-host") {
+		t.Fatalf("output = %q, want secondary root path", got)
 	}
 	if !strings.Contains(got, "Grand total:") || !strings.Contains(got, "across 2 task(s) in 2 root(s)") {
 		t.Fatalf("output = %q, want grand total line", got)

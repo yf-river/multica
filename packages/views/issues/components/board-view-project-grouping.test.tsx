@@ -63,7 +63,6 @@ vi.mock("../../navigation", () => ({
   ),
   useNavigation: () => ({
     push: () => {},
-    openInNewTab: () => {},
     getShareableUrl: (path: string) => `https://app.example${path}`,
     pathname: "/",
   }),

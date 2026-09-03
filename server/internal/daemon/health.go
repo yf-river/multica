@@ -20,12 +20,9 @@ import (
 type HealthResponse struct {
 	Status string `json:"status"`
 	PID    int    `json:"pid"`
-	// OS is the daemon's runtime.GOOS. The desktop app compares it against its
-	// own host OS to detect a daemon it cannot manage — e.g. a Windows desktop
-	// reaching a Linux daemon inside WSL2 over localhost forwarding. The
-	// lifecycle CLI (`daemon start/stop`) acts on the host process namespace,
-	// so a foreign-OS daemon can't be started/stopped by the app even though
-	// /health is reachable. See #3916.
+	// OS is the daemon's runtime.GOOS. Callers can compare it with their host OS
+	// before attempting lifecycle operations across a forwarded connection (for
+	// example, a Linux daemon reached from a Windows host). See #3916.
 	OS     string `json:"os"`
 	Uptime string `json:"uptime"`
 	// Profile names the CLI profile this daemon was started with, empty for
@@ -44,11 +41,6 @@ type HealthResponse struct {
 	DeviceName string `json:"device_name"`
 	ServerURL  string `json:"server_url"`
 	CLIVersion string `json:"cli_version"`
-	// LaunchedBy is "desktop" when the Electron app spawned this daemon, empty
-	// for a standalone one. Already reported to the server on registration;
-	// surfaced here so `daemon status` can say who manages the daemon instead
-	// of leaving the user to guess why a daemon they never started is running.
-	LaunchedBy string `json:"launched_by,omitempty"`
 	// ActiveTaskCount remains the compatibility/safety count of every claimed
 	// handleTask lifecycle. The additive counters split actual provider
 	// execution from local-directory parking for throughput and diagnostics.
@@ -317,7 +309,7 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 		// actually claim tasks. The health port is bound before preflight for
 		// liveness/diagnostics, so callers must not treat a reachable endpoint
 		// as ready — they gate on this status. Consumers that only know
-		// "running" (older CLI/desktop) safely treat "starting" as not-ready.
+		// "running" safely treat "starting" as not-ready.
 		status := "starting"
 		if d.ready.Load() {
 			status = "running"
@@ -329,7 +321,6 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			OS:                    runtime.GOOS,
 			Uptime:                time.Since(startedAt).Truncate(time.Second).String(),
 			Profile:               d.cfg.Profile,
-			LaunchedBy:            d.cfg.LaunchedBy,
 			DaemonID:              d.cfg.DaemonID,
 			DeviceName:            d.cfg.DeviceName,
 			ServerURL:             d.cfg.ServerBaseURL,

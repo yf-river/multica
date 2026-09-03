@@ -34,7 +34,7 @@ A resource's `ref` sets the branch, tag, or commit that later checkouts use by d
 
 ## Add a local directory
 
-The UI for adding a local directory is Desktop-only, because browsers cannot pick folders on your computer.
+The connected daemon adds a local directory for the project; browsers do not read folders on your computer directly.
 
 <Callout type="warning">
 **This is an escape hatch, not a more convenient default.** `local_directory` exists for people who have no other option — the canonical case is a game project whose checkout is tens of gigabytes, where re-cloning per task is simply not viable.
@@ -43,7 +43,7 @@ If your directory is an ordinary git repo you can clone, **use `github_repo` ins
 </Callout>
 
 
-1. Make sure Desktop's local daemon is online.
+1. Make sure the local daemon is online.
 2. Open the project's **Resources**, or the **Local directory** tab of the create-project dialog — the same choice is available before the project exists.
 3. Choose "Add local directory", then pick the folder to use.
 4. Pick how tasks should use it — **Direct** or **Parallel**, described under "How tasks share the directory". Desktop preselects **Parallel** when the folder is a git repository the runtime on that machine can isolate, and **Direct** otherwise. Change it right there, or later from **Resources** with the pencil next to the directory.
@@ -60,7 +60,7 @@ In the default `in_place` mode a local directory is not an isolated environment:
 
 ## How tasks share the directory
 
-A local directory has two execution modes, set per resource with `execution_mode`. Desktop labels them **Direct** and **Parallel**; the API, the CLI and the rest of this page use the identifiers.
+A local directory has two execution modes, set per resource with `execution_mode`. The UI labels them **Direct** and **Parallel**; the API, the CLI and the rest of this page use the identifiers.
 
 ### `in_place` (default) — "Direct"
 

@@ -536,7 +536,6 @@ function AgentFailureItem({
       {name ? (
         <AppLink
           href={`${wsPaths.agentDetail(row.agentId)}?view=overview`}
-          newTabTitle={name}
           className="min-w-0 hover:underline"
         >
           {label}

@@ -13,14 +13,14 @@ func TestClientMetadataExtractsHeaders(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set(HeaderClientPlatform, "desktop")
+	req.Header.Set(HeaderClientPlatform, "web")
 	req.Header.Set(HeaderClientVersion, "1.2.3")
 	req.Header.Set(HeaderClientOS, "macos")
 
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 
-	if gotPlatform != "desktop" {
-		t.Errorf("platform: got %q, want desktop", gotPlatform)
+	if gotPlatform != "web" {
+		t.Errorf("platform: got %q, want web", gotPlatform)
 	}
 	if gotVersion != "1.2.3" {
 		t.Errorf("version: got %q, want 1.2.3", gotVersion)

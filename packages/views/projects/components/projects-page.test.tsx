@@ -287,33 +287,7 @@ describe("ProjectsPage compact row navigation", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("uses the rowLink modifier and middle-click paths when openInNewTab is available", () => {
-    const push = vi.fn();
-    const openInNewTab = vi.fn();
-    renderProjects(makeAdapter({ push, openInNewTab }));
-    const row = projectRow();
-
-    fireEvent.click(row, { metaKey: true });
-    fireEvent.click(row, { ctrlKey: true });
-    const middleClick = new MouseEvent("auxclick", {
-      bubbles: true,
-      button: 1,
-      cancelable: true,
-    });
-    row.dispatchEvent(middleClick);
-
-    expect(middleClick.defaultPrevented).toBe(true);
-    expect(openInNewTab).toHaveBeenCalledTimes(3);
-    expect(openInNewTab).toHaveBeenNthCalledWith(1, "/test-workspace/projects/project-1", "Launch Plan");
-    expect(openInNewTab).toHaveBeenNthCalledWith(2, "/test-workspace/projects/project-1", "Launch Plan");
-    expect(openInNewTab).toHaveBeenNthCalledWith(3, "/test-workspace/projects/project-1", "Launch Plan");
-    expect(push).not.toHaveBeenCalled();
-  });
-
-  // Web (no adapter): the row is a <div>, so nothing native catches a
-  // modifier or middle click — rowLink opens the browser tab itself instead
-  // of navigating in place (MUL-5456).
-  it("has a single rowLink path for modifier and middle clicks without openInNewTab", () => {
+  it("opens browser tabs for row modifier and middle clicks", () => {
     const push = vi.fn();
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     renderProjects(makeAdapter({ push }));

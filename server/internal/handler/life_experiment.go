@@ -11,7 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/issueposition"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
 type lifeProposalPayload struct {
@@ -202,7 +204,14 @@ func (h *Handler) CreateLifeActionProposal(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid proposal payload")
 		return
 	}
-	proposal, err := h.Queries.CreateLifeActionProposal(r.Context(), db.CreateLifeActionProposalParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start proposal transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	proposal, err := qtx.CreateLifeActionProposal(r.Context(), db.CreateLifeActionProposalParams{
 		WorkspaceID:      scope.workspaceID,
 		UserID:           scope.userID,
 		CompanionAgentID: profile.AgentID,
@@ -217,6 +226,17 @@ func (h *Handler) CreateLifeActionProposal(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to create proposal")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), qtx, scope, "member", scope.userID,
+		"action_proposal", uuidToString(proposal.ID), "created", map[string]any{"proposal_type": proposal.ProposalType})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record proposal event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit proposal")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, http.StatusCreated, lifeProposalToResponse(proposal))
 }
 
@@ -356,10 +376,12 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 			writeError(w, 500, "failed to finalize proposal")
 			return
 		}
-		if err = tx.Commit(r.Context()); err != nil {
+		event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "memory", uuidToString(memory.ID), "proposal_executed", map[string]any{"proposal_id": uuidToString(proposal.ID), "action": payload.MemoryAction})
+		if err != nil {
 			writeError(w, 500, "failed to commit memory change")
 			return
 		}
+		h.publishLifeEvents(event)
 		writeJSON(w, http.StatusOK, map[string]any{"memory_id": uuidToString(memory.ID), "status": memory.Status})
 		return
 	}
@@ -392,10 +414,12 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 			writeError(w, 500, "failed to finalize proposal")
 			return
 		}
-		if err = tx.Commit(r.Context()); err != nil {
+		event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "identity", uuidToString(identity.ID), "proposal_executed", map[string]any{"proposal_id": uuidToString(proposal.ID), "version": version})
+		if err != nil {
 			writeError(w, 500, "failed to commit identity change")
 			return
 		}
+		h.publishLifeEvents(event)
 		writeJSON(w, http.StatusCreated, map[string]any{"identity_version_id": uuidToString(identity.ID), "version": version})
 		return
 	}
@@ -410,10 +434,12 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 			writeError(w, 500, "failed to finalize proposal")
 			return
 		}
-		if err = tx.Commit(r.Context()); err != nil {
+		event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "project", uuidToString(project.ID), "proposal_executed", map[string]any{"proposal_id": uuidToString(proposal.ID)})
+		if err != nil {
 			writeError(w, 500, "failed to commit project")
 			return
 		}
+		h.publishLifeEvents(event)
 		writeJSON(w, http.StatusCreated, map[string]any{"project_id": uuidToString(project.ID)})
 		return
 	}
@@ -434,6 +460,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		issue, err := qtx.CreateIssueWithOrigin(r.Context(), db.CreateIssueWithOriginParams{
+			ID:          dbid.NewV7(),
 			WorkspaceID: scope.workspaceID, Title: strings.TrimSpace(payload.ActionTitle),
 			Description: pgtype.Text{String: strings.TrimSpace(payload.ActionInstructions), Valid: true},
 			Status:      "todo", Priority: "none", AssigneeType: pgtype.Text{String: "agent", Valid: true}, AssigneeID: proposal.CompanionAgentID,
@@ -444,6 +471,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		task, err := qtx.CreateAgentTask(r.Context(), db.CreateAgentTaskParams{
+			ID:      dbid.NewV7(),
 			AgentID: proposal.CompanionAgentID, RuntimeID: agent.RuntimeID, IssueID: issue.ID, Priority: 5,
 			TriggerSummary: pgtype.Text{String: "用户已确认的人生搭子现实动作", Valid: true}, ForceFreshSession: pgtype.Bool{Bool: true, Valid: true},
 		})
@@ -451,15 +479,22 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 			writeError(w, 500, "failed to queue confirmed action")
 			return
 		}
+		queuedEvent, err := service.RecordTaskQueuedEventTx(r.Context(), qtx, uuidToString(scope.workspaceID), task)
+		if err != nil {
+			writeError(w, 500, "failed to record confirmed action")
+			return
+		}
 		receipt, _ := json.Marshal(map[string]any{"issue_id": uuidToString(issue.ID), "task_id": uuidToString(task.ID)})
 		if _, err = qtx.MarkLifeActionProposalExecuted(r.Context(), db.MarkLifeActionProposalExecutedParams{ID: proposal.ID, WorkspaceID: scope.workspaceID, UserID: scope.userID, ExecutionReceipt: receipt}); err != nil {
 			writeError(w, 500, "failed to finalize confirmed action")
 			return
 		}
-		if err = tx.Commit(r.Context()); err != nil {
+		event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "agent_action", uuidToString(issue.ID), "proposal_executed", map[string]any{"proposal_id": uuidToString(proposal.ID), "task_id": uuidToString(task.ID)})
+		if err != nil {
 			writeError(w, 500, "failed to commit confirmed action")
 			return
 		}
+		h.publishLifeEvents(event, queuedEvent)
 		writeJSON(w, http.StatusCreated, map[string]any{"issue_id": uuidToString(issue.ID), "task_id": uuidToString(task.ID)})
 		return
 	}
@@ -506,10 +541,12 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 			writeError(w, 500, "failed to finalize proposal")
 			return
 		}
-		if err = tx.Commit(r.Context()); err != nil {
+		event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "module", uuidToString(module.ID), "proposal_executed", map[string]any{"proposal_id": uuidToString(proposal.ID), "version": version})
+		if err != nil {
 			writeError(w, 500, "failed to commit life module")
 			return
 		}
+		h.publishLifeEvents(event)
 		writeJSON(w, http.StatusCreated, map[string]any{"module_id": uuidToString(module.ID), "status": module.Status})
 		return
 	}
@@ -524,7 +561,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 			writeError(w, 500, "failed to position task")
 			return
 		}
-		issue, err := qtx.CreateIssueWithOrigin(r.Context(), db.CreateIssueWithOriginParams{WorkspaceID: scope.workspaceID, Title: strings.TrimSpace(payload.IssueTitle), Description: pgtype.Text{String: strings.TrimSpace(payload.IssueDescription), Valid: strings.TrimSpace(payload.IssueDescription) != ""}, Status: "todo", Priority: "none", AssigneeType: pgtype.Text{String: "member", Valid: true}, AssigneeID: scope.userID, CreatorType: "member", CreatorID: scope.userID, Position: position, Number: issueNumber})
+		issue, err := qtx.CreateIssueWithOrigin(r.Context(), db.CreateIssueWithOriginParams{ID: dbid.NewV7(), WorkspaceID: scope.workspaceID, Title: strings.TrimSpace(payload.IssueTitle), Description: pgtype.Text{String: strings.TrimSpace(payload.IssueDescription), Valid: strings.TrimSpace(payload.IssueDescription) != ""}, Status: "todo", Priority: "none", AssigneeType: pgtype.Text{String: "member", Valid: true}, AssigneeID: scope.userID, CreatorType: "member", CreatorID: scope.userID, Position: position, Number: issueNumber})
 		if err != nil {
 			writeError(w, 500, "failed to create confirmed task")
 			return
@@ -534,10 +571,12 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 			writeError(w, 500, "failed to finalize proposal")
 			return
 		}
-		if err = tx.Commit(r.Context()); err != nil {
+		event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "issue", uuidToString(issue.ID), "proposal_executed", map[string]any{"proposal_id": uuidToString(proposal.ID)})
+		if err != nil {
 			writeError(w, 500, "failed to commit confirmed task")
 			return
 		}
+		h.publishLifeEvents(event)
 		writeJSON(w, http.StatusCreated, map[string]any{"issue_id": uuidToString(issue.ID)})
 		return
 	}
@@ -595,6 +634,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 		issueTitle = proposal.Title
 	}
 	issue, err := qtx.CreateIssueWithOrigin(r.Context(), db.CreateIssueWithOriginParams{
+		ID:          dbid.NewV7(),
 		WorkspaceID: scope.workspaceID,
 		Title:       issueTitle,
 		Description: pgtype.Text{String: strings.TrimSpace(payload.IssueDescription), Valid: strings.TrimSpace(payload.IssueDescription) != ""},
@@ -658,10 +698,14 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to finalize proposal")
 		return
 	}
-	if err := tx.Commit(r.Context()); err != nil {
+	event, err := recordAndCommitLifeChanged(r.Context(), tx, qtx, scope, "experiment_round", uuidToString(round.ID), "proposal_executed", map[string]any{
+		"proposal_id": uuidToString(proposal.ID), "experiment_id": uuidToString(experiment.ID),
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit experiment")
 		return
 	}
+	h.publishLifeEvents(event)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"experiment_id": uuidToString(experiment.ID),
 		"issue_id":      uuidToString(issue.ID),
@@ -745,7 +789,14 @@ func (h *Handler) StopLifeExperimentRound(w http.ResponseWriter, r *http.Request
 	if reason == "" {
 		reason = "stopped_by_user"
 	}
-	round, err := h.Queries.StopLifeExperimentRound(r.Context(), db.StopLifeExperimentRoundParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start experiment stop")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	round, err := qtx.StopLifeExperimentRound(r.Context(), db.StopLifeExperimentRoundParams{
 		ID: roundID, WorkspaceID: scope.workspaceID, UserID: scope.userID, StopReason: reason,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -756,6 +807,17 @@ func (h *Handler) StopLifeExperimentRound(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to stop experiment round")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), qtx, scope, "member", scope.userID,
+		"experiment_round", uuidToString(round.ID), "stopped", map[string]any{"reason": reason})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record experiment event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit experiment stop")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, http.StatusOK, lifeExperimentRoundToResponse(round))
 }
 
@@ -832,9 +894,16 @@ func (h *Handler) ReviewLifeExperimentRound(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
+	event, err := recordLifeChangedTx(r.Context(), q, scope, "member", scope.userID,
+		"experiment_round", uuidToString(round.ID), "reviewed", map[string]any{"reviewed": true})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record experiment review event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "failed to commit experiment review")
 		return
 	}
+	h.publishLifeEvents(event)
 	writeJSON(w, http.StatusOK, lifeExperimentRoundToResponse(round))
 }

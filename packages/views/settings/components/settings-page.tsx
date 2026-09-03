@@ -125,19 +125,7 @@ const LEGACY_WORKSPACE_TAB_REDIRECTS: Record<string, string> = {
 const SETTINGS_TAB_TRIGGER_CLASS =
   "h-8 shrink-0 px-2.5 hover:bg-surface-hover data-active:!bg-surface-selected data-active:!text-surface-selected-foreground data-active:hover:!bg-surface-selected md:!w-full md:px-2 md:after:hidden";
 
-export interface ExtraSettingsTab {
-  value: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  content: React.ReactNode;
-}
-
-interface SettingsPageProps {
-  /** Additional tabs injected by platform (e.g. desktop daemon settings) */
-  extraAccountTabs?: ExtraSettingsTab[];
-}
-
-export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
+export function SettingsPage() {
   const { t } = useT("settings");
   const workspaceName = useCurrentWorkspace()?.name;
   const navigation = useNavigation();
@@ -166,9 +154,8 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
       new Set<string>([
         ...ACCOUNT_TAB_KEYS,
         ...visibleWorkspaceTabKeys.map((key) => WORKSPACE_TAB_VALUES[key]),
-        ...(extraAccountTabs?.map((tab) => tab.value) ?? []),
       ]),
-    [extraAccountTabs, visibleWorkspaceTabKeys],
+    [visibleWorkspaceTabKeys],
   );
 
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
@@ -231,17 +218,6 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
               </TabsTrigger>
             );
           })}
-          {extraAccountTabs?.map((tab) => (
-            <TabsTrigger
-              key={tab.value}
-              value={tab.value}
-              className={SETTINGS_TAB_TRIGGER_CLASS}
-            >
-              <tab.icon className="h-4 w-4" />
-              {tab.label}
-            </TabsTrigger>
-          ))}
-
           {/* Workspace group */}
           <span className="hidden truncate px-2 pb-1 pt-4 text-caption font-medium text-muted-foreground md:block">
             {workspaceName ?? t(($) => $.page.workspace_fallback)}
@@ -289,9 +265,6 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="quick-actions"><QuickActionsTab /></TabsContent>
           <TabsContent value="mcp"><McpTab /></TabsContent>
           {pluginsEnabled ? <TabsContent value="plugins"><PluginsTab /></TabsContent> : null}
-          {extraAccountTabs?.map((tab) => (
-            <TabsContent key={tab.value} value={tab.value}>{tab.content}</TabsContent>
-          ))}
         </div>
       </div>
     </Tabs>

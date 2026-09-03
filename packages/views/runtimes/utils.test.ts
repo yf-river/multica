@@ -159,7 +159,7 @@ describe("estimateCost", () => {
   });
 
   it("prices the provider-prefixed Anthropic form (anthropic/claude-sonnet-4.6)", () => {
-    // openclaw / opencode emit `<provider>/<model>`. Same SKU as the
+    // provider-prefixed transports emit `<provider>/<model>`. Same SKU as the
     // bare form, must hit the same rate.
     const cost = estimateCost({
       ...zeroUsage,
@@ -215,7 +215,7 @@ describe("estimateCost", () => {
 
   it("prices Opus 5 on the standard Opus tier across its transport spellings", () => {
     // Opus 5 is a 5/25 SKU like Opus 4.5-4.8. Claude Code reports the
-    // 1M-context window with a bracketed suffix and openclaw/opencode prefix
+    // 1M-context window with a bracketed suffix and a provider prefix
     // the id with the provider, so all three spellings reach the cost
     // estimator and must land on the same row.
     for (const model of [
@@ -907,8 +907,8 @@ describe("isModelPriced", () => {
     expect(isModelPriced("claude-opus-4.7")).toBe(true);
   });
 
-  it("recognises provider-prefixed Anthropic IDs (openclaw / opencode form)", () => {
-    // openclaw / opencode emit `<provider>/<model>` in `meta.agentMeta.model`.
+  it("recognises provider-prefixed Anthropic IDs", () => {
+    // Some runtimes emit `<provider>/<model>` in `meta.agentMeta.model`.
     // The provider prefix is routing metadata, not part of the SKU.
     expect(isModelPriced("anthropic/claude-sonnet-5")).toBe(true);
     expect(isModelPriced("anthropic/claude-fable-5")).toBe(true);

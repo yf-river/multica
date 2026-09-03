@@ -113,11 +113,10 @@ That directory holds `daemon.log` (the log), `daemon.pid` (the background
 daemon's PID), and `daemon.err.log` (raw crash output; near-empty on a healthy
 daemon, since normal logging goes to `daemon.log`).
 
-The Desktop app runs its own named profile, so on a machine that has ever run
-both, `~/.multica/daemon.log` and `~/.multica/profiles/<name>/daemon.log` both
-exist and both read as plausible logs — only one is being written to. Don't
-guess: `multica daemon logs` prints the absolute path it resolved (see
-[Logs](#logs)).
+Named profiles let multiple daemon configurations coexist. When more than one
+profile has been used, several plausible log paths may exist — only one is
+being written to. Don't guess: `multica daemon logs` prints the absolute path
+it resolved (see [Logs](#logs)).
 
 To run in the foreground (useful for debugging):
 
@@ -150,9 +149,6 @@ upgraded in place, the daemon re-probes its version and re-registers the runtime
 **without restarting**, so subsequent tasks pick up the new CLI while Multica's
 availability stays independent of a third party's release cadence.
 
-Desktop-managed daemons ignore both, because the Desktop app owns its bundled
-CLI's lifecycle.
-
 ### Stop
 
 ```bash
@@ -182,7 +178,7 @@ profile's log you are looking at:
 
 ```
 $ multica daemon logs -n 100
-Reading /Users/you/.multica/profiles/desktop-mbp/daemon.log (profile: desktop-mbp)
+Reading /Users/you/.multica/profiles/work/daemon.log (profile: work)
 ...
 ```
 
@@ -212,7 +208,6 @@ The daemon auto-detects these AI CLIs on your PATH:
 | [Codex](https://github.com/openai/codex) | `codex` | OpenAI's coding agent |
 | [GitHub Copilot CLI](https://docs.github.com/en/copilot) | `copilot` | GitHub's coding agent (model routed by your GitHub entitlement) |
 | OpenCode | `opencode` | Open-source coding agent |
-| OpenClaw | `openclaw` | Open-source coding agent |
 | Hermes | `hermes` | Nous Research coding agent |
 | [Pi](https://pi.dev/) | `pi` | Pi coding agent |
 | Oh-My-Pi | `omp` | Oh-My-Pi coding agent (Pi fork) |
@@ -320,9 +315,6 @@ Agent-specific overrides:
 | `MULTICA_COPILOT_MODEL` | Override the Copilot model used (note: GitHub Copilot routes models through your account entitlement, so this may not be honoured) |
 | `MULTICA_OPENCODE_PATH` | Custom path to the `opencode` binary |
 | `MULTICA_OPENCODE_MODEL` | Override the OpenCode model used |
-| `MULTICA_OPENCLAW_PATH` | Custom path to the `openclaw` binary |
-| `MULTICA_OPENCLAW_MODEL` | Override the OpenClaw model used |
-| `MULTICA_OPENCLAW_CLI_TIMEOUT` | Deadline for each `openclaw config ...` call during task preparation (default 30s; accepts `45s` or `45`). Raise it when the local CLI is slow to start; the daemon also reads it from `backends.openclaw.cli_timeout` in the CLI config |
 | `MULTICA_HERMES_PATH` | Custom path to the `hermes` binary |
 | `MULTICA_HERMES_MODEL` | Override the Hermes model used |
 | `MULTICA_PI_PATH` | Custom path to the `pi` binary |

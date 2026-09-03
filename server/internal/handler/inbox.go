@@ -170,18 +170,34 @@ func (h *Handler) MarkInboxRead(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	item, err := h.Queries.MarkInboxRead(r.Context(), prev.ID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.LockInboxItemForUpdate(r.Context(), prev.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock inbox item")
+		return
+	}
+	item, err := qtx.MarkInboxRead(r.Context(), prev.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to mark read")
 		return
 	}
 
 	userID := requestUserID(r)
-	workspaceID := uuidToString(item.WorkspaceID)
-	h.publish(protocol.EventInboxRead, workspaceID, "member", userID, map[string]any{
-		"item_id":      uuidToString(item.ID),
-		"recipient_id": uuidToString(item.RecipientID),
-	})
+	event, err := recordInboxEventTx(r.Context(), qtx, buildInboxMutationEvent(item, protocol.EventInboxRead, "member", userID, "read", nil))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record inbox event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit inbox update")
+		return
+	}
+	h.publishEvent(event)
 
 	resp := h.enrichInboxResponse(r.Context(), inboxToResponse(item), item.IssueID)
 	writeJSON(w, http.StatusOK, resp)
@@ -199,18 +215,34 @@ func (h *Handler) MarkInboxUnread(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	item, err := h.Queries.MarkInboxUnread(r.Context(), prev.ID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.LockInboxItemForUpdate(r.Context(), prev.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock inbox item")
+		return
+	}
+	item, err := qtx.MarkInboxUnread(r.Context(), prev.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to mark unread")
 		return
 	}
 
 	userID := requestUserID(r)
-	workspaceID := uuidToString(item.WorkspaceID)
-	h.publish(protocol.EventInboxUnread, workspaceID, "member", userID, map[string]any{
-		"item_id":      uuidToString(item.ID),
-		"recipient_id": uuidToString(item.RecipientID),
-	})
+	event, err := recordInboxEventTx(r.Context(), qtx, buildInboxMutationEvent(item, protocol.EventInboxUnread, "member", userID, "unread", nil))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record inbox event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit inbox update")
+		return
+	}
+	h.publishEvent(event)
 
 	resp := h.enrichInboxResponse(r.Context(), inboxToResponse(item), item.IssueID)
 	writeJSON(w, http.StatusOK, resp)
@@ -222,7 +254,18 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	item, err := h.Queries.ArchiveInboxItem(r.Context(), prev.ID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.LockInboxItemForUpdate(r.Context(), prev.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock inbox item")
+		return
+	}
+	item, err := qtx.ArchiveInboxItem(r.Context(), prev.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to archive")
 		return
@@ -230,21 +273,30 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 
 	// Archive all sibling inbox items for the same issue (issue-level archive)
 	if item.IssueID.Valid {
-		h.Queries.ArchiveInboxByIssue(r.Context(), db.ArchiveInboxByIssueParams{
+		if _, err := qtx.ArchiveInboxByIssue(r.Context(), db.ArchiveInboxByIssueParams{
 			WorkspaceID:   item.WorkspaceID,
 			RecipientType: item.RecipientType,
 			RecipientID:   item.RecipientID,
 			IssueID:       item.IssueID,
-		})
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to archive related inbox items")
+			return
+		}
 	}
 
 	userID := requestUserID(r)
-	workspaceID := uuidToString(item.WorkspaceID)
-	h.publish(protocol.EventInboxArchived, workspaceID, "member", userID, map[string]any{
-		"item_id":      uuidToString(item.ID),
-		"issue_id":     uuidToPtr(item.IssueID),
-		"recipient_id": uuidToString(item.RecipientID),
-	})
+	event, err := recordInboxEventTx(r.Context(), qtx, buildInboxMutationEvent(item, protocol.EventInboxArchived, "member", userID, "archive", map[string]any{
+		"issue_id": uuidToPtr(item.IssueID),
+	}))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record inbox event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit inbox update")
+		return
+	}
+	h.publishEvent(event)
 
 	resp := h.enrichInboxResponse(r.Context(), inboxToResponse(item), item.IssueID)
 	writeJSON(w, http.StatusOK, resp)
@@ -264,7 +316,18 @@ func (h *Handler) UnarchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	item, err := h.Queries.UnarchiveInboxItem(r.Context(), prev.ID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.LockInboxItemForUpdate(r.Context(), prev.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock inbox item")
+		return
+	}
+	item, err := qtx.UnarchiveInboxItem(r.Context(), prev.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to unarchive")
 		return
@@ -272,21 +335,30 @@ func (h *Handler) UnarchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 
 	// Restore all sibling inbox items for the same issue (issue-level restore).
 	if item.IssueID.Valid {
-		h.Queries.UnarchiveInboxByIssue(r.Context(), db.UnarchiveInboxByIssueParams{
+		if _, err := qtx.UnarchiveInboxByIssue(r.Context(), db.UnarchiveInboxByIssueParams{
 			WorkspaceID:   item.WorkspaceID,
 			RecipientType: item.RecipientType,
 			RecipientID:   item.RecipientID,
 			IssueID:       item.IssueID,
-		})
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to restore related inbox items")
+			return
+		}
 	}
 
 	userID := requestUserID(r)
-	workspaceID := uuidToString(item.WorkspaceID)
-	h.publish(protocol.EventInboxUnarchived, workspaceID, "member", userID, map[string]any{
-		"item_id":      uuidToString(item.ID),
-		"issue_id":     uuidToPtr(item.IssueID),
-		"recipient_id": uuidToString(item.RecipientID),
-	})
+	event, err := recordInboxEventTx(r.Context(), qtx, buildInboxMutationEvent(item, protocol.EventInboxUnarchived, "member", userID, "unarchive", map[string]any{
+		"issue_id": uuidToPtr(item.IssueID),
+	}))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record inbox event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit inbox update")
+		return
+	}
+	h.publishEvent(event)
 
 	resp := h.enrichInboxResponse(r.Context(), inboxToResponse(item), item.IssueID)
 	writeJSON(w, http.StatusOK, resp)
@@ -363,7 +435,14 @@ func (h *Handler) MarkAllInboxRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := h.Queries.MarkAllInboxRead(r.Context(), db.MarkAllInboxReadParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	count, err := qtx.MarkAllInboxRead(r.Context(), db.MarkAllInboxReadParams{
 		WorkspaceID: wsUUID,
 		RecipientID: parseUUID(userID),
 	})
@@ -373,10 +452,17 @@ func (h *Handler) MarkAllInboxRead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("inbox: mark all read", append(logger.RequestAttrs(r), "user_id", userID, "count", count)...)
-	h.publish(protocol.EventInboxBatchRead, workspaceID, "member", userID, map[string]any{
-		"recipient_id": userID,
-		"count":        count,
-	})
+	event := buildInboxBatchEvent(workspaceID, userID, "member", userID, protocol.EventInboxBatchRead, "read_all", count)
+	persistedEvent, err := recordInboxEventTx(r.Context(), qtx, event)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record inbox event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit inbox update")
+		return
+	}
+	h.publishEvent(persistedEvent)
 
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
@@ -392,7 +478,14 @@ func (h *Handler) ArchiveAllInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := h.Queries.ArchiveAllInbox(r.Context(), db.ArchiveAllInboxParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	count, err := qtx.ArchiveAllInbox(r.Context(), db.ArchiveAllInboxParams{
 		WorkspaceID: wsUUID,
 		RecipientID: parseUUID(userID),
 	})
@@ -402,10 +495,17 @@ func (h *Handler) ArchiveAllInbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("inbox: archive all", append(logger.RequestAttrs(r), "user_id", userID, "count", count)...)
-	h.publish(protocol.EventInboxBatchArchived, workspaceID, "member", userID, map[string]any{
-		"recipient_id": userID,
-		"count":        count,
-	})
+	event := buildInboxBatchEvent(workspaceID, userID, "member", userID, protocol.EventInboxBatchArchived, "archive_all", count)
+	persistedEvent, err := recordInboxEventTx(r.Context(), qtx, event)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record inbox event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit inbox update")
+		return
+	}
+	h.publishEvent(persistedEvent)
 
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
@@ -421,7 +521,14 @@ func (h *Handler) ArchiveAllReadInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := h.Queries.ArchiveAllReadInbox(r.Context(), db.ArchiveAllReadInboxParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	count, err := qtx.ArchiveAllReadInbox(r.Context(), db.ArchiveAllReadInboxParams{
 		WorkspaceID: wsUUID,
 		RecipientID: parseUUID(userID),
 	})
@@ -431,10 +538,17 @@ func (h *Handler) ArchiveAllReadInbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("inbox: archive all read", append(logger.RequestAttrs(r), "user_id", userID, "count", count)...)
-	h.publish(protocol.EventInboxBatchArchived, workspaceID, "member", userID, map[string]any{
-		"recipient_id": userID,
-		"count":        count,
-	})
+	event := buildInboxBatchEvent(workspaceID, userID, "member", userID, protocol.EventInboxBatchArchived, "archive_read", count)
+	persistedEvent, err := recordInboxEventTx(r.Context(), qtx, event)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record inbox event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit inbox update")
+		return
+	}
+	h.publishEvent(persistedEvent)
 
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
@@ -455,7 +569,14 @@ func (h *Handler) ArchiveCompletedInbox(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to resolve status categories")
 		return
 	}
-	count, err := h.Queries.ArchiveCompletedInbox(r.Context(), db.ArchiveCompletedInboxParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	count, err := qtx.ArchiveCompletedInbox(r.Context(), db.ArchiveCompletedInboxParams{
 		WorkspaceID:        wsUUID,
 		RecipientID:        parseUUID(userID),
 		TerminalStatusKeys: terminalStatusKeys,
@@ -466,10 +587,17 @@ func (h *Handler) ArchiveCompletedInbox(w http.ResponseWriter, r *http.Request) 
 	}
 
 	slog.Info("inbox: archive completed", append(logger.RequestAttrs(r), "user_id", userID, "count", count)...)
-	h.publish(protocol.EventInboxBatchArchived, workspaceID, "member", userID, map[string]any{
-		"recipient_id": userID,
-		"count":        count,
-	})
+	event := buildInboxBatchEvent(workspaceID, userID, "member", userID, protocol.EventInboxBatchArchived, "archive_completed", count)
+	persistedEvent, err := recordInboxEventTx(r.Context(), qtx, event)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record inbox event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit inbox update")
+		return
+	}
+	h.publishEvent(persistedEvent)
 
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }

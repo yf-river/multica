@@ -122,8 +122,8 @@ Block Public Access, R2, MinIO), the API instead serves avatars from
 `/api/avatars/<signature>/<key>` and resolves each request through
 `ATTACHMENT_DOWNLOAD_MODE` — a presigned redirect, a CloudFront-signed
 redirect, or a proxied body. The signature in the path is what authorizes the
-read: an auth-gated URL cannot be used as an `<img src>` from the Desktop app
-or a split-origin frontend, because the session cookie is `SameSite=Strict`.
+read: an auth-gated URL cannot be used as an `<img src>` from a split-origin
+frontend, because the session cookie is `SameSite=Strict`.
 
 Only image objects resolve through this route, and only ones that are
 *avatar-class*: a standalone upload not attached to an issue, comment, chat, or
@@ -221,9 +221,6 @@ Agent-specific overrides:
 | `MULTICA_OPENCODE_MODEL` | Override the OpenCode model used |
 | `MULTICA_CODEARTS_PATH` | Custom path to the `codearts` launcher or binary |
 | `MULTICA_CODEARTS_MODEL` | Override the CodeArts model used |
-| `MULTICA_OPENCLAW_PATH` | Custom path to the `openclaw` binary |
-| `MULTICA_OPENCLAW_MODEL` | Override the OpenClaw model used |
-| `MULTICA_OPENCLAW_CLI_TIMEOUT` | Deadline for each `openclaw config ...` call during task preparation (default 30s; accepts `45s` or `45`). Raise it when the local CLI is slow to start; the daemon also reads it from `backends.openclaw.cli_timeout` in the CLI config |
 | `MULTICA_HERMES_PATH` | Custom path to the `hermes` binary |
 | `MULTICA_HERMES_MODEL` | Override the Hermes model used |
 | `MULTICA_PI_PATH` | Custom path to the `pi` binary |

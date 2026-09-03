@@ -1185,8 +1185,8 @@ func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
 // rollback (removeReusedManagedSkillDirs + CleanupSidecars + writeContextFiles
 // — the exact sequence Reuse runs) directly across the file-based providers,
 // including the stray-agent-file boundary. Driving the sequence rather than
-// full Reuse avoids the per-provider config setup (codex-home, openclaw
-// binary) while still covering each provider's skills-dir layout.
+// full Reuse avoids the per-provider config setup while still covering each
+// provider's skills-dir layout.
 func TestReuseSkillRefreshIsCanonicalAcrossProviders(t *testing.T) {
 	t.Parallel()
 

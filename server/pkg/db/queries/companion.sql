@@ -10,6 +10,11 @@ RETURNING *;
 SELECT * FROM companion_profile
 WHERE workspace_id = $1 AND user_id = $2;
 
+-- name: LockCompanionProfile :one
+SELECT * FROM companion_profile
+WHERE workspace_id = $1 AND user_id = $2
+FOR UPDATE;
+
 -- name: GetCompanionProfileForAgent :one
 SELECT * FROM companion_profile
 WHERE workspace_id = $1 AND user_id = $2 AND agent_id = $3;

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -200,6 +201,10 @@ func truncateChatQuickAction(value string, maxRunes int) string {
 // The decision is the server's own: suggestions are generated here now, so
 // nothing the daemon reports can grant or withhold them.
 func (s *TaskService) chatQuickActionsEligible(ctx context.Context, task db.AgentTaskQueue, msg *db.ChatMessage) bool {
+	return s.chatQuickActionsEligibleWithQueries(ctx, s.Queries, task, msg)
+}
+
+func (s *TaskService) chatQuickActionsEligibleWithQueries(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue, msg *db.ChatMessage) bool {
 	if s.QuickActions == nil || !s.QuickActions.Enabled() {
 		return false
 	}
@@ -219,7 +224,10 @@ func (s *TaskService) chatQuickActionsEligible(ctx context.Context, task db.Agen
 	// channel_ingested stamp on the turn's owned input batch. A NULL owner is
 	// an agent-initiated intro turn, which does render in Chat.
 	if task.ChatInputTaskID.Valid {
-		channelIngested, err := s.Queries.TaskHasChannelIngestedMessages(ctx, task.ChatInputTaskID)
+		if queries == nil {
+			return false
+		}
+		channelIngested, err := queries.TaskHasChannelIngestedMessages(ctx, task.ChatInputTaskID)
 		if err != nil || channelIngested {
 			return false
 		}
@@ -248,31 +256,79 @@ func (s *TaskService) SupplementChatQuickActions(ctx context.Context, task db.Ag
 		actions[i].Prompt = redact.Text(actions[i].Prompt)
 	}
 
-	var msg db.ChatMessage
-	var err error
-	if len(actions) > 0 {
-		encoded, marshalErr := json.Marshal(actions)
-		if marshalErr != nil {
-			return fmt.Errorf("marshal chat quick actions: %w", marshalErr)
-		}
-		msg, err = s.Queries.SetChatMessageQuickActionsByTask(ctx, db.SetChatMessageQuickActionsByTaskParams{
-			TaskID:       task.ID,
-			QuickActions: encoded,
-		})
-	} else {
-		msg, err = s.Queries.GetChatMessageByTaskAssistant(ctx, task.ID)
-	}
-	if err != nil {
+	if s.TxStarter == nil {
+		msg, err := s.applyChatQuickActions(ctx, s.Queries, task, actions)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
-		return fmt.Errorf("attach chat quick actions: %w", err)
-	}
-
-	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
-	if workspaceID == "" {
+		if err != nil {
+			return err
+		}
+		if msg == nil {
+			return nil
+		}
+		workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
+		if workspaceID != "" {
+			s.Bus.Publish(chatQuickActionsEvent(task, workspaceID, msg, failed))
+		}
 		return nil
 	}
+
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin chat quick actions transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := s.Queries.WithTx(tx)
+	msg, err := s.applyChatQuickActions(ctx, qtx, task, actions)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if msg == nil {
+		return nil
+	}
+	workspaceID, err := resolveTaskWorkspaceWithQueries(ctx, qtx, task)
+	if err != nil || workspaceID == "" {
+		if err == nil {
+			err = errors.New("task has no workspace")
+		}
+		return fmt.Errorf("resolve chat quick actions workspace: %w", err)
+	}
+	persisted, err := recordDurableEventTx(ctx, qtx, chatQuickActionsEvent(task, workspaceID, msg, failed))
+	if err != nil {
+		return fmt.Errorf("record chat quick actions event: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit chat quick actions transaction: %w", err)
+	}
+	publishCommittedEvent(s.Bus, persisted)
+	return nil
+}
+
+func (s *TaskService) applyChatQuickActions(ctx context.Context, q *db.Queries, task db.AgentTaskQueue, actions []protocol.ChatQuickAction) (*db.ChatMessage, error) {
+	var (
+		msg db.ChatMessage
+		err error
+	)
+	if len(actions) > 0 {
+		encoded, marshalErr := json.Marshal(actions)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("marshal chat quick actions: %w", marshalErr)
+		}
+		msg, err = q.SetChatMessageQuickActionsByTask(ctx, db.SetChatMessageQuickActionsByTaskParams{TaskID: task.ID, QuickActions: encoded})
+	} else {
+		msg, err = q.GetChatMessageByTaskAssistant(ctx, task.ID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("attach chat quick actions: %w", err)
+	}
+	return &msg, nil
+}
+
+func chatQuickActionsEvent(task db.AgentTaskQueue, workspaceID string, msg *db.ChatMessage, failed bool) events.Event {
 	payload := protocol.ChatQuickActionsPayload{
 		ChatSessionID: util.UUIDToString(task.ChatSessionID),
 		TaskID:        util.UUIDToString(task.ID),
@@ -281,13 +337,16 @@ func (s *TaskService) SupplementChatQuickActions(ctx context.Context, task db.Ag
 		Failed:        failed,
 	}
 	_ = json.Unmarshal(msg.QuickActions, &payload.QuickActions)
-	s.Bus.Publish(events.Event{
-		Type:          protocol.EventChatQuickActions,
-		WorkspaceID:   workspaceID,
-		ActorType:     "system",
-		ActorID:       "",
-		ChatSessionID: util.UUIDToString(task.ChatSessionID),
-		Payload:       payload,
-	})
-	return nil
+	encoded, _ := json.Marshal(payload)
+	digest := sha256.Sum256(encoded)
+	return events.Event{
+		Type:           protocol.EventChatQuickActions,
+		IdempotencyKey: fmt.Sprintf("chat-quick-actions:%s:%x", util.UUIDToString(task.ID), digest[:]),
+		StreamKey:      "chat:" + util.UUIDToString(task.ChatSessionID),
+		WorkspaceID:    workspaceID,
+		ActorType:      "system",
+		TaskID:         util.UUIDToString(task.ID),
+		ChatSessionID:  util.UUIDToString(task.ChatSessionID),
+		Payload:        payload,
+	}
 }

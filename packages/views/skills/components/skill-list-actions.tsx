@@ -694,7 +694,6 @@ export function SkillRowActions({
               intentNavigate(
                 paths.skillDetail(row.skill.id),
                 "foreground-tab",
-                row.skill.name,
               )
             }
           >

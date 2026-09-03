@@ -28,30 +28,16 @@ import {
  * (no provider) every lookup returns undefined and views behave as before.
  */
 
-/**
- * One captured scroll entry. `contentKey` is an optional fingerprint of the
- * rendered content (multica-ai#6405): views that render untrusted HTML inside
- * a sandboxed iframe cannot be scrolled externally and register an external
- * capture source instead; they tag the entry with a hash of the rendered HTML
- * so a re-upload to the same attachment id refuses to restore a stale offset.
- * Plain containers leave it undefined and get identity comparison (undefined
- * === undefined), so they are unaffected.
- */
+/** One captured scroll entry. */
 export interface ScrollRestorationEntry {
   top: number;
   height: number;
   contentKey?: string;
 }
 
-/**
- * A scroll source that lives outside the outer DOM — e.g. the document inside
- * a sandboxed iframe, which the platform cannot query for `scrollTop` due to
- * the opaque-origin boundary. The owning view reports latest values into a
- * ref and registers a source whose `capture()` reads it synchronously during
- * the pre-unmount store tick.
- */
+/** 外部滚动容器（例如附件 iframe）向桌面标签页提供的快照接口。 */
 export interface ExternalScrollSource {
-  capture(): ScrollRestorationEntry | undefined;
+  capture(): ScrollRestorationEntry | null;
 }
 
 export interface ScrollRestorationAdapter {
@@ -60,16 +46,6 @@ export interface ScrollRestorationAdapter {
    * when there is nothing to restore.
    */
   get(containerKey: string): ScrollRestorationEntry | undefined;
-  /**
-   * Register/unregister a scroll source that is not a `[data-tab-scroll-root]`
-   * element (currently: a sandboxed iframe's internal document). Desktop
-   * implements this; web does not and the method stays absent — views detect
-   * that and no-op without importing any app code.
-   */
-  registerExternalSource?(
-    containerKey: string,
-    source: ExternalScrollSource | null,
-  ): void;
   /**
    * Generic restorable view-state entries — the memento's second kind of
    * cargo, for state that must survive the view's unmount but is not a
@@ -84,6 +60,7 @@ export interface ScrollRestorationAdapter {
   getViewState?(entryKey: string): string | undefined;
   /** Write (string) or clear (undefined) an entry for the current route. */
   setViewState?(entryKey: string, value: string | undefined): void;
+  registerExternalSource?(containerKey: string, source: ExternalScrollSource | null): void;
 }
 
 const ScrollRestorationContext = createContext<ScrollRestorationAdapter | null>(
@@ -105,9 +82,8 @@ export function ScrollRestorationProvider({
 }
 
 /**
- * The active adapter, or null on web (no provider). Prefer the narrower hooks
- * below; reach for this when a view needs to call `registerExternalSource` or
- * inspect whether restoration is active at all.
+ * The active adapter, or null when no provider is mounted. Prefer the narrower
+ * hooks below when a view only needs one restoration operation.
  */
 export function useScrollRestorationAdapter(): ScrollRestorationAdapter | null {
   return useContext(ScrollRestorationContext);

@@ -75,11 +75,6 @@ vi.mock("@multica/core/api", () => ({ api: {} }));
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), error: vi.fn(), success: vi.fn() } }));
 vi.mock("@multica/core/feedback", () => ({
   FEEDBACK_KINDS: ["bug", "feature", "general", "praise"] as const,
-  isFeedbackContext: (value: unknown) =>
-    typeof value === "object" &&
-    value !== null &&
-    "kind" in value &&
-    value.kind === "desktop_route_error",
   useCreateFeedback: () => ({ isPending: false, mutateAsync: feedbackMocks.mutateAsync }),
   useFeedbackDraftStore: (selector: any) =>
     selector({ draft: { message: storedDraftMessage }, setDraft: vi.fn(), clearDraft: vi.fn() }),
@@ -155,21 +150,21 @@ describe("FeedbackModal", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses a crash-report initialMessage when there is no saved draft", () => {
+  it("uses an initial message when there is no saved draft", () => {
     storedDraftMessage = "";
 
-    render(<FeedbackModal onClose={vi.fn()} initialMessage="kind: desktop_route_error" />);
+    render(<FeedbackModal onClose={vi.fn()} initialMessage="Something went wrong" />);
 
-    expect(screen.getByLabelText("feedback editor")).toHaveValue("kind: desktop_route_error");
+    expect(screen.getByLabelText("feedback editor")).toHaveValue("Something went wrong");
   });
 
-  it("does not overwrite an existing feedback draft when crash report context is provided", () => {
+  it("does not overwrite an existing feedback draft when an initial message is provided", () => {
     storedDraftMessage = "saved draft";
 
-    render(<FeedbackModal onClose={vi.fn()} initialMessage="kind: desktop_route_error" />);
+    render(<FeedbackModal onClose={vi.fn()} initialMessage="Something went wrong" />);
 
     expect(screen.getByLabelText("feedback editor")).toHaveValue(
-      "saved draft\n\n---\n\nkind: desktop_route_error",
+      "saved draft\n\n---\n\nSomething went wrong",
     );
   });
 
@@ -210,9 +205,8 @@ describe("FeedbackModal", () => {
 
   // MUL-6784: rebuilding the URL from pathname + search alone downgraded a
   // `#comment-…` deep link to the whole issue, so a report sent from one
-  // comment no longer said which one. Desktop cannot fall back to
-  // `window.location` for the fragment — its renderer is a MemoryRouter over a
-  // file:// page — so the adapter has to carry it.
+  // comment no longer said which one. The navigation adapter carries the
+  // fragment when the browser URL is not available.
   it("keeps the comment fragment of the page the report was sent from", async () => {
     storedDraftMessage = "";
     feedbackMocks.hash.current = "#comment-c1";
@@ -226,40 +220,6 @@ describe("FeedbackModal", () => {
       expect(feedbackMocks.mutateAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           url: "https://app.example/test-workspace/projects/project-1?view=board#comment-c1",
-        }),
-      );
-    });
-  });
-
-  it("forwards structured diagnostic context without putting it in the message", async () => {
-    storedDraftMessage = "";
-    const context = {
-      kind: "desktop_route_error" as const,
-      trigger: "route-errorElement",
-      error: {
-        name: "Error",
-        message: "route render exploded",
-        stack: "Error: route render exploded",
-      },
-    };
-    render(
-      <FeedbackModal
-        onClose={vi.fn()}
-        data={{ kind: "bug", context }}
-      />,
-    );
-
-    const editor = screen.getByLabelText("feedback editor");
-    expect(editor).toHaveValue("");
-    fireEvent.change(editor, { target: { value: "I clicked an issue link." } });
-    fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
-
-    await waitFor(() => {
-      expect(feedbackMocks.mutateAsync).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: "I clicked an issue link.",
-          kind: "bug",
-          context,
         }),
       );
     });

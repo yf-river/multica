@@ -214,12 +214,12 @@ func TestLifeExperimentConfirmationIsAtomicAndRoundsAreIndependent(t *testing.T)
 		_, _ = testPool.Exec(ctx, `DELETE FROM life_experiment WHERE id = $1`, started.ExperimentID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, started.IssueID)
 	})
-	var issueScope, assigneeType, assigneeID string
-	if err := testPool.QueryRow(ctx, `SELECT scope, assignee_type, assignee_id::text FROM issue WHERE id = $1`, started.IssueID).Scan(&issueScope, &assigneeType, &assigneeID); err != nil {
+	var assigneeType, assigneeID string
+	if err := testPool.QueryRow(ctx, `SELECT assignee_type, assignee_id::text FROM issue WHERE id = $1`, started.IssueID).Scan(&assigneeType, &assigneeID); err != nil {
 		t.Fatalf("load experiment task: %v", err)
 	}
-	if issueScope != "personal" || assigneeType != "member" || assigneeID != testUserID {
-		t.Fatalf("experiment task ownership mismatch: scope=%s assignee=%s/%s", issueScope, assigneeType, assigneeID)
+	if assigneeType != "member" || assigneeID != testUserID {
+		t.Fatalf("experiment task ownership mismatch: assignee=%s/%s", assigneeType, assigneeID)
 	}
 
 	mustExec(t, ctx, `

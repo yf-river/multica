@@ -366,18 +366,8 @@ class ApiClient {
   }
 
   // --- Auth ---
-  async sendCode(email: string): Promise<void> {
-    await this.fetch<void>("/auth/send-code", {
-      method: "POST",
-      body: JSON.stringify({ email }),
-    });
-  }
-
-  async verifyCode(email: string, code: string): Promise<LoginResponse> {
-    return this.fetch<LoginResponse>("/auth/verify-code", {
-      method: "POST",
-      body: JSON.stringify({ email, code }),
-    });
+  async login(account: string, password: string): Promise<LoginResponse> {
+    return this.fetch<LoginResponse>("/auth/login", { method: "POST", body: JSON.stringify({ account, password }) });
   }
 
   async getMe(opts?: { signal?: AbortSignal }): Promise<User> {

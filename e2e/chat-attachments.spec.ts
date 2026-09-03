@@ -14,7 +14,7 @@ import { createTestApi } from "./helpers";
 import type { TestApiClient } from "./fixtures";
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || `http://localhost:${process.env.PORT || "8080"}`;
+  process.env.E2E_API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || `http://localhost:${process.env.PORT || "8080"}`;
 const DATABASE_URL =
   process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
 
@@ -84,7 +84,7 @@ test.describe("Chat attachments", () => {
     api.setWorkspaceId(ws.id);
 
     const userRow = await pgc.query(
-      `SELECT id FROM "user" WHERE email = $1 LIMIT 1`,
+      `SELECT id FROM "user" WHERE account = $1 LIMIT 1`,
       [api.getEmail()],
     );
     if (userRow.rows.length === 0) throw new Error("e2e user missing");
@@ -114,8 +114,8 @@ test.describe("Chat attachments", () => {
     createdAgentId = agentIns.rows[0].id as string;
 
     const sessionIns = await pgc.query(
-      `INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, status)
-       VALUES ($1, $2, $3, 'E2E Chat Attachment Session', 'active')
+      `INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, status, explicitly_created_at)
+       VALUES ($1, $2, $3, 'E2E Chat Attachment Session', 'active', now())
        RETURNING id`,
       [ws.id, createdAgentId, userId],
     );

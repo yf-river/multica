@@ -42,11 +42,6 @@ function runtime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
 }
 
 function machine(runtimes: AgentRuntime[]): RuntimeMachine {
-  const launchedBy = runtimes
-    .filter((item) => item.status === "online")
-    .map((item) => item.metadata?.launched_by)
-    .find((value): value is string => typeof value === "string");
-
   return {
     id: "local:daemon-1",
     daemonId: "daemon-1",
@@ -54,10 +49,8 @@ function machine(runtimes: AgentRuntime[]): RuntimeMachine {
     subtitle: null,
     deviceInfo: "dev.local",
     cliVersion: "0.3.17",
-    launchedBy: launchedBy ?? null,
     mode: "local",
     section: "remote",
-    isCurrent: false,
     health: "online",
     runtimes,
     onlineCount: runtimes.filter((item) => item.status === "online").length,
@@ -80,7 +73,6 @@ describe("MachineCliSection", () => {
       id: "online-owned",
       metadata: {
         cli_version: "0.3.17",
-        launched_by: "desktop",
       },
     });
     const otherUsers = runtime({ id: "other-user", owner_id: "user-2" });
@@ -98,7 +90,6 @@ describe("MachineCliSection", () => {
       runtimeId: "online-owned",
       currentVersion: "0.3.17",
       isOnline: true,
-      launchedBy: "desktop",
     });
   });
 
@@ -128,7 +119,6 @@ describe("MachineCliSection", () => {
       runtimeId: null,
       currentVersion: "0.3.17",
       isOnline: false,
-      launchedBy: null,
     });
   });
 
@@ -158,7 +148,6 @@ describe("MachineCliSection", () => {
       runtimeId: "online-other-user",
       currentVersion: "0.3.17",
       isOnline: true,
-      launchedBy: null,
     });
   });
 
@@ -184,7 +173,6 @@ describe("MachineCliSection", () => {
       runtimeId: null,
       currentVersion: "0.3.17",
       isOnline: false,
-      launchedBy: null,
     });
   });
 
@@ -196,7 +184,6 @@ describe("MachineCliSection", () => {
             owner_id: "user-2",
             metadata: {
               cli_version: "0.3.17",
-              launched_by: "desktop",
             },
           }),
         ])}
@@ -212,7 +199,6 @@ describe("MachineCliSection", () => {
       runtimeId: null,
       currentVersion: "0.3.17",
       isOnline: false,
-      launchedBy: "desktop",
     });
   });
 });

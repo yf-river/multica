@@ -24,7 +24,7 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       subheading:
         "Multica는 코딩 AI 에이전트를 진짜 팀원으로 만들어 주는 오픈소스 플랫폼입니다. 태스크를 맡기고, 진행 상황을 따라가고, 반복되는 노하우를 스킬로 쌓아 두세요. 사람과 AI 에이전트로 이루어진 팀을 한곳에서 관리할 수 있습니다.",
       cta: "무료로 시작하기",
-      downloadDesktop: "데스크톱 다운로드",
+      installCli: "CLI 설치",
       talkToSales: "영업팀에 문의",
       worksWith: "지원 도구",
       imageAlt: "사람과 AI 에이전트가 함께 태스크를 관리하는 Multica 보드 화면",
@@ -118,7 +118,7 @@ export function createKoDict(allowSignup: boolean): LandingDict {
           {
             title: "처음 실행할 때 자동 등록",
             description:
-              "Multica는 Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, ZeroClaw 등 26개 지원 도구를 스캔해 이미 설치된 것을 런타임으로 자동 등록합니다.",
+              "Multica는 Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, ZeroClaw 등 25개 지원 도구를 스캔해 이미 설치된 것을 런타임으로 자동 등록합니다.",
           },
         ],
       },
@@ -193,7 +193,7 @@ export function createKoDict(allowSignup: boolean): LandingDict {
         {
           question: "Multica는 어떤 코딩 에이전트를 지원하나요?",
           answer:
-            "Multica는 Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, ZeroClaw 등 26개 코딩 도구를 기본 지원합니다. 데몬이 이미 설치된 CLI를 자동으로 찾아 각각 런타임으로 등록합니다. 오픈소스이므로 직접 백엔드를 추가할 수도 있습니다.",
+            "Multica는 Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, ZeroClaw 등 25개 코딩 도구를 기본 지원합니다. 데몬이 이미 설치된 CLI를 자동으로 찾아 각각 런타임으로 등록합니다. 오픈소스이므로 직접 백엔드를 추가할 수도 있습니다.",
         },
         {
           question: "셀프 호스팅만 가능한가요, 클라우드 버전도 있나요?",
@@ -328,8 +328,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
             "편집이 충돌하면 각 선택 버튼이 해당 내용 바로 아래에 놓입니다.",
             "Lark 답장이 인증 정보 만료로 멈추지 않습니다.",
             "Quick Create의 초안 높이가 내용에 맞게 조절됩니다.",
-            "OpenClaw 실행이 시간 초과 시 완전히 멈추고 프로세스가 남지 않습니다.",
-            "OpenClaw 설정 확인이 성공했는데도 실패로 표시되지 않습니다.",
           ],
         },
         {
@@ -435,7 +433,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
           fixes: [
             "작업을 다시 실행해도 진행 중인 작업은 중단되지 않습니다.",
             "동시에 실행되는 작업이 서로의 작업 공간을 덮어쓰지 않습니다.",
-            "OpenClaw, Pi, OpenCode에서 구성한 사용자 지정 공급자를 사용할 수 있습니다.",
             "워크스페이스를 전환해도 실시간 업데이트와 멘션이 끊기지 않습니다.",
             "일반 CLI 출력에 Autopilot Webhook 자격 증명이 표시되지 않습니다.",
             "관련 없는 코딩 작업이 끝날 때까지 기다리지 않고 에이전트와 채팅할 수 있습니다.",
@@ -707,7 +704,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
             "WeCom에서 같은 /issue를 두 번 보내도 중복이 아니라 분명한 답을 받습니다.",
             "WeCom 그룹에서 모든 슬래시 명령이 동작합니다.",
             "다이렉트 채팅의 Codex 세션이 이어서 계속됩니다.",
-            "Windows의 OpenClaw 에이전트가 설정을 찾습니다.",
             "메시지를 연달아 보내도 그중 하나가 빠지지 않습니다.",
             "Lark에서 저장한 이미지와 파일의 이름이 어긋나지 않습니다.",
             "셀프호스팅 서버 주소를 잘못 넣으면 빈 화면 대신 분명한 오류가 나옵니다.",
@@ -837,7 +833,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
             "태스크의 구독 해제가 실제로 적용됩니다.",
             "답글 입력창에서 / 를 입력하면 워크스페이스의 빠른 작업도 표시됩니다.",
             "태스크 헤더에서 실행 중인 로그를 열어도 바로 닫히지 않습니다.",
-            "OpenClaw 답변이 생성을 마치는 즉시 도착합니다.",
             "Slack이나 Feishu에서 /new만 보내도 빈 메시지와 빈 실행이 남지 않습니다.",
             "새로 연결한 채팅 채널에서 에이전트가 보낼 수 없는 첨부 파일을 보냈다고 알리지 않습니다.",
             "긴 프로젝트 이름이나 레이블 이름이 칩을 한 줄 가득 늘리지 않습니다.",
@@ -964,7 +959,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
             "멤버의 대시보드에 비공개 에이전트가 표시되지 않습니다.",
             "작업 수락을 막는 동시 실행 수는 저장할 수 없습니다.",
             "ACP 에이전트의 외부 답변에는 최종 답변만 전달됩니다.",
-            "Windows에서 OpenClaw가 조용히 실패하면 확인할 내용을 알려 줍니다.",
           ],
         },
         {
@@ -1623,7 +1617,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
             "제공자별 기본 에이전트 인자 환경 변수에 대한 공식 문서가 추가되었고, 통합 협업 채널이 완전히 정착함에 따라 일회성 Lark 전환 스위치를 정리했습니다.",
           ],
           fixes: [
-            "OpenClaw가 설정 파일 차이에 더 너그러워졌고, 새로운 2026.6.x agents 스키마를 지원해 기존 OpenClaw 런타임이 끊기지 않습니다.",
             "태스크를 다른 프로젝트로 옮기면 이전 프로젝트 목록에서 즉시 빠지고, 보드 화면 밖에서 상태가 바뀌어도 컬럼 카운트가 정확하게 맞춰집니다.",
             "파일이 다른 출처에서 제공되더라도 첨부 파일 미리보기가 정상적으로 열립니다.",
             "명령줄 에이전트는 데몬이 준비된 뒤에야 개인 액세스 토큰으로 폴백하므로 인증이 조용히 다운그레이드되지 않고, 자체 호스팅 설정도 기존 구성을 존중하면서 서버 URL 변경을 분명히 보여 줍니다.",
@@ -1786,7 +1779,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
           features: [
             "에이전트, 오토파일럿, 프로젝트, 런타임, 스킬, 스쿼드의 목록이 더 빠르고 일관된 경험으로 바뀌어 행, 필터, 선택, 작업이 더 명확해졌습니다.",
             "명령줄에서 워크스페이스 저장소를 관리할 수 있어 로컬 에이전트가 프로젝트 저장소 정보를 더 쉽게 가져올 수 있습니다.",
-            "Cursor와 OpenClaw 설정이 더 쉬워졌습니다. Cursor 연결 설정은 Multica가 관리할 수 있고, OpenClaw는 기존 게이트웨이에 연결할 수 있습니다.",
             "댓글을 편집할 때 저장하기 전에 어떤 에이전트나 스쿼드가 실행될지 미리 보고 제어할 수 있습니다.",
           ],
           improvements: [
@@ -1854,7 +1846,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
             "태스크 대화에서 특정 답글을 해결 답변으로 남길 수 있어, 긴 스레드를 접어도 결론을 더 쉽게 확인할 수 있습니다.",
             "Lark와 Feishu 대화는 Multica가 답변을 준비하는 동안 입력 중 반응을 표시하고, 답변을 보내기 전에 자동으로 지웁니다.",
             "에이전트 실행은 각 작업을 누가 시작했는지 알 수 있어 인계, 감사, 개인정보를 고려한 동작이 더 정확해집니다.",
-            "OpenClaw 사용자는 로컬 설정에서 사용자 지정 앱 위치와 데이터 폴더를 지정할 수 있습니다.",
           ],
           improvements: [
             "댓글 트리거 표시가 더 조용하고 명확해졌으며, 긴 에이전트 이름도 덜 비좁게 보입니다.",
@@ -2046,7 +2037,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
             "Multica가 앱, 웹사이트, 문서에서 한국어를 지원하며, 전체 한국어 문서와 한국어 날짜 표시를 제공합니다.",
             "태스크 화면에서 작업 중인 에이전트를 제목 가까이에 고정해 보여 주고, 여러 에이전트가 동시에 일할 때도 더 쉽게 확인할 수 있습니다.",
             "에이전트가 태스크 대화를 읽을 때 스레드 미리보기, 답글 수, 최근 활동 시간을 먼저 확인해 필요한 맥락을 더 빨리 찾을 수 있습니다.",
-            "OpenClaw 런타임은 에이전트에 저장된 MCP 설정을 사용할 수 있고, Claude Opus 4.8도 모델 선택과 사용량 추정에 반영됩니다.",
           ],
           improvements: [
             "태스크, 프로젝트, 런타임, 스킬, 에이전트, 스쿼드 상세 화면의 breadcrumb가 통일되어 위치와 이동 경로가 더 분명해졌습니다.",
@@ -2654,9 +2644,9 @@ export function createKoDict(allowSignup: boolean): LandingDict {
         {
           version: "0.1.18",
           date: "2026-03-23",
-          title: "OAuth, OpenClaw, 태스크 로딩",
+          title: "OAuth, 태스크 로딩",
           changes: [
-            "OAuth, OpenClaw 런타임, 태스크 로딩 개선을 추가했습니다.",
+            "OAuth, 태스크 로딩 개선을 추가했습니다.",
           ],
         },
         {
@@ -2748,61 +2738,9 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       cta: "GitHub에서 보기",
     },
     download: {
-      hero: {
-        macArm64: {
-          title: "macOS용 Multica",
-          sub: "Apple Silicon · 데몬 포함, 별도 설정 없음",
-          primary: "다운로드(.dmg)",
-          altZip: "또는 .zip 다운로드",
-        },
-        macIntel: {
-          title: "macOS용 Multica",
-          sub: "Intel · 데몬 포함, 별도 설정 없음",
-          primary: "다운로드(.dmg)",
-          altZip: "또는 .zip 다운로드",
-        },
-        winX64: {
-          title: "Windows용 Multica",
-          sub: "데몬 포함, 별도 설정 없음",
-          primary: "다운로드(.exe)",
-        },
-        winArm64: {
-          title: "Windows용 Multica",
-          sub: "ARM · 데몬 포함, 별도 설정 없음",
-          primary: "다운로드(.exe)",
-        },
-        linux: {
-          title: "Linux용 Multica",
-          sub: "데몬 포함, 별도 설정 없음",
-          primary: "AppImage 다운로드",
-          altFormats: "또는 .deb / .rpm",
-        },
-        unknown: {
-          title: "플랫폼 선택",
-          sub: "모든 설치 파일은 아래에 정리되어 있습니다.",
-        },
-        safariMacHint: "Intel Mac을 사용 중인가요? 아래에서 Intel 버전을 선택하세요.",
-        archFallbackHint: "아키텍처가 맞지 않나요? 아래에서 모든 형식을 확인하세요.",
-      },
-      allPlatforms: {
-        title: "모든 플랫폼",
-        macArm64Label: "macOS · Apple Silicon",
-        macX64Label: "macOS · Intel",
-        winX64Label: "Windows · x64",
-        winArm64Label: "Windows · ARM64",
-        linuxX64Label: "Linux · x64",
-        linuxArm64Label: "Linux · ARM64",
-        formatDmg: ".dmg",
-        formatZip: ".zip",
-        formatExe: ".exe",
-        formatAppImage: ".AppImage",
-        formatDeb: ".deb",
-        formatRpm: ".rpm",
-        unavailable: "사용할 수 없음",
-      },
       cli: {
         title: "CLI가 더 편하신가요?",
-        sub: "서버, 원격 개발 환경, headless 환경에 적합합니다. 데스크톱과 동일한 데몬을 터미널에서 바로 설치할 수 있습니다.",
+        sub: "서버, 원격 개발 환경, headless 환경에 적합합니다. 터미널에서 daemon을 바로 설치할 수 있습니다.",
         installLabel: "설치",
         startLabel: "데몬 시작",
         sshNote: "이미 서버에 접속해 있나요? 같은 명령을 SSH에서도 그대로 사용할 수 있습니다.",
@@ -2812,12 +2750,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       cloud: {
         title: "클라우드 런타임 (대기자 명단)",
         sub: "Multica가 런타임을 직접 호스팅해 드립니다. 아직 정식 출시 전입니다. 이메일을 남겨 주시면 준비되는 대로 알려드릴게요.",
-      },
-      footer: {
-        releaseNotes: "{version}의 새로운 내용",
-        allReleases: "모든 릴리스 보기",
-        currentVersion: "현재 버전: {version}",
-        versionUnavailable: "버전을 확인할 수 없습니다. GitHub를 확인하세요.",
       },
     },
     contactSales: {

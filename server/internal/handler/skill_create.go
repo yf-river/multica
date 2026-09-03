@@ -7,8 +7,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type skillCreateInput struct {
@@ -85,9 +88,24 @@ func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInp
 		return SkillWithFilesResponse{}, err
 	}
 
+	skill, err := qtx.GetSkillInWorkspace(ctx, db.GetSkillInWorkspaceParams{ID: parseUUID(result.ID), WorkspaceID: input.WorkspaceID})
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	event, err := service.RecordDurableEventTx(ctx, qtx, events.Event{
+		Type:           protocol.EventSkillCreated,
+		IdempotencyKey: "skill:created:" + uuidToString(skill.ID),
+		StreamKey:      "skill:" + uuidToString(skill.ID), WorkspaceID: uuidToString(skill.WorkspaceID),
+		ActorType: "member", ActorID: uuidToString(input.CreatorID),
+		Payload: map[string]any{"skill": result},
+	})
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return SkillWithFilesResponse{}, err
 	}
+	h.publishEvent(event)
 
 	return result, nil
 }
@@ -225,13 +243,24 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 		}
 		fileResps = append(fileResps, skillFileToResponse(sf))
 	}
+	event, err := service.RecordDurableEventTx(ctx, qtx, events.Event{
+		Type:           protocol.EventSkillUpdated,
+		IdempotencyKey: "skill:updated:" + uuidToString(skill.ID) + ":" + skill.UpdatedAt.Time.UTC().Format("20060102150405.999999999"),
+		StreamKey:      "skill:" + uuidToString(skill.ID), WorkspaceID: uuidToString(skill.WorkspaceID),
+		ActorType: "member", ActorID: input.UserID,
+		Payload: map[string]any{"skill": SkillWithFilesResponse{SkillResponse: skillToResponse(skill), Files: fileResps}},
+	})
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return SkillWithFilesResponse{}, err
 	}
-
-	return SkillWithFilesResponse{
+	h.publishEvent(event)
+	result := SkillWithFilesResponse{
 		SkillResponse: skillToResponse(skill),
 		Files:         fileResps,
-	}, nil
+	}
+	return result, nil
 }

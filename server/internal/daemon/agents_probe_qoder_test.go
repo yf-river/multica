@@ -5,15 +5,16 @@ import (
 )
 
 // TestProbeAgentCLIs_QoderResolvesViaLoginShell locks down the fix for the
-// Qoder discovery gap reported from the desktop app (MUL-5524).
+// Qoder discovery gap reported from a daemon launched outside an interactive
+// shell (MUL-5524).
 //
 // Every other provider is probed through the shared probe() helper, which falls
 // back to the user's login shell when the daemon's own PATH can't see a bare
 // command name. Qoder was probed with a bare resolveAgentExecutablePath call
 // and therefore had no fallback at all: a GUI/Launchpad-started daemon (the
-// apple.dmg desktop build) does not inherit the interactive shell PATH, so a
-// `qodercli` living in an npm global prefix or any ~/.zshrc-added dir was
-// undetectable no matter how many times the daemon restarted.
+// host application does not inherit the interactive shell PATH, so a `qodercli`
+// living in an npm global prefix or any ~/.zshrc-added dir was undetectable no
+// matter how many times the daemon restarted.
 func TestProbeAgentCLIs_QoderResolvesViaLoginShell(t *testing.T) {
 	orig := resolveAgentsViaLoginShell
 	t.Cleanup(func() { resolveAgentsViaLoginShell = orig })

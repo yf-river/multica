@@ -141,7 +141,7 @@ func TestDetectVersionTimesOutOnHang(t *testing.T) {
 	pidFile := filepath.Join(dir, "child.pid")
 	// The CLI hangs forever (`wait`) and backgrounds a child that inherits and
 	// holds our stdout pipe open even after the parent is killed on timeout —
-	// the exact case RunCollect must cover. The child records its PID so we
+	// the process-tree ownership case must cover. The child records its PID so we
 	// can reap it in Cleanup instead of leaking a 60s `sleep` into CI.
 	body := fmt.Sprintf("#!/bin/sh\nsleep 60 &\necho $! > %q\nwait\n", pidFile)
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {

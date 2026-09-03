@@ -86,13 +86,13 @@ func TestDaemonLogSourcePathResolvesPerProfile(t *testing.T) {
 	})
 
 	t.Run("named profile", func(t *testing.T) {
-		home := mkProfiles(t, "desktop-api.multica.ai")
+		home := mkProfiles(t, "staging-api.multica.ai")
 
-		got, err := daemonLogSourcePath("desktop-api.multica.ai")
+		got, err := daemonLogSourcePath("staging-api.multica.ai")
 		if err != nil {
 			t.Fatalf("daemonLogSourcePath = %v, want nil", err)
 		}
-		want := filepath.Join(home, ".multica", "profiles", "desktop-api.multica.ai", "daemon.log")
+		want := filepath.Join(home, ".multica", "profiles", "staging-api.multica.ai", "daemon.log")
 		if got != want {
 			t.Fatalf("daemonLogSourcePath = %q, want %q", got, want)
 		}
@@ -126,13 +126,13 @@ func TestRunDaemonLogsAnnouncesResolvedPath(t *testing.T) {
 	}{
 		{"default profile", "", "default", 50, false},
 		{"default profile with lines", "", "default", 100, false},
-		{"named profile", "desktop-api.multica.ai", "desktop-api.multica.ai", 50, false},
-		{"named profile following", "desktop-api.multica.ai", "desktop-api.multica.ai", 50, true},
+		{"named profile", "staging-api.multica.ai", "staging-api.multica.ai", 50, false},
+		{"named profile following", "staging-api.multica.ai", "staging-api.multica.ai", 50, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			clearDaemonTaskEnv(t)
-			mkProfiles(t, "desktop-api.multica.ai")
+			mkProfiles(t, "staging-api.multica.ai")
 
 			wantPath, err := daemonLogSourcePath(tc.profile)
 			if err != nil {
@@ -202,20 +202,20 @@ func TestRunDaemonLogsAnnouncementDoesNotPolluteStdout(t *testing.T) {
 // for the profile that was asked for, not the default profile's.
 func TestRunDaemonLogsMissingFileNamesProfilePath(t *testing.T) {
 	clearDaemonTaskEnv(t)
-	home := mkProfiles(t, "desktop-api.multica.ai")
+	home := mkProfiles(t, "staging-api.multica.ai")
 
 	// A readable log for the DEFAULT profile exists — the exact trap from
 	// #6038. The error must still point at the requested profile's path.
 	seedDaemonLog(t, filepath.Join(home, ".multica", "daemon.log"))
 
-	cmd, errOut := daemonLogsCmdFor(t, "desktop-api.multica.ai", 50, false)
+	cmd, errOut := daemonLogsCmdFor(t, "staging-api.multica.ai", 50, false)
 	rec := stubTailLog(t, errOut)
 
 	err := runDaemonLogs(cmd, nil)
 	if err == nil {
 		t.Fatal("runDaemonLogs = nil, want the missing-log-file error")
 	}
-	want := filepath.Join(home, ".multica", "profiles", "desktop-api.multica.ai", "daemon.log")
+	want := filepath.Join(home, ".multica", "profiles", "staging-api.multica.ai", "daemon.log")
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("error = %q, want it to name %q", err, want)
 	}

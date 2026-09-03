@@ -134,7 +134,7 @@ describe("contentReferencesAttachment", () => {
     expect(contentReferencesAttachment(md, { id: ID, url: "" })).toBe(true);
   });
 
-  // Regression — issue DESCRIPTION editor binding (Desktop image render).
+  // Regression — issue description editor binding on split-origin clients.
   //
   // The editor persists the durable `markdown_url`
   // (`<MULTICA_PUBLIC_URL>/api/attachments/<id>/download`) into the body,
@@ -143,8 +143,8 @@ describe("contentReferencesAttachment", () => {
   // shape, so the upload was never linked via `attachment_ids`. After a
   // reload the attachment was absent from `issueAttachments`, the renderer
   // couldn't resolve it to a freshly-signed `download_url`, and the
-  // auth-gated endpoint failed to load as a native <img> on Desktop/Electron
-  // (cross-origin, no cookies). `contentReferencesAttachment` matches the
+  // auth-gated endpoint failed to load as a native <img> on a cross-origin
+  // client without cookies. `contentReferencesAttachment` matches the
   // absolute-host download URL via its stable-path substring, so the
   // attachment now binds the same way comments do.
   it("matches the absolute-host markdown_url the editor actually persists", () => {

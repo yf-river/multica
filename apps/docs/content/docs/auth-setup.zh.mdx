@@ -1,15 +1,11 @@
 ---
 title: 登录与注册
-description: 配置邮箱验证码、Google 登录和新用户注册范围。
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Multica 默认使用邮箱验证码登录，也可以增加 Google OAuth。已经存在的用户始终可以再次登录；注册限制只决定是否允许创建新账号。
 
-## 邮箱验证码
 
-用户输入邮箱后，Multica 会发送一个 6 位验证码。验证码 10 分钟内有效，验证成功后浏览器获得登录 cookie。
 
 邮件可以通过 Resend 或 SMTP 发送。两者同时配置时，`SMTP_HOST` 优先。
 
@@ -57,23 +53,17 @@ SMTP_EHLO_NAME=mail.example.com
 
 ### 无邮件服务时的行为
 
-服务器仍可启动，但验证码和邀请链接只会写入日志，不会发送邮件。这适合本地开发，不适合生产环境。
 
 启动日志会说明当前使用的是 `Resend API`、`SMTP relay` 还是 `DEV mode`。
 
-## 本地固定验证码
 
-本地自动化测试可以设置固定验证码：
 
 ```dotenv
 APP_ENV=development
-MULTICA_DEV_VERIFICATION_CODE=888888
 ```
 
-验证码必须是 6 位数字。`APP_ENV=production` 时固定验证码会被忽略。
 
 <Callout type="warning">
-不要在公网实例中启用固定验证码。生产环境的组合是 `APP_ENV=production` 加空的 `MULTICA_DEV_VERIFICATION_CODE`。
 </Callout>
 
 ## Google 登录

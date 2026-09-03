@@ -2,12 +2,10 @@
  * MUL-5208 — a link that points back at this deployment is an in-app
  * destination, not an external one.
  *
- * Chat and comments render agent-written content full of absolute URLs. When one
- * of them addresses this app, `window.open` sends it to the system browser on
- * desktop (Electron routes every renderer-opened window through
- * `shell.openExternal`), which is how "click an issue link, get a browser
- * window" happens. The real `openLink` is exercised here — mocking it would test
- * nothing about the routing decision.
+ * Chat and comments render agent-written content full of absolute URLs. A link
+ * that addresses this app must use in-app navigation instead of opening a
+ * second browser tab. The real `openLink` is exercised here — mocking it would
+ * test nothing about the routing decision.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -31,8 +29,8 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
 }));
 
 vi.mock("../navigation", () => ({
-  useNavigation: () => ({ push: vi.fn(), openInNewTab: vi.fn() }),
-  useOptionalNavigation: () => ({ push: vi.fn(), openInNewTab: vi.fn() }),
+  useNavigation: () => ({ push: vi.fn() }),
+  useOptionalNavigation: () => ({ push: vi.fn() }),
   resolveClickIntent: () => "push",
   useAppOrigin: () => APP_ORIGIN,
   AppLink: ({ href, children }: { href: string; children: React.ReactNode }) => (

@@ -34,7 +34,6 @@ Multica는 사용 중인 AI 코딩 도구를 대체하지 않습니다. 런타�
 | Kimi CLI | `kimi` | ✓ | ✓ | `.kimi/skills/` |
 | Kiro CLI | `kiro-cli` | ✓ | ✓ | `.kiro/skills/` |
 | MiniMax Code | `mcode` | — | ✓ | `.minimax/skills/` |
-| OpenClaw | `openclaw` | ✓ | ✓ | `skills/` |
 | OpenCode | `opencode` | ✓ | ✓ | `.opencode/skills/` |
 | Pi | `pi` | ✓ | — | `.pi/skills/` |
 | Oh-My-Pi | `omp` | ✓ | — | `.omp/skills/` |
@@ -84,11 +83,10 @@ MCP server의 명령, 인수, 환경 변수는 에이전트 설정과 함께 서
 
 저장소에 원래 있던 스킬은 덮어쓰지 않습니다. 이름이 충돌하면 Multica가 주입하는 복사본에 다른 디렉터리 이름을 사용하며 실행이 끝나면 자신이 만든 파일만 정리합니다.
 
-Codex, Hermes, OpenClaw의 처리는 조금 다릅니다.
+Codex와 Hermes의 처리는 조금 다릅니다.
 
 - Codex는 실행별 `CODEX_HOME`을 사용하며 시스템 수준 Codex 디렉터리에 스킬을 기록하지 않습니다.
 - Hermes는 실행별 `HERMES_HOME`을 사용합니다. 기존 로컬 설정은 계속 읽을 수 있지만 연결된 스킬과 세션 데이터는 작업별로 격리됩니다. 이 격리는 에이전트에 스킬이 연결된 경우에만 사용되며, 연결된 스킬이 없는 작업은 컴퓨터의 기존 Hermes 홈 디렉터리를 사용합니다.
-- OpenClaw는 현재 작업 작업 디렉터리의 `skills/`를 사용하고 실행별 설정을 통해 이 디렉터리를 워크스페이스로 지정합니다.
 
 스킬 생성 및 연결 방법은 [스킬](/skills)을 참고하세요.
 

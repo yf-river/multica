@@ -145,27 +145,14 @@ func TestEventFieldsPassedThrough(t *testing.T) {
 	}
 }
 
-func TestPublishPersistsBeforeDelivery(t *testing.T) {
+func TestPublishRecoveredDeliversWithoutPersistence(t *testing.T) {
 	bus := New()
-	var order []string
-	bus.SetPersister(func(Event) { order = append(order, "persist") })
-	bus.Subscribe("test:persist", func(Event) { order = append(order, "deliver") })
-
-	bus.Publish(Event{Type: "test:persist"})
-
-	if want := []string{"persist", "deliver"}; len(order) != len(want) || order[0] != want[0] || order[1] != want[1] {
-		t.Fatalf("event order = %v, want %v", order, want)
-	}
-}
-
-func TestPublishRecoveredDoesNotPersist(t *testing.T) {
-	bus := New()
-	var persisted int
-	bus.SetPersister(func(Event) { persisted++ })
+	called := 0
+	bus.Subscribe("test:recovered", func(Event) { called++ })
 
 	bus.PublishRecovered(Event{Type: "test:recovered"})
 
-	if persisted != 0 {
-		t.Fatalf("recovered event persisted %d times", persisted)
+	if called != 1 {
+		t.Fatalf("recovered event delivered %d times, want 1", called)
 	}
 }

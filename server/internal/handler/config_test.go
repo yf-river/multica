@@ -443,12 +443,6 @@ func TestGetConfigExposesFrontendFeatureFlags(t *testing.T) {
 			t.Fatalf("retired Plugin sub-flag %q must not be published", retired)
 		}
 	}
-	if !cfg.FeatureFlags["agents_skill_toggles"] {
-		t.Fatalf("agents_skill_toggles: want true for installed v0.4.0 clients, got false")
-	}
-	if !cfg.FeatureFlags["settings_resource_labels"] {
-		t.Fatalf("settings_resource_labels: want true for installed clients, got false")
-	}
 	// Deliberately unpublished: pre-v0.4.33 clients gate their "New status"
 	// button on this key and fail closed, which is how a client that predates
 	// the v0.4.31 rendering fixes is kept from creating one. See

@@ -79,7 +79,6 @@ vi.mock("../navigation", () => ({
     pathname: "/acme/issues",
     searchParams: new URLSearchParams(),
     hash: "",
-    openInNewTab: vi.fn(),
     getShareableUrl: (p: string) => `https://app.example${p}`,
   }),
 }));
@@ -859,14 +858,13 @@ describe("Attachment — file-card dispatch", () => {
   });
 });
 
-// MUL-3192 — Desktop quick-create: site-relative `/api/attachments/<id>/
-// download` and `/uploads/<key>` URLs only resolve in environments where the
-// document origin proxies them to the API host (web via Next.js rewrites).
-// In Electron desktop the renderer origin is `file://`, so the same path
-// can't load. The Attachment renderer runs the picked URL through an
+// MUL-3192 — site-relative `/api/attachments/<id>/download` and
+// `/uploads/<key>` URLs only resolve in environments where the document origin
+// proxies them to the API host (web via Next.js rewrites). Split-origin clients
+// cannot load the same path. The Attachment renderer runs the picked URL through an
 // absolutize pass that prefixes `apiBaseUrl` when one is configured.
 describe("Attachment — absolutize site-relative URLs (MUL-3192)", () => {
-  it("prefixes site-relative /api/attachments/<id>/download with apiBaseUrl in Desktop-like environments", () => {
+  it("prefixes site-relative /api/attachments/<id>/download with apiBaseUrl on split-origin clients", () => {
     getBaseUrlMock.mockReturnValue("https://api.example.test");
     renderWithQuery(
       <Attachment

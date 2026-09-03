@@ -1,37 +1,18 @@
-// Where the app thinks it is — the one field a freeze report is useless
-// without.
-//
-// Desktop runs a memory router, so `location.pathname` in the renderer is the
-// packaged `index.html` file path and can never identify the visible page. The
-// desktop shell publishes its bucketed route here; the freeze watchdog reads it
-// so an in-thread freeze event carries a real route. Web sets nothing and keeps
-// using `location.pathname`.
+// Route templates keep workspace slugs and resource ids out of telemetry while
+// preserving a useful screen-level grouping for diagnostics.
 
-let route: string | null = null;
+let currentRoute: string | null = null;
 
-/** Longest route we keep; these are our own short templates. */
-const MAX_ROUTE_LENGTH = 256;
-
-/**
- * Publish the current app route, already bucketed to a template — see
- * `bucketDiagnosticPath`. Pass null when leaving a known route.
- */
 export function setDiagnosticRoute(next: string | null): void {
-  if (typeof next !== "string") {
-    route = null;
-    return;
-  }
-  const trimmed = next.trim();
-  route = trimmed ? trimmed.slice(0, MAX_ROUTE_LENGTH) : null;
+  currentRoute = typeof next === "string" && next.trim() ? next.trim().slice(0, 256) : null;
 }
 
 export function getDiagnosticRoute(): string | null {
-  return route;
+  return currentRoute;
 }
 
-/** Test seam: drop state so cases don't leak into each other. */
 export function resetDiagnosticContext(): void {
-  route = null;
+  currentRoute = null;
 }
 
 // The known route shapes, mirroring `packages/core/paths/paths.ts` (the single

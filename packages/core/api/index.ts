@@ -9,7 +9,6 @@ export {
 } from "./client";
 export type {
   ApiClientOptions,
-  ClientRuntimeSnapshot,
   ClientUsageRequest,
 } from "./client";
 export { parseWithFallback, setSchemaLogger } from "./schema";

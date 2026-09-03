@@ -214,10 +214,17 @@ func (h *Handler) CreateLifeChronicleEntry(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	event, err := recordLifeChangedTx(r.Context(), qtx, scope, "member", scope.userID,
+		"chronicle", uuidToString(entry.ID), "created", map[string]any{"period_kind": entry.PeriodKind})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record chronicle event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit chronicle entry")
 		return
 	}
+	h.publishLifeEvents(event)
 	response, err := h.lifeChronicleToResponse(r, entry)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load chronicle entry")
@@ -270,10 +277,17 @@ func (h *Handler) UpdateLifeChronicleLaterUnderstanding(w http.ResponseWriter, r
 		return
 	}
 	entry.Revision = revision
+	event, err := recordLifeChangedTx(r.Context(), q, scope, "member", scope.userID,
+		"chronicle", uuidToString(entry.ID), "later_understanding_updated", map[string]any{"revision": revision})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record chronicle event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "failed to commit chronicle revision")
 		return
 	}
+	h.publishLifeEvents(event)
 	response, err := h.lifeChronicleToResponse(r, entry)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load chronicle entry")

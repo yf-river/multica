@@ -1,8 +1,9 @@
 CREATE TABLE domain_event_outbox (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    idempotency_key text NOT NULL DEFAULT gen_random_uuid()::text,
     event_type text NOT NULL,
     stream_key text,
-    workspace_id uuid REFERENCES workspace(id) ON DELETE CASCADE,
+    workspace_id uuid,
     actor_type text,
     actor_id text,
     task_id text,
@@ -18,14 +19,13 @@ CREATE TABLE domain_event_outbox (
     dead_letter_reason text,
     created_at timestamptz NOT NULL DEFAULT now(),
     sequence_no bigint GENERATED ALWAYS AS IDENTITY,
-    CHECK (processed_at IS NULL OR dead_lettered_at IS NULL)
+    CHECK (processed_at IS NULL OR dead_lettered_at IS NULL),
+    CHECK (length(btrim(idempotency_key)) > 0)
 );
-CREATE INDEX domain_event_outbox_pending_idx ON domain_event_outbox (available_at, sequence_no)
-  WHERE processed_at IS NULL AND dead_lettered_at IS NULL;
-CREATE INDEX domain_event_outbox_stream_idx ON domain_event_outbox (stream_key, sequence_no)
-  WHERE processed_at IS NULL AND dead_lettered_at IS NULL AND stream_key IS NOT NULL;
+
 CREATE TABLE domain_event_delivery (
-    event_id uuid NOT NULL REFERENCES domain_event_outbox(id) ON DELETE CASCADE,
+    event_id uuid NOT NULL,
     consumer text NOT NULL,
+    delivered_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (event_id, consumer)
 );

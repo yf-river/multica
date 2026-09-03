@@ -5,10 +5,10 @@ import (
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // noteRuntimeUnusable records, on the issue itself, that a trigger was refused
@@ -27,7 +27,18 @@ func (h *Handler) noteRuntimeUnusable(ctx context.Context, issue db.Issue, agent
 	content := service.RuntimeUnusableNotice(agent.Name, verdict)
 	// author_type='system', author_id=zero UUID — same shape as the sub-issue
 	// completion notice; clients branch on author_type, not the UUID value.
-	created, err := h.Queries.CreateComment(ctx, db.CreateCommentParams{
+	if h.TxStarter == nil {
+		slog.Warn("runtime unusable notice: transaction starter unavailable", "issue_id", uuidToString(issue.ID))
+		return
+	}
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		slog.Warn("runtime unusable notice: begin transaction failed", "error", err, "issue_id", uuidToString(issue.ID))
+		return
+	}
+	defer tx.Rollback(ctx)
+	qtx := h.Queries.WithTx(tx)
+	created, err := qtx.CreateComment(ctx, db.CreateCommentParams{
 		ID:          dbid.NewV7(),
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
@@ -45,12 +56,16 @@ func (h *Handler) noteRuntimeUnusable(ctx context.Context, issue db.Issue, agent
 		return
 	}
 	comment := created.Comment()
-	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), "system", "", map[string]any{
-		"comment":             commentToResponse(comment, nil, nil),
-		"issue_title":         issue.Title,
-		"issue_assignee_type": textToPtr(issue.AssigneeType),
-		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),
-		"issue_status":        issue.Status,
-		"issue_revision":      created.IssueRevision,
-	})
+	commentResp := commentToResponse(comment, nil, nil)
+	commentResp.IssueRevision = created.IssueRevision
+	event, err := eventoutbox.Enqueue(ctx, qtx, buildCommentCreatedEvent(issue, commentResp, "system", ""))
+	if err != nil {
+		slog.Warn("runtime unusable notice: enqueue event failed", "error", err, "issue_id", uuidToString(issue.ID))
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.Warn("runtime unusable notice: commit transaction failed", "error", err, "issue_id", uuidToString(issue.ID))
+		return
+	}
+	h.publishEvent(event)
 }

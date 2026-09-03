@@ -1,5 +1,5 @@
 /**
- * Semantic target resolver for desktop tabs.
+ * Semantic target resolver for workspace navigation.
  *
  * A tab points at a URL, but what a tab *is* — a collection page, a specific
  * resource, a container with a selected item, a creation flow, or something

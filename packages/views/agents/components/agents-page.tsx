@@ -235,15 +235,6 @@ import { isAccessChangeReady } from "@multica/core/agents";
 import { AgentBatchToolbar } from "./agent-batch-toolbar";
 export { isAccessChangeReady };
 
-export interface AgentsPageProps {
-  /** Desktop-only daemon wiring, currently unused by the list (kept for
-   *  platform-layer compatibility; the runtime filter lists runtimes by
-   *  name rather than grouped machines). */
-  localDaemonId?: string | null;
-  localMachineName?: string | null;
-  hasLocalMachine?: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // Page header
 // ---------------------------------------------------------------------------
@@ -766,7 +757,7 @@ function LoadingSkeleton() {
 // Page
 // ---------------------------------------------------------------------------
 
-export function AgentsPage(_props: AgentsPageProps = {}) {
+export function AgentsPage() {
   const { t } = useT("agents");
   const locale = useLocale();
   const wsId = useWorkspaceId();
@@ -1107,7 +1098,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                       className={`h-16 cursor-pointer ${
                         selectedIds.has(row.agent.id) ? "bg-accent/30" : ""
                       }`}
-                      {...rowLink(paths.agentDetail(row.agent.id), row.agent.name)}
+                      {...rowLink(paths.agentDetail(row.agent.id))}
                     >
                       <CheckboxCell
                         checked={selectedIds.has(row.agent.id)}

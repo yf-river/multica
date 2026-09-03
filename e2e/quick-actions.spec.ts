@@ -28,7 +28,7 @@ test("renders assistant quick actions and sends the hidden prompt", async ({
     api.setWorkspaceSlug(workspace.slug);
 
     const user = await db.query<{ id: string }>(
-      `SELECT id::text FROM "user" WHERE email = $1 LIMIT 1`,
+      `SELECT id::text FROM "user" WHERE account = $1 LIMIT 1`,
       [api.getEmail()],
     );
     const userId = user.rows[0]?.id;

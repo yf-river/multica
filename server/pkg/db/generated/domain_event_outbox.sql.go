@@ -13,22 +13,34 @@ import (
 
 const claimDomainEvents = `-- name: ClaimDomainEvents :many
 WITH picked AS (
-  SELECT candidate.id FROM domain_event_outbox candidate
-  WHERE candidate.processed_at IS NULL AND candidate.dead_lettered_at IS NULL
-    AND candidate.available_at <= now()
-    AND (candidate.lease_until IS NULL OR candidate.lease_until < now())
-    AND candidate.event_type = ANY($3::text[])
-    AND (candidate.stream_key IS NULL OR NOT EXISTS (
-      SELECT 1 FROM domain_event_outbox earlier
-      WHERE earlier.stream_key = candidate.stream_key AND earlier.sequence_no < candidate.sequence_no
-        AND earlier.processed_at IS NULL AND earlier.dead_lettered_at IS NULL
-    ))
-  ORDER BY candidate.available_at, candidate.sequence_no
-  LIMIT $4 FOR UPDATE SKIP LOCKED
+    SELECT candidate.id
+    FROM domain_event_outbox AS candidate
+    WHERE candidate.processed_at IS NULL
+      AND candidate.dead_lettered_at IS NULL
+      AND candidate.available_at <= now()
+      AND (candidate.lease_until IS NULL OR candidate.lease_until < now())
+      AND candidate.event_type = ANY($3::text[])
+      AND (
+          candidate.stream_key IS NULL
+          OR NOT EXISTS (
+              SELECT 1
+              FROM domain_event_outbox AS earlier
+              WHERE earlier.processed_at IS NULL
+                AND earlier.dead_lettered_at IS NULL
+                AND earlier.stream_key = candidate.stream_key
+                AND earlier.sequence_no < candidate.sequence_no
+          )
+      )
+    ORDER BY candidate.available_at, candidate.sequence_no
+    LIMIT $4
+    FOR UPDATE SKIP LOCKED
 )
-UPDATE domain_event_outbox event
-SET lease_owner = $1, lease_until = now() + $2::interval
-FROM picked WHERE event.id = picked.id RETURNING event.id, event.event_type, event.stream_key, event.workspace_id, event.actor_type, event.actor_id, event.task_id, event.chat_session_id, event.payload, event.attempts, event.available_at, event.lease_owner, event.lease_until, event.last_error, event.processed_at, event.dead_lettered_at, event.dead_letter_reason, event.created_at, event.sequence_no
+UPDATE domain_event_outbox AS event
+SET lease_owner = $1,
+    lease_until = now() + $2::interval
+FROM picked
+WHERE event.id = picked.id
+RETURNING event.id, event.idempotency_key, event.event_type, event.stream_key, event.workspace_id, event.actor_type, event.actor_id, event.task_id, event.chat_session_id, event.payload, event.attempts, event.available_at, event.lease_owner, event.lease_until, event.last_error, event.processed_at, event.dead_lettered_at, event.dead_letter_reason, event.created_at, event.sequence_no
 `
 
 type ClaimDomainEventsParams struct {
@@ -54,6 +66,7 @@ func (q *Queries) ClaimDomainEvents(ctx context.Context, arg ClaimDomainEventsPa
 		var i DomainEventOutbox
 		if err := rows.Scan(
 			&i.ID,
+			&i.IdempotencyKey,
 			&i.EventType,
 			&i.StreamKey,
 			&i.WorkspaceID,
@@ -84,8 +97,14 @@ func (q *Queries) ClaimDomainEvents(ctx context.Context, arg ClaimDomainEventsPa
 }
 
 const completeDomainEvent = `-- name: CompleteDomainEvent :execrows
-UPDATE domain_event_outbox SET processed_at = now(), lease_owner = NULL, lease_until = NULL, last_error = NULL
-WHERE id = $1 AND lease_owner = $2 AND dead_lettered_at IS NULL
+UPDATE domain_event_outbox
+SET processed_at = now(),
+    lease_owner = NULL,
+    lease_until = NULL,
+    last_error = NULL
+WHERE id = $1
+  AND lease_owner = $2
+  AND dead_lettered_at IS NULL
 `
 
 type CompleteDomainEventParams struct {
@@ -102,24 +121,40 @@ func (q *Queries) CompleteDomainEvent(ctx context.Context, arg CompleteDomainEve
 }
 
 const createDomainEvent = `-- name: CreateDomainEvent :one
-INSERT INTO domain_event_outbox (event_type, stream_key, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, event_type, stream_key, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload, attempts, available_at, lease_owner, lease_until, last_error, processed_at, dead_lettered_at, dead_letter_reason, created_at, sequence_no
+INSERT INTO domain_event_outbox (
+    idempotency_key, event_type, stream_key, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8,
+    $9
+)
+ON CONFLICT (idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
+WHERE domain_event_outbox.event_type = EXCLUDED.event_type
+  AND domain_event_outbox.stream_key IS NOT DISTINCT FROM EXCLUDED.stream_key
+  AND domain_event_outbox.workspace_id IS NOT DISTINCT FROM EXCLUDED.workspace_id
+  AND domain_event_outbox.actor_type IS NOT DISTINCT FROM EXCLUDED.actor_type
+  AND domain_event_outbox.actor_id IS NOT DISTINCT FROM EXCLUDED.actor_id
+  AND domain_event_outbox.task_id IS NOT DISTINCT FROM EXCLUDED.task_id
+  AND domain_event_outbox.chat_session_id IS NOT DISTINCT FROM EXCLUDED.chat_session_id
+  AND domain_event_outbox.payload IS NOT DISTINCT FROM EXCLUDED.payload
+RETURNING id, idempotency_key, event_type, stream_key, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload, attempts, available_at, lease_owner, lease_until, last_error, processed_at, dead_lettered_at, dead_letter_reason, created_at, sequence_no
 `
 
 type CreateDomainEventParams struct {
-	EventType     string      `json:"event_type"`
-	StreamKey     pgtype.Text `json:"stream_key"`
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-	ActorType     pgtype.Text `json:"actor_type"`
-	ActorID       pgtype.Text `json:"actor_id"`
-	TaskID        pgtype.Text `json:"task_id"`
-	ChatSessionID pgtype.Text `json:"chat_session_id"`
-	Payload       []byte      `json:"payload"`
+	IdempotencyKey string      `json:"idempotency_key"`
+	EventType      string      `json:"event_type"`
+	StreamKey      pgtype.Text `json:"stream_key"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	ActorType      pgtype.Text `json:"actor_type"`
+	ActorID        pgtype.Text `json:"actor_id"`
+	TaskID         pgtype.Text `json:"task_id"`
+	ChatSessionID  pgtype.Text `json:"chat_session_id"`
+	Payload        []byte      `json:"payload"`
 }
 
 func (q *Queries) CreateDomainEvent(ctx context.Context, arg CreateDomainEventParams) (DomainEventOutbox, error) {
 	row := q.db.QueryRow(ctx, createDomainEvent,
+		arg.IdempotencyKey,
 		arg.EventType,
 		arg.StreamKey,
 		arg.WorkspaceID,
@@ -132,6 +167,7 @@ func (q *Queries) CreateDomainEvent(ctx context.Context, arg CreateDomainEventPa
 	var i DomainEventOutbox
 	err := row.Scan(
 		&i.ID,
+		&i.IdempotencyKey,
 		&i.EventType,
 		&i.StreamKey,
 		&i.WorkspaceID,
@@ -155,9 +191,17 @@ func (q *Queries) CreateDomainEvent(ctx context.Context, arg CreateDomainEventPa
 }
 
 const deadLetterDomainEvent = `-- name: DeadLetterDomainEvent :execrows
-UPDATE domain_event_outbox SET attempts = attempts + 1, dead_lettered_at = now(), dead_letter_reason = $1,
-  lease_owner = NULL, lease_until = NULL, last_error = $1
-WHERE id = $2 AND lease_owner = $3 AND processed_at IS NULL AND dead_lettered_at IS NULL
+UPDATE domain_event_outbox
+SET attempts = attempts + 1,
+    dead_lettered_at = now(),
+    dead_letter_reason = $1,
+    lease_owner = NULL,
+    lease_until = NULL,
+    last_error = $1
+WHERE id = $2
+  AND lease_owner = $3
+  AND processed_at IS NULL
+  AND dead_lettered_at IS NULL
 `
 
 type DeadLetterDomainEventParams struct {
@@ -175,11 +219,14 @@ func (q *Queries) DeadLetterDomainEvent(ctx context.Context, arg DeadLetterDomai
 }
 
 const deleteExpiredDomainEvents = `-- name: DeleteExpiredDomainEvents :execrows
-DELETE FROM domain_event_outbox event WHERE event.id IN (
-  SELECT candidate.id FROM domain_event_outbox candidate
-  WHERE (candidate.processed_at IS NOT NULL AND candidate.processed_at < $1)
-     OR (candidate.dead_lettered_at IS NOT NULL AND candidate.dead_lettered_at < $2)
-  ORDER BY COALESCE(candidate.processed_at, candidate.dead_lettered_at), candidate.sequence_no LIMIT $3
+DELETE FROM domain_event_outbox AS event
+WHERE event.id IN (
+    SELECT candidate.id
+    FROM domain_event_outbox AS candidate
+    WHERE (candidate.processed_at IS NOT NULL AND candidate.processed_at < $1)
+       OR (candidate.dead_lettered_at IS NOT NULL AND candidate.dead_lettered_at < $2)
+    ORDER BY COALESCE(candidate.processed_at, candidate.dead_lettered_at), candidate.sequence_no
+    LIMIT $3
 )
 `
 
@@ -197,8 +244,62 @@ func (q *Queries) DeleteExpiredDomainEvents(ctx context.Context, arg DeleteExpir
 	return result.RowsAffected(), nil
 }
 
+const deleteOrphanedDomainEventDeliveries = `-- name: DeleteOrphanedDomainEventDeliveries :execrows
+DELETE FROM domain_event_delivery AS delivery
+WHERE NOT EXISTS (
+    SELECT 1 FROM domain_event_outbox AS event
+    WHERE event.id = delivery.event_id
+)
+`
+
+func (q *Queries) DeleteOrphanedDomainEventDeliveries(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOrphanedDomainEventDeliveries)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getDomainEventByIdempotencyKey = `-- name: GetDomainEventByIdempotencyKey :one
+SELECT id, idempotency_key, event_type, stream_key, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload, attempts, available_at, lease_owner, lease_until, last_error, processed_at, dead_lettered_at, dead_letter_reason, created_at, sequence_no FROM domain_event_outbox
+WHERE idempotency_key = $1
+`
+
+func (q *Queries) GetDomainEventByIdempotencyKey(ctx context.Context, idempotencyKey string) (DomainEventOutbox, error) {
+	row := q.db.QueryRow(ctx, getDomainEventByIdempotencyKey, idempotencyKey)
+	var i DomainEventOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.IdempotencyKey,
+		&i.EventType,
+		&i.StreamKey,
+		&i.WorkspaceID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.TaskID,
+		&i.ChatSessionID,
+		&i.Payload,
+		&i.Attempts,
+		&i.AvailableAt,
+		&i.LeaseOwner,
+		&i.LeaseUntil,
+		&i.LastError,
+		&i.ProcessedAt,
+		&i.DeadLetteredAt,
+		&i.DeadLetterReason,
+		&i.CreatedAt,
+		&i.SequenceNo,
+	)
+	return i, err
+}
+
 const hasDomainEventDelivery = `-- name: HasDomainEventDelivery :one
-SELECT EXISTS (SELECT 1 FROM domain_event_delivery WHERE event_id = $1 AND consumer = $2)
+SELECT EXISTS (
+    SELECT 1
+    FROM domain_event_delivery
+    WHERE event_id = $1
+      AND consumer = $2
+)
 `
 
 type HasDomainEventDeliveryParams struct {
@@ -214,7 +315,9 @@ func (q *Queries) HasDomainEventDelivery(ctx context.Context, arg HasDomainEvent
 }
 
 const recordDomainEventDelivery = `-- name: RecordDomainEventDelivery :exec
-INSERT INTO domain_event_delivery (event_id, consumer) VALUES ($1, $2) ON CONFLICT DO NOTHING
+INSERT INTO domain_event_delivery (event_id, consumer)
+VALUES ($1, $2)
+ON CONFLICT (event_id, consumer) DO NOTHING
 `
 
 type RecordDomainEventDeliveryParams struct {
@@ -227,10 +330,39 @@ func (q *Queries) RecordDomainEventDelivery(ctx context.Context, arg RecordDomai
 	return err
 }
 
+const renewDomainEventLease = `-- name: RenewDomainEventLease :execrows
+UPDATE domain_event_outbox
+SET lease_until = now() + $1::interval
+WHERE id = $2
+  AND lease_owner = $3
+  AND processed_at IS NULL
+  AND dead_lettered_at IS NULL
+`
+
+type RenewDomainEventLeaseParams struct {
+	LeaseDuration pgtype.Interval `json:"lease_duration"`
+	ID            pgtype.UUID     `json:"id"`
+	LeaseOwner    pgtype.Text     `json:"lease_owner"`
+}
+
+func (q *Queries) RenewDomainEventLease(ctx context.Context, arg RenewDomainEventLeaseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, renewDomainEventLease, arg.LeaseDuration, arg.ID, arg.LeaseOwner)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const retryDomainEvent = `-- name: RetryDomainEvent :execrows
-UPDATE domain_event_outbox SET attempts = attempts + 1, available_at = now() + $1::interval,
-  lease_owner = NULL, lease_until = NULL, last_error = $2
-WHERE id = $3 AND lease_owner = $4 AND dead_lettered_at IS NULL
+UPDATE domain_event_outbox
+SET attempts = attempts + 1,
+    available_at = now() + $1::interval,
+    lease_owner = NULL,
+    lease_until = NULL,
+    last_error = $2
+WHERE id = $3
+  AND lease_owner = $4
+  AND dead_lettered_at IS NULL
 `
 
 type RetryDomainEventParams struct {

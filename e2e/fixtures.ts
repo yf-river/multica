@@ -10,7 +10,7 @@ import pg from "pg";
 // `||` (not `??`) so an empty `NEXT_PUBLIC_API_URL=` in .env still falls
 // back to localhost. dotenv sets unset-vs-empty both as "" — treating them
 // the same matches user intent.
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || `http://localhost:${process.env.PORT || "8080"}`;
+const API_BASE = process.env.E2E_API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || `http://localhost:${process.env.PORT || "8080"}`;
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
 
 interface TestWorkspace {
@@ -49,53 +49,16 @@ export class TestApiClient {
   private token: string | null = null;
   private workspaceSlug: string | null = null;
   private workspaceId: string | null = null;
-  private email: string | null = null;
+  private account: string | null = null;
   private createdIssueIds: string[] = [];
   private seededIssueIds: string[] = [];
 
-  async login(email: string, name: string) {
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      // Keep each E2E login isolated so previous test runs do not trip the
-      // per-email send-code rate limit.
-      await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
-
-      // Step 1: Send verification code
-      const sendRes = await fetch(`${API_BASE}/auth/send-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      if (!sendRes.ok) {
-        throw new Error(`send-code failed: ${sendRes.status}`);
-      }
-
-      // Step 2: Read code from database
-      const result = await client.query(
-        "SELECT code FROM verification_code WHERE email = $1 AND used = FALSE AND expires_at > now() ORDER BY created_at DESC LIMIT 1",
-        [email],
-      );
-      if (result.rows.length === 0) {
-        throw new Error(`No verification code found for ${email}`);
-      }
-
-      const configuredDevCode = process.env.MULTICA_DEV_VERIFICATION_CODE?.trim();
-      const code = configuredDevCode || result.rows[0].code;
-
-      // Step 3: Verify code to get JWT
-      const verifyRes = await fetch(`${API_BASE}/auth/verify-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
-      });
-      if (!verifyRes.ok) {
-        throw new Error(`verify-code failed: ${verifyRes.status}`);
-      }
-      const data = await verifyRes.json();
-
+  async login(account: string, name: string, password = "E2ePass1!") {
+      const res = await fetch(`${API_BASE}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account, password }) });
+      if (!res.ok) throw new Error(`login failed: ${res.status}`);
+      const data = await res.json();
       this.token = data.token;
-      this.email = email;
+      this.account = account;
 
       // Update user name if needed
       if (name && data.user?.name !== name) {
@@ -105,12 +68,7 @@ export class TestApiClient {
         });
       }
 
-      await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
-
       return data;
-    } finally {
-      await client.end();
-    }
   }
 
   async getWorkspaces(): Promise<TestWorkspace[]> {
@@ -158,7 +116,7 @@ export class TestApiClient {
   }
 
   async markUserOnboarded() {
-    if (!this.email) {
+    if (!this.account) {
       throw new Error("Cannot mark E2E user onboarded before login");
     }
 
@@ -172,12 +130,12 @@ export class TestApiClient {
             onboarded_at = COALESCE(onboarded_at, now()),
             onboarding_questionnaire = COALESCE(onboarding_questionnaire, '{}'::jsonb)
               || '{"source":["friends_colleagues"],"source_other":null,"source_skipped":false}'::jsonb
-          WHERE email = $1
+          WHERE account = $1
         `,
-        [this.email],
+        [this.account],
       );
       if (result.rowCount !== 1) {
-        throw new Error(`Failed to mark E2E user onboarded: ${this.email}`);
+        throw new Error(`Failed to mark E2E user onboarded: ${this.account}`);
       }
     } finally {
       await client.end();
@@ -205,7 +163,7 @@ export class TestApiClient {
    */
   async seedTableIssues(rows: TestTableIssueSeed[]): Promise<TestTableIssue[]> {
     if (rows.length === 0) return [];
-    if (!this.workspaceId || !this.email) {
+    if (!this.workspaceId || !this.account) {
       throw new Error("Cannot seed table issues before login and workspace setup");
     }
 
@@ -214,12 +172,12 @@ export class TestApiClient {
     try {
       await client.query("BEGIN");
       const userResult = await client.query<{ id: string }>(
-        `SELECT id FROM "user" WHERE email = $1`,
-        [this.email],
+        `SELECT id FROM "user" WHERE account = $1`,
+        [this.account],
       );
       const creatorId = userResult.rows[0]?.id;
       if (!creatorId) {
-        throw new Error(`Cannot resolve E2E creator for ${this.email}`);
+        throw new Error(`Cannot resolve E2E creator for ${this.account}`);
       }
 
       const counterResult = await client.query<{ issue_counter: number }>(
@@ -346,10 +304,10 @@ export class TestApiClient {
   }
 
   getEmail() {
-    if (!this.email) {
+    if (!this.account) {
       throw new Error("Test API client is not logged in");
     }
-    return this.email;
+    return this.account;
   }
 
   private async authedFetch(path: string, init?: RequestInit) {

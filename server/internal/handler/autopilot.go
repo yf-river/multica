@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/events"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -327,8 +328,7 @@ type CreateAutopilotRequest struct {
 	Title       string  `json:"title"`
 	Description *string `json:"description"`
 	ProjectID   *string `json:"project_id"`
-	// AssigneeType is optional and defaults to "agent" — preserves backward
-	// compatibility with desktop clients shipped before MUL-2429.
+	// AssigneeType is optional and defaults to "agent" for older clients.
 	AssigneeType       *string           `json:"assignee_type"`
 	AssigneeID         string            `json:"assignee_id"`
 	ExecutionMode      string            `json:"execution_mode"`
@@ -765,17 +765,26 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	subs, err := qtx.ListAutopilotSubscribers(r.Context(), autopilot.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load autopilot subscribers")
+		return
+	}
+	resp := autopilotToResponse(autopilot, subs)
+	createdEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
+		protocol.EventAutopilotCreated, autopilot, "member", userID, "created",
+		autopilot.UpdatedAt.Time.UTC().Format("20060102150405.999999999"),
+		map[string]any{"autopilot": resp},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record autopilot event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create autopilot")
 		return
 	}
-	subs, err := h.Queries.ListAutopilotSubscribers(r.Context(), autopilot.ID)
-	if err != nil {
-		subs = nil
-	}
-
-	resp := autopilotToResponse(autopilot, subs)
-	h.publish(protocol.EventAutopilotCreated, workspaceID, "member", userID, map[string]any{"autopilot": resp})
+	h.publishEvent(createdEvent)
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.AutopilotCreated(
 		userID,
 		workspaceID,
@@ -1087,18 +1096,28 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	subs, err := qtx.ListAutopilotSubscribers(r.Context(), autopilot.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load autopilot subscribers")
+		return
+	}
+	resp := autopilotToResponse(autopilot, subs)
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
+		protocol.EventAutopilotUpdated, autopilot, "member", userID, "updated",
+		autopilot.UpdatedAt.Time.UTC().Format("20060102150405.999999999"),
+		map[string]any{"autopilot": resp},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record autopilot event")
+		return
+	}
 
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update autopilot")
 		return
 	}
 
-	subs, err := h.Queries.ListAutopilotSubscribers(r.Context(), autopilot.ID)
-	if err != nil {
-		subs = nil
-	}
-	resp := autopilotToResponse(autopilot, subs)
-	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{"autopilot": resp})
+	h.publishEvent(updatedEvent)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -1216,12 +1235,20 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete autopilot")
 		return
 	}
+	deletedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
+		protocol.EventAutopilotDeleted, ap, "member", userID, "deleted", uuidToString(ap.ID),
+		map[string]any{},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record autopilot event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete autopilot")
 		return
 	}
 
-	h.publish(protocol.EventAutopilotDeleted, workspaceID, "member", userID, map[string]any{"autopilot_id": uuidToString(idUUID)})
+	h.publishEvent(deletedEvent)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1289,19 +1316,38 @@ func (h *Handler) AddAutopilotCollaborator(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if _, err := h.Queries.AddAutopilotCollaborator(r.Context(), db.AddAutopilotCollaboratorParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to grant access")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	collaborator, err := qtx.AddAutopilotCollaborator(r.Context(), db.AddAutopilotCollaboratorParams{
 		AutopilotID: ap.ID,
 		UserType:    "member",
 		UserID:      targetUUID,
 		GrantedBy:   grantedByUUID,
-	}); err != nil {
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to grant access")
+		return
+	}
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
+		protocol.EventAutopilotUpdated, ap, "member", grantedBy, "collaborator_added",
+		uuidToString(targetUUID)+":"+collaborator.CreatedAt.Time.UTC().Format("20060102150405.999999999"),
+		map[string]any{"collaborator": collaboratorToEntry(collaborator)},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record autopilot event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to grant access")
 		return
 	}
 
-	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", grantedBy, map[string]any{
-		"autopilot_id": uuidToString(ap.ID),
-	})
+	h.publishEvent(updatedEvent)
 	h.writeAutopilotCollaborators(w, r, ap.ID, http.StatusCreated)
 }
 
@@ -1326,7 +1372,14 @@ func (h *Handler) RemoveAutopilotCollaborator(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := h.Queries.DeleteAutopilotCollaborator(r.Context(), db.DeleteAutopilotCollaboratorParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to revoke access")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.DeleteAutopilotCollaborator(r.Context(), db.DeleteAutopilotCollaboratorParams{
 		AutopilotID: ap.ID,
 		UserType:    "member",
 		UserID:      targetUUID,
@@ -1336,9 +1389,19 @@ func (h *Handler) RemoveAutopilotCollaborator(w http.ResponseWriter, r *http.Req
 	}
 
 	actor := requestUserID(r)
-	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", actor, map[string]any{
-		"autopilot_id": uuidToString(ap.ID),
-	})
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
+		protocol.EventAutopilotUpdated, ap, "member", actor, "collaborator_removed", uuidToString(targetUUID),
+		map[string]any{"collaborator_user_id": uuidToString(targetUUID)},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record autopilot event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to revoke access")
+		return
+	}
+	h.publishEvent(updatedEvent)
 	h.writeAutopilotCollaborators(w, r, ap.ID, http.StatusOK)
 }
 
@@ -1464,16 +1527,13 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusInternalServerError, "failed to encode event_filters")
 			return
 		}
-		trigger, err := h.createWebhookTriggerWithMintedToken(r, ap, ptrToText(req.Label), provider, eventFiltersBytes, publisherID)
+		trigger, updatedEvent, err := h.createWebhookTriggerWithMintedToken(r, ap, ptrToText(req.Label), provider, eventFiltersBytes, publisherID, userID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create trigger")
 			return
 		}
 		resp := h.triggerToResponse(trigger)
-		h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
-			"autopilot_id": uuidToString(ap.ID),
-			"trigger":      resp,
-		})
+		h.publishEvent(updatedEvent)
 		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
@@ -1510,16 +1570,21 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to create trigger")
 		return
 	}
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
+		protocol.EventAutopilotUpdated, ap, "member", userID, "trigger_created", uuidToString(trigger.ID),
+		map[string]any{"trigger": h.triggerToResponse(trigger)},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record autopilot event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create trigger")
 		return
 	}
 
 	resp := h.triggerToResponse(trigger)
-	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
-		"autopilot_id": uuidToString(ap.ID),
-		"trigger":      resp,
-	})
+	h.publishEvent(updatedEvent)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -1543,16 +1608,17 @@ func (h *Handler) createWebhookTriggerWithMintedToken(
 	provider string,
 	eventFilters []byte,
 	publisherID pgtype.UUID,
-) (db.AutopilotTrigger, error) {
+	actorID string,
+) (db.AutopilotTrigger, events.Event, error) {
 	ctx := r.Context()
 	for attempt := 0; attempt < 3; attempt++ {
 		token, err := generateWebhookToken()
 		if err != nil {
-			return db.AutopilotTrigger{}, err
+			return db.AutopilotTrigger{}, events.Event{}, err
 		}
 		tx, err := h.TxStarter.Begin(ctx)
 		if err != nil {
-			return db.AutopilotTrigger{}, err
+			return db.AutopilotTrigger{}, events.Event{}, err
 		}
 		qtx := h.Queries.WithTx(tx)
 		trigger, err := qtx.CreateAutopilotTrigger(ctx, db.CreateAutopilotTriggerParams{
@@ -1573,18 +1639,26 @@ func (h *Handler) createWebhookTriggerWithMintedToken(
 			if isUniqueViolation(err) {
 				continue // token collision: retry with a fresh token
 			}
-			return db.AutopilotTrigger{}, err
+			return db.AutopilotTrigger{}, events.Event{}, err
 		}
 		if err := h.recordAutopilotRuleVersion(ctx, qtx, ap, "member", publisherID); err != nil {
 			tx.Rollback(ctx)
-			return db.AutopilotTrigger{}, err
+			return db.AutopilotTrigger{}, events.Event{}, err
+		}
+		updatedEvent, err := service.RecordDurableEventTx(ctx, qtx, buildAutopilotDomainEvent(
+			protocol.EventAutopilotUpdated, ap, "member", actorID, "trigger_created", uuidToString(trigger.ID),
+			map[string]any{"trigger": h.triggerToResponse(trigger)},
+		))
+		if err != nil {
+			tx.Rollback(ctx)
+			return db.AutopilotTrigger{}, events.Event{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return db.AutopilotTrigger{}, err
+			return db.AutopilotTrigger{}, events.Event{}, err
 		}
-		return trigger, nil
+		return trigger, updatedEvent, nil
 	}
-	return db.AutopilotTrigger{}, fmt.Errorf("could not mint unique webhook token")
+	return db.AutopilotTrigger{}, events.Event{}, fmt.Errorf("could not mint unique webhook token")
 }
 
 func isAllowedWebhookProvider(p string) bool {
@@ -1852,16 +1926,21 @@ func (h *Handler) UpdateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
+		protocol.EventAutopilotUpdated, ap, "member", userID, "trigger_updated", uuidToString(trigger.ID),
+		map[string]any{"trigger": h.triggerToResponse(trigger)},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record autopilot event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update trigger")
 		return
 	}
 
 	resp := h.triggerToResponse(trigger)
-	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
-		"autopilot_id": uuidToString(ap.ID),
-		"trigger":      resp,
-	})
+	h.publishEvent(updatedEvent)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -1925,15 +2004,20 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to delete trigger")
 		return
 	}
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
+		protocol.EventAutopilotUpdated, ap, "member", userID, "trigger_deleted", uuidToString(triggerUUID),
+		map[string]any{"trigger_id": uuidToString(triggerUUID)},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record autopilot event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete trigger")
 		return
 	}
 
-	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
-		"autopilot_id": uuidToString(autopilotUUID),
-		"trigger_id":   uuidToString(triggerUUID),
-	})
+	h.publishEvent(updatedEvent)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1968,20 +2052,41 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 		return
 	}
 
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	var rotated db.AutopilotTrigger
+	var rotatedEvent events.Event
 	for attempt := 0; attempt < 3; attempt++ {
 		token, terr := generateWebhookToken()
 		if terr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to generate webhook token")
 			return
 		}
-		rotated, err = h.Queries.RotateAutopilotTriggerWebhookToken(r.Context(), db.RotateAutopilotTriggerWebhookTokenParams{
+		tx, txErr := h.TxStarter.Begin(r.Context())
+		if txErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to rotate webhook token")
+			return
+		}
+		qtx := h.Queries.WithTx(tx)
+		rotated, err = qtx.RotateAutopilotTriggerWebhookToken(r.Context(), db.RotateAutopilotTriggerWebhookTokenParams{
 			ID:           triggerUUID,
 			WebhookToken: pgtype.Text{String: token, Valid: true},
 		})
 		if err == nil {
+			rotatedEvent, err = service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
+				protocol.EventAutopilotUpdated, ap, "member", userID, "trigger_token_rotated", uuidToString(rotated.ID),
+				map[string]any{"trigger": h.triggerToResponse(rotated)},
+			))
+		}
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
+		if err == nil {
 			break
 		}
+		_ = tx.Rollback(r.Context())
 		if !isUniqueViolation(err) {
 			writeError(w, http.StatusInternalServerError, "failed to rotate webhook token")
 			return
@@ -1993,11 +2098,7 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 	}
 
 	resp := h.triggerToResponse(rotated)
-	userID, _ := requireUserID(w, r)
-	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
-		"autopilot_id": uuidToString(ap.ID),
-		"trigger":      resp,
-	})
+	h.publishEvent(rotatedEvent)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -2054,21 +2155,40 @@ func (h *Handler) SetAutopilotTriggerSigningSecret(w http.ResponseWriter, r *htt
 	if secret != "" {
 		param.SigningSecret = pgtype.Text{String: secret, Valid: true}
 	}
-	updated, err := h.Queries.SetAutopilotTriggerSigningSecret(r.Context(), param)
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update signing secret")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.SetAutopilotTriggerSigningSecret(r.Context(), param)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update signing secret")
+		return
+	}
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
+		protocol.EventAutopilotUpdated, ap, "member", userID, "trigger_signing_secret_updated", uuidToString(updated.ID),
+		map[string]any{"trigger": h.triggerToResponse(updated)},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record autopilot event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update signing secret")
 		return
 	}
 
 	resp := h.triggerToResponse(updated)
-	userID, _ := requireUserID(w, r)
 	// Publish the trigger update so the UI can refresh the has_signing_secret
 	// badge in real time. The event payload only carries the response shape,
 	// which excludes the secret.
-	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
-		"autopilot_id": uuidToString(ap.ID),
-		"trigger":      resp,
-	})
+	h.publishEvent(updatedEvent)
 	writeJSON(w, http.StatusOK, resp)
 }
 

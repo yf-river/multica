@@ -264,7 +264,6 @@ function ProjectRowActions({
               intentNavigate(
                 wsPaths.projectDetail(project.id),
                 "foreground-tab",
-                project.title,
               )
             }
           >
@@ -391,7 +390,7 @@ function ProjectTableRow({
   return (
     <ListGridRow
       className={`h-11 cursor-pointer ${selected ? "bg-accent/30" : ""}`}
-      {...rowLink(rowHref, project.title)}
+      {...rowLink(rowHref)}
     >
       <CheckboxCell checked={selected} onToggle={onToggleSelect} />
       <ListGridCell className="gap-2">

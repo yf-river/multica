@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -538,7 +539,14 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 	}
 
 	creator, _ := h.parseUserUUIDOrZero(userID)
-	resource, err := h.Queries.CreateProjectResource(r.Context(), db.CreateProjectResourceParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start project resource transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	resource, err := qtx.CreateProjectResource(r.Context(), db.CreateProjectResourceParams{
 		ProjectID:    project.ID,
 		WorkspaceID:  project.WorkspaceID,
 		ResourceType: req.ResourceType,
@@ -555,15 +563,20 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to create project resource")
 		return
 	}
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildProjectResourceDomainEvent(
+		protocol.EventProjectResourceCreated, resource, "member", userID, nil,
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record project resource event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit project resource")
+		return
+	}
 
 	resp := projectResourceToResponse(resource)
-	h.publish(
-		protocol.EventProjectResourceCreated,
-		uuidToString(project.WorkspaceID),
-		"member",
-		userID,
-		map[string]any{"resource": resp, "project_id": uuidToString(project.ID)},
-	)
+	h.publishEvent(event)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -727,7 +740,14 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	updated, err := h.Queries.UpdateProjectResource(r.Context(), db.UpdateProjectResourceParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start project resource transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.UpdateProjectResource(r.Context(), db.UpdateProjectResourceParams{
 		ID:          existing.ID,
 		ResourceRef: nextRef,
 		Label:       nextLabel,
@@ -741,15 +761,20 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to update project resource")
 		return
 	}
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildProjectResourceDomainEvent(
+		protocol.EventProjectResourceUpdated, updated, "member", userID, nil,
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record project resource event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit project resource")
+		return
+	}
 
 	resp := projectResourceToResponse(updated)
-	h.publish(
-		protocol.EventProjectResourceUpdated,
-		uuidToString(project.WorkspaceID),
-		"member",
-		userID,
-		map[string]any{"resource": resp, "project_id": uuidToString(project.ID)},
-	)
+	h.publishEvent(event)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -825,20 +850,29 @@ func (h *Handler) DeleteProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "project resource not found")
 		return
 	}
-	if err := h.Queries.DeleteProjectResource(r.Context(), resource.ID); err != nil {
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start project resource transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.DeleteProjectResource(r.Context(), resource.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete project resource")
 		return
 	}
-	h.publish(
-		protocol.EventProjectResourceDeleted,
-		uuidToString(project.WorkspaceID),
-		"member",
-		userID,
-		map[string]any{
-			"project_id":  uuidToString(project.ID),
-			"resource_id": uuidToString(resource.ID),
-		},
-	)
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildProjectResourceDomainEvent(
+		protocol.EventProjectResourceDeleted, resource, "member", userID, nil,
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record project resource event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit project resource")
+		return
+	}
+	h.publishEvent(event)
 	w.WriteHeader(http.StatusNoContent)
 }
 

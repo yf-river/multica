@@ -24,7 +24,7 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       subheading:
         "Multica は、コーディングエージェントを本物のチームメンバーに変えるオープンソースプラットフォームです。タスクを割り当て、進捗を追い、ノウハウをスキルとして積み上げる。人間と AI エージェントから成るチームを、ひとつの場所で管理できます。",
       cta: "無料トライアルを始める",
-      downloadDesktop: "デスクトップ版をダウンロード",
+      installCli: "CLI をインストール",
       talkToSales: "営業に相談する",
       worksWith: "対応ツール",
       imageAlt: "人間と AI エージェントがタスクを管理する Multica のボード画面",
@@ -118,7 +118,7 @@ export function createJaDict(allowSignup: boolean): LandingDict {
           {
             title: "初回起動時に自動検出",
             description:
-              "Multica は Antigravity、Claude Code、CodeBuddy、CodeArts、Codex、Copilot、Cursor、DeepSeek Harness、DevEco Code、Dim、Grok、Hermes、Kimi、Kiro CLI、MiniMax Code、Oh-My-Pi、OpenClaw、OpenCode、Pi、Qoder、Qoder CN、Qwen Code、QwenPaw、Reasonix、Trae CLI、ZeroClaw という26種類の対応ツールをスキャンし、見つかったものをそれぞれランタイムとして登録します。",
+            "Multica は Antigravity、Claude Code、CodeBuddy、CodeArts、Codex、Copilot、Cursor、DeepSeek Harness、DevEco Code、Dim、Grok、Hermes、Kimi、Kiro CLI、MiniMax Code、Oh-My-Pi、OpenCode、Pi、Qoder、Qoder CN、Qwen Code、QwenPaw、Reasonix、Trae CLI、ZeroClaw という25種類の対応ツールをスキャンし、見つかったものをそれぞれランタイムとして登録します。",
           },
         ],
       },
@@ -139,7 +139,7 @@ export function createJaDict(allowSignup: boolean): LandingDict {
         {
           title: "CLI をインストールしてマシンを接続",
           description:
-            "multica setup を実行すると、OAuth の手順を案内し、デーモンを起動し、26種類の対応コーディングツール(Antigravity、Claude Code、CodeBuddy、CodeArts、Codex、Copilot、Cursor、DeepSeek Harness、DevEco Code、Dim、Grok、Hermes、Kimi、Kiro CLI、MiniMax Code、Oh-My-Pi、OpenClaw、OpenCode、Pi、Qoder、Qoder CN、Qwen Code、QwenPaw、Reasonix、Trae CLI、ZeroClaw)をスキャンします。すでにインストール済みのものは、自動的にランタイムとして登録されます。",
+            "multica setup を実行すると、OAuth の手順を案内し、デーモンを起動し、25種類の対応コーディングツール(Antigravity、Claude Code、CodeBuddy、CodeArts、Codex、Copilot、Cursor、DeepSeek Harness、DevEco Code、Dim、Grok、Hermes、Kimi、Kiro CLI、MiniMax Code、Oh-My-Pi、OpenCode、Pi、Qoder、Qoder CN、Qwen Code、QwenPaw、Reasonix、Trae CLI、ZeroClaw)をスキャンします。すでにインストール済みのものは、自動的にランタイムとして登録されます。",
         },
         {
           title: "最初のエージェントを作成",
@@ -193,7 +193,7 @@ export function createJaDict(allowSignup: boolean): LandingDict {
         {
           question: "Multica はどのコーディングエージェントに対応していますか?",
           answer:
-            "Multica は、Antigravity、Claude Code、CodeBuddy、CodeArts、Codex、Copilot、Cursor、DeepSeek Harness、DevEco Code、Dim、Grok、Hermes、Kimi、Kiro CLI、MiniMax Code、Oh-My-Pi、OpenClaw、OpenCode、Pi、Qoder、Qoder CN、Qwen Code、QwenPaw、Reasonix、Trae CLI、ZeroClaw の26種類のコーディングツールに標準対応しています。デーモンが、すでにインストール済みの CLI を自動検出し、それぞれをランタイムとして登録します。オープンソースなので、独自のバックエンドを追加することもできます。",
+            "Multica は、Antigravity、Claude Code、CodeBuddy、CodeArts、Codex、Copilot、Cursor、DeepSeek Harness、DevEco Code、Dim、Grok、Hermes、Kimi、Kiro CLI、MiniMax Code、Oh-My-Pi、OpenCode、Pi、Qoder、Qoder CN、Qwen Code、QwenPaw、Reasonix、Trae CLI、ZeroClaw の25種類のコーディングツールに標準対応しています。デーモンが、すでにインストール済みの CLI を自動検出し、それぞれをランタイムとして登録します。オープンソースなので、独自のバックエンドを追加することもできます。",
         },
         {
           question: "セルフホストが必須ですか、それともクラウド版もありますか?",
@@ -329,8 +329,6 @@ export function createJaDict(allowSignup: boolean): LandingDict {
             "編集が競合したとき、どちらを選ぶボタンもそれぞれの内容の下に並びます。",
             "Lark の返信が、認証情報の期限切れで止まらなくなりました。",
             "Quick Create の下書きの高さが、内容に合わせて調整されます。",
-            "OpenClaw はタイムアウト時に完全に停止し、プロセスが残りません。",
-            "OpenClaw の設定確認が、成功しているのに失敗と出なくなりました。",
           ],
         },
         {
@@ -436,7 +434,6 @@ export function createJaDict(allowSignup: boolean): LandingDict {
           fixes: [
             "タスクを再実行しても、進行中の作業は中断されません。",
             "同時実行のタスクが、互いの作業スペースを上書きしません。",
-            "OpenClaw、Pi、OpenCode で設定済みのカスタムプロバイダーを使えます。",
             "ワークスペースを切り替えても、リアルタイム更新とメンションが途切れません。",
             "通常の CLI 出力に、Autopilot の Webhook 認証情報が表示されません。",
             "無関係なコーディング作業の完了を待たず、エージェントとチャットできます。",
@@ -712,7 +709,6 @@ export function createJaDict(allowSignup: boolean): LandingDict {
             "WeCom で同じ /issue を二度送っても、重複ではなく正直な返事が返ります。",
             "WeCom のグループで、すべてのスラッシュ コマンドが使えます。",
             "ダイレクト チャットの Codex セッションが、続きから再開します。",
-            "Windows の OpenClaw エージェントが設定を読めるようになりました。",
             "続けて何通も送っても、そのうちの一通が抜け落ちません。",
             "Lark から保存した画像とファイルの名前が正しく残ります。",
             "セルフホストのサーバー アドレスを間違えると、白い画面ではなく明確なエラーが出ます。",
@@ -842,7 +838,6 @@ export function createJaDict(allowSignup: boolean): LandingDict {
             "タスクの「購読解除」が正しく反映されるようになりました。",
             "返信欄で / を入力すると、ワークスペースのクイック アクションも表示されます。",
             "タスクのヘッダーから実行中のログを開いても、すぐに閉じなくなりました。",
-            "OpenClaw の返信が、生成し終わった時点ですぐ届くようになりました。",
             "Slack や Feishu で /new だけを送っても、空のメッセージと空の実行が残りません。",
             "新しく追加したチャット チャネルで、エージェントが添付ファイルの送信を誤って伝えなくなりました。",
             "長いプロジェクト名やラベル名が、ピルを一行いっぱいに広げなくなりました。",
@@ -969,7 +964,6 @@ export function createJaDict(allowSignup: boolean): LandingDict {
             "メンバーのダッシュボードに非公開エージェントが表示されなくなりました。",
             "作業取得を妨げる同時実行数は保存できなくなりました。",
             "ACP エージェントの外部返信には最終回答だけが届きます。",
-            "Windows の OpenClaw が無言で失敗したとき、確認事項が表示されます。",
           ],
         },
         {
@@ -1628,7 +1622,6 @@ export function createJaDict(allowSignup: boolean): LandingDict {
             "プロバイダーごとのデフォルト エージェント引数を制御する環境変数が公式に文書化され、統合連携チャネルが完全に定着したことで使われなくなった Lark 切り替えスイッチを整理しました。",
           ],
           fixes: [
-            "OpenClaw が設定ファイルの差異により寛容になり、新しい 2026.6.x の agents スキーマに対応したため、既存の OpenClaw ランタイムが切断されにくくなりました。",
             "タスクを別プロジェクトに移すと旧プロジェクトの一覧からすぐに外れ、ボード表示外でステータスが変わってもカラムの件数が正しく揃います。",
             "添付ファイルが別オリジンから配信されている場合でも、プレビューが正しく開けます。",
             "コマンドライン エージェントはデーモンの準備完了を待ってから個人アクセストークンへフォールバックするため、認証が静かにダウングレードしなくなり、セルフホスティングのセットアップも既存設定を尊重しつつサーバー URL の変更をはっきり知らせます。",
@@ -1791,7 +1784,6 @@ export function createJaDict(allowSignup: boolean): LandingDict {
           features: [
             "エージェント、オートパイロット、プロジェクト、ランタイム、スキル、スクワッドのリストがより速く一貫した体験になり、行表示、絞り込み、選択、操作が分かりやすくなりました。",
             "コマンドラインからワークスペースのリポジトリを管理できるようになり、ローカルエージェントがプロジェクトのリポジトリ情報を受け取りやすくなりました。",
-            "Cursor と OpenClaw の設定が簡単になりました。Cursor の接続設定は Multica に任せられ、OpenClaw は既存のゲートウェイにも接続できます。",
             "コメントを編集するとき、保存前にどのエージェントやスクワッドが動き始めるかをプレビューして制御できます。",
           ],
           improvements: [
@@ -1859,7 +1851,6 @@ export function createJaDict(allowSignup: boolean): LandingDict {
             "タスクの会話で特定の返信を解決として残せるようになり、長いスレッドを閉じても結論を確認しやすくなりました。",
             "Lark と Feishu の会話では、Multica が返信を準備している間に入力中のリアクションを表示し、返信前に自動で消します。",
             "エージェント実行は、誰がその作業を始めたかを把握できるようになり、引き継ぎ、監査、プライバシーに配慮した動作がより正確になります。",
-            "OpenClaw ユーザーは、ローカル設定から独自のアプリ場所とデータフォルダーを指定できます。",
           ],
           improvements: [
             "コメントトリガーの表示はより控えめで読みやすく、長いエージェント名でも混み合いにくくなりました。",
@@ -2025,7 +2016,6 @@ export function createJaDict(allowSignup: boolean): LandingDict {
             "Multica がアプリ、ウェブサイト、ドキュメントで韓国語に対応し、韓国語のドキュメントページや日付表示のローカライズも提供します。",
             "タスク画面で作業中のエージェントをタイトルの近くに表示し、複数のエージェントが同時に作業しているときも見やすくなりました。",
             "エージェントはタスクの議論を読むとき、スレッドのプレビュー、返信数、最近のアクティビティを先に確認し、必要なコンテキストをより速く見つけられます。",
-            "OpenClaw ランタイムがエージェントに保存された MCP 設定を使えるようになり、モデル選択や使用量の見積もりでも Claude Opus 4.8 を利用できます。",
           ],
           improvements: [
             "詳細ページのパンくずヘッダーが統一され、タスク、プロジェクト、ランタイム、スキル、エージェント、スクワッドの一貫性が高まりました。",
@@ -2633,9 +2623,9 @@ export function createJaDict(allowSignup: boolean): LandingDict {
         {
           version: "0.1.18",
           date: "2026-03-23",
-          title: "OAuth、OpenClaw、タスク読み込み",
+          title: "OAuth、タスク読み込み",
           changes: [
-            "OAuth、OpenClaw ランタイム、タスク読み込みの改善を追加しました。",
+            "OAuth、タスク読み込みの改善を追加しました。",
           ],
         },
         {
@@ -2727,61 +2717,9 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       cta: "GitHub で見る",
     },
     download: {
-      hero: {
-        macArm64: {
-          title: "macOS 版 Multica",
-          sub: "Apple Silicon · デーモン同梱、設定不要",
-          primary: "ダウンロード(.dmg)",
-          altZip: "または .zip をダウンロード",
-        },
-        macIntel: {
-          title: "macOS 版 Multica",
-          sub: "Intel · デーモン同梱、設定不要",
-          primary: "ダウンロード(.dmg)",
-          altZip: "または .zip をダウンロード",
-        },
-        winX64: {
-          title: "Windows 版 Multica",
-          sub: "デーモン同梱、設定不要",
-          primary: "ダウンロード(.exe)",
-        },
-        winArm64: {
-          title: "Windows 版 Multica",
-          sub: "ARM · デーモン同梱、設定不要",
-          primary: "ダウンロード(.exe)",
-        },
-        linux: {
-          title: "Linux 版 Multica",
-          sub: "デーモン同梱、設定不要",
-          primary: "AppImage をダウンロード",
-          altFormats: "または .deb / .rpm",
-        },
-        unknown: {
-          title: "プラットフォームを選択",
-          sub: "すべてのインストーラーは下にまとまっています。",
-        },
-        safariMacHint: "Intel Mac をお使いですか? 下の Intel 版を選択してください。",
-        archFallbackHint: "アーキテクチャが合いませんか? 下ですべての形式を確認してください。",
-      },
-      allPlatforms: {
-        title: "すべてのプラットフォーム",
-        macArm64Label: "macOS · Apple Silicon",
-        macX64Label: "macOS · Intel",
-        winX64Label: "Windows · x64",
-        winArm64Label: "Windows · ARM64",
-        linuxX64Label: "Linux · x64",
-        linuxArm64Label: "Linux · ARM64",
-        formatDmg: ".dmg",
-        formatZip: ".zip",
-        formatExe: ".exe",
-        formatAppImage: ".AppImage",
-        formatDeb: ".deb",
-        formatRpm: ".rpm",
-        unavailable: "利用できません",
-      },
       cli: {
         title: "CLI のほうが便利ですか?",
-        sub: "サーバー、リモート開発環境、ヘッドレス環境に最適です。デスクトップと同じデーモンを、ターミナルからインストールできます。",
+        sub: "サーバー、リモート開発環境、ヘッドレス環境に最適です。ターミナルからデーモンをインストールして実行できます。",
         installLabel: "インストール",
         startLabel: "デーモンを起動",
         sshNote: "すでにサーバーに接続中ですか? 同じコマンドが SSH 上でもそのまま使えます。",
@@ -2791,12 +2729,6 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       cloud: {
         title: "クラウドランタイム(順番待ち)",
         sub: "ランタイムを当社がホストします。まだ提供前です。メールアドレスをお預けいただければ、準備でき次第お知らせします。",
-      },
-      footer: {
-        releaseNotes: "{version} の新着情報",
-        allReleases: "すべてのリリースを見る",
-        currentVersion: "現在のバージョン: {version}",
-        versionUnavailable: "バージョンを確認できません。GitHub をご確認ください。",
       },
     },
     contactSales: {

@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -179,6 +180,13 @@ func (h *Handler) SetAgentRuntimeSkillEnabled(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to update runtime skill")
 		return
 	}
+	locked.DisabledRuntimeSkills = payload
+	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(locked.WorkspaceID))
+	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, h.buildAgentDomainEvent(protocol.EventAgentStatus, locked, actorType, actorID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record agent event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit")
 		return
@@ -203,9 +211,7 @@ func (h *Handler) SetAgentRuntimeSkillEnabled(w http.ResponseWriter, r *http.Req
 		slog.Warn("runtime skill toggle: load agent skills for broadcast failed",
 			append(logger.RequestAttrs(r), "error", err, "agent_id", agentID)...)
 	}
-	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(locked.WorkspaceID))
-	h.publish(protocol.EventAgentStatus, uuidToString(locked.WorkspaceID), actorType, actorID,
-		map[string]any{"agent": broadcastAgentResponse(resp)})
+	h.publishEvent(updatedEvent)
 
 	w.WriteHeader(http.StatusNoContent)
 }

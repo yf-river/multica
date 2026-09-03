@@ -118,7 +118,7 @@
     "local_validate_not_a_directory": "디렉터리가 아닙니다.",
     "local_validate_not_readable": "디렉터리를 읽을 수 없습니다.",
     "local_validate_not_writable": "디렉터리에 쓸 수 없습니다.",
-    "local_validate_unsupported": "로컬 디렉터리는 데스크톱 앱에서만 선택할 수 있습니다.",
+    "local_validate_unsupported": "이 브라우저에서는 로컬 디렉터리를 선택할 수 없습니다. 데몬 또는 CLI에서 추가하세요.",
     "mode_dialog_title": "작업이 이 폴더를 어떻게 사용할까요?",
     "mode_dialog_description": "에이전트의 결과물을 받는 방식과, 이 폴더의 작업을 동시에 실행할 수 있는지가 정해집니다.",
     "mode_in_place_title": "이 폴더를 직접 수정",

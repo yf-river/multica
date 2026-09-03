@@ -29,7 +29,6 @@ Multica は現在、次のコマンドを検出します。
 | Kimi CLI | `kimi` | [Kimi CLI](https://github.com/MoonshotAI/kimi-cli) |
 | Kiro CLI | `kiro-cli` | [Kiro CLI のインストール](https://kiro.dev/docs/cli/installation/) |
 | MiniMax Code | `mcode` | [MiniMax Code CLI のインストール](https://www.npmjs.com/package/@minimax-ai/code) |
-| OpenClaw | `openclaw` | [OpenClaw のインストール](https://docs.openclaw.ai/install) |
 | OpenCode | `opencode` | [OpenCode クイックスタート](https://opencode.ai/en/docs) |
 | Pi coding agent | `pi` | [Pi coding agent](https://github.com/earendil-works/pi) |
 | Oh-My-Pi | `omp` | [Oh-My-Pi インストール](https://omp.sh) |
@@ -81,7 +80,7 @@ Get-Command <command>
 
 `<command>` は表にあるコマンド名に置き換えてください。たとえば `claude`、`codex`、`cursor-agent` です。最初のコマンドで実行ファイルのパスが返れば、検出できています。
 
-ターミナルではツールを見つけられるのに、Desktop やバックグラウンドのデーモンでは見つからない場合、両者が異なる `PATH` を使っていることが一般的な原因です。アプリを再起動するか、対応する `MULTICA_<PROVIDER>_PATH` 環境変数で絶対パスを指定してください。設定の詳細は[環境変数](/environment-variables#デーモン設定)を参照してください。
+ターミナルではツールを見つけられるのに、バックグラウンドのデーモンでは見つからない場合、両者が異なる `PATH` を使っていることが一般的な原因です。デーモンを再起動するか、対応する `MULTICA_<PROVIDER>_PATH` 環境変数で絶対パスを指定してください。設定の詳細は[環境変数](/environment-variables#デーモン設定)を参照してください。
 
 ## 4. 再検出してオンライン状態を確認する
 
@@ -97,7 +96,7 @@ multica daemon start
 multica daemon restart
 ```
 
-Multica Desktop を使っている場合は、アプリを終了して開き直してください。
+デーモンを再起動して環境変数を再読み込みします。
 
 次に Multica の**ランタイム**ページを開きます。対象のコンピューターの下にツールが表示され、オンライン状態になっていることを確認してください。これで、エージェントを作成または編集するときにこのランタイムを選択できます。
 

@@ -58,6 +58,13 @@ func Files(direction string) ([]string, error) {
 	}
 
 	suffix := "." + direction + ".sql"
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_MIGRATION_BASELINE")), "true") {
+		baseline := filepath.Join(dir, "000_initial_schema"+suffix)
+		if _, err := os.Stat(baseline); err != nil {
+			return nil, fmt.Errorf("baseline migration not found: %w", err)
+		}
+		return []string{baseline}, nil
+	}
 	files, err := filepath.Glob(filepath.Join(dir, "*"+suffix))
 	if err != nil {
 		return nil, err

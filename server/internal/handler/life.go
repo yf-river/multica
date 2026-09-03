@@ -135,30 +135,47 @@ func (h *Handler) UpsertCompanionProfile(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to validate life runtimes")
 		return
 	}
+	agentIDs := []pgtype.UUID{agentID}
 	for _, observer := range observers {
 		observerAgent, loadErr := h.Queries.GetAgent(r.Context(), observer.AgentID)
 		if loadErr != nil || observerAgent.ArchivedAt.Valid {
 			writeError(w, http.StatusConflict, "observer agent is unavailable")
 			return
 		}
-		if observerAgent.RuntimeID != agent.RuntimeID || strings.TrimSpace(observerAgent.Model.String) != strings.TrimSpace(agent.Model.String) {
-			writeError(w, http.StatusConflict, "companion runtime and model must match every observer")
-			return
-		}
+		agentIDs = append(agentIDs, observerAgent.ID)
 	}
-	profile, err := h.Queries.UpsertCompanionProfile(r.Context(), db.UpsertCompanionProfileParams{
-		WorkspaceID: scope.workspaceID,
-		UserID:      scope.userID,
-		AgentID:     agentID,
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start companion update")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	q := h.Queries.WithTx(tx)
+	if _, err := h.applyLifeAgentSelections(r.Context(), q, scope.workspaceID, agentIDs); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	profile, err := q.UpsertCompanionProfile(r.Context(), db.UpsertCompanionProfileParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID, AgentID: agentID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save companion")
 		return
 	}
-	if err := h.ensureCompanionLifeDefaults(r.Context(), scope); err != nil {
+	if err := ensureCompanionLifeDefaultsWithQueries(r.Context(), q, scope); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to initialize companion life capabilities")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), q, scope, "member", scope.userID, "companion_profile", uuidToString(scope.userID), "updated", map[string]any{"agent_id": uuidToString(profile.AgentID)})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record companion update event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit companion update")
+		return
+	}
+	h.publishLifeEvents(event)
 	writeJSON(w, http.StatusOK, map[string]any{"profile": companionProfileToResponse(profile)})
 }
 
@@ -492,10 +509,17 @@ func (h *Handler) createLifeMemory(w http.ResponseWriter, r *http.Request, scope
 			}
 		}
 	}
+	event, err := recordLifeChangedTx(r.Context(), qtx, scope, createdByType, createdByID,
+		"memory", uuidToString(memory.ID), "created", map[string]any{"kind": memory.Kind})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record memory event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit memory")
 		return
 	}
+	h.publishLifeEvents(event)
 	response, err := h.lifeMemoryToResponse(r, memory)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load memory")
@@ -576,10 +600,17 @@ func (h *Handler) UpdateLifeMemory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to record memory correction")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), qtx, scope, "member", scope.userID,
+		"memory", uuidToString(updated.ID), "corrected", map[string]any{"kind": updated.Kind})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record memory event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit memory correction")
 		return
 	}
+	h.publishLifeEvents(event)
 	response, err := h.lifeMemoryToResponse(r, updated)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load memory")
@@ -622,10 +653,17 @@ func (h *Handler) ConfirmLifeMemory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to record memory confirmation")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), qtx, scope, "member", scope.userID,
+		"memory", uuidToString(confirmed.ID), "confirmed", map[string]any{"kind": confirmed.Kind})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record memory event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit memory confirmation")
 		return
 	}
+	h.publishLifeEvents(event)
 	response, err := h.lifeMemoryToResponse(r, confirmed)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load memory")
@@ -675,10 +713,17 @@ func (h *Handler) DowngradeLifeMemory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to record memory downgrade")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), qtx, scope, "member", scope.userID,
+		"memory", uuidToString(downgraded.ID), "downgraded", map[string]any{"kind": downgraded.Kind})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record memory event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit memory downgrade")
 		return
 	}
+	h.publishLifeEvents(event)
 	response, err := h.lifeMemoryToResponse(r, downgraded)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load memory")
@@ -716,10 +761,17 @@ func (h *Handler) ArchiveLifeMemory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to record memory archive")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), qtx, scope, "member", scope.userID,
+		"memory", uuidToString(archived.ID), "archived", map[string]any{"kind": archived.Kind})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record memory event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit memory archive")
 		return
 	}
+	h.publishLifeEvents(event)
 	response, err := h.lifeMemoryToResponse(r, archived)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load memory")
@@ -744,11 +796,12 @@ func (h *Handler) DeleteLifeMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	if _, err := qtx.GetLifeMemory(r.Context(), db.GetLifeMemoryParams{
+	rootMemory, err := qtx.GetLifeMemory(r.Context(), db.GetLifeMemoryParams{
 		ID:          memoryID,
 		WorkspaceID: scope.workspaceID,
 		UserID:      scope.userID,
-	}); err != nil {
+	})
+	if err != nil {
 		writeEntityLoadError(w, err, "memory", "memory_id", chi.URLParam(r, "memoryId"))
 		return
 	}
@@ -838,6 +891,29 @@ func (h *Handler) DeleteLifeMemory(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	// Record a content hash for every memory before deleting it.  The tombstone
+	// lets a delayed evidence check recognise a permanently forgotten source
+	// even after the row itself is gone.
+	for _, id := range memoryIDs {
+		memory := rootMemory
+		if id != rootMemory.ID {
+			memory, err = qtx.GetLifeMemory(r.Context(), db.GetLifeMemoryParams{
+				ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID,
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to load derived memory")
+				return
+			}
+		}
+		digest := sha256.Sum256([]byte(memory.Content))
+		if err := qtx.CreateLifeForgetTombstone(r.Context(), db.CreateLifeForgetTombstoneParams{
+			WorkspaceID: scope.workspaceID, UserID: scope.userID,
+			SourceType: "memory", SourceKey: uuidToString(id), ContentHash: fmt.Sprintf("%x", digest[:]),
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to record permanent memory forgetting")
+			return
+		}
+	}
 	if len(materialIDs) > 0 {
 		materialIDStrings := make([]string, 0, len(materialIDs))
 		for _, id := range materialIDs {
@@ -845,6 +921,18 @@ func (h *Handler) DeleteLifeMemory(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := qtx.ScrubLifeCognitionTasksByMaterialIDs(r.Context(), db.ScrubLifeCognitionTasksByMaterialIDsParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Column3: materialIDStrings}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to scrub background task copies")
+			return
+		}
+	}
+	if len(memoryIDs) > 0 {
+		memoryIDStrings := make([]string, 0, len(memoryIDs))
+		for _, id := range memoryIDs {
+			memoryIDStrings = append(memoryIDStrings, uuidToString(id))
+		}
+		if err := qtx.ScrubLifeCognitionTasksByMemoryIDs(r.Context(), db.ScrubLifeCognitionTasksByMemoryIDsParams{
+			WorkspaceID: scope.workspaceID, UserID: scope.userID, Column3: memoryIDStrings,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to scrub memory cognition copies")
 			return
 		}
 	}
@@ -867,6 +955,18 @@ func (h *Handler) DeleteLifeMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, id := range roundIDs {
 		sourceIDs = append(sourceIDs, uuidToString(id))
+	}
+	if len(sourceTokens) > 0 || len(sourceIDs) > 0 {
+		eventSourceIDs := append([]string(nil), sourceIDs...)
+		for _, token := range sourceTokens {
+			eventSourceIDs = append(eventSourceIDs, token)
+		}
+		if err := qtx.RedactLifeDomainEventsBySourceIDs(r.Context(), db.RedactLifeDomainEventsBySourceIDsParams{
+			WorkspaceID: scope.workspaceID, Column2: eventSourceIDs,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to redact forgotten life events")
+			return
+		}
 	}
 	if err := qtx.DeleteLifeCommitmentsByMemoryIDs(r.Context(), db.DeleteLifeCommitmentsByMemoryIDsParams{Column1: memoryIDs, WorkspaceID: scope.workspaceID, UserID: scope.userID}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete commitment dependencies")
@@ -917,9 +1017,16 @@ func (h *Handler) DeleteLifeMemory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "failed to delete empty observation topics")
 		return
 	}
+	event, err := recordLifeChangedTx(r.Context(), qtx, scope, "member", scope.userID,
+		"memory", uuidToString(memoryID), "deleted", map[string]any{"derived_memory_count": len(memoryIDs), "material_count": len(materialIDs)})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record memory deletion event")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit memory deletion")
 		return
 	}
+	h.publishLifeEvents(event)
 	w.WriteHeader(http.StatusNoContent)
 }

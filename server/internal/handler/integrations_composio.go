@@ -44,16 +44,13 @@ type ComposioConnectionResponse struct {
 }
 
 // ComposioToolkitResponse is the wire shape for one toolkit in the catalog.
-// Since MUL-4009 the catalog only contains connectable toolkits, so
-// `connectable` is always true. The field is retained for backward
-// compatibility with older desktop clients that branch on it (dropping it would
-// make them treat every entry as non-connectable and hide the Connect button).
+// The service only returns toolkits with an enabled auth configuration, so
+// every entry is connectable by construction.
 type ComposioToolkitResponse struct {
-	Slug        string `json:"slug"`
-	Name        string `json:"name"`
-	Logo        string `json:"logo,omitempty"`
-	Category    string `json:"category,omitempty"`
-	Connectable bool   `json:"connectable"`
+	Slug     string `json:"slug"`
+	Name     string `json:"name"`
+	Logo     string `json:"logo,omitempty"`
+	Category string `json:"category,omitempty"`
 }
 
 func (h *Handler) composioMCPAppsEnabled(ctx context.Context) bool {
@@ -165,8 +162,7 @@ func (h *Handler) ListComposioConnections(w http.ResponseWriter, r *http.Request
 // ListComposioToolkits (GET /api/integrations/composio/toolkits) returns the
 // connectable Composio toolkits for the Settings UI to render. Since MUL-4009
 // the service filters out toolkits with no enabled auth config in the project,
-// so every entry here is connectable; the `connectable` flag is kept on the
-// wire for backward compatibility. The catalog itself is project-global (not
+// so every entry here is connectable. The catalog itself is project-global (not
 // per-user), but the route is user-scoped (requireUser) like the rest of the
 // block. A resolver/upstream failure is a 502, letting the UI show its
 // load-failed state rather than a misleading empty catalog.
@@ -186,11 +182,10 @@ func (h *Handler) ListComposioToolkits(w http.ResponseWriter, r *http.Request) {
 	out := make([]ComposioToolkitResponse, 0, len(toolkits))
 	for _, tk := range toolkits {
 		out = append(out, ComposioToolkitResponse{
-			Slug:        tk.Slug,
-			Name:        tk.Name,
-			Logo:        tk.LogoURL,
-			Category:    tk.Category,
-			Connectable: tk.Connectable,
+			Slug:     tk.Slug,
+			Name:     tk.Name,
+			Logo:     tk.LogoURL,
+			Category: tk.Category,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

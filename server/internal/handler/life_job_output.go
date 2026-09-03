@@ -10,11 +10,13 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
 type lifeJobEvidenceOutput struct {
@@ -420,7 +422,7 @@ func oneOf(value string, allowed ...string) bool {
 
 func validLifeEvidenceSourceType(value string) bool {
 	switch value {
-	case "chat_message", "task", "comment", "project", "manual", "external", "memory", "experiment_round", "chronicle", "observer_knowledge":
+	case "material", "chat_message", "task", "comment", "project", "manual", "external", "memory", "experiment_round", "chronicle", "observer_knowledge":
 		return true
 	default:
 		return false
@@ -448,15 +450,44 @@ func lifeEvidenceWasForgotten(ctx context.Context, q *db.Queries, scope lifeJobT
 		if !validLifeEvidenceSourceType(item.SourceType) || strings.TrimSpace(item.SourceID) == "" {
 			return false, fmt.Errorf("invalid life evidence")
 		}
+		if item.SourceType == "material" {
+			id, err := util.ParseUUID(item.SourceID)
+			if err != nil {
+				return false, err
+			}
+			material, err := q.GetLifeMaterialForUser(ctx, db.GetLifeMaterialForUserParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return true, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			blocked, err := lifeMaterialIsForgotten(ctx, q, scope, material)
+			if err != nil || blocked {
+				return blocked, err
+			}
+			continue
+		}
 		if item.SourceType == "memory" {
 			id, err := util.ParseUUID(item.SourceID)
 			if err != nil {
 				return false, err
 			}
-			if _, err := q.GetLifeMemory(ctx, db.GetLifeMemoryParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID}); errors.Is(err, pgx.ErrNoRows) {
+			memory, err := q.GetLifeMemory(ctx, db.GetLifeMemoryParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID})
+			if errors.Is(err, pgx.ErrNoRows) {
 				return true, nil
 			} else if err != nil {
 				return false, err
+			}
+			forgotten, err := lifeMemoryIsForgotten(ctx, q, scope.workspaceID, scope.userID, memory)
+			if err != nil {
+				return false, err
+			}
+			if forgotten {
+				return true, nil
+			}
+			if memory.Status == "archived" {
+				return true, nil
 			}
 			continue
 		}
@@ -496,8 +527,7 @@ func lifeEvidenceWasForgotten(ctx context.Context, q *db.Queries, scope lifeJobT
 		if err != nil {
 			return false, err
 		}
-		digest := sha256.Sum256([]byte(material.Content))
-		blocked, err := q.IsLifeMaterialForgotten(ctx, db.IsLifeMaterialForgottenParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, SourceType: material.SourceType, SourceKey: material.SourceKey, ContentHash: fmt.Sprintf("%x", digest[:])})
+		blocked, err := lifeMaterialIsForgotten(ctx, q, scope, material)
 		if err != nil {
 			return false, err
 		}
@@ -508,7 +538,44 @@ func lifeEvidenceWasForgotten(ctx context.Context, q *db.Queries, scope lifeJobT
 	return false, nil
 }
 
+func lifeMaterialIsForgotten(ctx context.Context, q *db.Queries, scope lifeJobTaskScope, material db.LifeMaterial) (bool, error) {
+	digest := sha256.Sum256([]byte(material.Content))
+	return q.IsLifeMaterialForgotten(ctx, db.IsLifeMaterialForgottenParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID,
+		SourceType: material.SourceType, SourceKey: material.SourceKey,
+		ContentHash: fmt.Sprintf("%x", digest[:]),
+	})
+}
+
+func lifeMemoryIsForgotten(ctx context.Context, q *db.Queries, workspaceID, userID pgtype.UUID, memory db.LifeMemory) (bool, error) {
+	digest := sha256.Sum256([]byte(memory.Content))
+	return q.IsLifeMaterialForgotten(ctx, db.IsLifeMaterialForgottenParams{
+		WorkspaceID: workspaceID, UserID: userID,
+		SourceType: "memory", SourceKey: util.UUIDToString(memory.ID),
+		ContentHash: fmt.Sprintf("%x", digest[:]),
+	})
+}
+
 func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTaskScope, raw []byte) (db.LifeCognitionJob, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.LifeCognitionJob{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	completed, err := h.completeLifeCognitionJobInQueries(ctx, h.Queries.WithTx(tx), scope, raw)
+	if err != nil {
+		return db.LifeCognitionJob{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.LifeCognitionJob{}, err
+	}
+	return completed, nil
+}
+
+// completeLifeCognitionJobInQueries writes all derived Life records through a
+// caller-owned query handle. The caller can therefore commit the cognition
+// output and the corresponding agent task terminal event as one transaction.
+func (h *Handler) completeLifeCognitionJobInQueries(ctx context.Context, q *db.Queries, scope lifeJobTaskScope, raw []byte) (db.LifeCognitionJob, error) {
 	var output lifeCognitionOutput
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -521,12 +588,24 @@ func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTas
 	if err := validateLifeJobOutput(scope.job.JobType, output); err != nil {
 		return db.LifeCognitionJob{}, err
 	}
-	tx, err := h.TxStarter.Begin(ctx)
+	// Serialize the completion against user corrections/deletions.  The
+	// context-version row is locked before any derived record is written; a
+	// worker that started from an older snapshot therefore fails atomically
+	// instead of resurrecting stale understanding.
+	if err := q.EnsureLifeContextState(ctx, db.EnsureLifeContextStateParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID,
+	}); err != nil {
+		return db.LifeCognitionJob{}, err
+	}
+	state, err := q.LockLifeContextState(ctx, db.LockLifeContextStateParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID,
+	})
 	if err != nil {
 		return db.LifeCognitionJob{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	q := h.Queries.WithTx(tx)
+	if scope.job.ClaimToken.Valid && state.Version != scope.job.ContextVersion {
+		return db.LifeCognitionJob{}, invalidLifeJobOutput("life cognition context is stale")
+	}
 
 	for _, candidate := range output.MemoryCandidates {
 		if !validLifeMemoryKind(candidate.Kind) || strings.TrimSpace(candidate.Content) == "" || candidate.Confidence < 0 || candidate.Confidence > 1 || candidate.Urgency < 0 || candidate.Urgency > 1 {
@@ -648,7 +727,16 @@ func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTas
 		for i, rawID := range item.MemoryIDs {
 			memoryID, err := util.ParseUUID(rawID)
 			if err != nil {
-				continue
+				return db.LifeCognitionJob{}, invalidLifeJobOutput("topic memory id is invalid")
+			}
+			memory, err := q.GetLifeMemory(ctx, db.GetLifeMemoryParams{
+				ID: memoryID, WorkspaceID: scope.workspaceID, UserID: scope.userID,
+			})
+			if err != nil {
+				return db.LifeCognitionJob{}, invalidLifeJobOutput("topic memory is unavailable")
+			}
+			if memory.Status == "archived" {
+				return db.LifeCognitionJob{}, invalidLifeJobOutput("topic memory is archived")
 			}
 			relation := "context"
 			if i < len(item.Relations) && (item.Relations[i] == "supports" || item.Relations[i] == "contradicts" || item.Relations[i] == "context") {
@@ -695,6 +783,12 @@ func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTas
 			sourceMemoryID, err = util.ParseUUID(item.SourceMemoryID)
 			if err != nil {
 				return db.LifeCognitionJob{}, err
+			}
+			memory, loadErr := q.GetLifeMemory(ctx, db.GetLifeMemoryParams{
+				ID: sourceMemoryID, WorkspaceID: scope.workspaceID, UserID: scope.userID,
+			})
+			if loadErr != nil || memory.Status == "archived" {
+				return db.LifeCognitionJob{}, invalidLifeJobOutput("commitment source memory is unavailable")
 			}
 		}
 		commitment, err := q.CreateLifeCommitment(ctx, db.CreateLifeCommitmentParams{
@@ -853,6 +947,7 @@ func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTas
 		if decision.Status == "spoke" && strings.TrimSpace(decision.Message) != "" {
 			details, _ := json.Marshal(map[string]any{"life_proactive_check_id": util.UUIDToString(check.ID), "path": "/companion"})
 			if _, err := q.CreateInboxItem(ctx, db.CreateInboxItemParams{
+				ID:          dbid.NewV7(),
 				WorkspaceID: scope.workspaceID, RecipientType: "member", RecipientID: scope.userID,
 				Type: "life_companion", Severity: "info", Title: "搭子想和你聊聊",
 				Body:      pgtype.Text{String: strings.TrimSpace(decision.Message), Valid: true},
@@ -909,7 +1004,7 @@ proactiveDone:
 			if materialErr != nil {
 				return db.LifeCognitionJob{}, materialErr
 			}
-			forgotten, checkErr := lifeEvidenceWasForgotten(ctx, q, scope, []lifeJobEvidenceOutput{{SourceType: material.SourceType, SourceID: item.MaterialID}})
+			forgotten, checkErr := lifeMaterialIsForgotten(ctx, q, scope, material)
 			if checkErr != nil {
 				return db.LifeCognitionJob{}, checkErr
 			}
@@ -1050,6 +1145,12 @@ experimentReviewDone:
 			if err != nil {
 				return db.LifeCognitionJob{}, fmt.Errorf("invalid observer judgement id")
 			}
+			judgement, err := q.GetLifeObserverJudgementForUser(ctx, db.GetLifeObserverJudgementForUserParams{
+				ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID,
+			})
+			if err != nil || judgement.Status != "published" {
+				return db.LifeCognitionJob{}, invalidLifeJobOutput("observer judgement is unavailable")
+			}
 			if err := q.LinkLifeObservationTopicJudgement(ctx, db.LinkLifeObservationTopicJudgementParams{TopicID: topic.ID, JudgementID: id}); err != nil {
 				return db.LifeCognitionJob{}, err
 			}
@@ -1108,6 +1209,12 @@ experimentReviewDone:
 		if err := recordLifeDerivations(ctx, q, scope, "chronicle_entry", entry.ID, item.Evidence); err != nil {
 			return db.LifeCognitionJob{}, err
 		}
+		if _, err := q.UpsertLifeChronicleCursor(ctx, db.UpsertLifeChronicleCursorParams{
+			WorkspaceID: scope.workspaceID, UserID: scope.userID, PeriodKind: item.PeriodKind,
+			NextPeriodStart: periodEnd, LastProcessedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		}); err != nil {
+			return db.LifeCognitionJob{}, fmt.Errorf("advance chronicle cursor: %w", err)
+		}
 	}
 
 	if evaluation := output.UpgradeEvaluation; evaluation != nil {
@@ -1141,16 +1248,55 @@ experimentReviewDone:
 	}
 upgradeEvaluationDone:
 
-	completed, err := q.CompleteLifeCognitionJob(ctx, db.CompleteLifeCognitionJobParams{
-		ID: scope.job.ID, WorkspaceID: scope.workspaceID, UserID: scope.userID, Output: raw,
+	// Persist a compact summary alongside the full governed output.  The full
+	// JSON remains available for audit, while list views and recovery tooling do
+	// not need to load every generated record.  The completion fence is the last
+	// write in this transaction: a late task with an expired token cannot commit
+	// any derived rows or mark the job complete.
+	summary, _ := json.Marshal(map[string]any{
+		"summary":             lifeOutputSummary(output.Summary),
+		"job_type":            scope.job.JobType,
+		"memory_candidates":   len(output.MemoryCandidates),
+		"observer_judgements": len(output.ObserverJudgements),
+		"chronicles":          len(output.Chronicles),
 	})
+	// The derived rows below are the result of one governed cognition turn.
+	// Record that fact in the same transaction as the terminal job update so a
+	// replay can observe the turn without receiving a second copy of any row.
+	if _, err := recordLifeChangedTx(ctx, q, scope.lifeRequestScope, "agent", scope.agentID,
+		"cognition_job", util.UUIDToString(scope.job.ID), "output_committed", map[string]any{
+			"job_type": scope.job.JobType, "summary": lifeOutputSummary(output.Summary),
+			"memory_candidates": len(output.MemoryCandidates), "chronicles": len(output.Chronicles),
+		}); err != nil {
+		return db.LifeCognitionJob{}, err
+	}
+	var completed db.LifeCognitionJob
+	if scope.job.ClaimToken.Valid {
+		completed, err = q.CompleteLifeCognitionJobFenced(ctx, db.CompleteLifeCognitionJobFencedParams{
+			ID: scope.job.ID, WorkspaceID: scope.workspaceID, UserID: scope.userID,
+			Output: raw, OutputSummary: summary, ClaimToken: scope.job.ClaimToken,
+			ContextVersion: scope.job.ContextVersion,
+		})
+	} else {
+		// Rows created before the fencing migration can still be drained once;
+		// every worker-created row takes the fenced branch above.
+		completed, err = q.CompleteLifeCognitionJob(ctx, db.CompleteLifeCognitionJobParams{
+			ID: scope.job.ID, WorkspaceID: scope.workspaceID, UserID: scope.userID, Output: raw,
+		})
+	}
 	if err != nil {
 		return db.LifeCognitionJob{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return db.LifeCognitionJob{}, err
-	}
 	return completed, nil
+}
+
+func lifeOutputSummary(value string) string {
+	value = strings.TrimSpace(value)
+	if utf8.RuneCountInString(value) <= 1000 {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:1000]) + "…"
 }
 
 func coalesceLifeMemoryEvidence(items []lifeJobEvidenceOutput) []lifeJobEvidenceOutput {

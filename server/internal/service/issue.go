@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/dispatch"
 	"github.com/multica-ai/multica/server/internal/entitlement"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/issueposition"
@@ -121,8 +123,8 @@ type IssueCreateOpts struct {
 	AnalyticsAgentID string
 
 	// Platform tags the IssueCreated analytics + business-metrics event
-	// with the client surface the request came in on (web / desktop /
-	// daemon / lark / autopilot). Derived from middleware's client
+	// with the client surface the request came in on (web / daemon / lark /
+	// autopilot). Derived from middleware's client
 	// metadata at the handler layer.
 	Platform string
 
@@ -213,6 +215,10 @@ type IssueCreateResult struct {
 // required, RFC3339 date format, assignee pair sanity.
 func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts IssueCreateOpts) (IssueCreateResult, error) {
 	issueCountPolicy := ResolveIssueCountPolicy(ctx, s.Entitlements, p.WorkspaceID)
+	actorID := opts.ActorID
+	if actorID == "" {
+		actorID = util.UUIDToString(p.CreatorID)
+	}
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("begin tx: %w", err)
@@ -336,6 +342,8 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 
 	var issue db.Issue
 	var assignedTask db.AgentTaskQueue
+	var attachments []db.Attachment
+	var createdEvent events.Event
 	if p.OriginType.Valid {
 		issue, err = qtx.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
 			ID:            dbid.NewV7(),
@@ -456,6 +464,29 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 
+	// Link pre-uploaded attachments before the issue event is recorded. The
+	// event snapshot and the issue row then become visible together, so a
+	// replaying client never observes an issue that silently loses its files.
+	if len(p.AttachmentIDs) > 0 {
+		if _, err := qtx.LockAttachmentsForIssueLink(ctx, db.LockAttachmentsForIssueLinkParams{
+			WorkspaceID: p.WorkspaceID, AttachmentIds: p.AttachmentIDs,
+		}); err != nil {
+			return IssueCreateResult{}, fmt.Errorf("lock issue attachments: %w", err)
+		}
+		if _, err := qtx.LinkAttachmentsToIssue(ctx, db.LinkAttachmentsToIssueParams{
+			IssueID: issue.ID, WorkspaceID: p.WorkspaceID, AttachmentIds: p.AttachmentIDs,
+			BumpRevision: false,
+		}); err != nil {
+			return IssueCreateResult{}, fmt.Errorf("link issue attachments: %w", err)
+		}
+		attachments, err = qtx.ListAttachmentsByIssue(ctx, db.ListAttachmentsByIssueParams{
+			IssueID: issue.ID, WorkspaceID: p.WorkspaceID,
+		})
+		if err != nil {
+			return IssueCreateResult{}, fmt.Errorf("list issue attachments: %w", err)
+		}
+	}
+
 	if !opts.AssignedAgentRunFireAt.IsZero() && s.shouldEnqueueAgentTaskWithQueries(ctx, qtx, issue) {
 		// The issue must never become visible without its media-gated assigned
 		// task. Inserting both rows through qtx makes the unique-index winner
@@ -467,15 +498,14 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
+	createdEvent = issueCreatedEvent(issue, attachments, labels, p.CreatorType, actorID, opts)
+	createdEvent, err = recordDurableEventTx(ctx, qtx, createdEvent)
+	if err != nil {
+		return IssueCreateResult{}, fmt.Errorf("record issue-created event: %w", err)
 	}
 
-	attachments := s.linkAttachments(ctx, issue, p.AttachmentIDs)
-
-	actorID := opts.ActorID
-	if actorID == "" {
-		actorID = util.UUIDToString(issue.CreatorID)
+	if err := tx.Commit(ctx); err != nil {
+		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
 	}
 
 	var assignedTaskID pgtype.UUID
@@ -499,7 +529,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 
-	s.publishIssueCreated(issue, attachments, labels, p.CreatorType, actorID, opts)
+	publishCommittedEvent(s.Bus, createdEvent)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
 	if opts.AssignedAgentRunFireAt.IsZero() {
 		assignedTaskID = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AssignedAgentRunFireAt)
@@ -584,6 +614,27 @@ func (s *IssueService) linkAttachments(ctx context.Context, issue db.Issue, ids 
 	return list
 }
 
+// issueCreatedEvent builds the durable envelope used by every issue-create
+// entry point. The issue id is the logical occurrence identity: a retry may
+// re-run the handler, but it must never create a second create event.
+func issueCreatedEvent(issue db.Issue, attachments []db.Attachment, labels []db.IssueLabel, creatorType, actorID string, opts IssueCreateOpts) events.Event {
+	var payload map[string]any
+	if opts.BroadcastPayload != nil {
+		payload = opts.BroadcastPayload(issue, attachments, labels)
+	} else {
+		payload = map[string]any{"issue_id": util.UUIDToString(issue.ID)}
+	}
+	return events.Event{
+		Type:           protocol.EventIssueCreated,
+		IdempotencyKey: "issue:created:" + util.UUIDToString(issue.ID),
+		StreamKey:      "issue:" + util.UUIDToString(issue.ID),
+		WorkspaceID:    util.UUIDToString(issue.WorkspaceID),
+		ActorType:      creatorType,
+		ActorID:        actorID,
+		Payload:        payload,
+	}
+}
+
 func (s *IssueService) publishIssueCreated(issue db.Issue, attachments []db.Attachment, labels []db.IssueLabel, creatorType, actorID string, opts IssueCreateOpts) {
 	if s.Bus == nil {
 		return
@@ -610,53 +661,81 @@ func (s *IssueService) publishIssueCreated(issue db.Issue, attachments []db.Atta
 // after a detached channel media transaction. Issue creation is broadcast
 // before the remote download finishes, so the attachment event closes the
 // cache gap for current clients. The issue:updated event carries the newly
-// materialized description through a pre-existing protocol that installed
-// desktop clients already understand.
+// materialized description through a protocol all current clients understand.
 func (s *IssueService) PublishAttachmentsChanged(ctx context.Context, issue db.Issue, actorID pgtype.UUID) {
 	if s.Bus == nil {
 		return
 	}
-	if s.Queries == nil {
+	if s.Queries == nil || s.TxStarter == nil {
 		s.publishIssueAttachmentsChanged(issue, actorID, 0)
 		return
 	}
-
-	current, err := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		slog.Warn("begin attachment projection transaction failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	current, err := qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
 		slog.Warn("failed to load issue after channel media bind",
 			"issue_id", util.UUIDToString(issue.ID), "error", err)
-		s.publishIssueAttachmentsChanged(issue, actorID, 0)
 		return
 	}
-	workspace, err := s.Queries.GetWorkspace(ctx, issue.WorkspaceID)
+	workspace, err := qtx.GetWorkspace(ctx, issue.WorkspaceID)
 	if err != nil {
 		slog.Warn("failed to load workspace after channel media bind",
 			"workspace_id", util.UUIDToString(issue.WorkspaceID), "error", err)
-		// Without the workspace we cannot publish the matching owner snapshot.
-		// Keep this auxiliary event unversioned so clients invalidate instead of
-		// advancing the owner revision past a snapshot they never received.
-		s.publishIssueAttachmentsChanged(issue, actorID, 0)
 		return
 	}
-	s.Bus.Publish(events.Event{
-		Type:        protocol.EventIssueUpdated,
-		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
-		ActorType:   "member",
-		ActorID:     util.UUIDToString(actorID),
+	updatedEvent := events.Event{
+		Type:           protocol.EventIssueUpdated,
+		IdempotencyKey: "issue:channel-media:" + util.UUIDToString(current.ID) + ":" + strconv.FormatInt(current.Revision, 10),
+		StreamKey:      "issue:" + util.UUIDToString(current.ID),
+		WorkspaceID:    util.UUIDToString(issue.WorkspaceID),
+		ActorType:      "member",
+		ActorID:        util.UUIDToString(actorID),
 		Payload: map[string]any{
 			"issue":            IssueToMapResolved(ctx, s.Queries, current, workspace.IssuePrefix),
 			"assignee_changed": false,
 			"status_changed":   false,
 			"project_changed":  false,
 		},
-	})
+	}
+	attachmentsEvent := events.Event{
+		Type:           protocol.EventIssueAttachmentsChanged,
+		IdempotencyKey: "issue:attachments:" + util.UUIDToString(current.ID) + ":" + strconv.FormatInt(current.Revision, 10),
+		StreamKey:      "issue:" + util.UUIDToString(current.ID),
+		WorkspaceID:    util.UUIDToString(issue.WorkspaceID),
+		ActorType:      "member",
+		ActorID:        util.UUIDToString(actorID),
+		Payload: map[string]any{
+			"issue_id":       util.UUIDToString(current.ID),
+			"issue_revision": current.Revision,
+		},
+	}
+	updatedEvent, err = eventoutbox.Enqueue(ctx, qtx, updatedEvent)
+	if err != nil {
+		return
+	}
+	attachmentsEvent, err = eventoutbox.Enqueue(ctx, qtx, attachmentsEvent)
+	if err != nil {
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return
+	}
 	// Publish the auxiliary projection only after the full owner snapshot at
 	// this revision. Reversing these two events makes revision-aware clients
 	// reject the issue:updated payload as an equal-revision duplicate.
-	s.publishIssueAttachmentsChanged(current, actorID, current.Revision)
+	if s.Bus != nil {
+		s.Bus.PublishRecovered(updatedEvent)
+		s.Bus.PublishRecovered(attachmentsEvent)
+	}
 }
 
 func (s *IssueService) publishIssueAttachmentsChanged(issue db.Issue, actorID pgtype.UUID, revision int64) {

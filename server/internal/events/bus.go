@@ -7,10 +7,18 @@ import (
 
 // Event represents a domain event published by handlers or services.
 type Event struct {
-	ID          string // durable event identifier when persisted
-	Type        string // e.g. "issue:created", "inbox:new"
+	// ID is populated for durable events and remains stable across retries.
+	// Ephemeral-only events may leave it empty.
+	ID string
+	// IdempotencyKey identifies the logical occurrence across retries and
+	// process restarts. Producers may provide one; the outbox derives a stable
+	// key when it is omitted.
+	IdempotencyKey string
+	Type           string // e.g. "issue:created", "inbox:new"
+	// StreamKey serializes durable events that mutate the same aggregate.
+	// Events with different or empty keys remain independently claimable.
+	StreamKey   string
 	WorkspaceID string // routes to correct Hub room
-	StreamKey   string // optional ordering key for durable delivery
 	ActorType   string // "member", "agent", or "system"
 	ActorID     string
 	Payload     any // JSON-serializable, same shape as current WS payloads
@@ -31,20 +39,7 @@ type Bus struct {
 	mu             sync.RWMutex
 	listeners      map[string][]Handler
 	globalHandlers []Handler
-	persister      func(Event)
 }
-
-// SetPersister enables durable recording of published domain events. The
-// callback is deliberately optional so unit-test buses remain in-memory.
-func (b *Bus) SetPersister(persist func(Event)) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.persister = persist
-}
-
-// PublishRecovered replays a persisted event without writing it back to the
-// outbox, preventing recovery loops.
-func (b *Bus) PublishRecovered(e Event) { b.publish(e, false) }
 
 // New creates a new event bus.
 func New() *Bus {
@@ -52,6 +47,11 @@ func New() *Bus {
 		listeners: make(map[string][]Handler),
 	}
 }
+
+// PublishRecovered delivers an event that has already been persisted. Durable
+// persistence is owned by the transaction that created the event; replay must
+// never create a second outbox row.
+func (b *Bus) PublishRecovered(e Event) { b.Publish(e) }
 
 // Subscribe registers a handler for a given event type.
 // Handlers are called synchronously in registration order.
@@ -74,35 +74,21 @@ func (b *Bus) SubscribeAll(h Handler) {
 // Each handler is called synchronously. Panics in individual handlers are
 // recovered so one failing handler does not prevent others from executing.
 func (b *Bus) Publish(e Event) {
-	b.publish(e, true)
-}
-
-func (b *Bus) publish(e Event, persist bool) {
 	b.mu.RLock()
 	handlers := b.listeners[e.Type]
 	globals := b.globalHandlers
-	persister := b.persister
 	b.mu.RUnlock()
-	if persist && persister != nil {
-		persister(e)
-	}
 
+	dispatch(handlers, e, "event")
+	dispatch(globals, e, "global event")
+}
+
+func dispatch(handlers []Handler, e Event, scope string) {
 	for _, h := range handlers {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Error("panic in event listener", "event_type", e.Type, "recovered", r)
-				}
-			}()
-			h(e)
-		}()
-	}
-
-	for _, h := range globals {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("panic in global event listener", "event_type", e.Type, "recovered", r)
+					slog.Error("panic in "+scope+" listener", "event_type", e.Type, "recovered", r)
 				}
 			}()
 			h(e)

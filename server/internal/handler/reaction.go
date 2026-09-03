@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -88,7 +91,15 @@ func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
-	reaction, err := h.Queries.AddReaction(r.Context(), db.AddReactionParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		slog.Warn("begin comment reaction transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	reaction, err := qtx.AddReaction(r.Context(), db.AddReactionParams{
 		CommentID:   comment.ID,
 		WorkspaceID: wsUUID,
 		ActorType:   actorType,
@@ -103,25 +114,51 @@ func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 
 	resp := addedReactionToResponse(reaction)
 
-	// Look up issue title for inbox notifications.
+	// Load notification context in the same transaction as the mutation.
 	issueID := uuidToString(comment.IssueID)
-	var issueTitle, issueStatus string
-	if issue, err := h.Queries.GetIssue(r.Context(), comment.IssueID); err == nil {
-		issueTitle = issue.Title
-		issueStatus = issue.Status
+	issue, err := qtx.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+		ID: comment.IssueID, WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		slog.Warn("load issue for comment reaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
 	}
 
+	var persisted events.Event
 	if reaction.CommentRevision > 0 {
-		h.publish(protocol.EventReactionAdded, workspaceID, actorType, actorID, map[string]any{
-			"reaction":            resp,
-			"issue_id":            issueID,
-			"issue_title":         issueTitle,
-			"issue_status":        issueStatus,
-			"comment_id":          uuidToString(comment.ID),
-			"comment_author_type": comment.AuthorType,
-			"comment_author_id":   uuidToString(comment.AuthorID),
-			"comment_revision":    reaction.CommentRevision,
-		})
+		event := events.Event{
+			Type:           protocol.EventReactionAdded,
+			IdempotencyKey: "reaction:added:" + uuidToString(reaction.ID),
+			StreamKey:      "issue:" + issueID,
+			WorkspaceID:    workspaceID,
+			ActorType:      actorType,
+			ActorID:        actorID,
+			Payload: map[string]any{
+				"reaction":            resp,
+				"issue_id":            issueID,
+				"issue_title":         issue.Title,
+				"issue_status":        issue.Status,
+				"comment_id":          uuidToString(comment.ID),
+				"comment_author_type": comment.AuthorType,
+				"comment_author_id":   uuidToString(comment.AuthorID),
+				"comment_revision":    reaction.CommentRevision,
+			},
+		}
+		persisted, err = eventoutbox.Enqueue(r.Context(), qtx, event)
+		if err != nil {
+			slog.Warn("enqueue comment reaction event failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+			writeError(w, http.StatusInternalServerError, "failed to add reaction")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit comment reaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
+	}
+	if persisted.ID != "" {
+		h.publishEvent(persisted)
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -166,7 +203,15 @@ func (h *Handler) RemoveReaction(w http.ResponseWriter, r *http.Request) {
 
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
-	removed, err := h.Queries.RemoveReaction(r.Context(), db.RemoveReactionParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		slog.Warn("begin comment reaction removal transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		writeError(w, http.StatusInternalServerError, "failed to remove reaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	removed, err := qtx.RemoveReaction(r.Context(), db.RemoveReactionParams{
 		CommentID: comment.ID,
 		ActorType: actorType,
 		ActorID:   parseUUID(actorID),
@@ -178,15 +223,38 @@ func (h *Handler) RemoveReaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var persisted events.Event
 	if removed.Changed {
-		h.publish(protocol.EventReactionRemoved, workspaceID, actorType, actorID, map[string]any{
-			"comment_id":       uuidToString(comment.ID),
-			"issue_id":         uuidToString(comment.IssueID),
-			"emoji":            req.Emoji,
-			"actor_type":       actorType,
-			"actor_id":         actorID,
-			"comment_revision": removed.CommentRevision,
-		})
+		event := events.Event{
+			Type:           protocol.EventReactionRemoved,
+			IdempotencyKey: "reaction:removed:" + uuidToString(comment.ID) + ":" + actorType + ":" + actorID + ":" + req.Emoji + ":" + strconv.FormatInt(removed.CommentRevision, 10),
+			StreamKey:      "issue:" + uuidToString(comment.IssueID),
+			WorkspaceID:    workspaceID,
+			ActorType:      actorType,
+			ActorID:        actorID,
+			Payload: map[string]any{
+				"comment_id":       uuidToString(comment.ID),
+				"issue_id":         uuidToString(comment.IssueID),
+				"emoji":            req.Emoji,
+				"actor_type":       actorType,
+				"actor_id":         actorID,
+				"comment_revision": removed.CommentRevision,
+			},
+		}
+		persisted, err = eventoutbox.Enqueue(r.Context(), qtx, event)
+		if err != nil {
+			slog.Warn("enqueue comment reaction removal event failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+			writeError(w, http.StatusInternalServerError, "failed to remove reaction")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit comment reaction removal failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		writeError(w, http.StatusInternalServerError, "failed to remove reaction")
+		return
+	}
+	if persisted.ID != "" {
+		h.publishEvent(persisted)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

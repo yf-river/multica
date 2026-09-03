@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, Download } from "lucide-react";
+import { ArrowRight, Terminal } from "lucide-react";
 import { useAuthStore } from "@multica/core/auth";
 import { useLocale } from "../i18n";
 import { useDashboardCtaHref } from "../utils/use-dashboard-cta";
@@ -47,8 +47,8 @@ export function LandingHero() {
                 href="/download"
                 className={heroButtonClassName("ghost")}
               >
-                <Download className="size-4" aria-hidden />
-                {t.hero.downloadDesktop}
+                <Terminal className="size-4" aria-hidden />
+                {t.hero.installCli}
               </Link>
               <Link
                 href="/contact-sales"

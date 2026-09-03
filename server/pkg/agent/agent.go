@@ -113,6 +113,9 @@ type ExecOptions struct {
 	// through Claude Code's --settings flag. It currently carries restrictive
 	// runtime-skill overrides only; other providers ignore it.
 	ClaudeSettingsPath string
+	// LifeCognition marks executions that belong to the life cognition pipeline.
+	// Providers use it to apply the life-specific context and output contract.
+	LifeCognition bool
 }
 
 // runContext derives the execution context for an agent subprocess from the

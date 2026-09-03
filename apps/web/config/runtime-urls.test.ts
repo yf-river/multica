@@ -214,7 +214,6 @@ describe("runtimeRewriteDestination", () => {
   it("keeps same-origin fallback when no runtime upstreams are configured", () => {
     expect(runtimeRewriteDestination("/api/config", {})).toBeUndefined();
     expect(runtimeRewriteDestination("/v1/context", {})).toBeUndefined();
-    expect(runtimeRewriteDestination("/auth/send-code", {})).toBeUndefined();
     expect(
       runtimeRewriteDestination("/uploads/workspaces/a.png", {}),
     ).toBeUndefined();
@@ -249,11 +248,6 @@ describe("runtimeRewriteDestination", () => {
         REMOTE_API_URL: "http://backend:8080",
       }),
     ).toBe("http://backend:8080/v1/issues/MUL-6581");
-    expect(
-      runtimeRewriteDestination("/auth/send-code", {
-        REMOTE_API_URL: "http://backend:8080",
-      }),
-    ).toBe("http://backend:8080/auth/send-code");
     expect(
       runtimeRewriteDestination("/uploads/workspaces/a.png", {
         REMOTE_API_URL: "http://backend:8080",

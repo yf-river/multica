@@ -107,7 +107,7 @@ func TestExplainExecErrorIsIdempotentAcrossNestedBoundaries(t *testing.T) {
 	inner := ExplainExecError(enoexecError(execPath))
 	// The inner boundary wraps with %w on its way out, exactly as a backend
 	// does before returning to the daemon.
-	wrapped := fmt.Errorf("openclaw --version failed: %w", inner)
+	wrapped := fmt.Errorf("agent --version failed: %w", inner)
 	outer := ExplainExecError(wrapped)
 
 	if got := strings.Count(outer.Error(), "is not a runnable executable on"); got != 1 {

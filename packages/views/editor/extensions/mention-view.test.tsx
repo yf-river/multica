@@ -1,7 +1,7 @@
 /**
  * Editor mention modifier-click (MUL-5456).
  *
- * Both mention chips render a real `<a href>`, so on web the correct move is
+ * Both mention chips render a real `<a href>`, so the correct move is
  * to leave a modifier-click alone and let the browser do it — that keeps
  * cmd+click (background tab), shift+click (new window) and cmd+shift+click
  * (foreground tab) distinct, which `window.open` would flatten into one.
@@ -93,21 +93,7 @@ describe("MentionView project mention", () => {
     expect(push).toHaveBeenCalledWith(PROJECT_PATH);
   });
 
-  it("uses openInNewTab for cmd/ctrl click when available (desktop)", () => {
-    const push = vi.fn();
-    const openInNewTab = vi.fn();
-    renderProjectMention(makeAdapter({ push, openInNewTab }));
-
-    const defaultNotPrevented = fireEvent.click(screen.getByTestId("project-chip"), {
-      metaKey: true,
-    });
-
-    expect(defaultNotPrevented).toBe(false);
-    expect(openInNewTab).toHaveBeenCalledWith(PROJECT_PATH, "Roadmap");
-    expect(push).not.toHaveBeenCalled();
-  });
-
-  it("leaves modifier-click to the browser when openInNewTab is absent (web)", () => {
+  it("leaves modifier-click to the browser", () => {
     const push = vi.fn();
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     renderProjectMention(makeAdapter({ push }));
@@ -134,20 +120,18 @@ describe("MentionView issue mention", () => {
 
   it("pushes in place on plain click — same as the readonly chip", () => {
     const push = vi.fn();
-    const openInNewTab = vi.fn();
     renderMention(
       { type: "issue", id: ISSUE_ID, label: "MUL-7" },
-      makeAdapter({ push, openInNewTab }),
+      makeAdapter({ push }),
     );
 
     fireEvent.click(screen.getByTestId("issue-chip"));
     expect(push).toHaveBeenCalledWith(ISSUE_PATH);
-    expect(openInNewTab).not.toHaveBeenCalled();
   });
 
   // The reference implementation the project mention was aligned to — guard it
   // so the two chips can't drift apart again.
-  it("leaves modifier-click to the browser when openInNewTab is absent (web)", () => {
+  it("leaves issue modifier-click to the browser", () => {
     const push = vi.fn();
     renderMention({ type: "issue", id: ISSUE_ID, label: "MUL-7" }, makeAdapter({ push }));
 
@@ -159,20 +143,4 @@ describe("MentionView issue mention", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("uses openInNewTab for cmd/ctrl click when available (desktop)", () => {
-    const push = vi.fn();
-    const openInNewTab = vi.fn();
-    renderMention(
-      { type: "issue", id: ISSUE_ID, label: "MUL-7" },
-      makeAdapter({ push, openInNewTab }),
-    );
-
-    const defaultNotPrevented = fireEvent.click(screen.getByTestId("issue-chip"), {
-      metaKey: true,
-    });
-
-    expect(defaultNotPrevented).toBe(false);
-    expect(openInNewTab).toHaveBeenCalledWith(ISSUE_PATH, "MUL-7");
-    expect(push).not.toHaveBeenCalled();
-  });
 });

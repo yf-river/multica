@@ -106,8 +106,8 @@ export function parseActorRef(raw: unknown): IssuePropertyActorRef | null {
  * know about.
  *
  * Editors must round-trip through this rather than through
- * `actorRefsFromValue`: an installed desktop client talking to a newer backend
- * would otherwise drop every unknown-kind entry the moment the user toggles
+ * `actorRefsFromValue`: a client talking to a newer backend would otherwise
+ * drop every unknown-kind entry the moment the user toggles
  * one it does understand — a silent data loss the user never sees.
  */
 export function actorRefValuesFromValue(value: IssuePropertyValue | undefined): string[] {

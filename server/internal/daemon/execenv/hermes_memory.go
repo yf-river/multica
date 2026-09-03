@@ -321,10 +321,20 @@ func hermesStorePopulated(storeDir string) bool {
 // than skipped: the caller deletes the source on success, so a silent skip
 // would be a silent loss.
 func copyHermesMemoryEntry(src, dst string, entry os.DirEntry) error {
+	info, err := entry.Info()
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", src, err)
+	}
 	switch {
 	case entry.IsDir():
+		if info.Mode().Perm()&0555 == 0 {
+			return fmt.Errorf("directory %s has no read/execute permission", src)
+		}
 		return copyHermesMemoryTree(src, dst)
 	case entry.Type().IsRegular():
+		if info.Mode().Perm()&0444 == 0 {
+			return fmt.Errorf("file %s has no read permission", src)
+		}
 		return copyFile(src, dst)
 	default:
 		return fmt.Errorf("refusing to migrate %s: unsupported entry type %s", src, entry.Type())
@@ -340,6 +350,10 @@ func copyHermesMemoryTree(src, dst string) error {
 		if walkErr != nil {
 			return walkErr
 		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return infoErr
+		}
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
@@ -347,8 +361,14 @@ func copyHermesMemoryTree(src, dst string) error {
 		target := filepath.Join(dst, rel)
 		switch {
 		case d.IsDir():
+			if info.Mode().Perm()&0555 == 0 {
+				return fmt.Errorf("directory %s has no read/execute permission", path)
+			}
 			return os.MkdirAll(target, 0o700)
 		case d.Type().IsRegular():
+			if info.Mode().Perm()&0444 == 0 {
+				return fmt.Errorf("file %s has no read permission", path)
+			}
 			return copyFile(path, target)
 		default:
 			return fmt.Errorf("refusing to migrate %s: unsupported entry type %s", path, d.Type())

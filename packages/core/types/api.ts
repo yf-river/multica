@@ -369,8 +369,8 @@ export type IssueTableGroupSpec =
     }
   | { kind: "property"; property_id: string; include_empty?: boolean };
 
-/** Response-side actor reference. Kept open for forward compatibility: an
- * installed desktop client may receive a new actor kind from a newer server. */
+/** Response-side actor reference. Kept open for forward compatibility when a
+ * newer server introduces another actor kind. */
 export interface IssueTableActorRef {
   type: string;
   id: string;

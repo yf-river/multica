@@ -182,7 +182,6 @@ export function AutopilotRowActions({ row }: { row: Autopilot }) {
               intentNavigate(
                 wsPaths.autopilotDetail(row.id),
                 "foreground-tab",
-                row.title,
               )
             }
           >

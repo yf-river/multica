@@ -2146,7 +2146,6 @@ export function TableView({
       intentNavigate(
         paths.issueDetail(issue.id),
         event ? resolveClickIntent(event) : "push",
-        issue.identifier,
       );
     },
     [intentNavigate, paths],

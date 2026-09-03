@@ -9,9 +9,8 @@
  *             drag / pinch / double-click / keyboard zoom, same controls as
  *             the Mermaid viewer. Replaces the previous standalone
  *             ImageLightbox.
- *   - pdf   : <iframe src={download_url}> — relies on Chromium's PDFium
- *             plugin. On desktop, requires webPreferences.plugins=true
- *             (see apps/desktop/src/main/index.ts).
+ *   - pdf   : <iframe src={download_url}> — relies on the browser's PDF
+ *             viewer.
  *   - video : <video controls src={download_url}>
  *   - audio : <audio controls src={download_url}>
  *
@@ -380,12 +379,8 @@ export function AttachmentPreviewModal({
       ? `?name=${encodeURIComponent(state.filename)}`
       : "";
     const path = `${paths.workspace(slug).attachmentPreview(state.attachmentId)}${nameQuery}`;
-    if (navigation.openInNewTab) {
-      navigation.openInNewTab(path, state.filename, { activate: true });
-    } else {
-      const url = navigation.getShareableUrl(path);
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
+    const url = navigation.getShareableUrl(path);
+    window.open(url, "_blank", "noopener,noreferrer");
     onClose();
   };
 

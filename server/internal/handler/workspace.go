@@ -16,9 +16,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -275,7 +277,7 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = qtx.CreateMember(r.Context(), db.CreateMemberParams{
+	member, err := qtx.CreateMember(r.Context(), db.CreateMemberParams{
 		WorkspaceID: ws.ID,
 		UserID:      parseUUID(userID),
 		Role:        "owner",
@@ -292,13 +294,27 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to seed issue statuses: "+err.Error())
 		return
 	}
+	workspaceEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildWorkspaceDomainEvent(
+		protocol.EventWorkspaceUpdated, ws, "member", userID, map[string]any{"action": "created"},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record workspace event")
+		return
+	}
+	memberEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildMemberDomainEvent(
+		protocol.EventMemberAdded, member, "member", userID, map[string]any{"action": "created"},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record member event")
+		return
+	}
 
 	// NOTE: CreateWorkspace deliberately does NOT mark the user as
 	// onboarded. The `onboarded_at` flag is owned by CompleteOnboarding
 	// (Step 3 of the flow) and by AcceptInvitation (invitee joining an
 	// existing workspace). This decouples "the user has a workspace"
 	// from "the user has finished setup"; the workspace-layer route
-	// gate (web layout / desktop App.tsx overlay) redirects un-onboarded
+	// gate in the web layout redirects un-onboarded
 	// users back to /onboarding instead.
 
 	if err := tx.Commit(r.Context()); err != nil {
@@ -307,6 +323,8 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wsID := uuidToString(ws.ID)
+	h.publishEvent(workspaceEvent)
+	h.publishEvent(memberEvent)
 
 	// "Is this the user's first workspace?" is derived in PostHog by looking
 	// at whether they have a prior workspace_created event, not stamped at
@@ -437,16 +455,33 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		params.AvatarUrl = pgtype.Text{String: accepted, Valid: true}
 	}
 
-	ws, err := h.Queries.UpdateWorkspace(r.Context(), params)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start workspace update")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	ws, err := qtx.UpdateWorkspace(r.Context(), params)
 	if err != nil {
 		slog.Warn("update workspace failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to update workspace: "+err.Error())
 		return
 	}
+	workspaceEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildWorkspaceDomainEvent(
+		protocol.EventWorkspaceUpdated, ws, "member", requestUserID(r), map[string]any{"action": "updated"},
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record workspace event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit workspace update")
+		return
+	}
 
 	slog.Info("workspace updated", append(logger.RequestAttrs(r), "workspace_id", id)...)
-	userID := requestUserID(r)
-	h.publish(protocol.EventWorkspaceUpdated, uuidToString(ws.ID), "member", userID, map[string]any{"workspace": h.workspaceToResponse(ws)})
+	h.publishEvent(workspaceEvent)
 	// A rename changes what daemons display; a settings edit changes how they
 	// behave — the GitHub master switch and the Co-authored-by toggle are read
 	// from this JSONB. Daemons cache settings and have no other way to learn
@@ -613,7 +648,14 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updatedMember, err := h.Queries.UpdateMemberRole(r.Context(), db.UpdateMemberRoleParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start member update")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	updatedMember, err := qtx.UpdateMemberRole(r.Context(), db.UpdateMemberRoleParams{
 		ID:   target.ID,
 		Role: role,
 	})
@@ -624,16 +666,31 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 
 	h.MembershipCache.Invalidate(r.Context(), uuidToString(target.UserID), workspaceID)
 
-	user, err := h.Queries.GetUser(r.Context(), updatedMember.UserID)
+	user, err := qtx.GetUser(r.Context(), updatedMember.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load member")
 		return
 	}
 
 	userID := requestUserID(r)
-	h.publish(protocol.EventMemberUpdated, uuidToString(requester.WorkspaceID), "member", userID, map[string]any{
-		"member": h.memberWithUserResponse(updatedMember, user),
-	})
+	memberEvent := events.Event{
+		Type:           protocol.EventMemberUpdated,
+		IdempotencyKey: "member:" + protocol.EventMemberUpdated + ":" + uuidToString(updatedMember.ID) + ":" + role,
+		StreamKey:      "workspace:" + uuidToString(updatedMember.WorkspaceID),
+		WorkspaceID:    uuidToString(updatedMember.WorkspaceID),
+		ActorType:      "member", ActorID: userID,
+		Payload: map[string]any{"member": h.memberWithUserResponse(updatedMember, user), "action": "role_updated"},
+	}
+	memberEvent, err = service.RecordDurableEventTx(r.Context(), qtx, memberEvent)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record member event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit member update")
+		return
+	}
+	h.publishEvent(memberEvent)
 
 	writeJSON(w, http.StatusOK, h.memberWithUserResponse(updatedMember, user))
 }
@@ -689,11 +746,6 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 	h.publishRevocation(r.Context(), result, wsIDStr, "member", requesterUserID)
 
 	slog.Info("member removed", append(logger.RequestAttrs(r), "member_id", uuidToString(target.ID), "workspace_id", workspaceID, "user_id", uuidToString(target.UserID))...)
-	h.publish(protocol.EventMemberRemoved, wsIDStr, "member", requesterUserID, map[string]any{
-		"member_id":    uuidToString(target.ID),
-		"workspace_id": wsIDStr,
-		"user_id":      uuidToString(target.UserID),
-	})
 	h.notifyDaemonWorkspacesChanged(uuidToString(target.UserID))
 
 	w.WriteHeader(http.StatusNoContent)
@@ -733,11 +785,6 @@ func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 	h.publishRevocation(r.Context(), result, workspaceID, "member", userID)
 
 	slog.Info("member removed", append(logger.RequestAttrs(r), "member_id", uuidToString(member.ID), "workspace_id", workspaceID, "user_id", uuidToString(member.UserID))...)
-	h.publish(protocol.EventMemberRemoved, workspaceID, "member", userID, map[string]any{
-		"member_id":    uuidToString(member.ID),
-		"workspace_id": workspaceID,
-		"user_id":      uuidToString(member.UserID),
-	})
 	h.notifyDaemonWorkspacesChanged(uuidToString(member.UserID))
 
 	w.WriteHeader(http.StatusNoContent)
@@ -757,7 +804,7 @@ func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 //
 // Waiting on that lock without a cap is what the user sees as "delete does
 // nothing": the request never returns, and no layer above it times out — the
-// browser/Electron fetch in packages/core/api/client.ts has no deadline and
+// browser fetch in packages/core/api/client.ts has no deadline and
 // the delete dialog stays in its "Deleting…" state forever (MUL-5983). A
 // bounded wait turns the same contention into a retryable error.
 //
@@ -1139,6 +1186,7 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	// set-based delete scoped by workspace_id; the legacy cascades remain only
 	// as an expand-phase safety net until a later schema contract.
 	ctx := r.Context()
+	var workspaceDeletedEvent events.Event
 	deleteSteps := []struct {
 		name string
 		run  func() error
@@ -1157,6 +1205,25 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		{
 			name: "prepare relationship graph",
 			run:  func() error { return qtx.PrepareWorkspaceDeletionLinks(ctx, requester.WorkspaceID) },
+		},
+		{
+			// Life keeps its own derived graph and cognition queue. Clear it
+			// before source tasks, comments, projects, and chat rows disappear;
+			// the context state is removed once more after the graph triggers run.
+			name: "delete life data",
+			run: func() error {
+				if err := qtx.DeleteWorkspaceLifeData(ctx, requester.WorkspaceID); err != nil {
+					return err
+				}
+				return qtx.DeleteWorkspaceLifeContextState(ctx, requester.WorkspaceID)
+			},
+		},
+		{
+			// Outbox rows are part of the workspace's durable history. Remove
+			// them before source rows disappear so legacy events without an
+			// envelope workspace_id can still be resolved through their owners.
+			name: "delete durable events",
+			run:  func() error { return qtx.DeleteWorkspaceDomainEvents(ctx, requester.WorkspaceID) },
 		},
 		{
 			// These FK-free intents deliberately survive the transaction so the
@@ -1299,7 +1366,16 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			// valid UUID, so reuse the resolved value. The existing final
 			// statement also sweeps any expand-phase compatibility leftovers.
 			name: "delete workspace",
-			run:  func() error { return qtx.DeleteWorkspace(ctx, requester.WorkspaceID) },
+			run: func() error {
+				if err := qtx.DeleteWorkspace(ctx, requester.WorkspaceID); err != nil {
+					return err
+				}
+				var eventErr error
+				workspaceDeletedEvent, eventErr = service.RecordDurableEventTx(ctx, qtx, buildWorkspaceDomainEvent(
+					protocol.EventWorkspaceDeleted, db.Workspace{ID: requester.WorkspaceID}, "member", requestUserID(r), nil,
+				))
+				return eventErr
+			},
 		},
 	}
 	for _, step := range deleteSteps {
@@ -1317,9 +1393,7 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	h.deleteS3Objects(r.Context(), append(sourceContextAttachmentURLs, sourceContextIntentURLs...))
 
 	slog.Info("workspace deleted", append(logger.RequestAttrs(r), "workspace_id", workspaceID)...)
-	h.publish(protocol.EventWorkspaceDeleted, workspaceID, "member", requestUserID(r), map[string]any{
-		"workspace_id": workspaceID,
-	})
+	h.publishEvent(workspaceDeletedEvent)
 	h.notifyDaemonWorkspacesChanged(affectedUserIDs...)
 
 	w.WriteHeader(http.StatusNoContent)

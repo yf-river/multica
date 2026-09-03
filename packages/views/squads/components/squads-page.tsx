@@ -346,7 +346,6 @@ function SquadRowActions({ squad }: { squad: Squad }) {
               intentNavigate(
                 p.squadDetail(squad.id),
                 "foreground-tab",
-                squad.name,
               )
             }
           >
@@ -983,7 +982,7 @@ export function SquadsPage() {
                   <ListGridRow
                     key={squad.id}
                     className="cursor-pointer"
-                    {...rowLink(p.squadDetail(squad.id), squad.name)}
+                    {...rowLink(p.squadDetail(squad.id))}
                   >
                     <NameCell squad={squad} />
                     <LeaderCell

@@ -1,19 +1,16 @@
 CREATE TABLE public.companion_profile (
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
-    agent_id uuid NOT NULL REFERENCES public.agent(id) ON DELETE RESTRICT,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     updated_at timestamptz DEFAULT now() NOT NULL,
     PRIMARY KEY (workspace_id, user_id)
 );
 
-CREATE INDEX idx_companion_profile_agent
-    ON public.companion_profile (agent_id);
-
 CREATE TABLE public.life_memory (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     created_by_type text NOT NULL,
     created_by_id uuid NOT NULL,
     kind text NOT NULL,
@@ -25,7 +22,7 @@ CREATE TABLE public.life_memory (
     valid_from timestamptz,
     valid_to timestamptz,
     confirmed_at timestamptz,
-    confirmed_by_id uuid REFERENCES public."user"(id) ON DELETE SET NULL,
+    confirmed_by_id uuid,
     created_at timestamptz DEFAULT now() NOT NULL,
     updated_at timestamptz DEFAULT now() NOT NULL,
     CONSTRAINT life_memory_created_by_type_check CHECK (created_by_type = ANY (ARRAY['member', 'agent', 'system'])),
@@ -42,13 +39,8 @@ CREATE TABLE public.life_memory (
     )
 );
 
-CREATE INDEX idx_life_memory_user_status_updated
-    ON public.life_memory (workspace_id, user_id, status, updated_at DESC);
-CREATE INDEX idx_life_memory_user_kind_updated
-    ON public.life_memory (workspace_id, user_id, kind, updated_at DESC);
-
 CREATE TABLE public.life_memory_evidence (
-    memory_id uuid NOT NULL REFERENCES public.life_memory(id) ON DELETE CASCADE,
+    memory_id uuid NOT NULL,
     source_type text NOT NULL,
     source_id uuid NOT NULL,
     excerpt text DEFAULT '' NOT NULL,
@@ -58,25 +50,19 @@ CREATE TABLE public.life_memory_evidence (
     CONSTRAINT life_memory_evidence_source_type_check CHECK (source_type = ANY (ARRAY['chat_message', 'task', 'comment', 'memory', 'experiment_round']))
 );
 
-CREATE INDEX idx_life_memory_evidence_source
-    ON public.life_memory_evidence (source_type, source_id);
-
 CREATE TABLE public.life_memory_dependency (
-    source_memory_id uuid NOT NULL REFERENCES public.life_memory(id) ON DELETE CASCADE,
-    derived_memory_id uuid NOT NULL REFERENCES public.life_memory(id) ON DELETE CASCADE,
+    source_memory_id uuid NOT NULL,
+    derived_memory_id uuid NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     PRIMARY KEY (source_memory_id, derived_memory_id),
     CONSTRAINT life_memory_dependency_not_self CHECK (source_memory_id <> derived_memory_id)
 );
 
-CREATE INDEX idx_life_memory_dependency_derived
-    ON public.life_memory_dependency (derived_memory_id);
-
 CREATE TABLE public.life_action_proposal (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
-    companion_agent_id uuid NOT NULL REFERENCES public.agent(id) ON DELETE RESTRICT,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    companion_agent_id uuid NOT NULL,
     proposal_type text NOT NULL,
     status text DEFAULT 'internal_draft' NOT NULL,
     title text NOT NULL,
@@ -102,13 +88,10 @@ CREATE TABLE public.life_action_proposal (
     )
 );
 
-CREATE INDEX idx_life_action_proposal_user_status
-    ON public.life_action_proposal (workspace_id, user_id, status, updated_at DESC);
-
 CREATE TABLE public.life_experiment (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     title text NOT NULL,
     problem text NOT NULL,
     hypothesis text NOT NULL,
@@ -124,15 +107,12 @@ CREATE TABLE public.life_experiment (
     CONSTRAINT life_experiment_created_by_type_check CHECK (created_by_type = ANY (ARRAY['member', 'agent']))
 );
 
-CREATE INDEX idx_life_experiment_user_updated
-    ON public.life_experiment (workspace_id, user_id, updated_at DESC);
-
 CREATE TABLE public.life_experiment_round (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    experiment_id uuid NOT NULL REFERENCES public.life_experiment(id) ON DELETE CASCADE,
-    previous_round_id uuid REFERENCES public.life_experiment_round(id) ON DELETE SET NULL,
-    proposal_id uuid REFERENCES public.life_action_proposal(id) ON DELETE SET NULL,
-    issue_id uuid REFERENCES public.issue(id) ON DELETE SET NULL,
+    experiment_id uuid NOT NULL,
+    previous_round_id uuid,
+    proposal_id uuid,
+    issue_id uuid,
     status text DEFAULT 'draft' NOT NULL,
     plan jsonb DEFAULT '{}' NOT NULL,
     starts_at timestamptz,
@@ -140,7 +120,7 @@ CREATE TABLE public.life_experiment_round (
     stopped_at timestamptz,
     stop_reason text DEFAULT '' NOT NULL,
     confirmed_at timestamptz,
-    confirmed_by_id uuid REFERENCES public."user"(id) ON DELETE SET NULL,
+    confirmed_by_id uuid,
     review jsonb,
     reviewed_at timestamptz,
     created_at timestamptz DEFAULT now() NOT NULL,
@@ -165,28 +145,20 @@ CREATE TABLE public.life_experiment_round (
     )
 );
 
-CREATE INDEX idx_life_experiment_round_experiment_created
-    ON public.life_experiment_round (experiment_id, created_at DESC);
-CREATE INDEX idx_life_experiment_round_status_ends
-    ON public.life_experiment_round (status, ends_at) WHERE status = 'running';
-
 CREATE TABLE public.life_experiment_memory (
-    round_id uuid NOT NULL REFERENCES public.life_experiment_round(id) ON DELETE CASCADE,
-    memory_id uuid NOT NULL REFERENCES public.life_memory(id) ON DELETE CASCADE,
+    round_id uuid NOT NULL,
+    memory_id uuid NOT NULL,
     role text NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     PRIMARY KEY (round_id, memory_id, role),
     CONSTRAINT life_experiment_memory_role_check CHECK (role = ANY (ARRAY['input', 'observation', 'result']))
 );
 
-CREATE INDEX idx_life_experiment_memory_memory
-    ON public.life_experiment_memory (memory_id);
-
 CREATE TABLE public.life_proactive_check (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
-    companion_agent_id uuid NOT NULL REFERENCES public.agent(id) ON DELETE RESTRICT,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    companion_agent_id uuid NOT NULL,
     status text NOT NULL,
     trigger_source text NOT NULL,
     reason text NOT NULL,
@@ -199,13 +171,10 @@ CREATE TABLE public.life_proactive_check (
     CONSTRAINT life_proactive_check_context_check CHECK (jsonb_typeof(context_snapshot) = 'object')
 );
 
-CREATE INDEX idx_life_proactive_check_user_checked
-    ON public.life_proactive_check (workspace_id, user_id, checked_at DESC);
-
 CREATE TABLE public.life_chronicle_entry (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    workspace_id uuid NOT NULL REFERENCES public.workspace(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     period_start timestamptz NOT NULL,
     period_end timestamptz NOT NULL,
     facts text NOT NULL,
@@ -218,17 +187,11 @@ CREATE TABLE public.life_chronicle_entry (
     CONSTRAINT life_chronicle_facts_check CHECK (length(btrim(facts)) > 0)
 );
 
-CREATE INDEX idx_life_chronicle_user_period
-    ON public.life_chronicle_entry (workspace_id, user_id, period_start DESC);
-
 CREATE TABLE public.life_chronicle_evidence (
-    entry_id uuid NOT NULL REFERENCES public.life_chronicle_entry(id) ON DELETE CASCADE,
+    entry_id uuid NOT NULL,
     source_type text NOT NULL,
     source_id uuid NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     PRIMARY KEY (entry_id, source_type, source_id),
     CONSTRAINT life_chronicle_evidence_source_type_check CHECK (source_type = ANY (ARRAY['chat_message', 'task', 'memory', 'experiment_round']))
 );
-
-CREATE INDEX idx_life_chronicle_evidence_source
-    ON public.life_chronicle_evidence (source_type, source_id);

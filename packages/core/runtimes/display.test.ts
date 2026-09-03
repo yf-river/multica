@@ -126,14 +126,14 @@ describe("runtimeDisplayLabel", () => {
   it("first-letter-capitalizes non-overridden slugs, matching the daemon", () => {
     // Providers without an explicit daemon override are first-letter
     // capitalized on both the alias and no-alias paths, so the label must match
-    // the daemon (e.g. no-alias name is "Openclaw (host)").
+    // the daemon.
     expect(
       runtimeDisplayLabel({
-        name: "Openclaw (host)",
+        name: "Custom Runtime (host)",
         custom_name: "box",
-        provider: "openclaw",
+        provider: "custom-runtime",
       }),
-    ).toBe("box (Openclaw)");
+    ).toBe("box (Custom Runtime)");
     expect(
       runtimeDisplayLabel({
         name: "Codex (host)",

@@ -3813,7 +3813,6 @@ func TestCodexExecuteSemanticInactivityAllowsContinuousMessages(t *testing.T) {
 }
 
 func TestCodexExecuteSemanticInactivityAllowsContinuousDeltaProgress(t *testing.T) {
-	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fixture is POSIX-only")
 	}

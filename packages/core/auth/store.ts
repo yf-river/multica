@@ -26,8 +26,7 @@ export interface AuthState {
   retryGeneration: number;
 
   retryAuthentication: () => void;
-  sendCode: (email: string) => Promise<void>;
-  verifyCode: (email: string, code: string) => Promise<User>;
+  login: (account: string, password: string) => Promise<User>;
   loginWithGoogle: (code: string, redirectUri: string) => Promise<User>;
   loginWithToken: (token: string) => Promise<User>;
   logout: () => void;
@@ -52,19 +51,11 @@ export function createAuthStore(options: AuthStoreOptions) {
       }));
     },
 
-    sendCode: async (email: string) => {
-      await api.sendCode(email);
-    },
-
-    verifyCode: async (email: string, code: string) => {
-      const { token, user } = await api.verifyCode(email, code);
-      if (!cookieAuth) {
-        // Token mode: persist for Electron / legacy.
-        storage.setItem("multica_token", token);
-        api.setToken(token);
-      }
+    login: async (account: string, password: string) => {
+      const { token, user } = await api.login(account, password);
+      if (!cookieAuth) { storage.setItem("multica_token", token); api.setToken(token); }
       onLogin?.();
-      identifyAnalytics(user.id, { email: user.email, name: user.name });
+      identifyAnalytics(user.id, { account: user.account, name: user.name });
       set({ user, isLoading: false, status: "authenticated" });
       return user;
     },

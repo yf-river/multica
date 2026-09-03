@@ -7,8 +7,9 @@ test.describe("Authentication", () => {
     await waitForPageText(page, "Sign in to Multica");
 
     await expect(page.getByText("Sign in to Multica")).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Email" })).toBeVisible();
-    await expect(page.getByPlaceholder("you@example.com")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Account" })).toBeVisible();
+    await expect(page.getByPlaceholder("alice")).toBeVisible();
+    await expect(page.getByLabel("Password")).toBeVisible();
     await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 

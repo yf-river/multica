@@ -89,10 +89,8 @@ vi.mock("@multica/core/auth", () => ({
 
 const navigationMocks = vi.hoisted(() => ({
   push: vi.fn(),
-  openInNewTab: vi.fn(),
   getShareableUrl: vi.fn((path: string) => `https://app.example${path}`),
 }));
-const navigationState = vi.hoisted(() => ({ hasOpenInNewTab: true }));
 
 vi.mock("../../navigation", async () => {
   // Real resolver — pure, no React context.
@@ -106,35 +104,20 @@ vi.mock("../../navigation", async () => {
     resolveClickIntent,
     useNavigation: () => ({
       push: navigationMocks.push,
-      openInNewTab: navigationState.hasOpenInNewTab
-        ? navigationMocks.openInNewTab
-        : undefined,
       getShareableUrl: navigationMocks.getShareableUrl,
       pathname: "/",
     }),
-    // Mirrors the real hook's adapter semantics against the mocks above.
-    useIntentNavigate:
-      () => (href: string, intent: string, newTabTitle?: string) => {
-        if (intent === "push") {
-          navigationMocks.push(href);
-          return;
-        }
-        if (navigationState.hasOpenInNewTab) {
-          if (intent === "foreground-tab") {
-            navigationMocks.openInNewTab(href, newTabTitle, {
-              activate: true,
-            });
-          } else {
-            navigationMocks.openInNewTab(href, newTabTitle);
-          }
-          return;
-        }
-        window.open(
-          navigationMocks.getShareableUrl(href),
-          "_blank",
-          "noopener,noreferrer",
-        );
-      },
+    useIntentNavigate: () => (href: string, intent: string) => {
+      if (intent === "push") {
+        navigationMocks.push(href);
+        return;
+      }
+      window.open(
+        navigationMocks.getShareableUrl(href),
+        "_blank",
+        "noopener,noreferrer",
+      );
+    },
   };
 });
 
@@ -279,12 +262,10 @@ describe("TableView cell editors under data refresh", () => {
 
   beforeEach(() => {
     navigationMocks.push.mockReset();
-    navigationMocks.openInNewTab.mockReset();
     navigationMocks.getShareableUrl.mockReset();
     navigationMocks.getShareableUrl.mockImplementation(
       (path: string) => `https://app.example${path}`,
     );
-    navigationState.hasOpenInNewTab = true;
     vi.stubGlobal("IntersectionObserver", ObserverStub);
     vi.stubGlobal("ResizeObserver", ObserverStub);
     queryClient = new QueryClient({
@@ -431,7 +412,7 @@ describe("TableView cell editors under data refresh", () => {
     });
   });
 
-  it("navigates in place on plain title and row clicks; modifiers open tabs", async () => {
+  it("navigates in place on plain title and row clicks; modifiers open browser tabs", async () => {
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     serverIssues = [makeIssue("a", "Alpha task", "todo")];
 
@@ -446,35 +427,38 @@ describe("TableView cell editors under data refresh", () => {
 
     const row = (await screen.findByText("MUL-a")).closest("tr")!;
     const title = within(row).getByRole("button", { name: "Alpha task" });
+    const windowOpen = vi.spyOn(window, "open").mockReturnValue(null);
 
     await user.click(title);
     expect(navigationMocks.push).toHaveBeenCalledWith("/test/issues/a");
-    expect(navigationMocks.openInNewTab).not.toHaveBeenCalled();
+    expect(windowOpen).not.toHaveBeenCalled();
 
     navigationMocks.push.mockClear();
     await user.click(row);
     expect(navigationMocks.push).toHaveBeenCalledWith("/test/issues/a");
-    expect(navigationMocks.openInNewTab).not.toHaveBeenCalled();
+    expect(windowOpen).not.toHaveBeenCalled();
 
     navigationMocks.push.mockClear();
     fireEvent.click(title, { metaKey: true });
-    expect(navigationMocks.openInNewTab).toHaveBeenCalledWith(
-      "/test/issues/a",
-      "MUL-a",
+    expect(windowOpen).toHaveBeenCalledWith(
+      "https://app.example/test/issues/a",
+      "_blank",
+      "noopener,noreferrer",
     );
 
-    navigationMocks.openInNewTab.mockClear();
+    windowOpen.mockClear();
     fireEvent.click(row, { metaKey: true, shiftKey: true });
-    expect(navigationMocks.openInNewTab).toHaveBeenCalledWith(
-      "/test/issues/a",
-      "MUL-a",
-      { activate: true },
+    expect(windowOpen).toHaveBeenCalledWith(
+      "https://app.example/test/issues/a",
+      "_blank",
+      "noopener,noreferrer",
     );
     expect(navigationMocks.push).not.toHaveBeenCalled();
   });
 
   it("middle click on an interactive cell does not trigger row navigation", async () => {
     serverIssues = [makeIssue("a", "Alpha task", "todo")];
+    const windowOpen = vi.spyOn(window, "open").mockReturnValue(null);
 
     renderWithI18n(
       <QueryClientProvider client={queryClient}>
@@ -493,54 +477,21 @@ describe("TableView cell editors under data refresh", () => {
 
     // Status cell trigger (interactive) — must NOT bubble into a row open.
     auxClick(within(row).getByRole("button", { name: /Todo/ }));
-    expect(navigationMocks.openInNewTab).not.toHaveBeenCalled();
     expect(navigationMocks.push).not.toHaveBeenCalled();
 
     // Row checkbox — same.
     auxClick(within(row).getByRole("checkbox"));
-    expect(navigationMocks.openInNewTab).not.toHaveBeenCalled();
+    expect(navigationMocks.push).not.toHaveBeenCalled();
 
     // Dead space on the row still opens a background tab on middle click.
     auxClick(row);
-    expect(navigationMocks.openInNewTab).toHaveBeenCalledWith(
-      "/test/issues/a",
-      "MUL-a",
-    );
-  });
-
-  it("without a tab adapter (web), plain click pushes and a modifier click opens a browser tab", async () => {
-    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
-    const windowOpen = vi.fn();
-    vi.stubGlobal("open", windowOpen);
-    navigationState.hasOpenInNewTab = false;
-    serverIssues = [makeIssue("a", "Alpha task", "todo")];
-
-    renderWithI18n(
-      <QueryClientProvider client={queryClient}>
-        <Harness
-          childProgressMap={new Map()}
-          surfaceKey={`test-browser-tab-${Math.floor(Math.random() * 1e9)}`}
-        />
-      </QueryClientProvider>,
-    );
-
-    const row = (await screen.findByText("MUL-a")).closest("tr")!;
-    const title = within(row).getByRole("button", { name: "Alpha task" });
-
-    await user.click(title);
-    expect(navigationMocks.push).toHaveBeenCalledWith("/test/issues/a");
-    expect(windowOpen).not.toHaveBeenCalled();
-
-    fireEvent.click(title, { metaKey: true });
-    expect(navigationMocks.getShareableUrl).toHaveBeenCalledWith(
-      "/test/issues/a",
-    );
     expect(windowOpen).toHaveBeenCalledWith(
       "https://app.example/test/issues/a",
       "_blank",
       "noopener,noreferrer",
     );
   });
+
 });
 
 // Row virtualization unmounts a cell when its row scrolls out of the window

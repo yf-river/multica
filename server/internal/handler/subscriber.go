@@ -9,6 +9,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -91,7 +93,14 @@ func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
 	// Explicit action, so this CLEARS any earlier opt-out tombstone — the user
 	// is overriding their own unsubscribe. Rule-driven subscribes deliberately
 	// cannot do that (see AddIssueSubscriber).
-	err := h.Queries.SubscribeToIssueExplicitly(r.Context(), db.SubscribeToIssueExplicitlyParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start subscription transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	err = qtx.SubscribeToIssueExplicitly(r.Context(), db.SubscribeToIssueExplicitlyParams{
 		IssueID:  issue.ID,
 		UserType: targetUserType,
 		UserID:   parseUUID(targetUserID),
@@ -102,12 +111,19 @@ func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(protocol.EventSubscriberAdded, workspaceID, callerActorType, callerActorID, map[string]any{
-		"issue_id":  issueID,
-		"user_type": targetUserType,
-		"user_id":   targetUserID,
-		"reason":    "manual",
-	})
+	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildSubscriberEvent(
+		protocol.EventSubscriberAdded, issueID, workspaceID, callerActorType, callerActorID,
+		targetUserType, targetUserID, "manual",
+	))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record subscription event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit subscription")
+		return
+	}
+	h.publishEvent(event)
 
 	writeJSON(w, http.StatusOK, map[string]bool{"subscribed": true})
 }
@@ -177,7 +193,7 @@ func (h *Handler) unsubscribeFromIssue(w http.ResponseWriter, r *http.Request, s
 	// set so each one gets its own broadcast: a client with a CHILD issue open
 	// never sees the root's event, and would otherwise keep showing a
 	// subscription the server has already retired.
-	removed := []string{issueID}
+	var committedEvents []events.Event
 	if subtree {
 		// A subtree opt-out is only meaningful if it also covers children the
 		// agent files a moment later, so it must not interleave with the
@@ -185,7 +201,7 @@ func (h *Handler) unsubscribeFromIssue(w http.ResponseWriter, r *http.Request, s
 		// (workspace, user) lock for the length of their transaction; without
 		// it a child created between the tombstone write and the rule's read
 		// comes back as an active watcher (MUL-5483 review round 7).
-		ids, err := h.unsubscribeSubtreeSerialized(r.Context(), workspaceID, issue.ID, targetUserType, targetUserID)
+		_, committed, err := h.unsubscribeSubtreeSerialized(r.Context(), workspaceID, issue.ID, targetUserType, targetUserID, callerActorType, callerActorID)
 		if errors.Is(err, errTargetNoLongerMember) {
 			writeError(w, http.StatusForbidden, "target user is not a member of this workspace")
 			return
@@ -194,25 +210,38 @@ func (h *Handler) unsubscribeFromIssue(w http.ResponseWriter, r *http.Request, s
 			writeError(w, http.StatusInternalServerError, "failed to unsubscribe")
 			return
 		}
-		removed = removed[:0]
-		for _, id := range ids {
-			removed = append(removed, uuidToString(id))
+		committedEvents = committed
+	} else {
+		tx, err := h.TxStarter.Begin(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to start subscription transaction")
+			return
 		}
-	} else if err := h.Queries.RemoveIssueSubscriber(r.Context(), db.RemoveIssueSubscriberParams{
-		IssueID:  issue.ID,
-		UserType: targetUserType,
-		UserID:   parseUUID(targetUserID),
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to unsubscribe")
-		return
+		defer tx.Rollback(r.Context())
+		qtx := h.Queries.WithTx(tx)
+		if err := qtx.RemoveIssueSubscriber(r.Context(), db.RemoveIssueSubscriberParams{
+			IssueID: issue.ID, UserType: targetUserType, UserID: parseUUID(targetUserID),
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to unsubscribe")
+			return
+		}
+		event, err := service.RecordDurableEventTx(r.Context(), qtx, buildSubscriberEvent(
+			protocol.EventSubscriberRemoved, issueID, workspaceID, callerActorType, callerActorID,
+			targetUserType, targetUserID, "manual",
+		))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to record subscription event")
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit subscription")
+			return
+		}
+		committedEvents = []events.Event{event}
 	}
 
-	for _, id := range removed {
-		h.publish(protocol.EventSubscriberRemoved, workspaceID, callerActorType, callerActorID, map[string]any{
-			"issue_id":  id,
-			"user_type": targetUserType,
-			"user_id":   targetUserID,
-		})
+	for _, event := range committedEvents {
+		h.publishEvent(event)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"subscribed": false})
@@ -227,11 +256,11 @@ var errTargetNoLongerMember = errors.New("target user is no longer a workspace m
 // (workspace, user) serialization boundary the delegated auto-subscribe rule
 // uses, and returns every issue it actually retired.
 func (h *Handler) unsubscribeSubtreeSerialized(
-	ctx context.Context, workspaceID string, rootID pgtype.UUID, userType, userID string,
-) ([]pgtype.UUID, error) {
+	ctx context.Context, workspaceID string, rootID pgtype.UUID, userType, userID, actorType, actorID string,
+) ([]pgtype.UUID, []events.Event, error) {
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
@@ -240,7 +269,7 @@ func (h *Handler) unsubscribeSubtreeSerialized(
 		WorkspaceID: parseUUID(workspaceID),
 		UserID:      parseUUID(userID),
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// The membership pre-check in the caller ran against its own snapshot,
@@ -260,9 +289,9 @@ func (h *Handler) unsubscribeSubtreeSerialized(
 			WorkspaceID: parseUUID(workspaceID),
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, errTargetNoLongerMember
+				return nil, nil, errTargetNoLongerMember
 			}
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -272,10 +301,35 @@ func (h *Handler) unsubscribeSubtreeSerialized(
 		UserID:   parseUUID(userID),
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	committedEvents := make([]events.Event, 0, len(ids))
+	for _, id := range ids {
+		event, err := service.RecordDurableEventTx(ctx, qtx, buildSubscriberEvent(
+			protocol.EventSubscriberRemoved, uuidToString(id), workspaceID, actorType, actorID,
+			userType, userID, "subtree",
+		))
+		if err != nil {
+			return nil, nil, err
+		}
+		committedEvents = append(committedEvents, event)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return ids, nil
+	return ids, committedEvents, nil
+}
+
+func buildSubscriberEvent(eventType, issueID, workspaceID, actorType, actorID, userType, userID, reason string) events.Event {
+	return events.Event{
+		Type:           eventType,
+		IdempotencyKey: "subscriber:" + eventType + ":" + issueID + ":" + userType + ":" + userID,
+		StreamKey:      "issue:" + issueID,
+		WorkspaceID:    workspaceID,
+		ActorType:      actorType,
+		ActorID:        actorID,
+		Payload: map[string]any{
+			"issue_id": issueID, "user_type": userType, "user_id": userID, "reason": reason,
+		},
+	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/events"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -143,11 +144,17 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to mark chat session explicit")
 		return
 	}
+	createdEvent, err := recordChatEventTx(r.Context(), qtx, buildChatSessionCreatedEvent(session, actorType, actorID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record chat session event")
+		return
+	}
 
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit chat session create")
 		return
 	}
+	h.publishEvent(createdEvent)
 
 	writeJSON(w, http.StatusCreated, chatSessionToResponse(session))
 }
@@ -378,8 +385,9 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var (
-		updated db.ChatSession
-		err     error
+		updated      db.ChatSession
+		err          error
+		updatedEvent events.Event
 	)
 	var projectIDChanged bool
 	if hasTitle {
@@ -392,10 +400,32 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "title is too long")
 			return
 		}
-		updated, err = h.Queries.UpdateChatSessionTitle(r.Context(), db.UpdateChatSessionTitleParams{
+		tx, txErr := h.TxStarter.Begin(r.Context())
+		if txErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to start transaction")
+			return
+		}
+		defer tx.Rollback(r.Context())
+		qtx := h.Queries.WithTx(tx)
+		if _, lockErr := qtx.LockChatSessionForRuntimeBind(r.Context(), session.ID); lockErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to lock chat session")
+			return
+		}
+		updated, err = qtx.UpdateChatSessionTitle(r.Context(), db.UpdateChatSessionTitleParams{
 			ID:    session.ID,
 			Title: title,
 		})
+		if err == nil {
+			resolvedSessionID := uuidToString(updated.ID)
+			updatedEvent, err = recordChatEventTx(r.Context(), qtx, buildChatSessionUpdatedEvent(updated, "member", userID, protocol.ChatSessionUpdatedPayload{
+				ChatSessionID: resolvedSessionID,
+				Title:         updated.Title,
+				UpdatedAt:     timestampToString(updated.UpdatedAt),
+			}, "title"))
+		}
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
 	} else {
 		projectID := pgtype.UUID{Valid: false}
 		if string(req.ProjectID) != "null" {
@@ -443,6 +473,16 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 			ProjectID:   projectID,
 		})
 		if err == nil {
+			resolvedSessionID := uuidToString(updated.ID)
+			projectIDValue := uuidToPtr(updated.ProjectID)
+			updatedEvent, err = recordChatEventTx(r.Context(), qtx, buildChatSessionUpdatedEvent(updated, "member", userID, protocol.ChatSessionUpdatedPayload{
+				ChatSessionID: resolvedSessionID,
+				Title:         updated.Title,
+				ProjectID:     &projectIDValue,
+				UpdatedAt:     timestampToString(updated.UpdatedAt),
+			}, "project"))
+		}
+		if err == nil {
 			err = tx.Commit(r.Context())
 		}
 		projectIDChanged = true
@@ -462,7 +502,11 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 		projectID := uuidToPtr(updated.ProjectID)
 		payload.ProjectID = &projectID
 	}
-	h.publishChat(protocol.EventChatSessionUpdated, workspaceID, "member", userID, resolvedSessionID, payload)
+	if updatedEvent.ID != "" {
+		h.publishEvent(updatedEvent)
+	} else {
+		h.publishChat(protocol.EventChatSessionUpdated, workspaceID, "member", userID, resolvedSessionID, payload)
+	}
 
 	writeJSON(w, http.StatusOK, chatSessionToResponse(updated))
 }
@@ -494,7 +538,18 @@ func (h *Handler) SetChatSessionPinned(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.Queries.SetChatSessionPinned(r.Context(), db.SetChatSessionPinnedParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.LockChatSessionForRuntimeBind(r.Context(), session.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock chat session")
+		return
+	}
+	updated, err := qtx.SetChatSessionPinned(r.Context(), db.SetChatSessionPinnedParams{
 		ID:     session.ID,
 		Pinned: req.Pinned,
 	})
@@ -505,12 +560,21 @@ func (h *Handler) SetChatSessionPinned(w http.ResponseWriter, r *http.Request) {
 
 	resolvedSessionID := uuidToString(updated.ID)
 	pinned := updated.PinnedAt.Valid
-	h.publishChat(protocol.EventChatSessionUpdated, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionUpdatedPayload{
+	event, err := recordChatEventTx(r.Context(), qtx, buildChatSessionUpdatedEvent(updated, "member", userID, protocol.ChatSessionUpdatedPayload{
 		ChatSessionID: resolvedSessionID,
 		Title:         updated.Title,
 		Pinned:        &pinned,
 		UpdatedAt:     timestampToString(updated.UpdatedAt),
-	})
+	}, "pin"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record chat session event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit chat session update")
+		return
+	}
+	h.publishEvent(event)
 
 	writeJSON(w, http.StatusOK, chatSessionToResponse(updated))
 }
@@ -584,6 +648,7 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 	// request unarchives and nil for a web-only chat; BroadcastCancelledTasks
 	// is a no-op on an empty slice.
 	var cancelled []db.AgentTaskQueue
+	var archivedEvent events.Event
 
 	if req.Archived {
 		// Read the binding BEFORE the delete below, which is what erases the
@@ -617,6 +682,13 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 				writeError(w, http.StatusInternalServerError, "failed to settle delegated failure recoveries")
 				return
 			}
+			for _, task := range cancelled {
+				if _, err = service.RecordTaskTerminalEventTx(r.Context(), qtx, protocol.EventTaskCancelled, task,
+					map[string]any{"reason": "chat_session_archived"}); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to record cancelled chat tasks")
+					return
+				}
+			}
 		case errors.Is(bindingErr, pgx.ErrNoRows):
 			// A web-only chat has no room, no adapter and nowhere for a late
 			// answer to land, so there is nothing here to protect anyone from
@@ -641,6 +713,18 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
+	resolvedSessionID := uuidToString(updated.ID)
+	status := updated.Status
+	archivedEvent, err = recordChatEventTx(r.Context(), qtx, buildChatSessionUpdatedEvent(updated, "member", userID, protocol.ChatSessionUpdatedPayload{
+		ChatSessionID: resolvedSessionID,
+		Title:         updated.Title,
+		Status:        &status,
+		UpdatedAt:     timestampToString(updated.UpdatedAt),
+	}, "status"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record chat session event")
+		return
+	}
 
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Warn("commit chat session archive failed", "session_id", sessionID, "error", err)
@@ -657,14 +741,7 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 	// rather than at the daemon's next poll.
 	h.TaskService.BroadcastCancelledTasks(r.Context(), workspaceID, cancelled)
 
-	resolvedSessionID := uuidToString(updated.ID)
-	status := updated.Status
-	h.publishChat(protocol.EventChatSessionUpdated, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionUpdatedPayload{
-		ChatSessionID: resolvedSessionID,
-		Title:         updated.Title,
-		Status:        &status,
-		UpdatedAt:     timestampToString(updated.UpdatedAt),
-	})
+	h.publishEvent(archivedEvent)
 
 	writeJSON(w, http.StatusOK, chatSessionToResponse(updated))
 }
@@ -726,6 +803,13 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to settle delegated failure recoveries")
 		return
 	}
+	for _, task := range cancelled {
+		if _, err = service.RecordTaskTerminalEventTx(r.Context(), qtx, protocol.EventTaskCancelled, task,
+			map[string]any{"reason": "chat_session_deleted"}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to record cancelled chat tasks")
+			return
+		}
+	}
 
 	// channel_chat_session_binding used to carry a chat_session FK with
 	// ON DELETE CASCADE; MUL-3515 §4 dropped every channel_* foreign key, so
@@ -774,6 +858,11 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to clean up chat session agent")
 		return
 	}
+	deletedEvent, err := recordChatEventTx(r.Context(), qtx, buildChatSessionDeletedEvent(session, "member", userID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record chat session event")
+		return
+	}
 
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Warn("commit chat session delete failed", "session_id", sessionID, "error", err)
@@ -789,10 +878,7 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	// the row they would be resolved through is gone by now.
 	h.TaskService.BroadcastCancelledTasks(r.Context(), workspaceID, cancelled)
 
-	resolvedSessionID := uuidToString(session.ID)
-	h.publishChat(protocol.EventChatSessionDeleted, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionDeletedPayload{
-		ChatSessionID: resolvedSessionID,
-	})
+	h.publishEvent(deletedEvent)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -987,16 +1073,21 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		platform,
 	))
 
-	// Broadcast the user message.
+	// Broadcast only the envelope whose transaction has committed. Older test
+	// fixtures may not create an outbox row, so retain the in-memory fallback.
 	resolvedSessionID := uuidToString(session.ID)
-	h.publishChat(protocol.EventChatMessage, workspaceID, "member", userID, resolvedSessionID, protocol.ChatMessagePayload{
-		ChatSessionID: resolvedSessionID,
-		MessageID:     uuidToString(msg.ID),
-		Role:          "user",
-		Content:       req.Content,
-		TaskID:        uuidToString(task.ID),
-		CreatedAt:     timestampToString(msg.CreatedAt),
-	})
+	if sent.MessageEvent.ID != "" {
+		h.publishEvent(sent.MessageEvent)
+	} else {
+		h.publishChat(protocol.EventChatMessage, workspaceID, "member", userID, resolvedSessionID, protocol.ChatMessagePayload{
+			ChatSessionID: resolvedSessionID,
+			MessageID:     uuidToString(msg.ID),
+			Role:          "user",
+			Content:       req.Content,
+			TaskID:        uuidToString(task.ID),
+			CreatedAt:     timestampToString(msg.CreatedAt),
+		})
+	}
 
 	// First user message → kick off best-effort LLM auto-titling (MUL-4295).
 	// Fire-and-forget and non-blocking: the response below is written whether
@@ -1335,15 +1426,37 @@ func (h *Handler) MarkChatSessionRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Queries.MarkChatSessionRead(r.Context(), session.ID); err != nil {
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.LockChatSessionForRuntimeBind(r.Context(), session.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock chat session")
+		return
+	}
+	if err := qtx.MarkChatSessionRead(r.Context(), session.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to mark session read")
 		return
 	}
+	updated, err := qtx.GetChatSession(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reload chat session")
+		return
+	}
 
-	resolvedSessionID := uuidToString(session.ID)
-	h.publishChat(protocol.EventChatSessionRead, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionReadPayload{
-		ChatSessionID: resolvedSessionID,
-	})
+	event, err := recordChatEventTx(r.Context(), qtx, buildChatSessionReadEvent(updated, "member", userID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record chat session event")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit session read")
+		return
+	}
+	h.publishEvent(event)
 
 	w.WriteHeader(http.StatusNoContent)
 }

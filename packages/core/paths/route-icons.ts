@@ -6,10 +6,8 @@
  * choice keyed by the URL route segment (`/{slug}/{segment}/...`).
  *
  * This is the source of truth the sidebar nav uses (via `resolveRouteIconName`
- * / `routeIconForPath`). The desktop tab bar goes further and derives a full
- * *presentation* (which may be a resource's own icon/avatar/status rather than
- * a page icon) — see `tab-subject.ts` and `tab-presentation.ts`, which build on
- * this registry for the page case.
+ * / `routeIconForPath`). Resource navigation uses the same registry for its
+ * page-level fallback.
  *
  * Icon values are *names*, not React components, so this module stays
  * React-free and safe inside `@multica/core`. The name → component registry
@@ -18,7 +16,7 @@
  * error.
  */
 
-/** Every icon name a nav page or a tab type-icon can resolve to. */
+/** Every icon name a nav page or resource type can resolve to. */
 export type RouteIconName =
   | "Inbox"
   | "MessageSquare"
@@ -128,8 +126,8 @@ export const DEFAULT_ROUTE_ICON_NAME: RouteIconName = "ListTodo";
  * page's icon. Returns {@link DEFAULT_ROUTE_ICON_NAME} for unknown or
  * too-short paths, so the result is always a renderable name.
  *
- * This is the sidebar/nav entry point. The tab bar does NOT use this for
- * resource detail routes — it resolves a richer presentation instead.
+ * This is the sidebar/nav entry point. Resource detail routes use the richer
+ * presentation resolver instead.
  */
 export function resolveRouteIconName(path: string): RouteIconName {
   const pathname = path.split(/[?#]/)[0] ?? "";
