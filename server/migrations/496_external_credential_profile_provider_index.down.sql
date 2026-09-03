@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_external_credential_profile_user_provider;

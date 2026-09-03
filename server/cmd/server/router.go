@@ -1510,6 +1510,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
+		r.Route("/api/external-credential-profiles", func(r chi.Router) {
+			r.Get("/", h.ListExternalCredentialProfiles)
+			r.Post("/", h.CreateExternalCredentialProfile)
+			r.Post("/test", h.TestExternalCredentialProfile)
+			r.Route("/{id}", func(r chi.Router) {
+				r.Get("/", h.GetExternalCredentialProfile)
+				r.Put("/", h.UpdateExternalCredentialProfile)
+				r.Delete("/", h.DeleteExternalCredentialProfile)
+		})
+		})
 
 		// Plugin Action API. Called by the HOST PAGE on the signed-in user's
 		// session after a surface asks for something over the postMessage
@@ -1891,6 +1901,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/quick-actions/{quickActionId}/run", h.RunQuickAction)
 					r.Post("/quick-actions/{quickActionId}/render", h.RenderQuickAction)
 					r.Get("/task-runs", h.ListTasksByIssue)
+					r.Get("/trace", h.ListIssueTaskTraceEvents)
+					r.Get("/execution-tree", h.GetIssueExecutionTree)
 					r.Get("/usage", h.GetIssueUsage)
 					r.Post("/reactions", h.AddIssueReaction)
 					r.Delete("/reactions", h.RemoveIssueReaction)

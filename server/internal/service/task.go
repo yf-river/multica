@@ -748,6 +748,7 @@ func (s *TaskService) OriginatorForIssueTask(ctx context.Context, issue db.Issue
 }
 
 func (s *TaskService) captureTaskDispatched(ctx context.Context, task db.AgentTaskQueue) {
+	s.recordTaskTraceEvent(ctx, task, "task.dispatched", "任务已领取", taskTraceOptions{QueueWaitMs: durationMilliseconds(task.CreatedAt, task.DispatchedAt)})
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskDispatched(util.UUIDToString(task.ID), source, runtimeMode, taskQueueWaitSeconds(task))
@@ -759,6 +760,7 @@ func (s *TaskService) AnalyticsContextForTask(ctx context.Context, task db.Agent
 }
 
 func (s *TaskService) captureTaskStarted(ctx context.Context, task db.AgentTaskQueue) {
+	s.recordTaskTraceEvent(ctx, task, "task.started", "任务已开始", taskTraceOptions{QueueWaitMs: durationMilliseconds(task.CreatedAt, task.DispatchedAt)})
 	if s.Metrics != nil {
 		source, runtimeMode, provider := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskStarted(source, runtimeMode, provider)
@@ -766,6 +768,8 @@ func (s *TaskService) captureTaskStarted(ctx context.Context, task db.AgentTaskQ
 }
 
 func (s *TaskService) captureTaskCompleted(ctx context.Context, task db.AgentTaskQueue) {
+	runMs := durationMilliseconds(task.StartedAt, task.CompletedAt)
+	s.recordTaskTraceEvent(ctx, task, "task.completed", "任务已完成", taskTraceOptions{DurationMs: runMs, RunMs: runMs, TotalMs: durationMilliseconds(task.CreatedAt, task.CompletedAt), QueueWaitMs: durationMilliseconds(task.CreatedAt, task.DispatchedAt)})
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
@@ -774,6 +778,8 @@ func (s *TaskService) captureTaskCompleted(ctx context.Context, task db.AgentTas
 
 func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQueue) {
 	failureReason := taskFailureReason(task)
+	runMs := durationMilliseconds(task.StartedAt, task.CompletedAt)
+	s.recordTaskTraceEvent(ctx, task, "task.failed", "任务已失败", taskTraceOptions{DurationMs: runMs, RunMs: runMs, TotalMs: durationMilliseconds(task.CreatedAt, task.CompletedAt), QueueWaitMs: durationMilliseconds(task.CreatedAt, task.DispatchedAt), FailureReason: failureReason, ErrorType: taskErrorType(failureReason)})
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
@@ -782,6 +788,7 @@ func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQu
 }
 
 func (s *TaskService) captureTaskCancelled(ctx context.Context, task db.AgentTaskQueue) {
+	s.recordTaskTraceEvent(ctx, task, "task.cancelled", "任务已取消", taskTraceOptions{FailureReason: "cancelled", ErrorType: "cancelled", TotalMs: durationMilliseconds(task.CreatedAt, task.CompletedAt)})
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)

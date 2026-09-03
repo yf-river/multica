@@ -209,6 +209,7 @@ type Handler struct {
 	LivenessStore      LivenessStore
 	HeartbeatScheduler HeartbeatScheduler
 	Storage            storage.Storage
+	ExternalCredentialBox *secretbox.Box
 	CFSigner           *auth.CloudFrontSigner
 	Analytics          analytics.Client
 	// DaemonPendingWork pushes "heartbeat now" hints for queued

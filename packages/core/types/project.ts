@@ -64,12 +64,18 @@ export interface ListProjectsResponse {
 //   - github_repo: cloud-side git checkout, ref = { url, ref?, default_branch_hint? }
 //   - local_directory: agent execution on a specific daemon,
 //     ref = { local_path, daemon_id, label?, execution_mode? }
-export type ProjectResourceType = "github_repo" | "local_directory";
+export type ProjectResourceType = "github_repo" | "gongfeng_repo" | "local_directory";
 
 export interface GithubRepoResourceRef {
   url: string;
   ref?: string;
   default_branch_hint?: string;
+}
+export interface GongfengRepoResourceRef {
+  url: string;
+  project_path?: string;
+  resource_kind?: string;
+  ref?: string;
 }
 
 /**
@@ -101,6 +107,7 @@ export interface LocalDirectoryResourceRef {
 
 export type ProjectResourceRef =
   | GithubRepoResourceRef
+  | GongfengRepoResourceRef
   | LocalDirectoryResourceRef
   | Record<string, unknown>;
 

@@ -262,6 +262,7 @@ import { type Logger, noopLogger } from "../logger";
 import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseOrThrow, parseWithFallback } from "./schema";
+import type { CreateExternalCredentialProfileRequest, ExternalCredentialProfile, ExternalCredentialProvider, TestExternalCredentialProfileRequest, TestExternalCredentialProfileResponse, UpdateExternalCredentialProfileRequest } from "../types/external-credential";
 import {
   AgentTaskListSchema,
   AttachmentResponseSchema,
@@ -2450,6 +2451,25 @@ export class ApiClient {
       endpoint: "GET /api/issues/:id/task-runs",
     });
   }
+
+  async listIssueTaskTraceEvents(issueId: string): Promise<{ events: Array<{
+    id: string; task_id: string; event_type: string; event_name: string; status: string;
+    provider: string; model: string; failure_reason: string; duration_ms?: number;
+    input_tokens: number; output_tokens: number; created_at: string;
+  }> }> {
+    return this.fetch(`/api/issues/${issueId}/trace`);
+  }
+
+  async listExternalCredentialProfiles(provider?: ExternalCredentialProvider): Promise<ExternalCredentialProfile[]> {
+    const query = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+    const response = await this.fetch<{ profiles?: ExternalCredentialProfile[] }>(`/api/external-credential-profiles${query}`);
+    return response.profiles ?? [];
+  }
+  async getExternalCredentialProfile(id: string): Promise<ExternalCredentialProfile> { return this.fetch(`/api/external-credential-profiles/${id}`); }
+  async createExternalCredentialProfile(data: CreateExternalCredentialProfileRequest, idempotencyKey = createSafeId()): Promise<ExternalCredentialProfile> { return this.fetch(`/api/external-credential-profiles`, { method: "POST", body: JSON.stringify(data), headers: { "Idempotency-Key": idempotencyKey } }); }
+  async updateExternalCredentialProfile(id: string, data: UpdateExternalCredentialProfileRequest): Promise<ExternalCredentialProfile> { return this.fetch(`/api/external-credential-profiles/${id}`, { method: "PUT", body: JSON.stringify(data) }); }
+  async testExternalCredentialProfile(data: TestExternalCredentialProfileRequest): Promise<TestExternalCredentialProfileResponse> { return this.fetch(`/api/external-credential-profiles/test`, { method: "POST", body: JSON.stringify(data) }); }
+  async deleteExternalCredentialProfile(id: string): Promise<void> { await this.fetch(`/api/external-credential-profiles/${id}`, { method: "DELETE" }); }
 
   async getIssueUsage(issueId: string): Promise<IssueUsageSummary> {
     return this.fetch(`/api/issues/${issueId}/usage`);

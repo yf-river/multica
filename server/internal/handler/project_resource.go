@@ -79,11 +79,37 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 	switch resourceType {
 	case "github_repo":
 		return validateGithubRepoRef(ref)
+	case "gongfeng_repo":
+		return validateGongfengRepoRef(ref)
 	case "local_directory":
 		return validateLocalDirectoryRef(ref)
 	default:
 		return nil, fmt.Errorf("unknown resource_type %q", resourceType)
 	}
+}
+
+type gongfengRepoRef struct {
+	Provider     string `json:"provider"`
+	URL          string `json:"url"`
+	ProjectPath  string `json:"project_path"`
+	ResourceKind string `json:"resource_kind"`
+	Ref          string `json:"ref,omitempty"`
+}
+
+func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
+	var payload gongfengRepoRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return nil, fmt.Errorf("invalid gongfeng_repo payload: %w", err)
+	}
+	payload.URL = strings.TrimSpace(payload.URL)
+	if payload.URL == "" || !isValidGitRepoURL(payload.URL) {
+		return nil, errors.New("gongfeng_repo: url must be a valid http(s) or ssh git URL")
+	}
+	payload.Provider = "gongfeng"
+	payload.ProjectPath = strings.Trim(strings.TrimSpace(payload.ProjectPath), "/")
+	payload.ResourceKind = firstNonEmpty(strings.TrimSpace(payload.ResourceKind), "project")
+	payload.Ref = strings.TrimSpace(payload.Ref)
+	return json.Marshal(payload)
 }
 
 type githubRepoRef struct {

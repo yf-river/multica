@@ -176,6 +176,7 @@ export type {
   UpdateProjectRequest,
   ListProjectsResponse,
   ProjectResource,
+  GongfengRepoResourceRef,
   ProjectResourceType,
   ProjectResourceRef,
   GithubRepoResourceRef,
@@ -330,3 +331,4 @@ export type {
   WorkspaceSubscriptionSeatReconcileResult,
   CreateWorkspaceSubscriptionPortalResponse,
 } from "./billing";
+export type { ExternalCredentialProvider, ExternalCredentialProfile, CreateExternalCredentialProfileRequest, UpdateExternalCredentialProfileRequest, TestExternalCredentialProfileRequest, TestExternalCredentialProfileResponse } from "./external-credential";

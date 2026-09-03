@@ -650,6 +650,24 @@ type DomainEventOutbox struct {
 	SequenceNo       int64              `json:"sequence_no"`
 }
 
+type ExternalCredentialProfile struct {
+	ID              pgtype.UUID        `json:"id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	Provider        string             `json:"provider"`
+	Name            string             `json:"name"`
+	SecretRef       string             `json:"secret_ref"`
+	EncryptedSecret []byte             `json:"encrypted_secret"`
+	SecretHint      string             `json:"secret_hint"`
+	Capabilities    []byte             `json:"capabilities"`
+	Status          string             `json:"status"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	LastError       string             `json:"last_error"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	IdempotencyKey  pgtype.UUID        `json:"idempotency_key"`
+	RequestHash     pgtype.Text        `json:"request_hash"`
+}
+
 type Feedback struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`
@@ -1820,6 +1838,39 @@ type TaskToken struct {
 	UserID      pgtype.UUID        `json:"user_id"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type TaskTraceEvent struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	TaskID           pgtype.UUID        `json:"task_id"`
+	IssueID          pgtype.UUID        `json:"issue_id"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	RuntimeID        pgtype.UUID        `json:"runtime_id"`
+	SquadID          pgtype.UUID        `json:"squad_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	Source           string             `json:"source"`
+	EventType        string             `json:"event_type"`
+	EventName        string             `json:"event_name"`
+	Status           string             `json:"status"`
+	Attempt          int32              `json:"attempt"`
+	DurationMs       pgtype.Int8        `json:"duration_ms"`
+	QueueWaitMs      pgtype.Int8        `json:"queue_wait_ms"`
+	RunMs            pgtype.Int8        `json:"run_ms"`
+	TotalMs          pgtype.Int8        `json:"total_ms"`
+	Provider         string             `json:"provider"`
+	Model            string             `json:"model"`
+	InputTokens      int64              `json:"input_tokens"`
+	OutputTokens     int64              `json:"output_tokens"`
+	CacheReadTokens  int64              `json:"cache_read_tokens"`
+	CacheWriteTokens int64              `json:"cache_write_tokens"`
+	FailureReason    string             `json:"failure_reason"`
+	ErrorType        string             `json:"error_type"`
+	TriggerCommentID pgtype.UUID        `json:"trigger_comment_id"`
+	AutopilotRunID   pgtype.UUID        `json:"autopilot_run_id"`
+	ChatSessionID    pgtype.UUID        `json:"chat_session_id"`
+	Metadata         []byte             `json:"metadata"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type TaskUsage struct {

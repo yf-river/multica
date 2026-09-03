@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_task_trace_event_workspace_created;

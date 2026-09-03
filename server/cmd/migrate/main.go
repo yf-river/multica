@@ -308,6 +308,13 @@ var concurrentIndexCleanups = map[string]string{
 	"440_github_pr_head_sha_index":                                             "idx_github_pull_request_head_sha",
 	"443_issue_project_status_index":                                           "idx_issue_project_status",
 	"445_comment_delegated_failure_unsettled_index":                            "idx_comment_delegated_failure_unsettled",
+	"489_task_trace_event_indexes":                                             "idx_task_trace_event_workspace_created",
+	"491_external_credential_profile_indexes":                                  "idx_external_credential_profile_user_idempotency",
+	"492_task_trace_event_task_index":                                          "idx_task_trace_event_task_created",
+	"493_task_trace_event_issue_index":                                         "idx_task_trace_event_issue_created",
+	"494_task_trace_event_agent_index":                                         "idx_task_trace_event_agent_created",
+	"495_task_trace_event_squad_index":                                         "idx_task_trace_event_squad_created",
+	"496_external_credential_profile_provider_index":                           "idx_external_credential_profile_user_provider",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction

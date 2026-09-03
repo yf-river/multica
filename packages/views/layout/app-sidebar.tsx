@@ -120,6 +120,7 @@ type NavKey =
   | "agents"
   | "squads"
   | "usage"
+  | "runReviews"
   | "runtimes"
   | "skills"
   | "settings"
@@ -158,6 +159,7 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "agents", labelKey: "agents" },
   { key: "squads", labelKey: "squads" },
   { key: "usage", labelKey: "usage" },
+  { key: "runReviews", labelKey: "usage" },
 ];
 
 const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [
@@ -776,7 +778,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
                       >
                         <Icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
+                        <span>{item.key === "runReviews" ? "运行复盘" : t(($) => $.nav[item.labelKey])}</span>
                         {item.key === "inbox" && unreadCount > 0 && (
                           <CappedNumberFlow
                             value={unreadCount}
@@ -850,7 +852,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
                       >
                         <Icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
+                        <span>{item.key === "runReviews" ? "运行复盘" : t(($) => $.nav[item.labelKey])}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   );

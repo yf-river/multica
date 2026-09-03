@@ -1,6 +1,57 @@
 --
 --
 
+CREATE TABLE external_credential_profile (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL,
+    provider text NOT NULL,
+    name text NOT NULL,
+    secret_ref text NOT NULL DEFAULT '',
+    encrypted_secret bytea,
+    secret_hint text NOT NULL DEFAULT '',
+    capabilities jsonb NOT NULL DEFAULT '{}',
+    status text NOT NULL DEFAULT 'unverified',
+    last_verified_at timestamptz,
+    last_error text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    idempotency_key uuid,
+    request_hash text
+);
+
+CREATE TABLE task_trace_event (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    issue_id uuid,
+    agent_id uuid NOT NULL,
+    runtime_id uuid,
+    squad_id uuid,
+    project_id uuid,
+    source text NOT NULL DEFAULT '',
+    event_type text NOT NULL,
+    event_name text NOT NULL,
+    status text NOT NULL DEFAULT '',
+    attempt integer NOT NULL DEFAULT 1,
+    duration_ms bigint,
+    queue_wait_ms bigint,
+    run_ms bigint,
+    total_ms bigint,
+    provider text NOT NULL DEFAULT '',
+    model text NOT NULL DEFAULT '',
+    input_tokens bigint NOT NULL DEFAULT 0,
+    output_tokens bigint NOT NULL DEFAULT 0,
+    cache_read_tokens bigint NOT NULL DEFAULT 0,
+    cache_write_tokens bigint NOT NULL DEFAULT 0,
+    failure_reason text NOT NULL DEFAULT '',
+    error_type text NOT NULL DEFAULT '',
+    trigger_comment_id uuid,
+    autopilot_run_id uuid,
+    chat_session_id uuid,
+    metadata jsonb NOT NULL DEFAULT '{}',
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
 
 
 SET statement_timeout = 0;

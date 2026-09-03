@@ -23,6 +23,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import type {
   GithubRepoResourceRef,
+  GongfengRepoResourceRef,
   LocalDirectoryExecutionMode,
   LocalDirectoryResourceRef,
   ProjectResource,
@@ -63,6 +64,9 @@ function isLocalDirectoryRef(r: ProjectResource): r is ProjectResource & {
   resource_ref: LocalDirectoryResourceRef;
 } {
   return r.resource_type === "local_directory";
+}
+function isGongfengRef(r: ProjectResource): r is ProjectResource & { resource_ref: GongfengRepoResourceRef } {
+  return r.resource_type === "gongfeng_repo";
 }
 
 /**
@@ -434,6 +438,11 @@ function ResourceRow({
         onEditMode={onEditLocalDirectoryMode}
       />
     );
+  }
+
+  if (isGongfengRef(resource)) {
+    const ref = resource.resource_ref;
+    return <div className="flex items-center gap-2 text-caption group"><FolderGit className="size-3.5 text-muted-foreground shrink-0" /><a href={ref.url} target="_blank" rel="noopener noreferrer" className="truncate flex-1 hover:underline">{resource.label || ref.project_path || ref.url}</a><button type="button" onClick={onRemove} className="rounded-sm p-0.5 hover:bg-accent" title={t(($) => $.resources.remove_tooltip)}><Trash2 className="size-3" /></button></div>;
   }
 
   return (
