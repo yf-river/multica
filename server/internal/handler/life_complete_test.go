@@ -292,6 +292,21 @@ func TestLifeIdentityObserverAndPolicyAreUserGoverned(t *testing.T) {
 		t.Fatalf("manual run must advance observer schedule: last=%s next=%s", lastRunAt, nextRunAt)
 	}
 
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM life_proactive_policy WHERE workspace_id=$1 AND user_id=$2`, testWorkspaceID, testUserID); err != nil {
+		t.Fatalf("delete proactive policy: %v", err)
+	}
+	w = callLifeHandler(t, http.MethodGet, "/api/life/proactive-policy", nil, nil, testHandler.GetLifeProactivePolicy)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get default proactive policy: %d %s", w.Code, w.Body.String())
+	}
+	var defaultPolicy map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &defaultPolicy); err != nil {
+		t.Fatalf("decode default proactive policy: %v", err)
+	}
+	if enabled, _ := defaultPolicy["enabled"].(bool); enabled {
+		t.Fatalf("default proactive policy must be disabled: %s", w.Body.String())
+	}
+
 	w = callLifeHandler(t, http.MethodPut, "/api/life/proactive-policy", map[string]any{"enabled": true, "timezone": "Asia/Shanghai", "quiet_hours": map[string]any{"start": "23:00", "end": "08:00"}, "minimum_interval_hours": 24}, nil, testHandler.UpdateLifeProactivePolicy)
 	if w.Code != http.StatusOK {
 		t.Fatalf("update proactive policy: %d %s", w.Code, w.Body.String())

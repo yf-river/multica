@@ -490,8 +490,16 @@ func (h *Handler) GetLifeProactivePolicy(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	row, err := h.Queries.GetLifeProactivePolicy(r.Context(), db.GetLifeProactivePolicyParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": false, "timezone": "Asia/Shanghai",
+			"quiet_hours":            map[string]any{"start": "23:00", "end": "08:00"},
+			"minimum_interval_hours": 6, "next_check_at": "", "unanswered_count": 0,
+		})
+		return
+	}
 	if err != nil {
-		writeError(w, 404, "proactive policy not found")
+		writeError(w, http.StatusInternalServerError, "failed to get proactive policy")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"enabled": row.Enabled, "timezone": row.Timezone, "quiet_hours": json.RawMessage(row.QuietHours), "minimum_interval_hours": float64(row.MinimumInterval.Microseconds) / float64(time.Hour/time.Microsecond), "next_check_at": timestampToString(row.NextCheckAt), "unanswered_count": row.UnansweredCount})
