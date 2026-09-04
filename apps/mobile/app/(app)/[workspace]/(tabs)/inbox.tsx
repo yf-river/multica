@@ -72,23 +72,23 @@ export default function Inbox() {
   };
 
   // Trailing batch menu — mirrors web's dropdown
-  // (packages/views/inbox/components/inbox-page.tsx). "Mark all read" is
-  // first (most common batch op); "Archive all" is destructive so it gets
+  // (packages/views/inbox/components/inbox-page.tsx). "全部标为已读" is
+  // first (most common batch op); "全部归档" is destructive so it gets
   // the iOS red treatment + Alert confirm.
   const onPressMenu = () => {
     const options = [
-      "Cancel",
-      "Mark all read",
-      "Archive all read",
-      "Archive completed",
-      "Archive all",
+      "取消",
+      "全部标为已读",
+      "归档所有已读",
+      "归档已完成",
+      "全部归档",
     ];
     ActionSheetIOS.showActionSheetWithOptions(
       {
         options,
         cancelButtonIndex: 0,
         destructiveButtonIndex: 4,
-        title: "Inbox",
+        title: "收件箱",
       },
       (i) => {
         if (i === 1) markAllRead.mutate();
@@ -96,12 +96,12 @@ export default function Inbox() {
         else if (i === 3) archiveCompleted.mutate();
         else if (i === 4) {
           Alert.alert(
-            "Archive all?",
+            "全部归档？",
             "This archives every inbox item, read or unread. You can still find them via the issue pages.",
             [
-              { text: "Cancel", style: "cancel" },
+              { text: "取消", style: "cancel" },
               {
-                text: "Archive all",
+                text: "全部归档",
                 style: "destructive",
                 onPress: () => archiveAll.mutate(),
               },
@@ -115,13 +115,13 @@ export default function Inbox() {
   return (
     <View className="flex-1 bg-background">
       <Header
-        title="Inbox"
+        title="收件箱"
         right={
           <>
             <IconButton
               name="ellipsis-horizontal"
               onPress={onPressMenu}
-              accessibilityLabel="Inbox actions"
+              accessibilityLabel="收件箱操作"
             />
             <HeaderActions />
           </>
@@ -132,11 +132,11 @@ export default function Inbox() {
       ) : error ? (
         <View className="px-4 gap-3 pt-4">
           <Text className="text-sm text-destructive">
-            Failed to load inbox:{" "}
-            {error instanceof Error ? error.message : "unknown error"}
+            加载收件箱失败：{" "}
+            {error instanceof Error ? error.message : "未知错误"}
           </Text>
           <Button variant="outline" onPress={() => refetch()}>
-            <Text>Retry</Text>
+            <Text>重试</Text>
           </Button>
         </View>
       ) : !data || data.length === 0 ? (

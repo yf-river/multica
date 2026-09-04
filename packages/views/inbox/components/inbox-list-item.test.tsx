@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { buildIssueStatusCatalog } from "@multica/core/issue-statuses";
 import type { InboxItem, IssueStatusEntry } from "@multica/core/types";
@@ -267,6 +267,9 @@ describe("InboxListItem keyboard semantics", () => {
 });
 
 describe("InboxListItem link semantics", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
   it("plain click keeps the master-detail selection and does not navigate", () => {
     const onClick = vi.fn();
     const push = vi.fn();

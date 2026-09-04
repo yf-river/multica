@@ -3,31 +3,32 @@ import "i18next";
 // packages/ui/types/i18next.ts. Side-effect import is required for views'
 // typecheck program to see ui's contribution to `I18nResources`.
 import "@multica/ui/i18n-types";
-import type common from "../locales/en/common.json";
-import type auth from "../locales/en/auth.json";
-import type settings from "../locales/en/settings.json";
-import type issues from "../locales/en/issues.json";
-import type agents from "../locales/en/agents.json";
-import type editor from "../locales/en/editor.json";
-import type onboarding from "../locales/en/onboarding.json";
-import type invite from "../locales/en/invite.json";
-import type labels from "../locales/en/labels.json";
-import type members from "../locales/en/members.json";
-import type myIssues from "../locales/en/my-issues.json";
-import type search from "../locales/en/search.json";
-import type inbox from "../locales/en/inbox.json";
-import type workspace from "../locales/en/workspace.json";
-import type projects from "../locales/en/projects.json";
-import type autopilots from "../locales/en/autopilots.json";
-import type skills from "../locales/en/skills.json";
-import type chat from "../locales/en/chat.json";
-import type modals from "../locales/en/modals.json";
-import type runtimes from "../locales/en/runtimes.json";
-import type layout from "../locales/en/layout.json";
-import type usage from "../locales/en/usage.json";
-import type squads from "../locales/en/squads.json";
-import type billing from "../locales/en/billing.json";
+import type common from "../locales/zh-Hans/common.json";
+import type auth from "../locales/zh-Hans/auth.json";
+import type settings from "../locales/zh-Hans/settings.json";
+import type issues from "../locales/zh-Hans/issues.json";
+import type agents from "../locales/zh-Hans/agents.json";
+import type editor from "../locales/zh-Hans/editor.json";
+import type onboarding from "../locales/zh-Hans/onboarding.json";
+import type invite from "../locales/zh-Hans/invite.json";
+import type labels from "../locales/zh-Hans/labels.json";
+import type members from "../locales/zh-Hans/members.json";
+import type myIssues from "../locales/zh-Hans/my-issues.json";
+import type search from "../locales/zh-Hans/search.json";
+import type inbox from "../locales/zh-Hans/inbox.json";
+import type workspace from "../locales/zh-Hans/workspace.json";
+import type projects from "../locales/zh-Hans/projects.json";
+import type autopilots from "../locales/zh-Hans/autopilots.json";
+import type skills from "../locales/zh-Hans/skills.json";
+import type chat from "../locales/zh-Hans/chat.json";
+import type modals from "../locales/zh-Hans/modals.json";
+import type runtimes from "../locales/zh-Hans/runtimes.json";
+import type layout from "../locales/zh-Hans/layout.json";
+import type usage from "../locales/zh-Hans/usage.json";
+import type squads from "../locales/zh-Hans/squads.json";
+import type billing from "../locales/zh-Hans/billing.json";
 import type life from "../locales/zh-Hans/life.json";
+import type runReviews from "../locales/zh-Hans/run-reviews.json";
 
 
 
@@ -72,9 +73,9 @@ declare global {
     squads: typeof squads;
     billing: typeof billing;
     life: typeof life;
+    "run-reviews": typeof runReviews;
   }
 }
-
 declare module "i18next" {
   interface CustomTypeOptions {
     defaultNS: "common";

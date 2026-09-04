@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent } from "@multica/core/types";
-import enChat from "../../locales/en/chat.json";
-import enIssues from "../../locales/en/issues.json";
+import enChat from "../../locales-test/en/chat.json";
+import enIssues from "../../locales-test/en/issues.json";
 
 vi.mock("../../common/actor-avatar", () => ({
   ActorAvatar: ({ actorId }: { actorId: string }) => (

@@ -92,12 +92,12 @@ export default function NewProject() {
       return;
     }
     Alert.alert(
-      "Discard project?",
-      "Your draft will be lost.",
+      "放弃创建项目？",
+      "草稿将会丢失。",
       [
-        { text: "Keep editing", style: "cancel" },
+        { text: "继续编辑", style: "cancel" },
         {
-          text: "Discard",
+          text: "放弃",
           style: "destructive",
           onPress: () => {
             resetDraft();
@@ -133,8 +133,8 @@ export default function NewProject() {
         },
         onError: (err) => {
           Alert.alert(
-            "Failed to create project",
-            err instanceof Error ? err.message : "Unknown error",
+            "创建项目失败",
+            err instanceof Error ? err.message : "未知错误",
           );
         },
       },
@@ -154,7 +154,7 @@ export default function NewProject() {
   const headerLeft = useCallback(() => {
     return (
       <Pressable onPress={onCancel} className="px-1 py-1">
-        <Text className="text-base text-brand">Cancel</Text>
+        <Text className="text-base text-brand">取消</Text>
       </Pressable>
     );
   }, [onCancel]);
@@ -167,7 +167,7 @@ export default function NewProject() {
         className={canCreate ? "px-1 py-1" : "px-1 py-1 opacity-40"}
       >
         <Text className="text-base text-brand font-semibold">
-          {create.isPending ? "Creating…" : "Create"}
+          {create.isPending ? "正在创建…" : "创建"}
         </Text>
       </Pressable>
     );
@@ -185,7 +185,7 @@ export default function NewProject() {
           contentContainerClassName="px-4 pt-4 pb-6 gap-4"
           keyboardShouldPersistTaps="handled"
         >
-          <Field label="Icon (emoji)">
+          <Field label="图标（表情）">
             <TextInput
               value={icon}
               onChangeText={(v) => setIcon(v.slice(0, 4))}
@@ -196,11 +196,11 @@ export default function NewProject() {
             />
           </Field>
 
-          <Field label="Title">
+          <Field label="标题">
             <TextInput
               value={title}
               onChangeText={setTitle}
-              placeholder="Project title"
+              placeholder="项目标题"
               placeholderTextColor={MOBILE_PLACEHOLDER_COLOR}
               className="text-base text-foreground bg-secondary/50 rounded-md px-3 py-2"
               autoFocus
@@ -208,11 +208,11 @@ export default function NewProject() {
             />
           </Field>
 
-          <Field label="Description">
+          <Field label="描述">
             <AutosizeTextArea
               value={description}
               onChangeText={setDescription}
-              placeholder="What is this project about?"
+              placeholder="这个项目要做什么？"
               className="bg-secondary/50 rounded-md px-3 py-2"
               minHeight={MIN_BODY_INPUT_HEIGHT_PX}
             />
@@ -220,7 +220,7 @@ export default function NewProject() {
 
           <View className="flex-row gap-2">
             <View className="flex-1">
-              <Field label="Status">
+              <Field label="状态">
                 <Pressable
                   onPress={() => openPicker("status")}
                   className="flex-row items-center gap-2 bg-secondary/50 rounded-md px-3 py-2.5"
@@ -233,7 +233,7 @@ export default function NewProject() {
               </Field>
             </View>
             <View className="flex-1">
-              <Field label="Priority">
+              <Field label="优先级">
                 <Pressable
                   onPress={() => openPicker("priority")}
                   className="flex-row items-center gap-2 bg-secondary/50 rounded-md px-3 py-2.5"

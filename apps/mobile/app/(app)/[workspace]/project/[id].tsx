@@ -88,11 +88,11 @@ export default function ProjectDetail() {
     if (!project) return;
     const wsUrl = process.env.EXPO_PUBLIC_WEB_URL;
     const options = [
-      "Cancel",
-      isPinned ? "Unpin" : "Pin",
-      "Edit details",
-      ...(wsUrl ? ["Open on web"] : []),
-      "Delete",
+      "取消",
+      isPinned ? "取消置顶" : "置顶",
+      "编辑详情",
+      ...(wsUrl ? ["在网页中打开"] : []),
+      "删除",
     ];
     const destructiveIndex = options.length - 1;
     ActionSheetIOS.showActionSheetWithOptions(
@@ -103,19 +103,19 @@ export default function ProjectDetail() {
       },
       (i) => {
         const label = options[i];
-        if (label === "Pin") {
+        if (label === "置顶") {
           createPin.mutate({ item_type: "project", item_id: project.id });
           return;
         }
-        if (label === "Unpin") {
+        if (label === "取消置顶") {
           deletePin.mutate({ itemType: "project", itemId: project.id });
           return;
         }
-        if (label === "Edit details") {
+        if (label === "编辑详情") {
           if (wsSlug) router.push(`/${wsSlug}/project/${id}/edit`);
           return;
         }
-        if (label === "Open on web" && wsUrl) {
+        if (label === "在网页中打开" && wsUrl) {
           Linking.openURL(`${wsUrl}/${wsSlug}/projects/${id}`);
           return;
         }
@@ -128,12 +128,12 @@ export default function ProjectDetail() {
 
   const onDelete = () => {
     Alert.alert(
-      "Delete project?",
+      "删除项目？",
       "This cannot be undone. Issues in this project will become unassigned from any project.",
       [
-        { text: "Cancel", style: "cancel" },
+        { text: "取消", style: "cancel" },
         {
-          text: "Delete",
+          text: "删除",
           style: "destructive",
           onPress: () => {
             deleteProject.mutate(undefined, {
@@ -149,14 +149,14 @@ export default function ProjectDetail() {
     <SafeAreaView className="flex-1 bg-background" edges={["bottom"]}>
       <Stack.Screen
         options={{
-          title: project?.title || "Project",
-          headerBackTitle: "Back",
+          title: project?.title || "项目",
+          headerBackTitle: "返回",
           headerRight: project
             ? () => (
                 <IconButton
                   name="ellipsis-horizontal"
                   onPress={onPressMore}
-                  accessibilityLabel="Project actions"
+                  accessibilityLabel="项目操作"
                 />
               )
             : undefined,
@@ -169,13 +169,13 @@ export default function ProjectDetail() {
       ) : detail.error || projectMissing ? (
         <View className="flex-1 items-center justify-center px-6 gap-3">
           <Text className="text-sm text-destructive text-center">
-            Failed to load project:{" "}
+            加载项目失败：{" "}
             {detail.error instanceof Error
               ? detail.error.message
-              : "not found"}
+              : "未找到"}
           </Text>
           <Button variant="outline" onPress={() => detail.refetch()}>
-            <Text>Retry</Text>
+            <Text>重试</Text>
           </Button>
         </View>
       ) : (

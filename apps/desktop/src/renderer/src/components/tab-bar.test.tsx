@@ -150,13 +150,13 @@ describe("TabBar hover action buttons", () => {
       { id: "tB", url: "/acme/projects", title: "Projects", pinned: false },
     ];
     const { getAllByLabelText } = render(<TabBar />);
-    expect(getAllByLabelText("Unpin tab")).toHaveLength(1);
-    expect(getAllByLabelText("Pin tab")).toHaveLength(1);
+    expect(getAllByLabelText("取消固定标签页")).toHaveLength(1);
+    expect(getAllByLabelText("固定标签页")).toHaveLength(1);
   });
 
   it("clicking the Pin button calls togglePin for the tab", () => {
     const { getAllByLabelText } = render(<TabBar />);
-    const pinButtons = getAllByLabelText("Pin tab");
+    const pinButtons = getAllByLabelText("固定标签页");
     fireEvent.click(pinButtons[1]); // click Pin on tB (Projects)
     expect(state.togglePin).toHaveBeenCalledWith("tB");
   });
@@ -167,7 +167,7 @@ describe("TabBar hover action buttons", () => {
       { id: "tB", url: "/acme/projects", title: "Projects", pinned: false },
     ];
     const { getByLabelText } = render(<TabBar />);
-    fireEvent.click(getByLabelText("Unpin tab"));
+    fireEvent.click(getByLabelText("取消固定标签页"));
     expect(state.togglePin).toHaveBeenCalledWith("tA");
   });
 
@@ -179,7 +179,7 @@ describe("TabBar hover action buttons", () => {
     const { queryAllByLabelText } = render(<TabBar />);
     // Only the unpinned tab exposes a Close affordance — pinned tab requires
     // explicit Unpin first (RFC §3 D3c FINAL).
-    expect(queryAllByLabelText("Close tab")).toHaveLength(1);
+    expect(queryAllByLabelText("关闭标签页")).toHaveLength(1);
   });
 
   it("keeps the full title visible on a pinned tab (no icon-only collapse)", () => {
@@ -187,7 +187,7 @@ describe("TabBar hover action buttons", () => {
       { id: "tA", url: "/acme/issues", title: "Issues", pinned: true },
     ];
     const { getByLabelText } = render(<TabBar />);
-    const pinnedTab = getByLabelText("Issues (pinned)");
+    const pinnedTab = getByLabelText("Issues（已固定）");
     expect(within(pinnedTab).getByText("Issues")).toBeTruthy();
   });
 
@@ -216,7 +216,7 @@ describe("TabBar hover action buttons", () => {
       { id: "tB", url: "/acme/projects", title: "Projects", pinned: false },
     ];
     const { getByLabelText } = render(<TabBar />);
-    const pinnedTab = getByLabelText("Issues (pinned)");
+    const pinnedTab = getByLabelText("Issues（已固定）");
     // The leading slot is the resource visual (size-3.5), not a Pin glyph. The
     // only Pin lives in the size-2.5 hover action button.
     expect(pinnedTab.querySelector('[data-testid="tab-leading"]')).toBeTruthy();
@@ -345,7 +345,7 @@ describe("TabBar overflow", () => {
       "min-w-32",
     );
 
-    const newTabButton = getByLabelText("New tab");
+    const newTabButton = getByLabelText("新建标签页");
     expect(tabScroller).not.toContainElement(newTabButton);
   });
 
@@ -541,7 +541,7 @@ describe("TabBar context menu", () => {
 
     const { findByText, getByLabelText } = render(<TabBar />);
     fireEvent.contextMenu(getByLabelText("MUL-1: Fix tabs"));
-    fireEvent.click(await findByText("Open as new window"));
+    fireEvent.click(await findByText("在新窗口中打开"));
 
     expect(state.openIssueWindow).toHaveBeenCalledWith({
       path: "/acme/issues/issue-1?comment=comment-1",
@@ -561,9 +561,9 @@ describe("TabBar context menu", () => {
 
     const { findByText, getByLabelText, queryByText } = render(<TabBar />);
     fireEvent.contextMenu(getByLabelText("Issues"));
-    await findByText("Pin tab");
+    await findByText("固定标签页");
 
-    expect(queryByText("Open as new window")).toBeNull();
+    expect(queryByText("在新窗口中打开")).toBeNull();
   });
 
   it("closes other tabs from the context menu", async () => {
@@ -575,7 +575,7 @@ describe("TabBar context menu", () => {
 
     const { findByText, getByLabelText } = render(<TabBar />);
     fireEvent.contextMenu(getByLabelText("Projects"));
-    fireEvent.click(await findByText("Close other tabs"));
+    fireEvent.click(await findByText("关闭其他标签页"));
 
     expect(state.closeOtherTabs).toHaveBeenCalledWith("tB");
   });

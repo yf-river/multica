@@ -35,24 +35,12 @@ func (e SignupError) Error() string {
 var ErrSignupProhibited = SignupError{Message: "user registration is disabled on this self-hosted instance"}
 var ErrEmailNotAllowed = SignupError{Message: "email address or domain not allowed on this instance"}
 
-// supportedLanguages mirrors `SUPPORTED_LOCALES` in packages/core/i18n/types.ts.
-// Keep both lists in sync when adding a locale — the user-controlled `language`
-// field round-trips through GetMe back into i18n.changeLanguage(), so without
-// validation an arbitrary string would persist and echo to every device.
-var supportedLanguages = map[string]struct{}{
-	"en":      {},
-	"zh-Hans": {},
-	"ko":      {},
-	"ja":      {},
-}
-
 type UserResponse struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
 	Account   string  `json:"account"`
 	Email     string  `json:"email"`
 	AvatarURL *string `json:"avatar_url"`
-	Language  *string `json:"language"`
 	// Pinned IANA tz; nil = no preference (use browser-detected tz).
 	Timezone                *string         `json:"timezone"`
 	OnboardedAt             *string         `json:"onboarded_at"`
@@ -83,7 +71,6 @@ func (h *Handler) userToResponse(u db.User) UserResponse {
 		Account:                 u.Account,
 		Email:                   u.Email,
 		AvatarURL:               h.resolveAvatarURLPtr(textToPtr(u.AvatarUrl)),
-		Language:                textToPtr(u.Language),
 		Timezone:                textToPtr(u.Timezone),
 		OnboardedAt:             timestampToPtr(u.OnboardedAt),
 		OnboardingQuestionnaire: json.RawMessage(q),
@@ -233,7 +220,6 @@ func contains(slice []string, s string) bool {
 type UpdateMeRequest struct {
 	Name               *string `json:"name"`
 	AvatarURL          *string `json:"avatar_url"`
-	Language           *string `json:"language"`
 	ProfileDescription *string `json:"profile_description"`
 	Timezone           *string `json:"timezone"`
 }
@@ -504,14 +490,6 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		params.AvatarUrl = pgtype.Text{String: avatarURL, Valid: true}
-	}
-	if req.Language != nil {
-		lang := strings.TrimSpace(*req.Language)
-		if _, ok := supportedLanguages[lang]; !ok {
-			writeError(w, http.StatusBadRequest, "unsupported language")
-			return
-		}
-		params.Language = pgtype.Text{String: lang, Valid: true}
 	}
 	if req.ProfileDescription != nil {
 		// Count runes, not bytes: 2000 chars of Chinese must not be rejected

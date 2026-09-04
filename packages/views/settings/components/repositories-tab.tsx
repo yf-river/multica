@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { LoaderCircle, Plus, Search, Trash2 } from "lucide-react";
+import { GitBranch, LoaderCircle, Plus, Search, Trash2 } from "lucide-react";
 import { Input } from "@multica/ui/components/ui/input";
 import { Button } from "@multica/ui/components/ui/button";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -50,6 +50,7 @@ import type {
   GitHubRepository,
   Workspace,
   WorkspaceRepo,
+  WorkspaceRepoProbeResponse,
 } from "@multica/core/types";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
@@ -66,11 +67,15 @@ const EMPTY_REPOSITORIES: WorkspaceRepo[] = [];
 
 function repositoriesEqual(left: WorkspaceRepo[], right: WorkspaceRepo[]) {
   if (left.length !== right.length) return false;
-  return left.every(
-    (repo, index) =>
-      repo.url === right[index]?.url &&
-      (repo.description ?? "") === (right[index]?.description ?? ""),
-  );
+  const fields: Array<keyof WorkspaceRepo> = [
+    "url", "description", "provider", "project_path", "default_branch", "ref",
+    "head_commit", "connection_status", "sync_status", "test_status",
+    "last_tested_at", "last_synced_at",
+  ];
+  return left.every((repo, index) => {
+    const other = right[index];
+    return !!other && fields.every((field) => (repo[field] ?? "") === (other[field] ?? ""));
+  });
 }
 
 export function repositoryIdentity(rawURL: string): string | null {
@@ -122,6 +127,11 @@ export function RepositoriesTab() {
     Map<number, GitHubRepository>
   >(new Map());
   const [repositorySearch, setRepositorySearch] = useState("");
+  const [gongfengPickerOpen, setGongfengPickerOpen] = useState(false);
+  const [gongfengURL, setGongfengURL] = useState("");
+  const [gongfengProbe, setGongfengProbe] = useState<WorkspaceRepoProbeResponse | null>(null);
+  const [gongfengBranch, setGongfengBranch] = useState("");
+  const [gongfengPending, setGongfengPending] = useState(false);
 
   const currentMember = members.find((member) => member.user_id === user?.id) ?? null;
   const canManageWorkspace =
@@ -259,6 +269,52 @@ export function RepositoriesTab() {
     enabled: !!workspace && canManageWorkspace && allUrlsValid,
     isEqual: repositoriesEqual,
   });
+
+  const probeGongfengRepository = async () => {
+    if (!workspace || !gongfengURL.trim() || gongfengPending) return;
+    setGongfengPending(true);
+    try {
+      const result = await api.probeWorkspaceRepo(workspace.id, {
+        url: gongfengURL.trim(),
+      });
+      setGongfengProbe(result);
+      setGongfengBranch(result.default_branch || result.branches[0] || "");
+    } catch (error) {
+      setGongfengProbe(null);
+      setGongfengBranch("");
+      toast.error(error instanceof Error ? error.message : "工蜂仓库连接失败");
+    } finally {
+      setGongfengPending(false);
+    }
+  };
+
+  const importGongfengRepository = async () => {
+    if (!workspace || !gongfengProbe || !gongfengBranch || gongfengPending) return;
+    setGongfengPending(true);
+    try {
+      const resolved = await api.resolveWorkspaceRepo(workspace.id, {
+        url: gongfengProbe.url,
+        default_branch: gongfengBranch,
+      });
+      const identity = repositoryIdentity(resolved.url);
+      if (identity && existingRepositoryIdentities.has(identity)) {
+        toast.error("这个工蜂仓库已经添加过了");
+        return;
+      }
+      const next = [...repositories, resolved];
+      setRepositories(next);
+      await autoSave.saveNow(next);
+      setGongfengURL("");
+      setGongfengProbe(null);
+      setGongfengBranch("");
+      setGongfengPickerOpen(false);
+      toast.success("工蜂仓库已添加");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "添加工蜂仓库失败");
+    } finally {
+      setGongfengPending(false);
+    }
+  };
 
   const updateRepository = (
     index: number,
@@ -460,6 +516,14 @@ export function RepositoriesTab() {
                     ? t(($) => $.repositories.choose_from_github)
                     : t(($) => $.repositories.connect_github)}
                 </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setGongfengPickerOpen(true)}
+                >
+                  <GitBranch className="size-3.5" />
+                  {t(($) => $.repositories.gongfeng_add)}
+                </Button>
               </div>
               {!allUrlsValid ? (
                 <span className="text-caption text-muted-foreground">
@@ -651,6 +715,93 @@ export function RepositoriesTab() {
               disabled={selectedRepositories.size === 0 || !allUrlsValid}
             >
               {t(($) => $.repositories.github_import)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={gongfengPickerOpen}
+        onOpenChange={(open) => {
+          setGongfengPickerOpen(open);
+          if (!open) {
+            setGongfengProbe(null);
+            setGongfengBranch("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t(($) => $.repositories.gongfeng_title)}</DialogTitle>
+            <DialogDescription>
+              {t(($) => $.repositories.gongfeng_description)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label htmlFor="gongfeng-repository-url" className="text-caption font-medium">
+                {t(($) => $.repositories.gongfeng_url_label)}
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  id="gongfeng-repository-url"
+                  value={gongfengURL}
+                  onChange={(event) => {
+                    setGongfengURL(event.target.value);
+                    setGongfengProbe(null);
+                    setGongfengBranch("");
+                  }}
+                  placeholder="https://git.code.tencent.com/团队/项目"
+                  className="font-mono text-caption"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void probeGongfengRepository()}
+                  disabled={!gongfengURL.trim() || gongfengPending}
+                >
+                  {gongfengPending ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+                  {t(($) => $.repositories.gongfeng_connect)}
+                </Button>
+              </div>
+            </div>
+            {gongfengProbe ? (
+              <div className="space-y-2">
+                <label className="text-caption font-medium">
+                  {t(($) => $.repositories.gongfeng_branch_label)}
+                </label>
+                <Select
+                  items={gongfengProbe.branches.map((branch) => ({ value: branch, label: branch }))}
+                  value={gongfengBranch}
+                  onValueChange={(value) => setGongfengBranch(value ?? "")}
+                >
+                  <SelectTrigger aria-label={t(($) => $.repositories.gongfeng_branch_label)}>
+                    <SelectValue placeholder={t(($) => $.repositories.gongfeng_branch_placeholder)} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {gongfengProbe.branches.map((branch) => (
+                      <SelectItem key={branch} value={branch}>{branch}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-caption text-muted-foreground">
+                  {t(($) => $.repositories.gongfeng_connected, {
+                    project: gongfengProbe.project_path,
+                    count: gongfengProbe.branches.length,
+                  })}
+                </p>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setGongfengPickerOpen(false)}>
+              {t(($) => $.repositories.gongfeng_cancel)}
+            </Button>
+            <Button
+              onClick={() => void importGongfengRepository()}
+              disabled={!gongfengProbe || !gongfengBranch || gongfengPending}
+            >
+              {t(($) => $.repositories.gongfeng_import)}
             </Button>
           </DialogFooter>
         </DialogContent>

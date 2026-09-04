@@ -2,7 +2,6 @@
 
 import { useMemo } from "react";
 import { CoreProvider } from "@multica/core/platform";
-import { createBrowserCookieLocaleAdapter } from "@multica/core/i18n/browser";
 import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import packageJson from "../package.json";
@@ -64,7 +63,6 @@ export function WebProviders({
     () => ({ platform: "web", version: WEB_VERSION, os: detectWebOS() }),
     [],
   );
-  const localeAdapter = useMemo(() => createBrowserCookieLocaleAdapter(), []);
   return (
     <CoreProvider
       apiBaseUrl={apiBaseUrl}
@@ -84,7 +82,6 @@ export function WebProviders({
       identity={identity}
       locale={locale}
       resources={resources}
-      localeAdapter={localeAdapter}
     >
       <WebNavigationProvider>
         <WebScrollRestorationProvider>{children}</WebScrollRestorationProvider>

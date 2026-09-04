@@ -5,9 +5,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales-test/en/common.json";
+import enRuntimes from "../../locales-test/en/runtimes.json";
+import enAgents from "../../locales-test/en/agents.json";
 
 const TEST_RESOURCES = {
   en: { common: enCommon, runtimes: enRuntimes, agents: enAgents },

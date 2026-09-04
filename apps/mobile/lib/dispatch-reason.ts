@@ -25,10 +25,10 @@ export function dispatchReasonCode(err: unknown): string | undefined {
 export function sendFailureMessage(err: unknown): string {
   switch (dispatchReasonCode(err)) {
     case "invocation_not_allowed":
-      return "You no longer have permission to run this agent, so the message was not sent.";
+      return "你已没有权限运行这个智能体，消息未发送。";
     case "agent_runtime_required":
-      return "Bind a runtime to this agent before sending a message.";
+      return "请先为智能体绑定运行时，再发送消息。";
     default:
-      return "Your message could not be sent. Please try again.";
+      return "消息发送失败，请重试。";
   }
 }

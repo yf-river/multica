@@ -2,7 +2,7 @@ import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configStore } from "@multica/core/config";
-import enLayout from "../locales/en/layout.json";
+import enLayout from "../locales-test/en/layout.json";
 import { HelpLauncher } from "./help-launcher";
 
 // react-i18next isn't initialised in the views test env, so resolve the

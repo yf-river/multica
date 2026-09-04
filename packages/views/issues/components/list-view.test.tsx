@@ -8,8 +8,8 @@ import { ListView } from "./list-view";
 import { IssueContextMenuProvider } from "../actions";
 import { ScrollRestorationProvider } from "../../platform";
 import type { IssueStatusPagination } from "../surface/use-issue-status-branches";
-import enCommon from "../../locales/en/common.json";
-import enIssues from "../../locales/en/issues.json";
+import enCommon from "../../locales-test/en/common.json";
+import enIssues from "../../locales-test/en/issues.json";
 
 const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues } };
 

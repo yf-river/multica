@@ -5,8 +5,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enSkills from "../../locales/en/skills.json";
+import enCommon from "../../locales-test/en/common.json";
+import enSkills from "../../locales-test/en/skills.json";
 
 const TEST_RESOURCES = {
   en: { common: enCommon, skills: enSkills },

@@ -45,7 +45,7 @@ func buildProjectResourceDomainEvent(eventType string, resource db.ProjectResour
 	payload["resource"] = projectResourceToResponse(resource)
 	return events.Event{
 		Type:           eventType,
-		IdempotencyKey: "project_resource:" + eventType + ":" + util.UUIDToString(resource.ID),
+		IdempotencyKey: "project_resource:" + eventType + ":" + util.UUIDToString(resource.ID) + ":" + strconv.FormatInt(resource.Revision, 10),
 		StreamKey:      "project:" + util.UUIDToString(resource.ProjectID),
 		WorkspaceID:    util.UUIDToString(resource.WorkspaceID),
 		ActorType:      actorType,
@@ -297,7 +297,7 @@ func buildAutopilotDomainEvent(eventType string, autopilot db.Autopilot, actorTy
 	}
 	return events.Event{
 		Type:           eventType,
-		IdempotencyKey: "autopilot:" + eventType + ":" + util.UUIDToString(autopilot.ID) + ":" + keySuffix,
+		IdempotencyKey: "autopilot:" + eventType + ":" + util.UUIDToString(autopilot.ID) + ":" + action + ":" + keySuffix,
 		StreamKey:      "autopilot:" + util.UUIDToString(autopilot.ID),
 		WorkspaceID:    util.UUIDToString(autopilot.WorkspaceID),
 		ActorType:      actorType,

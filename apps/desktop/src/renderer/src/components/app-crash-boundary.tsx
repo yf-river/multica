@@ -66,17 +66,16 @@ function CrashFallback({ error }: { error: Error }) {
         className="flex flex-1 items-center justify-center overflow-auto p-8"
       >
         <div className="max-w-xl rounded-lg border bg-card p-6 shadow-sm">
-          <h1 className="text-title font-semibold">Something went wrong</h1>
+          <h1 className="text-title font-semibold">发生错误</h1>
           <p className="mt-3 text-body text-muted-foreground">
-            Multica Desktop hit an unexpected error and could not keep
-            rendering. Reloading usually recovers — your work is stored on the
-            server.
+            Multica 桌面端发生意外错误，无法继续显示。重新加载通常可以恢复，
+            你的工作已保存在服务器上。
           </p>
           <pre className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-caption text-muted-foreground">
-            {error.message || "An unexpected error occurred."}
+            {error.message || "发生了意外错误。"}
           </pre>
           <Button className="mt-4" onClick={() => window.location.reload()}>
-            Reload
+            重新加载
           </Button>
         </div>
       </div>

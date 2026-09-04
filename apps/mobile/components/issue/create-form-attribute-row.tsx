@@ -58,9 +58,9 @@ export function CreateFormAttributeRow() {
   const { categoryOf, colorOf, labelOf } = useIssueStatuses();
   const assigneeLabel = assignee
     ? getName(assignee.type, assignee.id)
-    : "Assignee";
+    : "负责人";
   const priorityLabel =
-    priority === "none" ? "Priority" : PRIORITY_LABEL[priority];
+    priority === "none" ? "优先级" : PRIORITY_LABEL[priority];
 
   const open = (field: NewIssuePickerField) => {
     if (!wsSlug) return;
@@ -121,7 +121,7 @@ export function CreateFormAttributeRow() {
               color={dueDate ? undefined : "#a1a1aa"}
             />
           }
-          label={dueDate ? formatDueDate(dueDate) : "Due date"}
+          label={dueDate ? formatDueDate(dueDate) : "截止日期"}
           variant={dueDate ? "filled" : "dimmed"}
           onPress={() => open("due-date")}
         />
@@ -133,7 +133,7 @@ export function CreateFormAttributeRow() {
               <Ionicons name="folder-outline" size={14} color="#a1a1aa" />
             )
           }
-          label={project?.title ?? "Project"}
+          label={project?.title ?? "项目"}
           variant={project ? "filled" : "dimmed"}
           onPress={() => open("project")}
         />
@@ -144,5 +144,5 @@ export function CreateFormAttributeRow() {
 
 // due_date is a calendar day — format timezone-safely (no offset day shift).
 function formatDueDate(iso: string): string {
-  return formatDateOnly(iso, { month: "short", day: "numeric" }) || "Due date";
+  return formatDateOnly(iso, { month: "short", day: "numeric" }) || "截止日期";
 }

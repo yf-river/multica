@@ -83,7 +83,7 @@ describe("buildIssueStatusCatalog", () => {
     for (const key of ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"]) {
       expect(c.categoryOf(key)).toBe(key);
     }
-    expect(c.labelOf("in_review")).toBe("In Review");
+    expect(c.labelOf("in_review")).toBe("审查中");
     expect(c.colorOf("in_review")).toBeNull();
   });
 
@@ -108,12 +108,12 @@ describe("buildIssueStatusCatalog", () => {
   // reading the catalog row for either would drift from every other surface.
   it("keeps mobile's own copy and token colour for a built-in", () => {
     const builtIn = entry("in_review", "in_review", {
-      name: "In Review",
+      name: "审查中",
       is_system: true,
       color: "#22c55e",
     });
     const c = buildIssueStatusCatalog([builtIn, entry("qa", "in_review", { name: "QA" })]);
-    expect(c.labelOf("in_review")).toBe("In Review");
+    expect(c.labelOf("in_review")).toBe("审查中");
     expect(c.colorOf("in_review")).toBeNull();
     expect(c.colorOf("qa")).toBe("#123456");
   });
@@ -167,21 +167,21 @@ describe("statusOptions", () => {
 
   // A category's catalog rows REPLACE its built-in fallback, so the built-in
   // must come back through its own is_system row — otherwise turning on custom
-  // statuses would silently remove "In Review" from the picker.
+  // statuses would silently remove "审查中" from the picker.
   it("keeps the built-in alongside its category's custom statuses", () => {
     const c = buildIssueStatusCatalog([
-      entry("in_review", "in_review", { name: "In Review", is_system: true }),
+      entry("in_review", "in_review", { name: "审查中", is_system: true }),
       entry("human_review", "in_review", { name: "Human Review" }),
     ]);
     const inReview = statusOptions(c).filter((o) => o.category === "in_review");
     expect(inReview.map((o) => o.key)).toEqual(["in_review", "human_review"]);
-    expect(inReview.map((o) => o.label)).toEqual(["In Review", "Human Review"]);
+    expect(inReview.map((o) => o.label)).toEqual(["审查中", "Human Review"]);
     expect(inReview.map((o) => o.color)).toEqual([null, "#123456"]);
   });
 
   it("never offers an archived status", () => {
     const c = buildIssueStatusCatalog([
-      entry("done", "done", { name: "Done", is_system: true }),
+      entry("done", "done", { name: "已完成", is_system: true }),
       entry("gate_approved", "done", { archived_at: "2026-01-01T00:00:00Z" }),
     ]);
     expect(statusOptions(c).map((o) => o.key)).not.toContain("gate_approved");
@@ -228,7 +228,7 @@ describe("isCustomStatus", () => {
 
   it("stays silent for a built-in", () => {
     const c = buildIssueStatusCatalog([
-      entry("in_review", "in_review", { name: "In Review", is_system: true }),
+      entry("in_review", "in_review", { name: "审查中", is_system: true }),
     ]);
     expect(isCustomStatus(c, "in_review")).toBe(false);
   });
@@ -236,7 +236,7 @@ describe("isCustomStatus", () => {
   // Backstop for a server that omits `is_system` — the schema defaults it to
   // false, and a built-in must stay silent either way.
   it("stays silent for a built-in row missing is_system", () => {
-    const c = buildIssueStatusCatalog([entry("done", "done", { name: "Done" })]);
+    const c = buildIssueStatusCatalog([entry("done", "done", { name: "已完成" })]);
     expect(isCustomStatus(c, "done")).toBe(false);
   });
 

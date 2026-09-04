@@ -2378,6 +2378,22 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 		projectCtx.applyTo(&resp)
+		credentialUserID := issue.CreatorID
+		if resp.InitiatorType == "member" && resp.InitiatorID != "" {
+			if initiatorID, parseErr := util.ParseUUID(resp.InitiatorID); parseErr == nil {
+				credentialUserID = initiatorID
+			}
+		}
+		resp.SourceContext, projectErr = h.buildIssueSourceContext(r.Context(), issue, credentialUserID)
+		if projectErr != nil {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, projectErr, "external source", uuidToString(issue.ID))
+		}
+		if resp.Agent != nil {
+			resp.Agent.McpConfig, projectErr = h.injectSourceCredentialMCPEnv(r.Context(), resp.Agent.McpConfig, resp.SourceContext)
+			if projectErr != nil {
+				return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, projectErr, "external credential", uuidToString(issue.ID))
+			}
+		}
 
 		// Load every planned input as one chronological, de-duplicated set.
 		// The trigger is included here so the delivery receipt can only contain

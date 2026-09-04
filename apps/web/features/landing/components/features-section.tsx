@@ -23,8 +23,6 @@ import { ImageIcon } from "./shared";
 import { useLocale } from "../i18n";
 import type { LandingDict } from "../i18n";
 import { StatusIcon, PriorityIcon } from "@multica/views/issues/components";
-import { STATUS_CONFIG } from "@multica/core/issues/config/status";
-import { PRIORITY_CONFIG } from "@multica/core/issues/config/priority";
 import type { IssueStatusCategory, IssuePriority } from "@multica/core/types";
 
 /* ------------------------------------------------------------------ */
@@ -79,9 +77,9 @@ const mockTimeline = [
     type: "activity" as const,
     actorType: "member" as const,
     initials: "AR",
-    name: "Alex Rivera",
-    action: "assigned to Claude",
-    time: "3:02 PM",
+    name: "陈默",
+    action: "分配给 Claude",
+    time: "15:02",
     statusIcon: null,
   },
   {
@@ -89,36 +87,36 @@ const mockTimeline = [
     actorType: "agent" as const,
     initials: "",
     name: "Claude",
-    action: "changed status from Todo to In Progress",
-    time: "3:02 PM",
+    action: "把状态从待办改为进行中",
+    time: "15:02",
     statusIcon: "in_progress" as const,
   },
   {
     type: "comment" as const,
     actorType: "member" as const,
     initials: "AR",
-    name: "Alex Rivera",
-    time: "10 min",
+    name: "陈默",
+    time: "10 分钟前",
     content:
-      "The current error responses are inconsistent across handlers — need a unified format with error codes.",
+      "目前各个处理器返回的错误格式不一致，需要统一格式并补充错误码。",
   },
   {
     type: "comment" as const,
     actorType: "agent" as const,
     initials: "",
     name: "Claude",
-    time: "6 min",
+    time: "6 分钟前",
     content:
-      "I've standardized error responses across 14 handlers. Each error now includes a code, message, and request_id. PR #43 is ready for review.",
+      "我已统一 14 个处理器的错误响应，每条错误都包含 code、message 和 request_id。合并请求 #43 可以评审了。",
   },
   {
     type: "comment" as const,
     actorType: "member" as const,
     initials: "AR",
-    name: "Alex Rivera",
-    time: "3 min",
+    name: "陈默",
+    time: "3 分钟前",
     content:
-      "Looking good. Make sure to preserve the existing HTTP status codes — some of our frontend relies on specific codes like 409.",
+      "看起来不错。注意保留现有 HTTP 状态码，前端有些逻辑依赖 409 之类的具体状态。",
   },
 ];
 
@@ -130,15 +128,31 @@ type Assignee = {
 };
 
 const allAssignees: Assignee[] = [
-  { type: null, id: null, name: "Unassigned" },
-  { type: "member", id: "ar", name: "Alex Rivera", initials: "AR" },
-  { type: "member", id: "sk", name: "Sarah Kim", initials: "SK" },
+  { type: null, id: null, name: "未分配" },
+  { type: "member", id: "ar", name: "陈默", initials: "CM" },
+  { type: "member", id: "sk", name: "林晓", initials: "LX" },
   { type: "agent", id: "claude", name: "Claude" },
   { type: "agent", id: "tina", name: "Tina-dev" },
 ];
 
 const statusCycle: IssueStatusCategory[] = ["backlog", "todo", "in_progress", "in_review", "done"];
 const priorityCycle: IssuePriority[] = ["none", "low", "medium", "high", "urgent"];
+const statusLabels: Record<IssueStatusCategory, string> = {
+  backlog: "待整理",
+  todo: "待办",
+  in_progress: "进行中",
+  in_review: "评审中",
+  done: "已完成",
+  blocked: "已阻塞",
+  cancelled: "已取消",
+};
+const priorityLabels: Record<IssuePriority, string> = {
+  none: "无",
+  low: "低",
+  medium: "中",
+  high: "高",
+  urgent: "紧急",
+};
 
 function TeammatesVisual() {
   const [status, setStatus] = useState<IssueStatusCategory>("in_progress");
@@ -163,11 +177,11 @@ function TeammatesVisual() {
       {/* Header bar */}
       <div className="flex h-10 shrink-0 items-center border-b bg-background px-4 text-body">
         <div className="flex items-center gap-1.5 min-w-0 text-caption">
-          <span className="text-muted-foreground">Multica Demo</span>
+          <span className="text-muted-foreground">Multica 演示</span>
           <ChevronRight className="h-3 w-3 text-faint-foreground shrink-0" />
           <span className="text-muted-foreground">MUL-18</span>
           <ChevronRight className="h-3 w-3 text-faint-foreground shrink-0" />
-          <span className="truncate">Refactor API error handling middleware</span>
+          <span className="truncate">重构 API 错误处理中间件</span>
         </div>
       </div>
 
@@ -175,17 +189,17 @@ function TeammatesVisual() {
         {/* Main content area */}
         <div className="flex-1 overflow-hidden px-8 py-5">
           <h3 className="text-title font-bold leading-snug tracking-tight">
-            Refactor API error handling middleware
+            重构 API 错误处理中间件
           </h3>
           <p className="mt-2 text-body text-muted-foreground">
-            Standardize error responses across all endpoints.
+            统一所有接口的错误响应。
           </p>
 
           <div className="my-4 border-t" />
 
           <div className="flex items-center justify-between">
-            <h4 className="text-body font-semibold">Activity</h4>
-            <span className="text-caption text-muted-foreground">Subscribe</span>
+            <h4 className="text-body font-semibold">动态</h4>
+            <span className="text-caption text-muted-foreground">订阅</span>
           </div>
 
           <div className="mt-3 flex flex-col gap-2.5">
@@ -231,19 +245,19 @@ function TeammatesVisual() {
             <div>
               <div className="flex items-center gap-1 text-caption font-medium mb-2">
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground rotate-90" />
-                Properties
+                属性
               </div>
               <div className="space-y-0.5 pl-2">
                 {/* Status — clickable with dropdown */}
                 <div className="relative">
-                  <PropRow label="Status">
+                  <PropRow label="状态">
                     <button
                       type="button"
                       className="flex items-center gap-1.5 cursor-pointer rounded px-1 -mx-1 hover:bg-accent/30 transition-colors"
                       onClick={() => { setStatusOpen(!statusOpen); setPriorityOpen(false); }}
                     >
                       <StatusIcon status={status} className="h-3.5 w-3.5 shrink-0" />
-                      <span>{STATUS_CONFIG[status].label}</span>
+                      <span>{statusLabels[status]}</span>
                     </button>
                   </PropRow>
                   {statusOpen && (
@@ -259,7 +273,7 @@ function TeammatesVisual() {
                           onClick={() => { setStatus(s); setStatusOpen(false); }}
                         >
                           <StatusIcon status={s} className="h-3.5 w-3.5 shrink-0" />
-                          {STATUS_CONFIG[s].label}
+                          {statusLabels[s]}
                           {s === status && <Check className="ml-auto h-3.5 w-3.5" />}
                         </button>
                       ))}
@@ -269,14 +283,14 @@ function TeammatesVisual() {
 
                 {/* Priority — clickable with dropdown */}
                 <div className="relative">
-                  <PropRow label="Priority">
+                  <PropRow label="优先级">
                     <button
                       type="button"
                       className="flex items-center gap-1.5 cursor-pointer rounded px-1 -mx-1 hover:bg-accent/30 transition-colors"
                       onClick={() => { setPriorityOpen(!priorityOpen); setStatusOpen(false); }}
                     >
                       <PriorityIcon priority={priority} />
-                      <span>{PRIORITY_CONFIG[priority].label}</span>
+                      <span>{priorityLabels[priority]}</span>
                     </button>
                   </PropRow>
                   {priorityOpen && (
@@ -292,7 +306,7 @@ function TeammatesVisual() {
                           onClick={() => { setPriority(p); setPriorityOpen(false); }}
                         >
                           <PriorityIcon priority={p} />
-                          {PRIORITY_CONFIG[p].label}
+                          {priorityLabels[p]}
                           {p === priority && <Check className="ml-auto h-3.5 w-3.5" />}
                         </button>
                       ))}
@@ -301,7 +315,7 @@ function TeammatesVisual() {
                 </div>
 
                 {/* Assignee — clickable to toggle picker */}
-                <PropRow label="Assignee">
+                <PropRow label="负责人">
                   <button
                     type="button"
                     className="flex items-center gap-1.5 cursor-pointer rounded px-1 -mx-1 hover:bg-accent/30 transition-colors"
@@ -313,7 +327,7 @@ function TeammatesVisual() {
                         <span>{assignee.name}</span>
                       </>
                     ) : (
-                      <span className="text-muted-foreground">Unassigned</span>
+                      <span className="text-muted-foreground">未分配</span>
                     )}
                   </button>
                 </PropRow>
@@ -324,7 +338,7 @@ function TeammatesVisual() {
             {pickerOpen && (
               <div className="overflow-hidden rounded-md border bg-popover shadow-md">
                 <div className="border-b px-3 py-1.5 text-caption text-muted-foreground">
-                  Assign to...
+                  分配给……
                 </div>
                 <div className="p-1">
                   <button
@@ -336,12 +350,12 @@ function TeammatesVisual() {
                     onClick={() => { setAssignee(allAssignees[0]!); setPickerOpen(false); }}
                   >
                     <UserMinus className="h-3.5 w-3.5" />
-                    <span>Unassigned</span>
+                    <span>未分配</span>
                     {!assignee.type && <Check className="ml-auto h-3.5 w-3.5" />}
                   </button>
                 </div>
                 <div className="px-3 py-0.5">
-                  <span className="text-micro font-medium uppercase tracking-wider text-muted-foreground">Members</span>
+                  <span className="text-micro font-medium uppercase tracking-wider text-muted-foreground">成员</span>
                 </div>
                 <div className="p-1 pt-0">
                   {allAssignees.filter((a) => a.type === "member").map((m) => (
@@ -361,7 +375,7 @@ function TeammatesVisual() {
                   ))}
                 </div>
                 <div className="px-3 py-0.5">
-                  <span className="text-micro font-medium uppercase tracking-wider text-muted-foreground">Agents</span>
+                  <span className="text-micro font-medium uppercase tracking-wider text-muted-foreground">智能体</span>
                 </div>
                 <div className="p-1 pt-0">
                   {allAssignees.filter((a) => a.type === "agent").map((a) => (
@@ -396,22 +410,22 @@ function TeammatesVisual() {
 /* ------------------------------------------------------------------ */
 
 const mockToolCalls = [
-  { type: "thinking" as const, content: "Analyzing the error handling patterns across all 14 handler files…" },
-  { type: "tool_use" as const, tool: "Read", summary: "server/internal/handler/issue.go" },
+  { type: "thinking" as const, content: "正在分析 14 个处理器文件中的错误处理模式……" },
+  { type: "tool_use" as const, tool: "读取", summary: "server/internal/handler/issue.go" },
   { type: "tool_result" as const, preview: "func (h *IssueHandler) Create(w http.ResponseWriter, r *http.Request) { …" },
-  { type: "tool_use" as const, tool: "Edit", summary: "server/internal/handler/issue.go — replace writeJSON error calls" },
-  { type: "tool_result" as const, preview: "Updated 3 error responses to use writeError() helper" },
-  { type: "thinking" as const, content: "Now checking handler/comment.go for the same inconsistent patterns…" },
-  { type: "tool_use" as const, tool: "Read", summary: "server/internal/handler/comment.go" },
+  { type: "tool_use" as const, tool: "编辑", summary: "server/internal/handler/issue.go — 替换 writeJSON 错误调用" },
+  { type: "tool_result" as const, preview: "已将 3 处错误响应改用 writeError()" },
+  { type: "thinking" as const, content: "正在检查 handler/comment.go 中是否存在同类问题……" },
+  { type: "tool_use" as const, tool: "读取", summary: "server/internal/handler/comment.go" },
   { type: "tool_result" as const, preview: "func (h *CommentHandler) Create(w http.ResponseWriter, r *http.Request) { …" },
-  { type: "tool_use" as const, tool: "Bash", summary: "go test ./internal/handler/ -run TestErrorResponses" },
+  { type: "tool_use" as const, tool: "终端", summary: "go test ./internal/handler/ -run TestErrorResponses" },
   { type: "tool_result" as const, preview: "ok  \tgithub.com/multica/server/internal/handler\t0.847s" },
 ];
 
 const mockTaskHistory = [
-  { status: "completed" as const, title: "Set up error response types", duration: "2m 14s" },
-  { status: "completed" as const, title: "Migrate issue handler", duration: "3m 41s" },
-  { status: "running" as const, title: "Migrate comment handler", duration: "1m 22s" },
+  { status: "completed" as const, title: "建立错误响应类型", duration: "2 分 14 秒" },
+  { status: "completed" as const, title: "迁移任务处理器", duration: "3 分 41 秒" },
+  { status: "running" as const, title: "迁移评论处理器", duration: "1 分 22 秒" },
 ];
 
 function AutonomousVisual() {
@@ -422,11 +436,11 @@ function AutonomousVisual() {
       {/* Header bar */}
       <div className="flex h-10 shrink-0 items-center border-b bg-background px-4 text-body">
         <div className="flex items-center gap-1.5 min-w-0 text-caption">
-          <span className="text-muted-foreground">Multica Demo</span>
+          <span className="text-muted-foreground">Multica 演示</span>
           <ChevronRight className="h-3 w-3 text-faint-foreground shrink-0" />
           <span className="text-muted-foreground">MUL-18</span>
           <ChevronRight className="h-3 w-3 text-faint-foreground shrink-0" />
-          <span className="truncate">Refactor API error handling middleware</span>
+          <span className="truncate">重构 API 错误处理中间件</span>
         </div>
       </div>
 
@@ -440,10 +454,10 @@ function AutonomousVisual() {
             </div>
             <div className="flex items-center gap-1.5 text-caption font-medium">
               <Loader2 className="h-3 w-3 animate-spin text-info" />
-              Agent is working
+              智能体正在工作
             </div>
-            <span className="ml-auto text-caption tabular-nums text-muted-foreground">7m 17s</span>
-            <span className="text-caption text-muted-foreground">10 tool calls</span>
+            <span className="ml-auto text-caption tabular-nums text-muted-foreground">7 分 17 秒</span>
+            <span className="text-caption text-muted-foreground">10 次工具调用</span>
           </div>
 
           {/* Tool call timeline */}
@@ -490,7 +504,7 @@ function AutonomousVisual() {
                   onClick={() => setExpanded(isExpanded ? null : i)}
                 >
                   <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", isExpanded && "rotate-90")} />
-                  <span className="shrink-0 text-muted-foreground">result:</span>
+                  <span className="shrink-0 text-muted-foreground">结果：</span>
                   <span className="truncate text-muted-foreground">{item.preview}</span>
                 </button>
               );
@@ -500,7 +514,7 @@ function AutonomousVisual() {
 
         {/* Task run history */}
         <div className="mt-4">
-          <span className="text-caption font-medium text-muted-foreground">Task execution history</span>
+          <span className="text-caption font-medium text-muted-foreground">任务执行历史</span>
           <div className="mt-2 space-y-1.5">
             {mockTaskHistory.map((task, i) => (
               <div key={i} className="flex items-center gap-2 text-caption">
@@ -527,10 +541,10 @@ function AutonomousVisual() {
 /* ------------------------------------------------------------------ */
 
 const mockSkills = [
-  { name: "Deploy to staging", description: "Run staging deploy pipeline", files: 3, selected: false },
-  { name: "Write migration", description: "Generate and validate SQL migration", files: 4, selected: true },
-  { name: "Review PR", description: "Code review with style guide checks", files: 2, selected: false },
-  { name: "Write tests", description: "Generate unit and integration tests", files: 3, selected: false },
+  { name: "部署测试环境", description: "执行测试环境部署流程", files: 3, selected: false },
+  { name: "编写迁移", description: "生成并验证 SQL 迁移", files: 4, selected: true },
+  { name: "评审合并请求", description: "按代码规范完成评审", files: 2, selected: false },
+  { name: "编写测试", description: "生成单元测试和集成测试", files: 3, selected: false },
 ];
 
 const mockFileTree = [
@@ -550,7 +564,7 @@ function SkillsVisual() {
         {/* Skills list panel */}
         <div className="w-[200px] shrink-0 border-r flex flex-col">
           <div className="flex items-center justify-between border-b px-3 py-2">
-            <span className="text-caption font-semibold">Skills</span>
+            <span className="text-caption font-semibold">技能</span>
             <button type="button" className="rounded p-0.5 text-muted-foreground hover:bg-accent transition-colors">
               <Sparkles className="h-3.5 w-3.5" />
             </button>
@@ -592,7 +606,7 @@ function SkillsVisual() {
             {/* File tree */}
             <div className="w-44 shrink-0 border-r">
               <div className="flex items-center justify-between border-b px-3 py-1.5">
-                <span className="text-micro font-semibold uppercase tracking-wider text-muted-foreground">Files</span>
+                <span className="text-micro font-semibold uppercase tracking-wider text-muted-foreground">文件</span>
               </div>
               <div className="py-1">
                 {mockFileTree.map((f) => (
@@ -633,24 +647,24 @@ function SkillsVisual() {
                     {/* Frontmatter */}
                     <div className="rounded-md border bg-muted/30 p-3">
                       <div className="grid grid-cols-[80px_1fr] gap-y-1">
-                        <span className="font-medium text-muted-foreground">name</span>
+                        <span className="font-medium text-muted-foreground">名称</span>
                         <span>write-migration</span>
-                        <span className="font-medium text-muted-foreground">version</span>
+                        <span className="font-medium text-muted-foreground">版本</span>
                         <span>1.2.0</span>
-                        <span className="font-medium text-muted-foreground">author</span>
-                        <span>Alex Rivera</span>
+                        <span className="font-medium text-muted-foreground">作者</span>
+                        <span>陈默</span>
                       </div>
                     </div>
                     {/* Content */}
                     <div className="space-y-2 text-muted-foreground leading-relaxed">
-                      <p className="font-semibold text-foreground">Write Migration</p>
-                      <p>Generate a SQL migration file based on the requested schema changes. Validates against the current database state and generates both up and down migrations.</p>
-                      <p className="font-medium text-foreground">Steps</p>
+                      <p className="font-semibold text-foreground">编写迁移</p>
+                      <p>根据请求的结构变更生成 SQL 迁移文件，结合当前数据库状态校验，并同时生成升级与回滚迁移。</p>
+                      <p className="font-medium text-foreground">步骤</p>
                       <ol className="list-decimal pl-4 space-y-0.5">
-                        <li>Analyze the current schema from migrations/</li>
-                        <li>Generate migration SQL with proper ordering</li>
-                        <li>Validate with sqlc compile</li>
-                        <li>Run tests against a fresh database</li>
+                        <li>从 migrations/ 分析当前结构</li>
+                        <li>按正确依赖顺序生成迁移 SQL</li>
+                        <li>使用 sqlc 编译校验</li>
+                        <li>在全新数据库上运行测试</li>
                       </ol>
                     </div>
                   </div>
@@ -680,16 +694,16 @@ function SkillsVisual() {
 /* ------------------------------------------------------------------ */
 
 const runtimeStatusConfig = {
-  idle: { label: "Idle", color: "text-muted-foreground", dot: "bg-muted-foreground" },
-  working: { label: "Working", color: "text-success", dot: "bg-success" },
-  error: { label: "Error", color: "text-destructive", dot: "bg-destructive" },
-  offline: { label: "Offline", color: "text-muted-foreground", dot: "bg-muted-foreground/40" },
+  idle: { label: "空闲", color: "text-muted-foreground", dot: "bg-muted-foreground" },
+  working: { label: "工作中", color: "text-success", dot: "bg-success" },
+  error: { label: "异常", color: "text-destructive", dot: "bg-destructive" },
+  offline: { label: "离线", color: "text-muted-foreground", dot: "bg-muted-foreground/40" },
 };
 
 const mockRuntimeList = [
-  { name: "MacBook Pro", mode: "local" as const, status: "online" as const, device: "arm64 / macOS 15.2", lastSeen: "Just now" },
-  { name: "Cloud (Anthropic)", mode: "cloud" as const, status: "online" as const, device: "api.anthropic.com", lastSeen: "Just now" },
-  { name: "Linux Server", mode: "local" as const, status: "offline" as const, device: "x86_64 / Ubuntu 24.04", lastSeen: "3h ago" },
+  { name: "MacBook Pro", mode: "local" as const, status: "在线" as const, device: "arm64 / macOS 15.2", lastSeen: "刚刚" },
+  { name: "云端（Anthropic）", mode: "cloud" as const, status: "在线" as const, device: "api.anthropic.com", lastSeen: "刚刚" },
+  { name: "Linux 服务器", mode: "local" as const, status: "离线" as const, device: "x86_64 / Ubuntu 24.04", lastSeen: "3 小时前" },
 ];
 
 /* Mock usage data — deterministic seed values to avoid SSR/hydration mismatch */
@@ -814,7 +828,7 @@ function RuntimesVisual() {
         {/* Runtime list */}
         <div className="w-[200px] shrink-0 border-r flex flex-col">
           <div className="flex items-center justify-between border-b px-3 py-2">
-            <span className="text-caption font-semibold">Runtimes</span>
+            <span className="text-caption font-semibold">运行时</span>
           </div>
           <div className="flex-1 overflow-hidden">
             {mockRuntimeList.map((rt, i) => (
@@ -839,7 +853,7 @@ function RuntimesVisual() {
                     <span className="truncate text-caption font-medium">{rt.name}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className={cn("h-1.5 w-1.5 rounded-full", rt.status === "online" ? "bg-success" : "bg-muted-foreground/40")} />
+                    <span className={cn("h-1.5 w-1.5 rounded-full", rt.status === "在线" ? "bg-success" : "bg-muted-foreground/40")} />
                     <span className="text-micro text-muted-foreground">{rt.status}</span>
                   </div>
                 </div>
@@ -861,7 +875,7 @@ function RuntimesVisual() {
             </div>
             <span className="text-body font-semibold">{mockRuntimeList[selectedRuntime]?.name}</span>
             <div className="flex items-center gap-1.5">
-              <span className={cn("h-1.5 w-1.5 rounded-full", mockRuntimeList[selectedRuntime]?.status === "online" ? "bg-success" : "bg-muted-foreground/40")} />
+              <span className={cn("h-1.5 w-1.5 rounded-full", mockRuntimeList[selectedRuntime]?.status === "在线" ? "bg-success" : "bg-muted-foreground/40")} />
               <span className="text-caption text-muted-foreground">{mockRuntimeList[selectedRuntime]?.status}</span>
             </div>
             <span className="text-caption text-muted-foreground">{mockRuntimeList[selectedRuntime]?.device}</span>
@@ -893,10 +907,10 @@ function RuntimesVisual() {
             {/* Token summary cards — same as real TokenCard */}
             <div className="grid grid-cols-4 gap-2">
               {[
-                { label: "Input", value: formatTokens(totals.input) },
-                { label: "Output", value: formatTokens(totals.output) },
-                { label: "Cache Read", value: formatTokens(totals.cacheRead) },
-                { label: "Cache Write", value: formatTokens(totals.cacheWrite) },
+                { label: "输入", value: formatTokens(totals.input) },
+                { label: "输出", value: formatTokens(totals.output) },
+                { label: "缓存读取", value: formatTokens(totals.cacheRead) },
+                { label: "缓存写入", value: formatTokens(totals.cacheWrite) },
               ].map((card) => (
                 <div key={card.label} className="rounded-lg border px-3 py-2">
                   <div className="text-micro text-muted-foreground">{card.label}</div>
@@ -909,10 +923,10 @@ function RuntimesVisual() {
             <div className="grid grid-cols-2 gap-3">
               {/* Activity Heatmap — mirrors real ActivityHeatmap */}
               <div className="rounded-lg border p-3">
-                <h4 className="text-micro font-medium text-muted-foreground mb-2">Activity</h4>
+                <h4 className="text-micro font-medium text-muted-foreground mb-2">活跃度</h4>
                 <div className="overflow-x-auto">
                   <svg width={svgWidth} height={svgHeight} className="block">
-                    {["", "Mon", "", "Wed", "", "Fri", ""].map((label, i) =>
+                    {["", "周一", "", "周三", "", "周五", ""].map((label, i) =>
                       label ? (
                         <text key={i} x={0} y={12 + i * (CELL_SIZE + CELL_GAP) + CELL_SIZE - 2} className="fill-muted-foreground" fontSize={8}>
                           {label}
@@ -933,20 +947,20 @@ function RuntimesVisual() {
                   </svg>
                 </div>
                 <div className="mt-1.5 flex items-center justify-end gap-1 text-micro text-muted-foreground">
-                  <span>Less</span>
+                  <span>少</span>
                   {[0, 1, 2, 3, 4].map((level) => (
                     <div key={level} className="h-[8px] w-[8px] rounded-[2px]" style={{ backgroundColor: getHeatmapColor(level) }} />
                   ))}
-                  <span>More</span>
+                  <span>多</span>
                 </div>
               </div>
 
               {/* Daily Cost — SVG bar chart mirroring real DailyCostChart */}
               <div className="rounded-lg border p-3">
-                <h4 className="text-micro font-medium text-muted-foreground mb-2">Daily Cost</h4>
+                <h4 className="text-micro font-medium text-muted-foreground mb-2">每日成本</h4>
                 <DailyCostBars data={mockUsageData.slice(-14)} />
                 <div className="mt-1.5 flex justify-between text-micro text-muted-foreground">
-                  <span>Mar 18</span><span>Mar 25</span><span>Mar 31</span>
+                  <span>3 月 18 日</span><span>3 月 25 日</span><span>3 月 31 日</span>
                 </div>
               </div>
             </div>

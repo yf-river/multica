@@ -28,7 +28,7 @@ function JoinInner() {
   // exposes the workspace name/slug and the inviter.
   useEffect(() => {
     if (!code) {
-      setInfoError("No invite code found. Please use a valid share link.");
+      setInfoError("未找到邀请码，请使用有效的邀请链接。");
       return;
     }
     let cancelled = false;
@@ -38,7 +38,7 @@ function JoinInner() {
         if (!cancelled) setInfo(data);
       })
       .catch(() => {
-        if (!cancelled) setInfoError("This invite link is invalid or has expired.");
+        if (!cancelled) setInfoError("邀请链接无效或已过期。");
       });
     return () => {
       cancelled = true;
@@ -90,14 +90,14 @@ function JoinInner() {
         }
         setJoining(false);
         if (code === "seat_capacity_full") {
-          setJoinError("All purchased member seats are in use. Ask a workspace admin to add a seat before trying again.");
+          setJoinError("成员席位已全部使用，请联系工作区管理员增加席位后重试。");
           return;
         }
         if (code === "seat_capacity_unavailable") {
-          setJoinError("Member capacity could not be verified. Please try again.");
+          setJoinError("无法验证成员容量，请重试。");
           return;
         }
-        setJoinError(msg || "Failed to join the workspace. The link may have expired.");
+        setJoinError(msg || "加入工作区失败，链接可能已过期。");
       });
   };
 
@@ -107,40 +107,40 @@ function JoinInner() {
         <CardContent className="space-y-4 pt-6">
           {joined ? (
             <>
-              <h1 className="text-title-lg font-semibold text-center">Joined!</h1>
-              <p className="text-center text-muted-foreground">Redirecting to your workspace...</p>
+              <h1 className="text-title-lg font-semibold text-center">已加入！</h1>
+              <p className="text-center text-muted-foreground">正在进入工作区……</p>
             </>
           ) : infoError ? (
             <>
-              <h1 className="text-title-lg font-semibold text-center">Oops</h1>
+              <h1 className="text-title-lg font-semibold text-center">出错了</h1>
               <p className="text-center text-muted-foreground">{infoError}</p>
               <div className="flex justify-center pt-2">
                 <Button variant="outline" onClick={() => router.push("/")}>
-                  Go Home
+                  返回首页
                 </Button>
               </div>
             </>
           ) : !info ? (
-            <div className="py-6 text-center text-muted-foreground">Loading invite details...</div>
+            <div className="py-6 text-center text-muted-foreground">正在加载邀请信息……</div>
           ) : (
             <>
               <h1 className="text-title-lg font-semibold text-center">
-                You&apos;re invited to {info.workspace_name}
+                邀请你加入 {info.workspace_name}
               </h1>
               {info.creator_name && (
                 <p className="text-center text-muted-foreground">
-                  Invited by {info.creator_name}
+                  邀请人：{info.creator_name}
                 </p>
               )}
               <p className="flex items-center justify-center gap-2 text-center text-body text-muted-foreground">
-                <span>You&apos;ll join this workspace as</span>
+                <span>你将以此身份加入工作区</span>
                 <Badge variant="outline">
-                  {info.role === "admin" ? "Administrator" : "Member"}
+                  {info.role === "admin" ? "管理员" : "成员"}
                 </Badge>
               </p>
               {!user && (
                 <p className="text-center text-body text-muted-foreground">
-                  You&apos;ll need to log in to join this workspace.
+                  登录后即可加入此工作区。
                 </p>
               )}
               {joinError && (
@@ -148,7 +148,7 @@ function JoinInner() {
               )}
               <div className="flex justify-center gap-2 pt-2">
                 <Button onClick={handleJoin} disabled={joining}>
-                  {joining ? "Joining..." : user ? "Join Workspace" : "Log In to Join"}
+                  {joining ? "正在加入……" : user ? "加入工作区" : "登录后加入"}
                 </Button>
               </div>
             </>
@@ -161,7 +161,7 @@ function JoinInner() {
 
 export default function JoinPage() {
   return (
-    <Suspense fallback={<div className="flex min-h-screen items-center justify-center">Loading...</div>}>
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center">正在加载……</div>}>
       <JoinInner />
     </Suspense>
   );

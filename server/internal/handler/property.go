@@ -748,6 +748,9 @@ func (h *Handler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 			Icon:        icon,
 			Config:      configJSON,
 		})
+		if err != nil {
+			return nil, err
+		}
 		return []events.Event{buildPropertyDomainEvent(protocol.EventPropertyCreated, property, "member", userID)}, nil
 	})
 	if capErr != nil {

@@ -1834,11 +1834,32 @@ func (h *Handler) PrioritizeQueuedChatTask(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to load prioritized task")
 		return
 	}
+	queueEvent, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
+		Type:           protocol.EventTaskQueued,
+		IdempotencyKey: "task:queued:" + uuidToString(queuedTask.ID) + ":prioritized",
+		StreamKey:      "task:" + uuidToString(queuedTask.ID),
+		WorkspaceID:    workspaceID,
+		ActorType:      "member",
+		ActorID:        userID,
+		TaskID:         uuidToString(queuedTask.ID),
+		ChatSessionID:  uuidToString(session.ID),
+		Payload: map[string]any{
+			"task_id":         uuidToString(queuedTask.ID),
+			"agent_id":        uuidToString(queuedTask.AgentID),
+			"status":          queuedTask.Status,
+			"chat_session_id": uuidToString(session.ID),
+			"queue_action":    "prioritized",
+		},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record queued task priority")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit queued task priority")
 		return
 	}
-	h.TaskService.BroadcastTaskQueued(r.Context(), queuedTask)
+	h.TaskService.PublishCommittedEvent(queueEvent)
 
 	writeJSON(w, http.StatusOK, PrioritizeQueuedChatTaskResponse{
 		TaskID:       uuidToString(prioritized.TaskID),

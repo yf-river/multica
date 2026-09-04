@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	"net/http"
@@ -13,6 +15,27 @@ import (
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func (h *Handler) loadUsableGongfengCredentialProfile(ctx context.Context, userID string) (db.ExternalCredentialProfile, bool, error) {
+	userUUID, ok := h.parseUserUUIDOrZero(userID)
+	if !ok {
+		return db.ExternalCredentialProfile{}, false, nil
+	}
+	profile, err := h.Queries.GetDefaultExternalCredentialProfileForUser(ctx, db.GetDefaultExternalCredentialProfileForUserParams{
+		UserID:   userUUID,
+		Provider: externalCredentialProviderGongfeng,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.ExternalCredentialProfile{}, false, nil
+	}
+	if err != nil {
+		return db.ExternalCredentialProfile{}, false, err
+	}
+	if profile.Status == "disabled" || profile.Status == "failed" || (profile.SecretRef == "" && len(profile.EncryptedSecret) == 0) {
+		return db.ExternalCredentialProfile{}, false, nil
+	}
+	return profile, true, nil
+}
 
 func hashRequestFingerprint(value any) (string, error) {
 	raw, err := json.Marshal(value)

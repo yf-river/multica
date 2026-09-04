@@ -5,7 +5,7 @@ import { WorkspaceSlugProvider } from "@multica/core/paths";
 import type { InboxItem } from "@multica/core/types";
 import { NavigationProvider } from "../../navigation";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enInbox from "../../locales/en/inbox.json";
+import enInbox from "../../locales-test/en/inbox.json";
 
 vi.mock("@multica/core/issue-statuses/hooks", () => ({
   // The catalog is server state; these suites render leaves without a

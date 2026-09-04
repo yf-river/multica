@@ -1,7 +1,7 @@
 /**
  * Screen-scoped state for "compose a reply to comment X" — read by the
  * inline comment composer, written by the comment long-press action sheet
- * ("Reply").
+ * ("回复").
  *
  * Why a global Zustand store and not props:
  *   - The trigger (long-press action sheet) and the consumer (composer at

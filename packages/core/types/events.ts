@@ -24,6 +24,7 @@ export type WSEventType =
   | "agent:archived"
   | "agent:restored"
   | "task:queued"
+  | "task:deferred"
   | "task:dispatch"
   | "task:running"
   | "task:waiting_local_directory"
@@ -295,6 +296,12 @@ export interface TaskMessagePayload {
   input?: Record<string, unknown>;
   output?: string;
   created_at?: string;
+}
+
+export interface TaskLifecyclePayload {
+  task_id: string;
+  issue_id: string;
+  chat_session_id?: string;
 }
 
 export interface TaskQueuedPayload {
@@ -574,6 +581,7 @@ export interface WSEventPayloadMap {
   "agent:archived": AgentArchivedPayload;
   "agent:restored": AgentRestoredPayload;
   "task:queued": TaskQueuedPayload;
+  "task:deferred": TaskQueuedPayload;
   "task:dispatch": TaskDispatchPayload;
   "task:running": TaskRunningPayload;
   "task:waiting_local_directory": TaskWaitingLocalDirectoryPayload;

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
-import { MULTICA_LOCALE_HEADER } from "./lib/locale-routing";
 import { config, proxy } from "./proxy";
 
 function makeRequest(
@@ -144,9 +143,6 @@ describe("proxy runtime upstream rewrites", () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get("x-middleware-rewrite")).toBeNull();
-      expect(
-        res.headers.get(`x-middleware-request-${MULTICA_LOCALE_HEADER}`),
-      ).toBe("en");
     });
   });
 
@@ -165,9 +161,6 @@ describe("proxy runtime upstream rewrites", () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get("x-middleware-rewrite")).toBeNull();
-      expect(
-        res.headers.get(`x-middleware-request-${MULTICA_LOCALE_HEADER}`),
-      ).toBe("en");
     });
   });
 
@@ -254,16 +247,13 @@ describe("proxy runtime upstream rewrites", () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get("x-middleware-rewrite")).toBeNull();
-      expect(
-        res.headers.get(`x-middleware-request-${MULTICA_LOCALE_HEADER}`),
-      ).toBe("en");
     } finally {
       restoreEnv("REMOTE_API_URL", previous);
     }
   });
 });
 
-describe("proxy root and locale handling", () => {
+describe("proxy root handling", () => {
   it("redirects logged-in root visits to the last workspace", () => {
     const res = proxy(
       makeRequest("/", {
@@ -278,13 +268,4 @@ describe("proxy root and locale handling", () => {
     );
   });
 
-  it("forwards locale on login requests", () => {
-    const res = proxy(makeRequest("/login", { "multica-locale": "zh-Hans" }));
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("location")).toBeNull();
-    expect(
-      res.headers.get(`x-middleware-request-${MULTICA_LOCALE_HEADER}`),
-    ).toBe("zh-Hans");
-  });
 });

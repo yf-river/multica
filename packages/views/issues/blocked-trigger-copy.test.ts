@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import { blockedReasonLabel, blockedShortReasonLabel } from "./blocked-trigger-copy";
-import en from "../locales/en/issues.json";
+import en from "../locales-test/en/issues.json";
 
 // A blocked mention's copy has to name the fix the user actually has. An unbound
 // agent (agent_runtime_required) and an agent whose machine is offline

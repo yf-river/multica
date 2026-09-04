@@ -29,6 +29,7 @@ import {
 import { SquadsPage, SquadDetailPage as SquadDetailPageView } from "@multica/views/squads/components";
 import { InboxPage } from "@multica/views/inbox";
 import { ChatPage } from "@multica/views/chat";
+import { RunReviewsPage } from "@multica/views/run-reviews";
 import { SettingsPage } from "@multica/views/settings";
 import { WorkspaceRouteLayout } from "./components/workspace-route-layout";
 import { DesktopRouteErrorPage } from "./components/route-error-page";
@@ -108,112 +109,117 @@ export const appRoutes: RouteObject[] = [
           {
             path: "issues",
             element: <IssuesPage />,
-            handle: { title: "Issues" },
+            handle: { title: "任务" },
           },
           {
             path: "issues/:id",
             element: <IssueDetailPage />,
-            handle: { title: "Issue" },
+            handle: { title: "任务" },
           },
           {
             path: "projects",
             element: <ProjectsPage />,
-            handle: { title: "Projects" },
+            handle: { title: "项目" },
           },
           {
             path: "projects/:id",
             element: <ProjectDetailPage />,
-            handle: { title: "Project" },
+            handle: { title: "项目" },
           },
           {
             path: "autopilots",
             element: <AutopilotsPage />,
-            handle: { title: "Autopilot" },
+            handle: { title: "自动化" },
           },
           {
             path: "autopilots/:id",
             element: <AutopilotDetailPage />,
-            handle: { title: "Autopilot" },
+            handle: { title: "自动化" },
           },
           {
             path: "my-issues",
             element: <MyIssuesPage />,
-            handle: { title: "My Issues" },
+            handle: { title: "我的任务" },
           },
           {
             path: "runtimes",
             element: <DesktopRuntimesPage />,
-            handle: { title: "Runtimes" },
+            handle: { title: "运行时" },
           },
           {
             path: "runtimes/:id",
             element: <RuntimeDetailPage />,
-            handle: { title: "Machine" },
+            handle: { title: "运行环境" },
           },
           {
             path: "runtimes/:id/runtime/:runtimeId",
             element: <RuntimeSettingsPage />,
-            handle: { title: "Runtime" },
+            handle: { title: "运行时" },
           },
-          { path: "skills", element: <SkillsPage />, handle: { title: "Skills" } },
+          { path: "skills", element: <SkillsPage />, handle: { title: "技能" } },
           {
             path: "skills/:id",
             element: <SkillDetailPage />,
-            handle: { title: "Skill" },
+            handle: { title: "技能" },
           },
-          { path: "agents", element: <DesktopAgentsPage />, handle: { title: "Agents" } },
+          { path: "agents", element: <DesktopAgentsPage />, handle: { title: "智能体" } },
           {
             path: "agents/new",
             element: <ChooseCreateMethodPage />,
-            handle: { title: "Create Agent" },
+            handle: { title: "创建智能体" },
           },
           {
             path: "agents/new/manual",
             element: <ManualCreateAgentPage />,
-            handle: { title: "Create Agent" },
+            handle: { title: "创建智能体" },
           },
           {
             path: "agents/new/ai",
             element: <AiCreateAgentPage />,
-            handle: { title: "Create Agent" },
+            handle: { title: "创建智能体" },
           },
           {
             path: "agents/new/ai/:sessionId",
             element: <AiBuilderSessionPage />,
-            handle: { title: "Create Agent" },
+            handle: { title: "创建智能体" },
           },
           {
             path: "agents/:id",
             element: <AgentDetailPage />,
-            handle: { title: "Agent" },
+            handle: { title: "智能体" },
           },
           {
             path: "members/:id",
             element: <MemberDetailPage />,
-            handle: { title: "Member" },
+            handle: { title: "成员" },
           },
-          { path: "squads", element: <SquadsPage />, handle: { title: "Squads" } },
+          { path: "squads", element: <SquadsPage />, handle: { title: "小队" } },
           {
             path: "squads/:id",
             element: <SquadDetailPageView />,
-            handle: { title: "Squad" },
+            handle: { title: "小队" },
           },
-          { path: "inbox", element: <InboxPage />, handle: { title: "Inbox" } },
-          { path: "chat", element: <ChatPage />, handle: { title: "Chat" } },
+          { path: "inbox", element: <InboxPage />, handle: { title: "收件箱" } },
+          { path: "chat", element: <ChatPage />, handle: { title: "聊天" } },
+          {
+            path: "run-reviews",
+            element: <RunReviewsPage />,
+            handle: { title: "运行复盘" },
+          },
           {
             path: "attachments/:id/preview",
             element: <AttachmentPreviewRoute />,
-            handle: { title: "Attachment" },
+            handle: { title: "附件" },
           },
           {
             path: "usage",
             element: <DashboardPage />,
-            handle: { title: "Usage" },
+            handle: { title: "用量" },
           },
           {
             path: "settings",
             element: <DesktopSettingsRoute />,
-            handle: { title: "Settings" },
+            handle: { title: "设置" },
           },
         ],
       },

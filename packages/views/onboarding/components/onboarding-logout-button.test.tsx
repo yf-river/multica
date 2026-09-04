@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enOnboarding from "../../locales/en/onboarding.json";
+import enCommon from "../../locales-test/en/common.json";
+import enOnboarding from "../../locales-test/en/onboarding.json";
 import { OnboardingLogoutButton } from "./onboarding-logout-button";
 
 const { logout } = vi.hoisted(() => ({ logout: vi.fn() }));

@@ -73,17 +73,14 @@ describe("keyboard shortcut definitions", () => {
       createShortcutChord("J", { primary: true }),
     );
     for (const platform of ["macos", "windows", "linux"] as const) {
-      for (const runtime of ["web", "desktop"] as const) {
         expect(
           isShortcutAllowedForAction(
             "toggleChat",
             createShortcutChord("J", { primary: true }),
             platform,
-            runtime,
           ),
-          `Mod+J must stay assignable on ${platform}/${runtime}`,
+          `Mod+J must stay assignable on ${platform}`,
         ).toBe(true);
-      }
     }
     // Dismissing chat has to work with the caret inside its own composer.
     expect(action.allowInEditable).toBe(true);

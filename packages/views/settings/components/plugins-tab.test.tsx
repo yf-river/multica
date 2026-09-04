@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enSettings from "../../locales/en/settings.json";
+import enCommon from "../../locales-test/en/common.json";
+import enSettings from "../../locales-test/en/settings.json";
 
 const mockPreview = vi.hoisted(() => vi.fn());
 const mockInstall = vi.hoisted(() => vi.fn());

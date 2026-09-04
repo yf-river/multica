@@ -69,7 +69,6 @@ func TestStartMikaOnboarding_AllowsAnyMemberNotJustTheOwner(t *testing.T) {
 	// Provisioned by the fixture user, so the caller below is never the owner.
 	owner := createMika(t, map[string]any{
 		"runtime_id": handlerTestRuntimeID(t),
-		"language":   "en",
 	})
 	if owner.Code != http.StatusCreated {
 		t.Fatalf("provision mika: expected 201, got %d: %s", owner.Code, owner.Body.String())
@@ -78,8 +77,7 @@ func TestStartMikaOnboarding_AllowsAnyMemberNotJustTheOwner(t *testing.T) {
 	second := addSecondWorkspaceMember(t, "mika-second-member@multica.test")
 	joined := createMikaAs(t, second, map[string]any{
 		"runtime_id":    handlerTestRuntimeID(t),
-		"language":      "en",
-		"session_title": "Getting started with Mika",
+		"session_title": "开始使用 Mika",
 	})
 	if joined.Code != http.StatusOK {
 		t.Fatalf("second member: expected the existing Mika (200), got %d: %s", joined.Code, joined.Body.String())
@@ -96,7 +94,7 @@ func TestStartMikaOnboarding_AllowsAnyMemberNotJustTheOwner(t *testing.T) {
 
 	req := withChatTestWorkspaceCtx(t, withURLParam(
 		newRequestAs(second, "POST", "/api/chat/sessions/"+sessionID+"/onboarding",
-			map[string]any{"language": "en"}),
+			map[string]any{}),
 		"sessionId", sessionID,
 	))
 	w := httptest.NewRecorder()
@@ -119,7 +117,7 @@ func TestCreateMikaAgent_RecoversFromAPartialBootstrap(t *testing.T) {
 	runtimeID := handlerTestRuntimeID(t)
 
 	first := decodeMika(t, createMika(t, map[string]any{
-		"runtime_id": runtimeID, "language": "en", "session_title": "Getting started with Mika",
+		"runtime_id": runtimeID, "session_title": "开始使用 Mika",
 	}))
 	if first.OnboardingSession == nil {
 		t.Fatal("first call returned no onboarding session")
@@ -135,7 +133,7 @@ func TestCreateMikaAgent_RecoversFromAPartialBootstrap(t *testing.T) {
 	}
 
 	retry := createMika(t, map[string]any{
-		"runtime_id": runtimeID, "language": "en", "session_title": "Getting started with Mika",
+		"runtime_id": runtimeID, "session_title": "开始使用 Mika",
 	})
 	if retry.Code != http.StatusOK {
 		t.Fatalf("retry: expected 200, got %d: %s", retry.Code, retry.Body.String())
@@ -154,8 +152,8 @@ func TestCreateMikaAgent_RecoversFromAPartialBootstrap(t *testing.T) {
 
 // TestCreateMikaAgent_SessionIsPerMemberAndStable covers the other half: the
 // session used to be resolved client-side by listing sessions and matching on
-// the localized title, which is both a check-then-insert race and
-// language-dependent. It is now (workspace, member, Mika) server-side.
+// the title, which is a check-then-insert race. It is now
+// (workspace, member, Mika) server-side.
 func TestCreateMikaAgent_SessionIsPerMemberAndStable(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -164,7 +162,7 @@ func TestCreateMikaAgent_SessionIsPerMemberAndStable(t *testing.T) {
 	runtimeID := handlerTestRuntimeID(t)
 
 	first := createMika(t, map[string]any{
-		"runtime_id": runtimeID, "language": "en", "session_title": "Getting started with Mika",
+		"runtime_id": runtimeID, "session_title": "开始使用 Mika",
 	})
 	if first.Code != http.StatusCreated {
 		t.Fatalf("first call: expected 201, got %d: %s", first.Code, first.Body.String())
@@ -187,11 +185,10 @@ func TestCreateMikaAgent_SessionIsPerMemberAndStable(t *testing.T) {
 		testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE creator_id = $1`, testUserID)
 	})
 
-	// A different title must not mint a second session — this is the retry
-	// after a language switch, which used to open a whole new conversation
-	// with its own kickoff.
+	// A different title must not mint a second session. Session identity is
+	// based on the member and Mika rather than display copy.
 	second := createMika(t, map[string]any{
-		"runtime_id": runtimeID, "language": "zh", "session_title": "开始使用 Mika",
+		"runtime_id": runtimeID, "session_title": "Mika",
 	})
 	if second.Code != http.StatusOK {
 		t.Fatalf("second call: expected 200, got %d: %s", second.Code, second.Body.String())
@@ -209,7 +206,7 @@ func TestCreateMikaAgent_SessionIsPerMemberAndStable(t *testing.T) {
 	// the same Mika, not the first member's.
 	other := addSecondWorkspaceMember(t, "mika-session-owner@multica.test")
 	otherResp := decodeMika(t, createMikaAs(t, other, map[string]any{
-		"runtime_id": runtimeID, "language": "en", "session_title": "Getting started with Mika",
+		"runtime_id": runtimeID, "session_title": "开始使用 Mika",
 	}))
 	if otherResp.OnboardingSession == nil {
 		t.Fatal("second member returned no onboarding session")

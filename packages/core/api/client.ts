@@ -51,6 +51,7 @@ import type {
   IssueReaction,
   Workspace,
   WorkspaceRepo,
+  WorkspaceRepoProbeResponse,
   WorkspaceMcpServer,
   MemberWithUser,
   User,
@@ -263,8 +264,15 @@ import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseOrThrow, parseWithFallback } from "./schema";
 import type { CreateExternalCredentialProfileRequest, ExternalCredentialProfile, ExternalCredentialProvider, TestExternalCredentialProfileRequest, TestExternalCredentialProfileResponse, UpdateExternalCredentialProfileRequest } from "../types/external-credential";
+import type { IssueExecutionTreeResponse } from "../types/issue-execution";
 import {
   AgentTaskListSchema,
+  EMPTY_ISSUE_EXECUTION_TREE_RESPONSE,
+  IssueExecutionTreeResponseSchema,
+  IssueTraceEventsResponseSchema,
+  ExternalCredentialProfileSchema,
+  ExternalCredentialProfileListSchema,
+  TestExternalCredentialProfileResponseSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
   ChatDraftRestoresResponseSchema,
@@ -465,6 +473,8 @@ import {
   PluginPreviewSchema,
   WorkspaceMcpServerListSchema,
   WorkspaceMcpServerSchema,
+  WorkspaceRepoSchema,
+  WorkspaceRepoProbeResponseSchema,
   ShareLinkSchema,
   ShareLinkListResponseSchema,
   ShareLinkInfoSchema,
@@ -1532,7 +1542,7 @@ export class ApiClient {
    * Provisions the workspace's built-in Chief of Staff, or returns the
    * existing one.
    *
-   * Only a runtime and a language are sent: name, description, avatar,
+   * Only runtime selection and the session label are sent: name, description, avatar,
    * permissions, and the system instruction layer are server constants, so a
    * client cannot mint an agent that would claim them. The server is also the
    * idempotency boundary — calling twice yields the same agent.
@@ -1540,7 +1550,6 @@ export class ApiClient {
   async createMikaAgent(
     data: {
       runtime_id: string;
-      language: "en" | "zh" | "ko" | "ja";
       /** Empty means "whatever the runtime defaults to". */
       model?: string;
       /** Label for the onboarding conversation, used only if this call is the
@@ -2457,18 +2466,45 @@ export class ApiClient {
     provider: string; model: string; failure_reason: string; duration_ms?: number;
     input_tokens: number; output_tokens: number; created_at: string;
   }> }> {
-    return this.fetch(`/api/issues/${issueId}/trace`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/trace`);
+    return parseWithFallback(raw, IssueTraceEventsResponseSchema, { events: [] }, {
+      endpoint: "GET /api/issues/:id/trace",
+    });
+  }
+
+  async getIssueExecutionTree(issueId: string): Promise<IssueExecutionTreeResponse> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/execution-tree`);
+    return parseWithFallback<IssueExecutionTreeResponse>(
+      raw,
+      IssueExecutionTreeResponseSchema,
+      EMPTY_ISSUE_EXECUTION_TREE_RESPONSE as IssueExecutionTreeResponse,
+      { endpoint: "GET /api/issues/:id/execution-tree" },
+    );
   }
 
   async listExternalCredentialProfiles(provider?: ExternalCredentialProvider): Promise<ExternalCredentialProfile[]> {
     const query = provider ? `?provider=${encodeURIComponent(provider)}` : "";
-    const response = await this.fetch<{ profiles?: ExternalCredentialProfile[] }>(`/api/external-credential-profiles${query}`);
-    return response.profiles ?? [];
+    const raw = await this.fetch<unknown>(`/api/external-credential-profiles${query}`);
+    return parseWithFallback(raw, ExternalCredentialProfileListSchema, { profiles: [] }, {
+      endpoint: "GET /api/external-credential-profiles",
+    }).profiles;
   }
-  async getExternalCredentialProfile(id: string): Promise<ExternalCredentialProfile> { return this.fetch(`/api/external-credential-profiles/${id}`); }
-  async createExternalCredentialProfile(data: CreateExternalCredentialProfileRequest, idempotencyKey = createSafeId()): Promise<ExternalCredentialProfile> { return this.fetch(`/api/external-credential-profiles`, { method: "POST", body: JSON.stringify(data), headers: { "Idempotency-Key": idempotencyKey } }); }
-  async updateExternalCredentialProfile(id: string, data: UpdateExternalCredentialProfileRequest): Promise<ExternalCredentialProfile> { return this.fetch(`/api/external-credential-profiles/${id}`, { method: "PUT", body: JSON.stringify(data) }); }
-  async testExternalCredentialProfile(data: TestExternalCredentialProfileRequest): Promise<TestExternalCredentialProfileResponse> { return this.fetch(`/api/external-credential-profiles/test`, { method: "POST", body: JSON.stringify(data) }); }
+  async getExternalCredentialProfile(id: string): Promise<ExternalCredentialProfile> {
+    const raw = await this.fetch<unknown>(`/api/external-credential-profiles/${id}`);
+    return parseOrThrow(raw, ExternalCredentialProfileSchema, { endpoint: "GET /api/external-credential-profiles/:id" });
+  }
+  async createExternalCredentialProfile(data: CreateExternalCredentialProfileRequest, idempotencyKey = createSafeId()): Promise<ExternalCredentialProfile> {
+    const raw = await this.fetch<unknown>(`/api/external-credential-profiles`, { method: "POST", body: JSON.stringify(data), headers: { "Idempotency-Key": idempotencyKey } });
+    return parseOrThrow(raw, ExternalCredentialProfileSchema, { endpoint: "POST /api/external-credential-profiles", mayHaveCommitted: true });
+  }
+  async updateExternalCredentialProfile(id: string, data: UpdateExternalCredentialProfileRequest): Promise<ExternalCredentialProfile> {
+    const raw = await this.fetch<unknown>(`/api/external-credential-profiles/${id}`, { method: "PUT", body: JSON.stringify(data) });
+    return parseOrThrow(raw, ExternalCredentialProfileSchema, { endpoint: "PUT /api/external-credential-profiles/:id", mayHaveCommitted: true });
+  }
+  async testExternalCredentialProfile(data: TestExternalCredentialProfileRequest): Promise<TestExternalCredentialProfileResponse> {
+    const raw = await this.fetch<unknown>(`/api/external-credential-profiles/test`, { method: "POST", body: JSON.stringify(data) });
+    return parseWithFallback(raw, TestExternalCredentialProfileResponseSchema, { status: "failed", last_error: "账号测试响应格式无效" }, { endpoint: "POST /api/external-credential-profiles/test" });
+  }
   async deleteExternalCredentialProfile(id: string): Promise<void> { await this.fetch(`/api/external-credential-profiles/${id}`, { method: "DELETE" }); }
 
   async getIssueUsage(issueId: string): Promise<IssueUsageSummary> {
@@ -2628,6 +2664,32 @@ export class ApiClient {
     return this.fetch(`/api/workspaces/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+  }
+
+  async probeWorkspaceRepo(
+    workspaceId: string,
+    data: { url: string },
+  ): Promise<WorkspaceRepoProbeResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos/probe`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, WorkspaceRepoProbeResponseSchema, {
+      endpoint: "POST /api/workspaces/:id/repos/probe",
+    });
+  }
+
+  async resolveWorkspaceRepo(
+    workspaceId: string,
+    data: { url: string; default_branch?: string },
+  ): Promise<WorkspaceRepo> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos/resolve`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, WorkspaceRepoSchema, {
+      endpoint: "POST /api/workspaces/:id/repos/resolve",
     });
   }
 
@@ -3489,15 +3551,12 @@ export class ApiClient {
 
   async startMikaOnboarding(
     sessionId: string,
-    data: {
-      language: "en" | "zh" | "ko" | "ja";
-    },
     workspaceSlug?: string,
   ): Promise<StartMikaOnboardingResponse> {
     const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/onboarding`, {
       method: "POST",
       headers: workspaceHeader(workspaceSlug),
-      body: JSON.stringify(data),
+      body: JSON.stringify({}),
     });
     return parseWithFallback(
       raw,

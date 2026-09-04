@@ -5972,7 +5972,13 @@ func providerDisplayName(name string) string {
 	if friendly, ok := runtimeDisplayNameOverrides[name]; ok {
 		return friendly
 	}
-	return strings.ToUpper(name[:1]) + name[1:]
+	parts := strings.Split(name, "-")
+	for i, part := range parts {
+		if part != "" {
+			parts[i] = strings.ToUpper(part[:1]) + part[1:]
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // providerNeedsInlineSystemPrompt reports whether the runtime brief must ride

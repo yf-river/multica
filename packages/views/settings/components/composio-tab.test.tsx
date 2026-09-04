@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { StrictMode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enSettings from "../../locales/en/settings.json";
+import enCommon from "../../locales-test/en/common.json";
+import enSettings from "../../locales-test/en/settings.json";
 import type { ComposioConnection, ComposioToolkit } from "@multica/core/types";
 
 // --- Mutable refs the mocked hooks read from, so each test can shape the data

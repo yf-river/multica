@@ -207,7 +207,7 @@ function createMdxComponents(locale: SupportedLocale) {
 export default async function UseCasePage(props: { params: Promise<Params> }) {
   const { slug } = await props.params;
   const locale = await getUseCaseLocale();
-  const text = useCaseText[locale];
+  const text = useCaseText["zh-Hans"];
   const page = getUseCasePageForLocale([slug], locale);
   if (!page) notFound();
 

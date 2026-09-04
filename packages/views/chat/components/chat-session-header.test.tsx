@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { ChatSession } from "@multica/core/types";
-import enChat from "../../locales/en/chat.json";
+import enChat from "../../locales-test/en/chat.json";
 
 const updateMutate = vi.hoisted(() => vi.fn());
 

@@ -1,8 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enOnboarding from "../../locales/en/onboarding.json";
+import enCommon from "../../locales-test/en/common.json";
+import enOnboarding from "../../locales-test/en/onboarding.json";
 import { CliInstallInstructions } from "./cli-install-instructions";
 
 const TEST_RESOURCES = { en: { common: enCommon, onboarding: enOnboarding } };

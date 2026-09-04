@@ -188,6 +188,20 @@ export interface Issue {
   creator_id: string;
   parent_issue_id: string | null;
   project_id: string | null;
+  project?: {
+    id: string;
+    title: string;
+    icon: string | null;
+  } | null;
+  child_progress?: {
+    done: number;
+    total: number;
+  };
+  agent_activity?: {
+    running_count: number;
+    queued_count: number;
+    agent_ids: string[];
+  };
   position: number;
   // Ordered barrier group among sibling sub-issues (null = unstaged). The
   // parent assignee is notified/woken only when every sub-issue in a stage

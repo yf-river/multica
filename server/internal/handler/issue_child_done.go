@@ -287,24 +287,24 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 		advance := stageAdvanceInstruction(nextStage, parentID)
 		if batch {
 			content = fmt.Sprintf(
-				"%sStage %d of this issue is complete — its sub-issues just finished together in a batch update, most recently [%s](mention://issue/%s) — \"%s\". Stage progress — %s.%s",
+				"%s当前任务的第 %d 阶段已完成——该阶段的子任务已在批量更新中全部结束，最近完成的是 [%s](mention://issue/%s)——“%s”。阶段进度：%s。%s",
 				mentionPrefix, closedStage, identifier, childID, title, summary, advance,
 			)
 		} else {
 			content = fmt.Sprintf(
-				"%sStage %d of this issue is complete — its last sub-issue [%s](mention://issue/%s) — \"%s\" — just finished. Stage progress — %s.%s",
+				"%s当前任务的第 %d 阶段已完成——最后一个子任务 [%s](mention://issue/%s)——“%s”刚刚结束。阶段进度：%s。%s",
 				mentionPrefix, closedStage, identifier, childID, title, summary, advance,
 			)
 		}
 	} else {
 		if batch {
 			content = fmt.Sprintf(
-				"%sAll sub-issues are complete — they just finished together in a batch update, most recently [%s](mention://issue/%s) — \"%s\". Continue the parent: synthesize the children's results and move it forward, or — if nothing remains — run `multica issue status %s in_review` to mark the parent ready for review.",
+				"%s所有子任务都已完成——它们刚刚在批量更新中一起结束，最近完成的是 [%s](mention://issue/%s)——“%s”。请汇总子任务结果并继续推进父任务；如果已经没有后续工作，请运行 `multica issue status %s in_review` 将父任务标记为待评审。",
 				mentionPrefix, identifier, childID, title, parentID,
 			)
 		} else {
 			content = fmt.Sprintf(
-				"%sAll sub-issues are complete — the last one, [%s](mention://issue/%s) — \"%s\", just finished. Continue the parent: synthesize the children's results and move it forward, or — if nothing remains — run `multica issue status %s in_review` to mark the parent ready for review.",
+				"%s所有子任务都已完成——最后一个子任务 [%s](mention://issue/%s)——“%s”刚刚结束。请汇总子任务结果并继续推进父任务；如果已经没有后续工作，请运行 `multica issue status %s in_review` 将父任务标记为待评审。",
 				mentionPrefix, identifier, childID, title, parentID,
 			)
 		}
@@ -474,10 +474,10 @@ func stageProgressSummary(children []db.Issue, closedStage int32, isTerminal fun
 	parts := make([]string, 0, len(order))
 	for _, s := range order {
 		a := byStage[s]
-		label := fmt.Sprintf("Stage %d: %d/%d done", s, a.done, a.total)
+		label := fmt.Sprintf("阶段 %d：已完成 %d/%d", s, a.done, a.total)
 		if nextStage == 0 && s > closedStage && a.done < a.total {
 			nextStage = s
-			label += " (next)"
+			label += "（下一阶段）"
 		}
 		parts = append(parts, label)
 	}
@@ -503,11 +503,11 @@ func stageProgressSummary(children []db.Issue, closedStage int32, isTerminal fun
 func stageAdvanceInstruction(nextStage int32, parentID string) string {
 	if nextStage > 0 {
 		return fmt.Sprintf(
-			" Stage %d is next. Review the full layout with `multica issue children %s`, and if Stage %d's dependencies are satisfied promote its `backlog` sub-issues to `todo` to continue. Read each sub-issue's description first and only promote items whose stated dependencies are already met — do not rely on this parent's higher-level breakdown alone. If a description conflicts with that breakdown, leave it `backlog` and post a comment to confirm first.",
+			" 下一步是阶段 %d。请先通过 `multica issue children %s` 查看完整结构；确认阶段 %d 的依赖已经满足后，再把其中处于 `backlog` 的子任务推进到 `todo`。请逐条阅读子任务描述，只推进明确满足依赖的任务；如果描述与父任务概览冲突，先保留在 `backlog` 并留言确认。",
 			nextStage, parentID, nextStage,
 		)
 	}
-	return fmt.Sprintf(" Completing this stage does not mean the whole issue is done. Decide whether the issue is actually complete — if so, synthesize the results and run `multica issue status %s in_review` to mark the parent ready for review — or whether the next stage still needs to be created, in which case create that stage and its sub-issues now.", parentID)
+	return fmt.Sprintf(" 当前阶段结束不代表整个任务已经完成。请判断父任务是否真正完成：如果完成，请汇总结果并运行 `multica issue status %s in_review` 标记为待评审；如果仍需要下一阶段，请立即创建该阶段及其子任务。", parentID)
 }
 
 // sanitizeChildTitleForSystemComment removes mention-style markdown from a

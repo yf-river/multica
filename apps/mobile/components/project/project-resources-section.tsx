@@ -45,12 +45,12 @@ export function ProjectResourcesSection({ projectId, onAdd }: Props) {
 
   const onLongPress = (resource: ProjectResource) => {
     Alert.alert(
-      "Detach resource?",
+      "移除资源？",
       describeResource(resource),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: "取消", style: "cancel" },
         {
-          text: "Detach",
+          text: "移除",
           style: "destructive",
           onPress: () => remove.mutate(resource.id),
         },
@@ -65,7 +65,7 @@ export function ProjectResourcesSection({ projectId, onAdd }: Props) {
           Resources
         </Text>
         <Pressable onPress={onAdd} className="px-2 py-1 active:bg-secondary rounded">
-          <Text className="text-xs text-brand">Add</Text>
+          <Text className="text-xs text-brand">添加</Text>
         </Pressable>
       </View>
       {isLoading ? (

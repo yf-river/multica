@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
 import { createI18n } from "@multica/core/i18n/react";
-import enAutopilots from "../../locales/en/autopilots.json";
+import enAutopilots from "../../locales-test/en/autopilots.json";
 import zhAutopilots from "../../locales/zh-Hans/autopilots.json";
 import { formatSchedulePartialFailureToast } from "./autopilot-dialog-toast";
 

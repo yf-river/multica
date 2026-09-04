@@ -5,8 +5,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
+import enCommon from "../../../locales-test/en/common.json";
+import enAgents from "../../../locales-test/en/agents.json";
 
 const getAgentEnv = vi.hoisted(() => vi.fn());
 const updateAgentEnv = vi.hoisted(() => vi.fn());

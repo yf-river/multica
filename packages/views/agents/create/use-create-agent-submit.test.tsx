@@ -8,7 +8,7 @@ import { EMPTY_AGENT_DRAFT } from "@multica/core/agents";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent } from "@multica/core/types";
 import { workspaceKeys } from "@multica/core/workspace/queries";
-import enAgents from "../../locales/en/agents.json";
+import enAgents from "../../locales-test/en/agents.json";
 
 const mockCreateAgent = vi.hoisted(() => vi.fn());
 const mockPush = vi.hoisted(() => vi.fn());

@@ -41,7 +41,7 @@ describe("UpdateNotification", () => {
     act(() => updateDownloaded({ version: "0.4.27" }));
 
     expect(screen.queryByRole("button", { name: "Later" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "See changelog" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看更新日志" }));
 
     expect(mocks.openExternal).toHaveBeenCalledWith(
       "https://multica.ai/changelog#release-0-4-27",
@@ -52,7 +52,7 @@ describe("UpdateNotification", () => {
     render(<UpdateNotification />);
     act(() => updateDownloaded({ version: "0.4.27" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Restart now" }));
+    fireEvent.click(screen.getByRole("button", { name: "立即重启" }));
 
     expect(mocks.installUpdate).toHaveBeenCalledOnce();
   });

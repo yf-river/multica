@@ -2129,11 +2129,15 @@ func (s *TaskService) enqueueChatTaskTx(
 			return db.AgentTaskQueue{}, fmt.Errorf("clear channel pending fresh: %w", err)
 		}
 	}
-	queuedEvent := taskEvent(protocol.EventTaskQueued, util.UUIDToString(currentSession.WorkspaceID), task)
-	queuedEvent.IdempotencyKey = "task:queued:" + util.UUIDToString(task.ID)
-	queuedEvent.StreamKey = "task:" + util.UUIDToString(task.ID)
-	if _, err := recordDurableEventTx(ctx, qtx, queuedEvent); err != nil {
-		return db.AgentTaskQueue{}, fmt.Errorf("record chat task queued event: %w", err)
+	createdEventType := protocol.EventTaskQueued
+	if task.Status == "deferred" {
+		createdEventType = protocol.EventTaskDeferred
+	}
+	createdEvent := taskEvent(createdEventType, util.UUIDToString(currentSession.WorkspaceID), task)
+	createdEvent.IdempotencyKey = "task:" + strings.TrimPrefix(createdEventType, "task:") + ":" + util.UUIDToString(task.ID)
+	createdEvent.StreamKey = "task:" + util.UUIDToString(task.ID)
+	if _, err := recordDurableEventTx(ctx, qtx, createdEvent); err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("record chat task creation event: %w", err)
 	}
 	return task, nil
 }

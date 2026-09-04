@@ -5,10 +5,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent, MemberWithUser, Squad } from "@multica/core/types";
-import enCommon from "../locales/en/common.json";
-import enModals from "../locales/en/modals.json";
-import enAgents from "../locales/en/agents.json";
-import enIssues from "../locales/en/issues.json";
+import enCommon from "../locales-test/en/common.json";
+import enModals from "../locales-test/en/modals.json";
+import enAgents from "../locales-test/en/agents.json";
+import enIssues from "../locales-test/en/issues.json";
 
 const TEST_RESOURCES = {
   en: { common: enCommon, modals: enModals, agents: enAgents, issues: enIssues },

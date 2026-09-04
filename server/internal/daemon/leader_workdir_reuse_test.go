@@ -392,8 +392,9 @@ func leaderReuseTestTask(id string) Task {
 		AuthToken:    "mat_leader_reuse",
 		IsLeaderTask: true,
 		Agent: &AgentData{
-			ID:   "agent-leader",
-			Name: "leader-agent",
+			ID:        "agent-leader",
+			Name:      "leader-agent",
+			CustomEnv: map[string]string{"IS_SANDBOX": "1"},
 		},
 	}
 }

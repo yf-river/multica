@@ -1,17 +1,5 @@
-import type { MikaOnboardingLanguage } from "@multica/core/onboarding";
-
-export type MikaContentLang = MikaOnboardingLanguage;
-
-interface LocalizedText {
-  en: string;
-  zh: string;
-  ko: string;
-  ja: string;
-}
-
 export interface MikaOnboardingDefinition {
   title: string;
-  language: MikaContentLang;
 }
 
 /**
@@ -21,21 +9,12 @@ export interface MikaOnboardingDefinition {
  * deploying, and stops a client from minting an agent that claims Mika's
  * identity.
  *
- * The chat title stays client-side: it names a session this member is opening,
- * in the language they are currently using.
+ * The chat title stays client-side: it names a session this member is opening.
  */
-const MIKA_CHAT_TITLE: LocalizedText = {
-  en: "Getting started with Mika",
-  zh: "和 Mika 开始",
-  ko: "Mika와 시작하기",
-  ja: "Mika と始める",
-};
+const MIKA_CHAT_TITLE = "和 Mika 开始";
 
-export function getMikaOnboarding(
-  lang: MikaContentLang,
-): MikaOnboardingDefinition {
+export function getMikaOnboarding(): MikaOnboardingDefinition {
   return {
-    title: MIKA_CHAT_TITLE[lang],
-    language: lang,
+    title: MIKA_CHAT_TITLE,
   };
 }

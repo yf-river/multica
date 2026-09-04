@@ -46,12 +46,12 @@ export default function SwitchWorkspaceRoute() {
   const onSelect = (ws: Workspace) => {
     if (ws.slug === activeSlug) return;
     Alert.alert(
-      "Switch workspace",
+      "切换工作区",
       `Switch to "${ws.name}"?`,
       [
-        { text: "Cancel", style: "cancel" },
+        { text: "取消", style: "cancel" },
         {
-          text: "Switch",
+          text: "切换",
           onPress: () => {
             router.dismiss();
             router.replace(`/${ws.slug}/inbox`);

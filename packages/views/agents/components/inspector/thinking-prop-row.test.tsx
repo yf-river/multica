@@ -14,9 +14,9 @@ import type {
   RuntimeModelListRequest,
 } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
-import enIssues from "../../../locales/en/issues.json";
+import enCommon from "../../../locales-test/en/common.json";
+import enAgents from "../../../locales-test/en/agents.json";
+import enIssues from "../../../locales-test/en/issues.json";
 
 const TEST_RESOURCES = {
   en: { common: enCommon, agents: enAgents, issues: enIssues },

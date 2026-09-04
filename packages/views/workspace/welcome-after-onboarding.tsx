@@ -22,7 +22,6 @@ import { useNavigation } from "../navigation";
 import {
   INSTALL_RUNTIME_ISSUE_BODY,
   INSTALL_RUNTIME_ISSUE_TITLE,
-  pickContentLang,
 } from "../onboarding/templates";
 
 /**
@@ -99,7 +98,7 @@ interface SkipWelcomeProps {
  * runs the same real bootstrap used by connected onboarding.
  */
 function SkipWelcome({ workspaceId, onDismiss }: SkipWelcomeProps) {
-  const { t, i18n } = useT("onboarding");
+  const { t } = useT("onboarding");
   const navigation = useNavigation();
   const queryClient = useQueryClient();
   const me = useAuthStore((state) => state.user);
@@ -113,12 +112,11 @@ function SkipWelcome({ workspaceId, onDismiss }: SkipWelcomeProps) {
     let cancelled = false;
     void (async () => {
       try {
-        const lang = pickContentLang(i18n.language);
         const installRuntime = await seedIssueDeduped(
           `${workspaceId}:install-runtime`,
           {
-            title: INSTALL_RUNTIME_ISSUE_TITLE[lang],
-            description: INSTALL_RUNTIME_ISSUE_BODY[lang],
+            title: INSTALL_RUNTIME_ISSUE_TITLE,
+            description: INSTALL_RUNTIME_ISSUE_BODY,
             status: "in_progress",
             priority: "high",
             assignee_type: "member",
@@ -139,7 +137,7 @@ function SkipWelcome({ workspaceId, onDismiss }: SkipWelcomeProps) {
     return () => {
       cancelled = true;
     };
-  }, [bundle, failed, i18n.language, me, queryClient, workspaceId]);
+  }, [bundle, failed, me, queryClient, workspaceId]);
 
   if (!me) return null;
 

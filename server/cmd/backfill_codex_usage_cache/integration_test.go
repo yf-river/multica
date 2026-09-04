@@ -312,6 +312,12 @@ func testApplyMigrationsUpTo(ctx context.Context, pool *pgxpool.Pool, lastVersio
 
 	for _, f := range files {
 		v := migrations.ExtractVersion(f)
+		// The baseline is a fresh-install snapshot of the complete schema. This
+		// test deliberately reconstructs an old release one historical migration
+		// at a time, so applying the snapshot first would duplicate every table.
+		if v == "000_initial_schema" {
+			continue
+		}
 		sql, err := os.ReadFile(f)
 		if err != nil {
 			return err

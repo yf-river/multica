@@ -4,7 +4,6 @@ import { Suspense, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
-import { useConfigStore } from "@multica/core/config";
 import {
   workspaceKeys,
   workspaceListOptions,
@@ -48,7 +47,6 @@ async function resolveLoggedInDestination(
 function LoginPageContent() {
   const router = useRouter();
   const qc = useQueryClient();
-  const googleClientId = useConfigStore((state) => state.googleClientId);
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
   const searchParams = useSearchParams();
@@ -114,32 +112,9 @@ function LoginPageContent() {
     router.push(await resolveLoggedInDestination(qc, onboarded, list));
   };
 
-  // Build Google OAuth state from the web destination and CLI callback.
-  // CLI callback/state must survive the Google OAuth round-trip so the
-  // post-login callback page can redirect the JWT back to the CLI's local
-  // HTTP listener (critical for headless / WSL2 environments).
-  const googleState = [
-    nextUrl ? `next:${nextUrl}` : "",
-    cliCallbackRaw && validateCliCallback(cliCallbackRaw)
-      ? `cli_callback:${encodeURIComponent(cliCallbackRaw)}`
-      : "",
-    cliState ? `cli_state:${encodeURIComponent(cliState)}` : "",
-  ]
-    .filter(Boolean)
-    .join(",") || undefined;
-
   return (
     <LoginPage
       onSuccess={handleSuccess}
-      google={
-        googleClientId
-          ? {
-              clientId: googleClientId,
-              redirectUri: `${window.location.origin}/auth/callback`,
-              state: googleState,
-            }
-          : undefined
-      }
       cliCallback={
         cliCallbackRaw && validateCliCallback(cliCallbackRaw)
           ? { url: cliCallbackRaw, state: cliState }

@@ -44,10 +44,7 @@ import {
 } from "../../layout/collection-page";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
-import {
-  getMikaOnboarding,
-  pickContentLang,
-} from "../../onboarding/templates";
+import { getMikaOnboarding } from "../../onboarding/templates";
 import { ConnectRemoteDialog } from "./connect-remote-dialog";
 import { CloudRuntimeDialog } from "./cloud-runtime-dialog";
 import { ProviderLogo } from "./provider-logo";
@@ -209,7 +206,7 @@ function MikaSetupCard({
   runtimesLoading?: boolean;
   currentUserId: string | null;
 }) {
-  const { t, i18n } = useT("runtimes");
+  const { t } = useT("runtimes");
   const navigation = useNavigation();
   const paths = useWorkspacePaths();
   const wsSlug = useRequiredWorkspaceSlug();
@@ -232,13 +229,12 @@ function MikaSetupCard({
 
   const handleStart = async () => {
     if (!runtimeId || bootstrapMika.isPending) return;
-    const lang = pickContentLang(i18n.language);
     try {
       const result = await bootstrapMika.mutateAsync({
         workspaceSlug: wsSlug,
         runtimeId,
         model: value.model || undefined,
-        ...getMikaOnboarding(lang),
+        ...getMikaOnboarding(),
       });
       setOpen(false);
       navigation.push(paths.chatSession(result.chatSession.id));
@@ -352,7 +348,7 @@ function PageHeaderBar({
   cloudRuntimeEnabled: boolean;
   onOpenCloudRuntime: () => void;
 }) {
-  const { t, i18n } = useT("runtimes");
+  const { t } = useT("runtimes");
   return (
     <CollectionPageHeader
       icon={Server}
@@ -360,7 +356,7 @@ function PageHeaderBar({
       count={totalCount}
       description={t(($) => $.page.tagline)}
       learnMore={{
-        href: daemonRuntimesDocsHref(i18n.language),
+        href: daemonRuntimesDocsHref(),
         label: t(($) => $.page.learn_more),
       }}
       actions={

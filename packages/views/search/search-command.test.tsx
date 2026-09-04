@@ -6,14 +6,14 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import { WORKSPACE_PAGES } from "@multica/core/paths";
 import { SearchCommand } from "./search-command";
 import { useSearchStore } from "./search-store";
-import enCommon from "../locales/en/common.json";
-import enAuth from "../locales/en/auth.json";
-import enSettings from "../locales/en/settings.json";
-import enSearch from "../locales/en/search.json";
+import enCommon from "../locales-test/en/common.json";
+import enAuth from "../locales-test/en/auth.json";
+import enSettings from "../locales-test/en/settings.json";
+import enSearch from "../locales-test/en/search.json";
 // The palette labels its Pages group from the sidebar's own nav strings, so
 // the layout namespace is part of its contract, not incidental setup.
-import enLayout from "../locales/en/layout.json";
-import enProjects from "../locales/en/projects.json";
+import enLayout from "../locales-test/en/layout.json";
+import enProjects from "../locales-test/en/projects.json";
 import zhHansProjects from "../locales/zh-Hans/projects.json";
 
 const TEST_RESOURCES = {
@@ -215,6 +215,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     agents: () => "/ws-test/agents",
     squads: () => "/ws-test/squads",
     usage: () => "/ws-test/usage",
+    runReviews: () => "/ws-test/run-reviews",
     runtimes: () => "/ws-test/runtimes",
     skills: () => "/ws-test/skills",
     settings: () => "/ws-test/settings",

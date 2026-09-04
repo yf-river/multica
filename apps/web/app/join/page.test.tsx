@@ -3,20 +3,20 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "@multica/views/locales/en/common.json";
-import enAuth from "@multica/views/locales/en/auth.json";
-import enSettings from "@multica/views/locales/en/settings.json";
+import zhCommon from "@multica/views/locales/zh-Hans/common.json";
+import zhAuth from "@multica/views/locales/zh-Hans/auth.json";
+import zhSettings from "@multica/views/locales/zh-Hans/settings.json";
 import { ApiError } from "@multica/core/api";
 import type { ReactNode } from "react";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, auth: enAuth, settings: enSettings },
+  "zh-Hans": { common: zhCommon, auth: zhAuth, settings: zhSettings },
 };
 
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return ({ children }: { children: ReactNode }) => (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
     </I18nProvider>
   );
@@ -98,9 +98,9 @@ describe("JoinPage", () => {
     render(<JoinPage />, { wrapper: createWrapper() });
 
     await waitFor(() =>
-      expect(screen.getByText(/You're invited to Acme/)).toBeInTheDocument(),
+      expect(screen.getByText("邀请你加入 Acme")).toBeInTheDocument(),
     );
-    expect(screen.getByText("Invited by Alice")).toBeInTheDocument();
+    expect(screen.getByText("邀请人：Alice")).toBeInTheDocument();
     expect(mockJoinByShareLink).not.toHaveBeenCalled();
   });
 
@@ -114,10 +114,10 @@ describe("JoinPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("You'll join this workspace as"),
+        screen.getByText("你将以此身份加入工作区"),
       ).toBeInTheDocument(),
     );
-    expect(screen.getByText("Administrator")).toBeInTheDocument();
+    expect(screen.getByText("管理员")).toBeInTheDocument();
   });
 
   it("shows a Member badge when the link grants member access", async () => {
@@ -130,10 +130,10 @@ describe("JoinPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("You'll join this workspace as"),
+        screen.getByText("你将以此身份加入工作区"),
       ).toBeInTheDocument(),
     );
-    expect(screen.getByText("Member")).toBeInTheDocument();
+    expect(screen.getByText("成员")).toBeInTheDocument();
   });
 
   it("shows an error when the link is invalid", async () => {
@@ -143,7 +143,7 @@ describe("JoinPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("This invite link is invalid or has expired."),
+        screen.getByText("邀请链接无效或已过期。"),
       ).toBeInTheDocument(),
     );
     expect(mockJoinByShareLink).not.toHaveBeenCalled();
@@ -155,7 +155,7 @@ describe("JoinPage", () => {
     render(<JoinPage />, { wrapper: createWrapper() });
 
     await user.click(
-      await screen.findByRole("button", { name: "Log In to Join" }),
+      await screen.findByRole("button", { name: "登录后加入" }),
     );
     expect(mockPush).toHaveBeenCalledWith(
       "/login?next=" + encodeURIComponent("/join?code=abc123"),
@@ -175,13 +175,13 @@ describe("JoinPage", () => {
     render(<JoinPage />, { wrapper: createWrapper() });
 
     await user.click(
-      await screen.findByRole("button", { name: "Join Workspace" }),
+      await screen.findByRole("button", { name: "加入工作区" }),
     );
     await waitFor(() => expect(mockJoinByShareLink).toHaveBeenCalledTimes(1));
     // The join succeeded — the page should transition to the Joined state
     // (navigation happens after a short delay).
     await waitFor(() =>
-      expect(screen.getByText("Joined!")).toBeInTheDocument(),
+      expect(screen.getByText("已加入！")).toBeInTheDocument(),
     );
   });
 
@@ -198,7 +198,7 @@ describe("JoinPage", () => {
     render(<JoinPage />, { wrapper: createWrapper() });
 
     await user.click(
-      await screen.findByRole("button", { name: "Join Workspace" }),
+      await screen.findByRole("button", { name: "加入工作区" }),
     );
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/acme/issues"));
   });
@@ -213,7 +213,7 @@ describe("JoinPage", () => {
     render(<JoinPage />, { wrapper: createWrapper() });
 
     await user.click(
-      await screen.findByRole("button", { name: "Join Workspace" }),
+      await screen.findByRole("button", { name: "加入工作区" }),
     );
     await waitFor(() =>
       expect(
@@ -225,11 +225,11 @@ describe("JoinPage", () => {
   it.each([
     [
       "seat_capacity_full",
-      "All purchased member seats are in use. Ask a workspace admin to add a seat before trying again.",
+      "成员席位已全部使用，请联系工作区管理员增加席位后重试。",
     ],
     [
       "seat_capacity_unavailable",
-      "Member capacity could not be verified. Please try again.",
+      "无法验证成员容量，请重试。",
     ],
   ])("maps %s to a user-facing capacity message", async (code, message) => {
     const user = userEvent.setup();
@@ -241,7 +241,7 @@ describe("JoinPage", () => {
     render(<JoinPage />, { wrapper: createWrapper() });
 
     await user.click(
-      await screen.findByRole("button", { name: "Join Workspace" }),
+      await screen.findByRole("button", { name: "加入工作区" }),
     );
     await waitFor(() => expect(screen.getByText(message)).toBeInTheDocument());
   });

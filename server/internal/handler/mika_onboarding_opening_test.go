@@ -5,27 +5,15 @@ import (
 	"testing"
 )
 
-// Every language the endpoint accepts must have an opening. A missing entry
-// would render the empty string, and the member's first ever message from Mika
-// would be a blank bubble under three starter cards.
-func TestMikaOnboardingOpeningCoversEveryAcceptedLanguage(t *testing.T) {
-	for language := range mikaOnboardingLanguages {
-		opening := buildMikaOnboardingOpening(language, "Mika", "Venus")
-		if strings.TrimSpace(opening) == "" {
-			t.Fatalf("language %q has no opening", language)
+func TestMikaOnboardingOpeningIsComplete(t *testing.T) {
+	opening := buildMikaOnboardingOpening("Mika", "Venus")
+	for _, want := range []string{"Venus", "Mika", "Multica"} {
+		if !strings.Contains(opening, want) {
+			t.Errorf("opening dropped %q: %s", want, opening)
 		}
-		if strings.Contains(opening, "%!") {
-			t.Fatalf("language %q has a broken format verb: %s", language, opening)
-		}
-		if !strings.Contains(opening, "Venus") {
-			t.Errorf("language %q dropped the workspace name: %s", language, opening)
-		}
-		if !strings.Contains(opening, "Mika") {
-			t.Errorf("language %q dropped the agent name: %s", language, opening)
-		}
-		if !strings.Contains(opening, "Multica") {
-			t.Errorf("language %q never names the product: %s", language, opening)
-		}
+	}
+	if strings.Contains(opening, "%!") {
+		t.Fatalf("opening has a broken format verb: %s", opening)
 	}
 }
 
@@ -33,8 +21,8 @@ func TestMikaOnboardingOpeningCoversEveryAcceptedLanguage(t *testing.T) {
 // name. Hardcoding "Mika" would have a renamed agent introduce itself under a
 // name the member never chose.
 func TestMikaOnboardingOpeningUsesTheCurrentDisplayName(t *testing.T) {
-	opening := buildMikaOnboardingOpening("en", "Ada", "Venus")
-	if !strings.Contains(opening, "I'm Ada,") {
+	opening := buildMikaOnboardingOpening("Ada", "Venus")
+	if !strings.Contains(opening, "我是 Ada，") {
 		t.Fatalf("opening does not introduce the renamed agent:\n%s", opening)
 	}
 	if strings.Contains(opening, "Mika") {
@@ -45,8 +33,8 @@ func TestMikaOnboardingOpeningUsesTheCurrentDisplayName(t *testing.T) {
 // A blank name is not a state the product should render around: fall back to
 // the default rather than emit "I'm , your Chief of Staff".
 func TestMikaOnboardingOpeningFallsBackToTheDefaultName(t *testing.T) {
-	opening := buildMikaOnboardingOpening("en", "   ", "Venus")
-	if !strings.Contains(opening, "I'm Mika,") {
+	opening := buildMikaOnboardingOpening("   ", "Venus")
+	if !strings.Contains(opening, "我是 Mika，") {
 		t.Fatalf("blank name did not fall back to the product default:\n%s", opening)
 	}
 }
@@ -54,7 +42,7 @@ func TestMikaOnboardingOpeningFallsBackToTheDefaultName(t *testing.T) {
 // Workspace names are member-typed and chat renders assistant content as
 // markdown, so an unescaped name reformats Mika's first sentence.
 func TestMikaOnboardingOpeningEscapesMemberTypedNames(t *testing.T) {
-	opening := buildMikaOnboardingOpening("en", "Mika", "**Ops** `prod`")
+	opening := buildMikaOnboardingOpening("Mika", "**Ops** `prod`")
 
 	if strings.Contains(opening, "**Ops**") {
 		t.Errorf("emphasis in the workspace name survived unescaped:\n%s", opening)
@@ -81,13 +69,13 @@ func TestEscapeMarkdownInlineHandlesBackslashesFirst(t *testing.T) {
 // beats have to survive a copy edit: what Multica is, who Mika is, what happens
 // next, and the handoff to the starter cards below.
 func TestMikaOnboardingOpeningKeepsItsFourBeats(t *testing.T) {
-	opening := buildMikaOnboardingOpening("en", "Mika", "Venus")
+	opening := buildMikaOnboardingOpening("Mika", "Venus")
 
 	for _, beat := range []string{
-		"Multica is a workspace", // what the product is
-		"Chief of Staff",         // who is speaking
-		"turn it into an issue",  // what happens next
-		"Pick one below",         // the bridge to the cards
+		"Multica 是一个",     // what the product is
+		"Chief of Staff",    // who is speaking
+		"把它变成一个任务",         // what happens next
+		"从下面选一个开始",          // the bridge to the cards
 	} {
 		if !strings.Contains(opening, beat) {
 			t.Errorf("opening lost a required beat (%q):\n%s", beat, opening)

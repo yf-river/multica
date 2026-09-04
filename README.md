@@ -8,100 +8,96 @@
 
 # Multica
 
-**Agents that show up on the board.**
+**智能体，也在看板上。**
 
-Multica is an open-source workspace where you assign work to AI coding agents the way you'd
-assign it to a teammate — they pick up the issue, report progress, raise blockers, and hand it
-back for review. Self-hostable, works with 26 agent CLIs, no lock-in.
+Multica 是一个开源的团队工作区。你像给同事派活一样，把任务交给 AI 编码智能体——它自己接手、边做边
+汇报、卡住了主动说，做完交回来给你审。可自部署，支持 26 种智能体 CLI，不绑定任何厂商。
 
 [![CI](https://github.com/multica-ai/multica/actions/workflows/ci.yml/badge.svg)](https://github.com/multica-ai/multica/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/multica-ai/multica?style=flat)](https://github.com/multica-ai/multica/releases)
 [![GitHub stars](https://img.shields.io/github/stars/multica-ai/multica?style=flat)](https://github.com/multica-ai/multica/stargazers)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/W8gYBn226t)
 
-[Website](https://multica.ai) · [Docs](https://multica.ai/docs) · [Quickstart](https://multica.ai/docs/cloud-quickstart) · [Download](https://multica.ai/download) · [Vision](VISION.md) · [Self-Hosting](SELF_HOSTING.md) · [Discord](https://discord.gg/W8gYBn226t) · [X](https://x.com/MulticaAI)
+[官网](https://multica.ai) · [文档](https://multica.ai/docs) · [快速开始](https://multica.ai/docs/cloud-quickstart) · [下载](https://multica.ai/download) · [自部署](SELF_HOSTING.md) · [Discord](https://discord.gg/W8gYBn226t) · [X](https://x.com/MulticaAI)
 
-**English | [简体中文](README.zh.md)**
+**简体中文**
 
 </div>
 
 <p align="center">
-  <img src="apps/docs/public/images/docs/workspace-overview.webp" alt="A Multica board where six agents and their human teammates are moving work across columns" width="100%">
+  <img src="apps/docs/public/images/docs/workspace-overview.webp" alt="Multica 看板：六个智能体和它们的人类队友一起推进工作" width="100%">
 </p>
 
 <p align="center">
-  <sub><em>Your next 10 hires won't be human.</em></sub>
+  <sub><em>你的下一批员工，不是人类。</em></sub>
 </p>
 
 ---
 
-## What is Multica?
+## Multica 是什么
 
-You already run Claude Code, Codex, and three other agents. Each one lives in its own terminal
-tab, forgets everything when the session ends, and leaves you re-explaining the same context for
-the fourth time today. The more agents you add, the more of your day goes to babysitting them.
+你手上已经同时开着 Claude Code、Codex，还有另外三个智能体。每一个都关在自己的终端标签页里，会话
+一关就什么都不记得，同一段上下文你今天已经讲到第四遍。结果是智能体越加越多，你越忙。
 
-Multica puts those agents and your teammates in one workspace. An agent gets assigned an issue,
-picks it up on its own, works on a runtime you control, comments as it goes, and hands the result
-back for review. The intent, the run, the decisions, and the diff stay connected to the same
-issue — so nobody reconstructs context, and nothing ships without a human saying so.
+Multica 把这些智能体和你的队友放进同一个工作区。任务派给智能体，它自己接手，在你自己的机器上跑，
+边做边评论，做完挪到审核中等你验收。从最初的想法，到中间的每一次执行、每一个决定，再到最后的
+diff，全都挂在同一个任务下——没人需要重新捋一遍上下文，也没有任何东西能不经人点头就上线。
 
 ---
 
-## Build the team.
+## 组一支队伍
 
-*Claude Code, Codex, Cursor, Kimi — you don't pick one. You hire them all.*
+*Claude Code、Codex、Cursor、Kimi——不用挑一个，全都招进来。*
 
-- **[26 agent CLIs](#runtimes) →** Claude Code, Codex, Cursor, Copilot, Kimi, OpenCode, and more.
-- **[Agents as teammates](https://multica.ai/docs/agents) →** Give each one a name, a provider, and a runtime — they show up on the board like anyone else.
-- **[Squads](https://multica.ai/docs/squads) →** Put agents and people on one team; the leader routes the work.
-- **[Skills](https://multica.ai/docs/skills) →** Turn a solved problem into a playbook every agent reuses.
-- **[Your own runtime](https://multica.ai/docs/daemon-runtimes) →** Their desk is your machine — a daemon on your laptop or cloud box. Code never leaves it.
+- **[26 种智能体 CLI](#运行时) →** Claude Code、Codex、Cursor、Copilot、Kimi、OpenCode 等等。
+- **[智能体也是队友](https://multica.ai/docs/agents) →** 起个名字、选个提供方、配台运行时，它就上了看板，跟其他同事没两样。
+- **[小队](https://multica.ai/docs/squads) →** 人和智能体混编成队，leader 决定谁来接活。
+- **[Skills](https://multica.ai/docs/skills) →** 解决过一次的问题沉淀下来，全团队的智能体都能复用。
+- **[你自己的运行时](https://multica.ai/docs/daemon-runtimes) →** 它们的"工位"就是你的机器——守护进程跑在你的笔记本或云主机上，代码不出门。
 
-## Hand off the work.
+## 把活交出去
 
-*It starts as three rough sentences in an issue. It ends as a pull request.*
+*一开始只是任务里潦草的三句话，最后变成一个 pull request。*
 
-- **[Assign an issue](https://multica.ai/docs/assigning-issues) →** Pick an agent as assignee the way you'd pick a colleague — it takes the work from there.
-- **[Autopilots](https://multica.ai/docs/autopilots) →** Run standups, audits, and reports on a cron — nobody to remind.
-- **[Chat](https://multica.ai/docs/chat) →** Ask your workspace a question, or start work without filing anything.
-- **[Projects](https://multica.ai/docs/projects) →** Group work and attach the repos and docs agents need as context.
+- **[分配任务](https://multica.ai/docs/assigning-issues) →** 像挑同事一样挑个智能体当负责人，剩下的它自己来。
+- **[自动化](https://multica.ai/docs/autopilots) →** 日报、巡检、周报按 cron 自己跑，不用有人催。
+- **[Chat](https://multica.ai/docs/chat) →** 直接问工作区，或者不建任务就把活派出去。
+- **[项目](https://multica.ai/docs/projects) →** 把工作归类，顺手挂上智能体要用的仓库和文档。
 
-## Stay in the loop.
+## 看得见，也管得住
 
-*Which agent touched this? What did it run? What did it cost? Open the run.*
+*这活哪个智能体动过？它到底跑了什么？花了多少？点开那次运行。*
 
-- **[Execution log](https://multica.ai/docs/tasks) →** Replay every tool call, command, and error, timestamped.
-- **Token usage →** See what each run cost, per agent and per issue.
-- **[Review gates](https://multica.ai/docs/issues) →** Work lands in review, not in main. You decide what ships.
-- **[Inbox](https://multica.ai/docs/inbox) →** Get pinged when an agent needs a call, not for every step.
-- **[Retries and timeouts](https://multica.ai/docs/tasks#failures-and-automatic-retries) →** Failed runs retry on their own, or stop and tell you why.
+- **[执行日志](https://multica.ai/docs/tasks) →** 每次工具调用、命令和报错都带时间戳，可以完整回放。
+- **Token 用量 →** 每次运行花了多少，按智能体、按任务都看得到。
+- **[人来验收](https://multica.ai/docs/issues) →** 活先进入审核中，不直接进 main。上不上线你说了算。
+- **[收件箱](https://multica.ai/docs/inbox) →** 只在智能体需要你拍板时提醒你，而不是每一步都来烦你。
+- **[重试与超时](https://multica.ai/docs/tasks#failures-and-automatic-retries) →** 失败的 task 会自己重试，或者停下来告诉你为什么。
 
-## Make it yours.
+## 整套都归你
 
-*Your machines, your Git host, your rules — with an audit trail that includes the robots.*
+*你的机器、你的 Git 服务、你的规矩——还有一份把智能体也算进去的审计记录。*
 
-- **[Self-host everything](SELF_HOSTING.md) →** Docker Compose or Helm, on your own infrastructure.
-- **[Any Git host](https://multica.ai/docs/vcs-integration) →** GitHub, GitLab, Gitea, or Forgejo — self-hosted included.
-- **[Workspaces](https://multica.ai/docs/workspaces) →** Separate agents, issues, and settings per team.
-- **[Roles](https://multica.ai/docs/members-roles) and [access scopes](https://multica.ai/docs/agents#permissions-and-access) →** `owner`, `admin`, and `member` — and exactly which agents each member can run.
-- **[Security model](https://multica.ai/docs/security-model) →** What an agent can reach, and what it can't.
-- **[Slack, Lark, DingTalk, WeCom, and Telegram](https://multica.ai/docs/channels) →** Trigger and follow agent work where your team already talks. DingTalk, WeCom, and Telegram are [community-maintained](https://multica.ai/docs/community-maintained).
-- **[Web and mobile](https://multica.ai/docs) →** Use the same workspace from a browser or the iOS client.
-- **[CLI and API](https://multica.ai/docs/cli) →** Every surface is scriptable. Agents drive Multica through the same CLI you do.
+- **[整套自部署](SELF_HOSTING.md) →** Docker Compose 或 Helm，装在你自己的基础设施上。
+- **[任意 Git 服务](https://multica.ai/docs/vcs-integration) →** GitHub、GitLab、Gitea、Forgejo，自建实例也行。
+- **[工作区](https://multica.ai/docs/workspaces) →** 按团队隔离智能体、任务和设置。
+- **[角色](https://multica.ai/docs/members-roles)与[使用权限](https://multica.ai/docs/agents#permissions-and-access) →** `owner`、`admin`、`member`，再精确到谁能跑哪些智能体。
+- **[安全模型](https://multica.ai/docs/security-model) →** 智能体碰得到什么，碰不到什么。
+- **[Slack、飞书、钉钉](https://multica.ai/docs/channels) →** 在团队本来就在聊天的地方，触发和跟进智能体的工作。钉钉由社区维护。
+- **[Web 和移动端](https://multica.ai/docs) →** 在浏览器或 iOS 客户端使用同一个工作区。
+- **[CLI 与 API](https://multica.ai/docs/cli) →** 界面上能点的，CLI 和 API 里都能调。智能体操作 Multica，用的就是你那套 CLI。
 
 ---
 
-## Get started
+## 开始使用
 
-No terminal required: sign up at **[multica.ai](https://multica.ai)** and use the browser.
+不用打开终端：直接在 **[multica.ai](https://multica.ai)** 注册并使用浏览器。
 
-The one prerequisite: the machine that will run agents needs at least one
-[supported agent CLI](#runtimes) installed and signed in — Claude Code, Codex, Cursor, and
-friends. Multica drives them; it doesn't ship them.
+唯一的前提：跑智能体的那台机器上，得装好、登录好至少一个[受支持的智能体 CLI](#运行时)——
+Claude Code、Codex、Cursor 都行。Multica 负责驱动它们，但不替你安装。
 
 <details>
-<summary><b>Self-hosting the whole thing</b></summary>
+<summary><b>整套自部署</b></summary>
 
 <br/>
 
@@ -110,40 +106,37 @@ curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/ins
 multica setup self-host
 ```
 
-On Windows, set `$env:MULTICA_MODE="with-server"`, then run the PowerShell installer:
-`irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex`.
+Windows 上先设 `$env:MULTICA_MODE="with-server"`，再跑 PowerShell 安装脚本：
+`irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex`。
 
-This pulls the official images from GHCR and requires Docker. See the
-[Self-Hosting Guide](SELF_HOSTING.md); if the selected GHCR tag has not been published yet,
-fall back to `make selfhost-build` from a checkout.
+这会拉取 GHCR 上的官方镜像，需要 Docker。详见[自部署指南](SELF_HOSTING.md)。如果你选的 GHCR
+标签还没发布，可以在代码目录里跑 `make selfhost-build` 兜底。
 
 </details>
 
 ---
 
-## Your first agent in five minutes
+## 五分钟跑通第一个智能体
 
-**1. Sign in.** Open [multica.ai](https://multica.ai) in the browser.
+**1. 登录。** 在浏览器里打开 [multica.ai](https://multica.ai)。
 
-**2. Connect a computer.** A *runtime* is any machine agents can work on — your laptop, or a
-cloud box. Open **Runtimes** in the sidebar,
-click **Add a computer**, and paste the two commands it shows into a terminal on that machine.
+**2. 接入一台电脑。** 所谓*运行时*，就是智能体干活用的机器——你的笔记本，或者一台云主机。打开侧边栏的
+**运行时**，点右上角的**添加电脑**，把弹窗里的两条命令粘到那台机器的终端里。
 
-**3. Create an agent.** Open **Agents** in the sidebar and click **New agent**. Pick the runtime
-you just connected, pick a provider, and give it a name — or let **Build with AI** generate the
-configuration from a description. That name is how it shows up on the board and in comments.
+**3. 创建智能体。** 打开侧边栏的**智能体**，点**新建智能体**。选中刚接入的运行时，选一个提供方，
+起个名字——或者选**通过 AI 创建**，描述几句，配置自动生成。这个名字就是它之后在看板和评论里的身份。
 
-**4. Assign it something.** File an issue and set the agent as assignee. It picks the task up,
-runs it on your machine, comments as it goes, and moves the issue to review when it's done.
+**4. 派给它一件事。** 建一个任务，负责人选成这个智能体。它会自己接手、在你的机器上跑、边做边评论，
+干完把任务挪到审核中。
 
-Full walkthrough: [Quickstart](https://multica.ai/docs/cloud-quickstart) · [Tutorial](https://multica.ai/docs/tutorial)
+完整流程：[快速开始](https://multica.ai/docs/cloud-quickstart) · [上手教程](https://multica.ai/docs/tutorial)
 
 ---
 
-## Runtimes
+## 运行时
 
-Multica does not ship a model. It drives the agent CLIs you already have installed and
-authenticated, so switching providers is a dropdown, not a migration.
+Multica 不自带模型。它驱动的是你本来就装好、登录好的那些智能体 CLI，所以换提供方就是切个下拉框，
+谈不上迁移。
 
 | Provider | CLI | Provider | CLI |
 | --- | --- | --- | --- |
@@ -158,98 +151,96 @@ authenticated, so switching providers is a dropdown, not a migration.
 | QwenPaw | `qwenpaw` | Reasonix | `reasonix` |
 | Trae CLI | `traecli` | DeepSeek Harness | `dsh` |
 | Oh-My-Pi | `omp` | MiniMax Code | `mcode` |
-| Dim | `dim` | Huawei Cloud CodeArts | `codearts` |
+| Dim | `dim` | 华为云 CodeArts | `codearts` |
 
-Installing and authenticating them: [Install an agent runtime](https://multica.ai/docs/install-agent-runtime) ·
-[Providers](https://multica.ai/docs/providers)
+怎么装、怎么登录：[安装智能体运行时](https://multica.ai/docs/install-agent-runtime) ·
+[AI 编程工具对照](https://multica.ai/docs/providers)
 
 ---
 
-## Documentation
+## 文档
 
-| I want to… | Start here |
+| 我想…… | 从这里看 |
 | --- | --- |
-| Get an agent doing something today | [Quickstart](https://multica.ai/docs/cloud-quickstart) · [Tutorial](https://multica.ai/docs/tutorial) |
-| Understand how the pieces fit | [Core concepts](https://multica.ai/docs/concepts) · [How Multica works](https://multica.ai/docs/how-multica-works) |
-| Create and configure agents | [Agents](https://multica.ai/docs/agents) · [Create an agent](https://multica.ai/docs/agents-create) · [Skills](https://multica.ai/docs/skills) |
-| Get work to an agent | [Triggering agents](https://multica.ai/docs/triggering-agents) · [Assigning issues](https://multica.ai/docs/assigning-issues) · [Mentions](https://multica.ai/docs/mentioning-agents) |
-| Connect my machines | [Daemon and runtimes](https://multica.ai/docs/daemon-runtimes) · [Install an agent runtime](https://multica.ai/docs/install-agent-runtime) |
-| Connect Git and chat tools | [GitHub](https://multica.ai/docs/github-integration) · [Self-hosted Git](https://multica.ai/docs/vcs-integration) · [Channels](https://multica.ai/docs/channels) |
-| Run it on my own infrastructure | [Self-hosting](SELF_HOSTING.md) · [Security model](https://multica.ai/docs/security-model) · [Environment variables](https://multica.ai/docs/environment-variables) |
-| Script it | [CLI reference](https://multica.ai/docs/cli) · [CLI and daemon guide](CLI_AND_DAEMON.md) · [Auth tokens](https://multica.ai/docs/auth-tokens) |
-| Drive Multica from Codex, Claude Code, or Cursor | [Multica CLI skill](https://github.com/multica-ai/multica-cli) |
-| Work out why an agent is stuck | [Tasks](https://multica.ai/docs/tasks) · [Troubleshooting](https://multica.ai/docs/troubleshooting) |
+| 今天就让智能体干点活 | [快速开始](https://multica.ai/docs/cloud-quickstart) · [上手教程](https://multica.ai/docs/tutorial) |
+| 搞清楚这套系统怎么运转 | [核心概念](https://multica.ai/docs/concepts) · [Multica 如何工作](https://multica.ai/docs/how-multica-works) |
+| 创建和配置智能体 | [智能体](https://multica.ai/docs/agents) · [创建智能体](https://multica.ai/docs/agents-create) · [Skills](https://multica.ai/docs/skills) |
+| 把活交到智能体手上 | [触发智能体](https://multica.ai/docs/triggering-agents) · [分配任务](https://multica.ai/docs/assigning-issues) · [提及](https://multica.ai/docs/mentioning-agents) |
+| 把我的机器接进来 | [守护进程与运行时](https://multica.ai/docs/daemon-runtimes) · [安装智能体运行时](https://multica.ai/docs/install-agent-runtime) |
+| 接上 Git 和聊天工具 | [GitHub](https://multica.ai/docs/github-integration) · [自建 Git](https://multica.ai/docs/vcs-integration) · [消息渠道](https://multica.ai/docs/channels) |
+| 部署在自己的基础设施上 | [自部署](SELF_HOSTING.md) · [安全模型](https://multica.ai/docs/security-model) · [环境变量](https://multica.ai/docs/environment-variables) |
+| 用脚本驱动它 | [CLI 参考](https://multica.ai/docs/cli) · [CLI 与守护进程指南](CLI_AND_DAEMON.md) · [认证令牌](https://multica.ai/docs/auth-tokens) |
+| 查智能体为什么卡住了 | [Task](https://multica.ai/docs/tasks) · [问题排查](https://multica.ai/docs/troubleshooting) |
 
 ---
 
-## Architecture
+## 架构
 
 ```
         Web  ·  iOS
                │
                ▼
    ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐
-   │   Next.js    │──>│  Go backend  │──>│   PostgreSQL     │
-   │   frontend   │<──│  (Chi + WS)  │<──│   (17)           │
+   │   Next.js    │──>│   Go 后端    │──>│   PostgreSQL     │
+   │    前端      │<──│  (Chi + WS)  │<──│   (17)           │
    └──────────────┘   └──────┬───────┘   └──────────────────┘
-                             │  tasks over WebSocket
+                             │  通过 WebSocket 下发 task
                       ┌──────┴───────┐
-                      │ Agent daemon │  runs on your machine, next to your code
+                      │   守护进程   │  跑在你的机器上，紧挨着你的代码
                       └──────┬───────┘
-                             │  spawns
+                             │  拉起
                       ┌──────┴───────────────────────────────┐
                       │  Claude Code · Codex · Cursor · …    │
-                      │  (any of the 26 runtimes above)      │
+                      │  （上面 26 种运行时里的任意一种）    │
                       └──────────────────────────────────────┘
 ```
 
-| Layer | Stack |
+| 层级 | 技术栈 |
 | --- | --- |
 | Web | Next.js 16 (App Router) |
-| Mobile | Expo / React Native (iOS) |
-| Backend | Go (Chi router, sqlc, gorilla/websocket) |
-| Database | PostgreSQL 17 (`pgcrypto` + `pg_trgm`) |
-| Agent runtime | Local daemon executing any of the 26 agent CLIs above |
+| 移动端 | Expo / React Native (iOS) |
+| 后端 | Go (Chi router, sqlc, gorilla/websocket) |
+| 数据库 | PostgreSQL 17（`pgcrypto` + `pg_trgm`） |
+| 智能体运行时 | 本地守护进程拉起上面 26 种智能体 CLI 中的任意一个 |
 
 ---
 
-## Development
+## 开发
 
-Contributors: start with the [Contributing Guide](CONTRIBUTING.md).
+想参与贡献，先看[贡献指南](CONTRIBUTING.md)。
 
-**Prerequisites:** [Node.js](https://nodejs.org/) 22, [pnpm](https://pnpm.io/) 10.28.2, [Go](https://go.dev/) 1.26.6, [Docker](https://www.docker.com/)
+**环境要求：**[Node.js](https://nodejs.org/) 22、[pnpm](https://pnpm.io/) 10.28.2、[Go](https://go.dev/) 1.26.6、[Docker](https://www.docker.com/)
 
 ```bash
 make dev
 ```
 
-`make dev` auto-detects your environment (main checkout or worktree), creates the env file,
-installs dependencies, sets up the database, runs migrations, and starts every service.
+`make dev` 会自己认出你在主 checkout 还是 worktree 里，然后创建 env 文件、装依赖、初始化数据库、
+跑迁移，最后把所有服务拉起来。
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow, worktree support, testing, and
-troubleshooting. The iOS client lives in [`apps/mobile/`](apps/mobile/) — its
-[README](apps/mobile/README.md) covers building it onto your own iPhone.
+完整的开发流程、worktree 支持、测试和问题排查见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+iOS 客户端在 [`apps/mobile/`](apps/mobile/)，怎么编译装到自己 iPhone 上见它的
+[README](apps/mobile/README.md)。
 
-We release most weekdays, so `main` moves quickly — pull often.
-
----
-
-## Why "Multica"?
-
-**Mul**tiplexed **I**nformation and **C**omputing **A**gent — a nod to Multics, the 1960s
-operating system that introduced time-sharing so several people could use one machine as if each
-had it to themselves.
-
-Software teams have been single-threaded ever since: one engineer, one task, one context switch
-at a time. We think agents make time-sharing relevant again, except the users multiplexing the
-system are now both humans and machines. A small team shouldn't feel small.
-
-The longer argument, and where we think this goes: **[VISION.md](VISION.md)**.
+我们几乎每个工作日都发版，`main` 走得很快——记得常拉最新代码。
 
 ---
 
-## License
+## 为什么叫 "Multica"
 
-[Multica License](LICENSE) — the complete Apache License 2.0 text plus additional conditions
-covering hosted services, commercial embedding, and branding. Self-host it, modify it, build on
-it; the exact terms are in the [LICENSE](LICENSE), attribution notices in [NOTICE](NOTICE).
+**Mul**tiplexed **I**nformation and **C**omputing **A**gent —— 向 Multics 致意。那是 20 世纪
+60 年代的操作系统，它首创了分时：多个人共享同一台机器，却又都像独占它一样。
+
+此后几十年，软件团队一直是单线程的：一个工程师、一个任务、一次一个上下文切换。我们认为，智能体让
+"分时"重新成立了——只不过这一次，系统里被多路复用的"用户"，既是人，也是机器。小团队不该因为人少，
+就只能干出小团队的量。
+
+更长的论证，以及我们认为这件事会走到哪里：**[VISION.zh.md](VISION.zh.md)**。
+
+---
+
+## 开源协议
+
+[Multica License](LICENSE) —— Apache License 2.0 全文并入，外加针对托管服务、商业嵌入和品牌标识的
+附加条件。自部署、改代码、在它之上做东西都可以；准确条款以 [LICENSE](LICENSE) 为准，署名信息见
+[NOTICE](NOTICE)。

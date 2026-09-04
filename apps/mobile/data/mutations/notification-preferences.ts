@@ -99,7 +99,7 @@ export function useUpdateNotificationPreferences() {
     mutationFn: ({ patch, workspaceSlug: targetWorkspaceSlug }) => {
       if (!targetWorkspaceSlug) {
         throw new Error(
-          "Workspace context is required to update notifications",
+          "更新通知设置需要工作区信息",
         );
       }
       return api.updateNotificationPreferences(patch, targetWorkspaceSlug);

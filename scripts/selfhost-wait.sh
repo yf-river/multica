@@ -88,8 +88,7 @@ else
   echo "        ${MULTICA_WEB_IMAGE:-ghcr.io/multica-ai/multica-web}:${MULTICA_IMAGE_TAG:-latest}"
 fi
 echo ""
-echo "Log in: configure RESEND_API_KEY in .env for email codes,"
-echo "        or read the generated code from backend logs when Resend is unset."
+echo "Log in with the account and password provisioned for this instance."
 echo ""
 echo "Next — install the CLI and connect your machine:"
 echo "  brew install multica-ai/tap/multica"

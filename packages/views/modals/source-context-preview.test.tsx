@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { ApiError } from "@multica/core/api";
-import enIssues from "../locales/en/issues.json";
+import enIssues from "../locales-test/en/issues.json";
 import { SourceContextPreviewCard } from "./source-context-preview";
 
 describe("SourceContextPreviewCard", () => {

@@ -6,8 +6,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
-import enChat from "../locales/en/chat.json";
+import enCommon from "../locales-test/en/common.json";
+import enChat from "../locales-test/en/chat.json";
 import {
   NavigationProvider,
   type NavigationAdapter,

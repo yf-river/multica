@@ -42,7 +42,7 @@ describe("buildSearchRows", () => {
       projects: [],
       recentIssues: [{ id: "r1" } as Issue, { id: "r2" } as Issue],
     });
-    expect(shape(rows)).toEqual(["#Recent", "r-r1", "r-r2"]);
+    expect(shape(rows)).toEqual(["#最近", "r-r1", "r-r2"]);
   });
 
   it("returns nothing when there is neither a query nor recent history", () => {
@@ -62,9 +62,9 @@ describe("buildSearchRows", () => {
     });
 
     expect(shape(rows)).toEqual([
-      "#Issues",
+      "#任务",
       "i-i-live",
-      "#Cancelled",
+      "#已取消",
       "p-p-dead",
     ]);
   });
@@ -85,13 +85,13 @@ describe("buildSearchRows", () => {
     });
 
     expect(shape(rows)).toEqual([
-      "#Projects",
+      "#项目",
       "p-p-live",
-      "#Issues",
+      "#任务",
       // 'done' stays live — only cancelled work is demoted.
       "i-i-live",
       "i-i-done",
-      "#Cancelled",
+      "#已取消",
       "p-p-dead",
       "i-i-dead",
     ]);
@@ -105,7 +105,7 @@ describe("buildSearchRows", () => {
       recentIssues: [],
     });
 
-    expect(shape(rows)).toEqual(["#Issues", "i-i-hit"]);
+    expect(shape(rows)).toEqual(["#任务", "i-i-hit"]);
   });
 
   it("omits the Cancelled section when nothing is demoted", () => {
@@ -115,6 +115,6 @@ describe("buildSearchRows", () => {
       projects: [project({ id: "p1", status: "completed" })],
       recentIssues: [],
     });
-    expect(shape(rows)).toEqual(["#Projects", "p-p1", "#Issues", "i-i1"]);
+    expect(shape(rows)).toEqual(["#项目", "p-p1", "#任务", "i-i1"]);
   });
 });

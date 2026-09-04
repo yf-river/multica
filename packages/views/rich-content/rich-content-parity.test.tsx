@@ -27,8 +27,8 @@ vi.mock("../issues/hooks", () => ({
 }));
 
 vi.mock("../i18n", async () => {
-  const editor = (await import("../locales/en/editor.json")).default;
-  const chat = (await import("../locales/en/chat.json")).default;
+  const editor = (await import("../locales-test/en/editor.json")).default;
+  const chat = (await import("../locales-test/en/chat.json")).default;
   return {
     useT: (ns?: string) => ({
       t: (select: (bundle: Record<string, unknown>) => string) =>

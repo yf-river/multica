@@ -323,9 +323,7 @@ export function isReservedShortcut(
   if (key === "F5") return true;
   if (modifiers.primary && PRIMARY_RESERVED_KEYS.has(key)) return true;
   if (modifiers.primary && BROWSER_ONLY_PRIMARY_RESERVED_KEYS.has(key)) {
-    const barePrimary =
-      !modifiers.control && !modifiers.meta && !modifiers.alt && !modifiers.shift;
-    if (!barePrimary) return true;
+    return true;
   }
 
   if (platform === "macos") {

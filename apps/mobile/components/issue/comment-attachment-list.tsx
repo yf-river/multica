@@ -110,7 +110,7 @@ function FileCard({
         }
       }}
       accessibilityRole="button"
-      accessibilityLabel={`Open ${attachment.filename}`}
+      accessibilityLabel={`打开 ${attachment.filename}`}
       className="flex-row items-center gap-2 px-3 py-2 rounded-md bg-secondary/60 active:opacity-80"
     >
       <Ionicons

@@ -71,8 +71,8 @@ function WindowToolbar() {
             type="button"
             onClick={goBack}
             disabled={!canGoBack}
-            aria-label="Go back"
-            title="Go back"
+            aria-label="后退"
+            title="后退"
             className={navButtonClassName}
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
           >
@@ -82,8 +82,8 @@ function WindowToolbar() {
             type="button"
             onClick={goForward}
             disabled={!canGoForward}
-            aria-label="Go forward"
-            title="Go forward"
+            aria-label="前进"
+            title="前进"
             className={navButtonClassName}
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
           >

@@ -348,8 +348,18 @@ type UpdateWorkspaceRequest struct {
 }
 
 type workspaceRepoRef struct {
-	URL         string `json:"url"`
-	Description string `json:"description,omitempty"`
+	URL              string `json:"url"`
+	Description      string `json:"description,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	ProjectPath      string `json:"project_path,omitempty"`
+	DefaultBranch    string `json:"default_branch,omitempty"`
+	Ref              string `json:"ref,omitempty"`
+	HeadCommit       string `json:"head_commit,omitempty"`
+	ConnectionStatus string `json:"connection_status,omitempty"`
+	SyncStatus       string `json:"sync_status,omitempty"`
+	TestStatus       string `json:"test_status,omitempty"`
+	LastTestedAt     string `json:"last_tested_at,omitempty"`
+	LastSyncedAt     string `json:"last_synced_at,omitempty"`
 }
 
 func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
@@ -368,11 +378,38 @@ func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
 	for i, repo := range repos {
 		repo.URL = strings.TrimSpace(repo.URL)
 		repo.Description = strings.TrimSpace(repo.Description)
+		repo.Provider = strings.TrimSpace(repo.Provider)
+		repo.ProjectPath = strings.Trim(strings.TrimSpace(repo.ProjectPath), "/")
+		repo.DefaultBranch = strings.TrimSpace(repo.DefaultBranch)
+		repo.Ref = strings.TrimSpace(repo.Ref)
+		repo.HeadCommit = strings.TrimSpace(repo.HeadCommit)
+		repo.ConnectionStatus = strings.TrimSpace(repo.ConnectionStatus)
+		repo.SyncStatus = strings.TrimSpace(repo.SyncStatus)
+		repo.TestStatus = strings.TrimSpace(repo.TestStatus)
+		repo.LastTestedAt = strings.TrimSpace(repo.LastTestedAt)
+		repo.LastSyncedAt = strings.TrimSpace(repo.LastSyncedAt)
 		if repo.URL == "" {
 			return nil, fmt.Errorf("repos[%d]: url is required", i)
 		}
 		if !isValidGitRepoURL(repo.URL) {
 			return nil, fmt.Errorf("repos[%d]: url must be a valid http(s) or ssh git URL", i)
+		}
+		projectPath, gongfengErr := parseGongfengRepositoryURL(repo.URL)
+		isGongfeng := gongfengErr == nil || strings.EqualFold(repo.Provider, "gongfeng")
+		if isGongfeng {
+			if gongfengErr != nil {
+				return nil, fmt.Errorf("repos[%d]: %w", i, gongfengErr)
+			}
+			if repo.ProjectPath == "" || repo.ProjectPath != projectPath {
+				return nil, fmt.Errorf("repos[%d]: 工蜂项目路径必须与仓库地址一致", i)
+			}
+			if repo.DefaultBranch == "" {
+				return nil, fmt.Errorf("repos[%d]: 工蜂仓库必须选择默认分支", i)
+			}
+			repo.Provider = "gongfeng"
+			if repo.Ref == "" {
+				repo.Ref = repo.DefaultBranch
+			}
 		}
 		if _, ok := seen[repo.URL]; ok {
 			continue

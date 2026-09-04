@@ -54,35 +54,35 @@ export function MarkdownToolbar({
   return (
     <View className="flex-row items-center gap-1 px-2 py-1.5 border-t border-border bg-background">
       <ToolbarButton
-        accessibilityLabel="Mention someone"
+        accessibilityLabel="提及成员"
         onPress={onAt}
         disabled={disabled}
       >
         <Text className="text-base text-muted-foreground leading-none">@</Text>
       </ToolbarButton>
       <ToolbarButton
-        accessibilityLabel="Bullet list"
+        accessibilityLabel="无序列表"
         onPress={onList}
         disabled={disabled}
       >
         <Ionicons name="list-outline" size={18} color={ICON_COLOR} />
       </ToolbarButton>
       <ToolbarButton
-        accessibilityLabel="Checklist"
+        accessibilityLabel="检查清单"
         onPress={onCheckbox}
         disabled={disabled}
       >
         <Ionicons name="checkbox-outline" size={18} color={ICON_COLOR} />
       </ToolbarButton>
       <ToolbarButton
-        accessibilityLabel="Code block"
+        accessibilityLabel="代码块"
         onPress={onCode}
         disabled={disabled}
       >
         <Ionicons name="code-slash-outline" size={18} color={ICON_COLOR} />
       </ToolbarButton>
       <ToolbarButton
-        accessibilityLabel="Quote"
+        accessibilityLabel="引用"
         onPress={onQuote}
         disabled={disabled}
       >
@@ -94,7 +94,7 @@ export function MarkdownToolbar({
       </ToolbarButton>
       {onImage ? (
         <ToolbarButton
-          accessibilityLabel="Attach image"
+          accessibilityLabel="添加图片"
           onPress={onImage}
           disabled={disabled}
         >
@@ -103,7 +103,7 @@ export function MarkdownToolbar({
       ) : null}
       {onFile ? (
         <ToolbarButton
-          accessibilityLabel="Attach file"
+          accessibilityLabel="添加文件"
           onPress={onFile}
           disabled={disabled}
         >

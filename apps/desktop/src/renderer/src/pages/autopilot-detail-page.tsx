@@ -11,7 +11,7 @@ export function AutopilotDetailPage() {
   const { data } = useQuery(autopilotDetailOptions(wsId, id!));
 
   // Plain text only — no leading ⚡ glyph in the title (MUL-4370).
-  useDocumentTitle(data ? data.autopilot.title : "Autopilot");
+  useDocumentTitle(data ? data.autopilot.title : "自动化");
 
   if (!id) return null;
   return <AutopilotDetail autopilotId={id} />;

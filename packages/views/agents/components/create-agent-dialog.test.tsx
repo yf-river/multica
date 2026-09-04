@@ -9,8 +9,8 @@ import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { configStore } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
-import enCommon from "../../locales/en/common.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales-test/en/common.json";
+import enAgents from "../../locales-test/en/agents.json";
 
 const navigationStub: NavigationAdapter = {
   push: vi.fn(),

@@ -8,7 +8,7 @@
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision
+       i.revision, i.work_started_at, i.work_completed_at
 FROM issue i
 WHERE i.workspace_id = $1
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
@@ -154,10 +154,12 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    stage, last_activity_at, id
+    stage, last_activity_at, id, work_started_at, work_completed_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    sqlc.narg('stage'), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
+    sqlc.narg('stage'), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid()),
+    CASE WHEN $4 IN ('in_progress', 'done') THEN now() ELSE NULL END,
+    CASE WHEN $4 = 'done' THEN now() ELSE NULL END
 ) RETURNING *;
 
 -- name: GetIssueByNumber :one
@@ -244,6 +246,18 @@ UPDATE issue AS i SET
     parent_issue_id = changed.next_parent_issue_id,
     project_id = changed.next_project_id,
     stage = changed.next_stage,
+    work_started_at = CASE
+        WHEN changed.next_status = 'in_progress' AND i.status IN ('done', 'cancelled') THEN now()
+        WHEN changed.next_status NOT IN ('done', 'cancelled', 'in_progress') AND i.status IN ('done', 'cancelled') THEN NULL
+        WHEN changed.next_status = 'in_progress' AND i.status <> 'in_progress' AND i.work_started_at IS NULL THEN now()
+        ELSE i.work_started_at
+    END,
+    work_completed_at = CASE
+        WHEN changed.next_status = 'in_progress' AND i.status IN ('done', 'cancelled') THEN NULL
+        WHEN changed.next_status NOT IN ('done', 'cancelled') AND i.status IN ('done', 'cancelled') THEN NULL
+        WHEN changed.next_status = 'done' AND i.status <> 'done' THEN now()
+        ELSE i.work_completed_at
+    END,
     revision = i.revision + changed.did_change::integer,
     last_activity_at = CASE WHEN changed.did_activity
         THEN GREATEST(COALESCE(i.last_activity_at, i.updated_at), now())
@@ -266,6 +280,18 @@ RETURNING i.*;
 -- old column's rank into a new column is the bug this guards against. See the
 -- next_position CASE in UpdateIssue for the policy.
 UPDATE issue AS i SET
+    work_started_at = CASE
+        WHEN $2 = 'in_progress' AND i.status IN ('done', 'cancelled') THEN now()
+        WHEN $2 NOT IN ('done', 'cancelled', 'in_progress') AND i.status IN ('done', 'cancelled') THEN NULL
+        WHEN $2 = 'in_progress' AND i.status <> 'in_progress' AND i.work_started_at IS NULL THEN now()
+        ELSE i.work_started_at
+    END,
+    work_completed_at = CASE
+        WHEN $2 = 'in_progress' AND i.status IN ('done', 'cancelled') THEN NULL
+        WHEN $2 NOT IN ('done', 'cancelled') AND i.status IN ('done', 'cancelled') THEN NULL
+        WHEN $2 = 'done' AND i.status <> 'done' THEN now()
+        ELSE i.work_completed_at
+    END,
     status = $2,
     position = CASE WHEN i.status IS DISTINCT FROM $2 THEN (
         SELECT COALESCE(MIN(target.position), 0) - 1
@@ -287,10 +313,12 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    origin_type, origin_id, stage, last_activity_at, id
+    origin_type, origin_id, stage, last_activity_at, id, work_started_at, work_completed_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    sqlc.narg('origin_type'), sqlc.narg('origin_id'), sqlc.narg('stage'), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
+    sqlc.narg('origin_type'), sqlc.narg('origin_id'), sqlc.narg('stage'), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid()),
+    CASE WHEN $4 IN ('in_progress', 'done') THEN now() ELSE NULL END,
+    CASE WHEN $4 = 'done' THEN now() ELSE NULL END
 ) RETURNING *;
 
 -- name: LockIssueDuplicateKey :exec

@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
-import enCommon from "../../locales/en/common.json";
-import enChat from "../../locales/en/chat.json";
-import enEditor from "../../locales/en/editor.json";
+import enCommon from "../../locales-test/en/common.json";
+import enChat from "../../locales-test/en/chat.json";
+import enEditor from "../../locales-test/en/editor.json";
 
 // Uploads flow through the module-level coordinator, which calls
 // `api.uploadFile(file, ctx, signal)` (MUL-5181 L2).

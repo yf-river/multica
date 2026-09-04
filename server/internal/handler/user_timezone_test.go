@@ -3,9 +3,18 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+func newPatchMeRequest(userID, body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPatch, "/api/me", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", userID)
+	return req
+}
 
 func newTimezoneTestUser(t *testing.T, email string) string {
 	t.Helper()

@@ -209,17 +209,6 @@ function handleDeepLink(url: string): void {
 
 // --- Window creation -----------------------------------------------------
 
-// Tracks the OS-preferred language as last seen by the running process.
-// Updated on each window-focus check so we can emit a `locale:system-changed`
-// event to the renderer when the user changes their OS language without
-// quitting the app — without restart, app.getPreferredSystemLanguages()
-// would still report the boot value forever.
-let lastKnownSystemLocale = "en";
-
-function getSystemLocale(): string {
-  return app.getPreferredSystemLanguages()[0] ?? "en";
-}
-
 function loadRenderer(window: BrowserWindow): void {
   const rendererEntry = join(__dirname, "../renderer/index.html");
   const rendererURL =
@@ -238,21 +227,6 @@ function loadRenderer(window: BrowserWindow): void {
   } else {
     void window.loadFile(rendererEntry);
   }
-}
-
-function installLocaleRefresh(window: BrowserWindow): void {
-  // Electron has no dedicated OS-language event. Check whenever any Multica
-  // window regains focus, then broadcast so all open windows remain aligned.
-  window.on("focus", () => {
-    const current = getSystemLocale();
-    if (current === lastKnownSystemLocale) return;
-    lastKnownSystemLocale = current;
-    for (const target of BrowserWindow.getAllWindows()) {
-      if (!target.isDestroyed()) {
-        target.webContents.send("locale:system-changed", current);
-      }
-    }
-  });
 }
 
 function installWindowShortcutHandler(window: BrowserWindow): void {
@@ -275,13 +249,6 @@ function installWindowShortcutHandler(window: BrowserWindow): void {
 }
 
 function createWindow(): BrowserWindow {
-  // Pass the OS-preferred language to the renderer via additionalArguments
-  // instead of a sync IPC call. process.argv is available to the preload
-  // script before the first network request, so the renderer's i18next
-  // instance can initialize with the right locale on the very first paint.
-  const systemLocale = getSystemLocale();
-  lastKnownSystemLocale = systemLocale;
-
   mainRendererMessages.resetReady();
 
   // Restore prior size/position/maximized/fullscreen (#5244), constraining
@@ -316,7 +283,6 @@ function createWindow(): BrowserWindow {
       : {}),
     webPreferences: createRendererWebPreferences(
       join(__dirname, "../preload/index.js"),
-      systemLocale,
     ),
   });
   const window = mainWindow;
@@ -366,8 +332,6 @@ function createWindow(): BrowserWindow {
     }
     window.show();
   });
-
-  installLocaleRefresh(window);
 
   installDownloadSaveDialogHandler(window);
 
@@ -454,9 +418,6 @@ function createWindow(): BrowserWindow {
 }
 
 function createIssueWindow(context: IssueWindowContext): void {
-  const systemLocale = getSystemLocale();
-  lastKnownSystemLocale = systemLocale;
-
   const window = new BrowserWindow({
     width: 960,
     height: 760,
@@ -472,7 +433,6 @@ function createIssueWindow(context: IssueWindowContext): void {
       : {}),
     webPreferences: createRendererWebPreferences(
       join(__dirname, "../preload/index.js"),
-      systemLocale,
       [encodeIssueWindowArgument(context)],
     ),
   });
@@ -485,7 +445,6 @@ function createIssueWindow(context: IssueWindowContext): void {
   });
 
   window.on("ready-to-show", () => window.show());
-  installLocaleRefresh(window);
   installDownloadSaveDialogHandler(window);
 
   window.webContents.setWindowOpenHandler((details) => {

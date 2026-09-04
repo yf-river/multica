@@ -23,7 +23,6 @@ export {
   useBootstrapMika,
   type BootstrapMikaInput,
   type BootstrapMikaResult,
-  type MikaOnboardingLanguage,
 } from "./use-bootstrap-mika";
 export {
   useWelcomeStore,

@@ -1,5 +1,5 @@
 /**
- * Per-comment text-selection mode. When the user taps "Select Text" in the
+ * Per-comment text-selection mode. When the user taps "选择文本" in the
  * comment's long-press action sheet (`components/issue/comment-context-
  * menu.tsx` → `useCommentLongPress`), the targeted comment id is parked
  * here. `CommentBody` reads this store and, when matched, (a) drops the

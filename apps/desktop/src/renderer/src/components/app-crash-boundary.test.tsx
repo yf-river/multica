@@ -53,7 +53,7 @@ describe("AppCrashBoundary", () => {
     const alert = screen.getByRole("alert");
     expect(alert).not.toBeNull();
     expect(alert.textContent).toContain("useWorkspaceId: no workspace selected");
-    expect(screen.getByRole("button", { name: /reload/i })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "重新加载" })).not.toBeNull();
   });
 
   it("keeps the window draggable by mounting the drag strip as the first child", () => {

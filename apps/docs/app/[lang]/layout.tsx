@@ -8,13 +8,11 @@ import { cn } from "@multica/ui/lib/utils";
 import { baseOptions } from "@/app/layout.config";
 import { source } from "@/lib/source";
 import { i18n, type Lang } from "@/lib/i18n";
-import { uiTranslations, localeLabels } from "@/lib/translations";
+import { uiTranslations } from "@/lib/translations";
 import { DocsSettings } from "@/components/docs-settings";
 
-// Inter (Latin UI face) is exposed under `--font-inter`. The full `--font-sans`
-// stack — Inter + the per-locale CJK fallback chain, including the Japanese-first
-// override scoped to `<html lang="ja">` — is composed in static CSS in
-// ./global.css (CSP-safe, no inline <style>). Mirrors apps/web/app/layout.tsx.
+// Inter handles Latin glyphs while static CSS supplies the Chinese fallback
+// chain without inline styles.
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
@@ -46,11 +44,10 @@ const sourceSerif = Source_Serif_4({
 
 export const metadata: Metadata = {
   title: {
-    template: "%s | Multica Docs",
-    default: "Multica Docs",
+    template: "%s | Multica 文档",
+    default: "Multica 文档",
   },
-  description:
-    "Documentation for Multica — the open-source managed agents platform.",
+  description: "Multica 开源智能体协作平台文档。",
 };
 
 export function generateStaticParams() {
@@ -68,10 +65,7 @@ export default async function Layout({
   const lang = (i18n.languages as readonly string[]).includes(rawLang)
     ? (rawLang as Lang)
     : (i18n.defaultLanguage as Lang);
-  const locales = i18n.languages.map((l) => ({
-    locale: l,
-    name: localeLabels[l],
-  }));
+  const locales = [{ locale: "zh", name: "简体中文" }];
 
   return (
     <html
@@ -101,7 +95,7 @@ export default async function Layout({
             // icons.
             themeSwitch={{ enabled: false }}
             searchToggle={{ enabled: false }}
-            sidebar={{ footer: <DocsSettings locale={lang} /> }}
+            sidebar={{ footer: <DocsSettings /> }}
             {...baseOptions}
           >
             {children}

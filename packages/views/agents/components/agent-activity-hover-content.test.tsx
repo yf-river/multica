@@ -137,7 +137,7 @@ describe("AgentActivityHoverContent", () => {
       locale: "zh-Hans",
     });
 
-    expect(screen.getByText("3 个 task 工作中")).toBeInTheDocument();
+    expect(screen.getByText("3 个任务工作中")).toBeInTheDocument();
   });
 });
 
@@ -221,8 +221,6 @@ describe("WorkspaceAgentActivityHoverContent", () => {
       { locale: "zh-Hans" },
     );
 
-    // issue is 任务 in Chinese; the agent run stays lowercase `task` so the two
-    // counted units never collapse into one word (conventions.zh.mdx).
-    expect(screen.getByText("1 个任务 · 2 个 task")).toBeInTheDocument();
+    expect(screen.getByText("1 个任务 · 2 个任务")).toBeInTheDocument();
   });
 });

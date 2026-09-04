@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { ArrowRight, Terminal, Loader2 } from "lucide-react";
+import { ArrowRight, Terminal, Loader2, MonitorDown } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
@@ -97,10 +97,13 @@ export function StepPlatformFork({
           <ForkPrimary onClick={handleOpenCli} />
 
           <ForkAlt
-            title={t(($) => $.step_platform.cli_title)}
-            subtitle={t(($) => $.step_platform.cli_subtitle)}
-            actionLabel={t(($) => $.step_platform.cli_action)}
-            onAction={handleOpenCli}
+            title={t(($) => $.step_platform.desktop_title)}
+            subtitle={t(($) => $.step_platform.desktop_subtitle)}
+            actionLabel={t(($) => $.step_platform.desktop_action)}
+            icon={<MonitorDown className="h-4 w-4" aria-hidden />}
+            onAction={() =>
+              window.open("/download", "_blank", "noopener,noreferrer")
+            }
           />
 
           <ForkAlt
@@ -197,12 +200,14 @@ function ForkAlt({
   actionLabel,
   onAction,
   disabled = false,
+  icon,
 }: {
   title: string;
   subtitle: ReactNode;
   actionLabel: ReactNode;
   onAction?: () => void;
   disabled?: boolean;
+  icon?: ReactNode;
 }) {
   return (
     <div
@@ -212,7 +217,10 @@ function ForkAlt({
       )}
     >
       <div className="min-w-0">
-        <div className="text-body font-medium text-foreground">{title}</div>
+        <div className="flex items-center gap-2 text-body font-medium text-foreground">
+          {icon}
+          {title}
+        </div>
         <div className="mt-1 text-caption leading-[1.5] text-muted-foreground">
           {subtitle}
         </div>

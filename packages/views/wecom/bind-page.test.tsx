@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
+import enCommon from "../locales-test/en/common.json";
 
 // bind-page.test.tsx — the /wecom/bind redeem page. Mirrors lark/bind-page.test.tsx
 // and adds the WeCom error-code → copy mapping (410 / 409 / 403 → distinct

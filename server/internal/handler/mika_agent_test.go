@@ -40,14 +40,13 @@ func cleanupMika(t *testing.T) {
 }
 
 // TestCreateMikaAgent_ServerOwnsTheDefinition is the point of moving creation
-// server-side: the caller sends only a runtime and a language, and everything
+// server-side: the caller sends only a runtime, and everything
 // that makes Mika Mika is decided here.
 func TestCreateMikaAgent_ServerOwnsTheDefinition(t *testing.T) {
 	cleanupMika(t)
 
 	w := createMika(t, map[string]any{
 		"runtime_id": handlerTestRuntimeID(t),
-		"language":   "en",
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -88,11 +87,11 @@ func TestCreateMikaAgent_IsIdempotentPerWorkspace(t *testing.T) {
 	cleanupMika(t)
 	runtimeID := handlerTestRuntimeID(t)
 
-	first := createMika(t, map[string]any{"runtime_id": runtimeID, "language": "en"})
+	first := createMika(t, map[string]any{"runtime_id": runtimeID})
 	if first.Code != http.StatusCreated {
 		t.Fatalf("first call: expected 201, got %d: %s", first.Code, first.Body.String())
 	}
-	second := createMika(t, map[string]any{"runtime_id": runtimeID, "language": "zh"})
+	second := createMika(t, map[string]any{"runtime_id": runtimeID})
 	if second.Code != http.StatusOK {
 		t.Fatalf("second call: expected 200, got %d: %s", second.Code, second.Body.String())
 	}
@@ -108,14 +107,6 @@ func TestCreateMikaAgent_IsIdempotentPerWorkspace(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected exactly 1 Mika in the workspace, got %d", count)
-	}
-}
-
-func TestCreateMikaAgent_RejectsUnsupportedLanguage(t *testing.T) {
-	cleanupMika(t)
-	w := createMika(t, map[string]any{"runtime_id": handlerTestRuntimeID(t), "language": "fr"})
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -182,7 +173,6 @@ func TestArchiveMikaIsRejected(t *testing.T) {
 	cleanupMika(t)
 	w := createMika(t, map[string]any{
 		"runtime_id": handlerTestRuntimeID(t),
-		"language":   "en",
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())

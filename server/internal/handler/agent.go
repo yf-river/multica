@@ -376,7 +376,8 @@ type AgentTaskResponse struct {
 	// as `## Workspace Context` so every agent running in this workspace —
 	// regardless of issue / chat / autopilot / quick-create — sees the same
 	// shared context. Empty when the workspace owner hasn't set it.
-	WorkspaceContext string `json:"workspace_context,omitempty"`
+	WorkspaceContext string                      `json:"workspace_context,omitempty"`
+	SourceContext    *protocol.TaskSourceContext `json:"source_context,omitempty"`
 	// IssueStatuses is the workspace's ACTIVE CUSTOM status catalog (MUL-6460),
 	// injected into the agent brief so agents can see and use statuses beyond
 	// the seven built-ins. Built-ins are omitted: their keys, names, and
@@ -446,12 +447,13 @@ type AgentTaskResponse struct {
 	// Populated on both terminal paths — a failed run can still have committed
 	// partial work, and that is when the pointer matters most.
 	BranchName               string                 `json:"branch_name,omitempty"`
-	TriggerCommentID         *string                `json:"trigger_comment_id,omitempty"`          // comment that triggered this task
-	CoalescedCommentIDs      []string               `json:"coalesced_comment_ids,omitempty"`       // MUL-4195: earlier comments folded into this run when it had not yet started, so a single run still covers every deliberate comment; trigger_comment_id is the newest. Surfaced so the UI can show which comments a run covered. omitempty so old clients ignore it
-	CoalescedComments        []CoalescedCommentData `json:"coalesced_comments,omitempty"`          // MUL-4195: full detail (thread_id/author/created_at/content) of the folded comments, so the daemon prompt can address each without assuming they share the triggering thread. omitempty so old clients ignore it
-	DeliveredCommentIDs      []string               `json:"delivered_comment_ids"`                 // always present: [] is an authoritative empty receipt, while field absence identifies responses from legacy servers
-	TriggerThreadID          string                 `json:"trigger_thread_id,omitempty"`           // root comment ID for the triggering thread
-	TriggerCommentContent    string                 `json:"trigger_comment_content,omitempty"`     // content of the triggering comment
+	TriggerCommentID         *string                `json:"trigger_comment_id,omitempty"`      // comment that triggered this task
+	CoalescedCommentIDs      []string               `json:"coalesced_comment_ids,omitempty"`   // MUL-4195: earlier comments folded into this run when it had not yet started, so a single run still covers every deliberate comment; trigger_comment_id is the newest. Surfaced so the UI can show which comments a run covered. omitempty so old clients ignore it
+	CoalescedComments        []CoalescedCommentData `json:"coalesced_comments,omitempty"`      // MUL-4195: full detail (thread_id/author/created_at/content) of the folded comments, so the daemon prompt can address each without assuming they share the triggering thread. omitempty so old clients ignore it
+	DeliveredCommentIDs      []string               `json:"delivered_comment_ids"`             // always present: [] is an authoritative empty receipt, while field absence identifies responses from legacy servers
+	TriggerThreadID          string                 `json:"trigger_thread_id,omitempty"`       // root comment ID for the triggering thread
+	TriggerCommentContent    string                 `json:"trigger_comment_content,omitempty"` // content of the triggering comment
+	TriggerCommentCreatedAt  string                 `json:"trigger_comment_created_at,omitempty"`
 	TriggerSummary           *string                `json:"trigger_summary,omitempty"`             // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
 	TriggerAuthorType        string                 `json:"trigger_author_type,omitempty"`         // "agent" or "member" — author kind of the triggering comment
 	TriggerAuthorName        string                 `json:"trigger_author_name,omitempty"`         // display name of the triggering comment author

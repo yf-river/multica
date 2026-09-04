@@ -4,8 +4,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { useWelcomeStore } from "@multica/core/onboarding";
-import enCommon from "../locales/en/common.json";
-import enOnboarding from "../locales/en/onboarding.json";
+import enCommon from "../locales-test/en/common.json";
+import enOnboarding from "../locales-test/en/onboarding.json";
 import {
   NavigationProvider,
   type NavigationAdapter,
@@ -147,13 +147,13 @@ describe("WelcomeAfterOnboarding", () => {
 
     expect(mockCreateIssue).toHaveBeenCalledTimes(1);
     expect(mockCreateIssue.mock.calls[0]![0]).toMatchObject({
-      title: "Connect a runtime to start with Mika",
+      title: "连接运行时，和 Mika 开始",
       status: "in_progress",
       assignee_type: "member",
       assignee_id: "user-1",
     });
     expect(mockCreateIssue.mock.calls[0]![0].description).toContain(
-      "Start with Mika",
+      "Mika",
     );
 
     fireEvent.click(screen.getByRole("button", { name: /got it/i }));

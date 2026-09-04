@@ -50,19 +50,13 @@ if (typeof window !== "undefined") {
       }) as MediaQueryList;
   }
 
-  // jsdom doesn't provide ResizeObserver; stub it so components that rely on it
-  // (e.g. input-otp) can render in tests.
+  // jsdom doesn't provide ResizeObserver; stub it for responsive components.
   if (typeof globalThis.ResizeObserver === "undefined") {
     globalThis.ResizeObserver = class ResizeObserver {
       observe() {}
       unobserve() {}
       disconnect() {}
     } as unknown as typeof ResizeObserver;
-  }
-
-  // jsdom doesn't implement elementFromPoint; input-otp uses it internally.
-  if (typeof document.elementFromPoint !== "function") {
-    document.elementFromPoint = () => null;
   }
 
   // jsdom has no layout, so it doesn't implement scrollIntoView; list components

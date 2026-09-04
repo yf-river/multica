@@ -5,8 +5,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enSettings from "../../locales/en/settings.json";
+import enCommon from "../../locales-test/en/common.json";
+import enSettings from "../../locales-test/en/settings.json";
 
 // wecom-tab.test.tsx — the Settings → Integrations WeCom panel and the per-agent
 // bind button. Mirrors dingtalk-tab.test.tsx. Covers the admin gate, the BYO

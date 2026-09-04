@@ -1,6 +1,6 @@
 /**
  * Per-message text-selection mode for the chat surface. When the user taps
- * "Select Text" in a chat bubble's long-press action sheet
+ * "选择文本" in a chat bubble's long-press action sheet
  * (`components/chat/message-long-press.tsx` → `useChatMessageLongPress`),
  * the targeted message id is parked here. The bubble row reads this store
  * and, when matched, (a) drops the `Pressable.onLongPress` wrapper so the

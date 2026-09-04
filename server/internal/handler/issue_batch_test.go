@@ -331,15 +331,15 @@ func TestBatchChildDoneCrossStage_OneComment(t *testing.T) {
 			t.Fatalf("expected exactly 1 system comment on parent, got %d", got)
 		}
 		content, _, _, _ := systemCommentOn(t, parentID)
-		if !strings.Contains(content, "Stage 2 of this issue is complete") {
+		if !strings.Contains(content, "第 2 阶段已完成") {
 			t.Errorf("expected the comment to announce the top closed stage (Stage 2), got: %s", content)
 		}
-		if !strings.Contains(content, "Stage 1: 2/2 done; Stage 2: 2/2 done") {
+		if !strings.Contains(content, "阶段 1：已完成 2/2; 阶段 2：已完成 2/2") {
 			t.Errorf("expected the final-state stage summary, got: %s", content)
 		}
 		// The bug: a mid-batch snapshot told the parent to advance a stage this
 		// same batch had already finished.
-		if strings.Contains(content, "is next") || strings.Contains(content, "(next)") {
+		if strings.Contains(content, "下一步是阶段") || strings.Contains(content, "（下一阶段）") {
 			t.Errorf("comment must not carry a stale next-stage instruction, got: %s", content)
 		}
 		// Exactly one wake, pinned to the final comment.
@@ -375,10 +375,10 @@ func TestBatchChildDoneCrossStage_Cancelled(t *testing.T) {
 		t.Fatalf("expected exactly 1 system comment on parent, got %d", got)
 	}
 	content, _, _, _ := systemCommentOn(t, fx.parent.ID)
-	if !strings.Contains(content, "Stage 2 of this issue is complete") {
+	if !strings.Contains(content, "第 2 阶段已完成") {
 		t.Errorf("expected Stage 2 completion announcement, got: %s", content)
 	}
-	if strings.Contains(content, "is next") || strings.Contains(content, "(next)") {
+	if strings.Contains(content, "下一步是阶段") || strings.Contains(content, "（下一阶段）") {
 		t.Errorf("comment must not carry a stale next-stage instruction, got: %s", content)
 	}
 }
@@ -395,13 +395,13 @@ func TestBatchChildDoneClosesLowerStageOnly(t *testing.T) {
 		t.Fatalf("expected exactly 1 system comment on parent, got %d", got)
 	}
 	content, _, _, _ := systemCommentOn(t, fx.parent.ID)
-	if !strings.Contains(content, "Stage 1 of this issue is complete") {
+	if !strings.Contains(content, "第 1 阶段已完成") {
 		t.Errorf("expected Stage 1 completion announcement, got: %s", content)
 	}
-	if !strings.Contains(content, "Stage 2: 0/2 done (next)") {
+	if !strings.Contains(content, "阶段 2：已完成 0/2（下一阶段）") {
 		t.Errorf("expected accurate next-stage progress, got: %s", content)
 	}
-	if !strings.Contains(content, "Stage 2 is next") {
+	if !strings.Contains(content, "下一步是阶段 2") {
 		t.Errorf("expected the advance-to-next-stage instruction, got: %s", content)
 	}
 }

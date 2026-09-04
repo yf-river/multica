@@ -22,16 +22,16 @@ export function useActorLookup() {
     type: "member" | "agent" | "squad" | null | undefined,
     id: string | null | undefined,
   ): string => {
-    if (!type || !id) return "System";
+    if (!type || !id) return "系统";
     if (type === "member") {
       const m = members.find((m) => m.user_id === id);
-      return m?.name ?? "Unknown";
+      return m?.name ?? "未知";
     }
     if (type === "agent") {
       const a = agents.find((a) => a.id === id);
-      return a?.name ?? "Unknown Agent";
+      return a?.name ?? "未知智能体";
     }
-    return squads.find((s) => s.id === id)?.name ?? "Squad";
+    return squads.find((s) => s.id === id)?.name ?? "小队";
   };
 
   const getAvatarUrl = (

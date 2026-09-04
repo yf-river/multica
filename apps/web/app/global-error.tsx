@@ -34,7 +34,7 @@ export default function GlobalError({
         }}
       >
         <div style={{ maxWidth: 420, textAlign: "center" }}>
-          <h1 style={{ fontSize: 18, fontWeight: 600 }}>Something went wrong</h1>
+          <h1 style={{ fontSize: 18, fontWeight: 600 }}>发生错误</h1>
           <p style={{ marginTop: 8, color: "#666" }}>
             The page hit an unexpected error. Try reloading.
           </p>

@@ -81,9 +81,9 @@ describe("DesktopRouteErrorPage", () => {
     render(<RouterProvider router={router} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Something went wrong in this tab",
+      "此标签页出现错误",
     );
-    fireEvent.click(screen.getByRole("button", { name: /reload tab/i }));
+    fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
     expect(reloadActiveTab).toHaveBeenCalledTimes(1);
   });
 
@@ -95,7 +95,7 @@ describe("DesktopRouteErrorPage", () => {
 
     render(<RouterProvider router={router} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /close tab/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "关闭标签页" }));
     expect(closeActiveTab).toHaveBeenCalledTimes(1);
   });
 
@@ -108,7 +108,7 @@ describe("DesktopRouteErrorPage", () => {
     render(<RouterProvider router={router} />);
 
     expect(openModal).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole("button", { name: /report error/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "报告错误" }));
 
     expect(openModal).toHaveBeenCalledWith(
       "feedback",
@@ -155,16 +155,16 @@ describe("DesktopRouteErrorPage", () => {
       renderUnmatchedRoute("/Users/whoever/Desktop/shot.png");
 
       const alert = await screen.findByRole("alert");
-      expect(alert).toHaveTextContent("This page doesn't exist");
+      expect(alert).toHaveTextContent("页面不存在");
       // The reported defect: a 404 was presented as an app crash and the user
       // was invited to file a bug for a link that was simply wrong.
-      expect(alert).not.toHaveTextContent("Something went wrong");
-      expect(alert).not.toHaveTextContent("Unknown route error");
+      expect(alert).not.toHaveTextContent("发生错误");
+      expect(alert).not.toHaveTextContent("未知页面错误");
       expect(
-        screen.queryByRole("button", { name: /report error/i }),
+        screen.queryByRole("button", { name: "报告错误" }),
       ).not.toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: /reload tab/i }),
+        screen.queryByRole("button", { name: "重新加载" }),
       ).not.toBeInTheDocument();
     });
 
@@ -177,7 +177,7 @@ describe("DesktopRouteErrorPage", () => {
 
     it("always offers Close tab", async () => {
       renderUnmatchedRoute("/Users/whoever/Desktop/shot.png");
-      fireEvent.click(await screen.findByRole("button", { name: /close tab/i }));
+      fireEvent.click(await screen.findByRole("button", { name: "关闭标签页" }));
       expect(closeActiveTab).toHaveBeenCalledTimes(1);
     });
 
@@ -186,7 +186,7 @@ describe("DesktopRouteErrorPage", () => {
       // "recovery" button pointing at /Users/issues — a second 404.
       renderUnmatchedRoute("/Users/whoever/Desktop/shot.png");
 
-      fireEvent.click(await screen.findByRole("button", { name: /go to issues/i }));
+      fireEvent.click(await screen.findByRole("button", { name: "前往任务" }));
       expect(navigateActiveSession).toHaveBeenCalledWith("/acme/issues", {
         replace: true,
       });
@@ -203,10 +203,10 @@ describe("DesktopRouteErrorPage", () => {
 
       await screen.findByRole("alert");
       expect(
-        screen.queryByRole("button", { name: /go to issues/i }),
+        screen.queryByRole("button", { name: "前往任务" }),
       ).not.toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: /close tab/i }),
+        screen.getByRole("button", { name: "关闭标签页" }),
       ).toBeInTheDocument();
     });
 
@@ -218,8 +218,8 @@ describe("DesktopRouteErrorPage", () => {
       render(<RouterProvider router={router} />);
 
       const alert = await screen.findByRole("alert");
-      expect(alert).toHaveTextContent("Something went wrong in this tab");
-      expect(alert).not.toHaveTextContent("This page doesn't exist");
+      expect(alert).toHaveTextContent("此标签页出现错误");
+      expect(alert).not.toHaveTextContent("页面不存在");
     });
   });
 });

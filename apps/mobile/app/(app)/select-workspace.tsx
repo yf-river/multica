@@ -32,7 +32,7 @@ export default function SelectWorkspace() {
 
         <View className="gap-3">
           <Text className="text-2xl font-semibold text-foreground">
-            Select a workspace
+            选择工作区
           </Text>
 
           {isLoading ? (
@@ -42,11 +42,11 @@ export default function SelectWorkspace() {
           ) : error ? (
             <View className="gap-3">
               <Text className="text-sm text-destructive">
-                Failed to load workspaces:{" "}
-                {error instanceof Error ? error.message : "unknown error"}
+                加载工作区失败：{" "}
+                {error instanceof Error ? error.message : "未知错误"}
               </Text>
               <Button variant="outline" onPress={() => refetch()}>
-                <Text>Retry</Text>
+                <Text>重试</Text>
               </Button>
             </View>
           ) : !data || data.length === 0 ? (
@@ -80,7 +80,7 @@ export default function SelectWorkspace() {
 
         <View className="pt-4 border-t border-border">
           <Button variant="outline" onPress={() => logout()}>
-            <Text>Sign out</Text>
+            <Text>退出登录</Text>
           </Button>
         </View>
       </ScrollView>

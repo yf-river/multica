@@ -379,7 +379,7 @@ class ApiClient {
     );
   }
 
-  // PATCH /api/me — name, avatar_url, language. Server returns the updated
+  // PATCH /api/me — name, avatar URL and profile fields. Server returns the updated
   // user; we parse so a partial drift doesn't bleed into the auth store.
   async updateMe(data: UpdateMeRequest): Promise<User> {
     return this.fetchValidatedWith(
@@ -1038,7 +1038,7 @@ class ApiClient {
       console.error("[api] ← shape mismatch POST /api/chat/sessions", {
         issues: parsed.error.issues,
       });
-      throw new ApiError("Create chat session response invalid", 0, raw);
+      throw new ApiError("创建对话的响应无效", 0, raw);
     }
     return parsed.data;
   }
@@ -1091,7 +1091,7 @@ class ApiClient {
       console.error("[api] ← shape mismatch POST /api/chat/sessions/:id/messages", {
         issues: parsed.error.issues,
       });
-      throw new ApiError("Send message response invalid", 0, raw);
+      throw new ApiError("发送消息的响应无效", 0, raw);
     }
     return parsed.data;
   }
@@ -1286,7 +1286,7 @@ class ApiClient {
         rid,
         error: parsed.error.message,
       });
-      throw new ApiError("Upload response invalid", res.status, json);
+      throw new ApiError("上传响应无效", res.status, json);
     }
     return parsed.data;
   }

@@ -6,7 +6,7 @@ import { useState } from "react";
 // accessible names below are then the strings that actually ship, and a
 // missing/renamed key fails here instead of silently rendering "".
 vi.mock("../i18n", async () => {
-  const editor = (await import("../locales/en/editor.json")).default;
+  const editor = (await import("../locales-test/en/editor.json")).default;
   return {
     useT: () => ({ t: (select: (bundle: typeof editor) => string) => select(editor) }),
   };

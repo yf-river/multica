@@ -298,6 +298,11 @@ func applyMigrationsUpTo(ctx context.Context, pool *pgxpool.Pool, lastVersion st
 
 	for _, f := range files {
 		v := migrations.ExtractVersion(f)
+		// This fixture reconstructs an old release from the historical chain.
+		// The fresh-install baseline already contains that chain's final schema.
+		if v == "000_initial_schema" {
+			continue
+		}
 		sql, err := os.ReadFile(f)
 		if err != nil {
 			return err

@@ -34,19 +34,10 @@ const (
 	mikaAgentAvatarURL = agentEmojiAvatarPrefix + "🦄"
 )
 
-// mikaAgentDescriptions is user-facing copy, so it is localized. Unlike the
-// instructions it is stored on the row: description is an owner-editable field
-// and the product does not reclaim it after creation.
-var mikaAgentDescriptions = map[string]string{
-	"en": "Your workspace Chief of Staff. Mika turns goals into issues, coordinates agents, and helps build reusable workflows.",
-	"zh": "你的工作区 Chief of Staff。Mika 会把目标转化为任务、协调智能体，并帮你建立可复用的工作流。",
-	"ko": "워크스페이스의 Chief of Staff입니다. Mika가 목표를 태스크로 구체화하고 에이전트를 조율하며 재사용 가능한 워크플로 구성을 돕습니다.",
-	"ja": "ワークスペースの Chief of Staff。Mika は目標をタスクに落とし込み、エージェントを調整し、再利用できるワークフローづくりを支援します。",
-}
+const mikaAgentDescription = "你的工作区 Chief of Staff。Mika 会把目标转化为任务、协调智能体，并帮你建立可复用的工作流。"
 
 type createMikaAgentRequest struct {
 	RuntimeID string `json:"runtime_id"`
-	Language  string `json:"language"`
 	// Model is the runtime model Mika should run on. Optional: empty means
 	// "whatever the runtime defaults to", which is what every deployment
 	// without per-agent model support gets anyway.
@@ -107,11 +98,6 @@ func (h *Handler) CreateMikaAgent(w http.ResponseWriter, r *http.Request) {
 // one, otherwise a freshly provisioned one. The bool pair is (created, ok);
 // when ok is false it has already written the error response.
 func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, workspaceID, userID string, req createMikaAgentRequest) (db.Agent, bool, bool) {
-	description, ok := mikaAgentDescriptions[req.Language]
-	if !ok {
-		writeError(w, http.StatusBadRequest, "language must be en, zh, ko, or ja")
-		return db.Agent{}, false, false
-	}
 	runtimeID, ok := parseUUIDOrBadRequest(w, req.RuntimeID, "runtime_id")
 	if !ok {
 		return db.Agent{}, false, false
@@ -180,7 +166,7 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 	created, err := qtx.CreateSystemUserAgent(r.Context(), db.CreateSystemUserAgentParams{
 		WorkspaceID:        wsUUID,
 		Name:               service.MikaDefaultName,
-		Description:        description,
+		Description:        mikaAgentDescription,
 		AvatarUrl:          pgtype.Text{String: mikaAgentAvatarURL, Valid: true},
 		RuntimeMode:        runtime.RuntimeMode,
 		RuntimeID:          runtime.ID,
@@ -259,9 +245,8 @@ func (h *Handler) writeMikaAgentResponse(w http.ResponseWriter, r *http.Request,
 // Serialized per (workspace, member) by an advisory lock rather than by a
 // unique index, because chat_session has no uniqueness constraint to lean on
 // and the repository does not add database FKs or indexes casually. The lookup
-// is by (workspace, creator, agent) — deliberately not by title, which is
-// localized: changing language between a failed attempt and its retry used to
-// produce a second onboarding conversation with its own kickoff task.
+// is by (workspace, creator, agent) — deliberately not by title, because
+// display copy must not define session identity.
 func (h *Handler) getOrCreateMikaSession(ctx context.Context, agent db.Agent, workspaceID, userID, title string) (db.ChatSession, error) {
 	wsUUID := parseUUID(workspaceID)
 	creatorUUID := parseUUID(userID)

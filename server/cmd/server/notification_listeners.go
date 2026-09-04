@@ -79,7 +79,7 @@ var notifTypeToGroup = map[string]string{
 	"assignee_changed":   "assignments",
 	"status_changed":     "status_changes",
 	"new_comment":        "comments",
-	"mentioned":          "comments",
+	"mentioned":          "mentions",
 	"priority_changed":   "updates",
 	"start_date_changed": "updates",
 	"due_date_changed":   "updates",
@@ -261,6 +261,19 @@ func notifySubscribers(
 	}
 	for id := range notified {
 		parentExclude[id] = true
+	}
+	// A delegated subscription intentionally receives only important child
+	// milestones. Do not let an ordinary parent subscription bypass that tier
+	// for the same person when routine child progress bubbles upward.
+	childSubscribers, err := queries.ListIssueSubscribers(ctx, util.MustParseUUID(issueID))
+	if err != nil {
+		return err
+	}
+	for _, subscriber := range childSubscribers {
+		if subscriber.UserType == "member" && subscriber.Reason == "delegated" &&
+			!deliverToSubscriber(subscriber.Reason, notifType, issueStatus) {
+			parentExclude[util.UUIDToString(subscriber.UserID)] = true
+		}
 	}
 
 	// Query subscribers from the parent issue, but the inbox item still
@@ -699,6 +712,9 @@ func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, 
 
 func projectCommentCreatedNotifications(ctx context.Context, queries *db.Queries, event events.Event, payload commentEventPayload) ([]events.Event, error) {
 	comment := payload.Comment
+	if !isMemberOrAgentActorType(comment.AuthorType) {
+		return nil, nil
+	}
 	details := emptyDetails
 	if comment.ID != "" {
 		details, _ = json.Marshal(map[string]string{"comment_id": comment.ID})
@@ -737,16 +753,14 @@ func projectTaskFailedNotifications(ctx context.Context, queries *db.Queries, ev
 		exclude[payload.AgentID] = true
 	}
 	collector := newNotificationEventCollector()
+	notificationEvent := event
+	notificationEvent.ActorType = "agent"
+	notificationEvent.ActorID = payload.AgentID
 	if err := notifySubscribers(ctx, queries, collector.bus,
 		payload.IssueID,
 		issue.Status,
 		event.WorkspaceID,
-		events.Event{
-			Type:        event.Type,
-			WorkspaceID: event.WorkspaceID,
-			ActorType:   "agent",
-			ActorID:     payload.AgentID,
-		},
+		notificationEvent,
 		exclude,
 		"task_failed",
 		"action_required",

@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CoreProvider } from "@multica/core/platform";
-import { pickLocale, type SupportedLocale } from "@multica/core/i18n";
 import { useAuthStore } from "@multica/core/auth";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import { workspaceKeys } from "@multica/core/workspace/queries";
@@ -22,26 +21,12 @@ import { useWindowOverlayStore } from "./stores/window-overlay-store";
 import { useOpenSettingsShortcut } from "./hooks/use-open-settings-shortcut";
 import { useDaemonIPCBridge } from "./platform/daemon-ipc-bridge";
 import { syncDaemonOnLogin } from "./platform/daemon-login-sync";
-import { createDesktopLocaleAdapter } from "./platform/i18n-adapter";
 import { captureEvent } from "@multica/core/analytics";
 import { RESOURCES } from "@multica/views/locales";
 import { DesktopClientUsageReporter } from "./platform/client-usage-reporter";
 import { DiagnosticRouteReporter } from "./platform/diagnostic-route-reporter";
 import { flushFreezeBreadcrumb } from "./freeze-flush";
 import { DesktopAuthSessionBridge } from "./platform/auth-session-bridge";
-
-// BCP-47 region tags for the <html lang> attribute, mirroring
-// apps/web/app/layout.tsx HTML_LANG. index.html ships a static lang="en";
-// we sync it to the resolved locale at boot so screen readers announce the
-// right language AND the Japanese-scoped CJK font override in globals.css
-// (`html[lang|="ja"]`) can take effect.
-const HTML_LANG: Record<SupportedLocale, string> = {
-  en: "en",
-  "zh-Hans": "zh-CN",
-  ko: "ko-KR",
-  ja: "ja-JP",
-};
-
 
 /**
  * Cmd/Ctrl+W: close the active tab. When the last real tab is closed
@@ -337,9 +322,9 @@ function BlockingRuntimeConfigError({ message }: { message: string }) {
   return (
     <div className="flex h-screen items-center justify-center bg-background p-8 text-foreground">
       <div className="max-w-xl rounded-lg border bg-card p-6 shadow-sm">
-        <h1 className="text-title font-semibold">Desktop configuration error</h1>
+        <h1 className="text-title font-semibold">桌面端配置错误</h1>
         <p className="mt-3 text-body text-muted-foreground">
-          Multica Desktop could not load <code>~/.multica/desktop.json</code>. Fix or remove the file and restart the app.
+          Multica 桌面端无法读取 <code>~/.multica/desktop.json</code>。请修复或删除该文件后重启应用。
         </p>
         <pre className="mt-4 whitespace-pre-wrap rounded-md bg-muted p-3 text-caption text-muted-foreground">
           {message}
@@ -377,7 +362,6 @@ async function handleDaemonLogout() {
 
 export default function App() {
   const { version, os } = window.desktopAPI.appInfo;
-  const systemLocale = window.desktopAPI.systemLocale;
   const runtimeConfigResult = window.desktopAPI.runtimeConfig;
   // The fallback keeps renderer HMR safe while a main/preload rebuild is
   // restarting Electron; packaged builds always expose windowContext.
@@ -409,44 +393,12 @@ export default function App() {
     () => ({ platform: "desktop", version, os }),
     [version, os],
   );
-  // Locale resolution happens once at app boot. Switching language goes
-  // through window.location.reload() to avoid hydration mismatch.
-  const localeAdapter = useMemo(
-    () => createDesktopLocaleAdapter(systemLocale),
-    [systemLocale],
-  );
-  const locale = useMemo(() => pickLocale(localeAdapter), [localeAdapter]);
-  const resources = useMemo(
-    () => ({ [locale]: RESOURCES[locale] }),
-    [locale],
-  );
+  const locale = "zh-Hans" as const;
+  const resources = useMemo(() => ({ "zh-Hans": RESOURCES["zh-Hans"] }), []);
 
-  // Keep <html lang> in sync with the resolved locale (index.html hardcodes
-  // "en"). Drives the lang-scoped Japanese CJK font override and a11y.
-  // useLayoutEffect (not useEffect) so lang is committed before the first
-  // paint — otherwise Japanese users would see one frame of Kanji rendered
-  // with the Chinese-first fallback stack before the override kicks in.
-  useLayoutEffect(() => {
-    document.documentElement.lang = HTML_LANG[locale];
-  }, [locale]);
-
-  // React to OS-level language changes detected by main on focus regain.
-  // Only act when the user is following the system signal (no explicit
-  // Settings choice) — otherwise their preference wins. Cross-device sync
-  // for the explicit-choice case is handled inside CoreProvider.
   useEffect(() => {
-    return window.desktopAPI.onSystemLocaleChanged((nextSystemLocale) => {
-      if (localeAdapter.getUserChoice()) return;
-      const next = pickLocale({
-        ...localeAdapter,
-        getSystemPreferences: () =>
-          nextSystemLocale ? [nextSystemLocale] : [],
-      });
-      if (next === locale) return;
-      localeAdapter.persist(next);
-      window.location.reload();
-    });
-  }, [localeAdapter, locale]);
+    document.documentElement.lang = "zh-CN";
+  }, []);
 
   return (
     <ThemeProvider>
@@ -460,7 +412,6 @@ export default function App() {
           identity={identity}
           locale={locale}
           resources={resources}
-          localeAdapter={localeAdapter}
         >
           <DesktopAuthSessionBridge />
           {windowContext.kind === "main" && <DiagnosticRouteReporter />}

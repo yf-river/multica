@@ -31,6 +31,29 @@ func cleanupActivities(t *testing.T, issueID string) {
 	testPool.Exec(context.Background(), `DELETE FROM activity_log WHERE issue_id = $1`, issueID)
 }
 
+func createTerminalTaskFixture(t *testing.T, issueID, status string) (taskID, agentID string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (workspace_id, name, runtime_mode, visibility)
+		VALUES ($1, 'activity projection test agent', 'local', 'workspace')
+		RETURNING id::text
+	`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("create activity projection agent: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, issue_id, status, completed_at)
+		VALUES ($1, $2, $3, now())
+		RETURNING id::text
+	`, agentID, issueID, status).Scan(&taskID); err != nil {
+		t.Fatalf("create activity projection task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+	})
+	return taskID, agentID
+}
+
 func TestActivityIssueCreated(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
@@ -283,7 +306,7 @@ func TestActivityTaskCompleted(t *testing.T) {
 		cleanupTestIssue(t, issueID)
 	})
 
-	agentID := testUserID // reuse as a stand-in for agent ID
+	taskID, agentID := createTerminalTaskFixture(t, issueID, "completed")
 
 	bus.Publish(events.Event{
 		Type:        protocol.EventTaskCompleted,
@@ -291,7 +314,7 @@ func TestActivityTaskCompleted(t *testing.T) {
 		ActorType:   "system",
 		ActorID:     "",
 		Payload: map[string]any{
-			"task_id":  "00000000-0000-0000-0000-000000000001",
+			"task_id":  taskID,
 			"agent_id": agentID,
 			"issue_id": issueID,
 			"status":   "completed",
@@ -321,7 +344,7 @@ func TestActivityTaskFailed(t *testing.T) {
 		cleanupTestIssue(t, issueID)
 	})
 
-	agentID := testUserID
+	taskID, agentID := createTerminalTaskFixture(t, issueID, "failed")
 
 	bus.Publish(events.Event{
 		Type:        protocol.EventTaskFailed,
@@ -329,7 +352,7 @@ func TestActivityTaskFailed(t *testing.T) {
 		ActorType:   "system",
 		ActorID:     "",
 		Payload: map[string]any{
-			"task_id":  "00000000-0000-0000-0000-000000000002",
+			"task_id":  taskID,
 			"agent_id": agentID,
 			"issue_id": issueID,
 			"status":   "failed",

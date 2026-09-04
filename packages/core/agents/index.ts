@@ -18,3 +18,7 @@ export * from "./visibility-label";
 export * from "./use-workspace-agent-availability";
 export * from "./mcp-support";
 export * from "./runtime-binding";
+
+export function isActiveAgentTaskStatus(status: string): boolean {
+  return status === "queued" || status === "dispatched" || status === "waiting_local_directory" || status === "running";
+}

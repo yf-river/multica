@@ -22,17 +22,17 @@ import { Button } from "@/components/ui/button";
 
 const FALLBACK_CONVERSATION_STARTERS: AgentConversationStarter[] = [
   {
-    label: "What can you help with?",
-    prompt: "What are you best at helping with? Give me a concise overview.",
+    label: "你能帮我做什么？",
+    prompt: "你最擅长帮我做什么？请简要介绍一下。",
   },
   {
-    label: "Suggest a first task",
-    prompt: "Suggest three useful tasks I could delegate to you.",
+    label: "建议第一个任务",
+    prompt: "建议三个适合交给你的实用任务。",
   },
   {
-    label: "Recommend an action",
+    label: "推荐下一步行动",
     prompt:
-      "Review what you know about my workspace and recommend a useful first action.",
+      "根据你对当前工作区的了解，推荐一个值得先做的行动。",
   },
 ];
 
@@ -43,7 +43,7 @@ interface Props {
 }
 
 export function ChatEmptyState({ hasSessions, agent, onPickPrompt }: Props) {
-  const title = agent ? `Hi, I'm ${agent.name}` : "Chat with your agents";
+  const title = agent ? `你好，我是 ${agent.name}` : "和智能体聊聊";
   const configured = (agent?.conversation_starters ?? []).filter(
     (item) => item.label.trim() && item.prompt.trim(),
   );
@@ -61,7 +61,7 @@ export function ChatEmptyState({ hasSessions, agent, onPickPrompt }: Props) {
         ) : null}
         {!hasSessions ? (
           <Text className="text-sm text-muted-foreground text-center">
-            Pick an example to start, then edit it before sending.
+            选择一个示例开始，你可以编辑后再发送。
           </Text>
         ) : null}
       </View>

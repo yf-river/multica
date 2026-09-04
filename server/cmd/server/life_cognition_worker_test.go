@@ -296,7 +296,7 @@ func TestMissingLifeChroniclePeriodsCatchUpInDependencyOrder(t *testing.T) {
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	var userID, workspaceID pgtype.UUID
-	if err := testPool.QueryRow(ctx, `INSERT INTO "user" (name, account) VALUES ('Chronicle Catchup', $1) RETURNING id`, "chronicle-catchup-"+suffix).Scan(&userID); err != nil {
+	if err := testPool.QueryRow(ctx, `INSERT INTO "user" (name, account, email) VALUES ('Chronicle Catchup', $1, $2) RETURNING id`, "chronicle-catchup-"+suffix, "chronicle-catchup-"+suffix+"@example.test").Scan(&userID); err != nil {
 		t.Fatalf("create catchup user: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `INSERT INTO workspace (name, slug, issue_prefix) VALUES ('Chronicle Catchup', $1, 'CHR') RETURNING id`, "chronicle-catchup-"+suffix).Scan(&workspaceID); err != nil {

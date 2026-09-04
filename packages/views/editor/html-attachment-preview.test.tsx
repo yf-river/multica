@@ -195,7 +195,7 @@ describe("HtmlAttachmentPreview — toolbar actions", () => {
     );
     fireEvent.mouseDown(screen.getByTitle("Open in new tab"));
     expect(windowOpenSpy).toHaveBeenCalledWith(
-      "/acme/attachments/att-1/preview?name=report.html",
+      "https://app.example/acme/attachments/att-1/preview?name=report.html",
       "_blank",
       "noopener,noreferrer",
     );

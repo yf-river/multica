@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { readFileSync } from "node:fs";
 
 vi.mock("../i18n", async () => {
-  const editor = (await import("../locales/en/editor.json")).default;
+  const editor = (await import("../locales-test/en/editor.json")).default;
   return {
     useT: () => ({ t: (select: (bundle: typeof editor) => string) => select(editor) }),
   };

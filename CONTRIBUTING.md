@@ -404,8 +404,8 @@ its own database and CLI profile, is one command:
 make up C=api,web,daemon
 ```
 
-It creates the environment if needed, sets the fixed local verification code
-before the first launch, logs in as `dev@localhost`, mints a personal access
+It creates the environment if needed, provisions the local development account,
+logs in with its account and password, mints a personal access
 token, creates a workspace, writes the CLI profile, builds `server/bin/multica`
 and starts the daemon from that binary. It then prints the URL, the login, the
 commit, and the stop command.

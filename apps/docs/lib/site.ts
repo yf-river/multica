@@ -35,10 +35,7 @@ function pageSourceStem(slugs: string[]): string {
 
 function hasLocalizedMdx(slugs: string[], lang: string): boolean {
   const stem = pageSourceStem(slugs);
-  const candidates =
-    lang === i18n.defaultLanguage
-      ? [`${stem}.mdx`, `${stem}/index.mdx`]
-      : [`${stem}.${lang}.mdx`, `${stem}/index.${lang}.mdx`];
+  const candidates = [`${stem}.${lang}.mdx`, `${stem}/index.${lang}.mdx`];
 
   return docsContentRoots().some((root) =>
     candidates.some((candidate) => existsSync(join(root, candidate))),

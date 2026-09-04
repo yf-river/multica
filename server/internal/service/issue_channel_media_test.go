@@ -86,7 +86,7 @@ func TestPublishAttachmentsChangedAlsoBroadcastsUpdatedDescription(t *testing.T)
 	}
 
 	bus := events.New()
-	svc := &IssueService{Bus: bus, Queries: q}
+	svc := &IssueService{Bus: bus, Queries: q, TxStarter: pool}
 	var updated events.Event
 	var ordered []events.Event
 	bus.Subscribe(protocol.EventIssueUpdated, func(e events.Event) { updated = e })

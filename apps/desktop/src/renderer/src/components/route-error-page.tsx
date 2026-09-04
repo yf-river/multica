@@ -68,11 +68,10 @@ function DesktopNotFoundPage() {
         <Compass className="h-6 w-6" aria-hidden="true" />
       </div>
       <div className="space-y-2">
-        <h2 className="text-title font-semibold">This page doesn&apos;t exist</h2>
+        <h2 className="text-title font-semibold">页面不存在</h2>
         <p className="max-w-lg text-body text-muted-foreground">
-          Nothing in Multica matches this address. If you got here from a link,
-          it probably points at a file on someone else&apos;s computer rather
-          than a page.
+          Multica 中没有与此地址匹配的页面。如果你是通过链接来到这里，
+          该链接可能指向了其他人电脑上的文件。
         </p>
         <p className="max-w-lg truncate font-mono text-caption text-muted-foreground">
           {location.pathname}
@@ -91,7 +90,7 @@ function DesktopNotFoundPage() {
                 .navigateActiveSession(recoveryRoute, { replace: true })
             }
           >
-            Go to issues
+            前往任务
           </Button>
         ) : null}
         <Button
@@ -99,7 +98,7 @@ function DesktopNotFoundPage() {
           onClick={() => useTabStore.getState().closeActiveTab()}
         >
           <X className="mr-2 h-4 w-4" aria-hidden="true" />
-          Close tab
+          关闭标签页
         </Button>
       </div>
     </div>
@@ -127,10 +126,9 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
         <AlertTriangle className="h-6 w-6" aria-hidden="true" />
       </div>
       <div className="space-y-2">
-        <h2 className="text-title font-semibold">Something went wrong in this tab</h2>
+        <h2 className="text-title font-semibold">此标签页出现错误</h2>
         <p className="max-w-lg text-body text-muted-foreground">
-          A route-level renderer error was contained before it could take down the
-          desktop shell. Reload this tab, or send the report if it keeps happening.
+          页面渲染发生错误。请重新加载此标签页；如果问题持续出现，请发送错误报告。
         </p>
         <p className="max-w-lg truncate text-caption text-muted-foreground">{message}</p>
       </div>
@@ -141,7 +139,7 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
           onClick={() => useTabStore.getState().reloadActiveTab()}
         >
           <RotateCw className="mr-2 h-4 w-4" aria-hidden="true" />
-          Reload tab
+          重新加载
         </Button>
         {recoveryRoute ? (
           <Button
@@ -155,7 +153,7 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
                 .navigateActiveSession(recoveryRoute, { replace: true })
             }
           >
-            Go to issues
+            前往任务
           </Button>
         ) : null}
         <Button
@@ -164,7 +162,7 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
           onClick={() => useTabStore.getState().closeActiveTab()}
         >
           <X className="mr-2 h-4 w-4" aria-hidden="true" />
-          Close tab
+          关闭标签页
         </Button>
         <Button
           type="button"
@@ -176,7 +174,7 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
           }
         >
           <Send className="mr-2 h-4 w-4" aria-hidden="true" />
-          Report error
+          报告错误
         </Button>
       </div>
     </div>
@@ -187,14 +185,14 @@ function normalizeError(error: unknown): { name: string; message: string; stack?
   if (error instanceof Error) {
     return {
       name: error.name || "Error",
-      message: error.message || "Unknown route error",
+      message: error.message || "未知页面错误",
       stack: error.stack,
     };
   }
   if (typeof error === "string") {
     return { name: "Error", message: error };
   }
-  return { name: "Error", message: "Unknown route error", stack: safeJson(error) };
+  return { name: "Error", message: "未知页面错误", stack: safeJson(error) };
 }
 
 function safeJson(value: unknown) {

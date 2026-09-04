@@ -4,7 +4,7 @@
  * animation library as comment-card.tsx, no new primitive.
  *
  * Used by:
- *   - apps/mobile/components/issue/agent-activity-row.tsx (in-card "Working" row)
+ *   - apps/mobile/components/issue/agent-activity-row.tsx (in-card "工作中" row)
  *   - apps/mobile/components/issue/agent-header-badge.tsx (Stack header ambient badge)
  *
  * Colour is the workspace `brand` token (mobile global.css:45 `--brand`),

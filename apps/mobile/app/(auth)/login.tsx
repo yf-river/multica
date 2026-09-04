@@ -28,7 +28,7 @@ export default function Login() {
       router.replace("/");
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setError(mapAuthError(err, "Couldn't send the code. Try again."));
+      setError(mapAuthError(err, "登录失败，请稍后重试。"));
     } finally {
       setSubmitting(false);
     }
@@ -45,9 +45,9 @@ export default function Login() {
             <MulticaLogo size={32} />
             <View className="gap-1 items-center">
               <Text className="text-2xl font-semibold text-foreground">
-                Sign in to Multica
+                登录 Multica
               </Text>
-              <Text className="text-sm text-muted-foreground text-center">Enter your account and password.</Text>
+              <Text className="text-sm text-muted-foreground text-center">请输入账号和密码。</Text>
             </View>
           </View>
 
@@ -56,7 +56,7 @@ export default function Login() {
               autoCapitalize="none"
               autoComplete="username"
               autoFocus
-              placeholder="Account"
+              placeholder="账号"
               value={account}
               onChangeText={setAccount}
               onSubmitEditing={onSubmit}
@@ -69,13 +69,13 @@ export default function Login() {
             ) : null}
           </View>
 
-          <TextField secureTextEntry placeholder="Password" value={password} onChangeText={setPassword} editable={!submitting} invalid={!!error} />
+          <TextField secureTextEntry placeholder="密码" value={password} onChangeText={setPassword} editable={!submitting} invalid={!!error} />
           <Button
             size="lg"
             disabled={submitting || !account.trim() || !password}
             onPress={onSubmit}
           >
-            <Text>{submitting ? "Signing in..." : "Sign in"}</Text>
+            <Text>{submitting ? "正在登录…" : "登录"}</Text>
           </Button>
         </View>
       </KeyboardAvoidingView>

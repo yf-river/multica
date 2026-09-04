@@ -12,10 +12,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
-import enModals from "../locales/en/modals.json";
-import enEditor from "../locales/en/editor.json";
-import enIssues from "../locales/en/issues.json";
+import enCommon from "../locales-test/en/common.json";
+import enModals from "../locales-test/en/modals.json";
+import enEditor from "../locales-test/en/editor.json";
+import enIssues from "../locales-test/en/issues.json";
 
 const TEST_RESOURCES = {
   // `editor` carries the shared upload-gate copy ("Uploading…").

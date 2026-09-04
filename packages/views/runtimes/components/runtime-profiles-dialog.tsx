@@ -77,7 +77,7 @@ export function RuntimeProfilesDialog({
   onProfileCreated?: (profile: RuntimeProfile) => void;
   onClose: () => void;
 }) {
-  const { t, i18n } = useT("runtimes");
+  const { t } = useT("runtimes");
   const { data: profiles = [], isLoading } = useQuery(
     runtimeProfileListOptions(wsId),
   );
@@ -105,7 +105,7 @@ export function RuntimeProfilesDialog({
     entries.find((entry) => entry.id === selectedId) ?? null;
   const openCreateForm = () =>
     setState({ surface: "form", mode: "create", step: "family" });
-  const docsHref = customRuntimeDocsHref(i18n.language);
+  const docsHref = customRuntimeDocsHref();
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>

@@ -3,9 +3,9 @@ import { chatSessionDisplayTitle } from "./chat-session-title";
 
 describe("chatSessionDisplayTitle", () => {
   it("uses New chat for an explicitly empty channel-created Chat", () => {
-    expect(chatSessionDisplayTitle("")).toBe("New chat");
-    expect(chatSessionDisplayTitle(null)).toBe("New chat");
-    expect(chatSessionDisplayTitle(undefined)).toBe("New chat");
+    expect(chatSessionDisplayTitle("")).toBe("新对话");
+    expect(chatSessionDisplayTitle(null)).toBe("新对话");
+    expect(chatSessionDisplayTitle(undefined)).toBe("新对话");
   });
 
   it("preserves a stored or manually renamed title", () => {

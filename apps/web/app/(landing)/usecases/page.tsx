@@ -14,7 +14,7 @@ type ExtraFrontmatter = {
 
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getUseCaseLocale();
-  const text = useCaseText[locale];
+  const text = useCaseText["zh-Hans"];
   return {
     title: text.indexMetadataTitle,
     description: text.indexMetadataDescription,
@@ -31,7 +31,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function UseCasesIndexPage() {
   const locale = await getUseCaseLocale();
-  const text = useCaseText[locale];
+  const text = useCaseText["zh-Hans"];
   const pages = getUseCasePagesForLocale(locale)
     .slice()
     .sort((a, b) => {

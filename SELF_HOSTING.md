@@ -45,7 +45,7 @@ multica setup self-host
 
 This installs the `multica` CLI, checks out the latest self-host assets, pulls the official Multica images from GHCR, and configures everything for localhost.
 
-Open http://localhost:3000. To log in, configure `RESEND_API_KEY` in `.env` for email-based codes (recommended), or leave Resend unset and copy the generated code from the backend logs. See [Step 2 — Log In](#step-2--log-in) for details.
+Open http://localhost:3000 and log in with the account and password provisioned for the instance. See [Step 2 — Log In](#step-2--log-in) for details.
 
 > **Prerequisites:** Docker and Docker Compose must be installed. The script checks for this and provides install links if missing.
 >
@@ -86,15 +86,9 @@ Once ready:
 
 ### Step 2 — Log In
 
-Open http://localhost:3000 in your browser. The Docker self-host stack defaults to `APP_ENV=production` (set in `docker-compose.selfhost.yml`), and there is no fixed verification code by default. Pick one of the following to log in:
-
-- **Recommended (production):** configure `RESEND_API_KEY` in `.env`, then restart the backend. Real verification codes will be sent to the email address you enter. See [Advanced Configuration → Email](SELF_HOSTING_ADVANCED.md#email-required-for-authentication).
-- **Without email configured:** the verification code is generated server-side and printed to the backend container logs (look for `[DEV] Verification code for ...:`). Useful for one-off testing on a single machine.
-- **Deterministic local/private testing:** set `APP_ENV=development` and `MULTICA_DEV_VERIFICATION_CODE=888888` in `.env`, then restart the backend. This fixed code is ignored when `APP_ENV=production`.
+Open http://localhost:3000 in your browser and enter the account and password provisioned by your operator. Local development environments print their generated account details after startup.
 
 Changes to `ALLOW_SIGNUP`, `DISABLE_WORKSPACE_CREATION`, and `GOOGLE_CLIENT_ID` also take effect after restarting the backend / compose stack. The web UI reads all three from `/api/config` at runtime, so no web rebuild is needed. See [Advanced Configuration → Signup Controls](SELF_HOSTING_ADVANCED.md#signup-controls-optional) for the recommended sequence to lock down workspace creation.
-
-> **Warning:** do **not** set `MULTICA_DEV_VERIFICATION_CODE` on a publicly reachable instance — anyone who knows an email address can then log in with that fixed code.
 
 ### Step 3 — Install CLI & Start Daemon
 
@@ -216,13 +210,11 @@ The chart references this Secret by name. Create it once with random values:
 kubectl -n multica create secret generic multica-secrets \
   --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
   --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 16)" \
-  --from-literal=RESEND_API_KEY="" \
   --from-literal=GOOGLE_CLIENT_SECRET="" \
-  --from-literal=CLOUDFRONT_PRIVATE_KEY="" \
-  --from-literal=MULTICA_DEV_VERIFICATION_CODE=""
+  --from-literal=CLOUDFRONT_PRIVATE_KEY=""
 ```
 
-Leave optional values empty for now — you can fill them in later (see [Step 5 — Log In](#step-5--log-in)).
+Leave optional values empty for now — you can fill them in later.
 
 ### Step 4 — Install the chart
 
@@ -269,39 +261,9 @@ Then open http://multica.dev.lan in your browser.
 
 ### Step 5 — Log In
 
-The chart defaults to `APP_ENV=production` (set in `values.yaml` under `backend.config.appEnv`), and there is no fixed verification code by default. Pick one of the following to log in — the same three options as the Docker setup:
-
-- **Recommended (production):** patch the Secret with a real Resend key, then restart the backend:
-
-  ```bash
-  kubectl -n multica patch secret multica-secrets --type=merge \
-    -p '{"stringData":{"RESEND_API_KEY":"re_xxx"}}'
-  kubectl -n multica rollout restart deploy/multica-backend
-  ```
-
-  Real verification codes will be sent to the email address you enter. See [Advanced Configuration → Email](SELF_HOSTING_ADVANCED.md#email-required-for-authentication).
-
-- **Without email configured:** the verification code is generated server-side and printed to the backend pod logs (look for `[DEV] Verification code for ...:`). Useful for one-off testing.
-
-  ```bash
-  kubectl -n multica logs -f deploy/multica-backend | grep "Verification code"
-  ```
-
-- **Deterministic local/private testing:** set `backend.config.appEnv: development` in your values file and `MULTICA_DEV_VERIFICATION_CODE=888888` in the Secret, then `helm upgrade` and restart. This fixed code is ignored when `APP_ENV=production`.
-
-  ```bash
-  helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
-    --version <chart-version> \
-    -n multica \
-    -f my-values.yaml --set backend.config.appEnv=development
-  kubectl -n multica patch secret multica-secrets --type=merge \
-    -p '{"stringData":{"MULTICA_DEV_VERIFICATION_CODE":"888888"}}'
-  kubectl -n multica rollout restart deploy/multica-backend
-  ```
+Open the frontend and enter the account and password provisioned by your operator. Authentication does not depend on an email delivery service.
 
 `ALLOW_SIGNUP`, `DISABLE_WORKSPACE_CREATION`, and `GOOGLE_CLIENT_ID` likewise live under `backend.config.*` in `values.yaml` (as `allowSignup`, `disableWorkspaceCreation`, and `googleClientId`). After `helm upgrade`, the backend pod will roll automatically because the ConfigMap hash changes; the web UI reads all three from `/api/config` at runtime, so no web rebuild is needed.
-
-> **Warning:** do **not** set `MULTICA_DEV_VERIFICATION_CODE` on a publicly reachable instance — anyone who knows an email address can then log in with that fixed code.
 
 ### Step 6 — Install CLI & Start Daemon
 

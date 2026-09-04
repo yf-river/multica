@@ -1,17 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { pickContentLang } from "./index";
+import { INSTALL_RUNTIME_ISSUE_BODY, INSTALL_RUNTIME_ISSUE_TITLE } from "./index";
 
-describe("pickContentLang", () => {
-  it("uses the shared locale matcher before selecting persisted content", () => {
-    expect(pickContentLang("en-US")).toBe("en");
-    expect(pickContentLang("zh-Hant")).toBe("zh");
-    expect(pickContentLang("ko-KR")).toBe("ko");
-    expect(pickContentLang("ja-JP")).toBe("ja");
-  });
-
-  it("falls back to English for unsupported or missing languages", () => {
-    expect(pickContentLang("fr-FR")).toBe("en");
-    expect(pickContentLang(null)).toBe("en");
-    expect(pickContentLang(undefined)).toBe("en");
+describe("Chinese onboarding templates", () => {
+  it("exports the runtime guide in Chinese", () => {
+    expect(INSTALL_RUNTIME_ISSUE_TITLE).toBe("连接运行时，和 Mika 开始");
+    expect(INSTALL_RUNTIME_ISSUE_BODY).toContain("欢迎来到 Multica");
   });
 });

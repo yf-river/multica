@@ -16,7 +16,6 @@ import { cn } from "@multica/ui/lib/utils";
 import { useCreateWorkspace } from "@multica/core/workspace/mutations";
 import type { Workspace } from "@multica/core/types";
 import { isImeComposing } from "@multica/core/utils";
-import { matchLocale } from "@multica/core/i18n";
 import { useConfigStore } from "@multica/core/config";
 import { workspaceUrlHost } from "@multica/core/workspace/workspace-url";
 import { useLogout } from "../../auth";
@@ -98,8 +97,7 @@ export function StepWorkspace({
    *  created, and only this step knows when that is. */
   onBusyChange?: (busy: boolean) => void;
 }) {
-  const { t, i18n } = useT("onboarding");
-  const locale = matchLocale([i18n.resolvedLanguage ?? i18n.language]);
+  const { t } = useT("onboarding");
   const workspaceCreationDisabled = useConfigStore((s) => s.workspaceCreationDisabled);
   const urlHost = workspaceUrlHost(useConfigStore((s) => s.daemonAppUrl));
   // Single source of truth for "can the user reach the create path on this
@@ -172,9 +170,7 @@ export function StepWorkspace({
   const handleNameChange = (value: string) => {
     setName(value);
     if (!slugTouched.current) {
-      // Locale decides whether Han characters are read as Chinese; see
-      // nameToWorkspaceSlug.
-      applySlug(nameToWorkspaceSlug(value, locale));
+      applySlug(nameToWorkspaceSlug(value));
     }
   };
 
@@ -189,7 +185,7 @@ export function StepWorkspace({
   };
 
   const handleRandomName = () => {
-    const identity = randomCelestialWorkspaceIdentity(locale);
+    const identity = randomCelestialWorkspaceIdentity();
     slugTouched.current = true;
     setName(identity.name);
     applySlug(identity.slug);

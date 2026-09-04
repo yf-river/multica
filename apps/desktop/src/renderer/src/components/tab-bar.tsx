@@ -301,10 +301,10 @@ function SortableTabItem({
         e.preventDefault();
         handleClose(e);
       }}
-      aria-label={tab.pinned ? `${title} (pinned)` : title}
+      aria-label={tab.pinned ? `${title}（已固定）` : title}
       data-tab-active={isActive ? "true" : undefined}
       data-tab-entering={isEntering ? "true" : undefined}
-      title={tab.pinned ? `${title} (pinned)` : undefined}
+      title={tab.pinned ? `${title}（已固定）` : undefined}
       style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       className={cn(
         "group relative flex size-full min-w-0 items-center gap-1.5 px-2.5 text-caption transition-colors",
@@ -329,8 +329,8 @@ function SortableTabItem({
         onClick={handleTogglePin}
         onPointerDown={stopDragOnAction}
         role="button"
-        aria-label={tab.pinned ? "Unpin tab" : "Pin tab"}
-        title={tab.pinned ? "Unpin tab" : "Pin tab"}
+        aria-label={tab.pinned ? "取消固定标签页" : "固定标签页"}
+        title={tab.pinned ? "取消固定标签页" : "固定标签页"}
         className="hidden size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors group-hover:flex hover:bg-muted-foreground/20 hover:text-foreground"
       >
         {tab.pinned ? <PinOff className="size-2.5" /> : <Pin className="size-2.5" />}
@@ -340,7 +340,7 @@ function SortableTabItem({
           onClick={handleClose}
           onPointerDown={stopDragOnAction}
           role="button"
-          aria-label="Close tab"
+          aria-label="关闭标签页"
           className="hidden size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors group-hover:flex hover:bg-muted-foreground/20 hover:text-foreground"
         >
           <X className="size-2.5" />
@@ -411,7 +411,7 @@ function SortableTabItem({
               <>
                 <ContextMenuItem onClick={handleOpenAsWindow}>
                   <AppWindow />
-                  Open as new window
+                  在新窗口中打开
                 </ContextMenuItem>
                 <ContextMenuSeparator />
               </>
@@ -420,12 +420,12 @@ function SortableTabItem({
               {tab.pinned ? (
                 <>
                   <PinOff />
-                  Unpin tab
+                  取消固定标签页
                 </>
               ) : (
                 <>
                   <Pin />
-                  Pin tab
+                  固定标签页
                 </>
               )}
             </ContextMenuItem>
@@ -436,7 +436,7 @@ function SortableTabItem({
               onClick={() => closeTab(tab.id)}
             >
               <X />
-              Close tab
+              关闭标签页
             </ContextMenuItem>
             <ContextMenuItem
               variant="destructive"
@@ -444,7 +444,7 @@ function SortableTabItem({
               onClick={() => closeOtherTabs(tab.id)}
             >
               <ListX />
-              Close other tabs
+              关闭其他标签页
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
@@ -536,7 +536,7 @@ function NewTabButton() {
     const activeSlug = useTabStore.getState().activeWorkspaceSlug;
     if (!activeSlug) return;
     const path = paths.workspace(activeSlug).issues();
-    const tabId = addTab(path, "Issues");
+    const tabId = addTab(path, "任务");
     if (tabId) setActiveTab(tabId);
   };
 
@@ -544,8 +544,8 @@ function NewTabButton() {
     <button
       type="button"
       onClick={handleClick}
-      aria-label="New tab"
-      title="New tab"
+      aria-label="新建标签页"
+      title="新建标签页"
       style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       className="mb-1 flex size-7 shrink-0 items-center justify-center self-end rounded-md text-faint-foreground transition-colors hover:bg-muted/50 hover:text-muted-foreground"
     >

@@ -18,7 +18,7 @@
     "last_run_empty": "--",
     "empty": {
       "title": "还没有自动化",
-      "hint": "为你的智能体安排周期性 task。从模板选一个，或从空白开始。"
+      "hint": "为你的智能体安排周期性任务。从模板选一个，或从空白开始。"
     },
     "scope_all": "全部",
     "no_matches": "没有匹配的自动化",
@@ -46,8 +46,8 @@
       "summary": "搜索并汇总今天的新闻给团队"
     },
     "pr_review": {
-      "title": "PR review 提醒",
-      "summary": "标记需要 review 的滞留 pull request"
+      "title": "PR 审查提醒",
+      "summary": "标记需要审查的滞留 合并请求"
     },
     "bug_triage": {
       "title": "Bug 分诊",
@@ -96,7 +96,7 @@
     "field_project": "关联项目",
     "no_project": "不关联项目",
     "project_unavailable": "项目不可用",
-    "field_prompt": "Prompt",
+    "field_prompt": "提示词",
     "field_subscribers": "订阅者",
     "field_subscribers_none": "无",
     "add_trigger": "添加触发器",
@@ -151,7 +151,7 @@
   "webhook_payload": {
     "label": "Webhook 事件：",
     "unknown_event": "webhook.received",
-    "payload": "Payload",
+    "payload": "载荷",
     "content_type": "Content-Type：{{type}}",
     "copy": "复制",
     "copied": "已复制 Webhook payload",
@@ -259,12 +259,12 @@
     "sr_edit": "编辑自动化",
     "header_create": "新建自动化",
     "header_edit": "编辑自动化",
-    "subtitle": "周期性的 AI task",
+    "subtitle": "周期性的 AI 任务",
     "expand": "展开",
     "collapse": "收起",
     "close": "关闭",
     "title_placeholder": "自动化名称",
-    "runbook_label": "Runbook",
+    "runbook_label": "运行手册",
     "runbook_hint": "智能体每次运行时读取",
     "description_placeholder": "# 目标\n你希望智能体完成什么？\n\n# 上下文\n这是给谁的？有什么约束？\n\n# 步骤\n1. ...\n2. ...",
     "auto_run_hint": "保存后会自动运行，直到暂停。",

@@ -2,10 +2,11 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enOnboarding from "../../locales/en/onboarding.json";
-import enWorkspace from "../../locales/en/workspace.json";
+import enCommon from "../../locales-test/en/common.json";
+import enOnboarding from "../../locales-test/en/onboarding.json";
+import enWorkspace from "../../locales-test/en/workspace.json";
 import type { Workspace } from "@multica/core/types";
+import { CELESTIAL_WORKSPACE_NAMES } from "../../workspace/celestial-workspace-names";
 
 const TEST_RESOURCES = {
   en: {
@@ -173,12 +174,12 @@ describe("StepWorkspace — random workspace identity", () => {
 
     const name = screen.getByLabelText("Workspace name") as HTMLInputElement;
     const slug = screen.getByLabelText("URL") as HTMLInputElement;
-    const expectedSlugPrefix = name.value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
+    const expectedSlugPrefix = CELESTIAL_WORKSPACE_NAMES.find(
+      (candidate) => candidate.name === name.value,
+    )?.slugBase;
 
     expect(name.value).not.toBe("");
+    expect(expectedSlugPrefix).toBeTruthy();
     expect(slug.value).toMatch(
       new RegExp(`^${expectedSlugPrefix}-[a-z0-9]{4}$`),
     );

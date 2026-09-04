@@ -23,10 +23,6 @@ interface DesktopAPI {
     version: string;
     os: "macos" | "windows" | "linux" | "unknown";
   };
-  /** OS-preferred locale (BCP 47) injected by main via additionalArguments. */
-  systemLocale: string;
-  /** Subscribe to OS language changes detected after boot. Returns an unsubscribe function. */
-  onSystemLocaleChanged: (callback: (locale: string) => void) => () => void;
   /** Validated runtime endpoint config, or a blocking config error. */
   runtimeConfig: RuntimeConfigResult;
   /** Main tabbed window or a dedicated issue-only window. */

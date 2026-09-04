@@ -64,11 +64,11 @@ export default function ProjectsPage() {
       ) : error ? (
         <View className="px-4 gap-3 pt-4">
           <Text className="text-sm text-destructive">
-            Failed to load projects:{" "}
-            {error instanceof Error ? error.message : "unknown error"}
+            加载项目失败：{" "}
+            {error instanceof Error ? error.message : "未知错误"}
           </Text>
           <Button variant="outline" onPress={() => refetch()}>
-            <Text>Retry</Text>
+            <Text>重试</Text>
           </Button>
         </View>
       ) : sorted.length === 0 ? (
@@ -103,7 +103,7 @@ function PlusButton({ onPress }: { onPress: () => void }) {
     <IconButton
       name="add"
       onPress={onPress}
-      accessibilityLabel="New project"
+      accessibilityLabel="新建项目"
     />
   );
 }
@@ -119,7 +119,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
         lead.
       </Text>
       <Button variant="default" onPress={onCreate}>
-        <Text>Create project</Text>
+        <Text>创建项目</Text>
       </Button>
     </View>
   );

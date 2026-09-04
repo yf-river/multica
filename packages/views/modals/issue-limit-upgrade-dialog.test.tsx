@@ -17,8 +17,8 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
-import enCommon from "../locales/en/common.json";
-import enModals from "../locales/en/modals.json";
+import enCommon from "../locales-test/en/common.json";
+import enModals from "../locales-test/en/modals.json";
 
 interface AvailableActions {
   checkout: boolean;

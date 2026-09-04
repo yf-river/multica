@@ -110,13 +110,13 @@ function IssueWindowUnavailable() {
           <AlertTriangle className="size-6" aria-hidden="true" />
         </div>
         <div className="space-y-1">
-          <h1 className="text-title font-semibold">Issue unavailable</h1>
+          <h1 className="text-title font-semibold">任务不可用</h1>
           <p className="text-body text-muted-foreground">
-            This workspace is no longer available in your account.
+            此工作区已不在你的账号中。
           </p>
         </div>
         <Button variant="outline" onClick={() => window.desktopAPI.closeWindow()}>
-          Close window
+          关闭窗口
         </Button>
       </div>
     </IssueWindowFrame>
@@ -125,7 +125,7 @@ function IssueWindowUnavailable() {
 
 function IssueWindowRouteError() {
   const error = useRouteError();
-  const message = error instanceof Error ? error.message : "Unknown route error";
+  const message = error instanceof Error ? error.message : "未知页面错误";
 
   return (
     <IssueWindowFrame>
@@ -137,7 +137,7 @@ function IssueWindowRouteError() {
           <AlertTriangle className="size-6" aria-hidden="true" />
         </div>
         <div className="space-y-1">
-          <h1 className="text-title font-semibold">Something went wrong</h1>
+          <h1 className="text-title font-semibold">发生错误</h1>
           <p className="max-w-lg truncate text-body text-muted-foreground">
             {message}
           </p>
@@ -145,11 +145,11 @@ function IssueWindowRouteError() {
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => window.location.reload()}>
             <RotateCw className="size-4" aria-hidden="true" />
-            Reload
+            重新加载
           </Button>
           <Button variant="outline" onClick={() => window.desktopAPI.closeWindow()}>
             <X className="size-4" aria-hidden="true" />
-            Close window
+            关闭窗口
           </Button>
         </div>
       </div>

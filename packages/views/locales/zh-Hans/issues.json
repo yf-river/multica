@@ -332,7 +332,7 @@
     "select_sub_issue_aria": "选择 {{identifier}}",
     "section_properties": "属性",
     "section_parent_issue": "父任务",
-    "section_pull_requests": "Pull Request",
+    "section_pull_requests": "合并请求",
     "section_metadata": "元数据",
     "section_details": "详情",
     "section_quick_actions": "快捷操作",
@@ -340,7 +340,7 @@
     "quick_action_runs_as": "由 {{name}} 执行",
     "quick_action_target_fallback": "该智能体",
     "quick_action_queued": "{{name}} 已开始处理",
-    "quick_action_coalesced": "已加入 {{name}} 当前的 task",
+    "quick_action_coalesced": "已加入 {{name}} 当前的任务",
     "quick_action_deferred": "{{name}} 当前离线，上线后开始",
     "quick_action_blocked": "无法触发 {{name}}",
     "quick_action_posted": "评论已发布",
@@ -349,10 +349,10 @@
     "quick_action_blocked_ok": "知道了",
     "pull_requests_loading": "加载中...",
     "pull_requests_empty": "还没有关联的 PR。在 PR 的分支名、标题或正文里引用本任务的 identifier 即可自动关联。",
-    "pull_request_state_open": "Open",
-    "pull_request_state_draft": "Draft",
-    "pull_request_state_merged": "Merged",
-    "pull_request_state_closed": "Closed",
+    "pull_request_state_open": "开放",
+    "pull_request_state_draft": "草稿",
+    "pull_request_state_merged": "已合并",
+    "pull_request_state_closed": "已关闭",
     "pull_request_checks_none": "暂无检查",
     "pull_request_checks_all_passed": "全部检查通过（{{total}}/{{total}}）",
     "pull_request_checks_running": "{{passed}}/{{total}} · {{running}} 个进行中",
@@ -456,8 +456,8 @@
     "due_date_removed": "移除了截止日期",
     "title_renamed": "把这个任务从\"{{from}}\"重命名为\"{{to}}\"",
     "description_updated": "更新了描述",
-    "task_completed_other": "完成了 task（{{count}} 次）",
-    "task_failed_other": "task 失败（{{count}} 次）",
+    "task_completed_other": "完成了任务（{{count}} 次）",
+    "task_failed_other": "任务失败（{{count}} 次）",
     "squad_leader_evaluated": "评估了小队触发",
     "squad_leader_action": "已评估并采取了操作",
     "squad_leader_action_reason": "已评估并采取了操作：{{reason}}",
@@ -504,8 +504,8 @@
     "reply_count_other": "{{count}} 条回复",
     "leave_comment_placeholder": "留下评论...",
     "send_tooltip": "发送",
-    "trigger_source_issue_assignee": "assignee",
-    "trigger_source_mention_agent": "@mention",
+    "trigger_source_issue_assignee": "负责人",
+    "trigger_source_mention_agent": "@提及",
     "trigger_source_mention_squad_leader": "小队",
     "trigger_source_unknown": "将触发",
     "trigger_skipped_label": "已跳过",
@@ -542,14 +542,14 @@
   },
   "agent_activity": {
     "hover_header_other": "{{count}} 个智能体工作中",
-    "hover_header_tasks_other": "{{count}} 个 task 工作中",
+    "hover_header_tasks_other": "{{count}} 个任务工作中",
     "hover_header_queued_other": "{{count}} 个智能体排队中",
     "status_running": "正在工作",
     "status_queued": "排队中",
     "empty_hover": "当前没有智能体在工作",
     "unknown_hover": "工作中的智能体：尚未加载",
     "filter_active_label": "正在查看有智能体在工作的任务",
-    "tasks_count_other": "{{count}} 个 task",
+    "tasks_count_other": "{{count}} 个任务",
     "chip_agents_working_other": "{{count}} 个智能体工作中",
     "issues_count_other": "{{count}} 个任务",
     "chip_agents_working_unknown": "工作中的智能体：—"
@@ -569,20 +569,20 @@
     "transcript_button": "查看记录",
     "stop_button": "停止",
     "stop_tooltip": "停止智能体",
-    "cancel_failed": "取消 task 失败"
+    "cancel_failed": "取消任务失败"
   },
   "execution_log": {
     "section": "执行日志",
     "show_past": "显示历史运行（{{count}}）",
     "hide_past": "隐藏历史运行（{{count}}）",
-    "cancel_task_tooltip": "取消 task",
-    "cancel_task_aria": "取消 task",
-    "retry_task_tooltip": "重试 task",
-    "retry_task_aria": "重试 task",
-    "retry_failed": "重试 task 失败",
+    "cancel_task_tooltip": "取消任务",
+    "cancel_task_aria": "取消任务",
+    "retry_task_tooltip": "重试任务",
+    "retry_task_aria": "重试任务",
+    "retry_failed": "重试任务失败",
     "retry_blocked": "未重试——你没有该智能体的使用权限",
     "transcript_tooltip": "查看记录",
-    "cancel_failed": "取消 task 失败",
+    "cancel_failed": "取消任务失败",
     "trigger_retry": "重试",
     "trigger_retry_attempt": "重试 #{{attempt}}",
     "trigger_retry_attempt_prefix": "重试 #{{attempt}} · ",
@@ -621,7 +621,7 @@
     "kpi_cost_hint_other": "{{count}} 次失败运行占 {{pct}}%",
     "kpi_cache": "缓存节省",
     "kpi_cache_hint": "命中率 {{pct}}% · 读取 {{reads}}",
-    "kpi_tokens": "Token",
+    "kpi_tokens": "令牌",
     "kpi_tokens_hint": "输入 {{input}} · 输出 {{output}}",
     "by_agent": "按智能体分摊",
     "by_agent_total": "合计 {{cost}}",
@@ -632,7 +632,7 @@
     "col_output": "输出",
     "col_cache_read": "缓存读",
     "col_cache_write": "缓存写",
-    "col_tokens": "Token",
+    "col_tokens": "令牌",
     "col_cost": "费用",
     "total": "合计",
     "note_unpriced_other": "有 {{count}} 次运行没有用量记录，不计入合计。",
@@ -640,11 +640,11 @@
     "note_estimate": "费用按各模型公开价目估算；供应商回报实际费用时以回报值为准。"
   },
   "terminate_dialog": {
-    "title": "确定停止该 task？",
-    "body": "task 会被取消且无法恢复。",
-    "running_note": " 进行中的 task 可能需要几秒才能完全停止。",
+    "title": "确定停止该任务？",
+    "body": "任务会被取消且无法恢复。",
+    "running_note": " 进行中的任务可能需要几秒才能完全停止。",
     "keep": "保留运行",
-    "confirm": "停止 task"
+    "confirm": "停止任务"
   },
   "batch": {
     "selected": "已选择 {{count}} 个",
@@ -767,10 +767,10 @@
   },
   "backlog_hint": {
     "title": "智能体在 backlog 状态下暂停",
-    "description": "这个任务处于待规划状态，被分配的智能体会等待。准备启动时把它移到 todo。",
-    "row_backlog_label": "backlog",
+    "description": "这个任务处于待规划状态，被分配的智能体会等待。准备启动时把它移到待办。",
+    "row_backlog_label": "待规划",
     "row_backlog_hint": "智能体保持暂停",
-    "row_todo_label": "todo",
+    "row_todo_label": "待办",
     "row_todo_hint": "启动智能体"
   },
   "save_view": {
@@ -795,7 +795,7 @@
     "display_defaults": "默认显示",
     "default_hint": "成员首次打开此视图时的显示方式，之后各自可调",
     "add_filter": "添加筛选",
-    "name_placeholder": "例如：需要 Review",
+    "name_placeholder": "例如：需要审查",
     "cancel": "取消",
     "name_required": "请输入视图名称",
     "toast_created": "视图已创建",
@@ -847,7 +847,7 @@
     "more_label": "更多视图"
   },
   "plugins": {
-    "panels": "Plugins",
+    "panels": "插件",
     "surface_failed": "{{name}} 的界面加载失败。",
     "hook_succeeded": "{{name}} 已完成。",
     "hook_failed": "{{name}} 执行失败。",
@@ -857,5 +857,17 @@
     "surface_loading": "正在加载 {{name}}…",
     "surface_unavailable": "{{name}} 的界面无法加载，已安装的版本可能不包含它。",
     "surface_navigated": "{{name}} 试图把面板替换成从别处加载的页面。已经拦下并断开连接，建议告知工作区管理员。"
+  },
+  "external_source": {
+    "tapd": "TAPD 来源",
+    "gongfeng": "工蜂来源",
+    "open": "打开原始来源",
+    "statuses": {
+      "fetched": "已读取",
+      "fetch_failed": "读取失败",
+      "blocked_missing_profile": "缺少账号",
+      "pending_mcp_fetch": "等待读取",
+      "unread": "尚未读取"
+    }
   }
 }

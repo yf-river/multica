@@ -20,7 +20,7 @@ vi.mock("../issues/hooks", () => ({
 // to "". Resolve against the real EN bundle instead — the editor tree only ever
 // uses the `editor` namespace — so tests can select controls by accessible name.
 vi.mock("../i18n", async () => {
-  const editor = (await import("../locales/en/editor.json")).default;
+  const editor = (await import("../locales-test/en/editor.json")).default;
   return {
     useT: () => ({ t: (select: (bundle: typeof editor) => string) => select(editor) }),
     useTimeAgo: () => "just now",

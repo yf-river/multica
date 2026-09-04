@@ -38,6 +38,7 @@ func registerDurableTerminalReceipts(dispatcher *eventoutbox.Dispatcher) error {
 		protocol.EventAgentArchived,
 		protocol.EventAgentRestored,
 		protocol.EventTaskQueued,
+		protocol.EventTaskDeferred,
 		protocol.EventTaskDispatch,
 		protocol.EventTaskRunning,
 		protocol.EventTaskWaitingLocalDirectory,

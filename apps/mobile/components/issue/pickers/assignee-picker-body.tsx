@@ -1,6 +1,6 @@
 /**
  * Pure picker body for issue assignee — polymorphic single-select over
- * members + agents + squads, plus an "Unassigned" option. See
+ * members + agents + squads, plus an "未分配" option. See
  * status-picker-body.tsx for the split rationale.
  *
  * Mirrors web `packages/views/issues/components/pickers/assignee-picker.tsx`
@@ -184,7 +184,7 @@ export function AssigneePickerBody({ value, query, onChange }: Props) {
           )}
           <Text className="flex-1 text-base text-foreground">
             {item.kind === "unassigned"
-              ? "Unassigned"
+              ? "未分配"
               : item.kind === "member"
                 ? item.member.name
                 : item.kind === "agent"
@@ -197,11 +197,11 @@ export function AssigneePickerBody({ value, query, onChange }: Props) {
               the same row. Members carry no tag (they're the default actor). */}
           {item.kind === "agent" ? (
             <Text className="text-sm text-muted-foreground">
-              {isAgentRuntimeBound(item.agent) ? "Agent" : "Needs runtime"}
+              {isAgentRuntimeBound(item.agent) ? "Agent" : "需要运行时"}
             </Text>
           ) : item.kind === "squad" ? (
             <Text className="text-sm text-muted-foreground">
-              {needsRuntime ? "Leader needs runtime" : "Squad"}
+              {needsRuntime ? "队长需要运行时" : "小队"}
             </Text>
           ) : null}
           {isSelected(item) ? (
@@ -212,7 +212,7 @@ export function AssigneePickerBody({ value, query, onChange }: Props) {
       }}
       ListEmptyComponent={
         <View className="px-3 py-8 items-center">
-          <Text className="text-sm text-muted-foreground">No matches.</Text>
+          <Text className="text-sm text-muted-foreground">没有匹配结果。</Text>
         </View>
       }
     />

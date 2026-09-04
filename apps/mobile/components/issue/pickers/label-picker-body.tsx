@@ -118,7 +118,7 @@ export function LabelPickerBody({
               style={{ backgroundColor: pickInlineColor(item.name) }}
             />
             <Text className="flex-1 text-base text-foreground">
-              Create &ldquo;{item.name}&rdquo;
+              创建“{item.name}”
             </Text>
             <Ionicons name="add" size={20} color={checkColor} />
           </Pressable>
@@ -147,8 +147,8 @@ export function LabelPickerBody({
         <View className="px-3 py-8 items-center">
           <Text className="text-sm text-muted-foreground text-center">
             {query
-              ? "No matches."
-              : "No labels in this workspace yet."}
+              ? "没有匹配结果。"
+              : "这个工作区还没有标签。"}
           </Text>
         </View>
       }

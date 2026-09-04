@@ -27,13 +27,13 @@ function CallbackContent() {
   useEffect(() => {
     const code = searchParams.get("code");
     if (!code) {
-      setError("Missing authorization code");
+      setError("缺少授权码");
       return;
     }
 
     const errorParam = searchParams.get("error");
     if (errorParam) {
-      setError(errorParam === "access_denied" ? "Access denied" : errorParam);
+      setError(errorParam === "access_denied" ? "访问被拒绝" : errorParam);
       return;
     }
 
@@ -74,7 +74,7 @@ function CallbackContent() {
           redirectToCliCallback(cliCallback, token, cliState);
         })
         .catch((err) => {
-          setError(err instanceof Error ? err.message : "Login failed");
+          setError(err instanceof Error ? err.message : "登录失败");
         });
     } else {
       // Normal web flow
@@ -124,7 +124,7 @@ function CallbackContent() {
           router.push(resolvePostAuthDestination(wsList, onboarded));
         })
         .catch((err) => {
-          setError(err instanceof Error ? err.message : "Login failed");
+          setError(err instanceof Error ? err.message : "登录失败");
         });
     }
   }, [searchParams, loginWithGoogle, router, qc]);
@@ -134,7 +134,7 @@ function CallbackContent() {
       <div className="flex min-h-screen items-center justify-center">
         <Card className="w-full max-w-sm">
           <CardHeader className="text-center">
-            <CardTitle className="text-display-sm">Login Failed</CardTitle>
+            <CardTitle className="text-display-sm">登录失败</CardTitle>
             <CardDescription>{error}</CardDescription>
           </CardHeader>
           <CardContent className="flex justify-center">
@@ -151,8 +151,8 @@ function CallbackContent() {
     <div className="flex min-h-screen items-center justify-center">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <CardTitle className="text-display-sm">Signing in...</CardTitle>
-          <CardDescription>Please wait while we complete your login</CardDescription>
+          <CardTitle className="text-display-sm">正在登录……</CardTitle>
+          <CardDescription>请稍候，正在完成登录</CardDescription>
         </CardHeader>
         <CardContent className="flex justify-center">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />

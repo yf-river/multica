@@ -3,8 +3,8 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 import { render as rtlRender, screen, type RenderOptions } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enSettings from "../../locales/en/settings.json";
+import enCommon from "../../locales-test/en/common.json";
+import enSettings from "../../locales-test/en/settings.json";
 
 const TEST_RESOURCES = {
   en: { common: enCommon, settings: enSettings },

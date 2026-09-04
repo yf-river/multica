@@ -76,11 +76,11 @@ export default function PinsPage() {
     return (
       <View className="flex-1 bg-background px-4 gap-3 pt-4">
         <Text className="text-sm text-destructive">
-          Failed to load pins:{" "}
-          {error instanceof Error ? error.message : "unknown error"}
+          加载固定项失败：{" "}
+          {error instanceof Error ? error.message : "未知错误"}
         </Text>
         <Button variant="outline" onPress={() => refetch()}>
-          <Text>Retry</Text>
+          <Text>重试</Text>
         </Button>
       </View>
     );
@@ -220,7 +220,7 @@ function MissingPinRow({
     <Pressable
       onPress={() => deletePin.mutate({ itemType, itemId })}
       className="px-4 py-3 flex-row items-center gap-3 active:bg-secondary opacity-60"
-      accessibilityLabel={`Unavailable ${itemType}, tap to unpin`}
+      accessibilityLabel={`${itemType} 已不可用，点按可取消固定`}
     >
       <Ionicons
         name="alert-circle-outline"

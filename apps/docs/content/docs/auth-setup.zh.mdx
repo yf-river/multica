@@ -7,7 +7,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 
 
-邮件可以通过 Resend 或 SMTP 发送。两者同时配置时，`SMTP_HOST` 优先。
+登录使用账号和密码，不依赖邮箱验证码。工作区邀请邮件可以通过 Resend 或 SMTP 发送；两者同时配置时，`SMTP_HOST` 优先。
 
 ### 使用 Resend
 
@@ -53,18 +53,7 @@ SMTP_EHLO_NAME=mail.example.com
 
 ### 无邮件服务时的行为
 
-
-启动日志会说明当前使用的是 `Resend API`、`SMTP relay` 还是 `DEV mode`。
-
-
-
-```dotenv
-APP_ENV=development
-```
-
-
-<Callout type="warning">
-</Callout>
+不配置邮件服务不会影响账号密码登录。邀请记录仍会创建，但系统不会发送邀请邮件。
 
 ## Google 登录
 

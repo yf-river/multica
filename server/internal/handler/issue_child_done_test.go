@@ -599,7 +599,7 @@ func TestStageLeaderPrepareTimeoutRetryCanAdvanceNextStage(t *testing.T) {
 
 	updateChildStatus(t, fx.child.ID, "done")
 	content := parentSystemCommentContent(t, fx.parent.ID)
-	if !strings.Contains(content, "Stage 2 is next") {
+	if !strings.Contains(content, "下一步是阶段 2") {
 		t.Fatalf("stage barrier comment does not identify Stage 2: %s", content)
 	}
 

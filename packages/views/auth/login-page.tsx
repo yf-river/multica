@@ -42,8 +42,6 @@ interface LoginPageProps {
   onTokenObtained?: () => void;
   /** Slot rendered at the bottom of the sign-in card. */
   extra?: ReactNode;
-  /** Deprecated email/OAuth entry point; retained for callers during migration. */
-  google?: { clientId: string; redirectUri: string; state?: string };
 }
 
 // ---------------------------------------------------------------------------

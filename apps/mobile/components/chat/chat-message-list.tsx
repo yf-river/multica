@@ -464,7 +464,7 @@ function QuickActions({
   return (
     <View
       className="flex-row flex-wrap gap-2 pt-0.5"
-      accessibilityLabel="Suggested follow-ups"
+      accessibilityLabel="后续建议"
     >
       {actions.slice(0, 3).map((action, index) => (
         <Pressable
@@ -514,7 +514,7 @@ function ElapsedCaption({
       ? `Replied in ${formatElapsedMs(elapsedMs)}`
       : variant === "finished"
         ? `Finished in ${formatElapsedMs(elapsedMs)}`
-        : `Failed after ${formatElapsedMs(elapsedMs)}`;
+        : `${formatElapsedMs(elapsedMs)} 后失败`;
   return (
     <Text className="text-xs text-muted-foreground/80 mt-1">{label}</Text>
   );
@@ -558,7 +558,7 @@ function FailureBubble({
             <CollapsibleTrigger asChild>
               <View
                 accessibilityRole="button"
-                accessibilityLabel="Show error details"
+                accessibilityLabel="查看错误详情"
                 className="mt-1 flex-row items-center gap-1 active:opacity-70"
               >
                 <Ionicons

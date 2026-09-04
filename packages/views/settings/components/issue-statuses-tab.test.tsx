@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import type { IssueStatusEntry } from "@multica/core/types";
-import en from "../../locales/en/settings.json";
+import en from "../../locales-test/en/settings.json";
 import { IssueStatusesTab } from "./issue-statuses-tab";
 
 const reorderMutate = vi.hoisted(() => vi.fn());

@@ -2,7 +2,7 @@ import { renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { buildIssueStatusCatalog } from "@multica/core/issue-statuses";
 import type { IssueStatusEntry } from "@multica/core/types";
-import en from "../../locales/en/issues.json";
+import en from "../../locales-test/en/issues.json";
 import { useStatusOptions } from "./status-options";
 import { useStatusLabel } from "./status-label";
 

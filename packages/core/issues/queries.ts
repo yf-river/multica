@@ -177,6 +177,8 @@ export const issueKeys = {
   tasksAll: () => ["issues", "tasks"] as const,
   /** Per-issue task list (issue-detail Execution log section). */
   tasks: (issueId: string) => [...issueKeys.tasksAll(), issueId] as const,
+  executionTreeAll: () => ["issues", "execution-tree"] as const,
+  executionTree: (issueId: string) => [...issueKeys.executionTreeAll(), issueId] as const,
   sourceContextPreview: (wsId: string, anchorCommentId: string) =>
     ["source-context", "preview", wsId, anchorCommentId] as const,
 };
@@ -494,6 +496,13 @@ export function childIssuesOptions(wsId: string, id: string) {
     // staleTime would otherwise reuse an incomplete children snapshot when
     // the parent is opened again, with no later event guaranteed to heal it.
     refetchOnMount: "always",
+  });
+}
+
+export function issueExecutionTreeOptions(issueId: string) {
+  return queryOptions({
+    queryKey: issueKeys.executionTree(issueId),
+    queryFn: () => api.getIssueExecutionTree(issueId),
   });
 }
 

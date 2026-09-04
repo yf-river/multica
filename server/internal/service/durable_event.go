@@ -92,6 +92,8 @@ func taskLifecycleIdempotencyKey(eventType string, task db.AgentTaskQueue, event
 		return key
 	}
 	switch eventType {
+	case protocol.EventTaskQueued, protocol.EventTaskDeferred:
+		return key
 	case protocol.EventTaskDispatch:
 		if task.DispatchedAt.Valid {
 			return key + ":" + task.DispatchedAt.Time.UTC().Format("20060102150405.999999999")

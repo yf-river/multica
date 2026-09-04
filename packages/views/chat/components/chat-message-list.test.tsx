@@ -5,7 +5,7 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import { chatKeys } from "@multica/core/chat/queries";
 import type { TaskMessagePayload } from "@multica/core/types";
 import type { ReactElement } from "react";
-import enChat from "../../locales/en/chat.json";
+import enChat from "../../locales-test/en/chat.json";
 
 // The live timeline is a real list row rather than Virtuoso chrome (MUL-4922),
 // so it shares one identity with the persisted assistant row and keeps its

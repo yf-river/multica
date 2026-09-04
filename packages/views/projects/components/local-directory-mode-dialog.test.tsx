@@ -4,8 +4,8 @@ import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { LocalDirectoryExecutionMode } from "@multica/core/types";
-import enProjects from "../../locales/en/projects.json";
-import enCommon from "../../locales/en/common.json";
+import enProjects from "../../locales-test/en/projects.json";
+import enCommon from "../../locales-test/en/common.json";
 import { LocalDirectoryModeDialog } from "./local-directory-mode-dialog";
 import type { WorktreeUnavailableReason } from "./local-directory-mode-dialog";
 

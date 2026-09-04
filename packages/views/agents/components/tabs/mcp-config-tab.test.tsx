@@ -7,8 +7,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { ApiError } from "@multica/core/api";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
+import enCommon from "../../../locales-test/en/common.json";
+import enAgents from "../../../locales-test/en/agents.json";
 import { McpConfigTab } from "./mcp-config-tab";
 
 const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };

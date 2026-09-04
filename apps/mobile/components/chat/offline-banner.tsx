@@ -30,7 +30,7 @@ interface Props {
 
 export function OfflineBanner({ agentName, availability }: Props) {
   if (availability !== "offline" && availability !== "unstable") return null;
-  const name = agentName?.trim() || "This agent";
+  const name = agentName?.trim() || "这个智能体";
 
   if (availability === "unstable") {
     return (

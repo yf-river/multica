@@ -21,8 +21,8 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
 }));
 
 vi.mock("../i18n", async () => {
-  const layout = (await import("../locales/en/layout.json")).default;
-  const chat = (await import("../locales/en/chat.json")).default;
+  const layout = (await import("../locales-test/en/layout.json")).default;
+  const chat = (await import("../locales-test/en/chat.json")).default;
   const bundles: Record<string, unknown> = { layout, chat };
   return {
     useT: (ns: string) => ({

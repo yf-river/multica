@@ -1,23 +1,17 @@
 /**
- * Map backend auth errors to user-facing strings. The backend returns raw
- * English messages that are fine for logs but should not surface as-is —
- * we map the known shapes to friendlier copy and fall back to the caller's
- * default for anything unrecognised.
+ * Map backend account/password auth errors to user-facing Chinese strings.
  */
 export function mapAuthError(err: unknown, fallback: string): string {
   if (!(err instanceof Error)) return fallback;
   const msg = err.message.toLowerCase();
   if (/invalid|incorrect|wrong/.test(msg)) {
-    return "That code didn't match. Double-check and try again.";
-  }
-  if (/expired/.test(msg)) {
-    return "That code has expired. Tap resend to get a new one.";
+    return "账号或密码不正确，请检查后重试。";
   }
   if (/rate.?limit|too many|throttle/.test(msg)) {
-    return "Too many attempts. Wait a moment and try again.";
+    return "尝试次数过多，请稍后再试。";
   }
   if (/network|fetch|timeout|unreachable/.test(msg)) {
-    return "Can't reach Multica. Check your connection and retry.";
+    return "无法连接 Multica，请检查网络后重试。";
   }
   return fallback;
 }

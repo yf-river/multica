@@ -21,7 +21,7 @@ export function ChatTitleButton({
   currentAgent,
   onPress,
 }: Props) {
-  const agentName = currentAgent?.name ?? "Chat";
+  const agentName = currentAgent?.name ?? "对话";
   const subtitle = chatSessionDisplayTitle(currentSession?.title);
 
   return (
@@ -30,7 +30,7 @@ export function ChatTitleButton({
       hitSlop={4}
       className="flex-row items-center gap-2 px-2 py-1 rounded-lg active:bg-secondary"
       accessibilityRole="button"
-      accessibilityLabel="Sessions and agent picker"
+      accessibilityLabel="选择会话和智能体"
     >
       <ActorAvatar
         type={currentAgent ? "agent" : null}

@@ -32,7 +32,7 @@ export interface CreateExternalCredentialProfileRequest {
 
 export type UpdateExternalCredentialProfileRequest = Partial<
   Omit<CreateExternalCredentialProfileRequest, "provider">
->;
+> & { status?: ExternalCredentialStatus };
 
 export type TestExternalCredentialProfileRequest = Pick<
   CreateExternalCredentialProfileRequest,

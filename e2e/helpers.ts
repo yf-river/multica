@@ -4,7 +4,8 @@ import { TestApiClient } from "./fixtures";
 const DEFAULT_E2E_NAME = "E2E User";
 const E2E_WORKER = process.env.TEST_PARALLEL_INDEX ?? process.env.TEST_WORKER_INDEX ?? "0";
 const E2E_RUN_ID = process.env.E2E_RUN_ID ?? `${Date.now().toString(36)}-${process.pid.toString(36)}`;
-const DEFAULT_E2E_ACCOUNT = `e2e-${E2E_WORKER}-${E2E_RUN_ID}`;
+const DEFAULT_E2E_ACCOUNT = process.env.E2E_ACCOUNT ?? "develop";
+const DEFAULT_E2E_PASSWORD = process.env.E2E_PASSWORD ?? "develop123";
 const DEFAULT_E2E_WORKSPACE = `e2e-workspace-${E2E_WORKER}-${E2E_RUN_ID}`;
 
 async function waitForIssuesPage(page: Page) {
@@ -36,7 +37,7 @@ export async function reloadAppPage(page: Page) {
  */
 export async function loginAsDefault(page: Page): Promise<string> {
   const api = new TestApiClient();
-  await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME);
+  await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME, DEFAULT_E2E_PASSWORD);
   const workspace = await api.ensureWorkspace(
     `E2E Workspace ${E2E_WORKER}`,
     DEFAULT_E2E_WORKSPACE,
@@ -63,7 +64,7 @@ export async function loginAsDefault(page: Page): Promise<string> {
  */
 export async function createTestApi(): Promise<TestApiClient> {
   const api = new TestApiClient();
-  await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME);
+  await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME, DEFAULT_E2E_PASSWORD);
   await api.ensureWorkspace(`E2E Workspace ${E2E_WORKER}`, DEFAULT_E2E_WORKSPACE);
   await api.markUserOnboarded();
   return api;

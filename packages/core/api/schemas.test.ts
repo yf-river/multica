@@ -14,6 +14,13 @@ import {
   EMPTY_LIST_TELEGRAM_INSTALLATIONS_RESPONSE,
   EMPTY_REDEEM_TELEGRAM_BINDING_TOKEN_RESPONSE,
   AgentTaskListSchema,
+  EMPTY_ISSUE_EXECUTION_TREE_RESPONSE,
+  IssueExecutionTreeResponseSchema,
+  IssueTraceEventsResponseSchema,
+  ExternalCredentialProfileListSchema,
+  TestExternalCredentialProfileResponseSchema,
+  WorkspaceRepoProbeResponseSchema,
+  WorkspaceRepoSchema,
   AutopilotQuotaUsageSchema,
   AutopilotRunSchema,
   FALLBACK_AUTOPILOT_RUN,
@@ -73,6 +80,79 @@ import {
   EMPTY_ISSUE_STATUS_ENTRY,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
+
+describe("issue execution review schemas", () => {
+  it("degrades a malformed execution tree to an empty review", () => {
+    const parsed = parseWithFallback(
+      { root: { issue: null } },
+      IssueExecutionTreeResponseSchema,
+      EMPTY_ISSUE_EXECUTION_TREE_RESPONSE,
+      { endpoint: "GET /api/issues/:id/execution-tree" },
+    );
+    expect(parsed.root.issue.id).toBe("");
+    expect(parsed.root.tasks).toEqual([]);
+  });
+
+  it("degrades malformed trace events to an empty list", () => {
+    const parsed = parseWithFallback(
+      { events: [{ id: 1 }] },
+      IssueTraceEventsResponseSchema,
+      { events: [] },
+      { endpoint: "GET /api/issues/:id/trace" },
+    );
+    expect(parsed.events).toEqual([]);
+  });
+});
+
+describe("external credential schemas", () => {
+  it("rejects malformed credential rows instead of exposing partial secrets", () => {
+    const parsed = parseWithFallback(
+      { profiles: [{ id: "profile-1", provider: "tapd" }] },
+      ExternalCredentialProfileListSchema,
+      { profiles: [] },
+      { endpoint: "GET /api/external-credential-profiles" },
+    );
+    expect(parsed.profiles).toEqual([]);
+  });
+
+  it("uses an explicit failed result for malformed credential tests", () => {
+    const parsed = parseWithFallback(
+      { ok: true },
+      TestExternalCredentialProfileResponseSchema,
+      { status: "failed", last_error: "账号测试响应格式无效" },
+      { endpoint: "POST /api/external-credential-profiles/test" },
+    );
+    expect(parsed.status).toBe("failed");
+  });
+});
+
+describe("workspace Gongfeng repository schemas", () => {
+  it("parses the probed project and branch choices", () => {
+    expect(
+      WorkspaceRepoProbeResponseSchema.parse({
+        url: "https://git.code.tencent.com/team/project.git",
+        project_path: "team/project",
+        default_branch: "main",
+        branches: ["main", "release"],
+        connection_status: "connected",
+        test_status: "passed",
+      }),
+    ).toMatchObject({
+      provider: "gongfeng",
+      project_path: "team/project",
+      branches: ["main", "release"],
+    });
+  });
+
+  it("rejects a resolved repository without a clone URL", () => {
+    expect(() =>
+      WorkspaceRepoSchema.parse({
+        provider: "gongfeng",
+        project_path: "team/project",
+      }),
+    ).toThrow();
+  });
+});
 
 const baseIssue = {
   id: "11111111-1111-1111-1111-111111111111",

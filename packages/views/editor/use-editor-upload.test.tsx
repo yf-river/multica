@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enEditor from "../locales/en/editor.json";
+import enEditor from "../locales-test/en/editor.json";
 
 const mockToastError = vi.hoisted(() => vi.fn());
 const mockUploadFile = vi.hoisted(() => vi.fn());

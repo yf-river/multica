@@ -3,7 +3,6 @@ packages:
   - packages/*
 
 catalog:
-  '@formatjs/intl-localematcher': ^0.8.4
   '@tailwindcss/postcss': ^4
   '@tailwindcss/vite': ^4
   '@tanstack/react-query': ^5.96.2
@@ -39,5 +38,6 @@ catalog:
   unicode-animations: ^1.0.3
   vitest: ^4.1.0
   yaml: ^2.6.0
+  xlsx: ^0.18.5
   zod: ^4.1.5
   zustand: ^5.0.0

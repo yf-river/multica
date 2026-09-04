@@ -261,6 +261,7 @@ func buildPromptBody(task Task, provider string) string {
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Scan the threads first with `multica issue comment list %s --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `--since` incremental polling, pagination, and folding, see `multica issue comment list --help`.\n", task.IssueID)
+	writeSourceContextPrompt(&b, task)
 	return b.String()
 }
 
@@ -493,6 +494,7 @@ func buildCommentPrompt(task Task, provider string) string {
 	} else {
 		fmt.Fprintf(&b, "Read the discussion: scan with `multica issue comment list %s --roots-only --summary --compact --output json`, then expand what matters with `--thread <thread-id> --tail 30`.\n\n", task.IssueID)
 	}
+	writeSourceContextPrompt(&b, task)
 	// Reply routing. When this run coalesced comments spanning MORE THAN ONE
 	// root thread, answer each thread in its own thread instead of dumping one
 	// merged comment (MUL-4348). Same-thread follow-ups collapse to a single
@@ -897,4 +899,44 @@ func taskIsSquadLeader(task Task) bool {
 		return task.Agent != nil && strings.Contains(task.Agent.Instructions, squadBriefingMarker)
 	}
 	return task.IsLeaderTask || task.SquadID != ""
+}
+
+func writeSourceContextPrompt(b *strings.Builder, task Task) {
+	if task.SourceContext == nil {
+		return
+	}
+	source := task.SourceContext
+	b.WriteString("\n外部来源：\n")
+	if source.Provider != "" {
+		fmt.Fprintf(b, "- 来源：%s\n", source.Provider)
+	}
+	if source.URL != "" {
+		fmt.Fprintf(b, "- 地址：%s\n", source.URL)
+	}
+	if source.TAPD != nil {
+		tapd := source.TAPD
+		fmt.Fprintf(b, "- TAPD：workspace_id=%s resource_type=%s resource_id=%s fetch_status=%s\n", tapd.WorkspaceID, tapd.ResourceType, tapd.ResourceID, tapd.FetchStatus)
+		switch tapd.FetchStatus {
+		case "fetched":
+			b.WriteString("- 平台已经取得 TAPD 原文，请使用下列证据，不要再次猜测或重复抓取。\n")
+			if tapd.Title != "" {
+				fmt.Fprintf(b, "- 标题：%s\n", tapd.Title)
+			}
+			if tapd.Summary != "" {
+				fmt.Fprintf(b, "- 摘要：%s\n", tapd.Summary)
+			}
+			if tapd.BodyExcerpt != "" {
+				fmt.Fprintf(b, "- 正文摘录：%s\n", tapd.BodyExcerpt)
+			}
+		case "fetch_failed":
+			fmt.Fprintf(b, "- TAPD 读取失败：%s。不得声称已经读过；先从任务描述和评论寻找人工补充，否则明确说明缺失。\n", tapd.FetchError)
+		default:
+			if strings.HasPrefix(tapd.FetchStatus, "blocked") {
+				b.WriteString("- TAPD 账号尚未配置，停止猜测并请用户先在设置中配置账号。\n")
+			} else {
+				fmt.Fprintf(b, "- 开始工作前通过 TAPD MCP 读取来源；成功后运行 `multica issue source-fetch %s --provider tapd --status fetched ...` 记录证据。\n", task.IssueID)
+			}
+		}
+	}
+	b.WriteString("\n")
 }

@@ -43,7 +43,7 @@ function useContentLinkHandler(
           // thing the adapter's openInNewTab produces.
           void window.desktopAPI.openIssueWindow({
             path: issuePath.path,
-            title: "Issue",
+            title: "任务",
           });
           return;
         }

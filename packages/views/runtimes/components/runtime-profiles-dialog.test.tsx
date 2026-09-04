@@ -4,8 +4,8 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { RuntimeProfile } from "@multica/core/types";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
+import enCommon from "../../locales-test/en/common.json";
+import enRuntimes from "../../locales-test/en/runtimes.json";
 
 const queryState = vi.hoisted(() => ({
   profiles: [] as RuntimeProfile[],
@@ -237,7 +237,7 @@ describe("RuntimeProfilesDialog", () => {
     expect(screen.getByText(/from Studio Mac/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View setup guide" })).toHaveAttribute(
       "href",
-      "https://multica.ai/docs/daemon-runtimes#custom-runtime-profiles",
+      `https://multica.ai/docs/zh/daemon-runtimes#${encodeURIComponent("自定义运行时配置")}`,
     );
     expect(screen.getByText("Step 1 of 2")).toBeInTheDocument();
     expect(

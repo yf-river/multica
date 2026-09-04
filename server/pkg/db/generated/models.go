@@ -292,6 +292,7 @@ type AutopilotTrigger struct {
 	EventFilters    []byte             `json:"event_filters"`
 	PublishedByType pgtype.Text        `json:"published_by_type"`
 	PublishedByID   pgtype.UUID        `json:"published_by_id"`
+	Revision        int64              `json:"revision"`
 }
 
 type ChannelBindingToken struct {
@@ -812,6 +813,8 @@ type Issue struct {
 	Properties         []byte             `json:"properties"`
 	Revision           int64              `json:"revision"`
 	LastActivityAt     pgtype.Timestamptz `json:"last_activity_at"`
+	WorkStartedAt      pgtype.Timestamptz `json:"work_started_at"`
+	WorkCompletedAt    pgtype.Timestamptz `json:"work_completed_at"`
 }
 
 type IssueDependency struct {
@@ -1685,6 +1688,7 @@ type ProjectResource struct {
 	Position     int32              `json:"position"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	CreatedBy    pgtype.UUID        `json:"created_by"`
+	Revision     int64              `json:"revision"`
 }
 
 type QuickAction struct {
@@ -1943,7 +1947,6 @@ type User struct {
 	CloudWaitlistEmail      pgtype.Text        `json:"cloud_waitlist_email"`
 	CloudWaitlistReason     pgtype.Text        `json:"cloud_waitlist_reason"`
 	StarterContentState     pgtype.Text        `json:"starter_content_state"`
-	Language                pgtype.Text        `json:"language"`
 	ProfileDescription      string             `json:"profile_description"`
 	Timezone                pgtype.Text        `json:"timezone"`
 }

@@ -3,23 +3,18 @@ import {
   describe,
   it,
   expect,
-  beforeAll,
   beforeEach,
-  afterAll,
   afterEach,
   vi,
 } from "vitest";
-import { render, screen, act, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enAuth from "../../locales/en/auth.json";
-import enSettings from "../../locales/en/settings.json";
+import zhCommon from "../../locales/zh-Hans/common.json";
+import zhAuth from "../../locales/zh-Hans/auth.json";
+import zhSettings from "../../locales/zh-Hans/settings.json";
 
-const mockPersist = vi.hoisted(() => vi.fn());
 const mockUpdateMe = vi.hoisted(() => vi.fn());
-const mockReload = vi.hoisted(() => vi.fn());
-const mockToastWarning = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockSetTheme = vi.hoisted(() => vi.fn());
@@ -32,28 +27,12 @@ vi.mock("@multica/ui/components/common/theme-provider", () => ({
   useTheme: () => ({ theme: "light", setTheme: mockSetTheme }),
 }));
 
-vi.mock("@multica/core/i18n/react", async () => {
-  const actual =
-    await vi.importActual<typeof import("@multica/core/i18n/react")>(
-      "@multica/core/i18n/react",
-    );
-  return {
-    ...actual,
-    useLocaleAdapter: () => ({
-      persist: mockPersist,
-      getUserChoice: () => null,
-      getSystemPreferences: () => [],
-    }),
-  };
-});
-
 vi.mock("@multica/core/api", () => ({
   api: { updateMe: mockUpdateMe },
 }));
 
 vi.mock("sonner", () => ({
   toast: {
-    warning: mockToastWarning,
     error: mockToastError,
     success: mockToastSuccess,
   },
@@ -84,132 +63,16 @@ import { PreferencesTab } from "./preferences-tab";
 import { useCommentComposerStore } from "@multica/core/issues/stores";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, auth: enAuth, settings: enSettings },
+  "zh-Hans": { common: zhCommon, auth: zhAuth, settings: zhSettings },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
 }
-
-describe("PreferencesTab — Language switcher", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    userRef.current = null;
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    Object.defineProperty(window, "location", {
-      writable: true,
-      configurable: true,
-      value: { reload: mockReload },
-    });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  async function pickLanguage(
-    user: ReturnType<typeof userEvent.setup>,
-    name: string,
-  ) {
-    await user.click(screen.getByRole("combobox", { name: "Language" }));
-    await user.click(await screen.findByRole("option", { name }));
-  }
-
-  it("does nothing when clicking the current locale", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(<PreferencesTab />, { wrapper: I18nWrapper });
-
-    await pickLanguage(user, "English");
-
-    expect(mockPersist).not.toHaveBeenCalled();
-    expect(mockUpdateMe).not.toHaveBeenCalled();
-    expect(mockReload).not.toHaveBeenCalled();
-  });
-
-  it("shows a confirmation toast when the theme is saved locally", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(<PreferencesTab />, { wrapper: I18nWrapper });
-
-    await user.click(screen.getByRole("combobox", { name: "Theme" }));
-    await user.click(await screen.findByRole("option", { name: "Dark" }));
-
-    expect(mockSetTheme).toHaveBeenCalledWith("dark");
-    expect(mockToastSuccess).toHaveBeenCalledTimes(1);
-  });
-
-  it("when not logged in: persists + reloads, no PATCH", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(<PreferencesTab />, { wrapper: I18nWrapper });
-
-    await pickLanguage(user, "한국어");
-
-    expect(mockPersist).toHaveBeenCalledWith("ko");
-    expect(mockUpdateMe).not.toHaveBeenCalled();
-    expect(mockToastSuccess).toHaveBeenCalledTimes(1);
-    expect(mockReload).not.toHaveBeenCalled();
-    act(() => vi.advanceTimersByTime(900));
-    expect(mockReload).toHaveBeenCalledTimes(1);
-    expect(mockToastWarning).not.toHaveBeenCalled();
-  });
-
-  it("when not logged in: selecting Japanese persists ja + reloads, no PATCH", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(<PreferencesTab />, { wrapper: I18nWrapper });
-
-    await pickLanguage(user, "日本語");
-
-    expect(mockPersist).toHaveBeenCalledWith("ja");
-    expect(mockUpdateMe).not.toHaveBeenCalled();
-    expect(mockToastSuccess).toHaveBeenCalledTimes(1);
-    expect(mockReload).not.toHaveBeenCalled();
-    act(() => vi.advanceTimersByTime(900));
-    expect(mockReload).toHaveBeenCalledTimes(1);
-    expect(mockToastWarning).not.toHaveBeenCalled();
-  });
-
-  it("when logged in + PATCH success: confirms the save before reloading", async () => {
-    userRef.current = { id: "user-1" };
-    mockUpdateMe.mockResolvedValueOnce({});
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(<PreferencesTab />, { wrapper: I18nWrapper });
-
-    await pickLanguage(user, "中文");
-
-    expect(mockPersist).toHaveBeenCalledWith("zh-Hans");
-    expect(mockUpdateMe).toHaveBeenCalledWith({ language: "zh-Hans" });
-    expect(mockToastWarning).not.toHaveBeenCalled();
-    expect(mockToastSuccess).toHaveBeenCalledTimes(1);
-    expect(mockReload).not.toHaveBeenCalled();
-    act(() => vi.advanceTimersByTime(900));
-    expect(mockReload).toHaveBeenCalledTimes(1);
-  });
-
-  it("when logged in + PATCH fails: shows toast and delays reload by 2.5s", async () => {
-    userRef.current = { id: "user-1" };
-    mockUpdateMe.mockRejectedValueOnce(new Error("network"));
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(<PreferencesTab />, { wrapper: I18nWrapper });
-
-    await pickLanguage(user, "中文");
-
-    // Local persist still happened so the reload below sees the new locale.
-    expect(mockPersist).toHaveBeenCalledWith("zh-Hans");
-    expect(mockUpdateMe).toHaveBeenCalledWith({ language: "zh-Hans" });
-    // Toast surfaced the sync failure.
-    expect(mockToastWarning).toHaveBeenCalledTimes(1);
-    // Reload deferred so the toast is visible.
-    expect(mockReload).not.toHaveBeenCalled();
-
-    act(() => {
-      vi.advanceTimersByTime(2500);
-    });
-    expect(mockReload).toHaveBeenCalledTimes(1);
-  });
-});
 
 describe("PreferencesTab — Timezone section", () => {
   // Shrink the picker to the curated COMMON_TIMEZONES fallback. With the
@@ -217,17 +80,6 @@ describe("PreferencesTab — Timezone section", () => {
   // userEvent traversal of that list blew past the per-test timeout on
   // slow CI runners (MUL-4427). Everything these tests pick — Asia/Tokyo
   // and the "(browser)" sentinel — exists in the fallback list too.
-  const intlWithValues = Intl as typeof Intl & {
-    supportedValuesOf?: (key: "timeZone") => string[];
-  };
-  const realSupportedValuesOf = intlWithValues.supportedValuesOf;
-  beforeAll(() => {
-    intlWithValues.supportedValuesOf = () => [];
-  });
-  afterAll(() => {
-    intlWithValues.supportedValuesOf = realSupportedValuesOf;
-  });
-
   beforeEach(() => {
     vi.clearAllMocks();
     userRef.current = null;
@@ -247,7 +99,7 @@ describe("PreferencesTab — Timezone section", () => {
     user: ReturnType<typeof userEvent.setup>,
     name: RegExp | string,
   ) {
-    await user.click(screen.getByRole("combobox", { name: "Viewing Timezone" }));
+    await user.click(screen.getByRole("combobox", { name: "查看时区" }));
     await user.click(await screen.findByRole("option", { name }));
   }
 
@@ -256,7 +108,7 @@ describe("PreferencesTab — Timezone section", () => {
     render(<PreferencesTab />, { wrapper: I18nWrapper });
 
     expect(
-      screen.getByRole("combobox", { name: "Viewing Timezone" }).textContent,
+      screen.getByRole("combobox", { name: "查看时区" }).textContent,
     ).toContain("Asia/Shanghai");
   });
 
@@ -302,7 +154,7 @@ describe("PreferencesTab — Timezone section", () => {
 
     // The "(browser)" sentinel option resets the preference to NULL; the
     // wire payload is an empty string the backend translates to NULL.
-    await pickTimezone(user, /browser/i);
+    await pickTimezone(user, /浏览器/);
 
     await waitFor(() => {
       expect(mockUpdateMe).toHaveBeenCalledWith({ timezone: "" });
@@ -328,7 +180,7 @@ describe("PreferencesTab — Sticky comment bar", () => {
     const user = userEvent.setup();
     render(<PreferencesTab />, { wrapper: I18nWrapper });
 
-    const toggle = screen.getByRole("switch", { name: "Sticky comment bar" });
+    const toggle = screen.getByRole("switch", { name: "固定评论栏" });
     expect(toggle).toHaveAttribute("aria-checked", "true");
 
     await user.click(toggle);

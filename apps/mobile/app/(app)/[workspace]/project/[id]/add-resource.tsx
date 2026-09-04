@@ -38,8 +38,8 @@ export default function AddResourceRoute() {
         onSuccess: () => router.back(),
         onError: (err) => {
           Alert.alert(
-            "Failed to attach resource",
-            err instanceof Error ? err.message : "Unknown error",
+            "添加资源失败",
+            err instanceof Error ? err.message : "未知错误",
           );
         },
       },
@@ -61,13 +61,13 @@ export default function AddResourceRoute() {
           }`}
         >
           <Text className="text-sm font-semibold text-primary">
-            {submitting ? "Attaching…" : "Attach"}
+            {submitting ? "正在添加…" : "添加"}
           </Text>
         </Pressable>
       </View>
       <View className="px-4 pt-4 gap-4">
         <View className="gap-1">
-          <Text className="text-xs text-muted-foreground">Repository URL</Text>
+          <Text className="text-xs text-muted-foreground">仓库地址</Text>
           <TextField
             value={url}
             onChangeText={setUrl}
@@ -85,7 +85,7 @@ export default function AddResourceRoute() {
           <TextField
             value={label}
             onChangeText={setLabel}
-            placeholder="e.g. Backend"
+            placeholder="例如：后端"
           />
         </View>
       </View>

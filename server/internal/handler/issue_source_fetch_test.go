@@ -1,0 +1,440 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type issueSourceFetchFixture struct {
+	AgentID string
+	IssueID string
+	TaskID  string
+}
+
+type issueSourceFetchResponse struct {
+	Metadata   map[string]any `json:"metadata"`
+	TraceEvent map[string]any `json:"trace_event"`
+}
+
+func decodeIssueSourceFetchResponse(t *testing.T, w *httptest.ResponseRecorder) issueSourceFetchResponse {
+	t.Helper()
+	var response issueSourceFetchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode source-fetch response: %v", err)
+	}
+	return response
+}
+
+func mustDecodePersistedJSONObject(raw []byte, name string) map[string]any {
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		panic(name + ": " + err.Error())
+	}
+	return value
+}
+
+func clearTapdCredentialProfilesForTest(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	if _, err := testPool.Exec(ctx, `DELETE FROM external_credential_profile WHERE user_id = $1 AND provider = 'tapd'`, testUserID); err != nil {
+		t.Fatalf("clear tapd profiles: %v", err)
+	}
+}
+
+func createTapdCredentialProfileForTest(t *testing.T, secretRef string) {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+		"provider":   "tapd",
+		"name":       fmt.Sprintf("tapd-auto-fetch-%d", time.Now().UnixNano()),
+		"secret_ref": secretRef,
+	})
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	testHandler.CreateExternalCredentialProfile(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func createIssueSourceFetchFixture(t *testing.T, ctx context.Context, runtimeName string, agentName string, metadata map[string]any) issueSourceFetchFixture {
+	t.Helper()
+
+	runtimeID := createClaimReclaimRuntime(t, ctx, runtimeName)
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, agentName)
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+
+	rawMetadata, _ := json.Marshal(metadata)
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET metadata = $2 WHERE id = $1`, issueID, rawMetadata); err != nil {
+		t.Fatalf("set issue metadata: %v", err)
+	}
+
+	return issueSourceFetchFixture{
+		AgentID: agentID,
+		IssueID: issueID,
+		TaskID:  taskID,
+	}
+}
+
+func recordIssueSourceAutoFetchForTest(t *testing.T, fixture issueSourceFetchFixture, failureContext string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/"+fixture.IssueID+"/source-fetch", map[string]any{
+		"provider":   "tapd",
+		"auto_fetch": true,
+	})
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	setTaskTokenActor(req, fixture.AgentID, fixture.TaskID)
+	req = withURLParam(req, "id", fixture.IssueID)
+	testHandler.RecordIssueSourceFetch(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("%s: expected 200, got %d: %s", failureContext, w.Code, w.Body.String())
+	}
+
+	return w
+}
+
+func TestRecordIssueSourceFetchWritesMetadataAndTrace(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Source fetch runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Source fetch agent")
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+
+	body := map[string]any{
+		"provider":      "tapd",
+		"status":        "fetched",
+		"workspace_id":  "47654106",
+		"resource_type": "markdown_wiki",
+		"resource_id":   "1147654106001004154",
+		"title":         "用户快捷入口需求",
+		"summary":       "快捷入口属于当前登录用户。",
+		"body_excerpt":  "快捷入口属于当前登录用户，不同用户之间互不影响。",
+		"version":       "2026-06-18 07:39:03",
+		"duration_ms":   1234,
+	}
+	requestID := "10000000-0000-4000-8000-000000000020"
+	call := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/issues/"+issueID+"/source-fetch", body)
+		setTaskTokenActor(req, agentID, taskID)
+		req.Header.Set("Idempotency-Key", requestID)
+		req = withURLParam(req, "id", issueID)
+		testHandler.RecordIssueSourceFetch(w, req)
+		return w
+	}
+
+	w := call()
+	if w.Code != http.StatusOK {
+		t.Fatalf("RecordIssueSourceFetch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	resp := decodeIssueSourceFetchResponse(t, w)
+	if resp.Metadata["source_fetch_status"] != "fetched" {
+		t.Fatalf("source_fetch_status = %v", resp.Metadata["source_fetch_status"])
+	}
+	if resp.Metadata["source_fetch_title"] != "用户快捷入口需求" {
+		t.Fatalf("source_fetch_title = %v", resp.Metadata["source_fetch_title"])
+	}
+	if resp.Metadata["source_fetch_body_excerpt"] == "" {
+		t.Fatalf("source_fetch_body_excerpt missing: %+v", resp.Metadata)
+	}
+	if resp.TraceEvent["event_type"] != "source.fetch" {
+		t.Fatalf("trace event = %+v", resp.TraceEvent)
+	}
+	replay := call()
+	if replay.Code != http.StatusOK {
+		t.Fatalf("source-fetch replay = %d %s, want 200", replay.Code, replay.Body.String())
+	}
+	replayResp := decodeIssueSourceFetchResponse(t, replay)
+	if replayResp.TraceEvent["id"] != resp.TraceEvent["id"] {
+		t.Fatalf("replay trace = %+v, want original %+v", replayResp.TraceEvent, resp.TraceEvent)
+	}
+
+	body["title"] = "changed request"
+	conflict := call()
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("changed source-fetch replay = %d %s, want 409", conflict.Code, conflict.Body.String())
+	}
+	persistedIssue, err := testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("load issue after conflict: %v", err)
+	}
+	if got := mustDecodePersistedJSONObject(persistedIssue.Metadata, "issue metadata")["source_fetch_title"]; got != "用户快捷入口需求" {
+		t.Fatalf("conflicting replay changed metadata title to %v", got)
+	}
+
+	events, err := testHandler.Queries.ListIssueTaskTraceEvents(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("ListIssueTaskTraceEvents: %v", err)
+	}
+	found := 0
+	for _, ev := range events {
+		if ev.EventType == "source.fetch" && ev.TaskID == parseUUID(taskID) {
+			found++
+			if ev.Status != "fetched" {
+				t.Fatalf("source.fetch status = %q", ev.Status)
+			}
+			if ev.DurationMs.Int64 != 1234 || !ev.DurationMs.Valid {
+				t.Fatalf("duration_ms = %+v", ev.DurationMs)
+			}
+		}
+	}
+	if found != 1 {
+		t.Fatalf("source.fetch trace event count = %d, want 1: %+v", found, events)
+	}
+}
+
+func TestRecordIssueSourceFetchValidatesFetchedTitle(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Source fetch validation runtime")
+	_, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Source fetch validation agent")
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/"+issueID+"/source-fetch", map[string]any{
+		"provider": "tapd",
+		"status":   "fetched",
+	})
+	req = withURLParam(req, "id", issueID)
+
+	testHandler.RecordIssueSourceFetch(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("RecordIssueSourceFetch: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRecordIssueSourceFetchAutoFetchesTapdWikiWithAccountProfile(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	clearTapdCredentialProfilesForTest(t, ctx)
+	t.Setenv("TAPD_AUTO_FETCH_TEST_TOKEN", "tapd-test-token")
+
+	var sawAuth bool
+	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tapd_wikis" {
+			t.Fatalf("unexpected TAPD path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") == "Bearer tapd-test-token" && r.Header.Get("Via") == "mcp" {
+			sawAuth = true
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": 1,
+			"data": []any{map[string]any{
+				"TWiki": map[string]any{
+					"id":                   "1147654106001004154",
+					"name":                 "用户快捷入口需求",
+					"markdown_description": "快捷入口属于当前登录用户，不同用户之间互不影响。",
+					"modified":             "2026-06-18 07:39:03",
+				},
+			}},
+		})
+	}))
+	defer tapdAPI.Close()
+	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
+
+	createTapdCredentialProfileForTest(t, "env:TAPD_AUTO_FETCH_TEST_TOKEN")
+	fixture := createIssueSourceFetchFixture(t, ctx, "Source fetch auto runtime", "Source fetch auto agent", map[string]any{
+		"source_url":         "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+		"tapd_workspace_id":  "47654106",
+		"tapd_resource_type": "markdown_wiki",
+		"tapd_resource_id":   "1147654106001004154",
+	})
+
+	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch")
+	if !sawAuth {
+		t.Fatal("TAPD auto_fetch did not send credential-backed MCP authorization headers")
+	}
+	if strings.Contains(w.Body.String(), "tapd-test-token") {
+		t.Fatalf("source-fetch response leaked token: %s", w.Body.String())
+	}
+	resp := decodeIssueSourceFetchResponse(t, w)
+	if resp.Metadata["source_fetch_status"] != "fetched" || resp.Metadata["source_fetch_title"] != "用户快捷入口需求" {
+		t.Fatalf("metadata = %+v", resp.Metadata)
+	}
+	if resp.TraceEvent["status"] != "fetched" {
+		t.Fatalf("trace_event = %+v", resp.TraceEvent)
+	}
+}
+
+func TestRecordIssueSourceFetchAutoFetchRetriesTransientTapdFailure(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	clearTapdCredentialProfilesForTest(t, ctx)
+	t.Setenv("TAPD_AUTO_FETCH_RETRY_TEST_TOKEN", "tapd-test-token")
+
+	requestCount := 0
+	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if requestCount == 1 {
+			http.Error(w, "temporary upstream failure", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": 1,
+			"data": []any{map[string]any{
+				"TWiki": map[string]any{
+					"id":                   "1147654106001004154",
+					"name":                 "用户快捷入口需求",
+					"markdown_description": "快捷入口属于当前登录用户，不同用户之间互不影响。",
+					"modified":             "2026-06-18 07:39:03",
+				},
+			}},
+		})
+	}))
+	defer tapdAPI.Close()
+	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
+
+	createTapdCredentialProfileForTest(t, "env:TAPD_AUTO_FETCH_RETRY_TEST_TOKEN")
+	fixture := createIssueSourceFetchFixture(t, ctx, "Source fetch retry runtime", "Source fetch retry agent", map[string]any{
+		"source_url":         "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+		"tapd_workspace_id":  "47654106",
+		"tapd_resource_type": "markdown_wiki",
+		"tapd_resource_id":   "1147654106001004154",
+	})
+
+	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch retry")
+	resp := decodeIssueSourceFetchResponse(t, w)
+	if requestCount != 2 {
+		t.Fatalf("requestCount = %d, want 2", requestCount)
+	}
+	if resp.Metadata["source_fetch_status"] != "fetched" || resp.Metadata["source_fetch_title"] != "用户快捷入口需求" {
+		t.Fatalf("metadata = %+v", resp.Metadata)
+	}
+}
+
+func TestRecordIssueSourceFetchAutoFetchDoesNotRetryUnauthorized(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	clearTapdCredentialProfilesForTest(t, ctx)
+	t.Setenv("TAPD_AUTO_FETCH_UNAUTHORIZED_TEST_TOKEN", "tapd-test-token")
+
+	requestCount := 0
+	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer tapdAPI.Close()
+	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
+
+	createTapdCredentialProfileForTest(t, "env:TAPD_AUTO_FETCH_UNAUTHORIZED_TEST_TOKEN")
+	fixture := createIssueSourceFetchFixture(t, ctx, "Source fetch unauthorized runtime", "Source fetch unauthorized agent", map[string]any{
+		"source_url":         "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+		"tapd_workspace_id":  "47654106",
+		"tapd_resource_type": "markdown_wiki",
+		"tapd_resource_id":   "1147654106001004154",
+	})
+
+	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch unauthorized")
+	resp := decodeIssueSourceFetchResponse(t, w)
+	if requestCount != 1 {
+		t.Fatalf("requestCount = %d, want 1", requestCount)
+	}
+	if resp.Metadata["source_fetch_status"] != "fetch_failed" {
+		t.Fatalf("metadata = %+v", resp.Metadata)
+	}
+}
+
+func TestRecordIssueSourceFetchAutoFetchParsesTapdWikiSourceURL(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	clearTapdCredentialProfilesForTest(t, ctx)
+	t.Setenv("TAPD_AUTO_FETCH_URL_TEST_TOKEN", "tapd-test-token")
+
+	var sawAuth bool
+	var sawWorkspaceID string
+	var sawWikiID string
+	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tapd_wikis" {
+			t.Fatalf("unexpected TAPD path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") == "Bearer tapd-test-token" && r.Header.Get("Via") == "mcp" {
+			sawAuth = true
+		}
+		sawWorkspaceID = r.URL.Query().Get("workspace_id")
+		sawWikiID = r.URL.Query().Get("id")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": 1,
+			"data": []any{map[string]any{
+				"TWiki": map[string]any{
+					"id":                   "1147654106001004223",
+					"name":                 "增强密码强度",
+					"markdown_description": "密码长度限制在8-32位，必须包含大小写字母、数字、特殊字符中的至少三种。",
+					"modified":             "2026-07-02 10:00:00",
+				},
+			}},
+		})
+	}))
+	defer tapdAPI.Close()
+	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
+
+	createTapdCredentialProfileForTest(t, "env:TAPD_AUTO_FETCH_URL_TEST_TOKEN")
+	fixture := createIssueSourceFetchFixture(t, ctx, "Source fetch URL parse runtime", "Source fetch URL parse agent", map[string]any{
+		"source_url": "https://www.tapd.cn/47654106/markdown_wikis/show/\n  #1147654106001004223",
+	})
+
+	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch")
+	if !sawAuth {
+		t.Fatal("TAPD auto_fetch did not send credential-backed MCP authorization headers")
+	}
+	if sawWorkspaceID != "47654106" || sawWikiID != "1147654106001004223" {
+		t.Fatalf("TAPD request query workspace_id=%q id=%q", sawWorkspaceID, sawWikiID)
+	}
+	resp := decodeIssueSourceFetchResponse(t, w)
+	if resp.Metadata["source_fetch_status"] != "fetched" ||
+		resp.Metadata["source_fetch_resource_type"] != "markdown_wiki" ||
+		resp.Metadata["source_fetch_resource_id"] != "1147654106001004223" ||
+		resp.Metadata["source_fetch_url"] != "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223" {
+		t.Fatalf("metadata = %+v", resp.Metadata)
+	}
+}
+
+func TestRecordIssueSourceFetchAutoFetchRecordsMissingTapdProfile(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	clearTapdCredentialProfilesForTest(t, ctx)
+	fixture := createIssueSourceFetchFixture(t, ctx, "Source fetch missing profile runtime", "Source fetch missing profile agent", map[string]any{
+		"tapd_workspace_id":  "47654106",
+		"tapd_resource_type": "markdown_wiki",
+		"tapd_resource_id":   "1147654106001004154",
+	})
+
+	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch missing profile")
+	resp := decodeIssueSourceFetchResponse(t, w)
+	if resp.Metadata["source_fetch_status"] != "fetch_failed" {
+		t.Fatalf("metadata = %+v", resp.Metadata)
+	}
+	if !strings.Contains(fmt.Sprint(resp.Metadata["source_fetch_error"]), "no account-level TAPD credential profile") {
+		t.Fatalf("source_fetch_error = %v", resp.Metadata["source_fetch_error"])
+	}
+}

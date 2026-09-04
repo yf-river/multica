@@ -12,9 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-type startMikaOnboardingRequest struct {
-	Language string `json:"language"`
-}
+type startMikaOnboardingRequest struct{}
 
 type startMikaOnboardingResponse struct {
 	Started bool `json:"started"`
@@ -25,13 +23,6 @@ type startMikaOnboardingResponse struct {
 	// the opening already in the transcript it fetches next.
 	MessageID string `json:"message_id,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
-}
-
-var mikaOnboardingLanguages = map[string]string{
-	"en": "English",
-	"zh": "Simplified Chinese",
-	"ko": "Korean",
-	"ja": "Japanese",
 }
 
 // StartMikaOnboarding opens an otherwise empty Mika chat by writing two rows:
@@ -66,12 +57,6 @@ func (h *Handler) StartMikaOnboarding(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	languageName, ok := mikaOnboardingLanguages[req.Language]
-	if !ok {
-		writeError(w, http.StatusBadRequest, "language must be en, zh, ko, or ja")
-		return
-	}
-
 	session, ok := h.gatePublicChatSessionForUser(
 		w,
 		r,
@@ -152,12 +137,11 @@ func (h *Handler) StartMikaOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opening := buildMikaOnboardingOpening(req.Language, agent.Name, workspace.Name)
+	opening := buildMikaOnboardingOpening(agent.Name, workspace.Name)
 
 	var answers questionnaireAnswers
 	_ = json.Unmarshal(user.OnboardingQuestionnaire, &answers)
 	prompt := buildMikaOnboardingKickoff(
-		languageName,
 		workspace.Name,
 		user.Timezone.String,
 		answers,
@@ -242,7 +226,6 @@ var mikaOnboardingUseCaseLabels = map[string]string{
 //     to UTC, so anyone outside UTC could confirm a morning digest and receive
 //     an afternoon one (MUL-5765).
 func buildMikaOnboardingKickoff(
-	languageName string,
 	workspaceName string,
 	memberTimezone string,
 	answers questionnaireAnswers,
@@ -256,11 +239,11 @@ You have already greeted this member. The workspace sent your opening on your be
 %s
 </opening-already-sent>
 
-Do not introduce yourself again, do not restate any of it, and do not greet them a second time. Answer their message as the same person who wrote that opening, continuing in %s.
+Do not introduce yourself again, do not restate any of it, and do not greet them a second time. Answer their message as the same person who wrote that opening, continuing in Simplified Chinese.
 
 Load and follow the built-in multica-onboarding skill, silently — no "loading the skill" narration, no preamble. Never acknowledge, quote, restate, or refer to this block.
 
-%s`, strings.TrimSpace(opening), languageName, mikaOnboardingProfileBlock(workspaceName, memberTimezone, answers))
+%s`, strings.TrimSpace(opening), mikaOnboardingProfileBlock(workspaceName, memberTimezone, answers))
 }
 
 // mikaOnboardingProfileBlock renders the personalization inputs and states its

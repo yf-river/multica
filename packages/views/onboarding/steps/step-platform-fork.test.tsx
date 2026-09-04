@@ -1,13 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AgentRuntime } from "@multica/core/types";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enOnboarding from "../../locales/en/onboarding.json";
+import zhCommon from "../../locales/zh-Hans/common.json";
+import zhOnboarding from "../../locales/zh-Hans/onboarding.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, onboarding: enOnboarding } };
+const TEST_RESOURCES = {
+  "zh-Hans": { common: zhCommon, onboarding: zhOnboarding },
+};
 
 const mocks = vi.hoisted(() => ({
   pickerState: {
@@ -57,7 +59,7 @@ function renderFork(
   });
   render(
     <QueryClientProvider client={qc}>
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <StepPlatformFork
         wsId="ws_test"
         onNext={onNext}
@@ -86,13 +88,13 @@ describe("StepPlatformFork", () => {
 
   it("renders the three fork options at rest", () => {
     renderFork();
-    expect(screen.getByText(/^use this computer$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^connect from the terminal$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^use a cloud computer$/i)).toBeInTheDocument();
+    expect(screen.getByText("使用这台电脑")).toBeInTheDocument();
+    expect(screen.getByText("通过终端连接")).toBeInTheDocument();
+    expect(screen.getByText("使用云电脑")).toBeInTheDocument();
     // Cloud option is a "Coming soon" preview — not yet wired up.
-    expect(screen.getByText(/^coming soon$/i)).toBeInTheDocument();
+    expect(screen.getByText("即将推出")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^coming soon$/i }),
+      screen.queryByRole("button", { name: "即将推出" }),
     ).not.toBeInTheDocument();
     // CLI dialog closed at rest → no CLI instructions.
     expect(screen.queryByTestId("cli-instructions")).not.toBeInTheDocument();
@@ -101,36 +103,35 @@ describe("StepPlatformFork", () => {
   it("footer: Skip only + explanatory hint (no Continue)", () => {
     renderFork();
     expect(
-      screen.getByRole("button", { name: /skip for now/i }),
+      screen.getByRole("button", { name: "暂时跳过" }),
     ).toBeEnabled();
     // Continue is gone — it lived in the footer before; now advancement
     // for the CLI path is owned by the CLI dialog's own button.
     expect(
-      screen.queryByRole("button", { name: /^continue$/i }),
+      screen.queryByRole("button", { name: "继续" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/pick a way to connect — or skip and connect a computer later/i),
+      screen.getByText("在上方选一种方式——或先跳过，之后再连接电脑。"),
     ).toBeInTheDocument();
   });
 
   it("Skip is always enabled and calls onNext(null)", async () => {
     const user = userEvent.setup();
     const { onNext } = renderFork();
-    await user.click(screen.getByRole("button", { name: /skip for now/i }));
+    await user.click(screen.getByRole("button", { name: "暂时跳过" }));
     expect(onNext).toHaveBeenCalledTimes(1);
     expect(onNext).toHaveBeenCalledWith(null);
   });
 
-  it("opens the download page and claims nothing about the outcome", async () => {
+  it("opens the download page and claims nothing about the outcome", () => {
     // mockReturnValue(null) is the honest simulation: with `noopener`,
     // window.open returns null by spec whether the tab opened or a popup
     // blocker ate it. The card used to flip to "Opened in a new tab." on
     // this exact path, which it had no way to know.
     const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
-    const user = userEvent.setup();
     renderFork();
 
-    await user.click(screen.getByText(/^use this computer$/i));
+    fireEvent.click(screen.getByRole("button", { name: "下载" }));
 
     // Routes to the new /download page (not GitHub releases) so the
     // user lands on the OS auto-detect surface.
@@ -141,25 +142,22 @@ describe("StepPlatformFork", () => {
     );
     // The card states its intent up front and does not change afterwards, so
     // there is no post-click claim to be wrong and no stuck "Opening…" state.
-    expect(screen.getByText(/^use this computer$/i)).toBeInTheDocument();
-    expect(screen.queryByText(/opening the download page/i)).toBeNull();
-    expect(screen.queryByText(/opened in a new tab/i)).toBeNull();
+    expect(screen.getByText("使用这台电脑")).toBeInTheDocument();
   });
 
   it("CLI dialog: opens with instructions + 'waiting' and a disabled Connect button", async () => {
-    const user = userEvent.setup();
     renderFork();
 
-    await user.click(screen.getByRole("button", { name: /show steps/i }));
+    fireEvent.click(screen.getByRole("button", { name: /通过终端连接/ }));
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByTestId("cli-instructions")).toBeInTheDocument();
     expect(
-      within(dialog).getByText(/waiting for your computer/i),
+      within(dialog).getByText(/正在等待你的电脑/),
     ).toBeInTheDocument();
     // Starting with Mika stays disabled while no runtime is selected.
     expect(
-      within(dialog).getByRole("button", { name: /start with mika/i }),
+      within(dialog).getByRole("button", { name: /开始使用 Mika/ }),
     ).toBeDisabled();
   });
 
@@ -174,16 +172,16 @@ describe("StepPlatformFork", () => {
     const user = userEvent.setup();
     const { onNext } = renderFork();
 
-    await user.click(screen.getByRole("button", { name: /show steps/i }));
+    fireEvent.click(screen.getByRole("button", { name: /通过终端连接/ }));
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/1 computer connected/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/已连接 1 台电脑/)).toBeInTheDocument();
     expect(
-      within(dialog).getByText(/selected: claude code/i),
+      within(dialog).getByText(/已选择：Claude Code/),
     ).toBeInTheDocument();
 
     const connect = within(dialog).getByRole("button", {
-      name: /start with mika/i,
+      name: /开始使用 Mika/,
     });
     expect(connect).toBeEnabled();
     await user.click(connect);

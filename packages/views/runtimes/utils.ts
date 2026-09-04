@@ -5,6 +5,16 @@ import type {
 } from "@multica/core/types";
 import { getCustomPricing } from "@multica/core/runtimes/custom-pricing-store";
 
+export function usageTokenTotal(usage: {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+}): number {
+  return (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) +
+    (usage.cache_read_tokens ?? 0) + (usage.cache_write_tokens ?? 0);
+}
+
 // A live local daemon re-registers itself within seconds of a server-side
 // delete (daemon self-heal, #2404), so deleting an online local runtime from
 // the UI has no lasting effect. Both the detail page and the list row menu

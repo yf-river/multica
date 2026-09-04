@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { useTranslation } from "react-i18next";
 import { I18nProvider } from "./provider";
@@ -14,37 +14,23 @@ function DialogTitle() {
 }
 
 describe("I18nProvider", () => {
-  it("rebuilds its i18n instance when resources change", async () => {
-    const initialResources: Record<string, LocaleResources> = {
-      en: { settings: { shortcuts: { title: "Keyboard Shortcuts" } } },
-    };
-    const updatedResources: Record<string, LocaleResources> = {
-      en: {
+  it("uses the Chinese resource selected at startup", () => {
+    const resources: Record<string, LocaleResources> = {
+      "zh-Hans": {
         settings: {
           shortcuts: {
-            title: "Keyboard Shortcuts",
-            reset_confirm: { title: "Restore all shortcut defaults?" },
+            title: "快捷键",
+            reset_confirm: { title: "恢复所有快捷键默认值？" },
           },
         },
       },
     };
 
-    const { rerender } = render(
-      <I18nProvider locale="en" resources={initialResources}>
+    render(
+      <I18nProvider locale="zh-Hans" resources={resources}>
         <DialogTitle />
       </I18nProvider>,
     );
-    expect(screen.queryByText("shortcuts.reset_confirm.title")).not.toBeNull();
-
-    rerender(
-      <I18nProvider locale="en" resources={updatedResources}>
-        <DialogTitle />
-      </I18nProvider>,
-    );
-    await waitFor(() => {
-      expect(
-        screen.queryByText("Restore all shortcut defaults?"),
-      ).not.toBeNull();
-    });
+    expect(screen.queryByText("恢复所有快捷键默认值？")).not.toBeNull();
   });
 });

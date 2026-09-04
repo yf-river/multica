@@ -6,11 +6,11 @@ import userEvent from "@testing-library/user-event";
 import { configStore } from "@multica/core/config";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent } from "@multica/core/types";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
+import enCommon from "../../../locales-test/en/common.json";
+import enAgents from "../../../locales-test/en/agents.json";
 // The conversation-starter editor previews the chat empty state, so it reads the
 // chat namespace for the built-in defaults it renders when nothing is set.
-import enChat from "../../../locales/en/chat.json";
+import enChat from "../../../locales-test/en/chat.json";
 import { NavigationProvider } from "../../../navigation";
 import type { NavigationAdapter } from "../../../navigation";
 import { InstructionsTab } from "./instructions-tab";

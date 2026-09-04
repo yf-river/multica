@@ -5,7 +5,7 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import { chatKeys } from "@multica/core/chat/queries";
 import type { TaskMessagePayload } from "@multica/core/types";
 import type { ReactElement } from "react";
-import enChat from "../../locales/en/chat.json";
+import enChat from "../../locales-test/en/chat.json";
 import { ChatMessageList } from "./chat-message-list";
 
 // Auto-scroll wiring: the list must keep the live end visible through streaming

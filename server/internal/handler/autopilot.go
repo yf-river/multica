@@ -1927,7 +1927,7 @@ func (h *Handler) UpdateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
-		protocol.EventAutopilotUpdated, ap, "member", userID, "trigger_updated", uuidToString(trigger.ID),
+		protocol.EventAutopilotUpdated, ap, "member", userID, "trigger_updated", fmt.Sprintf("%s:%d", uuidToString(trigger.ID), trigger.Revision),
 		map[string]any{"trigger": h.triggerToResponse(trigger)},
 	))
 	if err != nil {
@@ -2076,7 +2076,7 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 		})
 		if err == nil {
 			rotatedEvent, err = service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
-				protocol.EventAutopilotUpdated, ap, "member", userID, "trigger_token_rotated", uuidToString(rotated.ID),
+				protocol.EventAutopilotUpdated, ap, "member", userID, "trigger_token_rotated", fmt.Sprintf("%s:%d", uuidToString(rotated.ID), rotated.Revision),
 				map[string]any{"trigger": h.triggerToResponse(rotated)},
 			))
 		}
@@ -2172,7 +2172,7 @@ func (h *Handler) SetAutopilotTriggerSigningSecret(w http.ResponseWriter, r *htt
 		return
 	}
 	updatedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildAutopilotDomainEvent(
-		protocol.EventAutopilotUpdated, ap, "member", userID, "trigger_signing_secret_updated", uuidToString(updated.ID),
+		protocol.EventAutopilotUpdated, ap, "member", userID, "trigger_signing_secret_updated", fmt.Sprintf("%s:%d", uuidToString(updated.ID), updated.Revision),
 		map[string]any{"trigger": h.triggerToResponse(updated)},
 	))
 	if err != nil {

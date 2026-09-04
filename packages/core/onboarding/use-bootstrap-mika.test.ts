@@ -41,8 +41,7 @@ const session = {
 const input = {
   workspaceSlug: "venus",
   runtimeId: "runtime-1",
-  title: "Getting started with Mika",
-  language: "en",
+  title: "开始使用 Mika",
 } as const;
 
 beforeEach(() => {
@@ -62,21 +61,19 @@ describe("bootstrapMika", () => {
   it("asks the server for Mika, then opens one session and one hidden kickoff", async () => {
     const result = await bootstrapMika(input);
 
-    // Only a runtime, a language and the session label cross the wire: name,
+    // Only a runtime and the session label cross the wire: name,
     // description, avatar, permissions and the system prompt are the server's
     // to decide, and so is which session this member already has.
     expect(mocks.createMikaAgent).toHaveBeenCalledOnce();
     expect(mocks.createMikaAgent).toHaveBeenCalledWith(
       {
         runtime_id: "runtime-1",
-        language: "en",
-        session_title: "Getting started with Mika",
+        session_title: "开始使用 Mika",
       },
       "venus",
     );
     expect(mocks.startMikaOnboarding).toHaveBeenCalledWith(
       "session-1",
-      { language: "en" },
       "venus",
     );
     expect(result.agent.id).toBe("agent-1");
@@ -98,15 +95,14 @@ describe("bootstrapMika", () => {
     // Every workspace onboards from scratch. A member's second workspace may
     // carry entirely different work and collaborators, so its opening is built
     // from this workspace's own inputs and nothing else.
-    const [, payload] = mocks.startMikaOnboarding.mock.calls[0]!;
-    expect(Object.keys(payload)).toEqual(["language"]);
+    expect(mocks.startMikaOnboarding.mock.calls[0]).toEqual(["session-1", "venus"]);
   });
 
   // The session is now resolved server-side under an advisory lock. Listing
   // sessions and creating one on a miss was a check-then-insert with nothing
   // serializing it, so two tabs each opened their own onboarding conversation
-  // — and because the match was on the localized title, changing language
-  // between a failed attempt and its retry opened another.
+  // — and because the match was on display copy, changing the title between a
+  // failed attempt and its retry opened another.
   it("never resolves the session client-side", async () => {
     mocks.startMikaOnboarding.mockResolvedValue({ started: false });
 

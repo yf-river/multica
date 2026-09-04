@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enBilling from "../locales/en/billing.json";
+import enBilling from "../locales-test/en/billing.json";
 
 const mockReplace = vi.hoisted(() => vi.fn());
 const searchRef = vi.hoisted(() => ({ current: new URLSearchParams() }));

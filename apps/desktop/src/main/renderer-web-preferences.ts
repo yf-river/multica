@@ -15,7 +15,6 @@ import type { WebPreferences } from "electron";
  */
 export function createRendererWebPreferences(
   preloadPath: string,
-  systemLocale: string,
   additionalArguments: string[] = [],
 ): WebPreferences {
   return {
@@ -56,9 +55,6 @@ export function createRendererWebPreferences(
     // in a dedicated WebContentsView with `plugins: true` scoped to that view,
     // keeping the main renderer plugin-free.
     plugins: true,
-    additionalArguments: [
-      `--multica-locale=${systemLocale}`,
-      ...additionalArguments,
-    ],
+    additionalArguments,
   };
 }

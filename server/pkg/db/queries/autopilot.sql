@@ -207,6 +207,7 @@ UPDATE autopilot_trigger SET
     next_run_at = sqlc.narg('next_run_at'),
     label = COALESCE(sqlc.narg('label'), label),
     event_filters = COALESCE(sqlc.narg('event_filters'), event_filters),
+    revision = revision + 1,
     updated_at = now()
 WHERE id = $1
 RETURNING *;
@@ -249,6 +250,7 @@ WHERE id = $1;
 -- rows) rather than corrupting unrelated state.
 UPDATE autopilot_trigger
 SET webhook_token = $2,
+    revision = revision + 1,
     updated_at = now()
 WHERE id = $1
   AND kind = 'webhook'
@@ -262,6 +264,7 @@ RETURNING *;
 -- about webhook_token.
 UPDATE autopilot_trigger
 SET webhook_token = $2,
+    revision = revision + 1,
     updated_at = now()
 WHERE id = $1
 RETURNING *;
@@ -274,6 +277,7 @@ RETURNING *;
 -- webhook triggers to avoid corrupting unrelated state.
 UPDATE autopilot_trigger
 SET signing_secret = sqlc.narg('signing_secret'),
+    revision = revision + 1,
     updated_at = now()
 WHERE id = $1
   AND kind = 'webhook'

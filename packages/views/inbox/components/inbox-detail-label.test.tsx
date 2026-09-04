@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { InboxItem } from "@multica/core/types";
-import en from "../../locales/en/inbox.json";
+import en from "../../locales-test/en/inbox.json";
 import zhHansIssues from "../../locales/zh-Hans/issues.json";
 import { InboxDetailLabel } from "./inbox-detail-label";
 

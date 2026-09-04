@@ -3,7 +3,7 @@
  * Renders only when ≥1 agent task is active on this issue; otherwise null.
  *
  * Why this exists: the in-card `<AgentActivityRow>` is the first-time-
- * discovery surface (full "Working" text + larger avatars), but it scrolls
+ * discovery surface (full "工作中" text + larger avatars), but it scrolls
  * away with the timeline. Agent tasks run for minutes to tens of minutes;
  * users actively scroll during that window to read past comments. The
  * "is anything still working" signal needs a consistent location — see
@@ -50,7 +50,7 @@ export function AgentHeaderBadge({ issueId }: Props) {
         });
       }}
       hitSlop={8}
-      accessibilityLabel="Agent working — open runs"
+      accessibilityLabel="智能体工作中，打开运行记录"
       className="flex-row items-center gap-1.5 px-2 py-1 active:opacity-60"
     >
       <AvatarStack actors={actors} max={2} size={20} />

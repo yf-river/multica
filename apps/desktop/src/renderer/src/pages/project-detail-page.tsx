@@ -12,7 +12,7 @@ export function ProjectDetailPage() {
 
   // Plain text only — the project's icon is shown by the tab's leading visual,
   // not concatenated into the title (MUL-4370).
-  useDocumentTitle(project ? project.title : "Project");
+  useDocumentTitle(project ? project.title : "项目");
 
   if (!id) return null;
   return <ProjectDetail projectId={id} />;

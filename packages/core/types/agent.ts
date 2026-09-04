@@ -296,6 +296,10 @@ export interface AgentTask {
     | "failed"
     | "cancelled";
   priority: number;
+  agent?: {
+    id: string;
+    name: string;
+  };
   dispatched_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -322,6 +326,7 @@ export interface AgentTask {
   attempt?: number;
   /** Set when an issue comment triggered this task (@mention or assignee comment). */
   trigger_comment_id?: string;
+  trigger_comment_created_at?: string;
   /**
    * Earlier comment IDs folded into this run before it was claimed. This does
    * not include `trigger_comment_id`, which remains the run's newest trigger.

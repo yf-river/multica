@@ -1027,7 +1027,7 @@ func (h *Handler) resolveClaimProjectContext(ctx context.Context, projectID, wor
 }
 
 // projectResourcesForClaim maps resource rows onto the claim wire shape and
-// lifts github_repo resources into the repo list so `multica repo checkout` and
+// lifts repository resources into the repo list so `multica repo checkout` and
 // the meta-skill render them as the task's repos.
 func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData, []RepoData) {
 	if len(rows) == 0 {
@@ -1050,7 +1050,8 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 			ResourceRef:  ref,
 			Label:        label,
 		})
-		if row.ResourceType == "github_repo" {
+		switch row.ResourceType {
+		case "github_repo":
 			var payload struct {
 				URL string `json:"url"`
 				Ref string `json:"ref,omitempty"`
@@ -1058,7 +1059,33 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 			if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
 				repos = append(repos, RepoData{URL: payload.URL, Ref: strings.TrimSpace(payload.Ref)})
 			}
+		case "gongfeng_repo":
+			var payload struct {
+				URL         string `json:"url"`
+				ProjectPath string `json:"project_path"`
+				Ref         string `json:"ref,omitempty"`
+				Branch      string `json:"branch,omitempty"`
+			}
+			if json.Unmarshal(row.ResourceRef, &payload) == nil {
+				if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
+					repos = append(repos, RepoData{
+						URL: cloneURL,
+						Ref: firstNonEmpty(strings.TrimSpace(payload.Branch), strings.TrimSpace(payload.Ref)),
+					})
+				}
+			}
 		}
 	}
 	return resources, repos
+}
+
+func canonicalGongfengCloneURL(rawURL, projectPath string) string {
+	projectPath = strings.Trim(strings.TrimSpace(projectPath), "/")
+	if projectPath == "" {
+		projectPath = gongfengProjectPathFromURL(rawURL)
+	}
+	if projectPath == "" {
+		return ""
+	}
+	return "https://git.code.tencent.com/" + strings.TrimSuffix(projectPath, ".git") + ".git"
 }

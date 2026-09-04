@@ -70,7 +70,7 @@ export default function CommentEmojiPickerRoute() {
     <View className="flex-1">
       <View className="px-4 pt-3 pb-2">
         <Text className="text-lg font-semibold text-foreground">
-          Add Reaction
+          添加回应
         </Text>
       </View>
       <View className="flex-1">

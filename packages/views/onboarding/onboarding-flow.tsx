@@ -20,7 +20,7 @@ import { StepAboutYou } from "./steps/step-about-you";
 import { StepWorkspace } from "./steps/step-workspace";
 import { StepPlatformFork } from "./steps/step-platform-fork";
 import { OnboardingLogoutButton } from "./components/onboarding-logout-button";
-import { getMikaOnboarding, pickContentLang } from "./templates";
+import { getMikaOnboarding } from "./templates";
 import { useT } from "../i18n";
 
 const EMPTY_QUESTIONNAIRE: QuestionnaireAnswers = {
@@ -124,7 +124,7 @@ function OnboardingStepFlow({
   onCancel,
   runtimeInstructions,
 }: OnboardingFlowProps) {
-  const { t, i18n } = useT("onboarding");
+  const { t } = useT("onboarding");
   const user = useAuthStore((s) => s.user);
   if (!user) {
     throw new Error("OnboardingFlow requires an authenticated user");
@@ -241,7 +241,6 @@ function OnboardingStepFlow({
       // real interactive onboarding conversation. Specialists are created
       // later, only when the member's actual workflow justifies them.
       if (rt) {
-        const contentLang = pickContentLang(i18n.language);
         try {
           // The earlier questionnaire saves are deliberately optimistic. Flush
           // the latest snapshot here so the server-authored kickoff can read
@@ -251,7 +250,7 @@ function OnboardingStepFlow({
             workspaceSlug: workspace.slug,
             runtimeId: rt.id,
             model,
-            ...getMikaOnboarding(contentLang),
+            ...getMikaOnboarding(),
           });
           await completeOnboarding("full", workspace.id);
           onComplete(workspace, {
@@ -282,7 +281,7 @@ function OnboardingStepFlow({
       });
       onComplete(workspace, undefined);
     },
-    [answers, bootstrapMika, i18n.language, workspace, onComplete, t],
+    [answers, bootstrapMika, workspace, onComplete, t],
   );
 
   const handleBack = useCallback((from: OnboardingStep) => {

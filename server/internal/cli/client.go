@@ -389,6 +389,32 @@ func (c *APIClient) PostJSON(ctx context.Context, path string, body any, out any
 	return wrapBodyRead(req, json.NewDecoder(resp.Body).Decode(out))
 }
 
+func (c *APIClient) PostJSONWithIdempotencyKey(ctx context.Context, path string, body any, key string, out any) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", key)
+	c.setHeaders(req)
+	resp, err := c.HTTPClient.Do(req)
+	if err = wrapTransport(req, err); err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return newHTTPError(http.MethodPost, path, resp)
+	}
+	if out != nil {
+		return wrapBodyRead(req, json.NewDecoder(resp.Body).Decode(out))
+	}
+	return nil
+}
+
 // PutJSON performs a PUT request with a JSON body.
 func (c *APIClient) PutJSON(ctx context.Context, path string, body any, out any) error {
 	data, err := json.Marshal(body)

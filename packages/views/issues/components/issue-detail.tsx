@@ -90,6 +90,7 @@ import { ThreadNavPanel, mentionsUser, type ThreadNavThread } from "./thread-nav
 import { collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
+import { TAPDSourceBadge } from "./tapd-source-badge";
 import { QuickActionsSection } from "./quick-actions-section";
 import { PluginPanelSection } from "../../plugins";
 import { PullRequestList } from "./pull-request-list";
@@ -2940,7 +2941,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 }
               }}
             >
-              {issue.title}
+              <span className="inline-flex items-center gap-2">
+                {issue.title}
+                <TAPDSourceBadge issue={issue} variant="inline" />
+              </span>
             </div>
           )}
           {titleConflictDraft !== null ? (
@@ -3038,6 +3042,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               }}
             />
           )}
+
+          <ExternalSourceDetail issue={issue} />
 
           <div
             {...descDropZoneProps}
@@ -3583,5 +3589,55 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </AnimatedRightSidebar>
       </ResizablePanel>
     </ResizablePanelGroup>
+  );
+}
+
+function ExternalSourceDetail({ issue }: { issue: Issue }) {
+  const { t } = useT("issues");
+  const provider = String(issue.metadata.source_provider ?? "").toLowerCase();
+  if (provider !== "tapd" && provider !== "gongfeng") return null;
+  const url = String(issue.metadata.source_url ?? "");
+  const status = String(issue.metadata.source_fetch_status ?? "");
+  const title = String(issue.metadata.source_fetch_title ?? "");
+  const summary = String(issue.metadata.source_fetch_summary ?? "");
+  const error = String(issue.metadata.source_fetch_error ?? "");
+  const statusText = (() => {
+    switch (status) {
+      case "fetched":
+        return t(($) => $.external_source.statuses.fetched);
+      case "fetch_failed":
+        return t(($) => $.external_source.statuses.fetch_failed);
+      case "blocked_missing_profile":
+        return t(($) => $.external_source.statuses.blocked_missing_profile);
+      case "pending_mcp_fetch":
+        return t(($) => $.external_source.statuses.pending_mcp_fetch);
+      default:
+        return t(($) => $.external_source.statuses.unread);
+    }
+  })();
+  return (
+    <section className="mt-4 rounded-lg border border-surface-border bg-surface-subtle p-3">
+      <div className="flex items-start gap-3">
+        <TAPDSourceBadge issue={issue} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2 text-caption">
+            <span className="font-semibold">
+              {provider === "tapd"
+                ? t(($) => $.external_source.tapd)
+                : t(($) => $.external_source.gongfeng)}
+            </span>
+            <span className="text-muted-foreground">{statusText}</span>
+          </div>
+          {title && <p className="mt-1 text-body font-medium">{title}</p>}
+          {summary && <p className="mt-1 whitespace-pre-wrap text-caption text-muted-foreground">{summary}</p>}
+          {error && <p className="mt-1 text-caption text-destructive">{error}</p>}
+          {url && (
+            <a className="mt-2 inline-block max-w-full truncate text-caption text-primary hover:underline" href={url} target="_blank" rel="noreferrer">
+              {t(($) => $.external_source.open)}
+            </a>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }

@@ -35,7 +35,8 @@ INSERT INTO project_resource (
 UPDATE project_resource
 SET resource_ref = $2,
     label        = $3,
-    position     = $4
+    position     = $4,
+    revision     = revision + 1
 WHERE id = $1
 RETURNING *;
 

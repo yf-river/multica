@@ -27,6 +27,7 @@ import type { ChildProgress } from "./list-row";
 import { IssueActionsContextMenu } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
+import { TAPDSourceBadge } from "./tapd-source-badge";
 import { CustomStatusChip, useIsCustomStatus } from "./custom-status-chip";
 import { useIssueSurfaceActionsOptional } from "../surface/actions-context";
 function formatDate(date: string, locale: string): string {
@@ -187,6 +188,7 @@ export const BoardCardContent = memo(function BoardCardContent({
       {/* Row 2: Title */}
       <p className="mt-1 text-body font-medium leading-snug line-clamp-2">
         {issue.title}
+        <TAPDSourceBadge issue={issue} variant="inline" />
       </p>
 
       {showDescription && (() => {

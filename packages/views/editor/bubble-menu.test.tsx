@@ -40,7 +40,7 @@ vi.mock("@multica/core/issues/mutations", () => ({
 }));
 
 vi.mock("../i18n", async () => {
-  const editor = (await import("../locales/en/editor.json")).default;
+  const editor = (await import("../locales-test/en/editor.json")).default;
   return {
     useT: () => ({
       t: (selector: (resources: typeof editor) => string) => selector(editor),

@@ -1527,6 +1527,7 @@ CREATE TABLE public.autopilot_trigger (
     event_filters jsonb,
     published_by_type text,
     published_by_id uuid,
+    revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT autopilot_trigger_kind_check CHECK ((kind = ANY (ARRAY['schedule'::text, 'webhook'::text, 'api'::text]))),
     CONSTRAINT autopilot_trigger_provider_check CHECK ((provider = ANY (ARRAY['generic'::text, 'github'::text])))
 );
@@ -2251,6 +2252,8 @@ CREATE TABLE public.issue (
     properties jsonb DEFAULT '{}'::jsonb NOT NULL,
     revision bigint DEFAULT 1 NOT NULL,
     last_activity_at timestamp with time zone,
+    work_started_at timestamp with time zone,
+    work_completed_at timestamp with time zone,
     CONSTRAINT issue_assignee_type_check CHECK ((assignee_type = ANY (ARRAY['member'::text, 'agent'::text, 'squad'::text]))),
     CONSTRAINT issue_creator_type_check CHECK ((creator_type = ANY (ARRAY['member'::text, 'agent'::text]))),
     CONSTRAINT issue_metadata_is_object CHECK ((jsonb_typeof(metadata) = 'object'::text)),
@@ -3644,7 +3647,8 @@ CREATE TABLE public.project_resource (
     label text,
     "position" integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    created_by uuid
+    created_by uuid,
+    revision bigint DEFAULT 1 NOT NULL
 );
 
 
@@ -3951,6 +3955,8 @@ CREATE TABLE public.task_usage_hourly_rollup_state (
     CONSTRAINT task_usage_hourly_rollup_state_id_check CHECK ((id = 1))
 );
 
+INSERT INTO public.task_usage_hourly_rollup_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
 
 --
 -- Name: user; Type: TABLE; Schema: public; Owner: -
@@ -3970,7 +3976,6 @@ CREATE TABLE public."user" (
     cloud_waitlist_email character varying(254),
     cloud_waitlist_reason text,
     starter_content_state text,
-    language character varying(20) DEFAULT NULL::character varying,
     profile_description text DEFAULT ''::text NOT NULL,
     timezone text
 );
@@ -5543,8 +5548,7 @@ ALTER TABLE ONLY public.user_composio_connection
 ALTER TABLE ONLY public."user"
     ADD CONSTRAINT user_email_key UNIQUE (email);
 
-ALTER TABLE ONLY public."user"
-    ADD CONSTRAINT user_account_key UNIQUE (account);
+CREATE UNIQUE INDEX user_account_key ON public."user" USING btree (account) WHERE (account <> ''::text);
 
 
 --
@@ -6817,6 +6821,10 @@ CREATE INDEX idx_issue_workspace_position ON public.issue USING btree (workspace
 --
 
 CREATE INDEX idx_issue_workspace_status_position ON public.issue USING btree (workspace_id, status, "position");
+
+CREATE INDEX idx_issue_work_started_at ON public.issue USING btree (workspace_id, work_started_at) WHERE (work_started_at IS NOT NULL);
+
+CREATE INDEX idx_issue_work_completed_at ON public.issue USING btree (workspace_id, work_completed_at) WHERE (work_completed_at IS NOT NULL);
 
 
 --

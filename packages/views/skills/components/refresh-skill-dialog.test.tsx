@@ -5,8 +5,8 @@ import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { SkillSummary } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enSkills from "../../locales/en/skills.json";
+import enCommon from "../../locales-test/en/common.json";
+import enSkills from "../../locales-test/en/skills.json";
 import type { OriginInfo } from "../lib/origin";
 
 const TEST_RESOURCES = { en: { common: enCommon, skills: enSkills } };

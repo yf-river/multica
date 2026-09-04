@@ -58,17 +58,17 @@ interface Stage {
 }
 
 const TOOL_LABELS: Record<string, string> = {
-  bash: "Running command",
-  exec: "Running command",
-  read: "Reading files",
-  glob: "Reading files",
-  grep: "Searching code",
-  write: "Making edits",
-  edit: "Making edits",
-  multi_edit: "Making edits",
-  multiedit: "Making edits",
-  web_search: "Searching web",
-  websearch: "Searching web",
+  bash: "正在运行命令",
+  exec: "正在运行命令",
+  read: "正在读取文件",
+  glob: "正在读取文件",
+  grep: "正在搜索代码",
+  write: "正在修改",
+  edit: "正在修改",
+  multi_edit: "正在修改",
+  multiedit: "正在修改",
+  web_search: "正在搜索网络",
+  websearch: "正在搜索网络",
 };
 
 function pickStage(
@@ -78,21 +78,21 @@ function pickStage(
 ): Stage {
   // Mirrors web: deferred is an older turn waiting for retry backoff, not
   // active model work, so it must not fall through to "Thinking".
-  if (status === "deferred") return { label: "Retrying" };
+  if (status === "deferred") return { label: "正在重试" };
   if (
     (status === "queued" || status === "dispatched") &&
     availability === "offline"
   ) {
-    return { label: "Offline", static: true };
+    return { label: "离线", static: true };
   }
   if (
     (status === "queued" || status === "dispatched") &&
     availability === "unstable"
   ) {
-    return { label: "Reconnecting" };
+    return { label: "正在重连" };
   }
-  if (status === "queued") return { label: "Queued" };
-  if (status === "dispatched") return { label: "Starting up" };
+  if (status === "queued") return { label: "排队中" };
+  if (status === "dispatched") return { label: "正在启动" };
 
   let latest: TaskMessagePayload | null = null;
   for (let i = taskMessages.length - 1; i >= 0; i--) {
@@ -102,14 +102,14 @@ function pickStage(
       break;
     }
   }
-  if (!latest) return { label: "Thinking" };
-  if (latest.type === "thinking") return { label: "Thinking" };
-  if (latest.type === "text") return { label: "Typing" };
+  if (!latest) return { label: "思考中" };
+  if (latest.type === "thinking") return { label: "思考中" };
+  if (latest.type === "text") return { label: "输入中" };
   if (latest.type === "tool_use") {
     const slug = (latest.tool ?? "").toLowerCase();
-    return { label: TOOL_LABELS[slug] ?? "Working" };
+    return { label: TOOL_LABELS[slug] ?? "工作中" };
   }
-  return { label: "Thinking" };
+  return { label: "思考中" };
 }
 
 // Tabular figures for the 1Hz counter — proportional digits change the text

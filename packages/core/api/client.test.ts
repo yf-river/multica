@@ -8,6 +8,83 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("ApiClient workspace Gongfeng repositories", () => {
+  it("probes and resolves through the workspace-scoped endpoints", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            url: "https://git.code.tencent.com/team/project.git",
+            provider: "gongfeng",
+            project_path: "team/project",
+            default_branch: "main",
+            branches: ["main", "release"],
+            connection_status: "connected",
+            test_status: "passed",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            url: "https://git.code.tencent.com/team/project.git",
+            provider: "gongfeng",
+            project_path: "team/project",
+            default_branch: "release",
+            ref: "release",
+            head_commit: "abc123",
+            connection_status: "connected",
+            test_status: "passed",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(
+      client.probeWorkspaceRepo("workspace-1", {
+        url: "https://git.code.tencent.com/team/project.git",
+      }),
+    ).resolves.toMatchObject({ branches: ["main", "release"] });
+    await expect(
+      client.resolveWorkspaceRepo("workspace-1", {
+        url: "https://git.code.tencent.com/team/project.git",
+        default_branch: "release",
+      }),
+    ).resolves.toMatchObject({ ref: "release", head_commit: "abc123" });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.test/api/workspaces/workspace-1/repos/probe",
+      "https://api.example.test/api/workspaces/workspace-1/repos/resolve",
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      url: "https://git.code.tencent.com/team/project.git",
+      default_branch: "release",
+    });
+  });
+
+  it("fails closed when a probe response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ branches: ["main"] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").probeWorkspaceRepo("workspace-1", {
+        url: "https://git.code.tencent.com/team/project.git",
+      }),
+    ).rejects.toThrow();
+  });
+});
+
 describe("ApiClient agent conversation-starter compatibility", () => {
   const prompt = {
     label: "Review a PR",
@@ -2030,7 +2107,7 @@ describe("ApiClient explicit workspace targeting", () => {
   it("sends the given slug on Mika creation", async () => {
     const fetchMock = stubOk({ id: "agent-1" });
     await new ApiClient("https://api.example.test").createMikaAgent(
-      { runtime_id: "runtime-1", language: "en" },
+      { runtime_id: "runtime-1" },
       "proxima-centauri",
     );
     expect(slugHeaderOf(fetchMock)).toBe("proxima-centauri");
@@ -2220,9 +2297,7 @@ describe("ApiClient startMikaOnboarding", () => {
     );
 
     await expect(
-      new ApiClient("https://api.example.test").startMikaOnboarding("session-1", {
-        language: "en",
-      }),
+      new ApiClient("https://api.example.test").startMikaOnboarding("session-1"),
     ).resolves.toEqual({
       started: true,
       message_id: "message-1",
@@ -2245,9 +2320,7 @@ describe("ApiClient startMikaOnboarding", () => {
     // already opened this conversation" and navigates, rather than acting on a
     // body it could not understand.
     await expect(
-      new ApiClient("https://api.example.test").startMikaOnboarding("session-1", {
-        language: "en",
-      }),
+      new ApiClient("https://api.example.test").startMikaOnboarding("session-1"),
     ).resolves.toEqual({ started: false });
   });
 
@@ -2263,9 +2336,7 @@ describe("ApiClient startMikaOnboarding", () => {
     );
 
     await expect(
-      new ApiClient("https://api.example.test").startMikaOnboarding("session-1", {
-        language: "en",
-      }),
+      new ApiClient("https://api.example.test").startMikaOnboarding("session-1"),
     ).resolves.toEqual({ started: false });
   });
 });

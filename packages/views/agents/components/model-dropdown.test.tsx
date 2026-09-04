@@ -5,9 +5,9 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { RuntimeModelsResult } from "@multica/core/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import enAgents from "../../locales/en/agents.json";
-import enCommon from "../../locales/en/common.json";
-import enIssues from "../../locales/en/issues.json";
+import enAgents from "../../locales-test/en/agents.json";
+import enCommon from "../../locales-test/en/common.json";
+import enIssues from "../../locales-test/en/issues.json";
 import { ModelDropdown } from "./model-dropdown";
 
 const TEST_RESOURCES = {

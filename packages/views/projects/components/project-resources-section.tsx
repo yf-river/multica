@@ -98,6 +98,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const [open, setOpen] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
+  const [gongfengURL, setGongfengURL] = useState("");
   const [modeDialog, setModeDialog] = useState<ModeDialogState | null>(null);
   const [modeSaving, setModeSaving] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
@@ -127,6 +128,24 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : t(($) => $.resources.toast_attach_failed);
       toast.error(msg);
+    }
+  };
+
+  const handleAttachGongfeng = async () => {
+    const url = gongfengURL.trim();
+    if (!url) return;
+    const projectPath = gongfengProjectPath(url);
+    try {
+      await createResource.mutateAsync({
+        resource_type: "gongfeng_repo",
+        resource_ref: { provider: "gongfeng", url, project_path: projectPath },
+        label: projectPath || "工蜂仓库",
+      });
+      setGongfengURL("");
+      setAddOpen(false);
+      toast.success("工蜂仓库已关联");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "工蜂仓库关联失败");
     }
   };
 
@@ -336,6 +355,21 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                   setAddOpen(false);
                 }}
               />
+              <div className="space-y-2 border-t border-surface-border pt-2">
+                <div className="text-caption font-medium">
+                  {t(($) => $.resources.gongfeng_title)}
+                </div>
+                <input
+                  type="url"
+                  value={gongfengURL}
+                  onChange={(event) => setGongfengURL(event.target.value)}
+                  placeholder="https://git.code.tencent.com/组织/项目"
+                  className="h-8 w-full rounded-md border bg-transparent px-2 text-caption outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                />
+                <Button size="sm" className="w-full" disabled={!gongfengURL.trim() || createResource.isPending} onClick={() => void handleAttachGongfeng()}>
+                  {t(($) => $.resources.gongfeng_attach)}
+                </Button>
+              </div>
             </PopoverContent>
           </Popover>
         </div>
@@ -360,6 +394,18 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
       )}
     </div>
   );
+}
+
+function gongfengProjectPath(rawURL: string): string {
+  try {
+    const parsed = new URL(rawURL);
+    if (!parsed.hostname.toLowerCase().includes("git.code.tencent.com")) return "";
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const stop = parts.findIndex((part) => ["-", "tree", "blob", "merge_requests"].includes(part));
+    return (stop >= 0 ? parts.slice(0, stop) : parts).join("/");
+  } catch {
+    return "";
+  }
 }
 
 /**

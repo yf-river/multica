@@ -56,7 +56,7 @@ export function InboxRow({ item, onPress }: Props) {
                 {displayTitle}
               </Text>
             </View>
-            {/* The glyph is per category, so it alone cannot tell "In Review"
+            {/* The glyph is per category, so it alone cannot tell "审查中"
                 from a custom "Human Review" — a move between two statuses of
                 one category would leave this row pixel-identical and read as
                 "the inbox never updated" (MUL-6395). Colour is what carries a

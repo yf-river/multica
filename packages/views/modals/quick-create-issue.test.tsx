@@ -477,11 +477,11 @@ vi.mock("sonner", () => ({
 }));
 
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
-import enModals from "../locales/en/modals.json";
-import enEditor from "../locales/en/editor.json";
-import enProjects from "../locales/en/projects.json";
-import enIssues from "../locales/en/issues.json";
+import enCommon from "../locales-test/en/common.json";
+import enModals from "../locales-test/en/modals.json";
+import enEditor from "../locales-test/en/editor.json";
+import enProjects from "../locales-test/en/projects.json";
+import enIssues from "../locales-test/en/issues.json";
 import { AgentCreatePanel } from "./quick-create-issue";
 
 const TEST_RESOURCES = {

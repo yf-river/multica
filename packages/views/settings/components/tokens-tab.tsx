@@ -39,6 +39,7 @@ import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useLocale, useT } from "../../i18n";
 import { SettingsSection, SettingsTab } from "./settings-layout";
+import { ExternalCredentialPanel } from "./external-credential-panel";
 
 const EXPIRY_KEYS = ["30", "90", "365", "never"] as const;
 
@@ -239,6 +240,12 @@ export function TokensTab() {
             ))}
           </div>
         )}
+      </SettingsSection>
+      <SettingsSection
+        title="外部研发账号"
+        description="这些账号只用于你明确关联的 TAPD 和工蜂操作，令牌加密保存，不会显示原文。"
+      >
+        <ExternalCredentialPanel />
       </SettingsSection>
 
       <AlertDialog open={!!revokeConfirmId} onOpenChange={(v) => { if (!v) setRevokeConfirmId(null); }}>

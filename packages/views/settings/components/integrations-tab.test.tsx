@@ -7,8 +7,8 @@ import { ApiError } from "@multica/core/api";
 import { configStore } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enSettings from "../../locales/en/settings.json";
+import enCommon from "../../locales-test/en/common.json";
+import enSettings from "../../locales-test/en/settings.json";
 
 const composioErrorRef = vi.hoisted(() => ({
   current: null as Error | null,

@@ -42,9 +42,9 @@ export function UpdateNotification() {
           <RefreshCw className="size-4 text-success" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-body font-medium">Update ready</p>
+          <p className="text-body font-medium">更新已就绪</p>
           <p className="text-caption text-muted-foreground mt-0.5">
-            v{state.version} will be applied on next launch.
+            v{state.version} 将在下次启动时安装。
           </p>
           <div className="mt-2 flex items-center gap-1.5">
             <button
@@ -54,14 +54,14 @@ export function UpdateNotification() {
               }
               className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-caption font-medium text-foreground hover:bg-accent transition-colors"
             >
-              See changelog
+              查看更新日志
             </button>
             <button
               type="button"
               onClick={() => window.updater.installUpdate()}
               className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-caption font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              Restart now
+              立即重启
             </button>
           </div>
         </div>

@@ -8,8 +8,8 @@ import type { Agent } from "@multica/core/types";
 import { configStore } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
+import enCommon from "../../../locales-test/en/common.json";
+import enAgents from "../../../locales-test/en/agents.json";
 
 // AgentMcpTab reads its connection list + toolkit catalog from two queries and
 // writes through the useUpdateAgentAllowlist mutation. We stub all three at the

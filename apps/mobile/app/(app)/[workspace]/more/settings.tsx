@@ -33,9 +33,9 @@ import { THEME } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
 const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "system", label: "System" },
+  { value: "light", label: "浅色" },
+  { value: "dark", label: "深色" },
+  { value: "system", label: "跟随系统" },
 ];
 
 function initialsOf(name: string | undefined): string {
@@ -67,12 +67,12 @@ export default function SettingsPage() {
 
   const onSignOut = () => {
     Alert.alert(
-      "Sign out",
+      "退出登录",
       "You'll need to sign in again to use Multica on this device.",
       [
-        { text: "Cancel", style: "cancel" },
+        { text: "取消", style: "cancel" },
         {
-          text: "Sign out",
+          text: "退出登录",
           style: "destructive",
           onPress: async () => {
             await clearWorkspace();
@@ -92,12 +92,12 @@ export default function SettingsPage() {
       className="flex-1 bg-background"
       contentContainerClassName="px-4 py-4 gap-6"
     >
-      <SectionGroup title="Account">
+      <SectionGroup title="账号">
         <NavRow
           onPress={goProfile}
           chevronColor={mutedFg}
           leading={
-            <Avatar alt={user?.name ?? "User avatar"} className="size-10">
+            <Avatar alt={user?.name ?? "用户头像"} className="size-10">
               {user?.avatar_url ? (
                 <AvatarImage source={{ uri: user.avatar_url }} />
               ) : null}
@@ -115,12 +115,12 @@ export default function SettingsPage() {
         <NavRow
           onPress={goNotifications}
           chevronColor={mutedFg}
-          title="Notifications"
-          subtitle="Inbox and system alerts"
+          title="通知"
+          subtitle="收件箱和系统提醒"
         />
       </SectionGroup>
 
-      <SectionGroup title="Workspaces">
+      <SectionGroup title="工作区">
         {isLoading ? (
           <View className="py-4 items-center">
             <ActivityIndicator />
@@ -128,7 +128,7 @@ export default function SettingsPage() {
         ) : error ? (
           <View className="p-4">
             <Text className="text-sm text-destructive">
-              Failed to load workspaces
+              加载工作区失败
             </Text>
           </View>
         ) : (
@@ -151,7 +151,7 @@ export default function SettingsPage() {
         )}
       </SectionGroup>
 
-      <SectionGroup title="Appearance">
+      <SectionGroup title="外观">
         {/* Two converging entry points by design, NOT a double-fire:
               - Tap on small radio circle  → RadioGroupItem (Pressable, inner) consumes → onValueChange fires
               - Tap on text / row padding  → outer Pressable.onPress fires
@@ -186,7 +186,7 @@ export default function SettingsPage() {
 
       <View className="pt-2">
         <Button variant="destructive" onPress={onSignOut}>
-          <Text>Sign out</Text>
+          <Text>退出登录</Text>
         </Button>
       </View>
     </ScrollView>

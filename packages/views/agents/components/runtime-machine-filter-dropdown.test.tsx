@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales-test/en/common.json";
+import enAgents from "../../locales-test/en/agents.json";
 import type { RuntimeMachine } from "../../runtimes/components/runtime-machines";
 import { RuntimeMachineFilterDropdown } from "./runtime-machine-filter-dropdown";
 

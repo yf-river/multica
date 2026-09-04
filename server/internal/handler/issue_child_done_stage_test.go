@@ -110,7 +110,7 @@ func TestStageProgressSummary(t *testing.T) {
 		child(3, "backlog"), child(3, "backlog"),
 	}
 	summary, next := stageProgressSummary(children, 1, literalTerminalChild)
-	want := "Stage 1: 3/3 done; Stage 2: 0/4 done (next); Stage 3: 0/2 done"
+	want := "阶段 1：已完成 3/3; 阶段 2：已完成 0/4（下一阶段）; 阶段 3：已完成 0/2"
 	if summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
 	}
@@ -138,7 +138,7 @@ func TestStageProgressSummary_SkipsUnstaged(t *testing.T) {
 		child(2, "backlog"),
 	}
 	summary, next := stageProgressSummary(children, 1, literalTerminalChild)
-	want := "Stage 1: 2/2 done; Stage 2: 0/1 done (next)"
+	want := "阶段 1：已完成 2/2; 阶段 2：已完成 0/1（下一阶段）"
 	if summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
 	}
@@ -156,7 +156,7 @@ func TestStageAdvanceInstruction(t *testing.T) {
 
 	t.Run("a known next stage points the leader at it", func(t *testing.T) {
 		got := stageAdvanceInstruction(3, parentID)
-		if !strings.Contains(got, "Stage 3 is next") {
+		if !strings.Contains(got, "下一步是阶段 3") {
 			t.Fatalf("expected next-stage instruction, got %q", got)
 		}
 	})
@@ -166,7 +166,7 @@ func TestStageAdvanceInstruction(t *testing.T) {
 		// Regression guard for MUL-4062: an intermediate stage in a lazily
 		// created workflow also reaches nextStage==0, so the message must not
 		// claim this was definitively the final stage.
-		if strings.Contains(got, "This was the final stage") {
+		if strings.Contains(got, "这是最后一个阶段") {
 			t.Fatalf("must not assert finality when the workflow shape is unknown, got %q", got)
 		}
 		// It must make clear that finishing the stage != the whole issue is
@@ -174,10 +174,10 @@ func TestStageAdvanceInstruction(t *testing.T) {
 		// leader. The explicit in_review command marks the wrap-up moment;
 		// the write itself is authorized by the standing status-ownership
 		// grant (MUL-6300), not by this ask.
-		if !strings.Contains(got, "does not mean the whole issue is done") {
+		if !strings.Contains(got, "不代表整个任务已经完成") {
 			t.Fatalf("expected stage-done != issue-done framing, got %q", got)
 		}
-		if !strings.Contains(got, "next stage") {
+		if !strings.Contains(got, "下一阶段") {
 			t.Fatalf("expected create-next-stage guidance, got %q", got)
 		}
 		if !strings.Contains(got, "multica issue status "+parentID+" in_review") {

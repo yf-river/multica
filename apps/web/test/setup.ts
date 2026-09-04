@@ -5,19 +5,13 @@ import { vi } from "vitest";
 // with `// @vitest-environment node` and share this file, so there is no DOM to
 // patch there — bail out rather than guard each stub.
 if (typeof window !== "undefined") {
-  // jsdom doesn't provide ResizeObserver; stub it so components that rely on it
-  // (e.g. input-otp) can render in tests.
+  // jsdom doesn't provide ResizeObserver; stub it for responsive components.
   if (typeof globalThis.ResizeObserver === "undefined") {
     globalThis.ResizeObserver = class ResizeObserver {
       observe() {}
       unobserve() {}
       disconnect() {}
     } as unknown as typeof ResizeObserver;
-  }
-
-  // jsdom doesn't implement elementFromPoint; input-otp uses it internally.
-  if (typeof document.elementFromPoint !== "function") {
-    document.elementFromPoint = () => null;
   }
 
   // jsdom 29 / Node.js 22+ may not provide a proper Web Storage API.

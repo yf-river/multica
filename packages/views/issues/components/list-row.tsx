@@ -24,6 +24,7 @@ import { IssueActionsContextMenu } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
 import { CustomStatusChip } from "./custom-status-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
+import { TAPDSourceBadge } from "./tapd-source-badge";
 import { useIssueSurfaceSelection } from "../surface/selection-context";
 import { useLocale } from "../../i18n";
 
@@ -116,6 +117,7 @@ function ListRowContent({
 
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="truncate">{issue.title}</span>
+            <TAPDSourceBadge issue={issue} variant="inline" />
             {/* List sections are categories, so a custom status needs to name
                 itself on the row. Silent for built-ins. (MUL-6243) */}
             <CustomStatusChip status={issue.status} className="shrink-0" />

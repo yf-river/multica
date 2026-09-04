@@ -85,6 +85,8 @@ import type {
   TimelineEntry,
   User,
   WebhookDelivery,
+  WorkspaceRepo,
+  WorkspaceRepoProbeResponse,
   WorkspaceMcpServer,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
@@ -1784,6 +1786,196 @@ export const AgentTaskSchema = z.object({
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
 
+const TaskMessagePayloadSchema = z.object({
+  task_id: z.string(),
+  issue_id: z.string(),
+  chat_session_id: z.string().optional(),
+  seq: z.number(),
+  type: z.enum(["text", "thinking", "tool_use", "tool_result", "error"]),
+  tool: z.string().optional(),
+  content: z.string().optional(),
+  input: z.record(z.string(), z.unknown()).optional(),
+  output: z.string().optional(),
+  created_at: z.string().optional(),
+}).loose();
+
+const TaskTraceEventSchema = z.object({
+  id: z.string(),
+  task_id: z.string(),
+  agent_id: z.string(),
+  runtime_id: z.string().nullable(),
+  source: z.string(),
+  event_type: z.string(),
+  event_name: z.string(),
+  status: z.string(),
+  duration_ms: z.number().nullable().optional(),
+  queue_wait_ms: z.number().nullable().optional(),
+  run_ms: z.number().nullable().optional(),
+  total_ms: z.number().nullable().optional(),
+  provider: z.string(),
+  model: z.string(),
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  cache_read_tokens: z.number(),
+  cache_write_tokens: z.number(),
+  failure_reason: z.string(),
+  error_type: z.string(),
+  metadata: z.record(z.string(), z.unknown()),
+  created_at: z.string(),
+}).loose();
+
+const ToolCallChainSchema = z.object({
+  id: z.string(),
+  task_id: z.string().optional(),
+  tool: z.string().optional(),
+  status: z.string(),
+  use_seq: z.number().optional(),
+  result_seq: z.number().optional(),
+  input: z.record(z.string(), z.unknown()).optional(),
+  output: z.string().optional(),
+  duration_ms: z.number().optional(),
+  failure_signal: z.boolean(),
+  failure_reason: z.string().optional(),
+  created_at: z.string().optional(),
+  completed_at: z.string().optional(),
+}).loose();
+
+const AgentTaskArtifactSchema = z.object({
+  id: z.string(),
+  filename: z.string(),
+  title: z.string(),
+  kind: z.string(),
+  download_url: z.string(),
+  markdown_url: z.string(),
+  created_at: z.string(),
+}).loose();
+
+const IssueTimelineNodeSchema = z.object({
+  root_task_id: z.string().optional(),
+  node_id: z.string(),
+  node_type: z.enum([
+    "agent_task",
+    "squad_step",
+    "tool_call",
+    "evidence",
+    "approval",
+    "human_confirmation",
+    "dispatch_wait",
+    "child_issue_ref",
+    "source_fetch",
+    "status_change",
+  ]),
+  agent_id: z.string().optional(),
+  agent_name: z.string().optional(),
+  status: z.string(),
+  started_at: z.string().optional(),
+  actual_started_at: z.string().optional(),
+  completed_at: z.string().optional(),
+  duration_ms: z.number(),
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  cache_read_tokens: z.number(),
+  cache_write_tokens: z.number(),
+  message_count: z.number(),
+  agent_turn_count: z.number(),
+  trace_event_count: z.number(),
+  usage_unavailable_trace: z.boolean(),
+  summary: z.string(),
+  evidence_refs: z.array(z.record(z.string(), z.unknown())),
+  artifacts: z.array(AgentTaskArtifactSchema).optional(),
+}).loose();
+
+const IssueExecutionNodeSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.object({
+    issue: IssueSchema,
+    tasks: z.array(AgentTaskSchema),
+    task_messages: z.array(TaskMessagePayloadSchema),
+    trace_events: z.array(TaskTraceEventSchema),
+    tool_call_chains: z.array(ToolCallChainSchema),
+    children: z.array(IssueExecutionNodeSchema),
+  }).loose(),
+);
+
+export const IssueExecutionTreeResponseSchema = z.object({
+  root: IssueExecutionNodeSchema,
+  summary: z.record(z.string(), z.number()),
+  timeline_nodes: z.array(IssueTimelineNodeSchema).optional(),
+  issue_summary: z.object({
+    total_duration_ms: z.number(),
+    agent_execution_duration_ms: z.number().optional(),
+    human_confirmation_duration_ms: z.number().nullable().optional(),
+    child_issue_wait_duration_ms: z.number().nullable().optional(),
+    total_input_tokens: z.number(),
+    total_output_tokens: z.number(),
+    total_cache_read_tokens: z.number(),
+    total_cache_write_tokens: z.number(),
+    agent_turn_count: z.number(),
+    failure_summary: z.string().optional(),
+    acceptance_status: z.string(),
+  }).loose().optional(),
+}).loose();
+
+export const IssueTraceEventsResponseSchema = z.object({
+  events: z.array(TaskTraceEventSchema),
+}).loose();
+
+export const ExternalCredentialProfileSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  name: z.string(),
+  secret_binding: z.object({
+    configured: z.boolean(),
+    mode: z.string(),
+    hint: z.string().optional(),
+  }).loose(),
+  status: z.string(),
+  last_error: z.string().optional(),
+}).loose();
+
+export const ExternalCredentialProfileListSchema = z.object({
+  profiles: z.array(ExternalCredentialProfileSchema).default([]),
+}).loose();
+
+export const TestExternalCredentialProfileResponseSchema = z.object({
+  status: z.string(),
+  last_error: z.string().optional(),
+}).loose();
+
+export const EMPTY_ISSUE_EXECUTION_TREE_RESPONSE = {
+  root: {
+    issue: {
+      id: "",
+      workspace_id: "",
+      number: 0,
+      identifier: "",
+      title: "",
+      description: null,
+      status: "cancelled",
+      priority: "none",
+      assignee_type: null,
+      assignee_id: null,
+      creator_type: "member",
+      creator_id: "",
+      parent_issue_id: null,
+      project_id: null,
+      position: 0,
+      stage: null,
+      start_date: null,
+      due_date: null,
+      metadata: {},
+      properties: {},
+      created_at: "",
+      updated_at: "",
+    },
+    tasks: [],
+    task_messages: [],
+    trace_events: [],
+    tool_call_chains: [],
+    children: [],
+  },
+  summary: {},
+};
+
 // Task cancellation (`POST /api/tasks/:id/cancel`) is consumed directly by
 // chat recovery. Its optional message payload must be well-formed before the
 // UI deletes a message from cache or restores text into the input.
@@ -2355,7 +2547,6 @@ export const UserSchema = z.object({
   onboarded_at: z.string().nullable().default(null),
   onboarding_questionnaire: z.record(z.string(), z.unknown()).default({}),
   starter_content_state: z.string().nullable().default(null),
-  language: z.string().nullable().default(null),
   profile_description: z.string().default(""),
   timezone: z.string().nullable().default(null),
   created_at: z.string().default(""),
@@ -2371,7 +2562,6 @@ export const EMPTY_USER: User = {
   onboarded_at: null,
   onboarding_questionnaire: {},
   starter_content_state: null,
-  language: null,
   profile_description: "",
   timezone: null,
   created_at: "",
@@ -3229,6 +3419,31 @@ export const EMPTY_SKILL_IMPORT_RESULT: SkillImportResult = {
  * `transport` stays a plain string (not an enum) so an unknown value from a
  * newer backend still parses — the UI has a default branch for it.
  */
+export const WorkspaceRepoSchema: z.ZodType<WorkspaceRepo> = z.object({
+  url: z.string(),
+  description: z.string().optional(),
+  provider: z.string().optional(),
+  project_path: z.string().optional(),
+  default_branch: z.string().optional(),
+  ref: z.string().optional(),
+  head_commit: z.string().optional(),
+  connection_status: z.string().optional(),
+  sync_status: z.string().optional(),
+  test_status: z.string().optional(),
+  last_tested_at: z.string().optional(),
+  last_synced_at: z.string().optional(),
+}).loose();
+
+export const WorkspaceRepoProbeResponseSchema: z.ZodType<WorkspaceRepoProbeResponse> = z.object({
+  url: z.string(),
+  provider: z.string().default("gongfeng"),
+  project_path: z.string(),
+  default_branch: z.string().default(""),
+  branches: z.array(z.string()).default([]),
+  connection_status: z.string().default(""),
+  test_status: z.string().default(""),
+}).loose();
+
 export const WorkspaceMcpServerSchema = z.object({
   id: z.string().default(""),
   workspace_id: z.string().default(""),

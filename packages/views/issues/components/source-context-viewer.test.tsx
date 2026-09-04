@@ -3,7 +3,7 @@ import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Issue, IssueSourceContext, SourceContextCommentSnapshot } from "@multica/core/types";
-import enIssues from "../../locales/en/issues.json";
+import enIssues from "../../locales-test/en/issues.json";
 import zhHansIssues from "../../locales/zh-Hans/issues.json";
 
 const navigationPush = vi.hoisted(() => vi.fn());

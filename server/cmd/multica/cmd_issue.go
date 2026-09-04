@@ -189,6 +189,13 @@ var issuePullRequestsCmd = &cobra.Command{
 	RunE:    runIssuePullRequests,
 }
 
+var issueSourceFetchCmd = &cobra.Command{
+	Use:   "source-fetch <id>",
+	Short: "记录或抓取任务的外部来源",
+	Args:  exactArgs(1),
+	RunE:  runIssueSourceFetch,
+}
+
 var issueChildrenCmd = &cobra.Command{
 	Use:     "children <id>",
 	Aliases: []string{"subissues"},
@@ -449,6 +456,7 @@ func init() {
 	issueCmd.AddCommand(issueListCmd)
 	issueCmd.AddCommand(issueGetCmd)
 	issueCmd.AddCommand(issuePullRequestsCmd)
+	issueCmd.AddCommand(issueSourceFetchCmd)
 	issueCmd.AddCommand(issueChildrenCmd)
 	issueCmd.AddCommand(issueCreateCmd)
 	issueCmd.AddCommand(issueUpdateCmd)
@@ -493,6 +501,21 @@ func init() {
 
 	// issue pull-requests
 	issuePullRequestsCmd.Flags().String("output", "table", "Output format: table or json")
+	issueSourceFetchCmd.Flags().String("provider", "tapd", "Source provider: tapd or gongfeng")
+	issueSourceFetchCmd.Flags().String("fetch-provider", "", "Fetch mechanism")
+	issueSourceFetchCmd.Flags().String("status", "", "Fetch status: fetched or fetch_failed")
+	issueSourceFetchCmd.Flags().String("url", "", "Source URL")
+	issueSourceFetchCmd.Flags().String("source-workspace-id", "", "External workspace ID")
+	issueSourceFetchCmd.Flags().String("resource-type", "", "External resource type")
+	issueSourceFetchCmd.Flags().String("resource-id", "", "External resource ID")
+	issueSourceFetchCmd.Flags().String("title", "", "Fetched title")
+	issueSourceFetchCmd.Flags().String("summary", "", "Fetched summary")
+	issueSourceFetchCmd.Flags().String("body-excerpt", "", "Fetched body excerpt")
+	issueSourceFetchCmd.Flags().String("version", "", "External source version")
+	issueSourceFetchCmd.Flags().String("error", "", "Fetch failure reason")
+	issueSourceFetchCmd.Flags().Int64("duration-ms", 0, "Fetch duration in milliseconds")
+	issueSourceFetchCmd.Flags().Bool("auto-fetch", false, "Fetch with the configured account credential")
+	issueSourceFetchCmd.Flags().String("output", "json", "Output format: table or json")
 
 	issueChildrenCmd.Flags().String("output", "table", "Output format: table or json")
 	issueChildrenCmd.Flags().Bool("full-id", false, "Show full UUIDs in table output")

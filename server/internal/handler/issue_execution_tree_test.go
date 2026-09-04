@@ -1,0 +1,789 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+)
+
+func TestSummarizeIssueTimelineComputesHumanConfirmationRemainder(t *testing.T) {
+	workStartedAt := "2026-06-09T10:00:00Z"
+	workCompletedAt := "2026-06-09T10:10:00Z"
+	summary := summarizeIssueTimeline(IssueResponse{
+		ID:              "issue-1",
+		WorkStartedAt:   &workStartedAt,
+		WorkCompletedAt: &workCompletedAt,
+	}, []issueTimelineNodeResponse{
+		{
+			NodeID:      "task:1",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:00:00Z",
+			CompletedAt: "2026-06-09T10:04:00Z",
+			DurationMs:  240000,
+		},
+		{
+			NodeID:      "task:2",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:03:00Z",
+			CompletedAt: "2026-06-09T10:06:00Z",
+			DurationMs:  180000,
+		},
+	})
+
+	if summary.WallClockDurationMs == nil || *summary.WallClockDurationMs != 600000 {
+		t.Fatalf("wall clock = %v, want 600000", summary.WallClockDurationMs)
+	}
+	if summary.AgentExecutionDurationMs != 360000 {
+		t.Fatalf("agent execution = %d, want merged 360000", summary.AgentExecutionDurationMs)
+	}
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 240000 {
+		t.Fatalf("human confirmation = %v, want 240000", summary.HumanConfirmationDurationMs)
+	}
+	if summary.TotalDurationMs != 600000 {
+		t.Fatalf("total duration = %d, want agent + waiting 600000", summary.TotalDurationMs)
+	}
+}
+
+func TestSummarizeIssueTimelineSplitsHumanConfirmationAndChildIssueWait(t *testing.T) {
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []issueTimelineNodeResponse{
+		{
+			NodeID:      "task:1",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:00:00Z",
+			CompletedAt: "2026-06-09T10:02:00Z",
+			DurationMs:  120000,
+		},
+		{
+			NodeID:      "human_confirmation:1",
+			NodeType:    "human_confirmation",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:02:00Z",
+			CompletedAt: "2026-06-09T10:03:00Z",
+			DurationMs:  60000,
+		},
+		{
+			NodeID:      "child_issue_ref:1",
+			NodeType:    "child_issue_ref",
+			Status:      "done",
+			StartedAt:   "2026-06-09T10:03:00Z",
+			CompletedAt: "2026-06-09T10:08:00Z",
+			DurationMs:  300000,
+		},
+	})
+
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 60000 {
+		t.Fatalf("human confirmation = %v, want 60000", summary.HumanConfirmationDurationMs)
+	}
+	if summary.ChildIssueWaitDurationMs == nil || *summary.ChildIssueWaitDurationMs != 300000 {
+		t.Fatalf("child issue wait = %v, want 300000", summary.ChildIssueWaitDurationMs)
+	}
+	if summary.TotalDurationMs != 480000 {
+		t.Fatalf("total duration = %d, want agent + human + child wait 480000", summary.TotalDurationMs)
+	}
+}
+
+func TestSummarizeIssueTimelineFallsBackToAgentTaskBoundsWithoutWorkCycle(t *testing.T) {
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []issueTimelineNodeResponse{
+		{
+			NodeID:      "task:1",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:00:00Z",
+			CompletedAt: "2026-06-09T10:01:00Z",
+			DurationMs:  60000,
+		},
+	})
+
+	if summary.WorkStartedAt != "2026-06-09T10:00:00Z" || summary.WorkCompletedAt != "2026-06-09T10:01:00Z" {
+		t.Fatalf("work bounds = %q / %q, want task bounds", summary.WorkStartedAt, summary.WorkCompletedAt)
+	}
+	if summary.WallClockDurationMs == nil || *summary.WallClockDurationMs != 60000 {
+		t.Fatalf("wall clock = %v, want 60000", summary.WallClockDurationMs)
+	}
+	if summary.AgentExecutionDurationMs != 60000 {
+		t.Fatalf("agent execution = %d, want 60000", summary.AgentExecutionDurationMs)
+	}
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 0 {
+		t.Fatalf("human confirmation = %v, want 0", summary.HumanConfirmationDurationMs)
+	}
+	if summary.TotalDurationMs != 60000 {
+		t.Fatalf("total duration = %d, want agent duration 60000", summary.TotalDurationMs)
+	}
+}
+
+func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
+	root := issueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "issue-1"},
+		Tasks: []AgentTaskResponse{
+			{
+				ID:          "task-1",
+				AgentID:     "agent-coordinator",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
+				CreatedAt:   "2026-06-09T10:00:00Z",
+			},
+			{
+				ID:                      "task-2",
+				AgentID:                 "agent-coordinator",
+				Status:                  "completed",
+				StartedAt:               timelineTestStringPtr("2026-06-09T10:12:00Z"),
+				CompletedAt:             timelineTestStringPtr("2026-06-09T10:14:00Z"),
+				CreatedAt:               "2026-06-09T10:10:00Z",
+				TriggerCommentID:        timelineTestStringPtr("comment-1"),
+				TriggerAuthorName:       "Alice",
+				TriggerCommentContent:   "确认继续",
+				TriggerCommentCreatedAt: "2026-06-09T10:10:00Z",
+			},
+		},
+		ManualComments: []issueCommentBriefResponse{
+			{
+				ID:         "comment-1",
+				IssueID:    "issue-1",
+				AuthorType: "member",
+				Type:       "comment",
+				Content:    "确认继续",
+				CreatedAt:  "2026-06-09T10:10:00Z",
+			},
+		},
+	}
+
+	nodes := buildIssueTimelineNodes(root)
+	waitNode := timelineTestNodeByType(t, nodes, "human_confirmation")
+
+	if waitNode.NodeID != "human_confirmation:comment-1:task-2" {
+		t.Fatalf("human confirmation node = %+v, want comment-triggered wait", waitNode)
+	}
+	if waitNode.StartedAt != "2026-06-09T10:02:00Z" || waitNode.CompletedAt != "2026-06-09T10:10:00Z" {
+		t.Fatalf("human confirmation bounds = %q / %q", waitNode.StartedAt, waitNode.CompletedAt)
+	}
+	if waitNode.DurationMs != 480000 {
+		t.Fatalf("human confirmation duration = %d, want 480000", waitNode.DurationMs)
+	}
+	refs := map[string]bool{}
+	for _, ref := range waitNode.EvidenceRefs {
+		refs[ref.Type+":"+ref.ID] = true
+	}
+	for _, want := range []string{"agent_task:task-1", "comment:comment-1", "agent_task:task-2"} {
+		if !refs[want] {
+			t.Fatalf("human confirmation evidence missing %s: %+v", want, waitNode.EvidenceRefs)
+		}
+	}
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-2")
+	if taskNode.StartedAt != "2026-06-09T10:10:00Z" || taskNode.ActualStartedAt != "2026-06-09T10:12:00Z" {
+		t.Fatalf("task responsibility/actual start = %q / %q", taskNode.StartedAt, taskNode.ActualStartedAt)
+	}
+	if taskNode.DurationMs != 240000 {
+		t.Fatalf("task responsibility duration = %d, want 240000", taskNode.DurationMs)
+	}
+}
+
+func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
+	root := issueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "issue-1"},
+		Tasks: []AgentTaskResponse{
+			{
+				ID:          "task-1",
+				AgentID:     "agent-coordinator",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
+				CreatedAt:   "2026-06-09T10:00:00Z",
+				Result: map[string]any{
+					"output": "等待用户补充确认后，我将继续推进 02-方案设计。",
+				},
+				Agent:        &TaskAgentData{Name: "coordinator-v2 · 协调者"},
+				IsLeaderTask: true,
+			},
+		},
+		ActivityLogs: []issueActivityBriefResponse{
+			{
+				ID:        "activity-1",
+				IssueID:   "issue-1",
+				ActorType: "agent",
+				ActorID:   "agent-coordinator",
+				Action:    "squad_leader_evaluated",
+				Details: map[string]any{
+					"task_id":      "task-1",
+					"outcome":      "action",
+					"reason":       "01-clarify 已完成，存在未定决策点，需用户确认适用场景范围",
+					"wait_kind":    "human_confirmation",
+					"wait_summary": "等待用户确认密码策略边界",
+				},
+				CreatedAt: "2026-06-09T10:02:30Z",
+			},
+		},
+	}
+
+	nodes := buildIssueTimelineNodes(root)
+	waitNode := timelineTestNodeByType(t, nodes, "human_confirmation")
+
+	if waitNode.NodeID != "human_confirmation:pending:task-1" {
+		t.Fatalf("pending human confirmation node = %+v", waitNode)
+	}
+	if waitNode.Status != "running" || waitNode.StartedAt != "2026-06-09T10:02:00Z" || waitNode.CompletedAt != "" {
+		t.Fatalf("pending human confirmation status/bounds = %+v", waitNode)
+	}
+	if waitNode.DurationMs != 0 {
+		t.Fatalf("pending human confirmation duration = %d, want live client duration", waitNode.DurationMs)
+	}
+	if waitNode.Summary != "等待用户确认密码策略边界" {
+		t.Fatalf("pending human confirmation summary = %q", waitNode.Summary)
+	}
+	if waitNode.Metadata["pending"] != true || waitNode.Metadata["wait_kind"] != "human_confirmation" {
+		t.Fatalf("pending human confirmation metadata = %+v", waitNode.Metadata)
+	}
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-1")
+	if taskNode.Summary != "等待用户补充确认后，我将继续推进 02-方案设计。" {
+		t.Fatalf("coordinator task summary = %q, want task result intent", taskNode.Summary)
+	}
+	refs := map[string]bool{}
+	for _, ref := range waitNode.EvidenceRefs {
+		refs[ref.Type+":"+ref.ID] = true
+	}
+	for _, want := range []string{"agent_task:task-1", "activity:activity-1"} {
+		if !refs[want] {
+			t.Fatalf("pending human confirmation evidence missing %s: %+v", want, waitNode.EvidenceRefs)
+		}
+	}
+}
+
+func TestBuildIssueTimelineNodesSkipsMarkdownDividerInPendingHumanConfirmationSummary(t *testing.T) {
+	root := issueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "issue-1"},
+		Tasks: []AgentTaskResponse{
+			{
+				ID:          "task-1",
+				AgentID:     "agent-coordinator",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
+				CreatedAt:   "2026-06-09T10:00:00Z",
+				Result: map[string]any{
+					"output": "---\n\n## 01-需求澄清已完成，需等待用户确认\n\n请确认边界后继续。",
+				},
+				Agent:        &TaskAgentData{Name: "coordinator-v2 · 协调者"},
+				IsLeaderTask: true,
+			},
+		},
+	}
+
+	nodes := buildIssueTimelineNodes(root)
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-1")
+	waitNode := timelineTestNodeByID(t, nodes, "human_confirmation:pending:task-1")
+
+	if taskNode.Summary != "01-需求澄清已完成，需等待用户确认" {
+		t.Fatalf("coordinator task summary = %q, want markdown heading", taskNode.Summary)
+	}
+	if waitNode.Summary != "01-需求澄清已完成，需等待用户确认" {
+		t.Fatalf("pending human confirmation summary = %q, want markdown heading", waitNode.Summary)
+	}
+}
+
+func TestTimelineTaskSummaryPrefersCompletedStageResultOverTrigger(t *testing.T) {
+	summary := timelineTaskSummary(AgentTaskResponse{
+		ID:             "task-1",
+		Status:         "completed",
+		TriggerSummary: timelineTestStringPtr("## 协调者审阅 04-implement 追加改动\n\n请 05 继续验证。"),
+		Result: map[string]any{
+			"output": "05-verify 追加改动验收完成。两个 MR 的新 commit 均已确认推送。",
+		},
+		Agent: &TaskAgentData{Name: "05-验证测试"},
+	})
+
+	if summary != "05-verify 追加改动验收完成。两个 MR 的新 commit 均已确认推送。" {
+		t.Fatalf("summary = %q, want completed stage result", summary)
+	}
+}
+
+func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing.T) {
+	root := issueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "issue-1"},
+		Tasks: []AgentTaskResponse{
+			{
+				ID:          "task-1",
+				AgentID:     "agent-coordinator",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
+				CreatedAt:   "2026-06-09T10:00:00Z",
+			},
+			{
+				ID:          "task-2",
+				AgentID:     "agent-coordinator",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:05:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:06:00Z"),
+				CreatedAt:   "2026-06-09T10:02:00Z",
+			},
+		},
+	}
+
+	nodes := buildIssueTimelineNodes(root)
+	for _, node := range nodes {
+		if node.NodeType == "dispatch_wait" {
+			t.Fatalf("dispatch wait should not be emitted after responsibility-window change: %+v", node)
+		}
+	}
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-2")
+
+	if taskNode.StartedAt != "2026-06-09T10:02:00Z" || taskNode.ActualStartedAt != "2026-06-09T10:05:00Z" {
+		t.Fatalf("task responsibility/actual start = %q / %q", taskNode.StartedAt, taskNode.ActualStartedAt)
+	}
+	if taskNode.DurationMs != 240000 {
+		t.Fatalf("task responsibility duration = %d, want 240000", taskNode.DurationMs)
+	}
+}
+
+func TestSummarizeIssueTimelineReportsChildIssueRuntimeSeparately(t *testing.T) {
+	root := issueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "parent-issue"},
+		Tasks: []AgentTaskResponse{
+			{
+				ID:          "coordinator-1",
+				AgentID:     "agent-coordinator",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:01:00Z"),
+				CreatedAt:   "2026-06-09T10:00:00Z",
+			},
+			{
+				ID:          "coordinator-2",
+				AgentID:     "agent-coordinator",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:10:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:11:00Z"),
+				CreatedAt:   "2026-06-09T10:10:00Z",
+			},
+		},
+		Children: []issueExecutionNodeResponse{
+			{
+				Issue: IssueResponse{
+					ID:        "child-issue",
+					CreatedAt: "2026-06-09T10:01:00Z",
+					UpdatedAt: "2026-06-09T10:10:00Z",
+					Status:    "done",
+				},
+			},
+		},
+	}
+
+	nodes := buildIssueTimelineNodes(root)
+	for _, node := range nodes {
+		if node.NodeType == "human_confirmation" {
+			t.Fatalf("child issue runtime should be represented by child_issue_ref, not a generic inferred gap: %+v", node)
+		}
+	}
+	childRef := timelineTestNodeByType(t, nodes, "child_issue_ref")
+	if childRef.ChildIssueID != "child-issue" {
+		t.Fatalf("child_issue_ref = %+v, want child issue evidence", childRef)
+	}
+	summary := summarizeIssueTimeline(root.Issue, nodes)
+	if summary.AgentExecutionDurationMs != 120000 {
+		t.Fatalf("agent execution = %d, want parent agent work 120000", summary.AgentExecutionDurationMs)
+	}
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 0 {
+		t.Fatalf("human confirmation = %v, want 0", summary.HumanConfirmationDurationMs)
+	}
+	if summary.ChildIssueWaitDurationMs == nil || *summary.ChildIssueWaitDurationMs != 540000 {
+		t.Fatalf("child issue wait = %v, want 540000", summary.ChildIssueWaitDurationMs)
+	}
+	if summary.TotalDurationMs != 660000 {
+		t.Fatalf("total duration = %d, want parent agent + child wait 660000", summary.TotalDurationMs)
+	}
+}
+
+func TestSummarizeIssueTimelineUsesExplicitHumanConfirmationNodes(t *testing.T) {
+	workStartedAt := "2026-06-09T10:00:00Z"
+	workCompletedAt := "2026-06-09T10:20:00Z"
+	summary := summarizeIssueTimeline(IssueResponse{
+		ID:              "issue-1",
+		WorkStartedAt:   &workStartedAt,
+		WorkCompletedAt: &workCompletedAt,
+	}, []issueTimelineNodeResponse{
+		{
+			NodeID:      "task:1",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:00:00Z",
+			CompletedAt: "2026-06-09T10:02:00Z",
+			DurationMs:  120000,
+		},
+		{
+			NodeID:      "task:2",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:12:00Z",
+			CompletedAt: "2026-06-09T10:14:00Z",
+			DurationMs:  120000,
+		},
+		{
+			NodeID:      "human_confirmation:comment-1:task-2",
+			NodeType:    "human_confirmation",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:02:00Z",
+			CompletedAt: "2026-06-09T10:12:00Z",
+			DurationMs:  600000,
+		},
+	})
+
+	if summary.WallClockDurationMs == nil || *summary.WallClockDurationMs != 1200000 {
+		t.Fatalf("wall clock = %v, want 1200000", summary.WallClockDurationMs)
+	}
+	if summary.AgentExecutionDurationMs != 240000 {
+		t.Fatalf("agent execution = %d, want 240000", summary.AgentExecutionDurationMs)
+	}
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 600000 {
+		t.Fatalf("human confirmation = %v, want explicit 600000", summary.HumanConfirmationDurationMs)
+	}
+	if summary.TotalDurationMs != 840000 {
+		t.Fatalf("total duration = %d, want agent + explicit waiting 840000", summary.TotalDurationMs)
+	}
+}
+
+func TestSummarizeIssueTimelineIgnoresLowLevelFailureForAcceptanceAndTotals(t *testing.T) {
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []issueTimelineNodeResponse{
+		{
+			NodeID:          "task:1",
+			NodeType:        "agent_task",
+			Status:          "completed",
+			StartedAt:       "2026-06-09T10:00:00Z",
+			CompletedAt:     "2026-06-09T10:02:00Z",
+			DurationMs:      120000,
+			MessageCount:    3,
+			AgentTurnCount:  2,
+			TraceEventCount: 4,
+		},
+		{
+			NodeID:          "trace:1",
+			NodeType:        "evidence",
+			Status:          "failed",
+			StartedAt:       "2026-06-09T10:01:00Z",
+			CompletedAt:     "2026-06-09T10:01:10Z",
+			DurationMs:      10000,
+			MessageCount:    1,
+			TraceEventCount: 1,
+			Summary:         "工具输出包含失败字样",
+		},
+	})
+
+	if summary.AcceptanceStatus != "completed" || summary.FailureSummary != "" {
+		t.Fatalf("acceptance = %q failure = %q, want completed without low-level failure", summary.AcceptanceStatus, summary.FailureSummary)
+	}
+	if summary.TotalDurationMs != 120000 {
+		t.Fatalf("total duration = %d, want agent duration only", summary.TotalDurationMs)
+	}
+	if summary.MessageCount != 3 || summary.AgentTurnCount != 2 || summary.TraceEventCount != 4 {
+		t.Fatalf("counts = messages %d turns %d traces %d, want task counts only", summary.MessageCount, summary.AgentTurnCount, summary.TraceEventCount)
+	}
+}
+
+func TestSummarizeIssueTimelineIgnoresRecoveredRuntimeFailureForDoneIssue(t *testing.T) {
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []issueTimelineNodeResponse{
+		{
+			NodeID:        "task:coordinator-recovered",
+			NodeType:      "agent_task",
+			Status:        "failed",
+			FailureReason: "runtime_recovery",
+			StartedAt:     "2026-06-09T10:00:00Z",
+			CompletedAt:   "2026-06-09T10:01:00Z",
+			DurationMs:    60000,
+			Summary:       "daemon restarted while task was in flight",
+		},
+		{
+			NodeID:      "task:verify",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:02:00Z",
+			CompletedAt: "2026-06-09T10:04:00Z",
+			DurationMs:  120000,
+			Summary:     "verify done",
+		},
+	})
+
+	if summary.AcceptanceStatus != "done" || summary.FailureSummary != "" {
+		t.Fatalf("acceptance = %q failure = %q, want recovered runtime failure ignored", summary.AcceptanceStatus, summary.FailureSummary)
+	}
+}
+
+func TestSummarizeIssueTimelineUsesDoneIssueStatusOverHistoricalCancelledTask(t *testing.T) {
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []issueTimelineNodeResponse{
+		{
+			NodeID:      "task:abandoned-implement",
+			NodeType:    "agent_task",
+			Status:      "cancelled",
+			StartedAt:   "2026-06-09T10:00:00Z",
+			CompletedAt: "2026-06-09T10:01:00Z",
+			DurationMs:  60000,
+			Summary:     "abandoned early implementation dispatch",
+		},
+		{
+			NodeID:      "task:final-verify",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:02:00Z",
+			CompletedAt: "2026-06-09T10:04:00Z",
+			DurationMs:  120000,
+			Summary:     "final verification passed",
+		},
+	})
+
+	if summary.AcceptanceStatus != "done" || summary.FailureSummary != "" {
+		t.Fatalf("acceptance = %q failure = %q, want done without cancelled-task failure", summary.AcceptanceStatus, summary.FailureSummary)
+	}
+}
+
+func timelineTestStringPtr(value string) *string {
+	return &value
+}
+
+func timelineTestNodeByID(t *testing.T, nodes []issueTimelineNodeResponse, id string) issueTimelineNodeResponse {
+	t.Helper()
+	for _, node := range nodes {
+		if node.NodeID == id {
+			return node
+		}
+	}
+	t.Fatalf("timeline node %q missing", id)
+	return issueTimelineNodeResponse{}
+}
+
+func timelineTestNodeByType(t *testing.T, nodes []issueTimelineNodeResponse, nodeType string) issueTimelineNodeResponse {
+	t.Helper()
+	for _, node := range nodes {
+		if node.NodeType == nodeType {
+			return node
+		}
+	}
+	t.Fatalf("timeline node type %q missing", nodeType)
+	return issueTimelineNodeResponse{}
+}
+
+func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T) {
+	requireHandlerDatabase(t)
+
+	ctx := context.Background()
+	fx := newChildDoneFixture(t, "in_progress")
+
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id::text FROM agent
+		WHERE workspace_id = $1
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("load seeded agent: %v", err)
+	}
+
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
+		VALUES ($1, '执行树测试小队', '', $2, $3)
+		RETURNING id::text
+	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority,
+			started_at, completed_at, result, is_leader_task
+		)
+		VALUES ($1, $2, $3, 'completed', 0, now() - interval '3 seconds', now(), '{"结论":"已完成"}'::jsonb, true)
+		RETURNING id::text
+	`, agentID, testRuntimeID, fx.parent.ID).Scan(&taskID); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO task_message (task_id, seq, type, tool, content, input, output, created_at)
+		VALUES
+			($1, 1, 'tool_use', 'curl-check', '', '{"url":"/health"}'::jsonb, NULL, now() - interval '2 seconds'),
+			($1, 2, 'tool_result', 'curl-check', '', '{}'::jsonb, 'Error: HTTP 500 from upstream', now() - interval '1 seconds')
+	`, taskID); err != nil {
+		t.Fatalf("create task messages: %v", err)
+	}
+	var commentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, source_task_id)
+		VALUES ($1, $2, 'agent', $3, '阶段产物已上传', 'comment', $4)
+		RETURNING id::text
+	`, fx.parent.ID, testWorkspaceID, agentID, taskID).Scan(&commentID); err != nil {
+		t.Fatalf("create artifact comment: %v", err)
+	}
+	var attachmentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO attachment (
+			workspace_id, issue_id, comment_id, uploader_type, uploader_id,
+			filename, url, content_type, size_bytes
+		)
+		VALUES ($1, $2, $3, 'agent', $4, '01-需求澄清.md', '/uploads/clarify.md', 'text/markdown', 128)
+		RETURNING id::text
+	`, testWorkspaceID, fx.parent.ID, commentID, agentID).Scan(&attachmentID); err != nil {
+		t.Fatalf("create artifact attachment: %v", err)
+	}
+	var duplicateAttachmentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO attachment (
+			workspace_id, issue_id, comment_id, uploader_type, uploader_id,
+			filename, url, content_type, size_bytes
+		)
+		VALUES ($1, $2, $3, 'agent', $4, '01-需求澄清.md', '/uploads/clarify-duplicate.md', 'text/markdown', 128)
+		RETURNING id::text
+	`, testWorkspaceID, fx.parent.ID, commentID, agentID).Scan(&duplicateAttachmentID); err != nil {
+		t.Fatalf("create duplicate artifact attachment: %v", err)
+	}
+
+	if _, err := testHandler.Queries.CreateTaskTraceEvent(ctx, db.CreateTaskTraceEventParams{
+		WorkspaceID:  parseUUID(testWorkspaceID),
+		TaskID:       parseUUID(taskID),
+		IssueID:      parseUUID(fx.parent.ID),
+		AgentID:      parseUUID(agentID),
+		RuntimeID:    parseUUID(testRuntimeID),
+		SquadID:      parseUUID(squadID),
+		Source:       "squad",
+		EventType:    "task.completed",
+		EventName:    "任务已完成",
+		Status:       "completed",
+		Attempt:      1,
+		DurationMs:   pgtype.Int8{Int64: 3000, Valid: true},
+		Provider:     "codex",
+		Model:        "gpt-5.3-codex-spark",
+		InputTokens:  36,
+		OutputTokens: 19,
+		Metadata:     []byte(`{"阶段":"父子协作"}`),
+	}); err != nil {
+		t.Fatalf("create trace: %v", err)
+	}
+
+	updateChildStatus(t, fx.child.ID, "done")
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/issues/"+fx.parent.ID+"/execution-tree", nil)
+	req = withURLParam(req, "id", fx.parent.ID)
+	testHandler.GetIssueExecutionTree(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetIssueExecutionTree: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp issueExecutionTreeResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode execution tree: %v", err)
+	}
+	if resp.Root.Issue.ID != fx.parent.ID {
+		t.Fatalf("root issue id = %q, want %q", resp.Root.Issue.ID, fx.parent.ID)
+	}
+	if len(resp.Root.Children) != 1 || resp.Root.Children[0].Issue.ID != fx.child.ID {
+		t.Fatalf("children = %+v, want child %s", resp.Root.Children, fx.child.ID)
+	}
+	if resp.Summary["任务数"] != 1 || resp.Summary["完成任务数"] != 1 {
+		t.Fatalf("task summary = %+v, want one completed task", resp.Summary)
+	}
+	if resp.Summary["观测事件数"] != 1 {
+		t.Fatalf("trace summary = %+v, want one trace event", resp.Summary)
+	}
+	if resp.Summary["工具调用数"] != 1 || resp.Summary["异常工具数"] != 1 {
+		t.Fatalf("tool summary = %+v, want one tool call with attention", resp.Summary)
+	}
+	if len(resp.Root.TaskMessages) != 2 {
+		t.Fatalf("root task messages = %+v, want persisted task messages", resp.Root.TaskMessages)
+	}
+	if len(resp.Root.Artifacts) != 1 {
+		t.Fatalf("root artifacts = %+v, want one artifact", resp.Root.Artifacts)
+	}
+	rootArtifact := resp.Root.Artifacts[0]
+	if (rootArtifact.ID != attachmentID && rootArtifact.ID != duplicateAttachmentID) || rootArtifact.TaskID != taskID || rootArtifact.CommentID != commentID {
+		t.Fatalf("root artifact = %+v, want attachment/task/comment linkage", resp.Root.Artifacts[0])
+	}
+	if resp.Root.Artifacts[0].Title != "01-需求澄清" || resp.Root.Artifacts[0].Kind != "stage_markdown" {
+		t.Fatalf("root artifact title/kind = %+v", resp.Root.Artifacts[0])
+	}
+	if resp.Root.TaskMessages[0].Type != "tool_use" || resp.Root.TaskMessages[0].Tool != "curl-check" {
+		t.Fatalf("first task message = %+v, want curl-check tool_use", resp.Root.TaskMessages[0])
+	}
+	if resp.Root.TaskMessages[1].Type != "tool_result" || !strings.Contains(resp.Root.TaskMessages[1].Output, "HTTP 500") {
+		t.Fatalf("second task message = %+v, want HTTP 500 tool_result", resp.Root.TaskMessages[1])
+	}
+	if len(resp.Root.ToolCallSummary) != 1 {
+		t.Fatalf("root tool summary = %+v, want one row", resp.Root.ToolCallSummary)
+	}
+	if resp.Root.ToolCallSummary[0].Tool != "curl-check" || resp.Root.ToolCallSummary[0].FailureSignalCalls != 1 || !resp.Root.ToolCallSummary[0].NeedsAttention {
+		t.Fatalf("root tool summary row = %+v", resp.Root.ToolCallSummary[0])
+	}
+	if len(resp.Root.ToolCallChains) != 1 {
+		t.Fatalf("root tool chains = %+v, want one chain", resp.Root.ToolCallChains)
+	}
+	chain := resp.Root.ToolCallChains[0]
+	if chain.Tool != "curl-check" || chain.Status != "已配对" || chain.ResultCategory != "异常线索" || !chain.FailureSignal {
+		t.Fatalf("root tool chain = %+v, want paired failure signal", chain)
+	}
+	if chain.UseSeq != 1 || chain.ResultSeq != 2 || chain.FailureReason == "" {
+		t.Fatalf("root tool chain seq/failure reason = %+v, want call/result seq and reason", chain)
+	}
+	if resp.Summary["唤醒评论数"] != 1 || len(resp.Root.WakeupComments) != 1 {
+		t.Fatalf("wakeup comments = %+v / %+v, want one", resp.Summary, resp.Root.WakeupComments)
+	}
+	if !strings.Contains(resp.Root.WakeupComments[0].Content, fx.child.Identifier) {
+		t.Fatalf("wakeup comment does not mention child identifier: %s", resp.Root.WakeupComments[0].Content)
+	}
+	if len(resp.TimelineNodes) == 0 {
+		t.Fatalf("timeline_nodes missing")
+	}
+	nodeTypes := map[string]int{}
+	for _, node := range resp.TimelineNodes {
+		if node.Artifacts == nil {
+			t.Fatalf("timeline node artifacts must encode as [] instead of null: %+v", node)
+		}
+		nodeTypes[node.NodeType]++
+		if node.IssueID != fx.parent.ID {
+			t.Fatalf("timeline node issue id = %q, want parent %q: %+v", node.IssueID, fx.parent.ID, node)
+		}
+	}
+	for _, nodeType := range []string{"agent_task", "tool_call", "status_change", "child_issue_ref", "approval"} {
+		if nodeTypes[nodeType] == 0 {
+			t.Fatalf("timeline node type %s missing: %+v", nodeType, nodeTypes)
+		}
+	}
+	childRef := timelineTestNodeByType(t, resp.TimelineNodes, "child_issue_ref")
+	taskNode := timelineTestNodeByID(t, resp.TimelineNodes, "task:"+taskID)
+	if len(taskNode.Artifacts) != 1 || taskNode.Artifacts[0].ID != rootArtifact.ID {
+		t.Fatalf("task node artifacts = %+v, want uploaded attachment", taskNode.Artifacts)
+	}
+	hasAttachmentRef := false
+	for _, ref := range taskNode.EvidenceRefs {
+		if ref.Type == "attachment" && ref.ID == rootArtifact.ID && ref.Href != "" {
+			hasAttachmentRef = true
+			break
+		}
+	}
+	if !hasAttachmentRef {
+		t.Fatalf("task node evidence refs = %+v, want attachment ref", taskNode.EvidenceRefs)
+	}
+	if childRef.ChildIssueID != fx.child.ID {
+		t.Fatalf("child_issue_ref = %+v, want child %s", childRef, fx.child.ID)
+	}
+	if childRef.TraceEventCount != 0 || childRef.MessageCount != 0 || childRef.AgentTurnCount != 0 {
+		t.Fatalf("child_issue_ref must not expand child internals: %+v", childRef)
+	}
+	if resp.IssueSummary.IssueID != fx.parent.ID || resp.IssueSummary.NodeCount != len(resp.TimelineNodes) {
+		t.Fatalf("issue_summary = %+v, timeline nodes = %d", resp.IssueSummary, len(resp.TimelineNodes))
+	}
+	if resp.IssueSummary.TotalInputTokens < 36 || resp.IssueSummary.TotalOutputTokens < 19 {
+		t.Fatalf("issue_summary token totals = %+v, want trace usage included", resp.IssueSummary)
+	}
+	if resp.IssueSummary.FullAnalysisDeepLink == "" {
+		t.Fatalf("issue_summary missing deep link: %+v", resp.IssueSummary)
+	}
+}

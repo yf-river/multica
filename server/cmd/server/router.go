@@ -1168,6 +1168,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("composio integration disabled (COMPOSIO_API_KEY not set)")
 	}
 
+	if credentialKey, err := secretbox.LoadKey("MULTICA_EXTERNAL_CREDENTIAL_KEY"); err == nil {
+		box, boxErr := secretbox.New(credentialKey)
+		if boxErr != nil {
+			slog.Error("external credentials: secretbox initialization failed", "error", boxErr)
+		} else {
+			h.ExternalCredentialBox = box
+			slog.Info("external credential encryption enabled")
+		}
+	} else {
+		slog.Info("external credential token storage disabled (MULTICA_EXTERNAL_CREDENTIAL_KEY not set)")
+	}
+
 	// VCS at-rest encryption: the box encrypts per-workspace access tokens and
 	// webhook secrets for token-based providers (Forgejo / Gitea / GitLab).
 	// Without it, connect/webhook handlers return 503 (so a misconfigured
@@ -1518,7 +1530,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/", h.GetExternalCredentialProfile)
 				r.Put("/", h.UpdateExternalCredentialProfile)
 				r.Delete("/", h.DeleteExternalCredentialProfile)
-		})
+			})
 		})
 
 		// Plugin Action API. Called by the HOST PAGE on the signed-in user's
@@ -1610,6 +1622,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
+					r.Post("/repos/probe", h.ProbeWorkspaceRepo)
+					r.Post("/repos/resolve", h.ResolveWorkspaceRepo)
 					r.Post("/members", h.CreateInvitation)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
@@ -1917,6 +1931,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/properties/{propertyId}", h.SetIssueProperty)
 					r.Delete("/properties/{propertyId}", h.DeleteIssueProperty)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
+					r.Post("/pull-requests", h.LinkPullRequestToIssue)
+					r.Post("/merge-requests/create", h.CreateMergeRequestForIssue)
+					r.Post("/source-fetch", h.RecordIssueSourceFetch)
 				})
 			})
 

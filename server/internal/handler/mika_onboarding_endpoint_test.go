@@ -76,7 +76,7 @@ func TestStartMikaOnboarding_WritesTheOpeningWithoutRunningAnAgent(t *testing.T)
 	sessionID := createHandlerTestChatSession(t, agentID)
 	cleanupSessionTasks(t, sessionID)
 
-	w := startMikaOnboarding(t, sessionID, map[string]any{"language": "en"})
+	w := startMikaOnboarding(t, sessionID, map[string]any{})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -166,14 +166,12 @@ func TestStartMikaOnboarding_WritesTheOpeningWithoutRunningAnAgent(t *testing.T)
 	}
 }
 
-// TestStartMikaOnboarding_OpeningFollowsTheRequestedLanguage pins the one
-// personalization the template does branch on.
-func TestStartMikaOnboarding_OpeningFollowsTheRequestedLanguage(t *testing.T) {
+func TestStartMikaOnboarding_OpeningIsChinese(t *testing.T) {
 	agentID := markAsMika(t, createHandlerTestAgent(t, "Mika", nil))
 	sessionID := createHandlerTestChatSession(t, agentID)
 	cleanupSessionTasks(t, sessionID)
 
-	if w := startMikaOnboarding(t, sessionID, map[string]any{"language": "zh"}); w.Code != http.StatusCreated {
+	if w := startMikaOnboarding(t, sessionID, map[string]any{}); w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
@@ -186,7 +184,7 @@ func TestStartMikaOnboarding_OpeningFollowsTheRequestedLanguage(t *testing.T) {
 		t.Fatalf("load opening: %v", err)
 	}
 	if !strings.Contains(content, "工作区") {
-		t.Fatalf("zh request produced a non-Chinese opening: %q", content)
+		t.Fatalf("onboarding produced a non-Chinese opening: %q", content)
 	}
 }
 
@@ -198,12 +196,12 @@ func TestStartMikaOnboarding_IsIdempotent(t *testing.T) {
 	sessionID := createHandlerTestChatSession(t, agentID)
 	cleanupSessionTasks(t, sessionID)
 
-	first := startMikaOnboarding(t, sessionID, map[string]any{"language": "zh"})
+	first := startMikaOnboarding(t, sessionID, map[string]any{})
 	if first.Code != http.StatusCreated {
 		t.Fatalf("first call: expected 201, got %d: %s", first.Code, first.Body.String())
 	}
 
-	second := startMikaOnboarding(t, sessionID, map[string]any{"language": "zh"})
+	second := startMikaOnboarding(t, sessionID, map[string]any{})
 	if second.Code != http.StatusOK {
 		t.Fatalf("second call: expected 200, got %d: %s", second.Code, second.Body.String())
 	}
@@ -239,9 +237,7 @@ func TestStartMikaOnboarding_RejectsBadInput(t *testing.T) {
 		sessionID string
 		body      any
 	}{
-		{"unsupported language", mikaSession, map[string]any{"language": "fr"}},
-		{"missing language", mikaSession, map[string]any{}},
-		{"agent without the mika system_key", otherSession, map[string]any{"language": "en"}},
+		{"agent without the mika system_key", otherSession, map[string]any{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

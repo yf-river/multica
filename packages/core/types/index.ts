@@ -1,3 +1,12 @@
+export type {
+  AgentTaskArtifact,
+  IssueExecutionNode,
+  IssueExecutionTreeResponse,
+  IssueTimelineNode,
+  IssueTimelineSummary,
+  TaskTraceEvent,
+  ToolCallChain,
+} from "./issue-execution";
 export type { Issue, IssueStatus, IssuePriority, IssueAssigneeType, IssueMetadata, IssueMetadataValue, IssueReaction, SourceContextAttachment, SourceContextAuthor, SourceContextIssueSnapshot, SourceContextCommentSnapshot, SourceContextSnapshot, SourceContextLimitUsage, SourceContextPreview, SourceContextAuthorState, IssueSourceContext } from "./issue";
 export type {
   IssueStatusCategory,
@@ -85,7 +94,7 @@ export type {
   MikaBootstrapResponse,
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
-export type { Workspace, WorkspaceRepo, WorkspaceMcpServer, Member, MemberRole, User, MemberWithUser, Invitation, ShareLink, ShareLinkInfo } from "./workspace";
+export type { Workspace, WorkspaceRepo, WorkspaceRepoProbeResponse, WorkspaceMcpServer, Member, MemberRole, User, MemberWithUser, Invitation, ShareLink, ShareLinkInfo } from "./workspace";
 export type {
   PluginInstallation,
   PluginConfigField,

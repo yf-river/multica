@@ -4,8 +4,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { AgentConversationStarter } from "@multica/core/types";
-import enAgents from "../../locales/en/agents.json";
-import enChat from "../../locales/en/chat.json";
+import enAgents from "../../locales-test/en/agents.json";
+import enChat from "../../locales-test/en/chat.json";
 import { ConversationStartersEditor } from "./conversation-starters-editor";
 
 // The selection matrix (which rows count, when the fallback wins) is covered

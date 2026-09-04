@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enIssues from "../../../locales/en/issues.json";
+import enIssues from "../../../locales-test/en/issues.json";
 import { AssigneePicker } from "./assignee-picker";
 
 const MEMBERS = [

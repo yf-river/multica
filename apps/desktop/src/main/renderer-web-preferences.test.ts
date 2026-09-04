@@ -6,7 +6,7 @@ const PRELOAD = "/app/out/preload/index.js";
 
 describe("createRendererWebPreferences", () => {
   it("enables the Chromium process sandbox", () => {
-    expect(createRendererWebPreferences(PRELOAD, "en").sandbox).toBe(true);
+    expect(createRendererWebPreferences(PRELOAD).sandbox).toBe(true);
   });
 
   it("keeps webSecurity off only until the privileged-protocol migration lands", () => {
@@ -15,39 +15,34 @@ describe("createRendererWebPreferences", () => {
     // onto a custom privileged protocol (so CORS preflights carry a real
     // Origin), plus server-side CORS coordination. Any change to this
     // expectation should be that migration, in its own PR.
-    expect(createRendererWebPreferences(PRELOAD, "en").webSecurity).toBe(false);
+    expect(createRendererWebPreferences(PRELOAD).webSecurity).toBe(false);
   });
 
   it("leaves contextIsolation and nodeIntegration at Electron's secure defaults", () => {
     // Not setting them means contextIsolation: true and nodeIntegration:
     // false (Electron defaults). The guard is that nothing re-enables the
     // insecure side of either default.
-    const prefs = createRendererWebPreferences(PRELOAD, "en");
+    const prefs = createRendererWebPreferences(PRELOAD);
     expect(prefs.contextIsolation).not.toBe(false);
     expect(prefs.nodeIntegration).not.toBe(true);
   });
 
   it("keeps plugins enabled for the PDF preview iframe", () => {
-    expect(createRendererWebPreferences(PRELOAD, "en").plugins).toBe(true);
+    expect(createRendererWebPreferences(PRELOAD).plugins).toBe(true);
   });
 
   it("loads the given preload script", () => {
-    expect(createRendererWebPreferences(PRELOAD, "en").preload).toBe(PRELOAD);
+    expect(createRendererWebPreferences(PRELOAD).preload).toBe(PRELOAD);
   });
 
-  it("passes the system locale and extra arguments to the renderer", () => {
-    const prefs = createRendererWebPreferences(PRELOAD, "de", [
+  it("passes extra arguments to the renderer", () => {
+    const prefs = createRendererWebPreferences(PRELOAD, [
       "--issue-window=<ctx>",
     ]);
-    expect(prefs.additionalArguments).toEqual([
-      "--multica-locale=de",
-      "--issue-window=<ctx>",
-    ]);
+    expect(prefs.additionalArguments).toEqual(["--issue-window=<ctx>"]);
   });
 
-  it("defaults to the locale flag alone", () => {
-    expect(
-      createRendererWebPreferences(PRELOAD, "fr").additionalArguments,
-    ).toEqual(["--multica-locale=fr"]);
+  it("defaults to no additional arguments", () => {
+    expect(createRendererWebPreferences(PRELOAD).additionalArguments).toEqual([]);
   });
 });

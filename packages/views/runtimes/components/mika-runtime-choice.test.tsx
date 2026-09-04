@@ -4,9 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { AgentRuntime } from "@multica/core/types";
-import enAgents from "../../locales/en/agents.json";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
+import enAgents from "../../locales-test/en/agents.json";
+import enCommon from "../../locales-test/en/common.json";
+import enRuntimes from "../../locales-test/en/runtimes.json";
 import { MikaRuntimeChoice } from "./mika-runtime-choice";
 
 vi.mock("@multica/core/api", () => ({ api: { listRuntimeModels: vi.fn() } }));

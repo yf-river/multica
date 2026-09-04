@@ -3,6 +3,26 @@ export type MemberRole = "owner" | "admin" | "member";
 export interface WorkspaceRepo {
   url: string;
   description?: string;
+  provider?: string;
+  project_path?: string;
+  default_branch?: string;
+  ref?: string;
+  head_commit?: string;
+  connection_status?: string;
+  sync_status?: string;
+  test_status?: string;
+  last_tested_at?: string;
+  last_synced_at?: string;
+}
+
+export interface WorkspaceRepoProbeResponse {
+  url: string;
+  provider: string;
+  project_path: string;
+  default_branch: string;
+  branches: string[];
+  connection_status: string;
+  test_status: string;
 }
 
 export interface Workspace {
@@ -70,8 +90,6 @@ export interface User {
    * Kept as `string | null` for forward compatibility.
    */
   starter_content_state: string | null;
-  /** Preferred UI language. null means "follow client/system". */
-  language: string | null;
   /**
    * Free-form self-description (role, stack, preferences). Injected into
    * the agent brief so coding agents have cheap, durable context about

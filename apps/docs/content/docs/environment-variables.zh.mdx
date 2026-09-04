@@ -20,7 +20,7 @@ MULTICA_APP_URL=https://multica.example.com
 MULTICA_PUBLIC_URL=https://api.multica.example.com
 ```
 
-还需要选择一种邮件服务，否则验证码和邀请只会写入服务端日志。
+邮件服务仅用于发送工作区邀请，不影响账号密码登录。
 
 <Callout type="warning">
 </Callout>
@@ -66,7 +66,7 @@ MULTICA_PUBLIC_URL=https://api.multica.example.com
 自托管部署需要设置 `FRONTEND_ORIGIN`。缺少它时，邀请链接、cookie 安全属性和 WebSocket origin 校验都可能与实际域名不一致。
 </Callout>
 
-## 邮件与登录
+## 邀请邮件
 
 ### Resend
 
@@ -150,8 +150,7 @@ MULTICA_PUBLIC_URL=https://api.multica.example.com
 |---|---|---|
 | `REDIS_URL` | 空 | 用于共享限流、实时事件和 token cache；未设置时实时事件和邀请限流回退到进程内存，认证限流不生效 |
 | `REDIS_DISABLE_CLIENT_NAME` | `false` | 托管 Redis 禁止 `CLIENT SETNAME` 时设为 `true` |
-| `RATE_LIMIT_AUTH` | `5` | 单 IP 每分钟发送验证码或发起 Google 登录的次数 |
-| `RATE_LIMIT_AUTH_VERIFY` | `20` | 单 IP 每分钟验证验证码的次数 |
+| `RATE_LIMIT_AUTH` | `5` | 单 IP 每分钟账号密码登录或发起 Google 登录的次数 |
 | `RATE_LIMIT_INVITATION_ACTOR_10M` | `10` | 每位邀请人在 10 分钟滑动窗口内可创建的工作区邀请数；设为 `0` 可关闭此项限流 |
 | `RATE_LIMIT_INVITATION_WORKSPACE_24H` | `50` | 同一工作区内所有管理员在 24 小时滑动窗口内可创建的邀请总数；设为 `0` 可关闭此项限流 |
 | `RATE_LIMIT_INVITATION_RECIPIENT_24H` | `6` | 同一规范化收件邮箱跨工作区在 24 小时滑动窗口内可收到的邀请数；设为 `0` 可关闭此项限流 |

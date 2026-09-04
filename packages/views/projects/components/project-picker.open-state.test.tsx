@@ -11,8 +11,8 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enProjects from "../../locales/en/projects.json";
-import enIssues from "../../locales/en/issues.json";
+import enProjects from "../../locales-test/en/projects.json";
+import enIssues from "../../locales-test/en/issues.json";
 import { ProjectPicker } from "./project-picker";
 import { ClearablePillButton, PillButton } from "../../common/pill-button";
 

@@ -60,5 +60,9 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 export function providerDisplayName(provider: string): string {
   const known = PROVIDER_DISPLAY_NAMES[provider];
   if (known) return known;
-  return provider.charAt(0).toUpperCase() + provider.slice(1);
+  return provider
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }

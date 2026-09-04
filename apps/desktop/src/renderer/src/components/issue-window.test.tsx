@@ -97,7 +97,7 @@ describe("IssueWindow", () => {
     render(<IssueWindow context={context} />);
 
     expect(await screen.findByTestId("workspace-loading")).toBeInTheDocument();
-    expect(screen.queryByText("Issue unavailable")).toBeNull();
+    expect(screen.queryByText("任务不可用")).toBeNull();
   });
 
   it("shows unavailable only after an authoritative list omits the workspace", async () => {
@@ -105,7 +105,7 @@ describe("IssueWindow", () => {
 
     render(<IssueWindow context={context} />);
 
-    expect(await screen.findByText("Issue unavailable")).toBeInTheDocument();
+    expect(await screen.findByText("任务不可用")).toBeInTheDocument();
     expect(screen.queryByTestId("workspace-loading")).toBeNull();
   });
 

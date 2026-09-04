@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/events"
@@ -1158,11 +1159,12 @@ func TestNotification_StatusChange_ArchivesStaleTaskFailed(t *testing.T) {
 	// Two failed runs land before the status flip.
 	for i := 0; i < 2; i++ {
 		bus.Publish(events.Event{
-			Type:        protocol.EventTaskFailed,
-			WorkspaceID: testWorkspaceID,
-			ActorType:   "system",
+			Type:           protocol.EventTaskFailed,
+			IdempotencyKey: fmt.Sprintf("test:task-failed:archive:%d", i),
+			WorkspaceID:    testWorkspaceID,
+			ActorType:      "system",
 			Payload: map[string]any{
-				"task_id":  "00000000-0000-0000-0000-bbbbbbbbbbbb",
+				"task_id":  fmt.Sprintf("00000000-0000-0000-0000-bbbbbbbbbbb%d", i),
 				"agent_id": agentID,
 				"issue_id": issueID,
 			},
@@ -1257,9 +1259,10 @@ func TestNotification_StatusChange_NonTerminalKeepsTaskFailed(t *testing.T) {
 	addTestSubscriber(t, issueID, "member", testUserID, "creator")
 
 	bus.Publish(events.Event{
-		Type:        protocol.EventTaskFailed,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "system",
+		Type:           protocol.EventTaskFailed,
+		IdempotencyKey: "test:task-failed:non-terminal",
+		WorkspaceID:    testWorkspaceID,
+		ActorType:      "system",
 		Payload: map[string]any{
 			"task_id":  "00000000-0000-0000-0000-bbbbbbbbbbbb",
 			"agent_id": "00000000-0000-0000-0000-aaaaaaaaaaaa",
@@ -1299,9 +1302,10 @@ func TestNotification_StatusChange_ReopenSurfacesNewTaskFailed(t *testing.T) {
 	agentID := "00000000-0000-0000-0000-aaaaaaaaaaaa"
 
 	bus.Publish(events.Event{
-		Type:        protocol.EventTaskFailed,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "system",
+		Type:           protocol.EventTaskFailed,
+		IdempotencyKey: "test:task-failed:reopen:initial",
+		WorkspaceID:    testWorkspaceID,
+		ActorType:      "system",
 		Payload: map[string]any{
 			"task_id":  "00000000-0000-0000-0000-bbbbbbbbbbbb",
 			"agent_id": agentID,
@@ -1318,9 +1322,10 @@ func TestNotification_StatusChange_ReopenSurfacesNewTaskFailed(t *testing.T) {
 	// Reviewer kicks the issue back; a rerun fails again.
 	publishStatusChange(bus, issueID, "in_progress", "in_review")
 	bus.Publish(events.Event{
-		Type:        protocol.EventTaskFailed,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "system",
+		Type:           protocol.EventTaskFailed,
+		IdempotencyKey: "test:task-failed:reopen:new",
+		WorkspaceID:    testWorkspaceID,
+		ActorType:      "system",
 		Payload: map[string]any{
 			"task_id":  "00000000-0000-0000-0000-cccccccccccc",
 			"agent_id": agentID,

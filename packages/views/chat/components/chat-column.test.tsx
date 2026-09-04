@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enChat from "../../locales/en/chat.json";
+import enChat from "../../locales-test/en/chat.json";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { ChatMessageSkeleton } from "./chat-message-list";
 import { NoAgentBanner } from "./no-agent-banner";

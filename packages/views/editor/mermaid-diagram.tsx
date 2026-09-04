@@ -353,6 +353,7 @@ export function MermaidDiagram({ chart }: { chart: string }) {
   const [error, setError] = useState<string | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const copiedResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -429,9 +430,20 @@ export function MermaidDiagram({ chart }: { chart: string }) {
   const handleCopySource = useCallback(async () => {
     if (await copyText(chart)) {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copiedResetTimerRef.current) clearTimeout(copiedResetTimerRef.current);
+      copiedResetTimerRef.current = setTimeout(() => {
+        copiedResetTimerRef.current = null;
+        setCopied(false);
+      }, 2000);
     }
   }, [chart]);
+
+  useEffect(
+    () => () => {
+      if (copiedResetTimerRef.current) clearTimeout(copiedResetTimerRef.current);
+    },
+    [],
+  );
 
   if (error) {
     return (
