@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
-import { Inter, Geist_Mono, Source_Serif_4 } from "next/font/google";
+import localFont from "next/font/local";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@multica/ui/components/ui/sonner";
 import { cn } from "@multica/ui/lib/utils";
@@ -28,17 +28,30 @@ import "./globals.css";
 // italic face the ~20 semantic italic labels (chat empty states, model-picker's
 // "Managed by runtime", dashboard/squad placeholders) plus every markdown <em> and
 // blockquote rendered as browser-synthesized oblique.
-const inter = Inter({
-  subsets: ["latin"],
-  style: ["normal", "italic"],
+const inter = localFont({
+  src: [
+    {
+      path: "../../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2",
+      style: "normal",
+      weight: "100 900",
+    },
+    {
+      path: "../../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-italic.woff2",
+      style: "italic",
+      weight: "100 900",
+    },
+  ],
+  display: "swap",
   variable: "--font-inter",
 });
 // Mono font has no explicit CJK fallback: CJK chars in code blocks are inherently
 // non-aligned with a mono grid (Chinese is proportional), so listing CJK fonts
 // here would falsely signal alignment guarantees. Browser default fallback handles
 // the rare mixed case correctly.
-const geistMono = Geist_Mono({
-  subsets: ["latin"],
+const geistMono = localFont({
+  src: "../../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2",
+  display: "swap",
+  weight: "100 900",
   variable: "--font-mono",
   fallback: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
 });
@@ -46,9 +59,20 @@ const geistMono = Geist_Mono({
 // accents (e.g. "...on one shared board."). Only loaded on routes that
 // render the font; layout-shift-prevention handled by next/font's synthetic
 // fallback metrics, same as Inter.
-const sourceSerif = Source_Serif_4({
-  subsets: ["latin"],
-  style: ["normal", "italic"],
+const sourceSerif = localFont({
+  src: [
+    {
+      path: "../../../node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2",
+      style: "normal",
+      weight: "200 900",
+    },
+    {
+      path: "../../../node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-italic.woff2",
+      style: "italic",
+      weight: "200 900",
+    },
+  ],
+  display: "swap",
   variable: "--font-serif",
   fallback: [
     "ui-serif",
