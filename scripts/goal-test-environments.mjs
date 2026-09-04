@@ -346,7 +346,7 @@ async function deployEnvironment(item, build) {
   refreshDaemonProfileToken(item);
   const webArgs = item.frontendMode === "next-start"
     ? ["--dir", "apps/web", "exec", "next", "start", "-p", item.frontendPort, "-H", "0.0.0.0"]
-    : ["--dir", "apps/web", "exec", "next", "dev", "-p", item.frontendPort, "-H", "0.0.0.0"];
+    : ["--dir", "apps/web", "exec", "next", "dev", "--webpack", "-p", item.frontendPort, "-H", "0.0.0.0"];
   let webPID = startDetached("pnpm", webArgs, webEnv, logPath(item, "web"));
   waitForHTTP(`http://127.0.0.1:${item.frontendPort}/login`, 90_000);
   webPID = listeningPID(item.frontendPort) || webPID;
@@ -579,7 +579,7 @@ function serviceEnvironment(env, role) {
 function startWebProcess(item, env) {
   const webArgs = item.frontendMode === "next-start"
     ? ["--dir", "apps/web", "exec", "next", "start", "-p", item.frontendPort, "-H", "0.0.0.0"]
-    : ["--dir", "apps/web", "exec", "next", "dev", "-p", item.frontendPort, "-H", "0.0.0.0"];
+    : ["--dir", "apps/web", "exec", "next", "dev", "--webpack", "-p", item.frontendPort, "-H", "0.0.0.0"];
   let webPID = startDetached("pnpm", webArgs, env, logPath(item, "web"));
   waitForHTTP(`http://127.0.0.1:${item.frontendPort}/login`, 90_000);
   webPID = listeningPID(item.frontendPort) || webPID;
