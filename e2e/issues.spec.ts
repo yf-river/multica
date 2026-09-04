@@ -98,8 +98,7 @@ test.describe("Issues", () => {
 
     await page.getByRole("button", { name: /1 个筛选/ }).click();
     const dateFilterItem = page.getByRole("menuitem", { name: /^日期/ });
-    await dateFilterItem.focus();
-    await page.keyboard.press("ArrowRight");
+    await dateFilterItem.dispatchEvent("click");
     const updatedDateField = page.getByRole("menuitemradio", { name: "更新时间" });
     await expect(updatedDateField).toBeVisible();
     await updatedDateField.dispatchEvent("click");
