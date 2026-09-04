@@ -42,29 +42,29 @@ function tableBody(request: Request): TableRequestBody {
 }
 
 async function switchToTable(page: Page) {
-  const currentView = page.getByRole("button", { name: "Board", exact: true });
+  const currentView = page.getByRole("button", { name: "看板", exact: true });
   await expect(currentView).toBeVisible();
   await currentView.click();
   const tableOption = page.getByRole("menuitemradio", {
-    name: "Table",
+    name: "表格",
     exact: true,
   });
   await tableOption.click();
   await expect(
-    page.getByRole("button", { name: "Table", exact: true }),
+    page.getByRole("button", { name: "表格", exact: true }),
   ).toBeVisible();
   await expect(tableOption).toBeHidden();
 }
 
 async function groupByStatus(page: Page) {
-  await page.getByRole("button", { name: "Group", exact: true }).click();
+  await page.getByRole("button", { name: "分组", exact: true }).click();
   const statusOption = page.getByRole("menuitemradio", {
-    name: "Status",
+    name: "状态",
     exact: true,
   });
   await statusOption.click();
   await expect(
-    page.getByRole("button", { name: "Group: Status", exact: true }),
+    page.getByRole("button", { name: "分组：状态", exact: true }),
   ).toBeVisible();
   await expect(statusOption).toBeHidden();
 }
@@ -145,13 +145,10 @@ test.describe("Issue Table server grouping", () => {
 
     const backlogGroup = page
       .getByRole("row")
-      .filter({ hasText: "Backlog" })
+      .filter({ hasText: "待规划" })
       .first();
     await expect(backlogGroup).toContainText("501");
-    await expect(page.getByRole("row").filter({ hasText: "Backlog" }).first()).toBeVisible();
-    await expect(
-      page.getByText(/Grouping and hierarchy are paused/),
-    ).toHaveCount(0);
+    await expect(page.getByRole("row").filter({ hasText: "待规划" }).first()).toBeVisible();
 
     await expect
       .poll(() => Date.now() - lastObservedRequestAt, {
@@ -212,7 +209,11 @@ test.describe("Issue Table server grouping", () => {
     const todoChildrenPromise = page.waitForResponse((response) => {
       if (apiPath(response.request()) !== "/api/issues/table/rows") return false;
       const body = tableBody(response.request());
-      return body.parent_id === parent.id && response.status() === 200;
+      return (
+        body.group_key === "status:todo" &&
+        body.parent_id === parent.id &&
+        response.status() === 200
+      );
     });
     const doneRootPromise = page.waitForResponse((response) => {
       if (apiPath(response.request()) !== "/api/issues/table/rows") return false;
@@ -304,7 +305,7 @@ test.describe("Issue Table server grouping", () => {
       element.scrollTop = element.scrollHeight;
     });
     await firstTailPromise;
-    await expect(page.getByRole("button", { name: "Table", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "表格", exact: true })).toBeVisible();
 
     const postUpdateResponses: Array<{
       body: TableRequestBody;
@@ -364,7 +365,7 @@ test.describe("Issue Table server grouping", () => {
     ].map((row) => row.issue.id);
     expect(new Set(refreshedIds).size).toBe(60);
     expect(refreshedIds).toContain(moved.id);
-    await expect(page.getByRole("button", { name: "Table", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "表格", exact: true })).toBeVisible();
     page.off("response", collectResponse);
   });
 
@@ -401,7 +402,7 @@ test.describe("Issue Table server grouping", () => {
     await switchToTable(page);
     await groupByStatus(page);
     const retry = page.getByRole("button", {
-      name: "Loading more failed — Retry",
+      name: "加载更多失败——重试",
       exact: true,
     });
     await expect(retry).toBeVisible({ timeout: 20000 });

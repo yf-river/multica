@@ -12,6 +12,11 @@ import { waitForPageText } from "./helpers";
 const ACCOUNT = `onboarding-v3-${Date.now()}`;
 const SHOTS_DIR = "../shots-rail";
 
+test.skip(
+  process.env.ALLOW_SIGNUP === "false",
+  "当前部署关闭了新账号注册，因此不暴露新用户引导入口。",
+);
+
 test.use({ viewport: { width: 1440, height: 900 } });
 
 test("onboarding — welcome → about you (answer path)", async ({ page }) => {

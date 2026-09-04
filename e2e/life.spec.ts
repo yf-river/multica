@@ -9,12 +9,16 @@ const lifeTabs = [
 ] as const;
 
 test.describe("Life", () => {
+  let workspaceSlug: string;
+
   test.beforeEach(async ({ page }) => {
-    await loginAsDefault(page);
+    workspaceSlug = await loginAsDefault(page);
   });
 
   test("life navigation and material flow survive refresh", async ({ page }) => {
-    await page.locator('a[href$="/life?tab=memory"]').click();
+    await page.goto(`/${workspaceSlug}/life?tab=memory`, {
+      waitUntil: "domcontentloaded",
+    });
     await expect(page).toHaveURL(/\/life\?tab=memory$/);
     await expect(page.getByRole("heading", { name: "人生", exact: true })).toBeVisible();
     await expect(page.getByRole("tab")).toHaveCount(0);
@@ -54,11 +58,11 @@ test.describe("Life", () => {
     await expect(sidebarTrigger).toBeVisible();
     await sidebarTrigger.click();
     await expect(page.locator('a[href$="/life?tab=memory"]')).toBeVisible();
-    await expect(page.getByRole("link", { name: "Chat", exact: true })).toHaveCount(1);
+    await expect(page.getByRole("link", { name: "聊天", exact: true })).toHaveCount(0);
     await page.locator('a[href$="/life?tab=observers"]').click();
     await expect(page).toHaveURL(/\/life\?tab=observers$/);
     await expect(page.getByRole("heading", { name: "观察席", exact: true })).toBeVisible();
 
-    await expect(page.getByRole("button", { name: "Ask Multica" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "搭子" })).toBeVisible();
   });
 });

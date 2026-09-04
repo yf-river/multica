@@ -14,17 +14,17 @@ test.describe("Navigation", () => {
     await expect(page).toHaveURL(/\/inbox/, { timeout: ROUTE_CHANGE_TIMEOUT });
     await waitForPageText(page, "收件箱");
     // Each destination renames the browser tab after itself (MUL-6222).
-    await expect(page).toHaveTitle("Inbox | Multica");
+    await expect(page).toHaveTitle("收件箱 | Multica");
 
     await page.getByRole("link", { name: "智能体" }).click();
     await expect(page).toHaveURL(/\/agents/, { timeout: ROUTE_CHANGE_TIMEOUT });
     await waitForPageText(page, "智能体");
-    await expect(page).toHaveTitle("Agents | Multica");
+    await expect(page).toHaveTitle("智能体 | Multica");
 
     await page.getByRole("link", { name: "任务", exact: true }).click();
     await expect(page).toHaveURL(/\/issues/, { timeout: ROUTE_CHANGE_TIMEOUT });
     await waitForPageText(page, "任务");
-    await expect(page).toHaveTitle("Issues | Multica");
+    await expect(page).toHaveTitle("任务 | Multica");
   });
 
   test("settings page loads via sidebar", async ({ page }) => {
@@ -41,7 +41,8 @@ test.describe("Navigation", () => {
     await expect(page).toHaveURL(/\/agents/, { timeout: ROUTE_CHANGE_TIMEOUT });
     await waitForPageText(page, "智能体");
 
-    // Should show "Agents" heading
-    await expect(page.locator("text=Agents").first()).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "智能体", exact: true }),
+    ).toBeVisible();
   });
 });

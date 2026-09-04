@@ -7,7 +7,7 @@
   "fab": {
     "running": "Multica 正在工作...",
     "unread_other": "{{count}} 条未读对话",
-    "default": "问 Multica"
+    "default": "搭子"
   },
   "input": {
     "placeholder_no_agent": "创建一个智能体后才能开始对话",

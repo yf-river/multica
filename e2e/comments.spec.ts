@@ -27,7 +27,7 @@ test.describe("Comments", () => {
     await waitForPageText(page, issueTitle);
 
     // Wait for issue detail to load
-    await expect(page.locator("text=Properties")).toBeVisible();
+    await expect(page.locator("text=属性")).toBeVisible();
 
     // The composer renders as a static shell until clicked (readonly-first);
     // clicking it mounts and focuses the real ProseMirror editor.
@@ -38,7 +38,7 @@ test.describe("Comments", () => {
     // Type a comment
     const commentText = "E2E comment " + Date.now();
     const editor = page
-      .locator('.ProseMirror[data-placeholder="Leave a comment..."], .ProseMirror:has([data-placeholder="Leave a comment..."])')
+      .locator('.ProseMirror[data-placeholder="留下评论..."], .ProseMirror:has([data-placeholder="留下评论..."])')
       .first();
     await expect(editor).toBeVisible();
     await editor.click({ force: true });
@@ -56,7 +56,7 @@ test.describe("Comments", () => {
     await page.goto(`/${workspaceSlug}/issues/${issueId}`, { waitUntil: "domcontentloaded" });
     await waitForPageText(page, issueTitle);
 
-    await expect(page.locator("text=Properties")).toBeVisible();
+    await expect(page.locator("text=属性")).toBeVisible();
 
     // Submit button should be disabled when input is empty. The composer is a
     // static shell until clicked (readonly-first) — the disabled state must

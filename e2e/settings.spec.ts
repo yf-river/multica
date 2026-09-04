@@ -12,7 +12,7 @@ test.describe("Settings", () => {
     const originalName = (await sidebarName.innerText()).split("\n").pop()?.trim() ?? "E2E Workspace";
 
     await page.goto(`/${workspaceSlug}/settings?tab=workspace`, { waitUntil: "domcontentloaded" });
-    await waitForPageText(page, "General");
+    await waitForPageText(page, "常规");
 
     // Change workspace name
     const nameInput = page
@@ -24,7 +24,7 @@ test.describe("Settings", () => {
 
     // Workspace details are saved automatically on blur.
     await nameInput.press("Tab");
-    await expect(page.getByText("Saved", { exact: true }).first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("已保存", { exact: true }).first()).toBeVisible({ timeout: 10000 });
 
     // Sidebar should reflect the new name WITHOUT page refresh
     await expect(page.getByRole("button", { name: new RegExp(newName) }).first()).toBeVisible();
@@ -33,7 +33,7 @@ test.describe("Settings", () => {
     await nameInput.clear();
     await nameInput.fill(originalName.trim());
     await nameInput.press("Tab");
-    await expect(page.getByText("Saved", { exact: true }).first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("已保存", { exact: true }).first()).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole("button", { name: new RegExp(originalName) }).first()).toBeVisible();
   });
 
@@ -45,10 +45,20 @@ test.describe("Settings", () => {
   test("connecting a Composio toolkit shows a toast and refreshes the list", async ({
     page,
   }) => {
-    test.skip(
-      !process.env.COMPOSIO_API_KEY,
-      "Composio is disabled in this integration environment; enabled behavior is covered by component tests.",
-    );
+    await page.route("**/api/config", async (route) => {
+      const response = await route.fetch();
+      const config = await response.json();
+      await route.fulfill({
+        response,
+        json: {
+          ...config,
+          feature_flags: {
+            ...(config.feature_flags ?? {}),
+            composio_mcp_apps: true,
+          },
+        },
+      });
+    });
     const workspaceSlug = await loginAsDefault(page);
     const settingsUrl = `/${workspaceSlug}/settings?tab=integrations`;
 
@@ -107,15 +117,15 @@ test.describe("Settings", () => {
     await waitForPageText(page, "Composio");
 
     // Notion starts disconnected → click Connect.
-    await page.getByRole("button", { name: /^Connect$/ }).first().click();
+    await page.getByRole("button", { name: /^连接$/ }).first().click();
 
     // Success toast from the simulated callback redirect.
-    await expect(page.getByText("Connected").first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("已连接").first()).toBeVisible({ timeout: 10000 });
 
     // List refreshed without a manual reload: the Notion card now offers
     // Disconnect, and the one-shot ?connected param has been stripped.
     await expect(
-      page.getByRole("button", { name: /Disconnect/ }).first(),
+      page.getByRole("button", { name: /断开/ }).first(),
     ).toBeVisible({ timeout: 10000 });
     await expect(page).not.toHaveURL(/connected=notion/);
   });

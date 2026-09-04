@@ -109,6 +109,10 @@ func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.Queries.GetUserByAccount(r.Context(), account)
 	if err != nil {
+		if signupErr := h.checkSignupAllowed(account, true); signupErr != nil {
+			writeError(w, http.StatusForbidden, signupErr.Error())
+			return
+		}
 		if !accountPasswordValid(req.Password) {
 			writeError(w, http.StatusBadRequest, "invalid account or password")
 			return
