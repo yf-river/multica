@@ -62,24 +62,24 @@ test("onboarding — structural blocks match the column width on every step", as
 
   await page.addInitScript((t) => localStorage.setItem("multica_token", t), token);
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-  await waitForPageText(page, "Start exploring");
-  await page.getByRole("button", { name: "Start exploring" }).click();
+  await waitForPageText(page, "开始探索");
+  await page.getByRole("button", { name: "开始探索" }).click();
 
-  await page.getByText("Tell us a bit about you.").waitFor();
+  await page.getByText("简单介绍一下你自己。").waitFor();
   await expectFullWidthBlocks(page, "about you");
 
-  await page.getByRole("radio", { name: /Engineer \/ developer/i }).click();
-  await page.getByRole("checkbox", { name: /Ship code with AI agents/i }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("radio", { name: "工程师 / 开发者" }).click();
+  await page.getByRole("checkbox", { name: "让 AI 智能体帮我写代码" }).click();
+  await page.getByRole("button", { name: "继续" }).click();
 
-  await page.getByRole("heading", { name: /Name your workspace/i }).waitFor();
+  await page.getByRole("heading", { name: /给工作区起个名字/ }).waitFor();
   await expectFullWidthBlocks(page, "workspace");
 
   await page.getByRole("textbox").first().fill(`Width Guard ${Date.now()}`);
-  await page.getByRole("button", { name: /^Create /i }).click();
+  await page.getByRole("button", { name: /^创建/ }).click();
 
   await page
-    .getByRole("heading", { name: /Connect a computer/i })
+    .getByRole("heading", { name: /连接一台电脑来运行你的智能体/ })
     .waitFor({ timeout: 20000 });
   await expectFullWidthBlocks(page, "runtime");
 });
@@ -100,9 +100,9 @@ test("onboarding — the shell survives step changes instead of re-mounting", as
     api.getToken(),
   );
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-  await waitForPageText(page, "Start exploring");
-  await page.getByRole("button", { name: "Start exploring" }).click();
-  await page.getByText("Tell us a bit about you.").waitFor();
+  await waitForPageText(page, "开始探索");
+  await page.getByRole("button", { name: "开始探索" }).click();
+  await page.getByText("简单介绍一下你自己。").waitFor();
 
   // Tag the live nodes. A remount replaces the elements and drops the marks.
   await page.evaluate(() => {
@@ -110,10 +110,10 @@ test("onboarding — the shell survives step changes instead of re-mounting", as
     document.querySelector("main")?.setAttribute("data-persist-probe", "1");
   });
 
-  await page.getByRole("radio", { name: /Engineer \/ developer/i }).click();
-  await page.getByRole("checkbox", { name: /Ship code with AI agents/i }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("heading", { name: /Name your workspace/i }).waitFor();
+  await page.getByRole("radio", { name: "工程师 / 开发者" }).click();
+  await page.getByRole("checkbox", { name: "让 AI 智能体帮我写代码" }).click();
+  await page.getByRole("button", { name: "继续" }).click();
+  await page.getByRole("heading", { name: /给工作区起个名字/ }).waitFor();
 
   await expect(
     page.locator("aside[data-persist-probe]"),

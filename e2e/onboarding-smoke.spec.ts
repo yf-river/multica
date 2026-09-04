@@ -28,43 +28,43 @@ test("onboarding — welcome → about you (answer path)", async ({ page }) => {
     localStorage.setItem("multica_token", t);
   }, token);
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-  await waitForPageText(page, "Start exploring");
+  await waitForPageText(page, "开始探索");
 
   // 1. Welcome screen
-  await expect(page.getByRole("button", { name: "Start exploring" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "开始探索" })).toBeVisible({ timeout: 15000 });
   await page.screenshot({ path: `${SHOTS_DIR}/01-welcome.png`, fullPage: false });
 
   // Click Start exploring to advance to About you
-  await page.getByRole("button", { name: "Start exploring" }).click();
+  await page.getByRole("button", { name: "开始探索" }).click();
 
   // 2. About you step — both questions live on this one screen and the
   //    source question must NOT exist anywhere in the flow.
-  await expect(page.getByText("Tell us a bit about you.")).toBeVisible({ timeout: 10000 });
-  await expect(page.getByText("Which best describes you?")).toBeVisible();
-  await expect(page.getByText("What do you want to use Multica for?")).toBeVisible();
+  await expect(page.getByText("简单介绍一下你自己。")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("哪一项最符合你？")).toBeVisible();
+  await expect(page.getByText("你打算用 Multica 做什么？")).toBeVisible();
   // The rail names every step and marks the current one; the ordinal
   // counter it replaced is gone.
   await expect(page.locator('[data-slot="stepper-title"]')).toHaveText([
-    "About you",
-    "Workspace",
-    "Meet Mika",
+    "关于你",
+    "工作区",
+    "认识 Mika",
   ]);
   await expect(
-    page.locator('[aria-current="step"]').filter({ hasText: "About you" }),
+    page.locator('[aria-current="step"]').filter({ hasText: "关于你" }),
   ).toBeVisible();
-  await expect(page.getByText("How did you hear about Multica?")).toHaveCount(0);
+  await expect(page.getByText("你是从哪里了解到 Multica 的？")).toHaveCount(0);
   await page.waitForTimeout(500);
   await page.screenshot({ path: `${SHOTS_DIR}/02-about-you.png` });
 
   // Answer both groups, then Continue → workspace step.
-  await page.getByRole("radio", { name: /Engineer \/ developer/i }).click();
-  await page.getByRole("checkbox", { name: /Ship code with AI agents/i }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("radio", { name: "工程师 / 开发者" }).click();
+  await page.getByRole("checkbox", { name: "让 AI 智能体帮我写代码" }).click();
+  await page.getByRole("button", { name: "继续" }).click();
 
   // 3. Workspace step
-  await expect(page.getByRole("heading", { name: /Name your workspace/i })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("heading", { name: /给工作区起个名字/ })).toBeVisible({ timeout: 10000 });
   await expect(
-    page.locator('[aria-current="step"]').filter({ hasText: "Workspace" }),
+    page.locator('[aria-current="step"]').filter({ hasText: "工作区" }),
   ).toBeVisible();
   await page.waitForTimeout(600);
   await page.screenshot({ path: `${SHOTS_DIR}/03-workspace.png` });
@@ -72,9 +72,9 @@ test("onboarding — welcome → about you (answer path)", async ({ page }) => {
   // 4. Runtime step — the rail should now show two completed steps and mark
   //    "Meet Mika" current.
   await page.getByRole("textbox").first().fill(`Rail QA ${Date.now()}`);
-  await page.getByRole("button", { name: /^Create /i }).click();
+  await page.getByRole("button", { name: /^创建/ }).click();
   await expect(
-    page.locator('[aria-current="step"]').filter({ hasText: "Meet Mika" }),
+    page.locator('[aria-current="step"]').filter({ hasText: "认识 Mika" }),
   ).toBeVisible({ timeout: 20000 });
   await page.waitForTimeout(800);
   await page.screenshot({ path: `${SHOTS_DIR}/06-runtime.png` });
@@ -87,14 +87,14 @@ test("onboarding — one skip clears the whole questionnaire step", async ({ pag
 
   await page.addInitScript((t) => localStorage.setItem("multica_token", t), token);
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-  await waitForPageText(page, "Start exploring");
+  await waitForPageText(page, "开始探索");
 
-  await page.getByRole("button", { name: "Start exploring" }).click();
-  await expect(page.getByText("Tell us a bit about you.")).toBeVisible({ timeout: 10000 });
+  await page.getByRole("button", { name: "开始探索" }).click();
+  await expect(page.getByText("简单介绍一下你自己。")).toBeVisible({ timeout: 10000 });
 
   // A single Skip covers role + use case — next stop is workspace.
-  await page.getByRole("button", { name: "Skip" }).click();
-  await expect(page.getByRole("heading", { name: /Name your workspace/i })).toBeVisible({ timeout: 10000 });
+  await page.getByRole("button", { name: "跳过" }).click();
+  await expect(page.getByRole("heading", { name: /给工作区起个名字/ })).toBeVisible({ timeout: 10000 });
   await page.waitForTimeout(600);
   await page.screenshot({ path: `${SHOTS_DIR}/04-after-skip.png` });
 });
