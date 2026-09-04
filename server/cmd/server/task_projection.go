@@ -60,7 +60,12 @@ func loadTaskProjectionRow(ctx context.Context, queries *db.Queries, event event
 	if err != nil {
 		return taskEventPayload{}, db.AgentTaskQueue{}, false, fmt.Errorf("load task before projection: %w", err)
 	}
-	if payload.AgentID != util.UUIDToString(task.AgentID) || payload.IssueID != util.UUIDToString(task.IssueID) {
+	actualAgentID := util.UUIDToString(task.AgentID)
+	actualIssueID := ""
+	if task.IssueID.Valid {
+		actualIssueID = util.UUIDToString(task.IssueID)
+	}
+	if payload.AgentID != actualAgentID || payload.IssueID != actualIssueID {
 		return taskEventPayload{}, db.AgentTaskQueue{}, false, fmt.Errorf("task projection identity mismatch")
 	}
 	if payload.Status != task.Status {
