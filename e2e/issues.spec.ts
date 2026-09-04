@@ -38,7 +38,8 @@ test.describe("Issues", () => {
     await loginAsDefault(page);
   });
 
-  test.afterEach(async () => {
+  test.afterEach(async ({ page }) => {
+    await page.close();
     if (api) {
       await api.cleanup();
     }
