@@ -85,6 +85,7 @@ const {
   mockCommentExpandAll,
   mockResolvedCollapseAll,
   mockResolvedExpandAll,
+  mockQueryOptions,
 } = vi.hoisted(() => ({
   mockPush: vi.fn(),
   mockSearchIssues: vi.fn(),
@@ -129,6 +130,7 @@ const {
   mockCommentExpandAll: vi.fn(),
   mockResolvedCollapseAll: vi.fn(),
   mockResolvedExpandAll: vi.fn(),
+  mockQueryOptions: [] as Array<{ queryKey: readonly unknown[]; enabled?: boolean }>,
 }));
 
 vi.mock("@multica/core/api", () => ({
@@ -260,6 +262,7 @@ function resolveIssue(key: readonly unknown[]) {
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (opts: { queryKey: readonly unknown[]; enabled?: boolean }) => {
+    mockQueryOptions.push(opts);
     const key = opts.queryKey;
     if (key[0] === "workspaces" && key[2] === "members") {
       return { data: mockMembers.current };
@@ -328,6 +331,7 @@ describe("SearchCommand", () => {
     mockCommentExpandAll.mockReset();
     mockResolvedCollapseAll.mockReset();
     mockResolvedExpandAll.mockReset();
+    mockQueryOptions.length = 0;
 
     // cmdk calls scrollIntoView on the first selected item, which jsdom doesn't implement
     Element.prototype.scrollIntoView = vi.fn();
@@ -335,6 +339,20 @@ describe("SearchCommand", () => {
     act(() => {
       useSearchStore.setState({ open: true });
     });
+  });
+
+  it("does not enable search-only directory queries while closed", () => {
+    act(() => {
+      useSearchStore.setState({ open: false });
+    });
+
+    renderSearch();
+
+    expect(
+      mockQueryOptions.find(
+        (query) => query.queryKey[0] === "workspaces" && query.queryKey[2] === "members",
+      )?.enabled,
+    ).toBe(false);
   });
 
   it("closes on a single Escape press from the search input", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import {
   User,
   SlidersHorizontal,
@@ -31,28 +31,65 @@ import {
   PLUGINS_V1_FLAG,
 } from "@multica/core/feature-flags";
 import { useNavigation } from "../../navigation";
-import { AccountTab } from "./account-tab";
-import { PreferencesTab } from "./preferences-tab";
-import { ChatTab } from "./chat-tab";
-import { IssueTab } from "./issue-tab";
-import { TokensTab } from "./tokens-tab";
-import { WorkspaceTab } from "./workspace-tab";
-import { MembersTab } from "./members-tab";
-import { RepositoriesTab } from "./repositories-tab";
-import { GitHubTab } from "./github-tab";
-import { IntegrationsTab } from "./integrations-tab";
-import { LabsTab } from "./labs-tab";
-import { NotificationsTab } from "./notifications-tab";
-import { LabelsTab } from "./labels-tab";
-import { IssueStatusesTab } from "./issue-statuses-tab";
-import { PropertiesTab } from "./properties-tab";
-import { QuickActionsTab } from "./quick-actions-tab";
-import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
-import { PluginsTab } from "./plugins-tab";
-import { McpTab } from "./mcp-tab";
-import { BillingTab } from "./billing-tab";
+import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { CollapsedNavTrigger } from "../../layout/page-header";
 import { useT } from "../../i18n";
+
+const AccountTab = lazy(() => import("./account-tab").then((module) => ({ default: module.AccountTab })));
+const PreferencesTab = lazy(() => import("./preferences-tab").then((module) => ({ default: module.PreferencesTab })));
+const ChatTab = lazy(() => import("./chat-tab").then((module) => ({ default: module.ChatTab })));
+const IssueTab = lazy(() => import("./issue-tab").then((module) => ({ default: module.IssueTab })));
+const TokensTab = lazy(() => import("./tokens-tab").then((module) => ({ default: module.TokensTab })));
+const WorkspaceTab = lazy(() => import("./workspace-tab").then((module) => ({ default: module.WorkspaceTab })));
+const MembersTab = lazy(() => import("./members-tab").then((module) => ({ default: module.MembersTab })));
+const RepositoriesTab = lazy(() => import("./repositories-tab").then((module) => ({ default: module.RepositoriesTab })));
+const GitHubTab = lazy(() => import("./github-tab").then((module) => ({ default: module.GitHubTab })));
+const IntegrationsTab = lazy(() => import("./integrations-tab").then((module) => ({ default: module.IntegrationsTab })));
+const LabsTab = lazy(() => import("./labs-tab").then((module) => ({ default: module.LabsTab })));
+const NotificationsTab = lazy(() => import("./notifications-tab").then((module) => ({ default: module.NotificationsTab })));
+const LabelsTab = lazy(() => import("./labels-tab").then((module) => ({ default: module.LabelsTab })));
+const IssueStatusesTab = lazy(() => import("./issue-statuses-tab").then((module) => ({ default: module.IssueStatusesTab })));
+const PropertiesTab = lazy(() => import("./properties-tab").then((module) => ({ default: module.PropertiesTab })));
+const QuickActionsTab = lazy(() => import("./quick-actions-tab").then((module) => ({ default: module.QuickActionsTab })));
+const KeyboardShortcutsTab = lazy(() => import("./keyboard-shortcuts-tab").then((module) => ({ default: module.KeyboardShortcutsTab })));
+const PluginsTab = lazy(() => import("./plugins-tab").then((module) => ({ default: module.PluginsTab })));
+const McpTab = lazy(() => import("./mcp-tab").then((module) => ({ default: module.McpTab })));
+const BillingTab = lazy(() => import("./billing-tab").then((module) => ({ default: module.BillingTab })));
+
+function SettingsTabFallback() {
+  return (
+    <div className="space-y-4">
+      <Skeleton className="h-7 w-40" />
+      <Skeleton className="h-24 w-full" />
+      <Skeleton className="h-24 w-full" />
+    </div>
+  );
+}
+
+function ActiveSettingsTab({ tab }: { tab: string }) {
+  switch (tab) {
+    case "preferences": return <PreferencesTab />;
+    case "shortcuts": return <KeyboardShortcutsTab />;
+    case "issue": return <IssueTab />;
+    case "chat": return <ChatTab />;
+    case "notifications": return <NotificationsTab />;
+    case "tokens": return <TokensTab />;
+    case "workspace": return <WorkspaceTab />;
+    case "repositories": return <RepositoriesTab />;
+    case "github": return <GitHubTab />;
+    case "integrations": return <IntegrationsTab />;
+    case "labs": return <LabsTab />;
+    case "members": return <MembersTab />;
+    case "billing": return <BillingTab />;
+    case "labels": return <LabelsTab />;
+    case "issue-statuses": return <IssueStatusesTab />;
+    case "properties": return <PropertiesTab />;
+    case "quick-actions": return <QuickActionsTab />;
+    case "mcp": return <McpTab />;
+    case "plugins": return <PluginsTab />;
+    default: return <AccountTab />;
+  }
+}
 
 const ACCOUNT_TAB_KEYS = ["profile", "preferences", "shortcuts", "issue", "chat", "notifications", "tokens"] as const;
 const ACCOUNT_TAB_ICONS = {
@@ -243,28 +280,11 @@ export function SettingsPage() {
         <div className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${activeTab === "labels" || activeTab === "issue-statuses" || activeTab === "properties" || activeTab === "quick-actions"
               ? "max-w-5xl"
               : "max-w-3xl"}`}>
-          <TabsContent value="profile"><AccountTab /></TabsContent>
-          <TabsContent value="preferences"><PreferencesTab /></TabsContent>
-          <TabsContent value="shortcuts"><KeyboardShortcutsTab /></TabsContent>
-          <TabsContent value="issue"><IssueTab /></TabsContent>
-          <TabsContent value="chat"><ChatTab /></TabsContent>
-          <TabsContent value="notifications"><NotificationsTab /></TabsContent>
-          <TabsContent value="tokens"><TokensTab /></TabsContent>
-          <TabsContent value="workspace"><WorkspaceTab /></TabsContent>
-          <TabsContent value="repositories"><RepositoriesTab /></TabsContent>
-          <TabsContent value="github"><GitHubTab /></TabsContent>
-          <TabsContent value="integrations"><IntegrationsTab /></TabsContent>
-          <TabsContent value="labs"><LabsTab /></TabsContent>
-          <TabsContent value="members"><MembersTab /></TabsContent>
-          {billingEnabled ? (
-            <TabsContent value="billing"><BillingTab /></TabsContent>
-          ) : null}
-          <TabsContent value="labels"><LabelsTab /></TabsContent>
-          <TabsContent value="issue-statuses"><IssueStatusesTab /></TabsContent>
-          <TabsContent value="properties"><PropertiesTab /></TabsContent>
-          <TabsContent value="quick-actions"><QuickActionsTab /></TabsContent>
-          <TabsContent value="mcp"><McpTab /></TabsContent>
-          {pluginsEnabled ? <TabsContent value="plugins"><PluginsTab /></TabsContent> : null}
+          <Suspense fallback={<SettingsTabFallback />}>
+            <TabsContent value={activeTab}>
+              <ActiveSettingsTab tab={activeTab} />
+            </TabsContent>
+          </Suspense>
         </div>
       </div>
     </Tabs>

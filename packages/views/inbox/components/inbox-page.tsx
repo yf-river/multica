@@ -7,6 +7,8 @@ import {
   useDeferredValue,
   useMemo,
   useRef,
+  lazy,
+  Suspense,
 } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
 import { useQuery } from "@tanstack/react-query";
@@ -49,7 +51,7 @@ import {
   useInboxFilterStore,
 } from "@multica/core/inbox/filter-store";
 
-import { IssueDetail, issueHighlightMementoKey } from "../../issues/components";
+import { issueHighlightMementoKey } from "../../issues/components/issue-highlight-memento";
 import { useViewStateWriter } from "../../platform";
 import { ErrorBoundary } from "@multica/ui/components/common/error-boundary";
 import { useNavigation, useReportNavigating } from "../../navigation";
@@ -97,6 +99,10 @@ import {
 } from "./inbox-display";
 import { useT } from "../../i18n";
 import { useIssueLimitUpgradePrompt } from "../../modals/use-issue-limit-upgrade-prompt";
+
+const IssueDetail = lazy(() =>
+  import("../../issues/components/issue-detail").then((module) => ({ default: module.IssueDetail })),
+);
 
 export function InboxPage() {
   const { t } = useT("inbox");
@@ -686,25 +692,27 @@ export function InboxPage() {
         </div>
       ) : undefined}
     >
-      <IssueDetail
-        key={detailItem.issue_id}
-        issueId={detailItem.issue_id}
-        defaultSidebarOpen={false}
-        layoutId="multica_inbox_issue_detail_layout"
-        highlightCommentId={detailItem.details?.comment_id ?? undefined}
-        highlightRequestToken={highlightRequestToken}
-        leadingAction={compactBackAction}
-        onDelete={() => {
-          // Issue deletion CASCADE-deletes the inbox item server-side, and the
-          // issue:deleted WS event prunes it from the inbox cache. Just clear
-          // the selection — calling archive here would 404 on a row that no
-          // longer exists.
-          setSelectedKey("");
-        }}
-        onDone={() => {
-          handleArchive(detailItem.id);
-        }}
-      />
+      <Suspense fallback={<Skeleton className="h-full w-full" />}>
+        <IssueDetail
+          key={detailItem.issue_id}
+          issueId={detailItem.issue_id}
+          defaultSidebarOpen={false}
+          layoutId="multica_inbox_issue_detail_layout"
+          highlightCommentId={detailItem.details?.comment_id ?? undefined}
+          highlightRequestToken={highlightRequestToken}
+          leadingAction={compactBackAction}
+          onDelete={() => {
+            // Issue deletion CASCADE-deletes the inbox item server-side, and the
+            // issue:deleted WS event prunes it from the inbox cache. Just clear
+            // the selection — calling archive here would 404 on a row that no
+            // longer exists.
+            setSelectedKey("");
+          }}
+          onDone={() => {
+            handleArchive(detailItem.id);
+          }}
+        />
+      </Suspense>
     </ErrorBoundary>
   ) : detailItem ? (
     <div className="p-6">

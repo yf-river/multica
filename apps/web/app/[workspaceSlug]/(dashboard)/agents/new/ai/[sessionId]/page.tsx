@@ -1,7 +1,7 @@
 "use client";
 
 import { use } from "react";
-import { AiBuilderSessionPage } from "@multica/views/agents";
+import { AiBuilderSessionPage } from "@multica/views/agents/create/ai-session";
 
 export default function NewAgentAiSessionRoute({
   params,

@@ -1,4 +1,3 @@
-import * as XLSX from "xlsx";
 import { api } from "@multica/core/api";
 import { resolvePublicFileUrlWithBase } from "@multica/core/workspace/avatar-url";
 import type { AgentTaskArtifact, Issue, IssueExecutionTreeResponse } from "@multica/core/types";
@@ -252,28 +251,4 @@ export function buildRunReviewRawEventsXlsxSheets(eventRows: RunReviewEventRowDa
     rows,
     columnWidths: [28, 14, 16, 18, 14, 28, 18, 26, 24, 16, 12, 14, 14, 42, 52, 52, 18, 60, 60],
   }];
-}
-export function buildXlsxWorkbook(sheets: XlsxSheetSpec[]) {
-  const workbook = XLSX.utils.book_new();
-  for (const sheet of sheets) {
-    const worksheet = XLSX.utils.aoa_to_sheet(sheet.rows);
-    if (sheet.columnWidths?.length) {
-      worksheet["!cols"] = sheet.columnWidths.map((wch) => ({ wch }));
-    }
-    for (const hyperlink of sheet.hyperlinks ?? []) {
-      const address = XLSX.utils.encode_cell({ r: hyperlink.row, c: hyperlink.col });
-      const cell = worksheet[address] ?? { t: "s", v: "" };
-      cell.l = {
-        Target: hyperlink.target,
-        Tooltip: hyperlink.tooltip ?? hyperlink.target,
-      };
-      worksheet[address] = cell;
-    }
-    XLSX.utils.book_append_sheet(workbook, worksheet, sanitizeSheetName(sheet.name));
-  }
-  return workbook;
-}
-
-function sanitizeSheetName(name: string) {
-  return (name || "Sheet1").replace(/[\\/:?*[\]]/g, "_").slice(0, 31) || "Sheet1";
 }

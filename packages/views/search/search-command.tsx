@@ -349,7 +349,10 @@ export function SearchCommand() {
   const recentItems = useRecentIssuesStore(selectRecentIssues(wsId));
   const p: WorkspacePaths = useWorkspacePaths();
   const { theme, setTheme } = useTheme();
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: open && !!wsId,
+  });
 
   // Resolve each recent issue via its cached detail entry. Recent items are
   // typically already in the detail cache because the user has opened them;
@@ -390,7 +393,7 @@ export function SearchCommand() {
   }, [pathname]);
   const { data: currentIssue = null } = useQuery({
     ...issueDetailOptions(wsId, currentIssueId ?? ""),
-    enabled: !!currentIssueId,
+    enabled: open && !!currentIssueId,
   });
   const queryClient = useQueryClient();
 

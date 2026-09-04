@@ -37,7 +37,12 @@ let cachedBrowserTZ: string | null = null;
 export function browserTimezone(): string {
   if (cachedBrowserTZ !== null) return cachedBrowserTZ;
   try {
-    cachedBrowserTZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!detected) return (cachedBrowserTZ = "UTC");
+    // Some headless/system ICU builds report placeholders such as
+    // `Etc/Unknown`, even though they reject that value when formatting.
+    new Intl.DateTimeFormat(undefined, { timeZone: detected });
+    cachedBrowserTZ = detected;
   } catch {
     cachedBrowserTZ = "UTC";
   }

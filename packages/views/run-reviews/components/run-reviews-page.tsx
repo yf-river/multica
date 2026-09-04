@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { AlertTriangle, ChevronRight, Download, HelpCircle, Loader2, RotateCcw, WifiOff } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import * as XLSX from "xlsx";
 import { api } from "@multica/core/api";
 import { isActiveAgentTaskStatus } from "@multica/core/agents";
 import { issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica/core/issues/queries";
@@ -25,7 +24,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@multi
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
-import { TranscriptButton } from "../../common/task-transcript";
+import { TranscriptButton } from "../../common/task-transcript/transcript-button";
 import { useT } from "../../i18n";
 import {
   buildEventTaskLabelById,
@@ -41,7 +40,6 @@ import {
   artifactDownloadHref,
   buildRunReviewNodeXlsxSheets,
   buildRunReviewRawEventsXlsxSheets,
-  buildXlsxWorkbook,
   type XlsxSheetSpec,
 } from "./run-review-export";
 import {
@@ -1112,21 +1110,8 @@ function NodeTokenTooltip({ node }: { node: IssueTimelineNode | undefined }) {
     />
   );
 }
-function downloadXlsx(filename: string, sheets: XlsxSheetSpec[]) {
+async function downloadXlsx(filename: string, sheets: XlsxSheetSpec[]) {
   if (typeof window === "undefined" || typeof document === "undefined") return;
-  const workbook = buildXlsxWorkbook(sheets);
-  const data = XLSX.write(workbook, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
-  const blob = new Blob([data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = sanitizeFilename(filename);
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.URL.revokeObjectURL(url);
-}
-
-function sanitizeFilename(filename: string) {
-  return filename.replace(/[^\w.-]+/g, "_");
+  const { downloadRunReviewXlsx } = await import("./run-review-xlsx");
+  downloadRunReviewXlsx(filename, sheets);
 }

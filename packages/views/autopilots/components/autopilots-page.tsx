@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   BarChart3,
@@ -52,7 +52,6 @@ import {
   CollectionPageHeaderAction,
   CollectionPageState,
 } from "../../layout/collection-page";
-import { AutopilotDialog } from "./autopilot-dialog";
 import { AutopilotListToolbar, actorFilterValue } from "./autopilot-list-toolbar";
 import {
   AutopilotBatchToolbar,
@@ -77,6 +76,10 @@ const GRID_COLS =
 
 // h-12 rows; the virtualizer's fixed-size contract.
 const ROW_HEIGHT = 48;
+
+const AutopilotDialog = lazy(() =>
+  import("./autopilot-dialog").then((module) => ({ default: module.AutopilotDialog })),
+);
 
 // Single source for hideable column widths: track vars and the grid's
 // min-width derive from the same numbers.
@@ -961,23 +964,25 @@ export function AutopilotsPage() {
       />
 
       {createOpen && (
-        <AutopilotDialog
-          mode="create"
-          open={createOpen}
-          onOpenChange={setCreateOpen}
-          initial={
-            selectedTemplate
-              ? {
-                  // Template title pulls from i18n so the user-visible default
-                  // matches their locale, while the prompt body stays raw EN
-                  // since it's injected directly into the agent task.
-                  title: t(($) => $.templates[selectedTemplate.id].title),
-                  description: selectedTemplate.prompt,
-                }
-              : undefined
-          }
-          initialSchedule={selectedTemplate ? selectedTemplate.schedule : undefined}
-        />
+        <Suspense fallback={null}>
+          <AutopilotDialog
+            mode="create"
+            open={createOpen}
+            onOpenChange={setCreateOpen}
+            initial={
+              selectedTemplate
+                ? {
+                    // Template title pulls from i18n so the user-visible default
+                    // matches their locale, while the prompt body stays raw EN
+                    // since it's injected directly into the agent task.
+                    title: t(($) => $.templates[selectedTemplate.id].title),
+                    description: selectedTemplate.prompt,
+                  }
+                : undefined
+            }
+            initialSchedule={selectedTemplate ? selectedTemplate.schedule : undefined}
+          />
+        </Suspense>
       )}
     </div>
   );

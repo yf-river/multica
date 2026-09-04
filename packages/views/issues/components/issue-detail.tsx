@@ -8,6 +8,7 @@ import {
 } from "@multica/core/issues";
 import { useStatusLabel } from "../utils/status-label";
 import { priorityLabel } from "../utils/priority-label";
+import { issueHighlightMementoKey } from "./issue-highlight-memento";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, type ReactNode } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
@@ -61,7 +62,7 @@ import { AvatarGroup, AvatarGroupCount } from "@multica/ui/components/ui/avatar"
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PropRow } from "../../common/prop-row";
 import { PropertyIcon } from "../../common/property-icon";
-import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory, IssuePriority, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
+import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory, IssuePriority, ListIssuesCache, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { STATUS_CONFIG } from "@multica/core/issues/config";
 import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
@@ -95,14 +96,14 @@ import { QuickActionsSection } from "./quick-actions-section";
 import { PluginPanelSection } from "../../plugins";
 import { PullRequestList } from "./pull-request-list";
 import { useGitHubSettings } from "@multica/core/github";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
 import { useModalStore } from "@multica/core/modals";
-import { issueListOptions, issueDetailOptions, childIssuesOptions, childIssueProgressOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
+import { flattenIssueBuckets, issueDetailOptions, issueKeys, childIssuesOptions, childIssueProgressOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { issueLabelsOptions } from "@multica/core/labels";
@@ -149,16 +150,7 @@ import {
   useRightSidebarShortcut,
 } from "../../layout/animated-right-sidebar";
 
-/**
- * Memento entry recording that the comment-highlight deep link for this
- * issue already landed on the current route (value: the consumed comment
- * id). Lets a remount that merely restores the view (tab switch back) skip
- * the jump-and-highlight, while a fresh selection — which clears the entry
- * (see InboxPage.handleSelect) — runs it again.
- */
-export function issueHighlightMementoKey(issueId: string): string {
-  return `highlight:${issueId}`;
-}
+export { issueHighlightMementoKey } from "./issue-highlight-memento";
 
 // Shared by the subscribe button and the unsubscribe menu trigger so the two
 // stay one control visually — they occupy the same slot and only differ in
@@ -1131,6 +1123,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   // Issue navigation — read from TQ list cache
   const wsId = useWorkspaceId();
+  const queryClient = useQueryClient();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   // Workspace owners and admins moderate any comment authored by anyone
@@ -1140,7 +1133,22 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     members.find((m) => m.user_id === user?.id)?.role ?? null;
   const canModerateComments =
     currentUserRole === "owner" || currentUserRole === "admin";
-  const { data: allIssues = [] } = useQuery(issueListOptions(wsId));
+  const findCachedListIssue = useCallback(
+    (targetId: string | null | undefined) => {
+      if (!targetId) return undefined;
+      const cachedLists = queryClient.getQueriesData<ListIssuesCache>({
+        queryKey: issueKeys.list(wsId),
+      });
+      for (const [, cached] of cachedLists) {
+        const match = cached
+          ? flattenIssueBuckets(cached).find((item) => item.id === targetId)
+          : undefined;
+        if (match) return match;
+      }
+      return undefined;
+    },
+    [queryClient, wsId],
+  );
   const { getActorName } = useActorName();
   const resolveStatusLabel = useStatusLabel(wsId);
   // The glyph set is per CATEGORY (MUL-6243), so a status-change entry for a
@@ -1352,7 +1360,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     // hides source context until a full page refresh.
     refetchOnMount: "always",
     initialData: () => {
-      const cached = allIssues.find((i) => i.id === id);
+      const cached = findCachedListIssue(id);
       return cached?.description != null ? cached : undefined;
     },
   });
@@ -1795,7 +1803,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const { data: parentIssue = null } = useQuery({
     ...issueDetailOptions(wsId, parentIssueId ?? ""),
     enabled: !!parentIssueId,
-    initialData: () => allIssues.find((i) => i.id === parentIssueId),
+    initialData: () => findCachedListIssue(parentIssueId),
   });
 
   // Project segment in the breadcrumb. The issue's project_id is the source of

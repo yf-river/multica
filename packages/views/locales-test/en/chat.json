@@ -49,6 +49,7 @@
   },
   "message_list": {
     "show_details": "Show details",
+    "show_process": "View process",
     "replied_in": "Replied in {{elapsed}}",
     "failed_after": "Failed after {{elapsed}}",
     "finished_in": "Finished in {{elapsed}}",

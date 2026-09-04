@@ -118,29 +118,29 @@ describe("SettingsPage nav trigger", () => {
 });
 
 describe("SettingsPage Plugin feature flag", () => {
-  it("hides Plugins and falls back from a direct tab URL when disabled", () => {
+  it("hides Plugins and falls back from a direct tab URL when disabled", async () => {
     navigationState.search = "tab=plugins";
 
     renderWithI18n(<SettingsPage />);
 
     expect(screen.queryByRole("tab", { name: "Plugins" })).not.toBeInTheDocument();
     expect(screen.queryByText("PluginsTab")).not.toBeInTheDocument();
-    expect(screen.getByText("AccountTab")).toBeInTheDocument();
+    expect(await screen.findByText("AccountTab")).toBeInTheDocument();
   });
 
-  it("shows and mounts Plugins when explicitly enabled", () => {
+  it("shows and mounts Plugins when explicitly enabled", async () => {
     navigationState.search = "tab=plugins";
     configStore.getState().setFeatureFlags({ [PLUGINS_V1_FLAG]: true });
 
     renderWithI18n(<SettingsPage />);
 
     expect(screen.getByRole("tab", { name: "Plugins" })).toBeInTheDocument();
-    expect(screen.getByText("PluginsTab")).toBeInTheDocument();
+    expect(await screen.findByText("PluginsTab")).toBeInTheDocument();
   });
 });
 
 describe("SettingsPage workspace subscription feature flag", () => {
-  it("hides Billing and falls back to Workspace General from a direct URL", () => {
+  it("hides Billing and falls back to Workspace General from a direct URL", async () => {
     navigationState.search = "tab=billing";
 
     renderWithI18n(<SettingsPage />);
@@ -149,10 +149,10 @@ describe("SettingsPage workspace subscription feature flag", () => {
       screen.queryByRole("tab", { name: "Billing" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("BillingTab")).not.toBeInTheDocument();
-    expect(screen.getByText("WorkspaceTab")).toBeInTheDocument();
+    expect(await screen.findByText("WorkspaceTab")).toBeInTheDocument();
   });
 
-  it("shows and mounts Billing only when explicitly enabled", () => {
+  it("shows and mounts Billing only when explicitly enabled", async () => {
     navigationState.search = "tab=billing";
     configStore.getState().setFeatureFlags({
       [BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG]: true,
@@ -161,6 +161,6 @@ describe("SettingsPage workspace subscription feature flag", () => {
     renderWithI18n(<SettingsPage />);
 
     expect(screen.getByRole("tab", { name: "Billing" })).toBeInTheDocument();
-    expect(screen.getByText("BillingTab")).toBeInTheDocument();
+    expect(await screen.findByText("BillingTab")).toBeInTheDocument();
   });
 });

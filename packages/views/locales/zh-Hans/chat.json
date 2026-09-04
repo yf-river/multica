@@ -47,6 +47,7 @@
   },
   "message_list": {
     "show_details": "查看详情",
+    "show_process": "查看过程",
     "replied_in": "{{elapsed}} 内回复",
     "failed_after": "{{elapsed}} 后失败",
     "finished_in": "{{elapsed}} 内结束",

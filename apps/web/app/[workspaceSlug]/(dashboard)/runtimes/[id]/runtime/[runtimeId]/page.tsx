@@ -1,7 +1,7 @@
 "use client";
 
 import { use } from "react";
-import { RuntimeSettingsPage } from "@multica/views/runtimes";
+import { RuntimeSettingsPage } from "@multica/views/runtimes/runtime-settings-page";
 
 export default function RuntimeSettingsRoute({
   params,

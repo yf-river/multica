@@ -1,4 +1,4 @@
-import { RuntimesPage } from "@multica/views/runtimes";
+import { RuntimesPage } from "@multica/views/runtimes/runtimes-page";
 
 const cloudRuntimeEnabled =
   process.env.NEXT_PUBLIC_ENABLE_CLOUD_RUNTIME === "true";

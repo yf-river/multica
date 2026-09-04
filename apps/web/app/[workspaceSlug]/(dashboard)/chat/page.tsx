@@ -1,1 +1,1 @@
-export { ChatPage as default } from "@multica/views/chat";
+export { ChatPage as default } from "@multica/views/chat/chat-page";

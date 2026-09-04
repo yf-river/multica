@@ -558,14 +558,25 @@ function AssistantMessage({
   /** This turn is Mika's onboarding opening — render starter cards, not chips. */
   showStarterCards?: boolean;
 }) {
+  const { t } = useT("chat");
   const canFetchTaskMessages = isTaskMessageTaskId(taskId);
+  // A turn mounted while streaming keeps its live transcript through
+  // completion. Historical completed turns load that optional process only
+  // after the user asks, avoiding one request per visible assistant message.
+  const [processRequested, setProcessRequested] = useState(isPending);
+  const shouldFetchTaskMessages = shouldFetchAssistantTaskMessages(
+    canFetchTaskMessages,
+    isPending,
+    !!message?.failure_reason,
+    processRequested,
+  );
 
   // Use the shared taskMessagesOptions so this cache entry is the same one
   // seeded by useRealtimeSync during task execution — zero refetch when the
   // task finishes, since WS already populated it.
   const { data: taskMessages } = useQuery({
     ...taskMessagesOptions(taskId ?? ""),
-    enabled: canFetchTaskMessages,
+    enabled: shouldFetchTaskMessages,
   });
 
   // Memoized on the cache array identity: mergeTaskMessagesBySeq preserves the
@@ -621,6 +632,19 @@ function AssistantMessage({
           className="leading-relaxed"
         />
       ) : null}
+      {message && !isPending && canFetchTaskMessages && !processRequested ? (
+        <button
+          type="button"
+          className="flex items-center gap-1 text-caption text-muted-foreground transition-colors hover:text-foreground"
+          onClick={() => setProcessRequested(true)}
+        >
+          <ChevronRight className="size-3" />
+          <span>{t(($) => $.message_list.show_process)}</span>
+        </button>
+      ) : null}
+      {message && processRequested && shouldFetchTaskMessages && !taskMessages ? (
+        <Skeleton className="h-4 w-16" />
+      ) : null}
       {message && (
         <>
           <AttachmentList
@@ -658,6 +682,15 @@ function AssistantMessage({
       )}
     </div>
   );
+}
+
+export function shouldFetchAssistantTaskMessages(
+  hasPersistedTaskId: boolean,
+  isPending: boolean,
+  isFailed: boolean,
+  processRequested: boolean,
+): boolean {
+  return hasPersistedTaskId && (isPending || isFailed || processRequested);
 }
 
 function transformTimeline(

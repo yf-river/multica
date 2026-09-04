@@ -383,11 +383,12 @@ describe("IssueSurface — table pagination ownership", () => {
       </QueryClientProvider>,
     );
 
-    // The first render has not received the independent working-agents query
-    // yet and therefore requests the explicit match-none form. Once that
-    // query resolves, the Table owns a new query key containing the agent id
-    // list and starts the real branch.
-    await waitFor(() => expect(listIssueTableRows).toHaveBeenCalledTimes(2));
+    // The table loads independently from the surface. Whether it mounts before
+    // or after the working-agent query resolves, its settled request must own
+    // the complete agent id list and the legacy offset list must stay unused.
+    await waitFor(() => expect(listIssueTableRows).toHaveBeenCalled(), {
+      timeout: 3_000,
+    });
     expect(listIssueTableRows).toHaveBeenLastCalledWith(
       expect.objectContaining({
         group: { kind: "none" },

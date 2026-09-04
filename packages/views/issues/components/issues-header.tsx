@@ -309,6 +309,7 @@ const SCOPE_VALUES: IssuesScope[] = ["all", "members", "agents"];
 // ---------------------------------------------------------------------------
 
 function ActorSubContent({
+  enabled,
   counts,
   selected,
   onToggle,
@@ -321,6 +322,7 @@ function ActorSubContent({
   noAssigneeFixed = false,
   fixedTitle,
 }: {
+  enabled: boolean;
   counts: Map<string, number>;
   selected: ActorFilterValue[];
   onToggle: (value: ActorFilterValue) => void;
@@ -337,9 +339,18 @@ function ActorSubContent({
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
   const wsId = useWorkspaceId();
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: squads = [] } = useQuery(squadListOptions(wsId));
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId),
+    enabled,
+  });
+  const { data: agents = [] } = useQuery({
+    ...agentListOptions(wsId),
+    enabled,
+  });
+  const { data: squads = [] } = useQuery({
+    ...squadListOptions(wsId),
+    enabled,
+  });
   const query = search.trim().toLowerCase();
   const filteredMembers = members.filter((m) =>
     m.name.toLowerCase().includes(query) || matchesPinyin(m.name, query),
@@ -496,6 +507,7 @@ function ActorSubContent({
 // ---------------------------------------------------------------------------
 
 function ProjectSubContent({
+  enabled,
   counts,
   selected,
   onToggle,
@@ -506,6 +518,7 @@ function ProjectSubContent({
   noProjectFixed = false,
   fixedTitle,
 }: {
+  enabled: boolean;
   counts: Map<string, number>;
   selected: string[];
   onToggle: (projectId: string) => void;
@@ -519,7 +532,10 @@ function ProjectSubContent({
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
   const wsId = useWorkspaceId();
-  const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  const { data: projects = [] } = useQuery({
+    ...projectListOptions(wsId),
+    enabled,
+  });
   const query = search.trim().toLowerCase();
   const filtered = projects.filter((p) =>
     p.title.toLowerCase().includes(query),
@@ -597,12 +613,14 @@ function ProjectSubContent({
 // ---------------------------------------------------------------------------
 
 function LabelSubContent({
+  enabled,
   counts,
   selected,
   onToggle,
   fixedIds,
   fixedTitle,
 }: {
+  enabled: boolean;
   counts: Map<string, number>;
   selected: string[];
   onToggle: (labelId: string) => void;
@@ -612,7 +630,10 @@ function LabelSubContent({
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
   const wsId = useWorkspaceId();
-  const { data: labels = [] } = useQuery(labelListOptions(wsId));
+  const { data: labels = [] } = useQuery({
+    ...labelListOptions(wsId),
+    enabled,
+  });
   const query = search.trim().toLowerCase();
   const filtered = labels.filter((l) => l.name.toLowerCase().includes(query));
 
@@ -1421,6 +1442,7 @@ export function IssueFilterMenu({
 }) {
   const { t } = useT("issues");
   const triggerRef = useRef<HTMLElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [frozenAnchor, setFrozenAnchor] = useState<{ getBoundingClientRect: () => DOMRect } | null>(null);
   const statusFilters = useViewStore((s) => s.statusFilters);
   const priorityFilters = useViewStore((s) => s.priorityFilters);
@@ -1435,7 +1457,13 @@ export function IssueFilterMenu({
   const act = viewStoreApi.getState();
   const wsId = useWorkspaceId();
   const statusOptions = useStatusOptions(wsId);
-  const { data: workspaceProperties = [] } = useQuery(propertyListOptions(wsId));
+  const hasPropertyFilters = Object.values(propertyFilters).some(
+    (selected) => selected.length > 0,
+  );
+  const { data: workspaceProperties = [] } = useQuery({
+    ...propertyListOptions(wsId),
+    enabled: menuOpen || hasPropertyFilters,
+  });
   const filterableProperties = useMemo(
     () =>
       workspaceProperties.filter((p) => isFilterablePropertyType(p.type)),
@@ -1486,6 +1514,7 @@ export function IssueFilterMenu({
   return (
     <DropdownMenu
       onOpenChange={(open) => {
+        setMenuOpen(open);
         if (freezeAnchor) {
           if (open && triggerRef.current) {
             const rect = triggerRef.current.getBoundingClientRect();
@@ -1641,6 +1670,7 @@ export function IssueFilterMenu({
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-auto min-w-52 p-0">
                 <ActorSubContent
+                  enabled={menuOpen}
                   counts={counts.assignee}
                   selected={assigneeFilters}
                   onToggle={act.toggleAssigneeFilter}
@@ -1672,6 +1702,7 @@ export function IssueFilterMenu({
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-auto min-w-52 p-0">
                 <ActorSubContent
+                  enabled={menuOpen}
                   counts={counts.creator}
                   selected={creatorFilters}
                   onToggle={act.toggleCreatorFilter}
@@ -1699,6 +1730,7 @@ export function IssueFilterMenu({
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-auto min-w-52 p-0">
                 <ProjectSubContent
+                  enabled={menuOpen}
                   counts={counts.project}
                   selected={projectFilters}
                   onToggle={act.toggleProjectFilter}
@@ -1729,6 +1761,7 @@ export function IssueFilterMenu({
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-auto min-w-52 p-0">
                 <LabelSubContent
+                  enabled={menuOpen}
                   counts={counts.label}
                   selected={labelFilters}
                   onToggle={act.toggleLabelFilter}

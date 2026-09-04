@@ -41,6 +41,10 @@ const allowedDevOrigins = process.env.CORS_ALLOWED_ORIGINS
 const nextConfig: NextConfig = {
   ...(process.env.STANDALONE === "true" ? { output: "standalone" as const } : {}),
   transpilePackages: ["@multica/core", "@multica/ui", "@multica/views"],
+  onDemandEntries: {
+    maxInactiveAge: 10 * 60 * 1000,
+    pagesBufferLength: 32,
+  },
   ...(allowedDevOrigins && allowedDevOrigins.length > 0
     ? { allowedDevOrigins }
     : {}),

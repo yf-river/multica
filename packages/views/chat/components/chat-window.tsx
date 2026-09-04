@@ -101,9 +101,10 @@ export function ChatWindow() {
   const wsId = useWorkspaceId();
   const isOpen = useChatStore((s) => s.isOpen);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
-  const { data: quickActionsPending = null } = useQuery(
-    chatQuickActionsPendingOptions(activeSessionId ?? ""),
-  );
+  const { data: quickActionsPending = null } = useQuery({
+    ...chatQuickActionsPendingOptions(activeSessionId ?? ""),
+    enabled: isOpen && !!activeSessionId,
+  });
   // Drop a stuck pending marker (dead daemon / failed supplement) so the pill
   // spinner stops and a later refresh starts clean (MUL-5149).
   useQuickActionsPendingTimeout(activeSessionId ?? null, quickActionsPending);
@@ -117,23 +118,34 @@ export function ChatWindow() {
   const setSelectedAgentId = useChatStore((s) => s.setSelectedAgentId);
   const setSelectedProjectId = useChatStore((s) => s.setSelectedProjectId);
   const user = useAuthStore((s) => s.user);
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: agents = [] } = useQuery({
+    ...agentListOptions(wsId),
+    enabled: isOpen,
+  });
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: isOpen,
+  });
   // Single sessions cache — eliminates the separate active/all queries
   // that used to drift during the WS-invalidate window.
-  const { data: sessions = [], isSuccess: sessionsLoaded } = useQuery(
-    chatSessionsOptions(wsId),
-  );
-  const { data: projects = [], isSuccess: projectsLoaded } = useQuery(
-    projectListOptions(wsId),
-  );
+  const { data: sessions = [], isSuccess: sessionsLoaded } = useQuery({
+    ...chatSessionsOptions(wsId),
+    enabled: isOpen,
+  });
+  const { data: projects = [], isSuccess: projectsLoaded } = useQuery({
+    ...projectListOptions(wsId),
+    enabled: isOpen,
+  });
   const {
     data: rawMessagePages,
     isLoading: messagesLoading,
     fetchNextPage: fetchOlderMessages,
     hasNextPage: hasOlderMessages,
     isFetchingNextPage: isFetchingOlderMessages,
-  } = useInfiniteQuery(chatMessagesPageOptions(activeSessionId ?? ""));
+  } = useInfiniteQuery({
+    ...chatMessagesPageOptions(activeSessionId ?? ""),
+    enabled: isOpen && !!activeSessionId,
+  });
   // When no active session, always show empty — don't use stale cache.
   // Page 0 contains the latest chronological window; later cursor pages are
   // older chronological windows. Reverse pages so older fetched pages render
@@ -150,9 +162,10 @@ export function ChatWindow() {
   // (chat:message / chat:done / task:*) keep it invalidated in real time.
   //
   // This is the SOLE source for pendingTaskId — no mirror in the store.
-  const { data: pendingTask, isLoading: pendingTaskLoading } = useQuery(
-    pendingChatTaskOptions(activeSessionId ?? ""),
-  );
+  const { data: pendingTask, isLoading: pendingTaskLoading } = useQuery({
+    ...pendingChatTaskOptions(activeSessionId ?? ""),
+    enabled: isOpen && !!activeSessionId,
+  });
   const showSkeleton =
     !!activeSessionId && (messagesLoading || pendingTaskLoading);
   const messages = hideQueuedChatMessages(allMessages, pendingTask);
@@ -279,13 +292,17 @@ export function ChatWindow() {
     wsId,
   );
 
-  const projectContextSupport = useChatProjectContextSupport(wsId, activeAgent);
+  const projectContextSupport = useChatProjectContextSupport(
+    wsId,
+    activeAgent,
+    isOpen,
+  );
 
   // Three-state availability — "loading" stays neutral (no banner, no
   // disable) so the input doesn't flash a fake "no agent" state in the
   // few hundred ms before the agent list query resolves. Only `"none"`
   // (server confirmed: zero usable agents) drives the disabled UI.
-  const agentAvailability = useWorkspaceAgentAvailability();
+  const agentAvailability = useWorkspaceAgentAvailability(isOpen);
   const noAgent = agentAvailability === "none";
 
   // Presence drives both the avatar status dot (via ActorAvatar) and the
@@ -293,7 +310,7 @@ export function ChatWindow() {
   // returns "loading" while queries are still resolving — pass `undefined`
   // downstream so banners and pill copy stay silent during loading rather
   // than flash speculative offline text.
-  const presenceDetail = useAgentPresenceDetail(wsId, activeAgent?.id);
+  const presenceDetail = useAgentPresenceDetail(wsId, activeAgent?.id, isOpen);
   const availability =
     presenceDetail === "loading" ? undefined : presenceDetail.availability;
 
@@ -825,7 +842,7 @@ export function ChatWindow() {
       }
     : { width: renderWidth, height: renderHeight };
 
-  const contextItems = useChatContextItems(wsId);
+  const contextItems = useChatContextItems(wsId, isOpen);
   const queuedTasks = pendingTask?.queued_tasks ?? [];
 
   return (
@@ -866,6 +883,7 @@ export function ChatWindow() {
             <TooltipContent side="top">{t(($) => $.window.new_chat_tooltip)}</TooltipContent>
           </Tooltip>
           <SessionDropdown
+            enabled={isOpen}
             sessions={sessions}
             // Use the full agent list (incl. archived) so historical
             // sessions can still resolve their avatar.
@@ -1193,11 +1211,13 @@ interface SessionRowAction extends RowActionItem {
  * ⊕ button, not inside this dropdown.
  */
 function SessionDropdown({
+  enabled,
   sessions,
   agents,
   activeSessionId,
   onSelectSession,
 }: {
+  enabled: boolean;
   sessions: ChatSession[];
   agents: Agent[];
   activeSessionId: string | null;
@@ -1236,7 +1256,10 @@ function SessionDropdown({
   // Aggregate "which sessions have an in-flight task right now". Reuses
   // the same workspace-scoped query the FAB consumes, so toggling the chat
   // window doesn't fire a second request — TanStack dedupes by key.
-  const { data: pending } = useQuery(pendingChatTasksOptions(wsId));
+  const { data: pending } = useQuery({
+    ...pendingChatTasksOptions(wsId),
+    enabled,
+  });
   const pendingTaskBySessionId = useMemo(
     () => new Map((pending?.tasks ?? []).map((task) => [task.chat_session_id, task])),
     [pending],

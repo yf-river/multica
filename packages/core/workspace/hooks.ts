@@ -30,6 +30,20 @@ const EMPTY_AGENTS: Agent[] = [];
 const EMPTY_SQUADS: Squad[] = [];
 const EMPTY_WORKSPACES: Workspace[] = [];
 
+type ActorNameQueryScope = {
+  members?: boolean;
+  agents?: boolean;
+  squads?: boolean;
+  plugins?: boolean;
+};
+
+const DEFAULT_ACTOR_NAME_QUERY_SCOPE: Required<ActorNameQueryScope> = {
+  members: true,
+  agents: true,
+  squads: true,
+  plugins: true,
+};
+
 /**
  * Shared authoritative-state contract for the workspace list.
  *
@@ -91,17 +105,28 @@ export function buildActorNameResolver(directories: {
   };
 }
 
-export function useActorName() {
+export function useActorName(
+  scope: ActorNameQueryScope = DEFAULT_ACTOR_NAME_QUERY_SCOPE,
+) {
   const wsId = useWorkspaceId();
-  const { data: members = EMPTY_MEMBERS } = useQuery(memberListOptions(wsId));
-  const { data: agents = EMPTY_AGENTS } = useQuery(agentListOptions(wsId));
-  const { data: squads = EMPTY_SQUADS } = useQuery(squadListOptions(wsId));
+  const { data: members = EMPTY_MEMBERS } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: !!wsId && scope.members !== false,
+  });
+  const { data: agents = EMPTY_AGENTS } = useQuery({
+    ...agentListOptions(wsId),
+    enabled: !!wsId && scope.agents !== false,
+  });
+  const { data: squads = EMPTY_SQUADS } = useQuery({
+    ...squadListOptions(wsId),
+    enabled: !!wsId && scope.squads !== false,
+  });
   // Only for naming a plugin-authored row. Gated on the flag so a workspace
   // without plugins does not fetch a list it can never render an author from.
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
   const { data: pluginData } = useQuery({
     ...pluginInstallationsOptions(wsId),
-    enabled: pluginsEnabled && wsId.length > 0,
+    enabled: pluginsEnabled && wsId.length > 0 && scope.plugins !== false,
   });
 
   const getMemberName = useCallback((userId: string) => {

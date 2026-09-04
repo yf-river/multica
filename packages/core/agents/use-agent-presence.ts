@@ -119,18 +119,19 @@ const MISSING_AGENT_DETAIL: AgentPresenceDetail = {
 export function useAgentPresenceDetail(
   wsId: string | undefined,
   agentId: string | undefined,
+  enabled = true,
 ): AgentPresenceDetail | "loading" {
   const { data: agents, isError: agentsErr } = useQuery({
     ...agentListOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: enabled && !!wsId,
   });
   const { data: runtimes, isError: runtimesErr } = useQuery({
     ...runtimeListOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: enabled && !!wsId,
   });
   const { data: snapshot, isError: snapshotErr } = useQuery({
     ...agentTaskSnapshotOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: enabled && !!wsId,
   });
   const tick = usePresenceTick();
 

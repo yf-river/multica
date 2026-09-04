@@ -49,6 +49,12 @@ describe("useViewingTimezone", () => {
     expect(result.current).toBe("America/Chicago");
   });
 
+  it("falls back to the browser tz when the stored timezone is invalid", () => {
+    userRef.current = { timezone: "Etc/Unknown" };
+    const { result } = renderHook(() => useViewingTimezone());
+    expect(result.current).toBe("America/Chicago");
+  });
+
   // The preferences clear-flow PATCHes timezone: "" and the server may echo
   // the empty string back before normalising it to null. The hook must
   // treat "" as "no preference" and fall back to the browser tz.

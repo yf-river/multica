@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { AlertTriangle, FilterX, ListTodo, Plus } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -25,13 +33,8 @@ import {
   type IssueScope,
 } from "@multica/core/issues/surface/scope";
 import type { Issue } from "@multica/core/types";
-import { BoardView } from "../components/board-view";
 import { BatchActionToolbar } from "../components/batch-action-toolbar";
-import { GanttView } from "../components/gantt-view";
 import { IssuesHeader } from "../components/issues-header";
-import { ListView } from "../components/list-view";
-import { SwimLaneView } from "../components/swimlane-view";
-import { TableView } from "../components/table-view";
 import { useT } from "../../i18n";
 import { IssueContextMenuProvider } from "../actions";
 import { IssueSurfaceActionsProvider } from "./actions-context";
@@ -41,6 +44,32 @@ import {
   useIssueSurfaceController,
   type IssueSurfaceController,
 } from "./use-issue-surface-controller";
+
+const BoardView = lazy(() =>
+  import("../components/board-view").then((module) => ({
+    default: module.BoardView,
+  })),
+);
+const ListView = lazy(() =>
+  import("../components/list-view").then((module) => ({
+    default: module.ListView,
+  })),
+);
+const TableView = lazy(() =>
+  import("../components/table-view").then((module) => ({
+    default: module.TableView,
+  })),
+);
+const GanttView = lazy(() =>
+  import("../components/gantt-view").then((module) => ({
+    default: module.GanttView,
+  })),
+);
+const SwimLaneView = lazy(() =>
+  import("../components/swimlane-view").then((module) => ({
+    default: module.SwimLaneView,
+  })),
+);
 
 export interface IssueSurfaceRenderContext {
   controller: IssueSurfaceController;
@@ -302,7 +331,8 @@ function IssueSurfaceContent({
           )
         ) : (
           <div className={cn("flex flex-col flex-1 min-h-0", contentClassName)}>
-            {controller.viewMode === "board" && (
+            <Suspense fallback={<IssueSurfaceSkeleton mode={controller.viewMode} />}>
+              {controller.viewMode === "board" && (
               <BoardView
                 issues={issues}
                 visibleStatuses={controller.visibleStatuses}
@@ -315,8 +345,8 @@ function IssueSurfaceContent({
                 statusPagination={controller.statusPagination}
                 groupBranches={controller.groupBranches}
               />
-            )}
-            {controller.viewMode === "list" && (
+              )}
+              {controller.viewMode === "list" && (
               <ListView
                 issues={issues}
                 visibleStatuses={controller.visibleStatuses}
@@ -327,8 +357,8 @@ function IssueSurfaceContent({
                 onCreateIssue={openCreateIssue}
                 statusPagination={controller.statusPagination!}
               />
-            )}
-            {controller.viewMode === "table" && (
+              )}
+              {controller.viewMode === "table" && (
               <TableView
                 serverQuery={controller.tableQuerySpec}
                 childProgressMap={controller.childProgressMap}
@@ -339,11 +369,11 @@ function IssueSurfaceContent({
                 exportIssues={controller.exportTableIssues}
                 resolveExportLookups={controller.resolveTableExportLookups}
               />
-            )}
-            {controller.viewMode === "gantt" && (
-              <GanttView issues={controller.filteredGanttIssues} />
-            )}
-            {controller.viewMode === "swimlane" && (
+              )}
+              {controller.viewMode === "gantt" && (
+                <GanttView issues={controller.filteredGanttIssues} />
+              )}
+              {controller.viewMode === "swimlane" && (
               <SwimLaneView
                 issues={issues}
                 unfilteredIssues={swimlaneIssues}
@@ -357,7 +387,8 @@ function IssueSurfaceContent({
                 onCreateIssue={openCreateIssue}
                 groupBranches={controller.groupBranches}
               />
-            )}
+              )}
+            </Suspense>
           </div>
         )}
         {shouldShowBatchToolbar && (

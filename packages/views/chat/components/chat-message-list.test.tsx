@@ -46,10 +46,26 @@ vi.mock("react-virtuoso", () => ({
   },
 }));
 
-import { ChatMessageList } from "./chat-message-list";
+import {
+  ChatMessageList,
+  shouldFetchAssistantTaskMessages,
+} from "./chat-message-list";
 
 const TEST_RESOURCES = { en: { chat: enChat } };
 const TASK_ID = "6af44cbe-80ab-4dfe-b07d-bd3cfd588f4d";
+
+describe("shouldFetchAssistantTaskMessages", () => {
+  it("does not fetch completed history until the process is requested", () => {
+    expect(shouldFetchAssistantTaskMessages(true, false, false, false)).toBe(false);
+    expect(shouldFetchAssistantTaskMessages(true, false, false, true)).toBe(true);
+  });
+
+  it("keeps live and failed task diagnostics available", () => {
+    expect(shouldFetchAssistantTaskMessages(true, true, false, false)).toBe(true);
+    expect(shouldFetchAssistantTaskMessages(true, false, true, false)).toBe(true);
+    expect(shouldFetchAssistantTaskMessages(false, true, true, true)).toBe(false);
+  });
+});
 
 function taskMsg(
   seq: number,

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import { ApiError } from "@multica/core/api";
@@ -98,12 +98,14 @@ vi.mock("@multica/core/inbox/mutations", () => {
 const issueDetailProps = vi.hoisted(
   () => [] as Array<Record<string, unknown>>,
 );
-vi.mock("../../issues/components", () => ({
+vi.mock("../../issues/components/issue-detail", () => ({
   IssueDetail: (props: Record<string, unknown>) => {
     issueDetailProps.push(props);
     return null;
   },
-  StatusIcon: () => null,
+}));
+
+vi.mock("../../issues/components/issue-highlight-memento", () => ({
   issueHighlightMementoKey: (issueId: string) => `highlight:${issueId}`,
 }));
 
@@ -390,7 +392,7 @@ describe("InboxPage", () => {
     expect(replace).toHaveBeenCalledWith("/acme/inbox");
   });
 
-  it("replays the comment highlight when the already-open row is clicked again", () => {
+  it("replays the comment highlight when the already-open row is clicked again", async () => {
     // Re-clicking the open notification is an explicit "take me back to that
     // comment". It doesn't remount the detail (same issue key), so the page
     // signals the replay through the bumped token; a selection change keeps
@@ -401,10 +403,14 @@ describe("InboxPage", () => {
 
     render(<InboxPage />);
     fireEvent.click(screen.getByTestId("row"));
-    expect(issueDetailProps.at(-1)?.highlightRequestToken).toBe(0);
+    await waitFor(() => {
+      expect(issueDetailProps.at(-1)?.highlightRequestToken).toBe(0);
+    });
 
     fireEvent.click(screen.getByTestId("row"));
-    expect(issueDetailProps.at(-1)?.highlightRequestToken).toBe(1);
+    await waitFor(() => {
+      expect(issueDetailProps.at(-1)?.highlightRequestToken).toBe(1);
+    });
   });
 
   it("keeps the archived view in the URL when selecting an item there", () => {
