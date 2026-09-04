@@ -320,7 +320,14 @@ cli: ## Run the multica CLI with ARGS or MULTICA_ARGS from source
 multica: ## Run the multica CLI entrypoint directly from the Go source tree
 	cd server && go run -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)" ./cmd/multica $(MULTICA_ARGS)
 
-VERSION ?= $(shell git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || echo dev)
+VERSION ?= $(shell description=$$(git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || true); \
+	if printf '%s' "$$description" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+'; then \
+		printf '%s' "$$description"; \
+	else \
+		base=$$(node -p "require('./apps/web/package.json').version" 2>/dev/null || printf '0.0.0'); \
+		dirty=$$(git diff --quiet --ignore-submodules HEAD -- 2>/dev/null || printf '%s' '-dirty'); \
+		printf 'v%s-0-g%s%s' "$$base" "$$(git rev-parse --short HEAD 2>/dev/null || printf unknown)" "$$dirty"; \
+	fi)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE    ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 # Windows will not execute an extensionless binary, so a source build there has
