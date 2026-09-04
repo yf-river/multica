@@ -27,6 +27,16 @@ Multica is an AI-native task management platform for small teams, with agents as
 
 Shared packages export raw `.ts` / `.tsx` and are compiled by consuming apps. Dependency direction is `views -> core + ui`; `core` and `ui` must stay independent.
 
+## Active Delivery Scope
+
+The active product is Web, Server, Daemon, PostgreSQL, and Agent Runtime.
+
+- `apps/desktop/` and `apps/mobile/` are frozen source trees. Keep their source, build, routing, and release files, but do not implement Web feature parity or run and repair their checks unless the user explicitly reactivates that client.
+- Frozen-client compatibility is not a delivery constraint for Web changes. Shared code may evolve for the active Web product even when a frozen client no longer compiles.
+- Root `build`, `typecheck`, `test`, and `lint` commands validate `@multica/web` and its shared dependencies. Use `verify:desktop`, `verify:mobile`, or `verify:clients` only for explicit client reactivation or release work.
+- During development, verify the affected Web, Go, page, or runtime path. Full Web/backend verification and deployment are milestone actions requested explicitly by the user.
+- A task stops when its declared user flow passes. Unrelated historical failures are tracked separately unless they block login, companion chat, tasks, Agent execution, run reviews, memory governance, data safety, authorization, or recovery.
+
 ## State Rules
 
 Keep server state and client state separate.
@@ -94,6 +104,10 @@ pnpm build
 pnpm typecheck
 pnpm lint
 pnpm test             # TS/Vitest tests through Turborepo
+pnpm test:smoke       # Personal Studio core Web flow
+pnpm verify:desktop   # Explicit frozen Desktop verification
+pnpm verify:mobile    # Explicit frozen Mobile verification
+pnpm verify:clients   # Explicit verification for both frozen clients
 pnpm exec playwright test
 pnpm ui:add badge     # shadcn/Base UI component into packages/ui
 ```
@@ -128,7 +142,7 @@ These are hard requirements for every new or modified database design and produc
 
 ## API Compatibility
 
-Frontend code must survive backend response drift across supported clients.
+Frontend code for active delivery clients must survive backend response drift. Frozen clients are outside this compatibility contract until reactivated.
 
 - Parse API JSON with `parseWithFallback` in `packages/core/api/schema.ts` and a zod schema. Do not cast network JSON to `T`.
 - Endpoint responses consumed by UI logic must pass through a schema before returning.
@@ -164,10 +178,10 @@ CSS for the web is shared from `packages/ui/styles/`. Use semantic tokens such a
 
 Read `apps/mobile/CLAUDE.md` before touching `apps/mobile/`. It contains the mandatory pre-flight process, import limits, parity rules, tech stack, UI rules, data helpers, realtime strategy, and mobile release flow.
 
-Root-level reminders:
+These rules apply when Mobile is explicitly reactivated or its own source is intentionally changed:
 
 - Mobile shares only `@multica/core` types and pure functions.
-- Mobile must match web product semantics: counts, permissions, enums/transitions, and data identity.
+- Mobile must match Web product semantics when it returns to the active delivery scope: counts, permissions, enums/transitions, and data identity.
 - Mobile may differ in UI/interaction when the phone context requires it.
 
 ## UI Rules

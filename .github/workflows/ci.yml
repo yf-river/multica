@@ -38,15 +38,13 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
-          # apps/docs is excluded from the frontend turbo run, but knip does
-          # analyze it, so a docs-only change still needs this job.
-          # apps/mobile has its own mobile-verify workflow. Everything else
-          # the frontend job touches is listed here; bias toward
+          # The frontend jobs cover the active Web product and the shared
+          # packages it consumes. Frozen clients and docs are outside this
+          # workflow. Everything the frontend job touches is listed here; bias toward
           # over-matching since a missed path silently skips validation.
           filters: |
             frontend:
               - 'apps/web/**'
-              - 'apps/docs/**'
               - 'packages/**'
               - 'package.json'
               - '.npmrc'
@@ -274,12 +272,9 @@ jobs:
 
       - name: Build, type check, and lint
         if: ${{ needs.changes.outputs.frontend == 'true' }}
-        # Mobile lives in a parallel mobile-verify workflow (path-filtered
-        # to apps/mobile/** + packages/core/**) so it doesn't add
-        # ~50s of expo-lint + tsc to every web PR. Keep this
-        # filter in sync with the root package.json scripts, which also
-        # exclude @multica/mobile.
-        run: pnpm exec turbo build typecheck lint --filter='!@multica/docs' --filter='!@multica/mobile'
+        # Keep this filter in sync with the root package.json scripts. Desktop,
+        # Mobile, and Docs have explicit manual verification paths.
+        run: pnpm exec turbo build typecheck lint --filter='@multica/web...'
 
       # Blocking from the start: it reports nothing today, and it covers the
       # one regression knip structurally cannot see. packages/ui exports four
@@ -308,7 +303,7 @@ jobs:
       - name: Check for dead code and phantom dependencies (knip)
         if: ${{ needs.changes.outputs.frontend == 'true' }}
         continue-on-error: true
-        run: pnpm knip
+        run: pnpm knip:web
 
   frontend-test:
     needs: changes
@@ -355,11 +350,8 @@ jobs:
 
       - name: Test web and core
         if: ${{ needs.changes.outputs.frontend == 'true' }}
-        # Same filter rationale as frontend-build. Type errors are not this
-        # job's responsibility -- frontend-build owns the `typecheck` task.
-        # `test` reaches dependency sources through the hash-only
-        # `^cache-inputs` edge (see turbo.json), so no `tsc` runs here.
-        run: pnpm exec turbo test --filter='!@multica/docs' --filter='!@multica/mobile' --filter='!@multica/views'
+        # Views are sharded below. Type errors are owned by frontend-build.
+        run: pnpm exec turbo test --filter='@multica/web' --filter='@multica/core' --filter='@multica/ui'
 
   # Split views across two runners. GitHub reports the matrix job's combined
   # result, so the aggregate gate can continue depending on this one job ID.

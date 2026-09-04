@@ -52,6 +52,7 @@ export class TestApiClient {
   private account: string | null = null;
   private createdIssueIds: string[] = [];
   private seededIssueIds: string[] = [];
+  private seededLifeMemoryIds: string[] = [];
 
   async login(account: string, name: string, password = "E2ePass1!") {
       const res = await fetch(`${API_BASE}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account, password }) });
@@ -274,8 +275,116 @@ export class TestApiClient {
     return res.json();
   }
 
+  async seedLifeMemory(content: string): Promise<{ id: string; content: string }> {
+    if (!this.workspaceId || !this.account) {
+      throw new Error("Cannot seed a life memory before login and workspace setup");
+    }
+
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<{ id: string; content: string }>(
+        `
+          INSERT INTO life_memory (
+            workspace_id,
+            user_id,
+            created_by_type,
+            created_by_id,
+            kind,
+            status,
+            content,
+            confidence,
+            urgency,
+            uncertainty,
+            confirmed_at,
+            confirmed_by_id
+          )
+          SELECT
+            $1::uuid,
+            id,
+            'member',
+            id,
+            'understanding',
+            'confirmed',
+            $2,
+            1,
+            0.5,
+            '',
+            now(),
+            id
+          FROM "user"
+          WHERE account = $3
+          RETURNING id, content
+        `,
+        [this.workspaceId, content, this.account],
+      );
+      const memory = result.rows[0];
+      if (!memory) {
+        throw new Error(`Cannot resolve E2E user ${this.account}`);
+      }
+      await client.query(
+        `
+          INSERT INTO life_memory_revision (
+            memory_id,
+            revision,
+            kind,
+            status,
+            content,
+            confidence,
+            urgency,
+            uncertainty,
+            change_type,
+            change_reason,
+            changed_by_type,
+            changed_by_id
+          )
+          SELECT
+            $1::uuid,
+            1,
+            kind,
+            status,
+            content,
+            confidence,
+            urgency,
+            uncertainty,
+            'created',
+            'E2E fixture',
+            created_by_type,
+            created_by_id
+          FROM life_memory
+          WHERE id = $1::uuid
+        `,
+        [memory.id],
+      );
+      await client.query("COMMIT");
+      this.seededLifeMemoryIds.push(memory.id);
+      return memory;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      await client.end();
+    }
+  }
+
+  async deleteLifeMemory(id: string) {
+    const res = await this.authedFetch(`/api/life/memories/${id}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`delete life memory failed: ${res.status} ${await res.text()}`);
+    }
+  }
+
   /** Clean up all issues created during this test. */
   async cleanup() {
+    for (const id of this.seededLifeMemoryIds) {
+      try {
+        await this.deleteLifeMemory(id);
+      } catch {
+        /* ignore — may already be deleted */
+      }
+    }
+    this.seededLifeMemoryIds = [];
     if (this.seededIssueIds.length > 0 && this.workspaceId) {
       const client = new pg.Client(DATABASE_URL);
       await client.connect();

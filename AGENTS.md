@@ -14,6 +14,8 @@ This file provides guidance to AI agents when working with code in this reposito
 
 Go backend + monorepo frontend (pnpm workspaces + Turborepo) with shared packages.
 
+Current delivery scope is Web + Server + Daemon + PostgreSQL + Agent Runtime. Desktop and Mobile source remain in the repository but are frozen until the user explicitly reactivates them; routine changes and checks do not include them.
+
 - `server/` - Go backend (Chi router, sqlc, gorilla/websocket)
 - `apps/web/` - Next.js frontend (App Router)
 - `apps/mobile/` - Expo / React Native iOS app (read `apps/mobile/CLAUDE.md` first)
@@ -51,6 +53,8 @@ pnpm typecheck        # TypeScript check
 pnpm test             # TS unit tests (Vitest)
 make test             # Go tests
 make check            # Full verification pipeline
+pnpm test:smoke       # Personal Studio core Web flow
+pnpm verify:clients   # Explicit frozen-client verification
 ```
 
 See CLAUDE.md for the authoritative rules and common commands.
