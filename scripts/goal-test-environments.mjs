@@ -640,10 +640,15 @@ async function prewarmDevWebRoutes(item) {
   const fullRoutes = [
     "/",
     "/workspaces/new",
+    `/${slug}/life?tab=memory`,
+    `/${slug}/life?tab=experiment`,
+    `/${slug}/life?tab=observers`,
+    `/${slug}/life?tab=chronicle`,
     `/${slug}/my-issues`,
     `/${slug}/inbox`,
     `/${slug}/run-reviews`,
     `/${slug}/autopilots`,
+    `/${slug}/usage`,
     `/${slug}/settings`,
     `/${slug}/settings?tab=workspace`,
     `/${slug}/settings?tab=integrations`,
@@ -667,7 +672,7 @@ async function prewarmDevWebRoutes(item) {
 }
 
 function prewarmScope() {
-  const raw = String(process.env.GOAL_TEST_WEB_PREWARM_SCOPE || "core").trim().toLowerCase();
+  const raw = String(process.env.GOAL_TEST_WEB_PREWARM_SCOPE || "full").trim().toLowerCase();
   return raw === "full" ? "full" : "core";
 }
 

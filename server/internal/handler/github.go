@@ -967,6 +967,9 @@ func (h *Handler) ListPullRequestsForIssue(w http.ResponseWriter, r *http.Reques
 	}
 	rows, err := h.Queries.ListPullRequestsByIssue(r.Context(), issue.ID)
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list pull requests")
 		return
 	}
@@ -991,6 +994,9 @@ func (h *Handler) ListPullRequestsForIssue(w http.ResponseWriter, r *http.Reques
 	// newest-first.
 	vcsRows, err := h.Queries.ListVCSPullRequestsByIssue(r.Context(), issue.ID)
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list pull requests")
 		return
 	}

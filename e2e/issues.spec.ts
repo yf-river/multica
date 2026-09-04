@@ -97,12 +97,14 @@ test.describe("Issues", () => {
     await expect(page.getByText(oldTitle)).toBeHidden({ timeout: 10000 });
     await expect(page.getByText(updatedTodayTitle)).toBeHidden({ timeout: 10000 });
 
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: /1 个筛选/ }).click();
     const dateFilterItem = page.getByRole("menuitem", { name: /^日期/ });
-    await dateFilterItem.dispatchEvent("click");
+    await dateFilterItem.hover();
     const updatedDateField = page.getByRole("menuitemradio", { name: "更新时间" });
     await expect(updatedDateField).toBeVisible();
-    await updatedDateField.dispatchEvent("click");
+    await updatedDateField.press("Enter");
     await expect(
       page.getByRole("button", { name: "移除更新时间筛选" }),
     ).toBeVisible();
