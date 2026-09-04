@@ -79,7 +79,12 @@ test.describe("Issue Table server grouping", () => {
     await loginAsDefault(page);
   });
 
-  test.afterEach(async () => {
+  test.afterEach(async ({ page }) => {
+    // Stop the mounted board queries before deleting their backing fixtures.
+    // Otherwise fixture teardown can race an in-flight child-progress request:
+    // Playwright closes the browser context while PostgreSQL is reading, and
+    // the cancelled request is then recorded as a spurious server 500.
+    await page.close();
     await api?.cleanup();
   });
 
