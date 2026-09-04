@@ -9,8 +9,8 @@ const DEFAULT_E2E_PASSWORD = process.env.E2E_PASSWORD ?? "develop123";
 const DEFAULT_E2E_WORKSPACE = `e2e-workspace-${E2E_WORKER}-${E2E_RUN_ID}`;
 
 async function waitForIssuesPage(page: Page) {
-  await waitForPageText(page, "New Issue");
-  await expect(page.getByRole("button", { name: "New Issue" })).toBeVisible({
+  await waitForPageText(page, "新建任务");
+  await expect(page.getByRole("button", { name: "新建任务" })).toBeVisible({
     timeout: 15000,
   });
 }
@@ -25,7 +25,7 @@ export async function waitForPageText(page: Page, text: string, timeout = 30000)
 
 export async function reloadAppPage(page: Page) {
   await page.reload({ waitUntil: "domcontentloaded" });
-  await waitForPageText(page, "Issues");
+  await waitForPageText(page, "任务");
 }
 
 /**

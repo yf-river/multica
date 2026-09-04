@@ -10,36 +10,36 @@ test.describe("Navigation", () => {
   });
 
   test("sidebar navigation works", async ({ page }) => {
-    await page.getByRole("link", { name: "Inbox" }).click();
+    await page.getByRole("link", { name: "收件箱" }).click();
     await expect(page).toHaveURL(/\/inbox/, { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, "Inbox");
+    await waitForPageText(page, "收件箱");
     // Each destination renames the browser tab after itself (MUL-6222).
     await expect(page).toHaveTitle("Inbox | Multica");
 
-    await page.getByRole("link", { name: "Agents" }).click();
+    await page.getByRole("link", { name: "智能体" }).click();
     await expect(page).toHaveURL(/\/agents/, { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, "Agents");
+    await waitForPageText(page, "智能体");
     await expect(page).toHaveTitle("Agents | Multica");
 
-    await page.getByRole("link", { name: "Issues", exact: true }).click();
+    await page.getByRole("link", { name: "任务", exact: true }).click();
     await expect(page).toHaveURL(/\/issues/, { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, "Issues");
+    await waitForPageText(page, "任务");
     await expect(page).toHaveTitle("Issues | Multica");
   });
 
   test("settings page loads via sidebar", async ({ page }) => {
-    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    await page.getByRole("link", { name: "设置", exact: true }).click();
     await expect(page).toHaveURL(/\/settings/, { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, "Settings");
+    await waitForPageText(page, "设置");
 
-    await expect(page.getByRole("tab", { name: "General" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Members" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "常规" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "成员" })).toBeVisible();
   });
 
   test("agents page shows agent list", async ({ page }) => {
-    await page.getByRole("link", { name: "Agents" }).click();
+    await page.getByRole("link", { name: "智能体" }).click();
     await expect(page).toHaveURL(/\/agents/, { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, "Agents");
+    await waitForPageText(page, "智能体");
 
     // Should show "Agents" heading
     await expect(page.locator("text=Agents").first()).toBeVisible();
