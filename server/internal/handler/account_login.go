@@ -57,6 +57,10 @@ func accountPasswordValid(v string) bool {
 	return n >= 3
 }
 
+func accountPasswordLoginValid(v string) bool {
+	return len(v) >= 8 && len(v) <= 32
+}
+
 func accountPasswordHash(password string) (string, error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
@@ -99,12 +103,16 @@ func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	account, ok := accountName(req.Account)
-	if !ok || !accountPasswordValid(req.Password) {
+	if !ok || !accountPasswordLoginValid(req.Password) {
 		writeError(w, http.StatusBadRequest, "invalid account or password")
 		return
 	}
 	user, err := h.Queries.GetUserByAccount(r.Context(), account)
 	if err != nil {
+		if !accountPasswordValid(req.Password) {
+			writeError(w, http.StatusBadRequest, "invalid account or password")
+			return
+		}
 		hash, hashErr := accountPasswordHash(req.Password)
 		if hashErr != nil {
 			writeError(w, 500, "failed to hash password")
