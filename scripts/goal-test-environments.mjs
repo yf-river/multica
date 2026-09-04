@@ -494,7 +494,7 @@ function restartDevDaemon(item) {
 function runDevCheck(item) {
   const results = [];
   const checks = [
-    ["pnpm", ["--filter", "@multica/views", "exec", "vitest", "run", "settings/components/tokens-tab.test.tsx"]],
+    ["pnpm", ["--filter", "@multica/views", "exec", "vitest", "run", "settings/components/repositories-tab.test.tsx"]],
     ["pnpm", ["--filter", "@multica/views", "typecheck"]],
   ];
   for (const [cmd, args] of checks) {
@@ -1248,7 +1248,10 @@ async function copyTableRow(source, target, table, whereSql, params) {
   const quoted = columns.map((c) => '"' + c.replace(/"/g, '""') + '"').join(', ');
   const placeholders = columns.map((_, i) => '$' + (i + 1)).join(', ');
   const key = table === '"user"' ? 'account' : table === 'workspace' ? 'slug' : 'id';
-  await target.query('INSERT INTO ' + table + ' (' + quoted + ') VALUES (' + placeholders + ') ON CONFLICT ("' + key + '") DO NOTHING', values);
+  const conflictTarget = table === '"user"'
+    ? '("account") WHERE account <> ' + "''"
+    : '("' + key + '")';
+  await target.query('INSERT INTO ' + table + ' (' + quoted + ') VALUES (' + placeholders + ') ON CONFLICT ' + conflictTarget + ' DO NOTHING', values);
   return row;
 }
 
@@ -1268,9 +1271,10 @@ function passwordHash(password) {
 }
 
 async function seedFromScratch(target) {
+  const quotedUserTable = '"user"';
   const user = await target.query(
-    'INSERT INTO "user" (name, account, email, password_hash, avatar_url, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, now(), now()) ON CONFLICT (account) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, avatar_url = EXCLUDED.avatar_url, updated_at = now() RETURNING id',
-    ['胡云飞', account, email, passwordHash('Develop123!'), avatarUrl],
+    'INSERT INTO ' + quotedUserTable + ' (name, account, email, password_hash, avatar_url, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, now(), now()) ON CONFLICT (account) WHERE account <> ' + "''" + ' DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, avatar_url = EXCLUDED.avatar_url, updated_at = now() RETURNING id',
+    ['胡云飞', account, email, passwordHash('develop123'), avatarUrl],
   );
   const workspace = await target.query(
     'INSERT INTO workspace (name, slug, description, context, issue_prefix, repos) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, context = EXCLUDED.context, updated_at = now() RETURNING id',
