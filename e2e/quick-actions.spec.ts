@@ -137,6 +137,7 @@ test("renders assistant quick actions and sends the hidden prompt", async ({
     ).toBeVisible({ timeout: 15_000 });
     await expect(primaryAction).toBeDisabled();
   } finally {
+    await page.close();
     if (sessionId) {
       await db.query(`DELETE FROM agent_task_queue WHERE chat_session_id = $1`, [
         sessionId,

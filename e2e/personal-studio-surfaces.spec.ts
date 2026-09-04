@@ -23,6 +23,7 @@ test.describe("个人工作室入口", () => {
         page.getByRole("button", { name: "导出原始交互信息" }),
       ).toBeVisible();
     } finally {
+      await page.close();
       await api.cleanup();
     }
   });
