@@ -204,7 +204,12 @@ EOF
 # a function aborts the script under `set -e` when fn's last command fails, and
 # "no process is listening" is the normal answer here, not an error.
 port_listener_pid() {
-  lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1 || true
+  local pid
+  pid="$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+  if [ -z "$pid" ] && command -v fuser >/dev/null 2>&1; then
+    pid="$(fuser "$1/tcp" 2>/dev/null | awk '{print $1}' || true)"
+  fi
+  printf '%s' "$pid"
 }
 
 port_free() { [ -z "$(port_listener_pid "$1")" ]; }
@@ -325,6 +330,7 @@ rewrite_env_ports() {
     -e "s|^PORT=.*|PORT=${backend}|" \
     -e "s|^FRONTEND_PORT=.*|FRONTEND_PORT=${frontend}|" \
     -e "s|^FRONTEND_ORIGIN=.*|FRONTEND_ORIGIN=http://localhost:${frontend}|" \
+    -e "s|^CORS_ALLOWED_ORIGINS=.*|CORS_ALLOWED_ORIGINS=http://localhost:${frontend},http://127.0.0.1:${frontend}|" \
     -e "s|^POSTGRES_DB=.*|POSTGRES_DB=${db}|" \
     -e "s|^DATABASE_URL=.*|DATABASE_URL=${escaped_database_url}|" \
     -e "s|^MULTICA_SERVER_URL=.*|MULTICA_SERVER_URL=ws://localhost:${backend}/ws|" \
@@ -332,6 +338,7 @@ rewrite_env_ports() {
     -e "s|^MULTICA_APP_URL=.*|MULTICA_APP_URL=http://localhost:${frontend}|" \
     -e "s|^NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=http://localhost:${backend}|" \
     -e "s|^NEXT_PUBLIC_WS_URL=.*|NEXT_PUBLIC_WS_URL=ws://localhost:${backend}/ws|" \
+    -e "s|^REMOTE_API_URL=.*|REMOTE_API_URL=http://127.0.0.1:${backend}|" \
     "$file" > "$tmp"
   mv "$tmp" "$file"
 }
@@ -379,7 +386,7 @@ ensure_database() {
   # uses, so "created" and "reachable" cannot describe two different servers.
   if [ -n "$admin_url" ] && PGCONNECT_TIMEOUT=3 psql "$admin_url" -tAc 'SELECT 1' >/dev/null 2>&1; then
     if ! PGCONNECT_TIMEOUT=3 psql "$admin_url" -tAc "SELECT 1 FROM pg_database WHERE datname='${POSTGRES_DB}'" | grep -q 1; then
-      psql "$admin_url" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${POSTGRES_DB}\"" >/dev/null
+      psql "$admin_url" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${POSTGRES_DB}\" TEMPLATE template0" >/dev/null
       info "Created database ${POSTGRES_DB} through DATABASE_URL."
     fi
   else
@@ -462,6 +469,18 @@ process_group_id() {
   ps -p "$1" -o pgid= 2>/dev/null | tr -d ' ' || true
 }
 
+process_descends_from() {
+  local child=$1 ancestor=$2 parent depth=0
+  while [ -n "$child" ] && [ "$child" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
+    parent="$(ps -p "$child" -o ppid= 2>/dev/null | tr -d ' ' || true)"
+    [ -n "$parent" ] || return 1
+    [ "$parent" = "$ancestor" ] && return 0
+    child="$parent"
+    depth=$((depth + 1))
+  done
+  return 1
+}
+
 listener_belongs_to_component() {
   local component=$1 port=$2 launcher listener recorded
   launcher="$(component_pid "$component" || true)"
@@ -469,7 +488,8 @@ listener_belongs_to_component() {
   [ -n "$launcher" ] && [ -n "$listener" ] || return 1
   recorded="$(cat "$(listener_pid_file "$component")" 2>/dev/null || true)"
   [ -n "$recorded" ] && [ "$listener" = "$recorded" ] && return 0
-  [ "$(process_group_id "$listener")" = "$launcher" ]
+  [ "$(process_group_id "$listener")" = "$launcher" ] \
+    || process_descends_from "$listener" "$launcher"
 }
 
 health_belongs_to_api() {
@@ -532,19 +552,92 @@ Run 'make down' here first — a leftover instance answers /health with 200 and 
   die "api never became healthy. Log: $(log_file api)"
 }
 
+web_prewarm_routes() {
+  local slug="${WORKSPACE_SLUG:-dev}"
+  printf '%s\n' \
+    "/${slug}/life?tab=memory" \
+    "/${slug}/inbox" \
+    "/${slug}/my-issues" \
+    "/${slug}/issues" \
+    "/${slug}/projects" \
+    "/${slug}/autopilots" \
+    "/${slug}/agents" \
+    "/${slug}/squads" \
+    "/${slug}/usage" \
+    "/${slug}/run-reviews" \
+    "/${slug}/runtimes" \
+    "/${slug}/skills" \
+    "/${slug}/settings"
+}
+
+prewarm_web() {
+  local route pid active=0 failed=0 pids=""
+  step "Web route precompile"
+  while IFS= read -r route; do
+    (
+      local result status seconds body asset
+      body="$(mktemp)"
+      trap 'rm -f "$body"' EXIT
+      result="$(curl -sS -o "$body" --max-time 120 -w '%{http_code} %{time_total}' \
+        "http://localhost:${FRONTEND_PORT}${route}" 2>&1)" || {
+        warn "${route} failed: ${result}"
+        exit 1
+      }
+      status="${result%% *}"
+      seconds="${result#* }"
+      case "$status" in
+        2??|3??)
+          while IFS= read -r asset; do
+            curl -fsS -o /dev/null --max-time 120 "http://localhost:${FRONTEND_PORT}${asset}" \
+              || { warn "${route} client module failed: ${asset}"; exit 1; }
+          done < <(grep -Eo 'src="[^"]+\.js[^"]*"' "$body" | sed 's/^src="//; s/"$//' | sort -u)
+          ok "${route} ${status} (${seconds}s)"
+          ;;
+        *) warn "${route} failed: HTTP ${status} (${seconds}s)"; exit 1 ;;
+      esac
+    ) &
+    pid=$!
+    pids="${pids} ${pid}"
+    active=$((active + 1))
+    if [ "$active" -eq 2 ]; then
+      for pid in $pids; do
+        wait "$pid" || failed=1
+      done
+      active=0
+      pids=""
+    fi
+  done <<EOF
+$(web_prewarm_routes)
+EOF
+  for pid in $pids; do
+    wait "$pid" || failed=1
+  done
+  if [ "$failed" = 1 ]; then
+    warn "Some Web routes did not precompile; the available development environment remains running."
+  else
+    ok "all visible Web routes precompiled"
+  fi
+  return 0
+}
+
 start_web() {
   local waited=0 listener
   if curl -sf --max-time 15 "http://localhost:${FRONTEND_PORT}" >/dev/null 2>&1 \
     && listener_belongs_to_component web "$FRONTEND_PORT"; then
     ok "web already running on :$FRONTEND_PORT"
+    prewarm_web
     return 0
   fi
   if ! port_free "$FRONTEND_PORT"; then
-    die "Port $FRONTEND_PORT is busy: $(describe_port_owner "$FRONTEND_PORT"). Run 'make down' here first."
+    if listener_belongs_to_component web "$FRONTEND_PORT"; then
+      info "web is still starting on :$FRONTEND_PORT; waiting for it to respond"
+    else
+      die "Port $FRONTEND_PORT is busy: $(describe_port_owner "$FRONTEND_PORT"). Run 'make down' here first."
+    fi
+  else
+    launch_detached web make -C "$REPO_ROOT" -s web-dev ENV_FILE="$ENV_FILE"
+    info "web launching (pid $(cat "$(pid_file web)")), log: $(log_file web)"
   fi
-
-  launch_detached web make -C "$REPO_ROOT" -s web-dev ENV_FILE="$ENV_FILE"
-  info "web launching (pid $(cat "$(pid_file web)")), log: $(log_file web)"
 
   while [ "$waited" -lt 300 ]; do
     if curl -sf --max-time 15 "http://localhost:${FRONTEND_PORT}" >/dev/null 2>&1; then
@@ -553,7 +646,9 @@ start_web() {
         stop_component web
         die "Web on :$FRONTEND_PORT is not owned by the process group this environment launched."
       fi
+      printf '%s\n' "$listener" > "$(listener_pid_file web)"
       ok "web serving http://localhost:$FRONTEND_PORT (pid ${listener:-?})"
+      prewarm_web
       return 0
     fi
     component_pid web >/dev/null || { tail -20 "$(log_file web)" | sed 's/^/    /' >&2; die "web exited during startup. Log: $(log_file web)"; }
@@ -580,7 +675,7 @@ EOF
 
 ensure_credentials() {
   local server="http://localhost:${BACKEND_PORT}" config="$PROFILE_DIR/config.json"
-  local jwt pat ws
+  local jwt pat ws login_response
 
   if [ -f "$config" ]; then
     pat="$(json_field "$(cat "$config")" token || true)"
@@ -593,8 +688,9 @@ ensure_credentials() {
     fi
   fi
 
-  jwt="$(curl -sS -X POST "$server/auth/login" -H 'Content-Type: application/json' \
-    -d "{\"account\":\"${DEV_ACCOUNT}\",\"password\":\"${DEV_PASSWORD}\"}" | json_field token || true)"
+  login_response="$(curl -sS -X POST "$server/auth/login" -H 'Content-Type: application/json' \
+    -d "{\"account\":\"${DEV_ACCOUNT}\",\"password\":\"${DEV_PASSWORD}\"}")"
+  jwt="$(json_field "$login_response" token || true)"
   [ -n "$jwt" ] || die "account login failed for $DEV_ACCOUNT"
 
   local pat_response
@@ -1165,7 +1261,10 @@ Start the rest with 'make up C=api,web', or run 'make up C=daemon' from your own
 
   step "Components: $COMPONENTS"
   component_selected api && start_api
-  component_selected web && start_web
+  if component_selected web; then
+    ensure_credentials
+    start_web
+  fi
   component_selected daemon && start_daemon
   component_selected desktop && start_desktop
 

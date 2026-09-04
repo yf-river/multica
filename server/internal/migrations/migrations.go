@@ -69,6 +69,16 @@ func Files(direction string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The clean-install baseline is a snapshot of the schema produced by the
+	// historical migrations, so the two paths are mutually exclusive.
+	baseline := filepath.Join(dir, "000_initial_schema"+suffix)
+	filtered := files[:0]
+	for _, file := range files {
+		if file != baseline {
+			filtered = append(filtered, file)
+		}
+	}
+	files = filtered
 
 	if direction == "down" {
 		sort.Sort(sort.Reverse(sort.StringSlice(files)))

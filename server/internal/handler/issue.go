@@ -1151,6 +1151,9 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		terminalStatusKeys, err := h.terminalIssueStatusKeys(ctx, wsUUID)
 		if err != nil {
+			if writeClientClosedIfCanceled(w, err) {
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "failed to resolve status categories")
 			return
 		}
@@ -1167,6 +1170,9 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			PropertiesFilter:   openPropertiesFilter,
 		})
 		if err != nil {
+			if writeClientClosedIfCanceled(w, err) {
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
 			return
 		}
@@ -1326,6 +1332,9 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		// into a full workspace scan. (MUL-6243)
 		keys, err := issuestatus.ExpandCategories(r.Context(), h.Queries, wsUUID, statusCategoriesFilter)
 		if err != nil {
+			if writeClientClosedIfCanceled(w, err) {
+				return
+			}
 			slog.Warn("expand status categories failed", append(logger.RequestAttrs(r), "error", err)...)
 			writeError(w, http.StatusInternalServerError, "failed to resolve status categories")
 			return
@@ -1518,6 +1527,9 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		slog.Warn("ListIssues query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list issues")
 		return
@@ -1552,6 +1564,9 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			&row.Properties,
 			&row.Revision,
 		); err != nil {
+			if writeClientClosedIfCanceled(w, err) {
+				return
+			}
 			slog.Warn("ListIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
 			return
@@ -1559,6 +1574,9 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 		issues = append(issues, row)
 	}
 	if err := rows.Err(); err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		slog.Warn("ListIssues rows failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list issues")
 		return
@@ -1570,6 +1588,9 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 	countArgs := args[:len(args)-2]
 	var total int64
 	if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		total = int64(len(issues))
 	}
 
@@ -1814,6 +1835,9 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 		// still drives the scan. (MUL-6243)
 		keys, err := issuestatus.ExpandCategories(r.Context(), h.Queries, wsUUID, statusCategories)
 		if err != nil {
+			if writeClientClosedIfCanceled(w, err) {
+				return
+			}
 			slog.Warn("expand status categories failed", append(logger.RequestAttrs(r), "error", err)...)
 			writeError(w, http.StatusInternalServerError, "failed to resolve status categories")
 			return
@@ -2130,6 +2154,9 @@ ORDER BY
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		slog.Warn("ListGroupedIssues query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list grouped issues")
 		return
@@ -2165,6 +2192,9 @@ ORDER BY
 			&row.Revision,
 			&row.GroupTotal,
 		); err != nil {
+			if writeClientClosedIfCanceled(w, err) {
+				return
+			}
 			slog.Warn("ListGroupedIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list grouped issues")
 			return
@@ -2172,6 +2202,9 @@ ORDER BY
 		groupedRows = append(groupedRows, row)
 	}
 	if err := rows.Err(); err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		slog.Warn("ListGroupedIssues rows failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list grouped issues")
 		return

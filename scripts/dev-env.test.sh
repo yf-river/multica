@@ -45,6 +45,25 @@ dev_env() {
   bash "$root_dir/scripts/dev-env.sh" "$@"
 }
 
+prewarm_routes="$(MULTICA_DEV_WORKSPACE_SLUG=prewarm-test bash -c 'source "$1"; web_prewarm_routes' _ "$root_dir/scripts/dev-env.sh")"
+for route in \
+  /prewarm-test/life?tab=memory \
+  /prewarm-test/inbox \
+  /prewarm-test/my-issues \
+  /prewarm-test/issues \
+  /prewarm-test/projects \
+  /prewarm-test/autopilots \
+  /prewarm-test/agents \
+  /prewarm-test/squads \
+  /prewarm-test/usage \
+  /prewarm-test/run-reviews \
+  /prewarm-test/runtimes \
+  /prewarm-test/skills \
+  /prewarm-test/settings; do
+  printf '%s\n' "$prewarm_routes" | grep -Fxq "$route" \
+    || fail "prewarm route missing: $route"
+done
+
 write_manifest() {
   local name=$1 dir=$2 offset=$3
   local profile="dev-dev-env-test-$offset"
@@ -129,7 +148,8 @@ node -e '
   if (payload.backend_port !== 18981) throw new Error("backend_port = " + payload.backend_port);
   for (const key of ["api", "web", "daemon"]) {
     if (!payload.components[key]) throw new Error("missing component " + key);
-    if (payload.components[key].state !== "stopped") {
+    const allowed = key === "daemon" ? ["stopped", "unknown_profile"] : ["stopped"];
+    if (!allowed.includes(payload.components[key].state)) {
       throw new Error(key + " state = " + payload.components[key].state);
     }
   }

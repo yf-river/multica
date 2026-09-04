@@ -29,6 +29,7 @@ POSTGRES_USER=multica
 POSTGRES_PASSWORD=multica
 POSTGRES_PORT=${postgres_port}
 DATABASE_URL=postgres://multica:multica@localhost:${postgres_port}/${postgres_db}?sslmode=disable
+MULTICA_MIGRATION_BASELINE=true
 
 PORT=${backend_port}
 JWT_SECRET=change-me-in-production

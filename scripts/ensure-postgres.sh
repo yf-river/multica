@@ -83,7 +83,7 @@ if is_local; then
   if [ "$db_exists" != "1" ]; then
     docker compose exec -T postgres \
       psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 \
-      -c "CREATE DATABASE \"$POSTGRES_DB\"" \
+      -c "CREATE DATABASE \"$POSTGRES_DB\" TEMPLATE template0" \
       > /dev/null
   fi
 
