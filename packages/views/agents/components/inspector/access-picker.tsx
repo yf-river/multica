@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 的“访问权限”选择器：三个档位（仅自己 / 整个工作区 / 指定成员）+
+// 成员勾选。可见性变化是安全敏感操作，所以采用“草稿优先”模式——选择只改本地草稿，
+// 必须由拥有者显式点保存才真正落库。也被“批量设置访问范围”弹窗复用。
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Globe, Loader2, Lock, Users } from "lucide-react";
 import type {
@@ -15,6 +19,7 @@ import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { ActorAvatar } from "../../../common/actor-avatar";
 import { useT } from "../../../i18n";
 
+/** 一次访问设置变更的可提交载荷：权限模式 + 调用目标列表。 */
 export type AccessChange = {
   permission_mode: AgentPermissionMode;
   invocation_targets: AgentInvocationTargetInput[];
@@ -22,7 +27,7 @@ export type AccessChange = {
 
 type AccessScope = "private" | "workspace" | "members";
 
-
+/** 从后端目标列表里抽出指定类型（成员 / 团队）的目标 id 集合。 */
 function selectedTargetIds(
   targets: AgentInvocationTarget[] | undefined | null,
   type: "member" | "team",
@@ -35,9 +40,8 @@ function selectedTargetIds(
 }
 
 /**
- * Draft-first access editor. Visibility changes are security-sensitive, so
- * choosing a scope only updates the draft; nothing is persisted until the
- * owner explicitly saves the complete selection.
+ * 草稿优先的访问权限编辑器。可见性变化属安全敏感操作，所以选择档位只更新草稿；
+ * 直到拥有者显式保存完整选择，才真正持久化。
  */
 export function AccessPicker({
   permissionMode,
@@ -60,20 +64,17 @@ export function AccessPicker({
   canEdit?: boolean;
   hasComposioAllowlist?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
-  /** Notified when the draft becomes committable / non-committable.
-   *  The optional second argument is the current AccessChange when the draft
-   *  is ready, so the parent can store it for immediate use (e.g. the bulk
-   *  dialog's Apply button). */
+  /** 草稿变为“可提交/不可提交”时通知。可提交时的第二个参数是当前 AccessChange，
+   *  父层可存下来立即使用（如批量弹窗的“应用”按钮）。 */
   onReadyChange?: (ready: boolean, change?: AccessChange) => void;
   onChange?: (next: AccessChange) => Promise<void> | void;
-  /** When true, suppress the bottom Save footer — the parent dialog owns
-   *  the apply trigger (e.g. the bulk "Set access scope" dialog). */
+  /** true 时隐藏底部“保存”栏——由父弹窗自己持有提交触发器
+   *  （如批量“设置访问范围”弹窗）。 */
   hideFooter?: boolean;
 }) {
   const { t } = useT("agents");
   const { t: tc } = useT("common");
-  // Centralized derivation (MUL-3963): map canonical scope to picker's
-  // local draft key (private / workspace / members).
+  // 集中推导（MUL-3963）：把规范档位映射到选择器的本地草稿键（private / workspace / members）。
   const canonical = effectiveAccessScope(permissionMode, invocationTargets);
   const persistedPrivate = permissionMode === "private";
   const persistedWorkspace = canonical === "workspace";
@@ -94,22 +95,19 @@ export function AccessPicker({
   const [draftScope, setDraftScope] = useState<AccessScope>(persistedScope);
   const [draftMembers, setDraftMembers] = useState(persistedMembers);
   const [saving, setSaving] = useState(false);
-  /** Tracks whether the user has explicitly selected a scope (clicked any
-   *  radio). Once true, the picker considers the draft "ready" even if the
-   *  selection matches the persisted default — applying the default to a
-   *  bulk selection is still a valid action. */
+  /** 记录用户是否显式选过档位（点过任一单选框）。一旦为 true，即使所选与持久化
+   *  默认一致，选择器也认为草稿“就绪”——对批量选择应用默认档位同样是合法动作。 */
   const [hasInteracted, setHasInteracted] = useState(false);
 
-  /** Wrapper that marks the picker as interacted and updates the draft scope. */
+  /** 包装函数：标记“已交互”并更新草稿档位。 */
   const selectDraftScope = (scope: AccessScope) => {
     setHasInteracted(true);
     setDraftScope(scope);
   };
 
-  // Only reset the draft when the PERSISTED values actually change by value,
-  // not by reference. A prop like invocationTargets={[]} creates a new array
-  // on every parent render, which would otherwise cause this effect to fire
-  // on every render and reset the user's in-progress edits.
+  // 只有“持久化的值真的变了”才重置草稿（按值比较，不按引用）。父层传类似
+  // invocationTargets={[]} 会在每次渲染都新建数组，若按引用比较，这个 effect
+  // 就会每次渲染都触发，把用户正在编辑的内容冲掉。
   const prevPersistedScopeRef = useRef(persistedScope);
   const prevPersistedMembersRef = useRef(persistedMembers);
   useEffect(() => {
@@ -144,10 +142,9 @@ export function AccessPicker({
     return () => onDirtyChange?.(false);
   }, [dirty, onDirtyChange]);
 
-  /** The change the current draft would commit, or null when the draft is not
-   *  committable (specific-people with zero targets). Memoized by draft value:
-   *  a parent that stores this in state re-renders the picker with an identical
-   *  reference, so the notify effect below stays quiet. */
+  /** 当前草稿要提交的变更；草稿不可提交时（“指定成员”却一个都没选）为 null。
+   *  按草稿值 memo：父层把该对象存进 state 再回传本组件时引用不变，
+   *  下面的通知 effect 因此保持安静、不会死循环。 */
   const draftChange = useMemo<AccessChange | null>(() => {
     if (draftScope === "private") {
       return { permission_mode: "private", invocation_targets: [] };
@@ -168,17 +165,14 @@ export function AccessPicker({
     return { permission_mode: "public_to", invocation_targets: targets };
   }, [draftScope, draftMembers, teamIds]);
 
-  /** Ready once the user has explicitly selected a scope (hasInteracted) AND
-   *  the draft is committable. Does NOT require the draft to differ from the
-   *  persisted state — applying the default scope to a bulk selection is a
-   *  valid action. */
+  /** 用户已显式选过档位（hasInteracted）且草稿可提交，才算“就绪”。
+   *  不要求草稿与持久化状态不同——对批量选择应用默认档位同样是合法动作。 */
   const readyChange = hasInteracted ? draftChange : null;
 
-  // Notify on value change, never on render. `onReadyChange` must be stable in
-  // the caller; combined with the memoized `readyChange` that keeps a parent
-  // storing the change in state from re-triggering this effect. Deliberately no
-  // cleanup: clearing the parent whenever a dependency changes is what turned
-  // this into an update loop. The parent owns resetting its own state.
+  // 只在值变化时通知，绝不在每次渲染都通知。`onReadyChange` 需由调用方保持稳定；
+  // 配合 memo 过的 `readyChange`，父层把变更存进 state 后不会反复触发本 effect。
+  // 刻意不做清理函数：依赖一变就去清父层状态，正是之前把它变成更新循环的原因。
+  // 重置父层自己的状态由父层负责。
   useEffect(() => {
     onReadyChange?.(readyChange !== null, readyChange ?? undefined);
   }, [readyChange, onReadyChange]);
@@ -348,6 +342,7 @@ export function AccessPicker({
   );
 }
 
+/** 一行“单选项”：radio + 图标 + 标题/描述。点击整行即选中。 */
 function AccessChoice({
   name,
   value,

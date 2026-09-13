@@ -1,21 +1,23 @@
+// 本文件定义「聊天（Chat）」相关类型：会话、消息、快捷回复建议、挂起/排队
+// 任务、草稿恢复等，供与 agent 对话的 IM 风格界面使用。
+
 import type { AgentTask } from "./agent";
 
-/** A user's pinned "quick agent" for the Chat list top bar. */
+/** 用户置顶的「快捷 agent」（聊天列表顶栏用）。 */
 export interface ChatPinnedAgent {
   agent_id: string;
   position: number;
 }
 
 /**
- * Kind of a chat message. Additive (MUL-4351): the server always sends a
- * concrete value, but treat a missing/unknown value as "message" so an older
- * server or a future kind never breaks rendering.
- * - "message"     — an ordinary user/assistant message.
- * - "no_response" — a completed direct-chat turn that produced no text reply.
- * - "onboarding_kickoff" — a product-authored opening input that is sent to
- *   Mika but never rendered as a member message.
- * - "onboarding_opening" — Mika's reply to the kickoff; chat renders the
- *   onboarding starter cards under it instead of quick-action chips.
+ * 聊天消息的种类。增量式（MUL-4351）：服务器始终发送具体值，但缺失/未知值
+ * 一律按 "message" 处理，让旧服务器或未来种类都不破坏渲染。
+ * - "message"     —— 普通用户/助手消息。
+ * - "no_response" —— 一轮结束的直接对话，但没产生文本回复。
+ * - "onboarding_kickoff" —— 产品撰写的开场输入，发给 Mika 但从不作为成员
+ *   消息渲染。
+ * - "onboarding_opening" —— Mika 对 kickoff 的回复；聊天界面在它下面渲染
+ *   onboarding 起步卡片而不是快捷动作 chips。
  */
 export type ChatMessageKind =
   | "message"
@@ -24,10 +26,9 @@ export type ChatMessageKind =
   | "onboarding_opening";
 
 /**
- * A concise follow-up offered by an assistant reply. `label` is rendered in
- * the UI while `prompt` is the full text sent back to the agent. At most one
- * action should be primary; clients still render safely if an older or future
- * server sends more than one.
+ * 助手回复顺带的一条简明后续建议。UI 渲染 `label`，`prompt` 是发回给 agent
+ * 的完整文本。至多一个动作应标记为 primary；即便旧/未来服务器多发几个，
+ * 客户端仍能安全渲染。
  */
 export interface ChatQuickAction {
   label: string;
@@ -36,102 +37,100 @@ export interface ChatQuickAction {
 }
 
 /**
- * Client-only marker (never persisted, never fetched) that the identified
- * turn's quick-actions supplement is still in flight — drives the pill
- * skeleton between chat:done and chat:quick_actions.
+ * 仅客户端标记（永不持久化、永不拉取）：标明某轮次的快捷动作补充仍在途
+ * ——在 chat:done 与 chat:quick_actions 之间驱动 pill 骨架。
  */
 export interface ChatQuickActionsPendingState {
   message_id: string;
   task_id: string;
   /**
-   * Absolute epoch-ms deadline after which a client gives up waiting for the
-   * chat:quick_actions supplement and clears this marker. Stored on the marker
-   * (not as a component timer) so switching chat surfaces — which unmounts and
-   * remounts the timeout hook — resumes the SAME deadline instead of re-arming
-   * a fresh window each time (MUL-5149 review).
+   * 绝对 epoch-ms 截止时间，之后客户端放弃等待 chat:quick_actions 补充并清除
+   * 该标记。存在标记上（而非组件定时器），使切换聊天界面（会卸载/重挂超时
+   * hook）能继续同一截止时间，而不是每次重新武装新窗口（MUL-5149 review）。
    */
   expires_at: number;
 }
 
 /**
- * Client-only signal (never persisted, never fetched) that an explicit refresh's
- * background regeneration FAILED — the daemon suggestion pass never completed, so
- * the turn's pills are unchanged. Set by the realtime layer off a failed
- * chat:quick_actions and consumed once by a view to toast "couldn't refresh"
- * before clearing itself. `at` is a per-event nonce so a second failure re-fires
- * even when the message_id repeats (MUL-5149 review).
+ * 仅客户端信号（永不持久化、永不拉取）：一次显式刷新「重新生成」失败——
+ * daemon 的建议轮从未完成，因此该轮次的 pills 未变。由实时层在失败的
+ * chat:quick_actions 事件上设置，视图消费一次以提示「无法刷新」，然后自清。
+ * `at` 是每事件 nonce，即使 message_id 重复，第二次失败也能重新触发
+ *（MUL-5149 review）。
  */
 export interface ChatQuickActionsFailureState {
   message_id: string;
   at: number;
 }
 
-/** Preview of a session's most recent message, for the IM-style list. */
+/** 会话最近一条消息的预览（IM 式列表用）。 */
 export interface ChatLastMessage {
   content: string;
   role: "user" | "assistant";
   created_at: string;
-  /** Present when the last message is a failed assistant reply. */
+  /** 最近一条是失败助手回复时存在。 */
   failure_reason?: string | null;
-  /** "message" (default) or "no_response". Optional for older servers. */
+  /** "message"（默认）或 "no_response"。旧服务器可选。 */
   message_kind?: ChatMessageKind;
 }
 
+/** 外部渠道（Channel）建会话的来源信息。 */
 export interface ChatChannelSource {
   channel_type: string;
   installation_id: string;
   route_revision: number;
 }
 
+/** 一个聊天会话。 */
 export interface ChatSession {
   id: string;
   workspace_id: string;
   agent_id: string;
   creator_id: string;
-  /** Durable project context for every turn in this session. Null when the
-   *  conversation uses workspace context only; optional for older servers. */
+  /** 该会话每一轮的持久项目上下文。对话只使用 workspace 上下文时为 null；
+   *  旧服务器可选。 */
   project_id?: string | null;
   title: string;
   status: "active" | "archived";
-  /** True when the session has any unread assistant replies. List-only.
-   *  Convenience for `unread_count > 0`. */
+  /** 会话是否有未读的助手回复。仅列表。等价便捷 `unread_count > 0`。 */
   has_unread: boolean;
-  /** Number of unread assistant messages (after the read cursor). List-only;
-   *  optional so older clients / non-list payloads stay valid. */
+  /** 未读助手消息数（读游标之后）。仅列表；可选让旧客户端 / 非列表载荷保持
+   *  有效。 */
   unread_count?: number;
-  /** Latest message in the session, or null when empty. List-only. */
+  /** 会话最新消息；空会话时为 null。仅列表。 */
   last_message?: ChatLastMessage | null;
-  /** True when the user has pinned this chat to the top of the list.
-   *  Optional so older clients / non-list payloads stay valid. */
+  /** 用户是否把该会话置顶到列表顶部。可选让旧客户端 / 非列表载荷保持有效。 */
   pinned?: boolean;
-  /** Present for Chats created by an external Channel. Historical Chats keep
-   *  their source even after a newer route generation becomes current. */
+  /** 由外部渠道创建的聊天会带此字段。历史聊天即使在新一代路由成为当前后，
+   *  也保留来源。 */
   channel_source?: ChatChannelSource;
-  /** Absent for first-party Chats. */
+  /** 一手（first-party）聊天没有此字段。 */
   is_current_channel_route?: boolean;
   created_at: string;
   updated_at: string;
 }
 
+/** 一个排队中的聊天任务项。 */
 export interface PendingChatTaskItem {
   task_id: string;
   status: string;
   chat_session_id: string;
 }
 
+/** 排队聊天任务列表接口响应。 */
 export interface PendingChatTasksResponse {
   tasks: PendingChatTaskItem[];
 }
 
 /**
- * Boolean fast-path payload for the FAB "running" indicator — returned by
- * GET /api/chat/pending-tasks/has-any. The FAB only needs to know whether any
- * in-flight chat task exists, so it avoids fetching the full task list.
+ * FAB「运行中」指示器的布尔快速通道载荷——GET /api/chat/pending-tasks/has-any
+ * 返回。FAB 只需知道是否存在任何在途聊天任务，因此不用拉取完整任务列表。
  */
 export interface HasPendingChatTasksResponse {
   has_pending: boolean;
 }
 
+/** 一条聊天消息。 */
 export interface ChatMessage {
   id: string;
   chat_session_id: string;
@@ -140,45 +139,41 @@ export interface ChatMessage {
   task_id: string | null;
   created_at: string;
   /**
-   * Attachments linked to this message via the attachment table's
-   * chat_message_id FK. Populated by ListChatMessages. UI renders these
-   * as file/image cards inside the bubble; the markdown URL inline in
-   * `content` may have an expiring signature, while attachment metadata
-   * here is stable and the source of truth for click-time download.
+   * 通过附件表的 chat_message_id 外键关联到本条消息的附件。由 ListChatMessages
+   * 填充。UI 在气泡里把它们渲染成文件/图片卡片；`content` 里的 markdown URL
+   * 可能带过期签名，而这里的附件元数据稳定，是点击时下载的事实来源。
    */
   attachments?: import("./attachment").Attachment[];
   /**
-   * When set, this is an assistant message synthesized by the server's
-   * FailTask fallback (mirrors the issue path's failure system comment).
-   * `content` carries the raw daemon-reported errMsg; the front-end maps
-   * `failure_reason` (an enum like "agent_error" / "connection_error" /
-   * "timeout") to a user-facing label and renders a destructive bubble.
-   * Null on success messages and on user messages.
+   * 设置后，这是服务端 FailTask 兜底合成的助手消息（对应议题路径的失败系统
+   * 评论）。`content` 携带 daemon 报告的原始 errMsg；前端把 `failure_reason`
+   *（枚举，如 "agent_error" / "connection_error" / "timeout"）映射到用户可见
+   * 文案并渲染成错误气泡。成功消息与用户消息上为 null。
    */
   failure_reason?: string | null;
   /**
-   * Wall-clock duration from `task.created_at` (user hit send) to terminal
-   * state (completed/failed). Set by the server on assistant messages
-   * synthesized by CompleteTask/FailTask. UI renders it as "Replied in
-   * 38s" / "Failed after 12s" beneath the bubble. Null on user messages
-   * and on legacy assistant messages predating migration 063.
+   * 从 `task.created_at`（用户点发送）到终态（completed/failed）的墙钟时长。
+   * 服务器在 CompleteTask/FailTask 合成的助手消息上设置。UI 在气泡下渲染成
+   * "38s 内回复" / "12s 后失败"。用户消息与早于迁移 063 的旧助手消息上为
+   * null。
    */
   elapsed_ms?: number | null;
   /**
-   * "message" (default) or "no_response" — a completed direct-chat turn that
-   * produced no text reply (MUL-4351). Optional/additive: absent on older
-   * servers and on user messages; treat a missing value as "message".
+   * "message"（默认）或 "no_response"——一轮完成的直接对话但无文本回复
+   *（MUL-4351）。可选/增量：旧服务器与用户消息上缺失；缺失按 "message" 处理。
    */
   message_kind?: ChatMessageKind;
-  /** Up to three server-validated follow-ups generated with this reply. */
+  /** 随该回复生成的至多三条经服务器校验的后续建议。 */
   quick_actions?: ChatQuickAction[];
 }
 
+/** 消息翻页游标（按 created_at + id 定位）。 */
 export interface ChatMessagesCursor {
   created_at: string;
   id: string;
 }
 
+/** 分页消息接口响应。 */
 export interface ChatMessagesPage {
   messages: ChatMessage[];
   limit: number;
@@ -186,94 +181,92 @@ export interface ChatMessagesPage {
   next_cursor?: ChatMessagesCursor | null;
 }
 
+/** 发送聊天消息的接口响应。 */
 export interface SendChatMessageResponse {
   message_id: string;
   task_id: string;
-  /** True when the server supports queued follow-up sends. */
+  /** 服务器是否支持排队跟进发送。 */
   supports_queue?: boolean;
   /**
-   * True only when this task was accepted behind another in-flight task in
-   * the same chat session. Optional for compatibility with older servers.
+   * 仅当该任务被接受排到同一会话另一在途任务之后时才为 true。为兼容旧服务器
+   * 设为可选。
    */
   queued?: boolean;
   /**
-   * Server-authoritative task creation time. Optimistic StatusPill seed
-   * uses this as its anchor so the timer starts from the real `0s` —
-   * without it the front-end falls back to its local clock and the
-   * timer "snaps backwards" later when WS events update the cache.
+   * 服务器权威的任务创建时间。乐观 StatusPill 种子用它当锚点，让计时从真实
+   * 的 `0s` 起步——没有它，前端回退到本地时钟，之后 WS 事件更新缓存时计时器
+   * 会「往回跳」。
    */
   created_at: string;
   /**
-   * Attachment ids the server actually bound to this message. The client
-   * diffs these against the ids it requested to warn when an attachment
-   * silently failed to bind — no extra fetch needed. Optional for forward
-   * compat with servers that predate the field.
+   * 服务器实际绑定到该消息的附件 id。客户端用它与自己请求的 id 做差集，以在
+   * 附件静默绑定失败时给出告警——无需额外请求。为兼容早于该字段的服务器设为
+   * 可选。
    */
   attachment_ids?: string[];
 }
 
+/** 启动 Mika onboarding 的接口响应。 */
 export interface StartMikaOnboardingResponse {
-  /** True only for the request that wrote the opening. */
+  /** 仅对真正写入了开场白的请求为 true。 */
   started: boolean;
   /**
-   * The opening message, already persisted and final. No agent runs to
-   * produce it, so there is no task to await — a `started` response means the
-   * member's first message from Mika is in the transcript right now.
+   * 开场消息已持久化且是最终版。没有 agent 运行来产生它，所以没有任务可等——
+   * `started` 响应意味着 Mika 对成员的第一条消息此刻已在记录里。
    */
   message_id?: string;
   created_at?: string;
 }
 
+/** 一条被取消的聊天消息（供草稿恢复）。 */
 export interface CancelledChatMessage {
   chat_session_id: string;
   message_id: string;
   content: string;
   restore_to_input: boolean;
   /**
-   * Attachments detached from the deleted message so a restored draft can
-   * re-bind them on re-send. Absent on servers that predate the field.
+   * 从被删除消息解绑的附件，供恢复的草稿重发时重新绑定。早于该字段的服务器
+   * 上缺失。
    */
   attachments?: import("./attachment").Attachment[];
 }
 
+/** 取消任务的接口响应（可带被取消聊天消息）。 */
 export interface CancelTaskResponse extends AgentTask {
   cancelled_chat_message?: CancelledChatMessage;
 }
 
 /**
- * One durable draft restore from GET /api/chat/sessions/{id}/draft-restores
- * (#5219): a deferred cancellation settled as empty-transcript after the
- * cancel HTTP response had returned, so the deleted prompt is held
- * server-side until the creator's client applies it to the composer and
- * consumes it (DELETE, idempotent). The chat:cancel_finalized event is only
- * an invalidation hint for this fetch.
+ * GET /api/chat/sessions/{id}/draft-restores 返回的一条持久化草稿恢复（#5219）：
+ * 一次延迟取消在取消 HTTP 响应返回之后才以「空记录」结算，因此被删除的
+ * prompt 在服务端留存，直到创建方的客户端把它应用到编辑器并消费掉
+ *（DELETE，幂等）。chat:cancel_finalized 事件只是本次拉取的失效提示。
  */
 export interface ChatDraftRestore {
-  /** The deleted user chat message id — stable dedup and consume key. */
+  /** 被删除的用户聊天消息 id——稳定的去重与消费键。 */
   id: string;
   chat_session_id: string;
   task_id?: string;
   content: string;
   /**
-   * Attachments detached from the deleted message so a restored draft can
-   * re-bind them on re-send.
+   * 从被删除消息解绑的附件，供恢复的草稿重发时重新绑定。
    */
   attachments?: import("./attachment").Attachment[];
   created_at?: string;
 }
 
+/** 草稿恢复列表接口响应。 */
 export interface ChatDraftRestoresResponse {
   restores: ChatDraftRestore[];
 }
 
 /**
- * Response from GET /api/chat/sessions/{id}/pending-task.
- * All fields are absent when the session has no in-flight task.
+ * GET /api/chat/sessions/{id}/pending-task 的响应。
+ * 会话没有在途任务时所有字段都缺失。
  *
- * `created_at` is the server-authoritative anchor for the chat StatusPill's
- * elapsed-seconds timer — the optimistic seed in chat-window.tsx fills in
- * task_id/status only, then this query catches up with the real created_at
- * so the timer survives refresh / reopen without "resetting to 0s".
+ * `created_at` 是聊天 StatusPill 计时器的服务器权威锚点——chat-window.tsx 里
+ * 的乐观种子只填 task_id/status，此查询随后补上真实 created_at，让计时器在
+ * 刷新/重开后不「重置回 0s」。
  */
 export interface ChatQueuedTask {
   task_id: string;
@@ -283,29 +276,30 @@ export interface ChatQueuedTask {
   content?: string;
 }
 
+/** 把排队任务提前的接口响应。 */
 export interface PrioritizeQueuedChatTaskResponse {
   task_id: string;
-  /** Server-authoritative task to stop after the selected task is prioritized. */
+  /** 所选任务被提前后、应停掉的服务器权威当前活跃任务。 */
   active_task_id?: string;
 }
 
+/** 会话当前挂起/排队任务的汇总。 */
 export interface ChatPendingTask {
   task_id?: string;
   status?: string;
   created_at?: string;
   /**
-   * Why a `waiting_local_directory` task is parked: the directory it needs and,
-   * when known, the short id of the task holding it. Set only while that status
-   * is current — see promotePendingChatTask, which clears it on every other
-   * transition so a stale hold can never be read as a live one. Absent on
-   * servers predating the field, which renders as the bare waiting label.
+   * 为何一个 `waiting_local_directory` 任务被停放：它需要的目录，以及（可知时）
+   * 占用该目录的任务短 id。仅在该状态处于当前时设置——见 promotePendingChatTask，
+   * 它会在其它每个转移上清除它，因此陈旧的占用绝不会被读成活跃占用。早于该
+   * 字段的服务器上缺失，渲染为朴素的等待标签。
    */
   wait_reason?: string;
-  /** Explicit capability gate; absent on servers predating follow-up queues. */
+  /** 显式能力门控；早于跟进队列的服务器上缺失。 */
   supports_queue?: boolean;
   /**
-   * Ordered follow-ups behind the root task. The root may itself still have
-   * database status `queued` before claim, but is never duplicated here.
+   * 根任务之后排队的跟进任务。根任务在认领前数据库状态可能仍是 `queued`，
+   * 但绝不会在此重复出现。
    */
   queued_tasks?: ChatQueuedTask[];
 }

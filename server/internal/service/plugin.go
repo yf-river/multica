@@ -1,3 +1,8 @@
+// plugin.go —— 插件生态的服务层核心：发布内容的安装/升级/配置/启停/卸载。
+// 核心心智模型：「安装 = 对某个已发布版本的一次显式同意」。管理员批准的是发布时冻结的 manifest、
+// 表面脚本与 skill 文本（版本绑定），新发布只是新增版本、不碰既有安装——升级是第二次显式同意。
+// 本文件负责把配置按 schema 拆分（明文落安装行、secret 落加密表）、清理新 manifest 不再声明的孤儿
+// 配置/密钥，并保证安装/升级/卸载各自的整组行要么全成要么全不成（库政策禁外键，靠同一事务兜底）。
 package service
 
 import (
@@ -24,47 +29,39 @@ import (
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
 )
 
-// PluginService owns plugin publishing, installation, configuration, and
-// plugin-owned state.
+// PluginService 拥有插件发布、安装、配置与插件自有状态的业务逻辑。
 type PluginService struct {
 	Queries   *db.Queries
 	TxStarter TxStarter
-	// Secrets encrypts `secret` config values. Nil disables secret writes so a
-	// misconfigured deployment fails closed instead of storing plaintext.
+	// Secrets 负责加密 `secret` 类配置值。为 nil 时禁止 secret 写入——让配置错误的部署 fail-closed，
+	// 而不是存明文。
 	Secrets *secretbox.Box
-	// LocalDir is MULTICA_PLUGIN_DIR: a directory of plugin sources an author
-	// can publish from without zipping and uploading after every edit. Empty
-	// disables the development publish channel.
+	// LocalDir 是 MULTICA_PLUGIN_DIR：作者无需每次编辑后打包上传、可直接从中发布的插件源码目录。
+	// 为空即禁用开发发布通道。
 	LocalDir string
-	// DevOrigins is MULTICA_PLUGIN_DEV_ORIGINS: hook endpoint origins an author
-	// may point a plugin at while building one, typically a localhost server.
-	// Empty in every deployment that has not opted in, which is the only reason
-	// it is safe to skip the public-HTTPS guard for them.
+	// DevOrigins 是 MULTICA_PLUGIN_DEV_ORIGINS：作者开发插件时可以把 hook 端点指向的地址（通常
+	// 是 localhost 服务）。只有显式选择加入的部署才非空——这正是对它们可以跳过公开 HTTPS 校验的
+	// 唯一理由。
 	DevOrigins []string
-	// Host gates which declared contributions this build can actually run.
+	// Host 门控本构建声明的能力里哪些真正能跑。
 	Host plugincontract.Capabilities
-	// DeploymentKey is the raw MULTICA_PLUGIN_SECRET_KEY, used to derive each
-	// installation's hook signing secret. Held separately from Secrets because
-	// signing needs a key it can reproduce, not a sealed box.
+	// DeploymentKey 是原始 MULTICA_PLUGIN_SECRET_KEY，用来派生每次安装的 hook 签名密钥。它与
+	// Secrets 分开持有，因为签名需要一个可复现的密钥，而不是一个封好的盒子。
 	DeploymentKey []byte
-	// Callbacks issues the short-lived tokens a hook handler uses to call back.
-	// Nil means hooks go out without one.
+	// Callbacks 签发 hook handler 回调用的短时令牌。nil 表示 hook 发出时不带回调能力。
 	Callbacks *CallbackTokens
-	// CallbackBaseURL is the Action API root a hook handler should call, sent
-	// alongside the callback token so a plugin does not hardcode our hostname.
+	// CallbackBaseURL 是 hook handler 应调用的 Action API 根地址，与回调令牌一起发送——插件因此
+	// 不用硬编码我们的主机名。
 	CallbackBaseURL string
-	// FeatureFlags gates the hook engine. Held here because the EVENT path has
-	// no request to read the flag from: it runs on a worker, so the check has to
-	// live with the service rather than in a handler. Nil reads as disabled,
-	// which is the safe direction for the one path that reaches a third party.
+	// FeatureFlags 门控 hook 引擎。放在这里是因为 EVENT 路径没有可读 flag 的请求：它跑在 worker 上，
+	// 所以检查必须随服务而非随 handler。nil 视为关闭——对会触达第三方的那条路径，关闭是安全方向。
 	FeatureFlags *featureflag.Service
-	// HookClient overrides the outbound client, and ONLY for an endpoint whose
-	// origin the operator already named in DevOrigins. Nil everywhere else, so
-	// a public endpoint always goes through the SSRF-guarded client and this
-	// field cannot widen what a deployment can reach.
+	// HookClient 覆盖出站客户端，且只对「运维已在 DevOrigins 点名的 origin」生效。其余场合一律为 nil，
+	// 让公开端点总是走 SSRF 防护客户端，本字段不会放大部署可达的范围。
 	HookClient *http.Client
 }
 
+// NewPluginService 从环境变量读取开发发布/开发 origin 配置，组装 PluginService。
 func NewPluginService(queries *db.Queries, txStarter TxStarter) *PluginService {
 	service := &PluginService{
 		Queries:    queries,
@@ -77,18 +74,14 @@ func NewPluginService(queries *db.Queries, txStarter TxStarter) *PluginService {
 	return service
 }
 
-// devHookClient trusts an additional CA for dev-origin hook endpoints only.
+// devHookClient 只对开发 origin 的 hook 端点额外信任一个 CA。
 //
-// A hook URL must be HTTPS — the manifest requires it — so an author testing
-// against a local server needs its certificate trusted by something. This adds
-// a named CA file rather than turning verification off: the failure mode of
-// InsecureSkipVerify is that it survives into production behind a config flag
-// somebody forgot, and there is no way to tell from the code whether it is
-// active. A CA that has to be supplied by path cannot silently apply to
-// anything else.
+// hook URL 必须是 HTTPS（manifest 要求如此），所以作者要对本地服务做测试，就得让证书被某个东西
+// 信任。这里选择「信任一个点名 CA 文件」而不是关掉校验：InsecureSkipVerify 的失败模式是它会跟着
+// 一个被人忘掉的配置旗标活进生产环境，而且从代码上根本看不出它是否生效。按路径提供的 CA 不会
+// 静默作用于任何别的东西。
 //
-// Nil unless BOTH an origin allowlist and a CA path are set, and it is only
-// ever consulted for an endpoint already inside that allowlist.
+// 只有 origin 白名单与 CA 路径都设置了才非 nil，且只会被白名单内的端点用到。
 func devHookClient(devOrigins []string, caPath string) *http.Client {
 	if len(devOrigins) == 0 || strings.TrimSpace(caPath) == "" {
 		return nil
@@ -110,16 +103,15 @@ func devHookClient(devOrigins []string, caPath string) *http.Client {
 	return &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: transport,
-		// Refuse redirects, matching the secure client. A 302 from a dev
-		// endpoint would replay the SIGNED body and the callback token to
-		// wherever it pointed — the one destination check this path skipped is
-		// exactly the one a redirect would need.
+		// 与安全客户端一致地拒绝重定向。开发端点 302 会把「已签名的 body」和回调令牌重放到它指向的
+		// 任意地址——而重定向需要的正是这条路径唯一跳过的目的地检查。
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return errors.New("hook endpoints must not redirect")
 		},
 	}
 }
 
+// PluginErrorKind 是插件 API 错误的稳定分类，handler 据此映射 HTTP 状态。
 type PluginErrorKind string
 
 const (
@@ -132,12 +124,14 @@ const (
 	PluginErrorUnavailable  PluginErrorKind = "unavailable"
 )
 
+// PluginError 是带分类的插件错误：Kind 供上层分流，Message 给人看，Err 保留底层原因（可 Unwrap）。
 type PluginError struct {
 	Kind    PluginErrorKind
 	Message string
 	Err     error
 }
 
+// Error 拼出给人看的错误文案：带底层原因则追加之。
 func (e *PluginError) Error() string {
 	if e.Err != nil {
 		return e.Message + ": " + e.Err.Error()
@@ -145,20 +139,19 @@ func (e *PluginError) Error() string {
 	return e.Message
 }
 
+// Unwrap 暴露底层错误，供 errors.Is/As 穿透。
 func (e *PluginError) Unwrap() error { return e.Err }
 
+// pluginErrf 按 kind + 格式化文案构造 *PluginError。
 func pluginErrf(kind PluginErrorKind, format string, args ...any) *PluginError {
 	return &PluginError{Kind: kind, Message: fmt.Sprintf(format, args...)}
 }
 
-// PluginPreview is what the consent screen renders. It is deliberately the raw
-// manifest text plus the scope list: there is no signature, no trust tier, and
-// no publisher verification in this model, so the administrator reading the
-// scopes IS the trust decision.
+// PluginPreview 是授权（consent）界面要渲染的东西。它刻意就是「原始 manifest 文本 + 权限清单」：
+// 本模型里没有签名、没有信任层级、没有发布者核验——读这份权限清单的管理员本身就是信任决策。
 //
-// What it describes is one published version, and installing binds to that same
-// version — so unlike the URL model this replaced, the code approved here is the
-// code that runs.
+// 它描述的是某个已发布版本，而安装也绑定到同一版本——所以与被它取代的 URL 模型不同，在这里被批准
+// 的代码，就是会运行的代码。
 type PluginPreview struct {
 	Manifest     plugincontract.Manifest `json:"manifest"`
 	Scopes       []string                `json:"scopes"`
@@ -166,13 +159,13 @@ type PluginPreview struct {
 	VersionID    string                  `json:"version_id"`
 	Version      string                  `json:"version"`
 	Digest       string                  `json:"digest"`
-	// Upgrade describes what changes if this replaces an existing install.
+	// Upgrade 描述若该安装替换既有安装会有什么变化。
 	Installed        bool     `json:"installed"`
 	InstalledVersion string   `json:"installed_version,omitempty"`
 	AddedScopes      []string `json:"added_scopes,omitempty"`
 }
 
-// PluginConfigField is one host-rendered configuration input.
+// PluginConfigField 是单个由宿主渲染的配置输入项。
 type PluginConfigField struct {
 	Key         string   `json:"key"`
 	Type        string   `json:"type"`
@@ -184,8 +177,8 @@ type PluginConfigField struct {
 	Multiline   bool     `json:"multiline,omitempty"`
 }
 
-// ConfigFieldsForManifest flattens the manifest config schema into declaration
-// order so the client renders the same form the server validates against.
+// ConfigFieldsForManifest 把 manifest 配置 schema 压平成声明顺序的输入项，让客户端渲染的表单与服务端
+// 校验用的是同一张表。
 func ConfigFieldsForManifest(manifest plugincontract.Manifest) []PluginConfigField {
 	fields := make([]PluginConfigField, 0, manifest.Config.Len())
 	for _, field := range manifest.Config.Fields {
@@ -203,13 +196,10 @@ func ConfigFieldsForManifest(manifest plugincontract.Manifest) []PluginConfigFie
 	return fields
 }
 
-// ManifestForVersion decodes the manifest a published version froze at publish
-// time.
+// ManifestForVersion 解码某个已发布版本在发布时冻结的 manifest。
 //
-// Nothing is fetched. The manifest, the surface scripts and the skill text were
-// all validated together when the author published, and they are read back
-// together — an installation cannot end up consenting to one version's manifest
-// while running another version's code.
+// 不做任何网络获取。manifest、表面脚本与 skill 文本在作者发布时一起校验过，读回时也是一起读——
+// 安装不会出现「同意的是某版本的 manifest，跑的是另一版本代码」的情形。
 func ManifestForVersion(version db.PluginPackageVersion) (plugincontract.Manifest, []byte, error) {
 	var manifest plugincontract.Manifest
 	if err := json.Unmarshal(version.Manifest, &manifest); err != nil {
@@ -218,9 +208,8 @@ func ManifestForVersion(version db.PluginPackageVersion) (plugincontract.Manifes
 	return manifest, version.Manifest, nil
 }
 
-// parseDevOrigins reads the opt-in list. Anything that is not a bare origin is
-// dropped rather than half-honored: a path or query here would read as a broader
-// grant than it is.
+// parseDevOrigins 解析选择加入的 origin 列表。凡不是裸 origin 的一律丢弃而不是半承认：这里的 path 或
+// query 会被读成比实际更宽的授权。
 func parseDevOrigins(raw string) []string {
 	origins := make([]string, 0)
 	for _, candidate := range strings.Split(raw, ",") {
@@ -240,6 +229,7 @@ func parseDevOrigins(raw string) []string {
 	return origins
 }
 
+// isDevOrigin 判断给定 URL 的 origin 是否在开发白名单里。
 func (s *PluginService) isDevOrigin(sourceURL string) bool {
 	if len(s.DevOrigins) == 0 {
 		return false
@@ -257,9 +247,8 @@ func (s *PluginService) isDevOrigin(sourceURL string) bool {
 	return false
 }
 
-// PreviewPlugin reads a published version's manifest without writing anything.
-// It is the first half of the two-step install: the administrator must see the
-// scopes before an installation row exists.
+// PreviewPlugin 只读某个已发布版本的 manifest，不写任何东西。它是两步安装的前一半：在安装行
+// 存在之前，管理员必须看到权限清单。
 func (s *PluginService) PreviewPlugin(ctx context.Context, workspaceID pgtype.UUID, versionID string) (*PluginPreview, error) {
 	version, err := s.VersionForWorkspace(ctx, workspaceID, versionID)
 	if err != nil {
@@ -295,6 +284,7 @@ func (s *PluginService) PreviewPlugin(ctx context.Context, workspaceID pgtype.UU
 	return preview, nil
 }
 
+// capabilityMessage 把能力校验错误整理成给人看的文案。
 func capabilityMessage(err error) string {
 	var unavailable *plugincontract.ErrCapabilityUnavailable
 	if errors.As(err, &unavailable) {
@@ -303,6 +293,7 @@ func capabilityMessage(err error) string {
 	return "This plugin declares capabilities that are not enabled yet"
 }
 
+// addedScopes 求 wanted 里尚未 granted 的权限清单，供预览提示「升级后会新增这些权限」。
 func addedScopes(granted []string, wanted []string) []string {
 	have := make(map[string]bool, len(granted))
 	for _, scope := range granted {
@@ -317,6 +308,7 @@ func addedScopes(granted []string, wanted []string) []string {
 	return added
 }
 
+// decodeScopes 解析安装行里持久化的权限 JSON；空/坏数据按 nil 处理。
 func decodeScopes(raw []byte) []string {
 	var scopes []string
 	if len(raw) == 0 {
@@ -328,15 +320,11 @@ func decodeScopes(raw []byte) []string {
 	return scopes
 }
 
-// InstallPlugin is the second half of the install. grantedScopes must match the
-// manifest exactly: partial consent would leave the plugin silently broken, and
-// consenting to a scope the manifest does not request would grant access the
-// administrator was never shown a reason for.
+// InstallPlugin 是安装的第二步。grantedScopes 必须与 manifest 完全一致：部分同意会让插件静默残缺，
+// 而同意 manifest 未请求的权限等于授予管理员从未见过理由的访问。
 //
-// The installation is bound to one published version. A later publish creates
-// another version and does not touch this row — upgrading is a second, explicit
-// consent, which is what makes "approved the manifest, ran the code" a true
-// statement rather than an aspiration.
+// 安装绑定到某个已发布版本。之后的发布只会产生新版本、不碰本行——升级是第二次显式同意，这正让
+// 「批准了 manifest、跑的就是这份代码」成为一句真话而不是愿望。
 func (s *PluginService) InstallPlugin(ctx context.Context, workspaceID, userID pgtype.UUID, versionID string, grantedScopes []string) (db.PluginInstallation, error) {
 	version, err := s.VersionForWorkspace(ctx, workspaceID, versionID)
 	if err != nil {
@@ -362,9 +350,8 @@ func (s *PluginService) InstallPlugin(ctx context.Context, workspaceID, userID p
 		PluginKey:   manifest.Key,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		// A transaction even though it is one row: the skill resources land in
-		// the same commit. An installation whose skills half-arrived is worse
-		// than one that failed, because the missing half is invisible.
+		// 虽然只插一行，仍走事务：skill 资源要在同一提交里落库。skill 只到一半的安装比失败还糟——
+		// 缺失的那一半是看不见的。
 		tx, txErr := s.TxStarter.Begin(ctx)
 		if txErr != nil {
 			return db.PluginInstallation{}, &PluginError{Kind: PluginErrorUnavailable, Message: "begin install", Err: txErr}
@@ -383,17 +370,15 @@ func (s *PluginService) InstallPlugin(ctx context.Context, workspaceID, userID p
 			WorkspaceID:      workspaceID,
 			PluginKey:        manifest.Key,
 			PackageVersionID: version.ID,
-			// The published version string, not the manifest's: a development
-			// publish lands under a `+dev.N` suffix, and the settings page has to
-			// name the version that actually exists.
+			// 用已发布的版本字符串，而非 manifest 里的：开发发布会带上 `+dev.N` 后缀，设置页必须点名
+			// 真正存在的那个版本。
 			Version:       version.Version,
 			Manifest:      canonical,
 			GrantedScopes: scopesJSON,
 			InstalledBy:   userID,
 		})
 		if createErr != nil {
-			// Two admins installing the same plugin at once: one loses the
-			// unique index. That is a conflict to retry, not a broken backend.
+			// 两个管理员同时装同一个插件：必有一个输给唯一索引。这是可重试的冲突，不是后端坏了。
 			if isUniqueViolation(createErr) {
 				return db.PluginInstallation{}, pluginErrf(PluginErrorConflict, "this plugin is already installed in this workspace")
 			}
@@ -414,11 +399,9 @@ func (s *PluginService) InstallPlugin(ctx context.Context, workspaceID, userID p
 		return db.PluginInstallation{}, &PluginError{Kind: PluginErrorUnavailable, Message: "load existing installation", Err: err}
 	}
 
-	// Upgrade in place. Values whose fields the new manifest dropped are pruned
-	// rather than left as state nothing can reach — and that applies to secrets
-	// too, which is the case where unreachable residue is ciphertext. The whole
-	// upgrade is one transaction so a snapshot can never land with the previous
-	// version's secrets still attached.
+	// 原地升级。新 manifest 丢弃的字段，其值会被裁剪而非留成任何东西都够不到的状态——secret 也
+	// 一样，而那种情况下不可达的残留正是密文。整个升级是一个事务，快照永远不会带着上一版本的
+	// secret 落地。
 	config := pruneConfig(existing.Config, manifest)
 	orphanedSecrets, err := s.orphanedSecretKeys(ctx, existing.ID, manifest)
 	if err != nil {
@@ -455,9 +438,8 @@ func (s *PluginService) InstallPlugin(ctx context.Context, workspaceID, userID p
 	if err != nil {
 		return db.PluginInstallation{}, &PluginError{Kind: PluginErrorUnavailable, Message: "upgrade plugin", Err: err}
 	}
-	// Re-run on upgrade so a changed SKILL.md takes effect and a dropped one is
-	// pruned. Same transaction as the manifest snapshot: the two must never
-	// disagree about what this version contributes.
+	// 升级时重跑：改过的 SKILL.md 要生效、被删掉的要剪掉。与 manifest 快照同一事务——两者绝不能
+	// 在这个版本贡献了什么上互相矛盾。
 	if err := s.InstallSkillResources(ctx, queries, updated, manifest, userID); err != nil {
 		return db.PluginInstallation{}, err
 	}
@@ -470,8 +452,8 @@ func (s *PluginService) InstallPlugin(ctx context.Context, workspaceID, userID p
 	return updated, nil
 }
 
-// orphanedSecretKeys returns stored secrets the new manifest no longer declares
-// as a secret field — including a field that changed type away from secret.
+// orphanedSecretKeys 返回「库里有、但新 manifest 不再声明为 secret 字段」的 secret——含从 secret
+// 改型为其他类型的字段。
 func (s *PluginService) orphanedSecretKeys(ctx context.Context, installationID pgtype.UUID, manifest plugincontract.Manifest) ([]string, error) {
 	stored, err := s.Queries.ListPluginSecretKeys(ctx, installationID)
 	if err != nil {
@@ -487,6 +469,7 @@ func (s *PluginService) orphanedSecretKeys(ctx context.Context, installationID p
 	return orphaned, nil
 }
 
+// requireExactScopes 校验授予的权限与 manifest 声明逐项相等——多给少给都是拒绝。
 func requireExactScopes(manifestScopes, grantedScopes []string) error {
 	if len(manifestScopes) != len(grantedScopes) {
 		return pluginErrf(PluginErrorConflict, "granted_scopes must match the manifest scopes exactly")
@@ -503,6 +486,7 @@ func requireExactScopes(manifestScopes, grantedScopes []string) error {
 	return nil
 }
 
+// pruneConfig 从既有配置里删掉新 manifest 已不声明的键；空/坏数据按空配置处理。
 func pruneConfig(raw []byte, manifest plugincontract.Manifest) []byte {
 	var values map[string]any
 	if len(raw) == 0 || json.Unmarshal(raw, &values) != nil {
@@ -520,13 +504,14 @@ func pruneConfig(raw []byte, manifest plugincontract.Manifest) []byte {
 	return encoded
 }
 
+// parseUUIDValue 解析字符串为 UUID（转发到 util.ParseUUID）。
 func parseUUIDValue(value string) (pgtype.UUID, error) { return util.ParseUUID(value) }
 
+// uuidString 把 UUID 转字符串。
 func uuidString(value pgtype.UUID) string { return util.UUIDToString(value) }
 
-// ParseInstallationManifest reads back the consented snapshot. Callers must use
-// this, never a freshly fetched manifest: what the source URL serves today is
-// not what the administrator approved.
+// ParseInstallationManifest 读回被同意的快照。调用方必须用它、绝不用新取回的 manifest：来源 URL 今天
+// 提供的内容，不是管理员批准过的内容。
 func ParseInstallationManifest(installation db.PluginInstallation) (plugincontract.Manifest, error) {
 	var manifest plugincontract.Manifest
 	if err := json.Unmarshal(installation.Manifest, &manifest); err != nil {
@@ -535,9 +520,8 @@ func ParseInstallationManifest(installation db.PluginInstallation) (plugincontra
 	return manifest, nil
 }
 
-// SetConfig validates values against the stored manifest schema and splits them
-// by destination: plain values go on the installation row, secrets go to the
-// encrypted table. A secret value never lands in `config`.
+// SetConfig 对照存储的 manifest schema 校验值，再按去向拆分：明文值落到安装行，secret 值进加密表。
+// secret 值永远不会进入 `config`。
 func (s *PluginService) SetConfig(ctx context.Context, installation db.PluginInstallation, values map[string]any) (db.PluginInstallation, error) {
 	manifest, err := ParseInstallationManifest(installation)
 	if err != nil {
@@ -569,8 +553,7 @@ func (s *PluginService) SetConfig(ctx context.Context, installation db.PluginIns
 		plain[key] = normalized
 	}
 
-	// Merge over the stored values so a partial update does not silently clear
-	// fields the form did not submit.
+	// 在存量值之上合并，让部分更新不会静默清掉表单没提交的字段。
 	merged := map[string]any{}
 	if len(installation.Config) > 0 {
 		_ = json.Unmarshal(installation.Config, &merged)
@@ -587,8 +570,7 @@ func (s *PluginService) SetConfig(ctx context.Context, installation db.PluginIns
 		return db.PluginInstallation{}, pluginErrf(PluginErrorUnavailable, "plugin secrets are disabled: MULTICA_PLUGIN_SECRET_KEY is not configured")
 	}
 
-	// Secrets and plain values are two tables with no foreign key between them,
-	// so one transaction is what keeps a saved form from landing half-applied.
+	// secret 与明文值是两张表、彼此没有外键，所以一个事务才能保证保存的表单不会只落地一半。
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		return db.PluginInstallation{}, &PluginError{Kind: PluginErrorUnavailable, Message: "begin configure", Err: err}
@@ -597,7 +579,7 @@ func (s *PluginService) SetConfig(ctx context.Context, installation db.PluginIns
 	queries := s.Queries.WithTx(tx)
 
 	for key, text := range secrets {
-		// An empty submission clears the secret rather than storing "".
+		// 空提交 = 清除该 secret，而不是存空串。
 		if text == "" {
 			if _, err := queries.DeletePluginSecret(ctx, db.DeletePluginSecretParams{InstallationID: installation.ID, Key: key}); err != nil {
 				return db.PluginInstallation{}, &PluginError{Kind: PluginErrorUnavailable, Message: "clear plugin secret", Err: err}
@@ -630,16 +612,17 @@ func (s *PluginService) SetConfig(ctx context.Context, installation db.PluginIns
 	return updated, nil
 }
 
-// isUniqueViolation reports a Postgres 23505, the only class of write conflict
-// the plugin surface can produce.
+// isUniqueViolation 识别 Postgres 23505——插件面唯一可能产生的写冲突类别。
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
-// MaxPluginSecretBytes bounds one secret value before encryption.
+// MaxPluginSecretBytes 是加密前单个 secret 值的字节上限。
 const MaxPluginSecretBytes = 8192
 
+// normalizeConfigValue 按字段类型归一化并校验单个配置值（string 上限 4096 字节、number/bool 验类型、
+// enum 必须在声明选项中）。类型不符即返回带字段名的错误。
 func normalizeConfigValue(field plugincontract.ConfigField, value any) (any, error) {
 	label := fmt.Sprintf("config field %q", field.Key)
 	switch field.Type {
@@ -680,8 +663,8 @@ func normalizeConfigValue(field plugincontract.ConfigField, value any) (any, err
 	}
 }
 
-// ConfiguredSecretKeys reports which secret fields hold a value. It returns
-// names only — no endpoint ever returns a secret value, not even masked.
+// ConfiguredSecretKeys 报告哪些 secret 字段已持有值。只回名字——任何端点都不会返回 secret 值，连
+// 掩码都不返回。
 func (s *PluginService) ConfiguredSecretKeys(ctx context.Context, installationID pgtype.UUID) ([]string, error) {
 	rows, err := s.Queries.ListPluginSecretKeys(ctx, installationID)
 	if err != nil {
@@ -694,8 +677,7 @@ func (s *PluginService) ConfiguredSecretKeys(ctx context.Context, installationID
 	return keys, nil
 }
 
-// SetEnabled toggles an installation. Disabling hides every contribution
-// immediately but keeps storage and secrets, so re-enabling is not a reinstall.
+// SetEnabled 切换安装的启用状态。禁用会立刻隐藏所有贡献，但保留存储与 secret——重新启用不是重装。
 func (s *PluginService) SetEnabled(ctx context.Context, installation db.PluginInstallation, enabled bool) (db.PluginInstallation, error) {
 	if installation.Enabled == enabled {
 		return installation, nil
@@ -723,10 +705,8 @@ func (s *PluginService) SetEnabled(ctx context.Context, installation db.PluginIn
 	return updated, nil
 }
 
-// Uninstall removes the installation and all of its application-owned rows.
-// There are no foreign keys or cascades by repository policy, so the deletes
-// share one transaction: a partial uninstall would strand rows nothing can
-// reach or clean up later.
+// Uninstall 删除安装及其全部应用自有行。按仓库政策没有外键与级联，所以这些删除共享一个事务：
+// 半途卸载会留下任何东西都够不到、将来也清不掉的行。
 func (s *PluginService) Uninstall(ctx context.Context, installation db.PluginInstallation) error {
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
@@ -744,15 +724,13 @@ func (s *PluginService) Uninstall(ctx context.Context, installation db.PluginIns
 	if err := queries.DeletePluginSecretsByInstallation(ctx, installation.ID); err != nil {
 		return &PluginError{Kind: PluginErrorUnavailable, Message: "delete plugin secrets", Err: err}
 	}
-	// Hook records go too. They name an installation that is about to stop
-	// existing, and keeping them would leave rows nothing can attribute — the
-	// same reason storage and secrets are cleared here rather than swept later.
+	// hook 记录一并删。它们点名一个即将消失的安装，留着只会留下无法归属的行——与这里就清掉 storage
+	// 和 secret、而不是等以后清扫是同一个理由。
 	if err := queries.DeletePluginInvocationsByInstallation(ctx, installation.ID); err != nil {
 		return &PluginError{Kind: PluginErrorUnavailable, Message: "delete plugin invocations", Err: err}
 	}
-	// The skills this installation contributed go with it. Scoped by
-	// plugin_installation_id, so a skill a person wrote is untouched even if it
-	// happens to share a name with something the plugin once provided.
+	// 本安装贡献的 skill 也随它走。按 plugin_installation_id 限定——人写的 skill 即使恰好与插件曾经
+	// 提供的重名也不受影响。
 	if err := queries.DeletePluginSkillsByInstallation(ctx, installation.ID); err != nil {
 		return &PluginError{Kind: PluginErrorUnavailable, Message: "delete plugin skills", Err: err}
 	}
@@ -765,8 +743,7 @@ func (s *PluginService) Uninstall(ctx context.Context, installation db.PluginIns
 	return nil
 }
 
-// InstallationForWorkspace loads an installation and confirms it belongs to the
-// workspace in the URL, so an id from another workspace cannot be operated on.
+// InstallationForWorkspace 加载安装并确认它属于 URL 里的工作区——来自其他工作区的 id 因此无法被操作。
 func (s *PluginService) InstallationForWorkspace(ctx context.Context, workspaceID pgtype.UUID, installationID string) (db.PluginInstallation, error) {
 	parsed, err := util.ParseUUID(installationID)
 	if err != nil {

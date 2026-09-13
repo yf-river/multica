@@ -1,3 +1,7 @@
+// plugin_token.go —— 插件的两种凭据，方向相反：
+// 安装令牌（install token）给“插件的服务器”用来向宿主证明自己，长效、可轮换；
+// 回调令牌（callback token）由宿主发给“单次 hook 调用”，几分钟过期、绑定单次
+// 调用，让 hook handler 能调用 Action API。存的是哈希；两种令牌都不会进 iframe。
 package service
 
 import (
@@ -16,21 +20,18 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Two credentials, moving in opposite directions.
+// 两种凭据，方向相反。
 //
-// Neither one ever enters an iframe: a surface still holds nothing and still
-// reaches Multica only by asking the host page over postMessage. What changes
-// with hooks is that a plugin now has a SERVER, and that server needs a way to
-// be recognised. So the honest statement about the system is no longer "there
-// are no plugin credentials" but "plugin credentials only move between
-// servers".
+// 两者都永远不会进 iframe：一个表面（surface）仍什么都不持有，只能通过 postMessage
+// 问宿主页要 Multica 的能力。有了 hook 之后改变的是——插件现在有了一台“服务器”，
+// 而这台服务器需要一种被认出身份的方式。所以对这个系统诚实的描述不再是“插件没有
+// 凭据”，而是“插件的凭据只在服务器之间流动”。
 //
-//	install token  (mpi_…)  plugin -> host, long-lived, rotatable.
-//	                        The host only ever verifies it, so it is stored
-//	                        hashed and cannot be recovered from the database.
-//	callback token          host -> plugin, minutes, one INVOCATION.
-//	                        Handed to a hook handler so it can answer using the
-//	                        Action API without being given standing access.
+//	install token  (mpi_…)  插件 -> 宿主，长期有效、可轮换。
+//	                        宿主只做验证，因此只存哈希，无法从库中还原出令牌本体。
+//	callback token          宿主 -> 插件，几分钟过期、只用于一次 INVOCATION。
+//	                        发给 hook handler，让它在不持有长期权限的前提下，
+//	                        借助 Action API 完成这次调用的应答。
 
 const (
 	installTokenPrefix   = "mpi_"
@@ -39,11 +40,10 @@ const (
 	callbackTokenEntropy = 32
 )
 
-// IssueInstallToken mints a new install token and stores only its hash.
+// IssueInstallToken 铸造一枚新的安装令牌，只存它的哈希。
 //
-// Returned in plaintext exactly once. There is no endpoint that reads it back —
-// an admin who loses it rotates rather than recovers, which is the same trade
-// every other bearer credential in the product makes.
+// 明文只在返回这一刻给出一次。没有任何端点能把它读回来——管理员弄丢了就轮换、
+// 而不是找回，这和产品里其他所有 bearer 凭据是同一个取舍。
 func (s *PluginService) IssueInstallToken(ctx context.Context, installationID pgtype.UUID) (string, error) {
 	raw := make([]byte, callbackTokenEntropy)
 	if _, err := rand.Read(raw); err != nil {
@@ -59,18 +59,15 @@ func (s *PluginService) IssueInstallToken(ctx context.Context, installationID pg
 	return token, nil
 }
 
-// InstallCredentials is returned exactly once when an admin rotates a Plugin's
-// standing credential. SigningSecret is empty when hook signing is disabled;
-// the install token remains usable for the Public API in that deployment.
+// InstallCredentials 是管理员轮换插件“长期凭据”时、只返回一次的响应。hook 签名被
+// 禁用时 SigningSecret 为空；那种部署里安装令牌仍可用于 Public API。
 type InstallCredentials struct {
 	Token         string
 	SigningSecret string
 }
 
-// RotateInstallCredentials prepares every response value before replacing the
-// stored token hash. This keeps an optional hook-signing configuration failure
-// from invalidating the previous token after the response has already become
-// impossible to complete.
+// RotateInstallCredentials 先把所有要返回的值都准备好，再替换库里存的令牌哈希。
+// 这样“可选 hook 签名配置失败”不会在响应已经注定无法完成后、又顺手作废旧令牌。
 func (s *PluginService) RotateInstallCredentials(ctx context.Context, installationID pgtype.UUID) (InstallCredentials, error) {
 	var signingSecret string
 	if len(s.DeploymentKey) > 0 {
@@ -87,8 +84,8 @@ func (s *PluginService) RotateInstallCredentials(ctx context.Context, installati
 	return InstallCredentials{Token: token, SigningSecret: signingSecret}, nil
 }
 
-// RevokeInstallToken drops the stored hash, so nothing presented afterwards
-// matches. Rotation is IssueInstallToken, which overwrites in place.
+// RevokeInstallToken 丢掉已存的哈希，之后任何拿着旧令牌的请求都对不上。轮换就是
+// IssueInstallToken——它直接在原位上覆盖。
 func (s *PluginService) RevokeInstallToken(ctx context.Context, installationID pgtype.UUID) error {
 	if err := s.Queries.SetPluginInstallationToken(ctx, db.SetPluginInstallationTokenParams{
 		ID:        installationID,
@@ -99,7 +96,7 @@ func (s *PluginService) RevokeInstallToken(ctx context.Context, installationID p
 	return nil
 }
 
-// AuthenticateInstallToken resolves a presented token to its installation.
+// AuthenticateInstallToken 把出示的令牌解析回它的安装记录。
 func (s *PluginService) AuthenticateInstallToken(ctx context.Context, token string) (db.PluginInstallation, error) {
 	token = strings.TrimSpace(token)
 	if !strings.HasPrefix(token, installTokenPrefix) {
@@ -118,51 +115,47 @@ func (s *PluginService) AuthenticateInstallToken(ctx context.Context, token stri
 	return installation, nil
 }
 
+// hashToken 计算令牌的 SHA-256 十六进制串。库里只存哈希，令牌本体无法从库恢复。
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
 }
 
-// CallbackGrant is what a redeemed callback token proves.
+// CallbackGrant 是一次被兑换的回调令牌所证明的东西。
 //
-// Its scopes are the installation's, never wider: the callback exists so a hook
-// handler can finish the job it was called for, not so an out-of-band request
-// can do more than the surface could.
+// 它的范围就是该安装的范围，绝不会更宽：回调的存在是为了让 hook handler 完成叫它
+// 来的那件活，而不是让一次带外请求做得比表面（surface）能做的还多。
 type CallbackGrant struct {
 	InstallationID pgtype.UUID
 	WorkspaceID    pgtype.UUID
 	HookKey        string
 	Trigger        string
-	// Actor is who the resulting writes belong to, decided when the hook was
-	// dispatched. A handler cannot choose to write as somebody else.
+	// Actor 是“产生的写入归谁”，在 hook 被分发那一刻就已定下。handler 无法选择
+	// 以别人的身份写。
 	Actor HookActor
-	// IssueID narrows an event callback to the issue that produced it. Zero
-	// when the invocation had no issue.
+	// IssueID 把事件回调收窄到产生它的那个 issue。调用本身没有 issue 时为零值。
 	IssueID   pgtype.UUID
 	ExpiresAt time.Time
 }
 
-// CallbackTokens issues and resolves the per-invocation callback tokens.
+// CallbackTokens 签发并解析“绑定单次调用”的回调令牌。
 //
-// Scoped to one INVOCATION, not one request — and that distinction was found by
-// running a real handler rather than by reasoning about it. A single-use token
-// looked stricter and was: the reference handler reads the issue, decides, then
-// posts a comment, and the second call died on an already-spent token. Two calls
-// is the floor for any handler that does something with what it read.
+// 作用域是“一次 INVOCATION”而不是“一次请求”——这个区别是跑真 handler 跑出来的，
+// 不是靠推理想出来的。单次使用令牌看起来更严，也确实更严：参考 handler 先读 issue、
+// 做个判断、再发一条评论，第二调用就死在已花掉的令牌上。任何“拿读到的东西干点事”
+// 的 handler，两次调用都是地板价。
 //
-// The trade that actually matters is not one-call versus several. It is this
-// token versus the installation's standing token: a handler that cannot finish
-// its job with the callback will simply be written against the install token
-// instead, which never expires and is not scoped to an invocation. A control
-// that pushes authors toward the stronger credential is worse than the slightly
-// looser one they will use.
+// 真正要紧的取舍不是“一次调用 vs 多次”，而是“这枚令牌 vs 安装的长期令牌”：一个
+// 用回调令牌完不成活的 handler，就会索性改用安装令牌来写——而安装令牌永不过期、
+// 也不绑调用。与其把作者往更强的凭据那边推，还不如给他们那枚稍微宽松点、但他们会
+// 真的去用的令牌。
 //
-// What still bounds it: minutes, this installation's granted scopes, the actor
-// decided at dispatch, and the issue the invocation was about.
+// 仍然框住它的边界：几分钟的有效期、该安装被授予的范围、分发时定下的 actor、以及
+// 这次调用所关心的 issue。
 //
-// Held in memory. Across several instances or after a restart a token stops
-// resolving early rather than late, so the failure mode is a handler seeing 403
-// — visible and retriable — not a grant outliving its window.
+// 令牌存在内存里。多实例部署或进程重启后，令牌只会“提前失效”而非“逾期仍有效”，
+// 所以故障模式是 handler 看到一个 403——可见且可重试——而不是一笔授权活过它的
+// 窗口。
 type CallbackTokens struct {
 	mu     sync.Mutex
 	issued map[string]CallbackGrant
@@ -172,7 +165,7 @@ func NewCallbackTokens() *CallbackTokens {
 	return &CallbackTokens{issued: make(map[string]CallbackGrant)}
 }
 
-// Issue mints a token for one hook invocation.
+// Issue 为一次 hook 调用铸造一枚令牌。
 func (c *CallbackTokens) Issue(ctx context.Context, invocation HookInvocation) (string, error) {
 	raw := make([]byte, callbackTokenEntropy)
 	if _, err := rand.Read(raw); err != nil {
@@ -198,8 +191,8 @@ func (c *CallbackTokens) Issue(ctx context.Context, invocation HookInvocation) (
 	return token, nil
 }
 
-// Resolve looks a token up. Valid for as many calls as the handler needs until
-// it expires; see the type comment for why that is the right bound.
+// Resolve 按令牌查授权。handler 需要几次就能用几次，直到过期；为什么这是对的边界，
+// 见类型注释。
 func (c *CallbackTokens) Resolve(token string) (CallbackGrant, error) {
 	token = strings.TrimSpace(token)
 	if !strings.HasPrefix(token, callbackTokenPrefix) {
@@ -221,9 +214,8 @@ func (c *CallbackTokens) Resolve(token string) (CallbackGrant, error) {
 	return grant, nil
 }
 
-// Revoke drops a grant before its expiry. Called when a hook invocation has
-// finished, so a token stops working the moment the work it was issued for is
-// over rather than lingering for the rest of its window.
+// Revoke 在到期前提前丢弃一个授权。hook 调用一结束就调用它，于是令牌在“它为之签发
+// 的活”干完那一刻就失效，而不是在余下的窗口里继续躺尸。
 func (c *CallbackTokens) Revoke(token string) {
 	if token == "" {
 		return
@@ -233,8 +225,7 @@ func (c *CallbackTokens) Revoke(token string) {
 	delete(c.issued, hashToken(strings.TrimSpace(token)))
 }
 
-// sweepLocked drops expired grants so the map cannot grow without bound on a
-// long-running server. Callers hold the mutex.
+// sweepLocked 清掉已过期的授权，免得长跑服务器上这张 map 无限长大。调用方须已持锁。
 func (c *CallbackTokens) sweepLocked() {
 	now := time.Now()
 	for key, grant := range c.issued {

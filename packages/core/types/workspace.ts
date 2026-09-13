@@ -1,5 +1,9 @@
+// 本文件定义 workspace 与用户/成员/邀请/分享链接等核心组织实体的类型。
+
+/** 成员在 workspace 里的角色。 */
 export type MemberRole = "owner" | "admin" | "member";
 
+/** workspace 关联的一个 git 仓库的元信息。 */
 export interface WorkspaceRepo {
   url: string;
   description?: string;
@@ -15,6 +19,7 @@ export interface WorkspaceRepo {
   last_synced_at?: string;
 }
 
+/** 探测仓库 URL 的响应：判定平台、默认分支、可达性等。 */
 export interface WorkspaceRepoProbeResponse {
   url: string;
   provider: string;
@@ -25,6 +30,7 @@ export interface WorkspaceRepoProbeResponse {
   test_status: string;
 }
 
+/** 一个 workspace（工作空间）。 */
 export interface Workspace {
   id: string;
   name: string;
@@ -40,15 +46,14 @@ export interface Workspace {
 }
 
 /**
- * One MCP server in the workspace's library.
+ * workspace 库中的一台 MCP 服务器。
  *
- * This is the WHOLE read shape: the stored configuration is write-only, so
- * urls, commands, headers, and env never leave the server for any role. UI
- * that needs to change an entry sends a replacement rather than editing what
- * it read back.
+ * 这是完整的「读」形状：存储的配置是只写的，所以 urls、commands、headers、
+ * env 对任何角色都绝不会离开服务器。需要修改条目的 UI 会发送一份替换内容，
+ * 而不是编辑读回来的东西。
  *
- * `enabled` is only present on an AGENT's assignment list, where it is the
- * per-agent toggle; the workspace library listing has no binding to report.
+ * `enabled` 只出现在某 agent 的分配列表上，在那里它是按 agent 的开关；
+ * workspace 库列表没有绑定关系可报告。
  */
 export interface WorkspaceMcpServer {
   id: string;
@@ -60,6 +65,7 @@ export interface WorkspaceMcpServer {
   updated_at: string;
 }
 
+/** 成员关系记录：用户在 workspace 里担任的角色。 */
 export interface Member {
   id: string;
   workspace_id: string;
@@ -68,6 +74,7 @@ export interface Member {
   created_at: string;
 }
 
+/** 用户账号（个人资料）。 */
 export interface User {
   id: string;
   name: string;
@@ -76,33 +83,31 @@ export interface User {
   avatar_url: string | null;
   onboarded_at: string | null;
   /**
-   * JSONB payload from the server. Typed as `unknown` here so this module
-   * stays independent of the questionnaire shape — the onboarding views
-   * cast into `Partial<QuestionnaireAnswers>` when reading. Server always
-   * returns an object (defaults to `{}`), never null.
+   * 来自服务器的 JSONB 数据。这里类型定为 `unknown`，让本模块不依赖问卷的
+   * 具体形状——onboarding 视图读取时再强转为 `Partial<QuestionnaireAnswers>`。
+   * 服务器始终返回对象（缺省为 `{}`），绝不会是 null。
    */
   onboarding_questionnaire: Record<string, unknown>;
   /**
-   * Legacy column from the removed starter-content dialog. The column is
-   * still written to (always 'imported' for new accounts after the
-   * mark-onboarded paths run) so older desktop builds — which still render
-   * the dialog on NULL — don't show it to anyone created on a newer server.
-   * Kept as `string | null` for forward compatibility.
+   * 来自已移除的「starter 内容」对话框的遗留列。该列仍会写入（新账号在
+   * mark-onboarded 路径跑完后恒为 'imported'），这样旧桌面构建——在 NULL
+   * 时仍会渲染那个对话框——不会把它展示给在更新服务器上创建的用户。
+   * 保持 `string | null` 以便向前兼容。
    */
   starter_content_state: string | null;
   /**
-   * Free-form self-description (role, stack, preferences). Injected into
-   * the agent brief so coding agents have cheap, durable context about
-   * who is requesting the work. Server always returns a string —
-   * NOT NULL DEFAULT '' at the column level, empty when unset.
+   * 自由形式的自我介绍（角色、技术栈、偏好）。会被注入 agent 简报，让编码
+   * agent 对「谁在请求这份工作」有廉价、耐用的上下文。服务器始终返回字符串
+   * ——列级为 NOT NULL DEFAULT ''，未设置时为空串。
    */
   profile_description: string;
-  /** Pinned IANA tz; null means "use browser-detected tz at render time". */
+  /** 固定的 IANA 时区；null 表示「渲染时用浏览器探测的时区」。 */
   timezone: string | null;
   created_at: string;
   updated_at: string;
 }
 
+/** 成员及其（冗余的）用户展示字段，便于列表直接渲染。 */
 export interface MemberWithUser {
   id: string;
   workspace_id: string;
@@ -114,6 +119,7 @@ export interface MemberWithUser {
   avatar_url: string | null;
 }
 
+/** 一条邀请记录。 */
 export interface Invitation {
   id: string;
   workspace_id: string;
@@ -130,6 +136,7 @@ export interface Invitation {
   workspace_name?: string;
 }
 
+/** 一条分享链接（用邀请码加入 workspace）。 */
 export interface ShareLink {
   id: string;
   workspace_id: string;
@@ -145,6 +152,7 @@ export interface ShareLink {
   creator_email?: string;
 }
 
+/** 通过分享码加入前，链接对应的 workspace 概要信息。 */
 export interface ShareLinkInfo {
   workspace_name: string;
   workspace_slug: string;

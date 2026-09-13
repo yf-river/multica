@@ -1,3 +1,5 @@
+// 本文件是 autopilots/stores 子模块的对外出口（barrel）。
+
 export {
   useAutopilotsViewStore,
   AUTOPILOT_SCOPES,

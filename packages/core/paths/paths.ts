@@ -1,30 +1,30 @@
-/**
- * Centralized URL path builder. All navigation in shared packages (packages/views)
- * MUST go through this module — no hardcoded string paths.
- *
- * Two kinds of paths:
- *  - workspace-scoped: paths.workspace(slug).xxx() — carry workspace in URL
- *  - global: paths.login(), paths.newWorkspace(), paths.invite(id) — pre-workspace routes
- *
- * Why pure functions + builder pattern:
- *  - Changing a route shape (e.g. adding workspace slug prefix) becomes a single-file edit
- *  - IDs are always URL-encoded here so callers can't forget
- *  - Zero runtime deps means this module is safe in Node (tests) and browsers
- */
+// 本文件是集中的 URL 路径构造器。共享包（packages/views）里所有导航 MUST
+// 都走本模块——不允许硬编码字符串路径。
+//
+// 两种路径：
+//  - 工作区范围：paths.workspace(slug).xxx() —— 把工作区带在 URL 里；
+//  - 全局：paths.login()、paths.newWorkspace()、paths.invite(id) —— 工作区之前
+//    的路由。
+//
+// 为什么用纯函数 + 构造器模式：
+//  - 改路由形态（例如加工作区 slug 前缀）变成单文件修改；
+//  - id 一律在这里做 URL 编码，调用方不会忘；
+//  - 零运行时依赖，让本模块在 Node（测试）与浏览器里都安全。
 
 const encode = (id: string) => encodeURIComponent(id);
 
+/** life 页的标签清单。 */
 export const LIFE_TABS = ["memory", "experiment", "observers", "chronicle"] as const;
 export type LifeTab = (typeof LIFE_TABS)[number];
 
 /**
- * `?focus=` token that scrolls the agent's Instructions tab to its
- * conversation-starters editor and flashes it. Lives here because it is URL
- * vocabulary: `agentConversationStarters()` writes it and the tab reads it,
- * and a shared constant is what stops the two from drifting apart.
+ * `?focus=` 令牌：把 agent 的 Instructions 标签页滚到它的 conversation
+ * starters 编辑器并闪烁提示。放在这里是因为它是 URL 词汇：`agentConversation
+ * Starters()` 写它、标签页读它，共享常量才能防止两者漂移。
  */
 export const AGENT_FOCUS_CONVERSATION_STARTERS = "conversation_starters";
 
+/** 工作区范围内的路径构造器（slug 做 URL 编码）。 */
 function workspaceScoped(slug: string) {
   const ws = `/${encode(slug)}`;
   return {
@@ -39,19 +39,17 @@ function workspaceScoped(slug: string) {
     autopilotDetail: (id: string) => `${ws}/autopilots/${encode(id)}`,
     agents: () => `${ws}/agents`,
     newAgent: () => `${ws}/agents/new`,
-    // The two creation methods behind the chooser. Each is a real route so a
-    // half-filled form survives a refresh and can be linked to directly.
+    // 选择器背后的两条创建方法。各自是真实路由，让填了一半的表单刷新后仍在、
+    // 也可被直接链接到。
     newAgentManual: () => `${ws}/agents/new/manual`,
     newAgentAi: () => `${ws}/agents/new/ai`,
-    // One creation conversation. It is a durable object, not a step of the
-    // route above: it survives leaving the studio and is resumed later, so it
-    // owns an address instead of being a query param on the "start one" screen.
+    // 一次创建会话。它是持久对象，不是上面路由的一步：离开工作室它仍在、
+    // 之后可继续，所以它拥有自己的地址，而不是「开一个」屏幕上的一个查询参数。
     newAgentAiSession: (sessionId: string) =>
       `${ws}/agents/new/ai/${encode(sessionId)}`,
     agentDetail: (id: string) => `${ws}/agents/${encode(id)}`,
-    // Deep link behind "customize" in a chat's empty state: the agent's
-    // Instructions tab, scrolled to the conversation starters that produced
-    // the buttons the viewer just looked at.
+    // 聊天空态里「自定义」按钮背后的深链：agent 的 Instructions 标签页，
+    // 滚到生成刚才看到的那些按钮的 conversation starters 处。
     agentConversationStarters: (id: string) =>
       `${ws}/agents/${encode(id)}?view=instructions&focus=${AGENT_FOCUS_CONVERSATION_STARTERS}`,
     memberDetail: (id: string) => `${ws}/members/${encode(id)}`,
@@ -81,7 +79,7 @@ function workspaceScoped(slug: string) {
 export const paths = {
   workspace: workspaceScoped,
 
-  // Global (pre-workspace) routes
+  // 全局（工作区之前）的路由
   login: () => "/login",
   newWorkspace: () => "/workspaces/new",
   invite: (id: string) => `/invite/${encode(id)}`,
@@ -93,12 +91,13 @@ export const paths = {
 
 export type WorkspacePaths = ReturnType<typeof workspaceScoped>;
 
-// Prefixes — not slug names — because we match against full URL paths.
-// A path is global if it equals or begins with any of these.
-// Note: `/workspaces/` (trailing slash) is the prefix — `workspaces` is reserved,
-// so any path starting with `/workspaces/...` is system-owned, not user-owned.
+// 匹配的是「前缀」而非 slug 名，因为要跟完整 URL 路径比。某路径是全局路径，
+// 当它等于或始于其中任一前缀。
+// 注意：`/workspaces/`（带尾斜杠）是前缀——`workspaces` 是保留名，任何以
+// `/workspaces/...` 开头的路径都是系统拥有的，不是用户拥有的。
 const GLOBAL_PREFIXES = ["/login", "/workspaces/", "/invite/", "/invitations", "/onboarding", "/auth/", "/logout", "/signup"];
 
+/** 判断路径是否属于全局（工作区之外）路由。 */
 export function isGlobalPath(path: string): boolean {
   return GLOBAL_PREFIXES.some((p) => path === p || path.startsWith(p));
 }

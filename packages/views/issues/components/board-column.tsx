@@ -1,5 +1,11 @@
 "use client";
 
+// 本文件：BoardColumn —— 看板视图的一列（状态/项目/负责人/自定义属性分组列）。
+// 列的滚动容器同时兼作 dnd-kit 投放区与 Virtuoso 的自定义滚动父级，卡片跨列拖拽
+// 因此不受虚拟化影响。小列整列直出、大列走 Virtuoso 虚拟化（阈值与种子数量等见
+// 下方常量），列尾页脚挂在 Virtuoso 的 Footer 槽位上以支持触底加载。
+// 列表头含隐藏状态列菜单与"新建问题"按钮。
+
 import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
 import { Virtuoso } from "react-virtuoso";
 import { EyeOff, FolderMinus, MoreHorizontal, Plus, UserMinus } from "lucide-react";
@@ -33,61 +39,53 @@ import { DeferredTooltip } from "../../common/deferred-tooltip";
 import { VirtuosoSeed } from "../../common/virtuoso-seed";
 import type { IssueCreateDefaults } from "../surface/types";
 
-// Insertion-position prediction intentionally omitted. The server's
-// ORDER BY uses PostgreSQL's en_US.utf8 collation (glibc), which
-// cannot be faithfully replicated in JavaScript (ICU/V8). Showing an
-// inaccurate indicator is worse than showing none.
+// 刻意不做"插入位置预测"。服务端 ORDER BY 用的是 PostgreSQL 的
+// en_US.utf8 排序规则（glibc），JavaScript（ICU/V8）无法忠实复刻。
+// 展示一个不准确的落点指示器，还不如不展示。
 
 export const BOARD_COL_WIDTH = 280;
-export const BOARD_CARD_WIDTH = BOARD_COL_WIDTH - 16 - 8; // col(280) - col p-2(16) - droppable p-1(8)
+export const BOARD_CARD_WIDTH = BOARD_COL_WIDTH - 16 - 8; // 列(280) - 列内边距 p-2(16) - 投放区 p-1(8)
 
-// Board cards are ~90-140px tall, so ~10 fill a column viewport — unlike the
-// generic VIRTUOSO_SEED_COUNT (30, sized for 36px list rows). The seed mounts
-// synchronously per column on every surface remount, so oversizing it
-// multiplies straight into tab-switch cost (columns × seed × per-card mount).
+// 看板卡片高约 90-140px，约 10 张就能填满一列视口——不像通用
+// VIRTUOSO_SEED_COUNT（30，按 36px 的列表行高算）。该种子会在每次 surface
+// 重挂载时按列同步挂载，把种子调得过大，成本会直接乘进"切换页签"的耗时里
+//（列数 × 种子条数 × 每张卡片的挂载开销）。
 const BOARD_SEED_COUNT = 10;
 
-// Median card height (incl. the 8px pt-2 gap) for pre-measurement scroll
-// sizing only: the seed's trailing spacer and Virtuoso's defaultItemHeight
-// share it so total scroll height — and the scrollbar thumb — stays steady
-// across the seed → Virtuoso handoff instead of jumping when the unseeded
-// rows suddenly get spaced out. Real measurements refine it afterwards.
+// 卡片高度的中位数（含 8px pt-2 间距），只用于"预测测量"阶段的滚动高度：
+// 种子的尾部占位块与 Virtuoso 的 defaultItemHeight 共享这个值，让从种子到
+// Virtuoso 交接期间的总滚动高度（以及滚动条滑块）保持稳定，而不是在未种子化
+// 的行突然被拉开间距时跳动。真实测量随后会修正它。
 const BOARD_CARD_ESTIMATED_HEIGHT = 110;
 
-// Columns at or below this render every card plainly — no Virtuoso, no seed
-// handoff, no estimated heights. Scroll height is then always browser-measured
-// truth, so the column's scrollbar can never jump on mount, route return, or
-// tab restore. Virtualization only pays for itself on large columns (Linear
-// does the same per-column split: `data-virtual-cluster="false"` for small
-// columns, padding-spacer virtualization for big ones). ~30 ≈ 3 viewports of
-// cards; a full plain mount at that size is cheap now that per-card popups
-// mount lazily. Known edge: a load-more append that crosses the threshold
-// swaps the column to the virtualized path, which may adjust the scrollbar
-// once — accepted, since it only happens mid-scroll at the column bottom.
+// 等于或低于此数量时，列内每张卡片都直出渲染——没有 Virtuoso、没有种子交接、
+// 没有预估高度。此时滚动高度永远是浏览器实测的真值，因此列滚动条在挂载、
+// 路由返回或页签恢复时绝不会跳。虚拟化只在足够大的列上才划算（Linear 也是
+// 按列拆分：小列 `data-virtual-cluster="false"`，大列用 padding-spacer 虚拟化）。
+// ~30 ≈ 三屏卡片；这么大的列整列直出也不贵，因为每张卡片的浮层是惰性挂载的。
+// 已知边界：一次"加载更多"把总数推过阈值时会把列切换成虚拟化路径，
+// 滚动条可能调整一次——可接受，因为它只发生在列底部的滚动中途。
 const BOARD_VIRTUALIZE_THRESHOLD = 30;
 
-// Passed to <Virtuoso components> when the column has no footer. Must be a
-// STABLE object, never `undefined`: an explicit `undefined` prop overwrites
-// react-virtuoso's internal `{}` default and its startup destructure of
-// `EmptyPlaceholder`/`Footer` throws (MUL-4474).
+// 列没有页脚时传给 <Virtuoso components> 的对象。必须是稳定的对象，
+// 绝不能是 `undefined`：显式的 `undefined` prop 会覆盖 react-virtuoso 内部
+// 的 `{}` 默认值，其启动时对 `EmptyPlaceholder`/`Footer` 的解构会抛错（MUL-4474）。
 const EMPTY_VIRTUOSO_COMPONENTS = {};
 
 export interface BoardColumnGroup {
   id: string;
   title: string;
-  /** Board columns are CATEGORIES, never raw status keys. (MUL-6243) */
+  /** 看板列是"状态类别"，绝不是原始状态 key。（MUL-6243） */
   status?: IssueStatusCategory;
   assigneeType?: IssueAssigneeType | null;
   assigneeId?: string | null;
-  /** Project id for this column; null = the "No project" column. Set only
-   *  when the board is grouped by project. */
+  /** 该列对应的项目 id；null = "无项目"列。仅在看板按项目分组时设置。 */
   projectId?: string | null;
-  /** Display-only, for the column's leading icon. Null on the "No project"
-   *  column and on a project the projects query cannot resolve. */
+  /** 仅供列头图标显示。在"无项目"列、以及 projects 查询解析不到的项目上为 null。 */
   project?: Pick<Project, "icon"> | null;
-  /** Set when the board is grouped by a select-type custom property. */
+  /** 看板按 select 型自定义属性分组时设置。 */
   propertyId?: string;
-  /** Option id for this column; null = the "No value" column. */
+  /** 该列对应的选项 id；null = "无值"列。 */
   propertyOptionId?: string | null;
   propertyOptionColor?: string;
   totalCount?: number;
@@ -113,7 +111,7 @@ export const BoardColumn = memo(function BoardColumn({
   projectMap?: Map<string, Project>;
   totalCount?: number;
   footer?: ReactNode;
-  /** When set, the per-column "+" pre-fills the project on the create form. */
+  /** 设置后，列上的"+"会在新建表单里预填该项目。 */
   projectId?: string;
   onCreateIssue?: (defaults: IssueCreateDefaults) => void;
   sortLabel?: string | null;
@@ -122,13 +120,13 @@ export const BoardColumn = memo(function BoardColumn({
   const cfg = status ? STATUS_CONFIG[status] : null;
   const { setNodeRef, isOver } = useDroppable({ id: group.id });
   const viewStoreApi = useViewStoreApi();
-  // A status fixed by the open saved view cannot be hidden from the board —
-  // that would silently strip one of the view's own conditions.
+  // 被已打开保存视图固定的状态不能在看板里被隐藏——那等于悄悄抽掉视图自身的
+  // 一个条件。
   const viewBaseline = useViewBaseline();
   const statusFixedByView = !!status && viewBaseline?.status.has(status) === true;
   const { t } = useT("issues");
 
-  // Resolve IDs to Issue objects, preserving parent-provided order
+  // 把 id 解析成 Issue 对象，保留父组件给定的顺序。
   const resolvedIssues = useMemo(
     () =>
       issueIds.flatMap((id) => {
@@ -138,17 +136,14 @@ export const BoardColumn = memo(function BoardColumn({
     [issueIds, issueMap],
   );
 
-  // The column's scroll container is both dnd-kit's droppable and Virtuoso's
-  // customScrollParent, so a merged callback ref feeds the element to both.
-  // useDroppable's setNodeRef is stable across renders. Keeping the droppable
-  // on the always-mounted scroll container (not on individual cards) is what
-  // lets cross-column drops survive virtualization — only the cards inside
-  // window in/out of the DOM.
+  // 列的滚动容器同时兼任 dnd-kit 的投放区与 Virtuoso 的 customScrollParent，
+  // 所以用一个合并回调 ref 把元素同时喂给两者。useDroppable 的 setNodeRef
+  // 跨渲染稳定。把投放区放在常驻的滚动容器上（而不是每张卡片上），
+  // 是跨列投放能扛住虚拟化的关键——只有容器内的卡片会进出 DOM。
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
-  // Pull-based scroll restoration (MUL-4741): assign the saved offset at
-  // ref-attach (the seed + estimate spacer give the column a truthful height
-  // on its first commit, so the assignment sticks pre-paint) and feed the
-  // same offset into the Virtuoso as its initial position.
+  // 基于"拉取"的滚动恢复（MUL-4741）：在 ref 挂载那一刻写入已保存的偏移
+  //（种子 + 预估间隔块在首次提交时就给了列一个真实高度，赋值能赶在绘制前生效），
+  // 并把同一偏移作为 Virtuoso 的初始位置喂进去。
   const scrollMementoKey = `board:${group.id}`;
   const restoredScrollTop = useRestoredScrollOffset(scrollMementoKey);
   const restoreScrollRef = useRestoredScrollRef(scrollMementoKey);
@@ -160,9 +155,8 @@ export const BoardColumn = memo(function BoardColumn({
     },
     [setNodeRef, restoreScrollRef],
   );
-  // Infinite-scroll sentinel rides Virtuoso's Footer slot so it sits at the
-  // real end of the virtualized list and its IntersectionObserver still fires
-  // loadMore when scrolled to the bottom.
+  // 无限滚动哨兵挂在 Virtuoso 的 Footer 槽位上，因此它位于虚拟化列表真正的末尾，
+  // 滚到底时其 IntersectionObserver 依然会触发 loadMore。
   const footerComponents = useMemo(
     () => (footer ? { Footer: () => <>{footer}</> } : EMPTY_VIRTUOSO_COMPONENTS),
     [footer],
@@ -170,9 +164,9 @@ export const BoardColumn = memo(function BoardColumn({
 
   const computeItemKey = (_index: number, issue: Issue) => issue.id;
   const itemContent = (index: number, issue: Issue) => (
-    // pt-2 on every card but the first reproduces the previous `space-y-2`
-    // gap; padding (not margin) is inside Virtuoso's measured item box so its
-    // height math stays correct.
+    // 除第一张外每张卡片都加 pt-2，复刻原来的 `space-y-2` 间距；
+    // 用 padding（而非 margin）是因为它在 Virtuoso 的测量条目盒内部，
+    // 高度计算才能保持正确。
     <div className={index === 0 ? undefined : "pt-2"}>
       <DraggableBoardCard
         issue={issue}
@@ -190,12 +184,11 @@ export const BoardColumn = memo(function BoardColumn({
       <div className="mb-2 flex items-center justify-between px-1.5">
         <BoardGroupHeading group={group} count={totalCount ?? issueIds.length} />
 
-        {/* Right: add + menu */}
+        {/* 右侧：添加 + 菜单 */}
         <div className="flex items-center gap-1">
-          {/* Column-header popups mount lazily: a board/swimlane renders one
-              header per column and almost none of these menus/tooltips are
-              ever opened — eagerly mounting them dominated surface mount
-              cost (DeferredPopup / DeferredTooltip). */}
+          {/* 列表头的浮层惰性挂载：看板/泳道每列都渲染一个表头，而这些菜单/提示
+              几乎从不会被打开——急切挂载它们会主导 surface 的挂载成本
+              （DeferredPopup / DeferredTooltip）。 */}
           {status && (
             <DeferredPopup
               ariaHasPopup="menu"
@@ -261,9 +254,9 @@ export const BoardColumn = memo(function BoardColumn({
         )}
         <div
           ref={mergedRef}
-          // Per-column scroll registration for the tab session memento
-          // (MUL-4741): the group id is the stable memento key, so every
-          // column's offset survives tab switches/reloads independently.
+          // 每列独立向"页签会话记忆"登记滚动位置（MUL-4741）：
+          // 以 group id 作为稳定的记忆 key，因此每列滚动偏移在
+          // 页签切换/重载后各自独立地恢复。
           data-tab-scroll-root={scrollMementoKey}
           className={`absolute inset-0 overflow-y-auto rounded-lg p-1 transition-colors ${
             isOver && sortLabel
@@ -276,13 +269,10 @@ export const BoardColumn = memo(function BoardColumn({
           {resolvedIssues.length > 0 ? (
             <SortableContext items={issueIds} strategy={verticalListSortingStrategy}>
               {resolvedIssues.length <= BOARD_VIRTUALIZE_THRESHOLD ? (
-                /* Small column: plain full render (reusing the same
-                   itemContent, so it is byte-identical to the virtualized
-                   rows). No handoff, no estimates — see
-                   BOARD_VIRTUALIZE_THRESHOLD. The footer (infinite-scroll
-                   sentinel) renders at the real end of the flow, where its
-                   IntersectionObserver works the same as in Virtuoso's
-                   Footer slot. */
+                /* 小列：整列直出（复用同一个 itemContent，因此与虚拟化行
+                   逐字节相同）。无交接、无预估——见 BOARD_VIRTUALIZE_THRESHOLD。
+                   页脚（无限滚动哨兵）渲染在流的真正末尾，其 IntersectionObserver
+                   的运作方式与在 Virtuoso 的 Footer 槽位里一致。 */
                 <>
                   <VirtuosoSeed
                     data={resolvedIssues}
@@ -305,11 +295,9 @@ export const BoardColumn = memo(function BoardColumn({
                   itemContent={itemContent}
                 />
               ) : (
-                /* Large column, merged scroll ref not settled yet after a
-                   remount: seed a bounded slice of real cards so the column
-                   never paints blank; once the ref lands, mount the Virtuoso
-                   with a matching `initialItemCount` to survive the
-                   measurement frame (MUL-4750). */
+                /* 大列，重挂载后合并滚动 ref 尚未就位：先种子化一截真实卡片，
+                   让列绝不以空白呈现；等 ref 落地后再挂载 Virtuoso，
+                   并配以一致的 `initialItemCount` 以熬过测量帧（MUL-4750）。 */
                 <VirtuosoSeed
                   data={resolvedIssues}
                   itemContent={itemContent}

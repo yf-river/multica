@@ -1,5 +1,11 @@
 "use client";
 
+// 本文件：IssuesHeader —— 问题列表页的头部工具条，供全局 /issues 与项目详情页共用。
+// 职责包括：视图选择栏（内置范围页签 + 已保存视图）、范围切换（全部/成员/代理）、
+// 完整筛选菜单（状态/优先级/负责人/创建人/项目/标签/自定义属性/日期）、表格模式的
+// 分组与列选择、显示设置抽屉（排序/分组/子问题/卡片属性）、视图切换菜单、
+// "正在刷新"指示器，以及下方的"已激活筛选"chips 条与"另存为视图"对话框。
+
 import { cloneElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
@@ -129,7 +135,7 @@ type LocalDateRange = {
 };
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
 function getActiveFilterCount(
@@ -145,8 +151,8 @@ function getActiveFilterCount(
     propertyFilters?: Record<string, PropertyFilterValue[]>;
     dateFilter?: IssueDateFilter | null;
   },
-  // Inside a saved view only the user's additions on top of the view's own
-  // query count — the baseline is the view, not "active filtering".
+  // 在已保存视图里，只有用户额外叠加在视图自身条件之上的增补才计入数量——
+  // 基线是视图本身，而不是"当前是否在过滤"。
   baseline?: IssueViewBaseline,
 ) {
   let count = 0;
@@ -165,8 +171,8 @@ function getActiveFilterCount(
   if (projectDelta) count++;
   if (delta(state.labelFilters, baseline?.label) > 0) count++;
   for (const [id, selected] of Object.entries(state.propertyFilters ?? {})) {
-    // Property members can be operator objects — compare through their
-    // canonical keys so a view-fixed operator still cancels out.
+    // 属性筛选值可能是操作符对象——统一用规范化键比较，这样视图已固定的
+    // 操作符条件也能被正确抵消（不重复计数）。
     const fixed = baseline?.property.get(id);
     const deltaCount = fixed
       ? selected.filter((v) => !fixed.has(propertyFilterValueKey(v))).length
@@ -190,8 +196,8 @@ const DATE_FIELD_LABEL_KEY: Record<IssueDateField, "date_field_created" | "date_
   updated_at: "date_field_updated",
 };
 
-/** Feeding this to useIssueCounts hides every per-option badge (badges only
- *  render at count > 0) without touching the option lists themselves. */
+/** 把它喂给 useIssueCounts，可以隐藏全部"按选项统计"的数字角标
+ *  （角标只在计数 > 0 时渲染），同时不干扰选项列表本身。 */
 const NO_COUNT_ISSUES: Issue[] = [];
 
 function useIssueCounts(
@@ -205,8 +211,8 @@ function useIssueCounts(
     const creator = new Map<string, number>();
     const project = new Map<string, number>();
     const label = new Map<string, number>();
-    // property definition id → option key → count. Checkbox values count
-    // under the "true"/"false" pseudo-option keys the filter store uses.
+    // 结构：属性定义 id → 选项 key → 数量。复选框的值按筛选 store 使用的
+    // "true"/"false" 伪选项 key 计数。
     const property = new Map<string, Map<string, number>>();
     let noAssignee = 0;
     let noProject = 0;
@@ -299,13 +305,13 @@ function useIssueCounts(
 }
 
 // ---------------------------------------------------------------------------
-// Scope config
+// 范围（Scope）配置：全部 / 成员 / 代理
 // ---------------------------------------------------------------------------
 
 const SCOPE_VALUES: IssuesScope[] = ["all", "members", "agents"];
 
 // ---------------------------------------------------------------------------
-// Actor sub-menu content (shared between Assignee and Creator)
+// 成员（Actor）子菜单内容（负责人与创建人筛选共用）
 // ---------------------------------------------------------------------------
 
 function ActorSubContent({
@@ -331,7 +337,7 @@ function ActorSubContent({
   onToggleNoAssignee?: () => void;
   noAssigneeCount?: number;
   showSquads?: boolean;
-  /** Actor keys (`type:id`) fixed by the open saved view. */
+  /** 被当前已打开保存视图固定的成员 key（形如 `type:id`），这类项要锁定勾选并禁用。 */
   fixedKeys?: Set<string>;
   noAssigneeFixed?: boolean;
   fixedTitle?: string;
@@ -503,7 +509,7 @@ function ActorSubContent({
 }
 
 // ---------------------------------------------------------------------------
-// Project sub-menu content
+// 项目子菜单内容
 // ---------------------------------------------------------------------------
 
 function ProjectSubContent({
@@ -609,7 +615,7 @@ function ProjectSubContent({
 }
 
 // ---------------------------------------------------------------------------
-// Label sub-menu content
+// 标签子菜单内容
 // ---------------------------------------------------------------------------
 
 function LabelSubContent({
@@ -685,18 +691,17 @@ function LabelSubContent({
 }
 
 /**
- * Option checkboxes for one custom property inside the Filter dropdown.
- * Select/multi_select list the definition's options (dot + name); checkbox
- * definitions expose the "true"/"false" pseudo-options with Yes/No labels;
- * actor definitions have no config options at all, so their candidates come
- * from the member directory instead, with the signed-in member first so
- * "this property is me" stays one click away.
+ * 筛选下拉里单个自定义属性的选项勾选区。
+ * 单选/多选（select/multi_select）会列出属性的定义选项（圆点 + 名称）；
+ * 复选框（checkbox）属性暴露"true"/"false"两个伪选项并配"是/否"文案；
+ * 成员（actor）属性没有任何配置选项，候选直接来自成员目录，
+ * 并把当前登录成员排在最前，让"这个属性就是我"只需一次点击。
  */
 
-// Keyboard guard for the inline operator radios — same contract as the
-// scalar input below: Escape/Tab belong to the menu (close / move focus);
-// every other navigation or selection key must not bubble into the popup's
-// typeahead / list-navigation handlers.
+// 内联操作符单选键的键盘守卫——与下方标量输入框是同一契约：
+// Escape / Tab 交给菜单处理（关闭 / 移动焦点）；
+// 其余导航或选择键一律阻止冒泡，防止干扰弹出层的
+// 打字搜索 / 列表导航处理器。
 function stopScalarMenuKeys(event: React.KeyboardEvent) {
   if (event.key === "Escape" || event.key === "Tab") return;
   event.stopPropagation();
@@ -714,7 +719,7 @@ function PropertyFilterOptions({
   counts: Map<string, number> | undefined;
   selected: PropertyFilterValue[];
   onToggle: (optionId: string) => void;
-  /** Replace the property's full filter value set (scalar types only). */
+  /** 整体替换该属性的筛选值集合（仅标量类型使用）。 */
   onSetValues: (optionIds: PropertyFilterValue[]) => void;
   fixedIds?: Set<string>;
   fixedTitle?: string;
@@ -723,8 +728,8 @@ function PropertyFilterOptions({
   const wsId = useWorkspaceId();
   const currentUserId = useAuthStore((s) => s.user?.id);
   const actorProperty = isActorPropertyType(property.type);
-  // Scalar properties (text / number / date / url) have no option list — the
-  // filter menu shows a value input plus "No value".
+  // 标量属性（文本 / 数字 / 日期 / 网址）没有选项列表——筛选菜单里给它
+  // 一个值输入框外加"无值"选项。
   const { data: actorMembers = [] } = useQuery({
     ...memberListOptions(wsId),
     enabled: actorProperty,
@@ -747,8 +752,8 @@ function PropertyFilterOptions({
       }));
   }, [actorProperty, actorMembers, currentUserId]);
 
-  // "No value" is offered for every property type: it selects issues where the
-  // property is unset, the inverse of picking one of the options below.
+  // "无值"对所有属性类型都提供：它选出"该属性未设置"的问题，
+  // 与勾选下方某个具体选项正好相反。
   const noValueOption = {
     id: NO_PROPERTY_VALUE,
     name: t(($) => $.pickers.custom_property.none),
@@ -756,11 +761,10 @@ function PropertyFilterOptions({
     actorType: undefined as string | undefined,
     actorId: undefined as string | undefined,
   };
-  // Scalar value state lives at the top level so the hooks stay unconditional
-  // (Rules of Hooks): it is only rendered for text / number / date / url, but
-  // must be declared regardless of which branch runs. The draft syncs to the
-  // committed scalar member whenever that changes, so a filter cleared or
-  // rewritten elsewhere cannot be written back from a stale input.
+  // 标量值状态放在顶层，让 hooks 保持无条件调用（Rules of Hooks）：
+  // 它只对文本/数字/日期/网址渲染，但无论走哪个分支都必须声明。
+  // 草稿会跟随已提交的标量成员同步，因此别处清空或重写筛选后，
+  // 不会用过期输入把旧值写回去。
   const committedMember = selected.find((member) => member !== NO_PROPERTY_VALUE);
   const committedScalar =
     typeof committedMember === "object" ? committedMember.value : (committedMember ?? "");
@@ -769,10 +773,9 @@ function PropertyFilterOptions({
   const hasNoValue = selected.includes(NO_PROPERTY_VALUE);
   const [draft, setDraft] = useState(committedScalar);
   useEffect(() => setDraft(committedScalar), [committedScalar]);
-  // Operator picked in the open menu but not yet committed; null defers to the
-  // committed member (equality when there is none). Resets whenever the
-  // committed member changes — including right after this menu commits — so a
-  // value rewritten elsewhere can't inherit a stale operator.
+  // 在打开的菜单里选好但尚未提交的操作符；null 表示沿用已提交成员
+  //（没有时即"相等"）。已提交成员一旦变化就重置——包括本菜单刚提交之后——
+  // 避免别处重写的值继承到过期操作符。
   const [pendingOp, setPendingOp] = useState<PropertyFilterOp | "is" | null>(null);
   const committedKey =
     committedMember === undefined
@@ -813,13 +816,11 @@ function PropertyFilterOptions({
           ? t(($) => $.pickers.custom_property.number_placeholder)
           : t(($) => $.pickers.custom_property.value_placeholder);
     const noneCount = counts?.get(NO_PROPERTY_VALUE) ?? 0;
-    // A saved view locks this dimension: the value (with its operator) AND
-    // "No value" are both part of the view's identity, so neither can be
-    // edited in place.
+    // 已保存视图会锁定这个维度：值（连同操作符）与"无值"都属于视图身份的一部分，
+    // 因此两者都不能就地修改。
     const locked = fixedIds !== undefined && fixedIds.size > 0;
-    // "is" is equality and commits a bare string — the pre-operator shape.
-    // Every other op commits an operator object; the server and matcher both
-    // treat unknown shapes conservatively.
+    // "is" 表示相等，提交的是裸字符串（即操作符出现之前的形态）；
+    // 其余操作符提交操作符对象。服务端与匹配器对未知形态都做保守处理。
     const effectiveOp: PropertyFilterOp | "is" = pendingOp ?? committedOp;
     const scalarOperatorLabel = (op: PropertyFilterOp): string => {
       if (op === "contains") return t(($) => $.pickers.custom_property.op_contains);
@@ -842,10 +843,9 @@ function PropertyFilterOptions({
     ];
     const commitValue = (raw: string, op: PropertyFilterOp | "is" = effectiveOp) => {
       const value = raw.trim();
-      // NO_PROPERTY_VALUE is the reserved "no value" sentinel — it cannot be
-      // filtered as a literal value. The value and "No value" compose like
-      // every other property type: committing a value replaces only the value
-      // member and preserves "No value" membership.
+      // NO_PROPERTY_VALUE 是保留的"无值"哨兵——不能把它当字面值来筛选。
+      // 值与"无值"像其他属性类型那样组合：提交一个值只替换"值"这一份成员，
+      // 并保留"无值"的勾选状态。
       if (value === NO_PROPERTY_VALUE) return;
       const member: PropertyFilterValue | undefined = value
         ? op === "is"
@@ -858,11 +858,10 @@ function PropertyFilterOptions({
       ]);
     };
     const applyOp = (op: PropertyFilterOp | "is") => {
-      // An explicit click commits the current draft with the chosen op, unlike
-      // the input which waits for Enter/blur. With an empty draft nothing
-      // commits, so the choice rides on pendingOp and the next Enter/blur
-      // commit carries it — killing pendingOp here would silently downgrade
-      // that later commit back to equality.
+      // 显式点击会用所选操作符立即提交当前草稿，而输入框要等 Enter/失焦才提交。
+      // 草稿为空时什么都不提交，此时选择挂在 pendingOp 上、由下一次
+      // Enter/失焦的提交带走——如果在这里清掉 pendingOp，
+      // 会悄悄把那一次提交降级回"相等"。
       setPendingOp(op);
       commitValue(draft, op);
     };
@@ -913,12 +912,10 @@ function PropertyFilterOptions({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onBlur={(event) => {
-              // Clicking the "No value" menu item moves focus off the input,
-              // firing blur first. That premature commit would flip the
-              // checkbox's controlled state before its click handler reads it
-              // — so when focus moves into a menu item in this popup, skip the
-              // blur commit and let onCheckedChange decide from the pre-blur
-              // state.
+              // 点击"无值"菜单项会把焦点移出输入框、先触发 blur。这次过早的提交
+              // 会在其点击处理器读到勾选状态之前就把受控状态翻转了——
+              // 所以当焦点是移进本弹层内的菜单项时，跳过 blur 提交，
+              // 让 onCheckedChange 依据 blur 之前的状态做决定。
               const next = event.relatedTarget;
               const movedToMenuItem =
                 next instanceof HTMLElement &&
@@ -926,13 +923,11 @@ function PropertyFilterOptions({
               if (!movedToMenuItem) commitValue(draft);
             }}
             onKeyDown={(event) => {
-              // Base UI's menu popup merges typeahead + list-navigation handlers
-              // onto the role="menu" element and stopEvent()s every printable
-              // key — without stopping propagation, the input would swallow no
-              // characters at all (and arrow keys on number/date inputs would
-              // be hijacked). Escape/Tab are left for the menu to close/move
-              // focus; Enter commits and still needs stopPropagation so it does
-              // not bubble up and activate the highlighted "No value" item.
+              // Base UI 的菜单弹层把打字搜索 + 列表导航处理器都挂在 role="menu"
+              // 元素上并对每个可打印键 stopEvent()——如果不阻止传播，输入框将
+              // 一个字符都收不到（数字/日期输入框的上下键也会被劫持）。
+              // Escape/Tab 留给菜单去关闭/移动焦点；Enter 提交且仍需
+              // stopPropagation，避免冒泡后触发被高亮的"无值"项。
               if (event.key === "Escape" || event.key === "Tab") return;
               if (event.key === "Enter") commitValue(draft);
               event.stopPropagation();
@@ -946,9 +941,8 @@ function PropertyFilterOptions({
           checked={hasNoValue}
           disabled={locked}
           onCheckedChange={(checked) => {
-            // "No value" toggles membership in the same OR-set as the value —
-            // checking/unchecking never touches the committed value member, so
-            // unchecking restores it without any draft round-trip.
+            // "无值"与"值"在同一个 OR 集合里切换成员——勾选/取消都从不改动
+            // 已提交的"值"成员，因此取消勾选能原样恢复它，无需草稿往返。
             const valueMembers = selected.filter((id) => id !== NO_PROPERTY_VALUE);
             onSetValues(
               checked
@@ -1006,7 +1000,7 @@ function PropertyFilterOptions({
 }
 
 // ---------------------------------------------------------------------------
-// Date sub-menu content
+// 日期子菜单内容
 // ---------------------------------------------------------------------------
 
 function DateSubContent({
@@ -1018,8 +1012,8 @@ function DateSubContent({
 }) {
   const { t } = useT("issues");
   const [field, setField] = useState<IssueDateField>(value?.field ?? "created_at");
-  // Controlled so Apply can dismiss the calendar while the filter menu
-  // itself stays open (menu-wide rule: filter edits never close the menu).
+  // 做成受控组件：点"应用"可以单独收起日历，而筛选菜单本身保持展开
+  //（菜单的全局规则：筛选编辑从不关闭菜单）。
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [range, setRange] = useState<LocalDateRange | undefined>(() => {
     if (!value) return undefined;
@@ -1058,9 +1052,8 @@ function DateSubContent({
         <DropdownMenuLabel>{t(($) => $.filters.date_field)}</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={field} onValueChange={(next) => setFieldValue(next as IssueDateField)}>
           {(["created_at", "updated_at"] as const).map((option) => (
-            // Picking the date field is a parameter for the presets below, not
-            // the final action — keep the menu open so the user can continue
-            // to a preset or the custom range.
+            // 选择日期字段只是下方快捷项的一个参数，并非最终动作——
+            // 保持菜单展开，让用户能继续选快捷项或自定义区间。
             <DropdownMenuRadioItem key={option} value={option} closeOnClick={false}>
               {t(($) => $.filters[DATE_FIELD_LABEL_KEY[option]])}
             </DropdownMenuRadioItem>
@@ -1069,9 +1062,8 @@ function DateSubContent({
       </DropdownMenuGroup>
 
       <DropdownMenuSeparator />
-      {/* Presets set a filter value, same semantics as toggling a status
-          checkbox — keep the menu open so multi-dimension refinement
-          continues. Only Reset (terminal) closes. */}
+      {/* 快捷项会直接设置筛选值，语义等同勾选状态选项——保持菜单展开，
+          以便继续做多维度细筛。只有"重置"（终结动作）会关闭菜单。 */}
       <DropdownMenuItem closeOnClick={false} onClick={() => applyPreset(1)}>
         {t(($) => $.filters.date_today)}
       </DropdownMenuItem>
@@ -1130,19 +1122,17 @@ function DateSubContent({
 }
 
 // ---------------------------------------------------------------------------
-// ViewRefreshIndicator
+// ViewRefreshIndicator（视图刷新指示器）
 // ---------------------------------------------------------------------------
 
 /**
- * Neutral "view is revalidating" slot for the header controls cluster.
- * Driven by the surface's isRefreshing (placeholder-backed revalidation:
- * sort/date change, grouped-board filter change) — trigger-agnostic on
- * purpose, so any view change that puts a request in flight lights it.
+ * 头部控件区中一个中性的"视图正在重新校验"占位指示灯。
+ * 由宿主页面的 isRefreshing 驱动（占位式重新校验：排序/日期变化、看板分组
+ * 切换等都会触发）——刻意与具体触发动作解耦，任何让请求在途的视图变更都会点亮它。
  *
- * The slot is fixed-width so appearing/disappearing never shifts the
- * controls; the 300ms appear delay keeps fast networks indicator-free
- * (NN/g: sub-second responses need no feedback) while slow ones get a
- * "working on it" signal instead of a dead click.
+ * 该槽位宽度固定，出现/消失都不会挤动旁边控件；300ms 的延迟出现让快速网络下
+ * 保持无指示（亚秒响应无需反馈），慢网络下用户能收到"正在处理"的信号，
+ * 而不是一次毫无反馈的点击。
  */
 export function ViewRefreshIndicator({ active }: { active: boolean }) {
   return (
@@ -1157,9 +1147,22 @@ export function ViewRefreshIndicator({ active }: { active: boolean }) {
 }
 
 // ---------------------------------------------------------------------------
-// IssuesHeader
+// IssuesHeader（问题页头部）
 // ---------------------------------------------------------------------------
 
+/**
+ * 问题列表页的头部工具条。关键 props：
+ * - scopedIssues：当前范围过滤后、可用于展示与计数的问题列表；
+ * - workingAgents：surface 范围内的"代理工作中"概要（驱动 agents-working 角标）；
+ * - allowGantt：是否开放甘特视图入口（目前仅项目详情页为 true）；
+ * - dateFilter / onDateFilterChange：日期筛选状态及其回调——日期筛选独立于
+ *   视图 store，由宿主负责持有，这里只透传给筛选菜单与 chips 条；
+ * - isRefreshing：为 true 时在控件区右侧点亮"正在刷新"指示；
+ * - facetCountsExact / tableFacetCounts / onTableFacetChange：表格模式
+ *   分组菜单需要的后端 facet 计数与"按状态分组"选中态回传；
+ * - saveViewScope：决定"另存为视图"的归档范围（工作区/项目/我的）；
+ *   传 null 时整条保存入口不展示。
+ */
 export function IssuesHeader({
   scopedIssues,
   workingAgents,
@@ -1173,20 +1176,19 @@ export function IssuesHeader({
   saveViewScope = { kind: "workspace" },
 }: {
   scopedIssues: Issue[];
-  /** See IssueSurfaceController.workingAgents — the surface-scoped projection
-   *  behind the agents-working chip. */
+  /** 参见 IssueSurfaceController.workingAgents——"代理工作中"角标背后、
+   *  按当前 surface 范围投影出的代理列表。 */
   workingAgents: WorkingAgentSummary[] | undefined;
   allowGantt?: boolean;
   dateFilter?: IssueDateFilter | null;
   onDateFilterChange?: (filter: IssueDateFilter | null) => void;
   isRefreshing?: boolean;
-  /** See IssueDisplayControls.facetCountsExact. */
+  /** 说明见 IssueDisplayControls.facetCountsExact。 */
   facetCountsExact?: boolean;
   tableFacetCounts?: IssueTableFacetsResponse;
   onTableFacetChange?: (facet: IssueTableFacetSpec | null) => void;
-  /** Where "save as view" files the view. /issues keeps the workspace
-   *  default; the project-detail fallback passes its project scope; `null`
-   *  hides the save affordance entirely. */
+  /** "另存为视图"把视图归档到哪个范围。/issues 用工作区默认；
+   *  项目详情页传入它自己的项目范围；传 `null` 则完全不展示保存入口。 */
   saveViewScope?: SaveViewScope | null;
 }) {
   const { t } = useT("issues");
@@ -1201,8 +1203,8 @@ export function IssuesHeader({
     headerWsId,
     viewListScope,
   );
-  // The open view vanished (deleted / access revoked): fall back to the
-  // built-in default and say so — never a blank page (§7).
+  // 当前打开的视图不见了（被删除 / 访问权限被收回）：回退到内置默认视图
+  // 并 toast 告知用户——绝不让页面变成空白（§7）。
   useEffect(() => {
     if (missing) {
       setActive(null);
@@ -1219,9 +1221,9 @@ export function IssuesHeader({
   } | null>(null);
   const currentUserId = useAuthStore((s) => s.user?.id ?? null);
   const isViewOwner = !!activeView && activeView.owner_id === currentUserId;
-  // The tab belongs to THIS page (Issues vs each project) — see
-  // IssuesScopePageKey. The header both renders the tabs and seeds the
-  // save-view dialog's default variant from them.
+  // 页签归属于"当前这个页面"（全局 Issues 与各项目详情彼此独立）——
+  // 见 IssuesScopePageKey。头部既渲染这些页签，也用它们预填
+  // 保存视图对话框的默认变体。
   const scopePage: IssuesScopePageKey =
     saveViewScope?.kind === "project"
       ? `project:${saveViewScope.projectId}`
@@ -1232,12 +1234,11 @@ export function IssuesHeader({
     (next: IssuesScope) => setScopeForPage(scopePage, next),
     [setScopeForPage, scopePage],
   );
-  // The save dialog's default variant: while a saved view is open the view's
-  // own variant wins (the rows on screen ARE that variant — a copy must not
-  // silently widen to the page tab); otherwise the page tab applies. Memoized
-  // on primitives: the dialog resets its draft when this prop's identity
-  // changes, so a fresh object per header render would wipe a half-typed
-  // name on any background refetch.
+  // 保存对话框的默认变体：已打开保存视图时以视图自身变体为准（屏幕上的行
+  // 就是该变体——副本不能悄悄扩大到页面页签范围）；否则沿用页面页签。
+  // 按基本类型记忆化：对话框在这个 prop 的引用变化时会重置草稿，
+  // 若头部每次渲染都产生新对象，任何后台重取都会清掉用户敲了一半的
+  // 名称。
   const dialogActorKind = activeView
     ? actorKindForViewVariant(activeView.scope_variant)
     : scope;
@@ -1257,10 +1258,9 @@ export function IssuesHeader({
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- identity keyed on the primitive projections
   }, [dialogMyVariant, dialogProjectId, dialogActorKind, !!saveViewScope]);
-  // Bind the workspace agents-working chip to the active view store so
-  // shared IssuesHeader consumers (/issues and project detail) toggle the
-  // same filter state as the rest of the display controls. /my-issues keeps
-  // its own sibling header and passes chip state explicitly.
+  // 把工作区的"代理工作中"角标绑定到活动视图 store，让共用 IssuesHeader
+  // 的宿主（/issues 与项目详情页）与其他显示控件切换同一份筛选状态。
+  // /my-issues 有自己的独立兄弟头部，通过显式传参控制该角标。
   const agentRunningFilter = useViewStore((s) => s.agentRunningFilter);
   const toggleAgentRunningFilter = useViewStore(
     (s) => s.toggleAgentRunningFilter,
@@ -1282,8 +1282,8 @@ export function IssuesHeader({
     <>
     <div className={cn("min-h-12 shrink-0 py-2 [-webkit-overflow-scrolling:touch]", PAGE_GUTTER)}>
       <div className="flex w-full min-w-0 items-start justify-between gap-2">
-        {/* Left: the view bar — built-in tabs and saved views as one flat,
-            per-user ordered row; wraps instead of overflowing. */}
+        {/* 左侧：视图栏——内置页签与已保存视图拼成一行扁平、按用户排序的
+            横向列表；放不下时换行而非溢出。 */}
         <div className="hidden min-w-0 flex-1 md:block">
           {saveViewScope && viewListScope && (
             <ViewBar
@@ -1295,8 +1295,8 @@ export function IssuesHeader({
                 description: t(($) => $.scope[SCOPE_DESC_KEY[s]]),
                 active: !activeView && scope === s,
                 onSelect: () => {
-                  // Built-in tabs exit any open saved view; the surface
-                  // returns to its untouched per-tab state.
+                  // 点击内置页签会退出任何已打开的保存视图，surface
+                  // 回到该页签未改动过的原始状态。
                   if (activeView) setActive(null);
                   setScope(s);
                 },
@@ -1404,10 +1404,10 @@ export function IssuesHeader({
 }
 
 /**
- * The full filter menu (every dimension, search, counts) behind a caller-
- * supplied trigger. The toolbar wraps it in its labeled button; the
- * save-view dialog attaches it to a ghost "add filter" chip targeting the
- * draft store. Counts follow `scopedIssues` — pass nothing to hide them.
+ * 完整的筛选菜单（覆盖全部维度、搜索与计数），挂在调用方提供的触发器元素上。
+ * 工具栏把它包进带文字按钮；保存视图对话框则把它接到一个虚拟的
+ * "添加筛选"chip 上、目标是草稿 store。计数跟随 `scopedIssues`——
+ * 不传就不显示数字。
  */
 export function IssueFilterMenu({
   trigger,
@@ -1430,14 +1430,14 @@ export function IssueFilterMenu({
   onTableFacetChange?: (facet: IssueTableFacetSpec | null) => void;
   dateFilter?: IssueDateFilter | null;
   onDateFilterChange?: (filter: IssueDateFilter | null) => void;
-  /** Mirrors the menu's open state. */
+  /** 与菜单开合状态保持同步。 */
   onOpenChange?: (open: boolean) => void;
-  /** Pin the open menu to the trigger's position AT OPEN TIME (a virtual
-   *  anchor). With it, chips growing or wrapping can reflow the trigger
-   *  freely without the open menu ever moving under the pointer. */
+  /** 把展开的菜单钉在"打开那一刻"触发器所在的位置（虚拟锚点）。
+   *  开启后，chips 增删或换行可以让触发器自由移动，
+   *  而打开的菜单绝不会在指针下方漂移。 */
   freezeAnchor?: boolean;
-  /** Open saved view: values the view fixes render checked-and-disabled
-   *  ("already in this view"); everything else stays selectable. */
+  /** 已打开的保存视图：视图已固定的值渲染为勾选并禁用
+   *  （表示"已包含在该视图里"）；其余选项照常可选。 */
   viewBaseline?: IssueViewBaseline;
 }) {
   const { t } = useT("issues");
@@ -1505,8 +1505,8 @@ export function IssueFilterMenu({
       }`
     : null;
 
-  // Base UI's render-prop merges its own ref with ours, so cloning the
-  // caller's element only adds the ref we need for rect capture.
+  // Base UI 的 render-prop 会把它自己的 ref 与我们给的 ref 合并，
+  // 所以克隆调用方元素只会额外带上采集矩形所需的 ref。
   const anchoredTrigger = freezeAnchor
     ? cloneElement(trigger, { ref: triggerRef } as Partial<React.HTMLAttributes<HTMLElement>>)
     : trigger;
@@ -1536,7 +1536,7 @@ export function IssueFilterMenu({
         <DropdownMenuTrigger render={anchoredTrigger} />
       )}
           <DropdownMenuContent align="end" className="w-auto" anchor={frozenAnchor ?? undefined}>
-            {/* Status */}
+            {/* 状态 */}
             <DropdownMenuSub
               onOpenChange={(open) =>
                 onTableFacetChange?.(open ? { kind: "status" } : null)
@@ -1552,12 +1552,10 @@ export function IssueFilterMenu({
                 )}
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-auto min-w-48">
-                {/* Options come from the workspace catalog, so a custom status
-                    is filterable — otherwise an issue moved onto one could not
-                    be narrowed to. One flat list in category order: the icon
-                    already carries the category, and a heading per category
-                    doubled the menu's height for no added information
-                    (MUL-6243, MUL-6399). */}
+                {/* 选项来自工作区目录，因此自定义状态也可参与筛选——否则一个被移
+                    到自定义状态上的问题就筛不出来了。按类别顺序排成一条平铺列表：
+                    状态图标已表达类别，若再按类别加小标题只会徒增菜单高度，
+                    没有新增信息（MUL-6243, MUL-6399）。 */}
                 {statusOptions.map((option) => {
                   const checked = statusFilters.includes(option.key);
                   const count = counts.status.get(option.key) ?? 0;
@@ -1590,7 +1588,7 @@ export function IssueFilterMenu({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Priority */}
+            {/* 优先级 */}
             <DropdownMenuSub
               onOpenChange={(open) =>
                 onTableFacetChange?.(open ? { kind: "priority" } : null)
@@ -1653,7 +1651,7 @@ export function IssueFilterMenu({
               </DropdownMenuSub>
             )}
 
-            {/* Assignee */}
+            {/* 负责人 */}
             <DropdownMenuSub
               onOpenChange={(open) =>
                 onTableFacetChange?.(open ? { kind: "assignee" } : null)
@@ -1685,7 +1683,7 @@ export function IssueFilterMenu({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Creator */}
+            {/* 创建人 */}
             <DropdownMenuSub
               onOpenChange={(open) =>
                 onTableFacetChange?.(open ? { kind: "creator" } : null)
@@ -1713,7 +1711,7 @@ export function IssueFilterMenu({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Project */}
+            {/* 项目 */}
             <DropdownMenuSub
               onOpenChange={(open) =>
                 onTableFacetChange?.(open ? { kind: "project" } : null)
@@ -1744,7 +1742,7 @@ export function IssueFilterMenu({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Label */}
+            {/* 标签 */}
             <DropdownMenuSub
               onOpenChange={(open) =>
                 onTableFacetChange?.(open ? { kind: "label" } : null)
@@ -1771,7 +1769,7 @@ export function IssueFilterMenu({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Custom properties — one sub per filterable definition */}
+            {/* 自定义属性——每个可筛选定义对应一个子菜单 */}
             {filterableProperties.length > 0 && <DropdownMenuSeparator />}
             {filterableProperties.map((property) => {
               const selected = propertyFilters[property.id] ?? [];
@@ -1814,15 +1812,14 @@ export function IssueFilterMenu({
               );
             })}
 
-            {/* Reset */}
+            {/* 重置 */}
             {hasActiveFilters && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => {
                     if (viewBaseline) {
-                      // Inside a saved view, reset returns to the view's own
-                      // conditions, never to nothing.
+                      // 在已保存视图里，"重置"回到该视图自身的条件，而不是清空一切。
                       act.resetFiltersTo(viewBaseline.raw);
                     } else {
                       act.clearFilters();
@@ -1854,18 +1851,17 @@ export function IssueDisplayControls({
   hideViewToggle?: boolean;
   dateFilter?: IssueDateFilter | null;
   onDateFilterChange?: (filter: IssueDateFilter | null) => void;
-  /** Open saved view: menu marks the view's values checked-and-disabled;
-   *  the trigger count only counts additions on top. */
+  /** 已打开的保存视图：菜单把视图已固定的值标成勾选并禁用；
+   *  触发器上的角标数字只统计叠加在视图之上的增补。 */
   viewBaseline?: IssueViewBaseline;
-  // Only Project Detail renders <GanttView>; other surfaces (global /issues,
-  // /my-issues, actor panel) ignore viewMode === "gantt" and would silently
-  // fall back to List if the option were exposed there. Keep Gantt opt-in.
+  // 只有项目详情页会渲染 <GanttView>；其他宿主（全局 /issues、/my-issues、
+  // 成员面板）遇到 viewMode === "gantt" 时会悄悄回退成列表——若在那里暴露
+  // 甘特选项，就会出现"选了却没反应"。因此甘特保持显式开启（opt-in）。
   allowGantt?: boolean;
   /**
-   * Whether `scopedIssues` covers the surface's full window. Table does not
-   * use loaded rows for counts; server-paged List, Board, and Swimlane follow
-   * the same rule. They supply `tableFacetCounts` from the backend instead,
-   * so badges remain exact without downloading all issues.
+   * `scopedIssues` 是否已覆盖该 surface 的完整数据窗口。表格视图不拿已加载行
+   * 来计数；服务端分页的列表/看板/泳道也遵循同一规则。它们改为从后端获取
+   * `tableFacetCounts`，让角标保持精确，同时无需把全部问题下载到前端。
    */
   facetCountsExact?: boolean;
   tableFacetCounts?: IssueTableFacetsResponse;
@@ -1895,8 +1891,8 @@ export function IssueDisplayControls({
   const showSubIssues = useViewStore((s) => s.showSubIssues);
   const act = useViewStoreApi().getState();
   const headerWsId = useWorkspaceId();
-  // Active custom-property catalog: drives the filter sections, dynamic
-  // sort/grouping options, and the card-property toggles below.
+  // 生效中的自定义属性目录：驱动下方的筛选区、动态排序/分组选项
+  // 以及卡片属性的开关列表。
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(headerWsId));
   const propertyById = useMemo(
     () => new Map(workspaceProperties.map((p) => [p.id, p])),
@@ -1925,9 +1921,8 @@ export function IssueDisplayControls({
 
   const showDateFilter = !!onDateFilterChange;
 
-  // Only count filters whose definition is still active — a filter pinned to
-  // an archived definition is stripped by the surface controller and must
-  // not light the badge for an effect that no longer exists.
+  // 只统计定义仍有效的筛选——钉在已归档定义上的筛选会被 surface 控制器剥离，
+  // 不能让一个"已不存在"的筛选点亮角标数字。
   const effectivePropertyFilters = useMemo(() => {
     const activeIds = new Set(filterableProperties.map((p) => p.id));
     return Object.fromEntries(
@@ -1985,9 +1980,8 @@ export function IssueDisplayControls({
   const sortPropertyId = propertyIdFromViewKey(sortBy);
   const groupingPropertyId = propertyIdFromViewKey(grouping);
   const tableGroupingPropertyId = propertyIdFromViewKey(tableGrouping);
-  // Property-backed sort/grouping label straight from the definition name;
-  // a stale persisted id (archived/deleted definition) falls back to the
-  // manual/status default label.
+  // 属性型排序/分组的标签直接取属性定义名；持久化的 id 若已失效
+  //（定义被归档/删除），回退到"手动/按状态"等默认标签。
   const sortLabel = sortPropertyId
     ? propertyById.get(sortPropertyId)?.name ?? t(($) => $.display.sort_manual)
     : t(($) => $.display[SORT_LABEL_KEY[sortBy as keyof typeof SORT_LABEL_KEY]]);
@@ -2125,7 +2119,7 @@ export function IssueDisplayControls({
           />
         )}
 
-        {/* Display settings */}
+        {/* 显示设置 */}
         <Popover>
           <Tooltip>
             <PopoverTrigger
@@ -2144,8 +2138,8 @@ export function IssueDisplayControls({
           </Tooltip>
           <PopoverContent align="end" className="w-64 p-3">
             <div className="space-y-3">
-              {/* Uniform rows: caption label left, control right. Spacing
-                  separates sections — no dividers (see UI rules). */}
+              {/* 统一的行排版：左侧小标签、右侧控件。各区块之间用间距分隔，
+                  不画分割线（见 UI 规范）。 */}
               {viewMode === "board" && (
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-caption font-medium text-muted-foreground">
@@ -2306,8 +2300,8 @@ export function IssueDisplayControls({
                   <span className="text-caption font-medium text-muted-foreground">
                     {t(($) => $.display.card_properties_section)}
                   </span>
-                  {/* Chip toggles (pressed = shown on cards). Unpressed chips
-                      dim so the active set reads at a glance. */}
+                  {/* chip 式开关（按下 = 卡片上展示该属性）。未按下的 chip
+                      变淡，让已启用集合一眼可辨。 */}
                   <div className="mt-2 flex flex-wrap gap-1">
                     {CARD_PROPERTY_OPTIONS.map((opt) => (
                       <Toggle
@@ -2340,9 +2334,9 @@ export function IssueDisplayControls({
           </PopoverContent>
         </Popover>
 
-        {/* View toggle. If a store has `viewMode === "gantt"` persisted but
-            this surface doesn't render Gantt, fall back to "list" so the
-            trigger icon matches what's actually on screen. */}
+        {/* 视图切换。若 store 里持久化了 `viewMode === "gantt"` 但当前
+            surface 不渲染甘特，就回退成"列表"，让触发器图标与屏幕
+            实际展示的视图一致。 */}
         {!hideViewToggle && (
           <DropdownMenu open={viewMenuOpen} onOpenChange={setViewMenuOpen}>
             <Tooltip>

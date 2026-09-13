@@ -1,3 +1,5 @@
+// 会话标题行内编辑框：挂载即聚焦并全选原标题，Enter 提交、Escape 取消、
+// 点击输入框外部也会提交。
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -5,15 +7,12 @@ import { isImeComposing } from "@multica/core/utils";
 import { useT } from "../../i18n";
 
 /**
- * Inline editor for a session title. Mounts focused with the existing
- * title pre-selected so the user can either replace it outright or arrow
- * into the existing text. Enter commits, Escape cancels, a real click
- * outside the input also commits.
+ * 会话标题的行内编辑器。挂载时聚焦并预选原标题，让用户既能整个替换、
+ * 也能用方向键进入已有文字。Enter 提交，Escape 取消，真正的点击输入框外部也会提交。
  *
- * We do NOT commit on the input's `blur` event: the history popover can
- * move focus to sibling rows and nested actions while the user is still
- * interacting with the panel. Instead a document-level `pointerdown`
- * listener commits only when the user actually clicks outside the input.
+ * 我们故意不在输入框的 `blur` 事件上提交：历史弹层（history popover）在用户仍与
+ * 面板交互时，可能把焦点移到兄弟行或嵌套的操作上。取而代之的是 document 级的
+ * `pointerdown` 监听，只在用户真的点到输入框外面时才提交。
  */
 export function SessionRenameInput({
   initialValue,
@@ -27,10 +26,8 @@ export function SessionRenameInput({
   const { t } = useT("chat");
   const [value, setValue] = useState(initialValue);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Hold the latest value + callback in refs so the mount-only effect's
-  // listener always sees fresh state without re-subscribing on every
-  // keystroke (which would briefly leave a window where pointerdown isn't
-  // observed).
+  // 把最新的值和回调放进 ref，这样只在挂载时注册一次的监听器永远能看到新鲜状态，
+  // 而不用每次按键都重新订阅（那会短暂留下一个 pointerdown 未被观察的窗口期）。
   const valueRef = useRef(value);
   valueRef.current = value;
   const onSubmitRef = useRef(onSubmit);
@@ -46,8 +43,7 @@ export function SessionRenameInput({
       if (input.contains(e.target as Node)) return;
       onSubmitRef.current(valueRef.current);
     };
-    // Capture phase — commit before outside-click handling can close the
-    // popover and unmount this component.
+    // 用捕获阶段——在"点击外部"的处理能关掉弹层、卸载本组件之前先提交。
     document.addEventListener("pointerdown", handlePointerDown, true);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown, true);
@@ -65,8 +61,7 @@ export function SessionRenameInput({
       onClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
-        // Keep editing keys inside the input instead of letting the row
-        // selection keyboard handler consume them.
+        // 让编辑键留在输入框里，而不是被行的键盘选中处理器消费掉。
         e.stopPropagation();
         if (isImeComposing(e)) return;
         if (e.key === "Enter") {

@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 的 MCP 配置标签页：三个来源各成一节——Agent 自身的 mcp 服务
+//（增删改）、工作区库中分配给本 Agent 的服务器（启停/移除）、运行环境的 mcp 服务
+//（只读，可被前两者按同名覆盖）。删除带二次确认。
+
 import { useEffect, useMemo, useState } from "react";
 import {
   Loader2,
@@ -56,6 +60,12 @@ import {
 } from "./mcp-config-model";
 import { McpServerDialog } from "./mcp-server-dialog";
 
+/**
+ * MCP 配置标签页：三来源（Agent 自身 / 工作区分配 / 运行时）的 MCP 服务清单与管理。
+ * @param agent 当前 Agent（读 mcp_config 及是否脱敏）。
+ * @param runtime 绑定运行环境；其在线与可用性决定运行时节的展示。
+ * @param onSave 保存回调（携带新 mcp_config）。
+ */
 export function McpConfigTab({
   agent,
   runtime,
@@ -68,9 +78,8 @@ export function McpConfigTab({
   runtime: AgentRuntime | null;
   currentUserId?: string | null;
   /**
-   * Whether this viewer may change the agent. A member without it can still
-   * read the inventory — it carries no credential material — but every write
-   * affordance is hidden rather than left to 403 on click.
+   * 当前查看者能否改动该 Agent。无权限的成员仍可读取清单——它不含任何凭据材料——
+   * 但每个写操作入口都隐藏，而不是留到点击时才被 403 打脸。
    */
   canEdit?: boolean;
   onSave: (updates: { mcp_config: unknown | null }) => Promise<void>;
@@ -86,10 +95,9 @@ export function McpConfigTab({
       ? runtime.id
       : null;
   const runtimeQuery = useQuery(runtimeCapabilitiesOptions(runtimeId));
-  // The workspace MCP servers ASSIGNED to this agent, plus the library to pick
-  // from (GH #6062). A library entry does nothing until it is added here, and
-  // each assignment carries its own toggle. The API returns names and
-  // transports only — never the stored credentials.
+  // 分配（assign）给这个 Agent 的工作区 MCP 服务器，外加可供挑选的库（GH #6062）。
+  // 库里的条目直到加到这里才有作用，且每条分配自带独立开关。接口只回名称与传输
+  // 类型——绝不回存储的凭据。
   const assignedQuery = useQuery(agentMcpServersOptions(agent.id));
   const libraryQuery = useQuery(
     workspaceMcpServersOptions(agent.workspace_id ?? ""),
@@ -111,15 +119,13 @@ export function McpConfigTab({
     () => new Set(assignedServers.map((server) => server.id)),
     [assignedServers],
   );
-  // What is still available to assign. An entry the agent already has is not
-  // offered again.
+  // 还能分配的候选。Agent 已经有的不再给第二次。
   const availableServers = (libraryQuery.data ?? []).filter(
     (server) => !assignedIds.has(server.id),
   );
-  // Names that shadow a runtime server in the effective set. The daemon merges
-  // runtime < (assigned workspace servers + the agent's own), so an assigned
-  // server hides a same-named runtime one too — marking only the agent's own
-  // names would under-report it. A disabled assignment shadows nothing.
+  // 在“生效集合”里会遮蔽同名运行时服务器的名字。daemon 合并顺序是
+  // 运行时 <（已分配工作区服务器 + Agent 自身的），所以一条已分配服务器会连
+  // 同名的运行时服务器一起盖掉——只标 Agent 自身的名字会低估它。被禁用的分配不遮蔽。
   const effectiveNames = useMemo(() => {
     const names = new Set(managedNames);
     for (const server of assignedServers) {
@@ -175,8 +181,8 @@ export function McpConfigTab({
     }
   };
 
-  // Assignment writes return the agent's resulting list, so failures surface
-  // as a toast and the cache re-syncs from the server rather than a guess.
+  // 分配类写操作返回 Agent 的结果列表，所以失败用 toast 呈现、缓存从服务端重新
+  // 同步，而不是本地瞎猜。
   const runAssignmentAction = async (action: () => Promise<unknown>) => {
     try {
       await action();
@@ -225,9 +231,8 @@ export function McpConfigTab({
   };
 
   return (
-    // Three sources, one heading each. The prose that used to sit under every
-    // heading is gone: precedence is already shown where it applies (the
-    // Overridden badges) and nobody reads a paragraph to press a button.
+    // 三个来源、每个一节。过去放在每个标题下的说明文字都删了：优先级已在用得着的
+    // 地方体现（Overridden 徽章），而且没人会读一大段文字再去按按钮。
     <div className="space-y-6">
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-4">
@@ -316,8 +321,7 @@ export function McpConfigTab({
 
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-4">
-          {/* The machine name moves into the heading — it is the only part of
-              the old description that told the reader anything. */}
+          {/* 机器名移进标题——旧描述里唯一对读者有信息量的一句话。 */}
           <h3 className="min-w-0 truncate text-body font-medium">
             {runtime
               ? t(($) => $.tab_body.mcp_config.runtime_title_named, {
@@ -434,6 +438,7 @@ export function McpConfigTab({
   );
 }
 
+/** 单条 MCP 服务的只读视图形态（三来源共用同一种行样式）。 */
 type McpServerView = {
   name: string;
   transport: string;
@@ -443,9 +448,8 @@ type McpServerView = {
 };
 
 /**
- * One workspace server assigned to this agent: the per-agent toggle plus the
- * affordance to take it away. The entry itself is never shown — it is
- * write-only and lives in workspace Settings.
+ * 一条分配给本 Agent 的工作区服务器：逐 Agent 的启停开关 + 移除入口。
+ * 条目本身从不展示——它只写，存在工作区 Settings 里。
  */
 function McpWorkspaceServerRow({
   server,
@@ -465,8 +469,8 @@ function McpWorkspaceServerRow({
   const { t } = useT("agents");
   const enabled = server.enabled !== false;
   return (
-    // Same row shape as the other two lists on this tab — icon chip, name,
-    // transport — so the three sources read as one inventory.
+    // 与本页另两个列表同款行样式——图标块、名称、传输类型——让三个来源读起来
+    // 像一个统一清单。
     <li className="flex items-center gap-3 p-3">
       <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
         <Server className="h-4 w-4" aria-hidden="true" />
@@ -516,7 +520,7 @@ function McpWorkspaceServerRow({
   );
 }
 
-/** Picks an unassigned workspace server to give to this agent. */
+/** 从“未分配”的工作区服务器里挑一条给这个 Agent 的下拉选择器。 */
 function McpWorkspaceServerPicker({
   servers,
   disabled,
@@ -537,9 +541,8 @@ function McpWorkspaceServerPicker({
           </Button>
         }
       />
-      {/* Flush with the trigger's edges (`--anchor-width` is the trigger's own
-          width), free to grow for a long name, and capped so a workspace with
-          many servers scrolls instead of running off the viewport. */}
+      {/* 与触发器边缘齐平（`--anchor-width` 即触发器自身宽度），长名字可自由展开，
+          并限高——工作区服务器很多时滚动而不是冲出视口。 */}
       <DropdownMenuContent
         align="end"
         className="max-h-72 min-w-(--anchor-width) max-w-[min(20rem,var(--available-width))]"
@@ -561,6 +564,7 @@ function McpWorkspaceServerPicker({
   );
 }
 
+/** 通用 MCP 服务行列表（Agent 自身 / 运行时两处共用）：名称、传输、状态徽章、可选编辑。 */
 function McpServerList({
   servers,
   disabledLabel,
@@ -625,6 +629,7 @@ function McpServerList({
   );
 }
 
+/** 状态提示行（加载中转圈）。 */
 function McpNotice({ text, loading = false }: { text: string; loading?: boolean }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-dashed px-4 py-6 text-caption text-muted-foreground">

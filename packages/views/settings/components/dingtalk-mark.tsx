@@ -1,6 +1,7 @@
-// The SVG path in DingTalkMark below is adapted from DingTalk's official
-// connector artwork and used under the MIT License. The original fixed fill
-// was changed to currentColor for theme compatibility.
+// 本文件提供钉钉品牌图标组件，用于设置页集成频道等处展示钉钉的可识别图标。
+
+// 下方 DingTalkMark 中的 SVG 路径改编自钉钉官方连接器素材，依据 MIT 许可证使用。
+// 原固定填充色被改为 currentColor，以便跟随主题换色。
 //
 // Copyright (c) 2026 DingTalk Real Team
 //
@@ -22,6 +23,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+/**
+ * 钉钉品牌图标。
+ * @param props.className - 可选，附加到 svg 上的 CSS 类名，用于控制尺寸与颜色。
+ */
 export function DingTalkMark({ className }: { className?: string }) {
   return (
     <svg

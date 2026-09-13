@@ -1,8 +1,11 @@
+// 可持久化的 Agent 草稿（StoredAgentDraft）与可编辑草稿（AgentDraft）之间的互转，
+// 以及"两份草稿是否一样"的比较。
 import type { StoredAgentDraft } from "../types";
 import { EMPTY_AGENT_DRAFT, type AgentDraft } from "./draft";
 
 export type { StoredAgentDraft };
 
+/** 把内存里的可编辑草稿转成可序列化存储的形态（Set 展开为数组），供本地持久化。 */
 export function toStoredAgentDraft(
   draft: AgentDraft,
   appliedMessageId: string | null,
@@ -25,8 +28,8 @@ export function toStoredAgentDraft(
 }
 
 /**
- * Rebuilds the editable draft. `runtimeId` comes from the caller because the
- * server owns it — see the note on {@link StoredAgentDraft}.
+ * 从存储形态重建出可编辑草稿。`runtimeId` 由调用方传入，因为 runtime 归服务端管——
+ * 见 {@link StoredAgentDraft} 上的说明。
  */
 export function fromStoredAgentDraft(
   stored: StoredAgentDraft,
@@ -51,9 +54,8 @@ export function fromStoredAgentDraft(
 }
 
 /**
- * Whether two drafts would serialize identically — the autosave's "has anything
- * actually changed" test. Compared on the stored form so a `Set` rebuilt with
- * the same members does not read as an edit and cause a pointless write.
+ * 判断两份草稿序列化后是否完全相同——即自动保存的"真有东西变了吗"检测。
+ * 用存储形态比较，使"用相同成员重建的 Set"不会被误读为一次编辑、触发无意义的写入。
  */
 export function storedAgentDraftsEqual(
   a: StoredAgentDraft,

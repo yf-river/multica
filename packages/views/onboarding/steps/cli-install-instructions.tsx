@@ -1,5 +1,6 @@
 "use client";
 
+// CLI 安装指引卡片：展示「装 CLI + 连接云端」两条命令，各带一个一键复制按钮。
 import { useState } from "react";
 import { Check, Copy, Terminal } from "lucide-react";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
@@ -63,12 +64,10 @@ function Step({ n, label, cmd }: { n: number; label: string; cmd: string }) {
 }
 
 /**
- * CLI install instructions — two copy-and-run commands. Hardcoded because
- * there's nothing environmental to infer: step 1 is the public install
- * script, step 2 is the cloud `multica setup` which the CLI itself knows
- * the endpoints for. Local development tests a self-host variant by
- * typing the extended command directly in the terminal; no need to
- * thread env vars through React.
+ * CLI 安装指引——就两条「复制并运行」的命令。命令是写死的，因为没有任何环境变量
+ * 需要推断：第 1 步是公开的安装脚本，第 2 步是云端 `multica setup`，端点 CLI 自己
+ * 知道。本地开发要测自托管变体时，直接在终端里手敲扩展后的命令即可，无需把环境
+ * 变量一层层传进 React。
  */
 export function CliInstallInstructions() {
   const { t } = useT("onboarding");

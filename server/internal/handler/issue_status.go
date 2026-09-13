@@ -1,3 +1,6 @@
+// 职责定位：issue 状态目录（status catalog）API（MUL-6243）：内置 + 自定义状态的列表、创建、
+// 更新（改名/改类别/排序）、归档与重排。状态目录决定「自定义状态继承哪个平台行为类别」，
+// 是 issue 写路径解析与表格分组/过滤的基础。
 package handler
 
 import (
@@ -22,13 +25,12 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// Issue status catalog API (MUL-6243).
+// issue 状态目录 API（MUL-6243）。
 //
-// Reading the catalog is open to any workspace member — every client needs it
-// to render a status. Mutating it is owner/admin only: a status is workflow
-// configuration shared by the whole workspace, and creating one changes what
-// agents can be told to do.
+// 读目录对任何工作区成员开放——每个客户端渲染状态都需要它。改目录仅限 owner/admin：状态是
+// 全工作区共享的流程配置，创建一条就改变了「能命令 agent 做什么」。
 
+// IssueStatusResponse 是单条状态目录项的响应体。
 type IssueStatusResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
@@ -44,9 +46,8 @@ type IssueStatusResponse struct {
 	UpdatedAt   string  `json:"updated_at"`
 }
 
-// terminalIssueStatusKeys resolves the concrete status keys whose categories
-// carry terminal behavior. Callers pass the result into indexed status
-// predicates instead of resolving the category once per issue row.
+// terminalIssueStatusKeys 解析出「类别带终态行为」的具体状态 key。调用方把结果喂给索引化状态
+// 谓词，而不是逐行解析类别。
 func (h *Handler) terminalIssueStatusKeys(ctx context.Context, workspaceID pgtype.UUID) ([]string, error) {
 	return issuestatus.ExpandCategories(ctx, h.Queries, workspaceID, []string{
 		issuestatus.Done,
@@ -54,6 +55,7 @@ func (h *Handler) terminalIssueStatusKeys(ctx context.Context, workspaceID pgtyp
 	})
 }
 
+// issueStatusToResponse 把目录行转成响应体。
 func issueStatusToResponse(s db.IssueStatus) IssueStatusResponse {
 	return IssueStatusResponse{
 		ID:          uuidToString(s.ID),
@@ -71,9 +73,9 @@ func issueStatusToResponse(s db.IssueStatus) IssueStatusResponse {
 	}
 }
 
+// CreateIssueStatusRequest 是创建自定义状态的请求体。
 type CreateIssueStatusRequest struct {
-	// Key is optional; it is derived from Name when omitted. Immutable once
-	// created, because it is the value stored in issue.status.
+	// Key 可选；省略时由 Name 派生。创建后不可变，因为它是 issue.status 里存的值。
 	Key         string `json:"key"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -81,9 +83,8 @@ type CreateIssueStatusRequest struct {
 	Color       string `json:"color"`
 }
 
-// UpdateIssueStatusRequest deliberately has no Key or Category field. Both are
-// immutable: changing a category would silently rewrite the machine semantics
-// of every issue already on that status, and changing a key would strand them.
+// UpdateIssueStatusRequest 刻意没有 Key 与 Category 字段——两者不可变：改类别会悄悄改写所有
+// 已在该状态上 issue 的机器语义，改 key 则会让它们悬空。
 type UpdateIssueStatusRequest struct {
 	Name        *string  `json:"name"`
 	Description *string  `json:"description"`
@@ -91,8 +92,7 @@ type UpdateIssueStatusRequest struct {
 	Position    *float64 `json:"position"`
 }
 
-// ListIssueStatuses returns the workspace's status catalog in display order.
-// Any member may read it.
+// ListIssueStatuses 返回工作区状态目录（展示序）。任何成员可读。
 func (h *Handler) ListIssueStatuses(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
@@ -103,10 +103,8 @@ func (h *Handler) ListIssueStatuses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Self-heal: a workspace created by a pod that predates this feature has no
-	// catalog rows. Seeding on read keeps the endpoint correct during a rolling
-	// deploy without a second backfill pass. Idempotent, so this is a no-op
-	// once the rows exist.
+	// 自愈：由早于本特性的 pod 创建的工作区没有目录行。读时播种让滚动部署期间的端点保持正确，
+	// 不必再来一遍回填。幂等，行已存在时是空操作。
 	if err := issuestatus.Ensure(r.Context(), h.Queries, wsUUID); err != nil {
 		slog.Warn("failed to ensure issue status catalog", append(logger.RequestAttrs(r), "error", err)...)
 	}
@@ -133,7 +131,8 @@ func (h *Handler) ListIssueStatuses(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// CreateIssueStatus adds a custom status to the workspace catalog.
+// CreateIssueStatus 处理 POST .../issue-statuses：向工作区目录加一条自定义状态。
+// 权限：owner/admin（目录是全工作区共享的流程配置）。成功返回 201 + 新条目。
 func (h *Handler) CreateIssueStatus(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
@@ -170,10 +169,9 @@ func (h *Handler) CreateIssueStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// An explicit key wins and is checked here, against the reserved built-in
-	// names and the storage pattern. Without one the key is DERIVED from the
-	// display name, which needs the catalog and so happens under the lock in
-	// createIssueStatusEntry.
+	// 显式传了 key 就在此优先并立即校验：对着保留的内置状态名与存储格式检查。没传 key 时
+	// key 会从显示名「派生」出来——派生要读目录定名，依赖锁，所以放在 createIssueStatusEntry
+	// 的事务里做。
 	var explicitKey string
 	if strings.TrimSpace(req.Key) != "" {
 		explicitKey, err = issuestatus.ValidateKey(req.Key)
@@ -208,25 +206,20 @@ func (h *Handler) CreateIssueStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, issueStatusToResponse(entry))
 }
 
-// createIssueStatusEntry writes one catalog row, deriving arg.Key from the
-// display name when it arrives empty.
+// createIssueStatusEntry 在事务里创建一条状态目录行；传入的 arg.Key 为空时从显示名派生一个。
 //
-// Derivation READS the catalog to choose a key nothing already owns, so the
-// read and the insert have to be a single atomic step: two admins creating a
-// Chinese-named in_review status at the same instant would otherwise both
-// compute `in_review_2`, and the loser would be told a key they never typed was
-// already taken. The EXCLUSIVE catalog lock — the same one archive takes —
-// serializes them.
+// 为什么包成「读 + 写」的单一原子步骤：派生 key 要「读一遍目录」才能挑出没人占用的名字，
+// 因此读取与 INSERT 之间不能有缝——否则两个管理员同一瞬间创建中文名的 in_review 状态会算出
+// 同一个 `in_review_2`，后提交者收到「一个自己从未输入过的 key 已被占用」的报错。这里用的
+// EXCLUSIVE 目录锁（归档也用它）负责把它们串行化。
 //
-// EVERY create takes that lock, including one that supplies its own key.
-// Excluding those would leave the race half-closed: an explicit-key insert of
-// `in_review_2` could still land between a derive's catalog read and its
-// insert, and the derive — a UI request with no key field to blame — would come
-// back 409. The lock is only contended by catalog writes, which are rare admin
-// actions, so serializing them costs nothing worth keeping the hole for.
+// 每次创建都拿这把锁，包括自带 key 的创建：把自带 key 的排除掉等于只堵一半竞态——一个显式
+// 携带 `in_review_2` 的插入仍可能落在某次派生的读与写之间，让那次派生（UI 请求，连可归咎的
+// key 字段都没有）返回 409。锁只有目录写入才争用，属罕见的管理员操作，串行化它们几乎不花
+// 代价，没必要为此留一个洞。
 //
-// A non-empty second return is a caller error the handler reports as 400,
-// distinct from a nil-error success and from an infrastructure failure.
+// 第二个返回值非空表示调用方错误，handler 会当作 400 上报；区别于 nil error 的成功与基础设施
+// 故障两种情形。
 func (h *Handler) createIssueStatusEntry(ctx context.Context, workspaceID pgtype.UUID, actor db.Member, arg db.CreateIssueStatusEntryParams) (db.IssueStatus, string, events.Event, error) {
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
@@ -240,9 +233,9 @@ func (h *Handler) createIssueStatusEntry(ctx context.Context, workspaceID pgtype
 	}
 
 	if arg.Key == "" {
-		// IncludeArchived, because idx_issue_status_workspace_key is NOT a
-		// partial index: a retired status still owns its key, so reusing it
-		// would fail on insert instead of producing a second candidate.
+		// 读目录必须带上已归档行：idx_issue_status_workspace_key 不是部分索引，退役状态
+		// 仍然占着它的 key。若不带上，派生会认为该 key 空闲、选出它后 INSERT 撞唯一约束而
+		// 失败，而不是继续生成下一个可用编号。
 		entries, err := qtx.ListIssueStatusEntries(ctx, db.ListIssueStatusEntriesParams{
 			WorkspaceID:     workspaceID,
 			IncludeArchived: true,
@@ -276,9 +269,10 @@ func (h *Handler) createIssueStatusEntry(ctx context.Context, workspaceID pgtype
 	return entry, "", event, nil
 }
 
-// UpdateIssueStatus edits a custom status's presentation. Built-in statuses are
-// immutable in v1 — name and color included — so the default workspace looks
-// and behaves identically for everyone who never opens this settings page.
+// UpdateIssueStatus 处理 PATCH/PUT .../issue-statuses/:key：修改自定义状态的外观（名称/描述/
+// 颜色/位置）。内置状态在 v1 完全不可改——名字和颜色也一样——这样从未打开过这个设置页的
+// 工作区，默认状态目录长得与行为都完全一致。权限 owner/admin；expected_revision 乐观并发
+// 不匹配时返回 409。
 func (h *Handler) UpdateIssueStatus(w http.ResponseWriter, r *http.Request) {
 	entry, wsUUID, member, ok := h.loadIssueStatusForAdmin(w, r)
 	if !ok {
@@ -344,8 +338,7 @@ func (h *Handler) UpdateIssueStatus(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// The row moved out from under us (archived concurrently, or the
-			// is_system guard in the statement rejected it).
+			// 行在我们眼前被移走了：要么被并发归档，要么被语句里的 is_system 守卫拒绝。
 			writeError(w, http.StatusConflict, "status is no longer editable")
 			return
 		}
@@ -371,10 +364,9 @@ func (h *Handler) UpdateIssueStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, issueStatusToResponse(updated))
 }
 
-// ArchiveIssueStatus retires a custom status from FUTURE assignment. Issues
-// already on it are deliberately left alone — see the note on the transaction
-// below, which is also what makes "no new issue can be assigned an archived
-// status" exact rather than approximate.
+// ArchiveIssueStatus 处理 POST .../issue-statuses/:key/archive：把一条自定义状态从「未来可分配」
+// 中退役。已在它上面的 issue 被刻意保留不动——详见函数体内的锁说明，那也正是「已归档状态
+// 不接受新分配」从近似走向精确的原因。权限 owner/admin。
 func (h *Handler) ArchiveIssueStatus(w http.ResponseWriter, r *http.Request) {
 	entry, wsUUID, member, ok := h.loadIssueStatusForAdmin(w, r)
 	if !ok {
@@ -390,17 +382,13 @@ func (h *Handler) ArchiveIssueStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Archiving retires a status from FUTURE use and deliberately leaves issues
-	// already on it untouched: they keep their status, keep rendering, and keep
-	// resolving to their category's behavior (issuestatus.Effective ignores
-	// archived_at on purpose). Forcing a migration first would mean rewriting
-	// history to retire a label.
+	// 归档把状态从「未来可用」里退役，同时刻意不动已在它上面的 issue：它们保留原状态、照常
+	// 渲染、照常按所属类别解析行为（issuestatus.Effective 有意忽略 archived_at）。若强制先迁移
+	// 它们，等于为了退役一个标签而改写历史。
 	//
-	// The EXCLUSIVE catalog lock is still taken, and it is what makes "no NEW
-	// issue can be assigned an archived status" exact rather than approximate:
-	// an issue write targeting a custom status re-resolves it under the SHARED
-	// side of this lock (assertIssueStatusStillActive), so a write can never
-	// interleave between this archive and its own status check. (MUL-6243)
+	// 但仍要拿目录的 EXCLUSIVE 锁——正是它让「已归档状态不再接受新分配」从近似变成精确：针对
+	// 自定义状态的 issue 写路径会在同一把锁的 SHARED 侧重新解析该状态（assertIssueStatusStillActive），
+	// 所以一次写入永远不可能插进「本次归档」与「它自己的状态校验」之间。（MUL-6243）
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		slog.Warn("ArchiveIssueStatus begin failed", append(logger.RequestAttrs(r), "error", err)...)
@@ -440,16 +428,14 @@ func (h *Handler) ArchiveIssueStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to archive issue status")
 		return
 	}
-	// After the commit, never before: an event that announced a change the
-	// transaction then rolled back would have every other tab re-read the
-	// catalog and cache the pre-archive row as the new truth.
+	// 事件必须在提交之后发、绝不能在提交之前发：若事件宣告的变更随后被事务回滚，其它标签页
+	// 会收到通知重读目录，并把归档前的旧行当作新真相缓存下来。
 	h.publishEvent(persistedEvent)
 	writeJSON(w, http.StatusOK, issueStatusToResponse(archived))
 }
 
-// loadIssueStatusForAdmin resolves the {id} path param inside the caller's
-// workspace and enforces the owner/admin gate. The member it resolved is
-// returned so the write can name its actor on the realtime event.
+// loadIssueStatusForAdmin 在调用者工作区内解析 {id} 路径参数并执行 owner/admin 门槛校验。
+// 解析出的 member 一并返回，好让写操作在实时事件上署上操作者身份。权限不足写 403。
 func (h *Handler) loadIssueStatusForAdmin(w http.ResponseWriter, r *http.Request) (db.IssueStatus, pgtype.UUID, db.Member, bool) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
@@ -480,13 +466,11 @@ func (h *Handler) loadIssueStatusForAdmin(w http.ResponseWriter, r *http.Request
 	return entry, wsUUID, member, true
 }
 
-// publishIssueStatusChanged announces that the workspace catalog moved.
+// issueStatusChangedEvent 构造一条「状态目录发生变更」的工作区事件，通知各端重读目录。
 //
-// One event for every write (see protocol.EventIssueStatusChanged): clients
-// re-read the catalog, they do not merge the payload. Nothing about the
-// changed row travels here on purpose — a client that merged an entry out of
-// an event would have to reconcile it against a concurrent write it cannot
-// see, and the catalog is a handful of rows to re-read.
+// 每次写操作发一条事件（见 protocol.EventIssueStatusChanged），客户端收到后重读目录、不合并
+// payload。被改动的行内容刻意不随事件走：若客户端从事件里合并条目，还得与一条它看不见的
+// 并发写做对账；而目录只有几行，重读一次成本远低于此。
 func issueStatusChangedEvent(workspaceID string, actor db.Member, action, resourceID string) events.Event {
 	return events.Event{
 		Type: protocol.EventIssueStatusChanged, WorkspaceID: workspaceID,
@@ -497,32 +481,25 @@ func issueStatusChangedEvent(workspaceID string, actor db.Member, action, resour
 	}
 }
 
-// ReorderIssueStatusesRequest carries one category's custom statuses in their
-// new order. Reordering is scoped to a category because position is
-// intra-category: a status can only move relative to its own column.
+// ReorderIssueStatusesRequest 携带某类别下自定义状态的新顺序。重排按类别限定，因为 position
+// 是类别内的：一个状态只能在它自己的列里相对移动。
 //
-// `ids` must name EVERY active custom status in the category. A partial order
-// is rejected rather than applied, because positions are assigned from the
-// array index: reordering a subset would write positions that collide with the
-// rows left out of it.
+// `ids` 必须点名该类别「每个」活跃自定义状态。部分排序会被拒绝而不是部分应用——position 由
+// 数组下标派生，对子集重排会写进与被漏行相撞的位置。
 type ReorderIssueStatusesRequest struct {
 	Category string   `json:"category"`
 	IDs      []string `json:"ids"`
 }
 
-// ReorderIssueStatuses rewrites the intra-category order of a category's custom
-// statuses, atomically.
+// ReorderIssueStatuses 原子地重写某类别下自定义状态的类别内顺序。
 //
-// Everything happens inside ONE transaction holding the catalog's SHARED lock,
-// which is the archive path's counterpart. That is not decoration:
+// 一切发生在一个持有目录 SHARED 锁的事务里——它是归档路径（持 EXCLUSIVE 锁）的对应方。
+// 这不是装饰：
 //
-//   - Validating outside the transaction leaves a window. "Validate A and B →
-//     another request archives B → reorder runs" would write A's new position
-//     and silently skip B (the UPDATE excludes archived rows), then report 200
-//     on a half-applied order.
-//   - The affected-row count is checked against the payload, so any row the
-//     UPDATE declines to touch fails the whole request instead of committing a
-//     prefix.
+//   - 在事务外校验会留一个窗口。「先校验 A 和 B → 别的请求归档 B → 再跑重排」会写入 A 的新
+//     位置、悄悄跳过 B（UPDATE 排除已归档行），然后对半应用过的顺序报 200。
+//   - 受影响行数要与 payload 对得上：UPDATE 拒绝触碰的任何行都会让整个请求失败，而不是提交
+//     一个前缀。
 func (h *Handler) ReorderIssueStatuses(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
@@ -572,19 +549,17 @@ func (h *Handler) ReorderIssueStatuses(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
-	// SHARED side of the catalog lock: it does not block other reorders or
-	// issue writes, only the EXCLUSIVE archive path. That is what closes the
-	// validate-then-write window.
+	// 取目录锁的 SHARED 侧：它不挡其它重排与 issue 写入，只挡 EXCLUSIVE 的归档路径——
+	// 正是这一点消除了「先校验后写入」的竞态窗口。
 	if err := qtx.LockIssueStatusCatalogShared(r.Context(), wsUUID); err != nil {
 		slog.Warn("ReorderIssueStatuses lock failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to reorder issue statuses")
 		return
 	}
 
-	// The authoritative set, read under the lock. Comparing the payload against
-	// it covers every rejection case at once: a built-in, an archived status,
-	// another category's status, another workspace's row, and — the case a
-	// per-id check misses — an active status the payload simply left out.
+	// 权威集合：在锁内读出。拿 payload 与它逐一比对，一次覆盖所有拒绝情形——内置状态、已归档
+	// 状态、别的类别/别的工作区的行，以及逐条查 id 时最容易漏掉的那种：payload 干脆没点名的
+	// 活跃状态。
 	active, err := qtx.ListActiveCustomIssueStatusEntries(r.Context(), db.ListActiveCustomIssueStatusEntriesParams{
 		WorkspaceID: wsUUID,
 		Category:    req.Category,
@@ -602,10 +577,8 @@ func (h *Handler) ReorderIssueStatuses(w http.ResponseWriter, r *http.Request) {
 		if _, isActive := activeIDs[raw]; isActive {
 			continue
 		}
-		// Still inside the lock, so this diagnosis cannot go stale. Reported
-		// per-reason rather than as one opaque conflict, because "you sent a
-		// built-in" and "someone archived it while you dragged" are different
-		// problems for the caller.
+		// 仍在锁内，诊断不会过期。按原因逐类报告而不是合并成一个笼统的冲突——因为「你拖了
+		// 内置状态」与「拖动期间别人归档了它」对调用方是两种不同的问题。
 		entry, err := qtx.GetIssueStatusEntryByID(r.Context(), db.GetIssueStatusEntryByIDParams{
 			ID:          ids[i],
 			WorkspaceID: wsUUID,
@@ -627,9 +600,8 @@ func (h *Handler) ReorderIssueStatuses(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// Every id is active — so a length mismatch means the payload LEFT ONE OUT.
-	// Applying it would assign positions from the array index and collide with
-	// the omitted row, so the whole request is refused.
+	// 每个 id 都是有效且活跃的——那么数量对不上只可能意味着 payload「漏点了一个」。照单应用
+	// 会按数组下标派位置，与被漏掉的那行撞位，所以整个请求必须被拒绝。
 	if len(active) != len(ids) {
 		writeError(w, http.StatusConflict, "ids must name every active custom status in the category")
 		return
@@ -645,8 +617,7 @@ func (h *Handler) ReorderIssueStatuses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if affected != int64(len(ids)) {
-		// Belt and braces behind the lock: if the UPDATE declined a row anyway,
-		// roll the whole order back rather than commit a prefix.
+		// 锁内的双保险：万一 UPDATE 仍拒绝了一行，就把整个顺序回滚，而不是提交一个残缺前缀。
 		slog.Warn("ReorderIssueStatuses touched an unexpected row count",
 			append(logger.RequestAttrs(r), "affected", affected, "expected", len(ids))...)
 		writeError(w, http.StatusConflict, "issue status catalog changed during reorder")

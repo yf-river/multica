@@ -1,5 +1,5 @@
-// Package chatoriginbackfill marks legacy first-party Chats with the durable
-// origin signal introduced by the channel route migration.
+// Package chatoriginbackfill 给"旧一代第一方 Chat"打上由频道路由迁移引入的
+// 持久 origin 信号（即把创建来源标识回填到历史数据里）。
 package chatoriginbackfill
 
 import (
@@ -10,19 +10,21 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// DefaultBatchSize bounds each statement so the migration does not rewrite
-// the full chat_session table in one transaction.
+// DefaultBatchSize 限制每条语句的大小，避免在一条事务里重写整张 chat_session 表。
 const DefaultBatchSize = 1000
 
+// Result 报告一次完整遍历的统计结果。
 type Result struct {
-	RowsVisited    int64
+	// RowsVisited 扫描过的总行数。
+	RowsVisited int64
+	// RowsBackfilled 实际补上 explicitly_created_at 的总行数。
 	RowsBackfilled int64
-	Pages          int
+	// Pages 遍历了多少页。
+	Pages int
 }
 
-// HookOptions has production-safe zero values. Table overrides exist only so
-// integration tests can point the hook at an isolated schema; callers must
-// provide trusted, already-quoted identifiers.
+// HookOptions 的零值即可用于生产。Table 覆盖项仅用于让集成测试把 hook 指向隔离的
+// schema；调用方必须提供可信且已加引号的标识符。
 type HookOptions struct {
 	Logger       *slog.Logger
 	BatchSize    int
@@ -31,10 +33,9 @@ type HookOptions struct {
 	MessageTable string
 }
 
-// Each page follows the chat_session primary key instead of repeatedly
-// scanning all previously visited rows. The update remains provenance-based:
-// a binding or any channel-ingested message is enough to keep a legacy Chat
-// classified as channel-originated even if one of those records was removed.
+// 每页沿着 chat_session 主键推进，而不是反复扫描已访问过的行。更新依然基于"来源证据"：
+// 只要存在一条绑定记录或任何 channel 摄入的消息，就足以让旧 Chat 维持"频道来源"分类，
+// 即使其中一条记录后来被删除也不会误判。
 const backfillPageSQL = `
 WITH page AS MATERIALIZED (
     SELECT id
@@ -66,11 +67,9 @@ SELECT
     (SELECT count(*) FROM page),
     (SELECT count(*) FROM updated)`
 
-// Hook walks legacy Chats in short, idempotent pages. The migration runner
-// invokes it only after migration 420 has added explicitly_created_at and while
-// the normal deployment contract keeps the server stopped. If a batch fails,
-// already updated rows remain valid and the next migrate run safely revisits
-// them before continuing from the primary-key cursor.
+// Hook 以短小、幂等的分页方式遍历旧 Chat。迁移运行器只在迁移 420 已新增
+// explicitly_created_at 之后、且常规部署约定保持后端停机时调用它。某批失败时，
+// 已更新的行保持有效，下次 migrate 会从主键游标安全续跑。
 func Hook(ctx context.Context, pool *pgxpool.Pool, opts HookOptions) (Result, error) {
 	log := opts.Logger
 	if log == nil {

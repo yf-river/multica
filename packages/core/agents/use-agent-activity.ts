@@ -1,5 +1,7 @@
 "use client";
 
+// Agent 活动数据的 hook 与纯函数：把工作区级的近 30 天逐日桶归一化成每个 Agent
+// 的固定 30 元素序列（供火花图），并提供"取尾部 N 天做汇总"的入口。
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, AgentActivityBucket } from "../types";
@@ -9,52 +11,50 @@ import { agentActivity30dOptions } from "./queries";
 const DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** One day's tally for the sparkline. */
+/** 某一天的完成/失败计数（供火花图）。 */
 export interface ActivityBucket {
   total: number;
   failed: number;
 }
 
+/** 单个 Agent 的近 30 天活动序列。 */
 export interface AgentActivity {
   /**
-   * 30 daily buckets, oldest → newest. Days with no activity are
-   * zero-filled. Each surface picks how much of the tail to render: the
-   * Agents list uses 7, the agent detail uses all 30. Reading is the
-   * caller's job (see `summarizeActivityWindow` for the standard
-   * tail-slice + roll-up).
+   * 30 个天桶，旧 → 新。没有活动的天补零。各界面自取尾部多少段渲染：
+   * Agents 列表用 7 天，Agent 详情用全部 30 天。读取是调用方的活
+   * （标准"尾段切片 + 汇总"见 `summarizeActivityWindow`）。
    */
   buckets: ActivityBucket[];
   /**
-   * Days the agent has existed, capped at DAYS. Pure cosmetic — used by
-   * tooltip copy ("Created 3 days ago"). The sparkline doesn't change
-   * shape for young agents on purpose; pre-life days look the same as
-   * zero days.
+   * Agent 已存在的天数，封顶为 30。纯外观用途——供提示文案用（"3 天前创建"）。
+   * 年轻 Agent 的火花图形状刻意不变；出生前的天看起来和零活动的天一样。
    */
   daysSinceCreated: number;
 }
 
 /**
- * Window-sized roll-up of an agent's activity series. Both the Agents
- * list (windowDays=7) and the detail "Last 30 days" panel (windowDays=30)
- * read through this so the totals can never drift from the bars they
- * label.
+ * 对 Agent 活动序列做"窗口大小"的汇总。Agents 列表（windowDays=7）和详情
+ * 的"近 30 天"面板（windowDays=30）都经由它读取，汇总数字绝不会和它标注的
+ * 柱子漂移不一致。
  */
 export interface ActivityWindowSummary {
-  /** Trailing-N buckets from the activity series (newest end). */
+  /** 活动序列的尾部 N 个桶（最新端）。 */
   buckets: ActivityBucket[];
-  /** Sum of `bucket.total` across the window. */
+  /** 窗口内 `bucket.total` 之和。 */
   totalRuns: number;
-  /** Sum of `bucket.failed` across the window. */
+  /** 窗口内 `bucket.failed` 之和。 */
   totalFailed: number;
-  /** Echo of the input window — the renderer uses it for copy. */
+  /** 输入窗口的回显——渲染器用它拼文案。 */
   windowDays: number;
 }
 
+/** 空活动（所有桶补零、按满 30 天处理）。 */
 const EMPTY: AgentActivity = {
   buckets: Array.from({ length: DAYS }, () => ({ total: 0, failed: 0 })),
   daysSinceCreated: DAYS,
 };
 
+/** 空窗口汇总。 */
 const EMPTY_SUMMARY: ActivityWindowSummary = {
   buckets: [],
   totalRuns: 0,
@@ -63,10 +63,11 @@ const EMPTY_SUMMARY: ActivityWindowSummary = {
 };
 
 /**
- * Workspace-wide activity map keyed by `agent.id`. Single-pass batch:
- * one fetch + one derivation pass backs every row's sparkline on the
- * list AND the detail panel — adding rows costs O(1) HTTP and O(N)
- * compute (not O(N) HTTP).
+ * 以 `agent.id` 为 key 的工作区级活动映射。单趟批量：一次拉取 + 一次推导
+ * 就同时支撑列表每一行的火花图和详情面板——加行只花 O(1) HTTP 和 O(N) 计算
+ * （而不是 O(N) 次 HTTP）。
+ * @param wsId 工作区 id（为空时不查询）。
+ * @returns 按 Agent id 索引的活动映射 + 是否仍在加载。
  */
 export function useWorkspaceActivityMap(wsId: string | undefined): {
   byAgent: Map<string, AgentActivity>;
@@ -89,13 +90,13 @@ export function useWorkspaceActivityMap(wsId: string | undefined): {
   return { byAgent, loading: agentsPending || bucketsPending };
 }
 
+/** 一次遍历工作区 Agent 列表，构建 agentId → 活动序列 的映射。 */
 export function buildActivityMap(
   agents: readonly Agent[],
   buckets: readonly AgentActivityBucket[],
   now: number,
 ): Map<string, AgentActivity> {
-  // Group buckets by agent once so per-agent derivation is O(buckets) not
-  // O(agents × buckets).
+  // 桶先按 agent 分好组，让逐 Agent 推导是 O(buckets) 而不是 O(agents × buckets)。
   const bucketsByAgent = new Map<string, AgentActivityBucket[]>();
   for (const b of buckets) {
     const list = bucketsByAgent.get(b.agent_id);
@@ -118,10 +119,8 @@ export function buildActivityMap(
 }
 
 /**
- * Pure derivation: filter the workspace-wide buckets to one agent and
- * normalise to a fixed 30-element series ending at `now`. Exported for
- * unit-testing and direct reuse on surfaces that already have the
- * workspace-wide buckets in hand.
+ * 纯推导：把工作区级桶过滤成单个 Agent 的，并归一化成以 `now` 结尾的固定
+ * 30 元素序列。导出供单元测试，以及已手握工作区级桶的界面直接复用。
  */
 export function deriveAgentActivity(
   buckets: readonly AgentActivityBucket[],
@@ -133,8 +132,8 @@ export function deriveAgentActivity(
     failed: 0,
   }));
 
-  // Newest slot is the start of "today" in local time; we walk back DAYS
-  // slots so index 0 = oldest, index DAYS-1 = today.
+  // 最新的槽位是本地时间"今天"的开头；往回铺 DAYS 个槽，
+  // 于是下标 0 = 最旧、下标 DAYS-1 = 今天。
   const today = startOfDay(now);
 
   for (const b of buckets) {
@@ -161,13 +160,11 @@ export function deriveAgentActivity(
 }
 
 /**
- * Take the trailing N buckets and roll up totals over them. This is the
- * single entry point both surfaces (list + detail) read through, so the
- * numbers can never disagree with the bars they label.
+ * 取活动序列的尾部 N 个桶并对它们汇总。这是两个界面（列表 + 详情）共用的唯一入口，
+ * 数字永远不会与它们标注的柱子不一致。
  *
- * `windowDays` is clamped to the available bucket count, so passing a
- * value larger than `activity.buckets.length` returns the full series
- * rather than an out-of-range slice.
+ * `windowDays` 会夹到可用桶数以内，因此传大于 `activity.buckets.length` 的值
+ * 返回完整序列而不是越界切片。
  */
 export function summarizeActivityWindow(
   activity: AgentActivity | undefined,
@@ -178,8 +175,7 @@ export function summarizeActivityWindow(
     Math.max(0, windowDays),
     activity.buckets.length,
   );
-  // `slice(-0)` returns the full array (JS quirk: -0 === 0), so guard
-  // explicitly when no window is requested.
+  // `slice(-0)` 会返回整个数组（JS 怪癖：-0 === 0），所以不取窗口时要显式挡住。
   const slice =
     safeWindow === 0 ? [] : activity.buckets.slice(-safeWindow);
   let totalRuns = 0;
@@ -192,10 +188,9 @@ export function summarizeActivityWindow(
 }
 
 function startOfDay(ts: number): number {
-  // Local-time day boundary. The back-end truncates to UTC midnight, but
-  // the user's mental model is "today/yesterday in the timezone they're
-  // looking at"; using local matches that and keeps "today" stable across
-  // a working session even when buckets cross UTC midnight.
+  // 本地时间的天界。后端按 UTC 午夜截断，但用户的心智模型是"他正看着的那个时区
+  // 里的今天/昨天"；用本地时间与之相符，且即使在桶跨过 UTC 午夜时也让"今天"在
+  // 一场工作会话里保持稳定。
   const d = new Date(ts);
   d.setHours(0, 0, 0, 0);
   return d.getTime();

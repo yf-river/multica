@@ -1,5 +1,7 @@
 "use client";
 
+// 问题界面的数据层 hook：按视图模式取数并统一过滤——状态/分组分支（服务端数据）或
+// 客户端窗口；再派生出各视图需要的 issues、泳道、甘特行、可见/隐藏列、子进度表等。
 import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Issue, Project } from "@multica/core/types";
@@ -28,37 +30,31 @@ const EMPTY_CHILD_PROGRESS = new Map<string, ChildProgress>();
 const EMPTY_PROJECTS: Project[] = [];
 
 /**
- * The rows the gantt canvas actually draws, on top of the shared filters.
+ * 甘特画布真正绘制的行：在共享筛选之上，还要满足甘特自己的两条规则——一行得有日期
+ * 才能被摆放，以及除非用户要求否则隐藏已完成工作。数据源只交付已排期的问题
+ * （服务端 `scheduled=true`），但一行仍可能没带日期到达——比如刚被 WS 驱动的乐观补丁
+ * 清掉 start_date / due_date、正在等缓存重拉——所以日期检查保持防御性。
  *
- * The canvas adds two rules of its own: a row needs a date to be placed, and
- * completed work is hidden unless the user asks for it. The data source only
- * delivers scheduled issues (server-side `scheduled=true`), but a row can
- * still arrive without a date — e.g. a WS-driven optimistic patch that just
- * cleared start_date / due_date and is waiting for the cache to refetch — so
- * the date check stays defensive.
- *
- * These rules live HERE rather than privately inside GanttView so the header
- * chip can narrow the same set the canvas draws. A view that filters its own
- * rows in secret is exactly how the chip's count drifted from the list in the
- * first place (MUL-4884); duplicating the rules in both places would just
- * reintroduce the drift with extra steps.
+ * 这两条规则放在这里而不是 GanttView 内部私藏，是为了让表头 chip 能收敛到和画布相同的
+ * 集合。一个视图自己偷偷过滤行，正是 chip 计数当初和列表漂移的根源（MUL-4884）；
+ * 在两个地方重复这套规则只是换个姿势重新引入漂移。
  */
 function ganttCanvasRows(issues: Issue[], showCompleted: boolean): Issue[] {
   const dated = issues.filter((i) => i.start_date || i.due_date);
   if (showCompleted) return dated;
-  // By CATEGORY: a custom status in done/cancelled is completed work, and
-  // "show completed" has to hide it too. (MUL-6243)
+  // 按「分类」判断：处于 done/cancelled 分类的自定义状态同样是已完成工作，
+  // 「显示已完成」也得把它藏起来。（MUL-6243）
   return dated.filter((i) => !issueBehavesAsAny(i, ["done", "cancelled"]));
 }
 
+/** useIssueSurfaceData 返回的问题界面数据。 */
 export interface IssueSurfaceData {
   surfaceIssues: Issue[];
   projectIssues: Issue[];
   issues: Issue[];
   swimlaneIssues: Issue[];
-  /** Gantt only: the canvas rows the agents-working filter would leave on
-   *  screen. `undefined` on every other view mode, where the header chip
-   *  sources its count from the `working_agents` server facet instead. */
+  /** 仅甘特：agents-working 筛选会留在屏幕上的画布行。其他视图模式为 `undefined`，
+   *  它们的表头 chip 从服务端 `working_agents` facet 取计数。 */
   ganttWorkingScopeIssues: Issue[] | undefined;
   filteredGanttIssues: Issue[];
   ganttIssues: Issue[];
@@ -77,19 +73,22 @@ export interface IssueSurfaceData {
   }>;
   isLoading: boolean;
   /**
-   * The catalog request a CUSTOM status filter depends on failed. The filter
-   * cannot be honoured without it, so the surface shows a retryable error
-   * rather than an unexplained empty board. (MUL-6243)
+   * 自定义状态筛选所依赖的目录请求失败。没有它筛选无法兑现，
+   * 所以 surface 显示一个可重试的错误，而不是一个无法解释的空看板。（MUL-6243）
    */
   isStatusCatalogError: boolean;
-  /** The window's data is being revalidated while the previous snapshot is
-   *  shown as a placeholder (sort/date change, or any grouped-board filter
-   *  change). Drives the header's deferred refresh indicator — content stays
-   *  put, so this is NOT a loading state. */
+  /** 当前窗口的数据正在被重校验，同时把上一次的快照作为占位展示（排序/日期变化，
+   *  或任何分组看板的筛选变化）。驱动表头的延迟刷新指示——内容保持在原地，
+   *  所以这不是一个加载态。 */
   isRefreshing: boolean;
   isEmpty: boolean;
 }
 
+/**
+ * 问题界面的数据 hook：根据视图模式把「原始数据 + 全部筛选」变换成各视图要消费的
+ * 派生数据（issues、泳道、甘特行、可见/隐藏列、进度/项目表等）。
+ * 服务端分支数据（状态/分组）直接透传，客户端窗口数据在此统一套用筛选。
+ */
 export function useIssueSurfaceData({
   wsId,
   queryPlan,
@@ -123,14 +122,14 @@ export function useIssueSurfaceData({
   usesTable: boolean;
   serverStatusBranches: IssueStatusBranches;
   serverGroupBranches: IssueGroupBranches;
-  /** Gantt's "show completed" display toggle. The canvas hides done/cancelled
-   *  rows without it, so the working scope has to honour it too. */
+  /** 甘特的「显示已完成」显示开关。没有它画布会隐藏 done/cancelled 行，
+   *  所以「工作中范围」也得遵守它。 */
   ganttShowCompleted: boolean;
   statusFilters: IssueStatus[];
   hiddenStatusCategories: IssueStatusCategory[];
-  /** A custom status filter is waiting on the catalog — hold loading. */
+  /** 自定义状态筛选正在等目录——保持加载态。 */
   statusFilterPending: boolean;
-  /** The catalog failed, so a custom status filter cannot be honoured. */
+  /** 目录失败，自定义状态筛选无法兑现。 */
   statusFilterError: boolean;
   priorityFilters: IssueFilterState["priorityFilters"];
   assigneeFilters: IssueFilterState["assigneeFilters"];
@@ -141,7 +140,7 @@ export function useIssueSurfaceData({
   includeNoProject: boolean;
   labelFilters: string[];
   propertyFilters: Record<string, PropertyFilterValue[]>;
-  /** Distinct running-task issue ids projected by `/api/working-agents`. */
+  /** 由 `/api/working-agents` 投影出的、有任务在跑的问题 id 集合。 */
   workingIssueIDs: ReadonlySet<string>;
   showSubIssues: boolean;
   loadProjects: boolean;
@@ -160,11 +159,9 @@ export function useIssueSurfaceData({
       ? serverGroupBranches.issues
       : EMPTY_ISSUES;
 
-  // `cancelled` is a first-class default status (MUL-4290): it is fetched into
-  // the cache like every other status and flows straight through to list /
-  // board / swimlane columns, header facet counts, batch selection, and the
-  // isEmpty check. The status filter narrows this set like any other status —
-  // it no longer unlocks an otherwise-hidden bucket.
+  // `cancelled` 是一等公民的默认状态（MUL-4290）：它和别的状态一样被拉进缓存、
+  // 直接流经 list / board / swimlane 列、表头 facet 计数、批量选中和 isEmpty 判断。
+  // 状态筛选像筛其他状态一样筛它——它不再解锁一个本被藏起来的分桶。
   const ganttIssues = ganttIssuesQuery.data ?? EMPTY_ISSUES;
   const surfaceIssues = usesGantt
     ? ganttIssues
@@ -258,19 +255,17 @@ export function useIssueSurfaceData({
     [baseFilterState],
   );
 
-  // The Gantt canvas rows the agents-working filter would leave on screen —
-  // i.e. exactly what you get when you click the header chip in Gantt.
+  // 甘特里 agents-working 筛选会留在屏幕上的画布行——也就是你在甘特里点表头 chip
+  // 时看到的那一批。
   //
-  // Gantt is the one surface whose membership is NOT server-owned: it draws
-  // from a fully materialized scheduled-issue window, and its canvas
-  // projection (scheduled + dated + showCompleted) cannot be expressed in the
-  // Table query spec. So the header chip cannot source its count from the
-  // `working_agents` server facet here, and derives it from this set instead.
+  // 甘特是唯一一个会员不由服务端持有的 surface：它从一份完全物化的已排期问题窗口
+  // 里画，而它的画布投影（scheduled + dated + showCompleted）无法表达成 Table 查询
+  // spec。所以表头 chip 在这里不能从服务端 `working_agents` facet 取计数，只能从这
+  // 个集合推导。
   //
-  // Every other view mode (list / board / swimlane / table) resolves the same
-  // question through that facet, against the identical scope + filters the
-  // rows come from. Rebuilding a second complete issue window client-side to
-  // decorate the chip is what the server facet exists to avoid.
+  // 其他每种视图模式（list / board / swimlane / table）都通过那个 facet 解析同一
+  // 个问题——针对与行同源的 scope + 筛选。为了装饰 chip 而在客户端重建一整份问题窗口，
+  // 正是服务端 facet 存在要避免的事。
   const ganttWorkingScopeIssues = useMemo(() => {
     if (!usesGantt) return undefined;
     return ganttCanvasRows(
@@ -337,17 +332,14 @@ export function useIssueSurfaceData({
   const catalog = useIssueStatuses(wsId);
 
   const visibleStatuses = useMemo<IssueStatusCategory[]>(() => {
-    // Board columns are CATEGORIES, not status keys — adding a custom status
-    // must never add a column. Two independent things narrow them: hidden
-    // columns (display state) and the status filter, which is expressed in
-    // concrete KEYS and so has to be mapped back to the columns those keys land
-    // in. Default view shows every category, `cancelled` last (its canonical
-    // position in ALL_STATUSES). (MUL-6243)
+    // 看板列是「分类」，不是状态 key——加一个自定义状态绝不能加一列。有两条独立的东西
+    // 会收窄它们：隐藏列（显示状态），以及以具体 KEY 表达、因此必须映射回那些 KEY 所
+    // 落列的状态筛选。默认视图展示全部分类，`cancelled` 排最后（它在 ALL_STATUSES
+    // 里的规范位置）。（MUL-6243）
     const resolved =
       statusFilters.length > 0 ? statusFilterColumns(statusFilters, catalog) : null;
-    // Pending/error contribute no narrowing here; the surface's loading and
-    // error states (statusFilterPending / statusFilterError) are what stop it
-    // rendering as though the empty result were the answer.
+    // pending/error 在这里不产生任何收窄；surface 的加载与错误态
+    // （statusFilterPending / statusFilterError）才是拦住它把空结果当真去渲染的东西。
     const selected = resolved?.state === "resolved" ? resolved.columns : null;
     return ALL_STATUSES.filter(
       (s) =>
@@ -356,9 +348,8 @@ export function useIssueSurfaceData({
     );
   }, [statusFilters, hiddenStatusCategories, catalog]);
 
-  // Hidden columns are the lifecycle statuses not currently visible, so
-  // `cancelled` participates in the board show/hide controls exactly like the
-  // rest of the statuses.
+  // 隐藏列是当前不可见的生命周期状态，所以 `cancelled` 跟其余状态一样参与看板的
+  // 显示/隐藏控制。
   const hiddenStatuses = useMemo<IssueStatusCategory[]>(
     () => ALL_STATUSES.filter((s) => !visibleStatuses.includes(s)),
     [visibleStatuses],
@@ -393,10 +384,9 @@ export function useIssueSurfaceData({
     ],
   );
 
-  // `statusFilterPending` holds the surface in loading while a CUSTOM status
-  // filter waits for the catalog to say which column it belongs to. Without it
-  // the surface reported "loaded, zero results" — an empty board with no
-  // spinner — for the whole cold-load window. (MUL-6243)
+  // `statusFilterPending` 让 surface 在自定义状态筛选等着目录说清它属于哪列时保持加载。
+  // 没有它，surface 会报告「已加载、零结果」——整个冷加载窗口里一片空看板、连 spinner
+  // 都没有。（MUL-6243）
   const isLoading =
     statusFilterPending ||
     (serverGroupBranches.enabled
@@ -407,9 +397,8 @@ export function useIssueSurfaceData({
           ? serverStatusBranches.isLoading
           : false);
 
-  // Placeholder-backed revalidation of the ACTIVE query only. First loads are
-  // isLoading (no previous data to place-hold); gantt has no placeholder
-  // phase (its key carries no sort/filter).
+  // 只对「当前激活的查询」做占位式重校验。首次加载走 isLoading（没有旧数据可占位）；
+  // 甘特没有占位阶段（它的 key 不携带排序/筛选）。
   const isRefreshing = serverGroupBranches.enabled
     ? serverGroupBranches.isRefreshing
     : serverStatusBranches.enabled
@@ -433,14 +422,11 @@ export function useIssueSurfaceData({
     resolveTableExportLookups,
     isLoading,
     isRefreshing,
-    // isEmpty asserts "this window has no issues". The board/list/swimlane
-    // data IS the full window, so an empty result proves it. The gantt query
-    // is a scheduled-only PROJECTION — an empty subset cannot prove the
-    // window is empty, so never claim it (same "uncertain → don't assert"
-    // rule as surface membership). GanttView renders its own accurate
-    // "no scheduled issues" empty state instead of the generic create-issue
-    // one. Table owns its own branch-level loading, empty and retry states,
-    // so this shared legacy surface projection never asserts Table empty.
+    // isEmpty 断言「这个窗口里没有问题」。board/list/swimlane 的数据就是完整窗口，
+    // 所以空结果足以证明。甘特查询只是已排期问题的投影——空子集证明不了窗口为空，
+    // 所以绝不下这个断言（和「不确定 → 不下断言」的会员规则同源）。GanttView 渲染自己
+    // 准确的「没有已排期问题」空态，而不是通用的创建问题空态。Table 自己管理分层的
+    // 加载/空/重试状态，所以这份共享的旧 surface 投影绝不断言 Table 为空。
     isEmpty:
       !isLoading &&
       !statusFilterError &&

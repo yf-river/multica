@@ -9,15 +9,16 @@ import { workspaceListOptions } from "@multica/core/workspace/queries";
 import { CliInstallInstructions, OnboardingFlow } from "@multica/views/onboarding";
 
 /**
- * Creating a workspace runs the onboarding flow, entered at the workspace
- * step. A second workspace needs everything the first one needed — a runtime
- * connected to it, and its own Mika — so the only honest difference is that
- * this member has already met the product. Running one flow is what keeps the
- * two paths from drifting apart.
+ * 新建 workspace 的路由：复用 onboarding 流程，直接从 workspace 创建步骤进入。
  *
- * `/onboarding` keeps its own guard and stays first-run only; this route is
- * the explicit already-onboarded entry point, so nothing has to bypass that
- * guard.
+ * 创建 workspace 会走一遍 onboarding 流程，入口落在 workspace 那一步。
+ * 第二个 workspace 需要的东西跟第一个完全一样——连一个 runtime、还有它自己的 Mika——
+ * 所以唯一的区别就是这位成员已经认识产品了。共用同一套流程才能让两条路径不会各自漂移。
+ *
+ * `/onboarding` 保留自己的守卫、只服务首次用户；本路由是「已 onboard 用户」的显式入口，
+ * 因此无需绕过那个守卫。
+ *
+ * @returns 新建 workspace 的 onboarding 页面。
  */
 export default function Page() {
   const router = useRouter();
@@ -34,9 +35,8 @@ export default function Page() {
 
   if (isLoading || !user) return null;
 
-  // Cancel goes to the root path — the workspace layout redirects from there
-  // to the user's default workspace. Only offered when there is somewhere to
-  // return to; a user with no workspaces at all has to finish.
+  // 取消时去根路径——workspace 布局会从那里再重定向到用户的默认 workspace。
+  // 只有「有地方可回」时才提供取消；一个 workspace 都没有的用户必须走完流程。
   const onCancel =
     wsList.length > 0 ? () => router.push(paths.root()) : undefined;
 

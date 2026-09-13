@@ -1,19 +1,15 @@
-package wecom
-
-// senders_registry.go — a small process-wide map from installation_id to
-// live wsSender. wecomChannel.Connect adds an entry on entry and clears it
-// on exit; OutboundReplier and Outbound look up by installation id to push
-// aibot_send_msg over the same socket the inbound loop owns (aibot has no
-// REST outbound path; every write goes over the WebSocket). wecomChannel.Send
-// is not a reader — it returns ErrSendNotSupported.
+// senders_registry.go —— 一张进程级的「installation_id → 存活 wsSender」
+// 小映射表。wecomChannel.Connect 在进入时登记、退出时清除；OutboundReplier
+// 和 Outbound 按 installation id 查表，把 aibot_send_msg 压进入站循环所持有
+// 的同一条 socket（aibot 没有 REST 出站通道，所有写出都走 WebSocket）。
+// wecomChannel.Send 不是读者——它直接返回 ErrSendNotSupported。
 //
-// Why a registry rather than storing the sender on wecomChannel:
-// OutboundReplier is created once at boot with the shared engine.Router
-// and does not have per-installation Channel handles. When the engine
-// invokes Replier.Reply, it passes engine.ResolvedInstallation carrying
-// the installation id, not the Channel. The registry is the seam that
-// lets the boot-time Replier reach the per-installation live connection
-// without threading the Channel through the engine.
+// 为什么用注册表而不是把 sender 挂在 wecomChannel 上：OutboundReplier 在
+// 启动时就用共享的 engine.Router 建好了，它没有按安装划分的 Channel 句柄。
+// 引擎调 Replier.Reply 时传入的是 engine.ResolvedInstallation，里面只有
+// installation id，没有 Channel。这张注册表就是中间的接缝：让启动时就存在的
+// Replier 够得到每条安装的存活连接，而不用把 Channel 一路穿针引线进引擎。
+package wecom
 
 import (
 	"sync"
@@ -23,9 +19,9 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
-// sendersRegistry is a goroutine-safe installation_id → wsSender map.
-// SendersRegistry is exported only so boot can mint one before the relay's
-// shard readers start; every method stays unexported.
+// sendersRegistry 是一张 goroutine 安全的 installation_id → wsSender 映射。
+// SendersRegistry 之所以要导出，只是为了让启动流程能在中继的分片读者启动前
+// 先造出一张；其余方法一律不导出。
 type SendersRegistry = sendersRegistry
 
 type sendersRegistry struct {
@@ -33,15 +29,14 @@ type sendersRegistry struct {
 	byKey map[string]*wsSender
 }
 
-// newSendersRegistry constructs an empty registry.
+// newSendersRegistry 构造一张空注册表。
 func newSendersRegistry() *sendersRegistry {
 	return &sendersRegistry{byKey: make(map[string]*wsSender)}
 }
 
-// NewSendersRegistry is the public constructor boot uses to inject the
-// same registry into both the wecom ChannelDeps (writer side) and the
-// OutboundReplier (reader side). Kept exported so router.go can wire it
-// without importing an unexported type.
+// NewSendersRegistry 是公开构造函数，启动时用它把同一张注册表同时注入
+// wecom 的 ChannelDeps（写侧）和 OutboundReplier（读侧）。保持导出是为了
+// router.go 接线时不必去 import 一个未导出类型。
 func NewSendersRegistry() *SendersRegistry { return newSendersRegistry() }
 
 func (r *sendersRegistry) set(id pgtype.UUID, s *wsSender) {
@@ -50,18 +45,16 @@ func (r *sendersRegistry) set(id pgtype.UUID, s *wsSender) {
 	r.byKey[util.UUIDToString(id)] = s
 }
 
-// clear removes this installation's entry, but only if s is still the sender
-// registered under it. A generation that is shutting down must not evict its
-// own successor: Connect installs on entry and clears on a defer, so when a
-// lease flips while the old socket is still draining, the two overlap and the
-// loser's defer runs after the winner's set. Deleting unconditionally there
-// leaves the registry empty while a healthy connection is up, and every
-// outbound push resolves to nil — the bot goes silent with nothing in the log
-// to say why, until the next reconnect happens to re-register.
+// clear 移除该安装的条目，但仅当 s 仍是这个 id 下登记的 sender 时才删。
+// 正在退出的旧一代连接不能把接替自己的新连接挤掉：Connect 在进入时登记、
+// 用 defer 在退出时清除，所以当租约在旧 socket 仍排空期间发生翻转时，新旧
+// 两会短暂重叠，输家的 defer 会在赢家 set 之后才跑。此时若无条件 delete，
+// 注册表会在一条健康连接尚在的情况下被清空，所有出站推送都解析成 nil——
+// 机器人静默哑火，日志里却没有任何线索，直到下次重连碰巧重新登记。
 //
-// dingtalk_channel.go:74 guards the same handover with
-// `CompareAndSwap(c, nil)`; slack and lark have no registry at all because
-// their outbound is REST. WeCom was the one platform deleting unconditionally.
+// dingtalk_channel.go:74 用 `CompareAndSwap(c, nil)` 守护同样的交接；slack
+// 和飞书根本没有注册表，因为它们的出站是 REST。WeCom 是唯一曾经无条件删除
+// 的平台。
 func (r *sendersRegistry) clear(id pgtype.UUID, s *wsSender) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -72,9 +65,9 @@ func (r *sendersRegistry) clear(id pgtype.UUID, s *wsSender) {
 	delete(r.byKey, key)
 }
 
-// get returns the live wsSender for an installation, or nil when no
-// connection is currently held. Callers MUST treat nil as "connection not
-// ready" — Supervisor may be mid-reconnect after a lease flip.
+// get 返回某条安装当前存活的 wsSender；没有任何连接被持有时返回 nil。
+// 调用方必须把 nil 当作「连接未就绪」——Supervisor 可能正处在租约翻转后的
+// 重连中。
 func (r *sendersRegistry) get(id pgtype.UUID) *wsSender {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

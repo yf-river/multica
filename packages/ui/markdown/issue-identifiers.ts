@@ -6,60 +6,57 @@ import {
   rangesOverlap,
 } from './linkify'
 
+// 本文件负责把“裸 issue 编号”（如 MUL-123）自动改写成 mention 链接，供 markdown 预处理阶段调用。
 /**
- * Linear-style bare issue identifier autolinking for markdown preprocessing.
+ * Linear 风格的裸 issue 编号自动链接，用于 markdown 预处理。
  *
- * Rewrites bare issue identifiers like `MUL-123` / `TES-1` into canonical
- * mention links `[MUL-123](mention://issue/MUL-123)`, so the shared markdown
- * `a`/mention renderers can route them to a navigable issue chip.
+ * 把 `MUL-123` / `TES-1` 这类裸编号改写成规范的 mention 链接
+ * `[MUL-123](mention://issue/MUL-123)`，这样共享的 markdown `a`/mention 渲染器
+ * 就能把它们路由成可跳转的 issue 标签。
  *
- * This module is intentionally PURE (packages/ui): it has no workspace or API
- * access. It only DETECTS candidate identifiers — whether one resolves to a
- * real issue in the current workspace is decided later, in the views layer,
- * via an exact-match lookup. A candidate that resolves to nothing renders as
- * plain text, so over-detection here is harmless (at most one deduped lookup).
- * We still skip code, existing links, URLs, and file/path tokens so non-prose
- * content is never rewritten.
+ * 本模块刻意保持纯函数（packages/ui 层）：不访问工作区或 API。它只负责“检测”
+ * 候选编号——某个编号是否对应当前工作区里真实存在的 issue，交给 views 层通过
+ * 精确匹配查询来判定。解析不到的候选会渲染成普通文本，所以这里检测偏多是
+ * 无害的（最多一次去重查询）。我们仍会跳过代码、已有链接、URL 和文件/路径
+ * token，保证非正文内容永不被改写。
  *
- * NOTE: the `mention://issue/<id>` transport is reused for both real UUID
- * mentions and bare identifiers. Render sites tell them apart by the shape of
- * the id segment (`isIssueIdentifier`) — a UUID never matches the identifier
- * pattern, so the dispatch is unambiguous.
+ * 注意：`mention://issue/<id>` 这个传输形式同时用于真实 UUID mention 和裸编号。
+ * 渲染端靠 id 段的形状（isIssueIdentifier）区分——UUID 永远不会匹配编号模式，
+ * 所以分发是无歧义的。
  */
 
-// Detection form (global). Prefix is one uppercase letter followed by uppercase
-// alphanumerics, then `-<number>`. Case-sensitive on purpose: lowercase
-// `abc-1` in prose is almost never an issue reference, and matching it would
-// linkify ordinary hyphenated words. The look-around excludes alphanumerics,
-// `_`, and `-` on both sides so we only match standalone tokens.
+// 检测用正则（全局匹配）。前缀是一个大写字母接一串大写字母数字，再跟 `-<数字>`。
+// 刻意区分大小写：正文里的小写 `abc-1` 几乎不会是 issue 引用，匹配它反而会把
+// 普通的连字符单词错误地变成链接。两侧的环视排除了字母数字、`_` 和 `-`，
+// 确保只匹配独立 token。
 const IDENTIFIER_RE = /(?<![A-Za-z0-9_-])([A-Z][A-Z0-9]*-\d+)(?![A-Za-z0-9_-])/g
 
-// Anchored single-token form — used by render sites to distinguish a bare
-// identifier (carried through `mention://issue/<identifier>`) from a real UUID.
+// 锚定的单 token 形式——渲染端用它区分裸编号（经 `mention://issue/<identifier>`
+// 携带）和真实 UUID。
 export const ISSUE_IDENTIFIER_PATTERN = /^[A-Z][A-Z0-9]*-\d+$/
 
 /**
- * True when `value` is a bare issue identifier (e.g. "MUL-123"). A UUID never
- * matches (lowercase hex, four dashes), so this cleanly separates autolinked
- * identifiers from real mention UUIDs at render time.
+ * 当 `value` 是裸 issue 编号（如 "MUL-123"）时返回 true。UUID 永远不会匹配
+ * （小写十六进制、四个短横），因此能在渲染时干净地把自动链接的编号和真实
+ * mention UUID 区分开。
  */
 export function isIssueIdentifier(value: string): boolean {
   return ISSUE_IDENTIFIER_PATTERN.test(value)
 }
 
 /**
- * Rewrite bare issue identifiers into canonical `mention://issue/<identifier>`
- * markdown links. Runs BEFORE `preprocessLinks`/`preprocessFileCards` so those
- * passes see the rewritten spans as existing markdown links and skip them.
+ * 把裸 issue 编号改写成规范的 `mention://issue/<identifier>` markdown 链接。
+ * 必须在 `preprocessLinks`/`preprocessFileCards` 之前运行，让这些步骤把改写后的
+ * 片段当作已存在的 markdown 链接而跳过。
  *
- * Skipped contexts (never rewritten):
- *   - fenced code blocks, inline code, and math (findCodeRanges)
- *   - existing markdown links / images (findMarkdownLinkRanges)
- *   - detected URLs / emails / file paths (detectLinks)
- *   - dotted filename tails like `ABC-123.ts` and path segments like `FOO-1/bar`
+ * 跳过的上下文（永不改写）：
+ *   - 围栏代码块、行内代码和数学公式（findCodeRanges）
+ *   - 已有的 markdown 链接 / 图片（findMarkdownLinkRanges）
+ *   - 已检测到的 URL / 邮箱 / 文件路径（detectLinks）
+ *   - 带点的文件名后缀如 `ABC-123.ts`、路径片段如 `FOO-1/bar`
  */
 export function preprocessIssueIdentifiers(text: string): string {
-  // Cheap early-out: no `<UPPER>…-<DIGIT>` shape at all.
+  // 快速早退：完全没有 `<大写>…-<数字>` 形态就直接返回。
   if (!/[A-Z][A-Z0-9]*-\d/.test(text)) return text
 
   const codeRanges = findCodeRanges(text)
@@ -78,23 +75,21 @@ export function preprocessIssueIdentifiers(text: string): string {
     const end = start + identifier.length
     const range = { start, end }
 
-    // Inside fenced/inline code or math.
+    // 在围栏/行内代码或数学公式里。
     if (isInsideCode(start, codeRanges)) continue
-    // Inside an existing markdown link/image (label OR destination).
+    // 在已有 markdown 链接/图片里（标签或目标地址）。
     if (linkRanges.some((r) => rangesOverlap(range, r))) continue
-    // Inside a detected URL / email / file path.
+    // 在已检测到的 URL / 邮箱 / 文件路径里。
     if (detectedLinks.some((l) => rangesOverlap(range, l))) continue
 
-    // Dotted continuation such as `ABC-123.ts` (filename) or `ABC-123.tar.gz`:
-    // a `.` immediately followed by an alphanumeric means the token is part of
-    // a larger dotted name. A trailing `.` before whitespace/EOL is a sentence
-    // end ("see MUL-1.") and stays linkable.
+    // 带点后缀如 `ABC-123.ts`（文件名）或 `ABC-123.tar.gz`：`.` 后面紧跟字母数字
+    // 说明这个 token 是更大点分名字的一部分。而空白/行尾前的句号是句子结尾
+    // （如 "see MUL-1."），仍应可点击。
     const after = text[end]
     if (after === '.' && /[A-Za-z0-9]/.test(text[end + 1] ?? '')) continue
-    // Path segment such as `FOO-1/bar` or `foo/BAR-1` — a `/` on either side
-    // signals a path rather than a standalone reference.
+    // 路径片段如 `FOO-1/bar` 或 `foo/BAR-1`——任一侧有 `/` 说明是路径而非独立引用。
     if (after === '/' || text[start - 1] === '/') continue
-    // Embedded in a dotted name on the left (`file.MUL-1`).
+    // 左侧嵌在点分名字里（`file.MUL-1`）。
     if (text[start - 1] === '.') continue
 
     result += text.slice(lastIndex, start)

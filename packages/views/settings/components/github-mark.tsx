@@ -1,6 +1,11 @@
-// lucide-react v1.x dropped brand marks (including Github). Inline SVG of
-// the official GitHub octocat mark so the GitHub settings tab keeps a
-// recognizable icon in the sidebar and section headers.
+// 本文件提供 GitHub 品牌图标组件，用于设置页侧边栏和分区标题里展示 GitHub 的可识别图标。
+
+// lucide-react v1.x 移除了品牌图标（包括 Github）。这里内联官方 GitHub 章鱼猫
+// 标记的 SVG，让 GitHub 设置标签页在侧边栏和分区标题里仍有一个可识别的图标。
+/**
+ * GitHub 品牌图标。lucide-react 不再内置品牌图标，因此用内联 SVG 展示官方章鱼猫标记。
+ * @param props.className - 可选，附加到 svg 上的 CSS 类名，用于控制尺寸与颜色。
+ */
 export function GitHubMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="currentColor">

@@ -1,5 +1,12 @@
 "use client";
 
+// 本文件：TableView —— 问题列表的"表格视图"。
+// 负责渲染可排序/可拖拽调序/可显隐列的表格，支持服务端分组（按状态/负责人/项目/
+// 自定义属性）与父子层级、按分支无限分页 + 实时刷新去抖、单元内联编辑（选择器 /
+// 标题重命名）、行选择（含 shift 连选）、CSV 导出、虚拟化行渲染。
+// 核心技巧：表格单元组件必须是模块级稳定引用（渲染上下文走 table.options.meta），
+// 否则任何工作区刷新都会重挂载所有单元格、关闭用户刚打开的选择器（MUL-5108）。
+
 import { useStatusLabel } from "../utils/status-label";
 import {
   useCallback,
@@ -150,8 +157,7 @@ import type { ChildProgress } from "./list-row";
 import { ListLoadMoreFooter } from "./list-load-more-footer";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 
-// Enough placeholder rows to cover a typical viewport; the virtualizer only
-// mounts what fits, so overshooting costs nothing.
+// 足够覆盖典型视口的占位行数；虚拟化只挂载放得下的行，多铺几行零成本。
 const SKELETON_ROW_COUNT = 12;
 
 const SELECT_COLUMN_ID = "__select";
@@ -220,12 +226,11 @@ function sameStringArray(left: string[], right: string[]) {
   );
 }
 
-/** Rebase the branch graph synchronously when a query changes.
+/** 查询变化时同步地"重挂"分支图。
  *
- * Filters/search/sort keep the same group/hierarchy structure, so preserving
- * branch identities while resetting every cursor to the head lets React Query
- * show the previous rows during the new request. A real structure change
- * (group kind or hierarchy) discards incompatible group/parent identities. */
+ * 筛选/搜索/排序不会改变分组与层级结构，因此保留分支身份、只把所有游标重置回
+ * 头部，就能让 React Query 在新请求进行期间继续显示旧行。真正改了结构
+ * （分组方式或层级开关）时才丢弃不兼容的分组/父级身份。 */
 function rebaseServerBranchState(
   previous: ServerBranchState,
   identity: string,
@@ -384,21 +389,19 @@ function SortableColumnHeader({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: columnKey, disabled: !sortable });
   const active = sortField === sortBy;
-  // Any column in flight, not only this one: the neighbours shift to open a
-  // gap, and each is clipped by its own cell just the same.
+  // 只要有任何列在拖动（不限于本列）：相邻列会让位腾出缝隙，每列都同样被自己的
+  // 单元格裁剪着。
   const isReordering = useDndContext().active != null;
   const nodeRef = useRef<HTMLDivElement | null>(null);
 
-  // The cell clips its own content, which is what made a dragged column look
-  // like it vanished rather than travelled. The clip only earns its keep at
-  // rest, capping a label wider than its column, so it is lifted for the length
-  // of a reorder and the column in hand is raised over its neighbours.
+  // 单元格默认裁剪自身内容——这正是拖拽中的列看起来"消失"而非"跟着走"的原因。
+  // 这种裁剪只在静止时有意义（限制比列还宽的标签），所以整段重排期间暂时放开，
+  // 并让被拖的列浮到相邻列之上。
   //
-  // Only overflow and stacking are touched. Transforming the <th> itself would
-  // carry the header's full height along, but `transform` on a table cell is a
-  // corner of the spec browsers take liberties with — Chromium lifts the cell
-  // out of the table's box model and its geometry stops matching the row. The
-  // wrapper below is padded out to the cell's size instead.
+  // 这里只动 overflow 与层叠。直接给 <th> 加 transform 会把表头整行高度一起带着
+  // 跑，而且对表格单元格的 `transform`，各浏览器实现得很随意——Chromium 会把该格
+  // 从表格盒模型里抽出来，几何位置便不再与行对应。所以下面这个 wrapper 用负内边距
+  // 补足到与单元格同尺寸，由它来充当"被移动"的那一块。
   useLayoutEffect(() => {
     const cell = nodeRef.current?.closest("th");
     if (!cell || !isReordering) return;
@@ -416,23 +419,19 @@ function SortableColumnHeader({
         nodeRef.current = node;
         setNodeRef(node);
       }}
-      // Horizontal travel only. dnd-kit's layout animation also hands back
-      // scaleX/scaleY — old rect over new rect — to tween an item into the
-      // shape of the slot it landed in. Between two tabs of equal width that
-      // ratio is 1 and never shows; between two columns it is not, so a 174px
-      // column swapping with a 96px one gets stretched to 1.8x on the way.
-      // Reordering columns changes no column's width, so there is nothing for
-      // a shape tween to say here. The move and the settle stay animated
-      // through `transition`.
+      // 只允许水平移动。dnd-kit 的布局动画还会回传 scaleX/scaleY——用"新矩形 ÷
+      // 旧矩形"把某个对象补间成它落位槽位的形状。两个等宽标签页之间该比例恒为 1、
+      // 永远看不出效果；但两列之间不是，一根 174px 的列与 96px 的列互换时会被拉到
+      // 1.8 倍。重排列不会改变任何列宽，因此这里的形状补间无话可说。
+      // 移动与落定仍由 `transition` 负责动画。
       style={{
         transform: transform ? `translate3d(${transform.x}px, 0, 0)` : undefined,
         transition,
       }}
-      // The wrapper spans the cell's own box — the negative margins undo the
-      // <th>'s padding and put it back inside — so it renders exactly as at
-      // rest while being what travels: a header-sized block rather than the
-      // line of text in it. Height is derived rather than fixed at h-8: the
-      // strip is taller than the cell's nominal height once row borders are in.
+      // wrapper 撑满单元格自身的盒子——负外边距抵消 <th> 的内边距、让它"住回"格子
+      // 里——所以静止时它渲染得分毫不差，动起来的就是它：一块表头大小的方块，而非
+      // 其中的一行文字。高度用派生值而非写死 h-8：一旦算上行边框，这条表头条会比
+      // 单元格的名义高度更高。
       className={cn(
         "group/header -mx-4 -my-2 flex h-[calc(100%+1rem)] min-w-0 items-center px-4",
         isDragging && "opacity-60",
@@ -488,6 +487,10 @@ function SortableColumnHeader({
   );
 }
 
+/**
+ * 表格"列选择器"下拉：可勾选系统列与工作区自定义属性列（标题列固定不可隐藏），
+ * 带搜索框过滤。列的显隐写回 view store（`toggleTableColumn`）。
+ */
 export function TableColumnPicker({
   properties,
   trigger,
@@ -579,6 +582,9 @@ export function TableColumnPicker({
   );
 }
 
+/**
+ * 表格顶部的搜索输入框：带放大镜图标，非空时显示一键清空按钮。
+ */
 export function TableIssueSearch({
   value,
   onChange,
@@ -622,6 +628,11 @@ export function TableIssueSearch({
   );
 }
 
+/**
+ * 表格标题格的内联渲染：默认显示编号 + 标题（可点击打开 issue），有子任务时带
+ * 折叠箭头与缩进；重命名状态下显示可提交的输入框。点击外部"保存并关闭"时需吞掉
+ * 那次 click（避免误触发行导航），详见下文 `gestureStartedWhileEditingRef` 注释。
+ */
 export function InlineTitle({
   row,
   editing,
@@ -635,12 +646,12 @@ export function InlineTitle({
   createSubIssueLabel,
 }: {
   row: Extract<IssueTableDisplayRow, { kind: "issue" }>;
-  /** Rename state is owned by the table (one editor at a time) so it also
-   *  survives cell remounts and drives the structure freeze. */
+  /** 重命名状态由表格统一持有（同一时刻只有一个编辑器在编辑），这样它既能跨越
+   *  单元格被虚拟化重挂载，又能驱动表格结构的"冻结"。 */
   editing: boolean;
   onEditingChange: (editing: boolean) => void;
   onUpdate: (updates: Partial<UpdateIssueRequest>) => void;
-  /** Navigate to the issue — clicking the title is the primary way IN. */
+  /** 进入 issue —— 点击标题是进入详情的主要入口。 */
   onOpen: (event: React.MouseEvent) => void;
   onCreateSubIssue: () => void;
   onToggleParent: () => void;
@@ -651,18 +662,15 @@ export function InlineTitle({
   const [draft, setDraft] = useState(row.issue.title);
   const editingRef = useRef(editing);
   editingRef.current = editing;
-  // True between the mousedown and the click of ONE gesture when that gesture
-  // began while the rename input was up. onBlur commits and flips `editing`
-  // off synchronously, before the click that caused the blur lands — so a
-  // guard keyed only on the current `editing` value is already gone by click
-  // time, and the commit-click bubbles into row navigation (and could hit the
-  // title's own open handler): clicking away to save a rename would also open
-  // the issue (MUL-5108 review R1#2).
+  // 当"某一次手势的 mousedown 到 click 之间"、且该手势开始时重命名输入框正开着时，
+  // 此标记为真。onBlur 会在引发 blur 的那次 click 落下之前同步提交并关掉 `editing`，
+  // 所以只以当前 `editing` 值为键的守卫到 click 时已经失效，那次"提交式点击"会冒泡
+  // 进行的导航（甚至命中标题自己的打开处理器）：点别处想保存重命名，结果把 issue
+  // 打开了 (MUL-5108 review R1#2)。
   const gestureStartedWhileEditingRef = useRef(false);
 
   useEffect(() => {
-    // Realtime/cache snapshots should refresh the passive label, but must not
-    // overwrite text the user is actively composing.
+    // 实时/缓存快照应刷新被动展示的标签，但绝不能覆盖用户正在输入的文本。
     if (!editingRef.current) setDraft(row.issue.title);
   }, [row.issue.title]);
 
@@ -677,11 +685,9 @@ export function InlineTitle({
     <div
       className="group/title relative flex min-w-0 items-center gap-1.5"
       style={{ paddingLeft: row.depth * 18 }}
-      // Record whether the gesture began while editing (mousedown fires before
-      // the blur that commits), then swallow that click in the capture phase —
-      // before it can reach the row (navigation) or the title's open handler.
-      // A gesture that began while NOT editing passes through untouched, so
-      // clicking dead space still opens the issue.
+      // 记录手势是否在编辑状态中开始（mousedown 先于触发提交的 blur），然后在捕获
+      // 阶段吞掉这次 click——别让它到达行（导航）或标题的打开处理器。
+      // 编辑状态外开始的手势原样放行，所以点击空白处依然能打开 issue。
       onMouseDownCapture={() => {
         gestureStartedWhileEditingRef.current = editingRef.current;
       }}
@@ -746,23 +752,16 @@ export function InlineTitle({
           >
             {row.issue.title}
           </button>
-          {/* Lifted out of the flex flow, the way SidebarMenuAction is. Laid
-            * out inline these two reserved ~40px of the title column for
-            * buttons that are invisible until hovered — and title is the
-            * column with the least room to spare. The gradient fades the text
-            * running underneath rather than letting the icons sit on top of
-            * it; the sidebar has no need for one because its labels are short,
-            * but a title runs to the cell's edge. focus-within keeps them
-            * reachable by keyboard, where hover never fires. */}
-          {/* The fade has to be whatever the cell is painted with at the
-            * moment the actions show, and a hovered row is not the resting
-            * background — pinned cells switch to the muted mix on hover, so
-            * the gradient follows. */}
-          {/* Keyed to the title cell, not the row: these act on the title,
-            * and offering them from anywhere along a row puts them under the
-            * pointer while it is somewhere else entirely. The fade still
-            * follows the row's hover colour, since that is what the cell is
-            * painted with when they appear. */}
+          {/* 像 SidebarMenuAction 那样把它从 flex 流里提出来。若按行内布局，这两个
+            * 按钮会为"悬停才可见"的状态白占标题列约 40px——而标题正是最挤的一列。
+            * 渐变让下方文字淡出，而不是让图标叠在文字上；侧栏不需要渐变是因为它的
+            * 标签都很短，标题却会一直延伸到格子边缘。focus-within 让它们在不发生
+            * 悬停时也能用键盘触达。 */}
+          {/* 渐变必须跟随单元格此刻被涂上的颜色；悬停中的行并非静止底色——固定列
+            * 在悬停时会切到 muted 混合色，所以渐变要跟着走。 */}
+          {/* 以标题格为锚而不是整行：这些按钮作用于标题；从行上任取一点都会把它们
+            * 放到"指针正在别处"的位置。渐变色仍跟随整行的悬停色，因为它们出现时
+            * 单元格正是被那种颜色涂着的。 */}
           <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center gap-0.5 bg-gradient-to-l from-background from-70% to-transparent pr-1 pl-8 opacity-0 transition-opacity group-hover:from-[color-mix(in_oklab,var(--muted)_50%,var(--background))] group-hover/title:pointer-events-auto group-hover/title:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
             <button
               type="button"
@@ -847,16 +846,18 @@ function LazyLabelCell({
   );
 }
 
-// Extends the <tr> props so the virtualizer's measuring ref and data-index,
-// which DataTable clones onto whatever renderRow returns, reach the element
-// instead of being absorbed here. A group header is shorter than a data row,
-// so it is exactly the kind of row the measurement exists for.
+// 继承 <tr> 的 props，让虚拟化器打在返回行上的测量 ref 与 data-index（DataTable 会
+// 把它们克隆到 renderRow 的返回值上）能落到元素上、而不是被这里吞掉。组头比数据行矮，
+// 所以它正是这套测量机制为之存在的行型。
 type IssueTableGroupRowProps = React.ComponentProps<"tr"> & {
   group: Extract<IssueTableDisplayRow, { kind: "group" }>;
   colSpan: number;
   onToggle: () => void;
 };
 
+/**
+ * 分组标题行：显示折叠箭头 + 分组名 + 计数，整行可点击切换折叠。
+ */
 export function IssueTableGroupRow({
   group,
   colSpan,
@@ -892,8 +893,8 @@ export function IssueTableGroupRow({
 function propertyDisplayValue(
   property: IssueProperty,
   value: IssuePropertyValue | undefined,
-  // Actor values are "<kind>:<uuid>" references; without a resolver they would
-  // export as raw ids, so callers that can export an actor column must pass one.
+  // actor 值是 "<kind>:<uuid>" 形式的引用；没有解析器它们会以原始 id 导出，
+  // 所以能导出 actor 列的调用方必须传一个。
   getActorName?: (type: string, id: string) => string,
 ) {
   if (value === undefined) return "";
@@ -917,29 +918,26 @@ function propertyDisplayValue(
 }
 
 /**
- * Render-time context for the module-level cell/header components below,
- * carried on `table.options.meta`. The renderers MUST be module-level
- * components with stable identities: TanStack's flexRender mounts a
- * function-typed `cell`/`header` as a React component, so a renderer closure
- * rebuilt when any lookup changed identity (childProgressMap on every
- * realtime refetch, propertyById, actor names…) was a NEW element type and
- * React remounted every cell — closing any open picker popup and dropping
- * in-progress drafts the moment workspace activity refreshed the window
- * (MUL-5108). Data flows through meta instead so the element types never
- * change.
+ * 供下方模块级单元格/表头组件使用的"渲染期上下文"，挂在 `table.options.meta` 上。
+ * 这些渲染器必须是引用稳定的模块级组件：TanStack 的 flexRender 会把函数形态的
+ * `cell`/`header` 当作 React 组件来挂载，因此若渲染器是"任何查表数据变化就重建"的
+ * 闭包（childProgressMap 随每次实时刷新、propertyById、actor 名称……），每次刷新都
+ * 等于换了一种元素类型，React 会重挂载每个单元格——把打开的选择器弹层关掉、
+ * 把进行中的草稿丢掉，仅仅因为工作区活动刷新了一下窗口 (MUL-5108)。
+ * 数据改从 meta 流过，元素类型因此永不改变。
  */
 type TableViewMeta = {
   childProgressMap: Map<string, ChildProgress>;
   propertyById: Map<string, IssueProperty>;
   properties: IssueProperty[];
   visibleIssueIds: string[];
-  /** `${row.key}:${column.id}` of the cell whose editor popup / rename input
-   *  is open, or null. Owned by TableView so the open editor survives cell
-   *  remounts and freezes the table structure while it is up. */
+  /** 正在打开编辑弹层/重命名输入框的单元格，记作 `${row.key}:${column.id}`，
+   *  没有则为 null。归 TableView 所有，让"打开中的编辑器"能扛过单元格重挂载，
+   *  并在它打开期间冻结表格结构。 */
   editingCellKey: string | null;
   setEditingCellKey: (key: string | null) => void;
-  /** Takes the ISSUE, not its id: the run-confirm gate reads its status
-   *  category and owner to decide whether the write needs confirming first. */
+  /** 收的是 ISSUE 而非它的 id：run-confirm 门槛要读它的状态类别与归属者，
+   *  才能判断这次写入是否需要先确认。 */
   updateIssue: (issue: Issue, updates: Partial<UpdateIssueRequest>) => void;
   openIssue: (issue: Issue, event?: React.MouseEvent) => void;
   createSubIssue: (issue: Issue) => void;
@@ -960,23 +958,19 @@ function getTableViewMeta(
 }
 
 /**
- * Release the hoisted editing key when the cell that owns it unmounts.
+ * 当拥有某个"被提升到表格层"的编辑键的单元格卸载时，释放该键。
  *
- * Row virtualization (see data-table.tsx) unmounts a cell as its row scrolls
- * out of the rendered window. Base UI does NOT call onOpenChange(false) on
- * unmount, so without this the open picker's key — and the frozen row
- * structure keyed off it — would persist after the anchor row leaves the
- * viewport: the table would stay frozen, and scrolling the row back would
- * silently reopen the picker and discard any in-progress rename draft
- * (MUL-5108 review R1#3). Clearing the key iff this unmounting cell still owns
- * it thaws the structure and closes the editor.
+ * 行虚拟化（见 data-table.tsx）会把滚出渲染窗口的行连同它的单元格一起卸载。
+ * Base UI 在卸载时不会调用 onOpenChange(false)，所以没有这个机制的话，打开中的
+ * picker 的键——以及以它为键的整份冻结行结构——会在锚点行离开视口后仍然残留：
+ * 表格一直冻结着，把行滚回来又会悄悄重新打开 picker、丢掉正在编辑的重命名草稿
+ * (MUL-5108 review R1#3)。仅当这个正在卸载的单元格仍持有该键时清掉它，
+ * 结构随之解冻、编辑器随之关闭。
  *
- * Live values are read through refs so the empty-dep cleanup always sees the
- * current key/setter. At initial mount a cell is never yet the active editor
- * (the editor is opened by a later interaction, which does not remount the
- * cell), so this never fires spuriously — including under StrictMode's
- * mount → unmount → mount probe, whose first cleanup sees `editingCellKey`
- * still unequal to this cell's key.
+ * 活动值通过 ref 读取，让空依赖的清理函数永远看得到当前键/setter。初次挂载时单元格
+ * 绝不可能是活动编辑器（编辑器由更晚的交互打开，而那种交互不会重挂载单元格），所以
+ * 这里绝不会误触发——包括 StrictMode 的 mount → unmount → mount 探测：它的首次清理
+ * 看到的 `editingCellKey` 仍不等于本单元格的键。
  */
 export function useReleaseEditingCellOnUnmount(
   cellKey: string | null,
@@ -1092,8 +1086,8 @@ function IssueTableBodyCell({
 }: CellContext<IssueTableDisplayRow, unknown>) {
   const meta = getTableViewMeta(table);
   const { t, i18n } = useT("issues");
-  // Computed (and the unmount responder registered) before the early return so
-  // the hook order is stable across issue/group rows.
+  // 计算 cellKey（并注册卸载响应）须在提前 return 之前完成，
+  // 保证 issue/group 两种行之间的 hook 顺序稳定。
   const cellKey =
     row.original.kind === "issue" ? `${row.original.key}:${column.id}` : null;
   useReleaseEditingCellOnUnmount(
@@ -1101,9 +1095,8 @@ function IssueTableBodyCell({
     meta.editingCellKey,
     meta.setEditingCellKey,
   );
-  // Placeholder rows go through the ordinary cell renderer so they inherit the
-  // real column widths, pinning and borders — the grid is already correct
-  // before any data arrives, so the rows swap in without shifting anything.
+  // 占位行也走普通单元格渲染器，从而继承真实的列宽、固定与边框——数据还没到，网格就
+  // 已经对了，之后换行进来不会引起任何位移。
   if (row.original.kind === "skeleton") {
     return <Skeleton className="h-3.5 w-full" />;
   }
@@ -1275,6 +1268,11 @@ function IssueTableBodyCell({
   return null;
 }
 
+/**
+ * 表格视图主组件：聚合"按需激活的服务端分支"数据，编排成
+ * group / issue / load_more / skeleton 等展示行，交给下方受控的 DataTable 渲染。
+ * 同时持有列显隐/排序/分组等 view store 状态，并提供编辑、选择、导出等回调。
+ */
 export function TableView({
   serverQuery,
   childProgressMap,
@@ -1338,8 +1336,7 @@ export function TableView({
   const setSortDirection = useViewStore((state) => state.setSortDirection);
   const [exporting, setExporting] = useState<"all" | "selected" | null>(null);
   const selectionAnchorRef = useRef<string | null>(null);
-  // The one cell whose editor (picker popup / rename input) is open — see
-  // TableViewMeta.editingCellKey.
+  // 当前打开着编辑弹层/重命名输入框的那一个单元格——见 TableViewMeta.editingCellKey。
   const [editingCellKey, setEditingCellKey] = useState<string | null>(null);
 
   const groupingPropertyId = propertyIdFromViewKey(tableGrouping);
@@ -1372,12 +1369,10 @@ export function TableView({
     [effectiveTableGrouping],
   );
   const usesServerGrouping = serverGroupSpec.kind !== "none";
-  // Project group rows carry only a project id; the title comes from the
-  // shared projects query the surface already primes for this grouping.
+  // 项目分组行只携带项目 id；标题取自 surface 为这个分组预先拉好的共享项目查询。
   //
-  // Read `data` rather than defaulting it in the destructure: an un-settled
-  // query has no data, so `= []` would hand this memo a fresh array on every
-  // render and churn every consumer of the map below (MUL-5477).
+  // 读取 `data` 而不是在解构里给默认值：尚未落定的查询没有 data，`= []` 会让这份
+  // memo 每次渲染都拿到新数组，从而让下方映射的每个消费者跟着一起抖动 (MUL-5477)。
   const groupProjectsQuery = useQuery({
     ...projectListOptions(wsId),
     enabled: serverGroupSpec.kind === "project",
@@ -1469,9 +1464,8 @@ export function TableView({
     ],
   );
 
-  // Commit the synchronous rebase after render. Consumers use the derived
-  // state above immediately, so a filter/search/sort transition never has an
-  // empty frame while this effect catches state up.
+  // 渲染后再把同步的 rebase 结果提交进 state。消费者立刻使用上方那个派生状态，
+  // 所以筛选/搜索/排序切换之间绝不会出现"空一帧"等待这个 effect 追上状态。
   useEffect(() => {
     if (rebasedServerBranchState !== serverBranchState) {
       setServerBranchState(rebasedServerBranchState);
@@ -1489,10 +1483,9 @@ export function TableView({
       ),
     [activeServerBranches],
   );
-  // useQueries compares and installs the supplied query list in an effect.
-  // Keeping this array stable prevents a settled branch from being installed
-  // again on every render (which can otherwise create a render loop once the
-  // virtualized table starts measuring rows).
+  // useQueries 会在一个 effect 里比较并安装传入的查询列表。保持这个数组引用稳定，
+  // 可避免已落定的分支在每次渲染时都被重新安装（否则一旦虚拟化表格开始测量行高，
+  // 就可能形成渲染死循环）。
   const serverBranchQueries = useMemo(
     () =>
       serverBranchPageTargets.map(({ branch, cursor }) => {
@@ -1511,19 +1504,15 @@ export function TableView({
             parent_id: branch.parentId,
             page: { limit: 50, cursor },
           }),
-          // QueriesObserver replaces observers by query hash, so
-          // keepPreviousData alone cannot bridge a changed table query inside
-          // useQueries. Retain the last settled head per structural branch to
-          // keep the previous table painted while the new query is pending.
+          // QueriesObserver 按查询 hash 替换 observer，所以单靠 keepPreviousData
+          // 无法弥合 useQueries 里 table query 的变化。按结构分支保留最后一个已
+          // 落定的头部响应，在新查询挂起期间继续把旧表画出来。
           //
-          // Passed as a VALUE, not a closure. QueryObserver reuses the previous
-          // placeholder result only while `options.placeholderData` compares
-          // equal BY REFERENCE to the previous render's, so `() => placeholder`
-          // — a fresh arrow on every rebuild of this array — forced the
-          // placeholder to be recomputed and the result re-derived on every
-          // render. The value comes from a ref Map and is already stable, and
-          // the closure ignored both of the arguments the function form
-          // receives, so the two forms are equivalent (MUL-5477).
+          // 以"值"而非"闭包"传入。QueryObserver 只有在 `options.placeholderData`
+          // 与上一次渲染的值按引用相等时，才会复用上一份 placeholder 结果——
+          // `() => placeholder` 每次重建该数组都是全新的箭头函数，会迫使 placeholder
+          // 被反复计算、结果被反复派生。这里的值来自 ref Map、本就稳定，而闭包形态
+          // 又忽略函数形态收到的两个参数，所以两种写法等价 (MUL-5477)。
           ...(placeholder ? { placeholderData: placeholder } : {}),
           enabled:
             (branch.groupKey === null ||
@@ -1578,9 +1567,8 @@ export function TableView({
     },
     [serverBranchPageTargets],
   );
-  // `combine` is structurally shared by React Query. It must return only plain
-  // objects/arrays: Map instances and freshly-created retry closures cannot be
-  // shared, and make useQueries publish a different snapshot on every render.
+  // `combine` 会被 React Query 做结构共享。它必须只返回普通对象/数组：Map 实例和
+  // 每次新建的 retry 闭包无法共享，会让 useQueries 每次渲染发布不同的快照。
   const serverBranchData = useQueries({
     queries: serverBranchQueries,
     combine: combineServerBranchQueries,
@@ -1606,9 +1594,8 @@ export function TableView({
         next_cursor: null,
       });
     }
-    // Bound placeholders to the active structural graph. Sort/filter/search
-    // transitions reuse these entries; old group/property configurations do
-    // not accumulate for the lifetime of the Table component.
+    // 把占位结果限定在当前活跃的结构图上。排序/筛选/搜索切换会复用这些条目；
+    // 旧的组/属性配置不会在 Table 组件存活期内无限堆积。
     serverBranchPlaceholderRef.current = next;
   }, [
     activeServerBranches,
@@ -1616,9 +1603,8 @@ export function TableView({
     serverStructureIdentity,
   ]);
 
-  // Re-derive ancestry from the current row graph after realtime re-parenting.
-  // Branch keys are parent ids, so an existing branch can move under a new
-  // collapsed ancestor without being re-activated by the viewport sentinel.
+  // 实时重挂父级后，从当前行图重新推导祖先链。分支键是父级 id，因此一条既有分支可能
+  // 被挪到一个新的折叠祖先下——别让视口哨兵把它重新激活。
   useEffect(() => {
     const desiredAncestors = new Map<string, string[]>();
     const visited = new Set<string>();
@@ -1689,11 +1675,10 @@ export function TableView({
     [serverIdentity],
   );
 
-  // A broad Table invalidation refetches every active page. As soon as the
-  // head starts refreshing, every later cursor is obsolete; discard them
-  // before their concurrent responses can create a duplicate or missing row.
-  // The revision check is a second line of defence for clients that restore a
-  // refreshed head directly into the cache without exposing a fetching frame.
+  // 一次宽泛的 Table 失效会让每个活跃页都重新拉取。头部一开始刷新，之后的所有游标
+  // 就都过时了——在它们的并发响应可能造成重复或缺失行之前，先把这些游标丢弃。
+  // revision 检查是第二道防线：用于把刷新后的头部直接写回缓存、不暴露 fetching 帧
+  // 的那些客户端。
   const branchHeadRevisionRef = useRef<Record<string, number>>({});
   useEffect(() => {
     const previousRevisions = branchHeadRevisionRef.current;
@@ -1712,8 +1697,8 @@ export function TableView({
         branchesToTrim.add(key);
       }
     }
-    // Keep only the current query's active branches. This bounds the revision
-    // bookkeeping across long sessions with many filter/search identities.
+    // 只保留当前查询的活跃分支。这样能把 revision 记账限制在"长期会话 + 大量
+    // 筛选/搜索身份"的范围内。
     branchHeadRevisionRef.current = nextRevisions;
     if (branchesToTrim.size === 0) return;
 
@@ -1778,11 +1763,9 @@ export function TableView({
     (descriptor: IssueTableGroupDescriptor) => {
       const value = descriptor.value;
       if (value.kind === "status") {
-        // A group is one status KEY, so it shows that status's own name — a
-        // custom status must not read as its category. `resolveStatusLabel`
-        // falls back to the raw key, which is also what keeps a status
-        // introduced by a NEWER backend usable on an installed client instead
-        // of collapsing to the schema fallback or an empty label. (MUL-6243)
+        // 一个分组就是一个状态 KEY，因此显示该状态自己的名字——自定义状态绝不能读成
+        // 它的类别名。`resolveStatusLabel` 会回退到原始 key，这同时保证"由更新版本
+        // 后端引入的状态"在已装客户端上仍可显示，而不是塌缩成 schema 兜底值或空标签 (MUL-6243)。
         return resolveStatusLabel(value.status);
       }
       if (value.kind === "assignee") {
@@ -1792,8 +1775,8 @@ export function TableView({
       }
       if (value.kind === "project") {
         if (!value.project_id) return t(($) => $.swimlane.no_project);
-        // A project the query cannot resolve (deleted, or not visible to this
-        // member) reads as unavailable — never as its raw id.
+        // 查询解析不到的项目（已删除，或该成员不可见）读起来应像"不可用"——
+        // 而不是它的原始 id。
         return (
           groupProjectMap.get(value.project_id)?.title ??
           t(($) => $.table.value_unavailable)
@@ -1856,9 +1839,8 @@ export function TableView({
         });
       }
       for (const row of data.rows) {
-        // A realtime move can briefly leave the same entity in old and new
-        // branch caches. Render the first authoritative position only; duplicate
-        // ids otherwise create duplicate React keys and duplicate selection.
+        // 实时移动可能让同一实体短暂同时存在于新旧两个分支的缓存里。只渲染第一个
+        // 权威位置；重复 id 会带来重复的 React key 和重复的选中。
         if (seenIssueIds.has(row.issue.id)) continue;
         seenIssueIds.add(row.issue.id);
         const collapsed = collapsedParentSet.has(row.issue.id);
@@ -1895,9 +1877,8 @@ export function TableView({
           onLoad: () => loadNextServerBranchPage(key, nextCursor),
         });
       } else if (data.rows.length > 0) {
-        // Reaching the end is only worth marking on a branch that paginated;
-        // the footer applies that rule, so the row is pushed unconditionally
-        // and carries the total for it to judge by.
+        // 只有在"确实分页过"的分支上，抵达末尾才值得标记；footer 负责套用这条规则，
+        // 所以这里无条件推进这一行，并带上 total 供它判断。
         result.push({
           kind: "load_more",
           key: `end:${key}`,
@@ -1951,9 +1932,8 @@ export function TableView({
       });
     }
 
-    // Nothing has landed yet and something is still in flight: show the grid
-    // filled with placeholders instead of one "Loading…" line, which reads as
-    // an empty table more than a loading one.
+    // 还没有任何数据落地、且仍有请求在途：用占位行铺满网格，而不是显示一行孤零零的
+    // "Loading…"——那读起来更像空表而非加载中。
     const isColdLoad =
       !result.some((row) => row.kind === "issue") &&
       result.some((row) => row.kind === "load_more" && row.state === "loading");
@@ -1997,8 +1977,8 @@ export function TableView({
   const authoritativeLoadedIssues = useMemo(() => {
     const byId = new Map<string, Issue>();
     for (const branch of Object.values(serverBranchData)) {
-      // Previous-data placeholders keep the old table painted during a query
-      // transition, but they are not members of the new filter/search window.
+      // "上一份数据"占位结果在查询切换期间负责把旧表继续画出来，但它们不属于
+      // 新的筛选/搜索窗口。
       if (branch.placeholder) continue;
       for (const row of branch.rows) byId.set(row.issue.id, row.issue);
     }
@@ -2047,16 +2027,12 @@ export function TableView({
     [activePropertyIds, tableColumns],
   );
 
-  // While a cell editor popup / rename input is open, hold the row structure
-  // still: server branch pagination and realtime refetches can rebuild or
-  // reorder the row list, moving the anchor row out of the virtualized render
-  // window and closing the popup the user just opened (MUL-5108). The snapshot
-  // freezes ORDER only; issue objects inside the rows keep tracking live
-  // server-query data so the open editor reflects optimistic updates. Live
-  // structure snaps back the moment the editor closes. Ref writes happen
-  // during render on purpose: the snapshot must be captured from the same
-  // render that flips `editing` on, and both branches are idempotent under
-  // StrictMode double-render.
+  // 单元格编辑器（picker 弹层 / 重命名输入框）打开期间，让行结构保持静止：服务端
+  // 分支分页和实时刷新都可能重建或重排行列表，把锚点行移出虚拟化渲染窗口、关掉用户
+  // 刚打开的弹层 (MUL-5108)。这份快照只冻结 ORDER；行里的 issue 对象继续追踪实时
+  // 服务端查询数据，让打开中的编辑器能反映乐观更新。编辑器一关，实时结构立刻弹回来。
+  // ref 写入刻意放在渲染期：快照必须与"打开 `editing` 的那一次渲染"同帧捕获，
+  // 且两个分支在 StrictMode 双渲染下都是幂等的。
   const frozenRowsRef = useRef<IssueTableDisplayRow[] | null>(null);
   if (editingCellKey === null) frozenRowsRef.current = null;
   else if (frozenRowsRef.current === null)
@@ -2122,10 +2098,9 @@ export function TableView({
     [propertyById, t],
   );
 
-  // Inline row edits are single-issue writes like the picker in the issue
-  // detail or the right-click menu, so they route on the same gate: a status
-  // change that promotes an agent-owned issue out of the backlog category
-  // starts a run, and must confirm rather than fire from one click (MUL-6463).
+  // 行内编辑和详情页 picker、右键菜单一样是单 issue 写入，所以也走同一个门槛：
+  // 把 agent 拥有的 issue 从 backlog 类状态改出（进入运行态）的那次状态变更，
+  // 必须先确认而不能单击即发 (MUL-6463)。
   const updateIssue = useCallback(
     (issue: Issue, updates: Partial<UpdateIssueRequest>) => {
       const intent = runConfirmIntent(issue, updates, { entryOf });
@@ -2140,9 +2115,8 @@ export function TableView({
 
   const openIssue = useCallback(
     (issue: Issue, event?: React.MouseEvent) => {
-      // Standard link semantics: plain click navigates in place; modifier /
-      // middle clicks open tabs. Callbacks without an event (keyboard
-      // affordances) count as plain clicks.
+      // 标准链接语义：普通点击就地导航；修饰键 / 中键点击开新标签页。
+      // 没有 event 的回调（键盘可达性场景）按普通点击处理。
       intentNavigate(
         paths.issueDetail(issue.id),
         event ? resolveClickIntent(event) : "push",
@@ -2169,9 +2143,8 @@ export function TableView({
     [setSortBy, setSortDirection],
   );
 
-  // Fresh object every render is fine — cells read it through
-  // table.options.meta at render time. What must NOT change per render are
-  // the column defs' component identities below.
+  // 每次渲染都给新对象没问题——单元格在渲染时通过 table.options.meta 读取它。
+  // 真正绝不能每次渲染都变的是下方各列定义的组件身份。
   const viewMeta: TableViewMeta = {
     childProgressMap,
     propertyById,
@@ -2277,24 +2250,21 @@ export function TableView({
   const handleExport = async (mode: "all" | "selected") => {
     setExporting(mode);
     try {
-      // Every lookup the file depends on is AWAITED here rather than read
-      // from render-time hook state — a cold or errored query must fail the
-      // export, not silently degrade it: with an unsettled catalog the
-      // user's property columns vanish from the file, and with unsettled
-      // directories every actor exports as "Unknown *" (round-2 review
-      // P2#4). fetchQuery throws on failure, which lands in the catch below.
+      // 文件依赖的每份查表数据都必须在这里 AWAIT，而不是读渲染期的 hook 状态——
+      // 冷启动或出错都应当让导出失败，而不是悄悄降级：目录未落定时用户的自定义
+      // 列会从文件里消失；目录未落定时每个 actor 都会导出成 "Unknown *"（二轮评审
+      // P2#4）。fetchQuery 失败会抛错，落到下面的 catch。
       const needsPropertyCatalog = tableColumns.some(
         (column) => propertyIdFromViewKey(column.key) !== null,
       );
-      // fetchQuery bypasses the options' `select`, so unwrap the response.
+      // fetchQuery 会绕过选项里的 `select`，所以这里手动解开响应。
       const exportProperties = needsPropertyCatalog
         ? (await queryClient.fetchQuery(propertyListOptions(wsId))).properties
         : [];
       const exportPropertyById = new Map(
         exportProperties.map((property) => [property.id, property]),
       );
-      // Configured columns against the RESOLVED catalog — only a property
-      // definition that is genuinely gone (archived/deleted) drops out.
+      // 用"已解析的目录"过滤已配置列——只有定义真正消失（归档/删除）的属性列才掉出。
       const csvColumns = tableColumns.filter((column) => {
         const propertyId = propertyIdFromViewKey(column.key);
         return !propertyId || exportPropertyById.has(propertyId);
@@ -2448,17 +2418,13 @@ export function TableView({
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
-        // Columns only ever swap sideways, so the header should not follow the
-        // pointer up out of its own strip — same constraint the desktop tab bar
-        // puts on tab reordering.
+        // 列只可能横向互换，表头不应跟着指针飞出自己所在的横条——与桌面标签栏对
+        // 标签拖动的约束一致。
         modifiers={[restrictToHorizontalAxis]}
-        // Modifiers constrain the drag's movement but not its auto-scrolling,
-        // which reads raw pointer coordinates: drifting a few pixels vertically
-        // while dragging a header sent the rows scrolling underneath it. Zero
-        // on y removes an axis the gesture cannot act on. On x it stays, since
-        // a table wider than its viewport needs it to reach a distant slot, but
-        // the default 0.2 arms it a fifth of the way in from either edge, which
-        // is most of a wide header.
+        // Modifier 只约束拖动的位移，不约束它的自动滚动——自动滚动读的是原始指针
+        // 坐标：拖表头时手稍微飘几像素纵向，就会让下面的行跟着滚起来。y 归零，去掉
+        // 这个手势根本用不到的轴。x 保留，因为比视口还宽的表格要靠它到达远处槽位；
+        // 但默认的 0.2 意味着要滑入约五分之一宽的边距才触发，对宽表头来说太迟钝。
         autoScroll={{ threshold: { x: 0.05, y: 0 } }}
         onDragEnd={handleDragEnd}
       >
@@ -2493,12 +2459,10 @@ export function TableView({
                       colSpan={table.getVisibleLeafColumns().length}
                       className="p-0"
                     >
-                      {/* The same footer Board / List / Swimlane end their
-                        * columns with. Hand-rolling it here had left the table
-                        * as the one surface where a failed page read as muted
-                        * body text rather than an error, and where reaching the
-                        * end of a paginated branch said nothing at all. The row
-                        * only supplies the cell it lives in. */}
+                      {/* 与 Board / List / Swimlane 收尾用的同一个 footer。之前在
+                        * 表格里手工另写一份，导致表格成了唯一一个"加载失败读起来像
+                        * 灰色正文而非错误、分页分支到底了却一声不吭"的视图。这行只
+                        * 供给它所在的那个单元格。 */}
                       <div className="sticky left-0 w-full">
                         <ListLoadMoreFooter
                           hasMore={

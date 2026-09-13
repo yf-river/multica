@@ -1,3 +1,6 @@
+// 本文件提供 FeatureFlagService 的 React 接线：Provider 把 Service 与求值
+// 上下文挂进组件树，Hook 让 UI 代码安全地读取开关结论。
+
 "use client";
 
 import { createContext, useContext, useMemo, type ReactNode } from "react";
@@ -5,25 +8,20 @@ import type { EvalContext } from "./types";
 import { FeatureFlagService } from "./service";
 
 /**
- * React glue for the FeatureFlagService.
+ * React 层给 FeatureFlagService 提供的粘合代码。对外导出两块：
  *
- * Two pieces are exported:
+ *  - {@link FeatureFlagsProvider}：把 Service 和 EvalContext 提供给子树。
+ *    Service 通常在应用根节点创建一次；EvalContext 会随用户上下文变化
+ *    （例如登录之后）。
+ *  - {@link useFlag} / {@link useVariant}：UI 代码里推荐使用的开关读取点。
+ *    它们永不抛错；缺 provider 树时回退到传入的默认值，这样 Storybook
+ *    故事和单元测试不必为了渲染一个按钮就挂上 provider。
  *
- *  - {@link FeatureFlagsProvider}: wraps a part of the tree with a Service
- *    and an EvalContext. The Service is usually constructed once at the
- *    application root; the EvalContext changes as the user context changes
- *    (e.g. after login).
- *  - {@link useFlag} / {@link useVariant}: the recommended Toggle Points in
- *    UI code. They never throw; if the provider tree is missing they fall
- *    back to the supplied default, which keeps Storybook stories and unit
- *    tests from needing to mount the provider just to render a button.
- *
- * Note: we deliberately do NOT expose the underlying FeatureFlagService
- * through hooks. Components that need raw access can read it via the
- * exported context object, but at the cost of giving up the always-on
- * safety guarantee.
+ * 注意：我们刻意不通过 hooks 暴露底层的 FeatureFlagService。需要直接访问
+ * 的组件可以读导出的 context 对象，但代价是放弃「永远安全」的兜底保证。
  */
 
+/** Provider 上下文里携带的内容：Service + 本次求值用到的 EvalContext。 */
 interface FeatureFlagContextValue {
   service: FeatureFlagService;
   ctx: EvalContext;
@@ -31,23 +29,25 @@ interface FeatureFlagContextValue {
 
 const FeatureFlagContext = createContext<FeatureFlagContextValue | null>(null);
 
+/** FeatureFlagsProvider 组件的 props。 */
 export interface FeatureFlagsProviderProps {
   service: FeatureFlagService;
   /**
-   * Targeting context for every flag evaluation inside this subtree.
-   * Pass an empty object when the user is anonymous — percent rollouts
-   * and allow/deny lists then evaluate against the empty identifier,
-   * which is the desired behavior for anonymous traffic.
+   * 该子树内所有开关求值共用的定向上下文。
+   * 用户匿名时传空对象即可——此时百分比灰度和白/黑名单会对「空标识」求值，
+   * 这正是匿名流量期望的行为。
    */
   context?: EvalContext;
   children: ReactNode;
 }
 
 /**
- * Mount a FeatureFlagService and EvalContext into the tree. Replacing the
- * `service` prop on a re-render is allowed but rare; prefer mutating the
- * provider on the existing Service via `setProvider`, which avoids forcing
- * every consumer to re-evaluate.
+ * 把 FeatureFlagService 与 EvalContext 挂进组件树。
+ *
+ * 允许（但少见）在重渲染时替换 `service` prop；更推荐在既有 Service 上调用
+ * `setProvider` 来改底层 provider，那可以避免强制所有消费方重新求值。
+ *
+ * @param props - service、可选定向上下文与子树
  */
 export function FeatureFlagsProvider({
   service,
@@ -64,14 +64,18 @@ export function FeatureFlagsProvider({
 }
 
 /**
- * useFlag returns the boolean state of a feature flag.
+ * 读取某个开关的布尔状态。
  *
- * Outside a {@link FeatureFlagsProvider} the hook returns `defaultValue`,
- * never throws. This keeps tests and stories independent of the provider.
+ * 在 {@link FeatureFlagsProvider} 之外调用时返回 `defaultValue`、永不抛错，
+ * 这让测试与故事可以不必依赖 provider。
  *
  * @example
  *   const showNewBilling = useFlag("billing_v2_dashboard", false);
  *   return showNewBilling ? <BillingV2 /> : <BillingV1 />;
+ *
+ * @param key - 开关名
+ * @param defaultValue - 无 provider 时的兜底值
+ * @returns 开关是否开启
  */
 export function useFlag(key: string, defaultValue: boolean): boolean {
   const value = useContext(FeatureFlagContext);
@@ -80,8 +84,8 @@ export function useFlag(key: string, defaultValue: boolean): boolean {
 }
 
 /**
- * useVariant returns the raw variant identifier for a multi-arm flag, with
- * the same out-of-provider safety as {@link useFlag}.
+ * 读取多臂实验开关的原始变体标识，具备与 {@link useFlag} 相同的「无
+ * provider 也安全」的兜底。
  *
  * @example
  *   const variant = useVariant("checkout_algo", "control");
@@ -90,6 +94,10 @@ export function useFlag(key: string, defaultValue: boolean): boolean {
  *     case "experiment-v3": return <CheckoutV3 />;
  *     default:              return <CheckoutControl />;
  *   }
+ *
+ * @param key - 开关名
+ * @param defaultValue - 无 provider 时的兜底变体
+ * @returns 变体标识符
  */
 export function useVariant(key: string, defaultValue: string): string {
   const value = useContext(FeatureFlagContext);
@@ -98,10 +106,11 @@ export function useVariant(key: string, defaultValue: string): string {
 }
 
 /**
- * Escape hatch for diagnostic overlays that need direct Service access.
- * Returns `null` outside a provider so callers must guard explicitly —
- * this is intentional: random component code should use {@link useFlag},
- * not the raw Service.
+ * 给诊断浮层这类需要直接访问 Service 的场景留的「逃生门」。
+ * provider 之外返回 `null`，调用方必须显式判空——这是有意的：普通组件代码
+ * 应该用 {@link useFlag}，而不是裸 Service。
+ *
+ * @returns 当前子树里的 FeatureFlagService，缺 provider 时返回 null
  */
 export function useFeatureFlagService(): FeatureFlagService | null {
   return useContext(FeatureFlagContext)?.service ?? null;

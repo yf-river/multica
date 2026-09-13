@@ -1,47 +1,40 @@
-// Package wecom is the WeCom (企业微信) smart-bot ("智能机器人" / aibot)
-// adapter for the channel-agnostic inbound engine (MUL-3620). It plugs into the
-// same engine.Router / ResolverSet as Feishu and Slack.
+// Package wecom 是「企业微信智能机器人（智能机器人 / aibot）」接入多通道
+// 入站引擎的适配器（MUL-3620）。它和飞书、Slack 一样接入同一个
+// engine.Router / ResolverSet。
 //
-// Unlike the internal customer-service ("内部客服号") flow which is HTTP-callback
-// based, the smart-bot flow is a client-initiated WebSocket long connection
-// against wss://openws.work.weixin.qq.com. Each installation carries a
-// (bot_id, secret) pair; after the WS handshake the client subscribes with
-// aibot_subscribe and thereafter receives aibot_msg_callback events and sends
-// aibot_send_msg / aibot_respond_msg / aibot_upload_media_* over the same
-// socket. No public callback URL is required.
+// 与「内部客服号」那种走 HTTP 回调的方式不同，智能机器人走的是客户端主动
+// 建立的 WebSocket 长连接：wss://openws.work.weixin.qq.com。每条安装记录
+// 保存一对 (bot_id, secret)；WS 握手完成后客户端先发 aibot_subscribe 订阅，
+// 之后收 aibot_msg_callback 事件，并通过同一条连接发 aibot_send_msg /
+// aibot_respond_msg / aibot_upload_media_* 等指令。整个过程不需要对外暴露
+// 回调 URL。
 //
-// One installation = one bot = one WebSocket. WeCom allows only one active
-// connection per bot; a second connection kicks the first with a
-// disconnected_event. That single-active-connection guarantee lines up with
-// engine.Supervisor's WS lease, so the multi-replica invariant (at most one
-// active connection per installation across processes) already holds without
-// wecom-specific code.
+// 一条安装 = 一个机器人 = 一条 WebSocket。企业微信限定每个机器人同一时刻只
+// 允许一条活跃连接；第二条连接会把第一条挤下线（disconnected_event）。
+// 这一「单活跃连接」约束恰好和 engine.Supervisor 的 WS 租约对齐，所以跨进程
+// 的多副本「每条安装至多一条活跃连接」这一不变量，不需要 wecom 特有代码就能
+// 成立。
 //
-// Maintenance: this package is COMMUNITY-MAINTAINED. Its maintainers, the
-// support boundary and the retirement rule are published at
-// https://multica.ai/docs/community-maintained
-// (apps/docs/content/docs/community-maintained.mdx, four locales). That page
-// is the single source of truth — record ownership changes there, not here.
-// Changing the shared channel engine? Keep this adapter building, and loop in
-// its maintainers for anything that changes WeCom-visible behavior.
+// 维护说明：本包属于 COMMUNITY-MAINTAINED（社区维护）。维护者名单、支持边界
+// 和下线规则发布在 https://multica.ai/docs/community-maintained
+// （apps/docs/content/docs/community-maintained.mdx，四个语言版本）。该页面
+// 是唯一事实来源 —— 所有权变更请改那里，不要改这里。要动共享的通道路由引擎？
+// 请保证本适配器仍然能编译，并且任何会影响 WeCom 可见行为的改动都要拉上本包
+// 维护者一起评审。
 //
-// Inbound handles text, the transcript WeCom returns for a voice note,
-// photos, files, videos and 图文混排 (media_ingest.go downloads and decrypts
-// what a callback points at); a kind it cannot read still gets a short
-// receipt.
+// 入站方向能处理：文本、企业微信返回的语音转写文本、图片、文件、视频以及图文
+// 混排（media_ingest.go 负责下载并解密回调里指向的资源）；遇到读不动的类型，
+// 至少会给一条简短的回执。
 //
-// Outbound file delivery cannot report back to the agent that produced the
-// file. `multica attachment upload` returns once the object is in storage and
-// bound to the reply, while the send into the room runs on EventChatDone —
-// after the run has ended. A delivery that is shed, refused by WeCom, or lost
-// with the socket is therefore told to the person in the chat
-// (outbound_media.go) and never to the agent, which has already exited.
-// Routing that outcome back into a later turn is its own piece of work.
+// 出站方向有个限制：文件送达结果无法回传给当初产生该文件的 agent。
+// `multica attachment upload` 在对象进存储并绑定到回复那一刻就返回了，真正往
+// 群里发送要等 EventChatDone —— 那时本轮对话已经结束。因此被丢弃、被企微拒收、
+// 或随连接丢失的投递，只能当面告诉群里的人（见 outbound_media.go），无法告诉
+// 已经退场的 agent。把这种结果再接回下一轮对话，是单独的一块工作。
 //
-// Known limit, deliberate: outbound delivery requires a SINGLE backend
-// replica, because the only send path is the in-process WebSocket in
-// sendersRegistry while EventChatDone dispatches on the in-process
-// events.Bus. See SELF_HOSTING.md.
+// 已知且有意为之的限制：出站投递要求后端只有「单副本」部署，因为唯一的发送
+// 路径是进程内的 WebSocket（sendersRegistry），而 EventChatDone 也在进程内的
+// events.Bus 上分发。详见 SELF_HOSTING.md。
 package wecom
 
 import (
@@ -55,27 +48,29 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// TypeWecom is the channel discriminator for the WeCom smart-bot adapter.
-// It is defined here alongside the wecom-specific types (rather than in
-// package channel) so a build that excludes wecom does not force a package
-// channel edit; slack follows the same pattern with TypeSlack.
+// TypeWecom 是企业微信智能机器人适配器的通道判别值（channel discriminator）。
+// 它定义在本包、和各 wecom 特有类型放一起（而不是放 package channel），这样
+// 不编译 wecom 的构建就不必连带改 channel 包；Slack 也用同样的套路，见
+// TypeSlack。
 const TypeWecom channel.Type = "wecom"
 
-// channelTypeWecom is the string form persisted in channel_installation.
+// channelTypeWecom 是持久化在 channel_installation 表里的字符串形态。
 const channelTypeWecom = string(TypeWecom)
 
-// InstallationStatus mirrors the channel_installation.status column values.
+// InstallationStatus 与 channel_installation.status 列的取值一一对应。
 type InstallationStatus string
 
+// 安装状态的取值：
+//   - InstallationActive 表示安装记录当前可用，连接与收发都走正常流程。
+//   - InstallationRevoked 表示安装已被撤销，对应记录不应再被使用。
 const (
 	InstallationActive  InstallationStatus = "active"
 	InstallationRevoked InstallationStatus = "revoked"
 )
 
-// Installation is the decoded, in-memory view of a WeCom smart-bot
-// channel_installation row. SecretEncrypted is a secretbox-sealed blob and
-// never plaintext; callers who need the plaintext go through the Credentials
-// resolver.
+// Installation 是 channel_installation 表里一条企业微信智能机器人记录解码后
+// 的内存形态。SecretEncrypted 是 secretbox 密封过的密文，绝不是明文；需要
+// 明文的调用方一律走 Credentials 解析器。
 type Installation struct {
 	ID              pgtype.UUID
 	WorkspaceID     pgtype.UUID
@@ -83,56 +78,52 @@ type Installation struct {
 	InstallerUserID pgtype.UUID
 	Status          InstallationStatus
 
-	// BotID is the smart-bot identifier the WeCom admin console
-	// assigns at bot creation. It is BOTH the auth identity presented in
-	// the aibot_subscribe frame AND the routing key we persist as
-	// config->>'app_id' so GetChannelInstallationByAppID resolves an
-	// inbound event to its installation.
+	// BotID 是智能机器人在企业微信管理后台创建时分配的标识。它既是
+	// aibot_subscribe 订阅帧里出示的鉴权身份，也是我们持久化在
+	// config->>'app_id' 里的路由键——GetChannelInstallationByAppID 靠它把
+	// 入站事件归到对应安装记录上。
 	BotID string
 
-	// SecretEncrypted is the sealed long-connection secret. This is
-	// distinct from the token/EncodingAESKey used by callback-mode bots
-	// (which we do not use). Rotated via re-install.
+	// SecretEncrypted 是被密封过的长连接密钥。它和回调模式机器人用的
+	// token / EncodingAESKey 是两回事（我们不走回调模式）。密钥轮换通过
+	// 重新安装完成。
 	SecretEncrypted []byte
 
-	// BotDisplayName is what the bot is called in a chat. A WeCom group
-	// mention arrives as literal text — "@Multica Bot /new 重新分析" — with no
-	// structured mention list anywhere in the payload, so recognising where
-	// the mention ends is the only way a name containing a space does not
-	// swallow the command after it.
+	// BotDisplayName 是机器人在群里显示的名字。企业微信的群 @ 是以纯文本
+	// 形式进来的——"@Multica Bot /new 重新分析"，整个 payload 里没有任何
+	// 结构化的 @ 列表，所以只有正确识别 @ 在哪里结束，含空格的名字才不会
+	// 把后面的命令一起吞掉。
 	//
-	// Optional. Empty falls back to the whitespace heuristic in
-	// stripLeadingMentions, which is correct for a single-word name and is
-	// what every existing installation gets.
+	// 可选项。为空时退回到 stripLeadingMentions 里的空白启发式规则，该规则
+	// 对单词型名字是正确的，也是所有存量安装当前的默认行为。
 	BotDisplayName string
 }
 
-// InstallationCredentials is the plaintext-bearing view the WebSocket
-// subscribe frame needs. It is minted per-connect by the credentials resolver
-// so a plaintext secret never lives on the durable Installation itself.
+// InstallationCredentials 是 WebSocket 订阅帧需要的那种带明文的视图。
+// 它由凭证解析器在每次建立连接时生成，这样明文密钥就不会常驻在
+// 持久的 Installation 对象上。
 type InstallationCredentials struct {
 	BotID  string
 	Secret string
 }
 
-// installConfig is the on-disk (JSONB) shape of channel_installation.config
-// for wecom smart-bot rows. `app_id == bot_id` so the shared
-// idx_channel_installation_type_appid index and GetChannelInstallationByAppID
-// query stay generic.
+// installConfig 是企业微信智能机器人这类 channel_installation 行里
+// config（JSONB）落盘时的形态。这里刻意让 `app_id == bot_id`，这样通用的
+// idx_channel_installation_type_appid 索引和 GetChannelInstallationByAppID
+// 查询都可以直接复用，不用为 wecom 单独造轮子。
 type installConfig struct {
 	AppID           string `json:"app_id"`
 	BotID           string `json:"bot_id"`
 	SecretEncrypted []byte `json:"secret_encrypted"`
 
-	// BotDisplayName is the bot's name as it appears in a chat, used only to
-	// recognise its own @-mention (ws_frame.go). Optional and absent on every
-	// existing row; absent means the whitespace heuristic, which is what the
-	// adapter did before this field existed.
+	// BotDisplayName 是机器人在会话里显示的名字，仅用于识别它自己的 @ 提及
+	// （见 ws_frame.go）。可选项；存量行都没有这个字段。缺省时走空白启发式，
+	// 即本适配器在该字段出现之前就一直用的行为。
 	BotDisplayName string `json:"bot_display_name,omitempty"`
 }
 
-// encodeInstallConfig marshals an Installation's config-bearing fields into
-// the JSONB blob stored in channel_installation.config.
+// encodeInstallConfig 把 Installation 中需要落库的字段序列化成
+// channel_installation.config 里存的 JSONB 数据。
 func encodeInstallConfig(inst Installation) ([]byte, error) {
 	if inst.BotID == "" {
 		return nil, errors.New("wecom: bot_id is required")
@@ -145,9 +136,9 @@ func encodeInstallConfig(inst Installation) ([]byte, error) {
 	})
 }
 
-// installationFromRow hydrates an Installation from a channel_installation
-// row. The row's ChannelType is trusted (the callers already scope queries by
-// channel_type = 'wecom'), so we don't re-check it here.
+// installationFromRow 从一条 channel_installation 行填充出一个 Installation。
+// 这里信任行里的 ChannelType 已正确（调用方都已按 channel_type = 'wecom'
+// 限定过查询范围），所以不再重复校验。
 func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 	var cfg installConfig
 	if len(row.Config) > 0 {

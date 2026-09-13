@@ -1,3 +1,8 @@
+// 文件职责：实现 `multica project` 命令组——工作区项目的 CRUD 与状态变更
+// （list/get/create/update/delete/status），以及「项目附加资源」管理（resource
+// list/add/update/remove，如 github_repo / local_directory）。通用资源用 JSON
+// --ref 载荷走通，两种内建类型另有快捷 flag；ID 解析复用 cmd_id_resolver.go 的
+// resolveProjectID（完整 UUID/短前缀）。
 package main
 
 import (
@@ -13,11 +18,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// projectCmd 是 `multica project` 父命令。
 var projectCmd = &cobra.Command{
 	Use:   "project",
 	Short: "Work with projects",
 }
 
+// projectListCmd 列出工作区项目。
 var projectListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List projects in the workspace",
@@ -58,6 +65,7 @@ var projectStatusCmd = &cobra.Command{
 	RunE:  runProjectStatus,
 }
 
+// projectResourceCmd 是 `project resource` 分组命令。
 var projectResourceCmd = &cobra.Command{
 	Use:   "resource",
 	Short: "Manage resources attached to a project",
@@ -91,13 +99,14 @@ var projectResourceRemoveCmd = &cobra.Command{
 	RunE:  runProjectResourceRemove,
 }
 
+// validProjectStatuses 是项目合法状态集合。
 var validProjectStatuses = []string{
 	"planned", "in_progress", "paused", "completed", "cancelled",
 }
 
-// validateProjectStatus rejects unknown statuses client-side so a typo fails
-// fast with the valid list instead of a server round-trip and a 400. Shared by
-// `project create`, `project update`, and `project status`.
+// validateProjectStatus 在客户端拒掉未知状态，让拼写错误带合法列表立刻失败，而
+// 不是走一次 server 往返换 400。被 `project create` / `project update` /
+// `project status` 共用。
 func validateProjectStatus(status string) error {
 	for _, s := range validProjectStatuses {
 		if s == status {
@@ -144,10 +153,9 @@ func init() {
 	projectResourceListCmd.Flags().String("output", "table", "Output format: table or json")
 	projectResourceListCmd.Flags().Bool("full-id", false, "Show full UUIDs in table output")
 
-	// project resource add — generic shape: any --type with a JSON --ref
-	// payload works without further CLI changes. github_repo is supported via
-	// dedicated shortcuts; for that type, a non-JSON --ref value is treated as
-	// the default checkout ref.
+	// project resource add — 通用形态：任意 --type 配 JSON --ref 载荷即可，无需再改
+	// CLI。github_repo 另有专门快捷 flag；对该类型，非 JSON 的 --ref 值当作默认检出
+	// ref（checkout ref）。
 	projectResourceAddCmd.Flags().String("type", "github_repo", "Resource type (e.g. github_repo, local_directory — see docs)")
 	projectResourceAddCmd.Flags().String("url", "", "Shortcut: the repo URL (only used when --type github_repo)")
 	projectResourceAddCmd.Flags().String("default-branch-hint", "", "Shortcut: optional default branch hint (only used when --type github_repo)")
@@ -159,8 +167,8 @@ func init() {
 	projectResourceAddCmd.Flags().String("label", "", "Optional human-readable label")
 	projectResourceAddCmd.Flags().String("output", "json", "Output format: table or json")
 
-	// project resource update — mirrors `add` flags, but every field is
-	// optional so the caller can edit one thing at a time.
+	// project resource update — 镜像 `add` 的 flag，但每项都可选，调用方能一次只改
+	// 一处。
 	projectResourceUpdateCmd.Flags().String("url", "", "Shortcut: new repo URL (github_repo)")
 	projectResourceUpdateCmd.Flags().String("default-branch-hint", "", "Shortcut: new default branch hint (github_repo)")
 	projectResourceUpdateCmd.Flags().String("local-path", "", "Shortcut: new absolute local path (local_directory)")
@@ -194,9 +202,10 @@ func init() {
 }
 
 // ---------------------------------------------------------------------------
-// Project commands
+// Project commands —— 各 project 子命令
 // ---------------------------------------------------------------------------
 
+// runProjectList 执行 `project list`：列出工作区项目（--status 过滤）。
 func runProjectList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -257,6 +266,8 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runProjectGet 执行 `project get <id>`：取单个项目详情；带资源时给一条去
+// resource list 的提示。
 func runProjectGet(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -276,9 +287,8 @@ func runProjectGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get project: %w", err)
 	}
 
-	// Breadcrumb to the resources sub-collection. Goes to stderr so JSON on
-	// stdout stays parseable; the `resource_count` field on the response is
-	// the programmatic equivalent. JSON numbers decode as float64.
+	// 给资源子集合指路。走 stderr，stdout 的 JSON 保持可解析；响应的
+	// `resource_count` 字段是程序化等价物。JSON 数字解成 float64。
 	if n, _ := project["resource_count"].(float64); n > 0 {
 		fmt.Fprintf(os.Stderr, "%d resource(s) attached — run `multica project resource list %s` to view.\n",
 			int64(n), strVal(project, "id"))
@@ -303,6 +313,8 @@ func runProjectGet(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, project)
 }
 
+// runProjectCreate 执行 `project create`：--title 必填，可选 lead/日期/状态；多个
+// --repo 打包成 github_repo 资源随创建一并挂（同一事务，失败不留半挂状态）。
 func runProjectCreate(cmd *cobra.Command, _ []string) error {
 	title, _ := cmd.Flags().GetString("title")
 	if title == "" {
@@ -345,9 +357,8 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 		body["due_date"] = v
 	}
 
-	// Bundle resources into the create payload so the server attaches them in
-	// the same transaction; this avoids leaving a half-attached project on
-	// failure.
+	// 资源打包进 create 载荷，让 server 在同一事务里挂上；失败不会留下半挂起的
+	// 项目。
 	repos, _ := cmd.Flags().GetStringArray("repo")
 	if len(repos) > 0 {
 		resources := make([]map[string]any, 0, len(repos))
@@ -386,6 +397,8 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// runProjectUpdate 执行 `project update <id>`：只 PATCH Changed 字段（空串日期
+// 也当作清除语义传给 server）。
 func runProjectUpdate(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -429,8 +442,8 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 		body["lead_type"] = aType
 		body["lead_id"] = aID
 	}
-	// Changed() (not "") so an explicit --start-date "" reaches the server as a
-	// clear, mirroring the issue update CLI.
+	// 用 Changed()（而不是 "" 判空），显式 `--start-date ""` 才能作为「清除」送到
+	// server，镜像 issue update CLI 的语义。
 	if cmd.Flags().Changed("start-date") {
 		v, _ := cmd.Flags().GetString("start-date")
 		body["start_date"] = v
@@ -464,6 +477,7 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// runProjectDelete 执行 `project delete <id>`：删除项目。
 func runProjectDelete(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -486,6 +500,7 @@ func runProjectDelete(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runProjectStatus 执行 `project status <id> <status>`：改项目状态。
 func runProjectStatus(cmd *cobra.Command, args []string) error {
 	id := args[0]
 	status := args[1]
@@ -523,9 +538,10 @@ func runProjectStatus(cmd *cobra.Command, args []string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Project resource commands
+// Project resource commands —— 项目附加资源管理
 // ---------------------------------------------------------------------------
 
+// runProjectResourceList 执行 `project resource list <project-id>`：列出项目资源。
 func runProjectResourceList(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -570,6 +586,9 @@ func runProjectResourceList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runProjectResourceAdd 执行 `project resource add <project-id>`：挂一个资源——
+// 由 --type 决定用内建快捷（github_repo 需 --url；local_directory 需 --local-path
+// + --daemon-id）还是通用 JSON --ref。
 func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 	resourceType, _ := cmd.Flags().GetString("type")
 	resourceType = strings.TrimSpace(resourceType)
@@ -579,9 +598,8 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 
 	body := map[string]any{"resource_type": resourceType}
 
-	// --ref takes precedence when it is JSON: any new resource type works
-	// through that path without a CLI change. For github_repo only, a non-JSON
-	// --ref is a checkout ref shortcut and merges with --url.
+	// --ref 是 JSON 时优先：任意新资源类型都能走这条路，无需改 CLI。仅 github_repo
+	// 下，非 JSON 的 --ref 是 checkout-ref 快捷值、与 --url 合并。
 	if ref, ok, err := buildResourceRefFromRefFlag(cmd, resourceType, nil); err != nil {
 		return err
 	} else if ok {
@@ -654,6 +672,8 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// runProjectResourceUpdate 执行 `project resource update <project-id> <resource-id>`：
+// 局部编辑某条资源的 ref/label/position（先取现存行重建 payload，见注释）。
 func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -672,11 +692,9 @@ func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve project resource: %w", err)
 	}
 
-	// Fetch the existing row so per-type shortcuts know which schema to
-	// emit and which fields to preserve. The server treats resource_ref as
-	// opaque-replace, so a partial edit like `--default-branch-hint` has to
-	// rebuild the full payload here — otherwise the unmentioned `url` would
-	// vanish and the server would 400.
+	// 先拉出现有行，让各类型的快捷 flag 知道按哪个 schema 产出、该保留哪些字段。
+	// server 把 resource_ref 当整体替换——像 `--default-branch-hint` 这种局部编辑
+	// 必须在这里重建整个 payload，否则没提的 `url` 会消失、server 报 400。
 	var existing map[string]any
 	if err := client.GetJSON(ctx, "/api/projects/"+projectRef.ID+"/resources", &existing); err != nil {
 		return fmt.Errorf("list project resources: %w", err)
@@ -752,19 +770,22 @@ func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// buildResourceRefFromRefFlag 处理通用 --ref：--ref 是 JSON 时的逃生门。对
+// github_repo 身兼二职：JSON 对象/数组（"{...}" / "[...]"）仍是逃生门，其它任意
+// 值——包括裸标量如数字 tag（"2024"）或全数字短 SHA（"1234567"）——是检出 ref
+// 快捷值、与 --url 合并。只在值确实意在 JSON 时解析：否则 json.Unmarshal 会把
+// "2024" 当数字吞掉，悄悄吃掉一个合法的检出 ref。
 func buildResourceRefFromRefFlag(cmd *cobra.Command, resourceType string, existingRef map[string]any) (any, bool, error) {
 	if !cmd.Flags().Changed("ref") {
 		return nil, false, nil
 	}
 	rawRef, _ := cmd.Flags().GetString("ref")
 	rawRef = strings.TrimSpace(rawRef)
-	// --ref is the generic JSON resource_ref escape hatch. For github_repo it
-	// does double duty: a JSON object/array ("{...}" / "[...]") is still the
-	// escape hatch, but any other value — including bare scalars like a numeric
-	// tag ("2024") or an all-digit short SHA ("1234567") — is a checkout-ref
-	// shortcut that merges with --url. Only parse JSON when the value is
-	// actually meant as JSON; otherwise json.Unmarshal would accept "2024" as a
-	// number and silently swallow a legitimate checkout ref.
+	// --ref 是通用的 JSON resource_ref 逃生门。对 github_repo 身兼二职：JSON 对象/
+	// 数组（"{...}" / "[...]"）仍是逃生门，但任何其它值——包括裸标量如数字 tag
+	// （"2024"）或全数字短 SHA（"1234567"）——是检出-ref 快捷值，与 --url 合并。只在
+	// 值确实意在 JSON 时解析；否则 json.Unmarshal 会把 "2024" 当数字接受、悄悄吞掉
+	// 合法的检出 ref。
 	if rawRef != "" && (resourceType != "github_repo" || looksLikeJSONPayload(rawRef)) {
 		var ref any
 		if err := json.Unmarshal([]byte(rawRef), &ref); err != nil {
@@ -782,19 +803,17 @@ func buildResourceRefFromRefFlag(cmd *cobra.Command, resourceType string, existi
 	return ref, has, nil
 }
 
+// looksLikeJSONPayload 粗判字符串是否以 { 或 [ 开头（可能是 JSON 对象/数组）。
 func looksLikeJSONPayload(raw string) bool {
 	raw = strings.TrimSpace(raw)
 	return strings.HasPrefix(raw, "{") || strings.HasPrefix(raw, "[")
 }
 
-// buildResourceRefFromFlags collects the per-type shortcut flags into a
-// resource_ref payload, seeding from existingRef so partial edits (only
-// --default-branch-hint, only --ref-label) preserve the unmentioned fields.
-// Returns (ref, true) only when the caller actually set at least one shortcut
-// flag — that lets the update command tell "no change requested" apart from
-// "change ref to empty object". existingRef may be nil for the `add` path,
-// where there is nothing to merge with; in that case partial inputs that miss
-// required fields are still rejected.
+// buildResourceRefFromFlags 把按类型分组的快捷 flag 收成 resource_ref payload；
+// 用 existingRef 作底，局部编辑（只 --default-branch-hint、只 --ref-label）才能保留
+// 没提的字段。只有调用方确实设了至少一个快捷 flag 才返回 (ref, true)——这让 update
+// 命令能区分「没要求改」与「要把 ref 改成空对象」。add 路径 existingRef 可为 nil，
+// 没有可合并的对象；此时漏掉必填字段的局部输入仍会被拒。
 func buildResourceRefFromFlags(cmd *cobra.Command, resourceType string, existingRef map[string]any) (map[string]any, bool, error) {
 	switch resourceType {
 	case "github_repo":
@@ -805,8 +824,8 @@ func buildResourceRefFromFlags(cmd *cobra.Command, resourceType string, existing
 			return nil, false, nil
 		}
 		ref := map[string]any{}
-		// Seed from the existing row so a `--default-branch-hint` edit doesn't
-		// clobber the `url` (server overwrites resource_ref wholesale).
+		// 从现存行播种，`--default-branch-hint` 这类编辑才不会冲掉 `url`
+		// （server 整体覆盖 resource_ref）。
 		if existingRef != nil {
 			if u, ok := existingRef["url"].(string); ok && strings.TrimSpace(u) != "" {
 				ref["url"] = strings.TrimSpace(u)
@@ -892,8 +911,7 @@ func buildResourceRefFromFlags(cmd *cobra.Command, resourceType string, existing
 			}
 		}
 		if modeSet {
-			// An empty value clears the field back to the in_place default,
-			// mirroring how --ref-label clears a label.
+			// 空值清空该字段回到 in_place 默认，镜像 --ref-label 清 label 的方式。
 			mode := strings.TrimSpace(mustString(cmd, "execution-mode"))
 			if mode == "" {
 				delete(ref, "execution_mode")
@@ -909,7 +927,7 @@ func buildResourceRefFromFlags(cmd *cobra.Command, resourceType string, existing
 		}
 		return ref, true, nil
 	default:
-		// Unknown type or empty (resource not found) — caller must use --ref.
+		// 未知类型或类型为空（资源没找到）——调用方必须走 --ref。
 		if cmd.Flags().Changed("url") || cmd.Flags().Changed("default-branch-hint") ||
 			cmd.Flags().Changed("local-path") || cmd.Flags().Changed("daemon-id") ||
 			cmd.Flags().Changed("ref-label") || cmd.Flags().Changed("execution-mode") {
@@ -919,11 +937,14 @@ func buildResourceRefFromFlags(cmd *cobra.Command, resourceType string, existing
 	}
 }
 
+// mustString 取字符串 flag 值。
 func mustString(cmd *cobra.Command, name string) string {
 	v, _ := cmd.Flags().GetString(name)
 	return v
 }
 
+// runProjectResourceRemove 执行 `project resource remove <project-id> <resource-id>`：
+// 把资源从项目上摘掉。
 func runProjectResourceRemove(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -950,9 +971,8 @@ func runProjectResourceRemove(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// summarizeResourceRef extracts the most useful single string from a
-// resource_ref object — for github_repo this is the URL; for
-// local_directory it is the local path.
+// summarizeResourceRef 从 resource_ref 对象里提取最有用的一段字面——github_repo 是
+// URL（带检出 ref 时 "url @ ref"），local_directory 是本地路径。
 func summarizeResourceRef(raw any) string {
 	m, ok := raw.(map[string]any)
 	if !ok {
@@ -974,9 +994,10 @@ func summarizeResourceRef(raw any) string {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers —— 公共辅助
 // ---------------------------------------------------------------------------
 
+// formatLead 把项目 lead 的 (type, id) 渲染成可读名字（未设 lead 返回空）。
 func formatLead(project map[string]any, actors actorDisplayLookup) string {
 	lType := strVal(project, "lead_type")
 	lID := strVal(project, "lead_id")

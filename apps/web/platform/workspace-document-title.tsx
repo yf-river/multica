@@ -7,50 +7,44 @@ import { useTabPresentation } from "@multica/views/layout";
 import { SITE_TITLE, formatDocumentTitle } from "./document-title";
 
 /**
- * Names the browser tab after whatever the workspace route has open, e.g.
- * `MUL-123: Fix login | Multica` (MUL-6222). Without it every open dashboard
- * tab renders the root metadata title, so several issues side by side are
- * indistinguishable until you click into each one.
+ * 把浏览器标签页标题设成工作区路由当前打开的内容，例如 `MUL-123: Fix login | Multica`
+ * （MUL-6222）。不做的话，每个开着的 dashboard 标签页都只会显示根 metadata 标题，
+ * 并排看多个 issue 时根本无法区分，直到逐个点进去。
  *
- * The URL → title resolution is not ours: it is the same pure subject parser
- * plus cache-backed presentation hook that names workspace documents, so a
- * browser tab and a deep-linked document for one URL always read identically,
- * in the user's
- * locale, and a renamed project or a changed issue title re-titles the tab
- * live. Every query behind it is cache-only, so this costs no extra request.
+ * URL → 标题的解析不归本组件管：它用的是与「工作区文档命名」相同的纯解析器 +
+ * 缓存型展示 hook，所以同一个 URL 的浏览器标签页与深链文档读起来始终一致、按用户语言
+ * 展示；重命名的项目或改名的 issue 也会实时改掉标签标题。背后每个查询都只走缓存，
+ * 因此本组件不会带来额外请求。
  *
- * Mounted once per dashboard layout — one writer for the whole tree. A page
- * that wants a different title should teach `resolveTabPresentation` about its
- * subject rather than setting `document.title` behind this component's back.
+ * 每个 dashboard 布局只挂载一次——整棵树只有一个写入方。某页面想要不同标题，应当
+ * 让 resolveTabPresentation 认识它的 subject，而不是绕过本组件去直接写 document.title。
  */
 export function WorkspaceDocumentTitle() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // Inbox and Chat carry their selection in the query string, and the subject
-  // parser reads it, so the title has to be recomputed from the full URL.
+  // 收件箱与聊天把当前选中项放在查询串里，subject 解析器也会读它，
+  // 所以标题必须基于「完整 URL」重新计算。
   const search = searchParams.toString();
   const url = search ? `${pathname}?${search}` : pathname;
 
   const subject = useMemo(() => parseTabSubject(url), [url]);
   const { title } = useTabPresentation(url);
 
-  // An unrecognized URL gets the site title, never the "Unknown page" label a
-  // tab strip needs: a browser tab has no other place to show the product name.
+  // 未识别的 URL 落到站点标题，而不是标签条上需要的「未知页面」标签：
+  // 浏览器标签页没有别的地方展示产品名。
   const documentTitle =
     subject.kind === "unknown" ? SITE_TITLE : formatDocumentTitle(title);
 
-  // `url` is a dependency even though `documentTitle` is what we write: an app
-  // router navigation re-renders the target route's metadata and resets
-  // document.title to the root default, so a move between two routes that
-  // happen to share a title (`/inbox` → `/inbox?view=archived`) has to
-  // re-assert it.
+  // 虽然真正写入的是 documentTitle，但依赖里必须带 url：app router 在导航后会
+  // 用目标路由的 metadata 重新渲染并重置 document.title 为根默认值，所以两次
+  // 恰好同标题的路由之间移动（/inbox → /inbox?view=archived）也得重新断言一次。
   useEffect(() => {
     document.title = documentTitle;
   }, [documentTitle, url]);
 
-  // Leaving the dashboard entirely (logout, workspace switcher, landing) drops
-  // back to the site title so the stale issue name never outlives its page.
+  // 整体离开 dashboard（登出、切换工作区、回落地页）时把标题重置回站点名，
+  // 免得过期的 issue 名比页面活得更久。
   useEffect(() => {
     return () => {
       document.title = SITE_TITLE;

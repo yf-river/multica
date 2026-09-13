@@ -1,3 +1,7 @@
+// 本文件：squad（智能体小队）的 HTTP 接口层——小队 CRUD、成员管理、成员状态汇总、领袖
+// 评估记录与触发逻辑。职责边界要点：小队全工作区可见，但「管理」（改名/加人/归档）仅限
+// 工作区 owner/admin 或小队的创建者（canManageSquad）；普通创建者只能把「自己可 @ 触发」
+// 的 Agent 接入小队（memberCanWireAgent），防止把人拽进路由就能调他调不了的 Agent。
 package handler
 
 import (
@@ -21,8 +25,9 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// ── Response types ──────────────────────────────────────────────────────────
+// ── 响应类型 ─────────────────────────────────────────────────────────────
 
+// SquadResponse 是小队对外返回的 JSON 结构（含成员数与头像预览）。
 type SquadResponse struct {
 	ID            string                       `json:"id"`
 	WorkspaceID   string                       `json:"workspace_id"`
@@ -40,17 +45,20 @@ type SquadResponse struct {
 	MemberPreview []SquadMemberPreviewResponse `json:"member_preview"`
 }
 
+// SquadMemberPreviewResponse 是成员预览行（列表里头像那排），只含最小标识。
 type SquadMemberPreviewResponse struct {
 	MemberType string `json:"member_type"`
 	MemberID   string `json:"member_id"`
 	Role       string `json:"role"`
 }
 
+// squadMemberSummary 是内部聚合：成员总数 + 最多 3 行的预览。
 type squadMemberSummary struct {
 	count   int
 	preview []SquadMemberPreviewResponse
 }
 
+// SquadMemberResponse 是单个成员的对外 JSON。
 type SquadMemberResponse struct {
 	ID         string `json:"id"`
 	SquadID    string `json:"squad_id"`
@@ -60,8 +68,9 @@ type SquadMemberResponse struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-// ── Converters ──────────────────────────────────────────────────────────────
+// ── 转换器 ─────────────────────────────────────────────────────────────
 
+// squadToResponse 把 db.Squad 转成对外 JSON（MemberPreview 先置空数组，等摘要回填）。
 func (h *Handler) squadToResponse(s db.Squad) SquadResponse {
 	return SquadResponse{
 		ID:            uuidToString(s.ID),
@@ -80,6 +89,7 @@ func (h *Handler) squadToResponse(s db.Squad) SquadResponse {
 	}
 }
 
+// squadMemberToResponse 把 db.SquadMember 转成对外 JSON。
 func squadMemberToResponse(m db.SquadMember) SquadMemberResponse {
 	return SquadMemberResponse{
 		ID:         uuidToString(m.ID),
@@ -91,6 +101,7 @@ func squadMemberToResponse(m db.SquadMember) SquadMemberResponse {
 	}
 }
 
+// addSquadMemberPreview 累加计数并把成员塞进预览；预览超过 3 行就不再追加。
 func addSquadMemberPreview(summary *squadMemberSummary, memberType string, memberID pgtype.UUID, role string) {
 	summary.count++
 	if len(summary.preview) >= 3 {
@@ -103,6 +114,7 @@ func addSquadMemberPreview(summary *squadMemberSummary, memberType string, membe
 	})
 }
 
+// applySquadMemberSummary 把聚合结果回填进响应结构。
 func applySquadMemberSummary(resp *SquadResponse, summary *squadMemberSummary) {
 	if summary == nil {
 		return
@@ -111,14 +123,12 @@ func applySquadMemberSummary(resp *SquadResponse, summary *squadMemberSummary) {
 	resp.MemberPreview = summary.preview
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// ── 辅助函数 ─────────────────────────────────────────────────────────────
 
-// canManageSquad reports whether the member may mutate the squad. Workspace
-// owner/admin manage every squad; a regular member manages only the squads
-// they created. Squads stay creator-scoped for management while remaining
-// visible workspace-wide (ListSquads is unfiltered). Mirrors the front-end
-// per-squad `canManage` gate so the UI and API agree on who can rename / add
-// members / archive (MUL-4223).
+// canManageSquad 判断成员能否改动该小队。工作区 owner/admin 可管理任何小队；普通成员只能
+// 管理自己创建的小队。管理权保持在创建者范围内，小队本身却全工作区可见（ListSquads 不过滤）。
+// 与前端每个小队的 `canManage` 门槛保持一致，让 UI 与 API 对「谁能改名/加人/归档」的判断
+// 一致（MUL-4223）。
 func canManageSquad(member db.Member, squad db.Squad) bool {
 	if roleAllowed(member.Role, "owner", "admin") {
 		return true
@@ -126,15 +136,11 @@ func canManageSquad(member db.Member, squad db.Squad) bool {
 	return uuidToString(squad.CreatorID) == uuidToString(member.UserID)
 }
 
-// memberCanWireAgent reports whether the acting member may attach the given
-// agent to a squad (as leader or worker). Workspace owner/admin may wire any
-// workspace agent — their management surface is unchanged. A regular member
-// (a creator managing their own squad) may only wire agents they can
-// @-trigger: canInvokeAgent judged as the member themselves, so public_to
-// agents on their allow-list and their own private agents pass, while other
-// members' private / non-allow-listed agents are rejected. This stops a
-// creator from smuggling an agent they cannot invoke into a squad and reaching
-// it through squad routing (MUL-4223).
+// memberCanWireAgent 判断操作成员能否把指定 Agent 接进小队（当领袖或成员）。工作区
+// owner/admin 可接任何工作区 Agent——他们的管理面不变。普通成员（管理自己小队的创建者）
+// 只能接自己可 @ 触发的 Agent：以成员本人身份按 canInvokeAgent 判断，于是他们白名单上的
+// public_to Agent 和自己名下的私有 Agent 通过，别人的私有/不在白名单的 Agent 被拒。这防止
+// 创建者把一个自己调不动的 Agent 偷渡进小队、再借 squad 路由去够它（MUL-4223）。
 func (h *Handler) memberCanWireAgent(ctx context.Context, member db.Member, agent db.Agent, workspaceID string) bool {
 	if roleAllowed(member.Role, "owner", "admin") {
 		return true
@@ -143,7 +149,7 @@ func (h *Handler) memberCanWireAgent(ctx context.Context, member db.Member, agen
 	return h.canInvokeAgent(ctx, agent, "member", uid, uid, workspaceID)
 }
 
-// loadSquadInWorkspace loads a squad scoped to the current workspace.
+// loadSquadInWorkspace 按当前工作区范围加载小队；找不到就写 404 并返回 ok=false。
 func (h *Handler) loadSquadInWorkspace(w http.ResponseWriter, r *http.Request) (db.Squad, string, bool) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
 	squadID := chi.URLParam(r, "id")
@@ -166,6 +172,7 @@ func (h *Handler) loadSquadInWorkspace(w http.ResponseWriter, r *http.Request) (
 	return squad, workspaceID, true
 }
 
+// loadSquadMemberSummary 汇总小队成员：总数 + 预览行。
 func (h *Handler) loadSquadMemberSummary(ctx context.Context, squadID pgtype.UUID) (*squadMemberSummary, error) {
 	rows, err := h.Queries.ListSquadMemberPreviewRowsBySquad(ctx, squadID)
 	if err != nil {
@@ -178,6 +185,7 @@ func (h *Handler) loadSquadMemberSummary(ctx context.Context, squadID pgtype.UUI
 	return summary, nil
 }
 
+// squadToResponseWithPreview 组小队响应并带上成员摘要。
 func (h *Handler) squadToResponseWithPreview(ctx context.Context, squad db.Squad) (SquadResponse, error) {
 	resp := h.squadToResponse(squad)
 	summary, err := h.loadSquadMemberSummary(ctx, squad.ID)
@@ -188,8 +196,10 @@ func (h *Handler) squadToResponseWithPreview(ctx context.Context, squad db.Squad
 	return resp, nil
 }
 
-// ── Handlers ────────────────────────────────────────────────────────────────
+// ── Handlers ─────────────────────────────────────────────────────────────
 
+// ListSquads 处理 GET /api/workspaces/{workspaceId}/squads——列出工作区全部小队（不过滤），
+// 每行带成员预览。
 func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -226,11 +236,12 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// CreateSquad 处理 POST /api/workspaces/{workspaceId}/squads——创建工作区小队并自动把领袖
+// 加成 role="leader" 的成员。
 func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	// Any workspace member can create a squad and becomes its creator
-	// (CreatorID below). This aligns squads with agents/projects, which are
-	// also member-creatable; management stays creator-scoped (MUL-4223).
+	// 任何工作区成员都能建小队并成为其创建者（下面的 CreatorID）。这与 Agent/项目一致——
+	// 它们也是成员可建的；管理权保持在创建者范围内（MUL-4223）。
 	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
 	if !ok {
 		return
@@ -264,7 +275,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate leader is an agent in this workspace.
+	// 校验领袖是本工作区的 Agent。
 	leaderAgent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 		ID:          leaderUUID,
 		WorkspaceID: wsUUID,
@@ -273,8 +284,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
 		return
 	}
-	// A non-admin creator may only lead their squad with an agent they can
-	// @-trigger; admins may wire any workspace agent (MUL-4223).
+	// 非 admin 创建者只能用自己可 @ 触发的 Agent 当领袖；admin 可接任何工作区 Agent（MUL-4223）。
 	if !h.memberCanWireAgent(r.Context(), member, leaderAgent, workspaceID) {
 		writeError(w, http.StatusForbidden, "you can only use an agent you have access to as leader")
 		return
@@ -309,7 +319,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-add leader as a member with role "leader".
+	// 自动把领袖加为 role="leader" 的成员。
 	if _, err := qtx.AddSquadMember(r.Context(), db.AddSquadMemberParams{
 		SquadID:    squad.ID,
 		MemberType: "agent",
@@ -346,6 +356,8 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+// GetSquad 处理 GET /api/workspaces/{workspaceId}/squads/{id}——返回单个小队详情（含成员
+// 预览）。找不到回 404。
 func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
 	squad, _, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
@@ -359,6 +371,8 @@ func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// UpdateSquad 处理 PATCH /api/workspaces/{workspaceId}/squads/{id}——局部更新小队
+// （名/描述/指示/领袖/头像）。需 canManageSquad 管理权。
 func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
 	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
@@ -417,10 +431,8 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
-	// Autopilot assignment takes FOR SHARE on the squad before locking its
-	// leader Agent. Take the exclusive side in the same order so leader
-	// rotation and active Autopilot saves cannot leave an automation pointing
-	// at an unbound effective Agent.
+	// Autopilot 指派在锁领袖 Agent 之前先对 squad 取 FOR SHARE。这里按同样顺序取排他侧，
+	// 让领袖轮换与进行中的 Autopilot 保存不会留下一个指向未绑定有效 Agent 的自动化。
 	if _, err := qtx.LockSquadForUpdate(r.Context(), db.LockSquadForUpdateParams{
 		ID:          squad.ID,
 		WorkspaceID: wsUUID,
@@ -435,9 +447,8 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		// Stabilize runtime_id through commit. Runtime teardown takes FOR UPDATE
-		// on this row and follows the same Agent→Autopilot lock order, so
-		// whichever operation starts first produces a complete result.
+		// 让 runtime_id 稳定到提交后。runtime 拆解对该行取 FOR UPDATE、并遵循同样的
+		// Agent→Autopilot 锁顺序，所以谁先开始谁就产出完整结果。
 		newLeader, err := qtx.LockAgentForAutopilotAssignment(r.Context(), db.LockAgentForAutopilotAssignmentParams{
 			ID:          lid,
 			WorkspaceID: wsUUID,
@@ -446,12 +457,12 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
 			return
 		}
-		// A non-admin creator may only promote an agent they can @-trigger.
+		// 非 admin 创建者只能提拔自己可 @ 触发的 Agent。
 		if !h.memberCanWireAgent(r.Context(), member, newLeader, workspaceID) {
 			writeError(w, http.StatusForbidden, "you can only use an agent you have access to as leader")
 			return
 		}
-		// Ensure new leader is a squad member; auto-add if not.
+		// 确保新领袖是小队成员；不是就自动补加。
 		isMember, err := qtx.IsSquadMember(r.Context(), db.IsSquadMemberParams{
 			SquadID: squad.ID, MemberType: "agent", MemberID: lid,
 		})
@@ -523,6 +534,8 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// DeleteSquad 处理 DELETE /api/workspaces/{workspaceId}/squads/{id}——把该小队负责的 issue
+// 与 autopilot 交接给领袖，再归档小队。需 canManageSquad；已归档回 400。
 func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
 	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
@@ -544,8 +557,7 @@ func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Transfer assignments and archive the squad in one transaction so the
-	// deletion event cannot race a consumer that still sees the old assignee.
+	// 在同一个事务里转移指派并归档小队，这样删除事件不会与仍看到旧负责人的消费者赛跑。
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start squad transaction")
@@ -561,12 +573,10 @@ func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mirror the issue-assignee transfer for autopilots that target this
-	// squad. Without this, autopilot.assignee_id would still point at the
-	// archived squad row and every subsequent dispatch would skip with
-	// "assignee squad is archived" — visible to ops but useless to the
-	// owner. Rewriting to the leader keeps the autopilot semantics
-	// unchanged (Path A from MUL-2429 is leader-only execution anyway).
+	// 把指向该小队的 autopilot 一并镜像成指向领袖的 issue-指派转移。不做的话
+	// autopilot.assignee_id 仍指向已归档的小队行，之后的每次派发都会以 "assignee squad is
+	// archived" 跳过——ops 看得见，对 owner 却毫无用处。改写给领袖后 autopilot 语义不变
+	// （MUL-2429 的 Path A 本来就是领袖独跑）。
 	if err := qtx.TransferSquadAutopilotsToLeader(r.Context(), db.TransferSquadAutopilotsToLeaderParams{
 		AssigneeID:   squad.ID,
 		AssigneeID_2: squad.LeaderID,
@@ -601,8 +611,10 @@ func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ── Squad Members ───────────────────────────────────────────────────────────
+// ── Squad 成员 ───────────────────────────────────────────────────────────
 
+// ListSquadMembers 处理 GET /api/workspaces/{workspaceId}/squads/{id}/members——列出小队
+// 全部成员。
 func (h *Handler) ListSquadMembers(w http.ResponseWriter, r *http.Request) {
 	squad, _, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
@@ -620,13 +632,11 @@ func (h *Handler) ListSquadMembers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ── Squad Member Status ────────────────────────────────────────────────────
+// ── Squad 成员状态 ────────────────────────────────────────────────────────
 
-// SquadMemberStatus is the per-member entry in the squad member status
-// response. Agent members carry a derived working/idle/offline/unstable
-// status plus any active issues; human members are returned with member_type
-// only so the front-end can render them in the same list without
-// reordering.
+// SquadMemberStatusResponse 是成员状态响应里的「每个成员一行」。Agent 成员带派生的
+// working/idle/offline/unstable 状态和进行中的 issue；人类成员只带 member_type 返回，前端
+// 能在同一张表里渲染而不必重排。
 type SquadMemberStatusResponse struct {
 	MemberType   string                  `json:"member_type"`
 	MemberID     string                  `json:"member_id"`
@@ -635,6 +645,7 @@ type SquadMemberStatusResponse struct {
 	LastActiveAt *string                 `json:"last_active_at"`
 }
 
+// SquadActiveIssueBrief 是状态列表里某个成员当前进行中 issue 的摘要。
 type SquadActiveIssueBrief struct {
 	IssueID     string `json:"issue_id"`
 	Identifier  string `json:"identifier"`
@@ -642,28 +653,23 @@ type SquadActiveIssueBrief struct {
 	IssueStatus string `json:"issue_status"`
 }
 
+// SquadMemberStatusListResponse 是成员状态列表的整体响应。
 type SquadMemberStatusListResponse struct {
 	Members []SquadMemberStatusResponse `json:"members"`
 }
 
-// deriveSquadMemberStatus collapses runtime + task signals into the five
-// status buckets used by the squad UI. Mirrors the workload+availability
-// split in packages/core/agents/derive-presence.ts: working wins over
-// runtime health (an agent that is in the middle of dispatched/running
-// work counts as working even if the runtime briefly drops), then
-// availability buckets decide between idle / unstable / offline.
+// deriveSquadMemberStatus 把 runtime + 任务信号压成 squad UI 用的五档状态。镜像
+// packages/core/agents/derive-presence.ts 里的 workload+availability 划分：working 优先于
+// runtime 健康（正处在派发/运行中的 Agent 即使 runtime 短暂掉线也算 working），然后按
+// availability 桶在 idle / unstable / offline 之间取舍。
 //
-// Thresholds match deriveRuntimeHealth: any offline runtime whose
-// last_seen_at is within the last 5 minutes is reported as "unstable" so
-// the squad UI surfaces transient drops the same way the agent dot does.
+// 阈值与 deriveRuntimeHealth 一致：任何 offline runtime 只要 last_seen_at 在过去 5 分钟内，
+// 就报 "unstable"，让 squad UI 与 agent 圆点用同样方式呈现瞬态掉线。
 //
-// Archived agents always report `archived` regardless of any leftover
-// runtime row or task — they should appear in the list but never look
-// like they're still working or merely offline (a leftover online
-// runtime row would otherwise read as "offline" and hide the fact that
-// the agent has been archived). Per the RFC decision (see MUL-2319), we
-// surface archived agents in this endpoint rather than filtering them
-// out in the SQL.
+// 已归档的 Agent 永远报 `archived`，不管是否残留 runtime 行或任务——它们应该出现在列表里，
+// 但绝不能看起来还在干活或只是离线（残留的 online runtime 行会被误读成 "offline"，掩盖
+// Agent 已被归档的事实）。按 RFC 决定（见 MUL-2319），本端点保留归档 Agent 而不在 SQL 里
+// 过滤。
 func deriveSquadMemberStatus(
 	archived bool,
 	runtimeStatus pgtype.Text,
@@ -692,11 +698,9 @@ func deriveSquadMemberStatus(
 	return "offline"
 }
 
-// ListSquadMemberStatus returns one entry per squad member with derived
-// status, the issues each agent member is currently running or waiting to run,
-// and the last observed runtime activity. The endpoint is read-only and
-// inherits the workspace-membership guard from the route middleware — any
-// member of the workspace can read it.
+// ListSquadMemberStatus 返回每个小队成员一行：派生状态、该 Agent 成员当前正在跑/排队等的
+// issue，以及最近一次 runtime 活动。端点只读，继承路由中间件的工作区成员守卫——工作区任何
+// 成员都能读。
 func (h *Handler) ListSquadMemberStatus(w http.ResponseWriter, r *http.Request) {
 	squad, _, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
@@ -712,9 +716,8 @@ func (h *Handler) ListSquadMemberStatus(w http.ResponseWriter, r *http.Request) 
 	prefix := h.getIssuePrefix(r.Context(), squad.WorkspaceID)
 	now := time.Now()
 
-	// Group rows by member_id while preserving the SQL ORDER BY (squad_member
-	// insertion order). One member may appear in multiple rows when they have
-	// more than one active task.
+	// 按 member_id 分组，同时保留 SQL 的 ORDER BY（squad_member 插入序）。一个成员有多条
+	// 活跃任务时会在多行里出现。
 	type memberAcc struct {
 		response       SquadMemberStatusResponse
 		archived       bool
@@ -748,10 +751,9 @@ func (h *Handler) ListSquadMemberStatus(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		// Keep waiting_local_directory rows available for issue visibility,
-		// but only dispatched/running work drives the `working` bucket. A
-		// working task may have no issue (chat / quick-create), so decide the
-		// bucket independently from whether an issue link can be rendered.
+		// waiting_local_directory 行保留着供 issue 可见性用，但只有 dispatched/running 才推
+		// 动 `working` 桶。工作中的任务可能没有 issue（聊天/quick-create），所以桶的判定与
+		// 能否渲染 issue 链接互不依赖。
 		if row.TaskID.Valid {
 			if row.TaskStatus.Valid &&
 				(row.TaskStatus.String == "dispatched" || row.TaskStatus.String == "running") {
@@ -794,10 +796,9 @@ func (h *Handler) ListSquadMemberStatus(w http.ResponseWriter, r *http.Request) 
 				now,
 			)
 			entry.response.Status = &status
-			// last_active_at prefers the freshest active-task dispatch
-			// over the runtime heartbeat: a working agent should not
-			// look stale because the runtime heartbeat is a few seconds
-			// behind. Falls back to runtime last_seen_at otherwise.
+			// last_active_at 优先取最新一次活跃任务派发时刻而不是 runtime 心跳：正在干活的
+			// Agent 不该因为 runtime 心跳慢了几秒就显得陈旧。否则回退到 runtime 的
+			// last_seen_at。
 			if entry.latestActiveAt.Valid {
 				entry.response.LastActiveAt = timestampToPtr(entry.latestActiveAt)
 			} else if entry.runtimeSeenAt.Valid {
@@ -810,6 +811,8 @@ func (h *Handler) ListSquadMemberStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// AddSquadMember 处理 POST /api/workspaces/{workspaceId}/squads/{id}/members——把 Agent 或
+// 人类成员加进小队。需 canManageSquad；已在队内回 409。
 func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
 	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
@@ -853,7 +856,7 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the member belongs to this workspace.
+	// 校验成员属于本工作区。
 	if req.MemberType == "agent" {
 		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 			ID: memberUUID, WorkspaceID: wsUUID,
@@ -862,9 +865,8 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "agent not found in this workspace")
 			return
 		}
-		// A non-admin creator may only add agents they can @-trigger (public
-		// or their own / allow-listed agents); admins may add any workspace
-		// agent (MUL-4223).
+		// 非 admin 创建者只能加自己可 @ 触发的 Agent（public 或自己/白名单的）；admin 可加
+		// 任何工作区 Agent（MUL-4223）。
 		if !h.memberCanWireAgent(r.Context(), member, agent, workspaceID) {
 			writeError(w, http.StatusForbidden, "you can only add an agent you have access to")
 			return
@@ -915,6 +917,8 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 	h.publishEvent(event)
 }
 
+// RemoveSquadMember 处理 DELETE /api/workspaces/{workspaceId}/squads/{id}/members——把成员
+// 移出小队。不能移除领袖（需先换领袖）；需 canManageSquad。
 func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
 	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
@@ -945,7 +949,7 @@ func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prevent removing the leader.
+	// 不许移除领袖。
 	if req.MemberType == "agent" && uuidToString(squad.LeaderID) == req.MemberID {
 		writeError(w, http.StatusBadRequest, "cannot remove the squad leader; change leader first")
 		return
@@ -984,6 +988,8 @@ func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// UpdateSquadMemberRole 处理 PATCH /api/workspaces/{workspaceId}/squads/{id}/members/role——
+// 改成员角色。需 canManageSquad；成员不存在回 404。
 func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
 	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
@@ -1045,22 +1051,18 @@ func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, squadMemberToResponse(sm))
 }
 
-// ── Squad Leader Evaluation ──────────────────────────────────────────────────
+// ── Squad 领袖评估 ────────────────────────────────────────────────────────
 
-// RecordSquadLeaderEvaluation records a squad leader's evaluation decision
-// into the unified activity_log. Called by the leader agent via CLI after
-// each trigger to record whether it took action, stayed silent, or failed.
+// RecordSquadLeaderEvaluation 记录小队领袖在每次触发后的评估结论（action / no_action /
+// failed），写入统一 activity_log。领袖 Agent 通过 CLI 每次触发后调用。
 //
-// The leader-turn check is task-provenance based (is_leader_task + squad_id on
-// the X-Task-ID row), the SAME source the claim path uses to inject the squad
-// briefing and the mandatory-recording instruction. The target issue's own
-// assignee is deliberately NOT consulted: leaders legitimately run on issues
-// that are not squad-assigned. See MUL-6622 / GH #7487.
+// 「这轮是否是领袖轮」的判据基于任务来源（X-Task-ID 行上的 is_leader_task + squad_id）——
+// 与认领路径注入 squad 简报和强制记录指令用的是同一来源。刻意不查目标 issue 自己的负责人：
+// 领袖本来就会在非 squad 归属的 issue 上跑。见 MUL-6622 / GH #7487。
 //
-// Two authorization gates, in this order: the caller must own the task, and must
-// still be the squad's leader. The first is what makes it safe to quote the
-// task's issue id in an error; the second is what keeps a claim-downgraded run
-// (see the comment at gate 2) from writing a leader verdict.
+// 两道授权闸门按顺序：调用方必须拥有该任务，且必须仍是该小队领袖。第一道让「在错误里引用
+// 任务所属 issue id」变得安全；第二道防止一次已被降级的认领运行（见闸门 2 的注释）去写领袖
+// 结论。
 func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Request) {
 	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
@@ -1081,25 +1083,17 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Authority for "is this run a squad leader turn" is the TASK ROW, not the
-	// target issue's assignee (MUL-6622 / GH #7487). is_leader_task + squad_id
-	// are stamped at enqueue time and are exactly what the claim path keys the
-	// squad briefing and the mandatory-`squad activity` instruction off
-	// (handler/daemon.go, daemon/prompt.go taskIsSquadLeader). Gating this
-	// endpoint on issue.assignee_type == "squad" instead made the recording
-	// call unsatisfiable on the paths where a leader legitimately runs on a
-	// non-squad-assigned issue — a `@squad` mention on an issue owned by a
-	// plain agent, or a leader task bound to a child issue — and because the
-	// no_action instruction forbids substituting a comment, the decision left
-	// no trace at all.
+	// 「这轮是不是领袖轮」的权威在任务行，不在目标 issue 的负责人（MUL-6622 / GH #7487）。
+	// is_leader_task + squad_id 在入队时打上，正是认领路径把 squad 简报和强制 `squad activity`
+	// 指令挂上去的同一依据（handler/daemon.go、daemon/prompt.go taskIsSquadLeader）。若把本端点
+	// 挂在 issue.assignee_type == "squad" 上，反而会让领袖合法跑在非 squad 归属 issue 的路径
+	// ——某条普通 Agent 的 issue 上被 @squad、或绑到子 issue 的领袖任务——上永远无法记录；又
+	// 因 no_action 指令禁止用评论代替，那个决定就完全不留痕了。
 	//
-	// Check ORDER is load-bearing. Every rejection below the ownership gate may
-	// quote task-derived ids; every rejection above it must not. `GetAgentTask`
-	// is a global lookup by id, so tenant scoping (GetAgentTaskInWorkspace,
-	// which joins the owning agent's workspace) and the "caller owns this task"
-	// gate both come first — otherwise an unrelated task id, probed through an
-	// issue the caller can legitimately read, would echo back a foreign
-	// workspace's issue id.
+	// 检查顺序是承重的：拥有权闸门以下的每次拒绝都可以引用任务派生的 id；之上的则一概不能。
+	// `GetAgentTask` 是按 id 的全局查找，所以租户隔离（GetAgentTaskInWorkspace 会连所在工作区）
+	// 与「调用方拥有该任务」闸门都必须先跑——否则一个无关的任务 id 经调用方合法可读的 issue
+	// 试探，会把别的工作区的 issue id 回显出来。
 	taskID := r.Header.Get("X-Task-ID")
 	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task id")
 	if !ok {
@@ -1114,7 +1108,7 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Security gate 1: the caller must be the agent this task was enqueued for.
+	// 安全闸门 1：调用方必须是该任务入队时指定的那个 Agent。
 	workspaceID := uuidToString(issue.WorkspaceID)
 	userID := requestUserID(r)
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
@@ -1123,25 +1117,22 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Past the ownership gate, naming the task's own issue is safe — and useful:
-	// a leader woken by a stage barrier / child-done callback runs on the PARENT
-	// issue, so recording against the child it just read is the common mistake.
+	// 过了拥有权闸门，指名任务自己的 issue 就是安全且有用的：被 stage barrier / 子完成回调
+	// 唤醒的领袖跑在 PARENT issue 上，所以记录到它刚读的那个子 issue 上是最常见的错误。
 	if uuidToString(task.IssueID) != uuidToString(issue.ID) {
 		writeError(w, http.StatusBadRequest,
 			"task does not belong to issue; record the evaluation on issue "+uuidToString(task.IssueID)+" (the issue this task is running on)")
 		return
 	}
-	// Narrowing vs. the old behavior: a leader agent running a NON-leader task
-	// on a squad-assigned issue (for example a same-squad worker task) used to
-	// be accepted here. It is rejected now — it is not running as the leader,
-	// and the runtime only mandates this call when taskIsSquadLeader(task).
+	// 相对旧行为的收窄：领袖 Agent 在 squad 归属 issue 上跑一条非领袖任务（例如同队成员任务）
+	// 以前会被这里接受，现在拒绝了——他不是以领袖身份在跑，runtime 只在 taskIsSquadLeader
+	// 为真时才强制此调用。
 	if !task.IsLeaderTask {
 		writeError(w, http.StatusBadRequest, "task is not a squad leader task")
 		return
 	}
 	if !task.SquadID.Valid {
-		// Pre-MUL-3730 rows can be leader tasks without a stamped squad. Log it
-		// rather than failing silently from the operator's point of view.
+		// MUL-3730 之前的行可能是领袖任务却没盖 squad 戳。记日志而不是对运营方静默失败。
 		slog.Warn("squad leader evaluation: leader task has no squad_id",
 			append(logger.RequestAttrs(r),
 				"task_id", uuidToString(task.ID),
@@ -1160,21 +1151,16 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Security gate 2: the caller must still be this squad's leader.
+	// 安全闸门 2：调用方必须仍是该小队领袖。
 	//
-	// `is_leader_task` on the row records the enqueue-time INTENT, which is not
-	// always the role the claim actually delivered: when the leader was swapped
-	// between enqueue and claim, the claim path clears resp.IsLeaderTask and the
-	// run proceeds as an ordinary agent turn, while the row keeps
-	// is_leader_task = true (handler/daemon.go, "claim delivered as a non-leader
-	// task"). Trusting the row alone would let such a downgraded run write a
-	// leader verdict — and, on no_action, suppress its own comment. Until the
-	// delivered role is persisted, the live leader check is the only thing that
-	// distinguishes the two, so it stays.
+	// 行上的 `is_leader_task` 记录的是入队时的意图，不总是认领实际交付的角色：领袖在入队与
+	// 认领之间被换掉时，认领路径会清掉 resp.IsLeaderTask、让这次运行按普通 Agent 轮进行，
+	// 而行上仍留着 is_leader_task = true（handler/daemon.go "claim delivered as a non-leader
+	// task"）。只信行的话，这种被降级的运行就能写领袖结论——而且在 no_action 时压制自己的
+	// 评论。在交付角色落库之前，实时的领袖检查是区分二者的唯一手段，所以要保留。
 	//
-	// Cost of the conservative choice: a leader rotated away MID-run is refused
-	// here. That no longer means silence — the injected rules now tell a leader
-	// whose recording call failed to leave a short comment instead.
+	// 保守选择的代价：一轮运行中途被换掉的领袖会被拒绝。那不再意味着沉默——注入的规则现在
+	// 会告诉记录失败且没发评论的领袖留一句短评。
 	if actorID != uuidToString(squad.LeaderID) {
 		writeError(w, http.StatusForbidden, "only the squad leader agent can record evaluations")
 		return
@@ -1192,10 +1178,9 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 		WorkspaceID: issue.WorkspaceID,
 		IssueID:     issue.ID,
 		ActorType:   pgtype.Text{String: "agent", Valid: true},
-		// task.AgentID, not squad.LeaderID: the no_action comment suppression
-		// lookup matches actor_id against task.agent_id
-		// (service.HasSquadLeaderNoActionEvaluationForTask), so this column has
-		// to carry the task's agent for suppression to find the row at all.
+		// 用 task.AgentID 而非 squad.LeaderID：no_action 评论压制查找按 actor_id 对
+		// task.agent_id 匹配（service.HasSquadLeaderNoActionEvaluationForTask），所以这列必须带
+		// 任务的 Agent，压制逻辑才找得到这行。
 		ActorID: task.AgentID,
 		Action:  "squad_leader_evaluated",
 		Details: details,
@@ -1225,13 +1210,11 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// ── Squad Trigger Logic ─────────────────────────────────────────────────────
+// ── Squad 触发逻辑 ─────────────────────────────────────────────────────────
 
-// shouldSuppressSquadLeaderSelfTrigger reports whether a squad leader's own
-// comment should be blocked from re-enqueuing that same leader. The only
-// leader-authored non-leader task allowed to wake the assigned leader is a
-// same-squad worker task; generic agent tasks such as direct mentions and
-// thread-parent replies are not worker-role proof and must not self-trigger.
+// shouldSuppressSquadLeaderSelfTrigger 判断领袖自己发的评论是否应被阻止去重新入队这位领袖。
+// 唯一允许唤醒已指派领袖的「领袖自写非领袖任务」是同队成员任务；普通 Agent 任务（直接
+// mention、线程父回复等）不能证明 worker 身份，不得自我触发。
 func (h *Handler) shouldSuppressSquadLeaderSelfTrigger(ctx context.Context, issueID, leaderID, squadID pgtype.UUID) bool {
 	latest, err := h.Queries.GetLatestTaskRoleForIssueAndAgent(ctx, db.GetLatestTaskRoleForIssueAndAgentParams{
 		IssueID: issueID,
@@ -1246,11 +1229,9 @@ func (h *Handler) shouldSuppressSquadLeaderSelfTrigger(ctx context.Context, issu
 	return !latest.SquadID.Valid || uuidToString(latest.SquadID) != uuidToString(squadID)
 }
 
-// commentMentionsAnyone returns true when the comment body contains at least
-// one routing-style mention — [@Name](mention://agent|member|squad|all/<id>).
-// Issue cross-references (mention://issue/...) are ignored because they are
-// not directed at a participant. Only the current comment is inspected —
-// parent (thread root) mentions are NOT inherited here.
+// commentMentionsAnyone 判断评论正文里是否至少有一个路由型 mention——
+// [@Name](mention://agent|member|squad|all/<id>)。issue 交叉引用（mention://issue/...）不算，
+// 它不指向参与者。只检查当前这条评论——父（线程根）mention 不在这里继承。
 func commentMentionsAnyone(content string) bool {
 	for _, m := range util.ParseMentions(content) {
 		switch m.Type {
@@ -1261,20 +1242,15 @@ func commentMentionsAnyone(content string) bool {
 	return false
 }
 
-// The squad-leader assign/promotion readiness decision now lives in the single
-// service.IssueService.WillEnqueueRun predicate (MUL-3375), shared by the issue
-// write paths and the preview endpoint. The former handler-local mirrors
-// (shouldEnqueueSquadLeaderOnAssign / isSquadLeaderReady) were removed to stop
-// the four-entry-point drift. The squad enqueue side effect still flows through
-// enqueueSquadLeaderTask below, which keeps the leader access gate and pending
-// dedup in one place.
+// squad 领袖的指派/升格「是否就绪」判定现在统一住在 service.IssueService.WillEnqueueRun
+// 谓词里（MUL-3375），issue 写路径与预览端点共享。原先 handler 本地的镜像
+// （shouldEnqueueSquadLeaderOnAssign / isSquadLeaderReady）已删除，避免四个入口各自漂移。
+// squad 入队副作用仍走下面的 enqueueSquadLeaderTask，把领袖访问闸门与 pending 去重收敛在
+// 一处。
 
-// enqueueSquadLeaderTask triggers the squad leader agent for an issue assigned
-// to a squad. Assign and backlog-promotion paths use this directly; comment
-// paths go through computeCommentAgentTriggers so preview and create share the
-// same trigger set.
-// enqueueSquadLeaderTask returns true when it actually enqueued a leader task
-// (so the caller can record a handoff trace only on a real run start).
+// enqueueSquadLeaderTask 为指派给小队所属的 issue 触发领袖 Agent。指派与积压升格路径直接用它；
+// 评论路径走 computeCommentAgentTriggers，让预览与创建共享同一份触发集合。
+// 返回 true 表示确实入队了一条领袖任务（调用方可以只在真正跑起来时记一条 handoff 轨迹）。
 func (h *Handler) enqueueSquadLeaderTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, authorType, authorID, handoffNote string) bool {
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          issue.AssigneeID,
@@ -1284,16 +1260,12 @@ func (h *Handler) enqueueSquadLeaderTask(ctx context.Context, issue db.Issue, tr
 		return false
 	}
 
-	// The gate must judge the SAME top-of-chain human the enqueue path will
-	// persist on the leader task row, or it drifts: an agent-created issue that
-	// correctly inherits its originator (MUL-4305) would still be denied here
-	// if the gate used an empty originator. Member authors are their own
-	// originator; for agent/system-triggered assigns we resolve the originator
-	// exactly like EnqueueTaskForSquadLeader* does (via the issue's origin
-	// link). triggerCommentID is always empty on the assign/promote path, so we
-	// pass an invalid UUID to match. A still-unresolved originator leaves
-	// leaderOriginator empty, which correctly fails closed for member/team
-	// targets while a workspace target still admits the agent principal.
+	// 闸门必须判断与入队路径将要落库到领袖任务行上的同一个「链顶人类」，否则会漂移：一条
+	// 正确继承发起人的 Agent 创建 issue（MUL-4305），若闸门用空发起人去判仍会被拒。成员作者
+	// 自己是发起人；Agent/系统触发的指派则按 issue 的 origin 链接解析发起人（与
+	// EnqueueTaskForSquadLeader* 完全一致）。triggerCommentID 在指派/升格路径恒为空，所以传
+	// 非法 UUID 对齐。发起人解析不出来则 leaderOriginator 为空——对 member/team 目标正确
+	// fail-closed，对 workspace 目标仍放行 Agent 主体。
 	leaderOriginator := ""
 	if authorType == "member" {
 		leaderOriginator = authorID
@@ -1307,19 +1279,18 @@ func (h *Handler) enqueueSquadLeaderTask(ctx context.Context, issue db.Issue, tr
 	hasPending, err := h.Queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
 		IssueID: issue.ID,
 		AgentID: squad.LeaderID,
-		// Key dedup on the reviewed head (TEN-356).
+		// 按评审过的 head 去重（TEN-356）。
 		HeadSha: h.TaskService.ResolveIssueReviewSHAParam(ctx, issue.ID),
 	})
 	if err != nil || hasPending {
 		return false
 	}
 
-	// triggerCommentID is always empty on the assign/promote path; the handoff
-	// note rides its own task column, never trigger_comment_id.
+	// triggerCommentID 在指派/升格路径恒为空；handoff 备注走它自己的任务列，绝不进
+	// trigger_comment_id。
 	_ = triggerCommentID
-	// The member who performed the assign/promote is the accountable human for the
-	// leader run (MUL-4302 §4) — the same principal the gate above judged. An agent
-	// author is not a human, so only a member actor is threaded.
+	// 执行指派/升格的成员是这次领袖运行的负责人类（MUL-4302 §4）——也是上面闸门评判的同一
+	// 主体。Agent 作者不是人类，所以只有 member actor 会穿过去。
 	if _, err := h.TaskService.EnqueueTaskForSquadLeaderWithHandoff(ctx, issue, squad.LeaderID, squad.ID, handoffNote, memberActorUserID(authorType, authorID)); err != nil {
 		slog.Warn("enqueue squad leader task failed",
 			"issue_id", uuidToString(issue.ID),

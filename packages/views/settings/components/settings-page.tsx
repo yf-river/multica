@@ -1,3 +1,5 @@
+// 本文件是设置页顶层组件：渲染左侧标签导航和右侧对应标签内容，并按 feature flag 控制部分标签是否可见。
+
 "use client";
 
 import React, { lazy, Suspense } from "react";
@@ -151,10 +153,9 @@ const WORKSPACE_TAB_ICONS = {
 const DEFAULT_TAB = "profile";
 const TAB_QUERY_KEY = "tab";
 
-// Legacy `?tab=…` values that have been collapsed into another tab. Old
-// bookmarks still land on the correct surface without us preserving a
-// dead TabsContent entry. Lark used to be its own top-level workspace
-// tab; it now lives inside Integrations.
+// 历史遗留的 `?tab=…` 取值，已被合并进其它标签。老书签仍能落到正确的页面上，
+// 而无需保留一个已废弃的 TabsContent 项。Lark 曾经是独立的一级工作区标签，
+// 现在并入「集成」里了。
 const LEGACY_WORKSPACE_TAB_REDIRECTS: Record<string, string> = {
   lark: "integrations",
 };
@@ -162,6 +163,10 @@ const LEGACY_WORKSPACE_TAB_REDIRECTS: Record<string, string> = {
 const SETTINGS_TAB_TRIGGER_CLASS =
   "h-8 shrink-0 px-2.5 hover:bg-surface-hover data-active:!bg-surface-selected data-active:!text-surface-selected-foreground data-active:hover:!bg-surface-selected md:!w-full md:px-2 md:after:hidden";
 
+/**
+ * 设置页顶层组件。左侧是「我的账户」和「工作区」两组标签导航，右侧渲染当前标签内容；
+ * plugins、billing 等标签是否显示由 feature flag 决定。
+ */
 export function SettingsPage() {
   const { t } = useT("settings");
   const workspaceName = useCurrentWorkspace()?.name;
@@ -173,6 +178,7 @@ export function SettingsPage() {
     false,
   );
 
+  // 只保留被 feature flag 打开的标签；plugins 和 billing 默认隐藏。
   const visibleWorkspaceTabKeys = React.useMemo(
     () =>
       WORKSPACE_TAB_KEYS.filter(
@@ -183,9 +189,8 @@ export function SettingsPage() {
     [billingEnabled, pluginsEnabled],
   );
 
-  // Whitelist of valid tab values; unknown ?tab=… values silently fall back to
-  // the default. Whitelisting also blocks junk like ?tab=<script> from
-  // surfacing in the DOM via Radix Tabs internals.
+  // 有效标签值的白名单；未知的 ?tab=… 值会静默回退到默认标签。
+  // 白名单同时也能阻止 ?tab=<script> 之类的垃圾值通过 Radix Tabs 内部泄漏到 DOM。
   const validTabs = React.useMemo(
     () =>
       new Set<string>([
@@ -196,6 +201,7 @@ export function SettingsPage() {
   );
 
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
+  // billing 未开启时，若 URL 里还带着 billing 就退回 workspace 标签。
   const candidateTab = tabFromUrl
     ? tabFromUrl === "billing" && !billingEnabled
       ? "workspace"
@@ -204,8 +210,8 @@ export function SettingsPage() {
   const activeTab =
     candidateTab && validTabs.has(candidateTab) ? candidateTab : DEFAULT_TAB;
 
-  // replace (not push) so settings tab switches don't pollute browser history.
-  // Preserve any other query params the page may carry.
+  // 用 replace（而非 push）切换，避免设置页的标签切换污染浏览器历史记录。
+  // 同时保留页面上可能携带的其它查询参数。
   const handleTabChange = (next: string) => {
     const params = new URLSearchParams(navigation.searchParams);
     params.set(TAB_QUERY_KEY, next);
@@ -219,17 +225,14 @@ export function SettingsPage() {
       orientation={isMobile ? "horizontal" : "vertical"}
       className="flex flex-1 min-h-0 flex-col gap-0 overflow-y-auto md:flex-row md:overflow-hidden"
     >
-      {/* Structural navigation; bounded setting groups remain in the content surface.
-          Stays on the content surface color (no shell tint): the desktop's active
-          tab merges into the card top, and a tinted panel under the first tabs
-          breaks that seam (MUL-4439). Zoning comes from the divider instead. */}
+      {/* 结构导航；带边界的设置分组仍留在内容区里。
+          保持内容区背景色（不加外壳色）：桌面端活动标签会与卡片顶部融合，
+          若在首个标签下加一块着色面板会破坏这个接缝（MUL-4439）。区域划分改由分割线承担。 */}
       <div className="shrink-0 overflow-x-auto border-b border-surface-border p-2 md:w-56 md:overflow-y-auto md:border-b-0 md:border-r md:p-4">
-        {/* This page builds its own chrome instead of a PageHeader, so it has
-            to supply the nav trigger itself — below `xl` the nav is a sheet or
-            auto-collapsed, and settings has no other way back to it. */}
-        {/* The gap below this row belongs to the row, not to the heading: with
-            `items-center`, a bottom margin on the `h1` is part of the box being
-            centred, so it offsets the heading against the trigger beside it. */}
+        {/* 本页自建了页面框架而不是用 PageHeader，所以必须自己提供导航触发器——
+            在 `xl` 以下导航是抽屉或自动折叠的，设置页除此之外没有返回导航的途径。 */}
+        {/* 这一行下方的间距属于行本身，而不属于标题：配合 `items-center` 时，
+            给 `h1` 加的下边距会成为被居中盒的一部分，从而使标题相对旁边的触发器产生偏移。 */}
         <div className="flex items-center md:mb-4">
           <CollapsedNavTrigger />
           <h1 className="sr-only text-body font-semibold md:not-sr-only md:px-2">{t(($) => $.page.title)}</h1>
@@ -238,7 +241,7 @@ export function SettingsPage() {
           variant="line"
           className="flex w-max min-w-full flex-row items-center gap-1 p-0 md:w-full md:flex-col md:items-stretch"
         >
-          {/* My Account group */}
+          {/* 我的账户分组 */}
           <span className="hidden px-2 pb-1 pt-2 text-caption font-medium text-muted-foreground md:block">
             {t(($) => $.page.my_account)}
           </span>
@@ -255,7 +258,7 @@ export function SettingsPage() {
               </TabsTrigger>
             );
           })}
-          {/* Workspace group */}
+          {/* 工作区分组 */}
           <span className="hidden truncate px-2 pb-1 pt-4 text-caption font-medium text-muted-foreground md:block">
             {workspaceName ?? t(($) => $.page.workspace_fallback)}
           </span>
@@ -275,7 +278,7 @@ export function SettingsPage() {
         </TabsList>
       </div>
 
-      {/* Right content */}
+      {/* 右侧内容区 */}
       <div className="min-w-0 flex-1 md:overflow-y-auto">
         <div className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${activeTab === "labels" || activeTab === "issue-statuses" || activeTab === "properties" || activeTab === "quick-actions"
               ? "max-w-5xl"

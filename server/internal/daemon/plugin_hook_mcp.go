@@ -13,19 +13,17 @@ import (
 	"time"
 )
 
-// A local MCP server that presents this workspace's plugin hooks as tools.
+// 本文件实现一个本地 MCP server，把当前 workspace 的插件钩子（plugin hook）以工具的
+// 形态呈现给 agent。
 //
-// Unlike the Remote MCP broker beside it, there is no upstream MCP server to
-// proxy to: a plugin author writes an HTTP endpoint and never learns what MCP
-// is. This synthesises the protocol from the manifest — the hook description
-// becomes the tool description, the hook's input_schema becomes the tool's.
+// 与旁边的 Remote MCP broker 不同，这里没有上游 MCP server 可代理：插件作者写的是
+// 一个普通 HTTP 端点，根本不懂 MCP。因此这里按清单（manifest）自行合成协议——钩子的
+// 描述变成工具描述，钩子的 input_schema 变成工具的 inputSchema。
 //
-// A tool call does NOT go to the plugin from here. It goes back to Multica,
-// which makes the signed request. The daemon runs on someone's laptop; putting
-// the signing secret there would mean every machine running an agent holds a
-// credential that can impersonate the server to every plugin backend. Routing
-// through the server also means the rate limit, circuit breaker, `net:` check
-// and invocation record are the same code for all four triggers.
+// 工具调用并不会从这里直达插件：而是回传 Multica，由服务端发出带签名的请求。理由：
+// daemon 跑在某个人的笔记本上，把签名密钥放在这里意味着每台跑 agent 的机器都持有
+// 一份可以冒充服务端对任何插件后端发请求的凭据。绕道服务端还意味着限流、熔断、
+// `net:` 检查与调用记录对全部四种触发方式共用同一份代码。
 
 const (
 	pluginHookMCPProtocolVersion = "2024-11-05"
@@ -33,9 +31,11 @@ const (
 	pluginHookMCPCallTimeout     = 60 * time.Second
 )
 
-// pluginHookInvoker performs one hook call against the Multica server.
+// pluginHookInvoker 针对 Multica 服务端发起一次钩子调用，返回钩子的原始输出。
 type pluginHookInvoker func(ctx context.Context, taskID, installationID, hookKey string, input json.RawMessage) (json.RawMessage, error)
 
+// pluginHookMCPServer 是单任务的插件钩子 MCP 服务实例：按工具名索引钩子、以 HTTP
+// 处理 MCP JSON-RPC 请求，路径上带随机令牌做防护。
 type pluginHookMCPServer struct {
 	taskID string
 	tools  []PluginHookTool
@@ -45,12 +45,15 @@ type pluginHookMCPServer struct {
 	logger *slog.Logger
 }
 
+// pluginHookMCPSet 聚合一个任务对应的 HTTP server 与其生命周期（Close 幂等，可被
+// 多次调用）。
 type pluginHookMCPSet struct {
 	server   *http.Server
 	listener net.Listener
 	once     sync.Once
 }
 
+// Close 优雅关停 HTTP server 并关闭监听；once 保证重复调用只执行一次。
 func (set *pluginHookMCPSet) Close() {
 	if set == nil {
 		return
@@ -67,10 +70,10 @@ func (set *pluginHookMCPSet) Close() {
 	})
 }
 
-// startTaskPluginHookMCP starts the tool server for one task, if it has tools.
+// startTaskPluginHookMCP 在任务带有钩子工具时为该任务启动本地工具 server。
 //
-// Returns the MCP config fragment to merge into the agent's, exactly like the
-// Remote MCP broker, so the two arrive at the agent through one path.
+// 返回要并入 agent MCP 配置的 JSON 片段——与 Remote MCP broker 的返回形态一致，
+// 使两者能沿同一条路径到达 agent。
 func startTaskPluginHookMCP(lifetimeCtx context.Context, taskID string, tools []PluginHookTool, invoke pluginHookInvoker, logger *slog.Logger) (json.RawMessage, *pluginHookMCPSet, error) {
 	if len(tools) == 0 || invoke == nil {
 		return nil, nil, nil
@@ -78,8 +81,8 @@ func startTaskPluginHookMCP(lifetimeCtx context.Context, taskID string, tools []
 
 	byName := make(map[string]PluginHookTool, len(tools))
 	for _, tool := range tools {
-		// The server namespaces these, but a duplicate arriving anyway must
-		// resolve to exactly one hook rather than whichever came last.
+		// 服务端会做命名空间隔离，但万一还是有重名到达，必须解析到恰好一个钩子，
+		// 而不是“最后写入者胜”。
 		if _, clash := byName[tool.Name]; clash {
 			if logger != nil {
 				logger.Warn("plugin hook tool name collided; ignoring the duplicate", "task_id", taskID, "tool", tool.Name)
@@ -111,6 +114,7 @@ func startTaskPluginHookMCP(lifetimeCtx context.Context, taskID string, tools []
 			logger.Warn("plugin hook MCP server stopped unexpectedly", "task_id", taskID, "error", serveErr)
 		}
 	}()
+	// lifetimeCtx 结束（任务退出/daemon 关闭）即关停本 server。
 	go func() {
 		<-lifetimeCtx.Done()
 		set.Close()
@@ -129,6 +133,7 @@ func startTaskPluginHookMCP(lifetimeCtx context.Context, taskID string, tools []
 	return raw, set, nil
 }
 
+// pluginHookMCPRequest 是 MCP JSON-RPC 请求的线格式。
 type pluginHookMCPRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -137,8 +142,7 @@ type pluginHookMCPRequest struct {
 }
 
 func (s *pluginHookMCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// The path is a per-task random token, so a process that merely knows the
-	// port cannot reach the tools.
+	// 路径是每个任务随机的令牌：只知道端口、不知道令牌的进程够不到这些工具。
 	if r.URL.Path != s.path || r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -162,7 +166,7 @@ func (s *pluginHookMCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			"serverInfo":      map[string]any{"name": "multica-plugins", "version": "1"},
 		})
 	case "notifications/initialized":
-		// A notification has no id and takes no reply.
+		// 通知没有 id，也不需要回复，202 即可。
 		w.WriteHeader(http.StatusAccepted)
 	case "tools/list":
 		writePluginHookMCPResult(w, request.ID, map[string]any{"tools": s.toolDescriptors()})
@@ -173,13 +177,13 @@ func (s *pluginHookMCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// toolDescriptors 把任务钩子清单翻译成 MCP tools/list 的描述。
 func (s *pluginHookMCPServer) toolDescriptors() []map[string]any {
 	descriptors := make([]map[string]any, 0, len(s.tools))
 	for _, tool := range s.tools {
 		schema := tool.InputSchema
 		if len(schema) == 0 {
-			// A tool with no declared input still needs a schema, or providers
-			// reject the list outright.
+			// 没有声明入参的工具也需要一个 schema，否则 provider 会整体拒绝列表。
 			schema = json.RawMessage(`{"type":"object","properties":{}}`)
 		}
 		descriptors = append(descriptors, map[string]any{
@@ -191,6 +195,7 @@ func (s *pluginHookMCPServer) toolDescriptors() []map[string]any {
 	return descriptors
 }
 
+// handleCall 处理一次 tools/call：按名字找到钩子，转发给服务端执行并把结果回给 agent。
 func (s *pluginHookMCPServer) handleCall(w http.ResponseWriter, r *http.Request, request pluginHookMCPRequest) {
 	var params struct {
 		Name      string          `json:"name"`
@@ -210,9 +215,8 @@ func (s *pluginHookMCPServer) handleCall(w http.ResponseWriter, r *http.Request,
 	defer cancel()
 	output, err := s.invoke(ctx, s.taskID, tool.InstallationID, tool.HookKey, params.Arguments)
 	if err != nil {
-		// A TOOL error, not a protocol error. The agent reads this, decides the
-		// tool did not work, and carries on with the task — which is the whole
-		// point: an unreachable plugin endpoint must not fail somebody's issue.
+		// 这是“工具出错”而非“协议出错”。agent 读到 isError 会判定工具没生效然后
+		// 继续干任务——这正是设计意图：插件端点不可达不能把某人的 issue 搞挂。
 		if s.logger != nil {
 			s.logger.Info("plugin hook tool call failed", "task_id", s.taskID, "tool", tool.Name, "error", err)
 		}
@@ -232,11 +236,13 @@ func (s *pluginHookMCPServer) handleCall(w http.ResponseWriter, r *http.Request,
 	})
 }
 
+// writePluginHookMCPResult 以 JSON-RPC result 应答。
 func writePluginHookMCPResult(w http.ResponseWriter, id json.RawMessage, result any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 }
 
+// writePluginHookMCPError 以 JSON-RPC error 应答。
 func writePluginHookMCPError(w http.ResponseWriter, id json.RawMessage, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{

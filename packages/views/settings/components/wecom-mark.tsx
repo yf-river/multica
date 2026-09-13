@@ -1,5 +1,7 @@
-// The SVG path in WecomMark below is copied verbatim from `svg/logo-wecom.svg`
-// in Tencent's TDesign icon set, used under the MIT License. Source:
+// 本文件提供企业微信（WeCom）品牌图标组件，用于设置页集成频道等处展示企业微信的可识别图标。
+
+// 下方 WecomMark 中的 SVG 路径逐字复制自腾讯 TDesign 图标库的 `svg/logo-wecom.svg`，
+// 依据 MIT 许可证使用。来源：
 // https://github.com/Tencent/tdesign-icons/blob/main/svg/logo-wecom.svg
 //
 // Copyright (c) 2021-present TDesign
@@ -22,12 +24,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// The WeCom (企业微信) brand mark. lucide-react carries no brand icons, so the
-// WeCom connect button used the generic MessagesSquare speech bubble — the same
-// glyph as Slack's — and nothing on the page said which platform it was. The
-// artwork is the vendor's own mark rather than a redrawing of it; see the
-// license notice above. Same 24x24 box and currentColor fill as GitHubMark next
-// door, so it drops into a Button beside lucide icons without restyling.
+// 企业微信（WeCom）品牌图标。lucide-react 不携带品牌图标，企业微信的连接按钮
+// 之前用的是通用 MessagesSquare 气泡——和 Slack 是同一个图形——页面上看不出是哪个平台。
+// 这些图形是官方原图而非重绘，见上方许可证。与隔壁 GitHubMark 一样使用 24x24 画布
+// 和 currentColor 填充，可以放进按钮里和 lucide 图标并排使用而无需额外样式。
+/**
+ * 企业微信（WeCom）品牌图标。
+ * @param props.className - 可选，附加到 svg 上的 CSS 类名，用于控制尺寸与颜色。
+ */
 export function WecomMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="currentColor">

@@ -1,5 +1,14 @@
 package agent
 
+// 文件职责：捕获 agent CLI 的 stderr 有界尾部，在它"没来得及发结构化错误就退出"
+// （例如 Windows 上的 V8 abort、Bun panic、OOM）时把这段上下文带进错误消息。
+//
+// 凡是监护子 CLI 进程的 backend，都应该把 cmd.Stderr 接进 stderrTail，并在失败时
+// 经 withAgentStderr 把 Tail() 拼进 Result.Error。这样不用去翻 daemon 宿主机的日志
+// 就能定位 CLI 崩溃的根因。写入仍原样转发给内层 writer（通常是 daemon 日志）。
+// 落库前会先过 sanitizeAgentDiagnostic：去掉终端控制字符、把常见的密钥形状涂黑、
+// 修正非法 UTF-8，防止诊断内容污染任务行或泄露凭据。
+
 import (
 	"io"
 	"regexp"
@@ -9,25 +18,26 @@ import (
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
-// agentStderrTailBytes bounds the stderr tail captured for inclusion in
-// error messages when an agent CLI exits before emitting a structured
-// error (e.g. V8 abort on Windows, Bun panic, OOM). Large enough to
-// contain typical CLI error lines, small enough to stay sensible inside
-// a task-level Result.Error string.
+// agentStderrTailBytes 限制被捕获进错误消息的 stderr 尾部长度。要够装下典型的
+// CLI 错误行，又不能大到塞爆任务级 Result.Error 字符串。
 const agentStderrTailBytes = 2048
 
 var (
+	// agentAuthorizationHeaderRe 匹配 "authorization: <值>" 请求头形态（多行模式）。
 	agentAuthorizationHeaderRe = regexp.MustCompile(`(?im)(authorization\s*:\s*)[^\r\n]+`)
-	agentJSONSecretRe          = regexp.MustCompile(`(?i)("(?:token|auth|authorization|api[_-]?key|secret|password)"\s*:\s*)"(?:\\.|[^"\\])*"`)
-	agentDiagnosticSecretRe    = regexp.MustCompile(`(?i)(authorization|auth|api[_-]?key|token|secret|password)(\s*[:=]\s*)([^\s,;]+)`)
+	// agentJSONSecretRe 匹配 JSON 里形如 "token"/"auth"/"api_key"/"secret"/"password"
+	// 等键的字符串值。
+	agentJSONSecretRe = regexp.MustCompile(`(?i)("(?:token|auth|authorization|api[_-]?key|secret|password)"\s*:\s*)"(?:\\.|[^"\\])*"`)
+	// agentDiagnosticSecretRe 匹配日志里 "key: value" / "key=value" 形态的密钥对。
+	agentDiagnosticSecretRe = regexp.MustCompile(`(?i)(authorization|auth|api[_-]?key|token|secret|password)(\s*[:=]\s*)([^\s,;]+)`)
 )
 
-// sanitizeAgentDiagnostic removes terminal control characters and common secret
-// shapes before a child-process diagnostic is persisted in Result.Error. stderr
-// is still forwarded to the local daemon log; this helper protects the task row
-// and user-visible failure comment. Local paths are left intact — they are what
-// makes a crash diagnostic actionable, and hiding them was never a boundary.
+// sanitizeAgentDiagnostic 在子进程诊断信息落进 Result.Error 之前，去掉终端控制
+// 字符并涂黑常见密钥形态。stderr 仍会转发到本地 daemon 日志；本函数保护的是任务
+// 行与用户可见的失败评论。本地路径原样保留——它们是让崩溃诊断可操作的东西，
+// 藏路径从来不是要做的边界。
 func sanitizeAgentDiagnostic(value string) string {
+	// 剥掉除换行/制表符以外的控制字符（如颜色转义），免得诊断文本里混进终端噪声。
 	value = strings.Map(func(r rune) rune {
 		if r < 0x20 && r != '\n' && r != '\t' {
 			return -1
@@ -40,23 +50,21 @@ func sanitizeAgentDiagnostic(value string) string {
 	return redact.Text(value)
 }
 
-// stderrTail forwards writes to an inner writer (typically the daemon's
-// log) while also retaining a bounded tail of the bytes written. Consumers
-// call Tail() to include that context in error messages when the agent
-// process exits before it emits a structured error — otherwise all the
-// user sees is "exit status N", with the real reason stuck in daemon logs.
+// stderrTail 把写入转发给内层 writer（通常是 daemon 日志），同时保留最近一段
+// 字节的有界尾部。消费方在 agent 进程没来得及发结构化错误就退出时调 Tail()，
+// 把这段上下文带进错误消息——否则用户只能看到 "exit status N"，真正原因躺在
+// daemon 日志里。
 //
-// All backends that supervise a child CLI process should wire their
-// cmd.Stderr through this type, and on failure include Tail() in
-// Result.Error via withAgentStderr. That makes root-causing CLI crashes
-// possible without having to crawl the daemon host's log files.
+// 所有监护子 CLI 进程的 backend 都应把 cmd.Stderr 接到这个类型上，失败时经
+// withAgentStderr 把 Tail() 拼进 Result.Error。这让 CLI 崩溃的根因排查不必去翻
+// daemon 宿主机的日志文件。
 type stderrTail struct {
-	inner io.Writer
-	max   int
+	inner io.Writer // 原样转发目标（daemon 日志）
+	max   int       // 保留的尾部字节上限
 
 	mu    sync.Mutex
-	buf   []byte
-	total int64
+	buf   []byte // 有界尾部缓冲
+	total int64  // 累计写入总字节数（观测用）
 }
 
 func newStderrTail(inner io.Writer, max int) *stderrTail {
@@ -80,28 +88,25 @@ func (s *stderrTail) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// TotalBytes 返回累计写入的原始字节总数。
 func (s *stderrTail) TotalBytes() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.total
 }
 
-// Tail returns the captured stderr as valid UTF-8 with leading/trailing
-// whitespace trimmed. A byte-bounded tail can start or end partway through a
-// multi-byte rune, so invalid fragments are discarded before the diagnostic is
-// persisted. The inner writer still receives every original byte verbatim.
-// Empty string means nothing was written or no valid non-whitespace text was
-// captured.
+// Tail 返回捕获到的 stderr：修正为合法 UTF-8 并去掉首尾空白。按字节截断的尾部
+// 可能从某个多字节 rune 中间开始或结束，所以无效片段在诊断落库前被丢弃。内层
+// writer 仍然原样收到每一个字节。空串表示"什么都没写进去，或没有捕获到合法非空
+// 文本"。
 func (s *stderrTail) Tail() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return strings.TrimSpace(strings.ToValidUTF8(string(s.buf), ""))
 }
 
-// withAgentStderr appends a stderr tail hint to an error message when
-// non-empty, otherwise returns msg unchanged. The tail is prefixed with a
-// short label so the composed string stays readable even when the original
-// msg is already verbose.
+// withAgentStderr 在 stderr 尾部非空时把它作为提示追加到错误消息后；为空则原样
+// 返回 msg。尾部带一个简短标签，即使原 msg 已经很长，拼出来的串仍可读。
 func withAgentStderr(msg, label, tail string) string {
 	if tail == "" {
 		return msg

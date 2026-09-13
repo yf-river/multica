@@ -1,20 +1,17 @@
 "use client";
 
+// 「源回填」提示的每用户「关闭次数」存储：提示每被关掉一次就 +1，用于决定
+// 之后还要不要、以及隔多久再弹出。计数只落在浏览器 localStorage，不上服务端。
 import { useCallback, useSyncExternalStore } from "react";
 
 /**
- * Per-user dismiss-count storage for the source-backfill prompt.
+ * 为什么用 localStorage 而不是服务端：
+ *   - 这纯粹是前端 UX 的事（何时别再打扰），从不进统计或后端；
+ *   - 若写数据库就得每次页面访问都写一次，对瞬态信号太浪费。
  *
- * Lives in `localStorage` rather than the server because:
- *   - It is purely a frontend UX concern (when to stop nagging) and
- *     never feeds analytics or the backend.
- *   - Counting in the DB would mean writing on every page view, which
- *     is wasteful for a transient signal.
- *
- * Tradeoff: clearing browser storage resets the count, and the count
- * does not sync across devices. Both are acceptable — Submit and Skip
- * are the terminal paths that write to the server; dismiss is "ask me
- * later," and asking again on a fresh browser is fine.
+ * 取舍：清浏览器缓存会清零计数，计数也不跨设备同步。两者都能接受——真正落到
+ * 服务端的终点是 Submit / Skip；dismiss 只是「稍后再问」，换个新浏览器再问一次
+ * 也无妨。
  */
 
 const STORAGE_PREFIX = "multica.source_backfill.dismiss.";
@@ -38,8 +35,7 @@ function readCount(userId: string | null | undefined): number {
 
 function subscribe(callback: () => void): () => void {
   if (typeof window === "undefined") return () => {};
-  // Fires when another tab updates the value. Same-tab updates go
-  // through `forceUpdate` below.
+  // 别的标签页更新了该值时触发；同标签页内的更新走下面的 notify()。
   const handler = (e: StorageEvent) => {
     if (e.key && e.key.startsWith(STORAGE_PREFIX)) callback();
   };
@@ -47,13 +43,20 @@ function subscribe(callback: () => void): () => void {
   return () => window.removeEventListener("storage", handler);
 }
 
-// Shared listener registry so `bumpDismissCount` outside the React tree
-// (rare, but possible) still wakes hooks subscribed to the same key.
+// 共享的监听器注册表：让 React 树外调用 bumpDismissCount（罕见但可能）时，
+// 也能唤醒订阅了同一 key 的 Hook。
 const listeners = new Set<() => void>();
 function notify(): void {
   for (const fn of listeners) fn();
 }
 
+/**
+ * 读取并累加指定用户对「源回填」提示的关闭次数，结果对订阅本 Hook 的所有组件
+ * 保持同步（含跨标签页）。
+ *
+ * @param userId 当前用户 id（为空时恒为 0，也不累加）
+ * @returns [关闭次数, 把次数 +1 并通知订阅者的函数]
+ */
 export function useSourceBackfillDismissCount(
   userId: string | null | undefined,
 ): readonly [number, () => void] {
@@ -78,16 +81,15 @@ export function useSourceBackfillDismissCount(
       window.localStorage.setItem(storageKey(userId), String(next));
       notify();
     } catch {
-      // localStorage write can fail in private-mode Safari and similar
-      // — treat as a no-op. Worst case the prompt re-shows next login
-      // without backing off.
+      // 隐私模式 Safari 等场景下 localStorage 写入可能失败——当作没发生。
+      // 最坏情况是下次登录提示重新出现、不后退避让。
     }
   }, [userId]);
 
   return [count, bump] as const;
 }
 
-/** Test helper — not exported from the package index. */
+/** 仅供测试使用的清理函数——不通过包入口对外导出。 */
 export function _resetSourceBackfillDismissCountForTests(): void {
   if (typeof window === "undefined") return;
   for (let i = window.localStorage.length - 1; i >= 0; i--) {

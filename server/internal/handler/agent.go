@@ -1,3 +1,12 @@
+// 本文件是「Agent（智能体）」资源的 HTTP 处理器集合，负责 agent 的
+// 增删改查、归档/恢复、任务取消与运行历史查询，以及工作区维度的
+// 聚合统计（活动/运行次数/任务快照等）。核心关注点：
+//   - 响应组装与脱敏：把 DB 行转成对外 AgentResponse，凡是含密钥的字段
+//     （mcp_config、gateway.token、composio 白名单、custom_env）都必须按
+//     调用者身份（成员/Agent actor/所有者/管理员）脱敏，绝不原样上送。
+//   - 权限模型：私有 agent 仅所有者/工作区 owner-admin 可见，public_to
+//     agent 需在 invocation_targets 白名单内；修改/归档必须 canManageAgent。
+//   - 调用参数（MUL-3963）与 composio 叠加层（MUL-3869）为「仅所有者可写」。
 package handler
 
 import (
@@ -29,99 +38,92 @@ import (
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
 
-// Mirrors AGENT_DESCRIPTION_MAX_LENGTH in packages/core/agents/constants.ts
-// and the agent_description_length CHECK constraint in migration 060. Counted
-// in unicode code points (utf8.RuneCountInString), matching Postgres
-// char_length and the front-end's String.prototype.length-with-counter UX.
+// 与 packages/core/agents/constants.ts 中的 AGENT_DESCRIPTION_MAX_LENGTH
+// 以及 060 号迁移里的 agent_description_length CHECK 约束保持一致。计数单位
+// 是 Unicode 码点（utf8.RuneCountInString），对应 Postgres 的 char_length
+// 和前端 String.prototype.length 的用户体验。
 const maxAgentDescriptionLength = 255
 
 const (
+	// 开场白最多 3 条；标签 ≤80 字符；提示正文 ≤4000 字符。
 	maxAgentConversationStarters      = 3
 	maxAgentConversationStarterLabel  = 80
 	maxAgentConversationStarterLength = 4000
 )
 
+// AgentConversationStarter 是 agent 可选的「开场白」建议：用户在对话
+// 第一轮可一键点选的预设提问。
 type AgentConversationStarter struct {
 	Label  string `json:"label"`
 	Prompt string `json:"prompt"`
 }
 
+// AgentResponse 是对外返回的 agent 资源结构（列表/详情/变更后响应通用）。
+// 多个字段遵循「脱敏」约定：含密钥的配置绝不出现在该结构里，只给粗粒度元数据。
 type AgentResponse struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
-	// RuntimeID is the empty string when the agent is unbound — it kept its
-	// configuration and history when its runtime was deleted, and needs a new
-	// runtime before it can run again (MUL-5559). The wire type stays a string
-	// so installed clients keep parsing; RuntimeBound is the explicit signal.
+	// RuntimeID 在 agent「未绑定 runtime」时为空串——当它的 runtime 被删除后，
+	// agent 的配置与历史得以保留，但需绑定新 runtime 才能再次运行（MUL-5559）。
+	// 线格式仍保持 string 以兼容已安装客户端；真正的信号是 RuntimeBound。
 	RuntimeID string `json:"runtime_id"`
-	// RuntimeBound is false exactly when the agent has no runtime. UI should
-	// branch on this rather than on RuntimeID being falsy, and must not confuse
-	// it with a bound-but-offline runtime (a different user story: reconnect the
-	// machine vs. pick a new one).
+	// RuntimeBound 恰好只在 agent 没有 runtime 时为 false。UI 应以此字段而非
+	// RuntimeID 是否为空来判断，且不能与「已绑定但离线」（另一回事：重连机器
+	// vs 换一台新机器）混淆。
 	RuntimeBound bool   `json:"runtime_bound"`
 	Name         string `json:"name"`
 	Description  string `json:"description"`
-	// Instructions is what this agent's owner wrote. For a system agent it
-	// holds only the workspace's own notes — the product half lives in
-	// SystemInstructions and is never stored on the row.
+	// Instructions 是 agent 所有者自己写的指令。对系统 agent 而言它只保存
+	// 工作区自身的备注——产品那半部分在 SystemInstructions 里，从不落库。
 	Instructions string `json:"instructions"`
-	// ConversationStarters are optional, agent-specific first-turn suggestions. An
-	// empty list tells clients to render their localized fallback prompts.
+	// ConversationStarters 是可选的、agent 专属的第一轮建议。空列表表示
+	// 让客户端渲染本地化的兜底开场白。
 	ConversationStarters []AgentConversationStarter `json:"conversation_starters"`
-	// SystemKey identifies a product-defined agent (e.g. "mika"). Empty for
-	// every user- or template-created agent. The UI keys "this is maintained
-	// by Multica" off this rather than off the display name, which owners may
-	// change.
+	// SystemKey 标识产品内置 agent（如 "mika"）。用户或模板创建的 agent 为空。
+	// UI 用该键而不是显示名（所有者可以改名）来判断「这个 agent 由 Multica 维护」。
 	SystemKey string `json:"system_key,omitempty"`
-	// SystemInstructions is the read-only product half of a system agent's
-	// prompt, filled from the server binary. Empty for ordinary agents.
+	// SystemInstructions 是系统 agent 提示词中只读的产品半部分，从服务端
+	// 二进制注入。普通 agent 为空。
 	SystemInstructions string          `json:"system_instructions,omitempty"`
 	AvatarURL          *string         `json:"avatar_url"`
 	RuntimeMode        string          `json:"runtime_mode"`
 	RuntimeConfig      any             `json:"runtime_config"`
 	CustomArgs         []string        `json:"custom_args"`
 	McpConfig          json.RawMessage `json:"mcp_config"`
-	// custom_env is intentionally NOT serialized on agent resources. The
-	// agent_list/get/create/update/archive/restore responses and WS events
-	// only expose coarse metadata (has_custom_env, custom_env_key_count) so
-	// the UI can show "N variables configured" without dragging secrets
-	// across the API surface. Reading values requires the dedicated, audited
-	// `GET /api/agents/{id}/env` endpoint; writing requires `PUT` to the
-	// same path. agent-actor tokens are denied there. See MUL-2600.
+	// custom_env 有意不序列化进 agent 资源。agent 的 list/get/create/update/
+	// archive/restore 响应及 WS 事件只暴露粗粒度元数据（has_custom_env、
+	// custom_env_key_count），让 UI 能展示「已配置 N 个变量」而无需把密钥
+	// 拖过整个 API 面。读取取值须走专门的、带审计的 `GET /api/agents/{id}/env`
+	// 接口；写入须 `PUT` 同一路径。agent-actor 令牌在该处被拒绝。见 MUL-2600。
 	HasCustomEnv      bool   `json:"has_custom_env"`
 	CustomEnvKeyCount int    `json:"custom_env_key_count"`
 	McpConfigRedacted bool   `json:"mcp_config_redacted"`
 	Visibility        string `json:"visibility"`
-	// PermissionMode is the invocation-permission mode (MUL-3963):
-	// "private" (owner only) or "public_to" (allow-list in InvocationTargets).
-	// Replaces Visibility as the authorization source; Visibility is kept as a
-	// derived legacy field so old clients never see a permission widening.
+	// PermissionMode 是调用权限模式（MUL-3963）："private"（仅所有者）或
+	// "public_to"（白名单见 InvocationTargets）。它取代 Visibility 成为
+	// 鉴权依据；Visibility 仅作为派生出来的遗留字段保留，让旧客户端永远
+	// 看不到权限被悄悄放宽。
 	PermissionMode string `json:"permission_mode"`
-	// InvocationTargets is the allow-list for a public_to agent. Empty for
-	// private agents. Only populated on the detail / list / create / update
-	// responses that load it; broadcast payloads leave it empty.
+	// InvocationTargets 是 public_to agent 的白名单。private agent 为空。
+	// 仅在会加载它的 detail/list/create/update 响应中填充；广播负载留空。
 	InvocationTargets  []AgentInvocationTargetDTO `json:"invocation_targets"`
 	Status             string                     `json:"status"`
 	MaxConcurrentTasks int32                      `json:"max_concurrent_tasks"`
 	Model              string                     `json:"model"`
-	// ThinkingLevel is the runtime-native reasoning/effort token persisted
-	// for this agent (empty = use runtime default). The picker is per-runtime
-	// per-model; the API never normalizes across providers. See MUL-2339.
+	// ThinkingLevel 是该 agent 持久化的、runtime 原生的推理档位 token
+	// （空 = 用 runtime 默认）。选择器按 runtime×model 提供；API 不做
+	// 跨厂商归一化。见 MUL-2339。
 	ThinkingLevel string `json:"thinking_level"`
-	// ServiceTier is the runtime-native Codex execution tier persisted for
-	// this agent (empty = inherit local Codex configuration).
+	// ServiceTier 是该 agent 持久化的、runtime 原生的 Codex 执行档位
+	// （空 = 继承本地 Codex 配置）。
 	ServiceTier string `json:"service_tier"`
-	// ComposioToolkitAllowlist is the subset of Composio toolkit slugs this
-	// agent is allowed to mount as MCP at task dispatch — for ANY run that
-	// passes the agent's invocation permission, using the agent OWNER's
-	// Composio connection (MUL-3963; no longer gated on originator == owner).
-	// NULL or empty = no overlay. Like mcp_config, this is
-	// owner-only data: the slugs themselves are not secret, but the
-	// "this is what {agent owner} is willing to surface" view is — surfacing
-	// it cross-account is privacy-confusing UX and would let workspace
-	// members infer another member's integration footprint. Redacted to
-	// `nil` + `composio_toolkit_allowlist_redacted=true` for non-owners,
-	// mirroring the existing mcp_config redaction contract.
+	// ComposioToolkitAllowlist 是该 agent 在任务派发时被允许挂载为 MCP 的
+	// Composio toolkit 子集——适用于任何通过该 agent 调用权限的运行，使用
+	// agent 所有者的 Composio 连接（MUL-3963；不再要求发起人==所有者）。
+	// NULL 或空 = 不叠加。和 mcp_config 一样属于「所有者专属」数据：slug
+	// 本身不保密，但「{agent 所有者} 愿意暴露什么」这一视图跨账号展示会泄漏
+	// 其他成员对集成的使用面，隐私上易生困惑。对非所有者一律脱敏为 `nil` +
+	// composio_toolkit_allowlist_redacted=true，与既有 mcp_config 脱敏契约一致。
 	ComposioToolkitAllowlist         []string               `json:"composio_toolkit_allowlist,omitempty"`
 	ComposioToolkitAllowlistRedacted bool                   `json:"composio_toolkit_allowlist_redacted,omitempty"`
 	OwnerID                          *string                `json:"owner_id"`
@@ -133,15 +135,15 @@ type AgentResponse struct {
 	ArchivedBy                       *string                `json:"archived_by"`
 }
 
-// runtimeConfigGatewayTokenMask is the placeholder the API substitutes for
-// any non-empty `runtime_config.gateway.token`. The token is a bearer
-// credential; surfacing the real value through
-// GET responses would let anyone with read access to the agent dump the
-// gateway secret. The mask is a sentinel — when the UI later PATCHes the
-// agent and submits the same mask verbatim under that field, the update
-// handler restores the persisted token instead of overwriting it.
+// runtimeConfigGatewayTokenMask 是 API 对任何非空 `runtime_config.gateway.token`
+// 的占位替换值。该 token 是 bearer 凭证，直接经 GET 响应透出会让任何对
+// agent 有读权限的人都拿到网关密钥。该掩码是哨兵——当 UI 之后 PATCH agent
+// 并在该字段原样提交同一个掩码时，更新处理器会用持久化的真实 token 还原，
+// 而不是把掩码当真值覆盖进去。
 const runtimeConfigGatewayTokenMask = "***"
 
+// agentToResponse 把 DB 行转成对外 AgentResponse：反序列化各 JSON 列、
+// 统计 custom_env 键数（不暴露值）、对 gateway.token 做掩码等。
 func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 	var rc any
 	if a.RuntimeConfig != nil {
@@ -152,11 +154,9 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 	}
 	maskGatewayToken(rc)
 
-	// Compute env metadata WITHOUT exposing the values. We unmarshal here
-	// only to count keys; the map never reaches the response. A coarse
-	// has_custom_env / key_count is what the UI gets — to read the values
-	// the caller must hit GET /api/agents/{id}/env (agent owner or
-	// workspace owner/admin, audited).
+	// 只计算 env 元数据，绝不暴露取值。这里解出 map 仅为了数键数，map 不会
+	// 进入响应。UI 拿到的是粗粒度 has_custom_env / key_count——要看值必须走
+	// GET /api/agents/{id}/env（仅 agent 所有者或工作区 owner/admin，且审计）。
 	envKeyCount := 0
 	if a.CustomEnv != nil {
 		var customEnv map[string]string
@@ -189,13 +189,11 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		}
 	}
 
-	// composio_toolkit_allowlist: the column is stored as TEXT[] and arrives
-	// here as a []string (sqlc). NULL and `{}` both serialize as nil through
-	// the postgres driver — both correctly mean "no toolkits", but the API
-	// surface keeps them distinguishable from "owner has not opened the
-	// integration yet" only via the trio (slice nil / slice empty / slice
-	// non-empty). We hand the slice through verbatim so the redaction +
-	// owner-only gate below can decide.
+	// composio_toolkit_allowlist 列以 TEXT[] 存储，sqlc 拿到的是 []string。
+	// 通过 postgres 驱动时 NULL 与 `{}` 都会序列化为 nil——两者都正确表示
+	// "没有 toolkit"，但 API 面要区分「owner 还没开通集成」只能依赖三元组
+	// （nil / 空切片 / 非空切片）。这里原样传递切片，由下方脱敏+仅所有者
+	// 门控来决定。
 	composioAllowlist := a.ComposioToolkitAllowlist
 
 	return AgentResponse{
@@ -235,9 +233,8 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 	}
 }
 
-// maskGatewayToken replaces runtime_config.gateway.token with the public
-// mask sentinel when a non-empty value is present. It is a no-op for any
-// other shape.
+// maskGatewayToken 在 runtime_config.gateway.token 非空时用公开掩码哨兵
+// 替换它；其他任何结构都直接跳过（no-op）。
 func maskGatewayToken(rc any) {
 	root, ok := rc.(map[string]any)
 	if !ok {
@@ -254,12 +251,10 @@ func maskGatewayToken(rc any) {
 	gw["token"] = runtimeConfigGatewayTokenMask
 }
 
-// preserveMaskedGatewayToken substitutes the previously persisted gateway
-// token back into an incoming runtime_config when the request submitted the
-// public mask sentinel under `gateway.token`. Without this the next PATCH
-// after a GET would round-trip the masked sentinel into the database and
-// silently destroy the real secret. The previous value is taken from the
-// agent row the handler has just loaded for ownership / scoping checks.
+// preserveMaskedGatewayToken 在请求把公开掩码哨兵提交到 `gateway.token` 时，
+// 把此前持久化的真实 gateway token 还原回来。否则一次 GET 之后原样 PATCH
+// 同一个请求体，就会把 "***" 掩码写回数据库，悄悄销毁真实密钥。旧值取自
+// 处理器刚为所有权/作用域检查加载的 agent 行。
 func preserveMaskedGatewayToken(incoming any, persistedRuntimeConfig []byte) {
 	root, ok := incoming.(map[string]any)
 	if !ok {
@@ -273,14 +268,14 @@ func preserveMaskedGatewayToken(incoming any, persistedRuntimeConfig []byte) {
 	if tok != runtimeConfigGatewayTokenMask {
 		return
 	}
-	// The incoming token is the mask — fish the real one out of the row.
+	// 进来的 token 是掩码——从 agent 行里把真实值捞出来。
 	var prev struct {
 		Gateway struct {
 			Token string `json:"token"`
 		} `json:"gateway"`
 	}
 	if len(persistedRuntimeConfig) == 0 {
-		// No prior token to keep; the field becomes effectively empty.
+		// 没有可保留的旧 token，字段视为被清空。
 		delete(gw, "token")
 		return
 	}
@@ -291,21 +286,19 @@ func preserveMaskedGatewayToken(incoming any, persistedRuntimeConfig []byte) {
 	gw["token"] = prev.Gateway.Token
 }
 
-// RepoData holds repository information included in claim responses so the
-// daemon can set up worktrees for each workspace repo.
+// RepoData 携带 claim 响应中的仓库信息，daemon 据此为每个工作区仓库
+// 建立 worktree。
 type RepoData struct {
 	URL         string `json:"url"`
 	Description string `json:"description,omitempty"`
 	Ref         string `json:"ref,omitempty"`
 }
 
-// ProjectResourceData is the wire shape for a project resource included in a
-// claim response. The daemon reads this list and writes it into the agent's
-// working directory so skills/agents can discover project-scoped context.
+// ProjectResourceData 是 claim 响应里 project 资源的线格式。daemon 读取该
+// 列表并写入 agent 工作目录，让 skills/agent 能发现 project 级上下文。
 //
-// resource_ref is type-specific JSON; the daemon doesn't interpret it beyond
-// well-known fields like url for github_repo. New types can be added without
-// changing this struct.
+// resource_ref 是类型相关的 JSON；除 url 这类 github_repo 的已知字段外，
+// daemon 不做进一步解释。新增类型无需改动本结构。
 type ProjectResourceData struct {
 	ID           string          `json:"id"`
 	ResourceType string          `json:"resource_type"`
@@ -313,14 +306,13 @@ type ProjectResourceData struct {
 	Label        string          `json:"label,omitempty"`
 }
 
-// ConnectedAppData keeps the daemon-claim wire field local to handler types
-// while sharing the canonical JSON shape with the runtime app metadata package.
+// ConnectedAppData 把 daemon-claim 的线字段类型限定在 handler 包内，
+// 同时与 runtime app 元数据包共享同一份规范 JSON 形状。
 type ConnectedAppData = runtimeapps.ConnectedApp
 
-// ActiveSiblingRunData is bounded claim-time context about another in-flight
-// issue task for the same agent. Queued tasks are intentionally absent because
-// they cannot coordinate yet. It lets the daemon warn a newly claimed run
-// before it repeats code or PR work already underway elsewhere.
+// ActiveSiblingRunData 是 claim 时刻携带的、关于同一 agent 另一个进行中
+// issue 任务的受限上下文。排队的任务有意不包含——它们尚无法协调。它让
+// daemon 在新 claim 到的运行重复做别处正在做的代码/PR 工作之前给出警告。
 type ActiveSiblingRunData struct {
 	TaskID          string `json:"task_id"`
 	IssueID         string `json:"issue_id"`
@@ -331,21 +323,17 @@ type ActiveSiblingRunData struct {
 	StartedAt       string `json:"started_at,omitempty"`
 }
 
-// taskIssueStatusCap bounds the custom statuses a claim payload carries. A
-// defensive ceiling, not a product limit: a real catalog holds a handful of
-// entries, and the brief must not grow without bound on a workspace that
-// scripted hundreds. Overflow is reported via IssueStatusesOmitted so the
-// brief can disclose the truncation.
+// taskIssueStatusCap 限制 claim 负载里自定义状态的上限。这是防御性封顶，
+// 不是产品上限：真实目录只有寥寥数条，而脚本化建了数百条状态的工作区，
+// brief 不能被无限撑大。溢出通过 IssueStatusesOmitted 上报，brief 能明示截断。
 const taskIssueStatusCap = 30
 
-// TaskIssueStatusData is one active CUSTOM workspace status on the claim wire
-// (MUL-6460). Only the fields an agent needs to choose and write the status
-// travel: key is the CLI argument, name is what users call it in instructions,
-// category anchors the inherited platform behavior, and description is the
-// admin's "when to use me" guidance — the disambiguator when a category holds
-// more than one status. Color/position/id stay off the wire: they carry no
-// behavioral meaning for an agent, and the server already emits entries in
-// catalog order (category rank, then position, then key).
+// TaskIssueStatusData 是 claim 线上单个「活跃的自定义工作区状态」（MUL-6460）。
+// 只传 agent 选择/写入状态所需的字段：key 是 CLI 参数，name 是用户在下发
+// 指令里称呼它的名字，category 锚定继承的平台行为，description 是管理员写
+// 的「何时用它」指引——当某个 category 下有多个状态时它是消歧器。颜色/位置/
+// id 不上线：对 agent 无行为意义，且服务端已按目录顺序（category 排序、
+// 位置、key）输出。
 type TaskIssueStatusData struct {
 	Key         string `json:"key"`
 	Name        string `json:"name"`
@@ -353,6 +341,10 @@ type TaskIssueStatusData struct {
 	Description string `json:"description,omitempty"`
 }
 
+// AgentTaskResponse 是 agent 任务（运行）的对外线格式：既是任务列表/详情的
+// 返回体，也是 daemon claim 运行的负载。任务种类（issue 评论触发 / 聊天 /
+// autopilot / quick_create / 直接指派）由 Kind 判别，各自的来源上下文
+// （TriggerCommentID / ChatSessionID / AutopilotRunID 等）按需携带。
 type AgentTaskResponse struct {
 	ID                   string                 `json:"id"`
 	AgentID              string                 `json:"agent_id"`
@@ -362,37 +354,30 @@ type AgentTaskResponse struct {
 	WorkspaceSlug        string                 `json:"workspace_slug,omitempty"`
 	IssueIdentifier      string                 `json:"issue_identifier,omitempty"`
 	RemoteMCPConnections []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
-	// PluginHookTools are the workspace's agent-trigger plugin hooks, which the
-	// daemon renders as MCP tools for this task. Resolved at claim time so
-	// disabling or uninstalling a plugin takes effect on the next task rather
-	// than whenever a daemon happens to restart.
+	// PluginHookTools 是该工作区的 agent 触发型插件钩子，daemon 在本任务中
+	// 把它们渲染成 MCP 工具。在 claim 时刻解析，这样停用/卸载插件对下一个
+	// 任务生效，而不是等 daemon 碰巧重启。
 	PluginHookTools []service.PluginHookTool `json:"plugin_hook_tools,omitempty"`
-	// RemoteMCPDaemonToken is a short-lived, workspace-and-daemon scoped
-	// credential used only by the local daemon's write-only Remote MCP broker.
-	// It is never injected into the agent process.
+	// RemoteMCPDaemonToken 是短时、仅作用于工作区与 daemon 的凭证，只被本地
+	// daemon 的只写 Remote MCP 代理使用。绝不被注入 agent 进程。
 	RemoteMCPDaemonToken string `json:"remote_mcp_daemon_token,omitempty"`
-	// WorkspaceContext is the workspace-level system prompt set in workspace
-	// settings (`workspace.context` DB column). Injected into the agent brief
-	// as `## Workspace Context` so every agent running in this workspace —
-	// regardless of issue / chat / autopilot / quick-create — sees the same
-	// shared context. Empty when the workspace owner hasn't set it.
+	// WorkspaceContext 是工作区设置里配置的工作区级系统提示词（DB 列
+	// `workspace.context`）。注入 brief 的 `## Workspace Context` 段，让工作区
+	// 内所有 agent（无论 issue/chat/autopilot/quick-create）看到同一份共享
+	// 上下文。工作区所有者未设置时为空。
 	WorkspaceContext string                      `json:"workspace_context,omitempty"`
 	SourceContext    *protocol.TaskSourceContext `json:"source_context,omitempty"`
-	// IssueStatuses is the workspace's ACTIVE CUSTOM status catalog (MUL-6460),
-	// injected into the agent brief so agents can see and use statuses beyond
-	// the seven built-ins. Built-ins are omitted: their keys, names, and
-	// semantics are locked (is_system rows cannot be renamed or archived), so
-	// the daemon already knows them. Empty for a workspace with no custom
-	// statuses — the daemon then renders the brief exactly as before, keeping
-	// existing deployments byte-identical. Capped at taskIssueStatusCap
-	// entries; IssueStatusesOmitted carries the overflow count.
+	// IssueStatuses 是工作区「活跃的自定义状态」目录（MUL-6460），注入 brief
+	// 让 agent 能看到并使用七个内置之外的状态。内置状态不传：它们的 key/name/
+	// 语义是锁定的（is_system 行不可改名/归档），daemon 本就知道。没有自定义
+	// 状态的工作区为空——此时 daemon 按原样渲染 brief，保持既有部署字节一致。
+	// 最多 taskIssueStatusCap 条，超出数量由 IssueStatusesOmitted 携带。
 	IssueStatuses []TaskIssueStatusData `json:"issue_statuses,omitempty"`
-	// IssueStatusesOmitted is how many active custom statuses were dropped by
-	// the cap, so the brief can say the list is incomplete instead of
-	// presenting a truncated catalog as the whole one.
+	// IssueStatusesOmitted 记录被上限丢弃了多少条活跃自定义状态，让 brief
+	// 能说明列表不完整，而不是把截断后的目录当成全部。
 	IssueStatusesOmitted int                    `json:"issue_statuses_omitted,omitempty"`
 	ActiveSiblingRuns    []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
-	ThreadName           string                 `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
+	ThreadName           string                 `json:"thread_name,omitempty"` // 供厂商原生会话/线程历史使用的语义化标题
 	Status               string                 `json:"status"`
 	Priority             int32                  `json:"priority"`
 	DispatchedAt         *string                `json:"dispatched_at"`
@@ -400,169 +385,155 @@ type AgentTaskResponse struct {
 	CompletedAt          *string                `json:"completed_at"`
 	Result               any                    `json:"result"`
 	Error                *string                `json:"error"`
-	FailureReason        string                 `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
+	FailureReason        string                 `json:"failure_reason,omitempty"` // 见 TaskService.MaybeRetryFailedTask
 	Attempt              int32                  `json:"attempt"`
 	MaxAttempts          int32                  `json:"max_attempts"`
 	ParentTaskID         *string                `json:"parent_task_id,omitempty"`
 	IsLeaderTask         bool                   `json:"is_leader_task,omitempty"`
-	LeaderRoleResolved   bool                   `json:"leader_role_resolved,omitempty"` // claim-only capability, always true here: IsLeaderTask/SquadID authoritatively answer "is this a leader run", so the daemon must not infer the role from briefing text. Servers predating it make no such promise — before #4951 they sent no is_leader_task at all, after it they sent the flag without guaranteeing a briefing — so a daemon seeing no capability keeps the legacy inference. Never rendered into a prompt; see daemon.taskIsSquadLeader (MUL-5811). Mirror field: internal/daemon/types.go, same JSON name
-	Agent                *TaskAgentData         `json:"agent,omitempty"`
-	ConnectedApps        []ConnectedAppData     `json:"connected_apps,omitempty"` // daemon-claim only: per-run app capabilities mounted through runtime MCP overlays
-	Repos                []RepoData             `json:"repos,omitempty"`
-	ProjectID            string                 `json:"project_id,omitempty"`          // issue's project, when present
-	ProjectTitle         string                 `json:"project_title,omitempty"`       // for surfacing in agent context
-	ProjectDescription   string                 `json:"project_description,omitempty"` // durable project-level context injected into the brief
-	ProjectResources     []ProjectResourceData  `json:"project_resources,omitempty"`   // resources attached to the project
-	CreatedAt            string                 `json:"created_at"`
-	PriorSessionID       string                 `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
-	PriorWorkDir         string                 `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
-	// PriorSessionResumeUnavailable is set when a more recent Codex session was
-	// withheld because its rollout was missing (MUL-5305); PriorSessionID (if
-	// any) is then an older fallback. The daemon surfaces the continuity gap in
-	// the brief even when that older session resumes cleanly. omitempty keeps it
-	// off the wire for the common (no-gap) case and for old daemons.
+	// LeaderRoleResolved 是仅 claim 具备的能力，此处恒为 true：IsLeaderTask/
+	// SquadID 已权威地回答「是否 leader 运行」，daemon 不得再从 brief 文本反推
+	// 角色。早于 #4951 的服务器不发 is_leader_task，之后发送也不保证 brief——
+	// 见不到该能力的 daemon 保留旧式推断。绝不渲染进提示词；见
+	// daemon.taskIsSquadLeader（MUL-5811）。镜像字段：internal/daemon/types.go，
+	// JSON 名相同。
+	LeaderRoleResolved bool                  `json:"leader_role_resolved,omitempty"`
+	Agent              *TaskAgentData        `json:"agent,omitempty"`
+	ConnectedApps      []ConnectedAppData    `json:"connected_apps,omitempty"` // 仅 daemon-claim：经 runtime MCP 叠加挂载的每次运行的应用能力
+	Repos              []RepoData            `json:"repos,omitempty"`
+	ProjectID          string                `json:"project_id,omitempty"`          // issue 所属项目（若有）
+	ProjectTitle       string                `json:"project_title,omitempty"`       // 用于在 agent 上下文中展示
+	ProjectDescription string                `json:"project_description,omitempty"` // 注入 brief 的持久项目级上下文
+	ProjectResources   []ProjectResourceData `json:"project_resources,omitempty"`   // 项目上挂载的资源
+	CreatedAt          string                `json:"created_at"`
+	PriorSessionID     string                `json:"prior_session_id,omitempty"` // 同一 issue 上一任务留下的会话 ID
+	PriorWorkDir       string                `json:"prior_work_dir,omitempty"`   // 同一 issue 上一任务留下的工作目录
+	// PriorSessionResumeUnavailable 在较新的 Codex 会话因缺失回滚被扣下时置位
+	// （MUL-5305）；PriorSessionID（如有）为较旧的兜底。即使旧会话正常恢复，
+	// daemon 也会在 brief 中点明这段连续性缺口。omitempty 让常见（无缺口）场景
+	// 与旧 daemon 都不受影响。
 	PriorSessionResumeUnavailable bool   `json:"prior_session_resume_unavailable,omitempty"`
-	WorkDir                       string `json:"work_dir,omitempty"` // local working directory pinned for this task; populated once the daemon reports it
-	// RelativeWorkDir is a privacy-safe display form of WorkDir intended for
-	// the UI. For standard tasks it strips the daemon's workspaces root while
-	// preserving either the legacy or readable workspace/task segments; for local_directory
-	// tasks the absolute path lives outside the envRoot layout, so we strip
-	// recognised home-directory prefixes (`/Users/<name>/`, `/home/<name>/`,
-	// `<drive>:/Users/<name>/`) and otherwise fall back to the basename so
-	// the field never carries the user's home dir or account name. Empty
-	// when WorkDir is empty, or when stripping leaves nothing. See
-	// relativeWorkDir() for the full rules. Older clients can still read
-	// WorkDir directly; newer UIs should prefer RelativeWorkDir.
+	WorkDir                       string `json:"work_dir,omitempty"` // 本任务固定的本地工作目录；daemon 上报后才填充
+	// RelativeWorkDir 是 WorkDir 的隐私安全展示形式，供 UI 使用。标准任务去掉
+	// daemon 的 workspaces 根目录，同时保留旧式或可读的 workspace/task 段；
+	// local_directory 任务的绝对路径在 envRoot 布局之外，这里剥离常见的 home
+	// 目录前缀（`/Users/<name>/`、`/home/<name>/`、`<drive>:/Users/<name>/`），
+	// 否则退回 basename，保证该字段永不携带用户的 home 目录或账户名。WorkDir
+	// 为空或剥离后无内容则为空。完整规则见 relativeWorkDir()。旧客户端仍可直读
+	// WorkDir；新 UI 应优先用 RelativeWorkDir。
 	RelativeWorkDir string `json:"relative_work_dir,omitempty"`
-	// DurableWorkDir is the daemon-confirmed directory that remains usable
-	// after a disposable task worktree has been finalized and removed. It is a
-	// point-in-time task snapshot and does not follow later resource edits.
+	// DurableWorkDir 是 daemon 确认的、在一次性的任务 worktree 收尾删除后依然
+	// 可用的目录。它是任务时点快照，不随之后的资源编辑变化。
 	DurableWorkDir string `json:"durable_work_dir,omitempty"`
-	// RelativeDurableWorkDir is the privacy-safe display form. The absolute
-	// value is retained for explicit clipboard actions only.
+	// RelativeDurableWorkDir 是隐私安全展示形式。绝对路径仅保留给显式复制操作。
 	RelativeDurableWorkDir string `json:"relative_durable_work_dir,omitempty"`
-	// BranchName is the git branch this run delivered its work on, set only by
-	// worktree-mode local_directory tasks. Unlike WorkDir it is safe to show
-	// verbatim: it is a ref inside the user's own repo, not a filesystem path.
-	// Populated on both terminal paths — a failed run can still have committed
-	// partial work, and that is when the pointer matters most.
+	// BranchName 是本运行交付成果所在的 git 分支，仅由 worktree 模式的
+	// local_directory 任务设置。与 WorkDir 不同它可原样展示：是用户自己仓库内
+	// 的 ref，而非文件系统路径。两条终态路径都会填充——失败运行也可能已提交
+	// 部分成果，这正是该指针最要紧的时刻。
 	BranchName               string                 `json:"branch_name,omitempty"`
-	TriggerCommentID         *string                `json:"trigger_comment_id,omitempty"`      // comment that triggered this task
-	CoalescedCommentIDs      []string               `json:"coalesced_comment_ids,omitempty"`   // MUL-4195: earlier comments folded into this run when it had not yet started, so a single run still covers every deliberate comment; trigger_comment_id is the newest. Surfaced so the UI can show which comments a run covered. omitempty so old clients ignore it
-	CoalescedComments        []CoalescedCommentData `json:"coalesced_comments,omitempty"`      // MUL-4195: full detail (thread_id/author/created_at/content) of the folded comments, so the daemon prompt can address each without assuming they share the triggering thread. omitempty so old clients ignore it
-	DeliveredCommentIDs      []string               `json:"delivered_comment_ids"`             // always present: [] is an authoritative empty receipt, while field absence identifies responses from legacy servers
-	TriggerThreadID          string                 `json:"trigger_thread_id,omitempty"`       // root comment ID for the triggering thread
-	TriggerCommentContent    string                 `json:"trigger_comment_content,omitempty"` // content of the triggering comment
+	TriggerCommentID         *string                `json:"trigger_comment_id,omitempty"`      // 触发本任务的评论
+	CoalescedCommentIDs      []string               `json:"coalesced_comment_ids,omitempty"`   // MUL-4195：本运行尚未开始时被并入的更早评论，保证单次运行仍覆盖每条有意的评论；trigger_comment_id 是最新那条。暴露给 UI 展示覆盖了哪些评论。omitempty 让旧客户端忽略
+	CoalescedComments        []CoalescedCommentData `json:"coalesced_comments,omitempty"`      // MUL-4195：被并入评论的完整详情（thread_id/author/created_at/content），让 daemon 提示词能逐条回应，而无需假设它们共用触发线程。omitempty 让旧客户端忽略
+	DeliveredCommentIDs      []string               `json:"delivered_comment_ids"`             // 恒存在：[] 是权威的「已送达为空」回执；字段缺失则标识来自旧版服务器的响应
+	TriggerThreadID          string                 `json:"trigger_thread_id,omitempty"`       // 触发线程的根评论 ID
+	TriggerCommentContent    string                 `json:"trigger_comment_content,omitempty"` // 触发评论的内容
 	TriggerCommentCreatedAt  string                 `json:"trigger_comment_created_at,omitempty"`
-	TriggerSummary           *string                `json:"trigger_summary,omitempty"`             // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
-	TriggerAuthorType        string                 `json:"trigger_author_type,omitempty"`         // "agent" or "member" — author kind of the triggering comment
-	TriggerAuthorName        string                 `json:"trigger_author_name,omitempty"`         // display name of the triggering comment author
-	NewCommentCount          int                    `json:"new_comment_count,omitempty"`           // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
-	NewCommentsSince         string                 `json:"new_comments_since,omitempty"`          // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
-	ChatSessionID            string                 `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
-	ChatChannelType          string                 `json:"chat_channel_type,omitempty"`           // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Makes the agent channel-aware (read history from the channel, not Multica)
-	ChatChannelDeliversFiles bool                   `json:"chat_channel_delivers_files,omitempty"` // server capability: THIS deployment can put a file the agent produced into THIS conversation — the adapter goes back for the bound attachment AND object storage exists to go back to. Absent/false on a server predating it, which is the safe reading: the agent is told to describe its file in words. Never inferred daemon-side from chat_channel_type; see handler.Handler.channelDeliversFiles
-	ChatType                 string                 `json:"chat_type,omitempty"`                   // channel_chat_session_binding.chat_type — "group" for a shared room, "p2p" for a 1:1 with the bot. Lets the per-turn prompt tell the agent who else can read its replies; empty for a web-only chat
-	ChatInThread             bool                   `json:"chat_in_thread,omitempty"`              // true when the latest @mention was a thread reply; tells the agent to start with `multica chat thread` vs `multica chat history`
-	ChatMessage              string                 `json:"chat_message,omitempty"`                // user message for chat tasks
-	ChatMessageIDs           []string               `json:"chat_message_ids,omitempty"`            // user message ids sealed into this chat turn
-	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`    // attachments on the user message — agent calls `multica attachment download <id>` per entry
-	ChatIntro                bool                   `json:"chat_intro,omitempty"`                  // legacy compatibility for historical is_agent_intro sessions; new agent creation no longer creates these chats
-	// IsCompanion and LifeContext identify a governed Life chat/background run.
-	// The daemon reconstructs this context from Multica data on every run.
+	TriggerSummary           *string                `json:"trigger_summary,omitempty"`             // 规范的短描述快照（评论文本 / autopilot 标题），任务创建时截取；源被编辑/删除后依然有效
+	TriggerAuthorType        string                 `json:"trigger_author_type,omitempty"`         // "agent" 或 "member"——触发评论的作者类型
+	TriggerAuthorName        string                 `json:"trigger_author_name,omitempty"`         // 触发评论作者的显示名
+	NewCommentCount          int                    `json:"new_comment_count,omitempty"`           // 上次运行以来触发线程的新评论数；不含注入的触发评论与自己的评论；omitempty 让旧 daemon 忽略
+	NewCommentsSince         string                 `json:"new_comments_since,omitempty"`          // 计数起点的 RFC3339 锚点（上次运行的 started_at）；omitempty 让旧 daemon 忽略
+	ChatSessionID            string                 `json:"chat_session_id,omitempty"`             // chat 任务非空
+	ChatChannelType          string                 `json:"chat_channel_type,omitempty"`           // 聊天会话由 IM 频道承载时为 "slack"；纯 Web 聊天为空。让 agent 感知频道（从频道读历史，而非 Multica）
+	ChatChannelDeliversFiles bool                   `json:"chat_channel_delivers_files,omitempty"` // 服务端能力：本部署能否把 agent 产出的文件放进本会话——适配器能回查绑定的附件且对象存储可用。旧服务器缺失/false 是安全读法：agent 被告知用文字描述文件。绝不由 daemon 依据 chat_channel_type 推断；见 handler.Handler.channelDeliversFiles
+	ChatType                 string                 `json:"chat_type,omitempty"`                   // channel_chat_session_binding.chat_type——共享房间为 "group"，与机器人 1:1 为 "p2p"。让每轮提示告诉 agent 还有谁能读它的回复；纯 Web 聊天为空
+	ChatInThread             bool                   `json:"chat_in_thread,omitempty"`              // 最近一次 @提及是否为线程内回复；告诉 agent 用 `multica chat thread` 还是 `multica chat history`
+	ChatMessage              string                 `json:"chat_message,omitempty"`                // chat 任务的用户消息
+	ChatMessageIDs           []string               `json:"chat_message_ids,omitempty"`            // 封入本轮 chat 的用户消息 id
+	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`    // 用户消息上的附件——agent 逐个执行 `multica attachment download <id>`
+	ChatIntro                bool                   `json:"chat_intro,omitempty"`                  // 历史 is_agent_intro 会话的兼容字段；新建 agent 不再创建这类聊天
+	// IsCompanion 与 LifeContext 标识受管控的 Life 聊天/后台运行。daemon 每次
+	// 运行都从 Multica 数据重建该上下文。
 	IsCompanion              bool            `json:"is_companion,omitempty"`
 	LifeContext              string          `json:"life_context,omitempty"`
 	LifeJobID                string          `json:"life_job_id,omitempty"`
 	LifeJobType              string          `json:"life_job_type,omitempty"`
 	LifeJobInput             json.RawMessage `json:"life_job_input,omitempty"`
-	AutopilotRunID           string          `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot-spawned tasks
-	AutopilotID              string          `json:"autopilot_id,omitempty"`                // autopilot that spawned this task
-	AutopilotTitle           string          `json:"autopilot_title,omitempty"`             // autopilot title used as task context
-	AutopilotDescription     string          `json:"autopilot_description,omitempty"`       // autopilot description used as task prompt
-	AutopilotSource          string          `json:"autopilot_source,omitempty"`            // manual, schedule, webhook, or api
-	AutopilotTriggerPayload  json.RawMessage `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook/api runs
-	QuickCreatePrompt        string          `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
-	QuickCreatePriority      string          `json:"quick_create_priority,omitempty"`       // explicit priority selected in quick-create
-	QuickCreateDueDate       string          `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
-	QuickCreateAttachmentIDs []string        `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
-	QuickCreateSourceContext json.RawMessage `json:"quick_create_source_context,omitempty"` // immutable historical context for source-context quick-create
-	HandoffNote              string          `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
-	SquadID                  string          `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName                string          `json:"squad_name,omitempty"`                  // display name for the picker squad
-	ParentIssueID            string          `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier    string          `json:"parent_issue_identifier,omitempty"`     // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
-	// RequestingUserName + RequestingUserProfileDescription mirror the user
-	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
-	// from the runtime owner so they're populated for daemon runtimes and
-	// empty otherwise. The daemon emits both into the brief under
-	// `## Requesting User`; the heading is skipped entirely when description
-	// is empty.
+	AutopilotRunID           string          `json:"autopilot_run_id,omitempty"`            // autopilot 派生的任务非空
+	AutopilotID              string          `json:"autopilot_id,omitempty"`                // 派生本任务的 autopilot
+	AutopilotTitle           string          `json:"autopilot_title,omitempty"`             // 用作任务上下文的 autopilot 标题
+	AutopilotDescription     string          `json:"autopilot_description,omitempty"`       // 用作任务提示词的 autopilot 描述
+	AutopilotSource          string          `json:"autopilot_source,omitempty"`            // manual、schedule、webhook 或 api
+	AutopilotTriggerPayload  json.RawMessage `json:"autopilot_trigger_payload,omitempty"`   // webhook/api 运行的可选触发负载
+	QuickCreatePrompt        string          `json:"quick_create_prompt,omitempty"`         // quick-create 任务的用户自然语言输入
+	QuickCreatePriority      string          `json:"quick_create_priority,omitempty"`       // quick-create 显式选择的优先级
+	QuickCreateDueDate       string          `json:"quick_create_due_date,omitempty"`       // quick-create 显式选择的日历截止日期
+	QuickCreateAttachmentIDs []string        `json:"quick_create_attachment_ids,omitempty"` // quick-create 提示词里上传、建 issue 时绑定的附件 id
+	QuickCreateSourceContext json.RawMessage `json:"quick_create_source_context,omitempty"` // source-context quick-create 的不可变历史上下文
+	HandoffNote              string          `json:"handoff_note,omitempty"`                // 指派交接指令；渲染进运行的开场提示词与 issue_context.md（omitempty 让旧 daemon 忽略）
+	SquadID                  string          `json:"squad_id,omitempty"`                    // quick-create 选择器是 squad 时使用；Agent 仍是被解析出的 leader
+	SquadName                string          `json:"squad_name,omitempty"`                  // 被选 squad 的显示名
+	ParentIssueID            string          `json:"parent_issue_id,omitempty"`             // 「添加子 issue」发起时——新 issue 应挂的父 issue（UUID）
+	ParentIssueIdentifier    string          `json:"parent_issue_identifier,omitempty"`     // quick-create 父 issue 的可读标识（如 MUL-123），claim 时为提示词上下文解析
+	// RequestingUserName + RequestingUserProfileDescription 镜像 agent 代其行动的
+	// 用户（见 daemon/types.go）。v1 从 runtime 所有者取值，因此 daemon runtime
+	// 下有值，其余为空。daemon 将两者写入 brief 的 `## Requesting User` 段；
+	// 描述为空时整个标题段都省略。
 	RequestingUserName               string `json:"requesting_user_name,omitempty"`
 	RequestingUserProfileDescription string `json:"requesting_user_profile_description,omitempty"`
-	// Initiator* identify the actor who triggered THIS task — the real
-	// requester behind the current comment/mention or chat message — as
-	// distinct from the runtime owner whose credentials the agent runs with.
-	// Resolved at claim time: comment-triggered tasks use the triggering
-	// comment's author; chat tasks use the chat session creator. Empty for
-	// task kinds with no attributable human initiator (on-assign, autopilot,
-	// quick-create). InitiatorEmail is set only for member initiators
-	// ("member"); agent initiators ("agent") carry a name but no email. The
-	// daemon emits these into the brief under `## Task Initiator` so a
-	// workspace-visible, multi-user agent can attribute the request and apply
-	// per-person privacy / access rules instead of seeing every requester as
-	// the owner. The agent's effective Multica credentials stay owner-scoped —
-	// this is an attested identity, not a credential. See MUL-2645.
-	InitiatorType  string `json:"initiator_type,omitempty"`  // "member" or "agent"
-	InitiatorID    string `json:"initiator_id,omitempty"`    // user UUID (member) or agent UUID
-	InitiatorName  string `json:"initiator_name,omitempty"`  // display name of the initiator
-	InitiatorEmail string `json:"initiator_email,omitempty"` // member email; empty for agent initiators
-	Kind           string `json:"kind"`                      // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
-	// Attribution is the resolved accountable-human provenance for this run
-	// (MUL-4302 §9): the source label + precise flag, the initiator (accountable)
-	// and originator refs, the evidence pointer, and lineage. Always present (the
-	// pure taskToResponse builds the labels + raw ids); initiator/originator names
-	// are hydrated from the global user table only on user-facing surfaces.
+	// Initiator* 标识触发本任务的行动者——当前评论/提及/聊天消息背后真正的
+	// 请求者——区别于以其凭据运行的 runtime 所有者。claim 时刻解析：评论触发
+	// 的任务取触发评论作者；chat 任务取会话创建者。没有可归属的人类发起者的
+	// 任务类型（on-assign、autopilot、quick-create）为空。InitiatorEmail 仅
+	// 成员发起者（"member"）有值；agent 发起者（"agent"）只有名字无邮箱。
+	// daemon 将其写入 brief 的 `## Task Initiator`，让工作区可见的多用户 agent
+	// 能归属请求并按人套用隐私/访问规则，而不是把每个请求者都当成所有者。
+	// agent 的有效 Multica 凭据仍以所有者作用域为准——这是证言式身份，不是
+	// 凭据。见 MUL-2645。
+	InitiatorType  string `json:"initiator_type,omitempty"`  // "member" 或 "agent"
+	InitiatorID    string `json:"initiator_id,omitempty"`    // 用户 UUID（member）或 agent UUID
+	InitiatorName  string `json:"initiator_name,omitempty"`  // 发起者的显示名
+	InitiatorEmail string `json:"initiator_email,omitempty"` // 成员邮箱；agent 发起者为空
+	Kind           string `json:"kind"`                      // 判别字段："comment" | "autopilot" | "chat" | "quick_create" | "direct"——activity 行用它给无关联 issue 的任务打标
+	// Attribution 是本运行已解析的「可追责人类来源」（MUL-4302 §9）：来源标签
+	// 与精确标志、发起者（可追责方）与授权方引用、证据指针与血缘。恒存在（纯
+	// taskToResponse 构建标签与裸 id）；发起者/授权者的名字仅在面向用户的面上
+	// 从全局用户表补全。
 	Attribution *TaskAttribution `json:"attribution,omitempty"`
-	// Usage is this run's own token consumption, one entry per (provider, model)
-	// it used — the same grain `task_usage` stores and the same grain the client
-	// prices at. Hydrated only on the issue-facing execution-log endpoint
-	// (ListTasksByIssue); the daemon claim path leaves it nil so the claim
-	// payload does not carry accounting the agent has no use for.
+	// Usage 是本运行自身的 token 消耗，每个 (provider, model) 一条——与
+	// task_usage 存储粒度一致，客户端也按此计价。仅在 issue 面的执行日志端点
+	// （ListTasksByIssue）补全；daemon claim 路径保持 nil，claim 负载不携带
+	// agent 用不上的记账数据。
 	//
-	// nil and [] are both "no usage recorded" and the UI renders an em dash for
-	// them — a run that predates usage reporting, or one that died before any
-	// model call, genuinely has no number, and showing 0 would assert it was
-	// free. omitempty keeps both off the wire.
+	// nil 与 [] 都表示「无用量记录」，UI 对两者渲染破折号——早于用量上报的
+	// 运行，或死在任何模型调用之前的运行，确实没有数字；显示 0 反而断言它
+	// 免费。omitempty 让两者都不上线。
 	Usage []TaskUsageData `json:"usage,omitempty"`
-	// AuthToken is the task-scoped `mat_` token the daemon must inject as
-	// MULTICA_TOKEN in the agent process environment. The server binds it to
-	// this (agent_id, task_id) pair at claim time and treats any request
-	// authenticated with it as actor=agent, regardless of headers — so the
-	// agent process cannot use it to read another agent's secrets via the
-	// env-management endpoint. Claim fails closed when the runtime has no
-	// owning user; the daemon must not fall back to its own credential. See
-	// MUL-3292.
+	// AuthToken 是本任务作用域的 `mat_` token，daemon 必须以 MULTICA_TOKEN
+	// 注入 agent 进程环境。服务端在 claim 时把它绑定到 (agent_id, task_id) 对，
+	// 凡用该 token 鉴权的请求一律视为 actor=agent，与请求头无关——这样 agent
+	// 进程无法借它经 env 管理端点读取别的 agent 的密钥。runtime 无属主用户时
+	// claim 失败关闭；daemon 不得回退用自己的凭据。见 MUL-3292。
 	AuthToken string `json:"auth_token,omitempty"`
 }
 
-// TaskAttribution is the wire shape of a run's accountable-human provenance
-// (MUL-4302 §9). Source/Precise/Evidence/lineage come straight from the row (pure);
-// Initiator/Originator carry the raw user id always and the display name/email/avatar
-// only after hydration on a user-facing surface.
+// TaskAttribution 是一次运行的「可追责人类来源」线格式（MUL-4302 §9）。
+// Source/Precise/Evidence/血缘直接来自行（纯数据）；Initiator/Originator
+// 恒带裸用户 id，显示名/邮箱/头像只在面向用户的面上补全后才填充。
 type TaskAttribution struct {
-	// Source is the waterfall level that resolved the accountable human:
-	// direct_human | delegation | comment_source | rule_owner | owner_fallback |
-	// backfill | unattributed. Never blank (a pre-migration NULL renders "unattributed").
+	// Source 是解析出可追责人类的水位级别：direct_human | delegation |
+	// comment_source | rule_owner | owner_fallback | backfill | unattributed。
+	// 永不为空（迁移前的 NULL 渲染为 "unattributed"）。
 	Source string `json:"source"`
-	// Precise is false for degraded sources (owner_fallback / backfill / unattributed);
-	// the UI marks these distinctly and they count against the coverage metric.
+	// Precise 对降级来源（owner_fallback / backfill / unattributed）为 false；
+	// UI 会显著区分它们，并计入覆盖率指标。
 	Precise bool `json:"precise"`
-	// Initiator is the accountable human (accountable_user_id). Nil when unattributed.
+	// Initiator 是可追责人类（accountable_user_id）。未归属时为 nil。
 	Initiator *AttributionUser `json:"initiator,omitempty"`
-	// Originator is the authorization human (originator_user_id); nil for autopilot
-	// (rule_owner / owner_fallback), where no human authorized the run.
+	// Originator 是授权人类（originator_user_id）；autopilot（rule_owner /
+	// owner_fallback）没有人类授权本次运行时为 nil。
 	Originator *AttributionUser `json:"originator,omitempty"`
-	// Evidence points at the direct cause of the run so the UI can jump to it.
+	// Evidence 指向运行的直接原因，UI 可据此跳转。
 	Evidence            *TaskEvidence `json:"evidence,omitempty"`
 	RuleVersionID       string        `json:"rule_version_id,omitempty"`
 	DelegatedFromTaskID string        `json:"delegated_from_task_id,omitempty"`
@@ -570,8 +541,8 @@ type TaskAttribution struct {
 	RerunOfTaskID       string        `json:"rerun_of_task_id,omitempty"`
 }
 
-// AttributionUser is a departed-member-safe user ref, resolved from the global user
-// table. Name/Email/AvatarURL are empty until hydrated.
+// AttributionUser 是「成员已离开也安全」的用户引用，从全局用户表解析。
+// Name/Email/AvatarURL 补全前为空。
 type AttributionUser struct {
 	ID        string `json:"id"`
 	Name      string `json:"name,omitempty"`
@@ -579,20 +550,20 @@ type AttributionUser struct {
 	AvatarURL string `json:"avatar_url,omitempty"`
 }
 
-// TaskEvidence is the kind-tagged handle to a run's direct cause (a comment,
-// autopilot run, rule version, source task, ...).
+// TaskEvidence 是运行直接原因（评论、autopilot 运行、规则版本、源任务……）
+// 的带类型句柄。
 type TaskEvidence struct {
 	Kind  string `json:"kind"`
 	RefID string `json:"ref_id"`
 }
 
-// taskAttributionBase builds the pure (no-DB) part of a run's attribution from the
-// row: the source label + precise flag, evidence, lineage, and the raw initiator /
-// originator user ids. Names are filled later by hydrateTaskAttributions.
+// taskAttributionBase 从行构建一次运行归因中「纯」的部分（不查库）：来源
+// 标签与精确标志、证据、血缘，以及 initiator/originator 的裸用户 id。
+// 名字稍后由 hydrateTaskAttributions 补全。
 func taskAttributionBase(t db.AgentTaskQueue) *TaskAttribution {
 	src := attribution.Source(t.OriginatorSource.String)
 	attr := &TaskAttribution{
-		Source:              src.String(), // empty (pre-migration) → "unattributed"
+		Source:              src.String(), // 空（迁移前）→ "unattributed"
 		Precise:             src.Precise(),
 		RuleVersionID:       uuidToString(t.RuleVersionID),
 		DelegatedFromTaskID: uuidToString(t.DelegatedFromTaskID),
@@ -611,10 +582,9 @@ func taskAttributionBase(t db.AgentTaskQueue) *TaskAttribution {
 	return attr
 }
 
-// hydrateTaskAttributions fills the display name / email / avatar on the initiator
-// and originator refs of the given attributions, resolving from the GLOBAL user
-// table in one batch (departed-safe, N+1-free). Best-effort: on a lookup failure the
-// raw user ids already present are left as-is — names are display sugar, not gating.
+// hydrateTaskAttributions 用「全局」用户表批量补全各归因里 initiator/originator
+// 的显示名/邮箱/头像（成员已离开也安全，且无 N+1）。尽力而为：查询失败时保留
+// 已存在的裸用户 id——名字只是展示信息，不是门控条件。
 func (h *Handler) hydrateTaskAttributions(ctx context.Context, attrs []*TaskAttribution) {
 	seen := make(map[string]struct{})
 	var ids []pgtype.UUID
@@ -669,8 +639,8 @@ func (h *Handler) hydrateTaskAttributions(ctx context.Context, attrs []*TaskAttr
 	}
 }
 
-// attributionsOf collects the (non-nil) TaskAttribution pointers from a slice of
-// task responses so a list endpoint can hydrate them all in one batch.
+// attributionsOf 从一个任务响应切片里收集（非 nil 的）TaskAttribution 指针，
+// 让列表端点能一次性批量补全。
 func attributionsOf(resps []AgentTaskResponse) []*TaskAttribution {
 	out := make([]*TaskAttribution, 0, len(resps))
 	for i := range resps {
@@ -681,28 +651,22 @@ func attributionsOf(resps []AgentTaskResponse) []*TaskAttribution {
 	return out
 }
 
-// ChatAttachmentMeta is the structured attachment metadata embedded in
-// claim responses for chat tasks. The agent uses these to run
-// `multica attachment download <id>` rather than guessing from the
-// markdown URL (which is signed and 30-min expiring on private CDN).
-// The mirror struct on the daemon side lives in internal/daemon/types.go
-// and uses the same JSON field names.
+// ChatAttachmentMeta 是嵌入在 chat 任务 claim 响应里的结构化附件元数据。
+// agent 据此执行 `multica attachment download <id>`，而不是从 markdown URL 猜
+// （私有 CDN 的 URL 带签名且 30 分钟过期）。daemon 侧镜像结构在
+// internal/daemon/types.go，JSON 字段名一致。
 type ChatAttachmentMeta struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type,omitempty"`
 }
 
-// CoalescedCommentData carries the full detail of a comment that was folded
-// into a not-yet-started run (MUL-4195) so the daemon can embed it directly in
-// the prompt. The earlier merge path only shipped comment IDs plus a
-// "they are in the triggering thread" hint, which is WRONG when the folded
-// comments span multiple threads (an issue's assignee can be triggered from
-// different threads). Shipping thread_id / author / created_at / content lets
-// the prompt address each folded comment without assuming a single thread or
-// relying on a `--recent N` window that may not cover them all. The mirror
-// struct on the daemon side lives in internal/daemon/types.go with the same
-// JSON field names.
+// CoalescedCommentData 携带被并入「尚未开始运行」的评论完整详情（MUL-4195），
+// daemon 可直接嵌入提示词。早先的合并路径只下发评论 id 外加「它们在触发线程
+// 里」的提示——当被并入的评论横跨多个线程时这是错的（issue 的指派人可能被
+// 不同线程触发）。下发 thread_id/author/created_at/content 让提示词能逐条回应
+// 每条被并入的评论，无需假设单一线程，也无需依赖未必覆盖到它们的 `--recent N`
+// 窗口。daemon 侧镜像结构在 internal/daemon/types.go，JSON 字段名一致。
 type CoalescedCommentData struct {
 	ID         string `json:"id"`
 	ThreadID   string `json:"thread_id,omitempty"`
@@ -712,16 +676,13 @@ type CoalescedCommentData struct {
 	CreatedAt  string `json:"created_at,omitempty"`
 }
 
-// TaskUsageData is one (provider, model) slice of a single run's token usage.
-// Field names match the runtime/dashboard usage rows exactly so the client can
-// feed it to the same `estimateCost` / `estimateCacheSavings` helpers without
-// an adapter.
+// TaskUsageData 是一次运行中某个 (provider, model) 分片的 token 用量。字段名与
+// runtime/dashboard 的用量行完全一致，客户端无需适配器即可喂给同一个
+// `estimateCost` / `estimateCacheSavings` 帮助函数。
 //
-// CostUsdTicks is the provider's own price for these tokens (1e-10 USD) and is
-// nil when the provider reported none — the client then estimates that slice
-// from its rate table. A pointer, not a zero value: 0 ticks is a real answer
-// ("the provider says this was free") and must stay distinguishable from
-// "the provider said nothing".
+// CostUsdTicks 是厂商对这批 token 的报价（1e-10 美元）；厂商未上报时为 nil，
+// 此时客户端按自己的费率表估算该分片。用指针而非零值：0 ticks 是真实答案
+// （「厂商说这段免费」），必须与「厂商没说话」可区分。
 type TaskUsageData struct {
 	Provider         string `json:"provider,omitempty"`
 	Model            string `json:"model"`
@@ -732,8 +693,8 @@ type TaskUsageData struct {
 	CostUsdTicks     *int64 `json:"cost_usd_ticks,omitempty"`
 }
 
-// TaskAgentData holds agent info included in claim responses so the daemon
-// can set up the execution environment (branch naming, skill files, instructions).
+// TaskAgentData 携带 claim 响应里的 agent 信息，daemon 据此搭好执行环境
+// （分支命名、skill 文件、指令）。
 type TaskAgentData struct {
 	ID                    string                      `json:"id"`
 	Name                  string                      `json:"name"`
@@ -747,17 +708,15 @@ type TaskAgentData struct {
 	ThinkingLevel         string                      `json:"thinking_level,omitempty"`
 	ServiceTier           string                      `json:"service_tier,omitempty"`
 	DisabledRuntimeSkills []DisabledRuntimeSkill      `json:"disabled_runtime_skills,omitempty"`
-	// RuntimeConfig is the agent's saved runtime_config JSON as-is. The daemon
-	// decodes provider-specific fields while preserving the server-owned schema.
+	// RuntimeConfig 是 agent 保存的原始 runtime_config JSON。daemon 解码其中
+	// 各厂商专有字段，同时保留服务端所有的 schema。
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
 
-// taskToResponse maps a queue row to its wire shape. workspaceID is threaded
-// in because the row itself doesn't carry one (workspace lives on the agent
-// / issue / chat session) — we ask the caller to resolve it once and pass it
-// down. It populates WorkspaceID and powers the privacy-safe RelativeWorkDir
-// derivation; pass "" only on daemon-facing paths that genuinely don't have
-// it, in which case RelativeWorkDir falls back to the existing WorkDir.
+// taskToResponse 把队列行映射为线格式。workspaceID 由外部传入，因为行本身
+// 不携带（workspace 在 agent/issue/chat 会话上）——要求调用方解析一次后传下来。
+// 它填充 WorkspaceID 并为隐私安全的 RelativeWorkDir 推导提供输入；仅在确实
+// 没有它的 daemon 面路径传 ""，此时 RelativeWorkDir 退回既有 WorkDir。
 func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	var result any
 	if t.Result != nil {
@@ -812,49 +771,40 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		RelativeWorkDir:        relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
 		DurableWorkDir:         durableWorkDir,
 		RelativeDurableWorkDir: relativeWorkDir(durableWorkDir, "", ""),
-		// Surface task source so the UI can distinguish issue-linked tasks
-		// from chat-spawned or autopilot-spawned ones; all three may arrive
-		// with issue_id = "" once a task has no linked issue.
+		// 暴露任务来源，让 UI 区分 issue 关联任务与 chat/autopilot 派生任务；
+		// 一旦任务没有关联 issue，三者都可能带着 issue_id = ""。
 		ChatSessionID:  uuidToString(t.ChatSessionID),
 		AutopilotRunID: uuidToString(t.AutopilotRunID),
 		Kind:           computeTaskKind(t),
-		// Attribution labels + evidence + lineage + raw user ids (pure). Names are
-		// hydrated separately on user-facing surfaces (MUL-4302 §9).
+		// 归因的标签+证据+血缘+裸用户 id（纯数据）。名字只在面向用户的面上
+		// 另行补全（MUL-4302 §9）。
 		Attribution: taskAttributionBase(t),
 	}
 }
 
-// relativeWorkDir produces a privacy-safe display form of the daemon-reported
-// absolute work_dir. The contract: the returned string must never contain
-// the user's home directory prefix or their account name. The chip is
-// rendered in transcripts that frequently end up in screen shares,
-// screenshots, and recordings, so this function is the only guard.
+// relativeWorkDir 生成 daemon 上报的绝对 work_dir 的隐私安全展示形式。契约：
+// 返回值绝不包含用户的 home 目录前缀或账户名。该「小标签」常出现在屏幕共享、
+// 截图、录制里，因此本函数是唯一防线。
 //
-//   - For standard tasks, it validates the adjacent workspace/task segments
-//     by their stable ID suffixes, then strips everything before them. This
-//     accepts both legacy `<wsUUID>/<taskShort>` roots and readable
-//     `<workspaceSlug>-<wsShort>/<issueKey>-<taskShort>` roots without treating
-//     the labels as identity.
-//   - For local_directory tasks the absolute path lives outside the envRoot
-//     layout. We try to recognise common home-directory prefixes
-//     (`/Users/<name>/`, `/home/<name>/`, `<drive>:/Users/<name>/`) and strip
-//     them, returning the remainder (e.g. `repos/foo`). When the prefix
-//     can't be recognised — unusual home layouts, network mounts, paths
-//     under `/opt`, `/srv`, etc. — we fall back to the basename so we never
-//     accidentally render a path component that happens to be a username.
+//   - 标准任务：按稳定 ID 后缀校验相邻的 workspace/task 段，然后剥离其之前
+//     的一切。既兼容旧式 `<wsUUID>/<taskShort>` 根，也兼容可读的
+//     `<workspaceSlug>-<wsShort>/<issueKey>-<taskShort>` 根，且不把标签当身份。
+//   - local_directory 任务：绝对路径在 envRoot 布局之外。尝试识别常见 home
+//     目录前缀（`/Users/<name>/`、`/home/<name>/`、`<drive>:/Users/<name>/`）
+//     并剥掉，返回其余部分（如 `repos/foo`）。前缀无法识别时——不常见的 home
+//     布局、网络挂载、`/opt`、`/srv` 下的路径等——退回 basename，避免碰巧把
+//     某段用户名路径组件渲染出来。
 //
-// Returns empty when work_dir is empty, or when stripping leaves nothing
-// (i.e. work_dir was exactly the user's home — rendering nothing is
-// preferable to a chip that says `<name>`). taskDirSegment() must stay in
-// lock-step with server/internal/daemon/execenv/git.go:taskKey — both
-// consume the same task UUID. legacyTaskDirSegment keeps privacy-safe display
-// working for pre-#7347 roots and roots created by an earlier build of this PR.
+// work_dir 为空、或剥离后什么都不剩时返回空（即 work_dir 恰为 home 目录——
+// 渲染「什么都没有」好过渲染出一个写着 `<name>` 的标签）。taskDirSegment()
+// 必须与 server/internal/daemon/execenv/git.go:taskKey 保持同步——两者消费同一
+// 个任务 UUID。legacyTaskDirSegment 让隐私安全展示对 #7347 之前的根以及本 PR
+// 早期构建创建的根继续有效。
 func relativeWorkDir(workDir, workspaceID, taskID string) string {
 	if workDir == "" {
 		return ""
 	}
-	// Normalize Windows separators so the rest of the function only
-	// reasons about forward slashes.
+	// 归一化 Windows 分隔符，使后面只按正斜杠推理。
 	normalized := strings.ReplaceAll(workDir, "\\", "/")
 
 	if workspaceID != "" && taskID != "" {
@@ -890,15 +840,13 @@ func matchesTaskPathSegment(segment, taskID string) bool {
 		strings.HasSuffix(lower, "-"+legacy) || strings.HasSuffix(lower, "-"+current)
 }
 
-// taskDirSegmentLen and taskDirSegment mirror execenv.taskKeyLen /
-// execenv.taskKey — the LAST 12 hex chars of the task id. Kept inline here so
-// the agent handler has zero imports from the daemon package (which would
-// create an unwanted cycle between handler and daemon).
+// taskDirSegmentLen 与 taskDirSegment 镜像 execenv.taskKeyLen / execenv.taskKey
+// ——任务 id 的最后 12 个十六进制字符。就地内联是为了让 agent handler 对 daemon
+// 包零依赖（否则 handler 与 daemon 之间会形成不想要的循环引用）。
 //
-// It must keep taking the TAIL. A UUIDv7's leading hex chars are timestamp
-// bits shared by every task created within ~65.5s (#7326); the daemon stopped
-// reading from that end, and this reconstruction only matches while both sides
-// agree.
+// 必须继续取「尾部」。UUIDv7 前导十六进制是时间戳位，约 65.5 秒内创建的任务
+// 会共享它（#7326）；daemon 已不再从那一端读取，此处重建只有在两端一致时才
+// 能匹配。
 const taskDirSegmentLen = 12
 
 func taskDirSegment(uuid string) string {
@@ -909,8 +857,8 @@ func taskDirSegment(uuid string) string {
 	return s
 }
 
-// legacyTaskDirSegment mirrors the historical shortID layout: the first eight
-// dash-free characters. It is display compatibility only, never new identity.
+// legacyTaskDirSegment 镜像历史 shortID 布局：去掉破折号后的前八个字符。
+// 仅为展示兼容，绝不作为新身份。
 func legacyTaskDirSegment(uuid string) string {
 	s := strings.ReplaceAll(uuid, "-", "")
 	if len(s) > 8 {
@@ -919,24 +867,21 @@ func legacyTaskDirSegment(uuid string) string {
 	return strings.ToLower(s)
 }
 
-// homeDirPattern matches the well-known per-user home layouts on macOS,
-// Linux, and Windows after backslash normalization:
+// homeDirPattern 匹配 macOS/Linux/Windows（反斜杠归一化后）常见的按用户划分的
+// home 目录布局：
 //
 //	/Users/<name>[/<rest>]
 //	/home/<name>[/<rest>]
 //	<drive>:/Users/<name>[/<rest>]
 //
-// Case-insensitive because macOS and Windows are case-insensitive at the
-// filesystem layer; matching `/users/...` the same as `/Users/...` keeps
-// the strip robust against unusual casings seen on shared drives.
-// Capture group 1 is the optional remainder after the username segment.
+// 大小写不敏感：macOS/Windows 在文件系统层就不区分大小写；`/users/...` 与
+// `/Users/...` 同等待遇可让剥离在共享盘上不常见的写法下依然健壮。
+// 捕获组 1 是用户名段之后的可选剩余部分。
 var homeDirPattern = regexp.MustCompile(`(?i)^(?:[A-Za-z]:)?/(?:Users|home)/[^/]+(?:/(.*))?$`)
 
-// stripHomePrefix recognises common home-directory layouts and returns
-// the path remainder after the username segment. Returns (remainder, true)
-// when a known home prefix matched. The remainder may be the empty string
-// (work_dir was exactly the home directory) — the caller treats that as
-// "nothing safe to display".
+// stripHomePrefix 识别常见 home 目录布局，返回用户名段之后的路径剩余部分。
+// 命中已知 home 前缀时返回 (剩余, true)。剩余可能为空串（work_dir 恰好就是
+// home 目录）——调用方将其视为「无可安全展示内容」。
 func stripHomePrefix(p string) (string, bool) {
 	m := homeDirPattern.FindStringSubmatch(p)
 	if m == nil {
@@ -945,11 +890,9 @@ func stripHomePrefix(p string) (string, bool) {
 	return m[1], true
 }
 
-// basename returns the last non-empty segment of a forward-slash path.
-// Used as the ultimate privacy-safe fallback when we can't otherwise
-// recognise the path: a single segment can never expose the home prefix,
-// and the leaf is almost always the most useful piece of context anyway
-// (typically the repo directory name for local_directory tasks).
+// basename 返回正斜杠路径最后一个非空段。作为无法识别路径时的最终隐私安全
+// 兜底：单段绝不暴露 home 前缀，而叶名几乎总是最有用的上下文（local_directory
+// 任务通常就是仓库目录名）。
 func basename(p string) string {
 	p = strings.TrimRight(p, "/")
 	if p == "" {
@@ -961,12 +904,10 @@ func basename(p string) string {
 	return p
 }
 
-// computeTaskKind picks the source-discriminator string the activity UI uses
-// to choose how to render a task row. Computed from the existing FK shape so
-// no extra DB lookup is needed: chat / autopilot / comment-on-issue (any
-// triggered task with both an issue_id and trigger_comment_id) / quick_create
-// (no linked source — the agent is creating the issue itself) / direct
-// (assignee-driven task on an existing issue).
+// computeTaskKind 挑选 activity UI 用来决定任务行渲染方式的来源判别字符串。
+// 由既有外键形状计算，无需额外查库：chat / autopilot / issue 上被触发（既有
+// issue_id 又有 trigger_comment_id 的任意触发任务）/ quick_create（无关联源——
+// agent 自己在建 issue）/ direct（既有 issue 上由指派人驱动的任务）。
 func computeTaskKind(t db.AgentTaskQueue) string {
 	if _, ok := lifeCognitionContextForTask(t); ok {
 		return "life_cognition"
@@ -986,6 +927,10 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 	return "direct"
 }
 
+// ListAgents 处理 GET /api/agents（默认不含已归档）。任何工作区成员都可调用，
+// 但 private agent 仅所有者或工作区 owner/admin 可见，public_to agent 仅白名单
+// 成员可见；agent actor 走 A2A 协作放行。响应会按角色对 mcp_config 与 composio
+// 白名单脱敏。?include_archived=true 时含已归档。
 func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := h.workspaceMember(w, r, workspaceID)
@@ -1006,7 +951,7 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Batch-load skills for all agents to avoid N+1.
+	// 批量加载全部 agent 的 skills，避免 N+1。
 	skillRows, err := h.Queries.ListAgentSkillsByWorkspace(r.Context(), parseUUID(workspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
@@ -1023,11 +968,9 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// mcp_config still uses the workspace-level always-redact setting and
-	// the per-row owner/admin gate — secrets in MCP server configs follow
-	// the same exposure rules as custom_env used to. custom_env itself is
-	// never serialized on agent resources anymore (MUL-2600); see the
-	// AgentResponse comment.
+	// mcp_config 仍采用工作区级的 always-redact 设置加逐行 owner/admin 门控——
+	// MCP server 配置里的密钥遵循 custom_env 过去的暴露规则。custom_env 本身已
+	// 不再序列化进 agent 资源（MUL-2600）；见 AgentResponse 注释。
 	ws, err := h.Queries.GetWorkspace(r.Context(), parseUUID(workspaceID))
 	if err != nil {
 		slog.Warn("GetWorkspace failed for redact check", "workspace_id", workspaceID, "error", err)
@@ -1036,11 +979,10 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	alwaysRedact := workspaceAlwaysRedactSecrets(ws.Settings)
 
-	// Resolve the request actor once. Agents bypass the view gate to preserve
-	// A2A collaboration; members see a private agent only when they own it or
-	// are workspace owner/admin, and a public_to agent only when on its
-	// invocation allow-list. Targets are batch-loaded to avoid an N+1 and
-	// reused to enrich each response's invocation_targets.
+	// 只解析一次请求 actor。Agent actor 绕过可见性门控以保留 A2A 协作；成员
+	// 只有拥有该 private agent 或是工作区 owner/admin 才可见，public_to agent
+	// 只有在调用白名单上才可见。targets 批量加载避免 N+1，并复用来丰富每个
+	// 响应的 invocation_targets。
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	targetsByAgent, ok := h.loadInvocationTargetsByAgent(r.Context(), agents)
 	if !ok {
@@ -1060,23 +1002,19 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		if skills, ok := skillMap[resp.ID]; ok {
 			resp.Skills = skills
 		}
-		// Agent actors NEVER see mcp_config secrets, even when their host's
-		// PAT would normally satisfy the owner/admin role gate. Otherwise an
-		// agent running under an owner's daemon could read other agents'
-		// MCP configs (which routinely embed third-party API tokens) — the
-		// same lateral-movement vector MUL-2600 closed for custom_env.
+		// agent actor 永远看不到 mcp_config 密钥，即使其宿主的 PAT 本可满足
+		// owner/admin 角色门控。否则跑在所有者 daemon 下的 agent 就能读到别的
+		// agent 的 MCP 配置（常内嵌第三方 API token）——这正是 MUL-2600 为
+		// custom_env 封堵的横向移动路径。
 		if actorType == "agent" || alwaysRedact || !canViewAgentSecrets(a, userID, member.Role) {
 			redactMcpConfig(&resp)
 		}
-		// composio_toolkit_allowlist is owner-only — not because the slugs
-		// are secret but because surfacing "what {owner} has opted into"
-		// across the workspace leaks the owner's integration footprint and
-		// confuses non-owners who cannot actually edit it. Workspace
-		// owner/admin do NOT bypass this gate (unlike mcp_config): the overlay
-		// uses the OWNER's connection and follows invocation permission
-		// (MUL-3963), so surfacing the slugs to admins gives them nothing
-		// actionable. Agent actors are also redacted (same A2A
-		// lateral-movement reasoning as mcp_config).
+		// composio_toolkit_allowlist 仅所有者可见——不是 slug 保密，而是把
+		// 「{所有者} 开通了什么」展示给整个工作区会泄漏所有者的集成使用面，
+		// 也困惑那些实际上无法编辑它的非所有者。工作区 owner/admin 不绕过此
+		// 门控（区别于 mcp_config）：叠加层用的是所有者的连接并遵循调用权限
+		// （MUL-3963），把 slug 展示给管理员毫无用处。agent actor 同样脱敏
+		// （与 mcp_config 相同的 A2A 横向移动考量）。
 		if !h.composioMCPAppsEnabled(r.Context()) {
 			suppressComposioToolkitAllowlist(&resp)
 		} else if actorType == "agent" || uuidToString(a.OwnerID) != userID {
@@ -1088,16 +1026,18 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, visible)
 }
 
+// GetAgent 处理 GET /api/agents/{id}。先按可见性加载 agent，再走 private 门控
+// （403 而非 404，便于前端渲染「无权限」占位）；无权限返回 403。响应按调用者
+// 角色脱敏 mcp_config 与 composio 白名单，并附带 skills 与 invocation_targets。
 func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
 	if !ok {
 		return
 	}
-	// Private-agent gate: members must be in allowed_principals to view
-	// (and therefore navigate to) a private agent. The 403 lets the front-end
-	// render an explicit "no access" placeholder instead of a 404 — see
-	// agent-detail-page.tsx.
+	// Private-agent 门控：成员必须在 allowed_principals 里才能查看（从而跳转到）
+	// private agent。403 让前端渲染显式「无权访问」占位而不是 404——见
+	// agent-detail-page.tsx。
 	workspaceID := uuidToString(agent.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
 	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
@@ -1108,17 +1048,15 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	if !h.enrichAgentResponseWithTargetsHTTP(w, r, &resp, agent.ID) {
 		return
 	}
-	// Use the summary query (no `content` column) — the embedded
-	// AgentSkillSummary only needs id/name/description, and reading large
-	// SKILL.md bodies just to discard them is the exact regression we fixed
-	// in #2174.
+	// 用摘要查询（无 `content` 列）——内嵌的 AgentSkillSummary 只需要
+	// id/name/description，读大段 SKILL.md 正文又丢掉正是 #2174 修掉的回归。
 	if err := h.attachAgentSkills(r.Context(), &resp, agent.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
 
-	// mcp_config redaction (custom_env was removed from this response shape
-	// in MUL-2600; secrets are now fetched via GET /api/agents/{id}/env).
+	// mcp_config 脱敏（MUL-2600 已把 custom_env 移出该响应形状；密钥如今经
+	// GET /api/agents/{id}/env 拉取）。
 	userID := requestUserID(r)
 	ws, err := h.Queries.GetWorkspace(r.Context(), agent.WorkspaceID)
 	if err != nil {
@@ -1127,7 +1065,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	alwaysRedact := workspaceAlwaysRedactSecrets(ws.Settings)
-	// Agent actors NEVER see mcp_config (see ListAgents for the rationale).
+	// agent actor 永远看不到 mcp_config（理由同 ListAgents）。
 	if actorType == "agent" || alwaysRedact {
 		redactMcpConfig(&resp)
 	} else if member, ok := ctxMember(r.Context()); ok {
@@ -1135,8 +1073,8 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 			redactMcpConfig(&resp)
 		}
 	}
-	// composio_toolkit_allowlist visibility is strictly owner-only (see
-	// ListAgents for the rationale). No workspace owner/admin bypass.
+	// composio_toolkit_allowlist 严格仅所有者可见（理由同 ListAgents）。
+	// 工作区 owner/admin 不绕过。
 	if !h.composioMCPAppsEnabled(r.Context()) {
 		suppressComposioToolkitAllowlist(&resp)
 	} else if actorType == "agent" || uuidToString(agent.OwnerID) != userID {
@@ -1146,6 +1084,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// CreateAgentRequest 是创建 agent 的请求体。
 type CreateAgentRequest struct {
 	Name                 string                     `json:"name"`
 	Description          string                     `json:"description"`
@@ -1158,33 +1097,31 @@ type CreateAgentRequest struct {
 	CustomArgs           []string                   `json:"custom_args"`
 	McpConfig            json.RawMessage            `json:"mcp_config"`
 	Visibility           string                     `json:"visibility"`
-	// PermissionMode + InvocationTargets are the new invocation-permission
-	// inputs (MUL-3963). When permission_mode is present it is authoritative
-	// and Visibility is ignored; when absent, legacy Visibility is mapped
-	// (private -> private, workspace -> public_to+workspace target). On create
-	// only the caller can be the owner, so targets are accepted unconditionally.
+	// PermissionMode + InvocationTargets 是新的调用权限输入（MUL-3963）。
+	// permission_mode 出现时权威，忽略 Visibility；缺席时映射旧 Visibility
+	// （private→private，workspace→public_to+workspace 目标）。创建时调用者
+	// 只能是所有者，因此 targets 无条件接受。
 	PermissionMode     *string                    `json:"permission_mode"`
 	InvocationTargets  []AgentInvocationTargetDTO `json:"invocation_targets"`
 	MaxConcurrentTasks int32                      `json:"max_concurrent_tasks"`
 	Model              string                     `json:"model"`
 	ThinkingLevel      string                     `json:"thinking_level"`
 	ServiceTier        string                     `json:"service_tier"`
-	// ComposioToolkitAllowlist seeds the per-task overlay gate (MUL-3869). On
-	// create only the calling user can be the owner, so we accept the field
-	// unconditionally here; the cross-owner permission gate lives on PUT.
-	// Nil = leave column NULL (no overlay). Empty slice = explicit `{}` (no
-	// overlay either, but the column reads as "configured" — distinct from
-	// "owner has never opened the integration").
+	// ComposioToolkitAllowlist 为逐任务叠加层门控播种（MUL-3869）。创建时只有
+	// 调用用户可能是所有者，故此处无条件接受该字段；跨所有者的权限门控在 PUT。
+	// nil = 列留 NULL（无叠加）。空切片 = 显式 `{}`（也无叠加，但列读作「已配置」，
+	// 区别于「所有者从未开通集成」）。
 	ComposioToolkitAllowlist []string `json:"composio_toolkit_allowlist"`
-	// Template records the creation-source attribution used by the
-	// `agent_created` analytics event (for example, "agent_builder"). Empty
-	// identifies a manually authored agent.
+	// Template 记录 `agent_created` 分析事件使用的创建来源（例如
+	// "agent_builder"）。空表示手工编写的 agent。
 	Template string `json:"template"`
-	// SkillIDs are attached inside the same transaction as the agent row so a
-	// create never becomes visible in a partially configured state.
+	// SkillIDs 在与 agent 行相同的事务里挂接，创建永远不呈现半配置状态。
 	SkillIDs []string `json:"skill_ids"`
 }
 
+// decodeJSONBodyWithRawFields 一次性读 body 并做两次解组：目标结构体 + 原始
+// map。后者用于区分「字段缺席」与「显式 null/空值」（Go 指针解组两者都变 nil），
+// 是 thinking_level / composio 白名单等三态字段必需的信息。
 func decodeJSONBodyWithRawFields(body io.Reader, dst any) (map[string]json.RawMessage, error) {
 	payload, err := io.ReadAll(body)
 	if err != nil {
@@ -1206,6 +1143,8 @@ func decodeJSONBodyWithRawFields(body io.Reader, dst any) (map[string]json.RawMe
 	return raw, nil
 }
 
+// normaliseAgentConversationStarters 校验并规范化开场白列表：条数/各字段的
+// label、prompt 必填与长度上限，并去掉首尾空白。出错返回对用户友好的 400 文案。
 func normaliseAgentConversationStarters(starters []AgentConversationStarter) ([]AgentConversationStarter, error) {
 	if len(starters) > maxAgentConversationStarters {
 		return nil, fmt.Errorf("conversation_starters must contain at most %d items", maxAgentConversationStarters)
@@ -1232,6 +1171,11 @@ func normaliseAgentConversationStarters(starters []AgentConversationStarter) ([]
 	return normalised, nil
 }
 
+// CreateAgent 处理 POST /api/agents。权限与校验要点：请求者须是工作区成员且
+// runtime 允许其使用（private runtime 仅其所有者可用）；对 thinking_level /
+// service_tier 按目标 runtime 的能力做校验；custom_env 值不进 agent 行。创建与
+// skill 挂接、invocation targets 在同一事务内完成，成功后发 agent:created 事件，
+// 并按 actor 类型对响应脱敏。名字冲突（含已归档的）返回 409。
 func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 
@@ -1281,10 +1225,8 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve invocation permission (MUL-3963). permission_mode is
-	// authoritative when present; otherwise the legacy visibility value is
-	// mapped. On create the caller is always the owner, so targets are
-	// accepted unconditionally.
+	// 解析调用权限（MUL-3963）。permission_mode 出现时权威；否则映射旧
+	// visibility。创建时调用者恒为所有者，targets 无条件接受。
 	_, hasTargets := rawFields["invocation_targets"]
 	legacyVis := req.Visibility
 	perm, _, permErr := parsePermissionInput(wsUUID, req.PermissionMode, req.InvocationTargets, req.PermissionMode != nil, hasTargets, &legacyVis)
@@ -1310,18 +1252,17 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// thinking_level validation: fixed-enum providers reject unknown literals;
-	// dynamic-catalog providers (Codex/OpenCode) reject malformed tokens here.
-	// Pi has a fixed token universe and a daemon-discovered per-model subset.
-	// Per-model gaps are enforced by the daemon at execution time (MUL-2339):
-	// combination-invalid values are logged and omitted from the invocation.
+	// thinking_level 校验：固定枚举厂商拒绝未知字面量；动态目录厂商
+	// （Codex/OpenCode）在此拒绝畸形 token。Pi 有固定 token 宇宙加 daemon 发现
+	// 的逐模型子集。逐模型组合缺口由 daemon 在运行时执行（MUL-2339）：
+	// 组合无效的值记日志并从调用中剔除。
 	if !agent.IsKnownThinkingValue(runtime.Provider, req.ThinkingLevel) {
 		writeError(w, http.StatusBadRequest, thinkingLevelRejection(runtime.Provider, req.ThinkingLevel))
 		return
 	}
-	// For ACP-catalog providers the provider name is not the capability answer
-	// — this runtime's own discovered catalog is. Keeps a Hermes Agent user's
-	// clear 400 instead of accepting a level the daemon would later drop.
+	// 对 ACP 目录厂商，厂商名不是能力答案——该 runtime 自己发现的目录才是。
+	// 这样 Hermes Agent 用户收到明确的 400，而不是收下一个 daemon 之后会丢弃
+	// 的档位。
 	if req.ThinkingLevel != "" {
 		switch h.acpThinkingDecision(r.Context(), runtime.Provider, runtime.ID) {
 		case acpEffortAbsent:
@@ -1337,19 +1278,17 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Probe workspace agent count BEFORE the insert so the funnel has a
-	// clean "first agent ever in this workspace" signal — Step 4 of
-	// onboarding always lands in this branch. A non-fatal read: if the
-	// list fails we fall through with isFirstAgent=false rather than
-	// blocking creation, since the primary DB operation is the insert.
+	// 在 INSERT 前探测工作区 agent 数量，让漏斗得到干净的「工作区首个 agent」
+	// 信号——onboarding 的第 4 步总是落在这个分支。非致命读取：列表失败就以
+	// isFirstAgent=false 继续，主 DB 操作是插入本身。
 	isFirstAgent := false
 	if existing, listErr := h.Queries.ListAgents(r.Context(), wsUUID); listErr == nil {
 		isFirstAgent = len(existing) == 0
 	}
 
-	// A create has no prior token to restore, so if the caller submitted the
-	// public mask sentinel as gateway.token (e.g. replayed a masked GET body)
-	// drop it rather than persisting a literal "***" as a real bearer token.
+	// 创建没有旧 token 可还原，因此若调用者把公开掩码哨兵提交为 gateway.token
+	// （比如回放了被掩码的 GET 请求体），直接丢弃而非把字面 "***" 当真实 bearer
+	// token 持久化。
 	preserveMaskedGatewayToken(req.RuntimeConfig, nil)
 	rc, _ := json.Marshal(req.RuntimeConfig)
 	if req.RuntimeConfig == nil {
@@ -1373,12 +1312,10 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		mc = append([]byte(nil), rawMcpConfig...)
 	}
 
-	// composio_toolkit_allowlist: the JSON field is a list-of-slugs that gets
-	// stored as TEXT[]. We normalise here (lowercase + trim + dedupe) so the
-	// dispatch path can compare against per-user connection rows with a
-	// straight equality. A nil slice (or absent JSON key) maps to a NULL
-	// column on insert. An explicitly empty list (`[]`) is preserved as an
-	// empty TEXT[] (the dispatch path treats NULL and `{}` identically).
+	// composio_toolkit_allowlist：JSON 字段是 slug 列表，存为 TEXT[]。这里做
+	// 规范化（小写+去空白+去重），派发路径就能与逐用户的连接行做直接的相等比较。
+	// nil 切片（或 JSON 键缺席）插入时映射到 NULL 列；显式空列表（`[]`）保留为
+	// 空 TEXT[]（派发路径对 NULL 与 `{}` 一视同仁）。
 	allowlist := normaliseComposioToolkitAllowlist(req.ComposioToolkitAllowlist)
 	if !h.composioMCPAppsEnabled(r.Context()) {
 		allowlist = nil
@@ -1434,8 +1371,8 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		ComposioToolkitAllowlist: allowlist,
 	})
 	if err != nil {
-		// Unique constraint on (workspace_id, name) — return a clear conflict error
-		// so the UI can show the right message instead of a generic 500.
+		// (workspace_id, name) 唯一约束——返回清晰的冲突错误，让 UI 显示正确
+		// 信息而非通用 500。
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "agent_workspace_name_unique" {
 			writeError(w, http.StatusConflict, fmt.Sprintf("an agent named %q already exists in this workspace", req.Name))
@@ -1471,6 +1408,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	slog.Info("agent created", append(logger.RequestAttrs(r), "agent_id", uuidToString(created.ID), "name", created.Name, "workspace_id", workspaceID)...)
 
 	if runtime.Status == "online" {
+		// runtime 在线则触发一次状态协调，让新 agent 立即反映真实可达性。
 		h.TaskService.ReconcileAgentStatus(r.Context(), created.ID)
 		created, _ = h.Queries.GetAgent(r.Context(), created.ID)
 	}
@@ -1501,6 +1439,9 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+// UpdateAgentRequest 是更新 agent（PUT /api/agents/{id}）的请求体。多数字段
+// 为指针以支持三态（缺席/清空/设置），配合解码期捕获的 rawFields 判定键是否
+// 提交。
 type UpdateAgentRequest struct {
 	Name                 *string                     `json:"name"`
 	Description          *string                     `json:"description"`
@@ -1509,62 +1450,50 @@ type UpdateAgentRequest struct {
 	AvatarURL            *string                     `json:"avatar_url"`
 	RuntimeID            *string                     `json:"runtime_id"`
 	RuntimeConfig        any                         `json:"runtime_config"`
-	// custom_env is intentionally NOT updatable through this endpoint.
-	// Use `PUT /api/agents/{id}/env` for env changes — that path admits
-	// the agent owner or a workspace owner/admin, denies agent actors,
-	// and writes a persisted audit log entry. A `PUT /api/agents/{id}`
-	// body that carries
-	// `custom_env` is rejected with 400 in the handler below so a
-	// caller never believes they rotated a secret when the value is
-	// actually unchanged, and so a client that round-tripped a
-	// previously-returned masked map cannot silently overwrite real
-	// secret values with literal `****`. See MUL-2600.
+	// custom_env 有意不能经本端点修改。env 变更请走 `PUT /api/agents/{id}/env`
+	// ——该路径只允许 agent 所有者或工作区 owner/admin，拒绝 agent actor，且会
+	// 写持久化审计日志。若 `PUT /api/agents/{id}` 的请求体携带 `custom_env`，
+	// 下方 handler 返回 400 拒绝——避免调用者误以为轮换了密钥而实际没变，也避免
+	// 回传之前拿到过的掩码 map 的客户端把真实密钥悄悄覆盖成字面 `****`。见 MUL-2600。
 	CustomArgs *[]string        `json:"custom_args"`
 	McpConfig  *json.RawMessage `json:"mcp_config"`
 	Visibility *string          `json:"visibility"`
-	// PermissionMode + InvocationTargets are the invocation-permission inputs
-	// (MUL-3963). Owner-only writes (like composio_toolkit_allowlist): a
-	// non-owner admin passing them is silently ignored, because the invoke
-	// gate is owner/allow-list based and an admin-authored allow-list would
-	// confuse the owner about who can run their agent. permission_mode is
-	// authoritative when present; otherwise legacy visibility is mapped.
+	// PermissionMode + InvocationTargets 是调用权限输入（MUL-3963）。仅所有者
+	// 可写（同 composio_toolkit_allowlist）：非所有者的 admin 传它们会被静默忽略，
+	// 因为调用门控基于 owner/白名单，admin 写的白名单会让所有者困惑于谁能运行
+	// 自己的 agent。permission_mode 出现时权威；否则映射旧 visibility。
 	PermissionMode     *string                     `json:"permission_mode"`
 	InvocationTargets  *[]AgentInvocationTargetDTO `json:"invocation_targets"`
 	Status             *string                     `json:"status"`
 	MaxConcurrentTasks *int32                      `json:"max_concurrent_tasks"`
 	Model              *string                     `json:"model"`
-	// ThinkingLevel is treated as a tri-state per-MUL-2339:
-	//   - field omitted → no change (leave existing value alone)
-	//   - field present with "" → explicit clear (use runtime default)
-	//   - field present with non-empty value → set (validated server-side)
-	// Distinguishing those modes is why this is a pointer; the raw-fields
-	// map captured at decode time tells us whether the key was sent.
+	// ThinkingLevel 按 MUL-2339 的三态处理：
+	//   - 字段缺席 → 不变（保留现值）
+	//   - 字段为 "" → 显式清除（用 runtime 默认）
+	//   - 字段非空 → 设置（服务端校验）
+	// 之所以用指针，正是为了区分这些模式；解码期捕获的 rawFields 告诉我们键是否
+	// 被发送。
 	ThinkingLevel *string `json:"thinking_level"`
-	// ServiceTier follows the same tri-state contract as ThinkingLevel:
-	// omitted preserves, empty clears, and non-empty sets a Codex catalog ID.
+	// ServiceTier 与 ThinkingLevel 同一三态契约：缺席保留、空串清除、非空设置
+	// 一个 Codex 目录 ID。
 	ServiceTier *string `json:"service_tier"`
-	// ComposioToolkitAllowlist is a tri-state, same pattern as
-	// thinking_level, mcp_config:
-	//   - field omitted → no change (column preserved as-is)
-	//   - field present with null → explicit clear (ClearAgent... query)
-	//   - field present with [] → store empty TEXT[] (configured, no toolkits)
-	//   - field present with non-empty → store deduped lowercase slugs
-	// The decode-time raw fields map disambiguates "omitted" from "explicit
-	// null" (a *[]string can't, because a nil pointer is the same wire
-	// representation as both). MUL-3869.
+	// ComposioToolkitAllowlist 是三态，模式同 thinking_level、mcp_config：
+	//   - 字段缺席 → 不变（列原样保留）
+	//   - 字段为 null → 显式清除（ClearAgent... 查询）
+	//   - 字段为 [] → 存空 TEXT[]（已配置，无 toolkit）
+	//   - 字段非空 → 存去重小写 slug
+	// 解码期的 rawFields map 区分「缺席」与「显式 null」（*[]string 做不到：
+	// nil 指针与两者线表示相同）。MUL-3869。
 	ComposioToolkitAllowlist *[]string `json:"composio_toolkit_allowlist"`
 }
 
-// workspaceAlwaysRedactSecrets reports whether the workspace has opted
-// into unconditional redaction of secret-bearing fields (currently
-// `mcp_config`) on read responses, regardless of the caller's role.
+// workspaceAlwaysRedactSecrets 返回工作区是否已选择对读响应的含密钥字段
+// （目前是 `mcp_config`）无条件脱敏，无论调用者角色。
 //
-// The legacy JSON key is still `always_redact_env` for backwards-
-// compatibility with workspaces that flipped the setting before MUL-2600
-// shipped. The setting no longer affects `custom_env` because that field
-// is never serialized on agent resources anymore — secrets there are
-// fetched exclusively through `GET /api/agents/{id}/env` with audit
-// logging — so the flag now only governs `mcp_config` exposure.
+// 兼容旧工作区保留遗留 JSON 键 `always_redact_env`（在 MUL-2600 之前开启该
+// 设置的）。该设置不再影响 `custom_env`——该字段已永不出现在 agent 资源上，
+// 其密钥只经带审计的 `GET /api/agents/{id}/env` 拉取——因此现在只约束
+// `mcp_config` 的暴露。
 func workspaceAlwaysRedactSecrets(settings []byte) bool {
 	if len(settings) == 0 {
 		return false
@@ -1578,12 +1507,10 @@ func workspaceAlwaysRedactSecrets(settings []byte) bool {
 	return s.AlwaysRedactEnv
 }
 
-// canViewAgentSecrets checks whether the requesting user is allowed to
-// see the agent's secret-bearing fields (currently `mcp_config`). Only
-// the agent owner or workspace owner/admin qualify; for everyone else
-// the response is redacted. `custom_env` is no longer part of an agent
-// resource response (see MUL-2600), so this predicate is shared only by
-// the remaining mcp_config redaction path.
+// canViewAgentSecrets 判断请求用户能否查看 agent 的含密钥字段（目前是
+// `mcp_config`）。只有 agent 所有者或工作区 owner/admin 够格，其余人拿到的
+// 响应都被脱敏。`custom_env` 已不属于 agent 资源响应（见 MUL-2600），故此
+// 谓词仅被剩余的 mcp_config 脱敏路径共用。
 func canViewAgentSecrets(agent db.Agent, userID string, memberRole string) bool {
 	if roleAllowed(memberRole, "owner", "admin") {
 		return true
@@ -1591,39 +1518,29 @@ func canViewAgentSecrets(agent db.Agent, userID string, memberRole string) bool 
 	return uuidToString(agent.OwnerID) == userID
 }
 
-// broadcastAgentResponse strips secret-bearing fields from an
-// AgentResponse before it goes onto the WebSocket bus. Mutation
-// handlers call this when fanning out create/update/archive/restore
-// events: subscribers (which include agent processes that have
-// authenticated with their own task tokens) must not learn another
-// agent's mcp_config via a WS push that bypassed the read-path
-// redaction in ListAgents / GetAgent. The caller still receives the
-// canonical form in the HTTP response; only the broadcast copy is
-// redacted.
+// broadcastAgentResponse 在上 WebSocket 总线前剥掉 AgentResponse 里的含密钥
+// 字段。变更处理器在扇出 create/update/archive/restore 事件时调用：订阅方（含
+// 用自己任务 token 鉴权的 agent 进程）不得通过绕过了 ListAgents/GetAgent 读路
+// 脱敏的 WS 推送，得知别的 agent 的 mcp_config。调用者从 HTTP 响应仍拿到规范
+// 形式；只有广播副本被脱敏。
 //
-// composio_toolkit_allowlist follows the same fan-out rule: every
-// workspace member subscribes to agent:created/updated/archived, so
-// a non-redacted broadcast would leak the agent owner's per-toolkit
-// allowlist to every member regardless of whether they would have
-// been allowed to read it via GET. Redact unconditionally on the
-// broadcast copy.
+// composio_toolkit_allowlist 遵循同一扇出规则：每个工作区成员都订阅
+// agent:created/updated/archived，不脱敏的广播会把 agent 所有者逐 toolkit 的
+// 白名单泄漏给每个成员，无论他们经 GET 是否有权读它。广播副本上无条件脱敏。
 func broadcastAgentResponse(resp AgentResponse) AgentResponse {
 	out := resp
 	redactMcpConfig(&out)
 	redactComposioToolkitAllowlist(&out)
-	// Belt-and-suspenders: agentToResponse already masks gateway.token on
-	// every read, so by the time a response reaches this broadcast helper
-	// the field is already "***". Re-mask anyway so a future refactor that
-	// bypasses agentToResponse (e.g. constructing AgentResponse from raw
-	// db.Agent in a new handler) cannot silently leak the token to every
-	// WebSocket subscriber on the workspace, agent processes included.
+	// 双保险：agentToResponse 已在每次读时掩码 gateway.token，因此响应到达本
+	// 广播助手时字段已是 "***"。这里再掩一次，防止未来某次绕过 agentToResponse
+	// 的重构（如新 handler 直接由裸 db.Agent 构造 AgentResponse）把 token 悄悄
+	// 泄漏给工作区上每个 WS 订阅方，包括 agent 进程。
 	maskGatewayToken(out.RuntimeConfig)
 	return out
 }
 
-// redactMcpConfig removes the mcp_config value from the response when the caller is not
-// authorised to view it. The field is set to null; McpConfigRedacted is set to true so
-// callers know a config exists without seeing its contents (which may contain secrets).
+// redactMcpConfig 在调用者无权查看时移除响应里的 mcp_config：字段置 null，
+// McpConfigRedacted 置 true，让调用者知道存在配置但看不到内容（可能含密钥）。
 func redactMcpConfig(resp *AgentResponse) {
 	if resp.McpConfig != nil {
 		resp.McpConfig = nil
@@ -1631,15 +1548,12 @@ func redactMcpConfig(resp *AgentResponse) {
 	}
 }
 
-// redactComposioToolkitAllowlist removes the composio_toolkit_allowlist
-// value from the response when the caller is not the agent owner. The slug
-// list itself is not secret, but the "what {agent owner} has opted into"
-// view leaks the owner's integration footprint across the workspace, which
-// is the same privacy concern that gates mcp_config visibility behind
-// owner-only canViewAgentSecrets. We surface a coarse `_redacted` flag so
-// the front-end can render "Configured" without the contents (parity with
-// mcp_config_redacted). The clearing matters: the JSON `omitempty` only
-// drops nil slices, so reset to nil rather than `[]string{}`.
+// redactComposioToolkitAllowlist 在调用者非 agent 所有者时移除响应里的
+// composio_toolkit_allowlist。slug 列表本身不保密，但「{所有者} 开通了什么」
+// 视图会向整个工作区泄漏所有者的集成使用面——与把 mcp_config 可见性门控在
+// 仅所有者的 canViewAgentSecrets 是同一个隐私顾虑。暴露粗粒度 `_redacted` 标志
+// 让前端可渲染「已配置」而不展示内容（与 mcp_config_redacted 对齐）。置 nil
+// 而非 `[]string{}` 很重要：JSON 的 `omitempty` 只丢弃 nil 切片。
 func redactComposioToolkitAllowlist(resp *AgentResponse) {
 	if resp.ComposioToolkitAllowlist != nil {
 		resp.ComposioToolkitAllowlist = nil
@@ -1647,27 +1561,25 @@ func redactComposioToolkitAllowlist(resp *AgentResponse) {
 	}
 }
 
+// suppressComposioToolkitAllowlist 在功能开关关闭时整体隐藏该字段（不置
+// redacted 标志——不是「已配置但隐藏」，而是功能不存在）。
 func suppressComposioToolkitAllowlist(resp *AgentResponse) {
 	resp.ComposioToolkitAllowlist = nil
 	resp.ComposioToolkitAllowlistRedacted = false
 }
 
-// normaliseComposioToolkitAllowlist canonicalises an incoming allowlist
-// payload before persisting. Each slug is trimmed + lowercased so the
-// dispatch path (which compares against user_composio_connection.toolkit_slug,
-// stored lowercased by the Composio service) does a flat string match
-// without needing a CITEXT or per-query LOWER(). Empty / whitespace-only
-// strings are dropped and duplicates collapsed so a sloppy UI payload
-// can't waste DB row-length or surface twice in the response.
+// normaliseComposioToolkitAllowlist 在持久化前规范化收到的白名单负载。每个
+// slug 去空白+小写——派发路径（与 user_composio_connection.toolkit_slug 比较，
+// Composio 服务存的就是小写）就能做平铺字符串匹配，无需 CITEXT 或每次查询
+// LOWER()。丢弃空/纯空白串并折叠重复项，草率的 UI 负载不会浪费 DB 行长或在
+// 响应里出现两次。
 //
-// Contract:
-//   - nil in → nil out: "field absent / explicit null" preserved. Combined
-//     with sqlc.narg('composio_toolkit_allowlist')::text[] in UpdateAgent,
-//     this is what makes "omit field" mean "leave column alone".
-//   - empty slice in → empty slice out: "owner cleared all toolkits".
-//     Distinct from nil only at the column-NULL level; the dispatch path
-//     treats both identically as "no overlay".
-//   - non-empty in → trimmed, lowercased, deduped, stable order.
+// 契约：
+//   - nil 进 → nil 出：「字段缺席 / 显式 null」被保留。配合 UpdateAgent 里
+//     sqlc.narg('composio_toolkit_allowlist')::text[]，「省略字段」即「不动列」。
+//   - 空切片进 → 空切片出：「所有者清掉了所有 toolkit」。只在列 NULL 层面与
+//     nil 有区别；派发路径把两者都当「无叠加」。
+//   - 非空进 → 去空白、小写、去重、稳定顺序。
 func normaliseComposioToolkitAllowlist(in []string) []string {
 	if in == nil {
 		return nil
@@ -1691,17 +1603,14 @@ func normaliseComposioToolkitAllowlist(in []string) []string {
 	return out
 }
 
-// redactAgentResponseForActor strips secret-bearing fields from an agent
-// resource HTTP response when the request actor is an agent. Read
-// handlers already gate on actorType — mutation handlers
-// (create/update/archive/restore) must apply the same rule, otherwise
-// an agent with a host owner/admin token can do an unrelated mutation
-// (e.g. flip max_concurrent_tasks) on a target agent and harvest the
-// target's mcp_config from the mutation response. MUL-2600.
+// redactAgentResponseForActor 在请求 actor 是 agent 时，从 agent 资源 HTTP
+// 响应里剥离含密钥字段。读 handler 已按 actorType 门控——变更 handler
+// （create/update/archive/restore）必须应用同一规则，否则带着宿主 owner/admin
+// token 的 agent 可以对目标 agent 做无关变更（如翻转 max_concurrent_tasks）并
+// 从变更响应里捞取目标 agent 的 mcp_config。MUL-2600。
 //
-// composio_toolkit_allowlist is redacted under the same logic: an agent
-// runs with its host owner's PAT, so a mutation against a sibling agent
-// could otherwise return the sibling owner's allowlist in the response.
+// composio_toolkit_allowlist 在同样逻辑下脱敏：agent 用宿主所有者的 PAT 运行，
+// 对兄弟 agent 做变更时，响应里可能带出兄弟所有者的白名单。
 func redactAgentResponseForActor(resp *AgentResponse, actorType string) {
 	if actorType == "agent" {
 		redactMcpConfig(resp)
@@ -1709,9 +1618,8 @@ func redactAgentResponseForActor(resp *AgentResponse, actorType string) {
 	}
 }
 
-// canManageAgent checks whether the current user can update or archive an agent.
-// Only the agent owner or workspace owner/admin can manage any agent,
-// regardless of whether it is public or private.
+// canManageAgent 判断当前用户能否更新/归档 agent。只有 agent 所有者或工作区
+// owner/admin 能管理任何 agent，与其 public/private 无关。失败时已写好错误响应。
 func (h *Handler) canManageAgent(w http.ResponseWriter, r *http.Request, agent db.Agent) bool {
 	wsID := uuidToString(agent.WorkspaceID)
 	member, ok := h.requireWorkspaceRole(w, r, wsID, "agent not found", "owner", "admin", "member")
@@ -1727,6 +1635,15 @@ func (h *Handler) canManageAgent(w http.ResponseWriter, r *http.Request, agent d
 	return true
 }
 
+// UpdateAgent 处理 PUT /api/agents/{id}。门控与校验要点：
+//   - canManageAgent（所有者或工作区 owner/admin）；换 runtime 时复用 CreateAgent
+//     的 private-runtime 门控；
+//   - 拒绝 custom_env 写入（400，须走 /env 端点）；
+//   - thinking_level / service_tier / composio_toolkit_allowlist 均为三态；
+//     composio 白名单与调用权限字段仅所有者可写（非所有者显式改权限→403，
+//     原样回传→静默忽略）；
+//   - 需显式清空的字段在更新后走 Clear* 专用查询，与行更新同一事务；
+//   - 成功后发 agent:status 事件，响应按 actor 脱敏并重挂 skills/targets。
 func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	existing, ok := h.loadAgentForUser(w, r, id)
@@ -1744,14 +1661,10 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hard-reject any attempt to write custom_env through the generic
-	// update endpoint. Silently dropping the field (which is what an
-	// `omitempty` field would do) was the pre-PR behaviour and led to
-	// users believing they had rotated a secret when the value was
-	// actually unchanged. env values move only through `PUT
-	// /api/agents/{id}/env` — that endpoint admits the agent owner or a
-	// workspace owner/admin, denies agent actors, and writes a queryable
-	// audit row.
+	// 硬性拒绝经通用更新端点写 custom_env。静默丢弃（`omitempty` 字段的行为）
+	// 是本次改动前的旧行为，会让用户以为轮换了密钥而实际值没变。env 值只能经
+	// `PUT /api/agents/{id}/env`——该端点只放行 agent 所有者或工作区 owner/admin、
+	// 拒绝 agent actor、且写可查的审计行。
 	if _, ok := rawFields["custom_env"]; ok {
 		writeError(w, http.StatusBadRequest, "custom_env is no longer accepted on this endpoint; use PUT /api/agents/{id}/env (or `multica agent env set`)")
 		return
@@ -1790,10 +1703,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		params.AvatarUrl = pgtype.Text{String: avatarURL, Valid: true}
 	}
 	if req.RuntimeConfig != nil {
-		// Restore the persisted gateway token when the request submitted the
-		// public mask sentinel. Without this, a UI that GETs the agent and
-		// PATCHes the same payload back round-trips "***" into the database
-		// and silently destroys the real secret (issue #3260).
+		// 请求把公开掩码哨兵提交到 gateway.token 时，还原持久化的网关 token。
+		// 否则 UI 一旦 GET agent 再把同一负载 PATCH 回去，就会把 "***" 回写
+		// 数据库，悄悄毁掉真实密钥（issue #3260）。
 		preserveMaskedGatewayToken(req.RuntimeConfig, existing.RuntimeConfig)
 		rc, _ := json.Marshal(req.RuntimeConfig)
 		params.RuntimeConfig = rc
@@ -1808,10 +1720,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		params.McpConfig = append([]byte(nil), rawMcpConfig...)
 	}
 
-	// Resolve the runtime that will be in force after this update so the
-	// thinking_level validation hits the right provider enum. When the
-	// request doesn't move the agent, we still need to load the *current*
-	// runtime to validate a thinking_level change. Resolve once and reuse.
+	// 解析本更新生效后的目标 runtime，让 thinking_level 校验命中正确的厂商
+	// 枚举。请求不改动 runtime 时，校验 thinking_level 变更仍需要加载「当前」
+	// runtime。解析一次复用。
 	targetRuntimeID := existing.RuntimeID
 	targetProvider := ""
 	if existing.RuntimeID.Valid {
@@ -1832,9 +1743,8 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid runtime_id")
 			return
 		}
-		// Same gate as CreateAgent — prevents UpdateAgent from being used to
-		// re-bind an agent onto someone else's private runtime, which would
-		// otherwise be a quiet end-run around the CreateAgent check.
+		// 与 CreateAgent 相同的门控——防止用 UpdateAgent 把 agent 改绑到别人
+		// 的 private runtime 上，否则就成了绕过 CreateAgent 检查的静默后门。
 		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
 		if !ok {
 			return
@@ -1848,16 +1758,13 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		targetRuntimeID = runtime.ID
 		targetProvider = runtime.Provider
 	}
-	// Invocation permission (MUL-3963). OWNER-ONLY write: access is the one
-	// agent property a workspace admin may NOT change (only the owner decides
-	// who can run their agent — the overlay uses the owner's own Composio
-	// connection, so admin-authored access would be confusing and unsafe).
+	// 调用权限（MUL-3963）。仅所有者可写：access 是工作区 admin 也不能改的
+	// agent 属性（只有所有者能决定谁运行自己的 agent——叠加层用所有者自己的
+	// Composio 连接，admin 改的 access 会令人困惑且不安全）。
 	//
-	// Non-owner behaviour: a *real* change is rejected with 403 so the contract
-	// is explicit and matches the owner-only UI (the picker is read-only for
-	// non-owners). A no-op resubmit — an admin editing OTHER fields via a
-	// PATCH-as-PUT client that echoes the unchanged permission back — is
-	// tolerated (dropped) so it doesn't break legitimate admin edits.
+	// 非所有者行为：真正的变更以 403 拒绝，让契约显式且与仅所有者的 UI 一致
+	// （非所有者的选择器只读）。no-op 重提——admin 用 PATCH-as-PUT 客户端改
+	// 别的字段时把不变的权限原样回传——被容忍（丢弃），避免破坏合法 admin 编辑。
 	_, hasPermissionMode := rawFields["permission_mode"]
 	_, hasTargets := rawFields["invocation_targets"]
 	permissionTouched := hasPermissionMode || hasTargets || req.Visibility != nil
@@ -1906,17 +1813,14 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Model != nil {
 		params.Model = pgtype.Text{String: *req.Model, Valid: true}
 	} else if req.RuntimeID != nil && existing.Model.Valid && agent.ModelKnownIncompatibleWithProvider(targetProvider, existing.Model.String) {
-		// Model is runtime-native. When moving an agent across known provider
-		// families and the caller did not choose a replacement model, clear the
-		// old value so the new runtime falls back to its own default instead of
-		// receiving an obvious foreign model ID (e.g. Claude Code -> Codex).
-		// Unknown/custom model strings are preserved by the helper.
+		// Model 是 runtime 原生的。当 agent 跨已知厂商族迁移且调用者未另选模型时，
+		// 清空旧值，让新 runtime 回退到自己的默认模型，而不是收到明显外来的模型
+		// ID（如 Claude Code → Codex）。未知/自定义模型串由该助手保留。
 		params.Model = pgtype.Text{String: "", Valid: true}
 	}
 
-	// Life agents use one governed runtime/model pair. Ordinary agents retain
-	// the normal per-agent model rules; this check applies only when the agent
-	// is already bound as a companion or an independent observer.
+	// Life agent 使用一对受管控的 runtime/model。普通 agent 保留常规的逐 agent
+	// model 规则；本检查只适用于已绑定为 companion 或独立 observer 的 agent。
 	var lifeAgent bool
 	if lifeAgent, err = h.Queries.IsLifeAgent(r.Context(), db.IsLifeAgentParams{
 		WorkspaceID: existing.WorkspaceID, AgentID: existing.ID,
@@ -1942,24 +1846,21 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// thinking_level handling (MUL-2339). Tri-state semantics:
-	//   - field omitted  → leave column alone (COALESCE narg), but if a
-	//     runtime change in this same request would make the *existing*
-	//     value invalid for the new provider's fixed enum or token syntax,
-	//     reject 400. Exact dynamic-catalog compatibility is daemon-owned.
-	//   - field set to "" → explicit clear (run ClearAgentThinkingLevel post-update)
-	//   - field set to value → validate against the target runtime's fixed enum
-	//     or dynamic-token syntax; reject literal-invalid with 400. Per-model
-	//     combination checks run in the daemon at execution time, not here.
+	// thinking_level 处理（MUL-2339）。三态语义：
+	//   - 字段缺席 → 不动列（COALESCE narg）；但如果同一请求换了 runtime，会让
+	//     「既有」值对新厂商固定枚举/token 语法非法，则 400 拒绝。精确的动态目录
+	//     兼容由 daemon 负责。
+	//   - 字段为 "" → 显式清除（更新后执行 ClearAgentThinkingLevel）
+	//   - 字段为值 → 按目标 runtime 的固定枚举或动态 token 语法校验，字面非法
+	//     直接 400。逐模型组合检查在 daemon 运行时执行，不在此处。
 	shouldClearThinkingLevel := false
 	if req.ThinkingLevel != nil {
 		value := *req.ThinkingLevel
 		if value == "" {
 			shouldClearThinkingLevel = true
 		} else {
-			// Need the target runtime's provider to validate. Re-fetch only when
-			// we haven't already loaded it above (i.e. the request didn't change
-			// runtime_id), to keep the no-change path one DB roundtrip.
+			// 需要目标 runtime 的 provider 来校验。仅当上面还没加载过（即请求没
+			// 改 runtime_id）时才重取，让无变更路径保持一次 DB 往返。
 			provider := targetProvider
 			if provider == "" {
 				var ok bool
@@ -1984,13 +1885,10 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			params.ThinkingLevel = pgtype.Text{String: value, Valid: true}
 		}
 	} else if req.RuntimeID != nil && existing.ThinkingLevel.Valid && existing.ThinkingLevel.String != "" {
-		// Runtime is changing but the caller didn't touch thinking_level.
-		// If the existing value is not in the new provider's enum at all,
-		// preserving it would smuggle a literal-invalid token to the daemon.
-		// Hold the same line as the explicit-set path: always 400 on
-		// literal-invalid, never silently coerce. The caller can either
-		// pass `thinking_level: ""` to clear or pick a value valid for the
-		// new runtime.
+		// runtime 在变但调用者没碰 thinking_level。若既有值不在新厂商的枚举里，
+		// 保留它等于把一个字面非法的 token 偷运给 daemon。与显式设置路径同一
+		// 条线：字面非法一律 400，绝不静默强改。调用者可传 `thinking_level: ""`
+		// 清除，或挑一个对新 runtime 有效的值。
 		provider := targetProvider
 		if provider == "" {
 			var ok bool
@@ -2054,20 +1952,17 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// composio_toolkit_allowlist handling (MUL-3869). Tri-state semantics
-	// mirror thinking_level (see above): omitted → no change, null →
-	// ClearAgentComposioToolkitAllowlist, slice → wholesale replace.
+	// composio_toolkit_allowlist 处理（MUL-3869）。三态语义镜像 thinking_level
+	// （见上）：缺席 → 不变，null → ClearAgentComposioToolkitAllowlist，切片 →
+	// 整体替换。
 	//
-	// Owner-only WRITE. The caller is already past canManageAgent, which lets
-	// workspace owner/admins through alongside the agent owner — but the
-	// Composio overlay uses the agent OWNER's connection (MUL-3963), so an
-	// admin editing someone else's allowlist would silently reshape what the
-	// OWNER exposes through their own connected apps, confusing the owner
-	// about what their agent surfaces. Keep it owner-only.
-	// Drop the field with a debug log instead of erroring so an over-eager
-	// UI that sends the whole agent payload back on every save (PATCH-as-PUT)
-	// keeps working — same "silent ignore" stance the issue calls out, and
-	// the same one mcp_config takes for the broader admin pattern.
+	// 仅所有者可写。调用者已过 canManageAgent（工作区 owner/admin 与 agent 所有者
+	// 都能过），但 Composio 叠加层用的是 agent 所有者的连接（MUL-3963）——admin
+	// 改别人的白名单，等于悄悄重塑「所有者通过自己的已连接应用暴露了什么」，
+	// 让所有者困惑。保持仅所有者。
+	// 用 debug 日志丢弃而不是报错：把整个 agent 负载每次保存都原样发回的过度
+	// 积极的 UI（PATCH-as-PUT）能继续工作——即 issue 点名的「静默忽略」立场，
+	// 也是 mcp_config 对更广的 admin 模式采取的同一立场。
 	shouldClearComposioAllowlist := false
 	if _, hasAllowlist := rawFields["composio_toolkit_allowlist"]; hasAllowlist {
 		isAgentOwner := uuidToString(existing.OwnerID) == requestUserID(r)
@@ -2078,15 +1973,12 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			slog.Debug("update agent: composio_toolkit_allowlist write by non-owner silently dropped",
 				append(logger.RequestAttrs(r), "agent_id", id)...)
 		} else if req.ComposioToolkitAllowlist == nil {
-			// JSON null → explicit clear via the dedicated query.
+			// JSON null → 走专用查询显式清除。
 			shouldClearComposioAllowlist = true
 		} else {
-			// Normalise (trim/lowercase/dedupe). Empty slice is preserved as
-			// an empty TEXT[] so the persisted value distinguishes "owner
-			// cleared every toolkit" from "owner has never opened the
-			// integration" (the dispatch path treats both as "no overlay"
-			// either way, but the column tells UX whether to show a primed
-			// vs empty picker).
+			// 规范化（去空白/小写/去重）。空切片保留为空 TEXT[]，使持久化值能
+			// 区分「所有者清掉了所有 toolkit」与「所有者从未开通集成」（派发路径
+			// 两者都当「无叠加」，但列能告诉 UX 展示已就绪还是空选择器）。
 			params.ComposioToolkitAllowlist = normaliseComposioToolkitAllowlist(*req.ComposioToolkitAllowlist)
 		}
 	}
@@ -2101,12 +1993,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := qtx.UpdateAgent(r.Context(), params)
 	if err != nil {
-		// Unique constraint on (workspace_id, name) — mirror CreateAgent and
-		// return a clear conflict instead of a 500 that leaks the raw
-		// constraint name. The name can still be held by an *archived* agent
-		// (the constraint does not exclude archived rows), so this is the only
-		// signal the caller gets that a rename collided rather than the server
-		// faulting.
+		// (workspace_id, name) 唯一约束——镜像 CreateAgent 返回清晰的冲突而不是
+		// 泄漏裸约束名的 500。名字仍可能被「已归档」agent 占用（约束不排除归档
+		// 行），所以这是调用者判断「改名撞了」而非服务端故障的唯一信号。
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "agent_workspace_name_unique" {
 			name := ""
@@ -2121,9 +2010,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Nullable runtime overrides: null/empty in the request means explicitly
-	// clear the field. COALESCE in UpdateAgent cannot set a column to NULL, so
-	// mcp_config, thinking_level, and service_tier use dedicated clear queries.
+	// 可空 runtime 覆盖项：请求里 null/空表示显式清空字段。UpdateAgent 的
+	// COALESCE 无法把列设为 NULL，因此 mcp_config、thinking_level、service_tier
+	// 用专用清空查询。
 	if shouldClearMcpConfig {
 		updated, err = qtx.ClearAgentMcpConfig(r.Context(), updated.ID)
 		if err != nil {
@@ -2157,9 +2046,8 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Invocation targets (MUL-3963): replace wholesale when the owner touched
-	// permission. Done after the row update so a permission_mode flip and its
-	// targets land together.
+	// 调用 targets（MUL-3963）：所有者动权限时整体替换。放在行更新之后，让
+	// permission_mode 翻转与 targets 一起落库。
 	if replacePermissionTargets {
 		if err := replaceInvocationTargetsWithQueries(r.Context(), qtx, updated.ID, parseUUID(requestUserID(r)), resolvedPerm.targets); err != nil {
 			slog.Warn("update agent: persist invocation targets failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
@@ -2185,11 +2073,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load agent invocation targets")
 		return
 	}
-	// agentToResponse always initialises Skills as []; junction-table rows
-	// are untouched by the SQL update, so we reload them here to keep the
-	// response (and the broadcast that mirrors it) in sync with reality.
-	// Without this, callers see "skills": [] after every metadata-only
-	// update and assume their bindings were cleared — see #3459.
+	// agentToResponse 恒把 Skills 初始化为 []；SQL 更新不碰关联表行，所以这里
+	// 重载一遍，让响应（以及镜像它的广播）与现实同步。否则每次纯元数据更新后
+	// 调用者都会看到 "skills": []，误以为绑定被清掉了——见 #3459。
 	if err := h.attachAgentSkills(r.Context(), &resp, updated.ID); err != nil {
 		slog.Warn("load agent skills after update failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
@@ -2198,10 +2084,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	slog.Info("agent updated", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", uuidToString(updated.WorkspaceID))...)
 	h.publishEvent(updatedEvent)
 	redactAgentResponseForActor(&resp, actorType)
-	// Workspace admins / non-owner members pass canManageAgent for legitimate
-	// admin actions (e.g. bulk reassigning agents off a leaving member's
-	// runtime), but they must not learn the agent owner's composio allowlist
-	// from the mutation response. See ListAgents/GetAgent for the same gate.
+	// 工作区 admin / 非所有者成员能过 canManageAgent 做合法的管理动作（如批量把
+	// agent 从离开成员的 runtime 重指派出去），但他们不得从变更响应里获知 agent
+	// 所有者的 composio 白名单。与 ListAgents/GetAgent 同一门控。
 	if !h.composioMCPAppsEnabled(r.Context()) {
 		suppressComposioToolkitAllowlist(&resp)
 	} else if uuidToString(updated.OwnerID) != userID {
@@ -2210,10 +2095,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// attachAgentSkills populates resp.Skills from the agent_skill junction
-// table for the given agent. agentToResponse zeros the field; mutation
-// handlers that don't refresh it would otherwise serve a misleading
-// empty array on every successful response (#3459).
+// attachAgentSkills 从 agent_skill 关联表为给定 agent 填充 resp.Skills。
+// agentToResponse 会把该字段清零；不刷新它的变更 handler 会在每次成功响应里
+// 端出一个误导性的空数组（#3459）。
 func (h *Handler) attachAgentSkills(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) error {
 	skills, err := h.Queries.ListAgentSkillSummaries(ctx, agentID)
 	if err != nil {
@@ -2235,10 +2119,9 @@ func (h *Handler) attachAgentSkills(ctx context.Context, resp *AgentResponse, ag
 	return nil
 }
 
-// resolveAgentProvider returns the provider name for the runtime that
-// will own this agent after the in-flight update applies. Used by the
-// thinking_level validator so a runtime/model swap and a level swap
-// validated in the same request both consult the same provider.
+// resolveAgentProvider 返回在途更新生效后、将拥有该 agent 的 runtime 的厂商名。
+// thinking_level 校验器用它，保证同一请求里 runtime/model 交换与档位交换都对着
+// 同一个厂商。
 func (h *Handler) resolveAgentProvider(r *http.Request, workspaceID pgtype.UUID, runtimeID pgtype.UUID) (string, bool) {
 	rt, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
 		ID:          runtimeID,
@@ -2250,12 +2133,10 @@ func (h *Handler) resolveAgentProvider(r *http.Request, workspaceID pgtype.UUID,
 	return rt.Provider, true
 }
 
-// thinkingLevelRejection explains why the target runtime will not take this
-// thinking_level. Two different failures used to share one sentence: a token
-// the runtime's catalog doesn't list, and a runtime with no reasoning control
-// at all. The second one made "high" look like a spelling mistake and sent
-// users hunting for a value that does not exist for that runtime (MUL-5770),
-// so it now names the capability gap instead.
+// thinkingLevelRejection 解释为何目标 runtime 不接受这个 thinking_level。
+// 过去两种失败共用一句话：目录里没有的 token，以及根本没有推理控制的 runtime。
+// 后者让 "high" 看着像拼写错误，用户会去找该 runtime 并不存在的值（MUL-5770），
+// 所以现在把能力缺口单独说清楚。
 func thinkingLevelRejection(provider, value string) string {
 	if !agent.ThinkingControlSupported(provider) {
 		return thinkingCapabilityRejection(provider)
@@ -2263,9 +2144,8 @@ func thinkingLevelRejection(provider, value string) string {
 	return fmt.Sprintf("thinking_level %q is not a recognised value for runtime %q", value, provider)
 }
 
-// existingThinkingCapabilityRejection is the carry-over path's capability
-// sentence — same answer as thinkingCapabilityRejection, but it names the value
-// already on the agent and the escape hatch that clears it.
+// existingThinkingCapabilityRejection 是携旧值路径的能力提示句——与
+// thinkingCapabilityRejection 同答案，但点出 agent 上已有的值和清除它的逃生口。
 func existingThinkingCapabilityRejection(provider, value string) string {
 	return fmt.Sprintf(
 		"runtime %q does not support a per-agent reasoning effort; pass thinking_level=\"\" to clear the existing %q",
@@ -2273,14 +2153,11 @@ func existingThinkingCapabilityRejection(provider, value string) string {
 	)
 }
 
-// thinkingCapabilityUnknownRejection covers the ambiguous case: the provider
-// name does not say which binary is installed and no catalog has been reported
-// yet, so we can neither confirm nor deny the capability.
+// thinkingCapabilityUnknownRejection 覆盖歧义情况：厂商名说明不了装了哪个
+// 二进制，目录也尚未上报，因此既不能确认也不能否认该能力。
 //
-// It deliberately does NOT reuse the "does not support" sentence. That claim
-// would be actively wrong for a jcode runtime — sending its owner off to look
-// for a limitation that does not exist — whereas naming the missing evidence
-// points at the thing that resolves it.
+// 它有意不复用「不支持」那句话。对 jcode runtime 那样说会主动误导——让它的
+// 所有者去找一个不存在的限制——而点出「缺失证据」则指向解决它的那个动作。
 func thinkingCapabilityUnknownRejection(provider string) string {
 	return fmt.Sprintf(
 		"cannot confirm whether runtime %q supports a per-agent reasoning effort: it has not reported a model catalog yet. Open the model picker for this runtime to trigger discovery and retry, or leave thinking_level empty to use the runtime default",
@@ -2288,8 +2165,8 @@ func thinkingCapabilityUnknownRejection(provider string) string {
 	)
 }
 
-// existingThinkingCapabilityUnknownRejection is the carry-over path's version of
-// the same answer: it names the value already on the agent and the escape hatch.
+// existingThinkingCapabilityUnknownRejection 是携旧值路径的同答案版本：点出
+// agent 上已有的值和逃生口。
 func existingThinkingCapabilityUnknownRejection(provider, value string) string {
 	return fmt.Sprintf(
 		"cannot confirm whether runtime %q supports a per-agent reasoning effort: it has not reported a model catalog yet. Pass thinking_level=\"\" to clear the existing %q, or retry once the runtime has reported its models",
@@ -2297,10 +2174,9 @@ func existingThinkingCapabilityUnknownRejection(provider, value string) string {
 	)
 }
 
-// thinkingCapabilityRejection is the "this runtime has no reasoning dial"
-// sentence. Split out because the same answer can now be reached two ways: from
-// the provider name alone, or — for ACP-catalog providers, where the provider
-// name is not decisive — from a discovered catalog that advertises no effort.
+// thinkingCapabilityRejection 是「该 runtime 没有推理旋钮」的提示句。单独抽出
+// 是因为同一答案现在有两个来源：仅凭厂商名，或——对厂商名不具决定性的 ACP
+// 目录厂商——凭一个宣称无 effort 的已发现目录。
 func thinkingCapabilityRejection(provider string) string {
 	return fmt.Sprintf(
 		"runtime %q does not support a per-agent reasoning effort; leave thinking_level empty to use the runtime default",
@@ -2308,47 +2184,40 @@ func thinkingCapabilityRejection(provider string) string {
 	)
 }
 
-// acpEffortEvidence is what the discovered model catalog says about a runtime's
-// reasoning-effort support.
+// acpEffortEvidence 是已发现模型目录对 runtime 推理档位支持的说法。
 type acpEffortEvidence int
 
 const (
-	// acpEffortUnknown — no catalog has been discovered for this runtime.
+	// acpEffortUnknown —— 该 runtime 尚无已发现目录。
 	//
-	// This is NOT a transient cold-start state. The catalog is written only by
-	// ReportModelListResult, i.e. only after a client explicitly asks for a
-	// model list, so a caller who never opens a model picker (pure CLI use) can
-	// sit here indefinitely. Treating unknown as "supported" is therefore not a
-	// brief window — it is a permanent hole for anyone who works this way.
+	// 这不是瞬时冷启动态。目录只在 ReportModelListResult 之后才会写入，即只在
+	// 客户端显式要模型列表后才有——从不打开模型选择器的调用者（纯 CLI 使用）
+	// 可能一直停在这里。因此把 unknown 当「支持」就不是短暂窗口——对这类用户
+	// 是永久漏洞。
 	acpEffortUnknown acpEffortEvidence = iota
-	// acpEffortAbsent — a catalog exists and no model in it advertises an effort.
+	// acpEffortAbsent —— 目录存在，但没有模型宣称支持 effort。
 	acpEffortAbsent
-	// acpEffortPresent — a catalog exists and at least one model advertises one.
+	// acpEffortPresent —— 目录存在，且至少一个模型宣称支持。
 	acpEffortPresent
 )
 
-// ambiguousACPEffortProviders are providers whose name does not determine which
-// binary is actually installed, so "not discovered yet" cannot be read as
-// "supported".
+// ambiguousACPEffortProviders 是其厂商名无法确定实际安装了哪个二进制的厂商，
+// 因此「尚未发现」不能被读作「支持」。
 //
-// `hermes` is the only one: it covers jcode (advertises an effort and applies
-// it) and Hermes Agent (advertises none). reasonix is deliberately absent — that
-// provider means one binary, which does support an effort, so an undiscovered
-// reasonix runtime is safely allowed rather than blocked before its first
-// discovery.
+// 只有 `hermes`：它涵盖 jcode（宣称支持 effort 且会应用）与 Hermes Agent
+// （宣称不支持）。reasonix 有意缺席——该厂商只对应一个支持 effort 的二进制，
+// 未发现的 reasonix runtime 应安全放行，而不是在其首次发现前就被拦。
 var ambiguousACPEffortProviders = map[string]bool{
 	"hermes": true,
 }
 
-// acpThinkingDecision answers whether this runtime may carry a thinking level,
-// consulting the model catalog its daemon reported.
+// acpThinkingDecision 回答该 runtime 是否可携带 thinking level，依据其 daemon
+// 上报的模型目录。
 //
-// acpEffortPresent means "allow". Providers outside the ACP-catalog set, and
-// unambiguous ACP providers with no catalog yet, are reported as present — their
-// capability is already settled by the provider name. Only an ambiguous provider
-// turns an undiscovered catalog into a refusal, because for those the name
-// genuinely does not answer the question and guessing "yes" is what let a Hermes
-// Agent user persist a level the daemon would later drop.
+// acpEffortPresent 表示「允许」。ACP 目录集合之外的厂商，以及无目录但无歧义的
+// ACP 厂商，也报告为 present——其能力已由厂商名落定。只有歧义厂商才会把「未
+// 发现目录」变成拒绝，因为对这些厂商名真的回答不了问题，猜「支持」正是当初让
+// Hermes Agent 用户持久化了一个 daemon 之后会丢弃的档位的原因。
 func (h *Handler) acpThinkingDecision(ctx context.Context, provider string, runtimeID pgtype.UUID) acpEffortEvidence {
 	if !agent.UsesACPCatalogThinking(provider) {
 		return acpEffortPresent
@@ -2368,10 +2237,9 @@ func (h *Handler) acpThinkingDecision(ctx context.Context, provider string, runt
 	return acpEffortAbsent
 }
 
-// existingThinkingLevelRejection is thinkingLevelRejection for the carry-over
-// path, where the caller changed runtime without touching a level the new
-// runtime cannot take. Both branches point at the same escape hatch, so the
-// user does not have to guess that clearing is allowed.
+// existingThinkingLevelRejection 是携旧值路径的 thinkingLevelRejection——调用者
+// 换了 runtime 却未动新 runtime 收不下的档位。两个分支都指向同一逃生口，用户
+// 不必猜测能否清除。
 func existingThinkingLevelRejection(provider, value string) string {
 	if !agent.ThinkingControlSupported(provider) {
 		return existingThinkingCapabilityRejection(provider, value)
@@ -2382,6 +2250,9 @@ func existingThinkingLevelRejection(provider, value string) string {
 	)
 }
 
+// ArchiveAgent 处理 PUT/POST /api/agents/{id}/archive。需要 canManageAgent；
+// 已归档→409；系统 agent 属于产品不可归档。归档行更新与事件记录在同一事务，
+// 成功后取消该 agent 全部待办/运行中任务（带委托失败的结算一起提交）。
 func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
@@ -2396,11 +2267,9 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A system agent belongs to the product, not to the workspace, and the
-	// workspace's whole entry point runs through it. Archiving it would hide
-	// it from every list while leaving the row in place — which also strands
-	// the bootstrap endpoint, since its lookup skips archived rows but the
-	// unique index does not.
+	// 系统 agent 属于产品而非工作区，整个工作区的入口都经过它。归档它会让它从
+	// 所有列表消失而行仍在——还会卡住 bootstrap 端点：其查询跳过已归档行，但
+	// 唯一索引不排除。
 	if agent.SystemKey.Valid && agent.SystemKey.String != "" {
 		writeError(w, http.StatusBadRequest, "this agent is built into Multica and cannot be archived")
 		return
@@ -2434,11 +2303,10 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cancel all pending/active tasks for this agent. The cancel and its
-	// delegated-failure settlement commit together — a settlement issued after
-	// the cancel committed could never be repaired. Per-task task:cancelled
-	// events are still skipped: the agent:archived event below already triggers
-	// a full active-tasks invalidation on every connected client.
+	// 取消该 agent 全部待办/运行中任务。取消与其委托失败的结算一起提交——结算
+	// 若在取消提交之后发出，就永远无法修复了。逐任务的 task:cancelled 事件仍被
+	// 跳过：下方的 agent:archived 事件已经会触发每个已连接客户端对活跃任务列表的
+	// 全量失效。
 	if cancelled, err := h.TaskService.CancelTasksForArchivedAgent(r.Context(), agent.ID); err != nil {
 		slog.Warn("cancel agent tasks on archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 	} else {
@@ -2458,6 +2326,8 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// RestoreAgent 处理 POST /api/agents/{id}/restore。需要 canManageAgent；未归档
+// →409。行更新与事件记录同一事务；成功后发 agent:restored 事件。
 func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
@@ -2510,22 +2380,21 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// CancelAgentTasks bulk-cancels every active task (queued/dispatched/running)
-// belonging to an agent. Powers the agents-list "Cancel all tasks" row
-// action. Same permission gate as archive (canManageAgent — owner or
-// workspace admin/owner). Each cancelled row triggers a task:cancelled WS
-// event so connected clients clear their live cards immediately.
+// CancelAgentTasks 批量取消属于某个 agent 的全部活跃任务（queued/dispatched/
+// running）。支撑 agents 列表的「取消全部任务」行操作。权限门控与归档相同
+// （canManageAgent——所有者或工作区 admin/owner）。每行取消都会触发 task:cancelled
+// WS 事件，让已连接客户端立即清掉活动卡片。
 //
-// Note: a `running` task on the daemon side won't actually halt for up to
-// ~5 seconds (daemon polls GetTaskStatus on that interval). The DB row is
-// marked cancelled instantly, but the child process keeps going briefly;
-// see daemon/daemon.go:919-942 for the polling loop. Surface this in the
-// confirm-dialog copy so users aren't surprised by trailing transcript
-// lines.
+// 注意：daemon 侧的 `running` 任务不会真正立刻停下，最多滞后约 5 秒（daemon 以
+// 该间隔轮询 GetTaskStatus）。DB 行立即标为已取消，但子进程还会短暂继续；见
+// daemon/daemon.go:919-942 的轮询循环。请在确认对话框文案里点明这一点，用户
+// 才不会被后面拖尾的转录行吓到。
 type cancelAgentTasksResponse struct {
 	Cancelled int `json:"cancelled"`
 }
 
+// CancelAgentTasks 处理 POST /api/agents/{id}/cancel-tasks。门控见上方类型注释；
+// 返回取消的任务条数。
 func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
@@ -2548,14 +2417,16 @@ func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cancelAgentTasksResponse{Cancelled: len(cancelled)})
 }
 
+// ListAgentTasks 处理 GET /api/agents/{id}/tasks，返回该 agent 的运行历史。
+// 运行历史属于 private-agent 门控的一部分（「查看历史会话」），无权限返回 403。
 func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
 	if !ok {
 		return
 	}
-	// Run history is part of the private-agent gate ("查看历史会话"). Same
-	// 403 semantics as GetAgent.
+	// 运行历史是 private-agent 门控的一部分（「查看历史会话」）。403 语义同
+	// GetAgent。
 	workspaceID := uuidToString(agent.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
 	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
@@ -2578,8 +2449,8 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// AgentActivityBucket is one day-bucketed throughput sample for the
-// Agents-list ACTIVITY sparkline. bucket_at is midnight UTC of the day.
+// AgentActivityBucket 是 Agents 列表 ACTIVITY 迷你趋势图里的一个按天分桶的吞吐
+// 采样。bucket_at 是该日的 UTC 零点。
 type AgentActivityBucket struct {
 	AgentID     string `json:"agent_id"`
 	BucketAt    string `json:"bucket_at"`
@@ -2587,18 +2458,15 @@ type AgentActivityBucket struct {
 	FailedCount int32  `json:"failed_count"`
 }
 
-// AgentRunCount is the trailing-30-day total task run count per agent,
-// powering the Agents-list RUNS column.
+// AgentRunCount 是每个 agent 近 30 天任务运行总数，支撑 Agents 列表 RUNS 列。
 type AgentRunCount struct {
 	AgentID  string `json:"agent_id"`
 	RunCount int32  `json:"run_count"`
 }
 
-// WorkspaceWorkingAgent is the privacy-safe agent summary returned by the
-// workspace working-agents endpoint. It deliberately carries only display
-// information plus the current running-task count and referenced issue ids;
-// full AgentResponse fields include runtime and integration configuration that
-// this chip does not need.
+// WorkspaceWorkingAgent 是工作区 working-agents 端点返回的隐私安全 agent 摘要。
+// 只携带展示信息加当前运行任务数与引用的 issue id；完整 AgentResponse 里含
+// runtime 与集成配置，这个卡片用不上。
 type WorkspaceWorkingAgent struct {
 	ID               string   `json:"id"`
 	Name             string   `json:"name"`
@@ -2607,13 +2475,11 @@ type WorkspaceWorkingAgent struct {
 	IssueIDs         []string `json:"issue_ids"`
 }
 
-// ListWorkspaceWorkingAgents returns currently working user-authored agents in
-// the workspace, independent of issue filters or Table pagination. The
-// optional type query selects issue, autopilot, or chat work; omitting it keeps
-// the all-sources projection. scope=mine narrows issue work to the authenticated
-// member's selected My Issues relation. Access filtering mirrors the other
-// workspace-wide agent aggregations so a private/non-allow-listed agent is
-// never exposed by its name, avatar, count, or even presence.
+// ListWorkspaceWorkingAgents 返回工作区当前在工作的用户创建 agent，不依赖
+// issue 筛选或表格分页。可选 type 查询选择 issue、autopilot 或 chat 工作；省略
+// 则保持全来源投影。scope=mine 把 issue 工作收窄到认证成员选的 My Issues 关系。
+// 访问过滤与其它工作区级 agent 聚合一致，private/非白名单 agent 绝不以名字、
+// 头像、数量甚至存在性暴露。
 func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := h.workspaceMember(w, r, workspaceID)
@@ -2667,11 +2533,9 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Narrows the projection to one issue's direct children, so an issue
-	// detail's sub-issue header reads this endpoint instead of deriving a
-	// count client-side. Left zero when absent, which the query treats as
-	// NULL and therefore as "no narrowing" — an older client that never
-	// sends it keeps the exact workspace-wide behaviour.
+	// 把投影收窄到一个 issue 的直接子 issue，让 issue 详情页的子 issue 头部直接
+	// 读本端点，而不是在客户端推算计数。缺席时留零，查询把它当 NULL 即「不收窄」
+	// ——从不发它的旧客户端保持与原来完全一致的工作区级行为。
 	var parentIssueID pgtype.UUID
 	if raw := strings.TrimSpace(r.URL.Query().Get("parent")); raw != "" {
 		if workType != "issue" {
@@ -2729,9 +2593,8 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// GetWorkspaceAgentRunCounts returns 30-day total run counts for every
-// agent in the workspace. Same single-fetch pattern as live-tasks /
-// activity to keep the Agents list cheap regardless of agent count.
+// GetWorkspaceAgentRunCounts 返回工作区每个 agent 的 30 天运行总数。与
+// live-tasks/activity 相同的单次拉取模式，保证无论 agent 多少 Agents 列表都廉价。
 func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := h.workspaceMember(w, r, workspaceID)
@@ -2767,12 +2630,10 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// GetWorkspaceAgentActivity30d returns per-agent daily task counts for the
-// last 30 days, anchored on completed_at. Single workspace-wide read backs
-// both the Agents list sparkline (uses the trailing 7 buckets) and the
-// agent detail "Last 30 days" panel (uses all 30) — one fetch is cheaper
-// than two. Front-end fills missing days with zero; the back-end omits
-// empty buckets to keep the response small.
+// GetWorkspaceAgentActivity30d 返回每个 agent 最近 30 天、以 completed_at 锚定的
+// 逐日任务数。一次工作区级读取同时支撑 Agents 列表的迷你趋势图（用最近 7 桶）
+// 与 agent 详情的「最近 30 天」面板（用全部 30 桶）——一次拉取比两次便宜。
+// 缺天的桶由前端填零；后端省略空桶保持响应小巧。
 func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := h.workspaceMember(w, r, workspaceID)
@@ -2810,18 +2671,15 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ListWorkspaceAgentTaskSnapshot returns the workspace-wide task data the
-// front-end reads for two things: every active task
-// (queued/dispatched/running/waiting_local_directory), which is the current
-// workload presence derives from, plus each agent's most recent OUTCOME task
-// (completed/failed only), which is no longer part of presence since #1823 and
-// only feeds the Squad hover card's "last activity" line. Cancelled tasks are
-// excluded from the outcome half by design — cancel is a procedural signal
-// ("attempt aborted"), not an outcome, so it must not mask a prior failure.
-// Per-agent filtering happens in the front-end against this snapshot.
+// ListWorkspaceAgentTaskSnapshot 返回前端读取的工作区级任务数据，用于两件事：
+// 每个活跃任务（queued/dispatched/running/waiting_local_directory）——当前
+// workload 存在性由此而来；以及每个 agent 最近一次「结果」任务（仅 completed/
+// failed）——自 #1823 起不再是存在性的一部分，只喂 Squad 悬浮卡片的「最近活动」
+// 行。结果半边按设计排除 cancelled——取消是程序性信号（「尝试中止」），不是结果，
+// 不能盖住先前的失败。逐 agent 过滤在前端针对该快照进行。
 //
-// The outcome half is deliberately still served here so shipped desktop builds
-// keep working; MUL-5436 tracks moving it to a dedicated lazy endpoint.
+// 结果半边有意仍在这里提供，让已发布的桌面版继续工作；MUL-5436 跟踪把它移到
+// 专门的懒加载端点。
 func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := h.workspaceMember(w, r, workspaceID)

@@ -1,3 +1,9 @@
+// ============================================================================
+// 删除 Runtime 确认对话框（DeleteRuntimeDialog）
+// 角色定位详见下方导出组件注释——本文件是删除操作唯一的确认界面，支持
+// 「无 agent 轻量确认 / 有 agent 级联解绑删除」两种模式，并处理自愈 runtime
+// 与「计划已变」等服务端冲突。
+// ============================================================================
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -31,41 +37,37 @@ import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { useT } from "../../i18n";
 import { isSelfHealingRuntime } from "../utils";
 
-// DeleteRuntimeDialog is the single confirmation surface for runtime
-// deletion across the list-page kebab and the detail-page Diagnostics
-// card. It runs in two modes that share the same shell — light when no
-// agents are bound (matches the legacy "are you sure" prompt) and
-// cascade when active agents would be unbound as part of the delete.
+// ============================================================================
+// 删除 Runtime 的确认对话框（DeleteRuntimeDialog）
 //
-// "Unbound" is the load-bearing word (MUL-5559): the agents are kept, with
-// their instructions, chats and task history, and only lose their runtime —
-// they cannot run until bound to another one. The dialog used to say those
-// agents would be "archived" while the server hard-deleted them.
+// 角色定位：runtime 删除的唯一确认界面，列表页 kebab 菜单与详情页诊断卡共用。
+// 两种模式共享同一外壳——没有 agent 绑定时走「轻量确认」（与旧的 "are you
+// sure" 提示一致）；有活动的 agent 会被解绑时走「级联删除」。
 //
-// Mode is decided dynamically:
-//   1. Initial: peek at the cached agent list and pick light vs cascade
-//      based on whether any active agent.runtime_id === runtime.id. This
-//      lets the dialog open in the right state without an extra request.
-//   2. After the strict DELETE: if the server refuses with
-//      `runtime_has_active_agents` (the local data was stale), switch to
-//      cascade mode using the server's authoritative agent list.
-//   3. After the cascade endpoint: if it refuses with
-//      `runtime_delete_plan_changed`, refresh the displayed list with the
-//      server snapshot and force the user to re-confirm the checkbox.
+// 关键措辞是「解绑」而非删除（MUL-5559）：agent 连同它的指令、聊天与任务
+// 历史都会被保留，只是失去这台 runtime——在绑定到另一台之前无法运行。这个
+// 对话框以前会说这些 agent 将被「归档」，而服务端其实是硬删它们。
 //
-// Self-healing local runtimes (online local daemons that re-register
-// themselves seconds after deletion — see isSelfHealingRuntime) are NOT
-// blocked at this layer (MUL-3352). The trigger affordances let the
-// owner click through, and this dialog raises a self_heal warning banner
-// so the user knows the daemon will re-register a fresh runtime row
-// unless they stop the daemon process first. Confirm proceeds.
+// 模式动态判定：
+//   1. 初始：瞄一眼缓存的 agent 列表，根据是否有活动 agent 的
+//      runtime_id === runtime.id 决定轻量还是级联。这让对话框无需额外请求
+//      就能以正确状态打开。
+//   2. 严格 DELETE 之后：若服务端以 `runtime_has_active_agents` 拒绝（本地
+//      数据已过期），改用服务端权威 agent 列表切到级联模式。
+//   3. 级联端点之后：若以 `runtime_delete_plan_changed` 拒绝，用服务端快照
+//      刷新展示的列表，并强制用户重新勾选确认框。
+//
+// 自愈本机 runtime（在线本机 daemon，删除几秒后自行重新注册，见
+// isSelfHealingRuntime）不会在这一层被拦截（MUL-3352）。触发它的按钮让
+// 归属者能点到底，本对话框则弹出自愈告警横幅——用户需要知道除非先停掉
+// daemon 进程，否则它会重新注册出一行新的 runtime。确认仍可继续。
 export interface DeleteRuntimeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   runtime: AgentRuntime;
   wsId: string;
-  // Called after a successful delete. List page closes the dialog and
-  // toasts; detail page additionally navigates back to /runtimes.
+  // 删除成功后的回调。列表页关闭对话框并弹 toast；详情页还会导航回
+  // /runtimes。
   onDeleted: () => void;
 }
 
@@ -77,39 +79,33 @@ export function DeleteRuntimeDialog({
   onDeleted,
 }: DeleteRuntimeDialogProps) {
   const { t } = useT("runtimes");
-  // Pull cached workspace data — every consumer page already has these
-  // mounted, so this dialog adds zero new fetches when opened.
+  // 复用工作区级缓存数据——每个消费页面都已挂载这些查询，因此打开本对话框
+  // 零新增请求。
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
   const user = useAuthStore((s) => s.user);
 
-  // The displayed plan starts from the cached agent list and is replaced by
-  // server snapshots when the backend returns a structured 409 (either on
-  // the initial DELETE or on a plan-changed cascade refusal). We hold it in
-  // state so renders are deterministic even after invalidation flickers.
+  // 展示中的「删除计划」从缓存 agent 列表出发；当后端返回结构化 409（初次
+  // DELETE 或「计划已变」的级联拒绝）时，被服务端快照替换。把它放在 state
+  // 里，即使缓存失效闪烁也能保证渲染确定。
   const cachedActiveAgents = useMemo(
     () => agents.filter((a) => a.runtime_id === runtime.id && !a.archived_at),
     [agents, runtime.id],
   );
   const [planAgents, setPlanAgents] = useState<Agent[]>(cachedActiveAgents);
-  // `cascade` is true when the visible plan has at least one agent. Mode is
-  // a derived value, not user-controlled — the user always confirms the
-  // current plan; switching is the consequence of a server response, not a
-  // toggle.
+  // `cascade` 当可见计划里至少有一个 agent 时为 true。模式是推导值而非用户
+  // 可控——用户永远确认「当前计划」；切换是服务端响应的结果，不是开关。
   const cascade = planAgents.length > 0;
 
   const [confirmed, setConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  // Server-issued message shown above the agent table on plan-changed —
-  // tells the user "the list refreshed because something moved" without
-  // re-stating it in the title. Stored as a localized string (already
-  // translated) so the consumer can just render it.
+  // 「计划已变」时显示在 agent 表上方的服务端消息——告诉用户「列表刷新了，
+  // 因为有东西在变动」，不在标题里重复。存的是已翻译的字符串，消费方直接渲染。
   const [planChangedNotice, setPlanChangedNotice] = useState<string | null>(null);
 
-  // Reset transient state every time the dialog opens. Without this a
-  // previous plan-changed notice or a stale checkbox could survive across
-  // open/close cycles and confuse the next attempt.
+  // 每次打开对话框时重置临时状态。否则上次的计划变更提示或过期的勾选会跨
+  // 开关周期存活，迷惑下一次操作。
   useEffect(() => {
     if (open) {
       setPlanAgents(cachedActiveAgents);
@@ -138,11 +134,9 @@ export function DeleteRuntimeDialog({
           await lightMutation.mutateAsync(runtime.id);
           onDeleted();
         } catch (err) {
-          // The strict DELETE returns a structured 409 when active
-          // agents were created between dialog-open and confirm. Pivot
-          // into cascade mode using the server's authoritative list,
-          // unset the checkbox, and surface a notice so the user knows
-          // why the dialog suddenly grew an agent table.
+          // 严格 DELETE 在「打开对话框到确认之间」出现了新建的活动 agent 时
+          // 会返回结构化 409。用服务端权威列表切入级联模式、取消勾选，并弹
+          // 出一条提示让用户明白为什么对话框突然多了一张 agent 表。
           const conflict = parseActiveAgentsConflict(err);
           if (conflict?.code === "runtime_has_active_agents") {
             setPlanAgents(conflict.activeAgents);
@@ -159,9 +153,8 @@ export function DeleteRuntimeDialog({
         }
       }
     } catch (err) {
-      // Cascade-side plan-changed: the user confirmed plan A but the live
-      // set is now plan B. Refresh the displayed list with the server
-      // snapshot, force the user to re-tick the checkbox.
+      // 级联侧的「计划已变」：用户确认了计划 A，但线上集合现在是计划 B。
+      // 用服务端快照刷新展示的列表，强制用户重新勾选确认框。
       const conflict = parseActiveAgentsConflict(err);
       if (conflict?.code === "runtime_delete_plan_changed") {
         setPlanAgents(conflict.activeAgents);
@@ -184,17 +177,16 @@ export function DeleteRuntimeDialog({
     }
   };
 
-  // Permission to act — `false` blocks the close while submitting, prevents
-  // an accidental click on the underlying page from cancelling mid-write.
+  // 操作许可——提交中为 `false`：阻止关闭、防止误点底层页面导致写操作中途
+  // 取消。
   const handleOpenChange = (next: boolean) => {
     if (submitting) return;
     onOpenChange(next);
   };
 
-  // Light mode keeps the legacy short copy. Cascade mode mirrors the plan
-  // 赵刚 wrote: destructive title with the count, a destructive warning
-  // banner, the agent table, then a checkbox confirm whose label restates
-  // the consequences in the same words as the warning.
+  // 轻量模式沿用旧的简短文案。级联模式复刻产品负责人（赵刚）拟定的计划：
+  // 带数量的破坏性标题、一条破坏性告警横幅、agent 表，然后是勾选确认——
+  // 其标签用与告警相同的措辞重申后果。
   return (
     <AlertDialog open={open} onOpenChange={handleOpenChange}>
       <AlertDialogContent
@@ -233,10 +225,9 @@ export function DeleteRuntimeDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Persistence notice — informational banner shown when deleting the runtime
-// row may not permanently remove the runnable backend. Profile-backed custom
-// runtimes win over the generic local-daemon warning: stopping the daemon is
-// not sufficient when the workspace-level profile still exists.
+// 持久性提示——删除 runtime 行可能无法永久移除可运行后端时的信息性横幅。
+// 带自定义 profile 的 runtime 优先于通用本机 daemon 告警：当工作区级的
+// profile 仍然存在时，只停掉 daemon 还不够。
 // ---------------------------------------------------------------------------
 
 function DeletePersistenceNotice({ runtime }: { runtime: AgentRuntime }) {
@@ -265,9 +256,8 @@ function DeletePersistenceNotice({ runtime }: { runtime: AgentRuntime }) {
 }
 
 // ---------------------------------------------------------------------------
-// Light mode — no active agents, classic "are you sure" prompt. Title and
-// description match the legacy AlertDialog so existing screenshots / muscle
-// memory still apply.
+// 轻量模式——没有活动 agent，经典的 "are you sure" 提示。标题与描述沿用
+// 旧版 AlertDialog，既有截图/肌肉记忆仍然适用。
 // ---------------------------------------------------------------------------
 
 function LightBody({
@@ -324,9 +314,8 @@ function LightBody({
 }
 
 // ---------------------------------------------------------------------------
-// Cascade mode — destructive warning, agent table, checkbox-confirmed
-// destructive button. Copy follows 赵刚's English text verbatim per the
-// squad lead's directive.
+// 级联模式——破坏性告警、agent 表、需勾选确认的破坏性按钮。文案按小队负责
+// 人的指示，原样沿用产品负责人（赵刚）的英文文本。
 // ---------------------------------------------------------------------------
 
 function CascadeBody({
@@ -371,8 +360,7 @@ function CascadeBody({
 
         <DeletePersistenceNotice runtime={runtime} />
 
-        {/* Destructive banner — keep the user's eye on the irreversible
-            half before they scan the agent table. */}
+        {/* 破坏性横幅——让用户的目光先落在这不可逆的一半上，再看 agent 表。 */}
         <div
           role="alert"
           className="mt-3 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-caption text-destructive"
@@ -437,10 +425,9 @@ function CascadeBody({
   );
 }
 
-// AgentPlanTable renders the cascade plan: one row per agent showing the
-// fields 赵刚 specified. Header + scroll body live in a fixed-height
-// container so a runtime with many agents doesn't push the destructive
-// confirm out of view; the body scrolls instead.
+// AgentPlanTable 渲染级联计划：每个 agent 一行，展示产品负责人（赵刚）指定
+// 的字段。表头 + 滚动主体放在固定高度的容器里，agent 很多的 runtime 也不会
+// 把破坏性确认按钮挤出视野——主体自己滚动。
 function AgentPlanTable({
   agents,
   members,
@@ -592,17 +579,18 @@ function VisibilityCell({ visibility }: { visibility: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Server response parsing
+// 服务端响应解析
 // ---------------------------------------------------------------------------
 
+// 结构化 409 冲突信息的形状：冲突码 + 服务端权威的活动 agent 列表。
 interface ActiveAgentsConflict {
   code: "runtime_has_active_agents" | "runtime_delete_plan_changed";
   activeAgents: Agent[];
 }
 
-// parseActiveAgentsConflict pulls the structured 409 fields off an ApiError.
-// Non-409s, non-active-agents codes, and missing bodies all collapse to
-// `null` so callers can fall through to the generic error toast.
+// parseActiveAgentsConflict 从 ApiError 上取出结构化 409 的字段。非 409、
+// 非活动-agent 冲突码以及缺 body 的情况一律收敛为 `null`，调用方据此回退到
+// 通用错误 toast。
 function parseActiveAgentsConflict(err: unknown): ActiveAgentsConflict | null {
   if (!(err instanceof ApiError)) return null;
   if (err.status !== 409) return null;
@@ -619,10 +607,9 @@ function parseActiveAgentsConflict(err: unknown): ActiveAgentsConflict | null {
   if (!Array.isArray(rawAgents)) {
     return { code, activeAgents: [] };
   }
-  // We trust the server contract here — the response is the same
-  // AgentResponse shape that the agent list endpoint returns. Light
-  // runtime checks (id, runtime_id, name) catch genuinely malformed
-  // payloads without re-typing every field.
+  // 这里信任服务端契约——响应与 agent 列表端点返回的是同一种 AgentResponse
+  // 形状。对 id/name 的轻量运行时检查足以抓住真正畸形的内容，无需逐字段
+  // 复打类型。
   const activeAgents = rawAgents.filter(
     (a): a is Agent =>
       typeof a === "object" &&

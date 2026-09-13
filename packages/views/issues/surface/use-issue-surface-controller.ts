@@ -1,5 +1,9 @@
 "use client";
 
+// 问题界面控制器 hook：把「数据窗口里现在显示什么」的状态——当前视图模式、筛选、
+// 排序、按状态/分组的分页游标、服务端 facet 计数、选择集、动作集——全部归拢，
+// 导出成一个控制器对象供 IssueSurface 及各视图渲染。它是 board/list/table/gantt/
+// swimlane 几套视图共用一份逻辑的中枢。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { hashKey, keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
@@ -64,6 +68,7 @@ interface UseIssueSurfaceControllerInput {
   search?: string;
 }
 
+/** useIssueSurfaceController 产出的完整控制器。 */
 export interface IssueSurfaceController {
   scopeKey: string;
   projectId?: string;
@@ -74,25 +79,22 @@ export interface IssueSurfaceController {
   projectIssues: Issue[];
   issues: Issue[];
   swimlaneIssues: Issue[];
-  /** Agents currently working inside THIS surface, under the surface's active
-   *  filters — the header chip's count, so clicking it leaves exactly these
-   *  agents' rows (MUL-4884, MUL-5525). `undefined` means the projection has
-   *  not resolved yet; the chip renders an indeterminate state rather than a
-   *  number it cannot stand behind. */
+  /** 正处在本 surface 内、且命中当前激活筛选的智能体——表头 chip 的计数，
+   *  点它正好留下这些智能体的行（MUL-4884, MUL-5525）。`undefined` 表示投影还没
+   *  落定；chip 渲染的是不确定状态，而不是一个站不住脚的数字。 */
   workingAgents: WorkingAgentSummary[] | undefined;
   filteredGanttIssues: Issue[];
   sort: IssueSortParam;
   ganttIssues: Issue[];
   visibleStatuses: IssueStatusCategory[];
   hiddenStatuses: IssueStatusCategory[];
-  /** Exact server counts plus cursor controls for List/status Board. */
+  /** 服务端精确计数 + 列表/按状态看板的游标控制。 */
   statusPagination?: IssueStatusPagination;
-  /** Exact group catalog plus independent row cursors for Assignee/Property
-   * Board and compound Swimlane cells. */
+  /** 精确的分组目录 + 各分组独立行游标（用于按指派人/自定义属性看板与复合泳道格子）。 */
   groupBranches?: IssueGroupBranches;
   activeFilters: Omit<IssueFilters, "statusFilters">;
-  /** Any filter that `clearFilters()` would reset is on. Lets an empty surface
-   *  say "your filters hid everything" instead of "there is nothing here". */
+  /** 任何能被 `clearFilters()` 重置的筛选处于开启状态。让空 surface 能说
+   *  「你的筛选藏起了所有内容」而不是「这里什么都没有」。 */
   hasActiveFilters: boolean;
   actions: IssueSurfaceActions;
   selection: IssueSurfaceSelection;
@@ -106,27 +108,26 @@ export interface IssueSurfaceController {
     childProgressMap: Map<string, ChildProgress>;
   }>;
   tableSearch: string;
-  /** Canonical server-owned Table membership. */
+  /** 规范的、服务端拥有的 Table 会员集合。 */
   tableQuerySpec: IssueTableQuerySpec;
-  /** Exact disjunctive counts for the active server-backed filter submenu. */
+  /** 当前激活的、服务端支撑的筛选子菜单的精确析取计数。 */
   tableFacetCounts?: IssueTableFacetsResponse;
-  /** Whether scopedIssues is a complete client window for local count use. */
+  /** 本地计数使用中，scopedIssues 是否就是完整的客户端窗口。 */
   facetCountsExact: boolean;
-  /** Load one server facet when its filter submenu is opened. */
+  /** 当某个筛选子菜单被打开时，加载对应的那一个服务端 facet。 */
   setActiveTableFacet: (facet: IssueTableFacetSpec | null) => void;
   setTableSearch: (query: string) => void;
   exportTableIssues: () => Promise<Issue[]>;
   isLoading: boolean;
-  /** See IssueSurfaceData.isRefreshing — placeholder-backed revalidation. */
+  /** 见 IssueSurfaceData.isRefreshing——基于占位数据的后台重校验。 */
   isRefreshing: boolean;
   isEmpty: boolean;
   /**
-   * The status catalog a CUSTOM status filter depends on failed to load. The
-   * filter cannot be honoured, so the surface shows a retryable error rather
-   * than an unexplained empty board. (MUL-6243)
+   * 自定义状态筛选所依赖的状态目录加载失败。该筛选无法被兑现，
+   * 所以 surface 显示一个可重试的错误，而不是一个无法解释的空看板。（MUL-6243）
    */
   isStatusCatalogError: boolean;
-  /** Re-runs the failed catalog request behind {@link isStatusCatalogError}. */
+  /** 重跑失败的状态目录请求（配合 {@link isStatusCatalogError}）。 */
   retryStatusCatalog: () => void;
   openCreateIssue: (defaults?: IssueCreateDefaults) => void;
   moveIssue: (
@@ -169,28 +170,23 @@ function useDebouncedTableSearch(value: string, delayMs = 250) {
   return debouncedValue;
 }
 
-/** One shared reference for every un-settled list default in this hook.
+/** 所有未落定的列表查询共用的同一份空数组引用。
  *
- * `const { data = [] } = useQuery(...)` allocates a new array on every render
- * for as long as the query has no data — which is the whole window right after
- * a workspace switch. Downstream that array is a memo dependency, so the empty
- * default alone was enough to rebuild the derived Sets, the table query spec,
- * and the branch query list once per render (MUL-5477). */
+ * `const { data = [] } = useQuery(...)` 在查询还没有数据期间每次渲染都会分配一个新数组
+ * ——这正好覆盖切换工作区后的整段窗口。下游拿那个数组当 memo 依赖时，光是这个空默认值
+ * 就足以让派生的 Set、table query spec 和分支查询列表每渲染一次重建一遍（MUL-5477）。 */
 const EMPTY_LIST: never[] = [];
 
 /**
- * Pin a derived value's identity to its CONTENT.
+ * 把派生值的引用身份「钉」到它的内容上。
  *
- * `tableQuerySpec` is rebuilt from 17 dependencies, so any one of them losing
- * referential stability hands every consumer a new object even though the query
- * it describes is unchanged. Consumers use it as a memo dependency and, in the
- * Table's case, as the source of a `useQueries` list — so a new-but-equal spec
- * rebuilt that list on every render.
+ * `tableQuerySpec` 由 17 个依赖重建，其中任何一个失去引用稳定性，都会在查询没变时
+ * 给所有消费者发一个新的对象。消费者拿它当 memo 依赖，Table 还把它当作 `useQueries`
+ * 列表的来源——所以一份「变了但相等」的 spec 会让列表每次渲染都重建。
  *
- * Hashed with TanStack's own `hashKey` rather than `JSON.stringify` so this
- * agrees exactly with how the same spec is hashed into a `queryKey`: object
- * keys are sorted, so two specs that resolve to one query also resolve to one
- * identity here.
+ * 用 TanStack 自己的 `hashKey` 而不是 `JSON.stringify`，是为了和该 spec 被哈希进
+ * `queryKey` 的方式完全一致：对象键会排序，所以两条最终落到同一次查询的 spec，
+ * 在这里也只会得到一个身份。
  */
 function useStableByContent<T>(value: T): T {
   const contentKey = hashKey([value]);
@@ -198,6 +194,15 @@ function useStableByContent<T>(value: T): T {
   return useMemo(() => value, [contentKey]);
 }
 
+/**
+ * 问题界面控制器 hook：按 scope 归拢视图模式、筛选、排序、服务端分支分页、facet 计数、
+ * 选择与动作，产出驱动 IssueSurface 渲染的一切状态与方法。
+ * @param input.scope - 数据范围（工作区/我的/项目/成员/团队）。
+ * @param input.modes - 允许的视图模式集合。
+ * @param input.createDefaults - 创建问题弹窗的默认值。
+ * @param input.search - 搜索词（非 Table 界面使用）。
+ * @returns 完整的 surface 控制器。
+ */
 export function useIssueSurfaceController({
   scope,
   modes,
@@ -261,21 +266,18 @@ export function useIssueSurfaceController({
     () => issueDateFilterToApiParams(dateFilter),
     [dateFilter],
   );
-  // Active property catalog. Persisted view state can outlive definitions
-  // (archive/delete): filters keyed by a non-active definition are stripped
-  // before they reach the predicates, and a sort on a non-active definition
-  // degrades to manual order — matching what the header already shows.
+  // 当前生效的自定义属性目录。持久化的视图状态可能比定义活得更久（归档/删除）：
+  // 指向已失效定义的筛选会在进入判定函数前被剥掉；指向已失效定义的排序退化为手动顺序
+  // ——与表头已经显示的一致。
   const { data: workspaceProperties = EMPTY_LIST, isSuccess: catalogSettled } = useQuery(propertyListOptions(wsId));
   const activePropertyIds = useMemo(
     () => new Set(workspaceProperties.map((p) => p.id)),
     [workspaceProperties],
   );
   const effectivePropertyFilters = useMemo(() => {
-    // While the catalog is still loading (or errored), persisted filters are
-    // passed through UNCHANGED: treating a cold catalog as confirmed-empty
-    // would silently drop the user's filters on first paint (clean-room
-    // review F6). Old servers 404 into a SETTLED empty catalog, so the
-    // stripping below still protects that path.
+    // 目录还在加载（或失败）时，持久化的筛选原样放行：把冷目录当成「确认为空」
+    // 会在首屏悄悄丢掉用户的筛选（clean-room review F6）。旧服务器会 404 到一个
+    // 已落定的空目录，所以下面的剥除逻辑仍能保护那条路径。
     if (!catalogSettled) return propertyFilters;
     const entries = Object.entries(propertyFilters).filter(
       ([propertyId, selected]) => selected.length > 0 && activePropertyIds.has(propertyId),
@@ -284,11 +286,9 @@ export function useIssueSurfaceController({
     return Object.fromEntries(entries);
   }, [activePropertyIds, catalogSettled, propertyFilters]);
 
-  // Custom-property sorts and filters are served by the backend: the sort
-  // param carries `property:<id>` (typed ORDER BY expression server-side)
-  // and the window bag carries the property filter, so results are correct
-  // across pagination — not just the loaded window. A sort pinned to a
-  // non-active definition degrades to position order.
+  // 自定义属性的排序与筛选都由后端处理：排序参数携带 `property:<id>`（服务端把它编成
+  // 类型化 ORDER BY 表达式）、数据窗口包携带属性筛选，所以跨分页结果都正确——不只是
+  // 已加载窗口内的结果。钉到已失效定义的排序退化为按 position 排序。
   const rawPropertySortId = propertyIdFromViewKey(sortBy);
   const propertySortId =
     rawPropertySortId && (!catalogSettled || activePropertyIds.has(rawPropertySortId))
@@ -338,27 +338,23 @@ export function useIssueSurfaceController({
     [catalog, statusFilters],
   );
   /**
-   * A custom-status filter cannot be routed until the catalog answers. While it
-   * is pending the surface must HOLD ITS LOADING STATE, and on failure it must
-   * surface a retryable error — not fetch zero branches and render an empty
-   * board, which is what "return no columns" alone produced. (MUL-6243)
+   * 自定义状态筛选在目录返回前无法路由。目录 pending 时 surface 必须保持加载态，
+   * 失败时必须给出可重试的错误——而不能拉取零个分支、渲染出一个空看板，
+   * 那正是「只返回空列」会产生的后果。（MUL-6243）
    */
   const statusFilterPending = statusColumnsForFilters.state === "pending";
   const statusFilterError = statusColumnsForFilters.state === "error";
   /**
-   * Fetching is suspended until the filter resolves. Not just "narrow to
-   * nothing": with the filter unresolved the visible column set falls back to
-   * ALL categories, so fetching anyway would briefly show the UNFILTERED board
-   * to someone who opened a saved `qa` view. Holding both the request and the
-   * loading state is the only honest option.
+   * 筛选解析前，拉取被挂起。不只是「收敛成空」：筛选没解析时可见列集合会回退成
+   * 全部分类，这时照常拉取会让打开了一个已保存 `qa` 视图的人，短暂看到未筛选的看板。
+   * 把请求和加载态都按住是唯一诚实的做法。
    */
   const statusFilterUnresolved = statusFilterPending || statusFilterError;
 
-  // Columns are CATEGORIES. Two independent things narrow them, and conflating
-  // them is what let "hide the Backlog column" also drop every custom status in
-  // other categories: `hiddenStatusCategories` is display state, `statusFilters`
-  // is a filter over concrete status KEYS which we map back to the columns those
-  // keys land in. (MUL-6243)
+  // 列是「分类」。有两条独立的东西会收窄它们，把它们混为一谈正是「隐藏待办列」也会
+  // 丢掉其他分类里所有自定义状态的 bug 来源：`hiddenStatusCategories` 是显示状态，
+  // `statusFilters` 是对具体状态 KEY 的筛选，我们要把它映射回那些 KEY 落在的列。
+  // （MUL-6243）
   const serverStatuses = useMemo<IssueStatusCategory[]>(
     () => {
       const selected =
@@ -393,11 +389,9 @@ export function useIssueSurfaceController({
   const { projectFilters: viewProjectFilters, includeNoProject: viewIncludeNoProject } =
     projectFilterState;
 
-  // Exactly the filters `clearFilters()` resets, so an empty surface that
-  // reports "filters hid everything" can always offer a button that fixes it.
-  // Display toggles (show sub-issues) and per-surface search are deliberately
-  // out: they have their own affordances and clearing filters would not undo
-  // them.
+  // 恰好是 `clearFilters()` 会重置的那批筛选，所以一个报告「筛选藏起了一切」的空
+  // surface 总能提供一个修好它的按钮。显示开关（显示子问题）和每个 surface 自己的
+  // 搜索被刻意排除在外：它们各自有独立的入口，清除筛选并不会撤销它们。
   const hasActiveFilters =
     statusFilters.length > 0 ||
     priorityFilters.length > 0 ||
@@ -519,10 +513,9 @@ export function useIssueSurfaceController({
     viewProjectFilters,
     workingIssueIDs,
   ]);
-  // Every consumer below — the facet request, the status/group branch hooks and
-  // the Table's own `useQueries` list — keys off this object's identity. Pin it
-  // to the content so an unstable dependency upstream cannot rebuild all of
-  // them for a query that did not change.
+  // 下面每个消费方——facet 请求、状态/分组分支 hook、还有 Table 自己的 `useQueries`
+  // 列表——都以这个对象的引用身份做 key。把它钉到内容上，好让上游某个不稳定的依赖
+  // 无法为一条没变的查询重建它们全部。
   const tableQuerySpec = useStableByContent(derivedTableQuerySpec);
 
   const [activeTableFacet, setActiveTableFacet] =
@@ -542,15 +535,15 @@ export function useIssueSurfaceController({
     ) {
       facets.push(activeTableFacet);
     }
-    // The request shape remains total while disabled.
+    // 即便处于禁用态，请求结构也保持完整。
     return facets.length > 0 ? facets : [{ kind: "status" }];
   }, [activeTableFacet, usesServerStatusSurface]);
   const tableFacetRequest = useMemo(
     () => ({
       query: tableQuerySpec,
       facets: requestedFacets,
-      // Status surfaces consume the facet total as their authoritative empty
-      // state. Table rows/groups already own the displayed total.
+      // 状态类 surface 把 facet 总数当作权威的空态依据。表格行/分组自己已持有
+      // 显示用的总数。
       include_total: usesServerStatusSurface,
     }),
     [requestedFacets, tableQuerySpec, usesServerStatusSurface],
@@ -558,19 +551,16 @@ export function useIssueSurfaceController({
   const tableFacetsQuery = useQuery({
     ...issueTableFacetsOptions(wsId, tableFacetRequest),
     placeholderData: keepPreviousData,
-    // Counts are only visible inside one open filter submenu. Eagerly loading
-    // every custom-property facet made a Table mount issue up to 47 SQL
-    // statements and repeatedly scan the issue table after invalidation.
+    // 计数只在一个打开的筛选子菜单里可见。把每个自定义属性 facet 都急切加载，
+    // 会让一次 Table 挂载发到最多 47 条 SQL，并在失效后反复扫问题表。
     enabled:
       usesServerStatusSurface ||
       ((usesTable || usesServerGroupSurface) && activeTableFacet !== null),
   });
-  // The header chip's count, kept on its own query rather than folded into the
-  // submenu facet request above. Two reasons: that request is deliberately
-  // lazy (an always-on facet would re-enable it for Table/grouped surfaces on
-  // mount), and this spec drops `working_issue_ids` so toggling the filter
-  // does not change the query identity — the number must not flicker when you
-  // click the very chip it labels.
+  // 表头 chip 的计数，单独放一条查询而不是折进上面那个子菜单 facet 请求，有两个理由：
+  // 那个请求刻意做成懒加载（常开式的 facet 会在 Table/分组 surface 挂载时就把它
+  // 重新启用）；而且这条 spec 去掉了 `working_issue_ids`，切换筛选不会改变查询身份
+  // ——点击它标注的那个 chip 时数字绝不能闪。
   const workingAgentsQuerySpec = useMemo<IssueTableQuerySpec>(() => {
     if (!agentRunningFilter) return tableQuerySpec;
     const { working_issue_ids: _working, ...filters } = tableQuerySpec.filters;
@@ -587,22 +577,20 @@ export function useIssueSurfaceController({
   const workingAgentsFacetQuery = useQuery({
     ...issueTableFacetsOptions(wsId, workingAgentsFacetRequest),
     placeholderData: keepPreviousData,
-    // Gantt owns its own count: its canvas projection is client-side and not
-    // expressible as a Table query spec, so a facet answer would over-count.
+    // Gantt 用自己的计数：它的画布投影在客户端做、无法表达成 Table 查询 spec，
+    // 所以 facet 答案会多算。
     //
-    // The actor panel (member / agent detail) renders no agents-working chip at
-    // all, so nothing would read the answer — and with no control to toggle it,
-    // `agentRunningFilter` is unreachable there. Skip the aggregation rather
-    // than pay for it on every panel mount. Adding the chip to that header
-    // means dropping this clause.
+    // 成员/智能体详情面板（actor panel）根本不渲染 agents-working chip，没有东西会读
+    // 这个答案——而且没有开关可切时，`agentRunningFilter` 在那里不可达。与其每次面板
+    // 挂载都付一次聚合开销，不如跳过。要是给那个头部加 chip，就得删掉这个条件。
     enabled: !usesGantt && scope.type !== "actor",
   });
   const facetWorkingAgents = useMemo<WorkingAgentSummary[] | undefined>(() => {
     const facet = workingAgentsFacetQuery.data?.facets.find(
       (candidate) => candidate.kind === "working_agents",
     );
-    // A backend without this facet (older deploy) answers with an error or a
-    // response that omits it. Stay indeterminate instead of claiming zero.
+    // 不含这个 facet 的后端（旧部署）会报错或返回省略它的响应。保持「不确定」，
+    // 而不是谎称零。
     if (!facet) return undefined;
     return facet.values.map((value) => ({
       id: value.key,
@@ -632,11 +620,9 @@ export function useIssueSurfaceController({
       return {
         kind: "compound",
         primary: swimlaneGrouping,
-        // Same rollout switch as the board/list branches: `status_category` is
-        // a contract this feature introduced, so it is only sent once the
-        // catalog confirms this workspace HAS a custom status — which can only
-        // be true if the fleet already serves this version. Otherwise the
-        // swimlane keeps the exact request it made before. (MUL-6243)
+        // 和 board/list 分支同一个上线开关：`status_category` 是本特性引入的约定，
+        // 只有目录确认这个工作区确实有自定义状态后才发送——那只能在集群已跑这个版本
+        // 时为真。否则泳道保留它过去发起的那个请求原样。（MUL-6243）
         secondary: hasCustomStatuses ? "status_category" : "status",
         secondary_values: serverStatuses,
       };
@@ -675,14 +661,11 @@ export function useIssueSurfaceController({
     enabled: usesServerGroupSurface && !statusFilterUnresolved,
   });
 
-  // Selection is only meaningful within the current membership window: batch
-  // actions act on selected ids while export/common-field consumers intersect
-  // with visible rows, so a selection that survives a membership change lets
-  // "1 selected" mean different sets to different consumers (round-2 review
-  // P1#2). Reset whenever any membership-affecting input changes. Sort is
-  // excluded on purpose — reordering does not change membership. The live
-  // running set is also excluded: while the agents-working filter is on, a
-  // task finishing should not wipe the user's selection mid-action.
+  // 选中只在当前会员窗口内有意义：批量操作作用于选中的 id，而导出/公共字段消费方要拿
+  // 它跟可见行求交，所以一份在会员变化后存活的选中，会让「已选 1 项」对不同消费方
+  // 指不同集合（round-2 review P1#2）。凡是影响会员的输入一变就重置。排序刻意排除在外
+  // ——重排不改变会员。运行中的集合也排除：agents-working 筛选开启期间，一个任务
+  // 结束不应在用户操作到一半时清掉他的选中。
   const membershipKey = useMemo(
     () =>
       JSON.stringify([
@@ -748,16 +731,15 @@ export function useIssueSurfaceController({
     loadProjects:
       cardProperties.project ||
       (usesTable && tableColumns.some((column) => column.key === "project")) ||
-      // Project group headers resolve their title through the projects query,
-      // so grouping by project has to load it even when no card/column shows
-      // the project itself.
+      // 按项目分组的分组头要通过 projects 查询解析标题，所以即使没有卡片/列显示项目
+      // 本身，按项目分组也得加载它。
       (usesTable && tableGrouping === "project") ||
       (effectiveViewMode === "board" && effectiveGrouping === "project") ||
       (effectiveViewMode === "swimlane" && swimlaneGrouping === "project"),
   });
 
-  // Gantt draws a client-materialized canvas, so its chip counts the agents
-  // holding those canvas rows. Every other view mode takes the server facet.
+  // Gantt 画的是客户端物化出的画布，所以它的 chip 数持有那些画布行的智能体。
+  // 其他每种视图模式都取服务端 facet。
   const workingAgents = useMemo<WorkingAgentSummary[] | undefined>(() => {
     if (!usesGantt) return facetWorkingAgents;
     const rows = data.ganttWorkingScopeIssues;
@@ -798,10 +780,8 @@ export function useIssueSurfaceController({
         parent_id: null,
         page: { limit: 100, cursor },
       });
-      // parseWithFallback deliberately protects interactive views from schema
-      // drift with an empty response. Export must fail closed instead: an empty
-      // fingerprint is the fallback sentinel and must never create a truncated
-      // CSV that looks successful.
+      // parseWithFallback 刻意用空响应保护交互视图免受 schema 漂移影响。导出必须反其道
+      // 而行、失败即关闭：空的 fingerprint 是兜底哨兵，绝不能产出一份看着像成功的截断 CSV。
       if (!page.query_fingerprint) throw new IssueTableExportIntegrityError();
       fingerprint ??= page.query_fingerprint;
       if (cursor === null) expectedTotal = page.total;
@@ -848,10 +828,8 @@ export function useIssueSurfaceController({
     groupBranches: usesServerGroupSurface
       ? serverGroupBranches
       : undefined,
-    // Keep TableView mounted for an empty search result so its local search
-    // control remains available to refine or clear the query. Include the
-    // debounced value as well to avoid a brief empty-screen flash while a
-    // cleared query is waiting to re-fetch the unsearched window.
+    // 搜索结果是空时也保持 TableView 挂载，让它的本地搜索控件继续可用来细化或清除查询。
+    // 同时把防抖值也算进去，避免清掉的查询还在等重新拉取未搜索窗口时闪一下空屏。
     isEmpty:
       data.isEmpty &&
       !data.isRefreshing &&

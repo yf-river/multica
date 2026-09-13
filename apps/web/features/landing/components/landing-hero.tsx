@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * 官网首页首屏（Hero）：深色全屏背景 + 大字标语 + CTA（主 CTA 按登录态区分）
+ * + 可兼容工具的 logo 行 + 产品截图预览。
+ */
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, Terminal } from "lucide-react";
@@ -14,6 +18,11 @@ import {
   heroButtonClassName,
 } from "./shared";
 
+/**
+ * 首页首屏内容。
+ *
+ * @returns 深色 Hero 区（含背景、标语、按钮、工具列表与产品图）。
+ */
 export function LandingHero() {
   const { t } = useLocale();
   const user = useAuthStore((s) => s.user);
@@ -96,10 +105,11 @@ export function LandingHero() {
   );
 }
 
+/** 深色背景装饰图容器。 */
 function LandingBackdrop() {
   return (
     <div className="pointer-events-none absolute inset-0">
-      {/* This artwork is above the fold, so preload it alongside the product preview. */}
+      {/* 首屏背景在首屏内可见，需要与产品图一起预加载，避免白屏闪烁。 */}
       <Image
         src="/images/landing-bg.webp"
         alt=""
@@ -112,6 +122,7 @@ function LandingBackdrop() {
   );
 }
 
+/** 产品界面预览大图。 */
 function ProductImage({ alt }: { alt: string }) {
   return (
     <div>

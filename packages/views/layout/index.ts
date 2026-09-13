@@ -1,3 +1,7 @@
+/**
+ * 布局模块的公共出口。
+ * 集中导出侧边栏、页头、进度条、守卫等布局相关组件与 Hook。
+ */
 export { AppSidebar } from "./app-sidebar";
 export {
   CollectionPageHeader,

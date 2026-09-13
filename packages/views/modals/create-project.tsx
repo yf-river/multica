@@ -1,13 +1,16 @@
+// 本文件职责：「创建项目」弹窗——填写项目名称、描述、图标、状态/优先级/负责人/起止日期，
+// 并可附带关联 GitHub 仓库，最后调用创建接口并跳转到新项目详情页。
 "use client";
 
 import { useState, useRef } from "react";
 import { CalendarClock, CalendarDays, ChevronRight, Maximize2, Minimize2, MoreHorizontal, Search, X as XIcon, UserMinus } from "lucide-react";
 
 /**
- * GitHub mark — lucide-react v1 dropped brand icons, so we inline the
- * Octicon-style mark here (24×24 viewBox, currentColor fill so it inherits
- * the parent's text color). Stays in this file because there's only one
- * caller; promote to packages/ui if a second use crops up.
+ * GitHub 图标（纯 SVG）。
+ *
+ * lucide-react v1 移除了品牌类图标，所以这里把 Octicon 风格的 GitHub 标记直接内联：
+ * 24×24 viewBox、用 currentColor 填充，从而继承父级的文字颜色。目前只有这一个调用方，
+ * 所以先留在本文件；如果以后出现第二个使用处，再提升到 packages/ui。
  */
 function GithubIcon({ className }: { className?: string }) {
   return (
@@ -61,6 +64,10 @@ import { ProjectStartDatePicker } from "../projects/components/project-start-dat
 import { ProjectDueDatePicker } from "../projects/components/project-due-date-picker";
 import { PillButton } from "../common/pill-button";
 import { githubShortLabel } from "../common/github-url";
+/**
+ * 仓库地址展示：一行内只显示截短的仓库标识（如 owner/repo），完整 URL 通过悬浮
+ * tooltip 展示。URL 可能很长，所以 tooltip 允许换行并整体可复制。
+ */
 function RepoUrlText({
   url,
   className,
@@ -84,6 +91,15 @@ function RepoUrlText({
   );
 }
 
+/**
+ * 「创建项目」弹窗主组件。
+ *
+ * 负责整个表单：标题、描述、图标 emoji、负责人（成员或 agent）、状态/优先级、
+ * 起止日期，以及可选关联的 GitHub 仓库（来自工作区配置，也支持手动粘贴 URL）。
+ * 字段改动实时同步到草稿 store，创建成功后清空草稿并跳转项目详情页。
+ *
+ * @param onClose 关闭弹窗的回调
+ */
 export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const { t } = useT("modals");
   const router = useNavigation();
@@ -110,16 +126,15 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const [icon, setIcon] = useState<string | undefined>(draft.icon);
   const [startDate, setStartDate] = useState<string>(draft.startDate ?? "");
   const [dueDate, setDueDate] = useState<string>(draft.dueDate ?? "");
-  // Dates are collapsed into the ⋯ overflow by default (progressive
-  // disclosure, mirroring create-issue); these flip a pill inline + open.
+  // 日期字段默认折叠进 ⋯ 溢出菜单（渐进式暴露，与 create-issue 一致）；
+  // 以下开关负责把对应的内联胶囊和日历同时唤起。
   const [startDatePickerOpen, setStartDatePickerOpen] = useState(false);
   const [dueDatePickerOpen, setDueDatePickerOpen] = useState(false);
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
-  // Repos selected to attach as github_repo resources after the project is
-  // created. Stored as URLs (not full ProjectResource rows) — they're not
-  // persisted until handleSubmit fires the createProjectResource calls.
+  // 选中的仓库只存 URL 字符串，而不是完整的 ProjectResource 记录——它们要到
+  // handleSubmit 里真正发起 createProjectResource 调用时才会被持久化。
   const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
   const [repoPopoverOpen, setRepoPopoverOpen] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
@@ -130,7 +145,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     repo.url.toLowerCase().includes(repoQuery),
   );
 
-  // Sync field changes to draft store
+  // 把字段改动同步到草稿 store，弹窗中途关闭再打开能原样恢复。
   const updateTitle = (v: string) => { setTitle(v); setDraft({ title: v }); };
   const updateStatus = (v: ProjectStatus) => { setStatus(v); setDraft({ status: v }); };
   const updatePriority = (v: ProjectPriority) => { setPriority(v); setDraft({ priority: v }); };
@@ -176,7 +191,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
         lead_id: leadId,
         start_date: startDate || undefined,
         due_date: dueDate || undefined,
-        // Server attaches these in the same transaction as the project.
+        // 服务端会在与创建项目同一事务里把这些资源一并挂上。
         resources,
       });
       clearDraft();
@@ -309,12 +324,11 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
           </p>
         </div>
 
-        {/* Property toolbar — mirrors the create-issue footer: a wrapping pill
-            row whose low-frequency fields (start/due date) collapse into a ⋯
-            overflow, with the primary action in a separate bar below.
-            Repos lives here alongside the property pills for now. Once we
-            support more resource types (Linear / Notion / Figma / Slack), pull
-            them out into a dedicated Resources strip above this footer. */}
+        {/* 属性工具栏——布局与 create-issue 的 footer 对齐：一行可换行的胶囊，
+            低频字段（起止日期）默认折叠进 ⋯ 溢出菜单，主操作放在下方独立一栏。
+            仓库选择暂时和属性胶囊放在同一行；等以后支持更多资源类型
+            （Linear / Notion / Figma / Slack）时，再抽成 footer 上方独立的
+            Resources 栏。 */}
         <div className="flex items-center gap-1.5 px-4 py-2 shrink-0 flex-wrap">
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -450,8 +464,8 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
             </PopoverContent>
           </Popover>
 
-          {/* Start date — collapsed into ⋯ unless it has a value or was just
-              opened from the overflow (the calendar anchors on the inline pill). */}
+          {/* 开始日期——默认折叠进 ⋯，除非已填值、或用户刚从溢出菜单打开
+              （此时日期选择器的日历需要以内联胶囊为锚点）。 */}
           {(startDate || startDatePickerOpen) && (
             <ProjectStartDatePicker
               startDate={startDate || null}
@@ -594,9 +608,8 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
             </PopoverContent>
           </Popover>
 
-          {/* Overflow — always the last child so it stays at the end of the
-              wrap flow. Only rendered while a date is still collapsible; when
-              both are set there is nothing left to add. */}
+          {/* 溢出菜单——永远是最后一个子元素，这样在换行流里始终排到最后。
+              只有某个日期仍可折叠时才渲染；两个日期都已设上时没有可加的项。 */}
           {(!startDate || !dueDate) && (
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -624,8 +637,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        {/* Footer action bar — primary action in its own strip, matching
-            create-issue. */}
+        {/* Footer 操作栏——主按钮放在独立一栏，与 create-issue 保持一致。 */}
         <div className="flex items-center justify-end border-t px-4 py-3 shrink-0">
           <Button
             size="sm"

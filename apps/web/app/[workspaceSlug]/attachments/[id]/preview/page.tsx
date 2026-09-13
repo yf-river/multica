@@ -1,14 +1,22 @@
 "use client";
 
+/**
+ * 附件预览页路由：整屏预览附件（HTML iframe 等）。
+ * 刻意放在 (dashboard) 组之外——dashboard 布局有侧边栏与顶栏，而本页希望把
+ * 整个视口让给 iframe。workspace 解析仍在父级 [workspaceSlug] 布局里做，
+ * 因此 useWorkspaceId() 依旧可用。
+ */
 import { use } from "react";
 import { useSearchParams } from "next/navigation";
 import { AttachmentPreviewPage } from "@multica/views/attachments";
 import { ErrorBoundary } from "@multica/ui/components/common/error-boundary";
 
-// Lives at /:slug/attachments/:id/preview — OUTSIDE the (dashboard) group on
-// purpose. The dashboard layout adds a left sidebar + top chrome; this page
-// wants the full viewport for the HTML iframe. Workspace resolution still
-// happens in the parent [workspaceSlug] layout so useWorkspaceId() works.
+/**
+ * 附件预览路由。
+ *
+ * @param props.params - 动态参数，含附件 id（Promise 形式）。
+ * @returns 全屏附件预览（带错误边界）。
+ */
 export default function AttachmentPreviewWebPage({
   params,
 }: {

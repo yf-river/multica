@@ -1,14 +1,16 @@
 /**
- * Strip mention markdown syntax to plain text.
+ * 把提及的 markdown 语法剥成纯文本。
  *
- * Handles:
- * - Simple mentions: `[@Name](mention://agent/id)` → `@Name`
- * - Escaped brackets in names: `[@David\[TF\]](mention://agent/id)` → `@David[TF]`
- * - Issue mentions (no @): `[MUL-123](mention://issue/id)` → `MUL-123`
- * - Does NOT touch regular markdown links: `[docs](https://...)` stays unchanged
- * - Does NOT touch backslash-escaped mentions: `\[@Name](mention://...)` stays unchanged
+ * 处理：
+ * - 普通提及：`[@名字](mention://agent/id)` → `@名字`
+ * - 名字里的转义括号：`[@David\[TF\]](mention://agent/id)` → `@David[TF]`
+ * - 问题提及（没有 @）：`[MUL-123](mention://issue/id)` → `MUL-123`
+ * - 不碰普通 markdown 链接：`[docs](https://...)` 原样保留
+ * - 不碰反斜杠转义的提及：`\[@名字](mention://...)` 原样保留
  *
- * The regex mirrors the tokenizer in mention-extension.ts.
+ * 正则在镜像 mention-extension.ts 里的分词器。
+ * @param text - 含提及 markdown 的文本。
+ * @returns 剥去提及语法后的纯文本。
  */
 export function stripMentionMarkdown(text: string): string {
   return text.replace(

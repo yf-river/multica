@@ -1,12 +1,11 @@
 "use client";
 
 /**
- * AttachmentCard — shared file-card row UI (icon + filename + Eye + Download).
+ * AttachmentCard — 共享的「文件卡片行」UI（图标 + 文件名 + 预览/下载按钮）。
  *
- * Subcomponent of the unified `<Attachment>` dispatcher (see attachment.tsx).
- * Rendered for every attachment kind that does not have a richer inline
- * renderer (image / html). Kind-aware routing lives in `<Attachment>` — keep
- * that decision out of this file so this stays a single-purpose row UI.
+ * 它是统一 `<Attachment>` 分发组件（见 attachment.tsx）的子组件。凡是那些没有
+ * 更丰富内联渲染器（图片 / HTML）的附件类型，都会渲染成它。按类型路由的逻辑
+ * 放在 `<Attachment>` 里——别把那个决定带进本文件，好让它保持单一职责的行级 UI。
  */
 
 import { Download, Eye, FileText, Loader2, Trash2 } from "lucide-react";
@@ -101,29 +100,39 @@ function AttachmentCardChrome({
   );
 }
 
+/** 文件卡片行的 props。 */
 export interface AttachmentCardProps {
-  /** Filename used for icon label and previewable-kind detection. */
+  /** 文件名，用于图标标签以及「是否可预览」的类型探测。 */
   filename: string;
-  /** Content type used in addition to filename for previewable-kind detection. */
+  /** 内容类型，和文件名一起用于「是否可预览」的类型探测。 */
   contentType?: string;
   /**
-   * Attachment id — required when the preview proxy is ID-keyed (text kinds
-   * like markdown / html / text). Media kinds (pdf/video/audio) preview from
-   * the URL alone.
+   * 附件 id——当预览代理是按 id 寻址时（markdown / html / text 等文本类型）
+   * 必需。媒体类型（pdf/video/audio）仅凭 URL 就能预览。
    */
   attachmentId?: string;
-  /** Download URL — used as a non-null sentinel for the download button. */
+  /** 下载 URL——作为下载按钮的「非空哨兵」使用。 */
   href?: string;
-  /** True while a synchronous upload is in flight (file-card NodeView only). */
+  /** 上传进行中时为 true（仅 file-card NodeView 场景）。 */
   uploading?: boolean;
-  /** Pressed when the Eye button is clicked. */
+  /** 点击「预览」（眼睛）按钮时触发。 */
   onPreview: () => void;
-  /** Pressed when the Download button is clicked. */
+  /** 点击「下载」按钮时触发。 */
   onDownload: () => void;
-  /** Optional remove button, used by editable comment/file-card surfaces. */
+  /** 可选的删除按钮，用于可编辑的评论 / file-card 界面。 */
   onDelete?: () => void;
 }
 
+/**
+ * 文件卡片行组件：渲染图标 + 文件名 + 预览/下载/删除按钮。
+ *
+ * @param props.filename - 文件名
+ * @param props.contentType - 内容类型（用于判断是否可预览）
+ * @param props.attachmentId - 附件 id（文本类预览代理需要）
+ * @param props.href - 下载 URL（同时决定下载按钮是否显示）
+ * @param props.onPreview - 预览回调
+ * @param props.onDownload - 下载回调
+ */
 export function AttachmentCard({
   filename,
   contentType = "",
@@ -135,11 +144,10 @@ export function AttachmentCard({
   onDelete,
 }: AttachmentCardProps) {
   const kind = filename ? getPreviewKind(contentType, filename) : null;
-  // Media kinds (pdf/video/audio) are previewable from a URL alone — the
-  // modal renders them as <video>/<audio>/<iframe src=url>. Text kinds
-  // (markdown/html/text) need the ID-keyed `/api/attachments/{id}/content`
-  // proxy, so they only preview when we have an attachmentId — otherwise
-  // the Eye button would call tryOpen, get rejected, and do nothing.
+  // 媒体类型（pdf/video/audio）仅凭 URL 就能预览——弹窗会把它们渲染成
+  // <video>/<audio>/<iframe src=url>。文本类型（markdown/html/text）则需要走
+  // 按 id 寻址的 `/api/attachments/{id}/content` 代理，所以只有拿到 attachmentId
+  // 时才能预览——否则眼睛按钮会调用 tryOpen、被拒绝、然后什么都不做。
   const isUrlPreviewableKind =
     kind === "pdf" || kind === "video" || kind === "audio";
   const canPreview =

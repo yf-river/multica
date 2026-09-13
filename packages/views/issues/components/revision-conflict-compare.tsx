@@ -1,3 +1,8 @@
+// 本文件：RevisionConflictCompare —— 问题"修订冲突"的逐行对比面板。
+// 当本地未保存的编辑与服务端已落库的新版本冲突时，把两份文本并排成
+// 左右两栏 diff（左 server、右 local），每侧各带一个动作
+// （如"保留我的版本"）。共享同一行仅作参考。
+
 import type { ReactNode } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { diffTraceLines } from "../../common/task-transcript/trace-event-presenter";
@@ -9,11 +14,10 @@ interface RevisionConflictCompareProps {
   serverValue: string;
   localValue: string;
   footer?: ReactNode;
-  // One action per side, rendered in its own column of the same two-column
-  // grid as the labels and the diff. A single shared action row read as
-  // "keep my version" sitting under the SERVER preview it discards (#7624);
-  // the column is what makes each action point at its own pane, and it holds
-  // at every width because the diff itself never stacks.
+  // 每侧一个动作，渲染在与标签和 diff 相同的双列网格里各占一列。
+  // 曾经把它们放进单一共享动作行，结果"保留我的版本"看起来像是坐落在
+  // 它即将丢弃的 SERVER 预览下方（#7624）；一列一个动作才能让每个动作
+  // 指向自己的那一侧，且因为 diff 本身永不堆叠，在任何宽度都成立。
   serverAction?: ReactNode;
   localAction?: ReactNode;
   className?: string;
@@ -27,6 +31,9 @@ interface RevisionConflictRow {
 const textLines = (value: string): string[] =>
   value.length > 0 ? value.split("\n") : [""];
 
+/**
+ * 把两份文本跑一次行级 diff，产出左右对齐的行序列（含 changed 标记）。
+ */
 export function revisionConflictRows(
   serverValue: string,
   localValue: string,
@@ -69,6 +76,9 @@ export function revisionConflictRows(
   return rows;
 }
 
+/**
+ * 单侧单格的 diff 单元格（增/删/上下文染色）。
+ */
 function DiffCell({
   side,
   line,
@@ -100,6 +110,9 @@ function DiffCell({
   );
 }
 
+/**
+ * 修订冲突对比面板（职责见文件头）。
+ */
 export function RevisionConflictCompare({
   title,
   serverLabel,
@@ -147,8 +160,8 @@ export function RevisionConflictCompare({
             data-revision-conflict-actions
             className="grid grid-cols-2 border-t bg-muted/40"
           >
-            {/* px-3 matches the label cells above, so each button's left
-                edge lands on the same vertical line as its column header. */}
+            {/* px-3 与上方的标签格对齐，让每个按钮的左边缘
+                落在其列头的同一条垂直线上。 */}
             <div className="min-w-0 px-3 py-2">{serverAction}</div>
             <div className="min-w-0 border-l px-3 py-2">{localAction}</div>
           </div>

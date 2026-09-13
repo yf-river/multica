@@ -1,5 +1,12 @@
 "use client";
 
+// 本文件：ListRow / DraggableListRow —— 列表视图的一行。
+// ListRow 是纯展示行（不可拖拽），DraggableListRow 是 dnd-kit 可拖拽行，
+// 两者共享同一份 ListRowContent：标题/自定义状态 chip/子任务进度/标签/卡片
+// 自定义属性/项目/日期/负责人等字段是否展示，由视图的"卡片属性"开关控制。
+// 行左端是复选框选区（hover 出现），整行包裹在 IssueActionsContextMenu 中，
+// 右键可呼出常用动作菜单。
+
 import { memo, type Ref } from "react";
 import { useSortable, defaultAnimateLayoutChanges } from "@dnd-kit/sortable";
 import type { AnimateLayoutChanges } from "@dnd-kit/sortable";
@@ -28,6 +35,7 @@ import { TAPDSourceBadge } from "./tapd-source-badge";
 import { useIssueSurfaceSelection } from "../surface/selection-context";
 import { useLocale } from "../../i18n";
 
+/** 子任务完成进度概要：已完成数与总数。用于行/卡片上的小进度环。 */
 export interface ChildProgress {
   done: number;
   total: number;
@@ -118,8 +126,8 @@ function ListRowContent({
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="truncate">{issue.title}</span>
             <TAPDSourceBadge issue={issue} variant="inline" />
-            {/* List sections are categories, so a custom status needs to name
-                itself on the row. Silent for built-ins. (MUL-6243) */}
+            {/* 列表的分区是"状态类别"，因此自定义状态需要在行上自报名号；
+                内置状态保持静默。（MUL-6243） */}
             <CustomStatusChip status={issue.status} className="shrink-0" />
             {showChildProgress && (
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/60 px-1.5 py-0.5">
@@ -185,6 +193,8 @@ function ListRowContent({
   );
 }
 
+/** 静态列表行（不可拖拽）。字段渲染由 `ListRowContent` 统一负责，
+ *  本组件只做 memo 化的薄封装。 */
 export const ListRow = memo(function ListRow({
   issue,
   childProgress,
@@ -213,6 +223,10 @@ const stopDrag = (e: React.SyntheticEvent) => {
   e.stopPropagation();
 };
 
+/** dnd-kit 可拖拽列表行：把拖拽的 transform/transition/监听器/aria 属性
+ *  通过 container* 槽位交给 `ListRowContent`；`disableSorting` 时仅禁用
+ *  droppable（行仍可被拖走、只是自己不是投放目标，用于跨状态列表场景）。
+ *  复选框上的事件一律 stopPropagation，避免点选框时误触发拖拽。 */
 export const DraggableListRow = memo(function DraggableListRow({
   issue,
   childProgress,

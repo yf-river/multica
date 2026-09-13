@@ -1,3 +1,5 @@
+// 职责定位：把上传的附件绑定到新评论的辅助逻辑：在调用方事务里完成绑定，并把「部分认领
+// 失败」转成可回滚的校验错误。
 package handler
 
 import (
@@ -9,8 +11,11 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// errCommentAttachmentsUnavailable 表示请求里至少有一个附件对该评论不可用（不存在/被占用/
+// 归属错误）。
 var errCommentAttachmentsUnavailable = errors.New("one or more attachments are unavailable for this comment")
 
+// uniqueValidAttachmentIDs 校验入参全为合法 UUID 并去重；出现非法 id 时返回 false。
 func uniqueValidAttachmentIDs(ids []pgtype.UUID) ([]pgtype.UUID, bool) {
 	unique := make([]pgtype.UUID, 0, len(ids))
 	seen := make(map[[16]byte]struct{}, len(ids))
@@ -27,10 +32,8 @@ func uniqueValidAttachmentIDs(ids []pgtype.UUID) ([]pgtype.UUID, bool) {
 	return unique, true
 }
 
-// linkAttachmentsToNewComment links and verifies all requested attachments in
-// the caller's transaction. The SQL update intentionally ignores unavailable
-// rows; comparing the resulting set converts a partial claim into a rollbackable
-// validation error.
+// linkAttachmentsToNewComment 在调用方事务里绑定并核验请求的所有附件。SQL 更新有意忽略不可用
+// 行；随后对比实际集合，把「部分认领」变成可回滚的校验错误。
 func linkAttachmentsToNewComment(ctx context.Context, q *db.Queries, comment db.Comment, ids []pgtype.UUID) ([]db.Attachment, error) {
 	unique, ok := uniqueValidAttachmentIDs(ids)
 	if !ok {

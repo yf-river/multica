@@ -1,4 +1,6 @@
 "use client"
+// 本文件是下拉选择（Select）组件族（基于 Base UI 的 Select）：
+// 点击触发器弹出选项列表，单选/多选皆可；每个选项支持值 + 显示文本。
 
 import * as React from "react"
 import { Select as SelectPrimitive } from "@base-ui/react/select"
@@ -6,6 +8,7 @@ import { Select as SelectPrimitive } from "@base-ui/react/select"
 import { cn } from "@multica/ui/lib/utils"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
+/** SelectProps：在 Base UI Root 的 props 上强制 items 必填 */
 type SelectProps<
   Value,
   Multiple extends boolean | undefined = false,
@@ -14,8 +17,8 @@ type SelectProps<
 }
 
 /**
- * Base UI renders the raw value unless Root receives an items label map.
- * Keep items required so every select has a single source for value labels.
+ * Base UI 在 Root 没有收到 items 标签映射时，会直接渲染原始值。
+ * 所以这里把 items 设为必填：保证每个 select 都有唯一的「值 → 显示文本」来源。
  */
 function Select<Value, Multiple extends boolean | undefined = false>(
   props: SelectProps<Value, Multiple>
@@ -23,6 +26,7 @@ function Select<Value, Multiple extends boolean | undefined = false>(
   return <SelectPrimitive.Root {...props} />
 }
 
+/** SelectGroup：选项分组容器 */
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (
     <SelectPrimitive.Group
@@ -33,6 +37,7 @@ function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   )
 }
 
+/** SelectValue：显示当前选中项的文本 */
 function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   return (
     <SelectPrimitive.Value
@@ -43,6 +48,10 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   )
 }
 
+/**
+ * SelectTrigger：显示选中值并唤起下拉的触发器（右侧固定下拉箭头）。
+ * @param props.size 高度档位：'default' / 'sm'
+ */
 function SelectTrigger({
   className,
   size = "default",
@@ -71,6 +80,7 @@ function SelectTrigger({
   )
 }
 
+/** SelectContent：弹出的选项列表面板；默认宽度与触发器对齐，头部/尾部有滚动指示箭头 */
 function SelectContent({
   className,
   children,
@@ -110,6 +120,7 @@ function SelectContent({
   )
 }
 
+/** SelectLabel：选项组的标题文字 */
 function SelectLabel({
   className,
   ...props
@@ -123,6 +134,7 @@ function SelectLabel({
   )
 }
 
+/** SelectItem：单个可选项；选中时右侧显示对勾 */
 function SelectItem({
   className,
   children,
@@ -151,6 +163,7 @@ function SelectItem({
   )
 }
 
+/** SelectSeparator：选项之间的分隔线 */
 function SelectSeparator({
   className,
   ...props
@@ -164,6 +177,7 @@ function SelectSeparator({
   )
 }
 
+/** SelectScrollUpButton：选项列表顶部、提示可以继续向上滚的箭头 */
 function SelectScrollUpButton({
   className,
   ...props
@@ -183,6 +197,7 @@ function SelectScrollUpButton({
   )
 }
 
+/** SelectScrollDownButton：选项列表底部、提示可以继续向下滚的箭头 */
 function SelectScrollDownButton({
   className,
   ...props

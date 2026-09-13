@@ -1,4 +1,6 @@
 "use client"
+// 本文件是侧边抽屉（Sheet）组件族（基于 Base UI 的 Dialog）：
+// 从屏幕上下左右四个方向之一滑出的面板，用于设置、详情、编辑等次级任务。
 
 import * as React from "react"
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog"
@@ -7,22 +9,27 @@ import { cn } from "@multica/ui/lib/utils"
 import { Button } from "@multica/ui/components/ui/button"
 import { XIcon } from "lucide-react"
 
+/** Sheet：抽屉根组件 */
 function Sheet({ ...props }: SheetPrimitive.Root.Props) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
 }
 
+/** SheetTrigger：打开抽屉的触发元素 */
 function SheetTrigger({ ...props }: SheetPrimitive.Trigger.Props) {
   return <SheetPrimitive.Trigger data-slot="sheet-trigger" {...props} />
 }
 
+/** SheetClose：关闭抽屉的元素/按钮 */
 function SheetClose({ ...props }: SheetPrimitive.Close.Props) {
   return <SheetPrimitive.Close data-slot="sheet-close" {...props} />
 }
 
+/** SheetPortal：把抽屉内容传送到 body 末端 */
 function SheetPortal({ ...props }: SheetPrimitive.Portal.Props) {
   return <SheetPrimitive.Portal data-slot="sheet-portal" {...props} />
 }
 
+/** SheetOverlay：遮住背景的半透明遮罩 */
 function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   return (
     <SheetPrimitive.Backdrop
@@ -36,6 +43,10 @@ function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   )
 }
 
+/**
+ * SheetContent：抽屉主体。side 决定从哪边滑入，配套的进出场动画按方向分别
+ * 位移/渐隐。默认右上角带 X 关闭按钮。
+ */
 function SheetContent({
   className,
   children,
@@ -80,6 +91,7 @@ function SheetContent({
   )
 }
 
+/** SheetHeader：抽屉顶部内容区（标题 + 描述） */
 function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -90,6 +102,7 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** SheetFooter：抽屉底部操作区，mt-auto 把它推到面板最下方 */
 function SheetFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -100,6 +113,7 @@ function SheetFooter({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** SheetTitle：抽屉标题 */
 function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   return (
     <SheetPrimitive.Title
@@ -113,6 +127,7 @@ function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   )
 }
 
+/** SheetDescription：抽屉补充说明文字 */
 function SheetDescription({
   className,
   ...props

@@ -1,3 +1,6 @@
+// 本文件提供「当前工作区 slug」的 Context 与相关 Hook：从 URL 取 slug、按
+// slug 解析工作区对象、绑定到当前工作区的路径构造器。
+
 "use client";
 
 import { createContext, use, type ReactNode } from "react";
@@ -7,17 +10,17 @@ import { workspaceListOptions } from "../workspace/queries";
 import { paths, type WorkspacePaths } from "./paths";
 
 /**
- * Context for the current workspace slug (read from URL by the platform layer).
+ * 当前工作区 slug 的 Context（由平台层从 URL 读出）。
  *
- * apps/web populates this from Next.js `params.workspaceSlug` in
- * [workspaceSlug]/layout.tsx.
+ * apps/web 在 [workspaceSlug]/layout.tsx 里用 Next.js 的 `params.workspaceSlug`
+ * 填充它。
  *
- * packages/core/ cannot import next/navigation or react-router-dom directly,
- * so the slug arrives via this Context — mirroring how WorkspaceIdProvider
- * already works for workspace IDs.
+ * packages/core/ 不能直接 import next/navigation 或 react-router-dom，所以
+ * slug 经这个 Context 送达——与 WorkspaceIdProvider 对工作区 id 的处理一致。
  */
 const WorkspaceSlugContext = createContext<string | null>(null);
 
+/** 把当前 slug 提供给子树。 */
 export function WorkspaceSlugProvider({
   slug,
   children,
@@ -32,12 +35,12 @@ export function WorkspaceSlugProvider({
   );
 }
 
-/** Current workspace slug from URL, or null outside workspace-scoped routes. */
+/** 从 URL 读当前工作区 slug；在工作区范围路由之外调用返回 null。 */
 export function useWorkspaceSlug(): string | null {
   return use(WorkspaceSlugContext);
 }
 
-/** Same as useWorkspaceSlug, but throws if called outside a workspace route. */
+/** 同 useWorkspaceSlug，但在工作区路由之外调用会抛错。 */
 export function useRequiredWorkspaceSlug(): string {
   const slug = useWorkspaceSlug();
   if (!slug) {
@@ -49,8 +52,10 @@ export function useRequiredWorkspaceSlug(): string {
 }
 
 /**
- * The currently-selected workspace, derived from URL slug + React Query list.
- * Returns null if slug is missing or doesn't match any workspace in the list.
+ * 当前选中的工作区，由 URL slug + React Query 列表推导。
+ * slug 缺失或列表里没有匹配工作区时返回 null。
+ *
+ * @returns 匹配的工作区对象或 null
  */
 export function useCurrentWorkspace(): Workspace | null {
   const slug = useWorkspaceSlug();
@@ -60,8 +65,8 @@ export function useCurrentWorkspace(): Workspace | null {
 }
 
 /**
- * Path builder bound to the current workspace. Throws if called outside a
- * workspace route — for cross-workspace links use paths.workspace(slug) directly.
+ * 绑定到当前工作区的路径构造器。在工作区路由之外调用会抛错——跨工作区的链接
+ * 请直接用 paths.workspace(slug)。
  */
 export function useWorkspacePaths(): WorkspacePaths {
   const slug = useRequiredWorkspaceSlug();

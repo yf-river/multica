@@ -1,9 +1,8 @@
+// ws_frame.go：钉钉 Stream 帧的模型——在 WebSocket 上跑的是带 JSON 信封的帧。
+// 本文件定义入站 DataFrame、我们要回写的 DataFrameResponse，以及聊天机器人连接
+// 用到的那一小撮 type/topic 判别常量，替代原先对厂商 Stream SDK payload 包的
+// 依赖。
 package dingtalk
-
-// DingTalk Stream frames are JSON envelopes over the WebSocket. This file models
-// the inbound DataFrame and the DataFrameResponse we write back, plus the small
-// set of type/topic discriminators the chatbot connection uses. It replaces the
-// former dependency on the vendor stream SDK's payload package.
 
 const (
 	frameTypeSystem   = "SYSTEM"
@@ -16,9 +15,9 @@ const (
 	frameResponseCodeOK = 200
 )
 
-// dataFrame is an inbound Stream frame. The gateway carries the routing key in
-// headers.topic and the correlation id in headers.messageId; data is the frame
-// body as a JSON string (a bot callback for the bot-message topic).
+// dataFrame 是一条入站 Stream 帧。网关把路由键放在 headers.topic、把关联 id 放
+// 在 headers.messageId；data 是帧体——以 JSON 字符串承载（对机器人消息主题而言
+// 就是一条 bot 回调）。
 type dataFrame struct {
 	Type    string            `json:"type"`
 	Headers map[string]string `json:"headers"`
@@ -28,10 +27,9 @@ type dataFrame struct {
 func (f *dataFrame) topic() string     { return f.Headers["topic"] }
 func (f *dataFrame) messageID() string { return f.Headers["messageId"] }
 
-// dataFrameResponse is the ack we write back for every frame. The gateway
-// correlates it to the delivered frame by the echoed messageId header, so that
-// header is load-bearing; data stays empty for a plain callback ack (the actual
-// reply is delivered out-of-band over the Open API).
+// dataFrameResponse 是每帧都要回写的 ack。网关靠回显的 messageId 头把这帧 ack
+// 与送达的帧对上，所以那个头是承重的；普通回调 ack 的 data 留空（真正的回复经
+// Open API 带外投送）。
 type dataFrameResponse struct {
 	Code    int               `json:"code"`
 	Headers map[string]string `json:"headers"`
@@ -39,7 +37,7 @@ type dataFrameResponse struct {
 	Data    string            `json:"data"`
 }
 
-// newAckResponse builds a 200 ack echoing the frame's messageId.
+// newAckResponse 构造一条 200 ack，回显帧的 messageId。
 func newAckResponse(messageID string) dataFrameResponse {
 	return dataFrameResponse{
 		Code:    frameResponseCodeOK,
@@ -52,8 +50,8 @@ func newAckResponse(messageID string) dataFrameResponse {
 	}
 }
 
-// newPongResponse answers a SYSTEM ping. It echoes the ping's messageId and its
-// data body, mirroring the gateway's expected pong shape.
+// newPongResponse 应答 SYSTEM ping：回显 ping 的 messageId 与 data 负载，镜像
+// 网关期望的 pong 结构。
 func newPongResponse(messageID, data string) dataFrameResponse {
 	return dataFrameResponse{
 		Code:    frameResponseCodeOK,

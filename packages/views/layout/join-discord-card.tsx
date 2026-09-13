@@ -7,29 +7,23 @@ import { useDiscordCardDismissed } from "./use-discord-card-dismissed";
 import { useT } from "../i18n";
 
 /**
- * Dismissible "Join our Discord" entry sharing the sidebar footer strip with
- * the help launcher. Once dismissed it stays hidden for that user on this
- * browser — see {@link useDiscordCardDismissed}.
+ * 布局模块：可关闭的「加入 Discord」入口。
+ * 与帮助菜单共享侧边栏底部区域，关闭后对当前用户/当前浏览器保持隐藏。
  *
- * Deliberately shaped as a sidebar row, not a bordered card: it matches
- * SidebarMenuButton metrics (h-8 / rounded-md / gap-2 / text-body) and
- * carries no resting border or fill. A dismissible promo is the
- * lowest-priority item in the sidebar, so it must not be drawn heavier than
- * the navigation above it.
+ * 有意做成侧边栏行而不是带边框的卡片：它对齐 SidebarMenuButton 的尺寸
+ * （h-8 / rounded-md / gap-2 / text-body），不带常驻边框或底色。可关闭的
+ * 推广是侧边栏里优先级最低的项，所以不能画得比它上面的导航更重。
  *
- * No external-link arrow, unlike the Help menu's outbound items: sharing one
- * 224px strip with the help trigger leaves 128px for the label, and the arrow
- * plus the dismiss button together overflow that in the widest locale (en,
- * 109px). The dismiss affordance wins because it is a user-facing capability
- * and the arrow is only a hint — the Discord mark already signals the
- * destination. `flex-1 min-w-0` makes the label truncate rather than push the
- * trigger off.
+ * 与帮助菜单里的外链不同，这里不放外链箭头：与帮助触发器共享 224px 的
+ * 条带后留给标签的只有 128px，箭头加关闭按钮在最宽的语言（英文，109px）
+ * 下会一起溢出。关闭能力是面向用户的功能，箭头只是提示——Discord 标志
+ * 已经表明了去向，所以关闭按钮优先。`flex-1 min-w-0` 让标签截断而不是
+ * 把触发器挤出去。
  *
- * That 128px is the budget at the DEFAULT 256px sidebar, and the sidebar is
- * user-resizable down to 200px — every 1px of drag takes 1px from the label.
- * So a title that merely fits at 256px still truncates for anyone who has
- * narrowed their sidebar; keep every locale's title comfortably under budget,
- * not just under it (MUL-5704).
+ * 这 128px 是默认 256px 侧边栏下的预算，而侧边栏可被用户缩到 200px——
+ * 每拖 1px 标签就少 1px。所以只在 256px 下刚好放得下的标题，对任何把
+ * 侧边栏收窄的人仍会截断；每种语言的标题都要舒适地低于预算，而不只是
+ * 勉强低于它（MUL-5704）。
  */
 export function JoinDiscordCard() {
   const { t } = useT("layout");
@@ -51,8 +45,8 @@ export function JoinDiscordCard() {
           {t(($) => $.sidebar.discord_card.title)}
         </span>
       </a>
-      {/* Revealed on hover/focus so the resting row stays quiet. Coarse
-          pointers get no hover, so keep it permanently visible there. */}
+      {/* 悬停/聚焦时才显示，让静止的行保持安静。粗指针没有 hover，
+          所以那里让它常显。 */}
       <button
         type="button"
         aria-label={t(($) => $.sidebar.discord_card.dismiss)}

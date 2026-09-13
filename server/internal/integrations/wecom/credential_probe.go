@@ -1,44 +1,37 @@
+// credential_probe.go —— 证明「安装者真的掌控这个机器人」。
+//
+// 过去 BYO（自带）安装会把对话框里粘进去的任意一对凭据直接持久化。机器人 id
+// 并不是秘密：它印在企业微信管理后台，而且任何工作区成员都能从
+// GET /wecom/installations 读出来。只有 secret 才能证明什么，而当初没有任何
+// 东西校验过它。
+//
+// 于是出了两个问题，两个都不需要内鬼才能干：
+//
+// 其一，路由槽是全局的。channel_installation 在 (channel_type,
+// config->>'app_id') 上的唯一索引不包含工作区，所以部署上任何工作区的管理员
+// 都能写一行、拿别人的机器人 id 配一个垃圾 secret，无限期占住这个槽。真正的主
+// 人随后会撞上一个他根本看不见的工作区名字的冲突。
+//
+// 其二，更糟，回收（reclaim）是按同一个未经证明的 id 走的。真正主人只是
+// DISCONNECT 过的机器人会处于 revoked，而 revoked 行正是
+// ReclaimDeadChannelInstallationByAppID 会硬删的东西——连同它底下每个用户绑定、
+// 会话绑定、挂起的 token 一起。所以局外人只要贴一个他从列表上抄来的 bot id，
+// 就能毁掉别的工作区的绑定、逼着那边所有人重新绑定。
+//
+// 修复方式就是另外两个兄弟包已经用起来的做法：先证明控制权，再持久化。钉钉铸
+// access token（dingtalk/byo_install.go），Slack 调 auth.test
+// （slack/byo_install.go）。企微没有 REST 面，所以证明就用协议自己的握手——
+// 拨号、aibot_subscribe、读裁定、挂断。密钥错会被非零 errcode 拒绝，这正是
+// 我们要的信号。
+//
+// 探测绝不会打到别人正在连着的机器人上。企微每个机器人只允许一个在线订阅者，
+// 所以对一个活的槽做探测会把真正主人的连接挤掉，主人的 supervisor 又会重连、
+// 反过来把探测挤掉——而如果请求接着被拒绝，一次失败的安装就白把一台活机器人
+// 打下线了。InstallationService.Upsert 强制了这一点：它先拿这个槽的 advisory
+// 锁、读当前主人，只要活主人不是调用方自己的行就直接返回冲突，根本不会去探测
+// （见 botSlotConflictErr）。能走到探测这一步的只有：空闲槽、revoked 行、孤儿
+// 行、或调用方对自己机器人的重装——绝没有别人正在连着的。
 package wecom
-
-// credential_probe.go — proving the installer controls the bot.
-//
-// A BYO install used to persist whatever pair was pasted into the dialog. The
-// bot id is not a secret: it is on the WeCom admin console, and any member of
-// a workspace can read it back out of GET /wecom/installations. Only the
-// secret proves anything, and nothing checked it.
-//
-// Two things followed, and neither needs an insider.
-//
-// The routing slot is global. channel_installation's unique index on
-// (channel_type, config->>'app_id') has no workspace in it, so an admin of any
-// workspace on the deployment could write a row claiming somebody else's bot
-// id with a junk secret and hold that slot indefinitely. The rightful owner
-// then hits a conflict naming a workspace they cannot see.
-//
-// Worse, the reclaim is keyed on the same unproven id. A bot the rightful
-// owner has merely DISCONNECTED sits revoked, and a revoked row is what
-// ReclaimDeadChannelInstallationByAppID hard-deletes — along with every user
-// binding, session binding and pending token beneath it. So an outsider
-// pasting a bot id they read off a list could destroy another workspace's
-// bindings and force everyone there to re-link.
-//
-// The fix is the one both peers already use: prove control before persisting.
-// DingTalk mints an access token (dingtalk/byo_install.go), Slack calls
-// auth.test (slack/byo_install.go). WeCom has no REST surface, so the proof
-// is the protocol's own handshake — dial, aibot_subscribe, read the verdict,
-// hang up. A wrong secret is refused with a non-zero errcode, which is
-// exactly the signal.
-//
-// The probe never runs against a bot somebody else is actively connected to.
-// WeCom allows one live subscriber per bot, so a probe against a live slot
-// would displace the rightful owner's connection, whose supervisor would
-// reconnect and displace the probe in turn — and if the request is then
-// refused, a rejected install has knocked a live bot offline for nothing.
-// InstallationService.Upsert enforces this: it takes the slot's advisory lock,
-// reads the current owner, and returns the conflict without probing for any
-// live owner other than the caller's own row (see botSlotConflictErr). What
-// reaches the probe is a free slot, a revoked row, an orphan, or a re-install
-// of the caller's own bot — nothing anybody else is connected to.
 
 import (
 	"context"
@@ -48,60 +41,48 @@ import (
 	"log/slog"
 )
 
-// ErrCredentialsRejected is WeCom saying the pair is not valid: a wrong
-// secret, a bot that no longer exists, a bot whose API mode is off. It is the
-// answer that must reach the admin, because it is the one they can act on.
+// ErrCredentialsRejected 是企业微信在说「这对凭据不对」：密钥错、机器人已不存
+// 在、机器人 API 模式被关。它必须被送到管理员面前，因为这是唯一一件管理员
+// 能采取行动的事。
 var ErrCredentialsRejected = errors.New("wecom: WeCom rejected this bot id and secret")
 
-// ErrCredentialsUnverifiable is everything else — the dial failed, the
-// handshake timed out, the network is down. Distinct from rejection on
-// purpose: telling an admin their credentials are wrong when the deployment
-// simply could not reach WeCom sends them to rotate a secret that was fine.
+// ErrCredentialsUnverifiable 是其他一切情况——拨号失败、握手超时、断网。刻意和
+// rejection 区分开：在部署只是够不到企微的时候告诉管理员「你凭据错了」，只会
+// 让他们去轮换一把明明没问题的密钥。
 var ErrCredentialsUnverifiable = errors.New("wecom: could not reach WeCom to verify this bot")
 
-// rejectionErrCodes are the WeCom global error codes (document/path/90313)
-// documented as a refusal of the credential pair itself — the only answers
-// entitled to tell an admin their Bot ID or secret is wrong.
+// rejectionErrCodes 是企微全局错误码（document/path/90313）中明确表达「拒绝这
+// 对凭据本身」的那些——只有它们才有资格告诉管理员 Bot ID 或 secret 错了。
 //
-// Everything else non-zero is ErrCredentialsUnverifiable, deliberately. WeCom
-// only guarantees that 0 means success; the subscribe path is also under
-// frequency and concurrency protection (45009, 45033), and the platform can
-// fail on its own account. Reading any non-zero code as "wrong secret" pushes
-// an admin to rotate a long-connection secret that was fine, and a rotated one
-// cannot be recovered — the exact damage this file exists to prevent. So the
-// list is a whitelist and the default is fail-closed: refuse the install, keep
-// the stored credentials untouched, and say we could not verify.
+// 其余一切非零码一律归 ErrCredentialsUnverifiable，这是刻意的。企微只保证 0
+// 表示成功；订阅路径还受频率与并发保护约束（45009、45033），平台自己也可能
+// 出故障。把任何非零码都读成「密钥错」，会推着管理员去轮换一把没问题、且轮换
+// 后不可找回的长连接密钥——这正是本文件要防的确切损害。所以这张表是白名单，
+// 默认是「失败即关闭」：拒绝这次安装、不碰已存凭据、说明我们无法核验。
 //
-// Codes only, never errmsg text: the message is human-facing Chinese prose
-// that WeCom is free to reword.
+// 只按码判断、绝不看 errmsg 文本：那是对人展示的中文散文，企微随时可能改写措辞。
 var rejectionErrCodes = map[int]struct{}{
-	40001: {}, // 不合法的secret参数 — the secret does not match this bot
-	40013: {}, // 不合法的CorpID — the identity half of the pair is not valid
+	40001: {}, // 不合法的secret参数 —— secret 与这个机器人对不上
+	40013: {}, // 不合法的CorpID —— 凭据对里的身份那一半无效
 }
 
-// classifySubscribeAck turns a non-zero errcode on an aibot_subscribe ack into
-// one of the two sentinels above.
+// classifySubscribeAck 把 aibot_subscribe ack 上的非零 errcode 归到上面两个
+// 哨兵错误之一。
 //
-// Both readers of that ack go through here — this probe at install time, and
-// the channel's own handshake on every reconnect (wecom_channel.go). It is one
-// function rather than two copies of the same map lookup so the two cannot
-// give different answers to the same code: a 45009 throttle that is
-// "unverifiable, wait" at install time must not be "somebody go fix this
-// installation" on the connect path.
+// 两个读这个 ack 的地方都走这里——安装时的这个探测，以及通道每次重连时自己的
+// 握手（wecom_channel.go）。做成一个函数而不是同一份查表逻辑的两份拷贝，是为了
+// 让二者对同一个码不可能给出不同答案：安装时一个 45009 限流应该是「无法核验，
+// 等等再说」，绝不能到了连接路径上变成「去个人把这条安装修一下」。
 //
-// log receives the codes we do not recognize; nil falls back to the default
-// logger.
+// log 接收我们不认识的码；nil 时退回默认 logger。
 func classifySubscribeAck(log *slog.Logger, errCode int, errMsg string) error {
 	if _, rejected := rejectionErrCodes[errCode]; rejected {
-		// The one answer the admin can act on, and the only branch that
-		// blames their credentials.
+		// 这是唯一一件管理员能采取行动的事，也是唯一把账算到凭据头上的分支。
 		return fmt.Errorf("%w (errcode %d: %s)", ErrCredentialsRejected, errCode, errMsg)
 	}
-	// Unknown non-zero: throttling, a platform-side failure, or a code WeCom
-	// added since. Fail closed rather than blame the secret. The raw pair is
-	// logged here so an operator can see it even if the caller only surfaces
-	// the sentinel, and carried on the error so the caller's own log line has
-	// it too.
+	// 未知的非零码：限流、平台侧故障，或者企微新加的错误码。宁可「失败即关闭」
+	// 也不怪罪密钥。原始凭据对在这里记日志，让运维在调用方只透出哨兵错误时也
+	// 能看到细节；错误上也带上它，这样调用方自己的日志行同样有。
 	if log == nil {
 		log = slog.Default()
 	}
@@ -110,29 +91,26 @@ func classifySubscribeAck(log *slog.Logger, errCode int, errMsg string) error {
 	return fmt.Errorf("%w (subscribe returned errcode %d: %s)", ErrCredentialsUnverifiable, errCode, errMsg)
 }
 
-// credentialProbeTimeout bounds the whole probe. It has to cover a dial and
-// one round trip and nothing else, and it is spent with the admin watching a
-// spinner, so it is short. Sized off the connection's own two constants
-// rather than invented.
+// credentialProbeTimeout 给整个探测设了时间上限。它只需覆盖一次拨号加一次往返、
+// 不能再多，而且这段时间是当着管理员的面等一个 spinner，所以要短。尺寸是从
+// 连接自身那两个常量推出来的，而不是凭空定的。
 const credentialProbeTimeout = handshakeTimeout + subscribeTimeout
 
-// CredentialProbe proves a (bot_id, secret) pair is live. Exported because
-// the handler holds one so a test can exercise the install path without a
-// socket; production always gets the handshake probe.
+// CredentialProbe 证明一对 (bot_id, secret) 是活的。导出是因为 handler 持有
+// 它，这样测试不拉 socket 也能走安装路径；生产环境拿到的总是握手探测。
 type CredentialProbe interface {
 	Probe(ctx context.Context, botID, secret string) error
 }
 
-// handshakeProbe is the production probe: one connection, one subscribe, no
-// read loop, no registration, no sender published. Nothing else in the
-// process learns it happened.
+// handshakeProbe 是生产用的探测：一条连接、一次订阅，没有读取循环、没有登记、
+// 不发布 sender。进程里其他任何东西都不知道它发生过。
 type handshakeProbe struct {
 	dialer Dialer
 	wsURL  string
 }
 
-// NewHandshakeProbe builds the probe the install service uses. dialer and
-// wsURL are test seams; production passes nil and "".
+// NewHandshakeProbe 构造安装服务用的探测。dialer 和 wsURL 是测试接缝；生产
+// 传 nil 和 ""。
 func NewHandshakeProbe(dialer Dialer, wsURL string) *handshakeProbe {
 	if wsURL == "" {
 		wsURL = DefaultWSURL
@@ -155,8 +133,7 @@ func (p *handshakeProbe) Probe(ctx context.Context, botID, secret string) error 
 	}
 	defer conn.Close()
 
-	// The read below does not observe ctx, so the deadline has to be on the
-	// socket as well as on the context.
+	// 下面的读不感知 ctx，所以 deadline 既要设到 context 上、也要设到 socket 上。
 	if dl, ok := ctx.Deadline(); ok {
 		_ = conn.SetWriteDeadline(dl)
 		_ = conn.SetReadDeadline(dl)
@@ -175,8 +152,8 @@ func (p *handshakeProbe) Probe(ctx context.Context, botID, secret string) error 
 		return fmt.Errorf("%w: send subscribe: %v", ErrCredentialsUnverifiable, err)
 	}
 
-	// Read until our own ack comes back. The server may push other frames
-	// first; anything that is not the answer to this req_id is not ours.
+	// 一路读到我们自己的 ack 回来。服务端可能先推别的帧；凡是答这个 req_id 的
+	// 之外都不是我们的，一律跳过。
 	for {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("%w: %v", ErrCredentialsUnverifiable, err)
@@ -199,7 +176,6 @@ func (p *handshakeProbe) Probe(ctx context.Context, botID, secret string) error 
 	}
 }
 
-// websocketTextMessage is gorilla's TextMessage without importing gorilla
-// here — the probe writes one frame and this keeps its dependency surface to
-// the Dialer interface the package already defines.
+// websocketTextMessage 是 gorilla 的 TextMessage 常量，这里不 import gorilla
+// ——探测只写一帧，保持本文件的依赖面只到包已定义的 Dialer 接口为止。
 const websocketTextMessage = 1

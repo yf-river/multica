@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * squads 模块：小队资料卡片。
+ * 展示一个小队的头像、名称、简介和成员列表，供引用小队的地方（如 issue
+ * 的关联区、成员详情页）内嵌展示小队信息。
+ */
+
 import { useQuery } from "@tanstack/react-query";
 import type { SquadMemberPreview } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -15,10 +21,18 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { AppLink } from "../../navigation";
 import { useT } from "../../i18n";
 
+/** 小队资料卡片的属性。 */
 interface SquadProfileCardProps {
+  /** 要展示的小队 id。 */
   squadId: string;
 }
 
+/**
+ * 小队资料卡主组件。
+ * 从工作区的目录查询里找到指定小队并渲染信息；小队还没加载出来时先显示
+ * 骨架屏，小队不存在时显示"不可用"占位文案。
+ * @param props.squadId 要展示的小队 id。
+ */
 export function SquadProfileCard({ squadId }: SquadProfileCardProps) {
   const { t } = useT("squads");
   const wsId = useWorkspaceId();
@@ -111,6 +125,11 @@ export function SquadProfileCard({ squadId }: SquadProfileCardProps) {
   );
 }
 
+/**
+ * 小队资料卡内的成员列表。
+ * 至多展示前 3 个成员，多余数量用"还有 N 个"提示。每个成员解析其名称、
+ * 头像与详情链接：agent 成员跳 agent 详情、member 成员跳成员详情。
+ */
 function MembersList({
   members,
   memberCount,

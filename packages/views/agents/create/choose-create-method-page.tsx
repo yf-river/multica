@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是创建 Agent 的“选方式”入口页：挑一种创建方式（表单填写 / AI 对话），
+// 然后交棒给对应方式自己的路由。本页不持有任何草稿——这里没有输入，也就没有
+// 需要跨屏存活的东西。
+
 import { ChevronRight, FileText, MessageSquare } from "lucide-react";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { cn } from "@multica/ui/lib/utils";
@@ -9,9 +13,8 @@ import { AgentCreateShell } from "./create-shell";
 import { withSquadParam } from "./squad-param";
 
 /**
- * Entry route of agent creation: pick a method, then hand off to that method's
- * own route. Holds no draft — nothing typed here survives to the next screen
- * because nothing is typed here.
+ * 创建 Agent 的入口路由：挑一种方式，然后交棒给该方式自己的路由。不持有任何
+ * 草稿——这里什么都不会被输入，所以没有东西要跨屏存活。
  */
 export function ChooseCreateMethodPage() {
   const { t } = useT("agents");
@@ -40,6 +43,7 @@ export function ChooseCreateMethodPage() {
   );
 }
 
+/** 两种创建方式（表单 / AI）的卡片列表，AI 方式带“推荐”角标。 */
 export function CreateMethodChooser({
   blankHref,
   aiHref,

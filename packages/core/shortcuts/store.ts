@@ -1,3 +1,6 @@
+// 本文件实现快捷键的「用户覆盖」store：用户可把默认快捷键改成自己的组合
+// （或禁用），这里负责持久化、清洗、冲突检测与按 action 解析最终快捷键。
+
 "use client";
 
 import { create } from "zustand";
@@ -13,16 +16,22 @@ import {
   type ShortcutChord,
 } from "./definitions";
 
+/** 用户覆盖：action id → 快捷键（null 表示禁用该 action）。 */
 export type ShortcutOverrides = Partial<Record<ShortcutActionId, ShortcutChord | null>>;
 
 const SHORTCUT_ACTION_IDS = new Set<string>(
   SHORTCUT_ACTIONS.map((action) => action.id),
 );
 
+/** 是否为普通对象。 */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * 清洗单个快捷键值：null 放行（禁用）；结构不合法返回 undefined（丢弃）；
+ * 合法则返回带完整修饰符布尔值的对象。
+ */
 function sanitizeShortcutChord(value: unknown): ShortcutChord | null | undefined {
   if (value === null) return null;
   if (!isRecord(value) || typeof value.key !== "string" || value.key.length === 0) {
@@ -52,7 +61,7 @@ function sanitizeShortcutChord(value: unknown): ShortcutChord | null | undefined
   };
 }
 
-/** Drop unknown actions and malformed chords instead of letting storage crash matching/UI. */
+/** 丢弃未知 action 与畸形和弦，别让存储内容弄崩匹配/UI。 */
 export function sanitizeShortcutOverrides(value: unknown): ShortcutOverrides {
   if (!isRecord(value)) return {};
   const overrides: ShortcutOverrides = {};
@@ -72,6 +81,7 @@ export function sanitizeShortcutOverrides(value: unknown): ShortcutOverrides {
   return overrides;
 }
 
+/** store 内部状态。 */
 interface ShortcutState {
   overrides: ShortcutOverrides;
   setShortcut: (actionId: ShortcutActionId, shortcut: ShortcutChord | null) => void;
@@ -79,6 +89,7 @@ interface ShortcutState {
   resetAll: () => void;
 }
 
+/** 持久化版本的迁移：v1 的字符串偏好迁到 v2 的结构化和弦。 */
 export function migrateShortcutState(
   persisted: unknown,
   version: number,
@@ -99,12 +110,13 @@ export function migrateShortcutState(
     }
     if (typeof value !== "string") continue;
     const shortcut = parseLegacyShortcut(value);
-    // Invalid old data means "use the default", not "disable the action".
+    // 无效的旧数据意味着「用默认」，而不是「禁用该动作」。
     if (shortcut) overrides[actionId as ShortcutActionId] = shortcut;
   }
   return { overrides: sanitizeShortcutOverrides(overrides) };
 }
 
+/** 快捷键覆盖 store：只持久化与默认不同的覆盖项。 */
 export const useShortcutStore = create<ShortcutState>()(
   persist(
     (set) => ({
@@ -136,8 +148,8 @@ export const useShortcutStore = create<ShortcutState>()(
       partialize: (state) => ({ overrides: state.overrides }),
       version: 2,
       migrate: migrateShortcutState,
-      // Zustand only calls `migrate` when versions differ. Sanitize during
-      // every hydration as well so corrupt current-version storage is safe.
+      // Zustand 只在版本不同时才调 `migrate`。每次水合也要清洗一遍，让损坏的
+      // 当前版本存储也能安全读取。
       merge: (persisted, current) => {
         const stored = isRecord(persisted) ? persisted : undefined;
         return {
@@ -149,6 +161,9 @@ export const useShortcutStore = create<ShortcutState>()(
   ),
 );
 
+/**
+ * 解析某个 action 最终生效的快捷键：有覆盖用覆盖（null 即禁用），否则用默认。
+ */
 export function resolveShortcut(
   overrides: ShortcutOverrides,
   actionId: ShortcutActionId,
@@ -158,14 +173,17 @@ export function resolveShortcut(
     : SHORTCUT_ACTION_BY_ID[actionId].defaultShortcut;
 }
 
+/** React 侧读取某个 action 的快捷键。 */
 export function useShortcut(actionId: ShortcutActionId): ShortcutChord | null {
   return useShortcutStore((state) => resolveShortcut(state.overrides, actionId));
 }
 
+/** 非 React 侧读取某个 action 的快捷键。 */
 export function getShortcut(actionId: ShortcutActionId): ShortcutChord | null {
   return resolveShortcut(useShortcutStore.getState().overrides, actionId);
 }
 
+/** 找与目标快捷键撞车的另一个 action（允许在设置里警告冲突）。 */
 export function findShortcutConflict(
   actionId: ShortcutActionId,
   shortcut: ShortcutChord,

@@ -1,8 +1,8 @@
 /**
- * Shared link handling utilities for the editor system.
+ * 编辑器体系共用的链接处理工具。
  *
- * Used by content-editor (ProseMirror click handler), readonly-content
- * (react-markdown link component), and link-hover-card (Open button).
+ * 使用者：content-editor（ProseMirror 点击处理器）、readonly-content
+ * （react-markdown 链接组件）、link-hover-card（打开按钮）。
  */
 
 import { isGlobalPath, isReservedSlug } from "@multica/core/paths";
@@ -10,15 +10,14 @@ import { isIssueIdentifier } from "@multica/ui/markdown";
 import type { LinkClickIntent } from "../../navigation/click-intent";
 
 /**
- * Top-level workspace-scoped routes. Used to detect "/{route}/..." paths that
- * were authored without a workspace slug — we prepend the current slug so they
- * resolve correctly under the new /{slug}/{route}/... URL shape.
+ * 顶层「工作区作用域」路由。用来识别那些写的时候没带工作区 slug 的
+ * `/{route}/...` 路径——我们把当前 slug 拼到前面，让它在新的
+ * /{slug}/{route}/... URL 结构下正确解析。
  *
- * Why a hardcoded allowlist: the heuristic must be conservative. A path like
- * "/acme/issues/abc" already has a slug (first segment "acme" isn't a known
- * route), so leaving it alone is correct. A path like "/foo/bar" where "foo"
- * isn't a known route is ambiguous — we don't rewrite it, treating the author
- * as intentional. Only "/issues/..." style paths get auto-prefixed.
+ * 为什么用写死的白名单：这个启发式必须保守。像 "/acme/issues/abc"
+ * 这种路径已经带 slug（第一段 "acme" 不是已知路由），不去动它是正确的。
+ * 像 "/foo/bar" 这种第一段 "foo" 不是已知路由的路径是模糊的——我们不改写，
+ * 认为作者是故意的。只有 "/issues/..." 这类路径才会被自动加前缀。
  */
 const WORKSPACE_ROUTE_SEGMENTS = new Set([
   "usage",
@@ -39,15 +38,14 @@ const WORKSPACE_ROUTE_SEGMENTS = new Set([
 ]);
 
 /**
- * Report whether a path is a workspace-scoped app page — `/{slug}/...` where the
- * first segment is a slug a workspace could actually own.
+ * 判断路径是否为「工作区作用域」的应用页面——`/{slug}/...` 形态，即第一段
+ * 是某个工作区确实可能拥有的 slug。
  *
- * The app origin also serves things the app router does not own: `/api/*`,
- * `/uploads/*` (local-storage attachments, proxied by web), `/_next/*`,
- * `/favicon.ico`, and the pre-workspace routes. Every one of those first
- * segments is already a reserved slug, so the reserved list — the same one the
- * backend enforces at workspace creation — answers this question without a
- * parallel deny-list that has to be kept in sync with the backend's routes.
+ * 应用源上还提供一些应用路由不管的东西：`/api/*`、`/uploads/*`（本地存储
+ * 附件，由 web 代理）、`/_next/*`、`/favicon.ico`，以及前工作区路由。这些
+ * 的第一段全都已经在保留 slug 列表里，所以用保留列表——也就是后端建
+ * 工作区时强制的那一份——来回答这个问题，就不需要再维护一份必须和后端
+ * 路由同步的独立黑名单了。
  */
 function isWorkspaceScopedPath(pathname: string): boolean {
   const first = pathname.split("/")[1] ?? "";
@@ -62,15 +60,14 @@ function isWorkspaceScopedPath(pathname: string): boolean {
 }
 
 /**
- * Convert an absolute URL that points at a workspace page on this deployment's
- * own app into the in-app path it addresses; `null` for anything else.
+ * 把指向「本部署应用内工作区页面」的绝对 URL 换算成它在应用里的路径；
+ * 其它一律返回 null。
  *
- * An agent or a user pasting `https://<app-host>/acme/issues/123` means the same
- * destination as `/acme/issues/123`. Without this, the URL is treated as
- * external even though it belongs to the current deployment (MUL-5208).
+ * agent 或用户粘贴 `https://<app-host>/acme/issues/123` 与 `/acme/issues/123`
+ * 是同一个目的地。不处理的话，即使 URL 属于当前部署也会被当成外部链接
+ * （MUL-5208）。
  *
- * `appOrigin` is the deployment's public app URL, which only the platform layer
- * knows. See `useAppOrigin()`.
+ * `appOrigin` 是部署的对外应用 URL，只有平台层知道。参见 `useAppOrigin()`。
  */
 export function toInternalAppPath(
   href: string,
@@ -86,33 +83,31 @@ export function toInternalAppPath(
     return null;
   }
   if (target.origin !== app.origin) return null;
-  // Opaque origins (file:, data:) compare equal to each other; only real web
-  // origins identify the app.
+  // 不透明源（file:、data:）之间比较是相等的；只有真实 web 源才能标识应用。
   if (target.protocol !== "http:" && target.protocol !== "https:") return null;
   if (!isWorkspaceScopedPath(target.pathname)) return null;
   return `${target.pathname}${target.search}${target.hash}`;
 }
 
-/** An in-app entity page addressed by a link — the two kinds that have a chip. */
+/** 链接指向的应用内实体页——有专属「小卡片」的两种。 */
 export interface WorkspaceEntityRef {
   kind: "issue" | "project";
   /**
-   * Entity id, decoded from the path. A UUID for either kind, or — for an
-   * issue only — a bare identifier (`MUL-123`). Callers dispatch on the shape
-   * with `isIssueIdentifier`: an identifier still has to be resolved to a real
-   * issue before it can be rendered as a chip.
+   * 实体 id，从路径解码而来。两种实体都是 UUID；issue 额外支持裸标识
+   * （`MUL-123`）。调用方用 `isIssueIdentifier` 按形态分发：标识符在渲染成
+   * 卡片前仍需先解析成真实 issue。
    */
   id: string;
   /**
-   * Workspace slug the link names, or `null` for the slug-less legacy form
-   * (`/projects/<uuid>`), which `openLink` resolves against the current
-   * workspace. A caller that renders workspace-scoped data MUST compare a
-   * non-null slug against the current one — the entity itself is only
-   * resolvable inside the workspace that owns it.
+   * 链接指明的工作区 slug；不带 slug 的旧形态（`/projects/<uuid>`）为
+   * `null`，由 `openLink` 用当前工作区解析。凡是渲染工作区作用域数据的
+   * 调用方，都必须拿非 null 的 slug 与当前工作区比对——实体本身只能在
+   * 拥有它的工作区内被解析。
    */
   slug: string | null;
 }
 
+/** 路由段 → 实体类型。识别 `/issues/...` 与 `/projects/...` 两条路线。 */
 const ENTITY_ROUTE_SEGMENTS: Record<string, WorkspaceEntityRef["kind"]> = {
   issues: "issue",
   projects: "project",
@@ -122,22 +117,22 @@ const UUID_RE =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 /**
- * Does this path segment address one entity of `kind`?
+ * 该路径段是否指向 `kind` 类型的单个实体？
  *
- * A project is only ever addressed by UUID — it has no shorthand. An issue has
- * both, and the identifier form is the one that matters most: `copyLink` and
- * issue-link actions both build `paths.issueDetail(identifier || id)`, and the
- * issue route rewrites a UUID URL back to the identifier, so `MUL-123` is what
- * a user actually copies out of the app or the address bar. Accepting only the
- * UUID here would leave the shape people really paste as a raw URL.
+ * project 只能用 UUID 寻址——它没有简写。issue 两种都有，其中标识符形态
+ * 最重要：`copyLink` 和 issue 链接动作都拼 `paths.issueDetail(identifier || id)`，
+ * issue 路由还会把 UUID URL 重写成标识符，所以用户从应用里/地址栏复制出来
+ * 的往往是 `MUL-123`。这里只收 UUID 的话，人们真正会粘贴的那种形态反而
+ * 会变成裸 URL。
  *
- * Identifier-shaped ids are candidates, not hits: the caller resolves one
- * against the current workspace and keeps the plain link when it misses.
+ * 长得像标识符的 id 只是候选而非命中：调用方拿它去当前工作区解析，
+ * 解析不到就保留普通链接。
  */
 function isEntityId(kind: WorkspaceEntityRef["kind"], id: string): boolean {
   return UUID_RE.test(id) || (kind === "issue" && isIssueIdentifier(id));
 }
 
+/** 安全地解码 URL 段，失败返回 null。 */
 function decodeSegment(segment: string): string | null {
   try {
     return decodeURIComponent(segment);
@@ -147,26 +142,23 @@ function decodeSegment(segment: string): string | null {
 }
 
 /**
- * Stand-in origin for resolving a href that carries no origin of its own. The
- * `.invalid` TLD is reserved as permanently unresolvable (RFC 2606), so no
- * deployment can ever be served from it and no href can use it to pass as one.
+ * 解析不带自身 origin 的 href 时用的替身基准源。`.invalid` 顶级域被保留为
+ * 永久不可解析（RFC 2606），所以不会有任何部署用它提供内容，任何 href 也
+ * 无法借它冒充本应用。
  */
 const RELATIVE_BASE = "https://link.invalid";
 
 /**
- * Resolve a link to the path it addresses on THIS deployment; `null` when it
- * addresses anywhere else.
+ * 把链接解析成本部署内路径；指向别处一律返回 `null`。
  *
- * Resolving through `URL` rather than testing the string is what makes the
- * answer trustworthy. A leading slash does not mean "this site":
- * `//other.example/x` and `/\other.example/x` both start with one and both name
- * another host, which is where a browser goes. A parser sees the host; a prefix
- * test cannot, and no amount of extra prefixes closes the gap — that is why the
- * shape of this check matters more than the cases it currently rejects.
+ * 用 `URL` 解析而不是测字符串前缀，答案才可信。开头带 `/` 不代表
+ * “本站”：`//other.example/x` 与 `/\other.example/x` 都以它开头，但指的
+ * 都是别的主机——那正是浏览器会去的地方。解析器能看到主机，前缀测试
+ * 看不到，再加多少前缀也补不上这个洞——这就是这个检查的形态比它当前
+ * 拒绝的用例更重要的原因。
  *
- * With no `appOrigin` (a platform that cannot report one), only a genuinely
- * relative href resolves: anything carrying a host of its own fails the
- * comparison, which is the safe direction.
+ * 没有 `appOrigin`（平台报不出）时，只有真正相对路径能解析成功：任何自带
+ * 主机的链接都会在比对中落败，这是安全方向。
  */
 function toSameOriginPath(
   href: string,
@@ -181,20 +173,18 @@ function toSameOriginPath(
   } catch {
     return null;
   }
-  // Opaque origins (`javascript:`, `data:`) stringify to "null" and can never
-  // equal a real one, so they fall out here too.
+  // 不透明源（`javascript:`、`data:`）字符串化后是 "null"，永远不可能
+  // 等于真实源，所以它们也在这里被挡下。
   if (target.origin !== expected.origin) return null;
   return `${target.pathname}${target.search}${target.hash}`;
 }
 
 /**
- * Parse a link that addresses exactly one issue or project page on this
- * deployment; `null` for everything else — external URLs, list pages, deeper
- * routes, and links carrying a query string or fragment.
+ * 解析一个恰好指向本部署内某个 issue 或 project 实体页的链接；其它一律
+ * 返回 `null`——外部 URL、列表页、更深的路由，以及带查询串或片段的链接。
  *
- * Accepts a site-relative path and an absolute URL pointing back at this
- * deployment's app origin. Both go through the same origin comparison, so the
- * two forms cannot disagree about what counts as in-app.
+ * 同时接受站内相对路径与指向本部署应用源的绝对 URL。两者走同一个同源
+ * 比较，所以两种形态不会对「什么算站内」产生分歧。
  */
 export function parseWorkspaceEntityLink(
   href: string,
@@ -202,9 +192,8 @@ export function parseWorkspaceEntityLink(
 ): WorkspaceEntityRef | null {
   const path = toSameOriginPath(href, appOrigin);
   if (!path) return null;
-  // A query string or fragment addresses something more specific than the
-  // entity page (a saved filter, an anchored comment). Collapsing that to a
-  // plain entity reference would silently drop it.
+  // 查询串或片段指向的是比实体页更具体的东西（保存的筛选、锚定的评论）。
+  // 把它们折叠成纯实体引用等于静默丢弃这些信息。
   if (path.includes("?") || path.includes("#")) return null;
 
   const segments: string[] = [];
@@ -214,9 +203,9 @@ export function parseWorkspaceEntityLink(
     segments.push(decoded);
   }
 
-  // `/{slug}/{route}/{id}` — what every in-app "copy link" produces.
-  // `/{route}/{id}` — slug-less legacy content, current-workspace by
-  // definition since `openLink` prepends the current slug to it.
+  // `/{slug}/{route}/{id}` ——应用内「复制链接」产生的标准形态。
+  // `/{route}/{id}` ——不带 slug 的旧内容，按定义属于当前工作区，
+  // 因为 `openLink` 会给它拼上当前 slug。
   let slug: string | null;
   let route: string | undefined;
   let id: string | undefined;
@@ -239,20 +228,17 @@ export function parseWorkspaceEntityLink(
 }
 
 /**
- * Open a link — internal paths dispatch multica:navigate, external open new tab.
+ * 打开链接——站内路径派发 multica:navigate，外部链接新开标签页。
  *
- * If `currentSlug` is provided and `href` is a workspace-scoped path lacking a
- * slug (e.g. "/issues/abc" instead of "/{slug}/issues/abc"), the slug is
- * prepended. This is for legacy markdown content authored before the URL
- * refactor, or future content where users forget the slug when pasting.
+ * 提供了 `currentSlug` 且 `href` 是缺 slug 的工作区作用域路径时（比如
+ * "/issues/abc" 而不是 "/{slug}/issues/abc"），会拼上前缀。这是给 URL
+ * 重构之前创作的旧 markdown 内容准备的，也兼容未来用户粘贴时忘带 slug。
  *
- * `appOrigin` lets absolute URLs pointing back at this deployment take the same
- * internal route as a relative path.
+ * `appOrigin` 让指向本部署的绝对 URL 与相对路径走同一条站内路由。
  *
- * `intent` is how the user clicked (see `resolveClickIntent`); the platform
- * listener answering `multica:navigate` executes it — in-place navigation for
- * "push", a new tab otherwise. External links ignore it: they always hand off
- * to the browser / system browser.
+ * `intent` 是用户的点击方式（见 `resolveClickIntent`）；应答
+ * `multica:navigate` 的平台监听器负责执行——"push" 就地导航，其它新开
+ * 标签页。外部链接忽略它：一律交给浏览器/系统浏览器。
  */
 export function openLink(
   href: string,
@@ -268,12 +254,11 @@ export function openLink(
     if (currentSlug && !isGlobalPath(path)) {
       const firstSegment = path.split("/")[1];
       if (firstSegment && WORKSPACE_ROUTE_SEGMENTS.has(firstSegment)) {
-        // Path looks like /issues/abc (no slug) — prepend current slug.
+        // 路径形如 /issues/abc（没带 slug）——拼上当前 slug。
         path = `/${currentSlug}${path}`;
       }
-      // Otherwise the first segment is either already a slug (e.g. "acme" in
-      // "/acme/issues") or something unknown (e.g. "/foo"). Leave it alone —
-      // the user wrote what they meant.
+      // 否则第一段要么已经是 slug（"/acme/issues" 里的 "acme"），要么是
+      // 未知的东西（如 "/foo"）。保持原样——用户写下的就是他们想去的。
     }
     window.dispatchEvent(
       new CustomEvent("multica:navigate", {
@@ -285,7 +270,7 @@ export function openLink(
   }
 }
 
-/** Check if a href is a mention protocol link (should not be opened as a regular link). */
+/** 判断 href 是否为 mention 协议链接（不应当普通链接打开）。 */
 export function isMentionHref(href: string | null | undefined): href is string {
   return !!href && href.startsWith("mention://");
 }

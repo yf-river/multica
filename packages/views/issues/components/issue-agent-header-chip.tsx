@@ -1,5 +1,25 @@
 "use client";
 
+// 本文件：IssueAgentHeaderChip —— 问题详情头部"现在有 agent 在忙吗"chip。
+// 放在头部（而非可滚动正文），让"正在工作"的信号停在固定位置，
+// 不跟正文列未来的吸顶横幅抢地盘。取代原先正文里的吸顶 live 卡。
+//
+// 与右侧面板执行日志共用同一份按问题读的任务列表
+// （共享 `issueKeys.tasks(issueId)` 缓存），所以头部 chip 与日志对
+// "什么在跑"永远一致。两个表面都派生自同一个查询，消除了旧的全工作区
+// agent 任务快照比本按问题列表拉得慢、chip 落后于日志"agent 工作中"
+// 指示的竞态。
+//
+// 折叠态刻意保持浅显：
+//   - 一个 agent 在跑 → 头像 + "{名字} 工作中"
+//   - 多个在跑       → 头像堆叠 + "N 个 agent 工作中"
+//   - 仅排队         → "{名字} 已排队" / "N 个 agent 已排队"，
+//                      半透明头像 / 弱化文字（无光束动画）
+//
+// 悬停 chip 展开一张紧凑 Popover 卡，行内容与右侧面板的活动行一致
+// （点击 / 键盘同样可切换，供触屏与无障碍使用）。那些行只显示必要的
+// 状态/时间与任务入口动作，不渲染事件计数、也不为计数预取任务消息。
+
 import { memo, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -17,38 +37,18 @@ import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
 import { ActiveTaskRow } from "./execution-log-section";
 import { useT } from "../../i18n";
 
-// Per-issue "is an agent working on this right now?" chip for the issue
-// detail header. Lives in the header (not the scrollable body) so the live
-// signal stays in one fixed place and never competes with future sticky
-// banners in the content column. Replaces the in-body sticky live card.
-//
-// Reads the same per-issue task list as the right-panel Execution log
-// (shared `issueKeys.tasks(issueId)` cache), so the header chip and the log
-// always agree on what is active. Both surfaces derive from one query, which
-// removes the race where the old workspace-wide agent-task-snapshot refetched
-// slower than this per-issue list and left the chip lagging behind the log's
-// "agent is working".
-//
-// Collapsed display stays intentionally shallow:
-//   - one running agent  → avatar + "{name} is working"
-//   - multiple running   → avatar stack + "N agents working"
-//   - queued only        → "{name} is queued" / "N agents queued",
-//                          half-opacity avatars / muted text (no beam)
-//
-// Hovering the chip opens a compact Popover card with the same active rows as
-// the right panel (click / keyboard still toggle it for touch and a11y). Those
-// rows show necessary status/time and task entry actions, but do not render
-// event counts or prefetch task messages for a count.
-
 interface IssueAgentHeaderChipProps {
   issueId: string;
 }
 
+/**
+ * 头部 live chip：本问题有 agent 在跑 / 排队时渲染（职责见文件头）。
+ */
 export const IssueAgentHeaderChip = memo(function IssueAgentHeaderChip({
   issueId,
 }: IssueAgentHeaderChipProps) {
   const { t } = useT("issues");
-  // Same query options as ExecutionLogSection so both observe one cache entry.
+  // 与 ExecutionLogSection 同款查询选项，让两处共用一个缓存条目。
   const { data: tasks = [] } = useQuery({
     queryKey: issueKeys.tasks(issueId),
     queryFn: () => api.listTasksByIssue(issueId),
@@ -59,19 +59,18 @@ export const IssueAgentHeaderChip = memo(function IssueAgentHeaderChip({
   const { running, queued } = useMemo(() => {
     const running: AgentTask[] = [];
     const queued: AgentTask[] = [];
-    // The list is already issue-scoped by the endpoint, so only the status
-    // split matters here.
+    // 列表已被接口限定在本问题范围内，所以这里只需要按状态切分。
     for (const task of tasks) {
       if (task.status === "running") running.push(task);
       else if (
         task.status === "queued" ||
         task.status === "dispatched" ||
-        // Daemon-parked on a busy local_directory — still active, just
-        // waiting on a path lock. Belongs in the live chip, not dropped.
+        // 因 busy local_directory 被 daemon 停放——仍然活跃，只是在等一个
+        // 路径锁。归入 live chip，不能丢掉。
         task.status === "waiting_local_directory"
       )
         queued.push(task);
-      // Terminal statuses are the execution log's story, not the live chip's.
+      // 终态属于执行日志的故事，不是 live chip 的。
     }
     return { running, queued };
   }, [tasks]);
@@ -83,7 +82,7 @@ export const IssueAgentHeaderChip = memo(function IssueAgentHeaderChip({
       openedTranscriptTaskSnapshot
     : null;
 
-  // No active work → render nothing.
+  // 没有活跃工作 → 什么都不渲染。
   if (running.length === 0 && queued.length === 0 && !openedTranscriptTask) return null;
 
   return (
@@ -122,6 +121,9 @@ interface ActiveChipProps {
   onTranscriptOpenChange: (task: AgentTask, open: boolean) => void;
 }
 
+/**
+ * chip 本体 + 悬停卡片（活动行复用 ActiveTaskRow）。
+ */
 function ActiveChip({
   issueId,
   running,
@@ -135,10 +137,9 @@ function ActiveChip({
   const agentIds = [...new Set(activeTasks.map((task) => task.agent_id))];
   const anyRunning = running.length > 0;
   const isSingle = agentIds.length === 1;
-  // Copy must follow the actual state: "is working" only when something is
-  // truly running. With nothing running (queued / dispatched / parked on a
-  // path lock) the chip reads "is queued" so a not-yet-started agent isn't
-  // mislabelled as working.
+  // 文案必须跟着真实状态走：只有确实在跑时才说"工作中"。什么都不跑
+  // （排队 / dispatched / 等路径锁）时 chip 读作"已排队"，
+  // 免得还没开工的 agent 被误标成"工作中"。
   const label = isSingle
     ? t(
         ($) =>
@@ -156,14 +157,12 @@ function ActiveChip({
   return (
     <div className="flex items-center gap-1">
       <Popover>
-        {/* Hover opens the card so the live activity reads as a glanceable
-            status surface, not a click target. In Base UI the hover config
-            lives on the Trigger (a popover can have multiple triggers), not
-            the Root. The trigger stays a real button, so click and keyboard
-            (Enter/Space) still toggle it for touch and a11y. A short open
-            delay avoids flicker when the pointer merely passes over the chip;
-            the close delay keeps it open while the pointer travels across the
-            hover bridge into the interactive rows. */}
+        {/* 悬停即打开卡片，让"正在工作"读起来是可扫视的状态表面而不是
+            一个点击目标。Base UI 里悬停配置挂在 Trigger 上（popover 可以有
+            多个触发器），不在 Root 上。触发器保持真实按钮，因此点击与键盘
+            （Enter/Space）对触屏与无障碍同样可用。短打开延迟避免指针
+            只是掠过 chip 时的闪烁；关闭延迟让指针跨越悬停桥进入可交互行时
+            卡片保持打开。 */}
         <PopoverTrigger
           openOnHover
           delay={150}
@@ -172,11 +171,9 @@ function ActiveChip({
             <button
               type="button"
               aria-label={label}
-              // While an agent is actively running, the chip wears the
-              // brand border beam — a highlight sweeping around its rounded
-              // edge — so a triggered run is unmistakably "alive" in the
-              // header. Queued-only state stays calm (no beam) to reserve the
-              // motion for work that is genuinely in flight.
+              // agent 确实在跑时，chip 戴上品牌色描边光束——一道扫过圆角边的
+              // 高光——让被触发的运行在头部无可错认地"活着"。仅排队的
+              // 状态保持平静（无光束），把动效留给真正在途的工作。
               className={cn(
                 "flex h-9 min-w-9 max-w-[11rem] items-center justify-center gap-1.5 rounded-md px-2 text-muted-foreground outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring md:h-7 md:min-w-0 md:justify-start md:px-1.5",
                 anyRunning && "border-beam bg-brand/5",
@@ -223,8 +220,8 @@ function ActiveChip({
           </div>
         </PopoverContent>
       </Popover>
-      {/* Separator from the action buttons — the chip is a status segment,
-          not another button, so a hairline keeps the two groups legible. */}
+      {/* 与动作按钮隔开——chip 是状态段，不是又一个按钮，
+          用一条发丝线让两组保持可辨。 */}
       <span className="h-4 w-px bg-border" aria-hidden="true" />
     </div>
   );

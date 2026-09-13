@@ -1,3 +1,12 @@
+// notification_listeners.go
+//
+// 职责：把领域事件翻译成"收件箱通知"并实时推给相关订阅者。
+// 这是通知系统的中枢：Issue 创建/更新、评论创建、任务失败等事件进来后，先按
+// 场景算清楚"该通知谁"（订阅者、被 @ 的人、负责人、创建者…），再用可靠的
+// 投影式插入（ID 由源事件推导，重试幂等）写收件箱条目，并派发 inbox:new 事件
+// 让客户端实时弹出。整个文件贯穿几个关键策略：排除操作者本人、跳过订阅者的
+// 静默偏好、把子 Issue 的关键变更"冒泡"给父 Issue 的 watcher、对委派订阅
+// （delegated）只投递重要里程碑。
 package main
 
 import (
@@ -14,16 +23,19 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// emptyDetails 是最常见的空详情 JSON（很多通知类型不需要额外细节）。
 var emptyDetails = []byte("{}")
 
-// projectedInboxID gives a notification projection a stable row identity.
-// Consumer transactions can roll back after inserting the row (for example
-// while recording a delivery receipt); reusing a UUID derived from the source
-// event makes the retry an idempotent upsert instead of a duplicate inbox item.
+// projectedInboxID 给一条通知投影一个稳定的行 ID。消费者的数据库事务可能在
+// 插完行后回滚（例如登记投递回执时失败）；用"由源事件推导出的 UUID"重试，
+// 就能把重试变成幂等的 upsert 而不是重复的收件箱条目。
 func projectedInboxID(event events.Event, recipientType, recipientID, notifType, issueID string) pgtype.UUID {
 	return service.ProjectedInboxID(eventIdentity(event), recipientType, recipientID, notifType, issueID)
 }
 
+// eventIdentity 为事件生成稳定标识：优先用显式事件 ID，其次幂等键；两者都空
+// 就退化为"事件类型+负载 JSON"。它用于把派生通知"钉"在源事件上，保证重放时
+// 同一源事件不会重复产生通知。
 func eventIdentity(event events.Event) string {
 	if event.ID != "" {
 		return event.ID
@@ -35,20 +47,25 @@ func eventIdentity(event events.Event) string {
 	return event.Type + ":" + string(payload)
 }
 
-// parentBubbleNotifTypes is the allowlist of inbox notification types that
-// bubble up from a sub-issue to subscribers of its parent. Other event types
-// only notify subscribers of the sub-issue itself, to keep parent watchers'
-// inboxes focused on the signal that matters most: status transitions.
+// parentBubbleNotifTypes 是"从子 Issue 冒泡给父 Issue 订阅者"的通知类型白名单。
+// 白名单之外的其它事件类型只通知子 Issue 自己的订阅者——把父 Issue watcher 的
+// 收件箱留给最关键的信号：状态流转。
 var parentBubbleNotifTypes = map[string]bool{
 	"status_changed": true,
 }
 
+// delegatedAlwaysNotifTypes 是"委派订阅者（delegated）无论如何都要收到"的
+// 通知类型：被 @、任务失败、agent 卡住。这些对委派人（把活派给 agent 的人）
+// 始终是必须知晓的。
 var delegatedAlwaysNotifTypes = map[string]bool{
 	"mentioned":     true,
 	"task_failed":   true,
 	"agent_blocked": true,
 }
 
+// delegatedStatusNotify 是委派订阅者对"状态变更通知"放行的目标状态：只有走到
+// in_review / done / cancelled / blocked 这类里程碑才通知，日常的前进式状态
+// 不打扰。
 var delegatedStatusNotify = map[string]bool{
 	"in_review": true,
 	"done":      true,
@@ -56,8 +73,9 @@ var delegatedStatusNotify = map[string]bool{
 	"blocked":   true,
 }
 
-// deliverToSubscriber narrows only the passive delegated tier. Direct
-// subscribers receive the complete notification stream.
+// deliverToSubscriber 决定某条通知要不要投给某订阅者：非委派订阅者收到完整
+// 通知流；委派订阅者只收 delegatedAlwaysNotifTypes 里的类型，以及"走向里程碑"
+// 的状态变更（delegatedStatusNotify 判定）。
 func deliverToSubscriber(reason, notifType, issueStatus string) bool {
 	if reason != "delegated" {
 		return true
@@ -71,8 +89,8 @@ func deliverToSubscriber(reason, notifType, issueStatus string) bool {
 	return delegatedStatusNotify[issueStatus]
 }
 
-// notifTypeToGroup maps each InboxItemType to a user-configurable preference
-// group. Types not in this map are always delivered (not configurable).
+// notifTypeToGroup 把每种收件箱通知类型映射到"用户可配置的偏好分组"。不在表
+// 里的类型总是投递（不可配置静默）。
 var notifTypeToGroup = map[string]string{
 	"issue_assigned":     "assignments",
 	"unassigned":         "assignments",
@@ -89,18 +107,18 @@ var notifTypeToGroup = map[string]string{
 	"agent_completed":    "agent_activity",
 }
 
-// isNotifMuted returns true if the given notification type is muted for a user
-// based on their parsed preferences map.
+// isNotifMuted 依据用户解析后的偏好表判断某通知类型是否被该用户静默。
 func isNotifMuted(prefs map[string]string, notifType string) bool {
 	group, ok := notifTypeToGroup[notifType]
 	if !ok {
-		return false // unconfigurable types are always delivered
+		return false // 不可配置的类型总是投递
 	}
 	return prefs[group] == "muted"
 }
 
-// loadUserPrefs loads notification preferences for a set of user IDs in a
-// workspace. Returns a map from user_id string to parsed preferences.
+// loadUserPrefs 批量加载一批用户在工作区里的通知偏好。返回 user_id 字符串 →
+// 解析后的偏好 map；某个用户没配偏好就不在结果里。单条偏好 JSON 解析失败就
+// 跳过该用户（当没配处理）。
 func loadUserPrefs(
 	ctx context.Context,
 	queries *db.Queries,
@@ -139,24 +157,20 @@ func loadUserPrefs(
 	return result, nil
 }
 
-// terminalStatusForTaskFailedDismiss is the set of issue statuses that mark
-// the issue as "the user no longer needs to triage past failures." When a
-// status change lands on one of these, any pre-existing task_failed inbox
-// rows for the issue are archived so the inbox stays a fresh-signal surface.
-// `in_review` is included because in Multica's agent flow that's the most
-// reliable "work delivered" handoff — and a status flip back to in_progress
-// will simply produce new task_failed rows that surface normally.
+// terminalStatusForTaskFailedDismiss 是"能消除历史 task_failed 通知"的 Issue
+// 终态集合：状态走到这些终态之一时，把该 Issue 上先前遗留的 task_failed 收件箱
+// 条目全部归档，让收件箱保持"只呈现新鲜信号"。包含 in_review 是因为在 Multica
+// 的 agent 流程里那是最可靠的"活已交付"交接点——若之后状态又翻回 in_progress，
+// 新产生的 task_failed 行会照常冒出来。
 var terminalStatusForTaskFailedDismiss = map[string]bool{
 	"in_review": true,
 	"done":      true,
 	"cancelled": true,
 }
 
-// archiveStaleTaskFailedInbox archives all task_failed inbox rows for the
-// given issue and returns the realtime events that describe the projection.
-// It runs inside an outbox consumer, so the events are persisted by the
-// dispatcher instead of being published before the consumer transaction
-// commits.
+// archiveStaleTaskFailedInbox 归档某 Issue 上全部 task_failed 收件箱行，并返回
+// 描述这次投影的实时事件。它在 outbox 消费者内执行，所以这些事件由 dispatcher
+// 持久化（而不是在消费事务提交前就发布出去）。
 func archiveStaleTaskFailedInbox(
 	ctx context.Context,
 	queries *db.Queries,
@@ -176,14 +190,13 @@ func archiveStaleTaskFailedInbox(
 		return nil, nil
 	}
 
-	// Dedupe recipients: the listener creates one row per failure event per
-	// subscriber, so a long-running issue can yield several rows for the
-	// same recipient.
+	// 接收者去重：每条失败事件会对每个订阅者产生一行，长期存活的 Issue 可能给
+	// 同一接收者攒下多行，归档时按人合并成一条批量事件即可。
 	counts := map[string]int{}
 	for _, row := range rows {
-		// Inbox rows for task_failed only target member recipients today
-		// (notifySubscribers skips agent subscribers), but defend the WS
-		// layer against future widening — only members get a personal feed.
+		// 目前 task_failed 的收件箱行只投给 member 类接收者（notifySubscribers
+		// 会跳过 agent 订阅者），但这里仍给 WS 层留一道防线：只有 member 有个人
+		// 信息流，未来若扩大到 agent 也不会把事件推给没有个人流的对象。
 		if row.RecipientType != "member" {
 			continue
 		}
@@ -212,12 +225,10 @@ func archiveStaleTaskFailedInbox(
 	return emitted, nil
 }
 
-// notifySubscribers queries the subscriber table for an issue, excludes the
-// actor and any extra IDs, and creates inbox items for each remaining member
-// subscriber. Publishes an inbox:new event for each notification.
-// If the issue has a parent and the notification type is in the bubble
-// allowlist, parent issue subscribers are also notified (deduplicated
-// against direct subscribers).
+// notifySubscribers 查询某 Issue 的订阅者，排除操作者与 extra 指定的 ID，给
+// 其余每个 member 订阅者建收件箱条目，并为每条通知发布 inbox:new 事件。若
+// Issue 有父 Issue 且通知类型在"冒泡白名单"里，父 Issue 的订阅者也会被通知
+// （与直接订阅者去重）。
 func notifySubscribers(
 	ctx context.Context,
 	queries *db.Queries,
@@ -240,12 +251,12 @@ func notifySubscribers(
 		return err
 	}
 
-	// Only a small allowlist of event types bubbles to parent subscribers.
+	// 只有白名单里的小众事件类型才冒泡给父订阅者。
 	if !parentBubbleNotifTypes[notifType] {
 		return nil
 	}
 
-	// Also notify parent issue subscribers if this is a sub-issue.
+	// 若这是子 Issue，还要通知父 Issue 的订阅者。
 	issue, err := queries.GetIssue(ctx, util.MustParseUUID(issueID))
 	if err != nil {
 		return err
@@ -254,7 +265,7 @@ func notifySubscribers(
 		return nil
 	}
 
-	// Merge already-notified IDs into exclude set for parent subscribers.
+	// 把"已经通知过的人"并入父订阅者的排除集合，避免同一个人被投两遍。
 	parentExclude := make(map[string]bool, len(exclude)+len(notified))
 	for id := range exclude {
 		parentExclude[id] = true
@@ -262,9 +273,9 @@ func notifySubscribers(
 	for id := range notified {
 		parentExclude[id] = true
 	}
-	// A delegated subscription intentionally receives only important child
-	// milestones. Do not let an ordinary parent subscription bypass that tier
-	// for the same person when routine child progress bubbles upward.
+	// 委派订阅的初衷是"只接收重要子里程碑"。当例行的子 Issue 进展冒泡上来时，
+	// 不能让同一个人的普通父订阅绕过这个层级。因此查子 Issue 订阅者，把其中
+	// 委派订阅且按 deliverToSubscriber 不应收到该通知的人加进排除集。
 	childSubscribers, err := queries.ListIssueSubscribers(ctx, util.MustParseUUID(issueID))
 	if err != nil {
 		return err
@@ -276,8 +287,8 @@ func notifySubscribers(
 		}
 	}
 
-	// Query subscribers from the parent issue, but the inbox item still
-	// points to the sub-issue so the user navigates to the actual change.
+	// 从父 Issue 查订阅者，但收件箱条目仍指向子 Issue——让用户点过去看到真正
+	// 发生变更的地方。
 	parentID := util.UUIDToString(issue.ParentIssueID)
 	_, err = notifyIssueSubscribers(ctx, queries, bus,
 		parentID, issueID, issueStatus, workspaceID, e, parentExclude,
@@ -285,11 +296,9 @@ func notifySubscribers(
 	return err
 }
 
-// notifyIssueSubscribers sends inbox notifications to subscribers of
-// subscriberIssueID, but creates inbox items pointing to targetIssueID.
-// This allows querying subscribers from a parent issue while the notification
-// links to the sub-issue where the change actually occurred.
-// Returns the set of member IDs that were notified.
+// notifyIssueSubscribers 给 subscriberIssueID 的订阅者发收件箱通知，但创建的
+// 收件箱条目都指向 targetIssueID——从而可以从父 Issue 查订阅者、同时把通知链
+// 到真正发生变更的子 Issue。返回被通知到的 member ID 集合（供上层去重）。
 func notifyIssueSubscribers(
 	ctx context.Context,
 	queries *db.Queries,
@@ -313,7 +322,7 @@ func notifyIssueSubscribers(
 		return nil, err
 	}
 
-	// Batch-load notification preferences for all member subscribers.
+	// 先把所有 member 订阅者挑出来，批量加载他们的通知偏好。
 	var memberIDs []string
 	for _, sub := range subs {
 		if sub.UserType == "member" {
@@ -326,27 +335,28 @@ func notifyIssueSubscribers(
 	}
 
 	for _, sub := range subs {
-		// Only notify member-type subscribers (not agents)
+		// 只通知 member 类型订阅者（agent 走别的路径）。
 		if sub.UserType != "member" {
 			continue
 		}
 
 		subID := util.UUIDToString(sub.UserID)
 
-		// Skip the actor
+		// 跳过操作者本人
 		if subID == e.ActorID {
 			continue
 		}
 
-		// Skip any extra excluded IDs
+		// 跳过额外排除的人
 		if exclude[subID] {
 			continue
 		}
+		// 委派层级过滤（见 deliverToSubscriber）
 		if !deliverToSubscriber(sub.Reason, notifType, issueStatus) {
 			continue
 		}
 
-		// Skip if this notification type is muted by the user
+		// 用户把该通知类型静默了则跳过
 		if prefs, ok := userPrefs[subID]; ok && isNotifMuted(prefs, notifType) {
 			continue
 		}
@@ -386,8 +396,8 @@ func notifyIssueSubscribers(
 	return notified, nil
 }
 
-// notifyDirect creates an inbox item for a specific recipient. Skips if the
-// recipient is the actor. Publishes an inbox:new event on success.
+// notifyDirect 给单个指定接收者建收件箱条目。接收者是操作者本人则跳过。
+// 成功则发布 inbox:new 事件。
 func notifyDirect(
 	ctx context.Context,
 	queries *db.Queries,
@@ -406,12 +416,12 @@ func notifyDirect(
 	if !isMemberOrAgentActorType(recipientType) {
 		return nil
 	}
-	// Skip if recipient is the actor
+	// 接收者就是操作者则跳过
 	if recipientID == e.ActorID {
 		return nil
 	}
 
-	// Check notification preferences for member recipients.
+	// member 接收者要先查通知偏好，静默了就不打扰。
 	if recipientType == "member" {
 		prefs, err := loadUserPrefs(ctx, queries, workspaceID, []string{recipientID})
 		if err != nil {
@@ -453,13 +463,16 @@ func notifyDirect(
 	return nil
 }
 
+// isMemberOrAgentActorType 判断主体类型是否为 member 或 agent（通知只发这两类，
+// system 等其余类型不产生站内信）。
 func isMemberOrAgentActorType(actorType string) bool {
 	return actorType == "member" || actorType == "agent"
 }
 
-// notifyMentionedMembers creates inbox items for each @mentioned member,
-// excluding the actor and any IDs in the skip set. When an @all mention is
-// present, all workspace members are notified (excluding agents).
+// notifyMentionedMembers 为每个被 @ 的 member 建收件箱条目，排除操作者与
+// skip 集合里的人。出现 @all 时通知整个工作区的成员（agent 除外）。@squad
+// 会被展开成其中的成员；成员里的 agent 走评论触发/派发路径，不经由"@ 收件箱"
+// 路径。
 func notifyMentionedMembers(
 	ctx context.Context,
 	bus *events.Bus,
@@ -472,7 +485,7 @@ func notifyMentionedMembers(
 	skip map[string]bool,
 	details []byte,
 ) error {
-	// Collect the set of member IDs to notify.
+	// 收集要通知的 member ID 集合。
 	recipientIDs := map[string]bool{}
 
 	hasAll := false
@@ -490,9 +503,8 @@ func notifyMentionedMembers(
 		}
 	}
 
-	// Expand each @squad mention to its human members. Agent members of a
-	// squad are reached via comment-trigger / assignment paths, not the
-	// mention-inbox path, so we only seed member-typed recipients here.
+	// 把每个 @squad 展开成它的人类成员。squad 里的 agent 成员通过评论触发 /
+	// 派发路径触达，不走 @ 收件箱路径，所以这里只种下 member 类接收者。
 	for _, sid := range squadIDs {
 		squadUUID, err := util.ParseUUID(sid)
 		if err != nil {
@@ -509,7 +521,7 @@ func notifyMentionedMembers(
 		}
 	}
 
-	// If @all is present, expand to all workspace members.
+	// 出现 @all 就展开成全体工作区成员。
 	if hasAll {
 		members, err := queries.ListMembers(ctx, util.MustParseUUID(e.WorkspaceID))
 		if err != nil {
@@ -520,7 +532,7 @@ func notifyMentionedMembers(
 		}
 	}
 
-	// Batch-load notification preferences for all mention recipients.
+	// 批量加载所有 @ 接收者的通知偏好。
 	var mentionUserIDs []string
 	for id := range recipientIDs {
 		if id != e.ActorID && !skip[id] {
@@ -536,7 +548,7 @@ func notifyMentionedMembers(
 		if id == e.ActorID || skip[id] {
 			continue
 		}
-		// Skip if mentions/comments are muted by this user
+		// 该用户静默了 @/评论则跳过
 		if p, ok := mentionPrefs[id]; ok && isNotifMuted(p, "mentioned") {
 			continue
 		}
@@ -571,6 +583,10 @@ func notifyMentionedMembers(
 	return nil
 }
 
+// notificationEventCollector 是一个小工具：给"在可靠消费者事务里产生的通知"
+// 收集 inbox:new / inbox:batch-archived 事件。因为消费者返回的事件会由调度器
+// 持久化后再发布，投影逻辑不能用真总线（会把事务未提交的通知提前发出去），
+// 所以这里用一个独立的内存总线把派生事件先收进列表。
 type notificationEventCollector struct {
 	bus    *events.Bus
 	events []events.Event
@@ -587,6 +603,8 @@ func newNotificationEventCollector() *notificationEventCollector {
 	return collector
 }
 
+// projectIssueCreatedNotifications 投影"Issue 创建"的通知：给负责人发一条
+// issue_assigned（action_required），给描述里 @ 到的人发 mentioned。
 func projectIssueCreatedNotifications(ctx context.Context, queries *db.Queries, event events.Event, payload issueEventPayload) ([]events.Event, error) {
 	issue := payload.Issue
 	collector := newNotificationEventCollector()
@@ -610,6 +628,10 @@ func projectIssueCreatedNotifications(ctx context.Context, queries *db.Queries, 
 	return collector.events, nil
 }
 
+// projectIssueUpdatedNotifications 投影"Issue 更新"的通知：负责人变更时给新旧
+// 负责人分别发 issue_assigned / unassigned，再给订阅者群发 assignee_changed；
+// 状态、优先级、起止日期变更各给订阅者群发对应通知；状态走到终态时顺手归档
+// 过期的 task_failed 收件箱；描述变更时只 @ 新增出现在描述里的人。
 func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, event events.Event, payload issueEventPayload) ([]events.Event, error) {
 	issue := payload.Issue
 	collector := newNotificationEventCollector()
@@ -659,6 +681,7 @@ func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, 
 			nil, "status_changed", "info", issue.Title, "", details); err != nil {
 			return nil, err
 		}
+		// Issue 走到终态：把历史 task_failed 通知归档，保持收件箱信号新鲜。
 		if terminalStatusForTaskFailedDismiss[issue.Status] {
 			archivedEvents, err := archiveStaleTaskFailedInbox(ctx, queries, event.WorkspaceID, issue.ID, event)
 			if err != nil {
@@ -688,6 +711,7 @@ func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, 
 			return nil, err
 		}
 	}
+	// 描述变更只 @"新增出现的"对象——旧描述里已 @ 过的不重复打扰。
 	if payload.DescriptionChanged && issue.Description != nil {
 		previous := map[string]bool{}
 		if payload.PrevDescription != nil {
@@ -710,6 +734,9 @@ func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, 
 	return collector.events, nil
 }
 
+// projectCommentCreatedNotifications 投影"评论创建"的通知：给 Issue 订阅者群发
+// new_comment（正文当通知 body），并 @ 评论里新提到的人。系统账号发的评论不
+// 投影（提前返回空）。
 func projectCommentCreatedNotifications(ctx context.Context, queries *db.Queries, event events.Event, payload commentEventPayload) ([]events.Event, error) {
 	comment := payload.Comment
 	if !isMemberOrAgentActorType(comment.AuthorType) {
@@ -737,6 +764,9 @@ func projectCommentCreatedNotifications(ctx context.Context, queries *db.Queries
 	return collector.events, nil
 }
 
+// projectTaskFailedNotifications 投影"任务失败"的通知：确认任务所属 Issue 存在
+// 且工作区一致后，给该 Issue 订阅者群发 task_failed（action_required）。通知
+// 的 actor 记为执行失败的 agent（事件头原本可能是别的操作者，这里要如实归因）。
 func projectTaskFailedNotifications(ctx context.Context, queries *db.Queries, event events.Event, payload taskEventPayload) ([]events.Event, error) {
 	if payload.IssueID == "" {
 		return nil, nil
@@ -773,6 +803,7 @@ func projectTaskFailedNotifications(ctx context.Context, queries *db.Queries, ev
 	return collector.events, nil
 }
 
+// setAnyOptionalDetail 仅在 value 非空时把 key 写进 map[string]any 详情。
 func setAnyOptionalDetail(details map[string]any, key string, value *string) {
 	if value != nil {
 		details[key] = *value

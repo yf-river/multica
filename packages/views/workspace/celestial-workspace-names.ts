@@ -1,8 +1,21 @@
+/**
+ * workspace 模块：用于随机生成工作区身份的「天体」命名表。
+ *
+ * 每项包含一个稳定的英文 slug 前缀与对应的中文名称。创建新工作区时
+ * randomCelestialWorkspaceIdentity 从中随机挑选，用于给用户一个既有中文
+ * 名字、又有稳定 URL 前缀的开箱即用工作区名。
+ */
+
+/** 一个天体的工作区命名：slugBase 用于 URL/issue 前缀，name 是中文显示名。 */
 export interface CelestialWorkspaceName {
   slugBase: string;
   name: string;
 }
 
+/**
+ * 全部天体命名条目（只读）。创建新工作区时从里随机挑一个作为默认名字与
+ * slug 前缀。
+ */
 export const CELESTIAL_WORKSPACE_NAMES = [
   { slugBase: "alpha-centauri", name: "南门二" },
   { slugBase: "andromeda", name: "仙女座星系" },

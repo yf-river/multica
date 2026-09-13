@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件：BatchActionToolbar —— 批量选择多行问题后浮现的工具条。
+// 支持批量状态 / 优先级 / 负责人 / 删除；删除前有确认弹窗。
+// placement 决定它是视口底部悬浮条还是内联在列表流里。
+
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { X, Trash2 } from "lucide-react";
@@ -30,22 +34,23 @@ import {
 import { useIssueSurfaceActionsOptional } from "../surface/actions-context";
 import { useIssueSurfaceSelection } from "../surface/selection-context";
 
+/**
+ * 批量操作工具条。
+ */
 export function BatchActionToolbar({
   issues,
   placement = "fixed-bottom",
 }: {
   /**
-   * The universe of selectable issues at this call site (the same list the
-   * rows are rendered from). The toolbar filters it by the active surface
-   * selection to reflect the real common status / priority / assignee of the
-   * selected issues, mirroring how the skill list filters rows by `selectedIds`.
+   * 本调用点的可选中问题全集（与渲染行同一份列表）。工具条按当前表面
+   * 的活动选择对其过滤，好反映选中问题的真实共同状态/优先级/负责人，
+   * 与技能列表按 `selectedIds` 过滤行是一个道理。
    */
   issues: Issue[];
   /**
-   * "fixed-bottom" — floats at the bottom of the viewport (default; used by
-   * full-screen issue lists).
-   * "inline" — renders in normal flow so callers can place it adjacent to
-   * the selected rows (used inside scrollable sections like sub-issues).
+   * "fixed-bottom" —— 悬浮在视口底部（默认；全屏问题列表用）。
+   * "inline" —— 正常文档流渲染，调用方可把它放在选中行旁
+   *（可滚动区段如子问题内用）。
    */
   placement?: "fixed-bottom" | "inline";
 }) {
@@ -55,20 +60,18 @@ export function BatchActionToolbar({
   const clear = selection.clear;
   const shouldReduceMotion = useReducedMotion() ?? false;
 
-  // The authoritative selection is selectedIds ∩ the visible universe. Acting
-  // on raw selectedIds while other consumers (Export selected, common fields)
-  // intersect lets one "N selected" mean different sets — e.g. a realtime
-  // update drops a selected row from the window, batch still mutates it but
-  // export omits it. Count, pickers, and every action below share this set.
+  // 权威选择集 = selectedIds ∩ 可见全集。当其它消费方（导出选中、公共字段）
+  // 都做交集时，若这里对裸 selectedIds 动手，同一个"N 已选"可能指不同集合
+  // ——例如实时更新把某选中行移出窗口，批量仍改了它而导出漏掉了它。
+  // 计数、pickers 与下面每个动作共用这一份集合。
   const selectedIssues = useMemo(
     () => issues.filter((i) => selectedIds.has(i.id)),
     [issues, selectedIds],
   );
   const count = selectedIssues.length;
 
-  // Reflect the real shared value of the selected issues in each picker; fall
-  // back to an empty (no-checkmark) state when the selection is mixed, instead
-  // of asserting a hardcoded default.
+  // 让每个 picker 反映选中问题的真实共同值；选择为混合时回退到空态
+  // （无对勾），而不是断言一个写死的默认值。
   const common = useMemo(
     () => commonIssueFields(selectedIssues),
     [selectedIssues],
@@ -111,15 +114,13 @@ export function BatchActionToolbar({
     }
   };
 
-  // Batch status changes apply directly — no run-confirm modal (MUL-4155).
-  // done/cancelled can never start a run, and a backlog → active promotion now
-  // starts its run the same way a single-issue status change or the CLI does,
-  // without an extra confirmation step (product decision on MUL-4155). The
-  // status change was previously routed through the pre-trigger modal, which for
-  // the common done/cancelled case only rendered a misleading "现在开始处理？ →
-  // 不会开始处理" box. Agent/squad assignment still confirms via
-  // handleBatchAssignee — that is the only batch action that should preview a
-  // run fan-out.
+  // 批量状态变更直接应用——不走"运行确认"弹窗（MUL-4155）。
+  // done/cancelled 永远不会启动运行；backlog → active 的晋升现在与单问题
+  // 改状态或 CLI 一样直接开工，不再多一道确认（MUL-4155 的产品决定）。
+  // 过去状态变更要路由过 pre-trigger 弹窗，而在常见的 done/cancelled
+  // 情形它只渲染一个误导性的"现在开始处理？→ 不会开始处理"框。
+  // Agent/小队分配仍走 handleBatchAssignee 确认——那是唯一该预览
+  // 运行扇出的批量动作。
   const handleBatchStatus = (updates: Partial<UpdateIssueRequest>) => {
     if (!updates.status) return;
     void handleBatchUpdate(updates);
@@ -127,13 +128,12 @@ export function BatchActionToolbar({
 
   const handleBatchAssignee = (updates: Partial<UpdateIssueRequest>) => {
     if ((updates.assignee_type === "agent" || updates.assignee_type === "squad") && updates.assignee_id) {
-      // Backlog never starts a run on assign (parking lot), so if every selected
-      // issue is in backlog the confirm modal would only render an empty "won't
-      // start" box — apply directly, matching handleBatchStatus's backlog short-
-      // circuit. A mixed selection still routes through the modal: the non-backlog
-      // issues will trigger and need confirmation.
-      // Category, not key: a custom status in the backlog category is a parking
-      // lot too, and assigning into it never starts a run. (MUL-6243)
+      // Backlog 在分配时从不启动运行（停车场），所以如果每个选中问题都在
+      // backlog，确认弹窗只会渲染一个空的"不会开始"框——直接应用，
+      // 与 handleBatchStatus 的 backlog 短路一致。混合选择仍走弹窗：
+      // 非 backlog 的问题会触发运行、需要确认。
+      // 用类别而非 key 判断：backlog 类别里的自定义状态同样是停车场，
+      // 分配进去也永不启动运行。（MUL-6243）
       const allBacklog = selectedIssues.every((i) => issueBehavesAs(i, "backlog"));
       if (!allBacklog) {
         openModal("issue-run-confirm", {
@@ -221,7 +221,7 @@ export function BatchActionToolbar({
           </button>
         </div>
 
-        {/* Status */}
+        {/* 状态 */}
         <StatusPicker
           status={common.status}
           onUpdate={handleBatchStatus}
@@ -232,7 +232,7 @@ export function BatchActionToolbar({
           align="center"
         />
 
-        {/* Priority */}
+        {/* 优先级 */}
         <PriorityPicker
           priority={common.priority}
           onUpdate={handleBatchUpdate}
@@ -243,7 +243,7 @@ export function BatchActionToolbar({
           align="center"
         />
 
-        {/* Assignee */}
+        {/* 负责人 */}
         <AssigneePicker
           assigneeType={common.assignee?.type ?? null}
           assigneeId={common.assignee?.id ?? null}
@@ -256,7 +256,7 @@ export function BatchActionToolbar({
           align="center"
         />
 
-        {/* Delete */}
+        {/* 删除 */}
         <Button
           variant="ghost"
           size="sm"

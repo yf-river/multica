@@ -1,5 +1,9 @@
 //go:build windows
 
+// 环境锁（Windows 实现）：与 envlock_unix.go 提供的 API 相同，
+// 但底层用 Windows 的 LockFileEx/UnlockFileEx。加锁同样"不等待"，
+// 锁随句柄关闭而释放。
+
 package execenv
 
 import (
@@ -9,20 +13,13 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// lockFileExclusiveNonBlocking takes an exclusive lock on f without waiting.
-// ok is false when another process already holds it.
+// openLockFile 打开（必要时创建）锁文件，并返回可加锁的句柄。
+// 必须用 FILE_SHARE_DELETE 共享方式打开，而 os.OpenFile 默认不请求该标志。
 //
-// Windows releases the lock when the handle closes, including on abnormal
-// process termination, giving the same crash-safe liveness answer as flock on
-// unix — see the unix build of this file for why that property matters.
-// openLockFile opens (creating if needed) the lock file with
-// FILE_SHARE_DELETE, which os.OpenFile does not request.
-//
-// Without it Windows refuses to delete a file that anyone still has open, so a
-// held lock would pin the whole env root: the GC could not reclaim the
-// directory, and neither could a test's temp-dir teardown. Unix already allows
-// unlinking an open file, and this is what makes Windows behave the same. The
-// lock coordinates executions; it is not meant to pin the directory.
+// 为什么需要它：Windows 不允许删除"仍被某个进程打开"的文件。若不加这个标志，
+// 一把被持有的锁就会把整个环境根目录钉住——GC 无法回收目录，测试清理临时目录
+// 也会失败。Unix 本就允许删除一个已被打开的文件，加了这个标志后 Windows 的
+// 行为与 Unix 一致：锁只负责协调并发执行，不应阻止目录被回收。
 func openLockFile(path string) (*os.File, error) {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
@@ -43,6 +40,8 @@ func openLockFile(path string) (*os.File, error) {
 	return os.NewFile(uintptr(h), path), nil
 }
 
+// lockFileExclusiveNonBlocking 对 f 尝试加排他锁，加锁时立即返回、绝不阻塞
+// （LOCKFILE_FAIL_IMMEDIATELY）。返回的 ok 为 false 表示锁已被别人持有。
 func lockFileExclusiveNonBlocking(f *os.File) (ok bool, err error) {
 	overlapped := new(windows.Overlapped)
 	err = windows.LockFileEx(
@@ -59,7 +58,7 @@ func lockFileExclusiveNonBlocking(f *os.File) (ok bool, err error) {
 	return false, err
 }
 
-// unlockFile drops the lock.
+// unlockFile 主动释放这把锁。
 func unlockFile(f *os.File) error {
 	overlapped := new(windows.Overlapped)
 	return windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, overlapped)

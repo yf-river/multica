@@ -1,11 +1,10 @@
 /**
- * DJB2 string hash — 32-bit unsigned, rendered as base36.
+ * DJB2 字符串哈希——32 位无符号整数，最后以 base36 渲染。
  *
- * Extracted from `rich-content/mounted-block-registry.ts` (same cheap,
- * synchronous hash used by the Mermaid layout cache). Used by the HTML
- * attachment preview to derive a `contentKey` fingerprint of the rendered
- * text so that scroll restoration can detect when the attachment's content
- * changed (re-upload to the same id) and refuse to restore a stale offset.
+ * 从 `rich-content/mounted-block-registry.ts` 抽出来的（Mermaid 布局缓存
+ * 用的就是这种廉价同步哈希）。HTML 附件预览用它对渲染后的文本推导
+ * `contentKey` 指纹，这样滚动恢复能识别出附件内容是否已变化（同一 id
+ * 被重新上传），从而拒绝恢复过期的滚动位置。
  */
 export function hashString(source: string): string {
   let hash = 5381;

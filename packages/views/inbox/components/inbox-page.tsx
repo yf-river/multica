@@ -1,5 +1,8 @@
 "use client";
 
+// 收件箱页：左侧通知列表（活跃/归档两视图，可筛选），右侧任务详情或通知详情
+// （窄屏为整屏切换）。列表与选中都持久化到 URL；选中条目自动标已读，并支持
+// 全部已读/归档等批量操作。
 import {
   useState,
   useEffect,
@@ -104,6 +107,11 @@ const IssueDetail = lazy(() =>
   import("../../issues/components/issue-detail").then((module) => ({ default: module.IssueDetail })),
 );
 
+/**
+ * 收件箱页：左侧是去重后的通知列表（收件箱 / 归档两个视图，支持筛选与
+ * 批量操作），右侧渲染任务详情（懒加载）或纯通知详情；列表与选中状态
+ * 与 URL 参数 `issue` / `view` 双向同步。
+ */
 export function InboxPage() {
   const { t } = useT("inbox");
   const showIssueLimitUpgradePrompt = useIssueLimitUpgradePrompt();
@@ -116,7 +124,7 @@ export function InboxPage() {
   const [selectedKey, setSelectedKeyState] = useState(() => urlIssue);
   const [view, setViewState] = useState<InboxView>(() => urlView);
 
-  // Sync from URL when searchParams change (e.g. navigation)
+  // URL 变化（例如导航）时把选中同步回 state。
   useEffect(() => {
     setSelectedKeyState(urlIssue);
   }, [urlIssue]);
@@ -128,9 +136,8 @@ export function InboxPage() {
   const { data: rawItems = [], isLoading: loading } = useQuery(inboxListOptions(wsId));
   const items = useMemo(() => deduplicateInboxItems(rawItems), [rawItems]);
 
-  // Fetched in both views, not just the archived one: the main list's entry
-  // into the archive is labelled with this count, so it has to be known before
-  // the user goes there.
+  // 归档列表在两个视图都拉取，而不只在归档视图：主列表的归档入口要用这个计数
+  // 配数字，所以必须等用户进去之前就已知。
   const {
     data: rawArchivedItems = [],
     isLoading: archivedLoading,
@@ -145,10 +152,8 @@ export function InboxPage() {
   const viewItems = isArchivedView ? archivedItems : items;
   const filters = useInboxFilters(wsId);
   const clearFilters = useInboxFilterStore((state) => state.clearFilters);
-  // Active and archived endpoints return the same row contract and are both
-  // already loaded on this page. Requiring the combined response to expose the
-  // projection prevents one pod in a rolling deploy from advertising a
-  // capability the other pod does not have yet.
+  // 活跃与归档两个接口返回同一份行契约，且本页两者都已加载。要求「合并响应」才
+  // 暴露能力，能防止滚动发布里一个 pod 宣称的能力另一个 pod 还没有。
   const priorityFilterSupport = useMemo(
     () => inboxPriorityFilterSupport([...rawItems, ...rawArchivedItems]),
     [rawItems, rawArchivedItems],
@@ -170,36 +175,31 @@ export function InboxPage() {
   const selectionFilteredOut =
     selectedKey.length > 0 && selectedInView !== null && selected === null;
 
-  // What the DETAIL pane shows, one React transition behind the click.
+  // 详情面板展示什么，比点击晚一个 React transition。
   //
-  // Mounting `IssueDetail` is the expensive half of switching rows, and driven
-  // straight off `selectedKey` it ran as an urgent update: the main thread
-  // blocked from the click until the new detail was ready, which is the
-  // "click, freeze, jump" the desktop shell showed (MUL-6404). Deferred, the
-  // click commits the row highlight and the URL right away, React renders the
-  // new detail at transition priority — interruptible, so the shell keeps
-  // painting — and the previous issue stays on screen until it is ready.
+  // 挂载 `IssueDetail` 是换行里最贵的半边；如果直接跟 `selectedKey` 走，它会以
+  // urgent 更新运行：主线程从点击那一刻一直卡到新详情就绪，也就是桌面端曾经的
+  // 「点击、冻结、跳变」（MUL-6404）。延迟后，点击立刻提交行高亮和 URL，React
+  // 以 transition 优先级渲染新详情——可中断，外壳持续绘制——旧任务在就绪前一直
+  // 留在屏幕上。
   const detailKey = useDeferredValue(selectedKey);
   const detailSwapping = detailKey !== selectedKey;
   const detailItem = resolveDetailItem(visibleItems, selectedKey, detailKey);
 
-  // The gap above is invisible to the navigation adapter — the inbox stays on
-  // the same route and only rewrites `?issue=` — so report it explicitly and
-  // the shell's progress bar covers the swap on both platforms.
+  // 上面的延迟对外壳导航适配器不可见——收件箱始终在同一路由，只改写 `?issue=`——
+  // 所以这里显式上报，外壳的进度条在两种平台上都能盖住这次切换。
   useReportNavigating(detailSwapping);
 
-  // Track the last key we actually resolved against the inbox list. Lets the
-  // fallback effect distinguish "shared-link to a notification not in our
-  // inbox" (never resolved → redirect to the issue page) from "item was in
-  // our inbox and just got removed" (was resolved → stay on /inbox).
+  // 记住「最后一次真的在收件箱列表里解析成功」的 key。这让兜底 effect 能区分
+  // 「分享链接指向不在收件箱里的通知」（从未解析 → 跳任务页）与「条目原本在
+  // 收件箱、刚被移除」（曾解析 → 留在 /inbox）。
   const lastResolvedKeyRef = useRef<string>("");
   useEffect(() => {
     if (selected) lastResolvedKeyRef.current = selectedKey;
   }, [selected, selectedKey]);
 
-  // Both the view and the selection live in the URL, so every write has to
-  // carry the other one — a bare `?issue=` would silently drop the user out of
-  // the archived view on the next selection.
+  // 视图与选中都活在 URL 里，所以每次写入都要带上另一个——裸写 `?issue=` 会在
+  // 下一次选中时把用户悄悄甩出归档视图。
   const buildInboxUrl = useCallback(
     (nextView: InboxView, key: string) => {
       const params = new URLSearchParams();
@@ -217,37 +217,32 @@ export function InboxPage() {
     replace(buildInboxUrl(view, key));
   }, [replace, buildInboxUrl, view]);
 
-  // Switching views always clears the selection: the two lists are mutually
-  // exclusive, so a key carried across would never resolve, and the fallback
-  // effect below would bounce the user to the issue page.
+  // 切换视图总是清空选中：两个列表互斥，跨视图带过去的 key 永远解析不到，
+  // 下面的兜底 effect 会把用户弹到任务页去。
   const setView = useCallback((nextView: InboxView) => {
     setViewState(nextView);
     setSelectedKeyState("");
     replace(buildInboxUrl(nextView, ""));
   }, [replace, buildInboxUrl]);
 
-  // Stable identity: InboxList memoizes the archive entry on this callback, so
-  // an inline arrow here would rebuild (and remount) the entry every render.
+  // 稳定身份：InboxList 对归档入口做了 memo；这里如果写行内箭头，每次渲染都会
+  // 重建（并重挂载）这个入口。
   const openArchived = useCallback(() => setView("archived"), [setView]);
 
-  // Applying a filter can remove the open row from the list. Clear that local
-  // selection instead of treating it as a broken deep link and redirecting to
-  // the issue page; the notification still exists, it is simply filtered out.
+  // 应用筛选可能把当前打开的行筛出列表。这里清掉本地选中，而不是当成坏掉的
+  // 深链跳去任务页：通知仍然存在，只是被过滤了而已。
   useEffect(() => {
     if (selectionFilteredOut) setSelectedKey("");
   }, [selectionFilteredOut, setSelectedKey]);
 
-  // Whether the list currently on screen has finished its first load. The
-  // fallback and drain effects below both key on this, and getting it wrong in
-  // the archived view means acting on an empty list that simply hasn't arrived.
+  // 当前屏幕上的列表是否已完成首次加载。下面两个兜底 effect 都以它为准；
+  // 在归档视图里搞错它，等于对一个「只是还没到货」的空列表做动作。
   const viewLoading = isArchivedView ? archivedLoading : loading;
 
-  // Shared inbox links (?issue=<id>) may point to notifications not in this
-  // user's inbox (archived, or never received). Fall back to the issue page
-  // so the URL still resolves to something meaningful. But if the key was
-  // previously resolvable (e.g. the issue was just deleted in another tab
-  // and `onInboxIssueDeleted` pruned the cache), the issue detail would 404
-  // too — clear the selection and stay on /inbox instead.
+  // 共享的收件箱链接（?issue=<id>）可能指向不在该用户收件箱里的通知（已归档，
+  // 或从没收到过）。退回任务页，让 URL 仍解析到有意义的地方。但如果这个 key
+  // 之前能解析（例如该任务刚在别的标签页被删、`onInboxIssueDeleted` 已清掉
+  // 缓存），任务详情也会 404——那就清空选中、留在 /inbox。
   useEffect(() => {
     if (viewLoading) return;
     if (!selectedKey) return;
@@ -268,20 +263,18 @@ export function InboxPage() {
     setSelectedKey,
   ]);
 
-  // Never strand the user on an empty archive: when the last archived issue is
-  // restored (or a new notification revives it into the main inbox), fall back
-  // to the main list. Same fallback chat's archived view has. Gated on the load
-  // so a cold `?view=archived` open doesn't bounce before the data lands.
+  // 别把用户困在空归档里：当最后一条归档任务被还原（或新通知把它带回主收件箱）
+  // 时，退回主列表。与聊天归档视图同样的兜底。以加载完成作为门控，避免冷启动
+  // `?view=archived` 在数据落地前就被弹走。
   useEffect(() => {
     if (!isArchivedView) return;
     if (archivedLoading) return;
-    // A failed fetch is also "no items" — bouncing here would swap the error
-    // message for the main list and leave the user with no idea it failed.
+    // 拉取失败也等于「没有条目」——在这弹走会把错误信息换成主列表，用户连失败
+    // 都不知道。
     if (archivedError) return;
-    // Let the fallback effect above settle an unresolved selection first. On a
-    // deep link like `?view=archived&issue=X` into an empty archive both would
-    // otherwise fire in the same commit, and this one's replace() would land
-    // last and swallow the redirect to X.
+    // 先让上面的兜底 effect 处理掉解析不到的选中。像 `?view=archived&issue=X`
+    // 深链进空归档时，两个 effect 会在同一提交同时触发，后者的 replace() 会
+    // 最后落地、把去 X 的重定向吞掉。
     if (selectedKey) return;
     if (archivedItems.length > 0) return;
     setView("inbox");
@@ -314,18 +307,15 @@ export function InboxPage() {
   const typeLabels = useTypeLabels();
 
 
-  // An explicit "mark as unread" on the row that is currently open has to
-  // survive the auto-read effect below, which would otherwise fire on the very
-  // next commit and silently undo it. Holds that one item's id, and only while
-  // it stays selected: moving the selection elsewhere releases the guard, so
-  // re-opening the row later marks it read again like any other open.
+  // 对「当前打开的行」显式标为未读，必须扛过下面那个自动已读 effect——否则它在
+  // 下一个提交就会触发，把用户的操作悄悄撤掉。这里只短暂记录该条目的 id，且只在
+  // 它保持选中期间有效：选中移走即释放守卫，之后重新打开这行会和其它行一样被标读。
   const manualUnreadIdRef = useRef<string | null>(null);
 
-  // Auto-mark-read whenever a selected item is unread — covers both click-
-  // to-select and URL-param-select (e.g. OS notification click on desktop).
-  // The mutation flips `read: true` optimistically, so this effect settles
-  // in one pass and can't loop. Kept in a `useEffect` rather than inlined
-  // in handleSelect so URL-driven selection triggers it too.
+  // 只要选中了一条未读条目就自动标读——覆盖点击选中和 URL 参数选中（如桌面端点
+  // OS 通知）两种情况。mutation 乐观地把 `read: true` 翻掉，所以这个 effect 一遍
+  // 就收敛、不会死循环。放在 `useEffect` 而不是 handleSelect 里，是为了 URL 驱动的
+  // 选中也能触发它。
   const markReadMutate = markReadMutation.mutate;
   const selectedId = selected?.id;
   const selectedRead = selected?.read;
@@ -342,7 +332,7 @@ export function InboxPage() {
     });
   }, [selectedId, selectedRead, markReadMutate, t]);
 
-  // Release the guard as soon as the selection moves off the parked row.
+  // 选中一离开被「留住」的行，就释放守卫。
   useEffect(() => {
     if (manualUnreadIdRef.current && manualUnreadIdRef.current !== selectedId) {
       manualUnreadIdRef.current = null;
@@ -350,19 +340,16 @@ export function InboxPage() {
   }, [selectedId]);
 
   const writeViewState = useViewStateWriter();
-  // Bumped when the already-open notification row is re-clicked; threaded to
-  // IssueDetail so it replays the comment-highlight landing without a
-  // remount. Selection changes don't need it — they remount the detail (key
-  // by issue) and a fresh mount with a cleared memento entry lands by itself.
+  // 已打开的通知行被再次点击时递增；穿给 IssueDetail，让它不用重挂载就能重放
+  // 评论高亮的落地。选中变化不需要它——选中会按任务 key 重挂载详情，新挂载带
+  // 着已清空的 memento 项，自己就能落地。
   const [highlightRequestToken, setHighlightRequestToken] = useState(0);
   const handleSelect = (item: InboxItem) => {
     const nextKey = item.issue_id ?? item.id;
-    // Every click on a notification row is a fresh deep-link intent: clear
-    // the "highlight already landed" memento entry so the comment jump runs
-    // again even if this issue's detail was opened (and its landing
-    // consumed) before. Selection restored from the URL on a remount goes
-    // through the effects above, not through here, so a tab switch back
-    // keeps the entry and does NOT re-jump.
+    // 每次点通知行都是一次全新的深链意图：清掉「高亮已落地」的 memento 项，
+    // 让评论跳转即使在这个任务详情以前开过（且落地被消费过）也会再次执行。
+    // 重挂载时从 URL 还原的选中走上面的 effect、不走这里，所以切标签页回来会
+    // 保留该项、不再跳一次。
     if (item.issue_id) {
       writeViewState(issueHighlightMementoKey(item.issue_id), undefined);
       if (nextKey === selectedKey) {
@@ -373,7 +360,7 @@ export function InboxPage() {
   };
 
   const handleMarkRead = (id: string) => {
-    // Reading it back explicitly cancels an earlier park on the same row.
+    // 显式标读会取消同一行早先的「未读留住」。
     if (manualUnreadIdRef.current === id) manualUnreadIdRef.current = null;
     markReadMutation.mutate(id, {
       onError: (err) =>
@@ -386,9 +373,8 @@ export function InboxPage() {
   };
 
   const handleMarkUnread = (id: string) => {
-    // Only the open row needs the guard — the auto-read effect never touches
-    // the others, and arming it for a background row would suppress the very
-    // first open of that row later.
+    // 只有打开的那行需要守卫——自动标读从不碰其它行，给后台行装上守卫反而会
+    // 压制它之后第一次被打开时的标读。
     if (selected?.id === id) manualUnreadIdRef.current = id;
     markUnreadMutation.mutate(id, {
       onError: (err) =>
@@ -400,23 +386,20 @@ export function InboxPage() {
     });
   };
 
-  // Both archive and unarchive remove the row from the list it was actioned
-  // from, so both have to move the selection off it first. `list` is whichever
-  // list the row came from — the main one for archive, the archived one for
-  // unarchive.
+  // 归档和取消归档都会把被操作的行从它所在的列表里移除，所以两者都要先把选中
+  // 移走。`list` 是行来自的那个列表——归档用主列表，取消归档用归档列表。
   const advanceSelectionPast = (id: string, list: InboxItem[]) => {
     const idx = list.findIndex((i) => i.id === id);
     const target = idx >= 0 ? list[idx] : null;
     const wasSelected = !!target && (target.issue_id ?? target.id) === selectedKey;
     if (!wasSelected) return;
-    // List is sorted newest-first; prefer the next (older) item, fall back
-    // to the previous (newer) one when actioning at the bottom, and only
-    // clear the selection when nothing else is left.
+    // 列表按最新在前排序；优先下一个（更旧）的，在底部操作时退回上一个（更新）的，
+    // 只剩自己时才清空选中。
     const next = list[idx + 1] ?? list[idx - 1] ?? null;
     setSelectedKey(next ? (next.issue_id ?? next.id) : "");
   };
 
-  // Toasts live in these shared handlers so every archive surface confirms alike.
+  // toast 放在这些共享 handler 里，让所有归档入口的确认文案一致。
   const handleArchive = (id: string) => {
     advanceSelectionPast(id, visibleItems);
     archiveMutation.mutate(id, {
@@ -443,7 +426,7 @@ export function InboxPage() {
     });
   };
 
-  // Keep the listener stable while using the latest selected-item action.
+  // 监听器保持稳定，同时总用最新的「对选中项的操作」。
   const actionOnSelectedRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     actionOnSelectedRef.current = selected
@@ -467,7 +450,7 @@ export function InboxPage() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  // Batch operations
+  // 批量操作（只出现在主视图）
   const handleMarkAllRead = () => {
     markAllReadMutation.mutate(undefined, {
       onError: (err) =>
@@ -516,7 +499,7 @@ export function InboxPage() {
     });
   };
 
-  // -- Shared sub-components --------------------------------------------------
+  // -- 共享子组件 ------------------------------------------------------------
 
   const listHeader = (
     <PageHeader>
@@ -537,9 +520,8 @@ export function InboxPage() {
         items={viewItems}
         priorityFilterSupport={priorityFilterSupport}
       />
-      {/* Batch actions are main-view only. Every entry archives from the MAIN
-          inbox, so offering them while the archived list is on screen reads as
-          "archive all of these" and does the opposite of what it looks like. */}
+      {/* 批量操作只出现在主视图。每条入口都是「从主收件箱归档」——在归档列表
+          上提供它们会被读成「把这些全部归档」，做出来的事正好和字面相反。 */}
       {!isArchivedView && (
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -577,9 +559,8 @@ export function InboxPage() {
     </PageHeader>
   );
 
-  // Back out of the archive. Sits inside the list panel rather than replacing
-  // the PageHeader: the user is still in the Inbox, so the page title stays put
-  // and this reads as a sub-view — the same shape chat's archived view uses.
+  // 从归档返回。放在列表面板里而不是替换 PageHeader：用户仍在收件箱，页面标题
+  // 保持不动，这里读起来像子视图——与聊天归档视图同款结构。
   const archivedBackRow = (
     <button
       type="button"
@@ -646,13 +627,11 @@ export function InboxPage() {
     </>
   );
 
-  // Compact widths only: the detail fills the screen there, so the trip back to
-  // the list has to live inside it. On desktop the list is still on screen in
-  // the left panel and needs no back control at all.
+  // 仅紧凑宽度：详情在那里占满整屏，所以回到列表的控件必须活在详情内部。桌面端
+  // 列表仍在左面板里可见，根本不需要返回控件。
   //
-  // The detail owns the whole compact screen in four states — loaded, loading,
-  // not-found and crashed — so this control is threaded into all four below.
-  // Miss one and that state strands the reader with no way out.
+  // 详情在四种状态里拥有整块紧凑屏幕——已加载、加载中、未找到、崩溃——所以下面
+  // 四个状态都要穿进这个控件。漏掉一个，那个状态就会把读者困在没有出口的地方。
   const compactBackAction = isCompact ? (
     <Button
       variant="ghost"
@@ -661,8 +640,8 @@ export function InboxPage() {
       className="-ml-2 shrink-0 gap-1.5 text-muted-foreground"
     >
       <ArrowLeft className="h-4 w-4" />
-      {/* Back goes to the list the user came FROM, so the label has to
-          name it — "Inbox" here would be a lie about the destination. */}
+      {/* 返回要去的是用户「来时的」那个列表，所以文案要说出它的名字——这里写
+          「收件箱」就是对目的地的撒谎。 */}
       {isArchivedView ? t(($) => $.list.archived_title) : t(($) => $.page.back)}
     </Button>
   ) : undefined;
@@ -674,15 +653,13 @@ export function InboxPage() {
   ) : null;
 
   const detailContent = detailItem?.issue_id ? (
-    // Key by issue_id (not inbox-item id): a new comment/reaction generates a
-    // new inbox notification for the same issue, and the dedup helper picks the
-    // newest one — keying on its id would remount IssueDetail on every event,
-    // wiping the comment composer draft and resetting scroll position.
+    // 按 issue_id（而不是收件箱条目 id）作 key：新评论/新反应会给同一任务生成新的
+    // 收件箱通知，去重助手会挑最新一条——用它的 id 作 key 会让每条事件都重挂载
+    // IssueDetail，把评论草稿和滚动位置全清掉。
     <ErrorBoundary
       resetKeys={[detailItem.issue_id]}
-      // The default fallback is a bare message card. On a phone it would be the
-      // only thing on screen, so it has to carry the way back too — the bar is
-      // the point here, the message is whatever the boundary caught.
+      // 默认 fallback 只是一张干巴巴的错误卡。在手机上它是屏幕上唯一的东西，所以
+      // 必须带上回去的路——重点是那条返回栏，文案只是错误边界抓到的东西。
       fallback={compactBackAction ? ({ error }) => (
         <div className="flex flex-1 min-h-0 flex-col">
           {compactBackBar}
@@ -702,10 +679,9 @@ export function InboxPage() {
           highlightRequestToken={highlightRequestToken}
           leadingAction={compactBackAction}
           onDelete={() => {
-            // Issue deletion CASCADE-deletes the inbox item server-side, and the
-            // issue:deleted WS event prunes it from the inbox cache. Just clear
-            // the selection — calling archive here would 404 on a row that no
-            // longer exists.
+            // 删除任务会在服务端级联删掉收件箱条目，`issue:deleted` 的 WS 事件会
+            // 把它从收件箱缓存里清掉。这里只需清空选中——调 archive 会对一条已
+            // 不存在的行返回 404。
             setSelectedKey("");
           }}
           onDone={() => {
@@ -769,10 +745,8 @@ export function InboxPage() {
           <Button
             size="sm"
             onClick={() => {
-              // Seed the legacy advanced form with the original prompt so the
-              // user can recover their input in the full editor instead of
-              // retyping. The agent picker hint becomes the assignee
-              // candidate (still editable).
+              // 用原始提示词预填旧的进阶表单，让用户能在完整编辑器里找回输入，
+              // 而不是重新打一遍。Agent 选择提示会变成「负责人」候选（仍可改）。
               const prompt = detailItem.details?.original_prompt ?? "";
               const agentId = detailItem.details?.agent_id;
               useIssueDraftStore.getState().setManual({
@@ -787,8 +761,7 @@ export function InboxPage() {
             {t(($) => $.detail.edit_advanced)}
           </Button>
         )}
-        {/* Mirrors the row action: the button always reverses the view the
-            item is being read in. */}
+        {/* 与行的动作互相对应：按钮永远做「正在读这条的视图」的反向操作。 */}
         {isArchivedView ? (
           <Button
             variant="outline"
@@ -812,7 +785,7 @@ export function InboxPage() {
     </div>
   ) : null;
 
-  // -- Compact layout: list / detail toggle -----------------------------------
+  // -- 紧凑布局：列表 / 详情切换 -----------------------------------------------
 
   if (isCompact) {
     if (viewLoading) {
@@ -836,25 +809,21 @@ export function InboxPage() {
       );
     }
 
-    // Compact: show detail full-screen when an item is selected. The two kinds
-    // of selection get their chrome from different places, so they render
-    // differently — `InboxItem.issue_id` is nullable and a null one is a plain
-    // notification (a failed quick-create, say), not an issue.
+    // 紧凑布局：选中条目时整屏展示详情。两种选中的 chrome 来自不同地方，渲染
+    // 也不同——`InboxItem.issue_id` 可为空，为空是纯通知（如一次失败的快速创建），
+    // 不是任务。
     if (detailItem?.issue_id) {
-      // No scroll container and no back bar of our own: `IssueDetail` owns
-      // both, and takes the way back through `leadingAction`. Wrapping it in
-      // an `overflow-y-auto` used to collapse its inner scroller to content
-      // height, which took its header (and the done/pin/more/sidebar actions
-      // in it) out of the pinned position, made `position: sticky` inside it a
-      // no-op, and pointed both scroll restoration and the timeline
-      // virtualizer at an element that never scrolls. This wrapper only has to
-      // give the detail a definite height to fill.
+      // 不包自己的滚动容器也不包返回栏：`IssueDetail` 两者都自带，返回走
+      // `leadingAction`。以前包一层 `overflow-y-auto` 会把它的内层滚动器压成内容
+      // 高度——头部（连同 done/pin/more/sidebar 操作）离开钉住的位置、内部
+      // `position: sticky` 失效，滚动还原与时间线虚拟化还指向一个从不滚动的元素。
+      // 这个包装只负责给详情一个确定的高度去填满。
       return <div className="flex flex-1 flex-col min-h-0">{detailContent}</div>;
     }
 
     if (detailItem) {
-      // A notification body is a plain block with no header to host a leading
-      // slot and no scroller of its own, so this branch keeps supplying both.
+      // 通知正文是一块纯文本，没有可承载 leading 插槽的头部、也没有自己的滚动器，
+      // 所以这个分支继续提供两者。
       return (
         <div className="flex flex-1 flex-col min-h-0">
           {compactBackBar}
@@ -863,11 +832,11 @@ export function InboxPage() {
       );
     }
 
-    // Compact: full-screen list
+    // 紧凑布局：整屏列表
     return <div className="flex flex-1 flex-col min-h-0">{listPanel}</div>;
   }
 
-  // -- Desktop layout: resizable two-panel -----------------------------------
+  // -- 桌面布局：可调宽度的左右两栏 -------------------------------------------
 
   if (viewLoading) {
     return (

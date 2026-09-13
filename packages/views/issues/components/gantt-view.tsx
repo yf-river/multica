@@ -1,5 +1,12 @@
 "use client";
 
+// 本文件：GanttView —— 问题列表的"甘特图视图"。
+// 以时间作横轴、每个 issue 一行，用彩色条形展示 start_date ~ due_date 的跨度；
+// 只有单边日期时画成菱形标记。支持 日/周/月 三档缩放与"显示已完成"开关，
+// 行上可右键打开 issue 操作菜单。数据范围由调用方（surface）预过滤好——
+// 本视图只负责排序与绘制，不决定哪些行存在。整个时间轴按 UTC 自然日对齐，
+// 避免查看者时区让条形错位到别的日期上。
+
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -27,8 +34,8 @@ import { sortIssues } from "../utils/sort";
 import { useLocale, useT } from "../../i18n";
 
 // ---------------------------------------------------------------------------
-// Date utilities — everything is UTC-day-aligned so a `due_date` ISO string
-// produced anywhere maps to exactly one column on the axis.
+// 日期工具 —— 所有计算都以 UTC 自然日为对齐单位，这样任何一处产生的
+// `due_date` ISO 字符串都能精确映射到时间轴上的某一列。
 // ---------------------------------------------------------------------------
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -45,9 +52,9 @@ function daysBetween(a: Date, b: Date): number {
   return Math.round((b.getTime() - a.getTime()) / MS_PER_DAY);
 }
 
-// Issue dates arrive as date-only "YYYY-MM-DD" strings (calendar days). Anchor
-// each to UTC midnight so the bar lands on exactly that day, independent of the
-// viewer's timezone. See @multica/core/issues/date.
+// issue 的日期到达时是仅含日期的 "YYYY-MM-DD" 字符串（日历日）。把它们各自
+// 锚定到对应的 UTC 零点，条形就能精确落在该日历日上，与查看者所在时区无关。
+// 实现见 @multica/core/issues/date。
 function parseDay(iso: string | null): Date | null {
   return dateOnlyToUTCDate(iso);
 }
@@ -62,11 +69,11 @@ function isMonthStartUTC(d: Date): boolean {
 }
 
 function isWeekStartUTC(d: Date): boolean {
-  return d.getUTCDay() === 1; // Monday
+  return d.getUTCDay() === 1; // 周一（一周的第一天）
 }
 
 // ---------------------------------------------------------------------------
-// Geometry
+// 几何常量
 // ---------------------------------------------------------------------------
 
 const ROW_HEIGHT = 36;
@@ -108,7 +115,7 @@ function computeRange(issues: Issue[], today: Date, zoom: GanttZoom): Range {
 }
 
 // ---------------------------------------------------------------------------
-// Top axis — sticky on vertical scroll. Renders month + day/week ticks.
+// 顶部时间轴 —— 纵向滚动时吸顶。上面一行月份、下面一行日/周刻度。
 // ---------------------------------------------------------------------------
 
 function GanttAxis({
@@ -156,7 +163,7 @@ function GanttAxis({
       className="relative shrink-0 border-b bg-background"
       style={{ height: HEADER_HEIGHT, width }}
     >
-      {/* Month row */}
+      {/* 月份行 */}
       <div className="relative h-7 border-b">
         {monthBlocks.map((b, i) => (
           <div
@@ -168,7 +175,7 @@ function GanttAxis({
           </div>
         ))}
       </div>
-      {/* Day / week ticks */}
+      {/* 日 / 周刻度行 */}
       <div className="relative h-7">
         {Array.from({ length: totalDays }, (_, i) => {
           const date = addDays(range.start, i);
@@ -233,8 +240,8 @@ function GanttAxis({
 }
 
 // ---------------------------------------------------------------------------
-// Background layer — weekend shading, week/month gridlines, today line.
-// Rendered once across the full timeline track height behind all bars.
+// 背景层 —— 周末底色、周/月网格线与今日线。只铺一次，贯穿整条时间轨道的高度、
+// 垫在所有条形图后面。
 // ---------------------------------------------------------------------------
 
 function BackgroundLayer({
@@ -288,13 +295,12 @@ function BackgroundLayer({
 }
 
 // ---------------------------------------------------------------------------
-// Bar color by status (uses semantic Tailwind tokens, not hardcoded colors).
+// 条形图按状态取色（用 Tailwind 语义 token，而非写死的色值）。
 // ---------------------------------------------------------------------------
 
-// Keyed by CATEGORY, not by status key: an issue on a custom status draws in
-// the color of the category it behaves as. Keying this by IssueStatus made the
-// lookup `undefined` for every custom key, so the bar lost its color entirely.
-// (MUL-6243)
+// 以"类别"（CATEGORY）为键，而不是状态键：处于自定义状态的 issue，其条形
+// 按它归属的类别着色。当初以 IssueStatus 为键时，每个自定义状态键查出来的
+// 都是 undefined，条形图直接整个丢色 (MUL-6243)。
 const STATUS_BAR_BG: Record<IssueStatusCategory, string> = {
   backlog: "bg-muted-foreground/60",
   todo: "bg-muted-foreground/70",
@@ -306,7 +312,7 @@ const STATUS_BAR_BG: Record<IssueStatusCategory, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// One row — left label cell + right timeline track with absolute bar.
+// 单行 —— 左侧吸顶的标签格 + 右侧时间轨道（条形绝对定位在其上）。
 // ---------------------------------------------------------------------------
 
 function ScheduledRow({
@@ -333,9 +339,9 @@ function ScheduledRow({
   const start = parseDay(issue.start_date);
   const due = parseDay(issue.due_date);
 
-  // start > due is a data anomaly (backend only validates RFC3339, not order).
-  // Normalize to min/max so the row still draws something, and flag it so the
-  // user notices instead of seeing a silently empty row.
+  // start > due 属于异常数据（后端只校验 RFC3339 格式，不校验先后顺序）。
+  // 这里按 min/max 归一化，让这一行至少还能画出条形；同时给它加红圈警示，
+  // 让用户察觉异常，而不是看着一行静默空着。
   const inverted =
     start !== null && due !== null && start.getTime() > due.getTime();
   const rangeStart = start && due ? (inverted ? due : start) : (start ?? due);
@@ -369,7 +375,7 @@ function ScheduledRow({
         className="flex border-b border-foreground/5 hover:bg-accent/30 transition-colors"
         style={{ height: ROW_HEIGHT }}
       >
-        {/* Sticky label cell */}
+        {/* 左侧吸顶的标签格 */}
         <AppLink
           href={p.issueDetail(issue.id)}
           className="sticky left-0 z-[1] flex shrink-0 items-center gap-2 border-r bg-background px-3 text-body min-w-0"
@@ -395,7 +401,7 @@ function ScheduledRow({
             />
           )}
         </AppLink>
-        {/* Timeline track */}
+        {/* 时间轨道 */}
         <div
           className="relative shrink-0"
           style={{ width: totalDays * dayPx }}
@@ -446,9 +452,15 @@ function ScheduledRow({
 }
 
 // ---------------------------------------------------------------------------
-// GanttView — public component
+// GanttView —— 对外导出的甘特图组件
 // ---------------------------------------------------------------------------
 
+/**
+ * 甘特图视图组件：把传入的 issue 列表按时间跨度渲染成横向甘特图（行 = issue，
+ * 横轴 = 时间，彩色条形 = start_date ~ due_date 的跨度）。
+ * @param issues 待绘制的 issue 列表——调用方（surface）已套过共享过滤、剔除
+ *   无日期的行并处理了"是否显示已完成"，因此本组件只负责排序与绘制。
+ */
 export function GanttView({ issues }: { issues: Issue[] }) {
   const { t } = useT("issues");
   const zoom = useViewStore((s) => s.ganttZoom);
@@ -460,15 +472,14 @@ export function GanttView({ issues }: { issues: Issue[] }) {
   const today = useMemo(() => startOfDayUTC(new Date()), []);
   const dayPx = DAY_PX_BY_ZOOM[zoom];
 
-  // `issues` is already the canvas set: the surface applies the shared
-  // filters, drops undated rows, and honours `ganttShowCompleted` before
-  // handing it over (see `ganttCanvasRows` in use-issue-surface-data.ts).
-  // Those rules used to live here, which meant the header chip could count
-  // rows this canvas would never draw (MUL-4884). Keep this view a renderer:
-  // it orders rows, it does not decide which ones exist.
+  // `issues` 拿到的已是"该画哪些行"的最终集合：surface 在传进来之前就套好了
+  // 共享过滤、剔除了没有日期的行、并按 `ganttShowCompleted` 做过取舍（见
+  // use-issue-surface-data.ts 的 `ganttCanvasRows`）。这些规则原先写在本组件里，
+  // 结果头部 chip 统计的行数与画布实际画出来的对不上 (MUL-4884)。
+  // 因此请让本视图保持"纯渲染器"：它只负责给行排序，不决定哪些行存在。
   const scheduled = useMemo(() => {
-    // "position" makes no sense on a gantt — default to start_date asc when
-    // the user hasn't picked a more specific sort.
+    // 甘特图上"手动排序 position"没有意义——当用户没选更具体的排序字段时，
+    // 默认按开始日期升序。
     const sortField = sortBy === "position" ? "start_date" : sortBy;
     return sortIssues(issues, sortField, sortDirection);
   }, [issues, sortBy, sortDirection]);
@@ -499,7 +510,7 @@ export function GanttView({ issues }: { issues: Issue[] }) {
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {/* Toolbar */}
+      {/* 工具栏 */}
       <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
         <div className="inline-flex items-center rounded-md border border-foreground/10 p-0.5">
           {([
@@ -535,10 +546,10 @@ export function GanttView({ issues }: { issues: Issue[] }) {
         </Button>
       </div>
 
-      {/* Body — single scroll container drives both vertical + horizontal */}
+      {/* 主体 —— 单一滚动容器同时驱动纵向滚动（跨行）与横向滚动（时间轴） */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto">
         <div style={{ minWidth: LEFT_COL_WIDTH + timelineWidth }}>
-          {/* Sticky header row */}
+          {/* 吸顶的表头行 */}
           <div className="sticky top-0 z-20 flex">
             <div
               className="sticky left-0 z-30 shrink-0 border-b border-r bg-background"
@@ -557,10 +568,9 @@ export function GanttView({ issues }: { issues: Issue[] }) {
             />
           </div>
 
-          {/* Scheduled rows + background overlay */}
+          {/* 计划中的各行 + 背景覆盖层 */}
           <div className="relative">
-            {/* Background gridlines + today line spanning all rows. Positioned
-                starting after the left label column. */}
+            {/* 背景网格线与今日线纵向贯穿所有行。起点让出左侧标签列。 */}
             <div
               className="pointer-events-none absolute top-0"
               style={{ left: LEFT_COL_WIDTH, width: timelineWidth }}

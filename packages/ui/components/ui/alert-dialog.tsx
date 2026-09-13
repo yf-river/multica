@@ -1,4 +1,7 @@
 "use client"
+// 本文件是「警示对话框」组件族（基于 Base UI 的 AlertDialog）：
+// 用于必须打断用户并等待确认的重要操作（删除/危险动作等），带半透明遮罩与
+// 弹出层。由 Root + Trigger + 一组内容块拼装成完整对话框。
 
 import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog"
@@ -6,22 +9,26 @@ import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog
 import { cn } from "@multica/ui/lib/utils"
 import { Button } from "@multica/ui/components/ui/button"
 
+/** AlertDialog：警示对话框的根组件，管理开/关与焦点锁定 */
 function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
   return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
 }
 
+/** AlertDialogTrigger：触发对话框打开的按钮/区域 */
 function AlertDialogTrigger({ ...props }: AlertDialogPrimitive.Trigger.Props) {
   return (
     <AlertDialogPrimitive.Trigger data-slot="alert-dialog-trigger" {...props} />
   )
 }
 
+/** AlertDialogPortal：把内容传送到 body 末端渲染的传送门 */
 function AlertDialogPortal({ ...props }: AlertDialogPrimitive.Portal.Props) {
   return (
     <AlertDialogPrimitive.Portal data-slot="alert-dialog-portal" {...props} />
   )
 }
 
+/** AlertDialogOverlay：遮住背景的半透明遮罩，点击可关闭（默认行为由原语控制） */
 function AlertDialogOverlay({
   className,
   ...props
@@ -38,6 +45,7 @@ function AlertDialogOverlay({
   )
 }
 
+/** AlertDialogContent：居中弹出的对话框主体，含遮罩；size 控制宽度档位 */
 function AlertDialogContent({
   className,
   size = "default",
@@ -61,6 +69,7 @@ function AlertDialogContent({
   )
 }
 
+/** AlertDialogHeader：内容顶部区（媒体图标 + 标题 + 描述），按弹层尺寸切换居中/左对齐 */
 function AlertDialogHeader({
   className,
   ...props
@@ -77,6 +86,7 @@ function AlertDialogHeader({
   )
 }
 
+/** AlertDialogFooter：底部按钮区，移动端竖排、桌面端右对齐横排 */
 function AlertDialogFooter({
   className,
   ...props
@@ -93,6 +103,7 @@ function AlertDialogFooter({
   )
 }
 
+/** AlertDialogMedia：头部里的媒体图标块（警示图标等） */
 function AlertDialogMedia({
   className,
   ...props
@@ -109,6 +120,7 @@ function AlertDialogMedia({
   )
 }
 
+/** AlertDialogTitle：对话框标题（无障碍地标识该弹窗） */
 function AlertDialogTitle({
   className,
   ...props
@@ -125,6 +137,7 @@ function AlertDialogTitle({
   )
 }
 
+/** AlertDialogDescription：对话框补充说明文字 */
 function AlertDialogDescription({
   className,
   ...props
@@ -141,6 +154,7 @@ function AlertDialogDescription({
   )
 }
 
+/** AlertDialogAction：确认按钮（关闭并执行动作），就是普通 Button 加个 slot */
 function AlertDialogAction({
   className,
   ...props
@@ -154,6 +168,7 @@ function AlertDialogAction({
   )
 }
 
+/** AlertDialogCancel：取消按钮，关闭对话框而不执行动作，默认 outline 样式 */
 function AlertDialogCancel({
   className,
   variant = "outline",

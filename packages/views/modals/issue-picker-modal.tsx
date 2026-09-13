@@ -1,3 +1,5 @@
+// 本文件职责：通用「搜索并选择一个 issue」的弹窗——命令式搜索框（输入防抖 + 可中断请求），
+// 结果列表排除指定 id 后供点击选择；被「设父/设子」等弹窗复用。
 "use client";
 
 import { issueStatusCategory } from "@multica/core/issues";
@@ -16,15 +18,29 @@ import {
 import { StatusIcon } from "../issues/components/status-icon";
 import { useT } from "../i18n";
 
+/** IssuePickerModal 的入参约定。 */
 interface IssuePickerModalProps {
+  /** 是否打开弹窗 */
   open: boolean;
+  /** 弹窗开关变化的回调（点击遮罩/按 Esc 时为 false） */
   onOpenChange: (open: boolean) => void;
+  /** 弹窗标题 */
   title: string;
+  /** 弹窗副标题说明 */
   description: string;
+  /** 结果中要排除的 issue id（如当前 issue 自身、已有的父/子 issue） */
   excludeIds: string[];
+  /** 用户选中某条 issue 时的回调 */
   onSelect: (issue: Issue) => void;
 }
 
+/**
+ * 通用「搜索并选择 issue」弹窗。
+ *
+ * 基于 Command 的搜索选择器：输入关键字（300ms 防抖）远程搜索最多 20 条 issue，
+ * 结果中剔除 `excludeIds` 后再展示，点击即回调 `onSelect` 并关闭。关闭时重置内部
+ * 查询状态，保证下次打开是干净的初始态。
+ */
 export function IssuePickerModal({
   open,
   onOpenChange,
@@ -40,6 +56,7 @@ export function IssuePickerModal({
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const abortRef = useRef<AbortController>(undefined);
 
+  // 弹窗关闭时把搜索状态打回初始态，避免下次打开还残留上一次的关键字与结果。
   useEffect(() => {
     if (!open) {
       setQuery("");

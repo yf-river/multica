@@ -1,3 +1,6 @@
+// 本文件是 PR3 那批产品指标（漏斗/社区/商业）的标签归一化器：把调用方可能传出的
+// 各种自由形态取值（大小写、带 URL scheme 的域名、同义拼写变体）收进固定白名单。
+// 与 labels.go 属同一「标签卫生」家族，只是这批标签服务于增长/商业类指标。
 package metrics
 
 import (
@@ -5,11 +8,11 @@ import (
 	"strings"
 )
 
-// PR3 normalizers. All inputs go through fixed allow-lists so a misbehaving
-// caller cannot inflate metric cardinality. Every "unknown" / "other" bucket
-// keeps the series count bounded even under enum drift.
+// PR3 归一化器。所有输入都先过固定白名单，防止某个行为异常的调用方撑爆指标基数；
+// 每个表都留了 "unknown"/"other" 兜底桶，即使上游枚举演进走样，序列数量也保持有界。
 
 var (
+	// knownPlatforms 平台枚举：server/web/cli/mobile/ios。
 	knownPlatforms = map[string]string{
 		"server":  "server",
 		"web":     "web",
@@ -19,13 +22,10 @@ var (
 		"unknown": "unknown",
 	}
 
-	// knownSignupSources is the fixed bucket set for the signup_source
-	// metric label. The PostHog event still ships the raw cookie value
-	// so analytics keeps the long tail; the Prometheus side gets the
-	// bucketed version so cardinality stays bounded even if a misbehaving
-	// frontend writes a unique-per-visitor cookie. Empty cookie collapses
-	// to "direct" (no attribution = direct visit), unknown channels to
-	// "other".
+	// knownSignupSources 是 signup_source 指标标签的固定分桶集合。PostHog 事件仍然会上报
+	// cookie 的原始值（保留长尾给分析用）；Prometheus 侧拿分桶后的值，这样即使某个前端
+	// 写坏、给每个访客都写唯一 cookie，基数也仍然有界。空 cookie 归为 "direct"
+	// （无归因 = 直接访问），未知渠道归 "other"。
 	knownSignupSources = map[string]string{
 		"direct":       "direct",
 		"google":       "google",
@@ -63,6 +63,7 @@ var (
 		"other":        "other",
 	}
 
+	// knownOnboardingPaths 引导流程走向枚举（完整走完/跳过 runtime/进云等待名单/邀请加入等）。
 	knownOnboardingPaths = map[string]string{
 		"full":            "full",
 		"runtime_skipped": "runtime_skipped",
@@ -72,6 +73,7 @@ var (
 		"unknown":         "unknown",
 	}
 
+	// knownAutopilotCadences autopilot 运行节奏枚举。
 	knownAutopilotCadences = map[string]string{
 		"hourly":  "hourly",
 		"daily":   "daily",
@@ -209,6 +211,7 @@ var (
 		"other":         "other",
 	}
 
+	// knownFeedbackKinds 用户反馈类型枚举。
 	knownFeedbackKinds = map[string]string{
 		"bug":     "bug",
 		"feature": "feature",
@@ -217,9 +220,10 @@ var (
 		"other":   "other",
 	}
 
-	// Evidence kinds for multica_chat_output_local_path_total (MUL-4899). A
-	// closed allowlist is what keeps the offending path out of Prometheus: the
-	// caller passes a classification, never a fragment of the reply.
+	// knownChatOutputLocalPathKinds 是 multica_chat_output_local_path_total
+	// （MUL-4899）的证据类型白名单。封闭白名单的作用是把「出问题的路径」挡在
+	// Prometheus 之外：调用方传入的只是分类，永远不是回复内容的片段
+	// （避免把本地文件路径等敏感字符串写进标签）。
 	knownChatOutputLocalPathKinds = map[string]string{
 		"file_url":     "file_url",
 		"workdir_path": "workdir_path",
@@ -234,6 +238,8 @@ var (
 	}
 )
 
+// normalizeFromAllowList 通用白名单归一化：小写 + 去空白后精确查表，
+// 命中返回表中规范值，未命中返回 fallback（各调用方按语义传 "unknown" 或 "other"）。
 func normalizeFromAllowList(value string, allowList map[string]string, fallback string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if normalized, ok := allowList[value]; ok {
@@ -242,22 +248,21 @@ func normalizeFromAllowList(value string, allowList map[string]string, fallback 
 	return fallback
 }
 
+// NormalizePlatform 归一化平台枚举（server/web/cli/mobile/ios）；认不出归 "unknown"。
 func NormalizePlatform(value string) string {
 	return normalizeFromAllowList(value, knownPlatforms, "unknown")
 }
 
-// NormalizeSignupSource buckets the raw multica_signup_source cookie payload
-// into the fixed signup channel allow-list. The cookie carries free-form
-// JSON (utm_source / utm_medium / referrer) on the PostHog side; here we
-// only need a bounded label, so we look at utm_source / source / referrer
-// fields when present, otherwise the bare string. Empty -> "direct".
-// Anything not in the allow-list -> "other".
+// NormalizeSignupSource 把原始的 multica_signup_source cookie 载荷分桶到固定的注册渠道
+// 白名单。cookie 在 PostHog 侧是自由格式 JSON（utm_source / utm_medium / referrer）；
+// 这里只需要一个有界的标签，所以在有 JSON 字段时取 utm_source / source / referrer /
+// ref 之一，否则用裸字符串。空值 → "direct"，白名单外 → "other"。
 func NormalizeSignupSource(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "direct"
 	}
-	// JSON shape: {"utm_source":"...","utm_medium":"...","referrer":"..."}
+	// JSON 形态：{"utm_source":"...","utm_medium":"...","referrer":"..."}
 	if strings.HasPrefix(value, "{") {
 		var parsed map[string]any
 		if err := json.Unmarshal([]byte(value), &parsed); err == nil {
@@ -274,29 +279,28 @@ func NormalizeSignupSource(value string) string {
 	return normalizeFromAllowList(canonicaliseSignupChannel(value), knownSignupSources, "other")
 }
 
-// canonicaliseSignupChannel collapses the raw signup-source string into a
-// shape the allow-list can match: lowercase, trimmed, host-only for URL-ish
-// values, and with a few obvious aliases unified ("twitter.com" -> "twitter").
-// We deliberately keep this defensive — the cookie is set client-side, so any
-// shape is possible.
+// canonicaliseSignupChannel 把原始注册来源字符串归并成白名单能匹配的形状：
+// 小写、去空白、URL 形态只保留主机段，并把若干常见别名统一
+// （"twitter.com" → "twitter"）。这里刻意写得防御性很强——cookie 是客户端设的，
+// 什么形状都可能出现。
 func canonicaliseSignupChannel(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
 		return ""
 	}
-	// Strip an optional URL scheme so "https://twitter.com/foo" -> "twitter.com/foo".
+	// 剥掉可选的 URL scheme，让 "https://twitter.com/foo" → "twitter.com/foo"。
 	for _, scheme := range []string{"https://", "http://", "//"} {
 		if strings.HasPrefix(value, scheme) {
 			value = strings.TrimPrefix(value, scheme)
 			break
 		}
 	}
-	// Take just the host segment.
+	// 只保留主机段。
 	if i := strings.IndexAny(value, "/?#"); i >= 0 {
 		value = value[:i]
 	}
 	value = strings.TrimPrefix(value, "www.")
-	// Map well-known hostnames to their channel bucket.
+	// 把知名主机名映射到对应渠道桶。
 	hostAliases := map[string]string{
 		"google.com":           "google",
 		"google.co.uk":         "google",
@@ -330,46 +334,58 @@ func canonicaliseSignupChannel(value string) string {
 	return value
 }
 
+// NormalizeOnboardingPath 归一化引导路径枚举；认不出归 "unknown"。
 func NormalizeOnboardingPath(value string) string {
 	return normalizeFromAllowList(value, knownOnboardingPaths, "unknown")
 }
 
+// NormalizeAutopilotCadence 归一化 autopilot 运行节奏；认不出归 "unknown"。
 func NormalizeAutopilotCadence(value string) string {
 	return normalizeFromAllowList(value, knownAutopilotCadences, "unknown")
 }
 
+// NormalizeAutopilotTrigger 归一化 autopilot 触发方式；认不出归 "unknown"。
 func NormalizeAutopilotTrigger(value string) string {
 	return normalizeFromAllowList(value, knownAutopilotTriggers, "unknown")
 }
 
+// NormalizeAutopilotSkipReason 归一化 autopilot 跳过原因；认不出归 "other"。
 func NormalizeAutopilotSkipReason(value string) string {
 	return normalizeFromAllowList(value, knownAutopilotSkipReasons, "other")
 }
 
+// NormalizeWebhookProvider 归一化 webhook 来源方（github/gitlab/stripe…）；认不出归 "other"。
 func NormalizeWebhookProvider(value string) string {
 	return normalizeFromAllowList(value, knownWebhookProviders, "other")
 }
 
+// NormalizeWebhookDeliveryStatus 归一化 webhook 投递状态；认不出归 "other"。
 func NormalizeWebhookDeliveryStatus(value string) string {
 	return normalizeFromAllowList(value, knownWebhookDeliveryStatuses, "other")
 }
 
+// NormalizeWebhookRateLimitGate 归一化 webhook 限流闸门；认不出归 "other"。
 func NormalizeWebhookRateLimitGate(value string) string {
 	return normalizeFromAllowList(value, knownWebhookRateLimitGates, "other")
 }
 
+// NormalizeEmailRateLimitAction 归一化被限流的邮件动作；认不出归 "other"。
 func NormalizeEmailRateLimitAction(value string) string {
 	return normalizeFromAllowList(value, knownEmailRateLimitActions, "other")
 }
 
+// NormalizeEmailRateLimitGate 归一化邮件限流闸门维度（actor/workspace/recipient）；认不出归 "other"。
 func NormalizeEmailRateLimitGate(value string) string {
 	return normalizeFromAllowList(value, knownEmailRateLimitGates, "other")
 }
 
+// NormalizeGithubEventKind 归一化 GitHub webhook 事件类型；认不出归 "other"。
 func NormalizeGithubEventKind(value string) string {
 	return normalizeFromAllowList(value, knownGithubEventKinds, "other")
 }
 
+// NormalizeGithubAction 归一化 GitHub 事件动作。空值归 "none"（例如 push 事件没有动作
+// 字段），非空认不出归 "other"。
 func NormalizeGithubAction(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "none"
@@ -377,22 +393,24 @@ func NormalizeGithubAction(value string) string {
 	return normalizeFromAllowList(value, knownGithubActions, "other")
 }
 
+// NormalizeGithubPRReviewResult 归一化 PR review 结论；认不出归 "other"。
 func NormalizeGithubPRReviewResult(value string) string {
 	return normalizeFromAllowList(value, knownGithubPRReviewResults, "other")
 }
 
+// NormalizeCloudRuntimeOp 归一化云 runtime 操作类型；认不出归 "other"。
 func NormalizeCloudRuntimeOp(value string) string {
 	return normalizeFromAllowList(value, knownCloudRuntimeOps, "other")
 }
 
-// NormalizeCloudRuntimeStatus collapses an HTTP status code or symbolic
-// outcome string into the fixed bucket set {ok, 4xx, 5xx, timeout, error}.
-// Empty / unknown collapses to "error".
+// NormalizeCloudRuntimeStatus 把 HTTP 状态码或符号化的结果字符串收进固定桶
+// {ok, 4xx, 5xx, timeout, error}。空值/未知值都归 "error"。
 func NormalizeCloudRuntimeStatus(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if normalized, ok := knownCloudRuntimeStatuses[value]; ok {
 		return normalized
 	}
+	// 三位的裸数字按首位分桶：2xx 算成功、4xx/5xx 算对应错误桶，其它落 error。
 	if len(value) == 3 {
 		switch value[0] {
 		case '2':
@@ -406,8 +424,8 @@ func NormalizeCloudRuntimeStatus(value string) string {
 	return "error"
 }
 
-// CloudRuntimeStatusForCode maps an HTTP status code to its bucket label.
-// Used by cloudruntime client instrumentation.
+// CloudRuntimeStatusForCode 把 HTTP 状态码映射成分桶标签。供 cloudruntime
+// 客户端埋点用；与 NormalizeCloudRuntimeStatus 不同——它输入的是数字码而非字符串。
 func CloudRuntimeStatusForCode(code int) string {
 	switch {
 	case code >= 200 && code < 400:
@@ -421,18 +439,22 @@ func CloudRuntimeStatusForCode(code int) string {
 	}
 }
 
+// NormalizeDaemonWSKind 归一化 daemon WebSocket 消息类型；认不出归 "other"。
 func NormalizeDaemonWSKind(value string) string {
 	return normalizeFromAllowList(value, knownDaemonWSKinds, "other")
 }
 
+// NormalizeFeedbackKind 归一化用户反馈类型；认不出归 "other"。
 func NormalizeFeedbackKind(value string) string {
 	return normalizeFromAllowList(value, knownFeedbackKinds, "other")
 }
 
+// NormalizeContactSalesSource 归一化「联系销售」入口来源；认不出归 "other"。
 func NormalizeContactSalesSource(value string) string {
 	return normalizeFromAllowList(value, knownContactSalesSources, "other")
 }
 
+// NormalizeChatOutputLocalPathKind 归一化聊天输出本地路径的证据类型；认不出归 "other"。
 func NormalizeChatOutputLocalPathKind(value string) string {
 	return normalizeFromAllowList(value, knownChatOutputLocalPathKinds, "other")
 }

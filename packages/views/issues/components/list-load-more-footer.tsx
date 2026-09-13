@@ -1,24 +1,25 @@
 "use client";
 
+// 本文件：ListLoadMoreFooter —— 无限滚动问题视图（看板/列表/泳道）的列尾统一页脚。
+// 把散落在三个视图里的同一套 错误/还有更多/已到底 三分支收拢到一处，
+// 保证各状态的表现与文案始终一致。
+
 import { useT } from "../../i18n";
 import { InfiniteScrollSentinel } from "./infinite-scroll-sentinel";
 
-/** Server row-branch page size (use-issue-status-branches /
- * use-issue-group-branches). A column with no more rows than this never
- * paginated, so its end carries no "no more" marker — the column is
- * self-evidently complete. */
+/** 服务端"行分支"每页大小（见 use-issue-status-branches /
+ * use-issue-group-branches）。一列的总行数不超过它时根本不会翻页，
+ * 因此列尾不需要"没有更多了"的标记——列本身已自证完整。 */
 const PAGINATED_THRESHOLD = 50;
 
 /**
- * Unified end-of-column footer for the infinite-scrolled issue surfaces
- * (Board / List / Swimlane). Collapses four copies of the same
- * error / has-more / reached-end ternary into one place so the states and
- * wording stay consistent:
- *  - error       → retry
- *  - has more    → sentinel + "Loading…" label (bare spinner read as "stuck")
- *  - reached end → muted "No more" marker, but only for columns that actually
- *                  paginated (total beyond one page)
- *  - short list  → nothing
+ * 无限滚动问题视图（看板 / 列表 / 泳道）统一的列尾页脚。把同一条
+ * 错误/还有更多/已到底 三分支在四个副本里收拢为一份，让状态与文案保持一致：
+ *  - 出错      → 显示"重试"
+ *  - 还有更多  → 哨兵 + "加载中…"文字（光秃秃的转圈会被当成"卡死了"）
+ *  - 已到底    → 淡化的"没有更多了"标记——但只对真正翻过页的列（总数超过一页）
+ *                显示
+ *  - 列表很短  → 什么都不显示
  */
 export function ListLoadMoreFooter({
   hasMore,

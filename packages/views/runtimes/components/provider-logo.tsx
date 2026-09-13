@@ -1,3 +1,19 @@
+// ============================================================================
+// ProviderLogo——把「厂商 / 协议族」名字映射成品牌小图标的纯展示组件
+//
+// 角色定位：全站 runtime 列表 / profile 表单里通用的厂商图标渲染器。输入一个
+// 字符串标识（provider），返回对应厂商的图标；未收录的名字回退成通用 Monitor
+// 图标，保证永不白屏。
+//
+// 实现约定：
+//  - 每种 logo 是一个独立的 xxxLogo 小组件，图形要么来自官方 SVG/PNG 资源、
+//     要么是手写内联 SVG——每个组件的头部注释都注明图形来源与版权出处，
+//     换图 / 查证一律以注释为准。
+//  - 图片类资源（SVG / PNG / data URI）统一经 staticAssetSrc 归一化，兼容
+//    Next.js 的「{ src } 对象」与 Vite 的「字符串 URL」两种形态。
+//  - 同一页多处渲染时各自独立实例化：凡是涉及 clipPath / mask 的图形，id 都
+//    用 useId 按实例生成，避免多个 logo 共用同一个 id 导致样式互相污染。
+// ============================================================================
 import { useId } from "react";
 import { Monitor } from "lucide-react";
 import codeartsLogo from "./codearts-logo.svg";
@@ -5,13 +21,13 @@ import qwenLogo from "./qwen-logo.svg";
 import reasonixLogo from "./reasonix-logo.svg";
 import dimLogo from "./dim-logo.png";
 
-// Next.js exposes static imports as objects while Vite exposes URL strings.
-// Normalize both shapes here so shared provider logos work in web and desktop.
+// 统一图片资源的形态：Next.js 会把静态 import 暴露成对象（{ src }），而 Vite
+// 暴露成字符串 URL。这里归一化成字符串，让同一批 logo 在 web 和桌面端都能用。
 function staticAssetSrc(asset: string | { src: string }): string {
   return typeof asset === "string" ? asset : asset.src;
 }
 
-// Claude (Anthropic) — official mark, sourced from Bootstrap Icons (bi-claude)
+// Claude（Anthropic）——官方图形，取自 Bootstrap Icons 的 bi-claude 图标。
 function ClaudeLogo({ className }: { className: string }) {
   return (
     <svg viewBox="0 0 16 16" fill="#D97757" className={className}>
@@ -20,11 +36,10 @@ function ClaudeLogo({ className }: { className: string }) {
   );
 }
 
-// Tencent CodeBuddy — official mark from the @tencent-ai/codebuddy-code CLI
-// package (dist/web-ui/logo.svg), the same CLI this runtime spawns. Dark
-// rounded tile + white "claw" glyph. The artwork overflows the 24×24 box and
-// is cropped by a clipPath; the clip id is per-instance (useId) so multiple
-// logos on one page don't collide on a shared id.
+// 腾讯 CodeBuddy——官方图形，取自 @tencent-ai/codebuddy-code CLI 包内的
+// dist/web-ui/logo.svg（本 runtime 正是拉起这个 CLI）。深色圆角底 + 白色
+// "爪"形图形。原图超出 24×24 画布，靠 clipPath 裁剪；clip id 按实例生成
+// （useId），同一页出现多个 logo 时 id 才不会互相冲突。
 function CodeBuddyLogo({ className }: { className: string }) {
   const clipId = `codebuddy-logo-clip-${useId().replace(/:/g, "")}`;
 
@@ -66,7 +81,7 @@ function CodeBuddyLogo({ className }: { className: string }) {
   );
 }
 
-// Codex (OpenAI) — official mark, sourced from Bootstrap Icons (bi-openai)
+// Codex（OpenAI）——官方图形，取自 Bootstrap Icons 的 bi-openai 图标。
 function CodexLogo({ className }: { className: string }) {
   return (
     <svg viewBox="0 0 16 16" fill="currentColor" className={className}>
@@ -75,7 +90,7 @@ function CodexLogo({ className }: { className: string }) {
   );
 }
 
-// OpenCode — official pixel-art "O" mark from anomalyco/opencode brand assets
+// OpenCode——官方像素风 "O" 标识，取自 anomalyco/opencode 品牌资产。
 function OpenCodeLogo({ className }: { className: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={className}>
@@ -85,18 +100,16 @@ function OpenCodeLogo({ className }: { className: string }) {
   );
 }
 
-// DevEco Code — uses the Huawei DevEco brand icon, extracted from the locally
-// installed DevEco Studio app bundle (devecostudio.icns). The @deveco/deveco-code
-// npm package ships no image asset; swap this data URI for an official DevEco
-// Code mark if/when Huawei publishes one.
+// DevEco Code——使用华为 DevEco 品牌图标，取自本机安装的 DevEco Studio 应用包
+// （devecostudio.icns）。@deveco/deveco-code npm 包不带任何图片资源；等华为
+// 发布官方 DevEco Code 图形后，把这个 data URI 换成官方资源即可。
 const DEVECO_ICON =
   "data:image/png;base64,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";
 function DevecoLogo({ className }: { className: string }) {
   return <img src={DEVECO_ICON} alt="DevEco Code" className={className} />;
 }
 
-// CodeArts — official product icon supplied from the Huawei Cloud CodeArts
-// documentation site favicon.
+// CodeArts——官方产品图标，取自华为云 CodeArts 文档站的 favicon。
 const codeartsLogoSrc = staticAssetSrc(codeartsLogo);
 
 function CodeArtsLogo({ className }: { className: string }) {
@@ -116,7 +129,7 @@ function HermesLogo({ className }: { className: string }) {
   );
 }
 
-// Pi (pi.dev) — official pixel-art "pi" wordmark, sourced from pi.dev/logo.svg
+// Pi（pi.dev）——官方像素风 "pi" 字标，取自 pi.dev/logo.svg。
 function PiLogo({ className }: { className: string }) {
   return (
     <svg viewBox="0 0 800 800" fill="none" className={className}>
@@ -131,7 +144,7 @@ function PiLogo({ className }: { className: string }) {
   );
 }
 
-// GitHub Copilot — GitHub mark (Invertocat)
+// GitHub Copilot——GitHub 标识（Invertocat 章鱼猫）。
 function CopilotLogo({ className }: { className: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -140,7 +153,7 @@ function CopilotLogo({ className }: { className: string }) {
   );
 }
 
-// Cursor — official brand logo from Cursor brand assets
+// Cursor——官方品牌 logo，取自 Cursor 品牌资源。
 function CursorLogo({ className }: { className: string }) {
   return (
     <svg viewBox="600 300 400 400" fill="none" className={className}>
@@ -154,8 +167,8 @@ function CursorLogo({ className }: { className: string }) {
   );
 }
 
-// Kimi (Moonshot AI) — wordmark "K" mark in Moonshot brand purple, simple
-// rounded-square logotype suitable for small icon sizes.
+// Kimi（Moonshot AI）——K 字字标，用月之暗面品牌紫，配圆角方块字形，
+// 小尺寸下依然清晰易读，适合列表里的紧凑图标位。
 function KimiLogo({ className }: { className: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={className}>
@@ -168,14 +181,14 @@ function KimiLogo({ className }: { className: string }) {
   );
 }
 
-// Reasonix — official logo served at https://reasonix.io/logo.svg.
+// Reasonix——官方 logo，来源为 https://reasonix.io/logo.svg。
 const reasonixLogoSrc = staticAssetSrc(reasonixLogo);
 
 function ReasonixLogo({ className }: { className: string }) {
   return <img src={reasonixLogoSrc} alt="Reasonix" className={className} />;
 }
 
-// Qoder (QoderCLI) — official logo from qoder-color.svg
+// Qoder（QoderCLI）——官方 logo，取自 qoder-color.svg。
 function QoderLogo({ className }: { className: string }) {
   return (
     <svg
@@ -196,7 +209,7 @@ function QoderLogo({ className }: { className: string }) {
   );
 }
 
-// Antigravity (Google) — official mark, shipped as a PNG asset next to this file.
+// Antigravity（Google）——官方图形，以 PNG 静态资源随本文件存放。
 import antigravityLogo from "./antigravity-logo.png";
 const antigravityLogoSrc = staticAssetSrc(antigravityLogo);
 
@@ -204,7 +217,7 @@ function AntigravityLogo({ className }: { className: string }) {
   return <img src={antigravityLogoSrc} alt="Antigravity" className={className} />;
 }
 
-// Kiro CLI — official icon sourced from kiro.dev/icon.svg.
+// Kiro CLI——官方图标，取自 kiro.dev/icon.svg。
 function KiroLogo({ className }: { className: string }) {
   const maskId = `kiro-logo-mask-${useId().replace(/:/g, "")}`;
 
@@ -243,10 +256,8 @@ function KiroLogo({ className }: { className: string }) {
   );
 }
 
-// Trae (ByteDance) — official mark, recreated from the official Trae icon and
-// recolored to brand green on transparent. Embedded as a data URI (same
-// approach as the Hermes logo) so the exact official artwork is used rather
-// than a hand-drawn approximation.
+// Trae（字节跳动）——官方图形，从官方 Trae 图标重制并重染成品牌绿、透明底。
+// 与 Hermes 图标一样以 data URI 内嵌，保证用的是官方原图而不是手绘近似版。
 const TRAE_ICON =
   "data:image/png;base64,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";
 
@@ -254,8 +265,8 @@ function TraeLogo({ className }: { className: string }) {
   return <img src={TRAE_ICON} alt="Trae" className={className} />;
 }
 
-// Grok (xAI) — simple monochrome wordmark tile (G on dark square). Matches the
-// compact logo style used for Pi / OpenCode so the runtime list stays dense.
+// Grok（xAI）——简单的单色字标（深色方块上的 G）。与 Pi / OpenCode 采用同款
+// 紧凑样式，让 runtime 列表保持整齐、不喧宾夺主。
 function GrokLogo({ className }: { className: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
@@ -269,18 +280,17 @@ function GrokLogo({ className }: { className: string }) {
   );
 }
 
-// Qwen Code — official SVG copied verbatim from QwenLM/qwen-code's desktop
-// brand assets (packages/desktop/apps/electron/resources/brands/qwen-code/icon.svg).
+// Qwen Code——官方 SVG，原样复制自 QwenLM/qwen-code 桌面品牌资源
+// （packages/desktop/apps/electron/resources/brands/qwen-code/icon.svg）。
 const qwenLogoSrc = staticAssetSrc(qwenLogo);
 
 function QwenLogo({ className }: { className: string }) {
   return <img src={qwenLogoSrc} alt="" aria-hidden className={className} />;
 }
 
-// QwenPaw — the standalone mark lifted from the official wordmark
-// (agentscope-ai/QwenPaw, console/public/logo-light.svg, Apache-2.0). Upstream
-// ships a black light-theme mark and a white dark-theme one; currentColor gets
-// the same result from a single path.
+// QwenPaw——独立标识，取自官方字标（agentscope-ai/QwenPaw 仓库的
+// console/public/logo-light.svg，Apache-2.0）。上游分别提供黑色浅色主题版与
+// 白色深色主题版；这里用 currentColor + 单条 path，让颜色自动跟随主题。
 function QwenPawLogo({ className }: { className: string }) {
   return (
     <svg viewBox="-4.5 4 132 132" fill="currentColor" className={className}>
@@ -289,9 +299,8 @@ function QwenPawLogo({ className }: { className: string }) {
   );
 }
 
-// MiniMax Code (mcode) — official mark from the MiniMax Code docs logo.
-// The docs ship separate #171717 and white variants; currentColor preserves
-// that light/dark behavior with one inline path.
+// MiniMax Code（mcode）——官方图形，取自 MiniMax Code 文档 logo。文档提供
+// #171717 与白色两套变体；这里用 currentColor + 单条内联 path 保持明暗主题自适应。
 function McodeLogo({ className }: { className: string }) {
   return (
     <svg viewBox="2.1 2 27.9 28" fill="currentColor" className={className}>
@@ -300,10 +309,10 @@ function McodeLogo({ className }: { className: string }) {
   );
 }
 
-// DeepSeek Harness — official mark copied from deepseek-ai/deepseek-harness
-// (apps/web/public/favicon.svg, MIT — Copyright 2026 DeepSeek). Upstream picks
-// its colour with a prefers-color-scheme block; inlining the path lets
-// currentColor follow the app theme instead, which an <img> could not do.
+// DeepSeek Harness——官方图形，复制自 deepseek-ai/deepseek-harness
+// （apps/web/public/favicon.svg，MIT — Copyright 2026 DeepSeek）。上游用
+// prefers-color-scheme 决定颜色；这里把 path 内联进来，让 currentColor 跟随
+// 应用主题变色——这是 <img> 做不到的。
 function DshLogo({ className }: { className: string }) {
   return (
     <svg viewBox="0 0 50 50" fill="currentColor" className={className}>
@@ -315,18 +324,16 @@ function DshLogo({ className }: { className: string }) {
   );
 }
 
-// Dim (DimCode) — official app icon from the DimAgent desktop client
-// (/opt/DimAgent/resources/build/icon.png), resized to 128px for crisp
-// rendering at small sizes.
+// Dim（DimCode）——官方应用图标，取自 DimAgent 桌面客户端
+// （/opt/DimAgent/resources/build/icon.png），已缩放为 128px，小尺寸渲染也清晰。
 function DimLogo({ className }: { className: string }) {
   return <img src={staticAssetSrc(dimLogo)} alt="" aria-hidden className={className} />;
 }
 
-// ZeroClaw — no official brand asset has been sourced for this runtime yet
-// (multica-ai/multica#1543), so this is a deliberately simple placeholder
-// mark (three claw-scratch strokes) rather than a claimed "official" logo.
-// currentColor keeps it legible in both themes; swap for a real asset once
-// ZeroClaw ships one, following the DimLogo <img> pattern.
+// ZeroClaw——官方品牌资源还没就位（见 multica-ai/multica#1543），这里先放一个
+// 刻意简化的占位图形（三道抓痕），不冒充「官方」logo。currentColor 保证明暗
+// 两种主题下都清晰可辨；等 ZeroClaw 发布正式资源后，按 DimLogo 的 <img> 写法
+// 替换成真图。
 function ZeroClawLogo({ className }: { className: string }) {
   return (
     <svg
@@ -344,6 +351,16 @@ function ZeroClawLogo({ className }: { className: string }) {
   );
 }
 
+/**
+ * 把 provider 标识渲染成对应厂商 / 协议族的品牌小图标。
+ *
+ * @param provider - 厂商标识字符串，如 "claude"、"codex"、"qwen" 等，与后端
+ *   runtime 上报的 protocol_family / 厂商名对齐；别名如 "omp"（复用 Pi 图形）、
+ *   "qoderclicn"（同 Qoder）也在此处理。
+ * @param className - 传给图标的尺寸 / 样式类，默认 "h-4 w-4"。
+ *
+ * 未收录的标识符走 default 分支，渲染成通用的 Monitor 图标。
+ */
 export function ProviderLogo({
   provider,
   className = "h-4 w-4",

@@ -1,15 +1,14 @@
-// Canvas rendering + encoding for the shared avatar cropper.
+// 通用头像裁剪器的画布渲染与编码逻辑。
 //
-// react-easy-crop owns the interactive geometry (pan / zoom / rotate) and hands
-// back the crop rectangle in source-image pixels via `onCropComplete`. This
-// module turns that rectangle into a fixed-size square, compressed avatar file.
+// react-easy-crop 负责交互几何（平移/缩放/旋转），并通过 `onCropComplete`
+// 以源图像素返回裁剪矩形。本模块把这个矩形转成固定尺寸的方形、压缩后的头像文件。
 
-/** Square side of the encoded avatar. Avatars never need the original bitmap. */
+/** 编码后头像的边长（像素）。头像永远不需要原始位图大小。 */
 export const AVATAR_OUTPUT_SIZE = 512;
 
 const AVATAR_QUALITY = 0.85;
 
-/** react-easy-crop's `croppedAreaPixels` shape (source-image px). */
+/** react-easy-crop 的 `croppedAreaPixels` 形状（源图像素坐标）。 */
 export interface PixelCrop {
   x: number;
   y: number;
@@ -20,9 +19,9 @@ export interface PixelCrop {
 let webpEncodeSupport: boolean | null = null;
 
 /**
- * Whether the browser can *encode* WebP via canvas. Safari < 17 decodes WebP
- * but cannot encode it, silently emitting PNG from toDataURL — so we probe the
- * data URL's mime rather than assuming.
+ * 浏览器是否能通过 canvas *编码* WebP。Safari < 17 能解码 WebP 却不能编码，
+ * toDataURL 会悄悄输出 PNG——所以我们探测 data URL 的 mime，而不是想当然。
+ * @returns 是否支持 WebP 编码（结果会被缓存）。
  */
 export function supportsWebpEncode(): boolean {
   if (webpEncodeSupport !== null) return webpEncodeSupport;
@@ -39,14 +38,23 @@ export function supportsWebpEncode(): boolean {
   return webpEncodeSupport;
 }
 
-/** Preferred output type: WebP (keeps alpha, smaller) with a JPEG fallback. */
+/**
+ * 选择首选的输出格式：优先 WebP（保留透明通道、体积更小），不支持时回退 JPEG。
+ * @returns 输出类型和对应的压缩质量。
+ */
 export function pickOutputType(): { type: string; quality: number } {
   return supportsWebpEncode()
     ? { type: "image/webp", quality: AVATAR_QUALITY }
     : { type: "image/jpeg", quality: AVATAR_QUALITY };
 }
 
-/** Wrap an encoded blob in a File, swapping the source extension for the output's. */
+/**
+ * 把编码后的 blob 包成 File，并把源文件扩展名替换为输出格式对应的扩展名。
+ * @param blob 编码后的图片 blob。
+ * @param sourceName 源文件名。
+ * @param type 输出的 MIME 类型。
+ * @returns 命名好的头像 File。
+ */
 export function blobToAvatarFile(
   blob: Blob,
   sourceName: string,
@@ -84,7 +92,7 @@ function toRadians(degrees: number): number {
   return (degrees * Math.PI) / 180;
 }
 
-/** Bounding box of an image after rotation, in px. */
+/** 图像旋转后的外接矩形尺寸（像素）。 */
 function rotatedBoundingBox(width: number, height: number, degrees: number) {
   const rad = toRadians(degrees);
   return {
@@ -94,18 +102,25 @@ function rotatedBoundingBox(width: number, height: number, degrees: number) {
 }
 
 export interface RenderOptions {
+  /** 输出的正方形边长（像素）。 */
   output: number;
+  /** 输出 MIME 类型。 */
   type: string;
+  /** 压缩质量 0–1。 */
   quality: number;
-  /** Fill color drawn behind the image, for opaque formats (JPEG). */
+  /** 图像背后填充的背景色，用于不透明格式（如 JPEG）。 */
   background?: string;
 }
 
 /**
- * Draw the (possibly rotated) crop region into a square canvas and encode it.
- * `pixelCrop` is react-easy-crop's `croppedAreaPixels`, expressed in the
- * rotated-image bounding-box coordinate space — so we first rotate the whole
- * image into a bounding-box canvas, then sample the crop rect from it.
+ * 把（可能旋转过的）裁剪区域画进正方形画布并编码。
+ * `pixelCrop` 是 react-easy-crop 的 `croppedAreaPixels`，坐标基于旋转后图像的
+ * 外接矩形空间——所以我们先把整张图旋转到外接矩形画布上，再从中取样裁剪区域。
+ * @param imageSrc 源图片地址（object URL）。
+ * @param pixelCrop 源图像素下的裁剪矩形。
+ * @param rotation 旋转角度。
+ * @param options 渲染选项（输出尺寸、类型、质量、背景色）。
+ * @returns 编码后的图片 blob。
  */
 export async function getCroppedAvatarBlob(
   imageSrc: string,

@@ -1,3 +1,5 @@
+// 本文件：由「人」发起的 hook 调用（surface 里的按钮 = `ui`；issue 操作菜单和命令面板里的
+// 入口 = `manual`），外加安装级的 hook 管理与 token 轮换接口。
 package handler
 
 import (
@@ -10,36 +12,31 @@ import (
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
 )
 
-// Hook invocation from a person: a button inside a surface (`ui`) or an entry in
-// the issue actions menu and command palette (`manual`).
+// 由人发起的 hook 调用：surface 里的按钮（`ui`）或 issue 操作菜单与命令面板的入口（`manual`）。
 //
-// Both block — but only this request. A person is waiting for an answer they
-// asked for, so returning immediately would mean returning nothing useful. What
-// must never block is the host's own work, and that is the `event` trigger,
-// which does not come through here at all: it is dispatched off the event bus
-// onto a worker pool and no request ever waits for it.
+// 两者都阻塞——但只阻塞这一个请求。人在等他主动要的答案，立即返回等于什么都没给。绝不能
+// 阻塞的是宿主自己要做的事，那是 `event` 触发器的事——它根本不走这里：它从事件总线派发到
+// worker 池，没有任何请求在等它。
 
 type invokePluginHookRequest struct {
-	// Trigger is which declared call site this is. The client says which one it
-	// is using, and the server checks the manifest declared it — a client
-	// cannot invent a trigger to reach a hook that never offered it.
+	// Trigger 指出这是哪个声明过的调用点。客户端说明自己在用哪个，服务端核对 manifest
+	// 是否声明过它——客户端无法凭空造一个触发器，去够一个从没开放过它的 hook。
 	Trigger string          `json:"trigger"`
 	IssueID string          `json:"issue_id,omitempty"`
 	Input   json.RawMessage `json:"input,omitempty"`
 }
 
-// InvokePluginHook — POST /api/plugin-bridge/v1/hooks/{key}
+// InvokePluginHook 处理 POST /api/plugin-bridge/v1/hooks/{key}——由工作区成员在 UI/manual
+// 调用点上发起一次 hook 调用，同步等待插件服务器返回。
 func (h *Handler) InvokePluginHook(w http.ResponseWriter, r *http.Request) {
-	// No scope of its own: a hook is the plugin's own capability, and what it
-	// may do on the way back is bounded by the installation's scopes when the
-	// callback token is redeemed.
+	// 没有自己的 scope：hook 是插件自身的能力，返回路上它能做什么，由安装的 scopes 在
+	// 兑换回调 token 时约束。
 	caller, actor, ok := h.pluginCaller(w, r, "")
 	if !ok {
 		return
 	}
-	// A hook invoked from the UI is invoked BY somebody. A plugin's own server
-	// calling this would be asking us to call it back, which is a loop with no
-	// person in it and no reason to exist.
+	// 从 UI 发起的 hook 一定是由「某人」发起的。插件自己的服务器来调这个接口等于让我们
+	// 回叫它——那是个没有人在其中的循环，没有存在的理由。
 	if !actor.requireMember(w, r) {
 		return
 	}
@@ -52,9 +49,8 @@ func (h *Handler) InvokePluginHook(w http.ResponseWriter, r *http.Request) {
 	switch req.Trigger {
 	case plugincontract.TriggerUI, plugincontract.TriggerManual:
 	default:
-		// event is dispatched by the host, never asked for; agent arrives over
-		// MCP. Accepting either here would let a browser drive a call site that
-		// is supposed to have a different identity attached.
+		// event 由宿主自己派发、从不被请求触发；agent 走 MCP 到达。在浏览器里接受这两种
+		// 触发器，等于让浏览器驱动本应挂着不同身份的调用点。
 		writeError(w, http.StatusBadRequest, "trigger must be ui or manual")
 		return
 	}
@@ -69,8 +65,7 @@ func (h *Handler) InvokePluginHook(w http.ResponseWriter, r *http.Request) {
 		Installation: caller.Installation,
 		Hook:         hook,
 		Trigger:      req.Trigger,
-		// The person who pressed it. Writes the handler makes with the callback
-		// token land as theirs, marked with via_plugin_id.
+		// 按下按钮的那个人。handler 拿回调 token 做的写入都记成是他的，并打上 via_plugin_id。
 		Actor: service.HookActor{Type: "member", ID: actor.Member.UserID},
 		Input: rawOrNil(req.Input),
 	}
@@ -84,17 +79,16 @@ func (h *Handler) InvokePluginHook(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.PluginService.InvokeHook(r.Context(), invocation, 1)
 	if err != nil {
-		// The status matters to the person watching: "the admin did not grant
-		// this" and "the plugin author's server is down" are different problems
-		// with different owners, and a generic 500 hides which one it is.
+		// 状态对正在看的人很重要：「管理员没授权」和「插件作者的服务挂了」是两个不同问题、
+		// 由不同的人负责，笼统的 500 会让人分不清是哪一个。
 		writePluginError(w, err, "the hook call failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 
-// rawOrNil keeps an omitted input out of the request body entirely rather than
-// sending a literal null a handler has to special-case.
+// rawOrNil 把「没传 input」保持在请求体里彻底不出现，而不是发一个必须让 handler 特判的
+// 字面 null。
 func rawOrNil(raw json.RawMessage) any {
 	if len(raw) == 0 {
 		return nil
@@ -102,8 +96,9 @@ func rawOrNil(raw json.RawMessage) any {
 	return raw
 }
 
-// --- Installation-scoped hook administration ---
+// --- 安装级的 hook 管理 ---
 
+// pluginInvocationResponse 是单次 hook 调用记录的对外结构（不含请求/响应体，见下）。
 type pluginInvocationResponse struct {
 	ID         string  `json:"id"`
 	HookKey    string  `json:"hook_key"`
@@ -118,10 +113,10 @@ type pluginInvocationResponse struct {
 	CreatedAt  string  `json:"created_at"`
 }
 
-// ListPluginInvocations — GET /api/workspaces/{id}/plugins/{installationId}/invocations
+// ListPluginInvocations 处理 GET /api/workspaces/{id}/plugins/{installationId}/invocations。
 //
-// The triage view: why is this hook failing. Bodies were never stored, so this
-// answers "what happened and how often", not "what was sent".
+// 排障视图：这个 hook 为什么失败。请求/响应体从不入库，所以这里能答的是「发生了什么、
+// 多频繁」，而不是「发送了什么内容」。
 func (h *Handler) ListPluginInvocations(w http.ResponseWriter, r *http.Request) {
 	installation, ok := h.pluginInstallationFromURL(w, r)
 	if !ok {
@@ -168,16 +163,15 @@ func (h *Handler) ListPluginInvocations(w http.ResponseWriter, r *http.Request) 
 }
 
 type pluginTokenResponse struct {
-	// Token is returned exactly once, on the request that minted it. There is
-	// no read endpoint: an admin who loses it rotates rather than recovers.
+	// Token 只在铸造它的那次请求里返回一次。没有读取端点：弄丢的 admin 只能轮换而不是找回。
 	Token string `json:"token"`
-	// SigningSecret is what the author configures on their own server to verify
-	// our signature. Derived from the deployment key rather than stored, so it
-	// is stable for an installation and reproducible without a database copy.
+	// SigningSecret 是插件作者配置在自己服务器上、用来验证我们签名的密钥。它由部署密钥
+	// 派生而非存储，所以对一次安装是稳定的，不需要数据库拷贝也能复现。
 	SigningSecret string `json:"signing_secret,omitempty"`
 }
 
-// RotatePluginToken — POST /api/workspaces/{id}/plugins/{installationId}/token
+// RotatePluginToken 处理 POST /api/workspaces/{id}/plugins/{installationId}/token——铸造
+// 新的调用 token（旧 token 即刻失效）。
 func (h *Handler) RotatePluginToken(w http.ResponseWriter, r *http.Request) {
 	installation, ok := h.pluginInstallationFromURL(w, r)
 	if !ok {
@@ -191,7 +185,8 @@ func (h *Handler) RotatePluginToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pluginTokenResponse{Token: credentials.Token, SigningSecret: credentials.SigningSecret})
 }
 
-// RevokePluginToken — DELETE /api/workspaces/{id}/plugins/{installationId}/token
+// RevokePluginToken 处理 DELETE /api/workspaces/{id}/plugins/{installationId}/token——
+// 吊销当前 token，成功返回 204。
 func (h *Handler) RevokePluginToken(w http.ResponseWriter, r *http.Request) {
 	installation, ok := h.pluginInstallationFromURL(w, r)
 	if !ok {

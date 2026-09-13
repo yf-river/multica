@@ -1,16 +1,17 @@
+// 本文件定义 Composio 集成（工具包与连接）的查询配置与 key。
+
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 
-/** Query-key namespace for Composio integration data. */
+/** Composio 集成数据的查询 key 命名空间。 */
 export const composioKeys = {
   all: ["composio"] as const,
   toolkits: () => [...composioKeys.all, "toolkits"] as const,
   connections: () => [...composioKeys.all, "connections"] as const,
 };
 
-/** The project's connectable Composio toolkits (those with an enabled auth
- * config; see MUL-4009). The list changes rarely, so a long staleTime avoids
- * refetching it every time the Settings tab mounts. */
+/** 项目可连接的 Composio 工具包（启用 auth 配置的那些；见 MUL-4009）。
+ * 列表很少变化，所以用较长的 staleTime 避免每次 Settings 标签页挂载都重取。 */
 export const composioToolkitsOptions = () =>
   queryOptions({
     queryKey: composioKeys.toolkits(),
@@ -18,7 +19,7 @@ export const composioToolkitsOptions = () =>
     staleTime: 5 * 60 * 1000,
   });
 
-/** The current user's active Composio connections. */
+/** 当前用户活跃的 Composio 连接。 */
 export const composioConnectionsOptions = () =>
   queryOptions({
     queryKey: composioKeys.connections(),

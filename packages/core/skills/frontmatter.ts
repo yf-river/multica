@@ -1,17 +1,27 @@
+// 本文件提供技能文件 frontmatter 的解析：把 `---\n...\n---` 开头的 YAML 头
+// 与正文分开，并把标量值归一成字符串。
+
 import { parse as parseYaml } from "yaml";
 
-// Keeping the trailing newline inside the capture group matters: yaml's `|`
-// clip chomping only preserves a final newline when the input itself contains
-// one. Mirrors the regex used by the Go side in `server/internal/skill`.
+// 把结尾换行留进捕获组很关键：yaml 的 `|` clip 消除模式只有在输入本身带
+// 换行时才保留末换行。与 Go 侧 `server/internal/skill` 用的正则保持一致。
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)---\r?\n?/;
 
+/** 技能 frontmatter：键 → 字符串值。 */
 export type SkillFrontmatter = Record<string, string>;
 
+/** 解析结果：frontmatter（可能没有）与正文。 */
 export interface ParsedFrontmatter {
   frontmatter: SkillFrontmatter | null;
   body: string;
 }
 
+/**
+ * 从原始文件文本里解析 frontmatter 与正文。
+ *
+ * @param raw - 完整文件内容
+ * @returns 解析结果；没有合法的 frontmatter 时 frontmatter 为 null、body 原样
+ */
 export function parseFrontmatter(raw: string): ParsedFrontmatter {
   const match = FRONTMATTER_RE.exec(raw);
   if (!match) return { frontmatter: null, body: raw };

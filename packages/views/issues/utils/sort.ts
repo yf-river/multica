@@ -1,22 +1,30 @@
+// 客户端问题排序工具：按字段（优先级/开始/截止/创建时间/标题/位置/自定义属性）和方向
+// 对问题数组排序的纯函数，供问题界面在本地小窗口内排序使用。
 import type { Issue } from "@multica/core/types";
 import { PRIORITY_ORDER } from "@multica/core/issues/config";
 import type { SortField, SortDirection } from "@multica/core/issues/stores/view-store";
 import { propertyIdFromViewKey } from "@multica/core/issues/stores/view-store";
 
+// 优先级顺序 → 权重表，用于按优先级排序。
 const PRIORITY_RANK: Record<string, number> = Object.fromEntries(
   PRIORITY_ORDER.map((p, i) => [p, i])
 );
 
+/**
+ * 对问题数组排序（会返回新数组，不修改原数组）。
+ * @param issues - 要排序的问题。
+ * @param field - 排序字段。
+ * @param direction - 排序方向。
+ * @returns 排序后的新数组。
+ */
 export function sortIssues(
   issues: Issue[],
   field: SortField,
   direction: SortDirection
 ): Issue[] {
-  // `property:<id>` sorts by the custom-property value. Number values sort
-  // numerically; date values are date-only "YYYY-MM-DD" strings, which sort
-  // correctly lexically. Direction applies to the VALUE comparison only —
-  // issues without a value sort last in both directions (a whole-array
-  // reverse would flip them to the front on desc).
+  // `property:<id>` 按自定义属性值排序。数值按数字大小；日期值是纯 "YYYY-MM-DD"
+  // 字符串，按字典序即时间序。方向只作用于「值的比较」——没有值的问题在两种方向下
+  // 都排最后（整体 reverse 会让 desc 时把它们翻到最前）。
   const propertyId = propertyIdFromViewKey(field);
   if (propertyId) {
     const dir = direction === "desc" ? -1 : 1;

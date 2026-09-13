@@ -1,5 +1,12 @@
 "use client";
 
+/**
+ * auth 模块：登录页。
+ * 支持账号/密码登录，以及 CLI 授权回调流程（验证 localhost 回调地址后，
+ * 把带 token 的跳转交回 CLI）。登录成功后预置工作区列表到 React Query 缓存，
+ * 再由 onSuccess 决定跳去哪。
+ */
+
 import { useState, useEffect, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -20,43 +27,46 @@ import type { User } from "@multica/core/types";
 import { useT } from "../i18n";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
+/** CLI 授权回调的配置：已校验的回调地址 + 要原样带回 CLI 的 state。 */
 interface CliCallbackConfig {
-  /** Validated localhost callback URL */
+  /** 已校验的 localhost 回调 URL */
   url: string;
-  /** Opaque state to pass back to CLI */
+  /** 不透明的 state，回传给 CLI */
   state: string;
 }
 
+/** 登录页组件的属性。 */
 interface LoginPageProps {
-  /** Logo element rendered above the title */
+  /** 渲染在标题上方的 Logo 元素。 */
   logo?: ReactNode;
-  /** Called after successful login. The workspace list is seeded into React
-   *  Query before this fires, so the caller can compute a destination URL. */
+  /** 登录成功后调用。触发前工作区列表已种入 React Query，调用方可据此算出
+   *  目标 URL。 */
   onSuccess: () => void;
-  /** CLI callback config for authorizing CLI tools. */
+  /** CLI 授权回调配置；传了就走 CLI 授权流程。 */
   cliCallback?: CliCallbackConfig;
-  /** Called after a token is obtained (e.g. to set cookies). */
+  /** 拿到 token 后调用（例如用于种 cookie）。 */
   onTokenObtained?: () => void;
-  /** Slot rendered at the bottom of the sign-in card. */
+  /** 渲染在登录卡片底部的插槽。 */
   extra?: ReactNode;
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
+/** 带着 token/state 跳转到 CLI 回调地址（自动处理 ? 或 & 分隔）。 */
 export function redirectToCliCallback(url: string, token: string, state: string) {
   const separator = url.includes("?") ? "&" : "?";
   window.location.href = `${url}${separator}token=${encodeURIComponent(token)}&state=${encodeURIComponent(state)}`;
 }
 
 /**
- * Validate that a CLI callback URL points to a safe host over HTTP.
- * Allows localhost and private/LAN IPs (RFC 1918) to support self-hosted setups
- * on local VMs while blocking arbitrary public hosts.
+ * 校验 CLI 回调 URL 是否指向一个安全的、走 HTTP 的主机。
+ * 允许 localhost 与私网/局域网 IP（RFC 1918），以支持本地虚拟机的自托管部署，
+ * 同时拒绝任意公共主机。
  */
 export function validateCliCallback(cliCallback: string): boolean {
   try {
@@ -64,7 +74,7 @@ export function validateCliCallback(cliCallback: string): boolean {
     if (cbUrl.protocol !== "http:") return false;
     const h = cbUrl.hostname;
     if (h === "localhost" || h === "127.0.0.1") return true;
-    // Allow RFC 1918 private IPs: 10.x.x.x, 172.16-31.x.x, 192.168.x.x
+    // 放行 RFC 1918 私网 IP：10.x.x.x、172.16-31.x.x、192.168.x.x
     if (/^10\./.test(h)) return true;
     if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
     if (/^192\.168\./.test(h)) return true;
@@ -75,9 +85,10 @@ export function validateCliCallback(cliCallback: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Component
+// 组件
 // ---------------------------------------------------------------------------
 
+/** 登录页：普通账号密码登录，或 CLI 授权确认。 */
 export function LoginPage({
   logo,
   onSuccess,
@@ -94,13 +105,13 @@ export function LoginPage({
   const [loading, setLoading] = useState(false);
   const [existingUser, setExistingUser] = useState<User | null>(null);
 
-  // Check for existing session when CLI callback is present.
-  // Web authentication has one source of truth: the HttpOnly session cookie.
+  // 存在 CLI 回调时，先探测是否已有登录会话。
+  // Web 认证只有一个真相源：HttpOnly 会话 cookie。
   useEffect(() => {
     if (!cliCallback) return;
 
-    // Clear any in-memory bearer before checking the browser cookie so a CLI
-    // authorization can never inherit a different account's token.
+    // 探测浏览器 cookie 前先清掉内存中的 bearer，保证 CLI 授权永远不会
+    // 继承另一个账号的 token。
     api.setToken(null);
 
     api
@@ -168,7 +179,7 @@ export function LoginPage({
   };
 
   // -------------------------------------------------------------------------
-  // CLI confirm step
+  // CLI 确认步骤
   // -------------------------------------------------------------------------
 
   if (step === "cli_confirm" && existingUser) {

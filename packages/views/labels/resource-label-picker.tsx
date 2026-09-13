@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * labels 模块：给某个资源（agent / skill）附加或移除标签的选择器。
+ * 不可编辑时只展示当前已选标签；可编辑时以 popover 提供搜索 + 勾选/取消。
+ */
+
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Search, Tag } from "lucide-react";
@@ -20,13 +25,17 @@ import {
 import { useT } from "../i18n";
 import { LabelChip } from "./label-chip";
 
+/** 资源标签选择器：只读展示或 popover 内搜索、勾选/取消标签。 */
 export function ResourceLabelPicker({
   resourceType,
   resourceId,
   canEdit,
 }: {
+  /** 资源类型：agent 或 skill。 */
   resourceType: "agent" | "skill";
+  /** 资源 id。 */
   resourceId: string;
+  /** 是否可编辑；false 时只读展示。 */
   canEdit: boolean;
 }) {
   const { t } = useT("labels");

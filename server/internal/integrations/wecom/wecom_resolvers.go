@@ -1,11 +1,8 @@
+// wecom_resolvers.go —— 入站 channel_type 为 "wecom" 时 engine.Router 路由所经
+// 的那套 ResolverSet。每个接口方法都在引擎规范化的 channel.InboundMessage 与
+// wecom 的 store / 服务之间做翻译。规范化信封不带平台特有字段（BotID、发送者
+// userid），它们取自塞在 channel.InboundMessage.Raw 里的 wecom InboundMessage。
 package wecom
-
-// wecom_resolvers.go — the ResolverSet the engine.Router routes through when
-// the inbound channel_type is "wecom". Each interface method translates
-// between the engine's normalized channel.InboundMessage and the wecom store
-// / services. Platform-specific fields the normalized envelope does not carry
-// (BotID, sender userid) come out of the wecom InboundMessage stashed in
-// channel.InboundMessage.Raw.
 
 import (
 	"context"
@@ -23,15 +20,13 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-// originWecomChat is the issue.origin_type label written for issues created
-// via the wecom /issue command. Matches the "lark_chat" pattern (platform +
-// "_chat") so analytics keeps the origin family consistent.
+// originWecomChat 是经 wecom /issue 命令创建的任务所写的 issue.origin_type 标
+// 签。沿用 "lark_chat" 的模式（平台名 + "_chat"），好让分析侧保持同一套来源家族。
 const originWecomChat = "wecom_chat"
 
-// wecomMsgFromRaw decodes the wecom-side InboundMessage from
-// channel.InboundMessage.Raw. Every resolver ends up doing this at least
-// once; we centralize the JSON tag so a Raw shape change is a single-file
-// edit.
+// wecomMsgFromRaw 从 channel.InboundMessage.Raw 解码 wecom 侧的 InboundMessage。
+// 每个解析器最后都会至少解一次；把 JSON tag 收拢在这里，Raw 形状一变就是单文件
+// 修改。
 func wecomMsgFromRaw(msg channel.InboundMessage) (InboundMessage, error) {
 	if len(msg.Raw) == 0 {
 		return InboundMessage{}, errors.New("wecom: inbound message Raw is empty")
@@ -43,14 +38,12 @@ func wecomMsgFromRaw(msg channel.InboundMessage) (InboundMessage, error) {
 	return wm, nil
 }
 
-// NewResolverSet assembles the wecom ResolverSet from the store, the shared
-// chat-session service, and an outbound replier. wecom has no typing-
-// indicator affordance, so Typing is left nil — the Router treats a nil
-// Typing as a no-op.
+// NewResolverSet 由 store、共享的会话服务和一个出站回复器拼出 wecom 的
+// ResolverSet。wecom 没有「正在输入」这种提示能力，所以 Typing 留 nil——Router
+// 把 nil Typing 当成无操作。
 //
-// The replier is optional: pass nil to disable outbound binding prompts.
-// Media is optional too: pass nil when no object-storage backend is
-// configured, and inbound attachments degrade to their placeholder text.
+// replier 可选：传 nil 即关闭出站绑定引导。media 也可选：没配对象存储后端时传
+// nil，入站附件退化成它们的占位文本。
 func NewResolverSet(
 	store *Store,
 	session engineSessionBinder,
@@ -64,12 +57,11 @@ func NewResolverSet(
 		Session:      &sessionBinder{session: session},
 		Audit:        &auditor{store: store},
 		OriginType:   originWecomChat,
-		// Assigned straight through: media is already an interface, so a nil
-		// argument lands as a nil interface and the Router's `set.Media !=
-		// nil` guard holds. (DingTalk guards the same assignment with an if,
-		// which is redundant for that same reason — its media parameter is an
-		// engine.MediaResolver too. The typed-nil hazard there is on the if
-		// above it, where ack is a concrete *ackNotifier.)
+		// 直接原样赋值：media 本身就是接口，nil 参数会以「nil 接口」落地，
+		// Router 的 `set.Media != nil` 守卫依然成立。（钉钉用 if 包同一句赋值，
+		// 对同一原因来说是多余的——它的 media 参数同样是 engine.MediaResolver。
+		// 那里真正的 typed-nil 隐患在它上面的 if：ack 是具体类型
+		// *ackNotifier。）
 		Media: media,
 	}
 	if replier != nil {
@@ -78,10 +70,9 @@ func NewResolverSet(
 	return set
 }
 
-// engineSessionBinder is the slice of engine.ChatSession the wecom binder
-// drives. Declared as an interface so the platform-specific param mapping
-// can be exercised with a fake in unit tests; *engine.ChatSession is the
-// production value.
+// engineSessionBinder 是 wecom 绑定器驱动的 engine.ChatSession 切片。声明为接
+// 口，好让平台特有的参数映射能在单元测试里用假实现跑；生产值是
+// *engine.ChatSession。
 type engineSessionBinder interface {
 	EnsureSession(ctx context.Context, in engine.EnsureSessionInput) (pgtype.UUID, error)
 	StartSession(ctx context.Context, in engine.StartSessionInput) (engine.StartSessionResult, error)
@@ -110,11 +101,10 @@ func (r *sessionBinder) StartSession(ctx context.Context, p engine.StartSessionP
 
 type installationResolver struct{ store *Store }
 
-// ResolveInstallation looks up the wecom installation by the BotID carried
-// on the inbound event. Every aibot_msg_callback frame identifies the bot
-// via the WebSocket connection it arrived on (one bot per connection); the
-// connector stamps BotID into InboundMessage.Raw so this resolver stays a
-// pure DB lookup rather than needing socket-side plumbing.
+// ResolveInstallation 按入站事件携带的 BotID 查 wecom 安装记录。每条
+// aibot_msg_callback 帧都是经由它到达的那条 WebSocket 连接来标识机器人的（一
+// 条连接一个机器人）；连接器把 BotID 盖进 InboundMessage.Raw，这个解析器就只是
+// 一次纯粹的 DB 查询，而不需要 socket 侧的额外管道。
 func (r *installationResolver) ResolveInstallation(ctx context.Context, msg channel.InboundMessage) (engine.ResolvedInstallation, error) {
 	wm, err := wecomMsgFromRaw(msg)
 	if err != nil {
@@ -144,23 +134,18 @@ func (r *installationResolver) ResolveInstallation(ctx context.Context, msg chan
 
 type identityResolver struct{ store *Store }
 
-// ResolveSender maps the WeCom smart-bot userid (the anonymized "T"-prefixed
-// id the aibot API assigns per bot, from Source.SenderID) to a Multica user
-// via the channel_user_binding table. First-time senders have no row and
-// return engine.ErrSenderUnbound, which the Router pairs with the outbound
-// binding prompt (see OutboundReplier.sendBindingPrompt).
+// ResolveSender 把企微智能机器人的 userid（aibot API 按 bot 分配的匿名
+// "T"-前缀 id，取自 Source.SenderID）经 channel_user_binding 表映射成 Multica
+// 用户。首次发言的发送者没有行，返回 engine.ErrSenderUnbound，Router 会把它和
+// 出站绑定引导配对（见 OutboundReplier.sendBindingPrompt）。
 //
-// Why explicit binding rather than an implicit heuristic: aibot's userids
-// have no relationship to real enterprise userids or emails — they are
-// per-(bot, user) anonymized stable ids — so email-prefix matching (the
-// pattern the internal customer-service adapter used) cannot work. See
-// binding.go for the rationale.
+// 为什么显式绑定而不是隐式启发：aibot 的 userid 与真实企业 userid 或邮箱毫无
+// 关系——它们是 per-(bot, user) 的匿名稳定 id——所以邮箱前缀匹配（内部客服号适
+// 配器用过的套路）走不通。理由详见 binding.go。
 //
-// Membership re-check: the binding row's existence does NOT prove current
-// workspace membership — a removed member's binding survives until an admin
-// vacuums it. ErrSenderNotMember lets the Router drop silently rather than
-// re-prompt (the correct product outcome, avoids leaking that a user was
-// once a member).
+// 成员资格复查：绑定行的存在并不证明「当前仍是工作区成员」——被移出成员的绑定
+// 会一直活着，直到管理员清理。ErrSenderNotMember 让 Router 静默丢弃而不是再次
+// 提示（这才是正确的产品结果，也避免泄露「某人曾是成员」）。
 func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) (engine.ResolvedIdentity, error) {
 	senderID := strings.TrimSpace(msg.Source.SenderID)
 	if senderID == "" {
@@ -188,9 +173,8 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 
 // ---- dedup ----
 
-// deduper is the wecom Deduper. It uses the shared channel_inbound_message_dedup
-// sqlc queries — the same table Feishu / Slack use — so the two-phase
-// idempotency invariant is enforced uniformly across channels.
+// deduper 是 wecom 的 Deduper。它用共享的 channel_inbound_message_dedup sqlc 查
+// 询——和飞书 / Slack 同一张表——让两阶段幂等不变量在各通道间被统一执行。
 type deduper struct{ store *Store }
 
 func (d *deduper) Claim(ctx context.Context, installationID pgtype.UUID, messageID string) (pgtype.UUID, error) {
@@ -229,10 +213,9 @@ func (d *deduper) Release(ctx context.Context, installationID pgtype.UUID, messa
 
 type sessionBinder struct{ session engineSessionBinder }
 
-// EnsureSession picks the wecom session-isolation key. For single (p2p)
-// chats the wecom ChatID already IS the userid, one session per user;
-// for group chats we key on the chatid so all group traffic lands in one
-// session — the aibot API does not have a first-class thread concept.
+// EnsureSession 选定 wecom 的会话隔离键。单聊（p2p）里企微的 ChatID 本身就是
+// userid，一个用户一条会话；群聊则按 chatid 作键，让群里的所有流量落进同一会话
+// ——aibot API 没有一等公民的 thread 概念。
 func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessionParams) (pgtype.UUID, error) {
 	return r.session.EnsureSession(ctx, engine.EnsureSessionInput{
 		WorkspaceID:    p.Installation.WorkspaceID,
@@ -249,11 +232,10 @@ func (r *sessionBinder) MarkPendingFresh(ctx context.Context, sessionID pgtype.U
 }
 
 func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams) (engine.AppendResult, error) {
-	// The adapter's own command source wins, and Text is only the fallback.
-	// Overwriting it with Text — which this used to do — threw away the
-	// mention-stripped line the adapter had already worked out, so in a group
-	// the /issue parser was handed "@Multica Bot /issue …" and saw prose.
-	// Same two lines as lark/feishu_resolvers.go:206 and slack/resolvers.go:337.
+	// 适配器自己算出来的命令源优先，Text 只是兜底。过去这里用 Text 覆盖它——把
+	// 适配器已经算好的「剥掉 @」那一行扔了，于是群里 /issue 解析器拿到的是
+	// "@Multica Bot /issue …" 而当成正文。和 lark/feishu_resolvers.go:206、
+	// slack/resolvers.go:337 是同样的两行。
 	commandText := p.Message.CommandText
 	if commandText == "" {
 		commandText = p.Message.Text
@@ -267,23 +249,20 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		MessageID:      p.Message.MessageID,
 		ClaimToken:     p.ClaimToken,
 		ForceFresh:     p.Message.ForceFresh,
-		// How long the chat task waits before it runs. Without this the run
-		// fires the moment the message lands and the agent is handed the
-		// "[Image]" placeholder while the download is still going.
+		// 会话任务要等多久再跑。没有它，run 会在消息一落地就触发，agent 拿到的
+		// 是 "[Image]" 占位符，而下载还在进行中。
 		MediaPendingSeconds: p.MediaPendingSeconds,
 	})
 }
 
-// BindMedia attaches the objects the resolver stored to the message they came
-// with. Until the media resolver existed this was correctly a no-op — there
-// was nothing to bind — and returning nil reads to the Router as "bound
-// fine", so leaving it that way once media resolves means every attachment is
-// downloaded, decrypted, stored, and then silently discarded.
+// BindMedia 把解析器存下来的对象绑到它们随之而来的那条消息上。媒体解析器出现
+// 之前，这里正确地是个 no-op——没有可绑的东西——而返回 nil 会被 Router 读成
+// 「绑好了」；一旦媒体真的开始解析还保持原样，就意味着每个附件都被下载、解密、
+// 存储，然后被悄悄丢弃。
 //
-// IssueID is what makes an /issue turn's attachments belong to the issue
-// rather than to the chat message that created it; the other issue fields are
-// what let the description reference them. Feishu passes all of them
-// (lark/feishu_resolvers.go:223).
+// IssueID 是让一条 /issue 轮次的附件属于那条 issue、而不是属于创建它的会话消息
+// 的关键；其余 issue 字段让描述能引用它们。飞书把全套都传过去
+// （lark/feishu_resolvers.go:223）。
 func (r *sessionBinder) BindMedia(ctx context.Context, p engine.BindMediaParams) (engine.BindMediaResult, error) {
 	in := engine.BindMediaInput{
 		MessageID:            p.MessageID,
@@ -329,9 +308,9 @@ func (a *auditor) RecordDrop(ctx context.Context, instID pgtype.UUID, msg channe
 	})
 }
 
-// textOrNull maps an empty string to a NULL pgtype.Text — the shared
-// RecordChannelInboundDrop query uses sqlc.narg on the id columns so we
-// need to pass NULL rather than "".
+// textOrNull 把空字符串映射成 NULL 的 pgtype.Text——共享的
+// RecordChannelInboundDrop 查询在 id 列上用了 sqlc.narg，所以我们传 NULL 而非
+// ""。
 func textOrNull(s string) pgtype.Text {
 	if s == "" {
 		return pgtype.Text{}

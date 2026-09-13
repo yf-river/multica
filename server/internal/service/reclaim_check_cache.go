@@ -1,3 +1,7 @@
+// reclaim_check_cache.go —— 认领（reclaim）检查的 Redis 缓存：
+// 批量/单次认领的热路径在做“过期派发 UPDATE”之前，先问这个缓存“现在有没有任务
+// 可能已可被回收”；缓存说没有就省掉那趟数据库查询。缓存只负责削减负载，永远不会
+// 对任务恢复拍板——键缺失或 Redis 出错一律当作“去查 PostgreSQL”。
 package service
 
 import (
@@ -14,25 +18,22 @@ const (
 	reclaimCheckBackstopPrefix = "mul:claim:runtime:reclaim-backstop:"
 	reclaimCheckRetryBatchSize = 256
 
-	// The backstop remains at or below the PostgreSQL recovery window so a
-	// missed dispatch-side Redis write cannot delay recovery beyond one window.
+	// 兜底间隔保持在 PostgreSQL 恢复窗口之内（或等于它），这样派发侧漏写一次
+	// Redis 也不至于把恢复拖过一个恢复窗口。
 	ReclaimCheckBackstopInterval = claimResponseRecoveryWindow
-	// A due hint that produces no reclaimed row is retried at the daemon's next
-	// normal polling cadence instead of becoming inert until the backstop.
+	// 已到期的提示如果没收回任何行，就在 daemon 下一次正常轮询节奏里重试，而不是
+	// 一直躺到兜底时刻。
 	ReclaimCheckRetryInterval = 30 * time.Second
-	// The Redis hint is captured immediately before the PostgreSQL dispatch
-	// command. Leave a small margin for that command to commit so a hint cannot
-	// fire just before the database's strict recovery-window predicate does.
+	// Redis 提示在 PostgreSQL 派发命令之前的瞬间写入。留一点余量给那条命令去提交，
+	// 免得提示刚好赶在数据库“严格恢复窗口”判定之前触发。
 	ReclaimCheckHintSafetyMargin = 5 * time.Second
-	// A fresh task's first hint is one recovery window plus the safety margin in
-	// the future. Keep the containing ZSET alive for another full window so the
-	// hint survives its deadline and several bounded retries.
+	// 新任务的第一个提示定在“一个恢复窗口 + 安全余量”之后。让所在的 ZSET 再多活
+	// 一个完整窗口，确保提示扛得过自己的截止时间和若干次有界重试。
 	ReclaimCheckScheduleTTL = 2*claimResponseRecoveryWindow + ReclaimCheckHintSafetyMargin
 )
 
-// These scripts use only Redis 2.6-era primitives. In particular, they avoid
-// ZADD GT (Redis 6.2+) so self-hosted installations do not silently lose the
-// scheduling optimization on older Redis versions.
+// 下面的 Lua 脚本只用 Redis 2.6 时代的原语。尤其避免用 ZADD GT（Redis 6.2+），
+// 这样自托管的部署在较老的 Redis 上也不会悄悄丢掉“延后调度”这个优化。
 const reclaimCheckTrackLaterScript = `
 local current = redis.call('ZSCORE', KEYS[1], ARGV[1])
 if not current then
@@ -53,20 +54,20 @@ end
 return #members
 `
 
-// ReclaimCheckCache keeps the batch/singular claim hot paths from issuing a
-// stale-dispatch UPDATE when no task can possibly be reclaimed yet.
+// ReclaimCheckCache 让批量/单次认领的热路径在“确定还没有任务可被回收”时，免掉那
+// 趟注定无果的“过期派发 UPDATE”。
 //
-// Each runtime owns a sorted set of task IDs scored by their earliest known
-// reclaim time. A separate last-checked timestamp forces a periodic DB check
-// for cache loss, pre-deployment rows, or a missed write. Task scores and the
-// last-checked timestamp are both application-clock values; PostgreSQL remains
-// authoritative for actual eligibility when the query runs. Missing keys and
-// Redis errors always mean "check PostgreSQL now", so the cache can only reduce
-// load; it is never authoritative for task recovery.
+// 每个 runtime 各持一个有序集合（sorted set），元素是任务 ID，分值是该任务“已知
+// 最早可回收时刻”。另有一个“上次已检查”时间戳，强制周期性回库检查一遍，兜住缓存
+// 丢失、部署前的旧行或漏写。任务分值和“上次已检查”都是应用侧时钟的值；真正查库
+// 时仍以 PostgreSQL 为准判定是否够格。键缺失和 Redis 出错一律表示“现在就去查库”，
+// 所以这个缓存只能减少负载，永远不能替任务恢复做决定。
 type ReclaimCheckCache struct {
 	rdb *redis.Client
 }
 
+// NewReclaimCheckCache 包一层 Redis 客户端；rdb 为 nil 时返回 nil（调用方据此走
+// “没有缓存”的降级路径）。
 func NewReclaimCheckCache(rdb *redis.Client) *ReclaimCheckCache {
 	if rdb == nil {
 		return nil
@@ -82,18 +83,18 @@ func reclaimCheckBackstopKey(runtimeID string) string {
 	return reclaimCheckBackstopPrefix + runtimeID
 }
 
+// bounded 给单条 Redis 命令加上统一超时，防止慢 Redis 拖住认领热路径。
 func (c *ReclaimCheckCache) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, emptyClaimRedisTimeout)
 }
 
-// DueRuntimeIDs returns only runtimes with a due task hint or whose periodic
-// backstop has elapsed. It preserves the relative order of non-empty input IDs.
-// MarkChecked advances hints seen by a completed DB check to a bounded retry
-// deadline, so an unrecovered task is tried again without retriggering every
-// poll. The schedule TTL remains a hard bound on stale cleanup hints.
+// DueRuntimeIDs 只返回“有到期任务提示、或周期性兜底已到”的 runtime。它保留输入中
+// 非空 ID 的相对顺序。MarkChecked 会把“已被一趟完整查库看过的提示”推进到一个有界
+// 重试截止时间，所以一个没被收回的任务会被再试一次，而不会每次轮询都重新触发。
+// 计划 ZSET 的 TTL 仍是过期清理提示的硬性上限。
 //
-// A nil cache, missing/malformed backstop, or Redis failure fails open. Batch
-// callers treat any due runtime as a reason to query their complete runtime set.
+// 缓存为 nil、兜底键缺失/损坏、或 Redis 出错时都“放行”（fail open）：批量调用方
+// 把任一 runtime 到期当作“把完整 runtime 集合查一遍”的理由。
 func (c *ReclaimCheckCache) DueRuntimeIDs(ctx context.Context, runtimeIDs []string, now time.Time) []string {
 	if len(runtimeIDs) == 0 {
 		return nil
@@ -139,8 +140,7 @@ func (c *ReclaimCheckCache) DueRuntimeIDs(ctx context.Context, runtimeIDs []stri
 	for i, runtimeID := range validRuntimeIDs {
 		backstop, ok := backstops[i].(string)
 		if !ok {
-			// A missing or non-string value means this runtime has no trustworthy
-			// successful-check marker.
+			// 值缺失或不是字符串，说明这个 runtime 没有可信的“已成功检查”标记。
 			due[i] = true
 			continue
 		}
@@ -150,6 +150,7 @@ func (c *ReclaimCheckCache) DueRuntimeIDs(ctx context.Context, runtimeIDs []stri
 			continue
 		}
 		nextBackstop := checkedMillis + ReclaimCheckBackstopInterval.Milliseconds()
+		// 加法溢出或兜底时刻已到：都算到期。
 		if nextBackstop < checkedMillis || nextBackstop <= nowMillis {
 			due[i] = true
 			continue
@@ -189,19 +190,17 @@ func (c *ReclaimCheckCache) DueRuntimeIDs(ctx context.Context, runtimeIDs []stri
 	return dueRuntimeIDs
 }
 
-// Track records the earliest known reclaim time for one dispatched task. ZADD
-// replaces the task's score after a fresh dispatch/reclaim; multiple tasks on
-// one runtime remain independent, avoiding a runtime-level timestamp losing a
-// second task's earlier recovery deadline.
+// Track 记录某个已派发任务“已知最早可回收时刻”。一次新的派发/回收后，ZADD 会用
+// 新分值覆盖该任务；同一 runtime 上的多个任务互不影响，不会因为只记一个
+// runtime 级时间戳而丢掉第二个任务更早的恢复截止时间。
 func (c *ReclaimCheckCache) Track(ctx context.Context, runtimeID, taskID string, checkAfter time.Time) {
 	c.track(ctx, runtimeID, taskID, checkAfter, false)
 }
 
-// TrackLater advances an existing task hint only when a prepare-lease extension
-// protects it beyond its current recovery deadline. It deliberately does not
-// create a missing member: without the initial dispatch deadline, a short lease
-// could schedule an early failed check and delay recovery until the next
-// backstop. Missing state already fails open through that bounded backstop.
+// TrackLater 只在“prepare 租约续期”把任务保护到超过其当前恢复截止时间时，才把
+// 已有提示往后推。它刻意不创建缺失成员：若没有最初的派发截止时间，一次短暂的租约
+// 可能排出一趟过早的失败检查，把恢复拖到下一个兜底。缺失状态本来就由那个有界兜底
+// 放行处理。
 func (c *ReclaimCheckCache) TrackLater(ctx context.Context, runtimeID, taskID string, checkAfter time.Time) {
 	c.track(ctx, runtimeID, taskID, checkAfter, true)
 }
@@ -214,6 +213,7 @@ func (c *ReclaimCheckCache) track(ctx context.Context, runtimeID, taskID string,
 	defer cancel()
 	key := reclaimCheckScheduleKey(runtimeID)
 	if onlyLater {
+		// 只有当前分值更早时才 ZADD 到新时刻（Lua 内判断），并顺带刷新 TTL。
 		if err := c.rdb.Eval(
 			bctx,
 			reclaimCheckTrackLaterScript,
@@ -226,6 +226,7 @@ func (c *ReclaimCheckCache) track(ctx context.Context, runtimeID, taskID string,
 		}
 		return
 	}
+	// 普通 Track：无条件写入分值 + 刷新 TTL。
 	pipe := c.rdb.Pipeline()
 	member := redis.Z{Score: float64(checkAfter.UnixMilli()), Member: taskID}
 	pipe.ZAdd(bctx, key, member)
@@ -235,9 +236,9 @@ func (c *ReclaimCheckCache) track(ctx context.Context, runtimeID, taskID string,
 	}
 }
 
-// Forget removes a task that can no longer be reclaimed (started, requeued,
-// waiting on a local directory, or terminal). Failures are harmless: the stale
-// hint can cause one extra DB check but cannot make an ineligible task run.
+// Forget 移除一个“不可能再被回收”的任务（已启动、已重新排队、在等本地目录、或已
+// 终结）。失败无妨：过期提示最多引发一次多余的查库，绝不可能让一个不够格的任务跑
+// 起来。
 func (c *ReclaimCheckCache) Forget(ctx context.Context, runtimeID, taskID string) {
 	if c == nil || runtimeID == "" || taskID == "" {
 		return
@@ -249,13 +250,11 @@ func (c *ReclaimCheckCache) Forget(ctx context.Context, runtimeID, taskID string
 	}
 }
 
-// MarkChecked records a successful PostgreSQL reclaim pass for every runtime in
-// the machine-level polling set. Hints that actually triggered this pass are
-// atomically moved to retryAfter instead of deleted or made inert: SKIP LOCKED
-// and runtime-health predicates mean an empty result cannot prove those tasks no
-// longer need recovery. Concurrent hints newer than checkedThrough are left
-// untouched. The bounded batch prevents a pathological ZSET from monopolizing
-// Redis; any excess due hints remain due and fail open to another DB pass.
+// MarkChecked 记录“对机器级轮询集合里的每个 runtime，都完成了一趟成功的 PostgreSQL
+// 回收检查”。真正触发这趟检查的提示被原子地移到 retryAfter，而不是删除或置为无效：
+// SKIP LOCKED 和 runtime 健康谓词意味着“查不到结果”并不能证明那些任务不再需要
+// 回收。比 checkedThrough 更新的并发提示保持原样。有界批量防止病态 ZSET 独占 Redis；
+// 溢出的到期提示保持到期状态，放行到另一趟查库。
 func (c *ReclaimCheckCache) MarkChecked(ctx context.Context, runtimeIDs []string, checkedThrough, retryAfter time.Time) {
 	if c == nil || len(runtimeIDs) == 0 {
 		return

@@ -1,3 +1,6 @@
+// 本文件是「标签管理」设置标签页：按资源类型（Issue / 技能）分区维护工作区里的
+// 标签——支持搜索、新建、编辑、删除，删除/保存等操作经弹窗确认。
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -46,26 +49,33 @@ import { useLocale, useT } from "../../i18n";
 import { SettingsTab } from "./settings-layout";
 
 /**
- * Label scopes this settings tab manages. Narrower than `LabelResourceType`:
- * the backend still models agent labels, but the product no longer exposes
- * any way to create, apply, or view them, so they are not manageable here.
+ * 本标签页可管理的标签范围。比 `LabelResourceType` 窄：服务端仍建模着 agent 标签，
+ * 但产品已不再提供任何创建/使用/查看它的入口，因此 agent 标签不在此页管理。
  */
 type LabelScope = Extract<LabelResourceType, "issue" | "skill">;
 
+/** 顶部「按类型筛选」的两种资源类型。 */
 const RESOURCE_TYPES: LabelScope[] = ["issue", "skill"];
 
+/** 新建/编辑标签时的表单草稿。 */
 interface LabelDraft {
   name: string;
   description: string;
   color: string;
 }
 
+/** 空草稿：名字与描述留空，颜色用预设色板里的第 7 个色作默认。 */
 const EMPTY_DRAFT: LabelDraft = {
   name: "",
   description: "",
   color: COLOR_PICKER_PRESETS[6],
 };
 
+/**
+ * 「标签管理」标签页：顶部切换资源类型（Issue / 技能）并对应当前类型列出标签表
+ * （名称色点、描述、被引用数、更新时间），可搜索过滤；右上「新建」打开编辑器；
+ * 每行 ⋯ 菜单提供编辑/删除。下方挂新建/编辑与删除确认弹窗。
+ */
 export function LabelsTab() {
   const { t } = useT("settings");
   const locale = useLocale();
@@ -236,6 +246,10 @@ export function LabelsTab() {
   );
 }
 
+/**
+ * 新建 / 编辑标签的弹窗。打开时会按「编辑目标」回填草稿（label 有值是编辑，否则
+ * 新建）；名称必填、最长 32 字符，颜色用 ColorPicker 选预设色。
+ */
 function LabelEditorDialog({
   open,
   onOpenChange,
@@ -383,6 +397,7 @@ function LabelEditorDialog({
   );
 }
 
+/** 删除标签的确认弹窗：提示该标签当前被多少处引用，确认后执行删除。 */
 function DeleteLabelDialog({
   label,
   onClose,

@@ -1,11 +1,20 @@
 "use client";
 
+/**
+ * 官网「关于」页（客户端组件）：标题 + 逐字拆解的「Multica」名字梗文案 +
+ * 若干段落 + GitHub CTA，整体包在官网导航与页脚之间。
+ */
 import Link from "next/link";
 import { LandingHeader } from "./landing-header";
 import { LandingFooter } from "./landing-footer";
 import { GitHubMark, githubUrl } from "./shared";
 import { useLocale } from "../i18n";
 
+/**
+ * 关于页内容主体。
+ *
+ * @returns 关于页整页布局。
+ */
 export function AboutPageClient() {
   const { t } = useLocale();
   const n = t.about.nameLine;

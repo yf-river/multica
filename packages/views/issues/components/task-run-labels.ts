@@ -1,29 +1,29 @@
+// 本文件：task-run-labels —— 代理运行（AgentTask）的展示文案工具。
+// 凡列出某个问题代理运行的界面（执行日志行、用量详情对话框）都共用这里的
+// 标签；放在本文件而非任一组件里，正是为了两者不漂移——同一次运行在侧栏
+// 与它打开的表格里必须读起来一致。
+
 import type { AgentTask } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { stripMentionMarkdown } from "../utils/strip-mention-markdown";
 
-// Display labels shared by every surface that lists an issue's agent runs:
-// the execution log rows and the usage-detail dialog. They live here rather
-// than in either component so the two can't drift — a run must read the same
-// in the sidebar and in the table it opens.
+// 所有"列出某问题代理运行"的界面共用的展示标签：
+// 执行日志行与用量详情对话框。放在这里而非其中任一组件里，
+// 避免二者漂移——同一次运行在侧栏与打开的表格里必须读起来一样。
 
 /**
- * Human label for what caused this run.
+ * 这次运行是由什么触发的，给出人话标签。
  *
- * Primary source: the canonical snapshot taken at task creation time
- * (comment text / autopilot title). Survives source edits/deletes and is
- * information-dense — far better than a structural label.
+ * 首选来源：任务创建当时拍下的权威快照（评论文本 / autopilot 标题）。
+ * 它能扛住原文被改被删，且信息密度高——远胜一条结构化的标签。
  *
- * Retry tasks inherit the parent's trigger_summary on the DB side (so the
- * snapshot survives across attempts), but a row that just shows the inherited
- * summary is indistinguishable from its parent. We prepend "Retry #N" when
- * parent_task_id is set so retries are scannable as retries even when their
- * summary is inherited.
+ * 重试任务在数据库侧继承了父任务的 trigger_summary（快照能跨尝试存活），
+ * 但只显示继承摘要的行与其父任务无从区分。当设置了 parent_task_id 时，
+ * 前面加"重试 #N"前缀，让重试即使带着继承的摘要也能一眼认出是重试。
  *
- * Fallback chain for legacy tasks created before the snapshot field shipped,
- * OR for sources we don't snapshot (direct assignment / chat): degrade to a
- * short structural label by trigger source. New tasks (post-061 migration)
- * almost always hit the snapshot path.
+ * 回退链面向"快照字段上线前创建的旧任务"，或我们不做快照的来源
+ *（直接指派 / 聊天）：按触发来源退化成简短的结构化标签。
+ * 新任务（061 迁移之后）几乎总走快照路径。
  */
 export function useTriggerText(task: AgentTask): string {
   const { t } = useT("issues");
@@ -42,15 +42,16 @@ export function useTriggerText(task: AgentTask): string {
   }
   if (task.autopilot_run_id) return t(($) => $.execution_log.trigger_autopilot);
   if (task.trigger_comment_id) return t(($) => $.execution_log.trigger_comment);
-  // Assignment-triggered run that carried a handoff note: show the note inline
-  // (truncated by the caller) the way comment triggers show their text, so the
-  // row reads as the handoff instead of the generic "initial run".
+  // 由指派触发、且带交接（handoff）备注的运行：像评论触发展示文本那样
+  // 把备注内联展示出来（超出由调用方截断），让该行读起来就是一条交接，
+  // 而不是笼统的"初始运行"。
   if (task.handoff_note) {
     return retryPrefix + t(($) => $.execution_log.trigger_handoff_prefix) + stripMentionMarkdown(task.handoff_note);
   }
   return t(($) => $.execution_log.trigger_initial);
 }
 
+/** 运行状态的 i18n 可读标签（排队/派发/等待本地目录/运行中/完成/失败/取消）。 */
 export function useStatusLabel(status: AgentTask["status"]): string {
   const { t } = useT("issues");
   switch (status) {
@@ -67,10 +68,9 @@ export function useStatusLabel(status: AgentTask["status"]): string {
 }
 
 /**
- * Wall-clock duration of a finished run, or "" when the task never started or
- * never finished. Deliberately not computed for running tasks: the execution
- * log already ticks a live elapsed timer for those, and a second, frozen
- * figure next to it would contradict it.
+ * 已结束运行的墙钟耗时；任务从未开始或从未结束时返回 ""。
+ * 刻意不为"运行中"任务计算：执行日志已经为它们走着一个实时计时器，
+ * 旁边再放一个冻结的时长数字会互相矛盾。
  */
 export function taskDurationMs(task: AgentTask): number | null {
   const startIso = task.started_at ?? task.dispatched_at;

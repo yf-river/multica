@@ -1,3 +1,5 @@
+// noop_connector.go：一个“占位”连接器——不拨号、不下发任何入站事件，只把
+// run 的 ctx 挂起直到取消。
 package lark
 
 import (
@@ -5,28 +7,22 @@ import (
 	"log/slog"
 )
 
-// NoopConnector satisfies EventConnector by holding the run context
-// open without dialing anything and without emitting any inbound
-// events. It exists so the Hub can be wired into the boot path before
-// the real Lark long-connection client lands: the lease lifecycle,
-// supervisor / renewer goroutines, sweep + shutdown plumbing all run
-// against a real DB, and the operator sees the Hub's "lease acquired"
-// log lines once an installation exists — without the Hub silently
-// retrying a half-finished real connector and looking like the wire
-// protocol is broken when it has not been implemented yet.
+// NoopConnector 通过“什么都不拨、什么都不下发”来满足 EventConnector：它只是
+// 把 run 的 ctx 一直挂着。存在的意义是让 Hub 在真实飞书长连接落地之前就能接入
+// 启动路径：租约生命周期、supervisor / renewer goroutine、清扫与关闭等管道都
+// 对着真实 DB 跑，且一旦有安装，操作者就能看到 Hub 的“lease acquired”日志——
+// 而不是让 Hub 对一个半成品真实 connector 反复重试，看起来像线上协议坏了，
+// 其实根本还没实现。
 //
-// The next stage of the MVP (MUL-2671) replaces this with a connector
-// that opens the actual Lark WebSocket long connection, decodes
-// events, and calls emit. At that point the NoopConnectorFactory call
-// site in router.go swaps to the real factory; the Hub itself does
-// not change.
+// MVP 的下一阶段（MUL-2671）会用真正打开 Lark WebSocket 长连接、解码事件并
+// 调用 emit 的 connector 替换它。届时 router.go 里的 NoopConnectorFactory 调用
+// 点换成真实工厂即可，Hub 本身不用改。
 type NoopConnector struct {
 	logger *slog.Logger
 }
 
-// NewNoopConnector returns a connector that blocks until the Hub
-// cancels its run context. Logger may be nil; callers typically pass
-// slog.Default.
+// NewNoopConnector 返回一个阻塞到 Hub 取消其 run ctx 的 connector。logger 可为
+// nil；调用方通常传 slog.Default。
 func NewNoopConnector(logger *slog.Logger) *NoopConnector {
 	if logger == nil {
 		logger = slog.Default()
@@ -34,12 +30,10 @@ func NewNoopConnector(logger *slog.Logger) *NoopConnector {
 	return &NoopConnector{logger: logger}
 }
 
-// Run blocks until ctx is cancelled and then returns nil. A nil return
-// tells the Hub the connection ended cleanly (no backoff retry storm
-// on shutdown / lease loss). Because Run never errors and runs for as
-// long as the lease is held, the Hub's "uptime >= ResetBackoffAfter"
-// branch will reset the backoff on every supervisor cycle — which is
-// the right thing for a placeholder.
+// Run 阻塞到 ctx 被取消，然后返回 nil。返回 nil 告诉 Hub 连接是干净结束的
+// （关闭/租约丢失时不会触发退避重试风暴）。因为 Run 永不报错且只要租约在就
+// 一直跑，Hub 的 "uptime >= ResetBackoffAfter" 分支会在每个 supervisor 周期
+// 重置退避——对一个占位实现来说正合适。
 func (c *NoopConnector) Run(ctx context.Context, inst Installation, _ EventEmitter) error {
 	c.logger.Info("lark noop connector: holding lease (real long-conn not yet implemented)",
 		"installation_id", uuidString(inst.ID),
@@ -52,10 +46,9 @@ func (c *NoopConnector) Run(ctx context.Context, inst Installation, _ EventEmitt
 	return nil
 }
 
-// NoopConnectorFactory returns a ConnectorFactory that hands every
-// installation a NoopConnector sharing the supplied logger. Used by
-// the router during the bootstrap stage; replaced by the real
-// connector factory once the wire-protocol implementation lands.
+// NoopConnectorFactory 返回一个让所有安装共享同一个（带给定 logger 的）
+// NoopConnector 的 ConnectorFactory。引导阶段由 router 使用；线上协议实现落地
+// 后换成真实 connector 工厂。
 func NoopConnectorFactory(logger *slog.Logger) ConnectorFactory {
 	c := NewNoopConnector(logger)
 	return func(_ Installation) (EventConnector, error) {

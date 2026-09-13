@@ -1,3 +1,7 @@
+// http_client.go：APIClient 接口的真实线上实现——飞书（Lark）开放平台 HTTP 客户端。
+// 本文件是全仓库较大的单文件：集中处理 tenant_access_token 的获取/缓存/失效恢复、
+// IM v1 消息的发送与更新、消息资源（图片/视频等）下载，以及安装期的 Bot 身份查询，
+// 是 lark 包所有出站请求的必经之地。包级总览见 doc.go。
 package lark
 
 import (
@@ -17,122 +21,99 @@ import (
 	"time"
 )
 
-// Real Lark/飞书 Open Platform HTTP APIClient.
+// 本文件剩余部分实现 httpAPIClient——真实的飞书开放平台 HTTP 客户端。
 //
-// Scope: tenant_access_token acquisition + caching, IM v1 interactive-
-// card send / patch, the dedicated binding-prompt outbound, AND the
-// install-time Bot identity lookup (/open-apis/bot/v3/info) consumed
-// by RegistrationService right after a successful device-flow grant.
-// The PersonalAgent registration protocol itself is a separate client
-// (RegistrationClient) because it speaks to a different host
-// (accounts.feishu.cn) with a different auth model (no
-// tenant_access_token — the response IS the credentials).
+// 职责范围：tenant_access_token 的获取与缓存、IM v1 交互式卡片的发送/更新、绑定引导
+// 卡片的专属出站，以及安装期 Bot 身份查询（/open-apis/bot/v3/info）——后者由
+// RegistrationService 在设备流扫码授权成功后立刻调用。PersonalAgent 的注册协议本身是
+// 另一个客户端（RegistrationClient）：它访问的域名不同（accounts.feishu.cn）、认证模型
+// 也不同（没有 tenant_access_token——响应体本身就是凭据），所以不在本文件里。
 //
-// Per-installation credentials flow in on each call via
-// InstallationCredentials; the client never reads lark_installation
-// directly. tenant_access_token is cached in-process keyed by app_id,
-// honoring Lark's `expire` field minus a safety margin so callers
-// never present a token that's about to lapse mid-flight.
+// 凭据注入方式：每次调用通过参数 InstallationCredentials 传入「本次安装」的凭据；
+// 本客户端从不直接读 lark_installation 表。tenant_access_token 以 app_id 为 key 缓存在
+// 进程内，并按照 Lark 返回的 `expire` 字段扣除一段安全余量来判定过期，保证调用方不会
+// 在请求中途拿出一个即将失效的 token。
 
-// DefaultResourceDownloadTimeout is the default cap on one message-resource
-// download. Exported so the channel-media settle invariant test can assert
-// the reconciler's settle delay dwarfs every pipeline budget.
+// DefaultResourceDownloadTimeout 是单次消息资源下载的超时上限。导出它是为了让「渠道
+// 媒体 settle 不变量」测试能断言：reconciler 的结算延迟远大于任何一条流水线预算。
 const DefaultResourceDownloadTimeout = 45 * time.Second
 
 const (
-	// defaultLarkBaseURL is the mainland 飞书 open-platform host. It is the
-	// fallback host for an installation whose region is feishu (or unset);
-	// Region.OpenPlatformBaseURL maps region=lark to open.larksuite.com.
-	// Operators do NOT set MULTICA_LARK_HTTP_BASE_URL to pick a cloud
-	// anymore — the per-installation region does that automatically. The
-	// env var remains only as a deployment-wide override (proxy / mock /
-	// single-cloud staging); tests substitute an httptest.Server URL.
+	// defaultLarkBaseURL 是飞书（中国大陆）开放平台的默认域名，是区域为 feishu（或未
+	// 设置）的安装的兜底主机；Region.OpenPlatformBaseURL 会把区域为 lark 的安装映射到
+	// open.larksuite.com。运维不再通过 MULTICA_LARK_HTTP_BASE_URL 选云——每个安装的
+	// 区域字段会自动决定。该环境变量只保留为「部署级覆盖」（代理/mock/单云预发环境）；
+	// 测试则把它换成 httptest.Server 的 URL。
 	defaultLarkBaseURL = "https://open.feishu.cn"
 
-	// tokenSafetyMargin is subtracted from Lark's `expire` so we
-	// refresh before a token actually lapses. 60s comfortably exceeds
-	// any in-flight HTTP timeout we set below.
+	// tokenSafetyMargin 是自 Lark 返回的 `expire` 里扣除的安全余量，让我们在 token 真正
+	// 失效之前就提前刷新。60 秒远超下面设定的任何单次 HTTP 超时，保证请求往返期间
+	// token 一定还有效。
 	tokenSafetyMargin = 60 * time.Second
 
-	// defaultRequestTimeout is the per-call HTTP timeout. Lark's API
-	// is normally well under 1s; we leave headroom for cross-region
-	// latency from a self-hosted Multica deployment to feishu.cn.
+	// defaultRequestTimeout 是普通调用的 HTTP 超时。Lark API 通常远低于 1 秒就能返回；
+	// 留出余量是为了覆盖自建 Multica 部署访问 feishu.cn 的跨地域延迟。
 	defaultRequestTimeout = 10 * time.Second
 
-	// defaultResourceDownloadTimeout is intentionally longer than normal
-	// OpenAPI calls because message videos are binary transfers, not JSON
-	// RPCs. Keep it below the inbound dedup stale-claim window (60s), so a
-	// slow download does not invite a second replica to reclaim the same
-	// message before this one can append and mark it processed.
+	// defaultResourceDownloadTimeout 刻意比普通 OpenAPI 调用长：消息视频是二进制传输，
+	// 不是 JSON RPC。但要低于入站去重的 stale-claim 窗口（60 秒），否则一个下载很慢的
+	// 副本会被另一个副本抢先回收同一条消息，导致本条无法 append 并标记为已处理。
 	defaultResourceDownloadTimeout = DefaultResourceDownloadTimeout
 
-	// Feishu caps message resources at 100 MiB. Keep the local transport guard
-	// aligned with that contract; detached media processing keeps large
-	// transfers off the connector ACK path.
+	// 飞书把单条消息资源上限封在 100 MiB。本地传输层的防护闸门要和该契约对齐；
+	// 脱离 connector ACK 路径的大媒体处理，不会因大体积传输而阻塞 ACK。
 	maxMessageResourceBytes = 100 << 20
 
-	// Access-credential rejections. Seeing one means the token we
-	// presented is not usable, so drop the cached entry and re-mint from
-	// /tenant_access_token/internal. Both are from Lark's generic
-	// error-code table:
-	// open.feishu.cn/document/server-docs/api-call-guide/generic-error-code.
+	// 访问凭据被拒绝的错误码。看到它说明当前出示的 token 不可用：应丢弃缓存条目，
+	// 从 /tenant_access_token/internal 重新签发。二者均出自 Lark 通用错误码表：
+	// open.feishu.cn/document/server-docs/api-call-guide/generic-error-code。
 	//
-	// 99991663 covers BOTH halves for the only credential this client
-	// mints — "tenant_access_token 已过期" and "凭证无效" share the one
-	// code — and is the code the wedged-cache bug reported in #7611 hit.
+	// 99991663 覆盖本客户端唯一会签发的凭据的两半情形——"tenant_access_token 已过期"
+	// 与"凭证无效"共用这一个码——也是 #7611 报告的 wedged-cache（token 卡死在缓存里）
+	// bug 命中的那个码。
 	//
-	// 99991664 is app_access_token, which this client never mints. It
-	// stays in the class deliberately: it is unambiguously "the
-	// credential you presented was rejected", and if Lark ever answers it
-	// for a call we authenticated with a tenant token, re-minting is the
-	// only recovery. Being wrong costs one bounded refresh and one
-	// replay, while leaving it out would cost another wedged cache.
+	// 99991664 是 app_access_token 的错误码，本客户端从不签发。它仍被刻意留在同一
+	// 分类里：它毫不含糊地表示「你出示的凭据被拒绝」，若哪天 Lark 对我们用 tenant token
+	// 认证的调用回了这个码，重新签发是唯一恢复手段。误判一次的代价是有界的一次刷新 +
+	// 一次重放；漏掉它则会让缓存再次卡死。
 	codeTenantTokenInvalid = 99991663
 	codeAppTokenInvalid    = 99991664
 )
 
-// HTTPClientConfig configures the production Lark HTTP APIClient.
+// HTTPClientConfig 配置真实的 Lark HTTP APIClient（构造函数见 NewHTTPAPIClient）。
 type HTTPClientConfig struct {
-	// BaseURL is an optional deployment-wide override for the Lark
-	// open-platform root, e.g. "https://open.feishu.cn" or
-	// "https://open.larksuite.com". When set it forces every call —
-	// regardless of the installation's region — to that host; tests set
-	// it to an httptest.Server URL. When EMPTY (the production default),
-	// each call resolves its host from InstallationCredentials.Region so
-	// a single deployment serves both Feishu and Lark. Trailing "/" is
-	// stripped.
+	// BaseURL 是对 Lark 开放平台根地址的可选部署级覆盖，例如 "https://open.feishu.cn"
+	// 或 "https://open.larksuite.com"。一旦设置，它会强制所有调用——无论安装的区域是
+	// 什么——都打到该主机；测试把它设为 httptest.Server 的 URL。为空（生产默认）时，
+	// 每次调用根据 InstallationCredentials.Region 自行解析主机，这样单个部署能同时服务
+	// 飞书和 Lark 两种区域。末尾的 "/" 会被去掉。
 	BaseURL string
 
-	// HTTPClient is the transport used for every outbound call. Tests
-	// substitute an *http.Client whose Transport routes to an
-	// httptest.Server. Empty defaults to a fresh http.Client with
-	// defaultRequestTimeout.
+	// HTTPClient 是所有出站调用使用的 transport。测试会换成 Transport 指向
+	// httptest.Server 的 *http.Client。为空时默认新建一个带 defaultRequestTimeout 超时的
+	// http.Client。
 	HTTPClient *http.Client
 
-	// ResourceHTTPClient is used only for message resource downloads. It
-	// deliberately does not share HTTPClient's shorter timeout: image/video
-	// resource transfers are bounded by ResourceDownloadTimeout instead.
+	// ResourceHTTPClient 仅用于消息资源下载。它刻意不共享 HTTPClient 的较短超时：
+	// 图片/视频资源的传输改用 ResourceDownloadTimeout 兜底。
 	ResourceHTTPClient *http.Client
 
-	// ResourceDownloadTimeout caps a single message resource download. Zero
-	// defaults to defaultResourceDownloadTimeout.
+	// ResourceDownloadTimeout 限制单次消息资源下载。0 值时默认采用
+	// defaultResourceDownloadTimeout。
 	ResourceDownloadTimeout time.Duration
 
-	// Now is overridable for deterministic token-expiry tests.
+	// Now 可被覆盖，用于让 token 过期相关的测试可确定性推演时间。
 	Now func() time.Time
 
-	// Logger receives warnings about Lark error codes. Nil uses
-	// slog.Default().
+	// Logger 接收关于 Lark 错误码的告警。为 nil 时使用 slog.Default()。
 	Logger *slog.Logger
 }
 
 func (c HTTPClientConfig) withDefaults() HTTPClientConfig {
-	// BaseURL is intentionally NOT defaulted to defaultLarkBaseURL here.
-	// An empty BaseURL means "no deployment-wide override" — each call
-	// then resolves its host from InstallationCredentials.Region (see
-	// resolveBaseURL), so one client serves both Feishu and Lark. A
-	// non-empty BaseURL (MULTICA_LARK_HTTP_BASE_URL, or an httptest URL
-	// in tests) forces every region to that host.
+	// BaseURL 这里刻意不默认成 defaultLarkBaseURL：空 BaseURL 表示「没有部署级覆盖」，
+	// 每次调用再按 InstallationCredentials.Region 解析主机（见 resolveBaseURL），使一个
+	// 客户端同时服务飞书与 Lark；非空 BaseURL（MULTICA_LARK_HTTP_BASE_URL，或测试里的
+	// httptest URL）则把一切区域都强制指向该主机。
 	c.BaseURL = strings.TrimRight(c.BaseURL, "/")
 	if c.HTTPClient == nil {
 		c.HTTPClient = &http.Client{Timeout: defaultRequestTimeout}
@@ -152,51 +133,46 @@ func (c HTTPClientConfig) withDefaults() HTTPClientConfig {
 	return c
 }
 
-// NewHTTPAPIClient constructs the real APIClient that speaks to Lark's
-// open platform over HTTPS. Per-installation credentials flow in via
-// each call's InstallationCredentials parameter; tokens are cached
-// keyed by app_id so a single Multica server reuses Lark's
-// tenant_access_token across calls to the same app.
+// NewHTTPAPIClient 构造走 HTTPS 与 Lark 开放平台通信的真实 APIClient。每次调用的
+// InstallationCredentials 参数携带「本次安装」的凭据；token 以 app_id 为 key 缓存，
+// 因此单个 Multica server 可跨多次对同一 app 的调用复用 Lark 的 tenant_access_token。
 func NewHTTPAPIClient(cfg HTTPClientConfig) APIClient {
 	cfg = cfg.withDefaults()
 	return &httpAPIClient{cfg: cfg, tokens: make(map[string]*cachedToken)}
 }
 
+// httpAPIClient 是 APIClient 的真实 HTTP 实现，内部只维护配置与进程内 token 缓存。
 type httpAPIClient struct {
 	cfg HTTPClientConfig
 
+	// mu 保护 tokens 这个 map。
 	mu sync.Mutex
-	// tokens caches tenant_access_token keyed by app_id only — NOT by
-	// (app_id, region). This is safe because a Lark/飞书 app_id (the
-	// "cli_..." credential) is globally unique across both clouds and an
-	// app exists on exactly one of them, so an app_id never maps to two
-	// regions. The DB enforces the same assumption with UNIQUE(app_id) on
-	// lark_installation. If Lark ever reused an app_id across clouds, both
-	// this cache key and that constraint would need region added.
+
+	// tokens 按 app_id 缓存 tenant_access_token——注意不是按 (app_id, region)。这是
+	// 安全的：一个 Lark/飞书 app_id（"cli_..." 凭据）在两个云上都是全局唯一的，且一个
+	// app 只存在于其中一个云，所以同一个 app_id 绝不会对应两个区域。DB 侧用
+	// lark_installation 表上的 UNIQUE(app_id) 约束背书了同一假设。万一 Lark 哪天跨云
+	// 复用 app_id，这里的缓存 key 和那条约束都需要把 region 加进去。
 	tokens map[string]*cachedToken
 }
 
+// cachedToken 是缓存的 token 及其本进程判定下的过期时刻。
 type cachedToken struct {
 	value     string
 	expiresAt time.Time
 }
 
-// IsConfigured reports true: once this client exists at all, the
-// outbound transport path (send / patch / binding prompt / bot info)
-// is wired. The stub returns false because every call there errors
-// with ErrAPIClientNotConfigured; the real client is the inverse
-// contract.
+// IsConfigured 恒返回 true：只要这个客户端对象存在，出站传输路径（send / patch /
+// 绑定引导 / bot info）就已接好。桩实现返回 false，因为那边所有调用都会以
+// ErrAPIClientNotConfigured 报错；真实客户端是该契约的反面。
 func (c *httpAPIClient) IsConfigured() bool { return true }
 
-// tenantAccessToken returns a usable tenant_access_token for the
-// given installation, reusing a cached token while it is alive (minus
-// safety margin) and otherwise fetching a fresh one from Lark.
+// tenantAccessToken 返回指定安装可用的 tenant_access_token：token 在存活期内（已扣除
+// 安全余量）直接复用缓存，否则向 Lark 重新换取。
 //
-// Concurrent callers serialize on the per-client mutex during the
-// uncached path; the cached path takes the mutex only for the lookup
-// and releases before doing any I/O. Steady-state contention is
-// therefore one map-read under the lock, not a per-call HTTP round
-// trip.
+// 并发说明：未命中缓存的路径上，并发调用方会在客户端级互斥锁上串行；命中缓存的路径
+// 只在查表那一小段持锁，随即在发起任何 I/O 前释放。因此稳态争用只是一次持锁的 map
+// 读，而不是每次调用都打一次 HTTP 往返。
 func (c *httpAPIClient) tenantAccessToken(ctx context.Context, creds InstallationCredentials) (string, error) {
 	if creds.AppID == "" {
 		return "", errors.New("lark http client: missing app_id")
@@ -214,10 +190,9 @@ func (c *httpAPIClient) tenantAccessToken(ctx context.Context, creds Installatio
 	}
 	c.mu.Unlock()
 
-	// Self-built (internal) app endpoint. Marketplace / multi-tenant
-	// apps would use /tenant_access_token/v3 with a different body
-	// shape; PersonalAgent in this MVP is per-workspace self-built so
-	// we stay on /internal.
+	// 自建应用（internal）专用端点。市场上架应用 / 多租户应用应改用
+	// /tenant_access_token/v3 且请求体结构不同；MVP 阶段 PersonalAgent 是每个
+	// workspace 的自建应用，所以固定在 /internal。
 	body := map[string]string{
 		"app_id":     creds.AppID,
 		"app_secret": creds.AppSecret,
@@ -236,9 +211,8 @@ func (c *httpAPIClient) tenantAccessToken(ctx context.Context, creds Installatio
 	}
 
 	expire := time.Duration(resp.Expire) * time.Second
-	// Clamp to >= 2× safety margin so a misbehaving upstream that
-	// returns a sub-minute expire never makes us cache a token that
-	// is already past its safe window.
+	// 下限钳到安全余量的 2 倍，防止上游异常返回一个不足一分钟的 expire 时，我们缓存了
+	// 一个已过安全窗口的 token。
 	if expire < tokenSafetyMargin*2 {
 		expire = tokenSafetyMargin * 2
 	}
@@ -251,11 +225,9 @@ func (c *httpAPIClient) tenantAccessToken(ctx context.Context, creds Installatio
 	return resp.TenantAccessToken, nil
 }
 
-// resolveBaseURL picks the open-platform host for one call. An explicit
-// cfg.BaseURL (MULTICA_LARK_HTTP_BASE_URL, or an httptest URL in tests)
-// overrides every region and routes all traffic there. With no override,
-// the host comes from the installation's region, so Feishu and Lark
-// installations served by the same process each reach their own cloud.
+// resolveBaseURL 为一次调用挑选开放平台主机：显式配置的 cfg.BaseURL（来自
+// MULTICA_LARK_HTTP_BASE_URL，或测试里的 httptest URL）覆盖一切区域、把所有流量都
+// 导向那里；没有覆盖时按安装的区域取主机，使同一进程服务的飞书与 Lark 安装各回各的云。
 func (c *httpAPIClient) resolveBaseURL(creds InstallationCredentials) string {
 	if c.cfg.BaseURL != "" {
 		return c.cfg.BaseURL
@@ -263,38 +235,31 @@ func (c *httpAPIClient) resolveBaseURL(creds InstallationCredentials) string {
 	return creds.Region.OpenPlatformBaseURL()
 }
 
-// invalidateToken drops the cached token for an app_id. Called when
-// Lark surfaces an expired / invalid token error code so the next
-// call refreshes instead of looping on a stale entry.
+// invalidateToken 丢弃某 app_id 的缓存 token。当 Lark 返回过期/无效 token 错误码时
+// 调用，让下一次调用去刷新，而不是反复重试一个过期条目。
 func (c *httpAPIClient) invalidateToken(appID string) {
 	c.mu.Lock()
 	delete(c.tokens, appID)
 	c.mu.Unlock()
 }
 
-// InvalidateTokenCache drops the cached tenant_access_token for an
-// app_id from outside the client. It exists for credential rotation:
-// re-registering a Bot issues a new app_secret, which makes Lark revoke
-// every token minted from the previous one, and the cache — keyed by
-// app_id, which does NOT change — would otherwise keep replaying a
-// token Lark now rejects.
+// InvalidateTokenCache 供客户端外部主动丢弃某 app_id 的缓存 tenant_access_token。
+// 它服务于凭据轮换场景：重新注册 Bot 会签发新的 app_secret，导致 Lark 吊销所有由旧
+// secret 签发的 token；而本缓存 key 是 app_id（它没变），若不主动清掉，会一直重放一个
+// Lark 现已拒绝的 token。
 func (c *httpAPIClient) InvalidateTokenCache(appID string) {
 	c.invalidateToken(appID)
 }
 
-// doAuthedJSON performs one tenant_access_token-authenticated call. When
-// Lark rejects the token itself, it drops the cached entry, mints a
-// fresh token and replays the request exactly once.
+// doAuthedJSON 执行一次携带 tenant_access_token 认证的调用。当 Lark 直接拒绝 token
+// 本身时，会丢弃缓存条目、签发新 token，并把原请求原样重放恰好一次。
 //
-// Replaying is safe for every caller here: Lark rejects a bad token
-// during authentication, before the request is processed, so nothing was
-// delivered and the retry cannot duplicate a message. Without it the
-// refresh would only help the NEXT call and the reply that triggered it
-// would still be lost.
+// 对这里的所有调用方，重放都是安全的：Lark 在认证阶段、请求被真正处理之前就会拒绝
+// 坏 token，所以那时什么都还没投递，重试不会造成消息重复。不做重放的话，刷新只会惠及
+// 下一次调用，而触发刷新的那一次回复仍然会丢。
 //
-// Only token errors are retried. Business codes, 5xx and network
-// failures are returned untouched — those are either definitive or
-// ambiguous about delivery, and neither is fixed by a new token.
+// 只有 token 错误会被重试。业务错误码、5xx、网络失败一律原样返回——它们要么是定论、
+// 要么投递状态不明，换新 token 都解决不了。
 func (c *httpAPIClient) doAuthedJSON(ctx context.Context, creds InstallationCredentials, method, path string, body, out any) error {
 	token, err := c.tenantAccessToken(ctx, creds)
 	if err != nil {
@@ -314,15 +279,12 @@ func (c *httpAPIClient) doAuthedJSON(ctx context.Context, creds InstallationCred
 	return c.doJSON(ctx, c.resolveBaseURL(creds), method, path, fresh, body, out)
 }
 
-// outboundMessageRequest builds the (path, body) the three send methods
-// share. When target.IsSet() the message is routed through Lark's reply
-// endpoint (POST /im/v1/messages/{message_id}/reply) so it threads back
-// into the originating 话题 — reply_in_thread carries the target's
-// InThread flag (Lark also keeps the reply in-thread automatically when
-// the parent message already belongs to a thread). Otherwise the message
-// goes to the chat-level send endpoint keyed by receive_id=chat_id, the
-// historical behavior. Body is map[string]any (not map[string]string)
-// because reply_in_thread is a bool.
+// outboundMessageRequest 拼出三个发送方法共享的 (path, body)。当 target.IsSet() 时，
+// 消息走 Lark 的回复端点（POST /im/v1/messages/{message_id}/reply），从而挂回触发它的
+// 话题线程里——reply_in_thread 携带 target 的 InThread 标志（若父消息本身已在某话题
+// 内，Lark 也会自动保持回复在该话题）。否则消息走以 receive_id=chat_id 定位的群聊
+// 发送端点，即历史行为。body 用 map[string]any（而非 map[string]string），是因为
+// reply_in_thread 是个 bool。
 func outboundMessageRequest(chatID ChatID, msgType, content string, target ReplyTarget) (string, map[string]any) {
 	if target.IsSet() {
 		return "/open-apis/im/v1/messages/" + url.PathEscape(target.MessageID) + "/reply", map[string]any{
@@ -340,9 +302,8 @@ func outboundMessageRequest(chatID ChatID, msgType, content string, target Reply
 	}
 }
 
-// SendInteractiveCard posts a fresh interactive card into a chat and
-// returns Lark's message_id so the Patcher can target subsequent
-// patches at the same card.
+// SendInteractiveCard 往群里投递一张全新的交互式卡片，返回 Lark 的 message_id，便于
+// Patcher 后续对该卡片做定向 patch。
 func (c *httpAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParams) (string, error) {
 	if p.ChatID == "" {
 		return "", errors.New("lark http client: missing chat_id")
@@ -370,12 +331,10 @@ func (c *httpAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParam
 	return resp.Data.MessageID, nil
 }
 
-// SendTextMessage posts a plain text IM message into a Lark chat.
-// This is the Patcher's primary outbound for agent chat replies —
-// using a normal text bubble instead of an interactive card makes
-// free-form replies feel like a native Lark conversation. The
-// content envelope Lark expects is a JSON-encoded `{"text": "..."}`
-// blob; we encode it here so callers pass raw text.
+// SendTextMessage 往 Lark 群里投递一条纯文本 IM 消息。这是 Patcher 回复 agent 聊天时
+// 的主要出站方式——用普通文本气泡而非交互式卡片，让自由格式的回复读起来像原生 Lark
+// 对话。Lark 期望的 content 信封是 JSON 编码的 {"text": "..."}；这里代调用方完成编码，
+// 调用方只需传原始文本。
 func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (string, error) {
 	if p.ChatID == "" {
 		return "", errors.New("lark http client: missing chat_id")
@@ -383,9 +342,8 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	if p.Text == "" {
 		return "", errors.New("lark http client: missing text")
 	}
-	// Lark's `text` msg_type expects content = JSON-encoded {"text": "..."}.
-	// json.Marshal handles the escape of newlines / quotes / unicode so
-	// the agent's reply round-trips intact.
+	// Lark 的 text 类型要求 content = JSON 编码的 {"text": "..."}。json.Marshal 负责
+	// 转义换行/引号/unicode，保证 agent 回复的内容原样往返、不丢字符。
 	contentBytes, err := json.Marshal(map[string]string{"text": p.Text})
 	if err != nil {
 		return "", fmt.Errorf("lark http client: encode text content: %w", err)
@@ -410,21 +368,15 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	return resp.Data.MessageID, nil
 }
 
-// SendMarkdownCard posts the agent's reply as an interactive card
-// using Lark's schema-2.0 envelope with a single `tag: "markdown"`
-// body element. Lark's client renders the markdown into formatted
-// text (bold, italics, lists, links, fenced code blocks, tables, …)
-// rather than showing raw markdown characters as it does for
-// `msg_type=text`. We deliberately keep `SendTextMessage` as a
-// separate path for plain-prose replies — a card around a one-line
-// "Hello!" adds visual chrome that the user doesn't want; the
-// routing decision (markdown vs text) lives at the Patcher layer.
+// SendMarkdownCard 用 Lark schema-2.0 的信封把 agent 的回复发成交互式卡片，卡身是一个
+// 单独的 tag: "markdown" 元素。Lark 客户端会把 markdown 渲染成富文本（粗体、斜体、
+// 列表、链接、围栏代码块、表格……），而不是像 msg_type=text 那样把原始 markdown 字符
+// 原样显示。我们刻意保留 SendTextMessage 作为纯散文回复的独立路径——给一行「Hello!」
+// 套卡片是用户不想要的视觉负担；选 markdown 还是 text 的决策放在 Patcher 层。
 //
-// Why schema 2.0 rather than the legacy schema with a `div` +
-// `lark_md` text element: the legacy `lark_md` tag's markdown
-// dialect is much narrower — no fenced code blocks (syntax
-// highlighting), no tables, no heading sizes. Schema-2.0's
-// `markdown` tag is closer to GFM.
+// 为什么用 schema 2.0 而不是带 div + lark_md 文本元素的旧 schema：旧 lark_md 标签的
+// markdown 方言窄得多——没有围栏代码块（语法高亮）、没有表格、没有标题字号。
+// schema-2.0 的 markdown 标签更接近 GFM。
 func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCardParams) (string, error) {
 	if p.ChatID == "" {
 		return "", errors.New("lark http client: missing chat_id")
@@ -469,9 +421,8 @@ func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCard
 	return resp.Data.MessageID, nil
 }
 
-// PatchInteractiveCard updates an existing card's body. Lark's
-// message-patch endpoint replaces the whole card payload; callers
-// (i.e. the Patcher) render the full updated card each time.
+// PatchInteractiveCard 更新一张既有卡片的正文。Lark 的 message-patch 端点会整体替换
+// 卡片载荷；调用方（即 Patcher）每次都渲染完整的最新卡片再传进来。
 func (c *httpAPIClient) PatchInteractiveCard(ctx context.Context, p PatchCardParams) error {
 	if p.LarkCardMessageID == "" {
 		return errors.New("lark http client: missing card message id")
@@ -497,10 +448,9 @@ func (c *httpAPIClient) PatchInteractiveCard(ctx context.Context, p PatchCardPar
 	return nil
 }
 
-// SendBindingPromptCard renders the member-binding card and posts it
-// directly to the unbound user's open_id (not the chat). Keeping the
-// card template inside this client — rather than the dispatcher —
-// means the dispatcher never has to know about Lark's card schema.
+// SendBindingPromptCard 渲染「成员绑定」引导卡片，并直接投递给未绑定用户的 open_id
+// （不是投到群里）。把卡片模板放在本客户端里——而非 dispatcher——意味着 dispatcher
+// 永远不必了解 Lark 的卡片 schema。
 func (c *httpAPIClient) SendBindingPromptCard(ctx context.Context, p BindingPromptParams) error {
 	if p.OpenID == "" {
 		return errors.New("lark http client: missing open_id")
@@ -536,35 +486,24 @@ func (c *httpAPIClient) SendBindingPromptCard(ctx context.Context, p BindingProm
 	return nil
 }
 
-// GetBotInfo calls /open-apis/bot/v3/info to learn the Bot's
-// per-installation `open_id` and then /open-apis/contact/v3/users/
-// {open_id}?user_id_type=open_id to resolve its stable `union_id`.
-// RegistrationService is the only caller — right after the device-
-// flow registration returns fresh `client_id` / `client_secret`, the
-// service mints a tenant_access_token with those creds and calls
-// this method so the installation row can be frozen with both Bot
-// identifiers in the same transaction as the installer-bind.
+// GetBotInfo 调用 /open-apis/bot/v3/info 取得 Bot 在该安装下的 open_id，随后再调
+// /open-apis/contact/v3/users/{open_id}?user_id_type=open_id 解析其稳定的 union_id。
+// 唯一调用方是 RegistrationService——在设备流注册刚拿到新的 client_id / client_secret
+// 之后，服务用这套凭据签发 tenant_access_token 并调用本方法，好让安装行在安装者绑定
+// 的同一事务里带着两个 Bot 标识一起冻结入库。
 //
-// Why two API calls instead of one: /bot/v3/info does not return
-// union_id in the public schema. The WS inbound decoder needs
-// union_id to disambiguate which bot was @-mentioned in a multi-bot
-// group chat (the per-app open_id field on mentions is structurally
-// inverse across WS perspectives — see MUL-2671 triage), so we
-// invest one extra HTTP round-trip at install time to capture it
-// and avoid running the wrong supervisor for every event going
-// forward.
+// 为什么要两次 API 而不是一次：/bot/v3/info 的公开 schema 不返回 union_id。WS 入站
+// 解码器需要 union_id 来区分多 Bot 群聊里 @ 的是哪一个 bot（mention 上按 app 划分的
+// open_id 字段在 WS 不同视角下结构相反——见 MUL-2671 的排查结论），所以我们在安装期
+// 多付一次 HTTP 往返把它取回来，避免此后每个事件都跑错 supervisor。
 //
-// A missing union_id (contact lookup denied by app scope, or Lark
-// returns an empty field) is NOT a hard failure here — the
-// installation is still usable for p2p chats and the decoder can
-// fall back to the (broken) open_id match path until the operator
-// fixes scopes. We log a warning so the gap is visible.
+// union_id 缺失（应用的联系人权限不足被拒，或 Lark 返回空字段）在这里不算硬失败——
+// 该安装仍可用于一对一私聊，解码器在运维修复权限前可以先退回（有缺陷的）open_id 匹配
+// 路径。我们记一条告警，让这个缺口可见。
 //
-// Other fields the upstream APIs return (display name, avatar, IP
-// whitelist) are deliberately dropped; downstream reads can fetch
-// them on demand from the bot_open_id, and freezing them into our
-// schema would create a drift surface every time the operator edits
-// the Bot on Lark's side.
+// 上游 API 返回的其他字段（显示名、头像、IP 白名单）刻意丢弃；下游有需要时可以凭
+// bot_open_id 按需再查。把那些冻结进我们的 schema，只会给每次运维在 Lark 侧修改 Bot
+// 造成一个漂移面。
 func (c *httpAPIClient) GetBotInfo(ctx context.Context, creds InstallationCredentials) (BotInfo, error) {
 	if creds.AppID == "" || creds.AppSecret == "" {
 		return BotInfo{}, errors.New("lark http client: missing app credentials for GetBotInfo")
@@ -589,10 +528,8 @@ func (c *httpAPIClient) GetBotInfo(ctx context.Context, creds InstallationCreden
 		return BotInfo{}, errors.New("lark http client: bot info: response missing open_id")
 	}
 
-	// Resolve union_id via the contact endpoint. Soft-fail: log and
-	// return the BotInfo with empty UnionID. Callers (Registration-
-	// Service.finishSuccess) accept the gap and persist what they
-	// have.
+	// 经通讯录端点解析 union_id。软失败处理：记日志并返回 UnionID 为空的 BotInfo。
+	// 调用方（RegistrationService.finishSuccess）接受这个缺口，把已有的字段落库。
 	unionID, lookupErr := c.fetchBotUnionID(ctx, creds, botResp.Bot.OpenID)
 	if lookupErr != nil {
 		c.cfg.Logger.Warn("lark http client: bot union_id lookup failed; continuing without it",
@@ -603,20 +540,15 @@ func (c *httpAPIClient) GetBotInfo(ctx context.Context, creds InstallationCreden
 	return BotInfo{OpenID: OpenID(botResp.Bot.OpenID), UnionID: unionID}, nil
 }
 
-// GetMessage retrieves a message by id via
-// GET /open-apis/im/v1/messages/{message_id}. The endpoint always wraps
-// the result in data.items[] — one element for a normal message, and a
-// forward sentinel followed by the bundled child messages for a
-// `merge_forward`. We pass user_id_type=open_id so sender.id and
-// mentions[].id come back as open_ids, matching the identifiers the
-// rest of the package keys on.
+// GetMessage 按 id 取回一条消息：
+// GET /open-apis/im/v1/messages/{message_id}。该端点总把结果包在 data.items[] 里——
+// 普通消息是一个元素，merge_forward 则是一个转发哨兵后跟打包的子消息们。我们传
+// user_id_type=open_id，让 sender.id 与 mentions[].id 以 open_id 返回，与包内其余
+// 代码使用的标识一致。
 //
-// body.content is forwarded verbatim (the raw, JSON-encoded, msg_type-
-// specific string Lark double-encodes); the enricher's flattener owns
-// interpreting it. A deleted / out-of-scope message surfaces as a Lark
-// error code, which we turn into a normal Go error so the enricher can
-// degrade to its "[unable to fetch]" placeholder without aborting the
-// inbound pipeline.
+// body.content 原样透传（Lark 二次编码的、按 msg_type 区分的 JSON 字符串），由
+// enricher 的 flattener 负责解释。已删除 / 越权的消息会以 Lark 错误码浮现，我们把它
+// 转成普通 Go error，让 enricher 可以降级为 "[unable to fetch]" 占位而不中断入站管线。
 func (c *httpAPIClient) GetMessage(ctx context.Context, creds InstallationCredentials, messageID string) ([]LarkMessage, error) {
 	if messageID == "" {
 		return nil, errors.New("lark http client: missing message_id")
@@ -649,23 +581,18 @@ func (c *httpAPIClient) GetMessage(ctx context.Context, creds InstallationCreden
 	return out, nil
 }
 
-// larkListMessagesMaxPageSize is Lark's hard cap on a single
-// im/v1/messages page. We clamp to it so a caller asking for more
-// silently gets the max rather than a 400 from Lark.
+// larkListMessagesMaxPageSize 是 Lark 对单页 im/v1/messages 的硬上限。我们收敛到这个
+// 值，让请求更多的调用方静默拿到上限页，而不是被 Lark 回 400。
 const larkListMessagesMaxPageSize = 50
 
-// ListChatMessages retrieves a bounded, recent window of messages via
-// GET /open-apis/im/v1/messages. Where GetMessage fetches a single message
-// by id, this lists a conversation; it backs the enricher's group-context
-// prefetch. The container is chat (container_id_type=chat) by default, or a
-// single Lark topic (container_id_type=thread) when p.ThreadID is set — the
-// thread container keeps a topic @-mention from seeing sibling topics that
-// share the chat_id (#5835). We pass sort_type=ByCreateTimeDesc so the
-// newest messages come first and a small page_size captures "the last N"
-// without paginating, keeping the inbound ACK path's fan-out to a single
-// round-trip. user_id_type=open_id matches the identifiers the rest of the
-// package keys on; body.content is forwarded verbatim for the enricher's
-// flattener to interpret.
+// ListChatMessages 走 GET /open-apis/im/v1/messages 取一段有界、最近的会话消息窗口。
+// 与 GetMessage（按 id 取单条）不同，这里是列会话；它支撑 enricher 的群组上下文预取。
+// 容器默认是群聊（container_id_type=chat），当 p.ThreadID 有值时则是单个话题
+// （container_id_type=thread）——话题容器可避免话题里的 @ 提及看到共享同一 chat_id 的
+// 兄弟话题（#5835）。我们传 sort_type=ByCreateTimeDesc 让最新消息排最前，于是很小的
+// page_size 就能覆盖「最近 N 条」而无需翻页，把入站 ACK 路径的扇出压到单次往返。
+// user_id_type=open_id 与包内其余代码的标识一致；body.content 原样透传给 enricher 的
+// flattener 解释。
 func (c *httpAPIClient) ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error) {
 	if p.ChatID == "" {
 		return nil, errors.New("lark http client: missing chat_id")
@@ -678,11 +605,9 @@ func (c *httpAPIClient) ListChatMessages(ctx context.Context, creds Installation
 	}
 	q := url.Values{}
 	if p.ThreadID != "" {
-		// Topic-scoped window: only this 话题's messages, so a @-mention
-		// inside a topic never pulls sibling topics that share the chat_id
-		// (#5835). The thread container rejects end_time, so it is omitted
-		// here; the caller anchors the window to the trigger time
-		// client-side instead.
+		// 话题范围的窗口：只看这个话题的消息，让话题内的 @ 提及不会拉到共享 chat_id
+		// 的兄弟话题（#5835）。thread 容器不接受 end_time，所以这里不传；调用方改为在
+		// 客户端把窗口锚定到触发时间上。
 		q.Set("container_id_type", "thread")
 		q.Set("container_id", p.ThreadID)
 	} else {
@@ -721,10 +646,9 @@ func (c *httpAPIClient) ListChatMessages(ctx context.Context, creds Installation
 	return out, nil
 }
 
-// DownloadMessageResource obtains a binary message resource (image, video,
-// file, audio) from Lark/Feishu. Business errors are still represented as
-// JSON with a code/msg body on some failures, so JSON-looking responses are
-// checked before being treated as resource bytes.
+// DownloadMessageResource 从 Lark/飞书取回一条二进制消息资源（图片、视频、文件、音频）。
+// 部分失败场景下，业务错误仍以带 code/msg 的 JSON 形式返回，所以在把响应当资源字节
+// 处理之前要先检查「长得像 JSON」的响应。
 func (c *httpAPIClient) DownloadMessageResource(ctx context.Context, creds InstallationCredentials, p DownloadResourceParams) (DownloadedResource, error) {
 	stream, err := c.DownloadMessageResourceStream(ctx, creds, p)
 	if err != nil {
@@ -747,6 +671,9 @@ func (c *httpAPIClient) DownloadMessageResource(ctx context.Context, creds Insta
 	}, nil
 }
 
+// DownloadMessageResourceStream 以流式返回资源下载（DownLoadResourceParams 定位具体
+// 文件）。流式是为了把大文件的传输与上层处理解耦。downloadMessageResourceStreamOnce
+// 真正发请求；本方法在外面套了与 doAuthedJSON 相同的刷新-重试循环。
 func (c *httpAPIClient) DownloadMessageResourceStream(ctx context.Context, creds InstallationCredentials, p DownloadResourceParams) (DownloadedResourceStream, error) {
 	if p.MessageID == "" {
 		return DownloadedResourceStream{}, errors.New("lark http client: missing message_id")
@@ -763,9 +690,8 @@ func (c *httpAPIClient) DownloadMessageResourceStream(ctx context.Context, creds
 		path += "?" + encoded
 	}
 
-	// Same refresh-and-retry contract as doAuthedJSON: Lark rejects a bad
-	// token before it serves any bytes, so replaying the GET once cannot
-	// produce a half-downloaded resource.
+	// 与 doAuthedJSON 相同的「刷新并重放一次」契约：Lark 在吐出任何字节之前就拒绝坏
+	// token，所以把这个 GET 重放一次不可能得到半个下载好的资源。
 	for attempt := 0; ; attempt++ {
 		token, err := c.tenantAccessToken(ctx, creds)
 		if err != nil {
@@ -784,6 +710,9 @@ func (c *httpAPIClient) DownloadMessageResourceStream(ctx context.Context, creds
 	}
 }
 
+// downloadMessageResourceStreamOnce 实际执行一次资源下载请求：带超时的 GET + Bearer 鉴权
+// + 状态码与体积守卫，成功时返回包装好的下载流。区别于 doJSON，它处理的是二进制而非
+// JSON RPC，走独立的 ResourceHTTPClient 与 ResourceDownloadTimeout。
 func (c *httpAPIClient) downloadMessageResourceStreamOnce(ctx context.Context, creds InstallationCredentials, path, token string) (DownloadedResourceStream, error) {
 	downloadCtx := ctx
 	var cancel context.CancelFunc
@@ -805,6 +734,8 @@ func (c *httpAPIClient) downloadMessageResourceStreamOnce(ctx context.Context, c
 		}
 		return DownloadedResourceStream{}, fmt.Errorf("lark http client: download resource: http do: %w", err)
 	}
+	// 关闭响应体时顺带 cancel 超时 ctx，释放定时器资源；后续每个提前 return 的路径都
+	// 复用这个闭包，避免忘记 close。
 	closeWithCancel := func() {
 		resp.Body.Close()
 		if cancel != nil {
@@ -816,6 +747,8 @@ func (c *httpAPIClient) downloadMessageResourceStreamOnce(ctx context.Context, c
 		return DownloadedResourceStream{}, fmt.Errorf("lark http client: download resource: resource exceeds %d bytes", maxMessageResourceBytes)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// 非 2xx 响应体可能携带 Lark 的业务错误码，读出并解析它，好让调用方（含 token
+		// 重试循环）能按码分类。
 		rawBody, readErr := readMessageResourceErrorBody(resp.Body)
 		closeWithCancel()
 		if readErr != nil {
@@ -830,6 +763,8 @@ func (c *httpAPIClient) downloadMessageResourceStreamOnce(ctx context.Context, c
 		})
 	}
 	contentType := resp.Header.Get("Content-Type")
+	// 少数失败情况下资源端点也会返回「HTTP 200 + JSON 错误体」，这里先嗅探 Content-Type
+	// 是 JSON 的响应，优先按业务错误解析，而不是把错误 JSON 当二进制资源交付。
 	if strings.Contains(strings.ToLower(contentType), "json") {
 		rawBody, readErr := readMessageResourceErrorBody(resp.Body)
 		closeWithCancel()
@@ -841,8 +776,8 @@ func (c *httpAPIClient) downloadMessageResourceStreamOnce(ctx context.Context, c
 			Msg  string `json:"msg"`
 		}
 		if err := json.Unmarshal(rawBody, &apiResp); err == nil && apiResp.Code != 0 {
-			// Token invalidation is the retry loop's job in the caller —
-			// it owns both this shape and the non-2xx one.
+			// token 失效处理是调用方重试循环的事——该循环同时拥有这个形状和那个非 2xx
+			// 形状的错误。
 			return DownloadedResourceStream{}, &APIError{Op: "download resource", Code: apiResp.Code, Msg: apiResp.Msg}
 		}
 		return DownloadedResourceStream{
@@ -859,6 +794,8 @@ func (c *httpAPIClient) downloadMessageResourceStreamOnce(ctx context.Context, c
 	if sizeBytes < 0 {
 		sizeBytes = 0
 	}
+	// 正常二进制资源：用 maxBytesReadCloser 在读取侧限制体积，超过 100 MiB 即报错，
+	// 而不依赖 Content-Length（chunked 或错误头时可能缺失或不准）。
 	return DownloadedResourceStream{
 		Body:        cancelOnClose(&maxBytesReadCloser{r: resp.Body, remaining: maxMessageResourceBytes}, cancel),
 		ContentType: contentType,
@@ -867,6 +804,8 @@ func (c *httpAPIClient) downloadMessageResourceStreamOnce(ctx context.Context, c
 	}, nil
 }
 
+// readMessageResourceErrorBody 读出错误响应体，并套用 maxMessageResourceBytes 上限，
+// 防止一个失控的错误页无限占用内存。
 func readMessageResourceErrorBody(body io.Reader) ([]byte, error) {
 	rawBody, err := io.ReadAll(io.LimitReader(body, maxMessageResourceBytes+1))
 	if err != nil {
@@ -878,6 +817,8 @@ func readMessageResourceErrorBody(body io.Reader) ([]byte, error) {
 	return rawBody, nil
 }
 
+// maxBytesReadCloser 是带剩余字节配额的读取器：一旦读满配额后流里还有数据，就返回
+// 「资源超过上限」错误，实现读取侧的体积守卫。
 type maxBytesReadCloser struct {
 	r         io.ReadCloser
 	remaining int64
@@ -892,6 +833,7 @@ func (r *maxBytesReadCloser) Read(p []byte) (int, error) {
 		r.remaining -= int64(n)
 		return n, err
 	}
+	// 配额已用尽：再多读一个字节，若上游仍有数据，说明资源超限，报错而非截断交付。
 	var one [1]byte
 	n, err := r.r.Read(one[:])
 	if n > 0 {
@@ -904,11 +846,14 @@ func (r *maxBytesReadCloser) Close() error {
 	return r.r.Close()
 }
 
+// cancelReadCloser 包装一个在 Close 时顺带触发 cancel 的响应体，用于及时释放下载用的
+// 超时上下文。
 type cancelReadCloser struct {
 	io.ReadCloser
 	cancel context.CancelFunc
 }
 
+// cancelOnClose 让 body 在 Close 时同时调用 cancel；cancel 为 nil 时原样返回 body。
 func cancelOnClose(body io.ReadCloser, cancel context.CancelFunc) io.ReadCloser {
 	if cancel == nil {
 		return body
@@ -922,6 +867,8 @@ func (r *cancelReadCloser) Close() error {
 	return err
 }
 
+// filenameFromContentDisposition 从 Content-Disposition 响应头解析 filename 参数，
+// 拿不到或解析失败时返回空串。
 func filenameFromContentDisposition(raw string) string {
 	if raw == "" {
 		return ""
@@ -933,14 +880,12 @@ func filenameFromContentDisposition(raw string) string {
 	return params["filename"]
 }
 
-// larkBatchGetUsersMaxIDs is Lark's hard cap on user_ids per
-// contact/v3/users/batch call. We drop the overflow rather than error so
-// a caller asking for more still gets the first 50 resolved.
+// larkBatchGetUsersMaxIDs 是 Lark 对单次 contact/v3/users/batch 调用 user_ids 数量的
+// 硬上限。超出部分直接丢弃而非报错，让请求更多的调用方也能拿到前 50 个的解析结果。
 const larkBatchGetUsersMaxIDs = 50
 
-// AddMessageReaction adds an emoji reaction to a message via
-// POST /open-apis/im/v1/messages/{message_id}/reactions.
-// Returns the reaction_id so it can be deleted later.
+// AddMessageReaction 经 POST /open-apis/im/v1/messages/{message_id}/reactions 给一条
+// 消息加 emoji 回应，返回 reaction_id 供之后删除该回应使用。
 func (c *httpAPIClient) AddMessageReaction(ctx context.Context, p AddReactionParams) (string, error) {
 	if p.MessageID == "" {
 		return "", errors.New("lark http client: missing message_id")
@@ -971,8 +916,8 @@ func (c *httpAPIClient) AddMessageReaction(ctx context.Context, p AddReactionPar
 	return resp.Data.ReactionID, nil
 }
 
-// DeleteMessageReaction removes a reaction from a message via
-// DELETE /open-apis/im/v1/messages/{message_id}/reactions/{reaction_id}.
+// DeleteMessageReaction 经 DELETE /open-apis/im/v1/messages/{message_id}/reactions/
+// {reaction_id} 从消息上移除一个回应。
 func (c *httpAPIClient) DeleteMessageReaction(ctx context.Context, p DeleteReactionParams) error {
 	if p.MessageID == "" {
 		return errors.New("lark http client: missing message_id")
@@ -997,13 +942,11 @@ func (c *httpAPIClient) DeleteMessageReaction(ctx context.Context, p DeleteReact
 	return nil
 }
 
-// BatchGetUsers resolves user open_ids to display names via
-// GET /open-apis/contact/v3/users/batch?user_ids=…&user_id_type=open_id.
-// It mirrors fetchBotUnionID's single-user contact lookup, batched. Only
-// id->name pairs the API actually returns are included; a restricted
-// contact scope or an unknown id simply yields a smaller map (code==0
-// with fewer items), never an error, so the enricher degrades to
-// positional speaker labels. Ids past Lark's 50-per-call cap are dropped.
+// BatchGetUsers 经 GET /open-apis/contact/v3/users/batch?user_ids=…&user_id_type=open_id
+// 把用户 open_id 解析成显示名。它是 fetchBotUnionID 那种单用户通讯录查询的批量版。
+// 只有 API 实际返回的 id->name 对会进结果；通讯录权限受限或 id 未知时只是得到一张更小
+// 的 map（code==0 但 items 更少），绝不会报错，enricher 因此可降级为位置式发言人标签。
+// 超出每调用 50 个上限的 id 会被丢弃。
 func (c *httpAPIClient) BatchGetUsers(ctx context.Context, creds InstallationCredentials, openIDs []string) (map[string]string, error) {
 	if len(openIDs) == 0 {
 		return map[string]string{}, nil
@@ -1049,10 +992,9 @@ func (c *httpAPIClient) BatchGetUsers(ctx context.Context, creds InstallationCre
 	return out, nil
 }
 
-// larkRESTMessageItem is the IM v1 message item shape returned by the
-// get / list endpoints. It differs from the WS receive event in two
-// ways the enricher cares about: msg_type (not message_type), and a
-// flat `sender.id` / `mentions[].id` string (not a nested id object).
+// larkRESTMessageItem 是 get/list 端点返回的 IM v1 消息条目结构。它与 WS 收消息事件有
+// 两处 enricher 关心的差异：字段名是 msg_type（而非 message_type）；sender.id /
+// mentions[].id 是扁平的字符串（而非嵌套的 id 对象）。
 type larkRESTMessageItem struct {
 	MessageID      string `json:"message_id"`
 	RootID         string `json:"root_id"`
@@ -1077,6 +1019,8 @@ type larkRESTMessageItem struct {
 	} `json:"mentions"`
 }
 
+// normalize 把 REST 条目转换成包内统一的 LarkMessage，完成 msg_type→MessageType 等
+// 字段名与形状的适配。
 func (it larkRESTMessageItem) normalize() LarkMessage {
 	m := LarkMessage{
 		MessageID:      it.MessageID,
@@ -1097,16 +1041,13 @@ func (it larkRESTMessageItem) normalize() LarkMessage {
 	return m
 }
 
-// fetchBotUnionID resolves a Bot's `union_id` from its `open_id` via
-// /open-apis/contact/v3/users/{open_id}?user_id_type=open_id. Split
-// out from GetBotInfo so the failure mode is explicit and the call
-// sites that only need open_id don't pay for the second round-trip.
+// fetchBotUnionID 经 /open-apis/contact/v3/users/{open_id}?user_id_type=open_id 从 Bot
+// 的 open_id 解析 union_id。从 GetBotInfo 拆出来，是为了让失败模式显式化，也让只需
+// open_id 的调用方不必付出第二次 HTTP 往返的代价。
 //
-// Empty string + nil error is a valid outcome: Lark's user endpoint
-// can return code=0 with no union_id field when the app's contact
-// scope is restricted. Caller logs and continues; the decoder still
-// works in single-bot deployments where open_id-based matching is
-// unambiguous.
+// 返回空串 + nil error 是合法结局：应用通讯录权限受限时，Lark 的用户端点可能以 code=0
+// 返回但不带 union_id 字段。调用方记录日志后继续即可；单 Bot 部署里基于 open_id 的匹配
+// 没有歧义，解码器照常工作。
 func (c *httpAPIClient) fetchBotUnionID(ctx context.Context, creds InstallationCredentials, openID string) (string, error) {
 	if openID == "" {
 		return "", errors.New("empty open_id")
@@ -1127,10 +1068,9 @@ func (c *httpAPIClient) fetchBotUnionID(ctx context.Context, creds InstallationC
 		return "", fmt.Errorf("contact users: %w", err)
 	}
 	if resp.Code != 0 {
-		// invalidateToken is keyed by app_id (the cache key on
-		// httpAPIClient.tokens), NOT by the bearer string. Passing
-		// the bearer would do nothing and a stale token would keep
-		// being reused on every retry until natural TTL expiry.
+		// invalidateToken 以 app_id 为 key（对应 httpAPIClient.tokens 的缓存键），
+		// 而不是 bearer 字符串。传 bearer 进去不会清掉任何东西，过期的 token 会一直被
+		// 复用，直到自然 TTL 到期。
 		if isTokenError(resp.Code) {
 			c.invalidateToken(creds.AppID)
 		}
@@ -1139,12 +1079,10 @@ func (c *httpAPIClient) fetchBotUnionID(ctx context.Context, creds InstallationC
 	return resp.Data.User.UnionID, nil
 }
 
-// doJSON encapsulates the verb + URL + auth-header + JSON
-// encode/decode dance so each public method stays a thin shape-only
-// adapter. baseURL is the per-call open-platform host the caller
-// resolved via resolveBaseURL (region-aware). token == "" skips the
-// Authorization header (only the tenant_access_token endpoint takes
-// that path).
+// doJSON 把「动词 + URL + 鉴权头 + JSON 编解码」这套例行动作收进来，让每个公开方法
+// 保持成只做形状适配的薄层。baseURL 是调用方经 resolveBaseURL 解析出的本次开放平台
+// 主机（区域感知）。token == "" 时跳过 Authorization 头（只有 tenant_access_token 端点
+// 走这条路）。
 func (c *httpAPIClient) doJSON(ctx context.Context, baseURL, method, path, token string, body, out any) error {
 	var rdr io.Reader
 	if body != nil {
@@ -1174,10 +1112,9 @@ func (c *httpAPIClient) doJSON(ctx context.Context, baseURL, method, path, token
 		return fmt.Errorf("read body: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Lark still reports its business code in the body of a non-2xx
-		// reply, so parse it instead of collapsing the response into an
-		// opaque transport error. Everything that classifies by code —
-		// token invalidation above all — is unreachable otherwise.
+		// Lark 在非 2xx 回复的 body 里仍会带业务 code，所以解析它而不是把响应折叠成
+		// 一个不透明的传输错误。否则一切按 code 分类的逻辑——首当其冲是 token 失效——
+		// 都永远够不到。
 		code, msg := parseLarkErrorBody(rawBody)
 		return &larkAPIStatusError{
 			StatusCode: resp.StatusCode,
@@ -1194,10 +1131,9 @@ func (c *httpAPIClient) doJSON(ctx context.Context, baseURL, method, path, token
 	return nil
 }
 
-// parseLarkErrorBody best-effort extracts Lark's {code, msg} envelope
-// from an error body. A body that is not JSON at all (a proxy's HTML
-// error page, an empty 502) yields 0 / "" — no code, nothing to
-// classify — which keeps such failures on the plain-transport path.
+// parseLarkErrorBody 尽力从错误体里取出 Lark 的 {code, msg} 信封。body 根本不是 JSON
+// 时（代理的 HTML 错误页、空的 502）返回 0 / ""——没有 code、无可分类——从而让这类
+// 失败保持在纯传输错误路径上。
 func parseLarkErrorBody(raw []byte) (int, string) {
 	var env struct {
 		Code int    `json:"code"`
@@ -1209,19 +1145,17 @@ func parseLarkErrorBody(raw []byte) (int, string) {
 	return env.Code, env.Msg
 }
 
+// isTokenError 报告该 Lark 业务码是否属于「出示的凭据被拒」这一类。
 func isTokenError(code int) bool {
 	return code == codeTenantTokenInvalid || code == codeAppTokenInvalid
 }
 
-// larkAPIStatusError is a Lark reply that failed with a NON-2xx HTTP
-// status. It carries the business code Lark put in the body, because
-// Lark reports authentication failures that way: an invalid or expired
-// tenant_access_token comes back as HTTP 400 with {"code":99991663},
-// not as a 2xx envelope (#7611). A client that only reads the body of
-// 2xx replies can therefore never notice its cached token died, and
-// replays the dead token until the process restarts.
+// larkAPIStatusError 是「HTTP 状态非 2xx」的失败回复。它携带 Lark 放在 body 里的业务
+// code，因为 Lark 正是这样报告认证失败的：无效或过期的 tenant_access_token 会以
+// HTTP 400 + {"code":99991663} 回来，而不是一个 2xx 信封（#7611）。只读 2xx body 的
+// 客户端因此永远发现不了缓存的 token 已死，会把死 token 一直重放到进程重启。
 //
-// Code is 0 when the body carried no parsable Lark envelope.
+// 当 body 里没有可解析的 Lark 信封时 Code 为 0。
 type larkAPIStatusError struct {
 	StatusCode int
 	Code       int
@@ -1230,24 +1164,21 @@ type larkAPIStatusError struct {
 }
 
 func (e *larkAPIStatusError) Error() string {
-	// Preserve the historical wording — operators grep their logs for it.
+	// 保留历史措辞——运维 grep 日志就靠它。
 	return fmt.Sprintf("http %d: %s", e.StatusCode, e.Raw)
 }
 
-// larkErrorCode digs the Lark business code out of err, from either
-// shape that carries one: a non-2xx reply (larkAPIStatusError) or a 2xx
-// envelope a call site rejected (APIError). Returns 0 for anything else,
-// including network failures and timeouts, so a code-keyed lookup on the
-// result never matches an ambiguous transport error.
+// larkErrorCode 从 err 里挖出 Lark 业务码，两种携带该码的错误形状都认：非 2xx 回复
+// （larkAPIStatusError）或 2xx 信封里调用方拒绝的业务错误（APIError）。其余一切——
+// 包括网络失败与超时——返回 0，于是对结果做按码查表永远不会匹配上一个含混的传输错误。
 func larkErrorCode(err error) int {
 	code, _, _ := larkErrorCodeMsg(err)
 	return code
 }
 
-// larkErrorCodeMsg is larkErrorCode plus Lark's `msg` and whether err
-// carried a code at all. Classifiers that fall back to matching error
-// TEXT need the third result: "no code" and "code 0" must not both look
-// like a Lark verdict, or a gateway's HTML 502 would classify as one.
+// larkErrorCodeMsg 是 larkErrorCode 的增强版，额外返回 Lark 的 msg 与「err 是否真的
+// 携带了 code」。那些要回退到匹配错误文本的分类器需要第三个结果：「没有 code」和
+// 「code 为 0」不能都像 Lark 的裁决——否则网关的 HTML 502 也会被归类成 Lark 裁决。
 func larkErrorCodeMsg(err error) (int, string, bool) {
 	var statusErr *larkAPIStatusError
 	if errors.As(err, &statusErr) {
@@ -1260,15 +1191,11 @@ func larkErrorCodeMsg(err error) (int, string, bool) {
 	return 0, "", false
 }
 
-// APIError is a structured Lark business error: the request reached
-// Lark, returned HTTP 200, but Lark rejected it with a non-zero
-// `code`. This is distinct from the transport-level errors doJSON
-// surfaces (network failure, 5xx, timeout), which are returned as
-// plain wrapped errors. The distinction matters for the threaded-reply
-// fallback: a business code is definitive ("nothing was sent, and here
-// is exactly why"), whereas a transport error is ambiguous ("the
-// message may or may not have been delivered") and must NOT trigger a
-// chat-level retry that could duplicate or leak the reply.
+// APIError 是结构化的 Lark 业务错误：请求到达 Lark、HTTP 返回 200，但 Lark 以非零
+// `code` 拒绝了它。这与 doJSON 抛出的传输层错误（网络失败、5xx、超时，都是普通包装
+// 错误）不同。这个区别对话题回复的回退决策至关重要：业务错误码是定论（「什么都没发出，
+// 原因如下」），传输错误则是含混的（「消息可能已投递也可能没有」），后者绝不能触发可能
+// 造成回复重复或泄漏到别处的群聊级重试。
 type APIError struct {
 	Op   string
 	Code int
@@ -1279,41 +1206,34 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("lark http client: %s: code=%d msg=%q", e.Op, e.Code, e.Msg)
 }
 
-// threadReplyUnsupportedCodes are the reply-endpoint business codes
-// that definitively mean "this specific trigger message / topic cannot
-// receive a threaded reply" AND nothing was sent, while a plain
-// chat-level send to the same chat is unaffected. Only these justify
-// the chat-level fallback. Rate limits (230020), "message is being
-// sent" (230049, ambiguous), permission/content errors (which would
-// also fail at chat level), and all transport/5xx/timeout failures are
-// deliberately excluded: those stay failures so we never duplicate a
-// reply or leak a thread-only reply into the main group chat.
-// Codes are from the IM reply-message endpoint error table.
+// threadReplyUnsupportedCodes 是回复端点这样一类业务码：它们确凿地表示「这条触发消息 /
+// 话题收不了话题内回复」且什么都没发出，而对同一群聊的普通群聊级发送不受影响。只有这些
+// 码才配得上群聊级回退。限流（230020）、"消息正在发送"（230049，含混）、权限/内容错误
+// （在群聊级一样会失败），以及所有传输/5xx/超时失败都被刻意排除：那些保持为失败，这样
+// 我们既不会重复回复，也不会把本该只在话题里的回复泄漏到主群聊。码出自 IM 回复消息端点
+// 的错误码表。
 var threadReplyUnsupportedCodes = map[int]struct{}{
-	230011: {}, // the trigger message has been recalled
-	230019: {}, // the topic does not exist
-	230050: {}, // the trigger message is invisible to the operator
-	230071: {}, // the group does not support reply in thread
-	230072: {}, // aggregated messages do not support reply in thread
-	230111: {}, // cannot reply to a self-destructing message
+	230011: {}, // 触发消息已被撤回
+	230019: {}, // 话题不存在
+	230050: {}, // 触发消息对运维者不可见
+	230071: {}, // 该群不支持话题内回复
+	230072: {}, // 聚合消息不支持话题内回复
+	230111: {}, // 不能回复一条阅后即焚的消息
 }
 
-// isThreadReplyUnsupported reports whether err carries a Lark business
-// code meaning the threaded reply cannot land on this target. Only such
-// errors are safe to retry at the chat level. Transport errors and other
-// business codes return false.
+// isThreadReplyUnsupported 报告 err 是否携带「话题回复落不到这个目标上」的 Lark 业务码。
+// 只有这类错误可以安全地在群聊级重试。传输错误与其他业务码都返回 false。
 //
-// The code is read through larkErrorCode, so it is found whether Lark
-// answered with a 2xx envelope or a non-2xx status — a definitive
-// "nothing was sent" verdict is equally definitive either way, and only
-// codes on the list get here. Errors with no Lark code (network failure,
-// timeout, a proxy's HTML 502) yield code 0, which is not on the list, so
-// ambiguous delivery still never triggers the fallback.
+// 码经 larkErrorCode 读出，所以无论 Lark 是回了 2xx 信封还是非 2xx 状态都能找到——
+// 「什么都没发」的定论在哪种形态下都一样是定论，能走到这里的只有名单上的码。没有 Lark
+// 码的错误（网络失败、超时、代理的 HTML 502）得出 0，不在名单里，因此含混的投递状态
+// 永远不会触发回退。
 func isThreadReplyUnsupported(err error) bool {
 	_, ok := threadReplyUnsupportedCodes[larkErrorCode(err)]
 	return ok
 }
 
+// truncate 把字符串截到 n 个字节并加省略号，用于把可能很长的错误体塞进错误信息。
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -1321,14 +1241,11 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// bindingPromptTemplate renders the "you need to bind" interactive
-// card. Single primary CTA pointing at the redemption URL; the rest
-// of the body is plain-text Chinese copy matching the in-app voice.
+// bindingPromptTemplate 渲染「你需要绑定」引导卡片：单个指向兑换 URL 的主 CTA，其余
+// 卡身为纯文本中文文案，与应用内语气一致。
 //
-// Kept here (not in defaultRenderer) so the binding card template can
-// evolve independently of the streaming-status cards the Patcher
-// renders — they have different lifecycles (binding card is one-shot,
-// status cards are patched in place).
+// 放在这里（而非 defaultRenderer），是为了让绑定卡模板能独立于 Patcher 渲染的流式状态
+// 卡片演进——二者生命周期不同（绑定卡一次性发出，状态卡原地 patch）。
 func bindingPromptTemplate(bindURL string) (string, error) {
 	doc := map[string]any{
 		"config": map[string]any{"wide_screen_mode": true},

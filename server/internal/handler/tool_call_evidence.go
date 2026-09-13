@@ -1,3 +1,15 @@
+// 本文件把任务消息流（protocol.TaskMessagePayload）里的工具调用整理成「证据」，
+// 供前端展示 agent 干活的过程：
+//
+//   - buildToolCallChains：把 tool_use / tool_result 两种消息配对成一条条「调用链」
+//     （调用 → 结果），配对不上的各自标记为「缺少结果」/「孤立结果」；
+//   - buildToolCallSummary：按工具聚合出统计（总次数、配对/缺失/孤立数、耗时、异常
+//     线索等），并给出排序与「需要关注」标记；
+//   - toolCallFailureSignal 等启发式：从工具输出文本里嗅探失败信号（<tool_use_error>、
+//     非零退出码、≥400 的 HTTP 状态、error:/panic: 等结构化行），供 UI 高亮问题调用。
+//
+// 注意：这里的「工具调用—结果」配对是尽力而为的展示逻辑，按同一工具名先进先出配对；
+// 不等于 agent 执行轨迹的真实因果。
 package handler
 
 import (
@@ -12,6 +24,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// toolCallChainResponse 是一条「工具调用链」的对外结构：从一次 tool_use 出发，
+// 配到其 tool_result（成功配对），或保持「缺少结果 / 孤立结果」状态。
 type toolCallChainResponse struct {
 	ID             string         `json:"id"`
 	TaskID         string         `json:"task_id,omitempty"`
@@ -32,6 +46,7 @@ type toolCallChainResponse struct {
 	CompletedAt    string         `json:"completed_at,omitempty"`
 }
 
+// toolCallSummaryResponse 是按工具聚合后的统计结构。
 type toolCallSummaryResponse struct {
 	Tool                   string         `json:"tool"`
 	TotalCalls             int            `json:"total_calls"`
@@ -47,6 +62,9 @@ type toolCallSummaryResponse struct {
 	Summary                string         `json:"summary"`
 }
 
+// buildToolCallChains 把消息流转成调用链列表。tool_use 创建一条「等待结果」的链；
+// 随后的 tool_result 按「同工具名先进先出」配对（同一工具可多次调用）。没有待配对
+// 调用的结果单独记为「孤立结果」。
 func buildToolCallChains(messages []protocol.TaskMessagePayload) []toolCallChainResponse {
 	chains := []toolCallChainResponse{}
 	pendingByTool := map[string][]int{}
@@ -112,6 +130,8 @@ func buildToolCallChains(messages []protocol.TaskMessagePayload) []toolCallChain
 	return chains
 }
 
+// buildToolCallSummary 按工具聚合调用链的统计，并按「需要关注 → 最慢 → 次数多 →
+// 名称」排序，方便 UI 把问题工具顶到前面。
 func buildToolCallSummary(chains []toolCallChainResponse) []toolCallSummaryResponse {
 	if len(chains) == 0 {
 		return []toolCallSummaryResponse{}
@@ -179,6 +199,7 @@ func buildToolCallSummary(chains []toolCallChainResponse) []toolCallSummaryRespo
 	return result
 }
 
+// toolCallInputSummary 把调用入参序列化成短字符串，用于摘要文案。
 func toolCallInputSummary(input map[string]any) string {
 	if len(input) == 0 {
 		return ""
@@ -190,6 +211,8 @@ func toolCallInputSummary(input map[string]any) string {
 	return string(raw)
 }
 
+// toolCallDurationBetween 用两个 RFC3339 时间戳算出调用耗时（毫秒）；解析失败或结束
+// 早于开始都返回 0。
 func toolCallDurationBetween(start, end string) int64 {
 	startAt, startErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(start))
 	endAt, endErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(end))
@@ -199,6 +222,10 @@ func toolCallDurationBetween(start, end string) int64 {
 	return endAt.Sub(startAt).Milliseconds()
 }
 
+// toolCallFailureSignal 从工具输出里嗅探失败信号，返回是否失败及一句人话原因。
+// 判定顺序：工具错误标记 → 非零退出码 → ≥400 的 HTTP 状态 → 结构化错误行
+// （error:/panic: 等）；read/grep/glob 与只读 shell 命令、纯成功/失败计数器的输出
+// 不算失败。
 func toolCallFailureSignal(tool, output string) (bool, string) {
 	displayOutput := toolCallOutputText(output)
 	normalized := strings.ToLower(strings.TrimSpace(displayOutput))
@@ -231,6 +258,8 @@ func toolCallFailureSignal(tool, output string) (bool, string) {
 	return false, ""
 }
 
+// toolCallOutputText 若输出是 JSON 数组（常见的 text 分段格式），抽出所有 text 段
+// 拼成纯文本返回；否则原样返回。让后续匹配不用关心是哪种形态。
 func toolCallOutputText(output string) string {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" || !strings.HasPrefix(trimmed, "[") {
@@ -254,6 +283,9 @@ func toolCallOutputText(output string) string {
 	return strings.Join(texts, "\n")
 }
 
+// toolCallOutputIsReadOnlyCommand 判断输出里的 command: 行是否属于只读/本地制品
+// 命令（cat、git diff、rg、访问本地上传文件的 curl 等）。这类命令的非空输出通常是
+// 正常内容而不是失败证据。
 func toolCallOutputIsReadOnlyCommand(output string) bool {
 	command := ""
 	for _, rawLine := range strings.Split(output, "\n") {
@@ -300,6 +332,8 @@ func toolCallOutputIsReadOnlyCommand(output string) bool {
 	return strings.HasPrefix(command, "git diff") || strings.HasPrefix(command, "git branch") || strings.HasPrefix(command, "git show") || strings.HasPrefix(command, "git status") || strings.HasPrefix(command, "git log") || strings.HasPrefix(command, "multica issue comment list") || readOnlyShell || readsLocalArtifact
 }
 
+// toolCallStructuredFailureReason 从输出行里识别 error: / traceback / panic: /
+// make *** error 等结构化失败行，命中则返回对应的中文原因。
 func toolCallStructuredFailureReason(output string) string {
 	makeError := regexp.MustCompile(`^make(?:\[\d+\])?: \*\*\* .*\berror\s+\d+\b`)
 	for _, rawLine := range strings.Split(output, "\n") {
@@ -320,6 +354,9 @@ func toolCallStructuredFailureReason(output string) string {
 	return ""
 }
 
+// toolCallOutputHasOnlySuccessFailureCounters 判断输出是否只是「成功/失败计数器」
+// 之类的统计文本（如「0 tests failed」）。这类输出不含失败关键词且失败计数为 0，
+// 视为正常，不当作失败信号。
 func toolCallOutputHasOnlySuccessFailureCounters(output string) bool {
 	for _, needle := range []string{"error:", "exception", "panic", "timeout", "timed out", "permission denied", "http 500", "status 500", "错误", "异常", "超时", "无权限"} {
 		if strings.Contains(output, needle) {
@@ -338,6 +375,7 @@ func toolCallOutputHasOnlySuccessFailureCounters(output string) bool {
 	return false
 }
 
+// toolCallHTTPStatusCode 从输出文本里提取 4xx/5xx HTTP 状态码；没找到返回 0。
 func toolCallHTTPStatusCode(output string) int {
 	for _, pattern := range []*regexp.Regexp{
 		regexp.MustCompile(`\bhttp(?:/[\d.]+)?\s*(?:status\s*)?([45]\d{2})\b`),
@@ -352,6 +390,7 @@ func toolCallHTTPStatusCode(output string) int {
 	return 0
 }
 
+// toolCallExitCode 从输出文本里提取进程退出码；找不到返回 ok=false。
 func toolCallExitCode(output string) (int, bool) {
 	for _, pattern := range []*regexp.Regexp{
 		regexp.MustCompile(`\bexit\s+(?:status|code)\s*[:=]?\s*(\d+)\b`),

@@ -1,3 +1,4 @@
+// 议题相关的 WebSocket 事件处理器：把服务器推送的创建/更新/删除等事件应用到本地缓存。
 import { issueStatusCategory } from "./status-category";
 import type { QueryClient } from "@tanstack/react-query";
 import { issueKeys } from "./queries";
@@ -31,6 +32,7 @@ import type {
 } from "../types";
 import type { ListIssuesCache } from "../types";
 
+// 记录各议题“辅助投影”（标签/元数据/属性）最新 revision 的 WeakMap，用于丢弃乱序到达的旧事件。
 const auxiliaryIssueRevisions = new WeakMap<QueryClient, Map<string, number>>();
 
 type AuxiliaryIssueProjection = "generic" | "labels" | "metadata" | "properties";
@@ -77,6 +79,7 @@ function isOlderThanRecordedAuxiliaryProjection(
   return recorded !== undefined && revision < recorded;
 }
 
+/** 用一份完整快照的 revision 对账：清掉不高于它的辅助投影记录，并对仍更新的投影做失效。 */
 export function reconcileIssueFullSnapshotRevision(
   qc: QueryClient,
   wsId: string,
@@ -100,8 +103,8 @@ export function reconcileIssueFullSnapshotRevision(
     }
   }
   if (newestAuxiliaryRevision === undefined) return;
-  // setQueryData clears an inactive query's stale flag. Restore it when this
-  // full snapshot is still behind an auxiliary event we already observed.
+  // setQueryData 会清掉一个非活跃查询的 stale 标记。当这份完整快照仍落后于
+  // 我们已经观察到的辅助事件时，把它恢复。
   invalidateStaleIssueOwnerProjections(
     qc,
     wsId,
@@ -147,7 +150,7 @@ function patchIssueInFlatCaches(
   }
 }
 
-/** Patch denormalized issue snapshots in every loaded per-parent cache. */
+/** 修补每个已加载的“按父议题”缓存里反规范化的议题快照。 */
 function patchIssueInChildrenCaches(
   qc: QueryClient,
   wsId: string,
@@ -267,8 +270,7 @@ function refetchForUnversionedIssueEvent(
 ): boolean {
   if (revision !== undefined) return false;
   if (freshestCachedIssueRevision(qc, wsId, issueId) === undefined) return false;
-  // Mixed-version rollout: once any projection has an ordered revision, an
-  // older server's unversioned snapshot can no longer be applied safely.
+  // 混合版本上线期：一旦任一投影有了有序 revision，旧服务器的无版本快照就不能再安全应用了。
   qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
   return true;
 }
@@ -326,9 +328,8 @@ function invalidateStaleIssueOwnerProjections(
   );
 }
 
-/** Fallback for successful auxiliary mutations whose HTTP response cannot
- * carry an owner revision (notably 204 comment deletion). Only loaded
- * projections containing the owner are invalidated. */
+/** 成功但 HTTP 响应带不了 owner revision 的辅助 mutation 的回退方案
+ * （典型如 204 的评论删除）。只失效“包含该议题”的已加载投影。 */
 export function invalidateIssueOwnerProjections(
   qc: QueryClient,
   wsId: string,
@@ -343,12 +344,10 @@ export function invalidateIssueOwnerProjections(
 }
 
 /**
- * An auxiliary event proves that a newer aggregate owner revision exists, but
- * it does not carry the full Issue snapshot for that revision. Advancing the
- * cached Issue.revision here would make an older-but-newer-full snapshot look
- * stale and could strand fields such as title forever. Keep Issue.revision as
- * the ordering of the full snapshot actually present in that cache, and mark
- * only stale projections for an authoritative refetch.
+ * 一个辅助事件证明了存在更新的聚合 owner revision，但它不携带该 revision 的完整
+ * Issue 快照。如果在这里推进缓存的 Issue.revision，会让一份“更旧但更新”的完整快照
+ * 看起来过期，并可能让 title 之类的字段永久滞留。所以让 Issue.revision 保持为该缓存里
+ * 实际存在的完整快照的顺序，只把过期的投影标记为权威重取。
  */
 export function onIssueAuxiliaryRevision(
   qc: QueryClient,
@@ -376,15 +375,14 @@ function findIssueInFlatCaches(
   return undefined;
 }
 
+/** 处理 `issue:created` 事件：把新议题加入列表缓存，并失效各类聚合缓存。 */
 export function onIssueCreated(
   qc: QueryClient,
   wsId: string,
   issue: Issue,
 ) {
-  // A custom status this client cannot resolve to a category has no bucket to
-  // go in. Inserting nowhere would silently hide an issue that exists on the
-  // server, so invalidate the list instead and let the refetch place it.
-  // (MUL-6243)
+  // 客户端无法解析出分类的自定义状态，没有可入的桶。往哪都不插会静默隐藏一个
+  // 服务器上确实存在的议题，所以改为失效列表、让重取来摆放它。（MUL-6243）
   const bucketable = issueStatusCategory(issue) !== null;
   for (const [key, data] of qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) })) {
     if (!data) continue;
@@ -402,10 +400,9 @@ export function onIssueCreated(
   if (issue.project_id) {
     qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
   }
-  // Refresh every Project Gantt cache that might be observing this issue.
-  // We invalidate the whole prefix rather than the issue's own project
-  // because a fresh issue isn't necessarily scheduled yet; the active Gantt
-  // page (if any) will refetch and pick it up if it qualifies.
+  // 刷新每个可能正在观察该议题的 Project Gantt 缓存。这里失效整个前缀而不是
+  // 议题自己的项目，因为新议题未必已经排期；活跃的 Gantt 页面（如果有）会重取，
+  // 符合条件时再把它捡起来。
   qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
   if (issue.parent_issue_id) {
     qc.invalidateQueries({ queryKey: issueKeys.children(wsId, issue.parent_issue_id) });
@@ -413,24 +410,28 @@ export function onIssueCreated(
   }
 }
 
+/**
+ * 处理 `issue:updated` 事件：把服务器下发的部分议题变更应用到所有相关缓存。
+ * @param qc 查询客户端。
+ * @param wsId 工作区 id。
+ * @param issue 服务器下发的议题补丁（必含 id）。
+ * @param meta 服务器 issue:updated 事件自带的变更标记，权威地表示这次写是否动了成员关系维度。
+ */
 export function onIssueUpdated(
   qc: QueryClient,
   wsId: string,
   issue: Partial<Issue> & { id: string },
-  // assigneeChanged / statusChanged / projectChanged come from the server's
-  // issue:updated flags — authoritative "did this write move a membership
-  // dimension" signals. They feed the coordinator's changed-dims input so a
-  // non-membership change (title / position / priority / label) keeps every
-  // loaded list in place instead of refetching.
+  // assigneeChanged / statusChanged / projectChanged 来自服务器的 issue:updated 标记——
+  // 是权威的“这次写是否动了成员关系维度”信号。它们喂给协调器的 changed-dims 入参，
+  // 让非成员关系变更（标题/位置/优先级/标签）保持每个已加载列表原地不动，而不是去重取。
   meta: {
     assigneeChanged?: boolean;
     statusChanged?: boolean;
     projectChanged?: boolean;
   } = {},
 ) {
-  // Look up the OLD parent + cached entity before mutating cache state, so we
-  // can keep the parent's children cache in sync (powers the sub-issues list
-  // shown on the parent issue page) and diff-fallback the change flags.
+  // 在改动缓存状态之前先查好“旧的父议题 + 已缓存实体”，这样既能保持父议题的
+  // 子议题缓存同步（支撑父议题页上的子议题列表），又能用 diff 回退出变更标记。
   const listQueries = qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) });
   const firstListData = listQueries[0]?.[1];
   const detailData = qc.getQueryData<Issue>(issueKeys.detail(wsId, issue.id));
@@ -450,18 +451,15 @@ export function onIssueUpdated(
   }
   const oldParentId =
     detailData?.parent_issue_id ?? cachedIssue?.parent_issue_id ?? null;
-  // The NEW parent comes from the WS payload when parent_issue_id changed
+  // 当 parent_issue_id 变化时，新父议题来自 WS 载荷
   const newParentId = issue.parent_issue_id ?? null;
   const parentChanged =
     issue.parent_issue_id !== undefined && newParentId !== oldParentId;
 
-  // Prefer the server's flags (authoritative, set on the wire). Fall back to
-  // diffing the payload against the cached copy only when a flag is absent
-  // (older backend): the diff is unreliable once a local optimistic move has
-  // overwritten the cached value, but it still covers remote/agent changes
-  // and keeps a new frontend on an old backend from regressing (MUL-3669 /
-  // #4548). The local move itself is covered by useUpdateIssue's own
-  // coordinator pass, which never depends on these flags.
+  // 优先用服务器的标记（权威、在线上设置）。只在某个标记缺失（旧后端）时才回退到
+  // 把载荷与缓存副本做 diff：一旦本地乐观移动覆盖了缓存值，diff 就不可靠了，但它仍能
+  // 覆盖远程/agent 的变更，并避免“新前端 + 旧后端”的组合退步（MUL-3669 / #4548）。
+  // 本地移动本身由 useUpdateIssue 自己的协调器一轮覆盖，从不依赖这些标记。
   const oldProjectId = detailData?.project_id ?? cachedIssue?.project_id ?? null;
   const changed = {
     assignee:
@@ -481,12 +479,9 @@ export function onIssueUpdated(
         issue.status !== cachedIssue.status),
   };
 
-  // The coordinator applies the same rules table the local mutations use:
-  // surgical patch/rebucket where the card is loaded and still belongs,
-  // surgical remove where the change moved it off a filtered surface, and
-  // stale keys for the drift a patch cannot fix (enter/leave beyond the
-  // loaded window, undecidable membership, off-screen bucket counts). The
-  // server has already committed, so stale keys are flushed immediately.
+  // 协调器套用与本地 mutation 相同的规则表：卡片已加载且仍属于该列表时精确修补/换桶，
+  // 变更把它挪出某过滤视图时精确移除，以及为补丁修不了的漂移（窗口外进出、成员关系
+  // 无法判定、屏外桶计数）产出过期 key。服务器已经提交，所以过期 key 立即冲刷。
   const change = applyIssueChange(qc, wsId, issue.id, issue, {
     changed,
     baseIssue: cachedIssue,
@@ -500,11 +495,11 @@ export function onIssueUpdated(
     statusOrProjectChanged:
       issue.status !== undefined || issue.project_id !== undefined,
   });
-  // Group counts, branch membership and hierarchy are server-owned. Never
-  // guess deltas from a partial branch; refetch the active Table queries.
+  // 分组计数、分支成员关系和层级都由服务器拥有。绝不要从部分分支猜增量；
+  // 重取活跃的 Table 查询即可。
   qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
 
-  // Invalidate old parent's children (issue was removed from it)
+  // 失效旧父议题的子议题（议题已从它下面移除）
   if (oldParentId) {
     if (parentChanged) {
       qc.invalidateQueries({ queryKey: issueKeys.children(wsId, oldParentId) });
@@ -521,7 +516,7 @@ export function onIssueUpdated(
       );
     }
   }
-  // Invalidate new parent's children (issue was added to it)
+  // 失效新父议题的子议题（议题被加到了它下面）
   if (newParentId && parentChanged) {
     qc.invalidateQueries({ queryKey: issueKeys.children(wsId, newParentId) });
   }
@@ -535,15 +530,13 @@ export function onIssueUpdated(
 }
 
 /**
- * Patch an issue's labels in-place across the list cache, my-issues caches,
- * the detail cache, and the per-issue label cache. Triggered by the
- * `issue_labels:changed` WS event after attach/detach so list/board chips
- * and the issue-detail Properties LabelPicker update without a refetch.
+ * 把议题的标签就地修补到列表缓存、my-issues 缓存、详情缓存和每议题标签缓存里。
+ * 由 attach/detach 之后的 `issue_labels:changed` WS 事件触发，让列表/看板的标签 chip
+ * 和议题详情 Properties 里的 LabelPicker 无需重取即可更新。
  *
- * The byIssue cache backs `LabelPicker`; without patching it, externally
- * driven label changes (agents, other tabs) leave the picker stale until it
- * remounts — `staleTime: Infinity` + `refetchOnWindowFocus: false` (see
- * `query-client.ts`) means focus changes won't recover it.
+ * byIssue 缓存支撑着 `LabelPicker`；不修补它，外部驱动的标签变更（agent、其它标签页）
+ * 会让选择器一直陈旧到重新挂载——`staleTime: Infinity` + `refetchOnWindowFocus: false`
+ * （见 `query-client.ts`）意味着焦点变化无法恢复它。
  */
 export function onIssueLabelsChanged(
   qc: QueryClient,
@@ -561,7 +554,7 @@ export function onIssueLabelsChanged(
   invalidateLastActivitySortedIssueLists(qc, wsId);
 }
 
-/** Deterministic label snapshot patch used by optimistic mutation legs. */
+/** 确定性的标签快照补丁，供乐观 mutation 分支使用。 */
 export function patchIssueLabels(
   qc: QueryClient,
   wsId: string,
@@ -598,14 +591,12 @@ export function patchIssueLabels(
   onIssueAuxiliaryRevision(qc, wsId, issueId, revision, "labels");
 }
 
-/** Reconcile server-filtered label windows only after the write commits. */
+/** 只在写操作提交后，对服务器过滤的标签窗口做对账。 */
 export function invalidateIssueLabelDerivatives(qc: QueryClient, wsId: string) {
-  // A committed response/event must cancel or supersede any per-parent fetch
-  // that started before the label write and could otherwise land afterward.
+  // 一次已提交的响应/事件必须取消或取代任何在标签写之前发起、之后可能才落地的按父拉取。
   qc.invalidateQueries({ queryKey: issueKeys.childrenAll(wsId) });
-  // Batched children caches hold Map-shaped data (parentId → Issue[]) that
-  // patchIssueLabels can't surgically update — refetch instead so swimlane
-  // child lanes pick up the new label set.
+  // 批量子议题缓存是 Map 形状（parentId → Issue[]），patchIssueLabels 无法精确更新——
+  // 改为重取，让泳道的子议题行拿到新的标签集合。
   qc.invalidateQueries({ queryKey: issueKeys.childrenByParentsAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.myAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
@@ -623,13 +614,12 @@ export function invalidateIssueLabelDerivatives(qc: QueryClient, wsId: string) {
 }
 
 /**
- * Apply a metadata snapshot to the issue detail + list + my-issues caches.
- * The server emits this whenever a single key is set or deleted, so the
- * payload is always the FULL post-mutation map — we replace, not merge.
+ * 把元数据快照应用到议题详情 + 列表 + my-issues 缓存。
+ * 服务器在每次单个 key 被设置或删除时都会下发这个事件，所以载荷永远是变更后的
+ * 完整 map——我们做的是替换，而不是合并。
  *
- * Used for the read-only metadata strip in issue detail. Updates that arrive
- * while no view is mounted still keep the caches accurate so the next render
- * shows the latest state without a refetch.
+ * 用于议题详情里只读的元数据条。即使没有视图挂载时到达的更新，也会让缓存保持准确，
+ * 这样下一次渲染无需重取就能显示最新状态。
  */
 export function onIssueMetadataChanged(
   qc: QueryClient,
@@ -654,21 +644,19 @@ export function onIssueMetadataChanged(
   onIssueAuxiliaryRevision(qc, wsId, issueId, revision, "metadata");
   invalidateLastActivitySortedIssueLists(qc, wsId);
   qc.invalidateQueries({ queryKey: issueKeys.myAll(wsId) });
-  // A metadata write bumps issue.updated_at server-side (SetIssueMetadataKey /
-  // DeleteIssueMetadataKey), but the patches above keep each card's slot, so a
-  // board/table sorted by "Updated date" would stay in the old order. This
-  // event is server-committed, so refetch those keys to re-sort (MUL-5016).
+  // 一次元数据写在服务器端会推进 issue.updated_at（SetIssueMetadataKey /
+  // DeleteIssueMetadataKey），但上面的补丁让每张卡保持原槽位，所以按“更新日期”排序的
+  // 看板/表格会停在旧顺序。这个事件已由服务器提交，因此重取这些 key 来重新排序（MUL-5016）。
   invalidateUpdatedAtSortedIssueLists(qc, wsId);
-  // Server-backed Table counts, membership and cursor boundaries may also
-  // depend on metadata-driven timestamps, so refresh its query graph too.
+  // 由服务器支持的 Table 计数、成员关系和游标边界也可能依赖元数据驱动的时间戳，
+  // 所以一并刷新它的查询图。
   qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
 }
 
 /**
- * Apply a custom-property bag snapshot to the issue detail + list caches.
- * Mirrors onIssueMetadataChanged: the server emits the FULL post-mutation
- * bag on every single-key write, so we replace rather than merge. Also used
- * directly by the useSetIssueProperty/useUnsetIssueProperty optimistic path.
+ * 把自定义属性包快照应用到议题详情 + 列表缓存。与 onIssueMetadataChanged 一致：
+ * 服务器在每次单 key 写时都会下发变更后的完整属性包，所以我们替换而不是合并。
+ * 也被 useSetIssueProperty/useUnsetIssueProperty 的乐观路径直接使用。
  */
 export function onIssuePropertiesChanged(
   qc: QueryClient,
@@ -680,30 +668,28 @@ export function onIssuePropertiesChanged(
   if (refetchForUnversionedIssueEvent(qc, wsId, issueId, revision)) return;
   patchIssueProperties(qc, wsId, issueId, properties, revision);
   invalidateLastActivitySortedIssueLists(qc, wsId);
-  // Per-parent rows are patched for immediate UI feedback, then all children
-  // projections are marked stale so older fetches cannot win after commit.
+  // 按父行先做修补以获得即时 UI 反馈，然后把所有子议题投影标记为过期，
+  // 避免旧拉取在提交后胜出。
   qc.invalidateQueries({ queryKey: issueKeys.childrenAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.childrenByParentsAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.myAll(wsId) });
-  // Plain assignee-group caches are never patched in place (their bucket
-  // shape differs) and would otherwise hold stale chips forever under
-  // staleTime:Infinity (clean-room review F2).
+  // 普通的按负责人分组缓存从不在原地修补（它们的桶形状不同），否则在
+  // staleTime:Infinity 下会永久持有陈旧 chip（无尘评审 F2）。
   qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
   invalidatePropertyWindowQueries(qc, wsId);
-  // A property write also bumps issue.updated_at server-side
-  // (SetIssuePropertyValue / DeleteIssuePropertyValue). invalidatePropertyWindow
-  // Queries only refetches property-filtered/-sorted windows, so a status board
-  // or flat table sorted by "Updated date" (no property param) would keep the
-  // old order. Refetch those too. Only committed callers reach here (WS event +
-  // mutation onSuccess); the optimistic leg uses patchIssueProperties (MUL-5016).
+  // 一次属性写同样会在服务器端推进 issue.updated_at（SetIssuePropertyValue /
+  // DeleteIssuePropertyValue）。invalidatePropertyWindowQueries 只重取按属性过滤/排序的
+  // 窗口，所以按“更新日期”排序的状态看板或平铺表格（没有属性参数）会停在旧顺序。
+  // 这些也要重取。只有已提交的调用方才会走到这里（WS 事件 + mutation onSuccess）；
+  // 乐观分支用 patchIssueProperties（MUL-5016）。
   invalidateUpdatedAtSortedIssueLists(qc, wsId);
 }
 
-/** Patch only deterministic entity snapshots. Optimistic mutation legs use
- * this helper so they never start a property-filter/sort refetch before the
- * server commit (which could return the old bag and stomp the optimistic one). */
+/** 只修补确定性的实体快照。乐观 mutation 分支用这个辅助函数，
+ * 这样它们绝不会在服务器提交前就发起属性过滤/排序的重取
+ * （那会返回旧属性包、覆盖乐观的这份）。 */
 export function patchIssueProperties(
   qc: QueryClient,
   wsId: string,
@@ -727,12 +713,10 @@ export function patchIssueProperties(
 }
 
 /**
- * Refetch every issue window whose SERVER-side shape depends on property
- * values: queries filtered by `properties` or sorted by `property:<id>`.
- * In-place patching keeps them stale under staleTime:Infinity — a value
- * edit can change an issue's page membership and ordering, and grouped
- * caches never self-heal (review round 3). Windows without property params
- * keep the cheap in-place patch above.
+ * 重取每个“服务器端形状依赖属性值”的议题窗口：按 `properties` 过滤、或按
+ * `property:<id>` 排序的查询。原地修补在 staleTime:Infinity 下会一直保持陈旧——
+ * 一次取值编辑可能改变议题的页成员关系和顺序，而分组缓存永远不会自愈（第 3 轮评审）。
+ * 没有属性参数的窗口则保留上面廉价的原地修补。
  */
 export function invalidatePropertyWindowQueries(qc: QueryClient, wsId: string) {
   qc.invalidateQueries({
@@ -753,6 +737,7 @@ export function invalidatePropertyWindowQueries(qc: QueryClient, wsId: string) {
   });
 }
 
+/** 处理 `issue:deleted` 事件：清理该议题的所有缓存，并失效相关聚合缓存。 */
 export function onIssueDeleted(
   qc: QueryClient,
   wsId: string,

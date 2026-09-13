@@ -1,5 +1,6 @@
 "use client";
 
+// 评论触发预览 hook：根据评论内容里 @ 的智能体/小队，预判发送后会触发谁、以及谁会被阻止。
 import { useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
@@ -10,17 +11,30 @@ import type { CommentTriggerPreviewAgent, CommentTriggerOutcome } from "@multica
 const COMMENT_TRIGGER_PREVIEW_DEBOUNCE_MS = 300;
 const NOTE_COMMAND_RE = /^\/note(?:$|\s)/i;
 
+/** useCommentTriggerPreview 返回的预览结果。 */
 export interface UseCommentTriggerPreviewResult {
+  /** 发送后会被触发的智能体列表。 */
   agents: CommentTriggerPreviewAgent[];
-  // Explicit @agent / @squad mentions that will NOT trigger if posted as-is
-  // (MUL-4525 §2), so the composer can warn before sending.
+  // 照原样发出去却「不会」被触发的显式 @agent / @squad 提及（MUL-4525 §2），
+  // 让输入框能在发送前发出警告。
   blocked: CommentTriggerOutcome[];
 }
 
+/**
+ * 判断当前草稿是否是 /note 命令（这类评论不会触发智能体）。
+ * @param content - 评论草稿内容。
+ * @returns 是否为 /note 命令。
+ */
 export function isNoteCommentDraft(content: string): boolean {
   return NOTE_COMMAND_RE.test(content.replace(/^[ \t\r\n]+/, ""));
 }
 
+/**
+ * 生成评论触发预览的签名：只由被 @ 的智能体/小队集合决定，用于缓存和去重。
+ * 空内容或 /note 命令返回 "empty"。
+ * @param content - 评论草稿内容。
+ * @returns 用于查询 key 的签名字符串。
+ */
 export function commentTriggerPreviewSignature(content: string): string {
   if (!content.trim() || isNoteCommentDraft(content)) return "empty";
 
@@ -71,6 +85,14 @@ function useDebouncedSignature(signature: string) {
   return debouncedSignature;
 }
 
+/**
+ * 根据评论草稿内容实时预览会触发的智能体和会被阻止的提及。
+ * @param options.issueId - 问题 id。
+ * @param options.parentId - 父评论 id（回复场景）。
+ * @param options.editingCommentId - 正在编辑的评论 id。
+ * @param options.content - 评论草稿内容。
+ * @returns 触发预览结果（agents + blocked）。
+ */
 export function useCommentTriggerPreview({
   issueId,
   parentId,
@@ -97,22 +119,20 @@ export function useCommentTriggerPreview({
     queryFn: () => api.previewCommentTriggers(issueId, contentRef.current, parentId, editingCommentId),
     enabled: signature !== "empty" && debouncedSignature !== "empty",
     retry: false,
-    // The answer depends on live queue state (pending-task dedup), not just
-    // the mention set, so a cached result must revalidate when its signature
-    // reappears — Infinity here once pinned a stale "nobody triggers"
-    // snapshot taken while the agent was still queued.
+    // 答案取决于实时的队列状态（待处理任务去重），而不仅是提及集合，所以缓存结果
+    // 在其签名再次出现时也必须重新校验——这里如果设成 Infinity，曾经把一个「没人触发」
+    // 的过期快照钉死，而那快照是在智能体还在排队时拍的。
     staleTime: 0,
-    // Keep the previous agent list only while the same composer context is
-    // re-fetching. Crossing issue/parent/edit context must not display stale
-    // chips from another composer.
+    // 只在同一个输入框上下文重新请求时，才保留上一次的智能体列表。
+    // 跨问题/父评论/编辑上下文时绝不能显示来自另一个输入框的过期 chip。
     placeholderData: (previousData, previousQuery) =>
       queryKeyMatchesPreviewContext(previousQuery?.queryKey, issueId, parentKey, editingKey)
         ? keepPreviousData(previousData)
         : undefined,
   });
 
-  // Loading and errors intentionally surface as "no agents": the preview is
-  // an enhancement, and the composer renders nothing for an empty list.
+  // 加载中和错误都故意表现为「没有智能体」：预览只是增强功能，
+  // 输入框对空列表什么都不渲染。
   if (signature === "empty" || debouncedSignature === "empty") {
     return { agents: [], blocked: [] };
   }

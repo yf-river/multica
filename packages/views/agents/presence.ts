@@ -10,40 +10,35 @@ import {
 } from "lucide-react";
 import type { AgentAvailability, Workload } from "@multica/core/agents";
 
-// Visual mapping for the two presence dimensions, kept in matching shape
-// so consumers can pick which to render. The two are independent — the
-// dot reads only from availabilityConfig, the workload chip reads only
-// from workloadConfig.
+// 本文件负责把 Agent 的两种“在场状态”映射成纯视觉配置（颜色、图标），供列表、详情、悬浮卡片等各处复用。
 //
-// Color tokens map to project semantic tokens (no hardcoded Tailwind colors):
+// 这里只提供视觉映射，不包含任何可读文字——文字统一走 `agents` 语言包（`availability.*` / `workload.*`），
+// 避免在已翻译的包里再塞一份无法翻译的重复文案（历史上 #7411 就是因为这样才漂移）。
 //
-//   AVAILABILITY (drives the dot everywhere a dot appears):
-//     online    → success         (green)
-//     unstable  → warning         (amber) — pairs with the runtime card's amber
-//     offline   → muted-foreground (gray)
+// 颜色一律用项目的语义色 token，不写死 Tailwind 颜色：
 //
-//   WORKLOAD (drives the optional workload chip on focused surfaces):
-//     working   → brand           (blue)  has activity
-//     queued    → warning         (amber) anomaly: nothing running but tasks
-//                                          waiting (typically stuck on offline
-//                                          runtime; brief flash on online is
-//                                          a harmless race)
-//     idle      → muted           (gray)  nothing on the plate
+//   AVAILABILITY（可用状态，决定“圆点”在出现圆点处显示的颜色）：
+//     online    → success（绿色）
+//     unstable  → warning（琥珀色）——和运行时卡片上的琥珀色呼应
+//     offline   → muted-foreground（灰色）
 //
-// `failed` / `completed` / `cancelled` deliberately have no top-level visual
-// — those are historical context, surfaced via Recent Work + Inbox, not
-// list-level summary state.
+//   WORKLOAD（工作负载，决定聚焦场景下可选的“负载小标签”颜色）：
+//     working   → brand（蓝色）有活动在跑
+//     queued    → warning（琥珀色）异常信号：没有在跑，但有任务在排队
+//                                      （通常是挂在离线运行时上；在线时短暂闪现是无害的竞态）
+//     idle      → muted（灰色）当前没活
+//
+// `failed` / `completed` / `cancelled` 特意不做列表级视觉，它们属于历史上下文，
+// 通过「最近工作 + 收件箱」呈现，而不是列表摘要状态。
 
-// Visual-only: dot/text tone + icon. The human-readable word comes from the
-// `agents` locale bundle (`availability.*` / `workload.*`), never from here —
-// a `label` field inside a translated package is a second, untranslatable
-// source of the same string (#7411).
+// 纯视觉配置：圆点/文字的色调 + 图标。人读的文字永远不在这里，而是来自
+// `agents` 语言包（`availability.*` / `workload.*`）。
 export interface AvailabilityVisual {
-  // Background fill for the dot indicator.
+  // 圆点指示器的背景填充色。
   dotClass: string;
-  // Foreground colour for the label text alongside the dot.
+  // 圆点旁边标签文字的前景色。
   textClass: string;
-  // Icon used in larger badge contexts (detail header, hover card).
+  // 用在较大徽章场景（详情页头部、悬浮卡片）的图标。
   icon: LucideIcon;
 }
 
@@ -63,10 +58,9 @@ export const availabilityConfig: Record<AgentAvailability, AvailabilityVisual> =
     textClass: "text-muted-foreground",
     icon: CircleSlash,
   },
-  // Lifecycle state, not a runtime state — a retired agent. Gray like
-  // offline (it can't take work) but labelled distinctly (via
-  // `availability.archived`) so the user reads "this agent is archived", not
-  // "temporarily unreachable".
+  // 生命周期状态而非运行状态——已退役的 Agent。颜色和 offline 一样灰
+  // （因为它接不了活），但标签文字走 `availability.archived`，让用户读到的
+  // 是“此 Agent 已归档”，而不是“暂时失联”。
   archived: {
     dotClass: "bg-muted-foreground/40",
     textClass: "text-muted-foreground",
@@ -74,8 +68,7 @@ export const availabilityConfig: Record<AgentAvailability, AvailabilityVisual> =
   },
 };
 
-// Order used by availability filter chips so colours read in a natural
-// progression rather than alphabetical.
+// 可用状态筛选 chip 的展示顺序，让颜色按自然递进排列，而不是按字母序。
 export const availabilityOrder: AgentAvailability[] = [
   "online",
   "unstable",
@@ -83,9 +76,9 @@ export const availabilityOrder: AgentAvailability[] = [
 ];
 
 export interface WorkloadVisual {
-  // Foreground colour for icon + label text.
+  // 图标 + 标签文字的前景色。
   textClass: string;
-  // Icon used inline.
+  // 内联显示的图标。
   icon: LucideIcon;
 }
 
@@ -95,9 +88,8 @@ export const workloadConfig: Record<Workload, WorkloadVisual> = {
     icon: Loader2,
   },
   queued: {
-    // Amber chip: nothing running but tasks waiting. On an offline runtime
-    // this is the "stuck" signal we explicitly surface (replacing the old
-    // misleading "Running 0/N +Mq" copy).
+    // 琥珀色小标签：没有任务在跑、但有任务在排队。在离线运行时上，
+    // 这就是我们明确暴露的“卡住”信号（替代了原来容易误导的 “Running 0/N +Mq” 文案）。
     textClass: "text-warning",
     icon: Clock,
   },
@@ -107,5 +99,5 @@ export const workloadConfig: Record<Workload, WorkloadVisual> = {
   },
 };
 
-// Order used in any future workload chip group; actionable signals first.
+// 未来负载小标签分组使用的顺序；可操作的信号排在前面。
 export const workloadOrder: Workload[] = ["working", "queued", "idle"];

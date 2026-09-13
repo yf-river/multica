@@ -1,5 +1,7 @@
 "use client";
 
+// 引导流程每一步的通用外壳：左侧是进度侧栏（窄屏换成顶部进度条），右侧是
+// 该步骤自己的内容区，负责把各步骤重复的窗口骨架收敛到这一处。
 import { useRef, type ReactNode } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
@@ -8,28 +10,31 @@ import type { OnboardingStep } from "@multica/core/onboarding";
 import { StepProgressBar, StepSidebar } from "./step-sidebar";
 
 /**
- * Geometry for the onboarding steps, taken from the ReUI onboarding-3 block so
- * the two panes read as one design.
+ * 引导步骤的版心尺寸，取自 ReUI 的 onboarding-3 区块，让左右两个面板读起来
+ * 像是同一次设计。
  *
- * The old model had three competing measures — a 920px frame, a 620px column
- * and an in-frame cap — which is how the platform fork ended up ~150px off the
- * left edge of every other step. There is now one measure. A step that needs
- * to break out of it says so locally rather than picking a different global.
+ * 旧方案有三种互相竞争的宽度——920px 的外框、620px 的列、框内还有一个上限——
+ * 结果平台分叉那一步比其他步骤向左偏出约 150px。现在全流程只有一个宽度标准；
+ * 某个步骤真需要跳出版心时，就在它自己的文件里说明，而不是另选一个全局尺寸。
  */
+
+/** 步骤内容的纵向列：全宽容器内居中、宽度封顶 28rem、按列方向排布。 */
 export const STEP_COLUMN = "mx-auto flex min-h-full w-full max-w-[28rem] flex-col";
+/** 步骤内容区的外边距（内边距），随宽度档位变化。 */
 export const STEP_GUTTER = "px-6 py-8 sm:px-10 lg:px-14 lg:py-10";
 
 /**
- * Title + supporting line for a step.
+ * 一个步骤的标题 + 辅助说明行。
  *
- * Replaces a serif display headline over a grey uppercase eyebrow. The block
- * leads with a plain semibold sans title and one muted line under it, and the
- * eyebrow has no equivalent there — with the rail naming the step, a third
- * label for the same screen was redundant.
+ * 它取代了「灰色大写眉题 + 衬线大字标题」的组合。现在区块直接用普通半粗无衬线
+ * 标题开头、下面跟一行灰色说明，不再有眉题——既然左侧进度栏已经说明了当前是
+ * 哪一步，再给同一个画面加第三个标签就是冗余。
  *
- * `aria-live` because the panes persist across steps: a screen reader user
- * moving between steps gets no navigation event, so the heading has to
- * announce itself.
+ * 加 `aria-live` 是因为两侧面板在步骤切换时保持不变：读屏用户在各步之间移动时
+ * 收不到任何导航事件，标题必须自己播报出来。
+ *
+ * @param title 标题内容
+ * @param description 标题下方的辅助说明（可选）
  */
 export function StepHeading({
   title,
@@ -53,19 +58,21 @@ export function StepHeading({
 }
 
 /**
- * The step's actions, pinned to the bottom of the column.
+ * 步骤的操作区，钉在整列的底部。
  *
- * Full-width stacked buttons rather than a right-aligned inline row: the
- * column is 28rem, so an inline bar leaves the primary action floating in the
- * middle of the screen instead of landing where the eye finishes the form.
- * `mt-auto` against the column's `min-h-full` is what pins it.
+ * 用「通栏、竖向堆叠」的按钮而不是右对齐的一排横排按钮：列宽只有 28rem，
+ * 横排放置会让主按钮浮在屏幕中间，而不是落在用户视线完成表单的位置。
+ * `mt-auto` 配合列的 `min-h-full` 就是把它压到最底下的机制。
+ *
+ * @param children 按钮组内容
+ * @param hint 按钮上方的可选状态行（校验提示、进度等）
  */
 export function StepFooter({
   children,
   hint,
 }: {
   children: ReactNode;
-  /** Optional status line above the buttons (validation, progress). */
+  /** 按钮上方可选的状态行（校验提示、进度等）。 */
   hint?: ReactNode;
 }) {
   return (
@@ -81,17 +88,22 @@ export function StepFooter({
 }
 
 /**
- * The frame every onboarding step renders into: progress rail on the left,
- * the step's own content scrolling on the right.
+ * 每个引导步骤渲染进的外壳：左侧是常驻进度栏，右侧是该步骤自己的可滚动内容。
  *
- * It owns the window, not just a header strip. That is what lets the four
- * steps stop repeating an identical wrapper / DragStrip / header / `<main>`
- * preamble, including the scroll-fade wiring that was duplicated verbatim in
- * all four and is now set up once.
+ * 它拥有的是整个窗口，而不只是一条头部栏——正是这一点让四个步骤不用再各自重复
+ * 一套相同的 wrapper / DragStrip / 头部 / `<main>` 前缀，包括之前四个文件里原样
+ * 复制了四遍的滚动渐隐接线，现在只在这里装配一次。
  *
- * The column is `min-h-full` inside a scrolling pane rather than centred by
- * the pane: `items-center` on a scroll container clips the top of anything
- * taller than the viewport, and these steps do overflow on short windows.
+ * 列用的是滚动面板里的 `min-h-full`，而不是由面板居中：给滚动容器加 `items-center`
+ * 会把任何比视口高的内容顶部裁掉，而这些步骤在矮窗口里确实会超高。
+ *
+ * @param currentStep 当前所在步骤
+ * @param onBack 返回上一步的回调（缺省则不显示返回按钮）
+ * @param backDisabled 是否禁用返回（工作区步骤在创建请求进行中会禁用）
+ * @param onStepChange 从进度栏回到某个已完成步骤的回调
+ * @param chromeFooter 由外层流程注入的「退出登录」出口，渲染在当前可见的
+ *   chrome 上：md 及以上在进度栏里，以下在顶部压缩栏里
+ * @param children 该步骤自己的内容
  */
 export function StepShell({
   currentStep,
@@ -103,12 +115,12 @@ export function StepShell({
 }: {
   currentStep: OnboardingStep;
   onBack?: () => void;
-  /** Workspace step disables Back while its create request is in flight. */
+  /** 是否禁用「返回」——工作区步骤在创建请求进行中会禁用。 */
   backDisabled?: boolean;
-  /** Return to an already-completed step from the rail. */
+  /** 从进度栏直接回到某个已完成步骤的回调。 */
   onStepChange?: (step: OnboardingStep) => void;
-  /** Injected by the flow — the Log out escape hatch. Rendered in whichever
-   *  chrome is visible: the rail at `md` and up, the compact bar below it. */
+  /** 由流程注入的「退出登录」出口：渲染在当前可见的 chrome 上——
+   *  md 及以上在进度栏里，以下在顶部压缩栏里。 */
   chromeFooter?: ReactNode;
   children: ReactNode;
 }) {
@@ -117,13 +129,11 @@ export function StepShell({
 
   return (
     <div className="animate-onboarding-enter flex h-full min-h-0 flex-col bg-background">
-      {/* One strip across the whole window, as the first flex child — the
-          shape the desktop shell rule asks for, and the fix for an overlap:
-          the rail is a dark inset panel that started at the window's top-left
-          corner, which is exactly where macOS draws the traffic lights, so
-          they sat on top of it. Reserving the strip above both panes drops the
-          panel clear of them and keeps the whole band draggable. Two ad-hoc
-          per-pane strips used to do this job and neither was first. */}
+      {/* 整个窗口只放一条拖拽条、并让它当第一个 flex 子元素——这既是桌面端外壳
+          规则要求的形状，也是修一个重叠问题：进度栏是深色内嵌面板，从窗口左上角
+          开始铺，而 macOS 恰好把红绿灯按钮画在左上角，于是两者叠在了一起。在
+          两个面板上方预留这条条带，就能让面板避开红绿灯，同时整条带都可拖拽。
+          以前用两条各管一块的条带拼这件事，两条都不是第一个子元素。 */}
       <DragStrip />
 
       <div className="flex min-h-0 flex-1">

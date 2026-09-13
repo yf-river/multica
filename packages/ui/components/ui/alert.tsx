@@ -3,6 +3,10 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@multica/ui/lib/utils"
 
+// 本文件是提示条（Alert）组件：用来承载需要用户注意的信息块，
+// 含标题、描述与右上角操作区三个子部件，可配合前置图标/emoji 使用。
+
+/** 提示条的视觉变体定义（class-variance-authority） */
 const alertVariants = cva(
   "group/alert relative grid w-full gap-0.5 rounded-lg border px-2.5 py-2 text-left text-body has-data-[slot=alert-action]:relative has-data-[slot=alert-action]:pr-18 has-[>svg]:grid-cols-[auto_1fr] has-[>svg]:gap-x-2 *:[svg]:row-span-2 *:[svg]:translate-y-0.5 *:[svg]:text-current *:[svg:not([class*='size-'])]:size-4",
   {
@@ -19,6 +23,10 @@ const alertVariants = cva(
   }
 )
 
+/**
+ * Alert：提示条容器，默认带 role="alert"。直接子元素放图标/标题/描述/
+ * 操作区。带 `destructive` 变体强调错误场景。
+ */
 function Alert({
   className,
   variant,
@@ -34,6 +42,7 @@ function Alert({
   )
 }
 
+/** AlertTitle：提示条标题行 */
 function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -47,6 +56,7 @@ function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** AlertDescription：提示条正文描述，辅助色弱化呈现 */
 function AlertDescription({
   className,
   ...props
@@ -63,6 +73,7 @@ function AlertDescription({
   )
 }
 
+/** AlertAction：钉在提示条右上角的操作区（关闭按钮、动作链接等） */
 function AlertAction({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div

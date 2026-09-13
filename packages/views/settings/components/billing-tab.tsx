@@ -1,3 +1,7 @@
+// 本文件是「账单与订阅」设置标签页：展示当前工作区的订阅套餐、用量限额与座席情况，
+// 支持发起 Stripe 结账升级、跳转 Stripe 管理门户、增购座席（带报价预览、幂等与轮询）；
+// 同时处理从 Stripe 跳回本页后的回调参数消费与订阅同步提示。
+
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -77,14 +81,20 @@ import {
 } from "./billing-state";
 import { formatStripeMinorAmount } from "./billing-format";
 
+// 把金额格式化函数再导出一次，方便其它页面从这里统一引用（具体实现见 billing-format.ts）。
 export { formatStripeMinorAmount } from "./billing-format";
 
+// 结账确认的同步超时：从 Stripe 购买成功跳回来之后，前端要在这个窗口内等到订阅摘要变为已激活。
 const CHECKOUT_SYNC_TIMEOUT_MS = 30_000;
+// 增购座席的轮询超时：Stripe 的 webhook 激活是异步的，轮询不能无限进行，超时就停止并提示"仍在处理"。
 const SEAT_PURCHASE_POLL_TIMEOUT_MS = 2 * 60_000;
+// 增购座席报价预览的防抖间隔：用户停止敲数字一小段时间后再发起预览请求。
 const SEAT_PURCHASE_PREVIEW_DEBOUNCE_MS = 800;
 
+/** Stripe 回调可能带回来的三种结果：success 购买成功、cancel 用户取消、portal 从管理门户折返。 */
 type WorkspaceBillingReturnResult = "success" | "cancel" | "portal";
 
+/** 把地址栏的 result 参数解析成合法的回调结果类型；不识别的值一律视为 null。 */
 function parseReturnResult(
   value: string | null,
 ): WorkspaceBillingReturnResult | null {
@@ -98,6 +108,10 @@ function parseReturnResult(
   }
 }
 
+/**
+ * 生成幂等键（idempotency key）：用「前缀-工作区 id-随机串」保证同一次意图的
+ * 重复提交不会被 Stripe 重复扣款；整体截断到 255 字符以内。
+ */
 function createIdempotencyKey(prefix: string, wsId: string): string {
   const suffix =
     globalThis.crypto?.randomUUID?.() ??
@@ -105,6 +119,7 @@ function createIdempotencyKey(prefix: string, wsId: string): string {
   return `${prefix}-${wsId}-${suffix}`.slice(0, 255);
 }
 
+/** 把时间字符串按当前 locale 格式化成"日期"，空值或非法值返回 null。 */
 function formatDate(value: string | null, locale: string): string | null {
   if (!value) return null;
   const date = new Date(value);
@@ -112,6 +127,7 @@ function formatDate(value: string | null, locale: string): string | null {
   return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(date);
 }
 
+/** 同 formatDate，但额外带上时分，用于需要精确到时刻的展示（如宽限期、处理中截止时间）。 */
 function formatDateTime(value: string | null, locale: string): string | null {
   if (!value) return null;
   const date = new Date(value);
@@ -122,12 +138,14 @@ function formatDateTime(value: string | null, locale: string): string | null {
   }).format(date);
 }
 
+/** 套餐名到徽章配色的映射：pro 用主色调、free 用次级色、其它一律描边，便于一眼区分。 */
 function planBadgeVariant(plan: string): "default" | "secondary" | "outline" {
   if (plan === "pro") return "default";
   if (plan === "free") return "secondary";
   return "outline";
 }
 
+/** 订阅状态到徽章配色的映射：生效/试用亮色提醒，逾期/未完成/未付标红，失效/取消等弱化，未知描边兜底。 */
 function statusBadgeVariant(
   status: string,
 ): "default" | "secondary" | "destructive" | "outline" {
@@ -150,9 +168,9 @@ function statusBadgeVariant(
 }
 
 /**
- * A second gate inside the tab keeps direct/test mounts fail-closed. The
- * Settings shell also omits this component and its navigation entry while the
- * flag is absent, so no subscription request is issued in either path.
+ * 账单标签页的双重保险：在功能开关关闭时直接渲染 null（fail-closed），
+ * 保证直接挂载/测试这类绕过 Settings 外壳的路径也不会发起任何订阅请求。
+ * Settings 外壳在开关缺失时本就会隐藏本组件与它的导航入口，这里只是再加一道闸。
  */
 export function BillingTab() {
   const enabled = useFeatureEnabled(
@@ -162,6 +180,7 @@ export function BillingTab() {
   return enabled ? <BillingTabContent /> : null;
 }
 
+/** 账单页的真实内容主体：工作区与订阅摘要就绪后渲染，负责订阅状态展示与全部结账/座席操作。 */
 function BillingTabContent() {
   const { t } = useT("billing");
   const locale = useLocale();
@@ -251,9 +270,9 @@ function BillingTabContent() {
     setSeatPurchaseMessage(null);
   }, [wsId]);
 
-  // Consume Stripe callback params once, then remove them with replace so a
-  // refresh, copied URL, or settings-tab round trip cannot replay a banner or
-  // restart subscription polling. Keep unrelated params, especially `tab`.
+  // Stripe 回调参数只消费一次，随即用 replace 把它们从地址栏清掉：
+  // 避免一次刷新、复制链接或切换设置标签页的往返，就把横幅提示重复弹出、或把订阅轮询重新拉起。
+  // 无关参数（尤其是 tab）一律原样保留。
   useEffect(() => {
     if (!callbackKey || consumedCallbackKeyRef.current === callbackKey) return;
     consumedCallbackKeyRef.current = callbackKey;
@@ -290,9 +309,8 @@ function BillingTabContent() {
 
   const summaryQuery = useQuery({
     ...workspaceSubscriptionSummaryOptions(wsId),
-    // Checkout activation and seat additions both finish asynchronously in a
-    // Stripe webhook. Seat polling is bounded so a lost webhook cannot keep a
-    // browser polling forever.
+    // 结账激活和加座席都靠 Stripe 的 webhook 在服务端异步完成，前端只能轮询等待结果。
+    // 座席轮询设了上限（2 分钟超时）：万一 webhook 丢了，浏览器也不至于无限轮询下去。
     refetchInterval: (query) =>
       isSyncingCheckout ||
       (query.state.data?.seatCapacity?.activePurchase &&
@@ -345,6 +363,9 @@ function BillingTabContent() {
   const refetchSummary = summaryQuery.refetch;
   const previewSeatPurchase = previewSeatPurchaseMutation.mutateAsync;
 
+  // 「增购座席」报价预览的联动逻辑：弹窗开着时，只要输入数量 / 座席容量变化，
+  // 就防抖 800ms 去请求一次报价预览。用 requestKey 标记当次请求，过期回包直接丢弃；
+  // 若服务端报座位容量已变化（409），则刷新摘要后自动重试一次，再不行就提示用户容量已不同步。
   useEffect(() => {
     if (!seatPurchaseOpen) return;
     const value = additionalSeatsInput.trim();
@@ -599,8 +620,8 @@ function BillingTabContent() {
         return;
       }
       openExternal(response.url, { webTarget: "same-tab" });
-      // A Portal URL is single-use. A later click is a new intent, while a
-      // network failure above deliberately retains the key for safe retry.
+      // Portal 链接是单次有效：成功打开后就清掉记录，下次点击视为新的意图；
+      // 而上面网络失败时故意保留 key，是为了让用户重试时能安全复用同一个 key。
       portalIntentKeyRef.current = null;
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {

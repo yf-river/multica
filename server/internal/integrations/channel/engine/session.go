@@ -19,28 +19,23 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-// This file is the SHARED, channel-agnostic chat-session service every IM
-// adapter reuses (MUL-3516). It was lifted out of the Feishu-specific
-// lark.chatSessionService so that adding an IM never re-implements the
-// session/append/`/issue` machinery — the platform adapter contributes only a
-// channel_type, its session titles, and (because enrichment is
-// platform-specific) the command-parse source. The logic — find-or-create
-// session + binding, append message + touch + reply-target + in-tx dedup mark,
-// `/issue` parse — is identical across platforms and carries the channel_type
-// discriminator through the generalized channel_* tables.
+// 角色定位：所有 IM 适配器复用的、共享的渠道无关聊天会话服务（MUL-3516）。它从飞书
+// 专属的 lark.chatSessionService 里抽出来，这样新增一个 IM 就再也不需要重写会话/追加/
+// `/issue` 那套机制——平台适配器只贡献：channel_type、会话标题、以及（因为增强是平台
+// 特异的）命令解析源。逻辑本身（找或建会话 + 绑定、追加消息 + touch + 回复目标 +
+// 事务内去重 Mark、`/issue` 解析）跨平台完全一致，并把 channel_type 判别值一路带过
+// 通用 channel_* 表。
 
 const pgSQLStateUniqueViolation = "23505"
 
-// TxStarter abstracts transaction creation. Satisfied by *pgxpool.Pool. Kept
-// local to the engine so the integration layer never back-references
-// internal/service.
+// TxStarter 抽象事务创建。*pgxpool.Pool 满足它。收在 engine 本地，集成层就不用反向
+// 依赖 internal/service。
 type TxStarter interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
-// SessionQueries is the narrow slice of the generated queries the ChatSession
-// service needs. *db.Queries satisfies it through the dbSessionQueries adapter
-// (whose WithTx returns the interface type); tests supply an in-memory fake.
+// SessionQueries 是 ChatSession 服务需要的生成查询的窄切片。*db.Queries 经
+// dbSessionQueries 适配器满足它（其 WithTx 返回接口类型）；测试注入内存假实现。
 type SessionQueries interface {
 	WithTx(tx pgx.Tx) SessionQueries
 	GetChannelChatSessionBinding(ctx context.Context, arg db.GetChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error)
@@ -77,9 +72,8 @@ type SessionQueries interface {
 	MarkChannelInboundDedupProcessed(ctx context.Context, arg db.MarkChannelInboundDedupProcessedParams) (int64, error)
 }
 
-// dbSessionQueries adapts *db.Queries to SessionQueries — the only purpose is
-// to give WithTx an interface return type so the transactional path stays
-// behind SessionQueries.
+// dbSessionQueries 把 *db.Queries 适配成 SessionQueries——唯一目的是给 WithTx 一个接口
+// 返回类型，让事务路径始终留在 SessionQueries 后面（测试可整体替换）。
 type dbSessionQueries struct{ q *db.Queries }
 
 func (a dbSessionQueries) WithTx(tx pgx.Tx) SessionQueries {
@@ -209,17 +203,16 @@ func (a dbSessionQueries) MarkChannelInboundDedupProcessed(ctx context.Context, 
 	return a.q.MarkChannelInboundDedupProcessed(ctx, arg)
 }
 
-// SessionTitles is retained in the constructor surface for adapter
-// compatibility. New implicit channel Chats deliberately start with an empty
-// persisted title: their first effective user message initializes the shared
-// deterministic title, and clients already render the brief empty interval as
-// a localized "New chat" fallback.
+// SessionTitles 保留在构造函数的签名里，仅为适配器兼容。新建的隐式渠道 Chat 刻意以空的
+// 持久化标题开始：其第一条有效用户消息会初始化共享的确定性标题，客户端把这段短暂空档
+// 渲染成本地化的 "New chat" 兜底。
 type SessionTitles struct {
 	Group    string
 	Direct   string
 	Fallback string
 }
 
+// forType 按聊天类型挑标题：群聊/私聊/兜底。
 func (t SessionTitles) forType(ct channel.ChatType) string {
 	switch ct {
 	case channel.ChatTypeGroup:
@@ -231,9 +224,8 @@ func (t SessionTitles) forType(ct channel.ChatType) string {
 	}
 }
 
-// ChatSession is the shared chat-session service. One instance is built per
-// channel_type (so the binding rows carry the right discriminator); the logic
-// is otherwise platform-neutral.
+// ChatSession 是共享的聊天会话服务。每个 channel_type 构建一个实例（绑定行因此带正确的
+// 判别值）；逻辑其余部分平台中立。
 type ChatSession struct {
 	q           SessionQueries
 	tx          TxStarter
@@ -241,37 +233,30 @@ type ChatSession struct {
 	titles      SessionTitles
 }
 
-// NewChatSession builds the shared service over the generated queries. tx is
-// required: AppendUserMessage runs the dedup Mark inside the chat_message
-// transaction so the durable write and the Mark commit (or roll back) together.
+// NewChatSession 在生成查询之上构建共享服务。tx 必填：AppendUserMessage 把去重 Mark 跑在
+// chat_message 事务**内部**，持久化写入与 Mark 一起提交（或一起回滚）。
 func NewChatSession(q *db.Queries, tx TxStarter, channelType channel.Type, titles SessionTitles) *ChatSession {
 	return &ChatSession{q: dbSessionQueries{q: q}, tx: tx, channelType: channelType, titles: titles}
 }
 
-// newChatSessionWith is the test seam: it accepts a SessionQueries directly so
-// an in-memory fake can stand in for *db.Queries.
+// newChatSessionWith 是测试缝：直接收 SessionQueries，内存假实现就能顶替 *db.Queries。
 func newChatSessionWith(q SessionQueries, tx TxStarter, channelType channel.Type, titles SessionTitles) *ChatSession {
 	return &ChatSession{q: q, tx: tx, channelType: channelType, titles: titles}
 }
 
-// EnsureSessionInput is the channel-agnostic input for EnsureSession.
+// EnsureSessionInput 是 EnsureSession 的渠道无关入参。
 //
-// BindingKey is the SESSION-ISOLATION key (stored as channel_chat_id; one
-// chat_session per (installation_id, BindingKey)). It is intentionally NOT the
-// same thing as "the chat to reply into": the adapter composes it so that
-// distinct conversations get distinct sessions — Feishu passes the chat id;
-// Slack passes the channel id for a DM, and the channel id PLUS the thread root
-// for a channel/thread, so two @bot threads in one Slack channel do not collapse
-// into one transcript (the Hermes model: IM-independent, Slack groups isolated
-// by thread root). A raw platform chat id must never be passed straight through
-// as the key for a threaded platform.
+// BindingKey 是**会话隔离**键（存为 channel_chat_id；每个 (installation_id, BindingKey)
+// 一条 chat_session）。它刻意**不是**"要回进哪个聊天"：适配器自己拼它，让不同对话得到
+// 不同会话——飞书传 chat id；Slack 的 DM 传 channel id、频道/线程则传 channel id 加线程
+// 根 id，这样同一个 Slack 频道里两个 @bot 线程不会塌缩成同一份转写（Hermes 模型：与 IM
+// 无关，Slack 群按线程根隔离）。**有线程的平台绝不能**把原始平台 chat id 直接当键传。
 //
-// BindingConfig is opaque platform routing the key alone cannot carry — e.g.
-// Slack's real channel_id when BindingKey is a composite — persisted on the
-// binding's config for the outbound path to read back. nil means "{}".
+// BindingConfig 是键单独带不了的不透明平台路由——例如 BindingKey 是复合键时 Slack 的真实
+// channel_id——持久化在绑定的 config 上，供出站路径读回。nil 视为 "{}"。
 //
-// Sender is the already-resolved Multica user (the session creator: the sole
-// human for p2p, the installer for group chats — the caller decides which).
+// Sender 是已解析的 Multica 用户（会话创建者：私聊是唯一那个人、群聊是安装者——由调用方
+// 决定谁是）。
 type EnsureSessionInput struct {
 	WorkspaceID    pgtype.UUID
 	AgentID        pgtype.UUID
@@ -282,11 +267,9 @@ type EnsureSessionInput struct {
 	ChatType       channel.ChatType
 }
 
-// EnsureSession returns the chat_session.id bound to (installation, BindingKey),
-// creating it (with its channel_chat_session_binding) on first contact. The
-// race between two concurrent first messages is resolved by the
-// UNIQUE (installation_id, channel_chat_id) constraint: the loser re-reads the
-// winner's row.
+// EnsureSession 返回绑定到 (installation, BindingKey) 的 chat_session.id；首次接触时创建
+// （连同它的 channel_chat_session_binding）。两条并发首条消息的竞态由
+// UNIQUE (installation_id, channel_chat_id) 约束解决：输家重读赢家的行。
 func (s *ChatSession) EnsureSession(ctx context.Context, in EnsureSessionInput) (pgtype.UUID, error) {
 	lookup := db.GetChannelChatSessionBindingParams{InstallationID: in.InstallationID, ChannelChatID: in.BindingKey}
 
@@ -303,6 +286,7 @@ func (s *ChatSession) EnsureSession(ctx context.Context, in EnsureSessionInput) 
 		return id, nil
 	}
 	if isUniqueViolation(err) {
+		// 输掉了创建竞态：重读赢家的绑定行。
 		existing, lookupErr := s.q.GetChannelChatSessionBinding(ctx, lookup)
 		if lookupErr == nil {
 			return existing.ChatSessionID, nil
@@ -312,6 +296,7 @@ func (s *ChatSession) EnsureSession(ctx context.Context, in EnsureSessionInput) 
 	return pgtype.UUID{}, err
 }
 
+// createSessionAndBinding 在一个事务里创建 chat_session 与它的绑定行。
 func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSessionInput) (pgtype.UUID, error) {
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
@@ -320,9 +305,9 @@ func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSess
 	defer tx.Rollback(ctx)
 	qtx := s.q.WithTx(tx)
 
-	// FOR KEY SHARE on the workspace row before creating the session — the creator
-	// half of the #5219 delete/create protocol, so a channel session cannot be
-	// created into a workspace mid-delete (see LockWorkspaceForChatSessionCreate).
+	// 创建会话前先对工作区行做 FOR KEY SHARE——这是 #5219 delete/create 协议的"创建"
+	// 半边，保证渠道会话不会建进"正在删除中的工作区"
+	//（见 LockWorkspaceForChatSessionCreate）。
 	if _, err := qtx.LockWorkspaceForChatSessionCreate(ctx, in.WorkspaceID); err != nil {
 		return pgtype.UUID{}, fmt.Errorf("lock workspace for chat session create: %w", err)
 	}
@@ -357,17 +342,13 @@ func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSess
 	return session.ID, nil
 }
 
-// AppendInput is the channel-agnostic input for AppendUserMessage. Body is the
-// full stored text (including any platform enrichment); CommandText is the
-// user's OWN typed text used for `/issue` parsing (empty falls back to Body) —
-// the adapter supplies it because enrichment is platform-specific. ClaimToken
-// is the dedup owner-fence: when valid, the Mark runs inside this method's tx.
+// AppendInput 是 AppendUserMessage 的渠道无关入参。Body 是完整存储文本（含任何平台增强）；
+// CommandText 是用户**亲手**打的文本、供 `/issue` 解析（空则回落用 Body）——因为增强是
+// 平台特异的，由适配器提供。ClaimToken 是去重属主围栏：有效时 Mark 在本方法的事务内执行。
 //
-// MessageID and ThreadID are the REAL platform message id and thread id of this
-// trigger — the outbound reply target recorded on the binding (last_message_id /
-// last_thread_id), NOT the session BindingKey. Because each isolated session has
-// its own binding row, recording the real thread here per session does not clash
-// across sibling threads.
+// MessageID 与 ThreadID 是本条触发的**真实**平台消息 id 与线程 id——即绑定上记录的出站
+// 回复目标（last_message_id / last_thread_id），**不是**会话 BindingKey。因为每个隔离会话
+// 有自己的绑定行，在兄弟线程间按会话记录真实线程不会撞。
 type AppendInput struct {
 	SessionID           pgtype.UUID
 	Sender              pgtype.UUID
@@ -380,18 +361,16 @@ type AppendInput struct {
 	ClaimToken          pgtype.UUID
 	MediaPendingSeconds float64
 	ForceFresh          bool
-	// BeforeCommit adds work that must be atomic with this message and its
-	// context-generation change. Native slash commands use it to snapshot and
-	// enqueue the task before the message becomes visible.
+	// BeforeCommit 追加"必须与这条消息及其上下文代变更原子提交"的工作。原生斜杠命令用它
+	// 在消息可见之前给任务拍快照并入队。
 	BeforeCommit func(context.Context, pgx.Tx, db.ChatSession, int64, pgtype.UUID, int64) error
 }
 
-// StartSessionInput is the shared, transactional implementation of /new.
-// The adapter supplies only its route key/config and optional platform fence.
+// StartSessionInput 是 /new 的共享事务实现入参。适配器只提供路由键/配置与可选平台围栏。
 type StartSessionInput struct {
 	EnsureSessionInput
-	// Initiator is the authenticated sender of the /new command. Sender in the
-	// embedded EnsureSessionInput remains the owner of the newly created Chat.
+	// Initiator 是发出 /new 命令的已认证发送者。内嵌 EnsureSessionInput 里的 Sender
+	// 仍是新创建 Chat 的属主。
 	Initiator              pgtype.UUID
 	Body                   string
 	MessageID              string
@@ -402,15 +381,13 @@ type StartSessionInput struct {
 	PersistMessage         bool
 	HistoryBoundaryPending bool
 	BeforeWrite            func(context.Context, pgx.Tx) error
-	// BeforeCommit can add work that must be atomic with the route rotation and
-	// first message. The newly created session is visible through tx, but none of
-	// these writes are externally observable until StartSession commits.
+	// BeforeCommit 追加"必须与路由轮换和首条消息原子提交"的工作。新会话在 tx 内可见，
+	// 但这些写入在 StartSession 提交前对外部都不可观察。
 	BeforeCommit func(context.Context, pgx.Tx, db.ChatSession) error
 }
 
-// StartSession atomically retires the current route generation, creates an
-// explicitly visible Chat, installs the next generation, and optionally writes
-// the command body as its first ordinary user message.
+// StartSession 原子地完成：退役当前路由代 → 创建"显式可见"的 Chat → 装好下一代 → 可选
+// 地把命令正文写成它的第一条普通用户消息。
 func (s *ChatSession) StartSession(ctx context.Context, in StartSessionInput) (StartSessionResult, error) {
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
@@ -429,7 +406,7 @@ func (s *ChatSession) StartSession(ctx context.Context, in StartSessionInput) (S
 	}
 	nextRevision := int64(1)
 	if currentErr == nil {
-		// Preserve the global chat_session -> binding lock order used by append.
+		// 保持 append 用的"chat_session → binding"加锁顺序。
 		if _, err := qtx.LockChatSessionForAppend(ctx, current.ChatSessionID); err != nil {
 			return StartSessionResult{}, fmt.Errorf("lock prior chat session: %w", err)
 		}
@@ -447,9 +424,8 @@ func (s *ChatSession) StartSession(ctx context.Context, in StartSessionInput) (S
 		}
 		historyEnd := locked.LastMessageID
 		if in.HistoryBoundaryPending && in.MessageID == "" {
-			// A native command has no public platform cursor. Keep the old end
-			// open until the next real inbound atomically closes it and opens the
-			// pending generation at the same message id.
+			// 原生命令没有公开平台游标：把旧代的历史终点保持开放，直到下一条真实入站
+			// 原子地合上旧代、并用同一个消息 id 打开待定代。
 			historyEnd = pgtype.Text{}
 		} else if in.MessageID != "" {
 			historyEnd = textOrNull(in.MessageID)
@@ -576,12 +552,10 @@ func utilUUID(id pgtype.UUID) string {
 	return uuid.UUID(id.Bytes).String()
 }
 
-// BindMediaInput links already-uploaded media to either an /issue target or a
-// durable chat message in a short database-only transaction. A valid
-// IssueDescriptionBase permits inline replacement only while the issue still
-// has its exact creation-time description; otherwise issue media appends as a
-// concurrency-safe fallback. Remote downloads/uploads happen before this call
-// and outside the connector ACK path.
+// BindMediaInput 在一条短促的纯数据库事务里，把已上传媒体链接到 /issue 目标或持久化
+// chat message。IssueDescriptionBase 有效时，只在该 issue 仍保有"创建那一刻的描述"时允许
+// 行内替换；否则 issue 媒体以"并发安全"的追加形态落下。远程下载/上传发生在本调用之前、
+// 连接器 ACK 路径之外。
 type BindMediaInput struct {
 	MessageID            pgtype.UUID
 	SessionID            pgtype.UUID
@@ -594,17 +568,13 @@ type BindMediaInput struct {
 	MediaRefs            []channel.MediaRef
 }
 
-// channelCommandMessageKind marks a durable control-plane turn handled
-// synchronously by Router. Public Chat projections omit it, and the task batch
-// seal does too so the agent cannot execute the command again on a later turn.
+// channelCommandMessageKind 标记一条由 Router 同步处理的控制面轮次。公开 Chat 投影省略
+// 它，任务批次封装也省略——agent 在后续轮次不能再执行一遍这条命令。
 const channelCommandMessageKind = "channel_command"
 
-// AppendUserMessage writes the user message into the chat_session (touching it
-// and recording the reply target), runs the in-tx dedup Mark when a claim token
-// is supplied, and returns the durable message id plus the parsed `/issue`
-// command when present. Returns ErrClaimLost when a concurrent reclaim rotated
-// the dedup token mid-flight, in which case the whole transaction rolls back
-// (no chat_message lands).
+// AppendUserMessage 把用户消息写进 chat_session（touch 它并记录回复目标），提供认领 token
+// 时在事务内跑去重 Mark，返回持久化消息 id 及（若有）解析出的 `/issue` 命令。当并发回收
+// 中途轮换了去重 token 时返回 ErrClaimLost——此时整个事务回滚（不会落下 chat_message）。
 func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (AppendResult, error) {
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
@@ -617,9 +587,8 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		commandSource = in.Body
 	}
 	cmd, _ := ParseIssueCommand(commandSource)
-	// Context paths acquire chat_session before binding and generation. This
-	// also keeps the later TouchChatSession update from introducing the reverse
-	// binding -> chat_session edge against task enqueue.
+	// 上下文路径在 binding 与 generation 之前锁 chat_session。这也让后面的
+	// TouchChatSession 更新不会引入"binding → chat_session"的反向边去对着任务入队。
 	if _, err := qtx.LockChatSessionForAppend(ctx, in.SessionID); err != nil {
 		return AppendResult{}, fmt.Errorf("lock chat session for append: %w", err)
 	}
@@ -630,10 +599,8 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		}
 		return AppendResult{}, fmt.Errorf("lock channel chat binding: %w", err)
 	}
-	// The binding lock serializes ordinary appends in route order. Determine
-	// first-turn visibility and initialize its fallback title only after that
-	// fence, so two concurrent inbound messages cannot both announce creation or
-	// let the second message win the title race.
+	// 绑定锁把普通追加按路由顺序串行化。在这个围栏**之后**才判断首轮可见性并初始化其
+	// 兜底标题——两条并发入站消息不可能都宣布"我创建了"、也不可能让第二条消息赢走标题。
 	currentSession, err := qtx.GetChatSession(ctx, in.SessionID)
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("reload chat session for append: %w", err)
@@ -647,11 +614,13 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	if cmd == nil {
 		title := deriveFirstMessageTitle(in.Body, in.MediaPendingSeconds > 0)
 		if becameVisible {
+			// 隐式会话迎来第一条"公开用户消息"：这是它转正的时刻，替换掉隐式标题。
 			if _, err := qtx.ReplaceImplicitChatSessionTitle(ctx, db.ReplaceImplicitChatSessionTitleParams{ID: in.SessionID, Title: title}); err != nil {
 				return AppendResult{}, fmt.Errorf("replace implicit chat title: %w", err)
 			}
 			initializedTitle = title
 		} else if title != "" {
+			// 显式创建的会话在首条消息时才初始化标题（没有就是空）。
 			if _, err := qtx.InitializeChatSessionTitle(ctx, db.InitializeChatSessionTitleParams{ID: in.SessionID, Title: title}); err == nil {
 				initializedTitle = title
 			} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -667,6 +636,7 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	}
 	contextRevision := binding.ContextRevision
 	if in.ForceFresh {
+		// /clear：推进到新一代。历史边界消息 = 本条触发（若它本身也入库）。
 		advanced, err := qtx.AdvanceChannelChatContextGeneration(ctx, db.AdvanceChannelChatContextGenerationParams{
 			ChatSessionID: in.SessionID, CurrentRevision: contextRevision,
 			HistoryBoundaryMessageID: textOrNull(in.MessageID), HasMessageBody: in.MessageID != "",
@@ -676,14 +646,15 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		}
 		contextRevision = advanced.Revision
 	} else if contextState.HistoryBoundaryPending && in.MessageID != "" {
+		// 上一条命令把历史边界悬着；真实入站来了，用它合上边界。
 		if err := qtx.ResolveChannelChatContextHistoryStart(ctx, db.ResolveChannelChatContextHistoryStartParams{
 			HistoryStartMessageID: textOrNull(in.MessageID), ChatSessionID: in.SessionID, Revision: contextRevision,
 		}); err != nil {
 			return AppendResult{}, fmt.Errorf("resolve channel chat history boundary: %w", err)
 		}
 	}
-	// A channel command is excluded from agent input, so it must not replace
-	// the principal used to recover earlier unowned agent-visible messages.
+	// 渠道命令不进 agent 输入，所以它不能顶替"恢复更早未认领的 agent 可见消息"所用的
+	// 主体身份。
 	if contextRevision > 0 && cmd == nil {
 		if _, err := qtx.SetChannelChatContextInitiator(ctx, db.SetChannelChatContextInitiatorParams{
 			ChatSessionID: in.SessionID, Revision: contextRevision, InitiatorUserID: in.Sender,
@@ -691,9 +662,8 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 			return AppendResult{}, fmt.Errorf("snapshot channel context initiator: %w", err)
 		}
 	}
-	// channel_ingested is the immutable provenance the cancel path gates on:
-	// it must be stamped in the same transaction as the message so no later
-	// binding deletion (archive, installation rebind) can strip it.
+	// channel_ingested 是取消路径门控所依据的不可变来源戳：必须与消息盖在同一事务里，
+	// 之后任何绑定删除（归档、重绑安装）都无法剥掉它。
 	msg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
 		ID:                      dbid.NewV7(),
 		ChatSessionID:           in.SessionID,
@@ -715,8 +685,7 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		return AppendResult{}, fmt.Errorf("touch chat session: %w", err)
 	}
 
-	// Record the latest trigger so the decoupled outbound patcher can thread
-	// its reply back into the originating topic.
+	// 记录最新触发，解耦的出站 patcher 才能把回复回进来源话题。
 	if in.MessageID != "" {
 		if err := qtx.UpdateChannelChatSessionBindingReplyTarget(ctx, db.UpdateChannelChatSessionBindingReplyTargetParams{
 			ReplyChatSessionID: in.SessionID,
@@ -742,8 +711,8 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 			return AppendResult{}, fmt.Errorf("mark dedup processed: %w", err)
 		}
 		if rows == 0 {
-			// Another worker re-claimed the dedup row; roll back via the
-			// deferred Rollback so no second chat_message lands.
+			// 认领行已被别的 worker 重新认领：靠 deferred Rollback 整体回滚，
+			// 第二条 chat_message 不会落下。
 			return AppendResult{}, ErrClaimLost
 		}
 		markedInTx = true
@@ -770,16 +739,15 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	}, nil
 }
 
-// MarkPendingFresh persists a bare `/clear` command. Non-bare `/clear` messages
-// mark the same flag inside AppendUserMessage's transaction instead.
+// MarkPendingFresh 持久化一条裸 `/clear` 命令。带正文的 `/clear` 消息在
+// AppendUserMessage 的事务里标记同一个标志。
 func (s *ChatSession) MarkPendingFresh(ctx context.Context, sessionID pgtype.UUID, messageID string) error {
 	return s.MarkPendingFreshWithDedup(ctx, sessionID, messageID, pgtype.UUID{}, "", pgtype.UUID{})
 }
 
-// MarkPendingFreshWithDedup atomically advances the context generation and
-// finalizes an optional transport dedup claim. A native slash command has no
-// public platform cursor, so messageID may be empty while dedupMessageID holds
-// the durable Socket Mode envelope id.
+// MarkPendingFreshWithDedup 原子地推进上下文代并完结一个可选的传输去重认领。原生命令
+// 没有公开平台游标，所以 messageID 可能为空、而 dedupMessageID 持有持久化的 Socket Mode
+// 信封 id。
 func (s *ChatSession) MarkPendingFreshWithDedup(
 	ctx context.Context,
 	sessionID pgtype.UUID,
@@ -835,20 +803,16 @@ func (s *ChatSession) MarkPendingFreshWithDedup(
 	return nil
 }
 
-// BindMediaRefs creates attachment rows owned by IssueID when present, otherwise
-// links them to the existing durable chat message. It also clears the message's
-// media-pending marker. A failure rolls back the attachment rows, then clears
-// the marker separately so the placeholder can be promoted immediately for
-// graceful degradation.
-// BindMediaRefs preserves the established error-only API used by adapter test
-// doubles and direct callers.
+// BindMediaRefs 在 IssueID 有效时为它创建附件行，否则把它们链到既有的持久化 chat
+// message，并清除消息的媒体待处理标记。失败先回滚附件行，再单独清标记——占位符可以
+// 立刻被晋升、做优雅降级。保留"仅错误"的既有 API，供适配器测试替身与直接调用方使用。
 func (s *ChatSession) BindMediaRefs(ctx context.Context, in BindMediaInput) error {
 	_, err := s.BindMediaRefsWithResult(ctx, in)
 	return err
 }
 
-// BindMediaRefsWithResult additionally reports first-media title initialization
-// to production adapters so the Router can publish and refine that title.
+// BindMediaRefsWithResult 额外把"首个媒体标题初始化"报告给生产适配器，Router 据此发布并
+// 精修标题。
 func (s *ChatSession) BindMediaRefsWithResult(ctx context.Context, in BindMediaInput) (BindMediaResult, error) {
 	var result BindMediaResult
 	tx, err := s.tx.Begin(ctx)
@@ -870,14 +834,15 @@ func (s *ChatSession) BindMediaRefsWithResult(ctx context.Context, in BindMediaI
 		return BindMediaResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		// An ambiguous commit needs no adjudication: the intent-ledger rows
-		// were deleted in this same transaction, so commit landed ⇔ intents
-		// gone, atomically. Either way the reconciler settles the objects.
+		// 歧义提交无需裁断：意图台账行在同一个事务里被删，所以"提交成功 ⇔ 意图已删"，
+		// 原子成立。任一种结果下对象都交给对账器收尾。
 		return BindMediaResult{}, fmt.Errorf("commit media: %w", err)
 	}
 	return result, nil
 }
 
+// clearMediaPending 清除 chat message 的媒体待处理标记（在绑定事务内、或绑定失败后的
+// 单独补救事务里）。
 func (s *ChatSession) clearMediaPending(ctx context.Context, q SessionQueries, in BindMediaInput) error {
 	if err := q.ClearChatMessageChannelMediaPending(ctx, db.ClearChatMessageChannelMediaPendingParams{
 		ID:            in.MessageID,
@@ -888,6 +853,7 @@ func (s *ChatSession) clearMediaPending(ctx context.Context, q SessionQueries, i
 	return nil
 }
 
+// bindMediaRefs 是媒体绑定的核心事务逻辑（在调用方事务内执行）。
 func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in BindMediaInput, result *BindMediaResult) error {
 	if !in.WorkspaceID.Valid {
 		return errors.New("bind media refs: workspace_id is required")
@@ -913,11 +879,9 @@ func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in 
 			return fmt.Errorf("validate issue media target: %w", err)
 		}
 	}
-	// Claim the intent-ledger rows inside this same transaction: commit
-	// landed <=> intents gone, atomically, so an ambiguous COMMIT never needs
-	// adjudication. A key the reconciler already moved to 'deleting' is not
-	// returned and its ref must NOT attach — the object is being deleted and
-	// the placeholder stays.
+	// 在同一个事务内认领意图台账行：提交成功 ⇔ 意图已删，原子成立，歧义 COMMIT 无需
+	// 裁断。已被对账器挪进 'deleting' 的键不会被返回，其引用**不得**挂载——对象正在被
+	// 删除，占位符保持原位。
 	claimedKeys, err := qtx.ClaimChannelMediaPendingObjectsForBind(ctx, db.ClaimChannelMediaPendingObjectsForBindParams{
 		StorageKeys: keys,
 		WorkspaceID: in.WorkspaceID,
@@ -980,6 +944,7 @@ func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in 
 		return nil
 	}
 	if !in.IssueID.Valid {
+		// 普通消息：头一件媒体驱动"媒体标题初始化"（仅当会话还没有标题）。
 		for _, media := range created {
 			source := media.ref.Filename
 			if strings.TrimSpace(source) == "" {
@@ -1003,6 +968,7 @@ func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in 
 		}
 	}
 	if in.IssueID.Valid {
+		// /issue 目标：把媒体块拼进 issue 描述（必要时替换命令正文里的行内占位符）。
 		issueMarkdown := make([]string, 0, len(created))
 		replacements := make([]inlineMediaReplacement, 0, len(created))
 		for _, media := range created {
@@ -1072,6 +1038,7 @@ func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in 
 			markdown:    inlineAttachmentMarkdown(media.ref, media.id),
 		})
 	}
+	// 把落库正文里的占位符原位替换成 Markdown 附件链接。
 	if body, changed := composeInlineMediaBody(in.Body, replacements); changed {
 		rows, err := qtx.UpdateChatMessageContentForChannelMedia(ctx, db.UpdateChatMessageContentForChannelMediaParams{
 			ID:            in.MessageID,
@@ -1088,6 +1055,7 @@ func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in 
 	return nil
 }
 
+// inlineMediaReplacement 是一次"把占位符换成 Markdown"的候选替换。
 type inlineMediaReplacement struct {
 	placeholder string
 	index       int
@@ -1100,6 +1068,8 @@ type inlineMediaEdit struct {
 	text  string
 }
 
+// composeInlineMediaBody 按占位符在正文里第 index 次出现的位置，把它们依次替换成
+// Markdown；返回替换后的正文与是否发生了替换。
 func composeInlineMediaBody(body string, replacements []inlineMediaReplacement) (string, bool) {
 	edits := make([]inlineMediaEdit, 0, len(replacements))
 	for _, replacement := range replacements {
@@ -1124,7 +1094,7 @@ func composeInlineMediaBody(body string, replacements []inlineMediaReplacement) 
 	last := 0
 	for _, edit := range edits {
 		if edit.start < last {
-			continue
+			continue // 区间重叠：只保第一个（防御畸形输入）
 		}
 		out.WriteString(body[last:edit.start])
 		out.WriteString(edit.text)
@@ -1134,10 +1104,9 @@ func composeInlineMediaBody(body string, replacements []inlineMediaReplacement) 
 	return out.String(), true
 }
 
-// composeIssueCommandMediaDescription materializes media in the same positions
-// as the normalized inbound body, then removes the /issue directive line. Only
-// resolved media before the command is retained from the prefix; adapter-added
-// quoted context remains excluded from the issue description contract.
+// composeIssueCommandMediaDescription 在与规范化入站正文相同的位次上物化媒体，然后去掉
+// /issue 指令行。命令前的已解析媒体保留在前缀里；适配器加的引用上下文仍不属于 issue
+// 描述契约。
 func composeIssueCommandMediaDescription(body, commandText string, replacements []inlineMediaReplacement, fallback string) (string, bool) {
 	commandStart, _, ok := issueCommandLineBounds(body, commandText)
 	if !ok {
@@ -1181,12 +1150,12 @@ func composeIssueCommandMediaDescription(body, commandText string, replacements 
 			return description, true
 		}
 	}
-	// A malformed adapter layout placed every matched marker inside the command
-	// line that is removed above. Fall back to append so attachments never become
-	// invisible merely to preserve an unusable inline layout.
+	// 畸形适配器布局把每个命中的占位符都塞进了上面被删掉的命令行里。回退为追加——附件
+	// 绝不会仅仅为了保住一个没法用的行内布局而变得不可见。
 	return fallback, false
 }
 
+// nthSubstringIndex 返回 marker 在 body 里第 target 次（0 起）出现的下标；不足则 -1。
 func nthSubstringIndex(body, marker string, target int) int {
 	offset := 0
 	for index := 0; ; index++ {
@@ -1202,6 +1171,8 @@ func nthSubstringIndex(body, marker string, target int) int {
 	}
 }
 
+// inlineAttachmentMarkdown 为一件已链接的媒体生成行内 Markdown：图片用 ![](...)，其余按
+// 附件名生成转义后的链接。
 func inlineAttachmentMarkdown(ref channel.MediaRef, id pgtype.UUID) string {
 	downloadPath := "/api/attachments/" + uuid.UUID(id.Bytes).String() + "/download"
 	if ref.Type == channel.MsgTypeImage {
@@ -1214,6 +1185,8 @@ func inlineAttachmentMarkdown(ref channel.MediaRef, id pgtype.UUID) string {
 	return "[" + label + "](" + downloadPath + ")"
 }
 
+// defaultMediaFilename 在平台没给文件名时按媒体种类与 content type 造一个 `前缀-id.扩展名`
+// 的默认名。
 func defaultMediaFilename(kind channel.MsgType, id, contentType string) string {
 	prefix := "attachment"
 	switch kind {
@@ -1242,6 +1215,7 @@ func defaultMediaFilename(kind channel.MsgType, id, contentType string) string {
 	return prefix + "-" + id + ext
 }
 
+// isUniqueViolation 判断错误是不是 PostgreSQL 唯一约束冲突。
 func isUniqueViolation(err error) bool {
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) {
@@ -1250,6 +1224,7 @@ func isUniqueViolation(err error) bool {
 	return false
 }
 
+// textOrNull 把空串编码成 SQL NULL，其余编码成有效文本。
 func textOrNull(s string) pgtype.Text {
 	if s == "" {
 		return pgtype.Text{}
@@ -1257,6 +1232,7 @@ func textOrNull(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: true}
 }
 
+// textOrNullIf 按 valid 决定文本是否有效（false 即 NULL）。
 func textOrNullIf(valid bool, s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: valid}
 }

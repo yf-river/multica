@@ -1,3 +1,20 @@
+// 职责定位：heartbeat（心跳）处理器收到的「本 runtime 还活着，更新它的 last_seen_at」
+// 请求，最终要怎么落到数据库，由本文件的 HeartbeatScheduler 决定。它有两种实现：
+//
+//   - PassthroughHeartbeatScheduler：同步直写，保留历史行为——先 TouchAgentRuntimeLastSeen，
+//     若更新行数为 0（被 sweeper 抢先标成 offline），再走 MarkAgentRuntimeOnline 兜底翻回
+//     online（清扫竞态恢复）。Handler 默认装配它，让单元测试能立刻观察到落库，也保住既有
+//     的竞态恢复测试。
+//
+//   - BatchedHeartbeatScheduler：把 runtime ID 先收进内存队列，每 tick 用一条批量 UPDATE
+//     一次性刷新（flush）。生产环境装配它：N 个每 15s 心跳一次的 runtime，每 tick 只需
+//     约 1 次数据库事务而不是 N 次。同步路径（状态翻转、从未见过的行）仍走
+//     MarkAgentRuntimeOnline 立即落库；只有热点路径「行已是 online、只想撞一下
+//     last_seen_at」才走批量。goroutine 装配与关闭时的排空见 cmd/server/main.go。
+//
+// 两阶段关键时序链（为何用 30s tick 见 DefaultHeartbeatBatchInterval）：批量 flush 把
+// last_seen_at 推迟最多一个 tick，必须保证「推迟后的 last_seen_at」仍在
+// staleThresholdSeconds 判定为存活的时间窗内，否则在线 runtime 会被误判离线。
 package handler
 
 import (
@@ -10,45 +27,32 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// HeartbeatScheduler decides how a "this runtime is alive, bump its
-// last_seen_at" request actually reaches the database.
-//
-// Two implementations exist:
-//
-//   - PassthroughHeartbeatScheduler runs the legacy synchronous TouchAgentRuntimeLastSeen
-//     followed by a MarkAgentRuntimeOnline fallback when the touch matches zero rows
-//     (sweeper-race recovery). It is the default Handler wiring so unit tests
-//     observe the bump immediately and the existing race-recovery test stays valid.
-//
-//   - BatchedHeartbeatScheduler queues runtime IDs in memory and flushes them as a
-//     single bulk UPDATE every tick. Production wires this so a fleet of N runtimes
-//     beating every 15s costs ~1 DB transaction per tick instead of N. Sync paths
-//     (status flip, never-seen rows) still go through MarkAgentRuntimeOnline
-//     immediately; only the hot "online row, just bumping last_seen_at" path is
-//     batched. See cmd/server/main.go for the goroutine wiring and shutdown drain.
+// HeartbeatScheduler 抽象「一次心跳要不要立刻写库、怎么写」。
 type HeartbeatScheduler interface {
-	// Schedule is called from the heartbeat hot path after the per-row flush
-	// window check has decided a DB write is warranted. Implementations must
-	// preserve the sweeper-race semantics: if rt.Status was "online" at SELECT
-	// time but the row is now offline, the scheduler must eventually flip it
-	// back online (sync path immediately; batched path defers to the runtime's
-	// next beat, which will see status="offline" and take the sync branch in
-	// recordHeartbeat).
+	// Schedule 在心跳热点路径上被调用——调用方已先做过每行级别的 flush 窗口检查、
+	// 判定确实值得写一次数据库。实现方必须保持清扫（sweeper）竞态语义：如果 SELECT
+	// 时 rt.Status 是 "online" 但行此刻已被改成 offline，调度器最终必须把它翻回 online
+	// （同步实现立即翻；批量实现会推迟到该 runtime 的下一次心跳——那时会看到
+	// status="offline" 而走 recordHeartbeat 里的同步分支，同样能自愈）。
 	Schedule(ctx context.Context, rt db.AgentRuntime) error
 }
 
-// PassthroughHeartbeatScheduler is the synchronous, legacy-behavior scheduler.
-// Used as the default in handler.New so tests observe DB writes immediately,
-// and as the inline fallback inside BatchedHeartbeatScheduler for cases that
-// must commit before returning (offline→online flip, never-seen runtime).
+// PassthroughHeartbeatScheduler 是同步的、保持历史行为的调度器。它作为
+// handler.New 的默认装配，让测试能立刻观察到数据库写入；也作为
+// BatchedHeartbeatScheduler 内部对「必须在返回前落库」的场景（offline→online 翻转、
+// 从未见过的 runtime）的同步兜底。
 type PassthroughHeartbeatScheduler struct {
 	queries *db.Queries
 }
 
+// NewPassthroughHeartbeatScheduler 构造同步直写版心跳调度器。
 func NewPassthroughHeartbeatScheduler(queries *db.Queries) *PassthroughHeartbeatScheduler {
 	return &PassthroughHeartbeatScheduler{queries: queries}
 }
 
+// Schedule 同步把这次心跳写入数据库。行还是 online 时优先走轻量的 last_seen_at 撞针
+// （TouchAgentRuntimeLastSeen）；若它没命中任何行，说明清扫器在我们 SELECT 之后、本
+// UPDATE 之前把行翻成了 offline，落下去 MarkAgentRuntimeOnline 把行翻回来。
 func (p *PassthroughHeartbeatScheduler) Schedule(ctx context.Context, rt db.AgentRuntime) error {
 	if rt.Status == "online" && rt.LastSeenAt.Valid {
 		rows, err := p.queries.TouchAgentRuntimeLastSeen(ctx, rt.ID)
@@ -58,28 +62,24 @@ func (p *PassthroughHeartbeatScheduler) Schedule(ctx context.Context, rt db.Agen
 		if rows > 0 {
 			return nil
 		}
-		// Sweeper raced us to offline between the SELECT and this UPDATE.
-		// Fall through to MarkAgentRuntimeOnline to flip the row back.
+		// 清扫器在我们 SELECT 与这次 UPDATE 之间把 runtime 抢标成了 offline，
+		// 落到 MarkAgentRuntimeOnline 把它翻回 online。
 	}
 	_, err := p.queries.MarkAgentRuntimeOnline(ctx, rt.ID)
 	return err
 }
 
-// BatchedHeartbeatScheduler coalesces same-id Schedule calls within a tick
-// window into a single bulk UPDATE.
+// BatchedHeartbeatScheduler 把一个 tick 窗口内对同一 runtime 的多次 Schedule 调用
+// 合并成一次批量 UPDATE。
 //
-// Concurrency model:
-//   - Schedule grabs a short mutex, inserts into a map (deduped), releases.
-//   - A single goroutine (Run) drains the map every tickInterval into a bulk
-//     UPDATE.
-//   - Stop signals the run loop, which performs one final drain so pending
-//     IDs are not lost on graceful shutdown.
+// 并发模型：
+//   - Schedule 先抢一把短锁，把 runtime ID 写进 map（天然去重），然后放锁返回；
+//   - Run 是唯一的消费 goroutine：每 tickInterval 把 map 排空成一次批量 UPDATE；
+//   - Stop 通知 Run 退出；Run 在退出前会做最后一次排空，保证优雅关停时不丢积压 ID。
 //
-// Bounded growth: pending is keyed by runtime ID, so its size is bounded by
-// the active runtime fleet (one entry per heartbeating runtime per tick).
-// Persistent DB errors are logged but do NOT re-queue the failed IDs — the
-// next beat from each runtime will reschedule naturally, and re-queuing on
-// a hard outage would just balloon the map.
+// 增长边界：pending 以 runtime ID 为键，因此大小有上界——每 tick 每个活跃心跳的
+// runtime 至多占一项。数据库持续报错时只记日志、绝不把失败的 ID 重新入队：每个
+// runtime 的下一次心跳自然会重新调度；若在硬故障期间反复入队，map 会无限膨胀。
 type BatchedHeartbeatScheduler struct {
 	queries      *db.Queries
 	fallback     *PassthroughHeartbeatScheduler
@@ -93,13 +93,13 @@ type BatchedHeartbeatScheduler struct {
 	doneCh   chan struct{}
 }
 
-// DefaultHeartbeatBatchInterval is the production tick cadence for the
-// BatchedHeartbeatScheduler. Chosen so the load-bearing chain
-// `flushInterval + heartbeatInterval + tickInterval < staleThresholdSeconds`
-// holds with a comfortable buffer (60 + 15 + 30 = 105 < 150). Lengthening
-// this requires bumping staleThresholdSeconds in lockstep.
+// DefaultHeartbeatBatchInterval 是批量心跳调度器的生产 tick 节奏。取 30s 是为了让
+// 承重的时序链 flushInterval + heartbeatInterval + tickInterval < staleThresholdSeconds
+// 有余量地成立（60 + 15 + 30 = 105 < 150）。要拉长它，必须同步调大
+// staleThresholdSeconds，否则在线的 runtime 会被误判成已死。
 const DefaultHeartbeatBatchInterval = 30 * time.Second
 
+// NewBatchedHeartbeatScheduler 构造批量心跳调度器；tickInterval 非正时退回默认值。
 func NewBatchedHeartbeatScheduler(queries *db.Queries, tickInterval time.Duration) *BatchedHeartbeatScheduler {
 	if tickInterval <= 0 {
 		tickInterval = DefaultHeartbeatBatchInterval
@@ -114,10 +114,11 @@ func NewBatchedHeartbeatScheduler(queries *db.Queries, tickInterval time.Duratio
 	}
 }
 
+// Schedule 收下一次心跳。状态翻转（offline→online）与从未见过（LastSeenAt 无值）的行
+// 必须在返回前落库，让调用方/后续读能观察到新状态；只有热点路径「行已 online、仅撞
+// last_seen_at」才进批量队列。
 func (b *BatchedHeartbeatScheduler) Schedule(ctx context.Context, rt db.AgentRuntime) error {
-	// Status flip (offline→online) and never-seen rows must commit before
-	// returning so callers / dependent reads observe the new state. Only
-	// the hot "already online, bumping last_seen_at" case is batched.
+	// 见上方注释：非 online 或没有历史 last_seen 的行直接走同步兜底，不批量。
 	if rt.Status != "online" || !rt.LastSeenAt.Valid {
 		return b.fallback.Schedule(ctx, rt)
 	}
@@ -127,9 +128,8 @@ func (b *BatchedHeartbeatScheduler) Schedule(ctx context.Context, rt db.AgentRun
 	return nil
 }
 
-// Run drives periodic bulk flushes. Returns after Stop is called and the
-// final drain has completed. Intended to be invoked once in its own
-// goroutine from main.go.
+// Run 驱动周期性的批量 flush。直到 Stop 被调用且最后一次排空完成后才返回。
+// 设计为在 main.go 里以独立 goroutine 启动一次。
 func (b *BatchedHeartbeatScheduler) Run(ctx context.Context) {
 	defer close(b.doneCh)
 	t := time.NewTicker(b.tickInterval)
@@ -137,8 +137,8 @@ func (b *BatchedHeartbeatScheduler) Run(ctx context.Context) {
 	for {
 		select {
 		case <-b.stopCh:
-			// Drain whatever is still queued. Use a fresh, short-bounded
-			// context so a cancelled parent ctx doesn't drop the final flush.
+			// 把积压的队列排空再退出。用一个全新、短时限的 context，避免父 context
+			// 已被取消导致最后一次 flush 被一起丢掉。
 			drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			b.flushOnce(drainCtx)
 			cancel()
@@ -154,13 +154,12 @@ func (b *BatchedHeartbeatScheduler) Run(ctx context.Context) {
 	}
 }
 
-// Stop signals the Run goroutine to drain and exit. Blocks until the final
-// flush completes so callers can sequence shutdown deterministically.
+// Stop 通知 Run goroutine 排空并退出，并阻塞到最后一次 flush 完成，让调用方能确定性地
+// 安排关停顺序。
 //
-// As a defense-in-depth, Stop also performs one more flush after Run has
-// exited. This catches the rare case where Run already returned via its
-// ctx.Done() branch (e.g. parent ctx was cancelled before Stop was called)
-// and a late Schedule call has since added entries to the pending map.
+// 纵深防御：Run 退出后 Stop 还会再补一次 flush。这覆盖了「Run 已经从 ctx.Done() 分支
+// 返回（例如父 context 在 Stop 之前就被取消）、之后又有一批迟到的 Schedule 写进
+// pending map」这种少见情形。
 func (b *BatchedHeartbeatScheduler) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stopCh)
@@ -171,20 +170,21 @@ func (b *BatchedHeartbeatScheduler) Stop() {
 	cancel()
 }
 
-// FlushNow is exposed for tests that want to assert post-flush DB state
-// without sleeping for tickInterval. Production code should rely on Run.
+// FlushNow 暴露给测试：想在不等 tickInterval 的情况下断言 flush 之后的数据库状态。
+// 生产代码应该依赖 Run。
 func (b *BatchedHeartbeatScheduler) FlushNow(ctx context.Context) {
 	b.flushOnce(ctx)
 }
 
-// PendingCount reports the number of unique runtime IDs currently queued.
-// Exposed for tests and potential metrics.
+// PendingCount 返回当前排队中的不同 runtime ID 个数。暴露给测试与潜在指标。
 func (b *BatchedHeartbeatScheduler) PendingCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return len(b.pending)
 }
 
+// flushOnce 把此刻积压的 ID 一次性批量刷新到数据库。先取出并清空 pending，再发批量
+// UPDATE——「先拿后清」让排空期间新到的 Schedule 进的是新一批，不会丢也不会重复。
 func (b *BatchedHeartbeatScheduler) flushOnce(ctx context.Context) {
 	b.mu.Lock()
 	if len(b.pending) == 0 {
@@ -200,16 +200,15 @@ func (b *BatchedHeartbeatScheduler) flushOnce(ctx context.Context) {
 
 	rows, err := b.queries.TouchAgentRuntimesLastSeenBatch(ctx, ids)
 	if err != nil {
-		// Don't requeue on persistent errors — see type comment.
+		// 持续性故障不重新入队——理由见类型注释（会无限膨胀、下次心跳自然补偿）。
 		slog.Warn("heartbeat batch flush failed",
 			"scheduled", len(ids), "error", err)
 		return
 	}
 	if int(rows) < len(ids) {
-		// Some runtimes raced into a non-online state between Schedule and
-		// flush. Their next heartbeat sees status != "online" and falls
-		// through to the sync MarkAgentRuntimeOnline path in recordHeartbeat,
-		// so the divergence self-heals within one beat (~15s).
+		// 部分 runtime 在「入队」到「flush」之间被竞态翻成了非 online。它们下一次心跳
+		// 会看到 status != "online" 而走 recordHeartbeat 的同步 MarkAgentRuntimeOnline
+		// 分支，因此这个偏差会在一个心跳周期（约 15s）内自愈。
 		slog.Info("heartbeat batch flush: some runtimes raced to offline",
 			"scheduled", len(ids), "affected", rows)
 	}

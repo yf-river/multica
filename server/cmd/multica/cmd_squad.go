@@ -1,3 +1,6 @@
+// 文件职责：实现 `multica squad` 命令组——工作区级 squad（可整体指派的 agent
+// 编队，leader agent 协调派活）的增删改查（list/get/create/update/delete）、成员
+// 管理（member list/add/set-role/remove），以及 squad 近期活动（activity）。
 package main
 
 import (
@@ -12,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// squadCmd 是 `multica squad` 父命令。
 var squadCmd = &cobra.Command{
 	Use:   "squad",
 	Short: "Work with squads",
@@ -19,6 +23,7 @@ var squadCmd = &cobra.Command{
 
 // ── List ────────────────────────────────────────────────────────────────────
 
+// squadListCmd 列出工作区里的 squad。
 var squadListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List squads in the workspace",
@@ -26,6 +31,7 @@ var squadListCmd = &cobra.Command{
 	RunE:  runSquadList,
 }
 
+// runSquadList 执行 `squad list`：列出工作区 squad（表格显示成员数）。
 func runSquadList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -59,6 +65,7 @@ func runSquadList(cmd *cobra.Command, _ []string) error {
 	return w.Flush()
 }
 
+// memberCountDisplay 渲染成员数字段，缺失/为空/非正数显示 "-"。
 func memberCountDisplay(m map[string]any) string {
 	v, ok := m["member_count"]
 	if !ok || v == nil {
@@ -80,6 +87,7 @@ var squadGetCmd = &cobra.Command{
 	RunE:  runSquadGet,
 }
 
+// runSquadGet 执行 `squad get <squad-id>`：取单个 squad 详情。
 func runSquadGet(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -118,6 +126,8 @@ var squadCreateCmd = &cobra.Command{
 	RunE:  runSquadCreate,
 }
 
+// runSquadCreate 执行 `squad create`：--name 与 --leader（agent 名/ID）必填，leader
+// 先解析成 agent id 再 POST 创建。
 func runSquadCreate(cmd *cobra.Command, _ []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	if name == "" {
@@ -170,6 +180,8 @@ var squadUpdateCmd = &cobra.Command{
 	RunE:  runSquadUpdate,
 }
 
+// runSquadUpdate 执行 `squad update <squad-id>`：只 PATCH Changed 的字段；
+// --leader 传名字/ID，先解析成 agent id。
 func runSquadUpdate(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -230,6 +242,7 @@ var squadDeleteCmd = &cobra.Command{
 	RunE:  runSquadDelete,
 }
 
+// runSquadDelete 执行 `squad delete <squad-id>`：删除（归档）squad。
 func runSquadDelete(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -252,11 +265,13 @@ func runSquadDelete(cmd *cobra.Command, args []string) error {
 
 // ── Members ─────────────────────────────────────────────────────────────────
 
+// squadMemberCmd 是 `squad member` 分组命令（list/add/set-role/remove）。
 var squadMemberCmd = &cobra.Command{
 	Use:   "member",
 	Short: "Work with squad members",
 }
 
+// squadMemberListCmd 列出某 squad 的成员。
 var squadMemberListCmd = &cobra.Command{
 	Use:   "list <squad-id>",
 	Short: "List members of a squad",
@@ -264,6 +279,7 @@ var squadMemberListCmd = &cobra.Command{
 	RunE:  runSquadMemberList,
 }
 
+// runSquadMemberList 执行 `squad member list <squad-id>`：列出 squad 成员及各自角色。
 func runSquadMemberList(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -305,6 +321,8 @@ var squadMemberAddCmd = &cobra.Command{
 	RunE:  runSquadMemberAdd,
 }
 
+// runSquadMemberAdd 执行 `squad member add <squad-id>`：把某 member/agent 加进
+// squad（--role 指定角色）。
 func runSquadMemberAdd(cmd *cobra.Command, args []string) error {
 	memberID, _ := cmd.Flags().GetString("member-id")
 	memberType, _ := cmd.Flags().GetString("type")
@@ -352,6 +370,8 @@ var squadMemberSetRoleCmd = &cobra.Command{
 	RunE:  runSquadMemberSetRole,
 }
 
+// runSquadMemberSetRole 执行 `squad member set-role <squad-id> <member-id> <role>`：
+// 改某成员在 squad 里的角色。
 func runSquadMemberSetRole(cmd *cobra.Command, args []string) error {
 	memberID, _ := cmd.Flags().GetString("member-id")
 	memberType, _ := cmd.Flags().GetString("member-type")
@@ -402,6 +422,8 @@ var squadMemberRemoveCmd = &cobra.Command{
 	RunE:  runSquadMemberRemove,
 }
 
+// runSquadMemberRemove 执行 `squad member remove <squad-id> <member-id>`：把成员
+// 移出 squad。
 func runSquadMemberRemove(cmd *cobra.Command, args []string) error {
 	memberID, _ := cmd.Flags().GetString("member-id")
 	memberType, _ := cmd.Flags().GetString("type")
@@ -461,6 +483,8 @@ parent issue, so record against the parent.`,
 	RunE: runSquadActivity,
 }
 
+// runSquadActivity 执行 `squad activity [<squad-id>]`：列出 squad 的近期活动
+// （事件流），可按工作区聚合。
 func runSquadActivity(cmd *cobra.Command, args []string) error {
 	issueID := args[0]
 	outcome := args[1]

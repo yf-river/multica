@@ -1,3 +1,9 @@
+// 本文件职责：技能（Skill）详情页。顶部是面包屑 + 身份条 + 页头操作（只读提示、
+// 从来源刷新 / 添加到 agent / 删除）；正文分两个标签页：
+// - Overview：编辑名称/描述/标签，列出正在使用它的 agent；
+// - Files：文件树 + 正文区，可预览/编辑 SKILL.md 与附加文件，支持新增/重命名/删除。
+// 全页围绕「本地草稿 vs 服务端版本」运转：保存栏由脏标记门控，远端更新只在与草稿
+// 冲突时才弹横幅；保存 / 放弃 / 刷新都把结果收敛到 adoptServerVersion 一个入口。
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -91,7 +97,7 @@ const SKILL_MD = "SKILL.md";
 
 type DraftFile = { id?: string; path: string; content: string };
 
-/** The four editable fields, as one snapshot. */
+/** 可编辑草稿：四个可编辑字段合成的一张快照。 */
 type SkillDraft = {
   name: string;
   description: string;
@@ -100,18 +106,16 @@ type SkillDraft = {
 };
 
 /**
- * Server skill -> editable draft.
+ * 把服务端技能转成可编辑草稿。
  *
- * `name` and `description` are trimmed here because Save trims them too:
- * normalizing once, at the single seam where server data becomes a draft, is
- * what lets every later comparison be plain equality. Trimming at comparison
- * time instead is how the two sides drifted apart in the first place — the
- * dirty check trimmed one operand and not the other, so a description ending
- * in a newline (what `description: |` frontmatter yields) never compared equal
- * to itself and the page opened permanently dirty.
+ * `name`/`description` 在这里就 trim 掉，是因为保存时也会 trim：在「服务端数据
+ * 变成草稿」这唯一交接点归一化一次，之后所有比较就能直接用等号。当初两边漂移的
+ * 根源正是在比较时才 trim——脏检查只 trim 了一侧操作数：以换行结尾的描述
+ * （frontmatter 里 `description: |` 会生成）永远不等于它自己，页面一打开就是
+ * 永久脏状态。
  *
- * `content` and file bodies are deliberately NOT normalized: leading and
- * trailing whitespace in a SKILL.md body is content, not formatting.
+ * `content` 与各文件正文刻意不做归一化：SKILL.md 正文首尾的空白是内容本身，
+ * 不是排版噪声。
  */
 function toDraft(s: Skill): SkillDraft {
   return {
@@ -127,9 +131,8 @@ function toDraft(s: Skill): SkillDraft {
 }
 
 /**
- * Order-insensitive snapshot of a file set. The two endpoints that return
- * files disagree on order — GET sorts by path, PUT echoes request order — and
- * an order difference is not a content difference.
+ * 一组文件的「与顺序无关」签名。两个返回文件的接口顺序不一致——GET 按路径排序、
+ * PUT 按请求顺序回显——而顺序不同并不等于内容不同。
  */
 function fileSignature(files: DraftFile[]): string {
   return JSON.stringify(
@@ -140,12 +143,11 @@ function fileSignature(files: DraftFile[]): string {
 }
 
 /**
- * Did the USER change anything, measured against the draft we handed them?
+ * 用户是否真的改了什么——以「上次交给用户的草稿」为基准来量。
  *
- * Deliberately not "does the draft differ from the latest server skill": that
- * question conflates two independent causes — the user typed something, or the
- * server moved underneath us — and answering it as if only the first existed
- * is what made every remote update look like a local edit.
+ * 刻意不问「草稿与最新服务端技能是否不同」：那个问题混了两个互不相干的原因——
+ * 用户动了手，或服务端在我们背后变了——只按前者作答，正是当初把每个远端更新都
+ * 误读成本地编辑的原因。
  */
 function hasLocalEdits(draft: SkillDraft, baseline: SkillDraft | null): boolean {
   if (!baseline) return false;
@@ -158,12 +160,10 @@ function hasLocalEdits(draft: SkillDraft, baseline: SkillDraft | null): boolean 
 }
 
 /**
- * Two tabs, not three. A skill has no settings axis to speak of:
- * `UpdateSkillRequest` carries only name / description / content / config /
- * files, and edit rights are derived (creator or workspace admin) with no
- * writable counterpart — so a Settings tab would hold a delete button and a
- * read-only sentence. Delete lives in the header instead, matching the agent
- * detail page where Archive sits in the header.
+ * 两个标签页，不是三个。skill 没有值得单开的「设置」维度：更新请求只携带
+ * name/description/content/config/files，编辑权是派生出来的（创建者或工作区
+ * admin），没有对应的可写字段——真设一个 Settings 标签页，也只能放一个删除按钮
+ * 加一句只读说明。删除因此放在页头，与 agent 详情页把 Archive 放在页头一致。
  */
 type DetailView = "overview" | "files";
 
@@ -172,9 +172,14 @@ function isDetailView(value: string | null): value is DetailView {
 }
 
 // ---------------------------------------------------------------------------
-// File path validation + inline add
+// 新文件路径校验 + 行内新增
 // ---------------------------------------------------------------------------
 
+/**
+ * 返回一个校验器：判断「新文件路径」是否合法，不合法时给出本地化的中文错误消息，
+ * 合法时返回空串。规则（空/绝对路径/.. /保留名/重名/与目录撞名/落在已有文件之下）
+ * 与文件树、重命名共用，避免在页面各处维护多份「什么路径合法」的规则。
+ */
 export function useValidateNewFilePath() {
   const { t } = useT("skills");
   return (path: string, existing: string[]): string => {
@@ -184,11 +189,10 @@ export function useValidateNewFilePath() {
     if (p.split("/").includes("..")) return t(($) => $.detail.add_file.errors.double_dot);
     if (p === SKILL_MD) return t(($) => $.detail.add_file.errors.reserved);
     if (existing.includes(p)) return t(($) => $.detail.add_file.errors.exists);
-    // Directories are inferred from paths, not stored, so a file named after
-    // one merges into that folder's node when the tree is built — it drops off
-    // the rail while still sitting in the draft. Rejected in both directions:
-    // a file cannot take a folder's name, and cannot take a name that an
-    // existing file is already nested under.
+    // 目录是从路径「推断」出来的、并不单独存储：新文件若取了一个与已有推断目录
+    // 同名的路径，建树时会被并进那个目录节点——它明明还躺在草稿里，却在侧栏
+    // 消失了。所以两个方向都拒绝：文件不能占目录名，也不能取「某已有文件之下」
+    // 的子路径（那等于把已有文件当文件夹）。
     if (existing.some((other) => other.startsWith(`${p}/`))) {
       return t(($) => $.detail.add_file.errors.is_directory);
     }
@@ -256,7 +260,7 @@ function AddFileInline({
 }
 
 // ---------------------------------------------------------------------------
-// Header
+// 页头（身份条）
 // ---------------------------------------------------------------------------
 
 function useOriginLabel(origin: OriginInfo | null, runtime: AgentRuntime | null) {
@@ -278,18 +282,14 @@ function useOriginLabel(origin: OriginInfo | null, runtime: AgentRuntime | null)
 }
 
 /**
- * Identity strip under the breadcrumb: mark, name, and the counts that say
- * what this skill is made of. One line, because everything a reader would
- * scroll past it for is a field on the Overview tab.
+ * 面包屑下方的一行身份条：图标、名称，外加几个说明「这技能由什么构成」的计数。
+ * 保持一行：读者想滚动查看更多细节时，那些字段都在 Overview 标签页里。
  *
- * The description is not repeated here. It used to be, above an editable copy
- * of itself two tabs' worth of chrome below — every visit to a page whose only
- * verbs are edit, add and delete paid for a read-only restatement of a field
- * the next screenful lets you change. The list this page is reached from
- * already carries the description for anyone deciding whether to open it.
+ * 描述（description）不再在这里复述。过去它展示在可编辑副本两屏之上的这里——对
+ * 一页动作只有编辑/新增/删除的页面，每次访问都要为「下一个屏幕就能改」的字段
+ * 付一次只读复述。用户从列表页进入，列表已经带描述，足以决定是否打开详情。
  *
- * The agent detail header still has the taller form. Bringing it across is a
- * separate change to a page this branch does not otherwise touch.
+ * agent 详情页页头仍是更高的那种形态；把它对齐是本分支不触碰的那页的一次独立改动。
  */
 function SkillIdentity({
   skill,
@@ -325,8 +325,8 @@ function SkillIdentity({
         <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-caption text-muted-foreground sm:ml-auto">
           {originLabel && (
             <span className="inline-flex min-w-0 items-center gap-1.5">
-              {/* Same three-way split as the list's Source column: runtime,
-                  created here, imported. */}
+              {/* 与列表页 Source 列同样的三分法图标：本地 runtime / 手动创建 /
+                  外部导入。 */}
               {isRuntimeOrigin ? (
                 <HardDrive className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               ) : origin?.type === "manual" ? (
@@ -379,7 +379,7 @@ function SkillIdentity({
 }
 
 // ---------------------------------------------------------------------------
-// Overview tab
+// Overview 标签页
 // ---------------------------------------------------------------------------
 
 function PropertyRow({
@@ -484,9 +484,8 @@ function OverviewTab({
             label={t(($) => $.detail.overview.description)}
             htmlFor="skill-description"
           >
-            {/* Real descriptions run 500–900 characters (they carry the
-                trigger vocabulary an agent matches on), so this field is
-                sized for the data rather than the two rows it had before. */}
+            {/* 真实描述往往有 500–900 字（承载着 agent 用来匹配技能的触发词），
+                所以输入区按数据量定尺寸，而不是早前那两行的高度。 */}
             <Textarea
               id="skill-description"
               value={description}
@@ -545,7 +544,7 @@ function OverviewTab({
 }
 
 // ---------------------------------------------------------------------------
-// Files tab
+// Files 标签页
 // ---------------------------------------------------------------------------
 
 function FilesTab({
@@ -589,9 +588,9 @@ function FilesTab({
   const validatePath = useValidateNewFilePath();
   const supportingPaths = filePaths.filter((p) => p !== SKILL_MD);
   const isMd = isMarkdownPath(selectedPath);
-  // Absent for read-only viewers so the tree never offers an action it would
-  // then refuse. Both rails get the same object: SKILL.md keeps Edit and loses
-  // rename/delete, which the tree derives from reservedPath.
+  // 只读查看器不传 actions——树绝不提供一个之后又要拒绝的操作。两条文件树（主文件 /
+  // 支持文件）共用同一个对象：SKILL.md 保留「编辑」、去掉改名/删除，树据此从
+  // reservedPath 推导每行的可用动作。
   const treeActions = canEdit
     ? {
         onEdit: onEditFile,
@@ -604,9 +603,8 @@ function FilesTab({
 
   return (
     <div className="flex min-h-full flex-col md:h-full md:flex-row">
-      {/* The file list IS the second-level navigation, so it uses the same
-          rail treatment as the agent detail page's capability/settings nav
-          instead of inventing a third sidebar style. */}
+      {/* 文件列表本身就是第二级导航，所以沿用 agent 详情页「能力/设置」导航
+          同款侧栏样式，而不是再造第三种侧栏风格。 */}
       <aside
         role="tablist"
         aria-orientation="vertical"
@@ -669,11 +667,10 @@ function FilesTab({
           </span>
           <div className="ml-auto flex shrink-0 items-center gap-1">
             {isMd && (
-              // The second segment is named for what it does for THIS viewer:
-              // "Edit" when the pane it opens accepts typing, "Plain text"
-              // when the same pane is read-only. Same mode either way — only
-              // the promise differs, and offering an edit the page would
-              // refuse is the thing this rail is careful not to do.
+              // 第二段文案按「对这个查看者意味着什么」命名：打开的窗格接受输入就叫
+              // 「编辑」，同样的窗格只读就叫「纯文本」。底层都是同一个 raw 模式，
+              // 变的只是对用户的承诺——绝不提供一个页面之后会拒绝的「编辑」入口，
+              // 是这条侧栏一直小心守着的事。
               <div
                 role="group"
                 aria-label={t(($) => $.detail.files.mode_aria)}
@@ -741,9 +738,15 @@ function FilesTab({
 }
 
 // ---------------------------------------------------------------------------
-// Main page
+// 页面主组件
 // ---------------------------------------------------------------------------
 
+/**
+ * 技能详情页（作为路由页内目标被渲染）。接收 skillId，加载技能详情及成员/agent/
+ * runtime 等聚合数据；维护 Overview 与 Files 两个标签的本地草稿，统一管理
+ * 保存/放弃/删除/从来源刷新/增删改文件等交互，并在「本地有改动 + 远端出新版」
+ * 时提示冲突。无编辑权限时整体降级为只读并展示能力提示条。
+ */
 export function SkillDetailPage({ skillId }: { skillId: string }) {
   const { t } = useT("skills");
   const wsId = useWorkspaceId();
@@ -772,8 +775,8 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
   const canEdit = useCanEditSkill(skill, wsId);
   const skillPermissions = useSkillPermissions(skill ?? null, wsId);
 
-  // Context for the shared "Add to agent" dialog (also used by the skills
-  // list). Members see their own agents; workspace owners/admins see all.
+  // 供共用「添加到 agent」弹窗使用的上下文（技能列表页也用同一弹窗）。
+  // 普通成员只能看到自己的 agent；工作区 owner/admin 能看到全部。
   const myRole = useMemo(
     () => members.find((m) => m.user_id === currentUserId)?.role ?? null,
     [members, currentUserId],
@@ -798,13 +801,12 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
   const [addingFile, setAddingFile] = useState(false);
   const [conflictPending, setConflictPending] = useState(false);
 
-  // Preview/raw is a property of how the user wants to work, so it lives here
-  // and survives switching files. It used to live inside FileViewer, which the
-  // per-file `key` remounted — every file switch silently snapped back.
+  // 预览/原文是「用户想怎么干活」的属性，所以放在页面层、切换文件时得以保留。
+  // 早前它住在 FileViewer 内部，而 FileViewer 按文件 `key` 重挂载——每次切换
+  // 文件都被悄悄弹回预览态。
   const [fileMode, setFileMode] = useState<FileMode>("preview");
-  // Which file's editor is waiting for the caret. A path rather than a boolean
-  // so a request raised for one row cannot land in another row's editor if the
-  // selection moves before the effect runs.
+  // 哪个文件的编辑器正在等光标。用路径而非布尔值：若 effect 跑之前用户已移动选中，
+  // 为某一行发起的聚焦请求不会落进另一行的编辑器。
   const [focusPath, setFocusPath] = useState<string | null>(null);
 
   const urlView = navigation.searchParams.get("view");
@@ -837,14 +839,13 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
   const seededKeyRef = useRef<string | null>(null);
 
   /**
-   * The draft this page last handed the user, normalized by `toDraft`. Dirty
-   * state is measured against THIS, never against the latest server skill.
+   * 本页面最近一次交给用户的草稿（经 toDraft 归一化）。脏状态只以它为基准衡量，
+   * 绝不以「最新服务端技能」为基准。
    *
-   * INVARIANT: `seedFromSkill` is the only writer, and it always writes the
-   * same snapshot it pushes into state. `dirtySummary` is a `useMemo` keyed on
-   * those state values, so every baseline write is paired with the state
-   * change that recomputes it. Assigning this ref anywhere else breaks that
-   * pairing and silently re-opens MUL-5645.
+   * 不变量：只有 `seedFromSkill` 写它，且每次写入与推进到 state 的完全是同一份
+   * 快照；`dirtySummary` 是键在这些 state 值上的 `useMemo`，因此每次基准写入都
+   * 配对一次会触发它重算的状态更新。在别处给这个 ref 赋值会破坏成对关系，
+   * 静默重开 MUL-5645。
    */
   const baselineRef = useRef<SkillDraft | null>(null);
 
@@ -858,10 +859,9 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
   }, []);
 
   /**
-   * Adopt a server version wholesale: draft, baseline, seeded key and conflict
-   * flag all move together. Every path that accepts a server version goes
-   * through here — first load, silent refresh, Save, Discard — so the four
-   * pieces can never drift apart.
+   * 整包采信某个服务端版本：草稿、基准、seed 键与冲突标记一起推进。凡接受服务端
+   * 版本的路径都走这里——首次加载、静默刷新、保存、放弃——四个部分因此不可能
+   * 各自漂移。
    */
   const adoptServerVersion = useCallback(
     (s: Skill, resetSelection = false) => {
@@ -883,15 +883,13 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
       seededKeyRef.current !== null &&
       seededKeyRef.current.startsWith(`${wsId}:${skill.id}@`);
 
-    // Same skill, newer server version. Whether that is a conflict depends on
-    // the local draft alone: with no local edits the user is simply reading
-    // the page, so pull the new version in silently instead of accusing them
-    // of an edit they never made and freezing the editor on stale text.
+    // 同一技能、更新的服务端版本。是否构成冲突只看本地草稿：没有本地改动说明用户
+    // 只是在读页面，那就静默拉入新版本，而不是诬赖用户没做过的编辑、把编辑器冻在
+    // 过期文本上。
     //
-    // Re-run on draft changes, not just on new server versions: a conflict the
-    // user resolves by reverting their own edits has to release the page. The
-    // save bar is dirty-gated, so holding the conflict past that point would
-    // leave the banner above stale text with no Discard left to press.
+    // effect 在草稿变化时也要重跑，而不只在服务端出新版时跑：用户通过「放弃自己
+    // 的改动」解决冲突后，页面必须解除冲突态。保存栏受脏标记门控，若过了那个点还
+    // 挂着冲突，横幅就会悬在过期文本之上，而「放弃」按钮已无处可点。
     if (sameSkill && hasLocalEdits(draftRef.current, baselineRef.current)) {
       setConflictPending(true);
       return;
@@ -935,10 +933,9 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     }
   }, [fileMap, selectedPath]);
 
-  // Compared against the seeded baseline, not against the latest server skill,
-  // so a remote update can never read as a local edit. Files are matched by id
-  // so a rename counts as one changed file, not a delete plus an add; SKILL.md
-  // is its own entry since it lives in `content`.
+  // 与种下的基准比较，而非与最新服务端技能比较——远端更新因此绝不可能被读成
+  // 一次本地编辑。文件按 id 配对：改名算「一个文件有改动」而不是「删一个加一个」；
+  // SKILL.md 因为住在 `content` 里，单独算一项。
   const dirtySummary = useMemo(() => {
     const baseline = baselineRef.current;
     if (!baseline) {
@@ -1031,18 +1028,17 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     setAddingFile(false);
   };
 
-  // Defaults to the open file so the editor's own delete button keeps working;
-  // the tree passes the row that was acted on, which need not be the open one.
+  // 默认删当前打开的文件，让编辑器自己的删除按钮依旧可用；文件树传入的是被操作的
+  // 那一行，它不一定是当前打开的文件。
   const handleDeleteFile = (path: string = selectedPath) => {
     if (path === SKILL_MD) return;
     setFiles((prev) => prev.filter((f) => f.path !== path));
     if (path === selectedPath) setSelectedPath(SKILL_MD);
   };
 
-  // "Edit" from a row menu is one gesture that owes three things: the file is
-  // open, the pane is the editor rather than the preview, and the caret is in
-  // it. Doing fewer would leave the user another click away from typing, which
-  // is the whole reason the entry exists.
+  // 行菜单里的「编辑」是「一个手势同时做三件事」：打开该文件、把窗格切成编辑器
+  // 而非预览、再让光标落进编辑器。少做一件，用户就得多点一次才能开始打字——
+  // 而这个入口存在的全部意义就是省下那一次点击。
   const handleEditFile = useCallback(
     (path: string) => {
       if (!canEdit) return;
@@ -1060,8 +1056,8 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     setFiles((prev) =>
       prev.map((f) => (f.path === from ? { ...f, path: to } : f)),
     );
-    // Follow the file: the rail is keyed by path, so leaving the selection on
-    // the old one would land on a row that no longer exists.
+    // 让选中跟着文件走：侧栏以路径为 key，若选择仍停在旧路径，会落在一条已不
+    // 存在的行上。
     if (from === selectedPath) setSelectedPath(to);
   };
 
@@ -1127,8 +1123,8 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     );
   }
 
-  // Segments reuse the overview field labels so the pill and the fields it
-  // points at never use different words for the same thing.
+  // 各段直接复用 Overview 字段的文案：保存胶囊与它所指的字段，对同一件事
+  // 永远用同一个词，不会各说各话。
   const changedParts = [
     dirtySummary.nameChanged ? t(($) => $.detail.overview.name) : null,
     dirtySummary.descChanged ? t(($) => $.detail.overview.description) : null,
@@ -1148,8 +1144,8 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
   ];
 
   return (
-    // relative: positioning anchor for the floating save pill (page-centered,
-    // same rule as the skills list batch toolbar).
+    // relative：给浮动保存胶囊当定位锚点——相对页面（而非视口）水平居中，
+    // 与技能列表页的批量工具栏同一规则。
     <div className="relative flex flex-1 min-h-0 flex-col">
       <BreadcrumbHeader
         segments={[{ href: paths.skills(), label: t(($) => $.page.title) }]}
@@ -1330,9 +1326,9 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
         )}
       </div>
 
-      {/* Page-level so it covers edits made on either tab. Dirty-only and
-          floating, matching the skills list batch toolbar; anchored to the
-          page root (relative), NOT the viewport. */}
+      {/* 放在页面级，让两个标签页里的改动都被覆盖到。仅在有脏改动时浮出、
+          随内容浮动，与技能列表页的批量工具栏同一套路；锚定页面根（relative），
+          而非视口。 */}
       {canEdit && isDirty && (
         <div
           role="status"
@@ -1376,7 +1372,7 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
         </div>
       )}
 
-      {/* Delete confirmation */}
+      {/* 删除确认弹窗 */}
       <Dialog
         open={confirmDelete}
         onOpenChange={(v) => {
@@ -1444,8 +1440,7 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
         wsId={wsId}
         open={confirmRefresh}
         onOpenChange={setConfirmRefresh}
-        // Adopt explicitly: the user just confirmed the overwrite, so a dirty
-        // draft must be replaced instead of tripping the conflict banner.
+        // 显式采信新版：用户刚确认了覆盖，脏草稿应当被替换掉，而不是触发冲突横幅。
         onRefreshed={(updated) => adoptServerVersion(updated)}
       />
     </div>

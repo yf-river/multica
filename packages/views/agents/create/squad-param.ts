@@ -1,15 +1,14 @@
+// 本文件提供创建流程路由 URL 的拼接工具：把必须跨屏存活的两个参数
+//（squad、runtime）挂在路径上。
+
 /**
- * Builds a creation-route URL with the params that have to survive a hop
- * between screens.
+ * 构造一条创建路由的 URL，带上必须跨屏存活的参数。
  *
- * `squad` is the reason the flow was opened at all, so it rides along from the
- * chooser into whichever method the user picks.
+ * `squad` 是打开整个流程的缘由，所以从方式选择页一路跟到用户所选的方法页。
  *
- * `runtime` is a seed, not an identity: a conversation joins the sessions list
- * only once it holds a message or a saved configuration, so for the first turn
- * the runtime the user just picked cannot be read back from anywhere. It rides
- * in the URL rather than in component state so a refresh on that first turn
- * still knows where the conversation runs.
+ * `runtime` 是“种子”而非“身份”：会话只有在持有消息或已保存配置后才进入会话
+ * 列表，所以第一轮对话时，用户刚选的运行环境还没法从任何地方读回。它挂在 URL
+ * 而不是组件 state 里，这样第一轮对话刷新页面时，系统仍知道对话要跑在哪台机器。
  */
 export function createPathWithParams(
   path: string,
@@ -22,6 +21,7 @@ export function createPathWithParams(
   return suffix ? `${path}?${suffix}` : path;
 }
 
+/** 只带 squad 参数的简写。 */
 export function withSquadParam(path: string, squadId: string | null): string {
   return createPathWithParams(path, { squad: squadId });
 }

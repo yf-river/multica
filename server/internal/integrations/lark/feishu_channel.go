@@ -1,3 +1,5 @@
+// feishu_channel.go：channel.Channel 的飞书实现——把飞书接入到与渠道无关的
+// engine 的第一个适配器。
 package lark
 
 import (
@@ -17,19 +19,16 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// feishuChannel is the Feishu implementation of channel.Channel — the first
-// adapter driven by the channel-agnostic engine (MUL-3620). It wraps the
-// existing Lark transport: Connect runs the shared WS long-conn connector for
-// this installation, translating each decoded event into a normalized
-// channel.InboundMessage and handing it to the engine's shared inbound handler
-// (the Router, injected via channel.Config.Handler); Send posts a text reply
-// through the Lark HTTP API. One instance is built per channel_installation by
-// the registered Factory; the connector is shared across instances.
+// feishuChannel 是 channel.Channel 的飞书实现——第一个由与渠道无关的引擎
+// （MUL-3620）驱动的适配器。它包住既有的 Lark 传输层：Connect 为这个安装跑
+// 共享的 WS 长连接 connector，把每个解码事件规范化为 channel.InboundMessage
+// 后交给引擎的共享入站 handler（经 channel.Config.Handler 注入的 Router）；
+// Send 通过 Lark HTTP API 发文本回复。每个 channel_installation 由注册的
+// Factory 构建一个实例；connector 在实例间共享。
 //
-// The Channel holds only the credentials it needs for Connect/Send (decoded
-// from the per-installation config blob). The installation IDENTITY
-// (workspace / agent / installer) is resolved per message by the Router's
-// InstallationResolver, so it is deliberately absent here.
+// Channel 只持有 Connect/Send 需要的凭据（从每安装的 config blob 解码出来）。
+// 安装的【身份】（workspace / agent / installer）由 Router 的
+// InstallationResolver 逐消息解析，所以这里刻意不持有。
 type feishuChannel struct {
 	inst    Installation
 	conn    EventConnector
@@ -41,14 +40,13 @@ type feishuChannel struct {
 
 var _ channel.Channel = (*feishuChannel)(nil)
 
+// Type 返回该渠道的类型标识（飞书）。
 func (c *feishuChannel) Type() channel.Type { return channel.TypeFeishu }
 
-// Connect runs the Feishu long connection for this installation, blocking
-// until ctx is cancelled or the link drops — the contract engine.Supervisor
-// relies on to tie lease renewal to connection liveness. Each decoded event is
-// normalized to a channel.InboundMessage and handed to the engine handler. The
-// connector discards the (DispatchResult) return and reacts only to the error,
-// so the handler's error is what flows back.
+// Connect 为这个安装跑飞书长连接，阻塞到 ctx 被取消或链路断开——engine.Supervisor
+// 正是靠这个契约把租约续期与连接存活绑在一起。每个解码事件被规范化为
+// channel.InboundMessage 并交给引擎 handler。connector 丢弃 (DispatchResult)
+// 返回值、只对 error 反应，所以流回来的就是 handler 的 error。
 func (c *feishuChannel) Connect(ctx context.Context) error {
 	return c.conn.Run(ctx, c.inst, func(emitCtx context.Context, lm InboundMessage) (DispatchResult, error) {
 		if c.handler == nil {
@@ -58,13 +56,12 @@ func (c *feishuChannel) Connect(ctx context.Context) error {
 	})
 }
 
-// Disconnect is a no-op: the connector's receive loop is torn down by ctx
-// cancellation (the Supervisor cancels the run context). Safe to call repeatedly.
+// Disconnect 是空操作：connector 的接收循环靠 ctx 取消来拆除（Supervisor 会
+// 取消 run 的 ctx）。可安全重复调用。
 func (c *feishuChannel) Disconnect(ctx context.Context) error { return nil }
 
-// Send delivers a minimal text reply via the Lark IM API. Rich cards, media,
-// and the streaming card patch stay on the existing Patcher / OutcomeReplier
-// paths; this is the cross-platform OutboundMessage path.
+// Send 通过 Lark IM API 发送一条最小文本回复。富卡片、媒体和流式卡片 patch
+// 仍走既有的 Patcher / OutcomeReplier 路径；这里是跨平台 OutboundMessage 路径。
 func (c *feishuChannel) Send(ctx context.Context, out channel.OutboundMessage) (channel.SendResult, error) {
 	if c.sender == nil {
 		return channel.SendResult{}, errors.New("lark: api client not configured")
@@ -85,8 +82,8 @@ func (c *feishuChannel) Send(ctx context.Context, out channel.OutboundMessage) (
 	return channel.SendResult{MessageID: msgID}, nil
 }
 
-// Capabilities declares what the Feishu adapter supports. Declaration only —
-// the engine performs no degradation (channel.Capability docs).
+// Capabilities 声明飞书适配器支持的能力。只是声明——引擎不做任何降级处理
+// （见 channel.Capability 文档）。
 func (c *feishuChannel) Capabilities() channel.Capability {
 	return channel.CapText |
 		channel.CapRichCard |
@@ -97,10 +94,13 @@ func (c *feishuChannel) Capabilities() channel.Capability {
 		channel.CapMessageEdit
 }
 
+// installationCredentials 解析本安装的调用凭据。
 func (c *feishuChannel) installationCredentials() (InstallationCredentials, error) {
 	return installationCredentialsFor(c.inst, c.creds)
 }
 
+// installationCredentialsFor 用 resolver 解密安装行的 app_secret，组装成飞书
+// API 凭据。
 func installationCredentialsFor(inst Installation, resolver CredentialsResolver) (InstallationCredentials, error) {
 	if resolver == nil {
 		return InstallationCredentials{}, errors.New("lark: credentials resolver missing")
@@ -120,11 +120,10 @@ func installationCredentialsFor(inst Installation, resolver CredentialsResolver)
 	return creds, nil
 }
 
-// channelMessageFromLark normalizes a decoded Feishu InboundMessage into the
-// cross-platform channel.InboundMessage. The original struct is stashed in Raw
-// so the Feishu resolvers can read the platform-specific fields (app_id,
-// event_type, create time) the envelope does not carry. CommandBody maps to
-// the normalized CommandText field because command classification is shared.
+// channelMessageFromLark 把解码后的飞书 InboundMessage 规范化为跨平台
+// channel.InboundMessage。原结构体被塞进 Raw，让飞书 resolvers 能读到规范化
+// 信封没携带的平台特有字段（app_id、event_type、创建时间）。CommandBody 映射
+// 到规范化的 CommandText 字段，因为命令分类是共享的。
 func channelMessageFromLark(lm InboundMessage) channel.InboundMessage {
 	raw, _ := json.Marshal(lm)
 	var reply *channel.ReplyCtx
@@ -151,9 +150,9 @@ func channelMessageFromLark(lm InboundMessage) channel.InboundMessage {
 	}
 }
 
-// channelMsgType maps the raw Lark msg_type onto the normalized enum. Text-ish
-// Lark types (text / post / merge_forward / interactive) all flatten to text
-// (the human-readable content is in Body); media types map across.
+// channelMsgType 把原始 Lark msg_type 映射到规范化枚举。文本类 Lark 类型
+// （text / post / merge_forward / interactive）都压平为 text（人类可读内容在
+// Body 里）；媒体类型一一映射过去。
 func channelMsgType(larkMsgType string) channel.MsgType {
 	switch larkMsgType {
 	case "image":
@@ -171,9 +170,9 @@ func channelMsgType(larkMsgType string) channel.MsgType {
 	}
 }
 
-// outboundReplyTarget maps the cross-platform OutboundMessage reply hints to a
-// Lark ReplyTarget. Only a quote-reply (ReplyTo set) routes through the reply
-// endpoint; a bare thread continuation falls back to a chat-level send.
+// outboundReplyTarget 把跨平台 OutboundMessage 的回复提示映射成 Lark
+// ReplyTarget。只有引用回复（设置了 ReplyTo）才走回复接口；裸的“继续某话题”
+// 退化为普通群聊发送。
 func outboundReplyTarget(out channel.OutboundMessage) ReplyTarget {
 	if out.ReplyTo == "" {
 		return ReplyTarget{}
@@ -181,10 +180,9 @@ func outboundReplyTarget(out channel.OutboundMessage) ReplyTarget {
 	return ReplyTarget{MessageID: out.ReplyTo, InThread: out.ThreadID != ""}
 }
 
-// FeishuChannelDeps bundles the shared dependencies the Feishu Factory closes
-// over: the WS connector (one shared instance), the outbound HTTP client, and
-// the credentials resolver. The inbound handler is supplied per-build by the
-// engine via channel.Config.Handler.
+// FeishuChannelDeps 打包飞书 Factory 闭包捕获的共享依赖：WS connector（一个
+// 共享实例）、出站 HTTP client、凭据 resolver。入站 handler 由引擎在每次构建
+// 时经 channel.Config.Handler 提供。
 type FeishuChannelDeps struct {
 	Connector   EventConnector
 	APIClient   APIClient
@@ -192,13 +190,14 @@ type FeishuChannelDeps struct {
 	Logger      *slog.Logger
 }
 
-// RegisterFeishu registers the Feishu Factory on reg under channel.TypeFeishu
-// so the engine.Supervisor can build a feishuChannel per installation. "Adding
-// a channel" is this call plus the adapter — no engine edit.
+// RegisterFeishu 在 reg 上以 channel.TypeFeishu 注册飞书 Factory，使
+// engine.Supervisor 能为每个安装构建 feishuChannel。“加一个渠道”就等于这一
+// 次调用加适配器——不需要改引擎。
 func RegisterFeishu(reg *channel.Registry, deps FeishuChannelDeps) {
 	reg.Register(channel.TypeFeishu, newFeishuFactory(deps))
 }
 
+// newFeishuFactory 返回一个按安装构建 feishuChannel 的 channel.Factory。
 func newFeishuFactory(deps FeishuChannelDeps) channel.Factory {
 	logger := deps.Logger
 	if logger == nil {
@@ -208,10 +207,10 @@ func newFeishuFactory(deps FeishuChannelDeps) channel.Factory {
 		if deps.Connector == nil {
 			return nil, errors.New("lark: feishu factory missing connector")
 		}
-		// cfg.Raw is the per-installation config blob (the channel_installation
-		// .config JSONB): app_id, encrypted app_secret, tenant_key, region, ….
-		// We build a credentials-only Installation from it; the workspace /
-		// agent identity is resolved per message by the Router, not needed here.
+		// cfg.Raw 是每安装的 config blob（channel_installation 的 .config JSONB）：
+		// app_id、加密 app_secret、tenant_key、region……。我们从它构建一个只带
+		// 凭据的 Installation；workspace / agent 身份由 Router 逐消息解析，这里
+		// 不需要。
 		inst, err := installationFromRow(db.ChannelInstallation{
 			ChannelType: channelTypeFeishu,
 			Config:      cfg.Raw,
@@ -230,30 +229,28 @@ func newFeishuFactory(deps FeishuChannelDeps) channel.Factory {
 	}
 }
 
-// channelInstallationStore adapts *db.Queries to engine.InstallationStore. It
-// enumerates active installations across ALL channel types (the de-hardcoded
-// counterpart of the old per-feishu boot list) and manages the per-installation
-// WS lease, translating each row into the engine's Installation: ChannelType
-// selects the Factory, Config carries the platform config JSONB (verbatim), and
-// Fingerprint is a generic hash over channel_type + config so a credential
-// rotation forces a reconnect for any platform.
+// channelInstallationStore 把 *db.Queries 适配成 engine.InstallationStore。它
+// 枚举全部渠道类型的活跃安装（替代旧的“只枚举飞书”启动清单），并管理每安装
+// 的 WS 租约，把每行翻译成引擎的 Installation：ChannelType 选择 Factory，
+// Config 原样携带平台 config JSONB，Fingerprint 是对 channel_type + config 的
+// 通用哈希，凭据轮换会因此触发任何平台的连接重建。
 type channelInstallationStore struct {
 	q *db.Queries
 }
 
-// ChannelInstallationStore exposes both PostgreSQL seams used by the engine:
-// durable installation discovery and the explicit rollback lease backend.
+// ChannelInstallationStore 暴露引擎使用的两条 PostgreSQL 接缝：持久化安装
+// 发现与显式回滚的租约后端。
 type ChannelInstallationStore interface {
 	engine.InstallationStore
 	engine.LeaseStore
 }
 
-// NewChannelInstallationStore builds the engine.InstallationStore backed by the
-// generalized channel_* tables.
+// NewChannelInstallationStore 构建基于泛化 channel_* 表的 engine.InstallationStore。
 func NewChannelInstallationStore(q *db.Queries) ChannelInstallationStore {
 	return &channelInstallationStore{q: q}
 }
 
+// ListActiveInstallations 实现 engine.InstallationStore：列出全部活跃安装。
 func (s *channelInstallationStore) ListActiveInstallations(ctx context.Context) ([]engine.Installation, error) {
 	rows, err := s.q.ListAllActiveChannelInstallations(ctx)
 	if err != nil {
@@ -271,22 +268,24 @@ func (s *channelInstallationStore) ListActiveInstallations(ctx context.Context) 
 	return out, nil
 }
 
-// PostgreSQL remains an explicit rollback/self-host lease backend. Its sweep
-// optimization returns no known holders, so the SQL CAS remains authoritative
-// and each unowned installation is attempted once per poll (never in a blind
-// per-installation loop).
+// PostgreSQL 仍是显式的回滚/自托管租约后端。它的清扫优化不返回任何已知
+// 持有者，所以 SQL 的 CAS 保持权威，每个无主安装在每次轮询里只尝试一次
+// （绝不会出现盲目的按安装循环）。
 func (s *channelInstallationStore) ListHeldWSLeases(_ context.Context, _ []pgtype.UUID) (map[string]struct{}, error) {
 	return map[string]struct{}{}, nil
 }
 
+// TryAcquireWSLease 实现 engine.LeaseStore 的抢占。
 func (s *channelInstallationStore) TryAcquireWSLease(ctx context.Context, arg engine.AcquireLeaseParams) error {
 	return s.acquireOrRenewWSLease(ctx, arg)
 }
 
+// RenewWSLease 实现 engine.LeaseStore 的续期。
 func (s *channelInstallationStore) RenewWSLease(ctx context.Context, arg engine.AcquireLeaseParams) error {
 	return s.acquireOrRenewWSLease(ctx, arg)
 }
 
+// acquireOrRenewWSLease 是抢占/续期共用的 SQL CAS。
 func (s *channelInstallationStore) acquireOrRenewWSLease(ctx context.Context, arg engine.AcquireLeaseParams) error {
 	_, err := s.q.AcquireChannelWSLease(ctx, db.AcquireChannelWSLeaseParams{
 		NewToken:     pgtype.Text{String: arg.Token, Valid: true},
@@ -302,6 +301,7 @@ func (s *channelInstallationStore) acquireOrRenewWSLease(ctx context.Context, ar
 	return nil
 }
 
+// ReleaseWSLease 实现 engine.LeaseStore 的释放。
 func (s *channelInstallationStore) ReleaseWSLease(ctx context.Context, arg engine.ReleaseLeaseParams) error {
 	return s.q.ReleaseChannelWSLease(ctx, db.ReleaseChannelWSLeaseParams{
 		ID:           arg.ID,
@@ -312,12 +312,10 @@ func (s *channelInstallationStore) ReleaseWSLease(ctx context.Context, arg engin
 var _ engine.InstallationStore = (*channelInstallationStore)(nil)
 var _ engine.LeaseStore = (*channelInstallationStore)(nil)
 
-// rowFingerprint condenses the credential-bearing config of a
-// channel_installation row into an opaque string. Any change to the platform
-// config (Feishu rotates app_id / app_secret / region on re-install) flips the
-// fingerprint and the Supervisor restarts the connection. The config JSONB
-// carries only the secret ciphertext (never plaintext), so hashing it is safe
-// and channel-agnostic — no platform field is read directly.
+// rowFingerprint 把 channel_installation 行携带凭据的 config 浓缩成不透明
+// 字符串。平台 config 的任何变化（飞书重装会轮换 app_id / app_secret / region）
+// 都会翻转指纹，Supervisor 据此重启连接。config JSONB 只携带 secret 密文
+// （绝无明文），所以对它做哈希既安全又与渠道无关——不直接读任何平台字段。
 func rowFingerprint(row db.ChannelInstallation) string {
 	h := sha256.New()
 	_, _ = h.Write([]byte(row.ChannelType))

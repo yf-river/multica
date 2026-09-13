@@ -1,3 +1,6 @@
+// 文件职责：实现 `multica label` 命令组——工作区级 issue 标签（label）的 CRUD：
+// list/get/create/update/delete。标签条目本身在此维护；「给某 issue 挂/摘标签」
+// 属于 cmd_issue_label.go 的 `issue label ...`。
 package main
 
 import (
@@ -11,10 +14,10 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-// ---------------------------------------------------------------------------
-// Label commands — workspace-scoped CRUD for issue labels.
+// Label commands —— issue 标签（工作区级）的 CRUD
 // ---------------------------------------------------------------------------
 
+// labelCmd 是 `multica label` 父命令，子命令：list/get/create/update/delete。
 var labelCmd = &cobra.Command{
 	Use:   "label",
 	Short: "Work with issue labels",
@@ -75,6 +78,7 @@ func init() {
 	labelDeleteCmd.Flags().String("output", "json", "Output format: table or json")
 }
 
+// runLabelList 执行 `label list`：列出工作区全部标签。
 func runLabelList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -126,6 +130,7 @@ func runLabelList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runLabelGet 执行 `label get <id>`：取单个标签详情。
 func runLabelGet(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -163,6 +168,7 @@ func runLabelGet(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, label)
 }
 
+// runLabelCreate 执行 `label create`：--name 与 --color（hex，如 #3b82f6）必填。
 func runLabelCreate(cmd *cobra.Command, _ []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	color, _ := cmd.Flags().GetString("color")
@@ -200,6 +206,7 @@ func runLabelCreate(cmd *cobra.Command, _ []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// runLabelUpdate 执行 `label update <id>`：改 --name / --color（提供任一即可）。
 func runLabelUpdate(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -243,6 +250,7 @@ func runLabelUpdate(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// runLabelDelete 执行 `label delete <id>`：删除标签。
 func runLabelDelete(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -259,7 +267,7 @@ func runLabelDelete(cmd *cobra.Command, args []string) error {
 	if err := client.DeleteJSON(ctx, "/api/labels/"+labelRef.ID); err != nil {
 		return fmt.Errorf("delete label: %w", err)
 	}
-	// JSON consumers get machine-readable output; humans get natural language.
+	// JSON 消费方拿机器可读输出，人看自然语言提示。
 	if output, _ := cmd.Flags().GetString("output"); output == "json" {
 		return cli.PrintJSON(os.Stdout, map[string]any{"id": labelRef.ID, "deleted": true})
 	}

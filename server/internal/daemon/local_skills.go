@@ -18,38 +18,35 @@ import (
 const (
 	maxLocalSkillFileSize   int64 = 1 << 20
 	maxLocalSkillBundleSize int64 = 8 << 20
-	// Kept in lockstep with the server-side importer's maxImportFileCount so a
-	// skill that imports from a URL/archive also imports from a runtime-local
-	// directory. The 8 MiB bundle cap is the real guard on skill size.
+	// 与服务端导入器的 maxImportFileCount 保持同步，使“从 URL/压缩包导入的技能”也能
+	// 从 runtime 本地目录导入。8 MiB 的包上限才是技能大小的真正闸门。
 	maxLocalSkillFileCount = 256
-	// Cap how deep skill discovery descends below a runtime root. opencode
-	// stores skills two levels deep (e.g. `release/reporter/SKILL.md`); a
-	// few extra levels covers any realistic future layout while bounding
-	// work in case an installer accidentally points us at $HOME.
+	// 限制技能发现在 runtime 根目录之下最多下钻多少层。opencode 把技能存两层深
+	// （例如 `release/reporter/SKILL.md`）；再多几层能覆盖任何现实中的未来布局，同时
+	// 万一安装器把我们指向 $HOME 也限制住了工作量。
 	maxLocalSkillDirDepth = 4
 )
 
+// runtimeLocalSkillSummary 是某个 runtime 本地技能对外可见的摘要。
 type runtimeLocalSkillSummary struct {
 	Key         string `json:"key"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	SourcePath  string `json:"source_path"`
 	Provider    string `json:"provider"`
-	// Root classifies which discovery root surfaced this skill:
-	// localSkillRootProvider ("provider") for the runtime's own skill
-	// directory (e.g. ~/.claude/skills) or localSkillRootUniversal
-	// ("universal") for the cross-tool ~/.agents/skills fallback. The UI
-	// uses it to label a skill's origin and to hint, in the import dialog,
-	// whether a skill came from a provider-specific or a shared location.
-	// Older daemons that predate multi-root discovery omit the field; the
-	// server treats an empty value as "unknown" rather than a provider/
-	// universal assertion.
+	// Root 归类这个技能出自哪个发现根：localSkillRootProvider（"provider"）指 runtime
+	// 自己的技能目录（如 ~/.claude/skills），localSkillRootUniversal（"universal"）指
+	// 跨工具共享的 ~/.agents/skills 兜底。UI 用它给技能标注来源，并在导入对话框里提示
+	// 技能来自“provider 专用”还是“共享”位置。早于多根发现的老 daemon 省略此字段；
+	// 服务端把空值当 "unknown"，而不是当成 provider/universal 断言。
 	Root       string `json:"root,omitempty"`
 	Plugin     string `json:"plugin,omitempty"`
 	CanDisable bool   `json:"can_disable,omitempty"`
 	FileCount  int    `json:"file_count"`
 }
 
+// runtimeLocalSkillBundle 是某个 runtime 本地技能的完整内容（含支撑文件），供导入
+// 到服务器用。
 type runtimeLocalSkillBundle struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
@@ -59,10 +56,9 @@ type runtimeLocalSkillBundle struct {
 	Files       []SkillFileData `json:"files,omitempty"`
 }
 
-// localSkillRoot is a single discovery location plus a classifier for where
-// it came from. Roots are returned in priority order by
-// localSkillRootsForProvider; the kind is surfaced to the UI on each
-// discovered skill (see runtimeLocalSkillSummary.Root).
+// localSkillRoot 是一个发现位置外加“它来自哪类根”的分类。根按优先级顺序由
+// localSkillRootsForProvider 返回；kind 会随每个发现的技能暴露给 UI（见
+// runtimeLocalSkillSummary.Root）。
 type localSkillRoot struct {
 	path      string
 	kind      string
@@ -71,56 +67,50 @@ type localSkillRoot struct {
 }
 
 const (
-	// localSkillRootProvider marks a runtime's own skill directory (e.g.
-	// ~/.claude/skills). These take priority over the universal root.
+	// localSkillRootProvider 标记 runtime 自己的技能目录（如 ~/.claude/skills）。
+	// 它优先于 universal 根。
 	localSkillRootProvider = "provider"
-	// localSkillRootUniversal marks the cross-tool ~/.agents/skills root,
-	// a convention shared by Codex, Gemini CLI, Augment and others as a
-	// universal home-level skill store. It is always searched last so a
-	// same-key skill in the provider directory keeps winning.
+	// localSkillRootUniversal 标记跨工具的 ~/.agents/skills 根——Codex、Gemini CLI、
+	// Augment 等共同采用的“用户级通用技能库”约定。它总是最后搜，让 provider 目录里
+	// 同 key 的技能继续获胜。
 	localSkillRootUniversal = "universal"
-	// localSkillRootPlugin marks skills contributed by an enabled runtime
-	// plugin. Plugin roots use a namespace prefix so their invocation keys
-	// match Claude Code (for example paper-desktop:design-to-code) and never
-	// collide with standalone user skills.
+	// localSkillRootPlugin 标记由已启用的 runtime 插件贡献的技能。插件根带命名空间
+	// 前缀，调用 key 与 Claude Code 对齐（例如 paper-desktop:design-to-code），且绝不
+	// 与独立的用户技能撞名。
 	localSkillRootPlugin = "plugin"
 )
 
-// localSkillRootsForProvider returns the ordered user-level skill roots
-// scanned for each runtime/provider. The slice is in priority order:
+// localSkillRootsForProvider 返回每个 runtime/provider 要扫描的、有序的用户级技能根。
+// 切片按优先级排列：
 //
-//  1. the runtime's provider-specific root (backward-compatible with the
-//     single-root behavior that predates ~/.agents/skills support), then
-//  2. the cross-tool universal root ~/.agents/skills.
+//  1. 该 runtime 的 provider 专用根（向后兼容 ~/.agents/skills 支持之前“单根”
+//     行为），然后
+//  2. 跨工具 universal 根 ~/.agents/skills。
 //
-// Listing and import both walk the roots in this order and the first match of
-// a given skill key wins, so adding the universal root never changes what an
-// existing provider-root skill resolves to — it only surfaces additional,
-// non-conflicting skills.
+// 列表与导入都按此顺序走根，同一技能 key 的“首个匹配”获胜——因此加入 universal 根
+// 绝不改变已有 provider 根技能解析出的内容——它只会额外浮现不冲突的技能。
 //
-// Keep the provider roots in sync with upstream docs / conventions:
+// provider 根要与上游文档/约定保持同步：
 //   - GitHub Copilot: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills
 //   - OpenCode: https://opencode.ai/docs/skills
 //   - Pi: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/skills.md
-//   - Cursor: official forum guidance referencing the built-in /create-skill flow
+//   - Cursor: 官方论坛指内置 /create-skill 流程的指引
 //     (https://forum.cursor.com/t/cursor-doesnt-know-new-skills-arens-saved/158507)
-//   - Hermes: ~/.hermes/skills is Hermes Agent's primary skill directory
+//   - Hermes: ~/.hermes/skills 是 Hermes Agent 的主技能目录
 //     (https://hermes-agent.nousresearch.com/docs/user-guide/features/skills)
-//   - Kimi: ~/.kimi/skills mirrors Kimi CLI's project-level .kimi/skills layout
-//   - Kiro: project and user-level .kiro/skills directories discovered by Kiro CLI
-//   - Qoder: ~/.qoder/skills mirrors Qoder CLI's project-level .qoder/skills layout
-//   - Antigravity: ~/.gemini/antigravity-cli/skills user-level skill root
-//     (https://antigravity.google/docs/gcli-migration "Global skills")
-//   - Grok: $GROK_HOME/skills, defaulting to ~/.grok/skills
-//   - Qwen Code: $QWEN_HOME/skills, defaulting to ~/.qwen/skills
+//   - Kimi: ~/.kimi/skills 镜像 Kimi CLI 的项目级 .kimi/skills 布局
+//   - Kiro: Kiro CLI 发现的项目级与用户级 .kiro/skills 目录
+//   - Qoder: ~/.qoder/skills 镜像 Qoder CLI 的项目级 .qoder/skills 布局
+//   - Antigravity: ~/.gemini/antigravity-cli/skills 用户级技能根
+//     (https://antigravity.google/docs/gcli-migration 的 "Global skills")
+//   - Grok: $GROK_HOME/skills，缺省 ~/.grok/skills
+//   - Qwen Code: $QWEN_HOME/skills，缺省 ~/.qwen/skills
 //
-// The universal ~/.agents/skills root is documented as a cross-tool skill
-// location by Codex (https://developers.openai.com/codex/skills) and Gemini
-// CLI (https://geminicli.com/docs/cli/skills/), among others.
+// 通用 ~/.agents/skills 根被 Codex (https://developers.openai.com/codex/skills) 与
+// Gemini CLI (https://geminicli.com/docs/cli/skills/) 等文档化为跨工具技能位置。
 //
-// Longer-term this mapping would be better colocated with the provider
-// definitions under server/pkg/agent so adding a new runtime can't silently
-// miss the local-skills surface.
+// 长期看这个映射最好与 server/pkg/agent 下的 provider 定义放一起，那样新增一个 runtime
+// 就不会悄悄漏掉本地技能这一表面。
 func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -128,10 +118,9 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 	}
 
 	var providerRoot string
-	// Built-in runtime identities (e.g. "omp") declare their user skills dir
-	// in the descriptor; resolve to providerRoot and fall through to the
-	// common construction below so universal roots, merging, and fallback
-	// import all still apply — same as every protocol-family provider.
+	// 内置 runtime 身份（如 "omp"）在描述符里声明了它们的用户技能目录；解析成
+	// providerRoot 后落到下面的公共构造逻辑，让 universal 根、合并与导入兜底仍然全部
+	// 适用——与所有协议族 provider 相同。
 	if desc, ok := agent.BuiltinRuntimeByID(provider); ok {
 		providerRoot = filepath.Join(home, desc.UserSkillsDir)
 	} else {
@@ -139,14 +128,13 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 		case "claude":
 			providerRoot = filepath.Join(home, ".claude", "skills")
 		case "codebuddy":
-			// CodeBuddy Code is a Claude Code fork but ships its own native
-			// config directory; it does NOT read ~/.claude/skills unless the
-			// user manually symlinks it in (the vendor's documented Claude
-			// Code migration path). See
-			// https://www.codebuddy.ai/docs/cli/codebuddy-dir ("Global
-			// directory ~/.codebuddy/") and
-			// https://www.codebuddy.ai/docs/cli/skills ("User-level Skills:
-			// ~/.codebuddy/skills/").
+			// CodeBuddy Code 是 Claude Code 的分支，但自带原生的配置目录；它*不*读
+			// ~/.claude/skills，除非用户手动符号链接进来（厂商文档里给 Claude Code
+			// 的迁移路径就是如此）。见
+			// https://www.codebuddy.ai/docs/cli/codebuddy-dir（"Global directory
+			// ~/.codebuddy/"）与
+			// https://www.codebuddy.ai/docs/cli/skills（"User-level Skills:
+			// ~/.codebuddy/skills/"）。
 			providerRoot = filepath.Join(home, ".codebuddy", "skills")
 		case "codex":
 			codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
@@ -189,37 +177,33 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 		case "qoderclicn":
 			providerRoot = filepath.Join(home, ".qoder-cn", "skills")
 		case "traecli":
-			// Official TRAE CLI global skills live in ~/.traecli/skills.
-			// See https://docs.trae.cn/cli_skills
+			// 官方 TRAE CLI 的全局技能在 ~/.traecli/skills。见
+			// https://docs.trae.cn/cli_skills
 			providerRoot = filepath.Join(home, ".traecli", "skills")
 		case "antigravity":
-			// agy inherits Gemini CLI's global skill root; see
-			// https://antigravity.google/docs/gcli-migration ("Global skills").
+			// agy 继承 Gemini CLI 的全局技能根；见
+			// https://antigravity.google/docs/gcli-migration（"Global skills"）。
 			providerRoot = filepath.Join(home, ".gemini", "antigravity-cli", "skills")
 		case "grok":
-			// GROK_HOME replaces the default ~/.grok home for settings, sessions,
-			// and user-level skills.
+			// GROK_HOME 取代缺省的 ~/.grok home，管理设置、会话与用户级技能。
 			grokHome := strings.TrimSpace(os.Getenv("GROK_HOME"))
 			if grokHome == "" {
 				grokHome = filepath.Join(home, ".grok")
 			}
 			providerRoot = filepath.Join(grokHome, "skills")
 		case "qwen":
-			// QWEN_HOME replaces Qwen Code's global ~/.qwen directory. It owns
-			// settings, sessions, credentials and personal skills; project
-			// .qwen/skills remains rooted in the task workdir.
+			// QWEN_HOME 取代 Qwen Code 的全局 ~/.qwen 目录。它管理设置、会话、凭据与
+			// 个人技能；项目级 .qwen/skills 仍根植于任务 workdir。
 			qwenHome := strings.TrimSpace(os.Getenv("QWEN_HOME"))
 			if qwenHome == "" {
 				qwenHome = filepath.Join(home, ".qwen")
 			}
 			providerRoot = filepath.Join(qwenHome, "skills")
 		case "qwenpaw":
-			// QWENPAW_WORKING_DIR (or legacy COPAW_WORKING_DIR) overrides
-			// QwenPaw's global ~/.qwenpaw directory, which owns settings,
-			// sessions, credentials and personal skills. The runtime
-			// resolves its root from QWENPAW_WORKING_DIR → COPAW_WORKING_DIR
-			// → ~/.copaw (legacy) → ~/.qwenpaw (default).
-			// See constant.py in the QwenPaw source.
+			// QWENPAW_WORKING_DIR（或旧名 COPAW_WORKING_DIR）覆盖 QwenPaw 的全局
+			// ~/.qwenpaw 目录，后者管理设置、会话、凭据与个人技能。runtime 按
+			// QWENPAW_WORKING_DIR → COPAW_WORKING_DIR → ~/.copaw（旧）→ ~/.qwenpaw
+			// （缺省）的顺序解析根。见 QwenPaw 源码里的 constant.py。
 			qwenpawHome := strings.TrimSpace(os.Getenv("QWENPAW_WORKING_DIR"))
 			if qwenpawHome == "" {
 				qwenpawHome = strings.TrimSpace(os.Getenv("COPAW_WORKING_DIR"))
@@ -234,9 +218,8 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 			}
 			providerRoot = filepath.Join(qwenpawHome, "skill_pool")
 		case "mcode":
-			// MCode's default data directory is ~/.minimax; global skills live
-			// directly below it. Project skills are injected separately under
-			// <workDir>/.minimax/skills.
+			// MCode 的缺省数据目录是 ~/.minimax；全局技能直接在它下面。项目技能单独
+			// 注入到 <workDir>/.minimax/skills。
 			providerRoot = filepath.Join(home, ".minimax", "skills")
 		default:
 			return nil, false, nil
@@ -267,6 +250,8 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 	return roots, true, nil
 }
 
+// isIgnoredLocalSkillEntry 判断技能目录下的条目是否应被忽略（空名、点开头，或
+// license 相关文件）。
 func isIgnoredLocalSkillEntry(name string) bool {
 	if name == "" {
 		return true
@@ -282,6 +267,8 @@ func isIgnoredLocalSkillEntry(name string) bool {
 	}
 }
 
+// normalizeLocalSkillKey 把技能 key 清洗成“斜杠分隔的相对路径”形态：去空白、防
+// 目录逃逸（Clean 后不得是 "."、绝对路径或以 ".." 开头）。
 func normalizeLocalSkillKey(key string) (string, error) {
 	if strings.TrimSpace(key) == "" {
 		return "", fmt.Errorf("skill key is required")
@@ -293,6 +280,8 @@ func normalizeLocalSkillKey(key string) (string, error) {
 	return filepath.ToSlash(cleaned), nil
 }
 
+// relativizeHomePath 把位于用户家目录下的路径转成以 ~ 开头的相对展示形态，避免把
+// 账号名发上线；其余路径原样转斜杠。
 func relativizeHomePath(path string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -308,6 +297,7 @@ func relativizeHomePath(path string) string {
 	return filepath.ToSlash(path)
 }
 
+// readLocalSkillMainFile 读技能目录的 SKILL.md 主文件，超限即拒绝。
 func readLocalSkillMainFile(skillDir string) (string, error) {
 	mainPath := filepath.Join(skillDir, "SKILL.md")
 	info, err := os.Stat(mainPath)
@@ -324,15 +314,15 @@ func readLocalSkillMainFile(skillDir string) (string, error) {
 	return string(content), nil
 }
 
+// collectLocalSkillFiles 收集技能目录下除 SKILL.md 外的支撑文件（可含内容），对
+// 单文件大小、文件数与总大小设限，并跳过“无法无损往返传输”的二进制/坏 UTF-8 文件。
 func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileData, error) {
 	files := make([]SkillFileData, 0)
 	var totalSize int64
 
-	// filepath.WalkDir does not follow a symlinked root, so when the runtime
-	// root contains symlinks into a shared skill installer (e.g. lark-cli's
-	// ~/.agents/skills/<name>) walking from the symlink path enumerates zero
-	// children and every such skill ends up reporting 0 files. Resolve the
-	// real path first so the walk descends into the actual directory.
+	// filepath.WalkDir 不跟随“符号链接的根”，所以当 runtime 根内含指向共享技能安装器
+	// 的符号链接（如 lark-cli 的 ~/.agents/skills/<name>）时，从链接路径出发只能数出
+	// 零个子项，每个这类技能最终都上报 0 个文件。先解析真实路径，让遍历真正进入目录。
 	walkRoot := skillDir
 	if resolved, err := filepath.EvalSymlinks(skillDir); err == nil {
 		walkRoot = resolved
@@ -374,17 +364,14 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 		if err != nil || info.Size() > maxLocalSkillFileSize {
 			return nil
 		}
-		// A binary supporting file cannot survive SkillFileData.Content: the
-		// bytes go out as a Go string and encoding/json rewrites every invalid
-		// UTF-8 byte to U+FFFD, so writeSkillFiles later recreates a file that
-		// differs from the original and will not open.
+		// 二进制支撑文件无法安全走 SkillFileData.Content：字节会经 Go 字符串出站，而
+		// encoding/json 会把每个非法 UTF-8 字节改写成 U+FFFD——之后 writeSkillFiles 重建
+		// 出的文件与原文件不同、打不开。
 		//
-		// IsLikelyBinaryFilePath is the cheap first pass on the extension — the
-		// same heuristic the archive/URL importer uses — checked before any
-		// read so a known-binary file never pays the I/O. On its own it misses
-		// a binary file with an unlisted or missing extension (a .safetensors,
-		// a .parquet, a stray no-extension blob) and a text file in a
-		// non-UTF-8 encoding, both of which corrupt exactly the same way.
+		// IsLikelyBinaryFilePath 是看扩展名的廉价第一道检查——与 archive/URL 导入器同一
+		// 套启发——在任何读取前先做，已知二进制文件就不付 I/O。它单独做会漏掉“扩展名不
+		// 在列或没有扩展名的二进制”（.safetensors、.parquet、散落的无扩展名 blob），以及
+		// 非 UTF-8 编码的文本文件——两者都会以同样的方式损坏。
 		if skill.IsLikelyBinaryFilePath(rel) {
 			slog.Info("local skill: skipping binary file",
 				"skill_dir", skillDir,
@@ -394,20 +381,15 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 			)
 			return nil
 		}
-		// The read below is the actual guarantee: skip whenever the bytes
-		// themselves are not safely round-trippable, regardless of what the
-		// extension suggested. This runs on both the includeContent=false
-		// (discovery) and includeContent=true (sync) passes so they agree on
-		// which files make up the bundle — skipping the read on the false pass
-		// would let a discovery listing promise a file that sync then silently
-		// drops.
+		// 下面的读取才是真正的保证：只要字节本身无法安全往返就跳过，无论扩展名暗示了
+		// 什么。它在 includeContent=false（发现）与 includeContent=true（同步）两趟都跑，
+		// 让两趟对“包由哪些文件组成”看法一致——false 趟跳过读取会让发现列表承诺一个
+		// sync 随后悄悄丢掉的包。
 		//
-		// Valid UTF-8 alone is not enough: a NUL byte is legal UTF-8 but the
-		// server-side import path strips every 0x00 via sanitizeNullBytes
-		// (server/internal/handler/skill_create.go), so a file that is valid
-		// UTF-8 but contains NUL — UTF-16LE text made of ASCII characters is a
-		// realistic example — still comes back different from what went in.
-		// Require both: valid UTF-8 AND NUL-free.
+		// 仅合法 UTF-8 不够：NUL 字节是合法 UTF-8，但服务端导入路径会用
+		// sanitizeNullBytes 剥掉每个 0x00（server/internal/handler/skill_create.go），
+		// 因此一个“合法 UTF-8 却含 NUL”的文件——由 ASCII 字符组成的 UTF-16LE 文本就是
+		// 现实例子——仍会与进去时不一样。两个都要：合法 UTF-8 且无 NUL。
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return nil
@@ -450,28 +432,24 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 	return files, nil
 }
 
+// listRuntimeLocalSkills 列出某 provider 的 runtime 本地技能摘要（供 UI 展示）。
 func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, error) {
 	roots, supported, err := localSkillRootsForProvider(provider)
 	if err != nil || !supported {
 		return nil, supported, err
 	}
 
-	// Walk each runtime root with two extensions over filepath.WalkDir:
-	//   - Follow symlinks at every level. Installers like lark-cli ship
-	//     each skill as a symlink into a shared ~/.agents/skills/<name>;
-	//     the previous WalkDir path silently dropped them via the
-	//     os.ModeSymlink early return.
-	//   - Allow nested layouts. opencode stores skills as
-	//     `release/reporter/SKILL.md`, and `loadRuntimeLocalSkillBundle`
-	//     already accepts slash-delimited keys, so the list endpoint
-	//     must surface those nested skills too.
+	// 走每个 runtime 根，在 filepath.WalkDir 之上做两个扩展：
+	//   - 每层都跟随符号链接。lark-cli 这类安装器把每个技能都做成指向共享
+	//     ~/.agents/skills/<name> 的符号链接；旧的 WalkDir 路径经 os.ModeSymlink
+	//     提前返回，把它们静默丢掉了。
+	//   - 允许嵌套布局。opencode 把技能存成 `release/reporter/SKILL.md`，而
+	//     `loadRuntimeLocalSkillBundle` 已接受斜杠分隔的 key，所以列表端点也必须暴露
+	//     这些嵌套技能。
 	skills := make([]runtimeLocalSkillSummary, 0)
-	// Dedupe strictly by Key. Roots are visited in priority order
-	// (provider-specific first, ~/.agents/skills last); the first
-	// occurrence of a Key wins. This keeps backward compatibility provable:
-	// every skill visible under the single-root behavior keeps its Key,
-	// SourcePath and FileCount, and we only ever *add* non-conflicting Keys
-	// discovered under the universal root.
+	// 严格按 Key 去重。根按优先级访问（provider 专用先、~/.agents/skills 后）；Key
+	// 的首次出现获胜。这让向后兼容可证明：单根行为下可见的每个技能都保住它的 Key、
+	// SourcePath 与 FileCount，我们只会*新增* universal 根下发现的不冲突 Key。
 	seenKeys := make(map[string]bool)
 	for _, root := range roots {
 		if _, err := os.Stat(root.path); err != nil {
@@ -481,13 +459,11 @@ func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, 
 			return nil, true, err
 		}
 
-		// Each root gets its OWN `visited` set. It must NOT be shared across
-		// roots: a user can deliberately expose the same on-disk skill under
-		// two names by symlinking, e.g. ~/.claude/skills/bar ->
-		// ~/.agents/skills/foo. With per-root visited sets both `bar` (claude
-		// root) and `foo` (agents root) are listed; a shared set would mark
-		// the resolved real path visited from the first root and silently
-		// drop the legitimate second entry.
+		// 每个根有自己的 `visited` 集合，*绝不*跨根共享：用户可以靠符号链接刻意把
+		// 同一份磁盘技能暴露成两个名字，例如 ~/.claude/skills/bar ->
+		// ~/.agents/skills/foo。用 per-root visited 集合时 `bar`（claude 根）与 `foo`
+		// （agents 根）都会列出；共享集合会把第一个根已标记过的真实路径忽略掉，悄悄
+		// 丢掉合法的第二个条目。
 		rootSkills := make([]runtimeLocalSkillSummary, 0)
 		visited := make(map[string]bool)
 		enumerateLocalSkills(provider, root, root.path, root.path, 0, visited, &rootSkills)
@@ -501,24 +477,20 @@ func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, 
 		}
 	}
 
-	// Sort once, after every root has been merged, so the result is stable
-	// regardless of how many roots contributed.
+	// 所有根合并完再排一次序，无论多少个根参与，结果都稳定。
 	sort.Slice(skills, func(i, j int) bool {
 		return skills[i].Key < skills[j].Key
 	})
 	return skills, true, nil
 }
 
-// enumerateLocalSkills walks `currentDir` looking for skill directories
-// (directories that contain a SKILL.md). When one is found it is registered
-// at a key relative to `walkRoot` and the recursion stops at that branch —
-// we never descend into a directory that already qualifies as a skill, even
-// if it happens to contain nested SKILL.md files of its own.
+// enumerateLocalSkills 在 currentDir 里寻找技能目录（含 SKILL.md 的目录）。找到时，
+// 以相对 walkRoot 的 key 注册它，并在该分支停止递归——绝不下钻进一个已算作技能的
+// 目录，哪怕它里面恰好还有自己的嵌套 SKILL.md。
 //
-// `visited` keys on the resolved (symlink-followed) absolute path so a
-// cyclic symlink can't loop forever; this is the only reason we eagerly
-// EvalSymlinks up front. Errors from EvalSymlinks just stop the descent on
-// that branch — most often it's a dangling link, which we want to ignore.
+// `visited` 以“（跟随符号链接后的）解析绝对路径”为键，让循环符号链接不会永远转
+// 圈；这是唯一需要预先急切 EvalSymlinks 的原因。EvalSymlinks 出错就停掉该分支的下
+// 钻——多数情况是悬空链接，本来就该忽略。
 func enumerateLocalSkills(
 	provider string,
 	root localSkillRoot,
@@ -550,7 +522,7 @@ func enumerateLocalSkills(
 			continue
 		}
 		path := filepath.Join(currentDir, name)
-		info, statErr := os.Stat(path) // follows symlinks
+		info, statErr := os.Stat(path) // 跟随符号链接
 		if statErr != nil || !info.IsDir() {
 			continue
 		}
@@ -592,21 +564,21 @@ func enumerateLocalSkills(
 				Root:        root.kind,
 				Plugin:      root.plugin,
 				CanDisable:  provider == "codex" || provider == "claude",
-				// `files` is the supporting bundle (collectLocalSkillFiles
-				// intentionally excludes SKILL.md so the bundle's `Content`
-				// field can carry it without duplication on import). For the
-				// list summary the user expects the total file count, so add
-				// one back for SKILL.md itself.
+				// `files` 是支撑包（collectLocalSkillFiles 有意排除 SKILL.md，让包的
+				// `Content` 字段能装下它而不在导入时重复）。列表摘要里用户要的是文件总
+				// 数，因此把 SKILL.md 自己加回来。
 				FileCount: len(files) + 1,
 			})
 			continue
 		}
 
-		// No SKILL.md here — descend looking for nested skills.
+		// 这里没有 SKILL.md——继续下钻找嵌套技能。
 		enumerateLocalSkills(provider, root, walkRoot, path, depth+1, visited, skills)
 	}
 }
 
+// loadRuntimeLocalSkillBundle 按技能 key 加载某 provider 的完整技能包（含内容），
+// 供导入服务器使用。
 func loadRuntimeLocalSkillBundle(provider, skillKey string) (*runtimeLocalSkillBundle, bool, error) {
 	roots, supported, err := localSkillRootsForProvider(provider)
 	if err != nil || !supported {
@@ -618,16 +590,12 @@ func loadRuntimeLocalSkillBundle(provider, skillKey string) (*runtimeLocalSkillB
 		return nil, true, err
 	}
 
-	// Walk the roots in the same priority order as listRuntimeLocalSkills so
-	// import resolves to exactly the skill the list endpoint surfaced. The
-	// guiding invariant is list/load agreement: a root "has" the skill at this
-	// key only when it is a directory carrying a SKILL.md — the exact
-	// condition listRuntimeLocalSkills registers on. Anything that is not a
-	// valid skill at this key (no entry, not a directory, or a directory
-	// without a SKILL.md) means "this root doesn't have it" and we fall
-	// through to the next root. Only a genuine IO/permission fault is
-	// returned, so we never silently substitute a different-content same-key
-	// skill from a lower-priority root.
+	// 与 listRuntimeLocalSkills 相同优先级顺序走根，让导入精确解析到列表端点暴露的
+	// 那个技能。指导性不变量是“列表/加载一致”：只有当某根下该 key 是“一个带着
+	// SKILL.md 的目录”——listRuntimeLocalSkills 注册的精确条件——才算根“有”这个
+	// 技能。任何在该 key 下不是合法技能的情况（无条目、不是目录、或没有 SKILL.md 的
+	// 目录）都表示“该根没有它”，于是落到下一个根。只有真正的 IO/权限故障会被返回，
+	// 因此绝不会悄悄用低优先级根里“同 key 但内容不同”的技能顶替。
 	for _, root := range roots {
 		rootKey := key
 		if root.keyPrefix != "" {
@@ -639,30 +607,24 @@ func loadRuntimeLocalSkillBundle(provider, skillKey string) (*runtimeLocalSkillB
 		skillDir := filepath.Join(root.path, filepath.FromSlash(rootKey))
 		info, err := os.Stat(skillDir)
 		if err != nil {
-			// IsNotExist => this root simply lacks the skill, try the next.
-			// Any other stat error (permission, IO) is returned as-is rather
-			// than silently skipped, since skipping could load a DIFFERENT
-			// same-key skill from a lower-priority root that does not match
-			// what the user picked in the list (Eve review #1).
+			// IsNotExist => 该根只是没有这个技能，试下一个。其它 stat 错误（权限、IO）
+			// 原样返回而不是静默跳过——跳过可能从低优先级根加载出与用户在列表里选的
+			// 不匹配的“同 key 另一技能”（Eve review #1）。
 			if os.IsNotExist(err) {
 				continue
 			}
 			return nil, true, err
 		}
 		if !info.IsDir() {
-			// Not a directory: listRuntimeLocalSkills never surfaces a non-dir
-			// as a skill, so this root has no skill at this key. Fall through
-			// to the next root instead of erroring.
+			// 不是目录：listRuntimeLocalSkills 从不把非目录当技能，所以该根在这个 key
+			// 下没有技能。落到下一个根而不是报错。
 			continue
 		}
 
-		// A directory only counts as a skill when it actually contains a
-		// SKILL.md. A same-key directory WITHOUT one (e.g. ~/.claude/skills/foo
-		// that is just an empty/unrelated folder) is NOT this skill — list
-		// would have descended past it — so it must not shadow a valid
-		// ~/.agents/skills/foo. Treat a missing SKILL.md as "this root doesn't
-		// have it" and continue; only a non-IsNotExist stat error on the
-		// SKILL.md (permission, IO) is returned.
+		// 目录只有当它确实含 SKILL.md 才算技能。同 key 但没 SKILL.md 的目录（例如只是
+		// 一个空/无关文件夹的 ~/.claude/skills/foo）*不是*这个技能——列表会跳过它下钻
+		// ——因此它绝不能遮蔽合法的 ~/.agents/skills/foo。把“SKILL.md 缺失”当作“该根
+		// 没有它”并继续；只有对 SKILL.md 的 stat 出错且非 IsNotExist（权限、IO）才返回。
 		mainPath := filepath.Join(skillDir, "SKILL.md")
 		if _, err := os.Stat(mainPath); err != nil {
 			if os.IsNotExist(err) {

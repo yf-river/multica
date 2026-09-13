@@ -1,5 +1,6 @@
 "use client";
 
+// 工作区用量仪表盘页面：Usage（花了多少）和 Errors（坏了什么）两个标签页。
 import { useMemo, useState } from "react";
 import { BarChart3, RefreshCw } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -69,9 +70,8 @@ import { Leaderboard } from "./leaderboard";
 import { ErrorsTab } from "./errors-tab";
 import { cn } from "@multica/ui/lib/utils";
 
-// Stable references — `data ?? []` would create a new empty array on
-// every render while the query is loading, which breaks useMemo's
-// reference-equality dep check and trips the exhaustive-deps lint rule.
+// 稳定的空数组引用——`data ?? []` 会在查询加载期间的每次渲染都新建一个空数组，
+// 破坏 useMemo 的引用相等性依赖检查，还会触发 exhaustive-deps 的 lint 规则。
 const EMPTY_DAILY: import("@multica/core/types").DashboardUsageDaily[] = [];
 const EMPTY_BY_AGENT: import("@multica/core/types").DashboardUsageByAgent[] = [];
 const EMPTY_RUNTIME: import("@multica/core/types").DashboardAgentRunTime[] = [];
@@ -85,10 +85,9 @@ type DashboardTab = "usage" | "errors";
 const TAB_QUERY_KEY = "tab";
 const DEFAULT_TAB: DashboardTab = "usage";
 
-/** Local time of the most recent successful fetch, in the viewer's timezone.
- *  Every number on this page is bucketed on that timezone, so the header says
- *  which one it is — the same figures under a different tz are a different
- *  answer, and nothing on the page used to admit that. */
+/** 最近一次成功抓取数据的时间，按查看者的时区换算成本地时间。
+ *  这个页面上的每个数字都按该时区分桶，所以头部要标明是哪个时区——同一批数据
+ *  换一个时区就是另一个答案，而页面以前从不承认这一点。 */
 function useDataFreshness(
   updatedAts: (number | undefined)[],
   viewTZ: string,
@@ -99,9 +98,8 @@ function useDataFreshness(
       (n): n is number => typeof n === "number" && n > 0,
     );
     const latest = stamps.length > 0 ? Math.max(...stamps) : null;
-    // A stored timezone is user input and reaches us unvalidated; Intl throws
-    // on a string it does not recognise, and a header label is not worth
-    // taking the page down for.
+    // 存储的时区是用户输入，未经校验就传到了这里；Intl 遇到不认识的字符串会抛异常，
+    // 而一个头部标签不值得为此把整页搞崩。
     try {
       const tzLabel =
         new Intl.DateTimeFormat(locales, {
@@ -122,30 +120,26 @@ function useDataFreshness(
     } catch {
       return { tzLabel: null, updatedLabel: null };
     }
-    // `updatedAts` is a fresh array each render; spreading it into the dep list
-    // keeps the memo keyed on the values rather than the identity.
+    // `updatedAts` 每次渲染都是新数组；把它展开进依赖列表，让 memo 以「值」而非
+    // 「引用」作为缓存键。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...updatedAts, viewTZ, locales]);
 }
 
 /**
- * Workspace + project usage dashboard.
+ * 工作区 + 项目用量仪表盘。
  *
- * Lives at `/{slug}/usage`. Two tabs, split by the question the reader arrived
- * with rather than by which rollup feeds them: Usage answers "what did this
- * cost", Errors answers "what broke". They used to share one scrolling page,
- * where the failure breakdown sat below a leaderboard that could itself run to
- * thirty rows, and the only way to chart failures was to hide spend.
+ * 路由在 `/{slug}/usage`。两个标签页，按「读者带着什么问题进来」而非「由哪个
+ * 汇总接口喂数据」来切分：Usage 回答「花了多少」，Errors 回答「坏了什么」。它们
+ * 以前挤在同一张滚动页里，失败明细压在排行榜下面（排行榜本身就可能拉到三十行），
+ * 想看失败图表就只能先藏起开销。
  *
- * Scope is expressed by where a control lives: the toolbar under the header
- * carries the tabs and the two page-scoped filters (time range, project),
- * every card carries its own view switches. All six rollups are fetched for
- * both tabs — they are small, and prefetching is what makes switching tabs
- * instant — but the loading and empty states are per tab, so Usage does not
- * wait on the failure queries.
+ * 作用范围由控件所在的位置来表达：头部下方的工具栏承载标签页和两个页面级筛选
+ * （时间范围、项目），每张卡片则自带各自的视图切换。六个汇总接口在两个标签页
+ * 都会抓取——数据量小，预取正是切换标签页能秒开的原因——但加载态和空态是
+ * 按标签页区分的，所以 Usage 不必等失败的查询。
  *
- * Cost math runs client-side via the runtimes utils — keeps the dashboard
- * and the runtime page using one pricing table.
+ * 成本计算在客户端用 runtimes utils 完成——让仪表盘和运行时页面共用同一张价格表。
  */
 export function DashboardPage() {
   const { t, i18n } = useT("usage");
@@ -156,11 +150,10 @@ export function DashboardPage() {
   const [days, setDays] = useState<TimeRange>(30);
   const [projectValue, setProjectValue] = useState<string>(ALL_PROJECTS);
 
-  // The tab lives in the URL because the Errors view is the half of this page
-  // people paste at each other ("this agent failed 54 times, see for
-  // yourself"); component state cannot be linked to. `replace`, not `push`, so
-  // flipping tabs does not stack up history entries. An unknown ?tab= value
-  // falls back to Usage rather than rendering nothing.
+  // 标签页放在 URL 里，因为 Errors 视图正是这页里人们互相粘贴链接的那一半
+  // （"这个 agent 失败了 54 次，你自己看"）；组件状态是没法被链接到的。用 `replace`
+  // 而不是 `push`，这样切标签页不会堆出一堆历史记录。未知的 ?tab= 值回退到 Usage，
+  // 而不是渲染一片空白。
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
   const tab: DashboardTab = tabFromUrl === "errors" ? "errors" : DEFAULT_TAB;
   const handleTabChange = (next: string) => {
@@ -171,50 +164,43 @@ export function DashboardPage() {
     navigation.replace(query ? `${navigation.pathname}?${query}` : navigation.pathname);
   };
 
-  // The user can save model prices from the runtimes page; re-render when
-  // they do so the dashboard reflects the new rates.
+  // 用户可以在 runtimes 页保存模型价格；订阅这个 store，让他们保存时触发重渲染，
+  // 使仪表盘反映新的费率。
   useCustomPricingStore((s) => s.pricings);
 
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const agentsQuery = useQuery(agentListOptions(wsId));
   const agents = agentsQuery.data ?? EMPTY_AGENTS;
 
-  // Validate the picked project against the current workspace's list. A
-  // stale UUID — left over from a project that's been deleted, or from the
-  // previous workspace after a switch — would silently filter every query to
-  // empty rows while the header still reads "All projects". Derive the
-  // effective filter so the API call matches the user-visible selection.
+  // 把选中的项目放到当前工作区的列表里校验。一个过期的 UUID——来自被删除的项目，
+  // 或切换工作区后的残留——会悄悄把每个查询都过滤成空行，而头部却仍显示「所有项目」。
+  // 推导出真正生效的筛选，让 API 调用与用户可见的选择保持一致。
   const projectId = useMemo(() => {
     if (projectValue === ALL_PROJECTS) return null;
     return projects.some((p) => p.id === projectValue) ? projectValue : null;
   }, [projectValue, projects]);
 
-  // The weekly charts paint `ceil(days / 7)` trailing calendar weeks anchored
-  // at today-in-UTC. In the worst case (today = Sunday) the leftmost Monday
-  // sits `weekCount * 7 - 1` days back, so a vanilla `days=30` request would
-  // silently truncate the leftmost bucket. Over-fetch the per-date queries to
-  // cover the full first week.
+  // 周图表要画 `ceil(days / 7)` 个以「今天所在 UTC」为锚的末尾日历周。最坏
+  // 情况（今天是周日）下最左侧的周一在 `weekCount * 7 - 1` 天前，直接按
+  // `days=30` 去请求会静默截掉最左的桶。这里把按日期查询多取一些天，覆盖
+  // 完整的第一周。
   //
-  // Unconditionally, not only when a chart is weekly: the dimension is now a
-  // card-level control, so the page cannot know which grain is on screen — and
-  // fetching for the wider of the two means flipping a card between Daily and
-  // Weekly never refetches. Daily aggregations trim back to exactly `days`
-  // client-side via `dailyCutoffIso` below, so the extra rows change nothing
-  // they show. The per-agent rollups stay at `days` so KPI/leaderboard labels
-  // (e.g. "Tasks · 30D") keep their advertised window.
+  // 无条件多取（不只是图表处于周粒度时）：维度现在由卡片自己控制，页面无法
+  // 知道当前屏上是哪种粒度——两个粒度取更宽的那个，卡片在 Daily/Weekly 之间
+  // 切换就永远不会重新拉取。每日聚合在客户端用下面的 `dailyCutoffIso` 精确裁回
+  // `days`，多取的行不影响它们展示的内容。按 Agent 的汇总保持 `days`，让
+  // KPI/排行榜标签（如 "Tasks · 30D"）仍对应它们宣称的窗口。
   const weekCount = Math.max(1, Math.ceil(days / 7));
   const chartFetchDays = weekCount * 7;
 
   const dailyQuery = useQuery(
     dashboardUsageDailyOptions(wsId, chartFetchDays, projectId, viewTZ),
   );
-  // The three per-agent rollups carry no date, so `dailyCutoffIso` below
-  // cannot trim them — their window is closed server-side at exactly `days`
-  // calendar buckets (parseExactSinceParamInTZ). Anything derived from these
-  // three is therefore already on the same span as the trimmed daily series;
-  // do NOT put a per-agent rollup back on the N+1 cutoff, or the leaderboard
-  // and the Run time / Tasks KPIs silently widen by one day while the chart
-  // and the Cost / Tokens KPIs beside them do not (MUL-5551).
+  // 三个按 Agent 的汇总不携带日期，下面的 `dailyCutoffIso` 裁不到它们——它们的
+  // 窗口在服务端按精确的 `days` 个日历桶闭合（parseExactSinceParamInTZ）。凡从
+  // 这三个派生出来的数据已经与裁剪后的每日序列同跨距；不要再把按 Agent 的汇总
+  // 放到 N+1 的 cutoff 上，否则排行榜和 Run time/Tasks KPI 会悄悄宽出一天，而
+  // 旁边的图表和 Cost/Tokens KPI 却没有（MUL-5551）。
   const byAgentQuery = useQuery(
     dashboardUsageByAgentOptions(wsId, days, projectId, viewTZ),
   );
@@ -239,9 +225,8 @@ export function DashboardPage() {
   const failureByAgentRows = failuresByAgentQuery.data ?? EMPTY_FAILURE_BY_AGENT;
 
   const queryClient = useQueryClient();
-  // "Refreshing" covers any of the six rollups being in flight, whichever
-  // trigger started it (button, interval, mount) — the header spinner and the
-  // timestamp describe the same set of queries.
+  // "Refreshing" 覆盖六个汇总任一在途的情况，无论刷新由什么触发（按钮、定时器、
+  // 挂载）——头部旋转图标与时间戳描述的是同一组查询。
   const isRefreshing =
     dailyQuery.isFetching ||
     byAgentQuery.isFetching ||
@@ -266,12 +251,10 @@ export function DashboardPage() {
     locales,
   );
 
-  // Daily-aggregation surfaces re-scope to the user-selected `days` even
-  // though the per-date queries over-fetch for the weekly charts. The cutoff is
-  // anchored on the viewer's timezone — the same axis the backend slices
-  // `bucket_hour` on — so it lands on the same calendar boundary. Applied in
-  // both dims so 1d strictly means "today" even at the midnight edge where a
-  // wall-clock cutoff would otherwise include yesterday.
+  // 每日聚合的展示面重新限定到用户选的 `days`（尽管按日期的查询为周图表多取了）。
+  // 截止锚在查看者的时区上——与后端切 `bucket_hour` 的轴相同——所以落在同一个
+  // 日历边界。两个维度都应用，这样 1d 严格表示「今天」，即使撞到午夜边界（用墙钟
+  // 时间裁会把昨天也含进来）。
   const dailyCutoffIso = useMemo(
     () => addDaysIso(todayIso(viewTZ), -(days - 1)),
     [days, viewTZ],
@@ -289,9 +272,8 @@ export function DashboardPage() {
     [failureDailyRows, dailyCutoffIso],
   );
 
-  // Loading and empty are per tab: the Usage tab has no reason to wait on the
-  // two failure rollups, and a workspace with spend but no failures is not an
-  // empty dashboard.
+  // 加载与空态按标签页分开：Usage 标签页没理由等两个失败汇总；一个「有花费但没有
+  // 失败」的工作区也不是空仪表盘。
   const usageLoading =
     dailyQuery.isLoading ||
     byAgentQuery.isLoading ||
@@ -307,7 +289,7 @@ export function DashboardPage() {
     runTimeRows.length === 0 &&
     runTimeDailyRows.length === 0;
 
-  // Cost / token math — re-derived when usage, days, or pricings change.
+  // 成本 / token 计算——usage、days 或自定义价格变化时重新派生。
   const totals = useMemo(
     () => computeDailyTotals(dailyUsageInWindow),
     [dailyUsageInWindow],
@@ -333,16 +315,13 @@ export function DashboardPage() {
     [failureDailyInWindow],
   );
 
-  // Failure summaries.
+  // 失败摘要。
   //
-  // Totals / classes / reasons are derived from the DATE-BUCKETED rollup after
-  // the same `dailyCutoffIso` trim the charts use, not from the per-agent one.
-  // `parseSinceParamInTZ` deliberately returns N+1 calendar days of headroom
-  // (see sinceFromDays in server/internal/handler/runtime.go), and only a
-  // series carrying a date can trim that back client-side. Reading these off
-  // the per-agent rollup put the summary one calendar day wider than the chart
-  // beside it — at 1D the chart could show no failures while the tile counted
-  // yesterday's.
+  // 合计 / 类别 / 原因都从「按日期分桶」的汇总派生（先经图表同款的 `dailyCutoffIso`
+  // 裁剪），而不是从按 Agent 的那份。`parseSinceParamInTZ` 故意给 N+1 个日历日
+  // 的余量（见 server/internal/handler/runtime.go 里的 sinceFromDays），只有带日期
+  // 的序列才能在客户端裁掉那多出的一天。从按 Agent 的汇总读这些，会把摘要比旁边
+  // 的图表宽出一个日历日——在 1D 时图表可能显示「无失败」而磁贴却数进昨天的。
   const failureTotals = useMemo(
     () => computeFailureTotals(failureDailyInWindow),
     [failureDailyInWindow],
@@ -355,22 +334,19 @@ export function DashboardPage() {
     () => aggregateFailureReasons(failureDailyInWindow),
     [failureDailyInWindow],
   );
-  // Which agent ids this viewer can actually resolve to a name. Declared here
-  // rather than next to the leaderboard because the Errors aggregation below
-  // needs it too — see anonymizeUnresolvedAgentRows.
+  // 这个查看者能真正解析成名字的 Agent id 集合。在这里声明（而不是排行榜旁边）
+  // 是因为下面的 Errors 聚合也需要它——见 anonymizeUnresolvedAgentRows。
   const knownAgentIds = useMemo(
     () => (agentsQuery.isSuccess ? new Set(agents.map((a) => a.id)) : null),
     [agentsQuery.isSuccess, agents],
   );
 
-  // The per-agent split has no date to trim on, so its window is closed
-  // server-side instead — GetDashboardFailuresByAgent uses the exact N-day
-  // cutoff rather than the N+1 one.
+  // 按 Agent 的拆分没有日期可裁，所以它的窗口改在服务端闭合——
+  // GetDashboardFailuresByAgent 用的是精确的 N 天 cutoff 而不是 N+1。
   //
-  // Anonymize BEFORE aggregating: the sentinel then behaves like any other
-  // agent id, so the bucket's failure classes are summed from real
-  // per-(agent, reason) rows instead of being reconstructed from rows that
-  // have already collapsed to a single dominant class.
+  // 在聚合之前匿名化：这样哨兵 id 就和任何其它 agent id 一样，桶的失败类别由
+  // 真实的按 (agent, reason) 行求和得到，而不是从「已经塌缩成单一主导类别」的
+  // 行里重构。
   const agentFailureRows = useMemo(
     () =>
       aggregateAgentFailures(
@@ -379,12 +355,10 @@ export function DashboardPage() {
     [failureByAgentRows, knownAgentIds],
   );
 
-  // Weekly aggregates — built from the over-fetched per-date queries so the
-  // leftmost trailing week always has data even when the user-selected `days`
-  // (e.g. 30D) is shorter than the chart's `weekCount * 7` span. Buckets are
-  // pre-zeroed inside the helpers, so sparse weeks render as empty bars
-  // instead of being dropped (MUL-2382 weekly window scoping). Week
-  // boundaries follow the viewer's timezone.
+  // 周聚合——用「多取了天数的按日期查询」构建，这样即使用户选的 `days`（如 30D）
+  // 短于图表的 `weekCount * 7` 跨距，最左的末尾周也总有数据。桶在辅助函数里
+  // 预置了零，稀疏周渲染成空柱而不是被丢弃（MUL-2382 周窗口限定）。周边界跟随
+  // 查看者的时区。
   const weekly = useMemo(
     () => aggregateByWeek(dailyUsage, viewTZ, weekCount),
     [dailyUsage, viewTZ, weekCount],
@@ -408,7 +382,7 @@ export function DashboardPage() {
     [byAgentUsage],
   );
 
-  // Run-time totals — taskCount + failedCount summed for the KPI row.
+  // 运行时长合计——taskCount + failedCount 求和给 KPI 行。
   const runTimeTotals = useMemo(() => {
     let totalSeconds = 0;
     let taskCount = 0;
@@ -426,23 +400,18 @@ export function DashboardPage() {
     [agentTokenRows, runTimeRows],
   );
 
-  // Fold rollup rows for hard-deleted agents into one aggregated "Deleted
-  // agents" row instead of showing them as a bare UUID (MUL-3771) or dropping
-  // them outright — dropping made the per-agent breakdown stop reconciling
-  // with the top-line Cost/Tokens KPIs, which still count that spend (MUL-3776,
-  // #4640). Archived agents stay as themselves (the agent list is fetched with
-  // archived included); only truly-removed agents collapse into the bucket.
-  // Skip bucketing until the agent list has loaded so a slow agents fetch
-  // doesn't transiently merge every row.
+  // 把「已硬删除的 Agent」的汇总行折进一个聚合的 "Deleted agents" 行，而不是
+  // 显示成一串裸 UUID（MUL-3771）或直接丢弃——丢弃会让分 Agent 明细与仍计入
+  // 该花费的顶部 Cost/Tokens KPI 对不上账（MUL-3776, #4640）。归档的 Agent
+  // 保持各自身份（Agent 列表拉取时含归档）；只有真正被移除的 Agent 才塌进桶里。
+  // Agent 列表加载完成前跳过分桶，慢拉取不会瞬时把所有行合并到一起。
   const visibleAgentRows = useMemo(
     () => bucketUnknownAgentRows(agentRows, knownAgentIds),
     [agentRows, knownAgentIds],
   );
-  // Distinct hard-deleted agents folded into the bucket — drives the caption's
-  // "· N deleted" suffix (the bucket itself is a single row). The server's
-  // restricted bucket is not in `knownAgentIds` either but is not a deletion,
-  // so it must not inflate this count — that mislabelling is exactly the bug
-  // MUL-5409 came with.
+  // 折进桶里的不同硬删除 Agent 数量——驱动 caption 的 "· N deleted" 后缀
+  // （桶本身只是一行）。服务端的 restricted 桶同样不在 `knownAgentIds` 里，但它
+  // 不是删除，所以不能撑大这个计数——那种贴错标签正是 MUL-5409 带来的 bug。
   const deletedAgentCount = useMemo(
     () =>
       knownAgentIds
@@ -466,9 +435,8 @@ export function DashboardPage() {
         icon={BarChart3}
         title={t(($) => $.title)}
         actions={
-          /* Data freshness cluster: the timestamp and the action that advances
-             it stay together. Refresh re-pulls the same scope, so it lives here
-             with the page metadata rather than among the scope controls. */
+          /* 数据新鲜度簇：时间戳与推进它的操作呆在一起。刷新重拉的是同一作用域，
+             所以它放在这里、和页面元信息一起，而不是混进作用域控件里。 */
           <div className="flex items-center gap-1">
             {tzLabel ? (
               <span className="hidden text-caption text-muted-foreground lg:inline">
@@ -493,10 +461,9 @@ export function DashboardPage() {
         }
       />
 
-      {/* View toolbar, same grammar as the issues surface header: view
-          switching on the left, page-scoped filters on the right. Both tabs
-          share the range and project filter, which is why the filters live
-          here and not inside a tab. */}
+      {/* 视图工具栏，与 issues 面的头部同一套语法：左切换视图、右放页面级筛选。
+          两个标签页共享范围与项目筛选，这正是筛选放在这里而不是某个标签页里的
+          原因。 */}
       <div className={cn("h-12 shrink-0 overflow-x-auto border-b [-webkit-overflow-scrolling:touch]", PAGE_GUTTER)}>
         <div className="flex h-full w-max min-w-full items-center justify-between gap-2">
           <TabsList variant="line" className="gap-0 p-0 group-data-horizontal/tabs:h-full">
@@ -533,8 +500,7 @@ export function DashboardPage() {
               <DashboardEmpty />
             ) : (
               <>
-                {/* KPI row — same 3-divide-x card grid the runtime usage
-                    section uses, expanded to four tiles. */}
+                {/* KPI 行——与运行时用量区同款的三分栏卡片网格，扩到四个磁贴。 */}
                 <div className="grid grid-cols-1 divide-y rounded-lg border bg-card sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
                   <KpiCard
                     label={t(($) => $.kpi.cost_label, { days })}
@@ -581,12 +547,10 @@ export function DashboardPage() {
                         aria-label={String(runTimeTotals.taskCount)}
                       />
                     }
-                    // Deliberately sourced from `runTimeTotals`, not the
-                    // failure rollup: the tile's own value counts started tasks
-                    // only, so quoting the failure rollup's larger failure count
-                    // here would put two different denominators in one tile. The
-                    // Errors tab states its rate with the denominator spelled
-                    // out instead.
+                    // 有意取自 `runTimeTotals` 而非失败汇总：磁贴自己的值只统计
+                    // 已启动的任务，在这里引用失败汇总那个更大的失败数，会让一个
+                    // 磁贴里出现两个不同的分母。Errors 标签页则明确标出分母来陈述
+                    // 它的失败率。
                     hint={t(($) => $.kpi.tasks_hint, {
                       failed: runTimeTotals.failedCount,
                     })}

@@ -1,3 +1,7 @@
+// 本文件集中 chat 会话/消息域事件的「构建」小工具：把 db 行 + actor 身份打包成
+// events.Event（类型、幂等键、流键、负载等）。IdempotencyKey 让重试的通知不会
+// 造成第二条持久事实。recordChatEventTx 是 service.RecordDurableEventTx 的薄别名，
+// 供 handler 包内事务化落事件。
 package handler
 
 import (
@@ -14,9 +18,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// buildChatSessionCreatedEvent records the session snapshot before it becomes
-// visible to other clients. The session id is the logical identity, so a
-// retried notification cannot create a second durable fact.
+// buildChatSessionCreatedEvent 在会话对其它客户端可见之前记录会话快照。会话 id
+// 是逻辑身份，因此重试的通知不会创建第二条持久事实。
 func buildChatSessionCreatedEvent(session db.ChatSession, actorType, actorID string) events.Event {
 	return events.Event{
 		Type:           protocol.EventChatSessionCreated,
@@ -36,9 +39,9 @@ func buildChatSessionCreatedEvent(session db.ChatSession, actorType, actorID str
 	}
 }
 
-// buildChatSessionUpdatedEvent uses the row returned by the mutation. The
-// optional fields let one envelope represent title, project, pin, or status
-// changes without inventing another event protocol.
+// buildChatSessionUpdatedEvent 使用变更语句返回的行。可选字段让同一信封表达
+// title / project / pin / status 的变化，而无需发明另一套事件协议。幂等键额外
+// 混入动作名与负载 sha256，让不同内容/动作的更新各归其位。
 func buildChatSessionUpdatedEvent(session db.ChatSession, actorType, actorID string, payload protocol.ChatSessionUpdatedPayload, action string) events.Event {
 	payloadBytes, _ := json.Marshal(payload)
 	digest := sha256.Sum256(payloadBytes)
@@ -54,6 +57,8 @@ func buildChatSessionUpdatedEvent(session db.ChatSession, actorType, actorID str
 	}
 }
 
+// buildChatSessionDeletedEvent 打包会话删除（硬删）事件，通知其它客户端该会话
+// 已消失。
 func buildChatSessionDeletedEvent(session db.ChatSession, actorType, actorID string) events.Event {
 	return events.Event{
 		Type:           protocol.EventChatSessionDeleted,
@@ -69,6 +74,8 @@ func buildChatSessionDeletedEvent(session db.ChatSession, actorType, actorID str
 	}
 }
 
+// buildChatSessionReadEvent 打包「已读」事件（去掉 unread 徽标）。幂等键混入
+// LastReadAt 时间戳，同一时刻的多次已读归并为一条事实。
 func buildChatSessionReadEvent(session db.ChatSession, actorType, actorID string) events.Event {
 	return events.Event{
 		Type:           protocol.EventChatSessionRead,
@@ -84,6 +91,8 @@ func buildChatSessionReadEvent(session db.ChatSession, actorType, actorID string
 	}
 }
 
+// buildChatMessageEvent 打包一条新聊天消息事件：消息本体 + 其派生的任务 id，让
+// 各客户端既能渲染消息也能跟踪任务。
 func buildChatMessageEvent(session db.ChatSession, message db.ChatMessage, task db.AgentTaskQueue, actorType, actorID string) events.Event {
 	payload := protocol.ChatMessagePayload{
 		ChatSessionID: util.UUIDToString(session.ID),
@@ -106,6 +115,7 @@ func buildChatMessageEvent(session db.ChatSession, message db.ChatMessage, task 
 	}
 }
 
+// recordChatEventTx 在调用方的事务内持久化一条域事件，返回落库后的事件。
 func recordChatEventTx(ctx context.Context, queries *db.Queries, event events.Event) (events.Event, error) {
 	return service.RecordDurableEventTx(ctx, queries, event)
 }

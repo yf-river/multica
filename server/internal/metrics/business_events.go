@@ -1,3 +1,6 @@
+// 本文件承载「PR3 产品指标」：注册/引导/建仓/autopilot/集成等漏斗、社区、商业事件的
+// Prometheus 计数器。这些事件与 PostHog 行为分析事件一一对应、共用同一入口
+// RecordEvent，因此两条管道不会走样。任务生命周期/LLM 计费那批指标在 business.go。
 package metrics
 
 import (
@@ -5,30 +8,30 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// PR3: funnel / commercial / community counters paired with PostHog events.
+// PR3：漏斗/商业/社区计数器，与 PostHog 事件成对出现。
 //
-// Every PostHog Capture(...) call site goes through metrics.RecordEvent(...)
-// (see event_recorder.go) so the two sides cannot drift. Lint test in
-// business_pairing_test.go enforces that.
+// 每个 PostHog Capture(...) 调用点都必须经过 metrics.RecordEvent(...)（见
+// event_recorder.go），保证两侧口径不会漂移；business_pairing_test.go 的 lint 测试
+// 强制执行这一约束。
 
-// runtimeReadyBuckets covers cold-start runtime readiness from <1s to ~5min.
-// Most provider boots land in 5–60s; the long tail catches stuck pulls.
+// runtimeReadyBuckets 覆盖冷启动到就绪的耗时，从 <1s 到约 5 分钟。
+// 大多数 provider 启动落在 5–60 秒；长尾用于捕获卡住的拉取/启动。
 var runtimeReadyBuckets = []float64{1, 2.5, 5, 10, 30, 60, 120, 300, 600}
 
-// cloudRuntimeRequestBuckets covers outbound Fleet/Gateway calls from sub-100ms
-// (status pings) to ~30s (provision). Aligns with cloudruntime.defaultTimeout.
+// cloudRuntimeRequestBuckets 覆盖对外 Fleet/Gateway 调用耗时：从亚 100ms
+// （状态探活 ping）到约 30s（provision）。与 cloudruntime.defaultTimeout 对齐。
 var cloudRuntimeRequestBuckets = []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30}
 
-// prMergeSecondsBuckets covers PR-open → PR-merged latency from minutes to weeks.
+// prMergeSecondsBuckets 覆盖 PR 从打开到合并的延迟：从几分钟到几周。
 var prMergeSecondsBuckets = []float64{
 	300, 900, 1800,
 	3600, 2 * 3600, 6 * 3600, 12 * 3600,
 	24 * 3600, 2 * 24 * 3600, 7 * 24 * 3600, 30 * 24 * 3600,
 }
 
-// businessEventMetrics holds the PR3 collectors. Kept in a separate struct
-// so business.go (PR2 task lifecycle / LLM) stays focused; both are exposed
-// through the same BusinessMetrics receiver and the same Collectors() slice.
+// businessEventMetrics 装 PR3 批指标对应的采集器。单独拆一个 struct 是为了让
+// business.go（PR2 的任务生命周期 / LLM 指标）保持聚焦；两边都挂在同一个
+// BusinessMetrics 接收者上，由同一个 Collectors() 列表对外暴露。
 type businessEventMetrics struct {
 	signup                          *prometheus.CounterVec
 	workspaceCreated                *prometheus.CounterVec
@@ -67,6 +70,8 @@ type businessEventMetrics struct {
 	chatOutputLocalPath             *prometheus.CounterVec
 }
 
+// newBusinessEventMetrics 创建 PR3 全部事件指标。每条指标的标签都取自
+// metricLabels（即 labels.go 里 businessMetricLabels 登记表），防止少传/多传标签。
 func newBusinessEventMetrics() *businessEventMetrics {
 	return &businessEventMetrics{
 		signup: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -215,6 +220,7 @@ func newBusinessEventMetrics() *businessEventMetrics {
 	}
 }
 
+// collectors 返回 PR3 采集器列表（接收者 nil 时返回 nil）。
 func (e *businessEventMetrics) collectors() []prometheus.Collector {
 	if e == nil {
 		return nil
@@ -258,21 +264,18 @@ func (e *businessEventMetrics) collectors() []prometheus.Collector {
 	}
 }
 
-// RecordEvent increments the matching Prometheus counter and, for any event
-// that still ships to PostHog, enqueues the PostHog event too — so the two
-// cannot drift. Pass `client = nil` (no PostHog) or `m = nil` (no metrics)
-// safely; both sides are best-effort and never block the request path.
+// RecordEvent 是服务端记录任何漏斗/社区/商业事件的唯一正门：同时做两件事——凡是仍然
+// 要进 PostHog 的事件就调用 client.Capture 入队，并推进对应的 Prometheus 计数器，
+// 因此两条管道永远同步。`client = nil`（没配 PostHog）或 `m = nil`（无指标）都可安全
+// 传入，两侧都是尽力而为、绝不阻塞请求路径。
 //
-// As of MUL-4127 every server-side event is flagged by analytics.IsMetricsOnly
-// (all product events plus the runtime_* / autopilot_run_* lifecycle), so the
-// client.Capture below is skipped for all of them — server analytics is served
-// from the DB and Grafana, not PostHog. The Capture path is retained only so a
-// future non-metrics-only event name would still ship.
+// 自 MUL-4127 起，每个服务端事件都由 analytics.IsMetricsOnly 标记（所有产品事件加上
+// runtime_* / autopilot_run_* 生命周期），所以下面的 client.Capture 对它们全都会跳过
+// ——服务端分析数据来自数据库和 Grafana，不再走 PostHog。Capture 路径保留只是为了：
+// 将来若出现非 metrics-only 的事件名，仍能照常上报。
 //
-// This is the canonical way to record any funnel / community / commercial event
-// from server code. Direct analytics.Client.Capture(...) with an event
-// constructed from analytics.* is rejected by the lint test in
-// business_pairing_test.go.
+// lint 测试（business_pairing_test.go）会拒绝任何绕过本函数、直接用 analytics.* 构造
+// 事件再调 analytics.Client.Capture(...) 的写法。
 func RecordEvent(client analytics.Client, m *BusinessMetrics, ev analytics.Event) {
 	if client != nil && !analytics.IsMetricsOnly(ev.Name) {
 		client.Capture(ev)
@@ -282,9 +285,8 @@ func RecordEvent(client analytics.Client, m *BusinessMetrics, ev analytics.Event
 	}
 }
 
-// IncForEvent dispatches an analytics.Event to the matching Prometheus counter.
-// Unknown event names are silently ignored — the lint test in
-// business_pairing_test.go is responsible for catching missing dispatch entries.
+// IncForEvent 把一条 analytics.Event 分发到对应的 Prometheus 计数器。不认识的事件名
+// 静默忽略——漏配分发的地方由 business_pairing_test.go 的 lint 测试兜底捕获。
 func (m *BusinessMetrics) IncForEvent(ev analytics.Event) {
 	if m == nil || m.events == nil {
 		return
@@ -375,17 +377,16 @@ func (m *BusinessMetrics) IncForEvent(ev analytics.Event) {
 	case analytics.EventContactSalesSubmitted:
 		m.events.contactSalesSubmitted.WithLabelValues(NormalizeContactSalesSource(stringProp(ev.Properties, "form_source"))).Inc()
 	default:
-		// agent_task_* lifecycle telemetry is recorded straight to Prometheus
-		// via the typed BusinessMetrics.RecordTask* methods (they take
-		// queue/run/total seconds that an analytics.Event does not carry), so
-		// there is no analytics.Event to dispatch here. Anything else reaching
-		// this default is a missing case and the lint test will fail CI.
+		// agent_task_* 生命周期遥测直接经类型化方法 BusinessMetrics.RecordTask* 记入
+		// Prometheus（它们携带队列/运行/总耗时，这些 analytics.Event 装不下），所以这里
+		// 没有对应的 analytics.Event 可分发。任何别的事件落到这个 default 都意味着漏配了
+		// case，lint 测试会让 CI 失败。
 	}
 }
 
-// ---- non-PostHog Record* helpers (typed; no analytics.Event source) -------
+// ---- 非 PostHog 的 Record* 辅助（类型化入参；没有对应的 analytics.Event 源）----
 
-// RecordAutopilotRunSkipped counts an autopilot admission-skip with reason.
+// RecordAutopilotRunSkipped 记一次 autopilot 准入被跳过，带节奏与原因。
 func (m *BusinessMetrics) RecordAutopilotRunSkipped(cadence, reason string) {
 	if m == nil || m.events == nil {
 		return
@@ -396,7 +397,7 @@ func (m *BusinessMetrics) RecordAutopilotRunSkipped(cadence, reason string) {
 	).Inc()
 }
 
-// RecordWebhookDelivery counts an inbound webhook outcome.
+// RecordWebhookDelivery 记一条入站 webhook 的投递结果（来源方 + 状态）。
 func (m *BusinessMetrics) RecordWebhookDelivery(provider, status string) {
 	if m == nil || m.events == nil {
 		return
@@ -407,6 +408,7 @@ func (m *BusinessMetrics) RecordWebhookDelivery(provider, status string) {
 	).Inc()
 }
 
+// RecordWebhookRateLimited 记一次 webhook 因安全闸门（gate）被限流/推迟。
 func (m *BusinessMetrics) RecordWebhookRateLimited(gate string) {
 	if m == nil || m.events == nil {
 		return
@@ -414,6 +416,7 @@ func (m *BusinessMetrics) RecordWebhookRateLimited(gate string) {
 	m.events.webhookRateLimited.WithLabelValues(NormalizeWebhookRateLimitGate(gate)).Inc()
 }
 
+// RecordEmailRateLimited 记一次产邮件的动作被限流闸门拒绝（动作 + 闸门维度）。
 func (m *BusinessMetrics) RecordEmailRateLimited(action, gate string) {
 	if m == nil || m.events == nil {
 		return
@@ -424,7 +427,7 @@ func (m *BusinessMetrics) RecordEmailRateLimited(action, gate string) {
 	).Inc()
 }
 
-// RecordGithubEventReceived counts a GitHub webhook event by event kind / action.
+// RecordGithubEventReceived 记一条 GitHub webhook 事件（事件类型 + 动作）。
 func (m *BusinessMetrics) RecordGithubEventReceived(eventKind, action string) {
 	if m == nil || m.events == nil {
 		return
@@ -435,7 +438,7 @@ func (m *BusinessMetrics) RecordGithubEventReceived(eventKind, action string) {
 	).Inc()
 }
 
-// RecordGithubPRReview counts a PR review observation by result.
+// RecordGithubPRReview 按结论记一次观察到的 PR review。
 func (m *BusinessMetrics) RecordGithubPRReview(result string) {
 	if m == nil || m.events == nil {
 		return
@@ -443,8 +446,8 @@ func (m *BusinessMetrics) RecordGithubPRReview(result string) {
 	m.events.githubPRReview.WithLabelValues(NormalizeGithubPRReviewResult(result)).Inc()
 }
 
-// ObserveGithubPRMergeSeconds records open→merge latency in seconds.
-// Negative or zero values are ignored.
+// ObserveGithubPRMergeSeconds 记录 PR 从打开到合并的耗时（秒）。
+// 非正数（拿不到时间或异常值）直接忽略，不进直方图。
 func (m *BusinessMetrics) ObserveGithubPRMergeSeconds(seconds float64) {
 	if m == nil || m.events == nil || seconds <= 0 {
 		return
@@ -452,8 +455,8 @@ func (m *BusinessMetrics) ObserveGithubPRMergeSeconds(seconds float64) {
 	m.events.githubPRMergeSeconds.Observe(seconds)
 }
 
-// RecordCloudRuntimeRequest counts an outbound Fleet/Gateway call by op +
-// status bucket and observes its duration.
+// RecordCloudRuntimeRequest 记一次对外 Fleet/Gateway 调用：按「操作 + 状态桶」计数，
+// 并在耗时非负时把耗时写进直方图。
 func (m *BusinessMetrics) RecordCloudRuntimeRequest(op, status string, durationSeconds float64) {
 	if m == nil || m.events == nil {
 		return
@@ -466,15 +469,13 @@ func (m *BusinessMetrics) RecordCloudRuntimeRequest(op, status string, durationS
 	}
 }
 
-// RecordChatOutputLocalPath counts a chat reply that referenced a runtime-local
-// path, by evidence kind ("file_url" / "workdir_path").
+// RecordChatOutputLocalPath 按证据类型（"file_url" / "workdir_path"）记一次「agent
+// 聊天回复里引用了 runtime 本地路径」的事件。
 //
-// Observation only: the reply is delivered either way. The server cannot judge
-// these paths the way the CLI lint can — it has no access to the daemon's
-// filesystem to stat them — so this measures whether the MUL-4899 prompt
-// contract is landing, and must never gate delivery on a lexical guess. The
-// label is a closed enum precisely so no fragment of the path or reply body can
-// reach Prometheus.
+// 只做观测、不做拦截：无论哪种情况回复照常送达。服务端没有 daemon 的文件系统可 stat，
+// 无法像 CLI lint 那样判断这些路径真假，所以这个指标只衡量 MUL-4899 的 prompt 契约
+// 有没有被遵守，绝不能凭词法猜测去卡投递。标签是封闭枚举，正是为了确保路径或回复正文
+// 的任何片段都到不了 Prometheus。
 func (m *BusinessMetrics) RecordChatOutputLocalPath(kind string) {
 	if m == nil || m.events == nil {
 		return
@@ -482,7 +483,7 @@ func (m *BusinessMetrics) RecordChatOutputLocalPath(kind string) {
 	m.events.chatOutputLocalPath.WithLabelValues(NormalizeChatOutputLocalPathKind(kind)).Inc()
 }
 
-// RecordDaemonWSMessageReceived counts an inbound daemon WS message by handler kind.
+// RecordDaemonWSMessageReceived 按处理类型记一条入站 daemon WS 消息。
 func (m *BusinessMetrics) RecordDaemonWSMessageReceived(kind string) {
 	if m == nil || m.events == nil {
 		return
@@ -490,8 +491,11 @@ func (m *BusinessMetrics) RecordDaemonWSMessageReceived(kind string) {
 	m.events.daemonWSMessageReceived.WithLabelValues(NormalizeDaemonWSKind(kind)).Inc()
 }
 
-// ---- property accessors ---------------------------------------------------
+// ---- 事件属性读取器：从 analytics.Event.Properties 里按 key 安全取值 ----
+// 属性 map 来自 JSON 反序列化，实际类型不可控，所以这些函数宁可返回零值也不 panic。
+// 其中 boolLabel 是把 bool 变成 "true"/"false" 标签值。
 
+// stringProp 取字符串属性；缺 key / 非字符串 / 值为 nil 都返回空串。
 func stringProp(props map[string]any, key string) string {
 	if props == nil {
 		return ""
@@ -506,6 +510,7 @@ func stringProp(props map[string]any, key string) string {
 	return ""
 }
 
+// int64Prop 取整数属性；容忍 int32/int/float64 等常见 JSON 反序列化类型，其它返回 0。
 func int64Prop(props map[string]any, key string) int64 {
 	if props == nil {
 		return 0
@@ -527,6 +532,7 @@ func int64Prop(props map[string]any, key string) int64 {
 	return 0
 }
 
+// boolProp 取布尔属性；缺 key 或类型不是 bool 一律返回 false。
 func boolProp(props map[string]any, key string) bool {
 	if props == nil {
 		return false
@@ -541,6 +547,7 @@ func boolProp(props map[string]any, key string) bool {
 	return false
 }
 
+// boolLabel 把布尔转成 Prometheus 标签字面量："true"/"false"。
 func boolLabel(b bool) string {
 	if b {
 		return "true"

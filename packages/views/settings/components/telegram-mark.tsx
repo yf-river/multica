@@ -1,7 +1,12 @@
-// The Telegram brand mark below comes from Simple Icons and is available
-// under CC0 1.0. Source:
+// 本文件提供 Telegram 品牌图标组件，用于设置页集成频道等处展示 Telegram 的可识别图标。
+
+// 下方 Telegram 品牌图标来自 Simple Icons，依据 CC0 1.0 提供。来源：
 // https://github.com/simple-icons/simple-icons/blob/develop/icons/telegram.svg
 // https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md
+/**
+ * Telegram 品牌图标。
+ * @param props.className - 可选，附加到 svg 上的 CSS 类名，用于控制尺寸与颜色。
+ */
 export function TelegramMark({ className }: { className?: string }) {
   return (
     <svg

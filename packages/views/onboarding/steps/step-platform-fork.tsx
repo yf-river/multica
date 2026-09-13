@@ -1,5 +1,7 @@
 "use client";
 
+// 引导第 3 步「连上你的电脑/云端」：从浏览器端接上一个运行时（daemon）。主路径
+// 是弹窗里的 CLI 安装 + 实时探测；另有两张备选卡片（桌面版下载、云端“即将到来”）。
 import { useEffect, useState, type ReactNode } from "react";
 import { ArrowRight, Terminal, Loader2, MonitorDown } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
@@ -25,23 +27,25 @@ import {
 import { useRuntimePicker } from "../components/use-runtime-picker";
 import { useT } from "../../i18n";
 
-/**
- * Step 3 connects a daemon from the browser. The screen is a fan-out:
- *
- *   1. **Install the CLI** — primary card, black bg, "Show steps" pill → opens a
- *      dialog containing the real install instructions + live runtime
- *      probe. When a runtime appears and the user selects it, the
- *      dialog's "Connect & continue" button fires `onNext(runtime)`
- *      and advances the flow.
- *   2. **Cloud computer** — alt card, "Coming soon" badge. Not yet
- *      available; rendered as a static, non-actionable preview.
- *
- * Footer is simplified — no Continue button, since the CLI dialog
- * owns that advancement itself. Only Skip remains.
- */
-
+// 当前打开的对话框类型（目前只有 CLI 安装弹窗）。
 type DialogState = "cli" | null;
 
+/**
+ * 第 3 步在浏览器端连接一个运行时（daemon）。本屏是一个分叉选择：
+ *
+ *   1. **安装 CLI** —— 主卡片：黑底，「查看步骤」胶囊 → 打开一个包含真实安装
+ *      指引 + 实时运行时探测的弹窗。探测到运行时且用户选中后，弹窗里的
+ *      「连接并继续」按钮会触发 `onNext(runtime)` 并推进流程。
+ *   2. **云端电脑** —— 备选卡片，带「即将推出」徽标。目前不可用，只渲染成
+ *      一个静态的、不可点的预览。
+ *
+ * 页脚做了简化——没有 Continue 按钮，因为推进由 CLI 弹窗自己负责，只剩 Skip。
+ *
+ * @param wsId 目标工作区 id
+ * @param wsSlug 目标工作区 slug
+ * @param onNext 选定运行时后的回调（null 表示跳过，不带运行时）
+ * @param cliInstructions 平台相关的 CLI 安装说明卡（渲染在 CLI 弹窗内）
+ */
 export function StepPlatformFork({
   wsId,
   wsSlug,
@@ -49,12 +53,11 @@ export function StepPlatformFork({
   cliInstructions,
 }: {
   wsId: string;
-  /** Slug of the target workspace. Sent explicitly so the runtime list reads
-   *  the workspace being set up rather than whichever one the app is currently
-   *  showing. */
+  /** 目标工作区 slug。显式传参，让运行时列表读「正在配置的工作区」，
+   *  而不是应用当前显示的那个工作区。 */
   wsSlug?: string;
   onNext: (runtime: AgentRuntime | null, model?: string) => void | Promise<void>;
-  /** Platform-specific CLI install card, rendered inside the CLI dialog. */
+  /** 平台相关的 CLI 安装说明卡，渲染在 CLI 弹窗里。 */
   cliInstructions?: ReactNode;
 }) {
   const { t } = useT("onboarding");
@@ -85,9 +88,8 @@ export function StepPlatformFork({
   return (
     <>
       <div className="flex flex-col gap-8 pt-2 sm:pt-6">
-        {/* The eyebrow read "Connect a computer" directly above a headline
-            that starts with the same three words. The block has no eyebrow
-            slot and the rail already names the step, so it goes. */}
+        {/* 眉题本来要写成「Connect a computer」，而它正下方的标题开头就是这三个
+            同样的词。这个区块没有眉题插槽、进度栏也已经说了这是哪一步，于是删掉。 */}
         <StepHeading
           title={t(($) => $.step_platform.headline)}
           description={t(($) => $.step_platform.lede)}
@@ -116,9 +118,8 @@ export function StepPlatformFork({
 
       </div>
 
-      {/* Advancement for the CLI path is owned by the CLI dialog's own
-          "Connect & continue" button; Skip creates the single self-serve
-          onboarding issue. */}
+      {/* CLI 路径的推进由 CLI 弹窗自己的「连接并继续」按钮负责；Skip 则创建那条
+          自服务的引导任务。 */}
       <StepFooter hint={footerHint}>
         <Button
           variant="ghost"
@@ -154,9 +155,10 @@ export function StepPlatformFork({
 }
 
 // ------------------------------------------------------------
-// Fork cards
+// 分叉卡片
 // ------------------------------------------------------------
 
+/** 主卡片（安装 CLI）：整块黑色可点击横幅，点击打开 CLI 安装弹窗。 */
 function ForkPrimary({ onClick }: { onClick: () => void }) {
   const { t } = useT("onboarding");
   return (
@@ -189,10 +191,9 @@ function ForkPrimary({ onClick }: { onClick: () => void }) {
 }
 
 /**
- * Alt card with a right-side action. When `disabled`, the action
- * renders as a static badge (used for "Coming soon" paths that aren't
- * yet wired up); otherwise it's an outline button that fires
- * `onAction` and typically opens a dialog.
+ * 备选卡片：右侧带一个操作按钮。`disabled` 时操作渲染成静态徽标（用于还没接线的
+ * 「即将推出」路径）；否则是 outline 按钮，点击触发 `onAction`，通常用来打开
+ * 弹窗或跳转下载页。
  */
 function ForkAlt({
   title,
@@ -244,15 +245,13 @@ function ForkAlt({
 }
 
 // ------------------------------------------------------------
-// CLI install dialog
+// CLI 安装弹窗
 // ------------------------------------------------------------
 
 /**
- * Modal dialog for the CLI install path. Contains the real install
- * instructions card (via the `cliInstructions` slot) plus the live
- * runtime probe. Owns its own "Connect & continue" advancement — when
- * a runtime has registered and the user picks it, clicking that button
- * closes the dialog and fires the parent's `onConnect`.
+ * CLI 安装路径的模态弹窗：装真实安装指引卡（通过 `cliInstructions` 插槽）加
+ * 实时运行时探测。自己负责「连接并继续」的推进——当有运行时注册、且用户选中它
+ * 之后，点这个按钮会关掉弹窗并触发父组件的 `onConnect`。
  */
 function CliInstallDialog({
   open,
@@ -301,9 +300,8 @@ function CliInstallDialog({
                   {t(($) => $.step_platform.runtimes_connected, { count: runtimes.length })}
                 </span>
               </div>
-              {/* Cap the runtime list at ~4 rows visible, scroll the rest.
-                  Keeps the commands above always reachable even when
-                  a user has many machines registered. */}
+              {/* 运行时列表最多显示约 4 行、其余滚动。这样即使注册了很多台机器，
+                  上面的命令也始终够得着。 */}
               <MikaRuntimeChoice
                 layout="list"
                 runtimes={runtimes}
@@ -318,10 +316,9 @@ function CliInstallDialog({
         </div>
 
         <DialogFooter className="flex items-center justify-between gap-3 sm:justify-between">
-          {/* Hint is only useful AFTER a runtime has registered — "pick
-              one" / "selected X". While still waiting, the body's
-              CliWaitingStatus already conveys the live-listening state,
-              so an additional "Waiting..." footer line is duplication. */}
+          {/* 提示只在运行时注册之后才有意义——「选一个」/「已选 X」。还在等待时，
+              正文里的 CliWaitingStatus 已经表达了实时监听的姿态，页脚再写一句
+              「等待中…」就是重复。 */}
           <span className="text-caption text-muted-foreground">
             {hasRuntimes
               ? canConnect && selectedName
@@ -346,9 +343,8 @@ function CliInstallDialog({
 }
 
 /**
- * Format a seconds count as `m:ss` (e.g. 75 → "1:15"). Inline helper —
- * no existing utility matches this format (agent-live-card's
- * formatElapsed uses "1m 15s" style, not suitable for a ticking clock).
+ * 把秒数格式化成 `m:ss`（如 75 → "1:15"）。行内小工具——现有工具里没有同款
+ * 格式（agent-live-card 的 formatElapsed 是「1m 15s」风格，不适合滴答跳动的时钟）。
  */
 function formatElapsed(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -357,22 +353,18 @@ function formatElapsed(seconds: number) {
 }
 
 /**
- * Waiting state for the CLI dialog — shown until the first daemon
- * registers. We can't actually observe the install / login / daemon-
- * start phases from the frontend (they happen in the user's terminal
- * and browser), so the best we can do is:
+ * CLI 弹窗的等待态——在第一个 daemon 注册之前一直显示。前端其实观测不到
+ * 安装 / 登录 / daemon 启动这些阶段（它们发生在用户的终端和浏览器里），
+ * 所以只能做到：
  *
- *   1. Confirm "we're listening" — a pulsing green dot + m:ss timer
- *      signals an active WS subscription (useRuntimePicker is already
- *      subscribed to `daemon:register`). This is what tells the user
- *      "the system isn't frozen, it's waiting for your daemon".
- *   2. Progressively reveal troubleshooting hints as elapsed time
- *      crosses thresholds — so a user who stalls mid-setup gets
- *      useful guidance without being dogpiled at t=0.
- *   3. At the 90s+ "stalled" tier, point the user at the alternate paths.
+ *   1. 确认「我们在听」——一个跳动的绿点 + m:ss 计时器表示 WS 订阅活着
+ *      （useRuntimePicker 已经订阅了 `daemon:register`）。这就是在告诉用户
+ *      「系统没卡死，它在等你的 daemon」。
+ *   2. 随着等待时间越过不同阈值，逐步放出排障提示——让卡在安装中途的用户
+ *      得到有用指引，而不是在 t=0 就被灌一堆话。
+ *   3. 到 90s+ 的「停滞」档，引导用户去看备选路径。
  *
- * Elapsed-time counter only ticks while the dialog is open so reopen
- * after closing resets the staging.
+ * 计时器只在弹窗打开时走动，所以关掉再开后计时会从零开始。
  */
 function CliWaitingStatus({ dialogOpen }: { dialogOpen: boolean }) {
   const { t } = useT("onboarding");
@@ -389,12 +381,11 @@ function CliWaitingStatus({ dialogOpen }: { dialogOpen: boolean }) {
     return () => window.clearInterval(id);
   }, [dialogOpen]);
 
-  // Stage thresholds are rough — `multica setup` typical flow is
-  //   ~1s save config → browser-tab auth (user-driven, 5–30s) →
-  //   ~2s daemon boot → immediate WS register. So under 15s means
-  //   "still normal", 15–45s means "probably stuck on browser auth",
-  //   45–90s means "probably an error in the terminal", 90s+ means
-  //   "nothing's coming through, suggest the alternate paths".
+  // 阶段阈值是估算的——`multica setup` 的典型流程是
+  //   ~1s 保存配置 → 浏览器标签页授权（人操作，5–30s）→
+  //   ~2s daemon 启动 → 立即 WS 注册。所以 15s 内算「正常」，15–45s 大概率
+  //   卡在浏览器授权，45–90s 多半是终端里报错了，90s+ 就是「什么都进不来，
+  //   去推荐备选路径」。
   const stage: "normal" | "midway" | "slow" | "stalled" =
     elapsed < 15
       ? "normal"
@@ -407,9 +398,8 @@ function CliWaitingStatus({ dialogOpen }: { dialogOpen: boolean }) {
   return (
     <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-4">
       <div className="flex items-center gap-2 text-body">
-        {/* Pulsing green dot signals active WS subscription — the
-            useRuntimePicker hook is already subscribed to `daemon:register`,
-            this is the visual confirmation that "we're listening". */}
+        {/* 跳动的绿点表示 WS 订阅存活——useRuntimePicker 已订阅 `daemon:register`，
+            这是「我们在听」的视觉确认。 */}
         <span
           aria-hidden
           className="inline-block size-2 shrink-0 rounded-full bg-success animate-pulse"

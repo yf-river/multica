@@ -1,3 +1,7 @@
+// gitlab.go：GitLab 的 Provider 适配实现。GitLab 与 Forgejo/Gitea 在每条轴上都不同：
+// /api/v4 + PRIVATE-TOKEN 头、webhook 用明文 X-Gitlab-Token 比对鉴权（无 HMAC）、
+// X-Gitlab-Event 头、merge request 术语、以及用 pipeline 事件表示 CI。归一化的
+// PullRequestEvent/CIStatusEvent 把这些差异全部对 handler 隐藏。
 package vcs
 
 import (
@@ -12,18 +16,14 @@ import (
 	"time"
 )
 
-// gitlabProvider implements Provider for GitLab, which differs from
-// Forgejo/Gitea on every axis: /api/v4 with a PRIVATE-TOKEN header, webhooks
-// authenticated by a plaintext X-Gitlab-Token compare (no HMAC), an
-// X-Gitlab-Event header, "merge request" terminology, and pipeline events for
-// CI. The normalized PullRequestEvent/CIStatusEvent hide all of that from the
-// handler.
+// gitlabProvider 为 GitLab 实现 Provider。差异细节见本文件顶部导读。
 type gitlabProvider struct{}
 
 func init() { register(gitlabProvider{}) }
 
 func (gitlabProvider) Kind() Kind { return KindGitLab }
 
+// EventKind 按 X-Gitlab-Event 头归类事件：MR 钩子归 PR，pipeline 钩子归 CI 状态。
 func (gitlabProvider) EventKind(h http.Header) EventKind {
 	switch h.Get("X-Gitlab-Event") {
 	case "Merge Request Hook":
@@ -35,9 +35,8 @@ func (gitlabProvider) EventKind(h http.Header) EventKind {
 	}
 }
 
-// VerifySignature compares the X-Gitlab-Token header to the stored secret in
-// constant time. GitLab does not HMAC-sign webhook bodies; the shared token is
-// the whole authentication, so an empty stored secret never validates.
+// VerifySignature 常量时间比对 X-Gitlab-Token 头与存储的 secret。GitLab 不为 webhook
+// body 做 HMAC 签名；共享 token 就是全部认证，所以空的存储 secret 永远校验不过。
 func (gitlabProvider) VerifySignature(secret string, h http.Header, _ []byte) bool {
 	if secret == "" {
 		return false
@@ -46,6 +45,7 @@ func (gitlabProvider) VerifySignature(secret string, h http.Header, _ []byte) bo
 	return subtle.ConstantTimeCompare([]byte(got), []byte(secret)) == 1
 }
 
+// glMergeRequestPayload 是 GitLab "Merge Request Hook" webhook 载荷的 JSON 结构。
 type glMergeRequestPayload struct {
 	ObjectKind string `json:"object_kind"`
 	User       struct {
@@ -73,12 +73,15 @@ type glMergeRequestPayload struct {
 	} `json:"object_attributes"`
 }
 
+// ParsePullRequest 把 GitLab 的 MR webhook 解码成归一化 PullRequestEvent。
 func (gitlabProvider) ParsePullRequest(body []byte) (PullRequestEvent, error) {
 	var d glMergeRequestPayload
 	if err := json.Unmarshal(body, &d); err != nil {
 		return PullRequestEvent{}, err
 	}
 	owner, name := splitNamespace(d.Project.PathWithNamespace)
+	// GitLab 的 draft 信号散在三个地方：draft 布尔、work_in_progress 布尔，或标题前缀
+	// "Draft:"，三个都认。
 	draft := d.ObjectAttributes.Draft || d.ObjectAttributes.WorkInProgress ||
 		strings.HasPrefix(strings.ToLower(d.ObjectAttributes.Title), "draft:")
 	return PullRequestEvent{
@@ -99,19 +102,15 @@ func (gitlabProvider) ParsePullRequest(body []byte) (PullRequestEvent, error) {
 	}, nil
 }
 
-// normalizeGitLabTime converts GitLab's webhook timestamp format
-// ("2017-09-20 08:31:45 UTC") into the RFC3339 the rest of the pipeline expects
-// (PullRequestEvent/CIStatusEvent document their time fields as "RFC3339 or
-// empty", and the shared parser is RFC3339-only). Without this every GitLab
-// event's timestamp failed to parse and was silently replaced with ingestion
-// time, defeating the PR-upsert and commit-status monotonic guards for GitLab
-// and skewing PR list ordering. Normalizing here keeps the fix inside the
-// provider adapter, matching the package's "providers contribute only what
-// differs" design rather than teaching the shared parser a GitLab dialect.
-// Output uses RFC3339Nano to preserve any sub-second precision GitLab sends, so
-// two events within the same wall-clock second still order correctly under the
-// monotonic guards (the shared time.RFC3339 parser accepts the fractional part).
-// Unrecognized input returns "" so the handler falls back to ingestion time.
+// normalizeGitLabTime 把 GitLab webhook 的时间戳格式（"2017-09-20 08:31:45 UTC"）转成
+// 流水线其余部分期望的 RFC3339（PullRequestEvent/CIStatusEvent 把时间字段文档化为
+// "RFC3339 或空"，共享解析器也只认 RFC3339）。没有这层转换，每个 GitLab 事件的时间戳
+// 都会解析失败、被静默替换成摄取时间，从而破坏 GitLab 的 PR-upsert 与 commit-status
+// 单调守卫、扭曲 PR 列表排序。在这里归一化，把修复留在 provider 适配器内，符合本包
+// 「提供方只贡献真正不同之处」的设计，而不是教共享解析器认 GitLab 方言。输出用
+// RFC3339Nano 保留 GitLab 可能下发的亚秒精度，让同一墙钟秒内的两个事件在单调守卫下仍
+// 能正确排序（共享的 time.RFC3339 解析器接受小数部分）。无法识别的输入返回 ""，
+// handler 因此退回摄取时间。
 func normalizeGitLabTime(s string) string {
 	if s == "" {
 		return ""
@@ -130,8 +129,8 @@ func normalizeGitLabTime(s string) string {
 	return ""
 }
 
-// normalizeGitLabMRState maps GitLab MR states onto open/closed/merged/draft.
-// "locked" is a transient open sub-state, so it reads as open.
+// normalizeGitLabMRState 把 GitLab 的 MR 状态映射到 open/closed/merged/draft。
+// "locked" 是 open 的一个瞬时子状态，按 open 处理。
 func normalizeGitLabMRState(state string, draft bool) string {
 	switch state {
 	case "merged":
@@ -146,6 +145,7 @@ func normalizeGitLabMRState(state string, draft bool) string {
 	}
 }
 
+// glPipelinePayload 是 GitLab "Pipeline Hook" webhook 载荷的 JSON 结构。
 type glPipelinePayload struct {
 	ObjectKind       string `json:"object_kind"`
 	ObjectAttributes struct {
@@ -157,30 +157,27 @@ type glPipelinePayload struct {
 	} `json:"object_attributes"`
 }
 
+// ParseCIStatus 把 GitLab 的 pipeline webhook 解码成归一化 CIStatusEvent。
 func (gitlabProvider) ParseCIStatus(body []byte) (CIStatusEvent, error) {
 	var d glPipelinePayload
 	if err := json.Unmarshal(body, &d); err != nil {
 		return CIStatusEvent{}, err
 	}
-	// Prefer the pipeline's finished_at (the state transition we're recording);
-	// fall back to created_at. Normalized to RFC3339 so the commit-status
-	// monotonic guard has a real, comparable timestamp instead of ingestion time.
+	// 优先用 pipeline 的 finished_at（即我们要记录的那次状态跃迁）；退回 created_at。
+	// 归一化成 RFC3339，让 commit-status 单调守卫有真实可比的时间戳，而非摄取时间。
 	updatedAt := d.ObjectAttributes.FinishedAt
 	if updatedAt == "" {
 		updatedAt = d.ObjectAttributes.CreatedAt
 	}
 	return CIStatusEvent{
 		SHA: d.ObjectAttributes.SHA,
-		// GitLab pipelines are modelled as one status per commit, not per named
-		// check, so a stable synthetic context keys the single status row.
-		// Known limitations of this simplification (acceptable for the default
-		// branch-pipeline config; revisit if needed):
-		//   - Merge-train / merged-results pipelines run on a synthetic merge
-		//     commit whose SHA differs from the MR head (last_commit.id), so the
-		//     head_sha join won't match and the card shows no checks.
-		//   - Multiple pipelines on one commit (e.g. a scheduled pipeline plus an
-		//     MR pipeline) collapse into this single context, so the last one to
-		//     fire wins per commit.
+		// GitLab 的 pipeline 按「每个 commit 一条状态」建模，而非按具名 check，所以用
+		// 一个稳定的合成 context 去键唯一的状态行。该简化的已知局限（对默认分支 pipeline
+		// 配置可接受；有需要再回头改）：
+		//   - merge-train / merged-results pipeline 跑在一个合成 merge commit 上，其 SHA
+		//     与 MR head（last_commit.id）不同，head_sha 关联不上，卡片会显示无检查。
+		//   - 同一 commit 上的多条 pipeline（如一条定时 pipeline + 一条 MR pipeline）会
+		//     塌缩进这同一个 context，每个 commit 最后触发的那条胜出。
 		Context:   "gitlab/pipeline",
 		State:     normalizeGitLabPipelineState(d.ObjectAttributes.Status),
 		TargetURL: d.ObjectAttributes.URL,
@@ -188,9 +185,9 @@ func (gitlabProvider) ParseCIStatus(body []byte) (CIStatusEvent, error) {
 	}, nil
 }
 
-// normalizeGitLabPipelineState maps pipeline statuses onto passed/failed/
-// pending. skipped is a pass (nothing failed); canceled is a failure-class
-// terminal, matching how GitHub treats cancelled.
+// normalizeGitLabPipelineState 把 pipeline 状态映射到 passed/failed/pending。
+// skipped 算通过（什么都没失败）；canceled 是失败类的终态，与 GitHub 对待 cancelled
+// 的方式一致。
 func normalizeGitLabPipelineState(s string) string {
 	switch s {
 	case "success", "skipped":
@@ -202,6 +199,8 @@ func normalizeGitLabPipelineState(s string) string {
 	}
 }
 
+// ValidateToken 用 GET /api/v4/user 验证 token 是否可用，并取回账户登录名。GitLab 把
+// token 放在 PRIVATE-TOKEN 头里。
 func (gitlabProvider) ValidateToken(ctx context.Context, instanceURL, token string) (Account, error) {
 	endpoint := NormalizeInstanceURL(instanceURL) + "/api/v4/user"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -236,9 +235,8 @@ func (gitlabProvider) ValidateToken(ctx context.Context, instanceURL, token stri
 	return Account{Login: u.Username}, nil
 }
 
-// splitNamespace splits a GitLab path_with_namespace ("group/subgroup/repo")
-// into owner ("group/subgroup") and repo name ("repo"). Subgroups are kept in
-// the owner so the identity stays unique.
+// splitNamespace 把 GitLab 的 path_with_namespace（"group/subgroup/repo"）拆成 owner
+// （"group/subgroup"）与仓库名（"repo"）。子组保留在 owner 里，保证身份唯一。
 func splitNamespace(path string) (owner, name string) {
 	path = strings.Trim(path, "/")
 	if i := strings.LastIndex(path, "/"); i >= 0 {

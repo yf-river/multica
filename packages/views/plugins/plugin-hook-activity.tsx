@@ -8,33 +8,35 @@ import { cn } from "@multica/ui/lib/utils";
 import { useLocale, useT } from "../i18n";
 
 /**
- * Why a plugin's hook is failing, where the admin who installed it will look.
+ * plugins 模块：插件 hook 的调用活动与失败提示。
  *
- * An `event` hook fails silently by design — nothing blocks, nobody is watching
- * the call, and after a few failures the circuit breaker stops even trying. All
- * of that is correct behaviour and completely invisible without this: the plugin
- * still says "enabled" while doing nothing at all.
+ * 解释插件 hook 为什么在失败——展示给安装它的管理员看。
  *
- * Shows nothing when the recent calls all succeeded. A working plugin does not
- * need a panel about it.
+ * `event` hook 的失败是刻意静默的：没有什么被阻塞、没人在盯着调用，连续失败
+ * 几次后熔断器干脆不再尝试。这些行为都正确，但没有本组件就完全不可见：插件
+ * 显示「已启用」，实际却什么都没做。
+ *
+ * 当最近的调用全部成功时什么都不渲染。一个健康工作的插件不需要关于它的面板。
  */
 
-/** A breaker trips on this many failures inside its window; see plugin_hook.go. */
+/** 熔断器在窗口期内达到多少次失败就跳闸；见 plugin_hook.go。 */
 const BREAKER_THRESHOLD = 5;
 
+/** 汇总一段调用记录：总数、失败数、从最新端数的连续失败数、最近一次错误。 */
 export function summarizeInvocations(invocations: readonly PluginInvocation[]) {
   const recent = invocations.slice(0, 20);
   const failures = recent.filter((invocation) => invocation.status !== "ok");
   return {
     total: recent.length,
     failures,
-    // Consecutive from the newest end: a hook that failed and then recovered is
-    // not the same story as one that is failing right now.
+    // 从最新端往前数连续失败：先失败后恢复的 hook，和此刻正在失败的 hook，
+    // 并不是同一个故事。
     consecutiveFailures: countLeadingFailures(recent),
     lastError: failures[0]?.error,
   };
 }
 
+/** 从开头起数连续的非 ok 记录个数（遇到 ok 即停）。 */
 function countLeadingFailures(invocations: readonly PluginInvocation[]): number {
   let count = 0;
   for (const invocation of invocations) {
@@ -44,6 +46,10 @@ function countLeadingFailures(invocations: readonly PluginInvocation[]): number 
   return count;
 }
 
+/**
+ * 展示某个安装的 hook 最近失败情况的小横幅；没有任何失败时返回 null。
+ * 颜色只在真正熔断（投递已停止）时才变红。
+ */
 export function PluginHookActivity({ wsId, installationId }: { wsId: string; installationId: string }) {
   const { t } = useT("settings");
   const { data } = useQuery(pluginInvocationsOptions(wsId, installationId));
@@ -57,9 +63,8 @@ export function PluginHookActivity({ wsId, installationId }: { wsId: string; ins
     <div
       className={cn(
         "flex items-start gap-2 rounded-md border px-3 py-2 text-caption",
-        // Red only once delivery has actually stopped. A plugin whose endpoint
-        // blipped twice is worth mentioning, not worth alarming about — and a
-        // banner that is always red stops being read.
+        // 只在投递真的停下来时才用红色。端点闪断两次的插件值得提一句，不必
+        // 拉响警报——而且永远红色的横幅不会再有人看。
         tripped
           ? "border-destructive/40 bg-destructive/5 text-destructive"
           : "border-surface-border text-muted-foreground",
@@ -78,6 +83,7 @@ export function PluginHookActivity({ wsId, installationId }: { wsId: string; ins
   );
 }
 
+/** 展示带定时调度（schedule）的 hook 最近一次调用的时间与状态；无调度 hook 时返回 null。 */
 export function PluginScheduleActivity({
   wsId,
   installationId,
@@ -125,6 +131,7 @@ export function PluginScheduleActivity({
   );
 }
 
+/** 把时间字符串格式化成当前 locale 的可读时间；缺失或非法时返回 "—"。 */
 function formatInvocationTime(value: string | undefined, locale: string): string {
   if (!value) return "—";
   const timestamp = Date.parse(value);

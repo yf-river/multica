@@ -1,18 +1,16 @@
+// 本文件导出检查器里几个下拉（运行环境 / 模型 / 可见性 / 并发数）共用的“触发器”样式串。
+
 /**
- * Shared trigger styling for inspector pickers (Runtime / Model / Visibility /
- * Concurrency).
+ * 检查器下拉触发器共用样式。
  *
- * The defining choices:
- * - `rounded-md` (6px) — soft enough to feel like a button, not a tab.
- * - `hover:bg-accent` — single hover layer carries the entire "this is a
- *   button" signal. We tried adding a hover-border on top, but layered hover
- *   states (border + bg) made the chip outline busier without adding info.
- * - `min-w-0` so children that `truncate` don't overflow the inspector's
- *   320px column.
+ * 关键取舍：
+ * - `rounded-md`（6px）：圆角够柔和，像按钮而不是标签页。
+ * - `hover:bg-accent`：单层悬停背景就承担了“这是按钮”的全部暗示——曾试过在其上
+ *   再叠悬停边框，但“边框 + 背景”两层悬停让 chip 轮廓变花哨，却没有多传达任何信息。
+ * - `min-w-0`：保证内部 `truncate` 的子元素不会溢出检查器 320px 宽的窄列。
  *
- * No default border on purpose: at rest the chip should sit quietly inside
- * the row; the moment the cursor enters, the bg flips and the affordance is
- * obvious.
+ * 刻意不给默认边框：静止时 chip 应安静地躺在行里；鼠标一进来背景翻转，
+ * “可点击”的暗示自然浮现。
  */
 export const CHIP_CLASS =
   "group flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-caption transition-colors hover:bg-accent";

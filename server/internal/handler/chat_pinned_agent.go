@@ -1,3 +1,7 @@
+// 本文件实现聊天「快捷 agent 栏」（pinned agent）的置顶管理：列表 / 置顶 / 取消
+// 置顶。置顶按 (workspace, user) 维度、各用户私有；上限 maxChatPinnedAgents 保持
+// 快捷栏紧凑。所有端点都先经 resolveChatAgentAccess 求出调用者当前可访问的 agent
+// 集合，防止置顶暴露或指向已失去访问权的 agent（与 ListChatSessions 一致）。
 package handler
 
 import (
@@ -8,18 +12,18 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// maxChatPinnedAgents caps the quick-agent bar so it stays compact.
+// maxChatPinnedAgents 封顶快捷 agent 栏，让它保持紧凑、小而精选。
 const maxChatPinnedAgents = 5
 
-// ChatPinnedAgentResponse is one entry in a user's "quick agent" bar.
+// ChatPinnedAgentResponse 是用户「快捷 agent」栏中的一项（agent + 排序位置）。
 type ChatPinnedAgentResponse struct {
 	AgentID  string  `json:"agent_id"`
 	Position float64 `json:"position"`
 }
 
-// resolveChatAgentAccess returns the set of agent ids the caller may use, or
-// writes an error and returns ok=false. Mirrors ListChatSessions so pins can't
-// surface or target agents the caller has lost access to.
+// resolveChatAgentAccess 返回调用者当前可用的 agent id 集合；出错时写好响应并
+// 返回 ok=false。与 ListChatSessions 镜像，让置顶不能暴露或指向调用者已失去
+// 访问权的 agent。
 func (h *Handler) resolveChatAgentAccess(w http.ResponseWriter, r *http.Request, userID, workspaceID string) (map[string]struct{}, bool) {
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -34,9 +38,8 @@ func (h *Handler) resolveChatAgentAccess(w http.ResponseWriter, r *http.Request,
 	return allowed, true
 }
 
-// ListChatPinnedAgents returns the caller's pinned quick-chat agents, ordered.
-// Pins for agents the caller can no longer access (archived / permissions
-// changed) are dropped from the response.
+// ListChatPinnedAgents 返回调用者置顶的快捷聊天 agent，按位置有序。已失去访问权
+// （归档 / 权限变更）的 agent 的置顶会被从响应中丢弃。
 func (h *Handler) ListChatPinnedAgents(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -68,8 +71,8 @@ func (h *Handler) ListChatPinnedAgents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// PinChatAgent adds an agent to the caller's quick-chat bar (append at end).
-// Idempotent — pinning an already-pinned agent returns 200.
+// PinChatAgent 把某 agent 加进调用者的快捷聊天栏（追加到末尾）。幂等——置顶
+// 一个已置顶的 agent 返回 200。
 func (h *Handler) PinChatAgent(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -98,8 +101,8 @@ func (h *Handler) PinChatAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cap the quick-agent bar at a small, curated set. Re-pinning an already
-	// pinned agent stays idempotent and is allowed even at the cap.
+	// 快捷栏封顶为一小组精选 agent。重复置顶已置顶的保持幂等，且在达到上限时也
+	// 放行。
 	existing, err := h.Queries.ListChatPinnedAgents(r.Context(), db.ListChatPinnedAgentsParams{
 		WorkspaceID: parseUUID(workspaceID),
 		UserID:      parseUUID(userID),
@@ -145,7 +148,8 @@ func (h *Handler) PinChatAgent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// UnpinChatAgent removes an agent from the caller's quick-chat bar.
+// UnpinChatAgent 把某 agent 从调用者的快捷聊天栏移除。删除不存在行不报错
+// （删除即幂等）。
 func (h *Handler) UnpinChatAgent(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {

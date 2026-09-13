@@ -1,3 +1,7 @@
+// 本文件是「GitHub 集成」设置标签页（设置页一级标签）：总开关控制是否启用 GitHub
+// 能力；连接分区管理 GitHub App 安装（连接 / 断开）；功能分区提供 PR 侧边栏、
+// 提交共同作者署名、PR 自动关联开关；仓库分区是前往「仓库设置」的快捷入口。
+
 "use client";
 
 import { useState } from "react";
@@ -33,12 +37,21 @@ import { useT } from "../../i18n";
 import { SettingsTab } from "./settings-layout";
 import { GitHubMark } from "./github-mark";
 
+/** 本页能改写的几个工作区设置键名。 */
 type SettingsKey =
   | "github_enabled"
   | "github_pr_sidebar_enabled"
   | "co_authored_by_enabled"
   | "github_auto_link_prs_enabled";
 
+/**
+ * GitHub 集成设置标签页。自上而下四块：
+ * - 主开关：是否启用 GitHub 能力（连接/功能开关的父开关）；
+ * - 连接：展示已连接账号，可发起连接 / 断开 GitHub App 安装；
+ * - 功能：PR 侧边栏、Co-authored-by 署名、PR 自动关联三个子开关（主开关关闭时禁用）；
+ * - 仓库：跳转到「仓库设置」的快捷入口。
+ * 只有管理员（can_manage，来自后端响应）能改这些设置；其余成员只读。
+ */
 export function GitHubTab() {
   const { t } = useT("settings");
   const workspace = useCurrentWorkspace();
@@ -49,10 +62,9 @@ export function GitHubTab() {
 
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  // `canView` gates the read-only installation list (every workspace member
-  // sees it after MUL-2413); `canManage` gates the Connect / Disconnect
-  // actions and comes from the backend response (`can_manage`) so the
-  // frontend never claims management rights the server would reject.
+  // `canView` 只负责放行只读的安装列表（MUL-2413 后每个工作区成员都能看到）；
+  // `canManage` 才决定「连接/断开」权限，取值来自后端返回的 `can_manage`——
+  // 前端绝不自行宣称那些服务端会拒绝的管理权限。
   const canView = !!currentMember;
 
   const { data: installationData } = useQuery({
@@ -71,6 +83,8 @@ export function GitHubTab() {
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
 
+  // 保存某个设置开关：合并进工作区已有 settings 后整体提交，并把返回值写回
+  // React Query 里的工作区列表缓存（避免下次读取还是旧值）。
   async function persistSetting(key: SettingsKey, next: boolean) {
     if (!workspace || savingKey) return;
     setSavingKey(key);
@@ -206,9 +220,8 @@ export function GitHubTab() {
               {canManage && (
                 <div className="flex items-center gap-2">
                   {connected && primaryInstallation ? (
-                    // Disconnect must stay reachable even when the master switch
-                    // is off — disconnect is a separate intent (revoke the App
-                    // grant) from hiding the feature.
+                    // 断开入口在主开关关闭时也必须保留——「断开」是撤销 GitHub App
+                    // 授权，与「隐藏该功能」（主开关）是两码事，不能互相牵连。
                     <Button
                       variant="outline"
                       size="sm"
@@ -360,6 +373,10 @@ export function GitHubTab() {
   );
 }
 
+/**
+ * 一个功能开关行：左边图标 + 标题 + 说明，右边是开关本体。disabled 时开关灰掉，
+ * 常见于主开关未开、非管理员或正在保存该键。
+ */
 function FeatureRow({
   id,
   icon,

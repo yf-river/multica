@@ -1,3 +1,6 @@
+// 本文件：issues 组件桶文件（barrel）——统一对外导出 issue 相关组件与子模块。
+// 页面与上层按名导入，无需知道具体文件位置；同时避免循环依赖需要时内聚到对应文件。
+
 export { StatusIcon } from "./status-icon";
 export { StatusHeading } from "./status-heading";
 export { PriorityIcon } from "./priority-icon";

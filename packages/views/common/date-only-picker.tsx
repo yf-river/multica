@@ -1,3 +1,4 @@
+// 通用日期选择器：各类"开始/截止日期"药丸背后的共享实现，用日历弹层选择日期，支持清除，日期以 "YYYY-MM-DD" 传输且无时区偏移。
 "use client";
 
 import { useState } from "react";
@@ -18,50 +19,50 @@ import { DeferredPopup } from "./deferred-popup";
 import { useLocale } from "../i18n";
 
 /**
- * Default class of the date pill trigger — shared with the deferred lookalike
- * trigger so the swap on first interaction is pixel-identical.
+ * 日期药丸触发器的默认样式——与延迟版外观触发器共用，保证首次交互时的
+ * 替换在像素级别完全一致。
  */
 const DATE_TRIGGER_CLASS =
   "flex items-center gap-1.5 cursor-pointer rounded px-1 -mx-1 hover:bg-accent/30 transition-colors";
 
 interface DateOnlyPickerProps {
-  /** Selected calendar day ("YYYY-MM-DD") or null. */
+  /** 选中的日历日（"YYYY-MM-DD"）或 null。 */
   value: string | null;
-  /** Emits the new calendar day, or null when cleared. */
+  /** 发出新的日历日，清除时发出 null。 */
   onChange: (value: string | null) => void;
-  /** Trigger icon — the entity picks CalendarClock (start) vs CalendarDays (due). */
+  /** 触发器图标——实体按语义选 CalendarClock（开始）或 CalendarDays（截止）。 */
   icon: React.ReactNode;
-  /** Placeholder label shown when no date is set. */
+  /** 未设置日期时显示的占位标签。 */
   placeholder: string;
-  /** Label of the empty-value row at the top of the popover ("No due date"). */
+  /** 弹层顶部空值行的标签（如"无截止日期"）。 */
   emptyLabel: string;
-  /** Paint the value with `text-destructive` when it is in the past (due dates). */
+  /** 值为过去时间时用 `text-destructive` 高亮（用于截止日期）。 */
   highlightOverdue?: boolean;
-  /** Fully custom trigger contents (replaces the icon + date/placeholder). */
+  /** 完全自定义的触发器内容（替换图标 + 日期/占位）。 */
   trigger?: React.ReactNode;
-  /** Custom trigger element (e.g. a pill button). */
+  /** 自定义触发器元素（如药丸按钮）。 */
   triggerRender?: React.ReactElement<Record<string, unknown>>;
-  /** Controlled open state — lets a ⋯ overflow menu reveal + open the pill. */
+  /** 受控的打开状态——让 "⋯" 溢出菜单可以揭示并打开药丸。 */
   open?: boolean;
+  /** 打开状态变化回调。 */
   onOpenChange?: (v: boolean) => void;
+  /** 弹层对齐方式。 */
   align?: "start" | "center" | "end";
-  /** Open the popover on first mount (progressive-disclosure sidebars). */
+  /** 首次挂载时就打开弹层（渐进式披露侧栏）。 */
   defaultOpen?: boolean;
 }
 
 /**
- * Entity-agnostic calendar-day picker: the shared behaviour behind every
- * start/due-date pill (issues, projects, …). It owns the Popover + Calendar +
- * clear wiring and the calendar-day transport ("YYYY-MM-DD", no timezone shift,
- * via @multica/core/issues/date); each entity wraps it to supply only the field
- * name (through `onChange`), the icon, and the localized copy. Keeping this in
- * one place stops the per-entity pills from drifting in behaviour or display
- * formatting.
+ * 与实体无关的日历日选择器：所有开始/截止日期药丸（Issue、项目等）背后的
+ * 共享行为。它负责 Popover + Calendar + 清除的接线，以及日历日的传输
+ * （"YYYY-MM-DD"，无时区偏移，经 @multica/core/issues/date）；各实体包装它，
+ * 只需提供字段名（通过 `onChange`）、图标和本地化文案。集中在一处能防止各
+ * 实体的药丸在行为或显示格式上逐渐走偏。
  *
- * Uncontrolled usages render a deferred lookalike trigger and mount the
- * Popover + Calendar machinery on first interaction — the default trigger is
- * computable from props alone, so every uncontrolled pill defers. See
- * `DeferredPopup` for why.
+ * 非受控用法会先渲染一个延迟版外观触发器，在首次交互时才挂载 Popover +
+ * Calendar 机制——默认触发器仅凭 props 就能算出，所以每个非受控药丸都会
+ * 延迟。原因见 `DeferredPopup`。
+ * @param props 日期选择器的属性集合。
  */
 export function DateOnlyPicker(props: DateOnlyPickerProps) {
   const canDefer =
@@ -84,7 +85,7 @@ export function DateOnlyPicker(props: DateOnlyPickerProps) {
   );
 }
 
-/** Default trigger content, kept identical to what the Impl renders. */
+/** 默认触发器内容，与 Impl 渲染的内容保持一致。 */
 function DateTriggerContent({
   value,
   icon,
@@ -143,11 +144,9 @@ function DateOnlyPickerImpl({
         )}
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align={align}>
-        {/* Empty value first, above the calendar — the same position every
-            list-backed picker puts it in, so clearing a field is always the
-            top row no matter which pill was opened. Unlike a footer button it
-            is also a selectable value: it carries the checkmark when the
-            field is empty. */}
+        {/* 空值放最上面、在日历上方——和每个列表型选择器一致，所以无论打开
+            哪个药丸，清除字段永远都是第一行。和底部按钮不同，它本身也是可选中
+            值：字段为空时它带有对勾。 */}
         <button
           type="button"
           onClick={() => {

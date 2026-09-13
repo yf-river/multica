@@ -1,3 +1,5 @@
+// 本文件是 skills 的视图 store 出口（barrel）。
+
 export {
   useSkillsViewStore,
   DEFAULT_HIDDEN_COLUMNS,

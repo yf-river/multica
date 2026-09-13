@@ -1,3 +1,6 @@
+// s3.go 实现基于 AWS S3（及其兼容后端：MinIO、阿里 OSS、腾讯 COS、Cloudflare R2 等）
+// 的对象存储：上传（内存字节或流）、下载读取、预签名 URL、删除、以及「给客户端消费的
+// 公开 URL」的构造规则（CDN 优先，其次自定义 endpoint，最后 AWS 区域限定主机）。
 package storage
 
 import (
@@ -19,24 +22,24 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
+// S3Storage 是对象存储的 S3 实现。
 type S3Storage struct {
 	client       *s3.Client
 	bucket       string
-	region       string // used to construct virtual-hosted-style public URLs when no CDN/endpoint is set
-	cdnDomain    string // if set, returned URLs use this instead of bucket name
-	endpointURL  string // custom S3-compatible endpoint (e.g. MinIO)
-	usePathStyle bool   // controls path-style S3 addressing
+	region       string // 未设 CDN/endpoint 时用它构造 virtual-hosted 风格的公开 URL
+	cdnDomain    string // 设置后，返回的 URL 用它替换桶名
+	endpointURL  string // 自定义 S3 兼容 endpoint（例如 MinIO）
+	usePathStyle bool   // 是否用 path-style 的 S3 寻址
 }
 
-// NewS3StorageFromEnv creates an S3Storage from environment variables.
-// Returns nil if S3_BUCKET is not set.
+// NewS3StorageFromEnv 从环境变量构造 S3Storage。S3_BUCKET 未设置时返回 nil。
 //
-// Environment variables:
-//   - S3_BUCKET (required)
-//   - S3_REGION (default: us-west-2)
-//   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (optional; falls back to default credential chain)
-//   - AWS_ENDPOINT_URL (optional S3-compatible endpoint)
-//   - S3_USE_PATH_STYLE (optional; defaults to true when AWS_ENDPOINT_URL is set)
+// 环境变量：
+//   - S3_BUCKET（必填）
+//   - S3_REGION（默认 us-west-2）
+//   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY（可选；缺省走默认凭证链）
+//   - AWS_ENDPOINT_URL（可选 S3 兼容 endpoint）
+//   - S3_USE_PATH_STYLE（可选；设置了 AWS_ENDPOINT_URL 时默认 true）
 func NewS3StorageFromEnv() *S3Storage {
 	bucket := os.Getenv("S3_BUCKET")
 	if bucket == "" {
@@ -98,19 +101,20 @@ func NewS3StorageFromEnv() *S3Storage {
 	}
 }
 
+// CdnDomain 返回配置的 CDN 域名（未配置为空串）。
 func (s *S3Storage) CdnDomain() string {
 	return s.cdnDomain
 }
 
-// looksLikeS3Hostname returns true when the configured S3_BUCKET value looks
-// like an S3 endpoint hostname rather than a bucket name. Real bucket names
-// can never legitimately contain "amazonaws.com", so this is an unambiguous
-// misconfiguration signal — the most common form being users pasting
-// "<bucket>.s3.<region>.amazonaws.com" into S3_BUCKET.
+// looksLikeS3Hostname 在配置的 S3_BUCKET 看起来像「S3 endpoint 主机名」而不是桶名时
+// 返回 true。真实桶名绝不合法地包含 "amazonaws.com"，所以这是无歧义的配置错误信号——
+// 最常见形态是用户把 "<bucket>.s3.<region>.amazonaws.com" 直接粘进 S3_BUCKET。
 func looksLikeS3Hostname(bucket string) bool {
 	return strings.Contains(bucket, "amazonaws.com")
 }
 
+// s3UsePathStyleFromEnv 解析 S3_USE_PATH_STYLE：显式设置才覆盖；默认跟随「是否配置了
+// 自定义 endpoint」（配了 endpoint 通常需要 path-style）。
 func s3UsePathStyleFromEnv(endpointURL string) bool {
 	defaultValue := endpointURL != ""
 	raw, ok := os.LookupEnv("S3_USE_PATH_STYLE")
@@ -125,6 +129,7 @@ func s3UsePathStyleFromEnv(endpointURL string) bool {
 	return parsed
 }
 
+// parseBoolEnv 解析常见布尔环境变量写法。
 func parseBoolEnv(raw string) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "1", "t", "true", "y", "yes", "on":
@@ -136,14 +141,13 @@ func parseBoolEnv(raw string) (bool, error) {
 	}
 }
 
-// awsEndpointDomains are the parent domains AWS serves S3 from. VPC, dualstack
-// and FIPS hostnames all live under them, as does the China partition.
+// awsEndpointDomains 是 AWS 提供 S3 服务的父域名。VPC、dualstack、FIPS 主机名都在
+// 它们之下，中国分区也包含在内。
 var awsEndpointDomains = []string{"amazonaws.com", "amazonaws.com.cn"}
 
-// usesAWSEndpoint reports whether uploads go to real AWS S3 — either the
-// default endpoint or an explicitly configured AWS one. The match is on the
-// host label boundary, so "notamazonaws.com" and "s3.amazonaws.com.evil.net"
-// are correctly treated as third-party endpoints.
+// usesAWSEndpoint 报告上传是否真的发往 AWS S3——默认端点或显式配置的 AWS 端点都算。
+// 匹配发生在主机标签边界上，因此 "notamazonaws.com" 与 "s3.amazonaws.com.evil.net"
+// 会被正确当作第三方端点。
 func (s *S3Storage) usesAWSEndpoint() bool {
 	if s.endpointURL == "" {
 		return true
@@ -157,10 +161,8 @@ func (s *S3Storage) usesAWSEndpoint() bool {
 	return false
 }
 
-// endpointHostname extracts the comparable hostname from a configured
-// endpoint: lowercased, without the port, and without a trailing root dot.
-// A value written without a scheme is retried as an https URL, since
-// url.Parse otherwise reads the whole thing as a path.
+// endpointHostname 从配置的 endpoint 里取出可比较的主机名：小写、无端口、无结尾根点。
+// 没有写 scheme 的值会按 https URL 再试一次，因为否则 url.Parse 会把整串读成路径。
 func endpointHostname(endpointURL string) string {
 	parsed, err := url.Parse(endpointURL)
 	if err != nil {
@@ -175,17 +177,14 @@ func endpointHostname(endpointURL string) string {
 	return strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
 }
 
-// uploadChecksumOptions returns the per-request options for the buffered
-// upload path. The SDK defaults RequestChecksumCalculation to WhenSupported,
-// which sends the body as aws-chunked with a CRC32 trailer; Aliyun OSS and
-// Tencent COS do not implement that encoding and reject the request outright.
+// uploadChecksumOptions 返回「内存缓冲上传路径」的按请求选项。SDK 默认把
+// RequestChecksumCalculation 设为 WhenSupported，会把 body 以 aws-chunked + CRC32
+// trailer 发送；阿里 OSS 与腾讯 COS 不实现这种编码，会直接拒绝请求。
 //
-// Downgrading to WhenRequired drops the trailer, but it also drops the
-// client-side checksum entirely, so it is applied only to non-AWS endpoints.
-// Real AWS S3 accepts the trailer today, and buckets carrying a default Object
-// Lock retention actually require a checksum, so those requests are left
-// exactly as the SDK built them — including any AWS_REQUEST_CHECKSUM_CALCULATION
-// the operator configured.
+// 降级成 WhenRequired 会去掉 trailer，但也会完全去掉客户端校验和，所以只对非 AWS
+// endpoint 应用。真 AWS S3 今天接受 trailer，而且带默认 Object Lock 保留期的桶实际
+// 要求有校验和，因此那些请求保持 SDK 原样构造——包括运维配置的
+// AWS_REQUEST_CHECKSUM_CALCULATION。
 func (s *S3Storage) uploadChecksumOptions() []func(*s3.Options) {
 	if s.usesAWSEndpoint() {
 		return nil
@@ -195,8 +194,8 @@ func (s *S3Storage) uploadChecksumOptions() []func(*s3.Options) {
 	}}
 }
 
-// storageClass returns the appropriate S3 storage class.
-// Custom endpoints (e.g. MinIO) only support STANDARD; real AWS defaults to INTELLIGENT_TIERING.
+// storageClass 返回合适的 S3 存储类。自定义端点（例如 MinIO）只支持 STANDARD；
+// 真 AWS 默认 INTELLIGENT_TIERING。
 func (s *S3Storage) storageClass() types.StorageClass {
 	if s.endpointURL != "" {
 		return types.StorageClassStandard
@@ -204,8 +203,8 @@ func (s *S3Storage) storageClass() types.StorageClass {
 	return types.StorageClassIntelligentTiering
 }
 
-// KeyFromURL extracts the S3 object key from a CDN or bucket URL.
-// e.g. "https://multica-static.copilothub.ai/abc123.png" → "abc123.png"
+// KeyFromURL 从 CDN 或桶 URL 里取出 S3 对象键。
+// 例如 "https://multica-static.copilothub.ai/abc123.png" → "abc123.png"
 //
 //	"https://my-bucket.s3.us-east-1.amazonaws.com/uploads/x/y.png" → "uploads/x/y.png"
 func (s *S3Storage) KeyFromURL(rawURL string) string {
@@ -220,23 +219,22 @@ func (s *S3Storage) KeyFromURL(rawURL string) string {
 		}
 	}
 
-	// Strip known "https://host/" prefixes. Order matters: the more specific
-	// region-qualified hosts come first so they win over the legacy bucket-only
-	// prefix that we used to write before the suffix bug was fixed.
+	// 剥掉已知的 "https://host/" 前缀。顺序重要：更具体的带区域主机排前面，让它们
+	// 赢过「只有桶名」的旧前缀（后者是后缀 bug 修复前写的）。
 	prefixes := make([]string, 0, 5)
 	if s.cdnDomain != "" {
 		prefixes = append(prefixes, "https://"+s.cdnDomain+"/")
 	}
 	if s.region != "" {
-		// virtual-hosted-style: https://<bucket>.s3.<region>.amazonaws.com/<key>
+		// virtual-hosted 风格：https://<bucket>.s3.<region>.amazonaws.com/<key>
 		prefixes = append(prefixes,
 			"https://"+s.bucket+".s3."+s.region+".amazonaws.com/",
-			// path-style: https://s3.<region>.amazonaws.com/<bucket>/<key>
+			// path 风格：https://s3.<region>.amazonaws.com/<bucket>/<key>
 			"https://s3."+s.region+".amazonaws.com/"+s.bucket+"/",
 		)
 	}
-	// Legacy / fallback: the buggy "https://<bucket>/<key>" form that older
-	// records may still hold, plus a generic bucket-host prefix.
+	// 旧版 / 兜底：旧的错误形态 "https://<bucket>/<key>"（老记录可能还留着），以及
+	// 一个通用的「桶主机」前缀。
 	prefixes = append(prefixes, "https://"+s.bucket+"/")
 
 	for _, prefix := range prefixes {
@@ -244,18 +242,16 @@ func (s *S3Storage) KeyFromURL(rawURL string) string {
 			return strings.TrimPrefix(rawURL, prefix)
 		}
 	}
-	// Fallback: take everything after the last "/".
+	// 兜底：取最后一个 "/" 之后的一切。
 	if i := strings.LastIndex(rawURL, "/"); i >= 0 {
 		return rawURL[i+1:]
 	}
 	return rawURL
 }
 
-// GetReader streams the object body back to the caller. The returned
-// ReadCloser must be closed; closing it terminates the underlying HTTP
-// connection to S3. A missing key surfaces as an *types.NoSuchKey error
-// wrapped in the SDK's smithy wrapper — callers can use errors.As to
-// distinguish "not found" from a transport failure.
+// GetReader 把对象 body 流式返回给调用方。返回的 ReadCloser 必须关闭；关闭它会终止到
+// S3 的底层 HTTP 连接。key 缺失会以包在 SDK smithy 包装里的 *types.NoSuchKey 错误形式
+// 出现——调用方可用 errors.As 区分「不存在」与传输失败。
 func (s *S3Storage) GetReader(ctx context.Context, key string) (io.ReadCloser, error) {
 	if key == "" {
 		return nil, fmt.Errorf("s3 GetReader: empty key")
@@ -270,10 +266,13 @@ func (s *S3Storage) GetReader(ctx context.Context, key string) (io.ReadCloser, e
 	return out.Body, nil
 }
 
+// PresignGet 为 GET 生成带有效期的预签名 URL。
 func (s *S3Storage) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	return s.PresignGetWithContentDisposition(ctx, key, ttl, "")
 }
 
+// PresignGetWithContentDisposition 为 GET 生成预签名 URL，可带 Content-Disposition
+// 响应头（例如强制下载名）。ttl 非正时默认 30 分钟。
 func (s *S3Storage) PresignGetWithContentDisposition(ctx context.Context, key string, ttl time.Duration, contentDisposition string) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("s3 PresignGet: empty key")
@@ -297,15 +296,15 @@ func (s *S3Storage) PresignGetWithContentDisposition(ctx context.Context, key st
 	return out.URL, nil
 }
 
-// Delete removes an object from S3. Errors are logged but not fatal.
+// Delete 从 S3 删除一个对象。错误记日志但不致命。
 func (s *S3Storage) Delete(ctx context.Context, key string) {
 	if err := s.DeleteObject(ctx, key); err != nil {
 		slog.Error("s3 DeleteObject failed", "key", key, "error", err)
 	}
 }
 
-// DeleteObject is Delete with the error surfaced — the media reconciler needs
-// it to keep the ledger row and schedule a retry instead of assuming success.
+// DeleteObject 是带错误上抛的 Delete——媒体对账器需要它来保留台账行并安排重试，而
+// 不是想当然地认为成功。
 func (s *S3Storage) DeleteObject(ctx context.Context, key string) error {
 	if key == "" {
 		return nil
@@ -317,20 +316,20 @@ func (s *S3Storage) DeleteObject(ctx context.Context, key string) error {
 	return err
 }
 
-// ObjectURL returns the URL a successful Upload/UploadStream of key would
-// return. It is a pure function of configuration, so the media intent ledger
-// can persist the URL BEFORE the upload for the durable reference check.
+// ObjectURL 返回对 key 做一次成功的 Upload/UploadStream 会返回的 URL。它是配置的纯
+// 函数，因此媒体意图台账可以在上传前就持久化该 URL，供持久引用检查用。
 func (s *S3Storage) ObjectURL(key string) string {
 	return s.uploadedURL(key)
 }
 
-// DeleteKeys removes multiple objects from S3. Best-effort, errors are logged.
+// DeleteKeys 从 S3 删除多个对象。尽力而为，错误记日志。
 func (s *S3Storage) DeleteKeys(ctx context.Context, keys []string) {
 	for _, key := range keys {
 		s.Delete(ctx, key)
 	}
 }
 
+// Upload 把内存中的字节上传成对象，返回客户端消费用的 URL。
 func (s *S3Storage) Upload(ctx context.Context, key string, data []byte, contentType string, filename string) (string, error) {
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:             aws.String(s.bucket),
@@ -347,6 +346,7 @@ func (s *S3Storage) Upload(ctx context.Context, key string, data []byte, content
 	return s.uploadedURL(key), nil
 }
 
+// UploadStream 把流上传成对象。流不可重绕，所以必须显式给 Content-Length。
 func (s *S3Storage) UploadStream(ctx context.Context, key string, data io.Reader, sizeBytes int64, contentType string, filename string) (string, error) {
 	if sizeBytes < 0 {
 		return "", fmt.Errorf("s3 PutObject: content length is required for streaming upload")
@@ -362,10 +362,9 @@ func (s *S3Storage) UploadStream(ctx context.Context, key string, data io.Reader
 		StorageClass:       s.storageClass(),
 	}
 	_, err := s.client.PutObject(ctx, input, func(opts *s3.Options) {
-		// A non-seekable stream cannot be rewound for SigV4 payload hashing.
-		// S3 supports UNSIGNED-PAYLOAD for authenticated requests. Avoid the
-		// optional trailing-checksum path as well: it requires another rewind
-		// or aws-chunked framing that S3-compatible backends handle unevenly.
+		// 不可 seek 的流无法为 SigV4 负载哈希回绕。S3 对已认证请求支持
+		// UNSIGNED-PAYLOAD。可选的尾校验和路径同样要避开：它需要再一次回绕或
+		// aws-chunked 框架，而 S3 兼容后端对其支持参差不齐。
 		opts.APIOptions = append(opts.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
 		opts.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	})
@@ -375,18 +374,14 @@ func (s *S3Storage) UploadStream(ctx context.Context, key string, data io.Reader
 	return s.uploadedURL(key), nil
 }
 
-// uploadedURL returns the URL stored for client consumption after an upload.
-// Priority: CDN domain > custom endpoint > AWS S3 region-qualified host. The CDN
-// domain wins even when a custom endpoint is set so S3-compatible backends
-// (MinIO, R2, B2, Wasabi, etc.) can be paired with a separate public-read
-// domain — writes still go through the SDK with the custom endpoint; only the
-// reader-facing URL changes.
+// uploadedURL 返回上传后给客户端消费存的 URL。优先级：CDN 域名 > 自定义 endpoint >
+// AWS S3 区域限定主机。即使配了自定义 endpoint，CDN 域名也胜出——这样 S3 兼容后端
+// （MinIO、R2、B2、Wasabi 等）可以配一个独立的公共读域名：写入仍经 SDK 走自定义
+// endpoint，只有面向读者的 URL 变了。
 //
-// For the default AWS S3 case, virtual-hosted-style is preferred:
-// https://<bucket>.s3.<region>.amazonaws.com/<key>. When the bucket name
-// contains dots, the AWS-issued wildcard TLS certificate (`*.s3.amazonaws.com`)
-// fails to validate the host, so we fall back to path-style:
-// https://s3.<region>.amazonaws.com/<bucket>/<key>.
+// 默认 AWS S3 场景优先 virtual-hosted 风格：https://<bucket>.s3.<region>.amazonaws.com/<key>。
+// 当桶名含点号时，AWS 签发的通配 TLS 证书（`*.s3.amazonaws.com`）无法对那个主机完成
+// 校验，于是回退到 path 风格：https://s3.<region>.amazonaws.com/<bucket>/<key>。
 func (s *S3Storage) uploadedURL(key string) string {
 	if s.cdnDomain != "" {
 		return fmt.Sprintf("https://%s/%s", s.cdnDomain, key)
@@ -400,10 +395,13 @@ func (s *S3Storage) uploadedURL(key string) string {
 	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", s.bucket, s.region, key)
 }
 
+// customEndpointObjectURL 在自定义 endpoint 下拼出对象的访问 URL。
 func customEndpointObjectURL(endpointURL, bucket, key string, usePathStyle bool) string {
 	return customEndpointObjectPrefix(endpointURL, bucket, usePathStyle) + key
 }
 
+// customEndpointObjectPrefix 计算自定义 endpoint 下指向某桶的对象前缀：path-style 为
+// "<endpoint>/<bucket>/"，否则把桶名作为虚拟主机子域："https://<bucket>.<host>/"。
 func customEndpointObjectPrefix(endpointURL, bucket string, usePathStyle bool) string {
 	trimmed := strings.TrimRight(endpointURL, "/")
 	if usePathStyle {

@@ -1,3 +1,8 @@
+// 文件职责：定义 `multica issue` 整棵 CLI 命令树——issue 的增删改查、状态/排序、
+// 指派、评论、订阅人、执行历史与用量、搜索等子命令。命令层只负责把用户参数拼成
+// HTTP 请求发给 server、再把结果以表格/JSON 形式打印；文末的 assignee 解析辅助
+// 函数被 issue/project 等多组命令共用，是「人名/ID 如何映射成 assignee_type+ID」的
+// 公共逻辑所在。
 package main
 
 import (
@@ -23,21 +28,19 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
-// resolveTextFlag picks between a `--<name>` inline value, a `--<name>-stdin`
-// flag, and a `--<name>-file <path>` flag, mirroring the existing `--content`
-// / `--content-stdin` pattern. It returns the resolved string and an error
-// when more than one source is set, or when stdin/file is requested but
-// produces no body. Inline flag values are passed through
-// util.UnescapeBackslashEscapes so bash-double-quoted `\n` becomes a real
-// newline; stdin and file bodies are returned verbatim so literal backslashes
-// survive intact.
+// resolveTextFlag 从三种互斥的取值来源中挑出一个文本型 flag 的值：
+// 行内 `--<name>`、`--<name>-stdin`（标准输入）、`--<name>-file <path>`（读文件），
+// 沿用既有 `--content` / `--content-stdin` 的模式。返回 (解析出的文本, 是否确实
+// 提供了文本, 错误)。超过一个来源被设置时报错；要求 stdin/文件却没有内容（去掉
+// 末尾换行后为空串）也报错。
 //
-// The `-file` source exists for Windows agents: piping HEREDOC content to
-// `--<name>-stdin` from Windows PowerShell silently drops non-ASCII bytes
-// (PowerShell 5.1's `$OutputEncoding` defaults to ASCIIEncoding when piping
-// to a native command), so Chinese / Cyrillic / any non-ASCII content
-// arrives as `?`. Reading a UTF-8 file directly bypasses the shell's pipe
-// re-encoding entirely. See issues #2198 / #2236 / #2376.
+// 行内值会经 util.UnescapeBackslashEscapes 处理，使 bash 双引号里的 `\n` 变成真
+// 换行；stdin 与文件内容则原样返回，保证字面反斜杠不被破坏。
+//
+// 之所以提供 `-file` 来源：Windows 下 agent 用 PowerShell 管道向
+// `--<name>-stdin` 传 HEREDOC 内容时，非 ASCII 字节会被静默丢弃（PowerShell
+// 5.1 向原生命令管道时 `$OutputEncoding` 默认 ASCII 编码），中文/西里尔文等一律
+// 变成 `?`。直接读 UTF-8 文件绕开了 shell 的管道重编码。参见 issues #2198 / #2236 / #2376。
 func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) {
 	stdinFlag := flagName + "-stdin"
 	fileFlag := flagName + "-file"
@@ -90,17 +93,15 @@ func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) 
 	return util.UnescapeBackslashEscapes(inline), true, nil
 }
 
-// ensureFileFlagWithinWorkdir fails closed when a --<name>-file path resolves
-// outside the current working directory, unless --allow-external-file is set.
+// ensureFileFlagWithinWorkdir 采用「失败即关闭」策略：当 `--<name>-file` 指向的
+// 路径解析后位于当前工作目录之外，一律拒绝，除非显式传了 --allow-external-file。
 //
-// Agent task workdirs are isolated per profile and per task; machine-shared
-// scratch paths like /tmp are not. MUL-4252 traced a cross-environment context
-// leak to exactly this gap: a quick-create run wrote its description to a fixed
-// /tmp/desc.md, the write silently failed because a *different* environment's
-// run had left a stale file there minutes earlier, and --description-file then
-// fed that stale content into the new issue. Requiring the file to live under
-// the workdir turns "silently read another run's file" into a loud command
-// failure — an "incorrect content" bug becomes a "command errored" bug.
+// 原因：agent 的任务工作目录按「profile×任务」彼此隔离，但 /tmp 这类机器级共享
+// 路径并不隔离。MUL-4252 曾追查到一次跨环境串数据正出自这里：某次 quick-create
+// 把描述写进固定的 /tmp/desc.md，写入因另一个环境的运行几分钟前留下的陈旧文件而
+// 静默失败，随后 --description-file 就把那份旧内容喂给了新 issue。要求文件必须
+// 落在工作目录下，等于把「悄悄读到别的运行的文件」变成一声响亮的命令报错——
+// 「内容不对」的 bug 变成了「命令失败」的 bug。
 func ensureFileFlagWithinWorkdir(cmd *cobra.Command, fileFlag, flagName, filePath string) error {
 	if allow, _ := cmd.Flags().GetBool("allow-external-file"); allow {
 		return nil
@@ -120,12 +121,11 @@ func ensureFileFlagWithinWorkdir(cmd *cobra.Command, fileFlag, flagName, filePat
 	return nil
 }
 
-// fileWithinWorkingDir reports whether filePath resolves to a location inside
-// the process working directory. Both sides are symlink-resolved so aliased
-// roots (e.g. macOS /tmp -> /private/tmp) and symlinks planted inside the
-// workdir fail closed. A path that does not exist yet is judged on its cleaned
-// absolute form so the caller's os.ReadFile still surfaces the real not-found
-// error afterwards.
+// fileWithinWorkingDir 判断 filePath 解析后是否落在进程当前工作目录之内。判断
+// 双方都先做符号链接解析，这样被软链别名化的根路径（如 macOS /tmp -> /private/tmp）
+// 或工作目录内埋的软链，都会按失败处理（fail closed）。对尚不存在的路径，按其
+// 清理后的绝对路径形态判断——文件不存在时，后续调用方的 os.ReadFile 仍会报出
+// 真实的「找不到文件」错误。
 func fileWithinWorkingDir(filePath string) (bool, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -142,11 +142,10 @@ func fileWithinWorkingDir(filePath string) (bool, error) {
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
 	} else {
-		// The file may not exist yet (the caller's os.ReadFile surfaces that).
-		// Resolve symlinks on the parent directory instead so the comparison
-		// base and the candidate share the same canonical prefix — otherwise a
-		// workdir under a symlinked root (e.g. macOS temp dirs) would falsely
-		// read as "outside". A missing parent falls back to a plain clean.
+		// 文件可能还不存在（真实的 not-found 由调用方的 os.ReadFile 报出）。
+		// 改为解析父目录的符号链接，使比较基准与候选路径共享同一份规范化前缀
+		// ——否则位于软链根下的工作目录（如 macOS 临时目录）会被误判为「在外部」。
+		// 父目录也不存在时退回做一次普通 clean。
 		if resolvedParent, perr := filepath.EvalSymlinks(filepath.Dir(abs)); perr == nil {
 			abs = filepath.Join(resolvedParent, filepath.Base(abs))
 		} else {
@@ -163,6 +162,8 @@ func fileWithinWorkingDir(filePath string) (bool, error) {
 	return true, nil
 }
 
+// issueCmd 是 `multica issue` 父命令，下面挂着 list/get/create/update/comment 等
+// 子命令（见 init()）。它本身只负责分组，不执行任何动作。
 var issueCmd = &cobra.Command{
 	Use:   "issue",
 	Short: "Work with issues",
@@ -253,7 +254,8 @@ var issueReorderCmd = &cobra.Command{
 	RunE: runIssueReorder,
 }
 
-// Comment subcommands.
+// Comment 子命令组：评论的列出/新增/删除/解决/取消解决。
+// 注意 use 里的 <issue-id>/<comment-id> 参数指的是哪种 ID，见各命令的 RunE。
 
 var issueCommentCmd = &cobra.Command{
 	Use:   "comment",
@@ -295,7 +297,7 @@ var issueCommentUnresolveCmd = &cobra.Command{
 	RunE:  runIssueCommentUnresolve,
 }
 
-// Subscriber subcommands.
+// Subscriber 子命令组：issue 订阅者的查看/添加/移除。
 
 var issueSubscriberCmd = &cobra.Command{
 	Use:   "subscriber",
@@ -323,7 +325,8 @@ var issueSubscriberRemoveCmd = &cobra.Command{
 	RunE:  runIssueSubscriberRemove,
 }
 
-// Execution history subcommands.
+// Execution history 子命令组：查看 issue 上的执行历史（runs）、单次执行的消息、
+// 聚合 token 用量，以及重跑/取消任务。
 
 var issueRunsCmd = &cobra.Command{
 	Use:   "runs <issue-id>",
@@ -381,29 +384,27 @@ var issueSearchCmd = &cobra.Command{
 	RunE: runIssueSearch,
 }
 
-// validIssueStatuses are the 7 BUILT-IN status keys, present in every
-// workspace. Since MUL-6243 a workspace may define additional custom statuses,
-// so this is the list shown in help text and error messages, not the set of
-// accepted values — see validateIssueStatus.
+// validIssueStatuses 是 7 个「内置」状态 key，每个工作区都一定有它们。自 MUL-6243
+// 起工作区还可以自定义额外状态，所以这份列表只用于帮助文本和报错信息，不代表
+// 可接受值的全集——真正接受哪些由 validateIssueStatus 说了算。
 var validIssueStatuses = []string{
 	"backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled",
 }
 
+// validIssuePriorities 是 issue 优先级枚举的合法取值列表（none 表示不设优先级）。
 var validIssuePriorities = []string{
 	"urgent", "high", "medium", "low", "none",
 }
 
-// validIssueSortColumns are the sort keys `issue list --sort` accepts. They
-// mirror the server's ListIssues handler. "position" is the default and is
-// always sorted ascending (the board's manual drag order), so --direction is
-// only meaningful for the other columns.
+// validIssueSortColumns 是 `issue list --sort` 可接受的排序键，与 server 端
+// ListIssues 处理函数保持一致。"position"（看板手动拖拽顺序）是默认值且永远
+// 升序，所以 --direction 只对其余列有意义。
 var validIssueSortColumns = []string{
 	"position", "title", "created_at", "start_date", "due_date", "priority",
 }
 
-// directionalIssueSortColumns are the sort keys for which --direction is
-// meaningful: every valid column except "position". Derived from
-// validIssueSortColumns so the two stay in sync.
+// directionalIssueSortColumns 是 --direction 对其有意义的排序键集合：除
+// "position" 外的所有合法列。从 validIssueSortColumns 派生，保证两处不脱节。
 var directionalIssueSortColumns = func() []string {
 	cols := make([]string, 0, len(validIssueSortColumns)-1)
 	for _, c := range validIssueSortColumns {
@@ -414,14 +415,12 @@ var directionalIssueSortColumns = func() []string {
 	return cols
 }()
 
-// validateIssueStatus checks the shape of a status key, not its membership.
+// validateIssueStatus 只校验状态 key 的「形态」，不校验它是否在合法集合里。
 //
-// Since MUL-6243 a workspace can define custom statuses, so the CLI cannot know
-// the valid set without a round trip. It validates the format locally — that
-// still catches the common typo classes instantly and offline — and lets the
-// server reject an unknown key, which it does with a 400 listing that
-// workspace's actual statuses. Keeping a hard-coded list here would reject the
-// custom statuses the feature exists to enable.
+// 自 MUL-6243 起工作区可以自定义状态，因此 CLI 不经过一次网络往返就无法知道
+// 合法全集。它先在本地校验格式——足以立刻拦下常见的拼写错误，且完全离线——
+// 至于未知 key 则交给 server 拒绝（server 会以 400 列出该工作区的真实状态）。
+// 若在这里硬编码一份列表，反而会拒绝掉这个功能本要支持的自定义状态。
 func validateIssueStatus(status string) error {
 	trimmed := strings.ToLower(strings.TrimSpace(status))
 	if trimmed == "" {
@@ -436,13 +435,17 @@ func validateIssueStatus(status string) error {
 	return nil
 }
 
-// issueStatusKeyPattern mirrors the issue_status.key storage constraint.
+// issueStatusKeyPattern 与 issue_status.key 的存储约束保持一致：小写字母/数字开头，
+// 1-32 位小写字母、数字或下划线。
 var issueStatusKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,31}$`)
 
+// validateIssuePriority 校验 --priority 是否为合法枚举值。
 func validateIssuePriority(priority string) error {
 	return validateIssueEnum("priority", priority, validIssuePriorities)
 }
 
+// validateIssueEnum 是通用的枚举校验：value 必须出现在 allowed 列表里，否则报错
+// 并把合法值一并列出。
 func validateIssueEnum(field, value string, allowed []string) error {
 	for _, a := range allowed {
 		if value == a {
@@ -636,9 +639,12 @@ func init() {
 }
 
 // ---------------------------------------------------------------------------
-// Issue commands
+// Issue commands —— 各 issue 子命令的 RunE 实现
 // ---------------------------------------------------------------------------
 
+// runIssueList 执行 `issue list`：把状态/优先级/assignee/project/metadata/分页/排序
+// 等过滤条件拼成查询参数后 GET /api/issues，再按 --output 打表格或 JSON。表格输出会
+// 先加载 actor 查找表，把 assignee 的 (type, uuid) 渲染成可读名字。
 func runIssueList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -708,10 +714,8 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 		if d != "asc" && d != "desc" {
 			return fmt.Errorf("invalid --direction %q; valid values: asc, desc", v)
 		}
-		// position (the manual board order) is always ascending, so the server
-		// ignores --direction for it. Reject the combination up front rather
-		// than silently dropping the flag — a passed-but-ignored flag is a
-		// footgun, especially in scripts.
+		// position（手动看板顺序）永远升序，server 会忽略针对它的 --direction。
+		// 与其静默吞掉这个「传了但没用」的 flag（对脚本是隐患），不如在本地先拒绝该组合。
 		if sortVal == "" || sortVal == "position" {
 			return fmt.Errorf("--direction requires --sort to be one of %s; position (the default manual board order) is always ascending", strings.Join(directionalIssueSortColumns, ", "))
 		}
@@ -794,6 +798,8 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runIssuePullRequests 执行 `issue pull-requests <id>`（别名 prs）：拉取关联到该
+// issue 的 PR 列表，再按 --output 打表格或 JSON。
 func runIssuePullRequests(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -856,6 +862,8 @@ func pullRequestURL(pr map[string]any) string {
 	return strVal(pr, "html_url")
 }
 
+// runIssueGet 执行 `issue get <id>`：按 id/key 取单个 issue 的完整详情；表格输出
+// 会把 assignee 渲染成可读名字、把日期裁到 YYYY-MM-DD，其余场景直接输出 JSON。
 func runIssueGet(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -905,8 +913,8 @@ func runIssueGet(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, issue)
 }
 
-// childStage extracts the integer stage from a child issue response map.
-// Returns ok=false when the child is unstaged (stage null/absent).
+// childStage 从子 issue 的响应 map 里取出整数形式的 stage。
+// stage 字段为 null/缺失（即未分阶段）时返回 ok=false。
 func childStage(m map[string]any) (int, bool) {
 	v, ok := m["stage"]
 	if !ok || v == nil {
@@ -927,6 +935,9 @@ func childStage(m map[string]any) (int, bool) {
 	return 0, false
 }
 
+// runIssueChildren 执行 `issue children <id>`（别名 subissues）：拉取子 issue 列表；
+// 表格输出按 stage 升序（未分阶段排最后），JSON 输出按 stage 分组并附每组完成计数，
+// 让 agent 一眼掌握阶段进度。
 func runIssueChildren(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -949,13 +960,13 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 	}
 	children := resp.Issues
 
-	// Order by stage ascending (unstaged last), preserving the API's
-	// within-stage order (position, then created_at desc).
+	// 排序：stage 升序、未分阶段（unstaged）排最后；
+	// 同 stage 内部保持 API 返回的顺序（position，再按 created_at desc）。
 	sort.SliceStable(children, func(i, j int) bool {
 		si, oki := childStage(children[i])
 		sj, okj := childStage(children[j])
 		if oki != okj {
-			return oki // staged before unstaged
+			return oki // 已分阶段（staged）排在未分阶段（unstaged）前
 		}
 		return si < sj
 	})
@@ -983,8 +994,8 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// JSON: group by stage so an agent can see, at a glance, how many
-	// sub-issues there are and which stage each belongs to.
+	// JSON：按 stage 分组输出，让 agent 一眼看清共有多少子 issue、
+	// 分属哪个 stage（各组还带 done 完成数统计）。
 	type stageGroup struct {
 		Stage  int              `json:"stage"`
 		Total  int              `json:"total"`
@@ -1019,14 +1030,12 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 	})
 }
 
-// isTerminalChildIssue reports whether a child issue counts as finished for
-// stage progress.
+// isTerminalChildIssue 判断一个子 issue 是否算「已完成」，用于 stage 进度统计。
 //
-// Prefers `status_category`, which the server resolves for custom statuses: a
-// workspace can define its own statuses, and one in the `done` category must
-// count as done here or an agent reads the wrong progress. Falls back to the
-// raw status when the field is absent, so an older backend still reports the
-// built-in statuses correctly. (MUL-6243)
+// 优先用 `status_category`——它由 server 针对自定义状态解析出来：工作区可自定义
+// 状态，只要某个自定义状态落在 `done` 类别里，这里就必须把它算作完成，否则 agent
+// 会读到错误的进度。字段缺失时回退到原始 status 字段，使旧版后端的内置状态仍能
+// 正确统计。(MUL-6243)
 func isTerminalChildIssue(c map[string]any) bool {
 	status := strVal(c, "status_category")
 	if status == "" {
@@ -1035,22 +1044,19 @@ func isTerminalChildIssue(c map[string]any) bool {
 	return status == "done" || status == "cancelled"
 }
 
-// isHTTPURL reports whether path is an http:// or https:// URL.
-// Used to skip URL-shaped values passed to --attachment, which only
-// accepts local file paths. Trims surrounding whitespace because
-// agent-generated commands sometimes copy URLs with stray spaces.
+// isHTTPURL 判断 path 是否是 http:// 或 https:// 开头的 URL。
+// 用于把传给 --attachment 的 URL 形值滤掉——该参数只接受本地文件路径。
+// 先去掉两端空白再判断，因为 agent 生成的命令偶尔会带着多余空格复制 URL。
 func isHTTPURL(path string) bool {
 	p := strings.TrimSpace(path)
 	return strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://")
 }
 
-// ensureAttachmentWithinWorkdir applies the same workdir containment guard as
-// --description-file / --content-file (MUL-4252) to a local --attachment path.
-// An agent that writes a chart/report to a machine-shared path like /tmp and
-// then attaches it could otherwise pick up another run's — possibly another
-// workspace's — stale file (the image version of the /tmp/desc.md leak). URL
-// values are filtered by the caller and never reach here. --allow-external-file
-// overrides, mirroring the text-flag escape hatch.
+// ensureAttachmentWithinWorkdir 对本地 --attachment 路径施加与 --description-file /
+// --content-file 相同的工作目录守卫（MUL-4252）。若 agent 把图表/报告写到 /tmp 这类
+// 机器共享路径再作为附件上传，可能误取到另一份运行——甚至另一工作区——留下的陈旧
+// 文件（即 /tmp/desc.md 泄漏的附件版）。URL 形值由调用方先行滤除，不会走到这里。
+// --allow-external-file 可覆盖，与文本 flag 的逃生门保持一致。
 func ensureAttachmentWithinWorkdir(cmd *cobra.Command, filePath string) error {
 	if allow, _ := cmd.Flags().GetBool("allow-external-file"); allow {
 		return nil
@@ -1070,21 +1076,19 @@ func ensureAttachmentWithinWorkdir(cmd *cobra.Command, filePath string) error {
 	return nil
 }
 
-// pendingAttachment is a local --attachment file that passed URL filtering and
-// the workdir guard and has been read into memory, ready to upload.
+// pendingAttachment 是一个通过了 URL 过滤和工作目录守卫、已被读入内存、等待上传的
+// 本地 --attachment 文件。
 type pendingAttachment struct {
 	path string
 	data []byte
 }
 
-// collectLocalAttachments validates and reads ALL local --attachment paths up
-// front, before any upload. URL-shaped values are warned and skipped (the API
-// only accepts local paths). Each remaining path is run through the MUL-4252
-// workdir guard and read into memory; the first invalid or unreadable path
-// returns an error with nothing uploaded. Both `issue create` and
-// `comment add` share this so an invalid attachment can never leave an earlier
-// one uploaded as an orphaned issue attachment while the issue/comment is never
-// created (which would duplicate on retry).
+// collectLocalAttachments 在任何上传发生之前，一次性校验并读取所有本地
+// --attachment 路径。URL 形值给出警告后跳过（该 API 只接受本地路径）；其余每个
+// 路径都要过 MUL-4252 的工作目录守卫并读入内存，任一路径非法或不可读都会报错且
+// 什么都还没上传。`issue create` 与 `comment add` 共用此函数，保证「附件非法」时
+// 不会出现前几个附件已上传成孤儿、issue/comment 却没建成的半成品状态（否则重试会
+// 产生重复）。
 func collectLocalAttachments(cmd *cobra.Command, attachments []string) ([]pendingAttachment, error) {
 	pending := make([]pendingAttachment, 0, len(attachments))
 	for _, filePath := range attachments {
@@ -1104,6 +1108,8 @@ func collectLocalAttachments(cmd *cobra.Command, attachments []string) ([]pendin
 	return pending, nil
 }
 
+// appendUniqueStrings 把 values 逐个 trim 后追加到 dst 中，跳过空串与已出现的重复项，
+// 返回一个新切片（不改动 dst）。用于合并不同来源的附件 ID 列表。
 func appendUniqueStrings(dst []string, values ...string) []string {
 	seen := make(map[string]struct{}, len(dst)+len(values))
 	out := make([]string, 0, len(dst)+len(values))
@@ -1121,6 +1127,9 @@ func appendUniqueStrings(dst []string, values ...string) []string {
 	return out
 }
 
+// quickCreateAttachmentIDsFromEnv 从环境变量 MULTICA_QUICK_CREATE_ATTACHMENT_IDS
+// 读取一个 JSON 字符串数组（daemon 发起 quick-create 时注入），返回去重后的附件 ID
+// 列表；变量为空时返回 nil。
 func quickCreateAttachmentIDsFromEnv() ([]string, error) {
 	raw := strings.TrimSpace(os.Getenv("MULTICA_QUICK_CREATE_ATTACHMENT_IDS"))
 	if raw == "" {
@@ -1133,6 +1142,9 @@ func quickCreateAttachmentIDsFromEnv() ([]string, error) {
 	return appendUniqueStrings(nil, ids...), nil
 }
 
+// runIssueCreate 执行 `issue create`：收集标题/描述/状态等字段并做本地校验，构造
+// 请求体（含 quick-create 来源标记与父/子 issue、附件），先校验全部本地附件再 POST
+// 创建；创建成功后补传附件（此处失败只警告不报错，避免重试造成重复）。
 func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	title, _ := cmd.Flags().GetString("title")
 	if title == "" {
@@ -1156,7 +1168,7 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Use a longer timeout when attachments are present (file uploads can be slow).
+	// 带了附件时放宽超时——文件上传可能很慢。
 	timeout := cli.APITimeout()
 	attachments, _ := cmd.Flags().GetStringSlice("attachment")
 	if len(attachments) > 0 {
@@ -1222,13 +1234,11 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		body["assignee_id"] = aID
 	}
 
-	// Quick-create stamp: when the daemon sets MULTICA_QUICK_CREATE_TASK_ID
-	// before invoking the agent, the agent's `multica issue create` call
-	// inherits the env var and tags the new issue with origin_type=
-	// quick_create + origin_id=<task_id>. The completion handler then
-	// locates the issue deterministically by origin instead of "most
-	// recent issue by this agent", which is racy when max_concurrent_tasks
-	// > 1 and the agent is creating other issues in parallel.
+	// Quick-create 标记：daemon 在唤起 agent 前会设置 MULTICA_QUICK_CREATE_TASK_ID，
+	// agent 里的 `multica issue create` 调用便继承了该环境变量，把新 issue 打上
+	// origin_type=quick_create + origin_id=<task_id> 的标记。随后完成处理器靠 origin
+	// 确定性定位这个 issue，而不是用「该 agent 最近创建的 issue」——后者在
+	// max_concurrent_tasks > 1 且 agent 并行建别的 issue 时会有竞态。
 	if taskID := os.Getenv("MULTICA_QUICK_CREATE_TASK_ID"); taskID != "" {
 		body["origin_type"] = "quick_create"
 		body["origin_id"] = taskID
@@ -1243,12 +1253,10 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		body["attachment_ids"] = attachmentIDs
 	}
 
-	// Pre-validate attachments BEFORE creating the issue so a bad path can
-	// never produce a half-created issue (which would otherwise trigger
-	// callers — especially the agent doing quick-create — to retry the whole
-	// `issue create` and end up with duplicates). URLs are warned+skipped, the
-	// workdir guard is applied, and every local path is read upfront; a failure
-	// here surfaces pre-create so the issue never lands.
+	// 在创建 issue 之前先预校验附件：坏的路径绝不能产生一个建了一半的 issue
+	// （否则调用方——尤其是正在 quick-create 的 agent——会整体重试 `issue create`，
+	// 最终得到一堆重复）。URL 形值警告后跳过、过工作目录守卫、所有本地路径提前
+	// 读入内存；这里任一失败都在创建前暴露，issue 根本不会落库。
 	pending, err := collectLocalAttachments(cmd, attachments)
 	if err != nil {
 		return err
@@ -1262,10 +1270,9 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create issue: %w", err)
 	}
 
-	// Upload attachments and link them to the newly created issue.
-	// Failures here are partial-success: the issue exists already, so
-	// turning a non-zero exit on the caller would invite a retry that
-	// duplicates the issue. Warn on stderr and continue.
+	// 上传附件并把它们绑定到刚创建的 issue。这一步失败属于「部分成功」：issue 已经
+	// 存在了，若让调用方拿到非零退出码，会诱使它重试整个命令从而重复建 issue。
+	// 所以只往 stderr 打警告并继续。
 	issueID := strVal(result, "id")
 	for _, att := range pending {
 		if _, uploadErr := client.UploadFile(ctx, att.data, att.path, issueID); uploadErr != nil {
@@ -1292,6 +1299,9 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// activeDuplicateIssueCreateMessage 从错误里提取「活动重复 issue」的友好报错文案。
+// 只有当错误是 HTTP 409 且响应体 code 为 active_duplicate_issue、error 非空时才返回
+// 消息，否则返回 ok=false，让调用方走普通的错误包装。
 func activeDuplicateIssueCreateMessage(err error) (string, bool) {
 	var httpErr *cli.HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict {
@@ -1310,6 +1320,9 @@ func activeDuplicateIssueCreateMessage(err error) (string, bool) {
 	return payload.Error, true
 }
 
+// runIssueUpdate 执行 `issue update <id>`：把通过 flag 显式改动的字段（title/
+// description/status/priority/assignee/project/日期/parent/stage/position）收集成
+// 请求体。description 只读取一次——三个来源 flag 都传时由 resolveTextFlag 报互斥错。
 func runIssueUpdate(cmd *cobra.Command, args []string) error {
 	noStart, _ := cmd.Flags().GetBool("no-start")
 	statusChanged := cmd.Flags().Changed("status")
@@ -1350,9 +1363,8 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		// `issue update` has no --attachment flag, so the hint must point at the
-		// command that does. Telling the agent to "pass --attachment" here would
-		// name an argument this command rejects.
+		// `issue update` 没有 --attachment 参数，所以这里的提示必须指向带该参数的命令。
+		// 如果只让 agent「传 --attachment」，指的就是本命令会拒绝的参数名。
 		if err := guardLocalPathLinks(desc, "issue description",
 			"`multica issue update` cannot carry files — deliver the file with `multica issue comment add <issue-id> --attachment <path>` instead, and drop the link."); err != nil {
 			return err
@@ -1447,6 +1459,9 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// runIssueAssign 执行 `issue assign <id>`：把 issue 指派给某个 member/agent/squad
+// （--to/--to-id），或 --unassign 清空指派。变更会触发一次 agent run，--no-start
+// 可只改归属不起任务。
 func runIssueAssign(cmd *cobra.Command, args []string) error {
 	toName, _ := cmd.Flags().GetString("to")
 	unassign, _ := cmd.Flags().GetBool("unassign")
@@ -1515,6 +1530,8 @@ func runIssueAssign(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// runIssueStatus 执行 `issue status <id> <key>`：把 issue 改到指定状态列。key 只做
+// 本地形态校验（真正合法全集交给 server），默认会触发一次 agent run，--no-start 关闭。
 func runIssueStatus(cmd *cobra.Command, args []string) error {
 	id := args[0]
 	status := args[1]
@@ -1556,17 +1573,14 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Reorder command
+// Reorder command —— 状态列内重新排序
 // ---------------------------------------------------------------------------
 
-// registerIssueReorderFlags wires the reorder command's flags and declares its
-// target selector as a cobra flag group: mutually exclusive so at most one of
-// --before/--after/--top/--bottom is accepted, and one-required so at least one
-// must be given. Declaring the rule (instead of counting the flags by hand in
-// runIssueReorder) lets cobra reject zero-target and multi-target invocations
-// before RunE with a canonical message, and makes shell completion group-aware
-// — it hides the sibling target flags once one of them is set. It is shared with
-// the command's tests so they exercise the exact flag-group wiring that ships.
+// registerIssueReorderFlags 给 reorder 命令接上 flag，并把它的目标选择器声明成一组
+// cobra flag group：互斥（--before/--after/--top/--bottom 至多接受一个）且必选其一。
+// 用声明式规则代替在 runIssueReorder 里手数 flag，cobra 就能在 RunE 之前用标准报错
+// 文案拒绝「零目标」和「多目标」调用，还能让 shell 补全感知分组——一旦某个目标已设，
+// 就隐藏其余兄弟 flag。该函数被命令测试共用，测试跑的就是真正随命令发布的 flag 接线。
 func registerIssueReorderFlags(cmd *cobra.Command) {
 	cmd.Flags().String("before", "", "Place the issue directly above this issue (same column)")
 	cmd.Flags().String("after", "", "Place the issue directly below this issue (same column)")
@@ -1577,28 +1591,24 @@ func registerIssueReorderFlags(cmd *cobra.Command) {
 	cmd.MarkFlagsOneRequired("before", "after", "top", "bottom")
 }
 
-// runIssueReorder repositions an issue inside its current status column. The
-// new position is computed client-side by computeReorderPosition, which mirrors
-// the board/list drag-and-drop math (computePosition in
-// packages/views/issues/utils/drag-utils.ts) so the CLI and UI agree on where
-// an issue lands. Only the issue's own position changes; its column membership
-// (status) is left untouched, so cross-column moves still go through
-// `issue status`.
+// runIssueReorder 在 issue 当前所处的状态列内重新排位。新位置由
+// computeReorderPosition 在客户端算好——它复刻了看板/列表拖拽的排序算法
+// （packages/views/issues/utils/drag-utils.ts 里的 computePosition），保证 CLI 与
+// UI 对「issue 落在哪」看法一致。只改动 issue 自身的 position；它属于哪一列
+// （status）不受影响，跨列移动仍走 `issue status`。
 func runIssueReorder(cmd *cobra.Command, args []string) error {
 	before, _ := cmd.Flags().GetString("before")
 	after, _ := cmd.Flags().GetString("after")
 	top, _ := cmd.Flags().GetBool("top")
 	bottom, _ := cmd.Flags().GetBool("bottom")
 
-	// "Exactly one of --before/--after/--top/--bottom" is enforced declaratively
-	// by the command's mutually-exclusive, one-required flag group (see
-	// registerIssueReorderFlags), so cobra rejects zero-target and multi-target
-	// invocations before RunE runs. Cobra keys off flag *presence* (Changed),
-	// not value, so guard the cases it cannot see: a --before/--after passed
-	// empty (e.g. an unset shell variable), or a --top/--bottom explicitly set
-	// to false (e.g. `--top=false` from a generated command). Each counts as
-	// "set" for the group yet selects no real target, and would otherwise fall
-	// through to a confusing "not found in column" error.
+	// 「--before/--after/--top/--bottom 恰好一个」由命令上的互斥+必选 flag group
+	// 声明式兜底（见 registerIssueReorderFlags），cobra 会在 RunE 之前拒绝零目标与
+	// 多目标调用。cobra 判断依据是 flag 的「出现与否」（Changed）而非值，所以这里
+	// 再防它看不到的情况：--before/--after 传了空串（比如未赋值的 shell 变量），或
+	// --top/--bottom 被显式置为 false（如生成命令里的 `--top=false`）。这些对 group
+	// 而言都算「已设置」，却没有选中任何真实目标，若不拦下会落进一句令人困惑的
+	// 「在该列找不到」错误。
 	if cmd.Flags().Changed("before") && before == "" {
 		return fmt.Errorf("--before requires an issue ID or key")
 	}
@@ -1642,9 +1652,8 @@ func runIssueReorder(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("issue %s has no status, cannot determine its column", targetDisplay)
 	}
 
-	// Resolve the relative target up front, before any no-op shortcut, so a bad
-	// --before/--after value (typo, self-reference) always errors instead of
-	// being swallowed by the single-issue-column fast path below.
+	// 在任何 no-op 捷径之前先把相对目标解析出来：这样坏的 --before/--after 值
+	// （拼写错误、指向自身）总会报错，而不是被下面「单 issue 列」的快路径吞掉。
 	relative := before != "" || after != ""
 	var otherRef resolvedID
 	if relative {
@@ -1661,17 +1670,16 @@ func runIssueReorder(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Scope the column to the issue's own project (when it has one) so the
-	// computed position lands relative to the project board the issue lives on,
-	// not a blend of every project's issues in this status.
+	// 把列范围限定到 issue 自己的项目（若有）：这样算出的位置落在这个 issue 所在的
+	// 项目看板上，而不是把该状态下列所有项目的问题混在一起算。
 	projectID := strVal(target, "project_id")
 	column, err := fetchIssueColumn(ctx, client, wsID, projectID, status)
 	if err != nil {
 		return fmt.Errorf("list %s column: %w", status, err)
 	}
 
-	// Build the column order with the target removed, plus a lookup of every
-	// position in the column (the target's own included, for the no-op check).
+	// 构造去掉目标后的列顺序，外加一张「该列每个 issue 的位置」查找表
+	// （目标自身的位置也保留，供下面的 no-op 判断用）。
 	positions := make(map[string]float64, len(column))
 	ordered := make([]string, 0, len(column))
 	for _, raw := range column {
@@ -1685,9 +1693,8 @@ func runIssueReorder(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if len(ordered) == 0 {
-		// The active issue is alone in its column. A relative move cannot
-		// succeed here (its target is necessarily in another column), so report
-		// that rather than a misleading "nothing to reorder".
+		// 该 issue 独自占着整列。相对移动在这里必然失败（它的目标一定在别的列），
+		// 与其报一句误导性的「没有可排序的内容」，不如直接讲明原因。
 		if relative {
 			return reorderTargetNotInColumnError(ctx, client, otherRef, targetDisplay, status)
 		}
@@ -1733,8 +1740,7 @@ func runIssueReorder(cmd *cobra.Command, args []string) error {
 	return issueReorderOutput(cmd, result)
 }
 
-// issueReorderOutput prints an issue map as a table or JSON, matching the
-// update command's output contract.
+// issueReorderOutput 按 update 命令的输出契约，把 issue map 打成表格或 JSON 打印。
 func issueReorderOutput(cmd *cobra.Command, issue map[string]any) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
@@ -1751,10 +1757,9 @@ func issueReorderOutput(cmd *cobra.Command, issue map[string]any) error {
 	return cli.PrintJSON(os.Stdout, issue)
 }
 
-// reorderTargetNotInColumnError explains why a --before/--after target could
-// not be used. It fetches the target only to report its actual column in the
-// message, so the common mistake (target lives in a different column) gets a
-// precise, actionable error instead of a bare "not found".
+// reorderTargetNotInColumnError 解释为什么 --before/--after 的目标用不上。它额外
+// 拉取一次目标仅为了在报错里写明它实际所在的列，让最常见的错误（目标在别的列）
+// 得到一个精确、可执行的提示，而不是干巴巴一句「找不到」。
 func reorderTargetNotInColumnError(ctx context.Context, client *cli.APIClient, otherRef resolvedID, issueDisplay, status string) error {
 	otherDisplay := otherRef.Display
 	if other, err := fetchIssue(ctx, client, otherRef.ID); err == nil {
@@ -1766,7 +1771,7 @@ func reorderTargetNotInColumnError(ctx context.Context, client *cli.APIClient, o
 	return fmt.Errorf("issue %s was not found in the %q column", otherDisplay, status)
 }
 
-// fetchIssue retrieves a single issue by canonical ID.
+// fetchIssue 按规范 ID 取单个 issue。
 func fetchIssue(ctx context.Context, client *cli.APIClient, id string) (map[string]any, error) {
 	var issue map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(id), &issue); err != nil {
@@ -1775,12 +1780,9 @@ func fetchIssue(ctx context.Context, client *cli.APIClient, id string) (map[stri
 	return issue, nil
 }
 
-// fetchIssueColumn returns every issue in a status column ordered by position
-// ascending, paginating through the list endpoint so columns larger than one
-// page (the server caps a page at 100) still produce a complete, correctly
-// ordered set. A non-empty projectID scopes the column to that project,
-// matching a project board; an empty projectID lists the whole workspace
-// column.
+// fetchIssueColumn 返回某个状态列里的全部 issue，按 position 升序；通过 list 端点
+// 翻页抓取，让超过一页（server 每页上限 100）的列也能拿到完整且顺序正确的集合。
+// projectID 非空时把列限定到该项目（对应项目看板）；为空则列出整个工作区的该状态列。
 func fetchIssueColumn(ctx context.Context, client *cli.APIClient, workspaceID, projectID, status string) ([]map[string]any, error) {
 	var all []map[string]any
 	offset := 0
@@ -1814,13 +1816,10 @@ func fetchIssueColumn(ctx context.Context, client *cli.APIClient, workspaceID, p
 	return all, nil
 }
 
-// computeReorderPosition computes the position that places activeID at its
-// index in ids. It mirrors computePosition in
-// packages/views/issues/utils/drag-utils.ts: the top of a column is one less
-// than the next item, the bottom is one more than the previous, and any
-// interior slot is the midpoint of its neighbours. fallback is returned when
-// activeID is alone in (or absent from) the column, leaving its position
-// unchanged.
+// computeReorderPosition 算出把 activeID 放到 ids 中它当前索引处所需的位置值。
+// 复刻 packages/views/issues/utils/drag-utils.ts 里的 computePosition：列顶 = 下一项
+// 位置减 1，列底 = 上一项位置加 1，中间槽位取左右邻居的中点。当 activeID 独自占列
+// （或不在列里）时返回 fallback，保持其位置不变。
 func computeReorderPosition(ids []string, activeID string, positions map[string]float64, fallback float64) float64 {
 	idx := indexOfString(ids, activeID)
 	if idx == -1 || len(ids) == 1 {
@@ -1835,6 +1834,7 @@ func computeReorderPosition(ids []string, activeID string, positions map[string]
 	return (positions[ids[idx-1]] + positions[ids[idx+1]]) / 2
 }
 
+// indexOfString 返回 target 在 s 中的下标，找不到返回 -1。
 func indexOfString(s []string, target string) int {
 	for i, v := range s {
 		if v == target {
@@ -1852,9 +1852,13 @@ func floatVal(m map[string]any, key string) float64 {
 }
 
 // ---------------------------------------------------------------------------
-// Comment commands
+// Comment commands —— 评论相关子命令
 // ---------------------------------------------------------------------------
 
+// runIssueCommentList 执行 `issue comment list <issue-id>`：先本地镜像 server 的
+// flag 组合校验（--recent/--thread/--tail/--roots-only 等互斥与依赖关系），再按模式
+// 请求评论列表。--fold 折叠默认开启以省 token，--compact/--summary 只在 JSON 输出
+// 下生效。
 func runIssueCommentList(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -1876,21 +1880,18 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 	rootsOnly, _ := cmd.Flags().GetBool("roots-only")
 	summary, _ := cmd.Flags().GetBool("summary")
 	full, _ := cmd.Flags().GetBool("full")
-	// Flags().Changed distinguishes "user did not pass --recent" from
-	// "user explicitly passed --recent 0" (or a negative value). The
-	// GetInt zero-value collapses both cases, which would otherwise
-	// cause us to silently drop an invalid value and fall back to the
-	// default unparameterized list — exactly the drift Elon flagged in
-	// the PR #2787 second review. --tail follows the same pattern, and
-	// also keeps "--tail 0" (root-only) distinguishable from "no --tail".
+	// Flags().Changed 能区分「用户没传 --recent」和「用户显式传了 --recent 0」
+	// （或负数）。GetInt 的零值会把这两种情况混为一谈，若不区分，我们会悄悄丢掉
+	// 非法值、退回默认的无参列表——这正是 PR #2787 二审时被点名的问题。--tail 沿用
+	// 同样模式，也保证「--tail 0」（只要根评论）能与「没传 --tail」区分开。
 	recentSet := cmd.Flags().Changed("recent")
 	tailSet := cmd.Flags().Changed("tail")
 	before, _ := cmd.Flags().GetString("before")
 	beforeID, _ := cmd.Flags().GetString("before-id")
 
-	// Mirror the server-side combination rules client-side so the user gets
-	// a clear local error instead of a 400 round-trip. These match the
-	// validation in handler.ListComments (server/internal/handler/comment.go).
+	// 把 server 端的组合规则在客户端镜像一份，让用户立刻拿到清晰的本地产错，而不是
+	// 打一次 400 的往返。这些规则与 handler.ListComments
+	// （server/internal/handler/comment.go）里的校验保持一致。
 	if recentSet && recent <= 0 {
 		return fmt.Errorf("--recent must be a positive integer")
 	}
@@ -1932,14 +1933,12 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 	if summary {
 		params.Set("summary", "true")
 	}
-	// Resolve-aware folding is the default on the complete-thread reads (default
-	// list, --recent, --thread without --tail): a resolved thread collapses to
-	// root + conclusion so an agent does not pay tokens for settled discussion.
-	// --full opts out. The partial-thread reads (--since / --tail) and
-	// --roots-only cannot be folded safely (server rejects fold there), so we
-	// never send fold for them and --full is a harmless no-op. Sending fold only
-	// when eligible keeps every existing read command — including the prompt's
-	// `--thread <id> --tail 30` cold path — working unchanged.
+	// 完整线程类读取（默认列表、--recent、不带 --tail 的 --thread）默认做「感知已解决
+	// 的折叠」：已解决的线程塌缩成 根评论+结论，agent 不必为已尘埃落定的讨论付 token。
+	// --full 可退出该行为。局部读取（--since / --tail）与 --roots-only 无法安全折叠
+	// （server 会在那里拒绝 fold），所以对它们绝不发 fold，此时 --full 是无害的 no-op。
+	// 只在具备折叠资格时发送 fold，保证所有既有读命令——包括提示词里的冷路径
+	// `--thread <id> --tail 30`——行为不变地照常工作。
 	foldEligible := !rootsOnly && since == "" && !tailSet
 	if foldEligible && !full {
 		params.Set("fold", "true")
@@ -1968,12 +1967,10 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("list comments: %w", err)
 	}
-	// The server emits the next-page cursor in headers when there is likely
-	// an older page. Surface it on stderr so an operator (and the agent
-	// prompt update that follows this PR) can scroll deeper without having
-	// to dig into the raw HTTP response. Label depends on which paging mode
-	// the caller is in — under --recent the cursor is a thread cursor;
-	// under --thread + --tail it is a reply cursor inside that thread.
+	// 服务端在「很可能还有更早的一页」时把下一页游标放进响应头。把它打印到 stderr，
+	// 让操作者（以及随本 PR 更新的 agent 提示词）不用翻原始 HTTP 响应就能继续往下翻。
+	// 标签取决于调用方处于哪种翻页模式——--recent 下是线程游标；--thread + --tail
+	// 下是该线程内的回复游标。
 	if nb := respHeaders.Get("X-Multica-Next-Before"); nb != "" {
 		if nbid := respHeaders.Get("X-Multica-Next-Before-Id"); nbid != "" {
 			label := "Next thread cursor"
@@ -2022,6 +2019,9 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssueCommentAdd 执行 `issue comment add <issue-id>`：解析内容来源（行内/
+// stdin/文件）并做本地路径链接守卫，随后先上传全部本地附件再 POST 创建评论——
+// 附件任一失败即中止，避免上传成孤儿附件却没有评论主体。
 func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 	content, hasContent, err := resolveTextFlag(cmd, "content")
 	if err != nil {
@@ -2040,7 +2040,7 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Use a longer timeout when attachments are present (file uploads can be slow).
+	// 带了附件时放宽超时——文件上传可能很慢。
 	timeout := cli.APITimeout()
 	attachments, _ := cmd.Flags().GetStringSlice("attachment")
 	if len(attachments) > 0 {
@@ -2055,12 +2055,10 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 	}
 	issueID := issueRef.ID
 
-	// Validate and read ALL attachments before uploading any. URLs are skipped
-	// with a warning — `--attachment` only accepts local file paths. Reading
-	// everything up front means a later invalid path (external / symlink escape
-	// caught by the workdir guard) aborts the call with ZERO uploads, instead
-	// of leaving an earlier file uploaded as an orphaned issue attachment while
-	// the comment is never posted (which would duplicate on retry — MUL-4252).
+	// 在任何上传前先校验并读完全部附件。URL 形值给出警告后跳过——`--attachment`
+	// 只接受本地文件路径。提前全部读入，意味着后面任一路径非法（被工作目录守卫拦下
+	// 的外部/软链逃逸）都会在零上传的状态下中止调用，而不是留下「前面的附件已上传成
+	// 孤儿、评论却没发出」的局面（重试会重复——MUL-4252）。
 	pending, err := collectLocalAttachments(cmd, attachments)
 	if err != nil {
 		return err
@@ -2096,6 +2094,8 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// runIssueCommentDelete 执行 `issue comment delete <comment-id>`：按评论 UUID 直接
+// 删除评论。
 func runIssueCommentDelete(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -2121,6 +2121,8 @@ func runIssueCommentUnresolve(cmd *cobra.Command, args []string) error {
 	return runIssueCommentResolution(cmd, args[0], false)
 }
 
+// runIssueCommentResolution 是 resolve/unresolve 的共用实现：resolve=true 走 POST
+// /resolve，否则走 DELETE /resolve。带附件上传场景下超时可能较长。
 func runIssueCommentResolution(cmd *cobra.Command, commentID string, resolve bool) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -2152,9 +2154,11 @@ func runIssueCommentResolution(cmd *cobra.Command, commentID string, resolve boo
 }
 
 // ---------------------------------------------------------------------------
-// Execution history commands
+// Execution history commands —— 执行历史与聚合用量
 // ---------------------------------------------------------------------------
 
+// runIssueRuns 执行 `issue runs <issue-id>`：列出该 issue 上的执行历史（task runs）；
+// 表格输出会把 agent_id 渲染成名字、时间裁到分钟、错误信息截断显示。
 func runIssueRuns(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -2210,6 +2214,8 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssueUsage 执行 `issue usage <issue-id>`：GET /usage 取该 issue 聚合后的
+// token 用量（输入/输出/缓存读/缓存写）与任务数并输出。
 func runIssueUsage(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -2234,8 +2240,8 @@ func runIssueUsage(cmd *cobra.Command, args []string) error {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 
-	// JSON numbers decode to float64; formatMetadataValue renders them as clean
-	// integers (no scientific notation for large cache-token counts).
+	// JSON 数字解出来是 float64；formatMetadataValue 把它们渲染成干净的整数
+	// （大数值的缓存 token 数不会出现科学计数法）。
 	headers := []string{"INPUT_TOKENS", "OUTPUT_TOKENS", "CACHE_READ", "CACHE_WRITE", "RUNS"}
 	rows := [][]string{{
 		formatMetadataValue(result["total_input_tokens"]),
@@ -2248,6 +2254,8 @@ func runIssueUsage(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssueRunMessages 执行 `issue run-messages <task-id>`：列出某次执行产生的对话
+// 消息；--issue 限定短 task ID 的解析范围，--since 只取指定序号之后的消息。
 func runIssueRunMessages(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -2312,9 +2320,11 @@ func runIssueRunMessages(cmd *cobra.Command, args []string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Search command
+// Search command —— 全文搜索
 // ---------------------------------------------------------------------------
 
+// runIssueRerun 执行 `issue rerun <id>`：把该 issue 当前的 agent 指派重新入队成一条
+// 全新任务（POST /rerun），相当于手动触发一次重新执行。
 func runIssueRerun(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -2343,11 +2353,10 @@ func runIssueRerun(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runIssueCancelTask cancels a single task by ID. It accepts the short ID
-// prefix shown by `issue runs` (resolved through resolveTaskRunID), and uses
-// /api/tasks/{taskId}/cancel which both updates the DB row to status=cancelled
-// and triggers the daemon-side interrupt path (#2107) so an in-flight agent
-// stops emitting tool calls promptly instead of running until its own timeout.
+// runIssueCancelTask 按任务 ID 取消单个任务。接受 `issue runs` 显示的那种短 ID 前缀
+// （经 resolveTaskRunID 解析）。走 /api/tasks/{taskId}/cancel，它既把 DB 行更新为
+// status=cancelled，也触发 daemon 侧的中断路径（#2107）——飞行中的 agent 会立刻停止
+// 发工具调用，而不是一直跑到自己超时。
 func runIssueCancelTask(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -2388,6 +2397,8 @@ func runIssueCancelTask(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssueSearch 执行 `issue search <query>`：按标题/描述/评论正文做全文搜索；
+// 表格输出额外展示命中来源（MATCH 列）与命中片段，方便判断相关度。
 func runIssueSearch(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -2447,9 +2458,11 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Subscriber commands
+// Subscriber commands —— 订阅人管理
 // ---------------------------------------------------------------------------
 
+// runIssueSubscriberList 执行 `issue subscriber list <issue-id>`：列出该 issue 的
+// 订阅者、订阅原因与时间。
 func runIssueSubscriberList(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -2492,16 +2505,20 @@ func runIssueSubscriberList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssueSubscriberAdd 执行 `issue subscriber add <issue-id>`：为 issue 增加一个
+// 订阅人（member 或 agent），省略 --user/--user-id 时默认订阅调用者自己。
 func runIssueSubscriberAdd(cmd *cobra.Command, args []string) error {
 	return runIssueSubscriberMutation(cmd, args[0], "subscribe")
 }
 
+// runIssueSubscriberRemove 执行 `issue subscriber remove <issue-id>`：为 issue 移除
+// 一个订阅人（member 或 agent），省略 --user/--user-id 时默认退订调用者自己。
 func runIssueSubscriberRemove(cmd *cobra.Command, args []string) error {
 	return runIssueSubscriberMutation(cmd, args[0], "unsubscribe")
 }
 
-// runIssueSubscriberMutation shares subscribe/unsubscribe logic — both endpoints
-// take the same request body and only differ in the path.
+// runIssueSubscriberMutation 是 subscribe/unsubscribe 的共用实现——两个端点接收相同
+// 的请求体，仅路径不同。
 func runIssueSubscriberMutation(cmd *cobra.Command, issueID, action string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -2553,22 +2570,22 @@ func runIssueSubscriberMutation(cmd *cobra.Command, issueID, action string) erro
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers —— 公共辅助函数：assignee 解析是核心，被 issue/project 等多组命令共用
 // ---------------------------------------------------------------------------
 
+// assigneeMatch 是一次 assignee 解析命中的候选：Type/ID 就是要写进请求体的
+// assignee_type/assignee_id，Name 供报错与展示用。
 type assigneeMatch struct {
-	Type string // "member", "agent", or "squad"
-	ID   string // user_id for members, agent id for agents, squad id for squads
+	Type string // 实体类型："member" / "agent" / "squad"
+	ID   string // 对应 UUID：member 是 user_id，agent 是 agent id，squad 是 squad id
 	Name string
 }
 
-// assigneeKinds is the set of entity types a given flag is allowed to resolve
-// to. Issue assignees accept all three (`issueAssigneeKinds`), while
-// project lead and issue subscribers are member-or-agent only
-// (`memberOrAgentKinds`) — the DB CHECK on `project.lead_type` and the
-// `isWorkspaceEntity` switch in the subscriber handler both reject `squad`,
-// so resolving to (squad, ...) for those callers would surface as a 500 /
-// 403 instead of a clean CLI-side resolution error (MUL-2165 follow-up).
+// assigneeKinds 表示某个 flag 允许解析成哪些实体类型。issue 的 assignee 三种都收
+// （issueAssigneeKinds），而 project lead 与 issue 订阅者只收 member 或 agent
+// （memberOrAgentKinds）——`project.lead_type` 上的 DB CHECK 与订阅者 handler 里
+// 的 isWorkspaceEntity 分支都会拒绝 `squad`，对这些调用方解析成 (squad, ...) 只会
+// 以 500 / 403 收场，而不是得到干净的 CLI 侧解析错误（MUL-2165 后续）。
 type assigneeKinds struct {
 	member, agent, squad bool
 }
@@ -2576,10 +2593,12 @@ type assigneeKinds struct {
 var (
 	issueAssigneeKinds = assigneeKinds{member: true, agent: true, squad: true}
 	memberOrAgentKinds = assigneeKinds{member: true, agent: true}
-	// Actor property values are members only (MUL-6286).
+	// Actor 属性值只允许 member（MUL-6286）。
 	memberOnlyKinds = assigneeKinds{member: true}
 )
 
+// assigneeResolveRetrySleep 是在 assignee 解析重试之间等待的可替换函数（测试会换成
+// 假的）。返回 true 表示 ctx 已取消，调用方应停止重试。
 var assigneeResolveRetrySleep = func(ctx context.Context, d time.Duration) bool {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
@@ -2591,6 +2610,10 @@ var assigneeResolveRetrySleep = func(ctx context.Context, d time.Duration) bool 
 	}
 }
 
+// getAssigneeJSON 带轻量重试地 GET 一个 JSON 端点（用于拉取 members/agents/squads）。
+// 只对可重试的解析错误（见 isRetryableAssigneeResolveError，即网络层错误）按
+// 100ms→250ms 退避最多重试 3 次；HTTP 4xx/5xx 不重试。重试等待期间 ctx 被取消则
+// 直接返回 ctx.Err()。
 func getAssigneeJSON(ctx context.Context, client *cli.APIClient, path string, out any) error {
 	delays := []time.Duration{100 * time.Millisecond, 250 * time.Millisecond}
 	var err error
@@ -2606,6 +2629,8 @@ func getAssigneeJSON(ctx context.Context, client *cli.APIClient, path string, ou
 	return err
 }
 
+// isRetryableAssigneeResolveError 判断错误是否值得在解析 assignee 时重试：
+// 目前只有网络层错误算——连不上/超时这类瞬时故障才有重试价值。
 func isRetryableAssigneeResolveError(err error) bool {
 	var netErr *cli.NetworkError
 	return errors.As(err, &netErr)
@@ -2634,6 +2659,11 @@ func (k assigneeKinds) describe() string {
 	}
 }
 
+// resolveAssignee 把用户提供的名字解析成 (assignee_type, assignee_id)，kinds 决定
+// 允许命中哪些实体类型。匹配按三档优先级：完整 UUID / 8 位短 ID / 精确别名（如邮箱）
+// → 大小写不敏感的全名精确相等 → 子串模糊匹配；某一档命中多个即报「有歧义」。
+// 拉取 members/agents/squads 走带重试的 getAssigneeJSON；若所有列表拉取全部失败，
+// 报告真实错误而不是误导性的「未找到」。
 func resolveAssignee(ctx context.Context, client *cli.APIClient, name string, kinds assigneeKinds) (string, string, error) {
 	if client.WorkspaceID == "" {
 		return "", "", fmt.Errorf("workspace ID is required to resolve assignees; use --workspace-id or set MULTICA_WORKSPACE_ID")
@@ -2645,20 +2675,18 @@ func resolveAssignee(ctx context.Context, client *cli.APIClient, name string, ki
 	}
 	inputLower := strings.ToLower(input)
 
-	// Matches are collected into three priority buckets. Higher-priority buckets
-	// short-circuit lower-priority matching so that, e.g., an exact name match
-	// always wins over a substring collision with another candidate.
-	//   1. idMatches        — full UUID or 8-char ShortID (as shown by `truncateID`).
-	//   2. exactMatches     — case-insensitive full name equality.
-	//   3. substringMatches — preserves the existing partial-name UX.
+	// 命中按优先级分三桶收集，高优先级的桶会让低优先级的匹配短路——例如全名精确
+	// 命中永远压过与另一个候选的子串撞名。
+	//   1. idMatches        —— 完整 UUID 或 8 位 ShortID（`truncateID` 显示的那种）。
+	//   2. exactMatches     —— 大小写不敏感的全名精确相等。
+	//   3. substringMatches —— 保留既有「部分名字也能搜到」的体验。
 	var idMatches, exactMatches, substringMatches []assigneeMatch
 	var errs []error
 	var fetchAttempts int
 
-	// exactAliases are additional unique identifiers that select a candidate
-	// outright, ranked with id matches rather than name matches — a member's
-	// email is as unambiguous as their id, and is what people actually have to
-	// hand. Without it, `--value bohan@example.com` fails to resolve.
+	// exactAliases 是能直接锁定某候选的额外唯一标识，与 id 命中同级而不是名字命中
+	// ——member 的邮箱和他们的 id 一样不含歧义，而且人们手里通常就有邮箱。若不支持，
+	// `--value bohan@example.com` 这种传法会解析失败。
 	classify := func(entityType, id, displayName string, exactAliases ...string) {
 		match := assigneeMatch{Type: entityType, ID: id, Name: displayName}
 		if id != "" && (strings.EqualFold(id, input) || strings.EqualFold(truncateID(id), input)) {
@@ -2680,7 +2708,7 @@ func resolveAssignee(ctx context.Context, client *cli.APIClient, name string, ki
 		}
 	}
 
-	// Search members.
+	// 搜 members。
 	if kinds.member {
 		fetchAttempts++
 		var members []map[string]any
@@ -2693,7 +2721,7 @@ func resolveAssignee(ctx context.Context, client *cli.APIClient, name string, ki
 		}
 	}
 
-	// Search agents.
+	// 搜 agents。
 	if kinds.agent {
 		fetchAttempts++
 		var agents []map[string]any
@@ -2707,13 +2735,11 @@ func resolveAssignee(ctx context.Context, client *cli.APIClient, name string, ki
 		}
 	}
 
-	// Search squads. The platform allows issues to be assigned to a squad
-	// (the leader agent then coordinates delegation), so squad names must
-	// resolve here too for issue-assignee callers — otherwise a user saying
-	// "assign to <SquadName>" silently falls through and the autopilot
-	// prompt emits "Unrecognized assignee: <SquadName>" (MUL-2165). Callers
-	// whose target schema is member-or-agent only (project lead, subscriber)
-	// must opt out via `kinds.squad = false`.
+	// 搜 squads。平台允许把 issue 指派给 squad（由 leader agent 协调派活），所以
+	// squad 名字也必须能在这里解析成 issue 的 assignee——否则用户说「assign to
+	// <SquadName>」会静默落空，autopilot 提示词最终打出「Unrecognized assignee:
+	// <SquadName>」（MUL-2165）。目标 schema 只收 member-or-agent 的调用方
+	// （project lead、subscriber）必须通过 `kinds.squad = false` 退出。
 	if kinds.squad {
 		fetchAttempts++
 		var squads []map[string]any
@@ -2729,7 +2755,7 @@ func resolveAssignee(ctx context.Context, client *cli.APIClient, name string, ki
 		}
 	}
 
-	// If every fetch failed, report the errors instead of a misleading "not found".
+	// 若每个列表都拉取失败，就报告这些错误，而不是一句误导性的「未找到」。
 	if fetchAttempts > 0 && len(errs) == fetchAttempts {
 		msgs := make([]string, len(errs))
 		for i, e := range errs {
@@ -2751,6 +2777,9 @@ func resolveAssignee(ctx context.Context, client *cli.APIClient, name string, ki
 	return "", "", fmt.Errorf("no %s found matching %q", kinds.describe(), input)
 }
 
+// normalizeAssigneeLookupInput 预处理用户输入的 assignee 名字：去掉首尾空白、剥掉
+// 开头的 @ 或全角＠；若整体形如 `@member:xxx` / `@agent:xxx` / `@squad:xxx`（util 的
+// MentionRe 识别的提及语法），只留下后面的名字部分参与匹配。
 func normalizeAssigneeLookupInput(raw string) string {
 	input := strings.TrimSpace(raw)
 	if m := util.MentionRe.FindStringSubmatch(input); len(m) == 4 && m[0] == input {
@@ -2765,6 +2794,7 @@ func normalizeAssigneeLookupInput(raw string) string {
 	return strings.TrimSpace(input)
 }
 
+// ambiguousAssigneeError 把多个歧义命中整理成带候选清单的报错。
 func ambiguousAssigneeError(input string, matches []assigneeMatch) error {
 	parts := make([]string, 0, len(matches))
 	for _, m := range matches {
@@ -2773,13 +2803,11 @@ func ambiguousAssigneeError(input string, matches []assigneeMatch) error {
 	return fmt.Errorf("ambiguous assignee %q; matches:\n%s", input, strings.Join(parts, "\n"))
 }
 
-// resolveAssigneeByID strictly resolves a canonical UUID to (assignee_type,
-// assignee_id) by looking it up against the workspace's members, agents, and
-// (when allowed) squads. It is the deterministic counterpart to
-// resolveAssignee: callers that already hold a UUID (e.g. agents reading IDs
-// from `multica workspace member list --output json`) should use this instead of
-// round-tripping through name matching, which can be ambiguous in workspaces
-// with overlapping names.
+// resolveAssigneeByID 严格地按规范 UUID 反查 (assignee_type, assignee_id)：在
+// 工作区的 members、agents、（允许时）squads 里逐项比对 ID。它是 resolveAssignee 的
+// 确定性对应物——已经手握 UUID 的调用方（例如 agent 从 `multica workspace member list
+// --output json` 里读到的 ID）应该用它，而不是再走一遍名字匹配，后者在名字重叠的
+// 工作区里可能产生歧义。
 func resolveAssigneeByID(ctx context.Context, client *cli.APIClient, id string, kinds assigneeKinds) (string, string, error) {
 	if client.WorkspaceID == "" {
 		return "", "", fmt.Errorf("workspace ID is required to resolve assignees; use --workspace-id or set MULTICA_WORKSPACE_ID")
@@ -2845,19 +2873,15 @@ func resolveAssigneeByID(ctx context.Context, client *cli.APIClient, id string, 
 	return "", "", fmt.Errorf("no %s found with ID %q", kinds.describe(), input)
 }
 
-// pickAssigneeFromFlags reads a (name-flag, id-flag) pair off cmd and resolves
-// it to (assignee_type, assignee_id), restricted to the entity types in
-// kinds. The third return reports whether either flag was *explicitly set*;
-// callers use it to decide whether to write `assignee_*` into the request
-// body. The two flags are mutually exclusive — passing both is rejected
-// up-front so a script that accidentally sets both never silently applies one
-// over the other.
+// pickAssigneeFromFlags 从 cmd 上读取一对 (名字 flag, ID flag) 并解析成
+// (assignee_type, assignee_id)，实体范围限制在 kinds 内。第三个返回值表示两个 flag
+// 是否「被显式设置」——调用方据此决定要不要把 assignee_* 写进请求体。两个 flag 互斥：
+// 同时传会在最前面被拒绝，脚本不小心都设了也不会悄悄二选一。
 //
-// Presence is detected via Flags().Changed (not value-emptiness): a script
-// that interpolates an empty env var (`--assignee-id "$MAYBE_UUID"`) must
-// fail loudly through resolveAssignee/resolveAssigneeByID rather than silently
-// degrade to "no filter / unassigned / subscribe caller", which would defeat
-// the strict-UUID guarantee the new flags exist for.
+// 「是否设置」用 Flags().Changed 判断（而不是看值是否为空）：脚本插入空环境变量
+// （`--assignee-id "$MAYBE_UUID"`）时，必须通过 resolveAssignee/resolveAssigneeByID
+// 大声失败，而不是悄悄退化成「无过滤 / 未指派 / 订阅调用者」——那会让新 flag 存在的
+// 严格 UUID 保证失去意义。
 func pickAssigneeFromFlags(ctx context.Context, client *cli.APIClient, cmd *cobra.Command, nameFlag, idFlag string, kinds assigneeKinds) (string, string, bool, error) {
 	nameSet := cmd.Flags().Changed(nameFlag)
 	idSet := cmd.Flags().Changed(idFlag)
@@ -2883,6 +2907,8 @@ func pickAssigneeFromFlags(ctx context.Context, client *cli.APIClient, cmd *cobr
 	return "", "", false, nil
 }
 
+// formatAssignee 从 issue 响应里取 assignee_type+assignee_id，再经 actor 查找表渲染成
+// 可读的展示名；issue 未被指派时返回空串。
 func formatAssignee(issue map[string]any, actors actorDisplayLookup) string {
 	aType := strVal(issue, "assignee_type")
 	aID := strVal(issue, "assignee_id")
@@ -2892,6 +2918,7 @@ func formatAssignee(issue map[string]any, actors actorDisplayLookup) string {
 	return actors.actor(aType, aID)
 }
 
+// truncateID 把超过 8 个字符的 ID 截成前 8 个字符（表格里的短 ID 显示）。
 func truncateID(id string) string {
 	if utf8.RuneCountInString(id) > 8 {
 		runes := []rune(id)
@@ -2900,16 +2927,12 @@ func truncateID(id string) string {
 	return id
 }
 
-// compactComments strips response fields that carry no information for a
-// reader: the issue_id echoed from the request path, per-run bookkeeping
-// (source_task_id), updated_at when identical to created_at, null-valued
-// keys, and empty arrays. Everything else — content, identity, thread
-// summary fields — passes through untouched. Opt-in via --compact and
-// applied to JSON output only: the two bounded reads the agent workflow
-// prescribes are dominated by exactly this metadata (56% of a
-// --roots-only --summary scan, 21% of a --thread --tail read, measured on
-// a production issue), and it compounds through the prompt-cache prefix
-// (#5999 follow-up, MUL-5442).
+// compactComments 从评论响应里剥离对读者无信息的字段：从请求路径原样回显的 issue_id、
+// 每次运行的记账字段（source_task_id）、与 created_at 相同的 updated_at、值为 null 的
+// 键以及空数组。其余一切——内容、身份、线程汇总字段——原样保留。通过 --compact 开启，
+// 只作用于 JSON 输出：agent 工作流规定的两种有界读取恰好被这类元数据主导（一次
+// --roots-only --summary 扫描中占 56%，一次 --thread --tail 读取中占 21%，在生产
+// issue 上实测），而且会随提示词缓存前缀持续放大（#5999 后续，MUL-5442）。
 func compactComments(comments []map[string]any) {
 	for _, c := range comments {
 		delete(c, "issue_id")

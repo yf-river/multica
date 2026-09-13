@@ -1,3 +1,4 @@
+// 延迟 Tooltip 包装器：只在首次悬停时才挂载 Tooltip 机制，先用原触发器元素占位，避免密集网格里大量从未悬停的 tooltip 白白挂载。
 "use client";
 
 import {
@@ -10,35 +11,36 @@ import {
 } from "react";
 import { Tooltip, TooltipContent } from "@multica/ui/components/ui/tooltip";
 
-// Matches the ui TooltipProvider default delay so the deferred first-open
-// feels identical to a native tooltip.
+// 与 ui 的 TooltipProvider 默认延迟保持一致，让延迟后的首次打开感觉和原生 tooltip 一样。
 const TOOLTIP_OPEN_DELAY = 200;
 
 /**
- * Tooltip whose machinery mounts only on first hover.
+ * 只在首次悬停时才挂载机制的 Tooltip。
  *
- * Dense grids (board/swimlane column headers) mount hundreds of tooltip
- * roots that are almost never hovered — a measurable slice of surface mount
- * cost. This wrapper renders ONLY the trigger element until the pointer
- * first enters it, then mounts a controlled Tooltip anchored to that same
- * element.
+ * 密集网格（看板/泳道列头）会挂载成百上千个几乎从不被悬停的 tooltip 根——
+ * 这是可测量的界面挂载开销。本包装器在指针首次进入前只渲染触发器元素，
+ * 之后才挂载一个锚定到同一元素上的受控 Tooltip。
  *
- * Unlike a trigger-swap approach, the trigger element is rendered by this
- * component in the same tree position before and after warming — its DOM
- * node is preserved, so mid-gesture events (the hover's own click) never
- * land on a detached node. Hover open/close is driven here (timer on enter,
- * close on leave); the popup positions against the trigger via an anchor
- * ref instead of a Base UI trigger wrapper.
+ * 与"替换触发器"方案不同，触发器元素由本组件在预热前后渲染在同一树位置——
+ * 它的 DOM 节点被保留，所以手势中途的事件（悬停本身带来的点击）绝不会落在
+ * 已分离的节点上。悬停开/关在这里驱动（进入定时、离开关闭）；弹层通过锚点
+ * ref 而非 Base UI 触发器包装来相对触发器定位。
+ * @param trigger 可见的触发器元素（如图标按钮），克隆时带上悬停处理器和锚点
+ *   ref，其自身 props 被保留。
+ * @param content 提示内容。
+ * @param side 弹层方向。
  */
 export function DeferredTooltip({
   trigger,
   content,
   side,
 }: {
-  /** The visible trigger element (e.g. an icon button). Cloned with hover
-   *  handlers and an anchor ref; its own props are preserved. */
+  /** 可见的触发器元素（如图标按钮），克隆时带上悬停处理器和锚点 ref，
+   *  其自身 props 被保留。 */
   trigger: ReactElement<Record<string, unknown>>;
+  /** 提示内容。 */
   content: ReactNode;
+  /** 弹层方向。 */
   side?: "top" | "bottom" | "left" | "right";
 }) {
   const anchorRef = useRef<HTMLElement | null>(null);

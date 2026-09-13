@@ -1,3 +1,5 @@
+// 聊天排队任务卡片：agent 忙时被排队的后续请求列在这里（缩在输入框下沿），
+// 支持"立即发送"（抢占/引导）、编辑、删除与一键清空。
 "use client";
 
 import { useState } from "react";
@@ -26,15 +28,19 @@ interface ChatQueueProps {
   tasks: ChatQueuedTask[];
   headStatus: string | undefined;
   onSendNow: (taskId: string) => Promise<void> | void;
-  /** Blocks "send now" independently of the head task's status — used when the
-   *  caller may no longer invoke the agent, since steering a queued task
-   *  dispatches a run the server would refuse (MUL-6380). */
+  /** 独立于队头任务状态地禁用"立即发送"——当调用方已经无权调用该 agent 时使用，
+   *  因为引导一个排队任务会派发一次服务端会拒绝的运行（MUL-6380）。 */
   sendNowDisabled?: boolean;
   onEdit: (taskId: string) => Promise<void> | void;
   onRemove: (taskId: string) => Promise<void> | void;
   onClear: () => Promise<void> | void;
 }
 
+/**
+ * 输入框下方的排队任务卡片。任务排在 agent 后面依次执行；用户可把某个任务
+ * 提前为队头"立即发送"（dispatch），或编辑 / 删除单个任务、清空整条队列。
+ * 无任务时不渲染。
+ */
 export function ChatQueue({
   tasks,
   headStatus,
@@ -51,9 +57,8 @@ export function ChatQueue({
     headStatus === "running" ||
     headStatus === "waiting_local_directory";
   const canSendNow = !sendNowDisabled && dispatchableHead;
-  // The two blocked states need different copy: "wait for the reply to start"
-  // is actionable, "you cannot run this agent" is not — telling a user to wait
-  // for something waiting cannot fix is the bug (MUL-6380).
+  // 两种被阻塞的状态文案不同："等回复开始"是可行动的，"你不能运行这个 agent"
+  // 不是——让用户去等一件等待也解决不了的事，本身就是 bug（MUL-6380）。
   const sendNowLabel = t(($) =>
     canSendNow
       ? $.queue.steer
@@ -76,11 +81,9 @@ export function ChatQueue({
   return (
     <div
       data-slot="chat-queue-shell"
-      // Tucked under the composer: the negative margin slides this card's
-      // bottom edge behind the (opaque, always z-10) composer surface, so the
-      // queue reads as emerging from behind the input. z-0 keeps it there even
-      // while the entrance animation's opacity/transform spawns a stacking
-      // context. The composer's own chrome never changes.
+      // 缩在输入框下沿：负外边距把卡片的底边滑到输入框（不透明、恒为 z-10）表面的
+      // 后面，让队列看起来像从输入框背后冒出来。z-0 保证即使入场动画的透明度/位移
+      // 创建了层叠上下文，它也不会盖过输入框。输入框自身的外观永远不变。
       className={cn(CHAT_GUTTER, "relative z-0 -mb-3")}
       aria-live="polite"
       aria-busy={busyAction !== null}
@@ -90,11 +93,9 @@ export function ChatQueue({
           data-slot="chat-queue"
           aria-label={t(($) => $.queue.title, { count: tasks.length })}
           className={cn(
-            // Quiet secondary surface: border only, no shadow, so the composer
-            // below stays the visually dominant card. pb-4 = the 12px hidden
-            // behind the composer plus a visible 4px breathing room above it.
-            // mx-3 pulls the rear card in from the composer's edges so the
-            // stack reads as two distinct layers.
+            // 安静的次级表面：只有边框、没有阴影，让下方的输入框在视觉上仍是主卡片。
+            // pb-4 = 藏在输入框后面的 12px 加上上方可见的 4px 呼吸空间。
+            // mx-3 把这张后层卡片从输入框边缘向内收，让堆叠读起来像两层。
             "mx-3 overflow-hidden rounded-lg border border-surface-border bg-surface pb-4",
             "animate-in fade-in slide-in-from-bottom-2 duration-300",
           )}

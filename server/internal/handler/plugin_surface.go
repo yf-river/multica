@@ -1,3 +1,7 @@
+// 本文件：插件 surface（自定义 UI 页面）的宿主机制——mint 一个短期「启动 URL + 一次性
+// challenge」、由专用内容 host 渲染插件代码。安全性要点：URL 里的凭据是加密、认证、短命、
+// 且绑定到安装的不可变版本的；专用 host 拒绝接收任何应用凭据，CSP 把插件能连的域收死在
+// 授权 scope 范围内。
 package handler
 
 import (
@@ -28,8 +32,15 @@ const (
 	pluginSurfacePortGlobal      = "__multicaPluginBridgePortV2"
 )
 
+// 上方常量的分工：pluginSurfaceLaunchTTL 是 surface 启动链接的有效期；pluginSurfaceProtocolVersion
+// 是页面与父窗口的握手协议版本；pluginSurfaceConnectMessage / pluginSurfacePortGlobal 是握手
+// 消息类型与注入到页面全局的消息通道端口名。
+
+// errInvalidPluginSurfaceOrigin：插件 surface origin 必须是「不带路径」的绝对 HTTP(S) origin。
 var errInvalidPluginSurfaceOrigin = errors.New("plugin surface origin must be an absolute HTTP(S) origin without a path")
 
+// pluginSurfaceLaunchClaims 是写进 surface 启动 token 的负载：绑定工作区/安装/版本/surface，
+// 并带文档摘要与一次性 challenge，全部信息签名加密后防篡改。
 type pluginSurfaceLaunchClaims struct {
 	WorkspaceID    string `json:"workspace_id"`
 	InstallationID string `json:"installation_id"`
@@ -40,6 +51,8 @@ type pluginSurfaceLaunchClaims struct {
 	ExpiresAt      int64  `json:"expires_at"`
 }
 
+// pluginSurfaceLaunch 是发起 surface 时返回给宿主页的结构：去专用 host 打开它的 URL、
+// 给父窗口的桥接 token（即 challenge）等。
 type pluginSurfaceLaunch struct {
 	URL         string `json:"url"`
 	BridgeToken string `json:"bridge_token"`
@@ -47,9 +60,8 @@ type pluginSurfaceLaunch struct {
 	Digest      string `json:"digest"`
 }
 
-// NewPluginSurfaceTokenBox derives a separate AES-GCM key from the plugin
-// deployment key. A surface URL can never be opened as a stored config secret,
-// even though operators rotate both with one deployment setting.
+// NewPluginSurfaceTokenBox 从插件部署密钥派生一把独立的 AES-GCM 密钥。这样即使 operator
+// 用一个部署配置同时轮换两者，surface URL 也绝不可能被当成存储的配置机密打开。
 func NewPluginSurfaceTokenBox(deploymentKey []byte) (*secretbox.Box, error) {
 	if len(deploymentKey) != secretbox.KeySize {
 		return nil, secretbox.ErrInvalidKey
@@ -59,6 +71,8 @@ func NewPluginSurfaceTokenBox(deploymentKey []byte) (*secretbox.Box, error) {
 	return secretbox.New(mac.Sum(nil))
 }
 
+// parsePluginSurfaceOrigin 把配置串解析成严格的「绝对 HTTP(S) origin」；带路径/查询/片段/
+// 用户信息或不是 http(s) 的都报错。
 func parsePluginSurfaceOrigin(raw string) (*url.URL, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
@@ -69,6 +83,8 @@ func parsePluginSurfaceOrigin(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
+// pluginSurfaceOriginIsDedicated 判断所给 origin 是否与 API/App/附件宿主是同一台（同 host）。
+// 专用 host 才有资格挂插件内容。
 func (h *Handler) pluginSurfaceOriginIsDedicated(origin *url.URL) bool {
 	candidates := make([]string, 0, len(h.cfg.AttachmentFrameAncestors)+2)
 	candidates = append(candidates, h.cfg.PublicURL)
@@ -83,10 +99,9 @@ func (h *Handler) pluginSurfaceOriginIsDedicated(origin *url.URL) bool {
 	return true
 }
 
-// PluginSurfaceHostBoundary turns the configured content host into a one-route
-// origin. Reusing the API process is operationally convenient; exposing its
-// login, JSON API, uploads or redirects under the plugin host is not part of
-// that bargain.
+// PluginSurfaceHostBoundary 把配置的内容 host 收窄成一个「单路由 origin」的中间件。复用 API
+// 进程在运维上很方便；但把它的登录、JSON API、上传或重定向也暴露到插件 host 下，不在
+// 这笔交易之内——所以主机头命中插件 host 且路径不是 /plugin-surfaces/ 的请求一律 404。
 func (h *Handler) PluginSurfaceHostBoundary(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin, err := parsePluginSurfaceOrigin(h.cfg.PluginSurfaceOrigin)
@@ -99,6 +114,7 @@ func (h *Handler) PluginSurfaceHostBoundary(next http.Handler) http.Handler {
 	})
 }
 
+// randomPluginSurfaceChallenge 生成 32 字节随机 challenge（URL 安全 base64）。
 func randomPluginSurfaceChallenge() (string, error) {
 	value := make([]byte, 32)
 	if _, err := rand.Read(value); err != nil {
@@ -107,6 +123,7 @@ func randomPluginSurfaceChallenge() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(value), nil
 }
 
+// mintPluginSurfaceToken 把 claims 加密密封成一段 URL 安全 token（AES-GCM + 认证）。
 func (h *Handler) mintPluginSurfaceToken(claims pluginSurfaceLaunchClaims) (string, error) {
 	if h.PluginSurfaceTokens == nil {
 		return "", errors.New("plugin surface token encryption is not configured")
@@ -122,6 +139,8 @@ func (h *Handler) mintPluginSurfaceToken(claims pluginSurfaceLaunchClaims) (stri
 	return base64.RawURLEncoding.EncodeToString(sealed), nil
 }
 
+// openPluginSurfaceToken 解开并校验 surface token：解码、解密、解析，并检查必填字段齐全且
+// 未过期——任何一步失败都当无效 token。
 func (h *Handler) openPluginSurfaceToken(token string) (pluginSurfaceLaunchClaims, error) {
 	if h.PluginSurfaceTokens == nil {
 		return pluginSurfaceLaunchClaims{}, errors.New("plugin surface token encryption is not configured")
@@ -146,9 +165,8 @@ func (h *Handler) openPluginSurfaceToken(token string) (pluginSurfaceLaunchClaim
 	return claims, nil
 }
 
-// GetPluginSurfaceLaunch returns no executable bytes. It mints one short-lived
-// hosted URL plus the proof that exact document must present to the exact frame
-// which requested it.
+// GetPluginSurfaceLaunch 返回的没有任何可执行字节：它铸造一个短命的托管 URL，外加那份
+// 文档必须向「请求它的那个确切 frame」出示的证据（challenge）。宿主页拿到后去开 iframe。
 func (h *Handler) GetPluginSurfaceLaunch(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePluginsV1(w, r) {
 		return
@@ -209,19 +227,16 @@ func (h *Handler) GetPluginSurfaceLaunch(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// ServePluginSurface renders stored plugin code only on the configured content
-// host. The path credential is encrypted, authenticated, short-lived and bound
-// to the installation's immutable version, so this route needs no session and
-// receives no app cookie.
+// ServePluginSurface 只在配置的内容 host 上渲染插件代码。路径里的凭据是加密、认证、短命、
+// 且绑定到安装的不可变版本的，所以这条路由不需要会话、也收不到应用 cookie。
 func (h *Handler) ServePluginSurface(w http.ResponseWriter, r *http.Request) {
 	origin, err := parsePluginSurfaceOrigin(h.cfg.PluginSurfaceOrigin)
 	if err != nil || !h.pluginSurfaceOriginIsDedicated(origin) || !strings.EqualFold(r.Host, origin.Host) {
 		http.NotFound(w, r)
 		return
 	}
-	// Enforce the deployment promise at the request boundary. A broad parent-
-	// domain auth cookie must make the surface fail visibly, not quietly arrive
-	// on a host that was supposed to be cookie-free.
+	// 在请求边界兑现部署承诺。宽父域认证 cookie 必须让 surface 明显失败，而不是悄悄落到
+	// 一个本该无 cookie 的 host 上。
 	if r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
 		writeError(w, http.StatusBadRequest, "the Plugin content origin must not receive app credentials")
 		return
@@ -264,11 +279,12 @@ func (h *Handler) ServePluginSurface(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(document))
 }
 
+// pluginSurfaceCSP 按授权 scope 算出 surface 页的 Content-Security-Policy：默认全禁，插件
+// 的 connect-src 只放行 scope 里授权过的 https 域。
 func pluginSurfaceCSP(scopes []string) string {
 	connect := make([]string, 0)
 	for _, domain := range plugincontract.NetDomains(scopes) {
-		// Installation scopes are validated when written, but the CSP remains a
-		// boundary if a row is corrupted or restored from an older database.
+		// 安装 scope 写入时已校验过，但 CSP 仍是防线——防止某行被破坏或从老库恢复时漏进来。
 		if plugincontract.ValidateScope(plugincontract.ScopeNetPrefix+domain) != nil {
 			continue
 		}
@@ -292,6 +308,10 @@ func pluginSurfaceCSP(scopes []string) string {
 	}, "; ")
 }
 
+// buildPluginSurfaceDocument 拼出 surface 宿主页：把插件代码 base64 藏进一个 text/plain
+// 节点，再执行一段 bootstrap——它先把 MessageChannel 的 port 注册到全局（供插件与父窗口
+// 双向通信），向父窗口发握手消息（带 challenge），出错/离开页面都会通知父窗口，然后才真正
+// 解码并注入插件脚本。
 func buildPluginSurfaceDocument(code, challenge string) string {
 	encodedCode := base64.StdEncoding.EncodeToString([]byte(code))
 	bootstrap := fmt.Sprintf(`(function () {

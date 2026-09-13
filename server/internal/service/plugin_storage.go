@@ -1,3 +1,4 @@
+// plugin_storage.go —— 插件键值存储：工作区/user 两种作用域，写时强制配额（永不驱逐）。
 package service
 
 import (
@@ -9,19 +10,15 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Plugin storage scopes. There are exactly two, and adding a third is a product
-// decision, not a configuration knob.
+// 插件存储作用域。恰好两个；加第三个是产品决策，不是配置旋钮。
 const (
-	// PluginStorageWorkspace is team-shared state. scope_id is the workspace id.
+	// PluginStorageWorkspace 是团队共享状态。scope_id 为工作区 id。
 	PluginStorageWorkspace = "workspace"
-	// PluginStorageUser is per-member state, including that member's own
-	// credentials for the plugin's external service. scope_id is the user id.
+	// PluginStorageUser 是逐成员状态，含该成员在插件外部服务的自有凭据。scope_id 为用户 id。
 	PluginStorageUser = "user"
 )
 
-// Storage quotas. Enforced on write and never by eviction: a plugin that hits
-// its ceiling gets an explicit error, because silently dropping the oldest key
-// would corrupt state the plugin believes it stored.
+// 存储配额。写时强制、绝不驱逐：撞上限的插件得到显式错误，因为静默丢弃最旧键会破坏插件认为已存的状态。
 const (
 	MaxPluginStorageKeyBytes   = 1024
 	MaxPluginStorageValueBytes = 100 * 1024
@@ -29,15 +26,14 @@ const (
 	MaxPluginStorageTotalBytes = 5 * 1024 * 1024
 )
 
-// PluginStorageKey is one key in a listing. Values are deliberately absent:
-// listing is for a plugin to discover what it wrote, not to bulk-read state.
+// PluginStorageKey 是列出结果里的一个键。值刻意缺席：列出是为了让插件发现自己写过什么，不是批量读状态。
 type PluginStorageKey struct {
 	Key       string `json:"key"`
 	SizeBytes int64  `json:"size_bytes"`
 	UpdatedAt string `json:"updated_at"`
 }
 
-// ResolveStorageScope maps a scope name to the row's scope_id.
+// ResolveStorageScope 把作用域名映射到行的 scope_id（workspace 用工作区 id，user 用用户 id）。
 func ResolveStorageScope(scopeType string, workspaceID, userID pgtype.UUID) (pgtype.UUID, error) {
 	switch scopeType {
 	case PluginStorageWorkspace:
@@ -49,6 +45,7 @@ func ResolveStorageScope(scopeType string, workspaceID, userID pgtype.UUID) (pgt
 	}
 }
 
+// validateStorageKey 校验存储键非空且不超长。
 func validateStorageKey(key string) error {
 	if key == "" {
 		return pluginErrf(PluginErrorInvalid, "storage key is required")
@@ -59,9 +56,8 @@ func validateStorageKey(key string) error {
 	return nil
 }
 
-// GetStorageValue reads one value. This path can never reach plugin_secret:
-// secrets live in a different table with no read query that returns ciphertext
-// to a request handler.
+// GetStorageValue 读取一个值。该路径永远到不了 plugin_secret：机密在另一张表，没有把密文返回给请求
+// handler 的读查询。
 func (s *PluginService) GetStorageValue(ctx context.Context, installationID pgtype.UUID, scopeType string, scopeID pgtype.UUID, key string) (string, error) {
 	if err := validateStorageKey(key); err != nil {
 		return "", err
@@ -81,6 +77,7 @@ func (s *PluginService) GetStorageValue(ctx context.Context, installationID pgty
 	return row.Value, nil
 }
 
+// ListStorageKeys 列出作用域内的键元数据（键名/大小/更新时间，UTC 格式化）。
 func (s *PluginService) ListStorageKeys(ctx context.Context, installationID pgtype.UUID, scopeType string, scopeID pgtype.UUID) ([]PluginStorageKey, error) {
 	rows, err := s.Queries.ListPluginStorageKeys(ctx, db.ListPluginStorageKeysParams{
 		InstallationID: installationID,
@@ -101,16 +98,11 @@ func (s *PluginService) ListStorageKeys(ctx context.Context, installationID pgty
 	return keys, nil
 }
 
-// EnforceStorageQuota decides whether one write fits, given the scope's usage
-// with the candidate key excluded. Kept pure and separate from the write so the
-// three limits have one canonical test, and so it is obvious that every bound
-// is compared in bytes — the usage query reports octet_length for the same
-// reason.
+// EnforceStorageQuota 在“排除候选键后的作用域用量”之上判断一次写入是否放得下。保持纯函数、独立于写入，
+// 使三条上限有唯一规范测试，也让“每个界限都按字节比较”一目了然——用量查询同样因这个原因报 octet_length。
 //
-// Known bound: usage is read before the write without a lock, so concurrent
-// writers to the same scope can overshoot by their own sizes. Serializing every
-// plugin KV write to close that gap costs more than the overshoot is worth; the
-// limits exist to stop runaway growth, not to be exact to the byte.
+// 已知边界：用量在写入前读取、不加锁，因此并发写同一作用域可能各自超一点。为弥合这点串行化每个插件 KV
+// 写的代价大于超额的代价；这些限制是阻止失控增长，不是精确到字节。
 func EnforceStorageQuota(usage db.GetPluginStorageUsageRow, valueBytes int) error {
 	if valueBytes > MaxPluginStorageValueBytes {
 		return pluginErrf(PluginErrorQuota, "storage value exceeds %d bytes", MaxPluginStorageValueBytes)
@@ -124,9 +116,8 @@ func EnforceStorageQuota(usage db.GetPluginStorageUsageRow, valueBytes int) erro
 	return nil
 }
 
-// SetStorageValue writes one value after checking every quota. The usage query
-// excludes the key being written, so replacing a value is measured as a
-// replacement and cannot fail a limit the existing row already occupies.
+// SetStorageValue 在检查全部配额后写一个值。用量查询排除正被写的键，因此替换值按“替换”计量，
+// 不会因既有行已占用的空间而撞上限。
 func (s *PluginService) SetStorageValue(ctx context.Context, installationID pgtype.UUID, scopeType string, scopeID pgtype.UUID, key, value string) error {
 	if err := validateStorageKey(key); err != nil {
 		return err
@@ -155,6 +146,7 @@ func (s *PluginService) SetStorageValue(ctx context.Context, installationID pgty
 	return nil
 }
 
+// DeleteStorageValue 删除一个键；无行被删（键不存在）时返回 not-found。
 func (s *PluginService) DeleteStorageValue(ctx context.Context, installationID pgtype.UUID, scopeType string, scopeID pgtype.UUID, key string) error {
 	if err := validateStorageKey(key); err != nil {
 		return err

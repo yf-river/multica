@@ -1,11 +1,8 @@
-/**
- * Public API for the permissions module.
- *
- * Exports only what the views currently consume. The full pure-rule set lives
- * in `./rules` and is available to tests and future surfaces directly. Adding
- * a new rule to the public API should follow the same minimum-surface pattern
- * — only export when there's a caller.
- */
+// 本文件是 permissions（权限）模块的对外入口（barrel）。
+//
+// 只导出视图层当前正在消费的内容。完整纯规则集在 `./rules`，直接对测试与
+// 未来界面可用。往公共 API 加新规则时沿用同一「最小暴露」模式——有调用方才
+// 导出。
 export type {
   Decision,
   DecisionReason,

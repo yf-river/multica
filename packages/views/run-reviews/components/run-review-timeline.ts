@@ -1,9 +1,14 @@
+// 运行复盘里「时间线/条形图」的数据整理层：把执行树的时间线节点按 Agent 阶段、
+// 子任务等待、人工确认分组，聚合成条形图的「行 × 段」，并提供各节点 Token /
+// 产物 / 展示名等派生数据的纯函数。UI 展示逻辑不在这里。
+
 import type { AgentTaskArtifact, IssueExecutionTreeResponse, IssueTimelineNode } from "@multica/core/types";
 import { isActiveAgentTaskStatus } from "@multica/core/agents";
 import { normalizeSopStageName, sopStageDisplayName } from "../../common/sop-stage-labels";
 import { isActiveTimelineNode } from "./run-review-live";
 import { formatDateTime, formatDuration, formatNumber, parseTimeMs, statusLabel } from "./run-review-format";
 
+/** 时间线上某个段的描述（同一条条形可能被拆成多段，如某 Agent 多次运行）。 */
 interface TimelineNodeSegment {
   key: string;
   label: string;
@@ -11,14 +16,18 @@ interface TimelineNodeSegment {
   ordinal: number;
   total: number;
 }
+
+/** 时间线某一行：要么整行就是一个节点（node），要么拆成多段（segments）。 */
 export type TimelineNodeRow = {
   key: string;
   label: string;
   node?: IssueTimelineNode;
   segments?: TimelineNodeSegment[];
 };
+/** 子任务泳道：由执行树根节点的子任务派生而来。 */
 export type ChildLane = ReturnType<typeof buildChildLanes>[number];
 
+/** 条形图里一段的展示数据（几何、状态、Token、轮次等）。 */
 export interface TimelineBarSegment {
   key: string;
   label: string;
@@ -33,6 +42,7 @@ export interface TimelineBarSegment {
   total: number;
 }
 
+/** 条形图里的一行：阶段 / 子任务 / 人工确认三种之一，内含若干段。 */
 export interface TimelineBarRow {
   key: string;
   label: string;
@@ -42,6 +52,11 @@ export interface TimelineBarRow {
   segments: TimelineBarSegment[];
   missing: boolean;
 }
+
+/**
+ * 把时间线节点组装成条形图的行：人工确认、子任务等待、Agent 阶段按顺序排列，
+ * 每行内部再按各次运行拆成段。
+ */
 export function buildTimelineBarRows(
   stageRows: TimelineNodeRow[],
   _childLanes: ChildLane[],
@@ -98,6 +113,10 @@ function childIssueSegmentLabel(node: IssueTimelineNode) {
 }
 
 
+/**
+ * 生成某一段的 tooltip 键值对：开始/结束/耗时，非「人工确认/子任务」的行再加
+ * Token 与执行轮次。
+ */
 export function timelineSegmentTooltipRows(row: TimelineBarRow, segment: TimelineBarSegment): Array<[string, string]> {
   const rows: Array<[string, string]> = [
     ["节点", row.label],
@@ -142,6 +161,7 @@ function timelineNodeSegment(
   };
 }
 
+/** 把一段的起止时间换算成在时间轴上的 left/width 百分比样式。 */
 export function timelineSegmentStyle(startMs: number, endMs: number, minMs: number, spanMs: number) {
   return {
     left: `${timelineSegmentLeftPercent(startMs, minMs, spanMs)}%`,
@@ -174,6 +194,7 @@ function timelineTiming(node: IssueTimelineNode | undefined) {
   return { startMs, endMs, durationMs: Math.max(duration, endMs - startMs) };
 }
 
+/** 把时间戳格式化成「HH:mm」时间轴的刻度文案。 */
 export function formatTimeTick(value: number) {
   return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
@@ -182,6 +203,10 @@ export function formatTimeTick(value: number) {
   }).format(new Date(value));
 }
 
+/**
+ * 把时间线上的 Agent 任务节点按「Agent」聚合成行：同一 Agent 的多次运行合成
+ * 一行、拆多段，段按开始时间排好序。
+ */
 export function buildTimelineAgentRows(nodes: IssueTimelineNode[]): TimelineNodeRow[] {
   const agentNodes = nodes.filter((node) => node.node_type === "agent_task");
   const grouped = new Map<string, TimelineNodeRow>();
@@ -238,6 +263,7 @@ function timelineAgentRowBaseLabel(node: IssueTimelineNode, index: number) {
   return sopStageDisplayName(agentName) || node.summary || agentName;
 }
 
+/** 从执行树响应里提取子任务泳道（子任务标题与 issue）。 */
 export function buildChildLanes(tree: IssueExecutionTreeResponse | undefined) {
   return (tree?.root?.children ?? []).map((child) => ({
     key: child.issue.id,
@@ -245,10 +271,12 @@ export function buildChildLanes(tree: IssueExecutionTreeResponse | undefined) {
     issue: child.issue,
   }));
 }
+/** 产物显示名：优先标题，其次文件名，最后 id。 */
 export function artifactDisplayName(artifact: AgentTaskArtifact) {
   return artifact.title || artifact.filename || artifact.id;
 }
 
+/** 按语义键去重产物：同「类型+标题+文件名」只留最新创建的一条，并按名排序。 */
 export function dedupeArtifacts(artifacts: AgentTaskArtifact[]) {
   const byKey = new Map<string, AgentTaskArtifact>();
   for (const artifact of artifacts) {
@@ -280,6 +308,10 @@ function compareArtifactsForDisplay(left: AgentTaskArtifact, right: AgentTaskArt
   if (leftName !== rightName) return leftName.localeCompare(rightName, "zh-CN");
   return artifactCreatedMs(right) - artifactCreatedMs(left);
 }
+/**
+ * 把 Agent 任务节点聚合为「每个 Agent 一行」的展示数据（用于复盘表格/导出）：
+ * 同一 Agent 多次运行会合并成一个节点、统计运行次数与任务 id。
+ */
 export function buildAgentNodeRows(nodes: IssueTimelineNode[]) {
   const grouped = new Map<string, { key: string; label: string; node: IssueTimelineNode; runCount: number; taskIds: string[] }>();
   for (const [index, node] of nodes.filter((item) => item.node_type === "agent_task").entries()) {
@@ -299,6 +331,8 @@ export function buildAgentNodeRows(nodes: IssueTimelineNode[]) {
   return [...grouped.values()];
 }
 
+// 把两次运行合并成一个节点行：数值字段相加、时间取最早开始/最晚结束，作为该
+// Agent 在整条时间线上的汇总节点。
 function mergeTimelineNode(left: IssueTimelineNode, right: IssueTimelineNode): IssueTimelineNode {
   const leftStart = parseTimeMs(left.started_at);
   const rightStart = parseTimeMs(right.started_at);
@@ -329,7 +363,7 @@ function mergeTimelineNode(left: IssueTimelineNode, right: IssueTimelineNode): I
     node_type: primaryNode.node_type,
     agent_name: left.agent_name || right.agent_name,
     agent_id: left.agent_id || right.agent_id,
-    // Keep a wall-clock hint for charts/tooltips when individual runs overlap.
+    // 各次运行可能重叠，给图表/tooltip 留一个墙上时钟（wall-clock）时长的提示。
     duration_ms_wall_clock: leftStart !== null || rightStart !== null || leftCompleted !== null || rightCompleted !== null
       ? Math.max((latestNumber(leftCompleted, rightCompleted) ?? 0) - (earliestNumber(leftStart, rightStart) ?? 0), 0)
       : undefined,
@@ -366,11 +400,13 @@ function latestNumber(...values: Array<number | null>) {
   const present = values.filter((value): value is number => value !== null);
   return present.length ? Math.max(...present) : null;
 }
+/** 一个节点输入/输出/缓存读/缓存写 Token 的总和。 */
 export function nodeTokenTotal(node: IssueTimelineNode | undefined) {
   if (!node) return 0;
   return node.input_tokens + node.output_tokens + node.cache_read_tokens + node.cache_write_tokens;
 }
 
+/** Agent 行在表格里的展示名：运行多次时附上次数，如「前端开发 (3 次)」。 */
 export function agentNodeDisplayLabel(row: ReturnType<typeof buildAgentNodeRows>[number]) {
   return row.runCount > 1 ? `${row.label} (${row.runCount} 次)` : row.label;
 }

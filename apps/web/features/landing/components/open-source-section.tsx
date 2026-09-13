@@ -1,9 +1,17 @@
 "use client";
 
+/**
+ * 官网「开源」区块（白底）：左列标题 + GitHub CTA，右列亮点卡片网格。
+ */
 import Link from "next/link";
 import { useLocale } from "../i18n";
 import { GitHubMark, githubUrl } from "./shared";
 
+/**
+ * 开源区块组件。
+ *
+ * @returns 左侧标题与 CTA、右侧亮点网格。
+ */
 export function OpenSourceSection() {
   const { t } = useLocale();
 
@@ -11,7 +19,7 @@ export function OpenSourceSection() {
     <section id="open-source" className="bg-white text-[#0a0d12]">
       <div className="mx-auto max-w-[1320px] px-4 py-24 sm:px-6 sm:py-32 lg:px-8 lg:py-40">
         <div className="flex flex-col gap-16 lg:flex-row lg:items-start lg:gap-24">
-          {/* Left column — heading + CTA */}
+          {/* 左列 —— 标题 + CTA */}
           <div className="lg:w-[480px] lg:shrink-0">
             <p className="text-micro font-semibold uppercase tracking-[0.16em] text-[#0a0d12]/40">
               {t.openSource.label}
@@ -37,7 +45,7 @@ export function OpenSourceSection() {
             </div>
           </div>
 
-          {/* Right column — highlight grid */}
+          {/* 右列 —— 亮点卡片网格 */}
           <div className="flex-1">
             <div className="grid gap-px overflow-hidden rounded-2xl border border-[#0a0d12]/8 bg-[#0a0d12]/8 sm:grid-cols-2">
               {t.openSource.highlights.map((item) => (

@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * members 模块：成员详情页。
+ * 展示单个成员的头像、姓名、邮箱与角色徽标，下方是他的 issue 看板
+ * （ActorIssuesPanel）。
+ */
+
 import { ChevronRight, UserRound } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { MemberRole } from "@multica/core/types";
@@ -14,6 +20,7 @@ import { WorkspaceAvatar } from "../workspace/workspace-avatar";
 import { ActorIssuesPanel } from "../common/actor-issues-panel";
 import { useT } from "../i18n";
 
+/** 成员详情页：成员身份信息 + 其负责的 issue 看板。 */
 export function MemberDetailPage({ userId }: { userId: string }) {
   const { t } = useT("members");
   const wsId = useWorkspaceId();
@@ -77,6 +84,7 @@ export function MemberDetailPage({ userId }: { userId: string }) {
   );
 }
 
+/** 成员详情页顶部的面包屑导航：工作区 › 成员 › 姓名。 */
 function MemberBreadcrumb({
   workspaceName,
   workspaceAvatarUrl,
@@ -103,6 +111,7 @@ function MemberBreadcrumb({
   );
 }
 
+/** 成员角色徽标（owner/admin/member）。 */
 function RoleBadge({ role }: { role: MemberRole }) {
   const { t } = useT("members");
   return (
@@ -116,6 +125,7 @@ function RoleBadge({ role }: { role: MemberRole }) {
   );
 }
 
+/** 加载中的骨架屏：页头 + 身份行 + issue 看板占位。 */
 function MemberDetailSkeleton() {
   return (
     <div className="flex flex-1 min-h-0 flex-col">

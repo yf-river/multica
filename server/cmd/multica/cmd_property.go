@@ -1,3 +1,10 @@
+// 文件职责：实现 `multica property`（工作区自定义属性定义 list/get/create/
+// update/archive/unarchive）与 `multica issue property`（单个 issue 上的类型化
+// 属性值 list/set/unset）两组命令。校验契约（9 种类型、每工作区 20 个活动定义、
+// 仅 owner/admin 管定义、agent 不得写定义）见 server/internal/handler/property.go。
+//
+// CLI 易用性设计：属性、select 选项与 actor 值一律按「名字」（大小写不敏感）寻址，
+// CLI 把名字翻译成 API 要的 UUID——agent 不必摆弄 option id 或 actor 引用。
 package main
 
 import (
@@ -14,23 +21,15 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-// multica property {list|get|create|update|archive|unarchive} — workspace
-// custom property definitions, and multica issue property {list|set|unset} —
-// typed values on a single issue. See server/internal/handler/property.go
-// for the validation contract (9 types, 20 active definitions/workspace,
-// owner/admin-only definition management, agents rejected on definition
-// writes).
-//
-// CLI ergonomics: properties, select options and actor values are addressed BY
-// NAME (case-insensitive); the CLI translates names to the UUIDs the API
-// expects, so agents never have to juggle option ids or actor references.
-
+// 下面两组命令共用这些 DTO：属性定义（property）与 issue 上的类型化属性值。
+// propertyOptionDTO 是 select/multi_select 类型的一个选项。
 type propertyOptionDTO struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Color string `json:"color"`
 }
 
+// propertyDTO 是一条自定义属性定义（含 config 里的选项表）。
 type propertyDTO struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -47,6 +46,7 @@ type propertyDTO struct {
 	UpdatedAt  string  `json:"updated_at"`
 }
 
+// propertyCmd 是 `multica property` 父命令——管理属性定义。
 var propertyCmd = &cobra.Command{
 	Use:   "property",
 	Short: "Manage workspace custom issue properties",
@@ -105,6 +105,7 @@ var propertyUnarchiveCmd = &cobra.Command{
 	RunE:  makePropertyArchiveRun(false),
 }
 
+// issuePropertyCmd 是 `issue property` 分组命令——读写单个 issue 上自定义属性值。
 var issuePropertyCmd = &cobra.Command{
 	Use:   "property",
 	Short: "Manage custom property values on an issue",
@@ -180,9 +181,8 @@ func init() {
 	issueCmd.AddCommand(issuePropertyCmd)
 }
 
-// fetchProperties loads the full definition catalog (including archived — the
-// callers that must exclude archived filter locally, and value resolution for
-// display needs archived definitions too).
+// fetchProperties 拉取完整定义目录（含已归档——需要排除归档的调用方在本地过滤，
+// 而展示时的值解析也需要归档定义）。
 func fetchProperties(ctx context.Context, client *cli.APIClient) ([]propertyDTO, error) {
 	var result struct {
 		Properties []propertyDTO `json:"properties"`
@@ -193,8 +193,7 @@ func fetchProperties(ctx context.Context, client *cli.APIClient) ([]propertyDTO,
 	return result.Properties, nil
 }
 
-// resolvePropertyRef matches a CLI ref against the catalog by UUID first,
-// then case-insensitive name.
+// resolvePropertyRef 在目录里按 UUID 优先、其次大小写不敏感的名字匹配 CLI 引用。
 func resolvePropertyRef(properties []propertyDTO, ref string) (propertyDTO, error) {
 	for _, p := range properties {
 		if p.ID == ref {
@@ -214,11 +213,11 @@ func resolvePropertyRef(properties []propertyDTO, ref string) (propertyDTO, erro
 	return propertyDTO{}, fmt.Errorf("property %q not found; available: %s", ref, strings.Join(names, ", "))
 }
 
-// parseOptionFlags converts repeatable --option flags ("Name" or
-// "Name:#rrggbb") into config options. When updating, pass the existing
-// options so same-named options keep their ids (issue values reference ids).
+// defaultOptionColor 是 select 选项没给 ":#rrggbb" 后缀时的默认色。
 const defaultOptionColor = "#6b7280"
 
+// parseOptionFlags 把可重复的 --option flag（"Name" 或 "Name:#rrggbb"）转成 config
+// options。更新时传入 existing 选项，让同名选项保留原 id（issue 值引用 id）。
 func parseOptionFlags(flags []string, existing []propertyOptionDTO) []map[string]string {
 	byName := make(map[string]string, len(existing))
 	for _, opt := range existing {
@@ -242,6 +241,7 @@ func parseOptionFlags(flags []string, existing []propertyOptionDTO) []map[string
 	return out
 }
 
+// printPropertyTable 渲染属性定义列表（表格）。
 func printPropertyTable(properties []propertyDTO) {
 	headers := []string{"ID", "ICON", "NAME", "TYPE", "OPTIONS", "USED", "ARCHIVED"}
 	rows := make([][]string, 0, len(properties))
@@ -259,6 +259,7 @@ func printPropertyTable(properties []propertyDTO) {
 	cli.PrintTable(os.Stdout, headers, rows)
 }
 
+// runPropertyList 执行 `property list`：列出属性定义（--include-archived 含归档）。
 func runPropertyList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -286,6 +287,7 @@ func runPropertyList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runPropertyGet 执行 `property get <id-or-name>`：显示单条属性定义。
 func runPropertyGet(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -310,6 +312,8 @@ func runPropertyGet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runPropertyCreate 执行 `property create`：--name/--type 必填，select 型用
+// 可重复 --option 传选项。
 func runPropertyCreate(cmd *cobra.Command, _ []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	propType, _ := cmd.Flags().GetString("type")
@@ -348,6 +352,8 @@ func runPropertyCreate(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runPropertyUpdate 执行 `property update <id-or-name>`：type 不可改；--option
+// 整体替换选项表。
 func runPropertyUpdate(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -399,6 +405,8 @@ func runPropertyUpdate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// makePropertyArchiveRun 生成 archive/unarchive 共用的 RunE（archive=true 归档、
+// false 恢复）。
 func makePropertyArchiveRun(archive bool) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		client, err := newAPIClient(cmd)
@@ -440,10 +448,9 @@ func makePropertyArchiveRun(archive bool) func(*cobra.Command, []string) error {
 // issue property {list|set|unset}
 // ---------------------------------------------------------------------------
 
-// resolveActorPropertyRef turns one --value token into a "member:<uuid>"
-// actor reference. An already-prefixed token is taken as-is (after checking
-// the id parses); anything else goes through the same member lookup
-// `--assignee` uses, so names, emails, UUIDs and short ids all work.
+// resolveActorPropertyRef 把一个 --value token 解析成 "member:<uuid>" 引用。已带
+// member: 前缀的 token 原样采用（先校验 id 是 UUID）；其余走 `--assignee` 同款
+// member 查找——名字、邮箱、UUID、短 id 都行。
 func resolveActorPropertyRef(ctx context.Context, client *cli.APIClient, raw string) (string, error) {
 	token := strings.TrimSpace(raw)
 	if token == "" {
@@ -462,9 +469,8 @@ func resolveActorPropertyRef(ctx context.Context, client *cli.APIClient, raw str
 	return actorType + ":" + actorID, nil
 }
 
-// encodeIssuePropertyValue converts the CLI --value string into the typed
-// JSON the API expects, translating option names to ids for select types and
-// member names to actor references for actor types.
+// encodeIssuePropertyValue 把 CLI 的 --value 字符串转成 API 要的类型化 JSON：
+// select 型的选项名换成 id、actor 型的成员名换成 actor 引用。
 func encodeIssuePropertyValue(ctx context.Context, client *cli.APIClient, property propertyDTO, raw string) (json.RawMessage, error) {
 	optionNames := make([]string, len(property.Config.Options))
 	for i, opt := range property.Config.Options {
@@ -537,15 +543,14 @@ func encodeIssuePropertyValue(ctx context.Context, client *cli.APIClient, proper
 			return nil, fmt.Errorf("value %q is not a valid bool (expected true or false)", raw)
 		}
 		return json.RawMessage(raw), nil
-	default: // text, date, url — validated server-side
+	default: // text/date/url 三类原样透传，由 server 端校验
 		return json.Marshal(raw)
 	}
 }
 
-// formatIssuePropertyValue renders a stored value for humans: option ids
-// become option names, actor references become member names, everything
-// else prints via formatMetadataValue. actorNames may be nil — references then
-// print in their raw "<kind>:<uuid>" form rather than failing.
+// formatIssuePropertyValue 把存下的值渲染给人看：option id 变选项名、actor 引用变
+// 成员名，其余经 formatMetadataValue。actorNames 可为 nil——引用于是以原始
+// "<kind>:<uuid>" 形态打印而不是失败。
 func formatIssuePropertyValue(property propertyDTO, value any, actorNames map[string]string) string {
 	optionName := func(id string) string {
 		for _, opt := range property.Config.Options {
@@ -601,6 +606,7 @@ func formatIssuePropertyValue(property propertyDTO, value any, actorNames map[st
 	return formatMetadataValue(value)
 }
 
+// issuePropertyValueRow 是 issue 上一条属性值（含展示文本）。
 type issuePropertyValueRow struct {
 	PropertyID string `json:"property_id"`
 	Name       string `json:"name"`
@@ -610,6 +616,7 @@ type issuePropertyValueRow struct {
 	Archived   bool   `json:"archived,omitempty"`
 }
 
+// buildIssuePropertyRows 把属性袋（bag）里实际有值的属性排成行（按定义顺序）。
 func buildIssuePropertyRows(properties []propertyDTO, bag map[string]any, actorNames map[string]string) []issuePropertyValueRow {
 	rows := make([]issuePropertyValueRow, 0, len(bag))
 	for _, p := range properties {
@@ -629,10 +636,9 @@ func buildIssuePropertyRows(properties []propertyDTO, bag map[string]any, actorN
 	return rows
 }
 
-// fetchActorPropertyNames builds a "member:<uuid>" → display name map, but
-// only when the bag actually holds an actor value: every other property type
-// renders without a second round trip, and `issue property list` shouldn't pay
-// for a request it doesn't need.
+// fetchActorPropertyNames 构造 "member:<uuid>" → 显示名的映射——仅当 bag 里确实
+// 有 actor 值才拉：其它属性类型渲染都不用多打一次请求，`issue property list` 不为
+// 用不到的请求买单。
 func fetchActorPropertyNames(ctx context.Context, client *cli.APIClient, properties []propertyDTO, bag map[string]any) map[string]string {
 	needed := false
 	for _, p := range properties {
@@ -656,6 +662,7 @@ func fetchActorPropertyNames(ctx context.Context, client *cli.APIClient, propert
 	return names
 }
 
+// fetchIssuePropertyBag 拉取某 issue 上自定义属性值的整袋。
 func fetchIssuePropertyBag(ctx context.Context, client *cli.APIClient, issueID string) (map[string]any, error) {
 	var issue struct {
 		Properties map[string]any `json:"properties"`
@@ -669,6 +676,7 @@ func fetchIssuePropertyBag(ctx context.Context, client *cli.APIClient, issueID s
 	return issue.Properties, nil
 }
 
+// printIssuePropertyRows 渲染属性值行（表格或 JSON 由调用方决定）。
 func printIssuePropertyRows(rows []issuePropertyValueRow) {
 	headers := []string{"NAME", "VALUE", "TYPE"}
 	tableRows := make([][]string, len(rows))
@@ -678,6 +686,8 @@ func printIssuePropertyRows(rows []issuePropertyValueRow) {
 	cli.PrintTable(os.Stdout, headers, tableRows)
 }
 
+// runIssuePropertyList 执行 `issue property list <issue-id>`：列出该 issue 上已设
+// 的属性值。
 func runIssuePropertyList(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -707,6 +717,8 @@ func runIssuePropertyList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssuePropertySet 执行 `issue property set <issue-id> --name <属性> --value <值>`：
+// 按类型把 --value 编码后写入 issue。
 func runIssuePropertySet(cmd *cobra.Command, args []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	if name == "" {
@@ -757,6 +769,8 @@ func runIssuePropertySet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssuePropertyUnset 执行 `issue property unset <issue-id> --name <属性>`：
+// 从 issue 移除某属性值。
 func runIssuePropertyUnset(cmd *cobra.Command, args []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	if name == "" {

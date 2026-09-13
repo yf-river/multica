@@ -1,3 +1,5 @@
+// runtime_unusable_notice.go —— “运行时不可用”的 issue 侧提示：当指派无法入队（因指派人 agent 的 CLI
+// 无法在其机器上运行）时，在 issue 上留下系统评论说明拒绝原因。
 package service
 
 import (
@@ -13,16 +15,12 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// noteRuntimeUnusable leaves the refusal on the issue when an assignment cannot
-// be enqueued because the assignee's agent CLI cannot run on its machine.
+// noteRuntimeUnusable 在“指派无法入队，因为指派人 agent 的 CLI 无法在其机器上运行”时，把该拒绝原因留在 issue 上。
 //
-// Assignment is the trigger with no reply anyone reads: the API returns the
-// updated issue, and nothing in it says "and by the way, nothing will run".
-// Without this the user gets exactly the silence this change exists to remove
-// (MUL-6164).
+// 指派是没有“会有人读的回复”的触发点：API 返回更新后的 issue，而其中没有任何内容说明“顺带一提，不会有任何
+// 东西运行”。没有这一步，用户得到的正是本次改动要消除的沉默（MUL-6164）。
 //
-// Best-effort: the refusal is correct whether or not the note lands, so a
-// failure here is logged rather than returned.
+// best-effort：无论提示是否落地，拒绝本身都是正确的，因此这里的失败只记日志而不上抛。
 func (s *IssueService) noteRuntimeUnusable(ctx context.Context, issue db.Issue, verdict AgentVerdict) {
 	if s.TxStarter == nil {
 		slog.Warn("runtime unusable notice: transaction starter unavailable", "issue_id", util.UUIDToString(issue.ID))
@@ -32,8 +30,7 @@ func (s *IssueService) noteRuntimeUnusable(ctx context.Context, issue db.Issue, 
 	if agent, err := s.Queries.GetAgent(ctx, issue.AssigneeID); err == nil {
 		name = agent.Name
 	}
-	// author_type='system', author_id=zero UUID. The zero UUID is a valid 16
-	// byte value and the column is NOT NULL; clients branch on author_type.
+	// author_type='system'、author_id=零 UUID。零 UUID 是合法 16 字节值且该列 NOT NULL；客户端按 author_type 分支。
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		slog.Warn("runtime unusable notice: begin transaction failed", "error", err, "issue_id", util.UUIDToString(issue.ID))

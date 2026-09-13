@@ -1,3 +1,6 @@
+// 本文件职责：从「本地 runtime」批量导入技能的面板——选择一台本地 runtime（按机器分组）、
+// 勾选要导入的技能（支持搜索与单个改名/改描述）、批量导入；命名冲突时可逐个/全部决定
+// 覆盖或改名或跳过，导入过程实时显示进度与逐条结果。
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -66,9 +69,10 @@ import {
 import { isNameConflictError } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
+/** 单个技能导入的结果。 */
 type BulkImportResult = {
   key: string;
   name: string;
@@ -79,6 +83,7 @@ type BulkImportResult = {
   skill?: Skill;
 };
 
+/** 批量导入的整体状态机。 */
 type BulkImportState = {
   phase: "idle" | "importing" | "resolving" | "done" | "cancelled";
   total: number;
@@ -87,13 +92,16 @@ type BulkImportState = {
   results: BulkImportResult[];
 };
 
+/** 冲突的处置动作：覆盖 / 改名 / 跳过。 */
 type ConflictResolutionAction = "overwrite" | "rename" | "skip";
 
+/** 某个冲突的处置状态：动作 +（改名为）新名字。 */
 type ConflictResolutionState = {
   action: ConflictResolutionAction;
   renameName: string;
 };
 
+/** 批量导入状态的初始值（空闲态）。 */
 const INITIAL_BULK_STATE: BulkImportState = {
   phase: "idle",
   total: 0,
@@ -103,23 +111,25 @@ const INITIAL_BULK_STATE: BulkImportState = {
 };
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助
 // ---------------------------------------------------------------------------
 
 /**
- * Max concurrent imports. Higher = faster but more daemon/network pressure.
+ * 最大并发导入数。越大越快，但对 daemon/网络的瞬时压力也越大。
  *
- * Timeout invariant: IMPORT_CONCURRENCY × heartbeat period (~15s) must stay
- * within runtimeLocalSkillPendingTimeout (server/internal/handler/runtime_local_skills.go)
- * and IMPORT_POLL_TIMEOUT_MS (packages/core/runtimes/local-skills.ts).
- * See also maxLocalSkillImportBatch in server/internal/handler/daemon.go.
+ * 超时不变量：IMPORT_CONCURRENCY × 心跳周期（约 15s）必须落在
+ * runtimeLocalSkillPendingTimeout（server/internal/handler/runtime_local_skills.go）
+ * 与 IMPORT_POLL_TIMEOUT_MS（packages/core/runtimes/local-skills.ts）之内。
+ * 另见 server/internal/handler/daemon.go 的 maxLocalSkillImportBatch。
  */
 const IMPORT_CONCURRENCY = 10;
 
+/** 冲突时「改名」的默认新名字。 */
 function defaultRenameName(name: string): string {
   return `${name} copy`;
 }
 
+/** 按结果状态挑一个小图标（绿对勾=新建、蓝刷新=更新、黄三角=冲突等）。 */
 function ResultIcon({ status }: { status: BulkImportResult["status"] }) {
   switch (status) {
     case "created":
@@ -136,9 +146,13 @@ function ResultIcon({ status }: { status: BulkImportResult["status"] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Skill row with checkbox
+// 带勾选框的技能行
 // ---------------------------------------------------------------------------
 
+/**
+ * 单个技能的勾选行：名字/provider/描述/路径展示（命中的搜索词高亮），点击整行切换勾选；
+ * 选中且为「唯一选中」时下方展开行内编辑区（可改导入用名与描述）。
+ */
 function SkillItem({
   skill,
   checked,
@@ -160,7 +174,7 @@ function SkillItem({
   editDescription?: string;
   onNameChange?: (v: string) => void;
   onDescriptionChange?: (v: string) => void;
-  /** Active search term; matched substrings are highlighted in this row. */
+  /** 当前搜索词；命中片段会在本行里高亮。 */
   query?: string;
 }) {
   const { t } = useT("skills");
@@ -197,9 +211,7 @@ function SkillItem({
             </Badge>
           </div>
           {skill.description && (
-            // Drop the 2-line clamp while searching so a highlighted match that
-            // falls past the first two lines stays visible instead of being
-            // clipped out of view.
+            // 搜索时去掉两行截断：命中可能落在前两行之外，若仍截断会被剪掉看不见。
             <p
               className={`mt-1 text-caption text-muted-foreground ${
                 query.trim() ? "" : "line-clamp-2"
@@ -249,9 +261,10 @@ function SkillItem({
 }
 
 // ---------------------------------------------------------------------------
-// Summary view (shown after bulk import completes)
+// 汇总视图（批量导入完成后展示）
 // ---------------------------------------------------------------------------
 
+/** 批量导入完成/取消后的汇总：新建/更新/冲突/跳过/失败 5 类计数 + 逐条结果列表。 */
 function BulkImportSummary({ results }: { results: BulkImportResult[] }) {
   const { t } = useT("skills");
   const created = results.filter((r) => r.status === "created");
@@ -262,7 +275,7 @@ function BulkImportSummary({ results }: { results: BulkImportResult[] }) {
 
   return (
     <div className="space-y-4 py-2">
-      {/* Summary counts */}
+      {/* 各类计数 */}
       <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-5">
         <div className="rounded-md bg-green-50 px-3 py-2 dark:bg-green-950/30">
           <div className="text-title font-semibold text-green-700 dark:text-green-400">
@@ -306,7 +319,7 @@ function BulkImportSummary({ results }: { results: BulkImportResult[] }) {
         </div>
       </div>
 
-      {/* Detailed results list */}
+      {/* 逐条结果明细 */}
       <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
         {results.map((r) => (
           <div
@@ -327,6 +340,10 @@ function BulkImportSummary({ results }: { results: BulkImportResult[] }) {
   );
 }
 
+/**
+ * 冲突解决面板——列出每个命名冲突（新技能名字撞上已存在技能），逐条选择
+ * 覆盖/改名/跳过；批量时还提供「全部覆盖」「全部跳过」快捷按钮。
+ */
 function ConflictResolutionPanel({
   conflicts,
   resolutions,
@@ -500,9 +517,17 @@ function ConflictResolutionPanel({
 }
 
 // ---------------------------------------------------------------------------
-// Panel
+// 面板主体
 // ---------------------------------------------------------------------------
 
+/**
+ * 「从本地 runtime 导入技能」面板。
+ *
+ * 顶部选一台本地 runtime（按机器分组）并展示其在线状态；中部是技能勾选列表
+ * （搜索、全选/半选、单选时行内改名/改描述）；底部按钮随阶段变化——空闲时「导入」、
+ * 导入中显示进度条与取消、冲突时进入逐条处置、完成/取消后展示汇总与「完成」。
+ * 单一导入成功后回调 onImported 用于跳详情，批量导入结束后回调 onBulkDone。
+ */
 export function RuntimeLocalSkillImportPanel({
   onImported,
   onBulkDone,
@@ -527,10 +552,9 @@ export function RuntimeLocalSkillImportPanel({
     [runtimes, userId],
   );
 
-  // Group the local runtimes by machine so the picker reads as
-  // "machine → provider/runtime" (alias-aware) instead of a flat list of
-  // raw daemon names (MUL-5248). Reuses the same source of truth as the
-  // agent runtime picker.
+  // 把本地 runtime 按「机器」分组，让选择器读起来像「机器 → provider/runtime」
+  // （别名友好），而不是一长串裸 daemon 名（MUL-5248）。与 agent runtime 选择器
+  // 复用同一份数据源。
   const runtimeMachines = useMemo(
     () =>
       buildRuntimeMachines(localRuntimes, {
@@ -547,7 +571,7 @@ export function RuntimeLocalSkillImportPanel({
   >({});
   const [skillSearchQuery, setSkillSearchQuery] = useState("");
   const cancelRef = useRef(false);
-  // Single-select inline edit fields (shown when exactly 1 skill is checked)
+  // 单选时的行内编辑字段（仅当恰好勾选了 1 个技能时显示）
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
 
@@ -583,10 +607,9 @@ export function RuntimeLocalSkillImportPanel({
     const query = skillSearchQuery.trim().toLowerCase();
     if (!query) return runtimeSkills;
 
-    // Search only over fields the row actually renders (name, provider,
-    // description, path) so every match can be highlighted in the result —
-    // `skill.key` is intentionally excluded because it is not displayed, and a
-    // key-only match would surface a result with no visible reason.
+    // 只搜行内实际渲染的字段（name/provider/description/path），这样每次命中都能
+    // 在结果里高亮出来；刻意排除 `skill.key`——它不展示，若只命中 key，用户会看到
+    // 一条毫无来由的结果。
     return runtimeSkills.filter((skill) =>
       [skill.name, skill.description, skill.provider, skill.source_path].some(
         (value) => value?.toLowerCase().includes(query) ?? false,
@@ -594,20 +617,20 @@ export function RuntimeLocalSkillImportPanel({
     );
   }, [runtimeSkills, skillSearchQuery]);
 
-  // The single selected skill (for inline editing). Only valid when exactly 1.
+  // 行内编辑针对的对象：只有恰好勾选 1 个技能时才有意义，否则为 undefined。
   const singleSelectedSkill =
     selectedKeys.size === 1
       ? runtimeSkills.find((s) => selectedKeys.has(s.key))
       : undefined;
 
-  // -- Selection helpers --
+  // -- 勾选辅助 --
 
   const toggleSkill = (key: string) => {
     setSelectedKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
-      // Seed edit fields when toggling to exactly-one selection
+      // 恰好收窄到单选时，把该技能的名字/描述预填进编辑框，供用户改后再导入。
       if (next.size === 1) {
         const only = runtimeSkills.find((s) => next.has(s.key));
         if (only) {
@@ -699,7 +722,7 @@ export function RuntimeLocalSkillImportPanel({
     }
   };
 
-  // -- Bulk import handler --
+  // -- 批量导入主流程 --
 
   const handleBulkImport = async () => {
     if (!selectedRuntimeId || selectedKeys.size === 0) return;
@@ -719,7 +742,7 @@ export function RuntimeLocalSkillImportPanel({
     const results: BulkImportResult[] = [];
 
     const importOne = async (skill: RuntimeLocalSkillSummary) => {
-      // Single-select: use the user-edited name/description
+      // 单选时用用户在行内编辑过的名字/描述；多选时保持原名原描述。
       const importName =
         total === 1 ? editName.trim() || skill.name : skill.name;
       const importDescription =
@@ -769,7 +792,7 @@ export function RuntimeLocalSkillImportPanel({
       }));
     };
 
-    // Concurrent pool — up to IMPORT_CONCURRENCY in-flight at once
+    // 并发池：同时最多 IMPORT_CONCURRENCY 条在途；满员就等最先完成的那条让出名额。
     const executing = new Set<Promise<void>>();
     for (const skill of skillsToImport) {
       if (cancelRef.current) break;
@@ -915,7 +938,7 @@ export function RuntimeLocalSkillImportPanel({
     !!selectedRuntime &&
     selectedRuntime.status === "online" &&
     selectedKeys.size > 0 &&
-    // Single-select requires a non-empty name (user may be renaming)
+    // 单选时要求名字非空——用户可能正在行内改名，空名提交会被后端拒绝。
     (selectedKeys.size > 1 || !!editName.trim()) &&
     !busy;
 
@@ -926,10 +949,10 @@ export function RuntimeLocalSkillImportPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
 
-  // -- Middle content --
+  // -- 中部内容区：按阶段切换（勾选列表 / 进度 / 冲突处置 / 汇总） --
 
   const middle = (() => {
-    // Progress view during bulk import
+    // 导入中：进度条 + 实时逐条结果。
     if (bulkState.phase === "importing") {
       const pct =
         bulkState.total > 0
@@ -947,7 +970,7 @@ export function RuntimeLocalSkillImportPanel({
             </p>
           </div>
           <Progress value={pct} />
-          {/* Live result feed */}
+          {/* 实时滚动的逐条导入结果 */}
           <div className="max-h-48 space-y-1 overflow-y-auto">
             {bulkState.results.map((r) => (
               <div
@@ -963,7 +986,7 @@ export function RuntimeLocalSkillImportPanel({
       );
     }
 
-    // Summary view after bulk import (complete or cancelled)
+    // 导入结束（完成或用户取消）后展示汇总视图。
     if (bulkState.phase === "done" || bulkState.phase === "cancelled") {
       return <BulkImportSummary results={bulkState.results} />;
     }
@@ -1007,7 +1030,7 @@ export function RuntimeLocalSkillImportPanel({
       );
     }
 
-    // --- Idle phase: skill selection list ---
+    // --- 空闲阶段：技能勾选列表（含无 runtime/离线/加载失败等前置态） ---
 
     if (localRuntimes.length === 0) {
       return (
@@ -1105,7 +1128,7 @@ export function RuntimeLocalSkillImportPanel({
           </div>
         ) : (
           <>
-            {/* Select all header */}
+            {/* 全选表头：点此勾选/取消当前搜索结果的全部技能（半选态由 indeterminate 表达） */}
             <label className="flex cursor-pointer items-center gap-2 px-1 py-1">
               <input
                 type="checkbox"
@@ -1150,14 +1173,14 @@ export function RuntimeLocalSkillImportPanel({
     );
   })();
 
-  // -- Handle "Done" button after import --
+  // -- 「完成」按钮：导入收尾后决定去详情页还是关闭弹窗 --
 
   const handleDone = () => {
     const succeeded = bulkState.results.filter(
       (r) => r.status === "created" || r.status === "updated",
     );
-    // Single-import flow: navigate to the imported skill detail page.
-    // Multi-import flow: close the dialog even if only one succeeded.
+    // 单选流程：跳转到导入成功的那个技能详情页。
+    // 多选流程：直接关闭弹窗——即使只有一条成功也一样。
     if (
       bulkState.selectedCount === 1 &&
       succeeded.length === 1 &&
@@ -1251,7 +1274,7 @@ export function RuntimeLocalSkillImportPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Sticky top: runtime picker + status */}
+      {/* 吸顶区：runtime 选择器 + 当前选中项的在线状态 */}
       <div
         aria-disabled={busy || undefined}
         className={`shrink-0 space-y-2 border-b px-5 py-3 ${
@@ -1323,7 +1346,7 @@ export function RuntimeLocalSkillImportPanel({
         )}
       </div>
 
-      {/* Scrollable middle */}
+      {/* 可滚动的中部内容区（带首尾渐隐滚动效果） */}
       <div
         ref={scrollRef}
         style={fadeStyle}
@@ -1374,7 +1397,7 @@ export function RuntimeLocalSkillImportPanel({
         </AnimatePresence>
       </div>
 
-      {/* Sticky bottom: contextual actions per phase */}
+      {/* 吸底区：随阶段变化的一排操作按钮（导入 / 取消 / 处置冲突 / 完成） */}
       <div className="flex shrink-0 items-center gap-3 border-t bg-muted/30 px-5 py-3">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div

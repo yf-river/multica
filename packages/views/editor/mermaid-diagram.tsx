@@ -1,22 +1,18 @@
 "use client";
 
 /**
- * MermaidDiagram — sandboxed Mermaid diagram renderer.
+ * MermaidDiagram——沙箱化的 Mermaid 图渲染器（行内展示）。
  *
- * Extracted from `readonly-content.tsx` so the Tiptap CodeBlock NodeView
- * (`code-block-view.tsx`) can render the same component when a code block's
- * language is `mermaid`. Previously Mermaid only worked in read-only
- * markdown surfaces (comment cards) — issue descriptions, which always
- * stay in the Tiptap editor, never rendered diagrams.
+ * 从 `readonly-content.tsx` 抽出，让 Tiptap 代码块 NodeView
+ * （`code-block-view.tsx`）在代码块语言为 `mermaid` 时渲染同一组件。此前
+ * Mermaid 只在只读 markdown 界面（评论卡片）工作——issue 描述始终留在
+ * Tiptap 编辑器里，从不渲染图。
  *
- * Theme variables are detected from the host's CSS custom properties so the
- * diagram colors match light/dark mode. The SVG is rendered inside a
- * sandboxed iframe to keep Mermaid's runtime stylesheet from leaking into
- * the page.
+ * 主题变量从宿主的 CSS 自定义属性读取，让图的颜色匹配亮/暗模式。SVG 渲染
+ * 在沙箱 iframe 里，避免 Mermaid 的运行时样式表漏进页面。
  *
- * This component owns the inline presentation; the full-screen experience
- * lives in `MermaidViewer`. Both read the same rendered SVG, so what you
- * export or blow up is always what you were looking at.
+ * 本组件负责行内呈现；全屏体验在 `MermaidViewer`。两者读同一个渲染出的
+ * SVG，所以导出或放大看到的永远就是你正在看的。
  */
 
 import {
@@ -39,12 +35,14 @@ type MermaidAPI = typeof import("mermaid").default;
 
 let mermaidPromise: Promise<MermaidAPI> | null = null;
 
+/** 惰性加载 mermaid（模块级缓存，整个会话只载一次）。 */
 function getMermaid(): Promise<MermaidAPI> {
   mermaidPromise ??= import("mermaid").then(({ default: mermaid }) => mermaid);
 
   return mermaidPromise;
 }
 
+/** 把任意 CSS 颜色换算成 Mermaid 能吃的 legacy 语法。 */
 function toLegacyColor(color: string, fallback: string, ownerDocument: Document): string {
   const canvas = ownerDocument.createElement("canvas");
   canvas.width = 1;
@@ -52,9 +50,9 @@ function toLegacyColor(color: string, fallback: string, ownerDocument: Document)
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) return fallback;
 
-  // Mermaid's color parser only supports legacy color syntax. Canvas can parse
-  // modern CSS Color 4 values such as oklch(), then getImageData gives concrete
-  // 8-bit sRGB bytes that Mermaid can consume safely.
+  // Mermaid 的颜色解析器只支持 legacy 语法。canvas 能解析 oklch() 等现代
+  // CSS Color 4 值，getImageData 随后给出 Mermaid 可安全消费的 8 位 sRGB
+  // 字节。
   context.fillStyle = "#000";
   context.fillStyle = color || fallback;
   context.fillRect(0, 0, 1, 1);
@@ -63,6 +61,7 @@ function toLegacyColor(color: string, fallback: string, ownerDocument: Document)
   return `rgb(${red}, ${green}, ${blue})`;
 }
 
+/** 解析宿主某个 CSS 自定义属性（如 --muted）的实际颜色值。 */
 function resolveCssColor(
   host: HTMLElement,
   variableName: string,
@@ -80,6 +79,7 @@ function resolveCssColor(
 
 const FALLBACK_BACKGROUND = "rgb(255, 255, 255)";
 
+/** 按宿主主题组装 mermaid 主题变量；无宿主时用亮色默认。 */
 function getMermaidThemeVariables(host: HTMLElement | null) {
   if (!host) {
     return {
@@ -108,8 +108,8 @@ function getSandboxCssVariables(host: HTMLElement | null): string {
 }
 
 /**
- * Concrete colors for export. An exported file has no host page to inherit
- * from, so `var(--muted)` / `font-family: inherit` would resolve to nothing.
+ * 供导出的具体颜色。导出的文件没有宿主页面可继承，`var(--muted)` /
+ * `font-family: inherit` 都会解析成空。
  */
 function getExportStyle(host: HTMLElement | null): {
   background: string;
@@ -125,6 +125,7 @@ function getExportStyle(host: HTMLElement | null): {
   };
 }
 
+/** 从渲染出的 SVG 解析出原始尺寸；viewBox 缺失或无效时返回 null。 */
 function getMermaidLayout(svg: string): Size | null {
   const viewBoxMatch = svg.match(
     /viewBox=["']\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*["']/i,
@@ -143,16 +144,14 @@ function getMermaidLayout(svg: string): Size | null {
   return null;
 }
 
-// Default skeleton height while Mermaid loads + renders for the first time
-// in this session. Picked to absorb most issue-detail diagrams without
-// excessive empty space; web.dev's CLS guidance recommends reserving any
-// such space upfront so async content doesn't shift surrounding layout.
+// Mermaid 首次加载 + 渲染期间使用的默认骨架高度。取值意图是容纳 issue
+// 详情里的大多数图又不留过多空白；web.dev 的 CLS 指南建议提前预留此类空间，
+// 免得异步内容到来时把周围布局推来推去。
 export const MERMAID_SKELETON_HEIGHT_PX = 280;
 const MERMAID_LAYOUT_CACHE_PREFIX = "multica:mermaid:layout:";
 
-// DJB2 — small, fast, sufficient for sessionStorage cache keys. The chart
-// text itself is too unwieldy as a key (length, special chars), and a
-// crypto-strength hash would have to be async.
+// DJB2——小巧、快速、够 sessionStorage 缓存 key 用。图文本本身当 key 太笨重
+// （长度、特殊字符），而密码级哈希又得是异步的。
 function hashChart(chart: string): string {
   let hash = 5381;
   for (let i = 0; i < chart.length; i++) {
@@ -162,17 +161,14 @@ function hashChart(chart: string): string {
 }
 
 /**
- * Height to reserve for a diagram that has not rendered yet: the real height
- * when this exact chart already rendered in this session, otherwise the
- * skeleton default. Exported so the near-viewport lazy shell
- * (rich-content/lazy-rich-block.tsx) reserves the SAME space this component
- * would, instead of maintaining a second guess at the size.
+ * 尚未渲染的图要预留的高度：本会话已渲染过这同一张图时取真实高度，否则用
+ * 骨架默认值。导出给近视口惰性外壳（rich-content/lazy-rich-block.tsx），让
+ * 它预留与本组件相同的高度，而不是另行猜测尺寸。
  *
- * NOT safe to call during render: it reads sessionStorage, which does not exist
- * on the server, so the value differs between the server frame and the browser's
- * hydration frame whenever the cache is warm. Callers must use the skeleton
- * default for the first frame and call this from an effect (see
- * useReservedMermaidHeightPx in rich-content/rich-code-block.tsx).
+ * 渲染期间不可调用：它读 sessionStorage，服务端不存在，因此缓存温热时
+ * 服务端帧与浏览器水合帧的值会不一致。调用方首帧必须用骨架默认值，并从
+ * effect 里调用它（见 rich-content/rich-code-block.tsx 的
+ * useReservedMermaidHeightPx）。
  */
 export function reservedMermaidHeightPx(chart: string): number {
   return readCachedLayout(chart)?.height ?? MERMAID_SKELETON_HEIGHT_PX;
@@ -209,11 +205,12 @@ function writeCachedLayout(chart: string, layout: Size | null): void {
       JSON.stringify({ width: layout.width, height: layout.height }),
     );
   } catch {
-    // Quota exceeded or storage disabled — degrade silently; we still
-    // render correctly, just without the zero-shift optimisation.
+    // 配额超限或存储被禁用——静默降级；仍能正确渲染，只是没有零位移
+    // 优化。
   }
 }
 
+/** 组出一份「按宿主 CSS 变量配色的独立 HTML 文档」字符串。 */
 function buildSandboxedMermaidDocument(svg: string, host: HTMLElement | null): string {
   const cssVariables = getSandboxCssVariables(host);
 
@@ -221,10 +218,9 @@ function buildSandboxedMermaidDocument(svg: string, host: HTMLElement | null): s
 }
 
 /**
- * Viewer document: the diagram is drawn at natural size and the host applies
- * zoom as a CSS transform on the wrapper. Clamping to `max-width: 100%` here
- * (as the inline document does) would fight the transform and cap zoom at
- * whatever the iframe happens to measure.
+ * 查看器文档：图按原始尺寸绘制，宿主把缩放作为包裹层上的 CSS transform 施加。
+ * 这里若像行内文档那样钳到 `max-width: 100%`，会与 transform 打架，把缩放
+ * 上限卡在 iframe 恰好量到的宽度上。
  */
 function buildViewerMermaidDocument(
   svg: string,
@@ -236,6 +232,8 @@ function buildViewerMermaidDocument(
   return `<!doctype html><html><head><style>:root { ${cssVariables} } html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; } svg { display: block; width: ${layout.width}px; height: ${layout.height}px; max-width: none; }</style></head><body>${svg}</body></html>`;
 }
 
+/** 监听 html/body 的 class/style/data-theme 与系统深色偏好，主题变化时让
+ *  Mermaid 用新变量重新渲染。 */
 function useThemeVersion() {
   const [themeVersion, setThemeVersion] = useState(0);
 
@@ -266,9 +264,8 @@ function useThemeVersion() {
 }
 
 /**
- * Tracks which horizontal edges of a scroll container have content beyond
- * them, so CSS can fade those edges as an affordance that the diagram
- * continues off-screen.
+ * 跟踪滚动容器哪个水平边缘后面还有内容，让 CSS 淡出那些边缘，提示读者
+ * 图在屏幕之外继续延伸。
  */
 function useHorizontalOverflow(ref: React.RefObject<HTMLElement | null>, deps: unknown[]) {
   const [edges, setEdges] = useState<{ start: boolean; end: boolean }>({
@@ -284,8 +281,7 @@ function useHorizontalOverflow(ref: React.RefObject<HTMLElement | null>, deps: u
       const { scrollLeft, scrollWidth, clientWidth } = element;
       const maxScroll = scrollWidth - clientWidth;
       setEdges((previous) => {
-        // 1px tolerance: fractional layout widths otherwise leave a fade
-        // permanently stuck on at rest.
+        // 1px 容差：否则分数级布局宽度会在静止时留一片永久淡出。
         const start = scrollLeft > 1;
         const end = scrollLeft < maxScroll - 1;
         return previous.start === start && previous.end === end
@@ -311,24 +307,28 @@ function useHorizontalOverflow(ref: React.RefObject<HTMLElement | null>, deps: u
   return edges;
 }
 
-// Size the viewer falls back to when the SVG carries no usable viewBox. Mermaid
-// always emits one, but the viewer's transform math needs a concrete content
-// size, and rendering nothing at all would be a worse failure than an
-// approximate one.
+// SVG 没有可用 viewBox 时查看器退回的尺寸。Mermaid 总会给出 viewBox，但
+// 查看器的变换数学需要一个具体的 content 尺寸——什么都不渲染比一个近似
+// 值更糟。
 const VIEWER_FALLBACK_LAYOUT: Size = { width: 800, height: MERMAID_SKELETON_HEIGHT_PX };
 
+/** 一次成功的渲染产物：SVG、两份文档、尺寸与导出配色。 */
 interface RenderedDiagram {
   svg: string;
   inlineDocument: string;
   viewerDocument: string;
-  /** Natural size, or null when the viewBox was unreadable. Sizes the inline iframe. */
+  /** 原始尺寸；viewBox 读不到时为 null。决定行内 iframe 的尺寸。 */
   layout: Size | null;
-  /** Always concrete — the viewer cannot lay out against an unknown size. */
+  /** 恒为具体值——查看器无法对着未知尺寸布局。 */
   viewerLayout: Size;
   exportBackground: string;
   exportFontFamily: string;
 }
 
+/**
+ * MermaidDiagram——行内 Mermaid 图：渲染、错误态、复制源码、打开查看器。
+ * 宽图可横向拖动；点按打开全屏查看器（拖拽不触发）。
+ */
 export function MermaidDiagram({ chart }: { chart: string }) {
   const { t } = useT("editor");
   const reactId = useId();
@@ -340,13 +340,12 @@ export function MermaidDiagram({ chart }: { chart: string }) {
     [reactId],
   );
   const themeVersion = useThemeVersion();
-  // One object rather than parallel states: a half-applied re-render (new SVG,
-  // old layout) would size the viewer's iframe against the wrong diagram.
+  // 用单个对象而非并行状态：半应用的重渲染（新 SVG、旧 layout）会让查看器
+  // 的 iframe 对着错误的图定尺寸。
   const [rendered, setRendered] = useState<RenderedDiagram | null>(null);
-  // Lazy initial value: if we've rendered this exact chart already in the
-  // current session, the cached layout lets us reserve correct space on the
-  // very first paint — eliminating the 0px → real-height shift that breaks
-  // deep-link scroll positioning and ambient reading position.
+  // 惰性初值：本会话已渲染过这同一张图时，缓存的 layout 让首帧就能预留
+  // 正确空间——消除 0px → 真实高度的跳动，那会破坏深链滚动定位与阅读
+  // 时的位置感。
   const [skeletonLayout, setSkeletonLayout] = useState<Size | null>(() =>
     readCachedLayout(chart),
   );
@@ -361,28 +360,24 @@ export function MermaidDiagram({ chart }: { chart: string }) {
     async function renderDiagram() {
       try {
         setError(null);
-        // Deliberately NOT clearing `rendered` here. A theme switch re-runs
-        // this effect, and dropping to null would unmount the open viewer —
-        // closing it, and with it the user's zoom and position. Keeping the
-        // previous diagram on screen until the new one is ready also removes
-        // a flash of the loading skeleton on every theme toggle.
+        // 刻意不清 `rendered`。主题切换会重跑本 effect，落回 null 会卸载
+        // 已打开的查看器——连同用户的缩放与位置一起关掉。让旧图留在屏上
+        // 直到新图就绪，也省去每次切换主题都闪一下加载骨架。
         setSkeletonLayout(readCachedLayout(chart));
         const mermaid = await getMermaid();
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: "strict",
           theme: "base",
-          // Render labels as SVG <text> instead of Mermaid's default HTML-in-
-          // <foreignObject>. Browsers do not rasterize foreignObject when an
-          // SVG is drawn through an <img> — verified in Chromium, the label
-          // paints zero pixels AND taints the canvas, so PNG export produces
-          // nothing at all. SVG text keeps the export self-contained.
+          // 用 SVG <text> 渲染标签，而不是 Mermaid 默认的 HTML-in-
+          // <foreignObject>。浏览器经 <img> 画 SVG 时不会栅格化
+          // foreignObject——在 Chromium 里验证过，标签零像素绘制、还会污染
+          // canvas，PNG 导出结果空空如也。SVG text 让导出自足。
           htmlLabels: false,
           themeVariables: getMermaidThemeVariables(containerRef.current),
-          // On invalid syntax, make render() throw instead of drawing Mermaid's
-          // built-in error graphic into the DOM. The catch below then shows our
-          // own compact error state — no orphaned error SVG, and no extra parse
-          // pass over valid charts.
+          // 语法无效时让 render() 抛错，而不是把 Mermaid 内建错误图形画进
+          // DOM。下面的 catch 于是展示我们自己的紧凑错误态——没有游离的
+          // 错误 SVG，合法图也不会多跑一遍解析。
           suppressErrorRendering: true,
         });
         const { svg: renderedSvg } = await mermaid.render(diagramId, chart);
@@ -396,8 +391,8 @@ export function MermaidDiagram({ chart }: { chart: string }) {
         setRendered({
           svg: renderedSvg,
           inlineDocument: buildSandboxedMermaidDocument(renderedSvg, containerRef.current),
-          // Same size the viewer lays out against, so the drawn SVG and the
-          // transform never disagree about how big the diagram is.
+          // 与查看器布局用同一个尺寸，画出的 SVG 与 transform 对「图有多大」
+          // 永不分歧。
           viewerDocument: buildViewerMermaidDocument(
             renderedSvg,
             containerRef.current,
@@ -459,8 +454,8 @@ export function MermaidDiagram({ chart }: { chart: string }) {
             {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
           </button>
         </div>
-        {/* The parser message is the only clue about which line is wrong;
-            without it the fallback is just an unexplained code block. */}
+        {/* 解析器消息是判断哪行出错的唯一线索；没有它，兜底只是一段说不清
+            原因的代码块。 */}
         <p className="mermaid-diagram-error-detail">{error}</p>
         <pre>
           <code>{chart}</code>
@@ -469,10 +464,9 @@ export function MermaidDiagram({ chart }: { chart: string }) {
     );
   }
 
-  // While the iframe is not yet ready, hold the container at the skeleton
-  // height (cached real height when available, fallback default otherwise).
-  // Once the iframe renders, drop the min-height — the iframe's own height
-  // drives layout. If the cache was right, this transition is zero-shift.
+  // iframe 尚未就绪时，让容器保持骨架高度（有缓存用缓存真实高度，否则用
+  // 默认）。iframe 渲染后去掉 min-height——由 iframe 自身高度驱动布局。
+  // 缓存若是对的，这次过渡就是零位移。
   const containerStyle: CSSProperties | undefined = rendered
     ? undefined
     : { minHeight: skeletonLayout?.height ?? MERMAID_SKELETON_HEIGHT_PX };
@@ -488,13 +482,11 @@ export function MermaidDiagram({ chart }: { chart: string }) {
     >
       {rendered ? (
         <>
-          {/* The scroll container is a sibling of the toolbar, not its parent:
-              as an absolutely-positioned child of the scroller the toolbar used
-              to slide out of view with the diagram on wide charts. */}
-          {/* Tap opens the viewer, but a drag must not — see useDragToScroll.
-              The gesture drives this instead of `onClick`, because a click
-              fires at the end of a drag too and would reopen the viewer over
-              a user who was only trying to look at the rest of a wide chart. */}
+          {/* 滚动容器是工具条的兄弟而不是父节点：作为滚动器的绝对定位子节点，
+              旧版工具条在宽图上会随图一起滚出视野。 */}
+          {/* 点按打开查看器，但拖拽不行——见 useDragToScroll。这里用手势驱动
+              而非 `onClick`，因为拖拽结束时也会触发 click，会替只想看看宽图
+              剩余部分的人重新打开查看器。 */}
           <div
             ref={scrollRef}
             className="mermaid-diagram-scroll"

@@ -1,3 +1,12 @@
+// client.go：钉钉 Open-API REST 的最小封装——安装与出站路径共用的 HTTP 缝。
+// 目前只做一件事：从 AppKey/AppSecret 现铸 access_token。
+//
+// 刻意用 net/http 手写而不是上 Stream SDK：服务器在 Stream 连接之外要发的
+// REST 调用只有「铸令牌」和「发消息」这两个；收在这里，两者都能借着 apiBase
+// 覆盖、对着 httptest server 轻松测试。
+//
+// 钉钉 Open-API 的并发保护：401 会被翻译成 errUnauthorized，让出站发送器丢掉
+// 缓存的 access_token、用新令牌重试一次（令牌过期是这类调用的常态而非异常）。
 package dingtalk
 
 import (
@@ -11,40 +20,32 @@ import (
 	"strings"
 )
 
-// errUnauthorized is returned by postJSON on an HTTP 401 so the outbound sender
-// can drop the cached access_token and retry once with a fresh one.
+// errUnauthorized 由 postJSON 在收到 HTTP 401 时返回，让出站发送器丢掉缓存的
+// access_token 并拿新令牌重试一次。
 var errUnauthorized = errors.New("dingtalk: unauthorized (access token expired or invalid)")
 
-// This file is the thin DingTalk Open-API REST seam the install + outbound
-// paths share: minting an access_token from AppKey/AppSecret. It is deliberately
-// hand-rolled over net/http (not the Stream SDK) because the only REST call the
-// server makes outside the Stream connection is the token mint plus the message
-// send; keeping it here makes both trivially testable against an httptest
-// server via the apiBase override.
-
-// defaultAPIBase is the DingTalk Open-API host. The mainland cloud is the only
-// region DingTalk exposes for these endpoints, so unlike Feishu there is no
-// per-installation region split.
+// defaultAPIBase 是钉钉 Open-API 主机。大陆云是钉钉这些端点唯一开放的部署区域，
+// 因此与飞书不同，没有按安装分地域的问题。
 const defaultAPIBase = "https://api.dingtalk.com"
 
-// accessTokenPath mints an enterprise-internal-app access_token from the app's
-// AppKey/AppSecret. The response carries the token and its lifetime in seconds.
+// accessTokenPath 用应用的 AppKey/AppSecret 铸一个企业内部应用的 access_token。
+// 响应里带令牌本身和以秒计的有效期。
 const accessTokenPath = "/v1.0/oauth2/accessToken"
 
-// accessTokenResponse is the success shape of accessTokenPath.
+// accessTokenResponse 是 accessTokenPath 的成功响应结构。
 type accessTokenResponse struct {
 	AccessToken string `json:"accessToken"`
 	ExpireIn    int64  `json:"expireIn"`
 }
 
-// apiError is the DingTalk Open-API error envelope (non-2xx responses).
+// apiError 是钉钉 Open-API 的错误信封（非 2xx 响应）。
 type apiError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
-// apiRequestError preserves DingTalk's machine-readable error code so callers
-// can distinguish an actionable permission problem from a transient failure.
+// apiRequestError 保留钉钉机器可读的错误码，让调用方能区分「可处理的权限问题」
+// 与「一次性的瞬时故障」。
 type apiRequestError struct {
 	Path       string
 	StatusCode int
@@ -59,22 +60,20 @@ func (e *apiRequestError) Error() string {
 	return fmt.Sprintf("dingtalk: %s: http %d", e.Path, e.StatusCode)
 }
 
-// messageFilesDownloadPath resolves a robot message downloadCode to a
-// short-lived download URL. Both the code and the returned URL are temporary
-// (DingTalk documents no exact TTL) — resolve and fetch immediately, and never
-// persist or log either value.
+// messageFilesDownloadPath 把机器人消息的 downloadCode 解析成一条短命下载 URL。
+// code 和返回的 URL 都是临时的（钉钉没文档化确切 TTL）——拿到就立刻下载，两样
+// 都绝不落库或写日志。
 const messageFilesDownloadPath = "/v1.0/robot/messageFiles/download"
 
-// messageFileDownloadResponse is the success shape of messageFilesDownloadPath.
+// messageFileDownloadResponse 是 messageFilesDownloadPath 的成功响应结构。
 type messageFileDownloadResponse struct {
 	DownloadUrl string `json:"downloadUrl"`
 }
 
-// fetchAccessToken mints an access_token for (appKey, appSecret). baseURL
-// defaults to the DingTalk Open-API host; tests point it at an httptest server.
-// httpClient defaults to http.DefaultClient. It returns the token and its
-// lifetime in seconds. A non-2xx response or a missing token is an error — the
-// install path uses a failure here as "these credentials are wrong".
+// fetchAccessToken 为 (appKey, appSecret) 铸一个 access_token。baseURL 缺省指
+// 向钉钉 Open-API 主机，测试可指向 httptest server；httpClient 缺省用
+// http.DefaultClient。返回令牌与以秒计的有效期。非 2xx 响应或缺令牌都算错误——
+// 安装路径正是把这里的失败当「这些凭据是错的」。
 func fetchAccessToken(ctx context.Context, httpClient *http.Client, baseURL, appKey, appSecret string) (string, int64, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient

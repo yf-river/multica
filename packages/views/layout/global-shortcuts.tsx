@@ -19,6 +19,13 @@ import { isFloatingChatRouteSuppressed } from "../chat/floating-chat-visibility"
 import { useNavigation } from "../navigation";
 import { useSearchStore } from "../search/search-store";
 
+/**
+ * 布局模块：仪表盘外壳内的全局快捷键处理。
+ * 挂载一个文档级 keydown 监听器，执行搜索、创建 issue、切换侧边栏/聊天、
+ * 跳转到各页面等产品级快捷键动作。
+ */
+
+/** 需要注册为全局快捷键的动作 id 列表。 */
 const GLOBAL_ACTIONS: readonly ShortcutActionId[] = [
   "openSearch",
   "createIssue",
@@ -40,18 +47,24 @@ const GLOBAL_ACTIONS: readonly ShortcutActionId[] = [
   "goSettings",
 ];
 
+/**
+ * 判断是否应忽略某个全局快捷键事件。
+ * 已被 preventDefault、按键重复、或正在输入法组字时都应忽略。
+ * @param event 键盘事件。
+ * @returns 是否忽略。
+ */
 export function shouldIgnoreGlobalShortcutEvent(event: KeyboardEvent): boolean {
   return event.defaultPrevented || event.repeat || isImeComposing(event);
 }
 
-/** Executes configurable product-level shortcuts inside the dashboard shell. */
+/** 在仪表盘外壳内执行可配置的产品级快捷键。渲染为空，只挂监听器。 */
 export function GlobalShortcuts() {
   const { toggleSidebar } = useSidebar();
   const navigation = useNavigation();
   const workspacePaths = useWorkspacePaths();
 
-  // Subscribe so changing a binding in Settings immediately refreshes the
-  // listener closure; getShortcut remains useful to non-React call sites.
+  // 订阅覆盖配置，这样在设置里改绑定能立刻刷新监听器闭包；
+  // getShortcut 对非 React 调用点仍有用。
   const overrides = useShortcutStore((state) => state.overrides);
 
   useEffect(() => {
@@ -71,19 +84,17 @@ export function GlobalShortcuts() {
       goSettings: workspacePaths.settings(),
     };
 
-    // Read at press time rather than subscribing: the preference only matters
-    // the instant the chord fires, and the overlay is gone from the Chat tab.
-    // An unavailable overlay must not claim the chord either — returning false
-    // from the finder leaves the keypress its outside-the-app meaning instead of
-    // swallowing it for an action that would visibly do nothing.
+    // 在按下时读取而不是订阅：这个偏好只在组合键触发的瞬间起作用，而且
+    // 浮层在 Chat 标签页里并不存在。不可用的浮层也不该占用这个组合键——
+    // 从查找器返回 false 可以让按键保留它在应用之外的含义，而不是为了一个
+    // 肉眼可见毫无效果的动作把它吞掉。
     const canToggleFloatingChat = () =>
       useChatStore.getState().floatingChatEnabled &&
       !isFloatingChatRouteSuppressed(navigation.pathname, chatPath);
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Component/editor handlers run before this document-level listener.
-      // Respect their preventDefault instead of double-triggering a product
-      // action after the focused control already consumed the same chord.
+      // 组件/编辑器的处理器在这个文档级监听器之前运行。尊重它们的
+      // preventDefault，避免在焦点控件已消费同一组合键后，再次触发产品动作。
       if (shouldIgnoreGlobalShortcutEvent(event)) return;
 
       const actionId = GLOBAL_ACTIONS.find((candidate) => {
@@ -114,8 +125,8 @@ export function GlobalShortcuts() {
         return;
       }
       if (actionId === "goForward") {
-        // Optional on the adapter: an isolated window without a forward stack
-        // leaves it undefined, in which case the chord is simply a no-op.
+        // 在适配器上是可选的：没有前进栈的独立窗口会把它留成 undefined，
+        // 此时该组合键只是空操作。
         navigation.forward?.();
         return;
       }

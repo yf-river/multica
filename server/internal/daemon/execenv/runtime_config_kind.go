@@ -1,50 +1,48 @@
+// 任务运行类别（taskKind）的定义与分类：把一次运行要走的"分发路径"
+// 归类成互斥的几种，决定精简版 runtime brief 按哪种形态组装。
+
 package execenv
 
-// taskKind labels the dispatch path that the runtime brief should
-// follow for a given TaskContextForEnv. Used by
-// `buildMetaSkillContentSlim` (MUL-3560 brief; the `runtime_brief_slim`
-// flag that once gated it against a legacy verbose brief was retired in
-// MUL-4297, so this is now the only brief).
+// taskKind 标识给定 TaskContextForEnv 的 runtime brief 该沿哪条分发路径
+// 组装。它被 `buildMetaSkillContentSlim` 使用（即 MUL-3560 的精简 brief；
+// 曾经用来把它与旧的冗长 brief 二选一的 `runtime_brief_slim` 开关已在
+// MUL-4297 退役，因此现在它是唯一的 brief）。
 //
-// Four kinds, mutually exclusive in practice. classifyTask documents the
-// tiebreak rule that applies if a future caller accidentally violates the
-// mutex.
+// 共四种类别，实践中互斥。classifyTask 记录了一旦未来某个调用方不小心
+// 违反互斥时的裁决规则。
 type taskKind int
 
 const (
-	// kindLifeCognition is a governed background Life job. It has no
-	// repository, issue, or general platform mutation surface.
+	// kindLifeCognition 是受管的后台 Life 任务。它没有仓库、issue 或一般
+	// 意义上的平台改动面。
 	kindLifeCognition taskKind = iota
-	// kindIssue: this run operates on a real Multica issue. It deliberately
-	// does NOT distinguish comment-triggered from assignment-triggered runs.
+	// kindIssue：本次运行作用于一个真实的 Multica issue。它刻意"不"区分
+	// "评论触发"与"指派触发"两种运行。
 	//
-	// Those were two kinds until MUL-5377. Splitting them made the rendered
-	// brief — which Claude Code loads into messages[0], ahead of the entire
-	// conversation — differ between the first (on-assign) run and every
-	// later (comment) run on the same resumed session, which invalidated the
-	// prompt cache for the whole history on every resume. Which trigger
-	// fired THIS turn is per-turn state and now travels in the per-turn user
-	// message (daemon.BuildPrompt), which is appended after the cached
-	// prefix. See runtime_config_sections.go:writeWorkflowIssue.
+	// 直到 MUL-5377 前它们曾是两种类别。拆分它们会让渲染出的 brief——
+	// Claude Code 会把它加载进 messages[0]、位于整段对话之前——在同一
+	// 会话恢复后"首次（指派时）运行"与"后续每次（评论）运行"之间产生差异，
+	// 从而在每次恢复时使整段历史的提示缓存失效。而"本次究竟由哪种触发"
+	// 属于每轮（per-turn）状态，现在随每轮的用户消息
+	// （daemon.BuildPrompt）传递，该消息被追加在已缓存的公共前缀之后。
+	// 参见 runtime_config_sections.go:writeWorkflowIssue。
 	kindIssue
-	// kindAutopilotRunOnly: an autopilot fired in run-only mode (no
-	// issue created or attached).
+	// kindAutopilotRunOnly：autopilot 以纯运行模式（未创建也未关联 issue）
+	// 触发的一次运行。
 	kindAutopilotRunOnly
-	// kindQuickCreate: one-shot "create an issue from a natural-language
-	// prompt" task.
+	// kindQuickCreate：一次性"从自然语言提示创建 issue"的任务。
 	kindQuickCreate
-	// kindChat: interactive chat session, no issue.
+	// kindChat：交互式聊天会话，没有 issue。
 	kindChat
 )
 
-// classifyTask maps a TaskContextForEnv to the single taskKind the slim
-// brief should be assembled for. Precedence (documented for the tiebreak
-// case, although the daemon never sets two specific-kind flags at once):
-// chat → quick-create → autopilot run-only → issue.
+// classifyTask 把 TaskContextForEnv 映射成精简 brief 应为其组装的唯一
+// taskKind。优先级（供撞车裁决时参考；实际上 daemon 从不同时设置两个
+// 具体类别标志）：chat → quick-create → autopilot run-only → issue。
 //
-// Deliberately does not read ctx.TriggerCommentID: the classification must
-// not vary across runs of the same resumed session, or the brief's bytes
-// change and the prompt cache is lost from messages[0] onward (MUL-5377).
+// 它刻意不去读 ctx.TriggerCommentID：分类结果绝不能在同一会话恢复后的
+// 各次运行之间变化，否则 brief 的字节就会变，messages[0] 往后的提示缓存
+// 也就全部失效了（MUL-5377）。
 func classifyTask(ctx TaskContextForEnv) taskKind {
 	switch {
 	case ctx.LifeJobID != "":
@@ -60,19 +58,17 @@ func classifyTask(ctx TaskContextForEnv) taskKind {
 	}
 }
 
-// hasIssueContext returns true for the kinds that operate on a real Multica
-// issue and therefore can read / pin issue-scoped state. The slim
-// dispatcher gates these two sections on this predicate:
+// hasIssueContext 对"运行在真实 Multica issue 上、因此可以读取/钉住
+// issue 范围状态"的类别返回 true。精简分发器用这个谓词门控下面两节：
 //
-//   - Issue Metadata
-//   - Sub-issue Creation
+//   - Issue Metadata（issue 元数据）
+//   - Sub-issue Creation（子 issue 创建）
 //
-// Both are meaningless on the issue-less kinds (chat / quick-create /
-// autopilot run-only) and would either render an empty body or steer the
-// agent into a guaranteed-failed CLI call. Note this is a kind-based
-// predicate, not a check on ctx.IssueID — kindIssue always carries an issue
-// id by construction (the daemon refuses to dispatch it otherwise), and the
-// other three kinds never do.
+// 两者在"无 issue 的类别"（chat / quick-create / autopilot run-only）上
+// 都没有意义，要么渲染出空壳正文，要么把 agent 引向注定失败的 CLI 调用。
+// 注意它是"基于类别"的谓词，而不是对 ctx.IssueID 的检查——kindIssue
+// 按构造必然携带 issue id（否则 daemon 拒绝分发它），而其他三种类别
+// 永远不会带。
 func (k taskKind) hasIssueContext() bool {
 	return k == kindIssue
 }

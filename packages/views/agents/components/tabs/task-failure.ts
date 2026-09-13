@@ -1,11 +1,13 @@
+// 本文件提供“任务失败原因”的本地化标签工具：把后端下发的 failure_reason 字符串
+// 翻译成界面文案；未知原因原样返回，让旧客户端面对新后端时如实降级而不是报错。
+
 import type { useT } from "../../../i18n";
 
 type AgentsT = ReturnType<typeof useT<"agents">>["t"];
 
-// Stable translation keys for the canonical server taxonomy, provider-specific
-// operational reasons, and coarse values still present on historical rows.
-// The wire value remains an open string: clients can meet a newer reason than
-// they know, and failureReasonLabel deliberately falls back to that raw value.
+// 稳定的翻译键，覆盖三类来源：服务端规范分类、provider 特有的操作层原因、
+// 以及历史行上仍残留的粗粒度旧值。线上的值是开放字符串：客户端可能遇到比自己
+// 版本更新的原因，`failureReasonLabel` 特意回退显示原始值。
 export const FAILURE_REASON_I18N_KEYS = {
   // Platform / scheduler side.
   queued_expired: "queued_expired",
@@ -61,9 +63,8 @@ export const FAILURE_REASON_I18N_KEYS = {
 type KnownFailureReason = keyof typeof FAILURE_REASON_I18N_KEYS;
 
 /**
- * Localized label for a `failure_reason`, or `null` when there is nothing to
- * show. Unknown values remain raw so an older installed client degrades
- * truthfully when a newer backend adds a reason.
+ * 某个 `failure_reason` 的本地化标签；无需显示时返回 null。未知值保留原始串——
+ * 当新版后端加了新原因，旧版已安装客户端会如实降级显示。
  */
 export function failureReasonLabel(
   reason: string | null | undefined,
@@ -78,8 +79,7 @@ export function failureReasonLabel(
 }
 
 /**
- * Label for a cancelled task the server cancelled for a persisted reason.
- * User-initiated cancellation has no reason and stays unlabeled.
+ * 被服务端因持久化原因取消的任务的标签。用户自己发起的取消没有原因、不加标签。
  */
 export function cancelReasonLabel(
   task: {

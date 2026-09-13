@@ -1,3 +1,5 @@
+// 本文件是 paths（路由路径构造与导航辅助）模块的对外出口（barrel）。
+
 export {
   paths,
   isGlobalPath,

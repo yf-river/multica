@@ -1,3 +1,5 @@
+// 本文件负责安装级 ID 的读取与生成（幂等，仅当存储中无合法 UUID 时才创建）。
+
 import type { StorageAdapter } from "../types/storage";
 
 const INSTALL_ID_KEY = "multica_install_id";
@@ -16,7 +18,13 @@ function randomUUID(): string {
   return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
 }
 
-/** Returns the installation-scoped ID, creating it only when storage has no valid UUID. */
+/**
+ * 返回安装级 ID，仅当存储中没有合法 UUID 时才创建并写回。
+ *
+ * @param storage - 存储适配器
+ * @param generate - 生成 UUID 的函数（默认用 crypto）
+ * @returns 小写形式的安装 ID
+ */
 export function getOrCreateInstallId(
   storage: StorageAdapter,
   generate: () => string = randomUUID,

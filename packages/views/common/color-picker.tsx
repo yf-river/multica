@@ -1,3 +1,4 @@
+// 通用颜色选择器：饱和度/明度区域、色相滑杆、取色器（浏览器支持时）、hex 输入和预设调色板，值以 #rrggbb 传输。
 "use client";
 
 import { useEffect, useState } from "react";
@@ -20,10 +21,8 @@ import {
 } from "./color-utils";
 
 /**
- * Default palette shared by every color-picking surface (labels, property
- * options). Keeping one list is what makes colors look consistent across
- * the product — pick from here first, reach for the area/hex only when a
- * specific color is needed.
+ * 所有取色场景（标签、属性选项）共用的默认调色板。统一这份清单才能让颜色在
+ * 整个产品里保持一致——先从这里挑，只有需要特定颜色时才去用区域/hex 自定义。
  */
 export const COLOR_PICKER_PRESETS = [
   "#6b7280",
@@ -46,12 +45,15 @@ function clamp01(value: number): number {
 }
 
 /**
- * Shared color picker: saturation/value area, hue slider, eyedropper
- * (where the browser supports it), hex input, and the default palette with
- * a one-click Random action. Values travel as `#rrggbb` hex strings.
+ * 通用颜色选择器：饱和度/明度区域、色相滑杆、取色器（浏览器支持时）、hex
+ * 输入，以及带一键"随机"的默认调色板。值以 `#rrggbb` hex 字符串传输。
  *
- * `trigger` is the element that opens the popover (usually a swatch button),
- * passed through Base UI's render prop like the other pickers.
+ * `trigger` 是打开弹层的元素（通常是色块按钮），通过 Base UI 的 render prop
+ * 传入，和其他选择器一致。
+ * @param value 当前颜色值。
+ * @param onChange 颜色变化回调。
+ * @param trigger 触发弹层的元素。
+ * @param align 弹层对齐方式。
  */
 export function ColorPicker({
   value,
@@ -74,7 +76,11 @@ export function ColorPicker({
   );
 }
 
-/** Popover-less panel — exported for tests and future inline embedding. */
+/**
+ * 不带弹层的颜色面板——导出给测试和未来的内联嵌入使用。
+ * @param value 当前颜色值。
+ * @param onChange 颜色变化回调。
+ */
 export function ColorPickerPanel({
   value,
   onChange,
@@ -86,16 +92,15 @@ export function ColorPickerPanel({
   const [hsv, setHsv] = useState<Hsv>(
     () => hexToHsv(value) ?? { h: 217, s: 0.72, v: 0.96 },
   );
-  // Local hex text while the user is typing; null mirrors `value`.
+  // 用户输入过程中的本地 hex 文本；为 null 时直接镜像 `value`。
   const [hexDraft, setHexDraft] = useState<string | null>(null);
   const [eyedropperSupported] = useState(
     () => typeof window !== "undefined" && "EyeDropper" in window,
   );
 
-  // Sync internal HSV when the color changes from outside the area/slider
-  // (preset click, random, hex input, caller updates). Hex can't express hue
-  // for achromatic colors nor saturation for black, so preserve those parts
-  // and keep the area/slider from snapping.
+  // 当颜色从区域/滑杆之外变化（点击预设、随机、hex 输入、调用方更新）时同步
+  // 内部 HSV。hex 无法表达无色相的色相、也无法表达黑色的饱和度，所以保留这些
+  // 部分，避免区域/滑杆跳变。
   useEffect(() => {
     setHsv((previous) => {
       if (hsvToHex(previous) === normalizeHex(value)) return previous;
@@ -147,7 +152,7 @@ export function ColorPickerPanel({
         onChange(normalized);
       }
     } catch {
-      // user cancelled the eyedropper
+      // 用户取消了取色器
     }
   };
 
@@ -155,7 +160,7 @@ export function ColorPickerPanel({
 
   return (
     <div className="flex flex-col gap-2.5">
-      {/* Saturation / value area */}
+      {/* 饱和度 / 明度区域 */}
       <div
         role="slider"
         tabIndex={0}
@@ -197,7 +202,7 @@ export function ColorPickerPanel({
         />
       </div>
 
-      {/* Eyedropper + hue slider */}
+      {/* 取色器 + 色相滑杆 */}
       <div className="flex items-center gap-2.5">
         {eyedropperSupported && (
           <Button
@@ -247,7 +252,7 @@ export function ColorPickerPanel({
         </div>
       </div>
 
-      {/* Hex input */}
+      {/* Hex 输入 */}
       <div className="flex items-center gap-2.5">
         <span
           className="size-6 shrink-0 rounded-full ring-1 ring-inset ring-black/10"
@@ -270,7 +275,7 @@ export function ColorPickerPanel({
         />
       </div>
 
-      {/* Default palette + random */}
+      {/* 默认调色板 + 随机 */}
       <div className="flex items-center justify-between">
         <span className="text-caption font-medium text-muted-foreground">
           {t(($) => $.color_picker.presets)}

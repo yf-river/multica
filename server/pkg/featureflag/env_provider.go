@@ -1,5 +1,9 @@
 package featureflag
 
+// 本文件职责：实现 EnvProvider——从进程环境变量读开关配置。它是「急停开关、
+// 本地开发、不重新部署就要翻转的运维开关」这类场景的主力，规则值形如
+// FF_<KEY>=true / 42% / variant。
+
 import (
 	"context"
 	"os"
@@ -7,50 +11,46 @@ import (
 	"strings"
 )
 
-// EnvProvider reads flag configuration from process environment variables.
-// It is intended for emergency overrides, local development, and the kind
-// of "kill switch I need to flip without redeploying" use case Ops Toggles
-// were invented for.
+// EnvProvider 从进程环境变量读取开关配置。它面向紧急覆盖、本地开发，以及
+// 「不需要重新部署就能翻转的急停开关」这类 Ops 开关——这正是运维开关
+// （Ops Toggles）被发明出来要解决的问题。
 //
-// Variables are keyed by Prefix + UPPER_SNAKE_CASE(flag_key). For a Prefix
-// of "FF_" and a flag named "checkout_new_payment_flow", the env variable
-// is FF_CHECKOUT_NEW_PAYMENT_FLOW.
+// 变量名 = Prefix + 开关 key 转成的大写下划线形式。Prefix 为 "FF_" 时，
+// 名为 "checkout_new_payment_flow" 的开关对应环境变量
+// FF_CHECKOUT_NEW_PAYMENT_FLOW。
 //
-// Supported value formats (case-insensitive):
+// 支持的值格式（大小写不敏感）：
 //
 //	"true", "on", "1", "yes"      -> Enabled=true,  Variant="on"
 //	"false", "off", "0", "no"     -> Enabled=false, Variant="off"
-//	""                            -> Enabled=false, Variant="off"  (explicitly disabled)
-//	"42%"                         -> deterministic percent rollout
-//	any other non-empty value     -> treated as a variant identifier
-//	                                 (Enabled=true, Variant=<raw>)
+//	""                            -> Enabled=false, Variant="off"  (显式禁用)
+//	"42%"                         -> 确定性百分比发布
+//	其它任意非空值                  -> 当作 variant 标识符
+//	                                 (Enabled=true, Variant=<原值>)
 //
-// Malformed percent values (negative, >100, non-numeric) yield a Decision
-// with Reason=ReasonError. The Service still treats that as a real
-// decision and does not fall through to a less specific provider; an Ops
-// engineer who set FF_FOO=abc% expects to be told something is wrong, not
-// for the override to silently disappear.
+// 非法的百分比值（负数、>100、非数字）会产出 Reason=ReasonError 的 Decision。
+// Service 仍把它当作一条真实决策，不会漏到更宽泛的下层 provider——设置
+// FF_FOO=abc% 的运维工程师期待的是被告知「这里有问题」，而不是覆盖悄悄消失。
 type EnvProvider struct {
-	// Prefix is prepended to every lookup. Empty disables prefixing,
-	// which is rarely what you want.
+	// Prefix 会在每次查表时拼在最前面。空串等于不启用前缀，
+	// 但很少是你真正想要的。
 	Prefix string
 
-	// lookup is overridable for tests. Must return (value, true) when
-	// the variable is set (even to the empty string) and ("", false)
-	// when it is missing. Defaults to os.LookupEnv.
+	// lookup 可被测试替换。变量「已设置」（哪怕设成空串）时返回
+	// (value, true)；「未设置」时返回 ("", false)。默认是 os.LookupEnv。
 	lookup func(string) (string, bool)
 }
 
-// NewEnvProvider returns an EnvProvider with the supplied prefix. Pass
-// "FF_" for the conventional multica prefix.
+// NewEnvProvider 返回一个带给定前缀的 EnvProvider。传 "FF_" 即 multica
+// 惯例前缀。
 func NewEnvProvider(prefix string) *EnvProvider {
 	return &EnvProvider{Prefix: prefix, lookup: os.LookupEnv}
 }
 
-// Name implements Provider.
+// Name 实现 Provider 接口。
 func (*EnvProvider) Name() string { return "env" }
 
-// Lookup implements Provider.
+// Lookup 实现 Provider 接口。
 func (p *EnvProvider) Lookup(ctx context.Context, key string) (Decision, bool) {
 	envName := p.Prefix + flagKeyToEnv(key)
 	get := p.lookup
@@ -116,8 +116,8 @@ func (p *EnvProvider) Lookup(ctx context.Context, key string) (Decision, bool) {
 		}, true
 	}
 
-	// Treat any other value as a variant identifier. We must not parse
-	// the variant any further; callers know what their variants mean.
+	// 其余任何值都当作 variant 标识符。这里绝不能再往下解析 variant——
+	// 每个 variant 的含义只有调用方自己知道。
 	return Decision{
 		Key:     key,
 		Enabled: true,
@@ -127,13 +127,11 @@ func (p *EnvProvider) Lookup(ctx context.Context, key string) (Decision, bool) {
 	}, true
 }
 
-// flagKeyToEnv converts a flag key into its env-variable form. We
-// uppercase everything and replace any non-alphanumeric run with a single
-// underscore. The conversion is intentionally lossy (case-insensitive,
-// merges punctuation runs) so common variants like "checkout.newPayment"
-// and "checkout-new-payment" route to the same env name; if you need
-// distinct env vars for variants of the same key, choose distinct flag
-// keys instead.
+// flagKeyToEnv 把开关 key 转成它对应的环境变量名：全部大写，任何非字母数字
+// 的连续片段折叠成单个下划线。这个转换刻意是「有损」的（大小写不敏感、合并
+// 标点串），所以 "checkout.newPayment" 与 "checkout-new-payment" 会路由到
+// 同一个环境变量名；同一个 key 的不同写法想要各自独立的环境变量，就请用
+// 不同的开关 key。
 func flagKeyToEnv(key string) string {
 	var b strings.Builder
 	b.Grow(len(key))

@@ -1,3 +1,7 @@
+// 本文件是「钉钉机器人接入」相关的设置组件集合：
+// DingTalkTab 展示工作区里各 agent 的钉钉安装（机器人）状态与已发现的群组；
+// DingTalkAgentBindButton / 连接徽标等是给 agent 详情页复用的接入与展示组件。
+
 "use client";
 
 import { useState } from "react";
@@ -54,12 +58,14 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { openExternal } from "../../platform";
 import { useT, useTimeAgo } from "../../i18n";
 
+// 钉钉会话聊天管理权限点，提示用户给机器人补权限时要用到。
 const dingTalkChatManagePermission = "qyapi_chat_manage";
 
-// formatInstalledAt renders the install timestamp defensively: the schema
-// defaults installed_at to "" and the backend can emit a zero-value timestamp
-// (0001-01-01T…) for a never-set time, either of which would otherwise surface
-// as "Invalid Date" or a year-1 date. Fall back to a neutral placeholder.
+/**
+ * 稳妥地格式化"安装时间"：接口结构里 installed_at 默认是空串，后端对从未设置过的
+ * 时间还可能吐出零值时间戳（0001-01-01T…）。这两种情况直接拿去 new Date()，
+ * 会渲染成 "Invalid Date" 或公元 1 年的日期，所以统一兜底成一个中性占位符。
+ */
 function formatInstalledAt(value: string, locale: string): string {
   const t = Date.parse(value);
   if (!value || Number.isNaN(t) || t <= 0) return "—";
@@ -69,6 +75,11 @@ function formatInstalledAt(value: string, locale: string): string {
   }).format(new Date(t));
 }
 
+/**
+ * 在一批钉钉群里找出归属于指定安装（installationId）的机器人身份信息：
+ * 优先取有名字的 bot 作为身份，并把任一 bot 上报的"身份异常"合并带出，
+ * 供上层展示连接状态与权限问题提示。
+ */
 export function getDingTalkBotIdentity(
   groups: DingTalkGroup[],
   installationId: string,
@@ -83,6 +94,10 @@ export function getDingTalkBotIdentity(
     : undefined;
 }
 
+/**
+ * 「机器人已连接」标签：绿点 + 已连接的 agent 机器人名；有绑定的钉钉员工身份时
+ * 名称可 hover 查看详情，缺 qyapi_chat_manage 权限时展示一个解释图标。
+ */
 export function DingTalkConnectionLabel({
   botName,
   botIdentityIssue,
@@ -207,6 +222,10 @@ export function DingTalkConnectionLabel({
   );
 }
 
+/**
+ * 「已发现的群组」列表：展示机器人所在的活跃群组，可展开加载"不活跃群组"（分页）；
+ * 管理员可对单个群执行"忘记"操作；自带 loading / 出错重试 / 空态展示。
+ */
 export function DingTalkBotGroups({
   workspaceId,
   agentId,
@@ -501,15 +520,15 @@ export function DingTalkBotGroups({
   );
 }
 
-// DingTalkTab is the workspace settings panel for DingTalk robot installations.
-// Installation rows and group metadata follow Agent view permissions on the
-// server. Disconnect, linked Staff IDs, and permission remediation remain
-// workspace owner/admin-only in Settings.
-//
-// Adding a new installation flows through the Agent detail page: the install
-// path is per-agent (each Multica agent gets exactly one robot — the
-// (workspace_id, agent_id, channel_type) UNIQUE in channel_installation), so
-// asking the user to pick an agent here would re-create that page's picker.
+/**
+ * 工作区设置里的「钉钉机器人安装」面板。
+ * 安装行与群组元数据遵循服务端对 Agent 视图权限的控制；断开连接、查看绑定员工 ID、
+ * 处理权限问题在设置页里仅限工作区 owner/admin 操作。
+ *
+ * 新增安装并不在本页进行，而是走 Agent 详情页：安装是按 agent 一对一绑定的
+ * （每个 agent 恰好一个机器人，channel_installation 上 (workspace_id, agent_id,
+ * channel_type) 有 UNIQUE 约束），在这里再让用户挑一次 agent 只是在重复那边的选择器。
+ */
 export function DingTalkTab() {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -530,9 +549,8 @@ export function DingTalkTab() {
     enabled: !canManage && !!wsId,
   });
   const visibleAgentIDs = new Set(visibleAgents.map((agent) => agent.id));
-  // New servers already filter this response. Keep the client-side join as a
-  // compatibility guard for older servers that returned every workspace
-  // installation to members, which otherwise creates Unknown Agent dead links.
+  // 新版本服务端已经会过滤这份响应。这里保留客户端侧的二次过滤，作为对旧服务端的
+  // 兼容防线：旧服务端会把工作区全部安装返回给成员，不滤一遍就会产生"未知 agent"死链。
   const displayedInstallations = canManage
     ? installations
     : installations.filter(
@@ -683,6 +701,7 @@ export function DingTalkTab() {
   );
 }
 
+/** 单条钉钉安装行的展示组件：agent 头像/名称、连接状态标签、安装时间，以及该安装下已发现的群组。 */
 function InstallationRow({
   workspaceId,
   installation,
@@ -800,10 +819,10 @@ function InstallationRow({
   );
 }
 
-// dingtalkDocsUrl points at the DingTalk integration guide on the docs site,
-// localized to the viewer's language. The docs site uses /<lang>/ path
-// prefixes (English has none), matching the convention used elsewhere in the
-// app for doc links.
+/**
+ * 拼出钉钉接入文档链接，按浏览者的语言加 /zh、/ja、/ko 路径前缀
+ * （英文没有前缀），与全站文档链接约定保持一致。
+ */
 function dingtalkDocsUrl(lang: string | undefined): string {
   const prefix = lang?.startsWith("zh")
     ? "/zh"
@@ -815,15 +834,15 @@ function dingtalkDocsUrl(lang: string | undefined): string {
   return `https://multica.ai/docs${prefix}/dingtalk-bot-integration`;
 }
 
-// DingTalkAgentBindButton is the per-agent CTA exposed from the agent detail
-// page. DingTalk uses the bring-your-own-app model: the button opens a dialog
-// where an authorized manager pastes the AppKey (client id) + AppSecret (client
-// secret) of the DingTalk robot they created (the backend validates both).
-// Visibility:
-//   1. Only the agent's owner or a workspace owner/admin sees management UI.
-//   2. If this agent already has an active installation, show the connected
-//      badge (already-installed robots stay manageable).
-//   3. Otherwise the Connect CTA shows whenever install is available.
+/**
+ * agent 详情页上暴露的「接入钉钉」按钮（按 agent 粒度）。钉钉走 BYO（自带应用）模式：
+ * 点开弹窗，由有权限的管理者粘贴其在钉钉上自建机器人时拿到的 AppKey（client id）
+ * 与 AppSecret（client secret），后端会对两者做校验。
+ * 可见性规则：
+ *   1. 只有该 agent 的 owner 或工作区 owner/admin 能看到管理 UI；
+ *   2. 该 agent 已有生效中的安装时，改展示"已连接"徽标（已装的机器人仍可继续管理）；
+ *   3. 其余情况，只要服务端允许安装就展示"连接"按钮。
+ */
 export function DingTalkAgentBindButton({
   agentId,
   agentName,
@@ -835,16 +854,15 @@ export function DingTalkAgentBindButton({
 }: {
   agentId: string;
   agentName?: string;
-  /** Mirrors the backend canManageAgent rule for the per-agent entry point. */
+  /** 与后端 canManageAgent 规则对齐的入参：用来判断当前用户是否为该 agent 的所有者。 */
   agentOwnerId?: string | null;
   botName?: string;
   botIdentityIssue?: string;
   className?: string;
   /**
-   * When set, the connected state renders as a compact read-only status row
-   * that invokes this callback on click instead of the full badge with inline
-   * actions — the agent inspector passes a "jump to the Integrations tab"
-   * handler so management actions live in one place.
+   * 一旦传入，已连接状态就渲染成一行紧凑的只读状态条，点击时回调它，
+   * 而不是带行内操作的完整徽标——agent 详情面板传的是"跳到 Integrations 标签页"
+   * 的处理器，好让所有管理操作都收敛在同一个地方。
    */
   onShowConnectedDetails?: () => void;
 }) {
@@ -914,8 +932,8 @@ export function DingTalkAgentBindButton({
     setSubmitting(true);
     try {
       await api.registerDingTalkBYO(wsId, agentId, { client_id, client_secret });
-      // The dingtalk_installation realtime event also refreshes this list, but
-      // invalidate explicitly so the connected badge appears immediately.
+      // dingtalk_installation 的实时事件本来也会刷新这份列表，
+      // 这里再显式失效一次查询，让"已连接"徽标立即出现，不必等事件推送。
       await qc.invalidateQueries({ queryKey: dingtalkKeys.installations(wsId) });
       toast.success(t(($) => $.dingtalk.byo_success_toast));
       setDialogOpen(false);
@@ -1018,9 +1036,9 @@ export function DingTalkAgentBindButton({
             </div>
           </div>
 
-          {/* Inline footer instead of <DialogFooter>: its -mx-4/-mb-4 offsets
-              assume the default p-4 DialogContent; with p-0 they push the bar
-              outside the dialog (same workaround as CreateAgentDialog). */}
+          {/* 这里手写页脚而不套 <DialogFooter>：它自带的 -mx-4 / -mb-4 负外边距是
+              按默认 p-4 的 DialogContent 设计的；本弹窗内容区是 p-0，
+              用它会把按钮栏推出弹窗边框（与 CreateAgentDialog 相同的处理手法）。 */}
           <div className="flex items-center justify-end gap-2 border-t bg-background px-5 py-3">
             <Button variant="ghost" onClick={closeDialog} disabled={submitting}>
               {t(($) => $.dingtalk.byo_cancel)}
@@ -1041,9 +1059,10 @@ export function DingTalkAgentBindButton({
   );
 }
 
-// DingTalkAgentBotStatusRow is the compact, read-only connected affordance the
-// agent inspector renders instead of the full badge; it deep-links into the
-// Integrations tab where Manage / Disconnect live.
+/**
+ * 紧凑只读的"已连接"状态条：agent 详情面板用它替代完整徽标，
+ * 点击后跳到 Integrations 标签页，那里才有管理/断开操作。
+ */
 function DingTalkAgentBotStatusRow({
   onClick,
   className,
@@ -1070,9 +1089,10 @@ function DingTalkAgentBotStatusRow({
   );
 }
 
-// DingTalkAgentBotConnectedBadge is the full "already connected" affordance the
-// Integrations tab renders in place of the Connect button: a status row plus a
-// soft-destructive Disconnect. Only owners/admins ever reach this component.
+/**
+ * 完整的"已连接"徽标：Integrations 标签页用它替换"连接"按钮，
+ * 由状态行 + 一个断开按钮组成。只有 owner/admin 会走到这个组件。
+ */
 function DingTalkAgentBotConnectedBadge({
   installation,
   botName,

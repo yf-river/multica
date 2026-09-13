@@ -1,3 +1,7 @@
+// 本文件：life（生活陪练/人生搭子 companion）的「行动提案 + 实验」端点。提案（proposal）
+// 由 companion Agent 提议、用户确认后落成真实效果（建 issue、建项目、改记忆/身份、启用模块、
+// 起/续实验轮等），此处就是这些类型提案的创建、列表与确认执行的 handler，以及实验轮次的
+// 列表/停止/复盘。所有写操作都落统一 activity（life changed 事件）。
 package handler
 
 import (
@@ -16,6 +20,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
+// lifeProposalPayload 是行动提案按类型区分的负载：实验/任务/记忆/身份/项目/模块等各取所需
+// 字段，类型相关的必填校验见 validateLifeProposalPayload。
 type lifeProposalPayload struct {
 	ExperimentID         string         `json:"experiment_id,omitempty"`
 	PreviousRoundID      string         `json:"previous_round_id,omitempty"`
@@ -51,6 +57,7 @@ type lifeProposalPayload struct {
 	ChangeReason         string         `json:"change_reason,omitempty"`
 }
 
+// lifeProposalResponse 是行动提案对外的 JSON 结构。
 type lifeProposalResponse struct {
 	ID               string          `json:"id"`
 	ProposalType     string          `json:"proposal_type"`
@@ -66,6 +73,7 @@ type lifeProposalResponse struct {
 	UpdatedAt        string          `json:"updated_at"`
 }
 
+// lifeProposalToResponse 把提案行转成对外 JSON（Payload/ExecutionReceipt 原样透传）。
 func lifeProposalToResponse(proposal db.LifeActionProposal) lifeProposalResponse {
 	return lifeProposalResponse{
 		ID:               uuidToString(proposal.ID),
@@ -83,6 +91,8 @@ func lifeProposalToResponse(proposal db.LifeActionProposal) lifeProposalResponse
 	}
 }
 
+// validateLifeProposalPayload 按提案类型做字段必填校验（标题、各类专属字段、时间顺序），
+// 非法则写 400 并返回 false。
 func validateLifeProposalPayload(w http.ResponseWriter, proposalType, title string, payload lifeProposalPayload) bool {
 	if strings.TrimSpace(title) == "" {
 		writeError(w, http.StatusBadRequest, "title is required")
@@ -168,6 +178,9 @@ func validateLifeProposalPayload(w http.ResponseWriter, proposalType, title stri
 	return true
 }
 
+// CreateLifeActionProposal 处理 POST /api/.../life/action-proposals——创建一条行动提案
+// （pending_confirmation）。需先配置好 companion（没有则 409）；校验载荷后落库，并写
+// action_proposal:created 活动事件。
 func (h *Handler) CreateLifeActionProposal(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -240,6 +253,8 @@ func (h *Handler) CreateLifeActionProposal(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusCreated, lifeProposalToResponse(proposal))
 }
 
+// ListLifeActionProposals 处理 GET /api/.../life/action-proposals——列出当前用户的全部
+// 提案。
 func (h *Handler) ListLifeActionProposals(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -260,6 +275,7 @@ func (h *Handler) ListLifeActionProposals(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"proposals": items})
 }
 
+// lifeExperimentRoundResponse 是实验轮次的对外 JSON（observations 先给空数组，由读取方回填）。
 type lifeExperimentRoundResponse struct {
 	ID              string           `json:"id"`
 	ExperimentID    string           `json:"experiment_id"`
@@ -279,6 +295,7 @@ type lifeExperimentRoundResponse struct {
 	CreatedAt       string           `json:"created_at"`
 }
 
+// lifeExperimentRoundToResponse 把实验轮次行转成对外 JSON。
 func lifeExperimentRoundToResponse(round db.LifeExperimentRound) lifeExperimentRoundResponse {
 	return lifeExperimentRoundResponse{
 		ID:              uuidToString(round.ID),
@@ -300,6 +317,10 @@ func lifeExperimentRoundToResponse(round db.LifeExperimentRound) lifeExperimentR
 	}
 }
 
+// ConfirmLifeActionProposal 处理 POST /api/.../life/action-proposals/:proposalId/confirm——
+// 确认并执行一条 pending 提案。按 proposal_type 分派成真实效果（记忆确认/更正/降级/归档、
+// 身份换版、建项目、给 companion 排活、启用模块、建工作区 issue、起/续实验轮），成功后把
+// 提案标 executed 并落 activity。事务内完成，任何一步失败整体回滚。
 func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -333,6 +354,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 	if err := json.Unmarshal(proposal.Payload, &payload); err != nil || !validateLifeProposalPayload(w, proposal.ProposalType, proposal.Title, payload) {
 		return
 	}
+	// 事务内锁定提案行并复核仍是 pending_confirmation，然后按类型执行确认动作。
 	if proposal.ProposalType == "memory_change" {
 		memoryID, parseErr := parseUUIDText(payload.MemoryID)
 		if parseErr != nil {
@@ -386,6 +408,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if proposal.ProposalType == "identity_change" {
+		// 版本号自增：把当前 active 身份置为被取代，再落一条新版本并切到 companion 当前身份。
 		stableCore, _ := json.Marshal(payload.StableCore)
 		relationshipContract, _ := json.Marshal(payload.RelationshipContract)
 		growthProfile, _ := json.Marshal(payload.GrowthProfile)
@@ -424,6 +447,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if proposal.ProposalType == "project_create" {
+		// 建一个 planned 状态、以成员为负责人的项目。
 		project, err := qtx.CreateProject(r.Context(), db.CreateProjectParams{WorkspaceID: scope.workspaceID, Title: strings.TrimSpace(payload.ProjectTitle), Description: pgtype.Text{String: strings.TrimSpace(payload.ProjectDescription), Valid: strings.TrimSpace(payload.ProjectDescription) != ""}, Icon: pgtype.Text{}, Status: "planned", LeadType: pgtype.Text{String: "member", Valid: true}, LeadID: scope.userID, Priority: "none"})
 		if err != nil {
 			writeError(w, 500, "failed to create confirmed project")
@@ -444,6 +468,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if proposal.ProposalType == "agent_action" {
+		// 给 companion 建一条指派给它的 issue 并排任务，让它在真实世界执行这次动作。
 		agent, err := qtx.GetAgent(r.Context(), proposal.CompanionAgentID)
 		if err != nil || agent.ArchivedAt.Valid {
 			writeError(w, 409, "companion agent is unavailable")
@@ -499,6 +524,8 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if proposal.ProposalType == "module_adoption" {
+		// 采纳/沉淀模块：ModuleID 为空则新建模块，否则挂到已有模块，然后写一个新版本并置为
+		// 当前版本。
 		sourceExperimentID := pgtype.UUID{}
 		if payload.SourceExperimentID != "" {
 			sourceExperimentID, err = parseUUIDText(payload.SourceExperimentID)
@@ -551,6 +578,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if proposal.ProposalType == "workspace_issue" {
+		// 建一条指派给确认者本人的工作区 issue（待办）。
 		issueNumber, err := qtx.IncrementIssueCounter(r.Context(), scope.workspaceID)
 		if err != nil {
 			writeError(w, 500, "failed to reserve task number")
@@ -713,6 +741,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// lifeExperimentResponse 是实验本体对外返回的 JSON（不带轮次）。
 type lifeExperimentResponse struct {
 	ID         string          `json:"id"`
 	Title      string          `json:"title"`
@@ -722,6 +751,8 @@ type lifeExperimentResponse struct {
 	CreatedAt  string          `json:"created_at"`
 }
 
+// ListLifeExperiments 处理 GET /api/.../life/experiments——先顺带把已过期轮次停掉，再列出
+// 实验与轮次（轮次附观察记录）。
 func (h *Handler) ListLifeExperiments(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -770,6 +801,8 @@ func (h *Handler) ListLifeExperiments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"experiments": experimentItems, "rounds": roundItems})
 }
 
+// StopLifeExperimentRound 处理 POST /api/.../life/experiment-rounds/:roundId/stop——提前停掉
+// 一条 running 轮次（reason 为空则记 stopped_by_user）；只允许停 running 轮，否则 409。
 func (h *Handler) StopLifeExperimentRound(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -821,6 +854,9 @@ func (h *Handler) StopLifeExperimentRound(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, lifeExperimentRoundToResponse(round))
 }
 
+// ReviewLifeExperimentRound 处理 POST /api/.../life/experiment-rounds/:roundId/review——对已
+// 停下的轮次提交复盘（outcome/feelings/burden/companion_correction 必填）。若该轮草稿里带
+// 模块提案，会顺带生成一条 module_adoption 行动提案（仍需用户再次确认）。
 func (h *Handler) ReviewLifeExperimentRound(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {

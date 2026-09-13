@@ -1,3 +1,10 @@
+// 本文件实现侧边栏「置顶」（pin）的 CRUD：把某 issue / project / view 钉到当前用户
+// 侧边栏的固定入口，支持列表、创建（钉到末尾）、删除与排序。
+//
+// 置顶是纯个人化的用户级数据（user_id + workspace_id + item_type + item_id 唯一）。
+// 能力开关约定：item_type=view 的置顶只发给声明理解它的客户端（?include=view）——
+// 老客户端（桌面版早于分类功能）会把非 issue 置顶都当项目置顶去拉详情、404 后永久
+// 自动取消置顶，把 view 置顶也按旧契约返回会毁掉用户的视图置顶。
 package handler
 
 import (
@@ -11,10 +18,9 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// PinnedItemResponse carries pin metadata only. Title / status / identifier /
-// icon are intentionally NOT included — clients derive them from their own
-// issue / project query cache so that an `issue:updated` event flows naturally
-// into the sidebar without needing a cross-entity invalidate on `pinKeys`.
+// PinnedItemResponse 只携带 pin 的元数据。刻意不含标题/状态/编号/图标——客户端从
+// 它们自己的 issue / project 查询缓存里派生这些，这样 issue:updated 事件能自然流入
+// 侧边栏，无需对 pinKeys 做跨实体失效。
 type PinnedItemResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
@@ -25,6 +31,7 @@ type PinnedItemResponse struct {
 	CreatedAt   string  `json:"created_at"`
 }
 
+// pinnedItemToResponse 把置顶行转成对外结构。
 func pinnedItemToResponse(p db.PinnedItem) PinnedItemResponse {
 	return PinnedItemResponse{
 		ID:          uuidToString(p.ID),
@@ -37,20 +44,24 @@ func pinnedItemToResponse(p db.PinnedItem) PinnedItemResponse {
 	}
 }
 
+// CreatePinRequest 是创建置顶的请求体。
 type CreatePinRequest struct {
 	ItemType string `json:"item_type"`
 	ItemID   string `json:"item_id"`
 }
 
+// ReorderPinsRequest 是重排序的请求体：客户端提交完整有序列表。
 type ReorderPinsRequest struct {
 	Items []ReorderItem `json:"items"`
 }
 
+// ReorderItem 是重排序列表里的一项（pin id + 新位置）。
 type ReorderItem struct {
 	ID       string  `json:"id"`
 	Position float64 `json:"position"`
 }
 
+// ListPins 返回当前用户在 workspace 里的置顶列表。
 func (h *Handler) ListPins(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -67,12 +78,10 @@ func (h *Handler) ListPins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Capability opt-in: clients built before saved views classified every
-	// non-issue pin as a project pin, fetched its detail, got 404, and
-	// permanently auto-unpinned it. Exposing item_type=view through the old
-	// contract would let an old Desktop DESTROY the user's view pins just by
-	// opening the sidebar — so view rows only ship to clients that declare
-	// they understand them (?include=view).
+	// 能力开关：在保存视图功能之前的客户端，把所有非 issue 置顶都当项目置顶拉详情、
+	// 拿到 404 就永久自动取消置顶。若把 item_type=view 也按旧契约返回，老 Desktop 只要
+	// 打开侧边栏就会毁掉用户的视图置顶——所以 view 行只发给声明理解它们的客户端
+	// （?include=view）。
 	includeViews := strings.Contains(r.URL.Query().Get("include"), "view")
 
 	resp := make([]PinnedItemResponse, 0, len(pins))
@@ -85,6 +94,8 @@ func (h *Handler) ListPins(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// CreatePin 把某 issue/project/view 钉到末尾：先校验 item 在本 workspace 存在且可读，
+// 再在同一事务里取 max position+1 写入并记录事件。
 func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -115,7 +126,7 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the item exists in this workspace
+	// 校验该 item 存在于本 workspace
 	switch req.ItemType {
 	case "issue":
 		if _, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
@@ -132,9 +143,8 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "view":
-		// Same read rule as the view endpoints: your own views, or views
-		// shared to the workspace. Foreign private views 404 — a pin must
-		// never confirm their existence.
+		// 与视图端点同一条读规则：自己的视图，或共享给 workspace 的视图。别人的私有
+		// 视图按 404——置顶绝不能用来确认某个视图是否存在。
 		view, err := h.Queries.GetIssueView(r.Context(), db.GetIssueViewParams{
 			ID: itemUUID, WorkspaceID: wsUUID,
 		})
@@ -144,7 +154,7 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get max position to append at end
+	// 取当前最大位置，把新 pin 追加到末尾。
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start pin transaction")
@@ -194,6 +204,7 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+// DeletePin 移除一个置顶（仅本人）。
 func (h *Handler) DeletePin(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -246,6 +257,7 @@ func (h *Handler) DeletePin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ReorderPins 按客户端提交的完整有序列表更新位置，并在同一事务里广播重排事件。
 func (h *Handler) ReorderPins(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -287,9 +299,8 @@ func (h *Handler) ReorderPins(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Fan out so other sessions (web/desktop, or a second tab) refetch
-	// the pin list and pick up the new order. Without this, reorder is
-	// only consistent on the originating client until a hard refresh.
+	// 扇出让其它会话（web/desktop、或第二个标签页）重拉 pin 列表拿到新顺序。没有它，
+	// 重排只在发起客户端上保持一致，直到硬刷新。
 	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildPinDomainEvent(protocol.EventPinReordered, workspaceID, userID, "member", userID, map[string]any{"items": req.Items}, pinReorderKey(req.Items)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to record pin event")
@@ -304,9 +315,10 @@ func (h *Handler) ReorderPins(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// pinReorderKey 用整个有序列表的 JSON 作幂等键。
 func pinReorderKey(items []ReorderItem) string {
-	// The client sends the complete ordered list; JSON is stable for this
-	// concrete slice and gives retries of the same reorder one idempotency key.
+	// 客户端发送完整有序列表；JSON 对这个具体切片是稳定的，让同一次重排的重试共享
+	// 同一个幂等键。
 	b, _ := json.Marshal(items)
 	return string(b)
 }

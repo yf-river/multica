@@ -1,5 +1,17 @@
 "use client";
 
+// 本文件：AssigneePicker —— 问题"负责人"选择器。
+// 可选范围 = 工作区成员 + Agent + 小队（squad），并可按分配频率排序、
+// 支持拼音匹配搜索。
+//
+// 数据订阅较重（成员/Agent/小队/分配频率四个查询），因此在看板卡片、
+// 列表行等高频场景走"延迟触发器"策略：自定义触发器内容的调用方在首次交互前
+// 不挂载真实选择器，由 `DeferredPopup` 提供像素一致的仿触发器；
+// 无自定义触发器的调用方保持急切挂载（默认触发器本身就要订阅 getActorName）。
+//
+// 分配权限判定统一收敛到 `canAssignAgentToIssue` Decision API；
+// 本文件里的 `canAssignAgent` 只是给尚未迁移的旧调用方保留的兼容壳。
+
 import { useMemo, useState } from "react";
 import { Lock, UserMinus } from "lucide-react";
 import type { Agent, IssueAssigneeType, UpdateIssueRequest } from "@multica/core/types";
@@ -23,9 +35,8 @@ import { useT } from "../../../i18n";
 import { matchesPinyin } from "../../../editor/extensions/pinyin-match";
 
 /**
- * Legacy boolean shape kept around for callers (e.g. `use-issue-actions.ts`)
- * that haven't migrated to the new `canAssignAgentToIssue` Decision API yet.
- * Internally redirects to the canonical rule so behaviour stays in sync.
+ * 兼容壳：保留给还没迁移到新 `canAssignAgentToIssue` Decision API 的调用方
+ * （例如 `use-issue-actions.ts`）。内部直接转发到权威规则，保证行为同步。
  */
 export function canAssignAgent(
   agent: Agent,
@@ -44,10 +55,9 @@ interface AssigneePickerProps {
   assigneeType: IssueAssigneeType | null;
   assigneeId: string | null;
   /**
-   * `true` when a batch selection spans different assignees ("mixed"): no row
-   * is checked, including the unassigned row. Distinct from `assigneeType` /
-   * `assigneeId` both being `null`, which means every selected issue is
-   * genuinely unassigned and the unassigned row should be checked.
+   * `true` 表示批量选择跨越了不同负责人（"混合"）：此时没有任何一行被勾选，
+   * 包括"未分配"行。这与 `assigneeType` / `assigneeId` 同为 `null` 不同——
+   * 后者意味着每个选中问题都确实未分配，此时"未分配"行应当被勾选。
    */
   mixed?: boolean;
   onUpdate: (updates: Partial<UpdateIssueRequest>) => void;
@@ -59,12 +69,10 @@ interface AssigneePickerProps {
 }
 
 /**
- * Mounting the real picker subscribes to members/agents/squads/frequency
- * queries — multiplied per board card / list row that cost froze tab
- * switches. Uncontrolled callers that bring their own trigger content get a
- * deferred lookalike trigger instead; the picker mounts on first interaction.
- * The default trigger needs `getActorName` (a members/agents subscription
- * itself), so trigger-less callers stay eager.
+ * 挂载真实选择器会订阅成员/Agent/小队/频率查询——在每张看板卡片、每个列表
+ * 行上成倍累积曾让切换标签页卡顿。自带触发器内容、非受控的调用方因此改用
+ * 延迟仿触发器，选择器在首次交互时才挂载。默认触发器本身需要 `getActorName`
+ * （一个成员/Agent 订阅），所以无自定义触发器的调用方保持急切挂载。
  */
 export function AssigneePicker(props: AssigneePickerProps) {
   const hasDeferredTriggerContent =
@@ -136,7 +144,7 @@ function AssigneePickerImpl({
   const currentMember = members.find((m) => m.user_id === user?.id);
   const memberRole = currentMember?.role;
 
-  // Build a lookup map from frequency data for sorting.
+  // 由频率数据构建查找表，供排序使用。
   const freqMap = useMemo(() => {
     const map = new Map<string, number>();
     for (const entry of frequency) {
@@ -195,9 +203,8 @@ function AssigneePickerImpl({
         )
       }
     >
-      {/* Unassigned — always the first row, search active or not. Every
-          picker in the app puts the empty value there, so "clear this field"
-          never moves. */}
+      {/* 未分配 —— 始终是第一行，搜索开不开都在。App 里每个选择器都把空值
+          放在那里，所以"清空此字段"的动作永不挪窝。 */}
       <PickerItem
         emptyValue
         selected={!mixed && !assigneeType && !assigneeId}
@@ -210,7 +217,7 @@ function AssigneePickerImpl({
         <span className="text-muted-foreground">{t(($) => $.pickers.assignee.trigger_unassigned)}</span>
       </PickerItem>
 
-      {/* Members */}
+      {/* 成员 */}
       {filteredMembers.length > 0 && (
         <PickerSection label={t(($) => $.pickers.assignee.members_group)}>
           {filteredMembers.map((m) => (
@@ -232,7 +239,7 @@ function AssigneePickerImpl({
         </PickerSection>
       )}
 
-      {/* Agents */}
+      {/* Agent 分组 */}
       {filteredAgents.length > 0 && (
         <PickerSection label={t(($) => $.pickers.assignee.agents_group)}>
           {filteredAgents.map((a) => {
@@ -279,8 +286,7 @@ function AssigneePickerImpl({
         </PickerSection>
       )}
 
-      {/* Squads — group ownership; assigning to a squad routes the issue to
-          its leader agent on the backend. */}
+      {/* 小队 —— 小组归属；分配给小队时由后端路由给它的 lead agent。 */}
       {filteredSquads.length > 0 && (
         <PickerSection label={t(($) => $.pickers.assignee.squads_group)}>
           {filteredSquads.map((s) => {

@@ -1,3 +1,5 @@
+// 源回填「合并补丁」：把服务端已存的问卷答案与新填的「来源」字段合成一次
+// PATCH 需要发送的完整问卷形状（见 onboarding-flow 的注释）。
 import type {
   QuestionnaireAnswers,
   Role,
@@ -5,19 +7,19 @@ import type {
 } from "@multica/core/onboarding";
 
 /**
- * `PATCH /api/me/onboarding` overwrites the JSONB column wholesale —
- * it does NOT JSONB-merge (see `PatchUserOnboarding` in
- * `server/internal/handler/onboarding.go`). For the backfill flow the
- * user's stored questionnaire already contains role / use_case /
- * version, so we must read those, overlay only the source-related
- * fields, and send the whole shape back. Otherwise the very users we
- * target — onboarded accounts with role/use_case answered but source
- * missing — would have their other answers wiped on Submit / Skip.
+ * `PATCH /api/me/onboarding` 会把整个 JSONB 列整体覆盖——并不会做 JSONB 合并
+ * （见 `server/internal/handler/onboarding.go` 的 `PatchUserOnboarding`）。
+ * 回填流程针对的是已经答过 role / use_case、唯独缺 source 的老账号，这些答案
+ * 已存在磁盘上，所以必须先把它们读出来、只叠加来源相关字段，再把完整形状发回去；
+ * 否则正是我们要触达的那批用户，会在 Submit / Skip 时把其它答案一并清掉。
  *
- * Mirrors the legacy tolerance in `OnboardingFlow.mergeQuestionnaire`
- * and the server's `stringOrSlice` decoder: `source` and `use_case`
- * may exist on disk as a bare string from a prior single-select
- * schema, which we coerce to a single-element array.
+ * 兼容说明：与 `OnboardingFlow.mergeQuestionnaire` 以及服务端 `stringOrSlice`
+ * 解码器的处理一致——历史单选的 schema 可能把 `source` / `use_case` 存成裸
+ * 字符串，这里统一收敛成单元素数组。
+ *
+ * @param stored 服务端已存的问卷（可能为空）
+ * @param sourcePatch 本次要写入的来源字段补丁
+ * @returns 合并后的完整问卷（version 固定为 2）
  */
 export function mergedQuestionnairePatch(
   stored: Record<string, unknown> | null | undefined,

@@ -1,5 +1,22 @@
 package agent
 
+// 文件职责：本文件实现 Backend 接口中的「Kiro」后端。Kiro 是 xAI 的命令行编程
+// agent，走标准的 ACP（Agent Client Protocol）JSON-RPC 2.0 协议：我们拉起
+// `kiro-cli acp` 子命令，通过它的 stdin/stdout 收发请求（initialize、session/new、
+// session/load、session/set_model、session/prompt），把 ACP 的通知流翻译成系统统一
+// 的 Message 事件（文本、思考、工具调用与结果），最后汇总出 Result。
+//
+// 与 hermes.go / kimi.go 的 ACP 客户端（hermesClient）高度复用——Kiro 声明支持
+// loadSession、从 session/new 返回模型、支持 session/set_model，所以同一套 ACP 驱动
+// 只需做 provider 特有的启动参数和工具名归一化即可。
+//
+// 本文件特有的难点：Kiro 在任务实质完成后、若模型没能产出收尾回合，会抛
+// session/prompt -32603「failed to generate a response」。这类「收尾工具（goal_complete
+// 或 `multica issue comment add`）已成功、但收尾失败」的运行，需要用「最近一次收尾工具
+// 结果确为 completed」这一正向证据才能判为 completed，绝不能因为「没有结果」就当成功
+// （相关 review：#5511 / MUL-4860）。识别工具调用也是从命令载荷本身下手，而不是依赖
+// 适配层给出的工具名（见 #5509 / GH #5975）。
+
 import (
 	"context"
 	"errors"
@@ -12,17 +29,16 @@ import (
 	"time"
 )
 
-// kiroReaderDrainGrace bounds how long the turn waits for trailing ACP
-// notifications after the session/prompt response. A var, not a const, so
-// tests can shorten it. Mirrors qoderReaderDrainGrace / traecliReaderDrainGrace.
+// kiroReaderDrainGrace 限制回合在 session/prompt 响应之后最多等多久的尾部 ACP 通知。
+// 用 var 而不是 const，是为了让测试能把它调短。与 qoderReaderDrainGrace /
+// traecliReaderDrainGrace 相互对应。
 var kiroReaderDrainGrace = 2 * time.Second
 
-// kiroBlockedArgs are flags hardcoded by the daemon that must not be
-// overridden by user-configured custom_args. `acp` is the protocol subcommand,
-// and --trust-all-tools covers Kiro's CLI-level tool gate while
-// hermesClient handles ACP session/request_permission auto-approval. In Kiro
-// CLI 2.1.1, `-a` is short for --trust-all-tools, not --agent; --agent remains
-// allowed so users can select a custom Kiro agent.
+// kiroBlockedArgs 是 daemon 写死的参数清单，用户配置的 custom_args 不得覆盖它们。
+// `acp` 是协议子命令；--trust-all-tools 覆盖的是 Kiro 在 CLI 层的工具闸门，而 ACP 层
+// 的 session/request_permission 自动放行由 hermesClient 负责。注意 Kiro CLI 2.1.1 里
+// `-a` 是 --trust-all-tools 的简写，不是 --agent；--agent 仍放行，让用户能选自定义
+// Kiro agent。
 var kiroBlockedArgs = map[string]blockedArgMode{
 	"acp":               blockedStandalone,
 	"-a":                blockedStandalone,
@@ -30,16 +46,28 @@ var kiroBlockedArgs = map[string]blockedArgMode{
 	"--trust-tools":     blockedWithValue,
 }
 
-// kiroBackend implements Backend by spawning `kiro-cli acp` and communicating
-// via the standard ACP JSON-RPC 2.0 transport over stdin/stdout.
+// kiroBackend 实现 Backend 接口：通过拉起 `kiro-cli acp` 子进程，用标准的 ACP
+// JSON-RPC 2.0 传输（走 stdin/stdout）与它通信。
 //
-// Kiro CLI advertises loadSession, returns models from session/new, and supports
-// session/set_model, so the existing Hermes/Kimi ACP client can drive it with
-// only provider-specific launch and tool-name normalization.
+// Kiro CLI 对外声明支持 loadSession、能在 session/new 里返回模型、也支持
+// session/set_model，因此现有的 Hermes/Kimi ACP 客户端稍作适配（provider 特有的启动
+// 参数 + 工具名归一化）就能驱动它。
 type kiroBackend struct {
 	cfg Config
 }
 
+// Execute 是 Backend 接口的入口：拿一条用户 prompt，起一个 kiro-cli acp 进程，
+// 完成一次 ACP 会话并跑完这一轮对话。
+//
+// 流程：先确认可执行文件存在 → 把 mcp_config（Claude 式「对象套对象」）翻译成 ACP
+// session/new、session/load 期望的数组形状 → 起子进程并接管三路 IO（stdout 读响应、
+// stdin 写请求、stderr 喂给 provider 错误嗅探器）→ 依次完成 initialize / session 建
+// 立（新建或续跑）/ 可选 set_model → 发 session/prompt 进入对话回合，期间把 ACP 通知
+// 翻译成 Message 流式发出 → 回合结束后等待尾部通知静默，再依据 stderr / 文本流里的
+// 上游 LLM 终态失败信号决定是否把 completed 降级为 failed → 汇总 Result 交给调用方。
+//
+// 中途失败一律把 Result 直接放进 resCh 返回（状态 failed）；超时/取消会被识别成
+// timeout / aborted。新建会话拿不到 sessionId、set_model 失败都会判为失败。
 func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
@@ -49,10 +77,9 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		return nil, fmt.Errorf("kiro executable not found at %q: %w", execPath, err)
 	}
 
-	// Translate the agent's mcp_config (Claude-style object of objects)
-	// into the array shape ACP `session/new` and `session/load` expect.
-	// Fail closed on malformed JSON so the launch surfaces the real error
-	// instead of silently dropping all MCP servers.
+	// 把 agent 的 mcp_config（Claude 风格的「对象套对象」结构）翻译成 ACP 的
+	// session/new 和 session/load 期望的数组形状。格式非法时宁可启动失败，让真正的
+	// 错误暴露在启动阶段，也不能静默丢掉全部 MCP 服务器。
 	mcpServers, err := buildACPMcpServers(opts.McpConfig, b.cfg.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("kiro: invalid mcp_config: %w", err)
@@ -80,10 +107,9 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		cancel()
 		return nil, fmt.Errorf("kiro stdin pipe: %w", err)
 	}
-	// StderrPipe + an explicit copier give us a join point
-	// (`stderrDone`) that fires before the failure-promotion
-	// decision; see the matching comment in hermes.go for why the
-	// io.MultiWriter form races with stopReason=end_turn under load.
+	// 这里用 StderrPipe + 显式 copier，能拿到一个先于「把失败升级为最终失败」决策触发
+	// 的汇合点（stderrDone）；为什么 io.MultiWriter 的形式会在高负载下与
+	// stopReason=end_turn 竞争，见 hermes.go 里对应的注释。
 	providerErr := newACPProviderErrorSniffer("kiro")
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -108,34 +134,29 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
 
-	// Kiro streams interim narration and the final answer as the same
-	// AgentMessageChunk type; the tracker keeps only the post-tool-call block
-	// for Result.Output while retaining the full text for error detection.
+	// Kiro 把中途的叙述性文本和最终答案都用同一种 AgentMessageChunk 类型流式送出；
+	// 这个 tracker 只为 Result.Output 保留「最后一次工具调用之后的文本块」，
+	// 同时保留全文供错误检测使用。
 	var deliverable acpDeliverableTracker
 	var streamingCurrentTurn atomic.Bool
-	// Completion-preservation state for the -32603 close-handshake guard.
+	// 处理 -32603 关闭握手时的「成果保留」状态。
 	//
-	// Kiro raises `session/prompt -32603 "failed to generate a response"`
-	// when the model fails to produce its closing turn AFTER the task has
-	// already done its work. We keep such a run "completed" only when we
-	// have POSITIVE proof the finishing step succeeded — never from the mere
-	// absence of a result. A mid-command crash or internal session failure
-	// produces the very same "tool use, no result, -32603" shape, and
-	// treating that as success would mark a genuinely-unfinished task
-	// completed (see the review on #5511 / MUL-4860).
+	// Kiro 在任务实际已经干完、但模型没能产出收尾回合时，会抛
+	// `session/prompt -32603 "failed to generate a response"`。只有在握有「收尾步骤
+	// 确实成功」的正向证据时，我们才把这轮运行判为 completed——绝不能仅凭「没有结果」
+	// 就当成功。命令中途崩溃或会话内部失败，产生的同样是「工具用了、没有结果、-32603」
+	// 的形状，若把这种也当成功，等于把一个没干完的任务标记成完成（见 #5511 /
+	// MUL-4860 的评审）。
 	//
-	// The only positive proof available at this layer is a terminal
-	// ToolResult with status=="completed" for a finishing tool
-	// (goal_complete or `multica issue comment add`). We record the status
-	// of the MOST RECENT such result (ordered, keyed per CallID) so a later
-	// failed delivery correctly overrides an earlier success — e.g.
-	// "progress comment completed → final comment failed → -32603" must stay
-	// failed, while "first attempt failed → retry completed → -32603" is a
-	// real completion.
+	// 本层唯一拿得到的正向证据，是收尾工具（goal_complete 或 `multica issue comment
+	// add`）返回了一条终态 ToolResult 且 status=="completed"。我们记录「最近一次」这类
+	// 结果的状态（按 CallID 键控、有先后次序），这样后面一条失败的结果能正确覆盖前面
+	// 的成功——比如「进度评论完成 → 最终评论失败 → -32603」必须保持失败，而
+	// 「第一次尝试失败 → 重试完成 → -32603」才是真完成。
 	var goalCompleteCallIDs sync.Map
 	var issueCommentCallIDs sync.Map
 	var finishingMu sync.Mutex
-	var lastFinishingResultStatus string // "", "completed", or "failed"
+	var lastFinishingResultStatus string // "", "completed", 或 "failed"
 
 	promptDone := make(chan hermesPromptResult, 1)
 	activity := make(chan struct{}, 1)
@@ -163,13 +184,11 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 				if msg.Tool == "goal_complete" && msg.CallID != "" {
 					goalCompleteCallIDs.Store(msg.CallID, struct{}{})
 				}
-				// Recognize `multica issue comment add` by its command
-				// payload regardless of how the adapter titled the tool.
-				// GPT-5.6 Sol may label the shell tool something other than
-				// the aliases kiroToolNameFromTitle folds into "terminal"
-				// (e.g. "execute"/"run"), so gating on msg.Tool=="terminal"
-				// here would miss it entirely (issue #5509). We still require
-				// a CallID so the tool use can be correlated to its result.
+				// 按命令载荷识别 `multica issue comment add`，不依赖适配层怎么给工具起名。
+				// GPT-5.6 Sol 可能把 shell 工具标成 kiroToolNameFromTitle 归不进
+				// "terminal" 的名字（比如 "execute"/"run"），如果这里只拦 msg.Tool==
+				// "terminal" 就会整个漏掉（issue #5509）。仍然要求带 CallID，以便把这次
+				// 工具调用和它的结果对上号。
 				if msg.CallID != "" && isKiroIssueCommentAddTool(msg) {
 					issueCommentCallIDs.Store(msg.CallID, struct{}{})
 				}
@@ -178,10 +197,8 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 				_, isGoal := goalCompleteCallIDs.LoadAndDelete(msg.CallID)
 				_, isComment := issueCommentCallIDs.LoadAndDelete(msg.CallID)
 				if isGoal || isComment {
-					// Record this finishing tool's terminal outcome. The
-					// most recent result wins, so the guard sees the final
-					// delivery attempt's status and a later failure
-					// overrides an earlier success.
+					// 记录这个收尾工具的终态结果。最近一次结果胜出，所以守卫逻辑看到的
+					// 是最后一次投递的状态：后到的失败能覆盖早先的成功。
 					finishingMu.Lock()
 					lastFinishingResultStatus = msg.Status
 					finishingMu.Unlock()
@@ -229,9 +246,8 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		finalStatus := "completed"
 		var finalError string
 		var sessionID string
-		// Set when the ACP runtime refuses the session we asked to
-		// resume. Only that is curable by starting a fresh session, so
-		// handshake/network failures below must leave it false.
+		// 仅在「ACP 运行时不认我们请求续跑的那个会话」时置位。只有这种情况可以通过另起
+		// 全新会话挽回，所以下面的握手/网络类失败都必须保持它为 false。
 		var resumeRejected bool
 		effectiveModel := strings.TrimSpace(opts.Model)
 
@@ -250,10 +266,9 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			return
 		}
 
-		// Drop MCP entries whose remote transport the runtime didn't
-		// advertise. See the matching comment in hermes.go for why
-		// unconditionally sending http/sse to a stdio-only ACP runtime
-		// tanks the whole session/new.
+		// 把 mcpServers 里「运行方没对外声明支持远程传输」的条目丢掉。
+		// 为什么对只支持 stdio 的 ACP 运行方无条件发 http/sse 会拖垮整个 session/new，
+		// 见 hermes.go 里对应的注释。
 		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "kiro", b.cfg)
 
 		cwd := opts.Cwd
@@ -273,14 +288,11 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 				resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 				return
 			}
-			// Apply the same defensive resolution kimi/hermes use: if
-			// kiro echoes a sessionId in the session/load response, prefer
-			// it (the canonical id the backend is committed to). When the
-			// response is empty or doesn't include sessionId — kiro's
-			// current observed shape — the helper falls back to the
-			// requested id, preserving today's behavior. Fixing this here
-			// too means a future kiro that DOES return a different id on
-			// silent state reset is handled the same way as hermes/kimi.
+			// 套用与 kimi/hermes 相同的防御性解析：若 kiro 在 session/load 响应里回显了
+			// sessionId，就优先用它（那是后端真正承诺的规范 id）。当响应为空或不含
+			// sessionId——即 kiro 当前观察到的形态——辅助函数会退回用请求时的 id，
+			// 维持现状。在这里一并修正，意味着将来某个 kiro 在「静默状态重置」时返回
+			// 了不同 id，也能和 hermes/kimi 一样被正确处理。
 			var changed bool
 			sessionID, changed = resolveResumedSessionID(opts.ResumeSessionID, result)
 			if changed {
@@ -328,10 +340,9 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 				finalStatus = "failed"
 				finalError = fmt.Sprintf("kiro could not switch to model %q: %v", opts.Model, err)
 				if opts.ResumeSessionID != "" && isACPSessionNotFound(err) {
-					// On a resumed session with a model override, the dead
-					// session surfaces here instead of at session/prompt.
-					// Same fix as the prompt path below: clear the id so
-					// the daemon's resume-failure fallback retries fresh.
+					// 续跑会话且带了模型覆盖时，那个「已死的会话」是在这里暴露，而不是
+					// 等到 session/prompt 才暴露。与下面 prompt 路径的处理一样：清空
+					// session id，让 daemon 的「续跑失败回退」逻辑用全新会话重试。
 					b.cfg.Logger.Warn("resumed session not found at set_model time; clearing session id so the daemon retries fresh",
 						"backend", "kiro",
 						"session_id", sessionID,
@@ -359,10 +370,9 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		promptBlocks := []map[string]any{
 			{"type": "text", "text": userText},
 		}
-		// Kiro's published docs use `content`, while Kiro CLI 2.1.1 still
-		// requires the standard ACP `prompt` field. Send both so either wire
-		// shape can drive the turn.
-		// TODO: drop one field once Kiro lands on a single canonical payload.
+		// Kiro 的公开文档用的是 `content` 字段，而 Kiro CLI 2.1.1 仍然只认标准 ACP 的
+		// `prompt` 字段。两个都发，任一线协议形态都能驱动回合。
+		// TODO: Kiro 收敛到单一规范载荷后删掉其中一个字段。
 		streamingCurrentTurn.Store(true)
 		_, err = c.request(runCtx, "session/prompt", map[string]any{
 			"sessionId": sessionID,
@@ -379,13 +389,10 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			} else {
 				finalStatus = "failed"
 				finalError = fmt.Sprintf("kiro session/prompt failed: %v", err)
-				// Preserve completion only on POSITIVE proof: the most
-				// recent finishing-tool ToolResult we observed was
-				// status=="completed", paired with the specific -32603 close
-				// handshake. A missing result is NOT proof — a mid-command
-				// crash produces the same result-less shape (Must-fix #1) —
-				// and because we key on the most recent outcome, a later
-				// failed delivery overrides an earlier success (Must-fix #2).
+				// 只有「正向证据」才保留 completed：我们观察到的最近一次收尾工具的
+				// ToolResult 是 status=="completed"，且搭配的是特定的 -32603 关闭握手。
+				// 缺结果不是证据——命令中途崩溃也会产生同样无结果的形状（必修项 #1）——
+				// 而且以最近一次结果为准，后到的失败会覆盖先前的成功（必修项 #2）。
 				finishingMu.Lock()
 				lastFinishing := lastFinishingResultStatus
 				finishingMu.Unlock()
@@ -394,12 +401,10 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 					finalStatus = "completed"
 					finalError = ""
 				} else if opts.ResumeSessionID != "" && isACPSessionNotFound(err) {
-					// See the hermes backend: the runtime echoes the
-					// requested id back from session/resume even when
-					// the session is gone, so the stale id only fails
-					// here, at prompt time. Empty SessionID lets the
-					// daemon's resume-failure fallback retry fresh and
-					// store the replacement id.
+					// 参见 hermes 后端：即使会话已不存在，运行方也会从 session/resume
+					// 原样回显请求的 id，于是那个失效 id 只会在 prompt 时刻才报错。把
+					// SessionID 清空，daemon 的「续跑失败回退」就能用全新会话重试并保存
+					// 替换后的 id。
 					b.cfg.Logger.Warn("resumed session not found at prompt time; clearing session id so the daemon retries fresh",
 						"backend", "kiro",
 						"session_id", sessionID,
@@ -407,18 +412,13 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 					sessionID = ""
 					resumeRejected = true
 				} else if opts.ResumeSessionID != "" && isKiroOversizedHistoryImage(err) {
-					// A resumed session whose history contains an image
-					// exceeding the provider's max pixel dimensions replays
-					// that image on every session/prompt and is rejected
-					// before the current turn runs (GH #5975). Unlike a
-					// missing session the transcript still exists, so this is
-					// permanent for the resume path: only a fresh session
-					// without the resume id can recover. Signal
-					// ResumeRejected so the daemon retries once from a cold
-					// session; keep the (poisoned) session id on the result
-					// so it stays visible for auditing — the daemon gates the
-					// retry on the boolean, not on an empty id, and a
-					// successful fresh retry overwrites it with the new id.
+					// 续跑会话的历史里若含有一张超出 provider 最大像素尺寸的图片，每次
+					// session/prompt 都会重放这张图并被拒，且是在当前回合开跑之前就被拒
+					// （GH #5975）。与会话缺失不同，这里的 transcript 还在，所以对续跑
+					// 路径是永久性的：只有不带 resume id 的全新会话能恢复。置
+					// ResumeRejected 让 daemon 用冷会话重试一次；把（有毒的）session id
+					// 保留在结果里便于审计——daemon 依据的是布尔值而不是 id 是否为空来
+					// 决定重试，而一次成功的全新重试会用新 id 覆盖它。
 					b.cfg.Logger.Warn("resumed session has an oversized historical image the provider rejects; signaling resume rejection so the daemon retries with a fresh session",
 						"backend", "kiro",
 						"session_id", sessionID,
@@ -446,20 +446,16 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		cancel()
 
 		<-readerDone
-		// Ensure the stderr copier has drained before consulting the
-		// provider-error sniffer; see hermes.go for the failure mode.
+		// 在咨询 provider 错误嗅探器之前，先确保 stderr 拷贝协程已排空；失败模式见
+		// hermes.go。
 		<-stderrDone
 
 		finalOutput, providerErrorOutput := deliverable.result()
 
-		// Promote completed→failed when stderr or the agent text
-		// stream show a terminal upstream-LLM failure (HTTP 4xx /
-		// rate-limit / expired token). See the helper docs for the
-		// full signal set; the key safety property is that transient
-		// per-attempt warnings followed by a successful retry stay
-		// "completed". It reads the full text stream, not the
-		// deliverable, so a give-up turn that lands before a tool call
-		// stays visible.
+		// 当 stderr 或 agent 文本流里出现了上游 LLM 的终态失败（HTTP 4xx / 限流 /
+		// token 过期）时，把 completed 升级为 failed。完整信号集见辅助函数文档；关键的
+		// 安全性质是：瞬时的「单次尝试告警后重试成功」仍保持 completed。这里读的是全文
+		// 流而不是 deliverable，所以发生在一次工具调用之前、直接放弃的回合也仍然可见。
 		finalStatus, finalError = promoteACPResultOnProviderError(finalStatus, finalError, providerErrorOutput, providerErr)
 
 		u := c.accumulatedUsage()
@@ -487,6 +483,10 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
+// isKiroGoalCompleteCloseError 判断 err 是不是 Kiro 那类特殊的 -32603 关闭握手错误：
+// 任务是 session/prompt，错误码 -32603，消息归一化为 "Internal error"，且 data 里带
+// "failed to generate a response"。命中它说明模型是在工作收尾之后没能产出收尾回合，
+// 配合「收尾工具结果已完成」的正向证据即可保住 completed（见 Execute 里的守卫）。
 func isKiroGoalCompleteCloseError(err error) bool {
 	var rpcErr *acpRPCError
 	if !errors.As(err, &rpcErr) {
@@ -501,23 +501,19 @@ func isKiroGoalCompleteCloseError(err error) bool {
 	return strings.Contains(strings.ToLower(rpcErr.Data), "failed to generate a response")
 }
 
-// isKiroOversizedHistoryImage reports whether err is Kiro/upstream rejecting a
-// resumed conversation because an image already baked into the session history
-// exceeds the provider's maximum allowed pixel dimensions. Kiro surfaces this
-// at session/prompt time as a -32603 whose `data` names the offending
-// messages[n].content[m].image.source.base64.data block and the dimension
-// limit (GH #5975), e.g.:
+// isKiroOversizedHistoryImage 判断 err 是否为 Kiro/上游拒绝一个续跑会话——原因是会话
+// 历史里已烙入的一张图片超过了 provider 允许的最大像素尺寸。Kiro 在 session/prompt
+// 时刻把它抛成 -32603，其 `data` 会点名出错的那块 messages[n].content[m].image.
+// source.base64.data 和尺寸上限（GH #5975），例如：
 //
 //	session/prompt: Internal error (code=-32603, data=Encountered an error in
 //	the response stream: messages.14.content.0.image.source.base64.data: At
 //	least one of the image dimensions exceed max allowed size: 8000 pixels)
 //
-// Both markers must be present so an unrelated -32603 — a transient "failed to
-// generate a response" close, or a mid-command crash producing the same
-// result-less shape — is never misread as a permanent history incompatibility.
-// This is deliberately distinct from isACPSessionNotFound: the session exists,
-// only its historical multimodal content is unusable, so the recovery is a
-// fresh session started WITHOUT the resume id rather than clearing a dead id.
+// 两个特征必须同时出现，才不会把无关的 -32603——比如一次瞬时的 "failed to
+// generate a response" 关闭，或同样无结果的命令中途崩溃——误判成永久性的历史不兼容。
+// 它与 isACPSessionNotFound 刻意区分：这里的会话是存在的，只是它历史里的多模态内容
+// 不可用，所以恢复方式是「不带 resume id 另起全新会话」，而不是清掉一个已死的 id。
 func isKiroOversizedHistoryImage(err error) bool {
 	var rpcErr *acpRPCError
 	if !errors.As(err, &rpcErr) {
@@ -531,23 +527,22 @@ func isKiroOversizedHistoryImage(err error) bool {
 		strings.Contains(data, "image dimensions exceed max allowed size")
 }
 
-// isKiroIssueCommentAddTool reports whether a tool-use message is a
-// `multica issue comment add` invocation. It keys purely off the command
-// payload, not the normalized tool name: GPT-5.6 Sol adapters may title the
-// shell tool with a name that doesn't fold into "terminal" (the earlier
-// msg.Tool=="terminal" gate silently dropped those and left completed tasks
-// marked failed — see #5509). isKiroIssueCommentAddCommand is strict enough
-// that no non-shell tool's input will accidentally match.
+// isKiroIssueCommentAddTool 报告一条工具调用消息是否为 `multica issue comment add`
+// 调用。它只看命令载荷，不看归一化后的工具名：GPT-5.6 Sol 适配层给 shell 工具起的
+// 名字可能归不进 "terminal"（之前用 msg.Tool=="terminal" 拦截会静默漏掉它们，导致
+// 已完成的任务被标成失败——见 #5509）。isKiroIssueCommentAddCommand 足够严格，
+// 非 shell 工具的输入不会被误伤命中。
 func isKiroIssueCommentAddTool(msg Message) bool {
 	command, _ := msg.Input["command"].(string)
 	return isKiroIssueCommentAddCommand(command)
 }
 
+// isKiroIssueCommentAddCommand 判断命令行字符串本身是不是
+// `multica issue comment add`（可能带 `./` 前缀、绝对路径，或前导环境变量）。
 func isKiroIssueCommentAddCommand(command string) bool {
 	parts := trimLeadingEnvAssignments(strings.Fields(command))
-	// Some runtimes route terminal calls through a shell wrapper such as
-	// `sh -c "multica issue comment add ..."`; unwrap a single such layer so
-	// the real invocation is still recognized.
+	// 有的运行方会让终端调用绕一层 shell 包装，形如 `sh -c "multica issue comment
+	// add ..."`；只拆一层这种包装，让真实的调用仍能被识别出来。
 	if len(parts) >= 3 && isPOSIXShellName(parts[0]) && parts[1] == "-c" {
 		inner := strings.Trim(strings.Join(parts[2:], " "), "\"'")
 		parts = trimLeadingEnvAssignments(strings.Fields(inner))
@@ -562,8 +557,8 @@ func isKiroIssueCommentAddCommand(command string) bool {
 	return parts[1] == "issue" && parts[2] == "comment" && parts[3] == "add"
 }
 
-// trimLeadingEnvAssignments drops leading `KEY=VALUE` tokens so an invocation
-// like `MULTICA_TOKEN=x multica issue comment add ...` is still recognized.
+// trimLeadingEnvAssignments 丢掉开头的 `KEY=VALUE` 片段，使
+// `MULTICA_TOKEN=x multica issue comment add ...` 这类调用仍能被识别。
 func trimLeadingEnvAssignments(parts []string) []string {
 	for len(parts) > 0 && isEnvAssignment(parts[0]) {
 		parts = parts[1:]
@@ -571,7 +566,8 @@ func trimLeadingEnvAssignments(parts []string) []string {
 	return parts
 }
 
-// isEnvAssignment reports whether tok is a `NAME=value` shell env assignment.
+// isEnvAssignment 判断 tok 是否是 `NAME=value` 形式的 shell 环境变量赋值：
+// 等号前是合法标识符（字母/下划线开头，可含数字），等号在最前（eq<=0）则不是。
 func isEnvAssignment(tok string) bool {
 	eq := strings.IndexByte(tok, '=')
 	if eq <= 0 {
@@ -589,7 +585,8 @@ func isEnvAssignment(tok string) bool {
 	return true
 }
 
-// isPOSIXShellName reports whether tok names a shell that takes `-c <command>`.
+// isPOSIXShellName 判断 tok 是否是接受 `-c <command>` 参数的 shell 程序名；
+// 若带路径只取最后一段（basename）参与比对。
 func isPOSIXShellName(tok string) bool {
 	if i := strings.LastIndexByte(tok, '/'); i >= 0 {
 		tok = tok[i+1:]
@@ -602,6 +599,11 @@ func isPOSIXShellName(tok string) bool {
 	}
 }
 
+// kiroToolNameFromTitle 把 Kiro/适配层给出的工具「标题」归一化成系统内部统一的工具名。
+//
+// 归一化步骤：先取冒号前的部分（适配层可能把标题写成「工具名: 意图描述」），再统一小
+// 写后与已知别名对照；对不上号的兜底做法是把空格替换成下划线原样返回，例如
+// "Read File" → "read_file"。
 func kiroToolNameFromTitle(title string) string {
 	t := strings.TrimSpace(title)
 	if t == "" {

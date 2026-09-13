@@ -1,3 +1,4 @@
+// plugin_agent_tools.go —— `agent` 触发器：把插件 hook 作为 MCP 工具暴露给 agent 调用（经服务端签名执行）。
 package service
 
 import (
@@ -13,59 +14,40 @@ import (
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
 )
 
-// The `agent` trigger: a plugin hook offered to an agent as an MCP tool.
+// `agent` 触发器：把插件 hook 作为 MCP 工具交给 agent。
 //
-// This is the fourth call site, and the one that is NOT the host deciding to
-// call something. An agent sees a tool, reads its description, and chooses. That
-// choice is the whole reason hooks may be reached from an agent at all: the
-// alternative — a hook that must run before or after every turn — is a third
-// party holding the product's main loop open, which is why no such position
-// exists anywhere in this design.
+// 这是第四个调用点，也是唯一不是“宿主决定调用”的那个：agent 看到工具、读描述、自主选择。正是这个选择
+// 让 hook 有可能从 agent 侧被触达——另一方案（每回合前后都必须跑的 hook）等于让第三方握住产品主循环，
+// 本设计中任何地方都没有这种位置。
 //
-// The daemon renders these as tools but does NOT call the plugin. A tool call
-// goes back to the server, which performs the signed request. The signing secret
-// is derived from the deployment key and never leaves this process; equally
-// important, routing through the server means the rate limit, the circuit
-// breaker, the `net:` destination check and the invocation record all apply
-// exactly as they do for every other trigger, rather than being reimplemented
-// daemon-side where they would drift.
+// daemon 只把它们渲染成工具，【不】调用插件。工具调用回到服务器，由服务器执行签名请求。签名密钥由部署密钥
+// 派生、绝不离开本进程；同样重要的是，经服务器路由意味着限流、熔断、`net:` 目的地检查与调用记录都对它生效，
+// 与其它每个触发器完全一致，而不是在 daemon 侧重造并漂移。
 
-// PluginHookTool is one hook, described the way an agent will see it.
+// PluginHookTool 是一个 hook，以 agent 将看到的方式描述。
 type PluginHookTool struct {
 	InstallationID string `json:"installation_id"`
 	HookKey        string `json:"hook_key"`
-	// Name is what the agent sees, namespaced so two plugins contributing the
-	// same hook key do not collide.
+	// Name 是 agent 看到的工具名，带命名空间使两个插件贡献同名 hook key 也不冲突。
 	Name string `json:"name"`
-	// Description is the manifest's hook description verbatim: it is what the
-	// agent reads to decide whether to call this, so the plugin author writes
-	// it and the host does not paraphrase.
+	// Description 是 manifest 的 hook 描述原样——agent 读它来决定是否调用，因此由插件作者撰写、宿主不转述。
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 }
 
-// toolNameUnsafe matches everything MCP tool names should not contain. Agents
-// and providers vary in what they accept; letters, digits and underscores are
-// the intersection that works everywhere.
+// toolNameUnsafe 匹配 MCP 工具名不应包含的一切。各家 agent/provider 接受范围不一；字母、数字、下划线是
+// 到处可用的交集。
 var toolNameUnsafe = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
 
-// PluginToolName namespaces a hook so two plugins can both contribute a hook
-// called "summarize" without one shadowing the other.
+// PluginToolName 为 hook 加命名空间，使两个插件都能贡献名为 “summarize” 的 hook 而不互相遮蔽。
 //
-// The naive version of this — sanitize both halves and join with an underscore
-// — is not injective, and a test caught it: a plugin key uses `.` and `-`, both
-// of which have to become `_`, so `a.b` and `a-b` collapse together, and
-// `a.b_` + `c` collides with `a.b` + `c`. Two different plugins would then be
-// offering the agent one tool name, and whichever was registered last would
-// answer for both.
+// 朴素做法——两半各自清洗后以下划线连接——不是单射，测试抓到了它：插件 key 用 `.` 与 `-`，两者都得变 `_`，
+// 于是 `a.b` 与 `a-b` 坍缩成同一个，`a.b_`+`c` 与 `a.b`+`c` 也碰撞。两个不同插件会给 agent 同一个工具名，
+// 后注册的会替两者应答。
 //
-// So the prefix carries a short digest of the FULL plugin key rather than a
-// lossy transliteration of it. The readable part is the last segment, which is
-// what a person recognises; the digest is what makes it unique.
+// 因此前缀携带完整插件 key 的短摘要，而非有损音译。可读部分是最后一段（人能认出）；摘要负责唯一。
 //
-// The `__` separator is safe because a hook key cannot contain one: its pattern
-// requires an alphanumeric after every underscore, so a doubled underscore is
-// unrepresentable.
+// `__` 分隔符安全：hook key 不可能包含它——其模式要求每个下划线后跟字母数字，双下划线不可表示。
 func PluginToolName(pluginKey, hookKey string) string {
 	clean := func(value string) string {
 		return strings.Trim(toolNameUnsafe.ReplaceAllString(value, "_"), "_")
@@ -79,11 +61,9 @@ func PluginToolName(pluginKey, hookKey string) string {
 	return readable + "_" + hex.EncodeToString(digest[:])[:6] + "__" + clean(hookKey)
 }
 
-// AgentHookTools lists the hooks an agent running in this workspace may call.
+// AgentHookTools 列出本工作区运行中的 agent 可以调用的 hook。
 //
-// Disabled installations are skipped, which is what makes disabling a plugin
-// take effect on the next task rather than only in the UI. An uninstalled one
-// has no row at all.
+// 跳过错用安装，这正是“禁用插件在下次任务生效、而非只在 UI 生效”的机制。卸载的插件根本没有行。
 func (s *PluginService) AgentHookTools(ctx context.Context, workspaceID pgtype.UUID) ([]PluginHookTool, error) {
 	installations, err := s.Queries.ListWorkspacePluginInstallations(ctx, workspaceID)
 	if err != nil {
@@ -97,7 +77,7 @@ func (s *PluginService) AgentHookTools(ctx context.Context, workspaceID pgtype.U
 		}
 		manifest, err := ParseInstallationManifest(installation)
 		if err != nil {
-			// One unreadable manifest must not hide every other plugin's tools.
+			// 一份读不了的 manifest 不能藏起其它所有插件的工具。
 			continue
 		}
 		for _, hook := range manifest.Contributes.Hooks {
@@ -113,19 +93,15 @@ func (s *PluginService) AgentHookTools(ctx context.Context, workspaceID pgtype.U
 			})
 		}
 	}
-	// Stable order so a task's tool list does not reshuffle between claims for
-	// no reason, which shows up as cache churn in provider-side prompt caching.
+	// 稳定排序，使任务工具列表在两次认领之间不会无故重排——那会表现为 provider 侧提示缓存的搅动。
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
 	return tools, nil
 }
 
-// InvokeAgentHook runs one agent-triggered hook.
+// InvokeAgentHook 执行一次 agent 触发的 hook。
 //
-// The actor is the AGENT, not the person who filed the issue and not the
-// plugin: an agent chose to call this, so the writes it produces are the
-// agent's, exactly as they would be if the agent had written them directly.
-// author_type already has a value for that, which is why this trigger needs no
-// new one.
+// actor 是 AGENT——不是提交 issue 的人，也不是插件：agent 选择调用它，因此它产生的写入归 agent，
+// 与 agent 直接写出时完全一样。author_type 已有对应值，这也是该触发器无需新值的原因。
 func (s *PluginService) InvokeAgentHook(ctx context.Context, installationID, hookKey string, agentID pgtype.UUID, input json.RawMessage) (HookResult, error) {
 	caller, err := s.AuthorizePluginAction(ctx, installationID, pgtype.UUID{}, "")
 	if err != nil {
@@ -144,6 +120,7 @@ func (s *PluginService) InvokeAgentHook(ctx context.Context, installationID, hoo
 	}, 1)
 }
 
+// rawInputOrNil 把空原始输入变成 nil。
 func rawInputOrNil(raw json.RawMessage) any {
 	if len(raw) == 0 {
 		return nil

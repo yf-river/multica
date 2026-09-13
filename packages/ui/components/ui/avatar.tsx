@@ -1,10 +1,17 @@
 "use client"
+// 本文件是头像相关的一组原子组件（基于 Base UI 的 Avatar）：
+// 圆形头像框 + 图片/兜底内容，外加头像角标（Badge）与堆叠头像组（Group）。
+// 尺寸通过 data-size 属性在 CSS 里统一控制，默认 8（2rem），支持 sm/lg。
 
 import * as React from "react"
 import { Avatar as AvatarPrimitive } from "@base-ui/react/avatar"
 
 import { cn } from "@multica/ui/lib/utils"
 
+/**
+ * Avatar：圆形头像容器。会自带一层细描边；通过 `size` 切换 data-size
+ * 让整组（含图片、兜底、角标）联动缩放。
+ */
 function Avatar({
   className,
   size = "default",
@@ -25,6 +32,7 @@ function Avatar({
   )
 }
 
+/** AvatarImage：头像里的图片，占满圆形容器并按 object-cover 裁切 */
 function AvatarImage({ className, ...props }: AvatarPrimitive.Image.Props) {
   return (
     <AvatarPrimitive.Image
@@ -38,6 +46,7 @@ function AvatarImage({ className, ...props }: AvatarPrimitive.Image.Props) {
   )
 }
 
+/** AvatarFallback：图片缺失/加载失败时显示的兜底内容（如姓名首字母） */
 function AvatarFallback({
   className,
   ...props
@@ -54,6 +63,7 @@ function AvatarFallback({
   )
 }
 
+/** AvatarBadge：钉在头像右下角的角标（在线状态点、小图标等），随尺寸联动缩放 */
 function AvatarBadge({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
@@ -70,6 +80,7 @@ function AvatarBadge({ className, ...props }: React.ComponentProps<"span">) {
   )
 }
 
+/** AvatarGroup：多个头像互相叠压的群组，叠压部分用背景色描边分隔 */
 function AvatarGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -83,6 +94,7 @@ function AvatarGroup({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** AvatarGroupCount：头像群组的「+N」计数块，显示剩余人数或展开图标 */
 function AvatarGroupCount({
   className,
   ...props

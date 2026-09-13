@@ -1,9 +1,8 @@
+// inbox_message.go —— 企微智能机器人在 inbox:new 事件上推送的 markdown 正文。
+// 用 markdown 是为了让它经 aibot_send_msg 渲染干净（aibot_send_msg 不收
+// msgtype=text）。单独放一个文件，让出站 handler 专心做投递，本模块负责文案和
+// 链接的构造。
 package wecom
-
-// inbox_message.go — the markdown body wecom smart-bot pushes on inbox:new.
-// Uses markdown so it renders cleanly through aibot_send_msg (which does not
-// accept msgtype=text). Kept in a separate file so the outbound handler stays
-// focused on delivery and this module owns the wording + link building.
 
 import (
 	"net/url"
@@ -12,14 +11,12 @@ import (
 	"unicode/utf8"
 )
 
-// aibot markdown size cap. WeCom rejects the whole frame if we
-// push more than ~4096 chars, so we truncate the body on that budget. We
-// use 4000 to leave headroom for the prefix + link suffix.
+// aibot markdown 的大小上限。超过约 4096 字符企微会拒掉整帧，所以我们按这个
+// 预算截断正文。用 4000 是给前缀 + 链接后缀留出富余。
 const inboxMarkdownMaxLen = 4000
 
-// inboxTypeLabels are the Chinese display names used in the notification
-// preamble. Kept locally so wecom does not reach into cmd/server for it;
-// the two lists agree by convention.
+// inboxTypeLabels 是通知开头用的中文显示名。放在本包内，wecom 就不必伸到
+// cmd/server 去取；两份名单靠约定保持一致。
 var inboxTypeLabels = map[string]string{
 	"issue_assigned":     "任务指派",
 	"mentioned":          "提及你",
@@ -42,10 +39,9 @@ func inboxTypeLabel(t string) string {
 	return "新消息"
 }
 
-// inboxAppURL resolves the frontend URL for building the "view detail" link.
-// Priority: WECOM_APP_URL → MULTICA_APP_URL → FRONTEND_ORIGIN. Only HTTPS
-// values are accepted; a non-HTTPS override is silently dropped so a
-// misconfigured env cannot leak an http:// URL into a user chat.
+// inboxAppURL 解析出前端地址，用于构造「查看详情」链接。优先级：
+// WECOM_APP_URL → MULTICA_APP_URL → FRONTEND_ORIGIN。只收 HTTPS 值；非 HTTPS
+// 的覆盖项被静默丢弃，防止配错的环境变量把 http:// URL 泄漏进用户会话。
 func inboxAppURL() string {
 	for _, name := range []string{"WECOM_APP_URL", "MULTICA_APP_URL", "FRONTEND_ORIGIN"} {
 		v := strings.TrimSpace(os.Getenv(name))
@@ -60,15 +56,15 @@ func inboxAppURL() string {
 	return ""
 }
 
-// buildInboxMarkdown builds the aibot-friendly markdown body from an
-// inbox_item map. Format:
+// buildInboxMarkdown 根据一张 inbox_item map 构造 aibot 友好的 markdown 正文。
+// 格式：
 //
-//	**[{type}] {title}**
-//	{body}
+//	**[{类型}] {标题}**
+//	{正文}
 //	[查看详情]({appURL}/{slug|workspaceID}/inbox?issue={issueID})
 //
-// The link segment is omitted entirely when no appURL is configured — we
-// would rather send a title-only card than a broken link.
+// 没有配置 appURL 时整段链接直接省略——发一张只有标题的卡片，也好过发一条坏链
+// 接。
 func buildInboxMarkdown(item map[string]any, workspaceID, slug string) string {
 	title, _ := item["title"].(string)
 	typeStr, _ := item["type"].(string)
@@ -78,25 +74,21 @@ func buildInboxMarkdown(item map[string]any, workspaceID, slug string) string {
 	body := inboxItemBody(item)
 	link := inboxItemLink(item, workspaceID, slug)
 
-	// title and body are written by a member. They land inside an aibot
-	// markdown card the recipient has every reason to trust — it comes from
-	// the bot, not from the author — so link syntax in them must not render.
-	// An issue titled "[click here](http://evil.example)" arrived as a
-	// working link, and a body carrying "[重置密码]: https://evil.example"
-	// plus "[重置密码]" arrived as one too.
+	// title 与 body 是成员写的。它们会落进一张接收方完全有理由信任的 aibot
+	// markdown 卡片里——卡片来自机器人、不是作者——所以其中的链接语法绝不能
+	// 渲染。名为 "[click here](http://evil.example)" 的任务曾以「可点击链接」的
+	// 形态送达，正文里带 "[重置密码]: https://evil.example" 外加 "[重置密码]"
+	// 的也照样渲染成了链接。
 	//
-	// Per field rather than over the finished card, which is what the length
-	// budget below needs — and it costs no coverage. Every line of member
-	// text begins where the card's own line begins, bar the title's first,
-	// and there the bot's "**[" prefix keeps the member out of the block
-	// position a definition has to start in. The scan reads each field's
-	// start as a line start anyway, so that one is guarded twice over rather
-	// than not at all.
+	// 按「字段」逐个处理、而不是等整张卡片拼完再统一处理——下面做长度预算时需
+	// 要的正是这样——而且覆盖并不因此打折。成员文本的每一行都从卡片自己那行的
+	// 行首开始，唯独标题首行例外，而那里的机器人前缀 "**[" 让成员永远到不了定义
+	// 列表（reference definition）必须占据的块位置。扫描本来就把每个字段的开头
+	// 当作行首读，所以那一处是双保险、而不是没保险。
 	//
-	// Done here, before anything below measures a length: each break inserts
-	// a space, and a body dense in "](" grows by half. Budget the grown text
-	// or the card goes out over the cap, which WeCom refuses whole while
-	// telling the sender it was delivered.
+	// 要赶在下面任何量长度之前做完：每打断一处 `](` 会插入一个空格，而 `](` 密
+	// 集的正文会长出三分之一。按「未扩张」的文本来做预算，卡片发出去就会超上限，
+	// 被企微整帧拒掉——同时还告诉发送者「已送达」。
 	title = breakMemberLinks(title)
 	body = breakMemberLinks(body)
 
@@ -119,48 +111,41 @@ func buildInboxMarkdown(item map[string]any, workspaceID, slug string) string {
 	if utf8.RuneCountInString(result) <= inboxMarkdownMaxLen {
 		return result
 	}
-	// Truncate the body only. Prefix + link must survive intact so the
-	// user still gets the "view detail" affordance.
+	// 只截正文。前缀与链接必须完整幸存，用户才仍保有「查看详情」这个出口。
 	prefix := "**[" + inboxTypeLabel(typeStr) + "] " + title + "**"
 	suffix := ""
 	if link != "" {
 		suffix = "\n[查看详情](" + link + ")"
 	}
-	// Neither cut below can put a "]" back next to a "(" or a ":".
-	// truncateRunes only drops a suffix, so it cannot recreate a pair
-	// breakMemberLinks already separated, and every literal spliced in after
-	// member text here starts with ".", "*" or "\n" — never "(" or ":".
-	// Nor can dropping a suffix complete a reference definition: it can only
-	// cut the destination off one. Pinned by the seam cases in
-	// TestInboxCardNeverPutsCloseBracketNextToOpenParen and
-	// TestInboxCardDefinesNoResolvableLinkReference.
+	// 下面两种截断都不可能让 "]" 重新贴到 "(" 或 ":" 旁边。truncateRunes 只会
+	// 丢弃后缀，无法再造出 breakMemberLinks 已经拆开的那对组合；而这里在成员文
+	// 本之后拼进来的每个字面量都以 "."、"*" 或 "\n" 开头——永远不会是 "(" 或
+	// ":"。丢弃一段后缀也不可能补全一条引用定义：它只能把某条定义的目的地截断。
+	// 由 TestInboxCardNeverPutsCloseBracketNextToOpenParen 与
+	// TestInboxCardDefinesNoResolvableLinkReference 里的接缝用例钉死。
 	room := inboxMarkdownMaxLen - utf8.RuneCountInString(prefix) - utf8.RuneCountInString(suffix) - 4 // "\n...\n"
 	if room > 0 {
 		return prefix + "\n" + truncateRunes(body, room) + "..." + suffix
 	}
-	// No room for any body means the prefix itself is the problem — a long
-	// enough title pushes prefix+suffix past the cap on its own, and
-	// returning it unchanged means WeCom refuses the whole frame while the
-	// sender is told it was delivered. Truncate the title so what goes out
-	// always fits.
+	// 一点正文的空间都没有，说明问题出在前缀自己身上——标题足够长时，前缀+后
+	// 缀就自己顶破上限了；原样发出去意味着企微拒掉整帧、而发送者被告知已送达。
+	// 所以截标题，保证发出去的东西总能装下。
 	fixed := utf8.RuneCountInString(prefix) - utf8.RuneCountInString(title)
 	titleRoom := inboxMarkdownMaxLen - fixed - utf8.RuneCountInString(suffix) - 3 // "..."
 	if titleRoom < 0 {
-		// Clamping here still returns fixed+3+len(suffix) runes with no cap
-		// check, so in principle this branch can hand back a card over the
-		// cap. Reaching it needs a link suffix past ~3987 runes, i.e. an
-		// appURL plus workspace slug of that length; both are operator- and
-		// DB-constrained, never member-authored. Left as-is deliberately:
-		// the alternative is dropping the link to make room, and no input
-		// that exists can ask for it.
+		// 这里钳到 0 后返回的仍是 fixed+3+len(suffix) 个 rune，并没有过上限校验，
+		// 所以这个分支理论上可能交回一张超限卡片。要走到它需要链接后缀超过约
+		// 3987 个 rune，也就是那么长的 appURL 加 workspace slug；两者都受运维与
+		// DB 约束，绝不是成员能写出来的。刻意保持原样：另一条路是丢链接腾地方，
+		// 而现实里没有任何输入会走到这一步。
 		titleRoom = 0
 	}
 	return "**[" + inboxTypeLabel(typeStr) + "] " +
 		truncateRunes(title, titleRoom) + "...**" + suffix
 }
 
-// inboxItemBody extracts the body/description string from an inbox_item map.
-// Body may arrive as *string (nil-able JSON field), string, or missing.
+// inboxItemBody 从 inbox_item map 里抽出 body/description 字符串。body 可能以
+// *string（可空的 JSON 字段）、string、或缺席三种形态到达。
 func inboxItemBody(item map[string]any) string {
 	switch v := item["body"].(type) {
 	case *string:
@@ -173,9 +158,8 @@ func inboxItemBody(item map[string]any) string {
 	return ""
 }
 
-// inboxItemLink builds the {appURL}/{slug|wsUUID}/inbox?issue={issueID}
-// deep link. Returns "" when no appURL is configured — the caller uses that
-// as a signal to drop the entire link segment.
+// inboxItemLink 构造 {appURL}/{slug|wsUUID}/inbox?issue={issueID} 深链。
+// 未配置 appURL 时返回 ""——调用方把它当作「整段链接都不用放」的信号。
 func inboxItemLink(item map[string]any, workspaceID, slug string) string {
 	appURL := inboxAppURL()
 	if appURL == "" {
@@ -190,7 +174,7 @@ func inboxItemLink(item map[string]any, workspaceID, slug string) string {
 	b.WriteString("/")
 	b.WriteString(url.PathEscape(seg))
 	b.WriteString("/inbox")
-	// Optional ?issue=... — chat-only inbox items have no issue.
+	// 可选的 ?issue=... ——纯会话类 inbox 条目没有 issue。
 	if issueID := inboxItemIssueID(item); issueID != "" {
 		b.WriteString("?issue=")
 		b.WriteString(url.QueryEscape(issueID))
@@ -198,8 +182,8 @@ func inboxItemLink(item map[string]any, workspaceID, slug string) string {
 	return b.String()
 }
 
-// inboxItemIssueID extracts issue_id when present. Chat-type notifications
-// have no issue_id and we return "" — the link then omits the query param.
+// inboxItemIssueID 在存在时取出 issue_id。会话类通知没有 issue_id，我们返回
+// ""——此时链接省略查询参数。
 func inboxItemIssueID(item map[string]any) string {
 	switch v := item["issue_id"].(type) {
 	case *string:
@@ -212,8 +196,8 @@ func inboxItemIssueID(item map[string]any) string {
 	return ""
 }
 
-// truncateRunes trims s to at most maxRunes runes. Rune-based rather than
-// byte-based so the truncation never splits a Chinese character.
+// truncateRunes 把 s 剪到最多 maxRunes 个 rune。按 rune 而非字节裁剪，保证截
+// 断绝不会把一个汉字劈成两半。
 func truncateRunes(s string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""

@@ -1,3 +1,16 @@
+// media.go：入站图片媒体的解析与下载——把机器人消息回调里的 downloadCode 换成
+// 真实图片字节，落进对象存储，并把引用挂回归一化后的消息。
+//
+// 数据流（engine.MediaResolver 的钉钉实现）：媒体属于「重活」，被共享 Router 放
+// 到去重/身份/成员校验之后、异步做。对每条消息最多并行下载 2 张图片：先用钉钉的
+// messageFiles/download 接口把短命 downloadCode 换成临时下载 URL（URL 是带签的
+// 短期凭证，绝不落库、绝不打日志），再限时抓取、校验内容类型、上传对象存储，最后
+// 填进 channel.InboundMessage.MediaRefs。
+//
+// 安全内核：下载 URL 由钉钉签发自外部，属于不可信的出站目标。钉钉可能返回 http
+// 明文 URL，必须按原 scheme 抓取；但连到哪台机器必须由我们自己把关——本文件做了
+// 一套防 SSRF 的自解析拨号（先解析、验公网、再直连 IP），挡住 DNS rebinding 把
+// 连接带进内网。
 package dingtalk
 
 import (
@@ -26,9 +39,8 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// DingTalk publishes no inbound image limits. Keep the adapter's memory and
-// remote-I/O budget deliberately below the shared Router's 45-second media
-// deadline: at most two 10 MiB downloads are buffered concurrently.
+// 钉钉对入站图片不设公开上限，这里把适配器的内存与远端 I/O 预算刻意压到共享
+// Router 45 秒媒体截止时间之下：最多同时缓冲两张 10 MiB 的下载。
 const (
 	maxImagesPerMessage   = 4
 	maxInboundImageBytes  = 10 << 20
@@ -45,6 +57,9 @@ var allowedImageTypes = map[string]string{
 	"image/bmp":  ".bmp",
 }
 
+// mediaResolver 是 engine.MediaResolver 的钉钉实现。client 负责换 downloadCode、
+// decrypt 还原安装凭据、store 存图片、ledger 登记媒体意图、fetch 是带了 SSRF
+// 防护的下载 HTTP client。
 type mediaResolver struct {
 	client  *Client
 	decrypt Decrypter
@@ -56,6 +71,7 @@ type mediaResolver struct {
 
 var _ engine.MediaResolver = (*mediaResolver)(nil)
 
+// NewMediaResolver 构造钉钉媒体解析器。
 func NewMediaResolver(client *Client, decrypt Decrypter, store storage.Storage, ledger engine.MediaIntentLedger, logger *slog.Logger) engine.MediaResolver {
 	if logger == nil {
 		logger = slog.Default()
@@ -70,13 +86,11 @@ func NewMediaResolver(client *Client, decrypt Decrypter, store storage.Storage, 
 	}
 }
 
-// DingTalk's authenticated messageFiles/download API can return a public HTTP
-// URL as well as HTTPS. The adapter must honor that provider-issued URL without
-// rewriting its scheme, but the URL remains untrusted egress input: resolve the
-// host ourselves, reject every non-public answer, and dial the validated IP
-// directly so DNS rebinding cannot redirect the connection into the local
-// network. Proxy use is disabled because a proxy would resolve the target again
-// and bypass this guarantee.
+// 钉钉需要鉴权的 messageFiles/download 接口可能返回公开的 HTTP 明文 URL，也可能
+// 返回 HTTPS。适配器必须照单全收、不重写 scheme；但这个 URL 始终是不可信的出站
+// 输入：这里自己解析主机名、拒绝一切非公网结果、直接拨已验证的 IP——这样 DNS
+// rebinding 没法把连接重定向进内网。禁用代理，是因为代理会替我们二次解析目标、
+// 绕开这层保证。
 func newMediaHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
@@ -90,9 +104,8 @@ func newMediaHTTPClient() *http.Client {
 			if len(via) >= maxDownloadRedirects {
 				return errors.New("too many redirects")
 			}
-			// net/http derives Referer from the previous URL. The query string
-			// is a short-lived bearer credential, so it must never cross into a
-			// redirect request, including an otherwise-allowed same-origin hop.
+			// net/http 默认会拿上一个 URL 当 Referer。下载 URL 的查询串是短命 bearer
+			// 凭证，绝不能跟着跳转请求泄漏出去——包括本应放行的同源跳转。
 			req.Header.Del("Referer")
 			if err := validateDownloadURL(req.URL); err != nil {
 				return err
@@ -109,6 +122,8 @@ func newMediaHTTPClient() *http.Client {
 	}
 }
 
+// publicDownloadDialer 拦截每次出站拨号：自己解析主机 → 逐 IP 校验公网 → 只拨
+// 已放行的 IP。
 type publicDownloadDialer struct {
 	resolver *net.Resolver
 	dialer   *net.Dialer
@@ -128,6 +143,9 @@ func (d *publicDownloadDialer) DialContext(ctx context.Context, network, address
 			return nil, errors.New("blocked non-public download target")
 		}
 	}
+	// 全部候选都验过是公网后，逐个试连。验证在应用层解析阶段做，而 Go 的
+	// net.Dialer 默认会在系统层再解析一遍主机名——所以这里必须把已验 IP 拼回
+	// 地址直连，不能把 host 再交回给 dialer。
 	for _, addr := range addrs {
 		conn, err := d.dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
 		if err == nil {
@@ -137,6 +155,8 @@ func (d *publicDownloadDialer) DialContext(ctx context.Context, network, address
 	return nil, errors.New("connect to download target failed")
 }
 
+// lookup 把主机名解析成 IP 列表；本身已是 IP 的字面量直接返回（并归一化掉 IPv4
+// 映射的 IPv6 形态）。
 func (d *publicDownloadDialer) lookup(ctx context.Context, host string) ([]netip.Addr, error) {
 	if addr, err := netip.ParseAddr(host); err == nil {
 		return []netip.Addr{addr.Unmap()}, nil
@@ -151,6 +171,8 @@ func (d *publicDownloadDialer) lookup(ctx context.Context, host string) ([]netip
 	return addrs, nil
 }
 
+// 明确拒收的非公网前缀。大多是文档保留段（TEST-NET、benchmark、文档用）与
+// 特殊用途段。
 var nonPublicDownloadPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"),
@@ -160,14 +182,12 @@ var nonPublicDownloadPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("198.51.100.0/24"),
 	netip.MustParsePrefix("203.0.113.0/24"),
 	netip.MustParsePrefix("240.0.0.0/4"),
-	// IPv6 transition mechanisms can encapsulate an otherwise-blocked IPv4
-	// destination in an address that netip classifies as global unicast. The
-	// download client does not need these legacy/local transition ranges, so
-	// fail closed instead of attempting to decode every deployment-specific
-	// mapping and risking a route into loopback or RFC1918 space.
-	netip.MustParsePrefix("::/96"),          // deprecated IPv4-compatible
-	netip.MustParsePrefix("64:ff9b:1::/48"), // local-use NAT64
-	netip.MustParsePrefix("100::/64"),       // discard-only
+	// IPv6 过渡机制可以把一个本应被拦的 IPv4 目标封装在 netip 判为「全局单播」的
+	// 地址里。下载客户端用不到这些老的/局部的过渡网段，与其逐个解码各家部署特有的
+	// 映射（还有绕进 loopback 或 RFC1918 的风险），不如直接默认拒绝。
+	netip.MustParsePrefix("::/96"),          // deprecated IPv4-compatible（已废弃的 IPv4 兼容地址）
+	netip.MustParsePrefix("64:ff9b:1::/48"), // local-use NAT64（局部用途 NAT64）
+	netip.MustParsePrefix("100::/64"),       // discard-only（仅丢弃）
 	netip.MustParsePrefix("2001::/32"),      // Teredo
 	netip.MustParsePrefix("2001:2::/48"),    // benchmarking
 	netip.MustParsePrefix("2001:db8::/32"),
@@ -179,16 +199,17 @@ var nonPublicDownloadPrefixes = []netip.Prefix{
 
 var wellKnownNAT64Prefix = netip.MustParsePrefix("64:ff9b::/96")
 
+// isPublicDownloadAddress 判断一个 IP 是否可作下载目标（公网且非受限段）。先做
+// netip 自带分类，再叠加手工前缀表；标准 NAT64 前缀则递归校验其内嵌的 IPv4。
 func isPublicDownloadAddress(addr netip.Addr) bool {
 	addr = addr.Unmap()
 	if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() {
 		return false
 	}
 	if wellKnownNAT64Prefix.Contains(addr) {
-		// The standard NAT64 prefix carries an IPv4 address in its low 32
-		// bits. Permit a synthesized public target, but apply the complete IPv4
-		// deny policy to prevent an attacker-controlled AAAA record from
-		// smuggling loopback or RFC1918 through an apparently global IPv6 value.
+		// 标准 NAT64 前缀把 IPv4 地址放在低 32 位。合成目标本身可以放行，但内嵌的
+		// IPv4 必须再过一遍完整拒绝策略——否则攻击者用一条看起来是全局 IPv6 的
+		// AAAA 记录就能把 loopback / RFC1918 偷渡进来。
 		raw := addr.As16()
 		return isPublicDownloadAddress(netip.AddrFrom4([4]byte(raw[12:16])))
 	}
@@ -200,17 +221,21 @@ func isPublicDownloadAddress(addr netip.Addr) bool {
 	return true
 }
 
+// sameDownloadOrigin 判断两个 URL 是否同源（scheme 与 host 忽略大小写相等）。
 func sameDownloadOrigin(a, b *url.URL) bool {
 	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
 }
 
-// HasMedia is a pure decode of the already-received callback metadata. Remote
-// work stays behind ResolveMedia, after dedup, identity and membership checks.
+// HasMedia 纯解码已收到的回调元数据判断消息是否带媒体，不做任何远端调用。真正的
+// 远端工作（下载/上传）在去重、身份与成员校验之后的 ResolveMedia 里做。
 func (m *mediaResolver) HasMedia(msg channel.InboundMessage) bool {
 	raw, err := decodeDingTalkRaw(msg)
 	return err == nil && len(raw.Media) > 0
 }
 
+// ResolveMedia 是引擎在身份/去重/成员校验通过后回调的媒体解析入口：把消息里每个
+// downloadCode 下载成图片并传进对象存储，能成功的以 MediaRef 挂在消息上，失败逐
+// 张记 warn、不整体失败。下载是横向并发、受 mediaFetchConcurrency 限制。
 func (m *mediaResolver) ResolveMedia(ctx context.Context, inst engine.ResolvedInstallation, _ engine.ResolvedIdentity, _ pgtype.UUID, chatMessageID pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage {
 	raw, err := decodeDingTalkRaw(msg)
 	if err != nil || len(raw.Media) == 0 {
@@ -292,11 +317,16 @@ func (m *mediaResolver) ResolveMedia(ctx context.Context, inst engine.ResolvedIn
 	return msg
 }
 
+// dingtalkMediaObjectKey 为一张图片派生对象存储键：把「消息 id + 资源引用 +
+// 序号」做 SHA-256 得到定长十六进制名，再挂到该安装所属工作区/安装的 dingtalk
+// 目录下。键与钉钉的 downloadCode 无直观对应（下载码是短命凭证，不落进存储路径）。
 func dingtalkMediaObjectKey(inst engine.ResolvedInstallation, chatMessageID pgtype.UUID, resource dingtalkMediaResource, index int) string {
 	sum := sha256.Sum256([]byte(util.UUIDToString(chatMessageID) + "\x00" + resource.Ref + "\x00" + fmt.Sprint(index)))
 	return path.Join("workspaces", util.UUIDToString(inst.WorkspaceID), "dingtalk", util.UUIDToString(inst.ID), hex.EncodeToString(sum[:]))
 }
 
+// fetchResource 抓一个媒体资源：优先用主引用 code；失败且存在不同的备用 code 时
+// 落到备用；两条都失败就 errors.Join 合并两段原因返回。
 func (m *mediaResolver) fetchResource(ctx context.Context, creds credentials, resource dingtalkMediaResource) ([]byte, string, error) {
 	data, contentType, primaryErr := m.fetchByCode(ctx, creds, resource.Ref)
 	if primaryErr == nil || resource.Alt == "" || resource.Alt == resource.Ref {
@@ -312,6 +342,7 @@ func (m *mediaResolver) fetchResource(ctx context.Context, creds credentials, re
 	)
 }
 
+// fetchByCode 先用 code 换临时下载 URL，再抓字节。
 func (m *mediaResolver) fetchByCode(ctx context.Context, creds credentials, code string) ([]byte, string, error) {
 	downloadURL, err := m.client.messageFileDownloadURL(ctx, creds.AppKey, creds.AppSecret, creds.RobotCode, code)
 	if err != nil {
@@ -320,6 +351,8 @@ func (m *mediaResolver) fetchByCode(ctx context.Context, creds credentials, code
 	return m.fetchBytes(ctx, downloadURL)
 }
 
+// fetchBytes 带 SSRF 防护地把图片字节抓下来：校验 URL 形态、限制大小与超时、按
+// 内容头/内容嗅探判断类型，只放行白名单图片类型。
 func (m *mediaResolver) fetchBytes(ctx context.Context, rawURL string) ([]byte, string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -336,9 +369,8 @@ func (m *mediaResolver) fetchBytes(ctx context.Context, rawURL string) ([]byte, 
 	}
 	resp, err := m.fetch.Do(req)
 	if err != nil {
-		// net/http's *url.Error includes the full request URL. DingTalk download
-		// URLs are short-lived bearer credentials, so unwrap it before the caller
-		// logs the error and never persist the signed query string.
+		// net/http 的 *url.Error 会带上完整的请求 URL。钉钉下载 URL 是短命 bearer
+		// 凭证，日志前必须解包、绝不让带签查询串落进日志。
 		var urlErr *url.Error
 		if errors.As(err, &urlErr) {
 			return nil, "", fmt.Errorf("download image request failed: %w", urlErr.Err)
@@ -349,6 +381,7 @@ func (m *mediaResolver) fetchBytes(ctx context.Context, rawURL string) ([]byte, 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, "", fmt.Errorf("download image: http %d", resp.StatusCode)
 	}
+	// 多读 1 字节以探测超限（LimitReader 上限 +1），避免刚好等于上限的字节数被误判。
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxInboundImageBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("read image: %w", err)
@@ -360,6 +393,7 @@ func (m *mediaResolver) fetchBytes(ctx context.Context, rawURL string) ([]byte, 
 	if len(sniff) > 512 {
 		sniff = sniff[:512]
 	}
+	// 内容类型信内容嗅探而不是钉钉的声明：声明可被伪造，而真实字节会被用于渲染。
 	contentType := http.DetectContentType(sniff)
 	if semi := strings.IndexByte(contentType, ';'); semi >= 0 {
 		contentType = strings.TrimSpace(contentType[:semi])
@@ -370,6 +404,8 @@ func (m *mediaResolver) fetchBytes(ctx context.Context, rawURL string) ([]byte, 
 	return data, contentType, nil
 }
 
+// validateDownloadURL 校验下载 URL 的形态：必须有主机、不能带用户信息或 fragment
+// （fragment 不会上 wire，但混进来说明 URL 可疑），scheme 只收 http/https。
 func validateDownloadURL(parsed *url.URL) error {
 	if parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
 		return errors.New("invalid image download URL shape")
@@ -380,6 +416,7 @@ func validateDownloadURL(parsed *url.URL) error {
 	return nil
 }
 
+// logWarn 是单张图片失败的统一告警出口（不进审计，只记 warn）。
 func (m *mediaResolver) logWarn(msg channel.InboundMessage, err error) {
 	m.logger.Warn("dingtalk media resolve skipped", "message_id", msg.MessageID, "error", err)
 }

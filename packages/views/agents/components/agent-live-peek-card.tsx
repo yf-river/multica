@@ -1,5 +1,7 @@
 "use client";
 
+// 本文件是 Agent 头像的实时“窥视”卡片，展示 squad 成员页关心的三个实时信号。
+
 import { useQuery } from "@tanstack/react-query";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -22,11 +24,10 @@ interface AgentLivePeekCardProps {
   agentId: string;
 }
 
-// Live "peek" card for an agent avatar — shows the three live signals the
-// squad members tab cares about (workload, current issue, last activity).
-// Companion to AgentProfileCard, which surfaces static identity (description,
-// runtime, skills, owner). Keeping them separate avoids polluting the 23+
-// existing AgentProfileCard call sites with live-only concerns.
+// Agent 头像的实时“窥视”卡片——展示 squad 成员页关心的三个实时信号
+// （工作负载、当前 issue、最近活动）。与展示静态身份（描述、运行时、技能、拥有者）
+// 的 AgentProfileCard 是配套关系。把它们分开，是为了避免把“仅实时”的关注点
+// 污染到 23+ 处已存在的 AgentProfileCard 调用点上。
 export function AgentLivePeekCard({ agentId }: AgentLivePeekCardProps) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
@@ -73,9 +74,9 @@ export function AgentLivePeekCard({ agentId }: AgentLivePeekCardProps) {
     .toUpperCase()
     .slice(0, 2);
 
-  // Archived wins over workload — a retired agent reads "Archived", never
-  // "Idle"/"Working". availability is the unified signal (see
-  // deriveAgentPresenceDetail); for archived it's set before any task scan.
+  // 归档优先于工作负载——退役的 Agent 读作 "Archived"，绝不会是 "Idle"/"Working"。
+  // availability 是统一信号（见 deriveAgentPresenceDetail）；对于归档，它在任何
+  // 任务扫描之前就已确定。
   const isArchived =
     presence !== "loading" && presence.availability === "archived";
   const workload = presence === "loading" ? null : presence.workload;
@@ -84,7 +85,7 @@ export function AgentLivePeekCard({ agentId }: AgentLivePeekCardProps) {
 
   return (
     <div className="flex flex-col gap-3 text-left">
-      {/* Header — avatar + name. */}
+      {/* 头部——头像 + 名字。 */}
       <div className="flex items-start gap-3">
         <ActorAvatarBase
           name={agent.name}
@@ -121,7 +122,7 @@ export function AgentLivePeekCard({ agentId }: AgentLivePeekCardProps) {
         </div>
       </div>
 
-      {/* Meta rows. */}
+      {/* 元信息行。 */}
       <div className="flex flex-col gap-1.5 text-caption">
         <CurrentIssueRow
           wsId={wsId}
@@ -141,13 +142,11 @@ export function AgentLivePeekCard({ agentId }: AgentLivePeekCardProps) {
   );
 }
 
-// Pick the most recent terminal task for last-activity display. The snapshot
-// already caps this to one terminal row per agent (see queries.ts header), but
-// a defensive max-by-completed_at keeps the card honest if that shape ever
-// changes. Only completed / failed count, matching the snapshot's outcome
-// filter exactly: cancelled never reaches this card, and treating it as a
-// terminal outcome here would let an aborted attempt mask the agent's last
-// real result if the endpoint ever started returning it.
+// 为“最近活动”挑选最近的一个终态任务。快照已经把每个 Agent 限制成一行终态
+// （见 queries.ts 头注释），但这里按 completed_at 取最大做防御，万一那个形状
+// 变了也能保持卡片正确。只有 completed / failed 计入，与快照的结果筛选完全一致：
+// cancelled 永远不会到这张卡片，若在这里把它当成终态，一旦端点开始返回它，
+// 一次被中止的尝试就会掩盖 Agent 最后一次真实结果。
 function pickLatestTerminal(tasks: readonly AgentTask[]): AgentTask | null {
   let best: AgentTask | null = null;
   for (const t of tasks) {
@@ -175,9 +174,8 @@ function CurrentIssueRow({
   emptyLabel: string;
   issueHref: (id: string) => string;
 }) {
-  // Lazy issue detail — only enabled while the card is mounted AND we have
-  // a running issue id. snapshot already gives us the id; this hook just
-  // resolves the human identifier (MUL-123) + title.
+  // 懒加载 issue 详情——只在卡片挂载且确有运行中 issue id 时才启用。快照已经
+  // 给了我们 id；这个 hook 只是解析出人类可读的标识符（MUL-123）+ 标题。
   const { data: issue } = useQuery({
     ...issueDetailOptions(wsId, issueId ?? ""),
     enabled: !!issueId,
@@ -225,10 +223,8 @@ function LastActivityRow({
         <span className="inline-flex min-w-0 items-center gap-1 truncate">
           <span className="truncate">{timeAgo(task.completed_at)}</span>
           {task.status === "failed" && (
-            // Failed terminal state shows here only — workload above stays a
-            // clean "what's on the plate now" reading (working/queued/idle),
-            // matching the project's deliberate split between current and
-            // historical state.
+            // 只有失败终态显示在这里——上面的工作负载仍保持干净的“现在手头在做什么”
+            // 读法（working/queued/idle），与项目刻意的“当前 vs 历史”状态切分一致。
             <span
               className="inline-flex items-center gap-0.5 rounded bg-warning/10 px-1 py-0.5 text-micro font-medium text-warning"
               title={failedLabel}

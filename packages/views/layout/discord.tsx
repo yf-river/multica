@@ -1,8 +1,16 @@
-/** Community invite link. Shared by the help launcher and the sidebar card. */
+/**
+ * 布局模块：Discord 社区入口。
+ * 提供社区邀请链接和 Discord 品牌图标，侧边栏卡片与帮助菜单共用。
+ */
+
+/** Discord 社区邀请链接，侧边栏的 Discord 卡片和帮助菜单共用。 */
 export const DISCORD_URL = "https://discord.gg/W8gYBn226t";
 
-// lucide-react ships no Discord brand glyph, so render the official mark
-// inline. Sized via className to match the surrounding icons.
+// lucide-react 没有内置 Discord 品牌图标，所以这里内联绘制官方标志。
+/**
+ * Discord 品牌图标。
+ * @param className 控制图标尺寸，与周边图标保持一致。
+ */
 export function DiscordIcon({ className }: { className?: string }) {
   return (
     <svg

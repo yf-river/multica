@@ -1,26 +1,25 @@
 "use client";
 
 /**
- * Attachment — single unified renderer for every attachment surface.
+ * Attachment — 统一的附件渲染组件，所有附件展示场景共用这一个渲染入口。
  *
- * Takes one attachment-shaped input (a full record, a URL-only reference, or
- * an in-flight upload) and dispatches by PreviewKind:
+ * 接收一个「附件形状」的输入（可能是完整记录、仅 URL 引用，或正在上传的对象），
+ * 然后按 PreviewKind（预览类型）分发到不同渲染器：
  *
- *   - image  → ImageAttachmentView (figure + hover toolbar + lightbox via
- *              the shared AttachmentPreviewModal)
- *   - html   → HtmlAttachmentPreview (inline iframe + hover toolbar)
- *   - others → AttachmentCard (icon + filename + Eye/Download row)
+ *   - image  → ImageAttachmentView（图片主体 + 悬停工具栏 + 通过共享的
+ *              AttachmentPreviewModal 打开的灯箱）
+ *   - html   → HtmlAttachmentPreview（内联 iframe + 悬停工具栏）
+ *   - 其他   → AttachmentCard（图标 + 文件名 + 预览/下载按钮行）
  *
- * Call sites:
- *   - extensions/file-card.tsx FileCardView (Tiptap NodeView)
- *   - extensions/image-view.tsx ImageView (Tiptap NodeView)
- *   - rich-content/rich-content.tsx (markdown img + fileCard div renderers,
- *     serving Chat, Issue descriptions and Comments through one renderer)
- *   - issues/components/comment-card.tsx AttachmentList (standalone fallback)
+ * 调用方：
+ *   - extensions/file-card.tsx 的 FileCardView（Tiptap 节点视图）
+ *   - extensions/image-view.tsx 的 ImageView（Tiptap 节点视图）
+ *   - rich-content/rich-content.tsx（markdown 图片与 fileCard 渲染器，
+ *     让聊天、工单描述、评论都走同一个渲染器）
+ *   - issues/components/comment-card.tsx 的 AttachmentList（独立兜底）
  *
- * The component owns its own preview modal and download dispatcher — callers
- * just pass `attachment` and (for editor surfaces) optional editor chrome
- * hints (selected, editable, onDelete).
+ * 组件自己管理预览弹窗和下载分发逻辑——调用方只需传入 `attachment`，
+ * 以及（编辑器场景下）可选的编辑器提示（selected、editable、onDelete）。
  */
 
 import {
@@ -53,47 +52,49 @@ import "./styles/attachment.css";
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * 附件输入：既可以是服务器返回的完整记录，也可以是正文里只带 URL 的轻量引用。
+ * 组件内部会统一归一化成可渲染的状态。
+ */
 export type AttachmentInput =
-  // Server response in hand — full record. Used by AttachmentList and any
-  // caller iterating a server-returned attachments[] array.
+  // 手里已经有服务器响应——完整记录。AttachmentList 以及任何遍历服务器返回的
+  // attachments[] 数组的调用方都用这种形态。
   | { kind: "record"; attachment: AttachmentRecord }
-  // Markdown / Tiptap inline: only a URL + filename. Resolves to a full
-  // record via the surrounding AttachmentDownloadProvider when available;
-  // otherwise renders in URL-only mode (media types still preview from URL,
-  // text types fall back to a download CTA).
+  // Markdown / Tiptap 内联场景：只有 URL + 文件名。若外层有
+  // AttachmentDownloadProvider，会解析回完整记录；否则退回仅 URL 模式
+  // （媒体类型仍能从 URL 预览，文本类型则退回成一个下载按钮）。
   | {
       kind: "url";
       url: string;
       filename: string;
       contentType?: string;
-      /** Editor in-flight state. Renders a loader placeholder. */
+      /** 编辑器里「上传中」的状态，此时渲染一个加载占位。 */
       uploading?: boolean;
       /**
-       * Intrinsic pixel dimensions. Rendered as `<img width height>` so the
-       * browser reserves the box before the image decodes — prevents the
-       * layout shift that would otherwise push the caret out of view on paste.
+       * 图片固有像素尺寸。会渲染成 `<img width height>`，让浏览器在图片解码前
+       * 就预留好占位框——避免粘贴时因布局抖动把光标挤出视野。
        */
       width?: number;
       height?: number;
       /**
-       * Structural hint from the call site: "this slot is definitionally an
-       * image / file / ...". Bypasses `getPreviewKind` autodetect, which
-       * needs a filename or content-type and falls back to the file-card
-       * chrome when neither is available. Required for callers that KNOW
-       * the kind from context (markdown `![]()` is always an image; Tiptap
-       * image NodeView is always an image) but receive only a URL with an
-       * empty `alt`/`filename`.
+       * 调用方给出的「结构提示」：这个位置本质上就是图片 / 文件 / …。
+       * 它绕过了 `getPreviewKind` 的自动探测（后者需要文件名或 content-type，
+       * 两者都没有时会回退成文件卡片外观）。适用于那些「从上下文就知道类型，
+       * 但只拿到一个 URL、alt/文件名又是空的」的调用方（markdown 的 `![]()`
+       * 一定是图片；Tiptap 的图片 NodeView 也一定是图片）。
        */
       forceKind?: PreviewKind;
     };
 
+/** 附件组件的 props。 */
 export interface AttachmentProps {
+  /** 要渲染的附件输入（记录 / URL 引用 / 上传中）。 */
   attachment: AttachmentInput;
-  /** Editor hint — when true, the image toolbar exposes Trash. */
+  /** 编辑器提示——为 true 时，图片工具栏会显示删除（垃圾桶）按钮。 */
   editable?: boolean;
-  /** Editor hint — applies the "selected" visual to the image figure. */
+  /** 编辑器提示——给图片主体套上「选中」的高亮样式。 */
   selected?: boolean;
-  /** Editor hint — wired to Tiptap deleteNode(). */
+  /** 编辑器提示——接到 Tiptap 的 deleteNode() 上。 */
   onDelete?: () => void;
   className?: string;
 }
@@ -131,26 +132,21 @@ function normalize(
   return {
     filename: input.filename || record?.filename || "",
     contentType: input.contentType || record?.content_type || "",
-    // When the markdown URL resolved to an attachment record, swap to
-    // the record's freshly-loadable URL. The persisted markdown URL
-    // (`/api/attachments/<id>/download` for new content; raw stored URL
-    // for legacy) is correct as a stable reference but doesn't
-    // necessarily load as a native <img>/<video> resource for every
-    // client — token-mode clients can't attach an Authorization header
-    // to bare /api/* fetches, and a CloudFront-signed `download_url`
-    // is the only working media src in that mode. `pickInlineMediaURL`
-    // picks the URL with embedded credentials when one exists and
-    // falls back to the input URL otherwise so legacy / unresolved
-    // markdown stays on its existing path. See MUL-3130 review.
+    // 当 markdown 里的 URL 能解析回附件记录时，换成该记录上「当下可直接加载」的
+    // URL。持久化的 markdown URL（新内容是 `/api/attachments/<id>/download`，
+    // 旧内容是原始存储 URL）作为稳定引用没问题，但不一定能在每个客户端上直接
+    // 当作原生 <img>/<video> 资源加载——token 模式下客户端没法给裸的 /api/*
+    // 请求带上 Authorization 头，而 CloudFront 签名过的 `download_url` 才是
+    // 那种模式下唯一能用的媒体地址。`pickInlineMediaURL` 会优先挑自带凭据的
+    // URL，没有时退回输入 URL，这样旧的 / 解析不出来的 markdown 仍走原路径。
+    // 详见 MUL-3130 评审。
     //
-    // After picking the credential-bearing URL we run the absolutize
-    // pass so a site-relative `/api/attachments/...` or `/uploads/...`
-    // path becomes a proper origin-bearing URL when the document origin
-    // doesn't proxy /api or /uploads to the API host (for example, a mobile
-    // webview). Web with a same-origin
-    // proxy keeps `apiBaseUrl=""` and the helper is a no-op there.
-    // See MUL-3192 — quick-create regressed when a client on a different
-    // origin received a site-relative uploaded-image URL.
+    // 挑出自带凭据的 URL 之后，再做一次 absolutize（补全绝对地址）处理：
+    // 当文档源并没有把 /api 或 /uploads 反向代理到 API 主机时（比如移动端
+    // webview），站点相对路径 `/api/attachments/...` 或 `/uploads/...` 需要
+    // 补上源才能加载。Web 端走同源代理，`apiBaseUrl=""`，这个辅助函数在那里
+    // 等于空操作。详见 MUL-3192——quick-create 曾因不同源的客户端收到站点相对
+    // 的图片 URL 而回退。
     url: absolutizeMediaURL(
       record ? pickInlineMediaURL(record, input.url, cdnDomain, cdnSigned) : input.url,
     ),
@@ -162,94 +158,74 @@ function normalize(
   };
 }
 
-// absolutizeMediaURL is the legacy-compat fallback for old markdown bodies
-// that persisted a site-relative `/api/attachments/<id>/download` or
-// `/uploads/<key>` URL.
+// absolutizeMediaURL 是针对旧 markdown 正文的兼容兜底：那些正文里持久化的是
+// 站点相对路径 `/api/attachments/<id>/download` 或 `/uploads/<key>`。
 //
-// The current (post-MUL-3192) write path persists an absolute URL chosen
-// server-side by `buildMarkdownURL` (see server/internal/handler/file.go),
-// so new content already loads natively on every client. This helper only
-// matters for content written BEFORE MUL-3192 — those bodies still carry
-// the old relative shape, and rendering them on a surface whose document
-// origin is NOT the API host (for example, a mobile webview) needs the
-// API base URL pinned in at render time.
+// 当前（MUL-3192 之后）的写入路径会持久化一个由服务端 `buildMarkdownURL`
+// 挑好的绝对 URL（见 server/internal/handler/file.go），所以新内容在每个客户端
+// 都能原生加载。这个辅助函数只对 MUL-3192 之前写的内容有意义——那些正文里
+// 还是旧的相对路径形态，把它们渲染在「文档源不是 API 主机」的界面（比如移动端
+// webview）时，需要在渲染时把 API 基地址补进去。
 //
-// On web, `api.getBaseUrl()` is empty (the Next.js rewrite proxies /api/*
-// to the API host server-side), so this is a no-op there.
+// 在 Web 端 `api.getBaseUrl()` 是空的（Next.js 的 rewrite 在服务端把 /api/*
+// 代理到 API 主机），所以这里等于空操作。
 //
-// http(s)://, blob:, and data: URLs are passed through unchanged — they
-// already carry their own origin.
+// http(s)://、blob:、data: 这类 URL 原样透传——它们本身就带了自己的源。
 function absolutizeMediaURL(rawUrl: string): string {
   if (!rawUrl) return rawUrl;
   if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
   if (/^blob:/i.test(rawUrl) || /^data:/i.test(rawUrl)) return rawUrl;
   if (!rawUrl.startsWith("/")) return rawUrl;
-  // The api singleton is a Proxy that returns `undefined` for any property
-  // access before `setApiInstance()` runs (boot ordering, SSR). Optional
-  // chaining lets us cope with that without throwing — pre-init renders
-  // simply keep the site-relative path.
+  // api 单例是一个 Proxy，在 `setApiInstance()` 执行前（启动顺序、SSR 场景）
+  // 对任何属性访问都返回 `undefined`。用可选链可以避免抛异常——初始化之前的
+  // 渲染就保持站点相对路径不变。
   const baseUrl = (api.getBaseUrl?.() ?? "").replace(/\/+$/, "");
   if (!baseUrl) return rawUrl;
   return `${baseUrl}${rawUrl}`;
 }
 
-// pickInlineMediaURL returns the URL most likely to load successfully
-// inside a native <img>/<video>/<iframe> resource fetch — i.e. without
-// the calling client attaching an Authorization header.
+// pickInlineMediaURL 返回「最有可能在原生 <img>/<video>/<iframe> 资源加载里
+// 成功」的 URL——也就是不需要调用方客户端附带 Authorization 头就能加载的地址。
 //
-// The metadata response carries three URL fields per attachment row,
-// each with a different lifetime / accessibility:
+// 元数据响应里每个附件行带三个 URL 字段，各自的有效期 / 可访问性都不同：
 //
-//   - `record.download_url` — this-response click-time URL. In
-//                             CloudFront-signed mode this is the
-//                             signed redirect (works as a native img
-//                             src for the duration of the TTL); in
-//                             other modes it's the bare API endpoint
-//                             (`/api/attachments/<id>/download`) which
-//                             requires per-request auth and does NOT
-//                             load as a native img on a non-same-site
-//                             origin like Desktop's file://.
-//   - `record.markdown_url` — the durable URL the server picked for
-//                             persistence (MUL-3192 / `buildMarkdownURL`):
-//                             public CDN passthrough when the storage is
-//                             public-readable, or `MULTICA_PUBLIC_URL +
-//                             /api/attachments/<id>/download` for
-//                             private-bucket modes. Aligned with the
-//                             server-side policy by construction, so it
-//                             beats `record.url` whenever both exist.
-//   - `record.url`          — raw storage URL. May be private (S3 /
-//                             CloudFront-signed, R2, MinIO) and unable
-//                             to load directly. Last-resort fallback
-//                             for legacy responses that omit
-//                             `markdown_url`.
+//   - `record.download_url` — 本次响应里的「点击时」URL。在 CloudFront 签名
+//                             模式下是签名重定向地址（在 TTL 有效期内可当作
+//                             原生 img src 使用）；其它模式下是裸的 API 端点
+//                             （`/api/attachments/<id>/download`），需要每次
+//                             请求鉴权，且无法在非同源界面（比如 Desktop 的
+//                             file://）上当作原生 img 加载。
+//   - `record.markdown_url` — 服务端为持久化挑好的长期 URL（MUL-3192 /
+//                             `buildMarkdownURL`）：存储公开可读时走公共 CDN
+//                             直连；私有桶模式下是 `MULTICA_PUBLIC_URL +
+//                             /api/attachments/<id>/download`。构造上就与服务
+//                             端策略对齐，所以只要两者同时存在，它都优先于
+//                             `record.url`。
+//   - `record.url`          — 原始存储 URL。可能是私有的（S3 /
+//                             CloudFront 签名、R2、MinIO）无法直接加载。仅
+//                             用于兜底那些没返回 `markdown_url` 的旧响应。
 //
-// Order:
+// 选择顺序：
 //
-//  1. Signed `download_url` — when CloudFront has minted a signed
-//     redirect for THIS response, use it; the TTL means the signed URL
-//     beats `markdown_url` on first paint (no extra hop through the
-//     API endpoint), and the renderer doesn't persist it so the TTL is
-//     not a problem.
-//  2. Known CDN `record.url` — when `/api/config` exposes the same CDN
-//     host as the attachment record, the browser can load the object
-//     directly (public CDN, or CloudFront cookie mode). Prefer it over
-//     an API-shaped `markdown_url` so the rendered `<img src>` and Copy
-//     Link affordance expose the CDN URL while the persisted markdown
-//     can remain the stable attachment endpoint. Skipped when the server
-//     reports `cdn_signed` — in CloudFront signed-URL mode the same
-//     domain serves PRIVATE content and a raw (unsigned) storage URL is
-//     a guaranteed 403 (MUL-3254).
-//  3. Local disk `record.url` — self-host LocalStorage without
-//     LOCAL_UPLOAD_BASE_URL stores a site-relative `/uploads/...` path.
-//     It is the direct static object URL and is loadable once
-//     `absolutizeMediaURL` prefixes apiBaseUrl in split-origin clients.
-//  4. `record.markdown_url` — the durable, server-policy-aligned URL.
-//     Beats raw `record.url` because it never points at a private
-//     bucket (must-fix 2 from MUL-3192 review), except for the explicit
-//     site-relative local upload path above.
-//  5. `record.url` — legacy fallback for responses that omit
-//     `markdown_url` (a backend old enough to predate MUL-3192).
-//  6. The input URL — when there's no record at all.
+//  1. 已签名的 `download_url` —— 当 CloudFront 为「本次响应」签发了签名重定向
+//     时就用它；因为签名 URL 在首屏优于 `markdown_url`（少一次经过 API 端点的
+//     跳转），而渲染器并不持久化它，所以 TTL 不是问题。
+//  2. 已知 CDN 的 `record.url` —— 当 `/api/config` 暴露的 CDN 主机与附件记录
+//     相同时，浏览器能直接加载对象（公共 CDN，或 CloudFront cookie 模式）。
+//     让它优先于 API 形态的 `markdown_url`，这样渲染出的 `<img src>` 和「复制
+//     链接」暴露的是 CDN URL，而持久化的 markdown 仍保持稳定的附件端点。当服务
+//     端报告 `cdn_signed` 时跳过——CloudFront 签名 URL 模式下同一域名服务的是
+//     私有内容，裸的（未签名）存储 URL 必然 403（MUL-3254）。
+//  3. 本地磁盘的 `record.url` —— 自托管 LocalStorage 且没配
+//     LOCAL_UPLOAD_BASE_URL 时，存的是站点相对路径 `/uploads/...`。它是直接的
+//     静态对象 URL，在跨源客户端里经 `absolutizeMediaURL` 补上 apiBaseUrl 后
+//     即可加载。
+//  4. `record.markdown_url` —— 长期、与服务端策略对齐的 URL。它永远不会指向
+//     私有桶（MUL-3192 评审中的 must-fix 2），所以优先于裸的 `record.url`，
+//     除非是上面那条明确的站点相对本地上传路径。
+//  5. `record.url` —— 兜底那些没返回 `markdown_url` 的旧响应（早于 MUL-3192
+//     的后端）。
+//  6. 输入 URL —— 当完全没有记录时使用。
 function pickInlineMediaURL(
   record: AttachmentRecord,
   fallback: string,
@@ -310,6 +286,15 @@ function hasExpiringSignatureQuery(q: URLSearchParams): boolean {
 // Dispatcher
 // ---------------------------------------------------------------------------
 
+/**
+ * 附件统一渲染组件：根据附件类型（图片 / HTML / 其它）分发到对应的渲染器，
+ * 并统一管理预览弹窗与下载逻辑。
+ *
+ * @param props.attachment - 要渲染的附件输入（记录 / URL 引用 / 上传中）
+ * @param props.editable - 是否处于可编辑的编辑器场景（控制删除按钮等）
+ * @param props.selected - 图片是否处于选中态（高亮样式）
+ * @param props.onDelete - 删除回调（接 Tiptap 的 deleteNode）
+ */
 export function Attachment({
   attachment,
   editable,
@@ -332,32 +317,30 @@ export function Attachment({
     (state.filename || state.contentType
       ? getPreviewKind(state.contentType, state.filename)
       : null);
-  // The picked URL may still be the auth-gated API endpoint (reopened drafts
-  // whose persisted record has no signed download_url). Upgrade it to a
-  // freshly signed URL on clients that can't load the endpoint natively, or —
-  // on deployments that have no signed URL to give — to an object URL built
-  // from the authenticated byte fetch. Only the image branch renders a native
-  // resource load, so only it opts into that byte fetch.
+  // 挑出的 URL 可能仍是带鉴权的 API 端点（重新打开的草稿，其持久化记录没有
+  // 签名 download_url）。对于无法原生加载该端点的客户端，把它升级成新签名的
+  // URL；对于根本没有签名 URL 可给的环境，则升级成「用带鉴权的字节抓取」构造
+  // 出的 object URL。只有图片分支会做原生资源加载，所以也只有它选择走字节
+  // 抓取。
   const mediaUrl = useResignedInlineMediaURL(
     state.attachmentId,
     state.url,
     kind === "image",
   );
-  // Object URLs are session-local, so anything that hands a URL to the user or
-  // to another surface keeps the durable pick instead.
+  // object URL 只在当前会话有效，所以凡是会把 URL 交给用户或别的界面的地方，
+  // 都改用那个长期有效的 URL。
   const shareUrl = isObjectURL(mediaUrl) ? state.url : mediaUrl;
 
-  // Identity this image has in the surrounding surface's sequence: the
-  // attachment id once the URL resolves to a record, otherwise the URL exactly
-  // as written in the body — the same pair `collectImageSequence` keys on.
+  // 这张图片在外层界面的图片序列里的身份标识：URL 能解析回记录时用附件 id，
+  // 否则就用正文里原样写的 URL——和 `collectImageSequence` 建键时用的那一对
+  // 保持一致。
   const sequenceKey =
     state.attachmentId ?? (attachment.kind === "url" ? attachment.url : "");
 
   const openPreview = () => {
-    // Inside an issue / chat, an image opens the surface's shared viewer at
-    // its real position so the reader can page through the rest. Anything the
-    // sequence doesn't know — a composer's in-flight upload, a surface with no
-    // provider — falls through to the single-image preview below.
+    // 在工单 / 聊天里，图片会在外层界面共享查看器的真实位置上打开，方便读者
+    // 翻看其余图片。序列不认识的场景（编辑器里正在上传的图片、没有 provider 的
+    // 界面）则回退到下面的单图预览。
     if (kind === "image" && sequence.openAt(sequenceKey)) return;
     if (state.record) {
       preview.tryOpen({
@@ -441,21 +424,20 @@ export function Attachment({
 }
 
 // ---------------------------------------------------------------------------
-// ImageAttachmentView — inline image with hover toolbar
+// ImageAttachmentView — 内联图片 + 悬停工具栏
 // ---------------------------------------------------------------------------
 //
-// DOM and styling are intentionally a direct port of the original
-// extensions/image-view.tsx <figure> structure. Shared visual styles live in
-// styles/attachment.css under `.image-figure / .image-content / .image-toolbar`
-// so standalone surfaces (chat messages, AttachmentList) get identical visuals
-// without depending on the editor stylesheet being imported elsewhere.
+// DOM 和样式是有意直接沿用原 extensions/image-view.tsx 的 <figure> 结构。共享
+// 的视觉样式放在 styles/attachment.css 的
+// `.image-figure / .image-content / .image-toolbar` 下，这样独立界面（聊天消息、
+// AttachmentList）无需依赖别处导入编辑器样式表就能得到一致的视觉效果。
 
 interface ImageAttachmentViewProps {
   src: string;
   /**
-   * URL handed to the user by Copy Link. Splits from `src` only when `src` is
-   * a session-local object URL (proxy-mode byte fallback) — pasting a `blob:`
-   * URL anywhere outside this renderer resolves to nothing.
+   * 「复制链接」交给用户的 URL。只有当 `src` 是会话内的 object URL（代理模式的
+   * 字节抓取兜底）时它才会与 `src` 不同——因为把 `blob:` URL 粘到本渲染器以外
+   * 的任何地方都解析不出来。
    */
   linkUrl: string;
   alt: string;
@@ -494,17 +476,15 @@ function ImageAttachmentView({
     }
   };
 
-  // Click on figure opens the preview only in non-editor / non-uploading
-  // surfaces — inside the editor we let ProseMirror own the click for
-  // selection / cursor placement and route preview through the explicit
-  // Maximize button. The CSS rule `.image-figure[data-clickable="true"] {
-  // cursor: zoom-in }` keys off this same flag for the cursor affordance.
+  // 只有在非编辑器 / 非上传中的界面，点击图片主体才会打开预览——编辑器里则把
+  // 点击交给 ProseMirror 做选中 / 光标定位，预览改走显式的「放大」按钮。CSS
+  // 规则 `.image-figure[data-clickable="true"] { cursor: zoom-in }` 也是靠这个
+  // 标志来决定是否显示放大光标。
   const clickable = !editable && !uploading;
 
-  // DOM mirrors the original ReadonlyImage (span-only chain so it stays
-  // valid HTML5 when rendered inside a markdown <p>). In editor surfaces
-  // the NodeViewWrapper still emits its own outer .image-node div around
-  // this — the duplicate `image-node` class is harmless.
+  // DOM 对齐原来的 ReadonlyImage（只用 span 链，这样渲染在 markdown <p> 里
+  // 仍是合法 HTML5）。在编辑器场景里，NodeViewWrapper 仍会在外层再包一个自己
+  // 的 .image-node div——多一个 `image-node` class 无伤大雅。
   return (
     <span className="image-node">
       <span

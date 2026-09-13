@@ -1,3 +1,5 @@
+// Runtime 模块的公共出口：可用性判断、查询、配置档案、变更、模型、本地技能、
+// 健康推导、展示、hooks 等统一从这里导出。
 export * from "./access";
 export * from "./queries";
 export * from "./profiles";

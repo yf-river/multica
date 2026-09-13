@@ -1,3 +1,5 @@
+// 本文件是 platform（平台层）模块的对外出口（barrel）。
+
 export { CoreProvider } from "./core-provider";
 export type { CoreProviderProps, ClientIdentity } from "./types";
 export { AuthInitializer } from "./auth-initializer";

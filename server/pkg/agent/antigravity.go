@@ -1,5 +1,25 @@
 package agent
 
+// 文件职责：本文件实现 Backend 接口中的「Antigravity」后端——Google 的 Antigravity CLI
+// （`agy` 二进制）。后端用一次性 prompt 模式拉起它（`agy -p <prompt>`）：尽管 flag 名带
+// print 字样，当前 agy print 模式仍能运行 Antigravity 工具；daemon 只能用这个模式，因为
+// `agy -i` 需要附加的 TTY。
+//
+// 与 Claude/Codex/Cursor/Gemini 不同，Antigravity CLI 不暴露结构化事件流——stdout 是
+// 纯 assistant 文本（中间的 "I will run X" 行与最终回复交织在一起）。所以后端把 stdout
+// 按行流式发成 MessageText，并把同样的文本累积成最终 Result.Output。
+//
+// 本文件的几个关键设计都围绕「agy 日志」（daemon 通过 --log-file 指定的临时文件）做兜底：
+//
+//   - 会话续跑用 `--conversation <id>`；会话 id 不印在 stdout 上，而是靠扫 glog 日志行里
+//     printmode.go 在消息发送时写的 `conversation=<uuid>` token 抓取。
+//   - agy 1.0.14 的 print 模式有个回归：一个回合可能跑了工具、出了最终回复，却往 stdout
+//     输出 ZERO 字节（日志里是 "PlannerResponse without ModifiedResponse encountered"），
+//     退出码仍为 0、无错误，于是「空白但 completed」会到达 daemon（MUL-3726 / #4595）。
+//     因此 stdout 为空时，后端会从 agy 持久化写入的会话 transcript 里找回 assistant 文本。
+//   - agy 自己的 print 超时（--print-timeout）与终态 provider 错误也只落日志、stdout 与
+//     退出码可能一切正常，同样需要扫日志发现（MUL-3570 / antigravityProviderError）。
+
 import (
 	"context"
 	"encoding/json"
@@ -13,33 +33,35 @@ import (
 	"time"
 )
 
-// antigravityBackend implements Backend by spawning Google's Antigravity CLI
-// with a one-shot prompt (`agy -p <prompt>`). Despite the upstream flag name,
-// current agy print mode is still capable of running Antigravity tools; it is
-// the daemon-compatible mode because `agy -i` requires an attached TTY. Unlike
-// Claude / Codex / Cursor / Gemini, the Antigravity CLI does not expose a
-// structured event stream — stdout is plain assistant text (intermediate "I
-// will run X" lines and the final reply, all interleaved). The backend
-// therefore streams stdout line-by-line as `MessageText` events and accumulates
-// the same text as the final `Result.Output`.
+// antigravityBackend 实现 Backend 接口：用一次性 prompt 拉起 Google 的 Antigravity CLI
+// （`agy -p <prompt>`）。尽管上游 flag 名如此，当前 agy print 模式仍能运行 Antigravity
+// 工具；这是与 daemon 兼容的模式，因为 `agy -i` 要求附加 TTY。与 Claude / Codex /
+// Cursor / Gemini 不同，Antigravity CLI 不暴露结构化事件流——stdout 是纯 assistant 文本
+// （中间的 "I will run X" 行与最终回复交错）。因此后端把 stdout 逐行流式发成
+// MessageText，并把同样文本累积成最终 Result.Output。
 //
-// agy 1.0.14's print mode regressed this stdout contract: a turn can run tools
-// and produce a final reply while emitting ZERO bytes to stdout (the log shows
-// "PlannerResponse without ModifiedResponse encountered"). Exit code is 0 and
-// no error is logged, so a blank-but-"completed" run reaches the daemon and the
-// user sees an empty result even though the work happened (MUL-3726, #4595).
-// When stdout comes back empty on an otherwise-completed turn, the backend
-// therefore recovers the assistant text agy durably wrote to its per-
-// conversation transcript (see readAntigravityTranscriptOutput).
+// agy 1.0.14 的 print 模式回归了这个 stdout 契约：一个回合可能跑了工具、产出了最终回复，
+// 却往 stdout 输出 ZERO 字节（日志里是 "PlannerResponse without ModifiedResponse
+// encountered"）。退出码 0 且无错误日志，于是「空白但 completed」的运行到达 daemon，
+// 用户看到空结果尽管工作其实发生了（MUL-3726 / #4595）。所以 stdout 空而回合其它一切
+// 正常时，后端会从 agy 持久写入的会话 transcript 里找回 assistant 文本（见
+// readAntigravityTranscriptOutput）。
 //
-// Session resumption uses `--conversation <id>`. The conversation id is not
-// emitted on stdout; we capture it by routing `--log-file` to a temp file and
-// scanning its glog-formatted lines for the `conversation=<uuid>` token that
-// printmode.go logs at message-send time.
+// 会话续跑用 `--conversation <id>`。会话 id 不印在 stdout 上；我们把 `--log-file` 指到
+// 临时文件，再扫它的 glog 格式行找 printmode.go 在消息发送时记录的
+// `conversation=<uuid>` token 来捕获。
 type antigravityBackend struct {
 	cfg Config
 }
 
+// Execute 是 Backend 接口的入口：拿一条用户 prompt，起一个 agy print 模式进程跑完一整轮。
+//
+// 流程：确认可执行文件存在 → 指定了模型就先拿 `agy models` 目录做前置校验（agy 对认不
+// 出的模型会静默 no-op：退出 0、输出空，校验失败能让这种「completed 但空」提前暴露）→
+// 建临时日志文件 → 拼参数起进程 → 逐行流式读 stdout（按行发 MessageText、同时累积成
+// output）→ 进程退出后判最终状态：超时/取消/进程错误，并扫日志识别 agy 自己的
+// --print-timeout 耗尽与终态 provider 错误 → 若「completed 但 output 全空」则从 transcript
+// 找回文本 → 汇总 Result。会话 id 从日志里抓，token 用量留空（agy 不上报）。
 func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
@@ -49,16 +71,13 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		return nil, fmt.Errorf("agy executable not found at %q: %w", execPath, err)
 	}
 
-	// Guard against agy's silent no-op on an unrecognised --model: it exits 0
-	// with empty output, which would otherwise surface as a "completed" but
-	// empty task. opts.Model is the single funnel for both agent.model and the
-	// daemon-wide MULTICA_ANTIGRAVITY_MODEL default (resolved in daemon.go), so
-	// validating it here covers every source — UI free-text, API, a persisted
-	// value, and the env default alike. Reject a non-empty model the installed
-	// CLI definitively does not advertise, with an actionable error. Validation
-	// is fail-OPEN: if the `agy models` catalog can't be discovered we let agy
-	// resolve the value itself rather than blocking the run on a discovery
-	// hiccup (see antigravityModelError).
+	// 防 agy 对认不出的 --model 静默 no-op：它会退出 0、输出空，否则会被当成一个
+	// 「completed 但内容空」的任务。opts.Model 是 agent.model 与 daemon 全局
+	// MULTICA_ANTIGRAVITY_MODEL 默认值（在 daemon.go 解析）的唯一漏斗，在这里校验能
+	// 覆盖每个来源——UI 自由文本、API、持久化的值、环境变量默认值。装上 CLI 后确定
+	// 不提供的非空模型会被拒绝，带可操作的错误提示。校验是 fail-OPEN：若 `agy models`
+	// 目录查不出来，就放 agy 自己去解析这个值，别让一次发现故障卡死整次运行（见
+	// antigravityModelError）。
 	if opts.Model != "" {
 		catalog, _ := ListModels(ctx, "antigravity", b.cfg.commandAt(execPath))
 		if err := antigravityModelError(opts.Model, catalog.Models); err != nil {
@@ -130,14 +149,11 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 
 		for scanner.Scan() {
 			line := scanner.Text()
-			// The daemon concatenates streamed MessageText with no separator
-			// (pendingText.WriteString), so the streamed text must carry the
-			// line breaks itself. Mirror output's construction — prefix the
-			// newline on every line after the first, and stream blank lines
-			// too — so the persisted task_message text reconstructs output
-			// exactly. Emitting bare, blank-skipped lines dropped every newline,
-			// collapsing block markdown (headings, lists) onto one line in
-			// chat (#6149).
+			// daemon 拼接流式 MessageText 时不加分隔符（pendingText.WriteString），
+			// 所以流出的文本必须自带换行。这里镜像 output 的构造方式——首行之后每行都
+			// 前缀换行、空行也照发——让持久化的 task_message 文本能精确还原 output。
+			// 若发裸行且跳过空行，会丢掉所有换行，把块级 markdown（标题、列表）在聊天里
+			// 挤成一行（#6149）。
 			chunk := line
 			if output.Len() > 0 {
 				output.WriteByte('\n')
@@ -168,20 +184,18 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("agy exited with error: %v", waitErr)
 		} else if finalStatus == "completed" && antigravityPrintTimedOut(logPath) {
-			// agy hit its own --print-timeout: it printed "Error: timed out
-			// waiting for response" to stdout and EXITED 0, so runCtx never
-			// tripped and waitErr is nil — the checks above leave the turn as
-			// "completed". Surface it as a real timeout instead of a truncated
-			// success the user can't distinguish from a finished task (MUL-3570).
+			// agy 撞上了自己的 --print-timeout：它往 stdout 打了 "Error: timed out
+			// waiting for response" 然后 EXIT 0，于是 runCtx 从未触发、waitErr 为 nil——
+			// 上面的检查会把回合留成 "completed"。这里把它标成真超时，而不是让用户无法
+			// 区分于已完成任务的截断成功（MUL-3570）。
 			finalStatus = "timeout"
 			finalError = fmt.Sprintf(
 				"agy --print-timeout elapsed after %s waiting for the agent response; a long-running command likely outlived the print timeout",
 				antigravityPrintTimeout(timeout),
 			)
 		} else if providerErr := antigravityProviderError(logPath); finalStatus == "completed" && providerErr != "" {
-			// agy can also surface terminal model/provider failures only in the
-			// per-run log while exiting 0 with empty stdout. Without promoting
-			// that marker, the daemon records a failed turn as a blank success.
+			// agy 还可能把终态的模型/provider 失败只写进每轮日志、stdout 空着退出 0。
+			// 不提升这个标记的话，daemon 会把一次失败回合记成空成功。
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("agy provider error: %s", providerErr)
 		}
@@ -191,14 +205,12 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 
 		finalOutput := output.String()
 		if finalStatus == "completed" && strings.TrimSpace(finalOutput) == "" {
-			// agy 1.0.14 print mode can finish a turn (tools executed, reply
-			// produced) without writing anything to stdout, leaving a blank but
-			// "completed" run none of the guards above catch (MUL-3726). Recover
-			// the assistant text agy persisted to its conversation transcript so
-			// the user sees the actual answer instead of an empty result. Also
-			// emit it as a MessageText event so the task transcript catches up;
-			// otherwise Result.Output becomes visible only in the synthesized
-			// final comment while the execution transcript remains blank.
+			// agy 1.0.14 print 模式可能正常跑完回合（工具执行、回复产出）却什么也没往
+			// stdout 写，留下一个上面所有守卫都没抓住的「空白但 completed」运行
+			// （MUL-3726）。从 agy 持久化到会话 transcript 的 assistant 文本里找回答案，
+			// 让用户看到真实回答而不是空结果。同时补发一条 MessageText，让任务 transcript
+			// 也跟上；否则 Result.Output 只在合成的最终评论里可见，执行 transcript 却
+			// 一直空白。
 			if recovered := readAntigravityTranscriptOutput(logPath, sessionID); recovered != "" {
 				finalOutput = recovered
 				trySend(msgCh, Message{Type: MessageText, Content: recovered})
@@ -214,9 +226,8 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 			Error:      finalError,
 			DurationMs: duration.Milliseconds(),
 			SessionID:  sessionID,
-			// The Antigravity CLI doesn't surface per-turn token usage today;
-			// leave Usage empty rather than report misleading zeros under a
-			// guessed model name.
+			// Antigravity CLI 目前不上报每回合的 token 用量；留空 Usage，而不是在一个
+			// 猜的模型名下报误导性的 0。
 			Usage: map[string]TokenUsage{},
 		}
 	}()
@@ -224,33 +235,29 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
-// antigravityConversationIDRe matches the glog line printmode.go writes when
-// the CLI dispatches the user's message — the only place in the log that
-// reliably surfaces the conversation UUID for both fresh and resumed turns.
+// antigravityConversationIDRe 匹配 printmode.go 在 CLI 派发用户消息时写的 glog 行——
+// 这是日志里唯一对「新建与续跑回合」都可靠暴露会话 UUID 的地方。
 //
-// Example: `I0528 13:36:23.318877 73304 printmode.go:130] Print mode:
+// 示例：`I0528 13:36:23.318877 73304 printmode.go:130] Print mode:
 // conversation=b8b263a4-4b2f-4339-acc9-78b248e2b606, sending message`
 var antigravityConversationIDRe = regexp.MustCompile(
 	`conversation=([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`,
 )
 
-// antigravityPrintTimeoutRe matches the glog line agy's printmode.go writes when
-// the print-mode wall-clock budget (--print-timeout) elapses before the agent
-// produced a final response. agy then prints "Error: timed out waiting for
-// response" to stdout and EXITS 0 — runCtx never trips and cmd.Wait returns nil
-// — so without this signal the daemon would record the truncated turn as a
-// successful "completed" (MUL-3570).
+// antigravityPrintTimeoutRe 匹配 agy 的 printmode.go 在其 print 模式墙钟预算
+// （--print-timeout）耗尽、agent 还没产出最终响应时写的 glog 行。agy 随后往 stdout 打
+// "Error: timed out waiting for response" 并 EXIT 0——runCtx 永不触发、cmd.Wait 返回 nil
+// ——没有这个信号，daemon 会把被截断的回合记成成功的 "completed"（MUL-3570）。
 //
-// Example: `E0623 17:17:59.017212 65926 printmode.go:289] Print mode: timed out
+// 示例：`E0623 17:17:59.017212 65926 printmode.go:289] Print mode: timed out
 // after 100 polls (printed=3)`
 var antigravityPrintTimeoutRe = regexp.MustCompile(`Print mode: timed out after \d+ polls`)
 
+// antigravityProviderErrorRe 抓 agy 日志里的终态 agent executor 错误行。
 var antigravityProviderErrorRe = regexp.MustCompile(`agent executor error:\s*(.+)`)
 
-// antigravityPrintTimedOut reports whether the per-run log shows agy hit its own
-// print-mode timeout. Best-effort: returns false if the log is missing or the
-// marker format changes upstream, in which case the run is classified by its
-// exit status as before.
+// antigravityPrintTimedOut 报告每轮日志是否显示 agy 撞上了自己的 print 模式超时。
+// Best-effort：日志缺失或上游改格式时返回 false，此时运行退回按退出状态分类。
 func antigravityPrintTimedOut(logPath string) bool {
 	if logPath == "" {
 		return false
@@ -262,8 +269,8 @@ func antigravityPrintTimedOut(logPath string) bool {
 	return antigravityPrintTimeoutRe.Match(data)
 }
 
-// antigravityProviderError extracts terminal upstream/model errors that agy logs
-// but does not necessarily print to stdout or reflect in its exit code.
+// antigravityProviderError 提取 agy 只写进日志、不一定打到 stdout 或反映到退出码里的
+// 终态上游/模型错误。
 func antigravityProviderError(logPath string) string {
 	if logPath == "" {
 		return ""
@@ -279,9 +286,8 @@ func antigravityProviderError(logPath string) string {
 	return strings.TrimSpace(string(matches[len(matches)-1][1]))
 }
 
-// readAntigravityConversationID scans the per-run log file for the
-// conversation UUID. Best-effort: returns "" if the log file is missing, the
-// CLI exited before dispatching, or the format changes upstream.
+// readAntigravityConversationID 扫每轮日志文件找会话 UUID。Best-effort：日志缺失、
+// CLI 还没派发就退出、或上游改了格式时返回 ""。
 func readAntigravityConversationID(logPath string) string {
 	if logPath == "" {
 		return ""
@@ -294,28 +300,24 @@ func readAntigravityConversationID(logPath string) string {
 	if len(matches) == 0 {
 		return ""
 	}
-	// The CLI logs the conversation id repeatedly during a turn (one entry
-	// per dispatched message, plus stream-update lines). Any non-empty UUID
-	// in the file resolves to the same conversation, so the last match wins
-	// — that's what `--conversation` should be pinned to next turn.
+	// CLI 在一个回合里会反复记会话 id（每个派发的消息一条，外加 stream-update 行）。
+	// 文件里任何非空 UUID 都指向同一会话，所以取最后一条匹配——这正是下一轮
+	// `--conversation` 该钉住的 id。
 	return string(matches[len(matches)-1][1])
 }
 
-// antigravityAppDataDirRe matches the glog line agy writes at startup naming its
-// CLI app data directory — the root under which per-conversation transcripts
-// live. Reading the path from the log (which the daemon owns via --log-file)
-// is more robust than guessing $HOME, and follows agy through a custom data dir.
+// antigravityAppDataDirRe 匹配 agy 启动时写的、指名其 CLI app data 目录的 glog 行——
+// 每会话 transcript 就在这个根目录下面。从日志（daemon 经 --log-file 拥有它）读路径比
+// 猜 $HOME 更稳，也能跟着 agy 走自定义 data dir。
 //
-// Example: `I0630 14:19:40.582492 88197 common.go:156] CLI app data directory:
+// 示例：`I0630 14:19:40.582492 88197 common.go:156] CLI app data directory:
 // /Users/me/.gemini/antigravity-cli`
 var antigravityAppDataDirRe = regexp.MustCompile(`CLI app data directory:\s*(.+)`)
 
-// antigravityTranscriptRecord is the minimal shape of one line in agy's
-// per-conversation transcript.jsonl. A turn opens with a USER_INPUT record; the
-// assistant's replies are PLANNER_RESPONSE records with source=MODEL and (once
-// settled) status=DONE. Content holds the text, or JSON null for a tool-only
-// step — it is RawMessage so a null or non-string value is skipped rather than
-// failing the whole line.
+// antigravityTranscriptRecord 是 agy 每会话 transcript.jsonl 中一行的最小形状。回合以
+// USER_INPUT 记录开始；assistant 的回复是 PLANNER_RESPONSE 记录，带 source=MODEL、（尘埃
+// 落定后）status=DONE。Content 放文本，纯工具步骤里是 JSON null——它是 RawMessage，所以
+// null 或非字符串值会被跳过而不是让整行解析失败。
 type antigravityTranscriptRecord struct {
 	Type    string          `json:"type"`
 	Source  string          `json:"source"`
@@ -323,27 +325,22 @@ type antigravityTranscriptRecord struct {
 	Content json.RawMessage `json:"content"`
 }
 
-// readAntigravityTranscriptOutput recovers the assistant's text from agy's
-// per-conversation transcript when stdout carried nothing. agy 1.0.14's print
-// mode can finish a turn (tools executed, final reply produced) while emitting
-// zero bytes to stdout, leaving the daemon with a blank but "completed" run
-// (MUL-3726, #4595). The full reply is still durably written to:
+// readAntigravityTranscriptOutput 当 stdout 什么都没带出来时，从 agy 的每会话 transcript
+// 里找回 assistant 文本。agy 1.0.14 的 print 模式可能正常跑完回合（工具执行、最终回复
+// 产出）却往 stdout 输出零字节，留给 daemon 一个「空白但 completed」的运行（MUL-3726 /
+// #4595）。完整回复仍被持久写到：
 //
 //	<appDataDir>/brain/<conversation-id>/.system_generated/logs/transcript.jsonl
 //
-// as PLANNER_RESPONSE / source=MODEL records.
+// 以 PLANNER_RESPONSE / source=MODEL 记录的形式存在。
 //
-// The transcript is per-conversation and ACCUMULATES across resumed turns
-// (daemon reuses the conversation via --conversation / ResumeSessionID), so we
-// must return only the CURRENT turn's reply — otherwise a later empty-stdout
-// turn would re-emit prior turns' answers. Each turn opens with a USER_INPUT
-// record, so we reset on every USER_INPUT and keep only the model text that
-// follows the last one. We also require status=DONE to skip any future
-// streaming/partial planner records. The remaining text is joined in order
-// (intermediate narration + final reply), mirroring what stdout would have
-// streamed for this turn. Best-effort: returns "" if the app data dir or
-// conversation id is unknown, the transcript is missing, or it holds no model
-// text for the current turn.
+// transcript 是每会话一份、跨续跑回合累积（daemon 通过 --conversation / ResumeSessionID
+// 复用它），所以必须只返回当前回合的回复——否则以后某次空 stdout 回合会把先前回合的
+// 回答再发一遍。每个回合以一条 USER_INPUT 记录开场，于是我们在每个 USER_INPUT 处清零，
+// 只保留紧随其后、最后一条之后的模型文本。另外要求 status=DONE，跳过任何未来的
+// 流式/部分 planner 记录。剩余文本按序拼接（中间叙述 + 最终回复），镜像 stdout 本来会为
+// 这个回合流出的内容。Best-effort：app data dir 或会话 id 未知、transcript 缺失、或当前
+// 回合没有模型文本时返回 ""。
 func readAntigravityTranscriptOutput(logPath, conversationID string) string {
 	if logPath == "" || conversationID == "" {
 		return ""
@@ -373,8 +370,8 @@ func readAntigravityTranscriptOutput(logPath, conversationID string) string {
 			continue
 		}
 		if rec.Type == "USER_INPUT" {
-			// New turn boundary: drop anything collected for prior turns so a
-			// resumed conversation yields only the current turn's reply.
+			// 新回合边界：清掉为先前回合收集的内容，保证续跑的会话只产出当前回合的
+			// 回复。
 			parts = parts[:0]
 			continue
 		}
@@ -382,8 +379,8 @@ func readAntigravityTranscriptOutput(logPath, conversationID string) string {
 			continue
 		}
 		var text string
-		// Content is JSON null for tool-only steps; unmarshal leaves text "".
-		// A non-string value (object) errors and is skipped.
+		// Content 在纯工具步骤里是 JSON null；unmarshal 后 text 为 ""。
+		// 非字符串值（对象）会解析失败并被跳过。
 		if err := json.Unmarshal(rec.Content, &text); err != nil {
 			continue
 		}
@@ -394,9 +391,8 @@ func readAntigravityTranscriptOutput(logPath, conversationID string) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// readAntigravityAppDataDir extracts agy's CLI app data directory from the
-// per-run log. Best-effort: returns "" if the log is missing or the marker
-// format changes upstream.
+// readAntigravityAppDataDir 从每轮日志里提取 agy 的 CLI app data 目录。
+// Best-effort：日志缺失或上游改格式时返回 ""。
 func readAntigravityAppDataDir(logPath string) string {
 	if logPath == "" {
 		return ""
@@ -412,45 +408,39 @@ func readAntigravityAppDataDir(logPath string) string {
 	return strings.TrimSpace(string(m[1]))
 }
 
-// antigravityBlockedArgs are flags hardcoded by the daemon that must not be
-// overridden by user-configured custom_args. Overriding these would break
-// non-interactive operation or the daemon's session-resume bookkeeping.
+// antigravityBlockedArgs 是 daemon 写死的参数清单，用户配置的 custom_args 不得覆盖它们。
+// 覆盖这些会破坏非交互运行或 daemon 的会话续跑记账。
 var antigravityBlockedArgs = map[string]blockedArgMode{
 	"-p":                             blockedWithValue,
 	"--print":                        blockedWithValue,
 	"--prompt":                       blockedWithValue,
-	"-i":                             blockedStandalone, // interactive mode requires a TTY and cannot run under the daemon
+	"-i":                             blockedStandalone, // 交互模式要 TTY，daemon 下跑不了
 	"--prompt-interactive":           blockedStandalone,
-	"-c":                             blockedStandalone, // resume via --conversation, not --continue
+	"-c":                             blockedStandalone, // 续跑用 --conversation，不是 --continue
 	"--continue":                     blockedStandalone,
-	"--conversation":                 blockedWithValue, // managed via ExecOptions.ResumeSessionID
-	"--model":                        blockedWithValue, // managed via ExecOptions.Model / agent.model
+	"--conversation":                 blockedWithValue, // 由 ExecOptions.ResumeSessionID 管理
+	"--model":                        blockedWithValue, // 由 ExecOptions.Model / agent.model 管理
 	"--print-timeout":                blockedWithValue,
-	"--dangerously-skip-permissions": blockedStandalone, // always-on in daemon mode
-	"--log-file":                     blockedWithValue,  // daemon needs it for session capture
-	"--settings":                     blockedWithValue,  // Claude Code-only flag; agy rejects it
+	"--dangerously-skip-permissions": blockedStandalone, // daemon 模式常开
+	"--log-file":                     blockedWithValue,  // daemon 要靠它抓会话 id
+	"--settings":                     blockedWithValue,  // Claude Code 专属 flag；agy 会拒绝
 }
 
-// buildAntigravityArgs assembles the argv for a daemon-compatible one-shot agy
-// invocation.
+// buildAntigravityArgs 拼出与 daemon 兼容的一次性 agy 调用的 argv。
 //
 //	agy -p <prompt> --dangerously-skip-permissions [--model <catalog id>]
 //	    --print-timeout <duration> --log-file <tmp>
 //	    [--conversation <id>] [--add-dir <cwd>]
 //
-// agy 1.0.6 added a `--model` flag (MUL-3125), so opts.Model is now wired
-// through when set. The value is the catalog identifier parseAntigravityModels
-// read out of `agy models`: a slug (e.g. "gemini-3.6-flash-high") on agy
-// 1.1.11+, or the verbatim single-column value (e.g. "Claude Opus 4.6
-// (Thinking)") on older output. Either shape ships as one exec arg, so spaces
-// and parens need no shell quoting. agy still exposes no --system-prompt;
-// runtime instructions are delivered via AGENTS.md in the task workdir.
+// agy 1.0.6 加了 `--model` flag（MUL-3125），opts.Model 有值时现在会透传。值就是
+// parseAntigravityModels 从 `agy models` 读出的目录标识：agy 1.1.11+ 是 slug（如
+// "gemini-3.6-flash-high"），旧输出是原样的单列值（如 "Claude Opus 4.6 (Thinking)"）。
+// 两种形态都作为单个 exec 参数传，空格括号无需 shell 转义。agy 至今没有 --system-prompt；
+// runtime 指令经任务工作目录里的 AGENTS.md 送达。
 //
-// agy silently no-ops on a model string it doesn't recognise (empty output,
-// exit 0), so Execute validates opts.Model against the `agy models` catalog
-// and rejects an unrecognised value up front (see antigravityModelError) —
-// by the time we build argv the value is either empty or known-good. When
-// opts.Model is empty we omit the flag and agy resolves its own default.
+// agy 对认不出的模型串会静默 no-op（空输出、退出 0），所以 Execute 会先用 `agy models`
+// 目录校验 opts.Model、前置拒绝未知值（见 antigravityModelError）——走到拼 argv 这步，
+// 值要么为空要么已知可用。opts.Model 为空时省略该 flag，让 agy 自己解默认值。
 func buildAntigravityArgs(prompt, logPath string, timeout time.Duration, opts ExecOptions, logger *slog.Logger) []string {
 	args := []string{
 		"-p", prompt,
@@ -459,13 +449,11 @@ func buildAntigravityArgs(prompt, logPath string, timeout time.Duration, opts Ex
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
-	// agy's --print-timeout has NO "disabled" value and DEFAULTS TO 5m when the
-	// flag is omitted, so "no cap" cannot be expressed by dropping it — that
-	// silently guillotines every turn at 5 minutes, killing any run whose build
-	// or tests outlive the budget (MUL-3570). Always pass the flag: the
-	// configured wall-clock cap when positive, else a value so large agy's own
-	// timeout never fires before the daemon's idle/tool watchdogs reclaim a
-	// genuinely stuck run (see antigravityPrintTimeout).
+	// agy 的 --print-timeout 没有「禁用」值，且省略 flag 时默认 5 分钟——所以「不设上限」
+	// 没法用省略来表达，那会让每个回合都被 5 分钟静默腰斩，杀掉所有构建/测试超过预算的
+	// 运行（MUL-3570）。因此总是传该 flag：配置了正向墙钟上限就传它，否则传一个大到
+	// agy 自己的超时永远不会先于 daemon 的空闲/工具看门狗（它们会回收真正卡死的运行）
+	// 触发（见 antigravityPrintTimeout）。
 	args = append(args, "--print-timeout", antigravityFormatTimeout(antigravityPrintTimeout(timeout)))
 	args = append(args, "--log-file", logPath)
 	if opts.ResumeSessionID != "" {
@@ -479,14 +467,11 @@ func buildAntigravityArgs(prompt, logPath string, timeout time.Duration, opts Ex
 	return args
 }
 
-// antigravityModelError returns an actionable error when `model` is non-empty
-// and definitively absent from `available` (the `agy models` catalog); it
-// returns nil otherwise. An empty `available` means discovery couldn't produce
-// a catalog (agy missing, transient failure) — we fail OPEN there and let agy
-// resolve the value, so a discovery hiccup never blocks a run. The match is
-// exact because agy's --model wants the precise catalog identifier; a near-miss
-// (extra space, dropped suffix) is correctly rejected since agy would silently
-// no-op on it anyway.
+// antigravityModelError 在 `model` 非空且确定不在 `available`（`agy models` 目录）里时
+// 返回可操作的错误；否则返回 nil。空的 `available` 表示发现没跑出目录（agy 缺失、瞬时
+// 故障）——这里 fail OPEN，让 agy 自己去解析值，别让一次发现故障卡死运行。匹配是精确
+// 的，因为 agy 的 --model 要的就是目录里的精确标识；近似值（多空格、丢后缀）应被拒绝，
+// 反正 agy 遇到它也会静默 no-op。
 func antigravityModelError(model string, available []Model) error {
 	if model == "" || len(available) == 0 {
 		return nil
@@ -504,21 +489,17 @@ func antigravityModelError(model string, available []Model) error {
 	)
 }
 
-// antigravityNoCapPrintTimeout is the --print-timeout value used when the daemon
-// configures no wall-clock cap (opts.Timeout <= 0). agy's --print-timeout has no
-// "disabled" sentinel and falls back to a 5-minute default when omitted, so "no
-// cap" must instead be a value large enough that agy's own guillotine never
-// fires before the daemon's inactivity watchdog reclaims a genuinely stuck run.
-// 24h is effectively unbounded for any real turn while still being a finite
-// duration agy can parse, and it stays above the watchdog budget even when an
-// operator raises MULTICA_AGENT_IDLE_WATCHDOG well past its default.
+// antigravityNoCapPrintTimeout 是「daemon 不配墙钟上限（opts.Timeout <= 0）」时传给
+// --print-timeout 的值。agy 的 --print-timeout 没有「禁用」哨兵、省略时回落到 5 分钟
+// 默认，所以「不设上限」必须是一个大到 agy 自己的铡刀永远不会在 daemon 的空闲看门狗
+// （它回收真正卡死的运行）之前触发。24h 对任何真实回合都等于无界，同时仍是 agy 能解析
+// 的有限时长；即使操作员把 MULTICA_AGENT_IDLE_WATCHDOG 抬到远超默认值，它也仍然高于
+// 看门狗预算。
 const antigravityNoCapPrintTimeout = 24 * time.Hour
 
-// antigravityPrintTimeout resolves the wall-clock budget handed to agy's
-// --print-timeout: the daemon's configured cap when positive, else the no-cap
-// sentinel above. It is the single source of truth shared by
-// buildAntigravityArgs (which sets the flag) and Execute (which labels a
-// print-mode timeout).
+// antigravityPrintTimeout 解析交给 agy --print-timeout 的墙钟预算：daemon 配了正向上限
+// 就用它，否则用上面的 no-cap 哨兵。这是 buildAntigravityArgs（设 flag）与 Execute（把
+// print 模式超时标出来）共享的唯一真源。
 func antigravityPrintTimeout(timeout time.Duration) time.Duration {
 	if timeout > 0 {
 		return timeout
@@ -526,14 +507,13 @@ func antigravityPrintTimeout(timeout time.Duration) time.Duration {
 	return antigravityNoCapPrintTimeout
 }
 
-// antigravityFormatTimeout renders a Go duration in the `<n>m<n>s` shape the
-// agy CLI accepts (e.g. 20m0s). Sub-second timeouts round up to 1s so the CLI
-// doesn't reject the flag.
+// antigravityFormatTimeout 把 Go 的 duration 渲染成 agy CLI 接受的 `<n>m<n>s` 形态
+// （例如 20m0s）。亚秒级超时向上取整到 1s，免得 CLI 拒绝该 flag。
 func antigravityFormatTimeout(d time.Duration) string {
 	if d < time.Second {
 		d = time.Second
 	}
-	// time.Duration.String() already produces shapes like "20m0s" / "1h30m0s"
-	// that agy parses via Go's stdlib flag.Duration on the receiving side.
+	// time.Duration.String() 产出的正是 "20m0s" / "1h30m0s" 这类形状，agy 在接收端用 Go
+	// 标准库的 flag.Duration 解析。
 	return d.String()
 }

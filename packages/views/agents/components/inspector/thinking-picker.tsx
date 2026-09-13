@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 的“推理/努力档位”选择器：选项直接来自运行时逐模型目录的
+// supported_levels，弹层选择后写入 Agent 的 thinking_level。chunk 态用于检查器行内，
+// field 态用于 General 设置表单。
+
 import { useState } from "react";
 import { Brain, ChevronDown } from "lucide-react";
 import type { RuntimeModelThinkingLevel } from "@multica/core/types";
@@ -12,18 +16,15 @@ import { CHIP_CLASS } from "./chip";
 import { useT } from "../../../i18n";
 
 /**
- * Per-agent reasoning/effort picker (MUL-2339). Renders only when the
- * current model exposes a non-empty `supported_levels` set — Claude, Codex,
- * and OpenCode today; every other provider gets nothing. The catalog is daemon-
- * discovered, so the value/label pairs match each CLI's own UI (`Low`,
- * `Extra high`, …) verbatim; never normalised across providers.
+ * Agent 的推理/努力档位选择器（MUL-2339）。只有当当前模型的 `supported_levels`
+ * 非空时才渲染——目前是 Claude、Codex、OpenCode；其余 provider 什么都不显示。
+ * 目录由 daemon 发现，value/label 对与各 CLI 自己的文案（`Low`、`Extra high`…）
+ * 逐字一致，绝不在 provider 之间做归一化。
  *
- * Empty string is the "no override" sentinel: the backend omits the
- * effort flag entirely and the upstream CLI's own config / built-in
- * default decides what the model runs at. We render that state as
- * "Follow CLI config" rather than singling out one level as the
- * factory default, because the actual default at runtime is owned by
- * the user's local CLI install, not by Multica's catalog.
+ * 空串是“不覆盖”的哨兵：后端整体省略 effort 参数，由上游 CLI 自己的配置 /
+ * 内置默认决定模型实际跑在什么档位。这个状态渲染成“跟随 CLI 配置”，而不是
+ * 单独挑一个档位当出厂默认——因为运行期的真实默认属于用户本地的 CLI 安装，
+ * 不属于 Multica 的目录。
  */
 export function ThinkingPicker({
   value,
@@ -33,14 +34,12 @@ export function ThinkingPicker({
   showLabel = true,
   onChange,
 }: {
-  /** Persisted thinking_level — "" means "follow local CLI config". */
+  /** 已持久化的 thinking_level —— "" 表示“跟随本地 CLI 配置”。 */
   value: string;
-  /** Supported levels for the current (runtime, model) pair. Usually
-   *  non-empty when the row is shown, but the stale-orphan clear path
-   *  in ThinkingPropRow mounts the picker with an empty list plus a
-   *  persisted value so the user can see and clear the dangling token. */
+  /** 当前 (运行环境, 模型) 支持的档位。行可见时通常非空；但 ThinkingPropRow 的
+   *  “清孤儿值”路径会用空列表 + 已存值挂载本选择器，好让用户看到并清掉悬空值。 */
   levels: RuntimeModelThinkingLevel[];
-  /** When false, render a static read-only display and skip the popover. */
+  /** false 时渲染静态只读展示，不弹层。 */
   canEdit?: boolean;
   variant?: "chip" | "field";
   showLabel?: boolean;
@@ -50,10 +49,9 @@ export function ThinkingPicker({
   const [open, setOpen] = useState(false);
 
   const selected = value ? levels.find((l) => l.value === value) : undefined;
-  // Unknown-but-set value (model swap that dropped the option, CLI upgrade
-  // that trimmed the catalog): show the raw token so the user can see what
-  // is actually persisted and clear it, rather than silently labelling it
-  // "Default" when the backend would still send the stale value.
+  // 值“非空但在列表里找不到”（换模型丢掉了该选项，或 CLI 升级后目录缩水）：
+  // 直接展示原始 token，让用户看清实际存的是什么并清掉它——而不是把它悄悄标成
+  // “默认”，可后端仍会发送这个过期值。
   const triggerLabel = selected
     ? selected.label
     : value || t(($) => $.pickers.thinking_default);
@@ -148,17 +146,13 @@ export function ThinkingPicker({
           selected={l.value === value}
           onClick={() => void select(l.value)}
         >
-          {/* PickerItem wraps children in a flex `<span>`. Putting a
-              `<div>` inside that <span> is block-in-inline (invalid HTML5)
-              and triggers browser quirks that shift descendant x-position.
-              Use a `<span>` with explicit `block` + `text-left` so layout
-              is deterministic across rows regardless of whether the label
-              row has the `default` badge sibling. */}
-          {/* No model-factory-default badge here on purpose: when the
-              picker is "Follow CLI config" (value === ""), Multica omits
-              `--effort` and the local CLI config decides — the model's
-              factory default is irrelevant to what actually fires, so
-              flagging one option as "default" was misleading. */}
+          {/* PickerItem 会把子内容包在一个 flex `<span>` 里。若在这里塞 `<div>`，
+              就成了 inline 里嵌 block（HTML5 非法），会触发浏览器怪异行为、
+              把后代元素的 x 偏移搞乱。所以用显式 `block` + `text-left` 的
+              `<span>`，让每一行的布局都确定——无论该行有没有 `default` 徽章兄弟。 */}
+          {/* 这里刻意不打“模型出厂默认”徽章：当选择器处于“跟随 CLI 配置”
+              （value === ""）时，Multica 会省略 `--effort`，由本地 CLI 配置决定——
+              模型出厂默认与实际生效的档位无关，所以给某个选项标“默认”反而误导。 */}
           <span className="block min-w-0 flex-1 text-left">
             <span className="truncate text-label font-medium">{l.label}</span>
             {l.description && (

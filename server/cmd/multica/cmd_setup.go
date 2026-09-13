@@ -1,3 +1,7 @@
+// 文件职责：实现 `multica setup` 命令——一键引导：写 CLI 配置（Cloud 或
+// self-host）、浏览器登录、启动 daemon。self-host 分支里「写配置前先探测可达性」
+// 与「URL 解析回退链」是重点（避免失败的 setup 冲掉可用配置或把远程部署悄悄重置
+// 回 localhost）。
 package main
 
 import (
@@ -16,6 +20,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// setupCmd 是 `multica setup` 命令（默认连 Multica Cloud），子命令：cloud /
+// self-host，流程与 SSH/--callback-host 提示详见其 Long 文本。
 var setupCmd = &cobra.Command{
 	Use:   "setup",
 	Short: "Configure the CLI, authenticate, and start the daemon",
@@ -50,6 +56,7 @@ This is equivalent to running 'multica setup' without a subcommand.`,
 	RunE: runSetupCloud,
 }
 
+// setupSelfHostCmd 配置连自托管 server。
 var setupSelfHostCmd = &cobra.Command{
 	Use:   "self-host",
 	Short: "Configure the CLI for a self-hosted Multica server",
@@ -83,7 +90,7 @@ func init() {
 	setupCmd.AddCommand(setupSelfHostCmd)
 }
 
-// printConfigLocation prints the config file path and profile name.
+// printConfigLocation 打印配置文件的路径（与 profile 名）。
 func printConfigLocation(profile string) {
 	path, err := cli.CLIConfigPathForProfile(profile)
 	if err != nil {
@@ -95,19 +102,16 @@ func printConfigLocation(profile string) {
 	fmt.Fprintf(os.Stderr, "  config:     %s\n", path)
 }
 
-// confirmOverwrite checks for an existing config and prompts the user before
-// overwriting it. newServerURL/newAppURL are the values setup is about to
-// write; they are shown as "old -> new" when they differ from the current
-// config so the user can see the passed flags/env were received rather than
-// silently ignored. Returns true if we should proceed, false if the user
-// declined.
+// confirmOverwrite 检查既有配置，覆盖前先问用户。newServerURL/newAppURL 是 setup
+// 即将写入的值，与现值不同时按 "old -> new" 展示，让用户看到传入的 flag/env 已被
+// 接收而非悄悄忽略。返回 true 表示继续、false 表示用户拒绝。
 func confirmOverwrite(profile, newServerURL, newAppURL string) (bool, error) {
 	cfg, err := cli.LoadCLIConfigForProfile(profile)
 	if err != nil {
-		return true, nil // can't load → treat as no config
+		return true, nil // 读不了配置 → 当作还没有配置
 	}
 	if cfg.ServerURL == "" {
-		return true, nil // no server configured → fresh config
+		return true, nil // 没配过 server → 全新配置
 	}
 
 	fmt.Fprintln(os.Stderr, "Current configuration:")
@@ -129,8 +133,7 @@ func confirmOverwrite(profile, newServerURL, newAppURL string) (bool, error) {
 	return true, nil
 }
 
-// formatURLChange renders "old -> new" when setup is about to change the value,
-// or just the current value when it stays the same.
+// formatURLChange 在 setup 即将改动值时渲染 "old -> new"，不变时只渲染当前值。
 func formatURLChange(oldVal, newVal string) string {
 	if newVal != "" && newVal != oldVal {
 		return fmt.Sprintf("%s  ->  %s", oldVal, newVal)
@@ -138,6 +141,8 @@ func formatURLChange(oldVal, newVal string) string {
 	return oldVal
 }
 
+// runSetupCloud 执行 `setup`（或 `setup cloud`）：把配置指向 Multica Cloud、
+// 确认覆盖后保存，随后登录并启动 daemon。
 func runSetupCloud(cmd *cobra.Command, args []string) error {
 	if err := requireHumanLocalCommand("setup"); err != nil {
 		return err
@@ -166,7 +171,7 @@ func runSetupCloud(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "  app_url:    %s\n", cfg.AppURL)
 	printConfigLocation(profile)
 
-	// Authenticate.
+	// 进入登录流程。
 	fmt.Fprintln(os.Stderr, "")
 	if err := runLogin(cmd, args); err != nil {
 		return err
@@ -180,22 +185,22 @@ func runSetupCloud(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runSetupSelfHost 执行 `setup self-host`：解析后端/前端 URL（见 resolve* 的
+// 回退链），必要时让用户填前端 URL，确认覆盖后先探测 server 可达性再落盘——
+// 不可达则保留旧配置（含登录态）。
 func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 	if err := requireHumanLocalCommand("setup"); err != nil {
 		return err
 	}
 	profile := resolveProfile(cmd)
 
-	// Resolve the target URLs before confirming the overwrite so the prompt can
-	// show the incoming values ("old -> new"), making it clear the passed flags
-	// were received.
+	// 在确认覆盖前先解析目标 URL，提示里才能展示将写入的值（"old -> new"），
+	// 让用户确认传入的 flag 生效了。
 	//
-	// Honor MULTICA_SERVER_URL / MULTICA_APP_URL when the matching flag is not
-	// set — consistent with the rest of the CLI (resolveServerURL) and with the
-	// env vars documented on the root --server-url flag and in `multica --help`.
-	// Before this, setup self-host read only the flags, so a self-hoster who set
-	// MULTICA_SERVER_URL still got the localhost default and an "unreachable"
-	// error (GitHub #3912).
+	// 对应 flag 未设时优先读 MULTICA_SERVER_URL / MULTICA_APP_URL——与 CLI 其余
+	// 部分（resolveServerURL）及根 --server-url flag 上文档化的环境变量一致。
+	// 在这之前 setup self-host 只认 flag，于是设了 MULTICA_SERVER_URL 的自托管
+	// 用户仍然拿到 localhost 默认值和一句 "unreachable" 报错（GitHub #3912）。
 	existing, _ := cli.LoadCLIConfigForProfile(profile)
 	serverURL, userProvidedServerURL := resolveSelfHostServerURL(cmd, existing)
 	appURL := resolveSelfHostAppURL(cmd, existing)
@@ -203,9 +208,8 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 
 	if appURL == "" {
 		if userProvidedServerURL && !serverHostIsLocal(serverURL) {
-			// We can't guess the frontend URL for a remote server: api.x.co
-			// and app.x.co, or an https-fronted deployment, would silently
-			// produce a broken login URL. Ask the user instead.
+			// 远程 server 猜不出前端 URL：api.x.co 与 app.x.co，或 https 前置的
+			// 部署，硬猜只会静默产生一条坏的登录 URL。改为问用户。
 			entered, err := promptAppURL(serverURL)
 			if err != nil {
 				return err
@@ -227,10 +231,10 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Probe before persisting anything. A failed setup must never overwrite a
-	// working config or wipe the saved token: persistSelfHostConfigIfReachable
-	// writes only when the server answers, so an unreachable host leaves the
-	// existing config untouched and the user stays logged in.
+	// 落盘前先探测。失败的 setup 绝不能覆盖可用配置或抹掉已存 token：
+	// persistSelfHostConfigIfReachable 只在 server 应答时才写，host 不可达时旧配置
+	// 原样保留、用户保持登录。（原本的顺序是先存再探测再退出——每次失败的探测
+	// 都会抹掉 token。）
 	reachable, err := persistSelfHostConfigIfReachable(serverURL, appURL, profile, probeServer)
 	if err != nil {
 		return fmt.Errorf("save config: %w", err)
@@ -247,7 +251,7 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "  app_url:    %s\n", appURL)
 	printConfigLocation(profile)
 
-	// Authenticate.
+	// 进入登录流程。
 	fmt.Fprintln(os.Stderr, "")
 	if err := runLogin(cmd, args); err != nil {
 		return err
@@ -261,11 +265,9 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runDaemonAfterSetup makes the freshly authenticated profile effective in
-// the daemon process. A daemon reads its server URL and token only at startup,
-// so merely overwriting config.json while one is already running leaves it
-// connected to the previous deployment. Restart that profile when needed;
-// otherwise perform the normal first start.
+// runDaemonAfterSetup 让新登录的 profile 在 daemon 进程里生效。daemon 只在启动时
+// 读 server URL 与 token，所以已有 daemon 在跑时只覆盖 config.json 没用——它还连
+// 着旧部署。需要时重启该 profile，否则做正常的首次启动。
 func runDaemonAfterSetup(cmd *cobra.Command, args []string) error {
 	profile := resolveProfile(cmd)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -283,8 +285,12 @@ func runDaemonAfterSetup(cmd *cobra.Command, args []string) error {
 	)
 }
 
+// setupDaemonRunner 是「启动/重启 daemon」的可注入函数（测试换假实现用）。
 type setupDaemonRunner func(*cobra.Command, []string) error
 
+// dispatchDaemonAfterSetup 决定 daemon 的处理：健康且在跑时，若还有活跃任务就
+// 提醒用户手动重启（避免取消进行中的工作）；无活跃任务则重启以应用新配置；没在
+// 跑就首次启动。
 func dispatchDaemonAfterSetup(
 	cmd *cobra.Command,
 	args []string,
@@ -317,6 +323,7 @@ func dispatchDaemonAfterSetup(
 	return start(cmd, args)
 }
 
+// daemonActiveTaskCount 从健康检查响应里取活跃任务数（兼容 JSON 的 float64 形态）。
 func daemonActiveTaskCount(health map[string]any) int64 {
 	switch count := health["active_task_count"].(type) {
 	case float64:
@@ -330,13 +337,10 @@ func daemonActiveTaskCount(health map[string]any) int64 {
 	}
 }
 
-// persistSelfHostConfigIfReachable probes serverURL and, only when it answers,
-// overwrites the profile config with the given self-host URLs. When the server
-// is unreachable it leaves any existing config — and its auth token — untouched
-// and returns false, so a failed `setup self-host` never logs the user out or
-// clobbers a working config (the original ordering saved first, then probed,
-// then bailed — wiping the token on every failed probe). The prober is injected
-// so tests can exercise both branches without real network I/O.
+// persistSelfHostConfigIfReachable 先探测 serverURL，只有它应答时才用给定
+// self-host URL 覆盖 profile 配置。不可达时保留既有配置与 token、返回 false——
+// 失败的 `setup self-host` 既不登出用户也不冲掉可用配置（最初是「先存后探测再
+// 退出」，每次失败的探测都抹掉 token）。prober 注入便于测试不走真实网络。
 func persistSelfHostConfigIfReachable(serverURL, appURL, profile string, probe func(string) bool) (bool, error) {
 	if !probe(serverURL) {
 		return false, nil
@@ -351,48 +355,42 @@ func persistSelfHostConfigIfReachable(serverURL, appURL, profile string, probe f
 	return true, nil
 }
 
-// resolveSelfHostServerURL picks the backend URL for `setup self-host`: the
-// --server-url flag wins, then the MULTICA_SERVER_URL env var (consistent with
-// the rest of the CLI and the env var documented on the root flag), then an
-// already-configured server_url from the existing config, then the localhost
-// default built from --port. userProvided is true when the URL came from the
-// user (flag, env, or an existing config) rather than the localhost fallback —
-// the caller uses it to decide whether a remote host needs an explicit app_url.
+// resolveSelfHostServerURL 为 `setup self-host` 选后端 URL：--server-url flag 优先，
+// 然后 MULTICA_SERVER_URL 环境变量（与 CLI 其余部分及根 flag 上文档化的一致），
+// 再是既有配置里的 server_url，最后是 --port 拼的 localhost 默认。userProvided 为
+// true 表示 URL 来自用户（flag/env/既有配置）而非 localhost 回退——调用方据此
+// 判断远程 host 是否需要显式 app_url。
 //
-// Falling back to existing.ServerURL means re-running setup self-host (e.g. to
-// re-login or restart the daemon) keeps a configured remote deployment instead
-// of silently resetting it to http://localhost:8080. An explicit --port opts
-// back into the localhost path for the local-dev case.
+// 回退到 existing.ServerURL，意味着重跑 setup self-host（例如重新登录或重启
+// daemon）会保留已配置的远程部署，而不是悄悄重置回 http://localhost:8080。
+// 显式 --port 则回到 localhost 路径，适配本地开发场景。
 //
-// A user-supplied URL is run through normalizeAPIBaseURL, the same path
-// resolveServerURL uses: MULTICA_SERVER_URL is documented as a ws:// daemon
-// address (e.g. ws://localhost:8080/ws), so the ws/wss form and a trailing /ws
-// are accepted and converted to the http(s) base that the reachability probe
-// and the stored server_url expect.
+// 用户给的 URL 会走 normalizeAPIBaseURL——与 resolveServerURL 同一条路径：
+// MULTICA_SERVER_URL 文档化为 ws:// daemon 地址（如 ws://localhost:8080/ws），
+// 所以 ws/wss 形态与尾缀 /ws 都被接受并转成可达性探测与存储 server_url 所期待的
+// http(s) base。
 func resolveSelfHostServerURL(cmd *cobra.Command, existing cli.CLIConfig) (serverURL string, userProvided bool) {
 	if v := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", ""); v != "" {
 		return normalizeAPIBaseURL(v), true
 	}
 	if !cmd.Flags().Changed("port") && existing.ServerURL != "" {
-		// `config set server_url` stores the value as-is, so it may be the
-		// documented ws:// daemon form; normalize it to the http(s) base the
-		// probe and stored server_url expect, like resolveServerURL does.
+		// `config set server_url` 原样存值，可能是文档化的 ws:// daemon 形态；
+		// 规整成探测与存储 server_url 期望的 http(s) base，与 resolveServerURL
+		// 一致。
 		return normalizeAPIBaseURL(existing.ServerURL), true
 	}
 	port, _ := cmd.Flags().GetInt("port")
 	return fmt.Sprintf("http://localhost:%d", port), false
 }
 
-// resolveSelfHostAppURL resolves the frontend URL for `setup self-host`: the
-// --app-url flag wins, then MULTICA_APP_URL, then an already-configured app_url
-// from the existing config (unless --frontend-port was passed). Returns "" when
-// none of those is set, leaving the caller to infer it — prompt for a remote
-// host, or fall back to localhost:<frontend-port>.
+// resolveSelfHostAppURL 解析 `setup self-host` 的前端 URL：--app-url flag 优先，
+// 然后 MULTICA_APP_URL，再是既有配置里的 app_url（除非传了 --frontend-port）。
+// 全都没有时返回 ""，由调用方推断——远程 host 询问用户，否则回退
+// localhost:<frontend-port>。
 //
-// Mirrors resolveSelfHostServerURL so re-running setup self-host keeps a
-// configured remote frontend instead of resetting it to localhost. Unlike
-// server_url, app_url is a plain frontend URL rather than a ws:// daemon
-// address, so it is used as-is without normalizeAPIBaseURL.
+// 与 resolveSelfHostServerURL 镜像：重跑 setup self-host 会保留已配置的远程前端
+// 而不是重置回 localhost。app_url 是普通前端 URL（不是 ws:// daemon 地址），
+// 所以直接用、不过 normalizeAPIBaseURL。
 func resolveSelfHostAppURL(cmd *cobra.Command, existing cli.CLIConfig) string {
 	if v := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL", ""); v != "" {
 		return v
@@ -403,9 +401,8 @@ func resolveSelfHostAppURL(cmd *cobra.Command, existing cli.CLIConfig) string {
 	return ""
 }
 
-// serverHostIsLocal reports whether serverURL points at the same machine as
-// the CLI (loopback literal or "localhost"). Used to decide whether to infer
-// app_url from server_url or fall back to the local-dev default.
+// serverHostIsLocal 判断 serverURL 是否指向 CLI 所在机器（回环字面量或
+// "localhost"）。用于决定 app_url 是照 server_url 推断还是用本地开发默认值。
 func serverHostIsLocal(serverURL string) bool {
 	parsed, err := url.Parse(serverURL)
 	if err != nil {
@@ -421,10 +418,9 @@ func serverHostIsLocal(serverURL string) bool {
 	return false
 }
 
-// promptAppURL asks the user for the frontend URL interactively. We can't
-// derive it from a remote server_url — api.example.com ≠ app.example.com in
-// most production setups — so guessing would just defer the failure to the
-// browser login step. Returns an empty string if the user hits enter.
+// promptAppURL 交互式询问前端 URL。远程 server_url 推不出前端 URL——
+// api.example.com ≠ app.example.com（多数生产环境）——硬猜只会把失败推迟到浏览器
+// 登录那一步。用户直接回车时返回空串。
 func promptAppURL(serverURL string) (string, error) {
 	fmt.Fprintf(os.Stderr, "No --app-url provided, and --server-url (%s) is remote.\n", serverURL)
 	fmt.Fprint(os.Stderr, "Enter the frontend app URL (e.g. https://app.internal.co): ")
@@ -436,7 +432,7 @@ func promptAppURL(serverURL string) (string, error) {
 	return strings.TrimRight(strings.TrimSpace(line), "/"), nil
 }
 
-// probeServer checks whether a Multica backend is reachable at the given URL.
+// probeServer 探测给定 URL 的 Multica 后端是否可达（GET /health 返回 200）。
 func probeServer(baseURL string) bool {
 	url := strings.TrimRight(baseURL, "/") + "/health"
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

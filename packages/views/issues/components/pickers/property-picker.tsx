@@ -1,5 +1,15 @@
 "use client";
 
+// 本文件：PropertyPicker —— 各属性选择器的通用 Popover 外壳。
+// 内置可选的搜索框、键盘上下移动高亮、Enter 确认；子组件只需提供
+// PickerItem / PickerSection / PickerEmpty 等列表内容即可。
+//
+// 键盘语义统一约定（所有具体选择器共用）：
+//   - "空值行"（如"无项目/未分配"）固定钉在首行，但不属于搜索结果——
+//     输入查询后按 Enter 应提交首个真实匹配，绝不把字段清空。
+//   - 高亮跟随键盘移动；选中类样式直接写 DOM（避免整树重渲染）。
+//   - 弹出层在 open->closed 转换时清空搜索状态（见下方 effect 说明）。
+
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Check } from "lucide-react";
 import {
@@ -18,9 +28,8 @@ import { useT } from "../../../i18n";
 const HIGHLIGHT_CLASS = "bg-accent";
 const ITEM_SELECTOR = "button[data-picker-item]:not(:disabled)";
 /**
- * Marks the fixed empty-value row ("No project", "Unassigned", …). The row is
- * pinned first for the eye, but it is not a search result — typing a query and
- * pressing Enter must commit the first real match, never clear the field.
+ * 标记"固定的空值行"（"无项目"、"未分配"……）。该行虽然钉在列表首行，
+ * 但它不是搜索结果——输入查询后按 Enter 必须提交首个真实匹配，绝不回到清空字段。
  */
 const EMPTY_ITEM_ATTR = "data-picker-empty";
 
@@ -28,17 +37,20 @@ const isEmptyItem = (el: HTMLButtonElement | undefined) =>
   el?.hasAttribute(EMPTY_ITEM_ATTR) === true;
 
 /**
- * Default class of the picker popover trigger. Shared with the deferred
- * (pre-mount) lookalike trigger in `DeferredPopup` call sites so the swap on
- * first interaction is pixel-identical.
+ * 选择器 Popover 触发器的默认样式类。与 `DeferredPopup` 调用点里那个
+ * 延迟预挂载的仿触发器共享，保证首次交互时的替换在像素级一致。
  */
 export const PICKER_TRIGGER_CLASS =
   "flex items-center gap-1.5 cursor-pointer rounded px-1 -mx-1 hover:bg-accent/30 transition-colors overflow-hidden";
 
 // ---------------------------------------------------------------------------
-// PropertyPicker — generic Popover shell with optional search
+// PropertyPicker —— 可选搜索的通用 Popover 外壳
 // ---------------------------------------------------------------------------
 
+/**
+ * 通用属性选择器外壳：渲染 trigger + 弹层，弹层内可选搜索框，
+ * 并统一负责方向键高亮、Enter 提交、IME 输入法放行与状态复位。
+ */
 export function PropertyPicker({
   open,
   onOpenChange,
@@ -65,21 +77,17 @@ export function PropertyPicker({
   searchable?: boolean;
   searchPlaceholder?: string | undefined;
   onSearchChange?: (query: string) => void;
-  /** Custom sticky header rendered above the scrollable list. Use for
-   *  filter toggles, search inputs, or any UI that must stay visible while
-   *  the list scrolls. The built-in `searchable` input renders just above
-   *  this header when both are present. */
+  /** 自定义吸顶页头，渲染在可滚动列表上方。用于过滤开关、搜索输入框或任何
+   *  需要在列表滚动时保持可见的 UI。同时提供 `searchable` 时，内置搜索框会
+   *  渲染在该页头正上方。 */
   header?: React.ReactNode;
-  /** Optional design-system tooltip shown when the trigger is hovered while
-   *  the popover is closed. Suppressed automatically when the popover is
-   *  open (otherwise tooltip + popover would stack on the same anchor). */
+  /** 弹层关闭时悬停触发器展示的设计系统 Tooltip。弹层打开时自动抑制
+   *  （否则 Tooltip 与 Popover 会叠在同一个锚点上）。 */
   tooltip?: React.ReactNode;
   children: React.ReactNode;
   /**
-   * Optional footer rendered below the listbox. Unlike items rendered as
-   * children, the footer is *not* included in arrow-key navigation — use it
-   * for actions like "Create new…" or "Manage…" that shouldn't be treated as
-   * selectable listbox options.
+   * 渲染在 listbox 下方的可选页脚。与作为 children 的条目不同，页脚
+   * *不参与*方向键导航——适合放"新建…/管理…"这类不应被当作可选列表项的动作。
    */
   footer?: React.ReactNode;
 }) {
@@ -90,9 +98,8 @@ export function PropertyPicker({
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const [tooltipHover, setTooltipHover] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  // Show the tooltip only while the trigger is hovered AND the popover is
-  // closed — avoids the awkward state where the tooltip floats next to (or
-  // on top of) the popover that just opened on click.
+  // 仅当触发器被悬停且弹层关闭时才展示 Tooltip——避免弹层刚因点击打开时，
+  // Tooltip 还飘在它旁边/上面的尴尬状态。
   const tooltipOpen = !!tooltip && tooltipHover && !open;
 
   const getItems = useCallback(() => {
@@ -102,22 +109,21 @@ export function PropertyPicker({
     );
   }, []);
 
-  // Typing re-highlights the first *real* match. The index can't be computed
-  // in the input's onChange handler — the filtered list hasn't rendered yet —
-  // so the keystroke raises a flag and this effect resolves it against the
-  // fresh DOM. Guarding on the flag keeps arrow keys free to walk back onto
-  // the empty row: only a keystroke moves the highlight off it.
+  // 打字会重新高亮首个*真实*匹配项。索引不能在输入框 onChange 里即时算出——
+  // 此时过滤后的列表尚未渲染——因此按键只立起一个标志位，由本 effect 对着
+  // 新鲜 DOM 求解。靠标志位守卫意味着方向键仍可自由走回空值行：只有按键
+  // 才会把高亮从它身上移开。
   const pendingSearchHighlight = useRef(false);
   useEffect(() => {
     if (!pendingSearchHighlight.current) return;
     pendingSearchHighlight.current = false;
     const items = getItems();
-    // -1 when the query matches nothing (only the empty row is left), which
-    // leaves Enter inert instead of clearing the field.
+    // 查询无匹配时（列表只剩空值行）结果是 -1，Enter 因而保持无操作，
+    // 而不会把字段清空。
     setHighlightedIndex(items.findIndex((item) => !isEmptyItem(item)));
   }, [children, getItems]);
 
-  // Apply/remove highlight class via DOM when index changes
+  // 高亮索引变化时，直接改 DOM 上的类来应用/移除高亮
   useEffect(() => {
     const items = getItems();
     for (const item of items) {
@@ -126,13 +132,12 @@ export function PropertyPicker({
     if (highlightedIndex >= 0 && highlightedIndex < items.length) {
       items[highlightedIndex]?.classList.add(HIGHLIGHT_CLASS);
     }
-  }, [highlightedIndex, getItems, children]); // re-run when children change (filtered list updates)
+  }, [highlightedIndex, getItems, children]); // children 变化（过滤列表刷新）时重跑
 
-  // Reset the search state on the open -> closed transition rather than inside
-  // an open-change handler. Every picker closes itself after a selection by
-  // calling its own `setOpen(false)`, which flips this `open` prop directly and
-  // never routes through the popover's `onOpenChange` — so a handler-only reset
-  // left the stale query (and the filtered list) in place on the next open.
+  // 在 open->closed 转换时复位搜索状态，而不是放进 open-change 处理器里。
+  // 每个选择器在选择后都调用自己的 `setOpen(false)` 来关闭——那会直接翻转
+  // 本 `open` prop，从不经过 Popover 的 `onOpenChange`——所以只靠处理器复位
+  // 会让旧的查询词（以及过滤后的列表）残留到下次打开时。
   const wasOpen = useRef(open);
   useEffect(() => {
     if (wasOpen.current && !open) {
@@ -145,8 +150,8 @@ export function PropertyPicker({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      // IME is composing — Enter/Arrow belong to the IME (Enter commits
-      // composition; Arrow rotates candidates). Don't hijack them.
+      // IME 正在组词——Enter/方向键属于输入法（Enter 确认候选、方向键切换
+      // 候选）。不要劫持它们。
       if (isImeComposing(e)) return;
       const items = getItems();
       if (items.length === 0) return;
@@ -170,9 +175,8 @@ export function PropertyPicker({
         if (highlightedIndex >= 0 && highlightedIndex < items.length) {
           items[highlightedIndex]?.click();
         } else if (items.length === 1 && !isEmptyItem(items[0])) {
-          // Auto-select when only one result. The empty row is excluded: a
-          // query with no matches leaves it as the sole item, and Enter there
-          // would clear the field the user was trying to search in.
+          // 唯一结果时自动选中。空值行被排除：查询无匹配时它会是唯一一项，
+          // 此时若允许 Enter 会清空用户正在搜索的字段。
           items[0]?.click();
         }
       }
@@ -226,9 +230,12 @@ export function PropertyPicker({
 }
 
 // ---------------------------------------------------------------------------
-// PickerItem — single selectable row
+// PickerItem —— 单条可选行
 // ---------------------------------------------------------------------------
 
+/**
+ * 单条可选行。渲染一个真实 <button>，具备选中对勾、可选禁用、可选 Tooltip。
+ */
 export function PickerItem({
   selected,
   disabled,
@@ -243,19 +250,16 @@ export function PickerItem({
   onClick: () => void;
   hoverClassName?: string;
   /**
-   * Marks this row as the field's fixed empty value ("No project",
-   * "Unassigned", "No stage"). Such a row is pinned first for the eye but
-   * excluded from search-result keyboard defaults, so typing a query and
-   * pressing Enter commits the first real match instead of clearing the
-   * field. Arrow keys can still reach it. Set this on rows that write
-   * null/undefined — not on a real enum member that happens to read as
-   * "none" (issue priority), which is a value like any other.
+   * 把本行标记为字段的固定空值（"无项目"、"未分配"、"无阶段"）。这类行会
+   * 钉在首行供一眼定位，但不参与"搜索结果"的键盘默认项——这样输入查询后按
+   * Enter 提交的是首个真实匹配而不是把字段清空。方向键仍可到达它。请只在
+   * 写入 null/undefined 的行上设置；不要把恰好读作"无"的真实枚举成员
+   * （如 issue 优先级）算进来，那是一个与其他值平等的值。
    */
   emptyValue?: boolean;
-  /** Design-system tooltip for the row — useful when truncated content needs
-   *  the full string, or when the row carries metadata that doesn't fit on
-   *  a single line. Wrapped in a real Tooltip component (200ms delay,
-   *  styled), not a native `title` attribute. */
+  /** 行级设计系统 Tooltip——适合内容被截断需展示完整串，或行上带有放不进
+   *  单行的元数据时。用真正的 Tooltip 组件包裹（200ms 延迟、带样式），
+   *  而非原生 `title` 属性。 */
   tooltip?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -268,12 +272,10 @@ export function PickerItem({
       onClick={onClick}
       className={`flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left text-body ${disabled ? "opacity-50 cursor-not-allowed" : hoverClassName ?? "hover:bg-accent"} transition-colors`}
     >
-      {/* min-w-0 lets long children (like truncated label names) shrink
-          inside the flex row instead of pushing the selected checkmark off
-          the right edge. The check column always reserves its 14px slot
-          (visible when selected, invisible otherwise) so unselected rows
-          align with selected rows and the eye doesn't chase a jittery
-          right edge. */}
+      {/* min-w-0 让超长子内容（如被截断的标签名）在 flex 行内可收缩，
+          而不会把右侧选中对勾挤出屏幕。对勾列始终预留其 14px 槽位
+          （选中可见、未选中不可见），保证未选中行与选中行对齐，
+          眼睛不必追着抖动的右边缘跑。 */}
       <span className="flex min-w-0 flex-1 items-center gap-2">{children}</span>
       <Check
         className={`h-3.5 w-3.5 shrink-0 text-muted-foreground ${
@@ -294,9 +296,12 @@ export function PickerItem({
 }
 
 // ---------------------------------------------------------------------------
-// PickerSection — group header
+// PickerSection —— 分组标题
 // ---------------------------------------------------------------------------
 
+/**
+ * 分组标题 + 组内条目。用于把成员/Agent/小队等类别在列表里分节展示。
+ */
 export function PickerSection({
   label,
   children,
@@ -315,9 +320,12 @@ export function PickerSection({
 }
 
 // ---------------------------------------------------------------------------
-// PickerEmpty — no results state
+// PickerEmpty —— 无结果占位
 // ---------------------------------------------------------------------------
 
+/**
+ * "无匹配结果"的空态占位。
+ */
 export function PickerEmpty() {
   const { t } = useT("issues");
   return (

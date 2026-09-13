@@ -1,3 +1,15 @@
+// replier.go：钉钉出站回复器（engine.OutboundReplier 的钉钉实现）——引擎判定
+// 完一条入站消息的「结局」后，把对应的用户可见回复投回钉钉。它复用与
+// EventChatDone 订阅器相同的 sender，不需要新的传输通道。
+//
+// 覆盖的结局：
+//   - NeedsBinding：发送者未绑定。铸造一次性绑定令牌，回一条指向站内兑换页的
+//     「先关联你的账号」引导；绑定后他的下一条消息就能触达 agent。
+//   - AgentOffline / AgentArchived：状态提示，别让用户干等不知道为何没反应。
+//   - FreshPending / IssueUsage：命令确认或纠错引导。
+//   - Ingested 且同步建了 issue：带 issue 标识与标题的确认。普通聊天保持沉默。
+//   - Dropped：被丢弃的 /issue 命令给一句明确的拒绝，避免发送者以为静默等于
+//     已受理。
 package dingtalk
 
 import (
@@ -16,20 +28,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// This file is the DingTalk OutboundReplier — the engine seam that delivers a
-// verdict-driven reply back to the user. It posts through the same sender as the
-// EventChatDone subscriber.
-//
-// Outcomes handled:
-//   - NeedsBinding: the sender is unbound. Mint a single-use binding token and
-//     reply with a "link your account" prompt pointing at the in-product redeem
-//     page. After they bind, their next message reaches the agent.
-//   - AgentOffline / AgentArchived: a status notice so the user is not left
-//     wondering why nothing happened.
-//   - FreshPending / IssueUsage: command confirmation or corrective guidance.
-//   - Ingested with a synchronously-created /issue: a confirmation carrying the
-//     issue identifier and title. Plain chat turns stay silent.
-
 const (
 	agentOfflineText        = "⚠️ The agent is offline, so this message won't be processed automatically."
 	agentArchivedText       = "⚠️ This agent has been archived and can't respond. Please contact your workspace admin."
@@ -37,20 +35,18 @@ const (
 	chatStartedText         = "✅ Started a new Multica chat. Your next message will enter it."
 	issueUsageText          = "Please include an issue title. Use:\n\n`/issue <title>`\n\n`[description]` (optional)"
 	issueUsageWithMediaText = "Please add a title and resend with the image (*image can come before or after the command*):\n\n`/issue <title>`\n\n`[description]` (optional)"
-	// Refusals for dropped /issue commands, carried over from the deleted
-	// pre-engine IssueCommandProcessor: without them the user's command
-	// vanishes with no signal that it will never be handled.
+	// 对丢弃的 /issue 命令的回绝文案，从被删掉的 engine 前 IssueCommandProcessor
+	// 承继：没有它们，用户的命令会凭空消失、连「永远不会被处理」的信号都收不到。
 	issueNotMemberText = "You're not a member of this Multica workspace, so I can't file an issue for you. Ask a workspace admin to invite you, then send the command again."
 	issueDisabledText  = "This DingTalk robot isn't connected to Multica (or was disconnected). Ask the agent owner or a workspace owner/admin to reconnect it."
 )
 
-// bindingMinter is the binding-token surface the replier needs.
-// *BindingTokenService satisfies it.
+// bindingMinter 是回复器需要的绑定令牌能力面。*BindingTokenService 满足它。
 type bindingMinter interface {
 	Mint(ctx context.Context, workspaceID, installationID pgtype.UUID, dingtalkUserID string) (BindingToken, error)
 }
 
-// OutboundReplier implements engine.OutboundReplier for DingTalk.
+// OutboundReplier 是 engine.OutboundReplier 的钉钉实现。
 type OutboundReplier struct {
 	binding     bindingMinter
 	decrypt     Decrypter
@@ -60,25 +56,23 @@ type OutboundReplier struct {
 	logger      *slog.Logger
 }
 
-// OutboundReplierConfig configures the replier. Binding + AppURL are required for
-// the NeedsBinding prompt to work; without them the prompt is skipped (the
-// status and command notices still fire).
+// OutboundReplierConfig 配置回复器。Binding + AppURL 是 NeedsBinding 引导可用
+// 的前提；缺了它们就跳过绑定引导（状态与命令提示照常发）。
 type OutboundReplierConfig struct {
 	Binding bindingMinter
 	Decrypt Decrypter
 	Client  *Client
-	// AppURL is the Multica web app host the user clicks into to redeem the
-	// binding token (e.g. https://multica.example). The bind page (/dingtalk/bind)
-	// is served by the web app, so the link must point at the app host, not the
-	// API host. Mirrors the Slack replier's AppURL.
+	// AppURL 是用户点进去兑换绑定令牌的 Multica Web 应用主机（例如
+	// https://multica.example）。绑定页（/dingtalk/bind）由 Web 应用服务，所以
+	// 链接必须指到应用主机而不是 API 主机。与 Slack 回复器的 AppURL 一致。
 	AppURL      string
-	BindingPath string // default "/dingtalk/bind"
+	BindingPath string // 绑定页路径，默认 "/dingtalk/bind"
 	Logger      *slog.Logger
 }
 
 var _ engine.OutboundReplier = (*OutboundReplier)(nil)
 
-// NewOutboundReplier builds the replier.
+// NewOutboundReplier 构造回复器。
 func NewOutboundReplier(cfg OutboundReplierConfig) *OutboundReplier {
 	logger := cfg.Logger
 	if logger == nil {
@@ -105,8 +99,8 @@ func NewOutboundReplier(cfg OutboundReplierConfig) *OutboundReplier {
 	}
 }
 
-// Reply routes each outcome to its user-visible message. Errors are logged, not
-// propagated: the replier runs detached from the inbound ACK path.
+// Reply 按结局分派要发给用户的消息。错误只记日志不向上抛：回复器脱离入站 ACK
+// 路径运行，它的失败不应拖累消息确认。
 func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, res engine.Result) {
 	switch res.Outcome {
 	case engine.OutcomeNeedsBinding:
@@ -154,9 +148,8 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 			}
 		}
 	case engine.OutcomeDropped:
-		// Dropped /issue commands get a refusal so the sender is not left
-		// waiting for an issue that will never be created; every other drop
-		// (duplicates, unaddressed group chatter) stays silent.
+		// 被丢弃的 /issue 命令要回一句明确拒绝，别让发送者以为会建 issue 而干等；
+		// 其它丢弃（重复消息、没 @ 机器人的群聊闲聊）保持沉默。
 		if text := droppedReplyText(res, msg); text != "" {
 			if err := r.post(ctx, inst, msg, text); err != nil {
 				r.logger.WarnContext(ctx, "dingtalk replier: drop refusal failed",
@@ -166,6 +159,8 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 	}
 }
 
+// sendBindingPrompt 铸造一枚绑定令牌并把「关联账号」引导发出去。令牌嵌在指向站
+// 内兑换页的 URL 里；绑定完成后发送者的下一条消息就能触达 agent。
 func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, res engine.Result) error {
 	sender := res.Sender
 	if sender == "" {
@@ -187,10 +182,9 @@ func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.Res
 	bindURL := r.appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
 	text := "👋 To start chatting with me, link your DingTalk account to Multica: [link your account](" +
 		bindURL + ")\n\n(This link expires in 15 minutes.)"
-	// Deliver the single-use binding link privately (1:1) to the sender, never
-	// via targetFromMessage: in a group that would post the token into the whole
-	// chat, where any other workspace member could redeem it and bind the
-	// sender's DingTalk id to their own account (identity misbinding).
+	// 单次绑定链接必须【私聊（1:1）】发给本人，绝不走 targetFromMessage：群聊里
+	// 那样发等于把令牌贴进整群，群里任何成员都能捡去兑换——把发送者的钉钉 id 绑
+	// 到自己名下（身份错绑）。
 	target := sendTarget{ConversationType: convTypeP2P, StaffID: sender}
 	if _, err := sendInstallationText(ctx, r.client, r.decrypt, inst, target, text); err != nil {
 		return fmt.Errorf("post dingtalk binding prompt: %w", err)
@@ -198,8 +192,7 @@ func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.Res
 	return nil
 }
 
-// post resolves the installation's credentials from the carried platform row and
-// sends text back into the originating conversation.
+// post 从携带的平台行里解析安装凭据，并把 text 发回消息来源的会话。
 func (r *OutboundReplier) post(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, text string) error {
 	if _, err := sendInstallationText(ctx, r.client, r.decrypt, inst, targetFromMessage(msg), text); err != nil {
 		return fmt.Errorf("post dingtalk reply: %w", err)
@@ -207,9 +200,8 @@ func (r *OutboundReplier) post(ctx context.Context, inst engine.ResolvedInstalla
 	return nil
 }
 
-// sendInstallationText resolves an installation's credentials from the carried
-// platform row and sends text into target. Shared by the OutboundReplier and the
-// ack notifier so both proactive-send paths decode credentials identically.
+// sendInstallationText 从携带的平台行解析安装凭据，并把 text 发到 target。供
+// OutboundReplier 与 ack 通知器共用，两条主动发送路径的解密逻辑保持一致。
 func sendInstallationText(ctx context.Context, client *Client, decrypt Decrypter, inst engine.ResolvedInstallation, target sendTarget, text string) (string, error) {
 	row, ok := inst.Platform.(db.ChannelInstallation)
 	if !ok {
@@ -223,9 +215,8 @@ func sendInstallationText(ctx context.Context, client *Client, decrypt Decrypter
 	return s.send(ctx, target, text)
 }
 
-// targetFromMessage builds the reply target from the inbound message's own
-// routing identity (used for the immediate binding/status replies, before any
-// chat binding exists).
+// targetFromMessage 从入站消息自带的路由身份构造回复目标（用于即时绑定/状态回
+// 复——此刻还没有任何聊天绑定存在）。
 func targetFromMessage(msg channel.InboundMessage) sendTarget {
 	t := sendTarget{ConversationType: convTypeGroup, ConversationID: msg.Source.ChatID}
 	if msg.Source.ChatType == channel.ChatTypeP2P {
@@ -235,10 +226,9 @@ func targetFromMessage(msg channel.InboundMessage) sendTarget {
 	return t
 }
 
-// isAddressedIssueCommand reports whether msg is an /issue command explicitly
-// addressed to the bot — the gating the deleted pre-engine divert used. Only
-// such messages warrant an error/refusal reply: the sender asked for an
-// action, so silence would read as acceptance.
+// isAddressedIssueCommand 判断 msg 是不是一条显式 @ 到机器人的 /issue 命令——
+// 这是被删掉的 engine 前 divert 用的门槛。只有这类消息才配回错误/拒绝：发送者
+// 明确请求了动作，沉默会被理解成「已受理」。
 func isAddressedIssueCommand(msg channel.InboundMessage) bool {
 	if !msg.AddressedToBot {
 		return false
@@ -251,7 +241,7 @@ func isAddressedIssueCommand(msg channel.InboundMessage) bool {
 	return ok
 }
 
-// droppedReplyText maps an OutcomeDropped result to a user-facing refusal.
+// droppedReplyText 把 OutcomeDropped 的结果映射成对用户可见的拒绝文案。
 func droppedReplyText(res engine.Result, msg channel.InboundMessage) string {
 	if !isAddressedIssueCommand(msg) {
 		return ""
@@ -266,6 +256,7 @@ func droppedReplyText(res engine.Result, msg channel.InboundMessage) string {
 	}
 }
 
+// issueCreatedText 拼一条「issue 已创建」的确认文案。
 func issueCreatedText(res engine.Result) string {
 	identifier := issueResultIdentifier(res)
 	if res.IssueTitle == "" {
@@ -274,6 +265,7 @@ func issueCreatedText(res engine.Result) string {
 	return "✅ Created " + identifier + " — " + res.IssueTitle
 }
 
+// issueDuplicateText 拼一条「重复 issue 未创建」的提示文案。
 func issueDuplicateText(res engine.Result) string {
 	identifier := issueResultIdentifier(res)
 	if res.IssueTitle == "" {
@@ -282,6 +274,8 @@ func issueDuplicateText(res engine.Result) string {
 	return "⚠️ Not created — active issue " + identifier + " already exists: " + res.IssueTitle
 }
 
+// issueResultIdentifier 产出 issue 的展示标识：有项目内编号用它，其次回退到
+// #数字（issue number），最后用 issue id。
 func issueResultIdentifier(res engine.Result) string {
 	if res.IssueIdentifier != "" {
 		return res.IssueIdentifier

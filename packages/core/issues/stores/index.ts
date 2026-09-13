@@ -1,3 +1,5 @@
+// 议题相关的客户端状态 store 的统一出口：选择、创建模式、草稿、最近议题、
+// 视图设置、评论折叠/展开、子议题显示等全部从这里对外导出。
 export { useIssueSelectionStore } from "./selection-store";
 export {
   useCreateModeStore,

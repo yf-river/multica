@@ -1,19 +1,36 @@
 "use client"
+// 本文件是悬停卡片（HoverCard）组件（基于 Base UI 的 PreviewCard）：
+// 鼠标悬停/键盘聚焦在触发器上时，在附近浮出内容预览卡片（如用户资料卡）。
 
 import { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card"
 
 import { cn } from "@multica/ui/lib/utils"
 
+/** HoverCard：悬停卡片的根组件，管理开/关状态 */
 function HoverCard({ ...props }: PreviewCardPrimitive.Root.Props) {
   return <PreviewCardPrimitive.Root data-slot="hover-card" {...props} />
 }
 
+/** HoverCardTrigger：触发卡片出现的元素 */
 function HoverCardTrigger({ ...props }: PreviewCardPrimitive.Trigger.Props) {
   return (
     <PreviewCardPrimitive.Trigger data-slot="hover-card-trigger" {...props} />
   )
 }
 
+/**
+ * HoverCardContent：浮出的预览卡片内容（渲染在 body 端传送门里）。
+ *
+ * 特别注意这里主动拦截了一组点击类事件（click/右键/中键/双击），不让它们
+ * 冒泡到 React 组件树外层：Base UI 把弹层传送到 <body>，DOM 上虽然已经脱离
+ * 触发器，但 React 的合成事件仍会沿组件树冒泡——不拦截的话，弹层里的点击
+ * 会同时触发触发器任何祖先上的监听（比如可点击的列表行、外层 <a>）。
+ *
+ * 刻意不去拦截 pointerdown / mousedown：Base UI 的「点击外部关闭」监听的是
+ * document 上的 pointerdown，并通过「是否点在 React 树内部」来判断要不要关。
+ * 如果在弹层内拦掉 pointerdown，关闭逻辑会误以为点击发生在外部，导致要连点
+ * 两次才能关掉（与 radix-ui/primitives#2782 相同的问题）。
+ */
 function HoverCardContent({
   className,
   side = "bottom",
@@ -43,6 +60,7 @@ function HoverCardContent({
   // pointerdown inside the popup would make the dismiss handler wrongly
   // think the click happened outside, requiring two clicks to close
   // (mirrors radix-ui/primitives#2782).
+  // 组合 stop 包装器：阻止事件冒泡，同时仍执行调用方传进来的原回调（如果有）
   const stop = <E extends React.SyntheticEvent>(forwarded?: (e: E) => void) =>
     (e: E) => {
       e.stopPropagation()

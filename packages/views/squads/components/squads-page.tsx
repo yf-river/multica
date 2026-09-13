@@ -92,13 +92,18 @@ import {
 import { useLocale, useT } from "../../i18n";
 import { PAGE_TOOLBAR } from "../../layout/page-header";
 
-// Column template — the simplest member of the ListGrid family (squads are
-// the fewest entity, 1-5 rows): subgrid template + var tracks + two-zone
-// responsiveness + single scroll container, but NO virtualization, checkbox,
-// or batch. Identity two-line rows (avatar + name + description, 64px) like
-// the agents list. Name + leader are the core set (<@2xl); members / creator
-// / created are @2xl. The kebab track collapses when the viewer can't manage
-// any squad (workspace admin only).
+/**
+ * squads 模块：小队列表页。
+ * 以表格形式列出当前工作区的小队，支持范围切换（我的/全部）、按创建者与
+ * 负责人筛选、排序、显示列开关，以及对小队的归档（删除）操作。
+ */
+
+// 列模板——ListGrid 家族里最简单的一员（小队是实体里最少的，通常只有 1-5
+// 行）：子网格模板 + var 轨道 + 两档响应式 + 单一滚动容器，但无需虚拟滚动、
+// 复选框或批量操作。身份采用两行式（头像 + 名称 + 简介，64px），与 agents
+// 列表一致。名称 + 负责人是核心列（<@2xl 也显示）；成员 / 创建者 / 创建时间
+// 在 @2xl 才显示。当查看者无法管理任何小队（仅工作区管理员可管理）时，
+// kebab 操作列塌缩隐藏。
 const GRID_COLS =
   "grid-cols-[0.75rem_minmax(120px,1fr)_var(--sqc-leader)_var(--sqc-kebab)_0.75rem] " +
   "@2xl:grid-cols-[0.75rem_minmax(200px,1fr)_var(--sqc-leader)_var(--sqc-members)_var(--sqc-creator)_var(--sqc-created)_var(--sqc-kebab)_0.75rem]";
@@ -110,9 +115,8 @@ const COLUMN_WIDTHS: Record<SquadColumnKey, number> = {
   created: 104,
 };
 
-// Fixed tracks (edges 12+12, name min 200, leader 160) plus the 7 gap-x-3
-// gaps between the wide template's 8 tracks (zero-width tracks still carry
-// gaps).
+// 固定轨道宽度：两侧留白（12+12）+ 名称列最小 200 + 负责人列 160，再加上
+// 宽模板 8 条轨道之间的 7 个 gap-x-3 间隙（零宽轨道仍占用 gap）。
 const FIXED_TRACKS_WIDTH = 224 + LEADER_WIDTH + 7 * 12;
 
 function columnTrackVars(
@@ -139,9 +143,10 @@ function columnTrackVars(
 }
 
 // ---------------------------------------------------------------------------
-// Cells
+// 单元格（每列的数据单元）
 // ---------------------------------------------------------------------------
 
+/** 小队头像：有自定义头像就显示图片，否则按名称缩写渲染团队占位头像。 */
 function SquadAvatar({ squad }: { squad: Squad }) {
   const initials = squad.name
     .split(" ")
@@ -171,7 +176,7 @@ function SquadAvatar({ squad }: { squad: Squad }) {
   );
 }
 
-// Two-line identity cell — same form as the agents list.
+// 两行式身份单元格——与 agents 列表形式相同。
 function NameCell({ squad }: { squad: Squad }) {
   return (
     <ListGridCell className="gap-3">
@@ -190,6 +195,7 @@ function NameCell({ squad }: { squad: Squad }) {
   );
 }
 
+/** 负责人单元格：展示小队 leader（始终是 agent）的头像与名称。 */
 function LeaderCell({
   leaderId,
   leader,
@@ -207,9 +213,8 @@ function LeaderCell({
   );
 }
 
-// Polymorphic member avatar stack (agent + human members), driven by the
-// list payload's member_preview / member_count. NOT AgentAvatarStack, which
-// is agent-only.
+// 多类型成员头像叠放（agent + 人类成员），由列表载荷的 member_preview /
+// member_count 驱动。不用 AgentAvatarStack——那个只支持 agent。
 function MembersCell({ squad }: { squad: Squad }) {
   const preview = squad.member_preview ?? [];
   const count = squad.member_count ?? preview.length;
@@ -249,11 +254,12 @@ function MembersCell({ squad }: { squad: Squad }) {
 }
 
 // ---------------------------------------------------------------------------
-// Archive (= delete) dialog — reuses the existing archive_dialog copy.
-// Workspace owner/admin only (backend gate). No restore endpoint exists, so
-// once archived a squad is gone from the UI.
+// 归档（= 删除）弹窗——复用现有 archive_dialog 文案。
+// 仅工作区 owner/admin 可用（后端同样拦截）。没有恢复接口，一旦归档，
+// 小队就从 UI 里消失了。
 // ---------------------------------------------------------------------------
 
+/** 归档小队确认弹窗：确认后调用删除接口并失效小队列表缓存。 */
 function ArchiveSquadDialog({
   squad,
   open,
@@ -317,6 +323,7 @@ function ArchiveSquadDialog({
   );
 }
 
+/** 行操作菜单：在新标签打开详情、归档小队。 */
 function SquadRowActions({ squad }: { squad: Squad }) {
   const { t } = useT("squads");
   const { t: tCommon } = useT("common");
@@ -372,9 +379,10 @@ function SquadRowActions({ squad }: { squad: Squad }) {
 }
 
 // ---------------------------------------------------------------------------
-// Header + toolbar
+// 页头与工具栏
 // ---------------------------------------------------------------------------
 
+/** 小队列表的表头：可点击列头排序，并随隐藏列状态省略对应列。 */
 function SquadListHeader({
   sortField,
   sortDirection,
@@ -424,7 +432,7 @@ function SquadListHeader({
       ) : (
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
       )}
-      {/* kebab track placeholder (track width collapses when no actions) */}
+      {/* kebab 操作列占位（无操作时该轨道宽度塌缩为 0） */}
       <span aria-hidden="true" />
     </ListGridHeader>
   );
@@ -433,12 +441,14 @@ function SquadListHeader({
 const COLUMN_KEYS: SquadColumnKey[] = ["members", "creator", "created"];
 const SORT_FIELDS: SquadSortField[] = ["name", "members", "created"];
 
+/** 筛选下拉里可选的 actor（leader/creator）选项。 */
 interface ActorOption {
   id: string;
   name: string;
   count: number;
 }
 
+/** 小队列表顶部的工具栏：范围切换、筛选、排序与显示列设置。 */
 function SquadListToolbar({
   scope,
   onScopeChange,
@@ -562,7 +572,7 @@ function SquadListToolbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-      {/* Filter */}
+      {/* 筛选 */}
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -655,7 +665,7 @@ function SquadListToolbar({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* Display settings */}
+      {/* 显示设置（排序与显示列） */}
       <Popover>
         <Tooltip>
           <PopoverTrigger
@@ -766,9 +776,14 @@ function SquadListToolbar({
 }
 
 // ---------------------------------------------------------------------------
-// Page
+// 页面主体
 // ---------------------------------------------------------------------------
 
+/**
+ * 小队列表页主组件。
+ * 汇总小队、agent 与成员查询，把范围筛选、排序、过滤后的行渲染成网格；
+ * 空/加载状态分别展示对应占位。
+ */
 export function SquadsPage() {
   const { t } = useT("squads");
   const locale = useLocale();
@@ -826,8 +841,7 @@ export function SquadsPage() {
     return { mine, all: squads.length };
   }, [squads, currentUser]);
 
-  // Rows within the current scope, unfiltered — filter option lists + the
-  // "n / total" denominator derive from this.
+  // 当前范围内、未加过滤的行——筛选项列表与「n / 总数」的分母都由它推导。
   const scopeRows = useMemo<Squad[]>(() => {
     return squads.filter((s) => {
       if (scope === "mine") {
@@ -898,9 +912,8 @@ export function SquadsPage() {
     return sorted;
   }, [scopeRows, filters, sortField, sortDirection]);
 
-  // Reserve the row-actions (kebab) track when the current user can manage at
-  // least one visible squad. Workspace admins manage all squads; a regular
-  // member manages the squads they created (MUL-4223).
+  // 当当前用户能管理至少一个小队时保留行操作（kebab）轨道。工作区管理员
+  // 能管理全部小队；普通成员只能管理自己创建的小队（MUL-4223）。
   const canManageAnyRow = useMemo(
     () =>
       isWorkspaceAdmin ||
@@ -1033,6 +1046,7 @@ export function SquadsPage() {
   );
 }
 
+/** 加载中的骨架屏：先按默认列渲染几行灰色占位。 */
 function LoadingSkeleton() {
   return (
     <div className="min-h-0 flex-1 overflow-auto @container">

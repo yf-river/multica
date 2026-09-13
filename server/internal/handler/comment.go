@@ -1,3 +1,15 @@
+// 职责定位：本文件实现 issue 下 comment（评论）的 HTTP 处理：列表（含 roots_only / since /
+// thread / tail / recent / before 游标 / summary / fold 等面向 AI 读者的投影模式）、创建、
+// 编辑、删除、解决/取消解决，以及评论触发 agent 的整套路由与去重入队逻辑。
+
+// 关键约定：评论是 agent 运行的触发源——@agent/@squad 提及、回复父评论作者、回复所属线程
+// 的 agent 会话、issue 受理人回退等都会派生出「要触发谁」。触发计算必须与预览一致、与保存
+// 一致，多条评论合并进同一任务时靠完成时的 reconcile 保证「每条评论都有人回应」。/note 前缀
+// 的评论只留档、绝不触发。
+
+// 内部组织：先是最新的评论响应模型与 fold/摘要等只读投影辅助，然后是 ListComments 及其
+// 各模式的数据获取；接着是评论触发（triggers/targets/合并入队/兜底升级）相关的大量辅助，
+// 最后是 CreateComment / UpdateComment / DeleteComment / ResolveComment / UnresolveComment。
 package handler
 
 import (
@@ -27,6 +39,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// CommentResponse 是单条评论的 JSON 响应体。除基础字段外，只有对应读取模式（roots_only /
+// summary / fold）才会填充扩展字段，默认形态对老客户端保持字节不变。
 type CommentResponse struct {
 	ID             string  `json:"id"`
 	IssueID        string  `json:"issue_id"`
@@ -43,50 +57,38 @@ type CommentResponse struct {
 	ResolvedByType *string `json:"resolved_by_type"`
 	ResolvedByID   *string `json:"resolved_by_id"`
 	SourceTaskID   *string `json:"source_task_id,omitempty"`
-	// QuickActionID marks a comment produced by a quick action run (MUL-5465).
-	// The timeline renders those as a collapsed one-line card instead of the
-	// raw prompt body. It is NOT settable through this endpoint — there is no
-	// request field for it — which is exactly why the card keys off this id
-	// rather than a `type` value the client controls.
+	// QuickActionID 标记这条评论由 quick action 运行产生（MUL-5465）。时间线把它渲染成折叠的
+	// 单行卡片，而不是展示原始 prompt 正文。本字段不能通过该端点设置——请求里没有对应字段——
+	// 这正是卡片以它为准而不是以客户端可控的 `type` 值为准的原因。
 	QuickActionID *string              `json:"quick_action_id,omitempty"`
 	Reactions     []ReactionResponse   `json:"reactions"`
 	Attachments   []AttachmentResponse `json:"attachments"`
-	// Orientation stats — populated only on the roots_only path and omitted in
-	// every other mode, so the default response shape stays byte-identical for
-	// existing callers. ReplyCount is the number of descendants in the thread;
-	// LastActivityAt is the MAX(created_at) across the whole subtree. Together
-	// they let an agent triage which thread to drill into without fetching any
-	// replies.
+	// 方向性统计——只在 roots_only 路径填充、其余模式一律省略，让默认响应形态与老调用方
+	// 字节一致。ReplyCount 是线程内后代评论数；LastActivityAt 是整棵子树的 MAX(created_at)。
+	// 两者让 agent 不必抓取任何回复就能判断该钻进哪条线程。
 	ReplyCount     *int    `json:"reply_count,omitempty"`
 	LastActivityAt *string `json:"last_activity_at,omitempty"`
-	// ContentTruncated is set only under summary=true: true when Content was
-	// clipped to the summary budget, false when it fit. nil (omitted) means the
-	// caller did not request a summary projection, so Content is verbatim.
+	// ContentTruncated 只在 summary=true 时设置：true 表示 Content 被裁到摘要预算内，
+	// false 表示装得下；nil（省略）表示调用方没要求摘要投影，Content 是逐字原文。
 	ContentTruncated *bool `json:"content_truncated,omitempty"`
-	// Fold projection fields — populated only under fold=true, and only on the
-	// thread ROOT of a resolved thread (mirrors the human timeline fold; see
-	// foldResolvedThreads). Both are nil/omitted everywhere else: every comment
-	// under an unresolved thread, and every non-root comment. ThreadResolved
-	// marks a thread whose discussion was collapsed to its conclusion;
-	// FoldedCount is how many comments in that thread were dropped from the
-	// response (0 when the thread was already at root + conclusion). The reader
-	// pulls the folded comments back with `comment list --full`.
+	// 折叠投影字段——只在 fold=true 时填充，且只填在已解决线程的「根」评论上（镜像人类
+	// 时间线的折叠，见 foldResolvedThreads）。其余情况两者都为 nil/省略：未解决线程下的每条
+	// 评论、以及所有非根评论。ThreadResolved 标记线程讨论被折叠到结论；FoldedCount 是这条
+	// 线程里从响应中裁掉的评论数（线程本来就只有根+结论时为 0）。读者可用 `comment list
+	// --full` 把折叠的评论拉回来。
 	ThreadResolved *bool `json:"thread_resolved,omitempty"`
 	FoldedCount    *int  `json:"folded_count,omitempty"`
-	// TriggerOutcomes is the per-target result of every EXPLICIT @agent / @squad
-	// mention in this comment (MUL-4525 §2). It is additive and populated only on
-	// create/edit responses: old clients ignore it. A saved comment whose mention
-	// was blocked (no invoke permission, target unavailable, runtime offline) now
-	// reports that here instead of silently dropping the trigger, so the client
-	// can show "comment posted, but N targets were not triggered".
+	// TriggerOutcomes 是这条评论里每个显式 @agent / @squad 提及的按目标结果（MUL-4525 §2）。
+	// 它是增量字段，只在创建/编辑响应上填充：老客户端直接忽略。被拦截的提及（无调用权限、
+	// 目标不可用、runtime 离线）在这里上报而不是被静默丢弃，客户端才能提示「评论已发，但有
+	// N 个目标未被触发」。
 	TriggerOutcomes []CommentTriggerOutcome `json:"trigger_outcomes,omitempty"`
 }
 
-// CommentTriggerOutcome is the per-target result of an explicit @agent / @squad
-// mention (MUL-4525 §2). target_id is the id the user mentioned — the agent id,
-// or the SQUAD id for a squad mention — so the client correlates it back to the
-// mention it rendered without the server echoing a private target's name/owner.
-// reason_code is the stable, enumeration-safe admission reason.
+// CommentTriggerOutcome 是一次显式 @agent / @squad 提及的按目标结果（MUL-4525 §2）。
+// target_id 是用户提及时写的 id——agent 提及时是 agent id、squad 提及时是 SQUAD id——客户端
+// 借此对应回它渲染的那条提及，而不必让服务端回显私密目标的名字/主人。reason_code 是稳定的、
+// 枚举安全的准入原因。
 type CommentTriggerOutcome struct {
 	TargetType string             `json:"target_type"` // "agent" | "squad"
 	TargetID   string             `json:"target_id"`
@@ -94,6 +96,8 @@ type CommentTriggerOutcome struct {
 	ReasonCode DispatchReasonCode `json:"reason_code"`
 }
 
+// commentToResponse 把数据库行 db.Comment 转成对外 JSON 响应；reactions/attachments 传 nil
+// 时归一为空数组，保证线上字段形态稳定。
 func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments []AttachmentResponse) CommentResponse {
 	if reactions == nil {
 		reactions = []ReactionResponse{}
@@ -122,19 +126,16 @@ func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments [
 	}
 }
 
-// summaryContentRunes bounds comment content under summary=true. 200 runes is
-// enough to tell what a comment is about (its opening) while cutting the bulk
-// of a long body out of an agent's context budget. Counted in runes, not bytes,
-// so multi-byte (e.g. CJK) content is clipped on a character boundary.
+// summaryContentRunes 是 summary=true 模式下评论内容的长度上限。200 个 rune 足够看出一条
+// 评论在说什么（开头），又能把长正文大部分从 agent 的上下文预算里切掉。按 rune 而非字节计数，
+// 多字节内容（如中日韩）不会在字符中间被切断。
 const summaryContentRunes = 200
 
-// summarizeContent clips content to summaryContentRunes for the summary
-// projection. Returns the (possibly clipped) content and whether it was
-// truncated. An ellipsis marks a clip so the reader knows more text exists.
+// summarizeContent 把内容裁到 summaryContentRunes 以内用于摘要投影。返回（可能被裁的）内容
+// 以及是否被截断；被裁时补省略号提醒读者后面还有内容。
 //
-// It scans by rune and stops at the (budget+1)th rune rather than allocating a
-// full []rune for the whole body — so a pathologically long comment costs only
-// the budget, not its full length, under summary mode.
+// 它按 rune 逐个扫描，在 (预算+1) 个 rune 处停下，而不是给整个正文分配 []rune——病态超长的
+// 评论在摘要模式下只花预算那么多成本，而不是花它的完整长度。
 func summarizeContent(content string) (string, bool) {
 	count := 0
 	for byteOffset := range content { // range over a string yields rune start offsets
@@ -146,45 +147,32 @@ func summarizeContent(content string) (string, bool) {
 	return content, false
 }
 
-// foldStat is the per-thread fold annotation attached to a resolved thread's
-// root under fold=true. FoldedCount is how many comments in the thread were
-// dropped from the response. See CommentResponse.ThreadResolved / FoldedCount.
+// foldStat 是 fold=true 时挂在已解决线程根上的折叠注解。FoldedCount 是从响应里裁掉的评论数。
+// 见 CommentResponse.ThreadResolved / FoldedCount。
 type foldStat struct {
 	FoldedCount int
 }
 
-// foldResolvedThreads collapses every resolved thread in a COMPLETE-thread
-// comment set down to the comments a reader actually needs, mirroring the human
-// timeline fold (deriveThreadResolution in
-// packages/views/issues/components/thread-utils.ts) so agents see what humans
-// see:
+// foldResolvedThreads 把「完整线程」评论集合里每个已解决线程折叠成读者真正需要的评论，
+// 镜像人类时间线的折叠（packages/views/issues/components/thread-utils.ts 里的
+// deriveThreadResolution），让 agent 看到人类看到的东西：
 //
-//   - unresolved thread     → every comment kept, unchanged, no annotation.
-//   - reply-resolved thread → keep the thread root + the resolution reply (the
-//     conclusion), drop every other reply. Root + conclusion, never conclusion
-//     alone: a conclusion is often referential ("go with what we said above")
-//     and unreadable without the root question.
-//   - root-resolved thread  → keep only the root, drop every reply (the whole
-//     discussion was a settled dead-end; the root states the topic).
+//   - 未解决线程 → 全部保留、原样不动、无注解。
+//   - 回复式解决 → 保留线程根 + 那条解决回复（结论），丢弃其余回复。是「根 + 结论」而不是
+//     「只有结论」：结论常是引用式的（「按我们上面说的办」），没有根问题就读不懂。
+//   - 根式解决 → 只保留根，丢弃所有回复（整场讨论是个已了结的死胡同，根就点明了话题）。
 //
-// The thread root of each resolved thread is annotated (foldStat keyed by the
-// root's id string) so the response can mark it thread_resolved and report how
-// many comments were folded; a reader that needs the dropped discussion pulls
-// it back with `comment list --full`.
+// 每个已解决线程的根会被注解（以根的 id 字符串为 key 的 foldStat），响应据此标记
+// thread_resolved 并上报裁掉的数量；需要被裁讨论的读者用 `comment list --full` 拉回来。
 //
-// Resolution is derived exactly as the UI does: the root wins if resolved;
-// otherwise the reply with the latest resolved_at is THE resolution. The single
-// resolved-per-thread invariant (ClearOtherThreadResolutions) normally makes
-// this unambiguous; the latest-wins tiebreak keeps the projection total if an
-// older/concurrent write ever left two.
+// 解决判定与 UI 完全一致：根已解决则以根为准；否则 resolved_at 最新的那条回复就是「解决」。
+// 「每线程最多一条解决」约束（ClearOtherThreadResolutions）通常让这无歧义；latest-wins 的
+// 决胜规则保证即使某次旧/并发写留下了两条，投影也保持总数量正确。
 //
-// Callers MUST invoke this only on a set containing COMPLETE threads (the
-// default list, --recent, and untailed --thread reads). Partial-thread reads
-// (--since, --tail) are rejected upstream because a fold computed over a partial
-// thread could drop a resolution that was never fetched. As defense in depth,
-// any comment whose thread root is absent from the set is treated as its own
-// root and kept verbatim, so a partial thread degrades to "unchanged" rather
-// than to silent data loss.
+// 调用方只能对「包含完整线程」的集合（默认列表、--recent、未加 tail 的 --thread 读）调用本
+// 函数。部分线程读（--since、--tail）会在上游被拒，因为对部分线程做折叠可能把从未取到的解决
+// 丢进讨论里。纵深防御：集合里缺线程根的评论被当作自己的根、原样保留，部分线程因此退化成
+// 「原样」，而不是静默丢数据。
 func foldResolvedThreads(comments []db.Comment) ([]db.Comment, map[string]foldStat) {
 	if len(comments) == 0 {
 		return comments, nil
@@ -195,11 +183,9 @@ func foldResolvedThreads(comments []db.Comment) ([]db.Comment, map[string]foldSt
 		byID[uuidToString(c.ID)] = c
 	}
 
-	// rootOf walks parent_id up to the thread root within this set. It stops at
-	// the first comment whose parent is absent (in a complete-thread set that is
-	// the real root; in a partial set it is the highest ancestor we hold). The
-	// loop is bounded by len(comments) so an unexpected cycle cannot hang it —
-	// the PK forbids real cycles, but never trust a graph walk over stored data.
+	// rootOf 沿着 parent_id 向上走到本集合内的线程根。停在「父级不在集合里」的第一个评论
+	//（完整线程集合里那是真根；部分集合里则是我们手里最高的祖先）。循环以 len(comments)
+	// 为界，异常成环也不会挂死——主键禁止真环，但对存量数据做图遍历永远别假设不会坏。
 	rootOf := func(c db.Comment) db.Comment {
 		cur := c
 		for i := 0; i < len(comments); i++ {
@@ -236,13 +222,13 @@ func foldResolvedThreads(comments []db.Comment) ([]db.Comment, map[string]foldSt
 	keep := make(map[string]bool, len(comments))
 	stats := map[string]foldStat{}
 	for rid, th := range threads {
-		// Root-resolved: keep only the root.
+		// 根已解决：只保留根。
 		if th.root.ResolvedAt.Valid {
 			keep[rid] = true
 			stats[rid] = foldStat{FoldedCount: len(th.replies)}
 			continue
 		}
-		// Reply-resolved: the latest-resolved reply is the conclusion.
+		// 回复式解决：最新 resolved 的回复就是结论。
 		var resolution *db.Comment
 		for i := range th.replies {
 			r := &th.replies[i]
@@ -254,7 +240,7 @@ func foldResolvedThreads(comments []db.Comment) ([]db.Comment, map[string]foldSt
 			}
 		}
 		if resolution == nil {
-			// Unresolved thread: keep everything, no annotation.
+			// 未解决线程：全部保留、无注解。
 			keep[rid] = true
 			for _, r := range th.replies {
 				keep[uuidToString(r.ID)] = true
@@ -263,7 +249,7 @@ func foldResolvedThreads(comments []db.Comment) ([]db.Comment, map[string]foldSt
 		}
 		keep[rid] = true
 		keep[uuidToString(resolution.ID)] = true
-		// Every reply except the conclusion is folded away.
+		// 除结论外的每条回复都被折叠掉。
 		stats[rid] = foldStat{FoldedCount: len(th.replies) - 1}
 	}
 
@@ -276,123 +262,82 @@ func foldResolvedThreads(comments []db.Comment) ([]db.Comment, map[string]foldSt
 	return out, stats
 }
 
-// commentHardCap bounds the comments returned per issue. Sized as a defensive
-// safety net rather than a UX paging window: prod p99 is ~30 comments and
-// the all-time max observed is ~1.1k, so 2000 leaves ~2x headroom while still
-// preventing a runaway response if some user manages to accumulate a wild
-// number of rows on a single issue.
+// commentHardCap 限制每条 issue 最多返回的评论数。这是防御性安全网而不是 UX 分页窗口：
+// 生产 p99 约 30 条、历史最大值约 1.1k，2000 留出约 2 倍余量，同时能防住某个用户在单条
+// issue 上堆出海量行时响应失控。
 const commentHardCap = 2000
 
-// HeaderCommentsTruncated tells browser and CLI callers that a defensive
-// comment-list cap omitted rows. It is deliberately separate from the timeline
-// header: /comments has several projections (roots, one thread, since) whose
-// truncation cannot be described as a timeline activity kind.
+// HeaderCommentsTruncated 通知浏览器与 CLI 调用方：防御性列表上限裁掉了行。它刻意与
+// timeline 头分开：/comments 有若干投影（roots、单线程、since）其截断无法描述成某种时间线
+// 活动类型。
 const HeaderCommentsTruncated = "X-Comments-Truncated"
 
-// commentProbeLimit reads one row past the cap so a truncated read can be told
-// apart from an issue holding exactly commentHardCap comments. The difference
-// matters: exact-cap reads are complete and must not advertise data loss.
+// commentProbeLimit 在超过上限后再多读一行，用于区分「真被截断」与「issue 恰好持有
+// commentHardCap 条评论」——这区别要紧：恰好达上限的读是完整的，绝不能谎报数据丢失。
 const commentProbeLimit = commentHardCap + 1
 
-// Budgets for thread completion (completeCommentThreads).
+// 线程补全（completeCommentThreads）的预算。
 //
-// commentThreadContextBudget caps ALL context added outside the newest window:
-// ancestors first, then missing siblings/descendants for any thread whose root
-// had to be restored. A response is therefore bounded by commentHardCap +
-// commentThreadContextBudget comments regardless of thread shape.
-// commentThreadMaxDepth bounds each direction of the walk.
+// commentThreadContextBudget 限制「最新窗口之外」新增的全部上下文：先是祖先，再为任何需要
+// 补根的线程补缺失的兄弟/后代。因此无论线程长什么样，响应都被限制在 commentHardCap +
+// commentThreadContextBudget 条评论以内。commentThreadMaxDepth 限制每次行走的方向深度。
 //
-// Both are needed because reply depth is genuinely unbounded in stored data: the
-// general write path saves the exact comment being replied to, so chains can run
-// far deeper than the two levels the UI usually renders. Without a budget the
-// completion pass would defeat the row cap it is meant to preserve.
+// 两个都要，因为存量数据里回复深度真的无上界：通用写路径保存的是被回复的那条确切评论，
+// 链可以远比 UI 通常渲染的两层深。没有预算，补全这一步会击穿它本想守护的行数上限。
 const (
 	commentThreadContextBudget = 2000
 	commentThreadMaxDepth      = 64
 )
 
-// ListComments returns comments for an issue. The default path returns the
-// newest commentHardCap comments in chronological order. If that defensive cap
-// fires, completeCommentThreads restores each affected thread within a bounded
-// context budget (or drops that thread as a unit), and the response sets
-// HeaderCommentsTruncated. Optional query params give agent-style readers
-// bounded views that scale to long issues without dragging every prior reply
-// into context:
+// ListComments 处理 GET /api/issues/:id/comments：默认按时间正序返回最新 commentHardCap 条
+// 评论；若触发防御性上限，completeCommentThreads 会在有界预算内补全受影响的每条线程（或整条
+// 丢弃），响应置 HeaderCommentsTruncated。可选查询参数为 agent 式读者提供有界视图，长 issue
+// 不用把每条旧回复拖进上下文：
 //
-//   - roots_only=true — return only top-level comments (parent_id IS NULL),
-//     each annotated with reply_count + last_activity_at so the caller can
-//     triage which thread to drill into. May combine with since for incremental
-//     polling of newly created roots, but is exclusive with thread/recent/tail/
-//     cursor modes because those have their own grouping or pagination semantics.
+//   - roots_only=true —— 只返回顶层评论（parent_id IS NULL），每条带 reply_count +
+//     last_activity_at，调用方可据此判断该钻进哪条线程。可与 since 组合做增量轮询新建根，
+//     但与 thread/recent/tail/cursor 互斥（那些模式自带分组或分页语义）。
 //
-//   - summary=true — orthogonal content projection. Clips each returned
-//     comment's content to a fixed budget and sets content_truncated, so an
-//     agent can scan a list cheaply before pulling a full body. Composes with
-//     every mode (default, since, thread, recent, roots_only).
+//   - summary=true —— 正交的内容投影：把每条评论内容裁到固定预算并设置 content_truncated，
+//     agent 可以便宜地扫列表，再按需拉全文。可与所有模式组合。
 //
-//   - fold=true — resolve-aware thread projection. Collapses each resolved
-//     thread to root + conclusion (reply-resolved) or root only (root-resolved),
-//     reusing the human timeline fold so an agent does not pay tokens for
-//     settled discussion. The resolved thread's root carries thread_resolved +
-//     folded_count; `--full` (no fold param) brings the dropped comments back.
-//     Needs whole threads to compute a resolution, so it is rejected with since,
-//     tail, and roots_only (partial-thread / reply-less reads) and composes with
-//     the default list, recent, untailed thread, and summary.
+//   - fold=true —— 感知解决的线程投影：把每条已解决线程折叠成「根+结论」（回复式解决）或
+//     「仅根」（根式解决），复用人类时间线的折叠，agent 不必为已了结的讨论付 token。
+//     已解决线程的根带 thread_resolved + folded_count；`--full`（不带 fold 参数）把被裁评论
+//     拉回来。计算解决需要整条线程，因此与 since / tail / roots_only（部分线程或无回复读）
+//     互斥，可与默认列表、recent、未 tail 的 thread、summary 组合。
 //
-//   - thread=<comment-uuid> — return the root of the thread containing this
-//     comment plus every descendant. The anchor may be a root or any reply;
-//     the server walks up to the root via a recursive CTE, so callers do not
-//     need to know whether the id they have is a root.
+//   - thread=<comment-uuid> —— 返回包含该评论的线程的根 + 所有后代。锚点可以是根或任意回复，
+//     服务端用递归 CTE 向上走到根，调用方不必知道手里的 id 是不是根。
 //
-//   - tail=<N> — only valid with thread. Cap the reply count at the N most
-//     recent replies (per (created_at, id)). The thread root is always
-//     returned, even when N=0, so the reader keeps the "what is this thread
-//     about" context. Without tail, thread returns the entire thread (the
-//     pre-MUL-2421 behavior).
+//   - tail=<N> —— 只能与 thread 一起用。把回复数限制在最近 N 条（按 (created_at, id)）。
+//     线程根始终返回（哪怕 N=0），读者保住「这条线程在讲什么」的上下文。不带 tail 时
+//     thread 返回整条线程（MUL-2421 之前的行为）。
 //
-//   - recent=<N> — return the N most recently active threads (root + every
-//     descendant per thread). A thread's recency is MAX(created_at) across
-//     the whole subtree, so a stale-but-recently-replied thread ranks ahead
-//     of an active-but-quiet one. Row-based "newest N comments" is
-//     deliberately NOT exposed — it surfaces unrelated thread tails and
-//     hides relevant history (#2340).
+//   - recent=<N> —— 返回最近 N 条最活跃的线程（每条线程含根 + 全部后代）。线程活跃度取整棵
+//     子树的 MAX(created_at)，因此「旧但刚被回复」的线程排在「活跃但安静」的前面。刻意不暴露
+//     按行数的「最新 N 条评论」——它会浮出无关的线程尾巴、藏起相关历史（#2340）。
 //
-//   - before=<RFC3339> + before-id=<uuid> — cursor. The pair's meaning is
-//     context-dependent so the flag surface stays small:
+//   - before=<RFC3339> + before-id=<uuid> —— 游标。其含义随上下文而变（保持参数面小）：
 //
-//   - with recent: a *thread* cursor — (last_activity_at, root_id) — and
-//     the next page returns threads strictly less recent.
+//   - 配 recent：是「线程游标」——(last_activity_at, root_id)，下一页返回严格更不活跃的线程。
 //
-//   - with thread + tail: a *reply* cursor — (created_at, id) — and the
-//     next page returns replies in the same thread strictly older than
-//     that reply.
+//   - 配 thread + tail：是「回复游标」——(created_at, id)，下一页返回同一线程里严格更早的回复。
 //
-// Both values must be set together so the cursor can tie-break entries
-// landing in the same microsecond. The cursor for the next page is
-// emitted via the X-Multica-Next-Before / X-Multica-Next-Before-Id
-// response headers.
+// 两者必须同时给出，游标才能在落在同一微秒时决胜。下一页游标经响应头
+// X-Multica-Next-Before / X-Multica-Next-Before-Id 发出。
 //
-// Combination rules (kept narrow on purpose — Elon flagged the matrix risk):
+// 组合规则（刻意收紧——Elon 曾警示矩阵风险）：
 //
-//   - roots_only is exclusive with thread, recent, tail, and before/before-id.
-//     It may combine with since. This keeps "list issue roots" separate from
-//     "read a specific thread" and "read recently active threads".
-//   - thread is exclusive with recent. Asking for "the most recent N within
-//     thread X" mixes two different navigation models and is rejected.
-//   - thread + before/before-id requires tail. Without tail, thread returns
-//     the entire thread and a cursor would be ignored — reject loudly so
-//     the documented "cursor scrolls within a tailed window" rule holds.
-//   - tail requires thread (it is a thread-scoped limit; outside of thread
-//     it has no defined behavior).
-//   - thread may combine with since (incremental polling of one thread),
-//     and the since filter is applied after the tail/cursor cut so the
-//     thread root is still emitted but stale rows drop out.
-//   - recent may combine with before/before-id (scroll older threads) and
-//     with since (recent activity in a window).
+//   - roots_only 与 thread/recent/tail/before-before-id 互斥，可组合 since。
+//   - thread 与 recent 互斥。
+//   - thread + before/before-id 必须配 tail，否则拒绝。
+//   - tail 必须配 thread。
+//   - thread 可与 since 组合，since 过滤在 tail/游标裁切之后应用：线程根仍发出、过期行被滤掉。
+//   - recent 可与 before/before-id（翻更老的线程）及 since（窗口内的近期活动）组合。
 //
-// The response body is always chronological (oldest → newest); under recent
-// that means threads are listed oldest-active first and the freshest thread
-// sits at the tail, closest to "now" in an agent prompt.
+// 响应体恒为时间正序（旧→新）：recent 模式下最不活跃的线程排头、最新鲜的线程在尾部，
+// 靠近 agent prompt 里的「现在」。
 func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -406,7 +351,7 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
 		if err != nil {
-			// Fall back to RFC3339 for backwards-compat with the original CLI.
+			// 回退到 RFC3339，与原始 CLI 保持向后兼容。
 			t, err = time.Parse(time.RFC3339, v)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid since parameter; expected RFC3339 format")
@@ -422,13 +367,13 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	beforeTimeStr := q.Get("before")
 	beforeIDStr := q.Get("before_id")
 	if beforeIDStr == "" {
-		// Accept hyphenated alias to match CLI flag convention.
+		// 接受连字符别名以对齐 CLI flag 约定。
 		beforeIDStr = q.Get("before-id")
 	}
 
 	rootsOnlyStr := q.Get("roots_only")
 	if rootsOnlyStr == "" {
-		// Accept hyphenated alias to match CLI flag convention.
+		// 接受连字符别名以对齐 CLI flag 约定。
 		rootsOnlyStr = q.Get("roots-only")
 	}
 
@@ -444,11 +389,8 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// summary=true is an orthogonal content projection: it clips each comment's
-	// content to a fixed budget so an agent can scan a list without pulling full
-	// bodies into context. It is intentionally NOT mutually exclusive with any
-	// mode — it composes with the default list, since, thread, recent, and
-	// roots_only alike.
+	// summary=true 是正交的内容投影：把每条评论内容裁到固定预算，agent 不拉全文就能扫列表。
+	// 它刻意不与任何模式互斥——默认列表、since、thread、recent、roots_only 都能组合。
 	summary := false
 	if summaryStr := q.Get("summary"); summaryStr != "" {
 		switch summaryStr {
@@ -461,15 +403,11 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// fold=true is a thread-level projection: it collapses every resolved thread
-	// in the result to root + conclusion (reply-resolved) or root only
-	// (root-resolved), reusing the human timeline's fold semantics so an agent
-	// reading a long issue doesn't pay tokens for settled discussion. Unlike
-	// summary (a per-comment content clip that composes with everything), fold
-	// needs WHOLE threads to compute a resolution, so it is rejected on the
-	// partial-thread reads (since / tail) and on roots_only (which carries no
-	// replies to fold). It composes with summary, the default list, recent, and
-	// untailed thread reads.
+	// fold=true 是线程级投影：把结果里每条已解决线程折叠成「根+结论」（回复式解决）或
+	// 「仅根」（根式解决），复用人类时间线的折叠语义，读长 issue 的 agent 不必为已了结的讨论
+	// 付 token。与 summary（逐评论裁剪、可与一切组合）不同，fold 需要「完整线程」才能判定
+	// 解决，所以部分线程读（since / tail）与 roots_only（无回复可折）都拒绝；可与 summary、
+	// 默认列表、recent、未加 tail 的 thread 读组合。
 	fold := false
 	if foldStr := q.Get("fold"); foldStr != "" {
 		switch foldStr {
@@ -482,7 +420,7 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// --- combination validation ----------------------------------------
+	// --- 组合校验 ----------------------------------------
 	if fold && sinceTime.Valid {
 		writeError(w, http.StatusBadRequest, "fold and since are mutually exclusive: since returns a partial thread, and a fold over a partial thread could hide a resolution that was not fetched")
 		return
@@ -523,17 +461,15 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "before and before_id must be set together (composite cursor)")
 		return
 	}
-	// Cursor needs either a recent window (thread cursor) or a tailed thread
-	// (reply cursor). A bare cursor would otherwise fall through to the
-	// default / since path — returning a full timeline that the caller did
-	// not ask for. Reject loudly so the API surface matches the documented
-	// semantics.
+	// 游标要么配 recent 窗口（线程游标），要么配 tail 过的线程（回复游标）。裸游标会落到
+	// 默认/since 路径——返回一条调用方没要的完整时间线。响亮地拒绝，让 API 面与文档化语义
+	// 一致。
 	if beforeTimeStr != "" && recentStr == "" && (threadStr == "" || tailStr == "") {
 		writeError(w, http.StatusBadRequest, "before / before_id require recent (thread cursor) or thread + tail (reply cursor)")
 		return
 	}
 
-	// --- parse cursor / recent ----------------------------------------
+	// --- 解析游标 / recent ----------------------------------------
 	var beforeCursor pgtype.Timestamptz
 	var beforeUUID pgtype.UUID
 	hasCursor := false
@@ -569,10 +505,8 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 		recentN = n
 	}
 
-	// tail=0 is allowed (returns root only — useful for "what is this thread
-	// about" lookups without dragging any replies into context). Negative
-	// values are rejected because they'd round-trip to LIMIT -N which
-	// PostgreSQL flags as a syntax error.
+	// tail=0 允许（只返回根——适合「这条线程在讲什么」的查询，不拖任何回复进上下文）。
+	// 负值被拒绝，否则会 round-trip 成 LIMIT -N，PostgreSQL 会当语法错误。
 	threadTail := -1
 	threadTailSet := false
 	if tailStr != "" {
@@ -614,17 +548,14 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Apply the resolve-aware fold before anything keys off the comment set
-	// (reaction/attachment grouping, the response array): folding drops comments,
-	// and the dropped ones should not pay a reactions/attachments round-trip or
-	// appear in the response.
+	// 在任何以评论集合为 key 的逻辑（reaction/attachment 分组、响应数组）之前应用
+	// 感知解决的折叠：折叠会丢评论，被丢的评论不该付 reactions/attachments 的往返、
+	// 也不该出现在响应里。
 	//
-	// fetchCommentsForList marks FoldUnsafe only when a returned thread is known
-	// to be partial. The default capped path is safe: completeCommentThreads
-	// either restores every affected thread or removes it as one unit. An
-	// oversized untailed --thread read, however, intentionally keeps only the
-	// newest replies, so folding that partial thread would invent resolution
-	// state and folded_count.
+	// fetchCommentsForList 只在返回的线程「已知不完整」时标记 FoldUnsafe。默认截断路径是
+	// 安全的：completeCommentThreads 要么补全每条受影响的线程、要么把它整条移除。然而一条
+	// 超大、未加 tail 的 --thread 读有意只保留最新回复，折叠这种部分线程会凭空造出解决状态
+	// 与 folded_count。
 	var foldInfo map[string]foldStat
 	if fold && !result.FoldUnsafe {
 		result.Comments, foldInfo = foldResolvedThreads(result.Comments)
@@ -641,7 +572,7 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	for i, c := range result.Comments {
 		cid := uuidToString(c.ID)
 		resp[i] = commentToResponse(c, grouped[cid], groupedAtt[cid])
-		// Attach roots_only orientation stats when present (nil map elsewhere).
+		// roots_only 有数据时挂上方向统计（其余模式 map 为 nil）。
 		if st, ok := result.RootStats[cid]; ok {
 			rc := st.ReplyCount
 			resp[i].ReplyCount = &rc
@@ -650,16 +581,14 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 				resp[i].LastActivityAt = &la
 			}
 		}
-		// Attach fold annotations on a resolved thread's root (nil map elsewhere;
-		// keyed by root id, so only root comments match).
+		// 在已解决线程的根上挂折叠注解（其余模式 map 为 nil；按根 id 为 key，只有根评论会命中）。
 		if st, ok := foldInfo[cid]; ok {
 			resolved := true
 			resp[i].ThreadResolved = &resolved
 			fc := st.FoldedCount
 			resp[i].FoldedCount = &fc
 		}
-		// Apply the summary projection last so it clips whatever content the
-		// chosen read mode produced, uniformly across every mode.
+		// 摘要投影最后应用，让它在任意读取模式产出的内容上统一裁剪。
 		if summary {
 			clipped, truncated := summarizeContent(resp[i].Content)
 			resp[i].Content = clipped
@@ -667,13 +596,10 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Emit the next cursor as response headers when the page is likely not
-	// the last one. The cursor's meaning is context-dependent: under recent
-	// it points at the oldest thread in the page (next page = older threads);
-	// under thread + tail it points at the oldest reply in the page (next
-	// page = older replies in the same thread). Headers stay out of the JSON
-	// body so the default flat-array response shape — which the desktop UI
-	// and existing callers depend on — is unchanged.
+	// 当这一页很可能不是最后一页时，把下一页游标放进响应头。游标含义随上下文变化：recent 下
+	// 指向页内最不活跃的线程（下一页 = 更老的线程）；thread + tail 下指向页内最早的回复
+	//（下一页 = 同一线程更早的回复）。游标放头不放 JSON body，让默认扁平数组的响应形态——
+	// 桌面 UI 与老调用方依赖它——保持不变。
 	if result.NextBefore != "" && result.NextBeforeID != "" {
 		w.Header().Set("X-Multica-Next-Before", result.NextBefore)
 		w.Header().Set("X-Multica-Next-Before-Id", result.NextBeforeID)
@@ -685,14 +611,11 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// fetchCommentsArgs bundles the parsed query params so fetchCommentsForList
-// stays readable. Sentinel errors below let the caller turn DB-layer outcomes
-// into the right HTTP status without leaking SQL details.
+// fetchCommentsArgs 打包解析好的查询参数，让 fetchCommentsForList 保持可读。下面的哨兵错误
+// 让调用方把 DB 层的结果翻译成正确的 HTTP 状态而不泄露 SQL 细节。
 //
-// ThreadTail is split into a value + a "set" flag because tail=0 is a
-// meaningful caller intent (return just the root). A bare int would collapse
-// "user did not pass --tail" and "user passed --tail 0" into the same state,
-// which would silently downgrade the latter to the full-thread path.
+// ThreadTail 拆成「值 + set 标记」是因为 tail=0 是有意义的需求（只要根）。裸 int 会把
+// 「用户没传 --tail」和「用户传了 --tail 0」压成同一状态，后者会悄悄降级成整条线程路径。
 type fetchCommentsArgs struct {
 	Issue         db.Issue
 	Since         pgtype.Timestamptz
@@ -706,28 +629,24 @@ type fetchCommentsArgs struct {
 	BeforeID      pgtype.UUID
 }
 
-// fetchCommentsResult carries both the materialised comments and (for the
-// recent/thread-grouped path) the cursor to use for the next page. Cursor
-// fields are empty strings when there is no next page or the path does not
-// support cursors.
+// fetchCommentsResult 同时携带（物化好的）评论集合，以及（recent/thread 分组路径的）下一页
+// 游标。没有下一页或该路径不支持游标时游标字段为空字符串。
 type fetchCommentsResult struct {
 	Comments     []db.Comment
 	NextBefore   string
 	NextBeforeID string
-	// RootStats carries per-root orientation stats keyed by comment id string.
-	// Populated only on the roots_only path; nil for every other mode.
+	// RootStats 以评论 id 字符串为 key 存放每条根的方向统计。只在 roots_only 路径填充，
+	// 其它模式为 nil。
 	RootStats map[string]rootStat
-	// CommentsTruncated reports that a defensive cap omitted comments. Derived
-	// from a probe read, never from the final response length.
+	// CommentsTruncated 表示防御性上限裁掉了评论。由探针读导出，绝不从最终响应长度推导。
 	CommentsTruncated bool
-	// FoldUnsafe reports that the response contains a known-partial thread.
-	// Truncation alone does not imply this: completeCommentThreads makes the
-	// default newest window safe to fold by restoring or dropping whole threads.
+	// FoldUnsafe 表示响应里含已知不完整的线程。仅截断并不代表这一点：completeCommentThreads
+	// 通过补全或整条移除让默认最新窗口可以安全折叠。
 	FoldUnsafe bool
 }
 
-// rootStat is the per-thread orientation metadata attached to each root comment
-// on the roots_only path. See CommentResponse.ReplyCount / LastActivityAt.
+// rootStat 是 roots_only 路径上附着在每条根评论上的方向元数据。见
+// CommentResponse.ReplyCount / LastActivityAt。
 type rootStat struct {
 	ReplyCount     int
 	LastActivityAt pgtype.Timestamptz
@@ -738,35 +657,29 @@ var (
 	errCommentThreadBadID    = &commentFetchError{"invalid thread anchor id"}
 )
 
+// commentFetchError 是带消息的错误类型，用于区分「线程锚点找不到」与「锚点 id 非法」。
 type commentFetchError struct{ msg string }
 
 func (e *commentFetchError) Error() string { return e.msg }
 
+// fetchCommentsForList 按参数执行具体评论读取：thread/tailed-thread/recent/roots_only/since/
+// 默认 等路径，统一返回按时间正序的评论集合（带可选的游标与截断标记）。
 func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsArgs) (fetchCommentsResult, error) {
 	issue := args.Issue
 
-	// Thread-scoped read. Server resolves the anchor → root via recursive
-	// CTE, so we don't have to assume two-layer flat threads here.
+	// 线程作用域读。服务端把锚点解析成根（递归 CTE），所以这里不必假设两层扁平线程。
 	if args.ThreadAnchor != "" {
 		anchor, err := util.ParseUUID(args.ThreadAnchor)
 		if err != nil {
 			return fetchCommentsResult{}, errCommentThreadBadID
 		}
-		// Tailed path: paged query that returns root + the @reply_limit
-		// most recent replies (per (created_at, id)). The thread root is
-		// always returned, so a reader can land on a long thread without
-		// dragging hundreds of replies into context. The reply-internal
-		// cursor (--before / --before-id under --thread + --tail) scrolls
-		// to older replies inside the same thread.
+		// Tailed 路径：分页查询，返回根 + 最近的 @reply_limit 条回复（按 (created_at, id)）。
+		// 线程根始终返回，读者落在长线程上也不必把几百条回复拖进上下文。（--thread + --tail
+		// 下的 --before/--before-id）回复内游标在同一线程里翻更早的回复。
 		if args.ThreadTailSet {
-			// Probe for has-more by asking the SQL for one extra reply
-			// beyond what the caller wants. If we get back >tail replies
-			// there is at least one older reply still on disk; if we get
-			// back ≤tail the page is the tail of the thread and there is
-			// nothing older to scroll to (so we must NOT emit a cursor —
-			// otherwise the next page is wasted round-trip that returns
-			// just the root). This is the exact-boundary fix called out
-			// in the MUL-2421 review.
+			// 向 SQL 多要一条回复来探测「还有没有更旧的」。返回 >tail 条回复说明盘上至少还有
+			// 一条更旧的；≤tail 说明这页就是线程尾部、没有更旧的可翻（此时绝不能发游标——
+			// 否则下一页是只返回根的空跑）。这就是 MUL-2421 review 点名的精确边界修复。
 			rows, err := h.Queries.ListThreadCommentsForIssuePaged(ctx, db.ListThreadCommentsForIssuePagedParams{
 				AnchorID:    anchor,
 				IssueID:     issue.ID,
@@ -782,10 +695,8 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 			if len(rows) == 0 {
 				return fetchCommentsResult{}, errCommentThreadNotFound
 			}
-			// Split the result into root + replies (ASC order preserved).
-			// Root is identified by parent_id IS NULL and is always
-			// present in the SQL output; we keep it out of the cursor /
-			// tail-trim logic so the user always sees thread context.
+			// 把结果拆成根 + 回复（保持 ASC 顺序）。根以 parent_id IS NULL 识别、在 SQL 输出里
+			// 总是出现；把它排除在游标 / tail 裁切逻辑之外，保证用户永远看得到线程上下文。
 			var rootComment *db.Comment
 			replies := make([]db.Comment, 0, len(rows))
 			for _, r := range rows {
@@ -814,10 +725,8 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 				}
 				replies = append(replies, c)
 			}
-			// Trim the probe overflow back to the caller's tail. The SQL
-			// emits ASC, so the extra row is the oldest reply — dropping
-			// it from the head is what aligns "newest N" with the user's
-			// request.
+			// 把探针溢出的行裁回调用方要的 tail 数。SQL 按 ASC 输出，多出的那行是最旧回复——
+			// 从头部丢掉它正好把「最新 N 条」对齐用户请求。
 			hasMore := len(replies) > args.ThreadTail
 			if hasMore {
 				replies = replies[1:]
@@ -827,31 +736,21 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 				out = append(out, *rootComment)
 			}
 			for _, r := range replies {
-				// since drops stale rows AFTER the tail / cursor cut.
-				// The root is exempt (already appended above): a reader
-				// who set --since to skip already-seen replies still
-				// needs the root context if the page only contained
-				// the root.
+				// since 在 tail/游标裁切之后丢弃过期行。根是豁免的（上面已追加）：读者设了
+				// --since 想跳过已看过的回复时，如果这页只有根，他仍需要根做上下文。
 				if args.Since.Valid && !r.CreatedAt.Time.After(args.Since.Time) {
 					continue
 				}
 				out = append(out, r)
 			}
-			// Emit a reply cursor only when we proved an older reply
-			// exists (hasMore). On an exact-boundary page (replyCount
-			// == tail with no overflow) hasMore is false and the cursor
-			// stays empty.
+			// 只有在证明了「存在更旧的回复」（hasMore）时才发回复游标。精确边界页
+			//（replyCount == tail 无溢出）hasMore 为 false，游标保持空。
 			//
-			// Additionally suppress the cursor when `since` is set and
-			// the oldest retained reply on this page is already <= since.
-			// The next page walks replies strictly older than that one,
-			// so every older reply has created_at strictly less — if the
-			// cursor target itself can't satisfy `> since`, no older
-			// reply can either, and continuing to paginate would only
-			// return root-only pages until the agent walks the entire
-			// pre-`since` history. This mirrors the head-thread guard on
-			// the recent + since path. Flagged by Elon's second review on
-			// MUL-2421.
+			// 此外，当设了 since 且本页保留的最旧回复已 <= since 时抑制游标：下一页会翻比这条
+			// 严格更旧的回复，那么每条更旧回复的 created_at 都严格更小——若游标目标本身都满足
+			// 不了 `> since`，更旧的回复也不可能满足，继续翻页只会一路返回「仅根」的页，直到
+			// agent 翻完整段 pre-`since` 历史。镜像 recent + since 路径上的 head-thread 守卫。
+			// Elon 在 MUL-2421 的第二次 review 里点出。
 			res := fetchCommentsResult{Comments: out}
 			emitCursor := hasMore && len(replies) > 0
 			if emitCursor && args.Since.Valid && !replies[0].CreatedAt.Time.After(args.Since.Time) {
@@ -864,10 +763,9 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 			}
 			return res, nil
 		}
-		// Untailed reads use the same newest-reply query as the paged path.
-		// Probe with commentHardCap replies: because the root is unconditional,
-		// 2000 replies proves the total thread exceeds the 2000-row response cap.
-		// We then drop the oldest reply and retain root + newest 1999 replies.
+		// 未 tail 的读与分页路径用同一条「最新回复」查询。用 commentHardCap 条回复探测：因为
+		// 根是无条件返回的，2000 条回复足以证明整条线程超过 2000 行的响应上限。随后丢掉最旧
+		// 那条回复，保留根 + 最新的 1999 条。
 		rows, err := h.Queries.ListThreadCommentsForIssuePaged(ctx, db.ListThreadCommentsForIssuePagedParams{
 			AnchorID:    anchor,
 			IssueID:     issue.ID,
@@ -929,7 +827,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 		}, nil
 	}
 
-	// Thread-grouped recent read: N most recently active threads.
+	// 线程分组的 recent 读：N 条最活跃的线程。
 	if args.RecentN > 0 {
 		rows, err := h.Queries.ListRecentThreadCommentsForIssue(ctx, db.ListRecentThreadCommentsForIssueParams{
 			IssueID:     issue.ID,
@@ -943,16 +841,12 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 			return fetchCommentsResult{}, err
 		}
 
-		// The SQL already orders rows by (last_activity_at ASC, root_id ASC,
-		// created_at ASC, id ASC), so the OLDEST-active thread sits at the
-		// head and the FRESHEST thread at the tail. Walk the rows once to:
-		//   1. Strip the thread-metadata columns down to db.Comment for the
-		//      caller (uniform shape across paths).
-		//   2. Count distinct threads in the page so we know whether a "next
-		//      older page" is likely to exist.
-		//   3. Capture the head thread's (last_activity_at, root_id) — that
-		//      is the cursor for the next page (next page = threads strictly
-		//      less recent than this one).
+		// SQL 已经按 (last_activity_at ASC, root_id ASC, created_at ASC, id ASC) 排好，
+		// 因此最不活跃的线程在头部、最新鲜的在尾部。单趟遍历：
+		//   1. 把线程元数据列剥成统一的 db.Comment（各路径形态一致）。
+		//   2. 数出本页不同线程数，判断「更老的下一页」是否可能存在。
+		//   3. 抓取头部线程的 (last_activity_at, root_id)——那就是下一页的游标（下一页 =
+		//      严格比这条不活跃的线程）。
 		comments := make([]db.Comment, 0, len(rows))
 		var headRoot pgtype.UUID
 		var headLast pgtype.Timestamptz
@@ -963,11 +857,9 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 				headLast = r.ThreadLastActivityAt
 			}
 			seenRoot[uuidToString(r.ThreadRootID)] = struct{}{}
-			// Since filter on the recent path: drop comments older than
-			// `since`. Done in-memory so we keep the thread-grouped
-			// semantics from the query (don't pre-filter rows before the
-			// MAX(created_at) ranking — that would silently downgrade a
-			// thread whose most recent activity falls inside the window).
+			// recent 路径上的 since 过滤：丢掉早于 `since` 的评论。在内存里做，保住查询的
+			// 线程分组语义（不要先按 MAX(created_at) 排名前就预过滤行——那会把「最近活跃落在
+			// 窗口内」的线程悄悄降级掉）。
 			if args.Since.Valid && !r.CreatedAt.Time.After(args.Since.Time) {
 				continue
 			}
@@ -991,19 +883,14 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 			})
 		}
 
-		// Only emit a cursor when the page is full. Fewer threads than
-		// requested ⇒ the SELECT exhausted matching threads, so there is
-		// no older page to scroll to.
+		// 只在页满时才发游标。线程数少于请求数说明 SELECT 已经把匹配线程取尽了，没有更老
+		// 的页可翻。
 		//
-		// Additionally suppress the cursor when `since` is set and the head
-		// thread's last_activity_at is already <= since. The pagination
-		// walks threads in strictly decreasing last_activity_at, so every
-		// older page has last_activity_at strictly less than the head's —
-		// if the head itself can't satisfy `> since`, no older thread can
-		// either. Predicating on the head (not on whether `comments` is
-		// empty) also catches the mixed case where this page keeps rows
-		// from fresher threads but the head thread is already past `since`.
-		// Flagged by Elon in #2787's second review (MUL-2340 nit).
+		// 此外，当设了 since 且头部线程的 last_activity_at 已 <= since 时抑制游标：翻页按
+		// 严格递减的 last_activity_at 走，更老的每一页都严格小于头部——头部自己都不满足
+		// `> since`，更老的线程也不可能。以头部（而不是以 comments 是否为空）为判定条件，
+		// 还能接住「本页保留着更新线程的行、但头部线程已越过 since」的混合情况。
+		// Elon 在 #2787 第二次 review（MUL-2340 nit）里点出。
 		out := fetchCommentsResult{Comments: comments}
 		emitCursor := len(seenRoot) >= args.RecentN && headRoot.Valid && headLast.Valid
 		if emitCursor && args.Since.Valid && !headLast.Time.After(args.Since.Time) {
@@ -1017,11 +904,9 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 	}
 
 	if args.RootsOnly {
-		// Root-only read for issue-level orientation. This intentionally
-		// stays separate from thread/recent modes: callers get the global
-		// top-level discussion first, then fetch a specific thread only when
-		// they need reply context. Each root carries reply_count +
-		// last_activity_at so the reader can triage which thread to drill into.
+		// 只读根，用于 issue 级定向。刻意与 thread/recent 模式分开：调用方先拿到全局顶层
+		// 讨论，再按需抓特定线程的回复。每条根带 reply_count + last_activity_at，读者据此
+		// 判断该钻进哪条线程。
 		stats := map[string]rootStat{}
 		if args.Since.Valid {
 			rows, err := h.Queries.ListRootCommentsSinceForIssue(ctx, db.ListRootCommentsSinceForIssueParams{
@@ -1035,8 +920,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 			}
 			truncated := len(rows) > commentHardCap
 			if truncated {
-				// Since is an incremental stream: keep the first page after the
-				// cursor so callers can advance without skipping a gap.
+				// since 是增量流：保留游标之后的第一页，调用方才能前进且不跳过缺口。
 				rows = rows[:commentHardCap]
 			}
 			comments := make([]db.Comment, len(rows))
@@ -1065,8 +949,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 		}
 		truncated := len(rows) > commentHardCap
 		if truncated {
-			// The SQL returns selected roots chronologically after taking the
-			// newest probe window, so the overflow row is the oldest.
+			// SQL 取最新的探测窗口后按时间返回选中的根，因此溢出的那行是最旧的。
 			rows = rows[1:]
 		}
 		comments := make([]db.Comment, len(rows))
@@ -1085,8 +968,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 		}, nil
 	}
 
-	// Since reads keep their chronological page shape. A probe makes the cap
-	// visible without skipping the next page of the incremental stream.
+	// Since 读保持其时间正序的页面形态。探针让上限可见，又不跳过增量流下一页。
 	if args.Since.Valid {
 		comments, err := h.Queries.ListCommentsSinceForIssue(ctx, db.ListCommentsSinceForIssueParams{
 			IssueID:     issue.ID,
@@ -1111,16 +993,13 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 	if err != nil {
 		return fetchCommentsResult{}, err
 	}
-	// Probe read: an issue holding exactly commentHardCap comments is complete,
-	// and calling that truncated would needlessly suppress the thread fold below.
+	// 探针读：恰好持有 commentHardCap 条评论的 issue 是完整的，把它说成截断会不必要地
+	// 抑制下面的线程折叠。
 	truncated := len(comments) > commentHardCap
 	if truncated {
 		comments = comments[len(comments)-commentHardCap:]
-		// The cap keeps the NEWEST comments (MUL-5492), so a thread can be cut
-		// in half: an old root or sibling outside the window, a fresh reply
-		// inside it. Complete every affected thread within the shared context
-		// budget. If a thread cannot be completed, it is dropped as one unit.
-		//
+		// 上限保留「最新」的评论（MUL-5492），因此一条线程可能被拦腰截断：窗口外的旧根或
+		// 兄弟、窗口内的新回复。在共享上下文预算内补全每条受影响的线程。补不齐的线程整条丢弃。
 		comments, err = h.completeCommentThreads(ctx, issue.ID, issue.WorkspaceID, comments)
 		if err != nil {
 			return fetchCommentsResult{}, err
@@ -1129,44 +1008,28 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 	return fetchCommentsResult{Comments: comments, CommentsTruncated: truncated}, nil
 }
 
-// completeCommentThreads restores complete renderable threads around a newest-N
-// comment window.
+// completeCommentThreads 围绕「最新 N 条」评论窗口，补全可渲染的完整线程。
 //
-// Why this is needed at all: capping with the OLDEST n comments could never
-// orphan a reply, because a reply is always newer than its parent and so a
-// prefix of the timeline is closed under "parent of". A newest-n window is a
-// suffix and has no such property — an old thread root falls outside while a
-// fresh reply to it stays inside (MUL-5492).
+// 为什么需要它：若用「最旧 n 条」封顶，永远不会让回复成为孤儿——回复总是比父级新，时间线
+// 前缀在「父级」关系下封闭。但「最新 n 条」窗口是后缀，没有这个性质——老的线程根落在窗外，
+// 而针对它的新回复留在窗内（MUL-5492）。
 //
-// Parent closure comes first because an orphaned reply is not merely mis-nested,
-// it is invisible.
-// The timeline builds its top level from "activities + comments with no
-// parent_id" and renders replies by looking them up under their parent, so an
-// orphan sits in the map with no card to render it — the exact shape of MUL-1847
-// (1 root + 29 replies, root dropped, all 29 vanished from the UI while the API
-// returned them).
+// 先做父级封闭，因为孤儿回复不只是嵌套错位，它是「看不见」：时间线把顶层建成「无 parent_id
+// 的 activities+comments」，回复挂在它们父级下面渲染，因此孤儿在 map 里却没有卡片渲染它——
+// 正是 MUL-1847 的形状（1 根 + 29 回复，根被丢，29 条全部从 UI 消失而 API 却返回了它们）。
 //
-// Parent closure alone is insufficient for the human timeline. Web and Desktop
-// derive resolution bars and folded counts from the comments they receive, so a
-// backfilled root plus only its newest replies would make a partial thread look
-// complete. After reaching roots, this function walks DOWN from every restored
-// root and adds all missing siblings/descendants. If the shared budget or depth
-// bound cannot prove a whole affected thread complete, that thread is removed
-// as one unit; old installed clients can therefore never fold partial data.
+// 对人类时间线而言，只有父级封闭还不够。Web/Desktop 从收到的评论推导解决条与折叠计数，
+// 一条补回根却只带最新回复的线程会被当成完整线程。够到根之后，本函数再从每个补回的根向下走，
+// 补上所有缺失的兄弟/后代。若共享预算或深度上限无法证明一条受影响线程完整，就整条移除——
+// 老客户端因此永远不会折叠部分数据。
 //
-// Both walks share commentThreadContextBudget, so the returned set remains
-// provably bounded by commentHardCap + commentThreadContextBudget. Descendants
-// are fetched one level at a time for every affected root in one query, avoiding
-// an N+1 query per thread. Each query carries issue + workspace predicates and a
-// probe limit.
+// 两条遍历共享 commentThreadContextBudget，返回集合可证明被 bound 在 commentHardCap +
+// commentThreadContextBudget 以内。后代每次为所有受影响根各查一层、一次查询完成，避免每条
+// 线程一次 N+1。每个查询都带 issue + workspace 谓词与探针上限。
 //
-// When a budget is exhausted, a parent row is missing, or a parent belongs to
-// another issue or workspace, keepRootConnected drops the affected replies. A
-// descendant overflow drops every affected thread rather than guessing which
-// root is complete. Returning fewer new replies is a conservative degradation
-// that the caller already signals as truncated; leaking another tenant's
-// comments, returning an unbounded response, or emitting partial threads are all
-// worse.
+// 预算耗尽、父级行缺失、或父级属于别的 issue/workspace 时，keepRootConnected 会丢弃受影响的
+// 回复；后代溢出则丢弃所有受影响线程而不是猜测哪条根是完整的。少返回新回复是调用方已经会
+// 声明的保守降级；泄露别的租户评论、返回无界响应或吐部分线程都更糟。
 func (h *Handler) completeCommentThreads(ctx context.Context, issueID, workspaceID pgtype.UUID, window []db.Comment) ([]db.Comment, error) {
 	if len(window) == 0 {
 		return window, nil
@@ -1188,8 +1051,8 @@ func (h *Handler) completeCommentThreads(ctx context.Context, issueID, workspace
 
 	added := 0
 	for depth := 0; depth < commentThreadMaxDepth; depth++ {
-		// Distinct parents referenced by the current set but not in it. Dedup is
-		// what keeps many replies sharing one ancestor from fetching it twice.
+		// 当前集合里被引用但不在集合里的不同父级。去重让多条共享一个祖先的回复不会把祖先
+		// 取两遍。
 		var missing []pgtype.UUID
 		seen := make(map[string]struct{})
 		for _, c := range byID {
@@ -1213,9 +1076,8 @@ func (h *Handler) completeCommentThreads(ctx context.Context, issueID, workspace
 			break
 		}
 
-		// Tenant-scoped: a parent in another issue or workspace simply does not
-		// come back, and keepRootConnected then prunes the reply that pointed at
-		// it. The filter is on every level, not just the first.
+		// 租户隔离：另一个 issue/workspace 里的父级直接取不到，keepRootConnected 随后会剪掉
+		// 指向它的回复。每一层都过滤，不只是第一层。
 		rows, err := h.Queries.ListCommentsByIDsForIssue(ctx, db.ListCommentsByIDsForIssueParams{
 			Ids:         missing,
 			IssueID:     issueID,
@@ -1237,18 +1099,15 @@ func (h *Handler) completeCommentThreads(ctx context.Context, issueID, workspace
 		}
 	}
 
-	// Remove every chain that did not reach a same-tenant root within the
-	// ancestor budget/depth. Rebuild the map so the descendant phase cannot
-	// accidentally revive a disconnected chain.
+	// 在祖先预算/深度内没够到同租户根的链全部移除。重建 map，让后代阶段不会意外复活断开的链。
 	connected := keepRootConnected(byID)
 	byID = make(map[string]db.Comment, len(connected)+commentThreadContextBudget-added)
 	for _, c := range connected {
 		byID[uuidToString(c.ID)] = c
 	}
 
-	// A restored root identifies a thread that the newest window cut. Threads
-	// whose roots were already in the suffix are complete under the normal
-	// parent-before-reply timestamp contract and need no extra query.
+	// 补回的根标识着「最新窗口截断过的线程」。根原本就在后缀里的线程在常规的「父先于回复」
+	// 时间戳约定下已完整，无需额外查询。
 	affectedRoots := make(map[string]struct{})
 	for id, c := range byID {
 		if c.ParentID.Valid {
@@ -1285,9 +1144,8 @@ func (h *Handler) completeCommentThreads(ctx context.Context, issueID, workspace
 	return out, nil
 }
 
-// addMissingCommentDescendants walks every affected thread breadth-first. It
-// returns false when the remaining context budget or depth bound cannot prove
-// all affected threads complete; callers then drop those threads as one unit.
+// addMissingCommentDescendants 广度优先遍历每条受影响线程。剩余上下文预算或深度上限无法证明
+// 所有受影响线程完整时返回 false；调用方随后把这些线程整条丢弃。
 func (h *Handler) addMissingCommentDescendants(
 	ctx context.Context,
 	issueID, workspaceID pgtype.UUID,
@@ -1301,9 +1159,8 @@ func (h *Handler) addMissingCommentDescendants(
 		frontier[rootID] = rootID
 	}
 
-	// Every returned child is unique in a tree walk. The scan budget includes
-	// rows already present in the window plus the remaining add budget, so all
-	// descendant queries together inspect at most the response bound (+1 probe).
+	// 树遍历里每个返回的孩子都唯一。扫描预算包含窗口里已有的行加上剩余可增预算，所有后代
+	// 查询合计最多检查响应上限（+1 探针）。
 	scanBudget := len(byID) + commentThreadContextBudget - *added
 	for depth := 0; depth <= commentThreadMaxDepth; depth++ {
 		parentKeys := make([]string, 0, len(frontier))
@@ -1341,8 +1198,8 @@ func (h *Handler) addMissingCommentDescendants(
 			parentID := uuidToString(row.ParentID)
 			rootID, ok := frontier[parentID]
 			if !ok {
-				// The query is constrained to frontier parent ids, so this is
-				// defensive fail-closed handling for malformed query output.
+				// 查询被约束在 frontier 的父级 id 内，所以这里是对畸形查询输出的防御性
+				// 失败关闭。
 				return false, nil
 			}
 			id := uuidToString(row.ID)
@@ -1361,9 +1218,8 @@ func (h *Handler) addMissingCommentDescendants(
 	return false, nil
 }
 
-// dropCommentThreads removes every comment whose root is in roots. It is used
-// only after a bounded descendant walk could not prove the affected threads
-// complete.
+// dropCommentThreads 移除所有「根在 roots 里」的评论。只在有界后代遍历无法证明受影响线程
+// 完整之后使用。
 func dropCommentThreads(byID map[string]db.Comment, roots map[string]struct{}) {
 	for id := range byID {
 		rootID, ok := commentRootID(id, byID)
@@ -1377,6 +1233,8 @@ func dropCommentThreads(byID map[string]db.Comment, roots map[string]struct{}) {
 	}
 }
 
+// commentRootID 沿 parent 链向上找出 id 在 byID 里的根（parent_id IS NULL）；链离开集合或
+// 成环时返回 (false)。
 func commentRootID(id string, byID map[string]db.Comment) (string, bool) {
 	seen := make(map[string]struct{})
 	for current := id; ; {
@@ -1396,6 +1254,7 @@ func commentRootID(id string, byID map[string]db.Comment) (string, bool) {
 	}
 }
 
+// sortCommentsChronologically 按 (created_at, id) 时间正序排序评论，保证并列时间也有稳定顺序。
 func sortCommentsChronologically(comments []db.Comment) {
 	sort.Slice(comments, func(i, j int) bool {
 		if !comments[i].CreatedAt.Time.Equal(comments[j].CreatedAt.Time) {
@@ -1405,17 +1264,13 @@ func sortCommentsChronologically(comments []db.Comment) {
 	})
 }
 
-// keepRootConnected returns only the comments whose parent chain terminates at a
-// root (parent_id IS NULL) inside the set.
+// keepRootConnected 只保留「父链在集合内终结于根（parent_id IS NULL）」的评论。
 //
-// A comment whose chain leaves the set, loops, or dead-ends is unrenderable: the
-// UI needs a top-level card to hang the thread from. Dropping such a comment also
-// drops its descendants, because their chains run through it and therefore fail
-// the same test — no separate descendant pass is needed.
+// 链离开集合、成环或断头的评论都不可渲染：UI 需要一张顶层卡片来挂线程。丢弃这种评论也就
+// 顺带丢弃了它的后代——它们的链经过它、因此过不了同一道检验——无需再跑一次后代遍历。
 //
-// The walk is bounded by the visited set, so a cycle in stored data terminates
-// instead of hanging. Real cycles are impossible via the write path, but a graph
-// walk over stored data should never assume that.
+// 遍历以已访问集合为界，存量数据成环也会终止而不是挂死。真实环经写路径不可能产生，但遍历
+// 存量数据时永远不该做这种假设。
 func keepRootConnected(byID map[string]db.Comment) []db.Comment {
 	connected := make(map[string]bool, len(byID))
 
@@ -1460,6 +1315,7 @@ func keepRootConnected(byID map[string]db.Comment) []db.Comment {
 	return out
 }
 
+// CreateCommentRequest 是 POST /api/issues/:id/comments 的请求体。
 type CreateCommentRequest struct {
 	Content          string   `json:"content"`
 	Type             string   `json:"type"`
@@ -1468,21 +1324,23 @@ type CreateCommentRequest struct {
 	SuppressAgentIDs []string `json:"suppress_agent_ids"`
 }
 
+// CommentTriggerPreviewRequest 是触发预览端点的请求体：草稿内容 + 可选的父级与正在编辑的
+// 评论（编辑预览时排除其自身触发的任务，防重复触发）。
 type CommentTriggerPreviewRequest struct {
 	Content          string  `json:"content"`
 	ParentID         *string `json:"parent_id"`
 	EditingCommentID *string `json:"editing_comment_id"`
 }
 
+// CommentTriggerPreviewResponse 是触发预览的响应：会触发的 agent 列表 + 会被拦截的显式提及。
 type CommentTriggerPreviewResponse struct {
 	Agents []CommentTriggerAgentResponse `json:"agents"`
-	// Blocked lists explicit @agent / @squad mentions that will NOT trigger if
-	// this comment is posted as-is (MUL-4525 §2). Additive: old clients ignore
-	// it. It lets the composer warn before sending instead of the user only
-	// discovering the silent no-op afterwards.
+	// Blocked 列出按原文发出后「不会触发」的显式 @agent / @squad 提及（MUL-4525 §2）。
+	// 增量字段：老客户端忽略。让编辑器在发送前就能警示，而不是等用户事后才发现静默无操作。
 	Blocked []CommentTriggerOutcome `json:"blocked,omitempty"`
 }
 
+// CommentTriggerAgentResponse 是预览列表里一个会被触发的 agent 及其触发原因。
 type CommentTriggerAgentResponse struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
@@ -1491,6 +1349,7 @@ type CommentTriggerAgentResponse struct {
 	Reason    string  `json:"reason"`
 }
 
+// commentAgentTriggerSource 描述一次 agent 触发的来源（为什么这个 agent 会被触发）。
 type commentAgentTriggerSource string
 
 const (
@@ -1501,8 +1360,12 @@ const (
 	commentTriggerSourceConversation       commentAgentTriggerSource = "conversation_continuation"
 )
 
+// defaultCommentRoutingEscalationDelay 是评论路由的默认升级延迟（没配 settings 时），
+// 到期后若主触发 agent 没回应，会把评论升级兜底给受理人。
 const defaultCommentRoutingEscalationDelay = 5 * time.Minute
 
+// commentRoutingEscalationDelay 读工作区 settings 里 comment_routing.escalation_seconds
+// 自定义升级延迟；未配置/非法时回落默认值，显式 <=0 表示关闭升级。
 func (h *Handler) commentRoutingEscalationDelay(ctx context.Context, workspaceID pgtype.UUID) time.Duration {
 	ws, err := h.Queries.GetWorkspace(ctx, workspaceID)
 	if err != nil || len(ws.Settings) == 0 {
@@ -1523,11 +1386,15 @@ func (h *Handler) commentRoutingEscalationDelay(ctx context.Context, workspaceID
 	return time.Duration(*settings.CommentRouting.EscalationSeconds) * time.Second
 }
 
+// commentEscalationFallback 是一次路由的升级兜底目标：主 agent 超时未回应时把评论升级给
+// issue 的受理 agent（或受理 squad 的 leader）。
 type commentEscalationFallback struct {
 	Agent db.Agent
 	Squad *db.Squad
 }
 
+// commentAgentTrigger 描述一次已解析的 agent 触发：触发的 agent、来源、可选 squad 上下文、
+// 升级兜底，以及是否已存在待处理任务（可折叠入队）。
 type commentAgentTrigger struct {
 	Agent              db.Agent
 	Source             commentAgentTriggerSource
@@ -1536,33 +1403,27 @@ type commentAgentTrigger struct {
 	AlreadyPending     bool
 }
 
+// commentTriggerComputeOptions 携带触发计算所需的调用上下文。
 type commentTriggerComputeOptions struct {
 	ExcludeTriggerCommentID pgtype.UUID
-	// OriginatorUserID is the top-of-chain human user id for this trigger
-	// (MUL-3963). Only consulted for AGENT actors — canInvokeAgent judges A2A
-	// by the originator, not the immediate agent principal. Members are their
-	// own originator so this may be empty for member-authored triggers.
+	// OriginatorUserID 是这次触发顶层的人类用户 id（MUL-3963）。只在 AGENT 角色时起作用——
+	// canInvokeAgent 按发起人而非直接 agent 主体验证 A2A。member 自己就是发起人，member 触发
+	// 时可为空。
 	OriginatorUserID string
 
-	// AutopilotDelegationAuthorityUserID is the lineage-verified autopilot creator
-	// whose invoke rights an UNATTRIBUTED autopilot dispatch borrows for the A2A
-	// gate when it delegates mid-chain on the issue that autopilot created
-	// (MUL-4857). It is resolved SEPARATELY from OriginatorUserID, at the trusted
-	// request/comment boundary, from the server-trusted speaking task (see
-	// autopilotDelegationAuthority); it is empty whenever that lineage cannot be
-	// verified, which keeps the gate fail-closed. effectiveInvoker consults it ONLY
-	// when OriginatorUserID is empty. Authorization input only — attribution/audit
-	// read OriginatorUserID, never this, so the enqueued run stays unattributed.
+	// AutopilotDelegationAuthorityUserID 是血缘验证过的 autopilot 创建者：无归属的 autopilot
+	// 派发在 autopilot 创建的 issue 上链中委派时，借它的调用权过 A2A 闸门（MUL-4857）。
+	// 与 OriginatorUserID 分开解析，在受信任的请求/评论边界、从服务端信任的发言任务解析
+	//（见 autopilotDelegationAuthority）；血缘无法验证时为空，闸门保持失败关闭。
+	// effectiveInvoker 只在 OriginatorUserID 为空时才看它。仅是鉴权输入——归属/审计读
+	// OriginatorUserID，永远不读它，因此入队的运行保持无归属。
 	AutopilotDelegationAuthorityUserID string
 }
 
-// effectiveInvoker is the human principal the A2A invoke gate (canInvokeAgent)
-// keys on for this comment: the resolved top-of-chain human originator, or — only
-// when the run carried no human originator — the lineage-verified autopilot
-// delegation authority (MUL-4857). OriginatorUserID is left untouched so
-// attribution stays accurate; the authority is a gate-only fallback. For member
-// actors both are the member (or the fallback is unset), and canInvokeAgent
-// ignores this value for members anyway.
+// effectiveInvoker 返回本次评论 A2A 调用闸门（canInvokeAgent）所依据的人类主体：解析出的
+// 顶层人类发起人；或——仅当运行没有人类发起人时——血缘验证过的 autopilot 委派授权者
+// （MUL-4857）。OriginatorUserID 保持不动以保归属准确；该授权只是闸门专用回退。member 角色
+// 两者都是 member 本身（或回退未设置），canInvokeAgent 对 member 反正忽略这个值。
 func (o commentTriggerComputeOptions) effectiveInvoker() string {
 	if o.OriginatorUserID != "" {
 		return o.OriginatorUserID
@@ -1570,6 +1431,7 @@ func (o commentTriggerComputeOptions) effectiveInvoker() string {
 	return o.AutopilotDelegationAuthorityUserID
 }
 
+// commentAgentTriggerReason 生成预览 UI 给每个触发 agent 看的人类可读原因。
 func commentAgentTriggerReason(trigger commentAgentTrigger) string {
 	switch trigger.Source {
 	case commentTriggerSourceIssueAssignee:
@@ -1587,6 +1449,7 @@ func commentAgentTriggerReason(trigger commentAgentTrigger) string {
 	}
 }
 
+// commentAgentTriggerToResponse 把一次触发转成预览响应条目。
 func (h *Handler) commentAgentTriggerToResponse(trigger commentAgentTrigger) CommentTriggerAgentResponse {
 	return CommentTriggerAgentResponse{
 		ID:        uuidToString(trigger.Agent.ID),
@@ -1597,6 +1460,9 @@ func (h *Handler) commentAgentTriggerToResponse(trigger commentAgentTrigger) Com
 	}
 }
 
+// PreviewCommentTriggers 处理 GET/POST /api/issues/:id/comments/trigger-preview：对一段草稿
+// 内容（可带 parent_id / editing_comment_id）做与保存完全相同的触发解析，返回「会触发的
+// agent」与「被拦截的提及」，让编辑器在真正发送前展示后果。
 func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -1659,12 +1525,10 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 		parentComment = &parent
 	}
 
-	// Normalize with the SAME entry point CreateComment/UpdateComment apply
-	// before persisting (sanitizeNullBytes), so the preview computes triggers on
-	// the exact content that will be stored and enqueued on submit. Otherwise a
-	// mention hidden behind a byte the DB strips (e.g. a NUL inside
-	// mention://agent/<uuid>) reads as inert in preview but enqueues the agent on
-	// submit — a preview/side-effect divergence (GH #5388 review).
+	// 与 CreateComment/UpdateComment 持久化前用的「同一入口」归一化（sanitizeNullBytes），
+	// 预览才能在被 DB 剥掉字节（如 mention://agent/<uuid> 里的 NUL）后，对着将要入库和入队
+	// 的确切内容算触发。否则预览里被藏起来的提及看着是惰性的，提交时却把 agent 排进队列——
+	// 预览/副作用不一致（GH #5388 review）。
 	content := sanitizeNullBytes(req.Content)
 	if content == "" {
 		writeJSON(w, http.StatusOK, CommentTriggerPreviewResponse{Agents: []CommentTriggerAgentResponse{}})
@@ -1685,17 +1549,13 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// taskCoversReplyParent reports whether parentID is a comment this task is
-// authorized to reply under. A comment-triggered task may reply to its trigger
-// comment OR to any earlier comment that was folded into the same run while it
-// was still queued (coalesced_comment_ids). A coalesced run answers each root
-// thread it covered inside that thread, so its replies legitimately target
-// those threads' comments — not just the trigger (MUL-4348 per-thread fan-out).
+// taskCoversReplyParent 判断 parentID 是不是该任务被授权回复其下的评论。评论触发的任务可以
+// 回复它的触发评论，也可以回复排队期间被折进同一运行的更早评论（coalesced_comment_ids）。
+// 合并的运行会在它覆盖的每条根线程里作答，所以它的回复合理地指向那些线程的评论——不只是
+// 触发那条（MUL-4348 的逐线程 fan-out）。
 //
-// Every other parent on the task's own issue is still rejected: this is the
-// defense against resumed-session --parent drift and cross-thread misplacement.
-// The allow-list is exactly the set the run was given to answer, so it cannot
-// reach arbitrary comments.
+// 任务自己 issue 上的任何其它父级仍被拒绝：这是对「恢复会话时 --parent 漂移」与跨线程错放
+// 的防线。白名单恰好是运行被指定要回答的集合，因此它够不到任意评论。
 func taskCoversReplyParent(task db.AgentTaskQueue, parentID pgtype.UUID) bool {
 	if !parentID.Valid {
 		return false
@@ -1712,6 +1572,12 @@ func taskCoversReplyParent(task db.AgentTaskQueue, parentID pgtype.UUID) bool {
 	return false
 }
 
+// CreateComment 处理 POST /api/issues/:id/comments：校验后创建评论并派发 agent 触发。
+// 权限：调用方须为工作区成员（中间件）；agent 也可经 X-Agent-ID 身份发评论。入库前剥离
+// PostgreSQL TEXT 列拒绝的字节；type 仅接受客户端可写的种类（拒绝伪造系统生成的 type）。
+// 评论创建、附件绑定、线程重开事件、评论创建事件在同一事务内提交。评论保存后若有
+// @agent/@squad 提及或路由触发，逐个入队并把结果放进响应的 trigger_outcomes（拦截不使整
+// 个请求失败）。
 func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -1730,14 +1596,11 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strip bytes PostgreSQL's TEXT column rejects before the empty check. The
-	// case reachable over the JSON API is an embedded NUL (0x00, SQLSTATE
-	// 22021) that survives a JSON round trip; sanitizeNullBytes also drops
-	// invalid UTF-8 as defense-in-depth. A stray such byte in agent-written
-	// content (notably via --content-file) otherwise fails the INSERT with an
-	// opaque 500 the CLI renders as "server unavailable" and retries forever —
-	// the plausible cause of GH #5388. Mirrors the skill-import sanitization;
-	// normalizing first means all-NUL content is correctly treated as empty.
+	// 在空检查之前剥掉 PostgreSQL TEXT 列拒绝的字节。JSON API 可触达的是内嵌 NUL（0x00，
+	// SQLSTATE 22021）——它能穿越 JSON round trip；sanitizeNullBytes 也顺带丢弃非法 UTF-8
+	// 作为纵深防御。agent 写入内容（尤其经 --content-file）里混进这种字节，否则会让 INSERT
+	// 以不透明的 500 失败、CLI 渲染成「服务器不可用」然后无限重试——很可能是 GH #5388 的
+	// 根因。镜像 skill-import 的清理；先归一化意味着全 NUL 内容会被正确地当成空。
 	req.Content = sanitizeNullBytes(req.Content)
 	if req.Content == "" {
 		writeError(w, http.StatusBadRequest, "content is required")
@@ -1746,12 +1609,9 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if req.Type == "" {
 		req.Type = "comment"
 	}
-	// Validate rather than letting the DB CHECK reject it: an unknown type
-	// previously surfaced as a 500 on a constraint violation, which reads as a
-	// server fault for what is plainly bad input. This is also the explicit
-	// refusal of a client trying to author a machine-written kind (MUL-5465
-	// review): a member must not be able to post a comment that renders as
-	// something the system generated.
+	// 就地校验而不是让 DB CHECK 拒绝：未知 type 过去会以约束违规的 500 呈现，明明是坏输入
+	// 却像服务端故障。这也是对「客户端想伪造机器生成种类」的显式拒绝（MUL-5465 review）：
+	// 成员不能发一条渲染成系统生成样子的评论。
 	if !isClientAuthorableCommentType(req.Type) {
 		writeError(w, http.StatusBadRequest, "invalid comment type")
 		return
@@ -1783,65 +1643,46 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Determine author identity: agent (via X-Agent-ID header) or member.
+	// 确定作者身份：agent（经 X-Agent-ID 头）或 member。
 	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 
-	// sourceTaskID captures the agent's currently-executing task when it posts
-	// via the CLI (X-Task-ID header). Stamping it on the comment row keeps the
-	// originator inheritance chain (resolveOriginatorFromTriggerComment →
-	// comment.source_task_id → parent task's originator_user_id) intact across
-	// an agent→agent hop. Without this stamp, a private squad leader's
-	// worker-agent whose completion wakes the leader via
-	// routeAssignedSquadLeaderFallback can't pass canInvokeAgent — the worker's
-	// task originator is unattributed, effectiveUser resolves to "", and the
-	// private-agent gate denies the wake (MUL-4015).
+	// sourceTaskID 在 agent 经 CLI 发评论（X-Task-ID 头）时捕获它当前执行的任务。把它盖在
+	// 评论行上，保住跨 agent→agent 跳转的发起人继承链（resolveOriginatorFromTriggerComment →
+	// comment.source_task_id → 父任务的 originator_user_id）。没有这个章，私密 squad leader 的
+	// worker-agent——它的完成经 routeAssignedSquadLeaderFallback 唤醒 leader——会过不了
+	// canInvokeAgent：worker 的任务发起人无归属、effectiveUser 解析成 ""、私密 agent 闸门拒绝
+	// 这次唤醒（MUL-4015）。
 	//
-	// The header is NOT client-chosen: the task token forces X-Task-ID and
-	// X-Agent-ID from its own row, and resolveActor rejects the JWT path unless
-	// the named task belongs to the named agent. So the stamp always records the
-	// authoring agent's own run.
+	// 该头不是客户端自选的：task token 用自己的行强推 X-Task-ID 与 X-Agent-ID，resolveActor
+	// 除非命名任务属于命名 agent 否则拒绝 JWT 路径。因此这个章记录的一定是作者 agent 自己的运行。
 	//
-	// It is deliberately NOT scoped to that run's own issue (MUL-6490 / GH
-	// #7328). A run that legitimately comments on ANOTHER issue — the ordinary
-	// "agent creates issue Y, then coordinates there" flow — used to persist a
-	// NULL lineage, so the run that comment woke resolved as unattributed and
-	// every @mention / assign / sub-issue inside it hit invocation_not_allowed,
-	// even though the SAME delegation had just succeeded on the originating
-	// issue. Propagating the chain is monotonic: it can only carry the human
-	// this run ALREADY acts for, and every hop still re-runs canInvokeAgent
-	// against that same human, so the admissible set stays a subset of what that
-	// human could trigger directly. What must never happen is SUBSTITUTING a
-	// human — an owner fallback, or adopting the target issue's own originator —
-	// because that borrows a different person's authority; those stay rejected.
+	// 刻意不把范围限定到该运行自己的 issue（MUL-6490 / GH #7328）：一条运行合法地在「另一条」
+	// issue 上评论——平常的「agent 建 issue Y、再到那里协调」流程——过去会持久化 NULL 血缘，
+	// 让那条评论唤醒的运行解析成无归属，里面每个 @提及/分配/子任务都撞
+	// invocation_not_allowed，尽管同一委派在发起 issue 上刚刚成功过。传播链是单调的：它只能
+	// 携带这条运行「已经在代表」的人类，且每一步都对同一个人重跑 canInvokeAgent，可准入集合
+	// 始终是该人类可直接触发的子集。绝不能做的是「替换」一个人——owner 回退，或采用目标
+	// issue 自己的发起人——因为那是借别人的权力；这些仍被拒绝。
 	//
-	// Consumers that genuinely need "the authoring run is working on THIS issue"
-	// keep that check next to their own rule instead: the reply-parent /
-	// no_action guards below, and autopilotDelegationAuthority's lineage
-	// verification (MUL-4857).
+	// 真正需要「作者运行正在做这条 issue」的消费方，把检查放在自己规则旁边：回复父级/
+	// no_action 守卫，以及 autopilotDelegationAuthority 的血缘验证（MUL-4857）。
 	var sourceTaskID pgtype.UUID
 	if authorType == "agent" {
 		if task, ok := h.taskFromRequestHeader(r); ok {
-			// Defense against resumed-session drift: when an agent posts from
-			// inside a comment-triggered task AND the comment is being posted on
-			// that same issue, the parent_id must exactly match the task's
-			// trigger comment. Resumed Claude sessions otherwise carry forward a
-			// previous turn's --parent UUID and silently misplace the reply.
+			// 恢复会话漂移的防线：agent 在评论触发的任务里发评论、且评论发在同一条 issue 上时，
+			// parent_id 必须精确等于任务的触发评论。恢复的 Claude 会话否则会把上一轮的
+			// --parent UUID 带过来、悄悄放错回复位置。
 			//
-			// The task.IssueID scope is important: the CLI stamps X-Task-ID on
-			// every request, so an agent legitimately commenting on a different
-			// issue must not be blocked by its current task's trigger.
-			// Assignment-triggered tasks (no TriggerCommentID) are also
-			// unaffected.
+			// task.IssueID 范围很重要：CLI 在每次请求上都盖 X-Task-ID，合法地在另一条 issue 上
+			// 评论的 agent 不能被当前任务的触发评论拦住。分配触发的任务（无 TriggerCommentID）
+			// 也不受影响。
 			if task.IssueID.Valid && uuidToString(task.IssueID) == uuidToString(issue.ID) {
 				if task.TriggerCommentID.Valid {
 					if !taskCoversReplyParent(task, parentID) {
-						// Keep this error actionable for agents (MUL-4417 / GH #5266).
-						// The two rejections need different copy. A resumed
-						// session carrying a previous turn's --parent forward
-						// (GH #6264) did NOT ask for a top-level comment, and
-						// telling it that it did sends it looking for a
-						// new-thread opt-in instead of simply correcting the
-						// parent it already passed.
+						// 给 agent 可执行的报错（MUL-4417 / GH #5266）。两种拒绝需要不同的话术：
+						// 恢复会话把上一轮的 --parent 带过来（GH #6264）并没有要求一条顶层评论，
+						// 告诉它「你要求了顶层评论」会误导它去找新线程的 opt-in，而不是去纠正它
+						// 已经传的 parent。
 						fix := "set parent_id (--parent) to " + uuidToString(task.TriggerCommentID) + " or a coalesced comment id"
 						msg := "comment-triggered tasks cannot create top-level comments; " + fix
 						if parentID.Valid {
@@ -1867,16 +1708,12 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// NOTE: Comment content is stored as Markdown source. XSS is handled at the
-	// rendering layer (rehype-sanitize) and at the editor layer
-	// (@tiptap/markdown with html:false). Running an HTML sanitizer here would
-	// entity-encode Markdown syntax characters (>, ", &, <) and corrupt the
-	// source. See issue #1303 / discussion in MUL-1119, MUL-1125.
+	// 说明：评论内容以 Markdown 源存储。XSS 在渲染层（rehype-sanitize）与编辑器层
+	//（html:false 的 @tiptap/markdown）处理。在这里跑 HTML sanitizer 会把 Markdown 语法字符
+	//（>、"、&、<）实体编码、破坏源文本。见 issue #1303 / MUL-1119、MUL-1125 的讨论。
 
-	// parent_id stores the exact comment being replied to. Thread-level behavior
-	// (for example auto-unresolving a resolved thread) resolves the root
-	// separately so storing a reply-to-reply does not destroy the direct-parent
-	// signal used by trigger decisions.
+	// parent_id 存的是被回复的那条确切评论。线程级行为（例如自动取消已解决线程）另行解析根，
+	// 存「回复对回复」不会破坏触发决策用的直接父级信号。
 	var rootComment *db.Comment
 	if parentID.Valid {
 		if root, err := h.Queries.GetThreadRoot(r.Context(), db.GetThreadRootParams{
@@ -1914,9 +1751,8 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	comment := created.Comment()
 
-	// Link uploaded attachments and verify the complete requested set while the
-	// comment transaction is still open. A partial claim must roll back the
-	// comment and its issue activity together.
+	// 在评论事务仍开着时绑定上传的附件并核验完整请求集合。部分认领必须把评论与它的 issue
+	// activity 一起回滚。
 	attachments, err := linkAttachmentsToNewComment(r.Context(), qtx, comment, attachmentIDs)
 	if errors.Is(err, errCommentAttachmentsUnavailable) {
 		writeError(w, http.StatusBadRequest, "one or more attachments are unavailable for this comment")
@@ -1971,41 +1807,36 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	originatorUserID := h.invokeOriginatorFromRequest(r, authorType, authorID)
-	// MUL-4857: resolve the autopilot delegation authority from the SAME
-	// server-trusted X-Task-ID header the originator resolution uses, so an
-	// unattributed autopilot dispatch delegating mid-chain is keyed on its
-	// autopilot creator only when the speaking task's lineage checks out.
+	// MUL-4857：从与发起人解析「同一」的服务端信任 X-Task-ID 头解析 autopilot 委派授权——
+	// 无归属的 autopilot 派发要在链中委派时，只有发言任务的血缘验证通过，才以 autopilot
+	// 创建者身份判定。
 	delegationAuthority := h.autopilotDelegationAuthorityFromRequest(r, issue, authorType, authorID)
-	// The comment is already saved; a blocked mention must not fail the whole
-	// request. Surface the per-target outcomes so the client can show partial
-	// success instead of a silent no-op (MUL-4525 §2).
+	// 评论已保存；被拦截的提及不能让整个请求失败。把按目标结果发出来，客户端能提示「部分
+	// 成功」而不是静默无操作（MUL-4525 §2）。
 	resp.TriggerOutcomes = h.triggerTasksForComment(r.Context(), issue, comment, parentComment, authorType, authorID, originatorUserID, delegationAuthority, suppressAgentIDs)
 
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-// clientAuthorableCommentTypes is what POST /comments accepts. `status_change`
-// and `system` are platform-generated narration, so a client claiming them
-// would be forging system output; they are deliberately absent.
+// clientAuthorableCommentTypes 是 POST /comments 接受的 type 集合。`status_change` 与
+// `system` 是平台生成的旁白，客户端声明它们等于伪造系统输出，因此刻意不在其中。
 var clientAuthorableCommentTypes = map[string]struct{}{
 	"comment":         {},
 	"progress_update": {},
 }
 
+// isClientAuthorableCommentType 判断 type 是否客户端可写。
 func isClientAuthorableCommentType(t string) bool {
 	_, ok := clientAuthorableCommentTypes[t]
 	return ok
 }
 
-// noteCommentPrefix marks a comment as a human-only note. A comment whose first
-// whitespace-delimited token is this prefix (case-insensitive) is stored like
-// any other comment but never triggers an agent.
+// noteCommentPrefix 把评论标记为仅人类可见的便签。内容第一个「空白分隔的 token」等于此前缀
+// （大小写不敏感）的评论像普通评论一样存储，但绝不触发 agent。
 const noteCommentPrefix = "/note"
 
-// isNoteComment reports whether content opts out of agent triggering via the
-// reserved /note prefix. The prefix must be the comment's first token, so
-// "/note check expiry", "  /NOTE", and "/note" all match, while "/notes",
-// "/ note", and "see foo/note" do not.
+// isNoteComment 判断内容是否用保留前缀 /note 退出了 agent 触发。前缀必须是评论第一个 token：
+// "/note check expiry"、"  /NOTE"、"/note" 都命中；"/notes"、"/ note"、"see foo/note" 都不算。
 func isNoteComment(content string) bool {
 	trimmed := strings.TrimLeft(content, " \t\r\n")
 	firstToken := trimmed
@@ -2015,11 +1846,9 @@ func isNoteComment(content string) bool {
 	return strings.EqualFold(firstToken, noteCommentPrefix)
 }
 
-// triggerTasksForComment resolves and enqueues the comment's agent triggers and
-// returns the per-target outcomes for explicit @agent / @squad mentions
-// (MUL-4525 §2): blocked mentions from resolution plus queued / coalesced /
-// deferred / blocked from enqueue. UI-suppressed triggers (the user unchecked
-// them) are removed before enqueue and produce no outcome.
+// triggerTasksForComment 解析并入队评论的 agent 触发，返回显式 @agent / @squad 提及的按目标
+// 结果（MUL-4525 §2）：解析阶段被拦截的提及 + 入队阶段的 queued / coalesced / deferred /
+// blocked。UI 抑制的触发（用户取消勾选）在入队前移除、不产生任何结果。
 func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID, originatorUserID, delegationAuthorityUserID string, suppressAgentIDs []pgtype.UUID) []CommentTriggerOutcome {
 	if isNoteComment(comment.Content) {
 		return nil
@@ -2035,14 +1864,12 @@ func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, co
 	return commentTriggerOutcomes(targets, enqueued)
 }
 
-// noteBlockedRuntimeTargets leaves one system comment per agent refused for an
-// unusable runtime, whoever authored the trigger — see noteRuntimeUnusable for
-// why a human author gets one too. Deduped by agent so a comment naming both
-// @Agent and the squad it leads produces a single notice.
+// noteBlockedRuntimeTargets 对每个因 runtime 不可用被拒的 agent 留一条系统评论，无论谁写的
+// 触发——为何人类作者也有一条见 noteRuntimeUnusable。按 agent 去重：一条同时 @Agent 与其
+// 领导的 squad 的评论只产生一条通知。
 //
-// Called from the trigger path only. The resolver that produced these targets
-// also runs for the composer preview, where writing a comment would be a side
-// effect of typing.
+// 只在触发路径调用。产出这些 target 的解析器也服务编辑器预览——在那里写评论会是「打字就
+// 产生副作用」。
 func (h *Handler) noteBlockedRuntimeTargets(ctx context.Context, issue db.Issue, targets []commentMentionTarget) {
 	var noted map[string]struct{}
 	for _, t := range targets {
@@ -2061,6 +1888,8 @@ func (h *Handler) noteBlockedRuntimeTargets(ctx context.Context, issue db.Issue,
 	}
 }
 
+// filterSuppressedCommentAgentTriggers 把 suppressAgentIDs 里列出的 agent 从触发列表移除
+// （用户显式取消勾选，不发任务）。
 func filterSuppressedCommentAgentTriggers(triggers []commentAgentTrigger, suppressAgentIDs []pgtype.UUID) []commentAgentTrigger {
 	if len(triggers) == 0 || len(suppressAgentIDs) == 0 {
 		return triggers
@@ -2084,23 +1913,19 @@ func filterSuppressedCommentAgentTriggers(triggers []commentAgentTrigger, suppre
 	return filtered
 }
 
-// commentEnqueueResult is the domain outcome of enqueuing ONE executing agent.
-// execSquadID is the squad whose leader context the run actually carries (set
-// only for a squad-leader execution), so a DIFFERENT squad that shares this
-// leader can be reported honestly as coalesced rather than as if its own leader
-// context ran.
+// commentEnqueueResult 是「一个执行 agent 入队」的领域结果。execSquadID 是运行实际携带的
+// squad（其 leader 上下文）——只为 squad-leader 执行设置——因此共享同一 leader 的另一个
+// squad 可以诚实地上报为 coalesced，而不是假装它自己的 leader 上下文跑了。
 type commentEnqueueResult struct {
 	status      DispatchStatus
 	reason      DispatchReasonCode
 	execSquadID string
 }
 
-// enqueueCommentAgentTriggers enqueues each resolved trigger (already deduped by
-// executing agent) and returns the result keyed by executing agent id
-// (MUL-4525 §2). Outcomes are later fanned from these to every explicit mention
-// target that resolved to the agent, so coalescing a run never drops a named
-// target's outcome. queued / coalesced / deferred are success-shaped (the run
-// was handled, no duplicate task); only a real enqueue failure is blocked.
+// enqueueCommentAgentTriggers 入队每个已解析的触发（已按执行 agent 去重），返回以执行 agent
+// id 为 key 的结果（MUL-4525 §2）。结果之后会 fan-out 到每个解析到该 agent 的显式提及目标，
+// 合并运行永不丢命名目标的结果。queued / coalesced / deferred 都是成功形态（运行已被处理、
+// 无重复任务）；只有真正的入队失败是 blocked。
 func (h *Handler) enqueueCommentAgentTriggers(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, triggers []commentAgentTrigger) map[string]commentEnqueueResult {
 	var escalationDelay time.Duration
 	escalationDelayLoaded := false
@@ -2126,49 +1951,37 @@ func (h *Handler) enqueueCommentAgentTriggers(ctx context.Context, issue db.Issu
 	return results
 }
 
-// resolveCommentTriggerEnqueue resolves ONE trigger into its final dispatch
-// outcome, folding the comment into an existing pending task rather than
-// dropping it (MUL-4195). It handles the two ways the (issue, agent) pair can
-// already hold a pending task:
+// resolveCommentTriggerEnqueue 把单个触发解析成最终派发结果：尽量把评论折进已存在的待处理
+// 任务而不是丢弃（MUL-4195）。它处理 (issue, agent) 对已有待处理任务的两种情形：
 //
-//   - resolution pre-flagged AlreadyPending, or
-//   - a fresh enqueue LOST the race to a concurrent sibling and the
-//     idx_one_pending_task_per_issue_agent unique index rejected the insert
-//     (service.ErrDuplicatePendingTask, #5914).
+//   - 解析阶段预标记了 AlreadyPending，或
+//   - 一次全新入队在竞态中输给了并发兄弟，唯一索引
+//     idx_one_pending_task_per_issue_agent 拒绝了插入（service.ErrDuplicatePendingTask,
+//     #5914）。
 //
-// Both mean "a task now exists". INVARIANT: a success-shaped outcome (coalesced /
-// deferred / queued) is returned only when the comment is provably attached to a
-// run that will address it:
+// 两者都意味着「现在已有一条任务」。不变量：只有在评论「可证明已附着到会处理它的运行」时才
+// 返回成功形态（coalesced / deferred / queued）：
 //
-//   - coalesced — an atomic head-scoped merge folded it into a queued task;
-//   - queued    — a fresh task was created for it;
-//   - deferred  — an active task's completion reconcile will replay it, either
-//     because a planned-id write landed on a claim-receipt task
-//     (lost-race path, where the comment may PREDATE the task) or
-//     because the comment is newer than that task and therefore
-//     inside reconcile's `created_at > since` window (AlreadyPending
-//     path, where the task existed before the comment).
+//   - coalesced —— 原子 head 范围合并把它折进了排队任务；
+//   - queued —— 为它新建了一条任务；
+//   - deferred —— 活动任务的完成 reconcile 会重放它——要么是 planned-id 写落到了
+//     claim-receipt 任务上（lost-race 路径，评论可能早于任务），要么评论比该任务新、落在
+//     reconcile 的 `created_at > since` 窗口内（AlreadyPending 路径，任务先于评论存在）。
 //
-// The deferral is not a one-shot prediction: if a replay is later blocked by a
-// task that cannot cover the comment, reconcileCommentsOnCompletion hands the
-// obligation on (propagateUncoveredCommentObligation) instead of discarding it,
-// and that hand-off retries across the blocker's state changes (#5914, Elon
-// rounds 8–9). It is best-effort in exactly one shape — a DIFFERENT-head QUEUED
-// blocker, which can neither cover the comment nor accept it without violating
-// TEN-356 — and that case is logged at error rather than hidden; closing it needs
-// a durable obligation record, which is deliberately out of scope here.
-// It never defers off a mere classification of the current active tasks — a
-// snapshot cannot prove anything about state after it is read (round 7).
-// A duplicate that cannot yet be resolved re-loops (bounded by maxAttempts); on
-// genuine non-convergence it returns a truthful internal_error, never a fabricated
-// deferred that would silently drop the comment.
+// 推迟不是一次性的预测：若重放后来被一条盖不住该评论的任务挡住，reconcileCommentsOnCompletion
+// 会把义务转交（propagateUncoveredCommentObligation），并在挡路者的状态变化间重试（#5914，
+// Elon 第 8-9 轮）。唯一一个尽力形态是「不同 HEAD 的 QUEUED 挡路者」——它既盖不住评论、
+// 收下又会违反 TEN-356——这种情况以 error 记录而不隐藏；收掉它需要持久化义务记录，刻意
+// 不在本次范围内。
+// 绝不对当前活动任务做「分类」式推迟——快照读后证明不了任何状态（第 7 轮）。尚不能解决的
+// 重复会重试（以 maxAttempts 为界）；真正不收敛时返回诚实的 internal_error，绝不编造会悄悄
+// 丢弃评论的 deferred。
 func (h *Handler) resolveCommentTriggerEnqueue(ctx context.Context, issue db.Issue, trigger commentAgentTrigger, triggerCommentID pgtype.UUID, getEscalationDelay func() time.Duration) (DispatchStatus, DispatchReasonCode) {
 	pending := trigger.AlreadyPending
 	lostRace := false
-	// Resolve the reviewed HEAD lazily and at most once — the common
-	// non-pending path enqueues without ever needing it, so it stays off the
-	// hot path. It keys both the head-scoped merge and the planned-comment
-	// registration, matching the AlreadyPending pre-check's head (TEN-356).
+	// 懒解析被 review 过的 HEAD、最多一次——常见的非待处理路径根本不需要它，因此保持在热
+	// 路径外。它同时作为 head 范围合并与 planned-comment 登记的 key，与 AlreadyPending 预检
+	// 的 HEAD 一致（TEN-356）。
 	var headSha pgtype.Text
 	headShaLoaded := false
 	getHeadSha := func() pgtype.Text {
@@ -2178,49 +1991,39 @@ func (h *Handler) resolveCommentTriggerEnqueue(ctx context.Context, issue db.Iss
 		}
 		return headSha
 	}
-	// Bounded retry (#5914, Elon round 3). INVARIANT: never return a
-	// success-shaped outcome (coalesced / deferred / queued) without a COMPLETED
-	// merge, planned-id registration, fresh enqueue, or a confirmed different-head
-	// deferral. A duplicate that cannot be durably resolved re-loops; on genuine
-	// non-convergence we return a truthful internal_error below, never a
-	// fabricated deferred that would silently drop the comment. maxAttempts is a
-	// concurrent-churn backstop — each duplicate is followed by a merge/register
-	// attempt, so the loop only spins while a sibling keeps flipping state.
+	// 有界重试（#5914，Elon 第 3 轮）。不变量：没有「完成的合并 / planned-id 登记 / 全新
+	// 入队 / 确认的不同 head 推迟」就不返回成功形态（coalesced / deferred / queued）。
+	// 无法持久解决的重复会重试；真正不收敛返回诚实的 internal_error，绝不编造会悄悄丢弃
+	// 评论的 deferred。maxAttempts 是并发抖动的后盾——每次重复都跟着一次 merge/register
+	// 尝试，所以只有在兄弟持续翻转状态时循环才会空转。
 	const maxAttempts = 4
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if pending {
-			// (a) Fold into a same-head QUEUED task. This is the ONLY path that
-			// ATOMICALLY re-attributes the run (trigger / originator / accountable
-			// / overlay / connected apps) to the folded comment, so a queued
-			// winner must always come through here, never a bare planned append
-			// (MUL-4302). HEAD-scoped so a DIFFERENT-head task is never folded
-			// (TEN-356) — the merge misses and this falls through. The merge
-			// reports HOW it resolved: coalesced on success; blocked on a
-			// fail-closed / failed merge — never mislabeled as success (MUL-4525 §2).
+			// (a) 折进同 HEAD 的 QUEUED 任务。这是唯一「原子地」把运行（trigger / originator /
+			// accountable / overlay / connected apps）重新归属到被折评论上的路径，因此排队赢家
+			// 必须总走这里、绝不是裸 planned append（MUL-4302）。HEAD 限定使不同 HEAD 的任务
+			// 永远不会被折（TEN-356）——合并未命中就落到下面。合并会报告它是怎么解决的：成功
+			// 是 coalesced；失败关闭/合并失败是 blocked——绝不误标成成功（MUL-4525 §2）。
 			if status, reason, terminal := commentMergeTerminalOutcome(
 				h.mergeCommentIntoPendingTask(ctx, issue, trigger, triggerCommentID, getHeadSha()),
 			); terminal {
 				return status, reason
 			}
-			// No same-head QUEUED row to fold into (merge missed). The two paths
-			// resolve differently.
+			// 没有可折入的同 HEAD QUEUED 行（合并未命中）。两条路径解析不同。
 			if !lostRace {
-				// (b) AlreadyPending path: this comment arrived AFTER its task, so
-				// it is newer than the task and completion reconcile covers it by
-				// timestamp; MUL-4195 leaves the claimed task untouched. Defer to
-				// the active task, or enqueue fresh if it has since finished.
+				// (b) AlreadyPending 路径：这条评论晚于它的任务到达，因此比任务新、完成 reconcile
+				// 按时间戳盖得住它；MUL-4195 保持已 claim 的任务不动。推迟给活动任务；任务若已
+				// 结束则全新入队。
 				active, activeErr := h.hasActiveTaskForIssueAndAgent(ctx, issue.ID, trigger.Agent.ID)
 				if status, reason, enqueueFresh := decidePostMergeMiss(active, activeErr); !enqueueFresh {
 					return status, reason
 				}
 				// enqueueFresh → fall through to the enqueue below.
 			} else {
-				// (c) Lost INSERT race: the losing comment can PREDATE the winner,
-				// which completion reconcile's `created_at > since` window cannot
-				// see. Register it as a planned (undelivered) input on a same-head
-				// CLAIM-RECEIPT task (dispatched/running/waiting; queued is excluded
-				// — it must fold through the atomic merge above), turning the drop
-				// into a bounded follow-up (#5914, Elon round 2).
+				// (c) 输掉的 INSERT 竞态：输家评论可能早于赢家，完成 reconcile 的
+				// `created_at > since` 窗口看不见它。在同 HEAD 的 CLAIM-RECEIPT 任务上把它登记为
+				// planned（未投递）输入（dispatched/running/waiting；queued 排除——它必须走上面的
+				// 原子合并），把「丢」变成有界跟进（#5914，Elon 第 2 轮）。
 				registered, err := h.registerPlannedCommentForActiveTask(ctx, issue, trigger.Agent.ID, triggerCommentID, getHeadSha())
 				if err != nil {
 					slog.Warn("register planned lost-race comment failed",
@@ -2230,29 +2033,20 @@ func (h *Handler) resolveCommentTriggerEnqueue(ctx context.Context, issue db.Iss
 				if registered {
 					return DispatchDeferred, ReasonDeferred
 				}
-				// (d) No same-head QUEUED task to fold (merge missed) and no
-				// same-head CLAIM-RECEIPT task to register on. Do NOT try to defer
-				// off a classification of the current active tasks: a snapshot only
-				// proves state NOW, and a DIFFERENT-head task's reconcile covering
-				// this comment can be defeated by a newer blocker that appears after
-				// the snapshot but before that task completes (its replay collides
-				// with the blocker and completion reconcile discards the failure —
-				// Elon round 7). Every success-shaped outcome must be backed by a
-				// COMPLETED write, never a prediction. So just fall through to a
-				// fresh enqueue: if the unique slot is still occupied — necessarily
-				// by a different-head task we can neither fold into nor durably cover
-				// — the insert re-raises ErrDuplicatePendingTask and we re-loop,
-				// converging to a truthful non-success; if the slot is free, the
-				// enqueue creates the covering task. (The occupant's own completion
-				// reconcile still replays this comment best-effort in the common
-				// no-blocker case; we simply never PROMISE it.)
+				// (d) 没有可折入的同 HEAD QUEUED 任务（合并未命中），也没有可登记的同 HEAD
+				// CLAIM-RECEIPT 任务。别试着靠「当前活动任务的分类」推迟：快照只能证明现在，
+				// 而不同 HEAD 任务覆盖该评论的 reconcile 可能被快照之后、该任务完成之前出现的更新
+				// 的挡路者击穿（重放撞上挡路者，完成 reconcile 丢弃失败——Elon 第 7 轮）。每个
+				// 成功形态都必须有「已完成」的写背书，而不是预测。所以直接落到全新入队：若唯一槽
+				// 仍被占——必然是被一个既折不进也盖不住的不同 HEAD 任务占着——插入会再次抛
+				// ErrDuplicatePendingTask 并重试，收敛到诚实的非成功；若槽空，入队创建盖得住的任务。
+				//（占槽者自己的完成 reconcile 在常见无挡路情况下仍会尽力重放这条评论；我们只是
+				// 不承诺它。）
 			}
 		}
 		if err := h.enqueueSingleCommentTrigger(ctx, issue, triggerCommentID, trigger, getEscalationDelay); err != nil {
-			// Lost the enqueue race: a sibling task for this (issue, agent) now
-			// exists. Re-resolve as pending so the next attempt folds this
-			// comment into that sibling (queued) or durably registers it
-			// (dispatched) instead of dropping it (#5914).
+			// 入队竞态输了：这条 (issue, agent) 现在有了兄弟任务。重解析为 pending，让下一次
+			// 尝试把评论折进兄弟（queued）或持久登记它（dispatched），而不是丢弃（#5914）。
 			if errors.Is(err, service.ErrDuplicatePendingTask) {
 				pending = true
 				lostRace = true
@@ -2262,23 +2056,18 @@ func (h *Handler) resolveCommentTriggerEnqueue(ctx context.Context, issue db.Iss
 		}
 		return DispatchQueued, ReasonQueued
 	}
-	// Non-convergence after the bounded retries (only reachable under sustained
-	// concurrent churn where a sibling keeps flipping state under us): surface a
-	// truthful non-success — NEVER a fabricated deferred/coalesced that would
-	// report the comment covered when no task provably covers it (#5914, Elon
-	// round 3). The comment row persists; a later trigger/edit can still cover it.
+	// 有界重试后仍未收敛（只有在兄弟不断在脚下翻状态的持续并发抖动下才可达）：上报诚实的
+	// 非成功——绝不编造 deferred/coalesced，在没有任务可证明覆盖时谎称评论已被覆盖（#5914，
+	// Elon 第 3 轮）。评论行仍在；之后的触发/编辑仍可覆盖它。
 	slog.Warn("comment trigger enqueue did not converge; reporting non-success",
 		"issue_id", uuidToString(issue.ID), "agent_id", uuidToString(trigger.Agent.ID))
 	return DispatchBlocked, ReasonInternalError
 }
 
-// commentTriggerOutcomes maps each explicit mention target to its final outcome
-// (MUL-4525 §2): a target that resolved to an executing agent takes that agent's
-// enqueue status, so several mentions coalescing into one run each still get
-// their own outcome; a terminal target (blocked / self-suppressed) carries its
-// own status. A target whose executing agent has no enqueue result — because the
-// composer suppressed (unchecked) it — yields no outcome, since the user opted
-// out deliberately.
+// commentTriggerOutcomes 把每个显式提及目标映射成最终结果（MUL-4525 §2）：解析到某个执行
+// agent 的目标取该 agent 的入队状态——多条提及合并进同一运行也各自有结果；终态目标
+// （blocked / 自我抑制）带自己的状态。执行 agent 没有入队结果的目标——因为编辑器抑制（未勾选）
+// 了它——不产生结果，用户是主动选择退出的。
 func commentTriggerOutcomes(targets []commentMentionTarget, enqueued map[string]commentEnqueueResult) []CommentTriggerOutcome {
 	if len(targets) == 0 {
 		return nil
@@ -2291,11 +2080,10 @@ func commentTriggerOutcomes(targets []commentMentionTarget, enqueued map[string]
 				continue
 			}
 			status, reason := res.status, res.reason
-			// A @squad whose shared leader ran, but under a DIFFERENT squad's
-			// context, did not get its own leader briefing injected — the single
-			// leader run (one task per issue+agent) merely folds it in. Report
-			// coalesced, not queued, so we never claim this squad's leader
-			// context executed (MUL-4525, Elon round 3).
+			// 一条 @squad 的共享 leader 跑了、但跑在「另一个」squad 的上下文里——它没有得到
+			// 自己 squad 的 leader 简报注入，单条 leader 运行（每 issue+agent 一条任务）只是把
+			// 它折进来而已。上报 coalesced 而不是 queued，绝不声称这个 squad 的 leader 上下文
+			// 被执行过（MUL-4525，Elon 第 3 轮）。
 			if t.TargetType == "squad" && res.execSquadID != "" && res.execSquadID != t.TargetID && status == DispatchQueued {
 				status, reason = DispatchCoalesced, ReasonCoalesced
 			}
@@ -2307,10 +2095,9 @@ func commentTriggerOutcomes(targets []commentMentionTarget, enqueued map[string]
 	return outcomes
 }
 
-// commentBlockedTargetOutcomes is the composer-preview projection: the explicit
-// mentions that will NOT trigger if the comment is posted as-is (MUL-4525 §2). A
-// resolvable/executing target instead appears in the preview `agents` list, so
-// only terminal blocked targets surface here.
+// commentBlockedTargetOutcomes 是编辑器预览的投影：按原文发出后「不会触发」的显式提及
+// （MUL-4525 §2）。可解析/可执行的目标出现在预览的 `agents` 列表里，因此这里只浮现终态
+// blocked 目标。
 func commentBlockedTargetOutcomes(targets []commentMentionTarget) []CommentTriggerOutcome {
 	var blocked []CommentTriggerOutcome
 	for _, t := range targets {
@@ -2321,12 +2108,10 @@ func commentBlockedTargetOutcomes(targets []commentMentionTarget) []CommentTrigg
 	return blocked
 }
 
-// commentEnqueueFailureReason types an enqueue error that reached the response
-// (MUL-4525 §2). The admission gate (canInvokeAgent / archived / runtime) already
-// ran during resolution, so a failure here is either a fail-closed attribution
-// refusal (attribution_blocked, typed via errors.Is) or a rare race /
-// infrastructure error that stays an unclassified internal error rather than
-// leaking the raw message.
+// commentEnqueueFailureReason 把到达响应的入队错误归类（MUL-4525 §2）。准入闸门
+// （canInvokeAgent / archived / runtime）在解析阶段已经跑过，因此这里的失败要么是失败关闭的
+// 归属拒绝（attribution_blocked，经 errors.Is 判别），要么是罕见竞态/基础设施错误，归类为
+// 未细分的 internal error，而不是泄露原始消息。
 func commentEnqueueFailureReason(err error) DispatchReasonCode {
 	if errors.Is(err, service.ErrAttributionFailClosed) {
 		return ReasonAttributionBlocked
@@ -2334,13 +2119,10 @@ func commentEnqueueFailureReason(err error) DispatchReasonCode {
 	return ReasonInternalError
 }
 
-// hasActiveTaskForIssueAndAgent reports whether the (issue, agent) pair has any
-// non-terminal task whose completion will drive completion reconciliation. It
-// returns the query error rather than swallowing it (MUL-4525, Elon round 4):
-// callers must fail closed on error (never enqueue a possibly-colliding
-// duplicate) AND must not report a success — "cannot confirm whether a run is
-// active" is never the same as "a run is active". See decidePostMergeMiss /
-// decideSuppressedLeaderOutcome for the two decisions.
+// hasActiveTaskForIssueAndAgent 判断 (issue, agent) 对是否有「完成时会驱动完成 reconcile」
+// 的非终态任务。它返回查询错误而不是吞掉（MUL-4525，Elon 第 4 轮）：调用方出错时必须失败
+// 关闭（绝不入队可能撞车的重复）且绝不能上报成功——「无法确认运行是否活动」永远不等于
+// 「运行是活动的」。两个决策点见 decidePostMergeMiss / decideSuppressedLeaderOutcome。
 func (h *Handler) hasActiveTaskForIssueAndAgent(ctx context.Context, issueID, agentID pgtype.UUID) (bool, error) {
 	active, err := h.Queries.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{
 		IssueID: issueID,
@@ -2354,12 +2136,10 @@ func (h *Handler) hasActiveTaskForIssueAndAgent(ctx context.Context, issueID, ag
 	return active, nil
 }
 
-// decidePostMergeMiss decides what to do after a comment merge missed on a
-// target that had a pending task (MUL-4525, Elon round 4). On a query failure
-// (activeErr != nil) it FAILS CLOSED: never enqueue a fresh task — a duplicate
-// concurrent run risk — and report a non-success internal_error, since we cannot
-// confirm a run is active. A confirmed active task defers to that run's
-// reconcile; only a confirmed-none enqueues a fresh follow-up.
+// decidePostMergeMiss 决定「评论合并未命中一个原本有待处理任务的目标」后怎么办
+// （MUL-4525，Elon 第 4 轮）。查询失败（activeErr != nil）时失败关闭：绝不入队全新任务——
+// 有并发重复运行风险——并上报非成功的 internal_error，因为我们无法确认运行是否活动。
+// 确认有活动任务则推迟给它的 reconcile；只有确认「没有」才入队全新跟进。
 func decidePostMergeMiss(active bool, activeErr error) (status DispatchStatus, reason DispatchReasonCode, enqueueFresh bool) {
 	switch {
 	case activeErr != nil:
@@ -2371,11 +2151,10 @@ func decidePostMergeMiss(active bool, activeErr error) (status DispatchStatus, r
 	}
 }
 
-// decideSuppressedLeaderOutcome maps the self-trigger-suppressed squad leader's
-// active-task check to an honest outcome (MUL-4525, Elon round 4). A query
-// failure is never success — it is internal_error, not a fabricated deferred.
-// A confirmed active run defers (its reconcile covers the comment); otherwise
-// nothing runs and the outcome is self_trigger_suppressed.
+// decideSuppressedLeaderOutcome 把「自我触发被抑制的 squad leader」的活动任务检查映射成诚实
+// 的结果（MUL-4525，Elon 第 4 轮）。查询失败绝不是成功——是 internal_error，不是编造的
+// deferred。确认有活动运行则推迟（它的 reconcile 覆盖该评论）；否则什么都不会跑，
+// 结果是 self_trigger_suppressed。
 func decideSuppressedLeaderOutcome(active bool, activeErr error) (DispatchStatus, DispatchReasonCode) {
 	switch {
 	case activeErr != nil:
@@ -2387,34 +2166,28 @@ func decideSuppressedLeaderOutcome(active bool, activeErr error) (DispatchStatus
 	}
 }
 
-// commentMergeResult distinguishes how a pending-task merge attempt resolved so
-// the caller can report an HONEST outcome (MUL-4525, Elon round 5). A real merge
-// is coalesced, but a REFUSED or FAILED merge — even when we correctly fail
-// closed by keeping the original task and not enqueuing a duplicate — must NOT
-// be reported as a success-shaped coalesced.
+// commentMergeResult 区分一次待处理任务合并尝试是如何收尾的，让调用方上报诚实的结果
+// （MUL-4525，Elon 第 5 轮）。真合并是 coalesced；但被拒绝或失败的合并——即使我们正确地
+// 失败关闭（保留原任务、不新入队重复）——也不能上报成成功形态的 coalesced。
 type commentMergeResult int
 
 const (
-	// commentMergeSucceeded: the comment folded into the queued task → coalesced.
+	// commentMergeSucceeded: 评论折进了排队任务 → coalesced。
 	commentMergeSucceeded commentMergeResult = iota
-	// commentMergeNoPendingTask: no queued task to merge into anymore (it was
-	// claimed/started between the dedup check and now). The caller runs the
-	// active-task decision (defer vs fresh enqueue).
+	// commentMergeNoPendingTask: 已经没有可折入的排队任务（它在去重检查与现在之间被
+	// claim/start 了）。调用方跑活动任务决策（推迟 vs 全新入队）。
 	commentMergeNoPendingTask
-	// commentMergeAttributionBlocked: fail-closed attribution refused re-stamping
-	// the merge. The original task is kept and no fresh task is enqueued, but the
-	// re-attribution did NOT happen → outcome attribution_blocked, not success.
+	// commentMergeAttributionBlocked: 失败关闭的归属拒绝重新盖章。原任务保留、不新入队，
+	// 但重新归属「没有」发生 → 结果是 attribution_blocked 而非成功。
 	commentMergeAttributionBlocked
-	// commentMergeError: an unknown attribution/DB error. Fail closed (keep the
-	// task, no duplicate enqueue), but the merge did not complete → outcome
-	// internal_error, not success.
+	// commentMergeError: 未知的归属/DB 错误。失败关闭（保留任务、不入队重复），但合并未完成
+	// → 结果是 internal_error 而非成功。
 	commentMergeError
 )
 
-// commentMergeTerminalOutcome maps a merge result that carries its own final
-// outcome (everything except commentMergeNoPendingTask, which needs the
-// active-task decision) to the reported (status, reason). terminal=false only
-// for commentMergeNoPendingTask.
+// commentMergeTerminalOutcome 把自带最终结果的合并结果（除 commentMergeNoPendingTask——
+// 它还需要活动任务决策——以外的一切）映射成要上报的 (status, reason)。只有
+// commentMergeNoPendingTask 时 terminal=false。
 func commentMergeTerminalOutcome(result commentMergeResult) (status DispatchStatus, reason DispatchReasonCode, terminal bool) {
 	switch result {
 	case commentMergeSucceeded:
@@ -2428,33 +2201,25 @@ func commentMergeTerminalOutcome(result commentMergeResult) (status DispatchStat
 	}
 }
 
-// mergeCommentIntoPendingTask folds a newly-arrived comment into the existing
-// pre-claim task for (issue, agent) instead of dropping it
-// (MUL-4195). It reports HOW it resolved via commentMergeResult so the caller
-// never mislabels a refused/failed merge as success (MUL-4525 §2). No path here
-// enqueues a duplicate: on any failure the original task is kept intact, so the
-// comment is still read by that run and its instruction is not lost — only the
-// re-attribution / merge bookkeeping is declined, and that is surfaced honestly.
+// mergeCommentIntoPendingTask 把新到达的评论折进 (issue, agent) 既有的 pre-claim 任务，而不是
+// 丢弃它（MUL-4195）。它通过 commentMergeResult 报告「如何解决的」，调用方绝不把被拒/失败的
+// 合并误标成成功（MUL-4525 §2）。这里任何路径都不入队重复：失败时原任务原样保留，评论仍会被
+// 该运行读到、其指令不丢——只是重新归属/合并记账被拒绝，而这会被诚实上报。
 //
-// Recompute-on-merge (MUL-4195 review must-fix #1): on success the run's
-// originator_user_id, runtime_mcp_overlay and runtime_connected_apps are
-// re-stamped to the NEW trigger comment's originator, and trigger_summary is
-// refreshed — so a different member's comment safely folds into a task another
-// member created, the coalescing run carrying the latest instruction's
-// originator and matching connected-app overlay.
+// 合并时重算（MUL-4195 review 必须修 #1）：成功时把运行的 originator_user_id、
+// runtime_mcp_overlay、runtime_connected_apps 重新盖章成新触发评论的发起人，并刷新
+// trigger_summary——一个成员的评论因此可以安全折进另一个成员建的任务，合并运行携带最新指令
+// 的发起人与匹配的 connected-app overlay。
 func (h *Handler) mergeCommentIntoPendingTask(ctx context.Context, issue db.Issue, trigger commentAgentTrigger, newTriggerCommentID pgtype.UUID, headSha pgtype.Text) commentMergeResult {
-	// Re-attribute the coalescing run to the new comment's human atomically: the
-	// whole attribution snapshot moves, not just the person columns (MUL-4302). An
-	// issue-assignee reaction is comment_source; a mention / thread-parent /
-	// conversation hop is delegation.
+	// 把合并运行原子地重新归属给新评论的人类：整份归属快照一起动，不只那几个人名列
+	//（MUL-4302）。issue-assignee 反应是 comment_source；mention / thread-parent /
+	// conversation 跳转是委派。
 	isMention := trigger.Source != commentTriggerSourceIssueAssignee
 	attr, err := h.TaskService.AttributionForMergedComment(ctx, issue.WorkspaceID, newTriggerCommentID, isMention, trigger.Agent)
 	if err != nil {
-		// The new comment cannot be re-attributed. REFUSE the merge — keep the
-		// existing queued task on its original (precise) snapshot rather than
-		// re-stamp it to a degraded owner_fallback, and never spawn a duplicate.
-		// A fail-closed refusal is a distinct, honest outcome (attribution_blocked);
-		// any other error is unclassified (internal_error) — neither is success.
+		// 新评论无法重新归属。拒绝合并——让既有排队任务保留它原始（精确）的快照，而不是把它
+		// 重盖成降级的 owner_fallback；绝不派重复任务。失败关闭的拒绝是明确的诚实结果
+		//（attribution_blocked）；其它错误不分细类（internal_error）——两者都不是成功。
 		slog.Warn("refused comment merge: attribution failed, keeping original task snapshot",
 			"issue_id", uuidToString(issue.ID),
 			"agent_id", uuidToString(trigger.Agent.ID),
@@ -2484,14 +2249,11 @@ func (h *Handler) mergeCommentIntoPendingTask(ctx context.Context, issue db.Issu
 	})
 	if err != nil {
 		if isNotFound(err) {
-			// No pre-claim (queued/deferred) task to merge into. The caller
-			// defers to completion reconcile when an active task exists, or
-			// enqueues fresh when none does.
+			// 没有可折入的 pre-claim（queued/deferred）任务。有活动任务时调用方推迟给完成
+			// reconcile，没有则全新入队。
 			return commentMergeNoPendingTask
 		}
-		// Unknown error: the pending task most likely still exists, so do NOT
-		// risk enqueuing a duplicate — but the merge did not happen, so this is
-		// not a success.
+		// 未知错误：待处理任务很可能仍在，因此别冒险入队重复——但合并没发生，这不是成功。
 		slog.Warn("merge comment into pending task failed",
 			"issue_id", uuidToString(issue.ID),
 			"agent_id", uuidToString(trigger.Agent.ID),
@@ -2507,14 +2269,11 @@ func (h *Handler) mergeCommentIntoPendingTask(ctx context.Context, issue db.Issu
 	return commentMergeSucceeded
 }
 
-// registerPlannedCommentForActiveTask durably folds a lost-race comment into the
-// same-head active task's planned (coalesced) set when the queued merge could no
-// longer target it (the winner was already claimed → dispatched/running). It
-// returns true when a same-head active task absorbed the comment; (false, nil)
-// means no same-head active task exists (a DIFFERENT-head task holds the slot, or
-// the task just terminated), so the caller falls back to the active-task
-// decision. Delivered ids are untouched, so completion reconcile replays the
-// comment as a single bounded follow-up (#5914). See the query doc.
+// registerPlannedCommentForActiveTask 在 queued 合并已无法再瞄准同 HEAD 活动任务（赢家已被
+// claim → dispatched/running）时，把 lost-race 评论持久登记进它的 planned（coalesced）集合。
+// 同 HEAD 活动任务吸收评论时返回 true；（false, nil）表示不存在同 HEAD 活动任务（槽被不同
+// HEAD 任务占着，或任务刚终结），调用方回退到活动任务决策。已投递的 id 不动，完成 reconcile
+// 会把评论作为单条有界跟进重放（#5914）。见查询 doc。
 func (h *Handler) registerPlannedCommentForActiveTask(ctx context.Context, issue db.Issue, agentID, commentID pgtype.UUID, headSha pgtype.Text) (bool, error) {
 	row, err := h.Queries.RegisterPlannedCommentForActiveTask(ctx, db.RegisterPlannedCommentForActiveTaskParams{
 		CommentID: commentID,
@@ -2537,41 +2296,28 @@ func (h *Handler) registerPlannedCommentForActiveTask(ctx context.Context, issue
 	return true, nil
 }
 
-// propagateUncoveredCommentObligation hands an UNCOVERED comment's replay
-// obligation to whichever active task now occupies the (issue, agent) slot, so a
-// blocked completion replay is never silently dropped (#5914, Elon round 8).
+// propagateUncoveredCommentObligation 把一条「未覆盖」评论的重放义务交给现在占着 (issue,
+// agent) 槽的活动任务，让被挡的完成重放绝不静默丢弃（#5914，Elon 第 8 轮）。
 //
-// Without this, a deferral is only ever consumed ONCE: task A's completion
-// reconcile replays comment C, the enqueue collides with a newer blocker B, the
-// failure is discarded, and B never sees C (C predates B and is not in its
-// planned ids) — so C is lost even though the original response promised it would
-// be handled. Propagating turns "consumed once" into "handed along" until some
-// task provably covers C.
+// 没有它，推迟只会被消费「一次」：任务 A 的完成 reconcile 重放评论 C，入队撞上更新的挡路者
+// B，失败被丢弃，B 永远见不到 C（C 早于 B、不在它的 planned ids）——于是 C 丢了，尽管原始
+// 响应承诺过它会被处理。传播把「消费一次」变成「一路转交」，直到某任务可证明覆盖 C。
 //
-// Each attempt tries, in order, the three writes that can durably cover the
-// comment, and RETRIES when the slot's occupant changes state under us — the
-// hand-off is not one atomic statement, so a blocker that completes or gets
-// claimed between two steps must be re-observed rather than lost (Elon round 9):
+// 每次尝试按顺序试三种能持久覆盖评论的写，并在槽的占用者在我们脚下翻状态时「重试」——交接
+// 不是一条原子语句，两步之间完成或被 claim 的挡路者必须被重新观察而不是丢失（Elon 第 9 轮）：
 //
-//  1. a CLAIM-RECEIPT task (dispatched/running/waiting), ANY head: a planned id
-//     added after the claim is never delivered to that run, so it cannot consume
-//     the comment under the wrong head — it purely schedules the comment for that
-//     task's own completion reconcile, which re-enqueues at the head current then;
-//  2. a SAME-HEAD queued task: the atomic merge, which re-stamps trigger /
-//     originator / overlay (MUL-4302). This is HEAD-SCOPED on purpose: merging
-//     into a different-head queued task would make the comment that run's trigger
-//     and mark it delivered at claim time, so an old-head run would consume a
-//     new-head request and no new-head follow-up would ever be created — the
-//     TEN-356 violation (Elon round 9, must-fix 2);
-//  3. a fresh enqueue: correct precisely when the blocker has finished and freed
-//     the unique slot, which is the state a mid-hand-off completion leaves behind.
+//  1. CLAIM-RECEIPT 任务（dispatched/running/waiting），任意 HEAD：claim 之后补的 planned id
+//     永远不会投递给那个运行，因此它不会在错误的 HEAD 下消费评论——它纯粹把评论排进该任务
+//     自己的完成 reconcile，届时以当时的 HEAD 重新入队；
+//  2. 同 HEAD 的 queued 任务：原子合并，重盖 trigger / originator / overlay（MUL-4302）。
+//     刻意 HEAD 限定：折进不同 HEAD 的 queued 任务会让评论成为那个运行的 trigger、claim 时
+//     标记已投递——旧 HEAD 运行会消费新 HEAD 的请求、而永远不会创建新 HEAD 跟进——即
+//     TEN-356 违规（Elon 第 9 轮，必须修 #2）；
+//  3. 全新入队：恰在挡路者完成、释放唯一槽时正确——这正是交接中途完成留下的状态。
 //
-// A duplicate-key error from (3) means the slot is still held, so the loop
-// re-observes and tries again. Returns false only when every attempt found the
-// slot held by a task that can neither cover nor accept the comment (a
-// different-head QUEUED blocker); the caller logs that loudly — it is the one
-// shape today's schema has no safe place to park, and closing it needs a durable
-// obligation record rather than an in-request hand-off.
+// (3) 的重复键错误意味着槽仍被占，循环重新观察再试。只有当每次尝试都发现槽被「既盖不住也
+// 收不下该评论」的任务占着（不同 HEAD 的 QUEUED 挡路者）才返回 false；调用方大声记录该情况——
+// 这是当前 schema 没有安全车位的一种形态，收掉它需要持久化义务记录而不是请求内交接。
 func (h *Handler) propagateUncoveredCommentObligation(ctx context.Context, issue db.Issue, trigger commentAgentTrigger, commentID pgtype.UUID, headSha pgtype.Text) bool {
 	noEscalation := func() time.Duration { return 0 }
 	const maxAttempts = 3
@@ -2594,18 +2340,15 @@ func (h *Handler) propagateUncoveredCommentObligation(ctx context.Context, issue
 		if !errors.Is(err, service.ErrDuplicatePendingTask) {
 			return false
 		}
-		// The slot is still occupied; its occupant may have changed state between
-		// the steps above, so re-observe and try again.
+		// 槽仍被占着；占用者可能在上面的步骤之间翻了状态，重新观察再试。
 	}
 	return false
 }
 
-// logCommentEnqueueFailure logs a failed comment-trigger enqueue. A benign
-// duplicate-pending-task race (service.ErrDuplicatePendingTask) is not a fault —
-// resolveCommentTriggerEnqueue folds the comment into the winning task — so it
-// is logged at debug and never surfaces as a warning, keeping the raw Postgres
-// constraint name out of warn/error logs (#5914, Elon review). Any other error
-// stays a warning with the error attached.
+// logCommentEnqueueFailure 记录一次失败的评论触发入队。良性的重复待处理任务竞态
+// （service.ErrDuplicatePendingTask）不是故障——resolveCommentTriggerEnqueue 会把评论折进
+// 赢家任务——因此以 debug 记录、绝不当 warning，避免把原始 Postgres 约束名留在 warn/error
+// 日志里（#5914，Elon review）。其它错误保持带 error 的 warning。
 func logCommentEnqueueFailure(msg string, err error, attrs ...any) {
 	if errors.Is(err, service.ErrDuplicatePendingTask) {
 		slog.Debug(msg+": duplicate pending task, coalescing into the sibling run", attrs...)
@@ -2614,13 +2357,10 @@ func logCommentEnqueueFailure(msg string, err error, attrs ...any) {
 	slog.Warn(msg, append(attrs, "error", err)...)
 }
 
-// enqueueSingleCommentTrigger creates a fresh task for one computed trigger.
-// Split out of enqueueCommentAgentTriggers so the merge-not-drop path
-// (MUL-4195) can fall back to it when a pending task vanished mid-flight.
-// enqueueSingleCommentTrigger enqueues one resolved trigger and returns the
-// PRIMARY enqueue error (nil on success) so the caller can surface a
-// trigger_outcome (MUL-4525 §2). Secondary work (the deferred escalation
-// fallback) stays best-effort logged and does not affect the returned error.
+// enqueueSingleCommentTrigger 为一条已计算的触发新建任务。从 enqueueCommentAgentTriggers
+// 拆出来，让 merge-not-drop 路径（MUL-4195）在待处理任务中途消失时可以回退到它。返回主要的
+// 入队错误（成功为 nil），调用方据此上报 trigger_outcome（MUL-4525 §2）。次要工作（推迟的
+// 升级兜底）保持尽力记录，不影响返回的错误。
 func (h *Handler) enqueueSingleCommentTrigger(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, trigger commentAgentTrigger, getEscalationDelay func() time.Duration) error {
 	switch trigger.Source {
 	case commentTriggerSourceIssueAssignee:
@@ -2685,33 +2425,24 @@ func (h *Handler) enqueueSingleCommentTrigger(ctx context.Context, issue db.Issu
 	return nil
 }
 
-// computeCommentAgentTriggers resolves which agents a comment triggers (deduped
-// by executing agent), plus the per-target list for every EXPLICIT @agent /
-// @squad mention (MUL-4525 §2). Targets come only from the explicit-mention path
-// — the implicit routing fallbacks (assignee, thread parent, conversation) were
-// never named by the user, so a no-route there is not a silent no-op.
+// computeCommentAgentTriggers 解析一条评论会触发哪些 agent（按执行 agent 去重），外加每个
+// 显式 @agent / @squad 提及的按目标列表（MUL-4525 §2）。target 只来自显式提及路径——隐式
+// 路由回退（受理人、线程父级、会话）从没被用户点名，那边没有路由不算静默无操作。
 func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issue, content string, parentComment *db.Comment, actorType, actorID string, opts commentTriggerComputeOptions) ([]commentAgentTrigger, []commentMentionTarget) {
 	if isNoteComment(content) {
 		return nil, nil
 	}
 
-	// Autopilot delegation authority (MUL-4857) is applied by the gate via
-	// opts.effectiveInvoker(): when a run carried no human originator, the gate
-	// falls back to opts.AutopilotDelegationAuthorityUserID, which the caller has
-	// already resolved from a server-trusted, lineage-verified speaking task (see
-	// autopilotDelegationAuthority). Nothing is re-derived from issue provenance
-	// here, so an unrelated unattributed run cannot borrow a stranger autopilot
-	// creator's authority by commenting on that autopilot's issue.
-
+	// Autopilot 委派授权（MUL-4857）由闸门经 opts.effectiveInvoker() 应用：运行没有人类发起人
+	// 时，闸门回退到 opts.AutopilotDelegationAuthorityUserID——调用方已从服务端信任、血缘验证
+	// 过的发言任务解析（见 autopilotDelegationAuthority）。这里不按 issue 来源重新推导，无关的
+	// 无归属运行因此不能靠评论那条 autopilot 的 issue 来借陌生 autopilot 创建者的授权。
 	mentions := util.ParseMentions(content)
 
-	// EXPLICIT @agent / @squad mentions are a direct request and win over the
-	// @all broadcast (MUL-5411). @all only suppresses the IMPLICIT routing
-	// fallbacks (assignee / thread parent / conversation) below — it must not
-	// swallow a target the author named by hand. Before this ordering, a
-	// comment carrying both `@all` and `@Preflight` enqueued nothing at all.
-	// `all` is neither "agent" nor "squad", so it is skipped inside
-	// resolveMentionedAgentCommentTriggers and never enqueues a run of its own.
+	// 显式 @agent / @squad 提及是直接请求，优先级高于 @all 广播（MUL-5411）。@all 只抑制下面
+	// 的隐式路由回退（受理人 / 线程父级 / 会话）——绝不能吞掉作者亲手点名的目标。在此之前，
+	// 同时带 `@all` 和 `@Preflight` 的评论什么都不会入队。`all` 既不是 "agent" 也不是 "squad"，
+	// 因此在 resolveMentionedAgentCommentTriggers 内被跳过、不会自建运行。
 	if hasAgentOrSquadMention(mentions) {
 		return h.resolveMentionedAgentCommentTriggers(ctx, issue, mentions, actorType, actorID, opts)
 	}
@@ -2723,16 +2454,11 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 	}
 
 	if actorType != "member" {
-		// Agent-authored comments do not participate in the member-driven
-		// conversation routing (parent-author / thread-root continuation) or
-		// the member assignee fallback. They retain one narrow path restored
-		// after MUL-3794 (MUL-3879): a worker-agent result comment on a
-		// squad-assigned issue can still wake the assigned squad leader, so
-		// the leader→worker→leader coordination loop stays closed. The leader
-		// self-trigger guard lives in
-		// routeAssignedSquadLeaderFallback. Explicit @agent / @squad mentions
-		// are already handled above, so this never double-enqueues a mentioned
-		// target alongside the assigned leader.
+		// agent 写的评论不参与成员驱动的会话路由（父作者 / 线程根延续）与成员受理人回退。
+		// 它们保留一条 MUL-3794 之后恢复的窄路径（MUL-3879）：worker-agent 在 squad 受理的
+		// issue 上写结果评论仍可唤醒被分配的 squad leader，leader→worker→leader 的协作环因此
+		// 保持闭合。leader 自我触发守卫在 routeAssignedSquadLeaderFallback。显式 @agent / @squad
+		// 提及已在上面处理，这里不会把提及目标与受理 leader 重复入队。
 		if issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" {
 			if trigger, ok := h.routeAssignedSquadLeaderFallback(ctx, issue, actorType, actorID, opts); ok {
 				return []commentAgentTrigger{trigger}, nil
@@ -2773,9 +2499,8 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 			}
 			return triggers, nil
 		}
-		// A plain member-to-member reply must not start the issue assignee just
-		// because the thread has no agent owner. Explicit mentions and existing
-		// conversation owners were already resolved above.
+		// 纯成员对成员的回复不能因为线程没有 agent 主人就启动 issue 受理人。显式提及与既有
+		// 会话主人已在上面解析过。
 		if parentComment.AuthorType == "member" {
 			return nil, nil
 		}
@@ -2787,6 +2512,7 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 	return nil, nil
 }
 
+// hasAgentOrSquadMention 判断提及里是否含 agent 或 squad 类型。
 func hasAgentOrSquadMention(mentions []util.Mention) bool {
 	for _, m := range mentions {
 		if m.Type == "agent" || m.Type == "squad" {
@@ -2796,6 +2522,7 @@ func hasAgentOrSquadMention(mentions []util.Mention) bool {
 	return false
 }
 
+// hasMemberMention 判断提及里是否含 member 类型。
 func hasMemberMention(mentions []util.Mention) bool {
 	for _, m := range mentions {
 		if m.Type == "member" {
@@ -2805,6 +2532,7 @@ func hasMemberMention(mentions []util.Mention) bool {
 	return false
 }
 
+// routeReplyToParentAuthor 处理「回复一条 agent 写的评论」：触发被回复的父评论作者。
 func (h *Handler) routeReplyToParentAuthor(ctx context.Context, issue db.Issue, parent *db.Comment, authorType, authorID string, opts commentTriggerComputeOptions) (commentAgentTrigger, bool) {
 	if parent == nil || parent.AuthorType != "agent" || !parent.AuthorID.Valid {
 		return commentAgentTrigger{}, false
@@ -2826,10 +2554,13 @@ func (h *Handler) routeReplyToParentAuthor(ctx context.Context, issue db.Issue, 
 	return commentAgentTrigger{Agent: agent, Source: commentTriggerSourceThreadParent, AlreadyPending: hasPending}, true
 }
 
+// conversationRoutedAgentInfo 记录会话延续路由里某个 agent 关联的 squad（若经 squad 加入）。
 type conversationRoutedAgentInfo struct {
 	SquadID pgtype.UUID
 }
 
+// routeThreadRootOwners 处理成员回复线程内的成员评论：找到线程根（须为成员作者）后继续
+// 解析该线程根的会话主人。
 func (h *Handler) routeThreadRootOwners(ctx context.Context, issue db.Issue, parent *db.Comment, memberID string, opts commentTriggerComputeOptions) ([]commentAgentTrigger, bool) {
 	if parent == nil || !parent.ID.Valid {
 		return nil, false
@@ -2844,6 +2575,8 @@ func (h *Handler) routeThreadRootOwners(ctx context.Context, issue db.Issue, par
 	return h.routeConversationOwnersForRoot(ctx, issue, root, memberID, opts)
 }
 
+// routeConversationOwnersForRoot 解析以 member 根开头的会话的「延续主人」：根里若显式 @过
+// agent/squad，触发它；否则按历史上从该根触发的任务去重出延续目标。
 func (h *Handler) routeConversationOwnersForRoot(ctx context.Context, issue db.Issue, root db.Comment, memberID string, opts commentTriggerComputeOptions) ([]commentAgentTrigger, bool) {
 	if !root.ID.Valid || root.AuthorType != "member" {
 		return nil, false
@@ -2894,6 +2627,8 @@ func (h *Handler) routeConversationOwnersForRoot(ctx context.Context, issue db.I
 	return triggers, true
 }
 
+// routeFirstExplicitRootMentionOwner 查看线程根内容里第一个显式 @agent/@squad，命中则把它
+// 作为会话延续触发目标（有显式主人时返回 hasExplicitOwner=true）。
 func (h *Handler) routeFirstExplicitRootMentionOwner(ctx context.Context, issue db.Issue, root db.Comment, memberID string, opts commentTriggerComputeOptions) (commentAgentTrigger, bool, bool) {
 	for _, mention := range util.ParseMentions(root.Content) {
 		switch mention.Type {
@@ -2923,6 +2658,8 @@ func (h *Handler) routeFirstExplicitRootMentionOwner(ctx context.Context, issue 
 	return commentAgentTrigger{}, false, false
 }
 
+// routeConversationContinuationToAgent 校验 agent 可作为会话延续触发目标（在存在/未归档/
+// runtime/可调用），构造带可选 squad 的会话延续触发。
 func (h *Handler) routeConversationContinuationToAgent(ctx context.Context, issue db.Issue, agentID, squadID pgtype.UUID, memberID string, opts commentTriggerComputeOptions) (commentAgentTrigger, bool) {
 	if !agentID.Valid {
 		return commentAgentTrigger{}, false
@@ -2953,6 +2690,8 @@ func (h *Handler) routeConversationContinuationToAgent(ctx context.Context, issu
 	return trigger, true
 }
 
+// routeAssigneeFallback 处理隐式「评论没点名任何人但 issue 有受理人」的回退：受理是 agent 则
+// 触发该 agent；受理是 squad 则触发 squad leader。
 func (h *Handler) routeAssigneeFallback(ctx context.Context, issue db.Issue, authorType, authorID string, opts commentTriggerComputeOptions) (commentAgentTrigger, bool) {
 	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
 		return commentAgentTrigger{}, false
@@ -2971,6 +2710,8 @@ func (h *Handler) routeAssigneeFallback(ctx context.Context, issue db.Issue, aut
 	}
 }
 
+// routeAssignedSquadLeaderFallback 解析被分配的 squad 的 leader 作为回退目标；agent 作者就是
+// leader 且命中自我触发抑制时不触发。
 func (h *Handler) routeAssignedSquadLeaderFallback(ctx context.Context, issue db.Issue, authorType, authorID string, opts commentTriggerComputeOptions) (commentAgentTrigger, bool) {
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          issue.AssigneeID,
@@ -3000,9 +2741,11 @@ func (h *Handler) routeAssignedSquadLeaderFallback(ctx context.Context, issue db
 	return commentAgentTrigger{Agent: agent, Source: commentTriggerSourceIssueAssignee, Squad: &squad, AlreadyPending: hasPending}, true
 }
 
+// hasPendingTaskForIssueAndAgent 查询 (issue, agent) 是否已有待处理任务；提供
+// ExcludeTriggerCommentID 时排除以该评论为触发的任务（编辑重发预览用）。
 func (h *Handler) hasPendingTaskForIssueAndAgent(ctx context.Context, issueID, agentID pgtype.UUID, opts commentTriggerComputeOptions) (bool, error) {
-	// Key dedup on the reviewed head so re-pushing to the PR mid-review
-	// invalidates dedup and a fresh run enqueues against the new HEAD (TEN-356).
+	// 去重以被 review 过的 HEAD 为 key：mid-review 重新 push PR 会让去重失效、新运行对新的
+	// HEAD 入队（TEN-356）。
 	headSha := h.TaskService.ResolveIssueReviewSHAParam(ctx, issueID)
 	if opts.ExcludeTriggerCommentID.Valid {
 		return h.Queries.HasPendingTaskForIssueAndAgentExcludingTriggerComment(ctx, db.HasPendingTaskForIssueAndAgentExcludingTriggerCommentParams{
@@ -3019,42 +2762,32 @@ func (h *Handler) hasPendingTaskForIssueAndAgent(ctx context.Context, issueID, a
 	})
 }
 
-// resolveMentionedAgentCommentTriggers parses explicit @agent and @squad
-// mentions from the current comment and returns the runnable agent recipients.
-// Skips agents with on_mention trigger disabled, and private agents mentioned
-// by non-owner members (only the agent owner or workspace admin/owner can
-// mention a private agent). Self-mentions are intentionally allowed so an
-// agent running in one issue can explicitly enqueue itself on another (e.g.
-// a child-issue run notifying the parent issue whose assignee is the same
-// agent); runaway loops are prevented by HasPendingTaskForIssueAndAgent
-// dedupe and the natural queued/dispatched coalescing of the task queue.
-// Note: no issue status gate here — @mention is an explicit action and should
-// work even on done/cancelled issues (the agent can reopen the issue if needed).
-// commentMentionTarget is one EXPLICIT @agent / @squad mention and how it
-// resolved (MUL-4525 §2). This is tracked separately from the execution
-// triggers: several mentions can resolve to the same executing agent (e.g.
-// @Agent A and @Squad S whose leader is A), and each still needs its own
-// outcome even though the run is coalesced. Exactly one of the resolution
-// fields is set:
-//   - ExecAgentID non-empty → the mention runs via that executing agent; its
-//     outcome mirrors the agent's enqueue status (queued/coalesced/deferred).
-//   - Status set (with ReasonCode) → a terminal, non-executing outcome
-//     (blocked, or an A2A self-suppressed squad leader that is deferred).
+// resolveMentionedAgentCommentTriggers 解析当前评论里的显式 @agent 与 @squad 提及，返回可
+// 执行的 agent 接收方。跳过 on_mention 触发被禁用的 agent，以及被非 owner 成员提及的私密
+// agent（只有 agent owner 或工作区 admin/owner 能提私密 agent）。自我提及有意允许——一条
+// issue 里跑的 agent 可以在另一条 issue 上显式给自己入队（例如子任务运行通知父 issue，而父
+// issue 的受理人正是同一 agent）；失控循环由 HasPendingTaskForIssueAndAgent 去重与任务队列
+// 天然的 queued/dispatched 合并挡住。注意这里没有 issue 状态闸门——@提及是显式动作，对
+// done/cancelled 的 issue 也该能用（需要时 agent 可以重新打开 issue）。
+// commentMentionTarget 是某次显式 @agent / @squad 提及及其解析结果（MUL-4525 §2）。它与执行
+// 触发分开记录：多次提及可能解析到同一执行 agent（例如 @agent A 与 @Squad S，S 的 leader 是
+// A），即使运行被合并，每次提及仍要各自的结果。解析字段恰好设置一个：
+//   - ExecAgentID 非空 → 该提及经这个执行 agent 运行，结果镜像该 agent 的入队状态
+//     （queued/coalesced/deferred）。
+//   - Status（带 ReasonCode）已设 → 终态、不执行的结果（blocked，或被推迟的 A2A 自我抑制
+//     squad leader）。
 type commentMentionTarget struct {
 	TargetType  string // "agent" | "squad"
 	TargetID    string
 	ExecAgentID string
 	Status      DispatchStatus
 	ReasonCode  DispatchReasonCode
-	// unusable carries the refused agent and its verdict for the one reason
-	// that needs a durable trace (runtime_unusable). Internal to the handler:
-	// the resolver runs for the composer PREVIEW as well, so it only records
-	// what happened — writing the notice is the trigger path's job.
+	// unusable 为需要持久痕迹的那一种原因（runtime_unusable）携带被拒 agent 与其判定。
+	// handler 内部用：解析器也服务编辑器「预览」，它只记录发生了什么——写通知是触发路径的活。
 	unusable *blockedRuntimeNotice
 }
 
-// blockedRuntimeNotice is a refusal worth leaving on the issue: which agent, and
-// the verdict that names the repair.
+// blockedRuntimeNotice 是值得留在 issue 上的一次拒绝：哪个 agent、以及点名修复方式的判定。
 type blockedRuntimeNotice struct {
 	agent   db.Agent
 	verdict service.AgentVerdict
@@ -3063,12 +2796,10 @@ type blockedRuntimeNotice struct {
 func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issue db.Issue, mentions []util.Mention, authorType, authorID string, opts commentTriggerComputeOptions) ([]commentAgentTrigger, []commentMentionTarget) {
 	wsID := uuidToString(issue.WorkspaceID)
 	triggers := make([]commentAgentTrigger, 0, len(mentions))
-	// seen dedups EXECUTION by resolved agent id: two mentions resolving to the
-	// same agent enqueue only one task. Mapping to the trigger's index lets a
-	// squad-leader mention UPGRADE an already-added plain @agent trigger for the
-	// same agent — the leader task is a strict superset (it sets is_leader_task
-	// and squad_id so the daemon injects the squad briefing), so the merged run
-	// must carry that role regardless of mention order.
+	// seen 按「解析后的 agent id」对 EXECUTION 去重：两条提及解析到同一 agent 只入队一条任务。
+	// 映射到 trigger 的索引，让 squad-leader 提及能「升级」已加入的同 agent 普通 @agent 触发——
+	// leader 任务是严格超集（设置 is_leader_task 与 squad_id，daemon 才会注入 squad 简报），
+	// 合并后的运行必须带上该角色，无论提及顺序如何。
 	seen := make(map[string]int, len(mentions))
 	add := func(trigger commentAgentTrigger) {
 		id := uuidToString(trigger.Agent.ID)
@@ -3082,9 +2813,8 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 		seen[id] = len(triggers)
 		triggers = append(triggers, trigger)
 	}
-	// targets record one outcome per EXPLICIT mention — deduped by the target
-	// the user named (type:id), NOT by executing agent — so no explicitly-named
-	// target is silently dropped even when its run coalesces with another's.
+	// targets 按「用户点名的目标」（type:id）去重、一次显式提及一条结果——不是按执行 agent——
+	// 因此被点名却没有被执行的目标绝不会静默丢失，即便它的运行与别家合并。
 	var targets []commentMentionTarget
 	targetSeen := make(map[string]struct{}, len(mentions))
 	addTarget := func(t commentMentionTarget) {
@@ -3095,18 +2825,14 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 		targetSeen[key] = struct{}{}
 		targets = append(targets, t)
 	}
-	// blockTarget records a mention that will not fire. The invoke gate is
-	// evaluated BEFORE any archived/runtime state is read, so a caller who
-	// cannot invoke a private target learns only the generic
-	// invocation_not_allowed and can never enumerate the target's existence or
-	// state from the reason code.
+	// blockTarget 记录一条不会触发的提及。调用闸门在读取任何 archived/runtime 状态之前判定，
+	// 因此无法调用私密目标的调用方只学到通用的 invocation_not_allowed，绝不能凭 reason code
+	// 枚举出目标的存在性或状态。
 	blockTarget := func(targetType, targetID string, reason DispatchReasonCode) {
 		addTarget(commentMentionTarget{TargetType: targetType, TargetID: targetID, Status: DispatchBlocked, ReasonCode: reason})
 	}
-	// blockUnusableTarget is blockTarget for the one verdict that also needs a
-	// durable trace. Every author gets it, including a human: the chip and toast
-	// carry the reason code but not the repair command, and an agent-authored
-	// mention has nobody watching a response at all.
+	// blockUnusableTarget 是「那个还需要持久痕迹的判定」专用的 blockTarget。每个作者都会收到，
+	// 包括人类：chip 与 toast 带着 reason code 却不带修复命令，而 agent 写的提及响应根本没人看。
 	blockUnusableTarget := func(targetType, targetID string, agent db.Agent, verdict service.AgentVerdict) {
 		notice := &blockedRuntimeNotice{agent: agent, verdict: verdict}
 		if verdict.Reason != ReasonRuntimeUnusable {
@@ -3119,14 +2845,11 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 	}
 	for _, m := range mentions {
 		if m.Type == "squad" {
-			// @squad mention → trigger the squad's leader agent.
-			// The mention id comes from untrusted comment text and MentionRe
-			// accepts any hex/dash run (`mention://squad/-`), so it is parsed
-			// with the error-returning ParseUUID — the Must* variant would
-			// panic the request, and on the create path the comment row is
-			// already committed by then. A malformed id is indistinguishable
-			// from a well-formed id that owns no squad: same target_unavailable
-			// outcome, no run.
+			// @squad 提及 → 触发 squad 的 leader agent。
+			// 提及 id 来自不可信的评论文本，MentionRe 接受任意 hex/dash 串（mention://squad/-），
+			// 所以用带错误返回的 ParseUUID——Must* 变体会让请求 panic，而在创建路径上那时评论行
+			// 已提交。畸形 id 与「格式合法但不拥有 squad」无法区分：同样的 target_unavailable
+			// 结果、不跑运行。
 			squadUUID, err := util.ParseUUID(m.ID)
 			if err != nil {
 				blockTarget("squad", m.ID, ReasonTargetUnavailable)
@@ -3141,14 +2864,11 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 				continue
 			}
 			leaderID := squad.LeaderID
-			// A2A self-suppression: the author IS this squad's leader and its
-			// most recent task on this issue was a leader/generic role (NOT a
-			// fresh same-squad worker→leader handoff), so we do not re-fire the
-			// leader from its own @mention. The outcome must reflect reality, not
-			// assume success (MUL-4525): `deferred` only when a real non-terminal
-			// task is still active (its reconcile covers this comment); a query
-			// failure is a non-success internal_error, never a fabricated
-			// deferred; otherwise nothing runs → self_trigger_suppressed.
+			// A2A 自我抑制：作者就是这个 squad 的 leader，且它在本 issue 上最近的任务是
+			// leader/generic 角色（不是新的同 squad worker→leader 交接），就不因它自己的 @提及
+			// 重新触发 leader。结果必须反映现实、不能假设成功（MUL-4525）：只有真实非终态任务仍
+			// 活动时才 `deferred`（它的 reconcile 覆盖该评论）；查询失败是非成功的 internal_error、
+			// 绝非编造的 deferred；否则什么都没跑 → self_trigger_suppressed。
 			if authorType == "agent" && authorID == uuidToString(leaderID) &&
 				h.shouldSuppressSquadLeaderSelfTrigger(ctx, issue.ID, leaderID, squad.ID) {
 				active, activeErr := h.hasActiveTaskForIssueAndAgent(ctx, issue.ID, leaderID)
@@ -3164,8 +2884,8 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 				blockTarget("squad", m.ID, ReasonTargetUnavailable)
 				continue
 			}
-			// Private-leader gate first (enumeration-safe: a caller who cannot
-			// invoke the leader never learns its archived/runtime state).
+			// 私密 leader 闸门优先（枚举安全：调不动 leader 的调用方永远学不到它的
+			// archived/runtime 状态）。
 			if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvoker(), wsID) {
 				blockTarget("squad", m.ID, ReasonInvocationNotAllowed)
 				continue
@@ -3174,7 +2894,7 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 				blockTarget("squad", m.ID, ReasonTargetUnavailable)
 				continue
 			}
-			// Same shared verdict as the direct-agent branch below.
+			// 与下面的直接 agent 分支共用同一条就绪判定。
 			if verdict, err := service.AgentReadiness(ctx, h.runtimeLookup(obsmetrics.RuntimeLookupSourceComment), agent); err == nil && verdict.Blocked() {
 				blockUnusableTarget("squad", m.ID, agent, verdict)
 				continue
@@ -3193,33 +2913,27 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 		}
 		agentUUID, err := util.ParseUUID(m.ID)
 		if err != nil {
-			// Untrusted comment text: MentionRe matches any hex/dash run, so a
-			// malformed id must not reach the panicking Must* parser. A string
-			// that is not a UUID at all cannot name an entity in ANY workspace,
-			// so there is no existence to conceal here and the invoke-permission
-			// code would be a false cause (MUL-5548): report the same
-			// target_unavailable the squad path above already uses. Only the
-			// well-formed-but-unresolved case below stays enumeration-safe.
+			// 不可信的评论文本：MentionRe 匹配任意 hex/dash 串，畸形 id 绝不能进会 panic 的
+			// Must* 解析器。连 UUID 都不是的串在「任何」工作区都命名不了实体，这里没有存在性
+			// 可藏，调用权限码会是虚假成因（MUL-5548）：与上面 squad 路径一致上报
+			// target_unavailable。只有下面「格式合法但解析不到」的情况保持枚举安全。
 			blockTarget("agent", m.ID, ReasonTargetUnavailable)
 			continue
 		}
-		// Load the agent scoped to the current issue's workspace. Using the
-		// bare GetAgent here would let a mention resolve to an agent in a
-		// different workspace, and the visibility check below would then be
-		// applied against the wrong workspace's roles (a workspace owner in
-		// THIS workspace would pass the gate for a private agent that lives
-		// in someone else's workspace).
+		// 以当前 issue 的工作区为界加载 agent。用裸 GetAgent 会让提及解析到别的工作区的 agent，
+		// 下面的可见性检查就会对着错误工作区的角色判定（本工作区的 owner 会替「住在别人工作区」
+		// 的私密 agent 放行）。
 		agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 			ID:          agentUUID,
 			WorkspaceID: issue.WorkspaceID,
 		})
 		if err != nil {
-			// Do not reveal whether the id exists (it may be a private agent in
-			// another workspace): the generic invocation_not_allowed is returned.
+			// 不透露 id 是否存在（可能是别的工作区里的私密 agent）：统一返回通用的
+			// invocation_not_allowed。
 			blockTarget("agent", m.ID, ReasonInvocationNotAllowed)
 			continue
 		}
-		// Private-agent gate first, before any archived/runtime state is read.
+		// 私密 agent 闸门优先，先于任何 archived/runtime 状态读取。
 		if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvoker(), wsID) {
 			blockTarget("agent", m.ID, ReasonInvocationNotAllowed)
 			continue
@@ -3228,12 +2942,10 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 			blockTarget("agent", m.ID, ReasonTargetUnavailable)
 			continue
 		}
-		// One readiness verdict for every admission path (service.AgentReadiness).
-		// Only a BLOCKED verdict refuses the mention: an unbound agent has no
-		// machine to bring back (MUL-5559), and a machine whose CLI cannot run
-		// will not start doing so on its own (MUL-6164). A merely offline
-		// runtime keeps queueing — that wait ends by itself when the machine
-		// returns, and taking it away would remove a behaviour people rely on.
+		// 所有准入路径共用同一条就绪判定（service.AgentReadiness）。只有 BLOCKED 判定拒绝提及：
+		// 未绑定的 agent 没有可带回来的机器（MUL-5559），CLI 跑不了的机器也不会自己开始跑
+		//（MUL-6164）。仅离线的 runtime 保持入队——机器回来后等待自己结束，取消它反而会移除
+		// 人们依赖的行为。
 		if verdict, err := service.AgentReadiness(ctx, h.runtimeLookup(obsmetrics.RuntimeLookupSourceComment), agent); err == nil && verdict.Blocked() {
 			blockUnusableTarget("agent", m.ID, agent, verdict)
 			continue
@@ -3249,6 +2961,10 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 	return triggers, targets
 }
 
+// UpdateComment 处理 PATCH/PUT /api/issues/comments/:commentId：更新评论内容/附件集。
+// 权限：只有作者本人或工作区 owner/admin 可编辑；权限不足返回 403。可选 expected_revision /
+// content_base 提供乐观并发控制（不匹配返回 409），strictContentEdit 时取消旧内容触发的任务
+// 并重放幸存者；内容变更会走与创建完全一致的触发解析把新结果放回 trigger_outcomes。
 func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	commentId := chi.URLParam(r, "commentId")
 
@@ -3340,11 +3056,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 
 	// NOTE: See CreateComment — Markdown is sanitized at render/edit time, not here.
 
+	// 默认保留现有归属血缘——此路径只服务于「未改动」的编辑（不重新触发）。下面内容真变时，
+	// 血缘从「本次编辑动作」重新推导（MUL-4857），绝不从评论原始作者运行继承。
 	oldContent := existing.Content
-	// Preserve the existing authority lineage by default — this path is taken only
-	// for an UNCHANGED edit (no re-trigger). When the content changes below, the
-	// lineage is re-derived from the EDIT action itself (MUL-4857), never carried
-	// over from the comment's original authoring run.
 	sourceTaskID := existing.SourceTaskID
 	var triggerIssue *db.Issue
 	var cancelled []db.AgentTaskQueue
@@ -3356,24 +3070,19 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		triggerIssue = &issue
-		// A content edit is a NEW action, so its delegation lineage must key on THIS
-		// edit. Only the AGENT author re-editing its OWN comment carries the lineage
-		// forward (commentSourceTaskID re-stamps the current editing task) — so
-		// preview, save, and the deferred completion-reconcile all resolve the
-		// authority from this one action. Any OTHER editor — a workspace owner/admin
-		// editing an AGENT's comment, or a member editing their own — CLEARS the
-		// lineage so the deferred reconcile fails closed instead of resurrecting the
-		// original autopilot run's creator authority. An admin holds manage rights
-		// over the comment, not invoke rights over the author's private agents (Elon
-		// must-fix, round 3).
+		// 内容编辑是新动作，因此它的委派血缘必须以「本次编辑」为 key。只有 agent 作者重编自己
+		// 的评论才把血缘带下去（commentSourceTaskID 重新盖章当前编辑任务）——预览、保存与推迟的
+		// 完成 reconcile 都从这一动作解析授权。任何「其它」编辑者——owner/admin 编辑 agent 的
+		// 评论，或 member 编辑自己的——都会清空血缘，让推迟的 reconcile 失败关闭，而不是复活原
+		// autopilot 运行的创建者授权。admin 对评论持有的是管理权，不是对作者私密 agent 的调用权
+		//（Elon 必须修，第 3 轮）。
 		if actorType == "agent" && isAuthor {
 			sourceTaskID = h.commentSourceTaskID(r)
 		} else {
 			sourceTaskID = pgtype.UUID{}
 		}
-		// Legacy clients keep the existing cancel-before-update behavior. Strict
-		// revision writes defer cancellation until the conditional UPDATE wins,
-		// so a race that returns 409 cannot mutate the task queue.
+		// 老客户端保留现有的「先取消后更新」行为。严格 revision 写把取消推迟到条件 UPDATE
+		// 胜出之后，返回 409 的竞态因此不会改动任务队列。
 		if !strictContentEdit {
 			cancelled, err = h.TaskService.CancelTasksByTriggerComment(r.Context(), existing.ID)
 			if err != nil {
@@ -3401,11 +3110,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	var cancelledEvents []events.Event
 	transactionalEdit := replaceAttachments || (oldContent != req.Content && strictContentEdit)
 	if transactionalEdit {
-		// Strict body edits, attachment-set edits, and cancellation of tasks built
-		// from the old body are one database outcome. UpdateComment takes the row
-		// lock before the attachment replacement, so two modern editors cannot
-		// interleave their CAS check and attachment selection. A body + attachment
-		// edit is one visible mutation and therefore bumps revision exactly once.
+		// 严格正文编辑、附件集编辑、以及取消旧正文建的任务是同一个数据库结果。UpdateComment
+		// 在替换附件前先拿行锁，两个现代编辑器因此不能交错它们的 CAS 检查与附件选择。正文 +
+		// 附件是一次可见变更，因此 revision 恰好 +1。
 		tx, beginErr := h.TxStarter.Begin(r.Context())
 		if beginErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to prepare comment edit")
@@ -3461,10 +3168,8 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 			h.TaskService.BroadcastCancelledTasksWithEvents(r.Context(), uuidToString(existing.WorkspaceID), cancelled, cancelledEvents)
 		}
 	} else {
-		// Even legacy/non-strict edits must record their event in the same
-		// transaction as the row update. This is the path most likely to be
-		// exercised by older clients, so leaving it as a direct write would
-		// reintroduce a mutation-without-replay gap.
+		// 即使 legacy/非严格编辑，事件也必须与行更新同事务记录。这条路径最可能被老客户端
+		// 走到，若把它留成直接写，会重新引入「变更而无重放」的空档。
 		tx, beginErr := h.TxStarter.Begin(r.Context())
 		if beginErr != nil {
 			err = beginErr
@@ -3521,19 +3226,15 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		}
 
 		h.retriggerCancelledTaskSurvivors(r.Context(), issue, cancelled, existing.ID)
-		// MUL-4857: source_task_id was just re-derived from THIS edit above (the agent
-		// author re-stamps its current task; every other editor clears it), so
-		// resolving from the comment keys the delegation authority on the current
-		// editing action — identical to what the edit preview computed from the same
-		// request, and to what the completion-reconcile will restore. A non-author
-		// edit left it NULL, and a cross-issue editing task is rejected inside
-		// autopilotDelegationAuthority, so neither can borrow the old authoring run's
-		// authority.
+		// MUL-4857：source_task_id 刚刚由「本次编辑」重新推导过（agent 作者重盖当前任务；其它
+		// 编辑者清空它），所以从评论解析就把委派授权 key 在本次编辑动作上——与编辑预览从同一
+		// 请求算出的、以及与完成 reconcile 将恢复的完全一致。非作者编辑留下 NULL，跨 issue 的
+		// 编辑任务在 autopilotDelegationAuthority 内被拒，两者都不能借用旧作者运行的权利。
 		delegationAuthority := h.autopilotDelegationAuthorityFromComment(r.Context(), issue, comment)
 		return h.triggerTasksForComment(r.Context(), issue, comment, parentComment, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), delegationAuthority, suppressAgentIDs)
 	}
 
-	// Fetch reactions and attachments for the updated comment.
+	// 取更新后评论的表情与附件。
 	grouped := h.groupReactions(r, []pgtype.UUID{comment.ID})
 	groupedAtt := h.groupAttachments(r, []pgtype.UUID{comment.ID})
 	cid := uuidToString(comment.ID)
@@ -3544,13 +3245,16 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		h.publishEvent(persistedEvent)
 	}
 
-	// The broadcast above intentionally omits trigger_outcomes — it is the
-	// editor's private feedback, not shared timeline state (MUL-4525 §2).
+	// 上面的广播有意不带 trigger_outcomes——那是编辑者的私有反馈，不是共享时间线状态
+	//（MUL-4525 §2）。
 	resp.TriggerOutcomes = retriggerEditedComment()
 
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// DeleteComment 处理 DELETE /api/issues/comments/:commentId。权限：作者本人或工作区
+// owner/admin。删除前收集附件 URL、取消以该评论为触发的待处理任务；删除与其持久化事件同事务，
+// 之后删 S3 对象并重放取消任务批次里的幸存评论。返回 204。
 func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	commentId := chi.URLParam(r, "commentId")
 
@@ -3599,27 +3303,24 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		// The issue delete may have won the race after GetCommentInWorkspace.
-		// Continue so DeleteComment can report whether the comment itself still
-		// existed; touching issue activity is intentionally best effort.
+		// issue 删除可能在 GetCommentInWorkspace 之后赢下竞态。继续走，让 DeleteComment 报告
+		// 评论本身是否仍存在；触碰 issue activity 刻意做成尽力而为。
 		slog.Info("comment parent issue no longer exists", "issue_id", uuidToString(comment.IssueID), "comment_id", commentId)
 	}
 
-	// Collect attachment URLs before CASCADE delete removes them.
+	// 在 CASCADE 删除移除它们之前收集附件 URL。
 	attachmentURLs, _ := h.Queries.ListAttachmentURLsByCommentID(r.Context(), comment.ID)
 
-	// Cancel any active task whose planned batch contains this comment so the
-	// agent does not run with the now-deleted content already embedded. Must
-	// run before DeleteComment because the FK ON DELETE SET NULL would
-	// otherwise nullify trigger_comment_id and orphan those tasks in queued.
+	// 取消「planned 批次含此评论」的活动任务，避免 agent 带着已删内容运行。必须在
+	// DeleteComment 之前执行——FK ON DELETE SET NULL 否则会清空 trigger_comment_id，让那些
+	// 任务在 queued 里变成孤儿。
 	cancelled, cancelErr := h.TaskService.CancelTasksByTriggerComment(r.Context(), comment.ID)
 	if cancelErr != nil {
 		slog.Warn("cancel tasks for deleted trigger comment failed", append(logger.RequestAttrs(r), "error", cancelErr, "comment_id", commentId)...)
 	}
 
-	// Delete and its durable event share one transaction. Task cancellation is
-	// intentionally prepared before this transaction because the delete query
-	// may nullify trigger_comment_id through the existing relationship rules.
+	// 删除与其持久化事件共享同一事务。任务取消刻意在事务之前准备：删除查询可能经既有关系
+	// 规则清空 trigger_comment_id。
 	tx, beginErr := h.TxStarter.Begin(r.Context())
 	if beginErr != nil {
 		if hasIssue {
@@ -3644,9 +3345,8 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil || !deleted.Changed {
 		slog.Warn("delete comment failed", append(logger.RequestAttrs(r), "error", err, "changed", deleted.Changed, "comment_id", commentId)...)
-		// Cancellation already committed but deletion did not. If the parent
-		// issue still exists, rebuild the complete cancelled batch (including
-		// this trigger) before reporting the storage error or concurrent no-op.
+		// 取消已提交但删除没有。父 issue 若仍在，就先重建完整的取消批次（含此触发），再上报
+		// 存储错误或并发空操作。
 		if hasIssue {
 			h.retriggerCancelledTaskSurvivors(r.Context(), issue, cancelled, pgtype.UUID{})
 		}
@@ -3669,12 +3369,10 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// retriggerCancelledTaskSurvivors repairs the surviving inputs from a
-// batch containing a comment that was edited or deleted. Cancellation releases
-// the one-pending-task constraint; every other comment is replayed through the
-// normal authorization/routing path, scoped to the agent whose task carried
-// it. Chronological replay makes those survivors coalesce back into one batch
-// and lets the latest real comment restamp originator + connected-app context.
+// retriggerCancelledTaskSurvivors 修复来自一个「含被编辑/删除评论」批次的幸存输入。取消释放
+// 了 one-pending-task 约束；其它每条评论都走常规鉴权/路由路径重放，限定在承载它的那条任务
+// 所属 agent。按时间重放让幸存者合并回一个批次，并让最新真实评论重盖发起人与 connected-app
+// 上下文。
 func (h *Handler) retriggerCancelledTaskSurvivors(ctx context.Context, issue db.Issue, cancelled []db.AgentTaskQueue, excludedCommentID pgtype.UUID) {
 	if len(cancelled) == 0 {
 		return
@@ -3725,10 +3423,8 @@ func (h *Handler) retriggerCancelledTaskSurvivors(ctx context.Context, issue db.
 		if isNoteComment(comment.Content) {
 			continue
 		}
-		// Platform recovery comments bypass generic member/agent routing. If
-		// editing or deleting another comment cancelled the queued batch that
-		// carried one, replay it through the durable delegated-failure path so
-		// the cancelled, undelivered task cannot swallow the obligation.
+		// 平台恢复评论绕过通用 member/agent 路由。编辑/删除另一条评论取消掉了承载它的排队
+		// 批次时，经持久的「委派失败恢复」路径重放，让被取消、未投递的任务不能吞掉义务。
 		if service.IsDelegatedFailureRecoveryComment(comment) {
 			if err := h.TaskService.DispatchDelegatedFailureRecoveryComment(ctx, comment, pgtype.UUID{}); err != nil {
 				slog.Warn("retrigger cancelled comment batch: delegated failure recovery replay failed",
@@ -3751,8 +3447,8 @@ func (h *Handler) retriggerCancelledTaskSurvivors(ctx context.Context, issue db.
 		var delegationAuthority string
 		if actorType != "member" {
 			originatorUserID = uuidToString(h.TaskService.ResolveOriginatorFromTriggerComment(ctx, issue.WorkspaceID, comment.ID))
-			// MUL-4857: reconcile works from persisted comments, so the autopilot
-			// delegation authority is resolved from the stored comment.source_task_id.
+			// MUL-4857：reconcile 基于持久化评论工作，所以 autopilot 委派授权从存储的
+			// comment.source_task_id 解析。
 			delegationAuthority = h.autopilotDelegationAuthorityFromComment(ctx, issue, comment)
 		}
 		triggers, _ := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{
@@ -3773,13 +3469,10 @@ func (h *Handler) retriggerCancelledTaskSurvivors(ctx context.Context, issue db.
 	}
 }
 
-// loadCommentForActor resolves a {commentId} URL param to a comment in the
-// caller's workspace. Returns the comment, the workspace UUID, the actor
-// identity, and ok. Resolve / unresolve handlers share this scaffolding so the
-// workspace membership + tenant guard stay identical. Any comment (root or
-// reply) may be resolved: resolving a root collapses the whole thread; resolving
-// a reply marks it as the thread's resolution. Which one is the thread's
-// resolution is a pure frontend derivation, so the backend stays a plain setter.
+// loadCommentForActor 把 URL 参数 {commentId} 解析成调用方工作区里的一条评论。返回评论、
+// 工作区 UUID、actor 身份与 ok。Resolve/Unresolve handler 共享这套脚手架，让工作区成员 +
+// 租户守卫保持一致。任何评论（根或回复）都可被 resolve：解决根折叠整条线程；解决回复把它
+// 标记为线程的结论。哪条是线程的结论是纯前端推导，后端保持一个朴素 setter。
 func (h *Handler) loadCommentForActor(w http.ResponseWriter, r *http.Request) (db.Comment, string, string, string, bool) {
 	commentId := chi.URLParam(r, "commentId")
 	userID, ok := requireUserID(w, r)
@@ -3810,6 +3503,9 @@ func (h *Handler) loadCommentForActor(w http.ResponseWriter, r *http.Request) (d
 	return comment, workspaceID, actorType, actorID, true
 }
 
+// ResolveComment 处理 POST /api/issues/comments/:commentId/resolve：把一条评论标成「线程已
+// 解决」。权限与 loadCommentForActor 相同（工作区成员）。单解决不变量：同一线程里先清掉其它
+// 解决标记再设新的，两条写在同一个事务里原子完成，崩溃也不会留下两个（或零个）可见解决。
 func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 	comment, _, actorType, actorID, ok := h.loadCommentForActor(w, r)
 	if !ok {
@@ -3823,10 +3519,8 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Single-resolution invariant: a thread has at most one resolved comment, so
-	// resolving this one must clear any other resolution in the same thread. Both
-	// writes run in one tx — clearing the old resolution and setting the new one
-	// is atomic, so a crash can never leave two resolutions (or none) visible.
+	// 单解决不变量：一条线程至多一条已解决评论，因此解决这条必须先清掉同线程的其它解决。
+	// 两条写在同一个事务里——清旧的 + 设新的原子完成，崩溃永不留下两个（或没有）可见解决。
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to resolve comment")
@@ -3892,15 +3586,16 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 	cid := uuidToString(updated.ID)
 	resp := commentToResponse(updated, grouped[cid], groupedAtt[cid])
 
-	// Suppress the target event on a re-resolve no-op so consumers do not
-	// re-process an unchanged thread (notifications, log spam). Cleared siblings
-	// still get their own events above — those rows did change.
+	// 重复 resolve 的空操作抑制目标事件，消费者不必重处理未变的线程（通知、日志噪音）。被清
+	// 的兄弟仍会各自拿到上面的事件——那些行确实变了。
 	if !wasResolved {
 		slog.Info("comment resolved", append(logger.RequestAttrs(r), "comment_id", cid)...)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// UnresolveComment 处理 POST /api/issues/comments/:commentId/unresolve：撤掉一条评论的
+// 「已解决」标记。仅在原状态是已解决时广播取消事件（幂等空操作不发事件）。
 func (h *Handler) UnresolveComment(w http.ResponseWriter, r *http.Request) {
 	comment, _, actorType, actorID, ok := h.loadCommentForActor(w, r)
 	if !ok {

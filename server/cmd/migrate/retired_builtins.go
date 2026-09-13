@@ -1,3 +1,12 @@
+// retired_builtins.go
+//
+// 职责：清理"已退休的内置（built-in）"生成内容——历史上的 PM 系列与
+// "multica 编码小队"系列 squad、它们派生出的 agent、以及整张依赖图（任务、
+// Issue、聊天、autopilot 运行、Life 数据、渠道安装等），一次事务全部硬删除。
+// 之所以能硬删：这些模板是系统生成的，没有可恢复的源记录。文件还含 OpenClaw
+// （旧实现专用 runtime）退役的清理，以及供迁移 456/488 复用的事务版本。删除
+// 前会做多道护栏（仍在职的 squad leader、被 Life 系统收养的 agent 等），有
+// 歧义就中止，绝不误删。
 package main
 
 import (
@@ -9,12 +18,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// removeRetiredBuiltinsHook removes the two historical built-in squad
-// families before migration 456 is recorded.  The complete target graph is
-// materialised in temporary tables first, then every dependent row is
-// removed in one transaction.  This is intentionally a hard delete: these
-// templates were generated data and have no source record from which they
-// could be restored.
+// removeRetiredBuiltinsHook 在迁移 456 记为已应用之前移除两族历史内置 squad。
+// 先把完整的"目标依赖图"物化到临时表里，然后在同一个事务内删除所有相关行。
+// 这里刻意用硬删除：这些模板是生成的数据，没有任何源记录能用来恢复。
 func removeRetiredBuiltinsHook(ctx context.Context, pool *pgxpool.Pool) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -30,6 +36,9 @@ func removeRetiredBuiltinsHook(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
+// removeRetiredBuiltinsWithTx 具体执行"退休内置清理"：匹配 PM 系列与 multica
+// 编码小队的 squad/agent（按名称、描述/指令里的特征串、system_key、runtime 配置
+// 文本兜底），交给共享的依赖序清理器 removeRetiredGraphWithTx 完成整张图的删除。
 func removeRetiredBuiltinsWithTx(ctx context.Context, tx pgx.Tx) error {
 	return removeRetiredGraphWithTx(ctx, tx,
 		`INSERT INTO retired_builtin_squads (id)
@@ -62,10 +71,9 @@ func removeRetiredBuiltinsWithTx(ctx context.Context, tx pgx.Tx) error {
 	)
 }
 
-// removeRetiredGraphWithTx contains the shared dependency-ordered cleanup for
-// generated agent graphs. Keeping the seed queries separate lets the one-time
-// OpenClaw retirement use the same proven cleanup without teaching the normal
-// PM migration about another product concept.
+// removeRetiredGraphWithTx 内含共享的"按依赖序清理生成式 agent 图"逻辑。把
+// 种子查询独立出来，让一次性的 OpenClaw 退役能复用同一套验证过的清理流程，
+// 而不必给普通 PM 迁移再教一个新产品概念。
 func removeRetiredGraphWithTx(ctx context.Context, tx pgx.Tx, squadSeed, agentSeed, runtimeSeed string) error {
 
 	statements := []string{
@@ -121,9 +129,9 @@ func removeRetiredGraphWithTx(ctx context.Context, tx pgx.Tx, squadSeed, agentSe
 			     OR child.chat_input_task_id = parent.id
 		)
 		 INSERT INTO retired_builtin_tasks (id) SELECT id FROM related`,
-		// A runtime row is an ownership boundary even when an old deployment
-		// lost its agent link. Include those tasks before deriving their child
-		// graph so no runtime-owned work is left behind or deleted out of order.
+		// runtime 行本身就是一条所有权边界——即使旧部署丢了它的 agent 链接。
+		// 先把这些任务纳入集合，再去派生它们的子图，保证不会漏掉 runtime 名下
+		// 的工作，也不会乱序删除。
 		`INSERT INTO retired_builtin_tasks (id)
 		 SELECT id FROM agent_task_queue
 		  WHERE runtime_id IN (SELECT id FROM retired_builtin_runtimes)
@@ -239,9 +247,8 @@ func removeRetiredGraphWithTx(ctx context.Context, tx pgx.Tx, squadSeed, agentSe
 		slog.Info("retired built-in cleanup target", "kind", target.name, "count", count)
 	}
 
-	// A work agent cannot be removed while it is still the leader of a
-	// surviving squad, nor when it has been adopted by the Life system.  Such
-	// a deployment has ambiguous ownership; abort before deleting anything.
+	// 一个工作 agent 若仍是某个存活 squad 的 leader、或已被 Life 系统收养，就
+	// 不能删。这种部署的所有权有歧义：在删除任何东西之前先中止。
 	var conflictCount int64
 	if err := tx.QueryRow(ctx, `
 		SELECT count(*) FROM squad
@@ -266,10 +273,9 @@ func removeRetiredGraphWithTx(ctx context.Context, tx pgx.Tx, squadSeed, agentSe
 		return fmt.Errorf("retired built-in agent is referenced by Life data")
 	}
 
-	// Events are durable records, so remove deliveries first.  Events that
-	// carry a direct task/chat reference belong exclusively to the retired
-	// graph; workspace events whose payload embeds one of those ids are
-	// redacted to retain the ordering/audit envelope without retaining content.
+	// 事件是持久记录，所以先删投递。直接携带 task/chat 引用的事件专属于被退休
+	// 的图；而那些负载里"嵌了上述 id"的工作区事件则被脱敏——保留排序/审计外壳，
+	// 但不再保留内容。
 	if err := execRetiredDelete(ctx, tx, "domain event deliveries", `
 		DELETE FROM domain_event_delivery d
 		 WHERE d.event_id IN (
@@ -297,9 +303,8 @@ func removeRetiredGraphWithTx(ctx context.Context, tx pgx.Tx, squadSeed, agentSe
 		   )`, true); err != nil {
 		return err
 	}
-	// Null out references held by surviving rows before removing the target
-	// graph. These columns intentionally have no FK because they are
-	// polymorphic or cross-version references.
+	// 删目标图之前，先把"存活行仍持有它的引用"置空。这些列刻意没有外键——
+	// 它们是多态引用或跨版本引用。
 	updates := []struct {
 		name string
 		sql  string
@@ -325,9 +330,8 @@ func removeRetiredGraphWithTx(ctx context.Context, tx pgx.Tx, squadSeed, agentSe
 		}
 	}
 
-	// Remove polymorphic references before deleting their owners.  Rows tied
-	// to a target issue/task/chat are intentionally included even if the
-	// author or assignee was a human.
+	// 在删除它们的 owner 之前先移除多态引用。那些"挂在目标 issue/task/chat 上
+	// 的行"即使作者/负责人是人类也刻意一并删除。
 	deletes := []struct {
 		name string
 		sql  string
@@ -426,13 +430,12 @@ func removeRetiredGraphWithTx(ctx context.Context, tx pgx.Tx, squadSeed, agentSe
 	return nil
 }
 
-// removeOpenClawRuntimesWithTx retires runtime rows and the generated agent
-// graph attached to them. OpenClaw was an implementation-specific runtime,
-// not user-authored Life data; a Life binding is treated as an unsafe upgrade
-// and aborts before any row is removed so the user can rebind it explicitly.
+// removeOpenClawRuntimesWithTx 退役 runtime 行及其挂着的整棵生成式 agent 图。
+// OpenClaw 是实现专属的 runtime，不是用户创作的 Life 数据；若某 agent 被 Life
+// 绑定，视为"不安全的升级"，会在删除任何行之前中止，让用户显式重新绑定。
 func removeOpenClawRuntimesWithTx(ctx context.Context, tx pgx.Tx) error {
-	// Include squads led by an OpenClaw agent in the target set. A surviving
-	// squad cannot retain a leader row that this migration is about to delete.
+	// 把"由 OpenClaw agent 带领的 squad"也纳入目标集：存活的 squad 不能留着一条
+	// 本迁移即将删除的 leader 行。
 	squadSeed := `INSERT INTO retired_builtin_squads (id)
 		 SELECT s.id FROM squad s
 		 LEFT JOIN agent a ON a.id = s.leader_id
@@ -457,20 +460,17 @@ func removeOpenClawRuntimesWithTx(ctx context.Context, tx pgx.Tx) error {
 	if err := removeRetiredGraphWithTx(ctx, tx, squadSeed, agentSeed, runtimeSeed); err != nil {
 		return fmt.Errorf("remove OpenClaw agent graph: %w", err)
 	}
-	// The shared graph cleanup removes rows that are owned by target agents.
-	// These runtime/profile references can also be held by otherwise empty
-	// rows, so clear them explicitly before deleting the runtime definitions.
+	// 共享的图清理会删掉"目标 agent 拥有"的行。但这些 runtime/profile 引用也
+	// 可能被"本应已空"的行持有，所以要在删除 runtime 定义之前显式清一遍。
 	cleanup := []struct {
 		name string
 		sql  string
 	}{
 		{"surviving chat runtime references", `UPDATE chat_session SET runtime_id = NULL WHERE runtime_id IN (SELECT id FROM retired_builtin_runtimes)`},
-		// A runtime can outlive its agent after a partial upgrade.  Materialise
-		// those tasks into the same graph before deleting them so their task
-		// messages, usage, channel deliveries and durable events are removed in
-		// the dependency order above rather than relying on a runtime FK
-		// cascade.  The migration must also be safe on databases where the
-		// runtime row has already been removed but the task is still present.
+		// 部分升级后 runtime 可能比它的 agent 活得久。先把这些任务物化进同一张
+		// 图再删，让它们的消息、用量、渠道投递、可靠事件都按上面的依赖序被清掉，
+		// 而不是指望 runtime 外键级联。迁移在"runtime 行已被删但任务仍在"的数据库
+		// 上也必须安全。
 		{"orphan runtime task rows", `DELETE FROM agent_task_queue
 			WHERE runtime_id IN (SELECT id FROM retired_builtin_runtimes)
 			  AND id NOT IN (SELECT id FROM retired_builtin_tasks)`},
@@ -485,14 +485,14 @@ func removeOpenClawRuntimesWithTx(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-// removeRetiredBuiltinsTx is the migration-runner variant. The caller owns
-// the transaction and commits it together with migration 456 and its ledger
-// row. Keeping the pool wrapper above makes the cleanup easy to exercise in
-// isolation while production migration remains atomic.
+// removeRetiredBuiltinsTx 是供迁移 runner 使用的变体：调用方拥有事务，并把
+// 它连同迁移 456 及台账行一起提交。保留上面那个连接池包装版本，是为了在隔离
+// 环境里方便单独练习清理流程，而生产迁移仍是原子的。
 func removeRetiredBuiltinsTx(ctx context.Context, tx pgx.Tx) error {
 	return removeRetiredBuiltinsWithTx(ctx, tx)
 }
 
+// execRetiredDelete 执行一条清理 SQL（删除或更新）并记日志。
 func execRetiredDelete(ctx context.Context, tx pgx.Tx, name, statement string, update bool) error {
 	tag, err := tx.Exec(ctx, statement)
 	if err != nil {

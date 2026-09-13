@@ -1,3 +1,6 @@
+// 本文件是「通知设置」标签页：逐事件类型开关收件箱通知（分配给我/状态变更/评论/提及
+// 等），并单独开关系统通知；Web 端还额外提供浏览器通知授权行。
+
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
@@ -16,8 +19,8 @@ import {
   SettingsTab,
 } from "./settings-layout";
 
-// Inbox event groups rendered in the per-event toggle list. `system_notifications`
-// is a sibling preference key but lives in its own section below.
+// 逐事件开关列表里渲染的收件箱事件分组。`system_notifications`（系统通知）虽然也是
+// 同名偏好键，但单独放在下面自己的分区里，不在此列表。
 const INBOX_GROUP_KEYS = [
   "assignments",
   "status_changes",
@@ -26,8 +29,14 @@ const INBOX_GROUP_KEYS = [
   "updates",
   "agent_activity",
 ] as const;
+/** 收件箱事件分组键（由上方 INBOX_GROUP_KEYS 推导）。 */
 type InboxGroupKey = (typeof INBOX_GROUP_KEYS)[number];
 
+/**
+ * 「通知设置」标签页：用服务端下发的偏好逐项渲染开关；每切换一个开关，就把整份
+ * 偏好对象整体提交保存（保留其余未动过的键）。打开某事件类型时把键值设为 "all"
+ * 后从对象里删掉该键——"all" 是服务端默认值，带着它提交只会让 payload 变脏。
+ */
 export function NotificationsTab() {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -41,7 +50,7 @@ export function NotificationsTab() {
       ...preferences,
       [key]: enabled ? "all" : "muted",
     };
-    // Remove keys set to "all" (default) to keep the object clean
+    // 打开（回到默认 "all"）的键直接从对象里删掉，让提交内容保持干净、不夹带默认值。
     if (enabled) {
       delete updated[key];
     }
@@ -104,8 +113,8 @@ export function NotificationsTab() {
           </SettingsRow>
         </SettingsCard>
 
-        {/* Web-only: the browser permission banners require. Renders nothing on
-            desktop (OS-native delivery) or where the Notification API is absent. */}
+        {/* 仅 Web 端：浏览器权限提示只有网页环境需要。桌面端（走系统原生通知）
+            或不支持 Notification API 的环境下该组件自行不渲染。 */}
         <BrowserNotificationSetting />
       </SettingsSection>
     </SettingsTab>

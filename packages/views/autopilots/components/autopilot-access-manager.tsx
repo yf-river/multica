@@ -1,3 +1,8 @@
+// autopilot 协作者（显式写权限）管理：授予/撤销对某 autopilot 的显式访问。
+// 仅限成员，与订阅者选择器一致。创建者与工作区管理员始终有访问权、不列在此——
+// 这里管理的是额外显式授予的那一组。渲染在编辑弹窗的"管理访问"popover 里；
+// 访问变更通过各自 mutation 立即提交，与表单的保存动作相互独立。
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -21,12 +26,12 @@ import {
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
 
-// Grant / revoke explicit write access to an autopilot. Members-only, mirroring
-// the subscriber picker. Creators and workspace admins always have access and
-// are not listed here — this manages the additional, explicitly-granted set.
-// Rendered inside the edit dialog's "Manage access" popover; access changes
-// commit immediately via their own mutations and are independent of the form's
-// Save action.
+/**
+ * autopilot 协作者管理。已授权成员逐个列出、可移除；"添加"打开成员选择器。
+ * 授予/撤销立即通过 mutation 提交并 toast 反馈，不影响表单其他字段的待保存状态。
+ * @param autopilotId 目标 autopilot 的 ID。
+ * @param collaborators 当前已显式授予访问的协作者列表。
+ */
 export function AutopilotAccessManager({
   autopilotId,
   collaborators,
@@ -48,6 +53,7 @@ export function AutopilotAccessManager({
     [collaborators],
   );
 
+  // 候选 = 尚未被授予的成员，过滤排除已授权者，支持名称与拼音搜索。
   const query = filter.trim().toLowerCase();
   const candidates = useMemo(
     () =>

@@ -1,5 +1,7 @@
 "use client";
 
+// 收件箱单行条目：头像 + 展示标题 + 正文标签 + 活动徽标/时间，支持选中、
+// 修饰键新开任务、右键菜单与行内归档按钮。
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { StatusIcon } from "../../issues/components/status-icon";
 import {
@@ -19,9 +21,9 @@ import { useT } from "../../i18n";
 import { paths, useWorkspaceSlug } from "@multica/core/paths";
 import { resolveClickIntent, useIntentNavigate } from "../../navigation";
 
-// Hook returning a localized relative-time formatter — the i18n equivalent
-// of the previous static `timeAgo` function. Returning a function (rather
-// than a string) keeps call-site usage identical: `timeAgo(dateStr)`.
+// 返回本地化「相对时间」格式化函数的 Hook——之前静态 `timeAgo` 的 i18n 版本。
+// 返回函数（而不是字符串）是为了让调用处用法完全不变：`timeAgo(dateStr)`。
+/** 返回「把时间字符串格式化成几秒/分钟/小时/天前」的函数。 */
 export function useTimeAgo() {
   const { t } = useT("inbox");
   return (dateStr: string): string => {
@@ -36,6 +38,16 @@ export function useTimeAgo() {
   };
 }
 
+/**
+ * 收件箱单行条目：整体是一行可点的选择行，点击进详情，修饰键点击在新标签页
+ * 打开对应任务；行内含归档/取消归档按钮与紧凑操作菜单。
+ *
+ * @param item 收件箱条目
+ * @param view 当前列表视图（决定归档按钮方向与未读点显示）
+ * @param isSelected 是否选中
+ * @param onClick 普通点击（进入详情/选中）
+ * @param onAction 归档/取消归档回调——永远是当前视图的反向操作
+ */
 export function InboxListItem({
   item,
   view,
@@ -47,21 +59,20 @@ export function InboxListItem({
   view: InboxView;
   isSelected: boolean;
   onClick: () => void;
-  // Archive in the main list, unarchive in the archived one — the row action is
-  // always the reversal of the current view, so the two lists share this row.
+  // 主列表归档、归档列表取消归档——行操作永远是当前视图的反向操作，
+  // 因此两个列表共用这一行组件。
   onAction: () => void;
 }) {
   const { t } = useT("inbox");
   const timeAgo = useTimeAgo();
-  // Inbox is a cross-workspace surface, so the catalog is read against the
-  // item's OWN workspace rather than the route's. (MUL-6243)
+  // 收件箱是跨工作区的界面，所以状态目录按条目「自己的」工作区读，而不是路由的。
+  // (MUL-6243)
   const { categoryOf: statusCategoryOf, colorOf: statusColorOf } =
     useIssueStatuses(item.workspace_id);
   const statusLabelOf = useStatusLabel(item.workspace_id);
   const openContextMenu = useInboxContextMenu();
-  // Null-safe slug (not useWorkspacePaths, which throws): the row renders in
-  // tests and could render outside a workspace route; without a slug the
-  // modifier-click affordance simply stays off.
+  // 空安全的 slug（不用会抛错的 useWorkspacePaths）：行在测试中也要能渲染，
+  // 且可能出现在工作区路由之外；没有 slug 时修饰键打开的提示就干脆不启用。
   const slug = useWorkspaceSlug();
   const issueHref =
     slug && item.issue_id
@@ -70,34 +81,31 @@ export function InboxListItem({
   const intentNavigate = useIntentNavigate();
   const displayTitle = getInboxDisplayTitle(item);
   const isArchivedView = view === "archived";
-  // Archiving deliberately leaves `read` untouched so unarchiving restores the
-  // real unread state, so archived rows would otherwise keep an unread marker
-  // the user cannot clear from this view. Suppress the affordance here only.
+  // 归档刻意保留 `read` 不动，这样取消归档能还原真实的未读状态；否则归档行会
+  // 带着一个用户在本视图里无法清除的未读标记。这里只是先压住这个提示。
   const showUnread = item.read !== true && !isArchivedView;
   const ActionIcon = isArchivedView ? ArchiveRestore : Archive;
   const actionLabel = isArchivedView
     ? t(($) => $.list.unarchive_tooltip)
     : t(($) => $.list.archive_tooltip);
   const actorType = item.actor_type ?? item.recipient_type;
-  // The glyph is per CATEGORY, so it alone cannot tell "In Review" from a
-  // custom "Human Review" — moving between two statuses of the same category
-  // left this row pixel-identical and read as "the inbox never updated"
-  // (MUL-6395). Colour is what carries a custom status's own identity, exactly
-  // as the status-changed detail label already renders it. `colorOf` returns
-  // null for a built-in, which keeps it on its semantic token.
+  // 图标是按「状态类别」画的，单看图标分不清「In Review」和自定义的
+  // 「Human Review」——在同一类别内两个状态间移动时，这行看起来像素级不变，
+  // 用户会以为是收件箱没刷新（MUL-6395）。颜色承载自定义状态自己的身份，
+  // 状态变更的正文标签也正是这么渲染的。内置状态的 `colorOf` 返回 null，
+  // 落在它自己的语义色上。
   const statusColor = item.issue_status ? statusColorOf(item.issue_status) : null;
 
   return (
-    // A div, not a <button>: the row carries its own controls (the action
-    // button, the compact menu), and interactive descendants of a <button>
-    // are invalid HTML that screen readers cannot reach. `role="button"` plus
-    // the Enter/Space handler keeps the row's own keyboard behavior.
+    // 用 div 而不是 <button>：行内还带着自己的控件（归档按钮、紧凑菜单），
+    // <button> 里嵌可交互元素是屏幕阅读器够不到的非法 HTML。`role="button"`
+    // 加 Enter/Space 处理器保留行自己的键盘行为。
     <div
       role="button"
       tabIndex={0}
       onClick={(e) => {
-        // Plain click keeps the master-detail selection; a modifier click on
-        // a row that references an issue opens that issue as its own tab.
+        // 普通点击保留主-详情结构的选中；修饰键点击引用了任务的行时，
+        // 把该任务开成独立标签页。
         if (issueHref) {
           const intent = resolveClickIntent(e);
           if (intent !== "push") {
@@ -113,9 +121,8 @@ export function InboxListItem({
         e.preventDefault();
         intentNavigate(issueHref, "background-tab");
       }}
-      // Right-click opens the list's shared menu (mark read/unread, archive).
-      // `select-none` mirrors what Base UI's own trigger used to merge in, so
-      // right-clicking a row never starts a text selection.
+      // 右键打开列表的共享菜单（已读/未读、归档）。`select-none` 对应 Base UI
+      // 自己触发器原本合进来的样式，保证右键某行不会开始一段文本选择。
       onContextMenu={
         openContextMenu ? (e) => openContextMenu(item, e) : undefined
       }
@@ -144,10 +151,9 @@ export function InboxListItem({
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {/* Pointer-only affordance: revealed on hover, and on keyboard
-                focus anywhere in the row so it is reachable by Tab. Touch has
-                neither, so it stays hidden on a pointer that cannot hover and
-                the compact menu below carries the same action. */}
+            {/* 纯指针的小提示：悬停时显示；行内任意处键盘聚焦时也显示，保证 Tab
+                可达。触屏两者都没有，所以对不能悬停的指针保持隐藏——下面那个
+                紧凑菜单承载同样的操作。 */}
             <button
               type="button"
               title={actionLabel}
@@ -162,10 +168,9 @@ export function InboxListItem({
             </button>
             <InboxRowMenu item={item} view={view} />
             {item.issue_status && (
-              // Icon-only, like every other issue row — but a colour is not a
-              // name, and this row has no space for the CustomStatusChip the
-              // board card and list row carry. `title` is that name, and it is
-              // the same affordance the archive button above already uses.
+              // 只给图标、和其它任务行一致——但颜色不是名字，这行又没有空间放
+              // 看板卡/列表行那种 CustomStatusChip。`title` 就是这个名字，
+              // 和上面归档按钮用的提示是同一个套路。
               <span
                 title={statusLabelOf(item.issue_status)}
                 className="flex shrink-0 items-center"
@@ -185,11 +190,9 @@ export function InboxListItem({
             <InboxDetailLabel item={item} />
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
-            {/* Badge only, no hover card (MUL-5189). "An agent is on this"
-                is worth showing while triaging; the card behind it adds only
-                elapsed time, which does not change whether you open the row.
-                The row already carries the ActorAvatar hover card on the
-                left, so a second popup here was mostly noise. */}
+            {/* 只放徽标、不放悬停卡（MUL-5189）。「有 Agent 在处理」在排查收件箱
+                时值得一看；它背后的卡片只多给已流逝时长，而这不会改变你要不要
+                点开这行。左侧已经有头像的悬停卡，这里再来一个弹层大多是噪音。 */}
             {item.issue_id && (
               <IssueAgentActivityIndicator
                 issueId={item.issue_id}

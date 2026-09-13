@@ -1,9 +1,12 @@
 "use client"
+// 本文件是基础表格（Table）组件族：语义化的 <table> 一套件，负责网格结构
+// 与行 hover、选中态样式。DataTable.tsx 用低层原语拼装高级表格。
 
 import * as React from "react"
 
 import { cn } from "@multica/ui/lib/utils"
 
+/** Table：表格容器——外层包一个可横向滚动的 div，<table> 本身占满宽度 */
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
     <div
@@ -19,6 +22,7 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   )
 }
 
+/** TableHeader：表头区（<thead>），行间自动加下边框 */
 function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
@@ -29,6 +33,7 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   )
 }
 
+/** TableBody：表体区（<tbody>），去掉最后一行底边框 */
 function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
   return (
     <tbody
@@ -39,6 +44,7 @@ function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
   )
 }
 
+/** TableFooter：表尾区（<tfoot>），浅灰底 + 加粗字重，常放合计行 */
 function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
   return (
     <tfoot
@@ -52,6 +58,7 @@ function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
   )
 }
 
+/** TableRow：单行，hover 高亮；data-state=selected 时保持选中底色 */
 function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
   return (
     <tr
@@ -65,6 +72,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
   )
 }
 
+/** TableHead：表头单元格；含复选框时自动去掉左内边距 */
 function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   return (
     <th
@@ -78,6 +86,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   )
 }
 
+/** TableCell：数据单元格 */
 function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   return (
     <td
@@ -91,6 +100,7 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   )
 }
 
+/** TableCaption：表格标题/说明，显示在表格下方 */
 function TableCaption({
   className,
   ...props

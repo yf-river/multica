@@ -1,3 +1,5 @@
+// life_task.go —— 受治理（governed）的 Life 后台认知任务的队列行助手与终态兜底：
+// 这类任务须以 life_job_complete 提交结构化输出，队列只作执行载体。
 package service
 
 import (
@@ -17,13 +19,11 @@ import (
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
-// ErrLifeStructuredOutputRequired is returned when a governed background Life
-// task tries to use the ordinary daemon completion endpoint.  The task is
-// failed atomically with its cognition job before this error is returned; the
-// worker will schedule the job again instead of leaving two terminal states
-// that disagree.
+// ErrLifeStructuredOutputRequired 在受治理的 Life 后台任务试图使用普通 daemon 完成端点时返回。返回该错误前任务
+// 已与其认知作业原子地失败；worker 会重新调度作业，而不是留下两个互相矛盾的终态。
 var ErrLifeStructuredOutputRequired = errors.New("life cognition tasks must submit structured output with life_job_complete")
 
+// lifeTaskEnvelope 是 Life 认知任务 context 中携带的执行信封（类型标记 + 作业引用/认领）。
 type lifeTaskEnvelope struct {
 	Type           string `json:"type"`
 	JobID          string `json:"job_id"`
@@ -31,6 +31,7 @@ type lifeTaskEnvelope struct {
 	ContextVersion int64  `json:"context_version_number"`
 }
 
+// lifeTaskEnvelopeForQueue 判断排队行是否声明为受治理 Life 任务并取出信封。
 func lifeTaskEnvelopeForQueue(task db.AgentTaskQueue) (lifeTaskEnvelope, bool) {
 	if len(task.Context) == 0 {
 		return lifeTaskEnvelope{}, false
@@ -42,6 +43,7 @@ func lifeTaskEnvelopeForQueue(task db.AgentTaskQueue) (lifeTaskEnvelope, bool) {
 	return envelope, true
 }
 
+// lifeTaskActive 判断状态是否属于“Life 任务仍在活跃执行”（dispatched/running/waiting_local_directory）。
 func lifeTaskActive(status string) bool {
 	switch status {
 	case "dispatched", "running", "waiting_local_directory":
@@ -51,10 +53,8 @@ func lifeTaskActive(status string) bool {
 	}
 }
 
-// failLifeCognitionTask is the sole ordinary task-terminal fallback for a
-// governed Life background task.  It deliberately does not create platform
-// retries or issue/chat side effects: the cognition job owns its retry budget
-// and will be claimed again after its scheduled backoff.
+// failLifeCognitionTask 是受治理 Life 后台任务唯一的普通任务终态兜底。它刻意不创建平台重试或 issue/chat
+// 副作用：认知作业握有自己的重试预算，会在预定退避后被再次认领。
 func (s *TaskService) failLifeCognitionTask(ctx context.Context, taskID pgtype.UUID, errMsg, failureReason string) (*db.AgentTaskQueue, error) {
 	errMsg = util.SanitizeTextForPostgres(strings.TrimSpace(errMsg))
 	if errMsg == "" {
@@ -68,9 +68,8 @@ func (s *TaskService) failLifeCognitionTask(ctx context.Context, taskID pgtype.U
 	var task db.AgentTaskQueue
 	var terminalEvent events.Event
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
-		// Structured completion takes the job lock before the task transition.
-		// Use the same order here so a late ordinary callback cannot deadlock or
-		// partially win against a valid life_job_complete request.
+		// 结构化完成在任务转换前取作业锁。这里用相同顺序，迟到的普通回调才不至于与合法的 life_job_complete
+		// 请求死锁或部分获胜。
 		job, jobErr := qtx.GetLifeCognitionJobForTaskForUpdate(ctx, taskID)
 		if jobErr != nil && !errors.Is(jobErr, pgx.ErrNoRows) {
 			return fmt.Errorf("load Life cognition job for terminal fallback: %w", jobErr)
@@ -81,8 +80,7 @@ func (s *TaskService) failLifeCognitionTask(ctx context.Context, taskID pgtype.U
 			return currentErr
 		}
 		if !lifeTaskActive(current.Status) {
-			// A structured completion or a recovery pass won the race. Treat the
-			// ordinary callback as an idempotent no-op and never touch the job.
+			// 结构化完成或恢复流程赢了竞态：把普通回调当作幂等 no-op，绝不触碰作业。
 			task = current
 			return nil
 		}

@@ -1,5 +1,8 @@
 "use client";
 
+// 本文件是 Agent 的“对话开场白”编辑器：逐条编辑“标签 + 提示词”，支持增删，
+// 并实时用聊天空态同一套渲染逻辑做预览，让作者看到聊天界面里真实效果。
+
 import { Plus, Trash2 } from "lucide-react";
 import {
   AGENT_CONVERSATION_STARTER_LABEL_MAX_LENGTH,
@@ -17,6 +20,12 @@ import {
 } from "../../chat/components/conversation-starter-list";
 import { useT } from "../../i18n";
 
+/**
+ * Agent 对话开场白编辑器（受控组件）。
+ * @param value 开场白数组（label + prompt 对），由调用方持有。
+ * @param onChange 任何增删改都通过它交回一份新数组。
+ * @param disabled 为 true 时全部控件只读（如无权限的场景）。
+ */
 export function ConversationStartersEditor({
   value,
   onChange,
@@ -30,13 +39,12 @@ export function ConversationStartersEditor({
   const hasIncompletePrompt = value.some(
     (item) => !item.label.trim() || !item.prompt.trim(),
   );
-  // Rendered through the same component and the same resolver the chat empty
-  // state uses, so the preview cannot drift from what it previews — including
-  // the fallback rule, which is how an author learns that the three
-  // suggestions they never configured are defaults they can replace.
+  // 预览走的是聊天空态同款组件、同款解析规则，保证“所见即所得”、不会两处跑偏——
+  // 包括兜底逻辑：作者因此能发现那三条自己没配过的建议其实是可替换的默认值。
   const fallbackStarters = useFallbackConversationStarters();
   const preview = selectConversationStarters(value, fallbackStarters);
 
+  /** 就地更新某一条开场白的某个字段（label 或 prompt），生成新数组交给调用方。 */
   const update = (
     index: number,
     field: keyof AgentConversationStarter,

@@ -1,12 +1,19 @@
+/**
+ * 官网 landing 的 i18n 类型定义：描述 zh.ts 字典的完整结构，并提供语言别名、
+ * 语言判断与文档链接工具。当前仅实现了 zh-Hans。
+ */
 import type { SupportedLocale } from "@multica/core/i18n";
 export { docsHrefForLocale } from "@/lib/docs-href";
 
+/** 当前实际支持的语言（沿用 core 的语言联合类型，未来可扩展）。 */
 export type Locale = SupportedLocale;
 
+/** 是否中文环境：目前唯一语言就是中文，恒返回 true（保留参数以便未来扩展）。 */
 export function isZhLocale(_locale: Locale): boolean {
   return true;
 }
 
+/** 「功能亮点」区块的结构：标签 + 标题 + 描述 + 三点卖点卡片。 */
 type FeatureSection = {
   label: string;
   title: string;
@@ -14,13 +21,16 @@ type FeatureSection = {
   cards: { title: string; description: string }[];
 };
 
+/** 页脚链接组结构。 */
 type FooterGroup = {
   label: string;
   links: { label: string; href: string }[];
 };
 
+/** 联系销售表单里的下拉选项（值为提交值，label 为展示文案）。 */
 export type ContactSalesOption = { value: string; label: string };
 
+/** 官网落地页全部文案的结构（header/hero/各区块/表单等）。 */
 export type LandingDict = {
   header: {
     github: string;

@@ -1,5 +1,11 @@
 "use client";
 
+// 本文件：PullRequestList —— 问题详情里关联 PR 的列表区。
+// 保持侧栏现有密度：先内联显示前 3 行 PR，区段到达 4 行后把其余收进开关。
+// 终态（merged/closed）PR 靠头部状态图标即可传达，不再画 CI/可合并徽标；
+// 快照过期（GitHub 故障/密钥吊销）时把两者置灰并标注快照年龄，
+// 而不是把最后已知的数据藏起来。
+
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -29,8 +35,7 @@ import { useT, useTimeAgo } from "../../i18n";
 
 type IssuesT = ReturnType<typeof useT<"issues">>["t"];
 
-// Keep the existing sidebar density: show the first 3 PR rows inline, then
-// collapse the rest once the section reaches 4 rows.
+// 保持既有侧栏密度：先内联显示前 3 行 PR，区段到达 4 行后收拢其余部分。
 const PR_LIMIT_BEFORE_COLLAPSE = 4;
 
 const STATE_ICON: Record<
@@ -43,6 +48,9 @@ const STATE_ICON: Record<
   closed: { icon: GitPullRequestClosed, className: "text-rose-600 dark:text-rose-400" },
 };
 
+/**
+ * 关联 PR 列表。行数 >= 阈值时折叠 + "显示更多"开关（规则见下）。
+ */
 export function PullRequestList({ issueId }: { issueId: string }) {
   const { t } = useT("issues");
   const [expanded, setExpanded] = useState(false);
@@ -60,10 +68,10 @@ export function PullRequestList({ issueId }: { issueId: string }) {
     );
   }
 
-  // Render rule:
-  //   - <  PR_LIMIT_BEFORE_COLLAPSE: every PR row is visible.
-  //   - >= PR_LIMIT_BEFORE_COLLAPSE: first (LIMIT - 1) rows are visible and
-  //     the remainder sits behind a toggle.
+  // 渲染规则：
+  //   - 行数  <  PR_LIMIT_BEFORE_COLLAPSE：每行 PR 都可见。
+  //   - 行数 >= PR_LIMIT_BEFORE_COLLAPSE：前 (LIMIT - 1) 行可见，
+  //     其余收在一个开关后面。
   const useCollapse = prs.length >= PR_LIMIT_BEFORE_COLLAPSE;
   const expandedHead = useCollapse ? prs.slice(0, PR_LIMIT_BEFORE_COLLAPSE - 1) : prs;
   const collapsedTail = useCollapse ? prs.slice(PR_LIMIT_BEFORE_COLLAPSE - 1) : [];
@@ -93,6 +101,9 @@ export function PullRequestList({ issueId }: { issueId: string }) {
   );
 }
 
+/**
+ * 单条 PR 行。
+ */
 function PullRequestRow({ pr }: { pr: GitHubPullRequest }) {
   const { t } = useT("issues");
   const cfg = STATE_ICON[pr.state] ?? { icon: GitPullRequest, className: "" };
@@ -136,15 +147,14 @@ function PullRequestRowDetails({ pr }: { pr: GitHubPullRequest }) {
     changed_files: pr.changed_files,
   });
 
-  // Neither status element is shown for terminal PRs — the leading state icon
-  // already conveys merged / closed, and CI / mergeability are no longer
-  // actionable there.
+  // 终态 PR 两种状态元素都不显示——开头的状态图标已经传达 merged/closed，
+  // 且 CI / 可合并性在那里已无可操作。
   const isTerminal = pr.state === "merged" || pr.state === "closed";
   const checksBadge = isTerminal ? null : getChecksBadge(deriveChecksStatus(pr), t);
   const mergeBadge = isTerminal ? null : getMergeBadge(deriveMergeStatus(pr), t);
 
-  // A stale snapshot (GitHub outage / revoked key) greys out both elements and
-  // annotates them with the snapshot age instead of hiding the last-known data.
+  // 快照过期（GitHub 故障 / 密钥吊销）时把两个元素置灰，并标注快照年龄，
+  // 而不是把最后已知的数据藏起来。
   const stale = !isTerminal && pr.snapshot_stale === true;
   const staleTitle = stale
     ? pr.snapshot_fetched_at
@@ -163,6 +173,9 @@ function PullRequestRowDetails({ pr }: { pr: GitHubPullRequest }) {
   );
 }
 
+/**
+ * 增删行数 + 改动文件数统计。
+ */
 function PullRequestStats({ pr }: { pr: GitHubPullRequest }) {
   const { t } = useT("issues");
   return (
@@ -185,6 +198,9 @@ interface PullRequestBadgeConfig {
   className: string;
 }
 
+/**
+ * 徽标本体；stale 时降透明度并带说明 title。
+ */
 function PullRequestBadge({
   badge,
   stale,
@@ -206,8 +222,8 @@ function PullRequestBadge({
   );
 }
 
-// CI element. A current snapshot with a null rollup renders "no checks yet";
-// an unavailable/disabled snapshot renders nothing.
+// CI 元素。快照新鲜但汇总为 null 时渲染"尚无检查"；快照不可用/被禁用
+// 时什么都不渲染。
 function getChecksBadge(
   status: PullRequestChecksStatus,
   t: IssuesT,
@@ -269,8 +285,8 @@ function checksFailedLabel(
   });
 }
 
-// Mergeability element. Returns null for the "none" state — when GitHub has not
-// decided, the card asserts neither "conflict" nor "ready".
+// 可合并性元素。"none" 状态返回 null——GitHub 还没下结论时，
+// 卡片既不宣称"冲突"也不宣称"就绪"。
 function getMergeBadge(status: PullRequestMergeStatus, t: IssuesT): PullRequestBadgeConfig | null {
   switch (status.kind) {
     case "conflicting":

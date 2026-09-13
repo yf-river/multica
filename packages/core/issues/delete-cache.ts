@@ -1,3 +1,4 @@
+// 议题删除后的缓存清理：把被删议题从所有相关列表/子议题/聚合缓存里移除并失效。
 import type {
   InfiniteData,
   QueryClient,
@@ -19,6 +20,7 @@ import { findIssueLocation, removeIssueFromBuckets } from "./cache-helpers";
 import { issueKeys } from "./queries";
 import { useRecentIssuesStore } from "./stores/recent-issues-store";
 
+/** 删除议题时收集到的缓存元数据：所有需要一并清理的父议题 id。 */
 export type DeletedIssueCacheMetadata = {
   parentIssueIds: string[];
 };
@@ -46,6 +48,7 @@ function parentIdFromChildrenKey(key: QueryKey) {
   return typeof parentId === "string" ? parentId : null;
 }
 
+/** 扫描各类缓存，收集被删议题涉及的所有父议题 id。 */
 export function collectDeletedIssueCacheMetadata(
   qc: QueryClient,
   wsId: string,
@@ -91,6 +94,7 @@ export function collectDeletedIssueCacheMetadata(
   return { parentIssueIds: Array.from(parentIssueIds) };
 }
 
+/** 从工作区列表、myList 列表和所有平铺列表缓存里移除被删议题（并修正 total）。 */
 export function pruneDeletedIssueFromListCaches(
   qc: QueryClient,
   wsId: string,
@@ -131,6 +135,7 @@ export function pruneDeletedIssueFromListCaches(
   }
 }
 
+/** 从各父议题的“子议题列表”缓存里移除被删议题。 */
 export function pruneDeletedIssueFromParentChildrenCaches(
   qc: QueryClient,
   wsId: string,
@@ -144,6 +149,7 @@ export function pruneDeletedIssueFromParentChildrenCaches(
   }
 }
 
+/** 失效被删议题各父议题的子议题、子进度等缓存。 */
 export function invalidateDeletedIssueParentCaches(
   qc: QueryClient,
   wsId: string,
@@ -157,6 +163,7 @@ export function invalidateDeletedIssueParentCaches(
   qc.invalidateQueries({ queryKey: issueKeys.childrenByParentsAll(wsId) });
 }
 
+/** 失效依赖议题存在性的 Agent 活动/运行计数/任务等缓存。 */
 export function invalidateDeletedIssueDependentCaches(
   qc: QueryClient,
   wsId: string,
@@ -167,6 +174,7 @@ export function invalidateDeletedIssueDependentCaches(
   qc.invalidateQueries({ queryKey: agentTasksKeys.all(wsId) });
 }
 
+/** 失效该议题作用域下的时间线、反应、订阅者、用量、附件、任务、子议题、标签等缓存。 */
 export function invalidateIssueScopedCaches(
   qc: QueryClient,
   wsId: string,
@@ -182,6 +190,7 @@ export function invalidateIssueScopedCaches(
   qc.invalidateQueries({ queryKey: labelKeys.byIssue(wsId, issueId) });
 }
 
+/** 议题删除后的完整缓存清理入口：修剪列表/子议题、移除作用域缓存、失效聚合缓存。 */
 export function cleanupDeletedIssueCaches(
   qc: QueryClient,
   wsId: string,
@@ -207,15 +216,13 @@ export function cleanupDeletedIssueCaches(
   qc.invalidateQueries({ queryKey: issueKeys.myAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
-  // Project Gantt cache lives outside `myAll`, so it needs an explicit
-  // refresh when an issue is removed — the deleted row may have been a
-  // scheduled bar visible right now.
+  // Project Gantt 缓存在 `myAll` 之外，所以议题被移除时需要显式刷新——
+  // 被删的行可能就是此刻可见的一根排期条。
   qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
   invalidateDeletedIssueDependentCaches(qc, wsId);
 
-  // Recent Issues store persists to localStorage and survives reloads, so a
-  // deleted id left behind keeps the Cmd+K command bar firing 404s on every
-  // open. Both the delete mutation and the WS delete event flow through here,
-  // so a single call covers self-delete and cross-client delete.
+  // Recent Issues 存储持久化到 localStorage、刷新后仍在，所以遗留一个已删除的 id
+  // 会让 Cmd+K 命令栏每次打开都打 404。删除 mutation 和 WS 删除事件都会走到这里，
+  // 所以一次调用就同时覆盖了“自己删”和“别的客户端删”。
   useRecentIssuesStore.getState().forgetIssue(wsId, issueId);
 }

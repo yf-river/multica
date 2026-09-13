@@ -1,116 +1,104 @@
+// 本文件提供工作区的「issue 状态目录」查询与解析逻辑（MUL-6243）。
+//
+// 工作区永远有 7 个内置状态，还可能有自定义状态。每个状态——无论内置还是
+// 自定义——都属于 7 个类别中的恰好一个，而类别决定了平台行为、看板列与展示
+// 方式。所以这份目录对 UI 只回答一个问题：拿到 issue 上存的状态 key，它的
+// 标签、颜色和类别是什么？
+
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 import { STATUS_CONFIG, STATUS_ORDER } from "../issues/config";
 import type { IssueStatusCategory, IssueStatusEntry } from "../types";
 
-/**
- * The workspace issue status catalog (MUL-6243).
- *
- * A workspace always has the 7 built-in statuses and may define custom ones.
- * Every status — built-in or custom — belongs to exactly one of the 7
- * CATEGORIES, and the category is what determines platform behavior, board
- * column and presentation. So this catalog answers one question for the UI:
- * given a status key stored on an issue, what is its label, color and category?
- */
-
+/** issue 状态相关查询的 query key 命名空间。 */
 export const issueStatusKeys = {
   all: (wsId: string) => ["issue-statuses", wsId] as const,
   list: (wsId: string) => [...issueStatusKeys.all(wsId), "list"] as const,
 };
 
+/** 查询工作区的完整状态目录（含归档状态）。 */
 export function issueStatusListOptions(wsId: string) {
   return queryOptions({
     queryKey: issueStatusKeys.list(wsId),
-    // ARCHIVED entries included on purpose. Archiving retires a status from
-    // future assignment but leaves existing issues on it, and those issues must
-    // keep their real name, color and category. Dropping archived rows here
-    // would degrade them to a raw key with a guessed category. Pickers use
-    // `activeStatuses`, which excludes them. (MUL-6243)
+    // 刻意包含已归档条目。归档把某个状态从「将来可指派」里退休，但已有 issue
+    // 仍然停在这个状态上，那些 issue 必须继续显示真实的名称、颜色和类别。若
+    // 在这里丢掉归档行，它们会退化成带猜测类别的裸 key。选择器请用
+    // `activeStatuses`（已排除归档）。 (MUL-6243)
     queryFn: () => api.listIssueStatuses(true),
     select: (data) => data.statuses,
-    // The catalog changes only when an admin edits it, which is rare, so a
-    // generous stale time keeps this off the critical path of every render
-    // that needs a status label.
+    // 目录只在管理员编辑时变化，很少发生，所以慷慨的 staleTime 让每次需要
+    // 状态标签的渲染都不必走到这条查询的关键路径上。
     staleTime: 5 * 60_000,
   });
 }
 
 /**
- * A resolved view over the catalog. Every lookup falls back to something
- * renderable, because an issue can legitimately carry a status this client has
- * not heard of: a status created moments ago in another session, or one whose
- * catalog fetch has not landed yet.
+ * 对状态目录的一种「已解析」视图。任何查询都有可渲染的兜底，因为 issue 上
+ * 完全可能带着一份本客户端还没见过的状态：另一个会话几秒钟前刚创建的，或
+ * 目录数据还没拉回来的。
  */
 export interface IssueStatusCatalog {
   /**
-   * Every status in display order, ARCHIVED INCLUDED, so an issue left on an
-   * archived status still resolves to its real name, color and category.
-   * For anything that offers a status to pick, use `activeStatuses`.
+   * 按展示顺序排列的全部状态，包含已归档——这样停在归档状态上的 issue 依然
+   * 能解析出真实的名称、颜色和类别。任何「提供状态让用户挑」的界面请改用
+   * `activeStatuses`。
    */
   statuses: IssueStatusEntry[];
-  /** Assignable statuses — `statuses` minus archived ones. */
+  /** 可指派状态——`statuses` 去掉归档项。 */
   activeStatuses: IssueStatusEntry[];
-  /** Category for a status key; falls back to the key when it is a built-in, else "todo". */
+  /** 某个状态 key 的类别；内置 key 兜底为 key 本身，未知 key 兜底为 "todo"。 */
   categoryOf: (statusKey: string) => IssueStatusCategory;
-  /** Human label for a status key; falls back to the category label, then the raw key. */
+  /** 某个状态 key 的人类可读标签；先兜底为类别标签，再兜底为原始 key。 */
   labelOf: (statusKey: string) => string;
-  /** Catalog entry for a status key, when the catalog knows it. */
+  /** 某个状态 key 的目录条目；目录不认识时返回 undefined。 */
   entryOf: (statusKey: string) => IssueStatusEntry | undefined;
   /**
-   * The `#rrggbb` a surface must paint a status with, or null when it keeps
-   * its category's semantic token.
+   * 界面给某个状态上色要用的 `#rrggbb`；应该用类别语义 token 时返回 null。
    *
-   * ALWAYS null for a built-in. The 7 built-ins carry a seeded hex in the
-   * catalog, but they are not recolorable (the server rejects any edit to a
-   * system row) and every surface renders them from the token — `text-success`
-   * and friends, which is what makes them follow the theme into dark mode. A
-   * caller that reaches for `entryOf(key)?.color` instead paints the raw seed
-   * and drifts from the same status two pixels away. (MUL-6440)
+   * 内置状态恒为 null。7 个内置状态在目录里带着一个种子 hex，但它们不可
+   * 重新着色（服务端拒绝任何对系统行的修改），且所有界面都用 token 渲染它们
+   * ——`text-success` 之类，正是这让他们跟着主题进入深色模式。调用方若改用
+   * `entryOf(key)?.color`，画出来的会是原始种子色，与同状态的 token 渲染相差
+   * 几个像素的色差。(MUL-6440)
    */
   colorOf: (statusKey: string) => string | null;
-  /** ACTIVE statuses belonging to one category, in display order. */
+  /** 某类别下的 ACTIVE（未归档）状态，按展示顺序。 */
   inCategory: (category: IssueStatusCategory) => IssueStatusEntry[];
-  /** True once the catalog has loaded; false while it is still in flight. */
+  /** 目录一旦加载完成即为 true；仍在途时为 false。 */
   isLoaded: boolean;
   /**
-   * The catalog is still in flight and nothing has resolved yet.
+   * 目录仍在途、什么都没有解析出来。
    *
-   * A surface that routes on a CUSTOM status key has to hold its loading state
-   * while this is true. `isLoaded === false` alone is not enough to act on:
-   * the difference between "not here yet" and "the request failed" decides
-   * whether the user sees a spinner or a retryable error, and the first cut
-   * showed neither — just a silently empty board. (MUL-6243)
+   * 按自定义状态 key 路由的界面，在它为 true 时必须稳住 loading 状态。
+   * 仅 `isLoaded === false` 不足以下手：「还没到」和「请求失败」的区别，决定
+   * 用户看到的是 spinner 还是可重试错误；第一版实现两者都不给——只有一块
+   * 静悄悄空着的看板。(MUL-6243)
    */
   isPending: boolean;
   /**
-   * The catalog request failed AND there is no usable snapshot to fall back on.
+   * 目录请求失败，且没有可用的旧快照可兜底。
    *
-   * Narrower than "the query errored" on purpose: a BACKGROUND refetch can fail
-   * while the last successful catalog is still cached, and blocking a surface
-   * then would throw away data that is perfectly serviceable. Only a failure
-   * with nothing behind it is worth stopping for. (MUL-6243)
+   * 刻意比「查询出错」更窄：后台刷新可能在上一次成功目录还在缓存里时失败，
+   * 此时阻塞界面等于扔掉完全可用的数据。只有「失败且背后一无所有」才值得
+   * 停下来。(MUL-6243)
    */
   isError: boolean;
-  /** Re-runs the catalog request. Wired to the surface's retry affordance. */
+  /** 重新发起目录请求。接到界面的重试按钮上。 */
   retry: () => void;
   /**
-   * True when the catalog is LOADED and holds at least one custom status.
+   * 目录已 LOADED 且至少含一个自定义状态时为 true。
    *
-   * This is the switch for the category-grouped surface contract. Two reasons
-   * it has to be both conditions:
+   * 它是「按类别分组」界面契约的开关。必须同时满足两个条件，理由有二：
    *
-   * - Rolling deploy. `group.kind=status_category` is a server contract this
-   *   feature introduced, so a client that sends it unconditionally 400s
-   *   against any pod that has not been updated yet. A workspace only HAS a
-   *   custom status once the creation flag was on, which means the fleet was
-   *   already serving this version.
-   * - Cold load. Until the catalog lands, `categoryOf` cannot tell a custom key
-   *   from an unknown one and falls back to `todo`. Routing on that guess sends
-   *   a saved `qa` filter to the todo column and renders an empty board.
+   * - 滚动部署。`group.kind=status_category` 是本功能引入的服务端契约，客户端
+   *   无脑发它会对任何还没升级的 pod 报 400。而工作区只有在「创建状态」开关
+   *   打开后才会真的出现自定义状态，这意味着集群当时已经在提供这个版本。
+   * - 冷加载。目录落地之前，`categoryOf` 无法区分自定义 key 与未知 key，只会
+   *   兜底成 `todo`。按这个猜测路由，会把保存的 `qa` 过滤器送进 todo 列，
+   *   渲染出一块空看板。
    *
-   * A workspace with no custom statuses therefore keeps the exact request it
-   * made before this feature — which is also what keeps its board off the extra
-   * catalog reads the category contract needs. (MUL-6243)
+   * 因此没有自定义状态的工作区，发出的请求与本功能之前完全一致——这也让它
+   * 的看板不必做类别契约需要的那些额外目录读取。(MUL-6243)
    */
   hasCustomStatuses: boolean;
 }
@@ -120,11 +108,15 @@ const BUILT_IN = new Set<string>(STATUS_ORDER);
 const CATEGORY_RANK = new Map<string, number>(STATUS_ORDER.map((c, i) => [c, i]));
 
 /**
- * The server's catalog ordering, mirrored for client-side re-sorts.
- * Category rank, then intra-category position, then key as a stable tiebreak —
- * see `ListIssueStatusEntries` in `issue_status.sql`. An optimistic reorder has
- * to re-sort with this or the new positions land in the cache while the list
- * still renders in the old order.
+ * 镜像服务端的目录排序，用于客户端重排。
+ *
+ * 先按类别排名，再按类别内位置，最后用 key 做稳定的打破平手项——见
+ * `issue_status.sql` 里的 `ListIssueStatusEntries`。乐观重排必须用这个排序，
+ * 否则新位置已经写进缓存、列表却仍按旧顺序渲染。
+ *
+ * @param a - 条目 A
+ * @param b - 条目 B
+ * @returns 负数/0/正数，对应 a 在 b 前/并列/后
  */
 export function compareIssueStatusEntries(a: IssueStatusEntry, b: IssueStatusEntry): number {
   const rank =
@@ -135,16 +127,20 @@ export function compareIssueStatusEntries(a: IssueStatusEntry, b: IssueStatusEnt
   return a.key.localeCompare(b.key);
 }
 
+/** 判断一个字符串是否为 7 个内置状态类别之一（类型收窄到 IssueStatusCategory）。 */
 export function isIssueStatusCategory(value: string): value is IssueStatusCategory {
   return BUILT_IN.has(value);
 }
 
 /**
- * The color to paint one catalog entry with — its own hex for a custom status,
- * null for a built-in or an entry this client has not resolved yet.
+ * 一条目录条目该用什么颜色画：自定义状态用它的 hex；内置状态或本客户端还没
+ * 解析出来的条目返回 null。
  *
- * The pure form of {@link IssueStatusCatalog.colorOf}, for callers that already
- * hold the entry (a list they are mapping over) instead of just its key.
+ * 这是 {@link IssueStatusCatalog.colorOf} 的纯函数形态，给那些已经拿着条目
+ * （例如正在 map 的列表）而不只是 key 的调用方用。
+ *
+ * @param entry - 目录条目（可为空）
+ * @returns 自定义颜色的 hex；内置/未知条目返回 null
  */
 export function issueStatusColor(entry: IssueStatusEntry | undefined): string | null {
   if (!entry || entry.is_system === true) return null;
@@ -152,8 +148,12 @@ export function issueStatusColor(entry: IssueStatusEntry | undefined): string | 
 }
 
 /**
- * Builds the resolved catalog from a raw entry list. Pure, so the store and
- * other non-React callers can use it with a list they already hold.
+ * 从原始条目列表构建已解析的目录。纯函数，store 与其他非 React 调用方可以
+ * 拿一份自己已有的列表来用。
+ *
+ * @param entries - 原始状态条目（未加载时为 undefined）
+ * @param status - 可选的请求状态（用于 isPending / isError / retry）
+ * @returns 解析好的状态目录
  */
 export function buildIssueStatusCatalog(
   entries: IssueStatusEntry[] | undefined,
@@ -165,11 +165,10 @@ export function buildIssueStatusCatalog(
   const categoryOf = (statusKey: string): IssueStatusCategory => {
     const category = byKey.get(statusKey)?.category;
     if (category && isIssueStatusCategory(category)) return category;
-    // A built-in key IS its own category, so an unloaded catalog still resolves
-    // all 7 correctly — which is what keeps the default workspace rendering
-    // identically before the fetch lands.
+    // 内置 key 本身就是它的类别，所以目录没加载时也能正确解析全部 7 个——
+    // 这正是默认工作区在拉取落地前渲染完全一致的原因。
     if (isIssueStatusCategory(statusKey)) return statusKey;
-    // An unknown custom key: render it somewhere sane rather than dropping it.
+    // 未知的自定义 key：放到一个合理的地方渲染，而不是丢掉它。
     return "todo";
   };
 
@@ -187,11 +186,10 @@ export function buildIssueStatusCatalog(
     },
     inCategory: (category) => list.filter((e) => e.category === category && !e.archived_at),
     isLoaded: entries !== undefined,
-    // Defaults describe a non-React caller holding a list it already has:
-    // resolved when entries are present, still pending when they are not.
+    // 默认值描述的是「拿着已有列表」的非 React 调用方：有条目即已解析，
+    // 没条目即仍在途。
     isPending: status.isPending ?? entries === undefined,
-    // A failure that still has entries behind it is a stale-data situation, not
-    // a blocking one.
+    // 失败但背后还有条目，属于「旧数据」而非「阻塞性失败」。
     isError: (status.isError ?? false) && entries === undefined,
     retry: status.retry ?? (() => {}),
     hasCustomStatuses:

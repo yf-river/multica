@@ -1,16 +1,14 @@
-// Package composio is the Stage 2 business-integration glue between Multica and
-// the standalone Composio SDK (server/pkg/composio). It owns Multica semantics:
-// the signed-state connect handshake, the local user_composio_connection
-// mirror, idempotent disconnect, and the per-user MCP session helper.
+// Package composio 是 Multica 与独立 Composio SDK（server/pkg/composio）之间的
+// Stage 2 业务集成胶水层。它承载 Multica 侧的语义：带签名的连接握手 state、本地
+// user_composio_connection 镜像表、幂等的断开连接，以及按用户划分的 MCP 会话助手。
 //
-// It deliberately does NOT wrap the SDK in another HTTP client — it composes
-// *sdk.Client directly through the SDK interface so tests can drop in a fake.
+// 它刻意不再用另一个 HTTP client 包一层 SDK——而是通过 SDK 接口直接组合
+// *sdk.Client，这样测试能塞进一个 fake。
 //
-// MVP scope (MUL-3720): toolkits are discovered dynamically. The
-// toolkit→auth-config mapping is resolved at request time from Composio's
-// /auth_configs endpoint (cached briefly), so a toolkit becomes connectable the
-// moment an auth config is enabled for it in the Composio dashboard — no env
-// var and no redeploy. A toolkit with no enabled auth config is rejected.
+// MVP 范围（MUL-3720）：工具包动态发现。工具包→auth-config 的映射在请求时从
+// Composio 的 /auth_configs 端点解析（短暂缓存），因此只要在 Composio 控制台为某个
+// 工具包启用了 auth config，它立刻就能被连接——无需环境变量、无需重新部署。没有任何
+// 已启用 auth config 的工具包会被拒绝。
 package composio
 
 import (
@@ -29,39 +27,33 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Service-level errors surfaced to the handler layer.
+// 抛给 handler 层的服务级错误。
 var (
-	// ErrToolkitNotSupported is returned by BeginConnect when the requested
-	// toolkit has no enabled auth config in the Composio project, so there is
-	// no auth_config_id to start a connect link with.
+	// ErrToolkitNotSupported 由 BeginConnect 返回：请求的工具包在 Composio 项目里没有
+	// 启用的 auth config，因而拿不到可用来开 connect link 的 auth_config_id。
 	ErrToolkitNotSupported = errors.New("composio: toolkit not supported")
-	// ErrConnectNotSuccessful is returned by CompleteCallback when Composio
-	// reported a non-success status — no active row is written.
+	// ErrConnectNotSuccessful 由 CompleteCallback 返回：Composio 报告状态非成功——
+	// 不写活跃行。
 	ErrConnectNotSuccessful = errors.New("composio: connection was not successful")
-	// ErrConnectionNotFound is returned by Disconnect when the connection id
-	// does not belong to the user (or does not exist).
+	// ErrConnectionNotFound 由 Disconnect 返回：连接 id 不属于该用户（或根本不存在）。
 	ErrConnectionNotFound = errors.New("composio: connection not found")
-	// ErrAccountVerification is returned by CompleteCallback when the
-	// connected_account_id carried on the callback cannot be confirmed (with
-	// Composio) to belong to the user/auth-config named in the signed state —
-	// i.e. a tampered or unknown account id. No local row is written.
+	// ErrAccountVerification 由 CompleteCallback 返回：回调携带的 connected_account_id
+	// 无法（向 Composio）确认归属于签名 state 里指定的用户/auth-config——即被篡改或未知
+	// 的账户 id。不写本地行。
 	ErrAccountVerification = errors.New("composio: connected account verification failed")
 )
 
-// defaultStateTTL bounds how long a connect handshake may sit between
-// BeginConnect and the Composio callback. Five minutes is generous for a hosted
-// OAuth flow while keeping the replay window small.
+// defaultStateTTL 限制一次连接握手在 BeginConnect 与 Composio 回调之间能搁置多久。
+// 对托管 OAuth 流程五分钟足够宽裕，同时把重放窗口压得很小。
 const defaultStateTTL = 5 * time.Minute
 
-// defaultAuthCacheTTL bounds how long the resolved toolkit→auth-config map is
-// cached before a re-fetch from Composio. Short enough that enabling an auth
-// config in the dashboard reflects within minutes; long enough that a burst of
-// connect/list requests does not hammer /auth_configs.
+// defaultAuthCacheTTL 限制已解析的 工具包→auth-config map 在被重新拉取前缓存多久。
+// 短到在控制台启用一个 auth config 后几分钟内就能生效；长到一批集中的 connect/list
+// 请求不会反复冲击 /auth_configs。
 const defaultAuthCacheTTL = 5 * time.Minute
 
-// maxAuthConfigPages / maxToolkitPages cap the paginated fetch-all loops so a
-// pathological or buggy upstream cursor cannot spin forever. At limit=1000 per
-// page these cover far more than any real project / catalog.
+// maxAuthConfigPages / maxToolkitPages 给分页全量拉取的循环加上限，让病态或出 bug 的
+// 上游游标无法无限空转。以每页 limit=1000 计，这些上限远超任何真实项目/目录的规模。
 const (
 	maxAuthConfigPages  = 20
 	maxToolkitPages     = 20
@@ -69,9 +61,8 @@ const (
 	composioLogoBaseURL = "https://logos.composio.dev/api"
 )
 
-// SDK is the subset of *sdk.Client the service depends on. Declared as an
-// interface so handler/service tests can inject a fake without hitting Composio.
-// *sdk.Client satisfies it.
+// SDK 是服务依赖的 *sdk.Client 子集。声明成接口，handler/service 测试就能注入 fake
+// 而不用真的去打 Composio。*sdk.Client 满足该接口。
 type SDK interface {
 	CreateLink(ctx context.Context, req sdk.CreateLinkRequest) (*sdk.CreateLinkResponse, error)
 	ListConnectedAccounts(ctx context.Context, req sdk.ListConnectedAccountsRequest) (*sdk.ListConnectedAccountsResponse, error)
@@ -83,8 +74,7 @@ type SDK interface {
 	MCPAuthHeaders() map[string]string
 }
 
-// Store is the persistence seam for the local connection mirror. *db.Queries
-// satisfies it; tests use an in-memory fake.
+// Store 是本地连接镜像表的持久化接缝。*db.Queries 满足它；测试用内存 fake。
 type Store interface {
 	UpsertUserComposioConnection(ctx context.Context, arg db.UpsertUserComposioConnectionParams) (db.UserComposioConnection, error)
 	ListActiveUserComposioConnections(ctx context.Context, userID pgtype.UUID) ([]db.UserComposioConnection, error)
@@ -92,34 +82,30 @@ type Store interface {
 	MarkUserComposioConnectionRevoked(ctx context.Context, arg db.MarkUserComposioConnectionRevokedParams) error
 }
 
-// Config configures a Service.
+// Config 配置一个 Service。
 type Config struct {
-	// StateSecret signs the connect-state HMAC. Required (non-empty).
+	// StateSecret 给连接 state 的 HMAC 签名。必填（非空）。
 	StateSecret []byte
-	// CallbackBaseURL is the absolute, public base URL of THIS API, with no
-	// trailing slash (e.g. "https://multica.ai"). The Composio callback
-	// URL is built as CallbackBaseURL + CallbackPath. Required.
+	// CallbackBaseURL 是本 API 的绝对、公网、无尾斜杠的根地址（如 "https://multica.ai"）。
+	// Composio 回调 URL 由 CallbackBaseURL + CallbackPath 拼出。必填。
 	CallbackBaseURL string
-	// FrontendBaseURL is the web app base used to build the post-callback
-	// browser redirect (e.g. "https://multica.ai"). May be empty, in which
-	// case CallbackRedirect returns a site-relative path.
+	// FrontendBaseURL 是用于拼「回调后浏览器重定向目标」的 web 应用根地址（如
+	// "https://multica.ai"）。可为空，此时 CallbackRedirect 返回站内相对路径。
 	FrontendBaseURL string
-	// StateTTL overrides the default connect-state lifetime. Zero uses
-	// defaultStateTTL.
+	// StateTTL 覆盖默认的连接 state 寿命。0 使用 defaultStateTTL。
 	StateTTL time.Duration
-	// AuthConfigTTL overrides how long the resolved toolkit→auth-config map is
-	// cached. Zero uses defaultAuthCacheTTL.
+	// AuthConfigTTL 覆盖「已解析的工具包→auth-config map」的缓存时长。0 使用
+	// defaultAuthCacheTTL。
 	AuthConfigTTL time.Duration
-	// Now is overridable for deterministic tests. Nil uses time.Now.
+	// Now 可在确定性测试中覆盖。nil 使用 time.Now。
 	Now func() time.Time
 }
 
-// callbackPath is the API path Composio redirects the browser back to. It is a
-// constant (not configurable) so the SDK callback URL and the router route
-// cannot drift apart.
+// callbackPath 是 Composio 把浏览器重定向回来的 API 路径。它是常量（不可配置），
+// 这样 SDK 回调 URL 与 router 路由永远不会漂移失配。
 const callbackPath = "/api/integrations/composio/callback"
 
-// Service is the Composio business-integration service.
+// Service 是 Composio 业务集成服务。
 type Service struct {
 	sdk         SDK
 	store       Store
@@ -129,18 +115,16 @@ type Service struct {
 	stateTTL    time.Duration
 	now         func() time.Time
 
-	// authCache holds the resolved toolkit_slug → auth_config_id map for the
-	// project. It is rebuilt from Composio's /auth_configs endpoint on first
-	// use and whenever authCacheExp has passed; authCacheMu guards both fields.
+	// authCache 保存项目的 toolkit_slug → auth_config_id map。首次使用或 authCacheExp
+	// 过期后从 Composio 的 /auth_configs 端点重建；authCacheMu 保护这两个字段。
 	authCacheMu  sync.Mutex
 	authCache    map[string]string
 	authCacheExp time.Time
 	authCacheTTL time.Duration
 }
 
-// NewService validates its inputs and returns a ready Service. It errors when a
-// required dependency is missing so a misconfigured boot fails loudly instead
-// of returning 500s at request time.
+// NewService 校验入参并返回一个就绪的 Service。必要依赖缺失时报错，让配置错误的启动
+// 在启动时就大声失败，而不是等到请求期才回一堆 500。
 func NewService(client SDK, store Store, cfg Config) (*Service, error) {
 	if client == nil {
 		return nil, errors.New("composio: SDK client is required")
@@ -181,9 +165,8 @@ func NewService(client SDK, store Store, cfg Config) (*Service, error) {
 	}, nil
 }
 
-// Connection is the API-facing view of a local connection row. The Composio
-// connected_account_id and auth_config_id are intentionally omitted — they are
-// server-internal handles, not API surface.
+// Connection 是面向 API 的本地连接行视图。Composio 的 connected_account_id 与
+// auth_config_id 刻意省略——它们是服务内部句柄，不是 API 表面。
 type Connection struct {
 	ID          string  `json:"id"`
 	ToolkitSlug string  `json:"toolkit_slug"`
@@ -192,16 +175,16 @@ type Connection struct {
 	LastUsedAt  *string `json:"last_used_at"`
 }
 
-// MCPSession is the result of CreateMCPSession: the streamable MCP URL plus the
-// headers an MCP client must attach. Headers carry the Composio x-api-key, so
-// callers must route them through the redact pipeline before logging.
+// MCPSession 是 CreateMCPSession 的结果：可流式 MCP URL 加上 MCP 客户端必须携带的
+// 请求头。Headers 携带 Composio 的 x-api-key，所以调用方在写日志前必须先让它们过
+// 脱敏管线。
 type MCPSession struct {
 	URL     string
 	Headers map[string]string
 }
 
-// ToolkitView is the API-facing descriptor for one Composio toolkit. Only
-// toolkits with an enabled project auth configuration are returned.
+// ToolkitView 是面向 API 的单个 Composio 工具包描述。只有带已启用项目 auth 配置的
+// 工具包才会被返回。
 type ToolkitView struct {
 	Slug     string `json:"slug"`
 	Name     string `json:"name"`
@@ -209,6 +192,8 @@ type ToolkitView struct {
 	Category string `json:"category,omitempty"`
 }
 
+// toolkitLogoURL 决定工具包的 logo 地址：上游给了就用上游的，否则退回按 slug 拼
+// Composio 静态 logo 服务地址。
 func toolkitLogoURL(slug, upstreamLogoURL string) string {
 	if upstreamLogoURL != "" {
 		return upstreamLogoURL
@@ -220,17 +205,15 @@ func toolkitLogoURL(slug, upstreamLogoURL string) string {
 	return composioLogoBaseURL + "/" + url.PathEscape(slug)
 }
 
-// BeginConnect validates the toolkit, mints a signed state, and asks Composio
-// for a hosted Connect Link. The returned redirect URL is where the caller
-// sends the user's browser.
+// BeginConnect 校验工具包、铸造一个带签名的 state，并向 Composio 索取一个托管
+// Connect Link。返回的重定向 URL 就是调用方要引导用户浏览器去的地方。
 //
-// The auth_config_id is resolved dynamically from the project's enabled auth
-// configs (cached), so a toolkit is connectable iff the dashboard has an auth
-// config for it — no static env map. A toolkit with none yields
-// ErrToolkitNotSupported.
+// auth_config_id 从项目已启用的 auth config（有缓存）里动态解析，所以一个工具包可连接
+// 当且仅当控制台为它配了 auth config——没有静态 env map。配了的才连得上；没有的返回
+// ErrToolkitNotSupported。
 //
-// The composio_user_id sent to Composio is the Multica user id verbatim — the
-// invariant the rest of the integration relies on.
+// 传给 Composio 的 composio_user_id 原样采用 Multica 用户 id——这是整个集成其余部分
+// 依赖的不变量。
 func (s *Service) BeginConnect(ctx context.Context, userID pgtype.UUID, toolkitSlug string) (string, error) {
 	slug := strings.ToLower(strings.TrimSpace(toolkitSlug))
 	authConfigID, err := s.authConfigForToolkit(ctx, slug)
@@ -255,9 +238,8 @@ func (s *Service) BeginConnect(ctx context.Context, userID pgtype.UUID, toolkitS
 		return "", fmt.Errorf("composio: sign state: %w", err)
 	}
 
-	// Composio appends its own status / connected_account_id query params to
-	// the callback URL and preserves ours, so the signed state rides back to us
-	// on the redirect.
+	// Composio 会在回调 URL 上追加它自己的 status / connected_account_id 查询参数，
+	// 同时保留我们带的参数，所以这份有符号 state 会随重定向一起原样回到我们这里。
 	callbackURL := s.callbackURL + "?state=" + url.QueryEscape(state)
 
 	resp, err := s.sdk.CreateLink(ctx, sdk.CreateLinkRequest{
@@ -271,13 +253,12 @@ func (s *Service) BeginConnect(ctx context.Context, userID pgtype.UUID, toolkitS
 	return resp.RedirectURL, nil
 }
 
-// CompleteCallback verifies the signed state and, on a successful Composio
-// status, upserts the local connection row. It returns the toolkit slug from
-// the state so the handler can build the right redirect even on the
-// not-successful path.
+// CompleteCallback 校验有符号 state，并在 Composio 状态为成功时 upsert 本地连接行。
+// 它返回 state 里的工具包 slug，好让 handler 即便走在「不成功」的路径上也能拼对
+// 重定向目标。
 //
-// Idempotency: the upsert is keyed on (user_id, connected_account_id), so a
-// duplicate callback re-activates the same row instead of creating a second.
+// 幂等性：upsert 以 (user_id, connected_account_id) 为键，所以重复回调只会重新激活同一
+// 行，而不会造出第二行。
 func (s *Service) CompleteCallback(ctx context.Context, state, status, connectedAccountID string) (string, error) {
 	claims, err := verifyState(s.secret, state, s.now())
 	if err != nil {
@@ -285,7 +266,7 @@ func (s *Service) CompleteCallback(ctx context.Context, state, status, connected
 	}
 
 	if !strings.EqualFold(strings.TrimSpace(status), "success") {
-		// Honor the state for the redirect slug, but do not write an active row.
+		// 仍然用 state 里的 slug 拼重定向，但不写活跃行。
 		return claims.ToolkitSlug, ErrConnectNotSuccessful
 	}
 	if strings.TrimSpace(connectedAccountID) == "" {
@@ -297,22 +278,18 @@ func (s *Service) CompleteCallback(ctx context.Context, state, status, connected
 		return claims.ToolkitSlug, fmt.Errorf("composio: state has invalid user id: %w", err)
 	}
 
-	// The auth_config_id was resolved at BeginConnect and signed into the state,
-	// so we compare against THAT exact value rather than re-resolving here (a
-	// re-resolve that failed or drifted would otherwise fail-open: a missing
-	// expected auth config used to skip the check, letting another toolkit's
-	// account id be bound under this toolkit's slug). An empty value fails
-	// closed in verifyAccountOwnership.
+	// auth_config_id 是在 BeginConnect 时解析并签进 state 的，所以这里拿 state 里那份
+	// 精确值来比对，而不是在此重新解析（重新解析一旦失败或漂移就会 fail-open：曾经因为
+	// 缺失期望的 auth config 而跳过检查，让别的工具包的账户 id 被绑到本工具包 slug 下）。
+	// 空值会在 verifyAccountOwnership 里 fail-closed。
 	authConfigID := claims.AuthConfigID
 
-	// Defense-in-depth (PR 4608 review): the signed state proves *who* started
-	// the handshake and *which* toolkit, but connected_account_id rides back as
-	// a plain query param Composio appends to our callback URL. A crafted
-	// redirect could pair a valid, un-expired state with someone else's account
-	// id and we would mirror it verbatim. Before writing, confirm with Composio
-	// that this account actually belongs to the state's user (the
-	// composio_user_id == multica user id invariant) and was created under the
-	// toolkit's auth config. Any mismatch fails closed with ErrAccountVerification.
+	// 纵深防御（PR 4608 review）：签名 state 证明了「谁发起了握手」与「哪个工具包」，
+	// 但 connected_account_id 是 Composio 追加到我们回调 URL 上的明文查询参数。一条
+	// 精心构造的重定向可以把一份有效、未过期的 state 配上别人的账户 id，而我们原样
+	// 镜像。写入前先向 Composio 确认：该账户确实属于 state 里的用户（composio_user_id
+	// == multica 用户 id 不变量），并且是在该工具包的 auth config 下创建的。任何不匹配
+	// 都以 ErrAccountVerification 失败关闭。
 	if err := s.verifyAccountOwnership(ctx, connectedAccountID, claims.UserID, authConfigID); err != nil {
 		return claims.ToolkitSlug, err
 	}
@@ -322,7 +299,7 @@ func (s *Service) CompleteCallback(ctx context.Context, state, status, connected
 		ToolkitSlug:        claims.ToolkitSlug,
 		AuthConfigID:       authConfigID,
 		ConnectedAccountID: connectedAccountID,
-		// Invariant: composio_user_id == Multica user id.
+		// 不变量：composio_user_id == Multica 用户 id。
 		ComposioUserID: claims.UserID,
 	}); err != nil {
 		return claims.ToolkitSlug, fmt.Errorf("composio: upsert connection: %w", err)
@@ -330,7 +307,7 @@ func (s *Service) CompleteCallback(ctx context.Context, state, status, connected
 	return claims.ToolkitSlug, nil
 }
 
-// ListConnections returns the user's active connections.
+// ListConnections 返回用户的活跃连接。
 func (s *Service) ListConnections(ctx context.Context, userID pgtype.UUID) ([]Connection, error) {
 	rows, err := s.store.ListActiveUserComposioConnections(ctx, userID)
 	if err != nil {
@@ -343,40 +320,35 @@ func (s *Service) ListConnections(ctx context.Context, userID pgtype.UUID) ([]Co
 	return out, nil
 }
 
-// Disconnect revokes and deletes the connection at Composio, then marks the
-// local row revoked. It is idempotent: a Composio 404 (already gone) is treated
-// as success, and re-revoking an already-revoked local row is a no-op.
+// Disconnect 在 Composio 侧吊销并删除连接，然后把本地行标记为 revoked。它是幂等的：
+// Composio 回 404（已经没了）按成功处理，重复吊销已 revoked 的本地行也是空操作。
 //
-// A connection id that does not belong to the user (or does not exist at all)
-// returns ErrConnectionNotFound so the handler can 404 without leaking
-// existence across users.
+// 不属于该用户的连接 id（或根本不存在）返回 ErrConnectionNotFound，让 handler 能回
+// 404 而不跨用户泄漏存在性。
 func (s *Service) Disconnect(ctx context.Context, userID, connectionID pgtype.UUID) error {
 	row, err := s.store.GetUserComposioConnection(ctx, db.GetUserComposioConnectionParams{
 		ID:     connectionID,
 		UserID: userID,
 	})
 	if err != nil {
-		// pgx.ErrNoRows or fake "not found" — treat as not found for the owner.
+		// pgx.ErrNoRows 或 fake 的 "not found"——对拥有者而言都是 not found。
 		return ErrConnectionNotFound
 	}
 
-	// Already disconnected locally: a repeat DELETE is a pure no-op. Short-
-	// circuiting here keeps disconnect idempotent even when the upstream now
-	// answers revoke/delete with a NON-404 error (PR 4608 review): the account
-	// is already gone, so re-hitting Composio could turn a second DELETE into a
-	// 502 and break the 204-idempotent contract. The first disconnect already
-	// revoked upstream and marked the row.
+	// 本地已断开：重复 DELETE 是纯空操作。在这里短路让「断开」保持幂等，即使上游现在对
+	// revoke/delete 回的是非 404 错误（PR 4608 review）：账户已经没了，再打一次 Composio
+	// 可能把第二次 DELETE 变成 502，破坏 204-幂等契约。首次断开时已经在上游吊销过并
+	// 标记过这一行了。
 	if !strings.EqualFold(row.Status, "active") {
 		return nil
 	}
 
-	// Revoke the upstream grant first, then delete the Composio record. Both are
-	// made idempotent against a 404 so a repeated disconnect (or a connection
-	// already removed at Composio) still resolves the local row.
+	// 先吊销上游授权，再删 Composio 记录。两者都对 404 做了幂等化，因此重复断开（或一条
+	// 在 Composio 已被删的连接）仍能正确了结本地行。
 	if err := s.sdk.RevokeConnection(ctx, row.ConnectedAccountID); err != nil && !isNotFound(err) {
 		return fmt.Errorf("composio: revoke connection: %w", err)
 	}
-	// DeleteConnectedAccount already swallows 404 in the SDK, but guard anyway.
+	// DeleteConnectedAccount 在 SDK 里已吞掉 404，这里仍防御性地再判一次。
 	if err := s.sdk.DeleteConnectedAccount(ctx, row.ConnectedAccountID); err != nil && !isNotFound(err) {
 		return fmt.Errorf("composio: delete connected account: %w", err)
 	}
@@ -390,28 +362,21 @@ func (s *Service) Disconnect(ctx context.Context, userID, connectionID pgtype.UU
 	return nil
 }
 
-// CreateMCPSession opens a Composio tool-router (MCP) session scoped to the
-// user's active connections. It returns (nil, nil) when the user has no active
-// connections — callers treat that as "no MCP overlay for this user".
+// CreateMCPSession 开一个限定到「用户活跃连接」的 Composio tool-router（MCP）会话。
+// 用户没有任何活跃连接时返回 (nil, nil)——调用方把这种情况当作「该用户无 MCP overlay」。
 //
-// connected_accounts is pinned per toolkit to the user's own connected account
-// id array so the session cannot surface accounts the user did not connect. This
-// helper is NOT yet wired into task dispatch (Stage 3); it exists so that wiring
-// is a pure consumer of an already-tested seam.
+// connected_accounts 按工具包固定到用户自己的已连接账户 id 数组，让会话不可能浮出用户
+// 没连接过的账户。这个助手尚未接入任务派发（Stage 3）；它先存在，是为了让将来的接线
+// 成为某个已被测熟接缝的纯消费者。
 //
-// Single-account constraint (v1, PR 4608 review follow-up): the MVP connect
-// flow assumes AT MOST ONE active connection per (user, toolkit) — there is no
-// UI or API to hold several. Should duplicates ever exist, we must choose
-// deterministically: rows arrive newest-first (ListActive orders by
-// connected_at DESC), so we keep the FIRST occurrence per toolkit (the most
-// recently connected account) instead of letting a later map write silently
-// select an older one.
+// 单账户约束（v1，PR 4608 review 后续）：MVP 连接流程假设每个 (user, toolkit) 至多
+// 一个活跃连接——没有 UI 或 API 来持有多个。若真出现重复，必须确定性地选择：行按
+// 最新在前到达（ListActive 按 connected_at DESC 排序），因此我们保留每个工具包最先出现
+// 的那条（最近连接的账户），而不是让后面的 map 写入悄悄选中一个更旧的。
 //
-// Stage 3 owns the real decision before this is wired into dispatch: either
-// enforce the single-active constraint at connect time (revoke the previous
-// active row for the same toolkit on a new connect) or extend CreateSession to
-// a multi-account request shape. Until then, newest-wins keeps behavior
-// deterministic rather than order-dependent.
+// 真正接入派发前，Stage 3 要做出决策：要么在连接时强制单活跃约束（新连接时吊销同一
+// 工具包之前的活跃行），要么把 CreateSession 扩展成多账户请求形态。在那之前，新者胜
+// 让行为保持确定性，而不是依赖到达顺序。
 func (s *Service) CreateMCPSession(ctx context.Context, userID pgtype.UUID) (*MCPSession, error) {
 	rows, err := s.store.ListActiveUserComposioConnections(ctx, userID)
 	if err != nil {
@@ -423,7 +388,7 @@ func (s *Service) CreateMCPSession(ctx context.Context, userID pgtype.UUID) (*MC
 
 	connectedAccounts := make(map[string]any, len(rows))
 	for _, row := range rows {
-		// Keep the first (newest) account per toolkit; ignore older duplicates.
+		// 每个工具包保留第一条（最新）账户，忽略更旧的重复。
 		if _, exists := connectedAccounts[row.ToolkitSlug]; exists {
 			continue
 		}
@@ -443,15 +408,12 @@ func (s *Service) CreateMCPSession(ctx context.Context, userID pgtype.UUID) (*MC
 	}, nil
 }
 
-// CallbackRedirect builds the browser redirect target for the callback handler.
-// On success it points at the settings page (Integrations tab) with the
-// connected toolkit slug; on failure it carries a stable error code. The path
-// is the slug-less `/settings?tab=integrations&...` form on purpose: the web
-// proxy's legacy-route redirect prepends the user's last workspace slug, so it
-// resolves to the real `/{slug}/settings?tab=integrations` route that mounts
-// the Composio tab. The older `/settings/integrations` path was NOT a real
-// route and 404'd after the legacy rewrite. When FrontendBaseURL is unset it
-// returns a site-relative path.
+// CallbackRedirect 为回调 handler 拼浏览器重定向目标。成功时指向设置页（Integrations
+// 标签）并携带已连接的工具包 slug；失败时携带一个稳定错误码。路径刻意采用无 slug 的
+// `/settings?tab=integrations&...` 形态：web 代理的 legacy-route 重定向会自动补上用户
+// 最近工作区的 slug，从而落到真正挂载 Composio 标签的 `/{slug}/settings?tab=integrations`
+// 路由。更老的 `/settings/integrations` 路径不是真实路由，legacy 改写后会 404。
+// FrontendBaseURL 未设置时返回站内相对路径。
 func (s *Service) CallbackRedirect(slug string, success bool) string {
 	var path string
 	if success {
@@ -462,7 +424,7 @@ func (s *Service) CallbackRedirect(slug string, success bool) string {
 	return s.frontendURL + path
 }
 
-// rowToConnection maps a DB row to the API-facing Connection view.
+// rowToConnection 把一条 DB 行映射成面向 API 的 Connection 视图。
 func rowToConnection(row db.UserComposioConnection) Connection {
 	c := Connection{
 		ID:          util.UUIDToString(row.ID),
@@ -476,25 +438,19 @@ func rowToConnection(row db.UserComposioConnection) Connection {
 	return c
 }
 
-// ListToolkits returns only the Composio toolkits the project can actually
-// connect (those with an enabled auth config). Toolkits with no enabled auth
-// config are filtered out entirely (MUL-4009): a card the user can't act on is
-// noise, and the old "Not configured" grey label existed only to avoid a dead
-// button — dropping the entry removes the need for it. It fetches all pages
-// (capped by maxToolkitPages) so the UI gets the complete connectable list in
-// one call; the catalog is a few hundred entries, well within a single JSON
-// response. Every returned entry has an enabled auth configuration by
-// construction.
+// ListToolkits 只返回项目真正能连接的 Composio 工具包（即带已启用 auth config 的）。
+// 没有启用 auth config 的工具包被整个过滤掉（MUL-4009）：用户无法对它做任何操作，摆
+// 一张卡片只是噪音；旧的灰色 "Not configured" 标签存在只是为了不让按钮变死——直接去掉
+// 条目就不需要它了。它会取完所有页（受 maxToolkitPages 上限约束），让 UI 一次调用就
+// 拿到完整的可连接清单；目录不过几百条，单个 JSON 响应绰绰有余。构造上保证每个返回项
+// 都有已启用的 auth 配置。
 //
-// Unlike the previous behavior, a resolver error is NOT masked into an
-// everything-not-connectable catalog: with filtering in place that would render
-// as a silent "no apps configured" empty state, which is misleading. We return
-// the error so the handler can surface a 502 and the UI can show its honest
-// load-failed state instead.
+// 与之前行为不同：resolver 错误不再被伪装成「全不可连接」的目录。有了过滤后，那种掩蔽
+// 会渲染成一句误导性的空态 "no apps configured"。这里把错误原样返回，让 handler 能抛
+// 502、UI 能展示它诚实的加载失败态。
 func (s *Service) ListToolkits(ctx context.Context) ([]ToolkitView, error) {
-	// connectable is the project's enabled toolkit_slug → auth_config_id map.
-	// It is the source of truth for what to surface: only slugs present here
-	// are returned.
+	// connectable 是项目「已启用的 toolkit_slug → auth_config_id」map。它是「展示什么」
+	// 的事实来源：只有出现在这里的 slug 才会被返回。
 	connectable, err := s.authConfigMap(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("composio: resolve connectable toolkits: %w", err)
@@ -521,8 +477,8 @@ func (s *Service) ListToolkits(ctx context.Context) ([]ToolkitView, error) {
 				continue
 			}
 			seen[slug] = struct{}{}
-			// Filter out toolkits with no enabled auth config: the user has no
-			// working action for them, so they are omitted from the catalog.
+			// 过滤掉没有启用 auth config 的工具包：用户对它们没有任何可用的动作，因此
+			// 从目录中剔除。
 			if _, canConnect := connectable[slug]; !canConnect {
 				continue
 			}
@@ -546,9 +502,8 @@ func (s *Service) ListToolkits(ctx context.Context) ([]ToolkitView, error) {
 	return out, nil
 }
 
-// authConfigForToolkit returns the chosen auth_config_id for a toolkit slug, or
-// "" when the project has no enabled auth config for it. It reads the cached
-// project-wide map (refreshed on TTL).
+// authConfigForToolkit 返回某工具包 slug 选定的 auth_config_id；项目对它没有启用的
+// auth config 时返回 ""。它读全项目缓存 map（TTL 到期自动刷新）。
 func (s *Service) authConfigForToolkit(ctx context.Context, slug string) (string, error) {
 	slug = strings.ToLower(strings.TrimSpace(slug))
 	if slug == "" {
@@ -561,12 +516,10 @@ func (s *Service) authConfigForToolkit(ctx context.Context, slug string) (string
 	return m[slug], nil
 }
 
-// authConfigMap returns the toolkit_slug → auth_config_id map for the project,
-// rebuilding it from Composio when the cache is empty or expired. Concurrent
-// callers serialize on authCacheMu; the fetch runs under the lock, which is
-// acceptable for a short-TTL map that is cheap to build and read by a
-// low-traffic settings surface. A new map is assigned on refresh (never mutated
-// in place), so a reference handed to a caller stays safe to read.
+// authConfigMap 返回项目的 toolkit_slug → auth_config_id map；缓存为空或过期时从
+// Composio 重建。并发调用方在 authCacheMu 上串行；抓取在持锁下进行——对这个短 TTL、
+// 构建便宜、又只有低频设置面去读的 map 来说可以接受。刷新时整体赋新 map（绝不原地改），
+// 所以已经拿出去给调用方的引用可以安全继续读。
 func (s *Service) authConfigMap(ctx context.Context) (map[string]string, error) {
 	s.authCacheMu.Lock()
 	defer s.authCacheMu.Unlock()
@@ -575,8 +528,8 @@ func (s *Service) authConfigMap(ctx context.Context) (map[string]string, error) 
 	}
 	m, err := s.fetchAuthConfigMap(ctx)
 	if err != nil {
-		// Serve a stale snapshot if we have one — a transient /auth_configs
-		// blip should not make every toolkit suddenly un-connectable.
+		// 有旧快照就先喂旧快照——一次瞬时 /auth_configs 抖动不该让所有工具包突然全部
+		// 不可连接。
 		if s.authCache != nil {
 			return s.authCache, nil
 		}
@@ -587,18 +540,16 @@ func (s *Service) authConfigMap(ctx context.Context) (map[string]string, error) 
 	return m, nil
 }
 
-// authCandidate is one project auth config in contention to represent a toolkit
-// during resolution.
+// authCandidate 是解析过程中「竞争代表某个工具包」的一个项目 auth config。
 type authCandidate struct {
 	id      string
 	managed bool
 	updated string
 }
 
-// fetchAuthConfigMap pages through the project's ENABLED auth configs and
-// reduces them to one chosen auth_config_id per toolkit slug. When a toolkit
-// has several (e.g. a Composio-managed one plus a custom white-label one),
-// betterAuthConfig picks the winner.
+// fetchAuthConfigMap 翻页遍历项目「已启用的」auth config，把它们归约成每个工具包 slug
+// 选定一个 auth_config_id。当一个工具包有好几个（如一个 Composio 托管 + 一个自定义
+// 白标），由 betterAuthConfig 选出赢家。
 func (s *Service) fetchAuthConfigMap(ctx context.Context) (map[string]string, error) {
 	best := make(map[string]authCandidate)
 	cursor := ""
@@ -636,10 +587,8 @@ func (s *Service) fetchAuthConfigMap(ctx context.Context) (map[string]string, er
 	return out, nil
 }
 
-// betterAuthConfig reports whether candidate a should win over the currently
-// selected b for the same toolkit. A custom (bring-your-own OAuth) config beats
-// a Composio-managed one — it is the white-label path the product wants — and
-// among configs of the same kind the most recently updated wins.
+// betterAuthConfig 报告候选 a 是否应胜过同工具包当前选中的 b。自定义（自带 OAuth）配置
+// 优于 Composio 托管的——那是产品想要的白标路径——同类的配置里最近更新的胜出。
 func betterAuthConfig(a, b authCandidate) bool {
 	if a.managed != b.managed {
 		return !a.managed
@@ -647,15 +596,12 @@ func betterAuthConfig(a, b authCandidate) bool {
 	return a.updated > b.updated
 }
 
-// verifyAccountOwnership confirms with Composio that connectedAccountID really
-// belongs to expectedUserID and was created under expectedAuthConfigID, so a
-// tampered or cross-toolkit connected_account_id on the callback cannot smuggle
-// another account into the local mirror. It fails closed: an upstream error, an
-// unknown account, an owner mismatch, an EMPTY expected auth config, or an
-// auth-config mismatch all return ErrAccountVerification. Requiring a non-empty,
-// exactly-matching auth config is what closes the cross-toolkit binding gap —
-// the expected value is the auth_config_id signed into the state at
-// BeginConnect, which is toolkit-specific.
+// verifyAccountOwnership 向 Composio 确认 connectedAccountID 确实属于 expectedUserID、
+// 且在 expectedAuthConfigID 下创建，让回调上被篡改或跨工具包的 connected_account_id
+// 无法把别人的账户偷运进本地镜像表。它失败关闭：上游错误、未知账户、归属不匹配、
+// 期望 auth config 为 EMPTY、auth config 不匹配——一律返回 ErrAccountVerification。
+// 要求一个非空且精确匹配的 auth config，正是堵住跨工具包绑定的洞——期望值是 BeginConnect
+// 时签进 state 的 auth_config_id，它与工具包一一对应。
 func (s *Service) verifyAccountOwnership(ctx context.Context, connectedAccountID, expectedUserID, expectedAuthConfigID string) error {
 	resp, err := s.sdk.ListConnectedAccounts(ctx, sdk.ListConnectedAccountsRequest{
 		ConnectedAccountIDs: []string{connectedAccountID},
@@ -676,10 +622,9 @@ func (s *Service) verifyAccountOwnership(ctx context.Context, connectedAccountID
 	if acct.UserID != expectedUserID {
 		return ErrAccountVerification
 	}
-	// Fail closed: the account MUST have been created under the exact auth
-	// config the connect link used. An empty expected value (state missing it,
-	// or a resolver gap) is rejected rather than skipped — skipping is the
-	// fail-open hole that let a cross-toolkit account id be bound here.
+	// 失败关闭：账户必须是在 connect link 所用的那个确切 auth config 下创建的。期望值为
+	// 空（state 缺字段，或解析缺口）时直接拒绝而不是跳过——跳过就是当年那个让跨工具包
+	// 账户 id 绑进本地的 fail-open 洞。
 	accountAuthConfigID := acct.AuthConfigID
 	if accountAuthConfigID == "" {
 		accountAuthConfigID = acct.AuthConfig.ID
@@ -690,8 +635,7 @@ func (s *Service) verifyAccountOwnership(ctx context.Context, connectedAccountID
 	return nil
 }
 
-// isNotFound reports whether err is a Composio 404 APIError, used to make
-// revoke/delete idempotent.
+// isNotFound 报告 err 是否为 Composio 的 404 APIError，用于让 revoke/delete 幂等。
 func isNotFound(err error) bool {
 	var apiErr *sdk.APIError
 	return errors.As(err, &apiErr) && apiErr.IsNotFound()

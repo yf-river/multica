@@ -1,3 +1,10 @@
+// autopilot 列表页（"/autopilots" 路由）：拉取当前工作区的全部 autopilot，先按
+// 范围（全部/运行中/已暂停）裁出 scopeRows，再叠加执行者/触发方式/模式/创建者过滤
+// 与排序得到可见行，交给虚拟化表格渲染。表格支持勾选行做批量暂停/恢复/删除，整行
+// 可点击进详情页；空态页面提供六个内置模板一键创建。视图状态（范围/排序/列显隐/
+// 过滤）全部存于 useAutopilotsViewStore（Zustand），分页与创建弹窗只在本文件内使用。
+// 创建/编辑弹窗经 lazy 懒加载，减小列表页首屏包体。
+
 "use client";
 
 import { lazy, Suspense, useMemo, useRef, useState } from "react";
@@ -60,29 +67,25 @@ import {
 import type { ScheduleConfig } from "./schedule-editor/model";
 import { useLocale, useT, useTimeAgo } from "../../i18n";
 
-// Column template — single source of truth for header, rows, and skeletons.
-// Same conventions as the skills list (see list-grid.tsx and the comment
-// there): deterministic var-width tracks (rows are virtualized), and
-// TWO-ZONE responsiveness:
-// - Container ≥ @2xl (672px): WYSIWYG — every user-enabled column renders;
-//   the grid carries min-width = Σ(enabled tracks + gaps) and the wrapper
-//   scrolls horizontally when the enabled set outgrows the container. An
-//   enabled column must NEVER silently vanish (the "dead toggle" bug).
-// - Container < @2xl: static core set (name + assignee), no horizontal
-//   scroll, column toggles don't apply.
+// 列模板——表头、行与骨架的唯一真源。沿用技能列表的约定（见 list-grid.tsx 与其中
+// 注释）：确定性可变宽轨道（行是虚拟化的），外加两区响应式：
+// - 容器 ≥ @2xl（672px）：所见即所得——每个用户启用的列都渲染；网格携带
+//   min-width = Σ(启用的轨道 + 间隙)，启用集合超过容器宽度时外层横向滚动。
+//   已启用的列绝不能悄然消失（"死开关" bug）。
+// - 容器 < @2xl：静态核心集（名称 + 执行者），无横向滚动，列开关不生效。
 const GRID_COLS =
   "grid-cols-[0.75rem_1rem_minmax(120px,1fr)_var(--apc-assignee)_1.75rem_0.75rem] " +
   "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_var(--apc-assignee)_var(--apc-trigger)_var(--apc-lastrun)_var(--apc-nextrun)_var(--apc-mode)_var(--apc-creator)_var(--apc-created)_1.75rem_0.75rem]";
 
-// h-12 rows; the virtualizer's fixed-size contract.
+// h-12 行高；虚拟器定长契约。
 const ROW_HEIGHT = 48;
 
+// 创建/编辑弹窗按需懒加载，减小首屏包体。
 const AutopilotDialog = lazy(() =>
   import("./autopilot-dialog").then((module) => ({ default: module.AutopilotDialog })),
 );
 
-// Single source for hideable column widths: track vars and the grid's
-// min-width derive from the same numbers.
+// 可隐藏列宽度的唯一真源：轨道 CSS 变量与网格 min-width 由同一组数字推出。
 const COLUMN_WIDTHS: Record<AutopilotColumnKey, number> = {
   assignee: 144,
   trigger: 144,
@@ -93,11 +96,11 @@ const COLUMN_WIDTHS: Record<AutopilotColumnKey, number> = {
   created: 104,
 };
 
-// Fixed tracks (edges 12+12, checkbox 16, name min 200, kebab 28) plus the
-// 11 gap-x-3 gaps between the wide template's 12 tracks (zero-width tracks
-// still carry gaps).
+// 固定轨道（两边边缘 12+12、复选框 16、名称 min 200、kebab 28）加上宽模板 12 条
+// 轨道之间的 11 个 gap-x-3 间隙（零宽轨道仍带间隙）。
 const FIXED_TRACKS_WIDTH = 268 + 11 * 12;
 
+// 依据列可见性生成 CSS 变量：隐藏列轨道宽度 0px，min-width = 固定轨 + 可见列宽和。
 function columnTrackVars(
   isVisible: (key: AutopilotColumnKey) => boolean,
 ): React.CSSProperties {
@@ -122,9 +125,8 @@ function columnTrackVars(
 }
 
 // ---------------------------------------------------------------------------
-// Templates for the empty state (unchanged from the previous page version).
-// Prompts stay raw English because they're injected directly into the
-// agent's task input.
+// 空状态模板（与旧页面版本一致）。prompt 保持原始英文：它们直接注入智能体的
+// 任务输入。
 // ---------------------------------------------------------------------------
 
 type TemplateId =
@@ -135,6 +137,7 @@ type TemplateId =
   | "dependency_audit"
   | "documentation_check";
 
+// 一个"一键创建"模板：ID、注入任务的提示词正文、图标、预填的调度。
 interface AutopilotTemplate {
   id: TemplateId;
   prompt: string;
@@ -145,6 +148,7 @@ interface AutopilotTemplate {
 const WEEKDAYS: ScheduleConfig["days"] = { kind: "weekly", daysOfWeek: [1, 2, 3, 4, 5] };
 const MONDAY: ScheduleConfig["days"] = { kind: "weekly", daysOfWeek: [1] };
 
+// 六个内置模板清单。prompt 会整段注入智能体任务，因此刻意不翻译。
 const TEMPLATES: AutopilotTemplate[] = [
   {
     id: "daily_news",
@@ -210,9 +214,10 @@ const TEMPLATES: AutopilotTemplate[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Cells
+// 单元格
 // ---------------------------------------------------------------------------
 
+// 行首复选框列：整行点击会导航，所以这里阻止冒泡后单独切换。
 function CheckboxCell({
   checked,
   onToggle,
@@ -243,6 +248,7 @@ function CheckboxCell({
   );
 }
 
+// 名称单元格：标题 + 暂停标记。
 function NameCell({ autopilot }: { autopilot: Autopilot }) {
   const { t } = useT("autopilots");
   return (
@@ -250,8 +256,8 @@ function NameCell({ autopilot }: { autopilot: Autopilot }) {
       <span className="min-w-0 truncate text-body font-medium">
         {autopilot.title}
       </span>
-      {/* Paused marker: in the "all" scope active and paused rows mix, so a
-          paused automation needs an inline signal. */}
+      {/* 暂停标记：在"全部"范围里运行中与暂停的行混排，暂停的自动化需要一个行内
+          信号。 */}
       {autopilot.status === "paused" && (
         <span
           title={
@@ -268,6 +274,7 @@ function NameCell({ autopilot }: { autopilot: Autopilot }) {
   );
 }
 
+// 执行者单元格：头像 + 名称。
 function AssigneeCell({ autopilot }: { autopilot: Autopilot }) {
   const { getActorName } = useActorName();
   return (
@@ -286,12 +293,14 @@ function AssigneeCell({ autopilot }: { autopilot: Autopilot }) {
   );
 }
 
+// 触发方式 → 图标映射。
 const TRIGGER_ICONS: Record<string, typeof Zap> = {
   schedule: Clock,
   webhook: Webhook,
   api: Code,
 };
 
+// 触发方式单元格：每行列出该 autopilot 的全部触发方式（带图标）。
 function TriggerCell({ autopilot }: { autopilot: Autopilot }) {
   const { t } = useT("autopilots");
   const kinds = autopilot.trigger_kinds ?? [];
@@ -305,7 +314,7 @@ function TriggerCell({ autopilot }: { autopilot: Autopilot }) {
   return (
     <ListGridCell className="hidden gap-2 @2xl:flex">
       {kinds.map((kind) => {
-        // Server-driven enum: unknown kinds get a generic icon + raw label.
+        // 服务器驱动的枚举：未知种类用通用图标 + 原始标签。
         const Icon = TRIGGER_ICONS[kind] ?? Zap;
         const label =
           kind === "schedule" || kind === "webhook" || kind === "api"
@@ -325,8 +334,8 @@ function TriggerCell({ autopilot }: { autopilot: Autopilot }) {
   );
 }
 
-// Dot color per last run outcome. Server-driven enum — unknown values fall
-// through to the neutral dot, never crash (API compatibility rule).
+// 最近一次运行结果的圆点颜色。服务器驱动的枚举——未知值落到中性圆点，绝不崩溃
+//（API 兼容规则）。
 function runStatusDotClass(status: string | null | undefined): string {
   switch (status) {
     case "completed":
@@ -343,6 +352,7 @@ function runStatusDotClass(status: string | null | undefined): string {
   }
 }
 
+// 最近运行列：状态圆点 + 相对时间。
 function LastRunCell({ autopilot }: { autopilot: Autopilot }) {
   const { t } = useT("autopilots");
   const timeAgo = useTimeAgo();
@@ -375,6 +385,7 @@ function LastRunCell({ autopilot }: { autopilot: Autopilot }) {
   );
 }
 
+// 下次运行列：按读者时区格式化时刻；未调度则破折号。
 function NextRunCell({ autopilot }: { autopilot: Autopilot }) {
   const { i18n } = useT("autopilots");
   const next = autopilot.next_run_at;
@@ -391,6 +402,7 @@ function NextRunCell({ autopilot }: { autopilot: Autopilot }) {
   );
 }
 
+// 运行模式列。
 function ModeCell({ autopilot }: { autopilot: Autopilot }) {
   const { t } = useT("autopilots");
   const mode = autopilot.execution_mode;
@@ -405,6 +417,7 @@ function ModeCell({ autopilot }: { autopilot: Autopilot }) {
   );
 }
 
+// 创建者列：头像 + 名称。
 function CreatorCell({ autopilot }: { autopilot: Autopilot }) {
   const { getActorName } = useActorName();
   return (
@@ -422,9 +435,10 @@ function CreatorCell({ autopilot }: { autopilot: Autopilot }) {
 }
 
 // ---------------------------------------------------------------------------
-// Header row
+// 表头行
 // ---------------------------------------------------------------------------
 
+// 表头：全选复选框 + 各排序列表头。名称/最近运行/下次运行/创建支持排序。
 function AutopilotListHeader({
   sortField,
   sortDirection,
@@ -536,6 +550,7 @@ function AutopilotListHeader({
   );
 }
 
+// 加载骨架屏：与真实网格同轨道布局，列切换用默认隐藏集。
 function LoadingSkeleton() {
   return (
     <ListGrid
@@ -561,8 +576,7 @@ function LoadingSkeleton() {
         <ListGridHeaderCell className="hidden @2xl:flex">
           <Skeleton className="h-3 w-12" />
         </ListGridHeaderCell>
-        {/* mode/creator/created are hidden by default — keep their tracks
-            mapped with empty placeholders. */}
+        {/* mode/creator/created 默认隐藏——保持轨道映射为空的占位。 */}
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
@@ -598,9 +612,15 @@ function LoadingSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
-// Page
+// 页面
 // ---------------------------------------------------------------------------
 
+/**
+ * autopilot 列表页。加载 autopilot 全集，按范围（全部/运行中/已暂停）、过滤
+ * （执行者/触发方式/模式/创建者）与排序（名称/最近/下次运行/创建时间）出表；
+ * 行支持勾选与批量暂停/恢复/删除，点行跳详情，右上新建打开创建弹窗。空态提供
+ * 六个内置模板一键创建。
+ */
 export function AutopilotsPage() {
   const { t } = useT("autopilots");
   const locale = useLocale();
@@ -620,9 +640,8 @@ export function AutopilotsPage() {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  // Persisted scope may hold a retired value (e.g. "archived" from an older
-  // build) — fall back to "all" instead of stranding the user on an
-  // unreachable scope.
+  // 持久化的范围可能持有已退役的值（如旧构建的 "archived"）——回退到 "all"，
+  // 别把用户困在够不到的范围上。
   const rawScope = useAutopilotsViewStore((s) => s.scope);
   const scope = AUTOPILOT_SCOPES.includes(rawScope) ? rawScope : "all";
   const setScope = useAutopilotsViewStore((s) => s.setScope);
@@ -649,9 +668,8 @@ export function AutopilotsPage() {
     });
   };
 
-  // Scope counts come from the FULL set (filters never affect them — they
-  // are stage inventories, not result counts). API-archived rows (no UI
-  // flow creates them) are excluded everywhere.
+  // 各范围计数来自全集（过滤从不影响它们——它们是阶段清单，不是结果计数）。
+  // API 归档的行（没有任何 UI 流程会创建）在所有位置排除。
   const scopeCounts = useMemo<Record<AutopilotScope, number>>(() => {
     let active = 0;
     let paused = 0;
@@ -663,8 +681,7 @@ export function AutopilotsPage() {
     return { all: active + paused, active, paused };
   }, [autopilots]);
 
-  // Rows within the current scope, unfiltered — toolbar option lists and
-  // the "n / total" denominator derive from this.
+  // 当前范围内的行（未过滤）——工具栏选项列表与 "n / total" 分母由此推出。
   const scopeRows = useMemo<Autopilot[]>(() => {
     if (scope === "all") {
       return autopilots.filter((a) => a.status !== "archived");
@@ -672,7 +689,7 @@ export function AutopilotsPage() {
     return autopilots.filter((a) => a.status === scope);
   }, [autopilots, scope]);
 
-  // Visible rows: filters, then sort.
+  // 可见行：先过滤，再排序。
   const rows = useMemo<Autopilot[]>(() => {
     const filtered = scopeRows.filter((a) => {
       if (
@@ -709,7 +726,7 @@ export function AutopilotsPage() {
         return a.title.localeCompare(b.title) * dir;
       }
       if (sortField === "nextRun") {
-        // Missing next run sorts last regardless of direction.
+        // 没有下次运行的行无论方向都排最后。
         const av = a.next_run_at ? Date.parse(a.next_run_at) : null;
         const bv = b.next_run_at ? Date.parse(b.next_run_at) : null;
         if (av === null && bv === null) return a.title.localeCompare(b.title);
@@ -720,7 +737,7 @@ export function AutopilotsPage() {
       if (sortField === "created") {
         return (Date.parse(a.created_at) - Date.parse(b.created_at)) * dir;
       }
-      // lastRun: never-ran rows sort as oldest.
+      // lastRun：从未跑过的行排最旧（0 起点）。
       const av = a.last_run_at ? Date.parse(a.last_run_at) : 0;
       const bv = b.last_run_at ? Date.parse(b.last_run_at) : 0;
       return (av - bv) * dir || a.title.localeCompare(b.title);
@@ -728,8 +745,7 @@ export function AutopilotsPage() {
     return filtered;
   }, [scopeRows, filters, sortField, sortDirection]);
 
-  // Row virtualization — same wiring as the skills list: headless math,
-  // offsets as padding on the body, fixed-height rows.
+  // 行虚拟化——与技能列表同款接线：headless 数学、偏移量作 body 内边距、定高行。
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -764,10 +780,9 @@ export function AutopilotsPage() {
   const showEmpty = !isLoading && !listError && totalCount === 0;
 
   return (
-    // relative: positioning anchor for the batch toolbar (page-centered,
-    // not viewport-centered).
+    // relative：作为批量工具栏的定位锚点（页面居中，而非视口居中）。
     <div className="relative flex flex-1 min-h-0 flex-col">
-      {/* Header */}
+      {/* 页头 */}
       <CollectionPageHeader
         icon={Zap}
         title={t(($) => $.page.title)}
@@ -972,9 +987,8 @@ export function AutopilotsPage() {
             initial={
               selectedTemplate
                 ? {
-                    // Template title pulls from i18n so the user-visible default
-                    // matches their locale, while the prompt body stays raw EN
-                    // since it's injected directly into the agent task.
+                    // 模板标题走 i18n，用户看到的默认名与其语言一致；prompt 正文保持
+                    // 原始英文，因为它会整段注入智能体任务。
                     title: t(($) => $.templates[selectedTemplate.id].title),
                     description: selectedTemplate.prompt,
                   }

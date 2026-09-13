@@ -1,3 +1,8 @@
+// 转录按钮：一个紧凑的图标按钮，点击打开"任务执行实录"完整弹窗（AgentTranscriptDialog）。
+// 用在任何列智能体任务的地方（Issue 活动卡、智能体详情活动页）。按钮自己管理弹窗
+// 开关与数据的懒加载，父级只需把它放进去。支持三种数据来源：父级直接给时间线、
+// 订阅实时任务消息缓存、终态任务点击时一次性拉取。
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -24,12 +29,10 @@ interface TranscriptButtonProps {
   task: AgentTask;
   agentName: string;
   /**
-   * Pre-loaded timeline. When provided the button skips the fetch and opens
-   * the dialog immediately — used by surfaces that already own an accumulating
-   * timeline. Omit for terminal tasks; the button will fetch via
-   * `api.listTaskMessages` on the first click and cache the result. Omit for
-   * live tasks too: the button then subscribes to the shared task-messages
-   * cache so the dialog keeps growing as new events arrive.
+   * 预加载好的时间线。提供时按钮跳过拉取、点开立即显示——供那些自己已在累积
+   * 时间线的界面使用。终态任务省略此项：按钮会在首次点击时用
+   * `api.listTaskMessages` 拉取并缓存结果。实时任务也要省略：按钮会订阅共享的
+   * task-messages 缓存，让弹窗内容随新事件到来持续增长。
    */
   items?: TimelineItem[];
   isLive?: boolean;
@@ -39,25 +42,33 @@ interface TranscriptButtonProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   /**
-   * Optional content rendered above the transcript event list. Used to
-   * surface autopilot webhook payloads inline with the run history.
+   * 渲染在转录事件列表上方的可选内容。用于把 autopilot 的 webhook 载荷
+   * 与运行历史并排展示。
    */
   headerSlot?: React.ReactNode;
 }
 
 /**
- * Compact icon-button that opens the full transcript dialog. Used on any
- * surface that lists agent tasks (issue activity card, agent detail
- * activity tab). Owns its own dialog state and lazy-load — the parent
- * just drops it in.
+ * 打开完整转录弹窗的紧凑图标按钮。用在任何列出智能体任务的界面（Issue 活动卡、
+ * 智能体详情的活动标签页）。自己管理弹窗状态与懒加载——父级只管把它放下。
  *
- * Three data modes:
- *  - Provided items: parent owns the timeline, we just render it.
- *  - Live cache: `isLive` with no provided items and a persisted task id —
- *    subscribe to the shared `["task-messages", taskId]` cache (seeded by the
- *    WS `task:message` stream) so the open dialog keeps growing in real time,
- *    and force a seq-merged backfill on open to heal any WS reconnect gap.
- *  - Lazy: terminal tasks fetch once on first click and cache locally.
+ * 三种数据模式：
+ *  - 父级给 items：时间线由父级持有，这里只负责渲染。
+ *  - 实时缓存：`isLive` 为真、未给 items 且任务 ID 符合实时格式——订阅共享的
+ *    `["task-messages", taskId]` 缓存（由 WS `task:message` 流灌数据），打开的
+ *    弹窗随事件实时增长；打开时还会强制做一次按 seq 合并的补拉，弥合 WS 重连
+ *    可能造成的空洞。
+ *  - 懒加载：终态任务在首次点击时拉取一次并做本地缓存。
+ * @param task 智能体任务。
+ * @param agentName 智能体名称（用于弹窗标题等）。
+ * @param items 预加载时间线（见类型注释）。
+ * @param isLive 任务是否仍实时运行中。
+ * @param className 附加样式。
+ * @param title 按钮的提示/可访问名称。
+ * @param renderButton 是否渲染按钮本体（false 时只挂弹窗逻辑）。
+ * @param open 受控的弹窗开关。
+ * @param onOpenChange 弹窗开关变化回调。
+ * @param headerSlot 弹窗内容上方的可选插槽。
  */
 export function TranscriptButton({
   task,
@@ -77,16 +88,15 @@ export function TranscriptButton({
   const open = controlledOpen ?? uncontrolledOpen;
   const setOpen = controlledOnOpenChange ?? setUncontrolledOpen;
 
-  // Live cache mode: the running task feeds the shared task-messages cache, so
-  // we render straight off that cache instead of a one-shot local snapshot.
+  // 实时缓存模式：运行中的任务在持续喂共享的 task-messages 缓存，所以直接渲染
+  // 该缓存，而不是一次性拉取的本地快照。
   const liveCacheMode =
     isLive && providedItems === undefined && isTaskMessageTaskId(task.id);
 
-  // Latch the live path for the duration of an open session. The parent flips
-  // `isLive` to false the moment the task finishes; without the latch the
-  // dialog would drop to empty `loadedItems` mid-view. Staying on the cache
-  // path keeps every delivered seq on screen and lets the dialog take a final
-  // authoritative backfill on the running→terminal transition.
+  // 在一次打开会话期间"锁存"实时路径。任务一结束父级就把 `isLive` 翻成 false；
+  // 没有锁存的话，弹窗会在用户查看中途退化成空的 `loadedItems`。一直停留在缓存
+  // 路径上能保证每条已下发的 seq 都留在屏上，并让弹窗在"运行中 → 终态"切换时做
+  // 最后一次权威补拉。
   const [liveSession, setLiveSession] = useState(false);
   useEffect(() => {
     if (!open) {
@@ -98,7 +108,7 @@ export function TranscriptButton({
     }
   }, [liveCacheMode, open]);
 
-  // Live mode renders from the cache; lazy/provided modes from local state.
+  // 实时模式渲染缓存；懒加载/父级提供模式渲染本地 state。
   const items = providedItems ?? loadedItems ?? [];
 
   const handleClick = useCallback(
@@ -114,6 +124,7 @@ export function TranscriptButton({
         setOpen(true);
         return;
       }
+      // 都没有 → 首次点击才拉取，拉完缓存并打开弹窗。
       setLoading(true);
       api
         .listTaskMessages(task.id)
@@ -131,6 +142,7 @@ export function TranscriptButton({
     [liveCacheMode, providedItems, loadedItems, setOpen, task.id],
   );
 
+  // 弹窗打开期间监听全局导航事件，发生路由跳转就收起弹窗。
   useEffect(() => {
     if (!open) return;
 
@@ -201,15 +213,13 @@ interface LiveTranscriptDialogProps {
 }
 
 /**
- * Live transcript view backed by the shared task-messages cache. Mounted only
- * while the dialog is open, so closed live rows hold no query subscription and
- * don't widen the baseline request volume.
+ * 基于共享 task-messages 缓存的实时转录视图。只在弹窗打开期间挂载，所以关闭状态
+ * 的行不持有任何查询订阅，不会抬高基线请求量。
  *
- * The cache observer is read-only (`enabled: false`): the WS `task:message`
- * handler is the live writer, and the backfill below is the only fetch here.
- * Keeping React Query from issuing its own refetch is deliberate — its result
- * would blind-replace the cache and could drop a seq that arrived mid-flight,
- * whereas the backfill merges by seq.
+ * 缓存观察是只读的（`enabled: false`）：WS `task:message` 处理器才是实时写入方，
+ * 这里的补拉是唯一的 fetch。刻意不让 React Query 自行 refetch——它的结果会无脑
+ * 整体替换缓存，可能丢掉飞行中途到达的某条 seq；而补拉是按 seq 合并的，两边都
+ * 不会丢消息。
  */
 function LiveTranscriptDialog({
   task,
@@ -224,12 +234,10 @@ function LiveTranscriptDialog({
     enabled: false,
   });
 
-  // Force a backfill on open, and again when the task reaches a terminal state.
-  // `taskMessagesOptions` is `staleTime: Infinity`, so a plain subscription
-  // never refetches — a WS reconnect gap (or the final tail of messages a
-  // completed issue task never re-broadcasts) would otherwise leave a hole.
-  // The query's `structuralSharing` folds this response into whatever the
-  // realtime stream has already written, so neither side loses a seq.
+  // 打开时强制补拉一次，任务进入终态时再补一次。`taskMessagesOptions` 是
+  // `staleTime: Infinity`，所以单纯的订阅永远不会 refetch——WS 重连的空洞
+  // （或已完成 Issue 任务不会重播的尾部消息）不补拉就永远缺着。查询的
+  // `structuralSharing` 会把这次响应并入实时流已经写好的缓存，两边都不丢 seq。
   useEffect(() => {
     if (!isTaskMessageTaskId(task.id)) return;
     let cancelled = false;

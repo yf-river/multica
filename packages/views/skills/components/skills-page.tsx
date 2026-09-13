@@ -1,3 +1,7 @@
+// 本文件职责：技能（Skills）列表主页面。负责加载当前工作区的全部技能并渲染成
+// 一张可搜索/筛选/排序/勾选的虚拟滚动表格；每行聚合展示该技能被哪些 agent 使用、
+// 来源、创建者、更新时间等信息，并提供「新建技能」入口、列显隐工具栏与底部批量
+// 操作栏。排序/筛选/列显隐等偏好持久化在 core 的视图 store 里。
 "use client";
 
 import { useMemo, useRef, useState } from "react";
@@ -77,43 +81,33 @@ import {
 } from "./skill-list-actions";
 import { useT, useTimeAgo } from "../../i18n";
 
-// Column template — single source of truth for header, rows, and skeletons.
-// Tracks: [edge 0.75rem] [checkbox 1rem] [name, only fr track]
-// [usedBy] [source] [creator] [updated] [created] [kebab 1.75rem]
-// [edge 0.75rem].
-// Content cells carry a default px-2 from list-grid.tsx
-// (structural columns opt out with px-0), so the narrow edge tracks plus
-// cell padding land content 20px from the container edge. Non-core cells
-// carry `hidden @2xl:flex`. The breakpoint queries the CONTAINER (the page
-// wrapper is the `@container`), not the viewport, so sidebars and split
-// panes are accounted for.
-// Hideable tracks are DETERMINISTIC widths via CSS vars (no max-content):
-// rows are virtualized, so with only the visible slice mounted a
-// content-driven track would resize as different rows scrolled into view.
-// Truncation moved from per-cell max-w caps to the tracks themselves.
-// A user-hidden column zeroes its var (columnTrackVars), collapsing the
-// track exactly like the old max-content placeholder did; the empty
-// placeholder cell stays rendered to keep subgrid auto-placement intact.
+// 列模板：表头、数据行、骨架屏三处共用的唯一事实来源。
+// 轨道结构：[边距 0.75rem][复选框 1rem][名称，唯一 fr 弹性轨道][usedBy][source]
+// [creator][updated][created][操作 1.75rem][边距 0.75rem]。
+// 内容单元格默认带 list-grid.tsx 的 px-2 内边距（结构列用 px-0 取消），窄边距轨道
+// 加上单元格内边距后，内容正好距容器边缘 20px。非核心列带 `hidden @2xl:flex`；
+// 断点查的是容器宽度（页面外层是 `@container`）而非视口，所以侧栏/分栏造成的容器
+// 变窄也能正确触发换档。
+// 可隐藏列一律用 CSS 变量定死宽度（不用 max-content）：行是虚拟化的，若轨道宽度
+// 随内容浮动，行滚入/滚出时会不断改版式。截断也从「每格 max-w」挪到了轨道自身。
+// 用户隐藏某列时 columnTrackVars 把对应变量清零、轨道坍缩成 0 宽，效果等同旧的
+// max-content 占位；空的占位格仍会渲染，保证 subgrid 自动排布不乱。
 //
-// TWO-ZONE RESPONSIVENESS (replaces the retired per-tier breakpoints):
-// - Container ≥ @2xl (672px): WYSIWYG — every user-enabled column renders.
-//   The grid carries min-width = Σ(enabled tracks + gaps) so when the
-//   enabled set outgrows the container the wrapper scrolls horizontally.
-//   The scrollbar is the escape valve for an over-provisioned column set,
-//   never the default experience; an enabled column must NEVER silently
-//   vanish (that "dead toggle" bug shipped twice).
-// - Container < @2xl (phones, slim split panes): static core set
-//   (name + usedBy), no horizontal scroll, column toggles don't apply.
+// 两档响应式（取代早前按档位拆断点的做法）：
+// - 容器 ≥ @2xl（672px）：所见即所得——用户勾选的列全部渲染。网格带
+//   min-width = Σ(启用轨道+间距)，列总宽超出容器时外层横向滚动兜底；绝不让某个
+//   启用的列静默消失（「勾了白勾」这个 bug 曾出过两次）。
+// - 容器 < @2xl（手机、窄分栏）：固定核心两列（名称 + usedBy），不横向滚动，
+//   列显隐开关不生效。
 const GRID_COLS =
   "grid-cols-[0.75rem_1rem_minmax(120px,1fr)_var(--lgc-usedby)_1.75rem_0.75rem] " +
   "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_var(--lgc-usedby)_var(--lgc-source)_var(--lgc-creator)_var(--lgc-updated)_var(--lgc-created)_1.75rem_0.75rem]";
 
-// h-12 rows. The virtualizer's fixed-size contract: every row renders at
-// exactly this height, which is what lets it skip per-row measurement.
+// 行高 48px（h-12）。虚拟滚动要求每行固定这个高度：行高恒定，虚拟器才能
+// 跳过逐行实测、直接按固定尺寸推算渲染区间与偏移。
 const ROW_HEIGHT = 48;
 
-// Single source for hideable column widths: track vars and the grid's
-// min-width derive from the same numbers.
+// 可隐藏列宽的唯一事实来源：列轨道变量与网格 min-width 都从这组数推导。
 const COLUMN_WIDTHS: Record<SkillColumnKey, number> = {
   usedBy: 144,
   source: 152,
@@ -122,11 +116,14 @@ const COLUMN_WIDTHS: Record<SkillColumnKey, number> = {
   created: 104,
 };
 
-// Fixed tracks (edges 12+12, checkbox 16, name min 200, kebab 28) plus the
-// 9 gap-x-3 gaps between the wide template's 10 tracks (zero-width tracks
-// still carry gaps).
+// 固定轨道宽（左右边距 12+12、复选框 16、名称最小 200、操作 28）加上宽模板
+// 10 条轨道之间 9 个 gap-x-3 的间距（宽度为 0 的隐藏轨道同样占一个间距）。
 const FIXED_TRACKS_WIDTH = 268 + 9 * 12;
 
+/**
+ * 把各列显隐状态折算成 CSS 变量：可见列写入真实宽度，隐藏列写 0px 让轨道
+ * 坍缩；同时累加出启用轨道的最小总宽 `--lgc-minw`，供宽容器横向滚动兜底。
+ */
 function columnTrackVars(
   isVisible: (key: SkillColumnKey) => boolean,
 ): React.CSSProperties {
@@ -148,11 +145,22 @@ function columnTrackVars(
   } as React.CSSProperties;
 }
 
-// Sort/filter/column types and defaults live in the core view store
-// (@multica/core/skills/stores/view-store) so the persisted state and the
-// UI share one definition. Re-exported here for the toolbar's convenience.
+/**
+ * 排序字段的类型。排序/筛选/列显隐的类型与默认值定义在 core 的视图 store
+ * （@multica/core/skills/stores/view-store）里，持久化状态与 UI 共用同一份定义；
+ * 这里只是为工具栏引用方便而重新导出。
+ */
 export type SortField = SkillSortField;
 
+/**
+ * 表格中的一行数据：一个技能及其聚合信息，列表单元格、批量操作栏共用。
+ * - `skill`：技能摘要本身；
+ * - `agents`：正在使用该技能的所有 agent；
+ * - `creator`：创建者（成员表里查得到才非空，否则为 null）；
+ * - `runtime`：来源为本地 runtime 时对应的运行时实体，否则为 null；
+ * - `originType`：技能来源类型（手动/本地 runtime/ClawHub/Skills.sh/GitHub）；
+ * - `canEdit`：当前用户能否编辑/删除该技能。
+ */
 export interface SkillRow {
   skill: SkillSummary;
   agents: Agent[];
@@ -163,10 +171,13 @@ export interface SkillRow {
 }
 
 // ---------------------------------------------------------------------------
-// Page header bar — uses shared PageHeader so the mobile sidebar trigger and
-// h-12 chrome stay consistent with every other dashboard list page.
+// 页头栏：复用公共的 CollectionPageHeader，让移动端侧栏开关与 h-12 顶栏
+// 和其他仪表盘列表页保持一致。
 // ---------------------------------------------------------------------------
 
+/**
+ * 页头组件：展示技能图标、标题、总数、副标题与「新建技能」按钮。
+ */
 function PageHeaderBar({
   totalCount,
   onCreate,
@@ -197,15 +208,13 @@ function PageHeaderBar({
 }
 
 // ---------------------------------------------------------------------------
-// Cells
+// 各列单元格
 // ---------------------------------------------------------------------------
 
-// Hover-revealed multi-select checkbox. Same pattern as SkillPickerList:
-// the shadcn Checkbox is presentational only (`pointer-events-none`, so the
-// Base UI button can never swallow the click) and the wrapping <button> owns
-// the toggle. It stops click propagation so toggling never triggers the
-// row's whole-row navigation (see `useRowLink`) — no preventDefault needed,
-// the row is a plain <div>, not an <a>.
+// 悬停时才浮现的多选复选框。与 SkillPickerList 同一套做法：shadcn 的 Checkbox
+// 纯展示（`pointer-events-none`，永远点不到它），外包的 <button> 才负责开关。
+// 点击时 stopPropagation 阻止冒泡到整行的跳转逻辑（见 useRowLink）——行本身是
+// <div> 而非 <a>，所以不需要 preventDefault。
 function CheckboxCell({
   checked,
   onToggle,
@@ -352,8 +361,10 @@ function SourceCell({
     label = t(($) => $.table.source_github);
   }
 
-  // Imported skills link to their upstream page; the anchor must not bubble
-  // its click OR auxclick into the row's whole-row navigation.
+  // 从外部导入的技能要把 label 变成可点开上游页面的链接。行本身整行可点，
+  // 所以给这个 <a> 展开 rowLinkInteractiveProps：它同时 stopPropagation 掉
+  // click 与 auxclick（中键），点击既不会误触整行跳转，锚点的原生打开行为
+  // 也保持原样。
   const sourceUrl = originSourceUrl(origin);
 
   return (
@@ -404,7 +415,7 @@ function CreatorCell({ creator }: { creator: MemberWithUser | null }) {
 }
 
 // ---------------------------------------------------------------------------
-// Empty state
+// 空状态：工作区里一个技能都没有时，整页居中展示引导文案与新建按钮
 // ---------------------------------------------------------------------------
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
@@ -425,9 +436,13 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// List
+// 列表主体（表头 + 行）
 // ---------------------------------------------------------------------------
 
+/**
+ * 表格表头：渲染各列表头文字；支持点击排序（可排序列带升降序指示），
+ * 并在复选框轨道放一个三态全选按钮。
+ */
 function SkillListHeader({
   sortField,
   sortDirection,
@@ -451,9 +466,9 @@ function SkillListHeader({
   const anySelected = allSelected || someSelected;
   return (
     <ListGridHeader>
-      {/* Tri-state select-all in the checkbox track. Same presentational
-          Checkbox + interactive wrapper pattern as the row cells; revealed
-          on header hover or whenever a selection exists. */}
+      {/* 复选框轨道的三态全选按钮（全选/半选/未选）。与行内单元格同样的
+          「展示用 Checkbox + 交互外壳按钮」模式；表头悬停或已有任意选中时
+          才会浮现。 */}
       <div className="flex items-center justify-center">
         <button
           type="button"
@@ -541,9 +556,8 @@ function LoadingSkeleton() {
         <ListGridHeaderCell>
           <Skeleton className="h-3 w-14" />
         </ListGridHeaderCell>
-        {/* Source and created are hidden by default — keep their tracks
-            mapped with empty placeholders so the skeleton matches the
-            default layout. */}
+        {/* source 与 created 默认隐藏——仍给它们铺上空占位格，让骨架屏的
+            轨道排布与默认布局一致。 */}
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
         <ListGridHeaderCell className="hidden @2xl:flex">
           <Skeleton className="h-3 w-10" />
@@ -580,9 +594,14 @@ function LoadingSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
-// Page
+// 页面主组件
 // ---------------------------------------------------------------------------
 
+/**
+ * 技能列表页（默认导出）。加载技能/agent/成员/runtime 四路数据，把它们组装成
+ * 行模型后做筛选排序与虚拟滚动渲染；同时管理「新建技能」对话框、行多选与底部
+ * 批量操作栏。props 无（工作区 id 从上下文取）。
+ */
 export default function SkillsPage() {
   const { t } = useT("skills");
   const wsId = useWorkspaceId();
@@ -614,10 +633,9 @@ export default function SkillsPage() {
   );
   const [search, setSearch] = useState("");
 
-  // Persisted view preferences (per workspace, per user/device). Header sort
-  // buttons and the toolbar's display panel mutate the SAME store, so both
-  // surfaces always agree. Search and selection stay session-local on
-  // purpose.
+  // 已持久化的视图偏好（按工作区、按用户/设备分开保存）。表头排序按钮与工具栏
+  // 的显示面板写的是同一个 store，两处永远一致；搜索词与勾选则刻意只存在于
+  // 当前会话，不落盘。
   const sortField = useSkillsViewStore((s) => s.sortField);
   const sortDirection = useSkillsViewStore((s) => s.sortDirection);
   const hiddenColumns = useSkillsViewStore((s) => s.hiddenColumns);
@@ -666,7 +684,7 @@ export default function SkillsPage() {
     isAdmin,
   };
 
-  // Full assembled set — toolbar option lists and counts derive from this.
+  // 全量组装好的行集合（不过滤、不排序）——工具栏的下拉选项与计数都从它派生。
   const allRows = useMemo<SkillRow[]>(() => {
     return skills.map((skill) => {
       const origin = readOrigin(skill);
@@ -687,7 +705,8 @@ export default function SkillsPage() {
     });
   }, [skills, assignments, membersById, runtimesById, currentUserId, myRole]);
 
-  // Visible rows: name search + filters, then sort.
+  // 最终可见行：先按名称搜索词 + 三类筛选（使用情况/来源/agent/创建者）过滤，
+  // 再按当前排序字段排序；usedBy 排序相同时退回按名称排，保证顺序稳定。
   const rows = useMemo<SkillRow[]>(() => {
     const q = search.trim().toLowerCase();
     const filtered = allRows.filter((row) => {
@@ -742,13 +761,10 @@ export default function SkillsPage() {
     return filtered;
   }, [allRows, search, filters, sortField, sortDirection]);
 
-  // Row virtualization — Linear-style: the virtualizer only does the math
-  // (visible index range + offsets); the DOM stays ours. Offsets become
-  // padding on the rows wrapper, so the mounted rows remain direct subgrid
-  // children and column alignment is untouched. Fixed ROW_HEIGHT rows mean
-  // no per-row measurement. The scroll element is the SINGLE outer
-  // scroller (both axes) — see ListGridBody's comment for why the split
-  // scroll structure was retired.
+  // 行虚拟化——Linear 风格：虚拟器只负责算（可见行区间 + 偏移量），DOM 仍由
+  // 我们掌控。偏移量转成行容器的 padding，于是挂载中的行始终是 subgrid 的直接
+  // 子元素，列对齐不受影响。行高固定为 ROW_HEIGHT，因此无需逐行测量。滚动容器
+  // 是唯一的外层滚动条（横纵共用）；为何弃用分体滚动结构见 ListGridBody 注释。
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -770,7 +786,7 @@ export default function SkillsPage() {
     );
   };
 
-  // --- List request error ---
+  // --- 列表请求失败：整页降级为错误态，可重试 ---
   if (listError) {
     return (
       <div className="flex flex-1 min-h-0 flex-col">
@@ -805,8 +821,8 @@ export default function SkillsPage() {
   const supportingQueryDown =
     !!agentsError || !!membersError || !!runtimesError;
 
-  // Unmounted rows above/below the visible slice become padding on the
-  // scrolling body, exactly like Linear's --x-paddingTop/Bottom offsets.
+  // 可视区上/下没有挂载的行折成滚动主体的上下 padding，等价于 Linear 的
+  // --x-paddingTop/Bottom 偏移做法。
   const virtualItems = rowVirtualizer.getVirtualItems();
   const firstVirtual = virtualItems[0];
   const lastVirtual = virtualItems[virtualItems.length - 1];
@@ -818,8 +834,7 @@ export default function SkillsPage() {
   };
 
   return (
-    // relative: positioning anchor for the batch toolbar (page-centered,
-    // not viewport-centered).
+    // relative：给批量操作栏当定位锚点——它相对页面（而非视口）水平居中。
     <div className="relative flex flex-1 min-h-0 flex-col">
       <PageHeaderBar
         totalCount={totalCount}

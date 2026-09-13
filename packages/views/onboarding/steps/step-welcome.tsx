@@ -1,5 +1,7 @@
 "use client";
 
+// 引导第 0 步（欢迎页）：一次性的产品介绍屏，左文案右示意图，让新用户理解
+// 「人与 Agent 协作」的画面，然后开始探索或跳过回已有工作区。
 import { statusCategoryOfKey } from "@multica/core/issues";
 import { useState } from "react";
 import { ArrowRight, Loader2 } from "lucide-react";
@@ -14,23 +16,20 @@ import { ProviderLogo } from "../../runtimes/components/provider-logo";
 import { useT } from "../../i18n";
 
 /**
- * Step 0 — the one-shot product intro shown on every onboarding
- * entry (which-step-are-you-on is not persisted). Returning users
- * who are already onboarded never reach this screen; they're gated
- * out earlier by `!hasOnboarded`.
+ * 第 0 步——每次进入引导都会看到的一次性产品介绍页（走到哪一步不会被持久化）。
+ * 已经完成引导的老用户到不了这屏：更早的 `!hasOnboarded` 判断已把他们拦下。
  *
- * Layout: two-column editorial hero on lg+, single column below.
- * Left = wordmark + serif headline + lede + CTA; right = a stack of
- * mock issue cards that show what human/agent collaboration looks
- * like on the board — the thing the user is about to create. The
- * right column is an illustration, not content: hidden below lg so
- * the headline and CTA stay the focus on narrow viewports.
+ * 版式：lg+ 是左右两栏的编辑风主视觉，以下收成单栏。左栏 = 品牌字 + 衬线大字
+ * 标题 + 引导语 + CTA；右栏 = 一叠「示例任务卡片」，展示人与 Agent 在面板上
+ * 协作长什么样——也就是用户即将创建的东西。右栏只是插图、不是内容：lg 以下
+ * 隐藏，保证标题和 CTA 在窄屏上是焦点。
  *
- * `onSkip`, when provided, renders a secondary ghost CTA that marks
- * onboarding complete server-side and sends the user straight to
- * their existing workspace. OnboardingFlow only passes it when the
- * user has ≥ 1 workspace — without that, skipping lands in limbo.
+ * `onSkip` 提供时渲染一个次要的幽灵 CTA：在服务端把引导标记为完成，并把用户
+ * 直接送进他已有的工作区。OnboardingFlow 只在用户已有 ≥1 个工作区时才传它——
+ * 没有工作区就跳过，用户会落到没有着落的地方。
  *
+ * @param onNext 「开始探索」的回调（进入正式引导第一步）
+ * @param onSkip 「我以前弄过」的回调（直接跳到已有工作区，可选）
  */
 export function StepWelcome({
   onNext,
@@ -40,8 +39,7 @@ export function StepWelcome({
   onSkip?: () => void | Promise<void>;
 }) {
   const { t } = useT("onboarding");
-  // Tracks which button is mid-flight so we can show a per-button
-  // spinner and disable both while one is in progress.
+  // 记录哪个按钮正在请求中：用来显示各自的小菊花，并在这期间同时禁用两个按钮。
   const [pending, setPending] = useState<"next" | "skip" | null>(null);
 
   const handleNext = async () => {
@@ -66,7 +64,7 @@ export function StepWelcome({
 
   return (
     <div className="animate-onboarding-enter flex h-full min-h-[640px] flex-col lg:flex-row">
-      {/* Left — prose + CTA */}
+      {/* 左栏——文案 + 主按钮区（CTA） */}
       <div className="flex flex-col lg:flex-1">
         <DragStrip />
         <div className="flex flex-1 flex-col justify-center px-6 pb-12 sm:px-10 md:px-20 lg:px-20 xl:px-24">
@@ -124,12 +122,9 @@ export function StepWelcome({
         </div>
       </div>
 
-      {/* Right — mock issue cards illustration. Hidden on < lg.
-          Flex row on lg+ with `items-stretch` (default) makes both
-          columns take the container's full height, so the muted bg
-          fills the viewport edge-to-edge. `justify-center` inside
-          centers the mock cards vertically, mirroring the left
-          column's copy-center layout. */}
+      {/* 右栏——示例任务卡片插图。lg 以下隐藏。lg+ 用 flex 行 + 默认的
+          `items-stretch` 让两栏都撑满容器高度，灰色背景才能铺满整个视口边缘；
+          内部 `justify-center` 让示例卡片垂直居中，与左栏文案的居中构图呼应。 */}
       <div className="hidden border-l bg-muted/40 lg:flex lg:flex-1 lg:flex-col lg:overflow-hidden">
         <DragStrip />
         <div className="flex flex-1 flex-col items-center justify-center gap-7 px-8 py-8">
@@ -145,14 +140,12 @@ export function StepWelcome({
 
 
 /**
- * A day in a solo user's multi-agent workspace. Five activity cards
- * woven through 3 shared issues (MCA-42 appears 3×) so the reader can
- * *see* agents referencing each other's work — the product's
- * "one workspace, shared context" thesis rendered concretely.
+ * 「单人用户多 Agent 工作区里的一天」插画：五张活动卡片交织在三张共享任务上
+ * （MCA-42 出现 3 次），让读者能直观看到 Agent 们互相引用彼此的成果——
+ * 把产品「一个工作区、共享上下文」的主张落到实处。
  *
- * Cards use slight rotations + indents to feel like a hand-stacked
- * pile rather than a neat feed, which matches the editorial-hero
- * aesthetic of the left column.
+ * 卡片用了轻微旋转 + 缩进，看起来像随手叠起来的一摞而不是整齐的信息流，
+ * 呼应左栏编辑风主视觉。
  */
 function WelcomeIllustration() {
   const { t } = useT("onboarding");
@@ -265,9 +258,8 @@ function MockActivityCard({
     <div
       className={cn(
         "rounded-lg border bg-card px-4 py-3.5 shadow-sm",
-        // Decorative hover: lift, straighten, deeper shadow. Cards aren't
-        // clickable — this is ambient polish so the illustration feels like
-        // real app UI rather than a flat screenshot.
+        // 装饰性 hover：上浮、转正、阴影加深。卡片不可点——这些动效只是氛围感，
+        // 让插图像真实 App 界面而不是一张平面的截图。
         "transition-all duration-200 ease-out will-change-transform",
         "hover:-translate-y-0.5 hover:rotate-0 hover:shadow-md",
         className,
@@ -322,10 +314,9 @@ function StatusFooter({
   status: IssueStatus;
   timestamp?: string;
 }) {
-  // The illustration's statuses are hard-coded BUILT-IN keys, so the label
-  // resolves from i18n exactly the way `useStatusLabel` does for real issues
-  // (MUL-6243) — `STATUS_CONFIG` still owns the icon color, but its `.label`
-  // is the server's English seed and must never reach the screen.
+  // 插画里的状态都是硬编码的内置 key，所以文案要像真实任务的 `useStatusLabel`
+  // 那样从 i18n 取（MUL-6243）——`STATUS_CONFIG` 仍负责图标颜色，但它的 `.label`
+  // 是服务端的英文种子文案，绝不能直接上屏。
   const { t } = useT("issues");
   const category = statusCategoryOfKey(status);
   const cfg = STATUS_CONFIG[category];

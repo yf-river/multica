@@ -1,24 +1,21 @@
 /**
- * Fragment-navigation shim for sandboxed HTML attachment iframes.
+ * 沙箱 HTML 附件 iframe 的「锚点导航」补丁。
  *
- * HTML attachment previews mount the user-supplied document inside a
- * `<iframe sandbox="allow-scripts" srcdoc={...}>` — deliberately WITHOUT
- * `allow-same-origin`, because the source is untrusted user upload and
- * same-origin would let it reach cookies / localStorage / parent.document.
+ * HTML 附件预览会把用户提供的文档挂载在
+ * `<iframe sandbox="allow-scripts" srcdoc={...}>` 里——刻意**不带**
+ * `allow-same-origin`，因为内容来自不可信的用户上传，同源会让它够到
+ * cookie / localStorage / parent.document。
  *
- * That security posture has a side effect: in Chromium, a sandboxed srcdoc
- * iframe sits in an opaque origin, and the browser treats clicks on
- * `<a href="#section">` as cross-origin frame navigation — silently rejected,
- * no scroll, no error. See whatwg/html#3537 and crbug 40191760; it's a spec +
- * implementation consensus, not a bug we can wait out.
+ * 这个安全姿态有个副作用：在 Chromium 里，被沙箱的 srcdoc iframe 处于
+ * 不透明源，浏览器会把对 `<a href="#section">` 的点击视为跨源 frame 导航——
+ * 于是被静默拒绝，不滚动、也不报错。参见 whatwg/html#3537 与 crbug 40191760；
+ * 这是规范 + 实现层的共识行为，不是等版本就能等掉的 bug。
  *
- * The fix is in-iframe: append a tiny script to the document that listens for
- * fragment-link clicks and calls `scrollIntoView` itself. The script runs in
- * the iframe's own opaque origin — same capabilities the user's HTML already
- * has under `allow-scripts`; it cannot reach the parent. The shim only
- * intercepts `href="#..."` clicks, defers to any preventDefault handler the
- * user's HTML installed, and stays out of the way when the target id is
- * missing (so SPA / tab-style routers in the document can still handle it).
+ * 修复在 iframe 内部完成：往文档末尾追加一小段脚本，监听片段链接点击并
+ * 自行调用 `scrollIntoView`。脚本运行在 iframe 自身的不透明源里——与用户
+ * HTML 在 `allow-scripts` 下已有的能力相同，碰不到父页面。补丁只拦截
+ * `href="#..."` 的点击：尊重用户 HTML 安装的 preventDefault 处理器，
+ * 目标 id 不存在时也不干预（让文档里的 SPA / 标签式路由自行处理）。
  */
 const FRAGMENT_NAV_SHIM = `<script>
 (function(){
@@ -44,9 +41,13 @@ const FRAGMENT_NAV_SHIM = `<script>
 })();
 </script>`;
 
+/**
+ * 在给定 HTML 末尾追加锚点导航补丁脚本。
+ * @param html 原始 srcdoc HTML；为空时仅返回补丁脚本本身。
+ */
 export function withFragmentNavShim(html: string | undefined): string {
   return (html ?? "") + FRAGMENT_NAV_SHIM;
 }
 
-/** Exposed for unit tests so they can assert the shim was appended verbatim. */
+/** 暴露给单元测试，方便断言补丁脚本被原样追加。 */
 export const __FRAGMENT_NAV_SHIM__ = FRAGMENT_NAV_SHIM;

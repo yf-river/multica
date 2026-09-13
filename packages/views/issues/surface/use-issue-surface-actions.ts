@@ -1,5 +1,7 @@
 "use client";
 
+// 问题界面的写操作实现 hook：把单条更新、拖拽移动、批量更新/删除、打开创建弹窗
+// 等全部封装好，组装成供 actions-context 注入的整组动作，并对失败统一提示。
 import { useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import type { UpdateIssueRequest } from "@multica/core/types";
@@ -17,6 +19,7 @@ import {
 import type { IssueCreateDefaults } from "./types";
 import { useT } from "../../i18n";
 
+/** 拖拽移动问题时的一次完整写操作：字段 + 相对谁（before_id / after_id）。 */
 export type MoveIssueUpdates = Pick<
   UpdateIssueRequest,
   | "status"
@@ -30,6 +33,7 @@ export type MoveIssueUpdates = Pick<
   after_id: string | null;
 };
 
+/** useIssueSurfaceActions 返回的控制器：整组动作 + 创建弹窗 + 移动方法。 */
 export interface IssueSurfaceActionController {
   actions: IssueSurfaceActions;
   openCreateIssue: (defaults?: IssueCreateDefaults) => void;
@@ -40,6 +44,12 @@ export interface IssueSurfaceActionController {
   ) => void;
 }
 
+/**
+ * 实现问题界面的整组写操作：单条更新、拖拽移动（带 before/after 定位）、
+ * 批量更新/删除、打开创建弹窗，并统一错误提示。
+ * @param options.createDefaults - 创建问题弹窗的默认值。
+ * @returns 动作集合与创建/移动入口。
+ */
 export function useIssueSurfaceActions({
   createDefaults,
 }: {

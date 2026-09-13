@@ -1,17 +1,12 @@
-/**
- * Public types for the @multica/core/feature-flags module.
- *
- * The shape mirrors the Go-side server/pkg/featureflag package on purpose so
- * a Decision returned by the backend can be marshalled directly into the
- * frontend Service without translation. Keep them in sync when extending
- * either side.
- */
+// 本文件定义 @multica/core/feature-flags 模块的对外类型。
+//
+// 这些结构刻意与 Go 侧 server/pkg/featureflag 保持一致：后端返回的 Decision
+// 可以不经过任何转换直接序列化给前端 Service 使用。两侧扩展时请保持同步。
 
 /**
- * Reason explains why a Decision returned the value it did. Exposed in
- * diagnostics endpoints and in development overlays so engineers can tell
- * "this flag is on because the user is in the allowlist" apart from "this
- * flag is on because the default kicked in".
+ * Reason 解释一次 Decision 为什么得到这个结果。它会出现在诊断接口和开发
+ * 浮层里，让工程师能区分「这个开关开着是因为用户在白名单里」和「这个开关
+ * 开着是因为默认值生效了」。
  */
 export type Reason =
   | "static"
@@ -21,94 +16,87 @@ export type Reason =
   | "error";
 
 /**
- * Structured outcome of a single flag evaluation. Most callers only need
- * the {@link FeatureFlagService.isEnabled} convenience, but tests and
- * dev tools want the full record.
+ * 单个开关的一次求值结果。大多数调用方只需要 {@link FeatureFlagService.isEnabled}
+ * 这个便捷方法，但测试和开发工具想要完整记录。
  */
 export interface Decision {
-  /** The flag identifier that was evaluated. */
+  /** 被求值的开关标识。 */
   key: string;
-  /** Boolean projection. True for any variant except "off" / "" / "false" / "0". */
+  /** 布尔投影：除了 "off" / "" / "false" / "0" 之外的任意 variant 都为 true。 */
   enabled: boolean;
-  /** Raw variant value. Boolean flags use "on" / "off"; variant flags use arbitrary identifiers. */
+  /** 原始变体值。布尔开关用 "on" / "off"；变体开关用任意标识符。 */
   variant: string;
-  /** Why this decision was made. */
+  /** 这次结论产生的原因。 */
   reason: Reason;
-  /** Name of the provider that produced the decision, or "default" when nothing matched. */
+  /** 产出该结论的 provider 名；什么都没命中时为 "default"。 */
   source: string;
 }
 
 /**
- * Per-evaluation context for dynamic targeting (allow/deny lists, percent
- * rollouts). All fields are optional; a missing field never crashes the
- * evaluation, it simply skips the rules that depend on it.
+ * 每次求值携带的动态定向上下文（白/黑名单、百分比灰度）。所有字段可选：
+ * 缺少某个字段不会让求值崩溃，只会跳过依赖它的规则。
  */
 export interface EvalContext {
   userId?: string;
   workspaceId?: string;
-  /** Free-form attributes (plan, country, client, ...). Keys are case-sensitive. */
+  /** 自由格式的属性（套餐、国家、客户端……）。key 区分大小写。 */
   attributes?: Readonly<Record<string, string>>;
 }
 
 /**
- * Percent rollout descriptor. The bucket for (key, identifier) is computed
- * with FNV-1a so the same identifier always falls into the same bucket
- * across processes and tabs.
+ * 百分比灰度描述。(key, identifier) 用 FNV-1a 算出桶号，因此同一个标识符在
+ * 不同进程、不同标签页里总是落进同一个桶。
  */
 export interface PercentRollout {
-  /** Rollout size in [0, 100]. Out-of-range values are clamped. */
+  /** 灰度比例，范围 [0, 100]，越界会被夹回边界。 */
   percent: number;
   /**
-   * Attribute name used as the bucketing identifier. Defaults to "user_id".
-   * Use "workspace_id" for workspace-scoped rollouts.
+   * 用作分桶标识的属性名，默认 "user_id"。工作区维度灰度用 "workspace_id"。
    */
   by?: string;
 }
 
 /**
- * Rule describes how the {@link StaticProvider} evaluates a single flag.
+ * Rule 描述 {@link StaticProvider} 如何求值单个开关。
  *
- * Evaluation order (first match wins):
- *   1. Deny:    if the EvalContext attribute matches an entry in deny, return OFF.
- *   2. Allow:   if it matches an entry in allow, return ON.
- *   3. Percent: if the bucket falls inside percent.percent, return ON; else OFF.
- *   4. Default: return defaultValue.
+ * 求值顺序（先命中先赢）：
+ *   1. Deny：若 EvalContext 的属性命中 deny 里的条目，返回 OFF。
+ *   2. Allow：若命中 allow 里的条目，返回 ON。
+ *   3. Percent：若桶号落在 percent.percent 内，返回 ON，否则 OFF。
+ *   4. Default：返回 defaultValue。
  */
 export interface Rule {
-  /** Value returned when no targeting rule matches. Defaults to false. */
+  /** 没有任何定向规则命中时返回的值，默认 false。 */
   default?: boolean;
   /**
-   * Variant identifier returned WHEN the rule evaluates to enabled=true.
-   * Use for multi-arm experiments (e.g. "experiment-v2"). When the rule
-   * evaluates to enabled=false the Decision's variant is always "off",
-   * so callers branching on `Variant()` cannot accidentally enter the
-   * experiment arm for users that did not roll in.
+   * 当规则判定 enabled=true 时返回的变体标识，用于多臂实验（例如
+   * "experiment-v2"）。当规则判定 enabled=false 时，Decision 的 variant
+   * 恒为 "off"，这样按 `Variant()` 分支的调用方不可能因为用户没灰度进来
+   * 而误入实验组。
    */
   variant?: string;
-  /** Identifier values that force the flag ON. */
+  /** 命中就强制把开关打开（ON）的标识符列表。 */
   allow?: ReadonlyArray<string>;
-  /** EvalContext attribute used for allow lookups. Defaults to "user_id". */
+  /** allow 查询所用的 EvalContext 属性名，默认 "user_id"。 */
   allowBy?: string;
-  /** Identifier values that force the flag OFF. Deny wins over allow. */
+  /** 命中就强制把开关关掉（OFF）的标识符列表。Deny 优先于 allow。 */
   deny?: ReadonlyArray<string>;
-  /** EvalContext attribute used for deny lookups. Defaults to "user_id". */
+  /** deny 查询所用的 EvalContext 属性名，默认 "user_id"。 */
   denyBy?: string;
-  /** Deterministic percent rollout. */
+  /** 确定性的百分比灰度。 */
   percent?: PercentRollout;
 }
 
 /**
- * Provider is the configuration backend for the Service. Implementations
- * MUST be safe for concurrent use; the Service reads providers from many
- * components without additional synchronization.
+ * Provider 是 Service 的配置来源。实现 MUST 能并发安全使用：Service 会被很多
+ * 组件同时读取，而不额外做同步。
  *
- * Returning `undefined` (instead of a Decision) tells the Service to fall
- * through to the next provider in a ChainProvider, or to the caller's
- * default if there is no next provider.
+ * 返回 `undefined`（而不是一个 Decision）等于告诉 Service：让 ChainProvider
+ * 里下一个 provider 继续，或在没有下一个 provider 时回退到调用方给的默认值。
  */
 export interface Provider {
-  /** Stable, human-readable identifier surfaced in Decision.source. */
+  /** 稳定的、人类可读的标识，会体现在 Decision.source 里。 */
   readonly name: string;
-  /** Evaluate the flag, or return undefined if this provider does not know it. */
+  /** 求值一个开关；本 provider 不认识这个开关时返回 undefined。 */
   lookup(key: string, ctx: EvalContext): Decision | undefined;
 }

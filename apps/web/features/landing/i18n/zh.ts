@@ -1,6 +1,17 @@
+/**
+ * 官网 landing 的 zh-Hans 文案字典（纯数据，无逻辑）。
+ * 含 header / hero / 各功能区块 / FAQ / 页脚 / 关于 / 更新日志 / 下载 / 联系销售 等全部文案。
+ */
 import { githubUrl, discordUrl } from "../components/shared";
 import type { LandingDict } from "./types";
 
+/**
+ * 生成一套中文文案字典。
+ *
+ * @param allowSignup - 是否开放自助注册；为 false 时部分 CTA/文案会切换为
+ *   「联系商务」等表述（具体差异见本函数内引用该参数的位置）。
+ * @returns 完整的 LandingDict 文案对象。
+ */
 export function createZhDict(allowSignup: boolean): LandingDict {
   return {
   header: {

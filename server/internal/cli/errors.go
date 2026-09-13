@@ -1,3 +1,8 @@
+// errors.go 定义 cli（multica 命令行客户端）的「用户可读错误」体系：把网络层、
+// HTTP 状态层五花八门的底层错误归类成有限的 ErrorKind，再映射成友好的中/英文提示
+// 与分层的进程退出码。CLI 内部那些错误串（"resolve issue: ..."、裸的 net/http 报错、
+// JSON 响应体）对终端用户没有意义，FormatError 是把它们翻译成人话的唯一入口，
+// 在 main 顶层对冒出来的错误调用一次。
 package cli
 
 import (
@@ -15,34 +20,30 @@ import (
 	"syscall"
 )
 
-// ErrorKind is a coarse, user-facing classification of an error. The CLI's
-// many internal error strings ("resolve issue: ...", raw net/http messages,
-// JSON bodies) are not meaningful to end users; FormatError collapses them
-// into one of these kinds and renders a friendly, localized message.
+// ErrorKind 是面向用户的错误粗分类。CLI 内部错误串太多太杂，FormatError 会先把它们
+// 归到下面某一类，再渲染成友好的（本地化的）文案。
 //
-// The zero value is intentionally KindNetworkTimeout-adjacent only by index;
-// always classify explicitly rather than relying on the zero value.
+// 注意：零值并不是某种「默认网络错误」，一定要显式分类，不要依赖零值兜底。
 type ErrorKind int
 
 const (
-	// Network / transport layer (errors returned by http.Client.Do).
-	KindNetworkTimeout ErrorKind = iota // context deadline exceeded / i/o timeout
-	KindNetworkDNS                      // no such host
-	KindNetworkRefused                  // connection refused
-	KindNetworkTLS                      // x509 / tls handshake failures
-	KindNetworkOffline                  // catch-all: host unreachable, reset, etc.
-	// KindNetworkStalled is a transfer that stopped producing bytes (see
-	// StallError). Distinct from KindNetworkTimeout because the remedy is
-	// different: a timeout says "this took too long", a stall says "this went
-	// quiet", and only the latter is unaffected by raising a time limit.
+	// 网络 / 传输层（http.Client.Do 返回的那些错误）。
+	KindNetworkTimeout ErrorKind = iota // 报错文案含 context deadline exceeded / i/o timeout
+	KindNetworkDNS                      // no such host（域名解析不到）
+	KindNetworkRefused                  // connection refused（连接被拒）
+	KindNetworkTLS                      // x509 / tls 握手失败
+	KindNetworkOffline                  // 兜底：主机不可达、连接被重置等
+	// KindNetworkStalled 表示「传输中途停止产出字节」（见 StallError）。它和
+	// KindNetworkTimeout 的治疗方案不同，所以要区分：timeout 的意思是「太慢了」，
+	// stall 的意思是「没动静了」——只有后者不受「调高时限」影响。
 	KindNetworkStalled
 
-	// HTTP status layer.
+	// HTTP 状态码层。
 	KindAuthRequired // 401
-	// KindTaskTokenRejected is a 401 on a task-scoped token. HTTPError.Kind()
-	// never returns it — the status code alone cannot tell the two apart — so
-	// it is selected in userMessage, where the credential the request actually
-	// sent is known. Exit classification is unchanged: still an auth failure.
+	// KindTaskTokenRejected 是「task 专用令牌」收到的 401。HTTPError.Kind() 永远
+	// 不会返回它——单看状态码区分不了普通 401 与 task token 401——所以它由
+	// userMessage 里在「知道请求实际用的是哪种凭证」的地方挑出来。退出码归类不变：
+	// 仍然算认证失败。
 	KindTaskTokenRejected
 	KindForbidden   // 403
 	KindNotFound    // 404
@@ -51,20 +52,20 @@ const (
 	KindRateLimited // 429
 	KindServerError // 5xx
 
-	// Anything we could not classify.
+	// 无法归入上述任何一类的错误。
 	KindUnknown
 )
 
-// Tiered process exit codes. Stable so users can branch on them in scripts.
+// 分层的进程退出码。保持稳定，这样脚本可以拿它分支处理。
 const (
-	ExitGeneric    = 1 // anything not covered below
-	ExitNetwork    = 2 // any KindNetwork*
+	ExitGeneric    = 1 // 下面没有覆盖到的任何错误
+	ExitNetwork    = 2 // 任意 KindNetwork*
 	ExitAuth       = 3 // 401 / 403
 	ExitNotFound   = 4 // 404
 	ExitValidation = 5 // 400 / 422
 )
 
-// IsNetwork reports whether the kind is a transport-layer failure.
+// IsNetwork 报告该类别是否属于传输层失败。
 func (k ErrorKind) IsNetwork() bool {
 	switch k {
 	case KindNetworkTimeout, KindNetworkDNS, KindNetworkRefused, KindNetworkTLS, KindNetworkOffline, KindNetworkStalled:
@@ -74,9 +75,8 @@ func (k ErrorKind) IsNetwork() bool {
 	}
 }
 
-// String returns a stable, snake_case identifier for the kind. It is used in
-// --debug output and is safe to log or branch on; it is not user-facing copy
-// (see kindMessages / messageFor for that).
+// String 返回该类别稳定、snake_case 的标识。它用于 --debug 输出，可以安全地打日志
+// 或做分支判断；但不是给人看的文案（那部分见 kindMessages / messageFor）。
 func (k ErrorKind) String() string {
 	switch k {
 	case KindNetworkTimeout:
@@ -114,16 +114,16 @@ func (k ErrorKind) String() string {
 	}
 }
 
-// NetworkError wraps a transport-layer error (the error returned by
-// http.Client.Do, before any HTTP status is available). It strips the raw
-// URL out of the user-facing message while preserving the original error for
-// --debug output and errors.Is/As inspection.
+// NetworkError 包装传输层错误（http.Client.Do 在拿到任何 HTTP 状态码之前返回的
+// 错误）。它把原始 URL 从面向用户的文案里剥掉，同时保留原始错误给 --debug 输出和
+// errors.Is/As 检查用。
 type NetworkError struct {
 	Kind ErrorKind
-	Op   string // e.g. "GET /api/issues/abc" — shown only in --debug
-	Err  error  // the original net/http error
+	Op   string // 例如 "GET /api/issues/abc"——只在 --debug 里显示
+	Err  error  // 原始的 net/http 错误
 }
 
+// Error 拼出错误文本：带 Op 时前缀操作说明，否则直接透传底层错误文本。
 func (e *NetworkError) Error() string {
 	if e.Op != "" {
 		return fmt.Sprintf("%s: %s", e.Op, e.Err.Error())
@@ -131,17 +131,16 @@ func (e *NetworkError) Error() string {
 	return e.Err.Error()
 }
 
+// Unwrap 支持 errors.Is/As 穿透到原始错误。
 func (e *NetworkError) Unwrap() error { return e.Err }
 
-// UserMessageError attaches a command-specific, user-facing message to an
-// underlying error. FormatError shows Msg verbatim (in preference to the
-// generic kind-based copy it would otherwise derive from a wrapped
-// *NetworkError / *HTTPError), so command-level guidance — e.g. a `multica
-// login` failure that is more helpful than the generic 401/timeout line — is
-// visible in the default (non-debug) output.
+// UserMessageError 给底层错误附加一条「命令专用、面向用户」的消息。FormatError
+// 会优先原样展示 Msg（而不是根据被包装的 *NetworkError / *HTTPError 推导出来的
+// 泛型文案），这样命令级提示——例如 `multica login` 失败时比通用的 401/超时提示
+// 更有用的那句话——能在默认（非 --debug）输出里显示出来。
 //
-// It preserves Unwrap(), so ExitCodeFor still classifies by the underlying
-// typed error and --debug still prints the full original chain.
+// 它保留了 Unwrap()，因此 ExitCodeFor 仍按底层类型化错误分类，--debug 也仍能打印
+// 完整的原始错误链。
 type UserMessageError struct {
 	Msg string
 	Err error
@@ -156,9 +155,8 @@ func (e *UserMessageError) Error() string {
 
 func (e *UserMessageError) Unwrap() error { return e.Err }
 
-// WithUserMessage wraps err with a user-facing message that FormatError will
-// surface by default. It returns nil when err is nil so it can be used inline
-// in a `return` without an extra check.
+// WithUserMessage 给 err 包一层 FormatError 默认会展示的用户文案。err 为 nil 时也
+// 返回 nil，因此可以直接内联写在 return 里而不必先判空。
 func WithUserMessage(msg string, err error) error {
 	if err == nil {
 		return nil
@@ -166,7 +164,7 @@ func WithUserMessage(msg string, err error) error {
 	return &UserMessageError{Msg: msg, Err: err}
 }
 
-// Kind maps an HTTPError's status code onto an ErrorKind.
+// Kind 把 HTTPError 的状态码映射成 ErrorKind。
 func (e *HTTPError) Kind() ErrorKind {
 	switch e.StatusCode {
 	case 401:
@@ -189,24 +187,21 @@ func (e *HTTPError) Kind() ErrorKind {
 	}
 }
 
-// classifyNetworkError inspects a transport-layer error and returns the
-// matching network ErrorKind. It prefers typed inspection (errors.As /
-// errors.Is) and falls back to string matching for cases the standard library
-// does not expose as distinct types.
+// classifyNetworkError 检查一个传输层错误并返回匹配的网络类 ErrorKind。优先做类型
+// 化检查（errors.As / errors.Is），标准库没有暴露成独立类型的情况再退到字符串匹配。
 func classifyNetworkError(err error) ErrorKind {
 	if err == nil {
 		return KindUnknown
 	}
 
-	// A stalled transfer is checked first: the guard implements it by
-	// canceling the request context, so the underlying error would otherwise
-	// read as a generic cancellation and lose the reason.
+	// 卡死(停滞)要先查：它的实现是取消请求 context，不先查的话底层错误会读成普通的
+	// 「请求被取消」，真实原因就丢了。
 	var stalled *StallError
 	if errors.As(err, &stalled) {
 		return KindNetworkStalled
 	}
 
-	// Timeouts (context deadline or socket i/o timeout).
+	// 超时（context deadline 或 socket 的 i/o timeout）。
 	if errors.Is(err, context.DeadlineExceeded) {
 		return KindNetworkTimeout
 	}
@@ -215,13 +210,13 @@ func classifyNetworkError(err error) ErrorKind {
 		return KindNetworkTimeout
 	}
 
-	// DNS resolution failures.
+	// DNS 解析失败。
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
 		return KindNetworkDNS
 	}
 
-	// TLS / certificate failures.
+	// TLS / 证书类失败。
 	var certVerifyErr *tls.CertificateVerificationError
 	if errors.As(err, &certVerifyErr) {
 		return KindNetworkTLS
@@ -239,12 +234,12 @@ func classifyNetworkError(err error) ErrorKind {
 		return KindNetworkTLS
 	}
 
-	// Connection refused.
+	// 连接被拒。
 	if errors.Is(err, syscall.ECONNREFUSED) {
 		return KindNetworkRefused
 	}
 
-	// String fallbacks for anything not surfaced as a typed error.
+	// 字符串兜底：处理标准库没给独立类型的那些情况。
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "context deadline exceeded"), strings.Contains(msg, "timeout"), strings.Contains(msg, "timed out"):
@@ -259,9 +254,8 @@ func classifyNetworkError(err error) ErrorKind {
 	return KindNetworkOffline
 }
 
-// wrapTransport converts a raw transport error returned by http.Client.Do
-// into a *NetworkError. It returns nil when err is nil so call sites can
-// reassign unconditionally:
+// wrapTransport 把 http.Client.Do 返回的裸传输错误包成 *NetworkError。err 为 nil
+// 时返回 nil，因此调用点可以无脑赋值：
 //
 //	resp, err := c.HTTPClient.Do(req)
 //	err = wrapTransport(req, err)
@@ -277,23 +271,17 @@ func wrapTransport(req *http.Request, err error) error {
 	return &NetworkError{Kind: classifyNetworkError(err), Op: op, Err: err}
 }
 
-// wrapBodyRead classifies an error raised while reading or decoding a
-// response body.
+// wrapBodyRead 对「读/解码响应体」阶段抛出的错误做分类。
 //
-// wrapTransport only sees errors from http.Client.Do, which returns as soon as
-// the response headers arrive. Everything that goes wrong afterwards — the
-// case #7498 actually reports, a body that never finishes arriving — surfaces
-// out of the JSON decoder instead, and used to reach the user as a raw
-// "context deadline exceeded ... while reading body". A transport failure is
-// still a transport failure when the decoder is the one that notices it; a
-// genuine malformed-JSON error is returned unchanged.
+// 背景：wrapTransport 只能看到 http.Client.Do 的错误，而 Do 在响应头一到达就返回了。
+// 之后的一切问题——也就是 GH #7498 报告的真实场景：body 永远传不完——是从 JSON
+// 解码器里冒出来的，过去会以一行裸的 "context deadline exceeded ... while reading
+// body" 砸到用户脸上。解码器先发现「传输失败」，那它本质上还是传输失败；真正的
+// 畸形 JSON 错误则原样返回。
 //
-// io.ErrUnexpectedEOF is deliberately on the network side of that line. It is
-// what the decoder reports for a body that simply stops — a dropped
-// connection, a proxy cutting the response — which is vastly the more common
-// cause than a server that emits syntactically truncated JSON. Well-formed
-// nonsense (the ordinary server bug) raises *json.SyntaxError and is left
-// alone.
+// io.ErrUnexpectedEOF 被有意划在网络这一侧：解码器遇到 body 戛然而止（连接被掐、
+// 代理切断响应）时报的就是它，而这远比「服务器发出句法上截断的 JSON」常见。格式
+// 正确但内容不对（普通服务器 bug）抛 *json.SyntaxError，保持原样不管。
 func wrapBodyRead(req *http.Request, err error) error {
 	if err == nil {
 		return nil
@@ -312,7 +300,7 @@ func wrapBodyRead(req *http.Request, err error) error {
 	return err
 }
 
-// Language is the language FormatError renders messages in.
+// Language 是 FormatError 渲染文案用的语言。
 type Language int
 
 const (
@@ -320,9 +308,8 @@ const (
 	LangZH
 )
 
-// DetectLanguage chooses the output language from the environment. English is
-// the default (matching the CLI's help output); a Chinese locale in LC_ALL,
-// LC_MESSAGES, or LANG (in that precedence order) switches to Chinese.
+// DetectLanguage 从环境变量里选出输出语言。默认英文（与 CLI 帮助文本一致）；
+// 按 LC_ALL、LC_MESSAGES、LANG 的优先级顺序（locale 变量）出现中文前缀即切中文。
 func DetectLanguage() Language {
 	for _, key := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
 		v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
@@ -332,14 +319,14 @@ func DetectLanguage() Language {
 		if strings.HasPrefix(v, "zh") {
 			return LangZH
 		}
-		// First locale variable that is set wins; if it is not Chinese we
-		// fall through to English without consulting lower-precedence vars.
+		// 优先级最高的已设置的 locale 变量说了算；它不是中文就直接落到英文，
+		// 不再往下看低优先级的变量。
 		return LangEN
 	}
 	return LangEN
 }
 
-// kindMessages holds the {English, Chinese} user-facing message for each kind.
+// kindMessages 存各类别对应的 {英文, 中文} 用户文案。
 var kindMessages = map[ErrorKind][2]string{
 	KindNetworkTimeout: {
 		"Request timed out: the server did not respond in time. Check your network connection or try again later. You can raise the limit with MULTICA_HTTP_TIMEOUT.",
@@ -403,23 +390,20 @@ var kindMessages = map[ErrorKind][2]string{
 	},
 }
 
-// serverMessagePrefixes lists the kinds whose response body carries a
-// hand-written, actionable message worth showing instead of the generic
-// template, with the {English, Chinese} lead-in used to introduce it.
+// serverMessagePrefixes 列出那些「响应体里自带手写、可操作提示（值得优先于泛型文案
+// 展示）」的类别，并记录引入这些服务端消息时用的 {英文, 中文} 引导语。
 //
-// 409 belongs here because the generic conflict copy is not merely vague, it
-// points the wrong way: it reads as a transient race ("re-fetch the latest
-// state and try again") while every conflict this API returns is a
-// deterministic refusal that names its own fix ("a skill with this name
-// already exists", "set parent_id (--parent) to <id>"). Agents took the retry
-// hint literally and burned hours re-sending an unchanged request (GH #6264,
-// GH #5948), and the server-side wording added in MUL-4417 never reached them.
+// 409 之所以在这里：泛型冲突文案不仅含糊，还把方向指反了——它读起来像「瞬时竞态，
+// 重新拉取最新状态再试」，而这套 API 返回的每个冲突其实都是「确定性的拒绝」，并
+// 且都自带修法（"a skill with this name already exists"、"set parent_id (--parent)
+// to <id>"）。智能体曾把「重试」提示当真，白白花几小时重发一模一样的请求
+// （GH #6264、GH #5948），而 MUL-4417 加的服务端措辞从未到达过它们。
 var serverMessagePrefixes = map[ErrorKind][2]string{
 	KindValidation: {"Invalid request: ", "请求无效："},
 	KindConflict:   {"Request conflict: ", "请求冲突："},
 }
 
-// messageFor returns the localized message for a kind.
+// messageFor 返回某类别在当前语言下的文案。
 func messageFor(kind ErrorKind, lang Language) string {
 	m, ok := kindMessages[kind]
 	if !ok {
@@ -431,15 +415,12 @@ func messageFor(kind ErrorKind, lang Language) string {
 	return m[0]
 }
 
-// FormatError translates an error into a single user-facing line (or a
-// detailed multi-line block when debug is set). It is the only user-facing
-// translation entry point and is meant to be called once, at the top level
-// (main.go), on the error bubbling up from a command.
+// FormatError 把错误翻译成一行面向用户的文案（debug 打开时则是多行详情块）。它是
+// 唯一面向用户的翻译入口，约定只调用一次、在顶层（main.go）对命令冒出来的错误调用。
 //
-// When debug is false it skips the internal verb chain ("resolve issue: ...")
-// and the raw URL/JSON body, showing only the friendly message. When debug is
-// true (or MULTICA_DEBUG is set) it additionally prints the full original
-// error chain for troubleshooting.
+// debug 为 false 时，跳过内部的操作链（"resolve issue: ..."）和原始 URL/JSON 响应体，
+// 只显示友好文案。debug 为 true（或设了 MULTICA_DEBUG）时，额外打印完整原始错误链
+// 供排障。
 func FormatError(err error, debug bool) string {
 	if err == nil {
 		return ""
@@ -452,46 +433,38 @@ func FormatError(err error, debug bool) string {
 	return base
 }
 
-// userMessage produces the friendly message for the root cause of err.
+// userMessage 针对 err 的「根因」产出一条友好文案。
 func userMessage(err error, lang Language) string {
-	// A command-supplied user-facing message takes precedence over the generic
-	// kind-based copy, so command-specific guidance (e.g. sign-in failures) is
-	// visible by default. Unwrap() is preserved, so ExitCodeFor and --debug
-	// still see the underlying typed error.
+	// 命令自己提供的用户文案优先于泛型类别文案，这样命令级指引（例如登录失败）默认
+	// 就能看到。Unwrap() 被保留，ExitCodeFor 和 --debug 仍能看见底层的类型化错误。
 	var um *UserMessageError
 	if errors.As(err, &um) {
 		return um.Msg
 	}
 
-	// Transport-layer failure.
+	// 传输层失败。
 	var netErr *NetworkError
 	if errors.As(err, &netErr) {
 		return messageFor(netErr.Kind, lang)
 	}
 
-	// HTTP status failure.
+	// HTTP 状态码失败。
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
 		kind := httpErr.Kind()
-		// A 401 on a task token is not a login problem, and the generic copy
-		// below is the wrong instruction for whoever reads it: it says to sign
-		// in again or ask an administrator for valid credentials. An
-		// autonomous agent can act on that, and one did — after its task token
-		// stopped working mid-run it read the daemon owner's profile PAT and
-		// kept going under the member's identity (GH #7522).
+		// task token 收到 401 不是登录问题，下面的泛型文案对读它的人是错误指引：它叫
+		// 人重新登录或找管理员要凭证。自主运行的智能体真的会照着做——曾经就有一次，
+		// task token 在运行中途失效后，它读走了 daemon 主人的 profile PAT，以成员身份
+		// 继续跑（GH #7522）。
 		//
-		// What the copy must not do is guess *why*. The usual cause is the
-		// task reaching a terminal state, but the same 401 covers a malformed
-		// token, one sent to the wrong server, and one dropped by an unrelated
-		// cleanup. "Stop" is true in every one of those cases; "the task
-		// finished" is not.
+		// 文案绝不能去猜「为什么」。常见原因是 task 进入终态，但同一个 401 也涵盖
+		// 畸形 token、发错服务器、被无关清理逻辑删掉等。所有情况里「停止」都是对的；
+		// 「task 跑完了」则未必。
 		if kind == KindAuthRequired && httpErr.TaskScoped {
 			return messageFor(KindTaskTokenRejected, lang)
 		}
-		// Validation and conflict errors carry a useful server-provided
-		// message; surface it instead of the generic line. A body we cannot
-		// recognize still falls back to the template, so this never dumps a
-		// raw response at the user.
+		// validation 和 conflict 错误带一句服务端写好的有用提示，优先展示它而不是
+		// 泛型文案。认不出的响应体仍会落回模板，所以绝不会把裸响应倒给用户。
 		if prefix, ok := serverMessagePrefixes[kind]; ok {
 			if serverMsg := extractServerMessage(httpErr.Body); serverMsg != "" {
 				if lang == LangZH {
@@ -503,20 +476,17 @@ func userMessage(err error, lang Language) string {
 		return messageFor(kind, lang)
 	}
 
-	// Not a recognized typed error: this is typically a local/business error
-	// whose message is already meant for the user (e.g. a missing argument or
-	// a validation message constructed in a command). Show it as-is.
+	// 不是认识的结构化错误：通常是本地/业务错误，其文案本就是给用户看的（例如缺参数、
+	// 命令里拼出来的校验信息）。原样展示。
 	return strings.TrimSpace(err.Error())
 }
 
-// extractServerMessage tries to pull a human-readable message out of a JSON
-// error body like {"error":"..."} or {"message":"..."}. Returns "" if the
-// body is not JSON or has no recognizable message field.
+// extractServerMessage 尝试从形如 {"error":"..."} 或 {"message":"..."} 的 JSON 错误体
+// 里抠出一条人能读的消息。body 不是 JSON 或没有可识别的消息字段时返回 ""。
 //
-// A few endpoints put a stable machine code in "error" and the prose in
-// "message" (the issue-table cursor responses do this). Prose always wins;
-// a bare code is kept only as a last resort so the user still gets something
-// greppable when no sentence is on offer.
+// 少数端点把稳定的机器码放在 "error"、把说明文字放在 "message"（issue-table 游标
+// 响应就是这样）。散文优先；只有实在没有句子可展示时才退而保留裸代码，至少让用户
+// 有个能 grep 的东西。
 func extractServerMessage(body string) string {
 	body = strings.TrimSpace(body)
 	if body == "" || body[0] != '{' {
@@ -550,11 +520,9 @@ func extractServerMessage(body string) string {
 	return code
 }
 
-// looksLikeMachineCode reports whether s is a bare identifier such as
-// "cursor_query_mismatch" rather than a sentence meant for a person. The test
-// is deliberately narrow — lowercase word characters only — so that ordinary
-// prose in any language, including Chinese without ASCII spaces, is never
-// mistaken for a code.
+// looksLikeMachineCode 判断 s 是否是「裸标识符」（如 "cursor_query_mismatch"）而不是
+// 写给人的句子。判定刻意做得很窄——只允许小写字母数字下划线等——因此任何语言的普通
+// 散文（包括没有 ASCII 空格的汉语）都不会被误判成机器码。
 func looksLikeMachineCode(s string) bool {
 	if s == "" {
 		return false
@@ -569,8 +537,8 @@ func looksLikeMachineCode(s string) bool {
 	return true
 }
 
-// debugDetail renders the full original error chain plus any structured
-// details from typed errors, for --debug / MULTICA_DEBUG output.
+// debugDetail 把完整的原始错误链以及结构化错误里的细节拼出来，供 --debug /
+// MULTICA_DEBUG 输出。
 func debugDetail(err error) string {
 	var sb strings.Builder
 	sb.WriteString("[debug] ")
@@ -588,7 +556,7 @@ func debugDetail(err error) string {
 	return sb.String()
 }
 
-// debugEnabled reports whether MULTICA_DEBUG requests debug output.
+// debugEnabled 报告环境变量 MULTICA_DEBUG 是否请求调试输出。
 func debugEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("MULTICA_DEBUG"))) {
 	case "", "0", "false", "no", "off":
@@ -598,9 +566,8 @@ func debugEnabled() bool {
 	}
 }
 
-// ExitCodeFor maps an error onto a tiered process exit code so callers can
-// branch in scripts: network=2, auth(401/403)=3, not-found(404)=4,
-// validation(400/422)=5, everything else=1.
+// ExitCodeFor 把错误映射成分层的进程退出码，方便脚本分支：网络=2、认证(401/403)=3、
+// 未找到(404)=4、校验失败(400/422)=5、其余=1。
 func ExitCodeFor(err error) int {
 	if err == nil {
 		return 0

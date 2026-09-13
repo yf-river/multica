@@ -1,3 +1,4 @@
+// 离线提示条：当活动 agent 不可达（离线或不稳定）时，在聊天输入框上方显示提示。
 "use client";
 
 import { AlertCircle, WifiOff } from "lucide-react";
@@ -6,21 +7,25 @@ import type { AgentAvailability } from "@multica/core/agents";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { useT } from "../../i18n";
 
+/** OfflineBanner 组件的 props。 */
 interface Props {
-  /** Display name shown in the banner copy. */
+  /** 横幅文案中显示的 agent 名称。 */
   agentName?: string;
   /**
-   * Resolved presence availability. Pass `undefined` (or "loading") to
-   * suppress the banner — we only surface known offline / unstable states,
-   * never speculative copy.
+   * 已解析的在线状态。传 `undefined`（或 "loading"）会隐藏横幅——
+   * 我们只展示已知的离线 / 不稳定状态，从不展示猜测性的文案。
    */
   availability: AgentAvailability | undefined;
 }
 
-// Inline notice rendered above the chat input when the active agent isn't
-// reachable. Hides on `online`, `undefined`, or while presence is loading —
-// users get the silent default behaviour and only see copy when there's a
-// real-world implication for the message they're about to send.
+// 当活动 agent 不可达时，渲染在聊天输入框上方的行内提示。
+// 在 `online`、`undefined` 或在线状态加载中时隐藏——
+// 用户得到静默的默认行为，只有当他们即将发送的消息存在真实影响时才看到文案。
+/**
+ * 离线提示条：活动 agent 不可达时显示提示。
+ * @param agentName - agent 名称。
+ * @param availability - 在线状态。
+ */
 export function OfflineBanner({ agentName, availability }: Props) {
   const { t } = useT("chat");
   if (availability !== "offline" && availability !== "unstable") return null;

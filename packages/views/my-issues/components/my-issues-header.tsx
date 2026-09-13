@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * my-issues 模块：「我的 issue」页的头部。
+ * 包含范围（内置视图）切换、保存/切换视图、agent 运行中过滤、显示控制与
+ * 筛选条件条。移动端范围选择退化为下拉。
+ */
+
 import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
@@ -35,7 +41,7 @@ import { baselineFromQuery } from "@multica/core/issue-views/baseline";
 import { ViewBar } from "../../issues/components/view-bar";
 import type { IssueView } from "@multica/core/api/schemas";
 
-/** My Issues tab → saved-view scope_variant (API vocabulary). */
+/** My Issues 的标签页 → 已保存视图的 scope_variant（API 词汇）。 */
 const SAVE_VARIANT: Record<MyIssuesScope, Extract<SaveViewScope, { kind: "my" }>["variant"]> = {
   all: "any",
   assigned: "assigned",
@@ -43,6 +49,7 @@ const SAVE_VARIANT: Record<MyIssuesScope, Extract<SaveViewScope, { kind: "my" }>
   agents: "involved",
 };
 
+/** 我的 issue 页头部主体。 */
 export function MyIssuesHeader({
   allIssues,
   workingAgents,
@@ -54,14 +61,14 @@ export function MyIssuesHeader({
   onTableFacetChange,
 }: {
   allIssues: Issue[];
-  /** See IssueSurfaceController.workingAgents. My Issues used to ask the
-   *  working-agents endpoint for its own relation-scoped count; the surface
-   *  projection now covers the relation AND every active filter. */
+  /** 见 IssueSurfaceController.workingAgents。My Issues 过去会为它自己的关系
+   *  范围向 working-agents 端点另发一次请求；现在 surface 投影同时覆盖了
+   *  关系与每个生效中的筛选条件。 */
   workingAgents: WorkingAgentSummary[] | undefined;
   scope: MyIssuesScope;
   onScopeChange: (scope: MyIssuesScope) => void;
   isRefreshing?: boolean;
-  /** See IssueDisplayControls.facetCountsExact. */
+  /** 见 IssueDisplayControls.facetCountsExact。 */
   facetCountsExact?: boolean;
   tableFacetCounts?: IssueTableFacetsResponse;
   onTableFacetChange: (facet: IssueTableFacetSpec | null) => void;

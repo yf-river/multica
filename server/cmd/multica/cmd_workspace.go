@@ -1,3 +1,8 @@
+// 文件职责：实现 `multica workspace` 命令组——工作区的列出/创建/查看/更新与
+// 「默认工作区」切换（switch）、成员管理（member list/invite），以及工作区级 MCP
+// server 库的管理（mcp list/add/update/remove）。工作区引用统一收口在
+// resolveWorkspaceRef（支持 UUID/slug/短前缀）。MCP 库是写后不可读的（配置只写
+// 不回显），见各命令 Long。
 package main
 
 import (
@@ -14,11 +19,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// workspaceCmd 是 `multica workspace` 父命令。
 var workspaceCmd = &cobra.Command{
 	Use:   "workspace",
 	Short: "Work with workspaces",
 }
 
+// workspaceListCmd 列出当前登录用户所属的全部工作区。
 var workspaceListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all workspaces you belong to",
@@ -195,9 +202,8 @@ func init() {
 	workspaceUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	workspaceMcpListCmd.Flags().String("output", "json", "Output format: table or json")
-	// Same three mutually-exclusive secret-safe channels as `agent update`,
-	// resolved by the shared resolveMcpJSONObject so every surface agrees on
-	// what a valid payload is.
+	// 与 `agent update` 相同的三条互斥 secret-safe 通道，都由共用的
+	// resolveMcpJSONObject 解析——所有表面统一对「什么是合法 payload」的口径。
 	workspaceMcpAddCmd.Flags().String("server-config", "", "Server entry as JSON (avoid: lands in shell history)")
 	workspaceMcpAddCmd.Flags().Bool("server-config-stdin", false, "Read the server entry JSON from stdin")
 	workspaceMcpAddCmd.Flags().String("server-config-file", "", "Read the server entry JSON from a file")
@@ -210,18 +216,16 @@ func init() {
 	workspaceMcpRemoveCmd.Flags().String("output", "json", "Output format: table or json")
 }
 
-// workspaceSummary is the subset of fields the CLI needs from /api/workspaces
-// to drive list and switch. Keeping it here (instead of using the full
-// WorkspaceResponse) avoids a dependency on the handler package.
+// workspaceSummary 是 CLI 从 /api/workspaces 驱动 list/switch 所需的字段子集。
+// 放这里（而不是用完整的 WorkspaceResponse）避免对 handler 包的依赖。
 type workspaceSummary struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Slug string `json:"slug"`
 }
 
-// fetchWorkspaces lists all workspaces the authenticated user belongs to. It
-// is shared by `list` and `switch` so both see the same access-controlled view
-// of workspaces.
+// fetchWorkspaces 列出认证用户所属的全部工作区。`list` 与 `switch` 共用，保证两边
+// 看到同一份受访问控制的工作区视图。
 func fetchWorkspaces(ctx context.Context, cmd *cobra.Command) ([]workspaceSummary, error) {
 	serverURL := resolveServerURL(cmd)
 	token := resolveToken(cmd)
@@ -237,6 +241,7 @@ func fetchWorkspaces(ctx context.Context, cmd *cobra.Command) ([]workspaceSummar
 	return workspaces, nil
 }
 
+// runWorkspaceList 执行 `workspace list`：拉取所属工作区并输出（支持 --full-id）。
 func runWorkspaceList(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
@@ -279,23 +284,23 @@ func runWorkspaceList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// buildWorkspaceCreateBody 从 flag 收集 create 请求体（name/slug 必填，其余可选；
+// description 支持 stdin/行内解析）。
 func buildWorkspaceCreateBody(cmd *cobra.Command) (map[string]any, error) {
 	name, _ := cmd.Flags().GetString("name")
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("--name is required")
 	}
 
-	// The server requires both name and slug (POST /api/workspaces returns 400
-	// without them) and the slug is immutable after creation, so it must be
-	// chosen explicitly here rather than silently omitted.
+	// server 要求 name 与 slug 都提供（缺了 POST /api/workspaces 会返回 400），
+	// 且 slug 建后不可变，所以必须在这里显式挑选，而不是静默省略。
 	slug, _ := cmd.Flags().GetString("slug")
 	if strings.TrimSpace(slug) == "" {
 		return nil, fmt.Errorf("--slug is required")
 	}
 
-	// A single stdin stream cannot feed two fields: whichever field reads first
-	// drains it and the other gets EOF. Reject the ambiguous combination up
-	// front instead of surfacing a misleading "content is empty" error.
+	// 一条 stdin 流喂不了两个字段：谁先读谁抽干它，另一个只能拿到 EOF。与其
+	// 抛出一个误导性的 "content is empty"，不如在前面就把这种歧义组合拒掉。
 	descStdin, _ := cmd.Flags().GetBool("description-stdin")
 	ctxStdin, _ := cmd.Flags().GetBool("context-stdin")
 	if descStdin && ctxStdin {
@@ -327,6 +332,8 @@ func buildWorkspaceCreateBody(cmd *cobra.Command) (map[string]any, error) {
 	return body, nil
 }
 
+// runWorkspaceCreate 执行 `workspace create`：建新工作区并把自己设为 owner；
+// 不改当前默认工作区。
 func runWorkspaceCreate(cmd *cobra.Command, _ []string) error {
 	body, err := buildWorkspaceCreateBody(cmd)
 	if err != nil {
@@ -349,21 +356,18 @@ func runWorkspaceCreate(cmd *cobra.Command, _ []string) error {
 	return printWorkspace(cmd, ws)
 }
 
-// resolveWorkspaceByIDOrSlug looks up a workspace in the caller's accessible
-// list by full UUID, slug (case-insensitive), or short UUID prefix (≥4 hex
-// chars). The matching order is exact UUID → exact slug → prefix, so a slug
-// that happens to be a hex string can never be shadowed by a colliding UUID
-// prefix. Returns an error if no workspace matches, which doubles as the
-// "access denied / does not exist" check — the server only returns workspaces
-// the user is a member of, so a match implies access.
+// resolveWorkspaceByIDOrSlug 在调用方可访问的列表里，按完整 UUID、slug（忽略
+// 大小写）或短 UUID 前缀（≥4 位十六进制字符）查找工作区。匹配顺序是「精确
+// UUID → 精确 slug → 前缀」，所以一个恰好长得像十六进制字符串的 slug 绝不会被
+// 撞车的 UUID 前缀盖过。找不到匹配就报错，这同时充当「无权访问 / 不存在」检查
+// ——server 只返回用户是其成员的工作区，能匹配上即说明有权访问。
 func resolveWorkspaceByIDOrSlug(workspaces []workspaceSummary, target string) (workspaceSummary, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return workspaceSummary{}, fmt.Errorf("workspace id, slug, or id prefix is required")
 	}
-	// Slug comparison is case-insensitive (slugs are stored lowercase on the
-	// server, but tolerate user-typed uppercase). UUIDs are also case-
-	// insensitive in canonical form, so the lowering is safe for both.
+	// slug 比较忽略大小写（server 端存的是小写，但容忍用户输入大写）；规范
+	// 形式下 UUID 也忽略大小写，所以统一转小写对两者都安全。
 	lowered := strings.ToLower(target)
 	for _, ws := range workspaces {
 		if strings.ToLower(ws.ID) == lowered {
@@ -376,10 +380,9 @@ func resolveWorkspaceByIDOrSlug(workspaces []workspaceSummary, target string) (w
 		}
 	}
 
-	// Fall back to short UUID prefix matching, so values copied from
-	// `workspace list`'s default (truncated) ID column round-trip back into
-	// get/update/switch. normalizeUUIDPrefix enforces ≥4 hex chars to avoid
-	// surprises from arbitrary substrings.
+	// 回退到短 UUID 前缀匹配：从 `workspace list` 默认（截断）ID 列复制的值，
+	// 能原样作为 get/update/switch 的入参再解析回来。normalizeUUIDPrefix 强制
+	// 至少 4 位十六进制字符，避免任意子串带来意外命中。
 	if prefix, err := normalizeUUIDPrefix(target); err == nil {
 		matches := make([]workspaceSummary, 0, 1)
 		for _, ws := range workspaces {
@@ -389,7 +392,7 @@ func resolveWorkspaceByIDOrSlug(workspaces []workspaceSummary, target string) (w
 		}
 		switch len(matches) {
 		case 0:
-			// fall through to the not-found error below
+			// 落到下面的「未找到」报错
 		case 1:
 			return matches[0], nil
 		default:
@@ -400,6 +403,7 @@ func resolveWorkspaceByIDOrSlug(workspaces []workspaceSummary, target string) (w
 	return workspaceSummary{}, fmt.Errorf("workspace %q not found or you do not have access; run 'multica workspace list' to see options", target)
 }
 
+// ambiguousWorkspacePrefixError 把多个短前缀命中排成可读的歧义报错。
 func ambiguousWorkspacePrefixError(input string, matches []workspaceSummary) error {
 	parts := make([]string, 0, len(matches))
 	for _, m := range matches {
@@ -412,11 +416,10 @@ func ambiguousWorkspacePrefixError(input string, matches []workspaceSummary) err
 	return fmt.Errorf("ambiguous workspace id prefix %q; matches:\n%s\nUse more characters, the slug, or the full UUID", input, strings.Join(parts, "\n"))
 }
 
-// resolveWorkspaceRef fetches the caller's workspaces and resolves the input
-// (UUID, slug, or short UUID prefix) to a workspaceSummary. Shared by
-// `workspace get`, `workspace update`, `workspace member list`, and
-// `workspace switch` so all four accept the same identifiers users see in
-// `workspace list`.
+// resolveWorkspaceRef 拉取调用方的工作区列表，把输入（UUID、slug 或短 UUID
+// 前缀）解析成 workspaceSummary。`workspace get`/`workspace update`/
+// `workspace member list`/`workspace switch` 共用它，四条命令因此接受用户在
+// `workspace list` 里看到的同一批标识符。
 func resolveWorkspaceRef(ctx context.Context, cmd *cobra.Command, input string) (workspaceSummary, error) {
 	target := strings.TrimSpace(input)
 	if target == "" {
@@ -429,6 +432,8 @@ func resolveWorkspaceRef(ctx context.Context, cmd *cobra.Command, input string) 
 	return resolveWorkspaceByIDOrSlug(workspaces, target)
 }
 
+// runWorkspaceSwitch 执行 `workspace switch <ref>`：校验有权访问后把该工作区设成
+// 当前 profile 的默认（写 workspace_id 到配置）。
 func runWorkspaceSwitch(cmd *cobra.Command, args []string) error {
 	if err := requireHumanLocalCommand("workspace switch"); err != nil {
 		return err
@@ -455,13 +460,10 @@ func runWorkspaceSwitch(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// resolveWorkspaceArg returns the canonical UUID for a workspace command that
-// takes an optional `[workspace-id]` arg. When the arg is supplied it is
-// resolved against the caller's workspace list (UUID, slug, or short prefix);
-// when omitted it falls back to the standard --workspace-id / env / profile
-// resolution chain — the caller is responsible for guarding against the empty
-// case. A full UUID is forwarded as-is to avoid an extra /api/workspaces
-// round trip; access control is enforced by the downstream endpoint.
+// resolveWorkspaceArg 为带可选 `[workspace-id]` 参数的 workspace 命令返回规范
+// UUID。给了参数就按调用方工作区列表解析（UUID、slug 或短前缀）；没给则回退到
+// 标准 --workspace-id / env / profile 解析链——调用方负责兜住空串的情况。完整
+// UUID 原样透传以省掉一次 /api/workspaces 往返；访问控制由下游端点负责。
 func resolveWorkspaceArg(cmd *cobra.Command, args []string) (string, error) {
 	if len(args) > 0 {
 		trimmed := strings.TrimSpace(args[0])
@@ -479,6 +481,7 @@ func resolveWorkspaceArg(cmd *cobra.Command, args []string) (string, error) {
 	return resolveWorkspaceID(cmd), nil
 }
 
+// runWorkspaceGet 执行 `workspace get [ref]`：打印工作区详情。
 func runWorkspaceGet(cmd *cobra.Command, args []string) error {
 	wsID, err := resolveWorkspaceArg(cmd, args)
 	if err != nil {
@@ -504,6 +507,7 @@ func runWorkspaceGet(cmd *cobra.Command, args []string) error {
 	return printWorkspace(cmd, ws)
 }
 
+// printWorkspace 按 --output 渲染单个工作区。
 func printWorkspace(cmd *cobra.Command, ws map[string]any) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
@@ -532,10 +536,9 @@ func printWorkspace(cmd *cobra.Command, ws map[string]any) error {
 	return cli.PrintJSON(os.Stdout, ws)
 }
 
-// buildWorkspaceUpdateBody assembles the PATCH payload from the flags the
-// caller actually set, mirroring server/internal/handler/workspace.go's
-// UpdateWorkspaceRequest. Only fields whose flag is Changed() are emitted, so
-// the caller cannot accidentally clobber a field they did not pass.
+// buildWorkspaceUpdateBody 从调用方实际设置的 flag 拼出 PATCH 载荷，镜像
+// server/internal/handler/workspace.go 的 UpdateWorkspaceRequest。只有 Changed()
+// 过的字段才会进载荷，调用方因此不会意外清掉自己没传的字段。
 func buildWorkspaceUpdateBody(cmd *cobra.Command) (map[string]any, error) {
 	body := map[string]any{}
 	if cmd.Flags().Changed("name") {
@@ -558,9 +561,8 @@ func buildWorkspaceUpdateBody(cmd *cobra.Command) (map[string]any, error) {
 	}
 	if cmd.Flags().Changed("issue-prefix") {
 		v, _ := cmd.Flags().GetString("issue-prefix")
-		// The handler silently skips an empty prefix (workspace.go:274), so
-		// `--issue-prefix ""` would otherwise return 200 without changing
-		// anything. Reject it here so the failure is visible.
+		// handler 会静默跳过空 prefix（workspace.go:274），不然 `--issue-prefix ""`
+		// 会返回 200 却什么都没改。在这里拦住，让失败显性可见。
 		if strings.TrimSpace(v) == "" {
 			return nil, fmt.Errorf("--issue-prefix cannot be empty; clearing the prefix is not supported")
 		}
@@ -569,6 +571,8 @@ func buildWorkspaceUpdateBody(cmd *cobra.Command) (map[string]any, error) {
 	return body, nil
 }
 
+// runWorkspaceUpdate 执行 `workspace update [ref]`：更新工作区元数据（仅
+// admin/owner）。
 func runWorkspaceUpdate(cmd *cobra.Command, args []string) error {
 	wsID, err := resolveWorkspaceArg(cmd, args)
 	if err != nil {
@@ -602,6 +606,8 @@ func runWorkspaceUpdate(cmd *cobra.Command, args []string) error {
 	return printWorkspace(cmd, ws)
 }
 
+// runWorkspaceMcpList 执行 `workspace mcp list [ref]`：列出工作区 MCP 库的
+// 名字与传输方式（配置本身只写不回）。
 func runWorkspaceMcpList(cmd *cobra.Command, args []string) error {
 	wsID, err := resolveWorkspaceArg(cmd, args)
 	if err != nil {
@@ -627,6 +633,8 @@ func runWorkspaceMcpList(cmd *cobra.Command, args []string) error {
 	return printWorkspaceMcpServers(cmd, servers)
 }
 
+// runWorkspaceMcpAdd 执行 `workspace mcp add <server-name> [ref]`：把一条 MCP
+// server 配置加进库（不会自动派给任何 agent）。
 func runWorkspaceMcpAdd(cmd *cobra.Command, args []string) error {
 	serverName := strings.TrimSpace(args[0])
 	if serverName == "" {
@@ -665,6 +673,8 @@ func runWorkspaceMcpAdd(cmd *cobra.Command, args []string) error {
 	return printWorkspaceMcpServers(cmd, []workspaceMcpServer{server})
 }
 
+// runWorkspaceMcpUpdate 执行 `workspace mcp update <server-id> [ref]`：改名/替换
+// 配置（改名不影响已派给 agent 的引用，派发按 server id）。
 func runWorkspaceMcpUpdate(cmd *cobra.Command, args []string) error {
 	serverID := strings.TrimSpace(args[0])
 	if serverID == "" {
@@ -711,6 +721,8 @@ func runWorkspaceMcpUpdate(cmd *cobra.Command, args []string) error {
 	return printWorkspaceMcpServers(cmd, []workspaceMcpServer{server})
 }
 
+// runWorkspaceMcpRemove 执行 `workspace mcp remove <server-id> [ref]`：从库与所有
+// 已派 agent 上移除该 server。
 func runWorkspaceMcpRemove(cmd *cobra.Command, args []string) error {
 	serverID := strings.TrimSpace(args[0])
 	if serverID == "" {
@@ -741,23 +753,21 @@ func runWorkspaceMcpRemove(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// workspaceMcpServer is the CLI's half of the write-only boundary. Decoding
-// into named fields — rather than a map[string]any that gets re-encoded —
-// means a server that regressed to returning a stored entry, or a `url` /
-// `headers` inside one, cannot reach stdout through ANY output format. Fields
-// not declared here are dropped by encoding/json.
+// workspaceMcpServer 是 CLI 侧「只写边界」的一半：解码成具名字段——而不是一个
+// 会被原样重编码的 map[string]any——意味着即便 server 某天退化到回传已存的
+// 条目、或条目里带 `url`/`headers`，它们也无法经由任何输出格式到达 stdout：
+// 这里没声明的字段会被 encoding/json 直接丢弃。MCP server 列表里能安全展示的
+// 形态是名字与传输方式：存储配置只写不回，类型上就保证这条命令印不出任何配置。
 type workspaceMcpServer struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Transport string `json:"transport"`
-	// Only set on an agent's assignment list; nil in the workspace library.
+	// 只在 agent 的指派列表上出现；工作区库里为 nil。
 	Enabled *bool `json:"enabled,omitempty"`
 }
 
-// printWorkspaceMcpServers renders an MCP server list. There is no entry to
-// print in either format: the API never returns a stored configuration, and
-// the type above is what guarantees this command cannot print one even if the
-// API changed its mind.
+// printWorkspaceMcpServers 渲染 MCP server 列表。两种输出里都没有「配置条目」可
+// 打：API 从不返回已存配置，上面的类型定义则从结构上保证本命令打不出配置。
 func printWorkspaceMcpServers(cmd *cobra.Command, servers []workspaceMcpServer) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output != "table" {
@@ -783,6 +793,7 @@ func printWorkspaceMcpServers(cmd *cobra.Command, servers []workspaceMcpServer) 
 	return nil
 }
 
+// runWorkspaceMembers 执行 `workspace member list [ref]`：列出工作区成员。
 func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
 	wsID, err := resolveWorkspaceArg(cmd, args)
 	if err != nil {
@@ -824,15 +835,17 @@ func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runWorkspaceMemberInvite 执行 `workspace member invite <email> [ref]`：按邮箱发
+// 邀请（pending，待对方接受）；owner 不可邀请。
 func runWorkspaceMemberInvite(cmd *cobra.Command, args []string) error {
 	email := strings.ToLower(strings.TrimSpace(args[0]))
 	if email == "" {
 		return fmt.Errorf("email is required")
 	}
 
-	// Validate the role client-side to fail fast with a clear message; the
-	// server enforces the same rule (normalizeMemberRole rejects unknown roles
-	// and CreateInvitation refuses owner). Keep the accepted set in sync.
+	// 客户端先校验 role，用清晰的报错快速失败；server 端强制同一条规则
+	// （normalizeMemberRole 拒绝未知角色、CreateInvitation 拒绝 owner）。两边的
+	// 可接受集合要保持同步。
 	role, _ := cmd.Flags().GetString("role")
 	role = strings.ToLower(strings.TrimSpace(role))
 	if role == "" {

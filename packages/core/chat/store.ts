@@ -1,3 +1,6 @@
+// Chat 的客户端全局 store：浮窗开合、尺寸/展开、选中的 Agent/项目/会话、
+// 各会话输入草稿与上传、草稿恢复账本等。直接读写 localStorage（不走 Zustand persist），
+// 因为数据要么按 slug 隔离、要么按用户全局，且要兼容旧版草稿形态的迁移。
 import { create } from "zustand";
 import type { StorageAdapter } from "../types";
 import type { Attachment } from "../types/attachment";
@@ -13,68 +16,62 @@ import { createLogger } from "../logger";
 
 const logger = createLogger("chat.store");
 
+/** 上次选中 Agent 的存储 key（按工作区隔离）。 */
 const AGENT_STORAGE_KEY = "multica:chat:selectedAgentId";
+/** 上次选中项目上下文的存储 key（按工作区隔离）。 */
 const PROJECT_STORAGE_KEY = "multica:chat:selectedProjectId";
+/** 当前活跃会话 id 的存储 key（按工作区隔离）。 */
 const SESSION_STORAGE_KEY = "multica:chat:activeSessionId";
-/** Drafts are stored as one JSON blob per workspace: { [sessionId]: text }. */
+/** 草稿以"每个工作区一个 JSON blob"存储：{ [sessionId]: text }。 */
 const DRAFTS_KEY = "multica:chat:drafts";
-/** Draft attachment records per workspace: { [sessionId]: Attachment[] }. */
+/** 草稿附件记录，按工作区：{ [sessionId]: DraftUpload[] }。 */
 const DRAFT_ATTACHMENTS_KEY = "multica:chat:draft-attachments";
 /**
- * Ids of durable draft restores (#5219) this client has already written into a
- * composer. Persisted, because the server-side consume that follows can be lost
- * (retries exhausted, the app closed mid-flight) and the row would then be
- * re-offered on the next fetch — re-restoring a prompt the user has since sent.
- * The ledger makes the hand-off at-most-once regardless: an id in here is never
- * offered again, only reconciled (consumed again) until the row is gone.
+ * 本客户端已写进某个输入框的"持久草稿恢复"（#5219）的 id。
+ * 需要持久化，因为紧随其后的服务端消费可能丢失（重试耗尽、应用中途关闭），
+ * 该行下次拉取又会被重新弹出——把一条用户已发过的提示词再次恢复出来。
+ * 有账本在，交接最多一次：在这里的 id 永不再弹出，只会继续对账（再次消费）
+ * 直到该行真正消失。
  */
 const APPLIED_RESTORES_KEY = "multica:chat:applied-draft-restores";
 /**
- * Local restore requests waiting to reach a composer, queued per session (#5219).
+ * 本地"等待到达某输入框"的恢复请求，按会话排队（#5219）。
  *
- * These are the restores with NO server copy — a send that failed, or a cancel
- * that answered synchronously. The send already cleared the persisted draft, so
- * this queue is the only place their text exists. It is persisted for exactly
- * that reason: a request the composer cannot act on yet (the user is looking at
- * another session, or has work in progress in this one) must survive an unmount,
- * a refresh, or a close, and be re-offered when they come back.
+ * 这些是"没有服务端副本"的恢复——发送失败，或取消当场同步应答。发送已经清掉了
+ * 持久化草稿，所以这个队列是它们正文唯一存在的地方。正因如此必须持久化：一条输入框
+ * 还无法处理的请求（用户在另一个会话，或本会话正在编辑）必须扛过卸载、刷新、关闭，
+ * 等用户回来时再弹出。
  *
- * Durable restores (which have a server row) deliberately do NOT go in here —
- * they are refetchable, so dropping one loses nothing.
+ * 有服务端行的持久恢复刻意不进这里——它们可重取，丢一条无损失。
  */
 const PENDING_SEND_RESTORES_KEY = "multica:chat:pending-send-restores";
 /**
- * Draft slot for a chat that hasn't been created yet. There is exactly one per
- * workspace: the new-chat composer's identity is "the chat I have not created",
- * not "the chat I have not created with agent X". `selectedAgentId` is the send
- * target, not draft ownership, so switching agent mid-compose keeps the text
- * (MUL-4864). Created sessions keep their own slot, keyed by session id.
+ * 尚未创建出来的 chat 的草稿槽位。每个工作区恰好一个：新聊天输入框的身份是
+ * "我还没创建的那个聊天"，而不是"我和 Agent X 还没创建的那个聊天"。
+ * `selectedAgentId` 是发送目标，不是草稿归属，所以写到一半换 Agent 会保留正文
+ * （MUL-4864）。已创建的会话用自己的槽位，以 session id 为 key。
  */
 export const DRAFT_NEW_SESSION = "__new__";
 
-/** Pre-MUL-4864 per-agent new-chat slots, shaped `__new__:<agentId>`. */
+/** MUL-4864 之前的"按 Agent 分"新聊天槽位，形如 `__new__:<agentId>`。 */
 const LEGACY_NEW_SESSION_PREFIX = `${DRAFT_NEW_SESSION}:`;
 const CHAT_WIDTH_KEY = "multica:chat:width";
 const CHAT_HEIGHT_KEY = "multica:chat:height";
 const CHAT_EXPANDED_KEY = "multica:chat:expanded";
 /**
- * Open/closed preference, persisted globally (not per-workspace) — most users
- * have one habitual chat-panel preference across workspaces. Missing key =
- * new user (or cleared storage); default to CLOSED so opening a workspace
- * never pops the chat window uninvited (the FAB keeps it discoverable).
- * Once the user toggles even once, their explicit choice is respected on
- * every subsequent reload.
+ * 浮窗开/合的偏好，全局持久化（不按工作区）——多数用户跨工作区只有一种习惯性的
+ * 聊天面板偏好。key 缺失 = 新用户（或存储被清）；默认关，让打开工作区绝不擅自弹出
+ * 聊天窗（FAB 负责让人发现它）。一旦用户开关过一次，之后每次刷新都尊重其显式选择。
  */
 const OPEN_KEY = "multica:chat:isOpen";
 /**
- * Whether the floating chat window (FAB + overlay) is available at all,
- * persisted globally like OPEN_KEY. This is the Settings → Chat preference:
- * when off, the FAB/overlay never mount and Chat lives only in its tab.
- * Missing key = default ON — the floating window is on by default and can
- * be turned off from the Settings → Chat tab.
+ * 浮动聊天窗（FAB + 覆盖层）是否整体可用，与 OPEN_KEY 一样全局持久化。
+ * 这是 Settings → Chat 的偏好：关掉后 FAB/覆盖层永不挂载，Chat 只活在自己的标签里。
+ * key 缺失 = 默认开——浮窗默认开启，可从 Settings → Chat 关。
  */
 const FLOATING_KEY = "multica:chat:floatingChatEnabled";
 
+/** 从存储读草稿 map；解析失败或缺失返回空对象。 */
 function readDrafts(storage: StorageAdapter, key: string): Record<string, string> {
   const raw = storage.getItem(key);
   if (!raw) return {};
@@ -86,8 +83,9 @@ function readDrafts(storage: StorageAdapter, key: string): Record<string, string
   }
 }
 
+/** 写草稿 map，先清掉空字符串条目防止 blob 无限增长；全空则直接删 key。 */
 function writeDrafts(storage: StorageAdapter, key: string, drafts: Record<string, string>) {
-  // Prune empty entries so the blob doesn't grow unbounded.
+  // 修剪空条目，避免 blob 无界增长。
   const pruned: Record<string, string> = {};
   for (const [k, v] of Object.entries(drafts)) {
     if (v) pruned[k] = v;
@@ -99,7 +97,7 @@ function writeDrafts(storage: StorageAdapter, key: string, drafts: Record<string
   }
 }
 
-/** Shape check for server Attachment rows inside persisted restores. */
+/** 对持久化恢复里的服务端 Attachment 行做形状检查。 */
 function isAttachmentDraft(value: unknown): value is Attachment {
   return (
     typeof value === "object" &&
@@ -109,6 +107,7 @@ function isAttachmentDraft(value: unknown): value is Attachment {
   );
 }
 
+/** 从存储读草稿附件 map，并逐条归一化（见 normalizeStoredUploads 规则）。 */
 function readDraftAttachments(storage: StorageAdapter, key: string): Record<string, DraftUpload[]> {
   const raw = storage.getItem(key);
   if (!raw) return {};
@@ -118,10 +117,8 @@ function readDraftAttachments(storage: StorageAdapter, key: string): Record<stri
     const out: Record<string, DraftUpload[]> = {};
     for (const [draftKey, value] of Object.entries(parsed)) {
       if (!Array.isArray(value)) continue;
-      // Normalize on every load (MUL-5181 L2): bare Attachment rows persisted
-      // by pre-L2 builds become `uploaded` placeholders, and an upload still
-      // `uploading` at load time is dropped (bytes are gone, and nothing in the
-      // body references it).
+      // 每次加载都归一化（MUL-5181 L2）：L2 前持久化的裸 Attachment 行变成
+      // `uploaded` 占位；加载时仍 `uploading` 的上传被丢弃（字节已没，正文也没引用它）。
       const uploads = normalizeStoredUploads(value);
       if (uploads.length > 0) out[draftKey] = uploads;
     }
@@ -131,6 +128,7 @@ function readDraftAttachments(storage: StorageAdapter, key: string): Record<stri
   }
 }
 
+/** 读"已应用恢复"账本（字符串 id 数组）。 */
 function readAppliedRestores(storage: StorageAdapter, key: string): string[] {
   const raw = storage.getItem(key);
   if (!raw) return [];
@@ -143,11 +141,13 @@ function readAppliedRestores(storage: StorageAdapter, key: string): string[] {
   }
 }
 
+/** 写"已应用恢复"账本；为空则删 key。 */
 function writeAppliedRestores(storage: StorageAdapter, key: string, ids: string[]) {
   if (ids.length === 0) storage.removeItem(key);
   else storage.setItem(key, JSON.stringify(ids));
 }
 
+/** 判断值是否是合法的"待发送恢复"条目形状。 */
 function isPendingSendRestore(value: unknown): value is PendingSendRestore {
   if (typeof value !== "object" || value === null) return false;
   const v = value as { id?: unknown; content?: unknown; sessionId?: unknown };
@@ -156,6 +156,7 @@ function isPendingSendRestore(value: unknown): value is PendingSendRestore {
   );
 }
 
+/** 从存储读"待发送恢复"队列（按会话），并做形状过滤 + 附件清洗。 */
 function readPendingSendRestores(
   storage: StorageAdapter,
   key: string,
@@ -180,6 +181,7 @@ function readPendingSendRestores(
   }
 }
 
+/** 写"待发送恢复"队列（按会话）；清空后删 key。 */
 function writePendingSendRestores(
   storage: StorageAdapter,
   key: string,
@@ -193,6 +195,7 @@ function writePendingSendRestores(
   else storage.setItem(key, JSON.stringify(pruned));
 }
 
+/** 写草稿附件 map；清空后删 key。 */
 function writeDraftAttachments(
   storage: StorageAdapter,
   key: string,
@@ -210,18 +213,15 @@ function writeDraftAttachments(
 }
 
 /**
- * Fold the legacy per-agent new-chat slots into the single DRAFT_NEW_SESSION
- * slot, then drop them.
+ * 把遗留的"按 Agent 分"新聊天槽位折叠进统一的 DRAFT_NEW_SESSION 槽，然后删掉它们。
  *
- * The legacy slots carry no timestamp, so when several exist there is no way to
- * tell which one the user typed last — and "keep them all" has nowhere to put
- * the losers now that there is one composer. Adopt the slot belonging to the
- * persisted `selectedAgentId` (the draft this workspace would have shown on
- * open, so the only one the user can be expecting) and discard the rest: those
- * extra slots ARE the invisible multi-draft state this change removes.
+ * 遗留槽位不带时间戳，多个并存时无法判断用户最后敲的是哪个——而"全部保留"在现在
+ * 只有一个输入框的情况下无处安放失败者。采纳属于持久化 `selectedAgentId` 的那个槽
+ * （打开工作区时会显示的那份草稿，因此是用户唯一可能期待的那份），其余丢弃：
+ * 多出来的槽正是本次改动要移除的"隐形多草稿状态"。
  *
- * Both write paths prune empty values, so key presence means content.
- * Idempotent: once the legacy keys are gone this is an allocation-free no-op.
+ * 两个写路径都会修剪空值，所以 key 存在即代表有内容。
+ * 幂等：遗留 key 一旦删完，就是一次零分配的 no-op。
  */
 function migrateLegacyNewChatSlots<T>(
   slots: Record<string, T>,
@@ -231,8 +231,8 @@ function migrateLegacyNewChatSlots<T>(
   if (legacyKeys.length === 0) return { slots, changed: false };
   const next = { ...slots };
   const adopted = next[`${LEGACY_NEW_SESSION_PREFIX}${selectedAgentId ?? ""}`];
-  // Never clobber the unified slot: whatever is in it was written under the
-  // current scheme and is therefore newer than any legacy leftover.
+  // 绝不用遗留内容覆盖统一槽位：统一槽里不管是什么都是在现行方案下写的，
+  // 必然比任何遗留残留更新。
   if (!(DRAFT_NEW_SESSION in next) && adopted !== undefined) {
     next[DRAFT_NEW_SESSION] = adopted;
   }
@@ -246,10 +246,9 @@ function migrateLegacyNewChatSlots<T>(
 }
 
 /**
- * Read both draft maps and migrate them together, against the same
- * `selectedAgentId` — text and attachments must never disagree on which legacy
- * new-chat draft survived, or the user gets agent A's words with agent B's
- * files.
+ * 同时读取两份草稿 map，并对着同一个 `selectedAgentId` 一起迁移——正文与附件
+ * 绝不能对"哪份遗留新聊天草稿存活"产生分歧，否则用户会得到 Agent A 的文字配
+ * Agent B 的文件。
  */
 function loadDraftSlots(
   storage: StorageAdapter,
@@ -267,15 +266,16 @@ function loadDraftSlots(
   return { inputDrafts: drafts.slots, inputDraftAttachments: attachments.slots };
 }
 
+/** 聊天浮窗的最小尺寸。 */
 export const CHAT_MIN_W = 360;
 export const CHAT_MIN_H = 480;
+/** 聊天浮窗的默认尺寸。 */
 export const CHAT_DEFAULT_W = 380;
 export const CHAT_DEFAULT_H = 600;
 
 /**
- * Kept as a public type because existing consumers (chat-message-list,
- * views/chat types) import it. Items themselves no longer live in the
- * store — they flow through the React Query cache keyed by task id.
+ * 保留为公开类型，因为既有消费者（chat-message-list、views/chat 类型）会 import 它。
+ * 条目本身已不住在 store 里——它们经 React Query 缓存以任务 id 为 key 流动。
  */
 export interface ChatTimelineItem {
   seq: number;
@@ -288,96 +288,106 @@ export interface ChatTimelineItem {
 }
 
 /**
- * A restore with no server copy, waiting for a composer that can take it. Its
- * text exists nowhere else, so it lives in persisted storage until it is applied
- * (see PENDING_SEND_RESTORES_KEY).
+ * 一份"没有服务端副本"的恢复，等待能接住它的输入框。它的正文只存在于别处之外
+ * （已在持久存储里，直到被应用——见 PENDING_SEND_RESTORES_KEY）。
  */
 export interface PendingSendRestore {
   id: string;
   content: string;
   attachments?: Attachment[];
-  /** The session whose composer this belongs to. Never empty. */
+  /** 这条恢复所属会话的输入框。永不为空。 */
   sessionId: string;
 }
 
+/** Chat 客户端 store 的全部状态与方法。 */
 export interface ChatState {
+  /** 聊天浮窗是否打开。 */
   isOpen: boolean;
-  /** Settings preference: is the floating chat window available at all. */
+  /** 设置偏好：浮动聊天窗整体是否可用。 */
   floatingChatEnabled: boolean;
+  /** 当前活跃会话 id。 */
   activeSessionId: string | null;
+  /** 当前选中（要发起新聊天）的 Agent id。 */
   selectedAgentId: string | null;
-  /** Project context for the next session. Existing sessions remain bound to
-   *  their server-persisted project_id. */
+  /** 下一条会话的项目上下文。已有会话保持绑定自己服务端持久化的 project_id。 */
   selectedProjectId: string | null;
-  /** Drafts per session: sessionId (or DRAFT_NEW_SESSION) → markdown text. */
+  /** 各会话的输入草稿：sessionId（或 DRAFT_NEW_SESSION）→ markdown 正文。 */
   inputDrafts: Record<string, string>;
-  /** Attachment rows referenced by each input draft. */
-  /** Coordinator-owned uploads per draft slot (placeholders + completed). */
+  /** 各草稿槽位引用的附件（上传协调器持有：占位 + 已完成）。 */
   inputDraftAttachments: Record<string, DraftUpload[]>;
-  /** Durable draft restores already written into a composer (#5219). */
+  /** 已写进某输入框的持久草稿恢复 id（#5219）。 */
   appliedDraftRestoreIds: string[];
-  /** Server-less restores waiting for their session's composer, per session (#5219). */
+  /** 各会话排队等待输入框的"无服务端副本"恢复（#5219）。 */
   pendingSendRestores: Record<string, PendingSendRestore[]>;
-  /** Raw user-chosen size — no clamp applied. UI layer clamps at render time. */
+  /** 用户手选的原尺寸——不做夹取，UI 层渲染时再夹。 */
   chatWidth: number;
   chatHeight: number;
+  /** 是否处于展开（最大化）模式。 */
   isExpanded: boolean;
+  /** 打开/关闭浮窗。 */
   setOpen: (open: boolean) => void;
+  /** 切换浮窗开合。 */
   toggle: () => void;
+  /** 设置浮动聊天窗整体是否可用。 */
   setFloatingChatEnabled: (enabled: boolean) => void;
+  /** 切换当前活跃会话。 */
   setActiveSession: (id: string | null) => void;
+  /** 设置当前选中 Agent（发起新聊天的对象）。 */
   setSelectedAgentId: (id: string) => void;
+  /** 设置下一条会话的项目上下文。 */
   setSelectedProjectId: (id: string | null) => void;
-  /** sessionId accepts a real session UUID or DRAFT_NEW_SESSION. */
+  /** sessionId 接受真实会话 UUID 或 DRAFT_NEW_SESSION。 */
   setInputDraft: (sessionId: string, draft: string) => void;
-  /** Append a markdown fragment to a draft slot's text (upload write-back). */
+  /** 往某草稿槽位追加 markdown 片段（上传写回）。 */
   appendToInputDraft: (sessionId: string, markdown: string) => void;
   setInputDraftAttachments: (sessionId: string, uploads: DraftUpload[]) => void;
-  /** Record a completed server row as an uploaded entry (restore paths). */
+  /** 把一条已完成的服务端行记为 uploaded 条目（恢复路径用）。 */
   addInputDraftAttachment: (sessionId: string, attachment: Attachment) => void;
-  /** Record a placeholder the moment a file is picked (coordinator-owned). */
+  /** 选中文件的瞬间记录一个占位（协调器持有）。 */
   addInputDraftUpload: (sessionId: string, upload: DraftUpload) => void;
-  /** Swap a placeholder for its completed attachment. No-op if it's gone. */
+  /** 把占位换成完成的附件；占位不在则什么都不做。 */
   settleInputDraftUpload: (sessionId: string, clientUploadId: string, attachment: Attachment) => void;
-  /** Mark a placeholder failed. No-op if it's gone. */
+  /** 把占位标记为失败；占位不在则什么都不做。 */
   failInputDraftUpload: (sessionId: string, clientUploadId: string, error?: string) => void;
-  /** Drop a placeholder (dismiss a failure / interrupted). */
+  /** 丢弃一个占位（关闭失败/中断提示）。 */
   removeInputDraftUpload: (sessionId: string, clientUploadId: string) => void;
+  /** 清空某会话的草稿（正文 + 附件）。 */
   clearInputDraft: (sessionId: string) => void;
-  /** Record that a durable restore reached the composer; survives a reload. */
+  /** 记录一条持久恢复已到达输入框；刷新后依然生效。 */
   markDraftRestoreApplied: (restoreId: string) => void;
-  /** Drop the ledger entry once the server row is confirmed gone. */
+  /** 服务端行确认消失后，删掉账本条目。 */
   forgetDraftRestoreApplied: (restoreId: string) => void;
-  /** Queue a server-less restore for its session; survives unmount/refresh. */
+  /** 为某会话排队一条无服务端副本的恢复；扛过卸载/刷新。 */
   enqueuePendingSendRestore: (restore: PendingSendRestore) => void;
-  /** Drop a queued restore once its text is safely in the (persisted) draft. */
+  /** 恢复正文安全落进（持久化的）草稿后，从队列移除。 */
   dequeuePendingSendRestore: (sessionId: string, restoreId: string) => void;
-  /** Persist raw size and auto-exit expanded mode. */
+  /** 持久化原始尺寸，并自动退出展开模式。 */
   setChatSize: (width: number, height: number) => void;
   setExpanded: (expanded: boolean) => void;
 }
 
+/** 创建 chat store 所需的配置。 */
 export interface ChatStoreOptions {
   storage: StorageAdapter;
 }
 
+/** 创建 Chat 客户端 store（应用启动时调用一次并注册为单例）。 */
 export function createChatStore(options: ChatStoreOptions) {
   const { storage } = options;
 
+  /** 把基础 key 带上当前工作区 slug 作后缀，实现按工作区隔离。 */
   const wsKey = (base: string) => {
     const slug = getCurrentSlug();
     return slug ? `${base}:${slug}` : base;
   };
 
-  // Resolve initial isOpen from storage. The three-state read (null /
-  // "true" / "false") keeps the "new user → closed" default while still
-  // honouring an explicit "I opened it" choice on every reload.
+  // 从存储解析初始 isOpen。三态读取（null / "true" / "false"）既保留"新用户 → 关"
+  // 的默认，又在每次刷新时尊重显式的"我把它打开了"选择。
   const storedOpen = storage.getItem(OPEN_KEY);
   const initialIsOpen = storedOpen === "true";
 
-  // Default ON: the floating window is enabled unless the user explicitly
-  // turned it off ("false") from the Settings → Chat tab. A missing key
-  // (new user) resolves to enabled.
+  // 默认开：除非用户在 Settings → Chat 里显式关掉（"false"），否则浮窗可用。
+  // key 缺失（新用户）解析为可用。
   const initialFloatingEnabled = storage.getItem(FLOATING_KEY) !== "false";
 
   const initialAgentId = storage.getItem(wsKey(AGENT_STORAGE_KEY));
@@ -415,8 +425,7 @@ export function createChatStore(options: ChatStoreOptions) {
     setFloatingChatEnabled: (enabled) => {
       logger.info("setFloatingChatEnabled", { to: enabled });
       storage.setItem(FLOATING_KEY, String(enabled));
-      // Turning the feature off should also collapse an open overlay so it
-      // does not linger until the next toggle.
+      // 关掉功能时也应把开着的覆盖层收起，免得它赖到下一次开关。
       set(enabled ? { floatingChatEnabled: true } : { floatingChatEnabled: false, isOpen: false });
       if (!enabled) storage.setItem(OPEN_KEY, "false");
     },
@@ -440,13 +449,10 @@ export function createChatStore(options: ChatStoreOptions) {
       else storage.removeItem(wsKey(PROJECT_STORAGE_KEY));
       set({ selectedProjectId: id });
     },
-    // Append-only until the server confirms. There is deliberately no capacity
-    // cap: every entry in here is an UNconfirmed consume, and evicting one
-    // silently re-arms the restore it was suppressing — the row is still on the
-    // server, so the next fetch would offer an already-applied prompt again and
-    // the user could send it twice. Entries leave only through
-    // forgetDraftRestoreApplied, i.e. only once the row is provably gone, which
-    // bounds the ledger by the number of restores whose consume is still failing.
+    // 只增不删直到服务端确认。刻意不设容量上限：这里每条都是 UNconfirmed 消费，
+    // 逐出一条会静默重新武装它压制着的恢复——服务端行还在，下次拉取会把一条已应用
+    // 的提示词再次弹出，用户可能发它两次。条目只经 forgetDraftRestoreApplied 离开，
+    // 即只有行被证实消失才删，这也就把账本边界限制在"消费仍在失败中的恢复数"。
     markDraftRestoreApplied: (restoreId) => {
       const current = get().appliedDraftRestoreIds;
       if (current.includes(restoreId)) return;
@@ -454,7 +460,7 @@ export function createChatStore(options: ChatStoreOptions) {
       writeAppliedRestores(storage, wsKey(APPLIED_RESTORES_KEY), next);
       set({ appliedDraftRestoreIds: next });
     },
-    /** Called only on a confirmed consume: the server row is gone. */
+    /** 只在确认消费成功（服务端行已消失）时调用。 */
     forgetDraftRestoreApplied: (restoreId) => {
       const current = get().appliedDraftRestoreIds;
       if (!current.includes(restoreId)) return;
@@ -462,11 +468,9 @@ export function createChatStore(options: ChatStoreOptions) {
       writeAppliedRestores(storage, wsKey(APPLIED_RESTORES_KEY), next);
       set({ appliedDraftRestoreIds: next });
     },
-    // Queued per session, not in one shared slot: a request for a session the
-    // user is not looking at must never hold the composer's only restore slot
-    // (it would starve the session they ARE looking at), and it has no server
-    // copy to fall back on, so it cannot simply be dropped either. FIFO, so two
-    // failures against the same session are both recovered, oldest first.
+    // 按会话排队、不用一个共享槽：对用户当前没看的会话的请求绝不能占住输入框唯一的
+    // 恢复槽（会饿死用户正在看的那个会话），而它又没有服务端副本可回退，所以也不能
+    // 干脆丢掉。FIFO，让同一会话的两次失败都被恢复，最旧的先来。
     enqueuePendingSendRestore: (restore) => {
       if (!restore.sessionId || !restore.id) return;
       const current = get().pendingSendRestores;
@@ -480,7 +484,7 @@ export function createChatStore(options: ChatStoreOptions) {
       writePendingSendRestores(storage, wsKey(PENDING_SEND_RESTORES_KEY), next);
       set({ pendingSendRestores: next });
     },
-    /** Only after the text has landed in the draft, which is itself persisted. */
+    /** 只在正文已落进（本身已持久化的）草稿之后调用。 */
     dequeuePendingSendRestore: (sessionId, restoreId) => {
       const current = get().pendingSendRestores;
       const existing = current[sessionId];
@@ -494,7 +498,7 @@ export function createChatStore(options: ChatStoreOptions) {
       set({ pendingSendRestores: next });
     },
     setInputDraft: (sessionId, draft) => {
-      // Debug level — onUpdate fires on every keystroke.
+      // Debug 级——onUpdate 每次按键都触发。
       logger.debug("setInputDraft", { sessionId, length: draft.length });
       const next = { ...get().inputDrafts, [sessionId]: draft };
       writeDrafts(storage, wsKey(DRAFTS_KEY), next);
@@ -502,6 +506,7 @@ export function createChatStore(options: ChatStoreOptions) {
     },
     appendToInputDraft: (sessionId, markdown) => {
       const existing = get().inputDrafts[sessionId] ?? "";
+      // 已有正文时清掉行尾空白再补空行分隔，避免 markdown 粘成一团。
       const draft = existing.trim()
         ? `${existing.replace(/\s+$/, "")}\n\n${markdown}`
         : markdown;
@@ -523,6 +528,7 @@ export function createChatStore(options: ChatStoreOptions) {
       const current = get().inputDraftAttachments;
       const existing = current[sessionId] ?? [];
       const wrapped = attachmentToDraftUpload(attachment);
+      // 同 id 的 uploaded 条目已存在则替换为最新包装，否则追加。
       const nextForKey = existing.some(
         (u) => u.status === "uploaded" && u.attachment.id === attachment.id,
       )
@@ -537,6 +543,7 @@ export function createChatStore(options: ChatStoreOptions) {
     addInputDraftUpload: (sessionId, upload) => {
       const current = get().inputDraftAttachments;
       const existing = current[sessionId] ?? [];
+      // 同 clientUploadId 已存在则跳过（幂等）。
       if (existing.some((u) => u.clientUploadId === upload.clientUploadId)) return;
       const next = { ...current, [sessionId]: [...existing, upload] };
       writeDraftAttachments(storage, wsKey(DRAFT_ATTACHMENTS_KEY), next);
@@ -545,6 +552,7 @@ export function createChatStore(options: ChatStoreOptions) {
     settleInputDraftUpload: (sessionId, clientUploadId, attachment) => {
       const current = get().inputDraftAttachments;
       const existing = current[sessionId] ?? [];
+      // 占位已不在则什么都不做。
       if (!existing.some((u) => u.clientUploadId === clientUploadId)) return;
       const nextForKey = existing.map((u) =>
         u.clientUploadId === clientUploadId
@@ -576,6 +584,7 @@ export function createChatStore(options: ChatStoreOptions) {
     removeInputDraftUpload: (sessionId, clientUploadId) => {
       const current = get().inputDraftAttachments;
       const existing = current[sessionId] ?? [];
+      // 占位已不在则什么都不做。
       if (!existing.some((u) => u.clientUploadId === clientUploadId)) return;
       const remaining = existing.filter((u) => u.clientUploadId !== clientUploadId);
       const next = { ...current };
@@ -604,7 +613,7 @@ export function createChatStore(options: ChatStoreOptions) {
       logger.debug("setChatSize", { w, h });
       storage.setItem(CHAT_WIDTH_KEY, String(w));
       storage.setItem(CHAT_HEIGHT_KEY, String(h));
-      // Dragging = user chose a manual size → exit expanded mode
+      // 拖拽 = 用户选择了手动尺寸 → 退出展开模式。
       storage.removeItem(wsKey(CHAT_EXPANDED_KEY));
       set({ chatWidth: w, chatHeight: h, isExpanded: false });
     },
@@ -619,13 +628,11 @@ export function createChatStore(options: ChatStoreOptions) {
     },
   }));
 
-  // Self-register the chat draft persist keys so logout / workspace-delete
-  // clear them like every other draft store (previously leaked — the chat
-  // drafts, their attachments, and the applied-restore ledger survived a
-  // client-side logout into the next login on the same tab). All are
-  // workspace-scoped (persisted through `wsKey`, i.e. `${base}:${slug}`), and
-  // each entry resets only its own in-memory slice. The server-less restore
-  // queue is registered too so its recoverable text does not outlive the user.
+  // 把 chat 草稿的持久化 key 注册进草稿清理系统，让登出/删工作区像其它草稿 store
+  // 一样清掉（此前会泄漏——chat 草稿、附件、已应用恢复账本在客户端登出后仍存活到
+  // 同一标签页的下一次登录）。全部按工作区作用域（经 `wsKey` 持久化，即
+  // `${base}:${slug}`），每个条目只重置自己那片内存态。无服务端副本的恢复队列也注册，
+  // 让它的可恢复正文不活得比用户更久。
   registerDraftCleanup({
     storageKey: DRAFTS_KEY,
     workspaceScoped: true,
@@ -651,9 +658,8 @@ export function createChatStore(options: ChatStoreOptions) {
     const nextSession = storage.getItem(wsKey(SESSION_STORAGE_KEY));
     const nextAgent = storage.getItem(wsKey(AGENT_STORAGE_KEY));
     const nextProject = storage.getItem(wsKey(PROJECT_STORAGE_KEY));
-    // Drafts are namespaced per workspace, so the workspace being switched TO
-    // has its own legacy slots to fold — migrate against that workspace's own
-    // persisted agent, not the one we are leaving.
+    // 草稿按工作区命名空间，因此要切换去的那个工作区有自己的遗留槽位要折叠——
+    // 应对着那个工作区自己的持久化 Agent 迁移，而不是我们正要离开的那个。
     const { inputDrafts: nextDrafts, inputDraftAttachments: nextDraftAttachments } = loadDraftSlots(
       storage,
       wsKey(DRAFTS_KEY),
@@ -670,6 +676,7 @@ export function createChatStore(options: ChatStoreOptions) {
       draftCount: Object.keys(nextDrafts).length,
       draftAttachmentCount: Object.keys(nextDraftAttachments).length,
     });
+    // 整体换成新工作区的持久化状态。
     store.setState({
       activeSessionId: nextSession,
       selectedAgentId: nextAgent,

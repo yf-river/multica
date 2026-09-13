@@ -1,5 +1,18 @@
 package agent
 
+// 角色定位：本文件是 Codex CLI 的适配层，实现了 Backend 接口：拉起 `codex
+// app-server --listen stdio://` 子进程，通过 stdin/stdout 上的 JSON-RPC 2.0 与之对话，
+// 把 codex 的 thread/turn 协议翻译成本包统一的 Message/Result/Session。
+
+// 职责边界：管「进程生命周期 + JSON-RPC 客户端」这一整条链——参数归一化、MCP 配置
+// 落盘、启动握手、线程建立/resume、回合守护（语义静默/首轮无进展/握手三类超时）、
+// 产物与用量收集、进程树清理。不解析 AGENTS.md，不做任务持久化（在 daemon）。
+
+// 内部组织：先是常量/标记（含 MUL-5542 起的快速失败 watchdog 族），再是启动参数与
+// config.toml 里的受管 MCP block 渲染/剥离（密钥不落 argv），随后 executeOnce 的进程
+// 编排与 drainAndWait 两阶段清理，再往下是 codexClient 的 JSON-RPC 传输层、事件归一化
+// （patch/MCP/权限自动批准），最后是会话 JSONL 用量扫描。
+
 import (
 	"bufio"
 	"context"
@@ -23,14 +36,13 @@ import (
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
-// codexBlockedArgs are flags hardcoded by the daemon that must not be
-// overridden by user-configured custom_args. The mcp_servers config keys
-// live in the per-task `$CODEX_HOME/config.toml` (written by
-// ensureCodexMcpConfig); user-supplied `-c mcp_servers.…` overrides are
-// stripped separately by filterCodexCustomConfigOverrides because they
-// share the `-c` flag with legitimate non-MCP overrides like `-c model=…`.
+// codexBlockedArgs 是 daemon 硬编码、绝不允许被用户 custom_args 覆盖的启动参数。
+// mcp_servers 相关的配置键写在每个任务自己的 `$CODEX_HOME/config.toml` 里（由
+// ensureCodexMcpConfig 写入）；用户再传 `-c mcp_servers.…` 覆盖会被
+// filterCodexCustomConfigOverrides 单独剔除——因为 `-c` 还要承载合法的非 MCP 覆盖
+// （如 `-c model=…`），不能一刀切禁掉整个 `-c`。
 var codexBlockedArgs = map[string]blockedArgMode{
-	"--listen": blockedWithValue, // stdio:// transport for daemon communication
+	"--listen": blockedWithValue, // 通信走 stdio:// 传输，禁止改监听方式
 }
 
 const (
@@ -39,49 +51,37 @@ const (
 	codexFastModeFeature     = "fast_mode"
 )
 
-// codexStderrTailBytes bounds the stderr tail captured for inclusion in
-// error messages when codex exits before the JSON-RPC handshake (e.g. the
-// user supplied a custom_args flag that the `app-server` subcommand
-// rejects). Kept as its own constant so bumping codex independently of
-// other agents stays easy if codex starts shipping longer failure traces.
+// codexStderrTailBytes 限制收录进错误信息里的 stderr 尾部字节数——用于 codex 在
+// JSON-RPC 握手之前就退出的场景（例如用户在 custom_args 里传了 `app-server` 子命令
+// 不接受的参数）。单独成常量，方便日后 codex 输出更长失败堆栈时独立于其它 agent 调整。
 const (
 	codexStderrTailBytes                  = 2048
 	defaultCodexSemanticInactivityTimeout = 10 * time.Minute
-	// defaultCodexFirstTurnNoProgressTimeout caps how long the first turn may
-	// stay completely silent after the app-server reports turn/started. Its only
-	// job is to fail fast instead of waiting out
-	// defaultCodexSemanticInactivityTimeout, so it only has to stay well under
-	// that 10 minute backstop.
+	// defaultCodexFirstTurnNoProgressTimeout 限制第一轮在 app-server 上报 turn/started
+	// 之后最多可以保持完全静默多久。它的唯一作用是快速失败，而不是熬到
+	// defaultCodexSemanticInactivityTimeout（10 分钟兜底）才收场，所以只需明显小于后者。
 	//
-	// 30s turned out to sit inside the normal range rather than above it: two
-	// independent field reports measured the first progress event landing just
-	// past 30s on gpt-5.5, and ~39s for a WSL app-server (GH #5959). Both were
-	// healthy turns the watchdog killed. 60s clears that evidence with margin
-	// while keeping the fast-fail value (MUL-5542).
+	// 为什么取 60s 而不是 30s：两起独立的线上反馈测到 gpt-5.5 的首次进度事件刚好落在
+	// 30s 之后，WSL 上的 app-server 则约 39s（GH #5959）——两者都是被误杀的健康轮次。
+	// 60s 在这批证据之上留足余量，同时保住快速失败的价值（MUL-5542）。
 	defaultCodexFirstTurnNoProgressTimeout = 60 * time.Second
 	defaultCodexHandshakeTimeout           = 30 * time.Second
-	// thread/start and thread/resume may refresh the model catalog, initialize
-	// MCP integrations, and restore persisted history. Field evidence shows
-	// healthy calls crossing the 30s budget used for local initialize, so keep
-	// their default separate without slowing failures for lightweight RPCs.
+	// thread/start 与 thread/resume 可能会刷新模型目录、初始化 MCP 集成、恢复历史会话。
+	// 线上证据显示健康调用会跨过此前给本地 initialize 用的 30s 预算，所以单独给它们更长
+	// 的默认值，又不拖慢轻量 RPC 的失败速度。
 	defaultCodexThreadHandshakeTimeout = 60 * time.Second
 	codexVersionDiagnosticTimeout      = 2 * time.Second
-	// codexGracefulShutdownTimeout bounds how long the lifecycle goroutine
-	// waits for codex to exit on its own after stdin is closed, before forcing
-	// a context-cancel kill. A clean exit lets codex run its shutdown path and
-	// flush buffered telemetry — OTEL batch exporters only force-flush on
-	// graceful shutdown, so killing it immediately (the prior behavior) drops
-	// the task's spans/metrics/logs.
+	// codexGracefulShutdownTimeout 限制生命周期 goroutine 在关闭 stdin 后、强杀进程前，
+	// 愿意等 codex 自行退出的时长。干净退出能触发 codex 的收尾逻辑并冲刷缓存的遥测——
+	// OTEL 批量导出器只在优雅停机时强制 flush，立刻杀掉（旧行为）会丢掉本次任务的
+	// span/指标/日志。
 	codexGracefulShutdownTimeout = 10 * time.Second
 )
 
-// codexGracefulShutdownTimeoutNanos optionally overrides
-// codexGracefulShutdownTimeout for tests, in nanoseconds. Zero or negative
-// values keep the production default. Tests for the cleanup-on-scanner-
-// overflow path (#4520) use it to shrink the grace window from 10 s to a
-// few hundred ms so the regression runs in a normal `go test` budget
-// instead of burning two full grace windows per cleanup phase. Mirrors
-// the opencodeTerminateGraceNanos hook.
+// codexGracefulShutdownTimeoutNanos 供测试按纳秒覆盖 codexGracefulShutdownTimeout。
+// 零或负值保持生产默认。scanner 溢出清理路径的回归测试（#4520）用它把宽限期从 10s
+// 缩到几百毫秒，让回归在常规 `go test` 预算内跑完，而不是每个清理阶段烧掉两个完整
+// 宽限期。与 opencodeTerminateGraceNanos 钩子同构。
 var codexGracefulShutdownTimeoutNanos atomic.Int64
 var codexProcessWaitDelayNanos atomic.Int64
 var activeCodexLaunches atomic.Int64
@@ -114,17 +114,18 @@ func codexProcessWaitDelay() time.Duration {
 }
 
 type codexStderrClassification struct {
-	// modelRefreshFailure is the broad catalog failure bucket. It includes the
-	// narrower modelRefreshTimeout bucket, so the two counts are not additive.
+	// modelRefreshFailure 是「模型目录刷新失败」的宽口径计数，涵盖下面更窄的
+	// modelRefreshTimeout，所以两者不可相加。
 	modelRefreshFailure int
 	modelRefreshTimeout int
-	mcpInitTransport    int
-	bareTimeout         int
+	// mcpInitTransport：stderr 某行同时出现 mcp/transport 与 error/failed/closed。
+	mcpInitTransport int
+	// bareTimeout：确实超时，但没匹配到任何已知故障特征。
+	bareTimeout int
 }
 
-// classifyCodexStartupStderr emits bounded counters only. It deliberately does
-// not make retry decisions: stderr is sibling diagnostic evidence, not proof
-// that thread/start did or did not create a provider-side thread.
+// classifyCodexStartupStderr 只输出受边界限制的计数器，刻意不做「是否重试」的决策：
+// stderr 只是旁证，不能证明 thread/start 到底有没有在服务端建出线程。
 func classifyCodexStartupStderr(stderr string, timedOut bool) codexStderrClassification {
 	lower := strings.ToLower(sanitizeCodexDiagnostic(stderr))
 	classification := codexStderrClassification{
@@ -137,51 +138,43 @@ func classifyCodexStartupStderr(stderr string, timedOut bool) codexStderrClassif
 			classification.mcpInitTransport++
 		}
 	}
-	// Any catalog refresh failure now owns the timeout classification, not only
-	// the narrower child-process timeout signal. This intentionally makes the
-	// existing bare-timeout bucket stricter across daemon versions.
+	// 只要命中了模型目录刷新失败，超时分类就归它，而不是只归更窄的子进程超时信号。
+	// 这是有意为之：让旧版就有的 bare-timeout 桶在各 daemon 版本间口径更严格。
 	if timedOut && classification.modelRefreshFailure == 0 && classification.mcpInitTransport == 0 {
 		classification.bareTimeout = 1
 	}
 	return classification
 }
 
-// CodexSemanticInactivityMarker prefixes timeout errors emitted when Codex
-// stops making semantic progress while the process is still alive.
+// CodexSemanticInactivityMarker 是「Codex 进程还活着但已无语义进展」类超时错误的前缀。
 const CodexSemanticInactivityMarker = "codex semantic inactivity timeout"
 
-// CodexFirstTurnNoProgressMarker identifies the app-server failure mode where
-// Codex accepts a turn and then never emits any item, completion, or error.
+// CodexFirstTurnNoProgressMarker 标识 app-server 的一种失败形态：Codex 接受了回合后
+// 既不产出任何 item/完成事件，也不报错。
 const CodexFirstTurnNoProgressMarker = "codex app-server no progress timeout"
 
-// CodexHandshakeTimeoutMarker identifies a Codex app-server startup RPC that
-// did not answer within the bounded handshake window.
+// CodexHandshakeTimeoutMarker 标识 Codex app-server 启动类 RPC 在限定的握手窗口内没有应答。
 const CodexHandshakeTimeoutMarker = "codex app-server handshake timeout"
 
-// codexResumeMarker and codexLineOverflowMarker are the two halves of the
-// error text a resume-overflow produces: the method that failed (written by
-// startOrResumeThread) and bufio's own ErrTooLong wording, which reaches the
-// string through the reader goroutine.
+// codexResumeMarker 与 codexLineOverflowMarker 是「resume 溢出」错误文本的两半：
+// 失败的方法名（由 startOrResumeThread 写入）与 bufio 自带的 ErrTooLong 措辞
+// （经读取 goroutine 进到错误串里）。
 const (
 	codexResumeMarker       = "thread/resume failed"
 	codexLineOverflowMarker = "token too long"
 )
 
-// CodexResumeOverflowError reports whether an agent error string is the
-// resume-overflow failure — the thread/resume response did not fit in our
-// stdout line buffer, so the thread cannot be handed to us at all.
+// CodexResumeOverflowError 判断某个 agent 错误串是不是「resume 溢出」失败——即
+// thread/resume 的响应大到塞不进我们的 stdout 行缓冲，导致该会话根本交接不过来。
 //
-// This lives next to the code that writes both halves of the text so the two
-// cannot drift apart, and it is exported because the daemon has only the error
-// STRING at report time: by then the typed bufio.ErrTooLong that
-// isCodexResumeOverflow matches in-process is long gone. Both markers are
-// required — "thread/resume failed" alone covers ordinary rejections that a
-// plain retry handles, and "token too long" alone would also match an overflow
-// on some other RPC, where dropping the session pointer cures nothing.
+// 它紧挨着写入这两半错误文本的代码，避免两处漂移；之所以导出，是因为上报时 daemon
+// 手里只剩错误字符串：此刻进程内的类型化 bufio.ErrTooLong（isCodexResumeOverflow
+// 匹配的就是它）早已不在了。两个标记都必须出现——单凭 "thread/resume failed" 会误伤
+// 普通拒绝（普通重试即可解决）；单凭 "token too long" 又会误伤其它 RPC 的溢出
+// （那种情况丢掉会话指针毫无意义）。
 //
-// The session behind such a failure is unusable for resume until it shrinks,
-// which it never does — codex rollouts are append-only. Callers use this to
-// stop handing the same oversized thread to the next task (MUL-5722).
+// 这类失败背后的会话在变小之前无法用于 resume——而 codex 的会话是只追加的，永远等不到
+// 变小。调用方用这个判断来避免把同一个超大线程继续派给下一个任务（MUL-5722）。
 func CodexResumeOverflowError(errText string) bool {
 	if errText == "" {
 		return false
@@ -190,12 +183,10 @@ func CodexResumeOverflowError(errText string) bool {
 	return strings.Contains(lower, codexResumeMarker) && strings.Contains(lower, codexLineOverflowMarker)
 }
 
-// codexModelCatalogRefreshFailureSignal matches the Codex models-manager error
-// emitted when the model catalog could not be refreshed. Codex reports several
-// distinct causes under this prefix ("timeout waiting for child process to
-// exit", "stream disconnected before completion", ...), so match the shared
-// prefix rather than one variant: they are all the same startup-blocking
-// failure from the daemon's point of view.
+// codexModelCatalogRefreshFailureSignal 匹配 Codex models-manager 在模型目录刷新失败时
+// 抛出的错误。codex 在该前缀下会报多种不同成因（"timeout waiting for child process to
+// exit"、"stream disconnected before completion" 等），所以匹配公共前缀而非单一变体：
+// 从 daemon 视角它们都是同一类阻塞启动的失败。
 const codexModelCatalogRefreshFailureSignal = "failed to refresh available models"
 const codexModelCatalogRefreshTimeoutSignal = "failed to refresh available models: timeout waiting for child process to exit"
 
@@ -210,20 +201,18 @@ const (
 )
 
 type codexTimeoutDiagnostic struct {
-	Kind         codexTimeoutKind
-	Timeout      time.Duration
-	LastActivity string
+	Kind         codexTimeoutKind // 超时种类：语义静默还是首轮无进展
+	Timeout      time.Duration    // 本次实际使用的超时时长
+	LastActivity string           // 最后一次语义活动的描述
 	ThreadID     string
 	TurnID       string
 	Model        string
 	CodexVersion string
 }
 
-// codexFirstItemWaitObservation records the interval from turn/started to the
-// first semantic progress or terminal outcome. start is called by the stdout
-// reader before it publishes status:running, while finish is called by the
-// lifecycle goroutine; the mutex keeps the cross-goroutine timestamp precise
-// without changing the watchdog's existing channel-driven semantics.
+// codexFirstItemWaitObservation 记录从 turn/started 到第一个语义进展或最终结局的耗时。
+// start 由 stdout 读取方在发布 status:running 前调用，finish 由生命周期 goroutine 调用；
+// 互斥锁保证跨 goroutine 的时间戳精确，同时不改动 watchdog 现有的基于 channel 的语义。
 type codexFirstItemWaitObservation struct {
 	mu         sync.Mutex
 	startedAt  time.Time
@@ -236,7 +225,7 @@ func (o *codexFirstItemWaitObservation) start(now time.Time) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.startedAt.IsZero() {
-		o.startedAt = now
+		o.startedAt = now // 只记首个时间点，重复调用不覆盖
 	}
 }
 
@@ -244,7 +233,7 @@ func (o *codexFirstItemWaitObservation) finish(now time.Time, outcome string, st
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.startedAt.IsZero() || o.outcome != "" {
-		return
+		return // 尚未 start 或已收过结局，忽略重复的 finish
 	}
 	o.finishedAt = now
 	o.outcome = outcome
@@ -255,13 +244,13 @@ func (o *codexFirstItemWaitObservation) snapshot() (time.Duration, string, codex
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.startedAt.IsZero() || o.finishedAt.IsZero() || o.outcome == "" {
-		return 0, "", codexStderrClassification{}, false
+		return 0, "", codexStderrClassification{}, false // 观测未完成，无快照可取
 	}
 	return o.finishedAt.Sub(o.startedAt), o.outcome, o.stderr, true
 }
 
-// codexBackend implements Backend by spawning `codex app-server --listen stdio://`
-// and communicating via JSON-RPC 2.0 over stdin/stdout.
+// codexBackend 实现 Backend 接口：拉起 `codex app-server --listen stdio://` 子进程，
+// 通过 stdin/stdout 上的 JSON-RPC 2.0 与它通信。
 type codexBackend struct {
 	cfg Config
 }
@@ -275,32 +264,24 @@ func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
 	return append(args, launchArgs...)
 }
 
-// NormalizeCodexLaunchArgs returns the user-supplied Codex args (extra then
-// custom) after lower-priority normalization: shell quoting stripped,
-// protocol-critical flags removed, and — when a managed
-// mcp_config owns the mcp_servers namespace — stray `-c mcp_servers.*`
-// overrides dropped. buildCodexArgs prepends the fixed
-// `app-server --listen stdio://` transport flags and may append an
-// agent-owned runtime override (currently `--enable fast_mode`) after this
-// result.
+// NormalizeCodexLaunchArgs 返回用户提供的 codex 参数（extra 在前、custom 在后）经过
+// 低优先级归一化后的结果：去掉 shell 引号、剔除协议关键参数；并且当受管 mcp_config
+// 占据 mcp_servers 命名空间时，丢弃零散的 `-c mcp_servers.*` 覆盖。buildCodexArgs 会
+// 在前面拼上固定的 `app-server --listen stdio://` 传输参数，并可能在结果末尾追加一条
+// agent 持有的运行时覆盖（目前是 `--enable fast_mode`）。
 //
-// It is exported so the daemon can reconstruct the *effective* launch args when
-// deciding the Windows sandbox mode. A `-c windows.sandbox=…` opt-in may arrive
-// shell-quoted (users commonly type custom_args with shell syntax, e.g.
-// `'-c' 'windows.sandbox=unelevated'`), and only after this same normalization
-// does it match the `-c windows.sandbox=…` shape the sandbox detector looks
-// for. Reconstructing the args any other way lets the two drift, silently
-// downgrading a user's isolation opt-in (MUL-4957).
+// 导出它是为了让 daemon 在决定 Windows 沙箱模式时能重建 *实际生效* 的启动参数。
+// `-c windows.sandbox=…` 这类显式开关可能带 shell 引号出现（用户通常用 shell 语法写
+// custom_args，例如 `'-c' 'windows.sandbox=unelevated'`），只有经过同一套归一化后才能
+// 变成沙箱探测器要找的 `-c windows.sandbox=…` 形态。用其它方式重建两者会漂移，静默
+// 降级掉用户对隔离的显式选择（MUL-4957）。
 func NormalizeCodexLaunchArgs(extraArgs, customArgs []string, mcpConfig json.RawMessage, logger *slog.Logger) []string {
 	extra := filterCustomArgs(extraArgs, codexBlockedArgs, logger)
 	custom := filterCustomArgs(customArgs, codexBlockedArgs, logger)
-	// Only claim ownership of the `mcp_servers` namespace when the agent
-	// actually has a managed mcp_config in the MCP Tab. Otherwise existing
-	// users who configure MCP via `custom_args: ["-c", "mcp_servers.…"]`
-	// would silently lose those entries. With managed mcp_config present,
-	// daemon-written `$CODEX_HOME/config.toml` is the authoritative source and
-	// stray `-c mcp_servers.*` overrides are dropped to keep last-wins from
-	// re-shadowing it.
+	// 只有当 agent 在 MCP Tab 里确实有受管 mcp_config 时才接管 `mcp_servers` 命名空间。
+	// 否则那些习惯用 `custom_args: ["-c", "mcp_servers.…"]` 配置 MCP 的老用户会静默丢失
+	// 这些条目。有了受管 mcp_config 时，daemon 写入的 `$CODEX_HOME/config.toml` 才是唯一
+	// 权威来源，零散的 `-c mcp_servers.*` 覆盖要被丢弃，以免 last-wins 又把它盖回去。
 	if hasManagedCodexMcpConfig(mcpConfig) {
 		extra = filterCodexCustomConfigOverrides(extra, logger)
 		custom = filterCodexCustomConfigOverrides(custom, logger)
@@ -311,33 +292,24 @@ func NormalizeCodexLaunchArgs(extraArgs, customArgs []string, mcpConfig json.Raw
 	return out
 }
 
-// enforceCodexFastMode makes the explicit agent service-tier selection
-// authoritative over daemon ExtraArgs, per-agent CustomArgs, and inherited
-// config.toml. Codex's `--disable fast_mode` wins over `--enable fast_mode`
-// regardless of argv order, so conflicting lower-priority disable flags must
-// be removed before the managed enable is appended. Conflicting `-c` /
-// `--config features.fast_mode=...` overrides are removed for the same
-// precedence reason, even though current Codex versions let `--enable` win:
-// the final argv should encode one unambiguous owner for this setting.
+// enforceCodexFastMode 让 agent 显式选择的 service tier 压过 daemon ExtraArgs、各 agent
+// 的 CustomArgs 以及继承来的 config.toml。codex 的 `--disable fast_mode` 无论 argv 顺序
+// 如何都压过 `--enable fast_mode`，所以要在受管的 enable 追加之前，先去掉这些低优先级的
+// 冲突 disable 参数。同理，冲突的 `-c` / `--config features.fast_mode=...` 覆盖也要移除
+// （即便当前 codex 版本让 `--enable` 能赢）：最终 argv 对这个开关只能有一个明确的所有者。
 //
-// Other disabled features are preserved, and this helper is used only for the
-// catalog-owned `priority` tier. Future service tiers must not accidentally
-// inherit Fast mode semantics.
+// 其余被禁用的特性不受影响；该 helper 只用于目录里登记的 `priority` 档位。未来新的
+// service tier 不得无意继承 Fast mode 语义。
 func enforceCodexFastMode(args []string, logger *slog.Logger) []string {
 	return append(stripCodexFastModeConflicts(args, logger), "--enable", codexFastModeFeature)
 }
 
-// stripCodexFastModeConflicts removes the lower-priority overrides that would
-// defeat an explicit priority tier, without appending the managed enable.
-//
-// Split out of enforceCodexFastMode because the enable belongs exactly once, on
-// the final managed args, while the removal has to reach every argv region the
-// user can write into — including a custom runtime profile's launch prefix.
-// Prefix-first does not protect this setting: `--disable fast_mode` beats
-// `--enable fast_mode` regardless of argv order, and a `-c
-// features.fast_mode=false` beats config.toml from any position. Leaving the
-// prefix unfiltered would let a profile override the tier the agent explicitly
-// selected, inverting the precedence this package promises (GH #7046).
+// stripCodexFastModeConflicts 只移除会破坏显式 priority 档位的低优先级覆盖，不追加受管
+// enable。从 enforceCodexFastMode 里拆出来，是因为 enable 只需精确出现一次（在最终受管
+// 参数上），而移除必须覆盖用户能写入的每一段 argv——包括自定义 runtime profile 的启动
+// 前缀。前缀优先不保护这个开关：`--disable fast_mode` 无论 argv 顺序都压过 `--enable
+// fast_mode`，而任意位置的 `-c features.fast_mode=false` 都压过 config.toml。若不滤前缀，
+// profile 就能覆盖 agent 显式选择的档位，倒置本包承诺的优先级（GH #7046）。
 func stripCodexFastModeConflicts(args []string, logger *slog.Logger) []string {
 	args = filterCodexConfigOverrides(
 		args,
@@ -376,28 +348,25 @@ func stripCodexFastModeConflicts(args []string, logger *slog.Logger) []string {
 	return filtered
 }
 
-// hasManagedCodexMcpConfig reports whether the agent's mcp_config field is
-// "present" in the API three-state sense: a non-null JSON value. Both
-// `{}` and `{"mcpServers":{}}` count as present (the admin saved an empty
-// managed set — strict mode, no global fallback); only SQL NULL or the
-// literal JSON `null` count as absent (CLI default).
+// hasManagedCodexMcpConfig 报告 agent 的 mcp_config 字段在 API 三态语义下是否「存在」：
+// 非 null 的 JSON 值即为存在。`{}` 与 `{"mcpServers":{}}` 都算存在（管理员存了一组空
+// 受管集合——严格模式、无全局回退）；只有 SQL NULL 或字面 JSON `null` 才算不存在
+// （CLI 默认）。
 func hasManagedCodexMcpConfig(raw json.RawMessage) bool {
 	return hasManagedMcpConfig(raw)
 }
 
-// codexManagedMcpConfigKeyRe matches the daemon-managed config namespace
-// (`mcp_servers.…`) when it appears as the value of a Codex `-c` /
-// `--config` flag. Used by filterCodexCustomConfigOverrides to drop user
-// overrides that would otherwise shadow what the MCP Tab writes into
-// `$CODEX_HOME/config.toml`.
+// codexManagedMcpConfigKeyRe 匹配 daemon 受管的配置命名空间（`mcp_servers.…`）——当它
+// 作为 codex `-c` / `--config` 参数的值出现时。filterCodexCustomConfigOverrides 用它丢
+// 掉会反噬 MCP Tab 写进 `$CODEX_HOME/config.toml` 内容的用户覆盖。
 var codexManagedMcpConfigKeyRe = regexp.MustCompile(`^\s*mcp_servers(?:\s*\.|\s*=|\s*$)`)
 
 var codexManagedFastModeConfigKeyRe = regexp.MustCompile(
 	`^\s*features\s*\.\s*fast_mode\s*(?:=|$)`)
 
-// A daemon-managed shell_environment_policy must also win over profile and
-// custom-arg overrides. Match root and profile policy keys without catching an
-// unrelated table field that happens to use the same final key name.
+// daemon 受管的 shell_environment_policy 同样必须压过 profile 与 custom_args 里的覆盖。
+// 这里既匹配根级 policy 键也匹配 profile 级 policy 键，但不会误伤恰好同名同尾的其它
+// 无关表字段。
 const (
 	codexShellEnvPolicyKeyPattern = `(?:shell_environment_policy|"shell_environment_policy"|'shell_environment_policy')`
 	codexProfileNameKeyPattern    = `(?:[A-Za-z0-9_-]+|"[^"]+"|'[^']+')`
@@ -406,14 +375,12 @@ const (
 var codexManagedShellEnvConfigKeyRe = regexp.MustCompile(
 	`^\s*(?:` + codexShellEnvPolicyKeyPattern + `|profiles\s*\.\s*` + codexProfileNameKeyPattern + `\s*\.\s*` + codexShellEnvPolicyKeyPattern + `)\s*(?:\.|=|$)`)
 
-// filterCodexCustomConfigOverrides drops `-c mcp_servers.…=` and
-// `--config mcp_servers.…=` entries from custom args. Codex's `-c` is
-// last-wins (verified against codex-cli 0.132.0), so without this filter a
-// user-written `-c mcp_servers.fetch=…` in custom_args would silently
-// override whatever the MCP Tab saved into the per-task config.toml. We
-// own the `mcp_servers` namespace via the managed block, so user attempts
-// to write into it are dropped with a warning rather than allowed to win.
-// Other `-c`/`--config` keys (e.g. `-c model="o3"`) pass through unchanged.
+// filterCodexCustomConfigOverrides 从 custom args 里丢弃 `-c mcp_servers.…=` 与
+// `--config mcp_servers.…=` 条目。codex 的 `-c` 是 last-wins（已对 codex-cli 0.132.0
+// 验证）：没有这个过滤器的话，用户写在 custom_args 里的 `-c mcp_servers.fetch=…` 会静默
+// 盖掉 MCP Tab 存进任务 config.toml 的内容。我们通过受管 block 拥有 `mcp_servers`
+// 命名空间，所以用户往里面写的尝试会带警告丢弃，而不是放行让它赢。
+// 其它 `-c`/`--config` 键（如 `-c model="o3"`）原样放行。
 func filterCodexCustomConfigOverrides(args []string, logger *slog.Logger) []string {
 	return filterCodexConfigOverrides(args, codexManagedMcpConfigKeyRe, "mcp_servers", logger)
 }
@@ -446,8 +413,7 @@ func filterCodexConfigOverrides(args []string, managedKeyRe *regexp.Regexp, name
 			}
 			if managedKeyRe.MatchString(value) {
 				if logger != nil {
-					// Log the key only, never the value. Managed config values
-					// may contain secrets and must stay out of logs/argv.
+					// 只记键名绝不记值：受管配置的值可能含密钥，必须远离日志与 argv。
 					key := value
 					if eqIdx := strings.Index(value, "="); eqIdx >= 0 {
 						key = value[:eqIdx]
@@ -456,7 +422,7 @@ func filterCodexConfigOverrides(args []string, managedKeyRe *regexp.Regexp, name
 						"namespace", namespace, "flag", flag, "key", strings.TrimSpace(key))
 				}
 				if !hasInlineValue && i+1 < len(args) {
-					i++ // skip the value arg
+					i++ // 跳过作为独立参数的值，避免它残留下来
 				}
 				continue
 			}
@@ -466,9 +432,9 @@ func filterCodexConfigOverrides(args []string, managedKeyRe *regexp.Regexp, name
 	return filtered
 }
 
-// Markers delimiting the daemon-managed `[mcp_servers.*]` block in
-// `$CODEX_HOME/config.toml`. Match the existing sandbox / multi-agent /
-// memory marker pattern so ops can grep all managed blocks consistently.
+// 下面两个标记用于在 `$CODEX_HOME/config.toml` 里圈定 daemon 受管的
+// `[mcp_servers.*]` block。沿用现有 sandbox / multi-agent / memory 标记的写法，
+// 让运维能统一 grep 所有受管 block。
 const (
 	multicaCodexMcpBeginMarker = "# BEGIN multica-managed mcp_servers (do not edit; regenerated by daemon)"
 	multicaCodexMcpEndMarker   = "# END multica-managed mcp_servers"
@@ -478,29 +444,24 @@ var codexMcpBlockRe = regexp.MustCompile(
 	`(?ms)^` + regexp.QuoteMeta(multicaCodexMcpBeginMarker) +
 		`.*?^` + regexp.QuoteMeta(multicaCodexMcpEndMarker) + `\n*`)
 
-// userCodexMcpServersTableHeaderRe matches `[mcp_servers.<name>]` (and its
-// quoted-key form `[mcp_servers."<name>"]`) at the start of a line. Used
-// to strip user-provided mcp_servers tables from the per-task config when
-// the agent has its own mcp_config — mirrors Claude's `--strict-mcp-config`
-// model where the daemon's set is authoritative.
+// userCodexMcpServersTableHeaderRe 匹配行首的 `[mcp_servers.<name>]`（含带引号的
+// `[mcp_servers."<name>"]` 形式）。用于在 agent 自带 mcp_config 时，把用户配置里的
+// mcp_servers 表从任务配置中剥掉——对照 Claude 的 `--strict-mcp-config` 模式，
+// 即 daemon 的那一份才是权威。
 var userCodexMcpServersTableHeaderRe = regexp.MustCompile(
 	`^\s*\[\s*mcp_servers\s*\.\s*(?:"[^"]*"|[^\]\s]+)\s*\]\s*(?:#.*)?$`)
 
-// ensureCodexMcpConfig writes (or clears) the daemon-managed
-// `[mcp_servers.*]` block in `$CODEX_HOME/config.toml`. The block is the
-// authoritative source of MCP servers for this run: with mcp_config set
-// in the agent UI the daemon also strips any inherited
-// `[mcp_servers.*]` tables from the per-task config so the user's global
-// `~/.codex/config.toml` doesn't shadow or collide with the managed set.
+// ensureCodexMcpConfig 把 daemon 受管的 `[mcp_servers.*]` block 写进（或清除）
+// `$CODEX_HOME/config.toml`。该 block 是本次运行 MCP 服务器的唯一权威来源：当 agent UI
+// 里设置了 mcp_config，daemon 还会剥离任务配置中继承来的 `[mcp_servers.*]` 表，避免用户
+// 全局 `~/.codex/config.toml` 里的表遮蔽或撞上受管集合。
 //
-// The file mode is 0o600 because `mcp_servers.<id>.env` values may carry
-// secrets (API keys, bearer tokens); the per-task home is owned by the
-// daemon's user, so 0o600 keeps secrets out of any world-readable copy
-// while still letting the codex child read them.
+// 文件权限用 0o600：`mcp_servers.<id>.env` 值可能携带密钥（API key、bearer token）；
+// 每个任务的家目录归 daemon 用户所有，0o600 在允许 codex 子进程读取的同时，把密钥排除
+// 在任何世界可读的副本之外。
 //
-// A malformed mcp_config is returned as an error and the caller decides
-// whether to surface or warn — same fail-soft contract the prior argv
-// path had.
+// mcp_config 格式非法时按错误返回，由调用方决定上报还是告警——与旧 argv 路径的
+// fail-soft 契约保持一致。
 func ensureCodexMcpConfig(configPath string, mcpConfig json.RawMessage, logger *slog.Logger) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -508,8 +469,7 @@ func ensureCodexMcpConfig(configPath string, mcpConfig json.RawMessage, logger *
 	}
 	existing := string(data)
 
-	// Always strip a prior managed block so reruns and clear-config flows
-	// converge on a clean state.
+	// 每次都先剥掉旧的受管 block，让重跑与清除流程收敛到干净状态。
 	stripped := codexMcpBlockRe.ReplaceAllString(existing, "")
 
 	managed := hasManagedCodexMcpConfig(mcpConfig)
@@ -520,25 +480,19 @@ func ensureCodexMcpConfig(configPath string, mcpConfig json.RawMessage, logger *
 
 	var updated string
 	if managed {
-		// Agent has a managed MCP set (possibly empty — `{}` /
-		// `{"mcpServers":{}}` count as "saved an empty set" in the API's
-		// three-state semantics, distinct from nil/null which means
-		// "fall back to CLI default"). Strip any user-defined
-		// `[mcp_servers.*]` tables inherited from `~/.codex/config.toml`
-		// so the managed set is strict — mirrors Claude's
-		// `--strict-mcp-config`. Two reasons we cannot mix:
-		//   1. TOML rejects redefining the same table; a user table
-		//      named `[mcp_servers.fetch]` would crash codex if the
-		//      agent also defined `fetch`.
-		//   2. An admin saving an explicit list in the MCP Tab would
-		//      otherwise see user-global servers silently joined in,
-		//      which contradicts the UI affordance.
+		// agent 有受管 MCP 集合（可以为空——API 三态语义里 `{}` /
+		// `{"mcpServers":{}}` 算「存了一组空集合」，区别于 nil/null 的
+		// 「回退 CLI 默认值」）。把从 `~/.codex/config.toml` 继承来的用户
+		// `[mcp_servers.*]` 表也剥掉，让受管集合成为唯一严格来源——对照 Claude 的
+		// `--strict-mcp-config`。两者不能混用有两个原因：
+		//   1. TOML 不允许重复定义同一张表；若 agent 也定义了 fetch，用户表
+		//      名 `[mcp_servers.fetch]` 会让 codex 直接崩溃。
+		//   2. 管理员在 MCP Tab 存了一份显式清单时，不该看到用户全局的服务器
+		//      悄悄混进来——这与 UI 呈现的语义相矛盾。
 		stripped = stripCodexUserMcpServerTables(stripped)
 		stripped = strings.TrimRight(stripped, "\n")
-		// When the managed set is empty we still write the marker
-		// block (with no tables between). This pins "managed but
-		// empty" on disk so the next run can find and strip the
-		// markers, and so the file's intent is grep-able by ops.
+		// 受管集合为空时仍然写标记 block（表之间没有内容）。这样「受管但为空」
+		// 能落盘固定下来，下次运行能找到并剥掉标记，文件意图也可被运维 grep。
 		if block == "" {
 			block = multicaCodexMcpBeginMarker + "\n" + multicaCodexMcpEndMarker + "\n"
 		}
@@ -548,8 +502,8 @@ func ensureCodexMcpConfig(configPath string, mcpConfig json.RawMessage, logger *
 			updated = stripped + "\n\n" + block
 		}
 	} else {
-		// No managed config: just remove any prior managed block and
-		// leave inherited user tables alone (CLI default fallback).
+		// 没有受管配置：只移除可能残留的旧受管 block，继承来的用户表保持原样
+		// （回退 CLI 默认）。
 		updated = stripped
 	}
 
@@ -559,12 +513,9 @@ func ensureCodexMcpConfig(configPath string, mcpConfig json.RawMessage, logger *
 	if err := os.WriteFile(configPath, []byte(updated), 0o600); err != nil {
 		return fmt.Errorf("write config.toml: %w", err)
 	}
-	// os.WriteFile applies the mode only when creating a new file; if the
-	// per-task config.toml was already on disk at 0o644 (the default mode
-	// used by execenv.copyFile when seeding from ~/.codex/config.toml),
-	// the secret-bearing values we just wrote would inherit that wider
-	// mode. Chmod unconditionally to keep the secret in the daemon
-	// owner's lane regardless of the prior mode.
+	// os.WriteFile 只在新建文件时应用权限位；如果任务 config.toml 已以 0o644 在磁盘上
+	// （execenv.copyFile 从 ~/.codex/config.toml 播种时的默认权限），刚才写入的含密钥
+	// 内容会继承这个过宽权限。无条件 Chmod 一次，让密钥始终只落在 daemon 所有者的车道里。
 	if err := os.Chmod(configPath, 0o600); err != nil {
 		return fmt.Errorf("chmod config.toml to 0600: %w", err)
 	}
@@ -575,17 +526,14 @@ func ensureCodexMcpConfig(configPath string, mcpConfig json.RawMessage, logger *
 	return nil
 }
 
-// renderCodexMcpServersBlock renders the agent's mcp_config JSON
-// (Claude-style `{"mcpServers": {...}}`) as a TOML block of
-// `[mcp_servers.<name>]` tables wrapped in BEGIN/END markers. Returns
-// (block, hasServers, err); hasServers=false means the input had no
-// servers to render (empty/null mcp_config) and the caller should only
-// strip the prior managed block.
+// renderCodexMcpServersBlock 把 agent 的 mcp_config JSON（Claude 风格
+// `{"mcpServers": {...}}`）渲染成被 BEGIN/END 标记包裹的一批 `[mcp_servers.<name>]`
+// TOML 表。返回 (block, hasServers, err)；hasServers=false 表示输入里没有可渲染的
+// 服务器（mcp_config 为空/null），调用方此时只需剥掉旧的受管 block。
 //
-// Stdio server keys (`args`, `env`, `command`) pass through verbatim —
-// Codex's config schema happens to use the same names today. Remote HTTP
-// servers use Codex-specific keys, so they are normalised here rather than
-// leaking provider details into the UI/dispatch layer.
+// stdio 服务器键（`args`、`env`、`command`）原样透传——codex 的配置 schema 恰好与
+// 这些名字一致。远程 HTTP 服务器用的是 codex 专属键，因此在这里归一化，避免把供应商
+// 细节泄漏到 UI/调度层。
 func renderCodexMcpServersBlock(raw json.RawMessage) (string, bool, error) {
 	if len(raw) == 0 {
 		return "", false, nil
@@ -604,7 +552,7 @@ func renderCodexMcpServersBlock(raw json.RawMessage) (string, bool, error) {
 	for name := range parsed.McpServers {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	sort.Strings(names) // 排序保证输出确定、可复现，diff 时不会乱跳
 
 	var sb strings.Builder
 	sb.WriteString(multicaCodexMcpBeginMarker)
@@ -648,6 +596,9 @@ func renderCodexMcpServersBlock(raw json.RawMessage) (string, bool, error) {
 	return sb.String(), true, nil
 }
 
+// normalizeCodexMcpServerConfig 把一套服务器配置归一化：剥掉 UI 用的选择器键
+// （tools/prompts/resources），本地 stdio 服务器原样保留其余键；远程 HTTP 服务器则
+// 把 Claude 风格键映射为 codex 认识的形式，并强制开启 codex 的实验性远程 MCP 客户端。
 func normalizeCodexMcpServerConfig(server map[string]any) map[string]any {
 	if !isCodexRemoteMcpServer(server) {
 		normalized := make(map[string]any, len(server))
@@ -697,10 +648,9 @@ func isCodexRemoteMcpServer(server map[string]any) bool {
 	return hasURL && !hasCommand
 }
 
-// stripCodexUserMcpServerTables removes every `[mcp_servers.*]` table
-// (header + body lines until the next top-level table header or EOF) from
-// a TOML config string. Sub-tables like `[mcp_servers.fetch.env]` count
-// as part of the parent table and are dropped along with it.
+// stripCodexUserMcpServerTables 从 TOML 配置串里移除每一张 `[mcp_servers.*]` 表
+// （表头加其下的内容行，直到下一个顶层表头或 EOF）。`[mcp_servers.fetch.env]` 这类
+// 子表属于父表的一部分，随父表一并丢弃。
 func stripCodexUserMcpServerTables(content string) string {
 	lines := strings.Split(content, "\n")
 	out := make([]string, 0, len(lines))
@@ -713,9 +663,8 @@ func stripCodexUserMcpServerTables(content string) string {
 		if skipping {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "[") {
-				// Next table header. If it's still an `mcp_servers.*`
-				// table (including a sub-table), keep skipping; otherwise
-				// stop and emit this line.
+				// 遇到下一个表头：若仍是 `mcp_servers.*` 表（含子表），继续跳过；
+				// 否则结束跳过并放行这一行。
 				if userCodexMcpServersTableHeaderRe.MatchString(line) ||
 					strings.HasPrefix(trimmed, "[mcp_servers.") ||
 					strings.HasPrefix(trimmed, "[ mcp_servers.") {
@@ -732,10 +681,9 @@ func stripCodexUserMcpServerTables(content string) string {
 	return strings.Join(out, "\n")
 }
 
-// jsonValueToCodexTOMLInline serialises a JSON value as a TOML inline
-// value. Only the subset Codex's `-c` accepts is supported: strings,
-// numbers, booleans, arrays, and inline tables. JSON nulls are rejected
-// because TOML has no null and silently dropping them would be confusing.
+// jsonValueToCodexTOMLInline 把 JSON 值序列化成 TOML 内联值。只支持 codex `-c`
+// 接受的那个子集：字符串、数字、布尔、数组、内联表。JSON null 会被拒绝——TOML 没有
+// null，静默丢弃会令人困惑。
 func jsonValueToCodexTOMLInline(v any) (string, error) {
 	switch x := v.(type) {
 	case nil:
@@ -839,6 +787,8 @@ func isCodexBareTomlKey(s string) bool {
 }
 
 func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	// Execute 是对外入口：先跑一次完整 attempt，返回的 Session 消息流里，若首轮因
+	// 可重试原因失败，则内部再自动补一次 attempt（initialize / model_catalog_refresh）。
 	firstSession, err := b.executeOnce(ctx, prompt, opts, 1)
 	if err != nil {
 		return nil, err
@@ -860,13 +810,11 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 					return
 				}
 			}
-			// Hold back the leading session-pin status messages until this
-			// attempt proves it made real progress. A retry never continues the
-			// discarded attempt's thread (initialize retries fail before any
-			// thread exists; catalog retries clear ResumeSessionID below), so
-			// forwarding its pin would leave the resume pointer aimed at a
-			// thread that never produced a turn (MUL-5110). The first non-pin
-			// message means the attempt is live: flush and stream from then on.
+			// 先把开头的 session-pin 状态消息扣在手里，等本次 attempt 证明自己真的前进了再放行。
+			// 重试绝不会接着被丢弃 attempt 的会话（initialize 重试在会话创建前就失败；目录刷新
+			// 重试会在下面清掉 ResumeSessionID），提前转发它的 pin 会让 resume 指针指向一个从未
+			// 产出回合的会话（MUL-5110）。第一条非 pin 消息意味着 attempt 已活：立即冲刷 pin 并
+			// 从该点起持续转发。
 			var heldPins []Message
 			holdingPins := true
 			flushHeldPins := func() {
@@ -904,19 +852,14 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 				resCh <- result
 				return
 			}
-			// The model catalog refresh reaches the network, so give the
-			// transient failure a little more room than the local initialize
-			// handshake gets. Both stay well inside the task timeout, and
-			// ctx.Done() below keeps the retry from extending it.
+			// 模型目录刷新要访问网络，所以给瞬时故障留的余量比本地 initialize 握手更宽。
+			// 两者都远小于任务超时，且下方 ctx.Done() 保证重试不会把任务时间拖超。
 			backoff := 75*time.Millisecond + time.Duration(time.Now().UnixNano()%50)*time.Millisecond
 			if retryReason == "model_catalog_refresh" {
 				backoff = 500*time.Millisecond + time.Duration(time.Now().UnixNano()%1000)*time.Millisecond
-				// The stalled attempt already reached turn/started, so the prior
-				// thread may hold the submitted input or an unfinished turn.
-				// Resuming it again could duplicate that input; start a fresh
-				// thread instead and keep ResumeExpected so codexTurnInput
-				// prepends the caller's continuity notice about the lost
-				// context.
+				// 卡住的这次 attempt 已到达 turn/started，之前的会话可能握着已提交的输入或
+				// 未完成的回合。直接 resume 可能重复投喂该输入；改为新开会话，同时保留
+				// ResumeExpected，让 codexTurnInput 在输入前补上「上下文已丢失」的连续性提示。
 				if attemptOpts.ResumeSessionID != "" {
 					b.cfg.Logger.Warn("codex retry dropping resume pointer after model catalog refresh failure",
 						"prior_thread_id", attemptOpts.ResumeSessionID,
@@ -939,6 +882,9 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
+// executeOnce 真正拉起一次 codex app-server 进程并跑完一轮（进程生命周期 + JSON-RPC
+// 消息流）。attempt 是当前第几次尝试（第 1 次为原始执行，第 2 次为内部重试），用于日志
+// 与诊断区分。
 func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts ExecOptions, attempt int) (*Session, error) {
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
@@ -956,46 +902,35 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	handshakeTimeout, threadHandshakeTimeout := resolveCodexHandshakeTimeouts(opts)
 	runCtx, cancel := runContext(ctx, timeout)
 
-	// Materialise the agent's MCP config into the per-task
-	// `$CODEX_HOME/config.toml`. Argv would be the simpler path, but
-	// `mcp_servers.<id>.env` is allowed to carry secrets (Codex docs:
-	// https://developers.openai.com/codex/mcp#configure-with-configtoml)
-	// and our UI already treats mcp_config as a redacted-for-non-admins
-	// field. Process argv ends up in OS-level `ps` listings; daemon command
-	// logs redact values, but log redaction cannot protect the process list.
-	// Writing through config.toml at 0o600 keeps the secret values out of argv
-	// entirely.
+	// 把 agent 的 MCP 配置落到任务专属的 `$CODEX_HOME/config.toml`。走 argv 本来更简单，
+	// 但 `mcp_servers.<id>.env` 允许携带密钥（codex 文档：
+	// https://developers.openai.com/codex/mcp#configure-with-configtoml），而 UI 早已把
+	// mcp_config 当作「对非管理员脱敏」的字段处理。进程 argv 会出现在 OS 层 `ps` 列表里；
+	// daemon 的命令日志对值做脱敏，但日志脱敏保护不了进程列表。经由 config.toml 以 0o600
+	// 写入，密钥值彻底不进 argv。
 	codexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
 	if codexHome != "" {
 		if err := ensureCodexMcpConfig(filepath.Join(codexHome, "config.toml"), opts.McpConfig, b.cfg.Logger); err != nil {
-			// Fail closed when we can't materialise the managed config.
-			// Warning-and-launching would silently fall back to the
-			// user's global `~/.codex/config.toml` MCP servers and
-			// look indistinguishable from "the saved config was
-			// applied", which is exactly the surprise the MCP Tab is
-			// supposed to remove.
+			// 无法落地受管配置就关门失败。告警后继续启动会静默回退到用户全局
+			// `~/.codex/config.toml` 的 MCP 服务器，看起来跟「已保存的配置已生效」
+			// 一模一样——这正是 MCP Tab 想消除的意外。
 			cancel()
 			return nil, fmt.Errorf("apply codex mcp_config: %w", err)
 		}
 	} else if hasManagedCodexMcpConfig(opts.McpConfig) {
-		// Managed mcp_config saved but no CODEX_HOME to anchor it.
-		// Same reasoning as above: silently launching would inherit
-		// whatever MCP setup the host user has, which is the wrong
-		// shape of failure.
+		// 保存了受管 mcp_config，却没有 CODEX_HOME 来锚定它。理由同上：静默启动会继承
+		// 宿主用户已有的 MCP 配置，那是错误形态的失败。
 		cancel()
 		return nil, fmt.Errorf("codex: mcp_config is set but CODEX_HOME env var is not configured; cannot apply managed MCP")
 	}
 
-	// A custom runtime profile's fixed_args reach codex as the launch prefix.
-	// Being first does not protect the daemon's managed config from them: a
-	// `-c key=value` override wins over the task-local config.toml from any
-	// argv position, so the prefix needs the same two removals ExtraArgs and
-	// CustomArgs get below.
+	// 自定义 runtime profile 的 fixed_args 会作为启动前缀到达 codex。排在最前面并不能让
+	// daemon 的受管配置免受它们影响：`-c key=value` 覆盖从 argv 任意位置都能赢过任务级
+	// config.toml，所以前缀同样需要下方 ExtraArgs 与 CustomArgs 要做的那两次剔除。
 	runtimeCmd := b.cfg.commandAt(execPath)
 	if codexHome != "" {
-		// The daemon owns shell_environment_policy in the task-local config.
-		// Codex -c/--config overrides are last-wins, so remove user-provided
-		// root or profile policy overrides before building the final argv.
+		// daemon 在任务级配置里持有 shell_environment_policy。codex 的 -c/--config 覆盖
+		// 是 last-wins，所以在拼最终 argv 之前，先移除用户提供的根级或 profile 级 policy 覆盖。
 		opts.ExtraArgs = filterCodexShellEnvConfigOverrides(opts.ExtraArgs, b.cfg.Logger)
 		opts.CustomArgs = filterCodexShellEnvConfigOverrides(opts.CustomArgs, b.cfg.Logger)
 		runtimeCmd = runtimeCmd.withFilteredPrefix(func(prefix []string) []string {
@@ -1003,16 +938,15 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		})
 	}
 	if hasManagedCodexMcpConfig(opts.McpConfig) {
-		// Mirrors NormalizeCodexLaunchArgs, which applies this to ExtraArgs and
-		// CustomArgs once an agent has a managed mcp_config.
+		// 与 NormalizeCodexLaunchArgs 对应——它在 agent 有受管 mcp_config 时对
+		// ExtraArgs/CustomArgs 做同样处理，这里处理前缀。
 		runtimeCmd = runtimeCmd.withFilteredPrefix(func(prefix []string) []string {
 			return filterCodexCustomConfigOverrides(prefix, b.cfg.Logger)
 		})
 	}
 	if opts.ServiceTier == codexFastServiceTier {
-		// Mirrors enforceCodexFastMode, which buildCodexArgs applies to the
-		// managed args. The enable itself is appended there, once; the prefix
-		// only needs the conflicting disable/config overrides removed.
+		// 对应 enforceCodexFastMode——buildCodexArgs 对受管参数做同样处理。enable 本身
+		// 在那里只追加一次；前缀只需把冲突的 disable/config 覆盖移除。
 		runtimeCmd = runtimeCmd.withFilteredPrefix(func(prefix []string) []string {
 			return stripCodexFastModeConflicts(prefix, b.cfg.Logger)
 		})
@@ -1020,28 +954,21 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	codexArgs := buildCodexArgs(opts, b.cfg.Logger)
 	cmd := runtimeCmd.exec(runCtx, codexArgs...)
 	hideAgentWindow(cmd)
-	// Run codex in its own process group so a cancel-on-stuck cleanup
-	// reaches the whole tree — the codex Node wrapper plus the native
-	// Rust app-server it spawns — not just the direct child. Without
-	// this, killing the leader leaves grandchildren as orphans that
-	// keep consuming memory until the OS reaps them; see #4520, where a
-	// scanner overflow during thread/resume otherwise leaked Codex
-	// processes indefinitely. configureProcessGroup is a no-op on
-	// Windows.
-	// Override the default exec.CommandContext cancel behaviour. The
-	// default sends SIGKILL only to cmd.Process (the leader); we instead
-	// signal the whole process group so descendants die too. Returning
-	// nil keeps exec from logging a spurious error; cmd.WaitDelay below
-	// still backstops cmd.Wait() if the kill leaves an open pipe.
+	// 把 codex 放进独立的进程组，卡死后的清理能覆盖整棵进程树——codex 的 Node 壳加上
+	// 它拉起的原生 Rust app-server——而不只是直接子进程。否则杀掉带头进程会留下孤儿孙进程
+	// 持续吃内存直到 OS 回收；参见 #4520：thread/resume 期间发生 scanner 溢出时，旧行为会
+	// 无限泄漏 codex 进程。configureProcessGroup 在 Windows 上是空操作。
+	// 覆盖 exec.CommandContext 默认的取消行为：默认只向 cmd.Process（带头进程）发 SIGKILL，
+	// 我们改为给整个进程组发信号，让后代一起死。返回 nil 是避免 exec 记一条虚假错误；
+	// 若 kill 后仍有打开的管道，下方 cmd.WaitDelay 仍会兜底 cmd.Wait()。
 	cmd.Cancel = func() error {
 		if cmd.Process != nil {
 			signalProcessGroup(cmd, syscall.SIGKILL)
 		}
 		return nil
 	}
-	// Bound the wait after the context is cancelled so a stuck child (or an
-	// open pipe held by a grandchild) can't hang cmd.Wait() forever. Matches
-	// the other long-lived backends (claude, copilot, cursor, …).
+	// 给 context 取消后的等待上界，防止卡死的子进程（或孙进程握着的打开管道）让
+	// cmd.Wait() 无限挂起。与其它长驻后端（claude、copilot、cursor 等）保持一致。
 	cmd.WaitDelay = codexProcessWaitDelay()
 	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(codexArgs, trustAgentCommandPositional(0, "app-server")))
 	if opts.Cwd != "" {
@@ -1059,18 +986,15 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		cancel()
 		return nil, fmt.Errorf("codex stdin pipe: %w", err)
 	}
-	// Codex stderr can contain auth/provider diagnostics. Capture a bounded
-	// tail and emit it only through the sanitizer in the cleanup event.
+	// codex 的 stderr 可能含 auth/provider 诊断。只捕获一段有界尾部，并且只经脱敏器
+	// 出现在清理事件里。
 	stderrBuf := newStderrTail(io.Discard, codexStderrTailBytes)
 	cmd.Stderr = stderrBuf
 
-	// Start and take ownership of the process tree in one step. On Windows the
-	// child is created suspended and placed in a Job Object before it runs, so
-	// the cleanup below reaches the Node wrapper, the native app-server, and the
-	// sandbox helpers underneath them rather than just the direct child. On Unix
-	// the process group configured above already covers that and this is a plain
-	// Start. Ownership that cannot be taken is logged, not fatal; a child that
-	// cannot be resumed is killed and reported here.
+	// 启动并一步到位接管整棵进程树。Windows 上子进程以挂起方式创建并先放进 Job Object
+	// 再运行，让下方清理能覆盖 Node 壳、原生 app-server 及其底下的沙箱辅助进程，而不只是
+	// 直接子进程。Unix 上上面配置的进程组已覆盖这些，这里只是普通 Start。接管失败只记日志、
+	// 不算致命；无法恢复运行的子进程会被杀掉并在这一步报出来。
 	if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start codex: %w", err)
@@ -1095,20 +1019,18 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	semanticActivityCh := make(chan string, 256)
 
 	var outputMu sync.Mutex
-	// Result.Output is "final user-facing output selected by the backend"
-	// (agent.go), so it holds the deliverable only. finalAnswer is the text the
-	// app-server labelled `phase: "final_answer"`; lastAgentMessage is the
-	// fallback for the legacy `agent_message` protocol, which carries no phase.
-	// Every agent message still flows to msgCh, so the transcript is unchanged —
-	// only what the daemon forwards to a chat/channel reply narrows (GH #6006).
+	// Result.Output 是「后端选出的最终面向用户输出」（见 agent.go），所以它只装交付物。
+	// finalAnswer 是 app-server 标注为 `phase: "final_answer"` 的文本；lastAgentMessage
+	// 是旧式 `agent_message` 协议（不带 phase）的回退。每条 agent 消息仍会流到 msgCh，
+	// transcript 不变——只是 daemon 转发给聊天/频道回复的内容收窄了（GH #6006）。
 	var finalAnswer, lastAgentMessage string
 	var semanticObserved atomic.Bool
 	turnNotificationGate := &codexTurnNotificationGate{}
 	firstItemWait := &codexFirstItemWaitObservation{}
 
-	// turnDone is set before starting the reader goroutine so there is no
-	// race between the lifecycle goroutine writing and the reader reading.
-	turnDone := make(chan bool, 1) // true = aborted
+	// turnDone 在启动读取 goroutine 之前就设好，避免生命周期 goroutine 写入与读取方
+	// 读取之间产生竞态。
+	turnDone := make(chan bool, 1) // true = 被中止
 
 	c := &codexClient{
 		cfg:                    b.cfg,
@@ -1123,9 +1045,8 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		notificationProtocol:   "unknown",
 		acceptNotification:     turnNotificationGate.accept,
 		onDiscardedNotification: func(string, map[string]any) {
-			// Any app-server notification proves the process made semantic
-			// progress, even when it is intentionally excluded from the active
-			// turn. Preserve initialize-retry safety without replaying content.
+			// 任何 app-server 通知都证明进程做了语义进展——即使它被有意排除在当前回合外。
+			// 借此保住 initialize 重试的安全性，又不用重放内容。
 			semanticObserved.Store(true)
 		},
 		onMessage: func(msg Message) {
@@ -1163,7 +1084,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		},
 	}
 
-	// Start reading stdout in background
+	// 后台开始读 stdout
 	readerDone := make(chan struct{})
 	go func() {
 		defer close(readerDone)
@@ -1176,59 +1097,40 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			c.handleLine(line)
 		}
 		if err := scanner.Err(); err != nil {
-			// %w on BOTH: callers match errCodexProcessExited to decide the
-			// process is gone, and bufio.ErrTooLong to tell "we could not read
-			// the response" apart from "codex died". startOrResumeThread needs
-			// that distinction to report an oversized resume as a rejected
-			// resume rather than a crash (MUL-5722).
+			// 两个都要 %w：调用方用 errCodexProcessExited 判断进程没了，用
+			// bufio.ErrTooLong 区分「读不到响应」和「codex 死了」。startOrResumeThread
+			// 需要这个区别，才能把超大 resume 报成「被拒的 resume」而不是崩溃（MUL-5722）。
 			c.markProcessExited(fmt.Errorf("%w: %w", errCodexProcessExited, err))
 			return
 		}
 		c.markProcessExited(errCodexProcessExited)
 	}()
 
-	// drainAndWait closes stdin so codex shuts down, then joins cmd.Wait().
-	// cmd.Wait() is the only Go-stdlib-documented synchronization point for
-	// os/exec's internal stderr/stdout copy goroutines — until it returns,
-	// stderrBuf may not have observed every byte codex wrote before it
-	// exited, and stderrBuf.Tail() can come back empty or truncated. Any
-	// code that reads stderrBuf.Tail() must call drainAndWait() first.
-	// sync.Once makes it safe to call from both error paths and the deferred
-	// cleanup.
+	// drainAndWait 先关闭 stdin 让 codex 停机，再汇合 cmd.Wait()。
+	// cmd.Wait() 是 Go 标准库唯一文档化的、对 os/exec 内部 stderr/stdout 拷贝 goroutine
+	// 的同步点——它返回前，stderrBuf 未必观测到 codex 退出前写下的每一个字节，
+	// stderrBuf.Tail() 可能返回空或残缺。任何读取 stderrBuf.Tail() 的代码都必须先调用
+	// drainAndWait()。sync.Once 让它在两条错误路径与 deferred 清理里都能安全调用。
 	//
-	// drainAndWait is also the cleanup safety net for the scanner-overflow
-	// path (#4520). When codex emits a single stdout line larger than the
-	// scanner's MaxScanTokenSize, the reader goroutine returns with
-	// scanner.Err() set, fails all in-flight RPCs via markProcessExited, and
-	// closes readerDone — but the codex child process is still alive and is
-	// now blocked trying to write the rest of the oversized line into a
-	// stdout pipe nobody is reading. A naive stdin.Close()+cmd.Wait() then
-	// hangs forever: codex never reaches its stdin-read syscall, so it never
-	// sees EOF, never exits, and cmd.Wait() never returns. The lifecycle
-	// goroutine therefore never sends a failed Result, the outer daemon
-	// blocks on its result channel, and the higher-level fresh-session
-	// fallback never fires.
+	// drainAndWait 同时是 scanner 溢出路径（#4520）的清理安全网。当 codex 吐出一条超过
+	// scanner MaxScanTokenSize 的 stdout 行时，读取 goroutine 带着 scanner.Err() 退出，
+	// 经 markProcessExited 让所有在途 RPC 失败并关闭 readerDone——但 codex 子进程还活着，
+	// 正堵着往一条没人读的 stdout 管道写超大行的剩余部分。这时天真的
+	// stdin.Close()+cmd.Wait() 会永远挂起：codex 永远到不了读 stdin 的系统调用，也就
+	// 看不到 EOF、不会退出，cmd.Wait() 永不返回。于是生命周期 goroutine 永远发不出失败的
+	// Result，外层 daemon 卡在它的结果 channel 上，更上层的 fresh-session 兜底也不触发。
 	//
-	// To stay correct under both clean shutdown and the stuck-child case,
-	// drainAndWait runs in two bounded phases:
+	// 为了让干净停机与卡死子进程两种情况都正确，drainAndWait 分两个有界阶段运行：
 	//
-	//  1. Close stdin and wait for the reader goroutine to finish, capped by
-	//     codexGracefulShutdownTimeout. The reader exits when codex closes
-	//     stdout on its own (clean shutdown — gives OTEL batch exporters a
-	//     chance to flush) OR when the scanner errors out (overflow case —
-	//     readerDone is already closed and the select returns immediately).
-	//     Per os/exec docs, calling cmd.Wait() while reads are still
-	//     in-flight on a StdoutPipe-returned pipe is incorrect because Wait
-	//     closes the pipe and turns pending reads into spurious errors, so
-	//     we must wait for the reader first.
+	//  1. 关闭 stdin 并等读取 goroutine 结束，上限 codexGracefulShutdownTimeout。读取方
+	//     在 codex 自行关闭 stdout 时退出（干净停机——给 OTEL 批量导出器 flush 的机会），
+	//     或在 scanner 出错时退出（溢出场景——readerDone 早已关闭，select 立即返回）。
+	//     按 os/exec 文档，cmd.Wait() 期间若 StdoutPipe 返回的管道上还有读取在途是错误
+	//     用法：Wait 会关掉管道，把未完成的读取变成虚假错误，所以必须先等读取方。
 	//
-	//  2. Wait for cmd.Wait() to return, capped by another
-	//     codexGracefulShutdownTimeout. Normally this returns immediately
-	//     because the process has already exited. In the stuck-child case
-	//     the process is still alive — we cancel the runCtx, which fires
-	//     cmd.Cancel (the group-SIGKILL helper installed above), and
-	//     cmd.WaitDelay then guarantees cmd.Wait() returns even if pipes
-	//     stay open.
+	//  2. 等 cmd.Wait() 返回，同样以上限 codexGracefulShutdownTimeout。正常情况进程已退出、
+	//     立即返回。卡死子进程场景下进程还活着——取消 runCtx 触发 cmd.Cancel（上面装的
+	//     进程组 SIGKILL 助手），cmd.WaitDelay 随后保证即使管道仍开着 cmd.Wait() 也会返回。
 	var waitOnce sync.Once
 	var cleanupConfirmed bool
 	var waitReturned bool
@@ -1249,26 +1151,21 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				})
 			}
 
-			// Phase 1: let the reader finish before invoking cmd.Wait().
+			// 阶段 1：调用 cmd.Wait() 之前先让读取方结束。
 			select {
 			case <-readerDone:
-				// reader drained cleanly (codex shutdown closed stdout)
-				// or aborted early (e.g. scanner overflow). Either way it
-				// is now safe to call cmd.Wait().
+				// 读取方干净排空（codex 停机关闭了 stdout）或提前中止（如 scanner 溢出）。
+				// 无论哪种，现在调用 cmd.Wait() 都安全了。
 			case <-time.After(grace):
-				// codex did not close stdout within the grace window. Force
-				// the shutdown via context cancellation — cmd.Cancel
-				// group-kills the tree, the reader unblocks when stdout
-				// EOFs, and we proceed to phase 2.
+				// codex 没在宽限期内关闭 stdout。用 context 取消强制停机——cmd.Cancel
+				// 组杀整棵树，读取方在 stdout EOF 时解除阻塞，进入阶段 2。
 				b.cfg.Logger.Warn("codex did not close stdout after stdin EOF; forcing shutdown",
 					"pid", cmd.Process.Pid,
 					"grace", grace.String(),
 				)
 				cancel()
-				// On Windows, Cancel terminates only the direct child. A
-				// descendant may keep inherited stdout open indefinitely. Start
-				// Wait now so os/exec's WaitDelay closes the pipe after its
-				// bounded deadline and lets the reader finish.
+				// Windows 上 Cancel 只终止直接子进程，后代可能无限期握着继承来的 stdout。
+				// 现在就开始 Wait，让 os/exec 的 WaitDelay 在其有界期限后关闭管道、放读取方结束。
 				startProcessWait()
 				<-waitCh
 				select {
@@ -1281,30 +1178,26 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				}
 			}
 
-			// Phase 2: bound cmd.Wait() in case the process is still alive
-			// (scanner-overflow case: reader exited early on its own while
-			// codex stayed blocked writing into a full stdout pipe).
+			// 阶段 2：给 cmd.Wait() 上界，防止进程还活着时无限等
+			// （scanner 溢出场景：读取方自行提前退出，而 codex 仍堵着往塞满的管道写）。
 			startProcessWait()
 			select {
 			case <-waitCh:
 				waitReturned = true
-				// reaped cleanly.
+				// 干净回收。
 			case <-time.After(grace):
 				b.cfg.Logger.Warn("codex process still alive after reader exited; forcing shutdown",
 					"pid", cmd.Process.Pid,
 					"grace", grace.String(),
 				)
 				cancel()
-				// WaitDelay (10s) is the final backstop: even if the
-				// group-kill races with an open pipe held by a
-				// descendant, cmd.Wait() returns within WaitDelay of the
-				// cancel.
+				// WaitDelay（10s）是最后兜底：即使组杀与后代持有的打开管道竞态，
+				// 取消之后 cmd.Wait() 也会在 WaitDelay 内返回。
 				<-waitCh
 				waitReturned = true
 			}
-			// Wait returning with a ProcessState is the os/exec reap boundary.
-			// On Unix, ProcessState.Exited reports false for a process terminated
-			// by SIGKILL even though Wait successfully reaped it.
+			// Wait 带着 ProcessState 返回就是 os/exec 的回收边界。Unix 上被 SIGKILL 终止的
+			// 进程，即使 Wait 已成功回收，ProcessState.Exited 仍报 false。
 			cleanupConfirmed = waitReturned && cmd.ProcessState != nil && waitProcessGroupGone(cmd, grace)
 			if codexCleanupConfirmationOverride.Load() < 0 {
 				cleanupConfirmed = false
@@ -1323,19 +1216,17 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				"stderr_bytes", stderrBuf.TotalBytes(),
 				"stderr_truncated", stderrBuf.TotalBytes() > codexStderrTailBytes,
 			)
-			// The tree has been reaped and observed; drop ownership. This is
-			// the only safe point to do so on Windows, where releasing kills
-			// whatever is still inside the job — which is precisely what should
-			// happen to anything that outlived the reap above. waitOnce makes it
-			// exactly-once per launch attempt.
+			// 整棵树已回收并观测完毕，可以放弃所有权了。Windows 上这是唯一安全的放弃点——
+			// 在那里释放会把仍在 job 里的东西杀掉，而这正是对任何活过上面回收的东西该做的事。
+			// waitOnce 让每次启动尝试恰好执行一次。
 			releaseProcessGroup(cmd)
 		})
 	}
 
-	// Drive the session lifecycle in a goroutine.
-	// Shutdown sequence: lifecycle goroutine closes stdin + cancels context →
-	// codex process exits → reader goroutine's scanner.Scan() returns false →
-	// readerDone closes → lifecycle goroutine collects final output and sends Result.
+	// 用 goroutine 驱动会话生命周期。
+	// 停机时序：生命周期 goroutine 关闭 stdin + 取消 context → codex 进程退出 → 读取
+	// goroutine 的 scanner.Scan() 返回 false → readerDone 关闭 → 生命周期 goroutine
+	// 收拢最终输出并发出 Result。
 	go func() {
 		defer activeCodexLaunches.Add(-1)
 		defer cancel()
@@ -1347,7 +1238,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		finalStatus := "completed"
 		var finalError string
 
-		// 1. Initialize handshake
+		// 1. initialize 握手
 		initializeStarted := time.Now()
 		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_sent", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "active_launches", activeLaunches)
 		_, err := c.request(runCtx, "initialize", map[string]any{
@@ -1365,22 +1256,18 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			var handshakeErr *codexHandshakeTimeoutError
 			timedOut := errors.As(err, &handshakeErr) && handshakeErr.Method == "initialize"
 			if timedOut {
-				// A timed-out initialize may still complete after the host gives up.
-				// Kill the whole process group before waiting so a leader that exits
-				// on stdin EOF cannot leave detached-stdio descendants behind.
+				// 超时的 initialize 可能在主机放弃之后仍完成。先杀整个进程组再等，避免
+				// 一个因 stdin EOF 退出的带头进程留下脱离 stdio 的后代。
 				signalProcessGroup(cmd, syscall.SIGKILL)
 			}
-			drainAndWait() // flush os/exec stderr goroutine before sampling Tail
+			drainAndWait() // 采样 Tail 前先排空 os/exec 的 stderr goroutine
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("codex initialize failed: %v", err)
 			contextEnded := errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 			if !timedOut && !contextEnded {
-				// Timeout stderr is untrusted provider output and may echo opaque
-				// Config.Env/auth values that pattern sanitization cannot identify.
-				// The same applies when the parent task deadline/cancellation wins
-				// the race against the per-RPC handshake timeout.
-				// Keep it out of persisted/user-visible Results; cleanup lifecycle
-				// still records bounded byte/truncation metadata.
+				// 超时的 stderr 是供应商侧不可信输出，可能回显模式清洗识别不出的不透明
+				// Config.Env/auth 值。父任务期限/取消赢了单 RPC 握手超时的竞态时同理。
+				// 别让它进持久化/用户可见的 Result；清理生命周期仍记录有界的字节/截断元数据。
 				finalError = withAgentStderr(finalError, "codex", sanitizeCodexDiagnostic(stderrBuf.Tail()))
 			}
 			retrySafe := timedOut && !semanticObserved.Load() && cleanupConfirmed && codexInitializeRetrySupported()
@@ -1396,20 +1283,18 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_response", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "latency", time.Since(initializeStarted).Round(time.Millisecond).String())
 		c.notify("initialized")
 
-		// 2. Start a new thread, or resume the prior one for this issue. When
-		// resume fails (thread GCed on the server, schema drift, etc.) we fall
-		// back to a fresh thread so the task still makes progress.
+		// 2. 新开一个线程，或为本次问题 resume 之前的线程。resume 失败时（线程在服务端
+		// 被回收、schema 漂移等）回退到全新线程，让任务仍能推进。
 		threadID, resumed, err := c.startOrResumeThread(runCtx, opts, b.cfg.Logger)
 		if err != nil {
 			var handshakeErr *codexHandshakeTimeoutError
 			timedOut := errors.As(err, &handshakeErr) && isCodexThreadSetupRPC(handshakeErr.Method)
 			if timedOut {
-				// A timed-out thread setup has an uncertain provider outcome. Kill
-				// the whole process group before waiting so a leader that exits on
-				// EOF cannot leave detached-stdio descendants behind.
+				// 线程建立超时的服务端结果不确定。先杀整个进程组再等，避免一个因 EOF 退出的
+				// 带头进程留下带着脱离 stdio 的后代。
 				signalProcessGroup(cmd, syscall.SIGKILL)
 			}
-			drainAndWait() // flush os/exec stderr goroutine before sampling Tail
+			drainAndWait() // 采样 Tail 前先排空 os/exec 的 stderr goroutine
 			finalStatus = "failed"
 			stderrTail := sanitizeCodexDiagnostic(stderrBuf.Tail())
 			finalError = err.Error()
@@ -1450,26 +1335,21 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			b.cfg.Logger.Info("codex thread started", "thread_id", threadID)
 		}
 
-		// 3. Send turn and wait for completion. When a resume was expected but we
-		// ended up on a fresh thread (the live thread/resume RPC was rejected — a
-		// corrupt/incompatible rollout, server-side thread GC, schema drift — or a
-		// transport failure forced a fresh retry), prepend the caller's continuity
-		// notice so the agent does not assume continuity it no longer has. The
-		// daemon's pre-flight gates only catch cases detectable before launch;
-		// this covers the ones only the live resume reveals (MUL-4424).
+		// 3. 发送回合并等待完成。当预期 resume 却落在全新线程上时（在线的 thread/resume
+		// RPC 被拒——损坏/不兼容的 rollout、服务端线程回收、schema 漂移——或传输失败迫使我们
+		// 走全新重试），在提示词前拼上调用方的连续性提示，让 agent 不要假定它还拥有其实已
+		// 不存在的上下文。daemon 的预检门只能拦住启动前就能发现的情况；这里覆盖的，是只有
+		// 在线 resume 才会暴露出来的那些（MUL-4424）。
 		//
-		// Whether that notice asks the agent to tell the USER is the caller's
-		// call, not ours: it depends on whether this surface's conversation is
-		// still readable, which this package cannot see (MUL-5722).
+		// 这段提示是否要 agent 转告用户，是调用方而非我们决定：取决于这个界面的对话是否
+		// 仍可读，本包看不到（MUL-5722）。
 		turnParams := map[string]any{
 			"threadId": threadID,
 			"input":    codexTurnInput(prompt, opts.ResumeExpected, resumed, opts.ResumeContinuityNotice),
 		}
-		// Per-turn reasoning override. Mirrors the per-thread injection in
-		// startOrResumeThread; keeping both in sync is enforced by the
-		// shared `codexReasoningInjection` fixture in codex_test.go (see
-		// MUL-2339 — Trump's constraint that the three injection points
-		// must not drift independently).
+		// 每回合的推理强度覆盖。与 startOrResumeThread 里按线程的注入对应；两者同步由
+		// codex_test.go 里共享的 `codexReasoningInjection` 夹具保证（见 MUL-2339——
+		// Trump 要求三个注入点不得各自漂移）。
 		applyCodexReasoningEffort(turnParams, opts.ThinkingLevel)
 		applyCodexServiceTier(turnParams, opts.ServiceTier)
 		waitingForTurn := true
@@ -1636,11 +1516,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		duration := time.Since(startTime)
 		b.cfg.Logger.Info("codex finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
 
-		// Run cleanup. drainAndWait handles the graceful-then-cancel pattern
-		// in two bounded phases (see its declaration): wait for the reader,
-		// then wait for cmd.Wait(), force-cancelling either if the grace
-		// window expires. A clean shutdown lets codex flush OTEL telemetry;
-		// a stuck process is killed via the process-group SIGKILL.
+		// 执行清理。drainAndWait 用两个有界阶段实现「先优雅后强杀」（见其声明）：
+		// 先等 reader，再等 cmd.Wait()，任一步超时则强制取消。干净停机让 codex 冲刷
+		// OTEL 遥测；卡死的进程则被进程组 SIGKILL 干掉。
 		drainAndWait()
 
 		if processExitErr != nil {
@@ -1652,13 +1530,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			finalError = buildCodexTimeoutDiagnosticError(timeoutDiagnostic, stderrTail)
 		}
 
-		// A first turn that produced no semantic progress because Codex could
-		// not load its model catalog is a startup-only failure: no tool ran and
-		// no content reached the user, so replaying the prompt cannot duplicate
-		// side effects. Reuse the same process-tree evidence initialize retries
-		// require (cleanupConfirmed plus platform support) rather than a bare
-		// ProcessState check: on Windows the daemon cannot prove the whole tree
-		// is gone, and a surviving app-server would race the retry.
+		// 首轮因 codex 加载不了模型目录而无语义进展，属于「只在启动时发生」的失败：
+		// 没有工具运行过、没有内容到达用户，重放提示词不会重复副作用。复用 initialize
+		// 重试所需的进程树证据（cleanupConfirmed + 平台支持），而不是只看 ProcessState：
+		// Windows 上 daemon 无法证明整棵树都退出，残留的 app-server 会和重试抢跑。
 		startupRefreshRetrySafe := timeoutDiagnostic.Kind == codexTimeoutFirstTurnNoProgress &&
 			!firstTurnProgressObserved &&
 			strings.Contains(stderrTail, codexModelCatalogRefreshFailureSignal) &&
@@ -1675,11 +1550,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			if waitLatency < 0 {
 				waitLatency = 0
 			}
-			// On timeout, cmd.Wait is the synchronization point that guarantees
-			// the stderr copy goroutine has drained. Reclassify from the complete
-			// bounded tail so a last-moment catalog/MCP signal is not reported as
-			// a bare timeout. Successful waits keep the snapshot taken at first
-			// progress so later turn stderr cannot pollute first-item telemetry.
+			// 超时时，cmd.Wait 是保证 stderr 拷贝 goroutine 已排空的那个同步点。用完整
+			// 的有界尾部重新归类，避免最后一刻的目录/MCP 信号被误报成裸超时。成功等待则
+			// 保留首次进展时拍下的快照，后续回合的 stderr 就不会污染首 item 遥测。
 			if strings.HasSuffix(outcome, "_timeout") {
 				classification = classifyCodexStartupStderr(stderrTail, true)
 			}
@@ -1702,8 +1575,8 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				"daemon_version", b.cfg.DaemonVersion,
 				"cleanup_confirmed", cleanupConfirmed,
 				"reaped", cleanupConfirmed,
-				// retry_safe describes the terminal attempt, not the measured wait
-				// interval. Successful samples therefore report false by design.
+				// retry_safe 描述的是终局那次 attempt，而不是本次被测量的等待区间，
+				// 所以成功样本按设计应报 false。
 				"retry_safe", startupRefreshRetrySafe,
 				"stderr_model_refresh_failure_count", classification.modelRefreshFailure,
 				"stderr_model_refresh_timeout_count", classification.modelRefreshTimeout,
@@ -1722,17 +1595,16 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		finalOutput := codexDeliverableOutput(finalAnswer, lastAgentMessage)
 		outputMu.Unlock()
 
-		// Build usage map from accumulated codex usage.
-		// First check JSON-RPC notifications (often empty for Codex).
+		// 从累积的 codex 用量构建 usage map。先看 JSON-RPC 通知（对 Codex 常常是空的）。
 		var usageMap map[string]TokenUsage
 		c.usageMu.Lock()
 		u := c.usage
 		c.usageMu.Unlock()
 
-		// Fallback: if no usage from JSON-RPC, scan Codex session JSONL logs.
-		// Codex writes token_count events to $CODEX_HOME/sessions/YYYY/MM/DD/*.jsonl;
-		// scan this backend's per-task CODEX_HOME, since sessions are isolated
-		// there rather than in the shared ~/.codex/sessions (MUL-4424).
+		// 兜底：JSON-RPC 拿不到用量时，扫描 codex 的会话 JSONL 日志。codex 会把
+		// token_count 事件写到 $CODEX_HOME/sessions/YYYY/MM/DD/*.jsonl；这里扫的是
+		// 本后端任务专属的 CODEX_HOME——会话在该目录里隔离，而不是共享的
+		// ~/.codex/sessions（MUL-4424）。
 		if u.InputTokens == 0 && u.OutputTokens == 0 {
 			taskCodexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
 			if scanned := scanCodexSessionUsage(startTime, taskCodexHome, threadID, resumed); scanned != nil {
@@ -1773,8 +1645,7 @@ func resolveCodexHandshakeTimeouts(opts ExecOptions) (time.Duration, time.Durati
 	threadHandshakeTimeout := opts.ThreadHandshakeTimeout
 	if threadHandshakeTimeout <= 0 {
 		if opts.HandshakeTimeout > 0 {
-			// Backward compatibility: an explicit legacy override historically
-			// bounded every startup RPC, including thread setup.
+			// 向后兼容：旧的显式覆盖历史上一并约束所有启动 RPC（含线程建立）。
 			threadHandshakeTimeout = opts.HandshakeTimeout
 		} else {
 			threadHandshakeTimeout = defaultCodexThreadHandshakeTimeout
@@ -1783,22 +1654,17 @@ func resolveCodexHandshakeTimeouts(opts ExecOptions) (time.Duration, time.Durati
 	return handshakeTimeout, threadHandshakeTimeout
 }
 
-// The continuity notice this backend prepends is supplied by the caller via
-// ExecOptions.ResumeContinuityNotice rather than written here. It used to be a
-// constant in this file that mirrored the daemon's, which meant two hand-kept
-// copies of the same paragraph and no way for this package to know which
-// surface it was running on — the wording is only correct if you know whether
-// the conversation is still readable (MUL-5722).
+// 本后端要前置的「上下文连续性提示」由调用方经 ExecOptions.ResumeContinuityNotice
+// 提供，而不是写死在这里。以前它是本文件里的常量，与 daemon 各自维护一份同一段落的
+// 拷贝，且本包无从知道自己跑在哪个界面上——只有知道对话是否仍可读，措辞才对（MUL-5722）。
 
-// codexTurnInput builds the input content for the first turn/start. When a
-// resume was expected (resumeExpected) but the backend landed on a fresh thread
-// (!resumed), it prepends the caller's continuity notice so the run does not
-// silently continue as new. The notice is folded into the same text block as
-// the prompt to stay within the single-text-block turn input Codex accepts.
+// codexTurnInput 构造首轮 turn/start 的输入内容。当预期要 resume（resumeExpected）但
+// 后端最终落在一个全新会话上（!resumed）时，它把调用方的连续性提示拼在最前面，避免这次
+// 运行悄悄「当新会话」继续。提示与提示词折叠进同一个文本块，以符合 codex 单文本块
+// 回合输入的要求。
 //
-// An empty notice means the caller has already disclosed the loss in the prompt
-// itself, so this must add nothing — that is the whole guard against a turn
-// carrying the same paragraph twice.
+// 提示为空说明调用方已在提示词里自述了上下文丢失，此处不得再加任何内容——这正是防止
+// 同一段话出现两次的全部防线。
 func codexTurnInput(prompt string, resumeExpected, resumed bool, notice string) []map[string]any {
 	text := prompt
 	if resumeExpected && !resumed {
@@ -1807,31 +1673,24 @@ func codexTurnInput(prompt string, resumeExpected, resumed bool, notice string) 
 	return []map[string]any{{"type": "text", "text": text}}
 }
 
-// startOrResumeThread picks between Codex's thread/resume and thread/start
-// based on opts.ResumeSessionID. When a prior thread ID is provided it first
-// tries thread/resume; recoverable protocol errors (unknown thread, schema
-// mismatch) fall back to thread/start so the task still executes, while
-// transport/process failures fail fast because the app-server can no longer
-// answer a fresh start request. The returned threadID is what subsequent
-// turn/start calls must reference, and resumed indicates whether the prior
-// thread was picked up (only useful for logging).
+// startOrResumeThread 依据 opts.ResumeSessionID 在 codex 的 thread/resume 与
+// thread/start 之间做选择。提供了先前线程 ID 时先尝试 thread/resume；可恢复的协议错误
+// （线程未知、schema 不匹配）会回退到 thread/start 让任务仍能执行，而传输/进程级失败则
+// 快速失败——app-server 已经无法应答新的 start 请求。返回的 threadID 是后续 turn/start
+// 必须引用的线程标识；resumed 表示是否接上了先前线程（仅用于日志）。
 func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions, logger *slog.Logger) (string, bool, error) {
 	if priorThreadID := opts.ResumeSessionID; priorThreadID != "" {
-		// thread/resume reuses the thread's persisted model and reasoning
-		// effort; only override fields the daemon actually cares about.
-		// developerInstructions stays nil for the reason given on thread/start
-		// below.
+		// thread/resume 会复用会话持久化的模型与推理强度；这里只覆盖 daemon 真正在意的
+		// 字段。developerInstructions 保持 nil 的原因见下方 thread/start 的说明。
 		resumeParams := map[string]any{
 			"threadId":              priorThreadID,
 			"cwd":                   opts.Cwd,
 			"model":                 nilIfEmpty(opts.Model),
 			"developerInstructions": nil,
 		}
-		// Explicit override of the persisted reasoning effort: without
-		// this, a Codex resume silently reuses whatever level the prior
-		// session was created with, even when the user has flipped the
-		// agent's thinking_level since. See MUL-2339 — Elon flagged that
-		// resume must honour the live config, not the stored one.
+		// 显式覆盖持久化的推理强度：不加这个，codex resume 会静默沿用旧会话建时的档位，
+		// 即使 agent 的 thinking_level 之后已被用户改过。参见 MUL-2339——resume 必须
+		// 服从「当前配置」而非「存下来的配置」。
 		applyCodexReasoningEffort(resumeParams, opts.ThinkingLevel)
 		applyCodexServiceTier(resumeParams, opts.ServiceTier)
 		c.threadSetupMethod = "thread/resume"
@@ -1871,12 +1730,10 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		}
 	}
 
-	// developerInstructions is always nil: a thread started with this cwd loads
-	// the per-task AGENTS.md the daemon wrote there, so the runtime brief is
-	// already in context and inlining it would duplicate it on every turn.
-	// Confirmed end-to-end against codex-cli 0.144.6 driving the real
-	// app-server (thread/start -> turn/start) with developerInstructions unset
-	// (MUL-5392).
+	// developerInstructions 恒为 nil：用本 cwd 开启的线程会自动加载 daemon 写在该目录的
+	// 任务级 AGENTS.md，运行简报已进上下文，再内联一份会每回合重复。已用 codex-cli 0.144.6
+	// 驱动真实 app-server（thread/start -> turn/start）、developerInstructions 不设置的
+	// 方式端到端验证过（MUL-5392）。
 	startParams := map[string]any{
 		"model":                  nilIfEmpty(opts.Model),
 		"modelProvider":          nil,
@@ -1947,23 +1804,17 @@ func (c *codexClient) setThreadName(ctx context.Context, threadID, name string) 
 	return err
 }
 
-// applyCodexReasoningEffort writes the per-agent thinking_level into a
-// Codex app-server request. The three points — thread/start.config,
-// thread/resume.config, turn/start.effort — all flow through this helper
-// so any future protocol/key change touches one site rather than three
-// (per Trump's MUL-2339 review constraint).
+// applyCodexReasoningEffort 把各 agent 的 thinking_level 写进 codex app-server 请求。
+// thread/start.config、thread/resume.config、turn/start.effort 这三个位置都经本 helper
+// 汇入，将来协议/键名变化只改一处而不是三处（Trump 在 MUL-2339 review 中提出的约束）。
 //
-// The shape is detected from the params keys:
-//   - turn/start always carries `input`, and the schema exposes the
-//     reasoning override as the top-level `effort` field.
-//   - thread/start and thread/resume nest it under
-//     `config.model_reasoning_effort`.
+// 写入位置按参数键形状自动判断：
+//   - turn/start 总是带 `input`，其 schema 把推理强度覆盖暴露为顶层 `effort` 字段。
+//   - thread/start 与 thread/resume 把它嵌在 `config.model_reasoning_effort` 下。
 //
-// Empty `level` is a no-op: we deliberately do NOT emit a key when the
-// caller didn't request an override, so the upstream defaults (config
-// file, account-scoped model preference) stay in charge. This also
-// guarantees `effort: ""` never reaches the CLI — Codex rejects empty
-// strings on this field.
+// `level` 为空则什么都不做：调用方没有要求覆盖时我们刻意不发任何键，让上游默认
+// （配置文件、账号级模型偏好）继续掌权。同时也保证 `effort: ""` 永远不会到 CLI——
+// codex 拒绝该字段的空串。
 func applyCodexReasoningEffort(params map[string]any, level string) {
 	if params == nil || level == "" {
 		return
@@ -1980,9 +1831,8 @@ func applyCodexReasoningEffort(params map[string]any, level string) {
 	params["config"] = cfg
 }
 
-// applyCodexServiceTier writes the catalog-owned service tier to the
-// app-server's top-level serviceTier field. All three execution requests
-// accept the same shape. Empty is a no-op so config.toml remains authoritative.
+// applyCodexServiceTier 把目录持有的 service tier 写进 app-server 顶层 serviceTier 字段。
+// 三种执行请求接受同样的形状。空值不做任何事，让 config.toml 保持权威。
 func applyCodexServiceTier(params map[string]any, tier string) {
 	if params == nil || tier == "" {
 		return
@@ -2012,26 +1862,20 @@ func stopTimer(timer *time.Timer) {
 	}
 }
 
-// codexFirstTurnNoProgressTimeout resolves the first-turn watchdog ceiling:
-// how long the first turn may stay silent after turn/started before that one
-// watchdog fails it. This is only the first-turn timer's own duration — NOT
-// the effective first-item wait. The semantic-inactivity timer is armed
-// concurrently (the same first status:running resets it and starts this one),
-// so the real wait is min(this, semanticInactivityTimeout, execution timeout).
-// Raising the override above the semantic timeout therefore does not extend the
-// wait unless the semantic timeout is raised too; LoadConfig warns when it does
-// not. See the run loop's competing-timer select for the interaction.
+// codexFirstTurnNoProgressTimeout 解析首轮 watchdog 的上限：turn/started 之后，首轮在
+// 被该 watchdog 判失败前最多可静默多久。这只是首轮定时器自身的时长——不是实际的首 item
+// 等待。语义静默定时器是同时上膛的（同一次 status:running 会重置它并启动这个），所以真实
+// 等待 = min(本值, semanticInactivityTimeout, 执行超时)。把配置值抬到语义超时之上并不能
+// 延长等待，除非语义超时也一起抬——LoadConfig 在没抬时会告警。交互细节见运行循环里
+// 两个定时器竞争的 select。
 //
-// An explicit configured override (MULTICA_CODEX_FIRST_TURN_TIMEOUT) is honored
-// as-is, upward included: an operator whose app-server is legitimately slow to
-// its first event (a heavy MCP boot, a cold model catalog) can lift this ceiling
-// past the default that the semantic-inactivity timeout alone can never raise
-// (GH #3262 / #5959).
+// 显式配置的覆盖（MULTICA_CODEX_FIRST_TURN_TIMEOUT）原样生效、允许上调：运营者如果
+// 的 app-server 出首个事件确实慢（重的 MCP 启动、冷模型目录），可以把上限抬过默认值——
+// 语义静默超时单独永远抬不到这个默认值之上（GH #3262 / #5959）。
 //
-// With no override the behaviour is byte-identical to before: the default
-// ceiling, which the configured semantic-inactivity timeout can only ever
-// shrink, never raise. The `* 4 / 5` cannot overflow here because that branch
-// only runs when 0 < semanticInactivityTimeout <= defaultCodexFirstTurnNoProgressTimeout.
+// 没有覆盖时行为与过去逐字节一致：只用默认上限，配置的语义静默超时只能把它往下压、
+// 永远无法上抬。`* 4 / 5` 不会溢出，因为该分支只在
+// 0 < semanticInactivityTimeout <= defaultCodexFirstTurnNoProgressTimeout 时执行。
 func codexFirstTurnNoProgressTimeout(semanticInactivityTimeout, configured time.Duration) time.Duration {
 	if configured > 0 {
 		return configured
@@ -2131,12 +1975,10 @@ func trySendString(ch chan<- string, value string) {
 	}
 }
 
-// codexDeliverableOutput picks Result.Output from what the turn produced: the
-// message the app-server itself labelled `phase: "final_answer"`, or — for the
-// legacy `agent_message` protocol, which carries no phase — the most recent
-// agent message. Never every message joined: the intermediate ones narrate the
-// work between tool calls, which belongs to the transcript and not to a chat or
-// IM reply (GH #6006).
+// codexDeliverableOutput 从回合产物中挑出 Result.Output：优先用 app-server 自己标注了
+// `phase: "final_answer"` 的消息；旧式 `agent_message` 协议没有 phase，则回退到最近的
+// agent 消息。绝不把所有消息拼起来：中间那些消息是在叙述工具调用之间的过程，属于
+// transcript，不该进聊天/IM 回复（GH #6006）。
 func codexDeliverableOutput(finalAnswer, lastAgentMessage string) string {
 	if finalAnswer != "" {
 		return finalAnswer
@@ -2198,43 +2040,35 @@ type codexClient struct {
 	onMessage              func(Message)
 	onSemanticActivity     func(description string)
 	onTurnDone             func(aborted bool)
-	// onFinalAnswer fires only for an agent message the app-server itself
-	// labelled `phase: "final_answer"` — the turn's deliverable, as opposed to
-	// the intermediate agent messages that narrate work between tool calls.
-	// Both still reach onMessage: the transcript keeps the whole timeline, only
-	// Result.Output is narrowed to the deliverable (GH #6006).
+	// onFinalAnswer 只在 app-server 亲自标注 `phase: "final_answer"` 的 agent 消息时触发
+	// ——即本回合的「交付物」，区别于叙述工具调用过程的中间 agent 消息。两类都仍会到
+	// onMessage：transcript 保留完整时间线，只有 Result.Output 收窄为交付物（GH #6006）。
 	onFinalAnswer func(text string)
-	// acceptNotification isolates the active turn from same-thread history
-	// replay emitted while thread/resume is restoring prior conversation.
-	// Unit-level protocol tests leave it nil and exercise dispatch directly.
+	// acceptNotification 把当前回合与 thread/resume 恢复旧对话时重放的「同线程历史」
+	// 隔离开。协议级单测把它留为 nil，直接驱动 dispatch。
 	acceptNotification func(method string, params map[string]any) bool
-	// onDiscardedNotification preserves out-of-band safety signals (such as
-	// suppressing an initialize retry after observed activity) without letting
-	// filtered history mutate current-turn output or lifecycle state.
+	// onDiscardedNotification 保留带外安全信号（比如观测到活动后抑制 initialize 重试），
+	// 同时不让被过滤掉的历史去改动当前回合的输出或生命周期状态。
 	onDiscardedNotification func(method string, params map[string]any)
 
-	notificationProtocol string // "unknown", "legacy", "raw"
+	notificationProtocol string // "unknown"、"legacy"、"raw"
 	turnCompleted        bool
 
 	usageMu sync.Mutex
-	usage   TokenUsage // accumulated from turn events
+	usage   TokenUsage // 由回合事件累积而来
 
 	turnErrorMu sync.Mutex
-	turnError   string // captured from turn/completed status=failed or terminal error notifications
+	turnError   string // 从 turn/completed status=failed 或终态错误通知里捕获
 }
 
-// codexTurnNotificationGate keeps resume-time history replay from mutating the
-// output or ending the new turn. Codex app-server can emit notifications before
-// the turn/start RPC response, so the gate is armed before that request and uses
-// turn/started (or legacy task_started) as the actual current-turn boundary.
-// Protocols that omit those start events also omit a reliable current-turn ID;
-// for compatibility, their post-arm events remain accepted. We therefore rely
-// on the single stdout reader's ordering guarantee that resume history emitted
-// before the thread/resume response is processed while the gate is still closed.
-// A replay emitted after arm but before a start event cannot be distinguished
-// from a valid legacy current-turn event without breaking those older streams.
-// Its mutable lifecycle fields are only touched by the stdout reader goroutine;
-// armed is atomic because the lifecycle goroutine flips it.
+// codexTurnNotificationGate 防止 resume 期间的历史重放改动当前回合的输出或结束新回合。
+// codex app-server 可能在 turn/start RPC 响应之前就发通知，所以门在发起该请求前上闩，
+// 并以 turn/started（或旧式 task_started）作为真正的当前回合边界。省略这些 start 事件
+// 的协议也没有可靠的当前回合 ID；为兼容起见，上闩之后的事件保持放行。因此我们依赖
+// stdout 单读取方提供的顺序保证：resume 历史总是在门还关着时（thread/resume 响应之前）
+// 被处理。上闩后、start 事件前发出的重放，与合法旧式当前回合事件无法区分——除非破坏
+// 那些更老的协议流。它的可变生命周期字段只由 stdout 读取 goroutine 触碰；
+// armed 是原子的，因为生命周期 goroutine 会翻转它。
 type codexTurnNotificationGate struct {
 	armed   atomic.Bool
 	started bool
@@ -2257,8 +2091,8 @@ func (g *codexTurnNotificationGate) accept(method string, params map[string]any)
 			g.started = true
 			return true
 		}
-		// Older Codex event streams can omit task_started. Once turn/start is
-		// armed, keep that compatibility; pre-arm replay is still excluded.
+		// 旧版 codex 事件流可能省略 task_started。一旦 turn/start 已上闩，就保留这份
+		// 兼容；上闩前的重放仍会被排除。
 		return true
 	}
 
@@ -2269,9 +2103,8 @@ func (g *codexTurnNotificationGate) accept(method string, params map[string]any)
 		return true
 	case method == "turn/completed":
 		if !g.started {
-			// Older app-server versions can complete a turn without first
-			// emitting turn/started. The pre-arm boundary still rejects resume
-			// replay, while this keeps those versions functional.
+			// 更老的 app-server 版本可能不先发 turn/started 就直接完成一个回合。
+			// 上闩前的边界仍会挡掉 resume 重放，这个分支让这些老版本保持可用。
 			return true
 		}
 		turnID := extractNestedString(params, "turn", "id")
@@ -2283,8 +2116,8 @@ func (g *codexTurnNotificationGate) accept(method string, params map[string]any)
 		turnID, _ := params["turnId"].(string)
 		return g.turnID == "" || turnID == "" || turnID == g.turnID
 	default:
-		// A terminal error may be the first notification produced by a failed
-		// turn/start, so it must remain observable even without turn/started.
+		// 终态错误可能是失败的 turn/start 产出的第一条通知，即使没有 turn/started
+		// 也必须保持可见。
 		return true
 	}
 }
@@ -2514,25 +2347,20 @@ func (c *codexClient) getProcessErr() error {
 	return c.processErr
 }
 
-// isCodexResumeOverflow reports whether a failed startOrResumeThread failed
-// because the thread/resume RESPONSE did not fit in our stdout line buffer.
+// isCodexResumeOverflow 判断一次失败的 startOrResumeThread 是否因为 thread/resume 的
+// 响应大到塞不进我们的 stdout 行缓冲。
 //
-// Codex serializes the entire thread into that single response, so a long
-// enough thread overflows agentStreamMaxLineBytes and the reader goroutine
-// dies with bufio.ErrTooLong. Every other transport error means codex is
-// gone; this one means codex is fine and we cannot read it. The distinction
-// is what makes it a resume REJECTION: the thread cannot be handed to us at
-// all, so only starting over can cure it — exactly what Result.ResumeRejected
-// documents, and the evidence shouldRetryWithFreshSession looks for first.
+// codex 把整个会话序列化进那单条响应，所以足够长的会话会溢出
+// agentStreamMaxLineBytes，读取 goroutine 因 bufio.ErrTooLong 而死。其它传输错误都
+// 意味着 codex 没了；唯独这种意味着 codex 好好的、是我们读不动。这个区别正是把它当
+// 成 resume「被拒」的原因：会话根本交接不过来，只有重新开始能治好——这正是
+// Result.ResumeRejected 的语义，也是 shouldRetryWithFreshSession 首先寻找的证据。
 //
-// Recovery has to go through the daemon rather than a local thread/start
-// fallback. By the time we get here the reader goroutine has exited and codex
-// is blocked writing the rest of the oversized line into a pipe nobody drains,
-// so this process can no longer answer any RPC. The daemon's fresh-session
-// retry re-execs codex, which is the only way back (MUL-5722).
+// 恢复必须走 daemon 而不是本地 thread/start 兜底。到这里时读取 goroutine 已退出，
+// codex 正堵在往无人读取的管道写超大行的剩余部分，本进程已无法应答任何 RPC。
+// daemon 的 fresh-session 重试会重新 exec codex，这是唯一的出路（MUL-5722）。
 //
-// Requires ResumeSessionID: an overflow on a thread/start response is a
-// different failure and nothing about the session pointer would fix it.
+// 要求 ResumeSessionID：thread/start 响应的溢出是另一种失败，改会话指针治不了。
 func isCodexResumeOverflow(opts ExecOptions, err error) bool {
 	return opts.ResumeSessionID != "" && errors.Is(err, bufio.ErrTooLong)
 }
@@ -2557,7 +2385,7 @@ func (c *codexClient) handleLine(line string) {
 		return
 	}
 
-	// Check if it's a response to our request
+	// 判断这是否是对我方请求的响应
 	if _, hasID := raw["id"]; hasID {
 		if _, hasResult := raw["result"]; hasResult {
 			c.handleResponse(raw)
@@ -2567,14 +2395,14 @@ func (c *codexClient) handleLine(line string) {
 			c.handleResponse(raw)
 			return
 		}
-		// Server request (has id + method)
+		// 服务端主动发来的请求（带 id + method，需应答）
 		if _, hasMethod := raw["method"]; hasMethod {
 			c.handleServerRequest(raw)
 			return
 		}
 	}
 
-	// Notification (no id, has method)
+	// 通知（无 id、有 method）
 	if _, hasMethod := raw["method"]; hasMethod {
 		c.handleNotification(raw)
 	}
@@ -2616,7 +2444,7 @@ func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
 	var method string
 	_ = json.Unmarshal(raw["method"], &method)
 
-	// Auto-approve all exec/patch requests in daemon mode
+	// daemon 模式下自动批准所有 exec/patch 类请求：没有人在屏幕前点「允许」。
 	switch method {
 	case "item/commandExecution/requestApproval", "execCommandApproval":
 		c.respond(id, map[string]any{"decision": "accept"})
@@ -2634,16 +2462,13 @@ func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
 	}
 }
 
-// codexPermissionsApprovalResponse builds the auto-grant reply for a Codex
-// item/permissions/requestApproval server request. In daemon mode there is no
-// human to approve, so we echo back the requested network / fileSystem profile
-// and scope it to the current turn, mirroring the other auto-accept branches in
-// handleServerRequest.
+// codexPermissionsApprovalResponse 构造对 codex item/permissions/requestApproval
+// 服务端请求的自动授权应答。daemon 模式下没有人可审批，于是把请求的 network /
+// fileSystem profile 原样回显，并把范围限定在当前回合——与 handleServerRequest 里
+// 其它自动接受分支一致。
 //
-// The grant is intentionally limited to the network / fileSystem keys we
-// understand. A parse failure and any dropped key are logged so that a future
-// app-server protocol that adds a new permission shape is visible in daemon
-// logs instead of being silently narrowed away.
+// 授权刻意只限于我们认识的 network / fileSystem 键。解析失败与被丢弃的键都会记日志，
+// 这样未来 app-server 协议若新增权限形态，能在 daemon 日志里显形，而不是被静默收窄。
 func codexPermissionsApprovalResponse(params json.RawMessage, logger *slog.Logger) map[string]any {
 	var payload struct {
 		Permissions map[string]any `json:"permissions"`
@@ -2683,10 +2508,9 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 	if p, ok := raw["params"]; ok {
 		_ = json.Unmarshal(p, &params)
 	}
-	// Filter multiplexed subagent threads before the current-turn gate. The
-	// gate mutates started/turnID on turn/started; letting another thread reach
-	// it first can replace the main turn ID and make subsequent main-thread
-	// items/completion look stale.
+	// 在当前回合门之前先过滤多路复用的子 agent 线程。门会在 turn/started 时改动
+	// started/turnID；若让别的线程先到，可能把主回合 ID 顶掉，让后续主线 item/完成事件
+	// 看着像过期数据。
 	if c.isNotificationFromOtherThread(params) {
 		return
 	}
@@ -2697,7 +2521,7 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 		return
 	}
 
-	// Legacy codex/event notifications
+	// 旧式 codex/event 通知
 	if method == "codex/event" || strings.HasPrefix(method, "codex/event/") {
 		c.notificationProtocol = "legacy"
 		msgData, ok := params["msg"]
@@ -2712,7 +2536,7 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 		return
 	}
 
-	// Raw v2 notifications
+	// 原始 v2 通知
 	if c.notificationProtocol != "legacy" {
 		if c.notificationProtocol == "unknown" &&
 			(method == "turn/started" || method == "turn/completed" ||
@@ -2726,34 +2550,27 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 	}
 }
 
-// codexPatchInputMaxBytes bounds the total diff/content bytes recorded for a
-// single patch_apply event.
+// codexPatchInputMaxBytes 限制单条 patch_apply 事件记录的 diff/content 总字节数。
 //
-// The bound exists because the legacy protocol reports `add` and `delete` as
-// whole-file contents rather than diffs, so a single generated file can be
-// arbitrarily large. It is deliberately applied only to this new Codex payload:
-// other providers already stream tool inputs through unbounded, and clamping
-// them here would silently truncate transcripts that render correctly today.
-// Unifying the limit at the persistence boundary is a separate change.
+// 需要上限是因为旧式协议把 add/delete 报成整文件内容而不是 diff，单个生成文件可能任意大。
+// 上限刻意只加在这个新的 codex 载荷上：其它供应商的工具输入本就不设限，在这里硬截断会
+// 静默截坏今天正常渲染的 transcript。把上限统一到持久化边界是另一项独立改动。
 const codexPatchInputMaxBytes = 64 * 1024
 
-// codexNormalizeLegacyChanges converts a legacy `patch_apply_*` changes map
-// into the normalized change list.
+// codexNormalizeLegacyChanges 把旧式 `patch_apply_*` 的 changes map 转成归一化变更列表。
 //
-// The legacy wire shape is map[path]FileChange, where FileChange is internally
-// tagged on `type` and carries *different* payload fields per variant:
-// add/delete carry whole-file `content`, while update carries `unified_diff`
-// plus an optional `move_path`. Nothing in that shape is a plain unified diff
-// for every case, which is why the normalized form keeps `diff` and `content`
-// as alternatives instead of one field.
+// 旧式线上形态是 map[path]FileChange，FileChange 内部按 `type` 打标，且每种变体带的载荷
+// 字段*不同*：add/delete 带整文件 `content`，update 带 `unified_diff` 加可选 `move_path`。
+// 没有哪种形态对所有情况都是一条普通 unified diff，所以归一化形式把 `diff` 与 `content`
+// 作为互斥可选字段保留，而不是并成一个字段。
 func codexNormalizeLegacyChanges(raw any) []any {
 	changes, ok := raw.(map[string]any)
 	if !ok || len(changes) == 0 {
 		return nil
 	}
 
-	// Go randomizes map iteration; sort so a replayed event yields a stable
-	// transcript instead of reshuffling the file list on every run.
+	// Go 的 map 遍历顺序随机；排序后重放事件能得到稳定的 transcript，而不是每次运行
+	// 都重排文件列表。
 	paths := make([]string, 0, len(changes))
 	for path := range changes {
 		paths = append(paths, path)
@@ -2773,8 +2590,8 @@ func codexNormalizeLegacyChanges(raw any) []any {
 		if diff, _ := entry["unified_diff"].(string); diff != "" {
 			norm["diff"] = diff
 		}
-		// Presence, not non-emptiness: an added empty file has content "" and
-		// should still render as an empty body rather than a missing one.
+		// 看「是否存在」而不是「是否非空」：新增的空文件 content 为 ""，仍应渲染成
+		// 空 body 而非缺失。
 		if content, ok := entry["content"].(string); ok {
 			norm["content"] = content
 		}
@@ -2789,21 +2606,17 @@ func codexNormalizeLegacyChanges(raw any) []any {
 	return out
 }
 
-// codexNormalizeRawChanges converts a v2 app-server `fileChange` item's
-// changes array into the normalized change list.
+// codexNormalizeRawChanges 把 v2 app-server `fileChange` item 的 changes 数组转成
+// 归一化变更列表。
 //
-// Unlike the legacy shape this is an ordered array of
-// FileUpdateChange{path, kind, diff}, and `kind` is an *object*
-// ({type, move_path?}) rather than a string — reading it as a string yields ""
-// and silently loses the add/delete/update distinction.
+// 与旧式形态不同，这里是 FileUpdateChange{path, kind, diff} 的有序数组，且 `kind` 是
+// *对象*（{type, move_path?}）而不是字符串——当字符串读会得到 ""，静默丢失
+// add/delete/update 的区别。
 //
-// The `diff` field is misleadingly named: upstream's format_file_change_diff
-// only produces a unified diff for `update`. For `add` and `delete` it returns
-// the whole file's contents verbatim, and for a moved `update` it appends a
-// trailing "\n\nMoved to: <path>" line. Feeding an added file's contents to a
-// diff parser mislabels every line — and actively inverts the meaning of any
-// line that happens to begin with '+' or '-' — so the payload is routed by
-// `kind`, not by field name.
+// `diff` 字段的名字有误导性：上游 format_file_change_diff 只对 `update` 产出 unified
+// diff。对 `add`/`delete` 它把整文件内容原样返回；对带移动的 `update` 会追加一行尾部
+// "\n\nMoved to: <path>"。把新增文件的内容喂给 diff 解析器会让每一行都被误标——甚至把
+// 恰好以 '+'/'-' 开头的行含义颠倒——所以载荷按 `kind` 分流，而不是按字段名猜。
 func codexNormalizeRawChanges(raw any) []any {
 	changes, ok := raw.([]any)
 	if !ok || len(changes) == 0 {
@@ -2826,8 +2639,7 @@ func codexNormalizeRawChanges(raw any) []any {
 			kind, _ = k["type"].(string)
 			movePath, _ = k["move_path"].(string)
 		case string:
-			// Tolerate a flattened form so a future protocol tweak degrades
-			// to a labelled change instead of an unlabelled one.
+			// 容忍扁平化形式：未来协议若有小改动，退化成一个有标签的变更而不是无标签的。
 			kind = k
 		}
 		if kind != "" {
@@ -2840,9 +2652,8 @@ func codexNormalizeRawChanges(raw any) []any {
 		body, bodyPresent := entry["diff"].(string)
 		switch kind {
 		case "add", "delete":
-			// Whole-file contents, despite arriving under `diff`. Keyed on the
-			// field being present rather than non-empty so an empty added file
-			// still renders as an empty body instead of a missing one.
+			// 虽是整文件内容，却从 `diff` 字段到达。按「字段是否存在」而非「是否非空」
+			// 判定，让新增的空文件仍渲染成空 body 而不是缺失。
 			if bodyPresent {
 				norm["content"] = body
 			} else if content, ok := entry["content"].(string); ok {
@@ -2866,10 +2677,9 @@ func codexNormalizeRawChanges(raw any) []any {
 	return out
 }
 
-// stripCodexMovedToSuffix removes the trailing "Moved to: <path>" line that
-// upstream appends to a moved file's unified diff. The destination is already
-// carried as move_path, and leaving the sentence in would render as two stray
-// context lines at the end of the diff.
+// stripCodexMovedToSuffix 去掉上游追加在被移动文件 unified diff 末尾的
+// "Moved to: <path>" 行。目标路径已由 move_path 携带，留着这句话会在 diff 结尾渲染成
+// 两条多余的上下文行。
 func stripCodexMovedToSuffix(diff, movePath string) string {
 	if movePath == "" {
 		return diff
@@ -2878,34 +2688,28 @@ func stripCodexMovedToSuffix(diff, movePath string) string {
 	return strings.TrimSuffix(diff, suffix)
 }
 
-// codexPatchInput wraps normalized changes into the tool_use input, applying
-// the size bound. It returns nil when nothing could be normalized so a
-// malformed or unrecognised event degrades to the previous payload-less
-// behaviour rather than breaking the transcript.
+// codexPatchInput 把归一化后的变更包进 tool_use 的 input，并施加大小上限。当没有任何
+// 东西可归一化时返回 nil——畸形或未识别的事件退化成以前那种无载荷行为，而不是弄坏
+// transcript。
 func codexPatchInput(changes []any) map[string]any {
 	if len(changes) == 0 {
 		return nil
 	}
-	// Measure before anything rewrites the bodies, so the figure reported to the
-	// reader is the size of the patch they actually produced.
+	// 在任何改写 body 之前先量一遍，这样报给读取方的是他们实际产出的补丁大小。
 	originalBytes := codexPatchBodyBytes(changes)
 
-	// Redaction must run BEFORE the size budget, never after it. Several rules
-	// only match a credential as a whole — the PEM rule needs both the BEGIN
-	// and the END marker — so cutting a body at the budget can strand the
-	// opening half of a private key in text that no pattern will match again.
-	// The daemon and the server each redact further down the path, and neither
-	// can recover a secret that truncation has already made unrecognisable.
+	// 脱敏必须先于大小预算，绝不能反过来。好几条规则只把「整个凭据」当作整体匹配——
+	// PEM 规则需要 BEGIN 与 END 两个标记——所以按预算截断 body 可能把私钥的前半截留在
+	// 任何模式都再也匹配不到的文本里。daemon 与 server 在更下游还会各自脱敏，但两者都
+	// 无法恢复已被截断弄得面目全非的密钥。
 	safe, ok := redact.InputMap(map[string]any{"changes": changes})["changes"].([]any)
 	if !ok {
 		safe = changes
 	}
 
 	input := map[string]any{"changes": safe}
-	// Budget the redacted bodies, since those are what gets stored. Redaction
-	// usually shrinks a body — a whole key collapses to a short placeholder —
-	// so this is also the measurement that decides whether trimming is needed
-	// at all.
+	// 以脱敏后的 body 计预算，因为落库的是它们。脱敏通常会缩小 body——整把密钥塌缩成
+	// 一段占位符——所以这个测量也决定到底需不需要裁剪。
 	if codexPatchBodyBytes(safe) > codexPatchInputMaxBytes {
 		applyCodexPatchBudget(safe)
 		input["truncated"] = true
@@ -2914,7 +2718,7 @@ func codexPatchInput(changes []any) map[string]any {
 	return input
 }
 
-// codexPatchBodyBytes totals the diff/content payload carried by a change list.
+// codexPatchBodyBytes 统计一条变更列表携带的 diff/content 载荷总字节。
 func codexPatchBodyBytes(changes []any) int {
 	total := 0
 	for _, change := range changes {
@@ -2931,9 +2735,8 @@ func codexPatchBodyBytes(changes []any) int {
 	return total
 }
 
-// applyCodexPatchBudget trims diff/content bodies in place until the payload
-// fits codexPatchInputMaxBytes. Paths and kinds are never dropped: they are
-// small and are the part a reviewer needs even when the body is gone.
+// applyCodexPatchBudget 原地裁剪 diff/content body，直到载荷装进 codexPatchInputMaxBytes。
+// path 与 kind 绝不丢弃：它们很小，且是 body 没了之后审阅者仍需要看的部分。
 func applyCodexPatchBudget(changes []any) {
 	remaining := codexPatchInputMaxBytes
 	for _, change := range changes {
@@ -2961,8 +2764,7 @@ func applyCodexPatchBudget(changes []any) {
 	}
 }
 
-// truncateUTF8 cuts s to at most max bytes without leaving a split rune, so the
-// result still marshals as valid JSON.
+// truncateUTF8 把 s 截到至多 max 字节且不切断 UTF-8 字符，保证结果仍能序列化成合法 JSON。
 func truncateUTF8(s string, max int) string {
 	if max <= 0 {
 		return ""
@@ -2973,10 +2775,9 @@ func truncateUTF8(s string, max int) string {
 	return strings.ToValidUTF8(s[:max], "")
 }
 
-// codexNormalizePatchStatus maps both protocols' status spellings onto one
-// snake_case vocabulary: the legacy enum is already snake_case
-// (completed/failed/declined) while the v2 enum is camelCase and adds
-// inProgress.
+// codexNormalizePatchStatus 把两种协议的 status 拼写统一到同一套 snake_case 词汇表：
+// 旧式枚举本来就是 snake_case（completed/failed/declined），v2 枚举是 camelCase 且多了
+// inProgress。
 func codexNormalizePatchStatus(status string) string {
 	switch status {
 	case "":
@@ -2988,9 +2789,8 @@ func codexNormalizePatchStatus(status string) string {
 	}
 }
 
-// codexPatchResultOutput renders the tool_result line for a finished patch.
-// It always produces a non-empty string when anything is known, because an
-// empty output renders as an unexpandable blank row in the transcript.
+// codexPatchResultOutput 为已结束的 patch 渲染 tool_result 行。只要有任何已知信息，
+// 它总会返回非空串——空 output 在 transcript 里会渲染成一行无法展开的空行。
 func codexPatchResultOutput(status string, changes []any, stdout, stderr string) string {
 	segments := make([]string, 0, 3)
 
@@ -3006,11 +2806,9 @@ func codexPatchResultOutput(status string, changes []any, stdout, stderr string)
 	return strings.Join(segments, "\n")
 }
 
-// codexMCPToolInput keeps the remote server visible in the transcript while
-// preserving the provider-native argument shape under a stable key. Redact at
-// the adapter boundary as well as in the daemon: other Message consumers must
-// not have to know that an MCP invocation can carry credentials or private
-// query text in deeply nested arguments.
+// codexMCPToolInput 让远程服务器在 transcript 里保持可见，同时在一个稳定键下保留
+// 供应商原生参数形状。在适配层边界就脱敏（daemon 里也会再脱敏一次）：其它 Message
+// 消费方不必知道 MCP 调用可能在深层嵌套参数里携带凭据或私有查询文本。
 func codexMCPToolInput(item map[string]any) map[string]any {
 	input := make(map[string]any, 2)
 	if server, _ := item["server"].(string); strings.TrimSpace(server) != "" {
@@ -3029,10 +2827,9 @@ func codexMCPToolName(item map[string]any) string {
 	return "mcp_tool"
 }
 
-// codexMCPToolResultOutput deliberately excludes result.content and
-// structuredContent. Those values can be large and may contain private data;
-// the Agent Log needs an auditable outcome, not a second copy of the provider
-// payload that Codex already consumed.
+// codexMCPToolResultOutput 刻意排除 result.content 与 structuredContent：这些值可能很大、
+// 且可能含私有数据。Agent Log 需要一个可审计的结果，而不是 codex 早已消费过的供应商
+// 载荷的又一份拷贝。
 func codexMCPToolResultOutput(item map[string]any) string {
 	status, _ := item["status"].(string)
 	status = codexNormalizePatchStatus(status)
@@ -3121,8 +2918,8 @@ func (c *codexClient) handleEvent(msg map[string]any) {
 		stderr, _ := msg["stderr"].(string)
 		status, _ := msg["status"].(string)
 		if status == "" {
-			// `status` postdates `success`; fall back so older builds still
-			// report an outcome rather than a bare file count.
+			// `status` 晚于 `success` 出现；回退让更老的构建也能报出结果，而不是只有
+			// 干巴巴的文件数。
 			if success, ok := msg["success"].(bool); ok {
 				if success {
 					status = "completed"
@@ -3141,7 +2938,7 @@ func (c *codexClient) handleEvent(msg map[string]any) {
 			})
 		}
 	case "task_complete":
-		// Extract usage from legacy task_complete if present.
+		// 旧式 task_complete 若带用量则提取。
 		c.extractUsageFromMap(msg)
 		if c.onTurnDone != nil {
 			c.onTurnDone(false)
@@ -3154,15 +2951,12 @@ func (c *codexClient) handleEvent(msg map[string]any) {
 }
 
 func (c *codexClient) handleRawNotification(method string, params map[string]any) {
-	// Ignore notifications from threads other than the one we are tracking.
-	// Codex multiplexes subagent threads (e.g. memory consolidation) on the
-	// same stdio pipe; only our thread should drive turn lifecycle and output.
+	// 忽略非我们所跟踪线程发来的通知。codex 会在同一条 stdio 管道上多路复用子 agent
+	// 线程（如记忆整合）；只有我们的线程才能驱动回合生命周期与输出。
 	//
-	// The v2 app-server-protocol schema guarantees a top-level threadId on
-	// every notification. handleNotification performs this guard before the
-	// stateful current-turn gate; retain it here as defense in depth for direct
-	// callers. If a future codex revision introduces notifications without
-	// threadId, they fall through — re-audit this guard when bumping codex.
+	// v2 app-server 协议 schema 保证每条通知都带顶层 threadId。handleNotification 在
+	// 有状态的当前回合门之前就做这个守卫；这里再保留一份作为直接调用方的纵深防御。若
+	// codex 未来版本出现不带 threadId 的通知，它们会穿透——升级 codex 时要重新审计此守卫。
 	if c.isNotificationFromOtherThread(params) {
 		return
 	}
@@ -3188,8 +2982,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 		aborted := status == "cancelled" || status == "canceled" ||
 			status == "aborted" || status == "interrupted"
 
-		// Capture the error message from failed turns so callers can surface
-		// a real reason instead of falling back to "empty output".
+		// 捕获失败回合的错误消息，让调用方能给出真实原因，而不是退化成「空输出」。
 		if status == "failed" {
 			errMsg := extractNestedString(params, "turn", "error", "message")
 			if errMsg == "" {
@@ -3198,7 +2991,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 			c.setTurnError(errMsg)
 		}
 
-		// Extract usage from turn/completed if present (e.g. params.turn.usage).
+		// turn/completed 若带用量则提取（例如 params.turn.usage）。
 		if turn, ok := params["turn"].(map[string]any); ok {
 			c.extractUsageFromMap(turn)
 		}
@@ -3208,9 +3001,8 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 		}
 
 	case "error":
-		// Top-level protocol error. Retrying notifications (willRetry=true) are
-		// transient reconnect attempts; only capture terminal errors so we
-		// don't stomp on a real failure later with a retry placeholder.
+		// 顶层协议错误。带 willRetry=true 的通知只是瞬时重连尝试；只捕获终态错误，
+		// 免得后面用重试占位符盖掉一次真实失败。
 		willRetry, _ := params["willRetry"].(bool)
 		errMsg := extractNestedString(params, "error", "message")
 		if errMsg == "" {
@@ -3231,8 +3023,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 		}
 
 	case "thread/status/changed":
-		// Status changes are informational. Only turn/completed carries the
-		// authoritative terminal state for a raw-protocol turn.
+		// 状态变更只是信息性的。只有 turn/completed 携带原始协议回合的权威终态。
 
 	default:
 		if strings.HasPrefix(method, "item/") {
@@ -3331,16 +3122,13 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 		}
 		phase, _ := item["phase"].(string)
 		if phase == "final_answer" {
-			// The gate exists so a subagent or a replayed history turn cannot
-			// end OUR turn early, and the thread guard at the top of this
-			// function already keeps foreign threads out. A final answer that
-			// arrives before we observed turn/started is still this thread's
-			// deliverable, and dropping it would fall back to narration.
+			// 门的存在是为了防止子 agent 或重放的历史回合提前结束「我们的」回合；本函数
+			// 顶部的线程守卫已把外来线程挡在外面。在我们观测到 turn/started 之前到达的
+			// final answer 仍是本线程的交付物，丢掉它就会退化成叙述性消息。
 			if text != "" && c.onFinalAnswer != nil {
 				c.onFinalAnswer(text)
 			}
-			// Keep the stream open until turn/completed. A final answer is the
-			// deliverable, not the authoritative lifecycle boundary.
+			// 流保持打开直到 turn/completed。final answer 只是交付物，不是权威的生命周期边界。
 		}
 	}
 }
@@ -3359,10 +3147,10 @@ func describeCodexItemProgressActivity(method, itemType, itemID string) string {
 	return fmt.Sprintf("%s:%s:%s", method, itemType, itemID)
 }
 
-// extractUsageFromMap extracts token usage from a map that may contain
-// "usage", "token_usage", or "tokens" fields. Handles various Codex formats.
+// extractUsageFromMap 从一个可能含 "usage"、"token_usage" 或 "tokens" 字段的 map 里
+// 提取 token 用量，兼容 codex 的各种格式。
 func (c *codexClient) extractUsageFromMap(data map[string]any) {
-	// Try common field names for usage data.
+	// 依次试常用字段名。
 	var usageMap map[string]any
 	for _, key := range []string{"usage", "token_usage", "tokens"} {
 		if v, ok := data[key].(map[string]any); ok {
@@ -3377,9 +3165,8 @@ func (c *codexClient) extractUsageFromMap(data map[string]any) {
 	c.usageMu.Lock()
 	defer c.usageMu.Unlock()
 
-	// Codex reports cached input as a prompt-token detail: cached_input_tokens
-	// are included in input_tokens. Persist mutually-exclusive buckets so
-	// dashboard cost math does not charge cached input twice.
+	// codex 把缓存输入作为 prompt-token 的明细上报：cached_input_tokens 已含在
+	// input_tokens 里。持久化互斥分桶，让仪表盘的成本计算不会把缓存输入计两次。
 	inputTokens := codexInt64(usageMap, "input_tokens", "input", "prompt_tokens")
 	cacheReadTokens := codexInt64(usageMap, "cached_input_tokens", "cache_read_tokens", "cache_read_input_tokens")
 	c.usage.InputTokens += codexUncachedInputTokens(inputTokens, cacheReadTokens)
@@ -3396,7 +3183,7 @@ func codexUncachedInputTokens(inputTokens, cachedInputTokens int64) int64 {
 	return uncached
 }
 
-// codexInt64 returns the first non-zero int64 value from the map for the given keys.
+// codexInt64 按给定键顺序返回 map 里第一个非零 int64 值。
 func codexInt64(m map[string]any, keys ...string) int64 {
 	for _, key := range keys {
 		switch v := m[key].(type) {
@@ -3413,20 +3200,18 @@ func codexInt64(m map[string]any, keys ...string) int64 {
 	return 0
 }
 
-// ── Codex session log scanner ──
+// ── Codex 会话日志扫描器 ──
 
-// codexSessionUsage holds usage extracted from a Codex session JSONL file.
+// codexSessionUsage 保存从 codex 会话 JSONL 文件里提取出的用量。
 type codexSessionUsage struct {
 	usage TokenUsage
 	model string
 }
 
-// scanCodexSessionUsage extracts usage for threadID from its Codex rollout.
-// Codex 0.144.4 embeds the app-server thread ID in both the rollout filename and
-// the first session_meta item. Binding the scan to that ID prevents a
-// concurrently-created rollout (for example a Codex subagent) from being billed
-// to this task. A resumed rollout keeps its original date directory, so both flat
-// and YYYY/MM/DD layouts are searched.
+// scanCodexSessionUsage 为 threadID 从其 codex rollout 里提取用量。codex 0.144.4 把
+// app-server 线程 ID 同时嵌在 rollout 文件名和首个 session_meta 条目里。把扫描绑定到
+// 该 ID，可防止并发创建的 rollout（例如 codex 子 agent 的）被记到本任务头上。resume 的
+// rollout 保留它最初的日期目录，所以平面布局与 YYYY/MM/DD 布局都会搜。
 func scanCodexSessionUsage(startTime time.Time, codexHome, threadID string, resumed bool) *codexSessionUsage {
 	root := codexSessionRoot(codexHome)
 	if root == "" || strings.TrimSpace(threadID) == "" {
@@ -3455,9 +3240,8 @@ func scanCodexSessionUsage(startTime time.Time, codexHome, threadID string, resu
 		return files[i].modTime.Before(files[j].modTime)
 	})
 
-	// Multiple paths for one thread can transiently exist during layout migration.
-	// They have the same owner, so prefer the latest deterministically without ever
-	// crossing into a different thread's rollout.
+	// 布局迁移期间，同一线程可能短暂对应多个路径。它们同属一个主人，所以确定性地
+	// 取最新的一个，且绝不跨进别的线程的 rollout。
 	result := parseCodexSessionFileSince(files[len(files)-1].path, startTime, resumed)
 	if result == nil || (result.usage.InputTokens == 0 && result.usage.OutputTokens == 0 &&
 		result.usage.CacheReadTokens == 0 && result.usage.CacheWriteTokens == 0) {
@@ -3466,14 +3250,12 @@ func scanCodexSessionUsage(startTime time.Time, codexHome, threadID string, resu
 	return result
 }
 
-// findCodexSessionRollouts returns uncompressed rollout files owned by threadID
-// in the two layouts supported by Codex 0.14x. filepath.Glob traverses a linked
-// sessions root, unlike WalkDir, which treats a symlink root as a single file and
-// never visits its children. The normal path uses Codex's filename contract and
-// validates session_meta.id when present. If a future Codex version changes the
-// filename, the metadata pass preserves exact ownership instead of silently
-// dropping usage. Filtering after globbing also keeps a provider-supplied thread
-// ID out of the glob expression.
+// findCodexSessionRollouts 返回 threadID 拥有的、未被压缩的 rollout 文件，覆盖
+// codex 0.14x 支持的两种布局。filepath.Glob 会穿过符号链接的 sessions 根目录，而
+// WalkDir 会把符号链接根当单个文件、绝不访问其子项。常规路径采用 codex 的文件名约定，
+// 并在存在 session_meta.id 时校验它。若未来 codex 改文件名，元数据这趟仍能保持精确的
+// 归属，而不是静默丢掉用量。在 glob 之后再过滤，也避免把供应商提供的线程 ID 拼进
+// glob 表达式。
 func findCodexSessionRollouts(root, threadID string) []string {
 	threadID = strings.TrimSpace(threadID)
 	if root == "" || threadID == "" {
@@ -3500,8 +3282,8 @@ func findCodexSessionRollouts(root, threadID string) []string {
 		}
 	}
 
-	// Fast path for the current Codex contract. Reject a filename match if its
-	// canonical session_meta explicitly names a different thread.
+	// 当前 codex 约定的快路径。若文件名命中的 rollout 里，权威 session_meta 明确
+	// 指向别的线程，则拒绝该匹配。
 	suffix := "-" + threadID + ".jsonl"
 	var matches []string
 	for _, path := range candidates {
@@ -3517,8 +3299,8 @@ func findCodexSessionRollouts(root, threadID string) []string {
 		return matches
 	}
 
-	// Compatibility path for a future filename format: the first session_meta
-	// remains the canonical owner of a rollout in Codex's own resume reader.
+	// 面向未来文件名格式的兼容路径：在 codex 自己的 resume 读取逻辑里，首个
+	// session_meta 仍是 rollout 的权威归属者。
 	for _, path := range candidates {
 		if metadataID, ok := readCodexRolloutThreadID(path); ok && metadataID == threadID {
 			matches = append(matches, path)
@@ -3527,9 +3309,8 @@ func findCodexSessionRollouts(root, threadID string) []string {
 	return matches
 }
 
-// readCodexRolloutThreadID reads only the head of a rollout. Codex writes the
-// canonical session_meta first; the line cap prevents a malformed legacy file
-// without metadata from turning ownership checks into a full multi-GB scan.
+// readCodexRolloutThreadID 只读 rollout 的头部。codex 会把权威 session_meta 写在最前面；
+// 行数上限防止一个没有元数据的畸形旧文件把归属检查拖成全量扫描几 GB。
 func readCodexRolloutThreadID(path string) (string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -3557,10 +3338,9 @@ func readCodexRolloutThreadID(path string) (string, bool) {
 	return "", false
 }
 
-// codexSessionRoot returns the Codex sessions directory. It prefers the
-// explicit per-task codexHome the backend is running with (so usage is read
-// from the same task-local sessions Codex actually wrote to), then the ambient
-// CODEX_HOME, then ~/.codex.
+// codexSessionRoot 返回 codex 的 sessions 目录。优先用后端正在运行的显式 per-task
+// codexHome（用量从 codex 实际写入的任务级 sessions 里读），其次用环境变量 CODEX_HOME，
+// 最后回退 ~/.codex。
 func codexSessionRoot(codexHome string) string {
 	if codexHome = strings.TrimSpace(codexHome); codexHome == "" {
 		codexHome = os.Getenv("CODEX_HOME")
@@ -3592,7 +3372,7 @@ type codexRawTokenUsage struct {
 	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
 }
 
-// codexSessionTokenCount represents a token_count event in Codex JSONL.
+// codexSessionTokenCount 表示 codex JSONL 里的一条 token_count 事件。
 type codexSessionTokenCount struct {
 	Timestamp time.Time `json:"timestamp"`
 	Type      string    `json:"type"`
@@ -3607,17 +3387,15 @@ type codexSessionTokenCount struct {
 	} `json:"payload"`
 }
 
-// parseCodexSessionFile extracts the final token_count from a Codex session file.
+// parseCodexSessionFile 从 codex 会话文件里提取最后一条 token_count。
 func parseCodexSessionFile(path string) *codexSessionUsage {
 	return parseCodexSessionFileSince(path, time.Time{}, false)
 }
 
-// parseCodexSessionFileSince extracts usage accumulated after startTime. Codex
-// reports total_token_usage cumulatively for the whole resumed session, so the
-// last total before startTime is subtracted from the final total. Timestamp-less
-// events in a resumed rollout are baseline-only until an explicit post-start
-// timestamp establishes the boundary; fresh sessions retain the previous
-// whole-file behavior because every event belongs to the new task.
+// parseCodexSessionFileSince 提取 startTime 之后累积的用量。codex 对整段被 resume 的
+// 会话按 total_token_usage 累积上报，所以要从最终总数里减去 startTime 之前的最后一条
+// total。resume 的 rollout 里无时间戳的事件只算作基线，直到某条明确晚于 startTime 的
+// 时间戳确立边界；全新会话则保持旧的整文件行为，因为每个事件都属于新任务。
 func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) *codexSessionUsage {
 	f, err := os.Open(path)
 	if err != nil {
@@ -3637,7 +3415,7 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 	for scanner.Scan() {
 		line := scanner.Bytes()
 
-		// Fast pre-filter.
+		// 快速预筛，避免对每一行都做完整 JSON 解析。
 		if !bytesContainsStr(line, "token_count") && !bytesContainsStr(line, "turn_context") {
 			continue
 		}
@@ -3651,13 +3429,13 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 			afterStartBoundary = true
 		}
 
-		// Track model from turn_context events.
+		// 从 turn_context 事件跟踪模型名。
 		if evt.Type == "turn_context" && evt.Payload.Model != "" {
 			result.model = evt.Payload.Model
 			continue
 		}
 
-		// Extract token usage from token_count events.
+		// 从 token_count 事件提取 token 用量。
 		if evt.Payload.Type == "token_count" && evt.Payload.Info != nil {
 			afterStart := startTime.IsZero() || timestampAfterStart ||
 				(evt.Timestamp.IsZero() && (!resumed || afterStartBoundary))
@@ -3675,8 +3453,8 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 				previousTotal = current
 				previousTotalFound = true
 			} else if usage := evt.Payload.Info.LastTokenUsage; usage != nil && afterStart {
-				// Preserve event order: a later last_token_usage is the same
-				// fallback the old whole-file parser would have selected.
+				// 保持事件顺序：更晚的 last_token_usage 正是旧的整文件解析器会选中的
+				// 同一个回退。
 				finalUsage = normalizeCodexRawTokenUsage(*usage)
 				finalUsageFound = true
 			}
@@ -3701,9 +3479,8 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 func subtractCodexRawTokenUsage(total, baseline codexRawTokenUsage) codexRawTokenUsage {
 	total = normalizeCodexRawTokenUsage(total)
 	baseline = normalizeCodexRawTokenUsage(baseline)
-	// Guard each counter independently. Treating one field's reset as a reset of
-	// the entire snapshot would re-report still-monotonic fields and recreate the
-	// over-counting this fallback is meant to prevent.
+	// 各计数器独立防护。把一个字段的重置当成整份快照的重置，会把仍单调递增的字段
+	// 重新上报一遍，复现这个回退本想防止的重复计数。
 	return codexRawTokenUsage{
 		InputTokens:           nonNegativeTokenDelta(total.InputTokens, baseline.InputTokens),
 		OutputTokens:          nonNegativeTokenDelta(total.OutputTokens, baseline.OutputTokens),
@@ -3731,18 +3508,18 @@ func addCodexRawTokenUsage(a, b codexRawTokenUsage) codexRawTokenUsage {
 
 func nonNegativeTokenDelta(total, baseline int64) int64 {
 	if total < baseline {
-		// A counter reset means the final value already belongs to the new span.
+		// 计数器发生过重置，说明最终值已属于新的时间段。
 		return total
 	}
 	return total - baseline
 }
 
-// bytesContainsStr checks if b contains the string s (without allocating).
+// bytesContainsStr 判断 b 是否包含字符串 s（不额外分配内存）。
 func bytesContainsStr(b []byte, s string) bool {
 	return strings.Contains(string(b), s)
 }
 
-// ── Helpers ──
+// ── 辅助函数 ──
 
 func extractThreadID(result json.RawMessage) string {
 	var r struct {

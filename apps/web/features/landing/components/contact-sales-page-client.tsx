@@ -1,17 +1,24 @@
 "use client";
 
+/**
+ * 官网「联系销售」表单页（客户端组件）：纯前端负责渲染表单与交互状态，
+ * 收集潜在客户信息后 POST 到 `/api/contact-sales` 转交销售线索。
+ * 文案全部来自 landing i18n 字典；拦截常见免费邮箱 / 限流错误并即时提示。
+ */
 import Link from "next/link";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { LandingHeader } from "./landing-header";
 import { LandingFooter } from "./landing-footer";
 import { useLocale } from "../i18n";
 
+/** 表单提交状态机：初始 / 提交中 / 成功 / 失败（带提示语）。 */
 type SubmitState =
   | { status: "idle" }
   | { status: "submitting" }
   | { status: "success" }
   | { status: "error"; message: string };
 
+/** 表单各字段的值结构。 */
 type FormState = {
   firstName: string;
   lastName: string;
@@ -25,6 +32,7 @@ type FormState = {
   consentUpdates: boolean;
 };
 
+/** 表单初始空值。 */
 const EMPTY_FORM: FormState = {
   firstName: "",
   lastName: "",
@@ -38,9 +46,8 @@ const EMPTY_FORM: FormState = {
   consentUpdates: false,
 };
 
-// Free providers we reject client-side, so users get instant feedback. The
-// server enforces a longer list independently — this is purely a UX guard
-// and is not a security boundary.
+// 常见免费邮箱域名清单：仅用于客户端即时反馈（提示「请使用企业邮箱」），
+// 服务端还有一份更全的独立校验——这里只是体验上的预检，不是安全边界。
 const CLIENT_FREE_EMAIL_DOMAINS = new Set([
   "gmail.com",
   "googlemail.com",
@@ -58,6 +65,13 @@ const CLIENT_FREE_EMAIL_DOMAINS = new Set([
   "foxmail.com",
 ]);
 
+/**
+ * 联系销售页内容主体（导出给 page.tsx 使用）。
+ *
+ * 管理表单状态、提交流程与三种结果展示（成功卡片 / 错误提示 / 表单本体）。
+ *
+ * @returns 带官网导航与页脚的整页布局。
+ */
 export function ContactSalesPageClient() {
   const { t } = useLocale();
   const c = t.contactSales;
@@ -68,10 +82,8 @@ export function ContactSalesPageClient() {
 
   const isBusy = state.status === "submitting";
 
-  // After a successful submit, the tall form collapses into the much shorter
-  // success card. The browser keeps the scroll offset, which lands the user
-  // on the footer — they have to scroll up to see the confirmation. Pull the
-  // page back so the thank-you message is in view.
+  // 提交成功后，较高的表单会被替换成矮很多的成功卡片；浏览器此时仍停留在原滚动位置，
+  // 用户可能正好看到页脚。这里主动把页面滚回顶部锚点，确保感谢信息出现在视野里。
   useEffect(() => {
     if (state.status !== "success") return;
     successAnchorRef.current?.scrollIntoView({
@@ -125,19 +137,19 @@ export function ContactSalesPageClient() {
         return;
       }
 
-      // 429 from per-IP middleware or per-email DB cap.
+      // 429：IP 级中间件或单邮箱提交上限触发的限流。
       if (res.status === 429) {
         setState({ status: "error", message: c.errors.rateLimit });
         return;
       }
 
-      // Try to extract a server error message; fall back to generic copy.
+      // 尝试解析服务端错误信息；解析不出就用兜底文案。
       let serverMsg = "";
       try {
         const body = (await res.json()) as { error?: unknown };
         if (typeof body?.error === "string") serverMsg = body.error;
       } catch {
-        // ignore — body wasn't JSON.
+        // 忽略——响应体不是 JSON。
       }
       if (/business email/i.test(serverMsg)) {
         setState({ status: "error", message: c.errors.freeEmail });
@@ -195,6 +207,7 @@ export function ContactSalesPageClient() {
   );
 }
 
+/** 提交成功后的确认卡片：标题、说明与返回首页按钮。 */
 function SuccessCard({
   title,
   message,
@@ -224,8 +237,10 @@ function SuccessCard({
   );
 }
 
+/** 表单字段字典的类型（取自 contactSales 文案段）。 */
 type FormDict = ReturnType<typeof useLocale>["t"]["contactSales"];
 
+/** 整张联系表单：姓名/邮箱/公司/规模/地区/用途/目标 + 两个营销同意勾选。 */
 function FormCard({
   form,
   update,
@@ -412,6 +427,7 @@ function FormCard({
   );
 }
 
+/** 单个字段的外壳：label + 输入控件 +（可选）提示文字，警告语气会标红。 */
 function Field({
   label,
   htmlFor,
@@ -455,6 +471,7 @@ function Field({
   );
 }
 
+/** 统一样式的文本/邮箱输入框。 */
 function TextInput({
   id,
   value,
@@ -495,6 +512,7 @@ function TextInput({
   );
 }
 
+/** 统一样式的下拉选择框（带自定义下拉箭头）。 */
 function SelectInput({
   id,
   value,
@@ -533,6 +551,7 @@ function SelectInput({
   );
 }
 
+/** 营销同意区块：介绍文字 + 两个勾选项 + 隐私链接。 */
 function ConsentBlock({
   outreachId,
   updatesId,
@@ -581,6 +600,7 @@ function ConsentBlock({
   );
 }
 
+/** 单个同意勾选项。 */
 function ConsentCheckbox({
   id,
   checked,

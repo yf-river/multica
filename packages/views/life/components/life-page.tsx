@@ -2,6 +2,12 @@
 
 /* eslint-disable i18next/no-literal-string */
 
+/**
+ * life 模块：人生 / 长期关系工作台页面。
+ * 以标签页形式组织：记忆（理解与治理）、实验（行为实验轮次）、观察席
+ * （第三方独立视角）、编年史（周期性人生记录）。是长期记忆实验的核心 UI。
+ */
+
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Archive, Check, ChevronRight, Eye, History, Loader2, Pause, Play, Plus, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
@@ -46,10 +52,12 @@ import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
 
+/** 从 URL query 里解析当前激活的标签页；非法值回退到 memory。 */
 function parseLifeTab(value: string | null): LifeTab {
   return LIFE_TABS.includes(value as LifeTab) ? (value as LifeTab) : "memory";
 }
 
+/** 生活页主组件：按 tab 分发渲染记忆/实验/观察席/编年史各面板。 */
 export function LifePage() {
   const { t } = useT("life");
   const navigation = useNavigation();
@@ -102,6 +110,7 @@ export function LifePage() {
   );
 }
 
+/** 记忆页顶部的「随手记录一条材料」输入框。 */
 function QuickMaterialRecorder() {
   const { t } = useT("life");
   const wsId = useWorkspaceId();
@@ -111,14 +120,17 @@ function QuickMaterialRecorder() {
   return <section data-testid="memory-quick-record" className="mb-4 rounded-lg border border-dashed border-border/70 bg-muted/20 p-3"><div className="flex flex-wrap items-center gap-2"><span className="shrink-0 text-caption font-medium text-muted-foreground">{t(($) => $.complete.material_title)}</span><Input className="h-8 min-w-0 flex-1 bg-background" value={material} onChange={(event) => setMaterial(event.target.value)} placeholder={t(($) => $.complete.material_placeholder)} /><Button size="sm" disabled={!material.trim() || add.isPending} onClick={() => add.mutate()}><Plus />{t(($) => $.complete.record)}</Button></div>{add.isError && <p role="alert" className="mt-2 text-caption text-destructive">记录失败，请检查网络后重试。</p>}</section>;
 }
 
+/** 查询加载中的转圈占位。 */
 function QueryLoading() {
   return <div className="flex items-center justify-center py-10 text-muted-foreground"><Loader2 className="size-4 animate-spin" /></div>;
 }
 
+/** 查询失败的红框提示。 */
 function QueryError({ message = "这部分内容暂时加载失败，请稍后重试。" }: { message?: string }) {
   return <div role="alert" className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-body text-destructive"><AlertCircle className="size-4 shrink-0" />{message}</div>;
 }
 
+/** 记忆面板：展示长期理解焦点卡、其他理解、最近变化与治理区。 */
 function MemoryPanel() {
   const { t } = useT("life");
   const wsId = useWorkspaceId();
@@ -157,6 +169,7 @@ function MemoryPanel() {
   </div>;
 }
 
+/** 展示当前生效的身份版本的各维度摘要。 */
 function IdentitySummary({ identity }: { identity: LifeIdentityVersion }) {
   const { t } = useT("life");
   const labels: Record<string, string> = {
@@ -213,6 +226,7 @@ function experimentRoundStatus(value: string, t: ReturnType<typeof useT<"life">>
   return labels[value] ?? value;
 }
 
+/** 一行「待激活」的身份草稿，带激活按钮。 */
 function IdentityDraftRow({ identity }: { identity: LifeIdentityVersion }) {
   const { t } = useT("life");
   const wsId = useWorkspaceId();
@@ -221,6 +235,7 @@ function IdentityDraftRow({ identity }: { identity: LifeIdentityVersion }) {
   return <article className="flex items-center gap-3 rounded-lg border border-dashed p-4"><div className="min-w-0 flex-1"><div className="text-body font-medium">{t(($) => $.complete.identity_draft, { version: identity.version })}</div><div className="truncate text-caption text-muted-foreground">{identity.change_reason}</div></div><Button size="sm" disabled={activate.isPending} onClick={() => activate.mutate()}><Check />{t(($) => $.complete.activate)}</Button></article>;
 }
 
+/** 身份草稿编辑器：可编辑各维度 JSON 并提交一个新版本。 */
 function IdentityEditor({ identity }: { identity?: LifeIdentityVersion }) {
   const { t } = useT("life");
   const wsId = useWorkspaceId();
@@ -249,6 +264,7 @@ function lifeEvidenceLabel(value: string): string {
   return labels[value] ?? value.replaceAll("_", " ");
 }
 
+/** 单条记忆行：展示内容/置信度/证据，支持确认、纠正、降级、归档、删除。 */
 function MemoryRow({ memory, compact = false, showContent = true }: { memory: LifeMemory; compact?: boolean; showContent?: boolean }) {
   const { t } = useT("life");
   const [editing, setEditing] = useState(false);
@@ -315,6 +331,7 @@ function MemoryRow({ memory, compact = false, showContent = true }: { memory: Li
   );
 }
 
+/** 实验面板：展示待确认提案、当前实验与全部轮次治理。 */
 function ExperimentPanel() {
   const { t } = useT("life");
   const wsId = useWorkspaceId();
@@ -342,10 +359,12 @@ function ExperimentPanel() {
   </div><section className="space-y-3"><div className="flex items-center justify-between"><h2 className="text-body font-medium">全部轮次与治理</h2><span className="text-caption text-muted-foreground">{experiments.length} 个实验 · {rounds.length} 轮</span></div><div className="space-y-4">{pending.map((proposal) => <article key={proposal.id} className="space-y-2 rounded-xl border border-dashed border-brand/40 p-4"><div className="text-caption text-muted-foreground">等待你确认 · {proposal.proposal_type}</div><div className="text-body font-medium">{proposal.title}</div><p className="text-body text-muted-foreground">{proposal.summary}</p><div className="flex gap-2"><Button size="sm" disabled={confirm.isPending} onClick={() => confirm.mutate(proposal.id)}><Check />{t(($) => $.complete.confirm_execute)}</Button><Button size="sm" variant="outline" disabled={reject.isPending} onClick={() => reject.mutate(proposal.id)}><X />{t(($) => $.complete.reject)}</Button></div></article>)}{experiments.map((experiment) => <ExperimentRows key={experiment.id} experiment={experiment} rounds={rounds.filter((round) => round.experiment_id === experiment.id)} />)}{modules.length > 0 && <details className="rounded-xl border border-border/70"><summary className="cursor-pointer list-none p-4 text-body font-medium">{t(($) => $.complete.modules_title)}</summary><div className="space-y-2 border-t border-border/60 p-4">{modules.map((module) => <article key={module.id} className="flex items-center gap-3 rounded-lg border p-3"><div className="min-w-0 flex-1"><div className="text-body">{module.name}</div><div className="text-caption text-muted-foreground">{t(($) => $.complete.module_status, { status: module.status, version: module.current_version })}</div></div>{module.status === "active" ? <Button size="sm" variant="outline" onClick={() => updateModule.mutate({ id: module.id, status: "paused" })}><Pause />{t(($) => $.complete.pause)}</Button> : <Button size="sm" onClick={() => updateModule.mutate({ id: module.id, status: "active" })}><Play />{t(($) => $.complete.enable)}</Button>}</article>)}</div></details>}</div></section></div>;
 }
 
+/** 单个实验下的多轮记录列表。 */
 function ExperimentRows({ experiment, rounds }: { experiment: LifeExperiment; rounds: LifeExperimentRound[] }) {
   return <section className="space-y-3"><div><h2 className="text-body font-medium">{experiment.title}</h2><p className="mt-1 text-caption text-muted-foreground">{experiment.hypothesis}</p></div>{rounds.map((round) => <ExperimentRoundRow key={round.id} experiment={experiment} round={round} />)}</section>;
 }
 
+/** 实验中的一轮：状态、观察、复盘与停止/复盘/再来一轮等操作。 */
 function ExperimentRoundRow({ experiment, round }: { experiment: LifeExperiment; round: LifeExperimentRound }) {
   const { t } = useT("life");
   const wsId = useWorkspaceId();
@@ -382,6 +401,7 @@ function ExperimentRoundRow({ experiment, round }: { experiment: LifeExperiment;
   );
 }
 
+/** 观察席面板：管理第三方观察者、展示其判断与分歧，含主动观察策略。 */
 function ObserversPanel() {
   const { t } = useT("life");
   const wsId = useWorkspaceId();
@@ -424,6 +444,7 @@ function ObserversPanel() {
   </div>;
 }
 
+/** 编年史面板：按年份分组的周期性人生记录浏览。 */
 function ChroniclePanel() {
   const { t } = useT("life");
   const wsId = useWorkspaceId();
@@ -439,10 +460,11 @@ function ChroniclePanel() {
   const yearEntries = grouped[activeYear] ?? [];
   const selectedEntry = yearEntries[0] ?? entries[0];
   if (!selectedEntry) return <p className="rounded-xl border border-dashed p-6 text-body text-muted-foreground">{t(($) => $.chronicle.empty)}</p>;
-  // @ts-expect-error grouped keys are derived from the same years array.
+  // @ts-expect-error 分组 key 来自同一个 years 数组，这里确保其可索引。
   return <div data-testid="life-chronicle-panel" className="grid gap-5 lg:grid-cols-[.92fr_1.08fr]"><aside className="rounded-xl border border-border/70 p-4"><h2 className="text-body font-medium">时间线</h2><div className="mt-4 space-y-1">{years.map((year) => <button key={year} type="button" className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-body transition-colors ${activeYear === year ? "bg-brand/10 font-medium text-brand" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`} onClick={() => setSelected(year)}><span>{year}</span><span className="text-caption">{grouped[year].length}</span></button>)}</div></aside><section data-testid="chronicle-detail" className="rounded-xl border border-border/70 p-5 md:p-7"><div className="flex items-center justify-between"><div><p className="text-caption text-muted-foreground">{selectedEntry.period_kind} · {new Date(selectedEntry.period_start).toLocaleDateString()} — {new Date(selectedEntry.period_end).toLocaleDateString()}</p><h2 className="mt-2 text-title-sm font-medium">{activeYear} 年的人生片段</h2></div><span className="text-caption text-muted-foreground">v{selectedEntry.revision}</span></div><ChronicleRow entry={selectedEntry} /><div className="mt-5 space-y-2">{yearEntries.slice(1).map((entry) => <ChronicleRow key={entry.id} entry={entry} />)}</div></section></div>;
 }
 
+/** 单条编年史记录：事实/感受/当时理解与事后理解，可补充「后来怎么看」。 */
 function ChronicleRow({ entry }: { entry: LifeChronicleEntry }) {
   const { t } = useT("life");
   const wsId = useWorkspaceId();

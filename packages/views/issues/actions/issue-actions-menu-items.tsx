@@ -1,5 +1,6 @@
 "use client";
 
+// 问题操作菜单项：渲染下拉菜单和右键菜单共用的那一组操作项（状态、优先级、指派人、日期、关系、删除等）。
 import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -52,9 +53,8 @@ import type { UseIssueActionsResult } from "./use-issue-actions";
 import { PluginHookMenuItems, PluginModalMenuItems } from "../../plugins";
 import { useT } from "../../i18n";
 
-// Both Dropdown and Context menu wrappers expose an API-compatible surface
-// (variant, inset, onClick, etc.). We bundle the primitives we need into a
-// single object so `IssueActionsMenuItems` can render the same JSX for both.
+// Dropdown 和 Context 两种菜单包装暴露的 API 是兼容的（variant、inset、onClick 等）。
+// 这里把需要的菜单原语打包进一个对象，让 `IssueActionsMenuItems` 用同一份 JSX 同时渲染两种菜单。
 export interface MenuPrimitives {
   Item: typeof DropdownMenuItem;
   Sub: typeof DropdownMenuSub;
@@ -63,6 +63,7 @@ export interface MenuPrimitives {
   Separator: typeof DropdownMenuSeparator;
 }
 
+/** 下拉菜单原语集合，供 IssueActionsMenuItems 复用。 */
 export const dropdownPrimitives: MenuPrimitives = {
   Item: DropdownMenuItem,
   Sub: DropdownMenuSub,
@@ -71,9 +72,8 @@ export const dropdownPrimitives: MenuPrimitives = {
   Separator: DropdownMenuSeparator,
 };
 
-// Context primitives are API-compatible with Dropdown primitives, but their
-// TypeScript identities differ. Cast once here and call it a day — this is the
-// single bridge between the two primitive sets.
+// 右键菜单原语在 API 上和下拉菜单原语兼容，但 TypeScript 的类型身份不同。
+// 在这里统一强转一次，作为两套原语之间的唯一桥接点。
 export const contextPrimitives: MenuPrimitives = {
   Item: ContextMenuItem as unknown as typeof DropdownMenuItem,
   Sub: ContextMenuSub as unknown as typeof DropdownMenuSub,
@@ -86,18 +86,23 @@ interface IssueActionsMenuItemsProps {
   issue: Issue;
   actions: UseIssueActionsResult;
   primitives: MenuPrimitives;
-  /** Called when the user clicks the Assignee menu item. The parent should
-   *  close the surrounding menu and open the shared `AssigneePicker` popover.
-   *  Decoupled this way so the same item can drive both the dropdown
-   *  (3-dot button) and the context menu (right-click) wrappers. */
+  /** 用户点击「指派人」菜单项时调用。父组件应关闭外层菜单并打开共享的 `AssigneePicker` 弹层。
+   *  解耦成这样，是让同一个菜单项既能驱动下拉菜单（三点按钮），也能驱动右键菜单。 */
   onOpenAssignee: () => void;
-  /** If set, leave the page after the issue is deleted (used by the detail
-   *  page, which renders the issue being deleted). The delete modal goes back
-   *  to the list the user came from and only falls back to this path when
-   *  there is no in-app history. List surfaces leave it unset and stay put. */
+  /** 若设置，删除问题后离开当前页（详情页用它，因为渲染的正是被删除的问题）。
+   *  删除弹窗会回到用户来的列表，只有没有站内历史时才回退到该路径。
+   *  列表视图不设置它，删除后原地不动。 */
   onDeletedFallbackPath?: string;
 }
 
+/**
+ * 渲染问题操作菜单的全部菜单项，供下拉菜单和右键菜单共用。
+ * @param props.issue - 操作的目标问题。
+ * @param props.actions - 由 useIssueActions 返回的操作集合。
+ * @param props.primitives - 菜单原语集合（下拉或右键）。
+ * @param props.onOpenAssignee - 点击「指派人」时的回调。
+ * @param props.onDeletedFallbackPath - 删除后的兜底跳转路径。
+ */
 export function IssueActionsMenuItems({
   issue,
   actions,
@@ -122,14 +127,11 @@ export function IssueActionsMenuItems({
     openDeleteConfirm,
   } = actions;
 
-  // Subscribe to the issue's task list so the cache is warm by the time the
-  // user clicks "Copy local workdir path". The query only fires while the
-  // menu is open (Base UI portals the menu content lazily) — list views
-  // that wrap every row in IssueActionsContextMenu pay nothing until the
-  // menu actually opens.
+  // 提前订阅问题的任务列表，这样等用户点「复制本地工作目录路径」时缓存已经热好了。
+  // 该查询只在菜单打开时才发起（Base UI 懒加载菜单内容）——列表视图给每一行都包了
+  // IssueActionsContextMenu，在菜单真正打开前不产生任何开销。
   //
-  // The query shares its key with ExecutionLogSection, so navigating from
-  // the issue detail page is a free cache hit.
+  // 该查询的 key 与 ExecutionLogSection 共享，从详情页导航过来是免费的缓存命中。
   const { data: tasks } = useQuery({
     queryKey: issueKeys.tasks(issue.id),
     queryFn: () => api.listTasksByIssue(issue.id),
@@ -140,11 +142,9 @@ export function IssueActionsMenuItems({
     [tasks],
   );
 
-  // Synchronous click handler — the awaited fetch in the previous version
-  // dropped the browser's transient user activation, which made
-  // navigator.clipboard.writeText() reject from the menu when the cache
-  // was cold. We now read straight from the cached query result and write
-  // to the clipboard inside the same task as the click.
+  // 同步的点击处理器——旧版里 await 的 fetch 会丢掉浏览器短暂的「用户激活」状态，
+  // 导致缓存冷的时候 navigator.clipboard.writeText() 在菜单里被拒绝。
+  // 现在直接读缓存里的查询结果，在点击的同一个任务里写入剪贴板。
   const handleCopyWorkdirPath = useCallback(() => {
     if (!workdirCopyTarget) {
       toast.error(t(($) => $.detail.workdir_path_unavailable));
@@ -171,7 +171,7 @@ export function IssueActionsMenuItems({
 
   return (
     <>
-      {/* Status */}
+      {/* 状态 */}
       <P.Sub>
         <P.SubTrigger>
           <StatusIcon
@@ -183,10 +183,8 @@ export function IssueActionsMenuItems({
           {t(($) => $.actions.status)}
         </P.SubTrigger>
         <P.SubContent>
-          {/* Catalog-driven, like the picker and the filter: every entry point
-              that can change a status must offer the same set, or a custom
-              status is unreachable from the board's right-click menu. One flat
-              list in canonical category order. (MUL-6243) */}
+          {/* 由状态目录驱动，和选择器、过滤器保持一致：所有能改状态的入口必须提供同一套选项，
+              否则自定义状态就无法从看板的右键菜单里触达。按规范分类顺序排成一张平铺列表。(MUL-6243) */}
           {statusOptions.map((option) => (
             <P.Item
               key={option.key}
@@ -207,7 +205,7 @@ export function IssueActionsMenuItems({
         </P.SubContent>
       </P.Sub>
 
-      {/* Priority */}
+      {/* 优先级 */}
       <P.Sub>
         <P.SubTrigger>
           <PriorityIcon priority={issue.priority} />
@@ -230,17 +228,14 @@ export function IssueActionsMenuItems({
         </P.SubContent>
       </P.Sub>
 
-      {/* Assignee — closes this menu and hands off to the shared
-          AssigneePicker (members + agents + squads, with search and
-          permission checks). Keeps a single source of truth for the
-          assignee UX across detail sidebar, board cards, and right-click /
-          3-dot menus. */}
+      {/* 指派人——关闭本菜单并交给共享的 AssigneePicker（成员 + 智能体 + 小队，带搜索和权限校验）。
+          让详情侧栏、看板卡片、右键/三点菜单共用同一份指派人交互，保持单一事实来源。 */}
       <P.Item onClick={onOpenAssignee}>
         <UserMinus className="h-3.5 w-3.5" />
         {t(($) => $.actions.assignee)}
       </P.Item>
 
-      {/* Start date */}
+      {/* 开始日期 */}
       <P.Sub>
         <P.SubTrigger>
           <CalendarClock className="h-3.5 w-3.5" />
@@ -267,7 +262,7 @@ export function IssueActionsMenuItems({
         </P.SubContent>
       </P.Sub>
 
-      {/* Due date */}
+      {/* 截止日期 */}
       <P.Sub>
         <P.SubTrigger>
           <Calendar className="h-3.5 w-3.5" />
@@ -296,9 +291,8 @@ export function IssueActionsMenuItems({
 
       <P.Separator />
 
-      {/* Leads the "do something with this issue itself" group: the only
-          discoverable way to open an issue elsewhere for users who don't know
-          modifier-click, so it sits above the copy actions. */}
+      {/* 排在「对问题本身做点什么」分组的最前面：对于不知道修饰键+点击的用户，
+          这是唯一能被发现的「在别处打开问题」的入口，所以放在复制类操作之上。 */}
       <P.Item onClick={openInNewTab}>
         <ExternalLink className="h-3.5 w-3.5" />
         {t(($) => $.actions.open_in_new_tab)}
@@ -324,10 +318,9 @@ export function IssueActionsMenuItems({
 
       <P.Separator />
 
-      {/* Relationship actions live under "Relations" — a semantically explicit
-          label (unlike the old "More") so the first level tells you what the
-          submenu does. Holds parent/sub-issue links today, and will grow
-          (blocks, duplicates, related) as we add more relation types. */}
+      {/* 关系类操作放在「关系」子菜单下——用语义明确的标签（不像旧的「更多」），
+          第一层就能看出子菜单是干什么的。目前放父子问题链接，以后会加入更多关系类型
+          （阻塞、重复、相关）。 */}
       <P.Sub>
         <P.SubTrigger>
           <Network className="h-3.5 w-3.5" />
@@ -355,14 +348,12 @@ export function IssueActionsMenuItems({
         </P.SubContent>
       </P.Sub>
 
-      {/* Manual plugin hooks. Rendered by the host rather than by the plugin
-          because the trigger decides identity: a `manual` call acts as the
-          person who picked it, so the entry has to live where the host can
-          prove somebody did. Renders nothing when no plugin declares one. */}
+      {/* 手动插件钩子。由宿主渲染而不是插件自己渲染，因为触发者决定了身份：一次 `manual`
+          调用是以「选中它的人」的身份执行的，所以入口必须放在宿主能证明「有人点过」的地方。
+          没有插件声明时这里什么都不渲染。 */}
       <PluginHookMenuItems issueId={issue.id} Item={P.Item} Separator={P.Separator} />
-      {/* Modal surfaces open from here for the same reason: a modal is a third
-          party's UI taking over the screen, so it opens because a person chose
-          it, never on the plugin's own initiative. */}
+      {/* 插件模态也从这里打开，同理：模态是第三方 UI 接管整个屏幕，所以它是「因为有人选了」才打开，
+          绝不因为插件的自发行为而打开。 */}
       <PluginModalMenuItems issueId={issue.id} Item={P.Item} />
 
       <P.Separator />

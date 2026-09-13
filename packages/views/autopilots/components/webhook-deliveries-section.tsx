@@ -1,3 +1,7 @@
+// Webhook 投递记录区：列出某 autopilot 收到的所有 webhook 投递（每行状态/来源/
+// 事件/时间），点行进详情弹窗查看原始请求体、选中的请求头、响应体与元信息，
+// 并可在服务端允许时"重放"某次投递。仅当该 autopilot 配了 webhook 触发时才渲染。
+
 "use client";
 
 import { useState } from "react";
@@ -38,11 +42,10 @@ import type {
   WebhookSignatureStatus,
 } from "@multica/core/types";
 
-// --- Status visuals -------------------------------------------------------
+// --- 状态视觉 ──────────────────────────────────────────────────────────────
 
-// Mapping is exhaustive over the current backend enum but every consumer
-// site falls back to a generic "unknown" visual when the server adds a new
-// value — see the API Response Compatibility rules in CLAUDE.md.
+// 映射对当前后端枚举是穷尽的，但每个消费点都在服务器新增取值时回退到通用
+// "未知"视觉——见 CLAUDE.md 的 API Response Compatibility 规则。
 type StatusVisual = {
   color: string;
   icon: typeof CheckCircle2;
@@ -52,26 +55,28 @@ type StatusVisual = {
 const STATUS_VISUAL: Record<WebhookDeliveryStatus, StatusVisual> = {
   queued: { color: "text-blue-500", icon: Loader2, spin: true },
   dispatched: { color: "text-emerald-500", icon: CheckCircle2 },
-  // Signature failures and pre-flight bouncebacks land here. Read as a
-  // failure visually, the dialog footer explains the reason.
+  // 签名失败与预检退回都落在这里。视觉上读作失败，弹窗底部说明原因。
   rejected: { color: "text-destructive", icon: ShieldOff },
-  // Ignored covers paused/disabled/archived autopilots — same payload was
-  // received but no run was created. Muted so it doesn't look like a bug.
+  // ignored 覆盖已暂停/禁用/归档的 autopilot——同样的载荷收到了，但没有创建运行。
+  // 用弱化色，让它看起来不像 bug。
   ignored: { color: "text-muted-foreground", icon: Ban },
   failed: { color: "text-destructive", icon: XCircle },
 };
 
+// 未知状态的回退视觉（服务器将来可能加新枚举值）。
 const UNKNOWN_VISUAL: StatusVisual = {
   color: "text-muted-foreground",
   icon: AlertTriangle,
 };
 
+// 按状态取视觉；未知状态落到回退。
 function visualForStatus(status: string): StatusVisual {
   return (STATUS_VISUAL as Record<string, StatusVisual>)[status] ?? UNKNOWN_VISUAL;
 }
 
-// --- Helpers --------------------------------------------------------------
+// --- 辅助函数 ──────────────────────────────────────────────────────────────
 
+// 时间格式化：空值显示破折号。
 function formatDate(value: string, locale: string): string {
   if (!value) return "—";
   return new Date(value).toLocaleString(locale, {
@@ -82,21 +87,25 @@ function formatDate(value: string, locale: string): string {
   });
 }
 
-// A delivery is replayable when (a) the server allows it (signature is not
-// invalid AND the delivery itself wasn't rejected) and (b) we have something
-// to replay (raw_body / received). We mirror the server's rule rather than
-// rely on the response — keeping the button disabled saves a 400 round-trip.
+// 某次投递能否重放：(a) 服务端允许（签名不是 invalid 且投递本身未被 rejected），
+// (b) 有可重放的东西（raw_body / received）。镜像服务器的规则而不依赖响应——
+// 保持按钮禁用能省一次 400 往返。
 function canReplay(delivery: WebhookDelivery): boolean {
   if (delivery.signature_status === "invalid") return false;
   if (delivery.status === "rejected") return false;
-  // `queued` deliveries are mid-flight on the server; replay would race the
-  // synchronous dispatch path. Once they settle, the user can replay.
+  // `queued` 投递在服务端飞行中；此时重放会与同步分发路径竞态。落定后用户可重放。
   if (delivery.status === "queued") return false;
   return true;
 }
 
-// --- Section --------------------------------------------------------------
+// --- 投递列表区 ────────────────────────────────────────────────────────────
 
+/**
+ * Webhook 投递记录区。没有配置 webhook 触发时整节不渲染（保持仅定时型 autopilot
+ * 的详情页简短），而不是画一张空卡。
+ * @param autopilotId autopilot 的 ID。
+ * @param hasWebhookTrigger 是否配了 webhook 触发——决定数据查询是否启用与本节是否可见。
+ */
 export function WebhookDeliveriesSection({
   autopilotId,
   hasWebhookTrigger,
@@ -113,9 +122,8 @@ export function WebhookDeliveriesSection({
     }),
   );
 
-  // No webhook trigger configured → the entire section is irrelevant. We hide
-  // it rather than render an empty card to keep the detail page short for
-  // schedule-only autopilots.
+  // 没有 webhook 触发 → 整节都不相关。隐藏而非渲染空卡，让仅定时型 autopilot 的
+  // 详情页保持简短。
   if (!hasWebhookTrigger) return null;
 
   return (
@@ -148,8 +156,10 @@ export function WebhookDeliveriesSection({
   );
 }
 
-// --- Row ------------------------------------------------------------------
+// --- 列表行 ────────────────────────────────────────────────────────────────
 
+// 单行投递记录：状态图标/文案、来源 provider、事件名、重放与尝试徽标、接收时间；
+// 点行打开详情弹窗。
 function DeliveryRow({
   delivery,
   autopilotId,
@@ -220,8 +230,10 @@ function DeliveryRow({
   );
 }
 
-// --- Detail dialog --------------------------------------------------------
+// --- 详情弹窗 ──────────────────────────────────────────────────────────────
 
+// 单次投递的详情：状态头部（含签名徽标）、元信息网格、错误、正文区（请求体/
+// 选中头/响应体，懒加载）+ 重放按钮。正文较大时滚动，保证"重放"等底部内容可达。
 function DeliveryDetailDialog({
   open,
   onOpenChange,
@@ -239,27 +251,24 @@ function DeliveryDetailDialog({
   const { data: detail, isLoading } = useQuery(
     autopilotDeliveryOptions(wsId, autopilotId, delivery.id, { enabled: open }),
   );
-  // Use the detail row when loaded, otherwise the slim row from the list.
-  // The slim row is missing raw_body / response_body / selected_headers; the
-  // dialog renders skeleton placeholders for those sections while detail is
-  // still loading.
+  // 详情已加载时用详情行，否则用列表里的精简行。精简行缺 raw_body /
+  // response_body / selected_headers；详情还在加载时，弹窗为这些区渲染骨架占位。
   const full = detail ?? delivery;
   const visual = visualForStatus(full.status);
   const StatusIcon = visual.icon;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* max-h + overflow-y-auto: webhook bodies + headers + response can
-          easily exceed viewport height. Without a cap the dialog grows past
-          the screen edge and the bottom (e.g. Replay button) becomes
-          unreachable. 85vh leaves breathing room around the dialog. */}
+      {/* max-h + overflow-y-auto：webhook 请求体 + 头 + 响应很容易超过视口高。
+          不加帽的话弹窗会长出屏幕边缘、底部（如重放按钮）够不到。85vh 给弹窗四周
+          留出呼吸空间。 */}
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogTitle className="flex items-center gap-2">
           <Webhook className="h-4 w-4 text-muted-foreground" />
           {t(($) => $.deliveries.detail.title)}
         </DialogTitle>
         <div className="space-y-4 pt-1">
-          {/* Header row — status / provider / event */}
+          {/* 头部行——状态 / provider / 事件 */}
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <StatusIcon
@@ -281,7 +290,7 @@ function DeliveryDetailDialog({
             <SignatureBadge status={full.signature_status as WebhookSignatureStatus} />
           </div>
 
-          {/* Meta grid */}
+          {/* 元信息网格 */}
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-caption">
             <MetaRow
               label={t(($) => $.deliveries.detail.received_at)}
@@ -343,10 +352,10 @@ function DeliveryDetailDialog({
             </div>
           )}
 
-          {/* Raw body + response body + headers, all loaded lazily */}
+          {/* 原始请求体 + 响应体 + 请求头，全部懒加载 */}
           <DetailSections detail={detail} isLoading={isLoading} />
 
-          {/* Replay button */}
+          {/* 重放按钮 */}
           <div className="flex items-center justify-between pt-2">
             <ReplayHint delivery={full} />
             <ReplayButton
@@ -361,6 +370,7 @@ function DeliveryDetailDialog({
   );
 }
 
+// 元信息网格里的一行：标签在上、值在下（可选等宽），长值截断并带悬浮完整提示。
 function MetaRow({
   label,
   value,
@@ -386,6 +396,7 @@ function MetaRow({
   );
 }
 
+// 签名状态徽标：valid → 默认强调；invalid → 危险；missing → 次要；未知 → outline。
 function SignatureBadge({ status }: { status: WebhookSignatureStatus | string }) {
   const { t } = useT("autopilots");
   let variant: "default" | "secondary" | "destructive" | "outline" = "outline";
@@ -399,6 +410,7 @@ function SignatureBadge({ status }: { status: WebhookSignatureStatus | string })
   );
 }
 
+// 正文区：原始请求体 / 选中的请求头 / 响应体。详情还在加载且无缓存时给骨架。
 function DetailSections({
   detail,
   isLoading,
@@ -440,12 +452,12 @@ function DetailSections({
   );
 }
 
+// 一段带标题、可复制、超长截断显示的代码块。
 function CodeBlock({ label, value }: { label: string; value: string }) {
   const { t } = useT("autopilots");
   const [copied, setCopied] = useState(false);
-  // Truncate in-DOM display for very large bodies; the Copy button still
-  // yields the full string. 4 KiB is large enough for typical webhook
-  // payloads while keeping the dialog responsive.
+  // 超大体量的正文只截断进 DOM 的显示；复制按钮仍给出完整字符串。4 KiB 对典型
+  // webhook 载荷足够大，同时保持弹窗流畅。
   const TRUNCATE_AT = 4096;
   const isTruncated = value.length > TRUNCATE_AT;
   const display = isTruncated ? value.slice(0, TRUNCATE_AT) : value;
@@ -461,10 +473,8 @@ function CodeBlock({ label, value }: { label: string; value: string }) {
   };
 
   return (
-    // min-w-0 lets this card shrink below the <pre>'s intrinsic min-content
-    // width — without it, a minified single-line JSON body would push the
-    // surrounding grid/flex cell (and the whole DialogContent) past the
-    // viewport edge.
+    // min-w-0 让这张卡可缩到 <pre> 固有 min-content 宽度以下——否则一段压缩的
+    // 单行 JSON 会把外层 grid/flex 单元格（连同整个 DialogContent）推出视口边缘。
     <div className="min-w-0 rounded-md border bg-background">
       <div className="flex items-center justify-between border-b px-3 py-1.5 text-micro">
         <span className="font-medium text-muted-foreground">{label}</span>
@@ -483,9 +493,8 @@ function CodeBlock({ label, value }: { label: string; value: string }) {
             : t(($) => $.webhook_payload.copy)}
         </button>
       </div>
-      {/* whitespace-pre-wrap keeps pretty-printed indentation but lets
-          long lines wrap; break-all is the only thing that breaks mid-token
-          (necessary for minified JSON, which has no whitespace to break at). */}
+      {/* whitespace-pre-wrap 保留美化打印的缩进但让长行回绕；break-all 是唯一能在
+          token 中段断行的手段（压缩 JSON 没有空白可断）。 */}
       <pre className="max-h-48 overflow-auto bg-muted/40 px-3 py-2 text-caption font-mono leading-relaxed whitespace-pre-wrap break-all">
         {display}
         {isTruncated && (
@@ -498,6 +507,7 @@ function CodeBlock({ label, value }: { label: string; value: string }) {
   );
 }
 
+// 重放按钮左侧的解释文案：为什么不能重放（签名无效/被拒/仍在队列）。
 function ReplayHint({ delivery }: { delivery: WebhookDelivery }) {
   const { t } = useT("autopilots");
   if (delivery.signature_status === "invalid") {
@@ -524,6 +534,7 @@ function ReplayHint({ delivery }: { delivery: WebhookDelivery }) {
   return null;
 }
 
+// 重放按钮：把该次投递重新派发一次。可重放性见 canReplay；成功 toast 后关闭弹窗。
 function ReplayButton({
   autopilotId,
   delivery,

@@ -1,16 +1,18 @@
 "use client";
 
+// 项目状态 / 优先级 / 相对日期的 i18n 标签 Hook：所有要显示项目状态与优先级
+// 文案的地方都走这里取翻译。
 import type { ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { useT } from "../../i18n";
 
-// Hooks returning the i18n-aware label maps for project status / priority.
-// They replace the static `.label` field on PROJECT_STATUS_CONFIG /
-// PROJECT_PRIORITY_CONFIG, and search — the last caller still rendering
-// `PROJECT_STATUS_CONFIG.label` — now resolves through here too, so nothing
-// in the repo reads either `.label` any more. Name a project status through
-// these hooks; the core field is a leftover, not a second source of truth.
-// Mirror of inbox `useTypeLabels`.
+// 下面这些 Hook 返回「感知 i18n」的项目状态 / 优先级标签映射。它们取代了
+// PROJECT_STATUS_CONFIG / PROJECT_PRIORITY_CONFIG 上静态的 `.label` 字段；
+// 连搜索——最后一个还读 `PROJECT_STATUS_CONFIG.label` 的调用方——现在也改走
+// 这里，因此整个仓库不再有地方读这两个 `.label`。要给项目状态命名，请用这些
+// Hook；core 里的 `.label` 字段是历史遗留，不是第二个真源。与 inbox 的
+// `useTypeLabels` 互为镜像。
 
+/** 返回各项目状态对应的本地化文案。 */
 export function useProjectStatusLabels(): Record<ProjectStatus, string> {
   const { t } = useT("projects");
   return {
@@ -22,6 +24,7 @@ export function useProjectStatusLabels(): Record<ProjectStatus, string> {
   };
 }
 
+/** 返回各项目优先级对应的本地化文案。 */
 export function useProjectPriorityLabels(): Record<ProjectPriority, string> {
   const { t } = useT("projects");
   return {
@@ -33,9 +36,9 @@ export function useProjectPriorityLabels(): Record<ProjectPriority, string> {
   };
 }
 
-// "1d ago" / "3mo ago" / "Today" — relative date helper that flows through
-// i18next. Returns a function so callers keep the previous
-// `formatRelativeDate(iso)` shape.
+// 「1d ago」/「3mo ago」/「Today」——走 i18next 的相对日期小工具。返回一个函数，
+// 让调用方保持原来的 `formatRelativeDate(iso)` 用法。
+/** 返回「把 ISO 日期格式化成相对时间文案」的函数（如今天 / 1 天前 / 3 个月前）。 */
 export function useFormatRelativeDate(): (date: string) => string {
   const { t } = useT("projects");
   return (date: string) => {

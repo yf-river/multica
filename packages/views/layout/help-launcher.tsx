@@ -21,8 +21,17 @@ import { useConfigStore } from "@multica/core/config";
 import { DISCORD_URL, DiscordIcon } from "./discord";
 import { useT } from "../i18n";
 
+/**
+ * 布局模块：帮助菜单入口。
+ * 侧边栏里的问号按钮，点击弹出包含文档、更新日志、Discord、反馈等入口的下拉菜单。
+ */
+
 const DOCS_URL = "https://multica.ai/docs";
 const CHANGELOG_URL = "https://multica.ai/changelog";
+/**
+ * 帮助菜单启动器组件：渲染问号按钮和它的下拉菜单。
+ * 菜单里包含文档、更新日志、Discord 社区、反馈等外链或动作。
+ */
 export function HelpLauncher() {
   const { t } = useT("layout");
   const serverVersion = useConfigStore((state) => state.serverVersion);
@@ -81,11 +90,10 @@ export function HelpLauncher() {
         {serverVersion && (
           <>
             <DropdownMenuSeparator />
-            {/* DropdownMenuLabel renders Base UI's Menu.GroupLabel, which reads
-                a Menu.Group context and throws if it has no Group ancestor. It
-                must always be wrapped in a DropdownMenuGroup — without it the
-                Help menu crashes the whole app on open (no error boundary sits
-                above the sidebar). */}
+            {/* DropdownMenuLabel 底层是 Base UI 的 Menu.GroupLabel，它会读取
+                Menu.Group 上下文，没有 Group 祖先时直接抛错。所以它必须始终
+                包在 DropdownMenuGroup 里——否则帮助菜单一打开就崩掉整个应用
+                （侧边栏上方没有错误边界兜底）。 */}
             <DropdownMenuGroup>
               <DropdownMenuLabel className="font-normal break-words">
                 {t(($) => $.help.server_version, { version: serverVersion })}

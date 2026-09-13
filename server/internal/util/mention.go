@@ -2,25 +2,24 @@ package util
 
 import "regexp"
 
-// Mention represents a parsed @mention from markdown content.
+// Mention 表示从 markdown 内容解析出的一条 @提及。
 type Mention struct {
-	Type string // "member", "agent", "issue", or "all"
-	ID   string // user_id, agent_id, issue_id, or "all"
+	Type string // "member"（成员）、"agent"（代理）、"issue"（issue）或 "all"（全体）
+	ID   string // user_id、agent_id、issue_id 或 "all"
 }
 
-// MentionRe matches [@Label](mention://type/id) or [Label](mention://issue/id) in markdown.
-// The @ prefix is optional to support issue mentions which use [MUL-123](mention://issue/...).
-// Uses .+? (non-greedy) instead of [^\]]* so labels containing square brackets
-// (e.g. "David[TF]") are matched correctly — the ](mention:// anchor is specific
-// enough to prevent over-matching.
+// MentionRe 匹配 markdown 里的 [@Label](mention://type/id) 或 [Label](mention://issue/id)。
+// @ 前缀可选，以支持 issue 引用形式 [MUL-123](mention://issue/...)。
+// 用 .+?（非贪婪）而非 [^\]]*，这样含方括号的标签（如 "David[TF]"）也能正确匹配——
+// ](mention:// 锚点本身足够特异，不会过度匹配。
 var MentionRe = regexp.MustCompile(`\[@?(.+?)\]\(mention://(member|agent|squad|issue|all)/([0-9a-fA-F-]+|all)\)`)
 
-// IsMentionAll returns true if the mention is an @all mention.
+// IsMentionAll 判断该提及是否为 @all 全体提及。
 func (m Mention) IsMentionAll() bool {
 	return m.Type == "all"
 }
 
-// ParseMentions extracts deduplicated mentions from markdown content.
+// ParseMentions 从 markdown 内容提取去重后的提及列表。
 func ParseMentions(content string) []Mention {
 	matches := MentionRe.FindAllStringSubmatch(content, -1)
 	seen := make(map[string]bool)
@@ -36,7 +35,7 @@ func ParseMentions(content string) []Mention {
 	return result
 }
 
-// HasMentionAll returns true if any mention in the slice is an @all mention.
+// HasMentionAll 报告切片中是否含 @all 全体提及。
 func HasMentionAll(mentions []Mention) bool {
 	for _, m := range mentions {
 		if m.IsMentionAll() {

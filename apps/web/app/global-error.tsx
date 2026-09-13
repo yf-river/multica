@@ -4,12 +4,16 @@ import { useEffect } from "react";
 import { captureException } from "@multica/core/analytics";
 
 /**
- * Route-level error boundary for the web app. Next.js renders this (replacing
- * the root layout) when an error escapes everything below it — the full-page
- * white-screen case. React catches these before they reach window.onerror, so
- * posthog-js's automatic exception capture never sees them; we report them
- * explicitly here. Section-level failures are handled in place by
- * `@multica/ui` ErrorBoundary and don't reach this far.
+ * 应用级错误边界：负责兜底整个 Web 应用未被下层捕获的错误，避免白屏。
+ *
+ * 当错误一路逃逸到最外层时，Next.js 会用本组件替换根布局来渲染——也就是整页白屏的场景。
+ * React 会在这些错误到达 window.onerror 之前就把它们拦下来，因此 posthog-js 的自动异常捕获
+ * 根本看不到它们，我们才在这里显式上报。局部（section 级）的失败由 `@multica/ui` 的
+ * ErrorBoundary 就地处理，不会一路冒泡到这里。
+ *
+ * @param error - 抛出的错误对象；Next.js 会附带一个 digest 字符串用于服务端日志关联。
+ * @param reset - 由 Next.js 注入的重试函数，点击后尝试重新渲染出错页面。
+ * @returns 全屏错误提示页。
  */
 export default function GlobalError({
   error,

@@ -11,11 +11,9 @@ import type { RuntimeMachine, RuntimeMachineSection } from "../../runtimes/compo
 import { useT } from "../../i18n";
 
 // ---------------------------------------------------------------------------
-// Runtime machine filter — dropdown next to the search input. The trigger
-// shows the active machine's title (or "All runtimes"); the menu groups
-// machines by section (Remote / Cloud) the same way the
-// Runtimes page sidebar does, so a user moving between the two pages
-// sees consistent labels and counts.
+// 运行环境（机器）筛选下拉框——放在搜索框旁边。触发器上显示当前选中的机器名
+// （或“全部运行环境”）；展开的菜单按分组（Remote / Cloud）排列机器，
+// 与 Runtimes 页侧栏一致，用户在两个页面间切换时看到的分组、数量口径一致。
 // ---------------------------------------------------------------------------
 
 const RUNTIME_MACHINE_SECTIONS: RuntimeMachineSection[] = [
@@ -23,15 +21,22 @@ const RUNTIME_MACHINE_SECTIONS: RuntimeMachineSection[] = [
   "cloud",
 ];
 
+/**
+ * Agent 列表的“运行环境筛选”下拉。单选一台机器（或“全部”），选中后列表按该机器过滤。
+ * @param machines 所有可选机器。
+ * @param value 当前选中的机器 id；null 表示“全部”。
+ * @param onChange 选择变更回调，id 为 null 即回到“全部”。
+ * @param agentCountByMachine 每台机器名下绑定的 Agent 数，用于菜单里的计数角标。
+ * @param totalAgentCount 全部 Agent 总数。
+ */
 export function RuntimeMachineFilterDropdown({
   machines,
   value,
   onChange,
   agentCountByMachine,
-  // Sourced separately from the in-scope agent list (not derived from
-  // `agentCountByMachine`) so the "All runtimes" badge stays accurate
-  // even when an in-scope agent is bound to a runtime that's been GC'd
-  // and no longer shows up under any current machine.
+  // 这个总数单独从“范围内的 Agent 列表”算出来（不从 `agentCountByMachine` 推），
+  // 是为了让“全部运行环境”的数字保持准确——即使某个范围内的 Agent 绑定的机器
+  // 已被回收、不再出现在任何机器名下。
   totalAgentCount,
 }: {
   machines: RuntimeMachine[];
@@ -47,8 +52,7 @@ export function RuntimeMachineFilterDropdown({
       : machines.find((machine) => machine.id === value) ?? null;
 
   const triggerLabel = selected ? selected.title : t(($) => $.runtime_filter.all);
-  // Always show a count, even when the trigger is "All runtimes" — keeps
-  // the affordance scannable next to the other toolbar controls.
+  // 触发器上也总显示计数（包括“全部”态），方便和旁边其他工具栏控件一样一眼扫到。
   const triggerCount = selected
     ? (agentCountByMachine.get(selected.id) ?? 0)
     : totalAgentCount;
@@ -85,6 +89,7 @@ export function RuntimeMachineFilterDropdown({
   );
 }
 
+/** 下拉面板：按固定分组顺序把机器切成几段（Remote / Cloud），段内保持原排序。 */
 function RuntimeMachineFilterMenu({
   machines,
   value,
@@ -99,9 +104,8 @@ function RuntimeMachineFilterMenu({
   agentCountByMachine: Map<string, number>;
 }) {
   const { t } = useT("agents");
-  // Group machines by section while preserving the order
-  // `buildRuntimeMachines` already sorts them by (section, online count,
-  // title). We iterate the section list and slice to keep that order.
+  // 按分组聚合机器，同时保持 `buildRuntimeMachines` 已排好的顺序
+  //（先 section、再在线数、再标题）。这里顺着分组列表逐个切片即可保住原序。
   const grouped = useMemo(() => {
     const result: Array<{
       section: RuntimeMachineSection;
@@ -149,6 +153,7 @@ function RuntimeMachineFilterMenu({
   );
 }
 
+/** 菜单里的单行选项：一行机器名（含副标题）+ 右侧 Agent 计数；高亮表示选中。 */
 function RuntimeMachineFilterItem({
   active,
   onClick,
@@ -163,11 +168,10 @@ function RuntimeMachineFilterItem({
   count: number;
 }) {
   const { t } = useT("agents");
-  // DropdownMenuItem (Base UI Menu.Item) wires the row into the menu's
-  // keyboard navigation, typeahead, and ARIA role="menuitem" semantics,
-  // and auto-closes the menu on selection (closeOnClick: true). The
-  // visual treatment — selected vs. idle — is layered on top via
-  // `data-active` so it survives focus/hover styling from the base.
+  // DropdownMenuItem（Base UI Menu.Item）会把它接入菜单的方向键导航、前缀输入、
+  // ARIA role="menuitem" 语义，并在选中后自动关菜单（closeOnClick: true）。
+  // “选中 vs 闲置”的视觉是额外用 `data-active` 叠上去的，这样不会被 Base 的
+  // 聚焦/悬停样式盖掉。
   return (
     <DropdownMenuItem
       onClick={onClick}

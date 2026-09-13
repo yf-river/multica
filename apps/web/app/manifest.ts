@@ -1,35 +1,36 @@
 import type { MetadataRoute } from "next";
 
 /**
- * Web app manifest — what makes the mobile web app installable and lets it run
- * in its own window instead of a browser tab.
+ * Web 应用的 PWA manifest：让移动端 Web 应用可以被安装到桌面/主屏幕，并以独立窗口运行，
+ * 而不是窝在浏览器标签页里。
  *
- * `start_url` is deliberately NOT "/". The official marketing hosts keep the
- * root path on the public site even for a signed-in session (see
- * `isOfficialMarketingHost` in proxy.ts), so an installed app pointed at "/"
- * would open the landing page. "/inbox" is one of `LEGACY_ROUTE_SEGMENTS`,
- * which proxy.ts resolves per session: signed in with a known workspace it
- * lands on that workspace's inbox, signed in without one it lands on /login
- * (which resolves against the workspace list), and signed out it lands on
- * /login too. All three are pinned in manifest.test.ts, because a launcher
- * icon has no URL bar to recover from a wrong destination.
+ * `start_url` 故意不指向 "/"。官方营销站点即使用户已登录，根路径也仍停留在公开首页
+ * （见 proxy.ts 里的 `isOfficialMarketingHost`），所以让安装后的应用指向 "/" 会打开落地页。
+ * "/inbox" 属于 `LEGACY_ROUTE_SEGMENTS`，proxy.ts 会按会话解析它：已登录且知道 workspace 时
+ * 落到该 workspace 的 inbox；已登录但还没有 workspace 时落到 /login（会再根据 workspace 列表解析）；
+ * 未登录时同样落到 /login。这三种结果都在 manifest.test.ts 里做了断言，因为主屏幕图标没有地址栏，
+ * 一旦跳错地方用户无法自行修正。
  *
- * The icons under /icons are generated, not hand-drawn. To regenerate after a
- * brand change, edit public/icons/icon.svg and run from public/icons:
+ * /icons 下的图标是脚本生成的，不是手绘的。品牌变更后要重新生成时，编辑 public/icons/icon.svg，
+ * 然后在 public/icons 目录下执行：
  *
  *   sips -s format png --resampleHeightWidth 512 512 icon.svg --out icon-maskable-512.png
  *   sips -s format png --resampleHeightWidth 180 180 icon.svg --out apple-touch-icon.png
  *   sips -s format png --resampleHeightWidth 512 512 icon.svg --out icon-512.png
  *   sips -s format png --resampleHeightWidth 192 192 icon.svg --out icon-192.png
  *
- * All launcher icons are derived from the same SVG so browser-installed
- * versions stay visually consistent; the maskable one is full-bleed because
- * Android crops it to the launcher's shape.
+ * 所有启动图标都派生自同一个 SVG，保证浏览器安装的版本视觉一致；maskable 那张是满幅的，
+ * 因为 Android 会按启动器形状对图标做裁剪。
  */
 
-/** Launch path. Exported so manifest.test.ts can run it through the proxy. */
+/** PWA 的启动路径。导出是为了让 manifest.test.ts 能把它送进 proxy 做解析验证。 */
 export const PWA_START_URL = "/inbox";
 
+/**
+ * 生成 manifest 对象。
+ *
+ * @returns Next.js 约定的 Manifest 结构：应用名称、图标、启动地址、主题色等。
+ */
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
@@ -40,9 +41,8 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: PWA_START_URL,
     scope: "/",
     display: "standalone",
-    // Splash-screen colours. The runtime status bar is driven by the
-    // per-scheme `<meta name="theme-color">` pair in app/layout.tsx, which the
-    // manifest cannot express — these are the pre-launch fallback only.
+    // 启动闪屏颜色。运行时状态栏的颜色由 app/layout.tsx 里按明暗模式配对输出的
+    // `<meta name="theme-color">` 驱动，这是 manifest 表达不了的——这里只是启动前的兜底。
     background_color: "#ffffff",
     theme_color: "#ffffff",
     categories: ["productivity"],
@@ -66,9 +66,8 @@ export default function manifest(): MetadataRoute.Manifest {
         purpose: "maskable",
       },
     ],
-    // Long-press actions on the installed launcher icon. Both are legacy
-    // segments, so they resolve to the last workspace the same way start_url
-    // does instead of needing a slug the manifest cannot know.
+    // 长按已安装启动图标弹出的快捷操作。两者都是 legacy 段，所以会像 start_url 一样
+    // 解析到最近使用的 workspace，而不需要 manifest 里根本无法知道的 slug。
     shortcuts: [
       { name: "Inbox", url: "/inbox" },
       { name: "My Issues", url: "/my-issues" },

@@ -1,18 +1,18 @@
+// 本文件定义账户级计费（余额、交易、批次、充值、价目）的查询配置与 key。
+
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 
-// Billing data is account-level (single owner per X-User-ID), so the
-// React Query keys are NOT scoped to a workspace — keying on workspace
-// would force a refetch every time the user navigates to a different
-// workspace, even though the backing data is identical.
+// 计费数据是账户级的（每个 X-User-ID 一个所有者），因此 React Query key 不按
+// 工作区划分——按工作区划分会让用户每切换一次工作区就强制重取，尽管底层数据
+// 完全一样。
 //
-// Query-level staleness: the cloud's billing module is the source of
-// truth. Topup status flips from `pending` → `paid` → `credited` after
-// Stripe + the cloud-side webhook handler do their thing, so a returning-
-// from-Stripe page needs prompt freshness. We rely on the page-level
-// hooks (refetchInterval / invalidate-on-mount) rather than baking a
-// stale-time here, so consumers can tune polling per surface.
+// 查询级的保鲜度：云端的计费模块是事实来源。充值状态在 Stripe + 云端 webhook
+// 处理器完成后，会从 `pending` → `paid` → `credited` 翻转，所以从 Stripe 返回
+// 的页面需要及时的新鲜度。我们依赖页面级 hook（refetchInterval / 挂载时失效），
+// 而不是在这里写死 stale-time，这样消费者可以按界面调轮询节奏。
 
+/** 账户级计费查询的 key 工厂。 */
 export const billingKeys = {
   all: () => ["billing"] as const,
   balance: () => [...billingKeys.all(), "balance"] as const,
@@ -27,17 +27,20 @@ export const billingKeys = {
     [...billingKeys.all(), "checkout-session", sessionId] as const,
 };
 
+/**
+ * 账户余额的查询配置。
+ * 30 秒 stale-time：余额只在充值入账或扣款时变化。测试页里用户主要关心
+ * 结账后的状态；我们让页面显式失效。
+ */
 export function billingBalanceOptions() {
   return queryOptions({
     queryKey: billingKeys.balance(),
     queryFn: () => api.getCloudBillingBalance(),
-    // 30s stale-time: balance changes only when a topup credits or a
-    // deduction happens. For the test page the user's main interest is
-    // post-checkout state; we let the page invalidate explicitly.
     staleTime: 30 * 1000,
   });
 }
 
+/** 交易记录的查询配置。 */
 export function billingTransactionsOptions(params?: {
   page?: number;
   page_size?: number;
@@ -49,6 +52,7 @@ export function billingTransactionsOptions(params?: {
   });
 }
 
+/** 批次的查询配置。 */
 export function billingBatchesOptions(params?: {
   page?: number;
   page_size?: number;
@@ -60,6 +64,7 @@ export function billingBatchesOptions(params?: {
   });
 }
 
+/** 充值记录的查询配置。 */
 export function billingTopupsOptions(params?: {
   page?: number;
   page_size?: number;
@@ -71,31 +76,33 @@ export function billingTopupsOptions(params?: {
   });
 }
 
+/**
+ * 价目（price tiers）的查询配置。
+ * 价目来自服务端配置，运行时基本不会变——拉取一次即可保留整个会话。
+ * 5 分钟对测试页来说绰绰有余。
+ */
 export function billingPriceTiersOptions() {
   return queryOptions({
     queryKey: billingKeys.priceTiers(),
     queryFn: () => api.listCloudBillingPriceTiers(),
-    // Price tiers come from server config and basically never change at
-    // runtime — once we've fetched once we can keep it for the whole
-    // session. 5 minutes is more than enough for a test page.
     staleTime: 5 * 60 * 1000,
   });
 }
 
-// Stripe-success-redirect polling: when the page loads with
-// `?session_id=...` in the URL, the user just came back from Stripe and
-// the topup is racing through `pending → paid → credited`. Poll until
-// it's terminal so the UI can show a final outcome before the user
-// closes the tab.
+// Stripe 成功跳转后的轮询：页面带着 `?session_id=...` 加载时，用户刚从 Stripe
+// 返回，充值正在 `pending → paid → credited` 快速推进。一直轮询到终态，让 UI 在
+// 用户关闭标签页前能展示最终结果。
 //
-// Caller is expected to short-circuit by passing `enabled: !!sessionId`
-// — that's why we don't gate inside queryOptions itself.
+// 调用方应通过传 `enabled: !!sessionId` 短路——这就是为什么不在 queryOptions
+// 内部做门控。
+/**
+ * Checkout 会话的轮询查询配置。非终态时每 2 秒重取，进入 credited / failed /
+ * canceled 后停止轮询。
+ */
 export function billingCheckoutSessionOptions(sessionId: string) {
   return queryOptions({
     queryKey: billingKeys.checkoutSession(sessionId),
     queryFn: () => api.getCloudBillingCheckoutSession(sessionId),
-    // Refetch every 2s while we're still in a non-terminal state,
-    // stop once we land in `credited` / `failed` / `canceled`.
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       if (status === "credited" || status === "failed" || status === "canceled") {

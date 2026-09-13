@@ -1,5 +1,19 @@
 package agent
 
+// 文件职责：ACP 家族 backend 共用的 token 用量"度量口径调和"层。
+//
+// ACP 运行时通过两条路径上报用量：进行中逐条累计的 usage_update 通知快照，与
+// prompt 结束时终局响应里的 usage。两者都可能不全（runtime 时常只报部分桶、甚至
+// 显式报 0），字段是否出现必须与值分开记录（见 acpUsageSnapshot.fields），否则
+// 无法区分"上报了 0"与"根本没报"。本文件用"逐桶取最大 + 专门处理 input"的方式把
+// 两条路径归并成一份确定结果，与 usage_update 到的早/晚无关。
+//
+// input 桶特殊：不同 runtime 对"inputTokens 是否已含缓存命中"口径不一，Grok Build
+// 明确含在内（totalTokens == inputTokens + outputTokens）。因此把"已归一化的自述"
+// 与"口径不明的候选"分开保存，最后从整个观测集合解析；归一化见
+// normalizeACPTokenUsage——只在该恒等式成立时才把缓存前缀从 input 里拆出来，避免
+// 仪表盘按桶算钱时把命中部分算两遍。
+
 import (
 	"bytes"
 	"encoding/json"
@@ -7,54 +21,54 @@ import (
 	"strings"
 )
 
+// acpUsageFields 用位掩码标记"本次上报里哪些桶真的出现过"。
 type acpUsageFields uint8
 
 const (
-	acpUsageInput acpUsageFields = 1 << iota
-	acpUsageOutput
-	acpUsageCacheRead
-	acpUsageCacheWrite
-	acpUsageCost
+	acpUsageInput      acpUsageFields = 1 << iota // 出现过 inputTokens
+	acpUsageOutput                                // 出现过 outputTokens
+	acpUsageCacheRead                             // 出现过缓存读入
+	acpUsageCacheWrite                            // 出现过缓存写入
+	acpUsageCost                                  // 出现过成本（provider 自述）
 )
 
-// acpUsageSnapshot keeps field presence separate from the parsed values.
-// Prompt results are frequently partial, so a zero value alone cannot tell us
-// whether a runtime explicitly reported zero or omitted the bucket entirely.
+// acpUsageSnapshot 把"字段是否出现"与"解析出来的值"分开记录。prompt 的用量结果
+// 经常是残缺的，仅凭零值无法区分"runtime 显式报了 0"还是"整个桶都没给"。
 type acpUsageSnapshot struct {
 	TokenUsage
-	rawInputTokens  int64
+	rawInputTokens  int64 // 未归一化的原始 input（见 normalizeInput）
 	fields          acpUsageFields
-	totalTokens     int64
+	totalTokens     int64 // 终局响应里带的总量（用于判断 input 是否已含缓存）
 	hasTotalTokens  bool
-	inputNormalized bool
+	inputNormalized bool // input 是否已按"input 含缓存"口径做过归一化
 }
 
 func (s acpUsageSnapshot) has(field acpUsageFields) bool {
 	return s.fields&field != 0
 }
 
-// acpUsageAccumulator reconciles the two metering paths shared by ACP
-// backends: cumulative usage_update snapshots and terminal prompt usage.
+// acpUsageAccumulator 把 ACP backend 共享的两条计量路径——累计的 usage_update
+// 快照与终局 prompt 用量——调和成一份结果。
 //
-// Per-bucket maxima deduplicate equivalent snapshots while retaining buckets
-// omitted from one path. Input is special: self-describing normalized and
-// ambiguous candidates are retained separately, then resolved from the whole
-// observed set. This makes the result independent of whether a late
-// usage_update arrives before or after the terminal prompt response.
+// 逐桶取最大既能去重"等价快照"，又保留某条路径里缺失的桶。input 特殊：把"自述已
+// 归一化"与"口径不明"的候选分开保留，最后再从整个观测集合解析。这让结果不依赖
+// 于迟到的 usage_update 到底先于还是后于终局 prompt 响应到达。
 type acpUsageAccumulator struct {
 	TokenUsage
 	fields acpUsageFields
 
-	ambiguousInput    int64
+	ambiguousInput    int64 // 口径不明的 input 候选（可能是含缓存的原始数）
 	hasAmbiguousInput bool
-	normalizedInput   int64
+	normalizedInput   int64 // 自述已归一化的 input（对应 totalTokens == input+output 的形态）
 	normalizedTotal   int64
 	hasNormalized     bool
 }
 
+// merge 吸收一条快照；input 的归一化/不明两路先各自保留，逐桶取最大后统一解析。
 func (a *acpUsageAccumulator) merge(next acpUsageSnapshot) {
 	if next.has(acpUsageInput) {
 		if next.inputNormalized {
+			// 归一化候选：total 更大、或 total 相同而 input 更大的快照更新。
 			if !a.hasNormalized ||
 				next.totalTokens > a.normalizedTotal ||
 				(next.totalTokens == a.normalizedTotal && next.InputTokens > a.normalizedInput) {
@@ -76,9 +90,8 @@ func (a *acpUsageAccumulator) merge(next acpUsageSnapshot) {
 	if next.has(acpUsageCacheWrite) && (!a.has(acpUsageCacheWrite) || next.CacheWriteTokens > a.CacheWriteTokens) {
 		a.CacheWriteTokens = next.CacheWriteTokens
 	}
-	// Provider cost is a cumulative turn total on the ACP backends that expose
-	// it. Max consolidation preserves a late/richer report without charging a
-	// duplicate prompt-result and usage_update twice.
+	// 对会上报它的 ACP backend，provider 成本是整个回合的累计总数。取最大既能
+	// 保留"迟到/更全"的上报，又不会把同一条 prompt 结果和 usage_update 计两次费。
 	if next.has(acpUsageCost) && (!a.has(acpUsageCost) || next.CostUSDTicks > a.CostUSDTicks) {
 		a.CostUSDTicks = next.CostUSDTicks
 	}
@@ -91,6 +104,9 @@ func (a acpUsageAccumulator) has(field acpUsageFields) bool {
 	return a.fields&field != 0
 }
 
+// resolveInput 综合归一化/不明两路候选，定下最终 InputTokens。两路都有时，用
+// 一条保守的累计下界（ambiguous input + output）判断归一化记录到底是一份累计
+// 全量还是一份单次调用增量。
 func (a *acpUsageAccumulator) resolveInput() {
 	switch {
 	case !a.hasAmbiguousInput && a.hasNormalized:
@@ -98,9 +114,8 @@ func (a *acpUsageAccumulator) resolveInput() {
 	case a.hasAmbiguousInput && !a.hasNormalized:
 		a.InputTokens = a.ambiguousInput
 	case a.hasAmbiguousInput && a.hasNormalized:
-		// input + output is a conservative cumulative floor even when input
-		// includes cached reads. A normalized record below that floor is a
-		// per-call delta and must not replace the larger cumulative stream.
+		// "input + output" 是一条保守的累计下界，即便 input 里含缓存命中也是。
+		// 低于这条下界的归一化记录是单次调用增量，不能拿它顶替更大的累计流。
 		if a.normalizedTotal >= a.ambiguousInput+a.OutputTokens {
 			a.InputTokens = a.normalizedInput
 		} else {
@@ -109,11 +124,10 @@ func (a *acpUsageAccumulator) resolveInput() {
 	}
 }
 
-// withFallback fills fields omitted (or reported as zero) by a preferred
-// representation. ACP's standard top-level usage is authoritative over vendor
-// `_meta`, and nested `_meta.usage` is authoritative over its flat mirror.
-// Provider cost still takes the maximum because zero means "not reported" and
-// runtimes may expose the priced total in only one representation.
+// withFallback 用后备表示填上"首选表示里缺失（或报了 0）"的字段。ACP 的标准顶层
+// usage 对厂商 `_meta` 有权威，嵌套 `_meta.usage` 又对它的扁平镜像有权威。
+// provider 成本仍取最大，因为 0 表示"未上报"，而运行时可能只在某一种表示里给出
+// 计价后的总数。
 func (s acpUsageSnapshot) withFallback(fallback acpUsageSnapshot) acpUsageSnapshot {
 	result := s
 	inputFromFallback := false
@@ -148,9 +162,8 @@ func (s acpUsageSnapshot) withFallback(fallback acpUsageSnapshot) acpUsageSnapsh
 	return result
 }
 
-// normalizeInput always starts from the provider's raw input count so a
-// preferred/fallback merge can be normalized after all complementary fields
-// are present without subtracting cached reads twice.
+// normalizeInput 总是从 provider 的原始 input 数出发做归一化，这样"首选/后备
+// 合并"可以在所有互补字段齐全后再归一化，不会把缓存命中减两遍。
 func (s *acpUsageSnapshot) normalizeInput() {
 	s.InputTokens = s.rawInputTokens
 	s.inputNormalized = false
@@ -160,10 +173,13 @@ func (s *acpUsageSnapshot) normalizeInput() {
 	s.TokenUsage, s.inputNormalized = normalizeACPTokenUsage(s.TokenUsage, s.totalTokens)
 }
 
+// parseACPTokenUsage 解析一段 ACP usage JSON（常见字段的别名都认），只取用量值。
 func parseACPTokenUsage(data json.RawMessage) TokenUsage {
 	return parseACPTokenUsageSnapshot(data).TokenUsage
 }
 
+// parseACPTokenUsageSnapshot 把一段 usage JSON 解析成快照。null/空/解析失败返回
+// 空快照（调用方据此判断"这条上报没有用量"）。
 func parseACPTokenUsageSnapshot(data json.RawMessage) acpUsageSnapshot {
 	if len(data) == 0 || string(data) == "null" {
 		return acpUsageSnapshot{}
@@ -183,6 +199,7 @@ func parseACPTokenUsageSnapshot(data json.RawMessage) acpUsageSnapshot {
 		snapshot.OutputTokens = value
 		snapshot.fields |= acpUsageOutput
 	}
+	// 缓存读入的别名最多：各家 runtime 叫法不一，全部兼容。
 	if value, ok := acpUsageInt64(rawFields,
 		"cachedReadTokens",
 		"cacheReadTokens",
@@ -215,10 +232,9 @@ func parseACPTokenUsageSnapshot(data json.RawMessage) acpUsageSnapshot {
 	return snapshot
 }
 
-// parseACPTokenUsageSnapshotFromMeta extracts and reconciles token usage from
-// an ACP result `_meta` object. Grok Build returns both nested `_meta.usage`
-// and flat mirror fields; merging them preserves fields omitted from either
-// representation without double counting their duplicate values.
+// parseACPTokenUsageSnapshotFromMeta 从 ACP 结果 `_meta` 对象里提取并调和用量。
+// Grok Build 会同时给嵌套 `_meta.usage` 与扁平镜像字段；合并能补上两者各自缺失的
+// 字段，又不至于把重复值算两遍。
 func parseACPTokenUsageSnapshotFromMeta(meta json.RawMessage) acpUsageSnapshot {
 	if len(meta) == 0 || string(meta) == "null" {
 		return acpUsageSnapshot{}
@@ -230,23 +246,23 @@ func parseACPTokenUsageSnapshotFromMeta(meta json.RawMessage) acpUsageSnapshot {
 	var preferred acpUsageSnapshot
 	if err := json.Unmarshal(meta, &envelope); err == nil &&
 		len(envelope.Usage) > 0 && string(envelope.Usage) != "null" {
+		// 嵌套 _meta.usage 是权威形态，扁平镜像作为它的后备。
 		preferred = parseACPTokenUsageSnapshot(envelope.Usage)
 	}
 	return preferred.withFallback(parseACPTokenUsageSnapshot(meta))
 }
 
+// parseACPTokenUsageFromMeta 解析 _meta 里的用量并只取用量值。
 func parseACPTokenUsageFromMeta(meta json.RawMessage) TokenUsage {
 	return parseACPTokenUsageSnapshotFromMeta(meta).TokenUsage
 }
 
-// normalizeACPTokenUsage re-buckets a usage record whose inputTokens already
-// contains cachedReadTokens, so the persisted buckets stay mutually exclusive
-// and dashboard cost math does not charge the cached prefix twice.
+// normalizeACPTokenUsage 把一条"inputTokens 里已含缓存命中"的用量记录重新分桶，
+// 让落库的各桶互斥，仪表盘算成本时不会把缓存前缀收两遍。
 //
-// ACP does not specify whether cached reads are counted inside inputTokens.
-// Grok Build counts them inside: totalTokens == inputTokens + outputTokens.
-// The re-bucketing only happens when totalTokens proves that shape. Agents
-// reporting exclusive buckets or omitting totalTokens remain unchanged.
+// ACP 没规定缓存命中是否计入 inputTokens。Grok Build 计入：totalTokens ==
+// inputTokens + outputTokens。只有当 totalTokens 证明了这种形态时才重新分桶；
+// 上报互斥桶、或没给 totalTokens 的 agent 保持原样。
 func normalizeACPTokenUsage(usage TokenUsage, totalTokens int64) (TokenUsage, bool) {
 	if totalTokens <= 0 || usage.CacheReadTokens <= 0 || usage.CacheReadTokens > usage.InputTokens {
 		return usage, false
@@ -258,17 +274,22 @@ func normalizeACPTokenUsage(usage TokenUsage, totalTokens int64) (TokenUsage, bo
 	return usage, true
 }
 
+// excludeACPCachedInput 返回"已把缓存命中从 input 里剔除"的用量（能归一化才剔除，
+// 否则原样）。
 func excludeACPCachedInput(usage TokenUsage, totalTokens int64) TokenUsage {
 	normalized, _ := normalizeACPTokenUsage(usage, totalTokens)
 	return normalized
 }
 
+// acpUsageInt64 在一组候选字段名里按序找第一个能解析成非负整数（数字或数字字符串
+// 都行，容忍小数）的字段。
 func acpUsageInt64(fields map[string]json.RawMessage, names ...string) (int64, bool) {
 	for _, name := range names {
 		raw, ok := fields[name]
 		if !ok {
 			continue
 		}
+		// 先按 json.Number（不开 UseNumber 会先把大数转成 float64）解析整数。
 		var n json.Number
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.UseNumber()
@@ -280,6 +301,7 @@ func acpUsageInt64(fields map[string]json.RawMessage, names ...string) (int64, b
 				return int64(value), true
 			}
 		}
+		// 少数 runtime 把数字当字符串发，比如 "123"。
 		var s string
 		if err := json.Unmarshal(raw, &s); err == nil {
 			if value, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil && value >= 0 {

@@ -1,3 +1,4 @@
+// Agent 相关客户端状态 store 的统一出口：Agents 列表视图与任务记录（transcript）视图。
 export {
   useAgentsViewStore,
   AGENT_SCOPES,

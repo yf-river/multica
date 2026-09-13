@@ -29,6 +29,8 @@ type jobObjectBasicAccountingInformation struct {
 	TotalTerminatedProcesses  uint32
 }
 
+// newController 建一个带 KILL_ON_JOB_CLOSE 的 Job Object：job 句柄一旦关闭，
+// 系统会连带杀光 job 内所有进程——这把"进程树随命令一起消亡"的保证交给了内核。
 func newController(cmd *exec.Cmd) (*controller, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -79,8 +81,8 @@ func (c *controller) stop(_ *exec.Cmd) error {
 	return nil
 }
 
-// Windows Job Objects have no SIGTERM equivalent; terminating the job is the
-// graceful-attempt and hard-stop operation alike.
+// Windows 的 Job Object 没有 SIGTERM 这种东西：终止 Job 既当"优雅尝试"也用
+// 作"硬停"，二者是一回事。
 func (c *controller) interrupt(cmd *exec.Cmd) error { return c.stop(cmd) }
 
 func (c *controller) finish(_ *exec.Cmd) error {
@@ -107,6 +109,7 @@ func (c *controller) finish(_ *exec.Cmd) error {
 	return fmt.Errorf("process job still active after %s", processTreeFinishTimeout)
 }
 
+// activeProcesses 查询 Job 内当前仍存活的进程数，供 stop/finish 判断是否已清干净。
 func (c *controller) activeProcesses() (uint32, error) {
 	var info jobObjectBasicAccountingInformation
 	if err := windows.QueryInformationJobObject(

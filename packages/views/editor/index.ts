@@ -1,3 +1,10 @@
+/**
+ * editor 包对外出口（barrel）。
+ *
+ * 统一导出编辑器家族：ContentEditor（富文本主体）、TitleEditor（标题）、
+ * ReadonlyContent（只读渲染），以及附件下载/预览/图片序列、上传门禁、
+ * 协调上传、lazy 编辑、文本锚点等配套 hook 与组件。
+ */
 export {
   ContentEditor,
   type ContentEditorProps,

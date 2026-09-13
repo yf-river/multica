@@ -1,3 +1,11 @@
+// Package handler 是整个 HTTP API 的处理器集合。
+//
+// 本文件（life_complete.go）实现"人生陪伴/人生档案"场景的完整增删改查接口：
+// 身份版本（identity）、记忆（memory）、关系事件、人生素材（material）、
+// 内心想法、主题（topic）、承诺（commitment）、主动关怀策略、观察者
+// （observer）、观察席位、模块、认知任务、行动建议与身份升级评估等。多数
+// 写操作在同一事务里完成数据变更并写入"变更审计事件"，随后经
+// publishLifeEvents 推给前端实时刷新。
 package handler
 
 import (
@@ -16,6 +24,8 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// lifeIdentityResponse 把一条身份版本数据库行整理成对外 JSON 结构
+// （数据库 JSON 列用 json.RawMessage 原样透传，时间列统一转字符串）。
 func lifeIdentityResponse(row db.LifeIdentityVersion) map[string]any {
 	return map[string]any{
 		"id": uuidToString(row.ID), "version": row.Version, "status": row.Status,
@@ -26,6 +36,7 @@ func lifeIdentityResponse(row db.LifeIdentityVersion) map[string]any {
 	}
 }
 
+// ListLifeIdentityVersions 列出该用户所有的身份版本记录。
 func (h *Handler) ListLifeIdentityVersions(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -43,6 +54,8 @@ func (h *Handler) ListLifeIdentityVersions(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"versions": items})
 }
 
+// ListLifeMemoryRevisions 列出某条记忆的全部修订历史；
+// 先确认该记忆确实属于当前用户（否则 404），再按记忆 ID 拉修订。
 func (h *Handler) ListLifeMemoryRevisions(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -64,12 +77,17 @@ func (h *Handler) ListLifeMemoryRevisions(w http.ResponseWriter, r *http.Request
 	writeJSON(w, 200, map[string]any{"revisions": rows})
 }
 
+// lifeIdentityRequest 是"创建身份版本"的请求体。四个核心板块的字段不带
+// json tag，靠自定义 UnmarshalJSON 在内部 wire 结构里映射；Interests 和
+// ChangeReason 才声明 tag 保持可见性。
 type lifeIdentityRequest struct {
 	StableCore, RelationshipContract, GrowthProfile, ExpressionProfile json.RawMessage
 	Interests                                                          json.RawMessage `json:"interests"`
 	ChangeReason                                                       string          `json:"change_reason"`
 }
 
+// UnmarshalJSON 自定义解码：内部用带 tag 的 wire 结构体承接各 JSON 字段，
+// 这样字段名映射集中在一处，也便于后续校验。
 func (req *lifeIdentityRequest) UnmarshalJSON(raw []byte) error {
 	type wire struct {
 		StableCore           json.RawMessage `json:"stable_core"`
@@ -88,15 +106,20 @@ func (req *lifeIdentityRequest) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
+// validJSONObject 判断一段 JSON 是否为合法的非空对象（用于要求"必须传对象"的字段）。
 func validJSONObject(raw json.RawMessage) bool {
 	var value map[string]any
 	return json.Unmarshal(raw, &value) == nil && value != nil
 }
+
+// validJSONArray 判断一段 JSON 是否为合法的非空数组（用于必须传数组的字段）。
 func validJSONArray(raw json.RawMessage) bool {
 	var value []any
 	return json.Unmarshal(raw, &value) == nil && value != nil
 }
 
+// CreateLifeIdentityVersion 创建一个"草稿"状态的身份版本：校验各板块必须是
+// 合法 JSON（对象/数组），在事务里取下一版本号并落库，写审计事件后返回。
 func (h *Handler) CreateLifeIdentityVersion(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -140,6 +163,8 @@ func (h *Handler) CreateLifeIdentityVersion(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusCreated, lifeIdentityResponse(row))
 }
 
+// ActivateLifeIdentityVersion 激活某个草稿身份版本：先作废当前激活的版本，
+// 再把目标版本置为激活并把 companion 的 current_identity_version_id 指向它。
 func (h *Handler) ActivateLifeIdentityVersion(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -182,6 +207,7 @@ func (h *Handler) ActivateLifeIdentityVersion(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, lifeIdentityResponse(row))
 }
 
+// ListLifeRelationshipEvents 列出该用户与 companion 之间的关系事件列表。
 func (h *Handler) ListLifeRelationshipEvents(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -203,6 +229,8 @@ func (h *Handler) ListLifeRelationshipEvents(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, 200, map[string]any{"events": items})
 }
 
+// ResolveLifeRelationshipEvent 处理一条待处理的关系事件：仅允许置为 resolved
+// （已解决）或 retained_difference（保留分歧）两种终态，并记录用户的处置说明。
 func (h *Handler) ResolveLifeRelationshipEvent(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -244,6 +272,7 @@ func (h *Handler) ResolveLifeRelationshipEvent(w http.ResponseWriter, r *http.Re
 	writeJSON(w, 200, map[string]any{"id": uuidToString(row.ID), "status": row.Status, "resolution": row.Resolution})
 }
 
+// lifeMaterialResponse 把一条"人生素材"记录整理成对外 JSON 结构。
 func lifeMaterialResponse(row db.LifeMaterial) map[string]any {
 	return map[string]any{
 		"id": uuidToString(row.ID), "source_type": row.SourceType, "source_key": row.SourceKey, "source_revision": row.SourceRevision,
@@ -251,6 +280,7 @@ func lifeMaterialResponse(row db.LifeMaterial) map[string]any {
 	}
 }
 
+// ListLifeMaterials 列出该用户最近 200 条人生素材。
 func (h *Handler) ListLifeMaterials(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -268,6 +298,9 @@ func (h *Handler) ListLifeMaterials(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"materials": items})
 }
 
+// CreateLifeMaterial 手动录入一条人生素材。用"内容+发生时间"算 SHA-256 作
+// 为素材去重键（内容相同视为同一条，落库走 upsert）；若用户已配置 companion
+// 则同时排一个"理解这条素材"的认知任务，让 companion 后台消化它。
 func (h *Handler) CreateLifeMaterial(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -339,6 +372,7 @@ func (h *Handler) CreateLifeMaterial(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, lifeMaterialResponse(row))
 }
 
+// ListLifeInternalThoughts 列出 companion 的全部内心想法（思考记录）。
 func (h *Handler) ListLifeInternalThoughts(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -356,6 +390,7 @@ func (h *Handler) ListLifeInternalThoughts(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, 200, map[string]any{"thoughts": items})
 }
 
+// ListLifeTopics 列出该用户全部人生主题。
 func (h *Handler) ListLifeTopics(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -369,6 +404,9 @@ func (h *Handler) ListLifeTopics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"topics": rows})
 }
 
+// UpdateLifeTopic 更新一个主题的状态（active/contradicted/resolved/archived）。
+// 状态迁移需要保留原有内容字段，故先读出整行再写回；每次评审都会把
+// last_reviewed_at 置为当前时间、review_after 顺延 30 天。
 func (h *Handler) UpdateLifeTopic(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -415,6 +453,7 @@ func (h *Handler) UpdateLifeTopic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, updated)
 }
 
+// ListLifeCommitments 列出该用户的承诺事项列表。
 func (h *Handler) ListLifeCommitments(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -428,6 +467,8 @@ func (h *Handler) ListLifeCommitments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"commitments": rows})
 }
 
+// UpdateLifeCommitment 更新一个承诺的状态：confirmed 表示确认承诺（带到期与
+// 回访时间），completed/cancelled/expired 为终态（可填 outcome 记录结果）。
 func (h *Handler) UpdateLifeCommitment(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -484,6 +525,8 @@ func (h *Handler) UpdateLifeCommitment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, row)
 }
 
+// GetLifeProactivePolicy 读取用户"主动关怀"策略；从未配置时返回一组内置默认值
+// （关闭、上海时区、23:00-08:00 免打扰、最小间隔 6 小时）。
 func (h *Handler) GetLifeProactivePolicy(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -505,6 +548,8 @@ func (h *Handler) GetLifeProactivePolicy(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, 200, map[string]any{"enabled": row.Enabled, "timezone": row.Timezone, "quiet_hours": json.RawMessage(row.QuietHours), "minimum_interval_hours": float64(row.MinimumInterval.Microseconds) / float64(time.Hour/time.Microsecond), "next_check_at": timestampToString(row.NextCheckAt), "unanswered_count": row.UnansweredCount})
 }
 
+// UpdateLifeProactivePolicy 更新"主动关怀"策略：校验最小间隔小时数与时区合法
+// 后 upsert，并把 next_check_at 重置为当前时间让调度尽快按新策略跑。
 func (h *Handler) UpdateLifeProactivePolicy(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -553,10 +598,14 @@ func (h *Handler) UpdateLifeProactivePolicy(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, 200, row)
 }
 
+// lifeObserverResponse 把一条观察者（observer）记录整理成对外 JSON。
 func lifeObserverResponse(row db.LifeObserver) map[string]any {
 	return map[string]any{"id": uuidToString(row.ID), "agent_id": uuidToString(row.AgentID), "name": row.Name, "basis_type": row.BasisType, "status": row.Status, "current_version": row.CurrentVersion, "next_run_at": timestampToString(row.NextRunAt), "last_run_at": timestampToPtr(row.LastRunAt)}
 }
 
+// ListLifeObservers 列出该用户配置的全部观察者，并为每个观察者附带当前版本
+// 的人设（personality/perspective/expression_profile）与其知识条目；没有版本
+// 时这三项给空对象 `{}`。
 func (h *Handler) ListLifeObservers(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -595,6 +644,9 @@ func (h *Handler) ListLifeObservers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"observers": items})
 }
 
+// CreateLifeObserver 创建一个观察者：校验所属 agent 存在且未被归档、不是
+// companion 本尊、用户有权访问；事务内锁定 companion profile 防止并发下
+// companion 被换掉，然后建观察者及其第 1 版人设。
 func (h *Handler) CreateLifeObserver(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -688,6 +740,7 @@ func (h *Handler) CreateLifeObserver(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, lifeObserverResponse(observer))
 }
 
+// UpdateLifeObserver 更新观察者的状态（active/paused/archived）。
 func (h *Handler) UpdateLifeObserver(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -728,6 +781,8 @@ func (h *Handler) UpdateLifeObserver(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, lifeObserverResponse(row))
 }
 
+// AddLifeObserverKnowledge 给某观察者追加一条用户侧提供的"背景知识"，
+// 供其未来观察时参考。
 func (h *Handler) AddLifeObserverKnowledge(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -770,6 +825,8 @@ func (h *Handler) AddLifeObserverKnowledge(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, 201, row)
 }
 
+// CreateLifeObserverVersion 为观察者创建新一版人设：事务内取下一版本号写入，
+// 然后把观察者的 current_version 指到新版本，使其立即生效。
 func (h *Handler) CreateLifeObserverVersion(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -830,6 +887,8 @@ func (h *Handler) CreateLifeObserverVersion(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, 201, row)
 }
 
+// RunLifeObserver 手动触发一次观察者运行：把下次运行时间按 minimum_interval
+// 顺延（没配置就按 12 小时），并排一个 observer_run 类型的认知任务。
 func (h *Handler) RunLifeObserver(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -880,6 +939,8 @@ func (h *Handler) RunLifeObserver(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 202, map[string]any{"job_id": uuidToString(job.ID)})
 }
 
+// ListLifeObservationSeat 汇总"观察席位"视图：一次返回观察判断记录与观察
+// 主题两类数据，供观察界面使用。
 func (h *Handler) ListLifeObservationSeat(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -898,6 +959,8 @@ func (h *Handler) ListLifeObservationSeat(w http.ResponseWriter, r *http.Request
 	writeJSON(w, 200, map[string]any{"judgements": judgements, "topics": topics})
 }
 
+// UpdateLifeObservationTopic 推进观察主题的状态机（open/surfaced/discussing/
+// resolved/archived），可携带 companion 的回应内容。
 func (h *Handler) UpdateLifeObservationTopic(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -939,6 +1002,7 @@ func (h *Handler) UpdateLifeObservationTopic(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, 200, row)
 }
 
+// ListLifeModules 列出该用户可用的"人生模块"清单。
 func (h *Handler) ListLifeModules(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -952,6 +1016,7 @@ func (h *Handler) ListLifeModules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"modules": rows})
 }
 
+// UpdateLifeModule 更新模块的启用状态（active/paused/retired）。
 func (h *Handler) UpdateLifeModule(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -992,6 +1057,8 @@ func (h *Handler) UpdateLifeModule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, row)
 }
 
+// ListLifeCognitionJobs 列出最近 200 条认知任务（作业），Input/Output 列空时
+// 分别用 `{}`/省略处理，避免把 NULL 序列化出去。
 func (h *Handler) ListLifeCognitionJobs(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -1031,6 +1098,8 @@ func (h *Handler) ListLifeCognitionJobs(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, 200, map[string]any{"jobs": items})
 }
 
+// RetryLifeCognitionJob 请求重试一条失败的认知任务；不可重试状态由数据库
+// 返回 404/冲突。
 func (h *Handler) RetryLifeCognitionJob(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -1067,6 +1136,7 @@ func (h *Handler) RetryLifeCognitionJob(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusAccepted, map[string]any{"id": uuidToString(job.ID), "status": job.Status})
 }
 
+// RejectLifeActionProposal 拒绝一条 companion 提出的行动建议。
 func (h *Handler) RejectLifeActionProposal(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -1097,6 +1167,7 @@ func (h *Handler) RejectLifeActionProposal(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, 200, lifeProposalToResponse(row))
 }
 
+// ListLifeUpgradeEvaluations 列出全部"身份升级评估"记录。
 func (h *Handler) ListLifeUpgradeEvaluations(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -1114,6 +1185,7 @@ func (h *Handler) ListLifeUpgradeEvaluations(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, 200, map[string]any{"evaluations": items})
 }
 
+// lifeUpgradeEvaluationResponse 把一条升级评估记录整理成对外 JSON 结构。
 func lifeUpgradeEvaluationResponse(row db.LifeUpgradeEvaluation) map[string]any {
 	return map[string]any{
 		"id": uuidToString(row.ID), "workspace_id": uuidToString(row.WorkspaceID), "user_id": uuidToString(row.UserID),
@@ -1124,6 +1196,9 @@ func lifeUpgradeEvaluationResponse(row db.LifeUpgradeEvaluation) map[string]any 
 	}
 }
 
+// CreateLifeUpgradeEvaluation 发起一次"身份升级评估"：用候选身份与当前基线
+// 身份跑若干预置场景，排一个 upgrade_evaluation 认知任务让后台完成评估；
+// identity_version_id 可选——不指定就只按候选/基线标签的语义来评估。
 func (h *Handler) CreateLifeUpgradeEvaluation(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -1205,6 +1280,8 @@ func (h *Handler) CreateLifeUpgradeEvaluation(w http.ResponseWriter, r *http.Req
 	writeJSON(w, 202, lifeUpgradeEvaluationResponse(eval))
 }
 
+// parseUUIDText 解析 UUID 字符串；无效时返回显式错误而非 panic
+// （区别于 handler 内部假定输入合法的 parseUUID）。
 func parseUUIDText(raw string) (pgtype.UUID, error) {
 	id := parseUUID(raw)
 	if !id.Valid {

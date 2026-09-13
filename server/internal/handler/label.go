@@ -1,3 +1,11 @@
+// 职责定位：标签（Label）体系的 HTTP 处理器。标签可挂在三类资源上——issue、agent、skill，
+// 这里提供标签本身的增删改查，以及「资源 ↔ 标签」的挂接/解绑接口；三类资源的挂接逻辑高度
+// 同构，只是绑定的资源不同、事件 StreamKey 不同。
+//
+// 核心约定：名称/颜色/描述在入库前先做规范化（颜色只收 #rrggbb 六位十六进制，见
+// normalizeColor，避免前端把它直接当 CSS 用而变成注入面）；创建/改名都依赖数据库唯一
+// 约束防重名；删除标签时必须先把三类资源的挂接关系清干净，用事务保证原子（库里不加外键
+// 级联，按项目约定在应用层做）。
 package handler
 
 import (
@@ -24,6 +32,8 @@ import (
 // Types
 // ---------------------------------------------------------------------------
 
+// LabelResponse 是标签返回给前端的数据结构。UsageCount（被多少资源引用）只有列表查询
+// 才有，详情/单条创建返回的映射函数（labelToResponse）不给它赋值，保持零值即可。
 type LabelResponse struct {
 	ID           string `json:"id"`
 	WorkspaceID  string `json:"workspace_id"`
@@ -36,6 +46,7 @@ type LabelResponse struct {
 	UpdatedAt    string `json:"updated_at"`
 }
 
+// labelToResponse 把数据库里的单条标签记录（不含引用计数）转成接口响应结构。
 func labelToResponse(l db.IssueLabel) LabelResponse {
 	return LabelResponse{
 		ID:           uuidToString(l.ID),
@@ -49,6 +60,8 @@ func labelToResponse(l db.IssueLabel) LabelResponse {
 	}
 }
 
+// labelListRowToResponse 把列表查询返回的行（比 IssueLabel 多一个 UsageCount 引用数）
+// 转成接口响应结构。
 func labelListRowToResponse(l db.ListLabelsRow) LabelResponse {
 	return LabelResponse{
 		ID:           uuidToString(l.ID),
@@ -63,6 +76,7 @@ func labelListRowToResponse(l db.ListLabelsRow) LabelResponse {
 	}
 }
 
+// labelsToResponse 批量转换，保持顺序与入参一致。
 func labelsToResponse(list []db.IssueLabel) []LabelResponse {
 	out := make([]LabelResponse, len(list))
 	for i, l := range list {
@@ -71,6 +85,7 @@ func labelsToResponse(list []db.IssueLabel) []LabelResponse {
 	return out
 }
 
+// CreateLabelRequest 是创建标签的请求体。ResourceType 缺省为 "issue"。
 type CreateLabelRequest struct {
 	ResourceType string `json:"resource_type"`
 	Name         string `json:"name"`
@@ -78,14 +93,19 @@ type CreateLabelRequest struct {
 	Color        string `json:"color"`
 }
 
+// UpdateLabelRequest 是更新标签的请求体。三个字段都是指针：nil 表示本次不改该字段，
+// 传了非 nil 才会覆盖旧值。
 type UpdateLabelRequest struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
 	Color       *string `json:"color"`
 }
 
+// defaultLabelResourceType 是创建标签未指定资源类型时的兜底值。
 const defaultLabelResourceType = "issue"
 
+// parseLabelResourceType 解析并校验 resource_type 参数：空串当作缺省值 issue；
+// 只接受 issue / agent / skill 三种，其它一律报错（错误信息直接给前端当 400 文案）。
 func parseLabelResourceType(raw string) (string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
@@ -99,15 +119,14 @@ func parseLabelResourceType(raw string) (string, error) {
 	}
 }
 
-// 6-digit hex, with or without leading '#'.
+// 六位十六进制颜色，允许带或不带开头的 '#'。
 var hexColorRE = regexp.MustCompile(`^#?[0-9a-fA-F]{6}$`)
 
-// normalizeColor returns a canonical "#rrggbb" form or an error if invalid.
+// normalizeColor 把颜色统一成 "#rrggbb" 的小写形式；不合法就返回适合做 400 文案的错误。
 //
-// LOAD-BEARING INVARIANT: LabelChip renders `style={{ backgroundColor: color }}`
-// directly in the frontend. If this regex is ever relaxed to accept arbitrary
-// CSS (named colors, `url(...)`, etc.), that inline style becomes an injection
-// surface. Keep the regex strict.
+// 必须守住的安全不变量：前端 LabelChip 直接把 color 当 style={{ backgroundColor: color }}
+// 内联渲染。一旦这里放开校验、允许任意 CSS（命名颜色、url(...) 等），那段内联样式就变成
+// 注入面。正则必须保持严格。
 func normalizeColor(c string) (string, error) {
 	c = strings.TrimSpace(c)
 	if !hexColorRE.MatchString(c) {
@@ -121,8 +140,9 @@ func normalizeColor(c string) (string, error) {
 
 const maxLabelNameLen = 32
 
-// validateLabelName trims and validates a label name. Returns the trimmed
-// name or an error suitable for a 400 response.
+// validateLabelName 校验并清理标签名，返回裁剪掉首尾空格后的名字。名字不能为空、
+// 不能超过 32 个字符（按「字符数」而非字节数），且不能含控制字符（防 \n 之类混进
+// JSON/展示层制造脏数据）。
 func validateLabelName(raw string) (string, error) {
 	for _, r := range raw {
 		if unicode.IsControl(r) {
@@ -143,6 +163,8 @@ func validateLabelName(raw string) (string, error) {
 // Handlers — label CRUD
 // ---------------------------------------------------------------------------
 
+// ListLabels 列出当前 workspace 下某类资源的全部标签。resource_type 可缺省（默认 issue），
+// 返回 {"labels": [...], "total": N}。
 func (h *Handler) ListLabels(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	resourceType, err := parseLabelResourceType(r.URL.Query().Get("resource_type"))
@@ -165,6 +187,8 @@ func (h *Handler) ListLabels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"labels": resp, "total": len(resp)})
 }
 
+// GetLabel 按 id 查单条标签。id 必须属于当前 workspace（查询条件带 WorkspaceID），
+// 不存在或不属于本空间统一返回 404。
 func (h *Handler) GetLabel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
@@ -191,6 +215,8 @@ func (h *Handler) GetLabel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, labelToResponse(label))
 }
 
+// CreateLabel 创建一条标签：校验名称/颜色/资源类型后开事务插入，撞到名称唯一约束返回
+// 409；成功后把 EventLabelCreated 事件落进 outbox（与插入同事务），提交后再对外发布。
 func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 	var req CreateLabelRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -255,6 +281,8 @@ func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+// UpdateLabel 部分更新一条标签（只更新请求体里非 nil 的字段）。字段逐一校验后拼进
+// UPDATE 参数，成功后记录 EventLabelUpdated 事件并发布。
 func (h *Handler) UpdateLabel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
@@ -301,10 +329,9 @@ func (h *Handler) UpdateLabel(w http.ResponseWriter, r *http.Request) {
 		params.Color = pgtype.Text{String: color, Valid: true}
 	}
 
-	// Branch on pgx.ErrNoRows directly from the UPDATE — the WHERE clause
-	// already enforces (id, workspace_id), so a missing row means either the
-	// label doesn't exist or it's not in this workspace. Dropping the prior
-	// GetLabel precheck removes a TOCTOU window and saves a round-trip.
+	// 直接靠 UPDATE 返回的 pgx.ErrNoRows 分流，不再预先 GetLabel 查一次——WHERE 条件里
+	// 已经同时锁定了 (id, workspace_id)，查不到只可能是「标签不存在或不在本空间」。
+	// 去掉预检既消除了 check-then-act 的 TOCTOU 窗口，也省了一次数据库往返。
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start label transaction")
@@ -340,6 +367,9 @@ func (h *Handler) UpdateLabel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// DeleteLabel 删除一条标签。删除必须把三类资源上的挂接记录一起清掉并保持原子（项目约定
+// 不用数据库外键级联，改为在应用层显式清理）；真正的删除用 :one RETURNING id，查不到
+// 行就说明标签不在本空间，返回 404。成功后记 EventLabelDeleted 事件并发布。
 func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
@@ -363,9 +393,8 @@ func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
-	// Keep every relationship cleanup and the catalog deletion atomic. The
-	// resource-label junctions intentionally use application-level cleanup
-	// rather than database cascades.
+	// 把三类资源各自的标签挂接清理和标签目录删除放进同一个事务。项目硬性约定：
+	// 资源-标签关联表不加外键级联，必须由应用层显式、原子地清理。
 	for _, cleanup := range []func() error{
 		func() error { return qtx.DeleteIssueLabelAssignmentsByLabel(r.Context(), idUUID) },
 		func() error { return qtx.DeleteAgentLabelAssignmentsByLabel(r.Context(), idUUID) },
@@ -377,8 +406,8 @@ func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// DeleteLabel is :one RETURNING id — ErrNoRows means the label wasn't in
-	// this workspace (404). Any other error is a real 500.
+	// DeleteLabel 是 :one RETURNING id 查询——返回 ErrNoRows 表示标签不在当前
+	// workspace（按 404 处理）；其余错误才是真正的 500。
 	if _, err := qtx.DeleteLabel(r.Context(), db.DeleteLabelParams{
 		ID: idUUID, WorkspaceID: wsUUID,
 	}); err != nil {
@@ -409,16 +438,14 @@ func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 // Handlers — issue↔label attach/detach
 // ---------------------------------------------------------------------------
 
+// AttachLabelRequest 是给资源挂标签的请求体，只带一个 label_id。
 type AttachLabelRequest struct {
 	LabelID string `json:"label_id"`
 }
 
-// listLabelsForIssueSafe reads the attached-label list and handles the error
-// by logging + returning nil. Callers use this after a successful attach/detach
-// mutation: if the read fails, the mutation is already committed, so returning
-// nil → clients refetch via query invalidation, and we skip broadcasting an
-// empty list that would incorrectly overwrite every subscriber's optimistic
-// state.
+// listLabelsForIssueSafe 在挂/解成功之后读取 issue 的最新标签列表；读失败只打日志并返回
+// (nil, false)。这里故意用「容忍读失败」的姿势：变更已经提交，读失败时返回空列表并广播
+// 出去，会把每个订阅者的乐观状态错刷成空——所以宁可让客户端靠 query 失效自己去重拉。
 func (h *Handler) listLabelsForIssueSafe(r *http.Request, issueID, workspaceID pgtype.UUID) ([]db.IssueLabel, bool) {
 	labels, err := h.Queries.ListLabelsByIssue(r.Context(), db.ListLabelsByIssueParams{
 		IssueID:     issueID,
@@ -431,11 +458,11 @@ func (h *Handler) listLabelsForIssueSafe(r *http.Request, issueID, workspaceID p
 	return labels, true
 }
 
-// ListLabelsForIssue returns the labels currently attached to an issue.
+// ListLabelsForIssue 返回某个 issue 当前挂着的标签，并顺带返回 issue_revision
+// （供前端做并发一致性判断）。
 func (h *Handler) ListLabelsForIssue(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
-	// Authorize via the issue — if it's not in this workspace, the caller
-	// shouldn't see its labels.
+	// 用 issue 做鉴权：issue 不在当前 workspace，调用方就不该看到它的标签。
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
 		return
@@ -455,7 +482,9 @@ func (h *Handler) ListLabelsForIssue(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// AttachLabel attaches a label to an issue.
+// AttachLabel 给 issue 挂一个标签。issue 和 label 必须同属一个 workspace，且 label 的
+// resource_type 必须是 issue。数据库侧 AttachLabelToIssue 会去重（同一条标签重复挂时
+// Changed=false、不再发事件），所以幂等；挂在变化时记 EventLabelUpdated 事件并发布。
 func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	userID, ok := requireUserID(w, r)
@@ -473,7 +502,7 @@ func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Both the issue and label must belong to this workspace.
+	// issue 和 label 都必须属于当前 workspace，缺一不可。
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
 		return
@@ -517,10 +546,9 @@ func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read the updated label list; on read failure, the attach is already
-	// committed — return success without a labels body (clients refetch via
-	// query invalidation) and skip the broadcast so we don't overwrite every
-	// subscriber's optimistic state with an incorrect empty list.
+	// 挂好后再读一遍最新标签列表；此时若读取失败，挂接其实已经成功了——就返回成功但不
+	// 带 labels 正文（客户端会靠 query 失效重拉），也不广播，避免拿一张错误的空列表覆盖
+	// 每个订阅者的乐观状态。
 	labels, err := qtx.ListLabelsByIssue(r.Context(), db.ListLabelsByIssueParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load labels after attach")
@@ -549,7 +577,9 @@ func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-// DetachLabel removes a label from an issue.
+// DetachLabel 把标签从 issue 上解下来，逻辑与 AttachLabel 镜像。同 workspace 校验在此
+// 格外重要：若省略，一个捏造了别人空间 label_id 的请求会静默「无事发生」地返回 200——
+// 这种假成功比显式 404 更糟。
 func (h *Handler) DetachLabel(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	labelID := chi.URLParam(r, "labelId")
@@ -558,10 +588,9 @@ func (h *Handler) DetachLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify both issue and label belong to this workspace before detaching
-	// (mirror of AttachLabel). Without this, a crafted request with a foreign
-	// labelID would no-op and return 200 — "silent success" is worse than an
-	// explicit 404.
+	// 解绑前先确认 issue 和 label 都在本 workspace（与 AttachLabel 的校验互为镜像）。
+	// 少了这一步，一个带了外部 labelID 的伪造请求会「静默无事发生」地返回 200——
+	// 假成功比显式 404 更糟。
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
 		return
@@ -637,6 +666,7 @@ func (h *Handler) DetachLabel(w http.ResponseWriter, r *http.Request) {
 // Handlers — agent/skill↔label attach/detach
 // ---------------------------------------------------------------------------
 
+// ListLabelsForAgent 返回某个 agent 当前挂着的全部标签（列表查询自带 workspace 过滤）。
 func (h *Handler) ListLabelsForAgent(w http.ResponseWriter, r *http.Request) {
 	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
@@ -652,6 +682,9 @@ func (h *Handler) ListLabelsForAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"labels": labelsToResponse(labels)})
 }
 
+// AttachLabelToAgent 给 agent 挂标签。与 issue 版本不同，agent 需要管理权限
+// （canManageAgent）；挂接成功发出 EventLabelUpdated 事件后，直接内部转调
+// ListLabelsForAgent 把最新列表作为响应返回。
 func (h *Handler) AttachLabelToAgent(w http.ResponseWriter, r *http.Request) {
 	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
 	if !ok || !h.canManageAgent(w, r, agent) {
@@ -703,6 +736,8 @@ func (h *Handler) AttachLabelToAgent(w http.ResponseWriter, r *http.Request) {
 	h.ListLabelsForAgent(w, r)
 }
 
+// DetachLabelFromAgent 把标签从 agent 上解下来，同样要求管理权限，成功后发布事件并
+// 转调 ListLabelsForAgent 返回最新列表。
 func (h *Handler) DetachLabelFromAgent(w http.ResponseWriter, r *http.Request) {
 	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
 	if !ok || !h.canManageAgent(w, r, agent) {
@@ -742,6 +777,7 @@ func (h *Handler) DetachLabelFromAgent(w http.ResponseWriter, r *http.Request) {
 	h.ListLabelsForAgent(w, r)
 }
 
+// ListLabelsForSkill 返回某个 skill 当前挂着的全部标签。
 func (h *Handler) ListLabelsForSkill(w http.ResponseWriter, r *http.Request) {
 	skill, ok := h.loadSkillForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
@@ -757,6 +793,7 @@ func (h *Handler) ListLabelsForSkill(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"labels": labelsToResponse(labels)})
 }
 
+// AttachLabelToSkill 给 skill 挂标签（需管理权限），逻辑同 AttachLabelToAgent。
 func (h *Handler) AttachLabelToSkill(w http.ResponseWriter, r *http.Request) {
 	skill, ok := h.loadSkillForUser(w, r, chi.URLParam(r, "id"))
 	if !ok || !h.canManageSkill(w, r, skill) {
@@ -806,6 +843,7 @@ func (h *Handler) AttachLabelToSkill(w http.ResponseWriter, r *http.Request) {
 	h.ListLabelsForSkill(w, r)
 }
 
+// DetachLabelFromSkill 把标签从 skill 上解下来（需管理权限），逻辑同 DetachLabelFromAgent。
 func (h *Handler) DetachLabelFromSkill(w http.ResponseWriter, r *http.Request) {
 	skill, ok := h.loadSkillForUser(w, r, chi.URLParam(r, "id"))
 	if !ok || !h.canManageSkill(w, r, skill) {

@@ -1,3 +1,8 @@
+// 隔离执行环境准备工作：把 Prepare/Reuse 放到一个独立、可强杀的 helper
+// 子进程里执行，而不是在当前 daemon 进程内跑。这样当文件系统系统调用被
+// 卡住时可以直接终止整个进程树，不会残留一个"任务已被重试、却可能继续
+// 往磁盘写入"的进程内 goroutine。
+
 package execenv
 
 import (
@@ -13,10 +18,9 @@ import (
 	"time"
 )
 
-// PreparationHelperArg selects the private execution-environment helper mode
-// in the multica binary. The daemon runs Prepare/Reuse in that subprocess so a
-// blocked filesystem syscall can be terminated without leaving an in-process
-// goroutine that may resume writing after the task has already been retried.
+// PreparationHelperArg 选择 multica 二进制里的"私有执行环境准备"子命令。
+// daemon 通过这个子进程跑 Prepare/Reuse：被阻塞的文件系统调用可以被杀死，
+// 而不会留下一个可能在任务被重试后仍恢复写入的进程内 goroutine。
 const PreparationHelperArg = "__multica_execenv_prepare"
 
 const (
@@ -25,21 +29,24 @@ const (
 	preparationWaitDelay     = 2 * time.Second
 )
 
+// preparationRequest 是发给 helper 子进程的请求：要么 prepare、要么 reuse，
+// 两者互斥，由 Action 区分。
 type preparationRequest struct {
 	Action  string         `json:"action"`
 	Prepare *PrepareParams `json:"prepare,omitempty"`
 	Reuse   *ReuseParams   `json:"reuse,omitempty"`
 }
 
+// preparationResponse 是 helper 写回的结果：成功时带 Environment，
+// 失败时把错误文本放进 Error，让父进程能原样保留错误信息。
 type preparationResponse struct {
 	Environment *Environment `json:"environment,omitempty"`
 	Error       string       `json:"error,omitempty"`
 }
 
-// PrepareIsolated executes Prepare in a killable helper process. command must
-// name the current multica binary followed by PreparationHelperArg in
-// production; accepting a slice also lets tests use the Go test binary as the
-// helper without installing a CLI binary.
+// PrepareIsolated 在一个可被强杀的 helper 子进程中执行 Prepare。
+// command 在生产环境应指向"当前 multica 可执行文件 + PreparationHelperArg"；
+// 接收命令切片也让测试可以用 go test 的测试二进制当 helper，而不必装 CLI。
 func PrepareIsolated(ctx context.Context, command []string, params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	return runPreparationProcess(ctx, command, preparationRequest{
 		Action:  preparationActionPrepare,
@@ -47,8 +54,7 @@ func PrepareIsolated(ctx context.Context, command []string, params PrepareParams
 	}, logger)
 }
 
-// ReuseIsolated executes Reuse in the same killable helper process contract as
-// PrepareIsolated.
+// ReuseIsolated 与 PrepareIsolated 相同的"可杀 helper 子进程"契约下执行 Reuse。
 func ReuseIsolated(ctx context.Context, command []string, params ReuseParams, logger *slog.Logger) (*Environment, error) {
 	return runPreparationProcess(ctx, command, preparationRequest{
 		Action: preparationActionReuse,
@@ -56,6 +62,10 @@ func ReuseIsolated(ctx context.Context, command []string, params ReuseParams, lo
 	}, logger)
 }
 
+// runPreparationProcess 是 PrepareIsolated/ReuseIsolated 的公共实现：
+// 把请求 JSON 编码后从 stdin 喂给 helper，等它执行完并把 Environment
+// （或错误）从 stdout 以 JSON 形式回传。上下文取消时通过 controller 强杀
+// 整个 helper 进程树。
 func runPreparationProcess(ctx context.Context, command []string, request preparationRequest, logger *slog.Logger) (*Environment, error) {
 	if len(command) == 0 || strings.TrimSpace(command[0]) == "" {
 		return nil, errors.New("execenv: preparation helper command is empty")
@@ -87,9 +97,9 @@ func runPreparationProcess(ctx context.Context, command []string, request prepar
 		stdin.Close()
 		return nil, fmt.Errorf("execenv: start preparation helper: %w", err)
 	}
-	// The helper blocks decoding stdin. Attach it to the platform's process-tree
-	// boundary before releasing the finite request payload, so it cannot spawn a
-	// descendant in the gap between Start and ownership setup.
+	// helper 阻塞等待读取 stdin。要在释放有限大小的请求体之前，先把它挂到
+	// 平台的进程树边界（unix 的进程组 / windows 的 job object）上——
+	// 否则在 Start 成功到完成归属设置之间的空隙里，它可能又派生出子孙进程。
 	if err := controller.attach(cmd); err != nil {
 		stdin.Close()
 		_ = cmd.Process.Kill()
@@ -111,6 +121,7 @@ func runPreparationProcess(ctx context.Context, command []string, request prepar
 	select {
 	case err = <-waitDone:
 	case <-ctx.Done():
+		// 请求方取消：强杀 helper 进程树，然后等 Wait 返回收尸。
 		stopErr = controller.stop(cmd)
 		err = <-waitDone
 	}
@@ -119,8 +130,8 @@ func runPreparationProcess(ctx context.Context, command []string, request prepar
 	if lifecycleErr := errors.Join(stopErr, finishErr); lifecycleErr != nil {
 		return nil, fmt.Errorf("execenv: stop preparation process tree: %w", lifecycleErr)
 	}
-	// The context cause is the daemon's stable failure contract. Prefer it over
-	// the platform-specific process exit text ("signal: killed", exit 1, ...).
+	// context 的取消原因是 daemon 对外稳定的失败契约，优先用它，
+	// 而不是平台相关的进程退出文本（如 "signal: killed"、退出码 1 等）。
 	if ctx.Err() != nil {
 		return nil, context.Cause(ctx)
 	}
@@ -142,17 +153,20 @@ func runPreparationProcess(ctx context.Context, command []string, request prepar
 		return nil, errors.New(response.Error)
 	}
 	if response.Environment != nil {
-		// logger is intentionally omitted from JSON. Reattach the owning daemon's
-		// logger so later cleanup retains its normal diagnostics.
+		// logger 有意不放进 JSON。这里把属主 daemon 的 logger 重新挂回去，
+		// 让后续清理时仍能走正常的诊断日志。
 		response.Environment.logger = logger
 	}
 	return response.Environment, nil
 }
 
+// marshalPreparationRequest 把请求编码成 JSON（独立成函数便于两端一致复用）。
 func marshalPreparationRequest(request preparationRequest) ([]byte, error) {
 	return json.Marshal(request)
 }
 
+// decodePreparationRequest 从 in 解码 helper 请求，并拒绝未知字段
+// （DisallowUnknownFields），避免协议字段拼写错误被静默忽略。
 func decodePreparationRequest(in io.Reader) (preparationRequest, error) {
 	var request preparationRequest
 	decoder := json.NewDecoder(in)
@@ -163,10 +177,10 @@ func decodePreparationRequest(in io.Reader) (preparationRequest, error) {
 	return request, nil
 }
 
-// RunPreparationHelper serves the private helper protocol on stdin/stdout.
-// Operational errors from Prepare are encoded in the response so the parent
-// can preserve them; malformed protocol input/output is returned as a process
-// error because the parent cannot safely interpret the result.
+// RunPreparationHelper 在 stdin/stdout 上服务这个私有 helper 协议（由
+// helper 子进程执行）。Prepare 产生的"业务错误"会编码进响应，让父进程能
+// 原样保留；而协议本身的读写错误直接以进程错误返回，因为父进程无法安全
+// 解读这种结果。
 func RunPreparationHelper(in io.Reader, out io.Writer, logger *slog.Logger) error {
 	request, err := decodePreparationRequest(in)
 	if err != nil {
@@ -176,6 +190,7 @@ func RunPreparationHelper(in io.Reader, out io.Writer, logger *slog.Logger) erro
 	var response preparationResponse
 	switch request.Action {
 	case preparationActionPrepare:
+		// prepare 与 reuse 的请求参数互斥，交叉出现说明协议被破坏。
 		if request.Prepare == nil || request.Reuse != nil {
 			return errors.New("invalid prepare request")
 		}

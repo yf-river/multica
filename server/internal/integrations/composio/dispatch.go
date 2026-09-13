@@ -1,3 +1,8 @@
+// dispatch.go：给「待派发的 agent 任务」装配 Composio 的 MCP 覆盖层（overlay）。
+// 凡是能发起某个 agent 运行的人，在运行它时都应能用该 agent 拥有者挂上去的 Composio
+// 应用。本文件负责把「拥有者的工具白名单 ∩ 拥有者当前活跃的连接」收敛成一个专属 MCP
+// 会话，再序列化进任务队列的 runtime_mcp_overlay 字段，由 daemon 派发时合并进该 agent
+// 的 MCP 配置。
 package composio
 
 import (
@@ -13,106 +18,88 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// mcpOverlayServerName is the deterministic key under `mcpServers` used to
-// place the Composio session into the merged MCP config. Daemon-side merge
-// is by server name, so this constant is the integration's namespace: a
-// future provider adding its own overlay must pick a distinct name (e.g.
-// "pipedream") to avoid collisions, and an agent's own `mcp_config` entry
-// named "composio" is overridden by this overlay on purpose — the overlay
-// carries the live user-scoped session URL, the agent config carries a
-// generic service-wide entry at most.
+// mcpOverlayServerName 是把 Composio 会话写进合并后 MCP 配置时，在 `mcpServers` 下用的
+// 确定性键名。daemon 侧按 server 名合并，因此这个常量就是本集成的命名空间：将来某个
+// 提供方想叠加自己的覆盖层，必须另选不同的名字（如 "pipedream"）以免撞名；而 agent
+// 自带 mcp_config 里名叫 "composio" 的条目会被本覆盖层有意覆盖——覆盖层携带的是实时
+// 的、按用户划分的会话 URL，agent 配置里最多只有一条泛化的服务级条目。
 const mcpOverlayServerName = "composio"
 
-// composioMCPServer is the wire shape of one MCP server entry in the
-// Claude-style `{"mcpServers": {...}}` config that every supported runtime
-// (Cursor, Codex, Claude, OpenCode, Hermes/Kiro) consumes.
+// composioMCPServer 是 Claude 风格 {"mcpServers": {...}} 配置里一个 MCP server 条目的
+// 线上结构，所有受支持的运行时（Cursor、Codex、Claude、OpenCode、Hermes/Kiro）都消费
+// 这种格式。
 //
-// `type: http` is what marks the entry as a streamable HTTP MCP endpoint —
-// the form Composio's session helper returns. Headers carry the Composio API
-// key, so callers must NEVER log this struct without redacting Headers.
+// `type: http` 把这个条目标记为 streamable HTTP 的 MCP 端点——即 Composio 会话助手
+// 返回的形态。Headers 携带 Composio 的 API key，所以任何调用方在打印本结构体时都绝不
+// 能忘记对 Headers 做脱敏。
 type composioMCPServer struct {
 	Type    string            `json:"type"`
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-// mcpOverlayPayload is the per-task overlay JSON written to
-// agent_task_queue.runtime_mcp_overlay and read by the daemon claim handler
-// at task dispatch.
+// mcpOverlayPayload 是写入 agent_task_queue.runtime_mcp_overlay、由 daemon 领取任务时
+// 读取的「每任务一份」的覆盖层 JSON。
 //
-// Shape is deliberately a subset of agent.mcp_config (Claude-style
-// `mcpServers` map) so the daemon's merge is a flat dictionary union keyed
-// by server name. Anything more elaborate (capability filtering, env
-// injection, …) would force every sidecar generator to learn about overlays
-// individually; keeping the shape identical lets the merge stay pure
-// substitution.
+// 结构刻意取 agent.mcp_config（Claude 风格 `mcpServers` map）的子集，让 daemon 的合并
+// 退化成按 server 名做扁平的字典并集。若搞得更复杂（能力过滤、环境变量注入……），每个
+// sidecar 生成器都得单独学一遍 overlay；保持结构相同，合并就能一直是纯替换。
 type mcpOverlayPayload struct {
 	MCPServers map[string]composioMCPServer `json:"mcpServers"`
 }
 
-// BuildTaskOverlay returns the overlay payload to write for a task dispatching
-// `agent`, or a zero result when ANY of the gates below trip — meaning no
-// Composio session is created and no token is provisioned.
+// BuildTaskOverlay 返回派发 `agent` 任务时应写入的覆盖层载荷；下述任一闸门不过时返回
+// 零值——意味着不建 Composio 会话、也不签发任何 token。
 //
-// MUL-3963: Composio MCP now FOLLOWS the agent invocation permission instead
-// of requiring originator == owner. The security boundary is upstream —
-// canInvokeAgent decides who may enqueue a run for this agent at all — so any
-// task that reaches dispatch has already been authorised to run the agent, and
-// therefore to use the Composio apps the OWNER attached to it. The overlay is
-// always built from the AGENT OWNER's connected-apps view: the owner shares
-// those apps as part of the agent's capability with everyone allowed to invoke
-// it (private -> only the owner; public_to -> the allow-list). The front-end
-// warns the owner about this when a shared agent has Composio apps enabled.
+// MUL-3963：Composio MCP 现在跟随「agent 调用权限」而非要求发起者==拥有者。安全边界在
+// 上游——canInvokeAgent 决定谁能为这个 agent 排队运行；因此能走到派发这一步的任务，
+// 必然已被授权运行该 agent，也就被授权使用拥有者给它挂上的 Composio 应用。覆盖层永远
+// 按 AGENT 拥有者的已连接应用视角构建：拥有者把那些应用作为 agent 能力的一部分，分享给
+// 所有获准调用它的人（private→仅拥有者；public_to→白名单）。当共享的 agent 启用了
+// Composio 应用时，前端会就此提醒拥有者。
 //
-// originatorUserID is retained only for audit logging (who triggered) — it no
-// longer gates the overlay.
+// originatorUserID 仅保留用于审计日志（记录是谁触发的）——它不再参与覆盖层的闸门判定。
 //
-// Gates, in order:
+// 闸门依次为：
 //
-//  1. agent has no owner — cannot resolve a connected-apps view. No overlay.
+//  1. agent 没有拥有者——无法解析「已连接应用」视角。不产出覆盖层。
 //
-//  2. agent.composio_toolkit_allowlist is empty/NULL — the agent owner never
-//     opted into any toolkit. Default OFF: no overlay.
+//  2. agent.composio_toolkit_allowlist 为空/NULL——拥有者从未启用任何工具包。
+//     默认关闭：不产出覆盖层。
 //
-//  3. After intersecting the allowlist with the OWNER's currently-active
-//     Composio connections, no toolkit has an active connection. Nothing to
-//     mount.
+//  3. 把白名单与 OWNER 当前活跃的 Composio 连接求交后，没有任何工具包存在活跃连接。
+//     没有可挂载的东西。
 //
-//  4. Composio returns a session with no URL — defensive.
+//  4. Composio 返回的会话没有 URL——防御性检查。
 //
-// CreateSession is called with the owner as the session user, and with BOTH
-// the `toolkits.enable` allowlist filter and `connected_accounts` pinning so
-// the session is narrowed to (owner allowlist ∩ owner active connections).
+// CreateSession 以拥有者作为会话用户调用，同时带上 `toolkits.enable` 白名单过滤和
+// `connected_accounts` 固定，使会话被收窄到（拥有者白名单 ∩ 拥有者活跃连接）。
 func (s *Service) BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.UUID, agent db.Agent) (runtimeapps.MCPOverlayResult, error) {
-	// Gate 1: the overlay is the agent OWNER's connected-apps view. Without an
-	// owner there is nothing to project.
+	// 闸门 1：覆盖层是 agent 拥有者的已连接应用视角。没有拥有者就无从投影。
 	if !agent.OwnerID.Valid {
 		return runtimeapps.MCPOverlayResult{}, nil
 	}
 	ownerUserID := agent.OwnerID
-	// Gate 2: agent owner has not allowlisted any toolkit. NULL and empty
-	// `{}` are treated identically — both mean "no overlay".
+	// 闸门 2：agent 拥有者没有白名单任何工具包。NULL 与空 `{}` 一视同仁——都表示
+	// "无覆盖层"。
 	allowSet := normaliseAllowlistToSet(agent.ComposioToolkitAllowlist)
 	if len(allowSet) == 0 {
 		return runtimeapps.MCPOverlayResult{}, nil
 	}
 
-	// Resolve the OWNER's active connections and intersect with the allowlist.
-	// The intersection is the canonical input both for filtering the Composio
-	// CreateSession call AND for the early bail-out below.
+	// 解析 OWNER 的活跃连接并与白名单求交。这个交集既是给 Composio CreateSession 调用
+	// 过滤的权威输入，也是下面提前退出的依据。
 	rows, err := s.store.ListActiveUserComposioConnections(ctx, ownerUserID)
 	if err != nil {
 		return runtimeapps.MCPOverlayResult{}, fmt.Errorf("composio: build task overlay: list connections: %w", err)
 	}
 	pinned := pinConnectedAccounts(rows, allowSet)
 	if len(pinned) == 0 {
-		// Gate 3: owner allowlisted toolkits they have not connected — or have
-		// revoked since.
+		// 闸门 3：拥有者白名单了「并未连接过——或事后已撤销」的工具包。
 		return runtimeapps.MCPOverlayResult{}, nil
 	}
-	// `toolkits.enable` narrows what the tool-router exposes; pair it with
-	// the connected-account pin so the session can never surface an
-	// account outside the (allowlist ∩ active connections) set.
+	// `toolkits.enable` 收窄工具路由暴露面；再配合同一个 connected-account 固定，让会话
+	// 永远不可能浮出（白名单 ∩ 活跃连接）之外的账户。
 	slugs := make([]string, 0, len(pinned))
 	for slug := range pinned {
 		slugs = append(slugs, slug)
@@ -127,9 +114,8 @@ func (s *Service) BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.
 	if err != nil {
 		return runtimeapps.MCPOverlayResult{}, fmt.Errorf("composio: build task overlay: create session: %w", err)
 	}
-	// Gate 4: Composio answered 200 with no MCP URL. Treat as "no overlay"
-	// rather than wire up a server with an empty URL — every runtime fails
-	// noisily on that.
+	// 闸门 4：Composio 回了 200 却没有 MCP URL。按"无覆盖层"处理，而不是把一个空 URL
+	// 的 server 接上线——后者在每个运行时都会大声报错。
 	if resp == nil || resp.MCP.URL == "" {
 		return runtimeapps.MCPOverlayResult{}, nil
 	}
@@ -159,12 +145,10 @@ func (s *Service) BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.
 	return runtimeapps.MCPOverlayResult{MCPOverlay: raw, ConnectedApps: apps}, nil
 }
 
-// normaliseAllowlistToSet maps the agent.composio_toolkit_allowlist
-// TEXT[] column into a slug→{} set. Each entry is lowercased + trimmed
-// defensively (the API layer already normalises on write, but DB-level
-// migrations / out-of-band writes might bypass that, and the cost of a
-// re-normalise is one map walk). An empty result triggers gate 3 in
-// BuildTaskOverlay, identically for NULL columns and `{}` arrays.
+// normaliseAllowlistToSet 把 agent.composio_toolkit_allowlist 这个 TEXT[] 列映射成
+// slug→{} 集合。每个条目防御性地转小写并去空格（API 层写入时已做过归一，但 DB 级迁移
+// /绕道写入可能绕过它，而重新归一化不过一次 map 遍历的成本）。结果为空时触发
+// BuildTaskOverlay 里的闸门 3，NULL 列与 `{}` 数组表现一致。
 func normaliseAllowlistToSet(allow []string) map[string]struct{} {
 	if len(allow) == 0 {
 		return nil
@@ -180,17 +164,14 @@ func normaliseAllowlistToSet(allow []string) map[string]struct{} {
 	return out
 }
 
-// pinConnectedAccounts intersects the originator's active connection rows
-// with the allowlist set and returns the `connected_accounts` map shape the
-// Composio /tool_router/session endpoint expects: one entry per allowlisted
-// toolkit slug, value = array of the originator's connected account ids for
-// that toolkit. The product currently permits one active account per toolkit,
-// so each array has one element.
+// pinConnectedAccounts 把发起者的活跃连接行与白名单集合求交，返回 Composio
+// /tool_router/session 端点期望的 `connected_accounts` map 形态：白名单里每个工具包
+// slug 一条，值是该工具包下发起者已连接账户 id 的数组。产品目前允许每个工具包一个活跃
+// 账户，所以每个数组只有一个元素。
 //
-// Newest-wins on duplicates: rows arrive ordered by connected_at DESC
-// (see ListActiveUserComposioConnections), so the first row seen for a
-// given slug is the most recently connected account, matching the
-// single-account-per-toolkit invariant CreateMCPSession already documents.
+// 重复时取最新：行按 connected_at DESC 到达（见 ListActiveUserComposioConnections），
+// 因此同一 slug 先看到的行就是最近连接的账户，与 CreateMCPSession 已文档化的
+// 单账户/工具包不变量一致。
 func pinConnectedAccounts(rows []db.UserComposioConnection, allowSet map[string]struct{}) map[string]any {
 	pinned := make(map[string]any, len(rows))
 	for _, row := range rows {
@@ -209,13 +190,11 @@ func pinConnectedAccounts(rows []db.UserComposioConnection, allowSet map[string]
 	return pinned
 }
 
-// lowerTrim is the tiny inlined helper that keeps allowlist and connection
-// slug comparison consistent without dragging the unicode lib for what is
-// always an ASCII slug.
+// lowerTrim 是内联的小工具函数，让白名单与连接 slug 的比较口径一致，又不必为了
+// 永远只是 ASCII 的 slug 拖进整个 unicode 库。
 func lowerTrim(s string) string {
-	// strings.ToLower + TrimSpace would do, but we avoid importing strings
-	// just for two ASCII transforms in a hot path. Manual loop is
-	// allocation-free for the common all-ASCII case.
+	// 本可以用 strings.ToLower + TrimSpace，但只为两个 ASCII 变换、在热点路径上引入
+	// strings 不划算。全 ASCII 常见场景下这段手工循环是无分配的。
 	start, end := 0, len(s)
 	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
 		start++
@@ -226,7 +205,7 @@ func lowerTrim(s string) string {
 	if start == end {
 		return ""
 	}
-	// Detect upper-case before allocating.
+	// 先探测是否存在大写，避免为全小写的常见输入白白分配内存。
 	upper := false
 	for i := start; i < end; i++ {
 		if s[i] >= 'A' && s[i] <= 'Z' {

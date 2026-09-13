@@ -1,17 +1,20 @@
+// 本文件封装插件相关的各类变更：预览、发布包（远端 zip / 本地目录）、删除包、
+// 安装/卸载、配置、启停、MCP 工具审批、hook 调用、token 轮换/吊销等。
+
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type { PluginConfigRequest, PluginInstallRequest, PluginPreviewRequest } from "../types";
 import { pluginKeys } from "./queries";
 
+/** 失效某工作区全部插件查询的公共逻辑。 */
 function useInvalidatePlugins(wsId: string) {
   const queryClient = useQueryClient();
   return () => queryClient.invalidateQueries({ queryKey: pluginKeys.all(wsId) });
 }
 
 /**
- * Preview is deliberately a mutation, not a query: it is the first half of a
- * consent flow the administrator started, so it must run on an explicit action
- * rather than be replayed by a cache refetch.
+ * 预览刻意做成 mutation 而不是 query：它是管理员发起的「同意流程」的前半段，
+ * 必须在一次显式动作里运行，而不是被某次缓存重拉重放。
  */
 export function usePreviewPlugin(wsId: string) {
   return useMutation({
@@ -20,8 +23,8 @@ export function usePreviewPlugin(wsId: string) {
 }
 
 /**
- * Publishes an artifact bundle. A published version is immutable, so this only
- * ever adds one — it can never change what an installed workspace is running.
+ * 发布一份插件构建包。已发布的版本不可变，所以这里永远只是「新增一个」——
+ * 不可能改变某个已安装工作区正在运行的东西。
  */
 export function usePublishPluginPackage(wsId: string) {
   const invalidate = useInvalidatePlugins(wsId);
@@ -31,7 +34,7 @@ export function usePublishPluginPackage(wsId: string) {
   });
 }
 
-/** The development channel: publish from MULTICA_PLUGIN_DIR instead of a zip. */
+/** 开发通道：从 MULTICA_PLUGIN_DIR 发布而不是传 zip。 */
 export function usePublishLocalPluginPackage(wsId: string) {
   const invalidate = useInvalidatePlugins(wsId);
   return useMutation({
@@ -40,6 +43,7 @@ export function usePublishLocalPluginPackage(wsId: string) {
   });
 }
 
+/** 删除一个插件包。 */
 export function useDeletePluginPackage(wsId: string) {
   const invalidate = useInvalidatePlugins(wsId);
   return useMutation({
@@ -48,6 +52,7 @@ export function useDeletePluginPackage(wsId: string) {
   });
 }
 
+/** 安装一个插件。 */
 export function useInstallPlugin(wsId: string) {
   const invalidate = useInvalidatePlugins(wsId);
   return useMutation({
@@ -56,6 +61,7 @@ export function useInstallPlugin(wsId: string) {
   });
 }
 
+/** 配置某个插件安装（把安装 id 单独拆出，其余请求体透传）。 */
 export function useConfigurePlugin(wsId: string) {
   const invalidate = useInvalidatePlugins(wsId);
   return useMutation({
@@ -65,6 +71,7 @@ export function useConfigurePlugin(wsId: string) {
   });
 }
 
+/** 启用 / 停用某个插件安装。 */
 export function useSetPluginEnabled(wsId: string) {
   const invalidate = useInvalidatePlugins(wsId);
   return useMutation({
@@ -75,11 +82,10 @@ export function useSetPluginEnabled(wsId: string) {
 }
 
 /**
- * Pins the approved tool set for one `mcp` hook.
+ * 锁定某个 `mcp` hook 获准的工具集。
  *
- * `tools` is the complete set the administrator wants approved, never a delta —
- * unchecking one and saving is what revokes it. An empty array withdraws the
- * hook, and the next task claim stops offering it to agents.
+ * `tools` 是管理员想要批准的「完整集合」，绝不是增量——取消勾选一个再保存，
+ * 正是撤销它。空数组表示撤回该 hook，之后的任务认领会停止把它提供给 agent。
  */
 export function useApprovePluginMCPTools(wsId: string, installationId: string, hookKey: string) {
   const invalidate = useInvalidatePlugins(wsId);
@@ -89,6 +95,7 @@ export function useApprovePluginMCPTools(wsId: string, installationId: string, h
   });
 }
 
+/** 卸载某个插件安装。 */
 export function useUninstallPlugin(wsId: string) {
   const invalidate = useInvalidatePlugins(wsId);
   return useMutation({
@@ -98,16 +105,14 @@ export function useUninstallPlugin(wsId: string) {
 }
 
 /**
- * Invokes a hook the user asked for.
+ * 调用用户主动发起的某个 hook。
  *
- * A mutation rather than a query for the same reason preview is: it performs an
- * outbound call to a third-party server, and a cache refetch must never replay
- * it. Whatever the hook did on the far side is not something to repeat because
- * a component remounted.
+ * 用 mutation 而非 query，理由同 preview：它会对第三方服务器发起一次出站调用，
+ * 缓存重拉绝不可以重放它。hook 在远端做的事，不该因为组件重挂而重复一遍。
  *
- * Deliberately does NOT invalidate on settle. A hook may have changed nothing,
- * or may have written through the Action API under its own attribution — the
- * caller knows which and invalidates what it actually expects to have moved.
+ * 刻意不在 settle 时失效：hook 可能什么都没改，也可能通过 Action API 以自己的
+ * 身份写穿了——调用方才知道到底哪个没动、哪个动了，由它去失效自己真正预期
+ * 会变的那部分。
  */
 export function useInvokePluginHook() {
   return useMutation({
@@ -121,6 +126,7 @@ export function useInvokePluginHook() {
   });
 }
 
+/** 轮换某个插件安装的 webhook token。 */
 export function useRotatePluginToken(wsId: string) {
   const invalidate = useInvalidatePlugins(wsId);
   return useMutation({
@@ -129,6 +135,7 @@ export function useRotatePluginToken(wsId: string) {
   });
 }
 
+/** 吊销某个插件安装的 webhook token。 */
 export function useRevokePluginToken(wsId: string) {
   const invalidate = useInvalidatePlugins(wsId);
   return useMutation({

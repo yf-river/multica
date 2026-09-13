@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Codex Agent 设置里的“服务档位（Fast/Standard…）”全宽字段：档位能力来自
+// 当前模型实时目录，而不是写死的 Fast 开关。模型为空时跟随 config.toml、无法安全解析，
+// 于是该字段宁可失败关闭——除非已有存值需要保留可见，供用户显式清掉。
+
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Gauge } from "lucide-react";
@@ -14,10 +18,9 @@ import { useT } from "../../../i18n";
 import { findModelCapabilityEntry } from "./model-capability";
 
 /**
- * Full-width service-tier field for Codex agents. Capability comes from the
- * resolved model's live catalog rather than a hard-coded Fast switch. An empty
- * model follows config.toml and cannot be resolved safely, so the field fails
- * closed unless a saved value needs to remain visible for explicit clearing.
+ * 服务档位设置字段。能力从“当前解析出的模型”的实时目录里取，而不是硬编码 Fast 开关。
+ * 模型为空（跟随 config.toml）无法安全解析，字段失败关闭——除非还有存值
+ * 需要留在界面上供显式清理。
  */
 export function ServiceTierSettingField({
   label,
@@ -64,6 +67,7 @@ export function ServiceTierSettingField({
   );
 }
 
+/** 服务档位的实际选择器（read-only 时不弹层）：可选列表 = 目录档位 + 显式 Standard（若 CLI 支持）。 */
 function ServiceTierPicker({
   value,
   tiers,

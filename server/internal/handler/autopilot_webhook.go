@@ -1,3 +1,9 @@
+// 本文件实现 autopilot 的 webhook 公开入口（HandleAutopilotWebhook）与其支撑
+// 工具：body 规范化（任意 provider 的 JSON → 统一 WebhookEnvelope）、dedupe 键
+// 提取、HMAC 签名校验、事件过滤器，以及 webhook_delivery 行的持久化/终态落库。
+// 该入口跑在鉴权路由组之外——URL 路径里的 bearer token 本身就是凭据。流程为
+// 「先持久化、同步准入、异步派发」：写入 delivery 行后由数据库租约的 worker
+// 重新检查状态/过滤范围、幂等派发并推进 last_fired_at。
 package handler
 
 import (
@@ -29,23 +35,20 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-// maxWebhookBodyBytes is the request body size cap for webhook ingress.
-// 256 KiB is plenty for normal provider webhooks (a max-size GitHub PR
-// payload comes in well under this) and small enough that an attacker
-// cannot wedge agent context windows by sending megabytes of arbitrary JSON.
+// maxWebhookBodyBytes 是 webhook 入口的请求体上限。256 KiB 对常规 provider
+// webhook 绰绰有余（最大号的 GitHub PR 负载也远低于此），又小到攻击者无法靠发
+// 数 MB 任意 JSON 卡死 agent 的上下文窗口。
 const maxWebhookBodyBytes = 256 * 1024
 
-// webhookTokenPrefix makes a leaked token recognisable in logs / audit trails
-// without revealing the entropy bytes themselves. 32 random bytes encoded as
-// URL-safe base64 (no padding) is 43 chars, so a full token is "awt_" + 43 = 47
-// chars. URL-safe base64 keeps the token URL-friendly without escaping.
+// webhookTokenPrefix 让泄漏的 token 在日志/审计轨迹里可辨识，又不暴露熵字节本身。
+// 32 随机字节编码成 URL-safe base64（无填充）是 43 字符，因此完整 token 为
+// "awt_" + 43 = 47 字符。URL-safe base64 让 token 无需转义即可放进 URL。
 const webhookTokenPrefix = "awt_"
 
-// generateWebhookToken returns a cryptographically random bearer token used as
-// the public webhook URL secret. Format: "awt_" + URL-safe base64(32 bytes,
-// no padding). UUIDs are intentionally not used here — they are lower entropy
-// (122 bits vs 256) and visually overlap with internal IDs, which made
-// accidental token-vs-ID confusion easy in early prototypes.
+// generateWebhookToken 返回一把密码学随机的 bearer token，用作公开 webhook URL
+// 的密钥。格式："awt_" + URL-safe base64(32 字节, 无填充)。刻意不用 UUID——它熵
+// 更低（122 bit vs 256），视觉上又跟内部 id 重叠，早期原型里 token-vs-id 容易
+// 混淆。
 func generateWebhookToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -54,7 +57,7 @@ func generateWebhookToken() (string, error) {
 	return webhookTokenPrefix + base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// signature_status values mirror the CHECK constraint on webhook_delivery.
+// signature_status 取值镜像 webhook_delivery 上的 CHECK 约束。
 const (
 	sigStatusNotRequired = "not_required"
 	sigStatusValid       = "valid"
@@ -62,15 +65,13 @@ const (
 	sigStatusMissing     = "missing"
 )
 
-// delivery status values mirror the CHECK constraint on webhook_delivery.
+// delivery status 取值镜像 webhook_delivery 上的 CHECK 约束。
 //
-// "Duplicate" is a *response* status, not a delivery status — duplicates
-// don't get their own row; they bump attempt_count on the existing dedupe
-// target. Likewise "skipped" is a *response* status reported when the
-// autopilot service skipped the run (e.g. runtime offline); the delivery
-// row itself records `dispatched` and links the skipped run via
-// autopilot_run_id, because from the ingress's perspective we DID hand
-// the payload to the autopilot machinery.
+// "Duplicate" 是 *响应* 状态而非 delivery 状态——重复投递不建自己的行，它们在
+// 既有 dedupe 目标上累加 attempt_count。同理 "skipped" 是 autopilot 服务跳过该
+// 运行（如 runtime 离线）时上报的 *响应* 状态；delivery 行本身记 `dispatched`
+// 并经 autopilot_run_id 链接被跳过的运行，因为从入口视角我们确实把负载交给了
+// autopilot 机制。
 const (
 	deliveryStatusQueued     = "queued"
 	deliveryStatusDispatched = "dispatched"
@@ -79,56 +80,51 @@ const (
 	deliveryStatusFailed     = "failed"
 )
 
-// ── Payload normalization ───────────────────────────────────────────────────
+// ── Payload 规范化 ─────────────────────────────────────────────────────────
 
-// WebhookEnvelope is the canonical shape stored in autopilot_run.trigger_payload
-// and surfaced to the agent. The handler normalises arbitrary JSON bodies into
-// this shape so downstream consumers (run_only daemon prompt, create_issue
-// description appendix) can rely on a stable schema regardless of which
-// provider sent the webhook.
+// WebhookEnvelope 是存在 autopilot_run.trigger_payload、并展示给 agent 的规范
+// 形状。handler 把任意 JSON body 规范化成该形状，让下游消费者（run_only 的
+// daemon 提示词、create_issue 的描述附录）无论哪个 provider 发的 webhook 都
+// 依赖同一个稳定 schema。
 type WebhookEnvelope struct {
 	Event        string          `json:"event"`
 	EventPayload json.RawMessage `json:"eventPayload"`
 	Request      WebhookRequest  `json:"request"`
 }
 
+// WebhookRequest 是信封里关于本次 HTTP 请求本身的元数据。
 type WebhookRequest struct {
 	ReceivedAt  string `json:"receivedAt"`
 	ContentType string `json:"contentType,omitempty"`
 }
 
-// normalizeWebhookPayload parses an incoming webhook body and returns a
-// WebhookEnvelope. Rules:
+// normalizeWebhookPayload 解析入站 webhook body 并返回 WebhookEnvelope。规则：
 //
-//  1. Body must be a valid JSON object or array. Scalars / invalid JSON
-//     return an error so the handler can respond 400.
-//  2. If the body is an object containing a string `event` and any
-//     `eventPayload`, those are preserved as-is.
-//  3. Otherwise `event` is inferred from headers/body fields, and the entire
-//     original body becomes `eventPayload`.
-//  4. The default event is `webhook.received`.
+//  1. Body 必须是合法 JSON 对象或数组。标量/非法 JSON 返回错误，让 handler 回
+//     400。
+//  2. 若 body 是含字符串 `event` 且带 `eventPayload` 的对象，原样保留。
+//  3. 否则 `event` 从头/body 字段推断，整个原始 body 成为 `eventPayload`。
+//  4. 默认 event 是 `webhook.received`。
 //
-// Inference order:
+// 推断顺序：
 //
-//	X-GitHub-Event (combined with body.action when present),
-//	X-Gitlab-Event, X-Event-Type, body.event, body.type, body.action.
+//	X-GitHub-Event（存在时与 body.action 合并）、X-Gitlab-Event、X-Event-Type、
+//	body.event、body.type、body.action。
 func normalizeWebhookPayload(body []byte, headers http.Header) (WebhookEnvelope, error) {
 	body = stripBOM(body)
 	if len(body) == 0 {
 		return WebhookEnvelope{}, errors.New("empty body")
 	}
 
-	// First, validate JSON shape (object or array). Reject scalars early —
-	// `"hello"` is technically valid JSON but has no useful interpretation
-	// as a webhook payload and would land in the agent prompt as a bare
-	// string.
+	// 先校验 JSON 形状（对象或数组）。尽早拒绝标量——`"hello"` 技术上合法，但作为
+	// webhook 负载没有可用解释，会以裸字符串落进 agent 提示词。
 	var asAny any
 	if err := json.Unmarshal(body, &asAny); err != nil {
 		return WebhookEnvelope{}, fmt.Errorf("invalid json: %w", err)
 	}
 	switch asAny.(type) {
 	case map[string]any, []any:
-		// ok
+		// 合法形状
 	default:
 		return WebhookEnvelope{}, errors.New("body must be a JSON object or array")
 	}
@@ -146,7 +142,7 @@ func normalizeWebhookPayload(body []byte, headers http.Header) (WebhookEnvelope,
 		},
 	}
 
-	// 1. Caller-provided envelope.
+	// 1. 调用方自带的信封。
 	if obj, ok := asAny.(map[string]any); ok {
 		if eventStr, ok := obj["event"].(string); ok && eventStr != "" {
 			if rawPayload, ok := obj["eventPayload"]; ok {
@@ -157,22 +153,21 @@ func normalizeWebhookPayload(body []byte, headers http.Header) (WebhookEnvelope,
 					return env, nil
 				}
 			}
-			// `event` present but no eventPayload: still preserve event
-			// string, fall through to use whole body as payload.
+			// `event` 在但无 eventPayload：仍保留 event 串，退回用整个 body 当负载。
 			env.Event = eventStr
 			env.EventPayload = json.RawMessage(body)
 			return env, nil
 		}
 	}
 
-	// 2. Inferred event.
+	// 2. 推断 event。
 	event := inferEvent(headers, asAny)
 	env.Event = event
 	env.EventPayload = json.RawMessage(body)
 	return env, nil
 }
 
-// inferEvent returns a best-effort event identifier from headers and body.
+// inferEvent 从头与 body 尽力推断事件标识。
 func inferEvent(headers http.Header, body any) string {
 	if gh := headers.Get("X-GitHub-Event"); gh != "" {
 		if obj, ok := body.(map[string]any); ok {
@@ -202,8 +197,8 @@ func inferEvent(headers http.Header, body any) string {
 	return "webhook.received"
 }
 
-// stripBOM removes a leading UTF-8 byte-order-mark, which some clients
-// (notably PowerShell-based scripts) prepend to JSON bodies.
+// stripBOM 去掉开头的 UTF-8 byte-order-mark——部分客户端（尤其 PowerShell 脚本）
+// 会给 JSON body 前置 BOM。
 func stripBOM(b []byte) []byte {
 	if len(b) >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF {
 		return b[3:]
@@ -211,17 +206,16 @@ func stripBOM(b []byte) []byte {
 	return b
 }
 
-// ── Dedupe + signature helpers ──────────────────────────────────────────────
+// ── Dedupe + 签名辅助 ───────────────────────────────────────────────────────
 
-// extractDedupeKey returns the provider-specific idempotency identifier from
-// request headers, plus a short tag naming the header it came from. Returns
-// ("", "") when no recognised header is present.
+// extractDedupeKey 从请求头返回 provider 专属的幂等标识，外加标明来源头的短标签。
+// 没有可识别的头时返回 ("", "")。
 //
 //	github  -> X-GitHub-Delivery
 //	generic -> Idempotency-Key
 //
-// Other providers fall back to the generic header to keep manual replays from
-// Postman / curl behaving the same way regardless of trigger config.
+// 其它 provider 回退到通用头，让 Postman / curl 的手动重放与触发器配置无关地
+// 保持一致行为。
 func extractDedupeKey(provider string, headers http.Header) (string, string) {
 	if v := strings.TrimSpace(headers.Get("X-GitHub-Delivery")); v != "" && provider == "github" {
 		return v, "x-github-delivery"
@@ -235,16 +229,15 @@ func extractDedupeKey(provider string, headers http.Header) (string, string) {
 	return "", ""
 }
 
-// verifyWebhookSignatureForProvider returns one of sigStatus* describing the
-// outcome of HMAC verification for the configured trigger.
+// verifyWebhookSignatureForProvider 返回 sigStatus* 之一，描述对已配置触发器做
+// HMAC 校验的结果。
 //
-// When no signing secret is configured the result is `not_required` — the
-// trigger has opted into bearer-token-only authentication. When a secret IS
-// configured the request must carry the expected header; otherwise the
-// outcome is `missing` (caller still records a rejected delivery).
+// 未配置签名密钥时结果为 `not_required`——该触发器选择了纯 bearer-token 鉴权。
+// 配置了密钥时请求必须携带期望头；否则结果为 `missing`（调用方仍会记一条
+// rejected 投递）。
 //
 //	github  -> X-Hub-Signature-256: sha256=<hex>
-//	generic -> X-Hub-Signature-256 (same shape; lets curl/Postman opt in)
+//	generic -> X-Hub-Signature-256（同形状；让 curl/Postman 也能选用）
 func verifyWebhookSignatureForProvider(provider, secret string, headers http.Header, rawBody []byte) string {
 	if secret == "" {
 		return sigStatusNotRequired
@@ -260,9 +253,9 @@ func verifyWebhookSignatureForProvider(provider, secret string, headers http.Hea
 	return sigStatusValid
 }
 
-// verifyHubSignature implements the GitHub-compatible HMAC-SHA256 scheme:
-// `X-Hub-Signature-256: sha256=<hex(hmac(body, secret))>`. The hmac.Equal
-// comparison is constant-time so partial-prefix attacks cannot leak timing.
+// verifyHubSignature 实现 GitHub 兼容的 HMAC-SHA256 方案：
+// `X-Hub-Signature-256: sha256=<hex(hmac(body, secret))>`。hmac.Equal 的比较是
+// 常数时间的，部分前缀攻击无法靠计时泄漏。
 func verifyHubSignature(secret, header string, body []byte) bool {
 	const prefix = "sha256="
 	if !strings.HasPrefix(header, prefix) {
@@ -277,10 +270,8 @@ func verifyHubSignature(secret, header string, body []byte) bool {
 	return hmac.Equal(mac.Sum(nil), want)
 }
 
-// selectedHeadersJSON returns the small, debugging-friendly subset of request
-// headers we persist on a delivery row. Signature header is recorded as
-// present/absent only — never the value, so a delivery dump cannot leak the
-// HMAC of a sensitive body.
+// selectedHeadersJSON 返回一小撮我们持久化到 delivery 行上、便于排查的请求头。
+// 签名头只记 present/absent——绝不记值，投递 dump 不会泄漏敏感 body 的 HMAC。
 func selectedHeadersJSON(headers http.Header) []byte {
 	out := map[string]any{}
 	add := func(name string) {
@@ -304,46 +295,41 @@ func selectedHeadersJSON(headers http.Header) []byte {
 	return b
 }
 
-// ── Public ingress ──────────────────────────────────────────────────────────
+// ── 公开入口 ────────────────────────────────────────────────────────────────
 
-// HandleAutopilotWebhook is the public entry point for webhook-triggered
-// autopilots. It runs OUTSIDE the authenticated route group: the bearer
-// token in the URL path IS the credential.
+// HandleAutopilotWebhook 是 webhook 触发 autopilot 的公开入口。它跑在鉴权路由组
+// 之外：URL 路径里的 bearer token 本身就是凭据。
 //
-// Flow (persist-first, synchronous admission + durable async dispatch):
+// 流程（先持久化、同步准入 + 持久异步派发）：
 //
-//  1. High absolute per-IP ceiling plus a non-consuming check for prior
-//     bad-credential debt (both before DB I/O).
-//  2. Token lookup. ErrNoRows → 404; other DB errors → 500.
-//  3. Read raw body (capped). Oversized → 413.
-//  4. Normalize JSON envelope. Invalid → 400 (no persistence — there is no
-//     dedupe identifier we can trust from an unparsable body).
-//  5. Extract dedupe key from headers per provider.
-//  6. Verify signature (or `not_required` when no secret is configured).
-//  7. INSERT webhook_delivery row (status=queued). On dedupe collision (23505
-//     against `(trigger_id, dedupe_key)`) treat as duplicate: bump
-//     attempt_count on the existing row and return its delivery_id +
-//     autopilot_run_id with 200.
-//  8. If signature invalid/missing: charge bad-credential debt, UPDATE
-//     delivery → rejected, return 401.
-//  9. If trigger disabled / autopilot paused / archived: UPDATE delivery →
-//     ignored, return 200.
-//  10. Create or reuse the delivery's idempotent run, persist the compatible
-//     200 accepted/skipped acknowledgement, and wake the database-leased
-//     worker. The worker re-checks state/filter scope, dispatches idempotently,
-//     and bumps last_fired_at.
+//  1. 高绝对值的按 IP 上限，加一个对既有坏凭据债的「非消费」检查（都在 DB I/O
+//     之前）。
+//  2. 查 token。ErrNoRows → 404；其它 DB 错误 → 500。
+//  3. 读原始 body（封顶）。超限 → 413。
+//  4. 规范化 JSON 信封。非法 → 400（不持久化——无法解析的 body 里没有可信的
+//     dedupe 标识）。
+//  5. 按 provider 从头提取 dedupe 键。
+//  6. 校验签名（未配置密钥时为 `not_required`）。
+//  7. INSERT webhook_delivery 行（status=queued）。dedupe 冲突（23505，撞
+//     `(trigger_id, dedupe_key)`）按重复处理：在既有行上累加 attempt_count，并
+//     以 200 返回它的 delivery_id + autopilot_run_id。
+//  8. 签名非法/缺失：计坏凭据债，UPDATE delivery → rejected，返回 401。
+//  9. 触发器禁用 / autopilot 暂停或归档：UPDATE delivery → ignored，返回 200。
+//  10. 创建或复用该投递的幂等运行，持久化相应的 200 accepted/skipped 回执，并
+//     唤醒数据库租约的 worker。worker 重新检查状态/过滤范围、幂等派发、推进
+//     last_fired_at。
 //
-// Response shapes:
+// 响应形状：
 //   - 200 {"status":"accepted",  "delivery_id", "run_id", "autopilot_id", "trigger_id"}
 //   - 200 {"status":"skipped",   "delivery_id", "run_id", "reason"}
 //   - 200 {"status":"ignored",   "delivery_id", "reason"}
 //   - 200 {"status":"duplicate", "delivery_id", "run_id?"}
-//   - 400 {"error":"..."}                                          — invalid JSON / scalar / empty
-//   - 401 {"status":"rejected",  "delivery_id", "reason":"..."}    — signature failure
-//   - 404 {"error":"webhook not found"}                            — unknown token
-//   - 413 {"error":"payload too large"}                            — body exceeded cap
-//   - 429 {"error":"rate limit exceeded"}                          — IP safety/debt gate
-//   - 500 {"error":"..."}                                          — internal failure
+//   - 400 {"error":"..."}                                          — 非法 JSON / 标量 / 空
+//   - 401 {"status":"rejected",  "delivery_id", "reason":"..."}    — 签名失败
+//   - 404 {"error":"webhook not found"}                            — 未知 token
+//   - 413 {"error":"payload too large"}                            — body 超限
+//   - 429 {"error":"rate limit exceeded"}                          — IP 安全/债门
+//   - 500 {"error":"..."}                                          — 内部失败
 func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
 	if token == "" {
@@ -351,9 +337,8 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 1. Always retain a high absolute ceiling. The lower shared-IP limiter
-	//    tracks only requests already classified as bad credentials, so a NAT
-	//    full of legitimate GitHub hooks does not consume its budget.
+	// 1. 始终保留一个高绝对值上限。较低的共享 IP 限流器只跟踪已被归类为坏凭据的
+	//    请求，因此 NAT 后面一窝合法 GitHub hook 不会耗尽它的预算。
 	ip := h.clientIPForRateLimit(r)
 	if ip != "" && h.WebhookAbsoluteIPRateLimiter != nil && !h.WebhookAbsoluteIPRateLimiter.Allow(r.Context(), ip) {
 		writeWebhookRateLimit(w, r, h.WebhookAbsoluteIPRateLimiter, ip, "absolute_ip", h.Metrics)
@@ -364,10 +349,9 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 2. Token lookup. Distinguish "no row" from "DB error": collapsing both
-	//    to 404 means a transient DB blip silently drops real deliveries
-	//    (providers like GitHub don't retry on 404). For no-row we still
-	//    return a generic message so we don't leak which tokens existed.
+	// 2. 查 token。区分「无行」与「DB 错误」：把两者都折成 404 的话，一次瞬时 DB
+	//    抖动会悄悄丢掉真实投递（GitHub 这类 provider 对 404 不重试）。对无行我们
+	//    仍返回通用文案，不泄漏哪些 token 存在过。
 	trigRow, err := h.Queries.GetWebhookTriggerByToken(r.Context(), pgtype.Text{String: token, Valid: true})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -384,9 +368,8 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 
 	middleware.SetWebhookTriggerID(r, uuidToString(trigRow.ID))
 
-	// 3. Body size cap + JSON validation. http.MaxBytesReader stops the read
-	//    mid-stream once the cap is exceeded so an oversized payload is
-	//    rejected before being fully buffered.
+	// 3. body 大小上限 + JSON 校验。http.MaxBytesReader 在超过上限后中途截断读取，
+	//    超大负载在被完整缓冲前就被拒绝。
 	r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -399,10 +382,9 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 4. Cross-check autopilot/workspace consistency BEFORE we persist the
-	//    delivery — webhook_delivery.workspace_id is NOT NULL and a stale FK
-	//    row would otherwise fail INSERT after we've already paid the body
-	//    read. Same ErrNoRows-vs-DB-error split as token lookup.
+	// 4. 在持久化投递之前交叉核对 autopilot/workspace 一致性——webhook_delivery.
+	//    workspace_id 是 NOT NULL，过期 FK 行否则会在我们付过 body 读取的代价后才
+	//    让 INSERT 失败。与 token 查询相同的 ErrNoRows-vs-DB-error 切分。
 	autopilot, err := h.Queries.GetAutopilot(r.Context(), trigRow.AutopilotID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -425,9 +407,8 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 5. Normalize body. Invalid JSON → 400 without persistence: we have no
-	//    dedupe identifier from the body, and replaying an unparsable payload
-	//    is not useful.
+	// 5. 规范化 body。非法 JSON → 400 且不持久化：body 里没有可用的 dedupe
+	//    标识，重放一个无法解析的负载没有意义。
 	envelope, err := normalizeWebhookPayload(body, r.Header)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -438,7 +419,7 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to encode envelope")
 		return
 	}
-	// 6. Provider + dedupe + signature.
+	// 6. provider + dedupe + 签名。
 	provider := trigRow.Provider
 	if provider == "" {
 		provider = "generic"
@@ -446,7 +427,7 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 	dedupeKey, dedupeSource := extractDedupeKey(provider, r.Header)
 	sigStatus := verifyWebhookSignatureForProvider(provider, trigRow.SigningSecret.String, r.Header, body)
 
-	// 7. Persist (INSERT delivery). Dedupe collision → bump existing row.
+	// 7. 持久化（INSERT delivery）。dedupe 冲突 → 累加既有行。
 	delivery, dup, err := h.persistInboundDelivery(r, persistDeliveryInput{
 		WorkspaceID:     autopilot.WorkspaceID,
 		AutopilotID:     autopilot.ID,
@@ -469,11 +450,9 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if dup {
-		// A previous delivery already covered this dedupe key. Return the
-		// original delivery_id + admitted run_id with 200 so the caller can
-		// correlate. The delivery row is not linked until worker completion,
-		// so retrying before then must fall back to the run's durable delivery
-		// anchor.
+		// 之前的某条投递已覆盖这个 dedupe 键。以 200 返回原 delivery_id + 已准入
+		// 的 run_id 供调用方关联。delivery 行在 worker 完成前不会回链 run，因此
+		// 在此之前重试必须回退到该运行的持久 delivery 锚点。
 		resp := map[string]any{
 			"status":      "duplicate",
 			"delivery_id": uuidToString(delivery.ID),
@@ -503,8 +482,8 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 8. Signature failure → rejected delivery + 401. No dispatch, no replay.
-	//    Providers will look for 4xx feedback when their secret is wrong.
+	// 8. 签名失败 → rejected 投递 + 401。不派发、不重放。密钥配错时 provider 会
+	//    找 4xx 反馈。
 	if sigStatus == sigStatusInvalid || sigStatus == sigStatusMissing {
 		reason := "invalid_signature"
 		if sigStatus == sigStatusMissing {
@@ -523,10 +502,9 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 9. Trigger disabled / autopilot paused / archived → ignored. We return
-	//     200 so the sender's webhook-retry machinery doesn't keep hammering
-	//     us; the "ignored" status + delivery row makes the no-op visible if
-	//     the operator inspects the delivery log.
+	// 9. 触发器禁用 / autopilot 暂停或归档 → ignored。我们回 200，让发送方的
+	//    webhook 重试机制别继续锤我们；"ignored" 状态 + delivery 行让运维查看
+	//    delivery 日志时这个 no-op 可见。
 	if !trigRow.Enabled {
 		respBody := map[string]any{"status": "ignored", "delivery_id": uuidToString(delivery.ID), "reason": "trigger_disabled"}
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusIgnored, http.StatusOK, respBody, "trigger_disabled")
@@ -546,9 +524,8 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 10. Event filter scope → ignored. If the trigger declares a concrete
-	//     event_filters list and the incoming event is outside that scope,
-	//     record an ignored delivery without creating an expensive run/task.
+	// 10. 事件过滤范围 → ignored。若触发器声明了具体的 event_filters 列表而进来的
+	//    事件在其范围外，记一条 ignored 投递，不创建昂贵的 run/task。
 	if !webhookEventAllowedByTriggerScope(trigRow.EventFilters, envelope) {
 		respBody := map[string]any{
 			"status":      "ignored",
@@ -561,10 +538,9 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 11. Allocate the idempotent run synchronously so existing webhook clients
-	//     keep the v0.4.0 response contract. The queued delivery remains the
-	//     durable dispatch source: the worker resumes this run after the response
-	//     and can recover it after a process crash.
+	// 11. 同步分配幂等运行，让既有 webhook 客户端保持 v0.4.0 的响应契约。queued
+	//    delivery 仍是持久派发源：worker 在响应之后恢复这个 run，进程崩溃后也能
+	//    恢复它。
 	run, err := h.AutopilotService.AdmitAutopilotWebhookDelivery(
 		r.Context(),
 		autopilot,
@@ -630,18 +606,17 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, respBody)
 }
 
-// ── Event filter helpers ────────────────────────────────────────────────────
+// ── 事件过滤器辅助 ─────────────────────────────────────────────────────────
 
-// WebhookEventFilter declares one event and an optional list of actions.
-// A nil/empty Actions means "any action" for this event.
+// WebhookEventFilter 声明一个事件与可选的 action 列表。Actions 为 nil/空表示
+// 「该事件任意 action 都行」。
 type WebhookEventFilter struct {
 	Event   string   `json:"event"`
 	Actions []string `json:"actions,omitempty"`
 }
 
-// validateWebhookEventFilters enforces the contract at the HTTP boundary so
-// that malformed shapes never reach the database. The matcher (read path)
-// trusts whatever is stored — see webhookEventAllowedByTriggerScope.
+// validateWebhookEventFilters 在 HTTP 边界强制该契约，让畸形形状永远到不了
+// 数据库。匹配器（读路径）信任已存内容——见 webhookEventAllowedByTriggerScope。
 func validateWebhookEventFilters(filters []WebhookEventFilter) error {
 	for i, f := range filters {
 		if strings.TrimSpace(f.Event) == "" {
@@ -656,9 +631,8 @@ func validateWebhookEventFilters(filters []WebhookEventFilter) error {
 	return nil
 }
 
-// encodeWebhookEventFilters returns the JSONB bytes to persist for a CREATE.
-// nil/empty input maps to nil bytes (column stays NULL → matcher allows
-// every event), so we never write an explicit `[]` on create.
+// encodeWebhookEventFilters 返回 CREATE 时需持久化的 JSONB 字节。nil/空输入映射
+// 为 nil 字节（列保持 NULL → 匹配器放行所有事件），因此创建时绝不写显式 `[]`。
 func encodeWebhookEventFilters(filters []WebhookEventFilter) ([]byte, error) {
 	if len(filters) == 0 {
 		return nil, nil
@@ -666,11 +640,9 @@ func encodeWebhookEventFilters(filters []WebhookEventFilter) ([]byte, error) {
 	return json.Marshal(filters)
 }
 
-// encodeWebhookEventFiltersAlways always returns non-nil bytes, even for an
-// empty slice (`[]byte("[]")`). The UPDATE handler uses this so an explicit
-// empty array in the PATCH body can overwrite (via COALESCE) the existing
-// row to a cleared state — passing nil would be indistinguishable from
-// "field omitted, leave alone".
+// encodeWebhookEventFiltersAlways 总是返回非 nil 字节，空切片也返回
+// (`[]byte("[]")`)。UPDATE handler 用它，让 PATCH body 里的显式空数组能经
+// COALESCE 把既有行覆盖成清空态——传 nil 将与「字段省略、保持不变」无法区分。
 func encodeWebhookEventFiltersAlways(filters []WebhookEventFilter) ([]byte, error) {
 	if filters == nil {
 		filters = []WebhookEventFilter{}
@@ -678,20 +650,16 @@ func encodeWebhookEventFiltersAlways(filters []WebhookEventFilter) ([]byte, erro
 	return json.Marshal(filters)
 }
 
-// webhookEventAllowedByTriggerScope returns true when the trigger has no
-// filters (NULL / empty) or when the incoming envelope matches at least one
-// declared filter.
+// webhookEventAllowedByTriggerScope 在触发器没有过滤器（NULL/空）时返回 true，
+// 或入站信封至少命中一个声明过的过滤器时返回 true。
 func webhookEventAllowedByTriggerScope(eventFilters []byte, envelope WebhookEnvelope) bool {
 	if len(eventFilters) == 0 {
 		return true
 	}
 	var filters []WebhookEventFilter
 	if err := json.Unmarshal(eventFilters, &filters); err != nil {
-		// Strict write-time validation should prevent malformed bytes
-		// from ever reaching this branch. If a corrupt row somehow
-		// exists, fail closed — silently widening the allowlist on a
-		// "only allow X" policy is worse than dropping events until an
-		// operator notices.
+		// 严格的写时校验应防止畸形字节到达这个分支。若某行确实损坏，就失败关闭
+		// ——在「只允许 X」的策略上静默放宽白名单，比丢掉事件直到运维注意到更糟。
 		slog.Warn("webhook: malformed event_filters, denying", "error", err)
 		return false
 	}
@@ -714,18 +682,16 @@ func webhookEventAllowedByTriggerScope(eventFilters []byte, envelope WebhookEnve
 				}
 			}
 		}
-		// Intentionally do NOT return false here: the UI allows several
-		// filters that share the same event name (e.g. two workflow_run
-		// rows covering disjoint actions). Earlier code short-circuited
-		// on the first event-name hit, which made one row silently shadow
-		// the others depending on iteration order — see PR #3231 review.
-		// Keep scanning so any later filter still gets its chance.
+		// 刻意不在这里 return false：UI 允许若干共享同一事件名的过滤器（如两行
+		// 覆盖不相交 action 的 workflow_run）。旧代码在首次命中事件名时就短路，
+		// 会让一行按迭代顺序悄悄遮蔽其余行——见 PR #3231 评审。继续扫，让任何
+		// 靠后的过滤器仍有出场机会。
 	}
 	return false
 }
 
-// splitWebhookEvent splits a normalized event like "github.workflow_run.completed"
-// into (provider, eventName, action). For unqualified events it returns ("", event, "").
+// splitWebhookEvent 把规范化事件（如 "github.workflow_run.completed"）拆成
+// (provider, eventName, action)。对未限定的事件返回 ("", event, "")。
 func splitWebhookEvent(event string) (provider, name, action string) {
 	parts := strings.Split(event, ".")
 	if isKnownProvider(parts[0]) {
@@ -751,8 +717,8 @@ func isKnownProvider(prefix string) bool {
 	return false
 }
 
-// webhookActionCandidates extracts possible action values from the event
-// action suffix and from well-known payload fields.
+// webhookActionCandidates 从事件 action 后缀与众所周知的有效负载字段里提取
+// 可能的 action 值。
 func webhookActionCandidates(eventAction string, payload json.RawMessage) []string {
 	seen := map[string]struct{}{}
 	add := func(v string) {
@@ -778,7 +744,7 @@ func webhookActionCandidates(eventAction string, payload json.RawMessage) []stri
 	return out
 }
 
-// ── Persistence helpers ─────────────────────────────────────────────────────
+// ── 持久化辅助 ─────────────────────────────────────────────────────────────
 
 type persistDeliveryInput struct {
 	WorkspaceID     pgtype.UUID
@@ -794,10 +760,9 @@ type persistDeliveryInput struct {
 	SelectedHeaders []byte
 }
 
-// persistInboundDelivery INSERTs a fresh `queued` delivery, returning (row,
-// false, nil) on the happy path. On dedupe-key unique-violation it returns
-// (existing-row, true, nil) after bumping attempt_count on the prior row.
-// Any other error bubbles up so the handler can 500 cleanly.
+// persistInboundDelivery INSERT 一条全新 `queued` 投递，快乐路径返回 (row, false,
+// nil)。dedupe 键唯一冲突时，在先前行上累加 attempt_count 后返回
+// (existing-row, true, nil)。其它错误原样上抛，让 handler 干净地回 500。
 func (h *Handler) persistInboundDelivery(r *http.Request, in persistDeliveryInput) (db.WebhookDelivery, bool, error) {
 	params := db.CreateWebhookDeliveryParams{
 		ID:              dbid.NewV7(),
@@ -826,7 +791,7 @@ func (h *Handler) persistInboundDelivery(r *http.Request, in persistDeliveryInpu
 	if !isUniqueViolation(err) || in.DedupeKey == "" {
 		return db.WebhookDelivery{}, false, err
 	}
-	// Dedupe collision: fetch the original row, bump attempt count.
+	// Dedupe 冲突：取回原始行，累加 attempt 数。
 	existing, lookupErr := h.Queries.GetWebhookDeliveryByTriggerAndDedupe(r.Context(), db.GetWebhookDeliveryByTriggerAndDedupeParams{
 		TriggerID: in.TriggerID,
 		DedupeKey: pgtype.Text{String: in.DedupeKey, Valid: true},
@@ -836,8 +801,7 @@ func (h *Handler) persistInboundDelivery(r *http.Request, in persistDeliveryInpu
 	}
 	bumped, bumpErr := h.Queries.BumpWebhookDeliveryAttempt(r.Context(), existing.ID)
 	if bumpErr != nil {
-		// Still treat as duplicate; just log the bump failure so the
-		// operator can investigate, returning the row we DID read.
+		// 仍按重复处理；只记下 bump 失败供运维排查，返回我们确实读到的行。
 		slog.Warn("webhook: failed to bump attempt_count",
 			"delivery_id", uuidToString(existing.ID),
 			"error", bumpErr,
@@ -847,9 +811,9 @@ func (h *Handler) persistInboundDelivery(r *http.Request, in persistDeliveryInpu
 	return bumped, true, nil
 }
 
-// finaliseDeliveryTerminal records a non-dispatched outcome (rejected,
-// ignored, failed). HTTP status and full response body are captured so a
-// future Deliveries UI can show exactly what we returned.
+// finaliseDeliveryTerminal 记录一条未派发的结果（rejected、ignored、failed）。
+// HTTP 状态与完整响应体都会被捕获，未来某个 Deliveries UI 能精确展示我们回了
+// 什么。
 func (h *Handler) finaliseDeliveryTerminal(
 	r *http.Request,
 	id pgtype.UUID,
@@ -882,8 +846,8 @@ func (h *Handler) finaliseDeliveryTerminal(
 	h.Metrics.RecordWebhookDelivery(h.deliveryProvider(r.Context(), id), status)
 }
 
-// finaliseDeliveryWithRun records a delivery that produced (or was admission-
-// skipped to) an autopilot_run. Same response-capture as the terminal path.
+// finaliseDeliveryWithRun 记录一条产出了（或准入时跳转成）autopilot_run 的投递。
+// 与终态路径相同的响应捕获。
 func (h *Handler) finaliseDeliveryWithRun(
 	r *http.Request,
 	id pgtype.UUID,
@@ -910,11 +874,9 @@ func (h *Handler) finaliseDeliveryWithRun(
 	h.Metrics.RecordWebhookDelivery(h.deliveryProvider(r.Context(), id), status)
 }
 
-// deliveryProvider best-effort reads the provider for a delivery id so the
-// webhook delivery metric carries useful provenance. On lookup failure we
-// fall back to "generic" — the metric must always be incremented exactly
-// once per finalise call so the dashboard counts line up with autopilot_run
-// volume.
+// deliveryProvider 尽力读取某 delivery id 的 provider，让 webhook delivery 指标
+// 带上可用溯源。查询失败时回退 "generic"——每次 finalise 调用指标必须恰好 +1，
+// 让 dashboard 计数与 autopilot_run 体量对齐。
 func (h *Handler) deliveryProvider(ctx context.Context, id pgtype.UUID) string {
 	if h.Queries == nil {
 		return "generic"
@@ -926,7 +888,7 @@ func (h *Handler) deliveryProvider(ctx context.Context, id pgtype.UUID) string {
 	return row.Provider
 }
 
-// ── Rate-limit / IP plumbing ────────────────────────────────────────────────
+// ── 限流 / IP 管道 ─────────────────────────────────────────────────────────
 
 func writeWebhookRateLimit(w http.ResponseWriter, r *http.Request, limiter WebhookRateLimiter, key, gate string, metrics *obsmetrics.BusinessMetrics) {
 	retryAfter := time.Second
@@ -944,12 +906,11 @@ func writeWebhookRateLimit(w http.ResponseWriter, r *http.Request, limiter Webho
 	writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 }
 
-// clientIPForRateLimit returns the IP used as a rate-limit bucket key.
+// clientIPForRateLimit 返回用作限流桶键的 IP。
 //
-// Default behaviour: use the host portion of r.RemoteAddr. Forwarded
-// headers (X-Forwarded-For, X-Real-IP) are IGNORED unless the operator
-// has explicitly opted in via MULTICA_TRUSTED_PROXIES — and even then
-// only when r.RemoteAddr is itself inside one of the listed CIDRs.
+// 默认行为：用 r.RemoteAddr 的主机部分。转发头（X-Forwarded-For、X-Real-IP）被
+// 忽略，除非运维经 MULTICA_TRUSTED_PROXIES 显式选择信任——且即使如此，也只在
+// r.RemoteAddr 本身落在所列某个 CIDR 内时才用。
 func (h *Handler) clientIPForRateLimit(r *http.Request) string {
 	remoteIP := remoteAddrHost(r.RemoteAddr)
 	if len(h.cfg.TrustedProxies) == 0 {
@@ -957,7 +918,7 @@ func (h *Handler) clientIPForRateLimit(r *http.Request) string {
 	}
 	remoteAddr, ok := parseNetIPAddr(remoteIP)
 	if !ok || !addrInPrefixes(remoteAddr, h.cfg.TrustedProxies) {
-		// Source isn't a trusted proxy — headers can't be believed.
+		// 来源不是可信代理——头部不可信。
 		return remoteIP
 	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {

@@ -1,3 +1,10 @@
+// Package handler 是整个 HTTP API 的处理器集合。
+//
+// 本文件（file.go）实现附件（attachment）的上传、列表、下载与删除，以及围绕
+// 附件 URL 的一整套策略：根据部署形态（CloudFront 签名 / S3 预签名 / API 代理 /
+// 本地磁盘）生成不同的下载/内嵌 URL，并提供 markdown 可持久化 URL、文本类
+// 附件的内联预览代理（支持断点续传的 Range 请求）。上传走 multipart，
+// 100MB 上限，文件类型以服务端嗅探为准。
 package handler
 
 import (
@@ -26,8 +33,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// extContentTypes overrides http.DetectContentType for extensions it gets wrong.
-// Go's sniffer returns text/xml for SVG, text/plain for CSS/JS, etc.
+// extContentTypes 覆盖 http.DetectContentType 对部分扩展名判断错误的情况——
+// Go 的嗅探器会把 SVG 判成 text/xml、CSS/JS 判成 text/plain 等。
 var extContentTypes = map[string]string{
 	".svg":  "image/svg+xml",
 	".css":  "text/css",
@@ -37,10 +44,13 @@ var extContentTypes = map[string]string{
 	".wasm": "application/wasm",
 }
 
+// maxUploadSize 单次上传上限：100 MB。
 const maxUploadSize = 100 << 20 // 100 MB
 
+// defaultAttachmentDownloadURLTTL 附件下载签名 URL 的默认有效期：30 分钟。
 const defaultAttachmentDownloadURLTTL = 30 * time.Minute
 
+// attachmentDownloadMode 表示"部署怎么把存储对象交给下载方"的策略名。
 type attachmentDownloadMode string
 
 const (
@@ -50,16 +60,19 @@ const (
 	attachmentDownloadModeProxy      attachmentDownloadMode = "proxy"
 )
 
-// maxPreviewTextSize caps the body the preview proxy will load into memory
-// for text-based types. Anything larger returns 413 and the UI falls back
-// to "please download". Sized so a typical README/source-file fits but a
-// 100 MB log dump can't blow up the renderer.
+// maxPreviewTextSize 限制预览代理为文本类类型载入内存的最大字节数。更大的文件
+// 回 413，UI 退化为"请下载"。尺寸取值让典型的 README/源码放得下，又让 100MB
+// 的日志导出撑不爆渲染器。
 const maxPreviewTextSize = 2 << 20 // 2 MB
 
 // ---------------------------------------------------------------------------
-// Response types
+// 响应类型
 // ---------------------------------------------------------------------------
 
+// AttachmentResponse 是单个附件的对外 JSON 形态。UploaderType/UploaderID 描述
+// 上传者（member/agent + 对应 id），URL 是存储对象地址，DownloadURL 与
+// AttachmentDownloadURL 分别是"用于预览加载"和"用于下载按钮强制下载"的地址，
+// MarkdownURL 是可安全写进 markdown 正文的长效地址。
 type AttachmentResponse struct {
 	ID            string  `json:"id"`
 	WorkspaceID   string  `json:"workspace_id"`
@@ -72,89 +85,74 @@ type AttachmentResponse struct {
 	Filename      string  `json:"filename"`
 	URL           string  `json:"url"`
 	DownloadURL   string  `json:"download_url"`
-	// AttachmentDownloadURL is a credential-free URL that forces a
-	// Content-Disposition: attachment across every storage mode, for the
-	// download BUTTON — unlike DownloadURL, which is load-intent and keeps
-	// serving media inline so the preview path (resolvePreviewMediaUrl) can
-	// render it. Like DownloadURL it can be short-lived (a 60s proxy capability,
-	// a presigned URL) and therefore MUST NOT be persisted, and it is emitted
-	// ONLY by the single-attachment endpoint (GetAttachmentByID), never in list
-	// responses. Empty when the server cannot mint one for the object's storage
-	// mode; clients fall back to DownloadURL. (MUL follow-up to #6092 / #6713.)
+	// AttachmentDownloadURL 是一条不带凭据、在各种存储模式下都强制
+	// Content-Disposition: attachment 的 URL，专供"下载按钮"用——它区别于
+	// DownloadURL：后者是"加载意图"，保持内嵌媒体形式以便预览路径
+	// （resolvePreviewMediaUrl）渲染。与 DownloadURL 一样它可能很短命（60 秒的
+	// 代理 capability、预签名 URL），因此绝不能持久化，且只在单附件接口
+	// （GetAttachmentByID）里输出，列表响应从不带它。对象的存储模式无法生成
+	// 时留空；客户端回退用 DownloadURL。（MUL 对 #6092 / #6713 的跟进。）
 	AttachmentDownloadURL string `json:"attachment_download_url,omitempty"`
-	// MarkdownURL is the durable, absolute-when-possible URL the client
-	// SHOULD persist into markdown bodies (issue descriptions, comments,
-	// chat messages). It is computed per deployment policy by
-	// buildMarkdownURL — preferring the storage URL when it is already a
-	// public, durable absolute URL (public CDN / LocalStorage with
-	// MULTICA_LOCAL_UPLOAD_BASE_URL), and otherwise prefixing
-	// MULTICA_PUBLIC_URL onto the stable per-attachment endpoint that the
-	// server self-resigns / proxies on every request.
+	// MarkdownURL 是客户端应当写进 markdown 正文（issue 描述、评论、聊天消息）
+	// 的长效、尽可能绝对化的 URL。它由 buildMarkdownURL 按部署策略算出——当
+	// 存储 URL 已经是公开、长效的绝对 URL（公网 CDN / 配了
+	// MULTICA_LOCAL_UPLOAD_BASE_URL 的 LocalStorage）时优先用它，否则在
+	// MULTICA_PUBLIC_URL 前缀后面接上稳定的、服务端每次请求自行签名/代理的
+	// 单附件接口地址。
 	//
-	// Why a separate field from URL / DownloadURL:
-	//   - URL is the raw storage object URL — fine for avatar/logo
-	//     surfaces but may be private (S3 + CloudFront-signed mode) or
-	//     site-relative (LocalStorage with no base URL configured).
-	//   - DownloadURL is the URL the renderer uses for THIS response — it
-	//     can be a short-lived signed URL (CloudFront, S3 presign) and
-	//     therefore must NOT be persisted. It expires.
-	//   - MarkdownURL is contracted to be persistable: it never carries a
-	//     TTL, and on every supported deployment shape it is loadable as
-	//     a native browser resource fetch (no Authorization header required
-	//     beyond the cookies/credentials the client already has on the
-	//     resolved host).
+	// 为什么单独设一个字段而不是复用 URL / DownloadURL：
+	//   - URL 是存储对象的原始地址——头像/logo 等场合没问题，但可能私有
+	//     （S3 + CloudFront 签名模式）或站内相对路径（没配 base URL 的
+	//     LocalStorage）。
+	//   - DownloadURL 是本响应渲染器要用的 URL——可能是短命签名 URL
+	//     （CloudFront、S3 presign），因此绝不能持久化。它会过期。
+	//   - MarkdownURL 约定为可持久化：永远不带 TTL，且在每种受支持的部署形态
+	//     下都能当原生浏览器资源加载（除解析出的主机上客户端已有的
+	//     cookie/凭据外，不需要 Authorization 头）。
 	//
-	// MUL-3192 — fixes the Desktop / mobile-webview regression where the
-	// previous site-relative `/api/attachments/<id>/download` link only
-	// resolved when the document origin proxied /api to the API host.
+	// MUL-3192——修复 Desktop / mobile-webview 回归：旧的站内相对路径
+	// /api/attachments/<id>/download 只有当文档源把 /api 代理到 API 主机时才
+	// 能解析。
 	MarkdownURL string `json:"markdown_url"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
 	CreatedAt   string `json:"created_at"`
 }
 
-// attachmentURLMode selects how DownloadURL is rendered on a response.
+// attachmentURLMode 决定响应里 DownloadURL 的渲染方式。
 //
-// MUL-5372 / GitHub #5999. A CloudFront-signed DownloadURL is ~800 chars, of
-// which ~630 are a Policy+Signature pair that is re-minted on every request
-// (the policy embeds now+TTL at second granularity). Emitting it for every
-// attachment of every list response is expensive three times over: raw payload,
-// a fresh RSA sign per attachment per request, and — because the bytes differ on
-// each read — it defeats any cache keyed on response content. Agents pay all
-// three and use none of it: they fetch files through the single-attachment
-// endpoint, which needs only the id.
+// MUL-5372 / GitHub #5999。CloudFront 签名的 DownloadURL 约有 800 字符，其中
+// 约 630 是 Policy+Signature 对——它每次请求都重铸（策略按秒嵌入 now+TTL）。
+// 在每个列表响应的每个附件上都输出它，代价是三重的：原始载荷大小、每个附件
+// 每次请求一次新的 RSA 签名，而且字节每次读都不同，会废掉任何以响应内容为键
+// 的缓存。agent 三种代价全付却一种都用不上：它们走单附件接口取文件，那个接口
+// 只需要 id。
 //
-// The mode is a caller capability declaration, never a server-side default
-// flip, so a client that does not know about it is served byte-identically to
-// before. See attachmentURLModeFromRequest.
+// 该模式是"调用方能力声明"，绝不是服务端默认值的切换——不认识它的客户端得到
+// 的响应与以前逐字节一致。见 attachmentURLModeFromRequest。
 type attachmentURLMode int
 
 const (
-	// attachmentURLModeSigned pre-binds authorization into DownloadURL so the
-	// caller can hand it straight to a native resource load (browser <img>,
-	// Linking.openURL) that cannot attach an Authorization header. This is the
-	// default for every caller that does not opt out.
+	// attachmentURLModeSigned 把授权预先绑进 DownloadURL，让调用方可以直接交给
+	// 无法带 Authorization 头的原生资源加载（浏览器 <img>、Linking.openURL）。
+	// 这是每个未主动退出的调用方的默认值。
 	attachmentURLModeSigned attachmentURLMode = iota
-	// attachmentURLModeStable renders DownloadURL as the stable
-	// /api/attachments/{id}/download path. That endpoint re-signs and 302s on
-	// every hit, so the value stays correct forever and costs ~95 chars instead
-	// of ~800. Callers that pick this mode must be able to follow an
-	// authenticated redirect, or fetch a fresh signature from the
-	// single-attachment endpoint before handing a URL to a native loader.
+	// attachmentURLModeStable 让 DownloadURL 渲染成稳定的 /api/attachments/{id}/
+	// download 路径。该接口每次命中都重新签名并 302，所以值永远正确，且只花约
+	// 95 字符而非约 800。选择此模式的调用方必须能跟随带认证的重定向，或在把
+	// URL 交给原生加载器之前先从单附件接口取一份新签名。
 	attachmentURLModeStable
 )
 
-// ClientCapabilityStableAttachmentURLs is the X-Client-Capabilities token a
-// caller advertises to receive stable attachment paths instead of pre-signed
-// URLs in bulk responses. Reusing the existing capability header (rather than a
-// query parameter) keeps the declaration client-wide: it is a property of what
-// the caller can process, not of the resource being requested.
+// ClientCapabilityStableAttachmentURLs 是调用方通过 X-Client-Capabilities
+// 声明"批量响应里给我稳定附件路径、不要预签名 URL"的标记。复用现有的能力头
+// （而非加查询参数）让声明保持客户端全局：它描述的是调用方处理能力，不是被
+// 请求资源的属性。
 const ClientCapabilityStableAttachmentURLs = "stable_attachment_urls"
 
-// attachmentURLModeFromRequest resolves the mode a request asked for. Absent or
-// unrecognized declarations resolve to attachmentURLModeSigned, which is what
-// makes this change safe to ship ahead of any client: the server default never
-// moves, callers migrate on their own release cadence.
+// attachmentURLModeFromRequest 解析请求要求的模式。未声明或无法识别的声明一律
+// 解析成 attachmentURLModeSigned——这使本变更可以早于任何客户端发布：服务端
+// 默认值不动，调用方按自己的发布节奏迁移。
 func attachmentURLModeFromRequest(r *http.Request) attachmentURLMode {
 	if r != nil && requestHasClientCapability(r, ClientCapabilityStableAttachmentURLs) {
 		return attachmentURLModeStable
@@ -162,6 +160,7 @@ func attachmentURLModeFromRequest(r *http.Request) attachmentURLMode {
 	return attachmentURLModeSigned
 }
 
+// attachmentToResponse 把附件库行按指定 URL 模式转成对外响应。
 func (h *Handler) attachmentToResponse(a db.Attachment, mode attachmentURLMode) AttachmentResponse {
 	id := uuidToString(a.ID)
 	resp := AttachmentResponse{
@@ -177,9 +176,8 @@ func (h *Handler) attachmentToResponse(a db.Attachment, mode attachmentURLMode) 
 		SizeBytes:    a.SizeBytes,
 		CreatedAt:    a.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
-	// Only CloudFront mode overrides the stable path here; the presign and proxy
-	// modes already leave DownloadURL as the stable path and resolve it at
-	// download time, so stable mode is a no-op for them.
+	// 只有 CloudFront 模式在这里覆盖稳定路径；presign 与 proxy 模式本就给
+	// DownloadURL 留稳定路径、在下载时再解析，所以 stable 模式对它们是无操作。
 	if h.CFSigner != nil && mode != attachmentURLModeStable {
 		resp.DownloadURL = h.CFSigner.SignedURL(a.Url, time.Now().Add(h.attachmentDownloadURLTTL()))
 	}
@@ -202,8 +200,7 @@ func (h *Handler) attachmentToResponse(a db.Attachment, mode attachmentURLMode) 
 	return resp
 }
 
-// attachmentsToResponses applies the ordinary response URL policy to a
-// transaction-loaded attachment snapshot.
+// attachmentsToResponses 对"事务里加载出来的附件快照"应用普通响应 URL 策略。
 func (h *Handler) attachmentsToResponses(attachments []db.Attachment) []AttachmentResponse {
 	if len(attachments) == 0 {
 		return nil
@@ -215,39 +212,31 @@ func (h *Handler) attachmentsToResponses(attachments []db.Attachment) []Attachme
 	return responses
 }
 
-// buildMarkdownURL chooses the durable URL the client persists into
-// markdown bodies. The contract is "absolute, no TTL, loadable as a native
-// browser resource fetch on every supported client" (MUL-3192).
+// buildMarkdownURL 挑选客户端要写进 markdown 正文的长效 URL。约定是"绝对化、
+// 无 TTL、在每个受支持客户端上都能当原生浏览器资源加载"（MUL-3192）。
 //
-// Decision:
+// 决策：
 //
-//  1. Persist `a.Url` only when the deployment has signaled the storage
-//     backend serves URLs publicly without per-request auth:
-//     - `Storage.CdnDomain()` is non-empty (operator configured a
-//     public-facing base URL — `S3_CDN_DOMAIN` for the S3 backend or
-//     `LOCAL_UPLOAD_BASE_URL` for LocalStorage), AND
-//     - `h.CFSigner` is nil (no per-request CloudFront signing — when
-//     signing is on, the same CDN domain serves PRIVATE content via
-//     time-bounded signed URLs and the raw `a.Url` is unauth-deny),
-//     AND
-//     - `a.Url` is itself an absolute http(s) URL with no signature
-//     query — defends against legacy rows backfilled while baseURL
-//     was unset, and against a freshly-signed `download_url` ever
-//     leaking into `a.Url` (the original MUL-3130 bug).
+//  1. 只有部署明确表示"存储后端无需每请求认证、公网即可读"时才持久化 a.Url：
+//     - Storage.CdnDomain() 非空（运营商配了面向公众的 base URL——
+//     S3 后端的 S3_CDN_DOMAIN，或 LocalStorage 的 LOCAL_UPLOAD_BASE_URL），
+//     并且
+//     - h.CFSigner 为 nil（无每请求 CloudFront 签名——签名开启时，同一个
+//     CDN 域名通过限时签名 URL 提供的是私有内容，裸的 a.Url 会拒绝匿名
+//     访问），并且
+//     - a.Url 本身是带签名查询的绝对 http(s) URL——既防"baseURL 未配置时
+//     回填造成的旧行"，也防新签的 download_url 泄进 a.Url（最初的
+//     MUL-3130 bug）。
 //
-//  2. Every other shape — CloudFront-signed mode, S3 presign /proxy
-//     against a private bucket without a CDN domain, raw S3 / R2 /
-//     MinIO, LocalStorage with no `LOCAL_UPLOAD_BASE_URL` — uses the
-//     stable per-attachment endpoint that the server self-signs /
-//     proxies on every request, anchored on `MULTICA_PUBLIC_URL` so the
-//     persisted URL keeps working for clients that don't share the
-//     document origin (Desktop / mobile webview).
+//  2. 其他所有形态——CloudFront 签名模式、对没有 CDN 域名的私有桶做 S3
+//     presign/proxy、裸 S3 / R2 / MinIO、没配 LOCAL_UPLOAD_BASE_URL 的
+//     LocalStorage——都用那个服务端每次请求自行签名/代理的稳定单附件接口，
+//     锚在 MULTICA_PUBLIC_URL 上，让持久化 URL 对不共享文档源（Desktop /
+//     mobile webview）的客户端也能用。
 //
-//  3. Last-resort fallback (no `MULTICA_PUBLIC_URL` configured): emit
-//     the site-relative path. Web's Next.js rewrite handles this; non-
-//     web clients on a deployment without `PublicURL` configured were
-//     already broken before MUL-3192 and stay broken here, but we
-//     don't make them worse.
+//  3. 最后兜底（没配 MULTICA_PUBLIC_URL）：输出站内相对路径。Web 的 Next.js
+//     rewrite 处理它；对"没配 PublicURL 的部署"上的非 web 客户端，MUL-3192
+//     之前就坏着，这里保持不更坏。
 func (h *Handler) buildMarkdownURL(a db.Attachment, id string) string {
 	relPath := util.AttachmentDownloadPath(id)
 	publicURL := strings.TrimRight(h.cfg.PublicURL, "/")
@@ -262,28 +251,25 @@ func (h *Handler) buildMarkdownURL(a db.Attachment, id string) string {
 	return relPath
 }
 
-// storageURLIsPubliclyReadable returns true when the deployment has signaled
-// that `a.Url` can be loaded directly by an unauthenticated native browser
-// fetch — the only case where it is safe to persist `a.Url` into a markdown
-// body that will outlive the current session.
+// storageURLIsPubliclyReadable 判断部署是否声明过"a.Url 可以被未认证的原生
+// 浏览器直接加载"——只有这种情况才适合把 a.Url 写进会活过当前会话的 markdown
+// 正文。
 func (h *Handler) storageURLIsPubliclyReadable(rawURL string) bool {
 	if h.Storage == nil || h.CFSigner != nil {
-		// CFSigner != nil is per-request signing; the CDN domain serves
-		// private content via signed URLs and `a.Url` is the raw S3 URL.
+		// CFSigner != nil 表示每请求签名；此时 CDN 域名通过签名 URL 提供私有
+		// 内容，a.Url 是裸 S3 URL。
 		return false
 	}
 	if h.Storage.CdnDomain() == "" {
-		// No public-facing base URL configured — the storage's URL is
-		// the raw private object URL (S3 / R2 / MinIO) or a site-relative
-		// LocalStorage path that doesn't carry an origin.
+		// 没配公网 base URL——存储 URL 要么是裸私有对象地址（S3 / R2 / MinIO），
+		// 要么是不带源站信息的站内相对 LocalStorage 路径。
 		return false
 	}
 	return isDurablePublicURL(rawURL)
 }
 
-// isDurablePublicURL is true when `rawURL` is an absolute http(s) URL that
-// is safe to persist into long-lived markdown bodies — i.e. it carries no
-// CloudFront / S3 signature query that would make it expire.
+// isDurablePublicURL 判断 rawURL 是否为可写进长期 markdown 正文的安全绝对
+// http(s) URL——即它不带会让它过期的 CloudFront / S3 签名查询。
 func isDurablePublicURL(rawURL string) bool {
 	if rawURL == "" {
 		return false
@@ -313,6 +299,8 @@ func isDurablePublicURL(rawURL string) bool {
 	return true
 }
 
+// normalizeAttachmentDownloadMode 把配置字符串归一化为合法模式；空串视为 auto，
+// 无法识别则返回 auto + false。
 func normalizeAttachmentDownloadMode(raw string) (attachmentDownloadMode, bool) {
 	switch attachmentDownloadMode(strings.ToLower(strings.TrimSpace(raw))) {
 	case "", attachmentDownloadModeAuto:
@@ -328,11 +316,13 @@ func normalizeAttachmentDownloadMode(raw string) (attachmentDownloadMode, bool) 
 	}
 }
 
+// attachmentDownloadMode 返回本实例配置的下载模式。
 func (h *Handler) attachmentDownloadMode() attachmentDownloadMode {
 	mode, _ := normalizeAttachmentDownloadMode(h.cfg.AttachmentDownloadMode)
 	return mode
 }
 
+// attachmentDownloadURLTTL 返回下载 URL 的有效期；配置没给时用默认值。
 func (h *Handler) attachmentDownloadURLTTL() time.Duration {
 	if h.cfg.AttachmentDownloadURLTTL > 0 {
 		return h.cfg.AttachmentDownloadURLTTL
@@ -340,7 +330,8 @@ func (h *Handler) attachmentDownloadURLTTL() time.Duration {
 	return defaultAttachmentDownloadURLTTL
 }
 
-// groupAttachments loads attachments for multiple comments and groups them by comment ID.
+// groupAttachments 按 comment_id 一次查出多个评论的附件并按评论分组返回。
+// 供评论列表展示附件，避免每个评论一条 N+1 查询。
 func (h *Handler) groupAttachments(r *http.Request, commentIDs []pgtype.UUID) map[string][]AttachmentResponse {
 	if len(commentIDs) == 0 {
 		return nil
@@ -363,10 +354,9 @@ func (h *Handler) groupAttachments(r *http.Request, commentIDs []pgtype.UUID) ma
 	return grouped
 }
 
-// groupChatMessageAttachments loads attachments for multiple chat messages
-// and groups them by chat_message_id. Mirrors groupAttachments — used so the
-// chat message list can surface attachment metadata to the UI bubble (file
-// cards, click-through download) without an N+1 query per message.
+// groupChatMessageAttachments 按 chat_message_id 一次查出多条聊天消息的附件
+// 并分组返回。镜像 groupAttachments——让聊天消息列表能给 UI 气泡带出附件元数据
+// （文件卡片、点击下载）而不必每条消息做一次 N+1 查询。
 func (h *Handler) groupChatMessageAttachments(ctx context.Context, workspaceID string, messageIDs []pgtype.UUID) map[string][]AttachmentResponse {
 	if len(messageIDs) == 0 {
 		return nil
@@ -391,6 +381,10 @@ func (h *Handler) groupChatMessageAttachments(ctx context.Context, workspaceID s
 // UploadFile — POST /api/upload-file
 // ---------------------------------------------------------------------------
 
+// UploadFile 处理 multipart 文件上传（≤100MB）。需要登录；有 workspace 上下文
+// 时校验成员身份并登记附件行（可挂 issue/comment/chat_session/task），无
+// workspace 上下文（如头像上传）则只存对象、返回裸 URL。类型用服务端嗅探 +
+// 扩展名纠正，不信任客户端头。上传者解析为实际执行者（member 或 agent）。
 func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	if h.Storage == nil {
 		writeError(w, http.StatusServiceUnavailable, "file upload not configured")
@@ -419,7 +413,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Sniff actual content type from file bytes instead of trusting the client header.
+	// 从文件字节嗅探真实内容类型，而不是相信客户端头。
 	buf := make([]byte, 512)
 	n, err := file.Read(buf)
 	if err != nil && err != io.EOF {
@@ -427,11 +421,11 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	contentType := http.DetectContentType(buf[:n])
-	// Override with extension-based type when the sniffer gets it wrong.
+	// 嗅探器判错时用扩展名类型纠正。
 	if ct, ok := extContentTypes[strings.ToLower(path.Ext(header.Filename))]; ok {
 		contentType = ct
 	}
-	// Seek back so the full file is uploaded.
+	// 回卷，让后续能上传完整文件。
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read file")
 		return
@@ -443,7 +437,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate a UUIDv7 to use as both the attachment ID and S3 key.
+	// 生成一个 UUIDv7，同时充当附件 ID 与 S3 对象键。
 	id, err := uuid.NewV7()
 	if err != nil {
 		slog.Error("failed to generate uuid", "error", err)
@@ -458,7 +452,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		key = "users/" + userID + "/" + filename
 	}
 
-	// If workspace context is available, validate membership before uploading.
+	// 有 workspace 上下文时，上传前先校验成员身份。
 	if workspaceID != "" {
 		if _, err := h.getWorkspaceMember(r.Context(), userID, workspaceID); err != nil {
 			writeError(w, http.StatusForbidden, "not a member of this workspace")
@@ -505,32 +499,29 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			params.CommentID = comment.ID
 		}
 		if chatSessionID := r.FormValue("chat_session_id"); chatSessionID != "" {
-			// Require the member-visible Chat projection as well as private-agent
-			// access. A cached command-only session id must not accept uploads that
-			// could later be attached by an old client and resurrect the session.
+			// 既要求该会话在"成员可见的 Chat 投影"里，也要通过私有 agent 访问
+			// 校验。一个被缓存的纯指令会话 id 不得接受上传——旧客户端可能把它
+			// 挂到附件上，从而"复活"该会话。
 			session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, chatSessionID)
 			if !ok {
 				return
 			}
 			params.ChatSessionID = session.ID
 		}
-		// task_id upload: an agent producing an image/file for its chat reply.
-		// The row is tagged with the producing task and its chat session so
-		// CompleteTask can bind it to the assistant message it synthesizes.
-		// Gate: the request must come from a task-scoped token, the form task_id
-		// must equal that token's task, the caller must be that task's agent,
-		// and it must be a chat task (has a chat_session_id).
+		// task_id 上传：agent 为它的聊天回复产出图片/文件。行上打上产出任务与其
+		// 聊天会话的标记，让 CompleteTask 能把它绑到合成的助手消息上。
+		// 门槛：请求必须来自任务作用域的 token，表单里的 task_id 必须等于该
+		// token 的任务，调用者必须是该任务的 agent，且必须是聊天任务（带
+		// chat_session_id）。
 		if taskID := r.FormValue("task_id"); taskID != "" {
-			// Authoritative task-token boundary (load-bearing, mirrors
-			// chat_history.go:chatHistorySession). X-Task-ID is only trustworthy
-			// when the auth middleware set it from a task-scoped `mat_` token —
-			// that path is also the ONLY one that stamps X-Actor-Source=task_token
-			// and strips a client-forged X-Task-ID. A normal JWT / `mul_` PAT
-			// leaves X-Actor-Source empty and does NOT strip a forged X-Task-ID,
-			// and resolveActor's fallback will accept a real X-Agent-ID +
-			// X-Task-ID pair. So without this gate a member who learns a task ID
-			// could forge both headers and inject an attachment onto another chat
-			// task's assistant reply — a cross-session/privacy leak.
+			// 权威的任务 token 边界（承重墙，镜像 chat_history.go:
+			// chatHistorySession）。X-Task-ID 只有在认证中间件从任务作用域的
+			// `mat_` token 里设置时才可信——那条路径也是唯一同时打
+			// X-Actor-Source=task_token、并剥离客户端伪造的 X-Task-ID 的地方。
+			// 普通 JWT / `mul_` PAT 不会设 X-Actor-Source，也不会剥离伪造的
+			// X-Task-ID；而 resolveActor 的回退会接受"真实的 X-Agent-ID +
+			// X-Task-ID"组合。所以没有这层门槛，一个知道任务 ID 的成员可以伪造
+			// 两个头、把附件塞进别的聊天任务的助手回复——跨会话/隐私泄漏。
 			if r.Header.Get("X-Actor-Source") != "task_token" {
 				writeError(w, http.StatusForbidden, "task_id upload is only available from within an agent task")
 				return
@@ -539,11 +530,10 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			// Pin to the run's own task: the middleware-injected X-Task-ID is the
-			// single source of truth for which task this token may act on, so a
-			// run authorized for task A cannot tag an attachment onto task B —
-			// even another chat task of the same agent, whose session may belong
-			// to a different user.
+			// 钉死在该运行自己的任务上：中间件注入的 X-Task-ID 是"此 token 能对
+			// 哪个任务动手"的唯一真源，所以被授权为任务 A 的一次运行不能把附件
+			// 标记到任务 B 上——哪怕是同一 agent 的另一条聊天任务，其会话可能
+			// 属于另一个用户。
 			boundTaskID := strings.TrimSpace(r.Header.Get("X-Task-ID"))
 			if boundTaskID == "" || !strings.EqualFold(boundTaskID, strings.TrimSpace(taskID)) {
 				writeError(w, http.StatusForbidden, "task_id must match the request's task token")
@@ -566,8 +556,8 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			params.TaskID = task.ID
-			// Bind the session too so reads (groupChatMessageAttachments) and
-			// GC classify the row consistently before it gains a message id.
+			// 会话也一并绑定，让读取（groupChatMessageAttachments）与 GC 在行获得
+			// message id 之前就能一致地归类它。
 			params.ChatSessionID = task.ChatSessionID
 		}
 
@@ -651,7 +641,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No workspace context (e.g. avatar upload) — upload directly.
+	// 没有 workspace 上下文（例如头像上传）——直接上传，返回裸地址。
 	link, err := h.Storage.Upload(r.Context(), key, data, contentType, header.Filename)
 	if err != nil {
 		slog.Error("file upload failed", "error", err)
@@ -669,6 +659,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 // ListAttachments — GET /api/issues/{id}/attachments
 // ---------------------------------------------------------------------------
 
+// ListAttachments 列出某个 issue 的全部附件。调用者需能访问该 issue。
 func (h *Handler) ListAttachments(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -698,38 +689,35 @@ func (h *Handler) ListAttachments(w http.ResponseWriter, r *http.Request) {
 // GetAttachmentByID — GET /api/attachments/{id}
 // ---------------------------------------------------------------------------
 
+// GetAttachmentByID 返回单个附件详情（含新鲜的下载 URL 与强制下载 URL）。
+// workspace_id 通过请求头解析。单附件接口是"新鲜、可原生加载 URL"的唯一来源，
+// 列表与 markdown 场景都汇聚到它这里换 URL。
 func (h *Handler) GetAttachmentByID(w http.ResponseWriter, r *http.Request) {
 	att, ok := h.loadAttachmentForRequest(w, r)
 	if !ok {
 		return
 	}
 
-	// Always signed, regardless of what the caller advertised: this endpoint is
-	// the single source of fresh, natively-loadable URLs. Stable-mode callers
-	// (CLI `attachment download`, the web inline-media re-sign hook) exchange a
-	// stable path for a signature HERE, so honoring the capability would break
-	// the very flow that makes stable mode safe elsewhere.
+	// 无论调用方声明了什么模式都签（除非代理/预签名），走签名：这个接口是"新鲜
+	// 的、可原生加载的 URL"的唯一来源。stable 模式调用方（CLI `attachment
+	// download`、web 内嵌媒体重签钩子）正是在这里把稳定路径换成分签——尊重它的
+	// 能力声明反而会破坏"stable 模式在其他地方安全"所依赖的这个流程。
 	resp := h.attachmentToResponse(att, attachmentURLModeSigned)
-	// Token-mode clients use this authenticated endpoint to replace the
-	// auth-gated API path with a URL that native media elements can load.
-	// Assert the same storage.DownloadPresigner that resolveAttachmentDownloadMode
-	// keys its presign decision on, so the mode resolution and the presign call
-	// can never disagree. An empty content disposition inherits the object's
-	// stored Content-Disposition (inline for media, attachment otherwise), which
-	// keeps images renderable inline while preserving the original download
-	// filename.
+	// Token 模式客户端用这个带认证的接口，把"受鉴权门槛保护的 API 路径"换成本
+	// 地媒体元素能加载的 URL。这里断言与 resolveAttachmentDownloadMode 决定是否
+	// 预签名所用的同一个 storage.DownloadPresigner，让模式解析与预签名调用永不
+	// 互相矛盾。空的 content disposition 沿用对象存储的 Content-Disposition
+	// （媒体内嵌、其余附件），既能内嵌渲染图片，又保留原始下载文件名。
 	switch mode := h.resolveAttachmentDownloadMode(att.Url); mode {
 	case attachmentDownloadModeCloudFront:
-		// CloudFront mode: attachmentToResponse already set DownloadURL to an
-		// inline-intent signed URL. The download button needs the forced-
-		// attachment sibling. response-content-disposition is folded into the
-		// signed Resource (SignedURLWithContentDisposition), so a client cannot
-		// strip or alter it without invalidating the signature. Keying on the
-		// resolved mode (not h.CFSigner != nil) lets an explicit proxy/presign
-		// override take effect even when a signer is configured; the nil guard
-		// keeps an explicit cloudfront mode without a configured signer from
-		// panicking — the field is left empty and the client falls back to
-		// download_url, the same graceful degrade attachmentToResponse uses.
+		// CloudFront 模式：attachmentToResponse 已经把 DownloadURL 设成内嵌意图
+		// 的签名 URL。下载按钮需要的是"强制下载"的姊妹 URL。
+		// response-content-disposition 折进了签名的 Resource
+		// （SignedURLWithContentDisposition），客户端去掉或改动它都会让签名
+		// 失效。键用解析出来的模式（而不是 h.CFSigner != nil），让显式的
+		// proxy/presign 覆盖即使在配了签名器时也生效；nil 守卫防止"显式
+		// cloudfront 模式但没配签名器"时 panic——字段留空，客户端回退用
+		// download_url，与 attachmentToResponse 用同一种优雅降级。
 		if h.CFSigner != nil {
 			resp.AttachmentDownloadURL = h.CFSigner.SignedURLWithContentDisposition(
 				att.Url,
@@ -746,10 +734,9 @@ func (h *Handler) GetAttachmentByID(w http.ResponseWriter, r *http.Request) {
 			} else {
 				resp.DownloadURL = signedURL
 			}
-			// Download-intent sibling: the same presigned object, but with a
-			// forced attachment disposition so the download button saves the
-			// file instead of previewing it. Independent of DownloadURL's inline
-			// signature above; either may be present without the other.
+			// 下载意图的姊妹 URL：同一个预签名对象，但强制 attachment
+			// disposition，让下载按钮存文件而不是预览。它与上面 DownloadURL 的
+			// 内嵌签名相互独立；两者可单独存在。
 			if dlURL, err := presigner.PresignGetWithContentDisposition(r.Context(), key, h.attachmentDownloadURLTTL(), storage.AttachmentContentDisposition(att.Filename)); err != nil {
 				slog.Warn("failed to presign attachment download URL", "id", uuidToString(att.ID), "key", key, "error", err)
 			} else {
@@ -757,26 +744,25 @@ func (h *Handler) GetAttachmentByID(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case attachmentDownloadModeProxy:
-		// Proxy mode has no signed storage URL to offer, so this response
-		// would otherwise hand back the auth-gated API path — which a
-		// native download on a token-mode client cannot authenticate,
-		// leaving the user with no file (MUL-5292). Mint a
-		// single-attachment, 60-second capability instead, so the same
-		// "replace the auth-gated path with something a native loader can
-		// fetch" contract holds in all three modes.
+		// Proxy 模式没有可提供的签名存储 URL，所以本响应本来会把带鉴权门槛的
+		// API 路径交给调用方——token 模式客户端上的原生下载无法对它做认证，用户
+		// 就拿不到文件（MUL-5292）。改为铸造一条"单附件、60 秒"的能力 URL，
+		// 让"把受鉴权门槛的路径换成原生加载器能取的地址"这条约定在三种模式下
+		// 都成立。
 		//
-		// Only here, never in attachmentToResponse: list responses are held
-		// far longer than the TTL, so a capability embedded in one would be
-		// expired by the time anything used it.
+		// 只在这里、绝不在 attachmentToResponse：列表响应被客户端持有远比 TTL
+		// 久，嵌进去的能力 URL 等真被用时就过期了。
 		resp.DownloadURL = attachmentCapabilityPath(resp.ID, time.Now())
-		// Download-intent sibling capability (dl=1): the redemption route turns
-		// it into a Content-Disposition: attachment, for the download button.
+		// 下载意图的姊妹能力 URL（dl=1）：赎回路由把它变成 Content-Disposition:
+		// attachment，供下载按钮使用。
 		resp.AttachmentDownloadURL = attachmentDownloadCapabilityPath(resp.ID, time.Now())
 	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// loadAttachmentForRequest 按 URL 里的 attachment id + 请求头里的 workspace_id
+// 装载附件行。任一路径失败（缺参数/UUID 非法/查不到）都会写错误并返回 false。
 func (h *Handler) loadAttachmentForRequest(w http.ResponseWriter, r *http.Request) (db.Attachment, bool) {
 	attachmentID := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
@@ -806,24 +792,21 @@ func (h *Handler) loadAttachmentForRequest(w http.ResponseWriter, r *http.Reques
 	return att, true
 }
 
-// loadAttachmentForDownload is a workspace-self-resolving variant used by the
-// /api/attachments/{id}/download endpoint. It looks the attachment up by ID
-// alone, then enforces that the authenticated user is a member of the
-// attachment's workspace.
+// loadAttachmentForDownload 是 /api/attachments/{id}/download 专用的"按行
+// workspace 自解析"变体：只凭 id 找附件，再强制要求认证用户是该附件所在
+// workspace 的成员。
 //
-// Why a separate code path: a native browser <img>/<video> resource load on
-// /api/attachments/{id}/download cannot attach the X-Workspace-Slug /
-// X-Workspace-ID headers that loadAttachmentForRequest relies on. Putting
-// the workspace into the URL (?workspace_slug=...) would work mechanically
-// but bakes a non-essential identifier into every persisted comment markdown
-// link — unnecessary because the attachment row already records its
-// workspace. This helper keeps the URL clean (`/api/attachments/{id}/download`)
-// and treats the attachment id + cookie/Bearer auth as sufficient.
+// 为什么单独一条代码路径：原生浏览器在 /api/attachments/{id}/download 上的
+// <img>/<video> 资源加载带不了 loadAttachmentForRequest 依赖的 X-Workspace-Slug
+// / X-Workspace-ID 头。把 workspace 塞进 URL（?workspace_slug=...）机械上可行，
+// 却会给每条持久化的评论 markdown 链接烤进一个非必要标识符——没必要，因为
+// 附件行已经记录了它的 workspace。这个辅助函数让 URL 保持干净
+// （/api/attachments/{id}/download），把"附件 id + cookie/Bearer 认证"当作
+// 足够。
 //
-// Membership uses the same 404-on-deny shape as ServeLocalUpload so the
-// route does not act as an IDOR oracle for attachment IDs that happen to
-// belong to a different workspace. The membership cache fast path mirrors
-// canReadWorkspaceUpload exactly.
+// 成员校验与 ServeLocalUpload 一样用"拒绝即 404"的形态，避免该路由充当"附件
+// ID 属于别的 workspace"的 IDOR 探针。成员缓存快路径与 canReadWorkspaceUpload
+// 完全一致。
 func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Request) (db.Attachment, bool) {
 	attachmentID := chi.URLParam(r, "id")
 	attUUID, ok := parseUUIDOrBadRequest(w, attachmentID, "attachment id")
@@ -832,9 +815,8 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 	}
 	att, err := h.Queries.GetAttachmentByIDOnly(r.Context(), attUUID)
 	if err != nil {
-		// 404 (not 403/401) so non-member and non-existent look identical
-		// to outside callers. Same shape as ServeLocalUpload's
-		// canReadWorkspaceUpload deny path.
+		// 404（而非 403/401），让"非成员"与"不存在"对外部调用者看起来一致。
+		// 与 ServeLocalUpload 的 canReadWorkspaceUpload 拒绝路径同形。
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return db.Attachment{}, false
 	}
@@ -864,18 +846,18 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 // DownloadAttachment — GET /api/attachments/{id}/download
 // ---------------------------------------------------------------------------
 //
-// Workspace context is derived from the attachment row itself, not from
-// X-Workspace-Slug / X-Workspace-ID headers. This is what lets a markdown
-// `<img src="/api/attachments/{id}/download">` work as a native browser
-// resource load: the browser cannot attach those headers to <img>/<video>
-// fetches, so resolving via the attachment row is the only way to keep
-// the URL stable across reloads (the previous design persisted a 30-min
-// signed /uploads URL into the markdown body — that URL stopped working
-// the moment the signature expired).
+// workspace 上下文从附件行本身推导，而不是从 X-Workspace-Slug / X-Workspace-ID
+// 头。这正让 markdown 里的 `<img src="/api/attachments/{id}/download">` 能当
+// 原生浏览器资源加载：浏览器给 <img>/<video> 请求带不了那些头，所以经由附件行
+// 解析是让 URL 跨刷新保持稳定的唯一办法（旧设计把 30 分钟签名的 /uploads URL
+// 写进 markdown 正文——签名一过期那个 URL 就废了）。
 //
-// Membership is enforced inside loadAttachmentForDownload with a 404 deny
-// shape so the route doesn't IDOR-leak attachment IDs to non-members.
+// 成员校验在 loadAttachmentForDownload 内强制，用 404 拒绝形态，让该路由不会
+// 向非成员 IDOR 泄漏附件 ID。
 
+// DownloadAttachment 把附件以"下载"意图交给客户端：按存储模式分别走
+// CloudFront 重定向、S3 预签名重定向或经 API 代理流式传输，响应均强制
+// Content-Disposition: attachment 并带预览安全头。
 func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 	att, ok := h.loadAttachmentForDownload(w, r)
 	if !ok {
@@ -930,6 +912,9 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// resolveAttachmentDownloadMode 对某个对象 URL 决定实际的下载模式。优先看
+// 显式配置；配置为 auto 或为空时按签名器是否存在、URL 是否需代理、存储是否
+// 支持预签名依次推导。
 func (h *Handler) resolveAttachmentDownloadMode(rawURL string) attachmentDownloadMode {
 	switch h.attachmentDownloadMode() {
 	case attachmentDownloadModeCloudFront:
@@ -951,6 +936,9 @@ func (h *Handler) resolveAttachmentDownloadMode(rawURL string) attachmentDownloa
 	return attachmentDownloadModeProxy
 }
 
+// shouldProxyAttachmentURL 判断对象 URL 是否指向"必须经 API 代理"的存储——
+// 即本地/内网主机名或 IP：公网可达对象不需要代理，本地磁盘、localhost、
+// .local/.internal 等内网后缀、保留/私网地址则必须走代理才能让浏览器访问。
 func shouldProxyAttachmentURL(rawURL string) bool {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Hostname() == "" {
@@ -982,13 +970,10 @@ func shouldProxyAttachmentURL(rawURL string) bool {
 	return false
 }
 
-// ServeLocalUpload serves a local-disk object from the public /uploads/*
-// route. It carries the same preview security headers as the authenticated
-// download endpoint so self-hosted deployments — same-origin or split
-// frontend/backend origins — can inline-render images and iframe-preview
-// documents (PDF/HTML) fetched straight from the static route. Without these
-// headers the global "frame-ancestors 'none'" policy blocks those previews.
-// See MUL-3821 / #4477.
+// ServeLocalUpload 从公开的 /uploads/* 路由提供本地磁盘对象。它带与带认证的
+// 下载接口相同的预览安全头，让自托管部署——同源或前后端分源——可以直接从静态
+// 路由内嵌渲染图片、iframe 预览文档（PDF/HTML）。没有这些头，全局的
+// "frame-ancestors 'none'" 策略会挡住这些预览。见 MUL-3821 / #4477。
 func (h *Handler) ServeLocalUpload(w http.ResponseWriter, r *http.Request) {
 	local, ok := h.Storage.(*storage.LocalStorage)
 	if !ok {
@@ -1000,22 +985,17 @@ func (h *Handler) ServeLocalUpload(w http.ResponseWriter, r *http.Request) {
 	local.ServeFile(w, r, key)
 }
 
-// proxyAttachmentDownload streams an attachment through the API instead of
-// redirecting to a signed storage URL (used for local-disk / private-host
-// backends, see resolveAttachmentDownloadMode).
+// proxyAttachmentDownload 经 API 把附件流式传给客户端，而不是重定向到签名存储
+// URL（用于本地磁盘 / 私有主机后端，见 resolveAttachmentDownloadMode）。
 //
-// It supports HTTP Range requests so a download interrupted mid-stream can be
-// resumed with `Range: bytes=<resume>-` instead of restarting from byte 0
-// (RAS-29). Two paths:
+// 支持 HTTP Range 请求，中断的下载可以用 `Range: bytes=<resume>-` 续传而不是
+// 从头开始（RAS-29）。两条路径：
 //
-//   - Seekable backend (local disk returns *os.File): delegate to
-//     http.ServeContent, which implements Range / If-Range / 206 /
-//     Content-Range / 416 correctly out of the box.
-//   - Non-seekable backend (S3/MinIO streaming body): advertise
-//     Accept-Ranges and implement single-range requests by hand
-//     (serveProxyRange). Multi-range is not implemented on this path; per
-//     RFC 7233 it is ignored and the full body is served (200), matching the
-//     seekable path's successful outcome rather than failing with 416.
+//   - 可回卷后端（本地磁盘返回 *os.File）：交给 http.ServeContent——它把 Range /
+//     If-Range / 206 / Content-Range / 416 全部正确实现。
+//   - 不可回卷后端（S3/MinIO 流式 body）：声明 Accept-Ranges，手工实现单区间
+//     请求（serveProxyRange）。此路径不实现多区间；按 RFC 7233 多区间应被忽略
+//     并以 200 返回完整内容，与可回卷路径的成功结果一致，而不是用 416 失败。
 func (h *Handler) proxyAttachmentDownload(w http.ResponseWriter, r *http.Request, att db.Attachment, key string, forceAttachment bool) {
 	reader, err := h.Storage.GetReader(r.Context(), key)
 	if err != nil {
@@ -1032,49 +1012,45 @@ func (h *Handler) proxyAttachmentDownload(w http.ResponseWriter, r *http.Request
 	}
 	disposition := storage.ContentDisposition(att.ContentType, att.Filename)
 	if forceAttachment {
-		// Download-intent capability (dl=1): override the media-aware inline
-		// disposition so the browser saves the file instead of previewing it.
+		// 下载意图的能力 URL（dl=1）：覆盖媒体感知的内嵌 disposition，让浏览器
+		// 存文件而不是预览。
 		disposition = storage.AttachmentContentDisposition(att.Filename)
 	}
 	w.Header().Set("Content-Disposition", disposition)
-	// no-store predates Range support; keep it. Range/206 semantics are
-	// independent of caching — clients resume via Content-Range, not the cache.
+	// no-store 早于 Range 支持存在，保留它。Range/206 语义与缓存无关——客户端
+	// 靠 Content-Range 续传，不靠缓存。
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	h.setAttachmentPreviewSecurityHeaders(w)
 
-	// Seekable backends get full standard-library Range handling. A zero
-	// modTime disables Last-Modified / If-Modified-Since (we keep no-store);
-	// ServeContent still honors Range and sets Accept-Ranges / Content-Length /
-	// Content-Range / status itself, and respects the headers we set above.
+	// 可回卷后端拿到标准库完整的 Range 处理。零值 modTime 禁用 Last-Modified /
+	// If-Modified-Since（我们保持 no-store）；ServeContent 仍支持 Range 并自行
+	// 设置 Accept-Ranges / Content-Length / Content-Range / 状态码，同时尊重
+	// 我们上面设的头。
 	if seeker, ok := reader.(io.ReadSeeker); ok {
 		http.ServeContent(w, r, att.Filename, time.Time{}, seeker)
 		return
 	}
 
-	// Non-seekable backend: single-range fallback.
+	// 不可回卷后端：单区间回退。
 	h.serveProxyRange(w, r, att, reader)
 }
 
-// serveProxyRange streams a (possibly partial) attachment body from a
-// forward-only reader. It always advertises Accept-Ranges: bytes and, when the
-// request carries a satisfiable single-range `Range` header, replies 206 +
-// Content-Range with just that byte interval. Without a Range header (or when
-// the size is unknown) it streams the whole body as a 200, preserving the
-// pre-RAS-29 behavior. An unsatisfiable range yields 416 + `Content-Range:
-// bytes */<total>` per RFC 7233.
+// serveProxyRange 从只进不回的 reader 流式输出（可能部分的）附件 body。它始终
+// 声明 Accept-Ranges: bytes；当请求带一条可满足的单区间 `Range` 头时，回 206 +
+// Content-Range 只输出那段字节区间。没有 Range 头（或总大小未知）时按 200 流式
+// 输出整个 body，保持 RAS-29 之前的行为。不可满足的区间按 RFC 7233 回 416 +
+// `Content-Range: bytes */<total>`。
 func (h *Handler) serveProxyRange(w http.ResponseWriter, r *http.Request, att db.Attachment, reader io.Reader) {
 	total := att.SizeBytes
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	rangeHeader := strings.TrimSpace(r.Header.Get("Range"))
 
-	// Decide how to respond. We serve the full body (200) when there is no Range,
-	// when the total size is unknown (total < 0), or when parseSingleByteRange
-	// classifies the Range as unsupported — multi-range, or a well-formed range
-	// against an empty object (see rangeUnsupported). A well-formed, in-bounds
-	// single range yields 206; a well-formed but out-of-bounds range on a
-	// non-empty object is the only case that yields 416.
+	// 决定怎么响应。没有 Range、总大小未知（total < 0）、或 parseSingleByteRange
+	// 把 Range 判为不支持时，按 200 输出完整 body——多区间、或对空对象的合法区间
+	// 都属于这类（见 rangeUnsupported）。合法且落在界内的单区间输出 206；合法但
+	// 越界、对象非空时是唯一输出 416 的情形。
 	serveFull := rangeHeader == "" || total < 0
 	var start, length int64
 	if !serveFull {
@@ -1082,17 +1058,15 @@ func (h *Handler) serveProxyRange(w http.ResponseWriter, r *http.Request, att db
 		start, length, outcome = parseSingleByteRange(rangeHeader, total)
 		switch outcome {
 		case rangeUnsupported:
-			// Unsupported Range form (multi-range). RFC 7233 requires an
-			// unsupported Range to be *ignored* and the full representation served
-			// (200), not rejected with 416. This also keeps the non-seekable path
-			// from diverging from the seekable http.ServeContent path, which
-			// answers multi-range with a successful 206 multipart: both backends
-			// now return complete, correctly-labeled data instead of one silently
-			// turning a resumable download into a hard 416 failure.
+			// 不支持的 Range 形态（多区间）。RFC 7233 要求"不支持的 Range 被
+			// 忽略、输出完整表示（200）"，而不是用 416 拒绝。这也让不可回卷路径
+			// 与可回卷的 http.ServeContent 路径不产生分歧——后者对多区间回成功
+			// 的 206 multipart：两条后端现在都返回完整且标注正确的数据，而不是
+			// 一条把可续传的下载变成硬 416。
 			serveFull = true
 		case rangeUnsatisfiable:
-			// Well-formed bytes range that does not overlap the content. RFC 7233
-			// §4.4 requires the total in the Content-Range of a 416 response.
+			// 合法 bytes 区间但与内容不重叠。RFC 7233 §4.4 要求在 416 响应的
+			// Content-Range 里给出总大小。
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", total))
 			writeError(w, http.StatusRequestedRangeNotSatisfiable, "requested range not satisfiable")
 			return
@@ -1109,20 +1083,16 @@ func (h *Handler) serveProxyRange(w http.ResponseWriter, r *http.Request, att db
 		return
 	}
 
-	// Satisfiable single range → 206. Forward-only reader: discard the bytes
-	// before `start` before copying the requested interval. Wasteful for large
-	// offsets but correct; seekable backends never reach here (they take the
-	// ServeContent path above).
+	// 可满足的单区间 → 206。只进不回的 reader：先丢弃 start 之前的字节，再复制
+	// 请求的区间。对大的起始偏移浪费但对；可回卷后端到不了这里（它们走上面的
+	// ServeContent 路径）。
 	if start > 0 {
 		if _, err := io.CopyN(io.Discard, reader, start); err != nil {
-			// The skip failed BEFORE any response header was written. We must send
-			// an explicit error status here: a bare `return` would let net/http
-			// emit its default 200 OK + empty body, which a resuming client reads
-			// as "Range ignored, here is the whole file" — silently turning a
-			// transient storage read error into a corrupt/empty download and
-			// defeating the very resume feature this path implements. (A copy
-			// failure AFTER WriteHeader below can only be logged: the 206 status
-			// is already on the wire and cannot be revised.)
+			// 跳过失败发生在任何响应头写出之前。这里必须显式写错误状态：光
+			// return 会让 net/http 发出默认的 200 OK + 空 body，续传客户端会读成
+			// "Range 被忽略，这里是完整文件"——把一次瞬时存储读错误静默变成一次
+			// 损坏/空下载，恰好毁掉本路径实现的续传功能。（下面的 WriteHeader 之
+			// 后复制失败就只能记日志了：206 状态已在线上，无法再改。）
 			slog.Error("failed to skip to range start for attachment", "id", uuidToString(att.ID), "error", err)
 			writeError(w, http.StatusBadGateway, "failed to read attachment range")
 			return
@@ -1136,62 +1106,55 @@ func (h *Handler) serveProxyRange(w http.ResponseWriter, r *http.Request, att db
 	}
 }
 
-// rangeParseOutcome classifies how serveProxyRange must respond to a `Range`
-// header on the forward-only (non-seekable) proxy path. It exists so the three
-// distinct HTTP outcomes required by RFC 7233 are not collapsed into a single
-// bool — collapsing them is exactly what caused a multi-range request to fail
-// with 416 on this path while succeeding (206 multipart) on the seekable path.
+// rangeParseOutcome 为 serveProxyRange 在"只进不回（不可回卷）代理路径"上应
+// 如何响应一条 `Range` 头做分类。它保证 RFC 7233 要求的三种不同 HTTP 结局不会
+// 被压成一个 bool——正是当年把多区间请求在这条路径上以 416 失败、却在可回卷
+// 路径上成功（206 multipart）的根因。
 type rangeParseOutcome int
 
 const (
-	// rangeSatisfiable: a single byte range we can serve as 206 + Content-Range.
+	// rangeSatisfiable：可以按 206 + Content-Range 服务的单字节区间。
 	rangeSatisfiable rangeParseOutcome = iota
-	// rangeUnsatisfiable: a well-formed request that cannot be served as a range
-	// we support — a bytes range that does not overlap the content (start at/after
-	// EOF, reversed), or a malformed / unknown-unit Range. stdlib http.ServeContent
-	// answers all of these with 416, so replying 416 here keeps the two backends
-	// aligned; the caller adds `Content-Range: bytes */<total>` (RFC 7233 §4.4).
+	// rangeUnsatisfiable：格式合法但按我们支持的范围无法服务的请求——不与内容
+	// 重叠的 bytes 区间（起点在/越过 EOF、倒序），或畸形/未知单位的 Range。
+	// 标准库 http.ServeContent 对这些一律回 416，所以这里也回 416 让两条后端
+	// 对齐；调用方再补 `Content-Range: bytes */<total>`（RFC 7233 §4.4）。
 	rangeUnsatisfiable
-	// rangeUnsupported: a well-formed Range this path answers by ignoring the
-	// Range and serving the full body (200), per RFC 7233. Two cases:
-	//   - multi-range (`bytes=a-b,c-d`): the seekable path serves it as a 206
-	//     multipart, so a full 200 here keeps both paths returning complete data
-	//     instead of one hard-failing with 416.
-	//   - a well-formed byte range against an EMPTY object (size == 0): there are
-	//     no bytes to satisfy any range, and stdlib http.ServeContent ignores the
-	//     Range and returns an empty 200 rather than 416. Classifying it here as
-	//     unsupported (→ empty 200) keeps the non-seekable path aligned with the
-	//     seekable one; answering 416 would make the same request against a
-	//     0-byte attachment succeed on a seekable backend but fail on an
-	//     S3/MinIO stream. Genuinely malformed / unknown-unit ranges against an
-	//     empty object stay rangeUnsatisfiable (416), matching ServeContent.
+	// rangeUnsupported：格式合法、但本路径选择"忽略 Range、按 200 输出完整
+	// body"（按 RFC 7233）。两种情况：
+	//   - 多区间（`bytes=a-b,c-d`）：可回卷路径把它当 206 multipart 服务，所以
+	//     这里回完整 200 让两条路径都返回完整数据，而不是一条硬 416 失败。
+	//   - 对空对象（size == 0）的合法 bytes 区间：没有任何字节能满足任何区间，
+	//     而标准库 http.ServeContent 忽略 Range 返回空 200 而非 416。把它在这
+	//     里归为不支持（→ 空 200）让不可回卷路径与可回卷路径对齐；回 416 会让
+	//     同一次请求在可回卷后端成功、在 S3/MinIO 流上失败。真正畸形/未知单位
+	//     对空对象的 Range 仍归 rangeUnsatisfiable（416），与 ServeContent 一致。
 	rangeUnsupported
 )
 
-// parseSingleByteRange parses a single-range HTTP `Range` header value against
-// a known content size and returns the absolute start offset, byte length, and
-// an outcome telling the caller which status to send (see rangeParseOutcome).
-// start/length are only meaningful when the outcome is rangeSatisfiable.
+// parseSingleByteRange 针对已知内容大小解析一条单区间 HTTP `Range` 头，返回
+// 绝对起始偏移、字节长度，以及告诉调用方该发哪个状态码的结果
+// （见 rangeParseOutcome）。只有结果是 rangeSatisfiable 时 start/length 才有
+// 意义。
 //
-// Supported forms (RFC 7233): `bytes=start-end`, `bytes=start-` (to EOF), and
-// `bytes=-suffix` (final suffix bytes). An out-of-range end is clamped to the
-// last byte; a start at or past EOF on a non-empty object is unsatisfiable (416).
-// Multi-range, and any well-formed range against an empty object (size == 0),
-// are valid-but-unsupported forms and yield rangeUnsupported (ignored → full
-// body), matching how the seekable http.ServeContent path handles them.
+// 支持的形式（RFC 7233）：`bytes=start-end`、`bytes=start-`（到 EOF）、
+// `bytes=-suffix`（末尾后缀字节）。越界的 end 被夹到最后一个字节；非空对象上
+// 起点在/越过 EOF 不可满足（416）。多区间，以及对空对象（size == 0）的任何
+// 合法区间，是"合法但本实现不支持"的形式，产出 rangeUnsupported（忽略 → 完整
+// body），与可回卷的 http.ServeContent 路径对这些形态的处理一致。
 func parseSingleByteRange(header string, size int64) (start, length int64, outcome rangeParseOutcome) {
 	const prefix = "bytes="
 	if !strings.HasPrefix(header, prefix) {
-		// Unknown / missing unit (e.g. "items=0-10", "0-100"). stdlib
-		// http.ServeContent rejects these with 416; mirror that here.
+		// 未知/缺失单位（例如 "items=0-10"、"0-100"）。标准库 http.ServeContent
+		// 用 416 拒绝；这里照做。
 		return 0, 0, rangeUnsatisfiable
 	}
 	spec := strings.TrimSpace(header[len(prefix):])
 	if spec == "" {
 		return 0, 0, rangeUnsatisfiable
 	}
-	// Multi-range is a valid HTTP form we do not implement on this forward-only
-	// path; ignore it and serve the full body rather than failing with 416.
+	// 多区间是合法 HTTP 形态，但本只进不回路径不实现它；忽略并按 200 输出完整
+	// body，而不是用 416 失败。
 	if strings.Contains(spec, ",") {
 		return 0, 0, rangeUnsupported
 	}
@@ -1203,7 +1166,7 @@ func parseSingleByteRange(header string, size int64) (start, length int64, outco
 	endStr := strings.TrimSpace(spec[dash+1:])
 
 	if startStr == "" {
-		// Suffix form: bytes=-N → final N bytes.
+		// 后缀形式：bytes=-N → 最后 N 个字节。
 		if endStr == "" {
 			return 0, 0, rangeUnsatisfiable
 		}
@@ -1212,9 +1175,8 @@ func parseSingleByteRange(header string, size int64) (start, length int64, outco
 			return 0, 0, rangeUnsatisfiable
 		}
 		if size == 0 {
-			// Well-formed suffix against an empty object: no bytes to satisfy it.
-			// Ignore the Range and serve an empty 200 (rangeUnsupported) to match
-			// the seekable path, instead of a divergent 416.
+			// 对空对象的合法后缀：没有字节能满足它。忽略 Range 回空 200
+			// （rangeUnsupported）与可回卷路径保持一致，而不是分叉成 416。
 			return 0, 0, rangeUnsupported
 		}
 		if n > size {
@@ -1228,11 +1190,10 @@ func parseSingleByteRange(header string, size int64) (start, length int64, outco
 		return 0, 0, rangeUnsatisfiable
 	}
 	if s >= size {
-		// The start is at or beyond EOF, so no bytes overlap. For an empty object
-		// (size == 0) every start is at EOF; stdlib http.ServeContent ignores the
-		// Range and serves an empty 200 there (it never validates the end once the
-		// start is out of range), so classify as rangeUnsupported (→ empty 200) to
-		// stay aligned. For a non-empty object a start past EOF is a genuine 416.
+		// 起点在或越过 EOF，没有任何字节重叠。对空对象（size == 0）任何起点都在
+		// EOF；标准库 http.ServeContent 在那里忽略 Range 返回空 200（起点越界后
+		// 它不再校验 end），所以归为 rangeUnsupported（→ 空 200）保持一致。对
+		// 非空对象，越过 EOF 的起点是真正的 416。
 		if size == 0 {
 			return 0, 0, rangeUnsupported
 		}
@@ -1251,13 +1212,15 @@ func parseSingleByteRange(header string, size int64) (start, length int64, outco
 	return s, e - s + 1, rangeSatisfiable
 }
 
+// setAttachmentPreviewSecurityHeaders 给附件预览响应加安全头。预览响应可能被
+// web 应用在同源部署或分源 app/api 自托管部署下加载，这里只允许 API 源自身加
+// 上配置的前端/CORS 源做 frame 祖先。
 func (h *Handler) setAttachmentPreviewSecurityHeaders(w http.ResponseWriter) {
-	// Attachment preview responses may be loaded by the web app in same-origin
-	// deployments or split app/api self-hosted deployments. Allow only the API
-	// origin itself plus configured frontend/CORS origins.
 	w.Header().Set("Content-Security-Policy", attachmentPreviewCSPHeader(h.cfg.AttachmentFrameAncestors))
 }
 
+// attachmentPreviewCSPHeader 拼出附件预览用的 CSP 头：default-src 一律 none，
+// 仅放开内嵌资源必需的最小集合，frame-ancestors 取 self + 配置的源去重结果。
 func attachmentPreviewCSPHeader(frameAncestors []string) string {
 	ancestors := []string{"'self'"}
 	seen := map[string]struct{}{"'self'": {}}
@@ -1281,6 +1244,8 @@ func attachmentPreviewCSPHeader(frameAncestors []string) string {
 		"form-action 'none'"
 }
 
+// normalizeFrameAncestorSource 把配置的 frame 祖先源规范成 "scheme://host"
+// 形态；空串、通配 *、非法 URL 或非 http(s) 协议一律判不合法。
 func normalizeFrameAncestorSource(raw string) (string, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "*" {
@@ -1300,18 +1265,18 @@ func normalizeFrameAncestorSource(raw string) (string, bool) {
 // ---------------------------------------------------------------------------
 // GetAttachmentContent — GET /api/attachments/{id}/content
 //
-// Streams the raw bytes of a text-previewable attachment back to the client.
-// Exists to (a) bypass CloudFront CORS (not configured) and (b) bypass
-// Content-Disposition: attachment which Chromium honors for iframe document
-// loads. Media types (image/video/audio/pdf) intentionally use download_url
-// instead. Metadata download_url keeps CloudFront/S3's media preview behavior;
-// the explicit /download route signs redirects as attachment downloads and
-// proxy mode streams with the same media-type policy as storage uploads.
+// 把"可文本预览"附件的原始字节流式传给客户端。存在是为了 (a) 绕开 CloudFront
+// 的 CORS（未配置）和 (b) 绕开 Content-Disposition: attachment——Chromium 对
+// iframe 加载文档时会尊重它。媒体类型（image/video/audio/pdf）刻意走 download_
+// url：元数据 download_url 保留 CloudFront/S3 的媒体预览行为；显式的 /download
+// 路由把重定向签名成附件下载，proxy 模式则用与存储上传相同的媒体类型策略流。
 //
-// Hard cap: 2 MB. Larger files return 413. Anything outside the text
-// whitelist returns 415.
+// 硬上限：2 MB。更大的文件回 413；不在文本白名单里的类型回 415。
 // ---------------------------------------------------------------------------
 
+// GetAttachmentContent 返回文本类附件的纯文本内容（用于内联预览）。类型不在
+// 白名单回 415；超过 2MB 回 413。始终以 text/plain 输出，防浏览器把恶意 HTML
+// 当文档重新解释。
 func (h *Handler) GetAttachmentContent(w http.ResponseWriter, r *http.Request) {
 	att, ok := h.loadAttachmentForRequest(w, r)
 	if !ok {
@@ -1337,8 +1302,8 @@ func (h *Handler) GetAttachmentContent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer reader.Close()
 
-	// LimitReader to maxPreviewTextSize+1 so we can detect "exactly at the
-	// limit" vs "exceeds the limit" by checking the returned length.
+	// LimitReader 读到 maxPreviewTextSize+1，这样能靠返回长度区分"恰好卡在
+	// 上限"与"超出上限"。
 	body, err := io.ReadAll(io.LimitReader(reader, maxPreviewTextSize+1))
 	if err != nil {
 		slog.Error("failed to read attachment body for preview", "id", attachmentID, "error", err)
@@ -1350,16 +1315,13 @@ func (h *Handler) GetAttachmentContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Always reply as text/plain so a hostile HTML payload can't be
-	// re-interpreted as a document by the browser. The original MIME is
-	// surfaced via X-Original-Content-Type for the client-side dispatcher.
+	// 永远以 text/plain 应答，防止恶意的 HTML 载荷被浏览器当文档重新解释。原始
+	// MIME 通过 X-Original-Content-Type 交给客户端分派器。
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Original-Content-Type", att.ContentType)
-	// No-store: workspace membership / attachment ACL can change between
-	// requests (member removed, attachment deleted). A cached body would
-	// stay readable past the revocation window. The redundant request is
-	// fine here — bodies are capped at 2 MB and the endpoint is only hit
-	// when a user explicitly opens a preview.
+	// No-store：workspace 成员关系 / 附件 ACL 可能随请求变化（成员被移走、附件
+	// 被删）。缓存下来的 body 会在撤销窗口之后仍可读。这里的冗余请求没问题——
+	// body 上限 2 MB，且该接口只在用户显式打开预览时才被命中。
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	h.setAttachmentPreviewSecurityHeaders(w)
@@ -1369,27 +1331,23 @@ func (h *Handler) GetAttachmentContent(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// isTextPreviewable is the whitelist for the text preview proxy.
+// isTextPreviewable 是文本预览代理的白名单。
 //
-// IMPORTANT — KEEP IN SYNC with the client-side mirror in
-// packages/views/editor/utils/preview.ts (TEXT_EXTENSIONS / TEXT_CONTENT_TYPES
-// / TEXT_BASENAMES + extensionToLanguage). If a type is allowed here but not
-// mapped client-side the user sees raw unhighlighted text; if mapped client-side
-// but rejected here the user sees a 415 fallback.
+// 重要——与客户端镜像保持同步：packages/views/editor/utils/preview.ts
+// （TEXT_EXTENSIONS / TEXT_CONTENT_TYPES / TEXT_BASENAMES + extensionToLanguage）。
+// 若这里放行而客户端没映射，用户看到的是没高亮的裸文本；若客户端映射了而这里
+// 拒绝，用户看到 415 回退。
 //
-// TODO(follow-up): extract this list to a JSON single-source-of-truth and
-// generate the TS side, mirroring the reserved-slugs pattern (see
-// server/internal/handler/reserved_slugs.json + scripts/generate-reserved-slugs.mjs).
-// Drift severity here is low (worst case: Eye button visible but proxy 415s,
-// modal shows the unsupported fallback — still functional, just confusing),
-// so it ships as manual hand-sync for v1.
+// TODO(follow-up)：把这列表抽成 JSON 单一真源并生成 TS 侧，镜像 reserved-slugs
+// 的做法（见 server/internal/handler/reserved_slugs.json +
+// scripts/generate-reserved-slugs.mjs）。漂移影响不大（最坏：Eye 按钮可见但
+// 代理 415，弹窗显示不支持的兜底——仍可用，只是困惑），所以 v1 用手工同步。
 //
-// We check both content_type and extension because http.DetectContentType
-// regularly returns "text/plain" for Markdown / source code, so a pure
-// content-type check would 415 those.
+// content_type 与扩展名都查，是因为 http.DetectContentType 常把 Markdown/源码
+// 判成 "text/plain"，只查 content-type 会把它们全 415 掉。
 func isTextPreviewable(contentType, filename string) bool {
 	ct := strings.ToLower(strings.TrimSpace(contentType))
-	// Strip params (e.g. "text/plain; charset=utf-8")
+	// 去掉参数（例如 "text/plain; charset=utf-8"）
 	if idx := strings.Index(ct, ";"); idx >= 0 {
 		ct = strings.TrimSpace(ct[:idx])
 	}
@@ -1427,7 +1385,7 @@ func isTextPreviewable(contentType, filename string) bool {
 		".dockerfile", ".makefile", ".gitignore":
 		return true
 	}
-	// Filenames without extension that match well-known build files.
+	// 没有扩展名但与知名构建文件匹配的文件名。
 	base := strings.ToLower(path.Base(filename))
 	switch base {
 	case "dockerfile", "makefile", ".env":
@@ -1440,6 +1398,10 @@ func isTextPreviewable(contentType, filename string) bool {
 // DeleteAttachment — DELETE /api/attachments/{id}
 // ---------------------------------------------------------------------------
 
+// DeleteAttachment 删除一个附件：库行 + 存储对象 + 附带事件。权限：只有上传者
+// （且是 member 类型的）或 workspace 的 admin/owner 能删。SourceContextID 命中
+// 的"捕获上下文附件"是不可变历史副本，只能随其目标 issue/workspace/被弃上下文
+// 一起删，这里一律回 404。
 func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 	attachmentID := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
@@ -1470,14 +1432,14 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
-	// Captured-context attachments are immutable historical copies. They are
-	// deleted only with their target issue, workspace, or abandoned context.
+	// 捕获上下文的附件是不可变的历史副本。它们只能随目标 issue、workspace 或
+	// 被弃上下文一起删除。
 	if att.SourceContextID.Valid {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
 
-	// Only the uploader (or workspace admin) can delete
+	// 只有上传者（或 workspace 管理员）能删。
 	uploaderID := uuidToString(att.UploaderID)
 	isUploader := att.UploaderType == "member" && uploaderID == userID
 	member, hasMember := ctxMember(r.Context())
@@ -1549,12 +1511,11 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
-// Attachment linking
+// 附件关联
 // ---------------------------------------------------------------------------
 
-// linkAttachmentsByIssueIDs links unbound attachments to an issue. A caller
-// that did not already advance the issue revision can ask this visible change
-// to advance it exactly once.
+// linkAttachmentsByIssueIDs 把未绑定的附件挂到某个 issue 上。调用方若此前没让
+// issue 版本前进，可以请这个"可见变更"把版本恰好推进一次。
 func (h *Handler) linkAttachmentsByIssueIDs(ctx context.Context, issueID, workspaceID pgtype.UUID, ids []pgtype.UUID, bumpRevision bool) (db.LinkAttachmentsToIssueRow, error) {
 	return h.Queries.LinkAttachmentsToIssue(ctx, db.LinkAttachmentsToIssueParams{
 		IssueID:       issueID,
@@ -1564,8 +1525,8 @@ func (h *Handler) linkAttachmentsByIssueIDs(ctx context.Context, issueID, worksp
 	})
 }
 
-// linkAttachmentsByIDs links the given attachment IDs to a comment.
-// Only updates attachments that belong to the same issue and have no comment_id yet.
+// linkAttachmentsByIDs 把给定附件 id 挂到某条评论上。只更新属于同一 issue 且
+// 还没有 comment_id 的附件。
 func (h *Handler) linkAttachmentsByIDs(ctx context.Context, commentID, issueID pgtype.UUID, ids []pgtype.UUID) {
 	if err := h.Queries.LinkAttachmentsToComment(ctx, db.LinkAttachmentsToCommentParams{
 		CommentID: commentID,
@@ -1576,7 +1537,7 @@ func (h *Handler) linkAttachmentsByIDs(ctx context.Context, commentID, issueID p
 	}
 }
 
-// deleteS3Object removes a single file from S3 by its CDN URL.
+// deleteS3Object 按 CDN URL 从存储里删除单个文件。
 func (h *Handler) deleteS3Object(ctx context.Context, url string) {
 	if h.Storage == nil || url == "" {
 		return
@@ -1584,7 +1545,7 @@ func (h *Handler) deleteS3Object(ctx context.Context, url string) {
 	h.Storage.Delete(ctx, h.Storage.KeyFromURL(url))
 }
 
-// deleteS3Objects removes multiple files from S3 by their CDN URLs.
+// deleteS3Objects 按 CDN URL 列表从存储里删除多个文件。
 func (h *Handler) deleteS3Objects(ctx context.Context, urls []string) {
 	if h.Storage == nil || len(urls) == 0 {
 		return

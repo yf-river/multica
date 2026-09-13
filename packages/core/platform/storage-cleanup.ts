@@ -1,20 +1,21 @@
+// 本文件提供「按工作区清理本地存储」：删除某工作区 slug 命名空间下所有
+// 工作区范围的持久化条目。
+
 import type { StorageAdapter } from "../types/storage";
 import { clearRegisteredWorkspaceDrafts } from "../drafts/cleanup-registry";
-// Ensure every module-level draft store has registered its key before cleanup
-// runs, so the registry is never partially populated at logout/delete time.
+// 确保每个模块级草稿 store 都在清理运行前注册过自己的 key，这样登出/删除时
+// 注册表绝不会只被部分填充。
 import "../drafts/register-all-drafts";
 
 /**
- * Non-draft workspace-scoped keys (stored as `${key}:${slug}`).
+ * 非草稿的工作区范围 key（存为 `${key}:${slug}`）。
  *
- * Draft stores no longer live here: they self-register via
- * `registerDraftCleanup` (see `drafts/cleanup-registry`) and are cleared by
- * `clearRegisteredWorkspaceDrafts` below. This list is only for the remaining
- * view/navigation keys that are not drafts.
+ * 草稿 store 已不在这里：它们通过 `registerDraftCleanup` 自注册（见
+ * `drafts/cleanup-registry`），由下面的 `clearRegisteredWorkspaceDrafts`
+ * 清除。这份清单只剩剩余的非草稿「视图/导航」key。
  *
- * IMPORTANT: When adding a new non-draft workspace-scoped persist store, add
- * its key here; for draft stores, prefer `createDraftStore` (auto-registers)
- * or call `registerDraftCleanup` directly.
+ * 重要：新增非草稿的工作区范围持久化 store 时，把 key 加在这里；草稿 store
+ * 则优先用 `createDraftStore`（自动注册）或直接调 `registerDraftCleanup`。
  */
 const WORKSPACE_SCOPED_KEYS = [
   "multica_issue_surface_views",
@@ -28,7 +29,12 @@ const WORKSPACE_SCOPED_KEYS = [
   "multica_navigation",
 ];
 
-/** Remove all workspace-scoped storage entries for the given workspace slug. */
+/**
+ * 删除给定工作区 slug 命名空间下所有工作区范围的存储条目。
+ *
+ * @param adapter - 存储适配器
+ * @param slug - 目标工作区 slug
+ */
 export function clearWorkspaceStorage(
   adapter: StorageAdapter,
   slug: string,
@@ -36,7 +42,7 @@ export function clearWorkspaceStorage(
   for (const key of WORKSPACE_SCOPED_KEYS) {
     adapter.removeItem(`${key}:${slug}`);
   }
-  // Draft stores self-register their keys; clear them from the registry so a
-  // new draft store can never be silently skipped by an out-of-date list.
+  // 草稿 store 自注册它们的 key；经注册表清除，这样新增草稿 store 绝不会被
+  // 一份过时的清单悄悄漏掉。
   clearRegisteredWorkspaceDrafts(adapter, slug);
 }

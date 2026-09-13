@@ -1,3 +1,12 @@
+// 本文件实现 workspace「分享链接」（share link）的创建、列表、撤销与通过链接加入。
+//
+// 分享链接允许管理员生成一条带 code 的邀请链接：访客先经公开预览接口（GetShareLinkInfo，
+// 无需登录）看到 workspace 名字与邀请人，登录后用 code 走 JoinByShareLink 加入。
+//
+// 关键不变量：一个 workspace 同一时刻至多一条激活中的分享链接——创建新链接前先在同一
+// 事务里把旧的停用（partial unique index 兜底并发）。加入走「先认领后落库」：认领是
+// 一条条件 UPDATE（复检 active/未过期/未超 max_uses 并自增 use_count），天然防止并发
+// 超用；席位容量（seat capacity）开启时还须经容量编排。
 package handler
 
 import (
@@ -24,13 +33,12 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// expiresInMaxHours is the largest hour count that can be multiplied by
-// time.Hour without overflowing a signed 64-bit time.Duration. Rejecting
-// anything above it prevents expires_in from wrapping to a negative duration
-// (which would make a freshly created link instantly expired).
+// expiresInMaxHours 是「小时数 × time.Hour」不会溢出有符号 64 位 time.Duration 的
+// 上限。拒绝超出它的值，防止 expires_in 回绕成负时长——那会让刚建的链接立刻过期。
 const expiresInMaxHours = math.MaxInt64 / int64(time.Hour)
 
-// ShareLinkResponse is the JSON shape returned for a workspace share link.
+// ShareLinkResponse 是分享链接接口返回的 JSON 结构。Enriched 部分的创建者名字/邮箱
+// 仅列表（含 join 后的视图）场景补充。
 type ShareLinkResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
@@ -42,21 +50,25 @@ type ShareLinkResponse struct {
 	UseCount    int32   `json:"use_count"`
 	IsActive    bool    `json:"is_active"`
 	CreatedAt   string  `json:"created_at"`
-	// Enriched
+	// Enriched：创建者展示信息（列表端点补齐）
 	CreatorName  string `json:"creator_name,omitempty"`
 	CreatorEmail string `json:"creator_email,omitempty"`
 }
 
+// CreateShareLinkRequest 是创建分享链接的请求体。Role 支持 member/admin；ExpiresIn
+// 是「从现在起多少小时」过期；MaxUses 是最大使用次数。
 type CreateShareLinkRequest struct {
 	Role      string `json:"role"`
-	ExpiresIn *int   `json:"expires_in,omitempty"` // hours from now
+	ExpiresIn *int   `json:"expires_in,omitempty"` // 从现在起的小时数
 	MaxUses   *int   `json:"max_uses,omitempty"`
 }
 
+// JoinByShareLinkRequest 是加入请求体，携带链接 code。
 type JoinByShareLinkRequest struct {
 	Code string `json:"code"`
 }
 
+// generateShareCode 用 12 字节加密随机数生成链接 code（hex 编码后 24 个字符）。
 func generateShareCode() (string, error) {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
@@ -65,7 +77,7 @@ func generateShareCode() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// CreateShareLink — admin creates a shareable invite link.
+// CreateShareLink——管理员创建一条可分享的邀请链接。
 // POST /api/workspaces/{id}/share-links
 func (h *Handler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
@@ -91,11 +103,9 @@ func (h *Handler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate expiry and usage bounds instead of silently treating bad input
-	// as "no limit": zero/negative and overflow-range values are rejected
-	// outright. max_uses is stored as int32, and expires_in is multiplied by
-	// time.Hour into a time.Duration, so both need an explicit upper bound to
-	// avoid wrapping or overflow before conversion.
+	// 校验过期与使用上限，而不是把坏输入静默当成「不限」：零/负数与超范围的值直接
+	// 拒绝。max_uses 以 int32 存储，expires_in 要乘 time.Hour 得到 time.Duration，
+	// 两者都必须在转换前给出显式上界，避免回绕或溢出。
 	var expiresAt pgtype.Timestamptz
 	if req.ExpiresIn != nil {
 		if *req.ExpiresIn <= 0 || int64(*req.ExpiresIn) > expiresInMaxHours {
@@ -114,11 +124,9 @@ func (h *Handler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 		maxUses = pgtype.Int4{Int32: int32(*req.MaxUses), Valid: true}
 	}
 
-	// Rotating to a new link and deactivating the previous one must be atomic:
-	// deactivating outside the transaction (as before) could destroy the old
-	// working link if the insert fails, and ignoring deactivation errors could
-	// leave multiple active links. The partial unique index on
-	// (workspace_id) WHERE is_active also fails closed on concurrent creates.
+	// 「换一条新链接并停用旧链接」必须原子：在事务外停用（以前的做法）会在插入失败
+	// 时把仍可用的旧链接一起毁掉；忽略停用错误又会留下多条激活链接。
+	// (workspace_id) WHERE is_active 的部分唯一索引在并发创建时也会失败关闭。
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create share link")
@@ -171,7 +179,7 @@ func (h *Handler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-// ListShareLinks — list active share links for a workspace (admin view).
+// ListShareLinks——列出 workspace 的分享链接（管理员视图）。
 // GET /api/workspaces/{id}/share-links
 func (h *Handler) ListShareLinks(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
@@ -197,7 +205,7 @@ func (h *Handler) ListShareLinks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RevokeShareLink — admin revokes a share link.
+// RevokeShareLink——管理员撤销一条分享链接。
 // DELETE /api/workspaces/{id}/share-links/{linkId}
 func (h *Handler) RevokeShareLink(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
@@ -223,11 +231,9 @@ func (h *Handler) RevokeShareLink(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ShareLinkInfoResponse is the public, pre-join preview of a share link:
-// only what a visitor needs to decide whether to join — the workspace name,
-// its slug, the inviting user's display name, and the role the link grants.
-// It deliberately excludes internal IDs (workspace_id), the invite code, and
-// the inviter's email address.
+// ShareLinkInfoResponse 是分享链接的公开（加入前）预览：只含访客决定是否加入所需的
+// 信息——workspace 名、slug、邀请人显示名与链接授予的角色。刻意排除内部 ID
+// （workspace_id）、邀请 code 与邀请人邮箱。
 type ShareLinkInfoResponse struct {
 	WorkspaceName string `json:"workspace_name"`
 	WorkspaceSlug string `json:"workspace_slug"`
@@ -235,9 +241,8 @@ type ShareLinkInfoResponse struct {
 	Role          string `json:"role"`
 }
 
-// GetShareLinkInfo — public preview of a workspace share link. No auth is
-// required so a not-yet-logged-in visitor can see what they're joining before
-// signing in. Only the workspace name/slug and inviter are exposed.
+// GetShareLinkInfo——分享链接的公开预览。无需鉴权，让还没登录的访客在登录前先看到
+// 自己要加入的是什么。只暴露 workspace 名字/slug 与邀请人。
 // GET /api/share-links/{code}
 func (h *Handler) GetShareLinkInfo(w http.ResponseWriter, r *http.Request) {
 	code := chi.URLParam(r, "code")
@@ -261,7 +266,7 @@ func (h *Handler) GetShareLinkInfo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// JoinByShareLink — authenticated user joins a workspace via a share link.
+// JoinByShareLink——已登录用户经分享链接加入一个 workspace。
 // POST /api/share-links/join
 func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
@@ -311,10 +316,9 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Open the transaction first, then atomically claim the link. The claim is
-	// a conditional UPDATE that revalidates active/not-expired/below-max_uses
-	// and increments use_count in one statement, so concurrent joins cannot
-	// exceed max_uses and a join cannot race past a revocation/expiry.
+	// 先开事务，再在事务里原子认领链接。认领是一条条件 UPDATE：一条语句里复检
+	// active / 未过期 / 未超 max_uses 并自增 use_count，所以并发加入不可能超出
+	// max_uses，加入也不可能与撤销/过期赛跑。
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to join workspace")
@@ -330,7 +334,7 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if already a member — if so, roll back the claimed use count.
+	// 事务内再查一次是否已是成员——是则回滚掉刚才认领增加的 use_count。
 	_, memberErr := qtx.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
 		UserID:      user.ID,
 		WorkspaceID: link.WorkspaceID,
@@ -355,8 +359,8 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mark onboarded. A failure here must roll the whole join back, otherwise a
-	// first-time user could become a member while still blocked by onboarding.
+	// 标记为已完成 onboarding。这一步失败必须让整个加入回滚，否则首次使用的用户
+	// 可能成了成员却仍被 onboarding 卡住。
 	if _, err := qtx.MarkUserOnboarded(r.Context(), user.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to finalize onboarding")
 		return
@@ -407,6 +411,7 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// shareLinkToResponse 把单条链接行转成对外结构（不含创建者展示信息）。
 func shareLinkToResponse(link db.WorkspaceShareLink) ShareLinkResponse {
 	var expiresAt *string
 	if link.ExpiresAt.Valid {
@@ -431,6 +436,7 @@ func shareLinkToResponse(link db.WorkspaceShareLink) ShareLinkResponse {
 	}
 }
 
+// shareLinkListToResponse 把列表行（含创建者名字/邮箱）转成对外结构。
 func shareLinkListToResponse(row db.ListShareLinksByWorkspaceRow) ShareLinkResponse {
 	var expiresAt *string
 	if row.ExpiresAt.Valid {

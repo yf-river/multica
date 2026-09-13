@@ -1,3 +1,4 @@
+// 新建聊天按钮与 agent 选择器：通过 ⊕ 按钮弹出可选 agent 列表，开始一段新聊天。
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -18,10 +19,17 @@ import { toast } from "sonner";
 import { useT } from "../../i18n";
 
 /**
- * Agent picker: a searchable, grouped (My agents / Others) list of agents in a
- * PropertyPicker. The caller supplies the trigger. `currentAgentId` marks one
- * agent with a check — omit it (as "new chat" does) when there is no current
- * selection to highlight.
+ * Agent 选择器：一个放在 PropertyPicker 里的可搜索、分组（我的 agent / 其他人）的 agent 列表。
+ * 触发元素由调用方提供。`currentAgentId` 会给某个 agent 打上勾选标记——
+ * 当没有当前选中项需要高亮时省略它（“新建聊天”就是这种情况）。
+ * @param agents - 可选 agent 列表。
+ * @param userId - 当前用户 ID，用于区分“我的/其他人”。
+ * @param currentAgentId - 当前选中的 agent ID（可选）。
+ * @param onSelect - 选中 agent 后的回调。
+ * @param trigger - 触发元素内容。
+ * @param triggerRender - 触发元素的外壳组件。
+ * @param side - 弹出方向。
+ * @param align - 对齐方式。
  */
 export function AgentPicker({
   agents,
@@ -151,12 +159,15 @@ function AgentPickerItem({
 }
 
 /**
- * "New chat" ⊕ button. Per the Chat V2 design, starting a new chat is where the
- * agent is chosen — so this opens an AgentPicker and reports the pick via
- * `onStart`. No agent is pre-checked: a new chat has no "current" agent yet.
- * Shortcuts: with a single available agent it starts immediately (no point
- * showing a one-item menu); with none it still fires `onStart(null)` so the
- * surface shows its no-agent empty state.
+ * “新建聊天”的 ⊕ 按钮。按 Chat V2 设计，开始新聊天就是选择 agent 的时机——
+ * 所以它会打开 AgentPicker 并通过 `onStart` 上报所选。没有 agent 被预勾选：
+ * 新聊天还没有“当前”agent。快捷逻辑：只有一个可用 agent 时立即开始（没必要
+ * 显示只有一个选项的菜单）；一个都没有时仍触发 `onStart(null)`，
+ * 让界面显示它的无 agent 空状态。
+ * @param agents - 可选 agent 列表。
+ * @param userId - 当前用户 ID。
+ * @param onStart - 开始新聊天的回调（agent 可为 null）。
+ * @param side - 弹出方向。
  */
 export function NewChatButton({
   agents,

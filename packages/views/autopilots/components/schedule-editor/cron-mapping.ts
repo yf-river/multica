@@ -1,10 +1,9 @@
+// cron 表达式与结构化模型的互相转换。后端解析器（robfig/cron v3，5 字段）对每个
+// 字段接受一套封闭语法：`*`、`?`、整数、月份/星期名、`-` 区间、`/` 步长与 `,`
+// 列表。结构化编辑器只往返下面这个子集；其余一切原样留在 `raw`（仅高级模式）。
+
 import type { DayPattern, ScheduleConfig, TimePattern } from "./model";
 import { consecutiveRuns, getDefaultScheduleConfig, pad2, timeParts } from "./model";
-
-// The backend parser (robfig/cron v3, 5-field) accepts a closed grammar per
-// field: `*`, `?`, integers, month/day names, `-` ranges, `/` steps and `,`
-// lists. The structured editor round-trips only the subset below; everything
-// else stays verbatim in `raw` (advanced-only mode).
 
 const DOW_NAMES: Record<string, number> = {
   SUN: 0,
@@ -31,6 +30,7 @@ const MONTH_NAMES: Record<string, number> = {
   DEC: 12,
 };
 
+// 一个字段的取值范围（及其命名字典，若该字段允许名字）。
 interface FieldBounds {
   min: number;
   max: number;
@@ -43,48 +43,45 @@ const DOM: FieldBounds = { min: 1, max: 31 };
 const MONTH: FieldBounds = { min: 1, max: 12, names: MONTH_NAMES };
 const DOW: FieldBounds = { min: 0, max: 6, names: DOW_NAMES };
 
-/** One part of a field, as robfig's getRange reads it. */
+/** 字段的一部分，按 robfig 的 getRange 怎么读怎么切。 */
 interface RangePart {
   lo: number;
   hi: number;
   step: number;
-  /** The range was written as a wildcard ("*", or the "?" normalizeField rewrites
-   *  to one) rather than spelled out. Not robfig's star BIT, which it clears for
-   *  any step above 1: that bit decides whether dom and dow are ANDed or ORed, and
-   *  parseCron settles that question on the field text before it gets here — it
-   *  structures a pinned day-of-month only when day-of-week is written "*". What
-   *  this flag carries is the text, because that is what the model echoes: an hour
-   *  written "*" is "all day", and one written "0-23" is a window that happens to
-   *  span it. */
+  /** 该区间写成通配（"*"，或 normalizeField 重写成的 "?"）而非逐个写出。不是
+   *  robfig 的 star 位——那一位只要步长大于 1 就会被清掉：它决定 dom 与 dow 是
+   *  做 AND 还是 OR，而 parseCron 在到达这里之前就已根据字段文本解决了那个问题
+   *  ——只有 dow 写作 "*" 时它才把固定日构造成结构化模型。本标记承载的是文本：
+   *  因为模型回显的正是文本——小时写成 "*" 是"全天"，写成 "0-23" 是一个恰好
+   *  横跨全天的窗口。 */
   wildcard: boolean;
-  /** A step was written, whatever its value. "*" and "*\/1" select the same
-   *  values but are not the same text, and the collapse rules turn on which. */
+  /** 是否写了步长，无论其值。"*" 与 "*\/1" 选出同样的取值，却不是同样的文本，
+   *  折叠规则就看的是这个。 */
   stepped: boolean;
-  /** The range was written with both ends ("9-21"), not as a bare value. */
+  /** 区间两端都写了（"9-21"），而不是只写一个裸值。 */
   explicitRange: boolean;
 }
 
+// 字段的一个单值部分（数字或名称），越界/非法返回 null。名称大小写不敏感。
 function fieldValue(s: string, bounds: FieldBounds): number | null {
   const named = bounds.names?.[s.toUpperCase()];
   if (named !== undefined) return named;
   if (!/^\d+$/.test(s)) return null;
   const n = Number(s);
-  // Numbers past the safe-integer range overflow the backend's Atoi and are a
-  // syntax error to it; out-of-bounds ones are one to its bounds check.
+  // 超过安全整数范围的数字会让后端的 Atoi 溢出、对它而言是语法错误；越界的则
+  // 过不了它的边界检查。
   if (!Number.isSafeInteger(n) || n < bounds.min || n > bounds.max) return null;
   return n;
 }
 
 /**
- * `<range>` or `<range>/<step>`, where `<range>` is `*`, a value, or `lo-hi` —
- * the whole of robfig's per-part grammar, in one place. Fields differ only in
- * the bounds and names they pass in, never in what the grammar means: a bare
- * value carrying a step runs to the field's max ("9/2" on hours is 9-23/2).
+ * 解析 `<range>` 或 `<range>/<step>`，其中 `<range>` 是 `*`、单个值或 `lo-hi`——
+ * robfig 逐部分语法的全集，收拢在一处。各字段只在传入的边界与名字上有别，语法
+ * 含义永远相同：带步长的裸值一路走到字段上限（小时上的 "9/2" 是 9-23/2）。
  *
- * The step is deliberately unbounded here, as it is in robfig: a step wider than
- * the range it steps over is legal and simply selects that range's first value
- * ("*\/100" on days is Sunday). Callers whose model slot cannot hold a step that
- * wide reject it themselves — they know what they can hold; the grammar does not.
+ * 步长在此刻意不设上限，robfig 也一样：比所跨区间还宽的步长是合法的，只是恰好只
+ * 选出该区间的首值（星期上的 "*\/100" 就是周日）。其模型槽放不下那么宽步长的
+ * 调用方自己会拒绝——它们知道自己装得下什么；语法不知道。
  */
 function parseRangePart(part: string, bounds: FieldBounds): RangePart | null {
   const [rangeStr, stepStr, ...rest] = part.split("/");
@@ -98,7 +95,7 @@ function parseRangePart(part: string, bounds: FieldBounds): RangePart | null {
   }
   const stepped = stepStr !== undefined;
 
-  // normalizeField has already rewritten every wildcard range to "*".
+  // normalizeField 已把所有通配区间重写成 "*"。
   if (rangeStr === "*") {
     return {
       lo: bounds.min,
@@ -117,8 +114,7 @@ function parseRangePart(part: string, bounds: FieldBounds): RangePart | null {
 
   let hi: number;
   if (hiStr === undefined) {
-    // A bare value runs to the field's max when it carries a step ("9/2" is
-    // 9-23/2), and is just itself when it does not.
+    // 裸值带步长时一路走到字段上限（"9/2" 是 9-23/2），不带时就是它自己。
     hi = stepped ? bounds.max : lo;
   } else {
     const hiVal = fieldValue(hiStr, bounds);
@@ -130,23 +126,21 @@ function parseRangePart(part: string, bounds: FieldBounds): RangePart | null {
   return { lo, hi, step, wildcard: false, stepped, explicitRange: hiStr !== undefined };
 }
 
-/** The whole field as one pinned value — "9", and nothing that merely selects a
- *  single value by other means ("9-9", "*\/100"), which the collapse rewrites to
- *  this shape first when the model has a slot for it. */
+/** 整个字段是否是一个钉死的值——"9"，而"9-9"、"*\/100" 这类只是凑巧只选一个值
+ *  的写法不算（折叠会先把它们重写成这种形态，如果模型有对应槽位）。 */
 function plainValue(field: string, bounds: FieldBounds): number | null {
   const r = parseRangePart(field, bounds);
   if (r === null || r.wildcard || r.stepped || r.explicitRange) return null;
   return r.lo;
 }
 
-/** Expand a dow field into a sorted, deduped day set, or null when it falls
- *  outside the echoable grammar. Digits, names, ranges, steps and lists are
- *  all enumerable — dow is structurable whenever robfig would accept it, a step
- *  wider than the week ("*\/100" → Sunday) included. */
+/** 把 dow 字段展开成升序去重的星期集合；落在可回显语法之外时返回 null。数字、
+ *  名字、区间、步长与列表都可枚举——只要 robfig 接受，dow 就可结构化，包括比
+ *  一周还宽的步长（"*\/100" → 周日）。 */
 function expandDow(field: string): number[] | null {
   const days = new Set<number>();
-  // `field` arrives normalized (see normalizeField), so an empty part here is a
-  // genuinely malformed expression, not a stray comma.
+  // `field` 到这儿已归一化（见 normalizeField），所以这里的空段是真·畸形表达式，
+  // 不是多余的逗号。
   for (const part of field.split(",")) {
     const r = parseRangePart(part, DOW);
     if (r === null) return null;
@@ -156,49 +150,46 @@ function expandDow(field: string): number[] | null {
   return Array.from(days).toSorted((a, b) => a - b);
 }
 
-/** Serialize a day set as maximal consecutive runs: [1,2,3,4,5] → "1-5",
- *  [0,1,2,4] → "0-2,4", [0,2,4,6] → "0,2,4,6". Any pair is worth a range here —
- *  "0-1" is shorter than "0,1". */
+/** 把星期集合按最大连续段序列化：[1,2,3,4,5] → "1-5"、[0,1,2,4] → "0-2,4"、
+ *  [0,2,4,6] → "0,2,4,6"。到这里任何一对都值得折叠成区间——"0-1" 比 "0,1" 短。 */
 function dowFieldFromDays(days: number[]): string {
   return consecutiveRuns(days)
     .map(([lo, hi]) => (hi > lo ? `${lo}-${hi}` : `${lo}`))
     .join(",");
 }
 
-/** The hour as an interval and an optional window. The model's interval is an
- *  hour count, so a step it cannot hold has no every-N-hours form — a degenerate
- *  one is already a fixed value by then, rewritten by collapseDegenerateRange. */
+/** 把小时字段解析成"间隔 + 可选窗口"。模型的间隔按小时计，所以装不下的步长没有
+ *  "每 N 小时"形式——那种退化形态到那一步早已被 collapseDegenerateRange 重写成
+ *  固定值了。 */
 function parseHourPattern(
   field: string,
 ): { interval: number; range: { lo: number; hi: number } | null } | null {
   const r = parseRangePart(field, HOUR);
   if (r === null || r.step > HOUR.max) return null;
-  // "*" and "0-23" select the same hours, and the model holds all day exactly one
-  // way — as the absence of a window. The editor's window is always on screen now,
-  // so there is no toggle state left for the two spellings to differ in: a window
-  // that spans the day would only leave the reset control lit on a schedule that
-  // is already all day, and hand the same schedule two structured forms.
+  // "*" 与 "0-23" 选出同样的小时，而模型把全天只有一种表示——窗口的缺席。编辑器的
+  // 窗口如今常驻屏上，两种写法之间没有可让它们差异化的开关状态了：横跨全天的窗口
+  // 只会让一个本来就全天的计划上亮着"重置"控件，还给同一计划两套结构化形态。
   const spansDay = r.wildcard || (r.lo === HOUR.min && r.hi === HOUR.max);
   return { interval: r.step, range: spansDay ? null : { lo: r.lo, hi: r.hi } };
 }
 
-/** `*` → 1, `*\/N` and `0/N` → N. Anchored steps ("15/5") would need a minute
- *  offset the model does not carry, so they stay advanced-only. */
+/** `*` → 1，`*\/N` 与 `0/N` → N。锚定步长（"15/5"）需要一个模型不携带的分偏移，
+ *  所以保持仅高级。 */
 function parseMinuteInterval(field: string): number | null {
   const r = parseRangePart(field, MINUTE);
   if (r === null || r.explicitRange || r.step > MINUTE.max) return null;
-  // The step must run from the top of the hour: "*/5" and "0/5" are the same set,
-  // "15/5" is one the model has no offset slot for. A bare "0" is a fixed minute,
-  // not an interval — but parseTimeFields reads that before it ever gets here.
+  // 步长必须从整点 0 分出发："*/5" 与 "0/5" 是同一集合，"15/5" 则是模型没有偏移槽
+  // 的一种。裸 "0" 是固定分，不是间隔——但 parseTimeFields 在到达这里之前就读掉了。
   if (r.lo !== MINUTE.min) return null;
   if (!r.stepped && !r.wildcard) return null;
   return r.step;
 }
 
+// 从分/时两个字段解析出 TimePattern。
 function parseTimeFields(minuteField: string, hourField: string): TimePattern | null {
   const plainMinute = plainValue(minuteField, MINUTE);
 
-  // Fixed minute: either a fixed time, or an every-N-hours pattern.
+  // 固定分：要么是固定时刻，要么是每 N 小时模式。
   if (plainMinute !== null) {
     const plainHour = plainValue(hourField, HOUR);
     if (plainHour !== null) {
@@ -221,25 +212,23 @@ function parseTimeFields(minuteField: string, hourField: string): TimePattern | 
     };
   }
 
-  // Wildcard/stepped minute: an every-N-minutes pattern with an hour-granular
-  // window. The model carries a single step, so a real hour step cannot be
-  // combined with a minute step — but a step of 1 selects every hour, which is
-  // just the unstepped field written out ("*/1" ≡ "*").
+  // 通配/步长的分：每 N 分钟模式带小时粒度窗口。模型只携带一个步长，所以真实的小
+  // 时步长不能与分步长叠加——但步长 1 选出每小时，那只是未步长字段的展开写法
+  // （"*/1" ≡ "*"）。
   const interval = parseMinuteInterval(minuteField);
   if (interval === null) return null;
   let window: { from: string; to: string } | null;
   const hour = parseHourPattern(hourField);
   if (hour === null) return null;
   if (hour.range === null) {
-    // An all-day hour field — "*/N", or the "0-23/N" that means the same — is a
-    // second step dimension once its step is real; the model has one step.
+    // 全天小时字段——"*/N" 或表达同义的 "0-23/N"——在其步长真实时就是第二个步长
+    // 维度；模型只有一个步长。
     if (hour.interval !== 1) return null;
     window = null;
   } else {
     const { lo, hi } = hour.range;
-    // A step wider than the range it steps over never gets past that range's
-    // first hour, so it selects that hour alone — a one-hour window, not a
-    // second step. "9-9/3" and "9-21/23" both mean 09:00–09:59 here.
+    // 比所跨区间还宽的步长永远走不出该区间的首小时，所以它选的就是那一小时——
+    // 一小时窗口，而非第二个步长。"9-9/3" 与 "9-21/23" 在这里都指 09:00–09:59。
     const selectsOneHour = hour.interval > hi - lo;
     if (!selectsOneHour && hour.interval !== 1) return null;
     window = { from: `${pad2(lo)}:00`, to: `${pad2(selectsOneHour ? lo : hi)}:59` };
@@ -247,15 +236,13 @@ function parseTimeFields(minuteField: string, hourField: string): TimePattern | 
   return { kind: "every", unit: "minutes", interval, minute: 0, window };
 }
 
-/** The backend accepts three kinds of lexical variance the parsers below do not:
- *  it splits list fields with strings.FieldsFunc, which DROPS empty elements
- *  ("1-5," is Mon–Fri to it, ",9" is hour 9, "1,,5" is {Mon, Fri}), it parses
- *  every number with strconv.Atoi, which takes leading zeros and a plus sign
- *  ("009", "+9" and "00/05" are 9, 9 and 0/5 to it), and it decides a range is a
- *  wildcard on its LOW END ALONE — see normalizeRange. Every field is normalized
- *  here, once, before any of the parsers below see it: a parser left to remember
- *  this rule itself would, when it forgets, grey out the whole editor on a
- *  schedule the server runs perfectly happily. */
+/** 后端接受三类下面的解析器不接受的词法变化：它用 strings.FieldsFunc 切列表字段，
+ *  会 DROP 空元素（"1-5," 对它而言是周一至周五，",9" 是第 9 小时，"1,,5" 是
+ *  {周一, 周五}）；它用 strconv.Atoi 解析每个数字，能吃前导零与正号（"009"、"+9"
+ *  与 "00/05" 分别是 9、9 与 0/5）；它还只用区间的 LOW END 单独判定是不是通配——
+ *  见 normalizeRange。每个字段在进入下面的任一解析器之前都要在这里归一化一次：
+ *  若让解析器自己记这条规则，一旦它忘了，就会把服务器跑得高高兴兴的计划搞到整页
+ *  控件置灰。 */
 function normalizeField(field: string): string {
   return field
     .split(",")
@@ -263,8 +250,8 @@ function normalizeField(field: string): string {
     .map(normalizeRange)
     .map((part) =>
       part.replace(/\+?\d+/g, (num) => {
-        // Numbers past the safe-integer range overflow Atoi and are a syntax
-        // error server-side; left alone, the parsers reject them the same way.
+        // 超过安全整数范围的数字会让服务端 Atoi 溢出、是语法错误；留着不改，
+        // 下面的解析器会以同样方式拒绝它们。
         const n = Number(num);
         return Number.isSafeInteger(n) ? String(n) : num;
       }),
@@ -272,17 +259,14 @@ function normalizeField(field: string): string {
     .join(",");
 }
 
-/** robfig tests a range's LOW END for "*" or "?" (parser.go:261) and, when it
- *  matches, takes the whole range as the field's full span — never looking at
- *  what followed the "-". So "?" is "*", and so are "*-19", "?-5" and even
- *  "*-19-25": the upper end is not merely unchecked, it is unread. A step
- *  survives ("?/2" is "*\/2", "*-19/2" is "*\/2" — the low end sets the span, the
- *  step still walks it), and only the low end is rewritten here, so "9-?" stays
- *  the syntax error it is to the server.
+/** robfig 用区间 LOW END 测 "*" 或 "?"（parser.go:261），命中就把整个区间当作该
+ *  字段的全宽——绝不再看 "-" 后面是什么。所以 "?" 就是 "*"，"*-19"、"?-5" 甚至
+ *  "*-19-25" 也都是：上端不只是不检查，是不读。步长仍会保留（"?/2" 是 "*\/2"，
+ *  "*-19/2" 是 "*\/2"——低端定全宽，步长照样走），而这里只重写低端，所以 "9-?"
+ *  保持它对服务器而言的语法错误身份。
  *
- *  Odd, and load-bearing: these are wildcards to the parser that will run the
- *  schedule, so an editor that called them unrepresentable would grey out its
- *  controls over an expression that means "every hour". */
+ *  怪异但关键：对将执行计划的解析器它们都是通配，编辑器若宣称"无法表达"就会在
+ *  一个明明"每小时"的表达式上把控件全置灰。 */
 function normalizeRange(part: string): string {
   const slash = part.indexOf("/");
   const range = slash === -1 ? part : part.slice(0, slash);
@@ -291,30 +275,24 @@ function normalizeRange(part: string): string {
   return low === "*" || low === "?" ? `*${step}` : part;
 }
 
-/** A step wider than the range it steps over never gets past that range's first
- *  value, so it means a fixed value: "*\/65" on minutes is 0, "*\/24" on hours is
- *  0, "10-20/30" is 10, "*\/40" on day-of-month is the 1st. The server runs all of
- *  these happily, and a fixed value is something the model has always had a slot
- *  for. Rewriting them as that value is what lets the controls take them; without
- *  it the editor greys itself out over a schedule it fully understands, and tells
- *  the user — untruthfully — that the controls cannot represent it.
+/** 比所跨区间还宽的步长永远走不出该区间首值，所以它表达一个固定值：分钟上的
+ *  "*\/65" 是 0、小时上的 "*\/24" 是 0、"10-20/30" 是 10、月日上的 "*\/40" 是 1 号。
+ *  服务器全都跑得好好的，而固定值一直是模型有槽可放的东西。把它们重写为那个值，
+ *  控件才接得住；不重写，编辑器就会在一个自己完全理解、还要向用户不实地宣称
+ *  "控件表达不了"的计划上把自己置灰。
  *
- *  `rangeSlot` marks a field the model holds as a range rather than as a value:
- *  hour, and only hour. Such a field is never collapsed while the parser can still
- *  read it exactly — neither a stepless "9-9" (the one-hour window the editor
- *  writes when a dragged window start meets its end) nor a stepped "9-9/3" (the
- *  same window at interval 3) may come back as a fixed time, or the every/unit/
- *  window controls the user set are silently discarded on reload. Only a step past
- *  what the model's interval can hold (> max) still collapses there, since
- *  parseHourPattern would refuse it and the expression would grey the editor out
- *  instead. Minute and day-of-month hold a value and not a range, so they collapse
- *  in every form, "5-5" included.
+ *  `rangeSlot` 标记一个模型按"区间"而非"值"持有的字段：小时，且只有小时。这样的
+ *  字段在解析器仍能精确读它时绝不折叠——无步长的 "9-9"（编辑器在拖拽窗口起点追上
+ *  终点时写出的单小时窗口）与带步长的 "9-9/3"（间隔为 3 的同一窗口）都不能退回成
+ *  固定时刻，否则用户设的 every/unit/window 控件会在重载时被悄悄丢弃。只有超出
+ *  模型 interval 能容纳的步长（> max）才在小时上折叠，因为 parseHourPattern 会拒绝
+ *  它、表达式会把编辑器置灰。分钟与月日持有的是值不是区间，所以它们任何形式都折叠，
+ *  含 "5-5"。
  *
- *  Safe on day-of-month, where the star bit decides whether dom and dow are ORed
- *  or ANDed: robfig clears that bit for any step above 1 (parser.go:297), so
- *  "*\/40" is already a restricted field, and "1" is another — the collapse cannot
- *  flip "the 1st, or any Monday" into "the 1st, if it is a Monday". Month is left
- *  alone: any pinned month is beyond the model regardless. */
+ *  在月日上安全：那里 star 位决定 dom 与 dow 是 OR 还是 AND——robfig 对任何大于 1
+ *  的步长清掉该位（parser.go:297），所以 "*\/40" 已是受限字段，"1" 也是——折叠不会
+ *  把 "1 号，或任意周一" 翻转成 "1 号，且是周一"。月份不碰：无论钉在哪个月都已超出
+ *  模型。 */
 function collapseDegenerateRange(
   field: string,
   bounds: FieldBounds,
@@ -324,11 +302,11 @@ function collapseDegenerateRange(
     .split(",")
     .map((part) => {
       const r = parseRangePart(part, bounds);
-      // Not the grammar's shape at all: leave it be, and let the field's own
-      // parser refuse it and send the expression to advanced-only.
+      // 完全不是该语法的形状：放它走，让字段自己的解析器拒绝它、把表达式送进
+      // 仅高级。
       if (r === null) return part;
-      // A range-slot field keeps every range its parser can still read exactly:
-      // stepless ("9-9"), and stepped within the model's interval ("9-9/3").
+      // 区间槽字段保留其解析器仍能精确读的每个区间：无步长的（"9-9"），以及在
+      // 模型 interval 范围内的带步长（"9-9/3"）。
       if (rangeSlot && !r.stepped) return part;
       if (rangeSlot && r.explicitRange && r.step <= bounds.max) return part;
       return r.step > r.hi - r.lo ? String(r.lo) : part;
@@ -336,20 +314,15 @@ function collapseDegenerateRange(
     .join(",");
 }
 
-/** A list with a step-1 wildcard element among its parts selects every value
- *  the field has, star bit included: robfig ORs a list's parts together, the
- *  wildcard part already spans the field, and a step of 1 is what keeps its
- *  star bit set (parser.go:297) — so "1,*" IS "*", right down to the AND-or-OR
- *  choice that bit drives between dom and dow. The parsers below read lists
- *  only where the model enumerates them (day-of-week), so without this rewrite
- *  a "0,*" minute greys the whole editor out over a schedule that means
- *  "every minute".
+/** 列表里含步长 1 的通配元素时，选的就是字段的全部值，含 star 位：robfig 把列表
+ *  各部分做 OR，通配部分已覆盖整个字段，步长 1 正是保住其 star 位的方式
+ *  （parser.go:297）——所以 "1,*" 就是 "*"，一路包含那位在 dom 与 dow 之间驱动
+ *  AND-or-OR 的选择。下面的解析器只在模型可枚举的字段（星期）读列表，不做这个
+ *  重写的话，"0,*" 的分字段会在"每分钟"的计划上把整页编辑器置灰。
  *
- *  Collapsed only when EVERY part parses: "*,abc" and "*,60" are syntax errors
- *  to the server, and a collapse that read just the wildcard part would
- *  structure an expression the server rejects. A list whose wildcard parts all
- *  carry real steps ("*\/2,*\/3") spans nothing by itself and is left for the
- *  field's own parser to judge. */
+ *  只有每一部分都能解析时才折叠："*,abc" 与 "*,60" 对服务器是语法错误，只读了
+ *  通配部分的折叠会把服务器拒绝的表达式结构化。全带真实步长的通配列表
+ *  （"*\/2,*\/3"）本身不覆盖任何东西，留给字段自己的解析器判定。 */
 function collapseWildcardList(field: string, bounds: FieldBounds): string {
   const parts = field.split(",");
   if (parts.length < 2) return field;
@@ -358,34 +331,27 @@ function collapseWildcardList(field: string, bounds: FieldBounds): string {
   return ranges.some((r) => r!.wildcard && r!.step === 1) ? "*" : field;
 }
 
-/** The two prefixes robfig's Parse reads a timezone from. */
+/** robfig 的 Parse 从中读时区的两个前缀。 */
 export function hasTimezonePrefix(s: string): boolean {
   return s.startsWith("TZ=") || s.startsWith("CRON_TZ=");
 }
 
-/** robfig's Parse reads an optional `TZ=` / `CRON_TZ=` prefix off the
- *  expression before the fields — case-sensitively, on the untrimmed text, up
- *  to the FIRST LITERAL SPACE (parser.go, `strings.Index(spec, " ")`) — and the
- *  embedded zone then overrides the schedule's own timezone column: both go
- *  through the same LoadLocation, so `CRON_TZ=Asia/Tokyo 0 9 * * *` with the
- *  column at UTC fires at 09:00 Tokyo. A prefixed expression IS the pair
- *  (timezone, fields), and extracting it into the editor's timezone field is
- *  exact — it is what keeps the timezone picker truthful over an expression
- *  that would otherwise silently overrule it.
+/** robfig 的 Parse 在读字段前从表达式开头读一个可选的 `TZ=` / `CRON_TZ=` 前缀——
+ *  大小写敏感、作用于未 trim 的文本、到第一个字面空格为止（parser.go 的
+ *  `strings.Index(spec, " ")`）——内嵌时区随后覆盖计划自己的时区列：两者走同一个
+ *  LoadLocation，所以 `CRON_TZ=Asia/Tokyo 0 9 * * *` 配上 UTC 列会在东京时间 09:00
+ *  触发。带前缀的表达式本身就是（时区, 字段）这一对，把它拆进编辑器的时区字段是
+ *  精确的——正是它让时区选择器在面对一个会静默凌驾于其上的表达式时仍然诚实。
  *
- *  Null when there is nothing robfig would read as a prefix, and for the shapes
- *  it would read but the editor must not touch:
- *  - no space at all ("TZ=UTC"): robfig v3.0.1 panics on it (parser.go:99), so
- *    it stays verbatim in advanced, where the server (guarded) calls it invalid;
- *  - a second prefix right behind the first: robfig strips ONE prefix and reads
- *    the second as a field, so extraction would quietly turn a rejected
- *    expression into an accepted one;
- *  - a zone the picker could not have offered (isPickerZone). config.timezone
- *    is a picker value and a formatter argument, so only names the browser can
- *    hold there are extracted. "TZ=Local 0 9 * * *" — legal server-side, where
- *    it means the SERVER host's zone — stays verbatim in advanced and keeps
- *    running exactly as written; so does a zone the server would reject, whose
- *    honest echo is the raw text under the server's own error. */
+ *  对 robfig 读不出前缀、以及它读得出但编辑器不能碰的形状返回 null：
+ *  - 完全没有空格（"TZ=UTC"）：robfig v3.0.1 会对它 panic（parser.go:99），所以
+ *    原样留在高级模式，由服务端（有护栏）判它非法；
+ *  - 第一个前缀后面紧跟着第二个前缀：robfig 剥掉一个前缀，把第二个当字段读，拆解
+ *    会把一个被拒的表达式悄悄变成被接受的；
+ *  - 选择器给不出的时区（isPickerZone）。config.timezone 既是选择器值又是格式化
+ *    参数，只有浏览器能放住的名字才被拆出。"TZ=Local 0 9 * * *"——服务端合法，
+ *    指 SERVER 宿主时区——原样留在高级模式照旧运行；服务器会拒绝的时区也如此，
+ *    其诚实的回显就是在服务端自己的报错下展示原始文本。 */
 export function extractTimezonePrefix(expr: string): { timezone: string; rest: string } | null {
   if (!hasTimezonePrefix(expr)) return null;
   const space = expr.indexOf(" ");
@@ -394,22 +360,19 @@ export function extractTimezonePrefix(expr: string): { timezone: string; rest: s
   const rest = expr.slice(space).trim();
   if (rest.length === 0) return null;
   if (hasTimezonePrefix(rest)) return null;
-  // An empty name loads as UTC server-side (LoadLocation("")); say so.
+  // 空名在服务端按 UTC 加载（LoadLocation("")）；把这话说破。
   const timezone = canonicalPickerZone(name === "" ? "UTC" : name);
   if (timezone === null) return null;
   return { timezone, rest };
 }
 
-/** The zone as the picker's list spells it, or null when the browser cannot
- *  hold it at all — as the picker's value or as an Intl formatter argument.
- *  Intl reads zone names case-insensitively, so "asia/shanghai" is a real zone
- *  to it; putting THAT spelling in the config would seat a duplicate next to
- *  the list's own "Asia/Shanghai" entry. resolvedOptions canonicalizes the
- *  name, which is also the spelling the server's LoadLocation is guaranteed to
- *  load — lowercase only ever worked there by the grace of a case-insensitive
- *  filesystem. Where the browser and the server genuinely part ways ("Local",
- *  tab-ridden garbage), the browser is the authority here, because
- *  config.timezone is a browser-side value. */
+/** 把时区规范成选择器列表拼写的形式；浏览器根本放不住（作为选择器值或 Intl
+ *  格式化参数都放不住）时返回 null。Intl 大小写不敏感地读时区名，所以
+ *  "asia/shanghai" 对它也是真时区；把那种拼写放进 config 会在列表自己的
+ *  "Asia/Shanghai" 条目旁座出一个重复项。resolvedOptions 会规范化名字——这也正是
+ *  服务器 LoadLocation 保证能加载的拼写（小写只在碰巧大小写不敏感的文件系统上
+ *  才成功过）。浏览器与服务器真正分道扬镳的地方（"Local"、满是制表符的垃圾），
+ *  以浏览器为准，因为 config.timezone 是浏览器侧的值。 */
 function canonicalPickerZone(tz: string): string | null {
   try {
     return new Intl.DateTimeFormat(undefined, { timeZone: tz }).resolvedOptions().timeZone;
@@ -418,12 +381,13 @@ function canonicalPickerZone(tz: string): string | null {
   }
 }
 
+/** 把 cron 表达式解析回结构化配置；解析不出的部分一律落进 `raw`（仅高级模式），
+ *  结构化模型仍由编辑器默认值占位。
+ */
 export function parseCron(expr: string, timezone: string): ScheduleConfig {
-  // The prefix is extracted whether or not the rest is structurable: the zone
-  // rides in `timezone` either way, and `raw` keeps only the fields. This is
-  // the inverse of toCron, which puts the prefix back on the way out — and it
-  // also hydrates legacy rows saved before expressions carried one, for which
-  // the caller passes the timezone column as the fallback.
+  // 前缀无论其余部分能否结构化都先拆出：时区无论如何都乘进 `timezone`，`raw`
+  // 只留字段。这与 toCron 相反——后者在出去时把前缀装回去——同时它也水合那些
+  // 在表达式携带前缀之前存下的旧行，调用方把时区列作为回退传进来。
   const prefix = extractTimezonePrefix(expr);
   const tz = prefix === null ? timezone : prefix.timezone;
   const body = prefix === null ? expr : prefix.rest;
@@ -458,8 +422,8 @@ export function parseCron(expr: string, timezone: string): ScheduleConfig {
       days = { kind: "weekly", daysOfWeek };
     }
   } else {
-    // A pinned day-of-month is only structurable when dow is unrestricted:
-    // cron treats dom+dow as OR, which the model cannot express.
+    // 钉死月日只有在 dow 不受限时才能结构化：cron 把 dom+dow 当 OR，那是模型无法
+    // 表达的。
     if (dowField !== "*") return advanced;
     const dayOfMonth = plainValue(domField, DOM);
     if (dayOfMonth === null) return advanced;
@@ -472,38 +436,29 @@ export function parseCron(expr: string, timezone: string): ScheduleConfig {
   return { time, days, timezone: tz, raw: null };
 }
 
-/** The wire expression: the timezone rides IN the cron string, as a `TZ=`
- *  prefix, on every save and every preview. robfig reads an embedded zone
- *  before the schedule's own timezone column, so a bare expression next to the
- *  column is two sources of truth with a silent override rule between them —
- *  prefixing unconditionally leaves exactly one. The column is still written,
- *  as a mirror: display surfaces and the preview endpoint's invalid_timezone
- *  classification read it, and it always agrees with the prefix.
+/** 线上表达式：时区乘在 cron 字符串里，作为 `TZ=` 前缀，每次保存、每次预览都是。
+ *  robfig 在读计划自己的时区列之前先读内嵌时区，所以"裸表达式 + 列"是两个真源、
+ *  之间有静默覆盖规则；无条件加前缀就只剩一个。列仍会写一份，作为镜像：展示面与
+ *  预览端点的 invalid_timezone 归类读它，且它永远与前缀一致。
  *
- *  The one shape that is NOT prefixed is an advanced `raw` that already starts
- *  with a prefix of its own: that is a typed expression awaiting the server's
- *  verdict (see applyDraft), and stacking a second prefix on it would make
- *  robfig read the first as the zone and the second as a field. It goes out
- *  verbatim — the embedded zone wins server-side, which is what the text says. */
+ *  唯一不前缀的形状是：本身已带自己前缀的高级 `raw`——那是一段等待服务器裁决的
+ *  输入表达式（见 applyDraft），再叠一个前缀会让 robfig 把第一个当前缀、第二个当
+ *  字段。它一字不改地出去——服务端胜出的是内嵌时区，这正是文本所言的。 */
 export function toCron(config: ScheduleConfig): string {
   const fields = cronFields(config);
   if (hasTimezonePrefix(fields)) return fields;
-  // Leading/trailing whitespace would not survive the prefix — robfig (and
-  // parseCron) trim the text after the zone, so prefixing would silently edit
-  // the very characters that make such an expression the rejection it is —
-  // and an empty expression has nothing to put one on.
+  // 首尾空白经不起加前缀——robfig（以及 parseCron）在时区后 trim 文本，加前缀会
+  // 悄悄改掉那些恰好让该表达式成为被拒之身的字符——而空表达式也没有可加前缀之物。
   if (fields === "" || fields !== fields.trim()) return fields;
-  // A zone name with a space in it would end at that space to robfig and hand
-  // the remainder to the field parser. IANA names never contain one (the picker
-  // could not have offered it), so this only guards a corrupt config — which
-  // degrades to the bare expression the timezone column already covers.
+  // 带空格的时区名会在那个空格处被 robfig 切断、把其余交给字段解析器。IANA 名
+  // 从不含空格（选择器给不出这种值），所以这里只护一份损坏的 config——它降级为
+  // 时区列已覆盖的裸表达式。
   if (config.timezone === "" || config.timezone.includes(" ")) return fields;
   return `TZ=${config.timezone} ${fields}`;
 }
 
-/** The schedule's five fields alone — the editable text of the cron box, whose
- *  `TZ=` prefix is a fixed group-input segment drawn from config.timezone, not
- *  characters in the field. Advanced expressions round-trip verbatim here. */
+/** 计划的五个字段本身——cron 框的可编辑文本，它的 `TZ=` 前缀是从 config.timezone
+ *  拉来的固定组输入段，不是框里的字符。高级表达式在这里一字不改地往返。 */
 export function cronFields(config: ScheduleConfig): string {
   if (config.raw !== null) return config.raw;
 
@@ -512,8 +467,7 @@ export function cronFields(config: ScheduleConfig): string {
   if (config.days.kind === "monthly") {
     dom = String(config.days.dayOfMonth);
   } else if (config.days.kind === "weekly") {
-    // The editor keeps at least one day selected; serialize defensively to
-    // Monday rather than emit an empty field.
+    // 编辑器始终保持至少选中一天；这里防御性地序列化成周一，而不是吐一个空字段。
     dow = config.days.daysOfWeek.length > 0 ? dowFieldFromDays(config.days.daysOfWeek) : "1";
   }
 

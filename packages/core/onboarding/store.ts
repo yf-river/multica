@@ -1,32 +1,30 @@
+// 本文件实现 onboarding 的持久化动作：保存问卷、完成引导、加入云端 waitlist。
+
 import { api } from "../api";
 import { useAuthStore } from "../auth";
 import { setPersonProperties } from "../analytics";
 import type { OnboardingCompletionPath, QuestionnaireAnswers } from "./types";
 
 /**
- * Persist questionnaire answers (one or more slots at a time — each
- * onboarding step PATCHes its own slot) and sync the refreshed user
- * into the auth store. Source of truth is
- * `user.onboarding_questionnaire` (JSONB on the server). No
- * client-side cache here.
+ * 持久化问卷答案（一次一个或多个槽位——每个引导步骤只 PATCH 自己的槽位），
+ * 并把刷新后的用户同步进 auth store。真源是 `user.onboarding_questionnaire`
+ * （服务端 JSONB 列），这里不做客户端缓存。
  *
- * Resume-by-step is intentionally not persisted: every onboarding
- * entry starts at Welcome. Answered slots are pre-filled on
- * re-entry; skipped slots are treated as fresh (the user can answer
- * this time).
+ * 刻意不持久化「按步骤断点续走」：每次进入引导都从 Welcome 开始。已答过的
+ * 槽位在重进时预填；跳过的槽位当作全新（这次用户可以作答）。
+ *
+ * @param answers - 要保存的问卷答案（部分）
  */
 export async function saveQuestionnaire(
   answers: Partial<QuestionnaireAnswers>,
 ): Promise<void> {
   const user = await api.patchOnboarding({ questionnaire: answers });
   useAuthStore.getState().setUser(user);
-  // Mirror the three cohort signals into person properties so every
-  // PostHog event on this user can be broken down by source / role /
-  // use_case without re-joining the DB. `source` is single-select but
-  // shipped as a one-element array for v2 back-compat with the JSONB
-  // column; `use_case` is multi-select. PostHog accepts array property
-  // values, and breakdowns split each element into its own group — so
-  // single-element source still slices cleanly.
+  // 把三个队列信号镜像成 person properties，这样该用户的每条 PostHog 事件
+  // 都能按 source / role / use_case 拆解，无需回连数据库。`source` 单选但以
+  // 单元素数组形式提交（兼容 JSONB 列的 v2 结构）；`use_case` 多选。PostHog
+  // 接受数组属性值，拆解时会把每个元素拆成一组——单元素 source 因此也能干净
+  // 切分。
   const sourceList = answers.source ?? [];
   const useCaseList = answers.use_case ?? [];
   if (sourceList.length > 0 || answers.role || useCaseList.length > 0) {
@@ -39,20 +37,20 @@ export async function saveQuestionnaire(
 }
 
 /**
- * Finalize onboarding. POST /complete marks `onboarded_at` atomically
- * (COALESCE-guarded for idempotency) and emits the `onboarding_completed`
- * analytics event exactly once. We then refresh the auth store so every
- * gate sees the updated user — most importantly the workspace layout
- * hard gate that redirects un-onboarded users back to /onboarding.
+ * 完成引导。POST /complete 原子地标记 `onboarded_at`（用 COALESCE 保护幂等），
+ * 并恰好发出一次 `onboarding_completed` 分析事件。随后刷新 auth store，让
+ * 每个闸门都看到更新后的用户——最重要的是工作区布局的硬闸门：它会把未完成
+ * 引导的用户重定向回 /onboarding。
  *
- * This is the only frontend mechanism that flips `onboarded_at`.
- * Runtime-connected onboarding creates Mika and enqueues the hidden opening
- * turn before calling this function. The explicit no-runtime path may seed
- * one setup-guide issue after navigation.
+ * 这是前端唯一会翻转 `onboarded_at` 的机制。连了 runtime 的引导会在调用本
+ * 函数前创建 Mika 并排入隐藏的开场回合；显式「不连 runtime」的路径可能在
+ * 导航后种一条 setup-guide issue。
  *
- * `completionPath` is the client's view of which Step-3 exit the user
- * took; the server funnel-splits `onboarding_completed` on this value.
- * Legacy callers that don't pass a path get recorded as `unknown`.
+ * `completionPath` 是客户端对自己走了哪个 Step-3 出口的判断；服务端会按它
+ * 给 `onboarding_completed` 做漏斗切分。不传路径的旧调用方会被记成 `unknown`。
+ *
+ * @param completionPath - 完成路径（可选）
+ * @param workspaceId - 工作区 id（可选）
  */
 export async function completeOnboarding(
   completionPath?: OnboardingCompletionPath,
@@ -67,13 +65,14 @@ export async function completeOnboarding(
 }
 
 /**
- * Records interest in cloud runtimes. Pure side effect — does NOT
- * complete onboarding; the user still has to pick a real Step 3
- * path (CLI with a detected runtime) or Skip to move on.
+ * 记录对云 runtime 的兴趣。纯副作用——不会完成引导；用户仍须选一条真实的
+ * Step-3 路径（检测到 runtime 的 CLI）或点 Skip 才能继续。
  *
- * Returned user object is not synced into the auth store because no
- * user-visible field (`onboarded_at`, anything in `UserResponse`)
- * actually changes here.
+ * 返回的 user 对象不同步进 auth store：这里没有任何用户可见字段
+ * （`onboarded_at`、`UserResponse` 里的任何东西）真的变化。
+ *
+ * @param email - 邮箱
+ * @param reason - 感兴趣的原因
  */
 export async function joinCloudWaitlist(
   email: string,

@@ -1,5 +1,13 @@
 "use client";
 
+/**
+ * 官网「功能亮点」区块：依次展示团队协作（Teammates）、自主执行（Autonomous）、
+ * 技能库（Skills）、运行时用量（Runtimes）四个核心能力的模拟界面。
+ *
+ * 这些可视化界面都是纯前端的静态演示：数据全部硬编码，样式复刻真实产品界面，
+ * 但刻意不依赖任何真实接口或 workspace 登录态，方便营销页无登录渲染。
+ * 左侧导航锚点 + IntersectionObserver 联动滚动高亮。
+ */
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import {
@@ -26,8 +34,8 @@ import { StatusIcon, PriorityIcon } from "@multica/views/issues/components";
 import type { IssueStatusCategory, IssuePriority } from "@multica/core/types";
 
 /* ------------------------------------------------------------------ */
-/*  Mock ActorAvatar — mirrors the real ActorAvatar styling exactly     */
-/*  but uses hardcoded data instead of the workspace store             */
+/*  MockAvatar：样式复刻真实的 ActorAvatar，                            */
+/*  但只用硬编码数据，不读 workspace store                              */
 /* ------------------------------------------------------------------ */
 
 function MockAvatar({
@@ -54,7 +62,7 @@ function MockAvatar({
 }
 
 /* ------------------------------------------------------------------ */
-/*  Mock PropRow — mirrors the real PropRow from issue-detail           */
+/*  MockPropRow：复刻 issue 详情页里的属性行（标签 + 值）               */
 /* ------------------------------------------------------------------ */
 
 function PropRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -69,7 +77,7 @@ function PropRow({ label, children }: { label: string; children: React.ReactNode
 }
 
 /* ------------------------------------------------------------------ */
-/*  Teammates feature visual                                           */
+/*  功能一：团队协作 —— 复刻 issue 详情的动态时间线 + 属性编辑            */
 /* ------------------------------------------------------------------ */
 
 const mockTimeline = [
@@ -174,7 +182,7 @@ function TeammatesVisual() {
 
   return (
     <div className="relative aspect-video overflow-hidden rounded-lg border bg-background text-foreground shadow-2xl">
-      {/* Header bar */}
+      {/* 模拟窗口顶部地址/标题栏 */}
       <div className="flex h-10 shrink-0 items-center border-b bg-background px-4 text-body">
         <div className="flex items-center gap-1.5 min-w-0 text-caption">
           <span className="text-muted-foreground">Multica 演示</span>
@@ -186,7 +194,7 @@ function TeammatesVisual() {
       </div>
 
       <div className="flex h-[calc(100%-40px)]">
-        {/* Main content area */}
+        {/* 主内容区：动态时间线 */}
         <div className="flex-1 overflow-hidden px-8 py-5">
           <h3 className="text-title font-bold leading-snug tracking-tight">
             重构 API 错误处理中间件
@@ -239,7 +247,7 @@ function TeammatesVisual() {
           </div>
         </div>
 
-        {/* Properties sidebar */}
+        {/* 右侧属性栏：状态 / 优先级 / 负责人，均可点击切换 */}
         <div className="w-[220px] shrink-0 overflow-hidden border-l">
           <div className="p-4 space-y-4">
             <div>
@@ -248,7 +256,7 @@ function TeammatesVisual() {
                 属性
               </div>
               <div className="space-y-0.5 pl-2">
-                {/* Status — clickable with dropdown */}
+                {/* 状态 —— 点击展开下拉选择 */}
                 <div className="relative">
                   <PropRow label="状态">
                     <button
@@ -281,7 +289,7 @@ function TeammatesVisual() {
                   )}
                 </div>
 
-                {/* Priority — clickable with dropdown */}
+                {/* 优先级 —— 点击展开下拉选择 */}
                 <div className="relative">
                   <PropRow label="优先级">
                     <button
@@ -314,7 +322,7 @@ function TeammatesVisual() {
                   )}
                 </div>
 
-                {/* Assignee — clickable to toggle picker */}
+                {/* 负责人 —— 点击展开成员/智能体选择器 */}
                 <PropRow label="负责人">
                   <button
                     type="button"
@@ -334,7 +342,7 @@ function TeammatesVisual() {
               </div>
             </div>
 
-            {/* Assignee picker — togglable */}
+            {/* 负责人选择器 —— 可开合的下拉面板 */}
             {pickerOpen && (
               <div className="overflow-hidden rounded-md border bg-popover shadow-md">
                 <div className="border-b px-3 py-1.5 text-caption text-muted-foreground">
@@ -406,7 +414,7 @@ function TeammatesVisual() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Autonomous feature visual — agent live execution card               */
+/*  功能二：自主执行 —— 模拟智能体实时运行卡片（工具调用 + 任务历史）    */
 /* ------------------------------------------------------------------ */
 
 const mockToolCalls = [
@@ -433,7 +441,7 @@ function AutonomousVisual() {
 
   return (
     <div className="relative aspect-video overflow-hidden rounded-lg border bg-background text-foreground shadow-2xl">
-      {/* Header bar */}
+      {/* 模拟窗口顶部地址/标题栏 */}
       <div className="flex h-10 shrink-0 items-center border-b bg-background px-4 text-body">
         <div className="flex items-center gap-1.5 min-w-0 text-caption">
           <span className="text-muted-foreground">Multica 演示</span>
@@ -445,9 +453,9 @@ function AutonomousVisual() {
       </div>
 
       <div className="flex-1 overflow-hidden px-8 py-5">
-        {/* Agent live card */}
+        {/* Agent 实时工作卡片 */}
         <div className="rounded-lg border border-info/20 bg-info/5">
-          {/* Live card header */}
+          {/* 卡片头部：状态 + 已用时长 + 工具调用次数 */}
           <div className="flex items-center gap-2 px-3 py-2">
             <div className="flex h-5 w-5 items-center justify-center rounded-full bg-info/10 text-info">
               <Bot className="h-3 w-3" />
@@ -460,7 +468,7 @@ function AutonomousVisual() {
             <span className="text-caption text-muted-foreground">10 次工具调用</span>
           </div>
 
-          {/* Tool call timeline */}
+          {/* 工具调用时间线 */}
           <div className="max-h-48 overflow-hidden px-3 pb-2 space-y-0.5">
             {mockToolCalls.map((item, i) => {
               const isExpanded = expanded === i;
@@ -495,7 +503,7 @@ function AutonomousVisual() {
                 );
               }
 
-              /* tool_result */
+              /* 工具执行结果 */
               return (
                 <button
                   type="button"
@@ -512,7 +520,7 @@ function AutonomousVisual() {
           </div>
         </div>
 
-        {/* Task run history */}
+        {/* 任务执行历史 */}
         <div className="mt-4">
           <span className="text-caption font-medium text-muted-foreground">任务执行历史</span>
           <div className="mt-2 space-y-1.5">
@@ -537,7 +545,7 @@ function AutonomousVisual() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Skills feature visual — skill library + file browser               */
+/*  功能三：技能库 —— 模拟技能列表 + SKILL.md 文件浏览器                */
 /* ------------------------------------------------------------------ */
 
 const mockSkills = [
@@ -561,7 +569,7 @@ function SkillsVisual() {
   return (
     <div className="relative aspect-video overflow-hidden rounded-lg border bg-background text-foreground shadow-2xl">
       <div className="flex h-full">
-        {/* Skills list panel */}
+        {/* 左侧技能列表面板 */}
         <div className="w-[200px] shrink-0 border-r flex flex-col">
           <div className="flex items-center justify-between border-b px-3 py-2">
             <span className="text-caption font-semibold">技能</span>
@@ -592,18 +600,18 @@ function SkillsVisual() {
           </div>
         </div>
 
-        {/* Skill detail */}
+        {/* 技能详情区 */}
         <div className="flex-1 flex flex-col min-w-0">
-          {/* Skill header */}
+          {/* 技能头部：名称 + 简介 */}
           <div className="flex items-center gap-2 border-b px-4 py-2.5">
             <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="text-body font-medium">{mockSkills[selectedSkill]?.name}</span>
             <span className="ml-2 text-caption text-muted-foreground">{mockSkills[selectedSkill]?.description}</span>
           </div>
 
-          {/* File browser */}
+          {/* 文件浏览器 */}
           <div className="flex flex-1 min-h-0">
-            {/* File tree */}
+            {/* 目录树 */}
             <div className="w-44 shrink-0 border-r">
               <div className="flex items-center justify-between border-b px-3 py-1.5">
                 <span className="text-micro font-semibold uppercase tracking-wider text-muted-foreground">文件</span>
@@ -636,7 +644,7 @@ function SkillsVisual() {
               </div>
             </div>
 
-            {/* File content viewer */}
+            {/* 文件内容预览区 */}
             <div className="flex-1 flex flex-col min-w-0">
               <div className="flex h-8 items-center border-b px-3">
                 <span className="text-caption font-mono text-muted-foreground">{selectedFile}</span>
@@ -644,7 +652,7 @@ function SkillsVisual() {
               <div className="flex-1 overflow-hidden p-4">
                 {selectedFile === "SKILL.md" ? (
                   <div className="space-y-3 text-caption">
-                    {/* Frontmatter */}
+                    {/* 文件元信息（frontmatter） */}
                     <div className="rounded-md border bg-muted/30 p-3">
                       <div className="grid grid-cols-[80px_1fr] gap-y-1">
                         <span className="font-medium text-muted-foreground">名称</span>
@@ -655,7 +663,7 @@ function SkillsVisual() {
                         <span>陈默</span>
                       </div>
                     </div>
-                    {/* Content */}
+                    {/* 正文内容 */}
                     <div className="space-y-2 text-muted-foreground leading-relaxed">
                       <p className="font-semibold text-foreground">编写迁移</p>
                       <p>根据请求的结构变更生成 SQL 迁移文件，结合当前数据库状态校验，并同时生成升级与回滚迁移。</p>
@@ -690,7 +698,7 @@ function SkillsVisual() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Runtimes feature visual — agent dashboard with runtime status      */
+/*  功能四：运行时 —— 模拟设备/云运行时列表 + token 用量图表             */
 /* ------------------------------------------------------------------ */
 
 const runtimeStatusConfig = {
@@ -706,7 +714,7 @@ const mockRuntimeList = [
   { name: "Linux 服务器", mode: "local" as const, status: "离线" as const, device: "x86_64 / Ubuntu 24.04", lastSeen: "3 小时前" },
 ];
 
-/* Mock usage data — deterministic seed values to avoid SSR/hydration mismatch */
+/* Mock usage data — 固定种子数据，避免 SSR/水合时的随机不一致          */
 const USAGE_SEEDS = [
   [72, 38, 54, 12], [45, 22, 41, 8], [88, 44, 63, 15], [61, 31, 48, 10],
   [93, 47, 58, 14], [55, 28, 39, 9], [79, 40, 52, 13], [67, 34, 46, 11],
@@ -726,21 +734,21 @@ const mockUsageData = USAGE_SEEDS.map((s, i) => ({
 }));
 
 
-/* Heatmap color helper — same as real ActivityHeatmap */
+/* 活跃度热力图的取色工具 —— 与真实 ActivityHeatmap 一致              */
 function getHeatmapColor(level: number): string {
   if (level === 0) return "var(--color-muted)";
   const opacities = ["25%", "45%", "68%", "90%"];
   return `color-mix(in oklch, var(--color-foreground) ${opacities[level - 1]}, transparent)`;
 }
 
-/* Generate heatmap cells — simplified version of real ActivityHeatmap */
+/* 生成热力图格子 —— 真实 ActivityHeatmap 的简化版（假随机但结果稳定）   */
 function buildHeatmapCells() {
   const WEEKS = 13;
   const cells: { week: number; day: number; level: number; date: string }[] = [];
   const today = new Date();
   const todayDay = today.getDay();
   const startOffset = todayDay + (WEEKS - 1) * 7;
-  // Deterministic pseudo-random sequence based on cell index
+  // 用「索引取模」的固定伪随机序列生成数值，保证每次渲染结果一致（避免水合抖动）。
   const seed = [3, 1, 4, 2, 0, 3, 2, 4, 1, 3, 0, 2, 4, 1, 3, 2, 0, 4, 1, 3];
 
   for (let i = 0; i <= startOffset; i++) {
@@ -748,7 +756,7 @@ function buildHeatmapCells() {
     d.setDate(today.getDate() - (startOffset - i));
     const week = Math.floor(i / 7);
     const day = d.getDay();
-    // Weekends (0=Sun, 6=Sat) get lower activity
+    // 周末（0=周日，6=周六）的活跃度设得更低，让热力图更接近真实使用节奏。
     const isWeekend = day === 0 || day === 6;
     const level = isWeekend
       ? seed[i % seed.length]! > 2 ? 1 : 0
@@ -825,7 +833,7 @@ function RuntimesVisual() {
   return (
     <div className="relative aspect-video overflow-hidden rounded-lg border bg-background text-foreground shadow-2xl">
       <div className="flex h-full">
-        {/* Runtime list */}
+        {/* 运行时列表 */}
         <div className="w-[200px] shrink-0 border-r flex flex-col">
           <div className="flex items-center justify-between border-b px-3 py-2">
             <span className="text-caption font-semibold">运行时</span>
@@ -862,9 +870,9 @@ function RuntimesVisual() {
           </div>
         </div>
 
-        {/* Detail panel */}
+        {/* 详情面板 */}
         <div className="flex-1 flex flex-col min-w-0">
-          {/* Header */}
+          {/* 面板头部 */}
           <div className="flex items-center gap-2.5 border-b px-4 py-2.5">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted">
               {mockRuntimeList[selectedRuntime]?.mode === "cloud" ? (
@@ -881,9 +889,9 @@ function RuntimesVisual() {
             <span className="text-caption text-muted-foreground">{mockRuntimeList[selectedRuntime]?.device}</span>
           </div>
 
-          {/* Usage content */}
+          {/* 用量内容区 */}
           <div className="flex-1 overflow-hidden p-4 space-y-3">
-            {/* Time range + Token cards */}
+            {/* 时间范围切换 + Token 汇总卡片 */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1">
                 {(["7d", "30d", "90d"] as const).map((range) => (
@@ -904,7 +912,7 @@ function RuntimesVisual() {
               </div>
             </div>
 
-            {/* Token summary cards — same as real TokenCard */}
+            {/* Token 汇总卡片 —— 与真实 TokenCard 一致 */}
             <div className="grid grid-cols-4 gap-2">
               {[
                 { label: "输入", value: formatTokens(totals.input) },
@@ -919,9 +927,9 @@ function RuntimesVisual() {
               ))}
             </div>
 
-            {/* Charts row — Heatmap + Hourly bar */}
+            {/* 图表行 —— 活跃度热力图 + 每日成本柱状图 */}
             <div className="grid grid-cols-2 gap-3">
-              {/* Activity Heatmap — mirrors real ActivityHeatmap */}
+              {/* 活跃度热力图 —— 复刻真实 ActivityHeatmap */}
               <div className="rounded-lg border p-3">
                 <h4 className="text-micro font-medium text-muted-foreground mb-2">活跃度</h4>
                 <div className="overflow-x-auto">
@@ -955,7 +963,7 @@ function RuntimesVisual() {
                 </div>
               </div>
 
-              {/* Daily Cost — SVG bar chart mirroring real DailyCostChart */}
+              {/* 每日成本 —— 复刻真实 DailyCostChart 的柱状图 */}
               <div className="rounded-lg border p-3">
                 <h4 className="text-micro font-medium text-muted-foreground mb-2">每日成本</h4>
                 <DailyCostBars data={mockUsageData.slice(-14)} />
@@ -971,6 +979,7 @@ function RuntimesVisual() {
   );
 }
 
+/* 组装功能区块数据：把 i18n 文案与对应的模拟视觉组件、背景图一一绑定     */
 function buildFeatures(t: LandingDict) {
   const keys = ["teammates", "autonomous", "skills", "runtimes"] as const;
   const visuals = [TeammatesVisual, AutonomousVisual, SkillsVisual, RuntimesVisual];
@@ -983,6 +992,14 @@ function buildFeatures(t: LandingDict) {
   }));
 }
 
+/**
+ * 功能亮点区块组件（官网 landing 页使用）。
+ *
+ * 采用「左侧粘性锚点导航 + 右侧长滚动面板」的布局：每个功能面板对应一个可视化演示，
+ * 滚动经过时通过 IntersectionObserver 同步高亮左侧对应锚点；点击锚点则平滑滚动到对应面板。
+ *
+ * @returns 完整的功能展示区。
+ */
 export function FeaturesSection() {
   const { t } = useLocale();
   const features = buildFeatures(t);
@@ -1020,7 +1037,7 @@ export function FeaturesSection() {
     <section id="features" className="bg-white text-[#0a0d12]">
       <div className="mx-auto max-w-[1320px] px-4 sm:px-6 lg:px-8">
         <div className="relative lg:flex lg:gap-20">
-          {/* Sticky left nav */}
+          {/* 左侧粘性导航（仅桌面端可见） */}
           <nav className="hidden lg:block lg:w-[180px] lg:shrink-0">
             <div className="sticky top-28 flex flex-col gap-0 py-28">
               {features.map((f, i) => (
@@ -1047,7 +1064,7 @@ export function FeaturesSection() {
             </div>
           </nav>
 
-          {/* Scrollable feature panels */}
+          {/* 可滚动的功能面板区 */}
           <div className="flex-1">
             {features.map((feature, i) => (
               <div
@@ -1061,7 +1078,7 @@ export function FeaturesSection() {
                   i < features.length - 1 && "border-b border-[#0a0d12]/8",
                 )}
               >
-                {/* Title + description */}
+                {/* 标题 + 简介 */}
                 <h2 className="landing-serif text-[2.6rem] leading-[1.05] tracking-[-0.03em] text-[#0a0d12] sm:text-[3.4rem] lg:text-[4.2rem]">
                   {feature.title}
                 </h2>
@@ -1069,7 +1086,7 @@ export function FeaturesSection() {
                   {feature.description}
                 </p>
 
-                {/* Visual */}
+                {/* 可视化演示区域 */}
                 <div className="mt-14 sm:mt-18">
                   {feature.visual ? (
                     <div className="relative overflow-hidden rounded-sm">
@@ -1102,7 +1119,7 @@ export function FeaturesSection() {
                   )}
                 </div>
 
-                {/* Feature cards */}
+                {/* 功能卡片（三点卖点） */}
                 <div className="mt-14 grid gap-8 sm:mt-18 md:grid-cols-3 md:gap-10">
                   {feature.cards.map((card) => (
                     <div key={card.title}>

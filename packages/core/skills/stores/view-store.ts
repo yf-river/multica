@@ -1,3 +1,8 @@
+// 本文件实现 skills 列表页的「视图偏好」store：排序、列可见性与过滤。按工作区
+// （workspace-aware 存储）、按用户/设备（localStorage）持久化。搜索文本与行
+// 选中刻意不存储——它们是会话级的，持久化会让回归用户看到一份莫名被收窄的
+// 列表。
+
 "use client";
 
 import { create } from "zustand";
@@ -8,17 +13,11 @@ import {
 } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
 
-// View preferences for the skills list page: sort, column visibility, and
-// filters. Persisted per workspace (workspace-aware storage), per user/device
-// (localStorage). Search text and row selection are deliberately NOT stored —
-// they are session-scoped, and persisting them would greet returning users
-// with an inexplicably narrowed list.
-
 export type SkillSortField = "name" | "usedBy" | "updated" | "created";
 
 export type SkillSortDirection = "asc" | "desc";
 
-/** Per-field direction applied when the user switches TO that field. */
+/** 用户切到某个字段时套用的默认方向。 */
 export const SKILL_SORT_DEFAULT_DIRECTION: Record<
   SkillSortField,
   SkillSortDirection
@@ -29,6 +28,7 @@ export const SKILL_SORT_DEFAULT_DIRECTION: Record<
   created: "desc",
 };
 
+/** 技能的来源类型。 */
 export type SkillOriginType =
   | "manual"
   | "runtime_local"
@@ -36,7 +36,7 @@ export type SkillOriginType =
   | "skills_sh"
   | "github";
 
-/** Multi-select filter state. Empty array per dimension = inactive. */
+/** 多选过滤状态。每个维度的空数组 = 未激活。 */
 export interface SkillListFilters {
   usage: ("used" | "unused")[];
   origins: SkillOriginType[];
@@ -51,8 +51,7 @@ export const EMPTY_SKILL_FILTERS: SkillListFilters = {
   creators: [],
 };
 
-// User-hideable columns. Name and the structural columns (checkbox, kebab)
-// are always visible.
+// 用户可隐藏的列。名字与结构性列（复选框、kebab 菜单）永远可见。
 export type SkillColumnKey =
   | "usedBy"
   | "source"
@@ -60,18 +59,18 @@ export type SkillColumnKey =
   | "updated"
   | "created";
 
-/** Source and created are opt-in: hidden until the user enables them. */
+/** Source 和 created 默认隐藏：用户开启才显示。 */
 export const DEFAULT_HIDDEN_COLUMNS: SkillColumnKey[] = ["source", "created"];
 
+/** skills 列表页的完整视图状态与动作。 */
 export interface SkillsViewState {
   sortField: SkillSortField;
   sortDirection: SkillSortDirection;
   hiddenColumns: SkillColumnKey[];
   filters: SkillListFilters;
-  /** Header click: toggles direction on the active field, otherwise switches
-   *  to the field with its default direction. */
+  /** 表头点击：当前字段上切换方向；否则切到该字段并套用其默认方向。 */
   toggleSort: (field: SkillSortField) => void;
-  /** Display panel select: switches field (default direction), no toggle. */
+  /** 显示面板选择：切字段（默认方向），不切换。 */
   setSortField: (field: SkillSortField) => void;
   setSortDirection: (direction: SkillSortDirection) => void;
   toggleColumn: (key: SkillColumnKey) => void;
@@ -86,6 +85,7 @@ const DEFAULTS = {
   filters: EMPTY_SKILL_FILTERS,
 };
 
+/** skills 列表视图偏好 store，按工作区 slug 分桶持久化。 */
 export const useSkillsViewStore = create<SkillsViewState>()(
   persist(
     (set) => ({
@@ -136,15 +136,13 @@ export const useSkillsViewStore = create<SkillsViewState>()(
         hiddenColumns: state.hiddenColumns,
         filters: state.filters,
       }),
-      // On rehydrate, if the new workspace has no persisted value, reset to
-      // the defaults instead of leaving the previous workspace's in-memory
-      // view state in place (same rationale as the agents view store).
+      // 水合时，若新工作区没有持久化值，就重置为默认值，而不是留下上一个
+      // 工作区的内存视图状态（与 agents 视图 store 同理由）。
       merge: (persisted, current) => {
         if (!persisted) return { ...current, ...DEFAULTS };
         const p = persisted as Partial<SkillsViewState>;
-        // Deep-merge filters so a payload persisted before a new filter
-        // dimension existed still gets that key's default instead of
-        // dropping it to undefined (which crashes `.length` reads).
+        // filters 深合并，让「早于某个新过滤维度」的持久化载荷也能拿到该 key
+        // 的默认值，而不是掉成 undefined（会导致 `.length` 读取崩溃）。
         return {
           ...current,
           ...p,

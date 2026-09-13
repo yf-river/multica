@@ -1,5 +1,9 @@
+// 本文件集中定义项目「状态」与「优先级」的展示配置：排序、文案与 Tailwind
+// 样式（文字/圆点/徽标配色）。
+
 import type { ProjectStatus, ProjectPriority } from "../types";
 
+/** 项目状态：从进行中到终止的展示顺序。 */
 export const PROJECT_STATUS_ORDER: ProjectStatus[] = [
   "planned",
   "in_progress",
@@ -8,6 +12,7 @@ export const PROJECT_STATUS_ORDER: ProjectStatus[] = [
   "cancelled",
 ];
 
+/** 各项目状态的展示文案与样式。 */
 export const PROJECT_STATUS_CONFIG: Record<
   ProjectStatus,
   { label: string; color: string; dotColor: string; badgeBg: string; badgeText: string }
@@ -19,6 +24,7 @@ export const PROJECT_STATUS_CONFIG: Record<
   cancelled: { label: "Cancelled", color: "text-destructive", dotColor: "bg-destructive", badgeBg: "bg-muted", badgeText: "text-muted-foreground" },
 };
 
+/** 项目优先级：从紧急到无的展示顺序。 */
 export const PROJECT_PRIORITY_ORDER: ProjectPriority[] = [
   "urgent",
   "high",
@@ -27,6 +33,7 @@ export const PROJECT_PRIORITY_ORDER: ProjectPriority[] = [
   "none",
 ];
 
+/** 各优先级的展示文案、条数（bars）与样式。 */
 export const PROJECT_PRIORITY_CONFIG: Record<
   ProjectPriority,
   { label: string; bars: number; color: string; badgeBg: string; badgeText: string }

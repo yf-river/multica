@@ -1,3 +1,6 @@
+// 文件职责：定义 `multica issue label` 子命令组——列出某个 issue 上挂的标签、
+// 给 issue 挂标签 / 摘标签。注意 label（标签库条目）本身的增删改查由
+// cmd_label.go 的 `multica label ...` 负责，本文件只管理「issue ↔ label」的关联。
 package main
 
 import (
@@ -10,9 +13,9 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-// multica issue label {list|add|remove} — manages the labels attached to a
-// specific issue. The label itself is managed via `multica label ...`.
-
+// issueLabelCmd 是 `issue label` 分组命令，管理挂在某个 issue 上的标签，
+// 子命令：list / add / remove。用法示例：`multica issue label {list|add|remove}`。
+// 标签条目本身归 cmd_label.go 的 `multica label ...` 管。
 var issueLabelCmd = &cobra.Command{
 	Use:   "label",
 	Short: "Manage labels on an issue",
@@ -51,10 +54,11 @@ func init() {
 	issueLabelAddCmd.Flags().Bool("full-id", false, "Show full UUIDs in table output")
 	issueLabelRemoveCmd.Flags().Bool("full-id", false, "Show full UUIDs in table output")
 
-	// Register under the top-level `issue` command.
+	// 挂在顶层 `issue` 命令下，形成 `multica issue label ...` 的调用路径。
 	issueCmd.AddCommand(issueLabelCmd)
 }
 
+// runIssueLabelList 执行 `issue label list <issue-id>`：列出该 issue 上已挂的标签。
 func runIssueLabelList(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -83,6 +87,8 @@ func runIssueLabelList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssueLabelAdd 执行 `issue label add <issue-id> <label-id>`：把某个标签挂到
+// issue 上，成功后照例把最新标签列表打给用户看。
 func runIssueLabelAdd(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -116,6 +122,9 @@ func runIssueLabelAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssueLabelRemove 执行 `issue label remove <issue-id> <label-id>`：把标签从
+// issue 上摘下。删除成功后顺手再拉一次最新列表展示结果；若这次刷新失败，仍打印
+// 明确的成功消息——摘除动作本身已经成功了。
 func runIssueLabelRemove(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -137,9 +146,8 @@ func runIssueLabelRemove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("detach label: %w", err)
 	}
 
-	// Follow up with the current label list so the user sees the result.
-	// If the refresh fails, still print a clear success message — the
-	// detach itself already succeeded.
+	// 接着拉一次当前标签列表让用户看到结果。若刷新失败，仍打印清晰的
+	// 成功消息——摘除本身已经成功了。
 	var result map[string]any
 	output, _ := cmd.Flags().GetString("output")
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/labels", &result); err != nil {
@@ -158,6 +166,8 @@ func runIssueLabelRemove(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// printLabelTable 以 ID/NAME/COLOR 三列表格渲染标签列表（labels 是响应里解出的
+// []any，元素为标签 map）。
 func printLabelTable(labels []any, fullID bool) {
 	headers := []string{"ID", "NAME", "COLOR"}
 	rows := make([][]string, 0, len(labels))

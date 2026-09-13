@@ -1,30 +1,26 @@
+// 对话栏几何尺寸：唯一的布局定义，供聊天主体各层（消息行、状态横幅、输入框）共享以对齐左右边缘。
 /**
- * Conversation-column geometry — ONE definition shared by every layer of the
- * chat body (message rows, status banners, composer) so their left and right
- * edges line up exactly.
+ * 对话栏的几何尺寸——唯一一份定义，被聊天主体的每一层（消息行、状态横幅、输入框）共享，
+ * 让它们的左右边缘精确对齐。
  *
- * The column is two nested boxes, and the nesting order is the point:
+ * 该栏是两层嵌套的盒子，而嵌套顺序是关键：
  *
- *   <div className={CHAT_GUTTER}>     // minimum distance from the surface edges
- *     <div className={CHAT_COLUMN}>   // the reading column itself
+ *   <div className={CHAT_GUTTER}>     // 到界面边缘的最小距离
+ *     <div className={CHAT_COLUMN}>   // 阅读栏本身
  *
- * Gutter OUTSIDE the cap makes the gutter a floor: it only bites while the
- * surface is narrower than the cap, and past that the column parks at
- * `max-w-4xl` and centers. The message list used to nest these the other way
- * round (`mx-auto max-w-4xl px-5` on a single element), which capped its text at
- * 40px narrower than the composer card on any surface wider than ~936px — the
- * two edges visibly failed to line up.
+ * 把 Gutter 放在 cap 之外，让它成为“下限”：只有当界面比 cap 更窄时它才起作用，
+ * 超过之后栏就停在 `max-w-4xl` 并居中。消息列表以前是反过来嵌套的
+ * （在单个元素上写 `mx-auto max-w-4xl px-5`），导致在宽度超过约 936px 的界面上，
+ * 它的文字比输入框卡片窄了 40px——两个边缘明显对不齐。
  *
- * The gutter scales with the CONTAINER, never the viewport. These components
- * render in a resizable split pane (the chat tab), a 360px floating window, and
- * the agent builder — all of which are independent widths inside the same
- * browser window, so a `lg:` viewport variant would widen the floating window's
- * gutter just because the window behind it is wide. Hosts therefore have to mark
- * the chat column `@container`; ChatPage, ChatWindow, and the agent builder do.
- * Without that ancestor the `@` variants simply never match and the column keeps
- * the base 20px, which is the old behavior rather than a broken layout.
+ * Gutter 随 CONTAINER 缩放，而不是视口。这些组件渲染在可调整大小的分栏
+ * （聊天标签页）、360px 悬浮窗口、以及 agent 构建器里——它们都是同一个浏览器
+ * 窗口内互相独立的宽度，所以一个 `lg:` 视口变体仅仅因为背后的窗口很宽，
+ * 就会把悬浮窗口的 gutter 加宽。因此宿主必须给聊天栏标记 `@container`；
+ * ChatPage、ChatWindow 和 agent 构建器都这么做了。没有这个祖先，`@` 变体
+ * 就永远不会匹配，栏会保持基础的 20px，这是旧行为，而不是坏掉的布局。
  */
 export const CHAT_GUTTER = "px-5 @2xl:px-8 @4xl:px-12";
 
-/** The reading column: centered, capped, full-width below the cap. */
+/** 阅读栏：居中、封顶，低于上限时占满宽度。 */
 export const CHAT_COLUMN = "mx-auto w-full max-w-4xl";

@@ -1,5 +1,7 @@
 "use client";
 
+// 收件箱条目「正文标签」渲染器：把各种通知类型（状态/优先级变更、评论、提及、
+// 快速创建结果等）的细节字段翻译成一行可读的短文案。
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { formatDateOnly } from "@multica/core/issues/date";
 import { useActorName } from "@multica/core/workspace/hooks";
@@ -11,9 +13,9 @@ import { useLocale, useT } from "../../i18n";
 import { useStatusLabel } from "../../issues/utils/status-label";
 import { priorityLabel } from "../../issues/utils/priority-label";
 
-// Hook returning the inbox-item type → human label map. Replaces the
-// previous static `typeLabels` const so the labels can flow through
-// i18next. Call sites keep the same `typeLabels[type]` access pattern.
+// 返回「收件箱条目类型 → 中文文案」的 Hook。取代旧的静态 `typeLabels` 常量，
+// 让文案走 i18next；调用方保持 `typeLabels[type]` 的取法不变。
+/** 返回各收件箱条目类型对应的本地化类型名。 */
 export function useTypeLabels(): Record<InboxItemType, string> {
   const { t } = useT("inbox");
   return {
@@ -39,20 +41,26 @@ export function useTypeLabels(): Record<InboxItemType, string> {
   };
 }
 
-// start_date / due_date are calendar days — format timezone-safely so the day
-// never shifts with the viewer's offset (see @multica/core/issues/date).
+// start_date / due_date 是日历日——按时区安全方式格式化，避免随查看者时区偏移
+// 而串日（见 @multica/core/issues/date）。
 function shortDate(dateStr: string, locale: string): string {
   return formatDateOnly(dateStr, { month: "short", day: "numeric" }, locale);
 }
 
+/**
+ * 收件箱条目的正文标签：按条目类型从 details 里渲染出一行可读文案
+ * （如「将状态设为 ✓ 进行中」「把任务分配给了 张三」）。
+ *
+ * @param item 收件箱条目
+ */
 export function InboxDetailLabel({ item }: { item: InboxItem }) {
   const { t } = useT("inbox");
   const { t: tIssues } = useT("issues");
   const locale = useLocale();
   const typeLabels = useTypeLabels();
   const { getActorName } = useActorName();
-  // Inbox is a cross-workspace surface, so the catalog is read per item's own
-  // workspace rather than from the route. (MUL-6243)
+  // 收件箱是跨工作区的界面，所以状态目录按条目自己的工作区读取，而不是按路由。
+  // (MUL-6243)
   const { categoryOf, colorOf } = useIssueStatuses(item.workspace_id);
   const statusLabelOf = useStatusLabel(item.workspace_id);
   const details = item.details ?? {};
@@ -126,8 +134,8 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
       return <span>{typeLabels[item.type]}</span>;
     }
     case "quick_create_unconfirmed": {
-      // Deliberately NOT the failed_with_detail label: the outcome is unknown,
-      // so the detail is shown as-is with no "Failed:" framing.
+      // 刻意不用 failed_with_detail 的文案：结果未知，所以详情原样展示，
+      // 不套「失败:」的框。
       const detail = getQuickCreateOutcomeDetail(item);
       if (detail) return <span>{detail}</span>;
       return <span>{typeLabels[item.type]}</span>;

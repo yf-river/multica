@@ -1,3 +1,16 @@
+// 职责定位：Composio 集成的 HTTP 处理器（MUL-3720，第二阶段 MVP）。Composio 是一种
+// 托管式第三方工具连接服务：前端跳转去 Composio 走完 OAuth 后，我们存下
+// 「用户 ↔ 外部工具账号」的连接关系，供后续让 Agent 调用该工具。
+//
+// 路由归属：Composio 连接属于「用户」而非「工作区」，所以这批处理器放在 workspace
+// 成员组之外。connect/init、toolkits、connections、delete 四个管理端点按用户鉴权
+// （requireUserID），挂在 Auth 中间件下。ComposioCallback 是唯一例外：它是公开路由
+// （在 Auth 组之外，见 router.go / MUL-3843）——浏览器常常没带会话 cookie 就跳到回调
+// （会话过期、SameSite/ITP 剥 cookie、隐私窗口、自托管回调子域都可能导致），它的身份
+// 完全来自 HMAC 签名的 state 查询参数，由 CompleteCallback 校验后才动作。
+//
+// 未配置约定：h.Composio 为 nil（即未设置 COMPOSIO_API_KEY）时，本组全部端点回 503，
+// 与 Lark/GitHub 那套「integration not configured」的约定一致。
 package handler
 
 import (
@@ -12,29 +25,17 @@ import (
 	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
 )
 
-// Composio integration handlers (MUL-3720, Stage 2 MVP). A Composio connection
-// belongs to a user, not a workspace, so these handlers live outside the
-// workspace-membership group. The four management endpoints (connect/init,
-// toolkits, connections, delete) are user-scoped (requireUserID) and sit under
-// the Auth middleware. ComposioCallback is the exception: it is a public route
-// (outside the Auth group, see router.go / MUL-3843) because the browser often
-// arrives without a session cookie — its identity comes from the signed state,
-// not requireUserID. The whole block returns 503 when h.Composio is nil
-// (COMPOSIO_API_KEY unset), matching the Lark/GitHub "integration not
-// configured" convention.
-
-// ComposioConnectInitRequest is the POST /connect/init body.
+// ComposioConnectInitRequest 是 POST /connect/init 的请求体。
 type ComposioConnectInitRequest struct {
 	ToolkitSlug string `json:"toolkit_slug"`
 }
 
-// ComposioConnectInitResponse carries the hosted Composio Connect Link the
-// frontend redirects the user to.
+// ComposioConnectInitResponse 携带前端要跳转过去的 Composio 托管 Connect Link。
 type ComposioConnectInitResponse struct {
 	RedirectURL string `json:"redirect_url"`
 }
 
-// ComposioConnectionResponse is the wire shape for one connection row.
+// ComposioConnectionResponse 是一条连接记录对外返回的线格式。
 type ComposioConnectionResponse struct {
 	ID          string  `json:"id"`
 	ToolkitSlug string  `json:"toolkit_slug"`
@@ -43,9 +44,8 @@ type ComposioConnectionResponse struct {
 	LastUsedAt  *string `json:"last_used_at"`
 }
 
-// ComposioToolkitResponse is the wire shape for one toolkit in the catalog.
-// The service only returns toolkits with an enabled auth configuration, so
-// every entry is connectable by construction.
+// ComposioToolkitResponse 是目录里一个 toolkit 对外返回的线格式。服务端只会返回
+// 已启用 auth 配置的 toolkit，所以这里的每一项按构造保证可以连接。
 type ComposioToolkitResponse struct {
 	Slug     string `json:"slug"`
 	Name     string `json:"name"`
@@ -53,13 +53,14 @@ type ComposioToolkitResponse struct {
 	Category string `json:"category,omitempty"`
 }
 
+// composioMCPAppsEnabled 通过特性开关判断当前是否启用 Composio MCP 应用能力。
 func (h *Handler) composioMCPAppsEnabled(ctx context.Context) bool {
 	return featureflags.ComposioMCPAppsEnabled(ctx, h.FeatureFlags)
 }
 
-// ComposioConnectInit (POST /api/integrations/composio/connect/init) starts a
-// hosted Composio auth flow for the requested toolkit and returns the redirect
-// URL. An unsupported toolkit slug is a 400 (the MVP only wires Notion).
+// ComposioConnectInit (POST /api/integrations/composio/connect/init) 为请求的 toolkit
+// 发起一次 Composio 托管授权流程，返回浏览器跳转 URL。不支持的 toolkit slug 是 400
+// （MVP 只接了 Notion）。
 func (h *Handler) ComposioConnectInit(w http.ResponseWriter, r *http.Request) {
 	if h.Composio == nil || !h.composioMCPAppsEnabled(r.Context()) {
 		writeError(w, http.StatusServiceUnavailable, "composio integration not configured")
@@ -95,16 +96,13 @@ func (h *Handler) ComposioConnectInit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ComposioConnectInitResponse{RedirectURL: redirectURL})
 }
 
-// ComposioCallback (GET /api/integrations/composio/callback) is the browser
-// redirect target Composio sends the user back to after the hosted flow. It is
-// registered as a PUBLIC route (outside the Auth middleware group — see
-// router.go / MUL-3843), because the browser frequently lands here without a
-// session cookie (expired session, SameSite/ITP stripping, private window,
-// self-hosted callback subdomain). Identity therefore comes solely from the
-// HMAC-signed `state` query param, which CompleteCallback verifies before
-// doing anything. On success the row is upserted and the browser is redirected
-// to the settings page; any failure redirects to the same page with a stable
-// error code so the user is never left on a blank API response.
+// ComposioCallback (GET /api/integrations/composio/callback) 是 Composio 在托管授权流程
+// 结束后把用户浏览器重定向回来的地址。它是公开路由（Auth 中间件组之外，见 router.go /
+// MUL-3843）：浏览器经常不带会话 cookie 就落到这里（会话过期、SameSite/ITP 剥 cookie、
+// 隐私窗口、自托管回调子域等）。因此身份完全来自 HMAC 签名的 state 查询参数——
+// CompleteCallback 在校验通过前不做任何动作。成功后把连接行 upsert 落库，并把浏览器
+// 重定向到设置页；任何失败都重定向回同一页面并带上稳定的错误码，绝不让用户停在
+// 一片空白的 API 响应上。
 func (h *Handler) ComposioCallback(w http.ResponseWriter, r *http.Request) {
 	if h.Composio == nil || !h.composioMCPAppsEnabled(r.Context()) {
 		writeError(w, http.StatusServiceUnavailable, "composio integration not configured")
@@ -117,17 +115,16 @@ func (h *Handler) ComposioCallback(w http.ResponseWriter, r *http.Request) {
 
 	slug, err := h.Composio.CompleteCallback(r.Context(), state, status, connectedAccountID)
 	if err != nil {
-		// Every failure (tampered/expired state, non-success status, write
-		// error) collapses to the generic failure redirect — we never tell the
-		// browser which check failed.
+		// 所有失败（state 被篡改/过期、status 非成功、落库出错）都收敛到同一个通用失败
+		// 重定向——绝不告诉浏览器具体是哪一项检查没过，避免泄露可探测的信息。
 		http.Redirect(w, r, h.Composio.CallbackRedirect(slug, false), http.StatusFound)
 		return
 	}
 	http.Redirect(w, r, h.Composio.CallbackRedirect(slug, true), http.StatusFound)
 }
 
-// ListComposioConnections (GET /api/integrations/composio/connections) returns
-// the caller's active connections.
+// ListComposioConnections (GET /api/integrations/composio/connections) 返回调用者名下
+// 的活动连接。
 func (h *Handler) ListComposioConnections(w http.ResponseWriter, r *http.Request) {
 	if h.Composio == nil || !h.composioMCPAppsEnabled(r.Context()) {
 		writeError(w, http.StatusServiceUnavailable, "composio integration not configured")
@@ -159,13 +156,11 @@ func (h *Handler) ListComposioConnections(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, out)
 }
 
-// ListComposioToolkits (GET /api/integrations/composio/toolkits) returns the
-// connectable Composio toolkits for the Settings UI to render. Since MUL-4009
-// the service filters out toolkits with no enabled auth config in the project,
-// so every entry here is connectable. The catalog itself is project-global (not
-// per-user), but the route is user-scoped (requireUser) like the rest of the
-// block. A resolver/upstream failure is a 502, letting the UI show its
-// load-failed state rather than a misleading empty catalog.
+// ListComposioToolkits (GET /api/integrations/composio/toolkits) 返回当前可连接的
+// Composio toolkit 目录，供设置页渲染。自 MUL-4009 起服务端会过滤掉项目里没启用 auth
+// 配置的 toolkit，所以这里每一项都保证可连接。目录本身是项目级全局数据（不随用户变），
+// 但路由和本组其它端点一样按用户鉴权（requireUserID）。上游解析失败时回 502，让前端
+// 显示「加载失败」状态，而不是误显示一张空的目录。
 func (h *Handler) ListComposioToolkits(w http.ResponseWriter, r *http.Request) {
 	if h.Composio == nil || !h.composioMCPAppsEnabled(r.Context()) {
 		writeError(w, http.StatusServiceUnavailable, "composio integration not configured")
@@ -192,8 +187,7 @@ func (h *Handler) ListComposioToolkits(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteComposioConnection (DELETE /api/integrations/composio/connections/{id})
-// disconnects a connection the caller owns. Idempotent at the service layer;
-// a connection that does not belong to the caller is a 404.
+// 断开一条属于当前调用者的连接。服务层幂等；连接不属于该用户时按 404 处理。
 func (h *Handler) DeleteComposioConnection(w http.ResponseWriter, r *http.Request) {
 	if h.Composio == nil || !h.composioMCPAppsEnabled(r.Context()) {
 		writeError(w, http.StatusServiceUnavailable, "composio integration not configured")

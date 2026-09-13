@@ -1,15 +1,18 @@
 "use client";
 
+/**
+ * 下载页「云运行时」区块（客户端组件）：复用共享的 CloudWaitlistExpand 申请表单，
+ * 配上更适合下载页的标题与副标题。提交动作在子组件内部完成（写入 waitlist），
+ * 这里的 submitted 只用来防止本页生命周期内重复提交。
+ */
 import { useState } from "react";
 import { CloudWaitlistExpand } from "@multica/views/onboarding";
 import { useLocale } from "../../i18n";
 
 /**
- * Cloud runtime waitlist — thin wrapper around the shared
- * CloudWaitlistExpand form with a download-page-appropriate title
- * and subtitle. Submission persists via `joinCloudWaitlist` inside
- * the child; the submitted flag here only prevents double-submits
- * for the lifetime of the page.
+ * 云运行时 waitlist 区块的薄封装：标题 + 共享申请表单。
+ *
+ * @returns 云运行时申请区块。
  */
 export function CloudSection() {
   const { t } = useLocale();

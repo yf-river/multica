@@ -1,27 +1,24 @@
-package lark
-
-// Channel-backed store for the Feishu integration.
+// store.go：飞书集成的 channel 化存储层——channel_* 表与其 JSONB config 的
+// 序列化/反序列化边界。
 //
-// MUL-3515 generalized the lark_* tables into channel_* (a channel_type
-// discriminator + a JSONB `config` blob for the platform-specific
-// identifiers/credentials). This file owns the one boundary where that JSONB
-// is (de)serialized: the rest of the package keeps working with flat domain
-// structs whose fields mirror the retired db.Lark* rows one-for-one, so the
-// call sites are a mechanical rename rather than a reshape.
+// MUL-3515 把 lark_* 表泛化成了 channel_*（一个 channel_type 判别列 + 一个
+// 存放平台特定标识/凭据的 JSONB `config` blob）。本文件是包内唯一处理这个
+// JSONB (反)序列化的边界：包其余部分继续使用扁平领域结构体，其字段与退役的
+// db.Lark* 行一一对应，因此调用点的改动只是机械改名而不是重塑。
 //
-// The feishu config blob carries exactly the columns that used to be flat on
-// lark_installation / lark_user_binding:
+// 飞书 config blob 恰好携带原先平铺在 lark_installation / lark_user_binding
+// 上的那些列：
 //
 //	installation: app_id, app_secret_encrypted (base64), tenant_key,
 //	              bot_open_id, bot_union_id, region
 //	user binding: union_id
 //
-// app_secret_encrypted is secretbox ciphertext stored as a base64 string.
-// The decoder is whitespace-tolerant on purpose: the migration backfill writes
-// it via PostgreSQL encode(...,'base64'), which MIME-wraps every 76 chars, and
-// a sealed ~72-byte secret exceeds that. The encoder always emits unwrapped
-// base64, so rows written by Go are already clean; stripping on read keeps
-// both sources interchangeable.
+// app_secret_encrypted 是 secretbox 密文，以 base64 字符串存储。解码器刻意容忍
+// 空白：迁移回填经 PostgreSQL encode(...,'base64') 写入，它会每 76 字符做一次
+// MIME 换行，而 ~72 字节的密封 secret 正好超过这个长度；编码器始终输出不换行
+// 的 base64，所以 Go 写的行本就干净；读时剥掉换行让两种来源可互换。
+
+package lark
 
 import (
 	"encoding/base64"
@@ -34,11 +31,10 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Installation is the flat, feishu-shaped view of a channel_installation row.
-// It keeps field parity with the lark_installation row it replaced, so the
-// cutover was a rename at the ~190 call sites. The feishu-specific fields
-// (AppID, AppSecretEncrypted, TenantKey, BotOpenID, BotUnionID, Region) come
-// from the JSONB config; the rest are flat columns.
+// Installation 是 channel_installation 行的扁平、飞书形态视图。它保持与被替代
+// 的 lark_installation 行字段对等，所以切换在 ~190 个调用点上只是改名。飞书
+// 特有字段（AppID、AppSecretEncrypted、TenantKey、BotOpenID、BotUnionID、
+// Region）来自 JSONB config；其余是平铺列。
 type Installation struct {
 	ID                 pgtype.UUID
 	WorkspaceID        pgtype.UUID
@@ -58,8 +54,8 @@ type Installation struct {
 	Region             string
 }
 
-// UserBinding is the flat view of a channel_user_binding row. ChannelUserID is
-// the feishu open_id; UnionID (secondary identity) lives in the JSONB config.
+// UserBinding 是 channel_user_binding 行的扁平视图。ChannelUserID 即飞书
+// open_id；UnionID（次要身份）放在 JSONB config 里。
 type UserBinding struct {
 	ID             pgtype.UUID
 	WorkspaceID    pgtype.UUID
@@ -70,23 +66,23 @@ type UserBinding struct {
 	BoundAt        pgtype.Timestamptz
 }
 
-// ChatSessionBinding is the flat view of a channel_chat_session_binding row.
+// ChatSessionBinding 是 channel_chat_session_binding 行的扁平视图。
 type ChatSessionBinding struct {
 	ID             pgtype.UUID
 	ChatSessionID  pgtype.UUID
 	InstallationID pgtype.UUID
 	ChannelChatID  string
 	ChatType       string
-	// Config carries the real chat id (larkBindingConfig) when ChannelChatID
-	// is a composite "chat:thread" topic-isolation key; "{}" otherwise.
+	// Config 在 ChannelChatID 是复合 "chat:thread"（话题隔离键）时携带真正的
+	// 聊天 id（larkBindingConfig）；否则是 "{}"。
 	Config        []byte
 	CreatedAt     pgtype.Timestamptz
 	LastMessageID pgtype.Text
 	LastThreadID  pgtype.Text
 }
 
-// InboundMessageDedup is the flat view of a channel_inbound_message_dedup row.
-// Every field is a flat column (no JSON), so this mirrors the channel row 1:1.
+// InboundMessageDedup 是 channel_inbound_message_dedup 行的扁平视图。每个字段
+// 都是平铺列（无 JSON），因此与 channel 行 1:1 镜像。
 type InboundMessageDedup struct {
 	InstallationID pgtype.UUID
 	MessageID      string
@@ -95,10 +91,9 @@ type InboundMessageDedup struct {
 	ClaimToken     pgtype.UUID
 }
 
-// BindingTokenRow is the flat view of a channel_binding_token row. ChannelUserID
-// is the feishu open_id the token will bind once redeemed. (Named *Row to avoid
-// colliding with BindingToken in binding_token.go, which is the freshly-minted
-// raw-token shape returned to the caller.)
+// BindingTokenRow 是 channel_binding_token 行的扁平视图。ChannelUserID 是令牌
+// 兑换后将绑定的飞书 open_id。（命名 *Row 是为避免与 binding_token.go 里
+// BindingToken——返回给调用方的“刚铸造原始令牌”形态——冲突。）
 type BindingTokenRow struct {
 	TokenHash      string
 	WorkspaceID    pgtype.UUID
@@ -109,7 +104,7 @@ type BindingTokenRow struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
-// OutboundCardMessage is the flat view of a channel_outbound_card_message row.
+// OutboundCardMessage 是 channel_outbound_card_message 行的扁平视图。
 type OutboundCardMessage struct {
 	ID                   pgtype.UUID
 	ChatSessionID        pgtype.UUID
@@ -121,10 +116,10 @@ type OutboundCardMessage struct {
 	CreatedAt            pgtype.Timestamptz
 }
 
-// feishuInstallConfig is the JSON shape of channel_installation.config for the
-// feishu channel. app_secret_encrypted is decoded by hand (see decodeSecret)
-// rather than as a json []byte field, so MIME-wrapped base64 from the SQL
-// backfill round-trips too. omitempty mirrors the migration's jsonb_strip_nulls.
+// feishuInstallConfig 是飞书渠道 channel_installation.config 的 JSON 形态。
+// app_secret_encrypted 手工解码（见 decodeSecret）而不是用 json []byte 字段，
+// 好让 SQL 回填写入的 MIME 换行 base64 也能往返。omitempty 对应迁移里的
+// jsonb_strip_nulls。
 type feishuInstallConfig struct {
 	AppID              string `json:"app_id"`
 	AppSecretEncrypted string `json:"app_secret_encrypted,omitempty"`
@@ -134,13 +129,13 @@ type feishuInstallConfig struct {
 	Region             string `json:"region,omitempty"`
 }
 
-// feishuBindingConfig is the JSON shape of channel_user_binding.config.
+// feishuBindingConfig 是 channel_user_binding.config 的 JSON 形态。
 type feishuBindingConfig struct {
 	UnionID string `json:"union_id,omitempty"`
 }
 
-// installationFromRow decodes a channel_installation row (flat columns + JSONB
-// config) into the flat Installation domain struct.
+// installationFromRow 把 channel_installation 行（平铺列 + JSONB config）解码成
+// 扁平 Installation 领域结构体。
 func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 	var cfg feishuInstallConfig
 	if len(row.Config) > 0 {
@@ -172,8 +167,8 @@ func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 	}, nil
 }
 
-// encodeInstallConfig builds the channel_installation.config JSONB from the
-// feishu fields of an Installation. The secret is emitted as unwrapped base64.
+// encodeInstallConfig 从 Installation 的飞书字段构建 channel_installation.config
+// JSONB。secret 以不换行的 base64 输出。
 func encodeInstallConfig(inst Installation) ([]byte, error) {
 	cfg := feishuInstallConfig{
 		AppID:      inst.AppID,
@@ -188,7 +183,7 @@ func encodeInstallConfig(inst Installation) ([]byte, error) {
 	return json.Marshal(cfg)
 }
 
-// userBindingFromRow decodes a channel_user_binding row into UserBinding.
+// userBindingFromRow 把 channel_user_binding 行解码成 UserBinding。
 func userBindingFromRow(row db.ChannelUserBinding) (UserBinding, error) {
 	var cfg feishuBindingConfig
 	if len(row.Config) > 0 {
@@ -207,16 +202,16 @@ func userBindingFromRow(row db.ChannelUserBinding) (UserBinding, error) {
 	}, nil
 }
 
-// encodeBindingConfig builds channel_user_binding.config from a UserBinding.
-// Returns the JSON null-stripped (an absent union_id is "{}"), so the
-// upsert's `config || jsonb_strip_nulls(EXCLUDED.config)` merge never clobbers
-// a previously-captured union_id with this write.
+// encodeBindingConfig 从 UserBinding 构建 channel_user_binding.config。返回做
+// 过 null-strip 的 JSON（union_id 缺席即 "{}"），这样 upsert 里的
+// `config || jsonb_strip_nulls(EXCLUDED.config)` 合并不会用这次写入覆盖掉先前
+// 捕获的 union_id。
 func encodeBindingConfig(b UserBinding) ([]byte, error) {
 	return json.Marshal(feishuBindingConfig{UnionID: b.UnionID.String})
 }
 
-// chatSessionBindingFromRow copies a channel_chat_session_binding row into the
-// flat domain struct. Config stays raw bytes; outboundChatID decodes it.
+// chatSessionBindingFromRow 把 channel_chat_session_binding 行拷贝进扁平领域
+// 结构体。Config 保持原始字节；outboundChatID 会解码它。
 func chatSessionBindingFromRow(row db.ChannelChatSessionBinding) ChatSessionBinding {
 	return ChatSessionBinding{
 		ID:             row.ID,
@@ -231,8 +226,8 @@ func chatSessionBindingFromRow(row db.ChannelChatSessionBinding) ChatSessionBind
 	}
 }
 
-// dedupFromRow copies a channel_inbound_message_dedup row into the flat domain
-// struct. No JSON: every field is a flat column.
+// dedupFromRow 把 channel_inbound_message_dedup 行拷贝进扁平领域结构体。没有
+// JSON：每个字段都是平铺列。
 func dedupFromRow(row db.ChannelInboundMessageDedup) InboundMessageDedup {
 	return InboundMessageDedup{
 		InstallationID: row.InstallationID,
@@ -243,8 +238,7 @@ func dedupFromRow(row db.ChannelInboundMessageDedup) InboundMessageDedup {
 	}
 }
 
-// bindingTokenFromRow copies a channel_binding_token row into the flat domain
-// struct.
+// bindingTokenFromRow 把 channel_binding_token 行拷贝进扁平领域结构体。
 func bindingTokenFromRow(row db.ChannelBindingToken) BindingTokenRow {
 	return BindingTokenRow{
 		TokenHash:      row.TokenHash,
@@ -257,8 +251,7 @@ func bindingTokenFromRow(row db.ChannelBindingToken) BindingTokenRow {
 	}
 }
 
-// outboundCardFromRow copies a channel_outbound_card_message row into the flat
-// domain struct.
+// outboundCardFromRow 把 channel_outbound_card_message 行拷贝进扁平领域结构体。
 func outboundCardFromRow(row db.ChannelOutboundCardMessage) OutboundCardMessage {
 	return OutboundCardMessage{
 		ID:                   row.ID,
@@ -272,11 +265,10 @@ func outboundCardFromRow(row db.ChannelOutboundCardMessage) OutboundCardMessage 
 	}
 }
 
-// decodeSecret base64-decodes the stored app secret ciphertext. It tolerates
-// the newline wrapping PostgreSQL's encode(...,'base64') inserts, so secrets
-// written by the SQL backfill and by encodeInstallConfig both decode. An empty
-// string yields a nil slice (an installation mid-registration before the
-// secret is sealed).
+// decodeSecret 对存储的 app secret 密文做 base64 解码。它容忍 PostgreSQL
+// encode(...,'base64') 引入的换行包裹，所以 SQL 回填与 encodeInstallConfig
+// 写的 secret 都能解码。空字符串产出 nil 切片（表示注册到一半、secret 还没
+// 密封的安装）。
 func decodeSecret(s string) ([]byte, error) {
 	if s == "" {
 		return nil, nil
@@ -284,7 +276,7 @@ func decodeSecret(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(stripWhitespace(s))
 }
 
-// stripWhitespace removes the ASCII whitespace MIME base64 wrapping introduces.
+// stripWhitespace 移除 MIME base64 换行引入的 ASCII 空白。
 func stripWhitespace(s string) string {
 	if !strings.ContainsAny(s, "\n\r \t") {
 		return s

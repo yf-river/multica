@@ -23,30 +23,25 @@ import { cn } from "@multica/ui/lib/utils";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 
-// Quick Actions sidebar section (MUL-5465).
+// 本文件：QuickActionsSection —— 侧栏"快捷操作"区段（MUL-5465）。
 //
-// The list is NOT filtered by invoke permission. An earlier version hid
-// actions the viewer could not run, which meant two people on one issue saw
-// different sidebars with nothing to explain the difference — harder to debug
-// than a button that tells you why it refused. Permission is answered once, by
-// the run endpoint; a refusal opens a dialog.
+// 列表*不*按 invoke 权限过滤。早期版本会藏起观看者跑不了的操作，结果是
+// 同一条问题上两个人看到不同侧栏、却没有任何东西解释差异——比一个会告诉你
+// 为什么被拒的按钮更难排查。权限只由运行接口裁定一次；被拒则打开对话框。
 //
-// One interaction: click runs it. There is no per-action input field — the `/`
-// slash command already drops a rendered action into the composer for editing,
-// which covers "same action, one detail different" more flexibly than a single
-// fixed field could, so a second UI for it was removed.
+// 交互只有一种：点击即运行。没有逐操作的输入字段——`/` 斜杠命令已经会把
+// 渲染好的操作投进 composer 供编辑，比单个固定字段更灵活地覆盖了
+// "同一操作、细节不同"的场景，所以第二套 UI 被删了。
 //
-// The result toast is deliberately outcome-specific rather than a generic
-// "done". A second click against an agent that already has a pending task on
-// this issue does NOT start a second run — the DB permits one pending task per
-// (issue, agent) and the comment is merged into the existing one. Reporting
-// that as success would be a lie the user later has to debug.
+// 结果 toast 刻意做到"按结局说事"，而不是笼统的"完成"。对着一个在本问题上
+// 已有待办任务的 agent 再点一次，*不会*启动第二次运行——DB 每条
+// (issue, agent) 只允许一个待办任务，新评论会被并入既有那条。把它报成
+// 成功，是说一个用户之后还得花时间排查的谎。
 
 export function QuickActionsSection({ issueId }: { issueId: string }) {
   const { t } = useT("issues");
-  // Nullable read, not useWorkspaceId(): this section is an enhancement on the
-  // sidebar and must degrade to "not rendered" outside a workspace route
-  // rather than throwing and taking the whole issue detail down with it.
+  // 用可空读取而非 useWorkspaceId()：本区段是侧栏上的增强件，
+  // 在非工作区路由下应降级为"不渲染"，而不是抛错把整个 issue detail 带崩。
   const wsId = useCurrentWorkspace()?.id ?? "";
   const [open, setOpen] = useState(true);
   const [showAll, setShowAll] = useState(false);
@@ -58,8 +53,7 @@ export function QuickActionsSection({ issueId }: { issueId: string }) {
   });
   const actions = useMemo(() => data.filter((a) => a.status === "active"), [data]);
 
-  // Nothing configured renders nothing at all: an empty section header in the
-  // sidebar is pure noise.
+  // 什么都没配置就什么都不渲染：侧栏里一个空的区段标题纯属噪音。
   if (isLoading || actions.length === 0) return null;
 
   const visible = showAll ? actions : actions.slice(0, QUICK_ACTION_SIDEBAR_LIMIT);
@@ -105,10 +99,9 @@ export function QuickActionsSection({ issueId }: { issueId: string }) {
         </div>
       ) : null}
 
-      {/* One message for every refusal. The person reading this dialog and the
-          person who can fix the binding are different people — the clicker's
-          next step is the same either way, and the diagnostic detail lives in
-          settings where the owner will act on it. */}
+      {/* 每一种被拒都只给一条消息。读这条弹窗的人与能修绑定的人不是同一个——
+          无论哪条路，点击者的下一步都一样；诊断细节放在设置里，
+          让所有者去处理。 */}
       <AlertDialog open={blocked !== null} onOpenChange={(v) => !v && setBlocked(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -127,11 +120,10 @@ export function QuickActionsSection({ issueId }: { issueId: string }) {
 }
 
 /**
- * Translate the per-target outcome into an honest sentence.
+ * 把每个目标的结果翻译成一句诚实的话。
  *
- * `coalesced` is the one that matters: the click was accepted but no NEW run
- * started. "Added to Lambda's current run" is the truth; "Lambda started
- * working" is not.
+ * `coalesced` 是那个关键项：点击被接受，但没有*新*运行开始。
+ * "已并入 Lambda 当前这次运行"是事实；"Lambda 开工了"不是。
  */
 function outcomeMessage(
   outcome: CommentTriggerOutcome | undefined,
@@ -139,8 +131,8 @@ function outcomeMessage(
   t: ReturnType<typeof useT<"issues">>["t"],
 ): { message: string; kind: "success" | "info" | "error" } {
   if (!outcome) {
-    // No outcome at all means the comment saved but nothing was reported —
-    // surface it as neutral rather than claiming a run.
+    // 完全没有 outcome 意味着评论存下了、但什么都没报——
+    // 用中性的方式呈现，而不是宣称启动了一次运行。
     return { message: t(($) => $.detail.quick_action_posted), kind: "info" };
   }
   switch (outcome.status) {
@@ -153,12 +145,14 @@ function outcomeMessage(
     case "blocked":
       return { message: t(($) => $.detail.quick_action_blocked, { name: targetName }), kind: "error" };
     default:
-      // Server-driven enum: an unknown status must not be silently rendered
-      // as success.
+      // 服务端驱动的枚举：未知状态绝不能静默渲染成成功。
       return { message: t(($) => $.detail.quick_action_posted), kind: "info" };
   }
 }
 
+/**
+ * 单条快捷操作行：点击运行，运行中禁用并显示 spinner。
+ */
 function QuickActionRow({
   action,
   issueId,
@@ -182,9 +176,8 @@ function QuickActionRow({
       else if (kind === "error") toast.error(message);
       else toast.info(message);
     } catch (error) {
-      // A permission refusal is a structured 403 the user needs explained, not
-      // a transient failure they should retry — it gets the dialog. Everything
-      // else stays a toast.
+      // 权限被拒是用户需要被解释的结构化 403，不是该重试的瞬时故障——
+      // 它走弹窗。其它一律保持 toast。
       if (dispatchReasonCode(error) === "invocation_not_allowed") {
         onBlocked();
         return;

@@ -1,3 +1,4 @@
+// 提供对议题分桶缓存（按状态分列）的读写与就地增删改工具，是缓存协调器的底层操作集。
 import type {
   Issue,
   IssueStatusCategory,
@@ -9,6 +10,7 @@ import { issueStatusCategory, normalizeStatusPatch } from "./status-category";
 
 const EMPTY_BUCKET: IssueStatusBucket = { issues: [], total: 0 };
 
+/** 读取某个状态分类对应的分桶；该分类没有数据时返回一个空桶。 */
 export function getBucket(
   resp: ListIssuesCache,
   status: IssueStatusCategory,
@@ -16,6 +18,7 @@ export function getBucket(
   return resp.byStatus[status] ?? EMPTY_BUCKET;
 }
 
+/** 覆盖写入某个状态分类的分桶，返回一份新的缓存对象（不改动入参）。 */
 export function setBucket(
   resp: ListIssuesCache,
   status: IssueStatusCategory,
@@ -24,7 +27,7 @@ export function setBucket(
   return { ...resp, byStatus: { ...resp.byStatus, [status]: bucket } };
 }
 
-/** Locate which status bucket holds `id`, if any. */
+/** 定位某个议题 id 当前落在哪个状态分桶里，找不到返回 `null`。 */
 export function findIssueLocation(
   resp: ListIssuesCache,
   id: string,
@@ -37,15 +40,14 @@ export function findIssueLocation(
   return null;
 }
 
-/** Add an issue to its status bucket (no-op if already present). */
+/** 把一个议题加进它所属的状态分桶（已存在则什么都不做）。 */
 export function addIssueToBuckets(
   resp: ListIssuesCache,
   issue: Issue,
 ): ListIssuesCache {
-  // An unresolvable custom status has no column to place the issue in. The
-  // caller is responsible for invalidating instead — silently dropping it would
-  // leave the board missing a row that exists on the server. Callers use
-  // `issueStatusCategory(issue) === null` to detect this before calling.
+  // 无法解析的自定义状态没有对应的列可以放。这种情况应该由调用方去失效重取，
+  // 而不是静默丢弃——否则看板上会少一行服务器上确实存在的议题。
+  // 调用方应在调用前用 `issueStatusCategory(issue) === null` 先判断。
   const category = issueStatusCategory(issue);
   if (!category) return resp;
   const bucket = getBucket(resp, category);
@@ -56,7 +58,7 @@ export function addIssueToBuckets(
   });
 }
 
-/** Remove an issue from whichever bucket contains it. */
+/** 从包含该议题的分桶里把它移除（不知道在哪一列也能用）。 */
 export function removeIssueFromBuckets(
   resp: ListIssuesCache,
   id: string,
@@ -71,10 +73,9 @@ export function removeIssueFromBuckets(
 }
 
 /**
- * Count-only reconcile for an issue BEYOND the loaded window: its status
- * changed server-side, so one unit of `total` moves between buckets while
- * the loaded arrays stay untouched. `hasMore` (loaded < total) stays
- * consistent for free.
+ * 只改数量的对账，用于“已加载窗口之外”的议题：它的状态在服务器端变了，
+ * 所以 `total` 从一个桶挪 1 到另一个桶，而已加载的数组不动。
+ * `hasMore`（已加载 < total）自然保持一致。
  */
 export function moveBucketTotal(
   resp: ListIssuesCache,
@@ -93,8 +94,8 @@ export function moveBucketTotal(
 }
 
 /**
- * Count-only reconcile for an issue BEYOND the loaded window that LEFT the
- * list (reassigned / moved project): the bucket it was counted in loses one.
+ * 只改数量的对账，用于“已加载窗口之外”且已离开本列表的议题
+ * （被重新分配 / 挪到别的项目）：它原来所在的分桶数量减 1。
  */
 export function decrementBucketTotal(
   resp: ListIssuesCache,
@@ -108,13 +109,11 @@ export function decrementBucketTotal(
 }
 
 /**
- * Insert `issue` into `issues` at the slot implied by `position ASC` — the same
- * ordering the board renders (server `ORDER BY position ASC`). Returns a new
- * array; the input is not mutated.
+ * 按 `position` 升序把 `issue` 插到 `issues` 中正确的位置——与看板渲染顺序一致
+ * （对应服务器 `ORDER BY position ASC`）。返回新数组，不改动入参。
  *
- * Inserting at the right slot (instead of appending to the end) is what keeps an
- * optimistic move from snapping: the card lands where it will be after the
- * server confirms, so no later cache refresh teleports it to the column tail.
+ * 插到正确槽位（而不是追加到末尾）是为了让乐观移动不跳变：卡片落在服务器确认后
+ * 它应有的位置，之后缓存刷新时不会被“瞬移”到列尾。
  */
 export function insertByPosition(issues: Issue[], issue: Issue): Issue[] {
   const idx = issues.findIndex((i) => i.position > issue.position);
@@ -123,12 +122,10 @@ export function insertByPosition(issues: Issue[], issue: Issue): Issue[] {
 }
 
 /**
- * Merge `patch` into the issue with `id`. If `patch.status` differs from the
- * current bucket, the issue moves to the new bucket and both buckets' totals
- * are adjusted. The moved card — and a same-column card whose `position`
- * changed — is re-inserted at its `position`-sorted slot rather than appended,
- * so the cache order stays consistent with what the board renders. A plain
- * field update (no status/position change) keeps the card in place.
+ * 把 `patch` 合并到 id 对应的议题上。若 `patch.status` 与当前所在桶不同，
+ * 该议题会移动到新桶，两个桶的 total 也随之调整。被移动的卡片（以及同一列里
+ * position 变化的卡片）会重新插到按 `position` 排序的槽位，而不是追加到末尾，
+ * 从而保证缓存顺序与看板渲染一致。纯字段更新（状态/位置都没变）则保持原位。
  */
 export function patchIssueInBuckets(
   resp: ListIssuesCache,
@@ -137,28 +134,25 @@ export function patchIssueInBuckets(
 ): ListIssuesCache {
   const loc = findIssueLocation(resp, id);
   if (!loc) return resp;
-  // Normalized so the merged entity's status_category matches the bucket it
-  // lands in; a bare spread would keep the previous category. (MUL-6243)
+  // 先做归一化，让合并后的实体 status_category 和它最终落到的桶一致；
+  // 直接裸合并会保留旧的 category。（MUL-6243）
   const patch = normalizeStatusPatch(rawPatch);
   const merged: Issue = { ...loc.issue, ...patch };
 
-  // Resolve the DESTINATION category before comparing anything. `loc.status` is
-  // a CATEGORY (the bucket key) while `patch.status` is a status KEY, so
-  // comparing them directly treats a same-category key change — `in_review` to
-  // a custom `human_review` — as a cross-bucket move. That path then deletes
-  // from and inserts into the same bucket using a pre-delete snapshot, leaving
-  // the card duplicated and the total one too high.
+  // 在比较之前先解析出“目标分类”。`loc.status` 是“分类”（桶的 key），
+  // 而 `patch.status` 是“状态 key”，直接比较会把同分类下的 key 变更——
+  // 比如 `in_review` 换成自定义的 `human_review`——误判成跨桶移动。
+  // 那会先删再插到同一个桶（用的是删除前的快照），导致卡片重复、total 偏大。
   //
-  // Resolved from `patch` alone, never from `merged`: merged inherits the
-  // PREVIOUS issue's status_category, which would silently keep the old column
-  // after a real move.
+  // 只从 `patch` 解析，绝不用 `merged`：merged 继承的是“旧议题”的 status_category，
+  // 真实移动后会被静默留在旧列。
   const nextCategory =
     patch.status === undefined
       ? loc.status
       : issueStatusCategory({ status: patch.status, status_category: patch.status_category });
 
-  // Unresolvable custom status: no bucket to move it to. Leave the cache alone
-  // and let the caller invalidate — see patchNeedsInvalidation.
+  // 无法解析的自定义状态：没有桶可放。这里不动缓存，交给调用方去失效——
+  // 见 patchNeedsInvalidation。
   if (!nextCategory) return resp;
 
   if (nextCategory === loc.status) {
@@ -166,15 +160,14 @@ export function patchIssueInBuckets(
     const positionChanged =
       patch.position !== undefined && patch.position !== loc.issue.position;
     if (!positionChanged) {
-      // Plain field update (labels, metadata, title, a same-category status
-      // key change …): keep the slot so a remote edit never reorders an
-      // otherwise-untouched column, and never change the total.
+      // 纯字段更新（标签、元数据、标题、同分类的状态 key 变更……）：保持原槽位，
+      // 让远程编辑不会打乱一个本就没变的列，也不去改 total。
       return setBucket(resp, loc.status, {
         ...bucket,
         issues: bucket.issues.map((i: Issue) => (i.id === id ? merged : i)),
       });
     }
-    // Same-column reorder: lift the card out and re-insert at its new slot.
+    // 同列内重排：先把卡片拎出来，再插回它的新槽位。
     return setBucket(resp, loc.status, {
       ...bucket,
       issues: insertByPosition(
@@ -198,10 +191,10 @@ export function patchIssueInBuckets(
 }
 
 /**
- * True when a status patch names a status this client cannot resolve to a
- * category, so `patchIssueInBuckets` will no-op. Callers must invalidate rather
- * than treat that as "nothing to do" — the row moved on the server, and leaving
- * the cache untouched drifts the column and its total permanently.
+ * 当状态补丁指向一个客户端无法解析出分类的状态时返回 true，
+ * 这时 `patchIssueInBuckets` 会什么都不做。调用方必须选择失效重取，
+ * 而不是当作“无事发生”——这行在服务器上已经移动了，缓存不动会让列和它的
+ * total 永久偏离。
  */
 export function patchNeedsInvalidation(patch: Partial<Issue>): boolean {
   if (patch.status === undefined) return false;

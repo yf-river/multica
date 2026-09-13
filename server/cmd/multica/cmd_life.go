@@ -1,3 +1,8 @@
+// 文件职责：实现 `multica life` 命令组——作为被配置的「生活陪伴（life
+// companion）」agent 运行时的受控操作面：提交记忆候选（memory-candidate）、管理
+// 行动提案（proposal）、记录模型自主决策的前摄检查（check）、解析受治理的证据
+// 引用（evidence resolve）、提交持久认知任务的结果（job complete）。配套的 MCP
+// 服务端在同名兄弟文件 cmd_life_mcp.go。
 package main
 
 import (
@@ -14,6 +19,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// newAPIClientContext 建 HTTP client 与带 10 分钟超时的 ctx（life 的治理端点通常
+// 涉及服务端推理，给足时间）。
 func newAPIClientContext(cmd *cobra.Command) (*cli.APIClient, context.Context, context.CancelFunc, error) {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -23,6 +30,7 @@ func newAPIClientContext(cmd *cobra.Command) (*cli.APIClient, context.Context, c
 	return client, ctx, cancel, nil
 }
 
+// lifeCmd 是 `multica life` 父命令——agent 以 life companion 身份运行时的工具面。
 var lifeCmd = &cobra.Command{
 	Use:   "life",
 	Short: "Work as the configured life companion",
@@ -114,6 +122,8 @@ func init() {
 	lifeJobCompleteCmd.Flags().String("output-file", "", "Read structured result from a JSON file")
 }
 
+// runLifeEvidenceResolve 执行 `life evidence resolve --ref <type>:<uuid>`：把一条条
+// material/chronicle/memory/observer_knowledge 引用解析成确切受治理的原文证据。
 func runLifeEvidenceResolve(cmd *cobra.Command, _ []string) error {
 	rawReferences, _ := cmd.Flags().GetStringSlice("ref")
 	if len(rawReferences) == 0 {
@@ -137,6 +147,7 @@ func runLifeEvidenceResolve(cmd *cobra.Command, _ []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// resolveLifeEvidence 调 /api/life/agent/evidence/resolve，返回证据解析结果。
 func resolveLifeEvidence(cmd *cobra.Command, references []map[string]string) (map[string]any, error) {
 	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
@@ -150,6 +161,8 @@ func resolveLifeEvidence(cmd *cobra.Command, references []map[string]string) (ma
 	return result, nil
 }
 
+// runLifeJobComplete 执行 `life job complete --job-id <id>`：把结构化结果（JSON
+// 对象，行内或文件）提交给持久认知任务收尾。
 func runLifeJobComplete(cmd *cobra.Command, _ []string) error {
 	jobID, err := requireFlag(cmd, "job-id")
 	if err != nil {
@@ -178,6 +191,7 @@ func runLifeJobComplete(cmd *cobra.Command, _ []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// completeLifeJob 调 /api/life/agent/jobs/{jobID}/complete 提交任务结果。
 func completeLifeJob(cmd *cobra.Command, jobID string, output map[string]any) (map[string]any, error) {
 	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
@@ -191,6 +205,7 @@ func completeLifeJob(cmd *cobra.Command, jobID string, output map[string]any) (m
 	return result, nil
 }
 
+// requireFlag 读取必填字符串 flag：trim 后为空即报 "--<name> is required"。
 func requireFlag(cmd *cobra.Command, name string) (string, error) {
 	value, _ := cmd.Flags().GetString(name)
 	value = strings.TrimSpace(value)
@@ -200,6 +215,7 @@ func requireFlag(cmd *cobra.Command, name string) (string, error) {
 	return value, nil
 }
 
+// decodeJSONObject 把字节解析成 JSON 对象，失败或解析成非对象时报带字段名的错。
 func decodeJSONObject(raw []byte, field string) (map[string]any, error) {
 	var value map[string]any
 	if err := json.Unmarshal(raw, &value); err != nil {
@@ -211,6 +227,8 @@ func decodeJSONObject(raw []byte, field string) (map[string]any, error) {
 	return value, nil
 }
 
+// runLifeMemoryCandidate 执行 `life memory-candidate`：提交一条可修订的记忆候选
+// 及其证据（kind/content/evidence-id 必填）。
 func runLifeMemoryCandidate(cmd *cobra.Command, _ []string) error {
 	kind, err := requireFlag(cmd, "kind")
 	if err != nil {
@@ -247,6 +265,8 @@ func runLifeMemoryCandidate(cmd *cobra.Command, _ []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// runLifeProposalCreate 执行 `life proposal create`：创建实验提案，payload 为
+// JSON 对象（行内 --payload-json 或文件 --payload-file，二选一）。
 func runLifeProposalCreate(cmd *cobra.Command, _ []string) error {
 	title, err := requireFlag(cmd, "title")
 	if err != nil {
@@ -293,6 +313,8 @@ func runLifeProposalCreate(cmd *cobra.Command, _ []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// runLifeProposalPresent 执行 `life proposal present <id>`：把内部提案提交给用户
+// 确认（POST /present）。
 func runLifeProposalPresent(cmd *cobra.Command, args []string) error {
 	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
@@ -306,6 +328,8 @@ func runLifeProposalPresent(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+// runLifeCheck 执行 `life check`：记录一次模型自主决定的前摄检查（含「选择沉默」
+// 的情况），status/reason 必填，context 为 JSON 快照。
 func runLifeCheck(cmd *cobra.Command, _ []string) error {
 	status, err := requireFlag(cmd, "status")
 	if err != nil {

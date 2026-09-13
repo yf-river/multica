@@ -1,3 +1,6 @@
+// db_ops.go 封装调度器对 sys_cron_executions 表的所有 SQL 原语：插入认领/窃取租约、
+// 续期心跳、写成功/失败终态、读取某 (job, scope) 最近一次计划等。管理调度循环
+// （manager.go）只依赖这些原语，本身不含任何 SQL。
 package scheduler
 
 import (
@@ -14,20 +17,16 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-// ErrLeaseLost is returned by heartbeat / terminal-update primitives
-// when the row is no longer owned by the calling runner. The handler
-// should stop, and the scheduler will not write a terminal status for
-// the lost lease.
+// ErrLeaseLost 由心跳 / 终态更新这类原语在「该行已不再归调用方 runner 所有」时返回。
+// 处理器应当停下，调度器也不会为已丢失的租约写终态。
 var ErrLeaseLost = errors.New("scheduler: lease lost")
 
-// errTerminalIgnored is the sentinel finishSuccess / finishFailure use
-// to convey a successful UPDATE that affected zero rows. Internal to
-// this package.
+// errTerminalIgnored 是 finishSuccess / finishFailure 用来表达「UPDATE 成功但影响 0 行」
+// 的哨兵错误。仅本包内部使用。
 var errTerminalIgnored = ErrLeaseLost
 
-// dbNow returns Postgres's notion of "now" as the canonical clock. The
-// scheduler uses DB time for every plan calculation and lease window so
-// instances with skewed clocks still agree on the same plan_time.
+// dbNow 以 Postgres 的 now() 作为规范时钟。调度器对每个计划的运算与租约窗口都用
+// 数据库时间，这样时钟偏斜的各实例对同一个 plan_time 依然能达成一致。
 func dbNow(ctx context.Context, pool *pgxpool.Pool) (time.Time, error) {
 	var t time.Time
 	if err := pool.QueryRow(ctx, "SELECT now()").Scan(&t); err != nil {
@@ -36,25 +35,22 @@ func dbNow(ctx context.Context, pool *pgxpool.Pool) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-// claim is the result of trying to acquire a plan. Only one of the
-// boolean outcomes is true at a time.
+// claim 是尝试获取某计划租约的结果。下面三个布尔结果同一时刻最多只有一个为真。
 type claim struct {
 	ID         uuid.UUID
 	LeaseToken uuid.UUID
 	Attempt    int
-	Won        bool // fresh insert
-	Stole      bool // stale-steal or FAILED retry
-	Conflicted bool // another runner already owns this plan, or attempts exhausted
+	Won        bool // 全新插入成功
+	Stole      bool // 窃取陈旧租约，或从 FAILED 状态重试成功
+	Conflicted bool // 其它 runner 已占该计划，或尝试次数已用尽
 }
 
-// tryClaim attempts to acquire the lease for (job, scope, plan_time).
-// Returns Won=true on a fresh insert, Stole=true on a stale-steal or
-// retry-after-FAILED, and Conflicted=true if another runner owns the
-// plan, the row is already SUCCESS, the FAILED row is not yet
-// retry-eligible (next_retry_at in the future), or attempts are
-// exhausted. The caller treats every Conflicted outcome the same way
-// (no-op); the scheduler distinguishes them through audit-row metrics
-// rather than per-call return fields.
+// tryClaim 尝试为 (job, scope, plan_time) 获取租约。
+// 全新插入成功返回 Won=true；窃取陈旧租约或 FAILED 后重试成功返回 Stole=true；
+// 以下情形返回 Conflicted=true：别的 runner 已拥有该计划、行已是 SUCCESS、FAILED
+// 行还不到可重试时间（next_retry_at 在未来）、或尝试次数已用尽。调用方把所有
+// Conflicted 结果一律同等对待（什么都不做）；调度器靠审计行的指标而不是每次调用的
+// 返回值来区分它们。
 func tryClaim(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -64,9 +60,8 @@ func tryClaim(
 	dbTime time.Time,
 	runnerID string,
 ) (claim, error) {
-	// Fresh-insert path. ON CONFLICT DO NOTHING means losers do not
-	// touch the existing row — we follow up with the steal/retry path
-	// only if this insert was a conflict.
+	// 全新插入路径。ON CONFLICT DO NOTHING 意味着没抢到的人不会碰到既有行——只有
+	// 当这次插入发生冲突时，我们才继续走下面的窃取/重试路径。
 	insertSQL := `
 		INSERT INTO sys_cron_executions (
 			job_name, scope_kind, scope_id, plan_time,
@@ -97,9 +92,8 @@ func tryClaim(
 		job.MaxAttempts,
 		runnerID,
 		dbTime, staleSecs,
-		// Execution rows are append-only and high-churn, so the id is a v7 for
-		// primary-key locality. lease_token stays gen_random_uuid(): it is a
-		// claim token, and it must not carry a guessable timestamp.
+		// 执行行是只追加、高变更率的，所以主键 id 用 v7，保证主键的局部性。
+		// lease_token 保持 gen_random_uuid()：它是认领令牌，不能携带可猜测的时间戳。
 		dbid.NewV7(),
 	).Scan(&c.ID, &c.LeaseToken, &c.Attempt)
 	if err == nil {
@@ -110,9 +104,8 @@ func tryClaim(
 		return claim{}, fmt.Errorf("scheduler: claim insert: %w", err)
 	}
 
-	// Conflict path. Try retry-after-FAILED or stale-steal in a single
-	// statement. The WHERE clause encodes both branches; the choice is
-	// made server-side from the existing row.
+	// 冲突路径：用单条语句尝试「FAILED 后重试」或「窃取陈旧租约」。WHERE 子句
+	// 同时编码两条分支，选哪条由服务端根据既有行决定。
 	stealSQL := `
 		UPDATE sys_cron_executions
 		   SET status        = 'RUNNING',
@@ -154,17 +147,15 @@ func tryClaim(
 		return claim{}, fmt.Errorf("scheduler: claim steal: %w", err)
 	}
 
-	// No-row update — somebody else owns a fresh RUNNING lease, the
-	// row is already SUCCESS, the row is FAILED but not yet
-	// retry-eligible, or attempts are exhausted. The caller treats
-	// these no-op cases identically.
+	// 更新 0 行——要么别人持有一条新鲜的 RUNNING 租约，要么行已是 SUCCESS，要么
+	// 行是 FAILED 但还不到可重试时间，要么尝试次数已用尽。调用方对这些「无事可做」
+	// 的情形一视同仁。
 	c.Conflicted = true
 	return c, nil
 }
 
-// markStaleAsFailed transitions a single stale RUNNING row to FAILED
-// when its job has AllowStaleReentry=false. Returns RowsAffected so the
-// sweeper can log how many rows were closed.
+// markStaleAsFailed 在任务 AllowStaleReentry=false 时，把单条陈旧的 RUNNING 行转成
+// FAILED。返回影响行数，清扫器用它对日志记录关闭了多少行。
 func markStaleAsFailed(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -188,9 +179,8 @@ func markStaleAsFailed(
 	return tag.RowsAffected(), nil
 }
 
-// heartbeat extends stale_after for the runner that holds the lease.
-// Returns ErrLeaseLost if the row is no longer ours (stolen or already
-// finalised).
+// heartbeat 为持有租约的 runner 延长 stale_after。若行已不再属于我们（被窃走或已
+// 终态），返回 ErrLeaseLost。
 func heartbeat(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -219,8 +209,8 @@ func heartbeat(
 	return nil
 }
 
-// finishSuccess writes a terminal SUCCESS row. The lease_token guard
-// prevents an ex-lease-holder from overwriting a newer attempt's state.
+// finishSuccess 写一条终态 SUCCESS 行。lease_token 守卫防止「已失去租约的前持有者」
+// 覆盖新一次尝试的状态。
 func finishSuccess(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -257,8 +247,8 @@ func finishSuccess(
 	return nil
 }
 
-// finishFailure writes a terminal FAILED row. nextRetryAt may be the
-// zero value if no retry is due (max_attempts reached).
+// finishFailure 写一条终态 FAILED 行。nextRetryAt 可为零值——表示无需重试（已达到
+// max_attempts）。
 func finishFailure(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -276,6 +266,7 @@ func finishFailure(
 	if errorCode == "" {
 		errorCode = "handler_error"
 	}
+	// 错误消息列有长度上限，超长截断以免写入失败。
 	if len(errorMsg) > 4000 {
 		errorMsg = errorMsg[:4000]
 	}
@@ -302,9 +293,8 @@ func finishFailure(
 	return nil
 }
 
-// encodeResult serialises a handler's small structured result to a
-// JSONB-ready string. Empty/nil maps encode as `{}` so the column
-// default is preserved if no result was set.
+// encodeResult 把处理器的小型结构化结果序列化成可写进 JSONB 的字符串。空/为 nil 的
+// map 编码成 `{}`，这样在没设置结果时仍保留列的默认值。
 func encodeResult(in map[string]any) (string, error) {
 	if len(in) == 0 {
 		return "{}", nil
@@ -313,41 +303,34 @@ func encodeResult(in map[string]any) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("scheduler: marshal result: %w", err)
 	}
-	// Defensive cap — keep result-row size predictable. Bigger
-	// payloads belong in structured logs.
+	// 防御性上限——让结果行大小可预测。更大的载荷应该走结构化日志。
 	if len(b) > 16*1024 {
 		return "", fmt.Errorf("scheduler: result payload too large (%d bytes); keep it small or use logs", len(b))
 	}
 	return string(b), nil
 }
 
-// LatestPlanInfo returns the latest known plan_time for (job, scope)
-// plus the fields the catch-up planner needs to decide whether the row
-// is still claimable at the same plan_time (FAILED-with-retry) or
-// finished and the next plan_time should advance past it.
+// LatestPlanInfo 返回 (job, scope) 最近一次已知的 plan_time，外加「追赶计划器」判断
+// 同一 plan_time 是否仍可认领（FAILED 待重试）或已结束、下一 plan_time 应越过它所需
+// 的字段。
 //
-// Exported so a JobSpec.PlansForScope hook can inspect the same view
-// the built-in Cadence planner uses — in particular Found / PlanTime
-// to know where to resume plan enumeration, and RetryEligible to keep
-// the cursor on a FAILED-with-retry plan_time.
+// 导出它，是为了让 JobSpec.PlansForScope 钩子能看到与内置 Cadence 计划器同一视角——
+// 尤其是用 Found / PlanTime 决定从哪恢复计划枚举，用 RetryEligible 决定是否把游标停在
+// 一个 FAILED-待重试的 plan_time 上。
 type LatestPlanInfo struct {
 	Found       bool
 	PlanTime    time.Time
 	Status      string
 	Attempt     int
 	MaxAttempts int
-	// NextRetryAt is zero (NULL in DB) when the row is not in a
-	// retry-eligible state, or when the next retry is due immediately
-	// (FAILED with no backoff configured).
+	// NextRetryAt 在「行不在可重试状态」或「下次重试立即可行」（FAILED 但没配退避）时
+	// 为零值（DB 里是 NULL）。
 	NextRetryAt time.Time
 }
 
-// RetryEligible reports whether the latest stored row should still be
-// considered for the same plan_time on the next tick. True for FAILED
-// rows that have remaining attempts and whose next_retry_at has
-// passed; the every_plan planner uses this to keep the cursor on the
-// retry-eligible bucket so tryClaim's retry-from-FAILED branch can
-// fire.
+// RetryEligible 报告最近存储的那行是否应该在下一 tick 仍按同一个 plan_time 处理。
+// 对「还有剩余尝试次数、且 next_retry_at 已到」的 FAILED 行为真；every_plan 计划器
+// 用这个判断把游标停在可重试的桶上，好让 tryClaim 的「从 FAILED 重试」分支能触发。
 func (i LatestPlanInfo) RetryEligible(now time.Time) bool {
 	if !i.Found {
 		return false
@@ -359,13 +342,13 @@ func (i LatestPlanInfo) RetryEligible(now time.Time) bool {
 		return false
 	}
 	if i.NextRetryAt.IsZero() {
-		// COALESCE-style: NULL next_retry_at means "as soon as
-		// possible", which is right now.
+		// COALESCE 语义：next_retry_at 为 NULL 表示「尽快」，也就是现在。
 		return true
 	}
 	return !i.NextRetryAt.After(now)
 }
 
+// latestPlan 查询 (job, scope) 最近一次已存储计划的相关字段，供追赶计划器使用。
 func latestPlan(
 	ctx context.Context,
 	pool *pgxpool.Pool,

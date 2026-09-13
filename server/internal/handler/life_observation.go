@@ -1,3 +1,8 @@
+// Package handler 是整个 HTTP API 的处理器集合。
+//
+// 本文件（life_observation.go）实现"人生档案"里的主动关怀回执查询与
+// 编年史（chronicle）接口：主动关怀检查列表、编年史条目的创建/列出/补写
+// "后来的理解"，每条编年史都带修订历史与证据引用。
 package handler
 
 import (
@@ -9,6 +14,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// lifeProactiveCheckResponse 是主动关怀检查（proactive check）的对外 JSON 结构。
 type lifeProactiveCheckResponse struct {
 	ID              string          `json:"id"`
 	Status          string          `json:"status"`
@@ -21,6 +27,7 @@ type lifeProactiveCheckResponse struct {
 	ValueAssessment string          `json:"value_assessment"`
 }
 
+// lifeProactiveCheckToResponse 把主动关怀检查行转成对外结构。
 func lifeProactiveCheckToResponse(check db.LifeProactiveCheck) lifeProactiveCheckResponse {
 	return lifeProactiveCheckResponse{
 		ID: uuidToString(check.ID), Status: check.Status, TriggerSource: check.TriggerSource,
@@ -29,6 +36,7 @@ func lifeProactiveCheckToResponse(check db.LifeProactiveCheck) lifeProactiveChec
 	}
 }
 
+// ListLifeProactiveChecks 列出最近 100 次主动关怀检查记录。
 func (h *Handler) ListLifeProactiveChecks(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -48,11 +56,13 @@ func (h *Handler) ListLifeProactiveChecks(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"checks": items})
 }
 
+// lifeChronicleEvidenceResponse 是编年史证据引用的对外 JSON 结构。
 type lifeChronicleEvidenceResponse struct {
 	SourceType string `json:"source_type"`
 	SourceID   string `json:"source_id"`
 }
 
+// lifeChronicleResponse 是编年史条目（含证据列表）的对外 JSON 结构。
 type lifeChronicleResponse struct {
 	ID                 string                          `json:"id"`
 	PeriodStart        string                          `json:"period_start"`
@@ -70,6 +80,7 @@ type lifeChronicleResponse struct {
 	Revision           int32                           `json:"revision"`
 }
 
+// lifeChronicleToResponse 加载编年史条目关联的证据并整理成对外结构。
 func (h *Handler) lifeChronicleToResponse(r *http.Request, entry db.LifeChronicleEntry) (lifeChronicleResponse, error) {
 	evidence, err := h.Queries.ListLifeChronicleEvidence(r.Context(), entry.ID)
 	if err != nil {
@@ -89,6 +100,7 @@ func (h *Handler) lifeChronicleToResponse(r *http.Request, entry db.LifeChronicl
 	}, nil
 }
 
+// ListLifeChronicleEntries 列出该用户的全部编年史条目。
 func (h *Handler) ListLifeChronicleEntries(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -119,6 +131,9 @@ func (h *Handler) ListLifeChronicleEntries(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"entries": items})
 }
 
+// CreateLifeChronicleEntry 手动创建一条编年史：校验时间段与每一条证据确实
+// 属于该用户后，事务内落条目、第 1 版修订与证据链接，理解"后来的理解"留空
+// 待后续补写。
 func (h *Handler) CreateLifeChronicleEntry(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -233,6 +248,8 @@ func (h *Handler) CreateLifeChronicleEntry(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusCreated, response)
 }
 
+// UpdateLifeChronicleLaterUnderstanding 给编年史条目补写"后来的理解"，
+// 并记一条新修订推进 revision。
 func (h *Handler) UpdateLifeChronicleLaterUnderstanding(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {

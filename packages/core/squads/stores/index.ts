@@ -1,3 +1,5 @@
+// 本文件是 squads 的 store 出口（barrel）。
+
 export {
   useSquadsViewStore,
   SQUAD_SCOPES,

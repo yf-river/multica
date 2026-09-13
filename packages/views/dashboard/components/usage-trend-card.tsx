@@ -1,5 +1,6 @@
 "use client";
 
+// 用量趋势卡片：同一根时间轴上用切换器展示 tokens/cost/time/tasks 四个指标。
 import { useState } from "react";
 import { BarChart3 } from "lucide-react";
 import {
@@ -26,16 +27,21 @@ import {
 import { Segmented, type Dim } from "./dashboard-shared";
 import { DimSegmented } from "./dim-segmented";
 
+/** 用量趋势卡片可切换的四个指标。 */
 type UsageMetric = "tokens" | "cost" | "time" | "tasks";
 
 /**
- * Spend over time: one x-axis, four metrics behind a toggle so the reader can
- * mentally overlay them by flipping between them.
+ * 随时间的开销趋势：一根 x 轴，四个指标藏在切换器后面，让读者翻来翻去就能
+ * 在脑子里把它们叠加起来对比。
  *
- * Errors used to be the fifth metric here. It is a different question — "what
- * broke" rather than "what did it cost" — and sharing a toggle with the spend
- * metrics meant the only way to see failures was to hide spend. It now has its
- * own chart on the Errors tab.
+ * Errors 曾经是这里的第五个指标。它其实是另一个问题——「什么坏了」而不是「花了多少」，
+ * 跟开销指标共用一个切换器意味着想看失败就必须先藏起开销。现在它已经在 Errors 标签页
+ * 有了自己的图表。
+ *
+ * @param allowedDims 当前时间段允许的维度列表
+ * @param dailyCost / dailyTokens / dailyTime / dailyTasks 日粒度的四个指标数据
+ * @param weeklyCost / weeklyTokens / weeklyTime / weeklyTasks 周粒度的四个指标数据
+ * @param lessThanMinuteLabel 不足一分钟时显示的文案
  */
 export function UsageTrendCard({
   allowedDims,
@@ -63,16 +69,14 @@ export function UsageTrendCard({
   const { t } = useT("usage");
   const [metric, setMetric] = useState<UsageMetric>("tokens");
   const [dim, setDim] = useState<Dim>("daily");
-  // Derived, never reset: when the range narrows to 1d the card simply draws
-  // the one dimension that range allows, and a later widening restores the
-  // reader's choice. Writing the correction back into state would make the
-  // card forget it.
+  // 派生值，绝不回写 state：时间段收窄到 1d 时卡片只画该范围允许的那一个维度，
+  // 之后再放宽又能恢复读者的选择；如果把纠正结果写回 state，卡片就会「忘记」用户
+  // 原来的选择。
   const effectiveDim: Dim = allowedDims.includes(dim) ? dim : allowedDims[0]!;
   const weekly = effectiveDim === "weekly";
 
-  // Empty-state is per-metric so each toggle option independently decides
-  // whether it has data — e.g. tokens recorded but no terminal runs yet
-  // should show Tokens normally while Time / Tasks fall through to empty.
+  // 空状态按指标分别判断，让每个切换选项独立决定自己有没有数据——例如已经有 token
+  // 记录、但还没有任何已结束的运行，就应该正常显示 Tokens，而 Time / Tasks 落空显示。
   const costData = weekly ? weeklyCost : dailyCost;
   const tokensData = weekly ? weeklyTokens : dailyTokens;
   const timeData = weekly ? weeklyTime : dailyTime;

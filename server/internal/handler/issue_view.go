@@ -1,3 +1,4 @@
+// 职责定位：已保存的 issue 视图（MUL-4796）：服务端存的过滤器定义 + 展示默认值 CRUD。
 package handler
 
 import (
@@ -12,21 +13,23 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Saved issue views (MUL-4796): server-backed filter definitions with
-// display defaults. `query` is the shared identity of a view; `display`
-// only seeds a member's first open. Both are opaque JSON to the server —
-// interpretation lives in the client definition_version contract.
+// 已保存的 issue 视图（MUL-4796）：带展示默认值的服务端过滤器定义。`query` 是视图的共享
+// 身份；`display` 只播种成员的首次打开。两者对服务端都是不透明 JSON——解释权在客户端的
+// definition_version 契约里。
 
+// issueViewNameMaxLen 是视图名称的字符上限（1-80）。
 const issueViewNameMaxLen = 80
 
-// issueViewBodyMaxBytes bounds every saved-view write. The query/display
-// blobs are filter documents — real ones are a few KB; the cap is the
-// abuse backstop, comfortably above any legitimate payload.
+// issueViewBodyMaxBytes 限制所有保存视图的写入。query/display blob 是过滤器文档——真实值就
+// 几 KB；这个上限是滥用兜底，舒适地高于任何合法 payload。
 const issueViewBodyMaxBytes = 128 * 1024
 
-// issueViewsPerOwnerMax bounds table growth per member per workspace.
+// issueViewsPerOwnerMax 限制每个成员在每个工作区的表增长。
 const issueViewsPerOwnerMax = 100
 
+// 允许的 scope 取值组合：scope_type 与 scope_variant 配对才有意义——my 的变体是「我」的关系
+// 收窄（assigned/created/involved/any），workspace 的变体是受理人类型收窄（members/agents），
+// visibility 决定视图是仅自己可见还是整工作区可见。
 var (
 	validIssueViewScopeTypes        = []string{"workspace", "my", "project"}
 	validIssueViewMyVariants        = []string{"assigned", "created", "involved", "any"}
@@ -34,10 +37,9 @@ var (
 	validIssueViewVisibilities      = []string{"private", "workspace"}
 )
 
-// validateIssueViewVariant returns the pgtype value for a scope_variant
-// input under the given scope_type, or ok=false when the pairing is
-// invalid. Workspace and project variants are optional assignee-type
-// narrowing (NULL = the unrestricted All tab); my variants are required.
+// validateIssueViewVariant 在给定 scope_type 下校验 scope_variant 输入并返回 pgtype 值；
+// 配对非法时 ok=false。workspace/project 变体是可选的受理人类型收窄（NULL = 不限的 All 标签页）；
+// my 变体必填。
 func validateIssueViewVariant(scopeType string, variant *string) (pgtype.Text, bool) {
 	switch scopeType {
 	case "my":
@@ -45,7 +47,7 @@ func validateIssueViewVariant(scopeType string, variant *string) (pgtype.Text, b
 			return pgtype.Text{}, false
 		}
 		return pgtype.Text{String: *variant, Valid: true}, true
-	default: // workspace, project
+	default: // workspace 与 project 两种 scope_type 共用此默认分支
 		if variant == nil || *variant == "" || *variant == "all" {
 			return pgtype.Text{}, true
 		}
@@ -56,6 +58,7 @@ func validateIssueViewVariant(scopeType string, variant *string) (pgtype.Text, b
 	}
 }
 
+// IssueViewResponse 是已保存视图的响应体。
 type IssueViewResponse struct {
 	ID                string          `json:"id"`
 	WorkspaceID       string          `json:"workspace_id"`
@@ -73,6 +76,7 @@ type IssueViewResponse struct {
 	UpdatedAt         string          `json:"updated_at"`
 }
 
+// issueViewToResponse 把数据库行转成视图响应体（uuid / 时间戳字段统一格式化）。
 func issueViewToResponse(v db.IssueView) IssueViewResponse {
 	return IssueViewResponse{
 		ID:                uuidToString(v.ID),
@@ -92,23 +96,25 @@ func issueViewToResponse(v db.IssueView) IssueViewResponse {
 	}
 }
 
-// canReadIssueView: owner always; workspace-shared views for any member.
-// (My-scope views are constrained to private by the DB CHECK, so they only
-// ever match the owner branch.)
+// canReadIssueView 判断调用者能否读取该视图：本人创建的总是可读；visibility=workspace 的共享
+// 视图对任意工作区成员开放。（my 作用域的视图被 DB CHECK 限定为只能 private，所以它们永远只会
+// 命中「本人」这一分支。）
 func canReadIssueView(v db.IssueView, userID pgtype.UUID) bool {
 	return v.OwnerID == userID || v.Visibility == "workspace"
 }
 
+// isJSONObject 校验 payload 是「非 null」的 JSON 对象。null 也能解成 map 且不报错，这里显式
+// 拒绝它，而不是放行后让 DB CHECK 把它变成一次 500。
 func isJSONObject(raw json.RawMessage) bool {
 	var m map[string]json.RawMessage
 	if json.Unmarshal(raw, &m) != nil {
 		return false
 	}
-	// JSON null unmarshals into a nil map without error — reject it here
-	// instead of letting the DB CHECK turn it into a 500.
 	return m != nil
 }
 
+// CreateIssueViewRequest 是创建已保存视图的请求体（query 为过滤器文档、display 为展示默认值，
+// 均为不透明 JSON）。
 type CreateIssueViewRequest struct {
 	Name              string          `json:"name"`
 	ScopeType         string          `json:"scope_type"`
@@ -120,6 +126,9 @@ type CreateIssueViewRequest struct {
 	Display           json.RawMessage `json:"display"`
 }
 
+// CreateIssueView 处理 POST .../issue-views：创建一条已保存视图。校验：名称 1-80 字符、每
+// owner 上限、scope 组合、visibility（缺省 private）、definition_version（缺省 1）、query 必须
+// 是 JSON 对象（display 缺省 {}）。成功返回 201 + 视图。
 func (h *Handler) CreateIssueView(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -194,8 +203,7 @@ func (h *Handler) CreateIssueView(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		// The project must exist in this workspace — a view on a foreign or
-		// deleted project would be unreachable and could leak across tenants.
+		// 项目必须存在于本工作区——挂在外部或已删除项目上的视图既不可达，也可能跨租户泄漏。
 		if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
 			ID: projUUID, WorkspaceID: wsUUID,
 		}); err != nil {
@@ -204,7 +212,7 @@ func (h *Handler) CreateIssueView(w http.ResponseWriter, r *http.Request) {
 		}
 		scopeID = projUUID
 	case "my":
-		// My Issues is a per-user perspective; sharing it is meaningless.
+		// My Issues 是个人视角，把它共享出去没有意义。
 		req.Visibility = "private"
 	}
 
@@ -227,6 +235,8 @@ func (h *Handler) CreateIssueView(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, issueViewToResponse(view))
 }
 
+// ListIssueViews 处理 GET .../issue-views：列出当前用户可读的视图（自己创建的 + 工作区可见
+// 的共享视图）。
 func (h *Handler) ListIssueViews(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -268,9 +278,8 @@ func (h *Handler) ListIssueViews(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// loadIssueViewForUser resolves the id, enforces workspace scoping, and
-// applies read authorization. Unauthorized and missing are both 404 so a
-// private view's existence never leaks.
+// loadIssueViewForUser 解析视图 id、强制限定在工作区内，并执行读授权。未授权与不存在统一返回
+// 404，避免暴露某条 private 视图是否存在。
 func (h *Handler) loadIssueViewForUser(w http.ResponseWriter, r *http.Request, userID string) (db.IssueView, pgtype.UUID, bool) {
 	wsUUID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace id")
 	if !ok {
@@ -290,6 +299,7 @@ func (h *Handler) loadIssueViewForUser(w http.ResponseWriter, r *http.Request, u
 	return view, wsUUID, true
 }
 
+// GetIssueViewByID 处理 GET .../issue-views/:id：返回单条视图详情。
 func (h *Handler) GetIssueViewByID(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -302,9 +312,9 @@ func (h *Handler) GetIssueViewByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, issueViewToResponse(view))
 }
 
-// canManageIssueView: the owner, or a workspace admin/owner for shared
-// views. Private views of others are invisible (404 in the loader), so
-// admin powers never reach them.
+// canManageIssueView 判断调用者能否管理该视图：本人创建的可以；workspace 可见的共享视图则要求
+// 调用者是工作区 owner/admin。别人的 private 视图在 loader 阶段就已不可见（404），管理员权限
+// 永远够不到它们。
 func (h *Handler) canManageIssueView(r *http.Request, view db.IssueView, userID string) bool {
 	if view.OwnerID == parseUUID(userID) {
 		return true
@@ -322,6 +332,8 @@ func (h *Handler) canManageIssueView(r *http.Request, view db.IssueView, userID 
 	return roleAllowed(member.Role, "owner", "admin")
 }
 
+// UpdateIssueViewRequest 是更新视图的请求体（可改名/可见性/scope_variant/query/display，
+// ExpectedRevision 做乐观并发）。
 type UpdateIssueViewRequest struct {
 	Name             *string         `json:"name"`
 	Visibility       *string         `json:"visibility"`
@@ -331,6 +343,7 @@ type UpdateIssueViewRequest struct {
 	ExpectedRevision int32           `json:"expected_revision"`
 }
 
+// UpdateIssueView 处理 PATCH .../issue-views/:id：更新视图内容。权限同 canManageIssueView。
 func (h *Handler) UpdateIssueView(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -392,7 +405,7 @@ func (h *Handler) UpdateIssueView(w http.ResponseWriter, r *http.Request) {
 		}
 		display = req.Display
 	}
-	// scope_type itself is immutable; the variant within it may switch.
+	// scope_type 本身不可改；它内部的变体可以切换。
 	scopeVariant := view.ScopeVariant
 	if req.ScopeVariant != nil {
 		next, variantOK := validateIssueViewVariant(view.ScopeType, req.ScopeVariant)
@@ -415,8 +428,8 @@ func (h *Handler) UpdateIssueView(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// The row exists (we just loaded it) — zero rows means the
-			// revision moved underneath the caller.
+			// 行必然存在（我们刚加载过它）——返回 0 行只可能是 revision 在调用方眼皮底下被别的
+			// 请求推进了。
 			writeError(w, http.StatusConflict, "view was modified by someone else")
 			return
 		}
@@ -426,6 +439,7 @@ func (h *Handler) UpdateIssueView(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, issueViewToResponse(updated))
 }
 
+// DeleteIssueView 处理 DELETE .../issue-views/:id：删除一条视图。权限同 canManageIssueView。
 func (h *Handler) DeleteIssueView(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {

@@ -1,3 +1,5 @@
+// 本文件：Mika——工作区内置的「Chief of Staff」系统 Agent——的创建（首次启用/幂等复用）
+// 与会话引导端点。Mika 的产品身份在这里是服务端常量，见下。
 package handler
 
 import (
@@ -18,58 +20,49 @@ import (
 	"net/http"
 )
 
-// Mika's product-defined identity. These are server constants on purpose: the
-// public CreateAgent API accepts neither `kind` nor `system_key`, so a client
-// cannot mint an agent that would receive the system instruction layer or pass
-// the onboarding gate. Letting it would both forge a "Mika" and break the
-// one-per-workspace invariant.
+// Mika 的产品级身份。刻意做成服务端常量：公开的 CreateAgent API 既不接受 `kind` 也不接受
+// `system_key`，客户端无法铸造一个会收到系统指令层、或能通过引导门槛的 Agent。若可以，既
+// 能伪造一个「Mika」，又会打破「每工作区一个」的不变式。
 const (
 	mikaAgentMaxConcurrency = 3
 	mikaAgentVisibility     = "workspace"
 	mikaAgentPermissionMode = "public_to"
-	// Placeholder until Mika has real artwork. Uses the same `emoji:` marker
-	// every other agent avatar uses, so ActorAvatar renders it as text and no
-	// surface needs to special-case her. The previous value was a hand-rolled
-	// data-URI SVG, which only that one constant knew how to produce.
+	// 在 Mika 有正式形象前的占位。用的是所有 Agent 头像都在用的 `emoji:` 标记，ActorAvatar
+	// 会把它当文本渲染，任何 surface 都不用为她特判。旧值是一段手搓的 data-URI SVG，只有
+	// 那个常量自己知道怎么产出。
 	mikaAgentAvatarURL = agentEmojiAvatarPrefix + "🦄"
 )
 
+// mikaAgentDescription 是 Mika 简介，创建 Agent 行时写入 Description。
 const mikaAgentDescription = "你的工作区 Chief of Staff。Mika 会把目标转化为任务、协调智能体，并帮你建立可复用的工作流。"
 
 type createMikaAgentRequest struct {
 	RuntimeID string `json:"runtime_id"`
-	// Model is the runtime model Mika should run on. Optional: empty means
-	// "whatever the runtime defaults to", which is what every deployment
-	// without per-agent model support gets anyway.
+	// Model 是 Mika 应该跑的 runtime 模型。可选：空表示「用 runtime 默认」，没有按 Agent
+	// 选模型能力的部署本来也就只能这样。
 	Model string `json:"model"`
-	// SessionTitle names the onboarding conversation when this call is the one
-	// that creates it. It is only ever a label: the session's identity is
-	// (workspace, member, Mika), so sending a different title later reuses the
-	// existing session rather than opening a second one.
+	// SessionTitle 在这次调用就是创建引导会话的那次时，给会话起的名。它永远只是个标签：
+	// 会话的身份是 (workspace, member, Mika)，所以之后传不同标题也只是复用它而不是另开一条。
 	SessionTitle string `json:"session_title"`
 }
 
-// mikaAgentResponse is the agent plus the caller's onboarding conversation.
+// mikaAgentResponse 是「Agent + 调用者的引导会话」一起返回。
 //
-// They are returned together because every caller needs both and the pair has
-// to be produced atomically. The client used to list sessions and then create
-// one if it saw no match, which is an unprotected check-then-insert:
-// LockWorkspaceForChatSessionCreate takes FOR KEY SHARE precisely so that
-// concurrent session creators do not block each other, so two tabs each
-// created a session and each got its own "idempotent" kickoff.
+// 两者要一起返回，因为每个调用方两个都需要，而且这对组合必须原子产出。客户端以前是先列
+// 会话、看不到匹配就创建一个——那是一处没有保护的 check-then-insert：LockWorkspaceForChatSessionCreate
+// 特意取 FOR KEY SHARE，让并发创建会话彼此不阻塞，于是两个标签页各建了一条会话、各拿到
+// 一次自己的「幂等」kickoff。
 type mikaAgentResponse struct {
 	AgentResponse
 	OnboardingSession *ChatSessionResponse `json:"onboarding_session,omitempty"`
 }
 
-// CreateMikaAgent provisions the workspace's built-in Chief of Staff on the
-// given runtime, or returns the existing one.
+// CreateMikaAgent 处理 POST /api/... 的 Mika 启用请求——在给定 runtime 上置备工作区内置的
+// Chief of Staff，或返回已有的那一个（已存在时返回 200，新建返回 201）。
 //
-// Idempotency is by system_key inside the workspace, not by name: names are
-// owner-editable, and migration 172's unique index covers
-// (workspace_id, owner_id, runtime_id, system_key), which would still admit a
-// second Mika on a different runtime or under a different owner. The lookup
-// below is the invariant that actually holds "one Mika per workspace".
+// 幂等键是工作区内的 system_key，而不是名字：名字可被 owner 改，migration 172 的唯一索引
+// 覆盖 (workspace_id, owner_id, runtime_id, system_key)，不同 runtime 或不同 owner 下仍可能
+// 出现第二个 Mika。下面这次查找才是真正守住「每工作区一个 Mika」的不变式。
 func (h *Handler) CreateMikaAgent(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -87,16 +80,13 @@ func (h *Handler) CreateMikaAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Deliberately outside resolveMikaAgent's transaction: the session
-	// get-or-create opens its own, and running it while the workspace
-	// provisioning lock is still held would queue every member's session
-	// behind a lock that has nothing to do with sessions.
+	// 刻意放在 resolveMikaAgent 的事务之外：会话的 get-or-create 自己开事务，若在工作区
+	// 置备锁还持有时跑它，会把每个成员的会话都排在一条与会话无关的锁后面。
 	h.writeMikaAgentResponse(w, r, agent, workspaceID, userID, req.SessionTitle, created)
 }
 
-// resolveMikaAgent returns the workspace's Mika — the existing one if there is
-// one, otherwise a freshly provisioned one. The bool pair is (created, ok);
-// when ok is false it has already written the error response.
+// resolveMikaAgent 返回工作区的 Mika——已有则直接返回，否则新置备一个。bool 对是
+// (created, ok)；ok 为 false 时它已经写好了错误响应。
 func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, workspaceID, userID string, req createMikaAgentRequest) (db.Agent, bool, bool) {
 	runtimeID, ok := parseUUIDOrBadRequest(w, req.RuntimeID, "runtime_id")
 	if !ok {
@@ -104,8 +94,7 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 	}
 	wsUUID := parseUUID(workspaceID)
 
-	// Already provisioned: hand back the same agent so a retry, a second tab,
-	// or a re-run of onboarding cannot produce a duplicate.
+	// 已置备：直接交回同一个 Agent，重试、第二个标签页或重跑引导都不会产生重复。
 	if existing, err := h.Queries.GetAgentBySystemKey(r.Context(), db.GetAgentBySystemKeyParams{
 		WorkspaceID: wsUUID,
 		SystemKey:   pgtype.Text{String: service.MikaSystemKey, Valid: true},
@@ -138,12 +127,10 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
-	// Serialize provisioning per workspace. The check above is only a fast
-	// path: without this, two members clicking "Start with Mika" at the same
-	// moment both miss and both insert. Migration 172's unique index would not
-	// stop them either — it covers (workspace_id, owner_id, runtime_id,
-	// system_key), so different owners or different runtimes are distinct
-	// tuples, and the workspace would end up with two live Mikas.
+	// 按工作区串行化置备。上面的检查只是快路径：没有它，两个成员同时点「和 Mika 开始」会
+	// 双双没查到、双双插入。migration 172 的唯一索引也拦不住——它覆盖 (workspace_id,
+	// owner_id, runtime_id, system_key)，不同 owner 或不同 runtime 就是不同的元组，结果工作区
+	// 里会有两个活着的 Mika。
 	if _, err := tx.Exec(r.Context(),
 		"SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
 		"mika:"+workspaceID,
@@ -151,8 +138,7 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 		writeError(w, http.StatusInternalServerError, "failed to lock the workspace agent")
 		return db.Agent{}, false, false
 	}
-	// Re-check under the lock: a request that was mid-flight when we started
-	// may have committed by now.
+	// 在锁下复查：我们启动时还在途中的请求此刻可能已提交。
 	if existing, err := qtx.GetAgentBySystemKey(r.Context(), db.GetAgentBySystemKeyParams{
 		WorkspaceID: wsUUID,
 		SystemKey:   pgtype.Text{String: service.MikaSystemKey, Valid: true},
@@ -182,7 +168,7 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 		writeError(w, http.StatusInternalServerError, "failed to create the workspace agent")
 		return db.Agent{}, false, false
 	}
-	// Workspace-invocable: every member may chat with Mika and assign it work.
+	// 工作区可调用：每个成员都能和 Mika 聊天、给它派活。
 	if err := replaceInvocationTargetsWithQueries(r.Context(), qtx, created.ID, parseUUID(userID), []targetSpec{
 		{targetType: invocationTargetWorkspace, targetID: wsUUID},
 	}); err != nil {
@@ -209,22 +195,21 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 	return created, true, true
 }
 
+// writeMikaAgentResponse 组装并写出 mikaAgentResponse：Agent 详情 + 调用者的引导会话。
+// 会话 get-or-create 失败时整体报错（见内联注释），已创建（201）与已存在（200）状态码分开。
 func (h *Handler) writeMikaAgentResponse(w http.ResponseWriter, r *http.Request, agent db.Agent, workspaceID, userID, sessionTitle string, created bool) {
 	resp := h.agentToResponse(agent)
 	if err := h.enrichAgentResponseWithTargets(r.Context(), &resp, agent.ID); err != nil {
 		slog.Warn("mika agent: load invocation targets failed", append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
 	}
 
-	// Announced before the session step can fail, because the agent itself is
-	// already committed and other clients' agent lists are stale until they
-	// hear about it.
+	// 在会话步骤可能失败前就广播 Agent 创建事件，因为 Agent 本身已经提交，其它客户端的
+	// Agent 列表在听到这个消息之前一直是旧的。
 	session, err := h.getOrCreateMikaSession(r.Context(), agent, workspaceID, userID, sessionTitle)
 	if err != nil {
-		// Reporting success with the session omitted was worse than failing:
-		// the caller cannot tell a partial bootstrap from a complete one, and
-		// the surfaces that offer to finish it key off the agent, which now
-		// exists. Every step here is idempotent, so a retry converges — say so
-		// with an error rather than handing back a half-built flow.
+		// 把会话省略掉报成功比失败更糟：调用方分不清「引导只做了一半」和「全做完了」，而
+		// 那些提供「补齐引导」的 surface 都以 Agent 为键，它现在已存在。这里的每一步都幂等，
+		// 重试会收敛——所以用错误明说，而不是交回一条半成品的流程。
 		slog.Warn("mika agent: get-or-create onboarding session failed", append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
 		writeError(w, http.StatusInternalServerError, "failed to open the Mika conversation")
 		return
@@ -239,14 +224,11 @@ func (h *Handler) writeMikaAgentResponse(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, out)
 }
 
-// getOrCreateMikaSession returns the caller's Mika conversation, creating it
-// only if they do not have one yet.
+// getOrCreateMikaSession 返回调用者的 Mika 会话；还没有才创建。
 //
-// Serialized per (workspace, member) by an advisory lock rather than by a
-// unique index, because chat_session has no uniqueness constraint to lean on
-// and the repository does not add database FKs or indexes casually. The lookup
-// is by (workspace, creator, agent) — deliberately not by title, because
-// display copy must not define session identity.
+// 按 (workspace, member) 用咨询锁串行化，而不是靠唯一索引——chat_session 没有可依仗的
+// 唯一性约束，而本仓库不轻易加数据库外键/索引。查找按 (workspace, creator, agent)，刻意
+// 不看标题：展示文案不能定义会话身份。
 func (h *Handler) getOrCreateMikaSession(ctx context.Context, agent db.Agent, workspaceID, userID, title string) (db.ChatSession, error) {
 	wsUUID := parseUUID(workspaceID)
 	creatorUUID := parseUUID(userID)
@@ -264,8 +246,8 @@ func (h *Handler) getOrCreateMikaSession(ctx context.Context, agent db.Agent, wo
 	); err != nil {
 		return db.ChatSession{}, err
 	}
-	// Same workspace delete/create protocol every other session creator uses
-	// (#5219): FOR KEY SHARE here conflicts with DeleteWorkspace's FOR UPDATE.
+	// 与其它会话创建者相同的「工作区删除/创建协议」（#5219）：这里 FOR KEY SHARE 会与
+	// DeleteWorkspace 的 FOR UPDATE 互斥。
 	if _, err := qtx.LockWorkspaceForChatSessionCreate(ctx, wsUUID); err != nil {
 		return db.ChatSession{}, err
 	}
@@ -304,9 +286,8 @@ func (h *Handler) getOrCreateMikaSession(ctx context.Context, agent db.Agent, wo
 	return created, nil
 }
 
-// systemInstructionsFor exposes the product-owned half of a system agent's
-// prompt so the UI can show it read-only. Ordinary agents get "" — their whole
-// prompt is already in the editable Instructions field.
+// systemInstructionsFor 暴露系统 Agent prompt 里「产品拥有」的那一半，供 UI 只读展示。
+// 普通 Agent 返回 ""——它们的整段 prompt 本来就在可编辑的 Instructions 字段里。
 func systemInstructionsFor(a db.Agent) string {
 	if a.SystemKey.String == service.MikaSystemKey {
 		return service.MikaSystemInstructions(a.Name)

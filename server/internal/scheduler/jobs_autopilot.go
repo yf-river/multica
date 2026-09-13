@@ -1,3 +1,7 @@
+// jobs_autopilot.go 把「Autopilot 定时触发器」接进共享 DB 调度器：每个启用的触发器是
+// 自己的 scope（scope_kind="autopilot_trigger"，scope_id=trigger id），plan_time 由
+// 该触发器的 cron+时区基于 DB 时间算出。这份代码取代了旧版 cmd/server 里用 goroutine
+// 实现的 autopilot_scheduler.go（MUL-3551）。
 package scheduler
 
 import (
@@ -16,31 +20,26 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// JobNameAutopilotScheduleDispatch is the canonical job name written
-// to sys_cron_executions audit rows. Stable across releases — renaming
-// it would orphan historic rows.
+// JobNameAutopilotScheduleDispatch 是写进 sys_cron_executions 审计行的规范任务名。
+// 跨版本必须稳定——改名会让历史行失去归属。
 const JobNameAutopilotScheduleDispatch = "autopilot_schedule_dispatch"
 
-// ScopeKindAutopilotTrigger labels the scope dimension. Each enabled
-// schedule trigger is one scope; scope_id is the trigger UUID.
+// ScopeKindAutopilotTrigger 标记作用域维度。每个启用的调度触发器是一个 scope；
+// scope_id 是触发器 UUID。
 const ScopeKindAutopilotTrigger = "autopilot_trigger"
 
-// DefaultAutopilotScheduleTimezone is the fallback when a trigger's
-// timezone column is NULL / empty. Matches
-// service.DefaultAutopilotTriggerTimezone.
+// DefaultAutopilotScheduleTimezone 是触发器 timezone 列为 NULL/空时的回退值。与
+// service.DefaultAutopilotTriggerTimezone 一致。
 const DefaultAutopilotScheduleTimezone = "UTC"
 
-// maxAutopilotScheduleLateness is the acceptance window for dispatching a
-// cron occurrence after its configured plan_time. Normal scheduler jitter is
-// tens of seconds; anything beyond this is a stale catch-up and should wait
-// for the next configured slot instead of firing at an arbitrary activation
-// time.
+// maxAutopilotScheduleLateness 是「在配置的 plan_time 之后投递一次 cron occurrence」
+// 的容差窗口。正常调度抖动是几十秒级；超过这个就是陈旧的补投，应当等下一个配置槽位，
+// 而不是在某个随意时刻补触发。
 const maxAutopilotScheduleLateness = 5 * time.Minute
 
-// AutopilotScheduleDispatcher is the narrow contract this job needs
-// from service.AutopilotService. Defined here so unit tests in this
-// package (and the cmd/server integration tests) can stub it without
-// pulling in the rest of the service layer.
+// AutopilotScheduleDispatcher 是本任务从 service.AutopilotService 里需要的窄接口。
+// 定义在这里，让本包的单测（以及 cmd/server 集成测试）不用拖进整个 service 层就能
+// 打桩。
 type AutopilotScheduleDispatcher interface {
 	DispatchAutopilotForPlan(
 		ctx context.Context,
@@ -52,40 +51,31 @@ type AutopilotScheduleDispatcher interface {
 	) (*db.AutopilotRun, error)
 }
 
-// AutopilotScheduleDispatchJob returns the JobSpec that drives
-// scheduled Autopilot dispatch through the existing scheduler +
-// sys_cron_executions lease infrastructure. Replaces the legacy
-// cmd/server/autopilot_scheduler.go goroutine (MUL-3551).
+// AutopilotScheduleDispatchJob 返回驱动「定时 Autopilot 派发」的 JobSpec，走既有
+// scheduler + sys_cron_executions 租约设施。取代旧版 cmd/server/autopilot_scheduler.go
+// 的 goroutine（MUL-3551）。
 //
-// Design highlights:
+// 设计要点：
 //
-//   - Each enabled schedule trigger is its own scope
-//     (scope_kind = "autopilot_trigger", scope_id = trigger.id).
-//   - plan_time is a canonical UTC cron occurrence computed from the
-//     trigger's cron expression + timezone against DB time. The
-//     PlansForScope hook enumerates occurrences in (lastPlan, dbNow]
-//     and returns only the most recent one (collapsing missed fires —
-//     same policy as the legacy goroutine).
-//   - The handler calls AutopilotService.DispatchAutopilotForPlan, which
-//     is itself idempotent on (trigger_id, planned_at) via the partial
-//     unique index from migration 124. Together with the
-//     sys_cron_executions unique key on (job, scope, plan_time), the
-//     same planned occurrence cannot produce duplicate runs even under
-//     stale-steal retries.
+//   - 每个启用的调度触发器是自己的 scope（scope_kind = "autopilot_trigger"、
+//     scope_id = trigger.id）。
+//   - plan_time 是从触发器 cron 表达式 + 时区基于 DB 时间算出的规范 UTC cron
+//     occurrence。PlansForScope 钩子枚举 (lastPlan, dbNow] 范围内的 occurrence，只取
+//     最近一个（折叠掉漏触发的——与旧 goroutine 同策略）。
+//   - handler 调 AutopilotService.DispatchAutopilotForPlan，它本身靠迁移 124 的
+//     部分唯一索引对 (trigger_id, planned_at) 幂等。再加上 sys_cron_executions 对
+//     (job, scope, plan_time) 的唯一键，同一计划 occurrence 即使在 stale-steal 重试下
+//     也不会产生重复 run。
 //
-// Restart semantics:
+// 重启语义：
 //
-//   - Triggers are recovered from the autopilot_trigger table on the
-//     next tick — no in-memory timer table is maintained. The
-//     scope provider runs every tick and re-derives the eligible set
-//     from `kind='schedule' AND enabled AND a.status='active'`.
-//   - If the previous incarnation crashed after claiming a plan_time
-//     but before writing terminal status, the stale-lease sweep in
-//     manager.runJob promotes that row to FAILED with
-//     error_code='stale_timeout'. AllowStaleReentry=true +
-//     attempts < MaxAttempts lets the next tick steal the lease and
-//     re-enter dispatch — DispatchAutopilotForPlan's idempotent lookup
-//     then returns the already-created run rather than duplicating it.
+//   - 触发器在下一个 tick 从 autopilot_trigger 表恢复——不维护任何内存定时器表。
+//     scope provider 每 tick 跑一次，从 `kind='schedule' AND enabled AND
+//     a.status='active'` 重新推导可执行集合。
+//   - 若上次进程在认领某 plan_time 之后、写终态之前崩溃，manager.runJob 里的陈旧租约
+//     清扫会把该行升为 error_code='stale_timeout' 的 FAILED。AllowStaleReentry=true +
+//     attempts < MaxAttempts 让下一 tick 能窃取租约重入派发——而
+//     DispatchAutopilotForPlan 的幂等查找会返回已创建的 run，而不是再造一个。
 func AutopilotScheduleDispatchJob(
 	pool *pgxpool.Pool,
 	queries *db.Queries,
@@ -95,9 +85,9 @@ func AutopilotScheduleDispatchJob(
 
 	return JobSpec{
 		Name:              JobNameAutopilotScheduleDispatch,
-		Cadence:           0, // hook-driven; cron expressions are arbitrary
+		Cadence:           0, // 钩子驱动；cron 表达式是任意的
 		ScheduleDelay:     0,
-		CatchUpMode:       CatchUpLatestOnly, // ignored when hook is set, but documents intent
+		CatchUpMode:       CatchUpLatestOnly, // 设了钩子后此字段被忽略，但记录意图
 		CatchUpWindow:     24 * time.Hour,
 		RunTimeout:        2 * time.Minute,
 		StaleTimeout:      5 * time.Minute,
@@ -109,9 +99,8 @@ func AutopilotScheduleDispatchJob(
 			5 * time.Minute,
 			15 * time.Minute,
 		},
-		// Belt-and-suspenders: 5 plan_times is more than CatchUpLatestOnly
-		// ever needs; the cap matters only if a future caller flips the
-		// hook to every_plan semantics.
+		// 双保险：CatchUpLatestOnly 永远用不到 5 个 plan_time；这个上限只在将来有人把
+		// 钩子改成 every_plan 语义时才有意义。
 		MaxPlansPerTick: 5,
 
 		Scopes:        autopilotScopes(pool, queries, cache),
@@ -120,26 +109,22 @@ func AutopilotScheduleDispatchJob(
 	}
 }
 
-// autopilotTriggerConfig is the per-tick view of one trigger that the
-// planner hook needs (cron + timezone + bootstrap floor).
+// autopilotTriggerConfig 是计划钩子需要的「单触发器每 tick 视图」（cron + 时区 +
+// 引导起点）。
 type autopilotTriggerConfig struct {
 	TriggerID      string
 	CronExpression string
 	Timezone       string
 	CreatedAt      time.Time
-	// LastFiredAt is autopilot_trigger.last_fired_at; zero if the
-	// trigger has never fired (or under no scheduler so far). Used by
-	// the planner hook to anchor cold-start enumeration so that
-	// occurrences which have already been processed (e.g. by the
-	// legacy goroutine pre-migration, or by a prior incarnation of
-	// this process pre-restart) are not replayed.
+	// LastFiredAt 是 autopilot_trigger.last_fired_at；触发器从没触发过（或到目前为止
+	// 没被任何调度器管过）时为零值。计划钩子拿它锚定冷启动枚举，保证那些已被处理过的
+	// occurrence（例如迁移前被旧 goroutine 处理过、或重启前被本进程上一次生命周期处理
+	// 过）不会被重放。
 	LastFiredAt time.Time
 }
 
-// autopilotScheduleCache holds the per-tick map of trigger configs.
-// The scope provider rewrites it at the top of each tick; the planner
-// hook reads it once per scope. Reader-writer synchronisation lets us
-// safely add parallel per-scope planning in the future.
+// autopilotScheduleCache 持有每 tick 的触发器配置映射。scope provider 在每 tick 开头
+// 重写它，计划钩子按 scope 各读一次。读写锁让将来可以安全地并行做按 scope 计划。
 type autopilotScheduleCache struct {
 	mu       sync.RWMutex
 	triggers map[string]autopilotTriggerConfig
@@ -162,10 +147,8 @@ func (c *autopilotScheduleCache) get(id string) (autopilotTriggerConfig, bool) {
 	return v, ok
 }
 
-// autopilotScopes lists every schedule trigger eligible to fire this
-// tick and populates the cache used by the planner hook. Disabled
-// triggers and paused/archived autopilots fall out naturally because
-// the SQL filter excludes them.
+// autopilotScopes 列出本次 tick 可触发的所有调度触发器，并填充计划钩子要用的缓存。
+// 被禁用的触发器与被暂停/归档的 autopilot 会自然滤掉，因为 SQL 过滤条件已排除它们。
 func autopilotScopes(
 	pool *pgxpool.Pool,
 	queries *db.Queries,
@@ -217,21 +200,16 @@ func autopilotScopes(
 	}
 }
 
-// autopilotPlansForScope returns the PlansForScope hook that computes
-// every cron occurrence in (lastPlan, dbNow], keeps only the most recent
-// one, and rejects it if it is outside the dispatch-lateness window.
-// The latest-only collapse prevents a long outage from replaying every
-// missed slot; the lateness guard prevents a paused / newly eligible
-// trigger from firing hours after its configured time.
+// autopilotPlansForScope 返回 PlansForScope 钩子：枚举 (lastPlan, dbNow] 里的每个
+// cron occurrence，只保留最近一个，并且若它落在「派发容差窗口」之外就拒绝。
+// latest-only 的折叠防止长时间停机把每个漏掉的时间槽都重放一遍；容差守卫防止一个
+// 刚被暂停/刚变为可触发的触发器在配置时间过了几小时后才触发。
 //
-// Retry-eligible state is handled specially: when the most recent
-// stored plan_time is a FAILED row with attempts remaining and
-// next_retry_at <= now, the hook returns THAT plan_time unchanged so
-// tryClaim's FAILED-with-retry branch can fire. Without this branch,
-// the half-open (latest.PlanTime, now] enumeration below would skip
-// past the failed bucket and the occurrence would be lost — the
-// canonical bug from the #4444 review where a claim+crash sequence
-// could leak a scheduled occurrence (MUL-3551 acceptance ③).
+// 可重试状态要特殊处理：最近存储的 plan_time 若是「还有剩余尝试次数、next_retry_at
+// <= now」的 FAILED 行，钩子就原样返回那个 plan_time，让 tryClaim 的 FAILED-带重试
+// 分支能触发。没有这个分支，下面「半开区间 (latest.PlanTime, now]」的枚举会跳过那个
+// 失败桶，这次 occurrence 就丢了——这正是 #4444 评审里指出的经典 bug：认领后崩溃的
+// 序列可能漏掉一次定时 occurrence（MUL-3551 验收 ③）。
 func autopilotPlansForScope(cache *autopilotScheduleCache) func(
 	ctx context.Context, scope Scope, now time.Time, latest LatestPlanInfo,
 ) ([]time.Time, error) {
@@ -239,49 +217,35 @@ func autopilotPlansForScope(cache *autopilotScheduleCache) func(
 	return func(ctx context.Context, scope Scope, now time.Time, latest LatestPlanInfo) ([]time.Time, error) {
 		cfg, ok := cache.get(scope.ID)
 		if !ok {
-			// Trigger disappeared between scope-list and plan-compute,
-			// or was filtered out. Nothing to plan — silent no-op is
-			// correct.
+			// 触发器在「scope 列表」与「计划计算」之间消失了，或被过滤掉。没什么可
+			// 计划的——静默无事可做是正确的。
 			return nil, nil
 		}
 
-		// Retry path: the manager's stale-lease sweep has already
-		// promoted any abandoned RUNNING row to FAILED. If that
-		// FAILED row still has attempts remaining and its
-		// next_retry_at has passed, the same plan_time is eligible
-		// for another claim. tryClaim's retry-from-FAILED branch only
-		// fires when the planner returns that exact plan_time, so we
-		// MUST surface it here — moving forward to a newer occurrence
-		// would strand the FAILED row at attempt < max_attempts
-		// forever and leak the missed dispatch.
+		// 重试路径：manager 的陈旧租约清扫已把任何被遗弃的 RUNNING 行升成 FAILED。
+		// 若那行 FAILED 还有剩余尝试次数、且 next_retry_at 已过，同一个 plan_time 就
+		// 还能再次认领。tryClaim 的 retry-from-FAILED 分支只有在计划器返回那个精确的
+		// plan_time 时才会触发，所以这里必须把它抛出来——向前移到更新的 occurrence
+		// 会让 FAILED 行永远停在 attempt < max_attempts，漏掉这次派发。
 		if latest.RetryEligible(now) {
 			return []time.Time{latest.PlanTime}, nil
 		}
 
-		// Anchor selection — three cases, in order:
+		// 锚点选择——三种情形，按序：
 		//
-		//   1. `latest.Found`: this trigger has at least one
-		//      sys_cron_executions row written by the new scheduler.
-		//      Resume strictly after the most recent plan_time.
+		//   1. `latest.Found`：该触发器至少已有一条新调度器写的 sys_cron_executions
+		//      行。严格从最近一次 plan_time 之后续跑。
 		//
-		//   2. `cfg.LastFiredAt` is set: the trigger has been fired
-		//      before, either by the legacy goroutine pre-migration
-		//      or by a previous incarnation of this process. Resume
-		//      strictly after the last successful fire so we do not
-		//      replay an already-handled occurrence. This is the case
-		//      that produced the post-deploy spurious-fire reported
-		//      on MUL-3551 dev: without it, a trigger that fired at
-		//      Mon 17:10 under the legacy code would be enumerated
-		//      again the moment the new scheduler took over, because
-		//      the (created_at, now] half-open interval still
-		//      contained Mon 17:10.
+		//   2. `cfg.LastFiredAt` 已设置：触发器以前触发过，无论是迁移前的旧 goroutine
+		//      还是本进程上一次生命周期。严格从最近一次成功触发之后续跑，以免重放
+		//      已经处理过的 occurrence。这正是 MUL-3551 dev 上报的「部署后误触发」的
+		//      成因：没有它，一个在旧代码下 Mon 17:10 触发过的触发器，新调度器一接管
+		//      就会再枚举一次——因为 (created_at, now] 半开区间仍包含 Mon 17:10。
 		//
-		//   3. Brand-new trigger that has never fired: anchor on
-		//      created_at so only occurrences after the trigger
-		//      existed are enumerated.
+		//   3. 从没触发过的全新触发器：锚在 created_at，只枚举触发器创建之后出现的
+		//      occurrence。
 		//
-		// Each case feeds into a final safety cap that prevents
-		// enumerating more than `replayWindow` of history at once.
+		// 每种情形最终都要过一道安全上限，防止一次枚举超过 `replayWindow` 的历史。
 		var after time.Time
 		switch {
 		case latest.Found:
@@ -291,11 +255,9 @@ func autopilotPlansForScope(cache *autopilotScheduleCache) func(
 		default:
 			after = cfg.CreatedAt
 		}
-		// Bound replay by CatchUpWindow so a long pause / dormant
-		// trigger does not enumerate millions of historical buckets.
-		// `after` is normally already recent (either latest.PlanTime
-		// or last_fired_at); the cap only matters for the unusual
-		// "trigger created weeks ago but never fired" path.
+		// 用 CatchUpWindow 界住重放，防止长时间暂停/休眠的触发器枚举出数百万个历史桶。
+		// `after` 通常已经很新（要么是 latest.PlanTime，要么是 last_fired_at）；这个
+		// 上限只在「触发器几周前就建了但从没触发过」这种不常见路径上有意义。
 		if oldest := now.Add(-replayWindow); after.Before(oldest) {
 			after = oldest
 		}
@@ -307,7 +269,7 @@ func autopilotPlansForScope(cache *autopilotScheduleCache) func(
 		if len(occs) == 0 {
 			return nil, nil
 		}
-		// CatchUpLatestOnly: collapse missed fires to the most recent.
+		// CatchUpLatestOnly：把漏掉的触发折叠到最近一次。
 		latestDue := occs[len(occs)-1]
 		if isAutopilotSchedulePlanStale(now, latestDue) {
 			return nil, nil
@@ -316,15 +278,14 @@ func autopilotPlansForScope(cache *autopilotScheduleCache) func(
 	}
 }
 
+// isAutopilotSchedulePlanStale 判断计划是否已陈旧到不该再补触发。
 func isAutopilotSchedulePlanStale(now, planTime time.Time) bool {
 	return now.Sub(planTime) > maxAutopilotScheduleLateness
 }
 
-// autopilotHandler dispatches one (trigger, planTime) attempt and
-// returns the lease-affecting outcome. It re-loads the trigger +
-// autopilot inside the handler so a between-tick state change (e.g.
-// trigger disabled, autopilot paused) takes effect immediately
-// without waiting for the next scope-list.
+// autopilotHandler 派发一次 (trigger, planTime) 尝试，并返回会影响租约的结果。它会在
+// handler 内部重新读取 trigger + autopilot，这样 tick 之间的状态变化（例如触发器被
+// 禁用、autopilot 被暂停）能立刻生效，不必等下一次 scope 列表。
 func autopilotHandler(
 	queries *db.Queries,
 	dispatcher AutopilotScheduleDispatcher,
@@ -338,10 +299,9 @@ func autopilotHandler(
 		trigger, err := queries.GetAutopilotTrigger(ctx, triggerID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				// Trigger was deleted between scope-list and run.
-				// A SUCCESS row in sys_cron_executions for a vanished
-				// trigger is fine — there is nothing to dispatch and
-				// no future tick will return this scope.
+				// 触发器在 scope 列表与运行之间被删了。sys_cron_executions 里为一个已
+				// 消失的触发器留一条 SUCCESS 行没毛病——没什么可派发的，将来也没有 tick
+				// 会再返回这个 scope。
 				return HandlerResult{RowsAffected: 0, Result: map[string]any{
 					"skipped_reason": "trigger_not_found",
 				}}, nil
@@ -377,17 +337,13 @@ func autopilotHandler(
 			return HandlerResult{}, fmt.Errorf("dispatch for plan: %w", err)
 		}
 
-		// Advance the display-only next_run_at to the upcoming slot and
-		// bump last_fired_at in the same write, so the trigger UI stops
-		// showing a "next run" that has already fired (MUL-3749). The
-		// value stays on the app local clock — consistent with the trigger
-		// create/update display path — but is floored at the plan_time
-		// that just fired (see advancedNextRun), so a lagging app clock can
-		// never recompute the slot we just dispatched. Errors are not
-		// fatal: the canonical record is autopilot_run.created_at and the
-		// next dispatch refreshes the value regardless; on a cron/timezone
-		// parse failure we fall back to the last_fired_at-only bump so the
-		// fire is still recorded.
+		// 同一次写入里，把「仅作展示」的 next_run_at 推进到下一个时间槽，并更新
+		// last_fired_at，让触发器 UI 不再显示一个「已经触发过」的 next run（MUL-3749）。
+		// 该值停留在应用本机时钟——与触发器创建/更新的展示路径一致——但被地板到「刚
+		// 触发过的那个 plan_time」（见 advancedNextRun），所以滞后的应用时钟绝不会把
+		// 刚派发过的时间槽又算一遍。错误不致命：规范记录是 autopilot_run.created_at，
+		// 下次派发无论如何都会刷新该值；cron/时区解析失败时就退化为只更新
+		// last_fired_at，让「触发过」这件事仍被记录。
 		tz := DefaultAutopilotScheduleTimezone
 		if trigger.Timezone.Valid && trigger.Timezone.String != "" {
 			tz = trigger.Timezone.String
@@ -411,16 +367,12 @@ func autopilotHandler(
 	}
 }
 
-// advancedNextRun computes the display-only next_run_at value to write
-// after a schedule trigger fires at planTime. It evaluates the cron on the
-// app local clock (`now`, normally time.Now()) but anchors at
-// max(now, planTime), so the result is always strictly after the slot that
-// just fired — even when this app instance's clock lags the DB clock that
-// judged the plan due. Without that floor a sub-second-late local clock
-// could recompute the same slot and the next_run_at staleness bug
-// (MUL-3749) would reappear at the top-of-period boundary. Returns
-// ok=false when the cron/timezone fail to parse, signalling the caller to
-// fall back to a last_fired_at-only bump.
+// advancedNextRun 计算调度触发器在 planTime 触发后要写入的「仅作展示」next_run_at。
+// 它在应用本机时钟（`now`，通常是 time.Now()）上求 cron，但锚定在 max(now, planTime)，
+// 保证结果永远严格晚于刚触发过的那个槽位——即使本实例时钟比「判计划到期的 DB 时钟」
+// 慢也不行。没有这个下限，落后亚秒级时钟会重新算出同一个槽位，MUL-3749 的
+// next_run_at 陈旧 bug 就会在周期边界复发。cron/时区解析失败返回 ok=false，提示调用
+// 方退化为只更新 last_fired_at。
 func advancedNextRun(cronExpr, timezone string, planTime, now time.Time) (time.Time, bool) {
 	anchor := now
 	if planTime.After(anchor) {
@@ -433,9 +385,8 @@ func advancedNextRun(cronExpr, timezone string, planTime, now time.Time) (time.T
 	return next, true
 }
 
-// parseScopeUUID converts a scope.ID string back into pgtype.UUID.
-// We accept both the standard hyphenated form and the unhyphenated
-// raw 32-hex form to keep the contract forgiving.
+// parseScopeUUID 把 scope.ID 字符串还原成 pgtype.UUID。标准带连字符形式与不带连字符
+// 的 32-hex 裸形式都接受，让契约宽容些。
 func parseScopeUUID(s string) (pgtype.UUID, error) {
 	var u pgtype.UUID
 	if err := u.Scan(s); err != nil {

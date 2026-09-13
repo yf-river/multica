@@ -1,3 +1,4 @@
+// issue_trigger.go —— issue 写入是否会启动 agent 运行的单一判定（预览与写路径共享），替换此前四处漂移的副本。
 package service
 
 import (
@@ -8,47 +9,35 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// RunEnqueueSource identifies which kind of issue write would start an agent
-// run. It is surfaced in preview responses so the UI can explain each trigger.
+// RunEnqueueSource 标识哪种 issue 写入会启动 agent 运行。它会出现在预览响应里，让 UI 能解释每个触发。
 type RunEnqueueSource string
 
 const (
-	// RunSourceAssign covers issue creation and assignee changes — the issue
-	// is being handed to an agent/squad. Parks silently on backlog.
+	// RunSourceAssign 覆盖 issue 创建与指派变更——issue 被交给 agent/群组。指派进 backlog 时静默停放。
 	RunSourceAssign RunEnqueueSource = "assign"
-	// RunSourceStatus covers promoting an already-assigned issue out of
-	// backlog into an active status.
+	// RunSourceStatus 覆盖把已指派的 issue 从 backlog 提升到活跃状态。
 	RunSourceStatus RunEnqueueSource = "status"
 )
 
-// IssueTriggerProbe carries the request-scoped checks WillEnqueueRun cannot
-// resolve from issue state alone.
+// IssueTriggerProbe 携带 WillEnqueueRun 单凭 issue 状态解析不了的请求级检查。
 //
-// CanAccessAgent is the private-agent gate. The write paths enforce it at the
-// HTTP boundary (validateAssigneePair on assign, canEnqueueSquadLeader inside
-// the squad enqueue helper) and therefore pass an allow-all probe so the gate
-// is never duplicated or sunk into the service layer. Preview passes the real
-// gate so it never leaks a private agent's readiness to a member who cannot
-// see it. A nil func is treated as allow-all.
+// CanAccessAgent 是私有 agent 闸门。写路径在 HTTP 边界强制它（assign 的 validateAssigneePair、群组入队助手里
+// 的 canEnqueueSquadLeader），因此传入放行一切的 probe，避免闸门被复制或沉进 service 层。预览传真实闸门，
+// 绝不向看不到它的成员泄露私有 agent 的就绪态。nil 函数视为放行一切。
 //
-// IsSelfLoop reports whether promoting this issue out of backlog would be the
-// calling agent re-triggering its own running task. Only the status source
-// consults it. A nil func means "not a self-loop".
+// IsSelfLoop 判断把该 issue 提出 backlog 是否等于“调用 agent 重新触发自己正在跑的任务”。只有 status 来源
+// 查询它。nil 表示 “非自环”。
 //
-// SuppressActiveSelfAssignment reports whether a direct agent assignment is a
-// trusted agent claiming ownership for itself while the target (issue, agent)
-// pair already has a non-terminal task. The ownership update still succeeds;
-// only the duplicate enqueue is suppressed. Cross-issue handoffs to a fresh
-// target remain runnable. A nil func means "do not suppress".
+// SuppressActiveSelfAssignment 判断一次直接 agent 指派是否属于“可信 agent 在 (issue, agent) 对已有非终态任务时
+// 替自己声明所有权”。所有权更新仍成功；只抑制重复入队。跨 issue 交接给新目标仍可运行。nil 表示 “不抑制”。
 type IssueTriggerProbe struct {
 	CanAccessAgent               func(agent db.Agent) bool
 	IsSelfLoop                   func() bool
 	SuppressActiveSelfAssignment func(agentID pgtype.UUID) bool
 }
 
-// IssueTriggerInput describes one prospective issue write in its post-write
-// shape. AssigneeChanged / StatusChanged mark which fields the write touches;
-// IsCreate marks a brand-new issue (no prior task to cancel, no self-loop).
+// IssueTriggerInput 以“写后”形态描述一次预期的 issue 写入。AssigneeChanged / StatusChanged 标记写入动了哪些字段；
+// IsCreate 标记全新 issue（没有可取消的旧任务、也没有自环）。
 type IssueTriggerInput struct {
 	Issue           db.Issue
 	PrevStatus      string
@@ -57,9 +46,8 @@ type IssueTriggerInput struct {
 	StatusChanged   bool
 }
 
-// IssueRunTrigger is the resolved decision shared by preview and the write
-// paths. AgentID is the agent that will actually run — the assignee for an
-// agent issue, the squad leader for a squad issue.
+// IssueRunTrigger 是预览与写路径共享的解析结论。AgentID 是真正要跑的 agent——agent issue 的指派者、群组 issue
+// 的群组长。
 type IssueRunTrigger struct {
 	IssueID      pgtype.UUID
 	AgentID      pgtype.UUID
@@ -67,33 +55,23 @@ type IssueRunTrigger struct {
 	Source       RunEnqueueSource
 }
 
+// allowAllAgents 是放行一切的默认 probe（私有 agent 闸门由调用方在 HTTP 边界执行时用）。
 func allowAllAgents(db.Agent) bool { return true }
 
-// WillEnqueueRun is the single predicate answering "will this issue write
-// start an agent run, and for whom". It is the one source of truth shared by
-// the issue update / batch-update write paths and the preview endpoint,
-// replacing the per-site copies that drifted (squad omitted, self-loop
-// omitted, four entry points inconsistent — see MUL-3375).
+// WillEnqueueRun 是回答 “这次 issue 写入会不会启动 agent 运行、为谁启动” 的单一谓词。它是 issue 更新 / 批量更新
+// 写路径与预览端点共享的事实来源，取代了四处漂移的副本（漏掉 squad、漏掉自环、四个入口不一致——见 MUL-3375）。
 //
-// It is intentionally a distinct predicate from the comment trigger
-// (assignee fallback comment routing): issue writes park on backlog while comments fire
-// in any status. The two only share leaf readiness checks (AgentReadiness,
-// the pending-task dedup), not the top-level decision.
+// 它刻意与评论触发（指派者回退评论路由）是不同的谓词：issue 写入在 backlog 停放，而评论在任何状态都会触发。
+// 两者只共享叶子就绪检查（AgentReadiness、pending 任务去重），不共享顶层决策。
 //
-// The decision must equal the real enqueue conditions so preview never claims
-// a net-new run that the write path then drops. The write enqueues through
-// CreateAgentTask, guarded by the (issue_id, agent_id) partial unique index
-// over pending (queued/dispatched) tasks; the pending check below mirrors that
-// guard, and only the status source needs it:
-//   - status source (backlog → active) can re-fire against an assignee that
-//     already holds a pending task (e.g. one a @mention raised while the issue
-//     sat in backlog); the check keeps preview from promising a run the unique
-//     index would coalesce away.
-//   - assign source (create / assignee change) skips the check: a create
-//     targets a fresh issue with no prior task, and a reassignment no longer
-//     cancels existing tasks (#4963 / MUL-4113) — in the rare case the new
-//     assignee already holds a pending task the insert simply no-ops on the
-//     same unique index, so the assignee still ends up with one pending run.
+// 决策必须与真实入队条件一致，预览才不会宣称一个写路径随后丢弃的全新运行。写经 CreateAgentTask 入队，
+// 由 (issue_id, agent_id) 部分唯一索引（作用于 queued/dispatched pending 任务）守卫；下方的 pending 检查镜像该
+// 守卫，且只有 status 来源需要它：
+//   - status 来源（backlog → active）可能对着已持有 pending 任务的指派者再触发（例如该 issue 停在 backlog 时
+//     @mention 起的任务）；该检查让预览不承诺会被唯一索引合并掉的运行。
+//   - assign 来源（create / 指派变更）跳过该检查：create 面向无旧任务的新 issue；改派不再取消既有任务
+//     （#4963 / MUL-4113）——罕见情况下新指派者已持有 pending 任务，插入只是在同一唯一索引上 no-op，
+//     指派者最终仍只有一条 pending 运行。
 func (s *IssueService) WillEnqueueRun(ctx context.Context, in IssueTriggerInput, probe IssueTriggerProbe) (IssueRunTrigger, bool) {
 	issue := in.Issue
 	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
@@ -104,26 +82,20 @@ func (s *IssueService) WillEnqueueRun(ctx context.Context, in IssueTriggerInput,
 		canAccess = allowAllAgents
 	}
 
-	// The status source also requires LEAVING the backlog category, not merely
-	// changing the status key. Before custom statuses a key change out of
-	// `backlog` was always a category change, so the two were the same
-	// condition; now `backlog` → a custom status in the `backlog` category is a
-	// move within the parking lot, and starting a run on it would break the one
-	// promise backlog makes. (MUL-6463)
+	// status 来源还要求【离开】backlog 类目，而不只是换状态键。自定义状态之前，“键离开 `backlog`”总是类目变化，
+	// 两者是同一条件；现在 `backlog` → 仍属 `backlog` 类目的自定义状态只是停车位内部移动，就此启动运行会破坏
+	// backlog 的唯一承诺（MUL-6463）。
 	//
-	// Both sides of the transition are normalized to the canonical status they
-	// inherit, so a custom status in the `backlog` category parks exactly like
-	// Backlog and a custom status in the `todo` category starts a run exactly
-	// like Todo. Built-in keys resolve to themselves without a query, leaving
-	// this decision bit-identical for workspaces with no custom statuses —
-	// which is the whole set of them until an admin defines one. (MUL-6243)
+	// 转换两侧都归一化到其继承的规范状态：`backlog` 类目里的自定义状态与 Backlog 一样停放，`todo` 类目里的
+	// 自定义状态与 Todo 一样启动运行。内置键无需查询即解析为自身，使该决策对无自定义状态的工作区逐位一致——
+	// 在管理员定义自定义状态之前所有工作区都是如此（MUL-6243）。
 	currentStatus := issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status)
 	prevStatus := issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, in.PrevStatus)
 
 	var source RunEnqueueSource
 	switch {
 	case in.IsCreate || in.AssigneeChanged:
-		// Backlog is the parking lot: assigning into backlog never starts a run.
+		// backlog 是停车场：指派进 backlog 从不启动运行。
 		if currentStatus == "backlog" {
 			return IssueRunTrigger{}, false
 		}
@@ -163,12 +135,9 @@ func (s *IssueService) WillEnqueueRun(ctx context.Context, in IssueTriggerInput,
 		}, true
 
 	case "squad":
-		// Pair-scoped self-assignment suppression intentionally applies only to
-		// direct agent ownership. Assigning a squad changes execution context
-		// (leader briefing, roles, and member routing), so even when the acting
-		// agent is that squad's leader it is an intentional group handoff rather
-		// than a redundant direct self-claim. The status path below still uses
-		// the leader's pending-task guard.
+		// 对 (issue, agent) 对的自我指派抑制刻意只作用于直接 agent 所有权。指派群组会改变执行上下文（组长 briefing、
+		// 角色、成员路由），因此即使操作 agent 正是该群组长，也是有意的群组交接而非冗余的直接自我声明。下方 status
+		// 路径仍用组长的 pending 任务守卫。
 		squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 			ID:          issue.AssigneeID,
 			WorkspaceID: issue.WorkspaceID,
@@ -200,15 +169,13 @@ func (s *IssueService) WillEnqueueRun(ctx context.Context, in IssueTriggerInput,
 	return IssueRunTrigger{}, false
 }
 
-// hasPendingRun reports whether the agent already holds a queued or dispatched
-// task for the issue (the (issue_id, agent_id) unique-index slot). Errors fail
-// closed to "pending" so preview never over-promises a run.
+// hasPendingRun 判断 agent 是否已为该 issue 持有 queued/dispatched 任务（(issue_id, agent_id) 唯一索引槽位）。
+// 错误按 fail closed 处理成 “有 pending”，预览便不会过度承诺运行。
 func (s *IssueService) hasPendingRun(ctx context.Context, issueID, agentID pgtype.UUID) bool {
 	pending, err := s.Queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
 		IssueID: issueID,
 		AgentID: agentID,
-		// Key dedup on the reviewed head so a pending run against an old HEAD
-		// does not shadow a request after HEAD advanced (TEN-356).
+		// 按被评审 head 做去重键：HEAD 推进后，针对旧 HEAD 的 pending run 不会遮蔽新请求（TEN-356）。
 		HeadSha: headShaText(s.TaskService.ResolveIssueReviewSHA(ctx, issueID)),
 	})
 	if err != nil {

@@ -1,26 +1,21 @@
-// Package taskusagebackfill seeds task_usage_hourly from historical
-// task_usage rows.
+// Package taskusagebackfill 从历史 task_usage 行播种 task_usage_hourly。
 //
-// It exists in two callers:
+// 有两个调用方：
 //
-//   - server/cmd/backfill_task_usage_hourly: explicit operator command,
-//     used by the SELF-HOST UPGRADE ORDER documented in that file.
-//   - server/cmd/migrate: invoked as a hook BEFORE migration 103 runs,
-//     so that operators upgrading directly from v0.3.4 (or any version
-//     prior to the hourly pipeline) do not trip migration 103's
-//     fail-closed watermark guard while the server is still down. The
-//     hook can run a full idempotent backfill in the same `migrate up`
-//     invocation and then continue applying 103/104.
+//   - server/cmd/backfill_task_usage_hourly：显式的运维命令，供该文件记载的
+//     SELF-HOST 升级顺序使用。
+//   - server/cmd/migrate：作为 hook 在迁移 103 运行前被调用，这样从 v0.3.4
+//     （或任何早于小时级管线的版本）直接升级的运维，在服务器仍停机时不会触发
+//     迁移 103"失败即关闭"的水位保护。该 hook 可在同一次 `migrate up` 调用里
+//     跑完一次完整幂等回填，然后继续应用 103/104。
 //
-// The implementation uses the same SQL window primitive
-// (`rollup_task_usage_hourly_window`) that the rollup worker uses, so
-// re-running is safe — partial progress is recovered on the next call.
+// 实现复用了 rollup worker 使用的同一个 SQL 窗口原语
+// （`rollup_task_usage_hourly_window`），因此重复运行是安全的——部分进度会在
+// 下次调用时续跑。
 //
-// All callers MUST hold advisory lock 4246 (AdvisoryLockKey) for the
-// duration of the backfill walk. That lock is what makes this safe to
-// run alongside the SQL `rollup_task_usage_hourly()` cron entry, the
-// in-process scheduler, and any other concurrent backfill — winners
-// take the lock, losers no-op until it is released.
+// 所有调用方在回填遍历期间都必须持有 advisory lock 4246（AdvisoryLockKey）。
+// 正是这把锁让本流程可与 SQL 的 `rollup_task_usage_hourly()` cron 条目、
+// 进程内 scheduler 及其它并发回填并存——抢到锁者执行，抢不到的等到释放为止。
 package taskusagebackfill
 
 import (
@@ -35,99 +30,79 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// AdvisoryLockKey is the int64 identifier shared by every path that
-// drives task_usage_hourly's rollup writes:
+// AdvisoryLockKey 是所有驱动 task_usage_hourly 汇总写入路径共享的 int64 标识：
 //
-//   - rollup_task_usage_hourly() in migration 102.
-//   - cmd/backfill_task_usage_hourly.
-//   - cmd/migrate's pre-103 hook (MUL-2957).
-//   - the in-process scheduler's rollup_task_usage_hourly handler
-//     (defense in depth — the scheduler's lease already prevents
-//     double-runs across instances; the advisory lock additionally
-//     prevents racing legacy pg_cron / manual entrypoints).
+//   - 迁移 102 里的 rollup_task_usage_hourly()。
+//   - cmd/backfill_task_usage_hourly。
+//   - cmd/migrate 的 pre-103 hook（MUL-2957）。
+//   - 进程内 scheduler 的 rollup_task_usage_hourly handler（纵深防御——
+//     scheduler 的租约已防止跨实例双跑；这把 advisory lock 额外防止与遗留的
+//     pg_cron / 手动入口竞争）。
 //
-// It is the same id used by every prior version of the rollup pipeline,
-// so a mixed-version cluster (rolling deploy) cannot double-write.
+// 它与以往每个版本的 rollup 管线使用同一 id，因此混版本集群（滚动发布）不会双写。
 const AdvisoryLockKey int64 = 4246
 
-// MaxLagThreshold mirrors the v_lag interval inside migration 103's
-// fail-closed guard. The pre-103 hook only triggers a backfill when the
-// watermark trails the latest task_usage event by more than this; below
-// the threshold the migration would have passed anyway, so we save the
-// scan.
+// MaxLagThreshold 对应迁移 103"失败即关闭"防护里的 v_lag 间隔。pre-103 hook
+// 只有在水位落后最新 task_usage 事件超过该值时才触发回填；低于阈值时迁移本来
+// 就能通过，省去一次扫描。
 const MaxLagThreshold = time.Hour
 
-// The watermark upper bound of `now() - 5 minutes` is encoded directly
-// in the SQL UPDATE in stampWatermark / stampWatermarkOnConn so the
-// math runs in the same session that does the write — no app-side
-// time.Now() participates. (MUL-2957 review: blocker #3.)
+// 水位上限 `now() - 5 minutes` 直接写死在 stampWatermark / stampWatermarkOnConn 的
+// SQL UPDATE 里，使计算发生在执行写入的同一会话——不掺入应用侧的 time.Now()。
+//（MUL-2957 review: blocker #3。）
 
-// Result describes what a single backfill run did. Exposed so callers
-// (the migrate command and tests) can log or assert on it.
+// Result 描述一次回填运行的结果。导出供调用方（migrate 命令与测试）打印或断言。
 type Result struct {
-	// Skipped is a short reason string when the run did no slice work.
-	// Empty string means the run actually walked at least one slice.
+	// Skipped 是该运行没有做任何切片工作时的简短原因字符串。空字符串表示
+	// 该运行确实遍历了至少一个切片。
 	Skipped string
 
-	// SlicesProcessed counts monthly slices that were rolled up.
+	// SlicesProcessed 被汇总的月度切片数。
 	SlicesProcessed int
 
-	// RowsTouched is the sum of rollup_task_usage_hourly_window's
-	// returned counts.
+	// RowsTouched 是 rollup_task_usage_hourly_window 返回计数的总和。
 	RowsTouched int64
 
-	// From / To bracket the walk's UTC range.
+	// From / To 圈定遍历的 UTC 范围。
 	From time.Time
 	To   time.Time
 
-	// WatermarkStamped reports whether the watermark UPDATE was issued.
+	// WatermarkStamped 报告是否发出了水位 UPDATE。
 	WatermarkStamped bool
 }
 
-// HookOptions controls Hook behaviour. The defaults are correct for
-// production; tests override fields as needed.
+// HookOptions 控制 Hook 的行为。默认值适用于生产；测试按需覆盖字段。
 type HookOptions struct {
-	// Logger receives slog records about the backfill walk. nil =
-	// slog.Default().
+	// Logger 接收回填遍历的 slog 记录。nil = slog.Default()。
 	Logger *slog.Logger
 
-	// LagThreshold overrides MaxLagThreshold. Zero = MaxLagThreshold.
-	// Tests pass a small value to force a backfill on a deterministic
-	// fixture.
+	// LagThreshold 覆盖 MaxLagThreshold。零 = MaxLagThreshold。测试会传一个
+	// 小值，在确定性夹具上强制触发回填。
 	LagThreshold time.Duration
 
-	// SleepBetweenSlices throttles the walk on a busy DB. Zero = no
-	// pause. Mirrors the operator-facing flag on the standalone
-	// backfill command.
+	// SleepBetweenSlices 在繁忙 DB 上给遍历节流。零 = 不暂停。对应独立回填命令
+	// 面向运维的那个标志。
 	SleepBetweenSlices time.Duration
 }
 
-// Hook is the migration-time entrypoint. It checks whether the
-// task_usage_hourly_rollup_state.watermark_at trails the latest
-// task_usage event by more than the lag threshold and, if so, runs an
-// idempotent monthly-slice backfill of task_usage_hourly. After the
-// walk completes (or if no backfill was needed) the watermark is
-// stamped to `now() - 5 minutes`, mirroring the standalone backfill
-// command's stampWatermark step.
+// Hook 是迁移期入口。它检查 task_usage_hourly_rollup_state.watermark_at 是否落后最新
+// task_usage 事件超过滞后阈值，若是则跑一次幂等的 task_usage_hourly 月度切片回填。
+// 遍历完成（或无需回填）后，把水位打为 `now() - 5 minutes`，与独立回填命令的
+// stampWatermark 步骤一致。
 //
-// The hook does NOT fail when:
+// 以下情况 hook 不会失败：
 //
-//   - task_usage is empty (a fresh database has no history to
-//     backfill — the watermark is stamped so migration 103's guard
-//     accepts the empty state).
+//   - task_usage 为空（全新数据库没有历史可回填——打上水位即可让迁移 103 的防护
+//     接受空状态）。
 //
-//   - the rollup state tables are missing (the hook ran before
-//     migration 101 in some unusual ordering — treated as nothing to
-//     do, the migration loop will install them next).
+//   - rollup 状态表缺失（某种异常顺序下 hook 跑在迁移 101 之前——视为无事可做，
+//     迁移循环随后会建表）。
 //
-// It DOES return an error when the rollup walk itself fails: that case
-// is identical to the standalone backfill failing, and the migration
-// run must abort so the operator can investigate before migration 103
-// drops the legacy daily rollups.
+// 当 rollup 遍历本身失败时它会返回错误：这种情况与独立回填失败相同，迁移运行必须
+// 中止，让运维在迁移 103 删除旧版日级 rollup 之前排查。
 //
-// The hook acquires advisory lock 4246 on its own session connection
-// so it does not collide with the migrate loop's session-level
-// migrationAdvisoryLockKey on a different conn.
+// hook 在自己会话的连接上获取 advisory lock 4246，避免与 migrate 循环在另一条连接
+// 上的会话级 migrationAdvisoryLockKey 冲突。
 func Hook(ctx context.Context, pool *pgxpool.Pool, opts HookOptions) (Result, error) {
 	log := opts.Logger
 	if log == nil {
@@ -138,10 +113,8 @@ func Hook(ctx context.Context, pool *pgxpool.Pool, opts HookOptions) (Result, er
 		threshold = MaxLagThreshold
 	}
 
-	// Step 1: cheap precondition check — if the rollup state tables
-	// have not been created yet, this hook simply has nothing to do
-	// (migrations 101/102 install them, and the migration loop will
-	// reach 103 only after those have already applied).
+	// 第 1 步：廉价的预检查——rollup 状态表还没建时本 hook 无事可做
+	//（迁移 101/102 会建表，而迁移循环只有在它们应用之后才会走到 103）。
 	stateExists, err := rollupStateExists(ctx, pool)
 	if err != nil {
 		return Result{}, fmt.Errorf("check rollup state existence: %w", err)
@@ -152,10 +125,9 @@ func Hook(ctx context.Context, pool *pgxpool.Pool, opts HookOptions) (Result, er
 		return Result{Skipped: "rollup_state_missing"}, nil
 	}
 
-	// Step 2: read task_usage range and current watermark on the pool.
-	// These do not need to be locked — they are only used to decide
-	// whether the lock-protected walk should run at all, and the walk
-	// itself is idempotent if the watermark advances under us.
+	// 第 2 步：在连接池上读取 task_usage 范围与当前水位。这些读取无需加锁——它们
+	// 只用于判断是否该跑受锁保护的遍历，而遍历本身幂等，即便水位在我们之前被推进
+	// 也无妨。
 	usageRange, err := loadUsageRange(ctx, pool)
 	if err != nil {
 		return Result{}, fmt.Errorf("load task_usage range: %w", err)
@@ -166,11 +138,9 @@ func Hook(ctx context.Context, pool *pgxpool.Pool, opts HookOptions) (Result, er
 	}
 
 	if !usageRange.HasRows {
-		// Empty database. Stamp the watermark so migration 103's
-		// guard accepts the no-history path on a fresh upgrade and
-		// the rollup worker starts forward from the stamp. The DB's
-		// own clock is used so a clock-skewed app process cannot
-		// stamp the watermark into the DB's future.
+		// 空库。打上水位，让迁移 103 的防护接受全新升级里"无历史"的路径，也让
+		// rollup worker 从该位置向前起步。用数据库自身时钟，避免时钟偏斜的应用进程
+		// 把水位打到 DB 的未来。
 		if err := stampWatermark(ctx, pool); err != nil {
 			return Result{}, err
 		}
@@ -179,14 +149,13 @@ func Hook(ctx context.Context, pool *pgxpool.Pool, opts HookOptions) (Result, er
 	}
 
 	if !watermark.Valid {
-		// Defensive — schema guarantees the row exists with a default
-		// of 1970-01-01, so an invalid value here means somebody has
-		// fiddled with the row directly.
+		// 防御性检查——schema 保证该行存在且默认 1970-01-01，因此这里值无效
+		// 意味着有人直接改过这行。
 		return Result{}, errors.New("task_usage_hourly_rollup_state row is missing or watermark is NULL; manual intervention required before migration 103")
 	}
 
-	// Lag is computed against the DB's max_event (already DB-time);
-	// comparing to the DB-time watermark avoids any app/DB skew.
+	// 滞后相对 DB 的 max_event（本身已是 DB 时间）计算；与 DB 时间的水位比较可
+	// 避免任何应用/DB 时钟偏差。
 	maxEvent := usageRange.MaxEvent
 	lag := maxEvent.Sub(watermark.Time)
 	if lag <= threshold {
@@ -195,10 +164,8 @@ func Hook(ctx context.Context, pool *pgxpool.Pool, opts HookOptions) (Result, er
 			"max_event", maxEvent.UTC().Format(time.RFC3339),
 			"lag", lag.String(),
 			"threshold", threshold.String())
-		// Re-stamp from DB now() to bring the value flush with the
-		// cron upper bound; the lag-based guard in migration 103 will
-		// pass either way, but stamping keeps the post-hook state
-		// consistent with the standalone backfill command.
+		// 用 DB now() 重打一次水位，把值与 cron 上限拉齐；迁移 103 的滞后防护无论
+		// 如何都会通过，但重打让 hook 之后的状态与独立回填命令保持一致。
 		if err := stampWatermark(ctx, pool); err != nil {
 			return Result{}, err
 		}
@@ -211,9 +178,9 @@ func Hook(ctx context.Context, pool *pgxpool.Pool, opts HookOptions) (Result, er
 		"lag", lag.String(),
 		"threshold", threshold.String())
 
-	// Step 3: serialise against the SQL cron entry / standalone backfill
-	// / scheduler handler via advisory lock 4246. We use a dedicated
-	// session-pinned conn because pg advisory locks are per-session.
+	// 第 3 步：通过 advisory lock 4246 与 SQL cron 条目 / 独立回填 / scheduler
+	// handler 串行化。这里使用专用且固定在会话上的连接，因为 pg advisory lock
+	// 是会话级的。
 	lockConn, err := pool.Acquire(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("acquire advisory-lock connection: %w", err)
@@ -223,9 +190,8 @@ func Hook(ctx context.Context, pool *pgxpool.Pool, opts HookOptions) (Result, er
 	if _, err := lockConn.Exec(ctx, `SELECT pg_advisory_lock($1)`, AdvisoryLockKey); err != nil {
 		return Result{}, fmt.Errorf("acquire advisory lock %d: %w", AdvisoryLockKey, err)
 	}
-	// Use a fresh context for the unlock so a cancelled ctx does not
-	// skip the release. Releasing the connection afterwards would end
-	// the session anyway, but an explicit unlock frees it immediately.
+	// 解锁用全新 context，避免被取消的 ctx 跳过释放。随后释放连接本就会结束会话，
+	// 但显式解锁可以立刻归还锁。
 	defer func() {
 		_, _ = lockConn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, AdvisoryLockKey)
 	}()
@@ -281,17 +247,18 @@ func Hook(ctx context.Context, pool *pgxpool.Pool, opts HookOptions) (Result, er
 	return res, nil
 }
 
+// usageRange 记录 task_usage 表里事件时间的边界；HasRows 为 false 表示空表。
 type usageRange struct {
 	HasRows  bool
 	MinEvent time.Time
 	MaxEvent time.Time
 }
 
+// loadUsageRange 读取 task_usage 的最小创建时间与最大"变更时间"，并标记是否有行。
 func loadUsageRange(ctx context.Context, pool *pgxpool.Pool) (usageRange, error) {
 	var minTS, maxTS pgtype.Timestamptz
-	// COALESCE(updated_at, created_at) tracks the same expression
-	// migration 103's guard uses, so the lag comparison stays
-	// consistent with the value the guard will check next.
+	// COALESCE(updated_at, created_at) 与迁移 103 防护用的表达式一致，保证滞后比较
+	// 与防护下一步将要检查的值口径相同。
 	err := pool.QueryRow(ctx, `
 		SELECT MIN(created_at), MAX(COALESCE(updated_at, created_at))
 		  FROM task_usage
@@ -309,6 +276,8 @@ func loadUsageRange(ctx context.Context, pool *pgxpool.Pool) (usageRange, error)
 	}, nil
 }
 
+// loadWatermark 读取 task_usage_hourly_rollup_state 里 id=1 行的水位；行不存在时
+// 返回一个无效值（而非报错），由调用方统一走"手工介入"的防御逻辑。
 func loadWatermark(ctx context.Context, pool *pgxpool.Pool) (pgtype.Timestamptz, error) {
 	var watermark pgtype.Timestamptz
 	err := pool.QueryRow(ctx, `
@@ -323,6 +292,7 @@ func loadWatermark(ctx context.Context, pool *pgxpool.Pool) (pgtype.Timestamptz,
 	return watermark, nil
 }
 
+// rollupStateExists 检查 rollup 状态表是否已在库中创建（迁移 101/102 才会建表）。
 func rollupStateExists(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 	var exists bool
 	err := pool.QueryRow(ctx, `
@@ -335,12 +305,9 @@ func rollupStateExists(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 	return exists, err
 }
 
-// stampWatermark moves the hourly rollup state watermark to
-// `now() - 5 min` using PostgreSQL's clock, NOT the app process clock.
-// This matches the cron entry's upper bound and — critically —
-// guarantees the watermark cannot be stamped into the DB's future
-// because of container clock drift. (MUL-2957 review: see张大彪's
-// blocker #3.)
+// stampWatermark 用 PostgreSQL 的时钟（而非应用进程时钟）把小时级 rollup 状态水位
+// 移到 `now() - 5 min`。这与 cron 条目的上界一致，并且——关键点——保证水位不会因为
+// 容器时钟漂移被打到 DB 的未来。（MUL-2957 review: 见张大彪 的 blocker #3。）
 func stampWatermark(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, `
 		UPDATE task_usage_hourly_rollup_state
@@ -353,6 +320,8 @@ func stampWatermark(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
+// stampWatermarkOnConn 与 stampWatermark 相同，但复用调用方已持有（并已加锁）的连接，
+// 保证打水位与最后的回填操作在同一个会话里完成。
 func stampWatermarkOnConn(ctx context.Context, conn *pgx.Conn) error {
 	_, err := conn.Exec(ctx, `
 		UPDATE task_usage_hourly_rollup_state
@@ -365,6 +334,7 @@ func stampWatermarkOnConn(ctx context.Context, conn *pgx.Conn) error {
 	return nil
 }
 
+// monthFloor 把时间归一化到其所在月的 1 号 00:00（UTC），用于切分月度回填窗口。
 func monthFloor(t time.Time) time.Time {
 	t = t.UTC()
 	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)

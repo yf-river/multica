@@ -9,15 +9,24 @@ import {
 } from "@multica/core/paths";
 import type { Workspace } from "@multica/core/types";
 
-/**
- * While the workspace list is in flight the CTA points at `/issues`, which the
- * proxy rewrites to the last workspace. That keeps the button working during
- * hydration without hiding or disabling it (which would flicker). A visitor
- * with no workspace history lands back on the landing page in that window and
- * can click again once the list resolves.
- */
+// 兜底地址：workspace 列表还没返回时 CTA 先指向 /issues——proxy 会把它改写为
+// 最近访问的 workspace。这样 hydration 期间按钮照常可点，不用隐藏或禁用（避免闪烁）。
+// 没有任何 workspace 历史的新访客在这个窗口内会先落到落地页，等列表就绪后即可再点一次。
 const LOADING_FALLBACK_HREF = "/issues";
 
+/**
+ * 登录用户在官网点击的「进入控制台」CTA 的真实去向（纯函数，便于测试）。
+ *
+ * 规则：未登录 → 登录页；workspace 列表还没就绪 → 先指向 /issues（见上方说明）；
+ * 就绪后 → 交给与 RedirectIfAuthenticated 相同的解析器决定落点，保证
+ * 「控制台在哪里」只有一处来源。
+ *
+ * @param isAuthenticated - 是否已登录。
+ * @param workspaceListReady - workspace 列表是否已加载完成。
+ * @param workspaces - 已加载的 workspace 列表。
+ * @param hasOnboarded - 用户是否已完成 onboarding。
+ * @returns CTA 应跳转的路径。
+ */
 export function resolveDashboardCtaHref({
   isAuthenticated,
   workspaceListReady,
@@ -35,19 +44,17 @@ export function resolveDashboardCtaHref({
 }
 
 /**
- * Destination for the landing "Dashboard" CTA.
+ * 官网「进入控制台」CTA 的去向 hook（在头部与页脚等多处使用）。
  *
- * These CTAs used to point at `/` and lean on the proxy bouncing logged-in
- * visitors from the root path to their workspace. Once `/` stayed public on the
- * official marketing host, that bounce stopped and the CTA resolved to the page
- * the visitor was already on — a click with no visible effect. Resolve the real
- * destination here instead, through the same resolver
- * `RedirectIfAuthenticated` uses, so "where the dashboard lives" has one source
- * of truth.
+ * 历史背景：这些 CTA 曾指向 `/`，指望 proxy 把登录访客从根路径弹回他们的 workspace；
+ * 但官方营销域名保持 `/` 公开后这个「弹跳」不再发生，CTA 解析到的正是访客已停留的页面——
+ * 点击毫无效果。因此改为在这里解析真实落点，并与 RedirectIfAuthenticated 共用同一解析器，
+ * 让「控制台在哪」只有一处定义。
  *
- * Shares `workspaceListOptions()`' query key with `RedirectIfAuthenticated`, so
- * on the landing page the list is typically already in flight or cached and this
- * adds no request.
+ * 与 RedirectIfAuthenticated 共享 workspaceListOptions() 的 query key，
+ * 落地页上该列表通常已在请求中或被缓存，本 hook 不会额外发请求。
+ *
+ * @returns CTA 应跳转的路径字符串。
  */
 export function useDashboardCtaHref(): string {
   const user = useAuthStore((s) => s.user);

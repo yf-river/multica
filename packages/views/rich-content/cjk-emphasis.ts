@@ -1,6 +1,11 @@
+/**
+ * 富文本模块：remark 插件，修复 AI 生成的中文加粗尾部多余空格。
+ * 例如把 `**中文。 **next` 修复成等价于 `**中文。** next` 的形式。
+ */
 import type { PhrasingContent, Root, Strong, Text } from "mdast";
 import { visit } from "unist-util-visit";
 
+// 中日韩文字符集合：汉字、平假名、片假名、韩文。
 const CJK_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 function text(value: string): Text {
@@ -26,8 +31,8 @@ function repairTextValue(value: string): PhrasingContent[] | null {
       continue;
     }
 
-    // Do not look across another delimiter run: that would reinterpret valid
-    // or deliberately literal Markdown beyond the one malformed span.
+    // 不要跨过另一个分隔符串去查找：那会把那段畸形范围之外的、合法或
+    // 有意保持字面的 Markdown 重新解释掉。
     const closing = value.indexOf("**", opening + 2);
     if (closing === -1) break;
 
@@ -67,14 +72,13 @@ function repairTextValue(value: string): PhrasingContent[] | null {
 }
 
 /**
- * Recover the screenshot's common AI-authored form after Markdown parsing:
- * `**中文。 **next` becomes the equivalent of `**中文。** next`.
+ * 在 Markdown 解析后恢复截图里常见的 AI 书写形式：
+ * `**中文。 **next` 变成等价于 `**中文。** next`。
  *
- * This transformer is deliberately narrower than a raw string rewrite. It
- * only visits parsed text nodes containing CJK script characters, so code,
- * valid Markdown nodes and non-CJK prose keep their original semantics.
- * Source/value equality also excludes escaped Markdown whose AST text no
- * longer matches the author's literal input.
+ * 这个转换器刻意比原始字符串改写更窄。它只访问包含 CJK 字符的已解析文本
+ * 节点，所以代码、合法的 Markdown 节点和非 CJK 文本都保持原语义。
+ * 源文本与值相等的校验也排除了那些 AST 文本已不再匹配作者字面输入的
+ * 转义 Markdown。
  */
 export function remarkRepairCjkStrongTrailingWhitespace() {
   return (tree: Root, file: { value: unknown }) => {

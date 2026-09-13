@@ -1,3 +1,12 @@
+// 本文件是两个搜索 handler（SearchIssues / SearchProjects，见各自所在文件）共用的
+// 底层设施：给搜索 SQL 一条短命只读事务 + Postgres 层语句超时作为安全网，并提供
+// 超时判定。
+//
+// 搜索是 LOWER(col) LIKE '%pattern%' 形态，快路径依赖 pg_bigm / pg_trgm 的 GIN 索引。
+// 扩展缺失时 Postgres 退化成对 issue 的顺序扫描加对 comment 的关联扫描，大 workspace
+// 上会让前端 Loader2 像永远卡住（MUL-4059）。3 秒的语句超时对已正确建索引的搜索
+// （通常 <50ms）足够宽裕，又短到前端浏览器的默认请求超时（约 30s）不会先触发；
+// 超时时调用方得到 503 而非吊死连接。
 package handler
 
 import (
@@ -10,32 +19,26 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// searchStatementTimeout bounds every /search request at the Postgres level.
+// searchStatementTimeout 在 Postgres 层给每个 /search 请求设置语句超时上限。
 //
-// The two search handlers (SearchIssues, SearchProjects) run LOWER(col) LIKE
-// '%pattern%' queries whose fast path depends on pg_bigm / pg_trgm GIN
-// indexes (see migrations 032, 033, 036, 137–142). When those extensions are
-// missing — as they were on every self-hosted deployment using the bundled
-// pgvector/pgvector:pg17 image before migration 137 shipped — Postgres
-// falls back to a Seq Scan on `issue` plus correlated Seq Scans on
-// `comment`. On workspaces with thousands of rows the query takes long
-// enough that the frontend Loader2 spinner appears to hang forever
-// ("搜索卡死没有任何反应", MUL-4059).
+// 两个搜索 handler（SearchIssues、SearchProjects）跑 LOWER(col) LIKE '%pattern%'
+// 查询，其快路径依赖 pg_bigm / pg_trgm GIN 索引（见 migrations 032、033、036、
+// 137–142）。扩展缺失时——migration 137 之前每个用随附 pgvector/pgvector:pg17
+// 镜像的自托管部署都是如此——Postgres 退化成对 `issue` 的顺序扫描 + 对 `comment`
+// 的关联顺序扫描。数千行的 workspace 上查询慢到前端 Loader2 看起来像永远卡住
+// （"搜索卡死没有任何反应"，MUL-4059）。
 //
-// The 3 s cap is generous compared to a properly indexed search (typically
-// <50 ms) and short enough that the frontend's implicit request timeout
-// (browser default, ~30 s) never kicks in. On timeout the caller sees a
-// 503 with a descriptive error rather than a stalled connection —
-// SearchIssues / SearchProjects map SQLSTATE 57014 to
-// http.StatusServiceUnavailable so the frontend can distinguish this
-// from a generic 500.
+// 3 秒上限对正确建索引的搜索（通常 <50ms）足够宽裕，又短到前端隐式请求超时
+// （浏览器默认约 30s）不会先触发。超时后调用方看到带描述的 503 而不是吊死的连接
+// ——SearchIssues / SearchProjects 把 SQLSTATE 57014 映射成
+// http.StatusServiceUnavailable，让前端能把它与普通 500 区分开。
 const searchStatementTimeout = 3 * time.Second
 
-// searchStatementTimeoutOverride, when non-zero, replaces
-// searchStatementTimeout for the duration of a test. Never read outside
-// of the runSearchQuery hot path — see search_timeout_test.go.
+// searchStatementTimeoutOverride 非零时在测试期间替换 searchStatementTimeout。只能在
+// runSearchQuery 热路径之外读取——见 search_timeout_test.go。
 var searchStatementTimeoutOverride time.Duration
 
+// effectiveSearchStatementTimeout 返回当前生效的搜索超时（测试覆盖优先）。
 func effectiveSearchStatementTimeout() time.Duration {
 	if searchStatementTimeoutOverride > 0 {
 		return searchStatementTimeoutOverride
@@ -43,14 +46,12 @@ func effectiveSearchStatementTimeout() time.Duration {
 	return searchStatementTimeout
 }
 
-// runSearchQuery executes a search SQL query inside a short-lived read-only
-// transaction with SET LOCAL statement_timeout as the safety net. rowsFn
-// receives each pgx.Rows result and is responsible for scanning /
-// accumulating results before returning; runSearchQuery handles
-// commit / rollback and returns the first error encountered.
+// runSearchQuery 在一条短命只读事务里执行搜索 SQL，用 SET LOCAL statement_timeout
+// 作安全网。rowsFn 接收每个 pgx.Rows 结果、负责在返回前扫描/累积结果；runSearchQuery
+// 负责提交/回滚并返回遇到的第一个错误。
 //
-// tx uses IsoLevel ReadCommitted (Postgres default) and AccessMode ReadOnly
-// so a stuck search cannot hold row locks against writers.
+// 事务取 IsoLevel ReadCommitted（Postgres 默认）+ AccessMode ReadOnly，卡死的搜索
+// 不会持有行锁挡着写方。
 func runSearchQuery(
 	ctx context.Context,
 	txStarter txStarter,
@@ -65,22 +66,19 @@ func runSearchQuery(
 	committed := false
 	defer func() {
 		if !committed {
-			// Best-effort rollback with a fresh context so a caller
-			// cancellation still lets the connection go back clean.
+			// 尽力回滚时用全新 context——即使调用方已取消，也要让连接干净归还。
 			_ = tx.Rollback(context.Background())
 		}
 	}()
 
-	// SET LOCAL is transaction-scoped, so pgxpool can safely hand this
-	// connection back out after COMMIT without the timeout leaking to
-	// unrelated queries.
+	// SET LOCAL 是事务作用域的，所以 COMMIT 之后 pgxpool 可以安全地把这条连接交回
+	// 池，超时不会泄漏到无关查询上。
 	timeoutMs := int(effectiveSearchStatementTimeout() / time.Millisecond)
 	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL statement_timeout = %d", timeoutMs)); err != nil {
 		return fmt.Errorf("set search statement_timeout: %w", err)
 	}
-	// The read-only mode is applied here rather than via TxOptions so we
-	// keep the txStarter interface signature (Begin only) intact. It's
-	// belt-and-suspenders — the search queries only SELECT anyway.
+	// 只读模式在这里用 SET 而非 TxOptions，是为了保持 txStarter 接口签名（只有
+	// Begin）。属于双保险——搜索查询本来就只 SELECT。
 	if _, err := tx.Exec(ctx, "SET LOCAL transaction_read_only = on"); err != nil {
 		return fmt.Errorf("set search transaction_read_only: %w", err)
 	}
@@ -89,8 +87,7 @@ func runSearchQuery(
 	if err != nil {
 		return err
 	}
-	// Close rows before commit so pgx does not complain about a busy
-	// connection during Commit.
+	// 提交前先关 rows，pgx 才不会在 Commit 时报「连接正忙」。
 	if err := rowsFn(rows); err != nil {
 		rows.Close()
 		return err
@@ -104,11 +101,9 @@ func runSearchQuery(
 	return nil
 }
 
-// isSearchStatementTimeout reports whether err is the canonical Postgres
-// query_canceled error (SQLSTATE 57014). Both `SET LOCAL statement_timeout`
-// firing and a client-side context cancellation surface as 57014 — the two
-// are indistinguishable from the client side, which is intentional in the
-// pgx layer.
+// isSearchStatementTimeout 判断 err 是否为 Postgres 标准的 query_canceled 错误
+// （SQLSTATE 57014）。SET LOCAL statement_timeout 触发与客户端侧 context 取消都会以
+// 57014 呈现——在客户端侧两者无法区分，这在 pgx 层是有意为之。
 func isSearchStatementTimeout(err error) bool {
 	if err == nil {
 		return false

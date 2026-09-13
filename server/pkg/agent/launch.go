@@ -1,5 +1,24 @@
 package agent
 
+// 文件职责：本文件是全包的「进程启动边界」——所有 runtime CLI（codebuddy、codex、
+// claude、hermes 等各家 agent 的命令行程序）在本文件的唯一入口处被构造成 *exec.Cmd。
+// 它统一解决三个横切问题：
+//
+//  1. 启动前缀（launch prefix）：自定义 runtime（MUL-3284）以 `command_name` + 固定
+//     fixed_args 描述，其中某些 token 属于「程序自身」而非某次调用（例如包装器
+//     `ccms start q36` 必须先让 `start q36` 被解析掉、才会把后续协议参数交给真正的
+//     Claude 二进制，GH #7046）。Command 类型把「可执行文件 + 该前缀」固化成一体。
+//  2. 进程生命周期：所有被拉起的进程默认进独立进程组、取消即整组 SIGKILL
+//     （newRuntimeCmd），避免 CLI 的子进程（MCP 服务、shell 等）成为逃逸的孤儿
+//     （GH #7522、#5918）；探测类调用（如 --version）通过 runOwned/outputOwned/
+//     combinedOutputOwned 获得与正式任务同样的树所有权与有界等待。
+//  3. 日志脱敏：logAgentCommand 是唯一允许记录进程参数的边界，只保留语法上合理的
+//     flag 名与「有来源证明」的适配层子命令，一切值一律替换成 <redacted>。
+//
+// 另外本文件还负责按 agent 类型过滤启动前缀中的协议关键 flag（filterLaunchPrefix），
+// 并缓存模型发现 key（cacheKey）。与 agent.go 等业务编排文件不同，这里不面向任何单一
+// CLI 的解析细节，而是给它们共用的地基。
+
 import (
 	"bytes"
 	"context"
@@ -11,30 +30,35 @@ import (
 	"time"
 )
 
+// redactedAgentCommandArg 是命令日志里用来替换敏感参数值的占位符。
 const redactedAgentCommandArg = "<redacted>"
 
+// maxLoggedAgentCommandFlagLen 上限：记录到日志里的长 flag 名最多这么长，防止把一长串
+// 内联秘密（例如 `--token=<超长值>` 的前半）误当成 flag 名整体记下来。
 const maxLoggedAgentCommandFlagLen = 64
 
-// agentCommandLogArgs describes the adapter-assembled argv handed to the
-// launch boundary. trustedPositionals contains indexes into invocationArgs for
-// literal subcommands owned by the adapter; every other positional remains
-// redacted. Keeping index-and-literal assertions instead of a global string
-// allowlist makes trust follow the argument's source, so an identical token
-// supplied through custom_args is still treated as sensitive.
+// agentCommandLogArgs 描述「由适配层拼好的 argv」在提交给启动边界时的样子。
+// trustedPositionals 是 invocationArgs 中属于适配层自有字面子命令的索引集合；除此之外
+// 的每个位置参数一律脱敏。用「索引 + 字面值」的断言而不是全局字符串白名单，是为了让
+// 信任跟着参数来源走——同一个 token 若是经 custom_args 进来，仍会被当作敏感信息。
 type agentCommandLogArgs struct {
 	invocationArgs     []string
 	trustedPositionals []trustedAgentCommandPositional
 }
 
+// trustedAgentCommandPositional 标记 invocationArgs 中第 index 个参数的字面值确为 value，
+// 即它是适配层写死的子命令、可以放心记日志。
 type trustedAgentCommandPositional struct {
 	index int
 	value string
 }
 
+// trustAgentCommandPositional 构造一条受信任位置参数断言。
 func trustAgentCommandPositional(index int, value string) trustedAgentCommandPositional {
 	return trustedAgentCommandPositional{index: index, value: value}
 }
 
+// newAgentCommandLogArgs 组装一次调用要记的 argv 快照及其中受信任的子命令位置。
 func newAgentCommandLogArgs(invocationArgs []string, trustedPositionals ...trustedAgentCommandPositional) agentCommandLogArgs {
 	return agentCommandLogArgs{
 		invocationArgs:     invocationArgs,
@@ -42,59 +66,47 @@ func newAgentCommandLogArgs(invocationArgs []string, trustedPositionals ...trust
 	}
 }
 
-// Command is the identity of a runtime CLI: the executable Multica spawns plus
-// the argv prefix that belongs to the command itself rather than to any single
-// invocation.
+// Command 是一次 runtime CLI 的身份：Multica 要拉起的可执行文件，加上「属于命令自身而
+// 不属于任何单次调用」的 argv 前缀。
 //
-// A custom runtime profile (MUL-3284) is configured as `command_name` plus
-// `fixed_args`, and for a wrapper like `ccms start q36` those two fixed_args
-// tokens are part of *what the program is*, not options passed to it. The
-// wrapper only reaches the real Claude binary after its `start` subcommand has
-// been selected, so `-p` and the rest of the stream-json protocol flags are
-// meaningless — and rejected outright by a Commander-style parser — until the
-// prefix has been consumed (GH #7046).
+// 自定义 runtime 配置（MUL-3284）由 `command_name` + `fixed_args` 组成；对 `ccms start
+// q36` 这类包装器而言，这两个 fixed_args token 是「这个程序是什么」的一部分，而不是
+// 传给它的选项。包装器只有在它的 `start` 子命令被选中之后才会到达真正的 Claude 二进制，
+// 所以在前缀被消费之前，`-p` 及 stream-json 协议族其余参数毫无意义——Commander 风格
+// 的解析器会直接拒绝它们（GH #7046）。
 //
-// So the prefix goes directly after the executable and before everything a
-// backend builds:
+// 因此前缀紧跟在可执行文件之后、位于 backend 拼出的任何参数之前：
 //
 //	<Path> <Prefix...> <protocol args...> <ExtraArgs...> <CustomArgs...>
 //
-// Subcommand-style prefixes work only in this position. Flag-style prefixes
-// generally parse the same either way — `agent --model composer-2.5 -p …` and
-// `agent -p … --model composer-2.5` are equivalent to most parsers — so
-// prefix-first is the broader of the two orders, not a universally safe one: a
-// CLI that separates global flags from subcommand flags can still care where a
-// flag lands. That residual risk is why the position change is called out in
-// the runtime docs rather than treated as invisible.
+// 子命令式前缀只有在这个位置才成立。flag 式前缀通常放在哪都一样——`agent --model
+// composer-2.5 -p …` 与 `agent -p … --model composer-2.5` 对多数解析器等价——所以「前缀
+// 在前」是两种顺序里更通用的一种，但并非对所有人都安全：一个区分「全局 flag」与「子命令
+// flag」的 CLI 仍可能在意 flag 落在哪里。正是这个残余风险，使该位置变化要在 runtime
+// 文档里显式说明，而不是当作无感变更。
 //
-// The zero Command is a bare executable with no prefix, which is what every
-// built-in runtime uses.
+// 零值 Command 表示「裸可执行文件、无前缀」，这正是所有内置 runtime 使用的形态。
 type Command struct {
-	// Path is the executable to spawn — a PATH lookup name or an absolute path.
+	// Path 是要拉起的可执行文件——PATH 查找名或绝对路径。
 	Path string
-	// Prefix is the argv prefix that belongs to the command, already filtered
-	// by FilterLaunchPrefix. Never mutate a Command's Prefix in place; Argv
-	// copies it precisely so a caller cannot alias it.
+	// Prefix 是命令自带的 argv 前缀，已由 FilterLaunchPrefix 过滤过。切勿就地修改某个
+	// Command 的 Prefix；Argv 会精确复制它，让调用方无法取别名。
 	Prefix []string
-	// logger reports prefix/argument conflicts at the moment a process is
-	// built. Optional: a zero Command logs nothing.
+	// logger 在构造进程时上报前缀/参数冲突。可选：零值 Command 不打任何日志。
 	logger *slog.Logger
 }
 
-// NewCommand builds a Command from a resolved executable path and a launch
-// prefix. Callers inside this package normally go through Config.commandAt
-// instead, which carries the prefix the daemon configured for the runtime.
+// NewCommand 由「已解析的可执行文件路径 + 启动前缀」构造一个 Command。包内调用方通常
+// 走 Config.commandAt 来继承 daemon 为 runtime 配置的前缀。
 //
-// The prefix should already have been through FilterLaunchPrefix; pass a raw
-// fixed_args list only where no protocol channel exists to protect, such as a
-// one-shot `--version` probe.
+// 前缀应当已通过 FilterLaunchPrefix；只有在没有协议通道需要保护的地方——比如一次性
+// `--version` 探测——才允许直接传入原始 fixed_args 列表。
 func NewCommand(path string, prefix []string) Command {
 	return Command{Path: path, Prefix: append([]string(nil), prefix...)}
 }
 
-// Argv returns the full argument vector for one invocation: the command's own
-// prefix followed by args. The result never aliases either input, so callers
-// may append to it freely.
+// Argv 返回一次调用的完整参数向量：命令自带前缀再接上 args。结果不会与任一入参共享
+// 底层数组，调用方可以放心往里追加。
 func (c Command) Argv(args ...string) []string {
 	argv := make([]string, 0, len(c.Prefix)+len(args))
 	argv = append(argv, c.Prefix...)
@@ -102,34 +114,28 @@ func (c Command) Argv(args ...string) []string {
 	return argv
 }
 
-// exec builds the *exec.Cmd that runs this command with args.
+// exec 构造用 args 运行本命令的 *exec.Cmd。
 //
-// This is the single place in the package where a runtime CLI process is
-// constructed. Everything the daemon launches or probes — task execution,
-// `--version` detection, model discovery — routes through here or through
-// execVia, so a new backend cannot forget the launch prefix and silently
-// reintroduce GH #7046. TestOnlyLaunchGoSpawnsRuntimeProcesses enforces it.
+// 这是包内唯一构造 runtime CLI 进程的地方。daemon 启动或探测的一切——任务执行、
+// `--version` 探测、模型发现——都经由这里或 execVia，因此新 backend 不可能忘记启动前缀
+// 而静默复现 GH #7046。TestOnlyLaunchGoSpawnsRuntimeProcesses 强制保障这一点。
 func (c Command) exec(ctx context.Context, args ...string) *exec.Cmd {
 	warnLaunchPrefixOverlap(c.Prefix, args, c.logger)
 	return newRuntimeCmd(exec.CommandContext(ctx, c.Path, c.Argv(args...)...))
 }
 
-// newRuntimeCmd applies the process-lifecycle defaults every runtime process in
-// this package gets. It runs at construction because both of them have to be in
-// place before the process exists.
+// newRuntimeCmd 给本包每个 runtime 进程套上「进程生命周期」的默认值。它在构造时就生效，
+// 因为两项设置都必须在进程存在之前就位。
 //
-// Both used to be opt-in, and opt-in is why GH #7522 happened. Of the 27 places
-// this package starts a process, 8 asked for a process group; the rest left
-// their CLI in the daemon's group, where a group-wide signal cannot reach it.
-// os/exec's default Cancel is the same leak by another route: it kills the
-// leader alone, so a cancelled task's tool subprocesses — MCP servers, shells,
-// whatever the agent spawned — survive it. On Linux that was #5918. On Windows,
-// where the leader is often a cmd.exe shim and the real CLI is already a
-// grandchild, a cancelled agent kept working for 40 minutes.
+// 这两项曾经都是可选的，而「可选」正是 GH #7522 的根源：本包启动进程的 27 个地方里，
+// 只有 8 个主动要了进程组，其余把自己的 CLI 留在 daemon 的进程组里，组级信号够不着它。
+// os/exec 默认的 Cancel 是同一漏洞的另一条路：它只杀组长，于是被取消任务的工具子进程
+// ——MCP 服务器、shell，agent 拉起的任何东西——都活了下来。在 Linux 上是 #5918；在
+// Windows 上组长常常是个 cmd.exe 垫片、真正的 CLI 已经是孙进程，一个被取消的 agent
+// 能继续跑 40 分钟。
 //
-// A backend that wants a graceful shutdown instead of an immediate kill assigns
-// its own cmd.Cancel after construction and wins; claude, dsh and deveco do,
-// because they drive SIGTERM → grace → SIGKILL themselves.
+// 想要优雅停机而非立即 kill 的 backend 可在构造后自行覆盖 cmd.Cancel 并获胜：claude、
+// dsh、deveco 就是自己驱动 SIGTERM → 宽限期 → SIGKILL。
 func newRuntimeCmd(cmd *exec.Cmd) *exec.Cmd {
 	configureProcessGroup(cmd)
 	cmd.Cancel = func() error {
@@ -139,27 +145,21 @@ func newRuntimeCmd(cmd *exec.Cmd) *exec.Cmd {
 	return cmd
 }
 
-// runOwned is Run() over an owned process tree: start, wait, drop ownership.
+// runOwned 是在「受管进程树」之上的 Run()：启动、等待、放弃所有权。
 //
-// os/exec's Run/Output/CombinedOutput call Start themselves, so a probe written
-// with them never reaches startOwnedProcessTree and owns nothing on Windows —
-// where the direct child of a `--version` probe is typically the shim, not the
-// CLI. That is the same escape GH #7522 was reported for, in a path nobody was
-// looking at: detectCLIVersion's own comment already describes a broken CLI
-// leaving grandchildren behind. These three helpers are how a synchronous probe
-// gets the same ownership a task launch has.
+// os/exec 的 Run/Output/CombinedOutput 会自己调 Start，所以用它们写的探测永远到不了
+// startOwnedProcessTree，在 Windows 上一无所属——那里 `--version` 探测的直接子进程通常
+// 是垫片而非 CLI。这正是 GH #7522 当初被报告的漏洞形态，只是换了一条没人盯的路径：
+// detectCLIVersion 自己的注释已经描述过「坏 CLI 留下孙进程」。这三个辅助函数让同步探测
+// 获得与任务启动相同的所有权。
 func runOwned(cmd *exec.Cmd, logger *slog.Logger) error {
-	// Without a bound this waits for its own cleanup and never returns. A
-	// descendant that inherited the output pipes holds them open after the
-	// leader exits; cmd.Wait blocks until the copy goroutines see EOF; and the
-	// thing that would close those pipes is the release below, which runs
-	// after Wait. WaitDelay is defined for exactly this case — "a child
-	// process that exits but leaves its I/O pipes unclosed" — and cancellation
-	// is no help, because a probe like checkOpenclawVersion runs on the
-	// caller's context before any task timeout exists.
+	// 不设上界的话，它会永远等自己的清理、永不返回：继承了输出管道的后代进程在组长退出
+	// 后仍握着管道，cmd.Wait 会一直等到拷贝 goroutine 看到 EOF；而能关掉这些管道的，正
+	// 是 Wait 之后才跑的 release。WaitDelay 天生就是为这个场景定义的——「子进程退出了却
+	// 不关 I/O 管道」——取消也帮不上忙，因为 checkOpenclawVersion 这类探测跑在调用方的
+	// context 上，任何任务超时都还没建立。
 	//
-	// A caller that set its own bound keeps it; detectCLIVersion has had one
-	// since MUL-3812 for this exact shape.
+	// 调用方自己设了上界就保留；detectCLIVersion 自 MUL-3812 起就为这个形状设了。
 	if cmd.WaitDelay == 0 {
 		cmd.WaitDelay = probeWaitDelay
 	}
@@ -167,26 +167,23 @@ func runOwned(cmd *exec.Cmd, logger *slog.Logger) error {
 		return err
 	}
 	err := cmd.Wait()
-	// The probe is over the moment its leader is: nothing it spawned should
-	// outlive the answer. Signalling before the release covers Unix, where
-	// releasing a process group is a no-op; on Windows closing the Job Object
-	// would take the tree down on its own.
+	// 探针在组长退出的瞬间就该结束：它拉起的任何东西都不应比答案活得更久。在 release
+	// 之前先发信号覆盖 Unix（那里 release 进程组是空操作）；在 Windows 上关闭 Job Object
+	// 本身就会带走整棵树。
 	signalProcessGroup(cmd, syscall.SIGKILL)
 	releaseProcessGroup(cmd)
 	return err
 }
 
-// probeWaitDelay bounds how long a finished probe waits on output pipes its
-// descendants left open. It matches the bound detectCLIVersion already sets by
-// hand. The timer only starts once the child has exited or the context is
-// done, so a healthy probe never pays it.
+// probeWaitDelay 限制一个已结束的探测在等待「后代留下的输出管道」上花多久。它与
+// detectCLIVersion 手工设定的上界一致。计时只在子进程已退出或 context 结束后才开始，
+// 所以健康的探测永远付不出这个代价。
 const probeWaitDelay = 2 * time.Second
 
-// outputOwned is cmd.Output() over an owned process tree. It matches the
-// stdlib's contract — stdout returned, a failed run's stderr attached to the
-// *exec.ExitError — except that the stderr sample is the last
-// probeStderrSampleBytes rather than the stdlib's head-and-tail, which is where
-// a CLI's actual failure line ends up.
+// outputOwned 是受管进程树之上的 cmd.Output()。它遵循标准库契约——成功返回 stdout，
+// 失败运行的 stderr 挂到 *exec.ExitError 上——唯一的差别是 stderr 样本取尾部
+// probeStderrSampleBytes，而不是标准库的「头尾各留一段」；CLI 真正的失败信息通常就在
+// 尾部。
 func outputOwned(cmd *exec.Cmd, logger *slog.Logger) ([]byte, error) {
 	if cmd.Stdout != nil {
 		return nil, errors.New("exec: Stdout already set")
@@ -194,8 +191,8 @@ func outputOwned(cmd *exec.Cmd, logger *slog.Logger) ([]byte, error) {
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 
-	// A caller that set its own Stderr wants it; only fill in the sample when
-	// nothing else is watching, exactly as Output() does.
+	// 调用方自己设的 Stderr 就尊重它；只有没人旁观时才填样本缓冲，与 Output() 的行为
+	// 一致。
 	var stderr *tailBuffer
 	if cmd.Stderr == nil {
 		stderr = &tailBuffer{max: probeStderrSampleBytes}
@@ -210,9 +207,8 @@ func outputOwned(cmd *exec.Cmd, logger *slog.Logger) ([]byte, error) {
 	return stdout.Bytes(), err
 }
 
-// combinedOutputOwned is cmd.CombinedOutput() over an owned process tree.
-// Stdout and Stderr are the same writer value, which is what makes os/exec give
-// them one pipe and therefore one interleaving, as the stdlib does.
+// combinedOutputOwned 是受管进程树之上的 cmd.CombinedOutput()。Stdout 与 Stderr 用同一个
+// writer 值，这正是 os/exec 给它们一根管道、从而有一种交错顺序的原因，与标准库一致。
 func combinedOutputOwned(cmd *exec.Cmd, logger *slog.Logger) ([]byte, error) {
 	if cmd.Stdout != nil {
 		return nil, errors.New("exec: Stdout already set")
@@ -227,19 +223,18 @@ func combinedOutputOwned(cmd *exec.Cmd, logger *slog.Logger) ([]byte, error) {
 	return combined.Bytes(), err
 }
 
-// probeStderrSampleBytes bounds the stderr kept for a failed probe's error.
-// os/exec bounds the same sample at 32 KiB; a CLI stuck in a log loop should
-// not be able to grow the daemon's heap through a `--version` call.
+// probeStderrSampleBytes 限制失败探测的错误里保留多少 stderr。os/exec 把同样的样本限制
+// 在 32 KiB；一个陷在日志循环里的 CLI 不应能借一次 `--version` 调用撑大 daemon 堆。
 const probeStderrSampleBytes = 32 << 10
 
-// tailBuffer keeps the last max bytes written to it and discards the rest. It
-// always reports a full write, so a child is never blocked or shortened by the
-// bound.
+// tailBuffer 只保留写进来的最后 max 字节、丢弃其余。它总是回报「全部写成功」，因此子
+// 进程绝不会被这个上限挡住或截短。
 type tailBuffer struct {
 	buf []byte
 	max int
 }
 
+// Write 追加数据并裁掉超出 max 的旧头部，永远向调用方报告完整写入。
 func (t *tailBuffer) Write(p []byte) (int, error) {
 	t.buf = append(t.buf, p...)
 	if len(t.buf) > t.max {
@@ -248,47 +243,40 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// Bytes 返回当前保留下来的尾部内容。
 func (t *tailBuffer) Bytes() []byte { return t.buf }
 
-// invocationChooser is the shape of the per-tool platform launch rewrites
-// (chooseCursorInvocation, chooseCopilotInvocation, choosePiInvocation). On
-// Windows they replace argv[0] with a PowerShell host or a bundled native
-// binary and wrap the CLI's own argv; on other platforms they pass through.
+// invocationChooser 是「按工具定制的平台启动改写」的函数形状（chooseCursorInvocation、
+// chooseCopilotInvocation、choosePiInvocation）。在 Windows 上它们用 PowerShell 宿主或
+// 随附的原生二进制替换 argv[0]，并包装 CLI 自己的 argv；其它平台原样透传。
 type invocationChooser func(execName, lookedUp string, args []string, logger *slog.Logger) (string, []string)
 
-// execVia builds the *exec.Cmd for a runtime CLI whose launch goes through a
-// platform invocation chooser.
+// execVia 为「启动要走平台调用选择器」的 runtime CLI 构造 *exec.Cmd。
 //
-// The prefix is applied to the CLI's own argv *before* the chooser runs, never
-// to the final argv[0]: on Windows the chooser may prepend its own tokens
-// (`-NoProfile -ExecutionPolicy Bypass -File cursor-agent.ps1`) that must stay
-// in front. `ccms start q36` has to land after the PowerShell preamble, on the
-// wrapped CLI, not ahead of PowerShell's own flags.
+// 前缀先应用到 CLI 自己的 argv 上、再交给选择器运行，绝不作用到最终 argv[0]：Windows
+// 上选择器可能前置自己的 token（`-NoProfile -ExecutionPolicy Bypass -File
+// cursor-agent.ps1`），那些必须待在最前。`ccms start q36` 要落在 PowerShell 前导之后、
+// 落在被包装的 CLI 上，而不是排在 PowerShell 自己的 flag 之前。
 func (c Command) execVia(ctx context.Context, choose invocationChooser, lookedUp string, args []string, logger *slog.Logger) (*exec.Cmd, string, []string) {
 	warnLaunchPrefixOverlap(c.Prefix, args, logger)
 	argv0, cmdArgs := choose(c.Path, lookedUp, c.Argv(args...), logger)
 	return newRuntimeCmd(exec.CommandContext(ctx, argv0, cmdArgs...)), argv0, cmdArgs
 }
 
-// withFilteredPrefix returns a copy of the command whose prefix has been
-// through fn.
+// withFilteredPrefix 返回一个前缀已经过 fn 处理的新 Command 副本。
 //
-// Moving the prefix to the front makes it lose an ordinary last-wins flag
-// conflict, which is the point. But a few settings are not decided by argv
-// order at all: Codex's `-c key=value` beats the daemon-written config.toml
-// from any position, so a `-c mcp_servers.…` in fixed_args shadows managed MCP
-// whether it sits first or last. Those need the same removal that ExtraArgs
-// and CustomArgs already get, and only the backend knows which they are.
+// 把前缀挪到最前，会让它丢掉常规「后者胜出」的 flag 冲突——这正是目的。但有少数设置不
+// 由 argv 顺序决定：Codex 的 `-c key=value` 从任何位置都能压过 daemon 写下的 config.toml，
+// 所以 fixed_args 里的 `-c mcp_servers.…` 无论放前放后都会遮蔽托管 MCP。这类设置需要和
+// ExtraArgs / CustomArgs 一样被移除，而只有 backend 自己知道是哪些。
 func (c Command) withFilteredPrefix(fn func([]string) []string) Command {
 	c.Prefix = fn(c.Prefix)
 	return c
 }
 
-// cacheKey identifies the command for the model-discovery memo. The prefix is
-// part of it because two profiles can share one binary and still enumerate
-// different catalogs — `ccms start q36` and `ccms start opus` are the same
-// executable with different models behind it, and keying on the path alone
-// would serve the first one's catalog to the second (see discoveryCacheKey).
+// cacheKey 标识命令，用于模型发现备忘录的键。前缀是键的一部分，因为两个 profile 可以共
+// 享同一个二进制却枚举出不同的目录——`ccms start q36` 与 `ccms start opus` 是同一可执行
+// 文件、背后是不同的模型——只按路径作键会把第一个的目录服务给第二个（见 discoveryCacheKey）。
 func (c Command) cacheKey() string {
 	if len(c.Prefix) == 0 {
 		return c.Path
@@ -296,8 +284,7 @@ func (c Command) cacheKey() string {
 	return c.Path + "\x00" + strings.Join(c.Prefix, "\x00")
 }
 
-// String renders the command the way a user wrote it in the Runtimes UI, for
-// logs and error messages.
+// String 把命令渲染成用户在 Runtimes UI 里写下的样子，用于日志与错误消息。
 func (c Command) String() string {
 	if len(c.Prefix) == 0 {
 		return c.Path
@@ -305,27 +292,22 @@ func (c Command) String() string {
 	return c.Path + " " + strings.Join(c.Prefix, " ")
 }
 
-// commandAt pairs a resolved executable path with this runtime's launch
-// prefix. Backends call it after their own PATH resolution and default-binary
-// fallback, which is why the path is a parameter rather than read from
-// Config.ExecutablePath.
+// commandAt 把一个已解析的可执行文件路径与当前 runtime 的启动前缀配成 Command。
+// Backend 在自己完成 PATH 解析与默认二进制回退之后再调用它——这正是路径要作为参数而
+// 不是读 Config.ExecutablePath 的原因。
 func (c Config) commandAt(path string) Command {
 	return Command{Path: path, Prefix: c.LaunchPrefix, logger: c.Logger}
 }
 
-// logAgentCommand is the only boundary allowed to record runtime process
-// arguments. It works from the final exec.Cmd so launch prefixes and
-// platform-specific rewrites are represented, but never records argument
-// values: flag names and adapter-owned literal subcommands remain useful for
-// diagnostics, inline values are removed, and every other positional/value
-// token is replaced with a marker.
+// logAgentCommand 是唯一允许记录 runtime 进程参数的边界。它从最终的 exec.Cmd 出发，使
+// 启动前缀与平台改写都被如实呈现，但绝不记录参数值：flag 名与适配层自有的字面子命令对
+// 诊断仍有价值会保留，内联值被剥掉，其余每个位置/值 token 一律替换成占位标记。
 func (c Config) logAgentCommand(cmd *exec.Cmd, source agentCommandLogArgs) {
 	c.logAgentCommandFields(cmd, source, 0, false)
 }
 
-// logAgentCommandWithPrompt adds only a typed prompt byte count to the safe
-// command log. Keeping it separate from logAgentCommand avoids an open-ended
-// optional field channel that could accidentally carry prompt content.
+// logAgentCommandWithPrompt 只在安全命令日志里加一个「带类型的 prompt 字节数」。它刻意
+// 与 logAgentCommand 分开，避免开一个无界的可选字段通道、意外把 prompt 内容带进日志。
 func (c Config) logAgentCommandWithPrompt(cmd *exec.Cmd, source agentCommandLogArgs, promptBytes int) {
 	c.logAgentCommandFields(cmd, source, promptBytes, true)
 }
@@ -356,10 +338,9 @@ func (c Config) logAgentCommandFields(cmd *exec.Cmd, source agentCommandLogArgs,
 	logger.Info("agent command", fields...)
 }
 
-// trustedAgentCommandPositionals maps source indexes onto the final exec.Cmd
-// argv. Platform launch rewrites may prepend a PowerShell host and wrapper
-// arguments, so the original launch prefix plus adapter argv must match the
-// final suffix before any positional is trusted. A mismatch fails closed.
+// trustedAgentCommandPositionals 把 source 里的索引映射到最终 exec.Cmd 的 argv 上。平台
+// 启动改写可能前置 PowerShell 宿主与包装参数，所以「原始启动前缀 + 适配层 argv」必须与
+// 最终后缀完全吻合，任何一个位置参数才配得上受信任。不匹配则一律失败关闭。
 func (c Config) trustedAgentCommandPositionals(finalArgs []string, source agentCommandLogArgs) map[int]struct{} {
 	originalLen := len(c.LaunchPrefix) + len(source.invocationArgs)
 	start := len(finalArgs) - originalLen
@@ -389,11 +370,10 @@ func (c Config) trustedAgentCommandPositionals(finalArgs []string, source agentC
 	return trusted
 }
 
-// redactAgentCommandArgs preserves only syntactically plausible flag names and
-// source-proven adapter subcommands while removing every value. Single-dash
-// flags must be one ASCII letter; this keeps a token such as
-// "-sTk9xQZ-secretvalue" from being mistaken for a flag. Long flags are
-// length-bounded and lose inline values. All other tokens become <redacted>.
+// redactAgentCommandArgs 只保留「语法上说得通的 flag 名」与「有来源证明的适配层子命令」，
+// 剥掉一切值。单横线 flag 必须是单个 ASCII 字母——这防止把
+// "-sTk9xQZ-secretvalue" 之类的 token 误当 flag。长 flag 有长度上限并剥掉内联值。
+// 其余所有 token 变成 <redacted>。
 func redactAgentCommandArgs(args []string, trustedPositionals map[int]struct{}) []string {
 	redacted := make([]string, len(args))
 	for i, arg := range args {
@@ -410,6 +390,8 @@ func redactAgentCommandArgs(args []string, trustedPositionals map[int]struct{}) 
 	return redacted
 }
 
+// safeAgentCommandFlagName 判断 arg 是否值得保留成 flag 名：单横线 + 单个 ASCII 字母，
+// 或长度受限、由字母开头、仅含字母数字._- 的双横线长 flag；否则拒绝并去掉内联的 `=值`。
 func safeAgentCommandFlagName(arg string) (string, bool) {
 	flag := arg
 	if equals := strings.IndexByte(flag, '='); equals > 0 {
@@ -430,16 +412,15 @@ func safeAgentCommandFlagName(arg string) (string, bool) {
 	return flag, true
 }
 
+// isASCIIAlpha 判断字节是否为 ASCII 大小写字母。
 func isASCIIAlpha(ch byte) bool {
 	return ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
 }
 
-// launchPrefixBlockedArgs maps a protocol family to the flags a launch prefix
-// may not set. It exists so New can filter the prefix once, at the single
-// point that knows the family, instead of asking each backend to remember.
+// launchPrefixBlockedArgs 把「协议族」映射到「启动前缀不许设置的 flag」。它的存在是为了
+// 让 New 在唯一知道协议族的那一点上过滤一次前缀，而不是让每个 backend 各自记住。
 //
-// Only families that reject flags at all appear here; a family whose backend
-// has no blocked-arg policy accepts any prefix.
+// 只有真的会拒绝 flag 的协议族出现在这里；backend 没有拦截参数策略的协议族接受任何前缀。
 var launchPrefixBlockedArgs = map[string]map[string]blockedArgMode{
 	"antigravity": antigravityBlockedArgs,
 	"claude":      claudeBlockedArgs,
@@ -465,37 +446,29 @@ var launchPrefixBlockedArgs = map[string]map[string]blockedArgMode{
 	"zeroclaw":    zeroclawBlockedArgs,
 }
 
-// FilterLaunchPrefix is the exported form for callers outside this package —
-// the daemon, which builds Commands for CLI probes that never reach New.
-// Without it a `--version` probe and a task launch would disagree about what
-// the runtime's prefix is.
+// FilterLaunchPrefix 是给包外调用方（daemon）用的导出形式——daemon 会为那些从不经过 New
+// 的 CLI 探测构造 Command。没有它，一次 `--version` 探测与一次任务启动对「runtime 前缀是
+// 什么」就会各说各话。
 func FilterLaunchPrefix(agentType string, prefix []string, logger *slog.Logger) []string {
 	return filterLaunchPrefix(prefix, agentType, logger)
 }
 
-// filterLaunchPrefix drops protocol-critical flags from a launch prefix while
-// letting positional tokens through.
+// filterLaunchPrefix 从启动前缀里去掉协议关键 flag，同时放行位置参数。
 //
-// The two token kinds answer different questions. A positional token is the
-// command's identity — `start`, `q36` — and the daemon has no opinion about
-// it. A flag token competes with the protocol arguments the daemon owns, and
-// the prefix position would let it win: putting `--output-format text` in
-// fixed_args would break the daemon↔CLI stream-json channel exactly like
-// putting it in custom_args, which is already refused.
+// 两种 token 回答的是两个不同问题。位置 token 是命令的身份——`start`、`q36`——daemon
+// 对它没有意见。flag token 则与 daemon 拥有的协议参数竞争，而前缀位置会让它赢：
+// 把 `--output-format text` 放进 fixed_args 会破坏 daemon↔CLI 的 stream-json 通道，
+// 与把它放进 custom_args（那已经被拒绝）效果相同。
 //
-// This deliberately does NOT delegate to filterCustomArgs, even though the two
-// share blocklists. Those maps also carry positional tokens — Hermes and
-// QwenPaw block `acp`, TRAE blocks `acp` and `serve`, Grok blocks `agent`,
-// `stdio` and `serve` — because in custom_args a bare `acp` really is someone
-// re-issuing the backend's own subcommand. In a launch prefix the same token
-// is part of the command's identity: `hermes-wrapper acp tenant` names a
-// program, and dropping `acp` from it would silently rewrite the command into
-// one the operator never configured. Only a leading `-` makes a token eligible
-// for the blocklist here.
+// 这里刻意不委托给 filterCustomArgs，虽然两者共享黑名单。那些 map 也带位置 token——
+// Hermes 与 QwenPaw 拦 `acp`，TRAE 拦 `acp` 和 `serve`，Grok 拦 `agent`、`stdio`、
+// `serve`——因为在 custom_args 里裸 `acp` 确实是在重发 backend 自己的子命令；而在启动
+// 前缀里同一个 token 是命令身份的一部分：`hermes-wrapper acp tenant` 命名了一个程序，
+// 从中去掉 `acp` 等于静默地把命令改写成操作员从未配置过的东西。这里只有以 `-` 开头的
+// token 才有资格进黑名单。
 //
-// A blocked flag still consumes its separate value token, positional or not,
-// so `--permission-mode ask` cannot leave a stray `ask` behind to be read as a
-// subcommand.
+// 被拦的 flag 仍然会带走它独立的值 token（无论是不是位置 token），所以
+// `--permission-mode ask` 不会留下一个孤零零的 `ask` 被读成子命令。
 func filterLaunchPrefix(prefix []string, agentType string, logger *slog.Logger) []string {
 	if len(prefix) == 0 {
 		return nil
@@ -512,8 +485,7 @@ func filterLaunchPrefix(prefix []string, agentType string, logger *slog.Logger) 
 		arg := unshellQuoteArg(prefix[i])
 		flag, isFlag := launchPrefixFlagName(arg)
 		if !isFlag {
-			// The command's own identity. Never filtered, even when it
-			// collides with a backend subcommand name.
+			// 命令自身的身份。即使与某个 backend 子命令名撞了也绝不过滤。
 			filtered = append(filtered, arg)
 			continue
 		}
@@ -534,16 +506,13 @@ func filterLaunchPrefix(prefix []string, agentType string, logger *slog.Logger) 
 	return filtered
 }
 
-// warnLaunchPrefixOverlap logs the flags a launch prefix shares with the
-// arguments the daemon builds for this run.
+// warnLaunchPrefixOverlap 记录启动前缀与「daemon 为本次运行拼的参数」重叠的 flag。
 //
-// Overlap is not an error: the prefix comes first, so the daemon's own value
-// is the later one and wins under the last-wins parsing every supported CLI
-// uses. That is the intended precedence — an explicitly chosen per-agent model
-// should beat a runtime-wide default — but before GH #7046 the prefix sat last
-// and quietly won instead, so a runtime pinned to `--model composer-2.5` used
-// to override the model the member picked in the UI. Anyone who was relying on
-// that gets a line in the log naming the flag rather than a silent change.
+// 重叠不算错误：前缀排在前，daemon 自己的值在后，按所有受支持 CLI 都用的「后者胜出」
+// 解析它赢。这正是想要的优先级——显式选择的按 agent 模型应该压过运行时全局默认——但在
+// GH #7046 之前前缀排在最后并悄悄获胜：被钉死 `--model composer-2.5` 的 runtime 会覆盖
+// 成员在 UI 里选的模型。过去依赖那行为的人现在能在日志里看到指名道姓的一行，而不是一次
+// 静默变更。
 func warnLaunchPrefixOverlap(prefix, args []string, logger *slog.Logger) {
 	if len(prefix) == 0 || len(args) == 0 || logger == nil {
 		return
@@ -564,9 +533,8 @@ func warnLaunchPrefixOverlap(prefix, args []string, logger *slog.Logger) {
 	}
 }
 
-// launchPrefixFlagName extracts the flag name from an argv token, reporting
-// false for positional tokens. `--model=o3` and `--model o3` both yield
-// "--model" so the two spellings compare equal.
+// launchPrefixFlagName 从一个 argv token 里抽出 flag 名，对位置参数返回 false。
+// `--model=o3` 与 `--model o3` 都得到 "--model"，两种写法因此比较相等。
 func launchPrefixFlagName(arg string) (string, bool) {
 	arg = unshellQuoteArg(arg)
 	if !strings.HasPrefix(arg, "-") || arg == "-" || arg == "--" {

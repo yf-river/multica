@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是“创建 Agent / 复制 Agent（Duplicate）”弹窗：头像、名字、描述、访问权限
+//（新版权限模型或旧版可见性）、运行环境、模型、指令、技能一应俱全，一次提交。
+// 复制模式下从模板 Agent 预填所有可见字段，并透传隐藏配置（args/并发），真正克隆。
+
 import { useState } from "react";
 import { Globe, Lock, Users } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -45,6 +49,19 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { CharCounter } from "./char-counter";
 import { useT } from "../../i18n";
 
+/**
+ * 创建 / 复制 Agent 的全功能弹窗。
+ * @param template 提供时进入“复制模式”：可见字段（名字/描述/运行环境/可见性/模型）
+ *   从该 Agent 预填，隐藏字段（instructions / custom_args / custom_env /
+ *   max_concurrent_tasks）随创建请求转发，使新 Agent 成为真克隆。技能由调用方在
+ *   createAgent 成功后另行复制——它们不属于 CreateAgentRequest。
+ * @param squadId 提供时，每次创建成功后跟随 addSquadMember(squadId, agent)，
+ *   让新 Agent 加入该 squad。若入队调用失败，Agent 已存在，弹窗仅弹警告 toast——
+ *   用户可从 Members tab 手动补加。
+ * @param onCreate 返回创建的 Agent，供弹窗用它执行后续 setAgentSkills（把表单里
+ *   勾的技能 id 挂上去）。没有技能区块的调用方可继续返回 void；弹窗容忍假值返回
+ *   （不执行后续）。
+ */
 export function CreateAgentDialog({
   runtimes,
   runtimesLoading,
@@ -84,12 +101,10 @@ export function CreateAgentDialog({
   const isDuplicate = !!template;
   const queryClient = useQueryClient();
   const wsId = useWorkspaceId();
-  // MUL-4010: rolls out the private / public_to access model in the create
-  // flow to match the AccessPicker on the agent detail page. Shares the
-  // `composio_mcp_apps` switch with the Composio rollout — the MUL-3963
-  // permission model exists to gate Composio sharing, so both surfaces flip
-  // together. Defaults OFF so production stays on the legacy Workspace /
-  // Personal toggle until Composio is greenlit.
+  // MUL-4010：把 private / public_to 权限模型推广到创建流程，与详情页的
+  // AccessPicker 对齐。与 Composio 发布共用 `composio_mcp_apps` 开关——MUL-3963
+  // 权限模型就是为管控 Composio 分享而生，所以两个界面一起翻转。默认 OFF，
+  // 让生产环境在 Composio 放行前保持旧的 Workspace / Personal 切换。
   const accessPickerEnabled = useFeatureEnabled(COMPOSIO_MCP_APPS_FLAG, false);
 
   // Name defaults: duplicate uses "<original> copy". Manual-create starts blank.
@@ -100,14 +115,15 @@ export function CreateAgentDialog({
   // Legacy visibility state. Kept as the source of truth when
   // `accessPickerEnabled` is false; only used to seed the new access state
   // when the flag flips on for a duplicate.
+  // 旧的可见性状态：`accessPickerEnabled` 为 false 时作为唯一真相；开启时仅用于
+  // 给新权限模型播种初始值（复制场景）。
   const [visibility, setVisibility] = useState<AgentVisibility>(
     template?.visibility ?? "workspace",
   );
 
-  // New access state (MUL-3963 aligned). When duplicating, seed from the
-  // template so the clone lands with the source agent's grants; otherwise
-  // default to public_to + workspace, matching the legacy "Workspace" default
-  // so a plain "click Create" produces the same result as before.
+  // 新权限模型状态（MUL-3963 对齐）。复制时从模板播种，克隆体带着源 Agent 的
+  // 授权落地；否则默认 public_to + workspace，与旧版 “Workspace” 默认等价，
+  // 保证“直接点创建”和以前产出相同结果。
   const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>(
     template?.permission_mode ?? "public_to",
   );
@@ -128,9 +144,8 @@ export function CreateAgentDialog({
       ),
   );
 
-  // Team targets on the template are preserved across the create so we don't
-  // silently drop a grant type the picker doesn't expose yet (mirrors
-  // AccessPicker's `teamIds` pass-through).
+  // 模板上的团队目标跨创建保留，避免静默丢掉选择器还没暴露的授权类型
+  //（与 AccessPicker 的 `teamIds` 透传呼应）。
   const templateTeamTargets: AgentInvocationTargetInput[] = (
     template?.invocation_targets ?? []
   )
@@ -148,11 +163,9 @@ export function CreateAgentDialog({
   );
   const [creating, setCreating] = useState(false);
 
-  // Duplicate-mode pre-fill: clone lands on the source agent's runtime so
-  // the user doesn't have to re-pick. Skipped when that runtime is now
-  // locked for the caller (Create would 403). Empty fallback hands the
-  // job to RuntimePicker — it owns filter state, so it's the only place
-  // that knows which runtimes are visible right now.
+  // 复制模式预填：克隆体落在源 Agent 的运行环境上，用户不必重选。若该运行环境现在
+  // 对当前用户已锁定（创建会 403），则跳过。空串兜底把决定权交回 RuntimePicker——
+  // 它持有筛选状态，只有它知道此刻哪些运行环境可见。
   const [selectedRuntimeId, setSelectedRuntimeId] = useState(() => {
     const templateRuntime = template?.runtime_id
       ? runtimes.find((r) => r.id === template.runtime_id)
@@ -164,10 +177,9 @@ export function CreateAgentDialog({
   });
 
   const selectedRuntime = runtimes.find((d) => d.id === selectedRuntimeId) ?? null;
-  // Defense-in-depth: even if a locked runtime somehow ends up selected
-  // (e.g. duplicate of an agent whose template runtime is now locked, and
-  // the workspace has no usable fallback), gate Create on it so we don't
-  // submit a request the backend will reject with 403.
+  // 纵深防御：即使一台锁定运行环境不知何故被选中（例如复制一个模板运行环境现已
+  // 锁定的 Agent，而工作区又没有可用兜底），也要把 Create 拦住——不提交一个后端
+  // 必然 403 的请求。
   const selectedRuntimeLocked =
     selectedRuntime != null &&
     !isRuntimeUsableForUser(selectedRuntime, currentUserId);
@@ -178,11 +190,9 @@ export function CreateAgentDialog({
     selectedMemberIds.size === 0 &&
     templateTeamTargets.length === 0;
 
-  // Shared squad-join follow-up. Returns nothing — the caller has
-  // already shown its create-success toast; we only need to surface a
-  // warning when the agent landed but the squad-join failed. Cache
-  // invalidation for the squad's members list rides along so the
-  // Members tab re-renders without a manual refetch.
+  // squad 加入的共同后续。不返回任何值——调用方已弹过“创建成功”的 toast，这里只
+  // 需要在上“Agent 已落地但入队失败”时弹出警告。squad 成员列表的缓存失效一并做掉，
+  // 让 Members tab 免手动刷新即可重渲染。
   const attachToSquad = async (agentId: string, displayName: string) => {
     if (!squadId) return;
     try {
@@ -231,11 +241,9 @@ export function CreateAgentDialog({
         skill_ids: [...selectedSkillIds],
       };
       if (accessPickerEnabled) {
-        // New MUL-3963 shape: send the authoritative permission fields and
-        // let the backend derive the legacy `visibility` field. Mirror the
-        // AccessPicker `emit` normalisation — a public_to with zero targets
-        // collapses to private as defense in depth so the backend never sees
-        // an "empty public" request. Team targets from the template survive.
+        // 新版 MUL-3963 形态：发送权威的权限字段，让后端推导旧版 `visibility`。
+        // 与 AccessPicker 的 `emit` 归一化一致——public_to 但零目标时塌缩为 private
+        // 作为纵深防御，后端永远见不到“空 public”请求。模板的团队目标保留。
         const invocationTargets: AgentInvocationTargetInput[] = [];
         if (permissionMode === "public_to") {
           if (workspaceTargetOn) {
@@ -254,31 +262,25 @@ export function CreateAgentDialog({
         data.permission_mode = collapseToPrivate ? "private" : permissionMode;
         data.invocation_targets = collapseToPrivate ? [] : invocationTargets;
       } else {
-        // Legacy path: send the visibility toggle unchanged. The backend
-        // maps this to permission_mode + invocation_targets server-side.
+        // 旧路径：原样发送可见性开关，后端在服务端把它映射成
+        // permission_mode + invocation_targets。
         data.visibility = visibility;
       }
       if (template) {
-        // Duplicate path: forward the hidden config fields the source
-        // agent had so the clone is functional out of the box (args /
-        // concurrency). Skills flow through the dialog form. As of
-        // MUL-2600 the agent resource shape no longer carries
-        // custom_env values, so duplication cannot copy env at all —
-        // the user has to re-set env on the clone via the env tab
-        // (which now goes through the audited `/env` endpoint). The
-        // dialog's create call still accepts custom_env at create
-        // time, but the source values aren't available here.
+        // 复制路径：把源 Agent 的隐藏配置字段（args/并发）转发出去，让克隆体
+        // 开箱即用。技能走弹窗表单。自 MUL-2600 起 agent 资源形态不再携带
+        // custom_env 值，所以复制完全无法拷贝 env——用户只能在克隆体上经
+        // env tab（现已走审计过的 `/env` 端点）重新设置。弹窗的创建调用
+        // 在创建时仍接受 custom_env，但源值在这里取不到。
         if (template.custom_args.length) data.custom_args = template.custom_args;
         if (template.max_concurrent_tasks) {
           data.max_concurrent_tasks = template.max_concurrent_tasks;
         }
       }
       const createdAgent = await onCreate(data);
-      // Squad context: attach the agent after skills land so the
-      // squad's Members tab shows the agent with its skills already
-      // in place. Atomicity is best-effort by design (see plan in
-      // MUL-2178) — a partial failure surfaces a warning toast and
-      // the user can retry from the Add Member dialog.
+      // Squad 上下文：等技能落地后再把 Agent 挂进 squad，让 Members tab 展示的
+      // Agent 自带技能。原子性是刻意“尽力而为”（见 MUL-2178 计划）——部分失败
+      // 只弹警告 toast，用户可从 Add Member 弹窗重试。
       if (createdAgent && squadId) {
         await attachToSquad(createdAgent.id, createdAgent.name);
       }
@@ -312,12 +314,9 @@ export function CreateAgentDialog({
 
         <div className="flex-1 overflow-y-auto p-5">
           <div className="space-y-4 min-w-0">
-            {/* Identity row: avatar (left) + name & description stack
-                (right). The avatar visually anchors the identity of
-                what the user is creating; pairing it with the Name
-                field reads as "this is the agent's face + name",
-                same shape as detail-page header so the affordance is
-                instantly familiar. */}
+            {/* 身份行：头像（左）+ 名字与描述堆叠（右）。头像在视觉上锚定用户正创建的
+                对象身份；与名字字段并排放，读起来就是“这是这个 Agent 的脸 + 名字”，
+                跟详情页头部同构，让人瞬间眼熟。 */}
             <div className="flex items-start gap-4">
               <AvatarUploadControl
                 variant="agent"
@@ -425,8 +424,8 @@ export function CreateAgentDialog({
               currentUserId={currentUserId}
               selectedRuntimeId={selectedRuntimeId}
               onSelect={(id) => {
-                // Models are per-runtime; a value picked for the old runtime
-                // may not exist on the new one, so drop it on runtime change.
+                // 模型是按运行环境的；为旧运行环境选的值新运行环境上可能不存在，
+                // 所以切换运行环境时把它清掉。
                 if (id !== selectedRuntimeId) setModel("");
                 setSelectedRuntimeId(id);
               }}
@@ -440,9 +439,9 @@ export function CreateAgentDialog({
               disabled={!selectedRuntime}
             />
 
-            {/* --- Optional sections (instructions / skills) ---
-                Collapsed by default so quick-create stays fast.
-                Duplicate pre-fills everything from the source agent. */}
+            {/* --- 可选分区（指令 / 技能）---
+                默认收起，保证快速创建不被拖慢。
+                复制模式会从源 Agent 预填一切。 */}
             <InstructionsEditor
               value={instructions}
               onChange={setInstructions}
@@ -460,12 +459,10 @@ export function CreateAgentDialog({
           </div>
         </div>
 
-        {/* Inline footer instead of <DialogFooter>: the shipped
-            DialogFooter applies `-mx-4 -mb-4` assuming a padded
-            DialogContent (default `p-4`). Our DialogContent uses
-            `p-0`, so those negative margins push the footer outside
-            the dialog. A plain flex row anchored by `border-t` keeps
-            the visual rhythm without the overflow bug. */}
+        {/* 用行内底部栏而不是 <DialogFooter>：它自带 `-mx-4 -mb-4`，那是针对默认
+            `p-4` 内边距的 DialogContent 的。本弹窗的 DialogContent 用 `p-0`，
+            负边距会把底部栏推出弹窗。普通 flex 行 + `border-t` 锚定，
+            视觉节奏不变又不会有溢出 bug。 */}
         <div className="flex items-center justify-end gap-2 border-t bg-background px-5 py-3">
           <Button variant="ghost" onClick={onClose}>
             {t(($) => $.create_dialog.cancel)}
@@ -491,19 +488,15 @@ export function CreateAgentDialog({
 
 
 /**
- * AccessSection — inline access editor for the create/duplicate flow, gated
- * on `COMPOSIO_MCP_APPS_FLAG`. Mirrors the semantics of
- * `AccessPicker` on the agent detail page: the underlying model is
- * `permission_mode` + `invocation_targets` (MUL-3963), not the legacy
- * `visibility`.
+ * 创建/复制流程里的内联权限编辑器，由 `COMPOSIO_MCP_APPS_FLAG` 开关控制。
+ * 语义与详情页 `AccessPicker` 对齐：底层模型是 `permission_mode` +
+ * `invocation_targets`（MUL-3963），而不是旧版 `visibility`。
  *
- * The three mutually exclusive scopes mirror AccessPicker on the detail page.
- * Specific people reveals a member allow-list; an entire-workspace grant never
- * stacks redundant member targets underneath it.
+ * 三个互斥档位与详情页 AccessPicker 一致。“指定成员”展开成员白名单；
+ * “整个工作区”授权之下不再叠冗余的成员目标。
  *
- * The current viewer is intentionally excluded from the member list: an
- * owner is always allowed to invoke their own agent, so listing them again
- * would be misleading.
+ * 当前查看者被刻意排除在成员列表外：拥有者永远能调用自己的 Agent，
+ * 再列一遍反而误导。
  */
 function AccessSection({
   permissionMode,
@@ -624,6 +617,7 @@ function AccessSection({
   );
 }
 
+/** 三选一的紧凑卡片选项（radio + 图标 + 标题/描述）。 */
 function CompactAccessChoice({
   value,
   icon: Icon,

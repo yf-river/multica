@@ -1,3 +1,7 @@
+// plugin_mcp_transport.go —— MCP（Model Context Protocol）传输类型的插件 hook：
+// 一个指向“插件作者自己已经在跑”的 MCP 服务器的 hook，Multica 采纳其工具。
+// 负责：发现工具、管理员审批钉住（按名称+schema 摘要）、把已批准的 hook 转成
+// broker 连接，以及携带密钥鉴权头。
 package service
 
 import (
@@ -11,31 +15,31 @@ import (
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
 
-// The `mcp` transport: a hook that points at an MCP server the plugin author
-// already runs, whose tools Multica adopts.
+// `mcp` 传输方式：hook 指向一个插件作者已在运行的 MCP 服务器，Multica 采纳它的
+// 工具。
 //
-// The whole difference from an `http` hook is who decides the shape. An http
-// hook declares one endpoint in a manifest an administrator read and approved.
-// An MCP server decides its own tool list at runtime and may change it whenever
-// it likes — so "install this plugin" would otherwise be a standing grant to run
-// whatever that server offers next week.
+// 与 `http` hook 的全部区别在于“谁决定形状”。http hook 在 manifest 里声明一个
+// 端点，由管理员读过并批准；而 MCP 服务器在运行时自己决定工具清单，并且随时可能
+// 改——所以“安装这个插件”如果照单全收，就等于永久授权去运行那台服务器下周才提供
+// 的任何东西。
 //
-// Hence the approval: an administrator sees the discovered tools and pins them
-// by name and schema digest. A tool that appears later is not adopted; a tool
-// whose schema drifts stops being called. The daemon-side enforcement already
-// exists — validatePinnedRemoteMCPTools refuses at broker startup — so this
-// wires the plugin's hook into the connection shape that check already reads.
+// 因此有了审批：管理员看到发现出来的工具，按名称和 schema 摘要把它们钉住。之后才
+// 出现的工具不会被采纳；schema 跑偏的工具会停止被调用。daemon 端的强制已经存在
+// （validatePinnedRemoteMCPTools 在 broker 启动时拒绝），所以这里是把插件的 hook
+// 接进那个检查早已认识的连接形态里。
 
-// PluginMCPApproval is one hook's approved tool list.
+// PluginMCPApproval 是一个 hook 已获批的工具清单。
 type PluginMCPApproval struct {
 	Tools      []remotemcp.Tool `json:"tools"`
 	ApprovedAt string           `json:"approved_at"`
 	ApprovedBy string           `json:"approved_by,omitempty"`
 }
 
-// PluginMCPApprovals maps hook key to its approval.
+// PluginMCPApprovals 以 hook key 为键、映射到它的审批记录。
 type PluginMCPApprovals map[string]PluginMCPApproval
 
+// decodeMCPApprovals 从安装记录里反序列化审批 JSON；空/坏数据退化成空表（调用方
+// 会按“没批过”处理，行为上偏保守）。
 func decodeMCPApprovals(raw []byte) PluginMCPApprovals {
 	approvals := PluginMCPApprovals{}
 	if len(raw) > 0 {
@@ -44,11 +48,10 @@ func decodeMCPApprovals(raw []byte) PluginMCPApprovals {
 	return approvals
 }
 
-// DiscoverMCPHookTools asks the hook's MCP server what it offers.
+// DiscoverMCPHookTools 询问该 hook 的 MCP 服务器当前提供哪些工具。
 //
-// Read-only and admin-driven: nothing is adopted by discovering it. The
-// administrator picks from this and approves, which is the step that makes a
-// tool callable.
+// 只读、由管理员驱动：光是“发现”不会采纳任何东西。管理员从这里挑选并批准——
+// 批准才是让工具可被调用的那一步。
 func (s *PluginService) DiscoverMCPHookTools(ctx context.Context, installation db.PluginInstallation, hookKey string) ([]remotemcp.Tool, error) {
 	hook, err := FindHook(installation, hookKey)
 	if err != nil {
@@ -57,11 +60,9 @@ func (s *PluginService) DiscoverMCPHookTools(ctx context.Context, installation d
 	if hook.Transport.Type != plugincontract.TransportMCP {
 		return nil, pluginErrf(PluginErrorInvalid, "hook %q is not an mcp transport", hookKey)
 	}
-	// Second layer. Manifest validation already refuses a hook whose transport
-	// URL is not covered by a declared net: scope, so this is unreachable for a
-	// manifest that installed cleanly — kept because the destination check below
-	// takes its allow-list from here, and an empty one must fail closed rather
-	// than read as "no restriction".
+	// 第二层防线。manifest 校验已经拒绝“传输 URL 不在已声明 net: 范围内”的 hook，
+	// 所以正常装进来的 manifest 走不到这里——保留这层是因为下面的目标域检查要从这里
+	// 取允许清单，空清单必须“失败即拒绝”，而不是被读成“没有限制”。
 	domains := plugincontract.NetDomains(decodeScopes(installation.GrantedScopes))
 	if len(domains) == 0 {
 		return nil, pluginErrf(PluginErrorForbidden, "this Plugin was granted no net: scope, so it cannot reach an MCP server")
@@ -71,8 +72,8 @@ func (s *PluginService) DiscoverMCPHookTools(ctx context.Context, installation d
 	if err != nil {
 		return nil, err
 	}
-	// Same endpoint guard as every other outbound call: the destination must be
-	// inside the consented `net:` set and resolve publicly.
+	// 和其他所有对外调用同一套端点护栏：目标必须在用户同意的 `net:` 集合内，且要
+	// 能公开解析。
 	tools, _, err := remotemcp.Discover(ctx, hook.Transport.URL, domains, nil, headers)
 	if err != nil {
 		return nil, &PluginError{Kind: PluginErrorUnavailable, Message: "could not reach the Plugin's MCP server", Err: err}
@@ -80,11 +81,10 @@ func (s *PluginService) DiscoverMCPHookTools(ctx context.Context, installation d
 	return tools, nil
 }
 
-// ApproveMCPHookTools pins a tool list for one hook.
+// ApproveMCPHookTools 为单个 hook 钉住一份工具清单。
 //
-// Pinned by digest, not just by name: a server that keeps a tool's name and
-// changes its arguments has changed what the agent is calling, and the agent
-// would have no way to notice.
+// 按摘要钉，而不只是按名字：服务器保留工具名、却改了它的参数，等于悄悄改了 agent
+// 实际调用的东西，而 agent 无从察觉。
 func (s *PluginService) ApproveMCPHookTools(ctx context.Context, installation db.PluginInstallation, hookKey string, names []string, userID pgtype.UUID) (db.PluginInstallation, error) {
 	discovered, err := s.DiscoverMCPHookTools(ctx, installation, hookKey)
 	if err != nil {
@@ -99,9 +99,8 @@ func (s *PluginService) ApproveMCPHookTools(ctx context.Context, installation db
 	for _, name := range names {
 		tool, ok := byName[name]
 		if !ok {
-			// Approving something the server does not currently offer would pin
-			// a name with no schema behind it, and the broker would refuse the
-			// whole connection at startup.
+			// 批准一个服务器当前并不提供的工具，等于钉住一个没有 schema 的名，
+			// broker 会在启动时拒绝整条连接。
 			return db.PluginInstallation{}, pluginErrf(PluginErrorInvalid, "tool %q is not offered by this MCP server", name)
 		}
 		approved = append(approved, tool)
@@ -109,9 +108,8 @@ func (s *PluginService) ApproveMCPHookTools(ctx context.Context, installation db
 
 	approvals := decodeMCPApprovals(installation.McpApprovals)
 	if len(approved) == 0 {
-		// Approving nothing is how an administrator withdraws a hook, so it
-		// removes the entry rather than storing an empty allow-list that reads
-		// like "approved, with nothing in it".
+		// 一个都不批，就是管理员“收回某个 hook”的方式——删除该条记录，而不是存一份
+		// 会被读成“已批准，但里面是空的”的空允许清单。
 		delete(approvals, hookKey)
 	} else {
 		approvals[hookKey] = PluginMCPApproval{
@@ -135,15 +133,13 @@ func (s *PluginService) ApproveMCPHookTools(ctx context.Context, installation db
 	return updated, nil
 }
 
-// AgentMCPConnections turns approved mcp hooks into broker connections.
+// AgentMCPConnections 把已批准的 mcp hook 转成 broker 连接。
 //
-// Returned in the claim payload beside the http-transport tools, so the daemon
-// handles both through the machinery it already has: the existing broker proxies
-// to the MCP server and validatePinnedRemoteMCPTools refuses to start if an
-// approved tool went missing or its schema drifted.
+// 随认领（claim）载荷一起返回、和 http 传输的工具并列，于是 daemon 用已有的机制
+// 一并处理两者：现有 broker 代理到 MCP 服务器，validatePinnedRemoteMCPTools 在
+// 某个已批准工具消失或 schema 跑偏时拒绝启动。
 //
-// A hook with no approval yields no connection. That is the point — installing
-// the plugin is not the grant, approving the tools is.
+// 没有审批的 hook 不产出连接。这正是关键点——安装插件不等于授权，批准工具才是。
 func (s *PluginService) AgentMCPConnections(ctx context.Context, workspaceID pgtype.UUID) ([]remotemcp.Connection, error) {
 	installations, err := s.Queries.ListWorkspacePluginInstallations(ctx, workspaceID)
 	if err != nil {
@@ -160,14 +156,13 @@ func (s *PluginService) AgentMCPConnections(ctx context.Context, workspaceID pgt
 	return connections, nil
 }
 
-// mcpConnectionsFor turns one installation's approved mcp hooks into broker
-// connections. Separated from the workspace query so the three conditions that
-// decide whether a hook is offered at all — mcp transport, agent trigger, a
-// non-empty approval — are testable without a database.
+// mcpConnectionsFor 把单个安装里的已批准 mcp hook 转成 broker 连接。从工作区查询里
+// 拆出来，是为了让决定“一个 hook 是否会被提供”的三个条件——mcp 传输、agent 触发、
+// 非空审批——可以不依赖数据库做测试。
 func mcpConnectionsFor(installation db.PluginInstallation) []remotemcp.Connection {
 	manifest, err := ParseInstallationManifest(installation)
 	if err != nil {
-		// One unreadable manifest must not hide every other plugin's tools.
+		// 一份读不懂的 manifest 不能把其他所有插件的工具都藏掉。
 		return nil
 	}
 	approvals := decodeMCPApprovals(installation.McpApprovals)
@@ -195,26 +190,22 @@ func mcpConnectionsFor(installation db.PluginInstallation) []remotemcp.Connectio
 			ContributionKey: PluginToolName(manifest.Key, hook.Key),
 			Endpoint:        hook.Transport.URL,
 			Transport:       "http",
-			// The same exact-host set the consent screen showed. The broker
-			// re-checks it at dial, so a manifest that later repoints its own
-			// hook still cannot reach anywhere new.
+			// 和同意页展示的是同一份精确主机集合。broker 在拨号时还会复查，所以
+			// manifest 之后即便把自己的 hook 改指别处，也到不了任何新地方。
 			EndpointAllowedHosts: domains,
 			CredentialHeader:     credentialHeader,
 			ApprovedTools:        approval.Tools,
 			ToolSchemaDigest:     toolSetDigest(approval.Tools),
-			// A plugin's MCP server going down must not fail the task, for the
-			// same reason a failing http hook is a tool error: an agent should
-			// still be able to work on the issue.
+			// 插件的 MCP 服务器宕机不能让任务失败，原因和失败的 http hook 只是一个
+			// 工具错误相同：agent 应该仍然能处理该 issue。
 			FailurePolicy: "optional",
 		})
 	}
 	return connections
 }
 
-// toolSetDigest pins the whole approved set, not just each tool. A digest error
-// yields the empty string: the broker then treats the set as unpinned at the
-// set level while still checking every tool individually, which is the
-// degradation that fails safe.
+// toolSetDigest 钉住的是整个已批准集合、而不只是逐个工具。摘要出错时返回空串：
+// broker 于是把集合层视为“未钉住”，同时仍逐个检查工具——这是朝安全方向降级。
 func toolSetDigest(tools []remotemcp.Tool) string {
 	digest, err := remotemcp.ToolSetDigest(tools)
 	if err != nil {
@@ -223,12 +214,11 @@ func toolSetDigest(tools []remotemcp.Tool) string {
 	return digest
 }
 
-// mcpCredentialHeaders builds the auth header from the installation's secret
-// config, if the manifest declared one for this hook.
+// mcpCredentialHeaders 按 manifest 是否为本 hook 声明了密钥配置，从安装的密钥里
+// 拼出鉴权请求头。
 //
-// Reuses the existing secret storage — write-only, secretbox-encrypted, never
-// echoed by any read endpoint — rather than introducing a second place where a
-// plugin's credentials live.
+// 复用现有密钥存储——只写、secretbox 加密、任何读端点都不回显——而不是再开一个
+// 放插件凭据的地方。
 func (s *PluginService) mcpCredentialHeaders(ctx context.Context, installation db.PluginInstallation, hook plugincontract.Hook) (map[string][]string, error) {
 	manifest, err := ParseInstallationManifest(installation)
 	if err != nil {
@@ -240,19 +230,17 @@ func (s *PluginService) mcpCredentialHeaders(ctx context.Context, installation d
 	}
 	secret, err := s.decryptedSecret(ctx, installation.ID, hook.Key+"_credential")
 	if err != nil || secret == "" {
-		// A declared-but-unset credential is a configuration gap, not a reason
-		// to fail discovery with a confusing transport error.
+		// 声明了但没填的密钥是配置缺口，不该拿一个让人困惑的传输错误去打断发现流程。
 		return nil, nil
 	}
 	return map[string][]string{"Authorization": {secret}}, nil
 }
 
-// decryptedSecret opens one stored secret.
+// decryptedSecret 解开一条已存储的密钥。
 //
-// The only place a plugin secret is ever decrypted for use, and it is used
-// here to authenticate to the plugin author's OWN server — never echoed back
-// through any read endpoint, which is the rule the separate secret table
-// exists to make structural.
+// 这是插件密钥全流程里唯一一次解密用于实际使用的地方，而这里用它去给插件作者
+// “自己的服务器”做鉴权——绝不通过任何读端点回显，这正是独立密钥表存在的意义：
+// 在结构上保证这一点。
 func (s *PluginService) decryptedSecret(ctx context.Context, installationID pgtype.UUID, key string) (string, error) {
 	if s.Secrets == nil {
 		return "", pluginErrf(PluginErrorUnavailable, "plugin secrets are disabled: MULTICA_PLUGIN_SECRET_KEY is not configured")
@@ -268,7 +256,7 @@ func (s *PluginService) decryptedSecret(ctx context.Context, installationID pgty
 	return string(plaintext), nil
 }
 
-// ApprovedMCPTools is the pinned set for one hook, by name.
+// ApprovedMCPTools 返回单个 hook 的钉住集合，按名字索引。
 func (s *PluginService) ApprovedMCPTools(installation db.PluginInstallation, hookKey string) map[string]remotemcp.Tool {
 	approval, ok := decodeMCPApprovals(installation.McpApprovals)[hookKey]
 	if !ok {
@@ -281,8 +269,8 @@ func (s *PluginService) ApprovedMCPTools(installation db.PluginInstallation, hoo
 	return byName
 }
 
-// MCPHookCredential resolves the credential for one mcp hook, for the daemon's
-// broker. Returns empty strings when the manifest declared none.
+// MCPHookCredential 解析单个 mcp hook 的凭据，供 daemon 的 broker 使用。manifest
+// 没声明时返回空串。
 func (s *PluginService) MCPHookCredential(ctx context.Context, installation db.PluginInstallation, hookKey string) (string, string, error) {
 	hook, err := FindHook(installation, hookKey)
 	if err != nil {

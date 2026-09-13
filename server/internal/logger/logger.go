@@ -1,3 +1,6 @@
+// Package logger 集中初始化 slog 全局/具名 logger：统一读取 LOG_LEVEL、
+// 按 stderr 是否为终端决定是否输出 ANSI 颜色，并提供从 HTTP 请求提取可观测字段
+// 的辅助函数。
 package logger
 
 import (
@@ -13,9 +16,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/middleware"
 )
 
-// isTerminal reports whether the given file descriptor is connected to a
-// terminal. Used to suppress ANSI color escapes when stderr is redirected
-// to a file (e.g. daemon.log), so log files stay clean.
+// isTerminal 判断给定文件描述符是否连着终端。stderr 被重定向到文件
+// （如 daemon.log）时据此关闭 ANSI 颜色转义，让日志文件保持干净。
 func isTerminal(f *os.File) bool {
 	fi, err := f.Stat()
 	if err != nil {
@@ -24,9 +26,8 @@ func isTerminal(f *os.File) bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
-// Init initializes the global slog logger. Colors are enabled when stderr
-// is a terminal and disabled otherwise. Reads LOG_LEVEL env var (debug,
-// info, warn, error). Default: debug.
+// Init 初始化全局 slog logger。stderr 是终端时启用颜色，否则关闭。
+// 读取 LOG_LEVEL 环境变量（debug、info、warn、error）。默认：debug。
 func Init() {
 	level := parseLevel(os.Getenv("LOG_LEVEL"))
 	handler := tint.NewHandler(os.Stderr, &tint.Options{
@@ -37,9 +38,8 @@ func Init() {
 	slog.SetDefault(slog.New(handler))
 }
 
-// NewLogger creates a named slog logger. Colors follow the same
-// TTY-detection rule as Init. Useful for standalone processes (daemon,
-// migrate) that want a component prefix.
+// NewLogger 创建带名称的 slog logger。颜色规则与 Init 相同（按 TTY 检测）。
+// 适合需要组件前缀的独立进程（daemon、migrate）。
 func NewLogger(component string) *slog.Logger {
 	level := parseLevel(os.Getenv("LOG_LEVEL"))
 	handler := tint.NewHandler(os.Stderr, &tint.Options{
@@ -50,22 +50,18 @@ func NewLogger(component string) *slog.Logger {
 	return slog.New(handler).With("component", component)
 }
 
-// StderrIsTerminal reports whether this process's stderr is attached to a
-// terminal. The daemon uses it to distinguish a user running
-// `daemon start --foreground` in a shell (log live to the terminal) from a
-// detached/background child whose stderr is redirected to a file (rotate into
-// daemon.log instead).
+// StderrIsTerminal 报告本进程的 stderr 是否连着终端。daemon 用它区分用户在 shell
+// 里跑 `daemon start --foreground`（日志实时打到终端）与分离/后台子进程（stderr
+// 被重定向到文件，改为轮转写入 daemon.log）这两种情况。
 func StderrIsTerminal() bool {
 	return isTerminal(os.Stderr)
 }
 
-// NewWriterLoggerDefault builds a named slog logger that writes structured,
-// color-free output to w, and installs the same handler as the global slog
-// default so bare slog.Info/Warn/... calls (e.g. from LoadConfig) land in the
-// same sink. Intended for standalone processes that log to a file or rotating
-// writer instead of a terminal (the daemon), where ANSI color is never wanted
-// and every log line — injected-logger and package-global alike — must end up
-// in the one managed file. Reads LOG_LEVEL like NewLogger/Init.
+// NewWriterLoggerDefault 构建一个把结构化、无色输出写到 w 的具名 slog logger，并
+// 把同一 handler 设为全局 slog 默认值，这样零散的 slog.Info/Warn/... 调用（例如来自
+// LoadConfig）也落到同一个 sink。面向"把日志写文件或轮转 writer 而非终端"的独立进程
+// （daemon）：永远不要 ANSI 颜色，且每一行——无论是注入的 logger 还是包级全局调用——
+// 都必须进同一个受管文件。同 NewLogger/Init 一样读取 LOG_LEVEL。
 func NewWriterLoggerDefault(component string, w io.Writer) *slog.Logger {
 	level := parseLevel(os.Getenv("LOG_LEVEL"))
 	handler := tint.NewHandler(w, &tint.Options{
@@ -78,10 +74,9 @@ func NewWriterLoggerDefault(component string, w io.Writer) *slog.Logger {
 	return base.With("component", component)
 }
 
-// RequestAttrs extracts request_id, user_id, and X-Client-* metadata from
-// an HTTP request for use in handler-level structured logging. Mirrors the
-// global request logger so handler logs end up with the same observability
-// dimensions as the access log.
+// RequestAttrs 从 HTTP 请求中提取 request_id、user_id 与 X-Client-* 元数据，
+// 供 handler 层结构化日志使用。与全局请求日志对齐，让 handler 日志与访问日志
+// 拥有相同的可观测维度。
 func RequestAttrs(r *http.Request) []any {
 	attrs := make([]any, 0, 10)
 	if rid := chimw.GetReqID(r.Context()); rid != "" {
@@ -103,6 +98,7 @@ func RequestAttrs(r *http.Request) []any {
 	return attrs
 }
 
+// parseLevel 把 LOG_LEVEL 字符串解析为 slog.Level，未知值回退到 debug。
 func parseLevel(s string) slog.Level {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "info":

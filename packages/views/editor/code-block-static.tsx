@@ -1,16 +1,15 @@
 "use client";
 
 /**
- * CodeBlockStatic — read-only lowlight-highlighted code block.
+ * CodeBlockStatic——只读的 lowlight 高亮代码块。
  *
- * Used by:
- *   - AttachmentPreviewModal's text-kind fallback (extracted from there).
- *   - HtmlBlockPreview's "source" toggle in ReadonlyContent.
+ * 使用者：
+ *   - AttachmentPreviewModal 的 text 类兜底（从那里抽出来的）。
+ *   - ReadonlyContent 里 HtmlBlockPreview 的「源码」切换。
  *
- * NOT used by Tiptap's editable code-block NodeView: that path must keep
- * `<NodeViewContent as="code" />` so the user can continue typing into the
- * code block. Replacing it with a static lowlight component would freeze
- * the content and desync ProseMirror state from the DOM.
+ * Tiptap 可编辑代码块 NodeView **不用**它：那条路径必须保留
+ * `<NodeViewContent as="code" />` 供用户继续输入代码块内容。换成静态
+ * lowlight 组件会冻结内容，并让 ProseMirror 状态与 DOM 失步。
  */
 
 import { useMemo } from "react";
@@ -25,6 +24,9 @@ interface CodeBlockStaticProps {
   className?: string;
 }
 
+/**
+ * 把代码高亮成静态 HTML 块。
+ */
 export function CodeBlockStatic({ language, body, className }: CodeBlockStaticProps) {
   const html = useMemo(() => {
     const code = body.replace(/\n$/, "");
@@ -32,7 +34,7 @@ export function CodeBlockStatic({ language, body, className }: CodeBlockStaticPr
       const tree = highlightCode(code, language);
       return toHtml(tree) as string;
     } catch {
-      // Keep an unexpected highlighter failure from breaking the preview.
+      // 别让一次意外的高亮失败搞坏预览。
       return escapeHtml(code);
     }
   }, [body, language]);
@@ -47,6 +49,7 @@ export function CodeBlockStatic({ language, body, className }: CodeBlockStaticPr
   );
 }
 
+/** 转义 HTML 特殊字符（高亮失败时的纯文本兜底）。 */
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

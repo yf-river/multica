@@ -1,19 +1,20 @@
 "use client";
 
+// 本文件是 AI 创建流程的底部提交栏：左边错误文案、右边“放弃草稿”与“创建并打开”。
+// 两个出口放在一起——它们是同一问题的两个答案，并排阅读才能让破坏性那个一眼可辨。
+
 import { Loader2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
 /**
- * Where the flow ends. Both exits live here — commit the agent, or abandon the
- * attempt — because they are the two answers to one question, and reading them
- * side by side is what makes the destructive one legible. A discard control
- * parked elsewhere (say, a trash icon over the transcript) reads as "clear this
- * chat" rather than "throw away what I am building".
+ * 创建流程的终点。两个出口都在这里——提交 Agent，或放弃这次尝试——因为它们是
+ * 同一个问题的两个答案，并排看才让破坏性那个清晰可辨。若把“丢弃”控件放去别处
+ *（比如 transcript 上的垃圾桶图标），读起来就像“清空这个聊天”而不是“扔掉我在
+ * 建的东西”。
  *
- * `onDiscard` is optional: the manual route has nothing to abandon, its form is
- * gone the moment the user navigates away.
+ * `onDiscard` 可选：手动流程没有可放弃的草稿——用户一导航离开，它的表单就没了。
  */
 export function CreateAgentFooter({
   canCreate,

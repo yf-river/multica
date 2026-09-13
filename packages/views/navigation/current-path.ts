@@ -1,12 +1,12 @@
 import type { NavigationAdapter } from "./types";
 
 /**
- * Rebuild the adapter's location as a single in-app path —
- * `/pathname?search#fragment` — the form `getShareableUrl()` expects.
+ * navigation 模块：把适配器的当前位置重建为单个应用内路径——
+ * `/pathname?search#fragment`——也就是 `getShareableUrl()` 期望的形式。
  *
- * Every caller that turns "where the user is" into a link must go through
- * here. Composing only `pathname` + `searchParams` silently drops the
- * fragment, which downgrades a `#comment-…` deep link to the whole issue.
+ * 任何要把「用户在哪」转成链接的调用方都必须走这里。只拼接 `pathname` +
+ * `searchParams` 会悄悄丢掉 fragment，把 `#comment-…` 这样的深链降级成整个
+ * issue 的地址。
  */
 export function currentPath(
   navigation: Pick<NavigationAdapter, "pathname" | "searchParams" | "hash">,

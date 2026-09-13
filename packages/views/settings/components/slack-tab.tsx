@@ -1,3 +1,7 @@
+// 本文件包含两块：① 设置页「集成」里的 Slack 频道面板（SlackTab），列出已接入的
+// 机器人并支持管理员断开；② 供 agent 详情页复用的「连接 Slack 机器人」按钮及其
+// 已连接态展示（SlackAgentBindButton 及两个配套小组件）。
+
 "use client";
 
 import { useState } from "react";
@@ -38,14 +42,15 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { openExternal } from "../../platform";
 import { useLocale, useT } from "../../i18n";
 
-// SlackTab is the workspace settings panel for Slack bot installations.
-// Listing is member-visible; the disconnect action is admin-only (the backend
-// enforces it; the UI hides the button for non-admins to match).
-//
-// Adding a new installation flows through the Agent detail page: the install
-// path is per-agent (each Multica agent gets exactly one bot — the
-// (workspace_id, agent_id, channel_type) UNIQUE in channel_installation), so
-// asking the user to pick an agent here would re-create that page's picker.
+/**
+ * Slack 频道设置面板：列出已接入的 Slack 机器人。列表对所有成员可见；断开仅限
+ * 管理员（后端强制，前端对非管理员隐藏按钮以对齐）。
+ *
+ * 新装机器人的入口不在本页、而在 agent 详情页：接入是按 agent 走的（每个 Multica
+ * agent 恰好一个机器人——(workspace_id, agent_id, channel_type) 在
+ * channel_installation 表里构成唯一约束），若在这里让用户挑 agent，等于把那边
+ * 的选人器重复造一遍。
+ */
 export function SlackTab() {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -63,10 +68,9 @@ export function SlackTab() {
   });
   const installations = data?.installations ?? [];
   const configured = data?.configured === true;
-  // install_supported tracks whether the OAuth client credentials are wired on
-  // the server. When false, "Connect Slack" would 503, so we hide the connect
-  // entry points and surface a "coming soon" notice. Already-installed bots
-  // still appear below and remain manageable.
+  // install_supported 表示服务端是否已配好 OAuth 客户端凭据。为 false 时点「连接
+  // Slack」只会得到 503，因此隐藏所有连接入口、改放一条「即将到来」提示；已装好的
+  // 机器人仍然列出并保持可管理。
   const installSupported = data?.install_supported === true;
 
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
@@ -182,6 +186,8 @@ export function SlackTab() {
   );
 }
 
+/** 单个已接入机器人的行：agent 头像 + 名称（可带「已撤销」角标）与接入时间；
+ *  仅对「活跃且当前有管理权」的行显示断开按钮。 */
 function InstallationRow({
   installation,
   canManage,
@@ -232,15 +238,12 @@ function InstallationRow({
   );
 }
 
-// SLACK_BYO_VIDEO_URL is the optional setup-tutorial video linked from the
-// connect dialog. Leave "" to hide the link; set it once the walkthrough that
-// shows how to create the Slack app + copy its two tokens is recorded.
+// SLACK_BYO_VIDEO_URL 是从连接弹窗里指向「设置教程视频」的可选链接。留 "" 即隐藏
+// 链接；等录好「如何创建 Slack App 并复制两个令牌」的演示后再填上。
 const SLACK_BYO_VIDEO_URL = "";
 
-// slackDocsUrl points at the Slack integration guide on the docs site,
-// localized to the viewer's language. The docs site uses /<lang>/ path
-// prefixes (English has none), matching the convention used elsewhere in the
-// app for doc links (e.g. the autopilots webhook docs link).
+// slackDocsUrl 指向文档站点的 Slack 接入指南，按阅读者语言加 /<lang>/ 前缀本地化
+// （英文无前缀），与 App 里其它文档链接约定一致（例如 autopilot webhook 文档链接）。
 function slackDocsUrl(lang: string | undefined): string {
   const prefix = lang?.startsWith("zh")
     ? "/zh"
@@ -252,14 +255,14 @@ function slackDocsUrl(lang: string | undefined): string {
   return `https://multica.ai/docs${prefix}/slack-bot-integration`;
 }
 
-// SlackAgentBindButton is the per-agent CTA exposed from the agent detail page.
-// Slack uses the bring-your-own-app model: the button opens a dialog where the
-// admin pastes the bot token (xoxb-) + app-level token (xapp-) of the Slack app
-// they created (the backend validates both belong to the same app). Visibility:
-//   1. Non-owner/admin viewers see nothing (the backend gates install/revoke).
-//   2. If this agent already has an active installation, show the connected
-//      badge (already-installed bots stay manageable).
-//   3. Otherwise the Connect CTA shows whenever install is available.
+/**
+ * agent 详情页上的「连接 Slack 机器人」按钮（供 agent 页复用）。
+ * Slack 走「自备 App」模型：点开弹窗，管理员粘入自己创建的 Slack App 的机器人令牌
+ * （xoxb-）与应用级令牌（xapp-）（后端会校验两者同属一个 App）。可见性：
+ *   1. 非 owner/admin 什么也不显示（后端负责门控安装/撤销）；
+ *   2. 该 agent 已有活跃安装时，显示已连接角标（已装机器人保持可管理）；
+ *   3. 否则只要安装可用就显示连接按钮。
+ */
 export function SlackAgentBindButton({
   agentId,
   agentName,
@@ -270,10 +273,9 @@ export function SlackAgentBindButton({
   agentName?: string;
   className?: string;
   /**
-   * When set, the connected state renders as a compact read-only status row
-   * that invokes this callback on click instead of the full badge with inline
-   * actions — the agent inspector passes a "jump to the Integrations tab"
-   * handler so management actions live in one place.
+   * 传入时，已连接状态渲染成一行紧凑的只读状态行（点击触发该回调），而不是带
+   * 行内操作的完整角标——agent 检查器传的是「跳到集成设置页」的处理器，把管理
+   * 动作统一收口在设置页一处。
    */
   onShowConnectedDetails?: () => void;
 }) {
@@ -333,8 +335,8 @@ export function SlackAgentBindButton({
     setSubmitting(true);
     try {
       await api.registerSlackBYO(wsId, agentId, { bot_token, app_token });
-      // The slack_installation realtime event also refreshes this list, but
-      // invalidate explicitly so the connected badge appears immediately.
+      // slack_installation 的实时事件也会刷新这个列表，但这里仍显式失效一次，
+      // 让「已连接」角标立刻出现、不依赖事件到达。
       await qc.invalidateQueries({ queryKey: slackKeys.installations(wsId) });
       toast.success(t(($) => $.slack.byo_success_toast));
       setDialogOpen(false);
@@ -413,7 +415,7 @@ export function SlackAgentBindButton({
                 data-testid="slack-byo-bot-token"
                 value={botToken}
                 onChange={(e) => setBotToken(e.target.value)}
-                // Slack token prefix: a format hint, not copy.
+                // 只是提示 Slack 令牌前缀的占位文案，不是可复制的真实示例（故禁用检查）。
                 // eslint-disable-next-line no-restricted-syntax
                 placeholder="xoxb-…"
                 autoComplete="off"
@@ -431,7 +433,7 @@ export function SlackAgentBindButton({
                 data-testid="slack-byo-app-token"
                 value={appToken}
                 onChange={(e) => setAppToken(e.target.value)}
-                // Slack token prefix: a format hint, not copy.
+                // 只是提示 Slack 令牌前缀的占位文案，不是可复制的真实示例（故禁用检查）。
                 // eslint-disable-next-line no-restricted-syntax
                 placeholder="xapp-…"
                 autoComplete="off"
@@ -467,9 +469,8 @@ export function SlackAgentBindButton({
   );
 }
 
-// SlackAgentBotStatusRow is the compact, read-only connected affordance the
-// agent inspector renders instead of the full badge; it deep-links into the
-// Integrations tab where Manage / Disconnect live.
+// SlackAgentBotStatusRow 是 agent 检查器渲染的紧凑只读「已连接」入口，代替完整角标；
+// 点击深链到集成设置页，管理 / 断开都在那边。
 function SlackAgentBotStatusRow({
   onClick,
   className,
@@ -495,10 +496,9 @@ function SlackAgentBotStatusRow({
   );
 }
 
-// SlackAgentBotConnectedBadge is the full "already connected" affordance the
-// Integrations tab renders in place of the Connect button. Two rows: status +
-// soft-destructive Disconnect, then a secondary "Open in Slack" link to the
-// installed workspace. Only owners/admins ever reach this component.
+// SlackAgentBotConnectedBadge 是「已连接」的完整展示（集成设置页用它替换连接按钮）：
+// 两行——状态 + 偏破坏色的断开按钮，以及次要的「在 Slack 中打开」链接到已装工作区。
+// 只有 owner/admin 会到达这个组件。
 function SlackAgentBotConnectedBadge({
   installation,
   className,

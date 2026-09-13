@@ -1,3 +1,9 @@
+// Package handler 是整个 HTTP API 的处理器集合。
+//
+// 本文件（life_context.go）负责为 companion / 观察者 / 各类认知任务拼装
+// "人生上下文"字符串：把身份、已确认/候选记忆、主题、承诺、模块、实验、
+// 素材、编年史、关系事件等有治理边界的内容聚合成一段 JSON，供注入
+// LLM prompt 使用；观察者内部判断与 companion 内心想法默认不进入公共上下文。
 package handler
 
 import (
@@ -11,6 +17,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// 下面这些常量是拼装人生上下文时各分类的最大条数上限（防止上下文过长）。
 const (
 	lifeContextVersion              = "life-context-v6"
 	confirmedLifeMemoryIndexLimit   = 24
@@ -30,9 +37,9 @@ const (
 	lifeEventChronicleIndexLimit    = 4
 )
 
-// buildGovernedLifeContext assembles only governed shared context. Internal
-// observer judgements and private companion thoughts are intentionally kept
-// out of the common context until their own publication rules expose them.
+// buildGovernedLifeContext 只聚合"受治理的共享上下文"。观察者的内部判断与
+// companion 的私密想法被刻意排除在公共上下文之外，直到它们自己的发布规则
+// 决定对外暴露。
 func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeRequestScope) (string, error) {
 	result := map[string]any{"context_version": lifeContextVersion}
 	profile, err := h.Queries.GetCompanionProfile(ctx, db.GetCompanionProfileParams{
@@ -253,6 +260,7 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 	return string(raw), nil
 }
 
+// lifeContextExcerpt 按 rune 截断文本到 maxRunes 并在尾部加省略号。
 func lifeContextExcerpt(value string, maxRunes int) string {
 	runes := []rune(value)
 	if len(runes) <= maxRunes {
@@ -261,6 +269,7 @@ func lifeContextExcerpt(value string, maxRunes int) string {
 	return string(runes[:maxRunes]) + "…"
 }
 
+// capLifeContextItems 泛型工具：把切片截到最多 limit 个元素。
 func capLifeContextItems[T any](items []T, limit int) []T {
 	if len(items) <= limit {
 		return items
@@ -268,6 +277,8 @@ func capLifeContextItems[T any](items []T, limit int) []T {
 	return items[:limit]
 }
 
+// currentLifeJobInput 校验认知任务输入必须是 JSON 对象，并盖上一个当前
+// 上下文版本号，保证任务数据与当时的上下文格式对齐。
 func currentLifeJobInput(input json.RawMessage) (json.RawMessage, error) {
 	var value map[string]any
 	if err := json.Unmarshal(input, &value); err != nil || value == nil {
@@ -280,6 +291,8 @@ func currentLifeJobInput(input json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(value)
 }
 
+// addLifeInternalThoughts 把该 agent 的内心想法列表塞进上下文字典的
+// agent_internal_thoughts 键。
 func (h *Handler) addLifeInternalThoughts(ctx context.Context, result map[string]any, scope lifeRequestScope, agentID pgtype.UUID) error {
 	thoughts, err := h.Queries.ListLifeInternalThoughtsForContext(ctx, db.ListLifeInternalThoughtsForContextParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: agentID, Limit: lifeInternalThoughtIndexLimit})
 	if err != nil {
@@ -293,6 +306,8 @@ func (h *Handler) addLifeInternalThoughts(ctx context.Context, result map[string
 	return nil
 }
 
+// buildCompanionChatLifeContext 拼装 companion 聊天场景使用的完整人生
+// 上下文（治理上下文 + companion 自己的内心想法）。
 func (h *Handler) buildCompanionChatLifeContext(ctx context.Context, scope lifeRequestScope, agentID pgtype.UUID) (string, error) {
 	governed, err := h.buildGovernedLifeContext(ctx, scope)
 	if err != nil {
@@ -309,6 +324,9 @@ func (h *Handler) buildCompanionChatLifeContext(ctx context.Context, scope lifeR
 	return string(raw), err
 }
 
+// buildLifeJobContext 按认知任务类型拼装其运行上下文：observation_aggregate
+// 额外带上已发布的观察判断与既有观察主题；observer_run 额外带上该观察者
+// 的身份（人设+知识）；其他任务只含治理上下文 + 内心想法。
 func (h *Handler) buildLifeJobContext(ctx context.Context, scope lifeRequestScope, jobType string, agentID pgtype.UUID, jobInput json.RawMessage) (string, error) {
 	governed, err := h.buildGovernedLifeContext(ctx, scope)
 	if err != nil {
@@ -409,6 +427,8 @@ func (h *Handler) buildLifeJobContext(ctx context.Context, scope lifeRequestScop
 	return string(raw), err
 }
 
+// lifeObservationJudgementIDs 从任务输入里取出 new_judgement_ids 列表，
+// 只保留合法 UUID，用于在聚合观察任务里挑选要汇总的判断。
 func lifeObservationJudgementIDs(input json.RawMessage) map[string]struct{} {
 	var value struct {
 		IDs []string `json:"new_judgement_ids"`

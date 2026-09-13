@@ -1,5 +1,5 @@
-// Package issueactivitybackfill provides bounded, resumable batches for
-// seeding issue.last_activity_at from the pre-existing updated_at history.
+// Package issueactivitybackfill 提供有界、可续跑的批处理，用于从已有的
+// updated_at 历史里为 issue.last_activity_at 播种。
 package issueactivitybackfill
 
 import (
@@ -9,29 +9,29 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// DefaultBatchSize bounds each transaction and the number of issue rows it
-// locks. Operators can add a delay between calls from the command wrapper.
+// DefaultBatchSize 限制每条事务及其锁定的 issue 行数。运维可从命令包装层在
+// 两次调用间加入延迟。
 const DefaultBatchSize = 1000
 
-// Options controls one backfill batch. Zero values are production defaults.
+// Options 控制一批回填。零值是生产默认值。
 type Options struct {
+	// BatchSize 覆盖 DefaultBatchSize。
 	BatchSize int
-	// AfterID is the exclusive keyset watermark for the current pass.
+	// AfterID 是当前这轮遍历的排他 keyset 水位。
 	AfterID *string
-	// Table is a trusted identifier override used only by tests.
+	// Table 是仅测试使用的可信标识符覆盖项。
 	Table string
 }
 
-// BatchResult advances a caller's keyset walk without rescanning completed
-// prefixes. LastID is empty only when the batch updated no rows.
+// BatchResult 推进调用方的 keyset 遍历，无需重扫已完成的段。仅当这批没更新任何行时
+// LastID 为空。
 type BatchResult struct {
 	Rows   int64
 	LastID string
 }
 
-// Batch copies updated_at into last_activity_at for at most BatchSize rows.
-// Rows already touched by a current writer no longer match the outer predicate,
-// so a concurrent semantic update always wins over historical reconstruction.
+// Batch 至多为 BatchSize 行把 updated_at 拷入 last_activity_at。已被当前写者触碰过的
+// 行不再命中外层条件，因此并发语义更新总能赢过历史重建。
 func Batch(ctx context.Context, pool *pgxpool.Pool, opts Options) (BatchResult, error) {
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
@@ -69,7 +69,7 @@ FROM updated`, table, table)
 	return result, nil
 }
 
-// CountRemaining reports rows not yet reconstructed.
+// CountRemaining 报告尚未重建的行数。
 func CountRemaining(ctx context.Context, pool *pgxpool.Pool, table string) (int64, error) {
 	if table == "" {
 		table = "issue"

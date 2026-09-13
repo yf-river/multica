@@ -1,3 +1,5 @@
+// 本文件职责：创建 issue 弹窗的「Agent 模式」面板（Quick Create）——选定 agent/小队、
+// 写 prompt、可选项目/优先级/截止日期与图片，提交后由所选 agent 异步执行并产出 issue。
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -86,22 +88,24 @@ import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
 import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
 
+// ActorSelection —— 本次创建的「执行者」：要么是某个 agent，要么是某个小队。
 type ActorSelection =
   | { type: "agent"; id: string }
   | { type: "squad"; id: string };
 
-// AgentCreatePanel — agent-mode body of the create-issue dialog. Renders
-// only the inner content; the surrounding `<Dialog>` AND `<DialogContent>`
-// (Portal + Overlay + Popup) are owned by CreateIssueDialog so mode-switching
-// swaps only this body. Lifting the Portal is what eliminates the close→open
-// animation flash — Base UI replays Popup enter/exit when DialogContent is
-// remounted, even inside a still-open Dialog Root.
-//
-// `onSwitchMode` is wired by the shell — the panel calls it with an optional
-// carry payload (currently `project_id`). The shared draft store carries the
-// description + agent across the agent→manual flip; project_id rides through
-// the same carry channel manual→agent uses, so the manual panel reads it
-// from `data?.project_id` without a parallel store.
+/**
+ * 创建 issue 弹窗的 Agent 模式面板主体（Quick Create）。
+ *
+ * 只渲染内部内容；外围的 `<Dialog>` 和 `<DialogContent>`（Portal + Overlay + Popup）
+ * 由 CreateIssueDialog 持有，因此切换模式只替换本面板。把 Portal 上提到外壳，正是
+ * 消除「关闭→打开」动画闪烁的原因——即使 Dialog 根节点还开着，一旦 DialogContent
+ * 被重新挂载，Base UI 就会重放 Popup 的进出场动画。
+ *
+ * `onSwitchMode` 由外壳接线——面板调用它时可携带一份数据（目前是 `project_id`）。
+ * 共享草稿 store 携带描述与 agent 一起跨过 agent→manual 的翻转；project_id 则走
+ * manual→agent 同一条携带通道，所以手动面板能从 `data?.project_id` 读到它，
+ * 无需另开一个 store。
+ */
 export function AgentCreatePanel({
   onClose,
   onSwitchMode,
@@ -112,9 +116,8 @@ export function AgentCreatePanel({
   onClose: () => void;
   onSwitchMode?: (carry?: Record<string, unknown> | null) => void;
   data?: Record<string, unknown> | null;
-  /** Lifted to the shell so DialogContent's mode-aware className can react —
-   *  same pattern as ManualCreatePanel. Shared across modes so the user's
-   *  expand preference persists when switching between agent and manual. */
+  /** 提升到外壳，让 DialogContent 的「模式感知」className 能响应它——与
+   *  ManualCreatePanel 同一模式。跨模式共享，用户切 agent/manual 时展开偏好不丢。 */
   isExpanded: boolean;
   setIsExpanded: (v: boolean) => void;
 }) {
@@ -141,9 +144,9 @@ export function AgentCreatePanel({
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: squads = [] } = useQuery(squadListOptions(wsId));
-  // Pull `isSuccess` so the stale-id sweep below can distinguish "still
-  // loading" from "loaded as empty". Reading length alone treats both as
-  // empty and incorrectly clears a valid persisted preference on every open.
+  // 读 `isSuccess` 而不是数组长度：下面「清除失效 projectId」的清扫逻辑需要区分
+  // 「还在加载」和「已加载但为空」。只读 length 会把两者都当成空数组，从而在每次
+  // 打开弹窗时把合法的持久化偏好误清掉。
   const { data: projects = [], isSuccess: projectsLoaded } = useQuery(
     projectListOptions(wsId),
   );
@@ -153,10 +156,9 @@ export function AgentCreatePanel({
     [members, userId],
   );
 
-  // Visible = not archived AND assignable by this user. Squads inherit
-  // their leader agent's reachability: the backend always routes a squad
-  // pick to the leader, so hiding squads whose leader isn't visible keeps
-  // the picker honest with what the server would actually accept.
+  // 「可见」= 未归档 且 当前用户可指派。小队继承其队长 agent 的可达性：后端总是把
+  // 小队的选择路由给队长执行，所以隐藏「队长不可见」的小队，能让选择器展示的结果
+  // 与服务器真正会接受的范围保持一致。
   const visibleAgents = useMemo(
     () =>
       agents.filter(
@@ -186,9 +188,8 @@ export function AgentCreatePanel({
   const keepOpen = useQuickCreateStore((s) => s.keepOpen);
   const setKeepOpen = useQuickCreateStore((s) => s.setKeepOpen);
   const setLastMode = useCreateModeStore((s) => s.setLastMode);
-  // The agent draft (prompt + actor) and the shared fields (project, priority,
-  // due date, attachments) live in the unified issue-create draft, so a switch
-  // to/from the manual form preserves them.
+  // agent 草稿（prompt + actor）与共享字段（项目/优先级/截止日期/附件）都存放在
+  // 统一的 issue 创建草稿里，因此在手动表单间来回切换也能完整保留。
   const draft = useIssueDraftStore((s) => s.draft);
   const setShared = useIssueDraftStore((s) => s.setShared);
   const setManual = useIssueDraftStore((s) => s.setManual);
@@ -196,10 +197,8 @@ export function AgentCreatePanel({
   const setActiveMode = useIssueDraftStore((s) => s.setActiveMode);
   const clearDraft = useIssueDraftStore((s) => s.clearDraft);
 
-  // Resolve a candidate actor against the currently-visible agents / squads.
-  // Returns null when the candidate doesn't exist in this workspace right
-  // now (deleted, archived, permission revoked, etc.) so callers can fall
-  // through to the next seed in the chain.
+  // 把候选执行者与「当前可见的 agent/小队」比对一遍。当候选在当前工作区里已不存在时
+  // （被删除、归档、权限被收回等）返回 null，让调用方沿着种子链继续找下一个候选。
   const resolveActor = useCallback(
     (
       type: QuickCreateActorType | "agent" | "squad" | null | undefined,
@@ -218,9 +217,8 @@ export function AgentCreatePanel({
   );
 
   const seedActor = useCallback((): ActorSelection | null => {
-    // Caller-provided seed wins (e.g. shell pre-seeds with `agent_id` /
-    // `squad_id`), then the persisted agent draft, the last successful pick,
-    // and finally the first visible agent.
+    // 种子优先级：调用方带进来的优先（例如外壳用 `agent_id` / `squad_id` 预置），
+    // 其次是持久化的 agent 草稿、上一次成功选择的执行者，最后回退到第一个可见 agent。
     const dataAgent = data?.agent_id as string | undefined;
     const dataSquad = data?.squad_id as string | undefined;
     return (
@@ -245,7 +243,7 @@ export function AgentCreatePanel({
 
   const [actor, setActor] = useState<ActorSelection | null>(() => seedActor());
 
-  // Re-seed once visible lists resolve (queries may be empty on first render).
+  // 可见列表解析完成后再补一次种子（首次渲染时查询可能还是空的）。
   useEffect(() => {
     if (actor && resolveActor(actor.type, actor.id)) return;
     setActor(seedActor());
@@ -264,14 +262,12 @@ export function AgentCreatePanel({
     return visibleSquads.find((s) => s.id === actor.id);
   }, [actor, visibleSquads]);
 
-  // Unfinished selections live in the shared issue-create draft. The
-  // last-successful actor remains a separate fallback, so closing a draft
-  // never overwrites the default established by an actual create.
+  // 未完成的选项存放在共享的 issue 创建草稿里。「最近一次成功选择」的执行者始终是
+  // 独立的兜底来源，因此清空草稿不会覆盖掉由真实创建确立的默认值。
   //
-  // Project has exactly two seeds, both carrying explicit user intent: the
-  // project page (or manual panel) the modal was opened from, and the user's
-  // own unfinished draft. It is deliberately NOT seeded from the last create
-  // — see quick-create-store (MUL-5862).
+  // 项目字段恰好有两个种子，且都带着明确的用户意图：弹窗从哪个项目页（或手动面板）
+  // 打开的，以及用户自己未完成的草稿。故意不从「上一次创建」取——见 quick-create-store
+  // （MUL-5862）。
   const [projectId, setProjectId] = useState<string | null>(() => {
     const seed = (data?.project_id as string | undefined) ?? draft.shared.projectId;
     return seed ?? null;
@@ -283,29 +279,25 @@ export function AgentCreatePanel({
     (data?.due_date as string | undefined) ?? draft.shared.dueDate,
   );
   const [fieldPickerOpen, setFieldPickerOpen] = useState<QuickCreateField | null>(null);
-  // Local state + shared draft always move together, so both the picker rows
-  // and the pill's quick-clear go through here.
+  // 本地 state 与共享草稿始终同步移动，所以选择器各行的改动和胶囊上的「快速清除」
+  // 都统一走这里。
   const commitProject = (next: string | null) => {
     setProjectId(next);
     setShared({ projectId: next ?? undefined });
   };
 
-  // Parent-issue context — seeded by `openCreateSubIssue` when the modal is
-  // opened from the "Add sub issue" entry on an existing issue. We carry it
-  // through (not as an editable form field) so a manual→agent flip preserves
-  // the sub-issue intent; the agent panel never exposes this as a picker.
-  // Identifier is best-effort display context only — the UUID is the
-  // authoritative reference the backend/agent uses for `--parent <uuid>`.
+  // 父 issue 上下文——当弹窗是从某 issue 上的「添加子 issue」入口打开时，由
+  // openCreateSubIssue 种下。我们只透传它（不当作可编辑的表单字段），以便 manual→agent
+  // 的翻转保留「创建子 issue」的意图；agent 面板从不把它暴露成选择器。标识（identifier）
+  // 只是尽力而为的展示信息——真正权威的是 UUID，后端/agent 用它执行 `--parent <uuid>`。
   const parentIssueId = (data?.parent_issue_id as string | undefined) ?? undefined;
   const parentIssueIdentifier =
     (data?.parent_issue_identifier as string | undefined) ?? undefined;
 
-  // Stale-id sweep. Once the project list query has actually resolved
-  // (`isSuccess` — distinct from "data is the empty default during loading"),
-  // a `projectId` that isn't in the list means the project was deleted in
-  // another session. Clear local state AND the unfinished draft — the draft
-  // is the only persisted copy left, and leaving it would make the next open
-  // re-seed and submit the same dead value.
+  // 失效 id 清扫。一旦项目列表查询真正解析完成（`isSuccess`——区别于「加载中数据为
+  // 空默认值」），一个不在列表里的 `projectId` 就意味着项目在别的会话中被删了。
+  // 同时清掉本地 state 与未完成的草稿——草稿是剩下的唯一持久副本，不清的话下次打开
+  // 会再次以同样的死值播种并提交。
   useEffect(() => {
     if (!projectsLoaded || projectId === null) return;
     if (projects.some((p) => p.id === projectId)) return;
@@ -315,21 +307,18 @@ export function AgentCreatePanel({
     }
   }, [projectsLoaded, projects, projectId, draft.shared.projectId, setShared]);
 
-  // Mark the persisted draft's active mode so a later reopen and any reader of
-  // the unified draft know which form is being edited.
+  // 把持久化草稿的 activeMode 标成 agent，让之后重开弹窗、以及任何读取统一草稿
+  // 的地方都知道用户正在编辑哪个表单。
   useEffect(() => {
     setActiveMode("agent");
   }, [setActiveMode]);
 
-  // Daemon CLI version gate. The agent-create flow needs the runtime's
-  // bundled multica CLI to be ≥ MIN_QUICK_CREATE_CLI_VERSION; older
-  // daemons handle attachments and partial-failure retries incorrectly
-  // (see PR #1851 / MUL-1496). Pre-check on the picker so the user gets
-  // immediate feedback instead of waiting for the inbox failure; the
-  // server re-validates as the trust boundary. Dev-built daemons
-  // (git-describe shape) are exempted inside checkQuickCreateCliVersion
-  // — frontend and server share the same signal there, so they agree by
-  // construction across web/desktop/staging without comparing env flags.
+  // Daemon CLI 版本闸门。Agent 创建流程要求 runtime 自带的 multica CLI 不低于
+  // MIN_QUICK_CREATE_CLI_VERSION；更老的 daemon 处理附件和「部分失败重试」有误
+  // （见 PR #1851 / MUL-1496）。在选择器阶段就预检，让用户立刻看到提示，而不是等
+  // Inbox 里的失败通知；服务端作为信任边界会再次校验。本地开发构建的 daemon
+  // （git-describe 形态）在 checkQuickCreateCliVersion 内部被豁免——前后端在那里共用
+  // 同一信号，因此跨 web/desktop/staging 天然一致，无需比较环境开关。
   const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
   const selectedRuntime = useMemo(
     () =>
@@ -354,19 +343,16 @@ export function AgentCreatePanel({
     (usesExplicitFields && fieldVersionCheck.state !== "ok");
 
   const initialPrompt = draft.agent.prompt || (data?.prompt as string) || "";
-  // The editor is uncontrolled — we read the latest markdown via the ref at
-  // submit/switch time. `hasContent` mirrors emptiness so the Create button
-  // can disable correctly without a controlled-input rerender on every keystroke.
+  // 编辑器是不受控的——提交/切换时通过 ref 读最新 markdown。`hasContent` 镜像「是否
+  // 为空」，让 Create 按钮能正确禁用，而不必每个键都触发一次受控输入的重渲染。
   const editorRef = useRef<ContentEditorRef>(null);
   const [hasContent, setHasContent] = useState(initialPrompt.trim().length > 0);
   const [justSent, setJustSent] = useState(false);
   const [sentCount, setSentCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const uploadGate = useUploadGate(editorRef);
-  // Coordinator-owned uploads in the shared draft pool (MUL-5181, L2): a file
-  // pasted into the prompt survives dialog close and mode switches, aborts on
-  // logout, and is dropped after a reload. `gate` widens the editor gate with
-  // the pool's placeholders.
+  // 协调器持有的共享草稿池上传（MUL-5181, L2）：粘贴进 prompt 的文件能跨弹窗关闭、
+  // 跨模式切换存活，退出登录时中止，刷新后被丢弃。`gate` 用池里的占位项扩宽编辑器闸门。
   const {
     attachments: pendingAttachments,
     handleUpload: handleUploadFile,
@@ -377,20 +363,16 @@ export function AgentCreatePanel({
   });
 
   useEffect(() => {
-    // Defer focus so it lands after the dialog's focus trap has settled —
-    // otherwise the trap can bounce focus back to the first focusable header
-    // button on the next tick.
+    // 延迟聚焦，让它落在弹窗的焦点陷阱稳定之后——否则下一拍焦点可能被陷阱弹回
+    // 头部第一个可聚焦按钮。
     const id = requestAnimationFrame(() => editorRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, []);
 
-  // Agent create runs through the shared await-then-render composer contract
-  // (single-flight ref, submit-time upload re-check, lock+spin, await→boolean,
-  // clear only on acceptance). The prompt IS the editor content, so this maps
-  // onto the hook directly.
-  // Stale-submit guard (MUL-5181 P0): the issue draft is a SINGLETON store.
-  // A late success from a dialog the user closed mid-submit must not clear a
-  // newer draft typed after reopening — see ManualCreatePanel for the rule.
+  // Agent 创建走共享的「先 await 后渲染」composer 契约（单飞 ref、提交时重查上传、
+  // 加锁转圈、await→boolean、只在接受时清空）。prompt 就是编辑器内容，所以直接套用。
+  // 过期提交守卫（MUL-5181 P0）：issue 草稿是单例 store。用户中途关掉弹窗后，一次
+  // 迟到的成功绝不能清掉重开后新打的草稿——规则见 ManualCreatePanel。
   const mountedRef = useRef(true);
   useLayoutEffect(() => {
     mountedRef.current = true;
@@ -399,20 +381,18 @@ export function AgentCreatePanel({
     };
   }, []);
   const submittedDraftRef = useRef<IssueCreateDraft | null>(null);
-  // Set by `onAccepted` only on the branch that keeps the panel open and wipes
-  // the editor; read back by `afterAccepted`. The closing branch must not
-  // refocus an editor that is about to unmount with the dialog.
+  // 由 `onAccepted` 在「保持打开并清空编辑器」的那个分支里置位，`afterAccepted` 读回。
+  // 走关闭分支时不能去聚焦一个即将随弹窗卸载的编辑器。
   const refocusAfterAcceptRef = useRef(false);
 
   const composer = useComposerSubmit({
     editorRef,
     uploadGate: gate,
     onSubmit: async (md): Promise<boolean> => {
-      // The button already disables on !actor / versionBlocked, but the
-      // ⌘+Enter path bypasses it — re-guard here and keep the draft in place.
+      // 按钮已用 !actor / versionBlocked 禁用，但 ⌘+Enter 会绕过按钮——这里再次
+      // 把关，失败时草稿原样保留。
       if (!actor || versionBlocked || (anchorCommentId && !sourcePreview)) return false;
-      // Flush the prompt editor's pending debounce before snapshotting — see
-      // ManualCreatePanel.
+      // 快照前先 flush prompt 编辑器挂起的防抖——见 ManualCreatePanel。
       const pendingPrompt = editorRef.current?.flushPendingUpdate?.();
       if (pendingPrompt != null) setAgent({ prompt: pendingPrompt });
       submittedDraftRef.current = useIssueDraftStore.getState().draft;
@@ -456,10 +436,8 @@ export function AgentCreatePanel({
         });
         return true;
       } catch (e) {
-        // Server returns 422 with { code, ... } for the structured rejection
-        // paths the modal cares about. Surface the reason in-modal so the
-        // user can switch to a live agent / upgrade their daemon without
-        // leaving the flow.
+        // 服务端对弹窗关心的「结构化拒绝」路径返回 422 + { code, ... }。把原因就地
+        // 展示在弹窗内，用户不必离开当前流程就能去切换可用 agent 或升级 daemon。
         if (e instanceof ApiError && e.body && typeof e.body === "object") {
           const body = e.body as {
             code?: string;
@@ -476,10 +454,8 @@ export function AgentCreatePanel({
             return false;
           }
           if (body.code === "daemon_version_unsupported") {
-            // Race fallback: the picker pre-check should normally catch this,
-            // but a runtime can silently re-register with an older CLI between
-            // pre-check and submit. Same wording as the inline notice for
-            // consistency.
+            // 竞态兜底：选择器的预检通常能拦住，但 runtime 可能在「预检」与「提交」之间
+            // 用一个更旧的 CLI 静默重新注册。文案与内联提示保持一致。
             const cur = body.current_version || "unknown";
             setError(
               t(($) => $.create_issue.agent.error_daemon_version, {
@@ -519,28 +495,24 @@ export function AgentCreatePanel({
         return false;
       }
     },
-    // Continuous-creation mode puts the caret back so the next prompt can be
-    // typed immediately. Deliberately no `containerRef`: this is a dialog whose
-    // own focus trap already bounds where focus can be, and reclaiming it is the
-    // point of keep-open mode.
+    // 连续创建模式会把光标放回编辑器，让下一条 prompt 能立刻输入。故意不传
+    // `containerRef`：这是弹窗，自身的焦点陷阱已经圈定了焦点能去的地方，而「夺回焦点」
+    // 正是保持打开模式的意义。
     afterAccepted: () => (refocusAfterAcceptRef.current ? "refocus" : "none"),
     onAccepted: () => {
       refocusAfterAcceptRef.current = false;
-      // A successful create ends this whole draft (shared + manual + agent);
-      // last-successful actor/project preferences were saved in onSubmit.
-      // Success may only consume the draft it submitted: flush the editor's
-      // pending debounce first, then clear only an untouched draft — edits
-      // made mid-flight or by a reopened dialog survive.
+      // 一次成功创建会终结整份草稿（共享 + manual + agent）；「最近成功」的 actor/
+      // project 偏好在 onSubmit 里已经存好了。成功只能消费它提交的那份草稿：先 flush
+      // 编辑器挂起的防抖，再只清「未被改动」的草稿——请求途中或重开弹窗产生的编辑保留。
       const latePrompt = editorRef.current?.flushPendingUpdate?.();
       if (latePrompt != null) setAgent({ prompt: latePrompt });
       const untouched =
         useIssueDraftStore.getState().draft === submittedDraftRef.current;
       if (untouched) clearDraft();
-      // An edit made during the request survives; the panel stays open on it.
+      // 请求期间的编辑会保留下来，面板停在那份更新的草稿上。
       if (!mountedRef.current || !untouched) return;
       if (keepOpen) {
-        // Stay open for continuous creation — clear the editor so the user can
-        // immediately type the next prompt.
+        // 保持打开以连续创建——清空编辑器，用户能立刻键入下一条 prompt。
         editorRef.current?.clearContent();
         setHasContent(false);
         setSentCount((c) => c + 1);
@@ -557,20 +529,17 @@ export function AgentCreatePanel({
   };
   const submitting = composer.submitting;
 
-  // Switch to the manual form WITHOUT destroying the agent draft. The agent
-  // slot (prompt + actor) is left untouched so a later manual→agent flip
-  // restores it verbatim. Project / priority / due date already live in the
-  // shared slot and carry across for free. Two one-time assist-inits run only
-  // when the manual slot is still empty: seed the description from the prompt
-  // and the assignee from the picked actor. The parent-issue context is not
-  // persisted (a per-invocation intent) so it rides the carry channel.
+  // 切到手动表单但「不销毁」agent 草稿。agent 槽位（prompt + actor）原样保留，
+  // 之后 manual→agent 翻回来能逐字恢复。项目/优先级/截止日期本来就在共享槽位里，
+  // 免费跟着过去。只有两项一次性「辅助初始化」在手动槽位仍为空时执行：用 prompt 种子
+  // 描述、用所选 actor 种子负责人。父 issue 上下文不持久化（属于单次调用意图），
+  // 因此走携带通道。
   const switchToManual = () => {
-    // The prompt is copied into the manual description on assist-init; mid-upload
-    // that body has already lost the pending image (see switchToAgent).
+    // prompt 会在辅助初始化时拷进手动描述；上传中途这段正文已经丢了待传的图片
+    // （见 switchToAgent），所以同样要上闸。
     if (gate.isBlocked()) return;
-    // Commit the shared fields to the draft so the manual panel reads them from
-    // there — local state can hold a value seeded from `data` that was never
-    // written through a picker.
+    // 把共享字段写进草稿，让手动面板从那里读——本地 state 可能持有从 `data` 做种子
+    // 的值，却从未经过选择器写出。
     setShared({ projectId: projectId ?? undefined, priority, dueDate });
     if (!draft.manual.description.trim()) {
       const md = editorRef.current?.getMarkdown() ?? "";
@@ -587,13 +556,11 @@ export function AgentCreatePanel({
     onSwitchMode?.(Object.keys(carry).length > 0 ? carry : null);
   };
 
-  // Field visibility lives in Settings → Issue. Persist the prompt draft
-  // before leaving so what the user typed survives the round-trip, then
-  // close — the dialog would otherwise linger over the settings page.
+  // 字段可见性存放在「设置 → Issue」。离开前先把 prompt 草稿落库，让用户已输入的内容
+  // 在往返后不丢，然后关闭——否则弹窗会一直叠在设置页上方。
   const openFieldSettings = (e: React.MouseEvent) => {
-    // Persist the draft either way, but only an in-place navigation closes
-    // the dialog — a modifier click opens Settings in another tab and the
-    // modal stays put.
+    // 无论哪种情况都先持久化草稿；但只有「当前页内跳转」才关弹窗——带修饰键的点击
+    // 会在新标签页打开设置，弹窗保持原位。
     setAgent({ prompt: editorRef.current?.getMarkdown() ?? "" });
     if (resolveClickIntent(e) !== "push") return;
     onClose();
@@ -603,17 +570,16 @@ export function AgentCreatePanel({
     <>
         <DialogTitle className="sr-only">{t(($) => $.create_issue.sr_agent)}</DialogTitle>
 
-        {/* Header */}
+        {/* 弹窗头部——工作区面包屑 + 展开/收起与关闭按钮 */}
         <div className="flex items-center justify-between px-5 pt-3 pb-2 shrink-0">
           <div className="flex items-center gap-1.5 text-caption">
             <span className="text-muted-foreground">{workspaceName}</span>
             <ChevronRight className="size-3 text-faint-foreground" />
             <span className="font-medium">{t(($) => $.create_issue.agent_breadcrumb)}</span>
           </div>
-          {/* Native `title` instead of Base UI Tooltip — Tooltip opens on
-              keyboard focus, and the dialog's focus trap briefly lands focus
-              on the first focusable element on mount, causing the tooltip to
-              auto-pop every open. Same workaround applies to expand. */}
+          {/* 用原生 `title` 而不是 Base UI Tooltip——Tooltip 在键盘聚焦时弹出，而弹窗的
+              焦点陷阱在挂载瞬间会把焦点落到第一个可聚焦元素上，导致每次打开 tooltip
+              都会自动弹一次。展开按钮同样用这个变通方案。 */}
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -636,10 +602,9 @@ export function AgentCreatePanel({
           </div>
         </div>
 
-        {/* Actor picker — agents and squads in one searchable list. Squads
-            route to their leader agent on the backend; the leader runs the
-            quick-create flow with the squad's Operating Protocol layered
-            on top, so a squad pick is "ask this squad to file the issue". */}
+        {/* Actor 选择器——agent 与小队在同一份可搜索列表里。小队在后端路由到其队长
+            agent：队长以小队叠加的 Operating Protocol 执行 quick-create 流程，所以
+            选小队等于「让这个小队来提单」。 */}
         <div className="px-5 pt-1 pb-2 shrink-0">
           <ActorPicker
             actor={actor}
@@ -667,13 +632,11 @@ export function AgentCreatePanel({
           </div>
         )}
 
-        {/* Prompt — same rich editor Advanced uses, so paste/drop images,
-            mentions, and formatting all work. The dropZone wrapper enables
-            drag-and-drop file uploads alongside paste. */}
-        {/* `flex-1 min-h-0 overflow-y-auto` so the editor area absorbs the
-            remaining vertical space inside the (now max-bounded) DialogContent
-            and scrolls internally. Without it, pasting an image expanded the
-            editor unbounded and pushed the modal past the viewport. */}
+        {/* Prompt——与 Advanced 用法同一套富文本编辑器，粘贴/拖拽图片、@提及、排版
+            全部可用。dropZone 外壳让拖拽上传与粘贴并存。 */}
+        {/* `flex-1 min-h-0 overflow-y-auto`：让编辑器区吸收（现在有最大高度约束的）
+            DialogContent 里的剩余纵向空间并在内部滚动。没有它，粘贴一张图片会把编辑器
+            撑到没有上限，把弹窗推出视口。 */}
         <div
           {...dropZoneProps}
           className="relative px-5 pb-3 flex flex-1 min-h-[140px] overflow-y-auto"
@@ -714,16 +677,13 @@ export function AgentCreatePanel({
           <div className="px-5 pb-2 text-caption text-destructive">{error}</div>
         )}
 
-        {/* Property toolbar — the project is visible by default; priority and
-            due date live behind the overflow until exposed in settings or
-            given a value. Unfinished picks remain workspace-persistent.
-            When the modal was opened from "Add sub issue" on an existing
-            issue, a read-only chip on the same row tells the user that the
-            new issue will be filed as a sub-issue of that parent — the agent
-            handles the wiring silently, but surfacing the relationship
-            avoids "where did this end up?" surprise. We deliberately keep
-            it non-editable: changing the parent is a `Set parent` action on
-            the parent itself, not a knob in the quick-create flow. */}
+        {/* 属性工具栏——项目默认可见；优先级与截止日期在设置里打开或填了值之前，收在
+            溢出菜单后面。未完成的选项保持在「工作区级」持久化。
+            当弹窗是从某 issue 上的「添加子 issue」打开时，同一行会出现一枚只读胶囊，
+            告诉用户新 issue 将作为那个父 issue 的子 issue 提交——agent 会静默处理
+            挂接，但把关系亮出来可以避免「它到底被建到哪去了」的困惑。故意做成不可编辑：
+            改父级是父 issue 自己的「设置父级」操作，不该成为 quick-create 流程里的一个
+            旋钮。 */}
         <div className="flex items-center gap-1.5 px-4 pb-2 shrink-0 flex-wrap">
           {(visibleFields.includes("project") ||
             projectId !== null ||
@@ -834,21 +794,17 @@ export function AgentCreatePanel({
           )}
         </div>
 
-        {/* Footer. Two layouts, one flat child list:
-            - Phones get a 2x2 grid — attach / switch on the top row, keep-open
-              toggle / Create on the bottom one. Laid out as a single row the
-              four controls need ~383px of the 398px a 430px phone has left
-              after padding, which reads as jammed and wraps outright below
-              ~410px (MUL-6236).
-            - From `sm` up it is the original single flex row: `mr-auto` on the
-              attach group reproduces what `justify-between` did when the
-              children were two wrapper divs, and `justify-self-end` goes
-              inert on flex items. */}
+        {/* Footer。两种布局，共享同一份平铺的子元素列表：
+            - 手机端是 2×2 网格——上行「附件 / 切手动」，下行「连续创建开关 / 创建」。
+              排成单行的话，四个控件需要约 383px，而 430px 手机扣掉内边距只剩 398px，
+              显得拥挤且在 ~410px 以下直接换行（MUL-6236）。
+            - 从 `sm` 起恢复原本的单行 flex：附件组上的 `mr-auto` 还原了当初子元素是
+              两个包装 div 时 `justify-between` 的效果，`justify-self-end` 在 flex 项上
+              会失效。 */}
         <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-2.5 border-t px-4 py-3 shrink-0 sm:flex sm:flex-wrap">
           <div className="flex min-h-7 items-center gap-2 sm:mr-auto">
-            {/* Deliberately NOT disabled while uploading: each file is its
-                own queue entry, so queueing a second one is safe and waiting
-                for the first to land just to attach the next is busywork. */}
+            {/* 上传中故意不禁用它：每个文件是独立队列项，排队第二个是安全的——非要等
+                第一个落地才能传下一个纯属白费功夫。 */}
             <FileUploadButton
               size="sm"
               multiple
@@ -885,7 +841,7 @@ export function AgentCreatePanel({
             onClick={submit}
             disabled={!hasContent || !actor || submitting || versionBlocked || gate.uploading || (!!anchorCommentId && !sourcePreview)}
             aria-disabled={gate.uploading || undefined}
-            // Sending is a busy state too, not just uploading.
+            // 发送同样是忙碌态，不只是上传中。
             aria-busy={gate.uploading || submitting || undefined}
             title={
               versionBlocked
@@ -903,9 +859,8 @@ export function AgentCreatePanel({
               <>
                 {t(($) => $.create_issue.agent.submit)}
                 {sendShortcut ? (
-                  // Touch phones have no ⌘ key and the narrowest footer row
-                  // to spare — drop the hint at the same breakpoint the
-                  // footer reflows at.
+                  // 触摸手机没有 ⌘ 键、footer 行又最紧凑——在 footer 换行的同一个断点
+                  // 下隐藏这个快捷键提示。
                   <ShortcutKeycaps
                     shortcut={sendShortcut}
                     decorative
@@ -921,11 +876,13 @@ export function AgentCreatePanel({
   );
 }
 
-// ActorPicker — the "Created by" trigger + searchable popover listing
-// agents and squads. Lives in this file (not under issues/components/pickers)
-// because it composes the generic PropertyPicker with a quick-create-shaped
-// trigger styled to match the modal header row — promoting it would invite
-// reuse pressure on a UI that's deliberately tuned for this one surface.
+/**
+ * ActorPicker ——「Created by」触发器 + 可搜索的 agent/小队列表弹层。
+ *
+ * 放在本文件（而不是 issues/components/pickers 下），因为它用泛型 PropertyPicker
+ * 组装了一个「贴合 quick-create」的触发器，样式对齐弹窗头部行——提升到共享目录会
+ * 招来「复用它」的压力，而这套 UI 是特意只为此处表面调出来的。
+ */
 function ActorPicker({
   actor,
   visibleAgents,

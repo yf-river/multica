@@ -1,5 +1,12 @@
 "use client";
 
+// WS → 缓存的集中同步层（唯一的"事件分发中心"）：
+// 监听 WebSocket 上各类事件，把载荷精确应用到 React Query 缓存或触发失效重取。
+// 大原则是"WS 作失效信号 + 重取"；只有需要副作用（toast、导航、自我校验）才用
+// 精确 handler。断线重连 / 切换 WSClient 时统一补失效，找回断线期间漏掉的事件。
+//
+// 注意：本文件所有精确写缓存的逻辑，都遵循各域（issues/chat/agents…）自带的
+// "单一规则表"，避免在此处再造一套会漂移的副本。
 import { useEffect, useRef } from "react";
 import { useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import type { WSClient } from "../api/ws-client";
@@ -123,19 +130,17 @@ import type {
 const chatWsLogger = createLogger("chat.ws");
 
 /**
- * Window over which incoming `task:message` frames are batched into a single
- * timeline cache write (MUL-6396).
+ * 把到达的 `task:message` 帧批处理进一次时间线缓存写的窗口（MUL-6396）。
  *
- * A fixed window, armed on the first frame and not reset by later ones, so a
- * sustained stream still lands every 100ms rather than being deferred until
- * the stream pauses. Short enough that streamed text still reads as live;
- * long enough that a run emitting several frames per second costs one merge
- * and one render instead of one per frame.
+ * 固定窗口：首帧到达时武装、后续帧不重置它，这样持续流仍每 100ms 落一次，
+ * 而不是一直推迟到流暂停。短到流式文本仍然实时；长到每秒发多帧的运行只需一次
+ * 合并和一次渲染，而不是每帧一次。
  */
 const TASK_MESSAGE_FLUSH_MS = 100;
 
 const logger = createLogger("realtime-sync");
 
+/** 失效某会话的两份消息缓存（扁平 + 分页）——请求它们重取。 */
 export function invalidateChatMessageQueries(
   qc: QueryClient,
   sessionId: string,
@@ -144,19 +149,16 @@ export function invalidateChatMessageQueries(
   qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
 }
 
-// refetchPendingChatAggregate marks the current user's cross-session pending
-// aggregate stale so it is refetched from the permission-filtering endpoint
-// (/api/chat/pending-tasks[/has-any]).
+// refetchPendingChatAggregate 把当前用户的跨会话待处理聚合标记为过期，使其从带权限
+// 过滤的接口（/api/chat/pending-tasks[/has-any]）重取。
 //
-// SECURITY (review on PR #5018 / MUL-4159): this is deliberately an
-// invalidate, NOT an optimistic setQueryData. Chat `task:*` events are a
-// workspace fanout delivered to every member with no creator / agent
-// visibility in the payload, so optimistically writing the aggregate from them
-// would let one member's task flip another member's FAB to has_pending=true,
-// bypassing the server-side permission filter. Invalidation forces the
-// authoritative, creator+agent-scoped server response to be the source of
-// truth. The has-any key is nested under pendingTasks, so invalidating
-// pendingTasks refreshes both the detailed list and the boolean fast-path.
+// 安全（PR #5018 / MUL-4159 评审）：这里是刻意用失效，而不是乐观 setQueryData。
+// chat 的 `task:*` 事件是对整个工作区扇出的，每个成员都会收到，且载荷里没有
+// 创建者/Agent 可见性——据此乐观写聚合，会让一个成员的任务把另一个成员的 FAB 翻成
+// has_pending=true，绕过服务端权限过滤。失效强制"创建者 + Agent 作用域"的权威服务端
+// 响应当真相来源。has-any key 嵌在 pendingTasks 之下，失效 pendingTasks 会同时刷新
+// 详细列表和布尔快路径。
+/** 使当前用户的跨会话待处理聚合失效（由带权限过滤的服务端接口重取）。 */
 export function refetchPendingChatAggregate(
   qc: QueryClient,
   wsId: string | null | undefined,
@@ -166,25 +168,20 @@ export function refetchPendingChatAggregate(
 }
 
 /**
- * Apply a chat:message event: write the turn's USER message into the message
- * caches, then reconcile authoritatively (MUL-5711).
+ * 应用 chat:message 事件：把这一轮的用户消息写进消息缓存，再做权威对账（MUL-5711）。
  *
- * The payload has always carried the whole message; this handler used to read
- * `chat_session_id` off it and drop the rest, which made a human's own prompt
- * the one row that reached the transcript ONLY through the refetch below. Any
- * client that did not write it locally — a second window or device, a send
- * whose HTTP response failed after the server committed, a surface mounting
- * mid-flight — lost it whenever that refetch was dropped, most reliably to the
- * chat:quick_actions cancel. Both caches are staleTime: Infinity, so nothing
- * re-fetched afterwards and the prompt stayed missing until a remount.
+ * 载荷一直携带完整消息；这个 handler 曾经只读 `chat_session_id`、丢掉其余，使得
+ * 人类自己的提示词成了"只能靠下面那次重取"才进得了会话记录的唯一一行。任何没有
+ * 在本地写它的客户端——第二个窗口/设备、服务器提交后 HTTP 响应才失败的发送、
+ * 半路挂载的界面——只要那次重取被丢弃（最常见是 chat:quick_actions 取消）就会丢失。
+ * 两份缓存都是 staleTime: Infinity，之后没人再拉，提示词要一直缺到下次重挂载。
  *
- * Only `role: "user"` is written. SendChatMessage is the event's one producer,
- * and an assistant row fabricated from this payload would carry no elapsed_ms /
- * message_kind / quick_actions while still claiming the id that
- * applyChatDoneToCache is about to write properly.
+ * 只写 `role: "user"`。SendChatMessage 是本事件的唯一生产者；从这个载荷捏造的
+ * assistant 行不会携带 elapsed_ms / message_kind / quick_actions，却还占着
+ * applyChatDoneToCache 即将正确写入的那个 id。
  *
- * The invalidate stays: this payload has no `attachments`, so the reconciling
- * refetch is what fills them in for clients that did not send the message.
+ * 失效保留：本载荷没有 `attachments`，所以对账重取正是为"没有发过这条消息"的
+ * 客户端补上它们的方式。
  */
 export function applyChatMessageToCache(
   qc: QueryClient,
@@ -205,6 +202,7 @@ export function applyChatMessageToCache(
   qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
 }
 
+/** 应用 chat:done 事件：把完成的助手消息写进缓存，并清掉该任务的待处理状态。 */
 export function applyChatDoneToCache(
   qc: QueryClient,
   payload: ChatDonePayload,
@@ -222,28 +220,24 @@ export function applyChatDoneToCache(
       task_id: taskId,
       created_at: payload.created_at ?? new Date().toISOString(),
       elapsed_ms: payload.elapsed_ms ?? null,
-      // Carry the kind so a no_response turn renders its placeholder inline
-      // without waiting for the reconciling refetch (MUL-4351). Missing →
-      // "message" for older servers.
+      // 带上 message_kind，让"无回应"的一轮就地渲染占位，不必等对账重取（MUL-4351）。
+      // 旧服务器缺失 → "message"。
       message_kind: payload.message_kind ?? "message",
       ...(payload.quick_actions !== undefined
         ? { quick_actions: payload.quick_actions }
         : {}),
     };
-    // Idempotent against reconnect replay and against a refetch that already
-    // landed this row.
+    // 对重连重放、对"已把此行落地的重取"都幂等。
     upsertChatMessageToCaches(qc, sessionId, assistant);
   }
-  // Replacement is in the messages list now; remove only this task. If a
-  // follow-up is queued, it becomes the next head in the same render tick.
+  // 替代消息已在消息列表里；这里只移除本任务。若还有后续排队任务，它会在同一
+  // 渲染拍内成为下一任头部。
   qc.setQueryData<ChatPendingTask>(
     chatKeys.pendingTask(sessionId),
     (old) => removePendingChatTask(old, taskId),
   );
-  // Raise/clear the quick-actions placeholder marker. Kept OUTSIDE the
-  // message caches deliberately: the authoritative refetch below replaces
-  // those, and a flag stored on the message would vanish with it. Explicit
-  // `=== true` — older servers omit the field entirely.
+  // 升起/清除快捷操作占位标记。刻意放在消息缓存*之外*：下面的权威重取会替换那些
+  // 缓存，存在消息上的标记会随之消失。显式 `=== true`——旧服务器整个省略该字段。
   qc.setQueryData<ChatQuickActionsPendingState | null>(
     chatKeys.quickActionsPending(sessionId),
     payload.quick_actions_pending === true && messageId
@@ -254,23 +248,18 @@ export function applyChatDoneToCache(
         }
       : null,
   );
-  // Authoritative refetch reconciles redaction / migrations / clients
-  // that took the fallback branch above.
+  // 权威重取对账编校 / 迁移 / 走了上面回退分支的客户端。
   invalidateChatMessageQueries(qc, sessionId);
   qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
 }
 
 /**
- * Apply a chat:quick_actions supplement: patch the identified assistant
- * message's quick_actions in both message caches and resolve the pending
- * placeholder. An empty/missing list is terminal ("no suggestions this
- * turn") — the placeholder still resolves.
+ * 应用 chat:quick_actions 补充：把识别出的助手消息的快捷操作补进两份消息缓存，
+ * 并解决占位标记。空/缺失列表是终态（"这轮没有建议"）——占位仍要解决。
  *
- * `payload.failed` marks a resolution whose regeneration failed: the carried
- * actions are the turn's UNCHANGED prior pills, so the patch is a no-op, but a
- * failure signal is raised for a view to toast — otherwise an explicit refresh
- * that failed would look identical to one that succeeded with the same
- * suggestions (MUL-5149 review).
+ * `payload.failed` 表示一次"再生失败"的解决：携带的操作是这轮**未变**的旧药丸，
+ * 所以补丁是空操作，但要为某个视图升起失败信号来弹 toast——否则一次显式刷新失败
+ * 会与一次成功且建议相同的刷新看起来一样（MUL-5149 评审）。
  */
 export async function applyChatQuickActionsToCache(
   qc: QueryClient,
@@ -281,13 +270,11 @@ export async function applyChatQuickActionsToCache(
   const patch = (m: ChatMessage): ChatMessage =>
     m.id === payload.message_id ? { ...m, quick_actions: actions } : m;
   if (actions.length > 0) {
-    // chat:done's invalidate may still have a messages refetch in flight that
-    // read the assistant row BEFORE the daemon persisted these actions. Cancel
-    // it first so its actions-less response can't land after — and overwrite —
-    // the patch below. Both message caches are staleTime: Infinity, so such an
-    // overwrite would never self-heal (MUL-5149 stale-refetch race). Cancelling
-    // before setQueryData is required: cancelQueries reverts to the pre-fetch
-    // state, so patching first would be undone by the revert.
+    // chat:done 的失效可能仍有一次消息重取在途，它读助手行读在 daemon 持久化这些
+    // 操作*之前*。先取消它，别让那份"无操作"响应落在——并覆盖——下面的补丁之后。
+    // 两份消息缓存都是 staleTime: Infinity，这种覆盖永远不会自愈
+    // （MUL-5149 过期重取竞态）。必须先 cancel 再 setQueryData：cancelQueries
+    // 会回退到取前状态，先打补丁会被那次回退撤销。
     await Promise.all([
       qc.cancelQueries({ queryKey: chatKeys.messages(sessionId) }),
       qc.cancelQueries({ queryKey: chatKeys.messagesPage(sessionId) }),
@@ -309,29 +296,23 @@ export async function applyChatQuickActionsToCache(
             }
           : old,
     );
-    // Settle the cancel (MUL-5711). cancelQueries defaults to `revert: true`,
-    // so the line above does more than ignore the in-flight response — it rolls
-    // the cache back to the snapshot taken when that fetch STARTED, dropping
-    // rows only that response carried (a peer's user message, anything that
-    // landed while this surface was unmounted). With staleTime: Infinity and no
-    // further trigger, the hole survived until a remount. Re-invalidating costs
-    // one request per supplement and cannot lose the pills: the server persists
-    // the actions BEFORE broadcasting this event (SupplementChatQuickActions),
-    // so the refetch this schedules reads them back.
+    // 收拾 cancel 的后果（MUL-5711）。cancelQueries 默认 `revert: true`，
+    // 所以上面这行不止是忽略在途响应——它把缓存回滚到"那次拉取开始"时拍的快照，
+    // 丢掉只有那份响应才带来的行（对等端的一条用户消息、界面卸载期间落地的任何东西）。
+    // 而 staleTime: Infinity 且没有后续触发，这个洞会一直留到下次重挂载。重新失效
+    // 每次补充只多一次请求，且不会丢药丸：服务端在广播本事件*之前*就已持久化操作
+    // （SupplementChatQuickActions），所以这次调度出的重取会读回它们。
     invalidateChatMessageQueries(qc, sessionId);
   }
-  // Resolve the marker only when it belongs to THIS message: a late
-  // supplement for turn N must not clear the marker turn N+1's chat:done
-  // just raised (near-unreachable — the daemon cancels stale passes — but
-  // the guard costs one comparison).
+  // 只有当标记属于这条消息时才解决它：第 N 轮迟到的补充绝不能清掉第 N+1 轮的
+  // chat:done 刚升起的标记（几乎不可达——daemon 会取消过期轮——但这次守卫只费一次比较）。
   qc.setQueryData<ChatQuickActionsPendingState | null>(
     chatKeys.quickActionsPending(sessionId),
     (current) =>
       current && current.message_id !== payload.message_id ? current : null,
   );
-  // Raise a one-shot failure signal on an explicit refresh whose regeneration
-  // failed. A view consumes it to toast and clears it; the `at` nonce keeps a
-  // repeat failure on the same turn from being deduped away.
+  // 对一次显式刷新且再生失败的，升起一次性失败信号。某视图消费它弹 toast 并清掉；
+  // `at` 随机数让同一轮的重复失败不会被去重掉。
   if (payload.failed === true) {
     qc.setQueryData<ChatQuickActionsFailureState | null>(
       chatKeys.quickActionsFailure(sessionId),
@@ -350,21 +331,17 @@ type ChatSessionUpdatedPayload = {
 };
 
 /**
- * Patch the cached sessions row for a `chat:session_updated` event (rename,
- * pin/unpin, archive/unarchive from any tab/device) instead of refetching the
- * whole list. `pinned` is present only on pin/unpin events and `status` only on
- * archive/unarchive; a plain rename omits both, so absent fields leave existing
- * state untouched. When either changes we re-sort so the row lands in the right
- * place (pin → top; archive → the other list) like the server order.
+ * 对 `chat:session_updated` 事件（改名、钉/取消钉、归档/取消归档——来自任一标签页/
+ * 设备）就地修补缓存里的会话行，而不是整表重取。`pinned` 只在钉/取消钉事件里出现、
+ * `status` 只在归档/取消归档里出现；纯改名两者皆缺，所以缺省字段不动既有状态。
+ * 任一变化时重排，让行落到正确位置（钉 → 顶部；归档 → 另一份列表），与服务端顺序一致。
  *
- * Archiving MUST also zero the row's unread here: the server payload carries
- * only status/updated_at, and chatSessionsOptions is `staleTime: Infinity`, so a
- * stale cache in another tab/device would otherwise keep an archived session's
- * unread badge lit forever — the same MUL-4360 stuck-badge bug, one surface over.
- * This mirrors the archive mutation's optimistic patch and the backend deriving
- * unread_count=0 for archived rows. Unarchive does NOT fabricate a count — the
- * true unread state comes back from the server refetch (last_read_at is
- * untouched), so we leave the row's unread fields as-is for `active`.
+ * 归档时**必须**也在这里把行的未读清零：服务端载荷只带 status/updated_at，而
+ * chatSessionsOptions 是 `staleTime: Infinity`——否则另一标签页/设备的陈旧缓存会让
+ * 一个已归档会话的未读徽标永远亮着——同样的 MUL-4360 卡徽标 bug，换了个界面。
+ * 这镜像归档 mutation 的乐观补丁与后端为已归档行推导 unread_count=0 的行为。
+ * 取消归档这里不捏造计数——真实未读状态由服务端重取带回（last_read_at 未动）——
+ * 所以对 `active` 状态保留行上未读字段原样。
  */
 export function applyChatSessionUpdatedToCache(
   qc: QueryClient,
@@ -394,6 +371,7 @@ export function applyChatSessionUpdatedToCache(
   });
 }
 
+/** 从分页消息缓存里移除某条消息（就地过滤每一页）。 */
 function removeChatMessageFromPageCache(
   qc: QueryClient,
   sessionId: string,
@@ -414,6 +392,7 @@ function removeChatMessageFromPageCache(
   );
 }
 
+/** 从两份消息缓存（扁平 + 分页）里移除某条消息。 */
 export function removeChatMessageFromCaches(
   qc: QueryClient,
   sessionId: string,
@@ -427,22 +406,18 @@ export function removeChatMessageFromCaches(
 }
 
 /**
- * Apply a chat:cancel_finalized event (#5219): the deferred outcome of a
- * cancelled chat task, settled after the daemon's transcript flush.
+ * 应用 chat:cancel_finalized 事件（#5219）：被取消 chat 任务的延迟结局，在 daemon
+ * 的会话记录冲刷之后落定。
  *
- * - outcome "stopped": a late "Stopped." assistant row was persisted —
- *   insert it exactly like a chat:done message.
- * - outcome "restored": the triggering user message was deleted — drop it
- *   from the caches. The deleted prompt itself never rides this
- *   workspace-wide broadcast: it is durable server-side and only the
- *   initiator's client refetches it through the creator-authorized
- *   draft-restores query, which the session's composer applies and consumes.
+ * - outcome "stopped"：一条迟到的 "Stopped." 助手行已被持久化——
+ *   像 chat:done 消息一样插入。
+ * - outcome "restored"：触发它的那条用户消息被删除——从缓存里移除它。
+ *   被删的提示词本身从不搭这条工作区广播：它在服务端持久，只有发起者客户端经
+ *   创建者授权的草稿恢复查询重取它，并由该会话的输入框应用与消费。
  *
- * The draft-restores invalidation is gated to the task's initiator and fails
- * closed when initiator_user_id is missing — nothing is lost either way,
- * because the durable restore is fetched again on the next composer mount or
- * network reconnect. Cache patches stay unconditional — they are no-ops for
- * anyone not viewing the session.
+ * 草稿恢复的失效被限定为任务的发起者，且 `initiator_user_id` 缺失时"关闭即失败"——
+ * 两种情况下都没损失，因为持久恢复会在下次输入框挂载或网络重连时再次被取到。
+ * 缓存补丁保持无条件——对没在看该会话的人是无操作。
  */
 export function applyChatCancelFinalizedToCache(
   qc: QueryClient,
@@ -467,8 +442,8 @@ export function applyChatCancelFinalizedToCache(
     if (payload.message_id) {
       removeChatMessageFromCaches(qc, sessionId, payload.message_id);
     }
-    // Deferred finalization can arrive after a queued successor was promoted.
-    // Remove only the cancelled task so a late restore cannot hide newer work.
+    // 延迟的终局可能在某个排队后继已被提升之后到达。只移除被取消的任务，
+    // 让迟到的恢复不能藏起更新的工作。
     qc.setQueryData<ChatPendingTask>(
       chatKeys.pendingTask(sessionId),
       (old) => removePendingChatTask(old, payload.task_id),
@@ -486,15 +461,12 @@ export function applyChatCancelFinalizedToCache(
 }
 
 /**
- * Apply a workspace:updated event directly to the cached workspace list.
- * If the incoming `issue_prefix` differs from what's currently cached, also
- * invalidates issueKeys.all for that workspace, since every issue's rendered
- * identifier (`MUL-123`) is recomputed from the workspace prefix at read time.
+ * 把 workspace:updated 事件直接应用到缓存的工作区列表。
+ * 若入站 `issue_prefix` 与当前缓存的不同，还会失效该工作区的 issueKeys.all——
+ * 因为每条议题渲染出的标识符（`MUL-123`）都是在读取时用工作区前缀重算的。
  *
- * If the workspace isn't in the cached list (first observation), we
- * conservatively invalidate — the prefix is effectively "new" relative to
- * what's cached, so any issues already loaded under the old prefix would
- * be stale anyway.
+ * 若该工作区不在缓存列表里（首次观察到），保守地做失效——前缀相对缓存而言实际是
+ * "新的"，任何在旧前缀下已加载的议题本来就该是过期的。
  */
 export function applyWorkspaceUpdatedToCache(
   qc: QueryClient,
@@ -514,23 +486,20 @@ export function applyWorkspaceUpdatedToCache(
       );
       return;
     }
-    // Do not seed an absent list with one workspace: staleTime is Infinity,
-    // so doing so would hide every other membership until a hard refresh.
+    // 不要用单个工作区去播种一份缺席的列表：staleTime 是 Infinity，那样做会一直
+    // 藏起其它成员关系，直到硬刷新。
     qc.invalidateQueries({ queryKey: issueKeys.all(next.id) });
   }
   qc.invalidateQueries({ queryKey: workspaceKeys.list() });
 }
 
 /**
- * Resolves the slug of the workspace an inbox item originated from, via the
- * cached workspace list (fetched once when the cache is cold).
+ * 经缓存的工作区列表（冷缓存时拉取一次）解析一条 inbox 条目源自哪个工作区的 slug。
  *
- * Notification routing must pin to the *source* workspace of the inbox item,
- * not the currently active one: the user can be on workspace B when an
- * `inbox:new` for workspace A arrives. Returns null when the workspace cannot
- * be resolved — callers must NOT fall back to the current slug (that
- * recreates the wrong-workspace routing this exists to prevent, #3766) and
- * should show the notification without a deep link instead.
+ * 通知路由必须钉在 inbox 条目的*来源*工作区，而不是当前活跃工作区：用户可能正在
+ * 工作区 B，却收到一条属于工作区 A 的 `inbox:new`。工作区解析不出时返回 null——
+ * 调用方绝不能回退到当前 slug（那会重新造出本功能要防止的错误路由，#3766），
+ * 应当改为显示不带深链的通知。
  */
 export async function resolveInboxSourceSlug(
   qc: QueryClient,
@@ -541,22 +510,18 @@ export async function resolveInboxSourceSlug(
     const workspaces = await qc.ensureQueryData(workspaceListOptions());
     return workspaces?.find((w) => w.id === workspaceId)?.slug ?? null;
   } catch {
-    // Workspace list unavailable (e.g. network hiccup): degrade to a
-    // link-less notification rather than guessing a slug.
+    // 工作区列表不可用（例如网络抖动）：退化为不带链接的通知，而不是猜一个 slug。
     return null;
   }
 }
 
 /**
- * Handles an `inbox:new` event end-to-end: inbox cache invalidation, the
- * focus / mute checks, and the native OS banner. Exported so the handler
- * behavior (not just slug resolution) is testable.
+ * 端到端处理一条 `inbox:new` 事件：inbox 缓存失效、聚焦/静音检查、原生系统横幅。
+ * 导出以便 handler 行为（不只是 slug 解析）可测。
  *
- * Every workspace-scoped read here keys on the ITEM's workspace
- * (`item.workspace_id`), never the currently active one (#3766): the cache
- * invalidation must refresh the source workspace's inbox list / unread
- * count / dock badge, the mute check must honor the source workspace's
- * preference, and the deep link must carry the source workspace's slug.
+ * 这里每次"按工作区作用域"的读取都以条目的工作区（`item.workspace_id`）为 key，
+ * 绝不用当前活跃工作区（#3766）：缓存失效必须刷新来源工作区的 inbox 列表/未读数/
+ * dock 徽标，静音检查必须尊重来源工作区的偏好，深链必须携带来源工作区的 slug。
  */
 export async function handleInboxNew(
   qc: QueryClient,
@@ -564,29 +529,22 @@ export async function handleInboxNew(
 ): Promise<void> {
   const sourceWsId = item.workspace_id;
   if (sourceWsId) onInboxNew(qc, sourceWsId, item);
-  // A new item in ANY workspace can light the workspace-switcher dot, so
-  // refresh the cross-workspace summary regardless of the active workspace.
+  // 任何工作区的新条目都可能点亮工作区切换器的圆点，所以无论活跃工作区是谁，
+  // 都要刷新跨工作区的汇总。
   onInboxSummaryInvalidate(qc);
-  // Fire a browser notification only when the app isn't focused. When the
-  // user is already looking at Multica, the inbox sidebar's unread styling is
-  // enough — no need to interrupt with a banner.
+  // 只在应用没有聚焦时弹浏览器通知。用户已经在看 Multica 时，inbox 侧边栏的
+  // 未读样式就够——不必用横幅打断。
   if (typeof document !== "undefined" && document.hasFocus()) return;
-  // Resolve the source workspace's slug once: it pins BOTH the mute check
-  // and the deep link to the workspace the inbox item BELONGS to, never the
-  // currently active one. Reading `getCurrentSlug()` here was the source of
-  // wrong-workspace routing (#3766): an `inbox:new` from workspace A arriving
-  // while workspace B is active emitted a notification carrying B's slug and
-  // A's issue id, deep-linking to an issue B doesn't have.
+  // 只解析一次来源工作区的 slug：它把静音检查和深链都钉在 inbox 条目*属于*的
+  // 工作区上，绝不在当前活跃工作区。在这里读 `getCurrentSlug()` 曾是错误路由
+  // 的来源（#3766）：工作区 B 活跃时到达一条工作区 A 的 `inbox:new`，会发出一条
+  // 带 B 的 slug 和 A 的议题 id 的通知，深链到一个 B 没有的议题。
   const slug = await resolveInboxSourceSlug(qc, sourceWsId);
-  // Respect the SOURCE workspace's system-notification preference. Keying the
-  // query on `sourceWsId` is not enough: the request resolves its workspace
-  // from the `X-Workspace-Slug` header, which follows the ACTIVE workspace —
-  // so a cold-cache lookup while viewing B would read B's mute setting and
-  // cache it under A's key. Passing the source slug scopes the fetch to A.
-  // When the slug can't be resolved we read only an already-warm cache
-  // (populated earlier with the correct workspace context) rather than fetch
-  // with the wrong one; on network failure we fall through to the default
-  // ("all") rather than swallow the banner.
+  // 尊重*来源*工作区的系统通知偏好。把查询 key 在 `sourceWsId` 上并不够：请求会用
+  // 跟随*活跃*工作区的 `X-Workspace-Slug` 头解析自己的工作区——所以查看 B 时一次
+  // 冷缓存查询会读到 B 的静音设置、并缓存到 A 的 key 下。传来源 slug 把拉取限定在 A。
+  // 解析不出 slug 时只读一份已热的缓存（早先已用正确的工作区上下文填过）而不是用
+  // 错误的上下文去拉；网络失败时落入默认（"all"）而不是吞掉横幅。
   if (sourceWsId) {
     try {
       const prefData = slug
@@ -598,16 +556,14 @@ export async function handleInboxNew(
           );
       if (prefData?.preferences?.system_notifications === "muted") return;
     } catch {
-      // Fall through with default behavior.
+      // 落入默认行为。
     }
   }
-  // `issueKey` matches the inbox page's URL selector (issue id when the
-  // item is attached to an issue, otherwise the inbox item id). `itemId`
-  // is the inbox row's own id, needed to fire markInboxRead on click.
-  // A null slug (workspace list unavailable / item from a workspace this
-  // client can't see) still shows the banner — the user should learn about
-  // the inbox item — but with an empty slug so the click is a no-op
-  // (the inbox bridge ignores empty slugs) instead of routing wrong.
+  // `issueKey` 与 inbox 页的 URL 选择器一致（条目挂在议题上时用议题 id，否则用
+  // inbox 条目 id）。`itemId` 是 inbox 行的 id，点击时用它触发 markInboxRead。
+  // 空的 slug（工作区列表不可用 / 条目来自本客户端不可见的工作区）仍显示横幅——
+  // 用户应该知道有条 inbox 条目——但用空 slug，点击变无操作（inbox bridge 忽略
+  // 空 slug），而不是路由错。
   const payload: SystemNotificationPayload = {
     slug: slug ?? "",
     itemId: item.id,
@@ -615,15 +571,13 @@ export async function handleInboxNew(
     title: item.title,
     body: item.body ?? "",
   };
-  // No-op without granted permission or on SSR — the in-app inbox and unread
-  // badge still reflect the new item.
+  // 未授权或 SSR 时无操作——应用内 inbox 与未读徽标仍会反映新条目。
   showWebNotification(payload);
 }
 
 /**
- * Invalidates all workspace-scoped queries. Used after reconnect and when a
- * new WSClient instance is detected (workspace switch) to recover events
- * missed while disconnected.
+ * 失效所有按工作区作用域的查询。重连后、以及检测到新 WSClient 实例（工作区切换）
+ * 时使用，以找回断线期间错过的事件。
  */
 function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
   const wsId = getCurrentWsId();
@@ -645,42 +599,38 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
     qc.invalidateQueries({ queryKey: chatKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: labelKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: propertyKeys.all(wsId) });
-    // A catalog edit missed while disconnected would otherwise sit behind the
-    // 5-minute staleTime — long enough to offer a status the server already
-    // archived, or to keep painting its old name.
+    // 断线期间漏掉的目录编辑本会坐在 5 分钟 staleTime 后面——足以把一个服务器已
+    // 归档的状态继续提供出去，或一直画着它的旧名字。
     qc.invalidateQueries({ queryKey: issueStatusKeys.all(wsId) });
   }
-  // Cross-workspace, so outside the wsId guard: a reconnect may have missed
-  // inbox events from any workspace, so re-pull the switcher-dot summary.
+  // 跨工作区，所以在 wsId 守卫之外：重连可能错过任意工作区的 inbox 事件，
+  // 所以重拉切换器圆点的汇总。
   onInboxSummaryInvalidate(qc);
-  // Per-issue caches are keyed without wsId, so the issueKeys.all(wsId)
-  // prefix above does not reach them. They rely entirely on WS events for
-  // freshness (staleTime: Infinity), so events missed while disconnected
-  // left them stale until a full reload — the inbox showed an agent's new
-  // comment while the issue timeline didn't (#3953). Inactive caches only
-  // get marked stale here and refetch on next mount; the one mounted issue
-  // refetches immediately, same as its own useWSReconnect already does.
+  // 按议题的缓存不带 wsId 作 key，所以上面的 issueKeys.all(wsId) 前缀够不到它们。
+  // 它们完全依赖 WS 事件保新鲜（staleTime: Infinity），断线期间错过的事件会让它们
+  // 一直陈旧到整页刷新——inbox 显示了某 Agent 的新评论而议题时间线没有（#3953）。
+  // 非活跃缓存在这里只被标为过期、下次挂载时重取；唯一挂载着的议题立即重取，
+  // 与它自己的 useWSReconnect 行为相同。
   qc.invalidateQueries({ queryKey: issueKeys.timelineAll() });
   qc.invalidateQueries({ queryKey: issueKeys.reactionsAll() });
   qc.invalidateQueries({ queryKey: issueKeys.subscribersAll() });
   qc.invalidateQueries({ queryKey: issueKeys.usageAll() });
   qc.invalidateQueries({ queryKey: issueKeys.attachmentsAll() });
   qc.invalidateQueries({ queryKey: issueKeys.tasksAll() });
-  // Per-chat-session caches are also keyed without wsId, so the
-  // chatKeys.all(wsId) prefix above only reaches session lists / aggregates.
-  // Message streams rely on WS invalidation with staleTime: Infinity; recover
-  // sessions that missed chat/task events while the socket was disconnected.
+  // 按会话的消息缓存同样不带 wsId 作 key，所以上面 chatKeys.all(wsId) 前缀只够到
+  // 会话列表/聚合。消息流依赖 staleTime: Infinity 下的 WS 失效；找回在 socket 断线
+  // 期间错过 chat/task 事件的会话。
   qc.invalidateQueries({ queryKey: chatKeys.messagesAll() });
   qc.invalidateQueries({ queryKey: chatKeys.messagesPageAll() });
   qc.invalidateQueries({ queryKey: chatKeys.pendingTaskAll() });
   qc.invalidateQueries({ queryKey: chatKeys.taskMessagesAll() });
-  // A chat:cancel_finalized broadcast missed while disconnected is exactly
-  // what the durable draft-restore rows exist for (#5219) — re-pull them so
-  // a mounted composer recovers the prompt without a remount.
+  // 断线期间错过的一条 chat:cancel_finalized 广播正是持久草稿恢复行存在的意义
+  // （#5219）——重拉它们，让一个挂载着的输入框不用重挂载就能恢复提示词。
   qc.invalidateQueries({ queryKey: chatKeys.draftRestoresAll() });
   qc.invalidateQueries({ queryKey: workspaceKeys.list() });
 }
 
+/** 失效某工作区全部 squad 的"成员状态"查询。 */
 function invalidateSquadMemberStatusQueries(qc: QueryClient, wsId: string): void {
   qc.invalidateQueries({
     predicate: (query) => {
@@ -695,26 +645,26 @@ function invalidateSquadMemberStatusQueries(qc: QueryClient, wsId: string): void
   });
 }
 
+/** 集中的 WS → store 同步需要的平台 store 集合。 */
 export interface RealtimeSyncStores {
   authStore: UseBoundStore<StoreApi<AuthState>>;
 }
 
 /**
- * Centralized WS -> store sync. Called once from WSProvider.
+ * 集中的 WS → store 同步。由 WSProvider 调用一次。
  *
- * Uses the "WS as invalidation signal + refetch" pattern:
- * - onAny handler extracts event prefix and calls the matching store refresh
- * - Debounce per-prefix prevents rapid-fire refetches (e.g. bulk issue updates)
- * - Precise handlers only for side effects (toast, navigation, self-check)
+ * 采用"WS 作失效信号 + 重取"的模式：
+ * - onAny 处理器提取事件前缀并调用对应 store 刷新
+ * - 按前缀去抖，防止连珠炮式重取（例如批量议题更新）
+ * - 精确 handler 只留给副作用（toast、导航、自我校验）
  *
- * Per-issue events (comments, activity, reactions, subscribers) are handled
- * both here (invalidation fallback) and by per-page useWSEvent hooks (granular
- * updates). Daemon register events invalidate runtimes globally; heartbeats
- * are skipped to avoid excessive refetches.
+ * 按议题的事件（评论、活动、反应、订阅者）既在这里处理（失效兜底），也由各页的
+ * useWSEvent hooks 处理（精细更新）。daemon 注册事件全局失效 runtimes；
+ * 心跳跳过以免过度重取。
  *
- * @param ws - WebSocket client instance (null when not yet connected)
- * @param stores - Platform-created Zustand store instances for auth and workspace
- * @param onToast - Optional callback for showing toast messages (platform-specific)
+ * @param ws - WebSocket 客户端实例（尚未连上时为 null）
+ * @param stores - 平台创建的 auth/workspace 等 Zustand store 实例
+ * @param onToast - 显示 toast 消息的可选回调（平台相关）
  */
 export function useRealtimeSync(
   ws: WSClient | null,
@@ -724,14 +674,13 @@ export function useRealtimeSync(
   const { authStore } = stores;
   const qc = useQueryClient();
 
-  // Captured via ref so the (rare) hasOnboarded change doesn't re-subscribe
-  // every WS handler in this effect. The resolver reads `.current` at the
-  // moment workspace-loss fires, which is what we want.
+  // 用 ref 捕获 hasOnboarded，让（罕见的）hasOnboarded 变化不会让本 effect 里每个
+  // WS handler 重新订阅。解析器在工作区消失触发那一刻读 `.current`——正是我们想要的。
   const hasOnboarded = useHasOnboarded();
   const hasOnboardedRef = useRef(hasOnboarded);
   hasOnboardedRef.current = hasOnboarded;
 
-  // Main sync: onAny -> refreshMap with debounce
+  // 主同步：onAny → refreshMap + 去抖。
   useEffect(() => {
     if (!ws) return;
 
@@ -739,12 +688,10 @@ export function useRealtimeSync(
       inbox: () => {
         const wsId = getCurrentWsId();
         if (wsId) onInboxInvalidate(qc, wsId);
-        // inbox:read / inbox:archived / inbox:unarchived / batch events arrive
-        // here. They can originate from a workspace other than the active one
-        // (personal events fan out to all the user's connections), so always
-        // refresh the cross-workspace summary — its dot must clear when another
-        // workspace's items are read/archived, and light again when an unread
-        // item is restored from the archive.
+        // inbox:read / inbox:archived / inbox:unarchived / 批量事件都落在这里。
+        // 它们可能来自当前活跃工作区之外的另一个工作区（个人事件会扇出到该用户所有
+        // 连接），所以总是刷新跨工作区汇总——别的条目被读/归档时它的圆点必须熄灭，
+        // 未读条目从归档里恢复时又要点亮。
         onInboxSummaryInvalidate(qc);
       },
       agent: () => {
@@ -752,10 +699,9 @@ export function useRealtimeSync(
         if (wsId) {
           qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
           qc.invalidateQueries({ queryKey: workspaceWorkingAgentsKeys.all(wsId) });
-          // Squad members status is derived per agent, so any agent
-          // change (status flip, archive, runtime swap) needs to refresh the
-          // per-squad members-status cache without refetching the static squad
-          // list summary.
+          // Squad 成员状态是逐个 Agent 派生的，所以任何 Agent 变化（状态翻转、归档、
+          // 换 runtime）都要刷新按 squad 的 members-status 缓存，而不重取静态的
+          // squad 列表摘要。
           invalidateSquadMemberStatusQueries(qc, wsId);
         }
       },
@@ -763,11 +709,9 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
       },
-      // workspace:updated is handled by the specific handler below
-      // (compares prefixes to decide whether to also invalidate issues).
-      // This generic fallback still fires for workspace:deleted (paired
-      // with the specific navigation handler) and any future workspace:*
-      // events without dedicated handlers.
+      // workspace:updated 由下面特定 handler 处理（比较前缀决定是否也要失效议题）。
+      // 这个通用兜底仍会为 workspace:deleted（配合特定导航 handler）以及任何还没有
+      // 专属 handler 的未来 workspace:* 事件触发。
       workspace: () => {
         qc.invalidateQueries({ queryKey: workspaceKeys.list() });
       },
@@ -783,16 +727,14 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
-          // squad:deleted triggers assignee transfer — refresh issues too.
+          // squad:deleted 会触发负责人转移——议题也要一起刷新。
           qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
         }
       },
       label: () => {
-        // Label catalogs are independently scoped to issues, agents, and
-        // skills. The generic event prefix does not carry the scope into this
-        // dispatcher, so refresh all three resource projections. Issue rows
-        // embed label snapshots; agent/skill label pickers use their resource
-        // cache plus the shared label query tree.
+        // 标签目录分别按议题、Agent、技能独立作用域。通用事件前缀不携带作用域进这个
+        // 分发器，所以刷新全部三类资源投影。议题行内嵌标签快照；Agent/技能的标签
+        // 选择器用自己的资源缓存 + 共享标签查询树。
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: ["labels", wsId] });
@@ -801,16 +743,13 @@ export function useRealtimeSync(
           qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
         }
       },
-      // The issue status catalog (MUL-6243). An admin edits it in the settings
-      // page; every other tab and device is rendering statuses out of it.
+      // 议题状态目录（MUL-6243）。管理员在设置页里编辑它；其它每个标签页/设备都在
+      // 基于它渲染状态。
       //
-      // Invalidate only — the event carries no entry to merge. Issue caches are
-      // deliberately NOT dragged along: a row stores the status KEY, and its
-      // name, color and category are resolved from this catalog at render time
-      // (`useStatusLabel`, `colorOf`), so refetching the catalog is what makes a
-      // rename repaint. Pulling every board and list with it would turn one
-      // admin rename into a workspace-wide refetch storm on every connected
-      // client. (MUL-6458)
+      // 只失效——事件不带可合并的条目。议题缓存刻意不跟着拖：行里存的是状态 KEY，
+      // 名字/颜色/分类都在渲染时从该目录解析（`useStatusLabel`、`colorOf`），所以
+      // 重取目录才是让改名重新绘制的动作。把它连同每个看板和列表一起拉，会把一次
+      // 管理员改名变成每个已连接客户端的整工作区重取风暴。（MUL-6458）
       issue_status: () => {
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: issueStatusKeys.all(wsId) });
@@ -824,9 +763,8 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
-          // Runtime online/offline transitions move the derived status
-          // for every agent that hosts on this runtime, which shifts the
-          // working/idle/offline pill on the squad page.
+          // runtime 在线/离线转换会移动托管在这台 runtime 上每个 Agent 的派生状态，
+          // 从而改变 squad 页上的 working/idle/offline 药丸。
           invalidateSquadMemberStatusQueries(qc, wsId);
         }
       },
@@ -863,120 +801,104 @@ export function useRealtimeSync(
         if (wsId) qc.invalidateQueries({ queryKey: telegramKeys.installations(wsId) });
       },
       pull_request: () => {
-        // PR list is keyed by issue id, not workspace, so we invalidate all
-        // PR queries — the open issue detail page will refetch its own list.
+        // PR 列表按议题 id 作 key、不按工作区，所以失效全部 PR 查询——开着的议题
+        // 详情页会重取自己的那份列表。
         qc.invalidateQueries({ queryKey: ["github", "pull-requests"] });
       },
-      // Powers the agent presence cache: any task lifecycle change
-      // (dispatch / completed / failed / cancelled) refreshes the
-      // workspace-wide agent-task-snapshot query so per-agent presence
-      // reflects the change. task:message is NOT in this prefix path — it
-      // stays in specificEvents to avoid an invalidate storm during long runs.
+      // 驱动 Agent 呈现缓存：任何任务生命周期变化（dispatch/completed/failed/
+      // cancelled）都刷新工作区级 agent-task-snapshot 查询，让逐 Agent 呈现反映变化。
+      // task:message 不在这个前缀路径里——它留在 specificEvents 里，避免长运行期间
+      // 的失效风暴。
       task: () => {
         const wsId = getCurrentWsId();
         if (!wsId) return;
         qc.invalidateQueries({ queryKey: agentTaskSnapshotKeys.list(wsId) });
         qc.invalidateQueries({ queryKey: workspaceWorkingAgentsKeys.all(wsId) });
-        // The Table working-agent shortcut derives an assignee set from the
-        // projection above. Refresh its server-owned graph alongside that set
-        // so rows/groups/facets cannot remain on an old task transition while
-        // the projection refetches (global staleTime is Infinity).
+        // Table 的"工作中 Agent"快捷方式从上面那份投影推导负责人集合。把服务端持有的
+        // 关系图与那集合一起刷新，别让行/组/facet 停留在一次旧任务转换上，而投影却
+        // 已在重取（全局 staleTime 是 Infinity）。
         qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
-        // 30d activity series shares the same lifecycle signal — any task
-        // completion / failure shifts the histogram. (Dispatch alone
-        // doesn't change a completed_at-anchored series, but invalidating
-        // here keeps the WS-handler shape uniform; the resulting refetch
-        // is cheap.) Both the list (trailing 7d slice) and the detail
-        // panel read off this single cache.
+        // 30 天活动序列共享同一生命周期信号——任何任务完成/失败都会移动直方图。
+        // （单独 dispatch 不会改变按 completed_at 锚定的序列，但在这里失效保持
+        // WS handler 形状统一；引发的重取很便宜。）列表（尾部 7 天切片）和详情面板
+        // 都读这一份缓存。
         qc.invalidateQueries({ queryKey: agentActivityKeys.last30d(wsId) });
-        // 30-day run count likewise increments per task lifecycle event.
+        // 30 天运行计数同样随每个任务生命周期事件递增。
         qc.invalidateQueries({ queryKey: agentRunCountsKeys.last30d(wsId) });
-        // Per-agent task list (Activity tab "Recent work"). Prefix match
-        // catches every agent's list — the per-agent detail key sits
-        // under agentTasks/<wsId>/<agentId>.
-        qc.invalidateQueries({ queryKey: agentTasksKeys.all(wsId) });
-        // Per-issue task list (issue-detail Execution log). Prefix match
-        // across all issues — keeps the contract "any task: event makes
-        // every list-of-tasks query stale" so cache stays fresh even
-        // when the relevant component isn't currently mounted.
-        qc.invalidateQueries({ queryKey: ["issues", "tasks"] });
-        // Per-issue token usage card (issue-detail right rail). Same
-        // shape as the tasks invalidation above — any task lifecycle
-        // event shifts the aggregated usage numbers.
-        qc.invalidateQueries({ queryKey: ["issues", "usage"] });
-        // Squad members-status reads the same task lifecycle to flip
-        // working ↔ idle for each agent member.
-        invalidateSquadMemberStatusQueries(qc, wsId);
-        // Comment trigger previews answer "who would a send wake right
-        // now" — the pending-task dedup guard makes that answer
-        // queue-dependent, so any task lifecycle change must refresh an
-        // open composer's chips (e.g. an agent finishing its run becomes
-        // triggerable again mid-typing).
-        qc.invalidateQueries({ queryKey: issueKeys.commentTriggerPreviewAll() });
-        // Issue-trigger previews (assign/status/create/batch) are deliberately
-        // NOT invalidated here. Unlike comment triggers, the assign source
-        // (create / assignee change) cancels existing tasks before enqueuing, so
-        // a task event can never change its verdict; only the status source's
-        // pending dedup could, and that preview is advisory — the write path
-        // re-evaluates authoritatively, so a rare stale label is harmless.
-        // Refetching every mounted preview on every workspace task event caused
-        // visible flicker, so the preview now refetches only on input change
-        // (signature), mirroring its query design (MUL-3375).
+      // 单 Agent 任务列表（Activity 标签"Recent work"）。前缀匹配会覆盖每个
+      // Agent 的列表——单 Agent 详情 key 在 agentTasks/<wsId>/<agentId> 之下。
+      qc.invalidateQueries({ queryKey: agentTasksKeys.all(wsId) });
+      // 按议题的任务列表（议题详情"执行日志"）。跨所有议题做前缀匹配——维持
+      // "任何 task: 事件都让所有任务列表查询过期"的契约，即使相关组件当前没挂载
+      // 缓存也保持新鲜。
+      qc.invalidateQueries({ queryKey: ["issues", "tasks"] });
+      // 按议题的 token 用量卡片（议题详情右侧栏）。与上面 tasks 失效同构——任何
+      // 任务生命周期事件都会移动聚合用量数字。
+      qc.invalidateQueries({ queryKey: ["issues", "usage"] });
+      // Squad 成员状态用同一份任务生命周期把每个 Agent 成员在 working ↔ idle 间翻转。
+      invalidateSquadMemberStatusQueries(qc, wsId);
+      // 评论触发预览回答"现在发一条会唤醒谁"——待处理任务去重守卫让答案依赖队列，
+      // 所以任何任务生命周期变化都要刷新打开的输入框的 chips（例如一个 Agent 跑完
+      // 后，打字中途它又变成可触发的了）。
+      qc.invalidateQueries({ queryKey: issueKeys.commentTriggerPreviewAll() });
+      // 议题触发预览（指派/状态/创建/批量）刻意不在这里失效。与评论触发不同，指派
+      // 来源（创建/负责人变更）在入队前会取消已有任务，所以任务事件永远改变不了它的
+      // 判定；只有状态来源的 pending 去重可能改变，而那个预览只是建议性——写路径会
+      // 权威地重新评估，罕见的一次陈旧标签无害。每次工作区任务事件都把每个挂载预览
+      // 重取一次会造成可见闪烁，所以预览现在只在输入变化（签名）时重取，与其查询
+      // 设计一致（MUL-3375）。
       },
     };
 
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
-    const debouncedRefresh = (prefix: string, fn: () => void) => {
-      const existing = timers.get(prefix);
-      if (existing) clearTimeout(existing);
-      timers.set(
-        prefix,
-        setTimeout(() => {
-          timers.delete(prefix);
-          fn();
-        }, 100),
-      );
-    };
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const debouncedRefresh = (prefix: string, fn: () => void) => {
+    const existing = timers.get(prefix);
+    if (existing) clearTimeout(existing);
+    timers.set(
+      prefix,
+      setTimeout(() => {
+        timers.delete(prefix);
+        fn();
+      }, 100),
+    );
+  };
 
-    // Event types handled by specific handlers below -- skip generic refresh
-    const specificEvents = new Set([
-      "workspace:updated",
-      "issue:updated", "issue:created", "issue:deleted", "issue_attachments:changed", "issue_labels:changed", "issue_metadata:changed", "issue_properties:changed", "property:created", "property:updated", "inbox:new",
-      "comment:created", "comment:updated", "comment:deleted",
-      "comment:resolved", "comment:unresolved",
-      "activity:created",
-      "reaction:added", "reaction:removed",
-      "issue_reaction:added", "issue_reaction:removed",
-      "subscriber:added", "subscriber:removed",
-      "daemon:heartbeat",
-      // Chat events are handled explicitly below; do not double-invalidate.
-      "chat:message", "chat:done", "chat:quick_actions", "chat:cancel_finalized", "chat:session_read",
-      "chat:session_created", "chat:session_deleted", "chat:session_updated",
-      // task:message stays out of the prefix path because it fires per
-      // streamed message during a long run — invalidating the snapshot on
-      // every message would flood the network. Specific chat handlers below
-      // still receive it via ws.on() (a separate subscription channel).
-      "task:message",
-      // task:completed / task:failed deliberately NOT here. They go through
-      // both the task-prefix invalidate (refreshes the agent-task-snapshot
-      // cache) AND the chat-specific ws.on() handlers below. The two
-      // channels are independent — onAny dispatch and ws.on are separate
-      // subscriptions.
-    ]);
+  // 以下事件类型由下方特定 handler 处理——跳过通用刷新。
+  const specificEvents = new Set([
+    "workspace:updated",
+    "issue:updated", "issue:created", "issue:deleted", "issue_attachments:changed", "issue_labels:changed", "issue_metadata:changed", "issue_properties:changed", "property:created", "property:updated", "inbox:new",
+    "comment:created", "comment:updated", "comment:deleted",
+    "comment:resolved", "comment:unresolved",
+    "activity:created",
+    "reaction:added", "reaction:removed",
+    "issue_reaction:added", "issue_reaction:removed",
+    "subscriber:added", "subscriber:removed",
+    "daemon:heartbeat",
+    // Chat 事件在下面显式处理；这里不要双重失效。
+    "chat:message", "chat:done", "chat:quick_actions", "chat:cancel_finalized", "chat:session_read",
+    "chat:session_created", "chat:session_deleted", "chat:session_updated",
+    // task:message 不从前缀路径走，因为长运行中它每条流式消息都发一次——每条消息
+    // 都失效快照会淹没网络。下面的 Chat 特定 handler 仍经 ws.on() 收到它
+    // （一条独立订阅通道）。
+    "task:message",
+    // task:completed / task:failed 刻意不在此列。它们既走 task 前缀失效（刷新
+    // agent-task-snapshot 缓存）也走下面的 chat 特定 ws.on() handler。两条通道
+    // 相互独立——onAny 分发与 ws.on 是各自的订阅。
+  ]);
 
-    const unsubAny = ws.onAny((msg) => {
-      if (specificEvents.has(msg.type)) return;
-      const prefix = msg.type.split(":")[0] ?? "";
-      const refresh = refreshMap[prefix];
-      if (refresh) debouncedRefresh(prefix, refresh);
-    });
+  const unsubAny = ws.onAny((msg) => {
+    if (specificEvents.has(msg.type)) return;
+    const prefix = msg.type.split(":")[0] ?? "";
+    const refresh = refreshMap[prefix];
+    if (refresh) debouncedRefresh(prefix, refresh);
+  });
 
-    // --- Specific event handlers (granular cache updates) ---
-    // No self-event filtering: actor_id identifies the USER, not the TAB.
-    // Filtering by actor_id would block other tabs of the same user.
-    // Instead, both mutations and WS handlers use dedup checks to be idempotent.
+  // --- 特定事件 handler（精细缓存更新） ---
+  // 不做"自我事件"过滤：actor_id 标识的是"用户"，不是"标签页"。按 actor_id 过滤
+  // 会挡住同一用户的其它标签页。取而代之的是 mutation 与 WS handler 都用去重检查
+  // 来保证幂等。
 
-    const unsubIssueUpdated = ws.on("issue:updated", (p) => {
+  const unsubIssueUpdated = ws.on("issue:updated", (p) => {
       const payload = p as IssueUpdatedPayload;
       const { issue } = payload;
       if (!issue?.id) return;
@@ -1038,22 +960,19 @@ export function useRealtimeSync(
       const wsId = getCurrentWsId();
       if (wsId) {
         onIssuePropertiesChanged(qc, wsId, issue_id, properties ?? {}, issue_revision);
-        // The catalog embeds per-definition usage counts; every value
-        // set/unset shifts them. The list is tiny, so a refetch beats
-        // trying to patch counts client-side.
+        // 目录里嵌着每个定义的使用计数；每次设值/清值都会让它变化。目录很小，
+        // 重取好过在客户端尝试补计数。
         qc.invalidateQueries({ queryKey: propertyKeys.all(wsId) });
       }
     });
 
-    // Definition changes (create / rename / options / archive) — refetch the
-    // catalog; issue caches keep raw value bags so they stay valid.
+    // 定义变化（创建/改名/选项/归档）——重取目录；议题缓存保留原始值袋子所以仍有效。
     const unsubPropertyChanged = ["property:created", "property:updated"].map((event) =>
       ws.on(event as "property:created" | "property:updated", () => {
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: propertyKeys.all(wsId) });
-          // Group order, supported group types, and unavailable option values
-          // are derived from the property definition, not just issue rows.
+          // 分组顺序、支持的分组类型、不可用的选项值都从属性定义推导，不只是议题行。
           qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
         }
       }),
@@ -1065,22 +984,17 @@ export function useRealtimeSync(
       await handleInboxNew(qc, item);
     });
 
-    // --- Timeline event handlers (global fallback) ---
-    // These events are also handled granularly by useIssueTimeline when
-    // IssueDetail is mounted. This global handler exists to mark the
-    // timeline cache stale for issues whose IssueDetail is *not* mounted,
-    // so stale data isn't served on next mount (staleTime: Infinity, set on
-    // the QueryClient default, relies on this).
+    // --- 时间线事件 handler（全局兜底） ---
+    // 这些事件在 IssueDetail 挂载时也由 useIssueTimeline 精细处理。这里的全局
+    // handler 存在，是为了把"其 IssueDetail *没*挂载"的议题的时间线缓存标记为过期，
+    // 免得下次挂载时端出陈旧数据（QueryClient 默认的 staleTime: Infinity 正依赖它）。
     //
-    // `refetchType: "none"` is the load-bearing detail: without it, an
-    // active IssueDetail observer would refetch the entire timeline on
-    // every comment / activity / reaction event. The refetch replaces
-    // every entry's reference and busts React.memo on every CommentCard
-    // subtree (visible during AI streaming as a flash across all sibling
-    // threads, MUL-1941). Inactive observers don't refetch either way;
-    // when IssueDetail mounts later, the stale flag triggers the refetch
-    // through `refetchOnMount`. Active observers stay fresh via the
-    // granular setQueryData handlers in `useIssueTimeline`.
+    // `refetchType: "none"` 是关键细节：没有它，一个活跃的 IssueDetail 观察者会在
+    // 每条评论/活动/反应事件时把整条时间线重取一遍。重取会替换每条条目的引用，
+    // 弄爆每个 CommentCard 子树上的 React.memo（AI 流式输出时表现为所有兄弟线程一起
+    // 闪，MUL-1941）。非活跃观察者无论哪种都不重取；IssueDetail 稍后挂载时，
+    // 过期标记经 `refetchOnMount` 触发重取。活跃观察者则靠 `useIssueTimeline` 里的
+    // 精细 setQueryData handler 保持新鲜。
     const invalidateTimeline = (issueId: string) => {
       qc.invalidateQueries({
         queryKey: issueKeys.timeline(issueId),
@@ -1092,18 +1006,16 @@ export function useRealtimeSync(
       const { comment, issue_revision: issueRevision } = p as CommentCreatedPayload;
       if (!comment?.issue_id) return;
       invalidateTimeline(comment.issue_id);
-      // A new comment bumps the parent issue's updated_at server-side
-      // (MUL-5009), so any open board/list sorted by "Updated date" has
-      // drifted. Refetch just those keys to re-sort the commented card into
-      // place; every other sort is untouched. Only comment:created bumps
-      // updated_at, so the other comment events below deliberately do not.
+      // 新评论会在服务端抬升父议题的 updated_at（MUL-5009），所以任何按"更新时间"
+      // 排序的开着的看板/列表都已漂移。只重取这些 key，把被评论的卡片重排到正确位置；
+      // 其它排序不受影响。只有 comment:created 抬升 updated_at，所以下面其它评论事件
+      // 刻意不做这件事。
       const wsId = getCurrentWsId();
       if (wsId) {
         invalidateUpdatedAtSortedIssueLists(qc, wsId);
         invalidateLastActivitySortedIssueLists(qc, wsId);
-        // A comment carries only the aggregate owner revision, not a full
-        // Issue snapshot. Mark stale projections for an authoritative fetch
-        // without making a later full snapshot look older than the cache.
+        // 一条评论只携带聚合的所有者 revision，不是完整 Issue 快照。把投影标记为过期
+        // 以触发权威拉取，又不会让之后某份完整快照显得比缓存旧。
         if (issueRevision) {
           onIssueAuxiliaryRevision(qc, wsId, comment.issue_id, issueRevision);
         } else {
@@ -1167,7 +1079,7 @@ export function useRealtimeSync(
       if (issue_id) invalidateTimeline(issue_id);
     });
 
-    // --- Issue-level reactions & subscribers (global fallback) ---
+    // --- 议题级反应与订阅者（全局兜底） ---
 
     const unsubIssueReactionAdded = ws.on("issue_reaction:added", (p) => {
       const { issue_id, issue_revision } = p as IssueReactionAddedPayload;
@@ -1197,14 +1109,11 @@ export function useRealtimeSync(
       if (issue_id) qc.invalidateQueries({ queryKey: issueKeys.subscribers(issue_id) });
     });
 
-    // --- Side-effect handlers (toast, navigation) ---
+    // --- 副作用 handler（toast、导航） ---
 
-    // After the current workspace disappears (deleted or we were kicked out),
-    // navigate to another workspace the user still has access to, or to the
-    // create-workspace page. We use a full-page navigation: this reliably
-    // tears down any in-flight queries / subscriptions tied to the dead
-    // workspace without relying on framework-specific routers from here in
-    // core.
+    // 当前工作区消失后（被删或我们被踢出），导航到用户仍可访问的另一个工作区，
+    // 或去创建工作区页。用整页导航：这能可靠地拆掉所有绑定在已死工作区上的在途
+    // 查询/订阅，而不必在 core 里依赖框架特定的路由器。
     const relocateAfterWorkspaceLoss = async (lostWsId: string) => {
       const wsList = await qc.fetchQuery({
         ...workspaceListOptions(),
@@ -1226,14 +1135,13 @@ export function useRealtimeSync(
 
     const unsubWsDeleted = ws.on("workspace:deleted", (p) => {
       const { workspace_id } = p as WorkspaceDeletedPayload;
-      // Self-initiated delete: useDeleteWorkspace owns storage cleanup and
-      // navigation (both run after the DELETE resolves). Reacting here too
-      // would race that flow's navigation with a full-page relocate — the
-      // CancelledError + reload combo this guard exists to prevent. This
-      // handler only serves deletes initiated elsewhere (other user/device).
+      // 自己发起的删除：useDeleteWorkspace 负责存储清理和导航（都在 DELETE 解析后
+      // 执行）。这里也响应会与那套流程的导航争抢整页 relocation——这个守卫正是为防
+      // 止 CancelledError + reload 组合。本 handler 只服务在别处（其它用户/设备）
+      // 发起的删除。
       if (isWorkspaceDeletePending(workspace_id)) return;
-      // Event payload has UUID; look up slug from cached workspace list
-      // since clearWorkspaceStorage keys are namespaced by slug.
+      // 事件载荷给的是 UUID；从缓存的工作区列表查 slug——clearWorkspaceStorage 的
+      // key 按 slug 命名空间。
       const wsList = qc.getQueryData<{ id: string; slug: string }[]>(workspaceKeys.list()) ?? [];
       const deletedSlug = wsList.find((w) => w.id === workspace_id)?.slug;
       if (deletedSlug) clearWorkspaceStorage(defaultStorage, deletedSlug);
@@ -1247,6 +1155,7 @@ export function useRealtimeSync(
     const unsubMemberRemoved = ws.on("member:removed", (p) => {
       const { user_id } = p as MemberRemovedPayload;
       const myUserId = authStore.getState().user?.id;
+      // 自己被移出工作区：清理该工作区的本地存储并导航离开。
       if (user_id === myUserId) {
         const slug = getCurrentSlug();
         const wsId = getCurrentWsId();
@@ -1262,6 +1171,7 @@ export function useRealtimeSync(
     const unsubMemberAdded = ws.on("member:added", (p) => {
       const { member, workspace_name } = p as MemberAddedPayload;
       const myUserId = authStore.getState().user?.id;
+      // 自己加入了工作区：刷新列表/邀请，弹 toast。
       if (member.user_id === myUserId) {
         qc.invalidateQueries({ queryKey: workspaceKeys.list() });
         qc.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
@@ -1272,7 +1182,7 @@ export function useRealtimeSync(
       }
     });
 
-    // invitation:created — notify the invitee of a new pending invitation
+    // invitation:created —— 通知被邀请者有一条新的待处理邀请。
     const unsubInvitationCreated = ws.on("invitation:created", (p) => {
       const { workspace_name } = p as InvitationCreatedPayload;
       qc.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
@@ -1282,7 +1192,7 @@ export function useRealtimeSync(
       );
     });
 
-    // invitation:accepted / declined / revoked — refresh invitation lists
+    // invitation:accepted / declined / revoked —— 刷新邀请列表。
     const unsubInvitationAccepted = ws.on("invitation:accepted", () => {
       const currentWsId = getCurrentWsId();
       if (currentWsId) {
@@ -1300,32 +1210,26 @@ export function useRealtimeSync(
       qc.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
     });
 
-    // --- Chat / task events (global, survives ChatWindow unmount) ---
+    // --- Chat / task 事件（全局，ChatWindow 卸载后仍存活） ---
     //
-    // Single source of truth: the Query cache. No Zustand writes here — the
-    // earlier mirror caused a race where the cache and store disagreed
-    // during the invalidate → refetch window and the UI rendered duplicates.
+    // 唯一真相来源：Query 缓存。这里没有 Zustand 写入——早先的镜像导致过
+    // "失效 → 重取"窗口里缓存与 store 不一致、UI 渲染出重复的竞态。
     //
-    // task:message is written directly into the task-messages cache so the
-    // live timeline updates in place. chat:message / chat:done /
-    // task:completed / task:failed invalidate messages + pending-task so the
-    // DB remains authoritative.
+    // task:message 直接写进 task-messages 缓存，让实时时间线就地更新。
+    // chat:message / chat:done / task:completed / task:failed 失效消息与待处理任务，
+    // 让数据库保持权威。
 
-    // Two guards stand between the workspace-wide message firehose and the
-    // renderer (MUL-6396). `task:message` is broadcast to EVERY client for
-    // EVERY run in the workspace, but only the handful of runs a user actually
-    // opens is ever rendered:
+    // 有两条守卫站在"工作区级消息消防水管"和渲染器之间（MUL-6396）。
+    // `task:message` 会对工作区里每次运行的每个客户端广播，但用户真正打开并渲染的
+    // 只是其中少数几场：
     //
-    // 1. Frames are kept only for a task this client already holds a timeline
-    //    entry for — opened at some point, and not yet garbage-collected. The
-    //    old `(old = [])` default built that entry on first sight instead, so
-    //    every client accumulated the transcript of every run its user would
-    //    never open, unbounded tool input included.
-    // 2. Frames that survive that gate are coalesced into one cache write per
-    //    window, so a burst costs one merge and one render instead of N.
+    // 1. 帧只为本客户端已持有时间线条目的任务保留——即曾被打开过、且尚未被 GC 的。
+    //    旧的 `(old = [])` 默认值会在第一次看见时就建条目，于是每个客户端都会累积
+    //    用户永远不会打开的每场运行的记录，包括无界工具输入。
+    // 2. 通过该闸门的帧被合并成每窗口一次缓存写，一波爆发只花一次合并和一次渲染
+    //    而不是 N 次。
     //
-    // The entry can be collected between the two, which is why the flush
-    // re-checks rather than trusting the gate — see flushTaskMessages.
+    // 条目可能在两者之间被 GC 掉，所以冲刷时再查一次而不信闸门——见 flushTaskMessages。
     const taskMessageBatches = new Map<string, TaskMessagePayload[]>();
     let taskMessageFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1333,16 +1237,12 @@ export function useRealtimeSync(
       taskMessageFlushTimer = null;
 
       for (const [taskId, batch] of taskMessageBatches) {
-        // Re-check, because holding was last verified up to a window ago and
-        // `setQueryData` does NOT postpone garbage collection — query-core arms
-        // that timer when the last observer leaves and never again on write.
-        // Closing a transcript while its run keeps streaming therefore has the
-        // entry disappear mid-window, and writing then REBUILDS it holding only
-        // this batch. With the app-wide `staleTime: Infinity` the next open
-        // would read that stub as fresh and never fetch, so everything before
-        // it would be missing until the window is reloaded. Dropping the batch
-        // instead costs nothing: the rows are persisted, so the next open
-        // fetches the whole timeline.
+        // 再查一次：持有状态最远在一个窗口之前被验证过，而 `setQueryData` 不会推迟
+        // GC——query-core 在最后一个观察者离开时武装计时器，且之后写入永不重挂。
+        // 因此一场运行还在流式输出时关闭它的时间线，条目会在窗口中途消失；此时写入
+        // 会用"只含本批"重建一条持有条目。在应用级 `staleTime: Infinity` 下，下次打开
+        // 会把这份残片读成新鲜的、永不拉取，于是它之前的所有内容都要缺到窗口重载。
+        // 丢弃这批反而零损失：行都已持久化，下次打开会拉整条时间线。
         if (!isTaskMessageTimelineHeld(qc, taskId)) {
           continue;
         }
@@ -1356,16 +1256,16 @@ export function useRealtimeSync(
 
     const unsubTaskMessage = ws.on("task:message", (p) => {
       const payload = p as TaskMessagePayload;
-      // Cheap Map lookup, and it runs before anything allocates — this is the
-      // hot path for every run in the workspace, not just the visible ones.
+      // 廉价的 Map 查找，且在任何分配之前跑——这是工作区里每次运行的热路径，
+      // 不只是可见的那些。
       if (!isTaskMessageTimelineHeld(qc, payload.task_id)) return;
 
       const batch = taskMessageBatches.get(payload.task_id);
       if (batch) batch.push(payload);
       else taskMessageBatches.set(payload.task_id, [payload]);
 
-      // Fixed window, not a resetting debounce: a continuous stream must still
-      // flush every TASK_MESSAGE_FLUSH_MS instead of being starved until a gap.
+      // 固定窗口而不是可重置的去抖：连续流仍须每 TASK_MESSAGE_FLUSH_MS 冲刷一次，
+      // 而不是被饿到出现间隙才冲刷。
       if (!taskMessageFlushTimer) {
         taskMessageFlushTimer = setTimeout(flushTaskMessages, TASK_MESSAGE_FLUSH_MS);
       }
@@ -1377,29 +1277,22 @@ export function useRealtimeSync(
       });
     });
 
-    // Helpers reused by chat lifecycle handlers.
+    // 供 chat 生命周期 handler 复用的助手。
     //
-    // SECURITY (review on PR #5018 / MUL-4159): chat `task:*` events are a
-    // *workspace fanout* — every member of the workspace receives them — and
-    // the payload carries no creator / agent-visibility. So we must NEVER
-    // optimistically write the cross-session pending AGGREGATE
-    // (chatKeys.pendingTasks / chatKeys.pendingTasksHasAny) from these events:
-    // member B starting a chat task would otherwise flip member A's FAB to
-    // has_pending=true, bypassing the server-side permission filter on
-    // /api/chat/pending-tasks[/has-any]. Instead we authoritatively (debounced)
-    // invalidate the aggregate so it is refetched through the filtering
-    // endpoint, which only returns the caller's own creator-owned,
-    // accessible-agent tasks.
+    // 安全（PR #5018 / MUL-4159 评审）：chat 的 `task:*` 事件是*工作区扇出*——工作区
+    // 每个成员都会收到——且载荷不带创建者/Agent 可见性。所以我们绝不能从这些事件乐观
+    // 写跨会话待处理*聚合*（chatKeys.pendingTasks / chatKeys.pendingTasksHasAny）：
+    // 成员 B 启动一条 chat 任务会把成员 A 的 FAB 翻成 has_pending=true，
+    // 绕过 /api/chat/pending-tasks[/has-any] 的服务端权限过滤。作为替代，我们权威地
+    // （去抖后）失效聚合，让它经带过滤的接口重取——那个接口只返回调用者自己的、
+    // 可访问的 Agent 的创建者任务。
     //
-    // The per-session `pendingTask` cache IS still written directly by the
-    // handlers below — it is keyed by chat_session_id and only rendered for a
-    // session the user is allowed to open (server-gated), so it is not a
-    // cross-user aggregate leak.
+    // 按会话的 `pendingTask` 缓存仍由下面的 handler 直接写——它以 chat_session_id
+    // 为 key，且只为用户有权打开的会话渲染（服务端口），所以不是跨用户聚合泄漏。
     //
-    // chat:message is intentionally NOT a trigger (it fires per streamed
-    // message and would re-create the request storm MUL-4159 fixed); the
-    // aggregate is refreshed only on task lifecycle transitions, which are
-    // per-task and low-frequency, then coalesced by the debounce below.
+    // chat:message 刻意不是触发源（它每条流式消息都发，会重建 MUL-4159 修掉的请求
+    // 风暴）；聚合只在任务生命周期转换时刷新，那类事件按任务计、频率低，再由下面
+    // 的去抖合并。
     let aggregateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     const invalidatePendingAggregate = () => {
       if (aggregateRefreshTimer) clearTimeout(aggregateRefreshTimer);
@@ -1419,12 +1312,11 @@ export function useRealtimeSync(
         chat_session_id: payload.chat_session_id,
         role: payload.role,
       });
-      // Write the user turn before invalidating so the prompt does not depend
-      // on the refetch surviving (MUL-5711) — same shape as chat:done.
+      // 先写用户这一轮、再失效，让提示词不依赖重取存活（MUL-5711）——与 chat:done
+      // 同构。
       applyChatMessageToCache(qc, payload);
-      // NOTE: intentionally does NOT touch the pending aggregate. chat:message
-      // fires per streamed message with no status; the aggregate is maintained
-      // by the task lifecycle handlers below (MUL-4159).
+      // 注意：刻意不碰待处理聚合。chat:message 每条流式消息都发、且无状态；聚合由
+      // 下面任务生命周期 handler 维护（MUL-4159）。
     });
 
     const unsubChatDone = ws.on("chat:done", (p) => {
@@ -1434,30 +1326,24 @@ export function useRealtimeSync(
         chat_session_id: payload.chat_session_id,
         has_message: !!payload.message_id,
       });
-      // Inline-insert the assistant message into the messages cache BEFORE
-      // clearing pending-task. Both writes land in the same React render
-      // tick, so ChatMessageList sees `pendingAlreadyPersisted === true`
-      // and the live TimelineView unmounts only after AssistantMessage has
-      // mounted — no flicker window. This applies TkDodo's "combine
-      // setQueryData (active query) + invalidateQueries (others)" pattern
-      // (https://tkdodo.eu/blog/using-web-sockets-with-react-query).
+      // 在清待处理任务*之前*把助手消息就地插入消息缓存。两次写入落在同一个 React
+      // 渲染拍内，所以 ChatMessageList 会看到 `pendingAlreadyPersisted === true`，
+      // 实时 TimelineView 只在 AssistantMessage 挂载后才卸载——没有闪烁窗口。
+      // 这应用了 TkDodo 的"setQueryData（活跃查询）+ invalidateQueries（其它）"
+      // 模式（https://tkdodo.eu/blog/using-web-sockets-with-react-query）。
       //
-      // Falls back to invalidate-only when the server omits the message
-      // payload (older builds). Older clients hitting a newer server also
-      // work: they ignore the extra fields and rely on the invalidate
-      // below, which keeps the old behavior alive.
+      // 服务器省略消息载荷（旧版本）时回退为只失效。旧客户端撞上新服务器同样可用：
+      // 它们忽略多余字段、依赖下面那次失效，让旧行为继续存活。
       applyChatDoneToCache(qc, payload);
-      // NOTE: the pending aggregate is left to the task:completed / task:failed
-      // handlers (which carry the task_id needed to remove the right entry).
-      // chat:done no longer invalidates it, so a chatty session doesn't refetch
-      // the aggregate on every turn (MUL-4159).
-      // Assistant message just landed → has_unread may have flipped to true.
+      // 注意：待处理聚合留给 task:completed / task:failed handler（它们带移除正确
+      // 条目所需的 task_id）。chat:done 不再失效它，这样话痨会话不会每轮都重取聚合
+      // （MUL-4159）。
+      // 助手消息刚落地 → has_unread 可能已翻成 true。
       invalidateSessionLists();
     });
 
-    // Late quick-actions supplement from the daemon's background suggestion
-    // pass — patches the finished turn's message in place; no invalidate
-    // needed (the payload is authoritative and tiny).
+    // daemon 后台建议轮迟到的快捷操作补充——就地修补已结束那轮的消息；无需失效
+    // （载荷权威且小）。
     const unsubChatQuickActions = ws.on("chat:quick_actions", (p) => {
       const payload = p as ChatQuickActionsPayload;
       chatWsLogger.info("chat:quick_actions (global)", {
@@ -1468,10 +1354,8 @@ export function useRealtimeSync(
       void applyChatQuickActionsToCache(qc, payload);
     });
 
-    // Deferred cancellation outcome (#5219): the server settles the
-    // empty/non-empty judgment only after the daemon's transcript flush, so
-    // this event arrives seconds after the cancel HTTP response — nothing
-    // else re-fetches at that point.
+    // 延迟取消结局（#5219）：服务器只在 daemon 冲刷会话记录后才判定空/非空，所以本
+    // 事件在取消的 HTTP 响应之后几秒才到——那时没有别的东西会再拉一次。
     const unsubChatCancelFinalized = ws.on("chat:cancel_finalized", (p) => {
       const payload = p as ChatCancelFinalizedPayload;
       chatWsLogger.info("chat:cancel_finalized (global)", {
@@ -1481,14 +1365,13 @@ export function useRealtimeSync(
       });
       applyChatCancelFinalizedToCache(qc, payload, authStore.getState().user?.id);
       if (payload.outcome === "stopped") {
-        // A Stopped. assistant row just landed → session previews change.
+        // 一条 "Stopped." 助手行刚落地 → 会话预览变了。
         invalidateSessionLists();
       }
     });
 
-    // Lifecycle events are invalidation hints. They intentionally omit queue
-    // previews and message ids, so only the pending-task endpoint can author
-    // the complete queue shape.
+    // 生命周期事件是失效提示。它们刻意省略队列预览与消息 id，所以只有待处理任务
+    // 接口能写出完整的队列形状。
     const unsubTaskQueued = ws.on("task:queued", (p) => {
       const payload = p as TaskQueuedPayload;
       if (!payload.chat_session_id) return;
@@ -1496,12 +1379,10 @@ export function useRealtimeSync(
       invalidatePendingAggregate();
     });
 
-    // task:dispatch fires when the daemon claims the queued task. The daemon
-    // immediately follows with StartTask, so dispatched→running is sub-second.
-    // We collapse that window by writing "running" directly — the pill jumps
-    // from "Queued" straight to "Thinking", skipping a meaningless "Starting"
-    // frame. Stage decision in TaskStatusPill maps "running" + empty
-    // taskMessages → "Thinking · Ns".
+    // task:dispatch 在 daemon 认领排队任务时发出。daemon 随即 StartTask，
+    // 所以 dispatched→running 是亚秒级的。我们把那窗口塌缩成直接写 "running"——
+    // 药丸从 "Queued" 直接跳到 "Thinking"，跳过无意义的 "Starting" 帧。
+    // TaskStatusPill 的阶段判定把 "running" + 空 taskMessages 映射成 "Thinking · Ns"。
     const unsubTaskDispatch = ws.on("task:dispatch", (p) => {
       const payload = p as TaskDispatchPayload;
       if (!payload.chat_session_id) return;
@@ -1514,11 +1395,10 @@ export function useRealtimeSync(
       invalidatePendingAggregate();
     });
 
-    // task:running fires when the daemon transitions a previously-parked task
-    // (waiting_local_directory) back into the run phase. The dispatch→running
-    // path is collapsed in the handler above, so this handler exists mainly to
-    // clear a stale `waiting_local_directory` pill — without it, the pill
-    // would stay parked even after the daemon resumed work.
+    // task:running 在 daemon 把一条此前停驻的任务（waiting_local_directory）带回运行
+    // 阶段时发出。dispatch→running 的路径已在上面的 handler 里塌缩，所以这个 handler
+    // 主要存在意义是清除过期的 `waiting_local_directory` 药丸——没有它，即使 daemon
+    // 已恢复工作，药丸仍会停驻。
     const unsubTaskRunning = ws.on("task:running", (p) => {
       const payload = p as TaskRunningPayload;
       if (!payload.chat_session_id) return;
@@ -1531,11 +1411,9 @@ export function useRealtimeSync(
       invalidatePendingAggregate();
     });
 
-    // task:waiting_local_directory fires when the daemon dequeues a task but
-    // can't acquire the local_directory path lock — another task on this
-    // daemon is in the same directory. Write the status so TaskStatusPill
-    // can render the "Waiting for local directory" stage instead of pinning
-    // a stale "Starting / Thinking" frame.
+    // task:waiting_local_directory 在 daemon 出队任务却拿不到 local_directory 路径锁时
+    // 发出——本 daemon 上另一任务正在同一目录。写这个状态，让 TaskStatusPill 能渲染
+    // "Waiting for local directory" 阶段，而不是钉死一份过期的 "Starting / Thinking"。
     const unsubTaskWaitingLocalDir = ws.on(
       "task:waiting_local_directory",
       (p) => {
@@ -1558,14 +1436,12 @@ export function useRealtimeSync(
       },
     );
 
-    // task:cancelled reaches us when:
-    //   1. handleStop already cleared the cache locally (this is a no-op confirm)
-    //   2. another tab / admin / system cancels — this is the only path that
-    //      drops the pending pill in those cases. Without it the pill spins
-    //      forever in the second-tab scenario.
-    // CancelTask also persists a best-effort assistant snapshot when the
-    // stopped chat task had already streamed transcript rows, so refresh the
-    // message page along with clearing pending.
+    // task:cancelled 到达我们的情形：
+    //   1. handleStop 已在本地面清了缓存（这是无操作确认）
+    //   2. 另一标签页 / 管理员 / 系统取消——这些情况下它是唯一能去掉待处理药丸的路径。
+    //      没有它，第二标签页场景里药丸会永远转圈。
+    // CancelTask 在停止的 chat 任务已经流过会话记录行时，还会持久化一条尽力而为的
+    // 助手快照，所以清待处理的同时要刷新消息页。
     const unsubTaskCancelled = ws.on("task:cancelled", (p) => {
       const payload = p as TaskCancelledPayload;
       if (!payload.chat_session_id) return;
@@ -1585,7 +1461,7 @@ export function useRealtimeSync(
 
     const unsubTaskCompleted = ws.on("task:completed", (p) => {
       const payload = p as TaskCompletedPayload;
-      if (!payload.chat_session_id) return; // issue tasks handled elsewhere
+      if (!payload.chat_session_id) return; // issue 任务在别处处理
       chatWsLogger.info("task:completed (global, chat)", {
         task_id: payload.task_id,
         chat_session_id: payload.chat_session_id,
@@ -1605,12 +1481,10 @@ export function useRealtimeSync(
         task_id: payload.task_id,
         chat_session_id: payload.chat_session_id,
       });
-      // FailTask writes a failure chat_message (mirroring CompleteTask's
-      // success message), so this path mirrors the task:completed handler:
-      // clear the pending signal AND invalidate the messages list so the
-      // failure bubble shows up without requiring a page refresh. Pre-#1823
-      // this branch only flipped pending — the comment "No new message"
-      // was true then, but FailTask now persists a row.
+      // FailTask 会写一条失败 chat_message（镜像 CompleteTask 的成功消息），所以这条
+      // 路径镜像 task:completed handler：清待处理信号 AND 失效消息列表，让失败气泡
+      // 不用刷新页面就出现。在 #1823 之前这个分支只翻 pending——那时 "No new message"
+      // 的注释还成立，但现在 FailTask 会持久化一行。
       qc.setQueryData<ChatPendingTask>(
         chatKeys.pendingTask(payload.chat_session_id),
         (old) => removePendingChatTask(old, payload.task_id),
@@ -1618,10 +1492,9 @@ export function useRealtimeSync(
       invalidateChatMessageQueries(qc, payload.chat_session_id);
       qc.invalidateQueries({ queryKey: chatKeys.pendingTask(payload.chat_session_id) });
       invalidatePendingAggregate();
-      // FailTask persisted a failure chat_message, so the thread list's
-      // last_message / unread_count / sort order changed too. Mirror the
-      // chat:done (success) path and refresh the sessions list — otherwise the
-      // left rail keeps a stale preview until the next full refetch.
+      // FailTask 持久化了一条失败 chat_message，所以线程列表的 last_message /
+      // unread_count / 排序也变了。镜像 chat:done（成功）路径刷新会话列表——否则
+      // 左栏会一直留着过期预览，直到下一次整次重取。
       invalidateSessionLists();
     });
 
@@ -1634,14 +1507,14 @@ export function useRealtimeSync(
     const unsubChatSessionCreated = ws.on("chat:session_created", (p) => {
       const payload = p as ChatSessionCreatedPayload;
       chatWsLogger.info("chat:session_created (global)", payload);
+      // 只关心当前工作区的会话创建（跨工作区扇出时过滤）。
       if (payload.workspace_id !== getCurrentWsId()) return;
       invalidateSessionLists();
     });
 
-    // chat:session_updated fires after the creator renames, pins, or archives
-    // a session in any tab/device. Patch the cached row inline so the dropdown
-    // and badges reflect the change without a full sessions-list refetch — see
-    // applyChatSessionUpdatedToCache for why archive must also zero unread.
+    // chat:session_updated 在创建者于任一标签页/设备改名、钉住或归档会话后发出。
+    // 就地修补缓存行，让下拉与徽标不用整次会话列表重取就反映变化——
+    // 为何归档还须清零未读见 applyChatSessionUpdatedToCache。
     const unsubChatSessionUpdated = ws.on("chat:session_updated", (p) => {
       const payload = p as ChatSessionUpdatedPayload;
       chatWsLogger.info("chat:session_updated (global)", payload);
@@ -1650,11 +1523,9 @@ export function useRealtimeSync(
       applyChatSessionUpdatedToCache(qc, id, payload);
     });
 
-    // chat:session_deleted fires after a hard delete. The originating tab has
-    // already optimistically dropped the row via useDeleteChatSession; this
-    // handler keeps OTHER tabs/devices in sync and also clears the active
-    // session pointer so a deleted session doesn't keep the chat window
-    // pointed at vanished messages.
+    // chat:session_deleted 在硬删除后发出。发起标签页已用 useDeleteChatSession 乐观
+    // 移除该行；本 handler 让其它标签页/设备保持同步，并清掉活跃会话指针，让被删
+    // 会话不会让聊天窗继续指向已经消失的消息。
     const unsubChatSessionDeleted = ws.on("chat:session_deleted", (p) => {
       const payload = p as { chat_session_id: string };
       chatWsLogger.info("chat:session_deleted (global)", payload);
@@ -1728,7 +1599,7 @@ export function useRealtimeSync(
     };
   }, [ws, qc, authStore, onToast]);
 
-  // Reconnect -> refetch all data to recover missed events
+  // 重连 → 重取所有数据以找回错过的事件。
   useEffect(() => {
     if (!ws) return;
 
@@ -1744,14 +1615,13 @@ export function useRealtimeSync(
     return unsub;
   }, [ws, qc]);
 
-  // New WSClient instance (workspace switch) -> invalidate workspace-scoped
-  // queries to recover events missed while the previous instance was torn down.
-  // Skips the initial assignment to avoid a redundant refetch on first mount.
+  // 新 WSClient 实例（工作区切换）→ 失效按工作区作用域的查询，找回前一实例被拆掉
+  // 期间错过的事件。跳过首次赋值，避免首次挂载多一次冗余重取。
   const wsInstanceRef = useRef<WSClient | null>(null);
   useEffect(() => {
     if (!ws) return;
     if (wsInstanceRef.current === null) {
-      // First non-null instance — store and skip invalidation.
+      // 首个非空实例——记下并跳过失效。
       wsInstanceRef.current = ws;
       return;
     }

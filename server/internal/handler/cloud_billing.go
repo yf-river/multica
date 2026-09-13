@@ -1,3 +1,15 @@
+// 职责定位：Cloud 计费（billing）的转发层处理器。本仓库自己不持有任何计费数据，而是把所有
+// 计费端点原样代理给 multica-cloud HTTP 服务（Fleet 与 Billing 共享 `:8080`，见上游 README），
+// 转发路径统一为 cloud 侧的 /api/v1/billing/* 与 /api/v1/subscriptions/*。详细约定如下方
+// 本文件导读注释。
+//
+// 处理方式分三档：
+//   - 余额类 owner-credit 端点（GET/POST /api/cloud-billing/*）走通用代理 proxyCloudRuntime，
+//     只注入 X-User-ID；
+//   - workspace 订阅端点（/api/cloud-subscriptions/*）走更严的包装 proxyCloudSubscription，
+//     额外注入权威 workspace_id、对 Idempotency-Key 做白名单校验；
+//   - Stripe webhook（/api/webhooks/stripe）是唯一按「原始字节」转发的出口（见
+//     HandleCloudBillingStripeWebhook）。
 package handler
 
 import (
@@ -13,50 +25,45 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
-// Cloud billing endpoints proxy to the same multica-cloud HTTP service
-// that backs cloud-runtime (Fleet and Billing share `:8080` per the
-// upstream README). All paths here forward verbatim to /api/v1/billing/*
-// on the cloud side, mirroring the cloud-runtime handler shape:
+// Cloud 计费端点全部代理到同一个 multica-cloud HTTP 服务——cloud-runtime 背后的服务
+// （Fleet 与 Billing 共享 `:8080`，按上游 README）。这里所有路径都原样转发到 cloud 侧的
+// /api/v1/billing/*，镜像 cloud-runtime 处理器的形态：
 //
-//   - Owner-credit endpoints sit under /api/cloud-billing/* in our router.
-//     Workspace subscription endpoints sit under /api/cloud-subscriptions/*
-//     and add membership / role checks plus an authoritative workspace ID.
-//     Both require regular Auth and inject the resolved user_id as `X-User-ID`.
+//   - owner-credit（余额）端点挂在路由的 /api/cloud-billing/* 下。workspace 订阅端点挂在
+//     /api/cloud-subscriptions/* 下，额外加了成员/角色检查，并注入权威的 workspace ID。
+//     两者都要求常规 Auth，并把解析出的 user_id 作为 `X-User-ID` 注入。
 //
-//   - The Stripe webhook is the one outlier: it lives at
-//     /api/webhooks/stripe (outside the Auth group), takes the raw
-//     request body byte-for-byte, and forwards `Stripe-Signature` for
-//     the cloud side to verify against its STRIPE_WEBHOOK_SECRET. The
-//     upstream contract is explicit about this:
-//     "webhook 使用原始请求体进行签名校验，不要在反向代理里改写 body."
+//   - Stripe webhook 是唯一的例外：它挂在 /api/webhooks/stripe（Auth 组之外），接收原始
+//     请求体（逐字节不加工），并把 `Stripe-Signature` 原样转发给 cloud 侧，由 cloud 用它的
+//     STRIPE_WEBHOOK_SECRET 验签。上游契约说得明确：「webhook 使用原始请求体进行签名校验，
+//     不要在反向代理里改写 body」。
 //
-// Owner-credit paths share `proxyCloudRuntime`. Workspace subscriptions use a
-// small stricter wrapper to inject workspace_id and allowlist Idempotency-Key;
-// the webhook remains the only raw-body forwarder.
+// owner-credit 路径共用 `proxyCloudRuntime`。workspace 订阅用一个更小的严格包装来注入
+// workspace_id 并对 Idempotency-Key 做白名单；webhook 仍是唯一的原始 body 转发者。
 
-// maxStripeWebhookBodySize bounds the raw body we'll forward upstream.
-// Stripe's documented event payload upper bound is well under this;
-// the cap exists to keep a malicious sender from making us read
-// arbitrary memory before the upstream gets to reject the signature.
+// maxStripeWebhookBodySize 限制我们愿意转发给上游的原始 body 大小。Stripe 文档里的事件
+// payload 上限远低于此；设这个上限是为了防止恶意发送方在「上游拒签」之前先逼我们读走任意
+// 内存。
 const maxStripeWebhookBodySize = 1 << 20 // 1 MiB
 
-// stripeSignatureHeader is the canonical name of the header Stripe
-// uses to ship its HMAC over the raw body. We forward whatever the
-// client sent verbatim; the cloud side is the one that knows the
-// shared secret and rejects on mismatch.
+// stripeSignatureHeader 是 Stripe 用来携带「对原始 body 的 HMAC」的头的标准名字。客户端发
+// 什么我们原样转发什么；只有 cloud 侧知道共享密钥、负责在验签不符时拒绝。
 const stripeSignatureHeader = "Stripe-Signature"
 
+// 幂等键：可放 header（Idempotency-Key）也可放请求体，转发前要校验长度。
 const idempotencyKeyHeader = "Idempotency-Key"
 const maxCloudSubscriptionIdempotencyKeyLength = 255
 const maxCloudSubscriptionSeatPurchaseIdempotencyKeyLength = 200
 
+// cloudSubscriptionCheckoutRequest 是「创建订阅结账会话」的客户端请求体（我们只校验
+// interval，其余字段不直接透传）。
 type cloudSubscriptionCheckoutRequest struct {
 	Interval       string `json:"interval"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
-// This is an intentional allowlist: additive cloud fields are not forwarded
-// until the main repository explicitly reviews and adds them here.
+// cloudSubscriptionCheckoutUpstreamRequest 是真正转发给 cloud 的请求体。这个白名单是刻意
+// 收紧的：cloud 新增的字段不会自动透传，必须等主仓库显式评审并在这里加上才行。
 type cloudSubscriptionCheckoutUpstreamRequest struct {
 	WorkspaceID    string `json:"workspace_id"`
 	Interval       string `json:"interval"`
@@ -64,10 +71,14 @@ type cloudSubscriptionCheckoutUpstreamRequest struct {
 	CustomerEmail  string `json:"customer_email,omitempty"`
 }
 
+// cloudSubscriptionSeatPurchasePreviewRequest 是「加购席位预览」的请求体，只接受增量座位数。
 type cloudSubscriptionSeatPurchasePreviewRequest struct {
 	AdditionalSeats int `json:"additional_seats"`
 }
 
+// cloudSubscriptionSeatPurchaseRequest 是「确认加购席位」的请求体：客户端必须回传它当初看到
+// 的「期望当前座位数 / 期望购买版本 / 已接受的 proration 金额 / 币种」，让 cloud 对报价做
+// 二次确认（乐观并发）。
 type cloudSubscriptionSeatPurchaseRequest struct {
 	AdditionalSeats         int    `json:"additional_seats"`
 	ExpectedCurrentSeats    int    `json:"expected_current_seats"`
@@ -77,10 +88,8 @@ type cloudSubscriptionSeatPurchaseRequest struct {
 	IdempotencyKey          string `json:"idempotency_key,omitempty"`
 }
 
-// requireCloudSubscriptionWorkspace is the handler-level backstop behind the
-// router's membership and role middleware. Local roles are a cheap
-// defense-in-depth guard; Cloud still performs the authoritative authorization
-// before every billing mutation.
+// requireCloudSubscriptionWorkspace 是路由层成员/角色中间件后面的「处理器级兜底」。
+// 本地角色只是便宜的纵深防御；Cloud 在每次计费变更前仍会做权威授权。
 func (h *Handler) requireCloudSubscriptionWorkspace(w http.ResponseWriter, r *http.Request, roles ...string) (string, string, bool) {
 	if isMachineCredentialActor(r) {
 		writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
@@ -113,6 +122,8 @@ func (h *Handler) requireCloudSubscriptionWorkspace(w http.ResponseWriter, r *ht
 	return util.UUIDToString(workspaceUUID), userID, true
 }
 
+// proxyCloudSubscription 是 workspace 订阅类端点的统一转发入口：要求 Cloud 运行时已启用，
+// 通过 h.CloudRuntime.Do 出站并把响应/错误转写回客户端。userID 用于 cloud 侧审计与鉴权。
 func (h *Handler) proxyCloudSubscription(w http.ResponseWriter, r *http.Request, method, path, userID string, body []byte, headers http.Header) {
 	if h.CloudRuntime == nil || !h.CloudRuntime.Enabled() {
 		writeError(w, http.StatusServiceUnavailable, "cloud runtime is not configured")
@@ -134,6 +145,8 @@ func (h *Handler) proxyCloudSubscription(w http.ResponseWriter, r *http.Request,
 	writeCloudRuntimeResponse(w, resp)
 }
 
+// cloudSubscriptionIdempotencyHeaders 从请求头里抽出 Idempotency-Key 打包成转发头；
+// 请求里没带就返回 nil。
 func cloudSubscriptionIdempotencyHeaders(r *http.Request) http.Header {
 	key := strings.TrimSpace(r.Header.Get(idempotencyKeyHeader))
 	if key == "" {
@@ -142,6 +155,8 @@ func cloudSubscriptionIdempotencyHeaders(r *http.Request) http.Header {
 	return http.Header{idempotencyKeyHeader: []string{key}}
 }
 
+// requireCloudSubscriptionIdempotencyKey 取幂等键（请求体里的优先，缺了退回 header），
+// 都缺返回 400，并校验长度上限。
 func requireCloudSubscriptionIdempotencyKey(w http.ResponseWriter, r *http.Request, bodyKey string) (string, bool) {
 	key := strings.TrimSpace(bodyKey)
 	if key == "" {
@@ -158,14 +173,12 @@ func requireCloudSubscriptionIdempotencyKey(w http.ResponseWriter, r *http.Reque
 	return key, true
 }
 
-// GetCloudWorkspaceSubscriptionSummary forwards cloud's Billing-page read:
-// the resolved entitlement plus local subscription facts (seats, interval,
-// cancellation and grace state, Portal availability). Member-readable like
-// entitlements; cloud re-verifies membership against its product database.
+// GetCloudWorkspaceSubscriptionSummary 转发 cloud 的 Billing 页读取：已解析的 entitlement
+// 加本地订阅事实（座位数、周期、取消与宽限状态、Portal 是否可用）。与 entitlement 一样普通
+// 成员可读；cloud 会对着自己的产品库复核成员身份。
 //
-// Cloud serves this from its own database without calling Stripe, so this stays
-// available while Stripe is degraded. A cloud that predates the endpoint
-// answers 404 and the client treats the page as unavailable — never as Free.
+// cloud 用自己库里（不查 Stripe）的数据回答，所以 Stripe 故障时这里仍可用。比该端点更老的
+// cloud 会答 404，客户端把页面当「不可用」处理——绝不会误显示成 Free。
 func (h *Handler) GetCloudWorkspaceSubscriptionSummary(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r)
 	if !ok {
@@ -174,14 +187,12 @@ func (h *Handler) GetCloudWorkspaceSubscriptionSummary(w http.ResponseWriter, r 
 	h.proxyCloudSubscription(w, r, http.MethodGet, "/api/v1/subscriptions/"+workspaceID+"/summary", userID, nil, nil)
 }
 
-// GetCloudWorkspaceSubscriptionPrices forwards cloud's validated per-seat price
-// read so the client never hardcodes an amount that Stripe can change.
+// GetCloudWorkspaceSubscriptionPrices 转发 cloud 侧已校验过的按座位定价，避免客户端把
+// Stripe 随时可能改的金额写死。
 //
-// Member-readable: seeing what Pro costs is not a privileged action, and cloud
-// scopes the read to a workspace this caller belongs to. Cloud returns only
-// currency, minor-unit amount and interval — Price and Product IDs stay server
-// side — and answers 503 when a configured Price cannot be validated, which the
-// client renders as "price confirmed at Checkout" rather than a guessed number.
+// 普通成员可读：看 Pro 多少钱不是特权动作，且 cloud 会把读取范围限定在调用者所属的
+// workspace。cloud 只返回币种、最小货币单位金额与周期——Price/Product ID 留在服务端——
+// 配置的 Price 无法校验时回 503，客户端把它渲染成「以 Checkout 为准」，而不是猜个数。
 func (h *Handler) GetCloudWorkspaceSubscriptionPrices(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r)
 	if !ok {
@@ -190,10 +201,9 @@ func (h *Handler) GetCloudWorkspaceSubscriptionPrices(w http.ResponseWriter, r *
 	h.proxyCloudSubscription(w, r, http.MethodGet, "/api/v1/subscriptions/"+workspaceID+"/prices", userID, nil, nil)
 }
 
-// CreateCloudWorkspaceSubscriptionCheckout injects the middleware-resolved
-// workspace and authenticated user's stored email into the upstream body. A
-// caller cannot smuggle a different workspace or Stripe payer identity through
-// JSON; Cloud remains authoritative for the price, quantity, and Checkout.
+// CreateCloudWorkspaceSubscriptionCheckout 把中间件解析出的 workspace 与已登录用户库里存的
+// email 注入上游请求体。调用方没法用 JSON 偷塞一个别的 workspace 或别的 Stripe 付款人身份；
+// 价格、数量与 Checkout 仍由 Cloud 说了算。
 func (h *Handler) CreateCloudWorkspaceSubscriptionCheckout(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r, "owner", "admin")
 	if !ok {
@@ -243,9 +253,8 @@ func (h *Handler) CreateCloudWorkspaceSubscriptionCheckout(w http.ResponseWriter
 	h.proxyCloudSubscription(w, r, http.MethodPost, "/api/v1/subscriptions/checkout-sessions", userID, upstreamBody, cloudSubscriptionIdempotencyHeaders(r))
 }
 
-// ReconcileCloudWorkspaceSubscriptionSeats is a hint only: neither this
-// handler nor its caller supplies a seat quantity. Cloud re-counts human
-// members from its least-privilege product-database connection.
+// ReconcileCloudWorkspaceSubscriptionSeats 只是个「提示」：本 handler 与它的调用方都不提供
+// 座位数。Cloud 会用最小权限的「产品库」连接自己去重数人类成员。
 func (h *Handler) ReconcileCloudWorkspaceSubscriptionSeats(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r, "owner", "admin")
 	if !ok {
@@ -254,9 +263,8 @@ func (h *Handler) ReconcileCloudWorkspaceSubscriptionSeats(w http.ResponseWriter
 	h.proxyCloudSubscription(w, r, http.MethodPost, "/api/v1/subscriptions/"+workspaceID+"/seats/reconcile", userID, nil, nil)
 }
 
-// PreviewCloudWorkspaceSubscriptionSeatPurchase accepts only an additive seat
-// count. Cloud reads the authoritative current quantity and returns Stripe's
-// estimated proration plus the next full recurring invoice.
+// PreviewCloudWorkspaceSubscriptionSeatPurchase 只接受增量座位数。Cloud 读取权威的当前数量，
+// 返回 Stripe 估算的 proration 金额与下一张完整续费账单。
 func (h *Handler) PreviewCloudWorkspaceSubscriptionSeatPurchase(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r, "owner", "admin")
 	if !ok {
@@ -284,9 +292,8 @@ func (h *Handler) PreviewCloudWorkspaceSubscriptionSeatPurchase(w http.ResponseW
 		"/api/v1/subscriptions/"+workspaceID+"/seats/purchase-preview", userID, upstreamBody, nil)
 }
 
-// PurchaseCloudWorkspaceSubscriptionSeats forwards a user-confirmed quote.
-// The allowlisted body omits any client workspace or absolute target quantity;
-// Cloud repeats the quote and owns concurrency, idempotency, and Stripe writes.
+// PurchaseCloudWorkspaceSubscriptionSeats 转发用户已确认的报价。白名单请求体不含任何客户端
+// 指定的 workspace 或绝对目标座位数；Cloud 会复算报价，并全权负责并发、幂等与 Stripe 写入。
 func (h *Handler) PurchaseCloudWorkspaceSubscriptionSeats(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r, "owner", "admin")
 	if !ok {
@@ -326,6 +333,7 @@ func (h *Handler) PurchaseCloudWorkspaceSubscriptionSeats(w http.ResponseWriter,
 		http.Header{idempotencyKeyHeader: []string{key}})
 }
 
+// isASCIICurrency 校验币种是恰好 3 个 ASCII 字母（ISO 4217 简写）。
 func isASCIICurrency(value string) bool {
 	if len(value) != 3 {
 		return false
@@ -338,6 +346,8 @@ func isASCIICurrency(value string) bool {
 	return true
 }
 
+// CreateCloudWorkspaceSubscriptionPortal 创建进入 Stripe 客户门户的会话（owner/admin 可操作），
+// 转发时需要幂等键。
 func (h *Handler) CreateCloudWorkspaceSubscriptionPortal(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r, "owner", "admin")
 	if !ok {
@@ -349,20 +359,18 @@ func (h *Handler) CreateCloudWorkspaceSubscriptionPortal(w http.ResponseWriter, 
 	h.proxyCloudSubscription(w, r, http.MethodPost, "/api/v1/subscriptions/"+workspaceID+"/portal-sessions", userID, nil, cloudSubscriptionIdempotencyHeaders(r))
 }
 
-// GetCloudBillingBalance forwards GET /api/v1/billing/balance.
+// GetCloudBillingBalance 转发 GET /api/v1/billing/balance。
 //
-// Returns the caller's wallet balance. Cloud reads `X-User-ID`; we
-// stamp it from the authenticated context.
+// 返回调用者的钱包余额。Cloud 读 `X-User-ID`；我们把它从已认证的上下文中盖上。
 func (h *Handler) GetCloudBillingBalance(w http.ResponseWriter, r *http.Request) {
 	h.proxyCloudRuntime(w, r, http.MethodGet, "/api/v1/billing/balance", cloudRuntimeProxyOptions{
 		withUserID: true,
 	})
 }
 
-// ListCloudBillingTransactions forwards GET /api/v1/billing/transactions.
+// ListCloudBillingTransactions 转发 GET /api/v1/billing/transactions。
 //
-// The upstream supports `page` / `page_size`; we forward the query
-// string unchanged.
+// 上游支持 `page` / `page_size`；我们原样转发查询串。
 func (h *Handler) ListCloudBillingTransactions(w http.ResponseWriter, r *http.Request) {
 	h.proxyCloudRuntime(w, r, http.MethodGet, "/api/v1/billing/transactions", cloudRuntimeProxyOptions{
 		withUserID: true,
@@ -370,10 +378,9 @@ func (h *Handler) ListCloudBillingTransactions(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// ListCloudBillingBatches forwards GET /api/v1/billing/batches.
+// ListCloudBillingBatches 转发 GET /api/v1/billing/batches。
 //
-// Returns paginated topup / bonus batches for the owner; same query
-// shape as transactions.
+// 返回 owner 的充值/奖励批次（分页），查询形态与 transactions 相同。
 func (h *Handler) ListCloudBillingBatches(w http.ResponseWriter, r *http.Request) {
 	h.proxyCloudRuntime(w, r, http.MethodGet, "/api/v1/billing/batches", cloudRuntimeProxyOptions{
 		withUserID: true,
@@ -381,7 +388,7 @@ func (h *Handler) ListCloudBillingBatches(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// ListCloudBillingTopups forwards GET /api/v1/billing/topups.
+// ListCloudBillingTopups 转发 GET /api/v1/billing/topups。
 func (h *Handler) ListCloudBillingTopups(w http.ResponseWriter, r *http.Request) {
 	h.proxyCloudRuntime(w, r, http.MethodGet, "/api/v1/billing/topups", cloudRuntimeProxyOptions{
 		withUserID: true,
@@ -389,24 +396,21 @@ func (h *Handler) ListCloudBillingTopups(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// ListCloudBillingPriceTiers forwards GET /api/v1/billing/price-tiers.
+// ListCloudBillingPriceTiers 转发 GET /api/v1/billing/price-tiers。
 //
-// Per the upstream doc, this endpoint requires `X-User-ID` (it sits
-// under the same auth fence as the rest of /api/v1/billing/*), even
-// though the response is the same for every owner today. We stamp the
-// header so cloud can audit who's listing tiers — and so the contract
-// stays uniform if pricing later differentiates per-customer.
+// 按上游文档，这个端点要求 `X-User-ID`（它跟 /api/v1/billing/* 其余部分在同一道鉴权墙后），
+// 即使今天的响应对所有 owner 都一样。我们盖上这个头，让 cloud 能审计是谁在列档位——也为将来
+// 按客户差异化定价保持契约统一。
 func (h *Handler) ListCloudBillingPriceTiers(w http.ResponseWriter, r *http.Request) {
 	h.proxyCloudRuntime(w, r, http.MethodGet, "/api/v1/billing/price-tiers", cloudRuntimeProxyOptions{
 		withUserID: true,
 	})
 }
 
-// CreateCloudBillingCheckoutSession forwards POST /api/v1/billing/checkout-sessions.
+// CreateCloudBillingCheckoutSession 转发 POST /api/v1/billing/checkout-sessions。
 //
-// Body shape (per upstream): `{tier_id, customer_email?}`. We don't
-// care about its contents — proxyCloudRuntime validates only that
-// it's syntactically JSON and forwards the bytes.
+// Body 形态（按上游）：`{tier_id, customer_email?}`。我们不在乎内容——proxyCloudRuntime
+// 只校验它是合法 JSON 并原样转发字节。
 func (h *Handler) CreateCloudBillingCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	h.proxyCloudRuntime(w, r, http.MethodPost, "/api/v1/billing/checkout-sessions", cloudRuntimeProxyOptions{
 		withUserID: true,
@@ -414,24 +418,19 @@ func (h *Handler) CreateCloudBillingCheckoutSession(w http.ResponseWriter, r *ht
 	})
 }
 
-// GetCloudBillingCheckoutSession forwards GET /api/v1/billing/checkout-sessions/{session_id}.
+// GetCloudBillingCheckoutSession 转发 GET /api/v1/billing/checkout-sessions/{session_id}。
 //
-// The path param goes into the upstream URL; if missing we return 400
-// before doing any network work.
+// 路径参数拼进上游 URL；缺失时在做任何网络请求前先回 400。
 func (h *Handler) GetCloudBillingCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionId")
 	if sessionID == "" {
 		writeError(w, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	// Stripe Checkout session IDs are `cs_<base62>` by construction —
-	// alphanumeric plus underscore, nothing else. We splice the value
-	// straight into the upstream URL path, so anything outside that
-	// alphabet could in principle introduce path / query / fragment
-	// segments that re-target the request. Allow-list rather than
-	// deny-list: a future Stripe-format bump cannot quietly slip a
-	// new "harmful" character past us, it just rejects until we
-	// widen the rule consciously.
+	// Stripe Checkout 会话 id 本来就是 `cs_<base62>` —— 字母数字加下划线，没有别的。这个值
+	// 会被直接拼进上游 URL 路径，所以超出该字母表的内容理论上可能带进路径/查询/片段段来改道
+	// 请求。这里用白名单而不是黑名单：将来 Stripe 格式升级，新字符不会悄悄溜过我们，只会被
+	// 拒掉，直到我们有意识地放宽规则。
 	if !isValidStripeSessionID(sessionID) {
 		writeError(w, http.StatusBadRequest, "invalid session_id")
 		return
@@ -441,13 +440,10 @@ func (h *Handler) GetCloudBillingCheckoutSession(w http.ResponseWriter, r *http.
 	})
 }
 
-// isValidStripeSessionID reports whether s is a syntactically
-// plausible Stripe Checkout session id: a non-empty string of
-// `[A-Za-z0-9_]`. Stripe's own format is `cs_<base62>`, but we
-// accept the broader alphanumeric+underscore set because (a) it
-// covers every Stripe ID variant that might ever route here and
-// (b) it stays in lockstep with Stripe's own ID grammar without
-// hard-coding the `cs_` prefix.
+// isValidStripeSessionID 判断 s 是否「语法上像」Stripe Checkout 会话 id：非空的
+// `[A-Za-z0-9_]` 串。Stripe 自己的格式是 `cs_<base62>`，但我们接受更宽的「字母数字+下划线」
+// 集合，因为 (a) 它覆盖可能路由到这里的各种 Stripe ID 变体，(b) 它跟 Stripe 的 ID 文法同步，
+// 又不用把 `cs_` 前缀写死。
 func isValidStripeSessionID(s string) bool {
 	if s == "" {
 		return false
@@ -465,69 +461,49 @@ func isValidStripeSessionID(s string) bool {
 	return true
 }
 
-// CreateCloudBillingPortalSession forwards POST /api/v1/billing/portal-sessions.
+// CreateCloudBillingPortalSession 转发 POST /api/v1/billing/portal-sessions。
 //
-// Body shape is upstream-defined; can be empty. We treat it as
-// optional JSON: cloud_runtime helper rejects empty bodies on
-// withBody=true, so for portal-sessions we explicitly do NOT mark
-// withBody and also send no body upstream. If the upstream contract
-// later requires a body, switch this to withBody and let cloud
-// validate.
+// Body 形态由上游定义，可以为空。这里把 body 当「可选 JSON」：cloud_runtime 的助手在
+// withBody=true 时会拒绝空 body，所以对 portal-sessions 我们刻意不开 withBody 也不向上游发
+// body。将来上游若要求带 body，改成 withBody 让 cloud 校验即可。
 func (h *Handler) CreateCloudBillingPortalSession(w http.ResponseWriter, r *http.Request) {
 	h.proxyCloudRuntime(w, r, http.MethodPost, "/api/v1/billing/portal-sessions", cloudRuntimeProxyOptions{
 		withUserID: true,
 	})
 }
 
-// HandleCloudBillingStripeWebhook is the public ingress for Stripe
-// webhook deliveries. Three things are critical here and are *not*
-// shared with the standard proxyCloudRuntime path:
+// HandleCloudBillingStripeWebhook 是 Stripe webhook 投递的公开入口。这里有三个关键点，且它们
+// *不*与常规 proxyCloudRuntime 路径共享：
 //
-//  1. NO authentication. Stripe POSTs from its own infrastructure;
-//     we don't have a user context and don't try to invent one.
-//     Application-layer auth is replaced by Stripe's HMAC signature,
-//     which the upstream cloud service verifies. This route therefore
-//     sits OUTSIDE the Auth group in router.go.
+//  1. 不做认证。Stripe 是从自己的基础设施 POST 过来的；我们没有用户上下文，也不该捏造一个。
+//     应用层的认证由 Stripe 的 HMAC 签名替代——由上游 cloud 服务验签。因此这条路由挂在
+//     router.go 的 Auth 组之外。
 //
-//  2. The body is forwarded byte-for-byte. Stripe's signature is
-//     computed over the exact bytes it sent. We must NOT json.Unmarshal
-//     /re-marshal, trim whitespace, or otherwise touch the payload —
-//     even a single byte difference fails verification.
+//  2. body 逐字节原样转发。Stripe 的签名是对它发来的确切字节算的。我们绝不能 json.Unmarshal/
+//     重新 marshal、裁空白或以任何方式碰 payload——哪怕差一个字节验签都会失败。
 //
-//  3. The `Stripe-Signature` header is forwarded verbatim. That's
-//     the entire authentication channel from Stripe to the upstream.
+//  3. `Stripe-Signature` 头原样转发。这是从 Stripe 到上游的整个认证通道。
 //
-// We DO bound the read with MaxBytesReader so a malicious or
-// misconfigured sender can't make us buffer arbitrary memory before
-// the upstream rejects on signature.
+// 我们确实用 MaxBytesReader 限制读取量：恶意或配置错误的发送方不能在「上游凭签名拒绝」之前
+// 逼我们缓冲任意大小的内存。
 //
-// Two pre-checks happen BEFORE we read the body:
+// 在读取 body 之前有两个预检：
 //
-//   - Per-IP rate limit (mirrors HandleAutopilotWebhook). The
-//     endpoint is public; without rate limiting an attacker spraying
-//     bogus payloads forces an upstream round-trip per request and
-//     burns the cloud's webhook handling budget. A spray of bad
-//     signatures still counts toward this limit, so the fast-path
-//     429 stops the bleed.
+//   - 按 IP 限流（镜像 HandleAutopilotWebhook）。该端点是公开的，不限流的话攻击者喷洒假
+//     payload 会让每个请求都打到上游一次，烧掉 cloud 的 webhook 处理预算。伪造签名的喷洒
+//     同样计入这个限流，所以快速 429 能止血。
 //
-//   - Mandatory `Stripe-Signature` header. Real Stripe deliveries
-//     always include it; absence ≡ not from Stripe. Returning 401
-//     locally saves an upstream RTT on the most common kind of
-//     unauthorized poke (curl from a script kiddie). This is a strict
-//     superset of what the upstream would do — Cloud also rejects
-//     missing-signature with 401 — so it does not change Stripe's
-//     own delivery dashboard view.
+//   - 必须有 `Stripe-Signature` 头。真正的 Stripe 投递总是带着它；缺失 ≡ 不是 Stripe 来的。
+//     本地直接回 401，省掉最常见的一种越权试探（脚本小子的 curl）的一次上游往返。这是上游
+//     行为的严格超集——Cloud 对缺失签名同样回 401——所以不影响 Stripe 自己投递仪表盘的视图。
 func (h *Handler) HandleCloudBillingStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	if h.CloudRuntime == nil || !h.CloudRuntime.Enabled() {
 		writeError(w, http.StatusServiceUnavailable, "cloud runtime is not configured")
 		return
 	}
 
-	// Per-IP rate limit BEFORE reading the body or hitting upstream.
-	// We deliberately reuse the same limiter as the autopilot
-	// webhook: both are public unauthenticated ingress with the same
-	// abuse profile, and budgeting them together gives a single knob
-	// to tune.
+	// 在读取 body 或打上游之前先按 IP 限流。刻意复用 autopilot webhook 的同一个限流器：
+	// 两者都是「公开、无认证」的入口且滥用画像相同，共用预算就只有一个旋钮可调。
 	if h.WebhookIPRateLimiter != nil {
 		if ip := h.clientIPForRateLimit(r); ip != "" {
 			if !h.WebhookIPRateLimiter.Allow(r.Context(), ip) {
@@ -537,25 +513,20 @@ func (h *Handler) HandleCloudBillingStripeWebhook(w http.ResponseWriter, r *http
 		}
 	}
 
-	// Real Stripe deliveries always include Stripe-Signature; the
-	// absence is a confident "not from Stripe" signal. Reject locally
-	// to save the upstream RTT. NOTE: we use Header.Values to detect
-	// presence rather than Get, so a header explicitly set to "" still
-	// counts as missing (matches the upstream's interpretation).
+	// 真正的 Stripe 投递总是带 Stripe-Signature；缺失就是很有把握的「不是 Stripe」信号。
+	// 本地拒绝以省一次上游往返。注意：用 Header.Values 判断「是否存在」而不是 Get——
+	// 显式设成 "" 的头也算缺失（与上游的解释一致）。
 	if len(r.Header.Values(stripeSignatureHeader)) == 0 {
 		writeError(w, http.StatusUnauthorized, "missing Stripe-Signature header")
 		return
 	}
 
-	// Body cap matches the JSON proxy. Stripe's documented payload
-	// ceiling is much smaller; the limit is defense, not contract.
+	// body 上限与 JSON 代理一致。Stripe 文档里的 payload 上限远小于此；这个限制是防御，
+	// 不是契约。
 	r.Body = http.MaxBytesReader(w, r.Body, maxStripeWebhookBodySize)
-	// io.ReadAll is appropriate here because the webhook body is
-	// fully consumed before forwarding (Stripe signs the bytes; we
-	// can't stream). Unlike the JSON proxy we deliberately do NOT
-	// trim whitespace or json-validate — the upstream signature
-	// check is computed over exactly what we received, so any
-	// transformation here would silently break verification.
+	// 这里用 io.ReadAll 是合适的：webhook body 在转发前要完整读入（Stripe 对字节签名，没法
+	// 流式）。与 JSON 代理不同，这里刻意不裁空白、不做 JSON 校验——上游的验签是对我们实际
+	// 收到的字节算的，任何一步变换都会悄悄弄坏验签。
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		var maxErr *http.MaxBytesError
@@ -567,16 +538,11 @@ func (h *Handler) HandleCloudBillingStripeWebhook(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Forward Stripe-Signature verbatim, plus Stripe's original
-	// Content-Type (so the upstream sees the exact same header set
-	// it would if Stripe were calling it directly). cloudruntime's
-	// default Content-Type would override `application/json;
-	// charset=utf-8` to plain `application/json`; signature
-	// verification doesn't care (HMAC is over the body), but
-	// preserving the exact header is cheap and removes a debug-time
-	// "why does this header look different?" surprise. Caller-
-	// supplied Headers in cloudruntime.Request override defaults, so
-	// putting Content-Type here is enough.
+	// 原样转发 Stripe-Signature，以及 Stripe 原始的 Content-Type（让上游看到与 Stripe 直接调
+	// 它时完全一样的头集合）。cloudruntime 的默认 Content-Type 会把 `application/json;
+	// charset=utf-8` 覆盖成纯 `application/json`；验签不在乎（HMAC 是对 body 算的），但保留
+	// 确切的头很便宜，还能消掉调试时「这个头怎么不一样」的疑问。cloudruntime.Request 里调用
+	// 方提供的 Headers 会覆盖默认值，所以把 Content-Type 放进来就够了。
 	headers := http.Header{}
 	if sigs := r.Header.Values(stripeSignatureHeader); len(sigs) > 0 {
 		headers[stripeSignatureHeader] = sigs
@@ -592,9 +558,8 @@ func (h *Handler) HandleCloudBillingStripeWebhook(w http.ResponseWriter, r *http
 		Headers:   headers,
 		RequestID: cloudRuntimeRequestID(r),
 		Op:        "billing",
-		// Intentionally no UserID — webhook is unauthenticated by
-		// design; injecting an empty header would still be harmless,
-		// but staying explicit makes the contract obvious to readers.
+		// 刻意不带 UserID——webhook 按设计无认证；即便注入一个空头也无害，但显式留白能让
+		// 读者一眼看清这份契约。
 	})
 	if err != nil {
 		writeCloudRuntimeError(w, r, err)

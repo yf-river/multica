@@ -1,3 +1,4 @@
+// Issue 属性图标：一份刻意精简的 Lucide 图标目录，用稳定 key 而非 SVG 数据/组件名持久化，供图标字形渲染和图标选择器使用。
 "use client";
 
 import type { IssueProperty } from "@multica/core/types";
@@ -52,9 +53,8 @@ interface PropertyIconOption {
 }
 
 /**
- * A deliberately small Lucide catalog that starts with the same symbols used
- * by built-in issue properties. Persist stable keys rather than SVG data or
- * component names so the visual implementation can evolve independently.
+ * 刻意保持精简的 Lucide 图标目录，以内置 Issue 属性用到的符号为起点。持久化
+ * 稳定 key 而非 SVG 数据或组件名，这样视觉实现可以独立演进。
  */
 export const PROPERTY_ICON_OPTIONS = [
   { value: "circle-dot", label: "Status", Icon: CircleDot },
@@ -99,6 +99,11 @@ function findPropertyIcon(value: string | undefined) {
   return PROPERTY_ICON_OPTIONS.find((option) => option.value === value);
 }
 
+/**
+ * 按 icon key 渲染对应的属性图标字形，找不到时回退到 Shapes 图标。
+ * @param icon 属性的图标 key。
+ * @param className 附加样式。
+ */
 export function PropertyIconGlyph({
   icon,
   className,
@@ -117,6 +122,11 @@ export function PropertyIconGlyph({
   );
 }
 
+/**
+ * 渲染 Issue 属性对象的图标；属性没有设置 icon 时返回 null。
+ * @param property Issue 属性（只需 icon 字段）。
+ * @param className 附加样式。
+ */
 export function PropertyIcon({
   property,
   className,
@@ -128,6 +138,14 @@ export function PropertyIcon({
   return <PropertyIconGlyph icon={property.icon} className={className} />;
 }
 
+/**
+ * 属性图标选择器：网格展示图标目录，选中高亮，并在有值时提供移除按钮。
+ * @param value 当前选中的 icon key。
+ * @param label 选择器的标题文本。
+ * @param removeLabel 移除按钮的文案。
+ * @param onSelect 选中图标回调。
+ * @param onRemove 移除图标回调。
+ */
 export function PropertyIconPicker({
   value,
   label,

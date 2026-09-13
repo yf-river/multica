@@ -1,5 +1,24 @@
 package execenv
 
+// 文件导读：本文件负责为 codex provider 构建「per-task 的 CODEX_HOME」。
+//
+// 角色：daemon 把每个 Codex 任务的 CODEX_HOME 设成一个任务私有目录（隔离于用户
+// 真实的 ~/.codex），本文件从共享 home（$CODEX_HOME 或 ~/.codex）向这个目录播种
+// 配置：auth.json 用 symlink 共享（让 token 刷新自动生效），config.json /
+// config.toml / instructions.md 用复制隔离（任务本地改动不影响共享 home）。之后还
+// 会往里写入一段 daemon 管理的 sandbox 配置块，并把每个任务各自的 sessions/ 指到
+// 只含本 issue 历史的持久会话存储（避免 Codex 0.143+ 为整机 ~/.codex/sessions 做
+// 全量 backfill 时卡死 initialize）。
+//
+// 关心的几类事：Windows 沙箱策略判定（fail-closed，不许误放宽到 danger-full-access）、
+// 复制配置时把被引用的外部文件（model_catalog_json、instructions 等）一并物化到
+// 任务 home 内、model 缓存与来源配置绑定、以及所有落盘操作都走 root-scoped 句柄，
+// 防止被复用的任务 home 里塞一个指向他处的 symlink 把 daemon 的写入带出隔离区。
+//
+// 边界：真正的沙箱策略内容在 codex_sandbox.go；技能注入在 codex_skill_strip.go /
+// codex_user_skills.go；native 多 agent 与记忆的禁用开关分别在 codex_multi_agent.go
+// / codex_memory.go。本文件只做「home 目录的内容编排」。
+
 import (
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,15 +33,14 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// Files to symlink from the shared ~/.codex/ into the per-task CODEX_HOME.
-// Symlinks share state (e.g. auth tokens) so changes propagate automatically.
+// 从共享 ~/.codex/ 软链进 per-task CODEX_HOME 的文件。软链共享状态（如 auth
+// token），改动会自动传播。
 var codexSymlinkedFiles = []string{
 	"auth.json",
 }
 
-// Files to copy from the shared ~/.codex/ into the per-task CODEX_HOME.
-// Copies are isolated — task-local config and cache refreshes don't mutate
-// the shared home.
+// 从共享 ~/.codex/ 复制进 per-task CODEX_HOME 的文件。复制是隔离的——任务本地的
+// 配置与缓存刷新不会改动共享 home。
 var codexCopiedFiles = []string{
 	"config.json",
 	"config.toml",
@@ -34,94 +52,79 @@ const (
 	codexModelsCacheBindingFile = ".models_cache_config.sha256"
 )
 
-// Files whose contents select the model provider/catalog used by Codex. The
-// task-local models cache is only reusable while this source configuration
-// remains unchanged. A model_catalog_json referenced by config.toml is folded
-// into the binding separately by codexModelsCacheConfigFingerprint.
+// 这些文件的内容决定 Codex 所用的模型 provider/目录。任务本地的 models 缓存仅在
+// 这份来源配置保持不变时可复用。config.toml 引用的 model_catalog_json 会由
+// codexModelsCacheConfigFingerprint 单独折进绑定指纹。
 var codexModelsCacheConfigFiles = []string{
 	"config.json",
 	"config.toml",
 }
 
-// CodexHomeOptions carries optional inputs for prepareCodexHomeWithOpts that
-// affect the generated per-task config.toml.
+// CodexHomeOptions 携带影响「生成出来的 per-task config.toml」的可选输入。
 type CodexHomeOptions struct {
-	// CodexVersion is the detected Codex CLI version (e.g. "0.121.0"). Empty
-	// means unknown; on macOS, unknown is treated as "probably broken" so the
-	// daemon falls back to danger-full-access for network access. See
-	// codex_sandbox.go for details.
+	// CodexVersion 是探测到的 Codex CLI 版本（如 "0.121.0"）。为空 = 未知；macOS
+	// 上「未知」被当作「很可能有问题」，daemon 网络访问因此回退到
+	// danger-full-access。详见 codex_sandbox.go。
 	CodexVersion string
-	// GOOS overrides the target platform when deciding the sandbox policy.
-	// Empty means use runtime.GOOS. Primarily exists so tests can exercise
-	// both macOS and Linux paths deterministically.
+	// GOOS 覆盖目标平台用于决定沙箱策略。空 = 使用 runtime.GOOS。主要让测试能
+	// 确定性地跑 macOS 与 Linux 两条路径。
 	GOOS string
-	// ResumeSessionID is the Codex thread/session ID this run intends to
-	// resume, when any. It is consulted when populating the per-issue session
-	// store (local_directory tasks) or migrating a legacy per-task home whose
-	// sessions/ still symlinks the shared ~/.codex/sessions: the single rollout
-	// for this ID is exposed so thread/resume can find it without pulling the
-	// whole shared history back in. Empty means a fresh thread (no rollout to
-	// expose). See prepareCodexSessionsDir (MUL-4424).
+	// ResumeSessionID 是本 run 打算续接的 Codex thread/session ID（若有）。在填充
+	// per-issue 会话存储（local_directory 任务）或迁移「sessions/ 仍软链共享
+	// ~/.codex/sessions」的遗留 per-task home 时被查询：只暴露该 ID 的那一份 rollout，
+	// 使 thread/resume 能找到它，而无须把整段共享历史拉回来。空 = 全新 thread
+	// （没有 rollout 可暴露）。参见 prepareCodexSessionsDir（MUL-4424）。
 	ResumeSessionID string
-	// IsLocalDirectory marks a task whose env root is never reused across task
-	// IDs — every local_directory task, in_place or worktree. Worktree tasks
-	// get a fresh env root per task just like in-place ones do
-	// (shouldReusePriorWorkdir refuses any local assignment), so they need the
-	// same per-issue session store; keying this on "runs in the user's
-	// directory" instead would silently drop a Codex agent's conversation
-	// history between turns on the same issue.
+	// IsLocalDirectory 标记「env root 永远不会跨 task ID 复用」的任务——每个
+	// local_directory 任务（in_place 或 worktree 都一样）。worktree 任务和 in-place
+	// 一样每个任务都拿全新 env root（shouldReusePriorWorkdir 拒绝任何本地分配），
+	// 所以它们需要同样的 per-issue 会话存储；若改成按「跑在用户目录里」来判定，就会
+	// 在同一个 issue 的轮次之间静默丢掉 Codex agent 的对话历史。
 	//
-	// These tasks get a fresh codex-home per task ID (the
-	// daemon never reuses their workdir), so their sessions/ is pointed at the
-	// per-issue store (SessionStoreKey) that survives across task IDs and holds
-	// ONLY this issue's rollouts — never the machine's whole ~/.codex/sessions.
-	// See prepareCodexSessionsDir (MUL-4424).
+	// 这些任务每个 task ID 都拿全新 codex-home（daemon 从不复用它们的 workdir），
+	// 所以它们的 sessions/ 指向跨 task ID 存活、且「只装这个 issue 的 rollout」的
+	// per-issue 存储（SessionStoreKey）——绝不是整机的 ~/.codex/sessions。参见
+	// prepareCodexSessionsDir（MUL-4424）。
 	IsLocalDirectory bool
-	// SessionStoreKey is a stable, per-(agent, issue-or-chat) relative path that
-	// identifies this task's persistent Codex sessions store. It survives across
-	// task IDs (unlike the task-scoped envRoot the GC reclaims) so a follow-up
-	// run resumes the same thread. Empty when no stable key is available (e.g. a
-	// task with no issue), in which case sessions/ stays task-local. See
-	// codexSessionStoreDir and prepareCodexSessionsDir (MUL-4424).
+	// SessionStoreKey 是稳定的、per-(agent, issue-or-chat) 相对路径，标识本任务的
+	// 持久 Codex sessions 存储。它跨 task ID 存活（不像 task-scoped envRoot 那样会被
+	// GC 回收），因此后续 run 能续接同一 thread。没有稳定 key（如无 issue 的任务）
+	// 时为空，此时 sessions/ 保持任务本地。参见 codexSessionStoreDir 与
+	// prepareCodexSessionsDir（MUL-4424）。
 	SessionStoreKey string
-	// CodexCustomArgs are the effective Codex CLI args this task will launch
-	// with (daemon defaults + profile-fixed + per-agent custom_args). Only the
-	// Windows sandbox decision reads them, to honor a `-c windows.sandbox=...`
-	// override that never lands in config.toml. See resolveWindowsSandboxState
-	// and MUL-4957.
+	// CodexCustomArgs 是本任务实际启动 Codex 时携带的 CLI 参数（daemon 默认 +
+	// profile 固定 + per-agent custom_args）。只有 Windows 沙箱决策会读它，以尊重
+	// 一个永远不会进 config.toml 的 `-c windows.sandbox=...` 覆盖。参见
+	// resolveWindowsSandboxState 与 MUL-4957。
 	CodexCustomArgs []string
 }
 
-// prepareCodexHome is a thin wrapper around prepareCodexHomeWithOpts kept for
-// tests that don't care about platform-aware sandbox configuration. It pins
-// GOOS to linux, which resolves to the danger-full-access default (MUL-5578),
-// so the sandbox block it writes is stable regardless of the host running the
-// test.
+// prepareCodexHome 是 prepareCodexHomeWithOpts 的薄包装，供「不在乎平台感知沙箱
+// 配置」的测试使用。它把 GOOS 钉在 linux——解析为 danger-full-access 默认值
+// （MUL-5578）——因此写出的 sandbox 块与运行测试的主机无关、稳定可预期。
 func prepareCodexHome(codexHome string, logger *slog.Logger) error {
 	return prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, logger)
 }
 
-// sharedConfigPresence is the tri-state existence of the shared
-// ~/.codex/config.toml copy source. It is three-valued so a stat that fails for
-// a reason other than "not found" (permission/IO) never masquerades as a
-// confident "the user has no config" — which would let the daemon loosen to
-// danger-full-access on doubt. See resolveWindowsSandboxState (MUL-4957).
+// sharedConfigPresence 是共享 ~/.codex/config.toml 复制来源的三态存在性。做成三值，
+// 使一次「非 not-found 原因」失败的 stat（权限/IO）绝不会伪装成确定的「用户没有配
+// 置」——那会纵容 daemon 在存疑时放宽到 danger-full-access。参见
+// resolveWindowsSandboxState（MUL-4957）。
 type sharedConfigPresence int
 
 const (
-	// sharedConfigAbsent: the shared config.toml is confidently not present
-	// (os.IsNotExist), so an absent per-task copy is a genuine "unconfigured".
+	// sharedConfigAbsent：共享 config.toml 确定不存在（os.IsNotExist），因此 per-task
+	// 副本缺失是货真价实的「未配置」。
 	sharedConfigAbsent sharedConfigPresence = iota
-	// sharedConfigPresent: the shared config.toml exists.
+	// sharedConfigPresent：共享 config.toml 存在。
 	sharedConfigPresent
-	// sharedConfigUndecidable: the stat failed for a reason other than
-	// not-found; the daemon cannot tell whether the user has a config.
+	// sharedConfigUndecidable：stat 因 not-found 之外的原因失败；daemon 无法判断用户
+	// 是否有配置。
 	sharedConfigUndecidable
 )
 
-// statSharedCodexConfig classifies the shared ~/.codex/config.toml (the copy
-// source) into the tri-state above, distinguishing a genuine absence from a
-// stat that could not complete.
+// statSharedCodexConfig 把共享 ~/.codex/config.toml（复制来源）归类进上面三态，
+// 区分「真缺失」与「无法完成的 stat」。
 func statSharedCodexConfig(sharedHome string) sharedConfigPresence {
 	if sharedHome == "" {
 		return sharedConfigAbsent
@@ -137,22 +140,18 @@ func statSharedCodexConfig(sharedHome string) sharedConfigPresence {
 	}
 }
 
-// resolveWindowsSandboxState determines, for a Windows task, whether a native
-// Codex sandbox is configured — across the per-task config.toml and the
-// effective custom args — failing closed (Undecidable) when it cannot tell.
+// resolveWindowsSandboxState 对 Windows 任务判断「是否配置了原生 Codex 沙箱」——
+// 综合 per-task config.toml 与生效的 custom args——无法判断时关闭即失败（Undecidable）。
 //
-// Two signals it does NOT gather itself (the caller does) keep the fail-closed
-// logic unit-testable without faulting the filesystem, and close MUL-4957's
-// round-3 must-fix where a failed sync could be misread as "unconfigured":
+// 两个信号不由它自己采集（由调用方给），这使 fail-closed 逻辑不必动文件系统也能
+// 单测，并封上 MUL-4957 第 3 轮必修项里「一次失败的同步可能被误读成未配置」的坑：
 //
-//   - configSyncErr: the error (if any) from syncing the shared config.toml
-//     into this per-task home. Non-nil means the per-task config.toml is
-//     unreliable — stale from a prior run, or never (re)written — so neither its
-//     contents nor its absence reflect the user's intent. Fail closed.
-//   - sharedPresence: whether the shared config.toml source exists. Only a
-//     confident absence lets an absent per-task copy count as genuinely
-//     unconfigured; a present-or-undecidable source whose per-task copy is
-//     missing means the copy silently did not land, so fail closed.
+//   - configSyncErr：把共享 config.toml 同步进 per-task home 时的错误（若有）。非
+//     nil 表示 per-task config.toml 不可信——可能是上一轮的陈旧副本，或从未(重)写过
+//     ——所以无论它「有内容」还是「缺失」都不能反映用户意图。关闭即失败。
+//   - sharedPresence：共享 config.toml 来源是否存在。只有「确定缺失」才能让 per-task
+//     副本的缺失算作真·未配置；来源「存在或不可判定」而 per-task 副本缺失，说明副本
+//     静默没落地，同样关闭即失败。
 func resolveWindowsSandboxState(configFile string, configSyncErr error, sharedPresence sharedConfigPresence, customArgs []string, logger *slog.Logger) windowsSandboxConfig {
 	configState := classifyPerTaskWindowsSandbox(configFile, configSyncErr, sharedPresence)
 	state := resolveWindowsSandbox(configState, windowsSandboxFromCustomArgs(customArgs))
@@ -163,12 +162,11 @@ func resolveWindowsSandboxState(configFile string, configSyncErr error, sharedPr
 	return state
 }
 
-// classifyPerTaskWindowsSandbox inspects the per-task config.toml given the
-// outcome of syncing it from the shared source, failing closed whenever the
-// file cannot be trusted or read.
+// classifyPerTaskWindowsSandbox 依据「从共享来源同步到 per-task」的结果检查 per-task
+// config.toml；文件不可信或不可读时一律关闭即失败。
 func classifyPerTaskWindowsSandbox(configFile string, configSyncErr error, sharedPresence sharedConfigPresence) windowsSandboxConfig {
-	// A failed shared→per-task sync leaves config.toml stale or missing; neither
-	// its contents nor its absence reflect the user's intent. Fail closed.
+	// 共享→per-task 的同步一旦失败，config.toml 就是陈旧或缺失的；无论有内容还是
+	// 缺失都不反映用户意图。关闭即失败。
 	if configSyncErr != nil {
 		return windowsSandboxUndecidable
 	}
@@ -177,24 +175,22 @@ func classifyPerTaskWindowsSandbox(configFile string, configSyncErr error, share
 	case err == nil:
 		return windowsSandboxFromConfig(string(data))
 	case os.IsNotExist(err):
-		// Sync succeeded and the per-task config is absent. That is a genuine
-		// "no config" only when the shared source is confidently absent too; a
-		// present or undecidable source whose copy is missing means the copy
-		// did not land → fail closed rather than loosen.
+		// 同步成功而 per-task 配置缺失。只有共享来源也「确定缺失」时，这才算真的
+		// 「没有配置」；来源「存在或不可判定」而副本缺失，意味着副本没落地——
+		// 关闭即失败，而不是放宽。
 		if sharedPresence == sharedConfigAbsent {
 			return windowsSandboxAbsent
 		}
 		return windowsSandboxUndecidable
 	default:
-		// A read error (permission/IO) on a file the daemon just wrote.
+		// 对一个 daemon 刚写过的文件，读失败（权限/IO）。
 		return windowsSandboxUndecidable
 	}
 }
 
-// prepareCodexHomeWithOpts creates a per-task CODEX_HOME directory and seeds
-// it with config from the shared ~/.codex/ home. Auth is symlinked (shared),
-// config files are copied (isolated). The per-task config.toml gets a
-// daemon-managed sandbox block picked by codexSandboxPolicyFor.
+// prepareCodexHomeWithOpts 创建 per-task 的 CODEX_HOME 目录，并从共享 ~/.codex/ home
+// 播种配置。auth 用 symlink（共享）、配置文件用复制（隔离）。per-task config.toml
+// 会写进一段由 daemon 管理、经 codexSandboxPolicyFor 挑选的 sandbox 块。
 func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *slog.Logger) error {
 	sharedHome := resolveSharedCodexHome()
 	freshHome := false
@@ -206,14 +202,14 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 		return fmt.Errorf("create codex-home dir: %w", err)
 	}
 
-	// Give the task its own local sessions/ directory instead of symlinking the
-	// shared ~/.codex/sessions in — a huge shared history would otherwise stall
-	// Codex's `initialize` state backfill (MUL-4424). See prepareCodexSessionsDir.
+	// 给任务一个自己本地的 sessions/ 目录，而不是软链共享 ~/.codex/sessions——
+	// 庞大的共享历史会卡住 Codex `initialize` 的状态回填（MUL-4424）。参见
+	// prepareCodexSessionsDir。
 	if err := prepareCodexSessionsDir(codexHome, sharedHome, opts, logger); err != nil {
 		logger.Warn("execenv: codex-home sessions dir prepare failed", "error", err)
 	}
 
-	// Symlink shared files (auth).
+	// 软链共享文件（auth）。
 	for _, name := range codexSymlinkedFiles {
 		src := filepath.Join(sharedHome, name)
 		dst := filepath.Join(codexHome, name)
@@ -222,16 +218,14 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 		}
 	}
 
-	// Surface the resulting auth.json state (file kind only, never contents)
-	// so operators diagnosing token-refresh failures can tell whether the
-	// per-task home is tracking the shared ~/.codex/auth.json or has drifted
-	// into a stale local copy.
+	// 暴露最终 auth.json 的状态（只报文件类型，绝不报内容），让排查 token 刷新失败
+	// 的运维人员能一眼看出 per-task home 是在跟踪共享 ~/.codex/auth.json，还是漂移
+	// 进了陈旧的本地副本。
 	logCodexAuthState(filepath.Join(codexHome, "auth.json"), logger)
 
-	// Sync isolated files from the shared source. Track the config.toml sync
-	// outcome specifically: on Windows a failed sync makes the per-task config
-	// untrustworthy, so the sandbox decision must fail closed rather than read a
-	// stale or absent copy as "unconfigured" and loosen (MUL-4957).
+	// 从共享来源同步隔离文件。单独跟踪 config.toml 的同步结果：Windows 上同步失败
+	// 会让 per-task 配置不可信，沙箱决策必须关闭即失败，而不是把陈旧/缺失的副本读
+	// 成「未配置」而放宽（MUL-4957）。
 	var configSyncErr error
 	for _, name := range codexCopiedFiles {
 		src := filepath.Join(sharedHome, name)
@@ -243,12 +237,11 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 			}
 		}
 	}
-	// Drop `[[skills.config]]` entries inherited from the user's
-	// ~/.codex/config.toml. Codex Desktop writes plugin-backed skills with a
-	// `name` and no `path`, which the CLI's stricter TOML parser rejects with
-	// `missing field path` and bails out of `thread/start`. Multica writes the
-	// agent's active skills directly to `codex-home/skills/`, so the
-	// user-level registry is redundant here. See codex_skill_strip.go.
+	// 去掉从用户 ~/.codex/config.toml 继承来的 `[[skills.config]]` 条目。Codex
+	// Desktop 会写带 `name` 却无 `path` 的插件型技能，CLI 更严格的 TOML 解析器会以
+	// `missing field path` 拒绝并中止 `thread/start`。Multica 把 agent 的活跃技能直接
+	// 写进 `codex-home/skills/`，所以这里的用户级注册表是多余的。参见
+	// codex_skill_strip.go。
 	if err := sanitizeCopiedCodexConfig(filepath.Join(codexHome, "config.toml")); err != nil {
 		logger.Warn("execenv: codex-home sanitize config failed", "error", err)
 	}
@@ -257,11 +250,9 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 		return fmt.Errorf("sync codex config file references: %w", err)
 	}
 
-	// Seed the shared model cache only for a fresh task home. On reuse, keep a
-	// task-local cache that Codex may have refreshed, but only while the source
-	// provider/catalog configuration is still the one that cache was bound to.
-	// If binding fails, discard the optional cache so Codex refreshes it instead
-	// of potentially using models from the wrong provider.
+	// 只为全新任务 home 播种共享 model 缓存。复用时保留一份「Codex 可能刷新过」的
+	// 任务本地缓存，但前提是来源 provider/目录配置仍是该缓存绑定时的那个。绑定失败
+	// 就丢弃这份可选缓存，让 Codex 自行刷新，而不是可能用到错误 provider 的模型。
 	if err := syncCodexModelsCache(codexHome, sharedHome, freshHome); err != nil {
 		logger.Warn("execenv: codex-home models cache sync failed; discarding cache", "error", err)
 		if removeErr := os.RemoveAll(filepath.Join(codexHome, codexModelsCacheFile)); removeErr != nil {
@@ -273,13 +264,11 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 		logger.Warn("execenv: codex-home plugin cache exposure failed", "error", err)
 	}
 
-	// Write a daemon-managed sandbox block into config.toml. On macOS we may
-	// need to fall back to danger-full-access because of openai/codex#10390,
-	// and on Windows the daemon defaults to danger-full-access unless the user
-	// opted into a native windows.sandbox; see codex_sandbox.go for the full
-	// rationale. On Windows, resolve the native-sandbox state across the copied
-	// config and the effective custom args so an explicit user opt-in is honored
-	// and an undecidable config fails closed instead of loosening.
+	// 往 config.toml 写 daemon 管理的 sandbox 块。macOS 上因 openai/codex#10390 可能
+	// 需要回退到 danger-full-access；Windows 上除非用户选择原生 windows.sandbox，否则
+	// daemon 默认 danger-full-access。完整缘由见 codex_sandbox.go。Windows 上综合已复
+	// 制的配置与生效 custom args 判定原生沙箱状态：显式用户选择被尊重，不可判定的
+	// 配置关闭即失败而不是放宽。
 	configFile := filepath.Join(codexHome, "config.toml")
 	winState := windowsSandboxAbsent
 	if resolveGOOS(opts.GOOS) == "windows" {
@@ -287,29 +276,25 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 	}
 	policy := codexSandboxPolicyForConfig(opts.GOOS, opts.CodexVersion, winState)
 	if err := ensureCodexSandboxConfig(configFile, policy, opts.CodexVersion, logger); err != nil {
-		// The managed block is the authoritative on-disk sandbox policy. If it
-		// can't be written, config.toml keeps whatever it already had — on a
-		// reused home that may be a stale danger-full-access from a prior run —
-		// so the fail-closed policy just computed above would only exist in
-		// memory while the effective config silently stays loose. Abort rather
-		// than launch Codex with an unenforced sandbox: on fresh Prepare this
-		// fails the task; on Reuse the caller leaves env.CodexHome unset, which
-		// configureCodexTaskShellEnvironment then refuses to start (MUL-4957).
+		// 这块受管配置是「磁盘上权威的沙箱策略」。写不进去的话，config.toml 保留原
+		// 有内容——复用 home 上可能是上一轮陈旧的 danger-full-access——那么刚算出的
+		// fail-closed 策略只存在于内存里，而实际配置悄悄保持宽松。与其在沙箱未被
+		// 落实的情况下启动 Codex，不如中止：全新 Prepare 会让任务失败；Reuse 时调用
+		// 方把 env.CodexHome 置空，configureCodexTaskShellEnvironment 随后拒绝启动
+		// （MUL-4957）。
 		return fmt.Errorf("ensure codex sandbox config: %w", err)
 	}
 
-	// Disable Codex native multi-agent inside daemon-managed task sessions
-	// so the parent thread's `turn/completed` is not interpreted as task
-	// completion while spawned subagents are still running. See
-	// codex_multi_agent.go for the full rationale and escape hatch.
+	// 在 daemon 管理的任务会话里禁用 Codex 原生多 agent：让父线程的 `turn/completed`
+	// 不会在派生子 agent 仍在运行时被误当成任务完成。完整缘由与逃生门见
+	// codex_multi_agent.go。
 	if err := ensureCodexMultiAgentConfig(filepath.Join(codexHome, "config.toml"), logger); err != nil {
 		logger.Warn("execenv: codex-home ensure multi-agent config failed", "error", err)
 	}
 
-	// Disable Codex native auto-memory inside daemon-managed task sessions
-	// so cross-task and cross-workspace context leaks (multica#3130) cannot
-	// happen via `codex-home/memories/` or `~/.codex/memories/`. See
-	// codex_memory.go for the full rationale and escape hatch.
+	// 在 daemon 管理的任务会话里禁用 Codex 原生自动记忆，使跨任务、跨 workspace 的
+	// 上下文泄漏（multica#3130）无法经 `codex-home/memories/` 或 `~/.codex/memories/`
+	// 发生。完整缘由与逃生门见 codex_memory.go。
 	if err := ensureCodexMemoryConfig(filepath.Join(codexHome, "config.toml"), logger); err != nil {
 		logger.Warn("execenv: codex-home ensure memory config failed", "error", err)
 	}
@@ -317,8 +302,8 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 	return nil
 }
 
-// resolveSharedCodexHome returns the path to the user's shared Codex home.
-// Checks $CODEX_HOME first, falls back to ~/.codex.
+// resolveSharedCodexHome 返回用户共享 Codex home 的路径：先查 $CODEX_HOME，回退到
+// ~/.codex。
 func resolveSharedCodexHome() string {
 	if v := os.Getenv("CODEX_HOME"); v != "" {
 		abs, err := filepath.Abs(v)
@@ -333,36 +318,31 @@ func resolveSharedCodexHome() string {
 	return filepath.Join(home, ".codex")
 }
 
-// codexSessionStateGlobs are the session-derived SQLite state Codex builds
-// inside a CODEX_HOME by indexing everything under sessions/. They are dropped
-// during the legacy-symlink migration (prepareCodexSessionsDir) so Codex
-// rebuilds them from the now task-local sessions instead of keeping the
-// thousands of stale rows it backfilled from the shared ~/.codex/sessions
-// history. Everything matched here is a rebuildable derived index — never
-// authoritative data.
+// codexSessionStateGlobs 是 Codex 在某个 CODEX_HOME 里、通过索引 sessions/ 之下所有
+// 内容构建出的「会话派生」SQLite 状态。旧版软链迁移（prepareCodexSessionsDir）会删掉
+// 它们，让 Codex 从「现在已是任务本地」的 sessions 重建，而不是保留它从共享
+// ~/.codex/sessions 历史回填的成千上万行陈旧数据。这里匹配到的都是可重建的派生
+// 索引——绝不是权威数据。
 //
-// Deliberately NOT listed: session_index.jsonl, which Codex 0.144.x uses as the
-// authoritative store for thread-id → user-set thread name (name edits land in
-// SQLite AND this file, never back in the rollout), so it cannot be rebuilt from
-// rollouts; and sibling per-task DBs with different prefixes (goals_*, logs_*,
-// memories_*) which are not session-derived. All are left intact.
+// 刻意不列出：session_index.jsonl——Codex 0.144.x 用它当「thread-id → 用户自定义
+// 线程名」的权威存储（改名会写进 SQLite 和这个文件，从不会写回 rollout），因此无法
+// 从 rollout 重建；以及其它前缀（goals_*、logs_*、memories_*）的非会话派生 per-task
+// DB。它们都保持原样。
 var codexSessionStateGlobs = []string{
 	"state_*.sqlite",
 	"state_*.sqlite-shm",
 	"state_*.sqlite-wal",
 }
 
-// codexSessionStoreRoot is the directory under the shared Codex home that holds
-// the per-issue session stores. It sits beside the user's own `sessions/` so it
-// shares that volume (making resume-rollout hard links zero-copy) but is never
-// enumerated by a plain `codex` run, keeping Multica task history out of the
-// user's own thread list.
+// codexSessionStoreRoot 是共享 Codex home 下存放 per-issue 会话存储的目录。它位于
+// 用户自己的 sessions/ 旁边，共享同一卷（让续接 rollout 的硬链接零拷贝），但从不会被
+// 一次普通 `codex` 运行枚举到，Multica 的任务历史因此不会混进用户自己的线程列表。
 const codexSessionStoreRoot = "multica-sessions"
 
-// codexSessionStoreDir returns the persistent, per-(agent, issue) Codex sessions
-// store for key, rooted on the shared Codex home's volume. It survives across
-// task IDs (unlike the task-scoped envRoot the GC reclaims) and holds only that
-// issue's rollouts. Empty key → "" (caller keeps sessions/ task-local).
+// codexSessionStoreDir 返回 key 的持久、per-(agent, issue) Codex sessions 存储，
+// 根落在共享 Codex home 所在的卷上。它跨 task ID 存活（不像 task-scoped envRoot 会被
+// GC 回收），只装该 issue 的 rollout。key 为空 → ""（调用方让 sessions/ 保持任务
+// 本地）。
 func codexSessionStoreDir(sharedHome, key string) string {
 	if key == "" {
 		return ""
@@ -370,23 +350,19 @@ func codexSessionStoreDir(sharedHome, key string) string {
 	return filepath.Join(sharedHome, codexSessionStoreRoot, key)
 }
 
-// codexSessionStoreNamespace maps a daemon's profile to the directory segment
-// that isolates its session stores from another profile-daemon's when several
-// run on the same machine sharing one ~/.codex (profiles get separate daemon
-// state but the same Codex home). Each daemon writes under, and only ever
-// reclaims, its own namespace, so a staging daemon's GC can never delete a
-// production task's live store and vice versa.
+// codexSessionStoreNamespace 把 daemon 的 profile 映射为路径段，用于在「多台 daemon
+// 共享一个 ~/.codex 跑在同一台机器上」时（profile 各有独立 daemon 状态，但 Codex
+// home 相同）隔离各 profile 的会话存储。每个 daemon 只在自己的命名空间下写入、也只
+// 回收自己的——因此一个 staging daemon 的 GC 永远删不掉生产任务在用的 live store，
+// 反之亦然。
 //
-// The map MUST be collision-free (distinct profiles are distinct daemons and
-// must never share a namespace) AND fixed-length (a profile can be as long as a
-// filesystem segment allows, ~255 bytes, so any length-expanding encoding would
-// overflow the 255-byte limit and fail to create the store dir). A lossy "drop
-// unsafe characters" scheme collides ("" vs "default", "staging.prod" vs
-// "stagingprod"); a full hex encoding doubles the length and overflows. So the
-// empty (default) profile gets a reserved bare literal, and every named profile
-// is the hex of its SHA-256 — a constant 64 hex chars, filesystem-safe and
-// collision-resistant — under a "p_" prefix the bare literal can never collide
-// with (MUL-4424).
+// 该映射必须「无碰撞」（不同 profile 是不同的 daemon，绝不共享命名空间）且「定长」
+// （profile 最长可到文件系统单段上限约 255 字节，任何会拉长长度的编码都会溢出 255
+// 字节限制、导致建目录失败）。有损的「丢弃不安全字符」方案会碰撞（"" vs "default"、
+// "staging.prod" vs "stagingprod"）；完整 hex 编码会把长度翻倍而溢出。因此空
+// （default）profile 用一个保留的裸字面量，每个具名 profile 用其 SHA-256 的 hex——
+// 恒 64 个 hex 字符、文件系统安全、抗碰撞——前缀 "p_" 使裸字面量永不与它碰撞
+// （MUL-4424）。
 func codexSessionStoreNamespace(profile string) string {
 	if profile == "" {
 		return "default"
@@ -395,10 +371,9 @@ func codexSessionStoreNamespace(profile string) string {
 	return "p_" + hex.EncodeToString(sum[:])
 }
 
-// codexSessionStoreKey builds a profile-and-task key for persistent Codex
-// sessions. Issue IDs retain their existing path;
-// direct chats use a prefixed chat_session_id so the two namespaces cannot
-// collide. Returns "" when neither stable identifier is available.
+// codexSessionStoreKey 为持久 Codex sessions 构建「profile + 任务」键。issue ID 保留
+// 其既有路径；直接聊天用带前缀的 chat_session_id，使两个命名空间不会碰撞。两个稳定
+// 标识都没有时返回 ""。
 func codexSessionStoreKey(profile string, task TaskContextForEnv) string {
 	storeID := sanitizePathSegment(task.IssueID)
 	if storeID == "" {
@@ -415,9 +390,8 @@ func codexSessionStoreKey(profile string, task TaskContextForEnv) string {
 	return filepath.Join(codexSessionStoreNamespace(profile), agent, storeID)
 }
 
-// sanitizePathSegment reduces s to the characters a UUID uses (hex plus
-// dashes/underscores), dropping everything else so the result is always a single
-// safe path segment — no separators, no "..", no drive letters.
+// sanitizePathSegment 把 s 缩减成 UUID 会用的字符（hex 加横线/下划线），丢掉其余
+// 一切，使结果恒为单个安全路径段——无分隔符、无 ".."、无盘符。
 func sanitizePathSegment(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -429,33 +403,26 @@ func sanitizePathSegment(s string) string {
 	return b.String()
 }
 
-// PruneCodexSessionStores reclaims per-issue Codex session stores under the
-// shared home's multica-sessions root that have not been touched within
-// retention, bounding the lifetime of the conversation history each one holds.
+// PruneCodexSessionStores 回收共享 home 的 multica-sessions 根下「在 retention 内没被
+// 触碰过」的 per-issue Codex 会话存储，为其中承载的每段对话历史设下生存期限。
 //
-// The stores deliberately live outside the task-scoped envRoot the task GC
-// reclaims (so resume survives across task IDs), which means without this they
-// would accumulate forever — a done or abandoned issue's prompts and full
-// rollouts (one reporter saw a single 1.5 GiB rollout) would never be freed, and
-// deleting the issue/agent/workspace would not remove them. A store's newest
-// mtime is its last activity: Codex writes/extends a rollout as the thread
-// advances, so an active or recently-resumed task keeps its store fresh and is
-// never reclaimed; a store idle past retention is removed, giving deleted issues
-// an eventual-reclamation guarantee. retention <= 0 disables pruning entirely.
+// 这些存储刻意位于任务 GC 回收的 task-scoped envRoot 之外（这样续接能跨 task ID
+// 存活），也正因如此，没有本函数它们会无限堆积——一个已完成或废弃 issue 的提示词
+// 与完整 rollout（有人见过单个 1.5 GiB 的 rollout）永远不会被释放，删除
+// issue/agent/workspace 也删不掉它们。存储的最新 mtime 就是它的最近活动：Codex 随
+// 线程推进写/追加 rollout，因此活跃或最近续接的任务不断刷新存储、绝不会被回收；
+// 闲置超过 retention 的存储被移除，让已删除的 issue 获得「最终必被回收」的保证。
+// retention <= 0 时完全禁用清理。
 //
-// It scans ONLY the caller profile's namespace, so a daemon never reclaims a
-// store owned by another profile-daemon sharing the same ~/.codex — the
-// in-process reservation guard cannot span processes, and the namespace makes
-// their store trees disjoint so it does not need to (MUL-4424).
+// 它只扫「调用方 profile 的命名空间」——一个 daemon 永远不会回收共享同一 ~/.codex
+// 的另一个 profile-daemon 的存储——进程内预留守卫无法跨进程，而命名空间让它们的
+// 存储树彼此不相交，也就不需要跨进程（MUL-4424）。
 //
-// reserve (may be nil) atomically claims a store for deletion: it returns
-// ok=false when a live task holds the store — leaving it — and otherwise returns
-// a commit to run once removal finishes. Because the caller's reservation and a
-// task's mark-active go through one lock in the same process, a store a task is
-// about to mount is never removed out from under it — the confirm-inactive and
-// the remove are effectively atomic, closing the stat->remove race a plain
-// point-in-time active check leaves open. nil disables the guard (tests): every
-// idle store is removed.
+// reserve（可为 nil）原子地为一次删除认领某个存储：当活动任务持有该存储时返回
+// ok=false（放过它）；否则返回一个「删除完成后要跑」的 commit。由于调用方的预留与
+// 任务的 mark-active 走同一个进程里的同一把锁，一个任务正要挂载的存储绝不会在它
+// 脚下被删——「确认不活跃」与「删除」实际原子，封死了朴素的时间点活跃检查留下的
+// stat→remove 竞态。nil 时禁用守卫（测试用）：每个闲置存储都被删。
 func PruneCodexSessionStores(profile string, retention time.Duration, now time.Time, reserve func(storeDir string) (commit func(), ok bool), logger *slog.Logger) (removed int, bytesFreed int64) {
 	if retention <= 0 {
 		return 0, 0
@@ -485,9 +452,8 @@ func PruneCodexSessionStores(profile string, retention time.Duration, now time.T
 				kept++
 				continue
 			}
-			// Atomically reserve the store before removing it. A live task holds
-			// it (or is mounting it right now) → skip; otherwise the reservation
-			// blocks any task from claiming it until the removal + commit finish.
+			// 删除前先原子认领该存储。活动任务持有它（或此刻正要挂载它）→ 跳过；
+			// 否则认领会阻止任何任务在「删除 + commit 完成」前占用它。
 			var commit func()
 			if reserve != nil {
 				c, ok := reserve(storeDir)
@@ -509,8 +475,8 @@ func PruneCodexSessionStores(profile string, retention time.Duration, now time.T
 			removed++
 			bytesFreed += size
 		}
-		// Remove the agent dir once its last issue store is gone, so the tree
-		// does not leave empty <agent>/ shells behind.
+		// 最后一个 issue 存储也删掉后，顺手移除 agent 目录，别让树里留下空空的
+		// <agent>/ 外壳。
 		if kept == 0 {
 			_ = os.Remove(agentDir)
 		}
@@ -518,9 +484,8 @@ func PruneCodexSessionStores(profile string, retention time.Duration, now time.T
 	return removed, bytesFreed
 }
 
-// dirStat walks dir once, returning the newest modification time seen (the
-// directory's last activity) and its total byte size (for GC accounting).
-// Shared by the store pruners and the task temp sweep.
+// dirStat 遍历 dir 一遍，返回见过的最新修改时间（目录的最近活动）与总字节数（GC
+// 记账用）。由会话存储清理器与任务临时文件清扫共用。
 func dirStat(dir string) (newest time.Time, size int64) {
 	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -541,44 +506,37 @@ func dirStat(dir string) (newest time.Time, size int64) {
 	return newest, size
 }
 
-// prepareCodexSessionsDir points codex-home/sessions at a sessions store that
-// holds ONLY this task's own history, never the machine's whole
-// ~/.codex/sessions.
+// prepareCodexSessionsDir 把 codex-home/sessions 指向一个「只装本任务自己历史」的
+// 会话存储，绝不装整机 ~/.codex/sessions。
 //
-// Background (MUL-4424): Codex 0.143+ backfills a per-home session-state DB by
-// enumerating every rollout visible under sessions/ during `initialize`. When
-// the per-task home symlinked the shared sessions dir in, a machine that had
-// accumulated thousands of rollouts (one reporter hit ~2000 files / ~22 GiB)
-// stalled `initialize` for tens of seconds — the app-server started but the
-// task produced no output before it was cancelled. So we scope sessions/ to a
-// single task/issue:
+// 背景（MUL-4424）：Codex 0.143+ 会在 `initialize` 期间枚举 sessions/ 下每一个可见
+// rollout 来回填 per-home 会话状态 DB。当 per-task home 软链了整个共享 sessions 目录
+// 时，一台积累了大量 rollout 的机器（有人报告约 2000 个文件 / 约 22 GiB）会让
+// `initialize` 卡住几十秒——app-server 已启动，但任务在超时取消前没有产出任何输出。
+// 因此把 sessions/ 收敛到单个 task/issue：
 //
-//   - local_directory task: envRoot (and thus codex-home) is fresh per task ID
-//     and never reused, so sessions/ links to the per-issue store on the shared
-//     Codex volume — stable across task IDs, GC-safe, and holding only this
-//     issue's rollouts. See linkCodexSessionsToStore.
-//   - Fresh managed task: sessions/ is absent — create an empty local dir so
-//     backfill is trivial; the reused envRoot carries it to the next run.
-//   - Reused managed task whose sessions/ is already a real dir: it is
-//     authoritative — the prior run's rollout already lives here — leave it.
-//   - Reused managed task still holding a legacy symlink into the shared
-//     sessions (older build): migrate. With a resume, route it through the
-//     per-issue store (cross-volume-safe); without one, replace the symlink
-//     with an empty local dir. Either way drop the stale session-state DB so
-//     Codex rebuilds it from the scoped sessions.
+//   - local_directory 任务：envRoot（连同 codex-home）每个 task ID 全新、从不复用，
+//     所以 sessions/ 软链到共享 Codex 卷上的 per-issue 存储——跨 task ID 稳定、
+//     GC 安全、只装该 issue 的 rollout。参见 linkCodexSessionsToStore。
+//   - 全新受管任务：sessions/ 不存在——建一个空的本地目录，让回填微不足道；被复用
+//     的 envRoot 会把它带进下一轮。
+//   - 复用的受管任务且 sessions/ 已是真目录：它是权威的——上一轮的 rollout 已在
+//     里面——保持原样。
+//   - 复用的受管任务仍持有指向共享 sessions 的旧版软链（更早的构建）：迁移。带
+//     resume 时改经 per-issue 存储（跨卷安全）；不带则用空本地目录替换软链。两种
+//     方式都会丢掉陈旧的会话状态 DB，让 Codex 从收敛过的 sessions 重建它。
 func prepareCodexSessionsDir(codexHome, sharedHome string, opts CodexHomeOptions, logger *slog.Logger) error {
 	dst := filepath.Join(codexHome, "sessions")
 	sharedSessions := filepath.Join(sharedHome, "sessions")
 	storeDir := codexSessionStoreDir(sharedHome, opts.SessionStoreKey)
 
-	// local_directory tasks have no reusable envRoot, so their history can only
-	// persist across task IDs in the per-issue store. The daemon still verifies
-	// the specific rollout is present before claiming a resume (see
-	// CodexResumeRolloutPresent), so a missing one no longer masquerades as one.
+	// local_directory 任务没有可复用的 envRoot，它们的历史只能存在 per-issue 存储里
+	// 以跨 task ID 延续。daemon 仍会在声称 resume 前核验具体 rollout 在不在（见
+	// CodexResumeRolloutPresent），因此「缺失的 rollout」不再伪装成存在。
 	if opts.IsLocalDirectory {
 		if storeDir == "" {
-			// No stable per-issue key (e.g. a non-issue task). Fall back to an
-			// empty local dir rather than re-exposing the whole shared history.
+			// 没有稳定的 per-issue key（如非 issue 任务）。退回空本地目录，而不是
+			// 重新暴露整段共享历史。
 			return os.MkdirAll(dst, 0o755)
 		}
 		return linkCodexSessionsToStore(dst, storeDir, sharedSessions, opts.ResumeSessionID, logger)
@@ -587,38 +545,34 @@ func prepareCodexSessionsDir(codexHome, sharedHome string, opts CodexHomeOptions
 	fi, err := os.Lstat(dst)
 	switch {
 	case os.IsNotExist(err):
-		return os.MkdirAll(dst, 0o755) // fresh managed task — empty local dir
+		return os.MkdirAll(dst, 0o755) // 全新受管任务——空本地目录
 	case err != nil:
 		return fmt.Errorf("stat sessions dir %s: %w", dst, err)
 	}
 
 	if fi.Mode()&os.ModeSymlink == 0 {
-		// Already a real directory (task-local, authoritative). Ensure it
-		// exists (no-op) and leave its contents alone.
+		// 已是真目录（任务本地、权威）。确保它存在（空操作）并保持内容不动。
 		return os.MkdirAll(dst, 0o755)
 	}
 
-	// A symlink/junction. If it already points at this issue's store (a home
-	// migrated with a resume on a prior reuse), it is authoritative — re-ensure
-	// the store link and the resume rollout, then leave it.
+	// 是 symlink/junction。若它已指向本 issue 的存储（一次带 resume 的迁移在先前复用
+	// 时做过），它就是权威的——重新确保存储链接与 resume rollout，然后保持原样。
 	if storeDir != "" {
 		if target, rlErr := os.Readlink(dst); rlErr == nil && sameCodexPath(target, storeDir) {
 			return linkCodexSessionsToStore(dst, storeDir, sharedSessions, opts.ResumeSessionID, logger)
 		}
 	}
 
-	// Legacy symlink into the shared ~/.codex/sessions — migrate it. Drop the
-	// session-derived state so Codex re-indexes the scoped sessions instead of
-	// the stale rows it built from the whole shared home.
+	// 是指向共享 ~/.codex/sessions 的旧版软链——迁移它。丢掉会话派生的状态，让
+	// Codex 重新索引收敛过的 sessions，而不是保留它从整段共享 home 建出的陈旧行。
 	if err := os.Remove(dst); err != nil {
 		return fmt.Errorf("remove legacy sessions symlink %s: %w", dst, err)
 	}
 	resetCodexSessionState(codexHome, logger)
 
-	// With a resume, route through the per-issue store so the rollout is exposed
-	// cross-volume-safely (hard link within the shared volume + a directory link
-	// into the task home). Without a resume — or with no stable key — an empty
-	// local dir is all a fresh thread needs.
+	// 带 resume 时改经 per-issue 存储，使 rollout 以跨卷安全的方式暴露（共享卷内硬
+	// 链接 + 进任务 home 的目录链接）。不带 resume——或没有稳定 key——时，全新 thread
+	// 只需要一个空本地目录。
 	if opts.ResumeSessionID != "" && storeDir != "" {
 		logger.Info("execenv: migrated codex-home sessions from shared symlink to per-issue store",
 			"codex_home", codexHome, "resume_session", true)
@@ -629,19 +583,15 @@ func prepareCodexSessionsDir(codexHome, sharedHome string, opts CodexHomeOptions
 	return os.MkdirAll(dst, 0o755)
 }
 
-// linkCodexSessionsToStore points codex-home/sessions (dst) at the per-issue
-// store (storeDir) via an idempotent directory link — a symlink on Unix, a
-// junction on Windows — both of which cross filesystem volumes without special
-// privilege. The store lives on the shared Codex home's volume, so linking the
-// directory (rather than copying rollout files into the task home) is what makes
-// resume exposure safe when WorkspacesRoot sits on a different disk than
-// ~/.codex (MUL-4424, Windows cross-volume).
+// linkCodexSessionsToStore 通过一个幂等的目录链接把 codex-home/sessions（dst）指向
+// per-issue 存储（storeDir）——Unix 用 symlink、Windows 用 junction——两者都能无特殊
+// 权限地跨文件系统卷。存储落在共享 Codex home 的卷上，所以链「目录」而非把 rollout
+// 文件复制进任务 home，正是当 WorkspacesRoot 与 ~/.codex 不在同一块盘时 resume 暴露
+// 依然安全的原因（MUL-4424、Windows 跨卷）。
 //
-// When resuming and the store does not yet hold the rollout — e.g. the first run
-// after upgrading from the old whole-shared-sessions layout, where the history
-// still lives only under ~/.codex/sessions — it hard-links that rollout into the
-// store. Both paths are on the shared volume, so the link is zero-copy and never
-// puts a (possibly gigabyte) rollout on initialize's critical path.
+// 续接而存储里还没有该 rollout 时——例如从旧版全量共享 sessions 布局升级后的首轮，
+// 历史只存在于 ~/.codex/sessions——就把那份 rollout 硬链进存储。两个路径都在共享卷
+// 上，硬链零拷贝，绝不会把可能上 GiB 的 rollout 放到 initialize 的临界路径上。
 func linkCodexSessionsToStore(dst, storeDir, sharedSessions, resumeID string, logger *slog.Logger) error {
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		return fmt.Errorf("create codex session store %s: %w", storeDir, err)
@@ -655,20 +605,17 @@ func linkCodexSessionsToStore(dst, storeDir, sharedSessions, resumeID string, lo
 	if err := ensureCodexSessionsLink(dst, storeDir); err != nil {
 		return err
 	}
-	// Stamp the store as just-used. Mounting it (MkdirAll, rollout lookup, link)
-	// does not touch its mtime, so without this the GC's idle check would still
-	// see a >TTL-old store and could reclaim it before the resumed turn writes its
-	// first rollout — reopening a long-idle issue must not lose context. This is
-	// the activity refresh; the daemon's in-process active-store guard closes the
-	// remaining stat→remove race (MUL-4424).
+	// 把存储盖成「刚用过」。挂载它（MkdirAll、rollout 查找、链接）并不会动它的 mtime，
+	// 没有这步，GC 的闲置检查仍会看到一个 >TTL 的旧存储，可能在续接轮次写出第一份
+	// rollout 之前就把它回收——重新打开一个长期闲置的 issue 不应丢失上下文。这就是
+	// 活跃刷新；daemon 进程内的活跃存储守卫封住剩余的 stat→remove 竞态（MUL-4424）。
 	touchCodexSessionStore(storeDir, logger)
 	return nil
 }
 
-// touchCodexSessionStore refreshes storeDir's modification time to now — the
-// signal dirStat reads as the store's last activity. Best-effort: a
-// failed touch only risks an over-eager prune, which the active-store guard
-// still prevents.
+// touchCodexSessionStore 把 storeDir 的修改时间刷新成现在——dirStat 把它读作存储的
+// 最近活动。尽力而为：一次失败的 touch 只带来过度积极清理的风险，而活跃存储守卫仍
+// 会兜住。
 func touchCodexSessionStore(storeDir string, logger *slog.Logger) {
 	now := time.Now()
 	if err := os.Chtimes(storeDir, now, now); err != nil {
@@ -676,11 +623,10 @@ func touchCodexSessionStore(storeDir string, logger *slog.Logger) {
 	}
 }
 
-// CodexSessionStorePath returns the per-conversation Codex session store on the
-// shared home, or "" when there is no stable issue or chat key. The daemon
-// marks this path in-use for the duration of a task so
-// PruneCodexSessionStores never reclaims a store mid-mount, closing the
-// stat→remove race the mtime refresh alone cannot (MUL-4424).
+// CodexSessionStorePath 返回共享 home 上、per-conversation 的 Codex 会话存储路径；
+// 没有稳定 issue/chat key 时返回 ""。daemon 会在任务期间把该路径标记为使用中，使
+// PruneCodexSessionStores 绝不会在挂载中途回收某个存储，封住单独的 mtime 刷新封不
+// 住的 stat→remove 竞态（MUL-4424）。
 func CodexSessionStorePath(profile string, task TaskContextForEnv) string {
 	key := codexSessionStoreKey(profile, task)
 	if key == "" {
@@ -689,17 +635,15 @@ func CodexSessionStorePath(profile string, task TaskContextForEnv) string {
 	return codexSessionStoreDir(resolveSharedCodexHome(), key)
 }
 
-// sameCodexPath reports whether two filesystem paths refer to the same location,
-// tolerating separator/cleanliness differences. Used to detect a sessions link
-// that already points at the per-issue store so a reused home is not re-migrated.
+// sameCodexPath 报告两个文件系统路径是否指向同一位置，容忍分隔符/整洁度差异。用于
+// 侦测「已指向 per-issue 存储」的 sessions 链接，使被复用的 home 不会被重复迁移。
 func sameCodexPath(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
-// resetCodexSessionState removes the rebuildable, session-derived Codex state
-// files from a per-task CODEX_HOME so the next `initialize` re-derives them from
-// the task-local sessions. Only session-derived indexes are touched; unrelated
-// per-task DBs (goals_*, logs_*, memories_*) are left intact.
+// resetCodexSessionState 从 per-task CODEX_HOME 移除可重建、会话派生的 Codex 状态
+// 文件，让下一次 `initialize` 从任务本地 sessions 重新推导它们。只碰会话派生的索引；
+// 无关的 per-task DB（goals_*、logs_*、memories_*）保持原样。
 func resetCodexSessionState(codexHome string, logger *slog.Logger) {
 	for _, pattern := range codexSessionStateGlobs {
 		matches, err := filepath.Glob(filepath.Join(codexHome, pattern))
@@ -714,13 +658,11 @@ func resetCodexSessionState(codexHome string, logger *slog.Logger) {
 	}
 }
 
-// ensureCodexSessionsLink points codex-home/sessions (dst) at the per-issue
-// session store (src) via a directory link, creating the store if needed.
-// Idempotent: a link already pointing at src is left as-is; anything else at dst
-// (a real dir, a stale link, a legacy shared-sessions symlink) is replaced. The
-// link crosses volumes without privilege (symlink on Unix, junction on Windows),
-// so the store can live on the shared Codex volume while the task home lives
-// under WorkspacesRoot (see linkCodexSessionsToStore).
+// ensureCodexSessionsLink 用目录链接把 codex-home/sessions（dst）指向 per-issue 会话
+// 存储（src），必要时先建存储。幂等：已指向 src 的链接原样保留；dst 上任何别的东西
+// （真目录、陈旧链接、旧版共享 sessions 软链）都被替换。链接无需特权即可跨卷
+// （Unix 用 symlink、Windows 用 junction），因此存储可放在共享 Codex 卷上、任务 home
+// 位于 WorkspacesRoot 之下（见 linkCodexSessionsToStore）。
 func ensureCodexSessionsLink(dst, src string) error {
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		return fmt.Errorf("create codex session store %s: %w", src, err)
@@ -738,20 +680,18 @@ func ensureCodexSessionsLink(dst, src string) error {
 	return createDirLink(src, dst)
 }
 
-// codexRolloutGlobs returns the glob patterns that match a session's rollout
-// under a Codex sessions directory. It covers the layouts Codex 0.14x writes:
-// date-nested (sessions/YYYY/MM/DD/) and flat (directly under sessions/), each
-// as a plain .jsonl or a background-compressed .jsonl.zst.
+// codexRolloutGlobs 返回能匹配某个会话 rollout（位于某个 Codex sessions 目录下）的
+// glob 模式。覆盖 Codex 0.14x 写出的布局：按日期嵌套（sessions/YYYY/MM/DD/）与平铺
+// （直接在 sessions/ 下），各自是普通 .jsonl 或后台压缩的 .jsonl.zst。
 func codexRolloutGlobs(sessionsDir, sessionID string) []string {
-	name := "rollout-*-" + sessionID + ".jsonl*" // .jsonl and .jsonl.zst
+	name := "rollout-*-" + sessionID + ".jsonl*" // .jsonl 与 .jsonl.zst
 	return []string{
 		filepath.Join(sessionsDir, name),
 		filepath.Join(sessionsDir, "*", "*", "*", name),
 	}
 }
 
-// findCodexRollouts returns every rollout file for sessionID under sessionsDir,
-// across the supported layouts.
+// findCodexRollouts 返回 sessionsDir 下、sessionID 在受支持布局中的所有 rollout 文件。
 func findCodexRollouts(sessionsDir, sessionID string) []string {
 	if sessionsDir == "" || sessionID == "" {
 		return nil
@@ -773,12 +713,10 @@ func findCodexRollouts(sessionsDir, sessionID string) []string {
 	return out
 }
 
-// CodexResumeRolloutPresent reports whether sessionID's rollout is present in
-// the task's codex-home sessions dir. The daemon uses this after preparing the
-// environment to avoid claiming a resume Codex would silently restart from
-// scratch — the rollout may be absent when a legacy home's migration could not
-// locate it, or when a local_directory task's shared history has been pruned
-// (MUL-4424).
+// CodexResumeRolloutPresent 报告 sessionID 的 rollout 是否出现在任务的 codex-home
+// sessions 目录。daemon 在准备好环境后用它对「resume」把关，避免声称要续接、结果
+// Codex 却静默从头开始——rollout 可能在旧 home 迁移时定位不到而缺失，或 local_directory
+// 任务的共享历史已被清理（MUL-4424）。
 func CodexResumeRolloutPresent(codexHome, sessionID string) bool {
 	if codexHome == "" || sessionID == "" {
 		return false
@@ -786,16 +724,13 @@ func CodexResumeRolloutPresent(codexHome, sessionID string) bool {
 	return len(findCodexRollouts(filepath.Join(codexHome, "sessions"), sessionID)) > 0
 }
 
-// exposeResumeRollout links sessionID's rollout(s) out of the shared sessions
-// history into the task-local sessions dir, preserving the relative layout so
-// thread/resume can find it. Covers plain and compressed rollouts in both the
-// nested and flat layouts.
+// exposeResumeRollout 把 sessionID 的 rollout 从共享 sessions 历史链进任务本地 sessions
+// 目录，保留相对布局使 thread/resume 能找到它。覆盖嵌套与平铺两种布局下的普通与
+// 压缩 rollout。
 //
-// It links rather than copies: a rollout can be large (one reporter saw a
-// single 1.5 GiB file) and this runs on `initialize`'s critical path, so an
-// unbounded copy would reintroduce the very stall we are fixing. See
-// linkCodexRollout for the hard-link-then-symlink strategy; if neither works
-// the caller treats the resume as unavailable and falls back to a fresh thread.
+// 它用链接而非复制：rollout 可能很大（有人见过单个 1.5 GiB 文件），且这步跑在
+// `initialize` 的临界路径上，无界复制会重新引入我们正要修掉的那个卡顿。硬链→软链的
+// 策略见 linkCodexRollout；两者都不成时调用方把 resume 视为不可用、回退到全新线程。
 func exposeResumeRollout(sharedSessions, localSessions, sessionID string, logger *slog.Logger) error {
 	matches := findCodexRollouts(sharedSessions, sessionID)
 	if len(matches) == 0 {
@@ -820,11 +755,10 @@ func exposeResumeRollout(sharedSessions, localSessions, sessionID string, logger
 	return nil
 }
 
-// linkCodexRollout materialises src at dst without copying its bytes: a hard
-// link first (zero-copy, needs no special privilege and works on Windows within
-// a volume), falling back to a symlink across filesystems. It never copies — a
-// rollout can be gigabytes and this runs on initialize's critical path, so a
-// copy would reintroduce the stall MUL-4424 fixes.
+// linkCodexRollout 在不复制字节的情况下把 src 物化到 dst：先硬链（零拷贝、无需特殊
+// 权限、同卷内 Windows 也可用），跨文件系统时回退到 symlink。它从不复制——rollout
+// 可能达数 GiB 且这步在 initialize 的临界路径上，复制会重新引入 MUL-4424 修掉的那个
+// 卡顿。
 func linkCodexRollout(src, dst string) error {
 	if err := os.Link(src, dst); err == nil {
 		return nil
@@ -832,20 +766,17 @@ func linkCodexRollout(src, dst string) error {
 	return os.Symlink(src, dst)
 }
 
-// syncCodexReferencedFiles materialises every file the copied config.toml
-// points at inside the per-task CODEX_HOME.
+// syncCodexReferencedFiles 把「被复制的 config.toml 里引用的每个文件」都物化进
+// per-task CODEX_HOME。
 //
-// config.toml is copied verbatim, so its path-valued keys survive the move to
-// the task home while the files they name do not. Codex resolves a relative
-// value against CODEX_HOME, which is now the task home, so an unmaterialised
-// reference makes Codex fail while loading its configuration — before the task
-// prompt is ever delivered (MUL-5623 / #6271: `failed to read model
-// instructions file <task-home>/gpt-unrestricted.md`).
+// config.toml 被原样复制，因此它的路径值键随配置一起进了任务 home，而键所指的文件
+// 却没有。Codex 按 CODEX_HOME（现在已是任务 home）解析相对值，物化不到的引用会让
+// Codex 在加载配置时就失败——在任务 prompt 送达之前（MUL-5623 / #6271：
+// `failed to read model instructions file <task-home>/gpt-unrestricted.md`）。
 //
-// Only the keys listed below are followed. Copying every path a config could
-// mention would turn any user config into a channel for pulling arbitrary host
-// files into a task sandbox, and copying the whole shared home would drag
-// auth.json and the machine's session history along with it.
+// 只跟进下面列出的键。跟随配置可能提到的每个路径，等于把任意用户配置变成「把宿
+// 主机任意文件拉进任务沙箱」的通道；把整段共享 home 复制过来又会把 auth.json 与整机
+// 会话历史一起拖进来。
 func syncCodexReferencedFiles(codexHome, sharedHome string) error {
 	configPath := filepath.Join(codexHome, "config.toml")
 	data, err := os.ReadFile(configPath)
@@ -858,9 +789,8 @@ func syncCodexReferencedFiles(codexHome, sharedHome string) error {
 
 	var cfg struct {
 		ModelCatalogJSON string `toml:"model_catalog_json"`
-		// Replacement for Codex's built-in instructions.
-		// experimental_instructions_file is the deprecated alias Codex still
-		// accepts, so configs written before the rename need it too.
+		// 替代 Codex 内置 instructions 的文件。experimental_instructions_file 是
+		// Codex 仍在接受的废弃别名，改名之前写的配置也要能读。
 		ModelInstructionsFile        string `toml:"model_instructions_file"`
 		ExperimentalInstructionsFile string `toml:"experimental_instructions_file"`
 	}
@@ -880,30 +810,23 @@ func syncCodexReferencedFiles(codexHome, sharedHome string) error {
 	return nil
 }
 
-// syncCodexReferencedFile copies one config-referenced file from the shared
-// Codex home into the task home at the same relative location, so the copied
-// config.toml keeps resolving under the relocated CODEX_HOME.
+// syncCodexReferencedFile 把一个被配置引用的文件从共享 Codex home 复制进任务 home
+// 的同一相对位置，使复制过去的 config.toml 在 CODEX_HOME 被搬迁后仍能继续解析。
 //
-// Absolute and ~-rooted values are left alone: they address the same host the
-// task runs on, so Codex reads them directly and copying would only risk
-// serving a stale snapshot.
+// 绝对路径与以 ~ 为根的取值保持原样：它们指向与任务同一台宿主机，Codex 直接读即可，
+// 复制反而有提供陈旧快照的风险。
 //
-// Destination writes are root-scoped to codexHome (see
-// materialiseInCodexHome): filepath.IsLocal only proves the config string has no
-// lexical `..`, and a reused task home is writable by the task that used it, so
-// nothing but a root-scoped mkdir/remove/write can guarantee the daemon stays
-// inside the task home.
+// 目标侧写入以 codexHome 为根做限定（见 materialiseInCodexHome）：filepath.IsLocal
+// 只能证明配置串没有词法上的 `..`，而被复用的任务 home 对其上一个任务可写，所以除
+// 了根限定的 mkdir/remove/write，没有任何东西能保证 daemon 留在任务 home 内。
 //
-// The source side deliberately keeps ordinary path semantics: the relative path
-// resolves inside the shared Codex home and symlinks there are followed. That
-// directory is the user's own configuration, the file is only ever read, and a
-// task on this host can already read anything the daemon user can — so a
-// symlink out of ~/.codex grants no access the task did not already have.
+// 源侧刻意保持普通路径语义：相对路径在共享 Codex home 内解析、那里的 symlink 被跟随。
+// 那个目录是用户自己的配置、文件只被读取，而本宿主机上的任务本就能读 daemon 用户
+// 能读的一切——所以从 ~/.codex 链出去并不授予任务本没有的访问权。
 //
-// The copy is refreshed on every prepare, so reusing a task home picks up an
-// edited source instead of keeping a stale instruction file. A copy whose key
-// was later removed or repointed stays behind unreferenced; Codex never reads it
-// because the config no longer names it.
+// 每次 prepare 都会刷新复制，因此复用任务 home 会拾取「已编辑过的源」，而不是守着陈
+// 旧的 instruction 文件。某个键后来被删除或改指后，旧复制会无人引用地留在原地；Codex
+// 永远不会读它，因为配置已不再点名它。
 func syncCodexReferencedFile(codexHome, sharedHome, key, configValue string) error {
 	referencedPath := strings.TrimSpace(configValue)
 	if referencedPath == "" {
@@ -919,9 +842,8 @@ func syncCodexReferencedFile(codexHome, sharedHome, key, configValue string) err
 		return fmt.Errorf("%s %q resolved to missing file %s: %w", key, referencedPath, src, err)
 	}
 	if err != nil {
-		// Not a confident absence — a permission or IO failure must not be
-		// reported as "the file isn't there", which sends operators looking for
-		// the wrong problem.
+		// 不是确定的缺失——权限或 IO 失败不能被报成「文件不在」，那会把运维人员引向
+		// 错误的问题。
 		return fmt.Errorf("%s %q: cannot stat source %s: %w", key, referencedPath, src, err)
 	}
 
@@ -938,31 +860,25 @@ func syncCodexReferencedFile(codexHome, sharedHome, key, configValue string) err
 	return materialiseInCodexHome(codexHome, cleanReferencedPath, src, key)
 }
 
-// openVerifiedCodexHomeRoot opens codexHome as a confinement root and only
-// returns it once the opened directory is proven to still BE codexHome.
+// openVerifiedCodexHomeRoot 把 codexHome 打开成约束根（confinement root），并且只在
+// 「打开后的目录被证明仍是 codexHome」后才返回它。
 //
-// Checking the path first and opening it second is not enough: os.OpenRoot
-// resolves the path it is given, so a directory swapped for a link to somewhere
-// else between the check and the open yields a root that is happily confined —
-// to the wrong tree. Every subsequent root-scoped write would then land outside
-// the task home without ever "escaping" its root.
+// 「先查路径、再开路径」是不够的：os.OpenRoot 会解析给它的路径，所以若在检查与打开
+// 之间目录被换成指向别处的链接，得到的 root 会「愉快地被约束」——约束到错误的树。
+// 之后每个 root 限定的写入都会落在任务 home 之外，却从不「逃出」它的 root。
 //
-// That window is not hypothetical here. Task homes are reused, and on Windows
-// only the direct Codex process is terminated — descendant cleanup cannot be
-// confirmed (see server/pkg/agent/proc_windows.go) — so a leftover process that
-// knows its old CODEX_HOME can still act on it. Any local process can create the
-// same window on other platforms.
+// 这个窗口在这里不是假设性的。任务 home 会被复用，而 Windows 上只有直接的 Codex
+// 进程被终止——后代进程的清理无法确认（见 server/pkg/agent/proc_windows.go）——
+// 所以一个记得自己旧 CODEX_HOME 的遗留进程仍能对它动手。任何本机进程都能在其它
+// 平台制造同一窗口。
 //
-// So the identity check is bound to the handle instead of the path: compare the
-// opened directory against a no-follow stat of codexHome. A swap before the open
-// fails here (symlink, or a different directory at that path), and a swap after
-// it cannot matter, because everything downstream uses this handle rather than
-// the path.
+// 因此身份校验绑定在句柄而非路径上：把打开的目录与 codexHome 的一次 no-follow
+// stat 比对。打开前的替换会在这里失败（symlink，或该路径上是另一个目录）；打开后的
+// 替换无关紧要，因为下游一切都用这个句柄而不是路径。
 //
-// Scope: this covers the config-referenced copies below. The earlier steps of
-// prepareCodexHomeWithOpts still address the task home by path, so "the whole
-// prepare is safe against a symlinked task home" is not yet true — that
-// conversion is tracked in MUL-5647.
+// 范围：它覆盖下面「配置引用的复制」。prepareCodexHomeWithOpts 更早的步骤仍按路径
+// 寻址任务 home，所以「整个 prepare 对 symlink 化的任务 home 都安全」尚未成立——
+// 那项改造记录在 MUL-5647。
 func openVerifiedCodexHomeRoot(codexHome, key string) (*os.Root, error) {
 	root, err := os.OpenRoot(codexHome)
 	if err != nil {
@@ -975,10 +891,9 @@ func openVerifiedCodexHomeRoot(codexHome, key string) (*os.Root, error) {
 	return root, nil
 }
 
-// verifyCodexHomeRoot proves that root is the directory codexHome names right
-// now: not reached through a symlink, and the same directory os.Lstat sees at
-// that path. It is separate from openVerifiedCodexHomeRoot so the swap case can
-// be tested deterministically instead of by racing.
+// verifyCodexHomeRoot 证明 root 正是 codexHome 现在指的那个目录：不是经由 symlink
+// 到达，且与 os.Lstat 在该路径上看到的同一目录。它与 openVerifiedCodexHomeRoot 分开，
+// 使「替换」场景能确定性测试而不必竞态。
 func verifyCodexHomeRoot(root *os.Root, codexHome, key string) error {
 	opened, err := root.Stat(".")
 	if err != nil {
@@ -997,17 +912,13 @@ func verifyCodexHomeRoot(root *os.Root, codexHome, key string) error {
 	return nil
 }
 
-// materialiseInCodexHome writes src to relPath inside codexHome using
-// root-scoped operations, so no symlink below the task home can redirect the
-// daemon's mkdir, remove, or write outside it.
+// materialiseInCodexHome 用 root 限定操作把 src 写进 codexHome 内的 relPath，使任务
+// home 之下任何 symlink 都无法把 daemon 的 mkdir、remove 或 write 重定向到 home 之外。
 //
-// This matters because a task home is reused: a prepare can run against a
-// directory a previous task already wrote to. Without the root, a task that
-// replaced an intermediate directory of its own home with a link to somewhere
-// else would have the daemon delete and overwrite the link target on the next
-// prepare. os.Root still allows links that stay inside the task home, which is
-// harmless, and rejects the ones that leave it. The root itself is
-// identity-checked by openVerifiedCodexHomeRoot.
+// 这很重要，因为任务 home 会被复用：一次 prepare 可能作用于上一个任务已写过的目录。
+// 没有 root 时，一个把自己 home 的某个中间目录换成「指向别处的链接」的任务，会让
+// daemon 在下次 prepare 时删除并覆写链接目标。os.Root 仍允许停留在任务 home 内的
+// 链接（无害），拒绝离开它的。root 本身的身份由 openVerifiedCodexHomeRoot 校验。
 func materialiseInCodexHome(codexHome, relPath, src, key string) error {
 	root, err := openVerifiedCodexHomeRoot(codexHome, key)
 	if err != nil {
@@ -1043,26 +954,22 @@ func materialiseInCodexHome(codexHome, relPath, src, key string) error {
 	if _, err := io.Copy(out, in); err != nil {
 		return fmt.Errorf("copy %s %s to %s: %w", key, src, relPath, err)
 	}
-	// Close explicitly so a deferred write-back failure cannot be swallowed; the
-	// deferred Close then no-ops.
+	// 显式 Close，让延迟到函数返回后的写回失败不被吞掉；随后 defer 中的 Close 变成
+	// 空操作。
 	if err := out.Close(); err != nil {
 		return fmt.Errorf("close %s copy %s: %w", key, relPath, err)
 	}
 	return nil
 }
 
-// syncCodexModelsCache seeds models_cache.json once for a fresh task home and
-// binds it to the shared provider/catalog configuration. Codex can replace the
-// task-local cache after startup, so an unchanged binding preserves whatever
-// the task last wrote rather than restoring a potentially stale shared copy.
+// syncCodexModelsCache 为全新任务 home 播种一次 models_cache.json，并把它绑定到共享
+// 的 provider/目录配置。Codex 启动后可能替换任务本地缓存，因此「绑定未变」保留任务
+// 最后写入的内容，而不是恢复一份可能陈旧的共享副本。
 //
-// A changed or missing binding makes an existing cache unsafe: Codex's cache
-// format (as of 0.144.x) records the client version and fetch time but not the
-// provider identity. Reusing that cache after config.toml switches providers
-// can therefore pair provider B with provider A's model catalog. Drop it and
-// let Codex fetch a catalog for the new effective configuration. We
-// deliberately do not seed the shared cache in this case because it carries
-// the same provider-identity ambiguity.
+// 绑定缺失或变化会让既有缓存不安全：Codex 的缓存格式（截至 0.144.x）记录客户端版本
+// 与抓取时间，却不记录 provider 身份。config.toml 切换 provider 后复用该缓存，可能
+// 把 provider B 与 provider A 的模型目录配到一起。丢掉它，让 Codex 为新生效配置抓取
+// 目录。此情形刻意不为共享缓存播种，因为那份缓存同样存在 provider 身份歧义。
 func syncCodexModelsCache(codexHome, sharedHome string, freshHome bool) error {
 	fingerprint, err := codexModelsCacheConfigFingerprint(sharedHome)
 	if err != nil {
@@ -1083,9 +990,8 @@ func syncCodexModelsCache(codexHome, sharedHome string, freshHome bool) error {
 	}
 
 	if bound && previous == fingerprint {
-		// The cache belongs to the current config. Preserve both an existing
-		// task-refreshed cache and an intentional absence after a failed fetch;
-		// seeding on reuse could reintroduce an unbound shared snapshot.
+		// 缓存属于当前配置。既保留任务刷新过的既有缓存，也保留一次失败抓取后「有意
+		// 的缺失」；复用时播种可能重新引入一份无绑定的共享快照。
 		if cacheExists && !cacheInfo.Mode().IsRegular() {
 			if err := os.RemoveAll(cachePath); err != nil {
 				return fmt.Errorf("remove non-regular codex models cache %s: %w", cachePath, err)
@@ -1101,10 +1007,9 @@ func syncCodexModelsCache(codexHome, sharedHome string, freshHome bool) error {
 	}
 
 	if freshHome && !bound && !cacheExists {
-		// A shared snapshot is useful on the one path where the task home itself
-		// did not exist yet; subsequent task-local refreshes stay isolated. An
-		// existing legacy home without a binding never seeds because its prior
-		// effective configuration is unknown even when its cache is absent.
+		// 共享快照只在「任务 home 本身还不存在」的那条路径上有用；此后任务本地刷新
+		// 保持隔离。没有绑定的既有旧 home 从不播种，因为即便它的缓存缺失，其先前生效
+		// 的配置也未知。
 		if err := seedCopiedFile(filepath.Join(sharedHome, codexModelsCacheFile), cachePath); err != nil {
 			return fmt.Errorf("seed codex models cache: %w", err)
 		}
@@ -1116,9 +1021,8 @@ func syncCodexModelsCache(codexHome, sharedHome string, freshHome bool) error {
 	return nil
 }
 
-// codexModelsCacheConfigFingerprint hashes the shared config files plus the
-// contents of any model_catalog_json they reference. The digest is stored in
-// the isolated task home; no config contents or credentials are persisted.
+// codexModelsCacheConfigFingerprint 对共享配置文件外加它们引用的任何 model_catalog_json
+// 的内容做哈希。摘要存在隔离的任务 home 里；不会持久化任何配置内容或凭据。
 func codexModelsCacheConfigFingerprint(sharedHome string) (string, error) {
 	h := sha256.New()
 	var configTOML []byte
@@ -1165,9 +1069,8 @@ func codexModelsCacheConfigFingerprint(sharedHome string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// readCodexModelsCacheBinding returns bound=false for a missing or non-regular
-// marker. Non-regular paths are removed so a reused task cannot redirect the
-// later binding write outside its isolated CODEX_HOME.
+// readCodexModelsCacheBinding 对缺失或非普通文件返回 bound=false。非普通路径会被
+// 移除，使被复用的任务无法把之后的绑定写入重定向到其隔离 CODEX_HOME 之外。
 func readCodexModelsCacheBinding(path string) (fingerprint string, bound bool, err error) {
 	fi, err := os.Lstat(path)
 	if os.IsNotExist(err) {
@@ -1207,12 +1110,10 @@ func writeCodexModelsCacheBinding(path, fingerprint string) error {
 	return nil
 }
 
-// resolveCodexConfigPath maps a path-valued config.toml entry to its source
-// file on this host. key is the config key the path came from and only shapes
-// the diagnostics, so an operator reading a failure knows which setting to fix.
-// A relative path resolves against the shared Codex home — that is the
-// directory the config was copied from, and the base Codex itself would have
-// used before the per-task home relocated CODEX_HOME.
+// resolveCodexConfigPath 把 config.toml 中一个路径值键映射为本宿主机上的源文件。key
+// 是路径来源的配置键，只用于塑造诊断信息，让读错误的运维人员知道该修哪项配置。
+// 相对路径在共享 Codex home 内解析——那是配置被复制出来的目录，也是 per-task home
+// 搬迁 CODEX_HOME 之前 Codex 自己本会使用的基准。
 func resolveCodexConfigPath(configPath, sharedHome, key string) (string, error) {
 	if filepath.IsAbs(configPath) {
 		return filepath.Clean(configPath), nil
@@ -1262,30 +1163,28 @@ func exposeSharedCodexPluginCache(codexHome, sharedHome string) error {
 	return nil
 }
 
-// ensureSymlink ensures dst tracks src. If src doesn't exist, it's a no-op.
-// If dst is already a symlink pointing at src, it's a no-op. Otherwise — a
-// wrong-target symlink, a broken symlink, or a regular file left over from a
-// prior createFileLink copy fallback — dst is removed and recreated via
-// createFileLink so the per-task home doesn't drift from the shared source.
+// ensureSymlink 确保 dst 跟踪 src。src 不存在时为空操作。dst 已是「指向 src」的
+// symlink 时也是空操作。其它情况——目标错误或损坏的 symlink、或先前 createFileLink
+// 复制回退留下的普通文件——删除 dst 并经由 createFileLink 重建，使 per-task home 不
+// 与共享来源漂移。
 //
-// The "regular file" branch matters on Windows: when os.Symlink fails (no
-// Developer Mode / not elevated), createFileLink falls back to copying the
-// file. Without this re-creation step, a once-stale auth.json would never
-// pick up token refreshes from the shared ~/.codex/auth.json, leaving Codex
-// stuck on a revoked refresh token across env reuses (issue #2081).
+// 「普通文件」分支在 Windows 上很关键：os.Symlink 失败时（无开发者模式/未提权），
+// createFileLink 回退为复制文件。没有这步重建，一次陈旧化的 auth.json 将永远收不到
+// 共享 ~/.codex/auth.json 的 token 刷新，让 Codex 在环境复用期间困在已撤销的刷新
+// token 上（issue #2081）。
 func ensureSymlink(src, dst string) error {
 	if _, err := os.Stat(src); os.IsNotExist(err) {
-		return nil // source doesn't exist — skip
+		return nil // 源不存在——跳过
 	}
 
 	if fi, err := os.Lstat(dst); err == nil {
 		if fi.Mode()&os.ModeSymlink != 0 {
 			if target, err := os.Readlink(dst); err == nil && target == src {
-				return nil // symlink already points to src
+				return nil // symlink 已指向 src
 			}
 		}
-		// Wrong-target symlink, broken symlink, or stale regular file —
-		// drop it so createFileLink can re-link/re-copy from the current src.
+		// 目标错误的 symlink、损坏的 symlink、或陈旧的普通文件——丢弃它，让
+		// createFileLink 从当前 src 重新链/重新复制。
 		if err := os.Remove(dst); err != nil {
 			return fmt.Errorf("remove stale dst %s: %w", dst, err)
 		}
@@ -1294,13 +1193,12 @@ func ensureSymlink(src, dst string) error {
 	return createFileLink(src, dst)
 }
 
-// logCodexAuthState records the kind of auth.json the per-task CODEX_HOME
-// ended up with — symlink (with target), regular file (with size + mtime),
-// or missing — so an operator chasing refresh_token_reused / token_expired
-// reports can immediately tell whether the per-task home is tracking the
-// shared ~/.codex/auth.json or has drifted into a stale local copy.
+// logCodexAuthState 记录 per-task CODEX_HOME 最终得到的 auth.json 类型——symlink
+// （带目标）、普通文件（带大小 + mtime）、或缺失——使追查 refresh_token_reused /
+// token_expired 报告的运维人员能立刻看出 per-task home 是在跟踪共享 ~/.codex/auth.json
+// 还是漂移成了陈旧的本地副本。
 //
-// Never logs the file contents.
+// 永不记录文件内容。
 func logCodexAuthState(authPath string, logger *slog.Logger) {
 	fi, err := os.Lstat(authPath)
 	if err != nil {
@@ -1319,36 +1217,29 @@ func logCodexAuthState(authPath string, logger *slog.Logger) {
 	)
 }
 
-// (The daemon used to write a minimal inline config here; the authoritative
-// sandbox/network directives now live in a managed block rendered by
-// codex_sandbox.go's ensureCodexSandboxConfig so they can be updated
-// idempotently without touching user-managed keys.)
+// （daemon 过去会在这里写一份极简内联配置；如今权威的 sandbox/network 指令位于
+// codex_sandbox.go 的 ensureCodexSandboxConfig 渲染的受管块里，可幂等更新而不碰用户
+// 管理的键。）
 
-// syncCopiedFile mirrors a per-task dst onto the current state of the shared
-// src so the per-task copy tracks the shared source across Reuse() runs:
+// syncCopiedFile 把 per-task 的 dst 镜像到共享 src 的当前状态，使 per-task 副本在
+// 历次 Reuse() 之间跟踪共享来源：
 //
-//   - src present, dst absent:  copy src → dst
-//   - src present, dst present: drop dst and re-copy src → dst (refresh)
-//   - src absent,  dst present: drop dst (the shared source has been removed,
-//     so the per-task stale copy must not linger)
-//   - src absent,  dst absent:  no-op
+//   - src 在、dst 缺：复制 src → dst
+//   - src 在、dst 在：丢弃 dst 再复制 src → dst（刷新）
+//   - src 缺、dst 在：丢弃 dst（共享来源已删，per-task 陈旧副本不得残留）
+//   - src 缺、dst 缺：空操作
 //
-// Regression for MUL-2646: the prior "don't overwrite" guard left per-task
-// config.toml / config.json / instructions.md stuck on whatever snapshot they
-// were seeded with at first Prepare. A user who edited ~/.codex/config.toml
-// between runs — switching the active [model_providers.X] base_url, pointing
-// env_key at a freshly rotated API key, or removing the file outright to
-// drop a provider — kept hitting the stale per-task copy on session resume,
-// with Codex calling the new URL using the old key (or replaying a provider
-// the user had since deleted from the shared config).
+// MUL-2646 的回归：早先的「不要覆盖」守卫让 per-task 的 config.toml / config.json /
+// instructions.md 死死停在首次 Prepare 播种时的快照上。用户在两次运行之间编辑了
+// ~/.codex/config.toml——切换活动的 [model_providers.X] base_url、把 env_key 指向
+// 刚轮换过的 API key、或直接删掉文件以丢弃某个 provider——却总在会话续接时撞上
+// 陈旧的 per-task 副本，Codex 用旧 key 调新 URL（或重放一个用户已从共享配置删掉的
+// provider）。
 //
-// For config.toml the subsequent ensureCodex{Sandbox,MultiAgent,Memory}Config
-// passes recreate the file from scratch when the shared source is gone, so
-// the per-task home keeps the daemon-managed defaults but loses every
-// user-managed [model_providers.X] / model_provider line that no longer
-// exists in the shared config. For config.json / instructions.md there is
-// no daemon-managed default, so they simply disappear in lockstep with the
-// shared source.
+// 对 config.toml：后续的 ensureCodex{Sandbox,MultiAgent,Memory}Config 在共享来源消失
+// 时会从零重建文件，因此 per-task home 保留 daemon 管理的默认值，但丢掉共享配置里
+// 已不存在的每条用户管理 [model_providers.X] / model_provider 行。config.json /
+// instructions.md 没有 daemon 管理的默认值，所以它们与共享来源同步消失。
 func syncCopiedFile(src, dst string) error {
 	_, srcErr := os.Stat(src)
 	srcMissing := os.IsNotExist(srcErr)
@@ -1368,10 +1259,9 @@ func syncCopiedFile(src, dst string) error {
 	return copyFile(src, dst)
 }
 
-// seedCopiedFile copies src only when dst has no task-local regular file.
-// Unlike syncCopiedFile, it never overwrites or removes a cache refreshed by a
-// prior run. Non-regular destinations are removed defensively so a reused task
-// cannot turn the cache path into a link outside its isolated CODEX_HOME.
+// seedCopiedFile 只在 dst 没有任务本地普通文件时复制 src。与 syncCopiedFile 不同，
+// 它绝不覆盖或移除上一轮刷新过的缓存。非普通目标会被防御性移除，使被复用的任务无法
+// 把缓存路径变成指向其隔离 CODEX_HOME 之外的链接。
 func seedCopiedFile(src, dst string) error {
 	if fi, err := os.Lstat(dst); err == nil {
 		if fi.Mode().IsRegular() {
@@ -1393,7 +1283,7 @@ func seedCopiedFile(src, dst string) error {
 	return copyFile(src, dst)
 }
 
-// copyFile copies src to dst unconditionally.
+// copyFile 无条件把 src 复制到 dst。
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {

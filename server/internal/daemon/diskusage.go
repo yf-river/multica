@@ -12,13 +12,12 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
-// TaskDiskUsage describes one task workdir's footprint on disk.
+// TaskDiskUsage 描述一个任务 workdir 在磁盘上占用的空间。
 //
-// ParentID is the id of the record that governs this directory's lifecycle,
-// discriminated by Kind (issue id, chat session id, autopilot run id, or task
-// id). ParentStatus is that record's current status; it stays empty until
-// ResolveParentStatuses fills it in, because ScanDiskUsage itself is purely
-// local and .gc_meta.json does not persist a status.
+// ParentID 是按 Kind 区分口径、真正管辖该目录生命周期的那个记录 id（issue id、chat
+// 会话 id、autopilot run id 或 task id）。ParentStatus 是该记录的当前状态；在
+// ResolveParentStatuses 填进来之前一直为空，因为 ScanDiskUsage 本身纯本地，
+// .gc_meta.json 并不持久化状态。
 type TaskDiskUsage struct {
 	WorkspaceID       string `json:"workspace_id"`
 	WorkspaceShort    string `json:"workspace_short"`
@@ -32,11 +31,9 @@ type TaskDiskUsage struct {
 	ArtifactSizeBytes int64  `json:"artifact_size_bytes"`
 }
 
-// WorkspaceDiskUsage aggregates per-workspace footprint across all tasks.
-// ArtifactRatio is the fraction (0..1) of SizeBytes that the GC artifact
-// cleanup could reclaim — kept here so the JSON consumer doesn't have to
-// re-derive it (and so the table view can render the column without dividing
-// by zero on empty workspaces).
+// WorkspaceDiskUsage 聚合某个 workspace 跨全部任务的占用。ArtifactRatio 是可被 GC
+// artifact 清理回收的部分占 SizeBytes 的比例（0..1）——放在这里，JSON 消费端就不用
+// 重新推导（表格视图渲染该列时也不用在空 workspace 上除以零）。
 type WorkspaceDiskUsage struct {
 	WorkspaceID       string  `json:"workspace_id"`
 	WorkspaceShort    string  `json:"workspace_short"`
@@ -47,9 +44,8 @@ type WorkspaceDiskUsage struct {
 	OldestAgeSeconds  int64   `json:"oldest_age_seconds"`
 }
 
-// DiskUsageReport is the full result of a single ScanDiskUsage call. Total*
-// fields always reflect the entire scan, never the post-`--top` truncated
-// view — consumers that need the displayed subtotals can sum the slice.
+// DiskUsageReport 是单次 ScanDiskUsage 调用的完整结果。Total* 字段永远反映整个
+// 扫描，绝不反映 `--top` 截断后的视图——需要显示小计的消费端自己去加和切片即可。
 type DiskUsageReport struct {
 	WorkspacesRoot          string               `json:"workspaces_root"`
 	GeneratedAt             time.Time            `json:"generated_at"`
@@ -62,34 +58,30 @@ type DiskUsageReport struct {
 	TotalSizeBytes          int64                `json:"total_size_bytes"`
 	TotalArtifactSizeBytes  int64                `json:"total_artifact_size_bytes"`
 	TotalArtifactRatio      float64              `json:"total_artifact_ratio"`
-	// RepoCacheSizeBytes is the bare-repo cache (.repos) footprint. It is a
-	// sibling of the task directories, not one of them, so it is reported
-	// separately and deliberately excluded from Total*: those totals describe
-	// task dirs, and folding a shared cache into them would double-count it
-	// against per-task numbers that do not contain it.
+	// RepoCacheSizeBytes 是裸仓库缓存（.repos）的占用。它是任务目录的“兄弟”，不是
+	// 任务目录本身，因此单独上报并刻意排除在 Total* 之外：那些合计描述的是任务目录，
+	// 把共享缓存折进去会跟“不含它的单任务数字”重复计数。
 	RepoCacheSizeBytes int64 `json:"repo_cache_size_bytes"`
 	RepoCacheCount     int   `json:"repo_cache_count"`
 }
 
-// DiskUsageRoot pairs a workspaces root with the profile it was derived from
-// ("" = the default root). ScanDiskUsageRoots scans each one and labels its
-// report with the profile so the cross-root view can attribute footprint back
-// to a profile (for example, a named `work` root).
+// DiskUsageRoot 把一个 workspaces 根目录与推导出它的 profile 配对（"" = 默认根目录）。
+// ScanDiskUsageRoots 逐个扫描并给每个报告打上 profile 标签，跨根视图就能把占用归因
+// 回 profile（例如一个叫 `work` 的根目录）。
 type DiskUsageRoot struct {
 	Profile string
 	Root    string
 }
 
-// RootDiskUsage is one root's report inside an AggregateDiskUsageReport.
+// RootDiskUsage 是 AggregateDiskUsageReport 里单个根目录的报告。
 type RootDiskUsage struct {
 	Profile string          `json:"profile"`
 	Report  DiskUsageReport `json:"report"`
 }
 
-// AggregateDiskUsageReport is the result of scanning several workspace roots in
-// one pass. Total* fields are the grand totals across every root's full scan
-// (never the post-`--top` truncated view) so the combined footprint stays
-// accurate even when each root's table is trimmed for display.
+// AggregateDiskUsageReport 是一次遍历扫描多个 workspace 根目录的结果。Total* 字段
+// 是每个根目录完整扫描的大合计（绝不是 `--top` 截断后的视图），即使每个根目录的表格
+// 为了展示被裁掉，合计占用依然准确。
 type AggregateDiskUsageReport struct {
 	GeneratedAt             time.Time       `json:"generated_at"`
 	ArtifactPatterns        []string        `json:"artifact_patterns"`
@@ -104,11 +96,10 @@ type AggregateDiskUsageReport struct {
 	TotalRepoCacheCount     int             `json:"total_repo_cache_count"`
 }
 
-// ScanDiskUsageRoots scans every root in order and returns the combined report.
-// It reuses ScanDiskUsage per root — a missing root yields an empty per-root
-// report (not an error), matching the single-root command, so a never-used
-// profile root simply contributes zero. A genuinely unreadable root (e.g. a
-// permission error on the root directory itself) aborts the whole scan.
+// ScanDiskUsageRoots 按顺序扫描每个根目录并返回合并报告。每个根目录复用
+// ScanDiskUsage——根目录不存在时给出空报告（而不是报错），与单根命令行为一致，因此
+// 从没用过的 profile 根目录只是贡献零。真正读不了的根目录（例如根目录本身权限错）会
+// 中止整个扫描。
 func ScanDiskUsageRoots(roots []DiskUsageRoot, artifactPatterns []string) (AggregateDiskUsageReport, error) {
 	agg := AggregateDiskUsageReport{GeneratedAt: time.Now().UTC()}
 	matcher := newArtifactMatcher(artifactPatterns, execenv.ManagedReclaimableArtifactSubpaths())
@@ -132,22 +123,19 @@ func ScanDiskUsageRoots(roots []DiskUsageRoot, artifactPatterns []string) (Aggre
 	return agg, nil
 }
 
-// DiskUsageKindUnknown is the kind reported for task directories whose
-// .gc_meta.json is missing or unreadable. Mirrors how the GC orphan path
-// treats them — present on disk, but no parent record we can lock onto.
+// DiskUsageKindUnknown 是 .gc_meta.json 缺失或不可读的任务目录上报的 kind。与 GC
+// orphan 路径对它们的处理一致——磁盘上确实存在，但没有一条能锁定的父记录。
 const DiskUsageKindUnknown = "unknown"
 
-// ScanDiskUsage walks workspacesRoot and returns the disk-usage report. The
-// walk is read-only, never follows symlinks, and counts only regular files.
-// artifactPatterns is filtered through the basename-only check used by
-// cleanTaskArtifacts, and exact daemon-managed artifact paths are included, so
-// the reported "artifact" footprint matches the bytes the GC would actually
-// reclaim. A .git subtree counts toward the total but never toward that
-// artifact footprint — see taskSize. Missing roots return an empty report
-// (not an error) — a daemon that's never run yet has no directory to walk.
+// ScanDiskUsage 遍历 workspacesRoot 并返回磁盘占用报告。遍历是只读的、绝不跟随
+// 符号链接、只统计常规文件。artifactPatterns 会经 cleanTaskArtifacts 所用的“只看
+// basename”过滤，daemon 托管的确切 artifact 路径也纳入，因此上报的 "artifact" 占用
+// 与 GC 实际能回收的字节一致。.git 子树计入总量但绝不进入 artifact 占用——见
+// taskSize。根目录不存在时返回空报告（而非报错）——从没跑过的 daemon 本就无目录可
+// 遍历。
 //
-// The scan is purely local. ParentStatus is left empty; callers that want the
-// STATUS column populated run ResolveParentStatuses afterwards.
+// 扫描纯本地。ParentStatus 留空；想要 STATUS 列被填上的调用方随后调用
+// ResolveParentStatuses。
 func ScanDiskUsage(workspacesRoot string, artifactPatterns []string) (DiskUsageReport, error) {
 	report := DiskUsageReport{
 		WorkspacesRoot:   workspacesRoot,
@@ -176,17 +164,15 @@ func ScanDiskUsage(workspacesRoot string, artifactPatterns []string) (DiskUsageR
 		if !wsEntry.IsDir() {
 			continue
 		}
-		// The bare-repo cache is not a workspace. Measure it separately rather
-		// than skipping it outright: it is reclaimed on its own schedule
-		// (GCRepoTTL) and used to be invisible here, which made the reported
-		// total disagree with the user's file manager for no stated reason.
+		// 裸仓库缓存不是 workspace。单独量它而不是直接跳过：它按自己的节奏回收
+		// （GCRepoTTL），过去在这里不可见，导致上报总数跟用户文件管理器对不上且没有
+		// 明确解释。
 		if wsEntry.Name() == reposDirName {
 			report.RepoCacheSizeBytes, report.RepoCacheCount = repoCacheSize(filepath.Join(workspacesRoot, wsEntry.Name()))
 			continue
 		}
-		// Other dot-directories are daemon-internal caches (skill bundles and
-		// friends), never workspaces. Counting them as workspaces put rows like
-		// ".skillca" in the per-workspace table.
+		// 其它点开头目录是 daemon 内部缓存（技能包等），绝不是 workspace。把它们当
+		// workspace 数，会在 per-workspace 表格里冒出 ".skillca" 之类的行。
 		if strings.HasPrefix(wsEntry.Name(), ".") {
 			continue
 		}
@@ -245,9 +231,9 @@ func ScanDiskUsage(workspacesRoot string, artifactPatterns []string) (DiskUsageR
 	return report, nil
 }
 
-// repoCacheSize measures the bare-repo cache and counts the repos in it.
-// Layout is .repos/<workspace-id>/<repo-dir>, so the count is the number of
-// second-level directories — the unit the GC evicts.
+// repoCacheSize 量出裸仓库缓存大小并统计其中仓库个数。布局是
+// .repos/<workspace-id>/<repo-dir>，所以个数就是第二层目录的数量——也就是 GC 驱逐
+// 的单位。
 func repoCacheSize(reposRoot string) (sizeBytes int64, repoCount int) {
 	wsEntries, err := os.ReadDir(reposRoot)
 	if err != nil {
@@ -273,9 +259,8 @@ func repoCacheSize(reposRoot string) (sizeBytes int64, repoCount int) {
 	return sizeBytes, repoCount
 }
 
-// ratio returns numerator / denominator, mapping 0/0 (and any 0 denominator)
-// to 0 instead of NaN. Callers render the result as a percentage so a NaN
-// would surface as "NaN%" in the table — guard at the source.
+// ratio 返回 numerator / denominator，把 0/0（以及任何零分母）映射成 0 而不是 NaN。
+// 调用方会把结果渲染成百分比，NaN 会以 "NaN%" 出现在表格里——在源头就防住。
 func ratio(numerator, denominator int64) float64 {
 	if denominator <= 0 {
 		return 0
@@ -283,6 +268,8 @@ func ratio(numerator, denominator int64) float64 {
 	return float64(numerator) / float64(denominator)
 }
 
+// buildPatternSet 清洗模式列表：去空白、丢弃空串与含路径分隔符的项（只认纯
+// basename），得到用于匹配的集合。
 func buildPatternSet(patterns []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(patterns))
 	for _, p := range patterns {
@@ -295,6 +282,7 @@ func buildPatternSet(patterns []string) map[string]struct{} {
 	return set
 }
 
+// sortedKeys 返回集合的排序键列表，保证输出顺序稳定。
 func sortedKeys(set map[string]struct{}) []string {
 	out := make([]string, 0, len(set))
 	for k := range set {
@@ -304,6 +292,8 @@ func sortedKeys(set map[string]struct{}) []string {
 	return out
 }
 
+// buildTaskUsage 汇总单个任务目录：尽量从 .gc_meta.json / managed env 元数据里还原
+// 归属与年龄，否则回退到目录 mtime。
 func buildTaskUsage(taskDir, wsID, taskShort string, matcher artifactMatcher) TaskDiskUsage {
 	usage := TaskDiskUsage{
 		WorkspaceID:    wsID,
@@ -340,9 +330,9 @@ func buildTaskUsage(taskDir, wsID, taskShort string, matcher artifactMatcher) Ta
 			usage.AgeSeconds = int64(age.Seconds())
 		}
 	}
-	// With no readable metadata, use taskDir mtime just like orphanByMTime.
-	// Legacy readable metadata without completed_at uses its own file mtime,
-	// matching gcDecisionIssueResult's managed-only fallback.
+	// 没有可读元数据时，像 orphanByMTime 那样用 taskDir 的 mtime。有可读元数据但没
+	// 有 completed_at 的旧数据用文件自身 mtime——对应 gcDecisionIssueResult 只认
+	// managed 的回退逻辑。
 	if usage.AgeSeconds <= 0 && !metaPresent {
 		if info, err := os.Stat(taskDir); err == nil {
 			usage.AgeSeconds = int64(time.Since(info.ModTime()).Seconds())
@@ -353,9 +343,8 @@ func buildTaskUsage(taskDir, wsID, taskShort string, matcher artifactMatcher) Ta
 	return usage
 }
 
-// parentIDForMeta returns the id of the record that governs this task dir's
-// lifecycle. GCMeta is a discriminated union keyed on Kind, so only the field
-// matching Kind is meaningful.
+// parentIDForMeta 返回管辖该任务目录生命周期的记录 id。GCMeta 是按 Kind 区分口径的
+// 判别联合，只有与 Kind 匹配的那个字段有意义。
 func parentIDForMeta(meta *execenv.GCMeta) string {
 	switch meta.Kind {
 	case execenv.GCKindIssue:
@@ -371,25 +360,21 @@ func parentIDForMeta(meta *execenv.GCMeta) string {
 	}
 }
 
-// ParentStatusFetcher resolves a batch of issue ids in one workspace to their
-// current status. Ids the server does not return (deleted, or invisible to
-// this token) must be omitted from the result rather than mapped to a
-// placeholder, so callers can tell "unresolved" from a real status.
+// ParentStatusFetcher 把某个 workspace 的一批 issue id 解析成当前状态。服务器没返回
+// 的 id（已删除，或对当前 token 不可见）必须从结果里省略，而不是映射成占位值——调用
+// 方才能区分“没解析出来”和“真实状态”。
 type ParentStatusFetcher func(ctx context.Context, workspaceID string, issueIDs []string) (map[string]string, error)
 
-// ResolveParentStatuses fills in ParentStatus on every issue-kind task in the
-// report. ScanDiskUsage is deliberately network-free — this is the opt-in
-// second pass that turns the STATUS column into real data.
+// ResolveParentStatuses 把报告里所有 issue 类任务的 ParentStatus 填上。ScanDiskUsage
+// 刻意不联网——本函数是选择性的第二遍，把 STATUS 列变成真实数据。
 //
-// Only issue-kind tasks are resolved: they are the overwhelming majority of
-// task dirs and the only kind with a batch reconciliation endpoint. Chat,
-// autopilot-run, and quick-create dirs keep an empty ParentStatus rather than
-// costing one request each.
+// 只解析 issue 类任务：它们是任务目录的绝大多数，也是唯一有批量对账端点的种类。
+// chat、autopilot-run 与 quick-create 目录保持 ParentStatus 为空，而不去为它们各发
+// 一次请求。
 //
-// Best-effort by design: a workspace whose fetch fails leaves its tasks
-// unresolved and the error is returned for the caller to surface, but every
-// other workspace is still filled in. Callers must not treat a non-nil error
-// as "the report is unusable".
+// 设计上就是尽力而为：某个 workspace 拉取失败时，它的任务保持未解析、错误返回给调用
+// 方去呈现，但其它 workspace 照常填好。调用方不能把“返回了非 nil 错误”当成“报告不
+// 可用”。
 func ResolveParentStatuses(ctx context.Context, report *DiskUsageReport, fetch ParentStatusFetcher) error {
 	if report == nil || fetch == nil {
 		return nil
@@ -404,8 +389,8 @@ func ResolveParentStatuses(ctx context.Context, report *DiskUsageReport, fetch P
 		if seen[task.WorkspaceID] == nil {
 			seen[task.WorkspaceID] = map[string]bool{}
 		}
-		// Several task dirs can share one issue (a re-dispatched task reuses
-		// the prior workdir), so de-duplicate before asking the server.
+		// 多个任务目录可能共享同一个 issue（重新派发的任务复用旧 workdir），所以问
+		// 服务器之前先去重。
 		if seen[task.WorkspaceID][task.ParentID] {
 			continue
 		}
@@ -420,8 +405,7 @@ func ResolveParentStatuses(ctx context.Context, report *DiskUsageReport, fetch P
 	statuses := make(map[string]map[string]string, len(idsByWorkspace))
 	for workspaceID, ids := range idsByWorkspace {
 		resolved := make(map[string]string, len(ids))
-		// Same chunk size the GC loop uses, so one oversized root cannot trip
-		// the server's batch cap.
+		// 与 GC 循环相同的分块大小，一个超大根目录就不会触发服务器的 batch 上限。
 		for start := 0; start < len(ids); start += issueGCBatchSize {
 			end := min(start+issueGCBatchSize, len(ids))
 			chunk, err := fetch(ctx, workspaceID, ids[start:end])
@@ -450,19 +434,15 @@ func ResolveParentStatuses(ctx context.Context, report *DiskUsageReport, fetch P
 	return firstErr
 }
 
-// taskSize walks taskDir and returns (totalBytes, artifactBytes). It never
-// follows symlinks and counts only regular files. A directory matched by
-// matcher is treated as an artifact subtree — its size is added to both totals
-// and the walk does not descend further so the size matches what os.RemoveAll
-// would reclaim if the GC ran cleanTaskArtifacts on it.
+// taskSize 遍历 taskDir 并返回 (总字节, artifact 字节)。绝不跟随符号链接、只统计常规
+// 文件。被 matcher 命中的目录按 artifact 子树处理——它的体积同时计入两个总数，且遍历
+// 不再下钻，让数字与 GC 真对其实行 cleanTaskArtifacts 时 os.RemoveAll 能回收的字节
+// 一致。
 //
-// A .git subtree is counted whole into totalBytes but never into artifactBytes.
-// It is real footprint the user sees in their file manager, and a full
-// gcActionClean removes it along with the rest of the task dir (dirSize, which
-// reports bytes_reclaimed there, counts it too) — so excluding it made SizeBytes
-// disagree with what the GC would actually free. The walk still refuses to
-// descend into it, which keeps the artifact accounting aligned with
-// cleanTaskArtifacts' refusal to reclaim anything inside .git.
+// .git 子树整体计入 totalBytes、但绝不进入 artifactBytes。它是用户文件管理器里能看
+// 到的真实占用，一次完整的 gcActionClean 会连同任务目录一起删掉它（上报 bytes_reclaimed
+// 的 dirSize 也会数它）——把它排除会让 SizeBytes 与 GC 实际能释放的对不上。遍历依然
+// 拒绝进入 .git，使 artifact 统计与 cleanTaskArtifacts“绝不回收 .git 内部”保持一致。
 func taskSize(taskDir string, matcher artifactMatcher) (totalBytes int64, artifactBytes int64) {
 	if taskDir == "" {
 		return
@@ -479,17 +459,14 @@ func taskSize(taskDir string, matcher artifactMatcher) (totalBytes int64, artifa
 		if path == absRoot {
 			return nil
 		}
-		// Links: never followed, never counted. WalkDir already refuses to
-		// descend through a symlink, but a symlinked file would otherwise show
-		// up here as a non-dir entry, and a Windows junction is reported as a
-		// directory WalkDir does descend (see linkedDirModes) — drop both
-		// explicitly so the size stays consistent with cleanTaskArtifacts'
-		// refusal to touch link targets.
+		// 链接：绝不跟随、绝不计数。WalkDir 已经拒绝下钻符号链接，但链接文件会以
+		// “非目录条目”出现在这里，而 Windows junction 会被当成 WalkDir 会下钻的
+		// 目录（见 linkedDirModes）——两者都显式丢弃，让统计与 cleanTaskArtifacts
+		// 不碰链接目标的立场一致。
 		if entry.Type()&linkedDirModes != 0 {
 			if entry.IsDir() {
-				// A junction: WalkDir would descend into the link target.
-				// SkipDir is safe here only because the entry is a directory —
-				// returning it for a file would skip the remaining siblings.
+				// 这是 junction：WalkDir 会下钻进链接目标。这里能安全用 SkipDir，
+				// 仅因为该条目是目录——对文件返回它会把剩下的兄弟条目也跳过。
 				return filepath.SkipDir
 			}
 			return nil
@@ -519,9 +496,8 @@ func taskSize(taskDir string, matcher artifactMatcher) (totalBytes int64, artifa
 	return
 }
 
-// ShortID returns the first 8 chars (dashes stripped) of a UUID, falling back
-// to the raw input when shorter. Mirrors execenv.shortID, which lives in an
-// internal subpackage and isn't exported.
+// ShortID 返回 UUID 去掉横线后的前 8 个字符；不足 8 个时返回原始输入。镜像
+// execenv.shortID——它在内部子包里，没有导出。
 func ShortID(id string) string {
 	s := strings.ReplaceAll(id, "-", "")
 	if len(s) > 8 {

@@ -1,3 +1,7 @@
+// 运行时技能禁用策略：把"本任务禁用哪些技能"落成各 provider 真正会读的
+// 配置——Claude Code 用 claude-runtime-skill-settings.json 的 skillOverrides
+// 与 permissions.deny；Codex 则在 config 里追加 [[skills.config]] 禁用块。
+
 package execenv
 
 import (
@@ -11,9 +15,9 @@ import (
 
 const claudeRuntimeSkillSettingsFile = "claude-runtime-skill-settings.json"
 
-// RuntimeSkillRefForEnv identifies a runtime-local skill for provider-specific
-// task environment filtering. Provider and runtime are already selected by the
-// task, so only the discovery root and provider-native key are needed here.
+// RuntimeSkillRefForEnv 标识一个"运行时本地"技能，用于按 provider 过滤任务
+// 环境。provider 与 runtime 已由任务选定，所以这里只需发现根与 provider
+// 原生的键。
 type RuntimeSkillRefForEnv struct {
 	Root   string
 	Key    string
@@ -21,6 +25,9 @@ type RuntimeSkillRefForEnv struct {
 	Plugin string
 }
 
+// cleanRuntimeSkillKey 规整一个技能键并做路径安全校验：
+// 去空白、统一平台斜杠、清理冗余段；若结果是 "."、".."、绝对路径或越出
+// 根目录的相对路径则拒绝（返回 ok=false），防止用配置把禁用规则写到任意位置。
 func cleanRuntimeSkillKey(key string) (string, bool) {
 	cleaned := filepath.Clean(filepath.FromSlash(strings.TrimSpace(key)))
 	if cleaned == "." || filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
@@ -29,6 +36,11 @@ func cleanRuntimeSkillKey(key string) (string, bool) {
 	return filepath.ToSlash(cleaned), true
 }
 
+// prepareClaudeSkillSettings 在 envRoot 下生成/更新 Claude Code 的运行时技能
+// 设置文件。无禁用项时删除旧文件并返回空串（幂等）。返回设置文件路径。
+//
+// 产出两层机制：skillOverrides 只对"个人/项目技能"完全隐藏生效；插件技能
+// 会忽略该设置，因此对每个键额外补发 permissions.deny，它才是插件的强制路径。
 func prepareClaudeSkillSettings(envRoot string, disabled []RuntimeSkillRefForEnv, workspaceSkills []SkillContextForEnv) (string, error) {
 	path := filepath.Join(envRoot, claudeRuntimeSkillSettingsFile)
 	if len(disabled) == 0 {
@@ -53,19 +65,23 @@ func prepareClaudeSkillSettings(envRoot string, disabled []RuntimeSkillRefForEnv
 		if !ok {
 			continue
 		}
+		// 禁用的"调用名"：显式给出则用之，否则退回技能键的末段。
 		invocationName := strings.TrimSpace(skill.Name)
 		if invocationName == "" {
 			invocationName = filepath.Base(filepath.FromSlash(key))
 		}
+		// 若同名技能其实是本任务工作区自带的（会被重新写入），则不受这条
+		// 运行时禁用影响，跳过。
 		if workspaceClaimsRuntimeSkill(invocationName, workspaceSkills) {
 			continue
 		}
-		// Claude Code's skillOverrides fully hides personal/project skills.
-		// Plugin skills ignore that setting, so the permission deny below is
-		// also emitted for every key and is the enforcement path for plugins.
+		// Claude Code 的 skillOverrides 能完全隐藏个人/项目技能；插件技能
+		// 会无视该设置，所以下面还要为每个键补发 permissions.deny——
+		// 那才是对插件的强制手段。
 		if skill.Root != "plugin" {
 			overrides[invocationName] = "off"
 		} else {
+			// 插件按完整键名禁用。
 			invocationName = key
 		}
 		addDeny("Skill(" + invocationName + ")")
@@ -93,6 +109,10 @@ func prepareClaudeSkillSettings(envRoot string, disabled []RuntimeSkillRefForEnv
 	return path, nil
 }
 
+// ensureCodexDisabledSkillsConfig 把禁用技能追加进 Codex 的 configPath：
+// 为每个技能键追加一段 `[[skills.config]] ... enabled = false`。
+// 只处理 provider（codex-home/skills 下）与 universal（用户 ~/.agents/skills）
+// 两类根，按完整技能路径去重。
 func ensureCodexDisabledSkillsConfig(configPath, codexHome string, disabled []RuntimeSkillRefForEnv, workspaceSkills []SkillContextForEnv) error {
 	if len(disabled) == 0 {
 		return nil
@@ -108,6 +128,8 @@ func ensureCodexDisabledSkillsConfig(configPath, codexHome string, disabled []Ru
 		var skillPath string
 		switch skill.Root {
 		case "provider":
+			// 只有技能的顶层目录段属于该 provider；若它是工作区自带的同名
+			// 技能（会重写进本任务环境），则不受影响，跳过。
 			firstKeyPart := strings.SplitN(key, "/", 2)[0]
 			if workspaceClaimsRuntimeSkill(firstKeyPart, workspaceSkills) {
 				continue
@@ -148,6 +170,9 @@ func ensureCodexDisabledSkillsConfig(configPath, codexHome string, disabled []Ru
 	return nil
 }
 
+// workspaceClaimsRuntimeSkill 判断名为 name 的技能是否被本任务工作区自带的
+// 某个技能"认领"（按各自 sanitizeSkillName 后的规范名比较）。被认领的技能
+// 会被重新写入任务环境，不应受用户级/运行时级禁用影响。
 func workspaceClaimsRuntimeSkill(name string, workspaceSkills []SkillContextForEnv) bool {
 	claim := sanitizeSkillName(name)
 	for _, skill := range workspaceSkills {

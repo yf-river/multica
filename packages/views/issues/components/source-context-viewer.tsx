@@ -1,5 +1,19 @@
 "use client";
 
+// 本文件：SourceContextBadge —— 问题"来源上下文"摘要条 + 快照查看器。
+//
+// 来源上下文 = agent 在处置"从我创建/关联的问题"时收到的那份只读快照
+// （源问题的标题、描述、评论线程与锚点评论）。由于它拷贝自捕获时刻，
+// 源问题此后可能已变动——本组件负责把这层差异讲清楚：
+//
+//   - 摘要条常驻在问题描述下方：显示父问题链接 / 来源标识，以及源问题
+//     现在的状态（已删除 / 不可用 / 有变更——列出改了什么主题、附件增删）；
+//   - "上下文快照"按钮打开查看器 Dialog：展示捕获当时的问题内容，
+//     对相对快照发生的变化（评论增删、附件、标题/描述改版）就地标注，
+//     并支持一键跳到源问题的当前评论位置。
+//
+// 打开"跳转当前来源"前会先 refetch 一次最新快照再导航（见 refresh）。
+
 import { useEffect, useState } from "react";
 import { AlertTriangle, ChevronRight, LocateFixed, Maximize2, Minimize2, XIcon } from "lucide-react";
 import { issueStatusCategory } from "@multica/core/issues";
@@ -14,6 +28,8 @@ import { ProgressRing } from "./progress-ring";
 import { SourceContextContent } from "./source-context-content";
 import { StatusIcon } from "./status-icon";
 
+// 把快照里的作者解析为可展示的名字。捕获后作者可能已改名、归档、被删除或
+// 离开工作区——依据服务端记录的作者状态逐一附加本地化后缀。
 function authorLabel(
   context: IssueSourceContext,
   type: string,
@@ -41,6 +57,9 @@ function authorLabel(
   }
 }
 
+/**
+ * 来源上下文摘要条 + 快照查看器（职责见文件头）。
+ */
 export function SourceContextBadge({
   context,
   refetchIssue,
@@ -75,9 +94,8 @@ export function SourceContextBadge({
       if (fresh) setCurrent(fresh);
       return fresh ?? null;
     } catch {
-      // Navigation must revalidate live state, but the immutable snapshot is
-      // still useful when that network read fails. Callers fall back to the
-      // viewer instead of producing an unhandled click promise.
+      // 导航必须重新校验实时状态，但当那次网络读取失败时，不可变的快照
+      // 依然有用。调用方退而用查看器兜底，而不是制造一个未处理的点击 promise。
       return null;
     }
   };
@@ -142,9 +160,8 @@ export function SourceContextBadge({
         className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5 text-caption"
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          {/* Structurally this is the same parent relation a plain sub-issue
-              has, so it reuses that label instead of naming a second concept.
-              The snapshot is the only extra, and it has its own button. */}
+          {/* 结构上这就是普通子问题与父问题同款的关系，所以沿用那套标签，
+              而不是再造一个概念。快照是唯一的额外之物，它有自己的按钮。 */}
           <span className="shrink-0 text-muted-foreground">
             {parentIssue
               ? t(($) => $.detail.sub_issue_of)

@@ -1,3 +1,5 @@
+// 本文件提供「当前用户在某个工作区里的成员身份」的 Hook。
+
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
@@ -6,13 +8,14 @@ import type { MemberRole, MemberWithUser } from "../types";
 import { memberListOptions } from "../workspace/queries";
 
 /**
- * Resolves the current user's membership in the given workspace. Single source
- * of truth for "what role am I" — replaces ad-hoc `members.find(...)` lookups
- * scattered across the views.
+ * 解析当前用户在给定工作区里的成员身份。「我是什么角色」的唯一真源——
+ * 取代散落在各视图里的临时 `members.find(...)` 查找。
  *
- * `wsId` is explicit (not via `useWorkspaceId()` Context) so this hook stays
- * usable in components that may render before workspace context is wired,
- * matching the repo rule for workspace-aware hooks.
+ * `wsId` 显式传入（不通过 `useWorkspaceId()` Context），让本 hook 在组件树
+ * 尚未接好工作区上下文时也可用，符合仓库对工作区感知 hook 的规则。
+ *
+ * @param wsId - 工作区 id
+ * @returns 用户 id、角色（都不是成员则为 null）、成员记录与加载态
  */
 export function useCurrentMember(wsId: string): {
   userId: string | null;

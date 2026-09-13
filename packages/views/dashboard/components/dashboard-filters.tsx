@@ -1,5 +1,6 @@
 "use client";
 
+// 仪表盘页面级筛选控件：时间范围筛选器和项目筛选器。
 import { CalendarDays, ChevronDown, FolderKanban } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -13,19 +14,20 @@ import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
 import { ALL_PROJECTS, TIME_RANGES, type TimeRange } from "./dashboard-shared";
 
+/** 项目筛选器下拉里用到的项目精简信息。 */
 type DashboardProject = { id: string; title: string; icon: string | null };
 
 /**
- * Page-scoped time range.
+ * 页面级时间范围筛选器。
  *
- * A button that states the current value plus a single-select menu, rather
- * than five permanently-expanded segments. The five segments were the widest
- * thing in the header and the least informative: the value they encode is
- * already repeated in every KPI label ("Cost · 30D"). Collapsing them costs one
- * click per change and buys the header back.
+ * 用「显示当前值 + 单选菜单」的一个按钮，代替五个常驻展开的分段。那五个分段曾是
+ * 头部最宽、信息量最低的东西：它们编码的值其实在每个 KPI 标签里已经重复出现了
+ * （"Cost · 30D"）。折叠起来每改一次多一次点击，却把头部空间还了回来。
  *
- * No "clear" entry: the range is a required parameter of every query on the
- * page, so it has no empty value to return to.
+ * 没有「清除」项：时间范围是页面上每个查询的必填参数，根本没有空值可以回退。
+ *
+ * @param days 当前选中的时间范围
+ * @param onChange 时间范围变化时的回调
  */
 export function TimeRangeFilter({
   days,
@@ -74,15 +76,17 @@ export function TimeRangeFilter({
 }
 
 /**
- * Page-scoped project filter.
+ * 页面级项目筛选器。
  *
- * A single-level dropdown, deliberately not a generic "Filter" menu: with one
- * dimension, a wrapper menu only hides what is filterable behind an extra
- * hover. The trigger states the current value like `TimeRangeFilter` does:
- * a neutral outline throughout, showing the selected project's own icon and
- * name once narrowed — the named value is the active-state signal, no filled
- * tier. If a second dimension ships (agent, model, runtime), fold this back
- * into a combined menu in the `IssueDisplayControls` grammar.
+ * 做成单层下拉，刻意不包一层通用的「Filter」菜单：只有一个维度时，外层菜单
+ * 只是把可筛选项藏到多一次悬停之后。触发器像 `TimeRangeFilter` 一样直接显示当前值：
+ * 全程中性描边，一旦选中就展示该项目的图标和名字——被命名的值本身就是「已选中」的信号，
+ * 不需要实心层级。以后要是再加第二个维度（agent / model / runtime），再把它折回
+ * `IssueDisplayControls` 那种组合菜单里。
+ *
+ * @param projects 当前工作区的项目列表
+ * @param projectValue 当前选中的项目 id（可为 ALL_PROJECTS）
+ * @param onProjectChange 项目变化时的回调
  */
 export function ProjectFilter({
   projects,
@@ -95,10 +99,9 @@ export function ProjectFilter({
 }) {
   const { t } = useT("usage");
   const allLabel = t(($) => $.filter.all_projects);
-  // A project id that no longer resolves (deleted project, or a stale id left
-  // over from another workspace) counts as no filter — the same reading the
-  // page applies when it derives the effective `projectId` for the queries, so
-  // the chip cannot claim a filter the data is not actually narrowed by.
+  // 一个已无法解析的项目 id（项目被删了，或切换工作区后残留的旧 id）应视为「未筛选」——
+  // 页面在推导查询真正用的 `projectId` 时也是这么处理的，这样这个 chip 就不会声称
+  // 数据其实没有被它收窄过的那个筛选。
   const selected = projects.find((p) => p.id === projectValue);
 
   return (

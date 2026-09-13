@@ -1,5 +1,11 @@
 "use client";
 
+// 本文件：SaveViewDialog —— "把当前视图保存为视图"对话框（含编辑已有视图）。
+// 打开时会用一次性的临时 draft store 快照当前 surface 面板状态；内嵌控件只改那份
+// 副本，页面主体毫无感知。保存时读取副本、关闭即丢弃。首次打开还要跟随一个
+// 草稿编辑区（DraftDefinitionFields：筛选 chips + 布局/排序/分组/卡片属性等
+// 显示默认值，可展开微调）。scope 变体/可见性等由此定义。
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useQuery } from "@tanstack/react-query";
@@ -63,8 +69,10 @@ import { IssueFilterMenu } from "./issues-header";
 import { FilterChipList } from "./filter-chips-bar";
 import { useT } from "../../i18n";
 
-/** Where the view being saved will live. Decided by the hosting surface, not
- *  by the user — the dialog only explains it. */
+/** 要保存的视图将归属哪个范围。由宿主页面决定而非用户选择——本对话框只负责说明。
+ *  workspace：工作区级（可选 actorKind 指定"全部/成员/代理"那个页签轴）；
+ *  my：个人级（variant 限定"任意/分配给我/我创建的/我参与的"）；
+ *  project：项目级（projectId + 可选 actorKind）。 */
 export type SaveViewScope =
   | { kind: "workspace"; actorKind?: "all" | "members" | "agents" }
   | { kind: "my"; variant: "any" | "assigned" | "created" | "involved" }
@@ -139,15 +147,14 @@ const CARD_PROPERTY_LABEL_KEY = {
   childProgress: "card_child_progress",
 } as const;
 
-/** Data-only snapshot: `partialize` strips the store's bound actions (which
- *  would otherwise write back to the LIVE store) and the deliberately
- *  unsaved fields (date filter, agents-working toggle). */
+/** 纯数据快照：`partialize` 剥掉 store 里绑定的 actions（否则会写回 LIVE store），
+ *  也剥掉刻意不保存的字段（日期筛选、代理工作中开关）。 */
 const snapshotState = viewStorePersistOptions("save-view-draft").partialize;
 
 const ROW_LABEL = "w-16 shrink-0 text-caption text-muted-foreground";
 
-/** Filter row + layout row + collapsible display defaults, all bound to the
- *  DRAFT store via the surrounding provider. */
+/** 筛选行 + 布局行 + 可展开的显示默认值，全部通过外围 provider 绑定到
+ *  DRAFT store 上（编辑的都是临时副本）。 */
 export function DraftDefinitionFields() {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
@@ -203,7 +210,7 @@ export function DraftDefinitionFields() {
 
   return (
     <>
-      {/* Filters: bare chips + the full filter menu behind a ghost chip. */}
+      {/* 筛选：裸 chips + 藏在虚线"添加筛选"chip 背后的完整筛选菜单。 */}
       <div className="flex items-start gap-3">
         <Label className={`${ROW_LABEL} pt-1`}>
           {t(($) => $.save_view.filters_label)}
@@ -228,7 +235,7 @@ export function DraftDefinitionFields() {
         </div>
       </div>
 
-      {/* Display defaults: captured already; expandable for fine-tuning. */}
+      {/* 显示默认值：已随快照捕获，展开后可微调。 */}
       <Collapsible>
         <CollapsibleTrigger className="group flex w-fit max-w-full items-center gap-1.5 rounded-md -mx-1 px-1 py-1 text-left hover:bg-muted/60">
           <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[panel-open]:rotate-90" />
@@ -449,10 +456,9 @@ export function DraftDefinitionFields() {
 }
 
 /**
- * Save the current surface state as a view. Uncontrolled: opening the dialog
- * snapshots the live panel state into a throwaway store, the embedded fields
- * edit THAT copy, and the page underneath never notices. Save reads the
- * copy; closing discards it. Prints until the API exists.
+ * 把当前 surface 状态保存为视图。非受控：打开对话框时把线上面板状态快照进一个
+ * 一次性的 store，内嵌字段编辑的是那份副本，页面主体毫无感知。保存读副本、
+ * 关闭即丢弃（编辑已有视图时改为 PATCH 更新）。
  */
 export function SaveViewDialog({
   open,
@@ -464,12 +470,11 @@ export function SaveViewDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   scope: SaveViewScope;
-  /** Edit mode: same dialog, prefilled from this view; confirm PATCHes it
-   *  (with optimistic-concurrency 409 handling) instead of creating. */
+  /** 编辑模式：同一个对话框，以这个视图预填内容；点确定走 PATCH 更新
+   *  （含乐观并发 409 冲突处理）而非新建。 */
   editView?: IssueView | null;
-  /** Manager-initiated edits seed from the view's own definition (the user
-   *  may not have it open); in-view edits keep seeding from the live panel
-   *  so the user's current additions are part of the draft. */
+  /** 由管理入口发起的编辑以视图自身定义做种子（用户此时可能并未打开它）；
+   *  在视图内的编辑则继续用线上面板做种子，让用户当前的增补并入草稿。 */
   seedFromDefinition?: boolean;
 }) {
   const { t } = useT("issues");
@@ -483,14 +488,13 @@ export function SaveViewDialog({
   const [nameError, setNameError] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const [visibility, setVisibility] = useState<"private" | "workspace">("private");
-  // Scope-layer variant (the "which tab" axis). Defaults to the tab the
-  // user stood on when saving; switchable here because the dialog IS the
-  // view-definition editor. scope_type itself never switches.
+  // 范围层变体（"落在哪个页签"那条轴）。默认取用户保存时所站的页签；
+  // 也允许在此切换，因为这个对话框本身就是"视图定义编辑器"。scope_type 永不切换。
   const [variant, setVariant] = useState<ScopeVariantValue>("all");
   const [draftStore, setDraftStore] = useState<StoreApi<IssueViewState> | null>(null);
 
-  // Fresh draft per open: seed a private store instance from the live
-  // panel's data fields, then let the embedded controls mutate it freely.
+  // 每次打开都换一份全新草稿：用线上面板的数据字段种出一个私有 store 实例，
+  // 然后让内嵌控件自由地改它。
   useEffect(() => {
     if (!open) {
       setDraftStore(null);
@@ -498,8 +502,7 @@ export function SaveViewDialog({
     }
     const store = createStore<IssueViewState>()(viewStoreSlice);
     if (seedFromDefinition && editView) {
-      // Same sanitizer the surface seed uses — the definition is a server
-      // blob, never trusted wholesale.
+      // 与 surface 播种用的是同一个清洗器——视图定义是服务端 blob，不能整包信任。
       const defaults = viewStoreSlice(store.setState);
       store.setState(
         mergeViewStatePersisted({ ...editView.query, ...editView.display }, defaults),
@@ -595,8 +598,8 @@ export function SaveViewDialog({
         propertyFilters: state.propertyFilters,
       },
       display: {
-        // Personal display preference (like layout): saved as the view's
-        // first-open default, freely adjustable per user afterwards.
+        // 个人显示偏好（如布局）：存为视图首次打开时的默认值，
+        // 之后每个用户都能自行调整。
         showSubIssues: state.showSubIssues,
         viewMode: state.viewMode,
         grouping: state.grouping,
@@ -645,10 +648,9 @@ export function SaveViewDialog({
     createView.mutate(payload, {
       onSuccess: (created) => {
         toast.success(t(($) => $.save_view.toast_created));
-        // The view you just saved is the one you want to be looking at:
-        // activate it on its surface right away. `created` is null only
-        // when the response failed to parse — the list refetch still shows
-        // the view, it just doesn't auto-open.
+        // 刚保存的视图正是你接下来想看的那个：立刻在它的 surface 上激活。
+        // `created` 只有在响应解析失败时才为 null——那时列表刷新仍会显示
+        // 该视图，只是不会自动打开。
         if (created) {
           setActiveInStore(
             issueViewContainerKey(wsId, {

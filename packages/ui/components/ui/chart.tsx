@@ -1,4 +1,8 @@
 "use client"
+// 本文件是图表（Chart）组件族（基于 recharts 的二次封装，shadcn 风格）：
+// 提供容器（ChartContainer）、tooltip（ChartTooltipContent）、图例
+// （ChartLegendContent）。配色由调用方传入 ChartConfig，组件把它转成
+// 挂在容器上的 CSS 变量（--color-*），recharts 的描边/填充就能按 key 引用。
 
 import * as React from "react"
 import * as RechartsPrimitive from "recharts"
@@ -6,12 +10,21 @@ import type { TooltipValueType } from "recharts"
 
 import { cn } from "@multica/ui/lib/utils"
 
-// Format: { THEME_NAME: CSS_SELECTOR }
+// 主题名 → CSS 选择器前缀。亮色没有前缀，暗色挂在 .dark 下。
+// 这样同一份 ChartConfig 可以分别给明/暗主题定义不同颜色。
 const THEMES = { light: "", dark: ".dark" } as const
 
+/** ResponsiveContainer 首次渲染前使用的初始尺寸（SSR 兜底，避免 0 尺寸抖动） */
 const INITIAL_DIMENSION = { width: 320, height: 200 } as const
 type TooltipNameType = number | string
 
+/**
+ * ChartConfig：图表的配置映射。每个 key 对应图上一条数据，可配：
+ * - label：展示名（图例/tooltip 里用）
+ * - icon：可选的小图标
+ * - 颜色二选一：固定 `color`，或按主题拆分的 `theme`（light/dark 不同色）。
+ *   color 与 theme 互斥（通过 TS 联合类型强制）。
+ */
 export type ChartConfig = Record<
   string,
   {
@@ -23,12 +36,15 @@ export type ChartConfig = Record<
   )
 >
 
+/** ChartContext 提供的内容：向下传 ChartConfig */
 type ChartContextProps = {
   config: ChartConfig
 }
 
+/** 全局图表上下文，ChartContainer 提供、tooltip/图例等消费 */
 const ChartContext = React.createContext<ChartContextProps | null>(null)
 
+/** 读取图表上下文；在 <ChartContainer /> 之外调用会直接报错 */
 function useChart() {
   const context = React.use(ChartContext)
 
@@ -39,6 +55,13 @@ function useChart() {
   return context
 }
 
+/**
+ * ChartContainer：图表容器。职责：
+ * 1. 把 ChartConfig 里的颜色注入成 `--color-<key>` CSS 变量（通过 ChartStyle）；
+ * 2. 提供图表上下文；
+ * 3. 用 ResponsiveContainer 让图表跟随容器尺寸自适应（含 SSR 初始尺寸）。
+ * 默认固定 16:9（aspect-video），可覆盖。
+ */
 function ChartContainer({
   id,
   className,
@@ -81,6 +104,11 @@ function ChartContainer({
   )
 }
 
+/**
+ * ChartStyle：生成一段 <style>，把每个 key 的取色写进
+ * `[data-chart=<id>]` 作用域下的 `--color-<key>` 变量（明暗主题各一条）。
+ * 渲染成一个注入 CSS 的 style 标签；没有带颜色的配置时返回 null。
+ */
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   const colorConfig = Object.entries(config).filter(
     ([, config]) => config.theme ?? config.color
@@ -114,8 +142,17 @@ ${colorConfig
   )
 }
 
+/** recharts 的 Tooltip 原样转发（调用方可直接配 content 之外的自定义） */
 const ChartTooltip = RechartsPrimitive.Tooltip
 
+/**
+ * ChartTooltipContent：hover 数据点时弹出的提示卡片（作为 recharts
+ * <Tooltip content={...}> 的自定义内容）。
+ *
+ * 布局：可选 indicator（色点/色条/虚线）→ 名称与数值。支持 label 区，
+ * labelFormatter 自定义标题、formatter 逐项自定义展示、footer 底部区域。
+ * nestLabel 单系列时把标题并进条目内。
+ */
 function ChartTooltipContent({
   active,
   payload,
@@ -286,8 +323,13 @@ function ChartTooltipContent({
   )
 }
 
+/** recharts 的 Legend 原样转发 */
 const ChartLegend = RechartsPrimitive.Legend
 
+/**
+ * ChartLegendContent：图例内容（作为 recharts <Legend content={...}>
+ * 的自定义内容）。每个系列显示「色块或配置的 icon + 配置的 label」。
+ */
 function ChartLegendContent({
   className,
   hideIcon = false,
@@ -343,6 +385,16 @@ function ChartLegendContent({
   )
 }
 
+/**
+ * 从 recharts 的 payload 条目里找到它在 ChartConfig 中对应的配置。
+ * recharts 的条目结构多变（key/name/dataKey/payload 都可能带名称），
+ * 这里逐层兜底解析出真正的 key，再回查 config。
+ *
+ * @param config 调用方传入的 ChartConfig
+ * @param payload recharts tooltip/legend 的某个 payload 条目
+ * @param key 优先尝试的 key（可能来自 dataKey / name / 自定义 labelKey）
+ * @returns 命中的单项配置；找不到返回 undefined
+ */
 function getPayloadConfigFromPayload(
   config: ChartConfig,
   payload: unknown,

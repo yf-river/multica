@@ -1,3 +1,4 @@
+// posthog.go 实现走 PostHog /batch/ 端点的真实 Client。
 package analytics
 
 import (
@@ -19,35 +20,33 @@ const (
 	defaultFlushTimeout = 5 * time.Second
 )
 
-// PostHogConfig configures the live PostHog client.
+// PostHogConfig 配置真实的 PostHog client。
 type PostHogConfig struct {
 	APIKey      string
 	Host        string
 	Environment string
 
-	// Optional overrides. Zero values fall back to sensible defaults.
+	// 可选覆盖项。零值会回退到合理默认值。
 	QueueSize  int
 	BatchSize  int
 	FlushEvery time.Duration
 	HTTPClient *http.Client
 }
 
-// PostHogClient ships events to PostHog's /batch/ endpoint. It enqueues events
-// into a bounded buffer (non-blocking Capture) and flushes them from a
-// background worker.
+// PostHogClient 把事件投递到 PostHog 的 /batch/ 端点。事件先进有界缓冲
+// （Capture 非阻塞），再由后台 worker 批量刷出。
 type PostHogClient struct {
 	cfg  PostHogConfig
 	ch   chan Event
 	done chan struct{}
 	wg   sync.WaitGroup
 
-	dropped atomic.Uint64 // events dropped because the queue was full
+	dropped atomic.Uint64 // 队列满被丢弃的事件数
 	sent    atomic.Uint64
 	failed  atomic.Uint64
 }
 
-// NewPostHogClient starts the background flush worker. Caller must call Close
-// on shutdown to drain pending events.
+// NewPostHogClient 启动后台刷出 worker。停机时调用方必须 Close 以排空待发事件。
 func NewPostHogClient(cfg PostHogConfig) *PostHogClient {
 	if cfg.QueueSize <= 0 {
 		cfg.QueueSize = defaultQueueSize
@@ -74,8 +73,8 @@ func NewPostHogClient(cfg PostHogConfig) *PostHogClient {
 	return c
 }
 
-// Capture enqueues an event. Returns immediately; on a full queue the event
-// is dropped and counted. Analytics must never block a request handler.
+// Capture 入队一条事件并立即返回；队列满时丢弃该事件并计数。
+// 分析绝不能阻塞请求 handler。
 func (c *PostHogClient) Capture(e Event) {
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now().UTC()
@@ -84,15 +83,14 @@ func (c *PostHogClient) Capture(e Event) {
 	case c.ch <- e:
 	default:
 		n := c.dropped.Add(1)
-		// Log periodically — every 100 drops — so a broken pipe is visible but
-		// doesn't spam logs under sustained load.
+		// 每丢 100 条记一次日志——让"管道坏了"可见，但持续高负载下不会刷屏。
 		if n%100 == 1 {
 			slog.Warn("analytics: queue full, dropping event", "event", e.Name, "total_dropped", n)
 		}
 	}
 }
 
-// Close stops accepting events and drains whatever is already queued.
+// Close 停止接收新事件，并排空已排队的事件。
 func (c *PostHogClient) Close() {
 	close(c.done)
 	c.wg.Wait()
@@ -103,6 +101,8 @@ func (c *PostHogClient) Close() {
 	)
 }
 
+// run 是后台 worker：攒批到 BatchSize 或定时（FlushEvery）就刷出，收到 done 时
+// 把剩余事件排空后退出。
 func (c *PostHogClient) run() {
 	defer c.wg.Done()
 	ticker := time.NewTicker(c.cfg.FlushEvery)
@@ -127,8 +127,8 @@ func (c *PostHogClient) run() {
 		case <-ticker.C:
 			flush()
 		case <-c.done:
-			// Drain remaining events. The channel is not closed by Close() to
-			// avoid racing with Capture, so we loop until it's empty.
+			// 排空剩余事件。Close 不关 channel，是为了避免与 Capture 竞争；
+			// 因此这里循环读到空为止。
 			for {
 				select {
 				case e := <-c.ch:
@@ -145,12 +145,13 @@ func (c *PostHogClient) run() {
 	}
 }
 
-// capturePayload mirrors the PostHog /batch/ JSON shape.
+// capturePayload 对应 PostHog /batch/ 的 JSON 形状。
 type capturePayload struct {
 	APIKey string        `json:"api_key"`
 	Batch  []captureItem `json:"batch"`
 }
 
+// captureItem 是 /batch/ 里的单条事件载荷。
 type captureItem struct {
 	Event      string         `json:"event"`
 	DistinctID string         `json:"distinct_id"`
@@ -158,6 +159,7 @@ type captureItem struct {
 	Timestamp  string         `json:"timestamp"`
 }
 
+// send 把一批事件序列化并 POST 到 PostHog；任一环节失败都记入 failed 计数。
 func (c *PostHogClient) send(batch []Event) {
 	items := make([]captureItem, 0, len(batch))
 	for _, e := range batch {

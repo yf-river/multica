@@ -1,3 +1,5 @@
+// 看板拖拽的工具函数：碰撞检测、分组 id 与拖拽列 id 的互相换算、拖拽落点位置计算
+// （before/after 定位）、把拖拽结果换算成一次写操作的更新字段等。纯函数、不碰 React。
 import {
   pointerWithin,
   closestCenter,
@@ -9,11 +11,13 @@ import { propertyIdFromViewKey } from "@multica/core/issues/stores/view-store";
 import { issueColumnCategory } from "@multica/core/issues";
 import type { BoardColumnGroup } from "../components/board-column";
 
+/** 拖拽移动目标列时要写的问题字段子集。 */
 export type DragMoveTargetUpdates = Pick<
   UpdateIssueRequest,
   "status" | "assignee_type" | "assignee_id" | "project_id" | "position"
 >;
 
+/** 一次拖拽移动的完整更新：目标字段 + 相对谁插入（before_id / after_id）。 */
 export type DragMoveUpdates = DragMoveTargetUpdates & {
   before_id: string | null;
   after_id: string | null;
@@ -21,6 +25,11 @@ export type DragMoveUpdates = DragMoveTargetUpdates & {
 
 const UNASSIGNED_GROUP_ID = "assignee:unassigned";
 
+/**
+ * 看板专用碰撞检测：优先按指针所在位置判定；命中结果里如果只有分组（列）本身、
+ * 没有真正的卡片，就退回这些分组，否则按最近中心点判定。
+ * @param groupIds - 被视为「列」的拖拽 id 集合（卡片不与列相撞）。
+ */
 export function makeKanbanCollision(groupIds: Set<string>): CollisionDetection {
   return (args) => {
     const pointer = pointerWithin(args);
@@ -33,14 +42,17 @@ export function makeKanbanCollision(groupIds: Set<string>): CollisionDetection {
   };
 }
 
+/** 状态分组 id：`status:<状态key>`。 */
 export function statusGroupId(status: IssueStatus): string {
   return `status:${status}`;
 }
 
+/** 自定义属性分组 id：`property:<属性id>:<选项id>`，无选项用 "none"。 */
 export function propertyGroupId(propertyId: string, optionId: string | null): string {
   return `property:${propertyId}:${optionId ?? "none"}`;
 }
 
+/** 指派人分组 id：`assignee:<类型>:<id>`；未指派一律归 `assignee:unassigned`。 */
 export function assigneeGroupId(
   type: IssueAssigneeType | null,
   id: string | null,
@@ -48,31 +60,33 @@ export function assigneeGroupId(
   return type && id ? `assignee:${type}:${id}` : UNASSIGNED_GROUP_ID;
 }
 
-/** Mirrors the server's project group key (`project:<id>` / `project:none`)
- *  so a column built from a descriptor and one built from a card agree. */
+/** 镜像服务端的项目分组 key（`project:<id>` / `project:none`），
+ *  让「由描述符建的列」和「由卡片归的列」对上号。 */
 export function projectGroupId(projectId: string | null): string {
   return `project:${projectId ?? "none"}`;
 }
 
+/**
+ * 计算一个问题应归入哪个分组 id。
+ * @param issue - 要分组的问题。
+ * @param grouping - 当前分组方式。
+ * @param knownOptionIds - 当前仍生效的自定义属性选项 id 集合（可选）。
+ */
 export function getIssueGroupId(
   issue: Issue,
   grouping: IssueGrouping,
   knownOptionIds?: ReadonlySet<string>,
 ): string {
-  // Status columns are CATEGORIES, so the card buckets by the category it
-  // behaves as. Bucketing by the raw key gave a custom status a column id no
-  // column has, and the card was dropped from the board/list entirely
-  // (MUL-6409).
+  // 状态列是「分类」，所以卡片按它「表现为」的分类入桶。按原始 key 入桶会让自定义
+  // 状态得到一个不存在的列 id，卡片便整个从看板/列表中消失（MUL-6409）。
   if (grouping === "status") return statusGroupId(issueColumnCategory(issue));
   if (grouping === "project") return projectGroupId(issue.project_id ?? null);
   const propertyId = propertyIdFromViewKey(grouping);
   if (propertyId) {
     const value = issue.properties?.[propertyId];
     let optionId = typeof value === "string" ? value : null;
-    // A value referencing an option no longer in the definition (removed
-    // before the in-use guard existed, or by a newer server) must bucket
-    // into the No-value column — an unmatched column id would silently drop
-    // the issue from the board.
+    // 值指向一个定义里已不存在的选项（在「在用守卫」出现前删掉的，或被更新版本的
+    // 服务端删掉的），必须归进「无值」列——一个对不上的列 id 会悄悄把问题从看板丢掉。
     if (optionId !== null && knownOptionIds && !knownOptionIds.has(optionId)) {
       optionId = null;
     }
@@ -81,6 +95,13 @@ export function getIssueGroupId(
   return assigneeGroupId(issue.assignee_type, issue.assignee_id);
 }
 
+/**
+ * 把问题按当前分组方式摊进各组：返回一个「列 id → 问题 id 列表」的映射。
+ * @param issues - 全部问题。
+ * @param groups - 已知的分组（列）。
+ * @param grouping - 当前分组方式。
+ * @param knownOptionIds - 仍生效的自定义属性选项 id 集合（可选）。
+ */
 export function buildColumns(
   issues: Issue[],
   groups: BoardColumnGroup[],
@@ -96,6 +117,14 @@ export function buildColumns(
   return cols;
 }
 
+/**
+ * 为被拖动的卡片算一个不与邻居冲突的 position 值：取前后两张卡 position 的中点，
+ * 拖到开头则比第二张小 1、拖到末尾则比最后一张大 1。问题个数为 1 或找不到时
+ * 返回原 position 或 0。
+ * @param ids - 目标列当前按序排列的问题 id。
+ * @param activeId - 被拖动的卡片 id。
+ * @param issueMap - id → 问题 的映射（读取 position）。
+ */
 export function computePosition(ids: string[], activeId: string, issueMap: Map<string, Issue>): number {
   const idx = ids.indexOf(activeId);
   if (idx === -1) return 0;
@@ -106,6 +135,7 @@ export function computePosition(ids: string[], activeId: string, issueMap: Map<s
   return (getPos(ids[idx - 1]!) + getPos(ids[idx + 1]!)) / 2;
 }
 
+/** 由当前相邻顺序推导拖放的 before_id / after_id 锚点。 */
 export function getMoveAnchors(
   ids: readonly string[],
   activeId: string,
@@ -118,11 +148,10 @@ export function getMoveAnchors(
 }
 
 /**
- * Insert `id` into `ids` at the slot implied by `position ASC`, reading each
- * id's position from `issueMap`. Mirrors `insertByPosition` in
- * `@multica/core/issues/cache-helpers` so the board's optimistic placement on
- * drop matches the cache the settle reconcile rebuilds from — otherwise the
- * card would land in one slot, then jump when local columns re-derive from TQ.
+ * 把 `id` 按「position 升序所暗示的槽位」插入 `ids`，每张卡的 position 从 `issueMap`
+ * 读取。镜像 `@multica/core/issues/cache-helpers` 里的 `insertByPosition`，
+ * 让看板放下时的乐观排位与最终 reconcile 重建的缓存一致——否则卡片会先落在一个槽位，
+ * 随后本地列从 TQ 重新推导时又跳一次。
  */
 export function insertIdByPosition(
   ids: string[],
@@ -138,6 +167,10 @@ export function insertIdByPosition(
   return [...ids.slice(0, idx), id, ...ids.slice(idx)];
 }
 
+/**
+ * 找出一个 id 当前所在的列：优先按「本身是列 id」判断（拖进空列），否则在列映射里
+ * 查哪一列包含它。
+ */
 export function findColumn(
   columns: Record<string, string[]>,
   id: string,
@@ -150,10 +183,10 @@ export function findColumn(
   return null;
 }
 
+/** 判断某问题是否已经属于某个分组（列）。 */
 export function issueMatchesGroup(issue: Issue, group: BoardColumnGroup): boolean {
-  // "Is this card already in that column?" — a category question, like the
-  // column itself. Comparing the raw key answered no for every custom status,
-  // so a drop that changed nothing still fired a status write (MUL-6409).
+  // 「这张卡是不是已经在这列里？」——和列本身一样是分类问题。拿原始 key 比较会让
+  // 每个自定义状态都答「否」，于是一次什么都没改变的拖放也会触发一次状态写入（MUL-6409）。
   if (group.status) return issueColumnCategory(issue) === group.status;
   if (group.propertyId !== undefined) {
     const value = issue.properties?.[group.propertyId];
@@ -169,14 +202,20 @@ export function issueMatchesGroup(issue: Issue, group: BoardColumnGroup): boolea
   );
 }
 
+/**
+ * 把一次拖放换算成要写的问题字段更新。
+ * @param group - 拖放目标所在的列。
+ * @param position - 拖放后算出的 position。
+ * @param issue - 正在被拖的卡片（调用方有的话）。状态列命名的是「分类」，而一张
+ *   处于自定义状态上的卡片已经在列里了、只是带着不同的 key——所以照抄列的规范 key
+ *   会把 `awaiting_response` 悄悄改写成 `in_review`，而一次只改了行序的拖拽会因此
+ *   启动一次智能体运行（MUL-6409）。
+ * @returns 需要写的问题字段；列内纯排序时可能只含 position。
+ */
 export function getMoveUpdates(
   group: BoardColumnGroup,
   position: number,
-  /** The card being moved, when the caller has it. A status column names a
-   *  CATEGORY, and a card on a custom status is already in that column under a
-   *  DIFFERENT key — so writing the column's canonical key would silently
-   *  rewrite `awaiting_response` to `in_review`, and a status change starts an
-   *  agent run, for a drag that only changed the row order (MUL-6409). */
+  /** 正在被拖的那张卡（调用方有的话）。 */
   issue?: Pick<Issue, "status" | "status_category">,
 ): DragMoveTargetUpdates {
   if (group.status) {
@@ -187,8 +226,8 @@ export function getMoveUpdates(
     if (keepsStatus) return { position };
     return { status: group.status, position };
   }
-  // Property columns: the value change is not part of UpdateIssueRequest —
-  // the board applies it through useSetIssueProperty after the position move.
+  // 属性列：值的变化不属于 UpdateIssueRequest——看板在 position 移动之后通过
+  // useSetIssueProperty 应用它。
   if (group.propertyId !== undefined) return { position };
   if (group.projectId !== undefined) {
     return { project_id: group.projectId, position };

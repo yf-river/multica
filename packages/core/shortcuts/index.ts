@@ -1,3 +1,5 @@
+// 本文件是 shortcuts（键盘快捷键）模块的对外出口（barrel）。
+
 export {
   SHORTCUT_ACTIONS,
   SHORTCUT_ACTION_BY_ID,

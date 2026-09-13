@@ -1,3 +1,8 @@
+// forgejo.go：Forgejo / Gitea（其上游，线上格式完全一致）的 Provider 适配实现。
+// 两者同走 /api/v1 REST 面、同一套 X-Gitea-Signature HMAC-SHA256 webhook、同样的
+// pull_request / status 事件结构，因此一个结构体服务两边，仅按 Kind 分别注册，用户可见
+// 的唯一差别是提供方标签。文件末尾还有 Forgejo/GitLab 共用的 HTTP 客户端与若干归一化
+// 小工具。
 package vcs
 
 import (
@@ -15,11 +20,8 @@ import (
 	"time"
 )
 
-// forgejoProvider implements Provider for Forgejo and its upstream Gitea, which
-// are wire-identical: same /api/v1 REST surface, same X-Gitea-Signature
-// HMAC-SHA256 webhooks, same pull_request / status event shapes. One struct
-// serves both; it is registered under KindForgejo and KindGitea so the only
-// user-visible difference is the provider label.
+// forgejoProvider 同时服务 Forgejo 与 Gitea 两个 Kind，结构体上带 kind 区分。差异细节
+// 见本文件顶部导读。
 type forgejoProvider struct{ kind Kind }
 
 func init() {
@@ -29,10 +31,12 @@ func init() {
 
 func (p forgejoProvider) Kind() Kind { return p.kind }
 
+// EventKind 按 X-Gitea-Event 头归类事件；Forgejo 也会镜像一份 X-GitHub-Event 头，所以
+// 两个头都认。
 func (p forgejoProvider) EventKind(h http.Header) EventKind {
 	event := h.Get("X-Gitea-Event")
 	if event == "" {
-		event = h.Get("X-GitHub-Event") // Gitea mirrors this header too
+		event = h.Get("X-GitHub-Event") // Gitea 也会镜像这个头
 	}
 	switch event {
 	case "pull_request":
@@ -44,12 +48,11 @@ func (p forgejoProvider) EventKind(h http.Header) EventKind {
 	}
 }
 
-// VerifySignature checks X-Gitea-Signature, a bare hex HMAC-SHA256 of the body
-// (no "sha256=" prefix — that is GitHub's convention; tolerate it anyway).
+// VerifySignature 校验 X-Gitea-Signature——body 的裸 hex HMAC-SHA256（没有 "sha256="
+// 前缀，那是 GitHub 的约定；这里仍顺带容忍它）。
 func (p forgejoProvider) VerifySignature(secret string, h http.Header, body []byte) bool {
-	// HMAC with an empty key is forgeable, so reject an empty secret outright
-	// (mirrors the GitLab verifier). Not reachable today — the secret is always
-	// 32 random bytes — but keep the auth boundary safe regardless.
+	// 空 key 的 HMAC 可被伪造，所以空 secret 直接拒绝（与 GitLab 校验器口径一致）。
+	// 今天到不了这里——secret 恒为 32 个随机字节——但无论如何守住认证边界。
 	if secret == "" {
 		return false
 	}
@@ -64,6 +67,7 @@ func (p forgejoProvider) VerifySignature(secret string, h http.Header, body []by
 	return hmac.Equal(mac.Sum(nil), want)
 }
 
+// fjPullRequestPayload 是 Forgejo/Gitea pull_request webhook 载荷的 JSON 结构。
 type fjPullRequestPayload struct {
 	Action      string `json:"action"`
 	PullRequest struct {
@@ -101,6 +105,7 @@ type fjPullRequestPayload struct {
 	} `json:"repository"`
 }
 
+// ParsePullRequest 把 Forgejo/Gitea 的 PR webhook 解码成归一化 PullRequestEvent。
 func (p forgejoProvider) ParsePullRequest(body []byte) (PullRequestEvent, error) {
 	var d fjPullRequestPayload
 	if err := json.Unmarshal(body, &d); err != nil {
@@ -108,6 +113,7 @@ func (p forgejoProvider) ParsePullRequest(body []byte) (PullRequestEvent, error)
 	}
 	owner := coalesce(d.Repository.Owner.UserName, d.Repository.Owner.Login)
 	if owner == "" {
+		// owner 两个字段都缺时，从 full_name（"owner/repo"）里切出 owner。
 		if i := strings.Index(d.Repository.FullName, "/"); i > 0 {
 			owner = d.Repository.FullName[:i]
 		}
@@ -135,24 +141,26 @@ func (p forgejoProvider) ParsePullRequest(body []byte) (PullRequestEvent, error)
 	}, nil
 }
 
+// fjStatusPayload 是 Forgejo/Gitea commit-status webhook 载荷的 JSON 结构。
 type fjStatusPayload struct {
 	SHA         string `json:"sha"`
 	Context     string `json:"context"`
 	State       string `json:"state"`
 	TargetURL   string `json:"target_url"`
 	Description string `json:"description"`
-	// Forgejo/Gitea send these as RFC3339 on the commit-status object.
+	// Forgejo/Gitea 在 commit-status 对象上以 RFC3339 下发这两个时间。
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 }
 
+// ParseCIStatus 把 Forgejo/Gitea 的 commit-status webhook 解码成归一化 CIStatusEvent。
 func (p forgejoProvider) ParseCIStatus(body []byte) (CIStatusEvent, error) {
 	var d fjStatusPayload
 	if err := json.Unmarshal(body, &d); err != nil {
 		return CIStatusEvent{}, err
 	}
-	// Prefer the status' own updated_at (RFC3339) so the monotonic guard is
-	// real; fall back to created_at, then empty (handler uses ingestion time).
+	// 优先用 status 自带的 updated_at（RFC3339），让单调守卫是真实有效的；退回
+	// created_at，再退到空（handler 用摄取时间）。
 	updatedAt := d.UpdatedAt
 	if updatedAt == "" {
 		updatedAt = d.CreatedAt
@@ -167,20 +175,21 @@ func (p forgejoProvider) ParseCIStatus(body []byte) (CIStatusEvent, error) {
 	}, nil
 }
 
-// normalizeForgejoState maps Forgejo/Gitea commit-status states onto the shared
-// passed/failed/pending vocabulary. "warning" is treated as a pass (it does not
-// block), mirroring how GitHub's neutral/skipped count as passed.
+// normalizeForgejoState 把 Forgejo/Gitea 的 commit-status 状态映射到共享的
+// passed/failed/pending 词汇表。"warning" 算通过（它不阻塞），与 GitHub 把
+// neutral/skipped 算作通过的做法对齐。
 func normalizeForgejoState(s string) string {
 	switch s {
 	case "success", "warning":
 		return "passed"
 	case "failure", "error":
 		return "failed"
-	default: // pending, and anything unknown
+	default: // pending，以及任何未知状态
 		return "pending"
 	}
 }
 
+// ValidateToken 用 GET /api/v1/user 验证 token 是否可用，并取回账户登录名。
 func (p forgejoProvider) ValidateToken(ctx context.Context, instanceURL, token string) (Account, error) {
 	endpoint := NormalizeInstanceURL(instanceURL) + "/api/v1/user"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -197,9 +206,8 @@ func (p forgejoProvider) ValidateToken(ctx context.Context, instanceURL, token s
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		// Log the upstream status + body snippet so a bad token (401) is
-		// distinguishable from an insufficient-scope token (403) without
-		// leaking the secret into the HTTP response.
+		// 记录上游状态码 + body 片段，让坏 token（401）与权限不足的 token（403）可区分，
+		// 又不把 secret 泄漏进 HTTP 响应。
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		slog.Warn("forgejo: token validation rejected",
 			"endpoint", endpoint,
@@ -227,15 +235,17 @@ func (p forgejoProvider) ValidateToken(ctx context.Context, instanceURL, token s
 
 // ── shared helpers ──────────────────────────────────────────────────────────
 
+// httpClient 是 vcs 包两个提供方做 token 校验时共用的 HTTP 客户端。
 var httpClient = &http.Client{Timeout: 15 * time.Second}
 
-// NormalizeInstanceURL trims whitespace and any trailing slash so stored
-// instance URLs and derived webhook URLs are stable regardless of input.
+// NormalizeInstanceURL 去掉首尾空白与尾部斜杠，让存储的实例 URL 与派生出的 webhook URL
+// 不随输入写法漂移。
 func NormalizeInstanceURL(raw string) string {
 	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
-// derivePRState collapses (state, draft, merged) into the normalized PR state.
+// derivePRState 把 (state, draft, merged) 收敛成归一化 PR 状态：merged 最优先，其次
+// closed，再其次 draft，其余为 open。
 func derivePRState(state string, draft, merged bool) string {
 	if merged {
 		return "merged"
@@ -249,6 +259,8 @@ func derivePRState(state string, draft, merged bool) string {
 	return "open"
 }
 
+// coalesce 返回第一个非空字符串——Forgejo 的载荷常同时带 login 与 username 两个字段，
+// 这里统一取「先出现且非空」的那个。
 func coalesce(a, b string) string {
 	if a != "" {
 		return a

@@ -1,5 +1,7 @@
 "use client";
 
+// 本文件是 Agent 列表页的浮动批量操作工具栏：选中多行后提供归档/恢复/批量改权限等操作。
+
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -27,14 +29,17 @@ import { AccessPicker, type AccessChange } from "./inspector/access-picker";
 import type { AgentListRow } from "./agents-page";
 
 /**
- * Floating batch-toolbar for the agents list page. Renders archive/restore
- * actions (existing) and a "Set access scope" action (new, MUL-4302 / 2026-07-14)
- * that opens a single confirmation dialog with an embedded AccessPicker.
+ * Agent 列表页的浮动批量工具栏。渲染归档/恢复动作（已有），以及“设置访问范围”动作
+ * （新增，MUL-4302 / 2026-07-14），后者会打开一个内嵌 AccessPicker 的确认对话框。
  *
- * The bulk action is gated by `isOwnedByMe` (not `canManage`) to match the
- * backend's owner-only write gate for `permission_mode` / `invocation_targets`.
- * Non-owned selected agents are skipped; the skip count is shown in both the
- * dialog summary and the partial-failure toast.
+ * 批量动作用 `isOwnedByMe`（而非 `canManage`）做门槛，以对齐后端对
+ * `permission_mode` / `invocation_targets` 的“仅拥有者可写”限制。非自己拥有的
+ * 选中项会被跳过；跳过数量会同时显示在对话框摘要和部分失败的 toast 里。
+ *
+ * @param rows 当前选中的 Agent 列表行
+ * @param members 工作区成员列表（供 AccessPicker 使用）
+ * @param currentUserId 当前登录用户 id
+ * @param onClear 清空选中的回调
  */
 export function AgentBatchToolbar({
   rows,
@@ -56,9 +61,9 @@ export function AgentBatchToolbar({
   const [accessChange, setAccessChange] = useState<AccessChange | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Must be stable: AccessPicker lists this in the effect that notifies us, so
-  // an inline callback would re-notify on every render we cause by storing the
-  // change — that is an update loop, not a re-render.
+  // 回调必须稳定：AccessPicker 会把我们列进它通知我们的 effect 依赖里，若这里
+  // 用内联回调，会因为我们存储 change 而触发的每次重渲染反复通知——那是更新死循环，
+  // 而不是普通重渲染。
   const handleAccessReadyChange = useCallback(
     (ready: boolean, change?: AccessChange) => {
       setAccessChange(ready && change ? change : null);
@@ -66,8 +71,8 @@ export function AgentBatchToolbar({
     [],
   );
 
-  // The picker owns the draft; we own `accessChange`. Reset it on every open and
-  // close so a previous selection can never leak into the next dialog session.
+  // 草稿由 picker 持有；`accessChange` 归我们持有。每次打开和关闭都重置它，
+  // 避免上一次的选择泄漏进下一次对话框会话。
   const setAccessDialogOpen = useCallback((open: boolean) => {
     setAccessChange(null);
     setConfirmAccess(open);
@@ -211,8 +216,7 @@ export function AgentBatchToolbar({
             {t(($) => $.row_actions.set_access)}
           </Button>
         )}
-        {/* Archive sits last: it is the destructive action, kept furthest from
-            the other batch actions. */}
+        {/* 归档放在最后：它是破坏性动作，要离其他批量操作最远。 */}
         {anyActive && (
           <Button
             variant="ghost"
@@ -229,7 +233,7 @@ export function AgentBatchToolbar({
         )}
       </AnimatePresence>
 
-      {/* Archive confirm dialog */}
+      {/* 归档确认对话框 */}
       {rows.length > 0 && <Dialog open={confirmArchive} onOpenChange={setConfirmArchive}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -277,9 +281,9 @@ export function AgentBatchToolbar({
         </DialogContent>
       </Dialog>}
 
-      {/* Bulk access dialog — AccessPicker's internal Save is hidden (hideFooter)
-          so this dialog's Confirm button is the sole apply trigger via onChange.
-          a11y: focus trap + restore via Dialog; aria-live summary; accessible name. */}
+      {/* 批量访问权限对话框——AccessPicker 内部的保存按钮被隐藏（hideFooter），
+          这样本对话框的“确认”按钮才是唯一的提交入口（通过 onChange 触发）。
+          无障碍：用 Dialog 做焦点陷阱与恢复；用 aria-live 朗读摘要；提供可访问名称。 */}
       {rows.length > 0 && <Dialog open={confirmAccess} onOpenChange={setAccessDialogOpen}>
         <DialogContent
           className="sm:max-w-md"

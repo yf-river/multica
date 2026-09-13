@@ -1,3 +1,5 @@
+// projection_helpers.go —— durable 投影与 service 共享的纯辅助函数：inbox 投影 ID、
+// quick-create 上下文解析、聊天耗时与 inbox 行线协议投影。
 package service
 
 import (
@@ -10,18 +12,16 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// ProjectedInboxID derives the identity of an inbox projection from its
-// source event and recipient. It is stable across consumer retries, while the
-// recipient/type fields keep two notifications from one source distinct.
+// ProjectedInboxID 从源事件与接收者推导 inbox 投影的身份（确定性 UUID）。它跨消费者重试稳定，
+// 而 recipient/type 字段让同一来源的两条通知彼此区分。
 func ProjectedInboxID(source, recipientType, recipientID, notifType, issueID string) pgtype.UUID {
 	name := strings.Join([]string{source, recipientType, recipientID, notifType, issueID}, "\x00")
 	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(name))
 	return pgtype.UUID{Bytes: [16]byte(id), Valid: true}
 }
 
-// ParseQuickCreateContext decodes the context stored on a standalone
-// quick-create task. It is shared by durable projections and the task
-// service so both paths apply the same shape and type check.
+// ParseQuickCreateContext 解码独立 quick-create 任务 context 中存储的载荷。durable 投影与任务服务共用，
+// 使两侧应用相同的形态与类型检查。
 func ParseQuickCreateContext(task db.AgentTaskQueue) (QuickCreateContext, bool) {
 	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || len(task.Context) == 0 {
 		return QuickCreateContext{}, false
@@ -33,13 +33,12 @@ func ParseQuickCreateContext(task db.AgentTaskQueue) (QuickCreateContext, bool) 
 	return context, true
 }
 
-// ComputeChatElapsedMs exposes the canonical user-visible chat latency
-// calculation to durable projections.
+// ComputeChatElapsedMs 向 durable 投影暴露规范的“用户可见聊天耗时”计算。
 func ComputeChatElapsedMs(task db.AgentTaskQueue) pgtype.Int8 {
 	return computeChatElapsedMs(task)
 }
 
-// InboxItemFields is the canonical wire projection for a persisted inbox row.
+// InboxItemFields 是持久化收件箱行的规范线协议投影（map）。
 func InboxItemFields(item db.InboxItem) map[string]any {
 	return map[string]any{
 		"id":             util.UUIDToString(item.ID),

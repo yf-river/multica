@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 AI-builder 工作室的两块核心面板：会话前“选运行环境/模型”的设置卡
+//（BuilderSetup），以及会话本身的聊天列（BuilderConversation：消息流、空态提示
+// 按钮、输入框、运行环境在线点）。回复内容统一剥掉 `<agent_draft>` JSON 块再展示。
+
 import type { ReactNode } from "react";
 import { Loader2, MessageSquare } from "lucide-react";
 import {
@@ -28,9 +32,8 @@ import { ModelDropdown } from "../components/model-dropdown";
 import { RuntimePicker } from "../components/runtime-picker";
 
 /**
- * Pre-conversation card: the builder runs on a real runtime, so the runtime and
- * model have to be chosen before the first message — they are frozen onto the
- * hidden carrier agent when the session is created.
+ * 会话前的一张卡：builder 跑在真实运行环境上，所以运行环境与模型必须在第一条消息
+ * 前选定——创建会话时它们会被冻结到隐藏的 carrier agent 上。
  */
 export function BuilderSetup({
   draft,
@@ -57,8 +60,7 @@ export function BuilderSetup({
   error: string | null;
   onStart: () => void;
   connectRuntimeHref: string;
-  /** Rendered above the card: the way back to an unfinished conversation, so
-   *  this screen cannot silently start yet another one. */
+  /** 渲染在卡上方：回到未完成会话的入口，让本屏不可能悄悄再开一条。 */
   banner?: ReactNode;
 }) {
   const { t } = useT("agents");
@@ -131,6 +133,7 @@ export function BuilderSetup({
   );
 }
 
+/** 会话的聊天列：头部（运行环境在线点）、消息流 / 骨架 / 空态提示按钮、错误条、输入框。 */
 export function BuilderConversation({
   sessionId,
   messages,
@@ -150,8 +153,8 @@ export function BuilderConversation({
     | { task_id?: string; status?: string; created_at?: string }
     | undefined;
   runtimeOnline: boolean;
-  /** `commitInput` is the composer's clear; the owner runs it as soon as the
-   *  server accepts the message. The prompt buttons below send without one. */
+  /** `commitInput` 是输入框的清空；服务端一接受消息，拥有者就运行它。
+   *  下方空态提示按钮发送时不带它。 */
   onSend: (content: string, commitInput?: () => void) => Promise<boolean>;
   onStop: () => void;
   restoreDraftRequest: BuilderRestore | null;
@@ -168,8 +171,8 @@ export function BuilderConversation({
   ];
 
   return (
-    // `@container`: this is one column of the studio's split layout, so the
-    // shared chat gutter must size against the column, not the viewport.
+    // `@container`：这是工作室分栏布局中的一列，共享的聊天 gutter 必须按“列”而非
+    // 视口来算尺寸。
     <section className="flex h-full min-h-0 flex-col bg-background @container">
       <header className="flex min-h-14 shrink-0 items-center justify-between gap-4 border-b px-5 py-2.5">
         <div className="min-w-0">
@@ -201,8 +204,7 @@ export function BuilderConversation({
           messages={messages}
           pendingTask={pendingTask}
           availability={runtimeOnline ? "online" : "offline"}
-          // Applies to the live stream as well as history, which is what keeps
-          // the half-written JSON block off the screen mid-reply.
+          // 同时作用于实时流与历史，正是这点让回复中写到一半的 JSON 块不占屏。
           transformContent={stripBuilderDraft}
         />
       ) : (

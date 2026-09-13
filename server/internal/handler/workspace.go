@@ -1,3 +1,10 @@
+// Package handler 是整个 HTTP API 的处理器集合。
+//
+// 本文件（workspace.go）承载 workspace 与成员（member）生命周期的主体接口：
+// workspace 的创建/查询/改名/删除，成员的角色变更、踢人、自己退出（复用
+// workspace_revoke.go 的撤销流程），以及删 workspace 时整套拆除事务的编排
+// （分页清扫任务、加锁顺序、锁超时可重试）。此外还定义 workspace 的 issue
+// 前缀派生规则与仓库（repos）绑定字段的校验。
 package handler
 
 import (
@@ -25,29 +32,35 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// nonAlpha 匹配任意非英文字母字符（用于从名字里取前缀字母）。
 var nonAlpha = regexp.MustCompile(`[^a-zA-Z]`)
+
+// nonAlphanumeric 匹配任意非字母数字字符（用于从 slug 里取前缀字符）。
 var nonAlphanumeric = regexp.MustCompile(`[^a-zA-Z0-9]`)
+
+// workspaceSlugPattern 校验 workspace slug 的合法形态：小写字母/数字组成的段，
+// 段间以单横线连接，不允许开头/结尾/连续横线。
 var workspaceSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+// issuePrefixPattern 校验 issue 前缀：1~10 位大写字母或数字。
 var issuePrefixPattern = regexp.MustCompile(`^[A-Z0-9]{1,10}$`)
 
-// defaultIssuePrefixFromSlug derives a new workspace's default issue prefix
-// from its slug: alphanumerics only, first 4 chars, uppercased.
-// Examples: "acme" → "ACME", "front-end" → "FRON", "team-2" → "TEAM".
+// defaultIssuePrefixFromSlug 从新 workspace 的 slug 派生默认 issue 前缀：
+// 只留字母数字、取前 4 位、转大写。示例："acme"→"ACME"、"front-end"→"FRON"、
+// "team-2"→"TEAM"。
 //
-// The slug — not the name — is the derivation source on purpose (MUL-6050).
-// Name is the one field in the create flow that accepts non-ASCII, so deriving
-// an ASCII-only prefix from it forced every CJK/emoji-named workspace onto the
-// same "WS" fallback. Slug is validated as `^[a-z0-9]+(-[a-z0-9]+)*$` and
-// required, so it always yields a non-empty, workspace-specific prefix.
+// 派生源刻意选 slug 而不是 name（MUL-6050）：name 是创建流程里唯一允许非
+// ASCII 的字段，若从 name 派生纯 ASCII 前缀，所有中文/emoji 命名的 workspace
+// 都会被挤到同一个 "WS" 兜底。slug 被限定为 ^[a-z0-9]+(-[a-z0-9]+)*$ 且必填，
+// 因此总能得出非空、且每个 workspace 各不相同的前缀。
 //
-// Kept byte-for-byte in sync with the client-side preview in
-// packages/views/onboarding/steps/step-workspace.tsx — what the user sees on
-// the create screen has to be what the server would derive.
+// 与客户端预览逐字节保持一致（packages/views/onboarding/steps/
+// step-workspace.tsx）——创建页上用户看到什么，服务端就该派生什么。
 func defaultIssuePrefixFromSlug(slug string) string {
 	head := nonAlphanumeric.ReplaceAllString(slug, "")
 	if head == "" {
-		// Unreachable for a validated slug; keeps the function total so a
-		// future caller can never persist an empty prefix.
+		// 对校验过的 slug 实际到不了这里；保留兜底是为让函数保持全函数性质，
+		// 未来的调用方永远不可能落一个空前缀进库。
 		return "WS"
 	}
 	if len(head) > 4 {
@@ -56,16 +69,14 @@ func defaultIssuePrefixFromSlug(slug string) string {
 	return strings.ToUpper(head)
 }
 
-// legacyIssuePrefixFromName is the pre-MUL-6050 derivation: first 3 ASCII
-// letters of the workspace name, uppercased, "WS" when the name has none.
+// legacyIssuePrefixFromName 是 MUL-6050 之前的旧派生逻辑：取 workspace 名字里
+// 前 3 个 ASCII 字母转大写，一个字母都没有就退回 "WS"。
 //
-// FROZEN — do not "fix" this to match defaultIssuePrefixFromSlug. Its only
-// caller is getIssuePrefix's fallback for workspaces whose stored prefix is
-// empty (rows predating the column). Issue identifiers are computed at read
-// time from the current prefix, so changing what this returns would silently
-// rewrite the identifier of every historical issue in those workspaces.
-// Deliberate product decision: no backfill, existing workspaces stay as they
-// are; only newly created ones follow the slug-derived rule.
+// 冻结——不要"修正"它去对齐 defaultIssuePrefixFromSlug。它唯一的调用方是
+// getIssuePrefix 里对"库里前缀为空（该列出现前建的行）"的 workspace 的回退。
+// issue 标识符是读取时按当前前缀现算的，改动它的返回值等于悄悄改写这些
+// workspace 里全部历史 issue 的标识。这是明确的产品决定：不做回填，存量
+// workspace 保持原样；只有新建的才走 slug 派生规则。
 func legacyIssuePrefixFromName(name string) string {
 	letters := nonAlpha.ReplaceAllString(name, "")
 	if len(letters) == 0 {
@@ -78,11 +89,10 @@ func legacyIssuePrefixFromName(name string) string {
 	return letters
 }
 
-// normalizeIssuePrefix trims and uppercases a client-supplied issue prefix.
-// An all-whitespace value means "not provided" and reports ("", true) so the
-// caller can fall back to its default. Anything else must be 1-10 chars of
-// A-Z0-9, mirroring the client-side guardrail in
-// packages/views/settings/components/workspace-tab.tsx.
+// normalizeIssuePrefix 清洗客户端提交的 issue 前缀：去空格并转大写。
+// 全空白值视为"未提供"，返回 ("", true) 让调用方回退到默认值。其余值必须是
+// 1~10 位 A-Z0-9，与客户端侧（packages/views/settings/components/
+// workspace-tab.tsx）的护栏保持一致。
 func normalizeIssuePrefix(raw string) (string, bool) {
 	prefix := strings.ToUpper(strings.TrimSpace(raw))
 	if prefix == "" {
@@ -94,8 +104,11 @@ func normalizeIssuePrefix(raw string) (string, bool) {
 	return prefix, true
 }
 
+// issuePrefixFormatError 是非法 issue 前缀的统一报错文案，供各处直接透出。
 const issuePrefixFormatError = "issue prefix must be 1-10 uppercase letters or digits"
 
+// WorkspaceResponse 是单个 workspace 对外展示的 JSON 形态；Settings 与 Repos
+// 都是各自 JSONB 字段解出来的结构（Settings 兜底为空对象、Repos 兜底为空数组）。
 type WorkspaceResponse struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
@@ -110,6 +123,8 @@ type WorkspaceResponse struct {
 	UpdatedAt   string  `json:"updated_at"`
 }
 
+// workspaceToResponse 把库行转成对外响应；Settings/Repos 存的是 JSONB，这里
+// 尽力解成通用结构体，解不出就保持零值再兜底为空对象/空数组。
 func (h *Handler) workspaceToResponse(w db.Workspace) WorkspaceResponse {
 	var settings any
 	if w.Settings != nil {
@@ -140,6 +155,7 @@ func (h *Handler) workspaceToResponse(w db.Workspace) WorkspaceResponse {
 	}
 }
 
+// MemberResponse 是成员关系（谁以什么角色属于哪个 workspace）的对外形态。
 type MemberResponse struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
@@ -148,6 +164,7 @@ type MemberResponse struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+// memberToResponse 把成员库行转成对外响应。
 func memberToResponse(m db.Member) MemberResponse {
 	return MemberResponse{
 		ID:          uuidToString(m.ID),
@@ -158,6 +175,8 @@ func memberToResponse(m db.Member) MemberResponse {
 	}
 }
 
+// ListWorkspaces 列出当前登录用户属于的全部 workspace。需要登录；客户端主动
+// 断开时按取消处理而不报错。
 func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -181,6 +200,8 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// GetWorkspace 返回单个 workspace 的详情。只按 id 取行，不校验请求者是否为
+// 成员——路由层的中间件负责这道门槛。
 func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 	id := workspaceIDFromURL(r, "id")
 	idUUID, ok := parseUUIDOrBadRequest(w, id, "workspace id")
@@ -196,6 +217,9 @@ func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.workspaceToResponse(ws))
 }
 
+// CreateWorkspaceRequest 是创建 workspace 的入参。name 允许任意文本
+// （含中文/emoji），slug 必须符合 ^[a-z0-9]+(-[a-z0-9]+)*$ 且不在保留名单里；
+// issue_prefix 可空，空则由 slug 派生默认前缀。
 type CreateWorkspaceRequest struct {
 	Name        string  `json:"name"`
 	Slug        string  `json:"slug"`
@@ -204,17 +228,18 @@ type CreateWorkspaceRequest struct {
 	IssuePrefix *string `json:"issue_prefix"`
 }
 
+// CreateWorkspace 创建一个新 workspace 并让当前用户以 owner 身份加入，同一
+// 事务内再播种 7 个内置 issue 状态并记录事件。需要登录。命中保留 slug 或 slug
+// 重复时分别回 400/409；实例配置禁止创建时（自托管开关）一律回 403。
 func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
 
-	// Self-host gate (#3433): when the operator has set
-	// DISABLE_WORKSPACE_CREATION=true, no caller — including existing
-	// workspace owners — may create additional workspaces. The frontend
-	// hides every "Create workspace" affordance via /api/config, but the
-	// 403 here is the only authoritative check.
+	// 自托管闸门（#3433）：运营商设了 DISABLE_WORKSPACE_CREATION=true 时，任何
+	// 调用方——包括已有 workspace 的 owner——都不许再建 workspace。前端通过
+	// /api/config 隐藏所有"创建 workspace"入口，但这里的 403 才是唯一权威校验。
 	if h.cfg.DisableWorkspaceCreation {
 		writeError(w, http.StatusForbidden, "workspace creation is disabled for this instance")
 		return
@@ -241,8 +266,7 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the prefix before opening the transaction: an invalid one is a
-	// 400 that should never cost a connection.
+	// 开事务前先定前缀：非法的前缀是 400，不该为此占用一条数据库连接。
 	issuePrefix := ""
 	if req.IssuePrefix != nil {
 		prefix, ok := normalizeIssuePrefix(*req.IssuePrefix)
@@ -290,9 +314,8 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Seed the 7 built-in issue statuses inside the same transaction, so a
-	// workspace is never visible without its status catalog — an issue cannot
-	// be created before its status can be resolved. (MUL-6243)
+	// 在同一事务里播种 7 个内置 issue 状态，保证 workspace 从不以"没有状态
+	// 目录"的形态出现——issue 得先能解析到状态才能被创建。（MUL-6243）
 	if err := issuestatus.Ensure(r.Context(), qtx, ws.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to seed issue statuses: "+err.Error())
 		return
@@ -312,13 +335,11 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// NOTE: CreateWorkspace deliberately does NOT mark the user as
-	// onboarded. The `onboarded_at` flag is owned by CompleteOnboarding
-	// (Step 3 of the flow) and by AcceptInvitation (invitee joining an
-	// existing workspace). This decouples "the user has a workspace"
-	// from "the user has finished setup"; the workspace-layer route
-	// gate in the web layout redirects un-onboarded
-	// users back to /onboarding instead.
+	// 注意：CreateWorkspace 刻意不把用户标记为已 onboarding。onboarded_at
+	// 标志归 CompleteOnboarding（流程第 3 步）与 AcceptInvitation（受邀者加入
+	// 既有 workspace）所有。这解耦了"用户有了 workspace"与"用户走完引导"两件
+	// 事；web 布局里 workspace 层的路由闸门会把未引导完成的用户重定向回
+	// /onboarding。
 
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create workspace")
@@ -329,10 +350,9 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	h.publishEvent(workspaceEvent)
 	h.publishEvent(memberEvent)
 
-	// "Is this the user's first workspace?" is derived in PostHog by looking
-	// at whether they have a prior workspace_created event, not stamped at
-	// emit time. Stamping here would race under concurrent creates without
-	// a schema change, and the event stream answers the question exactly.
+	// "是不是用户的第一个 workspace？"由 PostHog 端去看用户此前有没有
+	// workspace_created 事件来推导，而不是在发出时打标记。若在此打标记，并发
+	// 创建场景下不改表结构就会竞态；而事件流能精确回答这个问题。
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.WorkspaceCreated(userID, wsID))
 	h.notifyDaemonWorkspacesChanged(userID)
 
@@ -340,6 +360,8 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, h.workspaceToResponse(ws))
 }
 
+// UpdateWorkspaceRequest 是更新 workspace 的入参。各字段均为指针以区分
+// "未传"与"传了空值"；Settings 与 Repos 是整块替换的 JSONB。
 type UpdateWorkspaceRequest struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
@@ -350,6 +372,9 @@ type UpdateWorkspaceRequest struct {
 	AvatarURL   *string `json:"avatar_url"`
 }
 
+// workspaceRepoRef 描述一个与 workspace 绑定的代码仓库引用。URL 必填且必须是
+// 合法 git 地址；Provider 为 gongfeng 时额外要求项目路径与地址一致、默认分支
+// 已选，Ref 未给则沿用默认分支。
 type workspaceRepoRef struct {
 	URL              string `json:"url"`
 	Description      string `json:"description,omitempty"`
@@ -365,6 +390,9 @@ type workspaceRepoRef struct {
 	LastSyncedAt     string `json:"last_synced_at,omitempty"`
 }
 
+// validateAndNormalizeWorkspaceRepos 校验并规范化整份 repos 数组：
+// 逐条去空格、URL 合法性/工蜂项目路径一致性校验、给工蜂仓库补齐 Provider 与
+// Ref，最后按 URL 去重。返回可直接入库的 JSON。任何一条不合法即整体失败。
 func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -428,6 +456,9 @@ func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
 	return out, nil
 }
 
+// UpdateWorkspace 更新 workspace 的可变字段（名称/描述/上下文/设置/仓库/
+// issue 前缀/头像）。校验前置在事务外完成（avatar 除外，见内）。改名或改
+// settings 会唤醒该 workspace 全体成员的 daemon。路由层负责 owner/admin 门槛。
 func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	id := workspaceIDFromURL(r, "id")
 	idUUID, ok := parseUUIDOrBadRequest(w, id, "workspace id")
@@ -481,9 +512,8 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.AvatarURL != nil {
-		// Read the stored value so an unchanged re-send skips revalidation —
-		// this handler is the one avatar writer that doesn't already have the
-		// row in hand.
+		// 先读出库里当前值，让"原样重发"能跳过重新校验——本 handler 是唯一
+		// 写头像的路径里手上没有那行的。
 		var current string
 		if existing, err := h.Queries.GetWorkspace(r.Context(), idUUID); err == nil {
 			current = existing.AvatarUrl.String
@@ -522,10 +552,9 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("workspace updated", append(logger.RequestAttrs(r), "workspace_id", id)...)
 	h.publishEvent(workspaceEvent)
-	// A rename changes what daemons display; a settings edit changes how they
-	// behave — the GitHub master switch and the Co-authored-by toggle are read
-	// from this JSONB. Daemons cache settings and have no other way to learn
-	// they moved, so both edits have to wake every member's daemons.
+	// 改名会改变 daemon 显示的名字；改 settings 会改变 daemon 的行为——GitHub
+	// 总开关和 Co-authored-by 开关都从这个 JSONB 里读。daemon 缓存了 settings，
+	// 没有别的途径得知它变了，所以这两类编辑都得唤醒每个成员的 daemon。
 	if req.Name != nil || req.Settings != nil {
 		if members, err := h.Queries.ListMembers(r.Context(), ws.ID); err == nil {
 			userIDs := make([]string, 0, len(members))
@@ -539,6 +568,8 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.workspaceToResponse(ws))
 }
 
+// ListMembers 返回 workspace 的成员列表（仅成员关系，不含用户资料）。调用者
+// 必须是 workspace 成员，否则 404。
 func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	workspaceID := chi.URLParam(r, "id")
 	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
@@ -560,6 +591,8 @@ func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// MemberWithUserResponse 是"成员 + 用户资料"联查的对外形态，供成员管理界面
+// 展示头像、姓名、邮箱。
 type MemberWithUserResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
@@ -571,6 +604,8 @@ type MemberWithUserResponse struct {
 	AvatarURL   *string `json:"avatar_url"`
 }
 
+// ListMembersWithUser 联查 workspace 成员及其用户资料。调用者需为成员；响应里
+// 不校验角色——联查 SQL 已把 workspace_id 作为筛选条件。
 func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
@@ -601,11 +636,13 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// CreateMemberRequest 是添加成员的入参：按邮箱找人，role 可空（默认 member）。
 type CreateMemberRequest struct {
 	Email string `json:"email"`
 	Role  string `json:"role"`
 }
 
+// memberWithUserResponse 组装"成员 + 用户资料"的联查响应。
 func (h *Handler) memberWithUserResponse(member db.Member, user db.User) MemberWithUserResponse {
 	return MemberWithUserResponse{
 		ID:          uuidToString(member.ID),
@@ -619,6 +656,8 @@ func (h *Handler) memberWithUserResponse(member db.Member, user db.User) MemberW
 	}
 }
 
+// normalizeMemberRole 归一化成员角色：空值视为 "member"；只接受
+// owner/admin/member 三种取值，其余返回非法。
 func normalizeMemberRole(role string) (string, bool) {
 	if role == "" {
 		return "member", true
@@ -633,10 +672,14 @@ func normalizeMemberRole(role string) (string, bool) {
 	}
 }
 
+// UpdateMemberRequest 是修改成员角色的入参。
 type UpdateMemberRequest struct {
 	Role string `json:"role"`
 }
 
+// UpdateMember 修改某成员的角色。权限与约束：只有 owner 能改动 owner 的角色；
+// 把最后一个 owner 降级/移除会被拒绝（workspace 至少留一个 owner）。成功后在
+// 同一事务里记录 member_updated 事件并作废该成员的成员缓存。
 func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
 	requester, ok := h.workspaceMember(w, r, workspaceID)
@@ -735,6 +778,10 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.memberWithUserResponse(updatedMember, user))
 }
 
+// DeleteMember 把某成员移出 workspace（管理员踢人）。前置权限校验：只有 owner
+// 能移除 owner；最后一个 owner 不可移除。实质删除动作全部委托给
+// revokeAndRemoveMember（单事务收敛 runtime/agent/任务/订阅），提交后发布事件
+// 并通知该成员的 daemon 刷新。
 func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
 	requester, ok := h.workspaceMember(w, r, workspaceID)
@@ -791,6 +838,8 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// LeaveWorkspace 当前用户主动退出 workspace。owner 退出前需保证 workspace 还
+// 有别的 owner。实质删除走 revokeAndRemoveMember，之后发事件并通知 daemon。
 func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
 	member, ok := h.workspaceMember(w, r, workspaceID)
@@ -830,33 +879,31 @@ func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// workspaceDeleteLockTimeout bounds every lock wait inside the workspace
-// teardown transaction.
+// workspaceDeleteLockTimeout 限定拆除 workspace 事务内每次等待锁的时间上限。
 //
-// The teardown waits on three kinds of lock: the workspace row (FOR UPDATE),
-// every chat_session row in the workspace (FOR UPDATE), and the global
-// advisory lock 4246 that serialises it against the task_usage_hourly rollup.
-// The advisory lock is the dangerous one — it is global and batch-held. A
-// rollup tick may hold it for as long as its 25 min scheduler RunTimeout, the
-// backfill commands (cmd/backfill_task_usage_hourly, cmd/backfill_codex_usage_cache)
-// hold it for an entire run, and before migration 272 a tick whose query was
-// cancelled leaked it for the remaining life of its pooled connection.
+// 拆除过程要等三类锁：workspace 行锁（FOR UPDATE）、该 workspace 下每条
+// chat_session 行锁（FOR UPDATE）、以及那把把它与 task_usage_hourly 汇总
+// 串行化的全局 advisory 锁 4246。advisory 锁最危险——它全局且被批处理持有：
+// 一次汇总 tick 可能持有它长达调度器 25 分钟的 RunTimeout；回填命令
+// （cmd/backfill_task_usage_hourly、cmd/backfill_codex_usage_cache）会持有它
+// 跑完整个任务；在 272 号迁移之前，被取消的 tick 的查询还会把它泄漏到连接池
+// 连接剩余的生命周期里。
 //
-// Waiting on that lock without a cap is what the user sees as "delete does
-// nothing": the request never returns, and no layer above it times out — the
-// browser fetch in packages/core/api/client.ts has no deadline and
-// the delete dialog stays in its "Deleting…" state forever (MUL-5983). A
-// bounded wait turns the same contention into a retryable error.
+// 等这把锁没有上限时，用户看到的现象是"删除没反应"：请求永不返回，而它之上
+// 没有任何一层会超时——浏览器 fetch（packages/core/api/client.ts）没有截止时间，
+// 删除弹窗永远停在"Deleting…"（MUL-5983）。有界等待能把同样的锁竞争变成
+// 一个可重试的错误。
 //
-// 10 s is far above the millisecond-scale waits an uncontended teardown sees,
-// and short enough to fail while the user is still watching the dialog.
+// 10 秒远大于无竞争拆除时毫秒级的等待，又短到能让用户在仍盯着弹窗时得到失败。
 const workspaceDeleteLockTimeout = 10 * time.Second
 
-// workspaceDeleteLockTimeoutOverride, when non-zero, replaces
-// workspaceDeleteLockTimeout for the duration of a test. Never read outside
-// effectiveWorkspaceDeleteLockTimeout — see workspace_delete_lock_test.go.
+// workspaceDeleteLockTimeoutOverride 非零时，在测试期间临时顶替
+// workspaceDeleteLockTimeout。除了 effectiveWorkspaceDeleteLockTimeout，任何
+// 地方都不得直接读它——见 workspace_delete_lock_test.go。
 var workspaceDeleteLockTimeoutOverride time.Duration
 
+// effectiveWorkspaceDeleteLockTimeout 返回生效的锁超时：测试覆盖存在时用覆盖
+// 值，否则用默认值。
 func effectiveWorkspaceDeleteLockTimeout() time.Duration {
 	if workspaceDeleteLockTimeoutOverride > 0 {
 		return workspaceDeleteLockTimeoutOverride
@@ -864,13 +911,11 @@ func effectiveWorkspaceDeleteLockTimeout() time.Duration {
 	return workspaceDeleteLockTimeout
 }
 
-// isRetryableLockFailure reports whether err is one of the two transient lock
-// outcomes a teardown can hit: lock_not_available (55P03), which is what
-// `SET LOCAL lock_timeout` raises when a wait exceeds its budget, and
-// deadlock_detected (40P01), which the owner-row locks can hit against a
-// concurrent task update that takes the same locks in the opposite order (task
-// row first, then its owner). Neither says anything about the workspace itself:
-// the transaction rolled back untouched and the caller can retry.
+// isRetryableLockFailure 判断 err 是否为拆除过程可能撞上的两种瞬时锁失败之一：
+// lock_not_available（55P03），即 SET LOCAL lock_timeout 在等待超预算时抛出的
+// 错误；以及 deadlock_detected（40P01）——owner 行锁可能在与"并发任务更新"以
+// 相反顺序取同一批锁（先任务行、再其 owner）时互相死锁。这两种都说明不了
+// workspace 本身有问题：事务已原样回滚，调用方可以直接重试。
 func isRetryableLockFailure(err error) bool {
 	if err == nil {
 		return false
@@ -882,9 +927,8 @@ func isRetryableLockFailure(err error) bool {
 	return false
 }
 
-// failWorkspaceDelete logs a failed teardown step and writes the response for
-// it. A lock timeout or deadlock is transient and retryable, so it answers 503
-// with a message the delete dialog can show; every other failure stays a 500.
+// failWorkspaceDelete 记录一次失败的拆除步骤并写出对应响应。锁超时或死锁属于
+// 瞬时、可重试的失败，所以回 503 并给出删除弹窗能展示的提示；其余失败保持 500。
 func failWorkspaceDelete(w http.ResponseWriter, r *http.Request, workspaceID, step string, err error) {
 	attrs := append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID, "step", step)
 	if isRetryableLockFailure(err) {
@@ -896,58 +940,54 @@ func failWorkspaceDelete(w http.ResponseWriter, r *http.Request, workspaceID, st
 	writeError(w, http.StatusInternalServerError, "failed to delete workspace")
 }
 
-// workspaceDeleteTaskPageSize bounds one task page: the ids held in this process,
-// the array parameter sent back to Postgres, and the row count of a single
-// DELETE. A whole workspace's task set is not bounded by anything — one busy
-// agent can own millions of historical rows — so it must never be materialized at
-// once (MUL-5999 review).
+// workspaceDeleteTaskPageSize 限定单个任务页的大小：包括本进程内持有的 id 数、
+// 回传给 Postgres 的数组参数长度、以及单条 DELETE 影响的行数。一个 workspace
+// 的任务总量不受任何东西约束——单个活跃 agent 就能拥有数百万历史行——因此
+// 绝不能一次性物化全量（MUL-5999 评审结论）。
 const workspaceDeleteTaskPageSize = 1000
 
-// workspaceDeleteOwnerPageSize bounds owner enumeration the same way. A workspace
-// with a very large agent or issue set must not have its whole id list held here
-// either.
+// workspaceDeleteOwnerPageSize 以同样方式约束 owner 枚举的页大小。agent 或
+// issue 集合很大的 workspace，其完整 id 列表也不能整个拿进本进程。
 const workspaceDeleteOwnerPageSize = 500
 
-// workspaceDeleteVerifyPasses caps how many times a single owner may be swept.
+// workspaceDeleteVerifyPasses 限定单个 owner 最多被清扫几轮。
 //
-// Pass 1 removes what is there; pass 2 confirms the owner came back empty. This is
-// a cheap self-check, NOT the concurrency guarantee: a task inserted after the
-// final empty scan and before COMMIT would not be caught by any number of passes.
-// What closes that window is the in-transaction fence on task writes
-// (migration 284) plus the workspace row lock teardown already holds. The passes
-// exist so that anything unexpected — a path that somehow bypassed the fence — is
-// either cleaned up or turns into a failed, rolled-back teardown rather than a
-// tenant with rows left behind.
+// 第 1 轮清掉已有的；第 2 轮确认该 owner 回来已是空。这是廉价的自检，不是
+// 并发保证：在"最后一次空扫描之后、COMMIT 之前"插入的任务，再多轮也扫不到。
+// 真正封住那个窗口的是任务写入的事务内围栏（迁移 284）加上拆除过程已经持有的
+// workspace 行锁。设这么多轮是为了让任何意外——某条绕过了围栏的路径——要么
+// 被清掉，要么让整个拆除失败回滚，而不是留下"租户已删但残留行"的结果。
 const workspaceDeleteVerifyPasses = 3
 
-// deleteWorkspaceTasks removes every agent_task_queue row a workspace owns,
-// together with the rows that hang off those tasks, in bounded keyset pages.
+// deleteWorkspaceTasks 以有界的 keyset 分页方式删除一个 workspace 名下的全部
+// agent_task_queue 行，以及挂在这些任务下的关联行。
 //
-// Shape, and why:
+// 形态与原因：
 //
-//   - One owner key per query. agent_task_queue has no workspace_id and all three
-//     ownership paths must stay (nothing enforces that a task's agent, runtime and
-//     issue share a workspace), but combining them in one statement — as the
-//     previous three-way OR, as a UNION of joins, or as `= ANY(array)` over a
-//     whole workspace's agents — leaves the planner estimating a proportional
-//     share of the global table and choosing a Seq Scan.
-//   - Keyset pages, so the SCAN is bounded and not just the result. Each page is
-//     an index range scan that resumes where the previous one stopped. Bounding
-//     only the result (`ORDER BY id LIMIT n` with no id in the index) puts a Sort
-//     over the owner's whole task set in front of every page, which costs roughly
-//     O(N² / page) for a busy owner.
-//   - Row locks, not a read snapshot. Each page takes FOR UPDATE, so under READ
-//     COMMITTED Postgres re-checks ownership after acquiring each lock: a task a
-//     concurrent commit already moved elsewhere is skipped rather than deleted on
-//     a stale claim, and a task we locked cannot move before we delete it.
-//   - Children first, in the application layer. DetachTaskBatchReferences breaks
-//     inbound references and DeleteTaskBatch removes task_usage, task_message,
-//     task_token, the two outbound card tables and chat_draft_restore before the
-//     task rows themselves. The legacy FK cascades stay a safety net only.
+//   - 每条查询只用一个 owner 键。agent_task_queue 没有 workspace_id，三种归属
+//     路径都得保留（没有任何约束保证任务的 agent、runtime、issue 同属一个
+//     workspace），但若把它们并进一条语句——像旧的"三种 OR"、把 join 做 UNION、
+//     或对全 workspace 的 agents 用 = ANY(array)——会让规划器按"全局表的某个
+//     比例"来估算，从而选 Seq Scan。
 //
-// Late arrivals are handled by the fence, not here: migration 284 makes every task
-// write take FOR KEY SHARE on its owners' workspace rows, which conflicts with the
-// FOR UPDATE that LockWorkspaceForDelete holds for this whole transaction.
+//   - 用 keyset 分页，因此被约束的是"扫描本身"而不只是结果。每页都是索引范围
+//     扫描，从上一页停下的位置继续。只约束结果（ORDER BY id LIMIT n，而索引里
+//     没有 id）会在每页前面给 owner 的整份任务集加一次 Sort，活跃 owner 的代价
+//     约等于 O(N²/page)。
+//
+//   - 用行锁，不用读快照。每页都带 FOR UPDATE，所以在 READ COMMITTED 下，
+//     Postgres 拿到每个锁后会重查归属：并发提交已把任务移到别处的，按过期主张
+//     直接跳过而不误删；被我们锁住的任务在删除前不可能被移走。
+//
+//   - 应用层先删子行。DetachTaskBatchReferences 打断入站引用，
+//     DeleteTaskBatch 删除 task_usage、task_message、task_token、两张出站卡片表
+//     与 chat_draft_restore，然后才删任务行本身。旧的外键级联只作最后安全网。
+//
+// 迟到的新任务是围栏处理的，不是这里：迁移 284 让每次任务写入都对所属
+// workspace 行取 FOR KEY SHARE，与 LockWorkspaceForDelete 在整个事务期间持有的
+// FOR UPDATE 冲突。
+// deleteWorkspaceTasks 的 owner 形态表：每种归属（agent/issue/runtime）都带
+// 各自的"分页列 owner、按 owner 分页列任务"函数，供下面统一循环清扫。
 func deleteWorkspaceTasks(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID) error {
 	ownerKinds := []struct {
 		label          string
@@ -979,9 +1019,9 @@ func deleteWorkspaceTasks(ctx context.Context, qtx *db.Queries, workspaceID pgty
 					AgentID: owner, ID: cursor, Limit: limit,
 				})
 			},
-			// The third explicit task_token path. workspace_id (leaf data) and
-			// task_id (DeleteTaskBatch) leave one shape uncovered: a token whose
-			// own workspace_id points at a neighbour while its agent lives here.
+			// 这里补第三条显式的 task_token 清理路径。workspace_id（叶子数据）
+			// 与 task_id（DeleteTaskBatch）两条线盖不住一种形状：token 自己的
+			// workspace_id 指向隔壁 workspace，而它的 agent 住在本 workspace。
 			sweepAgent: true,
 		},
 		{
@@ -1037,6 +1077,7 @@ func deleteWorkspaceTasks(ctx context.Context, qtx *db.Queries, workspaceID pgty
 		if err != nil {
 			return fmt.Errorf("list workspace %ss: %w", kind.label, err)
 		}
+		// 用 keyset 游标翻遍全部 owner：取完一页，拿最后一个 id 当下一页起点。
 		for len(owners) > 0 {
 			for _, ownerID := range owners {
 				if err := sweepTasksForOwner(ctx, kind.label, ownerID,
@@ -1059,13 +1100,12 @@ func deleteWorkspaceTasks(ctx context.Context, qtx *db.Queries, workspaceID pgty
 	return nil
 }
 
-// sweepTasksForOwner deletes one owner's tasks, then re-verifies that owner.
+// sweepTasksForOwner 删除单个 owner 的任务，然后回头复核该 owner。
 //
-// Each pass walks the owner's tasks by keyset and deletes each page. A pass that
-// deletes nothing means the owner is clean. A later pass that still finds tasks
-// means something reached agent_task_queue without going through the fence, which
-// is logged and retried; exhausting the passes fails the whole teardown rather
-// than committing a workspace with tasks left behind.
+// 每轮按 keyset 走完该 owner 的任务并逐页删除。一整轮什么都没删到，说明该
+// owner 已经干净。后续轮次仍发现任务，说明有东西没走围栏就摸到了
+// agent_task_queue——记日志并重试；轮次耗尽就让整个拆除失败回滚，而不是提交
+// 一个"workspace 删了但任务残留"的结果。
 func sweepTasksForOwner(
 	ctx context.Context,
 	label string,
@@ -1105,27 +1145,20 @@ func sweepTasksForOwner(
 		label, uuidToString(ownerID), workspaceDeleteVerifyPasses)
 }
 
-// lockWorkspaceTaskOwners locks every row through which a task can belong to this
-// workspace.
+// lockWorkspaceTaskOwners 给所有"任务可能经由它属于本 workspace"的行加锁。
 //
-// Defence in depth on top of the real fence. The fence that closes the
-// insert-after-sweep window is migration 284's lock_task_owner_rows, a predicate
-// every ownership-writing statement calls in its own WHERE clause: it takes
-// FOR KEY SHARE on the workspace rows behind the task's owners and then on the
-// owner rows themselves, which conflicts with the FOR UPDATE that
-// LockWorkspaceForDelete holds for this whole transaction. Called from the writing
-// statement, so it is in the writer's transaction by construction, and independent
-// of the legacy foreign keys.
+// 这是真实围栏之上的纵深防御。封住"清扫之后又插入"窗口的围栏是迁移 284 的
+// lock_task_owner_rows——一个谓词，每条写归属的语句都在自己的 WHERE 子句里调用
+// 它：先对任务 owner 背后的 workspace 行取 FOR KEY SHARE，再对 owner 行本身取，
+// 这与 LockWorkspaceForDelete 在整个事务期间持有的 FOR UPDATE 冲突。它由写
+// 语句调用，因此天然落在写者的事务里，且独立于旧外键。
 //
-// These owner-row locks add a second, narrower barrier — they also block
-// ownership-changing UPDATEs of tasks that already exist — and cost nothing to
-// hold, since teardown deletes these very rows a few steps later. They are taken
-// set-based and return no ids, so a workspace with a huge owner set costs no
-// memory here.
+// 这些 owner 行锁再添一道更窄的屏障——它们同样会挡住对"已存在任务"的换归属
+// UPDATE——而且持有它们不花钱，因为拆除几行之后就要删掉这些行本身。它们是
+// set-based 的、不返回 id，owner 集再大的 workspace 在这里也不占内存。
 //
-// The wait is bounded by SET LOCAL lock_timeout, and taking these locks can
-// deadlock against a concurrent task update that locks in the opposite order
-// (task row, then owner); both outcomes surface as a retryable 503.
+// 等待被 SET LOCAL lock_timeout 封顶；取这些锁也可能与"以相反顺序加锁（先任务
+// 行、再 owner）的并发任务更新"死锁；两种结局都以可重试的 503 浮出。
 func lockWorkspaceTaskOwners(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID) error {
 	if err := qtx.LockWorkspaceTaskOwnerAgents(ctx, workspaceID); err != nil {
 		return fmt.Errorf("lock workspace agents: %w", err)
@@ -1139,13 +1172,17 @@ func lockWorkspaceTaskOwners(ctx context.Context, qtx *db.Queries, workspaceID p
 	return nil
 }
 
+// DeleteWorkspace 删除整个 workspace：先作废全体成员的成员缓存，再在单个大
+// 事务里依次加锁（workspace 行 → 全部 chat_session 行 → 任务 owner 行 → 全局
+// 汇总锁）并按依赖顺序分批删光任务与各资源行。锁等待统一受
+// workspaceDeleteLockTimeout 约束，瞬时锁失败回 503 可重试。只有 owner 能执行。
+// 提交后清理对象存储附件、发事件并通知成员 daemon 刷新。
 func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
 
-	// Defense in depth: the route is already gated by the
-	// RequireWorkspaceRoleFromURL("owner") middleware, but we re-check here
-	// so that the handler is safe regardless of how it gets wired up
-	// (direct calls in tests, future router refactors, etc.).
+	// 纵深防御：路由已用 RequireWorkspaceRoleFromURL("owner") 中间件挡过，这里
+	// 再查一遍，让本 handler 无论怎么接线都安全（测试里直接调用、将来路由重构
+	// 等）。
 	requester, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
 		return
@@ -1155,10 +1192,9 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Invalidate membership cache for all workspace members before deletion.
-	// After CASCADE deletes the member rows, cache entries become harmless
-	// orphans (downstream lookups for the deleted workspace will fail), but
-	// proactive invalidation prevents any stale-access window up to TTL.
+	// 删除前先作废全体成员的成员缓存。CASCADE 删掉成员行之后，缓存条目只是无
+	// 害的孤儿（对已删 workspace 的下游查询会失败），但主动作废能消除最长到 TTL
+	// 的"读到过期成员关系"窗口。
 	var affectedUserIDs []string
 	if members, err := h.Queries.ListMembers(r.Context(), requester.WorkspaceID); err == nil {
 		affectedUserIDs = make([]string, 0, len(members))
@@ -1169,20 +1205,17 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The teardown runs in one transaction so the chat_session row locks below
-	// are still held when DeleteWorkspace sweeps chat_draft_restore. Without
-	// them, FinalizeDeferredCancelledChat could commit a restore for one of
-	// these sessions after the sweep's snapshot was taken: the session cascades
-	// away, the restore has no FK to follow it (MUL-3515) and no reaper, and the
-	// user's prompt is stranded forever (#5219). The finalizer takes the same
-	// lock before inserting, so it either blocks until the session is gone and
-	// skips the insert, or commits first and the sweep sees its row.
+	// 拆除在一个事务里进行，这样 DeleteWorkspace 清扫 chat_draft_restore 时，
+	// 下面的 chat_session 行锁仍然有效。没有这些锁，FinalizeDeferredCancelledChat
+	// 可能在清扫取完快照之后、为其中某个会话提交一条 restore：会话被级联删掉，
+	// restore 没有可跟随的外键（MUL-3515）也没有收割器，用户的提示就被永久搁浅
+	// （#5219）。终结器在插入前取同一把锁，所以它要么阻塞到会话消失后跳过插入，
+	// 要么先提交而让清扫看到它的行。
 	//
-	// The workspace row is locked first, because the session locks only cover
-	// sessions that already exist: a CreateChatSession committing inside the
-	// delete window would otherwise slip in a session nobody locked, and its
-	// restore would outlive the cascade the same way. Holding the workspace row
-	// FOR UPDATE blocks that insert on its workspace FK (FOR KEY SHARE).
+	// workspace 行最先加锁，因为会话锁只覆盖已存在的会话：删除窗口期内提交的
+	// CreateChatSession 会偷偷塞进一个谁都没锁的会话，其 restore 会以同样方式
+	// 活过级联。持有 workspace 行 FOR UPDATE，会在会话插入走 workspace 外键
+	// （FOR KEY SHARE）时把它挡住。
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		slog.Warn("begin workspace delete tx failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
@@ -1194,10 +1227,9 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	var sourceContextAttachmentURLs []string
 	var sourceContextIntentURLs []string
 
-	// SET LOCAL is transaction-scoped, so pgxpool hands this connection back
-	// out with the default (unbounded) lock_timeout after COMMIT / ROLLBACK.
-	// It caps waiting for a lock, not the teardown work itself — deleting a
-	// large workspace is allowed to take as long as it takes.
+	// SET LOCAL 是事务级作用域，事务 COMMIT/ROLLBACK 后 pgxpool 会把这条连接
+	// 以默认（无上限的）lock_timeout 还回池子。它约束的是"等锁"而不是拆除本身
+	// 的工作量——删大 workspace 本来就允许想删多久删多久。
 	lockTimeoutMs := int(effectiveWorkspaceDeleteLockTimeout() / time.Millisecond)
 	if _, err := tx.Exec(r.Context(), fmt.Sprintf("SET LOCAL lock_timeout = %d", lockTimeoutMs)); err != nil {
 		failWorkspaceDelete(w, r, workspaceID, "set lock timeout", err)
@@ -1222,9 +1254,8 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Keep the relationship graph in the application layer. Each step is a
-	// set-based delete scoped by workspace_id; the legacy cascades remain only
-	// as an expand-phase safety net until a later schema contract.
+	// 关系图保持在应用层处理。每个步骤都是按 workspace_id 范围执行的集合式
+	// DELETE；旧级联只作为展开阶段的兜底安全网，直到未来的 schema 合约替换它。
 	ctx := r.Context()
 	var workspaceDeletedEvent events.Event
 	deleteSteps := []struct {
@@ -1236,9 +1267,8 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.SetWorkspaceTeardownMode(ctx) },
 		},
 		{
-			// Fences task enqueue / reassignment for the rest of the
-			// transaction. Must run before anything sweeps tasks — see
-			// lockWorkspaceTaskOwners.
+			// 封住本事务后续的任务入队/改派。必须在任何任务清扫之前执行——见
+			// lockWorkspaceTaskOwners。
 			name: "lock task owners",
 			run:  func() error { return lockWorkspaceTaskOwners(ctx, qtx, requester.WorkspaceID) },
 		},
@@ -1247,9 +1277,8 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.PrepareWorkspaceDeletionLinks(ctx, requester.WorkspaceID) },
 		},
 		{
-			// Life keeps its own derived graph and cognition queue. Clear it
-			// before source tasks, comments, projects, and chat rows disappear;
-			// the context state is removed once more after the graph triggers run.
+			// Life 维护自己派生的关系图与认知队列。在 source 任务、评论、
+			// 项目与聊天行消失之前清掉它；上下文状态等图触发器跑完后再清一次。
 			name: "delete life data",
 			run: func() error {
 				if err := qtx.DeleteWorkspaceLifeData(ctx, requester.WorkspaceID); err != nil {
@@ -1259,16 +1288,14 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
-			// Outbox rows are part of the workspace's durable history. Remove
-			// them before source rows disappear so legacy events without an
-			// envelope workspace_id can still be resolved through their owners.
+			// Outbox 行是 workspace 持久历史的一部分。在 source 行消失前移除
+			// 它们，让没有信封 workspace_id 的旧事件仍能通过其 owner 解析。
 			name: "delete durable events",
 			run:  func() error { return qtx.DeleteWorkspaceDomainEvents(ctx, requester.WorkspaceID) },
 		},
 		{
-			// These FK-free intents deliberately survive the transaction so the
-			// worker can release every invitation/member seat after local rows
-			// disappear. Skipped for self-hosted/unmanaged deployments.
+			// 这些无外键的 intent 刻意活过本事务，让 worker 在本地行消失后仍能
+			// 释放每个邀请/成员的座位。自托管/非托管部署跳过此步。
 			name: "prepare seat capacity release",
 			run: func() error {
 				if !h.seatCapacityEnabled() {
@@ -1291,18 +1318,16 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteChatPinnedAgentsByWorkspace(ctx, requester.WorkspaceID) },
 		},
 		{
-			// This is the first stage that touches usage rollups. Keep the
-			// global rollup lock out of relationship preparation so unrelated
-			// workspaces skip the shortest possible rollup window. This wait
-			// is bounded by workspaceDeleteLockTimeout — 4246 is held by
-			// batch jobs, so an unbounded wait here is what hangs the delete.
+			// 这是第一个碰 usage 汇总的阶段。把全局汇总锁放到关系准备之后，让
+			// 无关的 workspace 只经历尽可能短的汇总窗口。这次等待由
+			// workspaceDeleteLockTimeout 封顶——4246 被批处理任务持有，这里若不
+			// 封顶，删除就会挂死。
 			name: "lock task usage rollup",
 			run:  func() error { return qtx.LockTaskUsageRollupForWorkspaceDelete(ctx) },
 		},
 		{
-			// Bounded batches, after the rollup lock because it deletes
-			// task_usage. Replaces both the task-keyed arms of the old leaf
-			// data statement and the separate whole-workspace task delete.
+			// 有界分批，放在汇总锁之后是因为它要删 task_usage。它替代了旧叶子
+			// 数据语句里按任务键的两条臂，以及那条独立的"整个 workspace 删任务"。
 			name: "delete tasks",
 			run:  func() error { return deleteWorkspaceTasks(ctx, qtx, requester.WorkspaceID) },
 		},
@@ -1334,12 +1359,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			name: "delete comments",
 			run:  func() error { return qtx.DeleteWorkspaceComments(ctx, requester.WorkspaceID) },
 		},
-		// Keep source-context object intents after the workspace row is gone.
-		// They are the durable retry ledger for an upload that began before the
-		// workspace lock but completed after this transaction's immediate object
-		// deletion pass. With no attachment left, the reconciler will delete the
-		// object and then the intent; deleting the ledger here would make that
-		// crash window permanently leak the late object.
+		// source-context 的对象 intent 要留到 workspace 行消失之后。它是一份持久
+		// 的重试账本，登记"在加 workspace 锁之前就开始了上传、却在本事务的即时
+		// 对象删除之后才完成"的上传。没有附件残留时，reconciler 会先删对象再删
+		// intent；若在这里就删账本，崩溃窗口会让迟到的对象永久泄漏。
 		{
 			name: "delete source context attachments",
 			run:  func() error { return qtx.DeleteSourceContextAttachmentsByWorkspace(ctx, requester.WorkspaceID) },
@@ -1356,10 +1379,9 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteWorkspaceIssueRoots(ctx, requester.WorkspaceID) },
 		},
 		{
-			// issue_status carries no foreign key by project rule, so its rows
-			// are swept explicitly. Placed after the issue deletes so no issue
-			// row outlives the catalog its status key resolves against.
-			// (MUL-6243)
+			// issue_status 按项目规则不带外键，所以显式清扫它的行。放在 issue
+			// 删除之后，保证不会有 issue 行活得比它的状态键要解析的状态目录久。
+			// （MUL-6243）
 			name: "delete issue statuses",
 			run: func() error {
 				return qtx.DeleteIssueStatusEntriesForWorkspace(ctx, requester.WorkspaceID)
@@ -1402,9 +1424,8 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteWorkspaceAdministration(ctx, requester.WorkspaceID) },
 		},
 		{
-			// At this point workspaceMember has resolved → workspaceID is a
-			// valid UUID, so reuse the resolved value. The existing final
-			// statement also sweeps any expand-phase compatibility leftovers.
+			// 走到这里说明 workspaceMember 已解析成功 → workspaceID 是合法 UUID，
+			// 直接复用解析结果。这句收尾语句同时清扫展开阶段遗留的兼容数据。
 			name: "delete workspace",
 			run: func() error {
 				if err := qtx.DeleteWorkspace(ctx, requester.WorkspaceID); err != nil {

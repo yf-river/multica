@@ -1,3 +1,12 @@
+// 本文件：ResolvedThreadBar / CommentsFoldBar —— 已解决评论线程的两条折叠条。
+//
+// ResolvedThreadBar：整条线程折叠——ROOT 评论被解决（"解决线程"）。
+//   整条线程（根 + 每条回复）收进这一条。
+// CommentsFoldBar：中间折叠——某条回复是解决点（"带评论解决线程"）。
+//   根与解决回复保持可见，其余回复收进这条位于两者之间的条。
+//
+// 两者共用同一套"作者标签"逻辑（去重 + 至多命名 MAX_NAMED_AUTHORS 位）。
+
 import { CheckCircle2, ChevronRight } from "lucide-react";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { Card } from "@multica/ui/components/ui/card";
@@ -5,13 +14,12 @@ import type { TimelineEntry } from "@multica/core/types";
 import { useT } from "../../i18n";
 
 interface ResolvedThreadBarProps {
-  /** The resolved root comment. */
+  /** 已解决的根评论。 */
   entry: TimelineEntry;
   /**
-   * Flat list of every nested reply under this thread root. Precomputed by
-   * `issue-detail.tsx`'s `timelineView` from the same walk that CommentCard
-   * uses, so the count + author list match what the expanded view renders
-   * (direct-children-only would undercount nested replies).
+   * 线程根下全部嵌套回复的平铺列表。由 `issue-detail.tsx` 的 `timelineView`
+   * 在与 CommentCard 同一条遍历里预算好，保证计数 + 作者列表与展开视图
+   * 渲染的一致（只看直接子级会少算嵌套回复）。
    */
   replies: TimelineEntry[];
   onExpand: () => void;
@@ -19,8 +27,8 @@ interface ResolvedThreadBarProps {
 
 const MAX_NAMED_AUTHORS = 2;
 
-// Distinct authors across `entries`, first-seen order, collapsed to a label
-// ("Alice", "Alice, Bob", "Alice, Bob and 2 others"). Shared by both bars.
+// `entries` 里按首次出现顺序去重后的作者们，压成一段标签
+//（"Alice"、"Alice, Bob"、"Alice, Bob 与另外 2 人"）。两条条共用。
 function useAuthorsLabel(entries: TimelineEntry[]): string {
   const { t } = useT("issues");
   const { getActorName } = useActorName();
@@ -45,8 +53,7 @@ function useAuthorsLabel(entries: TimelineEntry[]): string {
 }
 
 /**
- * Whole-thread fold — the ROOT comment is resolved ("Resolve thread"). The
- * entire thread (root + every reply) collapses into this one bar.
+ * 整条线程折叠条（职责见文件头）。
  */
 export function ResolvedThreadBar({ entry, replies, onExpand }: ResolvedThreadBarProps) {
   const { t } = useT("issues");
@@ -73,15 +80,13 @@ export function ResolvedThreadBar({ entry, replies, onExpand }: ResolvedThreadBa
 }
 
 interface CommentsFoldBarProps {
-  /** The non-resolution replies folded behind this bar. */
+  /** 收在条后的非解决回复。 */
   replies: TimelineEntry[];
   onExpand: () => void;
 }
 
 /**
- * Middle fold — a REPLY is the resolution ("Resolve thread with comment"). The
- * root and the resolution stay visible; the other replies fold behind this bar,
- * which sits between them.
+ * 中间折叠条（职责见文件头）。
  */
 export function CommentsFoldBar({ replies, onExpand }: CommentsFoldBarProps) {
   const { t } = useT("issues");

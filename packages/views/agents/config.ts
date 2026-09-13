@@ -6,11 +6,11 @@ import {
   Play,
 } from "lucide-react";
 
-// Visual-only mapping for a task status: icon + tone. Deliberately carries no
-// `label` — the human-readable status word comes from `taskStatusLabel(status, t)`
-// against the `agents` locale bundle. A `label` here would be a second,
-// untranslatable source of the same string sitting inside a translated package,
-// which is exactly the drift #7411 reported.
+// 本文件负责把任务状态映射成纯视觉配置（图标 + 颜色）。
+//
+// 这里刻意不放 `label`——可读的状态文字统一由 `taskStatusLabel(status, t)` 从
+// `agents` 语言包取。如果在这里再放一份 `label`，就等于在已翻译的包里塞了第二份
+// 无法翻译的重复字符串，正是 #7411 报告的那种漂移。
 export const taskStatusConfig: Record<string, { icon: typeof CheckCircle2; color: string }> = {
   queued: { icon: Clock, color: "text-muted-foreground" },
   dispatched: { icon: Play, color: "text-info" },

@@ -3,6 +3,13 @@ import { Input as InputPrimitive } from "@base-ui/react/input"
 
 import { cn } from "@multica/ui/lib/utils"
 
+// 本文件是全局统一的文本输入框（Input）组件：单行文本框的标准样式，
+// 也内置了 file 型输入（选文件按钮）的排版。
+
+/**
+ * Input：单行文本输入框，产品内统一外观与状态色（错误、禁用、聚焦）。
+ * 原生 input 属性全部透传。
+ */
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (
     <InputPrimitive

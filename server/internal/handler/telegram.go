@@ -1,3 +1,7 @@
+// 本文件是 Telegram 集成面向 Web UI 的管理端点：列出某 workspace 的安装、BYO 安装
+// （把 @BotFather 给的 bot token 粘进来）、撤销安装，以及把 Telegram 用户与 Multica
+// 用户绑定的赎回端点。整体镜像 slack.go：channel_installation 行上的加密 bot token
+// 只在服务端解密使用、绝不回显，路由层限定 admin。
 package handler
 
 import (
@@ -14,9 +18,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// TelegramInstallationResponse is the wire shape for a Telegram installation
-// row. The encrypted bot token in config is INTENTIONALLY absent — it is
-// server-internal. WS lease columns are runtime state, not API surface.
+// TelegramInstallationResponse 是一条 Telegram 安装行的线上结构。config 里的加密
+// bot token 刻意缺席——它是服务器内部件。WS lease 各列是运行时状态而非 API 表面。
 type TelegramInstallationResponse struct {
 	ID              string `json:"id"`
 	WorkspaceID     string `json:"workspace_id"`
@@ -30,6 +33,7 @@ type TelegramInstallationResponse struct {
 	UpdatedAt       string `json:"updated_at"`
 }
 
+// telegramInstallationToResponse 把安装行（解码 config 的公开字段）转成对外结构。
 func telegramInstallationToResponse(row db.ChannelInstallation) TelegramInstallationResponse {
 	info := telegram.DecodePublicConfig(row.Config)
 	return TelegramInstallationResponse{
@@ -46,10 +50,10 @@ func telegramInstallationToResponse(row db.ChannelInstallation) TelegramInstalla
 	}
 }
 
-// ListTelegramInstallations (GET /api/workspaces/{id}/telegram/installations)
-// is member-visible so the Integrations tab renders for non-admins. Response
-// flags mirror Slack: configured = at-rest key set; install_supported is true
-// whenever configured (paste-a-token needs no hosted credential).
+// ListTelegramInstallations（GET /api/workspaces/{id}/telegram/installations）对成员
+// 可见，让非管理员的 Integrations 标签页也能渲染。响应旗标镜像 Slack：configured =
+// 静态加密密钥已设置；configured 时 install_supported 恒为 true（粘 token 不需要托管
+// 凭据）。
 func (h *Handler) ListTelegramInstallations(w http.ResponseWriter, r *http.Request) {
 	if h.TelegramInstall == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -79,15 +83,13 @@ func (h *Handler) ListTelegramInstallations(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// RegisterTelegramRequest is the body for a bot install: the token the user
-// pasted from @BotFather.
+// RegisterTelegramRequest 是安装请求体：用户从 @BotFather 粘出的 bot token。
 type RegisterTelegramRequest struct {
 	BotToken string `json:"bot_token"`
 }
 
-// RegisterTelegramBot (POST /api/workspaces/{id}/telegram/install?agent_id=…)
-// installs a user-supplied Telegram bot for an agent. Admin-only at the
-// router. Mirrors RegisterSlackBYO.
+// RegisterTelegramBot（POST /api/workspaces/{id}/telegram/install?agent_id=…）为某个
+// agent 安装用户提供的 Telegram bot。路由层限定 admin。镜像 RegisterSlackBYO。
 func (h *Handler) RegisterTelegramBot(w http.ResponseWriter, r *http.Request) {
 	if h.TelegramInstall == nil {
 		writeError(w, http.StatusServiceUnavailable, "telegram integration not enabled")
@@ -110,7 +112,7 @@ func (h *Handler) RegisterTelegramBot(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Ownership pre-check at the boundary so a wrong agent_id is a clear 404.
+	// 边界归属预检，让错误的 agent_id 得到清晰的 404。
 	if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 		ID:          agentUUID,
 		WorkspaceID: wsUUID,
@@ -154,18 +156,17 @@ func (h *Handler) RegisterTelegramBot(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// Broadcast so every open client invalidates its installations query and
-	// shows the new bot — matching the Slack install semantics.
+	// 广播让所有打开的客户端失效 installations 查询并显示新机器人——与 Slack 的
+	// 安装语义一致。
 	h.publish(protocol.EventTelegramInstallationCreated, uuidToString(row.WorkspaceID), "user", userID, map[string]any{
 		"id": uuidToString(row.ID),
 	})
 	writeJSON(w, http.StatusOK, telegramInstallationToResponse(row))
 }
 
-// RevokeTelegramInstallation (DELETE /api/workspaces/{id}/telegram/installations/{installationId})
-// flips status to 'revoked'. Admin-only at the router. The row is preserved
-// for audit and chat history stays in Multica; a re-install (re-pasting the
-// bot's token) flips status back to 'active'.
+// RevokeTelegramInstallation（DELETE /api/workspaces/{id}/telegram/installations/{installationId}）
+// 把状态翻成 'revoked'。路由层限定 admin。行保留供审计、聊天历史留在 Multica；重新
+// 安装（再次粘 bot token）会把状态翻回 'active'。
 func (h *Handler) RevokeTelegramInstallation(w http.ResponseWriter, r *http.Request) {
 	if h.TelegramInstall == nil {
 		writeError(w, http.StatusServiceUnavailable, "telegram integration not configured")
@@ -183,8 +184,7 @@ func (h *Handler) RevokeTelegramInstallation(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	// Workspace-scoped lookup so one workspace cannot revoke another's
-	// installation by guessing the UUID.
+	// workspace 范围内的查找，防止一个 workspace 靠猜 UUID 撤销另一家的安装。
 	if _, err := h.TelegramInstall.GetInWorkspace(r.Context(), instUUID, wsUUID); err != nil {
 		if errors.Is(err, telegram.ErrInstallationNotFound) {
 			writeError(w, http.StatusNotFound, "telegram installation not found")
@@ -203,24 +203,21 @@ func (h *Handler) RevokeTelegramInstallation(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RedeemTelegramBindingTokenRequest carries the raw token from the bot's
-// "link your account" prompt.
+// RedeemTelegramBindingTokenRequest 携带机器人「关联你的账号」提示里返回的原始 token。
 type RedeemTelegramBindingTokenRequest struct {
 	Token string `json:"token"`
 }
 
-// RedeemTelegramBindingTokenResponse echoes the bound identifiers so the
-// frontend can confirm without a second fetch.
+// RedeemTelegramBindingTokenResponse 回显绑定的标识，让前端无需再拉一次即可确认。
 type RedeemTelegramBindingTokenResponse struct {
 	WorkspaceID    string `json:"workspace_id"`
 	InstallationID string `json:"installation_id"`
 	TelegramUserID string `json:"telegram_user_id"`
 }
 
-// RedeemTelegramBindingToken (POST /api/telegram/binding/redeem) binds the
-// Telegram user id carried by the token to the logged-in Multica user. The
-// redeemer's identity comes from the session, not the token. Status codes
-// mirror the Slack redeem handler.
+// RedeemTelegramBindingToken（POST /api/telegram/binding/redeem）把 token 携带的
+// Telegram 用户 id 绑定到当前登录的 Multica 用户。赎回者身份来自会话而不是 token。
+// 状态码镜像 Slack 的赎回 handler。
 func (h *Handler) RedeemTelegramBindingToken(w http.ResponseWriter, r *http.Request) {
 	if h.TelegramBindingTokens == nil {
 		writeError(w, http.StatusServiceUnavailable, "telegram integration not configured")

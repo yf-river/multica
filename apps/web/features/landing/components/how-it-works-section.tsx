@@ -1,11 +1,20 @@
 "use client";
 
+/**
+ * 官网「工作原理」区块（深色）：以编号卡片展示几步流程，底部带 CTA
+ * （登录用户进控制台 / 未登录按语言跳文档或 GitHub）。
+ */
 import Link from "next/link";
 import { useAuthStore } from "@multica/core/auth";
 import { docsHrefForLocale, useLocale } from "../i18n";
 import { useDashboardCtaHref } from "../utils/use-dashboard-cta";
 import { GitHubMark, githubUrl, heroButtonClassName } from "./shared";
 
+/**
+ * 工作原理区块组件。
+ *
+ * @returns 深色步骤卡片 + CTA 行。
+ */
 export function HowItWorksSection() {
   const { t, locale } = useLocale();
   const user = useAuthStore((s) => s.user);

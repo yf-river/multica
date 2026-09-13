@@ -4,8 +4,8 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import type { TextAnchor } from "./text-anchor";
 
 /**
- * Minimal imperative surface useLazyEditor needs from the wrapped editor.
- * ContentEditorRef and TitleEditorRef both satisfy it structurally.
+ * useLazyEditor 需要被包裹编辑器暴露的最小命令式接口。
+ * ContentEditorRef 与 TitleEditorRef 结构上都满足它。
  */
 export interface LazyEditorHandle {
   focus: () => void;
@@ -15,10 +15,9 @@ export interface LazyEditorHandle {
 }
 
 /**
- * Where the caret should land after the swap. `anchor` (logical "block N,
- * character M", layout-independent) wins over the raw click coordinates;
- * coordinates remain as the fallback for clicks that yield no text anchor
- * (image, table chrome, margin) and for single-line hosts like the title.
+ * 切换后光标应落的位置。`anchor`（逻辑的「第 N 块、第 M 个字符」，
+ * 与布局无关）优先于原始点击坐标；坐标保留为「点不出文本锚点」时的兜底
+ * （图片、表格外框、留白），也服务标题这类单行宿主。
  */
 export interface LazyFocusTarget {
   x: number;
@@ -28,51 +27,44 @@ export interface LazyFocusTarget {
 
 export interface UseLazyEditorOptions {
   /**
-   * Mount the real editor immediately instead of the static stand-in.
-   * The one legitimate case is an unsent draft: its existence proves edit
-   * intent, and hydrating it into a visible editor matches the pre-lazy
-   * behavior exactly.
+   * 立即挂载真实编辑器而不是静态占位。唯一合理的场景是未发送的草稿：
+   * 它的存在证明编辑意图，把它水合成可见编辑器与 lazy 之前的旧行为完全
+   * 一致。
    */
   initialActive?: boolean;
-  /** The host's own editor ref — used for post-swap focus and queued uploads. */
+  /** 宿主自己的编辑器 ref——用于切换后的聚焦与排队上传。 */
   editorRef: RefObject<LazyEditorHandle | null>;
   /**
-   * When this value changes, the hook returns to the static stand-in DURING
-   * that same render (setState-during-render, React's derived-state pattern)
-   * — not in an effect. An effect-based reset is one commit too late: the
-   * render that carries the new key would still see `active/ready === true`,
-   * visibly mount a keyed editor for the NEW subject, assemble a full Tiptap
-   * instance, and only then throw it away — re-paying the exact main-thread
-   * cost this hook exists to avoid, and blanking the region for a beat.
-   * Hosts that remount per subject (via `key`) don't need this.
+   * 该值变化时，hook 会在**同一次渲染中**（渲染期 setState，React 的派生
+   * 状态模式）回到静态占位，而不是等一个 effect。effect 式重置慢一次
+   * commit：承载新 key 的那次渲染仍会看到 `active/ready === true`，给**新**
+   * 主体挂一个带 key 的编辑器、拼装完整 Tiptap 实例，然后才把它扔掉——
+   * 白付了本 hook 想省掉的同款主线程成本，还会让该区域空一下。每个主体都
+   * 用 `key` 重挂的宿主不需要这个。
    */
   resetKey?: unknown;
 }
 
 /**
- * Shared controller for readonly-first editors (issue title / comment /
- * reply). Tiptap instantiation costs ~70-460ms per editor on the
- * main thread, so every always-mounted editor makes opening an issue jankier
- * (measured: 2-4 editors per open froze the click for 0.4-1.3s). The pattern:
+ * 「只读优先」编辑器（issue 标题 / 评论 / 回复）的共享控制器。
+ * Tiptap 实例化在主线程要花约 70-460ms/个，每个常驻编辑器都会让打开 issue
+ * 更卡（实测：每次打开挂 2-4 个编辑器会冻结点击 0.4-1.3s）。模式：
  *
- *   1. Render a cheap static stand-in while `!active`.
- *   2. A click (or queued upload, or Enter on the stand-in) calls `activate`,
- *      which mounts the real editor HIDDEN — the stand-in stays visible so
- *      the content never blanks while Tiptap assembles.
- *   3. The editor's `onReady` flips `ready`; the host swaps visibility in
- *      that commit, and the effect below (running after that commit, so the
- *      editor is laid out) lands the caret at the activating click's focus
- *      target — text anchor first, raw coordinates as fallback — and
- *      flushes any uploads queued against the stand-in.
+ *   1. `!active` 时渲染廉价静态占位。
+ *   2. 点击（或排队上传、或占位上按 Enter）调 `activate`——挂载真实编辑器
+ *      但**隐藏**；占位保持可见，Tiptap 组装期间内容绝不空白。
+ *   3. 编辑器 `onReady` 翻转 `ready`；宿主在那一 commit 切换可见性，下面的
+ *      effect（跑在那次 commit 之后，编辑器已布局）把光标落到触发点击的
+ *      焦点目标上——优先文本锚点、原始坐标兜底——并冲刷排在被占位上的
+ *      上传队列。
  *
- * Host render contract:
+ * 宿主渲染契约：
  *   {lazy.active && <div className={lazy.ready ? undefined : "hidden"}>
  *     <Editor ref={editorRef} onReady={lazy.onReady} ... /></div>}
  *   {!lazy.ready && <StaticStandIn onClick={e => lazy.activate({x: e.clientX, y: e.clientY})} />}
  *
- * Hosts that outlive a subject switch without remounting (the web issue
- * route) must pass `resetKey`; keyed hosts get the reset for free by
- * remounting.
+ * 主体切换时不重挂的宿主（web issue 路由）必须传 `resetKey`；带 key 的
+ * 宿主靠重挂免费获得重置。
  */
 export function useLazyEditor({
   initialActive = false,
@@ -85,7 +77,7 @@ export function useLazyEditor({
   const focusPendingRef = useRef(false);
   const pendingFilesRef = useRef<File[]>([]);
 
-  // Render-phase reset on subject change — see the `resetKey` option doc.
+  // 主体变化时的渲染期重置——见 `resetKey` 选项说明。
   const [prevResetKey, setPrevResetKey] = useState(resetKey);
   if (resetKey !== prevResetKey) {
     setPrevResetKey(resetKey);
@@ -96,6 +88,7 @@ export function useLazyEditor({
     pendingFilesRef.current = [];
   }
 
+  /** 把光标落到目标上：优先文本锚点，其次坐标，最后普通 focus。 */
   const focusAtTarget = useCallback(
     (target: LazyFocusTarget | null) => {
       const handle = editorRef.current;
@@ -112,8 +105,8 @@ export function useLazyEditor({
       focusTargetRef.current = target ?? null;
       focusPendingRef.current = true;
       setActive(true);
-      // Already swapped in (e.g. keyboard re-activation after a blur):
-      // focus straight away, there is no ready-effect coming.
+      // 已经切换进来（如 blur 后键盘再次激活）：立刻聚焦，后面不会再
+      // 来 ready effect。
       if (ready) {
         focusPendingRef.current = false;
         const latched = focusTargetRef.current;
@@ -126,9 +119,8 @@ export function useLazyEditor({
 
   const onReady = useCallback(() => setReady(true), []);
 
-  // Post-swap work — runs after the commit that revealed the ready editor,
-  // so focus targets can resolve against a laid-out, live doc and uploads
-  // insert into it.
+  // 切换后的收尾——跑在「露出 ready 编辑器」的 commit 之后，因此焦点目标
+  // 能对着已布局、已活着的文档解析，上传也能插进它。
   useEffect(() => {
     if (!ready) return;
     if (focusPendingRef.current) {
@@ -142,7 +134,7 @@ export function useLazyEditor({
     for (const file of pending) editorRef.current?.uploadFile?.(file);
   }, [ready, editorRef, focusAtTarget]);
 
-  /** Upload now when the editor is live; otherwise queue and summon it. */
+  /** 编辑器已活就立刻上传；否则排队并召唤编辑器。 */
   const uploadOrQueue = useCallback(
     (files: File[]) => {
       if (ready) {

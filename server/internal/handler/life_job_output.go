@@ -1,3 +1,9 @@
+// 本文件：life 认知任务（life cognition job）「输出契约」的解析、校验与落库。companion
+// Agent 跑一趟后台认知任务后，返回一个结构化 output（lifeCognitionOutput，见下），本文件
+// 负责：按 job_type 白名单校验该类型允许输出哪些块 → 拒绝未知字段/未知取值 → 把证据链
+// 里「已被用户删除/遗忘」的来源剔除 → 将派生记录（记忆候选、话题、承诺、内心想法、关系
+// 事件、行动提案、主动决策、实验观察/复盘、观察者判断、纪事、升级评估等）逐个写入，并与
+// 任务终态更新同事务提交，供 replay 幂等观察。
 package handler
 
 import (
@@ -19,6 +25,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
+// 以下 lifeJob*Output 各类型对应认知任务可能产出的一类记录；lifeCognitionOutput 把它们
+// 聚合为单次任务输出的顶层 schema（字段名与下方 validate 白名单一一对应）。
 type lifeJobEvidenceOutput struct {
 	SourceType string `json:"source_type"`
 	SourceID   string `json:"source_id"`
@@ -156,6 +164,8 @@ type lifeJobProactiveAssessmentOutput struct {
 	MinimumIntervalHours int32  `json:"minimum_interval_hours"`
 }
 
+// lifeCognitionOutput 是一次认知任务输出的顶层结构：任务可按 job_type 产出其中部分块，
+// 每块都可带证据链（evidence）标明它由哪些素材推导而来。
 type lifeCognitionOutput struct {
 	Summary                string                               `json:"summary"`
 	MemoryCandidates       []lifeJobMemoryOutput                `json:"memory_candidates"`
@@ -174,6 +184,7 @@ type lifeCognitionOutput struct {
 	UpgradeEvaluation      *lifeJobUpgradeEvaluationOutput      `json:"upgrade_evaluation"`
 }
 
+// lifeJobOutputError 是带固定文案的输出校验错误（避免堆叠 fmt.Errorf 包装噪音）。
 type lifeJobOutputError struct {
 	message string
 }
@@ -182,10 +193,13 @@ func (e lifeJobOutputError) Error() string {
 	return e.message
 }
 
+// invalidLifeJobOutput 构造一条输出非法错误。
 func invalidLifeJobOutput(format string, args ...any) error {
 	return lifeJobOutputError{message: fmt.Sprintf(format, args...)}
 }
 
+// validateLifeJobOutput 校验一次认知任务输出：job_type 只能产出白名单允许的块，块内字段
+// 必须满足各自取值/必填约束，证据链 source 必须合法。
 func validateLifeJobOutput(jobType string, output lifeCognitionOutput) error {
 	provided := map[string]bool{
 		"memory_candidates":       len(output.MemoryCandidates) > 0,
@@ -382,6 +396,8 @@ func validateLifeJobOutput(jobType string, output lifeCognitionOutput) error {
 	return nil
 }
 
+// validateLifeJobEvidence 校验某条记录携带的证据列表：source 类型合法、source_id 是 UUID、
+// observed_at 合法。
 func validateLifeJobEvidence(field string, index int, evidence []lifeJobEvidenceOutput) error {
 	for evidenceIndex, item := range evidence {
 		if !validLifeEvidenceSourceType(item.SourceType) || strings.TrimSpace(item.SourceID) == "" || !oneOf(item.Stance, "", "supports", "contradicts", "context") {
@@ -397,6 +413,7 @@ func validateLifeJobEvidence(field string, index int, evidence []lifeJobEvidence
 	return nil
 }
 
+// validateOptionalLifeJobID 校验可选 id 字段：空即合法，非空必须是 UUID。
 func validateOptionalLifeJobID(field string, index int, name, raw string) error {
 	if strings.TrimSpace(raw) == "" {
 		return nil
@@ -407,10 +424,12 @@ func validateOptionalLifeJobID(field string, index int, name, raw string) error 
 	return nil
 }
 
+// validLifeTopicStatus 判断话题状态是否在允许集合内（空串 = 用默认）。
 func validLifeTopicStatus(status string) bool {
 	return oneOf(status, "", "candidate", "active", "contradicted", "resolved", "archived")
 }
 
+// oneOf 判断 value 是否命中 allowed 之一。
 func oneOf(value string, allowed ...string) bool {
 	for _, candidate := range allowed {
 		if value == candidate {
@@ -420,6 +439,7 @@ func oneOf(value string, allowed ...string) bool {
 	return false
 }
 
+// validLifeEvidenceSourceType 判断证据来源类型是否在允许集合内。
 func validLifeEvidenceSourceType(value string) bool {
 	switch value {
 	case "material", "chat_message", "task", "comment", "project", "manual", "external", "memory", "experiment_round", "chronicle", "observer_knowledge":
@@ -429,6 +449,7 @@ func validLifeEvidenceSourceType(value string) bool {
 	}
 }
 
+// recordLifeDerivations 把记录的证据链逐条写成「来源→目标」派生关系（同一事务内）。
 func recordLifeDerivations(ctx context.Context, q *db.Queries, scope lifeJobTaskScope, targetType string, targetID pgtype.UUID, evidence []lifeJobEvidenceOutput) error {
 	for _, item := range evidence {
 		if !validLifeEvidenceSourceType(item.SourceType) || strings.TrimSpace(item.SourceID) == "" {
@@ -445,6 +466,9 @@ func recordLifeDerivations(ctx context.Context, q *db.Queries, scope lifeJobTask
 	return nil
 }
 
+// lifeEvidenceWasForgotten 检查证据链里是否有来源已被用户遗忘/删除（material 进了遗忘表、
+// memory 被归档或遗忘、chronicle/observer_knowledge/其他来源已查无此行）。命中任一即返回
+// true，落库方会跳过该候选——不能复活用户明确丢弃的旧理解。
 func lifeEvidenceWasForgotten(ctx context.Context, q *db.Queries, scope lifeJobTaskScope, evidence []lifeJobEvidenceOutput) (bool, error) {
 	for _, item := range evidence {
 		if !validLifeEvidenceSourceType(item.SourceType) || strings.TrimSpace(item.SourceID) == "" {
@@ -556,6 +580,8 @@ func lifeMemoryIsForgotten(ctx context.Context, q *db.Queries, workspaceID, user
 	})
 }
 
+// completeLifeCognitionJob 开一个事务执行完整落库（见 completeLifeCognitionJobInQueries），
+// 成功则提交并返回完成后的任务行。
 func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTaskScope, raw []byte) (db.LifeCognitionJob, error) {
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
@@ -572,9 +598,8 @@ func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTas
 	return completed, nil
 }
 
-// completeLifeCognitionJobInQueries writes all derived Life records through a
-// caller-owned query handle. The caller can therefore commit the cognition
-// output and the corresponding agent task terminal event as one transaction.
+// completeLifeCognitionJobInQueries 通过「调用方持有」的查询句柄写入全部派生 life 记录。
+// 调用方因此可以把认知输出与对应的 agent 任务终态事件放进同一个事务。
 func (h *Handler) completeLifeCognitionJobInQueries(ctx context.Context, q *db.Queries, scope lifeJobTaskScope, raw []byte) (db.LifeCognitionJob, error) {
 	var output lifeCognitionOutput
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -588,10 +613,8 @@ func (h *Handler) completeLifeCognitionJobInQueries(ctx context.Context, q *db.Q
 	if err := validateLifeJobOutput(scope.job.JobType, output); err != nil {
 		return db.LifeCognitionJob{}, err
 	}
-	// Serialize the completion against user corrections/deletions.  The
-	// context-version row is locked before any derived record is written; a
-	// worker that started from an older snapshot therefore fails atomically
-	// instead of resurrecting stale understanding.
+	// 用「上下文版本行」锁把本次完成串行化在用户的更正/删除之后：先锁版本行再写任何派生
+	// 记录，于是从旧快照出发的 worker 会原子失败，而不是复活一份过时的理解。
 	if err := q.EnsureLifeContextState(ctx, db.EnsureLifeContextStateParams{
 		WorkspaceID: scope.workspaceID, UserID: scope.userID,
 	}); err != nil {
@@ -1248,11 +1271,9 @@ experimentReviewDone:
 	}
 upgradeEvaluationDone:
 
-	// Persist a compact summary alongside the full governed output.  The full
-	// JSON remains available for audit, while list views and recovery tooling do
-	// not need to load every generated record.  The completion fence is the last
-	// write in this transaction: a late task with an expired token cannot commit
-	// any derived rows or mark the job complete.
+	// 在完整受管输出旁再存一份紧凑摘要。完整 JSON 保留用于审计，列表视图和恢复工具不必每次
+	// 都加载每条生成记录。完成栅栏（completion fence）是本事务最后一次写：令牌已过期的迟到
+	// 任务既无法提交任何派生行，也无法把任务标成完成。
 	summary, _ := json.Marshal(map[string]any{
 		"summary":             lifeOutputSummary(output.Summary),
 		"job_type":            scope.job.JobType,
@@ -1260,9 +1281,8 @@ upgradeEvaluationDone:
 		"observer_judgements": len(output.ObserverJudgements),
 		"chronicles":          len(output.Chronicles),
 	})
-	// The derived rows below are the result of one governed cognition turn.
-	// Record that fact in the same transaction as the terminal job update so a
-	// replay can observe the turn without receiving a second copy of any row.
+	// 下面这些派生行是一次「受管认知轮」的产物。在同一事务里与任务终态更新一起记下这一事实，
+	// replay 就能观察到这一轮、而不会收到任何行的第二份拷贝。
 	if _, err := recordLifeChangedTx(ctx, q, scope.lifeRequestScope, "agent", scope.agentID,
 		"cognition_job", util.UUIDToString(scope.job.ID), "output_committed", map[string]any{
 			"job_type": scope.job.JobType, "summary": lifeOutputSummary(output.Summary),
@@ -1278,8 +1298,8 @@ upgradeEvaluationDone:
 			ContextVersion: scope.job.ContextVersion,
 		})
 	} else {
-		// Rows created before the fencing migration can still be drained once;
-		// every worker-created row takes the fenced branch above.
+		// 栅栏迁移（fencing）之前创建的行仍可被排空一次；所有 worker 新建的行都走上面带
+		// 栅栏的分支。
 		completed, err = q.CompleteLifeCognitionJob(ctx, db.CompleteLifeCognitionJobParams{
 			ID: scope.job.ID, WorkspaceID: scope.workspaceID, UserID: scope.userID, Output: raw,
 		})
@@ -1290,6 +1310,7 @@ upgradeEvaluationDone:
 	return completed, nil
 }
 
+// lifeOutputSummary 把长摘要截断到 1000 字符（按 rune，避免切半个汉字），超出部分用 … 结尾。
 func lifeOutputSummary(value string) string {
 	value = strings.TrimSpace(value)
 	if utf8.RuneCountInString(value) <= 1000 {
@@ -1299,6 +1320,8 @@ func lifeOutputSummary(value string) string {
 	return string(runes[:1000]) + "…"
 }
 
+// coalesceLifeMemoryEvidence 把指向同一 (source_type, source_id) 的多条证据并成一条：
+// 摘录用换行拼起来；立场冲突（supports vs contradicts）时降级为 context。
 func coalesceLifeMemoryEvidence(items []lifeJobEvidenceOutput) []lifeJobEvidenceOutput {
 	result := make([]lifeJobEvidenceOutput, 0, len(items))
 	positions := make(map[string]int, len(items))
@@ -1328,6 +1351,7 @@ func coalesceLifeMemoryEvidence(items []lifeJobEvidenceOutput) []lifeJobEvidence
 	return result
 }
 
+// parseLifeJobOptionalTime 解析可选的 RFC3339 时间；空串返回无效值（nil），供「未设」语义用。
 func parseLifeJobOptionalTime(raw string) (pgtype.Timestamptz, error) {
 	if strings.TrimSpace(raw) == "" {
 		return pgtype.Timestamptz{}, nil
@@ -1335,6 +1359,7 @@ func parseLifeJobOptionalTime(raw string) (pgtype.Timestamptz, error) {
 	return parseLifeJobTime(raw, time.Time{})
 }
 
+// parseLifeJobTime 解析 RFC3339 时间；空串时用 fallback（fallback 为零值则报错）。
 func parseLifeJobTime(raw string, fallback time.Time) (pgtype.Timestamptz, error) {
 	if strings.TrimSpace(raw) == "" {
 		if fallback.IsZero() {

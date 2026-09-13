@@ -1,3 +1,9 @@
+// Package handler 是整个 HTTP API 的处理器集合。
+//
+// 本文件（life.go）实现"人生记忆/陪伴档案"核心读写接口：companion 配置、
+// 人生记忆（memory）的创建/纠正/确认/降级/归档/永久删除，以及证据链与
+// 修订历史的维护。DeleteLifeMemory 会沿溯源图级联清理所有派生记录，并
+// 写入"遗忘墓碑"，保证删除彻底、可追溯。
 package handler
 
 import (
@@ -15,6 +21,8 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// createLifeMemoryRevision 为一条记忆写一条修订记录：先取下一修订号，
+// 再整行快照当前记忆内容（含变更类型/原因与操作者），供后续追溯。
 func createLifeMemoryRevision(ctx context.Context, q *db.Queries, memory db.LifeMemory, changeType, reason, actorType string, actorID pgtype.UUID) error {
 	revision, err := q.GetNextLifeMemoryRevision(ctx, memory.ID)
 	if err != nil {
@@ -29,8 +37,11 @@ func createLifeMemoryRevision(ctx context.Context, q *db.Queries, memory db.Life
 	return err
 }
 
+// lifeMemoryEvidenceExcerptMaxRunes 是证据摘录允许的最大长度（按 rune 计）。
 const lifeMemoryEvidenceExcerptMaxRunes = 2_000
 
+// lifeMemoryKindRank 给出各类记忆的"可信等级"排序，数值越大越接近事实、
+// 越不易被降级；弱信号等低等级记忆不能降级到更高等级。
 var lifeMemoryKindRank = map[string]int{
 	"current_expression": 0,
 	"weak_signal":        1,
@@ -40,11 +51,14 @@ var lifeMemoryKindRank = map[string]int{
 	"commitment":         4,
 }
 
+// lifeRequestScope 是"人生"相关接口的公共请求范围：请求者（成员）的用户
+// 与所在 workspace。
 type lifeRequestScope struct {
 	workspaceID pgtype.UUID
 	userID      pgtype.UUID
 }
 
+// requireLifeRequestScope 解析并校验请求范围：请求必须来自人类成员（life 场景仅对成员开放），否则写错误并返回 ok=false。
 func (h *Handler) requireLifeRequestScope(w http.ResponseWriter, r *http.Request) (lifeRequestScope, bool) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -67,6 +81,7 @@ func (h *Handler) requireLifeRequestScope(w http.ResponseWriter, r *http.Request
 	return lifeRequestScope{workspaceID: workspaceID, userID: parsedUserID}, true
 }
 
+// companionProfileResponse 是 companion 配置的对外 JSON 结构（ID 均转字符串）。
 type companionProfileResponse struct {
 	WorkspaceID string `json:"workspace_id"`
 	UserID      string `json:"user_id"`
@@ -75,6 +90,7 @@ type companionProfileResponse struct {
 	UpdatedAt   string `json:"updated_at"`
 }
 
+// companionProfileToResponse 把数据库 companion profile 转成对外结构。
 func companionProfileToResponse(profile db.CompanionProfile) companionProfileResponse {
 	return companionProfileResponse{
 		WorkspaceID: uuidToString(profile.WorkspaceID),
@@ -85,6 +101,8 @@ func companionProfileToResponse(profile db.CompanionProfile) companionProfileRes
 	}
 }
 
+// GetCompanionProfile 返回用户当前的 companion（人生伴侣 AI）配置；
+// 从未配置时 profile 为 null。
 func (h *Handler) GetCompanionProfile(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -105,6 +123,7 @@ func (h *Handler) GetCompanionProfile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"profile": companionProfileToResponse(profile)})
 }
 
+// UpsertCompanionProfile 设置/更换用户的 companion agent：校验 agent 存在、未归档、用户可访问，且不影响已有观察者；事务内应用 agent 相关运行时选择，并确保 companion 所需的人生能力默认项已初始化。
 func (h *Handler) UpsertCompanionProfile(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -179,6 +198,7 @@ func (h *Handler) UpsertCompanionProfile(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"profile": companionProfileToResponse(profile)})
 }
 
+// lifeMemoryEvidenceResponse 是记忆证据的对外 JSON 结构。
 type lifeMemoryEvidenceResponse struct {
 	SourceType string `json:"source_type"`
 	SourceID   string `json:"source_id"`
@@ -187,6 +207,7 @@ type lifeMemoryEvidenceResponse struct {
 	ObservedAt string `json:"observed_at"`
 }
 
+// lifeMemoryResponse 是记忆（含证据列表）的对外 JSON 结构。
 type lifeMemoryResponse struct {
 	ID            string                       `json:"id"`
 	Kind          string                       `json:"kind"`
@@ -205,6 +226,7 @@ type lifeMemoryResponse struct {
 	Evidence      []lifeMemoryEvidenceResponse `json:"evidence"`
 }
 
+// lifeMemoryToResponse 加载某条记忆的全部证据，并把记忆整理成对外结构。
 func (h *Handler) lifeMemoryToResponse(r *http.Request, memory db.LifeMemory) (lifeMemoryResponse, error) {
 	evidence, err := h.Queries.ListLifeMemoryEvidence(r.Context(), memory.ID)
 	if err != nil {
@@ -239,11 +261,13 @@ func (h *Handler) lifeMemoryToResponse(r *http.Request, memory db.LifeMemory) (l
 	}, nil
 }
 
+// validLifeMemoryKind 判断记忆类型是否在允许范围内。
 func validLifeMemoryKind(kind string) bool {
 	_, ok := lifeMemoryKindRank[kind]
 	return ok
 }
 
+// validLifeMemoryStatus 判断记忆状态是否为合法取值之一。
 func validLifeMemoryStatus(status string) bool {
 	switch status {
 	case "candidate", "confirmed", "archived":
@@ -253,6 +277,7 @@ func validLifeMemoryStatus(status string) bool {
 	}
 }
 
+// validateLifeMemoryContent 校验记忆的公共字段（类型/内容非空/置信度与紧迫度取值在 0~1 之间）；不合法时写 400 并返回 false。
 func validateLifeMemoryContent(w http.ResponseWriter, kind, content string, confidence, urgency float64) bool {
 	if !validLifeMemoryKind(kind) {
 		writeError(w, http.StatusBadRequest, "invalid memory kind")
@@ -273,6 +298,7 @@ func validateLifeMemoryContent(w http.ResponseWriter, kind, content string, conf
 	return true
 }
 
+// parseLifeOptionalTime 解析可选的 RFC3339 时间字段：空串返回零值（视为未填），非空则必须是合法 RFC3339，否则写 400。
 func parseLifeOptionalTime(w http.ResponseWriter, raw, field string) (pgtype.Timestamptz, bool) {
 	if strings.TrimSpace(raw) == "" {
 		return pgtype.Timestamptz{}, true
@@ -285,6 +311,7 @@ func parseLifeOptionalTime(w http.ResponseWriter, raw, field string) (pgtype.Tim
 	return pgtype.Timestamptz{Time: parsed, Valid: true}, true
 }
 
+// ListLifeMemories 列出记忆，可用 ?status= 过滤；每条都附带其证据。
 func (h *Handler) ListLifeMemories(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -325,6 +352,7 @@ func (h *Handler) ListLifeMemories(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"memories": items})
 }
 
+// lifeMemoryEvidenceRequest 是创建记忆时单条证据的请求体。
 type lifeMemoryEvidenceRequest struct {
 	SourceType string `json:"source_type"`
 	SourceID   string `json:"source_id"`
@@ -332,6 +360,7 @@ type lifeMemoryEvidenceRequest struct {
 	Stance     string `json:"stance"`
 }
 
+// createLifeMemoryRequest 是创建/更新记忆的请求体。
 type createLifeMemoryRequest struct {
 	Kind        string                      `json:"kind"`
 	Content     string                      `json:"content"`
@@ -343,6 +372,8 @@ type createLifeMemoryRequest struct {
 	Evidence    []lifeMemoryEvidenceRequest `json:"evidence"`
 }
 
+// resolvedLifeMemoryEvidence 是经过校验/落库前解析好的证据（source_id 已是
+// UUID，且带观察时间与来源记忆 ID 等派生信息）。
 type resolvedLifeMemoryEvidence struct {
 	sourceType     string
 	sourceID       pgtype.UUID
@@ -352,6 +383,7 @@ type resolvedLifeMemoryEvidence struct {
 	sourceMemoryID pgtype.UUID
 }
 
+// resolveLifeMemoryEvidence 解析并校验一条证据：source_id 必须是当前用户workspace 内真实存在的聊天消息或记忆（错误即 400），摘录为空时自动回退到原内容；记忆作为证据时同时记录来源记忆 ID，供后面建立派生依赖。
 func (h *Handler) resolveLifeMemoryEvidence(w http.ResponseWriter, r *http.Request, q *db.Queries, scope lifeRequestScope, req lifeMemoryEvidenceRequest) (resolvedLifeMemoryEvidence, bool) {
 	sourceID, ok := parseUUIDOrBadRequest(w, req.SourceID, "evidence.source_id")
 	if !ok {
@@ -418,6 +450,7 @@ func (h *Handler) resolveLifeMemoryEvidence(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// CreateLifeMemory 以成员身份创建一条记忆（由 createLifeMemory 承载）。
 func (h *Handler) CreateLifeMemory(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -426,6 +459,9 @@ func (h *Handler) CreateLifeMemory(w http.ResponseWriter, r *http.Request) {
 	h.createLifeMemory(w, r, scope, "member", scope.userID)
 }
 
+// createLifeMemory 创建一条记忆：校验内容与每条证据后，在事务里写入记忆、
+// 首版修订、证据（及记忆间依赖），再记录变更事件。createdByType/ID 说明
+// 创建者（成员或 agent）。
 func (h *Handler) createLifeMemory(w http.ResponseWriter, r *http.Request, scope lifeRequestScope, createdByType string, createdByID pgtype.UUID) {
 	var req createLifeMemoryRequest
 	if !decodeRequiredJSON(w, r, &req) {
@@ -528,6 +564,7 @@ func (h *Handler) createLifeMemory(w http.ResponseWriter, r *http.Request, scope
 	writeJSON(w, http.StatusCreated, response)
 }
 
+// loadLifeMemory 按 URL 里的 memoryId 加载属于当前用户的一条记忆。
 func (h *Handler) loadLifeMemory(w http.ResponseWriter, r *http.Request, scope lifeRequestScope) (db.LifeMemory, bool) {
 	memoryID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "memoryId"), "memory id")
 	if !ok {
@@ -545,6 +582,7 @@ func (h *Handler) loadLifeMemory(w http.ResponseWriter, r *http.Request, scope l
 	return memory, true
 }
 
+// UpdateLifeMemory 纠正一条记忆的内容/类型/置信度等，并写一条 corrected 修订。
 func (h *Handler) UpdateLifeMemory(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -619,6 +657,7 @@ func (h *Handler) UpdateLifeMemory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+// ConfirmLifeMemory 确认一条候选记忆：仅 candidate 可确认；确认后写修订并记录事件。
 func (h *Handler) ConfirmLifeMemory(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -672,6 +711,7 @@ func (h *Handler) ConfirmLifeMemory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+// DowngradeLifeMemory 把记忆的可信等级降级（kind 必须低于当前等级，如把 fact 降成 understanding）。
 func (h *Handler) DowngradeLifeMemory(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -732,6 +772,7 @@ func (h *Handler) DowngradeLifeMemory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+// ArchiveLifeMemory 归档一条记忆（不再参与日常但保留追溯）。
 func (h *Handler) ArchiveLifeMemory(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -780,6 +821,8 @@ func (h *Handler) ArchiveLifeMemory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+// DeleteLifeMemory 永久删除一条记忆及其整条派生链，实现"被遗忘权"。
+// 这是本文件最重的一个接口，工作分几大步：
 func (h *Handler) DeleteLifeMemory(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeRequestScope(w, r)
 	if !ok {
@@ -848,9 +891,9 @@ func (h *Handler) DeleteLifeMemory(w http.ResponseWriter, r *http.Request) {
 		sourceIDs = append(sourceIDs, key)
 		sourceTokens = append(sourceTokens, "memory:"+key)
 	}
-	// A source can feed several model-generated records without an explicit
-	// memory-to-memory edge. Walk the provenance graph until every derived
-	// memory is part of the same atomic deletion.
+	// 同一来源可能喂给多条模型生成的记录，而它们之间并没有显式的
+	// 记忆到记忆的边。因此要反复走溯源图，直到所有派生记忆都被收进同一次
+	// 原子删除。
 	for {
 		derivations, err := qtx.ListLifeDerivationsBySources(r.Context(), db.ListLifeDerivationsBySourcesParams{
 			WorkspaceID: scope.workspaceID, UserID: scope.userID, Column3: sourceTokens,
@@ -891,9 +934,8 @@ func (h *Handler) DeleteLifeMemory(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	// Record a content hash for every memory before deleting it.  The tombstone
-	// lets a delayed evidence check recognise a permanently forgotten source
-	// even after the row itself is gone.
+	// 删除前先为每条记忆记下内容哈希。墓碑让"延迟的证据校验"即使在该行
+	// 已被删除后，仍能认出这是一个被永久遗忘的来源。
 	for _, id := range memoryIDs {
 		memory := rootMemory
 		if id != rootMemory.ID {

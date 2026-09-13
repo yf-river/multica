@@ -30,56 +30,54 @@ import { IssueUsageDialog } from "./issue-usage-dialog";
 import { TaskStatusIcon } from "./task-status-icon";
 import { useStatusLabel, useTriggerText } from "./task-run-labels";
 
-// Right-panel section that lists every agent run for this issue. Active
-// runs sit at the top (always visible when present); past runs (terminal
-// statuses) collapse behind a "Show past runs (N)" toggle.
+// 本文件：ExecutionLogSection —— 问题详情右侧面板"执行日志"区段。
+// 列出本问题的每一次 agent 运行。活跃运行置顶（存在时始终可见）；历史
+// 运行（终态）收进"显示历史运行 (N)"开关后面。
 //
-// Replaces:
-//   - the click-to-expand timeline that used to live inside the in-body live
-//     card (the live "agent is working" signal now lives in the header via
-//     IssueAgentHeaderChip)
-//   - the standalone <TaskRunHistory> below the main content
+// 取代对象：
+//   - 正文内 live 卡里那个"点击展开"的时间线（"agent 正在工作"的 live
+//     信号现在由头部 IssueAgentHeaderChip 承载）
+//   - 主内容下方的独立 <TaskRunHistory>
 //
-// Row layout — simple left/right flex:
-//   1. Agent avatar (no status dot — agent availability is not the
-//      story here; the row's right column carries the task status)
-//   2. Trigger description flexes and truncates
-//   3. Status is a normal shrink-0 right column; on hover it is replaced
-//      in place by the action buttons (status is removed, not covered).
-//      Left text keeps flex-1 so the row never shows a mid-row gap. Do
-//      not use masks/padding gymnastics here.
+// 行布局——朴素的左/右 flex：
+//   1. Agent 头像（无状态点——agent 可用性不是这里的重点；行右列
+//      承载任务状态）
+//   2. 触发描述 flex 撑开并可截断
+//   3. 状态是普通 shrink-0 右列；悬停时原位被动作按钮替换（状态被移除，
+//      不是被盖住）。左侧文字保持 flex-1，行内永不出现在中间留缝。
+//      不要在这里玩遮罩/内边距体操。
 //
-// One query (`listTasksByIssue`) drives both buckets — the back-end
-// returns every status, the front-end filters into active vs past on the
-// client. WS task:* events for this issue trigger an invalidate so the
-// list updates without polling.
+// 一次查询（`listTasksByIssue`）同时驱动两个桶——后端返回所有状态，
+// 前端在客户端过滤成"活跃 vs 历史"。本问题的 WS task:* 事件会触发
+// invalidate，列表因此无需轮询即可更新。
 
 interface ExecutionLogSectionProps {
   issueId: string;
-  /** Shown in the usage dialog's subtitle so the panel names what it totals. */
+  /** 显示在用量弹窗的副标题里，让面板说明自己合计的是谁。 */
   identifier?: string;
 }
 
-// Past-runs sort priority: newest first by timestamp. When two runs
-// share the same timestamp, failed ranks above cancelled, which ranks
-// above completed.
+// 历史运行排序优先级：按时间戳新的在前。两条运行同时间戳时，failed 排在
+// cancelled 前、cancelled 排在 completed 前。
 const PAST_STATUS_RANK: Record<string, number> = {
   failed: 0,
   cancelled: 1,
   completed: 2,
 };
 
+/**
+ * 执行日志主区段：活跃运行置顶 + 可折叠的历史运行（职责见文件头）。
+ */
 export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSectionProps) {
   const { t } = useT("issues");
   const [open, setOpen] = useState(true);
   const [showPast, setShowPast] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
 
-  // Cache key registered in `issueKeys.tasks` (packages/core/issues/queries.ts)
-  // so the global useRealtimeSync `task:` prefix path invalidates it via
-  // a `["issues", "tasks"]` prefix-match — no local WS subscriptions
-  // needed, and the cache stays fresh even when this component isn't
-  // mounted (e.g. user cancels from agent-side, then navigates here).
+  // 缓存键注册在 `issueKeys.tasks`（packages/core/issues/queries.ts），
+  // 全局 useRealtimeSync 的 `task:` 前缀路径通过 `["issues", "tasks"]`
+  // 前缀匹配 invalidate 它——无需本地 WS 订阅，且即使本组件未挂载
+  // （例如用户从 agent 侧取消、随后导航到这里）缓存也保持新鲜。
   const { data: tasks = [] } = useQuery({
     queryKey: issueKeys.tasks(issueId),
     queryFn: () => api.listTasksByIssue(issueId),
@@ -93,9 +91,9 @@ export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSection
         (t) =>
           t.status === "queued" ||
           t.status === "dispatched" ||
-          // Daemon-parked task on a busy local_directory — still active
-          // (waiting on a path lock), not terminal. Surfacing it here is
-          // what tells the user the agent is alive and will resume.
+          // 被 daemon 因 busy local_directory 停放的任务——仍然活跃
+          //（在等一个路径锁），不是终态。把它列在这里，正是告诉用户
+          // agent 还活着、会继续跑。
           t.status === "waiting_local_directory" ||
           t.status === "running",
       ),
@@ -124,15 +122,13 @@ export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSection
   if (activeTasks.length === 0 && pastTasks.length === 0) return null;
 
   return (
-    // `@container/execution-log`: the header's three items only fit side by
-    // side above a certain width, and the width that decides it is the
-    // sidebar's — a resizable 260–420px panel — not the viewport's. See
-    // IssueUsageTotal for the tier this container drives.
+    // `@container/execution-log`：头部三项只有超过某宽度才能并排，而决定
+    // 这一宽度的是侧栏本身——一个可缩放 260–420px 的面板——不是视口。
+    // 该容器驱动的分层参见 IssueUsageTotal。
     <div className="@container/execution-log">
-      {/* Header is two independent targets, not one: the label + chevron
-          collapse the section, the total on the right opens the usage
-          breakdown. Nesting a button inside a button is invalid HTML, so they
-          are siblings in a flex row rather than a button wrapping a button. */}
+      {/* 头部是两个互不隶属的目标，不是一个：标签 + 箭头折叠区段，
+          右侧合计打开用量明细。按钮嵌按钮是非法的 HTML，
+          所以它们是 flex 行里的兄弟，而不是按钮包按钮。 */}
       <div className="mb-2 flex w-full items-center gap-1">
         <button
           type="button"
@@ -141,13 +137,11 @@ export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSection
           }`}
           onClick={() => setOpen(!open)}
         >
-          {/* The section label is the one item here that may shrink, so it
-              carries the nowrap + ellipsis pair. Without it the squeezed
-              button broke "Execution log" across two lines (MUL-5804) — a
-              section heading that reflows is a layout bug, not a narrow
-              column. The tier below keeps the ellipsis from ever showing at
-              the panel's 260px minimum; it is the backstop for a longer
-              translation, not the everyday state. */}
+          {/* 区段标签是这里唯一可收缩的一项，所以它带着 nowrap + 省略号对。
+              没有它，被挤压的按钮把"执行日志"折成两行（MUL-5804）——
+              区段标题换行是布局 bug，不是窄列该有的样子。下面的分层让省略号
+              在面板 260px 最小值时永不出现在；它是更长译文的后备，
+              不是日常状态。 */}
           <span className="truncate">{t(($) => $.execution_log.section)}</span>
           <ChevronRight
             className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${
@@ -213,23 +207,23 @@ export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSection
   );
 }
 
-// ─── Issue total ───────────────────────────────────────────────────────────
+// ─── 本问题用量合计 ─────────────────────────────────────────────────────────
 
-// The issue's whole spend, as a header affordance: "2.1M · $4.92". Answers
-// "what has this issue cost" without expanding anything, and is the entry
-// point to the per-run breakdown.
+// 整条问题的全部花费，作为头部一个触手可及的物件："2.1M · $4.92"。
+// 不展开任何东西就回答了"这个问题花了多少"，也是按次明细的入口。
 //
-// Renders nothing when no run on the issue has recorded usage — an issue whose
-// runs all predate usage reporting gets its old header back rather than a
-// "0 · $0.00" that would read as "this was free".
+// 本问题的所有运行都没记录用量时什么都不渲染——那些运行全部早于用量上报的
+// 问题，会拿回它原来的旧头部，而不是出现一个会被读成"这是免费的"
+// 的"0 · $0.00"。
 //
-// Narrow sections drop the token figure and keep the cost. Something has to
-// give at the narrow end — the header's full form needs ~246px next to the
-// active-run chip and the sidebar's 260px minimum leaves 228px — and the token
-// count is the piece whose absence costs least: the cost answers "what has
-// this issue spent", and the exact token split is a click away in the dialog
-// this opens. It is a figure that yields, never a figure's digits: a clipped
-// "$31.1…" would read as a different number than the issue actually spent.
+// 窄区段会丢掉 token 数字只留金额。窄端总得让点什么——头部完整形态在
+// 活跃运行 chip 旁需要约 246px，而侧栏 260px 最小值只剩 228px——
+// token 数是缺失代价最小的一块：金额回答了"这个问题花了多少钱"，
+// 精确的 token 拆分点一下就开。它是一个会退让的数字，而不是数字的位数：
+// 被截断的"$31.1…"会读成与问题实际花费不同的数字。
+/**
+ * 用量合计触发器（打开按次用量弹窗）。是"已花多少"的一眼入口。
+ */
 export function IssueUsageTotal({
   tasks,
   alone,
@@ -240,10 +234,9 @@ export function IssueUsageTotal({
   onOpen: () => void;
 }) {
   const { t } = useT("issues");
-  // Custom rates are read imperatively inside `estimateCost`, so a saved rate
-  // change does not re-render this on its own — subscribe and make the memo
-  // depend on the snapshot, or the header total keeps quoting the old price
-  // until the task list refetches.
+  // 自定义费率是在 `estimateCost` 内部命令式读取的，所以费率的保存不会
+  // 自己触发这里重渲染——订阅并把 memo 依赖在快照上，否则头部合计会
+  // 一直引用旧价格直到任务列表重新拉取。
   const pricings = useCustomPricingStore((s) => s.pricings);
   const total = useMemo(
     () => summarizeTaskUsageAcross(tasks.map((task) => task.usage)),
@@ -251,13 +244,11 @@ export function IssueUsageTotal({
   );
   if (!total) return null;
 
-  // Two thresholds because the header has two shapes, and the tier should cost
-  // the reader a figure only where the row genuinely runs out: beside the
-  // active-run chip the full form needs ~246px, alone ~218px. Written as whole
-  // literal classes — Tailwind scans source text, so a composed string would
-  // generate neither. `@max-…` (rather than showing at `@min-…`) is what makes
-  // a host that renders this outside the section's `@container` degrade to the
-  // full form instead of silently losing the tokens forever.
+  // 两个阈值是因为头部有两种形态，而分层只该在行真正挤爆的那一档让读者
+  // 失去一个数字：活跃运行 chip 旁完整形态需要约 246px、单独约 218px。
+  // 写成整段字面类——Tailwind 扫的是源码文本，拼出来的字符串两个都不会
+  // 生成。用 `@max-…`（而不是在 `@min-…` 显示）让在本区段 `@container`
+  // 之外渲染的宿主降级到完整形态，而不是永远丢 token。
   const narrowTier = alone
     ? "@max-[14rem]/execution-log:hidden"
     : "@max-[16rem]/execution-log:hidden";
@@ -281,16 +272,16 @@ export function IssueUsageTotal({
   );
 }
 
-// Trigger description and status labels live in ./task-run-labels so the
-// usage dialog lists a run exactly the way this section does.
+// 触发描述与状态标签放在 ./task-run-labels——这样用量弹窗列出的运行
+// 与本区段展示的是同一套说法。
 
-// ─── Row visual config ─────────────────────────────────────────────────────
+// ─── 行视觉配置 ─────────────────────────────────────────────────────────
 
 const STATUS_TONE: Record<AgentTask["status"], string> = {
   queued: "text-warning",
   dispatched: "text-warning",
-  // Same tone as queued/dispatched — visually "stopped" so users see the
-  // task is parked, but distinguished by the status label.
+  // 与 queued/dispatched 同色——视觉上"停住"让用户看出任务被停放，
+  // 但由状态标签加以区分。
   waiting_local_directory: "text-warning",
   running: "text-info",
   completed: "text-success",
@@ -298,12 +289,15 @@ const STATUS_TONE: Record<AgentTask["status"], string> = {
   cancelled: "text-muted-foreground",
 };
 
-// ─── Active row ────────────────────────────────────────────────────────────
+// ─── 活跃行 ────────────────────────────────────────────────────────────────
 
-// One active (running / queued / dispatched / parked) task row. Running rows
-// keep status to a single live elapsed timer; transcript and stop stay available
-// as hover actions. Transcript content lazy-loads on click via TranscriptButton,
-// so the row no longer fetches task messages just to render a count.
+// 一条活跃（running / queued / dispatched / 停放）任务行。运行中的行只把
+// 状态收敛成一个实时跳动的计时器；记录与停止作为悬停动作仍然可用。
+// 记录内容经 TranscriptButton 点击时懒加载，所以本行不再为渲染计数而
+// 预取任务消息。
+/**
+ * 活跃任务行（含取消按钮与确认弹窗）。
+ */
 export function ActiveTaskRow({
   task,
   issueId,
@@ -320,8 +314,8 @@ export function ActiveTaskRow({
   const label = useStatusLabel(task.status);
   const trigger = useTriggerText(task);
 
-  // Running rows show a live-ticking elapsed timer (the ticking digits carry
-  // "alive", the duration carries "how long"). Only running rows tick.
+  // 运行中的行显示实时跳动的耗时（跳动的数字承载"活着"，时长承载
+  // "跑了多久"）。只有运行中的行才跳。
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (task.status !== "running") return;
@@ -336,8 +330,8 @@ export function ActiveTaskRow({
         )
       : "";
 
-  // Transcript only meaningful once messages exist — pure-queued and
-  // waiting_local_directory tasks haven't streamed any agent output yet.
+  // 只有存在消息时记录才有意义——纯 queued 与 waiting_local_directory
+  // 的任务还没流出任何 agent 输出。
   const showTranscript =
     task.status !== "queued" && task.status !== "waiting_local_directory";
 
@@ -357,13 +351,11 @@ export function ActiveTaskRow({
     setConfirmOpen(true);
   };
 
-  // Deliberately no token figure on an active row: the daemon reports usage
-  // once, after `runner.run` returns (server/internal/daemon/daemon.go), and
-  // the write publishes no realtime event — so a running task has no usage to
-  // show, and would not learn of it mid-run if it did. Rendering the branch
-  // anyway would only ever be exercised by hand-written fixtures, which is a
-  // test that asserts a scenario production cannot produce. Restore it in the
-  // same change that adds incremental reporting + cache invalidation.
+  // 活跃行刻意没有 token 数字：daemon 只在 `runner.run` 返回后上报一次用量
+  // （server/internal/daemon/daemon.go），且该写入不发布实时事件——所以运行中
+  // 的任务没有用量可显示，即便有，中途也收不到更新。硬渲染这个分支只可能被
+  // 手写的夹具命中，而那等于在测一个生产环境造不出来的场景。要恢复它，
+  // 请与"增量上报 + 缓存失效"的改动同批做。
   return (
     <RowShell task={task}>
       <TriggerText text={trigger} />
@@ -423,8 +415,11 @@ export function ActiveTaskRow({
   );
 }
 
-// ─── Past row ──────────────────────────────────────────────────────────────
+// ─── 历史行 ────────────────────────────────────────────────────────────────
 
+/**
+ * 历史任务行（终态）：失败/取消原因 + 重试按钮。
+ */
 function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   const { t } = useT("issues");
   const { t: tAgents } = useT("agents");
@@ -433,34 +428,29 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   const label = useStatusLabel(task.status);
   const trigger = useTriggerText(task);
   const time = task.completed_at ? timeAgo(task.completed_at) : "—";
-  // A failed run always explains itself. A cancelled one only when the SERVER
-  // cancelled it for a persisted reason (worktree claim gate, preserved-work
-  // delivery) — a user-initiated cancel stays a plain "Cancelled".
+  // 失败运行总会自我解释。取消则只在该取消是 SERVER 因持久原因发起的
+  //（worktree 认领门、保留工作交付）——用户主动取消保持朴素的"已取消"。
   const failureLabel =
     task.status === "failed"
       ? failureReasonLabel(task.failure_reason, tAgents)
       : cancelReasonLabel(task, tAgents);
-  // Hovering the status mark reveals the localized reason, never the raw
-  // `task.error`. That field is operator-facing English prose the daemon and
-  // server write for classification and logs (#7411) — pasting it into a
-  // tooltip made every non-English workspace read English at the exact moment
-  // something broke, and dragged absolute worktree paths and machine names
-  // into hover text and screenshots. The full diagnostic stays one click away
-  // in the transcript's Run details.
+  // 悬停状态标记展示本地化的原因，绝不展示原始 `task.error`。那个字段是
+  // daemon 与服务端写给分类和日志用的、面向运维的英文散文（#7411）——
+  // 把它贴进 tooltip，等于在出事的瞬间让每个非英文工作区都读英文，
+  // 还会把绝对的 worktree 路径与机器名拖进悬停文本和截图。完整诊断
+  // 在记录的 Run 详情里一键可达。
   const statusTitle = failureLabel ?? label;
 
-  // What this run cost, in the slot the relative timestamp used to hold.
+  // 运行花销放在相对时间戳曾占的槽位里。
   //
-  // The sidebar is 288px and the row already carries an avatar, the trigger
-  // text, and a status mark; a third column would come straight out of the
-  // trigger, which is what people scan this list for. The list is sorted
-  // newest-first, so "which run came first" is already expressed by position —
-  // the exact "when" is the detail, and how much it cost is the new question.
-  // The displaced timestamp moves into the row tooltip below, together with
-  // the duration and model, which were previously not surfaced here at all.
+  // 侧栏 288px，行上已经有头像、触发文本与状态标记；第三列会直接挤掉
+  // 触发文本——而那是人们扫这个列表时最想看的。列表按最新在前排序，
+  // "哪次运行在先"已由位置表达——精确的"何时"是细节，"花多少"是新问题。
+  // 被挪走的时间戳连同时长与模型一起进了下面的行 tooltip，
+  // 这些以前根本没在这里露出过。
   //
-  // `null` (no usage recorded) renders an em dash, never 0: a run from before
-  // usage reporting was not free, we simply have no figure for it.
+  // `null`（未记录用量）渲染成破折号，绝不渲染 0：用量上报之前的那次运行
+  // 不是免费，只是我们手里没有它的数字。
   const usage = summarizeTaskUsage(task.usage);
   const rowTitle = [
     time,
@@ -472,11 +462,9 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
     .filter(Boolean)
     .join(" · ");
 
-  // Retry only makes sense for terminal-but-not-success rows. Passing
-  // task.id targets this specific row's agent — without it, the rerun
-  // endpoint would fall back to the issue's current assignee and the
-  // wrong agent would fire on rows whose agent has since been displaced
-  // (e.g. reassignment, squad worker, or a one-off @-mention agent).
+  // 重试只对"终态但非成功"的行有意义。传 task.id 精确定位这一行的 agent——
+  // 不带它，重跑接口会回退到问题的当前负责人，于是行上 agent 已被换掉时
+  //（例如改派、squad worker、或一次性 @-mention agent）会触发错的那个 agent。
   const canRetry = task.status === "failed" || task.status === "cancelled";
 
   const handleRetry = async () => {
@@ -485,9 +473,9 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
     try {
       await api.rerunIssue(issueId, task.id);
     } catch (e) {
-      // A rerun is now re-gated on the operator's invoke permission (MUL-4525):
-      // a structured 403 means the agent can't be triggered, not a transient
-      // failure — localize it instead of echoing the server's generic message.
+      // 重跑现在又被操作者的 invoke 权限重新门控（MUL-4525）：结构化的
+      // 403 表示"这个 agent 不能被触发"，不是瞬时故障——本地化它，
+      // 而不是把服务端的通用消息原样弹出。
       toast.error(
         dispatchReasonCode(e) === "invocation_not_allowed"
           ? t(($) => $.execution_log.retry_blocked)
@@ -496,9 +484,8 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
             : t(($) => $.execution_log.retry_failed),
       );
     } finally {
-      // Reset on both success and failure: the past row stays mounted
-      // (its task.id is unchanged), so leaving `retrying` true on success
-      // would pin the button as a permanent spinner.
+      // 成功失败都复位：历史行保持挂载（它的 task.id 没变），
+      // 成功路径若把 `retrying` 留在 true，按钮会被永久钉成转圈。
       setRetrying(false);
     }
   };
@@ -547,18 +534,20 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   );
 }
 
-// ─── Shared row chrome ─────────────────────────────────────────────────────
+// ─── 行公共外壳 ─────────────────────────────────────────────────────────
 
+/**
+ * 行外壳：头像 + 内容 + tooltip 承载。子组件按活跃/历史形态注入。
+ */
 function RowShell({
   task,
   title,
   children,
 }: {
   task: AgentTask;
-  /** Carries the details the right column no longer has room for (time,
-   *  duration, model). Lives on the row, not on RowStatus, because RowStatus
-   *  is swapped out for the action buttons on hover — a title there would
-   *  disappear at exactly the moment the pointer arrives. */
+  /** 承载右列再也放不下的细节（时间、时长、模型）。放在行上而非 RowStatus
+   *  上，因为 RowStatus 悬停时会被动作按钮换掉——那里的 title 会在指针
+   *  恰好到达的那一刻消失。 */
   title?: string;
   children: React.ReactNode;
 }) {
@@ -586,6 +575,9 @@ function TriggerText({ text }: { text: string }) {
   return <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">{text}</span>;
 }
 
+/**
+ * 该任务状态是否支持"包含评论数"徽标。
+ */
 function supportsCommentCoverage(status: AgentTask["status"]): boolean {
   switch (status) {
     case "queued":
@@ -601,14 +593,17 @@ function supportsCommentCoverage(status: AgentTask["status"]): boolean {
   }
 }
 
+/**
+ * "包含 N 条评论"标签：说明这次运行把哪些评论捎带进了上下文。
+ * 只有覆盖 > 1 条评论时渲染。
+ */
 export function TaskCommentCoverage({ task }: { task: AgentTask }) {
   const { t } = useT("issues");
   if (!supportsCommentCoverage(task.status)) return null;
 
-  // Queued rows show the planned coverage: coalesced_comment_ids deliberately
-  // excludes the newest trigger. Once claimed, prefer the server's actual
-  // delivery receipt. Only legacy rows where that field is absent fall back to
-  // the plan; an explicit [] means the claim delivered no comments.
+  // 排队中的行展示计划覆盖：coalesced_comment_ids 刻意不含最新触发器。
+  // 一旦被认领，优先用服务端实际的投递回执。只有那些字段缺失的旧行
+  // 才回退到计划；显式的 [] 表示认领没有投递任何评论。
   const plannedCommentIds = [
     task.trigger_comment_id,
     ...(task.coalesced_comment_ids ?? []),
@@ -646,8 +641,7 @@ function RowStatus({
   );
 }
 
-// Action slot — visible by default for touch devices. On hover-capable
-// surfaces, it replaces the status column in place on row hover.
+// 动作槽——触屏设备默认可见。在支持悬停的表面，行悬停时原位替换状态列。
 function RowActions({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-7 items-center gap-0.5 [@media(hover:hover)]:hidden [@media(hover:hover)]:group-hover/execution-log-row:flex">

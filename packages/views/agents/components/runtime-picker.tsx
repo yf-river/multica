@@ -1,5 +1,8 @@
 "use client";
 
+// 本文件是创建/编辑 Agent 时的“运行环境选择器”下拉：按“我的 / 全部”切换归属、
+// 超过阈值出现搜索框、按机器分组展示在线优先的列表。还可用来触发父表单的自动选中。
+
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Cloud, Loader2, Lock, Search } from "lucide-react";
 import { ProviderLogo } from "../../runtimes/components/provider-logo";
@@ -24,11 +27,20 @@ import {
 
 export type RuntimeFilter = "mine" | "all";
 
-// Above this many runtimes the flat list becomes hard to scan, so we surface
-// a search box. Machine grouping kicks in independently whenever more than one
-// machine is present.
+// 运行环境超过这个数量时，纯平铺列表就不好扫了，于是额外提供搜索框。
+// 而“按机器分组”只要机器多于一台就独立生效。
 const SEARCH_THRESHOLD = 6;
 
+/**
+ * 运行环境选择下拉。触发器显示当前选中项；面板内可切换“我的/全部”、搜索，
+ * 并把运行环境按机器分组、在线优先排列。任何人不能用的私有机（isRuntimeUsableForUser
+ * 判定）会置灰加锁标识。
+ * @param runtimes 全部候选运行环境。
+ * @param members 工作区成员（用于显示每台机器的拥有者名字）。
+ * @param currentUserId 当前用户 id；为 null 时不考虑“我的”筛选。
+ * @param selectedRuntimeId 当前选中的 id；空串表示“尚未选中”并会自动播种首个可用项。
+ * @param onSelect 选中变化回调。
+ */
 export function RuntimePicker({
   runtimes,
   runtimesLoading,
@@ -44,8 +56,7 @@ export function RuntimePicker({
   currentUserId: string | null;
   selectedRuntimeId: string;
   onSelect: (id: string) => void;
-  /** Blocks opening the picker while the selection cannot be honoured yet
-   *  (e.g. a builder reply or a runtime rebind is in flight). */
+  /** 选中动作暂不可兑现（如有 builder 回复或运行环境重绑在途）时，禁止打开选择器。 */
   disabled?: boolean;
 }) {
   const { t } = useT("agents");
@@ -60,16 +71,15 @@ export function RuntimePicker({
 
   const hasOtherRuntimes = runtimes.some((r) => r.owner_id !== currentUserId);
 
-  // Base list honours the mine/all toggle and drives auto-selection; it is
-  // intentionally independent of the search box so typing never changes the
-  // seeded selection.
+  // 基准列表响应“我的/全部”切换并驱动自动选中；它刻意与搜索框解耦——
+  // 这样打字搜索永远不会改变已播种的选中项。
   const filteredRuntimes = useMemo(
     () => computeFilteredRuntimes(runtimes, filter, currentUserId),
     [runtimes, filter, currentUserId],
   );
 
-  // Group the (searched) base list by machine so 20+ runtimes read as a
-  // handful of named machines, online-first, current machine first.
+  // 把（搜索过的）基准列表按机器分组，让 20+ 台机器读起来像几台有名的机器：
+  // 在线优先，且当前机器排最前。
   const machines = useMemo(() => {
     const all = buildRuntimeMachines(filteredRuntimes, {
       now: Date.now(),
@@ -82,11 +92,9 @@ export function RuntimePicker({
   const selectedRuntime =
     runtimes.find((d) => d.id === selectedRuntimeId) ?? null;
 
-  // Sole source of truth for seeding the parent's selection when it's empty
-  // — first mount with no template runtime, runtimes arriving later over
-  // WS, or filter toggle clearing to a set with no usable item. Only fires
-  // when `selectedRuntimeId === ""` so a duplicate-mode pre-fill (template
-  // runtime) is never silently overwritten.
+  // 父层选中为空时播种的唯一入口：首次挂载还没有模板运行环境、运行环境稍后经 WS
+  // 才到达、或切换筛选后集合里没有可用项，都走这里。只在 `selectedRuntimeId === ""`
+  // 时触发，保证“复制模式”预填的模板运行环境绝不会被悄悄覆盖。
   useEffect(() => {
     if (selectedRuntimeId !== "") return;
     const firstUsable = filteredRuntimes.find((r) =>
@@ -95,9 +103,8 @@ export function RuntimePicker({
     if (firstUsable) onSelect(firstUsable.id);
   }, [filteredRuntimes, selectedRuntimeId, currentUserId, onSelect]);
 
-  // On filter toggle, recompute the picker's selection to a usable item
-  // in the new filter set. Pushes `""` when nothing matches; the seeding
-  // effect above is a no-op in that case (correct: no usable item to pick).
+  // 切换“我的/全部”时，把选择重算到新集合里的第一个可用项。无匹配就置成 `""`，
+  // 此时上面的播种 effect 是空操作（正确：没有可用项可选）。
   const handleFilterChange = (next: RuntimeFilter) => {
     if (next === filter) return;
     setFilter(next);
@@ -115,9 +122,8 @@ export function RuntimePicker({
           {t(($) => $.create_dialog.runtime_label)}
         </Label>
         {hasOtherRuntimes && (
-          // These are not just a view filter: changing tab re-selects the first
-          // usable runtime in the new list, so they are a second way to fire
-          // onSelect and must honour `disabled` alongside the trigger.
+          // 这两个 tab 不只是“视图筛选”：切换 tab 会把选择重选到新列表里第一个可用项，
+          // 因此它是触发 onSelect 的另一条路径，和触发器一样必须尊重 `disabled`。
           <div className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">
             <button
               type="button"
@@ -221,10 +227,8 @@ export function RuntimePicker({
             ) : (
               machines.map((machine) => (
                 <div key={machine.id}>
-                  {/* Always show the machine header — even when a search or a
-                      single-machine workspace narrows it to one group — so the
-                      grouping stays consistent instead of collapsing to a flat
-                      list. */}
+                  {/* 机器头始终显示——哪怕搜索或单机工作区把它收窄成一组——
+                      好让分组样式保持一致，而不是塌缩成扁平列表。 */}
                   <div className="flex items-center justify-between gap-2 px-2 pb-0.5 pt-2 text-micro font-medium text-muted-foreground">
                     <span className="truncate">{machine.title}</span>
                     <span className="shrink-0 tabular-nums">
@@ -322,6 +326,7 @@ export function RuntimePicker({
   );
 }
 
+/** 按“我的/全部”过滤，并排序：自己的排前 → 可用的排前（稳定排序）。 */
 function computeFilteredRuntimes(
   runtimes: RuntimeDevice[],
   filter: RuntimeFilter,

@@ -1,3 +1,5 @@
+// 职责定位：issue 表格的「分组头」读取（POST .../table/groups）：按分组规格（受理人/状态
+// 类别等）聚合出各组，支持游标分页与每组的次级计数/上下文。
 package handler
 
 import (
@@ -20,6 +22,10 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// issueTableGroupValueResponse 是一个分组头的类型化 value：Kind 标明分的是哪个维度，其余字段
+// 按 kind 二选一填充——status/status_category 填 Status，assignee 填 Actor，project 填
+// ProjectID，parent 填 ParentID + Parent + ValueState，property 填 PropertyID + Value/
+// ValueState。前端渲染组头时按 Kind 读对应字段。
 type issueTableGroupValueResponse struct {
 	Kind       string               `json:"kind"`
 	Status     string               `json:"status,omitempty"`
@@ -32,6 +38,8 @@ type issueTableGroupValueResponse struct {
 	ValueState string               `json:"value_state,omitempty"`
 }
 
+// issueTableParentRef 是 parent 分组下每个组头附带的父 issue 摘要：由 contextExpression 从父
+// issue 行内联出来，省去前端逐组回查。
 type issueTableParentRef struct {
 	ID         string `json:"id"`
 	Number     int32  `json:"number"`
@@ -40,10 +48,15 @@ type issueTableParentRef struct {
 	Status     string `json:"status"`
 }
 
+// issueTableGroupContext 是分组行里 context JSON 的反序列化目标：目前只有 parent 分组会带
+// Parent（见 contextExpression），其余分组恒为空对象。
 type issueTableGroupContext struct {
 	Parent *issueTableParentRef `json:"parent,omitempty"`
 }
 
+// issueTableGroupDescriptorResponse 是一个分组头的完整描述：Key 是稳定分组键——前端选中该组后
+// 会把它原样回传给 rows 的 group_key；Value 是类型化取值；Count 是组内行数；compound 分组再
+// 附 SecondaryGroups（次级状态列，键由 compoundCellGroupKey 生成）。
 type issueTableGroupDescriptorResponse struct {
 	Key             string                              `json:"key"`
 	Value           issueTableGroupValueResponse        `json:"value"`
@@ -51,6 +64,8 @@ type issueTableGroupDescriptorResponse struct {
 	SecondaryGroups []issueTableGroupDescriptorResponse `json:"secondary_groups,omitempty"`
 }
 
+// issueTableGroupsResponse 是 POST /table/groups 的响应体：与行查询同源的指纹、行总数、组头
+// 列表与下一页游标。
 type issueTableGroupsResponse struct {
 	QueryFingerprint string                              `json:"query_fingerprint"`
 	Total            int64                               `json:"total"`
@@ -58,6 +73,9 @@ type issueTableGroupsResponse struct {
 	NextCursor       *string                             `json:"next_cursor"`
 }
 
+// resolvedIssueTableGroup 是解析并验证过后的分组规格：kind 决定分组语义，groupExpr/groupSortExpr
+// 是用于 SQL 的分组与排序表达式，property 分组额外携带属性选项表，compound 分组持有 primary 子
+// 规格与次级轴信息。status_category 分组则带类别映射（见 statusCategoryExpr）。
 type resolvedIssueTableGroup struct {
 	kind              string
 	propertyID        string
@@ -69,23 +87,20 @@ type resolvedIssueTableGroup struct {
 	primary           *resolvedIssueTableGroup
 	secondaryValues   []string
 	secondaryFiltered bool
-	// secondaryCategory marks a compound whose secondary axis is the CATEGORY
-	// of the status rather than the status key itself — the swimlane contract.
+	// secondaryCategory 标记复合分组的次级轴是状态「类别」而不是状态 key 本身——泳道契约。
 	secondaryCategory bool
-	// categoryKeys maps each of the 7 categories to the concrete status keys
-	// that belong to it, resolved ONCE per request. Category predicates expand
-	// through this into `i.status = ANY(...)` so the (workspace_id, status)
-	// index stays usable — see issuestatus.ExpandCategories. (MUL-6243)
+	// categoryKeys 把 7 个类别各自映射到属于它的具体状态 key，每个请求只解析一次。类别谓词经
+	// 它展开成 `i.status = ANY(...)`，让 (workspace_id, status) 索引保持可用——见
+	// issuestatus.ExpandCategories。（MUL-6243）
 	categoryKeys map[string][]string
-	// statusCustomKeys is the CUSTOM key -> category map behind
-	// statusCategoryExpr. Empty for a workspace with no custom statuses.
+	// statusCustomKeys 是 statusCategoryExpr 背后「自定义 key -> 类别」的映射。没有自定义状态的
+	// 工作区为空。
 	statusCustomKeys map[string]string
 }
 
-// statusCategoryExpr builds the scalar `status key -> category` rewrite used as
-// a GROUP BY expression. Built-ins fall through the ELSE untouched because a
-// built-in key IS its own category, so a workspace with no custom statuses gets
-// exactly `i.status`. (MUL-6243)
+// statusCategoryExpr 构造用作 GROUP BY 表达式的标量「状态 key -> 类别」改写。内置 key 落在 ELSE
+// 分支原样通过——内置 key 本身就是它的类别——所以没有自定义状态的工作区得到的就是 `i.status`。
+// （MUL-6243）
 func statusCategoryExpr(customKeys map[string]string, addArg func(any) string) string {
 	if len(customKeys) == 0 {
 		return "i.status"
@@ -104,14 +119,12 @@ func statusCategoryExpr(customKeys map[string]string, addArg func(any) string) s
 	return b.String()
 }
 
-// resolveStatusCategoryMaps derives BOTH shapes a category grouping needs from
-// ONE catalog read: the custom key -> category map behind the GROUP BY rewrite,
-// and the category -> concrete keys expansion that predicate() looks up (it has
-// no context or Querier of its own).
+// resolveStatusCategoryMaps 用「一次」目录读取同时产出类别分组需要的两张形状：GROUP BY 改写背后
+// 的「自定义 key -> 类别」映射，以及 predicate()（自身拿不到 context/Querier）查表的「类别 ->
+// 具体 key」展开。
 //
-// One read, not three. A board loads seven column branches as seven separate
-// HTTP requests, so a per-call `ExpandCategories` + `CustomKeyCategories` pair
-// meant 21 extra catalog SELECTs behind one surface load.
+// 为什么只读一次：看板把七个泳道列拆成七个独立 HTTP 请求加载，若每调用一次
+// `ExpandCategories` + `CustomKeyCategories`，单次看板加载就要多出 21 次目录 SELECT。
 func (h *Handler) resolveStatusCategoryMaps(
 	ctx context.Context,
 	workspaceID pgtype.UUID,
@@ -122,12 +135,11 @@ func (h *Handler) resolveStatusCategoryMaps(
 	}
 	categoryKeys = make(map[string][]string, len(validIssueStatuses))
 	for _, category := range validIssueStatuses {
-		// A category always contains at least its own canonical key, even on an
-		// unseeded workspace — a built-in key IS its own category.
+		// 每个类别至少包含它自己的 canonical key，即使工作区从未播种过目录——内置 key 本身就是
+		// 它的类别。
 		categoryKeys[category] = []string{category}
 	}
-	// Sorted so the expansion — and therefore the query's argument list — is
-	// deterministic for the same catalog.
+	// 排序后展开，保证同一目录下「展开结果、进而 SQL 参数列表」都是确定的。
 	keys := make([]string, 0, len(customKeys))
 	for key := range customKeys {
 		keys = append(keys, key)
@@ -140,6 +152,8 @@ func (h *Handler) resolveStatusCategoryMaps(
 	return customKeys, categoryKeys, nil
 }
 
+// issueTableGroupIdentity 生成分组规格的稳定身份串（含 property 空值是否纳入、compound 的
+// primary/secondary 与可见次级值），作为游标分支身份的一部分——不同分组规格间的游标不通用。
 func issueTableGroupIdentity(group issueTableGroupSpec) string {
 	if group.Kind == "property" {
 		return "group:property:" + group.PropertyID + ":empty=" + strconv.FormatBool(group.IncludeEmpty)
@@ -154,6 +168,9 @@ func issueTableGroupIdentity(group issueTableGroupSpec) string {
 	return "group:" + group.Kind
 }
 
+// resolveIssueTableGroup 校验并解析一次分组请求，产出可用的 resolvedIssueTableGroup。它会按
+// kind 补 SQL 表达式、为 status_category / compound 读类别映射、为 property 读属性定义与选项
+// 表。allowNone 允许解析「不分组」（组头端点禁止）。非法请求写 4xx/422 并返回 ok=false。
 func (h *Handler) resolveIssueTableGroup(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, group issueTableGroupSpec, allowNone bool) (resolvedIssueTableGroup, bool) {
 	if group.Kind != "compound" && group.SecondaryValues != nil {
 		writeError(w, http.StatusBadRequest, "group.secondary_values requires group.kind=compound")
@@ -169,9 +186,8 @@ func (h *Handler) resolveIssueTableGroup(w http.ResponseWriter, r *http.Request,
 	case "status":
 		return resolvedIssueTableGroup{kind: "status", groupExpr: "i.status"}, true
 	case "status_category":
-		// Board / list / swimlane columns are CATEGORIES, so a custom status
-		// groups into the column it behaves as instead of getting a column of
-		// its own — that is what keeps the fan-out pinned at 7. (MUL-6243)
+		// 看板 / 列表 / 泳道列是按「类别」分的：自定义状态归到「它表现为哪个类别」的那一列，
+		// 而不是给它单开一列——这样列数上限才钉在 7。（MUL-6243）
 		customKeys, categoryKeys, err := h.resolveStatusCategoryMaps(r.Context(), workspaceID)
 		if err != nil {
 			slog.Warn("resolve status category group failed", append(logger.RequestAttrs(r), "error", err)...)
@@ -187,9 +203,8 @@ func (h *Handler) resolveIssueTableGroup(w http.ResponseWriter, r *http.Request,
 		return resolvedIssueTableGroup{
 			kind:      "assignee",
 			groupExpr: "CASE WHEN i.assignee_type IS NULL OR i.assignee_id IS NULL THEN '__unassigned__' ELSE i.assignee_type || ':' || i.assignee_id::text END",
-			// groupSortExpr runs after issues have been reduced to one row per
-			// actor. Resolving display names before GROUP BY executes one lookup
-			// per issue and turns large assignee groups into an N+1 query plan.
+			// groupSortExpr 在 issue 已归并为「每受理人一行」之后再跑：显示名若在 GROUP BY 之前
+			// 逐行解析，大受理人分组会退化成 N+1 查询。
 			groupSortExpr: `LOWER(COALESCE(CASE split_part(group_value, ':', 1)
   WHEN 'member' THEN (SELECT u.name FROM "user" u WHERE u.id = split_part(group_value, ':', 2)::uuid)
   WHEN 'agent' THEN (SELECT a.name FROM agent a WHERE a.workspace_id = $1 AND a.id = split_part(group_value, ':', 2)::uuid)
@@ -320,6 +335,8 @@ END`, quotedKey, quotedKey, quotedKey)
 	}
 }
 
+// writeIssueTableUnsupportedGroup 以 422 + unsupported_group 错误码写回「该分组方式不受支持」
+// 类错误，调用方（前端）据 code 决定降级提示。
 func writeIssueTableUnsupportedGroup(w http.ResponseWriter, code, message string) {
 	writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 		"error":   "unsupported_group",
@@ -328,6 +345,8 @@ func writeIssueTableUnsupportedGroup(w http.ResponseWriter, code, message string
 	})
 }
 
+// expression 返回分组用的 SQL 取值表达式。compound 委托给主分组；status_category 走类别改写；
+// select 型 property 需要把激活选项数组参数化后填入 groupExpr。
 func (group resolvedIssueTableGroup) expression(addArg func(any) string) string {
 	if group.kind == "compound" && group.primary != nil {
 		return group.primary.expression(addArg)
@@ -345,6 +364,8 @@ func (group resolvedIssueTableGroup) expression(addArg func(any) string) string 
 	return group.groupExpr
 }
 
+// sortExpression 返回组间排序的 SQL 表达式（排序在归并成组之后执行，可用别名 group_value）；
+// compound 委托给主分组；没有显式排序表达式的回落到 group_value 本身。
 func (group resolvedIssueTableGroup) sortExpression() string {
 	if group.kind == "compound" && group.primary != nil {
 		return group.primary.sortExpression()
@@ -355,6 +376,8 @@ func (group resolvedIssueTableGroup) sortExpression() string {
 	return "group_value"
 }
 
+// orderExpression 返回组间的优先级排序表达式（如状态类别列的顺序、受理人类型顺序、属性选项的
+// 声明顺序）。表达式以 group_value 为输入；prop 分组还需要把选项顺序参数化后嵌入。
 func (group resolvedIssueTableGroup) orderExpression(addArg func(any) string) string {
 	if group.kind == "compound" && group.primary != nil {
 		return group.primary.orderExpression(addArg)
@@ -379,6 +402,8 @@ func (group resolvedIssueTableGroup) orderExpression(addArg func(any) string) st
 	}
 }
 
+// contextExpression 返回组头附带上下文 JSON 的 SQL（目前只有 parent 分组要给每组带上父 issue
+// 的摘要：id/编号/标识/标题/状态；其余分组恒为空对象）。
 func (group resolvedIssueTableGroup) contextExpression(addArg func(any) string, issuePrefix string) string {
 	if group.kind == "compound" && group.primary != nil {
 		return group.primary.contextExpression(addArg, issuePrefix)
@@ -400,12 +425,16 @@ func (group resolvedIssueTableGroup) contextExpression(addArg func(any) string, 
 ), '{}'::jsonb) END`, prefixRef)
 }
 
+// statusCategoryGroupKeyPrefix 是状态类别分组键的前缀，用于把类别写进 Key 里与「按 key 分组」的
+// status 键区分开。
 const statusCategoryGroupKeyPrefix = "status_category:"
 
+// statusCategoryGroupKey 生成某类别对应的分组键（<前缀> + 类别名）。
 func statusCategoryGroupKey(category string) string {
 	return statusCategoryGroupKeyPrefix + category
 }
 
+// parseStatusCategoryGroupKey 从分组键反解出类别名；前缀不符或类别不在内置白名单里返回 ok=false。
 func parseStatusCategoryGroupKey(key string) (string, bool) {
 	if !strings.HasPrefix(key, statusCategoryGroupKeyPrefix) {
 		return "", false
@@ -417,10 +446,8 @@ func parseStatusCategoryGroupKey(key string) (string, bool) {
 	return category, true
 }
 
-// categoryKeysFor returns the concrete status keys in a category. It falls back
-// to the category itself, which is always correct because a built-in key IS its
-// own category — so a catalog read that failed degrades to pre-feature behavior
-// instead of an empty result set.
+// categoryKeysFor 返回某类别下的具体状态 key。查不到时退回类别本身——这永远正确，因为内置 key
+// 就是它自己的类别；目录读取失败也因此降级成特性上线前的行为，而不是空结果集。
 func (group resolvedIssueTableGroup) categoryKeysFor(category string) []string {
 	if keys := group.categoryKeys[category]; len(keys) > 0 {
 		return keys
@@ -428,6 +455,9 @@ func (group resolvedIssueTableGroup) categoryKeysFor(category string) []string {
 	return []string{category}
 }
 
+// compoundCellGroupKey 生成复合分组「主组 × 次级状态列」某个 cell 的分组键：主分组 key base64
+// 编码后拼上次级轴（:status: 或 :status_category:）与状态值。主 key 含不可安全拼串的字符，编码
+// 是为保证键可回解、无歧义。
 func compoundCellGroupKey(primaryKey, status string, category bool) string {
 	axis := ":status:"
 	if category {
@@ -436,6 +466,9 @@ func compoundCellGroupKey(primaryKey, status string, category bool) string {
 	return "compound:" + base64.RawURLEncoding.EncodeToString([]byte(primaryKey)) + axis + status
 }
 
+// descriptor 把一行分组统计（raw 取值 + count + 上下文 + 次级计数）翻译成对外组头描述：按 kind
+// 把 raw 解析成类型化 Value 与稳定 Key（无受理人/无项目等哨兵、base64 编码的属性值等），compound
+// 时还要套一层次级组列表。raw 与 kind 对不上属内部不一致，返回 error 由调用方按 500 上报。
 func (group resolvedIssueTableGroup) descriptor(raw string, count int64, context issueTableGroupContext, secondaryCounts map[string]int64) (issueTableGroupDescriptorResponse, error) {
 	if group.kind == "compound" && group.primary != nil {
 		descriptor, err := group.primary.descriptor(raw, count, context, nil)
@@ -459,10 +492,9 @@ func (group resolvedIssueTableGroup) descriptor(raw string, count int64, context
 	descriptor := issueTableGroupDescriptorResponse{Count: count}
 	switch group.kind {
 	case "status":
-		// Any non-empty status KEY, not just the 7 built-ins. Since MUL-6243 a
-		// workspace can hold custom statuses, and rejecting one here failed the
-		// WHOLE grouped response with a 500 — one custom status made "group by
-		// status" unusable for the entire workspace.
+		// 任意非空的状态 KEY 都合法，不只那 7 个内置。自 MUL-6243 起工作区可以有自定义状态，
+		// 若在这里拒绝它们会让「按状态分组」整组响应 500——一条自定义状态就能让整个工作区的
+		// 按状态分组不可用。
 		if raw == "" {
 			return descriptor, fmt.Errorf("unexpected status group value %q", raw)
 		}
@@ -473,10 +505,9 @@ func (group resolvedIssueTableGroup) descriptor(raw string, count int64, context
 			return descriptor, fmt.Errorf("unexpected status category group value %q", raw)
 		}
 		descriptor.Key = statusCategoryGroupKey(raw)
-		// value.kind stays "status": a category's value IS its canonical status
-		// key, so this is exact rather than a compatibility shim, and every
-		// existing consumer of a status group keeps working. The KEY is what
-		// distinguishes the two contracts. (MUL-6243)
+		// value.kind 保持 "status"：类别的 value 就是它的 canonical 状态 key，所以这是精确映射而
+		// 非兼容垫片，所有既有 status 分组消费方无需改动仍能工作。真正区分两类契约的是 KEY。
+		// （MUL-6243）
 		descriptor.Value = issueTableGroupValueResponse{Kind: "status", Status: raw}
 	case "assignee":
 		descriptor.Value.Kind = "assignee"
@@ -561,6 +592,9 @@ func (group resolvedIssueTableGroup) descriptor(raw string, count int64, context
 	return descriptor, nil
 }
 
+// predicate 把客户端回传的 group_key 反解成一条可直接并入 WHERE 的 SQL 谓词（经 addArg 参数化，
+// 不拼接用户输入）。compound 键先解码出主分组键 + 次级状态再组合；property 键反解出状态与
+// 值；非法键一律 400。
 func (group resolvedIssueTableGroup) predicate(w http.ResponseWriter, key string, addArg func(any) string) (string, bool) {
 	if group.kind == "compound" && group.primary != nil {
 		const prefix = "compound:"
@@ -602,9 +636,8 @@ func (group resolvedIssueTableGroup) predicate(w http.ResponseWriter, key string
 	case "status":
 		const prefix = "status:"
 		status, found := strings.CutPrefix(key, prefix)
-		// A custom status is a valid group here too; the predicate is an exact
-		// key match either way. Length-bounded so an arbitrary blob cannot ride
-		// in as a status key.
+		// 自定义状态在这里同样是合法分组；无论内置还是自定义，谓词都是精确 key 匹配。长度受限，
+		// 防止任意大段文本冒充状态 key 混进来。
 		if !found || status == "" || len(status) > 64 {
 			writeError(w, http.StatusBadRequest, "invalid group_key")
 			return "", false
@@ -616,9 +649,8 @@ func (group resolvedIssueTableGroup) predicate(w http.ResponseWriter, key string
 			writeError(w, http.StatusBadRequest, "invalid group_key")
 			return "", false
 		}
-		// Expanded to concrete keys rather than wrapping the column in a
-		// category function: `status = ANY(...)` keeps the (workspace_id,
-		// status) index, a function wrapper would force a workspace scan.
+		// 展开成具体 key 而不是把列包进类别函数：`status = ANY(...)` 能继续用 (workspace_id,
+		// status) 索引，函数包裹会退化成全工作区扫描。
 		return fmt.Sprintf("i.status = ANY(%s::text[])", addArg(group.categoryKeysFor(category))), true
 	case "assignee":
 		const prefix = "assignee:"
@@ -727,6 +759,8 @@ func (group resolvedIssueTableGroup) predicate(w http.ResponseWriter, key string
 	}
 }
 
+// ListIssueTableGroups 处理 POST /api/issues/table/groups：在只读快照事务里按分组规格返回
+// 一组组头描述（含每组的行数/次级计数等），用于表格分组视图的渲染。
 func (h *Handler) ListIssueTableGroups(w http.ResponseWriter, r *http.Request) {
 	if h.DB == nil {
 		writeError(w, http.StatusInternalServerError, "database is unavailable")
@@ -829,9 +863,8 @@ func (h *Handler) ListIssueTableGroups(w http.ResponseWriter, r *http.Request) {
 )`, groupExpr, compiled.where, expectedRef, expectedRef)
 	}
 	if group.kind == "compound" {
-		// The secondary axis is either the status key itself or the CATEGORY it
-		// behaves as. In the category case a custom status counts into the cell
-		// of the column it renders in, never a cell of its own. (MUL-6243)
+		// 次级轴要么是状态 key 本身、要么是它表现所属的「类别」。按类别时，自定义状态计入它
+		// 渲染所在列的那个 cell，绝不会单开一格。（MUL-6243）
 		secondaryExpr := "i.status"
 		if group.secondaryCategory {
 			secondaryExpr = statusCategoryExpr(group.statusCustomKeys, addArg)
@@ -851,9 +884,8 @@ func (h *Handler) ListIssueTableGroups(w http.ResponseWriter, r *http.Request) {
 )`, groupExpr, secondaryExpr, compiled.where)
 		if group.secondaryFiltered {
 			visibleRef := addArg(group.secondaryValues)
-			// promoted_parents matches raw `child.status`, so a category axis has
-			// to expand back to concrete keys there; the cell filters compare
-			// against secondary_value, which is already a category.
+			// promoted_parents 匹配的是原始 `child.status`，所以按类别分轴时这里要把可见类别
+			// 展开回具体 key；cell 过滤器则直接比较已是类别的 secondary_value。
 			visibleKeysRef := visibleRef
 			if group.secondaryCategory {
 				expanded := make([]string, 0, len(group.secondaryValues))
@@ -1002,8 +1034,8 @@ func (h *Handler) ListIssueTableGroups(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-// issueStatusCatalog is the querier catalog reads go through. Defaults to
-// Queries; tests substitute a counting wrapper.
+// issueStatusCatalog 是分组/类别映射读目录要经过的 querier：默认用 h.Queries；测试注入一个计数
+// 包装器来断言目录读取次数。
 func (h *Handler) issueStatusCatalog() issuestatus.Querier {
 	if h.IssueStatusCatalog != nil {
 		return h.IssueStatusCatalog

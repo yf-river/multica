@@ -1,3 +1,21 @@
+// ============================================================================
+// Runtime Profile 管理对话框（自定义 CLI 运行配置的浏览 / 新建 / 编辑）
+//
+// 角色定位：管理「自定义运行配置（runtime profile）」的弹窗。用户可以把任意
+// 命令行（如某个 agent CLI）包装成一个 profile，绑定到某个协议族（claude /
+// openai / glm / cursor 等），供连接远程机器时复用。
+//
+// 三种打开意图（intent）对应三种形态：
+//  - manage：在主弹窗内切换「目录列表 + 详情面板」；
+//  - create：两步式创建（先选协议族，再填命令与描述）；
+//  - edit：直接进入编辑表单（协议族锁定不可改）。
+//
+// 内部组织：DialogState 驱动 surface（browse/form）切换；browse 由 CatalogList
+// （自建在前、内置族折叠在后）+ DetailPanel（内置只读、自建可编辑/删除）组成；
+// form 由 ProfileFormView → ProfileDetailsForm 提交到 @multica/core 的
+// useCreateRuntimeProfile / useUpdateRuntimeProfile。目录数据与表单校验逻辑在
+// ./runtime-profile-catalog。
+// ============================================================================
 "use client";
 
 import { useId, useMemo, useState } from "react";
@@ -54,14 +72,24 @@ import {
 import { useT } from "../../i18n";
 import { customRuntimeDocsHref } from "./runtime-docs";
 
-// The dialog runs in two surfaces that swap inside one Popup:
-//   - "browse": custom-first master list + adaptive detail
-//   - "form":   create (2-step) or edit (single step, family locked)
+// 弹窗在同一个 Popup 内的两种界面间切换：
+//   - "browse"：自建配置置顶的主列表 + 自适应详情面板
+//   - "form"：新建（两步：选协议族 → 填细节）或编辑（单步，协议族锁定不可改）
 type DialogState =
   | { surface: "browse" }
   | { surface: "form"; mode: "create"; step: "family" | "details" }
   | { surface: "form"; mode: "edit"; profile: RuntimeProfile };
 
+/**
+ * Runtime Profile 管理对话框（浏览/新建/编辑自定义 CLI 运行配置）。
+ *
+ * @param wsId - 工作区 id，用于拉取/创建/更新 profile。
+ * @param intent - manage=目录管理视图；create/edit=直接进入对应表单。
+ * @param machineName - 新建描述文案里的目标机器名（仅 create 时展示）。
+ * @param initialProfile - intent="edit" 时要编辑的配置。
+ * @param onProfileCreated - 新建成功后的回调（把新配置带回父组件）。
+ * @param onClose - 请求关闭对话框。
+ */
 export function RuntimeProfilesDialog({
   wsId,
   intent = "manage",
@@ -92,7 +120,7 @@ export function RuntimeProfilesDialog({
     return { surface: "browse" };
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Carries the chosen family from create-step-1 into the form.
+  // 记录第一步选中的协议族，带入第二步的表单。
   const [draftFamily, setDraftFamily] =
     useState<RuntimeProtocolFamily>(PROTOCOL_FAMILIES[0] ?? "claude");
 
@@ -245,7 +273,7 @@ export function RuntimeProfilesDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Master list — custom profiles first, built-in families as collapsed reference.
+// 主列表——自建配置在前，内置协议族作为可折叠的参考区块。
 // ---------------------------------------------------------------------------
 
 function CatalogList({
@@ -467,8 +495,7 @@ function CatalogRow({
 }
 
 // ---------------------------------------------------------------------------
-// Detail panel — adaptive: built-in is read-only, custom shows fields +
-// Edit / Delete.
+// 详情面板——自适应的：内置族只读，自建配置展示字段并提供 编辑 / 删除。
 // ---------------------------------------------------------------------------
 
 function DetailPanel({
@@ -629,7 +656,7 @@ function DetailRow({
 }
 
 // ---------------------------------------------------------------------------
-// Create / edit form.
+// 新建 / 编辑表单。
 // ---------------------------------------------------------------------------
 
 function ProfileFormView({
@@ -756,8 +783,7 @@ function ProfileDetailsForm({
     description: profile?.description ?? "",
   });
   const [errors, setErrors] = useState<ProfileFormErrorField[]>([]);
-  // Server-side error surfaced under the display-name field (duplicate) or
-  // as a generic banner.
+  // 服务端返回的错误（显示在「显示名」字段下方：重名冲突，或作为通用横幅）。
   const [duplicateName, setDuplicateName] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -812,7 +838,7 @@ function ProfileDetailsForm({
         onSaved(updated);
       }
     } catch (err) {
-      // 409 from create/patch means the display name collides.
+      // 创建/更新返回 409 表示显示名与他人冲突。
       if (err instanceof ApiError && err.status === 409) {
         setDuplicateName(true);
         return;
@@ -986,12 +1012,10 @@ function ProfileDetailsForm({
           />
         </div>
 
-        {/* NOTE: a visibility control is intentionally omitted in v1. The
-            server forces every profile to 'workspace' because the read paths
-            (list, daemon pull, register) do not yet enforce 'private', so
-            offering a private toggle would leak the profile to other members.
-            Re-add once creator-visibility filtering exists. Follow-up:
-            MUL-3308. */}
+        {/* 注意：v1 刻意不做「可见性」开关。服务端把所有 profile 强制设为
+            'workspace'，因为读取路径（列表、daemon 拉取、注册）还没有落实
+            'private' 的过滤——现在提供私有开关会把配置泄露给其他成员。
+            等「按创建者过滤可见性」实现后再加回。后续：MUL-3308。 */}
 
         {formError && (
           <p role="alert" className="text-caption text-destructive">

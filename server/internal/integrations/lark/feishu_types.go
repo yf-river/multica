@@ -1,18 +1,16 @@
+// feishu_types.go：飞书适配器侧较“原生”的入站/出站值类型定义。
 package lark
 
 import "github.com/jackc/pgx/v5/pgtype"
 
-// This file holds the Feishu adapter's native-ish inbound/outbound value
-// types. The WS connector decodes a raw Lark event into an InboundMessage;
-// feishuChannel translates that into a channel.InboundMessage for the
-// channel-agnostic engine.Router, and the feishu resolvers / OutcomeReplier
-// translate back at the adapter boundary. (Formerly defined on dispatcher.go,
-// which the MUL-3620 Router cutover removed.)
+// 本文件存放飞书适配器较原生的入站/出站值类型。WS connector 把原始 Lark 事件
+// 解码成 InboundMessage；feishuChannel 再把它转成 channel.InboundMessage 交给
+// 与渠道无关的 engine.Router；出站时由 feishu resolvers / OutcomeReplier 在
+// 适配器边界转回去。（原先定义在 dispatcher.go 上，MUL-3620 Router 切换时移除。）
 
-// InboundMessage is the Feishu connector's decoded, enriched event. It is the
-// adapter's internal shape: feishuChannel maps it to a channel.InboundMessage
-// (stashing this struct in Raw) so the resolvers can read the platform-
-// specific fields the normalized envelope does not carry.
+// InboundMessage 是飞书 connector 解码并富化后的事件，也是适配器内部形态：
+// feishuChannel 把它映射成 channel.InboundMessage（并把本结构塞进 Raw），这样
+// resolvers 能读到规范化信封没有携带的平台特有字段。
 type InboundMessage struct {
 	EventType    string
 	EventID      string
@@ -22,70 +20,63 @@ type InboundMessage struct {
 	MessageID    string
 	SenderOpenID OpenID
 	Body         string
-	// Content is the raw msg_type-specific JSON string Lark sends in
-	// event.message.content. Text/post decoding consumes it immediately; media
-	// ingestion keeps it so the adapter can extract image_key/file_key before
-	// translating to channel.InboundMessage.
+	// Content 是飞书在 event.message.content 里下发的、msg_type 特异的原始
+	// JSON 字符串。text/post 解码会立刻消费它；媒体摄入会留着它，以便适配器
+	// 在转成 channel.InboundMessage 之前提取 image_key/file_key。
 	Content string
-	// ForceFreshSession marks this dispatch as a one-off fresh start: the
-	// daemon should skip prior session resume when it claims the resulting
-	// chat task.
+	// ForceFreshSession 把本次分发标记为一次性“全新开始”：daemon 认领由此产生
+	// 的 chat task 时，应跳过对之前会话的恢复。
 	ForceFreshSession bool
 	AddressedToBot    bool
 
-	// MessageType is the raw Lark msg_type ("text", "post", "merge_forward",
-	// "image", "interactive", …). The decoder populates it so the inbound
-	// enricher can decide whether a message needs an HTTP round-trip to
-	// expand while the core stays msg_type-agnostic and only reads Body.
+	// MessageType 是原始 Lark msg_type（"text"、"post"、"merge_forward"、
+	// "image"、"interactive"……）。decoder 填充它，这样入站 enricher 能判断某条
+	// 消息是否需要一次 HTTP 往返来展开，而 core 保持对 msg_type 无感、只读 Body。
 	MessageType string
 
-	// CreateTime is the trigger message's creation time (epoch milliseconds).
-	// The enricher anchors the group recent-context window to it; the typing
-	// indicator uses it to skip stale reactions.
+	// CreateTime 是触发消息的创建时间（epoch 毫秒）。enricher 以它作为群聊
+	// “近期上下文”窗口的锚点；typing indicator 用它在加反应时跳过过期消息。
 	CreateTime string
 
-	// ParentID is the message_id this one quote-replies to (verbatim
-	// parent_id); RootID is the thread/root anchor. The enricher expands
-	// quoted replies off ParentID.
+	// ParentID 是本消息引用回复的那条消息的 message_id（原样 parent_id）；
+	// RootID 是话题/回复树的根锚点。enricher 以 ParentID 展开引用回复。
 	ParentID string
 	RootID   string
 
-	// ThreadID is the Lark topic (话题) id, populated only for messages posted
-	// inside a thread, so a non-empty value signals an in-thread @-mention.
-	// Persisted on the chat binding so the outbound patcher threads its reply.
+	// ThreadID 是飞书话题（话题）id，只有话题里的消息才有值，所以非空即代表
+	// “话题内发生了 @”。会持久化到聊天绑定上，出站 patcher 据此把回复贴回
+	// 对应话题。
 	ThreadID string
 
-	// CommandBody is the user's OWN typed text (the decoded Body before the
-	// enricher prepends quoted/forwarded context). `/issue` is parsed from
-	// THIS, not the enriched Body.
+	// CommandBody 是用户【自己】输入的文本（enricher 前置引用/转发上下文之前的
+	// 解码 Body）。`/issue` 从它解析，而不是从富化后的 Body。
 	CommandBody string
 }
 
-// Outcome categorizes what the inbound pipeline decided. The OutcomeReplier
-// inspects it to choose the Lark-side reply. Values mirror engine.Outcome.
+// Outcome 归类入站管线做出的决定。OutcomeReplier 检查它来选择飞书侧的回复。
+// 取值镜像 engine.Outcome。
 type Outcome string
 
 const (
-	// OutcomeDropped — not ingested (identity, dedup, group filter, …).
+	// OutcomeDropped —— 未摄入（身份、去重、群组过滤……）。
 	OutcomeDropped Outcome = "dropped"
-	// OutcomeNeedsBinding — the open_id is unbound; send the binding card.
+	// OutcomeNeedsBinding —— open_id 未绑定；发送绑定卡片。
 	OutcomeNeedsBinding Outcome = "needs_binding"
-	// OutcomeIngested — the message landed and a run was (or will be) enqueued.
+	// OutcomeIngested —— 消息落地且已（或将要）入队一次运行。
 	OutcomeIngested Outcome = "ingested"
-	// OutcomeFreshPending — a bare /clear was persisted for the next chat turn.
+	// OutcomeFreshPending —— 一次裸 /clear 被持久化，留给下一个聊天轮次。
 	OutcomeFreshPending Outcome = "fresh_pending"
 	OutcomeChatStarted  Outcome = "chat_started"
-	// OutcomeIssueUsage — /issue was sent without its required title.
+	// OutcomeIssueUsage —— /issue 没带必需的标题就发了。
 	OutcomeIssueUsage Outcome = "issue_usage"
-	// OutcomeAgentOffline — landed, but the agent has no runtime bound.
+	// OutcomeAgentOffline —— 消息落地了，但 agent 没有绑定 runtime。
 	OutcomeAgentOffline Outcome = "agent_offline"
-	// OutcomeAgentArchived — landed, but the agent is archived.
+	// OutcomeAgentArchived —— 消息落地了，但 agent 已归档。
 	OutcomeAgentArchived Outcome = "agent_archived"
 )
 
-// DispatchResult is the Feishu-side verdict the OutcomeReplier consumes to
-// drive its outbound reply. The engine produces an engine.Result; the feishu
-// OutboundReplier adapter translates it into this shape.
+// DispatchResult 是供 OutcomeReplier 消费、驱动出站回复的飞书侧判定结果。引擎
+// 产出 engine.Result；飞书 OutboundReplier 适配器把它转成这个形态。
 type DispatchResult struct {
 	Outcome        Outcome
 	DropReason     DropReason
@@ -95,15 +86,14 @@ type DispatchResult struct {
 	TaskID         pgtype.UUID
 	IssueID        pgtype.UUID
 	IssueNumber    int32
-	// IssueIdentifier is the workspace-qualified key ("MUL-42") for the
-	// created issue, used verbatim in the confirmation message.
+	// IssueIdentifier 是带 workspace 限定的键（"MUL-42"），确认消息里原样使用。
 	IssueIdentifier string
-	// IssueTitle is the title supplied on /issue, echoed in the confirmation.
+	// IssueTitle 是 /issue 时填的标题，会在确认消息里回显。
 	IssueTitle string
-	// IssueDuplicate distinguishes an active-issue conflict from a successful
-	// create while carrying the existing issue fields above.
+	// IssueDuplicate 用于区分“命中活跃 issue 冲突”与“创建成功”，冲突时上面的
+	// 现有 issue 字段仍然有效。
 	IssueDuplicate bool
-	// IssueUsageHadMedia asks the usage reply to tell the sender to include the
-	// current message's media again with the corrected command.
+	// IssueUsageHadMedia 让用法提示回复告诉发送者：要用纠正后的命令重发，就得
+	// 把当前这条消息里的媒体再带一次。
 	IssueUsageHadMedia bool
 }

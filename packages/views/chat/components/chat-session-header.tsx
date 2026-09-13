@@ -1,3 +1,5 @@
+// 会话头部栏：agent 头像 + 可编辑的聊天标题 + agent 副标题，以及一个 ⋯ 菜单
+// （重命名 / 查看 agent 资料 / 归档或删除）。
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -34,10 +36,9 @@ import { AppLink } from "../../navigation";
 import { useT } from "../../i18n";
 
 /**
- * Per-session header for the conversation pane: agent avatar + editable chat
- * title + agent subtitle, with a ⋯ menu (rename / view agent profile / delete).
- * The avatar's hover card is the lightweight "view profile" affordance; the
- * menu item navigates to the full agent page.
+ * 对话面板顶部的会话头部：agent 头像 + 可编辑的聊天标题 + agent 副标题，
+ * 带 ⋯ 菜单（重命名 / 查看 agent 资料 / 删除）。头像的 hover card 是轻量级的
+ * "查看资料"入口；菜单项则跳到完整的 agent 页面。
  */
 export function ChatSessionHeader({
   session,
@@ -46,9 +47,9 @@ export function ChatSessionHeader({
 }: {
   session: ChatSession;
   agent: Agent | null;
-  // Archiving the open conversation must move the pane off it (advance to the
-  // next chat on desktop, back to the list on mobile), so the parent owns it —
-  // see ChatPage.handleArchive. Falls back to a plain status flip if unwired.
+  // 归档当前打开的这个会话时必须把面板从它身上移开（桌面端前进到下一个聊天，
+  // 移动端退回列表），所以这个动作由父组件拥有——见 ChatPage.handleArchive。
+  // 未接线时退化为只翻转一下归档状态。
   onArchive?: (session: ChatSession) => void;
 }) {
   const { t } = useT("chat");
@@ -65,8 +66,8 @@ export function ChatSessionHeader({
   const [draft, setDraft] = useState(session.title ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
-  // A browser can blur the input before it emits compositionend. Remember
-  // that intent so the final composed value is committed, not the draft.
+  // 浏览器可能在发出 compositionend 之前就把输入框失焦了。记住这个意图，
+  // 让最终组合后的值被提交，而不是提交中途的草稿。
   const commitAfterCompositionRef = useRef(false);
   const blurCommitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -152,15 +153,13 @@ export function ChatSessionHeader({
               if (isComposingRef.current) {
                 commitAfterCompositionRef.current = true;
                 const input = e.currentTarget;
-                // Let a compositionend queued by the same focus change win.
-                // If it never arrives, commit on the next task instead of
-                // leaving an unfocused editor open indefinitely.
+                // 让同一次焦点变化排队的 compositionend 先赢。如果它一直没来，
+                // 就在下一个任务里提交，而不是让一个失焦的编辑器无限期挂着。
                 clearPendingBlurCommit();
                 blurCommitTimeoutRef.current = setTimeout(() => {
                   if (!commitAfterCompositionRef.current) return;
-                  // Without compositionend, the current DOM value is not
-                  // known to be final. Close without persisting a partial
-                  // composition instead of recreating the original bug.
+                  // 没有 compositionend，就不知道当前 DOM 值是否已定型。
+                  // 选择直接关闭、不保存半截输入法内容，而不是重演最初的 bug。
                   if (isComposingRef.current) {
                     clearPendingBlurCommit();
                     isComposingRef.current = false;
@@ -233,7 +232,7 @@ export function ChatSessionHeader({
                 <ArchiveRestore className="h-4 w-4" />
                 {t(($) => $.header.unarchive)}
               </DropdownMenuItem>
-              {/* Hard delete is offered only once a chat is archived. */}
+              {/* 只有聊天被归档后，才提供"彻底删除"这一入口。 */}
               <DropdownMenuItem variant="destructive" onClick={() => setConfirmDelete(true)}>
                 <Trash2 className="h-4 w-4" />
                 {t(($) => $.header.delete)}

@@ -1,3 +1,12 @@
+// 文件职责：实现 `multica agent` 整棵 CLI 命令树——agent 的增删改查、归档/恢复、
+// 任务列表、头像上传、技能指派（skills）与自定义环境变量（env）等子命令；其中
+// env 走审计端点、mcp_config 的读取改道到 `agent env`，flag 注释里均有说明。文件
+// 前半部集中了 CLI 的「任务/人类上下文」判定：通过 mat_ token、MULTICA_* 环境变量
+// 与工作目录里残留的 daemon marker 三层信号判断当前是否跑在 daemon 托管的 agent
+// 任务里，从而决定 server URL、workspace、配置文件根该从哪一层解析，并拦截「人
+// 本地的登录/配置类命令在任务上下文里被误用」的路径。文末 Helpers 提供
+// --custom-env / --mcp-config 三条 secret-safe 输入通道（行内 / stdin / 文件）的
+// 解析与互斥校验，值一律当机密材料处理。
 package main
 
 import (
@@ -18,6 +27,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
+// agentCmd 是 `multica agent` 父命令，其下挂 list/get/create/update/archive/
+// restore/tasks/avatar/skills/env 等子命令。
 var agentCmd = &cobra.Command{
 	Use:   "agent",
 	Short: "Work with agents",
@@ -77,19 +88,16 @@ var agentAvatarCmd = &cobra.Command{
 	RunE:  runAgentAvatar,
 }
 
-// Agent skills subcommands.
-
+// agentSkillsCmd 是 `agent skills` 分组命令，负责给 agent 指派工作区技能
+// （list/set/add）。
 var agentSkillsCmd = &cobra.Command{
 	Use:   "skills",
 	Short: "Manage agent skill assignments",
 }
 
-// Agent env subcommands. Live behind a dedicated `agent env` group because
-// they're the ONLY post-creation path for reading or writing
-// custom_env values — `multica agent list / get / update` no longer
-// expose env on the wire. Each call hits the audited
-// `/api/agents/{id}/env` endpoint. See MUL-2600.
-
+// agentEnvCmd 是 `agent env` 分组命令。custom_env 只在创建后通过这里读写，
+// 因为 `agent list / get / update` 已不在线上暴露 env——每次调用都打到带审计
+// 记录的 `/api/agents/{id}/env` 端点。参见 MUL-2600。
 var agentEnvCmd = &cobra.Command{
 	Use:   "env",
 	Short: "Read and update an agent's custom environment variables (audited)",
@@ -189,15 +197,13 @@ func init() {
 	agentUpdateCmd.Flags().String("thinking-level", "", "New reasoning/effort level for the agent's runtime (e.g. Claude: low|medium|high|xhigh|max; Codex values come from the runtime model catalog). The set is runtime/model-specific; malformed values are rejected server-side and the daemon validates the exact model/level pair. Some runtimes (e.g. hermes) expose no reasoning control and reject every value. Pass an empty string to clear and fall back to the runtime default.")
 	agentUpdateCmd.Flags().String("service-tier", "", "New Codex execution speed: default = explicit Standard when supported by the daemon's installed Codex CLI; a catalog tier such as priority = explicit Fast. Pass an empty string to clear and inherit local Codex configuration.")
 	agentUpdateCmd.Flags().String("custom-args", "", "New custom CLI arguments as JSON array. For model selection prefer --model; some providers reject --model in custom_args.")
-	// custom_env is intentionally NOT part of `agent update`. Use
-	// `multica agent env set <id>` — that path admits the agent owner or a
-	// workspace owner/admin, denies agent actors, and writes a persisted
-	// audit trail.
+	// custom_env 有意不放进 `agent update`：要用请走 `multica agent env set
+	// <id>`——那条路径允许 agent 属主或 workspace 属主/管理员操作、拒绝 agent
+	// 角色，并留下持久化审计记录。
 	//
-	// mcp_config, unlike custom_env, IS updatable here: it is persisted
-	// through the generic UpdateAgent endpoint (there is no dedicated
-	// audited endpoint for it). The same three secret-safe input channels
-	// as `agent create` are offered. Pass `--mcp-config null` to clear.
+	// mcp_config 与 custom_env 不同，确实可以在这里更新：它走通用的
+	// UpdateAgent 端点持久化（没有专属审计端点）。提供与 `agent create`
+	// 相同的三条 secret-safe 输入通道；传 `--mcp-config null` 表示清空。
 	agentUpdateCmd.Flags().String("mcp-config", "", "New MCP server configuration as a JSON object, e.g. '{\"mcpServers\":{...}}'. Pass 'null' to clear. Treated as secret material — never logged by the CLI, but values passed on the command line are visible to shell history and 'ps'; prefer --mcp-config-stdin or --mcp-config-file for real secrets.")
 	agentUpdateCmd.Flags().Bool("mcp-config-stdin", false, "Read the --mcp-config JSON from stdin. Keeps secrets out of shell history and 'ps'. Mutually exclusive with --mcp-config and --mcp-config-file.")
 	agentUpdateCmd.Flags().String("mcp-config-file", "", "Read the --mcp-config JSON from a file path (suggested mode: 0600). Mutually exclusive with --mcp-config and --mcp-config-stdin.")
@@ -236,16 +242,16 @@ func init() {
 	// agent env get
 	agentEnvGetCmd.Flags().String("output", "json", "Output format: json or table")
 
-	// agent env set. Same three secret-safe input channels as `agent
-	// create` so scripts can keep secrets out of shell history. Mutual
-	// exclusion + empty-input handling is enforced by resolveCustomEnv.
+	// agent env set。与 `agent create` 相同的三条 secret-safe 输入通道，
+	// 脚本可借此把机密挡在 shell history 之外。互斥与空输入处理由
+	// resolveCustomEnv 统一把关。
 	agentEnvSetCmd.Flags().String("custom-env", "", "Replacement custom_env as a JSON object, e.g. '{\"KEY\":\"value\"}'. Values equal to '****' preserve the existing entry. Treated as secret material — values passed on the command line are visible to shell history and 'ps'; prefer --custom-env-stdin or --custom-env-file for real secrets. Pass '{}' to clear all keys.")
 	agentEnvSetCmd.Flags().Bool("custom-env-stdin", false, "Read the replacement custom_env JSON object from stdin. Keeps secrets out of shell history and 'ps'. Mutually exclusive with --custom-env and --custom-env-file.")
 	agentEnvSetCmd.Flags().String("custom-env-file", "", "Read the replacement custom_env JSON object from a file path (suggested mode: 0600). Mutually exclusive with --custom-env and --custom-env-stdin.")
 	agentEnvSetCmd.Flags().String("output", "json", "Output format: json or table")
 }
 
-// resolveProfile returns the --profile flag value (empty string means default profile).
+// resolveProfile 返回 --profile flag 的取值（空串表示默认 profile）。
 func resolveProfile(cmd *cobra.Command) string {
 	val, _ := cmd.Flags().GetString("profile")
 	return val
@@ -255,12 +261,12 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 	taskContext := inDaemonManagedExecutionContext()
 	token := resolveToken(cmd)
 	if taskContext && !strings.HasPrefix(token, "mat_") {
-		// When the ONLY daemon signal is a workdir marker (no MULTICA_AGENT_ID /
-		// MULTICA_TASK_ID / MULTICA_DAEMON_PORT), the likeliest cause outside a
-		// real task is a leftover marker from a crashed daemon task in a
-		// local_directory. Name the exact file so a normal user can recover
-		// instead of hitting an opaque "requires mat_ token" error. Shares its
-		// wording with requireHumanLocalCommand: same cause, same remedy.
+		// 当唯一的 daemon 信号是工作目录里的 marker（没有 MULTICA_AGENT_ID /
+		// MULTICA_TASK_ID / MULTICA_DAEMON_PORT）时，任务外最可能的原因就是某个
+		// 在 local_directory 里跑崩的 daemon 任务留下的残留 marker。报错里点名
+		// 具体文件，普通用户照着手工删除即可恢复，而不是撞上一个晦涩的
+		// "requires mat_ token"。措辞与 requireHumanLocalCommand 保持一致：
+		// 同因同解。
 		if markerPath := leftoverDaemonTaskMarkerPath(); markerPath != "" {
 			return nil, fmt.Errorf("agent execution context requires MULTICA_TOKEN to be a task-scoped mat_ token%s", leftoverMarkerSuffix(markerPath))
 		}
@@ -274,7 +280,7 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 	}
 
 	client := cli.NewAPIClient(serverURL, workspaceID, token)
-	// When running inside a daemon task, attribute actions to the agent.
+	// 跑在 daemon 任务里时，把操作归因到对应 agent 上。
 	if agentID := os.Getenv("MULTICA_AGENT_ID"); agentID != "" {
 		client.AgentID = agentID
 	}
@@ -299,10 +305,9 @@ func tryResolveServerURL(cmd *cobra.Command) string {
 	return tryResolveProfileServerURL(cmd)
 }
 
-// tryResolveHumanServerURL is reserved for a human/local command after it has
-// passed requireHumanLocalCommand. Unlike the general resolver, a stale
-// MULTICA_DAEMON_PORT in a host/container environment must not hide the human
-// profile that login is explicitly meant to update.
+// tryResolveHumanServerURL 只给通过了 requireHumanLocalCommand 的「人类/本地」
+// 命令用。与通用解析器不同：宿主机/容器环境里过期的 MULTICA_DAEMON_PORT 不能
+// 掩盖 login 明确要更新的人类 profile。
 func tryResolveHumanServerURL(cmd *cobra.Command) string {
 	if val := tryResolveExplicitServerURL(cmd); val != "" {
 		return val
@@ -333,7 +338,7 @@ func resolveServerURL(cmd *cobra.Command) string {
 	}
 	fmt.Fprintln(os.Stderr, missingServerConfigMessage())
 	os.Exit(1)
-	return "" // unreachable
+	return "" // 不可达（上面已 os.Exit）
 }
 
 func missingServerConfigMessage() string {
@@ -346,7 +351,7 @@ func resolveHumanServerURL(cmd *cobra.Command) string {
 	}
 	fmt.Fprintln(os.Stderr, "No server configured. Run 'multica setup' first.")
 	os.Exit(1)
-	return "" // unreachable
+	return "" // 不可达（上面已 os.Exit）
 }
 
 func resolveLoginTokenServerURL(cmd *cobra.Command) string {
@@ -364,26 +369,24 @@ func normalizeAPIBaseURL(raw string) string {
 	return raw
 }
 
-// inAgentExecutionContext reports whether the CLI has explicit task identity
-// markers from a daemon-managed agent task.
+// inAgentExecutionContext 报告 CLI 是否带着 daemon 托管 agent 任务注入的显式
+// 任务身份标记（MULTICA_AGENT_ID / MULTICA_TASK_ID）。
 func inAgentExecutionContext() bool {
 	return os.Getenv("MULTICA_AGENT_ID") != "" || os.Getenv("MULTICA_TASK_ID") != ""
 }
 
-// inDaemonManagedExecutionContext reports whether the CLI is being invoked
-// from inside a daemon-managed agent task. MULTICA_DAEMON_PORT is included as
-// a defense-in-depth marker for subprocesses that lose MULTICA_AGENT_ID or
-// MULTICA_TASK_ID but still run under the daemon environment. In this context
-// workspace and token must come from daemon-provided env; falling back to
-// user-global ~/.multica/config.json can make agent writes land as a member.
+// inDaemonManagedExecutionContext 报告 CLI 是否正跑在 daemon 托管的 agent 任务
+// 里。MULTICA_DAEMON_PORT 被当作纵深防御的额外信号：某些子进程会丢掉
+// MULTICA_AGENT_ID / MULTICA_TASK_ID，但仍处于 daemon 环境。此上下文里
+// workspace 与 token 必须取自 daemon 注入的 env；回退到用户全局
+// ~/.multica/config.json 可能让 agent 的写入落成普通成员身份。
 func inDaemonManagedExecutionContext() bool {
 	return inAgentExecutionContext() || os.Getenv("MULTICA_DAEMON_PORT") != "" || hasDaemonTaskContextMarker()
 }
 
-// inDaemonTaskIdentityContext reports strong evidence that the current process
-// belongs to a daemon-managed task. MULTICA_DAEMON_PORT is deliberately not
-// sufficient: older host/container setups may export that otherwise inert
-// task hint before login or daemon startup.
+// inDaemonTaskIdentityContext 报告当前进程是否确实属于 daemon 托管任务的强
+// 证据。MULTICA_DAEMON_PORT 单独不足以作数：较老的宿主机/容器环境可能在登录
+// 或 daemon 启动前就把这个本无作用的任务提示导出了。
 func inDaemonTaskIdentityContext() bool {
 	return inAgentExecutionContext() ||
 		strings.TrimSpace(os.Getenv(cli.TaskConfigRootEnv)) != "" ||
@@ -397,20 +400,19 @@ func daemonPortOnlyContextHint() string {
 	return "; MULTICA_DAEMON_PORT is set without task identity — if this is a host or container startup shell, remove that variable and retry"
 }
 
-// requireTaskLocalConfigRoot prevents daemon-managed subprocesses that lost
-// part of their injected environment from silently resolving Multica state
-// below the daemon owner's HOME. Commands that intentionally support task-local
-// config (currently config show/set and auth status) call this before any load.
+// requireTaskLocalConfigRoot 防止丢了部分注入环境变量的 daemon 托管子进程
+// 静默地把 Multica 状态解析到 daemon 属主 HOME 之下的错误位置。明确支持
+// task-local 配置的命令（目前是 config show/set 与 auth status）在任何加载
+// 之前都会先调用它。
 func requireTaskLocalConfigRoot() error {
 	if !inDaemonManagedExecutionContext() {
 		return nil
 	}
 	if strings.TrimSpace(os.Getenv(cli.TaskConfigRootEnv)) == "" {
-		// The third refusal path a leftover marker can trigger, alongside
-		// newAPIClient and requireHumanLocalCommand. It has to name the file
-		// too: a user hitting this one through `config show` or `auth status`
-		// is as stuck as one hitting the others, and "which command did you
-		// happen to run first" must not decide whether the error is actionable.
+		// 残留 marker 还能触发第三条拒绝路径（另外两条在 newAPIClient 与
+		// requireHumanLocalCommand）。同样必须点名文件：用户通过 `config show`
+		// 或 `auth status` 撞上它时和其它路径一样无助，而「你先跑了哪条命令」
+		// 不该决定错误是否可操作。
 		if markerPath := leftoverDaemonTaskMarkerPath(); markerPath != "" {
 			return fmt.Errorf("daemon-managed task requires a task-local Multica config root in %s%s", cli.TaskConfigRootEnv, leftoverMarkerSuffix(markerPath))
 		}
@@ -419,20 +421,18 @@ func requireTaskLocalConfigRoot() error {
 	return nil
 }
 
-// requireHumanLocalCommand rejects commands whose purpose is to authenticate,
-// set up, or operate the human-owned local daemon/profile. Task API commands
-// remain available with the injected mat_ token; these local commands do not.
+// requireHumanLocalCommand 拒绝以认证、初始化或操作人类自有本地 daemon/profile
+// 为目的的命令。任务 API 命令靠注入的 mat_ token 仍可用，这些本地命令不可用。
 func requireHumanLocalCommand(command string) error {
 	if !inDaemonTaskIdentityContext() {
 		return nil
 	}
-	// A task-scoped workdir marker with no task identity in the environment is
-	// the one signal that can outlive the task that wrote it: a local_directory
-	// run that never cleaned up leaves it in the user's own repository, where it
-	// disables every command below this function for that whole directory tree
-	// until someone deletes the file by hand (MUL-6132). Name it, so the user
-	// knows which file that is; the bare message below sends them to the source
-	// instead. Mirrors newAPIClient's leftover-marker handling.
+	// 带任务作用域的工作目录 marker 且环境里没有任务身份，是唯一能活得比
+	// 写出它的任务更久的信号：一次没做清理的 local_directory 运行会把 marker
+	// 留在用户自己的仓库里，在有人手工删掉这个文件（MUL-6132）之前，它会禁用
+	// 该目录树下本函数之后的所有命令。点名这个文件，用户才知道要删的是哪个；
+	// 只有一句干巴巴的报错会把用户引向源码。与 newAPIClient 的残留 marker 处理
+	// 互为镜像。
 	if markerPath := leftoverDaemonTaskMarkerPath(); markerPath != "" {
 		return fmt.Errorf("%s is not available inside a daemon-managed task%s", command, leftoverMarkerSuffix(markerPath))
 	}
@@ -443,9 +443,8 @@ func hasDaemonTaskContextMarker() bool {
 	return daemonTaskContextMarkerPath() != ""
 }
 
-// daemonTaskContextMarkerPath walks up from the current working directory and
-// returns the path of the first readable daemon-task marker whose managed_by
-// matches, or "" when none is found.
+// daemonTaskContextMarkerPath 从当前工作目录逐级向上，返回第一个可读、且其
+// managed_by 匹配的 daemon 任务 marker 的路径；找不到时返回空串。
 func daemonTaskContextMarkerPath() string {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -453,14 +452,12 @@ func daemonTaskContextMarkerPath() string {
 	}
 	for {
 		markerPath := filepath.Join(dir, execenv.TaskContextMarkerRelPath)
-		// Only a marker we can read AND whose managed_by matches counts as a
-		// daemon-task signal. Any other outcome — missing file, unreadable
-		// path, or a foreign file at this name — is treated as "no signal
-		// here", so we keep walking up. We must not fail closed on an
-		// unrelated read error (e.g. an unsearchable ancestor directory on a
-		// normal user's machine), which would refuse their PAT for no reason;
-		// the daemon writes this marker world-readable in the agent's own
-		// workdir, so a legitimate agent can always read it.
+		// 只有「能读到」且「managed_by 匹配」的 marker 才算 daemon 任务信号；
+		// 其它任何结果——文件缺失、路径不可读、或同名文件来自他人——一律视为
+		// 「此处无信号」，继续向上走。不能在无关的读取错误上 fail closed（例如
+		// 普通用户机器上某个祖先目录不可搜索），那会无缘无故拒绝用户的 PAT；
+		// daemon 把 marker 写成 agent 自己工作目录里人人可读的文件，合法 agent
+		// 总能读到它。
 		if data, err := os.ReadFile(markerPath); err == nil {
 			var marker struct {
 				ManagedBy string `json:"managed_by"`
@@ -483,8 +480,8 @@ func resolveWorkspaceID(cmd *cobra.Command) string {
 	if val != "" {
 		return val
 	}
-	// Inside an agent task the daemon is the only authority on workspace
-	// identity. Never read the user-global CLI config here.
+	// agent 任务内部，workspace 身份的唯一权威是 daemon；绝不回读用户全局 CLI
+	// 配置。
 	if inDaemonManagedExecutionContext() {
 		return ""
 	}
@@ -493,9 +490,8 @@ func resolveWorkspaceID(cmd *cobra.Command) string {
 	return cfg.WorkspaceID
 }
 
-// requireWorkspaceID resolves the workspace ID and returns an error with
-// actionable instructions if it is empty (e.g. user has multiple workspaces
-// but no default configured).
+// requireWorkspaceID 解析 workspace ID，若为空（例如用户有多个 workspace 却没
+// 配置默认值）则返回带可操作指引的错误。
 func requireWorkspaceID(cmd *cobra.Command) (string, error) {
 	id := resolveWorkspaceID(cmd)
 	if id == "" {
@@ -508,7 +504,7 @@ func requireWorkspaceID(cmd *cobra.Command) (string, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Agent commands
+// agent 主命令（run* 实现）
 // ---------------------------------------------------------------------------
 
 func runAgentList(cmd *cobra.Command, _ []string) error {
@@ -596,12 +592,11 @@ func runAgentGet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// applyAgentPermissionFlags translates the invocation-permission flags
-// (--permission-mode / --public-to-workspace / --public-to-member) into the
-// permission_mode + invocation_targets request fields (MUL-3963). When none of
-// the flags are set it is a no-op, so the legacy --visibility handling still
-// drives the request. When any public-to-* flag is present without an explicit
-// --permission-mode, the mode defaults to public_to.
+// applyAgentPermissionFlags 把调用权限相关 flag（--permission-mode /
+// --public-to-workspace / --public-to-member）翻译成 permission_mode +
+// invocation_targets 请求字段（MUL-3963）。这些 flag 一个都没设置时是 no-op，
+// 继续由旧的 --visibility 处理逻辑驱动请求；只给了 public-to-* 却没显式
+// --permission-mode 时，mode 默认取 public_to。
 func applyAgentPermissionFlags(cmd *cobra.Command, body map[string]any) {
 	hasMode := cmd.Flags().Changed("permission-mode")
 	hasWorkspace := cmd.Flags().Changed("public-to-workspace")
@@ -683,10 +678,9 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 		v, _ := cmd.Flags().GetString("model")
 		body["model"] = v
 	}
-	// thinking_level mirrors model: a thin pass-through to the top-level agent
-	// field the server already accepts and validates (IsKnownThinkingValue).
-	// The CLI deliberately does not enumerate valid levels — they are
-	// runtime/model-specific and the server owns the catalog (MUL-2339).
+	// thinking_level 与 model 一样只是薄透传：直接落到 server 已接受并校验的
+	// agent 顶层字段（IsKnownThinkingValue）。CLI 有意不枚举合法取值——它们是
+	// runtime/model 相关的，目录由 server 维护（MUL-2339）。
 	if cmd.Flags().Changed("thinking-level") {
 		v, _ := cmd.Flags().GetString("thinking-level")
 		body["thinking_level"] = v
@@ -768,9 +762,9 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 		v, _ := cmd.Flags().GetString("model")
 		body["model"] = v
 	}
-	// thinking_level is a tri-state on the server (omitted = no change, "" =
-	// clear to runtime default, value = set). Sending the key only when the
-	// flag was provided produces exactly that, the same way --model behaves.
+	// thinking_level 在 server 端是三态（缺省 = 不改，"" = 清回 runtime 默认，
+	// 有值 = 设置）。只在用户提供了对应 flag 时才发送该 key，正好还原这种三态
+	// 语义，与 --model 的行为一致。
 	if cmd.Flags().Changed("thinking-level") {
 		v, _ := cmd.Flags().GetString("thinking-level")
 		body["thinking_level"] = v
@@ -912,20 +906,20 @@ func runAgentAvatar(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--file is required")
 	}
 
-	// Validate file exists.
+	// 先校验文件存在。
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return fmt.Errorf("file not found: %w", err)
 	}
 
-	// Validate extension.
+	// 校验扩展名。
 	ext := strings.ToLower(filepath.Ext(filePath))
 	validExts := map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true}
 	if !validExts[ext] {
 		return fmt.Errorf("unsupported file format %q: must be .png, .jpg, .jpeg, .gif, or .webp", ext)
 	}
 
-	// Client-side size guard: reject files > 5MB.
+	// 客户端侧大小闸门：拒绝超过 5MB 的文件。
 	const maxSize = 5 << 20 // 5 MB
 	if info.Size() > maxSize {
 		return fmt.Errorf("file too large: %d bytes (max 5MB)", info.Size())
@@ -936,8 +930,7 @@ func runAgentAvatar(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("read file: %w", err)
 	}
 
-	// Defensive re-check: guard against TOCTOU race where the file
-	// was swapped between stat and read.
+	// 防御性复查：防止 TOCTOU 竞态——stat 与 read 之间文件被调包。
 	if len(fileData) > maxSize {
 		return fmt.Errorf("file too large: %d bytes (max 5MB)", len(fileData))
 	}
@@ -945,7 +938,7 @@ func runAgentAvatar(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cli.AtLeastAPITimeout(60*time.Second))
 	defer cancel()
 
-	// Agent existence pre-check.
+	// 上传前先确认 agent 存在。
 	var agent map[string]any
 	if err := client.GetJSON(ctx, "/api/agents/"+args[0], &agent); err != nil {
 		return fmt.Errorf("get agent: %w", err)
@@ -982,7 +975,7 @@ func runAgentAvatar(cmd *cobra.Command, args []string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Agent skills subcommands
+// agent skills 子命令
 // ---------------------------------------------------------------------------
 
 func runAgentSkillsList(cmd *cobra.Command, args []string) error {
@@ -1112,13 +1105,12 @@ func printAgentSkillsMutationResult(cmd *cobra.Command, agentID string, result j
 }
 
 // ---------------------------------------------------------------------------
-// Agent env subcommands
+// agent env 子命令
 // ---------------------------------------------------------------------------
 
-// runAgentEnvGet fetches the plaintext custom_env for a single agent
-// via the audited `/env` endpoint. The CLI prints raw JSON in JSON
-// mode and a key/value table otherwise; we never truncate or mask
-// values here — the security gate is on the server, not the printer.
+// runAgentEnvGet 经带审计的 `/env` 端点取回单个 agent 的明文 custom_env。
+// JSON 模式下原样打印原始 JSON，否则打 key/value 表；这里从不截断或打码——
+// 安全闸门在 server 端，不在打印端。
 func runAgentEnvGet(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -1148,12 +1140,10 @@ func runAgentEnvGet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runAgentEnvSet replaces an agent's custom_env wholesale via the
-// audited `/env` endpoint. The three secret-safe input channels
-// (--custom-env, --custom-env-stdin, --custom-env-file) are required
-// — at least one must be supplied — and the server treats any value
-// equal to "****" as "preserve the existing entry" (see the **** guard
-// in the handler).
+// runAgentEnvSet 经带审计的 `/env` 端点整体替换 agent 的 custom_env。三条
+// secret-safe 输入通道（--custom-env / --custom-env-stdin /
+// --custom-env-file）至少要给一个；server 把值为 "****" 的条目视为「保留
+// 原值」（见 handler 里的 **** 防护）。
 func runAgentEnvSet(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -1189,19 +1179,17 @@ func runAgentEnvSet(cmd *cobra.Command, args []string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
-// parseCustomEnv parses the --custom-env flag value (a JSON object literal)
-// into a string map suitable for the request body. The clear-all signal is
-// the explicit JSON object "{}"; empty or whitespace-only input is rejected
-// because for the stdin/file channels it almost always means an upstream
-// failure (missing file, unset pipe, set -o pipefail off) rather than a
-// deliberate clear. Treating it as "clear" silently wipes secrets.
+// parseCustomEnv 把 --custom-env flag 的值（一个 JSON 对象字面量）解析成适合放
+// 进请求体的 string map。「全部清空」的信号是显式的 JSON 对象 "{}"；空串或纯
+// 空白输入会被拒绝，因为对 stdin/文件通道而言，那几乎总意味着上游故障（文件
+// 缺失、管道未接、set -o pipefail 未关）而不是有意清空——把这种情况当成「清空」
+// 会在无声中抹掉机密。
 //
-// The payload is treated as secret material: parse errors never wrap the
-// underlying json error, because json.SyntaxError / UnmarshalTypeError can
-// surface short fragments of the input on some malformed inputs.
+// 载荷按机密材料对待：解析错误从不包装底层 json 错误，因为某些畸形输入会让
+// json.SyntaxError / UnmarshalTypeError 泄出输入的一小段内容。
 func parseCustomEnv(raw string) (map[string]string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, fmt.Errorf("--custom-env: empty input; pass '{}' to clear")
@@ -1216,12 +1204,10 @@ func parseCustomEnv(raw string) (map[string]string, error) {
 	return ce, nil
 }
 
-// parseCustomArgs parses the --custom-args flag value (a JSON array of
-// CLI argument strings). The error message is content-free for the same
-// reason as parseCustomEnv: although custom_args is not a dedicated
-// secret channel today, it routinely carries values like "--api-key=…"
-// for runtime providers, and json.Unmarshal errors can echo short
-// fragments of malformed input.
+// parseCustomArgs 解析 --custom-args flag 的值（CLI 参数字符串组成的 JSON
+// 数组）。错误信息不带内容，理由与 parseCustomEnv 相同：custom_args 目前虽然
+// 不是专属机密通道，但它经常携带如 "--api-key=…" 之类的 runtime provider
+// 取值，json.Unmarshal 错误可能回显畸形输入的一小段内容。
 func parseCustomArgs(raw string) ([]string, error) {
 	var ca []string
 	if err := json.Unmarshal([]byte(raw), &ca); err != nil {
@@ -1230,19 +1216,17 @@ func parseCustomArgs(raw string) ([]string, error) {
 	return ca, nil
 }
 
-// resolveCustomEnv collects the --custom-env, --custom-env-stdin, and
-// --custom-env-file flags and returns the parsed map, a bool indicating
-// whether the caller supplied any of them, and any error. The three input
-// channels are mutually exclusive so callers can't accidentally provide a
-// secret twice. Stdin and file inputs exist to keep secret material out of
-// shell history and 'ps' / /proc/<pid>/cmdline.
+// resolveCustomEnv 汇总 --custom-env / --custom-env-stdin / --custom-env-file
+// 三个 flag，返回解析好的 map、一个表示「调用方是否确实提供了其中任一通道」的
+// bool，以及可能的错误。三条通道互斥，避免调用方不小心把同一个机密给两次；
+// stdin 与文件输入存在的意义是把机密材料挡在 shell history 和
+// 'ps' / /proc/<pid>/cmdline 之外。
 func resolveCustomEnv(cmd *cobra.Command) (map[string]string, bool, error) {
 	inline := cmd.Flags().Changed("custom-env")
 	fromStdin, _ := cmd.Flags().GetBool("custom-env-stdin")
 	filePath, _ := cmd.Flags().GetString("custom-env-file")
-	// Note: an explicit --custom-env-file "" is honored as "the user asked
-	// for this channel with an empty path" and surfaces a real error below,
-	// rather than being silently swallowed.
+	// 注意：显式传 `--custom-env-file ""` 会被当作「用户明确选了这条通道但给了
+	// 空路径」对待，在下方抛出一个真实错误，而不是被静默吞掉。
 	fromFile := cmd.Flags().Changed("custom-env-file")
 
 	count := 0
@@ -1281,8 +1265,7 @@ func resolveCustomEnv(cmd *cobra.Command) (map[string]string, bool, error) {
 		}
 		buf, err := os.ReadFile(filePath)
 		if err != nil {
-			// Filesystem errors may include the path but not the contents —
-			// safe to surface via %w.
+			// 文件系统错误可能带路径但不会带内容——用 %w 透传是安全的。
 			return nil, false, fmt.Errorf("read --custom-env-file: %w", err)
 		}
 		raw = string(buf)
@@ -1298,28 +1281,24 @@ func resolveCustomEnv(cmd *cobra.Command) (map[string]string, bool, error) {
 	return ce, true, nil
 }
 
-// parseMcpConfig validates the --mcp-config value and returns the raw JSON to
-// send. It accepts a JSON object (the MCP config, e.g. {"mcpServers": {…}}) or
-// the literal `null` to clear the agent's config.
+// parseMcpConfig 校验 --mcp-config 的值，返回要发送的原始 JSON。它接受一个
+// JSON 对象（MCP 配置，如 {"mcpServers": {…}}），或表示清空该 agent 配置的
+// 字面量 `null`。
 func parseMcpConfig(raw string) (json.RawMessage, error) {
 	return parseMcpJSONObject("--mcp-config", raw, true)
 }
 
-// parseMcpJSONObject validates a JSON-object payload supplied through one of
-// the secret-safe flag channels. A top-level array or primitive is rejected
-// because it can never be a valid MCP payload — this mirrors the agent-settings
-// UI (mcp-config-tab.tsx). Empty/whitespace input is rejected rather than
-// treated as a clear: for the stdin/file channels it almost always signals an
-// upstream failure (missing file, unset pipe) rather than a deliberate clear,
-// and silently wiping a secret-bearing field is the wrong default.
+// parseMcpJSONObject 校验经某条 secret-safe 输入通道送来的 JSON 对象载荷。顶层
+// 数组或基本类型会被拒绝，因为它们永远不可能是合法的 MCP 载荷——这与 agent
+// 设置 UI（mcp-config-tab.tsx）一致。空串/纯空白输入同样被拒绝而非当作清空：
+// 对 stdin/文件通道它几乎总意味着上游故障（文件缺失、管道未接），而不是有意
+// 清空，而静默抹掉一个含机密的字段是错误的默认行为。
 //
-// allowNull controls whether the literal `null` is accepted as the clear
-// sentinel. It is not for a single server entry, where removing something has
-// its own command and `null` is far more likely to be a mistake.
+// allowNull 控制字面量 `null` 是否被接受为「清空」哨兵。单个 server 条目不适用
+// ——移除某条有自己的命令，此时 `null` 更可能是手误。
 //
-// The payload is treated as secret material (MCP entries routinely carry API
-// tokens), so parse errors never wrap the underlying json error, which can
-// echo short fragments of malformed input.
+// 载荷按机密材料对待（MCP 条目通常携带 API token），解析错误从不包装底层
+// json 错误，以免回显畸形输入的一小段内容。
 func parseMcpJSONObject(flag, raw string, allowNull bool) (json.RawMessage, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -1337,7 +1316,7 @@ func parseMcpJSONObject(flag, raw string, allowNull bool) (json.RawMessage, erro
 	}
 	if probe == nil {
 		if allowNull {
-			// null → clear (NULL column server-side; on create it is a no-op).
+			// null → 清空（server 端对应 NULL 列；create 时是 no-op）。
 			return json.RawMessage("null"), nil
 		}
 		return nil, fmt.Errorf("%s must be a JSON object, not null", flag)
@@ -1351,21 +1330,18 @@ func parseMcpJSONObject(flag, raw string, allowNull bool) (json.RawMessage, erro
 	return json.RawMessage(trimmed), nil
 }
 
-// resolveMcpConfig collects the --mcp-config, --mcp-config-stdin, and
-// --mcp-config-file flags and returns the raw JSON value to send, a bool
-// indicating whether the caller supplied any of them, and any error. Mirrors
-// resolveCustomEnv; the only behavioural difference is the clear sentinel
-// (`null` here vs `{}` for custom_env), because mcp_config distinguishes an
-// explicit empty object from an absent config server-side.
+// resolveMcpConfig 汇总 --mcp-config / --mcp-config-stdin / --mcp-config-file
+// 三个 flag，返回要发送的原始 JSON 值、一个表示「调用方是否确实提供了任一
+// 通道」的 bool，以及可能的错误。与 resolveCustomEnv 互为镜像，唯一行为差异是
+// 清空哨兵（这里是 `null`，custom_env 是 `{}`）——因为 server 端区分「显式空
+// 对象」与「未提供配置」。
 func resolveMcpConfig(cmd *cobra.Command) (json.RawMessage, bool, error) {
 	return resolveMcpJSONObject(cmd, "mcp-config", true)
 }
 
-// resolveMcpJSONObject collects the `<prefix>`, `<prefix>-stdin`, and
-// `<prefix>-file` flags. The three input channels are mutually exclusive so
-// callers can't accidentally provide a secret twice. Stdin and file inputs
-// exist to keep payloads — which routinely embed API tokens — out of shell
-// history and 'ps'.
+// resolveMcpJSONObject 汇总 `<prefix>` / `<prefix>-stdin` / `<prefix>-file` 三个
+// flag。三条通道互斥，避免调用方不小心把同一个机密给两次；stdin 与文件输入的
+// 存在意义是把载荷——它通常内嵌 API token——挡在 shell history 和 'ps' 之外。
 func resolveMcpJSONObject(cmd *cobra.Command, prefix string, allowNull bool) (json.RawMessage, bool, error) {
 	inline := cmd.Flags().Changed(prefix)
 	fromStdin, _ := cmd.Flags().GetBool(prefix + "-stdin")
@@ -1412,8 +1388,7 @@ func resolveMcpJSONObject(cmd *cobra.Command, prefix string, allowNull bool) (js
 		}
 		buf, err := os.ReadFile(filePath)
 		if err != nil {
-			// Filesystem errors may include the path but not the contents —
-			// safe to surface via %w.
+			// 文件系统错误可能带路径但不会带内容——用 %w 透传是安全的。
 			return nil, false, fmt.Errorf("read --%s-file: %w", prefix, err)
 		}
 		raw = string(buf)

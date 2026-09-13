@@ -1,3 +1,7 @@
+// 本文件实现结构化 HTTP 请求日志中间件：用 slog 替代 Chi 自带日志，逐请求输出
+// 方法/路径/状态码/耗时/请求ID/用户/客户端元信息，并针对两种噪声做了专门处理——
+// 一是 webhook 入站路径里带凭证，日志前要打码；二是 daemon 生命周期里常见的
+// 「资源已被删」404，不该按 Warn 淹没日志。
 package middleware
 
 import (
@@ -11,22 +15,19 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
 
-// webhookTriggerIDKeyType is unexported so foreign packages cannot collide on
-// the context key — they go through SetWebhookTriggerID instead.
+// webhookTriggerIDKeyType 用私有空结构体做 context 键的类型：不导出类型，外部包就
+// 无法用同类型键撞车——它们只能经 SetWebhookTriggerID 写入。
 type webhookTriggerIDKeyType struct{}
 
 var webhookTriggerIDKey = webhookTriggerIDKeyType{}
 
-// SetWebhookTriggerID stashes the resolved trigger ID on the request context
-// so the request logger can include it in the audit line without revealing
-// the bearer token in the URL path. Called by the webhook handler right after
-// the trigger row is looked up.
+// SetWebhookTriggerID 把解析好的 trigger ID 存进请求 context，让请求日志能把它写进
+// 审计行，同时不必把 bearer token 暴露在 URL 路径里。由 webhook handler 在查到
+// trigger 行之后立刻调用。
 //
-// Mutates `*r` in place so the wrapping middleware (which is still holding the
-// original `*http.Request`) reads the value back out of context after
-// ServeHTTP returns. Reassigning a local `r` variable would not propagate the
-// new context back up to the caller, which is the trap a previous version of
-// this helper fell into.
+// 注意它直接改 `*r` 指向的对象（就地替换成带新 context 的副本）：外层包装中间件仍
+// 握着最初的 `*http.Request`，ServeHTTP 返回后要能从 context 读回这个值。如果只给
+// 局部的 `r` 变量重新赋值，新 context 传不回去——旧版实现就踩过这个坑。
 func SetWebhookTriggerID(r *http.Request, triggerID string) {
 	if triggerID == "" {
 		return
@@ -34,26 +35,22 @@ func SetWebhookTriggerID(r *http.Request, triggerID string) {
 	*r = *r.WithContext(context.WithValue(r.Context(), webhookTriggerIDKey, triggerID))
 }
 
-// webhookTriggerIDFromContext returns the trigger ID stashed by
-// SetWebhookTriggerID, or "" when none was set.
+// webhookTriggerIDFromContext 读回 SetWebhookTriggerID 存的 trigger ID；没存过返回 ""。
 func webhookTriggerIDFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(webhookTriggerIDKey).(string)
 	return v
 }
 
-// webhookIngressPathPrefix is the public webhook ingress path. The path
-// segment after this prefix IS a bearer credential, so the logger must
-// redact it — see redactWebhookPath.
+// webhookIngressPathPrefix 是公开 webhook 入站路径。此前缀之后的路径段本身就是
+// bearer 凭证，日志必须打码——见 redactWebhookPath。
 const webhookIngressPathPrefix = "/api/webhooks/autopilots/"
 
-// redactWebhookPath returns a logger-safe version of a request path. For
-// the autopilot webhook ingress path the trailing token segment is replaced
-// with "[redacted]"; every other path passes through untouched.
+// redactWebhookPath 返回「可安全进日志」的路径。autopilot webhook 入站路径里把
+// 末尾的 token 段替换成 "[redacted]"；其它路径原样返回。
 //
-// Why this exists: r.URL.Path for a successful webhook delivery is
-// "/api/webhooks/autopilots/awt_<32-byte-base64>", and the token is the
-// only credential gating the route. Without redaction, every successful
-// delivery prints a replayable URL into the structured log stream.
+// 为什么要打码：成功投递的 webhook 请求，r.URL.Path 形如
+// "/api/webhooks/autopilots/awt_<32字节base64>"，而 token 是这条路由唯一的凭据。
+// 不打码的话，每次成功投递都会把一条可重放的 URL 打进行结构化日志。
 func redactWebhookPath(path string) string {
 	if !strings.HasPrefix(path, webhookIngressPathPrefix) {
 		return path
@@ -62,21 +59,22 @@ func redactWebhookPath(path string) string {
 	if rest == "" {
 		return path
 	}
-	// Preserve any sub-path after the token (currently none, but defensive).
+	// 保留 token 之后的子路径（当前没有，防御性处理）。
 	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
 		return webhookIngressPathPrefix + "[redacted]" + rest[slash:]
 	}
 	return webhookIngressPathPrefix + "[redacted]"
 }
 
-// boundedBuffer captures up to Cap bytes from a stream then silently drops the
-// rest. Used by RequestLogger so a large response body cannot blow up logger
-// memory while we mirror just enough bytes to classify the response.
+// boundedBuffer 最多从流里收 cap 字节，其余静默丢弃。RequestLogger 用它镜像一小段
+// 响应体来做 404 分类——大响应体不能因此撑爆日志进程的内存。
 type boundedBuffer struct {
 	buf bytes.Buffer
 	cap int
 }
 
+// Write 实现 io.Writer：达到容量上限后返回 len(p), nil（假装写完了），
+// 让上游（net/http）以为一切正常，而实际只截取了前 cap 字节。
 func (b *boundedBuffer) Write(p []byte) (int, error) {
 	remain := b.cap - b.buf.Len()
 	if remain <= 0 {
@@ -90,31 +88,28 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// Bytes 返回已捕获的内容。
 func (b *boundedBuffer) Bytes() []byte { return b.buf.Bytes() }
 
-// softNotFoundBodyCaptureLimit is the maximum number of body bytes the
-// request logger inspects to decide whether a 404 is an expected stale-state
-// signal (runtime/task deleted server-side). The JSON error envelope is small
-// — 256 bytes is enough to see the "error" field — and the cap means an
-// unbounded handler body cannot blow up logger memory.
+// softNotFoundBodyCaptureLimit 是请求日志为判定「404 是否为预期的过期状态信号」
+// （runtime/task 已在服务端删除）而最多检查的响应体字节数。JSON 错误信封很小——
+// 256 字节足以看到 "error" 字段——这个上限也保证无界 handler 响应体撑不爆日志内存。
 const softNotFoundBodyCaptureLimit = 256
 
-// softNotFoundMarkers are 404 response bodies the daemon emits routinely as
-// part of normal lifecycle events: a runtime deleted from the UI, a task GC'd
-// after an issue was removed, etc. Logging these at Warn turned production
-// stderr into a flood whenever a runtime was deleted (see issue #2391). They
-// stay machine-recognizable at Info, while genuine 4xx (wrong path, bad
-// auth, real bugs) keep Warn.
+// softNotFoundMarkers 是 daemon 在日常生命周期里例行输出的 404 响应体特征：
+// 从 UI 删掉一个 runtime、issue 被删后 task 被 GC……把这批按 Warn 打，会让生产
+// stderr 在删除 runtime 时刷屏（见 issue #2391）。它们保持机器可识别地落在 Info 级，
+// 而真正的 4xx（路径错、鉴权失败、真 bug）仍然走 Warn。
 var softNotFoundMarkers = []string{
 	"runtime not found",
 	"task not found",
 }
 
-// RequestLogger is a structured HTTP request logger using slog.
-// It replaces Chi's built-in chimw.Logger with colored, structured output.
+// RequestLogger 是 slog 版结构化 HTTP 请求日志中间件，替代 Chi 内置的
+// chimw.Logger，输出带颜色的结构化字段。
 func RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip the hot liveness endpoint to keep logs readable.
+		// 跳过高频的存活探活端点，保持日志可读。
 		if r.URL.Path == "/health" {
 			next.ServeHTTP(w, r)
 			return
@@ -123,9 +118,8 @@ func RequestLogger(next http.Handler) http.Handler {
 		start := time.Now()
 		ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
 
-		// Capture a small body prefix so 404s can be classified by content.
-		// chimw.WrapResponseWriter exposes Tee for exactly this — the body
-		// keeps flowing to the client; we mirror up to N bytes for inspection.
+		// 捕获一小段响应体前缀，好按内容给 404 分类。chimw.WrapResponseWriter 提供
+		// Tee 正是干这个的——响应体照常流向客户端，我们只镜像前 N 字节供检查。
 		bodyPrefix := &boundedBuffer{cap: softNotFoundBodyCaptureLimit}
 		ww.Tee(bodyPrefix)
 
@@ -161,14 +155,15 @@ func RequestLogger(next http.Handler) http.Handler {
 			}
 		}
 
+		// 按状态分日志级别：5xx 用 Error；「软 404」（预期内的过期状态）用 Info；
+		// 其余 4xx 用 Warn；正常请求用 Info。
 		switch {
 		case status >= 500:
 			slog.Error("http request", attrs...)
 		case status == http.StatusNotFound && isSoftNotFound(bodyPrefix.Bytes()):
-			// Lifecycle 404 — runtime/task was deleted server-side. The daemon
-			// catches this exact body and triggers its own self-heal, so it is
-			// neither noise nor a bug; logging at Info keeps the signal in
-			// structured logs without flooding the warn channel.
+			// 生命周期 404——runtime/task 在服务端已被删。daemon 正是捕获这段响应体
+			// 触发自己的自愈流程，所以它既不是噪声也不是 bug；打在 Info 级让信号留在
+			// 结构化日志里，又不淹没 warn 通道。
 			slog.Info("http request", attrs...)
 		case status >= 400:
 			slog.Warn("http request", attrs...)
@@ -178,8 +173,8 @@ func RequestLogger(next http.Handler) http.Handler {
 	})
 }
 
-// isSoftNotFound reports whether the captured response body matches one of
-// the expected stale-state 404 signals listed in softNotFoundMarkers.
+// isSoftNotFound 判断捕获的响应体是否命中 softNotFoundMarkers 里某个预期中的
+// 过期状态 404 特征。命中则说明这不是 bug，而是正常生命周期。
 func isSoftNotFound(body []byte) bool {
 	if len(body) == 0 {
 		return false

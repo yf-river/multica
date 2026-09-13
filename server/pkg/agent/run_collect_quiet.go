@@ -1,5 +1,14 @@
 package agent
 
+// 文件职责：给"一次性输出式"的短命令提供"安静收集"运行器——不等进程退出，而是
+// 一旦 stdout 已给出完整答案并安静了一阵就收工。
+//
+// 动机：openclaw 之类 CLI 的 config file / agents list 会"打印完答案就永不退出"
+// （实测 60s 挂着），死等退出会把两条好使的命令变成任务致命错误。完整的设计动机、
+// 为什么必须由调用方给"答案完整性"规则、以及调用方可依赖的五条保证，都写在
+// RunCollectQuiet 的文档里——那里是唯一详细展开的地方。被谁消费：Prepare →
+// prepareOpenclawConfig 等任务 setup 的一次性探测命令。
+
 import (
 	"bytes"
 	"context"
@@ -10,151 +19,124 @@ import (
 	"time"
 )
 
-// DefaultQuietIdleGrace is how long stdout must stay silent, on top of already
-// carrying a complete answer, before RunCollectQuiet stops waiting for a CLI to
-// exit.
+// DefaultQuietIdleGrace 是"stdout 已经带上一份完整答案之后，还必须安静多久"才让
+// RunCollectQuiet 停止等 CLI 退出。
 //
-// Sized for "the CLI already flushed its answer": these commands print a path or
-// a short JSON document, and the writes of one logical response land
-// back-to-back — measured at 0.012–0.033ms apart on a real host. 400ms is orders
-// of magnitude longer than that, and short enough that the calls task setup
-// makes cost about a second in the misbehaving case instead of a full
-// openclawCLITimeout each.
+// 按"CLI 已刷完答案"的场景定尺寸：这些命令打印一个路径或一段短 JSON，同一条逻辑
+// 响应的各次写入背靠背落地——真实主机实测间隔 0.012–0.033ms。400ms 比它大了几个
+// 量级，又短到让任务 setup 的这类调用在最坏情况下只多花约一秒，而不是每次都吃满
+// openclawCLITimeout。
 //
-// What that sizing does *not* cover, and what the caller's `complete` rule has
-// to: a gap between output that is not the answer and the answer itself. On the
-// same host, a config that produces Doctor and plugin warnings put a single
-// 3285ms silence between the end of the warning block and the config path. Any
-// rule that accepts something printed before the answer therefore has 3.2s in
-// which to fire on it, and no value here can fix that — review demonstrated it
-// against a 5s grace with a warning line that was itself a path.
+// 这个尺寸*不*覆盖、而必须由调用方的 `complete` 规则覆盖的，是"输出里非答案的
+// 部分与答案本身之间的空档"。同一台主机上，一个会产 Doctor/plugin 警告的配置，
+// 在警告块结束到 config 路径之间埋了整整 3285ms 的静默。任何会接受"答案之前打印
+// 的东西"的规则，就有 3.2s 空档可能对它误触发，这里改成多大的值都救不了——
+// review 曾用一条"本身就是路径"的警告行，把 5s 宽限的规则打穿过。
 //
-// So the requirement lands on the rules rather than on this constant: a rule must
-// be unsatisfiable by anything the CLI prints before its answer. The only rule in
-// this package that qualifies is JSONOutputComplete, because a document has to
-// parse as a whole and because upstream keeps incidental output off a `--json`
-// stdout entirely. Judging human-readable output by shape does not qualify, and
-// the `config file` rule that tried was removed rather than retuned — see
-// openclawOutputComplete in internal/daemon/execenv.
+// 所以要求落在规则上而不是这个常量上：规则必须"CLI 在答案之前打印的任何东西都
+// 无法满足它"。本包唯一够格的规则是 JSONOutputComplete——文档必须整体可解析，且
+// 上游把零碎输出完全挡在 `--json` 的 stdout 之外。凭"长得像"去判断人读的输出不
+// 够格；曾经试过的 config file 规则被删掉而不是重调——见 internal/daemon/execenv
+// 里的 openclawOutputComplete。
 //
-// It is also the window in which a *late* failure can still be observed: a CLI
-// that prints a complete answer and then exits non-zero is reported as the
-// failure it is, as long as it does so within the grace. Beyond that it is
-// indistinguishable from one that prints an answer and hangs forever, which is
-// the case this whole helper exists to survive.
+// 它同时是"迟到的失败"仍能被观察到的窗口：CLI 打印完整答案后以非零码退出，只要
+// 发生在宽限内，就会被如实报成失败。超过宽限，它与"打印完就永远挂着"无法区分——
+// 而后者正是这个 helper 存在要扛的情形。
 const DefaultQuietIdleGrace = 400 * time.Millisecond
 
-// quietPoll is how often RunCollectQuiet re-evaluates its exit conditions.
+// quietPoll 是 RunCollectQuiet 重估退出条件的轮询间隔。
 const quietPoll = 50 * time.Millisecond
 
-// OutputComplete reports whether the bytes captured so far are a *finished*
-// answer for the command that produced them.
+// OutputComplete 报告"截至目前捕获的字节"是不是产生它们的命令的*已完成*答案。
 //
-// This is the caller's judgement, not something the runner can infer: only the
-// caller knows whether `{"agents":[{"id":"a"},` is a truncated document or a
-// legitimate one. Without it, "we have some output" gets mistaken for "we have
-// the output" and a response interrupted mid-flight is reported as success.
+// 这是调用方的判断，不是运行器能推断的：只有调用方知道
+// `{"agents":[{"id":"a"},` 是一份截断的文档还是一份合法的。没有它，"有点输出"
+// 就会被误当成"有完整输出"，被打断半截的响应被报成成功。
 type OutputComplete func(stdout []byte) bool
 
-// JSONOutputComplete is the rule for commands whose entire answer is one JSON
-// document. Empty output is never complete; a lone `null` is, since that is how
-// the CLI reports an unset key.
+// JSONOutputComplete 是"整份答案恰为单个 JSON 文档"的命令所用规则。空输出永远
+// 不算完整；单独的 `null` 算——那是 CLI 报告"未设置键"的写法。
 //
-// Note this requires the whole buffer to parse, so a CLI that prints banner text
-// before its JSON never satisfies it. That matches how the callers parse the
-// result anyway (a whole-buffer json.Unmarshal), so such output was never usable
-// — it now fails on the deadline instead of on the parse.
+// 注意它要求整个缓冲区可解析：打印 JSON 之前先吐横幅文本的 CLI 永远不满足它。
+// 这与调用方本就按整缓冲 json.Unmarshal 来解析结果的方式一致——那样的输出本来
+// 也从来没法用，现在不过是改成"在超时时失败"，而不是"在解析时失败"。
 func JSONOutputComplete(stdout []byte) bool {
 	trimmed := bytes.TrimSpace(stdout)
 	return len(trimmed) > 0 && json.Valid(trimmed)
 }
 
-// RunCollectQuiet runs a one-shot CLI command and returns when the process
-// exits, or — for a CLI that will not exit — as soon as it has produced output
-// that `complete` accepts and that has then stayed idle for idleGrace.
+// RunCollectQuiet 运行一条一次性 CLI 命令：进程退出即返回；对那种不肯退出的 CLI，
+// 则一旦 stdout 产出被 `complete` 接受、随后又安静了 idleGrace，就立即返回。
 //
-// # Why "output is enough" beats "wait for exit"
+// # 为什么"输出够了"优于"等退出"
 //
-// Measured on a host running openclaw 2026.5.27:
+// 实测自跑 openclaw 2026.5.27 的主机：
 //
-//	openclaw --version    258ms  exits cleanly
-//	openclaw config file    60s  correct path printed, then never exits
-//	openclaw agents list    60s  correct list printed, then never exits
+//	openclaw --version    258ms  干净退出
+//	openclaw config file    60s  正确路径已打印，然后永不退出
+//	openclaw agents list    60s  正确列表已打印，然后永不退出
 //
-// Waiting for exit turns two working commands into a task-fatal error, and they
-// sit on the task's critical path (Prepare -> prepareOpenclawConfig). The
-// contract of those commands is "print a value"; once the value has arrived,
-// whether the process tidies itself up is not the caller's business.
+// 死等退出会把两条好使的命令变成任务致命错误，而它们都卡在任务关键路径上
+// （Prepare → prepareOpenclawConfig）。这些命令的契约是"打印一个值"；值到了，
+// 进程有没有自我善后不是调用方该管的。
 //
-// Nor is that a quirk of the build those timings came from. Upstream has an
-// explicit opt-in for "print a one-shot answer and then exit" —
-// `requestExitAfterOneShotOutput`, flushed at the end of `runCli` after both
-// streams drain (`src/cli/one-shot-exit.ts`, checked at `v2026.7.1`). In the
-// shipped 2026.7.1 build only `models list`, `models status` and the hooks CLI
-// take it. `config file`, `config get` and `agents list` do not: their success
-// paths only print, so termination is whatever the Node event loop happens to
-// do, and `runtime.exit` appears on their failure paths alone. So a version
-// where they exit promptly is not making a promise a later one has to keep.
+// 那也不是这批计时所来自的构建的怪癖。上游有显式的"打印完一次性答案就退出"
+// opt-in——requestExitAfterOneShotOutput，在 runCli 末尾两条流都排空后冲刷
+// （src/cli/one-shot-exit.ts，v2026.7.1 核对）。已发布的 2026.7.1 只有 models
+// list、models status 与 hooks CLI 启用它。config file、config get、agents list
+// 都没有：它们的成功路径只打印，结束与否是 Node 事件循环碰巧做什么，而
+// runtime.exit 只出现在失败路径上。所以"某个版本它们退得干脆"不是后来版本必须
+// 守的承诺。
 //
-// # Why `complete` is required rather than "any output"
+// # 为什么必须有 `complete`，而不是"有输出就行"
 //
-// An earlier revision returned success from the deadline branch whenever stdout
-// was non-empty. That salvaged partial answers: a CLI still streaming when the
-// deadline arrived had its truncated output reported as success (measured 9 runs
-// in 10 against a 250ms deadline). Two conditions now gate the early return, and
-// neither is sufficient alone:
+// 更早的版本只要 stdout 非空就从超时分支返回成功。那会打捞残缺答案：CLI 在超时
+// 到达时还在流式输出，其被截断的输出被报成成功（250ms 超时下实测 10 次里 9 次）。
+// 现在有两个条件同时把守提前返回，单独哪个都不够：
 //
-//   - `complete` accepts the buffer. Idle alone is not enough, because the CLI
-//     may be pausing between a banner and the real answer — `openclaw config
-//     file` prints Doctor warning UI first (see MUL-3136), and cutting off there
-//     yields the banner instead of the path. The rule carries the whole weight of
-//     that distinction: review broke a rule that judged the path by *shape* with a
-//     warning line that was itself a path, so a rule has to be one the CLI's
-//     pre-answer output cannot satisfy at all.
-//   - The buffer has then been idle for idleGrace. Complete alone is not enough,
-//     because more output may still follow and change the answer.
+//   - `complete` 接受该缓冲区。光安静不够——CLI 可能在横幅与真正答案之间停顿：
+//     `openclaw config file` 会先打印 Doctor 警告 UI（见 MUL-3136），在那里掐掉
+//     拿到的是横幅而不是路径。这条规则承担了全部区分工作：review 曾用"本身就是
+//     路径的警告行"打穿"按形状判断路径"的规则，所以规则必须是 CLI 答案前的输出
+//     根本无法满足的那种。
+//   - 随后该缓冲区安静了 idleGrace。光完整不够——后面可能还有输出、还可能改变
+//     答案。
 //
-// Reaching the context deadline is never success. Whatever was captured is
-// returned alongside the error so a caller with a different rule can inspect it,
-// but this helper does not decide on the caller's behalf.
+// 走到 context 超时永远不算成功。捕获到的内容会连同错误一起返回，让持不同规则的
+// 调用方自己检查，但本 helper 不替调用方作决定。
 //
-// A nil `complete` disables the early return entirely: the call then waits for
-// exit, bounded only by ctx. That is the right default for a command whose
-// output shape has no completeness rule.
+// `complete` 传 nil 则完全禁用提前返回：调用死等退出，只受 ctx 约束。对"输出
+// 形态没有完整性规则"的命令，这是合适的默认。
 //
-// quiet reports that the return did not come from a clean exit, so callers can
-// log the CLI's misbehaviour without failing on it.
+// quiet 报告返回并非来自干净退出，让调用方能记下 CLI 的不规矩行为、而不必因此
+// 判失败。
 //
-// Guarantees callers depend on:
+// 调用方依赖的保证：
 //
-//  1. Returns within roughly the caller's context deadline plus collectDrainGrace,
-//     collectReapWindow and collectSettleGrace, whatever the CLI leaves behind.
-//  2. Descendants that are still in the leader's process group are signalled
-//     before returning, and the signal is repeated across collectReapWindow so one
-//     that was mid-fork does not escape. A descendant that left the group is out
-//     of reach on Unix — OpenClaw's helper was measured with its own PGID and SID —
-//     which is why guarantee 1 does not depend on the kill landing. Windows is
-//     different: the Job Object owns the tree irrespective of groups.
-//  3. Output is not abandoned while something may still be writing it: after the
-//     direct child exits, the call waits for pipe EOF unless `complete` says the
-//     answer is in. Leader exit alone is not treated as completion.
-//  4. Retention is bounded — collectStdoutLimit for the answer (reported, not
-//     silently truncated) and collectStderrTail for the diagnostic sample.
-//  5. The command's real exit status is reported, which openclawShimDiagnostic
-//     depends on (it type-switches on *exec.ExitError).
+//  1. 无论 CLI 留下什么，都会在大致"调用方 context 截止 + collectDrainGrace +
+//     collectReapWindow + collectSettleGrace"内返回。
+//  2. 返回前会向仍留在首进程进程组里的后代发信号，并且信号在 collectReapWindow
+//     内重复发送，让"恰好 fork 到一半"的后代逃不掉。已离开进程组的后代在 Unix 上
+//     就够不着了——OpenClaw 的 helper 实测有自己的 PGID 与 SID——所以保证 1 不
+//     依赖这次 kill 打没打中。Windows 不同：Job Object 拥有整棵树，与组无关。
+//  3. 只要还有东西可能正在写输出，就不抛弃输出：直接子进程退出后，除非 `complete`
+//     说答案已在，否则继续等管道 EOF。仅"首进程退出"不算完成。
+//  4. 保留有界——答案按 collectStdoutLimit（溢出会上报而不是静默截断），诊断样本
+//     按 collectStderrTail 留尾部。
+//  5. 如实报告命令真实退出状态——openclawShimDiagnostic 依赖它（它做
+//     *exec.ExitError 的类型分支）。
 //
-// Use this only for commands whose entire output is a short one-shot response.
-// Anything that streams incrementally (agent execution) must keep its own
-// lifecycle handling, where a pause in output carries meaning.
+// 只把整个输出是短一次性响应的命令交给它。任何增量流式输出的东西（agent 执行）
+// 必须自己管理生命周期——那种场景里输出的停顿本身有意义。
 func RunCollectQuiet(ctx context.Context, env []string, idleGrace time.Duration, complete OutputComplete, execPath string, args ...string) (stdout []byte, stderr string, quiet bool, err error) {
-	// Command.exec, not exec.CommandContext: launch.go owns process construction so
-	// a custom runtime's fixed_args prefix cannot be dropped (GH #7046). A zero
-	// Command has no prefix, which is what a bare path argument means here.
+	// 用 Command.exec 而不是 exec.CommandContext：进程构造归 launch.go 所有，
+	// 这样自定义运行时的 fixed_args 前缀就不会丢（GH #7046）。零值 Command 没有
+	// 前缀，正好对应这里传裸路径参数的情况。
 	return RunCollectQuietCmd(ctx, Command{Path: execPath}.exec(ctx, args...), env, idleGrace, complete)
 }
 
-// RunCollectQuietCmd is RunCollectQuiet for a caller that already holds a
-// *exec.Cmd, which is what Command.exec returns.
+// RunCollectQuietCmd 是给已持有 *exec.Cmd（Command.exec 的返回值）的调用方用的
+// RunCollectQuiet。
 func RunCollectQuietCmd(ctx context.Context, cmd *exec.Cmd, env []string, idleGrace time.Duration, complete OutputComplete) (stdout []byte, stderr string, quiet bool, err error) {
 	if idleGrace <= 0 {
 		idleGrace = DefaultQuietIdleGrace
@@ -171,10 +153,9 @@ func RunCollectQuietCmd(ctx context.Context, cmd *exec.Cmd, env []string, idleGr
 	for {
 		select {
 		case <-c.waitDone:
-			// The direct child is gone, which is not the same as "no more output
-			// is coming" — a wrapper may have exited while the real CLI still
-			// owes us the answer. Wait for pipe EOF, bounded, unless the answer
-			// is already in; see awaitOutputAfterExit.
+			// 直接子进程没了，这并不等于"不会再有输出"——包装器可能先退出，真正
+			// 的 CLI 还欠着答案。有界地等管道 EOF，除非答案已经在手；见
+			// awaitOutputAfterExit。
 			c.awaitOutputAfterExit(ctx, complete)
 			c.finish()
 			out := c.stdout.snapshot()
@@ -186,11 +167,9 @@ func RunCollectQuietCmd(ctx context.Context, cmd *exec.Cmd, env []string, idleGr
 		case <-ctx.Done():
 			c.finish()
 			out := c.stdout.snapshot()
-			// Deliberately no salvage. Reaching the deadline means we never saw
-			// output that `complete` accepted, so by the caller's own rule the
-			// buffer is unfinished. Prefer the process error when we have one:
-			// callers attribute ctx themselves and a "signal: killed" detail is
-			// worth keeping in the message.
+			// 刻意不做"打捞"。走到超时说明我们从没见过 `complete` 接受的输出，
+			// 按调用方自己的规则，缓冲区就是不完整的。有进程错误时优先报它：
+			// 调用方自己会归因 ctx，而 "signal: killed" 这类细节值得留在消息里。
 			if werr, reaped := c.exitErr(); reaped && werr != nil {
 				return out, string(c.stderr.snapshot()), true, werr
 			}
@@ -200,6 +179,8 @@ func RunCollectQuietCmd(ctx context.Context, cmd *exec.Cmd, env []string, idleGr
 			if complete == nil {
 				continue
 			}
+			// 轮询安静判定：有产出且安静时长达到宽限，且缓冲区被 `complete`
+			// 接受，才提前收工。
 			idle, produced := c.stdout.idleFor()
 			if !produced || idle < idleGrace {
 				continue
@@ -208,10 +189,9 @@ func RunCollectQuietCmd(ctx context.Context, cmd *exec.Cmd, env []string, idleGr
 			if !complete(out) {
 				continue
 			}
-			// A finished answer that has gone quiet: take it and reap the tree.
-			// `out` is the buffer `complete` accepted, deliberately not a fresh
-			// snapshot — bytes a lingering descendant appends after that verdict
-			// were never part of the answer and could only break the parse.
+			// 一份完整的答案、而且安静了：收下并收割整棵树。`out` 是 `complete`
+			// 接受的那份缓冲区，刻意不重新快照——晚到的后代进程在判定之后追加的
+			// 字节从不是答案的一部分，只会弄坏解析。
 			c.finish()
 			if c.stdout.overflowed() {
 				return out, string(c.stderr.snapshot()), true, collectStdoutOverflowErr()
@@ -221,18 +201,16 @@ func RunCollectQuietCmd(ctx context.Context, cmd *exec.Cmd, env []string, idleGr
 	}
 }
 
-// errCollectStdoutTooLarge reports that the answer exceeded collectStdoutLimit.
+// errCollectStdoutTooLarge 报告答案超出了 collectStdoutLimit。
 //
-// Reported rather than returned quietly: these helpers run one-shot commands
-// whose response is a path or a short document, so overflow means the CLI is
-// malfunctioning, and a caller that parsed a head-truncated answer would be
-// parsing something the CLI never said. stderr is capped by keeping its tail
-// instead, because it is a diagnostic sample and not an answer — dropping its
-// front loses nothing a caller relies on.
+// 是上报而不是静默收下：这些 helper 跑的是"响应是路径或短文档"的一次性命令，
+// 溢出意味着 CLI 出毛病了；调用方拿一份被掐了头的答案去解析，等于在解析 CLI
+// 从没说过的话。stderr 靠保留尾部封顶，因为它是诊断样本而非答案——丢它的开头
+// 不会丢任何调用方依赖的东西。
 var errCollectStdoutTooLarge = errors.New("collected stdout exceeded its limit")
 
-// collectStdoutOverflowErr names the limit in the message while keeping
-// errCollectStdoutTooLarge as the sentinel callers match on.
+// collectStdoutOverflowErr 把限额写进消息，同时保留 errCollectStdoutTooLarge 作为
+// 调用方匹配的哨兵错误。
 func collectStdoutOverflowErr() error {
 	return fmt.Errorf("%w (%d bytes)", errCollectStdoutTooLarge, collectStdoutLimit)
 }

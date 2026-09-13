@@ -2,33 +2,31 @@ import Highlight from "@tiptap/extension-highlight";
 import { matchHighlightAt } from "../utils/highlight-match";
 
 /**
- * HighlightExtension — text highlight mark (`==text==` ⇄ <mark>).
+ * HighlightExtension——文本高亮 mark（`==text==` ⇄ <mark>）。
  *
- * Builds on @tiptap/extension-highlight, which already supplies the `<mark>`
- * parseHTML/renderHTML, the `==text==` input/paste rules, the
- * setHighlight/toggleHighlight/unsetHighlight commands, and the Mod-Shift-H
- * shortcut. On top of that we add @tiptap/markdown serialization so highlights
- * round-trip through the stored Markdown as `==text==`:
+ * 基于 @tiptap/extension-highlight 构建，后者已提供 `<mark>` 的
+ * parseHTML/renderHTML、`==text==` 的输入/粘贴规则、
+ * setHighlight/toggleHighlight/unsetHighlight 命令，以及 Mod-Shift-H 快捷键。
+ * 在此之上补上 @tiptap/markdown 序列化，让高亮以 `==text==` 的形态在存储的
+ * Markdown 里往返：
  *
- *   - renderMarkdown: highlight mark → `==…==`. @tiptap/markdown renders marks by
- *     calling renderMarkdown with a placeholder child and splitting the result
- *     into opening/closing fences, so wrapping the placeholder in `==` yields a
- *     `==` open and `==` close.
- *   - markdownTokenizer + parseMarkdown: `==text==` in stored Markdown → highlight
- *     mark. inlineTokens keeps inner inline formatting (e.g. `==**bold**==`).
+ *   - renderMarkdown: highlight mark → `==…==`。@tiptap/markdown 渲染 mark 时
+ *     用一个占位子节点调用 renderMarkdown，再把结果拆成开头/结尾围栏，
+ *     因此把占位符裹进 `==` 就得到 `==` 开、`==` 收。
+ *   - markdownTokenizer + parseMarkdown: 存储 Markdown 里的 `==text==` → highlight
+ *     mark。inlineTokens 保留内部的行内格式（例如 `==**bold**==`）。
  *
- * Single colour (yellow) for now — `multicolor` stays off. A future multicolour
- * variant would need a syntax that can carry a colour (`==text==` cannot), so it
- * is intentionally out of scope here (see MUL-2934).
+ * 目前单色（黄色）——`multicolor` 保持关闭。未来的多色变体需要能携带
+ * 颜色的语法（`==text==` 做不到），所以这里刻意不纳入范围（见 MUL-2934）。
  *
- * BOUNDARY RULES live in utils/highlight-match.ts and are shared with the
- * read-only renderer (utils/highlight-markdown.ts) so the editor and the
- * read-only view can never disagree on what counts as a highlight:
- *   - no whitespace directly inside the fences (`==x==` highlights, `== x ==` not)
- *   - non-empty content (`====` stays literal text)
- *   - neither fence may sit inside code/math (a `==` inside `` `code` `` / `$math$`
- *     is literal), so ``==a `b==c` d==`` highlights the whole span, not `a `b`
- *   - a highlight may not cross a blank line / block boundary
+ * 边界规则放在 utils/highlight-match.ts，并与只读渲染器
+ * （utils/highlight-markdown.ts）共享，保证编辑器与只读视图对「什么算高亮」
+ * 永远不会产生分歧：
+ *   - 紧贴围栏内侧不能有空白（`==x==` 高亮，`== x ==` 不）
+ *   - 内容非空（`====` 保持字面文本）
+ *   - 两侧围栏都不能落在代码/数学里（`` `code` `` / `$math$` 内的 `==`
+ *     是字面量），所以 ``==a `b==c` d==`` 高亮的是整段而不是 `a `b`
+ *   - 高亮不得跨越空行/块边界
  */
 
 export const HighlightExtension = Highlight.extend({

@@ -1,5 +1,8 @@
 "use client";
 
+// 本文件是 Agent 的“自定义启动参数”编辑标签页：逐条增删/修改给 CLI 的附加参数，
+// 本地编辑 + 显式保存，并实时预览拼好的整条启动命令。
+
 import { useEffect, useRef, useState } from "react";
 import {
   Loader2,
@@ -20,28 +23,40 @@ import {
   SettingsSection,
 } from "../../../settings/components/settings-layout";
 
+/** 本地编辑用的条目：id 只服务于 React key 与编辑定位，value 才是真实参数。 */
 interface ArgEntry {
   id: string;
   value: string;
 }
 
+/** 编辑器状态：正在新增 / 正在编辑某一条 / 未在编辑。 */
 type EditorState =
   | { kind: "add" }
   | { kind: "edit"; entryId: string }
   | null;
 
+/** 把后端参数数组变成带稳定 id 的本地条目。 */
 function argsToEntries(args: string[]): ArgEntry[] {
   return args.map((value) => ({ id: createSafeId(), value }));
 }
 
+/** 把本地条目变回干净的后端参数数组（去尾空、滤空串）。 */
 function entriesToArgs(entries: ArgEntry[]): string[] {
   return entries.map((entry) => entry.value.trim()).filter(Boolean);
 }
 
+/** 预览时给含空白的参数加引号（JSON 序列化），让整条命令能看清边界。 */
 function formatArgForPreview(value: string): string {
   return /\s/.test(value) ? JSON.stringify(value) : value;
 }
 
+/**
+ * 自定义启动参数编辑页。
+ * @param agent 当前 Agent（读 custom_args 作为已存值）。
+ * @param runtimeDevice 运行环境设备（若有 launch_header 则展示命令预览）。
+ * @param onSave 保存回调，携带部分 Agent 更新。
+ * @param onDirtyChange 本地是否改动的通知（父层用它拦截 Tab 切换）。
+ */
 export function CustomArgsTab({
   agent,
   runtimeDevice,

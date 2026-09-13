@@ -1,11 +1,11 @@
+// 本文件是 WeCom 智能机器人（"智能机器人" / aibot）集成中面向 Web UI 的管理端点，
+// 是 slack.go 的平行实现：通过 JSON 暴露 list / install / revoke，让设置页和各 agent
+// 的 Integrations 标签页驱动 wecom.InstallationService.Upsert / Revoke。
+//
+// 这里没有回调（callback）面——智能机器人是客户端主动发起的 WebSocket 长连接，
+// 不需要对外公开的回调 URL。另有一个把 WeCom 用户与 Multica 用户绑定的赎回端点
+// （RedeemWecomBindingToken）。
 package handler
-
-// wecom_web.go — the Web-UI-facing management endpoints for the WeCom
-// smart-bot ("智能机器人" / aibot) integration. Parallel of slack.go: it
-// exposes list / install / revoke over JSON so the Settings page and per-
-// agent Integrations tab can drive wecom.InstallationService.Upsert /
-// Revoke. There is no callback surface — the smart-bot is a client-initiated
-// WebSocket long connection, so a public callback URL is not required.
 
 import (
 	"context"
@@ -23,24 +23,21 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// wecomBodyLimit caps what either WeCom JSON endpoint will read. Both bodies
-// are a handful of short fields, and encoding/json materializes a string value
-// whole before Decode returns — so without a ceiling, one authenticated caller
-// POSTing a multi-gigabyte token string costs the API server that much RSS per
-// request.
+// wecomBodyLimit 限制两个 WeCom JSON 端点可读取的 body 大小。两个请求体都只有
+// 几个短字段，而 encoding/json 在 Decode 返回前会把字符串值整体物化——不设上限的话，
+// 一个已认证调用者 POST 几 GB 的 token 字符串，每次请求就会让 API 进程占用那么多
+// RSS。
 const wecomBodyLimit = 16 * 1024
 
-// WecomBindingRedeemer is the slice of wecom.BindingTokenService the redeem
-// endpoint drives. *wecom.BindingTokenService is the production value; the
-// interface exists so the body ceiling can be pinned in a test without a live
-// channel_binding_token table.
+// WecomBindingRedeemer 是赎回端点所驱动的 wecom.BindingTokenService 的一个切片。
+// 生产值是 *wecom.BindingTokenService；定义成接口是为了让测试能在没有真实
+// channel_binding_token 表的情况下给 body 上限测试打桩。
 type WecomBindingRedeemer interface {
 	RedeemAndBind(ctx context.Context, raw string, multicaUserID pgtype.UUID) (wecom.RedeemedBindingToken, error)
 }
 
-// WecomInstallationResponse is the wire shape for a wecom installation
-// row. The secret is NEVER included — it remains sealed on the row. BotID
-// is surfaced because operators need to see which bot is bound.
+// WecomInstallationResponse 是一条 wecom 安装行的线上结构。secret 绝不外泄——它一直
+// 封存在行上。暴露 BotID 是因为运维需要看到绑定的是哪个机器人。
 type WecomInstallationResponse struct {
 	ID              string `json:"id"`
 	WorkspaceID     string `json:"workspace_id"`
@@ -50,6 +47,7 @@ type WecomInstallationResponse struct {
 	Status          string `json:"status"`
 }
 
+// wecomInstallationToResponse 把安装行转成对外 JSON 结构。
 func wecomInstallationToResponse(inst wecom.Installation) WecomInstallationResponse {
 	return WecomInstallationResponse{
 		ID:              uuidToString(inst.ID),
@@ -61,16 +59,14 @@ func wecomInstallationToResponse(inst wecom.Installation) WecomInstallationRespo
 	}
 }
 
-// wecomIntegrationConfigured reports whether the wecom integration is
-// wired on this deployment. Both surfaces (list + register) short-circuit
-// on it: list degrades to an empty response, register returns 503.
+// wecomIntegrationConfigured 报告本部署是否接入了 wecom 集成。两个界面（列表 + 注册）
+// 都会在未接入时短路：列表降级成空响应，注册返回 503。
 func (h *Handler) wecomIntegrationConfigured() bool {
 	return h.WecomStore != nil && h.WecomCredentials != nil && h.ChannelRouter != nil
 }
 
-// ListWecomInstallations (GET /api/workspaces/{id}/wecom/installations) is
-// member-visible so the Integrations tab renders for non-admins. Same
-// response envelope Slack / Lark use.
+// ListWecomInstallations（GET /api/workspaces/{id}/wecom/installations）对成员可见，
+// 让非管理员的 Integrations 标签页也能渲染。响应信封与 Slack / Lark 一致。
 func (h *Handler) ListWecomInstallations(w http.ResponseWriter, r *http.Request) {
 	if !h.wecomIntegrationConfigured() {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -105,25 +101,21 @@ func (h *Handler) ListWecomInstallations(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// RegisterWecomBYORequest is the body an admin submits from the Web UI's
-// BYO dialog. The bot's stable identifier (BotID) and its long-connection
-// secret are copied from the WeCom admin console; the secret is written
-// straight through the secretbox so plaintext never lives on this file's
-// stack past the wecom.InstallationService.Upsert call.
+// RegisterWecomBYORequest 是管理员从 Web UI 的 BYO 对话框提交的 body。机器人的稳定
+// 标识（BotID）与长连接 secret 从 WeCom 管理后台复制而来；secret 直接穿过
+// secretbox 写入，明文在本文件栈上存活不超过 wecom.InstallationService.Upsert 调用。
 type RegisterWecomBYORequest struct {
 	BotID  string `json:"bot_id"`
 	Secret string `json:"secret"`
 
-	// BotName is the bot's name as it appears in a chat. Optional, and used
-	// for one thing: recognising the bot's own @-mention in a group, which
-	// WeCom delivers as literal text. Omitting it on a re-install of the same
-	// bot keeps whatever name the row already carries.
+	// BotName 是机器人在聊天里显示的名字。可选，只用于一件事：识别机器人在群里被
+	// @ 到的自身 mention（WeCom 以纯文本形式下发）。同一机器人在重复安装时省略它，
+	// 会保留行上已有的名字。
 	BotName string `json:"bot_name,omitempty"`
 }
 
-// RegisterWecomBYO (POST /api/workspaces/{id}/wecom/install/byo?agent_id=…)
-// installs a user-supplied ("bring your own") wecom smart-bot for an agent.
-// Admin-only at the router.
+// RegisterWecomBYO（POST /api/workspaces/{id}/wecom/install/byo?agent_id=…）为某个
+// agent 安装用户自备（"bring your own"）的 wecom 智能机器人。路由层限定 admin。
 func (h *Handler) RegisterWecomBYO(w http.ResponseWriter, r *http.Request) {
 	if !h.wecomIntegrationConfigured() {
 		writeError(w, http.StatusServiceUnavailable, "wecom integration not enabled")
@@ -186,32 +178,27 @@ func (h *Handler) RegisterWecomBYO(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wecomInstallationToResponse(inst))
 }
 
-// writeWecomInstallError is the whole response matrix for a failed install, in
-// one place so it can be read and tested as a matrix rather than inferred from
-// a switch buried in the handler.
+// writeWecomInstallError 是「安装失败」的完整响应矩阵，收在一处，以便把它当作矩阵
+// 阅读和测试，而不是去 handler 深处的 switch 里推断。
 //
-// The distinction it draws is who has to do something about the failure:
+// 它划分的依据是「这次失败该谁去处理」：
 //
-//	bot already owned (same ws / archived agent / other ws) → 409, go disconnect it there
-//	required field missing                                  → 400, the admin's input
-//	WeCom refused the pair                                  → 400, the ONE branch that may blame the credentials
-//	WeCom unreachable, so unverified                        → 503, say the credentials were not changed
-//	anything else (DB, encryption key, a bug)               → 500, log it, do not blame the admin
+//	机器人已被占用（同 ws / 已归档 agent / 别的 ws） → 409，去那边先断开
+//	缺少必填字段                                      → 400，管理员的输入问题
+//	WeCom 拒绝这对凭据                                → 400，唯一可以把责任归到凭据的分支
+//	WeCom 连不上、无法核验                             → 503，说明凭据并未被改动
+//	其它任何情况（DB、加密密钥、bug）                  → 500，记日志，别怪管理员
 //
-// One bot is one live long connection, so the (wecom, bot_id) slot has exactly
-// one owner. Upsert conflicts on (workspace_id, agent_id, channel_type), which
-// means connecting an already-connected bot to a SECOND agent misses ON
-// CONFLICT and trips idx_channel_installation_type_appid instead. Each sentinel
-// gets the sentence that tells the admin where the bot actually is; returning
-// err.Error() here used to toast them the raw "duplicate key value violates
-// unique constraint" text — and forwarded every other database error verbatim
-// to the API caller besides.
+// 一个机器人只有一条活的长连接，所以 (wecom, bot_id) 槽位只有一个主人。Upsert 在
+// (workspace_id, agent_id, channel_type) 上冲突——这意味着把一个已连接的机器人连到
+// 第二个 agent 时不会命中 ON CONFLICT，而是撞上 idx_channel_installation_type_appid。
+// 每个哨兵都配上「告诉管理员机器人实际在哪」的句子；以前这里直接返回 err.Error()，
+// 会把原始的 "duplicate key value violates unique constraint" 弹给管理员——同时把
+// 其它数据库错误也一字不差地转给 API 调用方。
 //
-// Every case carries a stable code as well as the sentence, so the settings tab
-// can say this in the admin's own language instead of toasting English at them.
-// The sentence stays as the fallback for a client that does not know the code.
-// The codes are a published contract: each one means one outcome and keeps
-// meaning it, because the admin action differs per outcome.
+// 每个分支除了句子还带稳定 code，让设置页可以用管理员自己的语言来表述，而不是朝他
+// 们弹英文。句子保留为不认识 code 的客户端的兜底。code 是已发布的契约：一个 code
+// 只对应一种结局并一直保持该含义，因为不同结局管理员要采取的动作不同。
 func writeWecomInstallError(w http.ResponseWriter, err error, wsUUID, agentUUID pgtype.UUID) {
 	switch {
 	case errors.Is(err, wecom.ErrBotOwnedBySameWorkspace):
@@ -224,34 +211,29 @@ func writeWecomInstallError(w http.ResponseWriter, err error, wsUUID, agentUUID 
 		writeErrorCode(w, http.StatusConflict, "wecom_bot_owned_by_another_workspace",
 			"this bot is already connected to a different Multica workspace — disconnect it there before connecting it here")
 	case errors.Is(err, wecom.ErrInvalidInstallationParams):
-		// Something the admin left out. Their input, their fix. This code means
-		// exactly that and nothing else — the two credential outcomes below get
-		// their own, because "you left a field out", "WeCom said no" and "we
-		// could not ask WeCom" are three different next actions for the admin,
-		// and a client keying off one code cannot tell them apart.
+		// 管理员漏了某样东西。他的输入，他来修。这个 code 只表达这件事、不掺别的——
+		// 下面两种凭据结局各有各的 code，因为「字段漏填」「WeCom 说不行」「没能问成
+		// WeCom」对管理员是三种不同的下一步动作，只靠一个 code 分不出来。
 		writeErrorCode(w, http.StatusBadRequest, "wecom_install_rejected",
 			"could not connect the WeCom bot — check the Bot ID and secret from the WeCom admin console, and that the bot is a smart bot with the long connection enabled")
 	case errors.Is(err, wecom.ErrCredentialsRejected):
-		// WeCom itself refused the pair. This is the one branch entitled to
-		// blame the credentials, and the only one the admin can act on by going
-		// back to the console.
+		// WeCom 亲自拒绝了这对凭据。这是唯一有权把责任归到凭据的分支，也是管理员
+		// 唯一能靠回管理后台去改凭据解决的分支。
 		writeErrorCode(w, http.StatusBadRequest, "wecom_credentials_rejected",
 			"WeCom rejected this Bot ID and secret — check both on the WeCom admin console, and that the bot is a smart bot with the long connection enabled")
 	case errors.Is(err, wecom.ErrCredentialsUnverifiable):
-		// The deployment could not reach WeCom. Reporting this as a bad
-		// credential sends the admin to rotate a secret that was fine — and a
-		// rotated WeCom secret cannot be recovered. 503: nothing is wrong with
-		// the input, the check could not be made.
+		// 部署环境连不上 WeCom。把它报成坏凭据，会让管理员去轮换一个其实没问题的
+		// secret——而轮换后的 WeCom secret 无法恢复。503：输入没有问题，只是检查
+		// 做不了。
 		slog.Warn("wecom install could not verify the bot",
 			"error", err, "workspace_id", uuidToString(wsUUID), "agent_id", uuidToString(agentUUID))
 		writeErrorCode(w, http.StatusServiceUnavailable, "wecom_credentials_unverifiable",
 			"could not reach WeCom to verify this bot — the credentials were not changed; try again in a moment")
 	default:
-		// Ours: the database, the encryption key, a bug. This branch used to
-		// answer 400 and blame the credentials, which sent the admin to the
-		// WeCom console to rotate a secret that was fine — and a rotated WeCom
-		// secret cannot be recovered, so a thirty-second Postgres failover cost
-		// them a working bot. Whatever went wrong here, it was not their Bot ID.
+		// 我们的问题：数据库、加密密钥、一个 bug。这个分支以前回 400 并把责任归到
+		// 凭据，把管理员送进 WeCom 后台去轮换一个本来没问题的 secret——而轮换后的
+		// secret 无法恢复，于是三十秒的 Postgres 故障切换就让他们失去一个正常工作的
+		// 机器人。无论这里发生了什么，都不是他们的 Bot ID 的问题。
 		slog.Error("wecom install failed",
 			"error", err, "workspace_id", uuidToString(wsUUID), "agent_id", uuidToString(agentUUID))
 		writeErrorCode(w, http.StatusInternalServerError, "wecom_install_failed",
@@ -259,9 +241,9 @@ func writeWecomInstallError(w http.ResponseWriter, err error, wsUUID, agentUUID 
 	}
 }
 
-// RevokeWecomInstallation (DELETE /api/workspaces/{id}/wecom/installations/{installationId})
-// flips status to 'revoked'. Admin-only at the router. Row-preserving so a
-// re-install through Upsert flips it back to 'active' atomically.
+// RevokeWecomInstallation（DELETE /api/workspaces/{id}/wecom/installations/{installationId}）
+// 把状态翻成 'revoked'。路由层限定 admin。保留行——这样经 Upsert 重新安装时能原子地
+// 翻回 'active'。
 func (h *Handler) RevokeWecomInstallation(w http.ResponseWriter, r *http.Request) {
 	if !h.wecomIntegrationConfigured() {
 		writeError(w, http.StatusServiceUnavailable, "wecom integration not enabled")
@@ -302,26 +284,22 @@ func (h *Handler) RevokeWecomInstallation(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// wecomInstallService builds an InstallationService on demand from the
-// pieces the handler was wired with. It is cheap (a struct wrap over
-// *db.Queries + the shared secretbox.Box behind the CredentialsResolver),
-// and this lazy pattern avoids adding a fourth wecom field on the Handler
-// struct just for the Web-UI path.
+// wecomInstallService 按需从 handler 装配好的零件构建 InstallationService。它很便宜
+// （不过是 *db.Queries 加 CredentialsResolver 背后共享 secretbox.Box 的结构体包装），
+// 用这种惰性模式可以避免只为 Web UI 这条路径给 Handler 结构再加第四个 wecom 字段。
 //
-// SecretboxCredentialsResolver is the only production implementation of
-// wecom.CredentialsResolver, so a type-assert is safe. If a test supplies
-// a fake resolver, the assert falls through and both endpoints report 503,
-// which is exactly the "no encryption key wired" behaviour we want.
+// SecretboxCredentialsResolver 是 wecom.CredentialsResolver 唯一的线上实现，所以类型
+// 断言是安全的。测试若注入假 resolver，断言会落空，两个端点于是都报 503——这正是
+// 「没接加密密钥」想要的失败行为。
 func (h *Handler) wecomInstallService() *wecom.InstallationService {
 	res, ok := h.WecomCredentials.(*wecom.SecretboxCredentialsResolver)
 	if !ok || res == nil || res.Box == nil {
 		return nil
 	}
-	// The probe is what makes the reclaim inside Upsert safe to run against a
-	// row this caller may not own. h.WecomCredentialProbe is a test seam;
-	// production leaves it nil and NewInstallationService supplies the real
-	// handshake. There is no wiring that leaves the check off — a nil probe is
-	// a construction error there, not a fail-open mode.
+	// 探针（probe）是让 Upsert 内部的回收（reclaim）能安全地针对一行可能并非该调用方
+	// 所有的行执行的关键。h.WecomCredentialProbe 是测试接缝；生产环境保持 nil，
+	// NewInstallationService 会补上真正的握手。没有任何装配会把这个检查漏掉——nil 探针
+	// 在那里属于构造错误，不是放行模式。
 	var opts []wecom.InstallationOption
 	if h.WecomCredentialProbe != nil {
 		opts = append(opts, wecom.WithCredentialProbe(h.WecomCredentialProbe))
@@ -333,29 +311,27 @@ func (h *Handler) wecomInstallService() *wecom.InstallationService {
 	return svc
 }
 
-// RedeemWecomBindingTokenRequest carries the raw token the user clicked
-// through from the bot's "link your Multica account" prompt.
+// RedeemWecomBindingTokenRequest 携带用户从机器人「关联你的 Multica 账号」提示里
+// 点过来的原始 token。
 type RedeemWecomBindingTokenRequest struct {
 	Token string `json:"token"`
 }
 
-// RedeemWecomBindingTokenResponse echoes the bound workspace / installation
-// / wecom user so the frontend can confirm without a second fetch.
+// RedeemWecomBindingTokenResponse 回显绑定的 workspace / installation / wecom 用户，
+// 让前端无需再拉一次即可确认。
 type RedeemWecomBindingTokenResponse struct {
 	WorkspaceID    string `json:"workspace_id"`
 	InstallationID string `json:"installation_id"`
 	WecomUserID    string `json:"wecom_user_id"`
 }
 
-// RedeemWecomBindingToken (POST /api/wecom/binding/redeem) binds the WeCom
-// aibot userid carried by the token to the logged-in Multica user. The
-// redeemer's identity comes from the session, not the token, so a stolen
-// token cannot bind a WeCom id to an attacker's account. Failure modes map
-// to distinct status codes:
+// RedeemWecomBindingToken（POST /api/wecom/binding/redeem）把 token 携带的 WeCom aibot
+// userid 绑定到当前登录的 Multica 用户。赎回者的身份来自会话而不是 token，所以偷来的
+// token 无法把一个 WeCom id 绑到攻击者自己的账号上。失败映射到不同状态码：
 //
-//   - 410 Gone:      token unknown / consumed / expired
-//   - 409 Conflict:  this WeCom id is already bound to a different user
-//   - 403 Forbidden: redeemer is not a workspace member
+//   - 410 Gone:     token 未知 / 已消费 / 已过期
+//   - 409 Conflict: 该 WeCom id 已绑定到别的用户
+//   - 403 Forbidden: 赎回者不是 workspace 成员
 func (h *Handler) RedeemWecomBindingToken(w http.ResponseWriter, r *http.Request) {
 	if h.WecomBindingTokens == nil {
 		writeError(w, http.StatusServiceUnavailable, "wecom integration not configured")

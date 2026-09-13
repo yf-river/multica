@@ -1,3 +1,15 @@
+// ============================================================================
+// 每日 token 数四段堆叠图（runtime 用量页 token 概览）
+//
+// 角色定位：把每天四种 token——输入/输出/缓存读取/缓存写入——的计数画成
+// 纵向堆叠柱，让用户看到「用量真正长什么样」：Claude 典型的一天里，缓存
+// 读取往往远超原始输入 token 数（常为 10× 以上），不把读取画进去就会漏掉
+// 大头。数据来自 utils.ts 的 aggregateByDate。
+//
+// 配色约定：与 DailyCostChart 完全一致（input→chart-1、output→chart-2、
+// cacheRead→chart-4、cacheWrite→chart-3），这样同一天的「成本视图」与
+// 「token 视图」读起来像同一张图换了刻度。
+// ============================================================================
 import {
   BarChart,
   Bar,
@@ -14,17 +26,15 @@ import {
 import { formatTokens, type DailyTokenData } from "../../utils";
 import { useLocale, useT } from "../../../i18n";
 
-// Four-segment stack — input / output / cache read / cache write. Unlike the
-// cost chart, cache reads ARE visible here: a typical day on Claude shows
-// cache reads dominating raw token counts (often 10×+ input), so the user
-// only sees the real shape of usage when reads are stacked in. The cost
-// chart drops them for the opposite reason (their dollar contribution is
-// two orders of magnitude smaller and would be visually invisible).
+// 四段堆叠——输入 / 输出 / 缓存读取 / 缓存写入。与成本图不同，这里缓存读取
+// 一定要可见：Claude 上典型的一天里缓存读取占原始 token 的大头（常为输入
+// 的 10 倍以上），不把它堆叠进来，用户根本看不到用量的真实形状。成本图
+// 之所以丢掉它，是相反的原因（缓存读取的美元贡献小两个数量级，画出来
+// 在视觉上不可见）。
 //
-// Series → CSS chart token: stack reads bottom-up as chart-1 (deepest brand
-// blue, "input") → chart-2 (mid) → chart-4 (cache read) → chart-3 (lightest,
-// "cache write"). Cache read gets chart-4 so the two cache series are
-// visually adjacent and tonally distinct from input/output.
+// 序列 → CSS 图表 token：从下往上依次是 chart-1（最深的品牌蓝，「输入」）
+// → chart-2（中）→ chart-4（缓存读取）→ chart-3（最浅，「缓存写入」）。
+// 缓存读取用 chart-4，让两条缓存序列在视觉上相邻，且与输入/输出的色调区分开。
 export const tokenStackConfig = {
   input: { label: "Input", color: "var(--chart-1)" },
   output: { label: "Output", color: "var(--chart-2)" },
@@ -32,11 +42,14 @@ export const tokenStackConfig = {
   cacheWrite: { label: "Cache write", color: "var(--chart-3)" },
 } satisfies ChartConfig;
 
+/**
+ * 每日四种 token 数的堆叠柱状图（y 轴与悬浮提示都用 formatTokens 缩写）。
+ */
 export function DailyTokensChart({ data }: { data: DailyTokenData[] }) {
   const { t } = useT("runtimes");
   const locale = useLocale();
-  // No internal empty-state — same convention as DailyCostChart: the parent
-  // decides what to render when there's nothing to show.
+  // 没有内置空状态——与 DailyCostChart 同一约定：没有数据时渲染成什么由父
+  // 组件决定。
   return (
     <ChartContainer config={tokenStackConfig} className="aspect-[3/1] w-full">
       <BarChart data={data} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
@@ -82,7 +95,7 @@ export function DailyTokensChart({ data }: { data: DailyTokenData[] }) {
             />
           }
         />
-        {/* Legend is rendered by the parent in the chart card header. */}
+        {/* 图例由父组件渲染在图表卡片头部，这里不放。 */}
         <Bar
           dataKey="input"
           stackId="tokens"

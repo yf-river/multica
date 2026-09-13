@@ -1,5 +1,19 @@
 "use client";
 
+// 本文件：ActorPropertyPicker —— `actor` / `multi_actor` 自定义属性的
+// 成员选择器与只读展示（MUL-6286）。
+//
+// 形状照着 AssigneePicker 的成员区做——同样的行、同样的头像——但 actor
+// 属性只接受成员这一种引用。Agent 和小队可被"分配"，却不可被"引用"：
+// agent 需要选择器回答可见性、调用权限等问题，被动引用没资格问；
+// 小队则是一个路由目标，不是一个人。
+//
+// `multi_actor` 就地开关并保持弹层打开（镜像 multi_select）；`actor`
+// 提交即关闭。
+//
+// 开关与展示都对"本构建无法解析的引用种类"保持无损——已装的客户端对着
+// 更新的后端时，绝不能因为用户勾了一个成员就把不认识的数据删掉。
+
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { IssueProperty, IssuePropertyValue } from "@multica/core/types";
@@ -18,16 +32,14 @@ import { matchesPinyin } from "../../../editor/extensions/pinyin-match";
 import { PropertyPicker, PickerItem, PickerSection, PickerEmpty } from "./property-picker";
 
 /**
- * Toggles one reference inside a `multi_actor` value and returns the next
- * value (`undefined` clears the property).
+ * 在 `multi_actor` 值内开关一条引用并返回下一个值（`undefined` 清空属性）。
  *
- * Two properties this must hold, both load-bearing:
+ * 两条必须成立的属性，都承重：
  *
- *   1. `current` is the RAW stored list, so entries whose kind this build does
- *      not understand pass through untouched. An installed client talking to a
- *      newer backend must not delete them just because the user ticked a member.
- *   2. Insertion order survives. The server does not canonicalize actor lists
- *      (unlike multi_select), so the order here is the order that persists.
+ *   1. `current` 是 RAW 存储列表，因此本构建看不懂的条目原样穿过。
+ *      已装客户端对着更新的后端时，绝不能因为用户勾了成员就把它们删掉。
+ *   2. 插入顺序得以保留。服务端不会规范化 actor 列表（不像 multi_select），
+ *      所以这里的顺序就是最终落库的顺序。
  */
 export function toggleActorRefValue(current: string[], key: string): string[] | undefined {
   if (current.includes(key)) {
@@ -39,16 +51,7 @@ export function toggleActorRefValue(current: string[], key: string): string[] | 
 }
 
 /**
- * Value editor for `actor` / `multi_actor` custom properties (MUL-6286).
- *
- * Shaped like AssigneePicker's members section — same rows, same avatars — but
- * members are the only kind an actor property accepts. Agents and squads are
- * assignable but not referenceable: an agent would need the picker to answer
- * visibility and invoke-permission questions that a passive reference has no
- * business asking, and a squad is a routing target rather than a person.
- *
- * `multi_actor` toggles in place and keeps the popover open (mirroring
- * multi_select); `actor` commits and closes.
+ * `actor` / `multi_actor` 自定义属性的值编辑器（职责见文件头）。
  */
 export function ActorPropertyPicker({
   property,
@@ -75,9 +78,9 @@ export function ActorPropertyPicker({
   const { data: members = [] } = useQuery(memberListOptions(wsId));
 
   const multiple = property.type === "multi_actor";
-  // Raw strings, not parsed refs: a kind this build doesn't recognise (a newer
-  // backend widening actorPropertyKinds) has to survive an edit here instead
-  // of being silently dropped when the user toggles a member.
+  // 用原始字符串而非解析后的引用：本构建不认识的种类（更新的后端扩展了
+  // actorPropertyKinds）必须能在这次编辑里存活——不能因为用户开关一个成员
+  // 就被悄悄丢掉。
   const selectedRaw = actorRefValuesFromValue(value);
   const selectedKeys = new Set(selectedRaw);
   const atCapacity = multiple && selectedRaw.length >= MAX_ISSUE_PROPERTY_ACTOR_VALUES;
@@ -141,11 +144,10 @@ export function ActorPropertyPicker({
 }
 
 /**
- * Read-only rendering of an actor property value: avatar + name per reference.
+ * actor 属性值的只读渲染：每个引用一条"头像 + 名字"。
  *
- * A value holding only references this build cannot parse renders as
- * "unavailable", NOT as empty — showing it as empty would invite the user to
- * "fill in" a field that already has a value they cannot see.
+ * 只装着本构建无法解析的引用的值渲染成"不可用"，*不是*空——渲染成空会
+ * 引诱用户去"填"一个其实有值、只是他们看不见的字段。
  */
 export function ActorPropertyDisplay({
   value,

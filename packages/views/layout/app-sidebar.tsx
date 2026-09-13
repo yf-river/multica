@@ -84,28 +84,31 @@ import {
 } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../common/shortcut-keycaps";
 
-// Top-level nav items stay active when the user is on a child route
-// (e.g. "Projects" stays lit on /:slug/projects/:id). Pinned items keep
-// strict equality elsewhere — a pinned project shouldn't highlight on
-// sub-pages of itself.
+/**
+ * 布局模块：应用主侧边栏。
+ * 渲染工作区切换器、新建 issue 按钮、个人/工作区/配置/生活导航、置顶项、
+ * 待处理邀请和底部工具条，是整个仪表盘的导航中枢。
+ */
+
+// 顶层导航项在子路由下也保持高亮（例如 /:slug/projects/:id 下「项目」
+// 仍亮着）。置顶项在其他地方保持严格相等——置顶的项目不应在自己的子页
+// 上也高亮。
 function isNavActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
-// Stable empty arrays for query defaults. Using an inline `= []` default on
-// `useQuery` creates a new array reference on every render when `data` is
-// undefined (e.g. query disabled or loading) — which in turn breaks any
-// `useEffect`/`useMemo` that depends on the value, and can trigger infinite
-// re-render loops when the effect itself calls `setState`.
+// 为查询默认值提供稳定的空数组。若在 `useQuery` 上用内联 `= []` 默认值，
+// 当 `data` 为 undefined（例如查询禁用或加载中）时每次渲染都会产生新的
+// 数组引用——这会破坏依赖该值的 `useEffect`/`useMemo`，当 effect 自身调用
+// `setState` 时还可能触发无限重渲染循环。
 const EMPTY_PINS: PinnedItem[] = [];
 const EMPTY_WORKSPACES: Awaited<ReturnType<typeof api.listWorkspaces>> = [];
 const EMPTY_INVITATIONS: Awaited<ReturnType<typeof api.listMyInvitations>> = [];
 const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
 const EMPTY_INBOX_SUMMARY: Awaited<ReturnType<typeof api.getInboxUnreadSummary>> = [];
 
-// Nav items reference WorkspacePaths method names so they can be resolved
-// against the current workspace slug at render time (see AppSidebar body).
-// Only parameterless paths are valid nav destinations.
+// 导航项引用 WorkspacePaths 的方法名，以便在渲染时针对当前工作区 slug 解析
+// （见 AppSidebar 主体）。只有无参数的路径才是合法的导航目标。
 type NavKey =
   | "inbox"
   | "myIssues"
@@ -121,8 +124,8 @@ type NavKey =
   | "settings"
   | "life";
 
-// Static schema (key only) — labels resolved at render via useT("layout"),
-// icons derived from the destination path via routeIconForPath.
+// 静态 schema（仅 key）——标签在渲染时通过 useT("layout") 解析，
+// 图标通过 routeIconForPath 从目标路径推导。
 type NavLabelKey =
   | "inbox"
   | "my_issues"
@@ -138,9 +141,8 @@ type NavLabelKey =
   | "settings"
   | "life";
 
-// Nav icons are NOT declared here: they are derived from each item's
-// destination path at render time, so every resource navigation surface agrees.
-// See route-icon-components.tsx.
+// 导航图标不在这里声明：它们在渲染时从每项的目标路径推导，这样每个资源
+// 导航界面都一致。见 route-icon-components.tsx。
 const personalNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "inbox", labelKey: "inbox" },
   { key: "myIssues", labelKey: "my_issues" },
@@ -176,10 +178,9 @@ function DraftDot() {
 }
 
 /**
- * Presentational pin row. The `label` and `iconNode` are computed by the
- * parent `PinRow` from cached issue / project detail queries — keeping
- * this component dumb means the dnd-kit / navigation wiring lives in
- * one place and the data flow is explicit.
+ * 纯展示的置顶行。`label` 和 `iconNode` 由父级 `PinRow` 从缓存的 issue /
+ * project 详情查询里算出——让这个组件保持「笨」一些，dnd-kit / 导航的接线
+ * 就只住在一个地方，数据流也更明确。
  */
 function SortablePinItem({
   pin,
@@ -197,9 +198,9 @@ function SortablePinItem({
   onUnpin: () => void;
   label: string;
   iconNode: React.ReactNode;
-  /** Runs on a real click (not a drag-release) before navigation. */
+  /** 在真实点击（而非拖拽松手）时、导航之前执行。 */
   onNavigate?: () => void;
-  /** Overrides the plain path comparison (view pins carry extra state). */
+  /** 覆盖默认的路径比较（view 置顶项携带额外状态）。 */
   isActiveOverride?: boolean;
 }) {
   const { t } = useT("layout");
@@ -266,14 +267,13 @@ function SortablePinItem({
 }
 
 /**
- * Smart wrapper that resolves a pin's display data (label + status/icon)
- * from the issue / project detail query cache. Both queries are declared
- * unconditionally with `enabled` gates so the hook order stays stable
- * regardless of `pin.item_type`.
+ * 智能包装：从 issue / project 详情查询缓存解析置顶项的展示数据（标签 +
+ * 状态/图标）。两个查询都无条件声明、用 `enabled` 门控，这样无论
+ * `pin.item_type` 如何变化，hook 顺序都保持稳定。
  *
- * Loading: render a flat skeleton so the sidebar height doesn't jump.
- * Missing (deleted item / 404): render nothing — the row hides itself
- * until the user unpins manually or a server-side cascade catches up.
+ * 加载中：渲染一个扁平骨架，避免侧边栏高度跳动。
+ * 缺失（已删除项 / 404）：渲染空——该行隐藏自身，直到用户手动取消置顶
+ * 或服务端级联清理跟上。
  */
 function PinRow({
   pin,
@@ -307,10 +307,9 @@ function PinRow({
 
   const triggeredRef = useRef(false);
   useEffect(() => {
-    // Views are exempt from 404-auto-unpin: an installed client talking to an
-    // older backend without the view endpoints sees 404 for every view pin —
-    // auto-unpinning would permanently delete them all.
-    // A deleted view's row simply hides instead.
+    // view 不参与 404 自动取消置顶：已安装的客户端连到没有 view 端点的旧
+    // 后端时，每个 view 置顶都会得到 404——自动取消置顶会把它们全部永久删掉。
+    // 已删除的 view 行只是隐藏而已。
     if (isView) return;
     const err = isIssue ? issueQuery.error : projectQuery.error;
     if (err instanceof ApiError && err.status === 404 && !triggeredRef.current) {
@@ -324,8 +323,8 @@ function PinRow({
     if (viewQuery.isPending) return <PinSkeleton />;
     if (viewQuery.isError || !viewQuery.data) return null;
     const view = viewQuery.data;
-    // One resolved scope drives the path AND the container key so an
-    // unrecognised scope_type from a newer backend degrades coherently.
+    // 解析出的 scope 同时驱动路径和容器 key，这样来自更新后端的未知
+    // scope_type 也能一致地降级。
     const scopeType: "workspace" | "my" | "project" =
       view.scope_type === "my"
         ? "my"
@@ -345,17 +344,16 @@ function PinRow({
     return (
       <SortablePinItem
         pin={pin}
-        // ?view= keeps a web reload on the view for the surfaces that mount
-        // the URL-sync hook (/issues, /my-issues). Project pages don't sync
-        // yet — there the query is inert and reload falls back to the plain
-        // page; click-through activation still works everywhere.
+        // ?view= 让挂载了 URL 同步 hook 的界面（/issues、/my-issues）在刷新
+        // 后仍停留在该 view。项目页还没同步——那里 query 是惰性的，刷新会
+        // 回退到普通页面；点击激活在任何地方都仍然有效。
         href={`${viewPath}?view=${view.id}`}
         pathname={pathname}
         onUnpin={onUnpin}
         label={view.name}
         iconNode={<Layers className="!size-3.5 shrink-0" />}
-        // Active only when this exact view is open on its surface — the
-        // path alone also matches the plain tab.
+        // 只有当这个精确的 view 在它的界面上打开时才高亮——仅凭路径也会
+        // 匹配普通标签页。
         isActiveOverride={
           pathname === viewPath && activeViewByContainer[containerKey] === view.id
         }
@@ -370,7 +368,7 @@ function PinRow({
     const issue = issueQuery.data;
     const label = issue.title;
     const iconNode = (
-      /* Override parent [&_svg]:size-4 — pinned items need smaller icons to match sm size */
+      /* 覆盖父级的 [&_svg]:size-4——置顶项需要更小的图标来匹配 sm 尺寸 */
       <StatusIcon
         status={issue.status}
         category={issueStatusCategory(issue) ?? undefined}
@@ -416,17 +414,25 @@ function PinSkeleton() {
   );
 }
 
+/** 应用侧边栏的属性。 */
 interface AppSidebarProps {
-  /** Rendered above SidebarHeader when a host supplies window chrome spacing */
+  /** 当宿主提供窗口 chrome 间距时，渲染在 SidebarHeader 上方的内容 */
   topSlot?: React.ReactNode;
-  /** Rendered in the header between workspace switcher and new-issue button (e.g. search trigger) */
+  /** 渲染在头部工作区切换器和新建 issue 按钮之间（如搜索触发器） */
   searchSlot?: React.ReactNode;
-  /** Extra className for SidebarHeader */
+  /** SidebarHeader 的附加 className */
   headerClassName?: string;
-  /** Extra style for SidebarHeader */
+  /** SidebarHeader 的附加样式 */
   headerStyle?: React.CSSProperties;
 }
 
+/**
+ * 应用主侧边栏组件。
+ * @param topSlot 侧边栏顶部插槽（窗口 chrome 间距）。
+ * @param searchSlot 头部搜索触发器插槽。
+ * @param headerClassName 头部附加类名。
+ * @param headerStyle 头部附加样式。
+ */
 export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
   const { t } = useT("layout");
   const { pathname, push } = useNavigation();
@@ -439,13 +445,11 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   const { data: myInvitations = EMPTY_INVITATIONS } = useQuery(myInvitationListOptions());
   const workspaceCreationDisabled = useConfigStore((s) => s.workspaceCreationDisabled);
 
-  // On a phone the sidebar is a Sheet covering the page, so navigating out of
-  // it has to dismiss it — otherwise the destination renders underneath and the
-  // tap reads as "nothing happened". Closing on `pathname` rather than on each
-  // link's onClick covers every route out of here at once: the nav groups, the
-  // pinned items, the workspace switcher's programmatic push, and anything
-  // added later. `setOpenMobile` is a no-op on desktop, where the sheet is not
-  // the sidebar's rendering at all.
+  // 手机上侧边栏是盖住页面的 Sheet，所以导航出去时必须把它关闭——否则目标
+  // 会渲染在底下，点击看起来像「什么都没发生」。按 `pathname` 关闭（而不是
+  // 每个链接的 onClick）能一次性覆盖所有离开这里的路径：导航组、置顶项、
+  // 工作区切换器的编程式 push，以及以后加进来的任何东西。`setOpenMobile`
+  // 在桌面端是空操作，那里 Sheet 根本不是侧边栏的渲染形态。
   const { setOpenMobile } = useSidebar();
   useEffect(() => {
     setOpenMobile(false);
@@ -461,9 +465,8 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     () => deduplicateInboxItems(inboxItems).filter((i) => !i.read).length,
     [inboxItems],
   );
-  // Cross-workspace unread summary backs the workspace-switcher dot. One
-  // shared cache entry across workspaces; gated on an active workspace since
-  // the endpoint resolves through the workspace-member middleware.
+  // 跨工作区未读汇总支撑工作区切换器上的红点。所有工作区共用一个缓存条目；
+  // 以「存在活动工作区」为门控，因为该端点要经过工作区成员中间件解析。
   const { data: unreadSummary = EMPTY_INBOX_SUMMARY } = useQuery({
     ...inboxUnreadSummaryOptions(),
     enabled: !!wsId,
@@ -472,8 +475,8 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     () => hasOtherWorkspaceUnread(unreadSummary, wsId),
     [unreadSummary, wsId],
   );
-  // Which workspaces have unread, so the switcher dropdown can point at the
-  // specific one(s) rather than just the aggregate avatar dot.
+  // 记录哪些工作区有未读，让切换器下拉能指向具体的那（几）个，
+  // 而不只是头像上的汇总红点。
   const unreadWsIds = React.useMemo(() => unreadWorkspaceIds(unreadSummary), [unreadSummary]);
   const { data: pinnedItems = EMPTY_PINS } = useQuery({
     ...pinListOptions(wsId ?? "", userId ?? ""),
@@ -490,16 +493,15 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
         ? p.issueDetail(pin.item_id)
         : pin.item_type === "project"
           ? p.projectDetail(pin.item_id)
-          // Views know their target only after their detail loads — the row
-          // resolves its own href; this placeholder never renders as a link.
+          // view 只有在详情加载后才知道目标——由行自身解析 href；这个占位符
+          // 永远不会作为链接渲染。
           : "",
     [p],
   );
 
-  // Local presentational copy of pinnedItems for drop-animation stability.
-  // Follows TQ at rest; frozen during a drag gesture so a mid-drag cache
-  // write (our own optimistic update, or a WS refetch) cannot reorder the
-  // DOM under dnd-kit while its drop animation is still interpolating.
+  // pinnedItems 的本地展示副本，用于保证放置动画稳定。静止时跟随 TQ；
+  // 拖拽手势期间冻结，这样拖拽中途的缓存写入（我们自己的乐观更新，或
+  // WS 重取）不会在 dnd-kit 的放置动画还在插值时重排它下面的 DOM。
   const [localPinned, setLocalPinned] = useState<PinnedItem[]>(pinnedItems);
   const [localPinnedWsId, setLocalPinnedWsId] = useState<string | null>(wsId ?? null);
   const isDraggingRef = useRef(false);
@@ -512,9 +514,9 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     setLocalPinnedWsId(wsId ?? null);
   }, [wsId]);
   const visiblePinned = localPinnedWsId === (wsId ?? null) ? localPinned : EMPTY_PINS;
-  // View pins are absent here (their href resolves async): while a view
-  // pin is active the plain nav row for its surface stays highlighted too.
-  // Accepted — suppressing it would need every view detail lifted up here.
+  // view 置顶不在这里（它们的 href 是异步解析的）：某个 view 置顶激活时，
+  // 它所在界面的普通导航行也会保持高亮。这一点接受——要压制它得把每个
+  // view 的详情都提到这里来。
   const isActivePinnedRoute = visiblePinned.some((pin) => pathname === getPinHref(pin));
 
   const handleDragStart = useCallback(() => {
@@ -538,14 +540,13 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   const queryClient = useQueryClient();
   const acceptInvitationMut = useMutation({
     mutationFn: (id: string) => api.acceptInvitation(id),
-    // After accepting an invitation, navigate INTO the newly-joined workspace.
-    // Otherwise the user stays on their current workspace and just sees the
-    // new one appear in the dropdown — silent and confusing (this is MUL-820).
+    // 接受邀请后，导航进入刚加入的工作区。否则用户停留在当前工作区，只是
+    // 看到下拉里多了个新的——安静又令人困惑（这是 MUL-820）。
     onSuccess: async (_, invitationId) => {
       const invitation = myInvitations.find((i) => i.id === invitationId);
       queryClient.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
-      // staleTime: 0 forces a real network fetch — we need the joined workspace
-      // in the list before we can resolve its slug for navigation.
+      // staleTime: 0 强制真正走一次网络请求——得先把加入的工作区放进列表，
+      // 才能解析它的 slug 用于导航。
       const list = await queryClient.fetchQuery({
         ...workspaceListOptions(),
         staleTime: 0,
@@ -580,10 +581,9 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                     <SidebarMenuButton>
                       <span className="relative">
                         <WorkspaceAvatar name={workspace?.name ?? "M"} avatarUrl={workspace?.avatar_url} size="sm" />
-                        {/* Shared brand dot: a pending invitation OR another
-                            workspace with unread inbox items. The active
-                            workspace's own unread stays on the Inbox nav count
-                            (below), so it is deliberately excluded here. */}
+                        {/* 共享的品牌红点：有待处理邀请，或另一个工作区有未读
+                            收件箱。当前工作区自己的未读留在下方 Inbox 导航计数
+                            上，所以这里有意把它排除掉。 */}
                         {(myInvitations.length > 0 || otherWorkspaceUnread) && (
                           <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-brand ring-1 ring-sidebar" />
                         )}
@@ -631,11 +631,10 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                       >
                         <WorkspaceAvatar name={ws.name} avatarUrl={ws.avatar_url} size="sm" />
                         <span className="flex-1 truncate">{ws.name}</span>
-                        {/* Points at the specific workspace holding unread
-                            inbox items. Sits in the same right-edge slot as the
-                            active-workspace check; the active workspace is
-                            excluded (its unread is the Inbox nav count), so dot
-                            and check never collide on one row. */}
+                        {/* 指向具体持有未读收件箱项的工作区。与当前工作区的
+                            对勾占据同一右侧边缘槽位；当前工作区被排除（它的未读
+                            就是 Inbox 导航计数），所以红点和对勾永远不会在同一行
+                            相撞。 */}
                         {ws.id !== workspace?.id && unreadWsIds.has(ws.id) && (
                           <span className="size-2 rounded-full bg-brand" />
                         )}
@@ -866,9 +865,8 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
         </SidebarContent>
 
         <SidebarFooter className="p-2">
-          {/* One utility strip: the Discord link takes the leading space the
-              help trigger was leaving empty. `justify-end` keeps the trigger
-              right-aligned once the Discord link is dismissed. */}
+          {/* 一个工具条：Discord 链接占据帮助触发器原本空出的前导空间。
+              `justify-end` 保证 Discord 链接关闭后，触发器仍右对齐。 */}
           <div className="flex items-center justify-end gap-1">
             <JoinDiscordCard />
             <HelpLauncher />

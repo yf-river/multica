@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是“AI 创建方式”选择页顶部的一条横幅/弹层：在用户本会悄悄开出第三条会话
+// 的这块屏上，把 TA 开过又丢下的会话摆出来。一条未完成草稿时直接打开它（单选器
+// 列一项等于问一个已有答案的问题）；多条时弹对话框列出各自内容让用户挑。
+
 import { useState } from "react";
 import { ChevronRight, MessageSquare } from "lucide-react";
 import { decodeBuilderInput, stripBuilderDraft } from "@multica/core/agents";
@@ -15,12 +19,10 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT, useTimeAgo } from "../../i18n";
 
 /**
- * Offers the conversations this user started and left, on the one screen that
- * would otherwise silently start a third one.
+ * 在这块原本会悄悄再开第三条会话的屏上，把用户开过又丢下的会话亮出来。
  *
- * A single unfinished draft opens directly — a chooser listing one item is a
- * question with one answer. Several open a dialog, because picking between them
- * needs to show what each one is about, which does not fit in a banner.
+ * 只有一条未完成草稿时直接打开——一个只列一项的选择器是“只有一个答案的问题”。
+ * 多条则弹对话框，因为在它们之间挑选需要展示每条大概在聊什么，横幅放不下。
  */
 export function UnfinishedDraftsBanner({
   sessions,
@@ -101,9 +103,7 @@ export function UnfinishedDraftsBanner({
                       <DraftTimestamp at={session.last_message_at} />
                     ) : null}
                   </span>
-                  {/* Two lines: enough to recognise which conversation this is,
-                      short enough that a long reply cannot push the next row
-                      off the dialog. */}
+                  {/* 两行：够认出是哪条会话，又短到长回复不至于把下一行挤出弹窗。 */}
                   <span className="mt-1 line-clamp-2 block text-caption leading-5 text-muted-foreground">
                     {draftPreview(session)}
                   </span>
@@ -117,6 +117,7 @@ export function UnfinishedDraftsBanner({
   );
 }
 
+/** 相对时间的小时间戳。 */
 function DraftTimestamp({ at }: { at: string }) {
   const timeAgo = useTimeAgo();
   return (
@@ -127,9 +128,8 @@ function DraftTimestamp({ at }: { at: string }) {
 }
 
 /**
- * What the user calls this draft. The stored configuration's name is the only
- * candidate — the server-side title is the same string on every row and would
- * make the list unreadable.
+ * 用户会怎么称呼这条草稿。唯一候选是已存配置里的名字——服务端给的标题在每行上
+ * 都是同一个字符串，会让列表没法看。
  */
 function draftTitle(
   session: Pick<AgentBuilderSessionSummary, "draft">,
@@ -138,10 +138,9 @@ function draftTitle(
 }
 
 /**
- * The stored message is still in the builder wire format — the user side is a
- * JSON envelope carrying the whole draft, the assistant side ends in an
- * `<agent_draft>` block. Shown raw it is a wall of JSON, so both sides are
- * decoded through the same helpers the conversation itself uses.
+ * 存的消息仍是 builder 的线上格式——用户侧是携带整份草稿的 JSON 信封，助手侧
+ * 以 `<agent_draft>` 块结尾。原样展示就是一堵 JSON 墙，所以两侧都用会话本身
+ * 用的同一套 helper 解码。
  */
 export function draftPreview(
   session: Pick<

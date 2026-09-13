@@ -1,3 +1,9 @@
+// Package handler 是整个 HTTP API 的处理器集合。
+//
+// 本文件（workspace_mcp.go）负责把"显式绑定到某 agent 的工作区级 MCP 服务器"
+// 合入该 agent 自己的 mcp_config，算出任务运行时真正携带的配置。核心入口是
+// ResolveAgentMcpConfig（任务级覆盖 mergeMCPOverlay 之前调用），其余是配套的
+// 文档解析、服务名校验等辅助函数。
 package handler
 
 import (
@@ -7,53 +13,45 @@ import (
 	"fmt"
 )
 
-// mcpServerContainers are the two top-level keys an mcp_config document may
-// keep its servers under. `mcpServers` is the Claude-style container every
-// runtime consumes; `mcp` is a legacy spelling a few agents still carry and
-// which the agent settings UI keeps editing in place (mcp-config-model.ts).
-// Both are read when deciding what an agent already declares; only
-// `mcpServers` is ever written.
+// mcpServerContainers 是一份 mcp_config 文档可能放服务器的两个顶层键。
+// mcpServers 是 Claude 风格、所有 runtime 都读的标准容器；mcp 是少数 agent
+// 仍在携带的旧写法，agent 设置 UI（mcp-config-model.ts）也还在原地编辑它。
+// 判断"agent 已经声明了哪些服务器"时两个键都会读；写入时只写 mcpServers。
 var mcpServerContainers = [...]string{"mcpServers", "mcp"}
 
-// WorkspaceMcpBinding is one workspace MCP server that an agent has been
-// explicitly given: the name it is mounted under plus its entry.
+// WorkspaceMcpBinding 表示"某个 agent 被显式授予的一个工作区 MCP 服务器"：
+// 它在 agent 名下挂载的名字（Name），以及该服务器的原始配置（Config）。
 type WorkspaceMcpBinding struct {
 	Name   string
 	Config json.RawMessage
 }
 
-// ResolveAgentMcpConfig folds the workspace MCP servers BOUND to an agent into
-// that agent's own mcp_config and returns what the claim should carry. It runs
-// before the per-task overlay (mergeMCPOverlay), so the full precedence chain
-// on a claim is:
+// ResolveAgentMcpConfig 把"绑定到 agent 的工作区 MCP 服务器"合进该 agent 的
+// mcp_config，返回任务（claim）应当携带的最终配置。它在任务级覆盖层
+// （mergeMCPOverlay）之前执行，所以一份 claim 上的完整优先级是：
 //
-//	bound workspace servers  <  agent's own servers  <  per-task overlay
+//	绑定的工作区服务器  <  agent 自己的服务器  <  每次任务覆盖
 //
-// The contract (GH #6062, MUL-5421):
+// 合约（GH #6062、MUL-5421）：
 //
-//   - Only servers explicitly bound to this agent and left enabled are folded
-//     in. A workspace MCP server is a LIBRARY entry, exactly like a workspace
-//     skill: creating one gives it to nobody. Nothing about this layer reaches
-//     an agent implicitly, which is what keeps shared credentials from
-//     spreading to agents no one opted in.
+//   - 只有"显式绑定到该 agent 且仍处于启用状态"的服务器才被合入。工作区 MCP
+//     服务器是"库"条目，跟工作区技能一样：建好默认不给任何人用。这一层不会
+//     隐式流到任何 agent——这正是共享凭据不扩散到未授权 agent 的机制。
 //
-//   - The agent's own entry WINS on a name collision. Its config is the more
-//     specific statement, and it is the one an agent owner edits directly.
+//   - 名字冲突时 agent 自己的条目优先：那是更具体的声明，也是 agent 所有者
+//     直接编辑的那份。
 //
-//   - An agent with no bindings and no config of its own resolves to nil —
-//     "nothing managed" — so its runtime keeps its native MCP inheritance.
+//   - 一个既无绑定、自身也无配置的 agent 解析结果为 nil——"没有受管内容"——
+//     它的 runtime 保持原生 MCP 继承。
 //
-// Shape: the result is NORMALIZED onto the canonical `mcpServers` container,
-// including an agent's legacy top-level `mcp` entries. Normalizing is
-// mandatory, not cosmetic: the daemon's runtime merge only falls back to the
-// legacy container when `mcpServers` is ABSENT
-// (`internal/daemon/runtime_mcp.go`), so writing bound servers into
-// `mcpServers` while leaving an agent's legacy entries beside them would make
-// the daemon read the bound set and silently drop the agent's own servers.
+// 形状：结果一律归一化到标准的 mcpServers 容器，包括 agent 旧式顶层 mcp 里
+// 的条目也搬进去。归一化不是美化而是必须：daemon 侧做运行时合并时，只有当
+// mcpServers 键不存在才会回退读旧容器（internal/daemon/runtime_mcp.go）。
+// 若把绑定服务器写进 mcpServers、却把 agent 旧式条目留在 mcp 里，daemon 会
+// 只读绑定集合，静默丢掉 agent 自己的服务器。
 //
-// Failure mode: on a malformed agent config the config is returned unchanged
-// along with the error. Binding a shared server must never take away servers
-// the agent runs with today.
+// 失败模式：agent 配置损坏时，原配置原样返回并附上错误——绑定一个共享服务器
+// 绝不能反过来夺走 agent 今天正在跑的服务器。
 func ResolveAgentMcpConfig(bound []WorkspaceMcpBinding, agentMcpConfig json.RawMessage) (json.RawMessage, error) {
 	if len(bound) == 0 {
 		return passthroughAgentMcpConfig(agentMcpConfig), nil
@@ -71,8 +69,7 @@ func ResolveAgentMcpConfig(bound []WorkspaceMcpBinding, agentMcpConfig json.RawM
 	}
 
 	if !hasManagedJSON(agentMcpConfig) {
-		// The agent declares nothing of its own: it runs with exactly the
-		// servers it was given.
+		// agent 自己什么都没声明：它就跑着被显式授予的这些服务器。
 		out, err := json.Marshal(map[string]any{"mcpServers": shared})
 		if err != nil {
 			return nil, fmt.Errorf("resolve agent mcp_config: marshal bound servers: %w", err)
@@ -87,16 +84,16 @@ func ResolveAgentMcpConfig(bound []WorkspaceMcpBinding, agentMcpConfig json.RawM
 
 	merged := make(map[string]json.RawMessage, len(shared)+len(agentServers))
 	for name, server := range shared {
-		// The agent may declare this name in either container; agentServers
-		// spans both, so this check covers each spelling.
+		// agent 可能在任意一个容器里声明了该名字；agentServers 横跨两个容器，
+		// 所以这份命中检查对两种拼法都覆盖。
 		if _, taken := agentServers[name]; taken {
 			continue
 		}
 		merged[name] = server
 	}
-	// Fold the agent's own entries in, legacy container first so a name present
-	// in both resolves to the canonical one — the precedence the agent settings
-	// UI already shows (mcp-config-model.ts reads `mcpServers` before `mcp`).
+	// 再合入 agent 自己的条目。先读旧容器 mcp 再读 mcpServers，同一个名字在两处
+	// 都出现时以规范容器为准——这正是 agent 设置 UI 展示的优先级
+	// （mcp-config-model.ts 先读 mcpServers 再读 mcp）。
 	for _, container := range [...]string{"mcp", "mcpServers"} {
 		own, err := unmarshalServerMap(agentDoc[container])
 		if err != nil {
@@ -109,8 +106,8 @@ func ResolveAgentMcpConfig(bound []WorkspaceMcpBinding, agentMcpConfig json.RawM
 
 	out := make(map[string]json.RawMessage, len(agentDoc)+1)
 	for k, v := range agentDoc {
-		// Both containers are consumed into the canonical map above; leaving
-		// the legacy key behind would hand the daemon a second, stale copy.
+		// 两个服务器容器都已被消费进上面的规范 map；把旧键留在原处等于再给
+		// daemon 递一份过期的第二副本。
 		if k == "mcpServers" || k == "mcp" {
 			continue
 		}
@@ -129,10 +126,9 @@ func ResolveAgentMcpConfig(bound []WorkspaceMcpBinding, agentMcpConfig json.RawM
 	return final, nil
 }
 
-// parseMcpDocument decodes an mcp_config document into its top-level keys plus
-// the set of server names it declares across BOTH containers. The name set is
-// what "the agent already owns this name" keys off, so it must span the legacy
-// spelling too.
+// parseMcpDocument 把一份 mcp_config 文档解成"顶层键的 map"，外加一份
+// "跨两个容器声明的全部服务器名"集合。名字集合是判断"该名字 agent 是否
+// 已占有"的依据，所以必须也覆盖旧式拼法。
 func parseMcpDocument(raw json.RawMessage) (map[string]json.RawMessage, map[string]struct{}, error) {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -154,10 +150,9 @@ func parseMcpDocument(raw json.RawMessage) (map[string]json.RawMessage, map[stri
 	return doc, names, nil
 }
 
-// validateWorkspaceMcpServerEntry checks the shape of ONE server entry before
-// it is stored. Deliberately shallow — shape only, never the contents, which
-// are runtime-specific and carry secrets we do not want to inspect or echo
-// back in an error.
+// validateWorkspaceMcpServerEntry 在单条服务器条目入库前检查它的形状。
+// 刻意做得很浅——只查形状、绝不碰内容：内容是 runtime 相关的，里面常常带着
+// 密钥，既不想检视，也不想在报错时把它原样回显出来。
 func validateWorkspaceMcpServerEntry(raw json.RawMessage) error {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
@@ -165,8 +160,7 @@ func validateWorkspaceMcpServerEntry(raw json.RawMessage) error {
 	}
 	var entry map[string]json.RawMessage
 	if err := json.Unmarshal(trimmed, &entry); err != nil {
-		// Never wrap: the underlying error can echo fragments of an entry that
-		// routinely embeds API tokens.
+		// 不包装底层错误：它可能回显条目里的片段，而条目经常内嵌 API token。
 		return errors.New("config must be a JSON object")
 	}
 	if len(entry) == 0 {
@@ -175,9 +169,9 @@ func validateWorkspaceMcpServerEntry(raw json.RawMessage) error {
 	return nil
 }
 
-// validateWorkspaceMcpServerName checks a server name. The name is what the
-// runtime mounts the server under and what an agent's own config collides
-// with, so it follows the same rule the agent settings dialog enforces.
+// validateWorkspaceMcpServerName 校验服务器名。这个名字是 runtime 把服务器
+// 挂载到 agent 下所用的名字，也会与 agent 自己的配置撞名，因此规则与 agent
+// 设置弹窗里强制的一致。
 func validateWorkspaceMcpServerName(name string) error {
 	if name == "" {
 		return errors.New("name is required")

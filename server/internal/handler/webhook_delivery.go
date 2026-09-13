@@ -1,3 +1,14 @@
+// 本文件是 webhook 投递记录（webhook_delivery）面向「已认证 API」的只读视图：
+// 列出某 autopilot 最近的投递、看单条完整投递（含原始 body 与头子集）、以及重放
+// （replay）一条历史投递。
+//
+// 投递行的实际派发不在这里——投递记录由 autopilot 收到 webhook 后排队产生，真正的
+// 派发与重试由持久化 worker（WebhookDeliveryWorker / webhook_delivery_worker.go）
+// 拥有。本文件只负责新增一行「排队的重放投递」和查询。
+//
+// 数据安全约定：经此表面永不回显签名密钥/token；详情接口才会带上 raw body 与
+// 请求头子集（调试用）。重放受幂等键约束（ReplayIdempotencyKey），重复重放请求会
+// 返回既有的那次投递。
 package handler
 
 import (
@@ -17,12 +28,11 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-// ── Response types ──────────────────────────────────────────────────────────
+// ── 响应类型 ────────────────────────────────────────────────────────────────
 
-// WebhookDeliveryResponse is the authenticated-API view of webhook_delivery.
-// The list endpoint returns these without `RawBody` / `SelectedHeaders`
-// populated; the detail endpoint includes both for debugging. We never echo
-// the signing secret or token through this surface.
+// WebhookDeliveryResponse 是 webhook_delivery 在已认证 API 上的视图。列表端点返回
+// 这些行时不填充 RawBody / SelectedHeaders；详情端点两者都带上供调试。签名密钥或
+// token 绝不经过这个表面回显。
 type WebhookDeliveryResponse struct {
 	ID                     string  `json:"id"`
 	WorkspaceID            string  `json:"workspace_id"`
@@ -48,16 +58,15 @@ type WebhookDeliveryResponse struct {
 	LastAttemptAt          string  `json:"last_attempt_at"`
 	CreatedAt              string  `json:"created_at"`
 
-	// Detail-only fields. List responses leave these nil/empty so a page
-	// of N deliveries never serialises ~N × 256 KiB of raw bodies. Detail
-	// requests opt in by hitting GET /deliveries/{deliveryId}.
+	// 仅详情端点的字段。列表响应把它们留空，一页 N 条投递就不会序列化出约
+	// N × 256 KiB 的原始 body。需要详情的客户端走 GET /deliveries/{deliveryId}。
 	SelectedHeaders json.RawMessage `json:"selected_headers,omitempty"`
 	RawBody         *string         `json:"raw_body,omitempty"`
 	ResponseBody    *string         `json:"response_body,omitempty"`
 }
 
-// slimDeliveryToResponse maps the projected list row (no raw_body /
-// selected_headers / response_body) into the wire response shape.
+// slimDeliveryToResponse 把列表用的投影行（不含 raw_body / selected_headers /
+// response_body）映射成对外响应形状。
 func slimDeliveryToResponse(d db.ListWebhookDeliveriesByAutopilotRow) WebhookDeliveryResponse {
 	resp := WebhookDeliveryResponse{
 		ID:                   uuidToString(d.ID),
@@ -99,6 +108,8 @@ func slimDeliveryToResponse(d db.ListWebhookDeliveriesByAutopilotRow) WebhookDel
 	return resp
 }
 
+// deliveryToResponse 把完整投递行映射成对外响应；detail=true 时才带上大字段
+// （SelectedHeaders / RawBody / ResponseBody）。
 func deliveryToResponse(d db.WebhookDelivery, detail bool) WebhookDeliveryResponse {
 	resp := WebhookDeliveryResponse{
 		ID:                   uuidToString(d.ID),
@@ -153,11 +164,11 @@ func deliveryToResponse(d db.WebhookDelivery, detail bool) WebhookDeliveryRespon
 	return resp
 }
 
-// ── Handlers ────────────────────────────────────────────────────────────────
+// ── 端点 ────────────────────────────────────────────────────────────────────
 
-// ListAutopilotDeliveries returns recent deliveries for an autopilot. Slim
-// projection — selected_headers / raw_body / response_body are omitted to
-// keep list responses small. Use GetAutopilotDelivery for the full payload.
+// ListAutopilotDeliveries 返回某 autopilot 最近的投递（GET）。瘦投影——省略
+// selected_headers / raw_body / response_body，保证列表响应足够小。要完整载荷请用
+// GetAutopilotDelivery。
 func (h *Handler) ListAutopilotDeliveries(w http.ResponseWriter, r *http.Request) {
 	autopilotID := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
@@ -202,10 +213,9 @@ func (h *Handler) ListAutopilotDeliveries(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"deliveries": resp, "total": len(resp)})
 }
 
-// GetAutopilotDelivery returns one delivery in full, including the raw body
-// and headers subset. Workspace-scoped via the autopilot lookup; the
-// delivery is then re-checked to belong to that autopilot so a guessed
-// delivery id from another workspace cannot leak data.
+// GetAutopilotDelivery 返回单条完整投递，包括原始 body 与请求头子集。经 autopilot
+// 查询先限定在 workspace 内；随后再核对投递确实属于该 autopilot，防止从别的
+// workspace 猜 delivery id 把数据带出来。
 func (h *Handler) GetAutopilotDelivery(w http.ResponseWriter, r *http.Request) {
 	autopilotID := chi.URLParam(r, "id")
 	deliveryID := chi.URLParam(r, "deliveryId")
@@ -222,18 +232,13 @@ func (h *Handler) GetAutopilotDelivery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, deliveryToResponse(delivery, true))
 }
 
-// ReplayAutopilotDelivery creates a NEW queued delivery row from a prior one;
-// the existing durable worker owns dispatch. The new row carries
-// `replayed_from_delivery_id` so the operator can correlate. Replay is
-// rejected for deliveries that originally failed signature verification —
-// re-running an attack payload against the autopilot would defeat the
-// rejection in the first place.
+// ReplayAutopilotDelivery 从一条历史投递新建一条「排队中」的投递行；派发仍归持久化
+// worker 所有。新行带着 `replayed_from_delivery_id`，方便运维关联。签名校验本就没过
+// 的投递拒绝重放——把攻击载荷对 autopilot 再跑一遍，等于绕过当初的拒绝。
 //
-// Replays bypass provider dedupe by inserting with a NULL dedupe_key:
-// reusing the original key would silently collapse the replay onto the prior
-// delivery (the partial unique index would fire). This is the intended
-// behaviour — a replay is explicitly "run this again". API retries are
-// independently deduplicated by (original delivery, Idempotency-Key).
+// 重放通过插入 NULL dedupe_key 绕过提供方的去重：沿用原 key 会把重放静默合并到旧的
+// 那次投递上（部分唯一索引会触发）。这是有意行为——重放就是明确要求「再跑一次」。
+// API 层的重试则由 (原投递, Idempotency-Key) 独立去重。
 func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request) {
 	autopilotID := chi.URLParam(r, "id")
 	deliveryID := chi.URLParam(r, "deliveryId")
@@ -274,16 +279,15 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Build the envelope from the stored raw body using the original headers
-	// subset for event inference. SelectedHeaders is small + JSON-shaped, so
-	// we decode it back into a header map to reuse the same normalize path.
+	// 用原始 body + 原始头子集重建信封，供事件推断使用。SelectedHeaders 很小且是
+	// JSON 形状，把它解回 header map 以复用同一条 normalize 路径。
 	headers := headersFromSelected(original.SelectedHeaders)
 	envelope, err := normalizeWebhookPayload(original.RawBody, headers)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "stored body no longer parses: "+err.Error())
 		return
 	}
-	_ = envelope // the durable worker normalizes the stored payload again
+	_ = envelope // 持久化 worker 会再次规范化存储的载荷
 
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if len(idempotencyKey) > 255 {
@@ -347,10 +351,9 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusAccepted, deliveryToResponse(replay, true))
 }
 
-// loadDeliveryForAutopilot returns the delivery row when it exists in the
-// same workspace AND belongs to the given autopilot. Cross-autopilot or
-// cross-workspace IDs are returned as 404 — defense in depth against ID
-// guessing.
+// loadDeliveryForAutopilot 当投递行存在、且同时满足「同 workspace 且属于给定
+// autopilot」时返回该行。跨 autopilot / 跨 workspace 的 id 一律按 404 处理——
+// 针对猜 id 的纵深防御。
 func (h *Handler) loadDeliveryForAutopilot(w http.ResponseWriter, r *http.Request, autopilot db.Autopilot, deliveryID string) (db.WebhookDelivery, bool) {
 	deliveryUUID, ok := parseUUIDOrBadRequest(w, deliveryID, "delivery id")
 	if !ok {
@@ -375,10 +378,9 @@ func (h *Handler) loadDeliveryForAutopilot(w http.ResponseWriter, r *http.Reques
 	return delivery, true
 }
 
-// headersFromSelected decodes the small headers-subset blob back into an
-// http.Header. Only used by the replay path — fields we did not capture at
-// ingress time are simply absent, which matches what would have happened if
-// the original request had not sent them either.
+// headersFromSelected 把入库时保存的「头子集」小 blob 解回 http.Header。只在重放
+// 路径用到——入口处没捕获的字段在这里自然缺失，与原始请求本来就没发这些头的效果
+// 一致。
 func headersFromSelected(raw []byte) http.Header {
 	out := http.Header{}
 	if len(raw) == 0 {

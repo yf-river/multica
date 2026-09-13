@@ -1,120 +1,98 @@
+// metrics.go —— 本适配器对外暴露的健康信号。
+//
+// 连接链路上的每一次失败都被刻意设计成「安静降级」。拨号失败、握手被服务端
+// 拒绝，都把连接交还给 Supervisor 去退避重试；入站队列满了就停住读取循环、
+// 不再排空 socket，直到 worker 追上进度。对聊天对面的人来说安静是对的，但对
+// 背后运维的人就是错的——机器人已经一小时连不上，仪表盘上却什么都看不出来。
+//
+// 这里的计数器是按「什么值得被 paging」而不是按「全面覆盖」挑的：连接是不是
+// 起不来、如果起不来是等个人处理还是等时间就行；以及读取循环是不是被跟不上的
+// 入站 worker 逼着在等。
+//
+// 全程不带 installation id。它是一个无上限的标识符，metrics 包会直接拒绝这
+// 一类 label（见 internal/metrics/labels.go 的 forbiddenMetricLabels）。要做归
+// 因只能看结构化日志，而且日志里的归因并不统一：两个连接类计数带 id，因为它
+// 们统计的失败同时也会回传给 Supervisor，由 Supervisor 带上 installation_id
+// 记日志；两个入站类计数旁边什么都没有——队列阻塞写不产生任何日志行，所以
+// 计数器只能告诉运维「有某个机器人落后了」，说不清是哪个。
 package wecom
 
-// metrics.go — the health signals this adapter emits.
-//
-// Every failure in the connection path degrades quietly by design. A dial that
-// fails and a handshake the server refuses hand the connection back to the
-// Supervisor for backoff and retry; a full ingest queue parks the read loop
-// instead, and the socket stops being drained until the worker catches up.
-// Quiet is the right behaviour for the person in front of the chat and the
-// wrong behaviour for the operator behind it — nothing on a dashboard changes
-// when a bot has been unable to connect for an hour.
-//
-// The counters here are chosen for what somebody would page on rather than for
-// completeness: the connection is not coming up, and if so whether that needs a
-// person or just time; and the read loop is being made to wait by an ingest
-// worker that cannot keep up.
-//
-// No installation id anywhere. It is an unbounded identifier and the metrics
-// package rejects that class of label outright (forbiddenMetricLabels in
-// internal/metrics/labels.go). What attribution exists is in the structured
-// logs, and it is not uniform: the two connection counters have it, because
-// the failure they count is also returned to the Supervisor, which logs it
-// with installation_id. The two inbound counters have nothing beside them —
-// a queue that blocks writes no log line at all, so the counter tells an
-// operator that some bot is behind and not which one.
-
-// Metrics is the sink this adapter reports to. Every method must tolerate being
-// called concurrently, and none of them may block: they run on the read loop.
+// Metrics 是本适配器上报数据的出口。每个方法都必须支持并发调用，且都不能
+// 阻塞：它们跑在读取循环上。
 type Metrics interface {
-	// RecordConnectFailure — a dial, a handshake write or a handshake read
-	// that did not complete, or a handshake the server answered with a code
-	// that classifySubscribeAck could not verify (a throttle, a platform-side
-	// failure). Excludes an outright credential rejection, which has its own
-	// counter: everything counted here recovers on its own, that one needs an
-	// admin.
+	// RecordConnectFailure —— 一次拨号、握手写、握手读没完成，或者服务端用
+	// classifySubscribeAck 无法核验的握手码回复了（限流、平台侧故障）。
+	// 不含纯凭证被拒的情况，那有单独的计数器：这里统计的一切都能自行恢复，
+	// 那一种需要管理员介入。
 	RecordConnectFailure()
-	// RecordAuthFailure — aibot_subscribe was refused on the credentials, as
-	// classifySubscribeAck judges it (ErrCredentialsRejected: 40001 / 40013).
-	// Deliberately not every non-zero errcode — the codes that only mean "could
-	// not verify" go to RecordConnectFailure, because paging an operator to
-	// rotate a good secret costs a second outage. The bot will not connect
-	// until somebody fixes the credentials, so a sustained rate here is an
-	// alert and not a blip.
+	// RecordAuthFailure —— aibot_subscribe 因凭证问题被拒，按
+	// classifySubscribeAck 的判断（ErrCredentialsRejected: 40001 / 40013）。
+	// 刻意不是所有非零 errcode 都算：那些只代表「无法核验」的错误码归
+	// RecordConnectFailure——为一个好端端的密钥去 paging 运维，等于再制造
+	// 一次故障。机器人得等人修好凭证才会重连，所以这里的持续走高是告警，
+	// 不是抖动。
 	RecordAuthFailure()
 
-	// RecordCallbackQueued — one inbound callback handed to the worker. The
-	// baseline every other inbound number is read against.
+	// RecordCallbackQueued —— 一条入站回调交给了 worker。它是其他所有
+	// 入站数字的基准线。
 	RecordCallbackQueued()
-	// RecordCallbackQueueBlocked — the worker queue was full and the read
-	// loop had to wait. Backpressure, deliberately: it is how a slow ingest
-	// stops rather than a message being dropped. A rising rate says the
-	// engine is not keeping up with one bot's traffic, and past a point
-	// WeCom stops seeing the socket drained and replaces the connection.
+	// RecordCallbackQueueBlocked —— worker 队列满了，读取循环被迫等待。
+	// 这是有意的背压：宁可让慢的入站停下来，也不丢消息。速率升高说明引擎
+	// 跟不上某个机器人的流量，超过一定阈值后企业微信会认为 socket 一直没
+	// 被读走，直接把连接顶掉。
 	RecordCallbackQueueBlocked()
 
-	// RecordOutboundDelivered — one reply reached the user. It is the
-	// denominator: without it a flat drop counter cannot be told apart from a
-	// quiet day, and "the bot went silent" is exactly the report that cannot
-	// afford that ambiguity.
+	// RecordOutboundDelivered —— 一条回复送到了用户手里。它是分母：没有它，
+	// 一个平直的「丢弃」计数器无法和「今天很安静」区分开；而「机器人突然没
+	// 声了」恰恰是不能容忍这种歧义的告警。
 	RecordOutboundDelivered()
-	// RecordOutboundDropped — one reply the adapter owed a user and did not
-	// deliver, labelled with why (outbound_outcome.go's closed reason set).
-	// Every reason here leaves somebody in WeCom waiting on an answer that is
-	// not coming, so this IS an error total and the label says which failure it
-	// was. The ordinary outcomes — a question typed in the web UI on a
-	// WeCom-bound session, an installation revoked between trigger and reply —
-	// are not counted here; RecordOutboundSkipped has them.
+	// RecordOutboundDropped —— 本适配器欠用户一条回复却没送达，按原因打标
+	// （outbound_outcome.go 的 closed reason 集合）。这里的每种原因都意味着
+	// 有人在企业微信里等一个永远等不到的答案，所以它就是一个「错误总量」，
+	// label 说明是哪一种失败。普通结局——在 Web 界面给企微绑定的会话打字、
+	// 触发到回复之间安装被撤销——不在这里计，RecordOutboundSkipped 收。
 	RecordOutboundDropped(reason string)
-	// RecordOutboundSkipped — a completion this adapter was never going to
-	// deliver, because it was not owed to a WeCom user in the first place. Kept
-	// apart from dropped on purpose: counting a web-UI question's answer as a
-	// failed WeCom delivery makes ordinary web usage look like an outage.
+	// RecordOutboundSkipped —— 一次本适配器本就不打算投递的完成事件，因为
+	// 它从一开始就不欠某个企业微信用户。刻意与 dropped 分开：把 Web 界面
+	// 提问的答案当成一次失败的企业微信投递，会让普通 Web 使用看起来像故障。
 	RecordOutboundSkipped(reason string)
 
-	// RecordAttachmentDelivered / RecordAttachmentDropped count FILES, one per
-	// file, while the three above count REPLIES, one per reply. The two units
-	// are separate because a reply whose words arrived and whose file did not
-	// is a delivered reply with a failed attachment, and collapsing that into
-	// one number can only lie in one direction or the other.
+	// RecordAttachmentDelivered / RecordAttachmentDropped 按「文件」计数，
+	// 每个文件一条；上面三个按「回复」计数，每条回复一条。两个单位必须分开：
+	// 一条回复文字到了、附件没到，是「送达的回复 + 失败的附件」，硬折成
+	// 一个数字只能朝其中一个方向撒谎。
 	RecordAttachmentDelivered()
 	RecordAttachmentDropped(reason string)
 
-	// RecordAttachmentDeliveryShed counts a SCHEDULING decision: one delivery
-	// attempt refused admission before the lookup ran. Its own unit because at
-	// that point nothing knows whether the turn carries zero files or five —
-	// counting it as file drops fabricates cardinality in both directions.
+	// RecordAttachmentDeliveryShed 计一次「调度」决策：某次投递尝试在查库
+	// 之前就被拒之门外。它独立成类是因为这一刻谁都不知道这一轮带 0 个还是
+	// 5 个文件——把它算成文件丢弃，两个方向都会编造出错误的数量。
 	RecordAttachmentDeliveryShed()
 
-	// RecordOutboundUnconfirmed / RecordAttachmentUnconfirmed — the outcome is
-	// UNKNOWN: the frame reached the wire (or the wait for its verdict was cut
-	// short) and the message may already be in front of the user. Its own pair
-	// because folding it into dropped would inflate a definite failure rate
-	// with sends that probably succeeded, and an operator paging on the drop
-	// rate would be paged for deliveries that happened.
+	// RecordOutboundUnconfirmed / RecordAttachmentUnconfirmed —— 结局是
+	// UNKNOWN（未知）：帧已经上了线路（或等待它裁定的过程被打断），消息
+	// 可能已经出现在用户面前。它们单独成对，是因为并入 dropped 会把一个确凿
+	// 的失败率注水——其中大部分发送可能成功了，按丢弃率 paging 的运维会被
+	// 为「已经送达」的投递吵醒。
 	RecordOutboundUnconfirmed(reason string)
 	RecordAttachmentUnconfirmed(reason string)
 
-	// RecordRelayShed counts an ADMISSION decision on the cross-replica
-	// dispatcher: one routed frame refused because its queue was full. Its own
-	// unit, labelled by what kind of frame it was, because the reply counters
-	// above are per REPLY and the relay carries inbox notifications too — an
-	// inbox push counted as a dropped reply would make the delivered/dropped
-	// ratio track which replica happened to hold a socket rather than any
-	// outcome. Always recorded, on whichever replica refused the frame.
+	// RecordRelayShed 计一次跨副本分发器上的「准入」决策：一条被路由的帧
+	// 因队列已满被拒。它独立成类，按帧类型打标，因为上面那些是「每条回复」
+	// 计的，而中继还携带入站通知——把入站推送当成一条被丢弃的回复去计，会让
+	// delivered/dropped 比例反映「哪个副本恰好握着 socket」，而不是任何真实
+	// 结局。无论哪个副本拒了帧，都照记不误。
 	//
-	// It moves no reply counter, not even on the replica holding the socket.
-	// Every replica reads every frame, and during a lease handoff two of them
-	// hold a sender at once, so no replica can tell locally whether its own
-	// shed cost the user anything — each one answering for itself is what
-	// reported a single reply as delivered and dropped together. Whether a shed
-	// reply was really lost is settled once by the replica that routed it, in
-	// RelayOutbound.watchOutcomes.
+	// 它不动任何回复计数器，连握着 socket 的那个副本也不动。每个副本都会读
+	// 到每一帧，租约切换期间甚至有两个副本同时握着 sender，所以任何副本都
+	// 无法在本地判断「自己丢掉的那次是否让用户付出了代价」——各答各的账，就
+	// 会把同一条回复既报成已送达又报成已丢弃。一条被丢弃的回复是否真的丢了，
+	// 最终由路由它的副本在 RelayOutbound.watchOutcomes 里裁定一次。
 	RecordRelayShed(kind string)
 }
 
-// nopMetrics is what the constructor falls back to. A nil sink must never be a
-// nil-pointer dereference on the read loop.
+// nopMetrics 是构造函数兜底用的空实现。nil 出口绝不能变成读取循环上的
+// 空指针解引用。
 type nopMetrics struct{}
 
 func (nopMetrics) RecordConnectFailure()              {}
@@ -131,7 +109,7 @@ func (nopMetrics) RecordOutboundUnconfirmed(string)   {}
 func (nopMetrics) RecordAttachmentUnconfirmed(string) {}
 func (nopMetrics) RecordRelayShed(string)             {}
 
-// orNopMetrics turns an unset sink into one that is safe to call.
+// orNopMetrics 把未设置的出口（nil）替换成一个可以安全调用的空实现。
 func orNopMetrics(m Metrics) Metrics {
 	if m == nil {
 		return nopMetrics{}

@@ -1,5 +1,35 @@
 package agent
 
+// 文件导读：Dim（dimcode）CLI 的 ACP 驱动封装。
+//
+// 角色定位：把 Dim（dimcode）适配成 daemon 的 Backend。Dim 通过 `dim acp` 子命令把它的
+// agent 循环暴露在 ACP（Agent Client Protocol，stdin/stdout 上的 JSON-RPC 2.0）上，本文件
+// 拉起该子进程并驱动完整会话生命周期（initialize → session/new | session/load → 权限/模式
+// 配置 → 可选 set_model / effort → session/prompt → session/close），把正文、工具调用等
+// 翻译成 Message/Result 上抛。
+//
+// 职责边界：协议面与共享的 hermesClient ACP 传输一致（Hermes/Kimi/Kiro/Traecli/QwenPaw
+// 都在用），本文件只保留 Dim 特有的差异：二进制名、会话引导方式（session/load 跨进程续接，
+// 而不是 session/resume）、跨运行续接所需的版本门槛（>= 0.3.10）、以及创建会话后必须把
+// 只读权限提升为 full-access。
+//
+// 与 Dim ACP 服务端约定的几个要点：
+//   - `initialize` 不宣传任何 authMethods，所以无需 `authenticate` 步骤；CLI 直接用用户
+//     既有的 Dim OAuth 登录态。
+//   - `session/new` 要求绝对 cwd（相对路径会被拒）。
+//   - Dim 的 ACP 服务端在创建会话时硬编码一套只读权限预设，会静默拒绝一切文件写与进程
+//     拉起。因此后端在 session/new 之后立刻发 `session/set_config_option`（permission →
+//     full-access、mode → agent），让 Multica agent 能干实事。续接的会话经 `session/load`
+//     会保留这些设置，所以 set_config_option 在新旧会话上都要重放（幂等）。模型覆盖走标准
+//     的 `session/set_model` RPC；模型目录由 `session/new` 以 models.availableModels /
+//     configOptions 宣传。
+//   - `session/load` 跨进程续接既有会话：dim 0.3.10+ 在持有进程退出后约 5 秒内释放其
+//     每进程会话锁，因此新的 `dim acp` 进程里的后续运行可以接着聊。更早的 0.3.x 会把会话
+//     永久绑死在创建它的进程上；那些版本上 load 会失败，靠 ResumeRejected 让 daemon 用新
+//     会话重试。
+//   - 工具名本身已是小写（"write"、"read"、"exec"）；共享的 kimiToolNameFromTitle 归一化
+//     让 UI 标识符保持稳定。
+
 import (
 	"context"
 	"encoding/json"
@@ -12,12 +42,9 @@ import (
 	"time"
 )
 
-// dimBlockedArgs are flags hardcoded by the daemon that must not be
-// overridden by user-configured custom_args. `acp` is the protocol
-// subcommand that drives the ACP JSON-RPC transport; overriding it
-// would break the daemon↔Dim communication contract. `--auth-setup`
-// and `--remote` switch the CLI into modes that never start the ACP
-// server (interactive login / removed remote flow).
+// dimBlockedArgs 是 daemon 固定写死、不允许用户经 custom_args 覆盖的开关。其中 `acp` 是驱动
+// ACP JSON-RPC 传输所需的协议子命令，覆盖它会破坏 daemon ↔ Dim 的通信契约；`--auth-setup`
+// 与 `--remote` 会把 CLI 切进永远不会启动 ACP 服务端的模式（交互登录 / 已移除的远端流程）。
 var dimBlockedArgs = map[string]blockedArgMode{
 	"acp":          blockedStandalone,
 	"--auth-setup": blockedStandalone,
@@ -26,71 +53,57 @@ var dimBlockedArgs = map[string]blockedArgMode{
 	"-h":           blockedStandalone,
 }
 
-// dimBackend implements Backend by spawning `dim acp` and
-// communicating via the standard ACP (Agent Client Protocol) JSON-RPC 2.0
-// over stdin/stdout.
+// dimBackend 通过拉起 `dim acp`、经 stdin/stdout 上的标准 ACP（Agent Client Protocol）
+// JSON-RPC 2.0 通信来实现 Backend。
 //
-// Dim (dimcode) exposes its agent loop over ACP through the `dim acp`
-// subcommand. The protocol surface matches the shared hermesClient ACP
-// transport used by Hermes/Kimi/Kiro/Traecli/QwenPaw — only the binary,
-// the session bootstrap, and the tool-name extraction differ.
+// Dim（dimcode）通过 `dim acp` 子命令把它的 agent 循环暴露在 ACP 上。协议面与共享的
+// hermesClient ACP 传输一致（Hermes/Kimi/Kiro/Traecli/QwenPaw 都在用）——只有二进制名、
+// 会话引导方式和工具名提取不同。
 //
-// Notable contract with Dim's ACP server:
-//   - `initialize` advertises no authMethods, so no `authenticate` step is
-//     needed; the CLI uses the user's existing Dim OAuth login.
-//   - `session/new` requires an absolute cwd (relative paths are rejected).
-//   - The ACP server hardcodes a read-only permission preset at session
-//     creation, which would silently deny every file write and process
-//     spawn. The backend therefore issues `session/set_config_option`
-//     (permission → full-access, mode → agent) right after session/new so
-//     Multica agents can do real work. A resumed session retains these
-//     settings across `session/load`, so set_config_option is re-applied on
-//     both fresh and resumed sessions (idempotent). Model override is handled through the standard
-//     `session/set_model` RPC; the model catalog is advertised by
-//     `session/new` under models.availableModels / configOptions.
-//   - `session/load` resumes a prior session across processes: dim 0.3.10+
-//     releases its per-process session lock within ~5s of the owning process
-//     exiting, so a follow-up run in a fresh `dim acp` process can continue
-//     the conversation. Earlier 0.3.x builds bound sessions to the creating
-//     process permanently; on those the load fails and ResumeRejected lets
-//     the daemon retry fresh.
-//   - Tool names are already lowercase ("write", "read", "exec"); the
-//     shared kimiToolNameFromTitle normalisation keeps the UI identifiers
-//     stable.
+// 与 Dim ACP 服务端约定的要点：
+//   - `initialize` 不宣传任何 authMethods，所以无需 `authenticate` 步骤；CLI 直接用用户
+//     既有的 Dim OAuth 登录态。
+//   - `session/new` 要求绝对 cwd（相对路径会被拒）。
+//   - Dim 的 ACP 服务端在创建会话时硬编码一套只读权限预设，会静默拒绝一切文件写与进程
+//     拉起。因此后端在 session/new 之后立刻发 `session/set_config_option`（permission →
+//     full-access、mode → agent），让 Multica agent 能干实事。续接的会话经 session/load
+//     保留这些设置，所以 set_config_option 在新旧会话上都要重放（幂等）。模型覆盖走标准的
+//     `session/set_model` RPC；模型目录由 `session/new` 以 models.availableModels /
+//     configOptions 宣传。
+//   - `session/load` 跨进程续接既有会话：dim 0.3.10+ 在持有进程退出后约 5 秒内释放其每进程
+//     会话锁，因此新的 `dim acp` 进程里的后续运行可以接着聊。更早的 0.3.x 会把会话永久
+//     绑死在创建它的进程上；那些版本上 load 会失败，靠 ResumeRejected 让 daemon 用新会话
+//     重试。
+//   - 工具名本身已是小写（"write"、"read"、"exec"）；共享的 kimiToolNameFromTitle 归一化
+//     让 UI 标识符保持稳定。
 type dimBackend struct {
 	cfg Config
 }
 
 var (
+	// dimReaderDrainGrace 限制轮次在 session/prompt 响应之后还等多久「尾部的 ACP 通知」。
 	dimReaderDrainGrace      = 2 * time.Second
 	dimNotificationQuietTime = 250 * time.Millisecond
-	// dimProcessWaitTimeout bounds how long the deferred cleanup waits for
-	// the child to exit after cancel+stdin-close before force-killing it. A
-	// child that ignores both should not be able to hang Result delivery.
+	// dimProcessWaitTimeout 限制 deferred 清理在 cancel+关 stdin 之后等子进程退出的时间，
+	// 超时即强杀。一个对两者都不理的子进程不应该能挂住 Result 的投递。
 	dimProcessWaitTimeout = 5 * time.Second
-	// dimSessionCloseTimeout bounds the best-effort session/close sent before
-	// tearing down the process. It is deliberately short so a stuck close
-	// cannot delay Result delivery; the next run's session/load is still safe
-	// because dim releases the lock on its own after ~5s.
+	// dimSessionCloseTimeout 限制拆进程前那次尽力而为的 session/close 的耗时。刻意设得很
+	// 短，一个卡住的 close 不能拖迟 Result 投递；下一次运行的 session/load 仍然安全，因为
+	// dim 会在大约 5 秒后自行释放锁。
 	dimSessionCloseTimeout = 2 * time.Second
-	// dimSessionLoadRetryAttempts bounds the number of retries when
-	// session/load reports "held by another process" — the prior process's
-	// lock has not been released yet. With graceful session/close this is
-	// rare (the lock releases immediately), but a force-killed process can
-	// take up to ~5s. The retry loop covers that window instead of silently
-	// starting a fresh session and losing the conversation.
+	// dimSessionLoadRetryAttempts 限制 session/load 报「被另一个进程持有」时的重试次数——那
+	// 意味着上一个进程的锁还没释放。有了优雅的 session/close 这很少见（锁会立即释放），但
+	// 被强杀的进程可能要等约 5 秒。重试循环覆盖这段窗口，而不是静默新建会话丢掉对话。
 	dimSessionLoadRetryAttempts = 3
 	dimSessionLoadRetryDelay    = 2 * time.Second
 )
 
-// dimMinVersion is the minimum dim version that supports cross-run session
-// resume via session/load. Earlier builds bind sessions to the creating
-// process permanently.
+// dimMinVersion 是支持经 session/load 跨运行续接会话的最低 dim 版本。更早的构建会把会话
+// 永久绑死在创建它的进程上。
 const dimMinVersion = "0.3.10"
 
-// extractACPAgentVersion pulls agentInfo.version out of an initialize
-// response. Returns "" if the field is absent (e.g. an older runtime that
-// does not report it).
+// extractACPAgentVersion 从 initialize 响应里取 agentInfo.version。字段缺失（例如不上报它的
+// 老版本运行时）时返回 ""。
 func extractACPAgentVersion(result json.RawMessage) string {
 	var resp struct {
 		AgentInfo struct {
@@ -103,16 +116,14 @@ func extractACPAgentVersion(result json.RawMessage) string {
 	return resp.AgentInfo.Version
 }
 
-// dimVersionSupported reports whether the dim version meets the minimum
-// required for cross-run session resume. Uses semver-ish comparison
-// (major.minor.patch). Fail-closed: an empty or non-parseable version is
-// rejected (returns false) rather than assumed supported, so a runtime that
-// cannot prove it is >= 0.3.10 is blocked from session resume (review #3).
+// dimVersionSupported 判断 dim 版本是否达到跨运行会话续接的最低要求。用类 semver 的
+// 比较（major.minor.patch）。Fail-closed：空或解析不了的版本直接判不支持（返回 false），
+// 而不是假设它支持——一个证明不了自己 >= 0.3.10 的运行时不允许走会话续接（review #3）。
 func dimVersionSupported(version string) bool {
 	version = strings.TrimPrefix(version, "v")
 	parts := strings.Split(version, ".")
 	if len(parts) < 3 {
-		return false // unparseable — fail-closed, do not assume supported
+		return false // 解析不了——fail-closed，不假设支持
 	}
 	var maj, min, pat int
 	if _, err := fmt.Sscanf(parts[0], "%d", &maj); err != nil {
@@ -121,8 +132,7 @@ func dimVersionSupported(version string) bool {
 	if _, err := fmt.Sscanf(parts[1], "%d", &min); err != nil {
 		return false
 	}
-	// patch may have a suffix (e.g. "10-beta"); Sscanf stops at the first
-	// non-digit, which is what we want.
+	// patch 可能带后缀（如 "10-beta"）；Sscanf 在首个非数字处停下，这正是我们要的。
 	if _, err := fmt.Sscanf(parts[2], "%d", &pat); err != nil {
 		return false
 	}
@@ -137,18 +147,20 @@ func dimVersionSupported(version string) bool {
 	return pat >= reqPat
 }
 
-// dimMessageStream serializes sends and the final close so a late stdout
-// reader cannot send on a closed channel. Mirrors grok/traecli/qoder.
+// dimMessageStream 把消息发送与最终的 close 串行化，防止迟到的 stdout 读取方向已关闭的
+// 通道发送。与 grok/traecli/qoder 的做法一致。
 type dimMessageStream struct {
 	ch     chan Message
 	mu     sync.Mutex
 	closed bool
 }
 
+// newDimMessageStream 构造带容量 size 的消息流。
 func newDimMessageStream(size int) *dimMessageStream {
 	return &dimMessageStream{ch: make(chan Message, size)}
 }
 
+// send 尝试发送一条消息；流已关闭则静默丢弃（幂等）。
 func (s *dimMessageStream) send(msg Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -158,6 +170,7 @@ func (s *dimMessageStream) send(msg Message) {
 	trySend(s.ch, msg)
 }
 
+// close 关闭底层通道；重复调用安全。
 func (s *dimMessageStream) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -168,6 +181,14 @@ func (s *dimMessageStream) close() {
 	close(s.ch)
 }
 
+// Execute 驱动一次完整的 Dim ACP 会话并返回其产出。
+//
+// 流程：定位可执行文件、把 mcp_config 翻译成 ACP 数组形态 → 拉起 `dim acp` 子进程 → 后台读
+// stdout（每行一个 JSON-RPC 消息），主 goroutine 按 initialize →（版本门槛校验）→
+// session/new | session/load（带锁重试）→ set_config_option（permission/mode 提升）→ 可选
+// set_model / effort → session/prompt → 等尾部通知静默 → session/close → 合并 stderr 失败
+// 信号与用量 → 生成最终 Result。退出清理固定顺序：先对整组 SIGKILL → cancel → 关 stdin →
+// 有界等待子进程消失。
 func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
@@ -177,10 +198,9 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		return nil, fmt.Errorf("dim executable not found at %q: %w", execPath, err)
 	}
 
-	// Translate the agent's mcp_config (Claude-style object of objects) into
-	// the array shape ACP session/new and session/load expect. Fail closed on
-	// malformed JSON so the launch surfaces the real error instead of silently
-	// dropping every MCP server.
+	// 把 agent 的 mcp_config（Claude 风格的对象套对象）翻译成 ACP session/new 与
+	// session/load 期望的数组形态。畸形 JSON 要直接失败（fail closed），让启动把真实错误
+	// 暴露出来，而不是静默丢掉每一个 MCP 服务器。
 	mcpServers, err := buildACPMcpServers(opts.McpConfig, b.cfg.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("dim: invalid mcp_config: %w", err)
@@ -193,10 +213,9 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 
 	cmd := b.cfg.commandAt(execPath).exec(runCtx, dimArgs...)
 	hideAgentWindow(cmd)
-	// Take over context cancellation: the default kills the group the instant
-	// runCtx is done, leaving no chance to shut the ACP session down first. We
-	// instead drive a group-wide SIGKILL from the deferred cleanup below.
-	// Returning nil keeps os/exec from racing us with its own kill.
+	// 接管 context 取消：默认行为会在 runCtx 结束瞬间杀掉整个进程组，让人没有机会先把 ACP
+	// 会话关掉。这里改为由下面的 deferred 清理统一驱动对整组的 SIGKILL。把 Cancel 设为 no-op
+	// 返回 nil，让 os/exec 不会用自带的 kill 来和我们抢。
 	cmd.Cancel = func() error { return nil }
 	cmd.WaitDelay = 10 * time.Second
 	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(dimArgs, trustAgentCommandPositional(0, "acp")))
@@ -215,9 +234,9 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		cancel()
 		return nil, fmt.Errorf("dim stdin pipe: %w", err)
 	}
-	// StderrPipe + an explicit copier give us a join point (`stderrDone`) that
-	// fires before the failure-promotion decision; see hermes.go for why the
-	// io.MultiWriter form races with stopReason=end_turn under load.
+	// 用 StderrPipe 加显式 copier 是为了拿到一个 join 点（stderrDone），它保证在「把失败
+	// 提升到结果」的决策之前已经排干；为什么 io.MultiWriter 的形式在负载下会和
+	// stopReason=end_turn 竞态，见 hermes.go 里的对应注释。
 	providerErr := newACPProviderErrorSniffer("dim")
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -242,10 +261,8 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	msgStream := newDimMessageStream(256)
 	resCh := make(chan Result, 1)
 
-	// Dim streams interim narration and the final answer as the same
-	// agent_message_chunk type; the tracker keeps only the post-tool-call
-	// block for Result.Output while retaining the full text for error
-	// detection.
+	// Dim 把中途叙述与最终答案都作为同一种 agent_message_chunk 类型流出；tracker 只保留
+	// 「最后一次工具调用之后」的那段作为 Result.Output，同时保留全文供错误检测用。
 	var deliverable acpDeliverableTracker
 
 	promptDone := make(chan hermesPromptResult, 1)
@@ -264,8 +281,8 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		},
 		onMessage: func(msg Message) {
 			if msg.Type == MessageToolUse {
-				// Re-normalise tool titles the same way kimi/traecli do so the
-				// UI sees consistent snake_case names ("write" → "write_file").
+				// 像 kimi/traecli 那样把工具标题再归一化一轮，让 UI 看到一致的 snake_case
+				// 名字（"write" → "write_file"）。
 				msg.Tool = kimiToolNameFromTitle(msg.Tool)
 			}
 			deliverable.observe(msg)
@@ -297,20 +314,15 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		defer cancel()
 		defer msgStream.close()
 		defer close(resCh)
-		// Cleanup ordering matters: cancel the run context first so
-		// exec.CommandContext kills the child if it is still alive, THEN
-		// close stdin and wait. The previous order (stdin.Close → cmd.Wait →
-		// cancel) left cancel() unreachable when a child ignored stdin EOF
-		// and never exited, hanging cmd.Wait() forever and never closing
-		// resCh. cmd.Wait is bounded so a still-stuck child cannot block the
-		// final Result either.
+		// 清理顺序很关键：先 cancel 运行 context，让 exec.CommandContext 在子进程仍活着时
+		// 杀掉它，然后再关 stdin、等待。旧顺序（stdin.Close → cmd.Wait → cancel）在子进程
+		// 无视 stdin EOF、永不退出时会够不到 cancel()，cmd.Wait() 无限挂起，resCh 永远不关。
+		// cmd.Wait 有界，所以仍卡死的子进程也拖不住最终的 Result。
 		defer func() {
-			// Signal the entire process group (the agent CLI plus any tool
-			// subprocesses it spawned) BEFORE closing stdin. exec.
-			// CommandContext's cancel is disabled (cmd.Cancel returns nil)
-			// so we own all signalling. If we close stdin first, the shell
-			// exits on EOF and its process group dissolves before we can
-			// SIGKILL the descendants, orphaning them to PPID=1.
+			// 先对整棵进程组（agent CLI 加它派生的工具子进程）发信号，再关 stdin。exec.
+			// CommandContext 的 cancel 已被禁用（cmd.Cancel 返回 nil），所以全部发信号由我们
+			// 负责。若先关 stdin，shell 会因 EOF 退出、进程组在我们 SIGKILL 后代之前就解散，
+			// 后代成了 PPID=1 的孤儿。
 			signalProcessGroup(cmd, syscall.SIGKILL)
 			cancel()
 			stdin.Close()
@@ -321,8 +333,8 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			case <-time.After(dimProcessWaitTimeout):
 			}
 			waitProcessGroupGone(cmd, dimProcessWaitTimeout)
-			// Release the Windows Job Object ownership handle (no-op on Unix)
-			// so the OS can finalize any processes that were attached to it.
+			// 释放 Windows Job Object 的所有权句柄（Unix 上是 no-op），让操作系统能收尾任何
+			// 挂在它上面的进程。
 			releaseProcessGroup(cmd)
 		}()
 
@@ -330,9 +342,8 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		finalStatus := "completed"
 		var finalError string
 		var sessionID string
-		// Set when the ACP runtime refuses the session we asked to
-		// resume. Only that is curable by starting a fresh session, so
-		// handshake/network failures below must leave it false.
+		// 在「ACP 运行时拒绝了我们要求续接的会话」时置位。只有这种情况能靠新建会话治愈，
+		// 所以下面遇到的握手/网络类失败必须保持它为 false。
 		var resumeRejected bool
 		effectiveModel := strings.TrimSpace(opts.Model)
 
@@ -351,13 +362,10 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			return
 		}
 
-		// Require dim >= 0.3.10 (fail-closed): earlier builds bind sessions to
-		// the creating process permanently, so cross-run session/load fails with
-		// "held by another process" and follow-up runs lose context. 0.3.10
-		// releases the lock on graceful exit (session/close) or after ~5s. A
-		// version that is empty or cannot be parsed is rejected rather than
-		// assumed supported, so a runtime that cannot prove it is >= 0.3.10 is
-		// blocked from session resume (review #3).
+		// 要求 dim >= 0.3.10（fail-closed）：更早的构建会把会话永久绑死在创建进程上，
+		// session/load 会以 "held by another process" 失败、后续运行丢失上下文。0.3.10 在
+		// 优雅退出（session/close）或约 5 秒后释放锁。空版本或解析不了的版本一律判不支持，
+		// 不让一个证明不了自己 >= 0.3.10 的运行时走会话续接（review #3）。
 		dimVersion := extractACPAgentVersion(initResult)
 		if !dimVersionSupported(dimVersion) {
 			finalStatus = "failed"
@@ -370,8 +378,8 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			return
 		}
 
-		// Drop MCP entries whose remote transport the runtime didn't advertise.
-		// See hermes.go for why sending an unsupported transport tanks session/new.
+		// 丢弃运行时未宣传其远程传输方式的 MCP 条目。不支持的传输会拖垮整个 session/new，
+		// 原因见 hermes.go。
 		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "dim", b.cfg)
 
 		cwd := opts.Cwd
@@ -379,27 +387,20 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			cwd = "."
 		}
 
-		// Dim (dimcode 0.3.10+) releases its per-process session lock within
-		// ~5s of the owning process exiting (graceful close or SIGTERM), so a
-		// follow-up run in a fresh `dim acp` process can resume the prior
-		// session via the standard ACP `session/load`. Earlier 0.3.x builds
-		// bound sessions to the creating process permanently; on those the
-		// load fails with "held by another process" and ResumeRejected lets
-		// the daemon retry on a fresh session.
+		// Dim（dimcode 0.3.10+）在持有进程退出后约 5 秒内释放每进程会话锁（优雅 close 或
+		// SIGTERM 都算），所以新的 `dim acp` 进程里的后续运行可以经标准 ACP `session/load`
+		// 续接既有会话。更早的 0.3.x 会把会话永久绑死在创建进程上；那些版本上 load 会以
+		// "held by another process" 失败，靠 ResumeRejected 让 daemon 在新会话上重试。
 		//
-		// A loaded session retains its permission/mode config (verified: a
-		// full-access session stays full-access after load), but
-		// set_config_option is re-applied on both fresh and resumed sessions
-		// to guard against a partially configured session being resumed
-		// (review #4).
+		// 续接的会话会保留它的 permission/mode 配置（已验证：full-access 的会话 load 后仍是
+		// full-access），但为了防「一个只配到一半的会话被续接」，set_config_option 在新旧
+		// 会话上都会重放（review #4）。
 		var freshSession bool
 		var sessionResult json.RawMessage
 		if opts.ResumeSessionID != "" {
-			// Retry session/load when the prior process's lock has not been
-			// released yet ("held by another process"). With graceful
-			// session/close the lock releases immediately, but a force-killed
-			// process can take up to ~5s. Retry instead of silently starting
-			// a fresh session and losing the conversation (review #1).
+			// 上一个进程的锁还没释放（"held by another process"）时重试 session/load。优雅
+			// 的 session/close 会让锁立即释放，但被强杀的进程可能要约 5 秒。重试而不是静默
+			// 新建会话丢掉对话（review #1）。
 			var result json.RawMessage
 			var loadErr error
 		loadRetry:
@@ -413,10 +414,10 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 					break
 				}
 				if isACPSessionNotFound(loadErr) {
-					break // session is gone — no point retrying
+					break // 会话已消失——没有重试的意义
 				}
 				if !isACPHeldByProcess(loadErr) {
-					break // different error — let the normal failure path handle it
+					break // 其它错误——交给常规失败路径处理
 				}
 				if attempt < dimSessionLoadRetryAttempts {
 					b.cfg.Logger.Warn("dim session/load: lock not yet released, retrying",
@@ -503,16 +504,13 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		}
 
 		c.sessionID = sessionID
-		// Early session pin so a cancelled run still preserves resume pointer.
+		// 尽早把会话 id 透出给上层，被取消的运行也能保住续接指针。
 		msgStream.send(Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 		b.cfg.Logger.Info("dim session ready", "session_id", sessionID, "resumed", !freshSession)
 
-		// Dim's ACP server hardcodes a read-only permission preset at session
-		// creation. Raise it to full-access and pin agent mode. This runs on
-		// BOTH fresh and resumed sessions (review #4): a resumed session whose
-		// first run failed partway through config would carry a half-configured
-		// state into the resume. set_config_option is idempotent. On failure we
-		// close the session and abort.
+		// Dim 的 ACP 服务端在创建会话时硬编码只读权限预设。这里提升为 full-access 并把模式
+		// 固定为 agent。新建与续接会话都要跑（review #4）：一个首次运行中途配崩的会话，会把
+		// 半配置状态带进续接。set_config_option 幂等。失败时关闭会话并中止。
 		for _, cfgOpt := range []struct {
 			id    string
 			value string
@@ -527,8 +525,7 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			}); err != nil {
 				finalStatus = "failed"
 				finalError = fmt.Sprintf("dim could not set session config %s=%s: %v", cfgOpt.id, cfgOpt.value, err)
-				// Best-effort close so a partially configured session is not
-				// left behind for the next resume to inherit.
+				// 尽力关掉会话，别让一个只配了一半的会话留给下次续接继承。
 				closeCtx, closeCancel := context.WithTimeout(context.Background(), dimSessionCloseTimeout)
 				_, _ = c.request(closeCtx, "session/close", map[string]any{"sessionId": sessionID})
 				closeCancel()
@@ -546,8 +543,8 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 				b.cfg.Logger.Warn("dim set_session_model failed", "error", err, "requested_model", opts.Model)
 				finalStatus = "failed"
 				finalError = fmt.Sprintf("dim could not switch to model %q: %v", opts.Model, err)
-				// Close the session so a partially configured one (permission/mode
-				// set, model not) is not left for the next resume to inherit.
+				// 关闭会话，别让一个只配了一半的会话（permission/mode 已设、模型没设成）
+				// 留给下次续接继承。
 				closeCtx, closeCancel := context.WithTimeout(context.Background(), dimSessionCloseTimeout)
 				_, _ = c.request(closeCtx, "session/close", map[string]any{"sessionId": sessionID})
 				closeCancel()
@@ -563,10 +560,9 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			b.cfg.Logger.Info("dim session model set", "model", opts.Model)
 		}
 
-		// Apply the thinking level (if any) via the ACP session config. Dim
-		// advertises a `thought_level` configOption in session/new (auto/high/
-		// max), so it joins the acpCatalogThinkingProviders list. The effort
-		// option may depend on the current model, so apply it after set_model.
+		// 通过 ACP 会话配置应用思考级别（若有）。Dim 在 session/new 里宣传 `thought_level`
+		// 这个 configOption（auto/high/max），所以它进了 acpCatalogThinkingProviders 名单。
+		// effort 选项可能依赖当前模型，所以放在 set_model 之后应用。
 		applyACPEffortOption(runCtx, c.request, "dim", b.cfg.Logger,
 			sessionID, sessionResult, opts.ThinkingLevel, opts.Model == "")
 
@@ -593,9 +589,8 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 				finalError = fmt.Sprintf("dim session/prompt failed: %v", err)
 			}
 		} else {
-			// Check if we got a promptDone result from the response parsing
-			// (non-blocking — the response is parsed synchronously during
-			// c.request, so promptDone is usually already ready).
+			// 非阻塞地看看响应解析是否已给出 promptDone（响应是在 c.request 里同步解析的，
+			// 所以 promptDone 通常已经就绪）。
 			select {
 			case pr := <-promptDone:
 				if pr.stopReason == "cancelled" {
@@ -608,22 +603,19 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 				c.mergeUsage(pr.usage)
 			default:
 			}
-			// Give the stdout reader a bounded chance to consume notifications
-			// dim may emit just after session/prompt returns (agent_message_chunk,
-			// usage updates). Closing stdin at the response boundary otherwise
-			// races the reader and truncates the final text — the same race
-			// fixed for hermes (TestHermesBackendDrainsLateFinalNotification).
+			// 给 stdout 读取方一段有界时间消费 dim 在 session/prompt 返回后可能紧接着发出的
+			// 通知（agent_message_chunk、用量更新）。否则在响应边界就关 stdin 会和读取方
+			// 竞态、截断末尾文本——这正是 hermes 修过的同一个竞态
+			// （TestHermesBackendDrainsLateFinalNotification）。
 			waitForACPNotificationQuiescence(runCtx, activity, readerDone, dimNotificationQuietTime, dimReaderDrainGrace)
 		}
 
 		duration := time.Since(startTime)
 		b.cfg.Logger.Info("dim finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
 
-		// Best-effort session/close before tearing down the process: it lets
-		// dim release the per-process session lock promptly (the next run can
-		// resume immediately) instead of waiting for the 5s idle-release
-		// timeout. Bounded and best-effort — a miss just means the next run
-		// waits up to 5s for the lock.
+		// 拆进程前先尽力做一次 session/close：让 dim 及时释放每进程会话锁（下一次运行可以
+		// 立即续接），而不是干等 5 秒的空闲释放超时。有界且尽力而为——没发出去只是让下次
+		// 运行等锁最多 5 秒。
 		if sessionID != "" {
 			closeCtx, closeCancel := context.WithTimeout(context.Background(), dimSessionCloseTimeout)
 			_, _ = c.request(closeCtx, "session/close", map[string]any{"sessionId": sessionID})
@@ -633,8 +625,8 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		stdin.Close()
 		cancel()
 
-		// Dim's ACP server may keep the process — and the stdout/stderr
-		// pipes — open briefly after session/prompt returns. Bound the drain.
+		// Dim 的 ACP 服务端在 session/prompt 返回后可能仍让进程——以及 stdout/stderr
+		// 管道——短暂保持打开。给排干设一个上界。
 		drainCtx, drainCancel := context.WithTimeout(context.Background(), dimReaderDrainGrace)
 		select {
 		case <-readerDone:
@@ -648,10 +640,9 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 
 		finalOutput, providerErrorOutput := deliverable.result()
 
-		// Promote completed→failed when stderr or the agent text stream show a
-		// terminal upstream-LLM failure (auth / rate-limit / HTTP 4xx). It reads
-		// the full text stream, not the deliverable, so a give-up turn that
-		// lands before a tool call stays visible.
+		// 当 stderr 或 agent 文本流展现出「上游 LLM 终态失败」（鉴权 / 限流 / HTTP 4xx）时，
+		// 把 completed 提升为 failed。这里读的是完整文本流而不是 deliverable，所以「在工具
+		// 调用前就放弃」的一轮仍然可见。
 		finalStatus, finalError = promoteACPResultOnProviderError(finalStatus, finalError, providerErrorOutput, providerErr)
 
 		u := c.accumulatedUsage()

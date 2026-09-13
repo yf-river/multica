@@ -1,25 +1,22 @@
 "use client";
 
 /**
- * RichCodeBlock — the ONLY fenced-code dispatcher in the product (MUL-4922).
+ * 富文本模块：RichCodeBlock——产品里唯一的围栏代码分发器（MUL-4922）。
  *
- * Every product surface (Chat, Issue description, Comment) reaches fenced code
- * through this file. Adding a language branch anywhere else — a per-surface
- * `if (lang === "…")` in a message list or a comment card — is exactly the
- * drift this sweep deleted, so new languages get added HERE and nowhere else.
+ * 每个产品界面（Chat、issue 描述、评论）都通过这个文件渲染围栏代码。在
+ * 别处加语言分支——比如消息列表或评论卡片里写 `if (lang === "…")`——正是
+ * 这次清理要删除的漂移，所以新语言只加在这里、别处不加。
  *
- * Dispatch is on a whole language token, never a substring: `language-htmlbars`
- * and `language-mermaidx` are ordinary code, not an HTML preview / diagram.
+ * 分发基于完整的语言 token，从不做子串匹配：`language-htmlbars` 和
+ * `language-mermaidx` 是普通代码，不是 HTML 预览 / 图表。
  *
- * Upgrading to a rich block additionally requires the fence to be CLOSED (see
- * streaming-fence.ts). A half-streamed fence renders as plain source, so
- * Mermaid never parses a partial diagram and no iframe is created for HTML that
- * is still arriving.
+ * 升级成富块还要求围栏是*闭合*的（见 streaming-fence.ts）。流式传输中未
+ * 完成的围栏渲染为纯源码，这样 Mermaid 永远不会解析半张图，仍在到达的
+ * HTML 也不会创建 iframe。
  *
- * Leaf components (MermaidDiagram / HtmlBlockPreview / lowlight static code)
- * are surface-agnostic and shared with the Tiptap editor's NodeViews. They are
- * imported by direct path — never through the `editor` barrel — so this module
- * does not pull the editor's Tiptap graph into Chat.
+ * 叶子组件（MermaidDiagram / HtmlBlockPreview / lowlight 静态代码）与界面
+ * 无关，并与 Tiptap 编辑器的 NodeViews 共用。它们按直接路径导入——绝不
+ * 通过 `editor` 桶导入——这样本模块不会把编辑器的 Tiptap 图拉进 Chat。
  */
 
 import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -41,11 +38,15 @@ import { highlightCode } from "../editor/syntax-highlight";
 import { LazyRichBlock } from "./lazy-rich-block";
 
 /**
- * Languages that may become a rich block. Anything else — including unknown
- * and absent languages — renders as static highlighted code.
+ * 可能成为富块的代码语言。其他语言——包括未知和无语言——都渲染为静态
+ * 高亮代码。
  */
 export type RichFenceLanguage = "mermaid" | "html";
 
+/**
+ * 判断某个语言是否属于富块语言。
+ * @param language 语言 token。
+ */
 export function isRichFenceLanguage(
   language: string | undefined,
 ): language is RichFenceLanguage {
@@ -53,8 +54,10 @@ export function isRichFenceLanguage(
 }
 
 /**
- * Whether a fenced block should render as a rich block rather than source.
- * Both conditions are required: a rich-capable language AND a closed fence.
+ * 判断一个围栏块是否应渲染为富块而不是源码。
+ * 两个条件缺一不可：语言支持富块，且围栏已闭合。
+ * @param language 语言 token。
+ * @param isFenceClosed 围栏是否已闭合。
  */
 export function shouldUpgradeFence(
   language: string | undefined,
@@ -63,16 +66,18 @@ export function shouldUpgradeFence(
   return isRichFenceLanguage(language) && isFenceClosed;
 }
 
-// Memoized on source so appending text elsewhere in a streaming message does
-// not re-run Mermaid's async render or reload an already-mounted iframe. React
-// reconciliation keeps the instance mounted (same element type, same position);
-// memo additionally keeps it from re-rendering.
+// 按源码 memo，这样在流式消息的别处追加文字时，不会重跑 Mermaid 的异步
+// 渲染，也不会重载已经挂载的 iframe。React 协调会保持实例挂载（同样的
+// 元素类型、同样的位置）；memo 进一步阻止它重渲染。
 const MemoMermaidDiagram = memo(MermaidDiagram);
 const MemoHtmlBlockPreview = memo(HtmlBlockPreview);
 
 /**
- * Static lowlight-highlighted `<code>`, matching the editable Tiptap code
- * block's engine and `.hljs-*` CSS so a fence looks identical in every surface.
+ * 静态的 lowlight 高亮 `<code>`，与可编辑的 Tiptap 代码块使用同一引擎和
+ * `.hljs-*` CSS，让围栏在每个界面上看起来一模一样。
+ * @param language 语言 token。
+ * @param body 代码文本。
+ * @param className 附加样式类名。
  */
 export function StaticCodeBody({
   language,
@@ -94,7 +99,7 @@ export function StaticCodeBody({
   }, [body, language]);
 
   if (html == null) {
-    // Highlighter failure must not blank the code — render it unhighlighted.
+    // 高亮失败不能把代码清空——退回到无高亮渲染。
     return (
       <code className={cn("hljs", className)}>{body.replace(/\n$/, "")}</code>
     );
@@ -109,8 +114,11 @@ export function StaticCodeBody({
 }
 
 /**
- * `<pre>` shell with hover copy chrome, matching the editable code block's
- * header (language label + copy) in code-block-view.tsx.
+ * 带悬停复制 chrome 的 `<pre>` 外壳，与 code-block-view.tsx 里可编辑代码块
+ * 的头部（语言标签 + 复制）保持一致。
+ * @param language 语言标签。
+ * @param code 用于复制的代码文本。
+ * @param children 代码内容。
  */
 export function CodeBlockShell({
   language,
@@ -155,22 +163,22 @@ export function CodeBlockShell({
           )}
         </button>
       </div>
-      {/* No extra right padding: `.rich-text-editor pre` outranks utility
-          padding classes anyway, and the editable NodeView uses the same
-          1rem — keeping them identical keeps line wrapping identical. */}
+      {/* 不加额外右内边距：`.rich-text-editor pre` 的优先级本来就高于工具类
+          内边距，而可编辑 NodeView 也用同样的 1rem——保持一致才能让换行一致。 */}
       <pre className="!m-0">{children}</pre>
     </div>
   );
 }
 
 /**
- * The rich leaf for an upgraded fence. Only reached when shouldUpgradeFence()
- * returned true, so the fence is known-closed here.
+ * 升级围栏的富叶子。只在 shouldUpgradeFence() 返回 true 时才会走到这里，
+ * 所以此处围栏已知是闭合的。
  *
- * Both leaves are expensive to instantiate (async Mermaid render / sandboxed
- * iframe), so each is wrapped in the near-viewport lazy shell. The reserved
- * height comes from the leaf itself, so the shell holds the same space the
- * mounted block will occupy.
+ * 两种叶子实例化都很昂贵（异步 Mermaid 渲染 / 沙箱 iframe），所以各自
+ * 都包在近视口懒加载外壳里。预留高度来自叶子自身，因此外壳预留的正是
+ * 挂载后块将占据的空间。
+ * @param language 富围栏语言。
+ * @param body 图表或 HTML 源码。
  */
 export function RichFenceBlock({
   language,
@@ -179,22 +187,18 @@ export function RichFenceBlock({
   language: RichFenceLanguage;
   body: string;
 }) {
-  // Split into two components so the Mermaid-only height hook is never called
-  // conditionally.
+  // 拆成两个组件，让「仅 Mermaid 使用」的高度 hook 永远不会被条件调用。
   if (language === "mermaid") return <MermaidFenceBlock chart={body} />;
   return <HtmlFenceBlock html={body} />;
 }
 
 /**
- * Reserved height for a diagram: the skeleton default on the first frame, then
- * the session-cached real height once mounted.
+ * 图表的预留高度：首帧用骨架默认值，挂载后用会话缓存的真实高度。
  *
- * The cache lives in sessionStorage, which the server does not have. Reading it
- * during render therefore produces 280px on the server and the cached height in
- * a browser with a warm cache — different `style="min-height:…"` on the very
- * frame React hydrates, which React reports as an attribute mismatch and does
- * NOT repair. Deferring the read to an effect keeps the first frame identical
- * everywhere and still gets the zero-shift benefit immediately after.
+ * 缓存在 sessionStorage 里，服务端没有它。渲染期间读取它，服务端会得到
+ * 280px，而带热缓存的浏览器得到缓存高度——在 React hydration 的那一帧上
+ * `style="min-height:…"` 不一致，React 会报属性不匹配且不会修复。把读取
+ * 推迟到 effect，能让首帧处处一致，紧接着仍能拿到零位移的好处。
  */
 function useReservedMermaidHeightPx(chart: string): number {
   const [height, setHeight] = useState(MERMAID_SKELETON_HEIGHT_PX);
@@ -214,8 +218,7 @@ function MermaidFenceBlock({ chart }: { chart: string }) {
 }
 
 function HtmlFenceBlock({ html }: { html: string }) {
-  // The preview iframe is a fixed height, so this needs no cache and is already
-  // identical on server and client.
+  // 预览 iframe 是固定高度，所以这里无需缓存，服务端和客户端天然一致。
   return (
     <LazyRichBlock reservedHeightPx={HTML_BLOCK_PREVIEW_HEIGHT_PX} sourceKey={html}>
       <MemoHtmlBlockPreview html={html} />

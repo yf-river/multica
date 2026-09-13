@@ -1,5 +1,7 @@
 "use client";
 
+// 本文件是 Agent 列表页的工具栏：搜索、范围切换、筛选、排序、列显隐。
+
 import {
   ArrowDown,
   ArrowUp,
@@ -80,6 +82,12 @@ const AVAILABILITY_VALUES: AgentAvailability[] = [
   "offline",
 ];
 
+/**
+ * 统计当前生效的筛选维度数量，用于在筛选按钮上显示“已激活 N 个维度”的角标。
+ *
+ * @param filters 当前的列表筛选条件
+ * @returns 已激活的筛选维度个数（可用性、运行时、拥有者、模型、访问范围各算一个维度）
+ */
 export function countActiveFilterDimensions(
   filters: AgentListFilters,
 ): number {
@@ -115,7 +123,7 @@ export function AgentListToolbar({
 }: {
   scope: AgentsScope;
   onScopeChange: (scope: AgentsScope) => void;
-  /** Per-scope totals from the FULL set — scope counts ignore filters. */
+  /** 每个范围在“完整数据集”下的总数——范围计数不受筛选影响。 */
   scopeCounts: Record<AgentsScope, number>;
   search: string;
   onSearchChange: (value: string) => void;
@@ -128,11 +136,10 @@ export function AgentListToolbar({
   onSortDirectionChange: (direction: AgentSortDirection) => void;
   hiddenColumns: AgentColumnKey[];
   onToggleColumn: (key: AgentColumnKey) => void;
-  /** Rows within the current scope, unfiltered — filter option lists and
-   *  counts derive from this set. */
+  /** 当前范围内未筛选的所有行——筛选选项列表和计数都从这个集合推导。 */
   allRows: AgentListRow[];
   members: MemberWithUser[];
-  /** Rows surviving the filters — shown as "n / total" when narrowed. */
+  /** 通过筛选后剩下的行数——筛选收窄时显示为 "n / total"。 */
   visibleCount: number;
 }) {
   const { t } = useT("agents");
@@ -141,8 +148,8 @@ export function AgentListToolbar({
   const hasActiveFilters = activeCount > 0;
   const hasSearch = search.trim().length > 0;
 
-  // Option lists with counts, derived from the scope's unfiltered rows so
-  // toggling one dimension doesn't make the others' options vanish.
+  // 带计数的选项列表，从“范围内未筛选的行”推导，这样切换其中一个维度
+  // 不会让其他维度的选项消失。
   const availabilityCounts = new Map<string, number>();
   const runtimeOptions = new Map<string, { name: string; count: number }>();
   const accessCounts = new Map<string, number>();
@@ -163,7 +170,7 @@ export function AgentListToolbar({
     accessCounts.set(a, (accessCounts.get(a) ?? 0) + 1);
   }
 
-  // Owner options: members who own at least one agent in the current scope.
+  // 拥有者选项：当前范围内至少拥有一个 Agent 的成员。
   const memberById = new Map(members.map((m) => [m.user_id, m]));
   const ownerCounts = new Map<string, number>();
   const modelCounts = new Map<string, number>();
@@ -206,10 +213,9 @@ export function AgentListToolbar({
   return (
     <div className={cn("h-12 shrink-0 overflow-x-auto [-webkit-overflow-scrolling:touch]", PAGE_GUTTER)}>
       <div className="flex h-full w-max min-w-full items-center justify-between gap-2">
-        {/* Left: local search + scope buttons + result count. Scope mixes the
-          ownership lens (mine/all) with the archived lifecycle stage. Button
-          styling and the <md dropdown collapse follow the issues header's
-          scope buttons. */}
+        {/* 左侧：本地搜索 + 范围按钮 + 结果计数。范围把归属视角（mine/all）和
+          归档生命周期阶段混在一起。按钮样式和 <md 下折叠成下拉菜单，都沿用
+          issues 头部的范围按钮做法。 */}
       <div className="flex min-w-0 items-center gap-2">
         <div className="relative hidden shrink-0 md:block">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -284,7 +290,7 @@ export function AgentListToolbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-        {/* Filter */}
+        {/* 筛选 */}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -334,7 +340,7 @@ export function AgentListToolbar({
             }
           />
           <DropdownMenuContent align="end" className="w-auto">
-            {/* Availability */}
+            {/* 可用性 */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">
@@ -372,8 +378,8 @@ export function AgentListToolbar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Access — effective access scope (workspace / specific-people / owner-only).
-                Mirrors Availability's keyboard/ARIA pattern. */}
+            {/* 访问范围——实际生效的访问范围（工作区 / 指定成员 / 仅拥有者）。
+                键盘/ARIA 模式与“可用性”保持一致。 */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">
@@ -409,7 +415,7 @@ export function AgentListToolbar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Runtime */}
+            {/* 运行时 */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">
@@ -437,9 +443,9 @@ export function AgentListToolbar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Owner — the same person-axis as the Mine scope. Picking an
-                owner here leaves the clean "mine" view for "all" (store
-                rule), so Mine + owner never coexist. */}
+            {/* 拥有者——和 Mine 范围是同一条“人”的维度。在这里选拥有者，
+                会（按 store 规则）把干净的 "mine" 视图留给 "all"，所以
+                Mine + 拥有者永远不会同时出现。 */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">
@@ -478,7 +484,7 @@ export function AgentListToolbar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Model — runtime-native model id (categorical column → filter) */}
+            {/* 模型——运行时原生的模型 id（分类列 → 筛选） */}
             {modelCounts.size > 0 && (
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
@@ -510,7 +516,7 @@ export function AgentListToolbar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Display settings */}
+        {/* 显示设置 */}
         <Popover>
           <Tooltip>
             <PopoverTrigger

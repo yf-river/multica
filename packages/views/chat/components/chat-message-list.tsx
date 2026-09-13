@@ -1,3 +1,6 @@
+// 聊天消息列表：Virtuoso 虚拟化的对话正文。每条消息一行，assistant 回合同时支持
+// "实时流式 timeline"与"持久化后的气泡"两种形态（同一行 key 原地交接），附带
+// 开场建议 chips / 新手引导卡片 / 状态 pill / 吸底滚动等。
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -55,52 +58,47 @@ import { splitTimeline, extractCopyText } from "../lib/copy-text";
 import { stripChatQuickActionsProtocol } from "../lib/quick-actions";
 import { useT } from "../../i18n";
 
-// ─── Public component ────────────────────────────────────────────────────
+// ─── 公开组件 ────────────────────────────────────────────────────────────
 
 interface ChatMessageListProps {
   messages: ChatMessage[];
   /**
-   * Server-authoritative pending-task snapshot. `null` / undefined means
-   * no in-flight task — list renders without StatusPill.
+   * 服务端权威的 pending 任务快照。`null` / undefined 表示没有在途任务——
+   * 列表不渲染 StatusPill。
    */
   pendingTask: ChatPendingTask | null | undefined;
-  /** Resolved presence; pass `undefined` while loading to keep the pill copy neutral. */
+  /** 已解析的在线状态；加载中传 `undefined` 保持 pill 文案中性。 */
   availability: AgentAvailability | undefined;
   firstItemIndex?: number;
   hasOlderMessages?: boolean;
   isFetchingOlderMessages?: boolean;
   onLoadOlderMessages?: () => void;
-  /** Transform assistant task text for embedded chat protocols before render/copy. */
+  /** 渲染/复制前，对内嵌聊天协议文本做一次转换（清掉 quick-actions 协议页脚等）。 */
   transformContent?: (content: string) => string;
-  /** Send the full hidden prompt behind an assistant follow-up chip. */
+  /** 发送某条助手"跟进建议"背后隐藏的完整提示词。 */
   onQuickAction?: (action: ChatQuickAction) => void | Promise<unknown>;
   quickActionsDisabled?: boolean;
   /**
-   * Regenerate the follow-up suggestions for the session's latest assistant
-   * turn (the "refresh" affordance, MUL-5149). Only offered on that turn —
-   * regeneration resumes the newest provider state, so an older turn's pills
-   * can't be refreshed in place.
+   * 为会话最新一条助手回合重新生成跟进建议（"刷新"入口，MUL-5149）。
+   * 只在该回合上提供——重新生成会续接最新的 provider 状态，所以旧回合的
+   * pills 不能就地刷新。
    */
   onRegenerateQuickActions?: (message: ChatMessage) => void | Promise<unknown>;
   /**
-   * Message currently awaiting its quick-actions supplement (client-only
-   * marker raised by chat:done or a refresh) — renders pill skeletons under
-   * that reply until chat:quick_actions resolves it.
+   * 正在等待 quick-actions 补充的消息（chat:done 或一次刷新标起的纯客户端标记）——
+   * 在该条回复下渲染 pill 骨架，直到 chat:quick_actions 解决它。
    */
   quickActionsPendingMessageId?: string | null;
 }
 
-// ─── Virtuoso chrome ─────────────────────────────────────────────────────
+// ─── Virtuoso 外壳 ───────────────────────────────────────────────────────
 //
-// Header/Footer MUST be stable component references (module scope), never
-// inline arrows in the `components` prop: an inline `components={{ Footer:
-// () => … }}` creates a new component *type* every render, so React unmounts
-// and remounts the whole Header/Footer subtree each time. During task
-// streaming that tore down and rebuilt the entire live timeline — every row
-// and every Markdown parse — on every `task:message` event, freezing the
-// renderer for seconds at a time (MUL-3960). Per-render data flows through
-// Virtuoso's `context` prop instead, which reaches these components as an
-// ordinary prop (re-render, not remount).
+// Header/Footer 必须是稳定的组件引用（模块级），绝不能是 `components` prop 里
+// 的行内箭头函数：行内的 `components={{ Footer: () => … }}` 每次渲染都会新建一个
+// 组件*类型*，React 于是每次卸载再重挂整棵 Header/Footer 子树。任务流式输出期间，
+// 这会让整条实时 timeline——每一行、每一次 Markdown 解析——在每条 `task:message`
+// 事件上都拆掉重建，冻结渲染器数秒（MUL-3960）。每次渲染的数据改走 Virtuoso 的
+// `context` prop，以普通 prop 形式到达这些组件（重渲染，而非重挂载）。
 
 interface ChatListContext {
   isFetchingOlderMessages: boolean;
@@ -111,20 +109,18 @@ interface ChatListContext {
 }
 
 /**
- * One Virtuoso row. A live (still-streaming) task and the persisted assistant
- * message it becomes share ONE key — `task:<taskId>` — so the handoff replaces
- * this item's data in place instead of unmounting a Footer subtree and mounting
- * a different row (MUL-4922). That identity is what keeps an already-rendered
- * Mermaid diagram or HTML iframe mounted across task completion.
+ * 一行 Virtuoso 项。实时（仍在流式输出）任务与它持久化后变成的 assistant 消息
+ * 共用一个 key——`task:<taskId>`——所以交接是用新数据原地替换这一项，
+ * 而不是卸载 Footer 子树再挂一个不同的行（MUL-4922）。正是这个身份让已渲染的
+ * Mermaid 图或 HTML iframe 在任务完成后仍保持挂载。
  */
 type ChatRenderItem =
   | { key: string; kind: "message"; message: ChatMessage; taskId: string | null }
   | { key: string; kind: "live"; taskId: string };
 
 /**
- * Row key for a persisted message. Assistant turns carrying a task_id key on
- * the task so they can inherit the live row; everything else keys on its own
- * id.
+ * 持久化消息的行 key。带 task_id 的 assistant 回合按任务键，以便继承实时行；
+ * 其它按自己的 id。
  */
 function messageRowKey(message: ChatMessage): string {
   return message.role === "assistant" && message.task_id
@@ -145,13 +141,11 @@ function ChatListHeader({ context }: { context?: ChatListContext }) {
   );
 }
 
-// The Footer now carries only the status pill — task chrome, not content. The
-// live timeline moved into a real row so it can keep its identity when the
-// task completes (see ChatRenderItem).
+// Footer 现在只扛状态 pill——是任务的"外壳"，不再是内容。实时 timeline 挪进了
+// 真正的行，好让它在任务完成时保住自己的身份（见 ChatRenderItem）。
 //
-// The container always renders (even with no pill) so the list keeps a
-// constant bottom inset: without it the last row's own py-2 was the only gap
-// between the final reply (and its follow-up pills) and the composer.
+// 容器总是渲染（即使没有 pill），让列表保持恒定的底部内缩：没有它，最后一行的
+// py-2 会是最终回复（及它的跟进 pills）与输入框之间唯一的间隔。
 function ChatListFooter({ context }: { context?: ChatListContext }) {
   return (
     <div className={cn(CHAT_COLUMN, "pb-4 space-y-4")}>
@@ -171,6 +165,10 @@ const LIST_COMPONENTS: Components<ChatRenderItem, ChatListContext> = {
   Footer: ChatListFooter,
 };
 
+/**
+ * 消息列表主体：虚拟化渲染会话消息。滚动吸底、翻旧分页、状态 pill、图片序列、
+ * 实时/持久化 timeline 的原地交接都在这里编排。详见 Props 各字段。
+ */
 export function ChatMessageList({
   messages,
   pendingTask,
@@ -192,9 +190,9 @@ export function ChatMessageList({
     setScrollContainerEl(node);
   }, []);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  // The bottom-stick corrects through Virtuoso, never by writing `scrollTop`
-  // on the container: `scrollHeight` is an estimate over the unrendered rows,
-  // so the pixel bottom moves as Virtuoso measures (see stick-to-bottom.ts).
+  // 吸底纠正是经 Virtuoso 完成的，绝不直接在容器上写 `scrollTop`：`scrollHeight`
+  // 对未渲染的行是估算，所以像素级的"底部"会随 Virtuoso 的测量移动
+  // （见 stick-to-bottom.ts）。
   const pinToLiveEnd = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
   }, []);
@@ -202,15 +200,14 @@ export function ChatMessageList({
     scrollContainerEl,
     pinToLiveEnd,
   );
-  // Soft edge fade hinting more content above/below. Kept small so it barely
-  // grazes full-bleed previews (image / HTML) at the edges.
+  // 上下沿的柔和渐隐提示更多内容。保持很小，几乎不碰边缘的整幅预览
+  // （图片 / HTML）。
   const fadeStyle = useScrollFade(scrollRef, 16);
 
   const pendingTaskId = pendingTask?.task_id ?? null;
 
-  // The session's newest assistant turn — the only one whose quick actions can
-  // be refreshed (regeneration resumes the newest provider state). Computed off
-  // the persisted list so the affordance tracks the real tail, not a live row.
+  // 会话最新一条助手回合——唯一能刷新快捷操作的那条（重新生成会续接最新的
+  // provider 状态）。基于持久化列表计算，让入口跟着真实尾部走，而不是实时行。
   const latestAssistantMessageId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
@@ -219,10 +216,9 @@ export function ChatMessageList({
     return null;
   }, [messages]);
 
-  // Mika's onboarding opening self-describes (message_kind stamped by the
-  // completion path — the hidden kickoff row never reaches clients) and
-  // carries the product's starter cards instead of that turn's quick-action
-  // chips (MUL-5765).
+  // Mika 的新手引导开场白自带自我介绍（message_kind 由完成路径盖章——隐藏的
+  // kickoff 行永远不会到达客户端），并携带产品固定的开场卡片，而不是那一回合的
+  // quick-action chips（MUL-5765）。
   const starterCardsMessageId = useMemo(
     () =>
       messages.find(
@@ -231,18 +227,16 @@ export function ChatMessageList({
     [messages],
   );
 
-  // Once the assistant message for this pending task has landed in the
-  // messages list, AssistantMessage owns its rendering — suppress the live
-  // timeline (and pill) to avoid rendering the same content in two places
-  // during the invalidate → refetch window.
+  // 一旦这条 pending 任务的 assistant 消息落进了消息列表，渲染就交给
+  // AssistantMessage——抑制实时 timeline（和 pill），避免在 invalidate → refetch
+  // 窗口里同一份内容渲染两遍。
   const pendingAlreadyPersisted = !!pendingTaskId && messages.some(
     (m) => m.role === "assistant" && m.task_id === pendingTaskId,
   );
 
-  // Live timeline for the in-flight task. useRealtimeSync keeps this cache
-  // current via setQueryData on task:message events. Only used here to decide
-  // whether the live row exists and to feed the status pill — the row itself
-  // reads the same cache entry through AssistantMessage.
+  // 在途任务的实时 timeline。useRealtimeSync 通过 task:message 事件上的
+  // setQueryData 保持这个缓存最新。这里只用来决定实时行是否存在、以及喂状态
+  // pill——行本身经 AssistantMessage 读同一条缓存条目。
   const showLiveTimeline = !!pendingTaskId && !pendingAlreadyPersisted;
   const canFetchLiveTimeline = isTaskMessageTaskId(pendingTaskId) && !pendingAlreadyPersisted;
   const { data: liveTaskMessages } = useQuery({
@@ -252,12 +246,10 @@ export function ChatMessageList({
   const hasLive = showLiveTimeline && (liveTaskMessages?.length ?? 0) > 0;
   const showStatusPill = !!pendingTaskId && !pendingAlreadyPersisted && !!pendingTask;
 
-  // Persisted messages plus, while a task is in flight, one synthetic trailing
-  // row for it. When the assistant message persists, `hasLive` goes false and
-  // the message takes the SAME key at the SAME position — an in-place data
-  // swap, not a remount. The onboarding kickoff is a server-authored carrier
-  // for Mika's first task, not something the member typed, so it never becomes
-  // a visible bubble.
+  // 持久化消息加上——任务在途时——它的一条合成尾部行。assistant 消息持久化后，
+  // `hasLive` 变 false，消息以 SAME key、SAME 位置原地换入——是数据交换，不是
+  // 重挂载。新手引导 kickoff 是服务端为 Mika 第一个任务写的载体，不是成员敲的，
+  // 所以它永远不会变成可见气泡。
   const renderItems: ChatRenderItem[] = useMemo(() => {
     const items: ChatRenderItem[] = messages
       .filter((message) => message.message_kind !== "onboarding_kickoff")
@@ -284,14 +276,11 @@ export function ChatMessageList({
     availability,
   };
 
-  // Every image in this session, in message order, so opening one lets the
-  // reader page through the rest (MUL-5752). Built from the message data, not
-  // from what Virtuoso currently has mounted.
+  // 本会话里按消息顺序排列的每张图片，打开一张就能让读者翻完其余（MUL-5752）。
+  // 基于消息数据构建，而不是 Virtuoso 当前挂载的内容。
   //
-  // Persisted messages only: a task transcript's own attachments live behind a
-  // separate query and its blocks are collapsed by default, so an image in
-  // there keeps its standalone preview instead of entering a sequence the
-  // reader can't see the rest of.
+  // 只算持久化消息：任务 transcript 自己的附件活在另一条查询后面、它的块默认
+  // 折叠，所以那里的图片保留独立的预览，不进入读者看不见其余部分的序列。
   const imageSequence = useMemo(
     () =>
       collectImageSequence(
@@ -309,56 +298,47 @@ export function ChatMessageList({
       ref={setScrollContainerRef}
       data-tab-scroll-root
       style={fadeStyle}
-      // The gutter lives on the scroll container, so it applies once to the
-      // whole list — rows, header, footer — and the scrollbar still rides the
-      // surface edge rather than being inset with the text.
-      // Hidden until Virtuoso has actually landed on the newest message. The
-      // container paints nothing for that whole window anyway — the rows are
-      // not measured yet — so this costs no visible time and spares the
-      // reader a frame of the wrong messages (see stick-to-bottom.ts).
+      // gutter 放在滚动容器上，这样整份列表只应用一次——行、header、footer——
+      // 滚动条也仍贴着表面边缘，而不是和文字一起被内缩。
+      // Virtuoso 真正落到最新消息之前保持隐藏。那个窗口里容器本来也不画任何
+      // 东西——行还没被测量——所以这不花可见时间，还能让读者少看一帧错误的
+      // 消息（见 stick-to-bottom.ts）。
       className={cn("flex-1 overflow-y-auto", CHAT_GUTTER, !hasReachedLiveEnd && "invisible")}
     >
-      {/* Already inside the gutter + column, so this pre-mount frame renders the
-       *  skeleton BODY rather than <ChatMessageSkeleton>, which brings its own
-       *  wrapper for use as a standalone sibling of the list. */}
+      {/* 已经在 gutter + column 内，所以这个挂载前帧渲染骨架 BODY 而不是
+       *  <ChatMessageSkeleton>——后者自带外壳，用于作为列表的独立兄弟节点。 */}
       {!scrollContainerEl ? (
         <div className={cn(CHAT_COLUMN, "pt-4")}>
           <ChatSkeletonBody />
         </div>
       ) : (
-      // Chat scrolls inside its own element, so rich blocks must measure
-      // "near-viewport" against that element rather than the browser viewport —
-      // otherwise a diagram only starts loading once it is already on screen.
+      // 聊天在自己的元素里滚动，所以富块测量"接近视口"要对着那个元素、而不是
+      // 浏览器视口——否则一个图要等已经在屏幕上了才开始加载。
       <RichContentScrollRootProvider scrollRoot={scrollContainerEl}>
       <Virtuoso
         ref={virtuosoRef}
         customScrollParent={scrollContainerEl}
         data={renderItems}
         firstItemIndex={firstIndex}
-        // Open pinned to the newest message. The list is remounted per session
-        // (`key={activeSessionId}` upstream), so this initial position is
-        // re-applied on every session switch. Without it a fresh Virtuoso
-        // renders from the top and the only thing that can scroll it down is
-        // `followOutput`, which reacts to post-mount data growth — leaving the
-        // landing spot racy: cached sessions resolve synchronously and stick at
-        // the top, while fetched ones sometimes catch a growth tick and land at
-        // the bottom. `align: "end"` bottom-aligns even a last message taller
-        // than the viewport, so switching sessions always shows the latest reply.
+        // 打开时钉到最新消息。列表按会话重挂载（上游 `key={activeSessionId}`），
+        // 所以这个初始位置在每次切换会话时都会重新应用。没有它，全新的 Virtuoso
+        // 从顶部渲染，唯一能把它滚下去的是 `followOutput`——它只对挂载后的数据
+        // 增长做出反应——于是落点变得竞态：已缓存的会话同步解析、钉在顶部，
+        // 而拉取来的会话有时赶上一个增长 tick、落在底部。`align: "end"` 连一条
+        // 比视口还高的最新消息也底对齐，切换会话永远显示最新回复。
         initialTopMostItemIndex={{ index: "LAST", align: "end" }}
         increaseViewportBy={{ top: 400, bottom: 600 }}
         atBottomThreshold={FOLLOW_EDGE_THRESHOLD}
-        // Follow rapid streamed output only while Virtuoso says the reader is
-        // at the live end. An in-flight smooth animation temporarily reports
-        // "not at bottom" on the next append and permanently drops the follow
-        // (#6697), so live growth must use an immediate scroll. `isFollowing`
-        // narrows this further: the reader may have scrolled away by input the
-        // 120px `atBottom` band forgives (see stick-to-bottom.ts).
+        // 只有当 Virtuoso 说读者在实时端时才跟随快速流出的输出。一次进行中的
+        // 平滑动画会在下一次追加时暂时报告"不在底部"并永久丢掉跟随（#6697），
+        // 所以实时增长必须用即时滚动。`isFollowing` 进一步收窄：读者可能因为
+        // 输入而滚走——那是 120px 的 `atBottom` 宽容带原谅不了的（见
+        // stick-to-bottom.ts）。
         followOutput={(atBottom) =>
           !isFetchingOlderMessages && atBottom && isFollowing() ? "auto" : false
         }
-        // `followOutput` never fires for a single row growing mid-stream, so
-        // content resizes route to the bottom-stick through Virtuoso's own
-        // height signal instead.
+        // `followOutput` 永远不会为一行在流式中途长高而触发，所以内容尺寸变化
+        // 改经 Virtuoso 自己的高度信号路由到吸底逻辑。
         totalListHeightChanged={onContentHeightChanged}
         startReached={() => {
           if (hasOlderMessages && !isFetchingOlderMessages) {
@@ -395,10 +375,9 @@ export function ChatMessageList({
 }
 
 /**
- * Placeholder shown while `chat_message` for a session is being fetched
- * (initial refresh, or switching to an un-cached session). Shape roughly
- * mirrors an assistant → user → assistant exchange so the window doesn't
- * shift under the user when real messages arrive.
+ * 骨架屏占位：在拉取某会话 `chat_message` 期间显示（首次刷新、或切到一个未缓存的
+ * 会话）。形状大致镜像 assistant → user → assistant 的往来，让真实消息到达时
+ * 窗口不会在用户脚下移位。
  */
 export function ChatMessageSkeleton() {
   return (
@@ -410,8 +389,7 @@ export function ChatMessageSkeleton() {
   );
 }
 
-// The rows themselves, so the list's pre-mount frame can drop them straight
-// into the gutter + column it already established.
+// 行本身，让列表的挂载前帧可以直接把它们丢进它已建好的 gutter + column。
 function ChatSkeletonBody() {
   return (
     <div className="space-y-5">
@@ -431,13 +409,11 @@ function ChatSkeletonBody() {
   );
 }
 
-// ─── Message bubbles ─────────────────────────────────────────────────────
+// ─── 消息气泡 ───────────────────────────────────────────────────────────
 
-// memo: every streamed task:message re-renders ChatMessageList, and with it
-// every VISIBLE row via itemContent. Message objects are referentially
-// stable for unchanged messages and isPending is a boolean, so a shallow
-// memo skips reconciling rows the stream didn't touch — the persisted
-// history stays inert while only the live footer updates.
+// memo：每条流式 task:message 都会重渲染 ChatMessageList，连带 itemContent 里
+// 每一条 VISIBLE 行。未变消息的 Message 对象引用稳定、isPending 是布尔值，
+// 所以浅比较 memo 能跳过流没碰过的行——持久化历史保持惰性，只有实时 footer 更新。
 const MessageBubble = memo(function MessageBubble({
   item,
   isPending,
@@ -459,9 +435,9 @@ const MessageBubble = memo(function MessageBubble({
   quickActionsPendingMessageId: string | null;
   starterCardsMessageId: string | null;
 }) {
-  // The live row and the persisted assistant row both land here under one key,
-  // and both render <AssistantMessage> — same component type, same position —
-  // so React reconciles rather than remounts at task completion.
+  // 实时行与持久化后的 assistant 行都落在这里、共用一个 key，且两者都渲染
+  // <AssistantMessage>——相同组件类型、相同位置——所以任务完成时 React 做的是
+  // 协调而不是重挂载。
   if (item.kind === "live") {
     return (
       <AssistantMessage
@@ -480,11 +456,10 @@ const MessageBubble = memo(function MessageBubble({
     return (
       <div className="flex justify-end">
         <div className="rounded-2xl bg-muted px-3.5 py-2 text-body max-w-[80%] break-words">
-          {/* User messages are authored as markdown in ContentEditor, so they
-           * render through the SAME RichContent as assistant replies and as
-           * Issue/Comment — a Mermaid fence a user pastes is a diagram here
-           * too. `compact` trims the leading/trailing block margins so a
-           * single-line bubble stays as tight as the plain-text version. */}
+          {/* 用户消息在 ContentEditor 里以 markdown 编写，所以它们经同一套
+           * RichContent 渲染——和 assistant 回复、Issue/Comment 一样——用户粘贴的
+           * Mermaid 围栏在这里也是图。`compact` 收掉首尾块边距，让单行气泡
+           * 跟纯文本版一样紧凑。 */}
           <RichContent
             content={message.content}
             attachments={message.attachments}
@@ -518,21 +493,18 @@ const MessageBubble = memo(function MessageBubble({
 });
 
 /**
- * Assistant turn body — renders BOTH the in-flight (live) and the persisted
- * form of one task (MUL-4922).
+ * 一条 assistant 回合的主体——同时渲染一个任务的"在途（实时）"与"持久化"
+ * 两种形态（MUL-4922）。
  *
- * `message` is undefined while the task streams and becomes the persisted
- * `chat_message` when it lands. Both forms are rendered by this one component,
- * mounted under one stable row key (`task:<taskId>`), so the live → persisted
- * handoff is a prop change rather than an unmount: the RichContent subtree and
- * any Mermaid diagram / HTML iframe inside it stay mounted, keep their pan-zoom
- * state, and never re-run their expensive render. Before this, the live
- * timeline lived in Virtuoso's Footer and the persisted row keyed on
- * `message.id`, so every completed task tore down and rebuilt its diagrams.
+ * 任务流式期间 `message` 为 undefined，落地后变成持久化的 `chat_message`。
+ * 两种形态都由这一个组件渲染、挂在一个稳定的行 key（`task:<taskId>`）下，
+ * 所以 实时 → 持久化 的交接是 prop 变化而不是卸载：RichContent 子树以及里面的
+ * 任何 Mermaid 图 / HTML iframe 保持挂载、保留它们的平移缩放状态、绝不重跑昂贵
+ * 的渲染。此前实时 timeline 活在 Virtuoso 的 Footer 里、持久化行按 `message.id`
+ * 键，于是每个完成的任务都会拆掉并重建它的图。
  *
- * The timeline itself comes from `taskMessagesOptions(taskId)` in both forms —
- * the same cache entry useRealtimeSync seeds during execution — so no refetch
- * and no data discontinuity happens at the handoff either.
+ * timeline 两种形态都来自 `taskMessagesOptions(taskId)`——useRealtimeSync 在
+ * 执行期间种下的同一条缓存条目——所以交接时既不需要重拉取、也没有数据断层。
  */
 function AssistantMessage({
   taskId,
@@ -555,14 +527,13 @@ function AssistantMessage({
   onRegenerateQuickActions?: (message: ChatMessage) => void | Promise<unknown>;
   canRegenerateQuickActions?: boolean;
   quickActionsPending?: boolean;
-  /** This turn is Mika's onboarding opening — render starter cards, not chips. */
+  /** 这一回合是 Mika 的新手引导开场白——渲染开场卡片，而不是 chips。 */
   showStarterCards?: boolean;
 }) {
   const { t } = useT("chat");
   const canFetchTaskMessages = isTaskMessageTaskId(taskId);
-  // A turn mounted while streaming keeps its live transcript through
-  // completion. Historical completed turns load that optional process only
-  // after the user asks, avoiding one request per visible assistant message.
+  // 流式期间挂载的回合在完成后仍保留它的实时 transcript。历史已完成回合只有
+  // 在用户点开时才加载那段可选的过程，避免为每条可见的 assistant 消息发一个请求。
   const [processRequested, setProcessRequested] = useState(isPending);
   const shouldFetchTaskMessages = shouldFetchAssistantTaskMessages(
     canFetchTaskMessages,
@@ -571,30 +542,26 @@ function AssistantMessage({
     processRequested,
   );
 
-  // Use the shared taskMessagesOptions so this cache entry is the same one
-  // seeded by useRealtimeSync during task execution — zero refetch when the
-  // task finishes, since WS already populated it.
+  // 共用 taskMessagesOptions，让这条缓存条目与 useRealtimeSync 在任务执行期间
+  // 种下的那一条相同——任务完成时零重拉取，因为 WS 已经填好它了。
   const { data: taskMessages } = useQuery({
     ...taskMessagesOptions(taskId ?? ""),
     enabled: shouldFetchTaskMessages,
   });
 
-  // Memoized on the cache array identity: mergeTaskMessagesBySeq preserves the
-  // array reference when a duplicate event arrives, so this recomputes only
-  // when a genuinely new message lands.
+  // 按缓存数组的身份 memo：mergeTaskMessagesBySeq 在重复事件到达时保留数组引用，
+  // 所以只有真正的新消息落地时这里才重算。
   const timeline: ChatTimelineItem[] = useMemo(
     () => transformTimeline(buildTimeline(taskMessages ?? []), transformContent),
     [taskMessages, transformContent],
   );
 
-  // Content is settled once the persisted message exists; until then text is
-  // still arriving and a trailing fence may be half-written.
+  // 持久化消息存在即"内容已落定"；在那之前文本仍在到达、末尾围栏可能写了一半。
   const phase: "streaming" | "settled" = message ? "settled" : "streaming";
 
-  // Failure bubble path: when the server's FailTask wrote a failure
-  // chat_message (failure_reason set), render a destructive bubble with the
-  // human-readable reason label + collapsible raw errMsg + the same timeline
-  // so the user can see exactly where the run broke.
+  // 失败气泡路径：当服务端 FailTask 写入一条带 failure_reason 的 chat_message 时，
+  // 渲染一个带人类可读原因标签 + 可折叠原始 errMsg + 同一份 timeline 的破坏性
+  // 气泡，让用户能精确看到运行在哪断的。
   if (message?.failure_reason) {
     return (
       <FailureBubble
@@ -606,9 +573,9 @@ function AssistantMessage({
     );
   }
 
-  // no_response path (MUL-4351): the agent completed this direct-chat turn
-  // without any text. Keep whatever tool/thinking timeline the run produced and
-  // show a localized "no text reply" notice instead of an empty markdown block.
+  // no_response 路径（MUL-4351）：agent 完成这轮直聊却没有给出任何文字。
+  // 保留运行产生的工具/思考 timeline，并显示一条本地化的"没有文字回复"提示，
+  // 而不是一块空白 markdown。
   const isNoResponse = message?.message_kind === "no_response";
 
   return (
@@ -657,8 +624,8 @@ function AssistantMessage({
             isPending={isPending}
           />
           {onQuickAction && showStarterCards ? (
-            // The opening's starter cards own this turn's suggestion strip
-            // (MUL-5765); the server skips chip generation for it.
+            // 开场白自带的开场卡片占据这一回合的建议条（MUL-5765）；
+            // 服务端会为它跳过 chip 生成。
             <OnboardingStarterCards
               onPick={onQuickAction}
               disabled={quickActionsDisabled || isPending}
@@ -684,6 +651,11 @@ function AssistantMessage({
   );
 }
 
+/**
+ * 判断某条已持久化的 assistant 回合是否应该拉取它的任务消息过程。只有带持久化
+ * task_id 的回合才会：仍在跑（isPending）、失败（isFailed，要展示断点）、
+ * 或用户显式点了"查看过程"（processRequested）。
+ */
 export function shouldFetchAssistantTaskMessages(
   hasPersistedTaskId: boolean,
   isPending: boolean,
@@ -719,24 +691,22 @@ function QuickActions({
   actions: ChatQuickAction[];
   disabled: boolean;
   onSelect: (action: ChatQuickAction) => void | Promise<unknown>;
-  /** Present only on the session's latest turn — re-runs the suggestion pass. */
+  /** 只出现在会话最新一回合上——重跑一轮建议生成。 */
   onRegenerate?: () => void | Promise<unknown>;
   /**
-   * The turn is awaiting a supplement (a refresh is in flight): its old pills
-   * stay visible but inert, and the refresh icon spins until chat:quick_actions
-   * lands. Distinct from the local `regenerating` guard, which only covers the
-   * click → HTTP-ack window before the pending marker is observed.
+   * 这一回合正在等补充（一次刷新在途）：旧 pills 保持可见但惰性，刷新图标转圈
+   * 直到 chat:quick_actions 落地。与本地 `regenerating` 守卫不同——后者只覆盖
+   * "点击 → HTTP 已确认"这个还没观察到 pending 标记的窗口。
    */
   pending?: boolean;
 }) {
   const { t } = useT("chat");
   const [submitting, setSubmitting] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
-  // The pending marker is the single source of truth: chat:quick_actions clears
-  // it on success, and useQuickActionsPendingTimeout clears it from the query
-  // cache if no supplement ever arrives. So `pending` going false is what stops
-  // the spinner — no component-local "expired" flag that only masks the UI while
-  // the cache stays stuck (MUL-5149 review).
+  // pending 标记是唯一真相来源：chat:quick_actions 成功时清掉它，
+  // useQuickActionsPendingTimeout 在没有补充到达时从查询缓存里清掉它。所以
+  // `pending` 变 false 才是停转圈的信号——没有一个只在本地把 UI 蒙住、而缓存
+  // 仍卡着的"过期"标志（MUL-5149 review）。
   const blocked = disabled || submitting || regenerating || pending;
 
   const handleSelect = async (action: ChatQuickAction) => {
@@ -745,8 +715,8 @@ function QuickActions({
     try {
       await onSelect(action);
     } catch {
-      // The send path owns user-facing error feedback and optimistic rollback.
-      // Re-enable the chip so a transient failure can be retried.
+      // 发送路径负责面向用户的错误反馈与乐观回滚。
+      // 这里重新启用 chip，让一次临时失败可以被重试。
     } finally {
       setSubmitting(false);
     }
@@ -758,8 +728,8 @@ function QuickActions({
     try {
       await onRegenerate();
     } catch {
-      // The caller's mutation rolls the pending marker back; surface a toast so
-      // the silent re-enable isn't mistaken for "no suggestions this time".
+      // 调用方的 mutation 会回滚 pending 标记；弹一条 toast，
+      // 别让静默的重新启用被误读成"这次没有建议"。
       toast.error(t(($) => $.message_list.quick_actions_regenerate_failed));
     } finally {
       setRegenerating(false);
@@ -776,9 +746,8 @@ function QuickActions({
       >
         <QuickActionsHeading />
         {actions.slice(0, 3).map((action, index) => (
-          // The whole pill previews its hidden prompt on hover: clicking
-          // sends a message the user has never seen, in their name — the
-          // tooltip flips that from commit-then-learn to learn-then-commit.
+          // 整颗 pill 在悬停时预览它隐藏的提示词：点击会以用户名义发送一条他
+          // 从未见过的消息——tooltip 把"先提交后知晓"翻转成"先知晓后提交"。
           <Tooltip key={`${action.label}-${index}`}>
             <TooltipTrigger
               render={
@@ -830,11 +799,9 @@ function QuickActions({
   );
 }
 
-// Light inline prefix label for the follow-up pill row — the row sits below
-// the reply footer ("Replied in Xs · Copy") behind a faint top border, so
-// the pills read as a labelled next-steps strip, not part of the reply body.
-// shrink-0 keeps the label whole at the row start when narrow widths wrap
-// the pills.
+// 跟进 pills 行的轻量行内前缀标签——这行坐在回复 footer（"Replied in Xs · Copy"）
+// 下方、隔着一条淡淡的顶边框，让 pills 读起来是一条带标签的"下一步"条，
+// 而不是回复正文的一部分。shrink-0 在窄宽度换行时保持标签完整在行首。
 function QuickActionsHeading() {
   const { t } = useT("chat");
   return (
@@ -844,15 +811,13 @@ function QuickActionsHeading() {
   );
 }
 
-// Pill-shaped placeholders shown between chat:done (which declared a pending
-// supplement) and chat:quick_actions. Widths are staggered so the row reads
-// as "buttons coming", not a loading bar. aria-hidden: nothing actionable to
-// announce yet.
+// chat:done（宣告有待生成的补充）与 chat:quick_actions 之间显示的 pill 形占位。
+// 宽度交错，让这行读起来像"按钮马上来"，而不是进度条。aria-hidden：还没有
+// 可宣告的交互。
 function QuickActionsSkeleton() {
-  // No local timeout: the shared pending marker drives visibility, and
-  // useQuickActionsPendingTimeout clears it from the query cache if no
-  // chat:quick_actions ever resolves it — so this unmounts on its own instead
-  // of only hiding itself while the cache stays stuck (MUL-5149 review).
+  // 没有本地超时：可见性由共享的 pending 标记驱动，useQuickActionsPendingTimeout
+  // 在没有 chat:quick_actions 解决它时把它从查询缓存清掉——所以这里自己会卸载，
+  // 而不是只在缓存仍卡着时把自己藏起来（MUL-5149 review）。
   return (
     <div className="mt-2 border-t border-border/40 pt-2 animate-in fade-in duration-300">
       <div className="flex flex-wrap items-center gap-2" aria-hidden="true">
@@ -865,9 +830,9 @@ function QuickActionsSkeleton() {
   );
 }
 
-// Muted, localized notice shown in place of assistant text when a turn
-// completed with no reply (message_kind === "no_response"). Explains the empty
-// turn instead of rendering a blank bubble (MUL-4351).
+// 安静的本地化提示：当一轮"没有回复"就完成时（message_kind === "no_response"），
+// 在 assistant 文本的位置显示它。解释这轮为什么空，而不是渲染一块空白气泡
+// （MUL-4351）。
 function NoResponseNotice() {
   const { t } = useT("chat");
   return (
@@ -877,11 +842,9 @@ function NoResponseNotice() {
   );
 }
 
-// Inline footer row beneath the assistant reply: "Replied in 38s · [Copy]".
-// Action icons live here (not as a hover-floating overlay) so they're
-// discoverable on first read and don't shift content. Buttons stay quiet
-// (muted) until hover. Copy is suppressed during streaming because the
-// final text is still being appended.
+// assistant 回复下方的行内 footer 行："Replied in 38s · [Copy]"。
+// 动作图标就放这里（而不是悬停浮层），让它们首次阅读即可见、也不挪动内容。
+// 按钮悬停前保持安静（弱化）。流式期间抑制复制，因为最终文本还在追加。
 function MessageFooter({
   message,
   timeline,
@@ -891,8 +854,8 @@ function MessageFooter({
   timeline: ChatTimelineItem[];
   isPending: boolean;
 }) {
-  // A no_response turn has nothing to copy, and its caption uses a neutral
-  // "Finished in Xs" instead of "Replied in Xs" (MUL-4351).
+  // no_response 回合没有可复制的东西，它的 caption 用中性的 "Finished in Xs"
+  // 而不是 "Replied in Xs"（MUL-4351）。
   const isNoResponse = message.message_kind === "no_response";
   const showCopy = !isPending && !isNoResponse;
   if (message.elapsed_ms == null && !showCopy) return null;
@@ -946,11 +909,10 @@ function MessageCopyButton({
   );
 }
 
-// Persisted "Replied in 38s" / "Failed after 12s" line under the assistant
-// bubble. Reads `elapsed_ms` straight off the chat_message — server computes
-// it once at task completion, so this caption is identical across reloads
-// and devices. Skipped silently when null (legacy messages predating
-// migration 063 + user messages).
+// assistant 气泡下的持久化 "Replied in 38s" / "Failed after 12s" 行。直接从
+// chat_message 读 `elapsed_ms`——服务端在任务完成时算一次，所以这个 caption
+// 在重载和设备间完全相同。为 null 时静默跳过（在 migration 063 之前的旧消息 +
+// 用户消息）。
 function ElapsedCaption({
   variant,
   elapsedMs,
@@ -988,24 +950,19 @@ function FailureBubble({
 }) {
   const { t } = useT("chat");
   const [open, setOpen] = useState(false);
-  // Chat gets its own friendly, reassuring copy per failure reason — plain
-  // language + a "try again" nudge — instead of the terse developer labels
-  // (`failureReasonLabel`) used on the agent-detail / execution-log surfaces.
-  // The raw error stays tucked under the collapsible below for anyone who
-  // wants the technical detail.
+  // 聊天为每种失败原因准备了自己的友好、安抚性文案——大白话 + 一个"再试一次"
+  // 的提示——而不是 agent 详情 / 执行日志界面用的那种简短的开发者标签
+  // （`failureReasonLabel`）。原始错误仍收在下方可折叠区里，供想要技术细节的人看。
   //
-  // Keyed by the raw wire value, not a closed enum — `failure_reason` is an
-  // open string that grows as classifier rules land, same as
-  // `failureReasonLabel`'s map. Deliberately partial: the taxonomy is larger
-  // than the set worth writing distinct chat copy for, so an entry earns its
-  // place only when it can say something the `agent_error` family line can't,
-  // usually a different next step (re-auth, top up, check the network).
+  // 按键按原始线上值，而不是封闭枚举——`failure_reason` 是开放字符串，会随
+  // 分类规则落地而增长，和 `failureReasonLabel` 的映射表一样。刻意做成分片的：
+  // 分类体系比值得为聊天单独写文案的那一小撮大得多，所以一个条目只有在能说出
+  // `agent_error` 家族那句说不出的东西——通常是不同的下一步（重新授权、充值、
+  // 检查网络）——时才配得上占位。
   //
-  // Where this diverges from the operator surfaces: they fall back to the raw
-  // wire value, which is machine-y but searchable. A chat bubble is read by
-  // the person who just sent a message, so it degrades through
-  // `resolveFailureReasonKey` to the family line and finally to friendly
-  // generic copy. The raw error is still one click away under the collapsible.
+  // 与运维界面的分歧点：它们回退到原始线上值——机器味重但可搜索。聊天气泡是
+  // 刚发了消息的那个人读的，所以它经 `resolveFailureReasonKey` 先落到家族行、
+  // 最后落到友好通用文案。原始错误仍隔一次点击、躺在可折叠区下面。
   const chatFailureCopy: Record<string, string> = {
     agent_error: t(($) => $.message_list.failure.agent_error),
     timeout: t(($) => $.message_list.failure.timeout),
@@ -1037,11 +994,9 @@ function FailureBubble({
 
   return (
     <div className="w-full space-y-1.5">
-      {/* Failure read as an inline, low-key note — not a destructive
-       *  alert. Intentionally borderless / no background tint: a chat
-       *  failure is informational ("this didn't work"), not a system
-       *  error. The icon + muted destructive text are signal enough,
-       *  the rest stays in the normal reply rhythm. */}
+      {/* 失败读成一行行内、低调的提示——不是破坏性警报。刻意无边框 / 无底色：
+       * 聊天失败是告知性的（"这个没成"），不是系统错误。图标 + 弱化的破坏性
+       * 文字已是足够的信号，其余保持正常回复的节奏。 */}
       <div className="flex items-start gap-1.5 text-body">
         <AlertTriangle className="size-3.5 shrink-0 text-destructive mt-0.5" />
         <div className="flex-1 min-w-0">
@@ -1073,19 +1028,17 @@ function FailureBubble({
   );
 }
 
-// ─── Timeline: outer process fold + final text (Conductor-style) ─────────
+// ─── Timeline：外层过程折叠 + 最终正文（指挥家式） ─────────────────────
 //
-// splitTimeline (lib/copy-text.ts) carves the items into:
-//   preface — text before the first thinking/tool item
-//   middle  — first → last non-text item (inclusive, may sandwich text)
-//   final   — text after the last non-text item
+// splitTimeline（lib/copy-text.ts）把条目切成：
+//   preface — 第一个 thinking/tool 条目之前的文本
+//   middle  — 第一个 → 最后一个非文本条目（含首尾，中间可能夹着文本）
+//   final   — 最后一个非文本条目之后的文本
 //
-// We render preface + final outside an outer Collapsible ("X steps") that
-// wraps middle. The inner row Collapsibles (ThinkingRow / ToolCallRow /
-// ToolResultRow) are unchanged — clicking them toggles independently of
-// the outer fold. Copy mirrors what's visible when the outer fold is
-// closed: preface + final, never middle. See extractCopyText for the
-// authoritative copy logic.
+// 我们把 preface + final 渲染在包住 middle 的外层 Collapsible（"X steps"）之外。
+// 内层行的 Collapsibles（ThinkingRow / ToolCallRow / ToolResultRow）不变——
+// 点击它们与外层折叠互不干扰。复制与"外层折叠收起时看到的内容"一致：
+// preface + final，绝不含 middle。权威的复制逻辑见 extractCopyText。
 
 function TimelineView({
   items,
@@ -1144,11 +1097,10 @@ function OuterProcessFold({
   phase?: "streaming" | "settled";
 }) {
   const { t } = useT("chat");
-  // Open while the task streams (so the user watches progress), collapsed once
-  // it settles. This used to fall out of a remount: the live TimelineView was
-  // torn down and the persisted one mounted closed. The row is now stable
-  // across that handoff (MUL-4922) — which is the point, it keeps Mermaid and
-  // HTML blocks alive — so the collapse has to be expressed directly.
+  // 任务流式期间打开（让用户看到进度），落定后收起。过去这靠重挂载顺带实现：
+  // 实时 TimelineView 被拆掉、持久化的那个以收起状态挂上。行现在在交接中保持
+  // 稳定（MUL-4922）——这正是目的，保住 Mermaid 与 HTML 块——所以收起状态
+  // 必须直接表达。
   const [open, setOpen] = useState(!!isStreaming);
   const wasStreaming = useRef(!!isStreaming);
   useEffect(() => {
@@ -1183,10 +1135,8 @@ function OuterProcessFold({
   );
 }
 
-// Intermediate text segment rendered inside the outer fold. Visually
-// down-shifted (xs / muted) so it reads as part of the agent's process,
-// not the final answer — the final answer renders below the fold at full
-// prose size.
+// 渲染在外层折叠里的中间文本段。视觉上下沉（xs / 弱化），让它读起来是 agent
+// 过程的一部分、而不是最终答案——最终答案以完整正文字号渲染在折叠下方。
 function MiddleTextRow({
   item,
   attachments,
@@ -1208,7 +1158,7 @@ function MiddleTextRow({
   );
 }
 
-// ─── Individual item rows ────────────────────────────────────────────────
+// ─── 单条条目行 ──────────────────────────────────────────────────────────
 
 function ItemRow({ item }: { item: ChatTimelineItem }) {
   switch (item.type) {
@@ -1344,4 +1294,4 @@ function ErrorRow({ item }: { item: ChatTimelineItem }) {
   );
 }
 
-// ─── Shared ──────────────────────────────────────────────────────────────
+// ─── 共享 ────────────────────────────────────────────────────────────────

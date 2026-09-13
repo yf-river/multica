@@ -1,9 +1,13 @@
+// 本文件提供「通知偏好」补丁的纯函数：从新旧两份偏好里推导最小原子补丁、
+// 把补丁应用回完整偏好、以及只回滚仍属于本次乐观修改的那部分。
+
 import type {
   NotificationGroupKey,
   NotificationGroupValue,
   NotificationPreferences,
 } from "../types";
 
+/** 全部可配置的通知分组 key。 */
 const NOTIFICATION_GROUP_KEYS: readonly NotificationGroupKey[] = [
   "assignments",
   "status_changes",
@@ -14,6 +18,7 @@ const NOTIFICATION_GROUP_KEYS: readonly NotificationGroupKey[] = [
   "system_notifications",
 ];
 
+/** 读取某分组的偏好值；没写就视为默认值 "all"。 */
 function preferenceValue(
   preferences: NotificationPreferences,
   key: NotificationGroupKey,
@@ -22,8 +27,12 @@ function preferenceValue(
 }
 
 /**
- * Convert the full preference object produced by the settings UI into the
- * smallest atomic patch. Missing keys mean the default value ("all").
+ * 把设置界面产出的完整偏好对象，转成最小的原子补丁。
+ * 缺失的 key 表示默认值（"all"），所以只有「和默认不同」的项才会进补丁。
+ *
+ * @param previous - 改动前的完整偏好
+ * @param next - 改动后的完整偏好
+ * @returns 只含发生变化的 key 的补丁对象
  */
 export function deriveNotificationPreferencePatch(
   previous: NotificationPreferences,
@@ -42,7 +51,14 @@ export function deriveNotificationPreferencePatch(
   return patch;
 }
 
-/** Apply a preference patch while keeping default "all" values sparse. */
+/**
+ * 把一份补丁应用到当前完整偏好上，同时保持「值为 all」的键稀疏（即删除键，
+ * 而不是显式写 "all"）。
+ *
+ * @param current - 当前的完整偏好
+ * @param patch - 要应用的补丁
+ * @returns 应用后的完整偏好
+ */
 export function applyNotificationPreferencePatch(
   current: NotificationPreferences,
   patch: NotificationPreferences,
@@ -62,8 +78,13 @@ export function applyNotificationPreferencePatch(
 }
 
 /**
- * Roll back only values that still match this mutation's optimistic patch.
- * A later toggle that touched the same key wins.
+ * 只回滚「仍然与本变更的乐观补丁一致」的值。
+ * 之后另一个开关把同一个 key 又改了的，以那个为准。
+ *
+ * @param current - 当前（可能已被后续操作改过）的完整偏好
+ * @param patch - 本次变更的乐观补丁
+ * @param previous - 本次变更前的完整偏好
+ * @returns 回滚后的完整偏好
  */
 export function rollbackNotificationPreferencePatch(
   current: NotificationPreferences,

@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 详情页：头部信息 + 归档/恢复等操作、顶部横幅（无权限/已归档/未绑定
+// 运行环境），主体交给 AgentOverviewPane 按概览/工作/能力/设置分区展示。数据先读
+// 列表缓存（零请求快速路径），找不到再走详情查询以支持直达链接并区分 403/404。
+
 import { useState } from "react";
 import {
   AlertCircle,
@@ -66,9 +70,11 @@ import { ExpandableDescription } from "../../common/expandable-description";
 import { useT, useTimeAgo } from "../../i18n";
 
 interface AgentDetailPageProps {
+  /** 要展示详情的 Agent id（来自路由）。 */
   agentId: string;
 }
 
+/** Agent 详情页。数据主要吃列表缓存；无权限/不存在/加载失败各有独立占位页。 */
 export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
@@ -86,16 +92,15 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
 
-  // Single workspace-level presence pass; this page just reads its slot.
-  // The hook owns the 30s tick so the failed-window auto-clears here too.
+  // 工作区级做一遍在场状态查询，本页只读自己的槽位。hook 持有 30s 心跳，
+  // 失败窗口的自动清除也在这里生效。
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
 
   const listAgent = agents.find((a) => a.id === agentId) ?? null;
 
-  // The list remains the zero-request common path. When it has settled
-  // without the requested agent, use the canonical detail query to resolve
-  // direct links and distinguish 403/404 from transient failures. Creation
-  // hydrates this same key, so a newly-created agent renders immediately.
+  // 列表缓存是“零请求”的常规路径。当列表已 settle 却没有目标 Agent 时，
+  // 再用规范详情查询解析直达链接，并把 403/404 和瞬时失败区分开。新建 Agent
+  // 会水合（hydrate）同一 key，所以刚创建的 Agent 能立即渲染出来。
   const detailQuery = useQuery({
     ...agentDetailOptions(wsId, agentId),
     enabled: !agentsLoading && !listAgent && !!agentId,
@@ -105,19 +110,17 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     detailError instanceof ApiError && detailError.status === 403;
   const isNotFound =
     detailError instanceof ApiError && detailError.status === 404;
-  // TanStack intentionally keeps successful data when a refetch fails. Do not
-  // let that stale snapshot mask a later 403/404 after access is revoked or the
-  // agent is deleted, but preserve it through transient network failures. A
-  // still-visible list response remains authoritative in either case.
+  // TanStack 在刷新失败时有意保留成功数据。不要让这份过期快照掩盖掉访问被撤销
+  // 或 Agent 被删除后的 403/404——但瞬时网络故障期间又应保留它。两种情况下，
+  // 仍可见的列表响应都是权威。
   const agent =
     listAgent ?? (isForbidden || isNotFound ? null : detailQuery.data) ?? null;
   const presence: AgentPresenceDetail | null =
     agent ? presenceMap.get(agent.id) ?? null : null;
 
-  // Permission hook MUST be called unconditionally — its `agent | null`
-  // signature handles the not-found / loading case internally so the early
-  // returns below don't violate the rules of hooks. Backend gates archive
-  // and restore identically to edit, so a single `canEdit` covers them all.
+  // 权限 hook 必须无条件调用——它的 `agent | null` 签名内部就处理了“找不到/加载中”
+  // 的情况，使下方这些提前 return 不违反 hooks 规则。后端对归档/恢复的权限门槛
+  // 与编辑一致，所以一个 `canEdit` 就能覆盖全部动作。
   const {
     canAssign,
     canEdit,
@@ -126,24 +129,20 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
 
   const [confirmArchive, setConfirmArchive] = useState(false);
 
-  // One-shot channel: the inspector's compact Lark status row asks the
-  // overview pane to focus a tab. The pane clears it after consuming.
+  // 一次性频道：检查器里紧凑的 Lark 状态行请概览 pane 聚焦某个 Tab。
+  // pane 消费完这个意图后清除它。
   const [tabNavIntent, setTabNavIntent] = useState<DetailTab | null>(null);
 
   const handleUpdate = async (id: string, data: Record<string, unknown>) => {
-    // Optimistic update: patch the matching agent in the cached list
-    // BEFORE the network round-trip so the inspector picker chips flip to
-    // the new value immediately on click. Without this, every inspector
-    // picker (thinking / visibility / concurrency / model / runtime) waits
-    // 0.5-2s for the API response + invalidate + refetch before the trigger
-    // updates — readable as obvious lag in the UI.
+    // 乐观更新：在网络请求出去之前先就地补丁缓存列表里对应的 Agent，
+    // 让检查器的选择器 chip 一点击就翻成新值。否则每个选择器
+    //（推理/可见性/并发/模型/运行环境）都要等 0.5-2s 的“接口返回 + 失效 + 重拉”，
+    // 界面上会明显卡顿。
     //
-    // On error we rollback only the fields THIS call wrote, leaving any
-    // other concurrently-mutated fields untouched, then invalidate so the
-    // cache converges with the server. A whole-list snapshot rollback
-    // would clobber a concurrent successful mutation if the failing call
-    // resolves last (e.g. flipping visibility then runtime simultaneously
-    // and only the visibility PATCH fails).
+    // 出错时只回滚本次调用写入的字段，不动其他并发修改的字段，然后 invalidate
+    // 让缓存与服务端收敛。若做整列表快照回滚，当失败调用最后才 resolve 时
+    //（例如同时翻可见性与运行环境、只有可见性 PATCH 失败），会冲掉另一个
+    // 并发成功的变更。
     const optimisticData =
       typeof data.runtime_id === "string"
         ? { ...data, runtime_bound: data.runtime_id.trim().length > 0 }
@@ -305,14 +304,12 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     ? members.find((m) => m.user_id === agent.owner_id) ?? null
     : null;
 
-  // Chat shares the invocation gate with assignment (MUL-3963): starting a
-  // chat triggers agent runs. The button stays visible either way — a denied
-  // click explains itself instead of the affordance silently missing. While
-  // membership is still resolving the decision is undetermined, so the button
-  // is disabled rather than toasting a false "no access" at a real member.
+  // 发消息与派单共用同一“调用门槛”（MUL-3963）：发起会话就会触发 Agent 运行。
+  // 按钮无论有无权限都保持可见——被拒的点击会自己解释原因，而不是让控件无声消失。
+  // 成员关系还在解析时结论未定，此时按钮置灰，避免对真成员误报“无权限”。
   //
-  // The control is a real link, so a failed gate has to cancel the navigation
-  // AppLink would otherwise perform — preventDefault is that cancel.
+  // 控件是真实链接，所以门槛被拦时得取消 AppLink 本来要做的跳转——preventDefault
+  // 就是这个“取消”。
   const handleDm = (e: React.MouseEvent<HTMLAnchorElement>) => {
     if (permissionsLoading) {
       e.preventDefault();
@@ -465,6 +462,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   );
 }
 
+/** 顶部“面包屑 + 名字/描述/元信息 + 操作按钮”的头部栏。 */
 function DetailHeader({
   agent,
   runtime,
@@ -486,12 +484,12 @@ function DetailHeader({
   canArchive: boolean;
   dmPending: boolean;
   dmHref: string;
-  /** Runs before the link navigates; calls preventDefault when a gate denies
-   *  the chat, which is what stops AppLink from pushing. */
+  /** onDm：先于链接跳转执行；门槛拒绝发消息时调 preventDefault，
+   *  这正是拦下 AppLink 不再 push 的关键。 */
   onDm: (e: React.MouseEvent<HTMLAnchorElement>) => void;
   onAssign: () => void;
-  /** Absent for Multica's built-in agents, which the server refuses to
-   *  archive — the menu hides the action rather than offering a failure. */
+  /** Multica 内置 Agent 没有此回调——服务端拒绝归档它们，菜单直接隐藏该动作，
+   *  而不是提供一个注定失败的入口。 */
   onArchive?: () => void;
 }) {
   const { t } = useT("agents");
@@ -561,9 +559,9 @@ function DetailHeader({
                 variant="outline"
                 size="sm"
                 disabled={dmPending}
-                // An anchor never matches `:disabled`, so the base variant's
-                // `disabled:` rules never fire here — Base UI's data-disabled
-                // is what carries the dimmed, inert look.
+                // 锚点永远不会命中 `:disabled`，所以基础变体的 `disabled:` 规则
+                // 在这里都不生效——承担“变灰、不可点”外观的是 Base UI 的
+                // data-disabled。
                 className="data-disabled:pointer-events-none data-disabled:opacity-50"
                 render={<AppLink href={dmHref} onClick={onDm} />}
                 nativeButton={false}
@@ -606,6 +604,7 @@ function DetailHeader({
   );
 }
 
+/** 错误/无权限页顶部的“返回 Agents”小面包屑。 */
 function BackHeader({ paths, title }: { paths: string; title: string }) {
   return (
     <PageHeader>
@@ -620,6 +619,7 @@ function BackHeader({ paths, title }: { paths: string; title: string }) {
   );
 }
 
+/** 详情页加载中的骨架屏：头部 + 主体两栏都先占位。 */
 function DetailLoadingSkeleton() {
   return (
     <div className="flex flex-1 min-h-0 flex-col">

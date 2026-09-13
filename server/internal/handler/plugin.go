@@ -1,3 +1,7 @@
+// 本文件：Plugin v1（工作区级插件安装）的 HTTP 接口层。功能开关打开后才可用（否则 503）。
+// 覆盖两步安装（preview 读 scope 清单 → install 落库）、列安装、启停、改配置、卸载。错误
+// 一律经 writePluginError 按 service.PluginError.Kind 映射状态码，避免在 handler 里字符串
+// 匹配错误消息。
 package handler
 
 import (
@@ -13,10 +17,12 @@ import (
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
 )
 
+// pluginsV1Enabled 判断 Plugin v1 功能开关是否打开（该特性还处于功能开关保护期）。
 func (h *Handler) pluginsV1Enabled(ctx context.Context) bool {
 	return featureflags.PluginsV1Enabled(ctx, h.FeatureFlags)
 }
 
+// requirePluginsV1 是所有 plugin 路由的统一闸门：功能没开就直接 503，省得每个 handler 各写一遍。
 func (h *Handler) requirePluginsV1(w http.ResponseWriter, r *http.Request) bool {
 	if h.pluginsV1Enabled(r.Context()) {
 		return true
@@ -25,8 +31,8 @@ func (h *Handler) requirePluginsV1(w http.ResponseWriter, r *http.Request) bool 
 	return false
 }
 
-// writePluginError maps a service error onto a status. Kinds exist so the
-// handler never has to string-match a message to pick a status code.
+// writePluginError 把 service 层错误映射成 HTTP 状态码。Kind 的存在让 handler 不必靠
+// 字符串匹配错误消息来挑状态码。
 func writePluginError(w http.ResponseWriter, err error, fallback string) {
 	var pluginErr *service.PluginError
 	if !errors.As(err, &pluginErr) {
@@ -51,19 +57,17 @@ func writePluginError(w http.ResponseWriter, err error, fallback string) {
 	}
 }
 
-// pluginInstallationResponse never carries a secret value. `config` holds only
-// non-secret fields by construction (SetConfig routes secrets to their own
-// encrypted table), and configured secrets appear as names in
-// `configured_secrets`.
+// pluginInstallationResponse 是插件安装记录对外的 JSON 结构，永远不会带机密值：`config`
+// 按构造只含非机密字段（SetConfig 把机密导进自己那张加密表），已配置的机密以名字出现在
+// `configured_secrets`。
 type pluginInstallationResponse struct {
 	ID          string `json:"id"`
 	PluginKey   string `json:"plugin_key"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Version     string `json:"version"`
-	// The published version this installation is bound to. Nothing about it can
-	// change under the workspace's feet: upgrading means pointing at a different
-	// version id, which is a second consent.
+	// 本次安装所绑定的已发布版本。绑定后任何东西都不会在工作区脚下悄悄变：升级等于指向
+	// 另一个版本 id，那是第二次同意。
 	PackageVersionID  string                      `json:"package_version_id"`
 	Enabled           bool                        `json:"enabled"`
 	GrantedScopes     []string                    `json:"granted_scopes"`
@@ -77,8 +81,8 @@ type pluginInstallationResponse struct {
 	UpdatedAt         string                      `json:"updated_at"`
 }
 
-// pluginHookResponse omits input_schema: the settings page lists what a hook is
-// and who may call it, and the raw JSON Schema is noise there.
+// pluginHookResponse 省略 input_schema：设置页要列的是「这个 hook 是什么、谁能触发」，原始
+// 的 JSON Schema 在那儿只是噪音。
 type pluginHookResponse struct {
 	Key         string                      `json:"key"`
 	Name        string                      `json:"name"`
@@ -89,12 +93,15 @@ type pluginHookResponse struct {
 	Schedule    *pluginHookScheduleResponse `json:"schedule,omitempty"`
 }
 
+// pluginHookScheduleResponse 是定时型 hook（cron）的调度信息：下次执行时间按 UTC 算好给出。
 type pluginHookScheduleResponse struct {
 	Cron      string `json:"cron"`
 	Timezone  string `json:"timezone"`
 	NextRunAt string `json:"next_run_at,omitempty"`
 }
 
+// pluginInstallationPayload 把一条安装记录装配成对外结构：解析 manifest、查已配置机密名、
+// 解析 config 与授权 scope、补齐每个 hook 的 cron 调度信息。
 func (h *Handler) pluginInstallationPayload(ctx context.Context, installation db.PluginInstallation) (pluginInstallationResponse, error) {
 	manifest, err := service.ParseInstallationManifest(installation)
 	if err != nil {
@@ -177,7 +184,8 @@ func (h *Handler) pluginInstallationPayload(ctx context.Context, installation db
 
 const timeFormatRFC3339 = "2006-01-02T15:04:05Z07:00"
 
-// ListPlugins — GET /api/workspaces/{id}/plugins
+// ListPlugins 处理 GET /api/workspaces/{id}/plugins——列出工作区已安装的插件
+// （功能开关关闭时 503）。
 func (h *Handler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePluginsV1(w, r) {
 		return
@@ -203,14 +211,13 @@ func (h *Handler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"plugins": payloads})
 }
 
+// previewPluginRequest 是预览接口的请求体：只带要装的插件版本 id。
 type previewPluginRequest struct {
 	VersionID string `json:"version_id"`
 }
 
-// PreviewPlugin — POST /api/workspaces/{id}/plugins/preview
-//
-// Step one of the two-step install. Nothing is written: the response exists so
-// the administrator can read the scope list before consenting.
+// PreviewPlugin 处理 POST /api/workspaces/{id}/plugins/preview——两步安装的第一步。
+// 什么都不落库：响应存在的意义就是让管理员在同意前先读一遍 scope 清单。
 func (h *Handler) PreviewPlugin(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePluginsV1(w, r) {
 		return
@@ -232,12 +239,14 @@ func (h *Handler) PreviewPlugin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, preview)
 }
 
+// installPluginRequest 是安装接口的请求体：插件版本 id + 管理员授权给它的 scope 列表。
 type installPluginRequest struct {
 	VersionID     string   `json:"version_id"`
 	GrantedScopes []string `json:"granted_scopes"`
 }
 
-// InstallPlugin — POST /api/workspaces/{id}/plugins
+// InstallPlugin 处理 POST /api/workspaces/{id}/plugins——两步安装的第二步：落库一条安装
+// 记录（操作者记为该工作区成员）。
 func (h *Handler) InstallPlugin(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePluginsV1(w, r) {
 		return
@@ -269,11 +278,13 @@ func (h *Handler) InstallPlugin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, payload)
 }
 
+// configurePluginRequest 是配置接口的请求体：一组键值对（非机密字段；机密走各自接口）。
 type configurePluginRequest struct {
 	Values map[string]any `json:"values"`
 }
 
-// ConfigurePlugin — PUT /api/workspaces/{id}/plugins/{installationId}/config
+// ConfigurePlugin 处理 PUT /api/workspaces/{id}/plugins/{installationId}/config——更新插件
+// 的非机密配置。
 func (h *Handler) ConfigurePlugin(w http.ResponseWriter, r *http.Request) {
 	installation, ok := h.pluginInstallationFromURL(w, r)
 	if !ok {
@@ -297,16 +308,17 @@ func (h *Handler) ConfigurePlugin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-// EnablePlugin — POST /api/workspaces/{id}/plugins/{installationId}/enable
+// EnablePlugin 处理 POST /api/workspaces/{id}/plugins/{installationId}/enable——启用插件。
 func (h *Handler) EnablePlugin(w http.ResponseWriter, r *http.Request) {
 	h.setPluginEnabled(w, r, true)
 }
 
-// DisablePlugin — POST /api/workspaces/{id}/plugins/{installationId}/disable
+// DisablePlugin 处理 POST /api/workspaces/{id}/plugins/{installationId}/disable——停用插件。
 func (h *Handler) DisablePlugin(w http.ResponseWriter, r *http.Request) {
 	h.setPluginEnabled(w, r, false)
 }
 
+// setPluginEnabled 是启停两个入口的公共实现：置 enabled 位并返回更新后的安装记录。
 func (h *Handler) setPluginEnabled(w http.ResponseWriter, r *http.Request, enabled bool) {
 	installation, ok := h.pluginInstallationFromURL(w, r)
 	if !ok {
@@ -325,7 +337,8 @@ func (h *Handler) setPluginEnabled(w http.ResponseWriter, r *http.Request, enabl
 	writeJSON(w, http.StatusOK, payload)
 }
 
-// UninstallPlugin — DELETE /api/workspaces/{id}/plugins/{installationId}
+// UninstallPlugin 处理 DELETE /api/workspaces/{id}/plugins/{installationId}——卸载插件，
+// 成功返回 204。
 func (h *Handler) UninstallPlugin(w http.ResponseWriter, r *http.Request) {
 	installation, ok := h.pluginInstallationFromURL(w, r)
 	if !ok {
@@ -338,6 +351,8 @@ func (h *Handler) UninstallPlugin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// pluginInstallationFromURL 从 URL 解析出工作区 + installationId，并加载安装记录（属于
+// 别的工作区/不存在时经 writePluginError 回 404 等）。
 func (h *Handler) pluginInstallationFromURL(w http.ResponseWriter, r *http.Request) (db.PluginInstallation, bool) {
 	if !h.requirePluginsV1(w, r) {
 		return db.PluginInstallation{}, false

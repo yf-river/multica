@@ -1,5 +1,8 @@
 "use client";
 
+// 问题界面（IssueSurface）主组件：按 scope（工作区/我的/项目/成员/团队）渲染看板、
+// 列表、表格、甘特、泳道之一，统一处理已保存视图的叠加、Provider 挂载、
+// 加载/为空/出错等各状态，并按数据窗口整体重建以隔离跨窗口的缓存污染。
 import {
   lazy,
   Suspense,
@@ -71,6 +74,7 @@ const SwimLaneView = lazy(() =>
   })),
 );
 
+/** 传给自定义 header/空态/加载态渲染函数的最小上下文。 */
 export interface IssueSurfaceRenderContext {
   controller: IssueSurfaceController;
   issues: Issue[];
@@ -86,6 +90,22 @@ interface IssueSurfaceComponentProps extends IssueSurfaceProps {
   contentClassName?: string;
 }
 
+/**
+ * 问题界面组件：按 scope 渲染问题列表/看板/表格/甘特/泳道，并串起已保存视图、
+ * 各 Provider（右键菜单、写操作、多选、视图基线）与加载/为空/出错状态。
+ * @param props.scope - 数据范围（工作区/我的/项目/成员/团队）。
+ * @param props.modes - 允许的视图模式集合（按先后序决定回退模式）。
+ * @param props.surfaceKey - 视图偏好 key；指定后各视图偏好在各自 key 下隔离持久化。
+ * @param props.createDefaults - 创建问题弹窗的默认值。
+ * @param props.search - 服务端持有的搜索词（非 Table 界面使用）。
+ * @param props.renderHeader - 自定义头部渲染（默认用 IssuesHeader）。
+ * @param props.renderEmpty - 自定义空态渲染。
+ * @param props.renderLoading - 自定义加载态渲染。
+ * @param props.clientFilter - 仅客户端生效的额外过滤。
+ * @param props.showClientEmpty - 在 clientFilter 生效且结果为空时，是否显示「被筛空」空态。
+ * @param props.batchToolbar - 批量操作栏的出现策略。
+ * @param props.contentClassName - 内容区额外样式。
+ */
 export function IssueSurface({
   scope,
   modes,
@@ -101,7 +121,7 @@ export function IssueSurface({
   contentClassName,
 }: IssueSurfaceComponentProps) {
   const wsId = useWorkspaceId();
-  // Saved views exist on workspace / my / project surfaces only.
+  // 已保存视图只存在于工作区 / 我的 / 项目三类 surface 上。
   const viewScope: IssueViewScope | null =
     scope.type === "workspace"
       ? { scope_type: "workspace" }
@@ -112,9 +132,9 @@ export function IssueSurface({
           : null;
   const { activeView } = useActiveIssueView(wsId, viewScope);
 
-  // An open saved view swaps the surface onto its own view-preference key:
-  // display/extra-filter adjustments persist per user per view, and the
-  // underlying built-in surface state is never touched (no draft machinery).
+  // 打开某个已保存视图时，把 surface 切换到该视图自己的偏好 key 上：
+  // 显示/额外筛选的调整会按「人 × 视图」持久化，底层的内置 surface 状态绝不触碰
+  // （它没有草稿机制）。
   const resolvedSurfaceKey = activeView
     ? `view:${activeView.id}`
     : (surfaceKey ?? issueScopeKey(scope));
@@ -125,12 +145,10 @@ export function IssueSurface({
     () => (activeView ? baselineFromQuery(activeView.query) : null),
     [activeView],
   );
-  // While a view is open, the scope axis the view captured belongs to the
-  // VIEW, not to whichever tab the user stood on: workspace/project views
-  // carry an assignee-type variant, my views a relation variant. The user's
-  // own tab state is never touched — it is exactly where they left it when
-  // the view closes (or vanishes). A variant-free view resolves to the
-  // unrestricted axis value.
+  // 视图打开期间，视图捕获的 scope 轴属于视图，而不属于用户正站着的标签页：
+  // 工作区/项目视图带指派者类型变体，我的视图带关系变体。用户自己的标签页状态
+  // 从不被改动——视图关闭（或消失）时它恰好原样留在原地。无变体的视图解析为
+  // 不受限的轴值。
   const effectiveScope: IssueScope =
     activeView && (scope.type === "workspace" || scope.type === "project")
       ? { ...scope, actorKind: actorKindForViewVariant(activeView.scope_variant) }
@@ -138,10 +156,9 @@ export function IssueSurface({
         ? { ...scope, relation: myRelationForViewVariant(activeView.scope_variant) }
         : scope;
   const store = useMemo(() => {
-    // First-open seeding happens HERE, at store-creation time for this key:
-    // no React component has subscribed to the new key's store yet, so the
-    // setState inside cannot cascade into an in-render update loop (it did
-    // when this ran in the component body).
+    // 首次打开时的种子写入发生在这里——就在该 key 的 store 被创建的时刻：
+    // 那时还没有任何 React 组件订阅新 key 的 store，里面的 setState 不会级联成
+    // 渲染中的更新循环（它曾经正是因为在组件体内执行才出过问题）。
     if (seedDefinition) {
       seedIssueSurfaceViewState(resolvedSurfaceKey, seedDefinition);
     }
@@ -149,11 +166,9 @@ export function IssueSurface({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- seed identity follows the key
   }, [resolvedSurfaceKey]);
 
-  // Every change of this key tears down and remounts the ENTIRE surface
-  // (providers, DnD, all columns/cards) — by design for data-window changes,
-  // but expensive enough that unexpected flips are performance bugs. Dev-only
-  // breadcrumb so a Performance trace showing double mounts can be tied to
-  // the exact key transition.
+  // 每次这个 key 变化，都会拆掉并整体重建整个 surface（Provider、拖拽、所有列/卡片）——
+  // 对数据窗口变化是有意为之，但贵到「意外的翻转」都是性能 bug。留一个仅开发环境的
+  // 面包屑，让 Performance trace 里出现双重挂载时能追溯到具体的 key 变化。
   const contentKey = `${wsId}:${issueScopeKey(effectiveScope)}:${activeView ? `view:${activeView.id}` : "default"}`;
   useEffect(() => {
     if (process.env.NODE_ENV !== "production") {
@@ -164,17 +179,13 @@ export function IssueSurface({
   return (
     <ViewStoreProvider store={store}>
       <ViewBaselineProvider baseline={viewBaseline}>
-      {/* Remount on data-window change: the list queries keep the previous
-          key's data as a placeholder (keepPreviousData) so sort/filter
-          changes within ONE surface never flash a skeleton — but reusing the
-          mounted observer across windows made project A's cards impersonate
-          project B (with isLoading=false, so no skeleton either) until B's
-          fetch landed. A window-keyed remount gives the new window a fresh
-          observer: cold window → skeleton, warm window → instant cache hit.
-          The window identity is wsId + scope — wsId is required because the
-          workspace layout does not remount on workspace switch and two
-          workspaces share the same scope key (e.g. "workspace:all"). Keyed
-          by data identity, not surfaceKey (view-preference identity). */}
+      {/* 数据窗口变化时整体重建：列表查询把上一个 key 的数据保留为占位（keepPreviousData），
+          所以同一个 surface 内的排序/筛选变化永远不会闪骨架屏——但如果跨窗口复用已挂载的
+          observer，会出现 A 项目的卡片冒充 B 项目（且 isLoading=false、也没有骨架屏）直到
+          B 的数据到达。按窗口 key 重建让新窗口拿到全新 observer：冷窗口 → 骨架屏，
+          热窗口 → 立刻缓存命中。窗口身份是 wsId + scope——带上 wsId 是因为工作区布局在
+          切换工作区时不会重建，而两个工作区会共享同一个 scope key（如 "workspace:all"）。
+          这里按「数据身份」而非 surfaceKey（视图偏好身份）作为 key。 */}
       <IssueSurfaceContent
         key={contentKey}
         scope={effectiveScope}
@@ -262,10 +273,8 @@ function IssueSurfaceContent({
 
   return (
     <IssueSurfaceActionsProvider actions={controller.actions}>
-      {/* One shared right-click menu for every card/row this surface renders
-          — see IssueContextMenuProvider. Inside the actions provider so the
-          singleton's useIssueActions routes updates through surface
-          actions. */}
+      {/* 本 surface 渲染的所有卡片/行共享一个右键菜单——见 IssueContextMenuProvider。
+          放在 actions provider 之内，让单例里的 useIssueActions 把更新走 surface 动作。 */}
       <IssueContextMenuProvider>
       <IssueSurfaceSelectionProvider selection={controller.selection}>
         {renderHeader ? (
@@ -290,10 +299,9 @@ function IssueSurfaceContent({
             }
           />
         )}
-        {/* A failed status catalog precedes loading/empty/content on purpose.
-            Row fetching is suspended while it is down (a custom status filter
-            cannot be routed without it), so every branch below would render an
-            unexplained empty surface with no way out. (MUL-6243) */}
+        {/* 状态目录加载失败要先于加载/为空/内容渲染：它挂掉期间行数据的拉取是被
+            挂起的（自定义状态筛选没有它就无法路由），所以下面的每个分支都会渲染出
+            一个无法解释的空白 surface、且无路可走。（MUL-6243） */}
         {controller.isStatusCatalogError ? (
           <StatusCatalogErrorState onRetry={controller.retryStatusCatalog} />
         ) : controller.isLoading ? (
@@ -303,12 +311,10 @@ function IssueSurfaceContent({
             <IssueSurfaceSkeleton mode={controller.viewMode} />
           )
         ) : controller.isEmpty || shouldShowClientEmpty ? (
-          // A filtered-empty surface is NOT an empty surface. Claiming "no
-          // issues here yet" and offering to create one is wrong when the rows
-          // exist and a filter is hiding them — and it is the state the
-          // agents-working chip drops you into most often (MUL-5525). This
-          // branch precedes `renderEmpty` on purpose: every surface's own empty
-          // copy describes the unfiltered case.
+          // 被筛空的 surface 不等于空 surface。行数据其实存在、只是被筛选藏起来了时，
+          // 声称「这里还没有问题」并推荐去创建一个是错的——而且这正是 agents 工作中的
+          // chip 常把你丢进来的状态（MUL-5525）。这个分支刻意排在 `renderEmpty` 前面：
+          // 各 surface 自己的空态文案描述的都是未筛选的情况。
           controller.hasActiveFilters ? (
             <FilteredEmptyState />
           ) : renderEmpty ? (
@@ -405,10 +411,7 @@ function IssueSurfaceContent({
 }
 
 /**
- * Shown when the surface has rows but the active filters match none of them.
- * Shared by every surface, so no caller has to remember that its own empty
- * copy only describes the unfiltered case. The action clears exactly the
- * filters this state tests for, so it always restores content.
+ * 状态目录加载失败时的错误态：带重试按钮，让被自定义状态筛选卡住的 surface 有路可走。
  */
 function StatusCatalogErrorState({ onRetry }: { onRetry: () => void }) {
   const { t } = useT("issues");
@@ -427,12 +430,17 @@ function StatusCatalogErrorState({ onRetry }: { onRetry: () => void }) {
   );
 }
 
+/**
+ * surface 里有行数据、但当前激活的筛选一条都匹配不上的「被筛空」状态。
+ * 所有 surface 共用它，调用方不用记得自己那份空态文案只描述了未筛选的情况。
+ * 「清除筛选」按钮清除的恰是本状态所检验的那批筛选，所以点它总能恢复内容。
+ */
 function FilteredEmptyState() {
   const { t } = useT("issues");
   const clearFilters = useViewStore((s) => s.clearFilters);
   const resetFiltersTo = useViewStore((s) => s.resetFiltersTo);
-  // Inside a saved view "clear" returns to the view's own conditions — the
-  // baseline is not clearable from here (only the edit dialog changes it).
+  // 在已保存视图里「清除」会回到视图自己的条件——基线从这里不可清除（只有编辑视图
+  // 的对话框才能改它）。
   const baseline = useViewBaseline();
   const handleClear = baseline
     ? () => resetFiltersTo(baseline.raw)
@@ -450,10 +458,9 @@ function FilteredEmptyState() {
   );
 }
 
-// Table is deliberately absent. It owns its own placeholders, drawn as rows
-// inside its real grid so the header, column widths and toolbar are up before
-// any data is — a surface-level stand-in would replace all of that with bars
-// of a different shape and then jump when the rows arrived.
+// 加载骨架屏刻意不包含 Table：Table 用自己的占位，画在真实网格内部的行上，
+// 让表头、列宽和工具条在任何数据到达前就先立起来——surface 级替代品会用另一种
+// 形状的进度条替换这一切，等行数据到达时还要再跳一次。
 function IssueSurfaceSkeleton({ mode }: { mode: string }) {
   if (mode === "list") {
     return (

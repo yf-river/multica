@@ -1,3 +1,7 @@
+// 本文件是核心 HTTP API 客户端：封装一个针对后端的 fetch 层。
+// 统一处理鉴权头（token / workspace / CSRF / 客户端身份）、请求 ID、401 未授权回调、
+// 结构化错误（ApiError）解析与日志；业务方法拿到响应后大多用 zod schema 校验，
+// 校验失败时降级为空值/兜底数据而不是直接抛错，让 UI 不至于白屏。
 import { configStore } from "../config";
 import type {
   Issue,
@@ -527,26 +531,28 @@ import {
   type CreateIssueViewRequest,
 } from "./schemas";
 
-/** Identifies the calling client to the server.
- *  Sent on every HTTP request as X-Client-Platform / X-Client-Version /
- *  X-Client-OS so the backend can log, gate, or split metrics by client.
- *  See server/internal/middleware/client.go for the receiving end. */
+/** 向服务器标识调用方客户端的身份信息。
+ *  随每个 HTTP 请求以 X-Client-Platform / X-Client-Version /
+ *  X-Client-OS 头发送，供后端按客户端做日志记录、门控或指标拆分。
+ *  对应接收端见 server/internal/middleware/client.go。 */
 export interface ApiClientIdentity {
-  /** Logical client kind. Server expects: "web" | "desktop" | "cli" | "daemon". */
+  /** 客户端类型逻辑名。服务器期望取值："web" | "desktop" | "cli" | "daemon"。 */
   platform?: string;
-  /** Client/app version string (e.g. "0.1.0", git tag, commit). */
+  /** 客户端/应用版本号（如 "0.1.0"、git tag、commit）。 */
   version?: string;
-  /** Coarse operating-system bucket (for example "macos", "windows", or "linux"). */
+  /** 粗略的操作系统分类（如 "macos"、"windows" 或 "linux"）。 */
   os?: string;
 }
 
+/** 创建 ApiClient 的可选配置。 */
 export interface ApiClientOptions {
   logger?: Logger;
   onUnauthorized?: () => void;
-  /** Identifies the client to the server. Sent as X-Client-* headers. */
+  /** 标识客户端身份，会作为 X-Client-* 请求头发送。 */
   identity?: ApiClientIdentity;
 }
 
+/** 客户端运行环境快照：记录调用者机器上探测到的 runtime 汇总信息。 */
 export interface ClientRuntimeSnapshot {
   probe_result: "success" | "error";
   runtime_count?: number;
@@ -555,22 +561,29 @@ export interface ClientRuntimeSnapshot {
   offline_count?: number;
 }
 
+/** 客户端使用量上报请求体：安装 ID + 可选的运行环境快照。 */
 export interface ClientUsageRequest {
   install_id: string;
   runtime?: ClientRuntimeSnapshot;
 }
 
+/** 登录成功后的响应：token 与当前用户信息。 */
 export interface LoginResponse {
   token: string;
   user: User;
 }
 
+/**
+ * 后端返回非 2xx 时抛出的结构化错误。
+ * status / statusText 保留 HTTP 状态，body 保留已解析的 JSON 响应体
+ * （如果服务器返回了），其中通常带 `code` 等字段，方便调用方用机器可读
+ * 的错误码分支处理，而不是去匹配给人看的消息文案。
+ */
 export class ApiError extends Error {
   readonly status: number;
   readonly statusText: string;
-  // Raw decoded JSON body (when the server returned one). Carries structured
-  // error fields like `code` so callers can branch on machine-readable
-  // identifiers instead of pattern-matching the human-readable message.
+  // 原始解码的 JSON 响应体（当服务器返回了 JSON 时）。它承载结构化的
+  // 错误字段如 `code`，调用方可以按机器可读标识符分支，而不用匹配人读消息。
   readonly body?: unknown;
 
   constructor(message: string, status: number, statusText: string, body?: unknown) {
@@ -595,12 +608,11 @@ function assertAgentConversationStartersWriteSupported(data: {
   }
 }
 
-// errorCode extracts the stable `code` a handler attaches to a failure
-// (writeErrorCode), so a caller can render its own localized sentence instead
-// of toasting the server's English one. Returns undefined for a non-ApiError,
-// or a server that did not send one — the caller then falls back to
-// err.message, which is what every endpoint that has not adopted this yet
-// produces.
+// errorCode 从错误的响应体里提取处理器挂在失败上的稳定 `code`
+// （服务端 writeErrorCode 写入），调用方据此渲染自己本地化的提示句，
+// 而不是直接弹服务端的英文文案。对非 ApiError 或没带 code 的旧服务器返回
+// undefined，调用方会退回到 err.message——那是目前尚未采用此机制的端点
+// 产生的错误信息。
 export function errorCode(err: unknown): string | undefined {
   if (err instanceof ApiError && err.body && typeof err.body === "object") {
     const code = (err.body as { code?: unknown }).code;
@@ -609,12 +621,10 @@ export function errorCode(err: unknown): string | undefined {
   return undefined;
 }
 
-// dispatchReasonCode extracts the stable, machine-readable admission reason
-// (MUL-4525) from a blocked-trigger error's structured body, when present. UI
-// callers localize a blocked/partial trigger from this code instead of pattern
-// matching the human-readable message. Returns undefined for non-ApiErrors or
-// bodies without a reason_code (older servers), so callers fall back to their
-// generic failure toast.
+// dispatchReasonCode 从「触发器被拦截」错误的结构化响应体里提取稳定的、
+// 机器可读的准入拒绝原因（MUL-4525）。UI 调用方据此本地化被拦截/部分拦截的
+// 触发器提示，而不是去匹配给人读的消息文案。对非 ApiError 或响应体里没有
+// reason_code（旧服务器）的情况返回 undefined，调用方退回到通用失败提示。
 export function dispatchReasonCode(err: unknown): string | undefined {
   if (err instanceof ApiError && err.body && typeof err.body === "object") {
     const code = (err.body as { reason_code?: unknown }).reason_code;
@@ -623,13 +633,12 @@ export function dispatchReasonCode(err: unknown): string | undefined {
   return undefined;
 }
 
-// clientErrorMessage returns the server's message only when it is a CLIENT
-// error (4xx). Handlers write those for the user — "autopilot is not active",
-// "Idempotency-Key is too long" — so they are worth rendering. A 5xx message is
-// internal detail (Go error chains, pgx table/constraint names, internal ids)
-// that must never reach a toast (MUL-6472), and a non-ApiError is a transport
-// failure whose message ("Failed to fetch") says nothing a user can act on.
-// Both return undefined so the caller falls back to its own localized sentence.
+// clientErrorMessage 只在错误是「客户端错误（4xx）」时返回服务器消息。
+// 处理器为面向用户写的这类文案——「autopilot is not active」、「Idempotency-Key
+// is too long」——值得展示给用户。5xx 消息属于内部细节（Go error chain、
+// pgx 表/约束名、内部 id），绝不能进 toast（MUL-6472）；非 ApiError 是传输层
+// 失败，其消息（如 "Failed to fetch"）对用户没有可操作信息。两种情况都返回
+// undefined，调用方回退到自己的本地化文案。
 export function clientErrorMessage(err: unknown): string | undefined {
   if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
     return err.message || undefined;
@@ -637,9 +646,8 @@ export function clientErrorMessage(err: unknown): string | undefined {
   return undefined;
 }
 
-// Thrown by getAttachmentTextContent when the server refuses to inline a
-// file because it exceeds the 2 MB cap. UI maps to a "too large, please
-// download" affordance with the Download CTA still available.
+// 当服务器因文件超过 2 MB 上限拒绝内联展示时，由 getAttachmentTextContent 抛出。
+// UI 将其映射为「文件太大请下载」的提示，仍保留下载按钮可用。
 export class PreviewTooLargeError extends Error {
   constructor() {
     super("attachment too large for inline preview");
@@ -647,10 +655,9 @@ export class PreviewTooLargeError extends Error {
   }
 }
 
-// Thrown by getAttachmentTextContent when the server's text whitelist
-// rejects the content type. Normally the client's isPreviewable() guard
-// catches this earlier, but the two whitelists can drift — surfacing the
-// 415 as a typed error makes the drift visible.
+// 当服务器文本白名单拒绝了该内容类型时，由 getAttachmentTextContent 抛出。
+// 通常客户端的 isPreviewable() 守卫会提前拦截，但两侧白名单可能漂移——
+// 把 415 转成带类型的错误，让这种漂移暴露出来。
 export class PreviewUnsupportedError extends Error {
   constructor() {
     super("attachment type not supported for inline preview");
@@ -690,15 +697,15 @@ function skillFromImportResult(raw: unknown, endpoint: string): Skill {
 }
 
 /**
- * Advertised in X-Client-Capabilities so the server knows this client can
- * recover a cancelled prompt from the durable draft-restore row (#5219).
- * Must stay in sync with protocol.AppCapabilityChatDraftRestoreV1.
+ * 在 X-Client-Capabilities 中宣告的能力名：告知服务器本客户端可以从
+ * 持久化的草稿恢复行里救回一条被取消的 prompt（#5219）。
+ * 必须与协议常量 protocol.AppCapabilityChatDraftRestoreV1 保持一致。
  */
 export const CHAT_DRAFT_RESTORE_CAPABILITY = "chat-draft-restore-v1";
 
 /**
- * Body shared by both unsubscribe endpoints: an omitted target means "the
- * caller", which the server resolves from the request actor.
+ * 两个取消订阅端点共用的请求体构造：省略 target 即表示「当前调用者」，
+ * 服务器从请求发起者（actor）解析。
  */
 function subscriberTarget(
   userId?: string,
@@ -711,15 +718,13 @@ function subscriberTarget(
 }
 
 /**
- * Per-call override for the workspace a request targets.
+ * 单次调用覆盖本次请求目标 workspace 的辅助函数。
  *
- * `authHeaders()` normally stamps `X-Workspace-Slug` from the global
- * current-workspace singleton, and the server resolves the workspace from that
- * header BEFORE any `workspace_id` query param. Anything that acts on a
- * workspace the user is not currently "in" — notably the create-workspace flow,
- * which provisions a workspace it has not navigated to yet — must say so
- * explicitly, or a concurrent writer of that singleton silently redirects the
- * write to the wrong workspace.
+ * authHeaders() 平时从全局「当前 workspace」单例里打 X-Workspace-Slug，
+ * 服务器在读取任何 `workspace_id` 查询参数之前先从该请求头解析 workspace。
+ * 任何作用于「用户当前不在其中」的 workspace 的操作——典型如创建 workspace
+ * 的流程，它要为尚未跳转过去的 workspace 做初始化——必须显式声明目标，
+ * 否则该单例被并发写入时，写入会被静默重定向到错误的 workspace。
  */
 function workspaceHeader(
   slug?: string,
@@ -727,6 +732,7 @@ function workspaceHeader(
   return slug ? { "X-Workspace-Slug": slug } : undefined;
 }
 
+/** 把钉钉群搜索参数拼成查询字符串；无参数时返回空串。 */
 function dingTalkGroupSearch(params: ListDingTalkGroupsParams): string {
   const search = new URLSearchParams();
   if (params.activity) search.set("activity", params.activity);
@@ -737,26 +743,41 @@ function dingTalkGroupSearch(params: ListDingTalkGroupsParams): string {
   return encoded ? `?${encoded}` : "";
 }
 
+/**
+ * 业务 API 客户端。
+ *
+ * 职责：基于一个 baseUrl 发起各类 HTTP 请求，自动带上鉴权头与请求 ID，
+ * 统一处理 401 跳转、结构化 ApiError、响应日志；多数业务方法会用 zod schema
+ * 校验响应并在解析失败时降级为空数据。通常不直接 new，而是通过
+ * index.ts 暴露的全局单例使用。
+ */
 export class ApiClient {
   private baseUrl: string;
   private token: string | null = null;
   private logger: Logger;
   private options: ApiClientOptions;
 
+  /**
+   * @param baseUrl 服务端地址（不含路径前缀）
+   * @param options 可选：日志、401 未授权回调、客户端身份标识
+   */
   constructor(baseUrl: string, options?: ApiClientOptions) {
     this.baseUrl = baseUrl;
     this.options = options ?? {};
     this.logger = options?.logger ?? noopLogger;
   }
 
+  /** 返回构造时传入的服务端地址。 */
   getBaseUrl(): string {
     return this.baseUrl;
   }
 
+  /** 设置/清除登录 token；为 null 表示登出。 */
   setToken(token: string | null) {
     this.token = token;
   }
 
+  // 从浏览器 cookie 中读取 CSRF token（名 multica_csrf）；非浏览器环境返回 null。
   private readCsrfToken(): string | null {
     if (typeof document === "undefined") return null;
     const match = document.cookie
@@ -765,6 +786,7 @@ export class ApiClient {
     return match ? match.split("=")[1] ?? null : null;
   }
 
+  // 组装标准请求头：鉴权 token、当前 workspace slug、CSRF、客户端身份标识。
   private authHeaders(): Record<string, string> {
     const headers: Record<string, string> = {};
     if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
@@ -779,12 +801,14 @@ export class ApiClient {
     return headers;
   }
 
+  // 401 处理：清空本地 token，然后交给调用方配置的 onUnauthorized 回调
+  //（通常是跳转登录页）。
   private handleUnauthorized() {
     this.token = null;
-    // Workspace id is owned by the URL-driven workspace-storage singleton
-    // (set by [workspaceSlug]/layout.tsx). On 401, the auth flow navigates
-    // to /login which leaves the workspace route, and the next workspace
-    // entry will overwrite the id. No clear needed here.
+    // Workspace id 归 URL 驱动的 workspace-storage 单例管
+    //（由 [workspaceSlug]/layout.tsx 写入）。收到 401 后，鉴权流程会跳到
+    // /login 从而离开 workspace 路由，下一次进入 workspace 时会重新覆盖
+    // 该 id，所以这里无需主动清理。
     this.options.onUnauthorized?.();
   }
 
@@ -793,14 +817,13 @@ export class ApiClient {
       const data = await res.json() as { error?: string };
       if (typeof data.error === "string" && data.error) return data.error;
     } catch {
-      // Ignore non-JSON error bodies.
+      // 忽略非 JSON 的错误响应体。
     }
     return fallback;
   }
 
-  // Reads the response body once for both human-readable error message and
-  // structured fields. The Response stream can only be consumed once, so
-  // both pieces have to come from a single read.
+  // 一次性读取响应体：既取给人看的人读错误消息，也取结构化字段。
+  // Response 流只能消费一次，所以两者必须来自同一次读取。
   private async parseErrorBody(res: Response, fallback: string): Promise<{ message: string; body: unknown }> {
     try {
       const data = await res.json() as { error?: string };
@@ -811,11 +834,10 @@ export class ApiClient {
     }
   }
 
-  // Sends the request with the standard headers (auth, CSRF, request id,
-  // client identity) and runs the shared error path (401 → handleUnauthorized,
-  // structured ApiError, status-aware log level). Returns the raw Response so
-  // callers can decide how to decode the body — JSON for the typed `fetch<T>`
-  // path, plain text for the attachment-preview proxy, etc.
+  // 发送请求并统一走标准请求头（鉴权、CSRF、请求 ID、客户端身份）和共享
+  // 错误路径（401 → handleUnauthorized、结构化 ApiError、按状态区分的日志级别）。
+  // 返回原始 Response，让调用方自行决定如何解码响应体——JSON 给类型化的
+  // fetch<T> 路径，纯文本给附件预览代理等场景。
   private async fetchRaw(
     path: string,
     init?: RequestInit & { extraHeaders?: Record<string, string> },
@@ -851,23 +873,26 @@ export class ApiClient {
     return res;
   }
 
+  // 类型化 GET/POST 便捷方法：默认带 JSON Content-Type；204 时返回 undefined。
   private async fetch<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await this.fetchRaw(path, {
       ...init,
       extraHeaders: { "Content-Type": "application/json" },
     });
-    // Handle 204 No Content
+    // 处理 204 No Content
     if (res.status === 204) {
       return undefined as T;
     }
     return res.json() as Promise<T>;
   }
 
-  // Auth
+  // Auth（账号鉴权区）
+  /** 账号密码登录，成功后返回 token 与用户信息。 */
   async login(account: string, password: string): Promise<LoginResponse> {
     return this.fetch("/auth/login", { method: "POST", body: JSON.stringify({ account, password }) });
   }
 
+  /** Google OAuth 登录：用授权码换 token 与用户信息。 */
   async googleLogin(code: string, redirectUri: string): Promise<LoginResponse> {
     return this.fetch("/auth/google", {
       method: "POST",
@@ -875,14 +900,17 @@ export class ApiClient {
     });
   }
 
+  /** 退出登录。 */
   async logout(): Promise<void> {
     await this.fetch("/auth/logout", { method: "POST" });
   }
 
+  /** 为 CLI 签发一个临时访问 token。 */
   async issueCliToken(): Promise<{ token: string }> {
     return this.fetch("/api/cli-token", { method: "POST" });
   }
 
+  /** 获取当前登录用户信息（schema 校验 + EMPTY_USER 兜底）。 */
   async getMe(): Promise<User> {
     const raw = await this.fetch<unknown>("/api/me");
     return parseWithFallback(raw, UserSchema, EMPTY_USER, {
@@ -890,6 +918,7 @@ export class ApiClient {
     });
   }
 
+  /** 标记 onboarding（新手引导）完成；可带上完成路径与所在 workspace。 */
   async markOnboardingComplete(payload?: {
     completion_path?: OnboardingCompletionPath;
     workspace_id?: string;
@@ -903,6 +932,7 @@ export class ApiClient {
     });
   }
 
+  /** 加入云版 waitlist（等待名单）。 */
   async joinCloudWaitlist(payload: {
     email: string;
     reason?: string;
@@ -916,6 +946,7 @@ export class ApiClient {
     });
   }
 
+  /** 局部更新 onboarding 问卷等资料。 */
   async patchOnboarding(payload: {
     questionnaire?: Record<string, unknown>;
   }): Promise<User> {
@@ -928,6 +959,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新当前用户资料。 */
   async updateMe(data: UpdateMeRequest): Promise<User> {
     const raw = await this.fetch<unknown>("/api/me", {
       method: "PATCH",
@@ -938,7 +970,12 @@ export class ApiClient {
     });
   }
 
-  // Issues
+  // Issues（议题区）
+  /**
+   * 查询议题列表，支持筛选、分页、搜索与排序。
+   * @param params 筛选条件（状态、优先级、经办人、标签、日期范围等）
+   * @returns 分页后的议题列表（schema 校验 + 空列表兜底）
+   */
   async listIssues(params?: ListIssuesParams): Promise<ListIssuesResponse> {
     const search = new URLSearchParams();
     if (params?.limit) search.set("limit", String(params.limit));
@@ -965,9 +1002,8 @@ export class ApiClient {
     if (params?.include_no_project) search.set("include_no_project", "true");
     if (params?.label_ids?.length) search.set("label_ids", params.label_ids.join(","));
     if (params?.top_level_only) search.set("top_level_only", "true");
-    // No `.length` guard on purpose: an empty ids array must still send
-    // `ids=` — the server treats a PRESENT-but-empty list as an empty window
-    // (nothing running), while an absent param means no restriction.
+    // 故意不加 `.length` 守卫：空的 ids 数组也必须发 `ids=`——服务器把「存在但
+    // 为空」的列表解释为「空窗口」（什么都没有在跑），而缺少该参数表示不过滤。
     if (params?.ids) search.set("ids", params.ids.join(","));
     if (params?.involves_user_id) search.set("involves_user_id", params.involves_user_id);
     if (params?.metadata && Object.keys(params.metadata).length > 0) {
@@ -983,10 +1019,9 @@ export class ApiClient {
     if (params?.date_end) search.set("date_end", params.date_end);
     if (params?.sort_by) search.set("sort", params.sort_by);
     if (params?.sort_direction) search.set("direction", params.sort_direction);
-    // An ids facet can carry hundreds of UUIDs (agents-working filter) —
-    // enough to blow the ~8 KB request-line cap of common reverse proxies.
-    // Route those windows through the POST twin, which takes the SAME
-    // key/value pairs as a JSON body.
+    // ids 维度的筛选项可能携带几百个 UUID（如「agent 正在工作」筛选），足够
+    // 撑爆常见反向代理约 8 KB 的请求行上限。这类窗口改走它的 POST 孪生端点，
+    // 用 JSON body 携带完全相同的键值对。
     if (params?.ids) {
       const raw = await this.fetch<unknown>("/api/issues/query", {
         method: "POST",
@@ -1003,6 +1038,11 @@ export class ApiClient {
     });
   }
 
+  /**
+   * 查询按某字段（如状态/经办人）分组统计的议题列表。
+   * @param params 分组字段与过滤条件
+   * @returns 分组结果（schema 校验 + 空响应兜底）
+   */
   async listGroupedIssues(params: ListGroupedIssuesParams): Promise<GroupedIssuesResponse> {
     const search = new URLSearchParams({ group_by: params.group_by });
     if (params.limit) search.set("limit", String(params.limit));
@@ -1045,6 +1085,7 @@ export class ApiClient {
     });
   }
 
+  /** 查询议题表格的分组数据（拖表头分组视图）。 */
   async listIssueTableGroups(params: IssueTableGroupsRequest): Promise<IssueTableGroupsResponse> {
     const raw = await this.fetch<unknown>("/api/issues/table/groups", {
       method: "POST",
@@ -1058,6 +1099,7 @@ export class ApiClient {
     );
   }
 
+  /** 查询议题表格当前页的行数据（带展开/滚动游标等状态）。 */
   async listIssueTableRows(params: IssueTableRowsRequest): Promise<IssueTableRowsResponse> {
     const raw = await this.fetch<unknown>("/api/issues/table/rows", {
       method: "POST",
@@ -1071,6 +1113,7 @@ export class ApiClient {
     );
   }
 
+  /** 查询议题表格的筛选项/维度（facet）汇总。 */
   async listIssueTableFacets(params: IssueTableFacetsRequest): Promise<IssueTableFacetsResponse> {
     const raw = await this.fetch<unknown>("/api/issues/table/facets", {
       method: "POST",
@@ -1084,6 +1127,10 @@ export class ApiClient {
     );
   }
 
+  /**
+   * 按关键词搜索议题（轻量全局搜索下拉）。
+   * @param params.q 搜索词；signal 用于组件卸载时取消在途请求
+   */
   async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
@@ -1098,6 +1145,7 @@ export class ApiClient {
     });
   }
 
+  /** 按关键词搜索项目（供链接输入/选择器使用）。 */
   async searchProjects(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchProjectsResponse> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
@@ -1113,21 +1161,18 @@ export class ApiClient {
   }
 
   /**
-   * Fetch one issue by UUID **or** by bare identifier ("MUL-123"): the server
-   * resolves `PREFIX-NUMBER` against the workspace's own prefix through the
-   * unique `(workspace_id, number)` index, and 404s on a wrong prefix or a
-   * missing number.
+   * 按 UUID **或** 裸标识（如 "MUL-123"）获取单个议题：服务器会按
+   * 该 workspace 自己的前缀、通过唯一索引 `(workspace_id, number)` 解析
+   * `PREFIX-NUMBER`，前缀错误或编号不存在时返回 404。
    *
-   * `signal` is optional so cancel-on-unmount callers (identifier autolink
-   * resolution) can abort an in-flight lookup the same way search does.
+   * `signal` 可选，供「取消即卸载」的调用方（标识符自动链接解析）像搜索那样
+   * 中止在途查询。
    *
-   * The 2xx body is validated, not cast. A single issue is not a list: there
-   * is no safe-empty shape to degrade to, and the identifier-autolink caller
-   * caches this result for 5 minutes, so a field-missing or type-drifted 200
-   * must not become a truthy issue with an `undefined` id. Like createIssue,
-   * an unusable body fails the call — and it fails with a plain Error, never
-   * an ApiError 404, so `issueIdentifierOptions` propagates it instead of
-   * caching it as "no such issue".
+   * 2xx 响应体是校验而非强转。单个议题不是列表：没有可降级的「安全空」形状，
+   * 且标识符自动链接的调用方会把结果缓存 5 分钟，字段缺失或类型漂移的 200
+   * 绝不能变成一个 id 为 undefined 的「真议题」。与 createIssue 相同，不可用的
+   * 响应体会让调用失败——且以普通 Error 失败，绝不伪装成 ApiError 404，
+   * 这样 issueIdentifierOptions 会把它当作「不是没有这个议题」往上抛而非缓存。
    */
   async getIssue(id: string, options?: { signal?: AbortSignal }): Promise<Issue> {
     const raw = await this.fetch<unknown>(
@@ -1138,22 +1183,24 @@ export class ApiClient {
       endpoint: "GET /api/issues/:id",
     });
     if (!issue) {
-      // parseWithFallback already logged the zod issues + raw payload.
+      // parseWithFallback 已记录 zod 报错与原始响应体。
       throw new Error("GET /api/issues/:id returned a malformed issue");
     }
     return issue;
   }
 
+  /**
+   * 新建议题。
+   * @param data 创建议题请求（标题、优先级、经办人、标签等）
+   * @returns 创建成功的议题；响应体不可用时会抛错，让弹窗保留草稿并提示失败
+   */
   async createIssue(data: CreateIssueRequest): Promise<Issue> {
-    // Parse through a schema (not a raw cast): the create modal keys its
-    // label-attach compatibility fallback off `labels` being absent vs a
-    // validated Label[], so an unvalidated wrong shape must not slip through.
-    // Unlike list endpoints, a create that returns an unusable body is a
-    // FAILED mutation, not a safe-empty read: fall back to null and reject so
-    // the modal keeps the draft and shows a failure toast instead of a blank
-    // "created" card pointing at an empty issue id. parseWithFallback already
-    // logged the schema issues + raw payload; the empty message lets the modal
-    // render its localized "failed to create" toast.
+    // 经 schema 校验而非裸强转：创建弹窗根据 `labels` 是缺失还是已校验的
+    // Label[] 来决定标签附加的兼容回退逻辑，未校验的错误形状不能溜进来。
+    // 与列表接口不同，创建返回不可用响应体是「失败的写操作」而非「安全空读」：
+    // 回退 null 并抛错，让弹窗保留草稿并展示失败 toast，而不是显示一张指向
+    // 空 issue id 的空白「已创建」卡片。parseWithFallback 已记录 schema 报错和
+    // 原始响应体；空 message 让弹窗渲染本地化的「创建失败」提示。
     const raw = await this.fetch<unknown>("/api/issues", {
       method: "POST",
       body: JSON.stringify(data),
@@ -1167,6 +1214,7 @@ export class ApiClient {
     return issue;
   }
 
+  /** 快捷创建议题（用 prompt 走 agent 生成），返回后台任务 id。 */
   async quickCreateIssue(data: {
     agent_id?: string;
     squad_id?: string;
@@ -1183,6 +1231,7 @@ export class ApiClient {
     });
   }
 
+  /** 从评论上下文预览「可创建的子议题」信息。 */
   async getCommentSubIssuePreview(anchorCommentId: string): Promise<SourceContextPreview> {
     const raw = await this.fetch<unknown>(`/api/comments/${anchorCommentId}/sub-issue-preview`);
     const preview = parseWithFallback<SourceContextPreview | null>(
@@ -1195,6 +1244,12 @@ export class ApiClient {
     return preview;
   }
 
+  /**
+   * 以一条评论为「锚点」，从评论上下文创建其子议题。
+   * 手动模式返回创建好的 Issue；agent 模式返回一个后台任务 id。
+   * 服务器太旧（无此能力）时会抛一个带 source_context_server_unsupported
+   * 错误码的 ApiError，调用方可据此提示升级。
+   */
   async createCommentSubIssue(
     anchorCommentId: string,
     data: CreateCommentSubIssueManualRequest,
@@ -1240,6 +1295,7 @@ export class ApiClient {
     }
   }
 
+  /** 提交用户反馈。 */
   async createFeedback(data: {
     message: string;
     url?: string;
@@ -1256,6 +1312,7 @@ export class ApiClient {
     });
   }
 
+  /** 上报一次客户端使用情况（安装 id + 运行环境快照）。 */
   async upsertClientUsage(data: ClientUsageRequest): Promise<void> {
     await this.fetch("/api/client-usage", {
       method: "POST",
@@ -1263,6 +1320,7 @@ export class ApiClient {
     });
   }
 
+  /** 整体更新议题字段。 */
   async updateIssue(id: string, data: UpdateIssueRequest): Promise<Issue> {
     return this.fetch(`/api/issues/${id}`, {
       method: "PUT",
@@ -1270,6 +1328,7 @@ export class ApiClient {
     });
   }
 
+  /** 移动议题（改状态/列）。 */
   async moveIssue(id: string, data: MoveIssueRequest): Promise<Issue> {
     return this.fetch(`/api/issues/${id}/move`, {
       method: "POST",
@@ -1277,6 +1336,7 @@ export class ApiClient {
     });
   }
 
+  /** 获取某议题的直接子议题列表。 */
   async listChildIssues(id: string): Promise<{ issues: Issue[] }> {
     const raw = await this.fetch<unknown>(`/api/issues/${id}/children`);
     return parseWithFallback(raw, ChildIssuesResponseSchema, { issues: [] }, {
@@ -1284,10 +1344,9 @@ export class ApiClient {
     });
   }
 
-  /** Batched variant — returns children for multiple parents in one request.
-   *  Avoids an N-request fan-out in Swimlane (one per visible parent lane).
-   *  parentIds must be non-empty; pass a sorted, deduplicated list so the
-   *  React Query cache key is stable across renders. */
+  /** 批量版——一次请求返回多个父议题各自的子议题。
+   *  避免泳道视图对每个可见父泳道各发一次请求的 N 次扇出。
+   *  parentIds 必须非空；请传入已排序去重列表，让 React Query 缓存键稳定。 */
   async listChildrenByParents(parentIds: string[]): Promise<{ issues: Issue[] }> {
     const raw = await this.fetch<unknown>(
       `/api/issues/children?parent_ids=${parentIds.join(",")}`,
@@ -1297,6 +1356,7 @@ export class ApiClient {
     });
   }
 
+  /** 批量返回各父议题的子议题完成进度（用于泳道顶部进度条）。 */
   async getChildIssueProgress(): Promise<{
     progress: { parent_issue_id: string; total: number; done: number }[];
   }> {
@@ -1309,6 +1369,7 @@ export class ApiClient {
     );
   }
 
+  /** 查询当前 workspace 的议题数配额使用情况；无返回时给 null。 */
   async getIssueLimitUsage(): Promise<IssueLimitUsage | null> {
     const raw = await this.fetch<unknown>("/api/issues/limit-usage");
     if (raw == null) return null;
@@ -1320,10 +1381,12 @@ export class ApiClient {
     );
   }
 
+  /** 删除单个议题。 */
   async deleteIssue(id: string): Promise<void> {
     await this.fetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
+  /** 批量更新多个议题（同一组字段变更）。 */
   async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<{ updated: number }> {
     return this.fetch("/api/issues/batch-update", {
       method: "POST",
@@ -1331,6 +1394,7 @@ export class ApiClient {
     });
   }
 
+  /** 批量删除多个议题。 */
   async batchDeleteIssues(issueIds: string[]): Promise<{ deleted: number }> {
     return this.fetch("/api/issues/batch-delete", {
       method: "POST",
@@ -1338,7 +1402,8 @@ export class ApiClient {
     });
   }
 
-  // Comments
+  // Comments（评论区）
+  /** 获取某议题的全部评论。 */
   async listComments(issueId: string): Promise<Comment[]> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments`);
     return parseWithFallback(raw, CommentsListSchema, [], {
@@ -1346,6 +1411,15 @@ export class ApiClient {
     });
   }
 
+  /**
+   * 在议题下发表评论。
+   * @param issueId 议题 id
+   * @param content 评论正文
+   * @param type 评论类型（默认 "comment"）
+   * @param parentId 回复哪条评论（可选）
+   * @param attachmentIds 附带附件 id 列表（可选）
+   * @param suppressAgentIds 需要抑制触发/回应的 agent id 列表（可选）
+   */
   async createComment(
     issueId: string,
     content: string,
@@ -1366,6 +1440,7 @@ export class ApiClient {
     });
   }
 
+  /** 预演：模拟输入一条评论会触发哪些 agent 运行（供 UI 展示「将触发 N 个 agent」）。 */
   async previewCommentTriggers(issueId: string, content: string, parentId?: string, editingCommentId?: string): Promise<CommentTriggerPreview> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments/trigger-preview`, {
       method: "POST",
@@ -1380,10 +1455,9 @@ export class ApiClient {
     });
   }
 
-  /** Dry-run the unified run-enqueue predicate for a prospective issue write
-   *  (create / single assign / single status / batch). Returns the runs that
-   *  would start; no side effect. The four entry points consult this instead
-   *  of re-implementing the rule (MUL-3375). */
+  /** 干跑一次「统一入队判定」：对一次拟进行的议题写入（新建 / 单人指派 /
+   *  单状态变更 / 批量）预演会启动哪些 agent 运行，无副作用。四个入口都
+   *  调用此接口而不是各自重复实现规则（MUL-3375）。 */
   async previewIssueTrigger(params: IssueTriggerPreviewParams): Promise<IssueTriggerPreview> {
     const raw = await this.fetch<unknown>("/api/issues/preview-trigger", {
       method: "POST",
@@ -1400,6 +1474,7 @@ export class ApiClient {
     });
   }
 
+  /** 获取某议题的操作时间线（活动记录）。 */
   async listTimeline(issueId: string): Promise<TimelineEntry[]> {
     const raw = await this.fetch<unknown>(
       `/api/issues/${issueId}/timeline`,
@@ -1409,10 +1484,12 @@ export class ApiClient {
     });
   }
 
+  /** 获取「分配频率」统计条目（常用于展示高频协作者）。 */
   async getAssigneeFrequency(): Promise<AssigneeFrequencyEntry[]> {
     return this.fetch("/api/assignee-frequency");
   }
 
+  /** 编辑评论内容；可带上附件变更与基于修订号的并发保护。 */
   async updateComment(commentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[], contentBase?: string, expectedRevision?: number): Promise<Comment> {
     return this.fetch(`/api/comments/${commentId}`, {
       method: "PUT",
@@ -1426,18 +1503,22 @@ export class ApiClient {
     });
   }
 
+  /** 删除评论。 */
   async deleteComment(commentId: string): Promise<void> {
     await this.fetch(`/api/comments/${commentId}`, { method: "DELETE" });
   }
 
+  /** 把评论标记为已解决。 */
   async resolveComment(commentId: string): Promise<Comment> {
     return this.fetch(`/api/comments/${commentId}/resolve`, { method: "POST" });
   }
 
+  /** 取消评论的「已解决」标记。 */
   async unresolveComment(commentId: string): Promise<Comment> {
     return this.fetch(`/api/comments/${commentId}/resolve`, { method: "DELETE" });
   }
 
+  /** 在评论上添加一个表情回应。 */
   async addReaction(commentId: string, emoji: string): Promise<Reaction> {
     return this.fetch(`/api/comments/${commentId}/reactions`, {
       method: "POST",
@@ -1445,6 +1526,7 @@ export class ApiClient {
     });
   }
 
+  /** 移除评论上的一个表情回应。 */
   async removeReaction(commentId: string, emoji: string): Promise<void> {
     await this.fetch(`/api/comments/${commentId}/reactions`, {
       method: "DELETE",
@@ -1452,6 +1534,7 @@ export class ApiClient {
     });
   }
 
+  /** 在议题上添加一个表情回应。 */
   async addIssueReaction(issueId: string, emoji: string): Promise<IssueReaction> {
     return this.fetch(`/api/issues/${issueId}/reactions`, {
       method: "POST",
@@ -1459,6 +1542,7 @@ export class ApiClient {
     });
   }
 
+  /** 移除议题上的一个表情回应。 */
   async removeIssueReaction(issueId: string, emoji: string): Promise<void> {
     await this.fetch(`/api/issues/${issueId}/reactions`, {
       method: "DELETE",
@@ -1466,7 +1550,8 @@ export class ApiClient {
     });
   }
 
-  // Subscribers
+  // Subscribers（订阅区）
+  /** 列出订阅了某议题的用户/agent。 */
   async listIssueSubscribers(issueId: string): Promise<IssueSubscriber[]> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/subscribers`);
     return parseWithFallback(raw, SubscribersListSchema, [], {
@@ -1474,6 +1559,7 @@ export class ApiClient {
     });
   }
 
+  /** 让当前用户（或指定用户）订阅该议题，接收后续变更通知。 */
   async subscribeToIssue(issueId: string, userId?: string, userType?: string): Promise<void> {
     const body: Record<string, string> = {};
     if (userId) body.user_id = userId;
@@ -1484,6 +1570,7 @@ export class ApiClient {
     });
   }
 
+  /** 取消订阅某议题。 */
   async unsubscribeFromIssue(
     issueId: string,
     userId?: string,
@@ -1496,16 +1583,15 @@ export class ApiClient {
   }
 
   /**
-   * Leaves this issue and every descendant, and keeps future children of the
-   * tree from re-subscribing the user — the escape hatch for an agent-built
-   * tree that keeps growing (MUL-5483).
+   * 退出该议题及其所有后代议题的订阅，并让这棵议题树未来的新子议题
+   * 也不再自动订阅当前用户——这是针对 agent 生成且不断长大的树的逃生门
+   *（MUL-5483）。
    *
-   * Deliberately its own endpoint rather than a `subtree` flag on
-   * `unsubscribeFromIssue`. Web/desktop staging ships on merge while the
-   * backend is deployed by hand, so this client regularly runs against an
-   * older server; one that predates the feature would ignore an unknown body
-   * field, unsubscribe only the root, and still answer 200. A distinct path
-   * 404s there, which surfaces as a failed mutation instead of a silent lie.
+   * 特意做成独立端点，而不是在 unsubscribeFromIssue 上加一个 `subtree`
+   * 标志。Web/desktop 随合并立即发版而后端是手工部署，所以本客户端经常跑在
+   * 比服务器新的版本上；早于该特性的旧后端会忽略未知请求体字段，只退订根
+   * 节点却仍回 200。独立路径在旧后端上会 404，以「失败变更」的形式暴露
+   * 出来，而不是悄悄撒谎成功。
    */
   async unsubscribeFromIssueSubtree(
     issueId: string,
@@ -1518,7 +1604,8 @@ export class ApiClient {
     });
   }
 
-  // Agents
+  // Agents（agent 管理区）
+  /** 列出 workspace 的 agent，可选是否包含已归档。 */
   async listAgents(params?: { workspace_id?: string; include_archived?: boolean }): Promise<Agent[]> {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
@@ -1526,10 +1613,12 @@ export class ApiClient {
     return this.fetch(`/api/agents?${search}`);
   }
 
+  /** 获取单个 agent 详情。 */
   async getAgent(id: string): Promise<Agent> {
     return this.fetch(`/api/agents/${id}`);
   }
 
+  /** 新建 agent（写入前会检查当前服务器是否支持会话开场白字段）。 */
   async createAgent(data: CreateAgentRequest): Promise<Agent> {
     assertAgentConversationStartersWriteSupported(data);
     return this.fetch("/api/agents", {
@@ -1539,22 +1628,19 @@ export class ApiClient {
   }
 
   /**
-   * Provisions the workspace's built-in Chief of Staff, or returns the
-   * existing one.
+   * 创建 workspace 内置的「首席幕僚 Mika」agent；已存在时直接返回现有实例。
    *
-   * Only runtime selection and the session label are sent: name, description, avatar,
-   * permissions, and the system instruction layer are server constants, so a
-   * client cannot mint an agent that would claim them. The server is also the
-   * idempotency boundary — calling twice yields the same agent.
+   * 请求只携带 runtime 选择与会话标题：名称、描述、头像、权限与系统指令层
+   * 都是服务器常量，客户端无法自行铸造一个声称具备这些能力的 agent。
+   * 服务器还是幂等边界——调用两次得到的是同一个 agent。
    */
   async createMikaAgent(
     data: {
       runtime_id: string;
-      /** Empty means "whatever the runtime defaults to". */
+      /** 空值表示「用 runtime 的默认值」。 */
       model?: string;
-      /** Label for the onboarding conversation, used only if this call is the
-       *  one that creates it. The session's identity is the member and Mika,
-       *  never this string — it is localized. */
+      /** 供 onboarding 对话使用的会话标题；仅当本次调用真正创建了会话时才
+       *  生效。会话身份是「该成员 + Mika」，与这个本地化标题无关。 */
       session_title?: string;
     },
     workspaceSlug?: string,
@@ -1566,6 +1652,7 @@ export class ApiClient {
     });
   }
 
+  /** 开启一个「用对话创建 agent」的 builder 会话。 */
   async createAgentBuilderSession(data: {
     runtime_id: string;
     model?: string;
@@ -1583,12 +1670,11 @@ export class ApiClient {
   }
 
   /**
-   * The caller's unfinished agent-creation conversations.
+   * 取回调用方所有未完成的「创建 agent」对话。
    *
-   * Builder sessions are hidden from every chat list (their carrier agent is
-   * `kind = 'system'`), so this is the only route back to one. A 404 means the
-   * backend predates the endpoint: degrade to "no drafts" instead of erroring
-   * the Agents page, exactly as listChatDraftRestores does.
+   * builder 会话被所有聊天列表隐藏（载体 agent 的 `kind = 'system'`），
+   * 因此这是找回它们的唯一途径。404 表示后端早于该端点：降级为「无草稿」
+   * 而不是让 Agents 页报错，处理方式与 listChatDraftRestores 一致。
    */
   async listAgentBuilderSessions(): Promise<AgentBuilderSessionSummary[]> {
     let raw: unknown;
@@ -1607,10 +1693,9 @@ export class ApiClient {
   }
 
   /**
-   * Stores the configuration a creation conversation has arrived at, including
-   * edits the user typed but has not sent. Whole-object last-write-wins: one
-   * conversation has one editor, so a field-level merge could only reconstruct
-   * a state nobody saw. Read back through `listAgentBuilderSessions`.
+   * 保存创建对话已形成的配置，包括用户输入但尚未发送的编辑。整对象
+   * 后写覆盖：一个会话只有一个编辑者，字段级合并只能还原出一个谁都没
+   * 见过的中间态。之后通过 `listAgentBuilderSessions` 读回。
    */
   async saveAgentBuilderDraft(
     sessionId: string,
@@ -1622,13 +1707,13 @@ export class ApiClient {
     });
   }
 
-  /** Rebinds a live builder conversation to another runtime. Callers must not
-   *  show the new runtime as selected until this resolves — the whole point is
-   *  that the UI's runtime and the executing runtime agree.
+  /** 把一个进行中的 builder 会话改绑到另一个 runtime。调用方在本次请求
+   *  成功前不能把新 runtime 显示为已选中——重点就是让 UI 的 runtime 与
+   *  实际执行的 runtime 保持一致。
    *
-   *  A non-2xx throws before we get here and nothing was committed. Reaching the
-   *  parse means the server bound `data.runtime_id`, so that is the fallback for
-   *  an unparseable body — see agentBuilderRuntimeSwitchFallback. */
+   *  非 2xx 会在走到这里之前抛错，此时什么都没提交。能走到 parse 说明服务器
+   *  已绑定 `data.runtime_id`，因此解析失败时用它兜底——见
+   *  agentBuilderRuntimeSwitchFallback。 */
   async switchAgentBuilderRuntime(
     sessionId: string,
     data: { runtime_id: string },
@@ -1645,6 +1730,7 @@ export class ApiClient {
     );
   }
 
+  /** 更新 agent 信息（写入前会检查服务器是否支持会话开场白字段）。 */
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
     assertAgentConversationStartersWriteSupported(data);
     return this.fetch(`/api/agents/${id}`, {
@@ -1653,27 +1739,25 @@ export class ApiClient {
     });
   }
 
+  /** 归档（停用）agent。 */
   async archiveAgent(id: string): Promise<Agent> {
     return this.fetch(`/api/agents/${id}/archive`, { method: "POST" });
   }
 
   /**
-   * Returns the plaintext `custom_env` map for an agent. Admits the
-   * agent's owner or a workspace owner/admin (MUL-5438); calls from
-   * agent-actor sessions get a 403. Every successful call writes an
-   * `agent_env_revealed` activity_log row server-side. MUL-2600.
+   * 读取 agent 的明文 `custom_env` 映射。仅限 agent 拥有者或 workspace
+   * owner/admin（MUL-5438）；agent 身份的会话调用会得到 403。每次成功调用
+   * 都会在服务端写一条 `agent_env_revealed` activity_log。MUL-2600。
    */
   async getAgentEnv(id: string): Promise<AgentEnvResponse> {
     return this.fetch(`/api/agents/${id}/env`);
   }
 
   /**
-   * Replaces an agent's `custom_env` wholesale. Values equal to
-   * `"****"` are preserved server-side (the **** guard) so a partial
-   * UI edit doesn't overwrite real secrets with the masked
-   * placeholder. Admits the agent's owner or a workspace owner/admin
-   * (MUL-5438); agent actors get a 403. Every successful call writes an
-   * `agent_env_updated` activity_log row. MUL-2600.
+   * 整体替换 agent 的 `custom_env`。值为 `"****"` 的项在服务端会被保留
+   *（**** 守卫），这样 UI 的部分编辑不会用脱敏占位符覆盖真实密钥。仅限
+   * agent 拥有者或 workspace owner/admin（MUL-5438）；agent 身份调用返回 403。
+   * 每次成功调用写一条 `agent_env_updated` activity_log。MUL-2600。
    */
   async updateAgentEnv(id: string, data: UpdateAgentEnvRequest): Promise<AgentEnvResponse> {
     return this.fetch(`/api/agents/${id}/env`, {
@@ -1682,18 +1766,20 @@ export class ApiClient {
     });
   }
 
+  /** 恢复（取消归档）agent。 */
   async restoreAgent(id: string): Promise<Agent> {
     return this.fetch(`/api/agents/${id}/restore`, { method: "POST" });
   }
 
-  // Bulk-cancel every active task (queued/dispatched/running) for the agent.
-  // Permission: agent owner or workspace admin/owner. Server returns the
-  // count of cancelled rows; broadcasts task:cancelled for each so other
-  // surfaces can clear their live cards.
+  // 批量取消该 agent 的所有进行中任务（排队/已派发/运行中）。
+  // 权限：agent 拥有者或 workspace admin/owner。服务器返回被取消的行数，
+  // 并逐个广播 task:cancelled 让其它界面清掉各自的实时卡片。
   async cancelAgentTasks(id: string): Promise<{ cancelled: number }> {
     return this.fetch(`/api/agents/${id}/cancel-tasks`, { method: "POST" });
   }
 
+  /** 列出 runtime；owner="me" 只返回当前用户拥有的。workspaceSlug 用于
+   *  覆盖请求头，访问「不是当前所在」的 workspace 时必须传。 */
   async listRuntimes(
     params?: { workspace_id?: string; owner?: "me" },
     workspaceSlug?: string,
@@ -1701,14 +1787,14 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.owner) search.set("owner", params.owner);
-    // workspace_id alone is not enough: the server resolves the workspace from
-    // the slug header first, so a caller listing another workspace's runtimes
-    // must override the header too.
+    // 光有 workspace_id 不够：服务器优先从 slug 请求头解析 workspace，
+    // 因此要列出别的 workspace 的 runtime 时，请求头也必须一起覆盖。
     return this.fetch(`/api/runtimes?${search}`, {
       headers: workspaceHeader(workspaceSlug),
     });
   }
 
+  /** 分页列出云端 runtime 节点。 */
   async listCloudRuntimeNodes(
     params?: ListCloudRuntimeNodesParams,
   ): Promise<CloudRuntimeNode[]> {
@@ -1727,6 +1813,7 @@ export class ApiClient {
     );
   }
 
+  /** 创建一个云端 runtime 节点（异步启动）。 */
   async createCloudRuntimeNode(
     data: CreateCloudRuntimeNodeRequest,
   ): Promise<CloudRuntimeNode> {
@@ -1744,6 +1831,7 @@ export class ApiClient {
     );
   }
 
+  /** 删除（销毁）一个云端 runtime 节点。 */
   async deleteCloudRuntimeNode(instanceId: string): Promise<void> {
     await this.fetchRaw("/api/cloud-runtime/nodes", {
       method: "DELETE",
@@ -1753,12 +1841,12 @@ export class ApiClient {
   }
 
   // ---------------------------------------------------------------------
-  // Cloud Billing — proxies to multica-cloud /api/v1/billing/*. The
-  // multica-api server stamps X-User-ID and forwards bytes; everything
-  // here is upstream-shaped. See packages/core/types/billing.ts for the
-  // response field documentation.
+  // Cloud Billing — 代理到 multica-cloud 的 /api/v1/billing/*。由
+  // multica-api 服务器盖 X-User-ID 后转发字节；此处形状与上游一致。
+  // 响应字段说明见 packages/core/types/billing.ts。
   // ---------------------------------------------------------------------
 
+  /** 查询云计费余额。 */
   async getCloudBillingBalance(): Promise<BillingBalance> {
     const raw = await this.fetch<unknown>("/api/cloud-billing/balance");
     return parseWithFallback(raw, BillingBalanceSchema, EMPTY_BILLING_BALANCE, {
@@ -1766,6 +1854,7 @@ export class ApiClient {
     });
   }
 
+  /** 分页查询云计费流水（transactions）。 */
   async listCloudBillingTransactions(
     params?: { page?: number; page_size?: number },
   ): Promise<BillingTransactionsPage> {
@@ -1784,6 +1873,7 @@ export class ApiClient {
     );
   }
 
+  /** 分页查询云计费批次（batches）。 */
   async listCloudBillingBatches(
     params?: { page?: number; page_size?: number },
   ): Promise<BillingBatchesPage> {
@@ -1802,6 +1892,7 @@ export class ApiClient {
     );
   }
 
+  /** 分页查询云计费充值记录（topups）。 */
   async listCloudBillingTopups(
     params?: { page?: number; page_size?: number },
   ): Promise<BillingTopupsPage> {
@@ -1820,6 +1911,7 @@ export class ApiClient {
     );
   }
 
+  /** 列出云计费价格档位（用于页面展示价目）。 */
   async listCloudBillingPriceTiers(): Promise<BillingPriceTier[]> {
     const raw = await this.fetch<unknown>("/api/cloud-billing/price-tiers");
     return parseWithFallback(
@@ -1830,6 +1922,7 @@ export class ApiClient {
     );
   }
 
+  /** 创建一次云计费 checkout 会话（引导用户去 Stripe 付款）。 */
   async createCloudBillingCheckoutSession(
     data: CreateBillingCheckoutSessionRequest,
   ): Promise<CreateBillingCheckoutSessionResponse> {
@@ -1847,13 +1940,13 @@ export class ApiClient {
     );
   }
 
+  /** 查询一次 cloud billing checkout 会话的最新状态。 */
   async getCloudBillingCheckoutSession(
     sessionId: string,
   ): Promise<BillingCheckoutSessionStatus> {
-    // Stripe session ids are `cs_<base62>` so they're URL-safe by
-    // construction; encodeURIComponent is paranoia for the case where a
-    // future Stripe format change adds a non-alphanumeric character. The
-    // server has its own allow-list rejection for unsafe ids.
+    // Stripe 会话 id 形如 `cs_<base62>`，天然 URL 安全；encodeURIComponent
+    // 只是防未来 Stripe 改格式引入非字母数字字符的防御。服务器端另有
+    // 对不安全 id 的允许列表拒绝逻辑。
     const raw = await this.fetch<unknown>(
       `/api/cloud-billing/checkout-sessions/${encodeURIComponent(sessionId)}`,
     );
@@ -1865,12 +1958,12 @@ export class ApiClient {
     );
   }
 
+  /** 创建进入计费后台（billing portal）的会话。 */
   async createCloudBillingPortalSession(): Promise<CreateBillingPortalSessionResponse> {
     const res = await this.fetchRaw("/api/cloud-billing/portal-sessions", {
       method: "POST",
-      // Body is intentionally absent — the upstream endpoint requires no
-      // payload today. fetchRaw with no body skips the Content-Type
-      // default; that's fine because there's nothing to declare.
+      // 故意不带 body——上游端点目前不要求任何负载。fetchRaw 无 body 时会
+      // 跳过默认的 Content-Type，这没问题，因为本来就没什么要声明的。
     });
     const raw = (await res.json()) as unknown;
     return parseWithFallback(
@@ -1882,17 +1975,18 @@ export class ApiClient {
   }
 
   // ---------------------------------------------------------------------
-  // Workspace subscriptions — the server resolves the workspace from the
-  // authenticated request context, so no caller names one.
+  // Workspace 订阅——服务器从已鉴权的请求上下文解析 workspace，因此调用方
+  // 不需要显式指定。
   //
-  // Two distinct failure paths, both of which a caller must render as
-  // "unavailable" and neither of which may look like Free:
+  // 两种不同的失败路径，调用方都必须渲染为「不可用」，且两者都不能显示成
+  // Free（免费档）：
   //
-  //   - non-2xx (older cloud without the route, 403, 503) throws ApiError from
-  //     `fetch`, so a React Query caller sees `isError`;
-  //   - a 2xx body that does not match the contract returns null here.
+  //   - 非 2xx（旧云没有该路由、403、503）会从 fetch 抛出 ApiError，
+  //     React Query 调用方据此看到 isError；
+  //   - 2xx 但响应体不符合契约时，此处返回 null。
   // ---------------------------------------------------------------------
 
+  /** 查询 workspace 订阅概要；不可解析时返回 null（而非伪装的 Free）。 */
   async getWorkspaceSubscriptionSummary(): Promise<WorkspaceSubscriptionSummary | null> {
     const raw = await this.fetch<unknown>("/api/cloud-subscriptions/summary");
     return parseWithFallback<WorkspaceSubscriptionSummary | null>(
@@ -1903,6 +1997,7 @@ export class ApiClient {
     );
   }
 
+  /** 查询 workspace 订阅的各档价格；不可解析时返回 null。 */
   async getWorkspaceSubscriptionPrices(): Promise<WorkspaceSubscriptionPrices | null> {
     const raw = await this.fetch<unknown>("/api/cloud-subscriptions/prices");
     return parseWithFallback<WorkspaceSubscriptionPrices | null>(
@@ -1913,6 +2008,7 @@ export class ApiClient {
     );
   }
 
+  /** 为 workspace 订阅创建 checkout 会话；不可解析时返回 null。 */
   async createWorkspaceSubscriptionCheckout(
     data: CreateWorkspaceSubscriptionCheckoutRequest,
   ): Promise<CreateWorkspaceSubscriptionCheckoutResponse | null> {
@@ -1939,6 +2035,7 @@ export class ApiClient {
     );
   }
 
+  /** 触发一次座位（seat）对账；不可解析时返回 null。 */
   async reconcileWorkspaceSubscriptionSeats(): Promise<
     WorkspaceSubscriptionSeatReconcileResult | null
   > {
@@ -1954,6 +2051,7 @@ export class ApiClient {
     );
   }
 
+  /** 预演一次额外座位购买：返回费用预估与需接受的按比例折算金额。 */
   async previewWorkspaceSeatPurchase(
     data: PreviewWorkspaceSeatPurchaseRequest,
   ): Promise<WorkspaceSeatPurchasePreview | null> {
@@ -1974,6 +2072,7 @@ export class ApiClient {
     );
   }
 
+  /** 实际购买额外座位（按预估结果提交，携带版本号与幂等键）。 */
   async purchaseWorkspaceSeats(
     data: PurchaseWorkspaceSeatsRequest,
   ): Promise<PurchaseWorkspaceSeatsResponse | null> {
@@ -2004,6 +2103,7 @@ export class ApiClient {
     );
   }
 
+  /** 创建进入 workspace 订阅管理后台（portal）的会话。 */
   async createWorkspaceSubscriptionPortal(
     idempotencyKey: string,
   ): Promise<CreateWorkspaceSubscriptionPortalResponse | null> {
@@ -2020,23 +2120,22 @@ export class ApiClient {
     );
   }
 
+  /** 直接删除 runtime；若上面还绑着活跃 agent，服务器会返回结构化 409。 */
   async deleteRuntime(runtimeId: string): Promise<void> {
     await this.fetch(`/api/runtimes/${runtimeId}`, { method: "DELETE" });
   }
 
-  // Confirmed variant of deleteRuntime. The strict DELETE refuses with
-  // structured 409 (`code: "runtime_has_active_agents"`, body carries the
-  // blocking agents) when active agents are bound; the front-end then opens
-  // the confirmation dialog and submits the user-confirmed active agent set
-  // here. Server compares the snapshot to the live set inside the transaction
-  // and refuses with `code: "runtime_delete_plan_changed"` (same shape, fresh
-  // `active_agents`) if they don't match — caller should re-render the agent
-  // list and force the user to re-confirm.
+  // deleteRuntime 的「已确认」变体。严格的 DELETE 在还有活跃 agent 绑定时
+  // 会以结构化 409 拒绝（`code: "runtime_has_active_agents"`，body 携带阻塞的
+  // agent）；前端于是弹确认框，把用户确认的活跃 agent 集合提交到这里。
+  // 服务器会在事务内把快照与实时集合比较，不一致则以
+  // `code: "runtime_delete_plan_changed"` 拒绝（同形状、含最新 `active_agents`）
+  // ——调用方应重新渲染 agent 列表并让用户再次确认。
   //
-  // The agents are UNBOUND, not archived or deleted (MUL-5559): they keep their
-  // configuration, chats and task history and need a new runtime to run again.
-  // `agents_archived` is the server's deprecated mirror of `agents_unbound`,
-  // kept because installed clients read it; prefer `agents_unbound`.
+  // 这些 agent 是被「解绑」，而非归档或删除（MUL-5559）：它们保留自己的
+  // 配置、聊天与任务历史，只是需要一个新 runtime 才能再次运行。
+  // `agents_archived` 是服务器对 `agents_unbound` 的废弃镜像字段，仅为兼容
+  // 旧客户端而保留；请优先使用 `agents_unbound`。
   async unbindAgentsAndDeleteRuntime(
     runtimeId: string,
     expectedActiveAgentIds: string[],
@@ -2053,17 +2152,17 @@ export class ApiClient {
     });
   }
 
+  /** 局部更新 runtime（可见性、自定义显示名等）。 */
   async updateRuntime(
     runtimeId: string,
     patch: {
       visibility?: "private" | "public";
       /**
-       * Custom display name. Pass an empty string to clear it (the server
-       * reverts to the default name). Omit to leave it unchanged — a JSON
-       * `null` is treated as "unchanged", not "clear". See MUL-4217.
+       * 自定义显示名。传空字符串清除（服务器恢复为默认名）；不传表示不变——
+       * JSON 里的 `null` 被视为「不变」而非「清除」。见 MUL-4217。
        */
       custom_name?: string;
-      /** Apply custom_name to every runtime on the same machine. */
+      /** 是否把 custom_name 应用到同一台机器上的每个 runtime。 */
       apply_to_machine?: boolean;
     },
   ): Promise<AgentRuntime> {
@@ -2074,10 +2173,11 @@ export class ApiClient {
   }
 
   // ---------------------------------------------------------------------
-  // Custom runtime profiles (MUL-3284). All workspace-scoped: the caller
-  // passes the workspace id the same way the runtimes list resolves it.
+  // 自定义 runtime 配置档（MUL-3284）。全部按 workspace 隔离：调用方传
+  // workspace id 的方式与 runtimes 列表解析方式一致。
   // ---------------------------------------------------------------------
 
+  /** 列出某 workspace 的 runtime 配置档。 */
   async listRuntimeProfiles(workspaceId: string): Promise<RuntimeProfile[]> {
     const res = await this.fetch<{ runtime_profiles?: RuntimeProfile[] }>(
       `/api/workspaces/${workspaceId}/runtime-profiles`,
@@ -2085,6 +2185,7 @@ export class ApiClient {
     return res.runtime_profiles ?? [];
   }
 
+  /** 获取单个 runtime 配置档详情。 */
   async getRuntimeProfile(
     workspaceId: string,
     profileId: string,
@@ -2094,6 +2195,7 @@ export class ApiClient {
     );
   }
 
+  /** 新建一个 runtime 配置档。 */
   async createRuntimeProfile(
     workspaceId: string,
     body: CreateRuntimeProfileRequest,
@@ -2104,6 +2206,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新 runtime 配置档。 */
   async updateRuntimeProfile(
     workspaceId: string,
     profileId: string,
@@ -2118,6 +2221,7 @@ export class ApiClient {
     );
   }
 
+  /** 删除 runtime 配置档。 */
   async deleteRuntimeProfile(
     workspaceId: string,
     profileId: string,
@@ -2128,15 +2232,15 @@ export class ApiClient {
     );
   }
 
+  /** 查询某 runtime 近 N 天用量（token 数等）；tz 影响「按天」的切分边界。 */
   async getRuntimeUsage(
     runtimeId: string,
     params?: { days?: number; tz?: string },
   ): Promise<RuntimeUsage[]> {
     const search = new URLSearchParams();
     if (params?.days) search.set("days", String(params.days));
-    // `tz` drives the calendar-day boundary for the trend chart (Viewing
-    // layer). Caller-supplied; the backend falls back to user.timezone /
-    // UTC if omitted.
+    // `tz` 决定趋势图里「按天」日历边界的切分（展示层）。由调用方传入；
+    // 后端在缺省时回退到 user.timezone / UTC。
     if (params?.tz) search.set("tz", params.tz);
     const raw = await this.fetch<unknown>(
       `/api/runtimes/${runtimeId}/usage?${search}`,
@@ -2146,12 +2250,13 @@ export class ApiClient {
     });
   }
 
+  /** 查询某 runtime 的按小时任务活跃度（小时热力图数据）。 */
   async getRuntimeTaskActivity(
     runtimeId: string,
     params?: { tz?: string },
   ): Promise<RuntimeHourlyActivity[]> {
-    // Hour-of-day heatmap follows the viewer's tz, like the other reports on
-    // this page. Pass the viewer's IANA zone so the server buckets correctly.
+    // 小时热力图跟随查看者的时区，与同页其它报表一致。传查看者的 IANA
+    // 时区，让服务器按正确的时区分桶。
     const search = new URLSearchParams();
     if (params?.tz) search.set("tz", params.tz);
     const raw = await this.fetch<unknown>(
@@ -2165,6 +2270,7 @@ export class ApiClient {
     );
   }
 
+  /** 查询某 runtime 近 N 天按 agent 拆分的用量。 */
   async getRuntimeUsageByAgent(
     runtimeId: string,
     params?: { days?: number; tz?: string },
@@ -2183,6 +2289,7 @@ export class ApiClient {
     );
   }
 
+  /** 查询某 runtime 近 N 天按小时拆分的用量。 */
   async getRuntimeUsageByHour(
     runtimeId: string,
     params?: { days?: number; tz?: string },
@@ -2202,12 +2309,12 @@ export class ApiClient {
   }
 
   // ---------------------------------------------------------------------------
-  // Workspace dashboard — three independent rollups for `/{slug}/dashboard`.
-  // Each accepts an optional `project_id` to narrow the scope to one project.
-  // Cost is computed client-side from the model pricing table (same contract
-  // as the per-runtime endpoints above).
+  // Workspace 仪表盘——`/{slug}/dashboard` 的三组相互独立的汇总数据。
+  // 每组都接受可选 `project_id` 把范围收窄到单个项目。
+  // 成本在客户端按模型定价表计算（与上面按 runtime 的端点同契约）。
   // ---------------------------------------------------------------------------
 
+  /** 仪表盘：每日用量汇总。 */
   async getDashboardUsageDaily(
     params: { days?: number; project_id?: string | null; tz?: string },
   ): Promise<DashboardUsageDaily[]> {
@@ -2224,6 +2331,7 @@ export class ApiClient {
     );
   }
 
+  /** 仪表盘：按 agent 拆分的用量汇总。 */
   async getDashboardUsageByAgent(
     params: { days?: number; project_id?: string | null; tz?: string },
   ): Promise<DashboardUsageByAgent[]> {
@@ -2240,14 +2348,15 @@ export class ApiClient {
     );
   }
 
+  /** 仪表盘：agent 运行时长统计。 */
   async getDashboardAgentRunTime(
     params: { days?: number; project_id?: string | null; tz?: string },
   ): Promise<DashboardAgentRunTime[]> {
     const search = new URLSearchParams();
     if (params.days) search.set("days", String(params.days));
     if (params.project_id) search.set("project_id", params.project_id);
-    // `tz` aligns the "last N days" cutoff with the viewer's calendar,
-    // matching the per-agent token card.
+    // `tz` 让「最近 N 天」的截止点与查看者的日历对齐，与按 agent 的
+    // token 卡片保持一致。
     if (params.tz) search.set("tz", params.tz);
     const raw = await this.fetch<unknown>(`/api/dashboard/agent-runtime?${search}`);
     return parseWithFallback<DashboardAgentRunTime[]>(
@@ -2258,14 +2367,14 @@ export class ApiClient {
     );
   }
 
+  /** 仪表盘：每日运行时长（runtime/daily）汇总。 */
   async getDashboardRunTimeDaily(
     params: { days?: number; project_id?: string | null; tz?: string },
   ): Promise<DashboardRunTimeDaily[]> {
     const search = new URLSearchParams();
     if (params.days) search.set("days", String(params.days));
     if (params.project_id) search.set("project_id", params.project_id);
-    // `tz` cuts the day buckets in the viewer's calendar so Time / Tasks
-    // align with the Cost / Tokens charts.
+    // `tz` 按查看者日历切分天桶，让 Time / Tasks 与 Cost / Tokens 图对齐。
     if (params.tz) search.set("tz", params.tz);
     const raw = await this.fetch<unknown>(`/api/dashboard/runtime/daily?${search}`);
     return parseWithFallback<DashboardRunTimeDaily[]>(
@@ -2276,14 +2385,14 @@ export class ApiClient {
     );
   }
 
+  /** 仪表盘：每日失败次数汇总。 */
   async getDashboardFailuresDaily(
     params: { days?: number; project_id?: string | null; tz?: string },
   ): Promise<DashboardFailureDaily[]> {
     const search = new URLSearchParams();
     if (params.days) search.set("days", String(params.days));
     if (params.project_id) search.set("project_id", params.project_id);
-    // `tz` cuts the day buckets in the viewer's calendar so the Errors chart
-    // shares an x-axis with the other four metrics.
+    // `tz` 按查看者日历切分天桶，让 Errors 图与另外四个指标的 x 轴一致。
     if (params.tz) search.set("tz", params.tz);
     const raw = await this.fetch<unknown>(`/api/dashboard/failures/daily?${search}`);
     return parseWithFallback<DashboardFailureDaily[]>(
@@ -2294,6 +2403,7 @@ export class ApiClient {
     );
   }
 
+  /** 仪表盘：按 agent 拆分的失败次数汇总。 */
   async getDashboardFailuresByAgent(
     params: { days?: number; project_id?: string | null; tz?: string },
   ): Promise<DashboardFailureByAgent[]> {
@@ -2310,6 +2420,7 @@ export class ApiClient {
     );
   }
 
+  /** 发起 runtime 升级到指定版本（异步执行，结果另行查询）。 */
   async initiateUpdate(
     runtimeId: string,
     targetVersion: string,
@@ -2320,6 +2431,7 @@ export class ApiClient {
     });
   }
 
+  /** 查询一次 runtime 升级任务的结果。 */
   async getUpdateResult(
     runtimeId: string,
     updateId: string,
@@ -2327,11 +2439,11 @@ export class ApiClient {
     return this.fetch(`/api/runtimes/${runtimeId}/update/${updateId}`);
   }
 
-  // Both discovery endpoints feed a UI state machine (poll while
-  // pending/running, then render or fail), so the response is validated rather
-  // than cast: an unparseable body degrades to an explicit "failed" record that
-  // shows the discovery error and keeps manual model entry usable, instead of a
-  // fabricated empty catalog or an endless spinner (MUL-5444).
+  // 两个「发现类」端点都喂给同一个 UI 状态机（pending/running 时轮询，
+  // 然后渲染或失败），所以响应要校验而非强转：解析失败的响应体降级为一条
+  // 显式的 "failed" 记录——它展示发现错误、保留手动录入模型的入口，
+  // 而不是一个凭空捏造的空目录或无限转圈（MUL-5444）。
+  /** 发起一次「拉取 runtime 支持的模型列表」的异步任务（结果另行查询）。 */
   async initiateListModels(runtimeId: string): Promise<RuntimeModelListRequest> {
     const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models`, {
       method: "POST",
@@ -2344,6 +2456,7 @@ export class ApiClient {
     );
   }
 
+  /** 查询一次「拉取模型列表」任务的结果。 */
   async getListModelsResult(
     runtimeId: string,
     requestId: string,
@@ -2363,6 +2476,7 @@ export class ApiClient {
     );
   }
 
+  /** 发起一次「列出 runtime 本地技能」的异步任务。 */
   async initiateListLocalSkills(
     runtimeId: string,
   ): Promise<RuntimeLocalSkillListRequest> {
@@ -2371,6 +2485,7 @@ export class ApiClient {
     });
   }
 
+  /** 查询「列出本地技能」任务的结果。 */
   async getListLocalSkillsResult(
     runtimeId: string,
     requestId: string,
@@ -2378,6 +2493,7 @@ export class ApiClient {
     return this.fetch(`/api/runtimes/${runtimeId}/local-skills/${requestId}`);
   }
 
+  /** 发起一次「导入本地技能」的异步任务。 */
   async initiateImportLocalSkill(
     runtimeId: string,
     data: CreateRuntimeLocalSkillImportRequest,
@@ -2388,6 +2504,7 @@ export class ApiClient {
     });
   }
 
+  /** 查询「导入本地技能」任务的结果。 */
   async getImportLocalSkillResult(
     runtimeId: string,
     requestId: string,
@@ -2395,27 +2512,25 @@ export class ApiClient {
     return this.fetch(`/api/runtimes/${runtimeId}/local-skills/import/${requestId}`);
   }
 
+  /** 列出某 agent 的全部历史任务。 */
   async listAgentTasks(agentId: string): Promise<AgentTask[]> {
     return this.fetch(`/api/agents/${agentId}/tasks`);
   }
 
-  // Workspace-scoped agent task snapshot: every active task
-  // (queued/dispatched/running) plus each agent's most recent terminal task.
-  // Powers the front-end's "active wins, else latest terminal" presence
-  // derivation; one fetch backs every per-agent presence read in the app.
-  // Workspace is resolved server-side from the X-Workspace-Slug header.
+  // workspace 级 agent 任务快照：每个进行中任务（排队/已派发/运行中）加上
+  // 每个 agent 最近一个终态任务。支撑前端「活跃优先，否则取最近终态」的
+  // 在线状态推导；一次拉取就覆盖了应用里所有按 agent 的在线读取。
+  // workspace 由服务器按 X-Workspace-Slug 请求头解析。
   async getAgentTaskSnapshot(): Promise<AgentTask[]> {
     return this.fetch(`/api/agent-task-snapshot`);
   }
 
-  // Independent workspace-level projection. Unlike the task snapshot, this
-  // already deduplicates running agents and returns only the display fields
-  // consumers need. Callers may narrow the projection by task source and, for
-  // issue work, the authenticated member's My Issues relation.
-  // `parentIssueId` narrows the projection to that issue's direct children,
-  // which is how the sub-issue header on issue detail reads the same source
-  // as the Issues list header. The server rejects combining it with `scope`,
-  // so callers pass one or the other.
+  // 独立的 workspace 级投影。与任务快照不同，它已对运行中的 agent 去重，
+  // 只返回消费方需要的展示字段。调用方可按任务来源收窄投影；议题相关
+  // 场景还可按登录成员的 My Issues 关系过滤。
+  // `parentIssueId` 把投影收窄到某议题的直接子议题——议题详情的子议题表头
+  // 正是借此与议题列表表头读到同一数据源。服务器拒绝把该参数与 `scope`
+  // 一起用，所以调用方二选一。
   async getWorkspaceWorkingAgents(
     type?: WorkspaceWorkingAgentType,
     mineRelation?: WorkspaceWorkingAgentMineRelation,
@@ -2433,27 +2548,29 @@ export class ApiClient {
     return this.fetch(`/api/working-agents${query ? `?${query}` : ""}`);
   }
 
-  // Per-agent daily activity for the last 30 days, anchored on
-  // completed_at. One workspace-wide fetch backs both the Agents-list
-  // sparkline (uses trailing 7 buckets) and the agent detail "Last 30
-  // days" panel (uses all 30).
+  // 每个 agent 最近 30 天、锚定 completed_at 的日活跃数据。一次 workspace 级
+  // 拉取同时支撑：Agent 列表迷你折线图（用最近 7 个桶）和 agent 详情页的
+  //「最近 30 天」面板（用全部 30 个桶）。
   async getWorkspaceAgentActivity30d(): Promise<AgentActivityBucket[]> {
     return this.fetch(`/api/agent-activity-30d`);
   }
 
-  // Per-agent 30-day total run count for the Agents-list RUNS column.
+  // 每个 agent 的 30 天运行总次数，供 Agent 列表的 RUNS 列使用。
   async getWorkspaceAgentRunCounts(): Promise<AgentRunCount[]> {
     return this.fetch(`/api/agent-run-counts`);
   }
 
+  /** 获取某议题当前的活跃任务。 */
   async getActiveTasksForIssue(issueId: string): Promise<{ tasks: AgentTask[] }> {
     return this.fetch(`/api/issues/${issueId}/active-task`);
   }
 
+  /** 列出某任务的消息记录。 */
   async listTaskMessages(taskId: string): Promise<TaskMessagePayload[]> {
     return this.fetch(`/api/tasks/${taskId}/messages`);
   }
 
+  /** 列出与某议题关联的全部任务运行记录。 */
   async listTasksByIssue(issueId: string): Promise<AgentTask[]> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/task-runs`);
     return parseWithFallback<AgentTask[]>(raw, AgentTaskListSchema, [], {
@@ -2461,6 +2578,7 @@ export class ApiClient {
     });
   }
 
+  /** 列出某议题任务执行轨迹（trace）事件，用于耗时/失败分析。 */
   async listIssueTaskTraceEvents(issueId: string): Promise<{ events: Array<{
     id: string; task_id: string; event_type: string; event_name: string; status: string;
     provider: string; model: string; failure_reason: string; duration_ms?: number;
@@ -2472,6 +2590,7 @@ export class ApiClient {
     });
   }
 
+  /** 获取某议题的执行树（子任务分解结构）。 */
   async getIssueExecutionTree(issueId: string): Promise<IssueExecutionTreeResponse> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/execution-tree`);
     return parseWithFallback<IssueExecutionTreeResponse>(
@@ -2482,6 +2601,7 @@ export class ApiClient {
     );
   }
 
+  /** 列出外部凭证配置；可按 provider 过滤。 */
   async listExternalCredentialProfiles(provider?: ExternalCredentialProvider): Promise<ExternalCredentialProfile[]> {
     const query = provider ? `?provider=${encodeURIComponent(provider)}` : "";
     const raw = await this.fetch<unknown>(`/api/external-credential-profiles${query}`);
@@ -2489,34 +2609,42 @@ export class ApiClient {
       endpoint: "GET /api/external-credential-profiles",
     }).profiles;
   }
+  /** 获取单个外部凭证配置。 */
   async getExternalCredentialProfile(id: string): Promise<ExternalCredentialProfile> {
     const raw = await this.fetch<unknown>(`/api/external-credential-profiles/${id}`);
     return parseOrThrow(raw, ExternalCredentialProfileSchema, { endpoint: "GET /api/external-credential-profiles/:id" });
   }
+  /** 新建外部凭证配置（自带幂等键，防重复提交）。 */
   async createExternalCredentialProfile(data: CreateExternalCredentialProfileRequest, idempotencyKey = createSafeId()): Promise<ExternalCredentialProfile> {
     const raw = await this.fetch<unknown>(`/api/external-credential-profiles`, { method: "POST", body: JSON.stringify(data), headers: { "Idempotency-Key": idempotencyKey } });
     return parseOrThrow(raw, ExternalCredentialProfileSchema, { endpoint: "POST /api/external-credential-profiles", mayHaveCommitted: true });
   }
+  /** 更新外部凭证配置。 */
   async updateExternalCredentialProfile(id: string, data: UpdateExternalCredentialProfileRequest): Promise<ExternalCredentialProfile> {
     const raw = await this.fetch<unknown>(`/api/external-credential-profiles/${id}`, { method: "PUT", body: JSON.stringify(data) });
     return parseOrThrow(raw, ExternalCredentialProfileSchema, { endpoint: "PUT /api/external-credential-profiles/:id", mayHaveCommitted: true });
   }
+  /** 测试外部凭证是否可用；响应无法解析时兜底为「测试失败」。 */
   async testExternalCredentialProfile(data: TestExternalCredentialProfileRequest): Promise<TestExternalCredentialProfileResponse> {
     const raw = await this.fetch<unknown>(`/api/external-credential-profiles/test`, { method: "POST", body: JSON.stringify(data) });
     return parseWithFallback(raw, TestExternalCredentialProfileResponseSchema, { status: "failed", last_error: "账号测试响应格式无效" }, { endpoint: "POST /api/external-credential-profiles/test" });
   }
+  /** 删除外部凭证配置。 */
   async deleteExternalCredentialProfile(id: string): Promise<void> { await this.fetch(`/api/external-credential-profiles/${id}`, { method: "DELETE" }); }
 
+  /** 查询单议题的用量汇总。 */
   async getIssueUsage(issueId: string): Promise<IssueUsageSummary> {
     return this.fetch(`/api/issues/${issueId}/usage`);
   }
 
+  /** 取消议题下的某个任务。 */
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
     return this.fetch(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
       method: "POST",
     });
   }
 
+  /** 重新运行整个议题（或只重跑指定任务）。 */
   async rerunIssue(issueId: string, taskId?: string): Promise<AgentTask> {
     return this.fetch(`/api/issues/${issueId}/rerun`, {
       method: "POST",
@@ -2524,6 +2652,7 @@ export class ApiClient {
     });
   }
 
+  /** 重试一次「源上下文快速创建」失败的任务。 */
   async retrySourceContextQuickCreate(taskId: string): Promise<AgentTask> {
     const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/retry-source-context`, {
       method: "POST",
@@ -2535,7 +2664,8 @@ export class ApiClient {
     return task;
   }
 
-  // Inbox
+  // Inbox（收件箱区）
+  /** 列出收件箱消息。 */
   async listInbox(): Promise<InboxItem[]> {
     const raw = await this.fetch<unknown>("/api/inbox");
     return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
@@ -2543,21 +2673,23 @@ export class ApiClient {
     });
   }
 
+  /** 把某条收件箱消息标为已读。 */
   async markInboxRead(id: string): Promise<InboxItem> {
     return this.fetch(`/api/inbox/${id}/read`, { method: "POST" });
   }
 
+  /** 把某条收件箱消息标为未读。 */
   async markInboxUnread(id: string): Promise<InboxItem> {
     return this.fetch(`/api/inbox/${id}/unread`, { method: "POST" });
   }
 
+  /** 归档某条收件箱消息。 */
   async archiveInbox(id: string): Promise<InboxItem> {
     return this.fetch(`/api/inbox/${id}/archive`, { method: "POST" });
   }
 
-  // Archived notifications, backing the inbox's "Archived" sub-view. Capped
-  // server-side (no pagination in v1). Schema-guarded so a contract drift
-  // renders an empty archive instead of taking the inbox down with it.
+  // 已归档通知，支撑收件箱的「已归档」子视图。服务端限制条数（v1 无分页）。
+  // 有 schema 守卫：契约漂移时渲染为空归档，而不是拖垮整个收件箱。
   async listArchivedInbox(): Promise<InboxItem[]> {
     const raw = await this.fetch<unknown>("/api/inbox/archived");
     return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
@@ -2565,18 +2697,19 @@ export class ApiClient {
     });
   }
 
+  /** 把某条消息从归档中恢复。 */
   async unarchiveInbox(id: string): Promise<InboxItem> {
     return this.fetch(`/api/inbox/${id}/unarchive`, { method: "POST" });
   }
 
+  /** 查询当前收件箱的未读数。 */
   async getUnreadInboxCount(): Promise<{ count: number }> {
     return this.fetch("/api/inbox/unread-count");
   }
 
-  // Cross-workspace unread summary: one entry per workspace the user belongs
-  // to that has unread inbox items. Backs the workspace-switcher dot for
-  // OTHER workspaces. Schema-guarded so a contract drift hides the dot rather
-  // than crashing the sidebar.
+  // 跨 workspace 的未读汇总：用户所属且有未读收件箱消息的每个 workspace
+  // 一条记录。支撑 workspace 切换器里「其它 workspace」的小圆点。带 schema
+  // 守卫：契约漂移时隐藏圆点，而不是弄崩侧边栏。
   async getInboxUnreadSummary(): Promise<InboxWorkspaceUnread[]> {
     const raw = await this.fetch<unknown>("/api/inbox/unread-summary");
     return parseWithFallback(raw, InboxUnreadSummarySchema, EMPTY_INBOX_UNREAD_SUMMARY, {
@@ -2584,28 +2717,33 @@ export class ApiClient {
     });
   }
 
+  /** 把所有收件箱消息标为已读。 */
   async markAllInboxRead(): Promise<{ count: number }> {
     return this.fetch("/api/inbox/mark-all-read", { method: "POST" });
   }
 
+  /** 归档全部收件箱消息。 */
   async archiveAllInbox(): Promise<{ count: number }> {
     return this.fetch("/api/inbox/archive-all", { method: "POST" });
   }
 
+  /** 归档全部已读的收件箱消息。 */
   async archiveAllReadInbox(): Promise<{ count: number }> {
     return this.fetch("/api/inbox/archive-all-read", { method: "POST" });
   }
 
+  /** 归档所有「已完成」的收件箱消息。 */
   async archiveCompletedInbox(): Promise<{ count: number }> {
     return this.fetch("/api/inbox/archive-completed", { method: "POST" });
   }
 
-  // Notification preferences
+  // Notification preferences（通知偏好区）
   //
-  // `workspaceSlug` overrides the default `X-Workspace-Slug` header (which
-  // follows the active workspace) so a caller can read a SPECIFIC workspace's
-  // preferences — e.g. honoring the mute setting of the workspace an inbox
-  // notification came from while the user is viewing a different one (#3766).
+  // `workspaceSlug` 会覆盖默认的 X-Workspace-Slug 请求头（默认跟随当前活跃
+  // workspace），从而让调用方能读取「指定 workspace」的偏好——例如用户正在
+  // 查看 A workspace，却要遵守 B workspace（那条收件箱通知来源）的静默设置
+  //（#3766）。
+  /** 读取当前（或指定）workspace 的通知偏好。 */
   async getNotificationPreferences(workspaceSlug?: string): Promise<NotificationPreferenceResponse> {
     const raw = await this.fetch<unknown>(
       "/api/notification-preferences",
@@ -2619,6 +2757,7 @@ export class ApiClient {
     );
   }
 
+  /** 更新当前（或指定）workspace 的通知偏好。 */
   async updateNotificationPreferences(
     preferences: NotificationPreferences,
     workspaceSlug?: string,
@@ -2636,7 +2775,8 @@ export class ApiClient {
     );
   }
 
-  // App Config
+  // App Config（应用配置区）
+  /** 读取全局应用配置（功能开关等）。 */
   async getConfig(): Promise<AppConfigResponse> {
     const raw = await this.fetch<unknown>("/api/config");
     return parseWithFallback<AppConfigResponse>(raw, AppConfigSchema, EMPTY_APP_CONFIG, {
@@ -2644,15 +2784,18 @@ export class ApiClient {
     });
   }
 
-  // Workspaces
+  // Workspaces（workspace 管理区）
+  /** 列出当前用户可访问的全部 workspace。 */
   async listWorkspaces(): Promise<Workspace[]> {
     return this.fetch("/api/workspaces");
   }
 
+  /** 获取单个 workspace 详情。 */
   async getWorkspace(id: string): Promise<Workspace> {
     return this.fetch(`/api/workspaces/${id}`);
   }
 
+  /** 新建 workspace（需提供名称、slug 与可选描述/上下文/议题前缀）。 */
   async createWorkspace(data: { name: string; slug: string; description?: string; context?: string; issue_prefix?: string }): Promise<Workspace> {
     return this.fetch("/api/workspaces", {
       method: "POST",
@@ -2660,6 +2803,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新 workspace 资料与设置。 */
   async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; repos?: WorkspaceRepo[]; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {
     return this.fetch(`/api/workspaces/${id}`, {
       method: "PATCH",
@@ -2667,6 +2811,7 @@ export class ApiClient {
     });
   }
 
+  /** 探测一个 git 仓库 URL：检查可达性、协议等，返回探测结果。 */
   async probeWorkspaceRepo(
     workspaceId: string,
     data: { url: string },
@@ -2680,6 +2825,7 @@ export class ApiClient {
     });
   }
 
+  /** 解析仓库 URL 为规范化的仓库信息（可指定默认分支）。 */
   async resolveWorkspaceRepo(
     workspaceId: string,
     data: { url: string; default_branch?: string },
@@ -2693,6 +2839,7 @@ export class ApiClient {
     });
   }
 
+  /** 列出 workspace 下已安装的插件；旧服务器 404 时返回空列表。 */
   async listPluginInstallations(workspaceId: string): Promise<PluginInstallationListResponse> {
     let raw: unknown;
     try {
@@ -2706,11 +2853,8 @@ export class ApiClient {
     });
   }
 
-  /**
-   * The workspace's MCP server library. The response carries identity and
-   * transport only — the stored entries are write-only server-side, so there
-   * is nothing here to redact.
-   */
+  /** workspace 的 MCP 服务器库。响应只带身份与传输方式——服务端存的是
+   *  只写条目，所以这里没有需要脱敏的内容。 */
   async listWorkspaceMcpServers(workspaceId: string): Promise<WorkspaceMcpServer[]> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/mcp-servers`);
     return parseWithFallback(raw, WorkspaceMcpServerListSchema, [] as WorkspaceMcpServer[], {
@@ -2718,10 +2862,8 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Adds a server to the library. It is assigned to NO agent — an agent gets
-   * it only through addAgentMcpServer.
-   */
+  /** 把一台服务器加入库中。它不会自动分配给任何 agent——agent 只能通过
+   *  addAgentMcpServer 显式获得它。 */
   async createWorkspaceMcpServer(
     workspaceId: string,
     name: string,
@@ -2736,10 +2878,8 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Renames a library entry, replaces its configuration, or both. Agents keep
-   * their assignment across a rename because assignments key off the id.
-   */
+  /** 重命名库条目 / 替换配置，或两者都做。agent 的分配按 id 关联，
+   *  因此重命名不会影响已有分配。 */
   async updateWorkspaceMcpServer(
     workspaceId: string,
     serverId: string,
@@ -2754,7 +2894,7 @@ export class ApiClient {
     });
   }
 
-  /** Removes a library entry and every assignment to it. */
+  /** 从库中删除一台服务器，同时删除所有指向它的 agent 分配。 */
   async deleteWorkspaceMcpServer(workspaceId: string, serverId: string): Promise<void> {
     await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/mcp-servers/${encodeURIComponent(serverId)}`,
@@ -2762,7 +2902,7 @@ export class ApiClient {
     );
   }
 
-  /** The workspace MCP servers assigned to this agent, with their toggles. */
+  /** 列出分配给该 agent 的 workspace MCP 服务器及其开关状态。 */
   async listAgentMcpServers(agentId: string): Promise<WorkspaceMcpServer[]> {
     const raw = await this.fetch<unknown>(`/api/agents/${agentId}/mcp-servers`);
     return parseWithFallback(raw, WorkspaceMcpServerListSchema, [] as WorkspaceMcpServer[], {
@@ -2770,10 +2910,8 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Gives one workspace server to this agent. Every write returns the
-   * resulting assignment list, so the client never has to guess the state.
-   */
+  /** 把一台 workspace 服务器分配给这个 agent。每次写入都返回分配后的完整
+   *  列表，客户端无需猜测当前状态。 */
   async addAgentMcpServer(agentId: string, serverId: string): Promise<WorkspaceMcpServer[]> {
     const raw = await this.fetch<unknown>(`/api/agents/${agentId}/mcp-servers`, {
       method: "POST",
@@ -2784,6 +2922,7 @@ export class ApiClient {
     });
   }
 
+  /** 启停某个 agent 对某台 MCP 服务器的使用。 */
   async setAgentMcpServerEnabled(
     agentId: string,
     serverId: string,
@@ -2798,6 +2937,7 @@ export class ApiClient {
     });
   }
 
+  /** 移除该 agent 与某台 MCP 服务器的分配。 */
   async removeAgentMcpServer(agentId: string, serverId: string): Promise<WorkspaceMcpServer[]> {
     const raw = await this.fetch<unknown>(
       `/api/agents/${agentId}/mcp-servers/${encodeURIComponent(serverId)}`,
@@ -2808,7 +2948,7 @@ export class ApiClient {
     });
   }
 
-  /** Everything published into this workspace, with its versions. */
+  /** 列出该 workspace 发布过的全部插件包及各自版本。 */
   async listPluginPackages(workspaceId: string): Promise<PluginPackageListResponse> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/packages`);
     return parseWithFallback(raw, PluginPackageListResponseSchema, EMPTY_PLUGIN_PACKAGE_LIST, {
@@ -2816,14 +2956,11 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Publishes an artifact bundle: a zip holding the manifest and every file it
-   * names. This is the whole publishing path — a plugin author needs no server
-   * of their own, and nothing about a published version changes afterwards.
+  /** 发布一个插件包：zip 内含 manifest 与它引用的所有文件。这是完整的发布
+   *  通道——插件作者无需自建服务器，且已发布版本之后不可修改。
    *
-   * Not routed through `this.fetch`, for the same reason uploadFile is not: the
-   * browser has to set the multipart boundary itself.
-   */
+   *  不走 this.fetch，原因与 uploadFile 相同：浏览器必须自己设置 multipart
+   *  边界。 */
   async publishPluginPackage(workspaceId: string, bundle: File): Promise<PluginPackage> {
     const formData = new FormData();
     formData.append("bundle", bundle);
@@ -2844,11 +2981,8 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Publishes from a directory the operator hosts (MULTICA_PLUGIN_DIR) — the
-   * development channel, so iterating on a surface does not mean zipping and
-   * uploading after every edit. It still produces an immutable version.
-   */
+  /** 从运维托管的目录（MULTICA_PLUGIN_DIR）发布——开发通道，让迭代 surface
+   *  不必每次改动都压缩再上传。产出仍是不可变版本。 */
   async publishLocalPluginPackage(workspaceId: string, name: string): Promise<PluginPackage> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/packages/local`, {
       method: "POST",
@@ -2859,11 +2993,12 @@ export class ApiClient {
     });
   }
 
+  /** 删除一个插件包（连同其全部版本）。 */
   async deletePluginPackage(workspaceId: string, packageId: string): Promise<void> {
     await this.fetch<void>(`/api/workspaces/${workspaceId}/plugins/packages/${packageId}`, { method: "DELETE" });
   }
 
-  /** Mint one hosted document URL and its single-use bridge proof. */
+  /** 铸造一个托管文档 URL 及其一次性桥接凭证，供 plugin surface 启动。 */
   async getPluginSurfaceLaunch(workspaceId: string, installationId: string, surfaceKey: string): Promise<PluginSurfaceLaunch> {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/plugins/${installationId}/surfaces/${encodeURIComponent(surfaceKey)}/launch`,
@@ -2873,10 +3008,8 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Step one of the two-step install. Nothing is written: the response is what
-   * the consent screen shows before an installation exists.
-   */
+  /** 两步安装的第一步。不产生任何写入：返回的是安装存在之前、授权确认屏
+   *  需要展示的内容。 */
   async previewPlugin(workspaceId: string, request: PluginPreviewRequest): Promise<PluginPreview> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/preview`, {
       method: "POST",
@@ -2887,6 +3020,7 @@ export class ApiClient {
     });
   }
 
+  /** 正式安装插件（生成安装记录）。 */
   async installPlugin(workspaceId: string, request: PluginInstallRequest): Promise<PluginInstallation> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins`, {
       method: "POST",
@@ -2897,6 +3031,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新某安装的插件配置。 */
   async configurePlugin(workspaceId: string, installationId: string, request: PluginConfigRequest): Promise<PluginInstallation> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/config`, {
       method: "PUT",
@@ -2907,6 +3042,7 @@ export class ApiClient {
     });
   }
 
+  /** 启停某个插件安装。 */
   async setPluginEnabled(workspaceId: string, installationId: string, enabled: boolean): Promise<PluginInstallation> {
     const action = enabled ? "enable" : "disable";
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/${action}`, {
@@ -2917,13 +3053,11 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Performs one Action API call on behalf of a plugin surface.
+  /** 代替某个 plugin surface 执行一次 Action API 调用。
    *
-   * The surface has no credential — it asked the host over postMessage, and
-   * this re-issues the call on the signed-in user's session. The installation
-   * travels in a header the iframe cannot set for itself; the server derives
-   * the workspace from it rather than trusting anything the client sends.
+   *  surface 自身没有凭证——它通过 postMessage 向宿主申请，宿主以当前登录
+   *  用户的会话重新发起调用。安装标识放在 iframe 自己无法伪造的请求头里；
+   *  服务器据此推导 workspace，而不是信任客户端发送的任何东西。
    */
   async callPluginAction(
     installationId: string,
@@ -2939,15 +3073,12 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Invokes one hook on behalf of a person.
+  /** 代替用户调用一次 plugin hook。
    *
-   * `ui` comes from a button inside a surface, `manual` from the issue actions
-   * menu or the command palette. Both block this request and only this request:
-   * somebody is waiting for the answer. The `event` trigger never comes through
-   * here — the host dispatches it, so no client can ask for one and inherit an
-   * identity that is supposed to be the plugin's.
-   */
+   *  `ui` 来自 surface 内的按钮，`manual` 来自议题操作菜单或命令面板。两者
+   *  都会阻塞本次（且仅本次）请求：有人正在等答案。`event` 触发器永远不会
+   *  走到这里——它由宿主调度，任何客户端都不能申请一个并继承「本应属于
+   *  插件」的身份。 */
   async invokePluginHook(
     installationId: string,
     hookKey: string,
@@ -2967,6 +3098,7 @@ export class ApiClient {
     }, { endpoint: "POST /api/plugin-bridge/v1/hooks/{key}" });
   }
 
+  /** 列出某安装的插件调用历史。 */
   async listPluginInvocations(workspaceId: string, installationId: string): Promise<PluginInvocation[]> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/invocations`);
     return parseWithFallback(raw, PluginInvocationListSchema, { invocations: [] }, {
@@ -2974,6 +3106,7 @@ export class ApiClient {
     }).invocations;
   }
 
+  /** 轮换（重新签发）插件 token 与签名密钥。 */
   async rotatePluginToken(workspaceId: string, installationId: string): Promise<PluginTokenIssue> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/token`, {
       method: "POST",
@@ -2983,18 +3116,16 @@ export class ApiClient {
     });
   }
 
+  /** 吊销（作废）插件的当前 token 与签名密钥。 */
   async revokePluginToken(workspaceId: string, installationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/plugins/${installationId}/token`, { method: "DELETE" });
   }
 
-  /**
-   * Lists what an `mcp`-transport hook's server currently offers.
+  /** 列出某 `mcp` 传输插件 hook 的服务器当前提供的工具。
    *
-   * Read-only: discovering a tool adopts nothing. approvePluginMCPTools is the
-   * grant, which is the difference from an `http` hook — that one declares a
-   * single endpoint in a manifest an administrator already read, while an MCP
-   * server decides its own tool list at runtime and can change it later.
-   */
+   *  只读：发现一个工具并不等于采纳它。approvePluginMCPTools 才是授权动作；
+   *  这与 `http` 型 hook 不同——后者在管理员已审阅过的 manifest 里声明单个
+   *  端点，而 MCP 服务器在运行时自行决定工具列表且之后可以变更。 */
   async listPluginMCPTools(workspaceId: string, installationId: string, hookKey: string): Promise<PluginMCPTool[]> {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/plugins/${installationId}/mcp/${encodeURIComponent(hookKey)}/tools`,
@@ -3004,13 +3135,11 @@ export class ApiClient {
     }).tools;
   }
 
-  /**
-   * Pins the approved tool set for one hook.
+  /** 固定（授权）某个 hook 的已批准工具集。
    *
-   * `tools` is the COMPLETE set, not a delta — removing one is the same request
-   * shape as adding one, so there is no way to think you revoked something and
-   * have it stay. An empty array withdraws the hook entirely.
-   */
+   *  `tools` 是完整集合而非增量差异——移除一个工具与新增一个工具的请求形状
+   *  相同，因此不存在「你以为撤销了但它还在」的情况。空数组表示整体撤销
+   *  该 hook。 */
   async approvePluginMCPTools(
     workspaceId: string,
     installationId: string,
@@ -3026,17 +3155,20 @@ export class ApiClient {
     });
   }
 
+  /** 卸载插件（删除安装记录及其全部配置）。 */
   async uninstallPlugin(workspaceId: string, installationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/plugins/${installationId}`, {
       method: "DELETE",
     });
   }
 
-  // Members
+  // Members（成员管理区）
+  /** 列出 workspace 成员。 */
   async listMembers(workspaceId: string): Promise<MemberWithUser[]> {
     return this.fetch(`/api/workspaces/${workspaceId}/members`);
   }
 
+  /** 邀请（创建）一位 workspace 成员，返回邀请记录。 */
   async createMember(workspaceId: string, data: CreateMemberRequest): Promise<Invitation> {
     return this.fetch(`/api/workspaces/${workspaceId}/members`, {
       method: "POST",
@@ -3044,6 +3176,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新成员的角色等信息。 */
   async updateMember(workspaceId: string, memberId: string, data: UpdateMemberRequest): Promise<MemberWithUser> {
     return this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "PATCH",
@@ -3051,49 +3184,58 @@ export class ApiClient {
     });
   }
 
+  /** 移除 workspace 成员。 */
   async deleteMember(workspaceId: string, memberId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "DELETE",
     });
   }
 
+  /** 退出 workspace。 */
   async leaveWorkspace(workspaceId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/leave`, {
       method: "POST",
     });
   }
 
-  // Invitations
+  // Invitations（邀请管理区）
+  /** 列出 workspace 已发出的邀请。 */
   async listWorkspaceInvitations(workspaceId: string): Promise<Invitation[]> {
     return this.fetch(`/api/workspaces/${workspaceId}/invitations`);
   }
 
+  /** 撤销一条邀请。 */
   async revokeInvitation(workspaceId: string, invitationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/invitations/${invitationId}`, {
       method: "DELETE",
     });
   }
 
+  /** 列出发给我的（待处理）邀请。 */
   async listMyInvitations(): Promise<Invitation[]> {
     return this.fetch("/api/invitations");
   }
 
+  /** 获取一条邀请的详情。 */
   async getInvitation(invitationId: string): Promise<Invitation> {
     return this.fetch(`/api/invitations/${invitationId}`);
   }
 
+  /** 接受邀请，成为该 workspace 成员。 */
   async acceptInvitation(invitationId: string): Promise<MemberWithUser> {
     return this.fetch(`/api/invitations/${invitationId}/accept`, {
       method: "POST",
     });
   }
 
+  /** 拒绝邀请。 */
   async declineInvitation(invitationId: string): Promise<void> {
     await this.fetch(`/api/invitations/${invitationId}/decline`, {
       method: "POST",
     });
   }
 
+  /** 创建一条分享链接（可设角色、过期时间、最大使用次数）。 */
   async createShareLink(workspaceId: string, data: { role?: string; expires_in?: number; max_uses?: number }): Promise<ShareLink> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/share-links`, {
       method: "POST",
@@ -3104,6 +3246,7 @@ export class ApiClient {
     });
   }
 
+  /** 列出 workspace 的分享链接。 */
   async listShareLinks(workspaceId: string): Promise<ShareLink[]> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/share-links`);
     return parseWithFallback(raw, ShareLinkListResponseSchema, [], {
@@ -3111,12 +3254,14 @@ export class ApiClient {
     });
   }
 
+  /** 撤销一条分享链接。 */
   async revokeShareLink(workspaceId: string, linkId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/share-links/${linkId}`, {
       method: "DELETE",
     });
   }
 
+  /** 通过分享码加入对应 workspace。 */
   async joinByShareLink(code: string): Promise<{ member: MemberWithUser; workspace_id: string; workspace_slug: string }> {
     const raw = await this.fetch<unknown>("/api/share-links/join", {
       method: "POST",
@@ -3127,6 +3272,7 @@ export class ApiClient {
     });
   }
 
+  /** 查询分享码对应的 workspace 概要（加入前展示用）。 */
   async getShareLinkInfo(code: string): Promise<ShareLinkInfo> {
     const raw = await this.fetch<unknown>(`/api/share-links/${encodeURIComponent(code)}`);
     return parseWithFallback(raw, ShareLinkInfoSchema, EMPTY_SHARE_LINK_INFO, {
@@ -3134,21 +3280,25 @@ export class ApiClient {
     });
   }
 
+  /** 删除整个 workspace。 */
   async deleteWorkspace(workspaceId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}`, {
       method: "DELETE",
     });
   }
 
-  // Skills
+  // Skills（技能库区）
+  /** 列出全部技能（概要）。 */
   async listSkills(): Promise<SkillSummary[]> {
     return this.fetch("/api/skills");
   }
 
+  /** 获取技能详情。 */
   async getSkill(id: string): Promise<Skill> {
     return this.fetch(`/api/skills/${id}`);
   }
 
+  /** 新建技能。 */
   async createSkill(data: CreateSkillRequest): Promise<Skill> {
     return this.fetch("/api/skills", {
       method: "POST",
@@ -3156,6 +3306,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新技能内容。 */
   async updateSkill(id: string, data: UpdateSkillRequest): Promise<Skill> {
     return this.fetch(`/api/skills/${id}`, {
       method: "PUT",
@@ -3163,10 +3314,12 @@ export class ApiClient {
     });
   }
 
+  /** 删除技能。 */
   async deleteSkill(id: string): Promise<void> {
     await this.fetch(`/api/skills/${id}`, { method: "DELETE" });
   }
 
+  /** 从远程 URL 导入技能。 */
   async importSkill(data: { url: string }): Promise<Skill> {
     return this.fetch("/api/skills/import", {
       method: "POST",
@@ -3174,14 +3327,12 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Imports a skill from a local .skill / .zip archive. Not routed through
-   * `this.fetch`: the browser has to set the multipart boundary itself.
+  /** 从本地 .skill / .zip 压缩包导入技能。不走 this.fetch：浏览器必须自己
+   *  设置 multipart 边界。
    *
-   * The archive path always returns a structured `{ status, skill, reason }`
-   * body. Created/updated responses yield the skill; anything else throws
-   * with the server's reason (or `error`) so the dialog can show it.
-   */
+   *  压缩包路径始终返回结构化的 `{ status, skill, reason }` 响应体。
+   *  created/updated 响应返回技能本身；其它状态抛出携带服务器 reason（或
+   *  `error`）的错误，让导入对话框能直接展示。 */
   async importSkillArchive(
     file: File,
     onConflict?: "fail" | "overwrite" | "rename" | "skip",
@@ -3204,9 +3355,8 @@ export class ApiClient {
     return skillFromImportResult(raw, "POST /api/skills/import");
   }
 
-  // Re-downloads the skill from its stored config.origin source, replacing
-  // name/description/content/files in place while preserving the skill id and
-  // its agent bindings.
+  // 从技能记录的 config.origin 来源重新下载技能，就地更新名称/描述/内容/文件，
+  // 但保留技能 id 与它的 agent 绑定关系。
   async refreshSkill(id: string): Promise<Skill> {
     const raw = await this.fetch<unknown>(`/api/skills/${id}/refresh`, {
       method: "POST",
@@ -3216,10 +3366,12 @@ export class ApiClient {
     });
   }
 
+  /** 列出某 agent 绑定的技能。 */
   async listAgentSkills(agentId: string): Promise<SkillSummary[]> {
     return this.fetch(`/api/agents/${agentId}/skills`);
   }
 
+  /** 整体设置某 agent 绑定的技能集合。 */
   async setAgentSkills(agentId: string, data: SetAgentSkillsRequest): Promise<void> {
     await this.fetch(`/api/agents/${agentId}/skills`, {
       method: "PUT",
@@ -3227,9 +3379,8 @@ export class ApiClient {
     });
   }
 
-  // Incremental attach: POST /skills/add only inserts the given ids (the
-  // server upserts with ON CONFLICT DO NOTHING), so callers don't need to
-  // read the agent's current skill set first.
+  // 增量附加：POST /skills/add 只插入给定的技能 id（服务器用 ON CONFLICT DO
+  // NOTHING 幂等 upsert），调用方无需先读取 agent 当前的技能集合。
   async addAgentSkills(agentId: string, data: SetAgentSkillsRequest): Promise<void> {
     await this.fetch(`/api/agents/${agentId}/skills/add`, {
       method: "POST",
@@ -3237,6 +3388,7 @@ export class ApiClient {
     });
   }
 
+	/** 启停某 agent 对某个技能的可用状态。 */
 	async setAgentSkillEnabled(agentId: string, skillId: string, enabled: boolean): Promise<void> {
 		await this.fetch(`/api/agents/${agentId}/skills/${skillId}/enabled`, {
 			method: "PUT",
@@ -3244,6 +3396,7 @@ export class ApiClient {
 		});
 	}
 
+  /** 启停某 agent 对某个「运行时技能」的可用状态。 */
   async setAgentRuntimeSkillEnabled(
     agentId: string,
     data: SetAgentRuntimeSkillEnabledRequest,
@@ -3254,17 +3407,20 @@ export class ApiClient {
     });
   }
 
+	/** 解除某 agent 与某个技能的绑定。 */
 	async removeAgentSkill(agentId: string, skillId: string): Promise<void> {
 		await this.fetch(`/api/agents/${agentId}/skills/${skillId}`, {
 			method: "DELETE",
 		});
 	}
 
-  // Personal Access Tokens
+  // Personal Access Tokens（个人访问令牌区）
+  /** 列出个人访问令牌。 */
   async listPersonalAccessTokens(): Promise<PersonalAccessToken[]> {
     return this.fetch("/api/tokens");
   }
 
+  /** 创建个人访问令牌。 */
   async createPersonalAccessToken(data: CreatePersonalAccessTokenRequest): Promise<CreatePersonalAccessTokenResponse> {
     return this.fetch("/api/tokens", {
       method: "POST",
@@ -3272,18 +3428,23 @@ export class ApiClient {
     });
   }
 
+  /** 吊销个人访问令牌。 */
   async revokePersonalAccessToken(id: string): Promise<void> {
     await this.fetch(`/api/tokens/${id}`, { method: "DELETE" });
   }
 
-  // File Upload & Attachments
+  // File Upload & Attachments（文件上传与附件区）
+  /**
+   * 上传一个文件并返回附件记录。
+   * @param file 待上传的文件
+   * @param opts 可选：把附件关联到某议题 / 评论 / 聊天会话
+   * @param signal 可选中止信号，供模块级上传协调器（MUL-5181）在登出时取消
+   *  在途上传。被中止时 `fetch` 以 AbortError 拒绝，协调器通过
+   *  `signal.aborted` / `err.name === "AbortError"` 与真实失败区分。
+   */
   async uploadFile(
     file: File,
     opts?: { issueId?: string; commentId?: string; chatSessionId?: string },
-    // Optional abort signal so a module-level upload coordinator (MUL-5181)
-    // can cancel an in-flight upload on logout. When aborted, `fetch` rejects
-    // with an AbortError, which the coordinator distinguishes from a real
-    // failure via `signal.aborted` / `err.name === "AbortError"`.
     signal?: AbortSignal,
   ): Promise<Attachment> {
     const formData = new FormData();
@@ -3318,66 +3479,112 @@ export class ApiClient {
     });
   }
 
-  // Life companion
+  // Life companion（生活伴侣区）
+  /** 读取当前用户的伴侣（companion）档案。 */
   async getCompanionProfile(): Promise<CompanionProfileEnvelope> {
     const raw = await this.fetch<unknown>("/api/life/companion");
     return parseWithFallback(raw, CompanionProfileEnvelopeSchema, EMPTY_COMPANION_PROFILE, { endpoint: "GET /api/life/companion" });
   }
 
+  /** 把某个 agent 绑定为当前用户的伴侣。 */
   async setCompanionProfile(agentId: string): Promise<CompanionProfile> {
     const raw = await this.fetch<unknown>("/api/life/companion", { method: "PUT", body: JSON.stringify({ agent_id: agentId }) });
     const envelope = parseOrThrow<{ profile: CompanionProfile }>(raw, CompanionProfileEnvelopeSchema, { endpoint: "PUT /api/life/companion" });
     return parseOrThrow(envelope.profile, CompanionProfileSchema, { endpoint: "PUT /api/life/companion profile", mayHaveCommitted: true });
   }
 
+  /** 按状态列出生活记忆。 */
   async listLifeMemories(status?: string): Promise<LifeMemoryListResponse> {
     const query = status ? `?status=${encodeURIComponent(status)}` : "";
     return parseWithFallback(await this.fetch<unknown>(`/api/life/memories${query}`), LifeMemoryListSchema, EMPTY_LIFE_MEMORIES, { endpoint: "GET /api/life/memories" });
   }
+  /** 更新一条生活记忆。 */
   async updateLifeMemory(id: string, data: UpdateLifeMemoryRequest): Promise<LifeMemory> { return parseOrThrow(await this.fetch(`/api/life/memories/${id}`, { method: "PATCH", body: JSON.stringify(data) }), LifeMemorySchema, { endpoint: "PATCH /api/life/memories/:id" }); }
+  /** 确认一条生活记忆为真实经历。 */
   async confirmLifeMemory(id: string): Promise<LifeMemory> { return parseOrThrow(await this.fetch(`/api/life/memories/${id}/confirm`, { method: "POST" }), LifeMemorySchema, { endpoint: "POST /api/life/memories/:id/confirm" }); }
+  /** 把记忆降级为指定（低置信度）类型。 */
   async downgradeLifeMemory(id: string, kind: LifeMemoryKind): Promise<LifeMemory> { return parseOrThrow(await this.fetch(`/api/life/memories/${id}/downgrade`, { method: "POST", body: JSON.stringify({ kind }) }), LifeMemorySchema, { endpoint: "POST /api/life/memories/:id/downgrade" }); }
+  /** 归档一条生活记忆。 */
   async archiveLifeMemory(id: string): Promise<LifeMemory> { return parseOrThrow(await this.fetch(`/api/life/memories/${id}/archive`, { method: "POST" }), LifeMemorySchema, { endpoint: "POST /api/life/memories/:id/archive" }); }
+  /** 删除一条生活记忆。 */
   async deleteLifeMemory(id: string): Promise<void> { await this.fetch(`/api/life/memories/${id}`, { method: "DELETE" }); }
+  /** 列出某条记忆的历史修订。 */
   async listLifeMemoryRevisions(id: string): Promise<{ revisions: Array<Record<string, unknown>> }> { return this.fetch(`/api/life/memories/${id}/revisions`); }
+  /** 列出生活建议（proposal）。 */
   async listLifeProposals(): Promise<LifeProposalListResponse> { return parseWithFallback(await this.fetch("/api/life/proposals"), LifeProposalListSchema, EMPTY_LIFE_PROPOSALS, { endpoint: "GET /api/life/proposals" }); }
+  /** 新建一条生活建议。 */
   async createLifeProposal(data: Omit<LifeProposal, "id" | "status" | "expires_at" | "confirmed_at" | "executed_at" | "created_at" | "updated_at">): Promise<LifeProposal> { return parseOrThrow(await this.fetch("/api/life/proposals", { method: "POST", body: JSON.stringify(data) }), LifeProposalSchema, { endpoint: "POST /api/life/proposals" }); }
+  /** 确认执行某条生活建议。 */
   async confirmLifeProposal(id: string): Promise<unknown> { return this.fetch(`/api/life/proposals/${id}/confirm`, { method: "POST" }); }
+  /** 拒绝某条生活建议。 */
   async rejectLifeProposal(id: string): Promise<LifeProposal> { return parseOrThrow(await this.fetch(`/api/life/proposals/${id}/reject`, { method: "POST" }), LifeProposalSchema, { endpoint: "POST /api/life/proposals/:id/reject" }); }
+  /** 列出生活实验。 */
   async listLifeExperiments(): Promise<LifeExperimentListResponse> { return parseWithFallback(await this.fetch("/api/life/experiments"), LifeExperimentListSchema, EMPTY_LIFE_EXPERIMENTS, { endpoint: "GET /api/life/experiments" }); }
+  /** 提前终止一轮生活实验。 */
   async stopLifeExperimentRound(id: string, reason: string): Promise<LifeExperimentRound> { return parseOrThrow(await this.fetch(`/api/life/experiment-rounds/${id}/stop`, { method: "POST", body: JSON.stringify({ reason }) }), LifeExperimentRoundSchema, { endpoint: "POST /api/life/experiment-rounds/:id/stop" }); }
+  /** 提交一轮生活实验的复盘（感受/负担等）。 */
   async reviewLifeExperimentRound(id: string, data: { outcome: string; feelings: string; burden: string; companion_correction: string }): Promise<LifeExperimentRound> { return parseOrThrow(await this.fetch(`/api/life/experiment-rounds/${id}/review`, { method: "POST", body: JSON.stringify(data) }), LifeExperimentRoundSchema, { endpoint: "POST /api/life/experiment-rounds/:id/review" }); }
+  /** 列出生活编年史条目。 */
   async listLifeChronicle(): Promise<LifeChronicleListResponse> { return parseWithFallback(await this.fetch("/api/life/chronicle"), LifeChronicleListSchema, EMPTY_LIFE_CHRONICLE, { endpoint: "GET /api/life/chronicle" }); }
+  /** 列出「主动关怀」检查结果。 */
   async listLifeProactiveChecks(): Promise<LifeProactiveCheckListResponse> { return parseWithFallback(await this.fetch("/api/life/proactive-checks"), LifeProactiveCheckListSchema, EMPTY_LIFE_PROACTIVE_CHECKS, { endpoint: "GET /api/life/proactive-checks" }); }
+  /** 为某条编年史补充「后来的理解」。 */
   async updateLifeChronicleLaterUnderstanding(id: string, understanding: string): Promise<LifeChronicleEntry> { return parseOrThrow(await this.fetch(`/api/life/chronicle/${id}/later-understanding`, { method: "PATCH", body: JSON.stringify({ understanding_later: understanding }) }), LifeChronicleEntrySchema, { endpoint: "PATCH /api/life/chronicle/:id/later-understanding" }); }
+  /** 列出「人生身份」的历史版本。 */
   async listLifeIdentityVersions(): Promise<LifeIdentityListResponse> { return parseWithFallback(await this.fetch("/api/life/identity/versions"), LifeIdentityListSchema, EMPTY_LIFE_IDENTITIES, { endpoint: "GET /api/life/identity/versions" }); }
+  /** 新建一个「人生身份」版本。 */
   async createLifeIdentityVersion(data: Record<string, unknown>): Promise<unknown> { return this.fetch("/api/life/identity/versions", { method: "POST", body: JSON.stringify(data) }); }
+  /** 激活某个「人生身份」版本。 */
   async activateLifeIdentityVersion(id: string): Promise<unknown> { return this.fetch(`/api/life/identity/versions/${id}/activate`, { method: "POST" }); }
+  /** 列出人际关系事件。 */
   async listLifeRelationshipEvents(): Promise<LifeRelationshipListResponse> { return parseWithFallback(await this.fetch("/api/life/relationship-events"), LifeRelationshipListSchema, EMPTY_LIFE_RELATIONSHIPS, { endpoint: "GET /api/life/relationship-events" }); }
+  /** 解决一条人际关系事件。 */
   async resolveLifeRelationshipEvent(id: string, status: string, resolution: string): Promise<unknown> { return this.fetch(`/api/life/relationship-events/${id}/resolve`, { method: "POST", body: JSON.stringify({ status, resolution }) }); }
+  /** 列出生活素材（material）。 */
   async listLifeMaterials(): Promise<LifeMaterialListResponse> { return parseWithFallback(await this.fetch("/api/life/materials"), LifeMaterialListSchema, EMPTY_LIFE_MATERIALS, { endpoint: "GET /api/life/materials" }); }
+  /** 列出内部想法（internal thoughts）。 */
   async listLifeInternalThoughts(): Promise<LifeInternalThoughtListResponse> { return parseWithFallback(await this.fetch("/api/life/internal-thoughts"), LifeInternalThoughtListSchema, EMPTY_LIFE_INTERNAL_THOUGHTS, { endpoint: "GET /api/life/internal-thoughts" }); }
+  /** 新建一条生活素材。 */
   async createLifeMaterial(content: string): Promise<unknown> { return this.fetch("/api/life/materials", { method: "POST", body: JSON.stringify({ content, metadata: {} }) }); }
+  /** 列出生活主题。 */
   async listLifeTopics(): Promise<LifeTopicListResponse> { return parseWithFallback(await this.fetch("/api/life/topics"), LifeTopicListSchema, EMPTY_LIFE_TOPICS, { endpoint: "GET /api/life/topics" }); }
+  /** 更新某生活主题的状态。 */
   async updateLifeTopic(id: string, status: string): Promise<unknown> { return this.fetch(`/api/life/topics/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); }
+  /** 列出生活承诺（commitment）。 */
   async listLifeCommitments(): Promise<LifeCommitmentListResponse> { return parseWithFallback(await this.fetch("/api/life/commitments"), LifeCommitmentListSchema, EMPTY_LIFE_COMMITMENTS, { endpoint: "GET /api/life/commitments" }); }
+  /** 更新一条生活承诺。 */
   async updateLifeCommitment(id: string, data: Record<string, unknown>): Promise<unknown> { return this.fetch(`/api/life/commitments/${id}`, { method: "PATCH", body: JSON.stringify(data) }); }
+  /** 读取「主动关怀」策略。 */
   async getLifeProactivePolicy(): Promise<LifeProactivePolicy> { return parseOrThrow(await this.fetch("/api/life/proactive-policy"), LifeProactivePolicySchema, { endpoint: "GET /api/life/proactive-policy" }); }
+  /** 更新「主动关怀」策略。 */
   async updateLifeProactivePolicy(data: LifeProactivePolicy | Record<string, unknown>): Promise<unknown> { return this.fetch("/api/life/proactive-policy", { method: "PUT", body: JSON.stringify(data) }); }
+  /** 列出生活观察者（observer）。 */
   async listLifeObservers(): Promise<LifeObserverListResponse> { return parseWithFallback(await this.fetch("/api/life/observers"), LifeObserverListSchema, EMPTY_LIFE_OBSERVERS, { endpoint: "GET /api/life/observers" }); }
+  /** 新建一个生活观察者。 */
   async createLifeObserver(data: Record<string, unknown>): Promise<unknown> { return this.fetch("/api/life/observers", { method: "POST", body: JSON.stringify(data) }); }
+  /** 更新某生活观察者的状态。 */
   async updateLifeObserver(id: string, status: string): Promise<unknown> { return this.fetch(`/api/life/observers/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); }
+  /** 为观察者添加一条知识。 */
   async addLifeObserverKnowledge(id: string, data: { title: string; content: string; source?: string }): Promise<unknown> { return this.fetch(`/api/life/observers/${id}/knowledge`, { method: "POST", body: JSON.stringify(data) }); }
+  /** 创建观察者的一个新版本。 */
   async createLifeObserverVersion(id: string, data: Record<string, unknown>): Promise<unknown> { return this.fetch(`/api/life/observers/${id}/versions`, { method: "POST", body: JSON.stringify(data) }); }
+  /** 手动触发一次观察者运行。 */
   async runLifeObserver(id: string): Promise<unknown> { return this.fetch(`/api/life/observers/${id}/run`, { method: "POST" }); }
+  /** 列出「观察席」占用情况。 */
   async listLifeObservationSeat(): Promise<LifeObservationSeatResponse> { return parseWithFallback(await this.fetch("/api/life/observation-seat"), LifeObservationSeatSchema, EMPTY_LIFE_OBSERVATION_SEAT, { endpoint: "GET /api/life/observation-seat" }); }
+  /** 列出生活模块。 */
   async listLifeModules(): Promise<LifeModuleListResponse> { return parseWithFallback(await this.fetch("/api/life/modules"), LifeModuleListSchema, EMPTY_LIFE_MODULES, { endpoint: "GET /api/life/modules" }); }
+  /** 更新某生活模块的状态。 */
   async updateLifeModule(id: string, status: string): Promise<unknown> { return this.fetch(`/api/life/modules/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); }
+  /** 列出认知任务（cognition jobs）。 */
   async listLifeCognitionJobs(): Promise<LifeCognitionJobListResponse> { return parseWithFallback(await this.fetch("/api/life/cognition-jobs"), LifeCognitionJobListSchema, EMPTY_LIFE_JOBS, { endpoint: "GET /api/life/cognition-jobs" }); }
+  /** 重试某个失败的认知任务。 */
   async retryLifeCognitionJob(id: string): Promise<unknown> { return this.fetch(`/api/life/cognition-jobs/${id}/retry`, { method: "POST" }); }
+  /** 列出「升级评估」记录。 */
   async listLifeUpgradeEvaluations(): Promise<LifeUpgradeEvaluationListResponse> { return parseWithFallback(await this.fetch("/api/life/upgrade-evaluations"), LifeUpgradeEvaluationListSchema, EMPTY_LIFE_UPGRADES, { endpoint: "GET /api/life/upgrade-evaluations" }); }
 
-  // Chat Sessions
+  // Chat Sessions（聊天会话区）
+  /** 列出聊天会话；可按状态过滤，workspaceSlug 可覆盖目标 workspace。 */
   async listChatSessions(
     params?: { status?: string },
     workspaceSlug?: string,
@@ -3391,6 +3598,7 @@ export class ApiClient {
     });
   }
 
+  /** 获取单个聊天会话。 */
   async getChatSession(id: string): Promise<ChatSession> {
     const raw: unknown = await this.fetch(`/api/chat/sessions/${id}`);
     return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, {
@@ -3398,6 +3606,7 @@ export class ApiClient {
     });
   }
 
+  /** 新建一个与指定 agent 的聊天会话。 */
   async createChatSession(
     data: {
       agent_id: string;
@@ -3413,20 +3622,18 @@ export class ApiClient {
     });
   }
 
+  /** 删除聊天会话。 */
   async deleteChatSession(id: string): Promise<void> {
     await this.fetch(`/api/chat/sessions/${id}`, { method: "DELETE" });
   }
 
-  // Refresh the quick-action suggestions for a session's latest assistant turn.
-  // Fire-and-forget: the server enqueues a background regeneration pass and the
-  // refreshed pills arrive over the chat:quick_actions realtime event, so the
-  // caller anchors its pending placeholder on the turn it already knows rather
-  // than on this response.
-  // Refresh the quick actions for the given assistant turn. Sends the message
-  // id the caller is refreshing so the server can atomically confirm it is still
-  // the session's latest turn (409 otherwise) — that keeps the client's pending
-  // marker aligned with the turn chat:quick_actions will resolve, with no
-  // response reconciliation needed even under a WS-before-HTTP race (MUL-5149).
+  // 为某会话最新一条 assistant 轮次刷新快捷动作建议。发后即忘：服务器入队一次
+  // 后台重生成，刷新好的 pill 通过 chat:quick_actions 实时事件送达，所以调用方
+  // 把「处理中」占位符锚定在自己已知的那一轮上，而不是本响应上。
+  // 携带调用方正在刷新的消息 id，让服务器能原子地确认它仍是该会话的最新一轮
+  //（否则 409）——即使出现 WS 先于 HTTP 到达的竞态，也能让客户端的 pending
+  // 标记与 chat:quick_actions 最终解析的那一轮保持一致，无需再做响应对账
+  //（MUL-5149）。
   async regenerateChatQuickActions(
     sessionId: string,
     messageId: string,
@@ -3437,6 +3644,7 @@ export class ApiClient {
     });
   }
 
+  /** 修改会话标题或所属项目。 */
   async updateChatSession(
     id: string,
     data: { title: string } | { project_id: string | null },
@@ -3447,6 +3655,7 @@ export class ApiClient {
     });
   }
 
+  /** 置顶/取消置顶会话。 */
   async setChatSessionPinned(id: string, pinned: boolean): Promise<ChatSession> {
     return this.fetch(`/api/chat/sessions/${id}/pin`, {
       method: "PATCH",
@@ -3454,6 +3663,7 @@ export class ApiClient {
     });
   }
 
+  /** 归档/取消归档会话。 */
   async setChatSessionArchived(id: string, archived: boolean): Promise<ChatSession> {
     return this.fetch(`/api/chat/sessions/${id}/archive`, {
       method: "PATCH",
@@ -3461,11 +3671,13 @@ export class ApiClient {
     });
   }
 
-  // Quick-agent bar: per-user pinned agents.
+  // Quick-agent bar：每个用户的置顶 agent 列表。
+  /** 列出当前用户置顶的 agent（快捷 agent 栏）。 */
   async listChatPinnedAgents(): Promise<ChatPinnedAgent[]> {
     return this.fetch("/api/chat/pinned-agents");
   }
 
+  /** 置顶一个 agent。 */
   async pinChatAgent(agentId: string): Promise<ChatPinnedAgent> {
     return this.fetch("/api/chat/pinned-agents", {
       method: "POST",
@@ -3473,10 +3685,12 @@ export class ApiClient {
     });
   }
 
+  /** 取消置顶 agent。 */
   async unpinChatAgent(agentId: string): Promise<void> {
     await this.fetch(`/api/chat/pinned-agents/${agentId}`, { method: "DELETE" });
   }
 
+  /** 列出会话的全部消息（一次性全量）。 */
   async listChatMessages(sessionId: string): Promise<ChatMessage[]> {
     const raw: unknown = await this.fetch(`/api/chat/sessions/${sessionId}/messages`);
     return parseWithFallback(raw, ChatMessageListSchema, EMPTY_CHAT_MESSAGE_LIST, {
@@ -3484,6 +3698,7 @@ export class ApiClient {
     });
   }
 
+  /** 分页拉取会话消息（支持向上翻页游标）。 */
   async listChatMessagesPage(
     sessionId: string,
     params: { before?: { created_at: string; id: string } | null; limit?: number } = {},
@@ -3507,14 +3722,11 @@ export class ApiClient {
         },
       );
     } catch (err) {
-      // Deployment-order compatibility: a backend deployed before this endpoint
-      // existed returns 404 for the unknown route. Fall back to the legacy
-      // full-list endpoint so chat never white-screens regardless of whether
-      // the server or the client deploys first. Only the initial (cursorless)
-      // page falls back — the legacy endpoint returns every message at once, so
-      // the fallback page reports has_more: false and there is no follow-up
-      // request to translate. A 404 on a cursor request is an unexpected state
-      // and propagates instead of duplicating the whole list.
+      // 部署顺序兼容：在本端点出现之前部署的后端会对未知路由返回 404。
+      // 回退到旧的整表端点，这样无论服务器还是客户端先发布，聊天都不会白屏。
+      // 只有初始（无游标）页会回退——旧端点一次返回全部消息，回退页因此报告
+      // has_more: false，也不存在后续请求需要翻译。游标请求上的 404 是意外状态，
+      // 直接向上抛而不是把整个列表再复制一份。
       if (err instanceof ApiError && err.status === 404 && !params.before) {
         const messages = await this.listChatMessages(sessionId);
         return { messages, limit, has_more: false, next_cursor: null };
@@ -3523,6 +3735,7 @@ export class ApiClient {
     }
   }
 
+  /** 向会话发送一条用户消息（可带附件）。 */
   async sendChatMessage(
     sessionId: string,
     content: string,
@@ -3549,6 +3762,7 @@ export class ApiClient {
     return response;
   }
 
+  /** 启动 Mika onboarding 对话流程。 */
   async startMikaOnboarding(
     sessionId: string,
     workspaceSlug?: string,
@@ -3566,6 +3780,7 @@ export class ApiClient {
     );
   }
 
+  /** 查询会话当前挂起的任务（等待中的 agent 回复）。 */
   async getPendingChatTask(sessionId: string): Promise<ChatPendingTask> {
     const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/pending-task`);
     return parseWithFallback(raw, ChatPendingTaskSchema, EMPTY_CHAT_PENDING_TASK, {
@@ -3573,6 +3788,7 @@ export class ApiClient {
     });
   }
 
+  /** 把某会话的一条排队任务提前（优先处理）。 */
   async prioritizeQueuedChatTask(
     sessionId: string,
     taskId: string,
@@ -3589,17 +3805,15 @@ export class ApiClient {
     );
   }
 
+  /** 清空某会话的排队任务（删除排队状态）。 */
   async clearQueuedChatTasks(sessionId: string): Promise<void> {
     await this.fetch(`/api/chat/sessions/${sessionId}/queued-tasks`, {
       method: "DELETE",
     });
   }
 
-  /**
-   * Pending deferred-cancellation draft restores for a session (#5219).
-   * A 404 means the backend predates the endpoint — treat as "nothing
-   * pending" so older servers never error the composer.
-   */
+  /** 会话待处理的「延迟取消后的草稿恢复」列表（#5219）。
+   *  404 表示后端早于该端点——当作「无待恢复项」，旧服务器不会让编辑器报错。 */
   async listChatDraftRestores(sessionId: string): Promise<ChatDraftRestoresResponse> {
     let raw: unknown;
     try {
@@ -3615,29 +3829,31 @@ export class ApiClient {
     });
   }
 
-  /** Idempotent consume — deleting an already-consumed restore is a 204 no-op. */
+  /** 幂等消费一条草稿恢复——删除一条已消费的恢复是 204 空操作。 */
   async consumeChatDraftRestore(sessionId: string, restoreId: string): Promise<void> {
     await this.fetch(`/api/chat/sessions/${sessionId}/draft-restores/${restoreId}`, {
       method: "DELETE",
     });
   }
 
+  /** 列出所有会话的排队任务（跨会话）。 */
   async listPendingChatTasks(): Promise<PendingChatTasksResponse> {
     return this.fetch(`/api/chat/pending-tasks`);
   }
 
+  /** 是否还有任何排队的聊天任务（供 UI 做提醒角标等）。 */
   async hasAnyPendingChatTasks(): Promise<HasPendingChatTasksResponse> {
     return this.fetch(`/api/chat/pending-tasks/has-any`);
   }
 
+  /** 将会话标记为已读。 */
   async markChatSessionRead(sessionId: string): Promise<void> {
     await this.fetch(`/api/chat/sessions/${sessionId}/read`, { method: "POST" });
   }
 
-  // Advertises the durable draft-restore capability (#5219). The server only
-  // defers the empty-transcript judgment — and therefore only withholds the
-  // synchronous restore from the response — for clients that send this; without
-  // it we would be treated as a pre-#5219 client and get the legacy behaviour.
+  // 在请求头宣告「持久草稿恢复」能力（#5219）。只有发送该头的客户端，服务器
+  // 才会延迟「空记录」判定——也因此才会把同步恢复从响应里扣下；不带此头会被
+  // 当作 #5219 前的旧客户端，得到旧行为。
   async cancelTaskById(
     taskId: string,
     options?: { queuedAction?: "edit" | "remove"; sessionId?: string },
@@ -3659,14 +3875,14 @@ export class ApiClient {
     });
   }
 
+  /** 列出议题的附件列表。 */
   async listAttachments(issueId: string): Promise<Attachment[]> {
     return this.fetch(`/api/issues/${issueId}/attachments`);
   }
 
-  // Fetches a fresh attachment metadata record. The server re-signs
-  // `download_url` on every call (30 min expiry), so the click-time
-  // download flow uses this endpoint to avoid handing the user a stale
-  // signed URL cached in TanStack Query.
+  // 重新拉取一份新的附件元数据记录。服务器每次调用都会重新签名
+  // `download_url`（30 分钟有效），因此点击下载的流程走这里，避免把 TanStack
+  // Query 里缓存的过期签名 URL 交给用户。
   async getAttachment(id: string): Promise<Attachment> {
     const raw = await this.fetch<unknown>(`/api/attachments/${id}`);
     return parseWithFallback(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
@@ -3674,23 +3890,22 @@ export class ApiClient {
     });
   }
 
+  /** 删除附件。 */
   async deleteAttachment(id: string): Promise<void> {
     await this.fetch(`/api/attachments/${id}`, { method: "DELETE" });
   }
 
-  // Fetches the raw bytes of a text-previewable attachment.
+  // 取回一个「可文本预览」附件的原始字节。
   //
-  // The endpoint sidesteps CloudFront CORS (not configured on the CDN) and
-  // bypasses Content-Disposition: attachment for the `text/*` family, both
-  // of which would otherwise prevent the renderer from getting the body.
-  // The server always replies with `text/plain; charset=utf-8` for safety;
-  // the original MIME ships back in the `X-Original-Content-Type` header so
-  // the preview dispatcher can choose between markdown / html / plain code.
+  // 该端点绕开 CloudFront CORS（CDN 未配置）以及对 `text/*` 家族的
+  // Content-Disposition: attachment（两者都会阻止渲染器拿到响应体）。服务器
+  // 一律以 `text/plain; charset=utf-8` 响应以保证安全；原始 MIME 通过
+  // `X-Original-Content-Type` 请求头回传，预览分发器据此在 markdown / html /
+  // 纯代码之间做选择。
   //
-  // Routes through `fetchRaw` so it inherits the standard auth headers,
-  // 401 → handleUnauthorized recovery, request-id logging, and ApiError
-  // shape. 413 / 415 are translated to typed `Preview*Error` instances so
-  // the modal can render specific fallbacks instead of generic failure.
+  // 走 fetchRaw 以便继承标准鉴权头、401 → handleUnauthorized 恢复、请求 id
+  // 日志与 ApiError 形状。413 / 415 被转成带类型的 Preview*Error，让弹窗能
+  // 渲染具体回退而非通用失败。
   async getAttachmentTextContent(
     id: string,
   ): Promise<{ text: string; originalContentType: string }> {
@@ -3710,40 +3925,38 @@ export class ApiClient {
     };
   }
 
-  // Fetches the raw bytes of an attachment through the unified download
-  // endpoint.
+  // 通过统一下载端点取回附件的原始字节。
   //
-  // This is the last-resort inline-media path for deployments where the
-  // server has no natively-loadable URL to offer. `GET /api/attachments/{id}`
-  // only upgrades `download_url` to a signed storage URL under CloudFront
-  // signing or presign mode; in **proxy** mode (self-hosted MinIO or any
-  // storage endpoint on an internal host, which the default `auto` mode
-  // classifies as proxy) it returns the auth-gated API path again. Clients
-  // that cannot ride the session cookie on a native `<img>` resource fetch —
-  // Desktop's file:// renderer, the mobile webview, split-origin web — get
-  // the bytes here and render them from an object URL instead.
+  // 这是那些服务器无法提供「可原生加载 URL」部署环境的兜底内联媒体通道。
+  // `GET /api/attachments/{id}` 只在 CloudFront 签名或预签名模式下才把
+  // `download_url` 升级为签名存储 URL；在 **proxy** 模式（自托管 MinIO 或任何
+  // 内部主机上的存储端点，默认的 `auto` 模式会把这类归为 proxy）下，它再次返回
+  // 受鉴权的 API 路径。那些无法在原生 `<img>` 资源请求上携带会话 cookie 的
+  // 客户端——Desktop 的 file:// 渲染器、移动 webview、跨域部署的 web——在这里
+  // 拿到字节，再以 object URL 渲染。
   //
-  // Routes through `fetchRaw` so it inherits the standard auth headers,
-  // 401 → handleUnauthorized recovery, request-id logging and ApiError shape.
-  // Callers must only reach for this once the metadata refresh has shown
-  // there is no signed URL: in the other modes the endpoint 302s to storage,
-  // where CORS is not configured for a JS fetch.
+  // 走 fetchRaw 以继承标准鉴权头、401 → handleUnauthorized 恢复、请求 id 日志
+  // 与 ApiError 形状。调用方必须在元数据刷新已表明「没有签名 URL」之后才走此路：
+  // 其它模式下该端点会 302 到存储，而存储上未为 JS fetch 配置 CORS。
   async getAttachmentBlob(id: string): Promise<Blob> {
     const res = await this.fetchRaw(`/api/attachments/${id}/download`);
     return res.blob();
   }
 
-  // Projects
+  // Projects（项目区）
+  /** 列出项目（可按状态过滤）。 */
   async listProjects(params?: { status?: string }): Promise<ListProjectsResponse> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
     return this.fetch(`/api/projects?${search}`);
   }
 
+  /** 获取项目详情。 */
   async getProject(id: string): Promise<Project> {
     return this.fetch(`/api/projects/${id}`);
   }
 
+  /** 新建项目。 */
   async createProject(data: CreateProjectRequest): Promise<Project> {
     return this.fetch("/api/projects", {
       method: "POST",
@@ -3751,6 +3964,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新项目。 */
   async updateProject(id: string, data: UpdateProjectRequest): Promise<Project> {
     return this.fetch(`/api/projects/${id}`, {
       method: "PUT",
@@ -3758,17 +3972,20 @@ export class ApiClient {
     });
   }
 
+  /** 删除项目。 */
   async deleteProject(id: string): Promise<void> {
     await this.fetch(`/api/projects/${id}`, { method: "DELETE" });
   }
 
-  // Project resources
+  // Project resources（项目资源区）
+  /** 列出项目的资源。 */
   async listProjectResources(
     projectId: string,
   ): Promise<ListProjectResourcesResponse> {
     return this.fetch(`/api/projects/${projectId}/resources`);
   }
 
+  /** 给项目添加一个资源。 */
   async createProjectResource(
     projectId: string,
     data: CreateProjectResourceRequest,
@@ -3779,6 +3996,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新项目资源。 */
   async updateProjectResource(
     projectId: string,
     resourceId: string,
@@ -3790,6 +4008,7 @@ export class ApiClient {
     });
   }
 
+  /** 删除项目资源。 */
   async deleteProjectResource(
     projectId: string,
     resourceId: string,
@@ -3799,7 +4018,8 @@ export class ApiClient {
     });
   }
 
-  // Labels
+  // Labels（标签区）
+  /** 列出某类资源（默认 issue）的标签。 */
   async listLabels(resourceType: LabelResourceType = "issue"): Promise<ListLabelsResponse> {
     const raw = await this.fetch<unknown>(`/api/labels?resource_type=${resourceType}`);
     return parseWithFallback(raw, ListLabelsResponseSchema, EMPTY_LIST_LABELS_RESPONSE, {
@@ -3807,6 +4027,7 @@ export class ApiClient {
     });
   }
 
+  /** 获取单个标签。 */
   async getLabel(id: string): Promise<Label> {
     const raw = await this.fetch<unknown>(`/api/labels/${id}`);
     return parseWithFallback(raw, LabelSchema, EMPTY_LABEL, {
@@ -3814,6 +4035,7 @@ export class ApiClient {
     });
   }
 
+  /** 新建标签。 */
   async createLabel(data: CreateLabelRequest): Promise<Label> {
     const raw = await this.fetch<unknown>(`/api/labels`, {
       method: "POST",
@@ -3824,6 +4046,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新标签。 */
   async updateLabel(id: string, data: UpdateLabelRequest): Promise<Label> {
     const raw = await this.fetch<unknown>(`/api/labels/${id}`, {
       method: "PUT",
@@ -3834,12 +4057,14 @@ export class ApiClient {
     });
   }
 
+  /** 删除标签。 */
   async deleteLabel(id: string): Promise<void> {
     await this.fetch(`/api/labels/${id}`, { method: "DELETE" });
   }
 
-  // Issue status catalog (MUL-6243). Reads are open to any workspace member;
-  // the mutations below are owner/admin only and return 403 otherwise.
+  // 议题状态目录（MUL-6243）。读操作对所有 workspace 成员开放；下面的写操作
+  // 仅限 owner/admin，否则返回 403。
+  /** 列出议题状态目录（可按需包含已归档）。 */
   async listIssueStatuses(includeArchived = false): Promise<ListIssueStatusesResponse> {
     const query = includeArchived ? "?include_archived=true" : "";
     const raw = await this.fetch<unknown>(`/api/issue-statuses${query}`);
@@ -3848,6 +4073,7 @@ export class ApiClient {
     });
   }
 
+  /** 新建一个自定义议题状态。 */
   async createIssueStatus(data: CreateIssueStatusRequest): Promise<IssueStatusEntry> {
     const raw = await this.fetch<unknown>(`/api/issue-statuses`, {
       method: "POST",
@@ -3858,6 +4084,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新议题状态（名称、类别、颜色等）。 */
   async updateIssueStatus(id: string, data: UpdateIssueStatusRequest): Promise<IssueStatusEntry> {
     const raw = await this.fetch<unknown>(`/api/issue-statuses/${id}`, {
       method: "PATCH",
@@ -3868,12 +4095,9 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Rewrites one category's custom-status order in a single server-side
-   * statement. Not expressible as a sequence of `updateIssueStatus` calls: a
-   * row rejected mid-sequence would leave the earlier rows already reordered
-   * while the caller sees a failure. (MUL-6243)
-   */
+  /** 在单条服务端语句里重写某个类别下自定义状态的排列顺序。无法用一串
+   *  updateIssueStatus 表达：若中途某行被拒绝，前面的行已经重排好了而调用方
+   *  只看到一个失败。（MUL-6243） */
   async reorderIssueStatuses(
     category: IssueStatusCategory,
     ids: string[],
@@ -3887,11 +4111,8 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Archives a custom status, retiring it from future use. Issues already on it
-   * keep it and keep behaving as their category prescribes; only new
-   * assignments are refused. Built-in statuses return 403.
-   */
+  /** 归档一个自定义状态，使其不再用于新指派。已在用该状态的议题保留它并按
+   *  其所属类别的规则继续运作；只有新的指派会被拒绝。内建状态返回 403。 */
   async archiveIssueStatus(id: string): Promise<IssueStatusEntry> {
     const raw = await this.fetch<unknown>(`/api/issue-statuses/${id}`, { method: "DELETE" });
     return parseWithFallback(raw, IssueStatusEntrySchema, EMPTY_ISSUE_STATUS_ENTRY, {
@@ -3899,18 +4120,18 @@ export class ApiClient {
     });
   }
 
-  // Custom issue properties
+  // Custom issue properties（自定义议题属性区）
+  /** 列出自定义属性目录（可按需包含已归档）。 */
   async listProperties(includeArchived = false): Promise<ListPropertiesResponse> {
     const suffix = includeArchived ? "?include_archived=true" : "";
     let raw: unknown;
     try {
       raw = await this.fetch<unknown>(`/api/properties${suffix}`);
     } catch (error) {
-      // A backend predating custom properties 404s here (e.g. after a
-      // server-only rollback). Treat it as an empty catalog: the property
-      // UI sections disappear and the active-catalog reconciliation strips
-      // persisted property sorts/filters, so no property params ever reach
-      // the old server. Other errors keep normal query-error semantics.
+      // 早于自定义属性的后端会在此 404（例如只回滚了服务器的场景）。把它当作
+      // 空目录处理：属性相关的 UI 区块消失，活跃目录对账会剥离持久化的属性
+      // 排序/筛选，因此不会把属性参数发给旧服务器。其它错误保持常规的
+      // 查询错误语义。
       if (error instanceof Error && "status" in error && (error as { status?: number }).status === 404) {
         return EMPTY_LIST_PROPERTIES_RESPONSE;
       }
@@ -3921,18 +4142,14 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Quick actions catalog — one projection for every caller.
+  /** 快捷动作目录——对所有调用方用同一份投影。
    *
-   * The server hides nothing beyond `private` ownership; whether the caller
-   * may RUN an action is answered by runQuickAction, not here. There is
-   * deliberately no "runnable only" mode: filtering the sidebar by permission
-   * made two people looking at one issue see different sidebars with no
-   * explanation.
+   *  服务器除 `private` 归属外不隐藏任何东西；调用方能否 RUN 某个动作由
+   *  runQuickAction 回答，而不是这里。刻意不做「仅可运行」模式：按权限过滤
+   *  侧边栏会让看同一议题的两个人看到不同的侧边栏且无法解释。
    *
-   * A backend predating quick actions 404s here; treat that as an empty
-   * catalog so the sidebar section and settings tab simply do not render.
-   */
+   *  早于快捷动作的后端会在此 404；当作空目录处理，让侧边栏区块和设置页
+   *  直接不渲染。 */
   async listQuickActions(opts?: { includeArchived?: boolean }): Promise<ListQuickActionsResponse> {
     const suffix = opts?.includeArchived === true ? "?include_archived=true" : "";
     let raw: unknown;
@@ -3949,6 +4166,7 @@ export class ApiClient {
     });
   }
 
+  /** 新建一条快捷动作。 */
   async createQuickAction(data: CreateQuickActionRequest): Promise<QuickAction> {
     const raw = await this.fetch<unknown>(`/api/quick-actions`, {
       method: "POST",
@@ -3959,6 +4177,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新一条快捷动作。 */
   async updateQuickAction(id: string, data: UpdateQuickActionRequest): Promise<QuickAction> {
     const raw = await this.fetch<unknown>(`/api/quick-actions/${id}`, {
       method: "PATCH",
@@ -3969,16 +4188,15 @@ export class ApiClient {
     });
   }
 
+  /** 删除一条快捷动作。 */
   async deleteQuickAction(id: string): Promise<void> {
     await this.fetch<void>(`/api/quick-actions/${id}`, { method: "DELETE" });
   }
 
-  /**
-   * Run a quick action against one issue. The response is a Comment carrying
-   * `trigger_outcomes` — the same shape POST /comments returns — so callers
-   * reuse one result handler and inherit `queued` / `coalesced` / `deferred` /
-   * `blocked` instead of a parallel vocabulary that would drift.
-   */
+  /** 对某个议题执行一条快捷动作。响应是一个携带 `trigger_outcomes` 的 Comment
+   *  ——与 POST /comments 返回的形状相同——因此调用方复用同一套结果处理器，
+   *  天然支持 `queued` / `coalesced` / `deferred` / `blocked`，而不必维护一套
+   *  会漂移的平行词汇。 */
   async runQuickAction(issueId: string, quickActionId: string): Promise<Comment> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/quick-actions/${quickActionId}/run`, {
       method: "POST",
@@ -3988,12 +4206,9 @@ export class ApiClient {
     });
   }
 
-  /**
-   * What a quick action WOULD post, without posting it. Backs the composer
-   * hand-off (⌥-click and the `/` menu) so the user can edit before sending.
-   * Returns "" when the response cannot be read — callers must treat an empty
-   * string as "insert nothing" rather than clearing the composer.
-   */
+  /** 渲染一条快捷动作「将要发布的内容」而不真正发布。支撑编辑器交接（⌥-点击
+   *  与 `/` 菜单），让用户在发送前可以修改。响应读不到时返回 ""——调用方
+   *  必须把空串当作「不插入任何内容」，而不是清空编辑器。 */
   async renderQuickAction(issueId: string, quickActionId: string): Promise<string> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/quick-actions/${quickActionId}/render`, {
       method: "POST",
@@ -4004,6 +4219,7 @@ export class ApiClient {
     return parsed.content;
   }
 
+  /** 新建一个自定义议题属性。 */
   async createProperty(data: CreatePropertyRequest): Promise<IssueProperty> {
     const raw = await this.fetch<unknown>(`/api/properties`, {
       method: "POST",
@@ -4014,6 +4230,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新自定义属性定义。 */
   async updateProperty(id: string, data: UpdatePropertyRequest): Promise<IssueProperty> {
     const raw = await this.fetch<unknown>(`/api/properties/${id}`, {
       method: "PATCH",
@@ -4024,6 +4241,7 @@ export class ApiClient {
     });
   }
 
+  /** 给某议题设置自定义属性值。 */
   async setIssueProperty(issueId: string, propertyId: string, value: IssuePropertyValue): Promise<IssuePropertiesResponse> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/properties/${propertyId}`, {
       method: "PUT",
@@ -4034,6 +4252,7 @@ export class ApiClient {
     });
   }
 
+  /** 移除某议题的自定义属性值。 */
   async unsetIssueProperty(issueId: string, propertyId: string): Promise<IssuePropertiesResponse> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/properties/${propertyId}`, {
       method: "DELETE",
@@ -4043,6 +4262,7 @@ export class ApiClient {
     });
   }
 
+  /** 列出某议题当前的标签。 */
   async listLabelsForIssue(issueId: string): Promise<IssueLabelsResponse> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels`);
     return parseWithFallback(raw, ResourceLabelsResponseSchema, EMPTY_RESOURCE_LABELS_RESPONSE, {
@@ -4050,6 +4270,7 @@ export class ApiClient {
     });
   }
 
+  /** 给议题打上标签。 */
   async attachLabel(issueId: string, labelId: string): Promise<IssueLabelsResponse> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels`, {
       method: "POST",
@@ -4060,6 +4281,7 @@ export class ApiClient {
     });
   }
 
+  /** 移除议题上的某个标签。 */
   async detachLabel(issueId: string, labelId: string): Promise<IssueLabelsResponse> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels/${labelId}`, {
       method: "DELETE",
@@ -4069,6 +4291,7 @@ export class ApiClient {
     });
   }
 
+  /** 列出某 agent/skill 资源上的标签。 */
   async listLabelsForResource(
     resourceType: "agent" | "skill",
     resourceId: string,
@@ -4079,6 +4302,7 @@ export class ApiClient {
     });
   }
 
+  /** 给某 agent/skill 资源打上标签。 */
   async attachLabelToResource(
     resourceType: "agent" | "skill",
     resourceId: string,
@@ -4093,6 +4317,7 @@ export class ApiClient {
     });
   }
 
+  /** 移除某 agent/skill 资源上的标签。 */
   async detachLabelFromResource(
     resourceType: "agent" | "skill",
     resourceId: string,
@@ -4106,9 +4331,10 @@ export class ApiClient {
     });
   }
 
-  // Saved issue views (MUL-4796). Responses go through zod so installed
-  // desktop builds survive backend drift; a malformed list degrades to []
-  // (selector shows only built-ins) rather than blanking the page.
+  // Saved issue views（MUL-4796）。响应经过 zod 校验，让已安装的桌面端构建在
+  // 后端演进时仍可运行；格式异常的列表降级为 []（选择器只显示内建视图）
+  // 而不是让整页白屏。
+  /** 列出某作用域（scope）下的已保存议题视图。 */
   async listIssueViews(params: {
     scope_type: string;
     scope_id?: string | null;
@@ -4121,18 +4347,20 @@ export class ApiClient {
     });
   }
 
+  /** 新建一个已保存议题视图。 */
   async createIssueView(data: CreateIssueViewRequest): Promise<IssueView | null> {
     const raw = await this.fetch<unknown>("/api/issue-views", {
       method: "POST",
       body: JSON.stringify(data),
     });
-    // null fallback: the create itself succeeded server-side; a response we
-    // cannot parse must not crash the dialog — callers refetch the list.
+    // null 兜底：创建本身在服务端已成功；解析不了的响应不能让弹窗崩溃——
+    // 调用方重新拉取列表即可。
     return parseWithFallback(raw, IssueViewSchema.nullable(), null, {
       endpoint: "POST /api/issue-views",
     });
   }
 
+  /** 更新已保存视图（带 expected_revision 并发保护）。 */
   async updateIssueView(
     id: string,
     data: {
@@ -4153,6 +4381,7 @@ export class ApiClient {
     });
   }
 
+  /** 获取单个已保存视图。 */
   async getIssueView(id: string): Promise<IssueView | null> {
     const raw = await this.fetch<unknown>(`/api/issue-views/${id}`);
     return parseWithFallback(raw, IssueViewSchema.nullable(), null, {
@@ -4160,10 +4389,12 @@ export class ApiClient {
     });
   }
 
+  /** 删除已保存视图。 */
   async deleteIssueView(id: string): Promise<void> {
     await this.fetch(`/api/issue-views/${id}`, { method: "DELETE" });
   }
 
+  /** 读取某作用域的视图偏好（隐藏了哪些视图、排列顺序等）。 */
   async getIssueViewPreference(params: {
     scope_type: string;
     scope_id?: string | null;
@@ -4176,6 +4407,7 @@ export class ApiClient {
     });
   }
 
+  /** 保存某作用域的视图偏好（整体覆盖）。 */
   async putIssueViewPreference(data: {
     scope_type: string;
     scope_id?: string | null;
@@ -4190,14 +4422,15 @@ export class ApiClient {
     });
   }
 
-  // Pins
+  // Pins（置顶区）
+  /** 列出置顶项。
+   *  include=view 是能力声明：服务器不会把「视图置顶」返回给未声明支持它的
+   *  客户端（旧构建把所有非议题置顶当作项目置顶，并在 404 时自动删除）。 */
   async listPins(): Promise<PinnedItem[]> {
-    // include=view is the capability opt-in: the server withholds view pins
-    // from clients that don't declare support (old builds treated any
-    // non-issue pin as a project pin and auto-deleted it on 404).
     return this.fetch("/api/pins?include=view");
   }
 
+  /** 新增一个置顶项。 */
   async createPin(data: CreatePinRequest): Promise<PinnedItem> {
     return this.fetch("/api/pins", {
       method: "POST",
@@ -4205,10 +4438,12 @@ export class ApiClient {
     });
   }
 
+  /** 删除指定类型与 id 的置顶项。 */
   async deletePin(itemType: PinnedItemType, itemId: string): Promise<void> {
     await this.fetch(`/api/pins/${itemType}/${itemId}`, { method: "DELETE" });
   }
 
+  /** 重新排列置顶顺序。 */
   async reorderPins(data: ReorderPinsRequest): Promise<void> {
     await this.fetch("/api/pins/reorder", {
       method: "PUT",
@@ -4216,7 +4451,8 @@ export class ApiClient {
     });
   }
 
-  // Squads
+  // Squads（战队/小组区）
+  /** 列出全部 squad。 */
   async listSquads(): Promise<Squad[]> {
     const raw = await this.fetch<unknown>(`/api/squads`);
     return parseWithFallback(raw, SquadListSchema, EMPTY_SQUAD_LIST, {
@@ -4224,6 +4460,7 @@ export class ApiClient {
     }) as Squad[];
   }
 
+  /** 获取单个 squad。 */
   async getSquad(id: string): Promise<Squad> {
     const raw = await this.fetch<unknown>(`/api/squads/${id}`);
     return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
@@ -4231,6 +4468,7 @@ export class ApiClient {
     }) as Squad;
   }
 
+  /** 新建 squad（需指定队长 leader_id）。 */
   async createSquad(data: { name: string; description?: string; leader_id: string; avatar_url?: string }): Promise<Squad> {
     const raw = await this.fetch<unknown>("/api/squads", { method: "POST", body: JSON.stringify(data) });
     return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
@@ -4238,6 +4476,7 @@ export class ApiClient {
     }) as Squad;
   }
 
+  /** 更新 squad 信息。 */
   async updateSquad(id: string, data: { name?: string; description?: string; instructions?: string; leader_id?: string; avatar_url?: string }): Promise<Squad> {
     const raw = await this.fetch<unknown>(`/api/squads/${id}`, { method: "PUT", body: JSON.stringify(data) });
     return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
@@ -4245,30 +4484,35 @@ export class ApiClient {
     }) as Squad;
   }
 
+  /** 删除 squad。 */
   async deleteSquad(id: string): Promise<void> {
     await this.fetch(`/api/squads/${id}`, { method: "DELETE" });
   }
 
+  /** 列出 squad 成员。 */
   async listSquadMembers(squadId: string): Promise<SquadMember[]> {
     return this.fetch(`/api/squads/${squadId}/members`);
   }
 
+  /** 添加 squad 成员。 */
   async addSquadMember(squadId: string, data: { member_type: string; member_id: string; role?: string }): Promise<SquadMember> {
     return this.fetch(`/api/squads/${squadId}/members`, { method: "POST", body: JSON.stringify(data) });
   }
 
+  /** 移除 squad 成员。 */
   async removeSquadMember(squadId: string, data: { member_type: string; member_id: string }): Promise<void> {
     await this.fetch(`/api/squads/${squadId}/members`, { method: "DELETE", body: JSON.stringify(data) });
   }
 
+  /** 修改 squad 成员的角色。 */
   async updateSquadMemberRole(squadId: string, data: { member_type: string; member_id: string; role: string }): Promise<SquadMember> {
     return this.fetch(`/api/squads/${squadId}/members/role`, { method: "PATCH", body: JSON.stringify(data) });
   }
 
-  // Per-squad members status snapshot: one row per member with derived
-  // working/idle/offline/unstable plus the issues each agent is currently
-  // running. Parsed with a lenient schema so a new server-side status
-  // value or extra field can't white-screen the Squad page (#2143).
+  // 每个 squad 的成员状态快照：每名成员一行，含推导出的
+  // working/idle/offline/unstable 状态与每个 agent 当前正在跑的议题。
+  // 用宽松 schema 解析，使新的服务端状态值或额外字段不会把 Squad 页弄白屏
+  //（#2143）。
   async getSquadMemberStatus(squadId: string): Promise<SquadMemberStatusListResponse> {
     const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members/status`);
     return parseWithFallback(raw, SquadMemberStatusListResponseSchema, EMPTY_SQUAD_MEMBER_STATUS_LIST, {
@@ -4276,7 +4520,8 @@ export class ApiClient {
     }) as SquadMemberStatusListResponse;
   }
 
-  // Autopilots
+  // Autopilots（自动驾驶/自动化 agent 区）
+  /** 列出 autopilot（可按状态过滤）。 */
   async listAutopilots(params?: { status?: string }): Promise<ListAutopilotsResponse> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
@@ -4289,10 +4534,12 @@ export class ApiClient {
     );
   }
 
+  /** 获取单个 autopilot（含其配置明细）。 */
   async getAutopilot(id: string): Promise<GetAutopilotResponse> {
     return this.fetch(`/api/autopilots/${id}`);
   }
 
+  /** 新建 autopilot。 */
   async createAutopilot(data: CreateAutopilotRequest): Promise<Autopilot> {
     return this.fetch("/api/autopilots", {
       method: "POST",
@@ -4300,6 +4547,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新 autopilot 配置。 */
   async updateAutopilot(id: string, data: UpdateAutopilotRequest): Promise<Autopilot> {
     return this.fetch(`/api/autopilots/${id}`, {
       method: "PATCH",
@@ -4307,13 +4555,13 @@ export class ApiClient {
     });
   }
 
+  /** 删除 autopilot。 */
   async deleteAutopilot(id: string): Promise<void> {
     await this.fetch(`/api/autopilots/${id}`, { method: "DELETE" });
   }
 
-  // Grant a workspace member explicit write access to the autopilot. Both
-  // grant and revoke return the full updated collaborator list so callers can
-  // refresh without a second round-trip.
+  // 授予某 workspace 成员对该 autopilot 的显式写权限。授予与撤销都返回完整
+  // 的更新后协作者列表，调用方无需二次请求即可刷新。
   async grantAutopilotAccess(id: string, userId: string): Promise<AutopilotCollaboratorsResponse> {
     return this.fetch(`/api/autopilots/${id}/collaborators`, {
       method: "POST",
@@ -4321,16 +4569,17 @@ export class ApiClient {
     });
   }
 
+  /** 撤销某成员对该 autopilot 的访问权限。 */
   async revokeAutopilotAccess(id: string, userId: string): Promise<AutopilotCollaboratorsResponse> {
     return this.fetch(`/api/autopilots/${id}/collaborators/${userId}`, {
       method: "DELETE",
     });
   }
 
+  /** 手动立即触发一次 autopilot 运行。
+   *  手动「立即运行」通常返回一条运行记录（含下游准入失败）。配额被拒是
+   *  例外，返回 429。UI 对两条路径都做处理，不展示「假成功」的 toast。 */
   async triggerAutopilot(id: string): Promise<AutopilotRun> {
-    // Manual "run now" usually returns a run, including downstream admission
-    // failures. Quota rejection is the exception and returns 429. The UI
-    // handles both paths without presenting a false-success toast.
     const raw = await this.fetch<unknown>(`/api/autopilots/${id}/trigger`, {
       method: "POST",
       headers: { "Idempotency-Key": createSafeId() },
@@ -4340,6 +4589,7 @@ export class ApiClient {
     });
   }
 
+  /** 查询 autopilot 的配额用量（本周期可运行次数等）。 */
   async getAutopilotQuotaUsage(): Promise<AutopilotQuotaUsage> {
     const raw = await this.fetch<unknown>("/api/autopilots/usage");
     return parseWithFallback(
@@ -4361,6 +4611,7 @@ export class ApiClient {
     );
   }
 
+  /** 分页列出某 autopilot 的历史运行记录（列表为精简字段）。 */
   async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<ListAutopilotRunsResponse> {
     const search = new URLSearchParams();
     if (params?.limit) search.set("limit", params.limit.toString());
@@ -4368,13 +4619,14 @@ export class ApiClient {
     return this.fetch(`/api/autopilots/${id}/runs?${search}`);
   }
 
-  // Returns a single run including its full trigger_payload. List responses
-  // omit trigger_payload to keep them small (a webhook envelope can be
-  // up to 256 KiB × limit rows), so the detail view fetches via this route.
+  // 返回单次运行并含完整 trigger_payload。列表响应为保持体积省略了
+  // trigger_payload（一个 webhook 信封可达 256 KiB × 行数上限），因此详情视图
+  // 走此路由。
   async getAutopilotRun(autopilotId: string, runId: string): Promise<AutopilotRun> {
     return this.fetch(`/api/autopilots/${autopilotId}/runs/${runId}`);
   }
 
+  /** 为 autopilot 新建一个触发器（定时/webhook 等）。 */
   async createAutopilotTrigger(autopilotId: string, data: CreateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
     return this.fetch(`/api/autopilots/${autopilotId}/triggers`, {
       method: "POST",
@@ -4382,6 +4634,7 @@ export class ApiClient {
     });
   }
 
+  /** 更新 autopilot 触发器。 */
   async updateAutopilotTrigger(autopilotId: string, triggerId: string, data: UpdateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
     return this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
       method: "PATCH",
@@ -4389,10 +4642,12 @@ export class ApiClient {
     });
   }
 
+  /** 删除 autopilot 触发器。 */
   async deleteAutopilotTrigger(autopilotId: string, triggerId: string): Promise<void> {
     await this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, { method: "DELETE" });
   }
 
+  /** 预览一条 cron 表达式在指定时区下的下次触发时间。 */
   async cronPreview(params: { expr: string; tz: string }): Promise<CronPreviewResponse> {
     const search = new URLSearchParams();
     search.set("expr", params.expr);
@@ -4406,6 +4661,7 @@ export class ApiClient {
     );
   }
 
+  /** 轮换 autopilot webhook 触发器的签名 token。 */
   async rotateAutopilotTriggerWebhookToken(
     autopilotId: string,
     triggerId: string,
@@ -4416,11 +4672,10 @@ export class ApiClient {
     );
   }
 
-  // Webhook deliveries — list is slim (no raw_body / selected_headers /
-  // response_body); detail returns the full row. Both responses are parsed
-  // through a lenient schema so an unknown server-side `status` /
-  // `signature_status` value degrades to a generic row instead of dropping
-  // the whole list.
+  // Webhook 投递记录——列表为精简字段（不含 raw_body / selected_headers /
+  // response_body），详情返回完整行。两类响应都用宽松 schema 解析：未知的
+  // 服务端 `status` / `signature_status` 值会降级为通用行，而不会丢弃整份列表。
+  /** 分页列出某 autopilot 的 webhook 投递记录（精简字段）。 */
   async listAutopilotDeliveries(
     autopilotId: string,
     params?: { limit?: number; offset?: number },
@@ -4439,6 +4694,7 @@ export class ApiClient {
     );
   }
 
+  /** 获取单条 webhook 投递记录（完整字段）。 */
   async getAutopilotDelivery(
     autopilotId: string,
     deliveryId: string,
@@ -4454,10 +4710,9 @@ export class ApiClient {
     );
   }
 
-  // Replay creates a NEW delivery row referencing the original via
-  // `replayed_from_delivery_id`. Server rejects replays of
-  // signature-invalid / rejected deliveries with 400 — the UI keeps the
-  // button disabled for those rows, but the server is the source of truth.
+  // 重放会创建一条新的投递记录，通过 `replayed_from_delivery_id` 指向原记录。
+  // 服务器用 400 拒绝「签名无效 / 已被拒」投递的重放——UI 对这些行保持按钮
+  // 禁用，但服务器才是权威。
   async replayAutopilotDelivery(
     autopilotId: string,
     deliveryId: string,
@@ -4474,7 +4729,8 @@ export class ApiClient {
     );
   }
 
-  // GitHub integration
+  // GitHub integration（GitHub 集成区）
+  /** 获取 GitHub OAuth 连接 URL（可指定连接后跳回 github / repositories 页）。 */
   async getGitHubConnectURL(
     workspaceId: string,
     returnTo?: "github" | "repositories",
@@ -4493,6 +4749,7 @@ export class ApiClient {
     );
   }
 
+  /** 列出 workspace 已安装的 GitHub App 安装。 */
   async listGitHubInstallations(workspaceId: string): Promise<ListGitHubInstallationsResponse> {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/github/installations`,
@@ -4505,6 +4762,7 @@ export class ApiClient {
     );
   }
 
+  /** 列出某 GitHub 安装下可访问的仓库（分页）。 */
   async listGitHubInstallationRepositories(
     workspaceId: string,
     installationId: string,
@@ -4525,12 +4783,14 @@ export class ApiClient {
     );
   }
 
+  /** 删除（卸载）一个 GitHub 安装。 */
   async deleteGitHubInstallation(workspaceId: string, installationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/github/installations/${installationId}`, {
       method: "DELETE",
     });
   }
 
+  /** 列出某议题关联的 GitHub PR。 */
   async listIssuePullRequests(issueId: string): Promise<{ pull_requests: GitHubPullRequest[] }> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/pull-requests`);
     return parseWithFallback(
@@ -4541,11 +4801,13 @@ export class ApiClient {
     );
   }
 
-  // VCS integration (Forgejo / Gitea / GitLab)
+  // VCS integration（Forgejo / Gitea / GitLab 集成区）
+  /** 列出 workspace 已配置的 VCS 连接。 */
   async listVCSConnections(workspaceId: string): Promise<ListVCSConnectionsResponse> {
     return this.fetch(`/api/workspaces/${workspaceId}/vcs/connections`);
   }
 
+  /** 新建（连接）一个 VCS 连接。 */
   async connectVCS(
     workspaceId: string,
     body: ConnectVCSRequest,
@@ -4556,12 +4818,14 @@ export class ApiClient {
     });
   }
 
+  /** 删除 VCS 连接。 */
   async deleteVCSConnection(workspaceId: string, connectionId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}`, {
       method: "DELETE",
     });
   }
 
+  /** 轮换 VCS 连接的 webhook 密钥。 */
   async rotateVCSWebhook(
     workspaceId: string,
     connectionId: string,
@@ -4572,40 +4836,42 @@ export class ApiClient {
     );
   }
 
-  // Lark integration
+  // Lark / 飞书集成区
+  /** 列出 workspace 的 Lark/飞书安装。 */
   async listLarkInstallations(workspaceId: string): Promise<ListLarkInstallationsResponse> {
     return this.fetch(`/api/workspaces/${workspaceId}/lark/installations`);
   }
 
+  /** 发起一次 Lark/飞书绑定安装（设备码流程的 begin 步，用于展示二维码）。 */
   async beginLarkInstall(
     workspaceId: string,
     agentId: string,
     region: "feishu" | "lark",
   ): Promise<BeginLarkInstallResponse> {
-    // The user picks the cloud explicitly in the UI ("Bind to Feishu"
-    // vs "Bind to Lark"), and the backend POSTs the device-flow `begin`
-    // against the corresponding accounts host (accounts.feishu.cn vs
-    // accounts.larksuite.com) so the QR renders against the right
-    // cloud up front. Empty / omitted region still resolves to Feishu
-    // server-side (RegionOrDefault) — we surface region as a required
-    // arg here so every call site is forced to make a deliberate
-    // choice rather than silently defaulting to mainland.
+    // 用户在 UI 里显式选择云环境（「绑定到飞书」还是「绑定到 Lark」），后端会
+    // 对相应的账号主机（accounts.feishu.cn 还是 accounts.larksuite.com）发起
+    // 设备码流程的 `begin`，让二维码一开始就渲染在正确的云环境上。region 为空/
+    // 省略时服务端仍默认飞书（RegionOrDefault）——这里把 region 设为必填参数，
+    // 强制每个调用点做出明确选择，而不是悄悄默认到国内版。
     const search = new URLSearchParams({ agent_id: agentId, region });
     return this.fetch(`/api/workspaces/${workspaceId}/lark/install/begin?${search.toString()}`, {
       method: "POST",
     });
   }
 
+  /** 查询一次 Lark/飞书绑定安装会话的进行状态。 */
   async getLarkInstallStatus(workspaceId: string, sessionId: string): Promise<LarkInstallStatusResponse> {
     return this.fetch(`/api/workspaces/${workspaceId}/lark/install/${sessionId}/status`);
   }
 
+  /** 解绑（删除）一个 Lark/飞书安装。 */
   async deleteLarkInstallation(workspaceId: string, installationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/lark/installations/${installationId}`, {
       method: "DELETE",
     });
   }
 
+  /** 用绑定 token 兑换当前登录用户与 Lark/飞书账号的绑定关系。 */
   async redeemLarkBindingToken(token: string): Promise<RedeemLarkBindingTokenResponse> {
     return this.fetch(`/api/lark/binding/redeem`, {
       method: "POST",
@@ -4613,24 +4879,23 @@ export class ApiClient {
     });
   }
 
-  // Composio integration (MUL-3720). All routes are user-scoped (a connection
-  // belongs to a user, not a workspace), so none take a workspaceId.
+  // Composio 集成（MUL-3720）。所有路由按用户隔离（连接属于用户而非
+  // workspace），因此都不接收 workspaceId。
 
-  /** The project's connectable Composio toolkits (those with an enabled auth
-   * config). Since MUL-4009 the backend filters out non-connectable toolkits,
-   * so every entry has `connectable: true`. A resolver/upstream failure is a
-   * 502 rather than an empty list. */
+  /** 项目可连接的 Composio 工具包（启用过鉴权配置的那些）。自 MUL-4009 起
+   *  后端会过滤掉不可连接的 toolkit，因此每个条目都是 `connectable: true`。
+   *  解析/上游失败返回 502 而非空列表。 */
   async listComposioToolkits(): Promise<ComposioToolkit[]> {
     return this.fetch(`/api/integrations/composio/toolkits`);
   }
 
-  /** The caller's active Composio connections. */
+  /** 当前调用者活跃的 Composio 连接列表。 */
   async listComposioConnections(): Promise<ComposioConnection[]> {
     return this.fetch(`/api/integrations/composio/connections`);
   }
 
-  /** Starts a hosted Composio connect flow for a toolkit and returns the
-   * redirect URL the browser should be sent to. */
+  /** 为某个 toolkit 启动托管式 Composio 连接流程，返回浏览器应跳转的
+   *  重定向 URL。 */
   async beginComposioConnect(toolkitSlug: string): Promise<ComposioConnectInitResponse> {
     return this.fetch(`/api/integrations/composio/connect/init`, {
       method: "POST",
@@ -4638,21 +4903,21 @@ export class ApiClient {
     });
   }
 
-  /** Disconnects a Composio connection the caller owns. */
+  /** 断开调用者拥有的一个 Composio 连接。 */
   async deleteComposioConnection(connectionId: string): Promise<void> {
     await this.fetch(`/api/integrations/composio/connections/${connectionId}`, {
       method: "DELETE",
     });
   }
 
-  // Slack integration (MUL-3666)
+  // Slack 集成（MUL-3666）
+  /** 列出 workspace 的 Slack 安装。 */
   async listSlackInstallations(workspaceId: string): Promise<ListSlackInstallationsResponse> {
     return this.fetch(`/api/workspaces/${workspaceId}/slack/installations`);
   }
 
-  // registerSlackBYO performs a bring-your-own-app install: the admin pastes the
-  // bot token (xoxb-) + app-level token (xapp-) of the Slack app they created,
-  // and the backend validates + persists it, returning the new installation.
+  // registerSlackBYO 执行「自带应用」安装：管理员粘贴其创建的 Slack 应用的
+  // bot token（xoxb-）与应用级 token（xapp-），后端校验并持久化，返回新安装。
   async registerSlackBYO(
     workspaceId: string,
     agentId: string,
@@ -4665,12 +4930,14 @@ export class ApiClient {
     });
   }
 
+  /** 删除 Slack 安装（解绑）。 */
   async deleteSlackInstallation(workspaceId: string, installationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/slack/installations/${installationId}`, {
       method: "DELETE",
     });
   }
 
+  /** 用绑定 token 把当前登录用户与 Slack 账号绑定起来。 */
   async redeemSlackBindingToken(token: string): Promise<RedeemSlackBindingTokenResponse> {
     return this.fetch(`/api/slack/binding/redeem`, {
       method: "POST",
@@ -4678,7 +4945,8 @@ export class ApiClient {
     });
   }
 
-  // DingTalk integration
+  // DingTalk / 钉钉集成区
+  /** 列出 workspace 的钉钉安装。 */
   async listDingTalkInstallations(
     workspaceId: string,
   ): Promise<ListDingTalkInstallationsResponse> {
@@ -4691,6 +4959,7 @@ export class ApiClient {
     );
   }
 
+  /** 列出 workspace 钉钉可用的群（供机器人加入/转发）。 */
   async listDingTalkGroups(
     workspaceId: string,
     params: ListDingTalkGroupsParams = {},
@@ -4700,10 +4969,9 @@ export class ApiClient {
       const search = dingTalkGroupSearch(params);
       raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/groups${search}`);
     } catch (error) {
-      // Installed clients can be newer than the server they reconnect to. A
-      // backend predating group discovery 404s this additive endpoint. The
-      // first admin-only version returns 403 to members; both mean this client
-      // cannot use the workspace inventory, while real failures stay visible.
+      // 已安装的客户端可能比它们重新连上的服务器新。早于群发现特性的后端会
+      // 对该增量端点返回 404；最初仅管理员的版本对成员返回 403。两种情况都
+      // 表示本客户端用不了该 workspace 的群清单，而真实的故障仍然保持可见。
       if (
         error instanceof ApiError &&
         (error.status === 404 || error.status === 403)
@@ -4720,6 +4988,7 @@ export class ApiClient {
     );
   }
 
+  /** 列出某 agent 可用的钉钉群。 */
   async listAgentDingTalkGroups(
     agentId: string,
     params: ListDingTalkGroupsParams = {},
@@ -4729,8 +4998,8 @@ export class ApiClient {
       const search = dingTalkGroupSearch(params);
       raw = await this.fetch<unknown>(`/api/agents/${agentId}/dingtalk/groups${search}`);
     } catch (error) {
-      // Keep installed clients compatible with servers that predate agent-
-      // scoped group discovery. Authorization failures must remain visible.
+      // 保持已安装客户端与早于「按 agent 的群发现」特性的服务器兼容。
+      // 授权失败仍须保持可见。
       if (error instanceof ApiError && error.status === 404) {
         return EMPTY_LIST_DINGTALK_GROUPS_RESPONSE;
       }
@@ -4744,6 +5013,7 @@ export class ApiClient {
     );
   }
 
+  /** 让某钉钉安装「遗忘」一个群（解除关联）。 */
   async forgetDingTalkGroup(
     workspaceId: string,
     installationId: string,
@@ -4755,10 +5025,9 @@ export class ApiClient {
     );
   }
 
-  // registerDingTalkBYO performs a bring-your-own-app install: the agent owner
-  // or a workspace owner/admin pastes the AppKey (client id) + AppSecret
-  // (client secret) of the DingTalk Stream-mode robot they created, and the
-  // backend validates + persists it, returning the new installation.
+  // registerDingTalkBYO 执行「自带应用」安装：agent 拥有者或 workspace
+  // owner/admin 粘贴其创建的钉钉 Stream 模式机器人的 AppKey（client id）+
+  // AppSecret（client secret），后端校验并持久化，返回新安装。
   async registerDingTalkBYO(
     workspaceId: string,
     agentId: string,
@@ -4777,12 +5046,14 @@ export class ApiClient {
     });
   }
 
+  /** 删除钉钉安装（解绑）。 */
   async deleteDingTalkInstallation(workspaceId: string, installationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/dingtalk/installations/${installationId}`, {
       method: "DELETE",
     });
   }
 
+  /** 用绑定 token 把当前登录用户与钉钉账号绑定。 */
   async redeemDingTalkBindingToken(
     token: string,
   ): Promise<RedeemDingTalkBindingTokenResponse> {
@@ -4797,11 +5068,11 @@ export class ApiClient {
       { endpoint: "POST /api/dingtalk/binding/redeem" },
     );
   }
-  // WeCom smart-bot ("智能机器人" / aibot) integration. The bot dials a
-  // WebSocket long connection to wss://openws.work.weixin.qq.com and stays
-  // authenticated with (bot_id, secret); no public callback URL is required.
-  // These three methods drive the Settings-page BYO Connect dialog + list +
-  // disconnect only — the inbound WebSocket loop runs entirely server-side.
+  // 企业微信智能机器人（aibot）集成。机器人拨一条 WebSocket 长连接到
+  // wss://openws.work.weixin.qq.com 并以 (bot_id, secret) 保持鉴权，无需公开
+  // 回调地址。下面这几个方法只驱动设置页的 BYO 连接对话框 + 列表 + 断开——
+  // 入站 WebSocket 循环完全运行在服务端。
+  /** 列出 workspace 的企业微信安装。 */
   async listWecomInstallations(workspaceId: string): Promise<ListWecomInstallationsResponse> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/wecom/installations`);
     return parseWithFallback(
@@ -4812,10 +5083,10 @@ export class ApiClient {
     );
   }
 
-  // registerWecomBYO performs a bring-your-own-app install: the admin pastes
-  // the bot id and long-connection secret from the WeCom admin console,
-  // and the backend seals the secret with MULTICA_WECOM_SECRET_KEY before
-  // persisting, returning the new installation.
+  // registerWecomBYO 执行「自带应用」安装：管理员粘贴企业微信管理后台的
+  // 机器人 id 与长连接密钥，后端在持久化前用 MULTICA_WECOM_SECRET_KEY 封存
+  // 密钥，返回新安装。
+  /** 自带应用方式注册企业微信机器人。 */
   async registerWecomBYO(
     workspaceId: string,
     agentId: string,
@@ -4834,19 +5105,19 @@ export class ApiClient {
     });
   }
 
+  /** 删除企业微信安装（解绑）。 */
   async deleteWecomInstallation(workspaceId: string, installationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/wecom/installations/${installationId}`, {
       method: "DELETE",
     });
   }
 
-  // redeemWecomBindingToken binds the WeCom aibot userid carried by the
-  // token to the logged-in Multica user. Called by the /wecom/bind redeem
-  // page after the user clicks through the "link your Multica account"
-  // prompt the bot sent in WeCom. Status codes:
-  //   410 Gone      → invalid / expired / already consumed
-  //   409 Conflict  → the WeCom user is already bound to a different user
-  //   403 Forbidden → the logged-in user is not a workspace member
+  // redeemWecomBindingToken 把 token 携带的企业微信机器人 userid 绑定到当前
+  // 登录的 Multica 用户。由 /wecom/bind 兑换页在用户点过机器人在企业微信里
+  // 发来的「关联你的 Multica 账号」提示后调用。状态码：
+  //   410 Gone      → 无效 / 过期 / 已消费
+  //   409 Conflict  → 该企业微信用户已绑定到别的用户
+  //   403 Forbidden → 当前登录用户不是 workspace 成员
   async redeemWecomBindingToken(token: string): Promise<RedeemWecomBindingTokenResponse> {
     const raw = await this.fetch<unknown>(`/api/wecom/binding/redeem`, {
       method: "POST",
@@ -4860,6 +5131,8 @@ export class ApiClient {
     );
   }
 
+  // Telegram 集成区
+  /** 列出 workspace 的 Telegram 安装。 */
   async listTelegramInstallations(
     workspaceId: string,
   ): Promise<ListTelegramInstallationsResponse> {
@@ -4872,6 +5145,7 @@ export class ApiClient {
     );
   }
 
+  /** 注册（安装）一个 Telegram 机器人绑定到 agent。 */
   async registerTelegramBot(
     workspaceId: string,
     agentId: string,
@@ -4890,12 +5164,14 @@ export class ApiClient {
     });
   }
 
+  /** 删除 Telegram 安装（解绑）。 */
   async deleteTelegramInstallation(workspaceId: string, installationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/telegram/installations/${installationId}`, {
       method: "DELETE",
     });
   }
 
+  /** 用绑定 token 把当前登录用户与 Telegram 账号绑定。 */
   async redeemTelegramBindingToken(token: string): Promise<RedeemTelegramBindingTokenResponse> {
     const raw = await this.fetch<unknown>(`/api/telegram/binding/redeem`, {
       method: "POST",

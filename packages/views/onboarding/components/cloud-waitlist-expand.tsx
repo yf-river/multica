@@ -1,5 +1,8 @@
 "use client";
 
+// 云端版「等待列表」报名表单：填入邮箱（+可选的用途说明）即可报名加入云端等待列表，
+// 展开展现在引导流程选择「本地/云端」运行时那一步里。提交成功后表单会锁定，
+// 是否离开当前页面由调用方决定。
 import { useState } from "react";
 import { ArrowRight, Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -14,13 +17,15 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const REASON_MAX = 500;
 
 /**
- * Cloud waitlist inline form — used from both:
- *   - onboarding Step 3 (`StepPlatformFork` cloud fork)
+ * 云端等待列表的内联报名表单——目前用在引导流程第 3 步（`StepPlatformFork`
+ * 的 cloud 分支）里。
  *
- * Submitting calls `joinCloudWaitlist` and disables the form. Does NOT
- * advance the onboarding flow — the caller owns navigation (usually
- * "Skip for now" in the footer). That keeps the contract consistent:
- * waitlist is interest capture, Skip is the actual exit.
+ * 提交时调用 `joinCloudWaitlist` 并把表单置为禁用。它不会自己推进引导流程——
+ * 后续导航由调用方负责（通常是底部的「暂时跳过」）。这样职责划分清晰：
+ * 等待列表只负责收集意向，真正退出引导走的是 Skip。
+ *
+ * @param submitted 是否已提交成功（提交后表单锁定为只读）
+ * @param onSubmitted 提交成功后的回调
  */
 export function CloudWaitlistExpand({
   submitted,

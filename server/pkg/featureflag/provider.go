@@ -1,81 +1,73 @@
 package featureflag
 
+// 本文件职责：定义功能开关的两块地基——「求值结果」Decision（含理由 Reason）
+// 与「配置后端抽象」Provider 接口。业务代码只认识 Decision；不同的配置来源
+// （静态 YAML、环境变量、链式组合）都通过实现 Provider 接入。
+
 import "context"
 
-// Reason identifies why a Decision returned the value it did. Reasons are
-// observable strings so they can be exposed in metadata endpoints and
-// structured logs.
+// Reason 说明一次 Decision 为什么给出这个结果。取值是可直接观测的字符串，
+// 方便暴露到元数据接口和结构化日志里。
 type Reason string
 
 const (
-	// ReasonStatic means a provider returned an unconditional value
-	// (Rule.Default, an Allow hit, a Deny hit, or a Variant lookup).
+	// ReasonStatic 表示 provider 无条件返回了一个值
+	// （命中 Rule.Default、Allow 命中、Deny 命中或 Variant 查表）。
 	ReasonStatic Reason = "static"
 
-	// ReasonPercent means the value came from a deterministic percent
-	// rollout bucket. The same (key, identifier) pair always yields the
-	// same bucket.
+	// ReasonPercent 表示结果来自确定性的百分比发布分桶。
+	// 同一对 (key, identifier) 永远落进同一个桶。
 	ReasonPercent Reason = "percent"
 
-	// ReasonOverride means a per-request override was applied (for
-	// example a debug header or a cookie). Overrides win over normal
-	// rules so they should never be exposed to untrusted callers.
+	// ReasonOverride 表示套用了单次请求级覆盖（例如调试 header 或 cookie）。
+	// 覆盖优先级高于普通规则，所以绝不能暴露给不受信任的调用方。
 	ReasonOverride Reason = "override"
 
-	// ReasonDefault means no provider matched the key and the caller's
-	// default value was returned. This is the only Reason callers ever
-	// see when their default is used.
+	// ReasonDefault 表示没有任何 provider 命中该 key，返回了调用方传入的默认值。
+	// 这是调用方在「默认值被使用」时唯一会看到的 Reason。
 	ReasonDefault Reason = "default"
 
-	// ReasonError means a provider attempted to evaluate the flag but
-	// failed (for example a malformed env var). The default is returned
-	// and the error reason is recorded for diagnostics.
+	// ReasonError 表示 provider 尝试求值但失败了（例如环境变量格式非法）。
+	// 此时返回默认值，并记下 error 原因供诊断。
 	ReasonError Reason = "error"
 )
 
-// Decision is the structured result of a flag evaluation. Callers typically
-// use Service.IsEnabled or Service.Variant which collapse Decision into a
-// single value, but Decision is exposed for diagnostics endpoints and tests.
+// Decision 是一次开关求值的结构化结果。调用方一般用 Service.IsEnabled 或
+// Service.Variant，它们会把 Decision 折叠成单个值；Decision 本身暴露给
+// 诊断接口和测试用。
 type Decision struct {
-	// Key is the flag identifier that was evaluated.
+	// Key 是被求值的开关标识。
 	Key string
 
-	// Enabled is the boolean projection of the decision. For variant
-	// flags it is true when Variant != "" and Variant != "off".
+	// Enabled 是决策的布尔投影。对 variant 类开关，当 Variant 非空且不等于
+	// "off" 时为 true。
 	Enabled bool
 
-	// Variant is the raw value the provider produced. Boolean flags use
-	// "on" / "off". Variant flags use arbitrary identifiers such as
-	// "control", "experiment-v2".
+	// Variant 是 provider 产出的原始值。布尔开关用 "on"/"off"；variant 类
+	// 开关用任意标识符，例如 "control"、"experiment-v2"。
 	Variant string
 
-	// Reason records why this decision was made (see Reason constants).
+	// Reason 记录这条决策的依据（见上方 Reason 常量）。
 	Reason Reason
 
-	// Source is the name of the provider that produced the decision, or
-	// "default" when no provider matched. Useful for debugging which
-	// configuration layer is winning in a ChainProvider setup.
+	// Source 是产出该决策的 provider 名字；没有任何 provider 命中时是
+	// "default"。排查 ChainProvider 里到底哪一层配置在生效时很有用。
 	Source string
 }
 
-// Provider is the configuration backend for the feature flag Service.
-// Implementations must be safe for concurrent use; the Service reads
-// providers from many goroutines without additional locking.
+// Provider 是功能开关 Service 背后的配置后端。
+// 实现必须并发安全：Service 会在多个 goroutine 里不加额外锁地读 provider。
 //
-// A Lookup call returns (decision, true) when the provider knows about the
-// key and (zero, false) when it does not. Callers must rely on the boolean,
-// not on the Decision content, because Decision is otherwise the zero value
-// when found is false.
+// Lookup 在 provider「认识」这个 key 时返回 (decision, true)；
+// 不认识时返回 (零值, false)。调用方必须信这个布尔值而不是 Decision 内容，
+// 因为 found=false 时 Decision 只是零值。
 type Provider interface {
-	// Lookup evaluates a single flag against the supplied context.
-	// Implementations should never panic; on internal failures they
-	// should return a Decision with Reason=ReasonError and found=true so
-	// the Service can record the failure without falling through to a
-	// less specific provider.
+	// Lookup 用传入的上下文对单个开关求值。实现绝不应 panic；内部失败时
+	// 应返回 Reason=ReasonError、found=true 的 Decision，这样 Service 能
+	// 记下这次失败，而不会漏到更宽泛的下层 provider。
 	Lookup(ctx context.Context, key string) (decision Decision, found bool)
 
-	// Name returns a stable, human-readable identifier used in Decision.Source
-	// and in diagnostic endpoints. Two provider instances of the same type
-	// may share a name; uniqueness is not required.
+	// Name 返回稳定、可读的标识符，用于 Decision.Source 与诊断接口。
+	// 同类型的不同 provider 实例可以同名；并不要求全局唯一。
 	Name() string
 }

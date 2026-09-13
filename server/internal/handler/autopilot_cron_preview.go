@@ -1,3 +1,5 @@
+// 本文件实现 cron 表达式预览端点：调度编辑器在保存前先拿到权威的下次触发时刻。
+// 纯计算、只读——工作区成员资格由路由组保证，不触碰其它资源。
 package handler
 
 import (
@@ -7,22 +9,20 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 )
 
-// Rejection codes let the editor say which input is at fault: a timezone the
-// server's tzdata does not know is not the user's cron being wrong, and the two
-// are fixed in different controls.
+// 拒绝码让编辑器说清楚是哪个输入有错：服务端 tzdata 不认识的时区，不是用户的
+// cron 写错——两者在编辑器里由不同控件修复。
 const (
 	cronPreviewInvalidCron     = "invalid_cron"
 	cronPreviewInvalidTimezone = "invalid_timezone"
 )
 
+// writeCronPreviewError 以统一的 400 + {error, code} 形状回写预览错误。
 func writeCronPreviewError(w http.ResponseWriter, code, msg string) {
 	writeJSON(w, http.StatusBadRequest, map[string]any{"error": msg, "code": code})
 }
 
-// CronPreview computes the next occurrences of a candidate cron expression
-// so schedule editors can show an authoritative preview before saving.
-// Compute-only: workspace membership is enforced by the router group and no
-// other resource is touched.
+// CronPreview 计算候选 cron 表达式的接下来几次触发时刻，让调度编辑器在保存前
+// 展示权威预览。纯计算：工作区成员资格由路由组强制，不触碰其它资源。
 func (h *Handler) CronPreview(w http.ResponseWriter, r *http.Request) {
 	expr := r.URL.Query().Get("expr")
 	if expr == "" {
@@ -39,9 +39,8 @@ func (h *Handler) CronPreview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	const previewCount = 3
-	// A syntactically valid expression that never fires comes back as a short (or
-	// empty) slice, not an error: the editor tells "never runs" from "your cron is
-	// wrong" by the status code.
+	// 语法合法但永不触发的表达式会返回短（或空）切片，而非错误：编辑器靠状态码
+	// 区分「永远不会跑」与「cron 写错了」。
 	occurrences, err := service.NextOccurrencesAfterUTC(expr, tz, time.Now().UTC(), previewCount)
 	if err != nil {
 		writeCronPreviewError(w, cronPreviewInvalidCron, err.Error())

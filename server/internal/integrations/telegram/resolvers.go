@@ -18,18 +18,20 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-// This file is the Telegram ResolverSet: the platform-specific seams the
-// channel-agnostic engine.Router runs the inbound pipeline through. Built
-// entirely on the generic channel_* queries plus the shared engine.ChatSession
-// — no new query, no schema change — mirroring slack/resolvers.go.
+// 角色定位：Telegram 的 ResolverSet——channel-agnostic 引擎 Router 跑入站流水线时，
+// 需要每平台各自实现的那组"缝"（按安装路由 → 两级去重 → 身份与成员资格 → 保证会话 →
+// 追加+标记 → /issue → 限速运行）。本文件把全部 Telegram 特有逻辑缝进通用引擎，
+// 完全建立在通用 channel_* 查询 + 共享 engine.ChatSession 之上——零新增查询、零表结构
+// 改动，与 slack/resolvers.go 同构。
+//
+// 文件内部按 Router 的调用顺序组织：安装路由 → 身份 → 去重 → 会话绑定 → 审计 →
+// 输入指示。
 
-// originTelegramChat is the issue.origin_type label for issues created via the
-// Telegram /issue command.
+// originTelegramChat 是通过 Telegram /issue 命令创建的 issue 的 origin_type 标签。
 const originTelegramChat = "telegram_chat"
 
-// NewTelegramResolverSet assembles the Telegram ResolverSet. Pass a nil
-// replier to disable outbound verdict notices; typing (sendChatAction) is
-// enabled when deps carry a decrypter.
+// NewTelegramResolverSet 组装 Telegram ResolverSet。replier 传 nil 表示关闭判定类出站
+// 提示；deps 携带 Decrypter 时才启用打字指示（sendChatAction 需要解密 token）。
 func NewTelegramResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier) engine.ResolverSet {
 	return engine.ResolverSet{
 		Installation: &installationResolver{q: q},
@@ -56,18 +58,16 @@ var (
 	_ engine.TypingNotifier       = (*typingNotifier)(nil)
 )
 
-// telegramBindingConfig is the opaque outbound routing persisted on the chat
-// binding's config: the real chat id survives even when the binding key is a
-// composite (forum-topic thread isolation).
+// telegramBindingConfig 是持久化在"聊天会话绑定"config 里的不透明出站路由信息：当绑定键
+// 是复合键（forum 话题隔离）时，真正的 chat id 靠它存活（回复时从 config 还原出 chat id）。
 type telegramBindingConfig struct {
 	ChatID string `json:"chat_id"`
 }
 
-// telegramSessionRouting derives the session-isolation key, the binding
-// config, and the reply thread from one inbound message. A private chat is one
-// continuous session (key = chat id). A group is one session per chat, except
-// forum topics, which isolate per topic (key = "chat:thread") — the closest
-// analog of Feishu thread isolation. Pure function, unit-tested without a DB.
+// telegramSessionRouting 从一条入站消息推导出三样东西：会话隔离键 bindingKey、绑定配置
+// config、以及回复线程 replyThread。规则：私聊是一整条连续会话（键 = chat id）；群聊每个
+// chat 一条会话，但 forum 话题按话题隔离（键 = "chat:thread"）——这是飞书"按线程隔离"最
+// 接近的对应物。纯函数，无 DB 也能单测。
 func telegramSessionRouting(msg channel.InboundMessage) (bindingKey string, config []byte, replyThread string) {
 	chatID := msg.Source.ChatID
 	cfg, _ := json.Marshal(telegramBindingConfig{ChatID: chatID})
@@ -77,6 +77,8 @@ func telegramSessionRouting(msg channel.InboundMessage) (bindingKey string, conf
 	return chatID, cfg, msg.Source.ThreadID
 }
 
+// decodeTelegramRaw 把入站消息里携带的 telegramRawEvent 解回来（出站/审计侧要读
+// BotID、EventType 等字段时用）。
 func decodeTelegramRaw(msg channel.InboundMessage) (telegramRawEvent, error) {
 	var raw telegramRawEvent
 	if len(msg.Raw) == 0 {
@@ -88,6 +90,8 @@ func decodeTelegramRaw(msg channel.InboundMessage) (telegramRawEvent, error) {
 	return raw, nil
 }
 
+// nullText 把空字符串编码成 pgtype.Text 的 NULL（审计表里空 chat/event/message id 应落
+// NULL 而非空串，查询时语义才正确）。
 func nullText(s string) pgtype.Text {
 	if s == "" {
 		return pgtype.Text{}
@@ -95,7 +99,7 @@ func nullText(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: true}
 }
 
-// ---- installation routing ----
+// ---- 安装路由 ----
 
 type installationResolver struct{ q *db.Queries }
 
@@ -106,8 +110,8 @@ func (r *installationResolver) ResolveInstallation(ctx context.Context, msg chan
 	}
 	inst, err := r.q.GetChannelInstallationByAppID(ctx, db.GetChannelInstallationByAppIDParams{
 		ChannelType: string(TypeTelegram),
-		// Route by the bot id: each polling loop serves exactly one bot, and the
-		// (channel_type, app_id) unique index maps it to its installation.
+		// 按 bot id 路由：每条轮询循环只服务一个 bot，(channel_type, app_id) 唯一索引
+		// 恰好把 bot id 映射回它的安装记录。
 		AppID: raw.BotID,
 	})
 	if err != nil {
@@ -126,7 +130,7 @@ func (r *installationResolver) ResolveInstallation(ctx context.Context, msg chan
 	}, nil
 }
 
-// ---- identity ----
+// ---- 身份 ----
 
 type identityResolver struct{ q *db.Queries }
 
@@ -141,7 +145,7 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 		}
 		return engine.ResolvedIdentity{}, err
 	}
-	// Binding existence no longer proves membership (no FK); re-check.
+	// 有绑定记录不再等于"是成员"（表间没有外键约束、可能已被移出工作区）；重新校验一次。
 	if _, err := r.q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 		UserID:      binding.MulticaUserID,
 		WorkspaceID: inst.WorkspaceID,
@@ -154,7 +158,7 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 	return engine.ResolvedIdentity{UserID: binding.MulticaUserID}, nil
 }
 
-// ---- dedup ----
+// ---- 去重 ----
 
 type deduper struct{ q *db.Queries }
 
@@ -165,6 +169,7 @@ func (r *deduper) Claim(ctx context.Context, installationID pgtype.UUID, message
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// 拿不到认领行 = 已被认领过 = 重复消息。
 			return pgtype.UUID{}, engine.ErrDuplicate
 		}
 		return pgtype.UUID{}, err
@@ -190,11 +195,10 @@ func (r *deduper) Release(ctx context.Context, installationID pgtype.UUID, messa
 	return err
 }
 
-// ---- session bind / append ----
+// ---- 会话绑定 / 追加 ----
 
-// chatSession is the shared engine session surface used by the Telegram
-// adapter. Keeping the adapter behind this narrow seam makes its parameter
-// mapping testable without a database.
+// chatSession 是 Telegram 适配器需要的共享引擎会话接口的窄面。把适配器挡在这条窄缝后面，
+// 参数映射可以脱离数据库做单测。
 type chatSession interface {
 	EnsureSession(ctx context.Context, in engine.EnsureSessionInput) (pgtype.UUID, error)
 	StartSession(ctx context.Context, in engine.StartSessionInput) (engine.StartSessionResult, error)
@@ -203,6 +207,7 @@ type chatSession interface {
 	BindMediaRefs(ctx context.Context, in engine.BindMediaInput) error
 }
 
+// sessionBinder 把引擎的会话参数翻译成 Telegram 会话语义（见 telegramSessionRouting）。
 type sessionBinder struct{ session chatSession }
 
 func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessionParams) (pgtype.UUID, error) {
@@ -270,6 +275,8 @@ func (r *sessionBinder) BindMedia(ctx context.Context, p engine.BindMediaParams)
 		Sender:      p.Sender,
 		MediaRefs:   p.MediaRefs,
 	}
+	// 探测增强接口：实现了 BindMediaRefsWithResult 就用它（能拿到结果），否则退到只写
+	// 不读的基础版。这样窄面保持最小，富能力的实现不必削足适履。
 	if richer, ok := r.session.(interface {
 		BindMediaRefsWithResult(context.Context, engine.BindMediaInput) (engine.BindMediaResult, error)
 	}); ok {
@@ -278,12 +285,12 @@ func (r *sessionBinder) BindMedia(ctx context.Context, p engine.BindMediaParams)
 	return engine.BindMediaResult{}, r.session.BindMediaRefs(ctx, in)
 }
 
-// ---- audit ----
+// ---- 审计 ----
 
 type auditor struct{ q *db.Queries }
 
 func (r *auditor) RecordDrop(ctx context.Context, instID pgtype.UUID, msg channel.InboundMessage, reason engine.DropReason) error {
-	raw, _ := decodeTelegramRaw(msg) // best-effort; a decode miss still audits
+	raw, _ := decodeTelegramRaw(msg) // 尽力而为：Raw 解析失败也要把这次丢弃审计下来
 	return r.q.RecordChannelInboundDrop(ctx, db.RecordChannelInboundDropParams{
 		ID:               dbid.NewV7(),
 		ChannelType:      string(TypeTelegram),
@@ -296,11 +303,10 @@ func (r *auditor) RecordDrop(ctx context.Context, instID pgtype.UUID, msg channe
 	})
 }
 
-// ---- typing indicator ----
+// ---- 打字指示 ----
 
-// typingNotifier shows Telegram's native "typing…" chat action when a message
-// is ingested. The action self-expires after ~5 seconds, so unlike Slack's
-// reaction there is nothing to clear — OnSettled is a no-op.
+// typingNotifier 在消息被收入时展示 Telegram 原生的 "typing…" 聊天动作。该动作约 5 秒后
+// 自动过期，所以不像 Slack 的回应表情那样需要收尾清理——OnSettled 是空操作。
 type typingNotifier struct {
 	decrypt Decrypter
 	apiBase string
@@ -308,7 +314,7 @@ type typingNotifier struct {
 	logger  *slog.Logger
 }
 
-// NewTypingNotifier builds the sendChatAction-based typing indicator.
+// NewTypingNotifier 组装基于 sendChatAction 的打字指示器。
 func NewTypingNotifier(decrypt Decrypter, apiBase string, client *http.Client, logger *slog.Logger) engine.TypingNotifier {
 	if logger == nil {
 		logger = slog.Default()
@@ -316,6 +322,8 @@ func NewTypingNotifier(decrypt Decrypter, apiBase string, client *http.Client, l
 	return &typingNotifier{decrypt: decrypt, apiBase: apiBase, client: client, logger: logger}
 }
 
+// OnIngested 在消息被收入时点亮输入框旁的 "typing…"。失败只记日志（指示器是锦上添花，
+// 不影响消息处理主链路）。
 func (n *typingNotifier) OnIngested(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID) {
 	row, ok := inst.Platform.(db.ChannelInstallation)
 	if !ok {
@@ -339,4 +347,5 @@ func (n *typingNotifier) OnIngested(ctx context.Context, inst engine.ResolvedIns
 	}
 }
 
+// OnSettled 空操作：sendChatAction 的 "typing…" 会在约 5 秒后自动消失，无需清理。
 func (n *typingNotifier) OnSettled(ctx context.Context, sessionID pgtype.UUID) {}

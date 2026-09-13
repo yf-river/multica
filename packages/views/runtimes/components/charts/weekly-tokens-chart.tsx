@@ -1,3 +1,13 @@
+// ============================================================================
+// 每周 token 数四段堆叠图（runtime 用量页「周视图」token 概览）
+//
+// 角色定位：把每周四种 token（输入/输出/缓存读取/缓存写入）的计数画成一根
+// 纵向堆叠柱，每周一根。它是每日 token 图的粗粒度版本——序列与颜色完全一致，
+// 让「周」被读作「日」的更粗切分而不是另一张图。
+//
+// 特殊处理：进行中（未满整周）的那根柱半透明显示，提示「本周尚未结束」，
+// 避免把进行中的一周误读成用量骤降。数据来自 utils.ts 的 aggregateByWeek。
+// ============================================================================
 import {
   BarChart,
   Bar,
@@ -15,8 +25,8 @@ import {
 import { formatTokens, type WeeklyTokenData } from "../../utils";
 import { useLocale, useT } from "../../../i18n";
 
-// Mirror of DailyTokensChart's four-segment stack — same series and colours
-// keep the Weekly view legible as a coarser cut of the Daily one.
+// 每日 token 图的四段堆叠镜像——同样的序列与颜色，让周视图读作日视图的
+// 更粗切分。
 export const weeklyTokenStackConfig = {
   input: { label: "Input", color: "var(--chart-1)" },
   output: { label: "Output", color: "var(--chart-2)" },
@@ -24,6 +34,9 @@ export const weeklyTokenStackConfig = {
   cacheWrite: { label: "Cache write", color: "var(--chart-3)" },
 } satisfies ChartConfig;
 
+/**
+ * 每周 token 堆叠柱状图。进行中的周（partial=true）半透明显示。
+ */
 export function WeeklyTokensChart({ data }: { data: WeeklyTokenData[] }) {
   const { t } = useT("runtimes");
   const locale = useLocale();

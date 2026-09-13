@@ -2,8 +2,13 @@
 
 import type { SVGProps } from "react";
 
+// 各品牌官方 Logo 的内联 SVG 图标集合（Google / X / LinkedIn / GitHub /
+// YouTube / OpenAI），供引导流程里的第三方登录、授权选择等入口使用。
+
+// 图标通用属性：去掉 children，防止调用方往 SVG 里塞不该有的内容。
 type IconProps = Omit<SVGProps<SVGSVGElement>, "children">;
 
+/** Google 的彩色「G」Logo。 */
 export function GoogleIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden {...props}>
@@ -27,6 +32,7 @@ export function GoogleIcon(props: IconProps) {
   );
 }
 
+/** X（原 Twitter）的 Logo。 */
 export function XIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden {...props}>
@@ -38,6 +44,7 @@ export function XIcon(props: IconProps) {
   );
 }
 
+/** LinkedIn 的 Logo。 */
 export function LinkedInIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden {...props}>
@@ -49,6 +56,7 @@ export function LinkedInIcon(props: IconProps) {
   );
 }
 
+/** GitHub 的 Logo。 */
 export function GitHubIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden {...props}>
@@ -60,6 +68,7 @@ export function GitHubIcon(props: IconProps) {
   );
 }
 
+/** YouTube 的 Logo。 */
 export function YouTubeIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden {...props}>
@@ -72,6 +81,7 @@ export function YouTubeIcon(props: IconProps) {
   );
 }
 
+/** OpenAI 的 Logo。 */
 export function OpenAIIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden {...props}>

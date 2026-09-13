@@ -1,11 +1,14 @@
 "use client";
 
+// 问题界面的「进行中活动」工具：把工作区级的智能体任务快照按问题切分，
+// 得到每个问题「是否有智能体正在干活/排队」的状态，供行级指示器和表头徽标使用。
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { useWorkspaceId } from "@multica/core/hooks";
 import type { AgentTask } from "@multica/core/types";
 
+/** 单个问题当前的智能体活动状态。 */
 export interface IssueActivityState {
   isWorking: boolean;
   isQueued: boolean;
@@ -13,11 +16,13 @@ export interface IssueActivityState {
   queuedTasks: AgentTask[];
 }
 
+/** 问题界面整体需要的活动投影：按问题 id 分组的活动状态 + 正在干活的问题 id 集合。 */
 export interface IssueSurfaceActivity {
   activityByIssueId: Map<string, IssueActivityState>;
   runningIssueIds: Set<string>;
 }
 
+/** 这些任务状态都算「排队中/待分发」，而不是正在运行。 */
 function isQueuedTaskStatus(status: AgentTask["status"]) {
   return (
     status === "queued" ||
@@ -26,19 +31,21 @@ function isQueuedTaskStatus(status: AgentTask["status"]) {
   );
 }
 
+/** 单个问题在快照里分到的任务，按运行中/排队中两组返回。 */
 export interface IssueTaskGroups {
   running: AgentTask[];
   queued: AgentTask[];
 }
 
 /**
- * Per-issue slice of the workspace-wide agent task snapshot. Used as the
- * `select` for a row-level `useQuery(agentTaskSnapshotOptions)`: every row
- * still observes the one shared snapshot query, but React Query's structural
- * sharing keeps this returned object referentially stable when *this* issue's
- * tasks are unchanged, so a snapshot invalidation only re-renders the rows
- * whose own tasks actually moved — not the whole list. Terminal statuses are
- * dropped (they belong on issue history, not the live indicator).
+ * 从工作区级智能体任务快照里取出「某个问题」的那一份。用作行级
+ * `useQuery(agentTaskSnapshotOptions)` 的 `select`：每行仍共享同一次快照查询，
+ * 但 React Query 的结构共享会让返回值在这个问题的任务没变化时保持引用稳定——
+ * 于是快照失效只重渲染「自己的任务真的动了」的那些行，而不是整列列表。
+ * 终态任务被丢弃（它们该去问题历史里，而不是活在实时指示器上）。
+ * @param snapshot - 工作区级任务快照。
+ * @param issueId - 要切分出的问题 id。
+ * @returns 该问题的运行中/排队中任务。
  */
 export function selectIssueTasks(
   snapshot: readonly AgentTask[],
@@ -54,6 +61,12 @@ export function selectIssueTasks(
   return { running, queued };
 }
 
+/**
+ * 由一组任务推导出整个界面的活动投影：只保留运行中/排队中的任务，
+ * 按键分组，并收集正在干活的问题 id。
+ * @param tasks - 任务列表（通常是整个工作区的快照）。
+ * @returns 按问题分组的活动状态 + 正在干活的问题 id 集合。
+ */
 export function deriveIssueSurfaceActivity(
   tasks: readonly AgentTask[],
 ): IssueSurfaceActivity {
@@ -92,6 +105,10 @@ export function deriveIssueSurfaceActivity(
   return { activityByIssueId, runningIssueIds };
 }
 
+/**
+ * 读取工作区智能体任务快照并推导出问题界面的活动投影（运行中/排队中、按问题分组）。
+ * @returns 界面级的活动投影。
+ */
 export function useIssueSurfaceActivity(): IssueSurfaceActivity {
   const wsId = useWorkspaceId();
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));

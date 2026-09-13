@@ -1,3 +1,10 @@
+// 职责定位：inbox（通知收件箱）的 HTTP 处理器：列出未归档项、列出归档视图、单条已读/未读、
+// 单条/批量归档与恢复、未读数计数、跨 workspace 未读汇总。收件人维度目前只服务「member」
+// （某 workspace 的某个用户成员），按 workspace + user 过滤。
+//
+// 语义约定：归档是 issue 级的——归档一条会把同 issue 的同组兄弟通知一起归档，恢复同理；
+// 「已读」不影响归档/未归档。所有变更走「先锁行（LockInboxItemForUpdate）→ 改状态 → 在
+// 同一事务里落事件 → 提交后发布」的模式，事件承载供实时同步。
 package handler
 
 import (
@@ -13,6 +20,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// InboxItemResponse 是单条 inbox 项的接口形态。IssueStatus / IssuePriority 等 issue 投影
+// 字段在列表与详情（富化）路径填充；Actor* 是谁触发了这条通知。
 type InboxItemResponse struct {
 	ID            string          `json:"id"`
 	WorkspaceID   string          `json:"workspace_id"`
@@ -33,6 +42,7 @@ type InboxItemResponse struct {
 	Details       json.RawMessage `json:"details"`
 }
 
+// inboxToResponse 把数据库里的单条 inbox 记录转成接口形态（不含 issue 投影字段）。
 func inboxToResponse(i db.InboxItem) InboxItemResponse {
 	return InboxItemResponse{
 		ID:            uuidToString(i.ID),
@@ -53,6 +63,7 @@ func inboxToResponse(i db.InboxItem) InboxItemResponse {
 	}
 }
 
+// inboxRowToResponse 把「列表查询行」转成接口形态（行里多带了 join 出的 issue 投影字段）。
 func inboxRowToResponse(r db.ListInboxItemsRow) InboxItemResponse {
 	return InboxItemResponse{
 		ID:            uuidToString(r.ID),
@@ -75,14 +86,15 @@ func inboxRowToResponse(r db.ListInboxItemsRow) InboxItemResponse {
 	}
 }
 
-// ListArchivedInboxItemsRow carries the same columns as ListInboxItemsRow (both
-// queries select `inbox_item.*` plus the joined issue projections), so the archived
-// row converts to the active one and reuses its mapper. If either query's
-// column list drifts, this conversion stops compiling — which is the point.
+// archivedInboxRowToResponse 说明见上（与 ListInboxItemsRow 列一致），所以归档行直接
+// 转成活跃行、复用同一个 mapper——两条查询的列清单一旦漂移，这段转换就编不过，这正是
+// 想达到的效果。
 func archivedInboxRowToResponse(r db.ListArchivedInboxItemsRow) InboxItemResponse {
 	return inboxRowToResponse(db.ListInboxItemsRow(r))
 }
 
+// enrichInboxResponse 若该条通知关联了 issue，就补上 issue 当前的状态与优先级。读失败静默
+// 跳过——这些只是展示性富化字段，issue 不存在（已删除）时保持为空即可。
 func (h *Handler) enrichInboxResponse(ctx context.Context, resp InboxItemResponse, issueID pgtype.UUID) InboxItemResponse {
 	if !issueID.Valid {
 		return resp
@@ -97,6 +109,7 @@ func (h *Handler) enrichInboxResponse(ctx context.Context, resp InboxItemRespons
 	return resp
 }
 
+// ListInbox 列出当前用户（member）在活跃 workspace 下未归档的通知，即收件箱主视图。
 func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -126,15 +139,12 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ListArchivedInbox returns the recipient's archived notifications, backing the
-// inbox's "Archived" sub-view. Kept as its own endpoint rather than a flag on
-// ListInbox so installed clients keep their current contract, and so the
-// unbounded archive never rides along with the main list.
+// ListArchivedInbox 返回收件人的已归档通知，支撑收件箱的「Archived」子视图。单独做成端点
+// 而不是 ListInbox 上加个 flag：既保持已装客户端契约不变，也不让无上限的归档列表搭主列表
+// 的车。
 //
-// The query drops any issue that also has an active row, keeping this list and
-// the main inbox mutually exclusive per issue group. It selects at most 200
-// groups and returns only each group's newest row plus its optional comment
-// anchor — see the query comment for both the bound and the grouping contract.
+// 查询会剔除「还有活跃行」的 issue，保证这份列表与主收件箱按 issue 组互斥；最多取 200 组，
+// 每组只返回最新一行与其可选的评论锚点——上限与分组契约见查询里的注释。
 func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -164,6 +174,8 @@ func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// MarkInboxRead 把单条通知标记为已读：事务里先锁行再改状态，记 EventInboxRead 事件并发布，
+// 返回富化后的最新条目。
 func (h *Handler) MarkInboxRead(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	prev, ok := h.loadInboxItemForUser(w, r, id)
@@ -203,12 +215,11 @@ func (h *Handler) MarkInboxRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// MarkInboxUnread flips a notification back to unread, the inverse of
-// MarkInboxRead. It exists so a user can park something they opened but did not
-// act on: the inbox auto-marks an item read the moment it is selected, which
-// otherwise makes "opened" and "handled" the same signal.
+// MarkInboxUnread 把通知翻回未读，是 MarkInboxRead 的逆操作。它存在的意义：用户能把「打开过
+// 但还没处理」的事先放一边——收件箱在条目被选中的瞬间就会自动标已读，否则「打开过」和
+// 「处理完」会变成同一个信号。
 //
-// Scope is the single item, matching MarkInboxRead — see the query comment.
+// 作用范围是单条，与 MarkInboxRead 一致——见查询里的注释。
 func (h *Handler) MarkInboxUnread(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	prev, ok := h.loadInboxItemForUser(w, r, id)
@@ -248,6 +259,8 @@ func (h *Handler) MarkInboxUnread(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// ArchiveInboxItem 归档一条通知，同时归档同 issue 的所有兄弟通知（issue 级归档），
+// 记 EventInboxArchived 事件并发布。
 func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	prev, ok := h.loadInboxItemForUser(w, r, id)
@@ -271,7 +284,7 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Archive all sibling inbox items for the same issue (issue-level archive)
+	// 顺带归档同 issue 的兄弟通知（issue 级归档：同一件事的通知整组收走）。
 	if item.IssueID.Valid {
 		if _, err := qtx.ArchiveInboxByIssue(r.Context(), db.ArchiveInboxByIssueParams{
 			WorkspaceID:   item.WorkspaceID,
@@ -302,14 +315,11 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// UnarchiveInboxItem restores an archived notification to the main inbox. It is
-// the inverse of ArchiveInboxItem and mirrors its issue-level scope: archiving
-// one item archives every sibling for the same issue, so restoring brings the
-// whole group back.
+// UnarchiveInboxItem 把归档通知恢复到主收件箱，是 ArchiveInboxItem 的逆操作，且镜像它的
+// issue 级范围：归档一条会把同 issue 的整组兄弟一起归档，所以恢复也把整组带回来。
 //
-// `read` is untouched on purpose. An item archived while unread comes back
-// unread, which raises the unread badge again — the badge only ever counted
-// non-archived items, so restoring one is a real addition, not a bug.
+// `read` 刻意不去动。一条「未读时归档」的通知恢复回来仍是未读，未读角标会重新亮起——角标
+// 本来就只数未归档项，所以恢复一条是真的增加一条未读，不是 bug。
 func (h *Handler) UnarchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	prev, ok := h.loadInboxItemForUser(w, r, id)
@@ -333,7 +343,7 @@ func (h *Handler) UnarchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Restore all sibling inbox items for the same issue (issue-level restore).
+	// 顺带恢复同 issue 的兄弟通知（issue 级恢复）。
 	if item.IssueID.Valid {
 		if _, err := qtx.UnarchiveInboxByIssue(r.Context(), db.UnarchiveInboxByIssueParams{
 			WorkspaceID:   item.WorkspaceID,
@@ -364,6 +374,7 @@ func (h *Handler) UnarchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// CountUnreadInbox 返回当前用户在活跃 workspace 下的未读数（给未读角标用）。
 func (h *Handler) CountUnreadInbox(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -388,19 +399,15 @@ func (h *Handler) CountUnreadInbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int64{"count": count})
 }
 
-// InboxWorkspaceUnreadResponse is one workspace's unread inbox count in the
-// cross-workspace summary.
+// InboxWorkspaceUnreadResponse 是跨 workspace 汇总里「某一个 workspace」的未读数。
 type InboxWorkspaceUnreadResponse struct {
 	WorkspaceID string `json:"workspace_id"`
 	Count       int64  `json:"count"`
 }
 
-// UnreadInboxSummary returns per-workspace unread inbox counts across every
-// workspace the user belongs to. The sidebar uses it to light a dot on the
-// workspace switcher when a workspace OTHER than the active one has unread
-// items, without fetching each workspace's full inbox list. It is
-// account-level by nature: it ignores the active workspace and keys only on
-// the authenticated user.
+// UnreadInboxSummary 返回当前用户所属「每个 workspace」的未读数。侧边栏用它给 workspace
+// 切换器打点：当「非当前激活」的 workspace 有未读时不拉它的完整收件箱也能亮一个点。它天生
+// 是账号级的：忽略当前激活的 workspace，只按已登录用户取数。
 func (h *Handler) UnreadInboxSummary(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -424,6 +431,8 @@ func (h *Handler) UnreadInboxSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// MarkAllInboxRead 把当前 workspace 下该用户的全部通知标已读。事务内更新，落一个带 count
+// 的批量事件（EventInboxBatchRead）并发布，返回被标记的条数。
 func (h *Handler) MarkAllInboxRead(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -467,6 +476,7 @@ func (h *Handler) MarkAllInboxRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
 
+// ArchiveAllInbox 把当前 workspace 下该用户的全部通知归档，返回归档条数并广播批量事件。
 func (h *Handler) ArchiveAllInbox(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -510,6 +520,7 @@ func (h *Handler) ArchiveAllInbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
 
+// ArchiveAllReadInbox 归档该用户「已读」的全部通知（保留未读的继续提醒），返回条数并广播。
 func (h *Handler) ArchiveAllReadInbox(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -553,6 +564,8 @@ func (h *Handler) ArchiveAllReadInbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
 
+// ArchiveCompletedInbox 归档「关联 issue 已进入终态（完成/取消等）」的通知。先解析出本
+// workspace 的终态状态键集合，再在事务里按它批量归档，返回条数并广播。
 func (h *Handler) ArchiveCompletedInbox(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {

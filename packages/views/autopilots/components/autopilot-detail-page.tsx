@@ -1,3 +1,8 @@
+// autopilot 详情页：展示单个 autopilot 的全部信息——状态开关、执行者、输出模式、
+// 项目、订阅者、描述、触发规则（可增删、webhook 可复制/轮换 URL）、webhook 投递
+// 记录、运行历史（可看执行转录），以及"立即运行/编辑/删除"。编辑走共用的
+// AutopilotDialog；权限由 can_write/can_manage_access 控制。
+
 "use client";
 
 import { useState } from "react";
@@ -71,27 +76,24 @@ import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
 import { PageHeader } from "../../layout/page-header";
 
-// A run that already happened is an instant in the reader's day, so it reads in
-// the reader's zone (no timeZone passed). A run that is still to come belongs to
-// the schedule that will fire it — see the trigger row, which passes the
-// trigger's own timezone.
+// 已发生的运行是读者一天里的某个时刻，用读者所在时区显示（不传 timeZone）。尚待
+// 发生的运行属于将触发它的那个计划——见触发行，那里传的是触发器自己的时区。
 type RunStatus = "issue_created" | "running" | "skipped" | "completed" | "failed";
 
+// 各运行状态的颜色与图标。
 const RUN_VISUAL: Record<RunStatus, { color: string; icon: typeof CheckCircle2; spin?: boolean }> = {
   issue_created: { color: "text-blue-500", icon: Clock },
   running: { color: "text-blue-500", icon: Loader2, spin: true },
-  // `skipped` (admission check found the assignee runtime offline,
-  // MUL-1899) is muted so it doesn't read as a failure-ratio inflator.
-  // The row still shows failure_reason which carries the skip context.
+  // `skipped`（准入检查发现执行者运行时离线，MUL-1899）用弱化色，让它不至于被
+  // 读成拉高失败率的项。行上仍显示带跳过上下文的 failure_reason。
   skipped: { color: "text-muted-foreground", icon: Ban },
   completed: { color: "text-emerald-500", icon: CheckCircle2 },
   failed: { color: "text-destructive", icon: XCircle },
 };
 
-// WebhookPayloadSlot lazy-fetches the full run (incl. trigger_payload) once
-// the parent dialog actually mounts this slot. The list endpoint omits
-// trigger_payload to keep responses small (worst case 256 KiB × N runs),
-// so the detail-on-demand fetch lives here.
+// WebhookPayloadSlot 在父弹窗真正挂载这个槽位时才懒加载完整运行（含
+// trigger_payload）。列表端点为保持响应小而省略 trigger_payload（最坏 256 KiB ×
+// N 次运行），所以按需拉详情的请求放在这里。
 function WebhookPayloadSlot({ autopilotId, runId }: { autopilotId: string; runId: string }) {
   const wsId = useWorkspaceId();
   const { data, isLoading } = useQuery(
@@ -106,6 +108,8 @@ function WebhookPayloadSlot({ autopilotId, runId }: { autopilotId: string; runId
   return <WebhookPayloadPreview payload={data.trigger_payload} />;
 }
 
+// 运行历史列表中的一行：状态/来源/摘要/时间，行点击跳转；run_only 且有 task_id 的
+// 运行提供"查看转录"入口。
 function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: string; agentName: string }) {
   const { t, i18n } = useT("autopilots");
   const wsPaths = useWorkspacePaths();
@@ -113,8 +117,8 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
   const visual = RUN_VISUAL[status];
   const StatusIcon = visual.icon;
 
-  // For runs with a task_id (run_only mode), build a minimal AgentTask so
-  // TranscriptButton can lazy-load the execution transcript.
+  // 对带 task_id 的运行（run_only 模式），拼一个最小 AgentTask，让
+  // TranscriptButton 能懒加载执行转录。
   const syntheticTask: AgentTask | null = run.task_id
     ? {
         id: run.task_id,
@@ -184,6 +188,8 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
   return <div className={rowClass}>{content}</div>;
 }
 
+// 运行历史列表：非 skipped 的运行逐行平铺，skipped 运行收进一个可展开组，避免
+// 失败/跳过率高的小问题把列表刷屏。
 function RunHistoryList({
   runs,
   agentId,
@@ -208,6 +214,7 @@ function RunHistoryList({
   );
 }
 
+// 折叠的"被跳过运行"组：头部一行摘要（次数 + 最近时间），展开后逐行列出。
 function SkippedRunsGroup({
   runs,
   agentId,
@@ -255,6 +262,8 @@ function SkippedRunsGroup({
   );
 }
 
+// 触发行：展示一个触发规则（定时/API/webhook）的可读信息与操作。定时器行有白话
+// 回读 + cron + 下次运行；webhook 行额外展示/复制/轮换/删除 URL。
 function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrigger; autopilotId: string; canWrite: boolean }) {
   const { t, i18n } = useT("autopilots");
   const describeSchedule = useDescribeSchedule();
@@ -264,6 +273,7 @@ function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrig
   const [rotateOpen, setRotateOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  // 删除触发器。
   const handleDelete = async () => {
     setDeleting(true);
     try {
@@ -283,9 +293,8 @@ function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrig
 
   const isWebhook = trigger.kind === "webhook";
   const isApi = trigger.kind === "api";
-  // Resolve the URL from the server's webhook_url first, then compose
-  // from the API base URL (desktop) or window.origin (web). Falls back
-  // to the relative path if neither is available.
+  // 优先从服务器给的 webhook_url 解析 URL，否则用 API 基址（桌面）或
+  // window.origin（web）拼接。都不可用时回退到相对路径。
   const webhookUrl = isWebhook
     ? buildAutopilotWebhookUrl({
         trigger,
@@ -294,6 +303,7 @@ function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrig
       })
     : null;
 
+  // 轮换 webhook token。
   const handleRotate = async () => {
     try {
       await rotateToken.mutateAsync({ autopilotId, triggerId: trigger.id });
@@ -310,19 +320,15 @@ function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrig
 
   const Icon = isWebhook ? Webhook : isApi ? Zap : Clock;
   const showWebhookUrlRow = isWebhook && webhookUrl;
-  // null when the expression is beyond the structured model — those rows keep
-  // showing the raw cron on its own.
+  // 表达式超出结构化模型时为 null——那些行单独继续显示原始 cron。
   const scheduleConfig = trigger.cron_expression
     ? parseCron(trigger.cron_expression, trigger.timezone ?? "UTC")
     : null;
   const scheduleDescription = scheduleConfig ? describeSchedule(scheduleConfig) : null;
 
-  // Delete control extracted so a webhook trigger can render it inline
-  // with Copy / Rotate on the URL action row (where the other action
-  // buttons live), while schedule / api triggers — which have no URL row
-  // — keep it pinned to the row's top-right corner. Without this the
-  // trash icon visually floats above the URL action buttons because the
-  // outer flex uses `items-start`.
+  // 删除控件单独提出，让 webhook 触发器可把它内联渲染在 URL 操作行（与其他操作
+  // 按钮同排），而定时/API 触发器——没有 URL 行——仍把它钉在行右上角。否则外层
+  // flex 用 `items-start` 时垃圾桶图标会视觉悬浮在 URL 操作按钮上方。
   const deleteButton = canWrite ? (
     <Button
       size="icon"
@@ -356,16 +362,15 @@ function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrig
           )}
         </div>
         {trigger.cron_expression && (
-          // The plain-language line leads; the raw expression drops to a
-          // secondary line so the two never run together as one blob.
+          // 白话句子领衔；原始表达式降到次要行，两者不会混成一坨。
           <div className="mt-0.5 space-y-0.5">
             <div className="text-caption text-muted-foreground">
               {scheduleDescription ?? trigger.cron_expression}
               {trigger.timezone && ` (${trigger.timezone})`}
             </div>
             {scheduleDescription !== null && scheduleConfig !== null && (
-              // Fields only: the zone already reads out in the sentence above,
-              // where a person can use it — same rule as the editor's readback.
+              // 只显示五个字段：时区已在上面的句子里读出来了，人能看懂——与编辑器
+              // 回读的规则一致。
               <div className="font-mono text-micro text-muted-foreground">
                 {cronFields(scheduleConfig)}
               </div>
@@ -457,6 +462,8 @@ function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrig
   );
 }
 
+// "添加触发"弹窗：选择类型（定时 / webhook）。定时类型内嵌 ScheduleEditor 编辑
+// cron 计划，提交前经提交闸向服务器确认；webhook 类型提交后生成带 token 的 URL。
 function AddTriggerDialog({
   open,
   onOpenChange,
@@ -527,9 +534,8 @@ function AddTriggerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogTitle>{t(($) => $.add_trigger_dialog.title)}</DialogTitle>
-        {/* DialogContent is a grid, so without min-w-0 this item's min-width is
-            its content's — and the cron readback is one unbreakable line that
-            would push the track past the dialog instead of truncating. */}
+        {/* DialogContent 是网格布局，没有 min-w-0 时此项的最小宽度就是内容宽——而 cron
+            回读是行内不可断的一长串，会把轨道推出弹窗而不是截断。 */}
         <div className="min-w-0 space-y-4 pt-2">
           <div>
             <label className="text-caption font-medium text-muted-foreground">
@@ -569,9 +575,8 @@ function AddTriggerDialog({
               }}
               wsId={wsId}
               onValidityChange={scheduleGate.onValidityChange}
-              // Same reason as the autopilot dialog: the submit path reads the
-              // schedule, validates it over the network, then writes what it
-              // read — an edit landing inside that window would be discarded.
+              // 与 autopilot 弹窗同理：提交路径读取计划、经网络校验、再写入所读内容
+              // ——落在那个窗口内的编辑会被丢弃。
               disabled={submitting}
             />
           ) : (
@@ -605,8 +610,8 @@ function AddTriggerDialog({
   );
 }
 
-// Read-only chip row; edits flow through AutopilotDialog → SubscriberMultiSelect
-// so the detail page never holds in-flight selection state.
+// 只读订阅者 chip 行；编辑经由 AutopilotDialog → SubscriberMultiSelect，所以详情页
+// 从不持有飞行中的选择状态。
 function SubscriberChips({
   subscribers,
 }: {
@@ -639,6 +644,13 @@ function SubscriberChips({
   );
 }
 
+/**
+ * autopilot 详情页。加载详情后按区块展示：属性（执行者/创建者/模式/项目/订阅者/
+ * 描述）、触发规则（增删、webhook URL 复制与轮换）、webhook 投递记录、运行历史，
+ * 头部提供启停开关与"立即运行/编辑"，底部危险区可删除。数据与操作权限跟随
+ * can_write。
+ * @param autopilotId autopilot 的 ID（路由参数）。
+ */
 export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
   const { t } = useT("autopilots");
   const wsId = useWorkspaceId();
@@ -711,29 +723,27 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
 
   const { autopilot, triggers } = data;
   const collaborators = data.collaborators ?? [];
-  // Treat an absent can_write (older server) as "allowed" — the backend is the
-  // real gate, so the UI only hides controls when the server explicitly says
-  // the caller cannot write.
+  // 把缺失的 can_write（旧服务器）当作"允许"——后端才是真正的闸，UI 只在服务器
+  // 明确说调用方不能写时才隐藏控件。
   const canWrite = autopilot.can_write !== false;
-  // Managing the access list is narrower than write: granted collaborators can
-  // edit/run but cannot grant/revoke. Fall back to canWrite when the server
-  // doesn't send the field (older backend).
+  // 管理访问列表比"能写"更窄：被授权的协作者可编辑/运行，但不能授予/撤销。服务器
+  // 不发该字段时（旧后端）回退到 canWrite。
   const canManageAccess = autopilot.can_manage_access ?? canWrite;
 
+  // 手动"立即运行"。
   const handleRunNow = async () => {
     try {
       const run = await triggerAutopilot.mutateAsync(autopilotId);
-      // Manual "run now" returns 200 even when admission blocks the run, so the
-      // toast is driven by the run's domain status, not the HTTP 2xx (MUL-4525).
-      // Success is a whitelist (issue_created/running) — a skipped run warns, a
-      // failed or unknown/future status errors — never a false "triggered".
+      // 手动"立即运行"即使准入挡住了也会返回 200，所以 toast 由运行的领域状态驱动，
+      // 而非 HTTP 2xx（MUL-4525）。成功是白名单（issue_created/running）——skipped
+      // 警告、failed 或未知/未来状态报错——绝不误报 "triggered"。
       const kind = runNowToastKind(run?.status);
       if (kind === "success") {
         toast.success(t(($) => $.detail.toast_triggered));
         return;
       }
-      // reason_code is the stable, typed cause the server decided at admission
-      // time; an unknown/absent code degrades to a generic "not triggered".
+      // reason_code 是服务器准入时决定的稳定类型化原因；未知/缺失 code 降级为通用
+      // "未触发"文案。
       const message = t(($) => $.detail[runNowBlockedKey(run?.reason_code)]);
       if (kind === "warning") {
         toast.warning(message);
@@ -746,13 +756,13 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
         toast.error(t(($) => $.detail[runNowBlockedKey(reason)]));
         return;
       }
-      // Only a 4xx message is written for the user; a 5xx one is internal
-      // server detail (MUL-6472), so an unclassified dispatch failure shows the
-      // localized generic sentence instead of the raw body.
+      // 只有 4xx 的文案写给用户；5xx 是内部服务器细节（MUL-6472），所以无法归类的
+      // 派发失败显示本地化的通用句子而不是原始 body。
       toast.error(clientErrorMessage(e) || t(($) => $.detail.toast_trigger_failed));
     }
   };
 
+  // 删除 autopilot，成功后退回列表页。
   const handleDelete = async () => {
     setDeleting(true);
     try {
@@ -775,7 +785,7 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
+      {/* 头部（面包屑）：标题 + 启停开关 + 状态 + 编辑/立即运行 */}
       <BreadcrumbHeader
         segments={[{ href: wsPaths.autopilots(), label: t(($) => $.page.title) }]}
         leaf={
@@ -835,6 +845,7 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
       />
 
       {autopilot.pause_reason === "agent_runtime_required" && (
+        // 横幅：因执行者未绑定运行时而暂停，引导去绑定。
         <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-6 py-2 text-caption text-amber-900 dark:text-amber-100">
           <Server className="size-3.5 shrink-0" />
           <span className="flex-1">
@@ -853,7 +864,7 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
 
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto p-6 space-y-8">
-          {/* Properties */}
+          {/* 属性 */}
           <section className="space-y-4">
             <h2 className="text-body font-medium text-muted-foreground uppercase tracking-wider">
               {t(($) => $.detail.section_properties)}
@@ -877,9 +888,9 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
               <div>
                 <label className="text-caption text-muted-foreground">{t(($) => $.detail.field_created_by)}</label>
                 <div className="mt-1 flex items-center gap-2">
-                  {/* Creator may be a member or an agent: the HTTP create path stamps
-                      member today, but backend logic also writes created_by_type=agent.
-                      ActorAvatar/getActorName resolve both, so never assume member. */}
+                  {/* 创建者可能是成员或智能体：HTTP 创建路径今天盖的是成员，但后端
+                      逻辑也会写 created_by_type=agent。ActorAvatar/getActorName 两者
+                      都解析，所以绝不假定是 member。 */}
                   <ActorAvatar
                     actorType={autopilot.created_by_type}
                     actorId={autopilot.created_by_id}
@@ -898,10 +909,9 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
                   {t(($) => $.execution_mode[autopilot.execution_mode as AutopilotExecutionMode])}
                 </div>
               </div>
-              {/* Shown for BOTH output modes (MUL-6681): a run_only autopilot's
-                  project decides its execution environment (repository /
-                  local_directory, and therefore worktree isolation), so an
-                  operator debugging a run needs to see it here. */}
+              {/* 两种输出模式都显示（MUL-6681）：run_only 型 autopilot 的项目决定
+                  它的执行环境（仓库 / 本地目录，进而决定 worktree 隔离），所以调试某
+                  次运行的运维人员需要在这里看到它。 */}
               <div>
                 <label className="text-caption text-muted-foreground">{t(($) => $.detail.field_project)}</label>
                 <div className="mt-1 min-w-0">
@@ -943,7 +953,7 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
             </div>
           </section>
 
-          {/* Triggers */}
+          {/* 触发规则 */}
           <section className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-body font-medium text-muted-foreground uppercase tracking-wider">
@@ -969,15 +979,14 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
             )}
           </section>
 
-          {/* Webhook deliveries — only renders when at least one webhook
-              trigger is configured. The component does its own fetch so
-              schedule-only autopilots don't pay for an empty list query. */}
+          {/* Webhook 投递记录——仅在配了至少一个 webhook 触发时渲染。组件自己拉取，
+              让仅定时型 autopilot 不用为一次空列表查询买单。 */}
           <WebhookDeliveriesSection
             autopilotId={autopilotId}
             hasWebhookTrigger={triggers.some((trig) => trig.kind === "webhook")}
           />
 
-          {/* Run History */}
+          {/* 运行历史 */}
           <section className="space-y-3">
             <h2 className="text-body font-medium text-muted-foreground uppercase tracking-wider">
               {t(($) => $.detail.section_run_history)}
@@ -1001,7 +1010,7 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
             )}
           </section>
 
-          {/* Danger zone */}
+          {/* 危险区：删除 */}
           {canWrite && (
             <section className="space-y-3 pt-4 border-t">
               <h2 className="text-body font-medium text-destructive uppercase tracking-wider">
@@ -1016,8 +1025,8 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
         </div>
       </div>
 
-      {/* Mounted only while open, like the edit dialog: otherwise a rejected
-          cron leaves scheduleValid=false behind for the next open. */}
+      {/* 只在打开时挂载，与编辑弹窗同理：否则被拒的 cron 会把 scheduleValid=false
+          残留到下一次打开。 */}
       {triggerDialogOpen && (
         <AddTriggerDialog
           open={triggerDialogOpen}

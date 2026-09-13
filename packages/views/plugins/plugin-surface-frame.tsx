@@ -11,6 +11,7 @@ import { createSurfaceBridge } from "./surface-bridge";
 
 const DEFAULT_HEIGHT = 220;
 
+/** 插件 surface frame 组件的属性。 */
 interface PluginSurfaceFrameProps {
   wsId: string;
   installation: PluginInstallation;
@@ -20,11 +21,10 @@ interface PluginSurfaceFrameProps {
 }
 
 /**
- * Mounts one plugin surface.
+ * plugins 模块：挂载单个插件 surface。
  *
- * This element is a TRUSTED wrapper. Its nested plugin iframe is the isolation
- * boundary and is always `sandbox="allow-scripts"` without
- * `allow-same-origin`; see buildSurfaceFrameDocument.
+ * 这个元素是「受信任的」包裹层。它嵌套的插件 iframe 才是隔离边界，永远只带
+ * `sandbox="allow-scripts"`、没有 `allow-same-origin`；详见 buildSurfaceFrameDocument。
  */
 export function PluginSurfaceFrame({ wsId, installation, surface, issueId, className }: PluginSurfaceFrameProps) {
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -32,8 +32,8 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const launchInstance = useId();
 
-  // Every mounted frame gets its own launch. The artifact is immutable, but the
-  // bridge proof is deliberately neither cacheable nor shareable.
+  // 每个挂载的 frame 都做一次独立的 launch。产物（artifact）不可变，但桥的
+  // 一次性凭据刻意既不可缓存也不可共享。
   const { data: launch, isPending, isError } = useQuery(
     pluginSurfaceLaunchOptions(wsId, installation.id, surface.key, installation.package_version_id, launchInstance, issueId),
   );
@@ -47,19 +47,17 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
     }
   }, [launch?.url, launch?.bridge_token]);
 
-  // Terminal state belongs to one rendered document on one issue. Comparing
-  // the instance keeps an old failure/navigation from surviving a replacement
-  // launch even though the new iframe is running normally.
+  // 终态属于「一次渲染的文档 + 一个 issue」。对比 instance 能让旧的失败/跳转
+  // 状态在替换成新 launch 后不再延续——即使新 iframe 运行正常。
   const surfaceInstance = useMemo(() => ({ issueId, surfaceDocument }), [issueId, surfaceDocument]);
   const [failedSurfaceInstance, setFailedSurfaceInstance] = useState<typeof surfaceInstance | null>(null);
   const [navigatedSurfaceInstance, setNavigatedSurfaceInstance] = useState<typeof surfaceInstance | null>(null);
   const failed = failedSurfaceInstance === surfaceInstance;
   const navigated = navigatedSurfaceInstance === surfaceInstance;
 
-  // One bridge per rendered document. srcDoc changing reloads the frame — and
-  // therefore restarts the guest's handshake — so the old bridge is finished:
-  // close() is terminal, and reusing a closed one across a document change is
-  // exactly how the panel ends up permanently blank.
+  // 每份渲染出来的文档对应一个桥。srcDoc 一变 iframe 就会重载——访客的握手
+  // 也随之重来——所以旧桥到此结束：close() 是终态；把一个已关闭的桥在换文档
+  // 后复用来连接，正是让面板永久空白的原因。
   const bridge = useMemo(
     () => createSurfaceBridge({
       installationId: installation.id,
@@ -70,8 +68,8 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
     [installation.id, launch?.bridge_token, issueId],
   );
 
-  // The listener is armed BEFORE srcdoc is assigned. That makes the guest-first
-  // one-shot port transfer race-free without retries or a reusable token.
+  // 监听器在 srcdoc 赋值之前就已挂好。这样访客优先的「一次性 port 转移」无需
+  // 重试或可复用凭据即可做到无竞态。
   useEffect(() => {
     const frame = frameRef.current;
     if (!frame || !surfaceDocument) return () => bridge.close();
@@ -80,14 +78,14 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
       if (type !== "multica:plugin-surface-error" &&
           type !== "multica:plugin-surface-navigated" &&
           type !== "multica:plugin-surface-navigation-blocked") return;
-      // Same window-identity rule as the bridge: without it any frame on the
-      // page could light up the failure banner on every other panel.
+      // 与桥相同的「同一窗口」规则：没有它，页面上任何 frame 都能点亮别的
+      // 面板上的失败横幅。
       if (!frame.contentWindow || event.source !== frame.contentWindow) return;
       if (type === "multica:plugin-surface-error") setFailedSurfaceInstance(surfaceInstance);
       else setNavigatedSurfaceInstance(surfaceInstance);
     };
-    // Terminal events and the bridge are both armed before srcdoc is assigned,
-    // so even a first-line plugin failure or navigation cannot outrun the host.
+    // 终态事件与桥都在 srcdoc 赋值前挂好，所以即使插件首行就失败或跳转，
+    // 也快不过宿主。
     window.addEventListener("message", onMessage);
     bridge.connect(frame, readThemeTokens(anchorRef.current));
     frame.srcdoc = surfaceDocument;
@@ -113,11 +111,9 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
   if (!surfaceDocument) {
     return (
       <div ref={anchorRef} className={cn("rounded-lg border border-surface-border px-4 py-3 text-caption text-muted-foreground", className)}>
-        {/* Three states share this box on purpose: still loading, the request
-            failed, and the installed version carries no code for this surface.
-            All three mean "nothing to render yet"; only the last is permanent,
-            and none of them should show an empty frame the reader cannot act
-            on. */}
+        {/* 三种状态刻意共用这一个框：仍在加载、请求失败、以及已装版本没有为
+            该 surface 提供代码。三者都表示「暂时没有可渲染的东西」；只有最后
+            一种会持续，它们都不该显示一个读者无从操作的空 frame。 */}
         <PluginSurfaceNotice installation={installation} kind={isPending && !isError ? "loading" : "unavailable"} />
       </div>
     );
@@ -131,14 +127,13 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
         </div>
       ) : null}
       <iframe
-        // Keyed on the issue as well: a new bridge is created when issueId
-        // changes, but an unchanged document would not reload, and the guest
-        // stops announcing once answered — the fresh bridge would wait forever.
+        // 同时以 issue 为 key：issueId 变化时会新建桥，但文档若不变就不会
+        // 重载，访客应答完也就不再发声——新桥会永远等不到握手。
         key={`${installation.id}:${surface.key}:${issueId ?? ""}`}
         ref={frameRef}
         title={`${installation.name} — ${surface.name}`}
-        // This is the host-authored wrapper, so same-origin is intentional. Its
-        // nested plugin iframe remains opaque and owns no app credential.
+        // 这是宿主编写的外层包裹，所以同源是有意为之；它嵌套的插件 iframe
+        // 仍然不透明、不持有任何应用凭据。
         sandbox="allow-scripts allow-same-origin"
         className="w-full border-0 bg-transparent"
         style={{ height }}
@@ -147,6 +142,7 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
   );
 }
 
+/** 按类型渲染 surface 的说明文案（加载/失败/不可用/发生了跳转）。 */
 function PluginSurfaceNotice({
   installation,
   kind,

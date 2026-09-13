@@ -1,32 +1,27 @@
-// backfill_delegated_failure_settled retires delegated-failure recovery
-// comments that were already closed by a terminal delivery receipt before
-// comment.recovery_settled_at existed.
+// backfill_delegated_failure_settled —— 收尾"委派失败恢复"的历史评论。
 //
-// Run it after every backend in a rolling deployment carries the code that
-// writes the marker. Until it finishes, the outbox scan behaves exactly as it
-// did before — unmarked history is still scanned and no recovery is lost — so
-// this is a performance recovery step, not a correctness step, and it is safe
-// to run off-peak or in several sittings.
+// 在 comment.recovery_settled_at 字段出现之前，一部分委派失败恢复评论其实已被
+// 终态投递回执关掉了；本命令给这些老评论补上"已收尾"标记，让 outbox 扫描器不再
+// 反复把它们捞出来。
 //
-// # Resuming
+// 建议在滚动部署里"所有后端都带上写该标记的代码"之后再跑。它跑完之前，outbox
+// 扫描的行为与以前完全一样——未打标记的历史仍会被扫描，任何恢复都不会丢——所以
+// 这是一次"性能恢复"步骤而非正确性步骤，错峰跑、分几次跑都安全。
 //
-// The walk is keyed on (created_at, id), matching
-// idx_comment_delegated_failure_unsettled, and the watermark advances over
-// every candidate EXAMINED rather than only the ones marked. That distinction
-// is what makes a bounded run resumable: the rows this walk deliberately leaves
-// pending — a recovery still genuinely open — sit permanently at the front of
-// the index, so a run that only remembered marked rows would restart inside
-// that same prefix forever and never reach the settleable history behind it.
+// # 断点续跑
 //
-// Pass --checkpoint-file to persist the watermark after every committed batch
-// and resume from it automatically, or read the resume_after_* fields this
-// command logs on every exit path and pass them back with --after-created-at /
-// --after-id. Without either, a rerun starts from the beginning; that is
-// correct but repeats work.
+// 遍历以 (created_at, id) 为键，与 idx_comment_delegated_failure_unsettled 索引
+// 对齐；水位只推进"被检视过的候选"，而不是"被打标记的候选"。这个差别正是有界
+// 运行可续跑的原因：那些本命令刻意留着 pending 的行（恢复确实还开着）会永远停在
+// 索引最前面，若只记住"打过标记的行"，重启会永远卡在同一前缀里、够不到后面可收
+// 尾的历史。
 //
-// A session advisory lock keeps two operators from walking at once. It is
-// operator mutual exclusion for this manual command only — the periodic
-// sweeper's single-instance gate is a separate concern and is not this lock.
+// 传 --checkpoint-file 可在每个已提交批次后持久化水位并自动从那里续跑；或者读取
+// 本命令在每条退出路径上打印的 resume_after_* 字段，用 --after-created-at /
+// --after-id 传回去。两者都不给，重跑就从起点开始——正确，但会重复做功。
+//
+// 会话级咨询锁保证不会有两个运维同时开跑。这只是本手工命令的运维互斥——周期
+// 清扫器自己的单实例闸门是另一回事，不由这把锁管。
 package main
 
 import (
@@ -48,14 +43,16 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 )
 
+// advisoryLockName 是本次回填用的会话咨询锁名字（防止两名运维同时开跑）。
 const advisoryLockName = "delegated_failure_recovery_settled_backfill"
 
-// checkpoint is the on-disk form of a keyset watermark.
+// checkpoint 是 keyset 水位在磁盘上的存储形态。
 type checkpoint struct {
 	AfterCreatedAt time.Time `json:"after_created_at"`
 	AfterID        string    `json:"after_id"`
 }
 
+// readCheckpoint 从文件读水位；文件不存在返回 (nil,nil)（表示从头开始）。
 func readCheckpoint(path string) (*delegatedrecoverybackfill.Cursor, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -74,8 +71,8 @@ func readCheckpoint(path string) (*delegatedrecoverybackfill.Cursor, error) {
 	return &delegatedrecoverybackfill.Cursor{CreatedAt: cp.AfterCreatedAt, ID: cp.AfterID}, nil
 }
 
-// writeCheckpoint replaces the file atomically so an interrupted write cannot
-// leave behind a half-written watermark that resumes in the wrong place.
+// writeCheckpoint 原子地替换水位文件——中断的写入不会留下半截水位、导致续跑从
+// 错误的位置开始。
 func writeCheckpoint(path string, cursor *delegatedrecoverybackfill.Cursor) error {
 	raw, err := json.Marshal(checkpoint{AfterCreatedAt: cursor.CreatedAt, AfterID: cursor.ID})
 	if err != nil {
@@ -99,6 +96,8 @@ func writeCheckpoint(path string, cursor *delegatedrecoverybackfill.Cursor) erro
 	return nil
 }
 
+// resolveStart 决定从哪个水位开始：显式给的 --after-created-at/--after-id 优先于
+// 文件里的 checkpoint（那是运维覆盖不再信任的水位的方式）；两个参数必须同时给。
 func resolveStart(checkpointFile, afterCreatedAt, afterID string) (*delegatedrecoverybackfill.Cursor, error) {
 	if (afterCreatedAt == "") != (afterID == "") {
 		return nil, fmt.Errorf("--after-created-at and --after-id must be given together")
@@ -108,8 +107,6 @@ func resolveStart(checkpointFile, afterCreatedAt, afterID string) (*delegatedrec
 		if err != nil {
 			return nil, fmt.Errorf("--after-created-at must be RFC3339: %w", err)
 		}
-		// An explicit flag wins over the file: it is how an operator overrides
-		// a checkpoint they no longer trust.
 		return &delegatedrecoverybackfill.Cursor{CreatedAt: createdAt, ID: afterID}, nil
 	}
 	if checkpointFile == "" {
@@ -163,6 +160,7 @@ func run() error {
 		return fmt.Errorf("ping database: %w", err)
 	}
 
+	// 会话咨询锁：防止两个运维同时遍历。
 	lockConn, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire advisory-lock connection: %w", err)
@@ -184,8 +182,8 @@ func run() error {
 		"resumed_from_id", cursorID(cursor))
 
 	var scanned, settled int64
-	// Report the watermark on EVERY exit, including SIGTERM and --max-batches,
-	// so a run without --checkpoint-file is still resumable from the logs.
+	// 每条退出路径（含 SIGTERM、--max-batches）都打印水位，让没配
+	// --checkpoint-file 的运行也能从日志续跑。
 	defer func() {
 		slog.Info("delegated failure recovery settled backfill stopped",
 			"scanned", scanned, "settled", settled,
@@ -231,13 +229,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	// The remainder is the genuinely open backlog plus anything a reversible
-	// exclusion is holding, which is what the index is supposed to contain.
+	// 剩下来的是"真正还开着"的积压，加上被一条可逆排除规则扣住的量——这正是该
+	// 索引本来该装的东西。
 	slog.Info("delegated failure recovery settled backfill finished",
 		"scanned", scanned, "settled", settled, "unsettled_remaining", remaining)
 	return nil
 }
 
+// cursorID 空安全地取游标 ID（用于打日志）。
 func cursorID(c *delegatedrecoverybackfill.Cursor) string {
 	if c == nil {
 		return ""
@@ -245,6 +244,7 @@ func cursorID(c *delegatedrecoverybackfill.Cursor) string {
 	return c.ID
 }
 
+// cursorCreatedAt 空安全地把游标时间格式化成 RFC3339Nano（用于打日志）。
 func cursorCreatedAt(c *delegatedrecoverybackfill.Cursor) string {
 	if c == nil {
 		return ""

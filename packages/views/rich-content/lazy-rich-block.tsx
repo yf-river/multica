@@ -1,31 +1,26 @@
 "use client";
 
 /**
- * LazyRichBlock — near-viewport, stable-size mount gate for rich blocks
- * (MUL-4922 performance contract).
+ * 富文本模块：LazyRichBlock——近视口、尺寸稳定的富块挂载闸门
+ * （MUL-4922 性能契约）。
  *
- * A long chat session or a long comment thread can contain dozens of Mermaid
- * diagrams and sandboxed HTML iframes. Instantiating them all at once costs a
- * Mermaid render (async, layout-heavy) and an iframe (its own document +
- * script execution) per block, whether or not the user ever scrolls to them.
- * This shell defers each rich leaf until it is near the viewport.
+ * 一段很长的会话或评论串可能包含几十个 Mermaid 图和沙箱 HTML iframe。
+ * 一次性全部实例化，每个块都要付出一次 Mermaid 渲染（异步、布局开销大）
+ * 和一个 iframe（自带文档 + 脚本执行），无论用户最终会不会滚到它们。
+ * 这个外壳把每个富叶子推迟到它接近视口时才挂载。
  *
- * Two properties make this safe inside Virtuoso's virtualized list:
+ * 两个特性让它在 Virtuoso 虚拟列表里是安全的：
  *
- * 1. STABLE SIZE. The shell reserves the block's expected height BEFORE mounting
- *    and keeps that reservation as a `min-height` afterwards. Without it, a
- *    block would measure 0px while off-screen and jump to its real height on
- *    mount — which is precisely the measurement churn that makes a virtualized
- *    list mis-estimate item sizes and lose scroll position. The reservation is
- *    not a guess local to this file: it comes from the leaf components
- *    themselves (a session-cached real diagram height when available, else their
- *    documented skeleton/iframe height), so a cache hit mounts with zero shift.
+ * 1. 尺寸稳定。外壳在挂载前就预留块的期望高度，之后把它作为 `min-height`
+ *    保留。没有它，块在离屏时会量出 0px，挂载时再跳到真实高度——这正是
+ *    让虚拟列表误估项尺寸、丢失滚动位置的测量抖动。这个预留不是本文件里
+ *    的猜测：它来自叶子组件自身（有会话缓存的真实图高度就用它，否则用
+ *    它们记录的骨架/iframe 高度），所以缓存命中时挂载零位移。
  *
- * 2. MOUNT-ONCE LATCH. Once mounted the block is never unmounted, even when
- *    scrolled far away. Unmounting would re-run Mermaid and rebuild the iframe
- *    on every pass, and would discard the viewer's pan/zoom state — trading a
- *    one-time cost for a repeated one. Memory is bounded by "blocks the user
- *    actually scrolled past", not by the whole transcript.
+ * 2. 只挂载一次的闩锁。一旦挂载，块就再也不会被卸载，哪怕滚得很远。卸载
+ *    会在每一趟都重跑 Mermaid、重建 iframe，还会丢掉查看者的平移/缩放
+ *    状态——把一次性成本换成了重复成本。内存被「用户实际滚过的块」所限制，
+ *    而不是整个记录。
  */
 
 import {
@@ -42,19 +37,16 @@ import {
   mountedBlockKey,
 } from "./mounted-block-registry";
 
-// Restoring an already-mounted block must happen before paint, or a recycled
-// Virtuoso row would flash its placeholder on the way back into view.
-// useLayoutEffect does not run on the server (and warns if called there), so the
-// server takes the plain-effect branch — neither runs during SSR, so the first
-// frame is unaffected either way.
+// 恢复一个已挂载的块必须在绘制前完成，否则被回收的 Virtuoso 行滚回视野时
+// 会先闪一下占位符。useLayoutEffect 不在服务端运行（在那里调用还会告警），
+// 所以服务端走普通 effect 分支——两者在 SSR 期间都不运行，首帧不受影响。
 const useIsomorphicLayoutEffect =
   typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 /**
- * How far outside the viewport a block starts mounting. Sized to cover
- * Virtuoso's own overscan (`increaseViewportBy` is 400px top / 600px bottom in
- * the chat list) so a block is ready by the time it is scrolled into view,
- * without eagerly building the whole transcript.
+ * 块在视口外多远时开始挂载。取值覆盖 Virtuoso 自身的 overscan（chat 列表
+ * 里 `increaseViewportBy` 是顶部 400px / 底部 600px），这样块在滚进视野时
+ * 就绪，而不必急切地构建整个记录。
  */
 const NEAR_VIEWPORT_ROOT_MARGIN = "800px 0px";
 
@@ -62,17 +54,22 @@ function supportsIntersectionObserver(): boolean {
   return typeof window !== "undefined" && typeof window.IntersectionObserver === "function";
 }
 
+/**
+ * 近视口、尺寸稳定的富块挂载闸门。
+ * @param reservedHeightPx 挂载后的块期望高度，挂载前后都据此预留。
+ * @param sourceKey 该块内容的稳定标识，用于记住它已挂载过。
+ * @param children 富块叶子内容。
+ */
 export function LazyRichBlock({
   reservedHeightPx,
   sourceKey,
   children,
 }: {
-  /** Expected height of the mounted block; reserved before and after mount. */
+  /** 挂载后的块期望高度；挂载前后都预留。 */
   reservedHeightPx: number;
   /**
-   * Stable identity for this block's content. Used to remember that it has
-   * already been mounted, so a virtualized row that gets recycled and later
-   * re-created does not pay the mount cost again.
+   * 该块内容的稳定标识。用于记住它已经挂载过，这样被回收、之后又重建的
+   * 虚拟行不会再付一次挂载成本。
    */
   sourceKey?: string;
   children: ReactNode;
@@ -80,24 +77,19 @@ export function LazyRichBlock({
   const ref = useRef<HTMLDivElement>(null);
   const scrollRoot = useRichContentScrollRoot();
   const registryKey = sourceKey == null ? null : mountedBlockKey("rich", sourceKey);
-  // ALWAYS false on the first render, on both server and client.
+  // 首帧在服务端和客户端都始终为 false。
   //
-  // Deriving this from feature detection (`typeof window`, IntersectionObserver
-  // presence) would make the first frame environment-dependent: the server, with
-  // no `window`, would render the full Mermaid/HTML subtree while the browser's
-  // hydration pass renders a placeholder — a markup mismatch, and an SSR that
-  // silently bypasses the lazy gate it is supposed to honour. `"use client"`
-  // does not opt a component out of Next's server render, so the only safe
-  // initial state is the one both environments can agree on.
+  // 若用特性检测（`typeof window`、IntersectionObserver 是否存在）推导它，
+  // 首帧就会依赖环境：服务端没有 `window`，会渲染完整的 Mermaid/HTML 子树，
+  // 而浏览器 hydration 阶段渲染占位符——标记不一致，且 SSR 悄悄绕过了它
+  // 本应遵守的懒加载闸门。`"use client"` 并不会让组件退出 Next 的服务端
+  // 渲染，所以唯一安全的初始状态是两个环境都能达成一致的那个。
   //
-  // Everything environment-specific happens in the effect below, which never
-  // runs on the server.
+  // 所有依赖环境的事都在下面的 effect 里做，它永远不会在服务端运行。
   const [mounted, setMounted] = useState(false);
 
-  // Restore a block this session has already built. Kept out of the initial
-  // state for the same reason as everything else here: the registry is empty on
-  // the server, so seeding from it would make the first frame differ between
-  // server and client.
+  // 恢复本会话已经构建过的块。不放进初始状态的原因和这里其他东西一样：
+  // 注册表在服务端是空的，从它播种会让首帧在服务端和客户端不一致。
   useIsomorphicLayoutEffect(() => {
     if (mounted || registryKey == null) return;
     if (hasBlockMounted(registryKey)) setMounted(true);
@@ -106,9 +98,8 @@ export function LazyRichBlock({
   useEffect(() => {
     if (mounted) return;
 
-    // No IntersectionObserver (jsdom, older webviews): fall back to mounting
-    // eagerly. This runs in an effect rather than in the initial state so the
-    // first committed frame still matches the server's.
+    // 没有 IntersectionObserver（jsdom、较老的 webview）：退回急切挂载。
+    // 放在 effect 里而不是初始状态，是为了让首个提交帧仍与服务端一致。
     if (!supportsIntersectionObserver()) {
       setMounted(true);
       return;
@@ -120,15 +111,14 @@ export function LazyRichBlock({
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) {
-          // Latch: stop observing so the block never unmounts on scroll-away.
+          // 闩锁：停止观察，让块在滚走后也不会被卸载。
           setMounted(true);
           observer.disconnect();
         }
       },
       {
-        // Clip against the surface's own scroll container when there is one.
-        // With the default (viewport) root, rootMargin would expand the wrong
-        // box and a Chat block would only load once already visible.
+        // 有界面自己的滚动容器时就相对它裁剪。用默认（视口）root 时，
+        // rootMargin 会扩大错误的框，Chat 块只有已经可见了才会加载。
         root: scrollRoot,
         rootMargin: NEAR_VIEWPORT_ROOT_MARGIN,
       },
@@ -137,7 +127,7 @@ export function LazyRichBlock({
     return () => observer.disconnect();
   }, [mounted, scrollRoot]);
 
-  // Record the mount so a recycled row can skip straight to the built block.
+  // 记录这次挂载，让被回收的行能直接跳到已构建好的块。
   useEffect(() => {
     if (mounted && registryKey != null) markBlockMounted(registryKey);
   }, [mounted, registryKey]);
@@ -147,9 +137,8 @@ export function LazyRichBlock({
       ref={ref}
       data-rich-block-shell=""
       data-mounted={mounted ? "" : undefined}
-      // The reservation persists after mount so the shell never shrinks back
-      // and re-triggers a measurement pass. Real diagrams and the fixed-height
-      // HTML preview normally exceed it, so it rarely adds visible space.
+      // 预留会在挂载后继续保留，让外壳永远不会缩回去并再次触发一次测量。
+      // 真实图和固定高度的 HTML 预览通常会超过它，所以它很少增加可见空白。
       style={{ minHeight: reservedHeightPx }}
     >
       {mounted ? children : <RichBlockPlaceholder />}
@@ -158,9 +147,8 @@ export function LazyRichBlock({
 }
 
 /**
- * Pre-mount placeholder. Deliberately inert and unlabelled-as-loading: it fills
- * reserved space rather than announcing work, because nothing is loading yet —
- * the block simply has not been scrolled near.
+ * 挂载前的占位符。刻意惰性、且不标记为「加载中」：它只是填充预留空间
+ * 而不是宣告有工作在进行，因为此刻还没开始加载——只是块还没被滚到附近。
  */
 function RichBlockPlaceholder() {
   return (

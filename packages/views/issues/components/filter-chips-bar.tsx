@@ -1,5 +1,13 @@
 "use client";
 
+// 本文件：FilterChipsBar / FilterChipList —— "已激活筛选"chips 条。
+// 每个激活的筛选维度渲染成一个小 chip（维度图标 + 取值摘要 + 移除按钮），
+// 点击 chip 右上角可单独清除该维度；右侧"清除"一键重置所有筛选（含日期）。
+// 已打开保存视图时，chips 只展示用户叠加在视图条件之上的增补，
+// 移除某个维度则回到视图自身该维度的值。
+// FilterChipList 是无外壳变体，供表单场景（如保存视图对话框）作为
+// "添加筛选"入口的列表使用。名称/头像查找复用筛选下拉已有的缓存。
+
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { useStatusLabel } from "../utils/status-label";
 import { NO_PROPERTY_VALUE } from "../utils/filter";
@@ -38,15 +46,15 @@ import { PriorityIcon } from "./priority-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 
-/** One rendered chip: a dimension with its selected values summarised. */
+/** 一个被渲染出来的 chip：某个维度连同其已选值的摘要。 */
 interface FilterChip {
   key: string;
   icon: ReactNode;
-  /** Dimension name, e.g. "状态". */
+  /** 维度名称，如"状态"。 */
   label: string;
-  /** Values summary, e.g. "进行中" or "4 个状态". */
+  /** 取值摘要，如"进行中"或"4 个状态"。 */
   value: string;
-  /** Up to three overlapping value icons rendered before the summary text. */
+  /** 摘要文字前至多三枚相互叠压的值图标。 */
   valueIcons?: ReactNode;
   onRemove: () => void;
 }
@@ -60,8 +68,8 @@ function summarize(names: (string | undefined)[]): string {
 
 const CHIP_ICON_CLASS = "size-3 shrink-0 text-muted-foreground";
 
-/** Overlapping value icons, following the runtime-list stack pattern: each
- *  icon sits on an opaque wrapper so the one underneath cannot show through. */
+/** 叠压的值图标，沿用运行时列表的堆叠样式：每个图标坐在不透明的底上，
+ *  下面那个不会透出来。 */
 function IconStack({ children }: { children: ReactNode[] }) {
   return (
     <span className="flex items-center -space-x-1">
@@ -78,14 +86,14 @@ function IconStack({ children }: { children: ReactNode[] }) {
 }
 
 /**
- * Name lookup for chip values, keyed the way filters actually store actors.
+ * chip 值的人名查找器，按键方式与筛选实际存储 actor 的方式一致。
  *
- * Members are keyed by `user_id`, NOT by the membership row id: every actor
- * filter value — assignee, creator, and actor properties — carries the user
- * id. Keying by `Member.id` silently resolved nothing (MUL-6286 review).
+ * 成员用 `user_id` 作 key，而不是成员行自身的 id：每个 actor 筛选值——
+ * 负责人、创建人、以及成员类属性——携带的都是用户 id。按 `Member.id` 做 key
+ * 会静默地查不到任何东西（MUL-6286 评审结论）。
  *
- * Returns undefined for anything unresolved so the caller can omit it, rather
- * than rendering a placeholder like "Unknown".
+ * 解析不到的名字返回 undefined，让调用方直接省略该值，而不是渲染
+ * "Unknown" 之类的占位。
  */
 export function buildChipActorNames(
   members: readonly { user_id: string; name: string }[],
@@ -100,9 +108,8 @@ export function buildChipActorNames(
 }
 
 /**
- * Actor-property filter values ("member:<uuid>") as actor refs, for the avatar
- * stack. Unparseable entries drop out — the chip degrades to fewer avatars
- * rather than rendering a broken one.
+ * 把成员类属性的筛选值（"member:<uuid>"）转成 avatar 头像堆栈用的 actor 引用。
+ * 解析不了的值直接丢弃——chip 退化成更少的头像，而不是渲染一个坏头像。
  */
 export function actorFilterValues(selected: PropertyFilterValue[]): ActorFilterValue[] {
   return selected
@@ -112,12 +119,11 @@ export function actorFilterValues(selected: PropertyFilterValue[]): ActorFilterV
 }
 
 /**
- * Whether any active property filter targets an actor-typed definition.
+ * 是否有任何活动的属性筛选指向成员（actor）类型定义。
  *
- * The chips bar loads each directory lazily, and actor properties are the one
- * property type whose chip needs the member directory to say anything useful:
- * their values are references, not config options, so without this the chip
- * can only render a bare count (MUL-6286 review).
+ * chips 条按需惰性加载各目录，而成员属性是唯一一种"chip 想显示有意义内容
+ * 就必须加载成员目录"的属性类型：它的值是引用而非配置选项，缺了目录，
+ * 该 chip 只能渲染一个干巴巴的数字（MUL-6286 评审结论）。
  */
 export function hasActorPropertyFilterSelection(
   propertyFilters: Record<string, PropertyFilterValue[]>,
@@ -130,8 +136,7 @@ export function hasActorPropertyFilterSelection(
   );
 }
 
-/** Avatar variant of the stack — avatars are already opaque, so they only
- *  need the background-colored separation ring. */
+/** 头像版堆叠——头像本身不透明，只需背景色的分隔环即可。 */
 function AvatarStack({ actors }: { actors: ActorFilterValue[] }) {
   return (
     <span className="flex items-center -space-x-1">
@@ -152,7 +157,7 @@ function AvatarStack({ actors }: { actors: ActorFilterValue[] }) {
   );
 }
 
-/** Colored-dot stack for labels and select-property options. */
+/** 标签和单选项属性用的彩色圆点堆叠。 */
 function DotStack({ colors }: { colors: string[] }) {
   if (colors.length === 0) return null;
   return (
@@ -169,10 +174,10 @@ function DotStack({ colors }: { colors: string[] }) {
 }
 
 /**
- * Active-filter chips for the surrounding ViewStoreProvider's store — works
- * against the live surface store on pages and against the draft store inside
- * the save-view dialog. Name lookups reuse the caches the filter dropdown
- * already populates; a cache miss degrades a chip to a count, never blocks.
+ * 针对外围 ViewStoreProvider 的 store 汇总"已激活筛选"chips——
+ * 页面里作用于真实 surface store，保存视图对话框里作用于草稿 store。
+ * 名称查找复用筛选下拉已填充的缓存；缓存未命中时该 chip 退化为纯计数，
+ * 绝不让查询失败卡住渲染。
  */
 function useFilterChips(
   dateFilter: IssueDateFilter | null,
@@ -212,9 +217,8 @@ function useFilterChips(
     ...propertyListOptions(wsId),
     enabled: enabled && Object.keys(propertyFilters).length > 0,
   });
-  // An active actor-property filter needs the member directory too, or its
-  // chip can only render a bare count instead of who was filtered on. The
-  // catalog resolves first, so this flips true on its second render.
+  // 活动的成员属性筛选还需要成员目录，否则它的 chip 只能显示干巴巴的计数、
+  // 看不出筛的是谁。目录查询先返回，因此下面这个开关在其第二次渲染时才翻 true。
   const hasActorPropertyFilter = useMemo(
     () => hasActorPropertyFilterSelection(propertyFilters, workspaceProperties),
     [propertyFilters, workspaceProperties],
@@ -246,9 +250,8 @@ function useFilterChips(
     [members, agents, squads],
   );
 
-  // Inside a saved view chips show only the user's additions ON TOP of the
-  // view; removing one returns the dimension to the view's values (never
-  // empty). Without a baseline this is plain clear.
+  // 已保存视图里的 chips 只显示用户叠加在视图之上的增补；移除某个维度会回到
+  // 该维度在视图里的取值（绝不会是空）。没有基线时就是普通的整维清除。
   const clearDimension = (dimension: FilterDimension) => {
     if (!baseline) {
       store.getState().clearFilterDimension(dimension);
@@ -305,7 +308,7 @@ function useFilterChips(
     }
   };
 
-  // Values the view already fixes are invisible here — subtract them.
+  // 视图已经固定的值在这里不可见——把它们从 chips 中减去。
   const deltaStatus = baseline
     ? statusFilters.filter((s) => !baseline.status.has(s))
     : statusFilters;
@@ -452,19 +455,18 @@ function useFilterChips(
   for (const [propertyId, selected] of Object.entries(deltaProperties)) {
     if (selected.length === 0) continue;
     const definition = workspaceProperties.find((p) => p.id === propertyId);
-    // A stale filter on an archived definition is stripped by the surface
-    // controller before querying; hide its chip rather than render a ghost.
+    // 钉在已归档定义上的过期筛选会在查询前被 surface 控制器剥离；
+    // 这里直接隐藏它的 chip，别渲染一个"幽灵"。
     if (!definition) continue;
-    // Actor properties carry no config options — their values are member
-    // references, so names come from the directory and the icons are avatars.
+    // 成员属性没有配置选项——它的值是成员引用，因此名称查成员目录、图标用头像。
     const actorProperty = isActorPropertyType(definition.type);
     const actorValues = actorProperty ? actorFilterValues(selected) : [];
     const optionName = (member: PropertyFilterValue): string | undefined => {
       if (member === NO_PROPERTY_VALUE) {
         return t(($) => $.pickers.custom_property.none);
       }
-      // Scalar operator members summarize with their operator; the comparison
-      // symbols are locale-independent, the word ops get chip phrases.
+      // 标量操作符成员用操作符做摘要；比较符号是语言无关的，
+      // 而"文字式"操作符（如 contains/before/after）则用专门的 chip 短语。
       if (typeof member === "object") {
         if (member.op === "contains") {
           return t(($) => $.filters.chip_op_contains, { value: member.value });
@@ -487,7 +489,7 @@ function useFilterChips(
           ? t(($) => $.pickers.custom_property.true_label)
           : t(($) => $.pickers.custom_property.false_label);
       }
-      // Scalar properties have no option list — the filter value IS the label.
+      // 标量属性没有选项列表——筛选值本身就是标签。
       if (isScalarPropertyType(definition.type)) {
         return member;
       }
@@ -535,7 +537,7 @@ function useFilterChips(
 
   const clearAll = () => {
     if (baseline) {
-      // Back to exactly the view's own conditions.
+      // 精确回到该视图自身的条件。
       store.getState().resetFiltersTo(baseline.raw);
       onDateFilterChange?.(null);
       return;
@@ -550,10 +552,9 @@ function useFilterChips(
 function ChipSpan({ chip }: { chip: FilterChip }) {
   const { t } = useT("issues");
   return (
-    // Keyed per dimension: the chip animates in once when its dimension
-    // first gains a value; value changes inside it re-render without
-    // re-animating. No exit animation — unmount presence isn't worth the
-    // machinery for a 150ms nicety.
+    // 按维度设 key：某维度首次有值时才让 chip 播放一次进入动画；
+    // 之后值的更新只重渲染、不重播动画。不做退场动画——
+    // 为这 150ms 的小效果上全套卸载机制不值当。
     <span className="flex h-6 max-w-72 items-center gap-1.5 rounded-md bg-background pl-2 pr-1 text-caption shadow-xs animate-in fade-in-0 zoom-in-95 duration-150">
       <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
         {chip.icon}
@@ -576,12 +577,11 @@ function ChipSpan({ chip }: { chip: FilterChip }) {
 }
 
 /**
- * Bare chip list for form contexts (the save-view dialog): no bar chrome,
- * no page margins. `trailing` renders after the chips — the add-filter
- * trigger slot. Chips get a border here since they sit on the dialog
- * background rather than the muted bar. Menu-position stability while
- * adding filters is handled by the menu itself (IssueFilterMenu's
- * `freezeAnchor`), not by this list.
+ * 供表单场景（保存视图对话框）使用的裸 chips 列表：没有横条外壳与页面边距。
+ * `trailing` 渲染在所有 chips 之后——即"添加筛选"触发器槽位。
+ * 这里 chips 落在对话框背景上而非暗色横条内，所以给它们加了一圈边框。
+ * 添加筛选期间菜单的定位稳定性由菜单自身处理（IssueFilterMenu 的
+ * `freezeAnchor`），不归本列表管。
  */
 export function FilterChipList({ trailing }: { trailing?: ReactNode }) {
   const { chips } = useFilterChips(null);
@@ -596,10 +596,9 @@ export function FilterChipList({ trailing }: { trailing?: ReactNode }) {
 }
 
 /**
- * Horizontal strip of active-filter chips shown under the issues header row.
- * Renders nothing when no filter is active. Each chip clears exactly its own
- * dimension; the right-aligned Clear resets everything (including the date
- * filter, which lives outside the view store).
+ * 位于问题页头部下方的"已激活筛选"横向 chips 条。没有任何筛选激活时
+ * 不渲染。每个 chip 只清除它自己的维度；右侧"清除"重置一切（包括日期——
+ * 日期筛选保存在视图 store 之外）。
  */
 export function FilterChipsBar({
   dateFilter = null,
@@ -610,12 +609,12 @@ export function FilterChipsBar({
 }: {
   dateFilter?: IssueDateFilter | null;
   onDateFilterChange?: (filter: IssueDateFilter | null) => void;
-  /** Shows the save/edit button. Hosts that support saved views pass this
-   *  to open their dialog; surfaces without support omit it. */
+  /** 是否展示"保存/编辑"按钮。支持保存视图的宿主传入它来打开对话框；
+   *  不支持的宿主省略它。 */
   onSave?: () => void;
-  /** Override for the trailing button label — "编辑"/"另存" in view mode. */
+  /** 覆盖尾部按钮文案——视图模式下为"编辑"/"另存"。 */
   saveLabel?: string;
-  /** Open saved view: chips show only the user's additions on top of it. */
+  /** 已打开的保存视图：chips 只显示叠加在它之上的增补。 */
   viewBaseline?: IssueViewBaseline;
 }) {
   const { t } = useT("issues");

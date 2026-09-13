@@ -1,3 +1,6 @@
+// 本文件是「问题状态」设置标签页：按类别（todo / in_review 等）分组管理工作区的问题状态，
+// 支持新增自定义状态、重命名、改颜色与描述、拖拽排序、归档；内置状态只读展示不可改。
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -85,26 +88,23 @@ import { useT } from "../../i18n";
 import { SettingsTab } from "./settings-layout";
 
 /**
- * Workspace issue status catalog management (MUL-6243).
+ * 工作区「问题状态」目录管理（MUL-6243）。
  *
- * The page is organised by CATEGORY rather than as one flat list, because a
- * category is not decoration here — it is the behavior a status inherits. A
- * status in `todo` starts the assigned agent; one in `in_review` finalizes an
- * autopilot run. Grouping is what makes that consequence visible at the moment
- * the admin picks a category, which is also the only moment they can: category
- * is immutable after creation, since changing it would silently rewrite the
- * machine semantics of every issue already on the status.
+ * 页面按「类别」组织，而不是拉成一长串平铺列表，因为类别在这里不是装饰，
+ * 而是状态继承到的行为：放在 todo 里的状态会触发指派给它的 agent，
+ * 放在 in_review 里的状态会终结一次自动运行。按类别分组，就是为了让这份后果
+ * 在管理员挑选类别的那一刻就显现出来——这也是他们唯一能看到后果的时机：
+ * 类别创建后不可再改，改了等于悄悄改写每一个挂在该状态上的 issue 的机器语义。
  *
- * Built-ins are shown but locked. Each one is its category's canonical
- * definition, and the default workspace has to look identical for every user
- * who never opens this page.
+ * 内置状态会展示出来但处于锁定态。每个内置状态就是其类别的"标准定义"，
+ * 默认工作区对任何从未打开过本页的用户来说都必须长得一模一样。
  *
- * The chrome is deliberately thin (MUL-6422). A category and its built-in row
- * are the same concept seen twice, so anything the row already carries — the
- * glyph, the behavior sentence — is noise on the header above it. What is left
- * on a header is the label and the one action it owns.
+ * 界面刻意做得极简（MUL-6422）。类别与它的内置行本是同一概念展示两遍，
+ * 行里已有的东西——图标、行为描述——放到头部标题上就是噪音；
+ * 所以头部只留类别名和它独有的一件动作。
  */
 
+/** 新建/编辑状态用的表单草稿：名称、描述、类别与颜色。 */
 interface StatusDraft {
   name: string;
   description: string;
@@ -112,6 +112,7 @@ interface StatusDraft {
   color: string;
 }
 
+// 空白草稿的默认值：新建状态时以此为起点（默认归入 todo、颜色取预设里的第 7 个）。
 const EMPTY_DRAFT: StatusDraft = {
   name: "",
   description: "",
@@ -119,6 +120,10 @@ const EMPTY_DRAFT: StatusDraft = {
   color: COLOR_PICKER_PRESETS[6]!,
 };
 
+/**
+ * 「问题状态」设置标签页：按类别分组展示全部状态，管理员可新建/编辑/归档自定义状态，
+ * 并可打开「显示已归档」开关查看归档行。
+ */
 export function IssueStatusesTab() {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -144,8 +149,8 @@ export function IssueStatusesTab() {
         return {
           category,
           builtIn: inCategory.find((s) => s.is_system),
-          // Archived rows are hidden behind a toggle rather than dropped: an
-          // admin needs to see what a lingering status on an old issue is.
+          // 归档行默认收起来、需要开关才展示，而不是直接丢掉：管理员得能看到
+          // 旧 issue 上还残留着的那个状态到底是什么。
           custom: inCategory.filter(
             (s) => !s.is_system && (showArchived || !s.archived_at),
           ),
@@ -162,9 +167,8 @@ export function IssueStatusesTab() {
       description={t(($) => $.issue_statuses.description)}
     >
       <div className="space-y-4">
-        {/* Offered only once the workspace has something archived. A permanently
-            disabled "Show archived (0)" is a control that can never do
-            anything. */}
+        {/* 只有确实存在已归档状态时才显示"显示已归档"开关：一个永远置灰的
+            「显示已归档 (0)」按钮是什么也做不了的摆设。 */}
         {archivedCount > 0 && (
           <label className="flex items-center justify-end gap-2 text-caption text-muted-foreground">
             {t(($) => $.issue_statuses.show_archived, { count: archivedCount })}
@@ -177,9 +181,8 @@ export function IssueStatusesTab() {
             {t(($) => $.issue_statuses.loading)}
           </div>
         ) : (
-          // One list, not seven cards: the categories are sections of a single
-          // workflow, and seven separate borders made them read as seven
-          // unrelated settings.
+          // 用一整块列表而不是七张独立卡片：各个类别只是同一条工作流的几个分段，
+          // 若各自套七个边框，读起来会像七个互不相干的设置项。
           <div className="overflow-hidden rounded-lg border border-surface-border bg-card">
             {groups.map((group) => (
               <CategorySection
@@ -213,6 +216,10 @@ export function IssueStatusesTab() {
   );
 }
 
+/**
+ * 单个类别区块：头部展示类别名与「新增」按钮，下方列出该类别下的内置行（只读）
+ * 和自定义行（支持拖拽排序、编辑与归档）。
+ */
 function CategorySection({
   category,
   builtIn,
@@ -235,8 +242,8 @@ function CategorySection({
   const labelOf = useStatusLabel(wsId);
   const reorder = useReorderIssueStatuses();
 
-  // Local order so the drag reads as instant even before the optimistic cache
-  // write settles; resynced whenever the server list changes.
+  // 用一份本地顺序数组先响应拖拽，让排序在乐观缓存写入落定前就"立刻跟手"；
+  // 服务端列表一变就重新同步这份本地副本。
   const [order, setOrder] = useState(custom);
   useEffect(() => setOrder(custom), [custom]);
 
@@ -252,11 +259,10 @@ function CategorySection({
     if (from < 0 || to < 0) return;
     const next = arrayMove(order, from, to);
     setOrder(next);
-    // ACTIVE rows only. With "show archived" on, `order` also holds archived
-    // rows; sending those made the server reject the request, and before the
-    // write became atomic that rejection landed AFTER the active rows had
-    // already been reordered. Archived rows are frozen, so their absence from
-    // the payload is also what the user sees.
+    // 只提交「活跃」行的新顺序。开着"显示已归档"时，order 里也会混入归档行；
+    // 把它们一起发给服务端会被拒绝，而在那次写入改成原子操作之前，这个拒绝
+    // 是在活跃行已经被重排之后才落到前端的，造成"排完又弹回"的错乱。
+    // 归档行本来就是冻结的，载荷里不含它们，也正是用户看到的最终结果。
     reorder.mutate(
       { category, ordered: next.filter((entry) => !entry.archived_at) },
       {
@@ -270,16 +276,15 @@ function CategorySection({
     );
   };
 
-  // Only rows that can actually move are draggable. A single custom status has
-  // nothing to swap with, and archived rows are frozen.
+  // 只有真正"动得了"的行才允许拖拽：仅有一条自定义状态时没有可交换的对象，
+  // 归档行则一律冻结。
   const sortableIds = order.filter((s) => !s.archived_at).map((s) => s.id);
   const canReorder = canManage && sortableIds.length > 1;
 
   return (
     <section className="border-b border-surface-border last:border-b-0">
-      {/* Label plus the one action the header owns. The category glyph is the
-          same glyph the built-in row renders directly below it, so it said
-          nothing the eye had not already read. */}
+      {/* 头部只留类别名 + 它独有的一件动作。类别图标和正下方内置行渲染的是同一个图标，
+          再在头部放一遍等于让眼睛读两遍早已看过的东西。 */}
       <div className="flex items-center justify-between gap-2 bg-muted/20 px-4 py-1.5">
         <span className="text-caption font-medium text-muted-foreground">
           {labelOf(category)}
@@ -330,6 +335,7 @@ function CategorySection({
   );
 }
 
+/** 内置状态行：只读展示图标与名称，副行用中文类别行为句说明该状态的语义；没有操作菜单。 */
 function BuiltInRow({
   entry,
   label,
@@ -344,17 +350,18 @@ function BuiltInRow({
       <StatusIcon status={entry.key} category={entry.category} className="size-4" />
       <div className="min-w-0">
         <p className="truncate text-body font-medium">{label}</p>
-        {/* The catalog's own description is seeded in English by the server;
-            the category sentence is the translated form of the same fact, so
-            it is the one that ships. No lock icon rides along — a built-in is
-            the row with no actions menu, and seven padlocks said that seven
-            times. */}
+        {/* 目录自身的描述字段是服务端种的英文种子文案，类别行为句则是同一事实的
+            已翻译表述，所以展示中文那句。行上不画锁图标——内置状态本身就是
+            "没有操作菜单的那一行"，挂七把锁等于把这件事说了七遍。 */}
         <p className="truncate text-caption text-muted-foreground">{behavior}</p>
       </div>
     </div>
   );
 }
 
+/**
+ * 自定义状态行：可拖拽排序（handle 位于行内左侧）；管理员可通过行尾菜单编辑或归档。
+ */
 function CustomStatusRow({
   entry,
   canManage,
@@ -382,10 +389,9 @@ function CustomStatusRow({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={`group/row relative flex min-h-12 items-center gap-3 bg-card px-4 py-2 ${isDragging ? "z-10 shadow-[var(--surface-shadow)]" : ""} ${archived ? "opacity-60" : ""}`}
     >
-      {/* The handle rides inside the row's own left padding instead of taking a
-          column of its own. A reserved gutter indents every status away from
-          the card edge — including the built-in rows, which can never be
-          dragged — and that indent is what the list reads as. (MUL-6422) */}
+      {/* 拖拽把手放在行自身的左侧内边距里，而不是单独占一列。预留装订线会让所有行
+          ——包括永远拖不了的内置行——从卡片边缘得到一致的缩进，
+          这份整体缩进就是列表给人的秩序感。(MUL-6422) */}
       {canReorder && (
         <button
           type="button"
@@ -403,9 +409,8 @@ function CustomStatusRow({
         color={issueStatusColor(entry)}
         className="size-4"
       />
-      {/* Name over description, the way the row is read. The old layout pinned
-          the description to the far right, which left a column of em dashes on
-          every status nobody had described. */}
+      {/* 名称在上、描述在下，顺着阅读顺序走。旧布局把描述钉在最右侧，
+          于是每个没写描述的状态都留下一列破折号，很杂乱。 */}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-body font-medium">{entry.name}</span>
@@ -455,6 +460,10 @@ function CustomStatusRow({
   );
 }
 
+/**
+ * 新建 / 编辑状态的共用弹窗：传入 status 时走"编辑既有状态"，否则按传入的类别新建。
+ * 编辑模式下类别字段锁定不可改。
+ */
 function StatusEditorDialog({
   open,
   onOpenChange,
@@ -485,6 +494,7 @@ function StatusEditorDialog({
 
   useEffect(() => {
     if (!open) return;
+    // 每次打开弹窗都重新用待编辑状态（或空白草稿）初始化表单，避免带出上一次的残留输入。
     setDraft(
       status
         ? {
@@ -527,13 +537,10 @@ function StatusEditorDialog({
       {
         onSuccess: (created) => {
           onOpenChange(false);
-          // The key is derived server-side and is the only handle the API and
-          // the CLI accept, so creation has to say what it minted. A name with
-          // no ASCII to slug gets one that cannot be guessed back from the name
-          // — "客户确认" becomes `in_review_2` (MUL-6749) — so staying silent
-          // would leave the admin no way to learn it short of reopening the
-          // row. The dialog is already closing; a toast is the one surface
-          // still visible.
+          // key 是服务端派生出来的、API 和 CLI 唯一认的标识，所以新建必须把生成了什么说清楚。
+          // 当名字里没有任何可转 slug 的 ASCII 字符时，生成的 key 无法从名字反推回来
+          // ——「客户确认」会变成 in_review_2（MUL-6749）——若一声不吭就关闭，
+          // 管理员只能重新打开那一行才能查到。弹窗马上要关了，toast 是唯一还看得见的出口。
           if (created?.key) {
             toast.success(t(($) => $.issue_statuses.editor.created, { key: created.key }));
           }
@@ -573,11 +580,9 @@ function StatusEditorDialog({
               }
               placeholder={t(($) => $.issue_statuses.editor.name_placeholder)}
             />
-            {/* The key is the string the API and the CLI take, and renaming a
-                status does not move it — so it has to be readable somewhere.
-                Here, not as a chip on every row: the list is for scanning
-                names, and a slug beside each one is what turned it into a
-                table of internals. (MUL-6422) */}
+            {/* key 是 API 与 CLI 认的字符串，且重命名状态并不会改变 key，所以它总得
+                有个能读到的地方。放在这里而不是给每行都贴个徽标：列表是用来扫名字的，
+                每行旁边再放一串 slug 就把列表变成了一张内部细节表。(MUL-6422) */}
             {status && (
               <p className="text-caption text-muted-foreground">
                 {t(($) => $.issue_statuses.editor.key_hint, { key: status.key })}
@@ -586,8 +591,7 @@ function StatusEditorDialog({
           </div>
           <div className="space-y-2">
             <FieldLabel>{t(($) => $.issue_statuses.editor.category)}</FieldLabel>
-            {/* Immutable after creation: changing it would silently rewrite the
-                platform behavior of every issue already on this status. */}
+            {/* 创建后类别不可再改：改了等于悄悄改写每个已挂在该状态上的 issue 的平台行为。 */}
             <Select
               items={categoryItems}
               value={draft.category}
@@ -667,6 +671,7 @@ function StatusEditorDialog({
   );
 }
 
+/** 归档确认弹窗：向用户讲清"归档只是退出未来的新指派，旧 issue 不受影响"，以免被当成删除。 */
 function ArchiveStatusDialog({
   status,
   onClose,
@@ -681,9 +686,8 @@ function ArchiveStatusDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{t(($) => $.issue_statuses.archive_dialog.title)}</AlertDialogTitle>
-          {/* Archiving retires a status from FUTURE assignment. Issues already
-              on it keep it and keep behaving as their category prescribes —
-              say so, or this reads like a delete. */}
+          {/* 归档只是让状态退出"未来指派"：已挂其上的 issue 仍保留该状态、仍按类别规则运行——
+              这一点必须写明，否则这段描述读起来会像"删除"。 */}
           <AlertDialogDescription>
             {t(($) => $.issue_statuses.archive_dialog.description, {
               name: status?.name ?? "",

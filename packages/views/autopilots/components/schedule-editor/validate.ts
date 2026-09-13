@@ -1,3 +1,8 @@
+// 定时器计划的"提交前校验"与"拒绝反馈"：编辑器内联错误只覆盖预览已落定的表达式；
+// 在预览请求还在飞行中时就点保存，会先持久化再创建触发器失败，留下一个永不运行的
+// autopilot。因此所有写路径在真正写入前还要再过一道与服务器确认的闸。本文件集中
+// 提供：对服务器 400 的归类、确认查询、toast 播报，以及可复用的提交闸 Hook。
+
 import { useState } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -7,15 +12,15 @@ import { useT } from "../../../i18n";
 import type { ScheduleConfig } from "./model";
 import { toCron } from "./cron-mapping";
 
-/** The server's rejection, split the way the editor is: which input is at fault
- *  (the cron box or the timezone picker), and the parser's own words. */
+/** 服务器的拒绝，按编辑器的方式拆开：哪个输入出错（cron 框还是时区选择器），
+ *  以及解析器自己的话。 */
 export interface ScheduleRejection {
   code: "invalid_cron" | "invalid_timezone";
   detail: string;
 }
 
-/** Read the server's classification off a preview 400. Anything but an explicit
- *  invalid_timezone tag is the cron's fault. */
+/** 从预览的 400 上读出服务器的归类。除显式 invalid_timezone 标签外一律归咎于
+ *  cron。 */
 export function classifyScheduleRejection(err: ApiError): ScheduleRejection {
   const body = typeof err.body === "object" && err.body !== null ? err.body : {};
   const code = (body as { code?: unknown }).code;
@@ -26,18 +31,18 @@ export function classifyScheduleRejection(err: ApiError): ScheduleRejection {
 }
 
 /**
- * Ask the server whether it accepts this schedule, and return its rejection
- * (or null when it accepts).
+ * 问服务器是否接受这份计划，返回它的拒绝（接受时返回 null）。
  *
- * The editor's inline error only covers expressions whose preview has already
- * settled: typing an invalid cron and clicking Save immediately commits the
- * draft on blur while the preview request is still in flight, so the submit
- * gate would still be open. Creating the autopilot in that state persists it
- * and then fails to create its trigger, leaving an autopilot that can never
- * run — so submit paths validate once more before writing.
+ * 编辑器的内联错误只覆盖预览已经落定的表达式：打了一串非法 cron 就立刻点保存，
+ * 会在预览请求还在飞行中时于 blur 时提交草稿，提交闸仍是开的。那种状态下创建
+ * autopilot 会先持久化、随后创建触发器失败，留下一个永不运行的 autopilot——所以
+ * 提交路径在写入前必须再校验一次。
  *
- * Transport failures resolve to null: an unreachable preview endpoint must not
- * block saving a schedule the server would have accepted.
+ * 传输层故障归为 null：预览接口不可达不该阻止保存一份服务器本会接受的计划。
+ * @param queryClient React Query 客户端。
+ * @param wsId 工作区 ID。
+ * @param config 要校验的调度配置。
+ * @returns 拒绝详情；接受或传输故障时为 null。
  */
 export async function findScheduleRejection(
   queryClient: QueryClient,
@@ -53,10 +58,9 @@ export async function findScheduleRejection(
   }
 }
 
-/** Announce a rejection the way both submit paths must: the headline names the
- *  control at fault, because the cron and the timezone are fixed in different
- *  ones, and the parser's own words go underneath — untranslated, but the only
- *  text that says what is actually wrong. */
+/** 用两个提交路径必须一致的方式播报拒绝：标题点名出错的那个控件（cron 与时区固定
+ *  在不同控件里），解析器自己的话放下面——不翻译，但它是唯一说明到底错在哪的
+ *  文本。 */
 export function toastScheduleRejection(
   t: ReturnType<typeof useT<"autopilots">>["t"],
   rejection: ScheduleRejection,
@@ -70,23 +74,22 @@ export function toastScheduleRejection(
 }
 
 /**
- * The submit gate every form that writes a schedule needs, in one place: a
- * schedule the server has rejected must not be submittable, or the form
- * persists an autopilot whose trigger then 400s and never runs.
+ * 每个写计划的表单都需要的提交闸，收拢在一处：服务器拒绝过的计划绝不能提交，
+ * 否则表单会持久化一个触发器随后 400、永不运行的 autopilot。
  *
- * - `scheduleValid` gates the submit button, fed by the editor's
- *   `onValidityChange` and by `ensureAccepted`.
- * - `clearRejection` belongs in the schedule's `onChange`: a submit-time
- *   rejection is the gate's, not the editor's — the editor's own preview may
- *   never query that expression if the user edits again before the debounce
- *   fires, and then nothing would re-enable Save. Any edit lifts it; the
- *   editor's inline error re-disables Save if the new expression is bad too.
- * - `ensureAccepted` runs the pre-write check (see findScheduleRejection) and
- *   toasts the rejection itself; the caller only unwinds its own submit state.
+ * - `scheduleValid` 门控提交按钮，由编辑器的 `onValidityChange` 与
+ *   `ensureAccepted` 共同喂。
+ * - `clearRejection` 要放进计划的 `onChange`：提交时的拒绝属于闸而非编辑器——
+ *   编辑器自己的预览可能因为防抖还没触发而从未查询该表达式，那样没人会把
+ *   Save 重新点亮。任何编辑都解除它；若新表达式也不合法，编辑器的内联错误会再次
+ *   禁用 Save。
+ * - `ensureAccepted` 执行写入前检查（见 findScheduleRejection）并自己 toast 拒绝
+ *   内容；调用方只需回卷自己的提交状态。
  *
- * Mount the owning form only while it is open: the gate's state lives with it,
- * and a form kept mounted closed would carry a stale rejection into its next
- * opening.
+ * 让承载表单只在打开期间挂载：闸的状态跟它同生共死，一直挂着关闭态的表单会把
+ * 过期的拒绝带进下一次打开。
+ * @param wsId 工作区 ID。
+ * @returns 提交闸的四件套。
  */
 export function useScheduleSubmitGate(wsId: string): {
   scheduleValid: boolean;

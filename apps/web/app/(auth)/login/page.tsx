@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * 登录页：渲染共享的 <LoginPage />，并负责登录成功后的落地路由——
+ * 处理 `?next=` 跳转、CLI 授权回调、以及按用户 workspace 状态决定去向。
+ */
 import { Suspense, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
@@ -19,11 +23,15 @@ import { setLoggedInCookie } from "@/features/auth/auth-cookie";
 import { LoginPage, validateCliCallback } from "@multica/views/auth";
 
 /**
- * Pick where a logged-in user with no explicit `?next=` should land.
- * Un-onboarded users with pending invitations on their email get routed to
- * the batch /invitations page; everyone else falls through to the standard
- * resolver. A network blip on listMyInvitations is non-fatal — we fall
- * through rather than trap the user on an error screen.
+ * 为「没有显式 `?next=` 的已登录用户」决定落点。
+ * 尚未 onboard 且邮箱里有待处理邀请的用户，会被路由到批量 /invitations 页；
+ * 其余用户走标准解析器。listMyInvitations 的网络抖动是非致命的——直接往下走，
+ * 而不是把用户困在错误页。
+ *
+ * @param qc - React Query 客户端，用于把邀请列表写进缓存。
+ * @param hasOnboarded - 用户是否已完成 onboarding。
+ * @param workspaces - 当前用户的 workspace 列表。
+ * @returns 解析出的目标路由。
  */
 async function resolveLoggedInDestination(
   qc: QueryClient,
@@ -38,12 +46,13 @@ async function resolveLoggedInDestination(
         return paths.invitations();
       }
     } catch {
-      // fall through
+      // 忽略查询失败，继续往下走
     }
   }
   return resolvePostAuthDestination(workspaces, hasOnboarded);
 }
 
+/** 登录页内容主体：读取用户状态与查询参数，处理到达时已登录、以及表单登录成功两种场景。 */
 function LoginPageContent() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -53,23 +62,20 @@ function LoginPageContent() {
 
   const cliCallbackRaw = searchParams.get("cli_callback");
   const cliState = searchParams.get("cli_state") || "";
-  // `next` carries a protected URL the user was originally headed to
-  // (e.g. /invite/{id}). With URL-driven workspaces there is no legacy
-  // "/issues" default — if `next` is absent we decide after login based on
-  // the user's workspace list. Sanitize first so a crafted `?next=https://evil`
-  // cannot bounce the user off-origin after a successful login.
+  // `next` 携带用户原本要去的受保护 URL（例如 /invite/{id}）。
+  // 改成 URL 驱动的 workspace 后不再有默认的 "/issues" 落点——如果没有 `next`，
+  // 就等登录后根据用户的 workspace 列表来决定。先做净化，避免伪造的 `?next=https://evil`
+  // 在登录成功后把用户弹到站外。
   const nextUrl = sanitizeNextUrl(searchParams.get("next"));
 
   const hasOnboarded = useHasOnboarded();
 
-  // Latched once auth has been observed settled as logged-out on this page.
-  // Any `user` that appears afterwards came from the login form in this
-  // session — not from an existing session found on arrival.
+  // 在本页观察到 auth 已稳定为「未登录」时置位一次。之后出现的任何 `user`
+  // 都来自本会话里的登录表单，而不是到达时就已存在的旧会话。
   const settledLoggedOutRef = useRef(false);
 
-  // Already authenticated ON ARRIVAL — honor ?next= or fall back to first
-  // workspace (or /onboarding if the user has none). Skip this entire path
-  // when the user arrived to authorize the CLI.
+  // 「到达时就已经登录」的场景——优先尊重 ?next=，否则回退到第一个 workspace
+  // （没有 workspace 则去 /onboarding）。当用户是为了授权 CLI 而来时，整段逻辑全部跳过。
   useEffect(() => {
     if (isLoading) return;
     if (!user) {
@@ -77,21 +83,18 @@ function LoginPageContent() {
       return;
     }
     if (cliCallbackRaw) return;
-    // Fresh form login (issue #5009): the user was written while
-    // handleVerify was still fetching the workspace list, so this effect used
-    // to read the not-yet-seeded list cache and race handleSuccess with a
-    // replace to /workspaces/new. handleSuccess owns post-login navigation;
-    // this effect only serves visitors who arrived already authenticated.
+    // 表单新登录（issue #5009）：user 被写入时 handleVerify 还在拉 workspace 列表，
+    // 所以这个 effect 过去会读到尚未播种的列表缓存，从而用 replace 到 /workspaces/new
+    // 跟 handleSuccess 抢导航。登录后的导航归 handleSuccess 管；
+    // 这个 effect 只为「到达时已经登录」的访客服务。
     if (settledLoggedOutRef.current) return;
     if (nextUrl) {
       router.replace(nextUrl);
       return;
     }
-    // Fetch instead of reading the cache: on a fresh page load the cache is
-    // cold, and `getQueryData() ?? []` would misroute a user who does have
-    // workspaces to /workspaces/new. On fetch failure fall back to [] —
-    // same destination the cold-cache read produced, rather than trapping
-    // the user on the login page.
+    // 用 fetch 而不是读缓存：全新页面加载时缓存是冷的，`getQueryData() ?? []` 会把
+    // 实际有 workspace 的用户误路由到 /workspaces/new。fetch 失败时回退到 []——
+    // 跟读冷缓存得到的结果一致，而不是把用户困在登录页。
     void qc
       .ensureQueryData(workspaceListOptions())
       .catch(() => [] as Workspace[])
@@ -100,8 +103,7 @@ function LoginPageContent() {
   }, [isLoading, user, router, nextUrl, cliCallbackRaw, hasOnboarded, qc]);
 
   const handleSuccess = async () => {
-    // Read the latest user snapshot directly — the closure's `hasOnboarded`
-    // was captured before login completed and would be stale here.
+    // 直接读最新的用户快照——闭包里的 `hasOnboarded` 是在登录完成前捕获的，这里会过期。
     const currentUser = useAuthStore.getState().user;
     const onboarded = currentUser?.onboarded_at != null;
     if (nextUrl) {
@@ -125,6 +127,11 @@ function LoginPageContent() {
   );
 }
 
+/**
+ * 登录页默认导出：用 Suspense 包裹，避免 `useSearchParams` 触发 CSR bailout。
+ *
+ * @returns 登录页内容。
+ */
 export default function Page() {
   return (
     <Suspense fallback={null}>

@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 的“身份信息卡”（通常作为悬停卡内容出现）：用紧凑布局展示
+// 头像、名字、可见性、可用状态，以及运行环境 / 模型 / 技能 / 拥有者等元信息。
+// 顶部右侧提供一个仅悬停时出现的“详情 →”链接。
+
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { useAgentPresenceDetail } from "@multica/core/agents";
@@ -22,9 +26,14 @@ import { VisibilityBadge } from "./visibility-badge";
 import { useT } from "../../i18n";
 
 interface AgentProfileCardProps {
+  /** 要展示的 Agent id。卡片会自己去拉 Agent / 成员 / 运行环境数据。 */
   agentId: string;
 }
 
+/**
+ * Agent 身份卡（悬停卡主体）。按 id 取数据并渲染成一张只读迷你卡片；
+ * 数据还没加载出来时先显示骨架屏，Agent 不存在时显示“不可用”占位。
+ */
 export function AgentProfileCard({ agentId }: AgentProfileCardProps) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
@@ -66,18 +75,14 @@ export function AgentProfileCard({ agentId }: AgentProfileCardProps) {
     .slice(0, 2);
 
   return (
-    // `group` enables the hover-only Detail link on the top-right —
-    // it fades in only when the user is hovering the card chrome,
-    // staying out of the way during a quick glance.
+    // 卡根节点挂 `group`：右上角的“详情”链接只在鼠标悬停整张卡时淡入，
+    // 平时扫一眼时不会碍事。
     <div className="group flex flex-col gap-3 text-left">
-      {/* Header — avatar + name + availability on the left, "Detail →" link
-          on the right (hover-only). Card stays minimal: only the 3-state
-          availability dot is surfaced here; last-task state lives in the
-          agents list and the agent detail page. */}
+      {/* 头部区：左侧头像 + 名字 + 可用状态，右侧“详情 →”链接（仅悬停显示）。
+          卡片刻意保持精简：这里只放三态可用圆点，最近任务的状态交给列表页和详情页。 */}
       <div className="flex items-start gap-3">
-        {/* Base avatar rather than the ActorAvatar wrapper: this card IS a
-            hover-card payload, so it must not nest another hover card or
-            profile link inside itself. */}
+        {/* 直接用 Base 头像而非 ActorAvatar 包装：这张卡本身就是悬停卡的内容，
+            不能再在内部嵌套另一张悬停卡或个人页链接。 */}
         <ActorAvatarBase
           name={agent.name}
           initials={initials}
@@ -116,10 +121,9 @@ export function AgentProfileCard({ agentId }: AgentProfileCardProps) {
         </p>
       )}
 
-      {/* Meta rows — runtime (where it lives), model (what powers it),
-          skills (what it knows), owner (who manages it). Model + effort
-          are surfaced here so a quick hover answers "which model is this
-          agent running?" without opening the detail page. */}
+      {/* 元信息行 —— 运行环境（跑在哪）、模型（用什么驱动）、技能（会什么）、
+          拥有者（谁管）。这里把模型和推理档位也露出来，让用户悬停一眼就能回答
+          “这 Agent 跑的是哪个模型？”，不用点开详情页。 */}
       <div className="flex flex-col gap-1.5 text-caption">
         <RuntimeRow agent={agent} runtime={runtime} />
         <ModelRow model={agent.model} thinkingLevel={agent.thinking_level} />
@@ -132,10 +136,9 @@ export function AgentProfileCard({ agentId }: AgentProfileCardProps) {
   );
 }
 
-// Compact availability line under the agent name — single 3-state signal
-// (online / unstable / offline). Last-task state is intentionally NOT
-// shown here; it belongs in the agents list and the detail page where
-// there's room for icon + label + reason without crowding the popover.
+// 名字下方的紧凑可用状态行 —— 只有一个三态信号（在线 / 不稳定 / 离线）。
+// 刻意不展示“最近任务”状态：那属于列表页和详情页，那里的空间够放
+// 图标 + 文案 + 原因，放在弹层里反而拥挤。
 function AgentAvailabilityLine({
   wsId,
   agentId,
@@ -157,13 +160,11 @@ function AgentAvailabilityLine({
   );
 }
 
-// Compact runtime row — wifi-style health icon + runtime name. The icon
-// shape (Wifi / WifiOff) plus colour reflects the live runtime health
-// derived from runtime + clock; cloud runtimes always read as online.
-// This is duplicate signal with the availability dot above by design —
-// the dot is the agent's effective availability (which mostly tracks
-// runtime health), and seeing the same wifi icon next to the runtime
-// name confirms WHICH runtime is the one currently in the dot's state.
+// 运行环境行 —— wifi 式健康图标 + 运行环境名。图标形状（Wifi / WifiOff）与颜色
+// 反映“运行环境 + 时钟”推导出的实时健康度；云端运行环境恒读作在线。
+// 它和上面可用圆点是刻意重复的信号：圆点表示 Agent 的“有效可用性”（大多跟随
+// 运行环境健康度），而圆点状态到底是哪台机器导致的，由运行环境名旁的
+// wifi 图标来确认。
 function RuntimeRow({
   agent,
   runtime,
@@ -194,16 +195,13 @@ function RuntimeRow({
   );
 }
 
-// Model row — the runtime-native model id the agent runs (`agent.model`),
-// with the reasoning/effort token appended as a small badge whenever the
-// agent pins one. An empty model means "no override": the runtime CLI's own
-// default decides at run time, so we render a "Runtime default" placeholder
-// rather than a bare dash. The model id is mono so provider-slug ids like
-// `claude-opus-4-8` stay legible. The effort badge is gated on `effort`
-// alone (NOT on `hasModel`): a `Runtime default` agent can still persist a
-// `thinking_level` override that applies at run time against the runtime's
-// default model, and the whole point of this row is to surface that runtime
-// info at a glance — hiding it would misreport the agent's real config.
+// 模型行 —— 展示 Agent 实际跑的运行时模型 id（`agent.model`），并在其固定了
+// 推理档位时以小徽章追加显示。model 为空表示“未覆盖”：运行时 CLI 自己的默认
+// 在运行期决定，所以这里显示“运行时默认”占位而不是一个横杠。模型 id 用等宽字体，
+// 让 `claude-opus-4-8` 这种带厂商前缀的 id 保持可读。推理徽章只看 `effort` 有值与否
+// （不看 `hasModel`）：一个“运行时默认”模型的 Agent 仍可能持久化了 `thinking_level`
+// 覆盖，运行期会作用到运行时的默认模型上——这一行本就是为了把这种运行时信息
+// 一眼呈现出来，藏着反而会误报 Agent 的真实配置。
 function ModelRow({
   model,
   thinkingLevel,
@@ -237,6 +235,7 @@ function ModelRow({
   );
 }
 
+/** 一行键值对：固定宽标签 + 可截断的值（等宽模式用于 id 类文本）。 */
 function MetaRow({
   label,
   value,
@@ -256,17 +255,16 @@ function MetaRow({
   );
 }
 
+/** 技能行：最多显示 3 个技能 chip，超出折叠成 `+N`；长名字在 chip 内截断。 */
 function SkillsRow({ skills }: { skills: string[] }) {
   const { t } = useT("agents");
   const visible = skills.slice(0, 3);
   const overflow = skills.length - visible.length;
   return (
-    // `items-start` (not center): skill chips wrap to multiple lines, and a
-    // vertically-centred label would drift down next to the middle chip —
-    // making the first chip look like it belongs to the row above. Pin the
-    // label to the first chip row; `pt-0.5` lines its text up with the chip
-    // text (chips carry `py-0.5`). Each chip truncates so one long skill name
-    // can't blow out the card width.
+    // 用 `items-start`（而非居中）：技能 chip 会换行成多排，垂直居中的标签会被
+    // 拽到中间那一排旁边，让第一个 chip 看起来像属于上一行。把标签钉在第一排，
+    // `pt-0.5` 让文字和 chip 文字（chip 自带 `py-0.5`）对齐。每个 chip 截断，
+    // 防止单个超长技能名撑爆卡片宽度。
     <div className="flex items-start gap-1.5">
       <span className="w-12 shrink-0 pt-0.5 text-muted-foreground">{t(($) => $.profile_card.skills_label)}</span>
       <div className="flex min-w-0 flex-wrap gap-1">

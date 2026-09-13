@@ -1,24 +1,23 @@
 /**
- * Export helpers for Mermaid diagrams (`.mmd` source, `.svg`, `.png`).
+ * Mermaid 图的导出辅助（`.mmd` 源码、`.svg`、`.png`）。
  *
- * Export runs in the host document against the SVG markup Mermaid returned —
- * never by reaching into the preview iframe, which is `sandbox=""` and
- * deliberately unreachable. The markup therefore has to be made standalone
- * first: Mermaid renders for embedding, so it emits a transparent background,
- * a `max-width` style tuned to the host container, and `font-family: inherit`,
- * none of which survive being opened as a file on their own.
+ * 导出在宿主文档里针对 Mermaid 返回的 SVG 标记进行——绝不伸手进预览
+ * iframe（它是 `sandbox=""`，本来就刻意不可达）。因此标记必须先做成
+ * 独立可用的：Mermaid 是为嵌入而渲染的，会输出透明背景、按宿主容器
+ * 调好的 `max-width` 样式、以及 `font-family: inherit`，这些在单独存成
+ * 文件后全都不能成立。
  */
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
-// Rasterize above CSS pixels so PNGs stay legible when zoomed or pasted into a
-// doc. 2 matches a typical HiDPI screen without producing huge files.
+// 按高于 CSS 像素的分辨率栅格化，PNG 在放大或粘进文档时才不至于糊。
+// 2 倍对应典型 HiDPI 屏幕，又不会产出巨大的文件。
 const PNG_PIXEL_RATIO = 2;
 
 export interface ExportSvgOptions {
-  /** Opaque page color, so an exported file is not transparent-on-transparent. */
+  /** 不透明页面底色，避免导出的文件在透明背景上再叠一层透明。 */
   background: string;
-  /** Concrete stack to replace Mermaid's `inherit`, which has nothing to inherit from in a file. */
+  /** 具体字体栈，替换 Mermaid 的 `inherit`——后者在文件里没有可继承的来源。 */
   fontFamily: string;
   width: number;
   height: number;
@@ -50,12 +49,11 @@ interface Size {
 }
 
 /**
- * Rewrites a `style` attribute's declarations.
+ * 重写 `style` 属性里的各条声明。
  *
- * Done at the attribute level rather than through the `.style` CSSStyleDeclaration
- * API: an SVG root parsed out of an XML document does not reliably expose that
- * API (jsdom does not implement it at all), so touching `.style` here would
- * throw outside a real browser.
+ * 在属性字符串层面做，而不是用 `.style` CSSStyleDeclaration API：从 XML
+ * 文档解析出的 SVG 根节点不一定暴露该 API（jsdom 就完全不实现），在真实
+ * 浏览器之外碰 `.style` 会直接抛错。
  */
 function mergeStyleAttribute(
   existing: string | null,
@@ -82,9 +80,9 @@ function mergeStyleAttribute(
 }
 
 /**
- * Rewrites embedded Mermaid SVG markup into a standalone document.
+ * 把 Mermaid 产出的内嵌 SVG 标记重写成一份可独立打开的文档。
  *
- * @returns serialized SVG, or `null` when the markup does not parse.
+ * @returns 序列化后的 SVG；标记无法解析时返回 null。
  */
 export function buildExportSvg(
   svgMarkup: string,
@@ -97,9 +95,8 @@ export function buildExportSvg(
   if (root.nodeName.toLowerCase() !== "svg") return null;
 
   root.setAttribute("xmlns", SVG_NAMESPACE);
-  // Concrete pixel dimensions: `width="100%"` (Mermaid's default) has no
-  // percentage basis in a standalone file, and an <img> loading it for the PNG
-  // path would have no intrinsic size to draw.
+  // 写死像素尺寸：`width="100%"`（Mermaid 默认）在独立文件里没有可参照的
+  // 百分比基准，而且走 PNG 路径的 <img> 加载它时也需要固有尺寸才能绘制。
   root.setAttribute("width", String(width));
   root.setAttribute("height", String(height));
   root.setAttribute(
@@ -107,17 +104,16 @@ export function buildExportSvg(
     mergeStyleAttribute(
       root.getAttribute("style"),
       { "background-color": background, "font-family": fontFamily },
-      // Mermaid sizes the embedded SVG to the host container; kept, it would
-      // clip the export to whatever width the page happened to have.
+      // Mermaid 会把内嵌 SVG 调成宿主容器的宽度；保留它会让导出被裁剪成
+      // 页面当时恰好有的宽度。
       ["max-width"],
     ),
   );
 
   const viewBox = readViewBox(root, { width, height });
   const backgroundRect = parsed.createElementNS(SVG_NAMESPACE, "rect");
-  // Cover the viewBox rather than 0,0 100%x100%: Mermaid emits negative
-  // viewBox origins for diagrams with padding, and a 0,0-anchored rect would
-  // leave those margins transparent.
+  // 覆盖整个 viewBox 而不是 0,0 到 100%,100%：Mermaid 对带留白的图会输出
+  // 负的 viewBox 原点，锚在 0,0 的矩形会把这些边距留成透明。
   backgroundRect.setAttribute("x", String(viewBox.minX));
   backgroundRect.setAttribute("y", String(viewBox.minY));
   backgroundRect.setAttribute("width", String(viewBox.width));
@@ -138,11 +134,10 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 /**
- * Rasterizes standalone SVG markup to a PNG blob.
+ * 把独立的 SVG 标记栅格化成 PNG blob。
  *
- * The blob URL is same-origin and the markup carries no external references
- * (fonts are resolved to a concrete stack by `buildExportSvg`), so the canvas
- * stays untainted and `toBlob` is allowed to read it back.
+ * blob URL 同源，且标记里没有任何外部引用（字体已被 buildExportSvg
+ * 换成具体字体栈），所以 canvas 不会被污染，`toBlob` 可以正常读回像素。
  */
 export async function renderSvgToPngBlob(
   standaloneSvg: string,
@@ -173,6 +168,9 @@ export async function renderSvgToPngBlob(
   }
 }
 
+/**
+ * 触发浏览器下载一个 blob。
+ */
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -182,14 +180,14 @@ export function downloadBlob(blob: Blob, filename: string): void {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  // Revoke on the next task: Safari aborts the download if the URL dies while
-  // the click is still being processed synchronously.
+  // 放到下一个任务再 revoke：Safari 在点击还在同步处理时若 URL 失效会
+  // 中止下载。
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 /**
- * Filename stem derived from the diagram's first meaningful line, so a folder
- * of exports is scannable instead of being `diagram (3).png` all the way down.
+ * 从图的第一个有意义行推导文件名主干，让一批导出的文件可以扫视识别，
+ * 而不是清一色的 `diagram (3).png`。
  */
 export function diagramFilenameStem(chart: string): string {
   const firstLine = chart

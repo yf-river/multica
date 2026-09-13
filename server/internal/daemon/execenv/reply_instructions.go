@@ -1,37 +1,38 @@
+// 组装"评论触发任务"的回复指引文本：告诉 agent 本轮该去读哪些评论、
+// 以及用哪个 --parent 以哪种安全方式回帖。这些块供每轮提示
+// （daemon.buildCommentPrompt）与 CLAUDE.md 工作流（InjectRuntimeConfig）
+// 共用，保证触发评论 id 与 --parent 值在各表面之间永不错位。
+
 package execenv
 
 import "fmt"
 
-// BuildNewCommentsHint returns the comment-reading pointer for the WARM path —
-// the agent ran on this issue before, so there is a since-anchor. The server
-// count is ISSUE-WIDE (every thread, not just the triggering one) and excludes
-// the triggering comment itself because that body is already injected into the
-// prompt. It ships only the COUNT and the cursor — never the comment bodies —
-// so the server stays cheap and the agent pulls details on demand.
+// BuildNewCommentsHint 生成 WARM 路径的"读评论"指引——agent 此前运行过该
+// issue，因此存在 since 锚点。服务端统计的数量是"整 issue 范围"的（每个
+// 线程，不只是触发的那一个），并且排除触发评论本身——因为其正文已被注入
+// 提示词。它只携带数量与游标，绝不携带评论正文，这样服务端保持轻量，
+// agent 按需自行拉取详情。
 //
-// The agent is told the full issue-wide volume but steered to read the
-// triggering (parent) thread FIRST instead of blindly catching up on every
-// thread. The issue-wide `--since` catch-up is kept as an explicit
-// "only if you need it" fallback.
+// agent 被告知 issue 范围内的总量，但被引导"先读触发它的（父）线程"，
+// 而不是盲目追平所有线程。整 issue 范围的 `--since` 追平被降级为显式的
+// "仅在需要时"回退。
 //
-// Since MUL-5377 the per-turn prompt (daemon.buildCommentPrompt) is the only
-// caller — the brief must not carry per-run routing state.
+// 自 MUL-5377 起，每轮提示（daemon.buildCommentPrompt）是唯一调用方——
+// brief 不得携带按轮次变化的路由状态。
 //
-// Renders nothing on cold start (no prior run → newCommentsSince empty) or when
-// there are no new comments (newCommentCount <= 0) or issueID is empty. In those
-// cases the caller falls back to BuildResumedCommentsHint (when a prior session
-// is active) or BuildColdCommentsHint.
+// 在冷启动（没有历史运行 → newCommentsSince 为空）、没有新评论
+// （newCommentCount <= 0）或 issueID 为空时不渲染任何内容。这些情况下调用方
+// 回退到 BuildResumedCommentsHint（当有活跃的历史会话时）或
+// BuildColdCommentsHint。
 func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newCommentsSince string, newCommentCount int) string {
 	if newCommentCount <= 0 || newCommentsSince == "" || issueID == "" {
 		return ""
 	}
 	threadID := activeThreadID(triggerThreadID, triggerCommentID)
-	// When we know the triggering thread, steer the agent to read THAT thread
-	// first rather than blindly pulling every new comment issue-wide. The
-	// issue-wide --since catch-up is demoted to an only-if-needed fallback,
-	// phrased as a rerun of the thread command minus `--thread` instead of a
-	// second full command: the duplicate restated the issue UUID and anchor
-	// for no routing value (MUL-5721 OPT-1).
+	// 知道触发线程时，引导 agent 先读"那一条"线程，而不是盲目地拉取 issue
+	// 范围内每条新评论。整 issue 的 --since 追平被降级为"仅在需要时"的回退，
+	// 措辞上是"去掉 --thread 重跑该命令"而非"第二条完整命令"：重复的命令会
+	// 为毫无路由价值地再次复述 issue UUID 与锚点（MUL-5721 OPT-1）。
 	if threadID != "" {
 		return fmt.Sprintf(
 			"%d new comment(s) on this issue since your last run — don't read them all blindly. "+
@@ -42,9 +43,8 @@ func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newComment
 			newCommentCount, issueID, threadID, newCommentsSince,
 		)
 	}
-	// Defensive: comment triggers always carry a trigger id, but if one is
-	// missing there is no thread to anchor on, so fall back to the plain
-	// issue-wide catch-up.
+	// 防御性兜底：评论触发总会带 trigger id，但万一缺失就没有线程可锚定，
+	// 退回朴素的整 issue 范围追平。
 	return fmt.Sprintf(
 		"%d new comment(s) on this issue since your last run. Catch up: "+
 			"`multica issue comment list %s --since %s --compact --output json`.\n\n",
@@ -52,22 +52,18 @@ func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newComment
 	)
 }
 
-// BuildResumedCommentsHint returns the comment-reading pointer for the WARM
-// no-delta path: the daemon is resuming a prior provider session and the
-// triggering comment body has already been injected into the per-turn prompt.
-// newCommentCount == 0 here means no new comments arrived issue-wide since the
-// last run (beyond the injected trigger and the agent's own replies). Keep the
-// read bounded and conditional, but make it explicit that context-dependent
-// replies should refresh the triggering conversation rather than trusting
-// resumed memory alone.
+// BuildResumedCommentsHint 生成 WARM 但"无增量"路径的读评论指引：daemon 正在
+// 恢复之前某个 provider 会话，而触发评论的正文已注入每轮提示。此处的
+// newCommentCount == 0 表示自上次运行以来（除已注入的触发评论与 agent 自己的
+// 回复外）issue 范围内没有新评论。让读取保持有界且有条件，同时明示：依赖
+// 上下文的回复应当刷新触发它的那段对话，而不是只信任恢复出的会话记忆。
 func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string) string {
 	threadID := activeThreadID(triggerThreadID, triggerCommentID)
 	if issueID == "" || threadID == "" {
 		return ""
 	}
-	// No standalone anchor-restating sentence here (MUL-5721 OPT-1): the read
-	// command below already carries the thread anchor, and the trigger comment
-	// id reaches the agent as the reply cookbook's `--parent` value.
+	// 这里不再有独立的一句"复述锚点"（MUL-5721 OPT-1）：下面的读命令已携带
+	// 线程锚点，触发评论 id 会以回复 cookbook 的 `--parent` 值送到 agent 手上。
 	return fmt.Sprintf(
 		"You're resuming the prior session, and the triggering comment is already included above. "+
 			"No other new comments on this issue since your last run. "+
@@ -78,29 +74,25 @@ func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string)
 	)
 }
 
-// BuildColdCommentsHint returns the comment-reading pointer for the COLD path —
-// the agent has no prior run on this issue, so there is no since-anchor and
-// BuildNewCommentsHint renders nothing. Instead of dumping the whole flat
-// timeline (oldest-first, server cap 2000), point the agent at the triggering
-// CONVERSATION: `--thread <trigger> --tail 30` returns that thread's root plus
-// its 30 newest replies (root is always included, even at --tail 0) — the
-// context the triggering comment actually needs. Cross-thread background is a
-// cheap `--roots-only --summary` scan; the hint deliberately does NOT name
-// `--recent`, whose saturation trap and pagination live once in the brief's
-// `## Available Commands` (MUL-5372). Per-turn hints name only the reads they
-// actually want the agent to run.
+// BuildColdCommentsHint 生成 COLD 路径的读评论指引——agent 在此 issue 上没有
+// 历史运行，因此没有 since 锚点，BuildNewCommentsHint 渲染不出内容。与其倒出
+// 整条扁平的评论时间线（从最旧开始，服务端上限 2000 条），不如把 agent 指向
+// 触发它的那条"会话线程"：`--thread <trigger> --tail 30` 返回该线程的根评论
+// 及其最新 30 条回复（根评论始终包含，即使 --tail 0 也一样）——这正是触发
+// 评论真正需要的上下文。跨线程背景可以用便宜的 `--roots-only --summary`
+// 扫描获取；指引刻意不提 `--recent`，它的"饱和陷阱"与分页只存在于 brief 的
+// `## Available Commands` 一节（MUL-5372）。每轮指引只点名本轮真正想让它跑的
+// 读取命令。
 //
-// Since MUL-5377 the per-turn prompt is the only caller (same as
-// BuildNewCommentsHint). Returns "" when there is no triggering comment to
-// thread from, so the caller can keep a final plain fallback.
+// 自 MUL-5377 起每轮提示是唯一调用方（与 BuildNewCommentsHint 相同）。
+// 当没有可作线程起点的触发评论时返回 ""，让调用方保留最后的普通回退。
 func BuildColdCommentsHint(issueID, triggerCommentID, triggerThreadID string) string {
 	threadID := activeThreadID(triggerThreadID, triggerCommentID)
 	if issueID == "" || threadID == "" {
 		return ""
 	}
-	// The roots scan is phrased as a flag swap on the thread command above, not
-	// a second full command: the duplicate restated the issue UUID for no
-	// routing value (MUL-5721 OPT-1).
+	// 根评论扫描被措辞为"对上面那条线程命令的换旗标操作"，而非第二条完整
+	// 命令：重复的命令只会为毫无路由价值地复述 issue UUID（MUL-5721 OPT-1）。
 	return fmt.Sprintf(
 		"Read the triggering conversation first: "+
 			"`multica issue comment list %s --thread %s --tail 30 --compact --output json` "+
@@ -111,6 +103,8 @@ func BuildColdCommentsHint(issueID, triggerCommentID, triggerThreadID string) st
 	)
 }
 
+// activeThreadID 决定线程锚点：显式给出触发线程就用它，否则退回触发评论 id
+// （评论 id 在单层会话里即可充当线程标识）。
 func activeThreadID(triggerThreadID, triggerCommentID string) string {
 	if triggerThreadID != "" {
 		return triggerThreadID
@@ -118,50 +112,42 @@ func activeThreadID(triggerThreadID, triggerCommentID string) string {
 	return triggerCommentID
 }
 
-// BuildCommentReplyInstructions returns the canonical block telling an agent
-// how to post its reply for a comment-triggered task. Both the per-turn
-// prompt (daemon.buildCommentPrompt) and the CLAUDE.md workflow
-// (InjectRuntimeConfig) call this so the trigger comment ID and the
-// --parent value cannot drift between surfaces.
+// BuildCommentReplyInstructions 返回告诉 agent "如何为评论触发任务发布回复"
+// 的规范文本块。每轮提示（daemon.buildCommentPrompt）与 CLAUDE.md 工作流
+// （InjectRuntimeConfig）都调用它，于是触发评论 id 与 --parent 值不会在各
+// 表面之间漂移。
 //
-// The explicit "do not reuse --parent from previous turns" wording exists
-// because resumed Claude sessions keep prior turns' tool calls in context
-// and will otherwise copy the old --parent UUID forward.
+// 之所以明确写 "do not reuse --parent from previous turns"，是因为被恢复的
+// Claude 会话会把之前轮次的工具调用留在上下文里，否则 agent 会把旧的
+// --parent UUID 一路复制下去。
 //
-// The template is platform-agnostic AND provider-agnostic — the failure it
-// guards against lives at the shell layer, so it cannot be scoped to one
-// provider or one OS:
+// 该模板与平台无关、也与 provider 无关——它要防的失败发生在 shell 层，
+// 无法限定到某一个 provider 或某一个 OS：
 //
-//   - Inline `--content "..."` lets the shell rewrite the body BEFORE the CLI
-//     receives it: a backtick-wrapped token becomes a failed command
-//     substitution that is silently deleted, the stored comment no longer
-//     matches what the model intended, and a model that notices the mismatch
-//     can retry forever (MUL-2904 / OKK-497). It also lets Codex emit literal
-//     `\n` escapes inside `--content` (MUL-1467).
-//   - `--content-stdin` with a HEREDOC has TWO failure modes the model cannot
-//     see:
-//     1. On Windows, PowerShell 5.1's `$OutputEncoding` defaults to
-//     ASCIIEncoding when piping to native commands and drops non-ASCII as
-//     `?` before the bytes reach `multica.exe` (#2198 Chinese, #2236
-//     Chinese, #2376 Cyrillic).
-//     2. On any host, when the model emits a multi-flag command (e.g.
-//     `multica issue create --title ... --assignee-id ... --project ...`)
-//     the bash heredoc/flag boundary is fragile: a `BODY \` "terminator
-//     with trailing token" is not recognised as the heredoc end, so flag
-//     lines after it are swallowed into the description; or a clean
-//     terminator turns the trailing `--assignee ...` line into a separate
-//     shell statement that fails while the create already succeeded with
-//     no assignee. Both paths exit 0 with silently dropped flags. Github
-//     issue #4182 documents two confirmed cases (OXY-78, OXY-76).
+//   - 内联的 `--content "..."` 让 shell 在 CLI 收到正文"之前"改写它：被反引号
+//     包住的令牌会变成一次失败的命令替换而被静默删除，存下来的评论不再符合
+//     模型本意，而一旦模型察觉到不一致就可能无限重试（MUL-2904 / OKK-497）。
+//     它还允许 Codex 在 `--content` 里发出字面 `\n` 转义（MUL-1467）。
+//   - `--content-stdin` 配 HEREDOC 有两种模型看不见的失败模式：
+//     1. 在 Windows 上，PowerShell 5.1 的 `$OutputEncoding` 在向原生命令管道
+//     输出时默认是 ASCIIEncoding，会在字节到达 `multica.exe` 之前把非 ASCII
+//     字符替换成 `?`（#2198 中文、#2236 中文、#2376 西里尔文）。
+//     2. 在任何主机上，当模型发出多旗标命令（例如
+//     `multica issue create --title ... --assignee-id ... --project ...`）时，
+//     bash 的 heredoc/旗标边界很脆弱：正文里带尾随令牌的 `BODY \` "终止符
+//     不会被识别为 heredoc 结束，于是其后的旗标行被吞进描述；或者一个干净的
+//     终止符让尾随的 `--assignee ...` 行变成一条独立的 shell 语句而失败，
+//     但此时 create 早已成功——只是没有 assignee。两条路径都以退出码 0
+//     结束并静默丢弃旗标。GitHub issue #4182 记录了两个确证案例
+//     （OXY-78、OXY-76）。
 //
-// The single safe path is therefore: write the body to a UTF-8 file with
-// the file-write tool, post with `--content-file`, then remove the file.
-// All flags live on one shell-token line; the body never touches the shell;
-// no heredoc boundary exists for flags to leak across. This converges with
-// the long-standing Windows path so the cross-platform template is one shape.
+// 因此唯一安全的路径是：先用文件写入工具把正文写进 UTF-8 文件，用
+// `--content-file` 发帖，然后删除该文件。所有旗标都在同一行 shell token 上；
+// 正文从不经过 shell；不存在可供旗标泄漏越界的 heredoc 边界。这与长期以来的
+// Windows 路径收敛，于是跨平台模板只有一种形态。
 //
-// provider is retained for caller symmetry and future per-provider tweaks; the
-// guardrail itself is intentionally identical across providers and hosts.
+// provider 保留只是为了调用方对称以及未来可能出现的按 provider 微调；
+// 这个护栏本身在所有 provider 与主机上刻意为同一形态。
 func BuildCommentReplyInstructions(provider, issueID, triggerCommentID string, squadLeader bool) string {
 	if triggerCommentID == "" {
 		return ""
@@ -169,24 +155,19 @@ func BuildCommentReplyInstructions(provider, issueID, triggerCommentID string, s
 	return buildCommentReplyInstructionsSlim(provider, issueID, triggerCommentID, squadLeader)
 }
 
-// buildCommentReplyInstructionsSlim is the compressed reply-instructions
-// block used by BuildCommentReplyInstructions. It was introduced in
-// MUL-3560 as the slim alternative to a legacy verbose form; the
-// `runtime_brief_slim` flag has since been retired (MUL-4297) and this is
-// now the only form.
+// buildCommentReplyInstructionsSlim 是 BuildCommentReplyInstructions 使用的
+// 压缩版回复指引块。它于 MUL-3560 作为对旧式冗长形态的"精简"替代而引入；
+// `runtime_brief_slim` 旗标此后已退役（MUL-4297），现在它是唯一形态。
 //
-// The slim block carries only the trigger-specific cookbook (the exact
-// `--parent` UUID, the file path, the cleanup line) plus the two
-// behavioural rules tests pin ("do NOT reuse --parent" and "do not rely
-// on `\n` escapes"). The detailed shell-hazard rationale lives in the
-// canonical `## Comment Formatting` section the same brief carries, so
-// repeating it inline at every comment-triggered step 7 would be
-// duplication, not signal.
+// 精简块只携带"触发特有"的 cookbook（确切的 `--parent` UUID、文件路径、
+// 清理行），外加测试钉死的两条行为规则（"do NOT reuse --parent"与
+// "do not rely on `\n` escapes"）。关于 shell 风险的详细论证位于同一 brief
+// 携带的规范 `## Comment Formatting` 一节，在每个评论触发的步骤 7 内联复述
+// 只会是重复而非信号。
 func buildCommentReplyInstructionsSlim(provider, issueID, triggerCommentID string, squadLeader bool) string {
-	// The squad leader's `no_action` exit (recorded via `squad activity`) is
-	// the one path where posting no comment is correct — the imperative must
-	// carry its own carve-out so a later line never contradicts the
-	// no_action rule injected above it (MUL-5442 #6493 review).
+	// 小队长的 `no_action` 退出（通过 `squad activity` 记录）是"不发评论才是
+	// 正确"的唯一路径——这条祈使句必须自带例外，让后面的行永远不与被注入在
+	// 其上的 no_action 规则相矛盾（MUL-5442 #6493 review）。
 	lead := "Post your reply as a comment — always use the trigger comment ID below, "
 	if squadLeader {
 		lead = "Unless your outcome is `no_action`, post your reply as a comment — always use the trigger comment ID below, "
@@ -213,41 +194,34 @@ func buildCommentReplyInstructionsSlim(provider, issueID, triggerCommentID strin
 	)
 }
 
-// ThreadReplyTarget is one root-thread group a coalesced run must answer.
-// ThreadID labels the conversation (its root comment id); ParentID is the exact
-// `--parent` the agent must pass so its reply lands inside that thread.
+// ThreadReplyTarget 是一次"聚合运行"必须回答的"一个根线程分组"。
+// ThreadID 标识该会话（其根评论 id）；ParentID 是 agent 必须传的确切
+// `--parent`，使回复落进该线程内。
 type ThreadReplyTarget struct {
 	ThreadID string
 	ParentID string
 }
 
-// BuildMultiThreadCommentReplyInstructions is the reply fan-out block for a run
-// whose coalesced comments span MORE THAN ONE root thread (MUL-4348). It
-// deliberately overrides the general "post exactly one comment per run"
-// guidance for this specific run: three unrelated questions raised in three
-// separate threads must land as three in-thread answers, not one merged blob
-// posted under a single thread (or as a stray root comment).
+// BuildMultiThreadCommentReplyInstructions 是"聚合评论横跨多条根线程"
+// （MUL-4348）时的回复分发块。它刻意在"这一次运行"上覆盖通用的"每次运行
+// 只发一条评论"指引：三条在三个不同线程里提出的互不相关问题，必须以三条
+// 线程内回答落地，而不是合并成一坨贴在单条线程下（或成为一条游离的根评论）。
 //
-// The grouping is computed server-side, so same-thread follow-ups never reach
-// here — they collapse to a single target upstream and take the ordinary
-// single-parent path. That is why the agent is told, unconditionally, to post
-// exactly one reply per listed thread and never more than one reply in the same
-// thread: the "multiple @mentions in one thread" case is already consolidated
-// before this instruction is emitted, so a per-thread fan-out cannot split it.
+// 分组由服务端计算，因此"同一线程内的追问"永远不会走到这里——它们在上游
+// 就已塌缩成单个目标、走普通的单父路径。正因如此，才无条件地告诉 agent：
+// 每个列出的线程恰好回一条、同一线程内绝不超过一条——"同一线程里的多次
+// @提及"在发出本指引前已被合并，逐线程分发不会把它拆散。
 //
-// The block carries only what is multi-thread-SPECIFIC: the fan-out
-// announcement + override, the posting order, the per-thread `--parent`
-// targets, and the one mechanical delta (a DISTINCT body file per thread).
-// The posting mechanism itself — body file → `--content-file` → cleanup, the
-// inline/`--content-stdin` bans, the `\n`-escape rule, and the OS-specific
-// cleanup command — lives once in the brief's `## Comment Formatting`; this
-// block used to restate all of it plus two example command pairs, triple-
-// writing the same cookbook for ~1KB extra per multi-thread turn (MUL-5825).
-// Dropping the embedded commands also removes the only OS-dependent text, so
-// the block no longer branches on runtimeGOOS: `## Comment Formatting` keeps
-// the OS split.
+// 该块只携带"多线程特有"的东西：分发宣告 + 覆盖、发帖顺序、逐线程的
+// `--parent` 目标，以及唯一一处机械差异（每个线程用不同的正文文件）。
+// 发帖机制本身——正文文件 → `--content-file` → 清理、内联/`--content-stdin`
+// 禁令、`\n` 转义规则、按 OS 区分的清理命令——只在 brief 的
+// `## Comment Formatting` 一处定义；此块曾复述全部内容外加两对示例命令，
+// 使每个多线程轮次白白多写约 1KB 相同的 cookbook（MUL-5825）。去掉内嵌命令
+// 也同时删掉了唯一的 OS 相关文本，因此该块不再按 runtimeGOOS 分支：
+// `## Comment Formatting` 保留 OS 差异。
 //
-// Returns "" for fewer than two targets; callers keep the single-parent path.
+// 目标少于两个时返回 ""；调用方保留单父路径。
 func BuildMultiThreadCommentReplyInstructions(issueID string, targets []ThreadReplyTarget, squadLeader bool) string {
 	if issueID == "" || len(targets) < 2 {
 		return ""
@@ -258,13 +232,11 @@ func BuildMultiThreadCommentReplyInstructions(issueID string, targets []ThreadRe
 		targetLines += fmt.Sprintf("%d. thread %s → reply with `--parent %s`\n", i+1, tgt.ThreadID, tgt.ParentID)
 	}
 
-	// Same carve-out as the single-thread cookbook (MUL-5442 #6493 review):
-	// the leader's no_action exit must not be contradicted by this later
-	// imperative, and the scope sentence must govern the ENTIRE fan-out
-	// block — every obligation below ("multiple replies are required", the
-	// posting order, the per-thread file rule) sits under the "Otherwise" —
-	// not just the first verb. Ordinary agents keep the unconditional form
-	// byte-for-byte.
+	// 与单线程 cookbook 相同的例外（MUL-5442 #6493 review）：小队长的
+	// no_action 退出不得被这条更晚的祈使句推翻，而且作用域句必须统辖整个
+	// 分发块——下面每一条义务（"需要多条回复"、发帖顺序、逐线程文件规则）
+	// 都挂在 "Otherwise" 之下——而不只是第一个动词。普通 agent 保持无条件
+	// 形态逐字节不变。
 	lead := "This run coalesced comments from %d DISTINCT threads. Post ONE reply per thread"
 	if squadLeader {
 		lead = "This run coalesced comments from %d DISTINCT threads. **If your outcome is `no_action`, skip this ENTIRE fan-out block — post no replies at all and exit via `multica squad activity` as your leader rules direct; everything below applies only otherwise.** Otherwise, post ONE reply per thread"

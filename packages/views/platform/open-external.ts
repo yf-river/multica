@@ -1,4 +1,4 @@
-/** Open a URL in the browser. SSR-safe and popup-safe for async callers. */
+/** 在浏览器中打开一个 URL。对 SSR 安全、对异步调用方的弹窗拦截也安全。 */
 export function openExternal(
   url: string,
   options?: { webTarget?: "new-tab" | "same-tab" },

@@ -1,3 +1,5 @@
+// inbound_enricher.go：入站富化器——回调飞书 IM API，把用户【显式】附带的
+// 上下文（引用回复 / 合并转发包）以及群聊近期语境内联进消息正文。
 package lark
 
 import (
@@ -13,27 +15,22 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 )
 
-// larkMsgTypeMergeForward is the msg_type of a "merged & forwarded"
-// message — a bundle of other messages a user forwarded as one unit.
-// Its own body.content is a fixed sentinel string; the actual forwarded
-// messages come back as the extra items[] of a GetMessage call.
+// larkMsgTypeMergeForward 是“合并转发”消息的 msg_type——用户把一个包里的多条
+// 消息整体转发。它自己的 body.content 是一段固定的哨兵字符串；真正被转发的
+// 消息来自 GetMessage 调用多出的 items[]。
 const larkMsgTypeMergeForward = "merge_forward"
 
-// defaultMaxForwardChildren caps how many child messages we inline from
-// a single forward. Lark itself bounds a merge_forward at 100 messages;
-// we mirror that as a safety valve so a pathological bundle can't blow
-// up the agent's context. Anything beyond the cap is dropped with a
-// visible "... (N more truncated)" marker.
+// defaultMaxForwardChildren 限制单次转发我们内联的子消息条数。Lark 自己把
+// merge_forward 上限设为 100 条；我们镜像它作为安全阀，病态的大包不会撑爆
+// agent 的上下文。超过上限的部分丢弃，并带一个可见的 "... (N more truncated)"
+// 标记。
 const defaultMaxForwardChildren = 100
 
-// DefaultRecentContextSize is the window the production wiring uses for
-// the group-context prefetch: the page_size of the single list call made
-// when a user @-mentions the Bot in a group. It is a FETCH budget, not a
-// guaranteed rendered count — the trigger message itself and any quoted
-// parent are filtered out of the result, so the <recent_context> block
-// usually renders one or two fewer lines. 10 keeps the agent's prompt
-// meaningfully contextual without bloating it or straining the inbound
-// ACK budget (one list call, page_size 10).
+// DefaultRecentContextSize 是生产接线给群聊上下文预取用的窗口：用户在有 @ Bot
+// 时的那次单条 list 调用的 page_size。它是【拉取】预算而非保证的渲染条数——
+// 触发消息本身与任何被引用的父消息都会从结果里滤掉，所以 <recent_context> 块
+// 通常会少渲染一两行。10 能让 agent 的提示词有意义的上下文又不臃肿，也不给入站
+// ACK 预算添负担（一次 list 调用，page_size 10）。
 const DefaultRecentContextSize = 10
 
 const (
@@ -50,40 +47,35 @@ const (
 	recentContextFailureTemporary        = "temporary"
 )
 
+// errRecentContextChannelUnbound 表示近期上下文预取缺 chat_id。
 var errRecentContextChannelUnbound = errors.New("lark enricher: missing chat_id for recent context")
 
-// Enricher expands an inbound message's body with context the user
-// EXPLICITLY attached — a quoted reply or a merged-and-forwarded bundle
-// — by calling back into Lark's IM API. It runs after the (fast,
-// HTTP-free) decoder and before the dispatcher, turning a bare
-// "@bot 总结一下" into a body that already carries the referenced
-// conversation inline.
+// Enricher 通过回调飞书 IM API，用用户【显式】附带的上下文——引用回复或合并
+// 转发包——展开一条入站消息的正文。它跑在（快速、无 HTTP 的）decoder 之后、
+// dispatcher 之前，把一条裸的 "@bot 总结一下" 变成已内联引用对话的正文。
 //
-// It is best-effort by contract: every fetch failure degrades to a
-// readable note or placeholder and Enrich NEVER returns an error or
-// blocks ingestion. A message with nothing to expand (no parent_id, not
-// a merge_forward) is returned untouched without any network call.
+// 按契约是 best-effort：任何拉取失败都退化成可读的说明或占位符，Enrich 绝不
+// 返回错误或阻塞摄入。没有要展开内容的消息（无 parent_id、非 merge_forward）
+// 不经任何网络调用原样返回。
 type Enricher interface {
 	Enrich(ctx context.Context, msg InboundMessage, creds InstallationCredentials) InboundMessage
 }
 
-// InboundEnricherConfig tunes the enricher. All fields default.
+// InboundEnricherConfig 调优富化器。所有字段都有默认。
 type InboundEnricherConfig struct {
-	// MaxForwardChildren caps inlined forward children. <=0 uses
-	// defaultMaxForwardChildren.
+	// MaxForwardChildren 限制内联的转发子消息条数。<=0 用
+	// defaultMaxForwardChildren。
 	MaxForwardChildren int
-	// RecentContextSize caps how many surrounding group messages the
-	// enricher prefetches and inlines as a <recent_context> block when a
-	// user @-mentions the Bot in a group. <=0 DISABLES the prefetch
-	// entirely (only explicitly-attached quote/forward context is used);
-	// the production wiring sets DefaultRecentContextSize. Values above
-	// Lark's 50-per-page cap are clamped by the client.
+	// RecentContextSize 限制用户在有 @ Bot 时富化器预取并内联成
+	// <recent_context> 块的周边群消息条数。<=0 完全禁用预取（只用显式附带的
+	// 引用/转发上下文）；生产接线设 DefaultRecentContextSize。超过 Lark 单页 50
+	// 上限的值由 client 夹紧。
 	RecentContextSize int
-	// Logger receives best-effort warnings about fetch failures. Nil
-	// uses slog.Default().
+	// Logger 接收拉取失败的 best-effort 警告。nil 用 slog.Default()。
 	Logger *slog.Logger
 }
 
+// inboundEnricher 是 Enricher 的实现。
 type inboundEnricher struct {
 	client             APIClient
 	maxForwardChildren int
@@ -91,9 +83,8 @@ type inboundEnricher struct {
 	logger             *slog.Logger
 }
 
-// NewInboundEnricher builds an Enricher backed by the given Lark API
-// client. The client supplies GetMessage; everything else (flattening,
-// block assembly, speaker labelling) is local.
+// NewInboundEnricher 构造由给定 Lark API client 支撑的 Enricher。client 提供
+// GetMessage；其余一切（压平、块组装、说话者命名）都是本地处理。
 func NewInboundEnricher(client APIClient, cfg InboundEnricherConfig) Enricher {
 	if cfg.MaxForwardChildren <= 0 {
 		cfg.MaxForwardChildren = defaultMaxForwardChildren
@@ -109,44 +100,34 @@ func NewInboundEnricher(client APIClient, cfg InboundEnricherConfig) Enricher {
 	}
 }
 
-// Enrich rewrites msg.Body to inline surrounding group context and/or
-// any quoted-reply parent and/or forwarded bundle. Composition order
-// goes broadest-to-narrowest: the surrounding group history first, then
-// the explicitly-quoted parent (a specific reference), then the message's
-// own content (or, for a forward, the rendered transcript).
+// Enrich 重写 msg.Body，内联周边群语境和/或引用回复的父消息和/或转发包。组合
+// 顺序从宽到窄：先是周边群历史，其次显式引用的父消息（特定引用），最后是消息
+// 自身内容（转发则是渲染后的记录）。
 //
 //	<recent_context …>…</recent_context>
 //
 //	<quoted_message …>…</quoted_message>
 //
-//	<[sender name]: the user's own message, or the forwarded transcript>
+//	<[发送者名]: 用户自己的消息，或转发记录>
 //
-// The <recent_context> block is only produced for a group message
-// addressed to the Bot, and only when RecentContextSize > 0 — it answers
-// MUL-3084 (the Bot saw only the single @-ed line, never the surrounding
-// conversation). It is the one fetch here NOT triggered by something the
-// user explicitly attached. When the @-mention arrives inside a Lark topic
-// (话题) the window is scoped to that topic, so a topic's context never
-// includes a sibling topic's messages (#5835 — see fetchRecentItems).
+// <recent_context> 块只对发给 Bot 的群消息产生，且仅当 RecentContextSize > 0
+// ——它回答 MUL-3084（Bot 只看到被 @ 的那一行，看不到周边对话）。它是这里唯一
+// 不是由“用户显式附带的东西”触发的拉取。@ 落在飞书话题（话题）里时窗口限定在
+// 该话题内，一个话题的上下文绝不会包含兄弟话题的消息（#5835——见
+// fetchRecentItems）。
 //
-// In group chats, every speaker across ALL blocks (recent + quoted +
-// forwarded) and the sender who @-mentioned the Bot are resolved to real
-// display names via ONE Contact batch call, so the agent reads
-// "[Alice]: …" rather than "[User 1]: …" and knows who addressed it. This
-// is why the quote/forward items are fetched up front (Phase 1) before
-// names are resolved (Phase 2). Unresolved senders fall back to positional
-// "User N"; resolution is best-effort and never blocks. p2p chats keep
-// positional labels (identity is unambiguous in a 1:1).
+// 在群聊里，所有块（近期 + 引用 + 转发）里的每个说话者以及 @ Bot 的发送者，
+// 都通过一次 Contact 批量调用解析成真实显示名，agent 读到的是 "[Alice]: …"
+// 而不是 "[User 1]: …"，并且知道是谁 @ 的。这也是为什么引用/转发条目要在
+// 解析名字（Phase 2）之前先拉取（Phase 1）。解析不到的发送者退回位置标签
+// "User N"；名字解析是 best-effort、绝不阻塞。p2p 私聊保持位置标签（一对一里
+// 身份没有歧义）。
 //
-// Persistence note: like the quoted/forwarded blocks, the rewritten Body
-// is persisted into the addressed turn's chat_message.content downstream
-// (AppendUserMessage). Inlining nearby group messages — including ones
-// from senders who did not address the Bot — into a member's addressed
-// turn is an accepted product decision for MUL-3084. It does NOT relax
-// the MUL-2671 drop-audit invariant: a non-addressed group message still
-// never creates its own session row, and is only ever surfaced as read-
-// context attached to a turn a workspace member explicitly directed at
-// the Bot.
+// 持久化说明：与引用/转发块一样，被重写的 Body 会随被 @ 的那一轮后续持久化到
+// chat_message.content（AppendUserMessage）。把周边群消息——包括没有 @ Bot 的
+// 发送者的——内联进某成员的被 @ 轮次，是 MUL-3084 接受的产品决策。它并【不】
+// 放松 MUL-2671 的丢弃审计不变量：未被 @ 的群消息仍然绝不会创建自己的会话行，
+// 只会作为“附在 workspace 成员显式指向 Bot 的那一轮上的阅读上下文”浮出。
 func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds InstallationCredentials) InboundMessage {
 	freshSource := msg.CommandBody
 	if freshSource == "" {
@@ -159,9 +140,8 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 		case engine.ControlCommandFreshSession:
 			msg.ForceFreshSession = true
 		case engine.ControlCommandNewChat:
-			// A new Chat must not inherit adapter-generated recent context from
-			// the route's previous Chat. Explicit quote/forward context is still
-			// expanded below because the user attached it to this command.
+			// 新对话不能继承适配器从路由上一条对话生成的近期上下文。显式的引用/
+			// 转发上下文仍会在下面展开，因为用户把它附给了这条命令。
 			startChat = true
 		}
 	}
@@ -169,22 +149,19 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 	isForward := msg.MessageType == larkMsgTypeMergeForward
 	wantRecent := !startChat && e.recentContextSize > 0 && msg.ChatType == ChatTypeGroup && msg.AddressedToBot
 	if msg.ParentID == "" && !isForward && !wantRecent {
-		// Nothing to expand and no group prefetch wanted — no network call.
+		// 没有要展开的东西、也不想要群预取——不发网络调用。
 		return msg
 	}
-	// If the transport isn't wired (stub client on a deployment without
-	// a Lark app), skip rather than stamp every reply with a fetch
-	// error. Body stays whatever the decoder produced.
+	// 传输层没接线（没有 Lark app 的部署上的 stub client）时直接跳过，别给每条
+	// 回复都盖一个拉取错误。Body 保持 decoder 产出的样子。
 	if e.client == nil || !e.client.IsConfigured() {
 		return msg
 	}
 
-	// Phase 1 — fetch every set of messages we may render. Each is
-	// best-effort; its error is handled where the block is rendered. We
-	// fetch up front (rather than fetch-and-render per block) so Phase 2
-	// can resolve display names for EVERY speaker across ALL blocks in a
-	// single Contact batch — otherwise a quoted/forwarded sender that
-	// isn't in the recent window would fall back to "User N".
+	// Phase 1 —— 拉取可能要渲染的每一组消息。每组都是 best-effort；错误在该块
+	// 渲染处处理。我们一次性先拉取（而不是逐块拉取-渲染），这样 Phase 2 才能用
+	// 一次 Contact 批量调用解析【所有】块的每个说话者的显示名——否则不在近期窗口
+	// 里的引用/转发发送者会退回 "User N"。
 	var recentItems []LarkMessage
 	var recentErr error
 	if wantRecent {
@@ -201,11 +178,9 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 		forwardItems, forwardErr = e.client.GetMessage(ctx, creds, msg.MessageID)
 	}
 
-	// Phase 2 — resolve display names for every speaker we're about to
-	// render (recent + quoted + forwarded) plus the sender who @-mentioned
-	// the Bot, in one batch. Group chats only; p2p keeps positional labels
-	// (identity is unambiguous in a 1:1). Unresolved ids fall back to
-	// "User N" per speakerLabeler.
+	// Phase 2 —— 用一次批量调用解析即将渲染的每个说话者（近期 + 引用 + 转发）
+	// 加 @ Bot 的发送者的显示名。仅群聊；p2p 保持位置标签（一对一里身份无歧义）。
+	// 解析不到的 id 按 speakerLabeler 退回 "User N"。
 	var names map[string]string
 	if msg.ChatType == ChatTypeGroup {
 		ids := senderOpenIDs(recentItems)
@@ -217,7 +192,7 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 		names = e.resolveNames(ctx, creds, ids)
 	}
 
-	// Phase 3 — render broadest-to-narrowest with the complete name map.
+	// Phase 3 —— 用完整名字映射按“从宽到窄”渲染。
 	var b strings.Builder
 	if wantRecent {
 		if recentErr != nil {
@@ -243,9 +218,8 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 		}
 	} else {
 		core = msg.Body
-		// Label the user's own message with their real name so the agent
-		// knows WHO @-mentioned it — not just what they said. Only when the
-		// name resolved (group path); otherwise the body passes through.
+		// 用真实名字标注用户自己的消息，让 agent 知道是谁 @ 的——而不只是说了
+		// 什么。仅当名字解析成功时（群路径）；否则正文原样通过。
 		if name := names[string(msg.SenderOpenID)]; name != "" {
 			core = fmt.Sprintf("[%s]: %s", name, msg.Body)
 		}
@@ -259,9 +233,8 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 	return msg
 }
 
-// senderOpenIDs returns the distinct non-app sender open_ids across the
-// given messages, in first-appearance order — the input set for a
-// Contact name lookup.
+// senderOpenIDs 返回给定消息里去重后的非 app 发送者 open_id，按首次出现顺序
+// ——这是 Contact 名字查询的输入集。
 func senderOpenIDs(msgs []LarkMessage) []string {
 	seen := make(map[string]bool, len(msgs))
 	out := make([]string, 0, len(msgs))
@@ -275,10 +248,9 @@ func senderOpenIDs(msgs []LarkMessage) []string {
 	return out
 }
 
-// resolveNames batch-resolves open_ids to display names, best-effort: a
-// failure (restricted contact scope, transport error) logs and returns
-// nil so every speaker labeler degrades to positional "User N" rather
-// than blocking ingestion. Duplicate / empty ids are dropped first.
+// resolveNames 批量把 open_id 解析成显示名，best-effort：失败（联系人范围受限、
+// transport 错误）只记日志并返回 nil，让每个说话者标签退化成位置标签 "User N"
+// 而不是阻塞摄入。重复/空 id 先被丢弃。
 func (e *inboundEnricher) resolveNames(ctx context.Context, creds InstallationCredentials, ids []string) map[string]string {
 	uniq := make([]string, 0, len(ids))
 	seen := make(map[string]bool, len(ids))
@@ -300,22 +272,17 @@ func (e *inboundEnricher) resolveNames(ctx context.Context, creds InstallationCr
 	return names
 }
 
-// fetchRecentItems pulls the recent group window and returns the
-// messages to render — the trigger message itself and the directly-quoted
-// parent (which gets its own <quoted_message> block) filtered out, sorted
-// oldest-first. A fetch failure is returned to the caller (which renders a
-// safe, readable degradation note); it never blocks ingestion.
+// fetchRecentItems 拉取近期群窗口，返回要渲染的消息——滤掉触发消息本身和被
+// 直接引用的父消息（它有自己的 <quoted_message> 块），按旧到新排序。拉取失败
+// 返回给调用方（它渲染一条安全可读的退化说明）；绝不阻塞摄入。
 //
-// When the trigger arrived inside a Lark topic (msg.ThreadID != ""), the
-// window is scoped to that topic (container_id_type=thread) so sibling
-// topics that share the chat_id can't leak into this topic's context or
-// its persisted turn (#5835). Because the thread container rejects
-// end_time, the topic path anchors to the trigger time CLIENT-side; it
-// also fail-closes on thread_id — any returned item whose thread_id is
-// missing or does not match is dropped rather than trusted. A topic fetch
-// failure degrades exactly like the chat path and NEVER falls back to a
-// chat-wide fetch (that would re-open the leak). Outside a topic the chat
-// path is unchanged: anchored to the trigger time via end_time.
+// 触发落在飞书话题里（msg.ThreadID != ""）时，窗口限定在该话题
+// （container_id_type=thread），共享 chat_id 的兄弟话题不会漏进本话题的上下文或
+// 其持久化轮次（#5835）。因为线程容器拒绝 end_time，话题路径改为在客户端侧按
+// 触发时间锚定；它对 thread_id 也 fail-closed——任何返回条目缺 thread_id 或不
+// 匹配都被丢弃，而不是被信任。话题拉取失败与聊天路径一样优雅退化，绝不回退到
+// 全聊天拉取（那会重新打开泄漏口）。话题之外，聊天路径保持不变：用 end_time
+// 锚定到触发时间。
 func (e *inboundEnricher) fetchRecentItems(ctx context.Context, creds InstallationCredentials, msg InboundMessage) ([]LarkMessage, error) {
 	if msg.ChatID == "" {
 		classified := classifyRecentContextFetchError(errRecentContextChannelUnbound)
@@ -323,20 +290,19 @@ func (e *inboundEnricher) fetchRecentItems(ctx context.Context, creds Installati
 		return nil, errRecentContextChannelUnbound
 	}
 
-	// Lark sends create_time as epoch millis; a missing/unparseable time
-	// yields 0. The chat path converts it to seconds for end_time; the
-	// thread path uses the raw millis for the client-side anchor below.
+	// 飞书把 create_time 按 epoch 毫秒下发；缺失/不可解析返回 0。聊天路径把它
+	// 转成秒给 end_time；话题路径用原始毫秒做下面客户端侧锚点。
 	triggerMillis := parseLarkMillis(msg.CreateTime)
 	params := ListMessagesParams{
 		ChatID:   msg.ChatID,
 		PageSize: e.recentContextSize,
 	}
 	if msg.ThreadID != "" {
-		// Topic-scoped fetch: no end_time (the thread container rejects it);
-		// the window is anchored client-side below.
+		// 话题限定拉取：不带 end_time（线程容器拒绝它）；窗口在下方客户端侧
+		// 锚定。
 		params.ThreadID = msg.ThreadID
 	} else {
-		// 0 tells the client "no end_time" (newest N).
+		// 0 告诉 client “不要 end_time”（最新 N 条）。
 		params.EndTime = triggerMillis / 1000
 	}
 	var items []LarkMessage
@@ -356,11 +322,10 @@ func (e *inboundEnricher) fetchRecentItems(ctx context.Context, creds Installati
 			break
 		}
 		classified := classifyRecentContextFetchError(err)
-		// A retry only helps while the shared enrichment budget still has
-		// time left. Both attempts reuse one ctx (ws_connector caps the
-		// whole Enrich at EnrichTimeout, ~2s), so once ctx is done a second
-		// call fails immediately — degrade now instead of burning a doomed
-		// request. This is why a first-attempt deadline never "recovers".
+		// 只有在共享富化预算还剩时间时重试才有意义。两次尝试复用同一个 ctx
+		// （ws_connector 把整个 Enrich 限制在 EnrichTimeout、约 2 秒），所以 ctx
+		// 结束后第二次调用会立即失败——此刻就该退化，而不是烧一次注定失败请求。
+		// 这就是“首次尝试超时从不恢复”的原因。
 		if !classified.retryable || attempt == recentContextMaxFetchAttempts || ctx.Err() != nil {
 			e.logRecentContextFetchFailure(msg, err, classified, attempt)
 			return nil, err
@@ -388,23 +353,20 @@ func (e *inboundEnricher) fetchRecentItems(ctx context.Context, creds Installati
 		if exclude[it.MessageID] {
 			continue
 		}
-		// The Bot's markdown replies are sent as schema-2.0 interactive
-		// cards, which flatten to a zero-signal "[interactive card]"
-		// placeholder — drop them rather than render noise (#5835).
+		// Bot 的 markdown 回复以 schema-2.0 交互卡片发出，压平后是零信号的
+		// "[interactive card]" 占位符——丢弃它们，免得渲染噪音（#5835）。
 		if it.SenderType == "app" && it.MessageType == "interactive" {
 			continue
 		}
 		if inThread {
-			// Fail-closed topic isolation: the thread container should only
-			// return this topic's messages, but if Lark ever returns an item
-			// with a missing or mismatched thread_id, drop it rather than
-			// risk leaking a sibling topic's content into this topic.
+			// 话题隔离 fail-closed：线程容器应当只返回本话题的消息，但若飞书
+			// 返回了 thread_id 缺失或不匹配的条目，丢弃它也不冒把兄弟话题内容漏
+			// 进本话题的风险。
 			if it.ThreadID != msg.ThreadID {
 				continue
 			}
-			// The thread container ignores end_time, so anchor client-side:
-			// drop anything created strictly after the @-mention moment. A
-			// zero trigger time (unparseable) disables the anchor.
+			// 线程容器忽略 end_time，所以客户端侧锚定：丢弃任何创建时间严格晚于
+			// 被 @ 时刻的消息。触发时间为 0（不可解析）时禁用锚定。
 			if triggerMillis > 0 && parseLarkMillis(it.CreateTime) > triggerMillis {
 				continue
 			}
@@ -412,14 +374,14 @@ func (e *inboundEnricher) fetchRecentItems(ctx context.Context, creds Installati
 		kept = append(kept, it)
 	}
 
-	// The list endpoint returns newest-first; render oldest-first so the
-	// transcript reads top-to-bottom like the chat does.
+	// list 端点按最新在前返回；我们按旧到新渲染，让记录像聊天一样从上往下读。
 	sort.SliceStable(kept, func(i, j int) bool {
 		return parseLarkMillis(kept[i].CreateTime) < parseLarkMillis(kept[j].CreateTime)
 	})
 	return kept, nil
 }
 
+// logRecentContextFetchFailure 记录一次近期上下文拉取失败（带分类与尝试次数）。
 func (e *inboundEnricher) logRecentContextFetchFailure(msg InboundMessage, err error, classified recentContextFetchClassification, attempts int) {
 	e.logger.Warn("lark enricher: recent context fetch failed",
 		"layer", "lark_inbound_enricher",
@@ -433,10 +395,9 @@ func (e *inboundEnricher) logRecentContextFetchFailure(msg InboundMessage, err e
 		"err", err)
 }
 
-// renderRecentContextBlock renders the surrounding conversation as a
-// <recent_context> block: one "[<speaker>]: <text>" line per message,
-// oldest-first, speakers labeled with real names from `names` (falling
-// back to positional "User N"). Callers pass a non-empty `kept`.
+// renderRecentContextBlock 把周边对话渲染成 <recent_context> 块：每条消息一行
+// "[<说话者>]: <文本>"，旧到新，说话者用 `names` 里的真实名字（缺失退回位置
+// 标签 "User N"）。调用方传入非空的 `kept`。
 func (e *inboundEnricher) renderRecentContextBlock(kept []LarkMessage, names map[string]string) string {
 	labeler := newSpeakerLabeler(names)
 	lines := make([]string, 0, len(kept))
@@ -458,11 +419,13 @@ func (e *inboundEnricher) renderRecentContextBlock(kept []LarkMessage, names map
 		len(kept), strings.Join(lines, "\n"))
 }
 
+// recentContextFetchClassification 是一次近期上下文拉取错误的分类结果。
 type recentContextFetchClassification struct {
 	category  string
 	retryable bool
 }
 
+// classifyRecentContextFetchError 给错误分类：是否可重试、属于哪个可见原因类别。
 func classifyRecentContextFetchError(err error) recentContextFetchClassification {
 	if err == nil {
 		return recentContextFetchClassification{category: recentContextFailureUnknown}
@@ -470,13 +433,11 @@ func classifyRecentContextFetchError(err error) recentContextFetchClassification
 	if errors.Is(err, errRecentContextChannelUnbound) {
 		return recentContextFetchClassification{category: recentContextFailureChannelUnbound}
 	}
-	// A Lark business code names the failure exactly, so prefer it over
-	// the text heuristics below — read through larkErrorCodeMsg it is
-	// found in either shape that carries one: the 2xx envelope a call
-	// site rejected (*APIError) and the non-2xx reply the HTTP client
-	// returns. Only a code that resolves to a real category short-
-	// circuits; anything else falls through, so a status-only signal
-	// like "http 403" still classifies on the error text.
+	// Lark 业务码能精确命名失败，所以优先于下面的文本启发式——经
+	// larkErrorCodeMsg 读取，凡携带业务码的两种形态都能找到：调用方拒绝的 2xx
+	// 信封（*APIError）与 HTTP client 返回的非 2xx 回复。只有解析成真实类别的码
+	// 才短路；其它一律落下去，这样 "http 403" 之类的纯状态码信号仍能按错误文本
+	// 分类。
 	if code, msg, ok := larkErrorCodeMsg(err); ok {
 		if cls := classifyRecentContextAPIError(code, msg); cls.category != recentContextFailureUnknown {
 			return cls
@@ -499,9 +460,8 @@ func classifyRecentContextFetchError(err error) recentContextFetchClassification
 	case containsAny(msg, "code=99991663", "code=99991664"):
 		return recentContextFetchClassification{category: recentContextFailureTokenExpired, retryable: true}
 	case containsAny(msg, "code=230020", "rate limit", "rate_limit", "http 429"):
-		// Not retryable: the client drops Retry-After, and an immediate
-		// second call within the same budget almost always re-hits the
-		// limit while doubling list load on an already-throttled tenant.
+		// 不可重试：client 丢弃 Retry-After，同一预算内立刻发第二次几乎总会再次
+		// 撞限，同时给本已受限的 tenant 双倍 list 负载。
 		return recentContextFetchClassification{category: recentContextFailureRateLimited}
 	case containsAny(msg, "deadline exceeded", "timeout", "timed out"):
 		return recentContextFetchClassification{category: recentContextFailureTimeout, retryable: true}
@@ -512,6 +472,7 @@ func classifyRecentContextFetchError(err error) recentContextFetchClassification
 	}
 }
 
+// classifyRecentContextAPIError 按 Lark 业务码直接分类。
 func classifyRecentContextAPIError(code int, msg string) recentContextFetchClassification {
 	switch {
 	case code == 99991002 || code == 230001:
@@ -521,13 +482,14 @@ func classifyRecentContextAPIError(code int, msg string) recentContextFetchClass
 	case isTokenError(code):
 		return recentContextFetchClassification{category: recentContextFailureTokenExpired, retryable: true}
 	case code == 230020:
-		// See classifyRecentContextFetchError: rate limits degrade rather
-		// than retry, since the client drops Retry-After.
+		// 见 classifyRecentContextFetchError：限流失效后退化而不重试，因为 client
+		// 丢弃 Retry-After。
 		return recentContextFetchClassification{category: recentContextFailureRateLimited}
 	}
 	return classifyRecentContextFetchError(errors.New(msg))
 }
 
+// containsAny 判断 s 是否包含任一 needle。
 func containsAny(s string, needles ...string) bool {
 	for _, needle := range needles {
 		if strings.Contains(s, needle) {
@@ -537,6 +499,7 @@ func containsAny(s string, needles ...string) bool {
 	return false
 }
 
+// recentContextUnavailableLine 按失败类别返回近期上下文不可用的可读说明行。
 func recentContextUnavailableLine(category string) string {
 	switch category {
 	case recentContextFailureChannelUnbound:
@@ -552,13 +515,11 @@ func recentContextUnavailableLine(category string) string {
 	}
 }
 
-// renderQuotedBlock renders a <quoted_message> block from the already-
-// fetched GetMessage(parentID) result. A parent that is itself a
-// merge_forward nests a <forwarded_messages> transcript inside the quoted
-// block (the GetMessage response already carries both the forward
-// sentinel and its children). A fetch error / empty / deleted parent
-// degrades to the documented error block. Speakers are labeled from
-// `names` (the shared, already-resolved map), falling back to "User N".
+// renderQuotedBlock 从已拉取的 GetMessage(parentID) 结果渲染 <quoted_message>
+// 块。父消息本身是 merge_forward 时，会在引用块里嵌套一份 <forwarded_messages>
+// 记录（GetMessage 响应已同时携带转发哨兵与其子消息）。拉取错误/空/已删除的
+// 父消息退化成文档化的错误块。说话者用 `names`（共享的已解析映射）标注，缺失
+// 退回 "User N"。
 func (e *inboundEnricher) renderQuotedBlock(parentID string, items []LarkMessage, err error, names map[string]string) string {
 	if err != nil || len(items) == 0 {
 		e.logger.Warn("lark enricher: quoted parent fetch failed",
@@ -584,24 +545,20 @@ func (e *inboundEnricher) renderQuotedBlock(parentID string, items []LarkMessage
 	return wrapQuoted(parentID, sender, parent.MessageType, text)
 }
 
-// renderForwardedItems renders the children of a forward whose own
-// record id is forwardID. Children are time-ordered, capped, and each
-// rendered as "[<speaker>]: <text>"; a child that is itself a forward is
-// not recursed into (it gets a manual-expand placeholder) so the HTTP
-// fan-out on the ACK-latency-sensitive inbound path stays bounded.
+// renderForwardedItems 渲染转发记录 id 为 forwardID 的转发的子消息。子消息按
+// 时间排序、受上限约束，每条渲染成 "[<说话者>]: <文本>"；本身又是转发的子消息
+// 不递归展开（给它一个“手动展开”占位符），让对 ACK 延迟敏感的入站路径上的
+// HTTP 扇出保持有界。
 func (e *inboundEnricher) renderForwardedItems(items []LarkMessage, forwardID string, names map[string]string) string {
-	// The verified contract is that GetMessage(forward_id) returns one
-	// level of bundling: [sentinel, direct-children…]. We therefore
-	// treat every non-sentinel item as a direct child. We filter by id
-	// (not by upper_message_id == forwardID) on purpose: a strict
-	// upper_message_id match would silently DROP a real child if Lark
-	// ever returned one with that field unpopulated. A child that is
-	// itself a forward is rendered as a manual-expand placeholder below
-	// rather than recursed into, so grandchildren are never inlined.
+	// 验证过的契约是 GetMessage(forward_id) 返回一层打包：[哨兵、直接子消息…]。
+	// 因此我们把每个非哨兵条目都当直接子消息。刻意按 id 过滤（而不是按
+	// upper_message_id == forwardID）：严格按 upper_message_id 匹配会在飞书返回
+	// 一个字段未填充的真实子消息时静默【丢弃】它。本身是转发的子消息在下文渲染
+	// 成“手动展开”占位符而不递归，孙消息从不内联。
 	children := make([]LarkMessage, 0, len(items))
 	for _, it := range items {
 		if it.MessageID == forwardID {
-			continue // the forward sentinel itself
+			continue // 转发哨兵本身
 		}
 		children = append(children, it)
 	}
@@ -643,12 +600,10 @@ func (e *inboundEnricher) renderForwardedItems(items []LarkMessage, forwardID st
 	return fmt.Sprintf("<forwarded_messages count=\"%d\">\n%s\n</forwarded_messages>", total, body)
 }
 
-// flattenMessage turns one fetched message into plain text: structural
-// flatten by msg_type, then @_user_N placeholder resolution against the
-// message's own mentions. The bot mention is NOT stripped here (unlike
-// the inbound decoder) — a quoted / forwarded message is historical
-// context, not a fresh trigger, so passing empty bot identifiers leaves
-// every @-mention rendered as a readable @name.
+// flattenMessage 把一条拉取到的消息转成纯文本：先按 msg_type 结构压平，再对
+// 消息自己的 mentions 解析 @_user_N 占位符。这里不剥 Bot 自己的 @（不同于入站
+// decoder）——引用/转发的消息是历史上下文而非新触发，所以传空 bot 标识让每个
+// @ 都渲染成可读的 @名字。
 func (e *inboundEnricher) flattenMessage(m LarkMessage) string {
 	if m.Deleted {
 		return "[deleted message]"
@@ -660,9 +615,9 @@ func (e *inboundEnricher) flattenMessage(m LarkMessage) string {
 	return resolveMentions(raw, restMentionsToEvent(m.Mentions), "", "")
 }
 
-// restMentionsToEvent adapts the IM REST mention shape (flat string id)
-// to the WS-event larkMention shape resolveMentions consumes, so a
-// single mention-resolution implementation serves both ingress paths.
+// restMentionsToEvent 把 IM REST 的 mention 形态（扁平字符串 id）适配成
+// resolveMentions 消费的 WS 事件 larkMention 形态，让两条入站路径共用同一套
+// @ 解析实现。
 func restMentionsToEvent(ms []LarkMessageMention) []larkMention {
 	if len(ms) == 0 {
 		return nil
@@ -676,42 +631,45 @@ func restMentionsToEvent(ms []LarkMessageMention) []larkMention {
 	return out
 }
 
+// wrapQuoted 把引用块的内部内容包成 <quoted_message> 标签。
 func wrapQuoted(messageID, sender, msgType, inner string) string {
 	return fmt.Sprintf("<quoted_message message_id=%q sender=%q type=%q>\n%s\n</quoted_message>",
 		messageID, sender, msgType, inner)
 }
 
+// quotedErrorBlock 生成引用父消息拉取失败的错误占位块。
 func quotedErrorBlock(messageID string) string {
 	return fmt.Sprintf("<quoted_message message_id=%q type=\"error\">[unable to fetch]</quoted_message>", messageID)
 }
 
+// forwardedErrorBlock 生成转发拉取失败的错误占位块。
 func forwardedErrorBlock() string {
 	return "<forwarded_messages type=\"error\">[unable to fetch]</forwarded_messages>"
 }
 
+// parseLarkMillis 把飞书的 epoch 毫秒字符串解析成 int64；不可解析时返回 0。
 func parseLarkMillis(s string) int64 {
 	n, _ := strconv.ParseInt(s, 10, 64)
 	return n
 }
 
-// speakerLabeler assigns stable, human-readable labels to the senders
-// within one rendered block. Lark message items carry only a sender id
-// (no display name in the payload), so the enricher resolves real names
-// out of band via the Contact API and passes them in as a sender-id ->
-// name map. A sender present in that map is labeled with their real
-// name; one that is not (restricted contact scope, deactivated user,
-// name lookup failed) falls back to "User 1", "User 2", … in
-// first-appearance order. App senders are always "Bot".
+// speakerLabeler 给一个渲染块内的发送者分配稳定、人可读的标签。Lark 消息条目
+// 只携带发送者 id（负载里没有显示名），所以富化器经 Contact API 带外解析真实
+// 名字，作为 sender-id -> name 映射传入。映射里有的发送者用真实名字标注；没有
+// 的（联系人范围受限、已停用用户、名字查询失败）按首次出现顺序退回 "User 1"、
+// "User 2"……。app 发送者恒为 "Bot"。
 type speakerLabeler struct {
-	names map[string]string // resolved open_id -> display name (may be nil)
+	names map[string]string // 已解析 open_id -> 显示名（可为 nil）
 	seen  map[string]string
 	n     int
 }
 
+// newSpeakerLabeler 构造说话者标签器。
 func newSpeakerLabeler(names map[string]string) *speakerLabeler {
 	return &speakerLabeler{names: names, seen: make(map[string]string)}
 }
 
+// label 返回某条消息发送者的稳定标签。
 func (l *speakerLabeler) label(m LarkMessage) string {
 	if m.SenderType == "app" {
 		return "Bot"

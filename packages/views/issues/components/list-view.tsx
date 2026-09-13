@@ -1,5 +1,12 @@
 "use client";
 
+// 本文件：ListView —— 问题列表的"分组列表视图"。
+// 按状态类别分组，每个状态一个可折叠的手风琴区块（默认展开、可收起），区块头
+// 带"全选"复选框与"+ 新建"。每个展开区块内的行用 Virtuoso 虚拟化到页面共享的
+// 滚动容器；行支持跨组拖拽移动（改状态）与同组内重排（仅手动排序模式）。
+// 服务端按组分页，"加载更多"哨兵挂在 Virtuoso 的 Footer 上；拖拽/落定逻辑与
+// board-view 共用同一套 useDragSettle，保证两个视图行为一致。
+
 import { memo, useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { ChevronRight, Plus } from "lucide-react";
 import { Accordion } from "@base-ui/react/accordion";
@@ -47,11 +54,10 @@ import { VirtuosoSeed, VIRTUOSO_SEED_COUNT } from "../../common/virtuoso-seed";
 import { DeferredTooltip } from "../../common/deferred-tooltip";
 import { useRestoredScrollRef } from "../../platform";
 
-// List rows are a fixed 36px (h-9). Sharing the estimate between the seed's
-// trailing spacer and Virtuoso's defaultItemHeight keeps the shared
-// scroller's height truthful from the first frame — which both stops the
-// scrollbar from re-drawing across the seed → Virtuoso handoff and lets the
-// restored scrollTop assignment stick at ref-attach (MUL-4741).
+// 列表行高固定 36px (h-9)。把这个估算值同时给"种子渲染区"的尾部占位与
+// Virtuoso 的 defaultItemHeight 使用，共享滚动器从第一帧起高度就是真实的——
+// 既避免滚动条在"种子 → Virtuoso"交接时来回重绘，也让恢复的 scrollTop
+// 在 ref 附着时能直接生效 (MUL-4741)。
 const LIST_ROW_ESTIMATED_HEIGHT = 36;
 
 const EMPTY_PROGRESS_MAP = new Map<string, ChildProgress>();
@@ -122,10 +128,10 @@ function ListViewImpl({
     [groups],
   );
 
-  // --- Drag state ---
+  // --- 拖拽状态 ---
   const [activeIssue, setActiveIssue] = useState<Issue | null>(null);
-  // Shared drag/settle primitive (see use-drag-settle) — same machine as
-  // board-view, so the two surfaces can't drift apart.
+  // 共享的拖拽/落定原语（见 use-drag-settle）——与 board-view 是同一套状态机，
+  // 两个视图的拖拽行为才不会各自漂移。
   const {
     columns,
     setColumns,
@@ -259,12 +265,11 @@ function ListViewImpl({
           resetColumns();
           return;
         }
-        // Optimistically move the row into the target group *now*. Without this
-        // the sortBy != "position" branch never touched local columns on drop,
-        // so the row sat in its origin group for the whole request and only
-        // jumped across when the mutation settled — the same "snaps back, then
-        // moves" glitch the board view had. Placement mirrors the cache
-        // (insertIdByPosition) so the settle rebuild is a visual no-op.
+        // 立刻乐观地把行移进目标组。否则在 sortBy != "position" 的分支里，
+        // 落地时本地列从未被动过，行会待在原组直到整个请求结束、mutation 落定
+        // 才跳过去——正是 board-view 修过的"先弹回原列、再移动"闪烁。
+        // 插入位置按缓存同款逻辑（insertIdByPosition）推算，因此落定时用缓存
+        // 重建的列与当前显示一致，视觉上没有任何跳动。
         const targetIds = insertIdByPosition(
           (cols[finalCol] ?? []).filter((id) => id !== activeId),
           activeId,
@@ -298,9 +303,9 @@ function ListViewImpl({
         return;
       }
 
-      // beginSettle() also bumps settleVersion on settle (board-view did, this
-      // branch did not) so a failed position move reverts instead of stranding
-      // the row at the drop target.
+      // beginSettle() 在落定时还会递增 settleVersion（board-view 做了、而此前
+      // 这个分支没有做），这样一次失败的位置移动会触发回滚，而不是让行滞留
+      // 在落点位置。
       onMoveIssue(
         activeId,
         {
@@ -313,30 +318,25 @@ function ListViewImpl({
     [issues, groups, onMoveIssue, groupIds, groupMap, sortBy, beginSettle, setColumns, columnsRef, isDraggingRef],
   );
 
-  // dnd-kit fires onDragCancel — never onDragEnd — when an active drag is
-  // aborted: pointercancel, window resize, tab hide, or Escape. Touch browsers
-  // hit that path constantly, because a scroll gesture that starts on a row
-  // moves past the 5px activation distance and *then* the browser takes the
-  // gesture over for native scrolling and cancels the pointer. Without this
-  // handler `isDraggingRef` stayed true for the rest of the session, which
-  // froze the column mirror against cache updates and — because the accordion's
-  // onValueChange is guarded by the same ref — made tapping a status header a
-  // no-op, so groups could no longer be collapsed at all (MUL-6240).
+  // 一次拖拽被中止（pointercancel、窗口缩放、标签页隐藏、Escape）时，dnd-kit
+  // 触发的是 onDragCancel 而非 onDragEnd。触屏浏览器几乎总会走到这条路径：
+  // 从某一行上发起的滚动手势先越过 5px 的激活距离，随后浏览器接管手势去做
+  // 原生滚动并取消指针。没有这个处理器，`isDraggingRef` 会在整个会话里一直为
+  // true——列镜像冻结、不再跟随缓存更新；又因为手风琴的 onValueChange 由同一
+  // ref 把关，点击状态表头也变成空操作，所有分组都再也无法收起 (MUL-6240)。
   const handleDragCancel = useCallback(() => {
     isDraggingRef.current = false;
     setActiveIssue(null);
     setColumns(buildColumns(issues, groups, "status"));
   }, [issues, groups, setColumns, isDraggingRef]);
 
-  // The single scroll container is shared by every status panel's Virtuoso as
-  // its customScrollParent, so a callback ref hands the element to the panels
-  // once it mounts. Keeping one scroller (rather than one per panel) preserves
-  // the current sticky-header + cross-section scroll behavior; only the rows
-  // inside each expanded panel virtualize.
+  // 每个状态面板的 Virtuoso 都把同一个滚动容器当作 customScrollParent，所以用
+  // 回调 ref 在容器挂载后把元素交给各面板。只保留一个滚动器（而非每个面板各
+  // 一个）才能维持现有的"吸顶表头 + 跨区块滚动"行为；每个展开面板内部，被
+  // 虚拟化的只是行本身。
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
-  // Pull-based scroll restoration (MUL-4741): assign the saved offset when
-  // the shared scroller attaches — the per-status seeds plus their estimate
-  // spacers give it a truthful height on the first commit.
+  // 拉取式的滚动恢复 (MUL-4741)：共享滚动器附着时写入保存的滚动偏移量——
+  // 各状态的种子区加上估算高度的占位，让它在首次提交时就拥有真实高度可依。
   const restoreScrollRef = useRestoredScrollRef("list");
   const attachScroller = useCallback(
     (el: HTMLDivElement | null) => {
@@ -470,13 +470,13 @@ function StatusAccordionItem({
 
   const disableSorting = !!sortLabel;
 
-  // The infinite-scroll sentinel rides Virtuoso's Footer so it sits at the true
-  // end of the virtualized rows and still fires loadMore when scrolled to it.
+  // 无限滚动哨兵搭乘 Virtuoso 的 Footer，因此它落在虚拟化行的真正末端，
+  // 滚动到那里时 loadMore 依然能被触发。
   const listComponents = useMemo(
     () => ({
-      // Always a non-undefined object: react-virtuoso throws if `components`
-      // is ever undefined (MUL-4474). The footer itself renders null for a
-      // short, non-paginated section.
+      // Footer 恒为对象、绝不传 undefined：react-virtuoso 在 `components` 是
+      // undefined 时会直接抛错 (MUL-4474)。区块短小且没有分页时，Footer 自身
+      // 渲染 null。
       Footer: () => (
         <ListLoadMoreFooter
           hasMore={page.hasMore}
@@ -512,15 +512,13 @@ function StatusAccordionItem({
       />
     );
 
-  // Rows virtualize into the page's shared scroll parent. Only render when the
-  // section is expanded and non-empty — a Virtuoso in a collapsed (0-height /
-  // hidden) panel has no viewport to measure. While the shared scroll parent
-  // is still null (callback ref not settled after a route-return remount),
-  // seed a bounded slice of real rows so the first painted frame isn't blank;
-  // once it's set, mount the Virtuoso with a matching `initialItemCount` so the
-  // measurement frame keeps those rows instead of flashing empty (MUL-4750).
-  // The droppable, SortableContext, sticky header, and collapse are unchanged;
-  // virtualization only decides whether an off-screen row is in the DOM.
+  // 行被虚拟化进页面共享的滚动父容器，且只在区块"展开且非空"时渲染——折叠
+  // （0 高度 / 隐藏）面板里的 Virtuoso 没有视口可测量。当共享滚动父容器仍是
+  // null（路由返回后的重挂载里回调 ref 尚未落定）时，先用种子渲染一批数量
+  // 有界的真实行，避免首帧空白；容器一旦就位，就挂载 Virtuoso 并配上匹配的
+  // `initialItemCount`，让测量帧保留住这些行而不是闪成空白 (MUL-4750)。
+  // 无论是否虚拟化，drop 目标、SortableContext、吸顶表头与折叠行为都不变——
+  // 虚拟化只决定屏幕外的行是否进入 DOM。
   const rows =
     isExpanded && issues.length > 0 ? (
       scrollParent ? (
@@ -576,7 +574,7 @@ function StatusAccordionItem({
         </Accordion.Trigger>
         {onCreateIssue && (
           <div className="pr-2">
-            {/* Lazy-mounted tooltip machinery — see DeferredTooltip. */}
+            {/* 懒挂载的 tooltip 机制 —— 见 DeferredTooltip。 */}
             <DeferredTooltip
               content={t(($) => $.list.add_issue_tooltip)}
               trigger={
@@ -619,9 +617,9 @@ function StatusAccordionItem({
 }
 
 /**
- * Memoized: the surface controller re-renders on loading-flag flips (e.g. a
- * query enabling when the view changes) — without memo every such flip
- * re-rendered this entire view tree (hundreds of ms). All props are
- * referentially stable useMemo/useCallback outputs from the controller.
+ * 分组列表视图（套了 memo）。为什么 memo：surface 控制器会在加载标志翻转时
+ * （例如视图切换使某个查询转为启用）重渲染——没有 memo，每次这样的翻转都会
+ * 重渲染整棵视图树（数百毫秒）。传入的全部 props 都是控制器产出的、引用稳定
+ * 的 useMemo / useCallback 结果，因此 memo 能安全短路。
  */
 export const ListView = memo(ListViewImpl);

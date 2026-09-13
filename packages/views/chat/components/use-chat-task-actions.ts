@@ -1,3 +1,6 @@
+// 聊天任务操作 hook：封装"停止/取消任务""编辑或移除排队任务""清空队列"
+// "把某条排队任务立即发送（抢占队头）"这些操作，负责乐观更新缓存、
+// 失败回滚、以及取消后把草稿恢复进输入框。
 "use client";
 
 import { useCallback } from "react";
@@ -29,11 +32,19 @@ type EnqueueLocalRestore = (restore: {
 }) => void;
 
 type CancelOptions = {
+  /** 是否把被取消任务的内容恢复进输入框（本地草稿队列）。 */
   restoreDraftToInput: boolean;
+  /** 打日志用的操作来源标签。 */
   source: string;
+  /** 目标是一个排队任务时的具体动作：编辑（把内容取回输入框）或移除。 */
   queuedAction?: "edit" | "remove";
 };
 
+/**
+ * 当前会话的任务操作集：取消正在跑/排队中的任务（可顺带把内容取回输入框）、
+ * 编辑 / 移除 / 清空排队任务、以及"立即发送"某个排队任务（会把正在跑的队头任务
+ * 取消掉再抢占）。全部带乐观更新与失败恢复。
+ */
 export function useChatTaskActions(
   activeSessionId: string | null,
   enqueueLocalRestore: EnqueueLocalRestore,
@@ -42,6 +53,11 @@ export function useChatTaskActions(
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
 
+  /**
+   * 取消（停止）一个任务。先从缓存里乐观移除它；服务端返回被取消的聊天消息时，
+   * 按需把它恢复进输入框。若服务端报了 409 且目标本是一个我们已缓存成 queued 的
+   * 任务，则说明 daemon 已抢先开始跑它——改以纯"停止"语义再取消一次。
+   */
   const cancelChatTask = useCallback(
     async (
       taskId: string,
@@ -79,8 +95,8 @@ export function useChatTaskActions(
           if (!(derivedQueuedAction && err instanceof ApiError && err.status === 409)) {
             throw err;
           }
-          // The daemon claimed the task after our cached queued snapshot.
-          // Preserve Stop semantics by cancelling its new active state.
+          // daemon 在我们缓存的 queued 快照之后把任务领走了。
+          // 用取消它新的活动状态来保留"停止"的语义。
           queuedAction = undefined;
           result = await api.cancelTaskById(taskId);
         }
@@ -130,6 +146,7 @@ export function useChatTaskActions(
     [qc, enqueueLocalRestore, wsId],
   );
 
+  /** "编辑"排队任务：把它的内容取回输入框（作为可编辑草稿），并取消它。 */
   const handleEditQueuedTask = useCallback(
     async (taskId: string) => {
       if (!activeSessionId) return;
@@ -143,6 +160,7 @@ export function useChatTaskActions(
     [activeSessionId, cancelChatTask, t],
   );
 
+  /** "移除"排队任务：直接删除，不把内容取回输入框。 */
   const handleRemoveQueuedTask = useCallback(
     async (taskId: string) => {
       if (!activeSessionId) return;
@@ -156,6 +174,7 @@ export function useChatTaskActions(
     [activeSessionId, cancelChatTask, t],
   );
 
+  /** "清空队列"：取消并移除当前会话所有排队任务，同时清掉它们对应的消息气泡。 */
   const handleClearQueuedTasks = useCallback(async () => {
     if (!activeSessionId) return;
     const pendingKey = chatKeys.pendingTask(activeSessionId);
@@ -188,6 +207,11 @@ export function useChatTaskActions(
     }
   }, [activeSessionId, qc, t, wsId]);
 
+  /**
+   * "立即发送"某条排队任务：先乐观把它提到队头，通知服务端去抢占；
+   * 若服务端回应有活动任务（active_task_id），则把当前正在跑的任务取消掉
+   * （其内容一并取回输入框）。
+   */
   const handleSendQueuedTaskNow = useCallback(
     async (taskId: string) => {
       if (!activeSessionId) return;

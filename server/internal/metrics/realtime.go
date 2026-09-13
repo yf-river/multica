@@ -1,3 +1,6 @@
+// 本文件把 realtime 包内部的原子计数器/观测快照，翻译成 multica_realtime_*
+// Prometheus 指标。realtime 用标准库原子计数来避免依赖 prometheus；本文件是
+// 适配层，顺带把 per-stream 的采样观测（条目数/内存/TTL）拆成带 stream 标签的指标。
 package metrics
 
 import (
@@ -6,6 +9,11 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 )
 
+// RealtimeCollector 把 realtime.Metrics 转成 Prometheus 指标。
+// 前段 Desc 都是无标签的固定指标；三组「带标签」的特殊指标：
+//   - redis_mirror_errors_total 按 target 拆 primary/secondary；
+//   - redis_stream_entries / _memory_bytes / _pttl_milliseconds 按 stream 名各一条，
+//     反映每根 relay 流的最新一次低频采样。
 type RealtimeCollector struct {
 	metrics *realtime.Metrics
 
@@ -36,6 +44,9 @@ type RealtimeCollector struct {
 	redisStreamPTTL        *prometheus.Desc
 }
 
+// NewRealtimeCollector 基于 realtime 侧指标对象创建采集器。m 为 nil 时 Collect 直接
+// 返回。三个带标签 Desc 在此显式 new：因为它们的标签不是固定列，无法走 newRealtimeDesc
+// 的「无标签统一前缀」快捷路径。redis 前缀的指标在未启用 Redis 中转时恒为 0。
 func NewRealtimeCollector(m *realtime.Metrics) *RealtimeCollector {
 	return &RealtimeCollector{
 		metrics: m,
@@ -68,10 +79,12 @@ func NewRealtimeCollector(m *realtime.Metrics) *RealtimeCollector {
 	}
 }
 
+// newRealtimeDesc 统一生成无标签 realtime 指标的描述符，指标名固定带 multica_realtime_ 前缀。
 func newRealtimeDesc(name, help string) *prometheus.Desc {
 	return prometheus.NewDesc("multica_realtime_"+name, help, nil, nil)
 }
 
+// Describe 告诉 Prometheus 本采集器会发射哪些指标（Collector 接口约定）。
 func (c *RealtimeCollector) Describe(ch chan<- *prometheus.Desc) {
 	for _, desc := range []*prometheus.Desc{
 		c.connectsTotal,
@@ -104,6 +117,13 @@ func (c *RealtimeCollector) Describe(ch chan<- *prometheus.Desc) {
 	}
 }
 
+// Collect 读取 realtime 各原子计数器并发射；metrics 为 nil 直接返回。
+// 几点口径说明：
+//   - redis_connected 用 boolFloat 把布尔转成 1/0 的 Gauge；
+//   - redis_mirror_errors_total 拆成 target=primary / target=secondary 两条；
+//     主备镜像任一条失败都算 divergence（两后端结果不一致），单独有 mirror_divergence 指标；
+//   - 末尾遍历 RedisStreamObservations()（内部持锁取的副本）给每根流发一组
+//     entries/memory/PTTL 三条 Gauge。PTTL 沿用 Redis 语义：-1 无过期、-2 键不存在。
 func (c *RealtimeCollector) Collect(ch chan<- prometheus.Metric) {
 	if c.metrics == nil {
 		return
@@ -139,6 +159,8 @@ func (c *RealtimeCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
+// boolFloat 把布尔值转成指标可用的浮点：true=1、false=0。用于把「是否连接」这类
+// 状态表达成 0/1 Gauge。
 func boolFloat(v bool) float64 {
 	if v {
 		return 1

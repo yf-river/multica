@@ -1,21 +1,18 @@
 "use client";
 
 /**
- * AttachmentPreviewPage — full-page HTML attachment viewer.
+ * attachments 模块：全页 HTML 附件查看器。
  *
- * Destination for the browser-tab action from HtmlAttachmentPreview's
- * toolbar. The inline preview (HtmlAttachmentPreview) renders the same content in a 480px
- * card with a hover toolbar; this is the same content edge-to-edge so the
- * user can resize / interact with the document at full size.
+ * 是 HtmlAttachmentPreview 工具栏里「浏览器标签页打开」动作的目的地。内联预览
+ * （HtmlAttachmentPreview）在同一内容放进 480px 卡片并带悬停工具栏；这里是
+ * 同一内容满出血展示，让用户能按全尺寸调整 / 与文档交互。
  *
- * Same security posture as the inline preview: iframe sandbox is
- * "allow-scripts" only — no allow-same-origin, no allow-top-navigation. The
- * iframe runs in an opaque origin and cannot reach cookies, localStorage,
- * parent, or top-level navigation.
+ * 与内联预览相同的安全姿态：iframe sandbox 只有 "allow-scripts"——没有
+ * allow-same-origin、没有 allow-top-navigation。iframe 运行在 opaque origin，
+ * 无法触碰 cookie、localStorage、父页面或顶层导航。
  *
- * The route is workspace-scoped (`/{slug}/attachments/{id}/preview`) for
- * tenancy isolation; the `/api/attachments/{id}/content` proxy itself is
- * already auth-checked, so the slug is purely a URL contract.
+ * 路由按工作区限定（`/{slug}/attachments/{id}/preview`）以隔离租户；
+ * `/api/attachments/{id}/content` 代理本身已做鉴权，slug 只是 URL 约定。
  */
 
 import { useEffect } from "react";
@@ -24,13 +21,15 @@ import { useAttachmentHtmlText } from "../editor/hooks/use-attachment-html-text"
 import { withFragmentNavShim } from "../editor/utils/iframe-fragment-nav";
 import { hashString } from "../editor/utils/hash-string";
 
+/** 附件预览页组件的属性。 */
 interface AttachmentPreviewPageProps {
   attachmentId: string;
-  /** Optional display name. Falls back to a generic label and is only used
-   *  for the document title — never echoed into the iframe sandbox. */
+  /** 可选展示名。缺省时退回通用标签；仅用于文档标题——绝不回显进 iframe
+   *  sandbox。 */
   filename?: string;
 }
 
+/** 全页附件查看器：加载 HTML 附件内容并以沙箱 iframe 满页展示。 */
 export function AttachmentPreviewPage({
   attachmentId,
   filename,
@@ -40,8 +39,7 @@ export function AttachmentPreviewPage({
 
   const text = query.data?.text;
 
-  // Set the browser tab title and remount the sandbox when the attachment
-  // content changes.
+  // 展示名变化时更新浏览器标签标题。
   useEffect(() => {
     if (filename) document.title = filename;
   }, [filename]);

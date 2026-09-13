@@ -1,20 +1,17 @@
-// Package ghsnapshot fetches a GitHub pull request's CI + mergeability state
-// from the GitHub API and treats that response as the single source of truth
-// for the PR card (MUL-5265, Plan C). Webhooks and page visits only trigger a
-// refresh; nothing here infers state incrementally from webhook payloads.
+// Package ghsnapshot 从 GitHub API 拉取某个 Pull Request 的 CI + 可合并状态，并把
+// 该响应当作 PR 卡片的唯一事实来源（MUL-5265，Plan C）。webhook 与页面访问只负责
+// 触发刷新；本包绝不根据 webhook 载荷做增量推断。
 //
-// The package has three layers:
-//   - Client (this file): GitHub App auth — App JWT → installation access
-//     token (cached per installation, refreshed early) → GraphQL/REST calls.
-//   - snapshot.go: the single GraphQL query, contexts pagination, and
-//     normalization into a flat per-check snapshot.
-//   - refresh.go: the outbound work queue (dedup, single in-flight per PR,
-//     bounded concurrency, Retry-After backoff), the head-SHA-guarded atomic
-//     write, and the trigger surfaces (webhook / page visit / TTL sweep).
+// 本包分三层：
+//   - Client（本文件）：GitHub App 认证——App JWT → 安装访问令牌（按安装缓存、提前
+//     续期）→ GraphQL/REST 调用。
+//   - snapshot.go：唯一一条 GraphQL 查询、contexts 分页，以及归一化成扁平的
+//     逐检查快照。
+//   - refresh.go：出站工作队列（去重、每个 PR 单飞行、有界并发、Retry-After 退避）、
+//     带 head-SHA 守卫的原子写入，以及触发面（webhook / 页面访问 / TTL 巡检）。
 //
-// Credential hygiene (acceptance criterion 6): the App private key and every
-// installation token are treated as opaque secrets and are NEVER written to a
-// log or embedded in an error message.
+// 凭据卫生（验收标准 6）：App 私钥与每一个安装令牌都按不透明秘密对待，绝不写入日志，
+// 也绝不嵌进错误消息。
 package ghsnapshot
 
 import (
@@ -38,15 +35,13 @@ import (
 
 const (
 	defaultAPIBase = "https://api.github.com"
-	// Renew an installation token this long before it actually expires so an
-	// in-flight request never races the expiry boundary. GitHub tokens live
-	// one hour.
+	// 安装令牌在真正过期前这么久就续期，避免飞行中的请求撞上过期边界。GitHub 令牌寿命
+	// 为一小时。
 	tokenRenewSkew = 5 * time.Minute
 )
 
-// RateLimitError signals that GitHub asked us to back off. RetryAfter is how
-// long to wait before retrying; it is derived from the Retry-After header, or
-// the X-RateLimit-Reset header, or a conservative default.
+// RateLimitError 表示 GitHub 要求我们退避。RetryAfter 是重试前应等待的时长，取自
+// Retry-After 头，其次 X-RateLimit-Reset 头，都没有则用保守默认值。
 type RateLimitError struct {
 	RetryAfter time.Duration
 }
@@ -55,10 +50,9 @@ func (e *RateLimitError) Error() string {
 	return fmt.Sprintf("github rate limited, retry after %s", e.RetryAfter)
 }
 
-// Client is an installation-token-authenticated GitHub API client. A nil
-// *Client is a valid "feature disabled" value — every method the refresh
-// pipeline calls tolerates it — so a deployment without a GitHub App private
-// key degrades cleanly (acceptance criterion 4).
+// Client 是以安装令牌认证的 GitHub API 客户端。nil 的 *Client 是合法的「功能已禁用」
+// 取值——刷新管线调用的每个方法都能容忍它——所以没有配置 GitHub App 私钥的部署会干净
+// 地降级关闭整个功能（验收标准 4）。
 type Client struct {
 	appID      string
 	privateKey *rsa.PrivateKey
@@ -68,9 +62,8 @@ type Client struct {
 
 	mu     sync.Mutex
 	tokens map[int64]cachedToken
-	// sf collapses concurrent token mints for the same installation into a
-	// single HTTP call, so the N workers of one installation don't each mint a
-	// token on a cold cache or a simultaneous renew.
+	// sf 把同一安装的并发 token 铸造收敛成一次 HTTP 调用，让某个安装的 N 个 worker 在
+	// 冷缓存或并发续期时不会各自铸一枚 token。
 	sf singleflight.Group
 }
 
@@ -79,11 +72,10 @@ type cachedToken struct {
 	expiry time.Time
 }
 
-// NewClientFromEnv builds a Client from GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY.
+// NewClientFromEnv 从 GITHUB_APP_ID 与 GITHUB_APP_PRIVATE_KEY 构造 Client。
 //
-//   - Both unset → (nil, nil): the App API is simply not configured for this
-//     deployment; the caller degrades the whole feature off.
-//   - Key present but malformed → (nil, err): operator-actionable, surface it.
+//   - 两者都未设置 → (nil, nil)：本部署没有配置 App API；调用方把整个功能降级关闭。
+//   - 密钥存在但损坏 → (nil, err)：属于运维可处理的错误，直接浮出来。
 func NewClientFromEnv() (*Client, error) {
 	appID := strings.TrimSpace(os.Getenv("GITHUB_APP_ID"))
 	pemKey := strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY"))
@@ -92,7 +84,7 @@ func NewClientFromEnv() (*Client, error) {
 	}
 	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(pemKey))
 	if err != nil {
-		// Deliberately do not include the key material in the error.
+		// 刻意不把密钥材料带进错误。
 		return nil, fmt.Errorf("parse GITHUB_APP_PRIVATE_KEY: %w", err)
 	}
 	return &Client{
@@ -105,12 +97,11 @@ func NewClientFromEnv() (*Client, error) {
 	}, nil
 }
 
-// Enabled reports whether the App API is configured. A nil client is disabled.
+// Enabled 报告 App API 是否已配置。nil 客户端即已禁用。
 func (c *Client) Enabled() bool { return c != nil && c.privateKey != nil }
 
-// signAppJWT mints the short-lived RS256 JWT GitHub requires for
-// App-authenticated calls. iat is back-dated 60s to absorb clock skew and exp
-// is capped at 9 minutes (GitHub's ceiling is 10).
+// signAppJWT 铸造 GitHub 对 App 认证调用要求的短寿命 RS256 JWT。iat 回拨 60 秒吸收
+// 时钟偏移，exp 封顶 9 分钟（GitHub 上限是 10）。
 func (c *Client) signAppJWT(now time.Time) (string, error) {
 	claims := jwt.MapClaims{
 		"iat": now.Add(-60 * time.Second).Unix(),
@@ -125,16 +116,15 @@ func (c *Client) signAppJWT(now time.Time) (string, error) {
 	return signed, nil
 }
 
-// installationToken returns a cached installation access token, minting a new
-// one via POST /app/installations/{id}/access_tokens when the cache is empty or
-// within the renew skew of expiry. Concurrent callers for the same installation
-// are collapsed by singleflight, so a cold cache under N workers mints once.
+// installationToken 返回缓存的安装访问令牌；缓存为空或已进入续期窗口时，经
+// POST /app/installations/{id}/access_tokens 铸造新令牌。同一安装的并发调用被
+// singleflight 收敛，所以 N 个 worker 下的冷缓存只会铸造一次。
 func (c *Client) installationToken(ctx context.Context, installationID int64) (string, error) {
 	if tok, ok := c.cachedToken(installationID); ok {
 		return tok, nil
 	}
 	v, err, _ := c.sf.Do(strconv.FormatInt(installationID, 10), func() (any, error) {
-		// A concurrent caller may have minted while we waited for the flight.
+		// 等 flight 的间隙，并发调用方可能已经铸造好了。
 		if tok, ok := c.cachedToken(installationID); ok {
 			return tok, nil
 		}
@@ -146,7 +136,7 @@ func (c *Client) installationToken(ctx context.Context, installationID int64) (s
 	return v.(string), nil
 }
 
-// cachedToken returns a cached token that is still outside the renew skew.
+// cachedToken 返回仍处于续期窗口外的缓存令牌。
 func (c *Client) cachedToken(installationID int64) (string, bool) {
 	now := c.now()
 	c.mu.Lock()
@@ -157,8 +147,8 @@ func (c *Client) cachedToken(installationID int64) (string, bool) {
 	return "", false
 }
 
-// mintInstallationToken exchanges the App JWT for a fresh installation token and
-// caches it. Called under singleflight, so only one runs per installation.
+// mintInstallationToken 用 App JWT 换取全新安装令牌并缓存。在 singleflight 下执行，
+// 因此每个安装只有一份在跑。
 func (c *Client) mintInstallationToken(ctx context.Context, installationID int64) (string, error) {
 	now := c.now()
 	appJWT, err := c.signAppJWT(now)
@@ -183,8 +173,7 @@ func (c *Client) mintInstallationToken(ctx context.Context, installationID int64
 		return "", rateLimitFromResponse(resp, c.now())
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		// Never echo the body — a token-mint failure body can contain sensitive
-		// hints; the status code is enough to diagnose.
+		// 绝不回显 body——token 铸造失败时 body 可能含敏感线索；诊断只需状态码。
 		return "", fmt.Errorf("github installation token: unexpected status %d", resp.StatusCode)
 	}
 	var parsed struct {
@@ -209,10 +198,9 @@ func (c *Client) mintInstallationToken(ctx context.Context, installationID int64
 	return parsed.Token, nil
 }
 
-// graphQL runs a single GraphQL query as the given installation and returns the
-// raw `data` object. GitHub returns HTTP 200 even for query-level errors, so we
-// inspect the `errors` array too, mapping a RATE_LIMITED error type to a
-// RateLimitError.
+// graphQL 以指定安装身份跑一条 GraphQL 查询，返回原始 `data` 对象。GitHub 即使查询级
+// 报错也回 HTTP 200，所以这里也检查 `errors` 数组，把 RATE_LIMITED 错误类型映射成
+// RateLimitError。
 func (c *Client) graphQL(ctx context.Context, installationID int64, query string, variables map[string]any) (json.RawMessage, error) {
 	token, err := c.installationToken(ctx, installationID)
 	if err != nil {
@@ -259,8 +247,7 @@ func (c *Client) graphQL(ctx context.Context, installationID int64, query string
 				return nil, &RateLimitError{RetryAfter: time.Minute}
 			}
 		}
-		// Surface the message but nothing else; GraphQL error messages do not
-		// contain credentials.
+		// 只透出 message 本身，其余不带；GraphQL 错误消息不含凭据。
 		return nil, fmt.Errorf("github graphql error: %s", envelope.Errors[0].Message)
 	}
 	if len(envelope.Data) == 0 {
@@ -269,9 +256,9 @@ func (c *Client) graphQL(ctx context.Context, installationID int64, query string
 	return envelope.Data, nil
 }
 
-// rateLimitFromResponse builds a RateLimitError from GitHub's throttling
-// headers. Retry-After (seconds) wins; then X-RateLimit-Reset (unix seconds);
-// otherwise a conservative 60s. The wait is clamped to [1s, 5m].
+// rateLimitFromResponse 根据 GitHub 的限流响应头构造 RateLimitError。Retry-After
+// （秒）优先；其次 X-RateLimit-Reset（unix 秒）；都没有则取保守的 60s。等待时长被
+// 钳制在 [1s, 5m]。
 func rateLimitFromResponse(resp *http.Response, now time.Time) *RateLimitError {
 	wait := time.Minute
 	if v := resp.Header.Get("Retry-After"); v != "" {

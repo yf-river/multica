@@ -1,9 +1,11 @@
+// Runtime 实例的变更 mutation：删除、强制解绑删除、补丁更新。
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { runtimeKeys } from "./queries";
 import { workspaceKeys } from "../workspace/queries";
 import { agentTaskSnapshotKeys } from "../agents/queries";
 
+/** 删除一台 runtime 的 mutation hook（成功后失效 runtime 缓存）。 */
 export function useDeleteRuntime(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -14,16 +16,14 @@ export function useDeleteRuntime(wsId: string) {
   });
 }
 
-// Confirmed-delete counterpart to useDeleteRuntime. The dialog routes here when
-// the strict DELETE refused with `runtime_has_active_agents` (or when the
-// caller already knows the runtime has active agents and wants to skip the
-// pre-flight refusal). Mutation fn returns the server-reported counts so
-// the caller can render a richer success toast.
+// useDeleteRuntime 的"确认删除"版本。弹窗在严格 DELETE 以 `runtime_has_active_agents`
+// 拒绝时（或调用方已知该 runtime 有活跃 Agent、想跳过预检拒绝时）走这里。
+// mutation 函数返回服务器报告的计数，让调用方能渲染更丰富的成功 toast。
 //
-// Invalidates runtimes (the list / detail), workspace agents (they are unbound,
-// so their runtime column and readiness change) and the agent presence snapshot
-// (the delete also cancels queued/running tasks). Without the agent-side
-// invalidation the Agents page would keep showing them as runnable.
+// 失效 runtimes（列表/详情）、工作区 agents（它们被解绑，runtime 列与就绪状态会变）
+// 与 agent 呈现快照（删除也会取消排队/运行中的任务）。没有 Agent 侧失效，Agents 页
+// 会继续把它们显示成可运行。
+/** 强制解绑全部 Agent 后删除 runtime 的 mutation hook。 */
 export function useUnbindAgentsAndDeleteRuntime(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -42,9 +42,9 @@ export function useUnbindAgentsAndDeleteRuntime(wsId: string) {
   });
 }
 
-// useUpdateRuntime patches editable fields on a runtime (visibility, custom
-// name). Invalidates the runtime list so the picker disabled-state and
-// display names recompute.
+// useUpdateRuntime 补丁更新一台 runtime 的可编辑字段（可见性、自定义名）。
+// 失效 runtime 列表，让选择器的禁用态与展示名重新计算。
+/** 更新 runtime 可编辑字段的 mutation hook。 */
 export function useUpdateRuntime(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -55,7 +55,7 @@ export function useUpdateRuntime(wsId: string) {
       runtimeId: string;
       patch: {
         visibility?: "private" | "public";
-        // Empty string clears the custom name; omit to leave unchanged.
+        // 空字符串清除自定义名；省略则保持不变。
         custom_name?: string;
         apply_to_machine?: boolean;
       };

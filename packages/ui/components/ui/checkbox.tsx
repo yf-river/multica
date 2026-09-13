@@ -1,10 +1,16 @@
 "use client"
+// 本文件是复选框（Checkbox）组件（基于 Base UI 的 Checkbox）：
+// 支持勾选与半选（indeterminate）两种状态，选中/半选时填充品牌色。
 
 import { Checkbox as CheckboxPrimitive } from "@base-ui/react/checkbox"
 
 import { cn } from "@multica/ui/lib/utils"
 import { CheckIcon, MinusIcon } from "lucide-react"
 
+/**
+ * Checkbox：可勾选的复选框。`indeterminate` 为 true 时呈半选态
+ * （常用来表达「子项部分被选」），显示一条横线而非对勾。
+ */
 function Checkbox({ className, indeterminate, ...props }: CheckboxPrimitive.Root.Props) {
   return (
     <CheckboxPrimitive.Root

@@ -1,3 +1,5 @@
+// 本文件是 metrics 包内部测试专用的辅助工具（仅测试引用，import "testing"，
+// 生产代码路径不会用到）。放在普通 .go 而非 _test.go 里，方便跨包的测试文件复用。
 package metrics
 
 import (
@@ -7,21 +9,20 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
-// SumAllCounters returns the running sum across every counter sample
-// currently registered with this BusinessMetrics receiver. Used by the lint
-// test in business_pairing_test.go to confirm that a synthetic event causes
-// AT LEAST ONE counter to advance — i.e. that the IncForEvent dispatch
-// covered the case. Production code never calls this.
+// SumAllCounters 返回当前注册在接收者 m 上所有 counter 样本的总和。供
+// business_pairing_test.go 的 lint 测试用：确认一个合成事件至少让一个计数器
+// 前进——即 IncForEvent 分发确实覆盖到了这个分支。生产代码从不调用它。
 //
-// Histograms and gauges are deliberately excluded so prewarmed buckets
-// (e.g. failure_reason 0-counts) don't make every event "pass" trivially.
+// 故意排除直方图与 Gauge，否则预热过的桶（例如 failure_reason 的 0 计数）会让
+// 任何事件都「平凡地通过」检查，测不出分发是否真的发生。
 func SumAllCounters(m *BusinessMetrics) float64 {
 	if m == nil {
 		return 0
 	}
+	// 每次调用新建一个干净 Registry：MustRegister 遇到重复注册会 panic，
+	// 复用一个共享注册表会互相污染。
 	reg := prometheus.NewPedanticRegistry()
 	for _, c := range m.Collectors() {
-		// MustRegister panics on duplicate; we use a fresh registry each call.
 		reg.MustRegister(c)
 	}
 	families, err := reg.Gather()
@@ -42,11 +43,10 @@ func SumAllCounters(m *BusinessMetrics) float64 {
 	return total
 }
 
-// GatherForTest registers every collector on a fresh registry and returns
-// the resulting metric families keyed by name. Test-only — the production
-// /metrics endpoint reads from the shared registry constructed in
-// NewRegistry. Any Gather error is reported via t.Fatalf so callers can
-// dereference the result without nil checks.
+// GatherForTest 把全部采集器注册到新 Registry 上，返回按指标名索引的结果。
+// 仅测试用——生产环境的 /metrics 端点读的是 NewRegistry 里构建的共享注册表。
+// 任何 Gather 错误都会通过 t.Fatalf 上报，所以调用方拿到返回值可以直接解引用，
+// 不用再做 nil 判断。
 func GatherForTest(t *testing.T, m *BusinessMetrics) map[string]*dto.MetricFamily {
 	t.Helper()
 	if m == nil {

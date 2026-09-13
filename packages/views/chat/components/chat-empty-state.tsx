@@ -1,3 +1,4 @@
+// 聊天空状态：在用户发送第一条消息前显示的占位界面，含 agent 头像、描述和开场建议。
 "use client";
 
 import { Settings2 } from "lucide-react";
@@ -11,7 +12,13 @@ import {
   useFallbackConversationStarters,
 } from "./conversation-starter-list";
 
-/** Empty compose placeholder shown before the first user message. */
+/**
+ * 空状态占位：在用户发送第一条消息前显示。
+ * @param agent - 当前对话对应的 agent（可能为 null）。
+ * @param hasSessions - 该用户是否已有其他会话，用于区分首次使用提示。
+ * @param onPickPrompt - 选中某条开场建议后触发的回调。
+ * @param customizeHref - “自定义”入口的跳转地址，为 `null` 时隐藏该入口。
+ */
 export function EmptyState({
   agent,
   hasSessions = true,
@@ -22,11 +29,10 @@ export function EmptyState({
   hasSessions?: boolean;
   onPickPrompt: (prompt: string) => void;
   /**
-   * Where "customize" sends this viewer, or `null` to hide the affordance.
-   * The container resolves it: only someone who may edit THIS agent on a
-   * backend that persists conversation starters gets a link. Keeping it a prop
-   * leaves this component presentational — and keeps the link out of the DOM
-   * entirely for readers, rather than rendering a disabled tease.
+   * “自定义”入口要把用户送去哪里，`null` 表示隐藏这个入口。
+   * 由容器来决定：只有能在一个会持久化开场建议的后端上编辑“这个”agent 的人
+   * 才会拿到链接。把它作为 prop，让这个组件保持纯展示——并且对读者来说，
+   * 链接完全不出现在 DOM 里，而不是渲染一个被禁用的“诱饵”。
    */
   customizeHref?: string | null;
 }) {

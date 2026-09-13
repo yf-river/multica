@@ -17,40 +17,35 @@ function attachmentDownloadEndpoint(
   return resolvePublicFileUrl(endpoint) ?? endpoint;
 }
 
-// Resolve the forced-attachment ("download button") URL the server minted, if
-// any. Unlike `download_url` (load-intent — media serves inline for preview),
-// `attachment_download_url` carries Content-Disposition: attachment in every
-// storage mode, so it downloads rather than previews. resolvePublicFileUrl keeps
-// a site-relative proxy capability same-origin and passes absolute presign /
-// CloudFront URLs through unchanged. Empty on a server that predates the field.
+// 解析服务端铸造的「强制附件」（下载按钮）URL，如果有的话。与 `download_url`
+//（加载意图——媒体为预览而内联服务）不同，`attachment_download_url` 在每种
+// 存储模式下都带 Content-Disposition: attachment，所以它下载而不是预览。
+// resolvePublicFileUrl 让站内相对的能力 URL 保持同源，并把绝对的
+// presign / CloudFront URL 原样放行。服务端老于该字段时为空。
 function forcedAttachmentUrl(url: string | undefined): string | null {
   if (!url) return null;
   return resolvePublicFileUrl(url);
 }
 
-// The capability download URL the server minted, if any.
+// 服务端铸造的能力下载 URL，如果有的话。
 //
-// In proxy mode the backend puts a signed, single-attachment capability into
-// `download_url` (a site-relative `/api/attachments/{id}/signed-download?...`
-// URL, added in #6092). It carries its own credential in the query string, so a
-// top-level `<a download>` navigation authenticates on its own — no
-// `Authorization` header, no session cookie — which is what clears the 401 that
-// otherwise makes the browser save the error body as `download.txt`. That 401
-// is the token-mode case: auth is a bearer token held in JS, so a bare
-// navigation to the cookie-gated slug endpoint sends no credential at all.
+// proxy 模式下后端把一份带签名的单附件能力塞进 `download_url`（站内相对的
+// `/api/attachments/{id}/signed-download?...` URL，#6092 加的）。它在查询串里
+// 自带凭据，所以一次顶层 `<a download>` 导航能自行鉴权——不需要
+// `Authorization` 头、不需要会话 cookie——这正是解决那个 401 的方式，否则
+// 浏览器会把错误正文存成 `download.txt`。那个 401 是 token 模式的情形：
+// 鉴权是 JS 里持有的 bearer token，裸导航到 cookie 门控的 slug 端点根本
+// 不会带任何凭据。
 //
-// The capability does NOT force an attachment disposition — it streams through
-// `proxyAttachmentDownload` → `storage.ContentDisposition`, which returns
-// `inline` for image/video/audio/PDF. What makes the browser download rather
-// than preview is the request staying same-origin combined with the `download`
-// attribute. This is the #6713 fallback for a server that has the #6092
-// capability but not yet `attachment_download_url`; the forced-attachment URL
-// preferred above closes the cross-origin-media gap #6712 tracked.
+// 该能力**不**强制 attachment disposition——它经 `proxyAttachmentDownload`
+// → `storage.ContentDisposition` 流式输出，图片/视频/音频/PDF 会返回
+// `inline`。真正让浏览器下载而非预览的，是请求保持同源、加上 `download`
+// 属性。这是给「有 #6092 能力但还没有 `attachment_download_url`」的服务端
+// 的 #6713 回退；上面优先的强制附件 URL 补上了 #6712 跟踪的跨源媒体缺口。
 //
-// Absolute CloudFront / S3 `download_url`s are deliberately NOT used here: they
-// are cross-origin and inline-tuned, so an `<a download>` to them previews the
-// file instead of downloading it. Those modes keep entering through the unified
-// slug endpoint, and a server that predates #6092 returns no capability at all.
+// 绝对 CloudFront / S3 `download_url` 刻意不在这里用：它们跨源且按内联调校，
+// 对它们做 `<a download>` 会预览而不是下载。那些模式仍从统一 slug 端点进入，
+// 早于 #6092 的服务端则什么能力都不返回。
 function capabilityDownloadUrl(downloadUrl: string | undefined): string | null {
   if (!downloadUrl) return null;
   if (!downloadUrl.startsWith("/api/attachments/")) return null;
@@ -58,15 +53,14 @@ function capabilityDownloadUrl(downloadUrl: string | undefined): string | null {
   return resolvePublicFileUrl(downloadUrl);
 }
 
+/** 触发浏览器下载（用隐藏 a 标签 + 点击）。 */
 function triggerBrowserDownload(url: string): void {
   const anchor = document.createElement("a");
   anchor.href = url;
-  // Keep the click in the current browsing context. For same-origin API
-  // downloads this hint lets Chromium/Safari use Content-Disposition's
-  // filename without opening a blank tab. If the endpoint later 302s to
-  // CloudFront/S3, the server signs that redirect with an attachment
-  // disposition; the browser follows it natively without buffering the file
-  // into JS memory.
+  // 让点击留在当前浏览上下文。对同源 API 下载，这个提示让
+  // Chromium/Safari 能采用 Content-Disposition 的文件名而不开空白页签。
+  // 若端点随后 302 到 CloudFront/S3，服务端会给那次重定向签 attachment
+  // disposition；浏览器原生跟随它，不会把文件缓冲进 JS 内存。
   anchor.download = "";
   anchor.rel = "noopener";
   anchor.style.display = "none";
@@ -76,9 +70,8 @@ function triggerBrowserDownload(url: string): void {
 }
 
 /**
- * Returns a callback that downloads an attachment by ID. The Web path uses
- * the unified server endpoint directly instead of opening a blank tab or
- * materializing the file as a Blob in renderer memory.
+ * 返回一个按附件 id 触发下载的回调。Web 路径直接走统一服务端端点，
+ * 而不是开空白页签或在渲染进程内存里把文件物化成 Blob。
  */
 export function useDownloadAttachment(): (attachmentId: string) => Promise<void> {
   const { t } = useT("editor");
@@ -88,38 +81,33 @@ export function useDownloadAttachment(): (attachmentId: string) => Promise<void>
       const failed = () => toast.error(t(($) => $.attachment.download_failed));
 
       try {
-        // The preflight metadata request is both the permission check (so API
-        // failures still produce the existing toast instead of a silent failed
-        // navigation) and where the server hands back the download URLs it mints
-        // for this response.
+        // 预检元数据请求既是一次权限检查（API 失败仍会弹出既有 toast，
+        // 而不是一次静默失败的导航），也是服务端把为本次响应铸造的下载
+        // URL 交回来的地方。
         const fresh = await api.getAttachment(attachmentId);
         if (typeof document === "undefined") {
           failed();
           return;
         }
-        // Prefer the forced-attachment URL when the server minted one: it is
-        // credential-free and carries Content-Disposition: attachment in every
-        // storage mode, so a bare `<a download>` navigation both authenticates
-        // and downloads — instead of previewing media inline or 401ing in
-        // token-mode.
+        // 服务端铸造了强制附件 URL 时优先用：它无需凭据、每种存储模式都带
+        // Content-Disposition: attachment，所以裸 `<a download>` 导航既能
+        // 鉴权又能下载——而不是内联预览媒体、或在 token 模式下 401。
         const forced = forcedAttachmentUrl(fresh.attachment_download_url);
         if (forced) {
           triggerBrowserDownload(forced);
           return;
         }
-        // Older server without the forced-attachment field: fall back to the
-        // #6092 proxy capability (#6713). A top-level `<a download>` navigation
-        // sends no `Authorization` header, so in token-mode the cookie-gated
-        // slug endpoint 401s; the capability URL carries its own credential in
-        // the query string, so it authenticates that bare navigation itself.
+        // 没有强制附件字段的老服务端：退回 #6092 proxy 能力（#6713）。
+        // 顶层 `<a download>` 导航不带 `Authorization` 头，token 模式下
+        // cookie 门控的 slug 端点会 401；能力 URL 在查询串里自带凭据，
+        // 所以能自行鉴权那次裸导航。
         const capability = capabilityDownloadUrl(fresh.download_url);
         if (capability) {
           triggerBrowserDownload(capability);
           return;
         }
-        // No capability (CloudFront / S3 signing, or a server that predates
-        // #6092): fall back to the cookie-authenticated unified endpoint, which
-        // still works wherever the session cookie applies.
+        // 没有能力（CloudFront / S3 签名，或早于 #6092 的服务端）：退回
+        // cookie 鉴权的统一端点，它在会话 cookie 有效的任何地方都能用。
         if (!workspaceSlug) {
           failed();
           return;

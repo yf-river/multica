@@ -1,3 +1,6 @@
+// 聊天总控 hook：与布局无关，集中持有会话状态的解析、发送/停止/取消的
+// "等待再渲染"流程、消息分页与自动已读等全部聊天逻辑，聊天页与悬浮窗口共用
+// 同一套实现，保证两个界面的会话行为永远一致。
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -55,17 +58,20 @@ import { useAppForeground } from "../../common/use-app-foreground";
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
 
-// Derive a concise session title from the first user message: first line,
-// markdown stripped, whitespace collapsed, capped. A deterministic title
-// (no LLM) — the server has no summarization model, so this is the sensible
-// default until a runtime-generated title is wired up.
+// 从第一条用户消息里派生一个简短的会话标题：取第一行、剥掉 Markdown、
+// 压缩空白并封顶。标题是确定性的（不用 LLM）——服务端没有摘要模型，
+// 所以在接入运行时生成标题之前，这是合理的默认。
 const CHAT_TITLE_MAX = 30;
+
+/**
+ * 从内容派生会话标题（纯函数、确定性）：取第一行、去 Markdown 符号、压空白、截断。
+ */
 export function deriveChatTitle(content: string): string {
   const firstLine = (content.split("\n").find((l) => l.trim()) ?? content).trim();
   const cleaned = firstLine
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/[#*`>~_]/g, "")
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1") // markdown links/images → their text
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1") // markdown 链接/图片 → 只留文字
     .replace(/\s+/g, " ")
     .trim();
   if (cleaned.length <= CHAT_TITLE_MAX) return cleaned;
@@ -73,19 +79,15 @@ export function deriveChatTitle(content: string): string {
 }
 
 /**
- * After a send resolves: is the user still composing to the target they sent
- * from? Decides whether to scrub the composer and open the sent session, or
- * treat the send as fire-and-forget (the reply surfaces as unread instead).
+ * 发送请求落定后：用户是否还在对着"发出时那个"会话输入？据此决定该清空输入框并
+ * 打开新会话，还是把这次发送当"发完即走"（回复以未读的形式出现）。
  *
- * The active session answers this on its own, deliberately. The new-chat
- * composer is ONE box per workspace (see DRAFT_NEW_SESSION), so moving the
- * agent picker re-points where the next send goes without moving the view or
- * the draft slot — that is not "navigating away" (MUL-4864). Counting it as
- * such would leave a completed send's text sitting in the composer, primed to
- * be sent a second time to the agent just picked.
+ * 这里特意只拿"活动会话"自己来判断。新聊天输入框是整个工作区共享的一个盒子
+ * （见 DRAFT_NEW_SESSION），所以在 agent 选择器里换人只是改下一次发送的目标，
+ * 并没有移动视图或草稿槽——这不算"导航离开"（MUL-4864）。要是把它算成导航，
+ * 一次已完成的发送留下的文本就会继续躺在输入框里，随时可能被二次发给刚选中的 agent。
  *
- * Shared by both send chains — the chat tab's controller and the floating
- * ChatWindow — so the rule cannot drift between the two surfaces.
+ * 聊天页与悬浮窗口两条发送链路共用，规则不会在两处漂移。
  */
 export function isStillOnComposeTarget(
   liveActiveSessionId: string | null,
@@ -95,24 +97,19 @@ export function isStillOnComposeTarget(
 }
 
 /**
- * Decide what a project-context change should do, given the open session.
+ * 根据当前打开的会话，决定一次项目上下文切换该做什么。
  *
- *  - `awaitSession`: an active session id is set but its row has not loaded
- *    yet. Bail so a persisted selection resolving before its sessions query
- *    cannot misfile a project change into the new-chat draft.
- *  - `detachCurrent`: removing context from the open session — safe in place,
- *    it only changes what future turns receive.
- *  - `startFreshChat`: switching to a DIFFERENT project. A fresh chat is
- *    started so the old project's provider memory / reused workdir cannot
- *    bleed in. It must stay bound to the agent whose session we are leaving
- *    (`agentId`): clearing the active session otherwise drops selection back
- *    to the stored `selectedAgentId`, which can be a stale preference for a
- *    different agent, sending the lazily-created session to the wrong agent.
- *  - `setDraftProject`: no open session, so this only adjusts the new-chat
- *    draft's project.
+ *  - `awaitSession`: 有活动会话 id 但它的行还没加载完。先退出，避免一条持久化的
+ *    选中记录在它的会话查询解析之前，把一次项目切换误记进新聊天草稿。
+ *  - `detachCurrent`: 从打开的会话上移除项目上下文——原地操作是安全的，
+ *    它只改变未来几轮接收到的内容。
+ *  - `startFreshChat`: 切到*另一个*项目。开一个全新会话，好让旧项目的 provider 记忆 /
+ *    复用的工作目录不会渗进来。它必须绑定在我们正要离开的会话所属的 agent
+ *    （`agentId`）上：否则清空活动会话会让选中状态落回已存的 `selectedAgentId`，
+ *    那可能是一个指向别的 agent 的过期偏好，把懒创建的会话发给错误的 agent。
+ *  - `setDraftProject`: 没有打开的会话，所以只调整新聊天草稿的项目。
  *
- * Shared by both send chains — the chat tab's controller and the floating
- * ChatWindow — so the stale-agent rule cannot drift between the two surfaces.
+ * 两条发送链路共用，过期 agent 的规则不会在两处漂移。
  */
 export type ProjectContextChange =
   | { kind: "awaitSession" }
@@ -139,14 +136,13 @@ export function planProjectContextChange(input: {
   return { kind: "setDraftProject", projectId: input.targetProjectId };
 }
 
-// True when a session has an in-flight pending task in the cache — the signal
-// of a just-created (or actively-sending) session still awaiting server
-// confirmation, before the sessions-list refetch includes it. `handleSend`
-// seeds this task from the server response the instant the send is accepted, so
-// it is populated before `setActiveSession` publishes the new session.
-// Deliberately NOT "has cached messages": a session deleted elsewhere can still
-// have real cached history, which must not exempt it from the stale-session
-// self-heal.
+/**
+ * 判断会话当前是否有一条在途（in-flight）的 pending 任务——这正是"刚创建 / 正在发"
+ * 的会话、在会话列表重拉取把它包含进来之前要等服务端确认的信号。`handleSend`
+ * 在发送一被接受就从服务端响应种下这个任务，所以它早于 `setActiveSession`
+ * 发布新会话前就已填充。刻意 NOT "有缓存消息"：在别处被删除的会话可能还带着
+ * 真实的缓存历史，那不能让它豁免过期会话的自愈。
+ */
 export function hasInFlightPendingTask(
   qc: ReturnType<typeof useQueryClient>,
   sessionId: string,
@@ -155,6 +151,11 @@ export function hasInFlightPendingTask(
   return Boolean(pending?.task_id);
 }
 
+/**
+ * 把服务端已接受的发送种进 pending 任务缓存（乐观写入），带真实的 task_id 与
+ * created_at，并让 StatusPill 以真实时钟为锚、也让会话列表重拉取之前这个刚创建的
+ * 会话能豁免过期自愈。
+ */
 export function seedAcceptedPendingTask(
   qc: ReturnType<typeof useQueryClient>,
   sessionId: string,
@@ -190,17 +191,15 @@ const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 
 
 /**
- * Layout-agnostic chat controller. Holds every piece of chat conversation
- * state and behavior — agent resolution, session lookup, the await-then-render
- * send/stop/cancel flow, message pagination, and auto-mark-read — so that
- * both surfaces render the same conversation logic:
+ * 与布局无关的聊天总控。持有会话相关的全部状态与行为——agent 解析、会话查找、
+ * 发送/停止/取消的"等待-再渲染"流程、消息分页、自动已读——让两个界面渲染出
+ * 一致的会话逻辑：
  *
- *  - ChatWindow: the floating FAB overlay (adds resize / expand / minimize).
- *  - ChatPage:   the first-class Chat tab (two-pane thread list + conversation).
+ *  - ChatWindow: 悬浮 FAB 浮层（额外带缩放 / 展开 / 最小化）。
+ *  - ChatPage:   一等公民的聊天标签页（会话列表 + 对话双栏）。
  *
- * The only thing the caller supplies is `isActive` — whether its surface is
- * currently on screen — which gates auto-mark-read so a background overlay
- * doesn't silently clear unread state the user hasn't actually seen.
+ * 调用方只需给 `isActive`——它所在的界面当前是否在屏幕上——它把关自动已读，
+ * 避免一个后台浮层把用户根本没看到的未读悄悄清掉。
  */
 export function useChatController(opts?: { isActive?: boolean }) {
   const isActive = opts?.isActive ?? true;
@@ -251,15 +250,13 @@ export function useChatController(opts?: { isActive?: boolean }) {
       : 0;
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
-  // Durable deferred-cancellation draft restores (#5219). The whole lifecycle —
-  // fetch, offer, skip-and-re-offer, apply, consume, reconcile — lives in this
-  // hook, shared with the floating chat window.
+  // 持久化的"推迟取消"草稿恢复（#5219）。完整的生命周期——拉取、提供、
+  // 跳过再提供、采纳、消费、对账——都在这只 hook 里，与悬浮聊天窗口共享。
   //
-  // Gated on isActive AND app foreground: a backgrounded browser tab still renders
-  // this controller, and it must not fetch/apply/consume a restore the user is
-  // waiting on in a foreground surface. It recovers on its next fetch once the
-  // surface is on screen and the app is refocused. (appForeground also gates auto
-  // mark-read below.)
+  // 以 isActive AND 应用在前台 双重把关：退到后台的浏览器标签页仍然渲染着
+  // 这个控制器，它绝不能去拉取/采纳/消费一条用户正在前台界面等着的那份恢复。
+  // 界面回到屏幕、应用重新聚焦后，会在下一次拉取时恢复。（appForeground 同样
+  // 把关下方的自动已读。）
   const appForeground = useAppForeground();
   const { restoreDraftRequest, enqueueLocalRestore, handleRestoreDraftApplied } =
     useChatDraftRestore(activeSessionId, isActive && appForeground);
@@ -270,9 +267,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
     handleClearQueuedTasks,
     handleSendQueuedTaskNow,
   } = useChatTaskActions(activeSessionId, enqueueLocalRestore);
-  // Nonce handed to ChatInput to pull focus into the compose box when a new
-  // chat starts. Bumped by handleNewChat / handleStartNewChat only, so
-  // selecting an existing chat or a deep link never steals focus.
+  // 交给 ChatInput 的聚焦 nonce：新建聊天时把键盘焦点拉进输入框。只有
+  // handleNewChat / handleStartNewChat 会加一，所以选中已有会话或深链接永不抢焦点。
   const [focusInputRequest, setFocusInputRequest] = useState(0);
   const requestInputFocus = useCallback(
     () => setFocusInputRequest((n) => n + 1),
@@ -310,10 +306,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
     ? candidateProjectId
     : null;
 
-  // A project may be deleted on another client while this workspace's next
-  // chat preference is still persisted locally. Normalize it as soon as the
-  // authoritative project list settles so a future send cannot carry a stale
-  // selection.
+  // 一个项目可能在别的客户端被删除，而本工作区"下一条新聊天"的偏好还持久化在
+  // 本地。等权威的项目列表落定后尽快把它归一化，免得未来一次发送带上过期的选中。
   useEffect(() => {
     if (!projectsLoaded || !selectedProjectId) return;
     if (projects.some((project) => project.id === selectedProjectId)) return;
@@ -331,29 +325,26 @@ export function useChatController(opts?: { isActive?: boolean }) {
   const availableAgents = agents.filter(
     (a) => !a.archived_at && canAssignAgent(a, user?.id, memberRole),
   );
-  // `availableAgents` is only trustworthy once BOTH queries above succeeded:
-  // the permission filter reads the member role, so agents-without-members
-  // misreports a public_to agent as unavailable. Consumers that must tell
-  // "still loading" apart from "settled and not available" (the `?agent=`
-  // deep link) gate on this instead of sniffing list emptiness. Query errors
-  // deliberately keep this false — a failed fetch is not a permission verdict.
+  // `availableAgents` 只有在上面的两个查询都成功后才可信：权限过滤会读成员角色，
+  // 所以"有 agents 但成员没加载完"会把一个 public_to 的 agent 误报成不可用。
+  // 需要区分"还在加载"和"已落定但不可用"的消费方（`?agent=` 深链接）用这个
+  // 而非嗅探列表是否为空把关。查询出错时故意保持 false——一次失败的拉取
+  // 不能算权限裁决。
   const agentsSettled = agentsLoaded && membersLoaded;
 
-  // The agent bound to the OPEN session, resolved from the full agent list
-  // (archived included, since agentListOptions passes include_archived). An
-  // archived agent is filtered out of `availableAgents`, so resolving the
-  // active agent only from that list would make an archived-agent session
-  // silently render some *other* available agent — wrong avatar/name/presence
-  // in the header, and a send that targets the wrong agent. Binding to the
-  // session's real agent keeps the conversation honest; the archived state
-  // then makes it read-only (see isAgentArchived).
+  // 当前打开会话绑定的 agent，从完整 agent 列表里解析（含已归档，因为
+  // agentListOptions 传了 include_archived）。已归档的 agent 会被过滤出
+  // `availableAgents`，如果只从那个列表解析活动 agent，已归档的会话会静默渲染成
+  // 某个*别的*可用 agent——头像/名字/在线状态全错，发送还对准了错误的 agent。
+  // 绑定会话真正的 agent 才能保持对话诚实；归档状态随后把它变成只读
+  // （见 isAgentArchived）。
   const sessionAgent = currentSession
     ? agents.find((a) => a.id === currentSession.agent_id) ?? null
     : null;
   const isAgentArchived = !!sessionAgent?.archived_at;
 
-  // Resolve selected agent: open session's agent → stored preference → first
-  // available. New chats have no session, so they fall through to the picker.
+  // 解析选中的 agent：会话的 agent → 存储的偏好 → 第一个可用。新聊天没有会话，
+  // 所以一路落到选择器。
   const activeAgent =
     sessionAgent ??
     availableAgents.find((a) => a.id === selectedAgentId) ??
@@ -361,19 +352,16 @@ export function useChatController(opts?: { isActive?: boolean }) {
     null;
   const isAgentRuntimeBound = !!activeAgent && hasAgentRuntime(activeAgent);
 
-  // A session outlives the permission that created it. The agent can be flipped
-  // to personal, change owner, or drop this member from its allow-list, and the
-  // server then refuses every send with `invocation_not_allowed` while still
-  // serving the transcript (MUL-4525 — read uses the view gate, send re-runs the
-  // invoke gate). Judge the SESSION's agent, not just the picker list, so the
-  // composer goes read-only up front instead of after the user types
-  // (MUL-6380). Same rule the server enforces, via the shared predicate.
+  // 会话可以活过创造它的权限。agent 可能被改成 personal、更换所有者、或把
+  // 这个成员移出允许列表，服务端随后会拒绝每一次发送（invocation_not_allowed），
+  // 同时仍正常提供 transcript（MUL-4525——读取走 view 闸门，发送重新跑 invoke
+  // 闸门）。判断要基于*会话的* agent，而不只是选择器列表，让输入框提前变只读，
+  // 而不是等用户打完字才撞上（MUL-6380）。与服务端通过共享谓词执行同一条规则。
   const isAgentAccessRevoked =
     !!activeAgent && !canAssignAgent(activeAgent, user?.id, memberRole);
 
-  // "Customize" under the starter buttons in the empty state — the only place
-  // that admits those buttons are configuration. Resolved here so the full
-  // page and the floating window cannot disagree about who sees it.
+  // 空状态开场建议按钮下方的"自定义"——唯一承认这些按钮是配置的地方。
+  // 在这里解析，整页和悬浮窗口就不会对谁能看到它产生分歧。
   const customizeConversationStartersHref = useCustomizeConversationStartersHref(
     activeAgent,
     wsId,
@@ -388,25 +376,19 @@ export function useChatController(opts?: { isActive?: boolean }) {
   const availability =
     presenceDetail === "loading" ? undefined : presenceDetail.availability;
 
-  // Auto mark-as-read whenever the user is actively looking at a session with
-  // unread state. `isActive` lets the caller say "my surface is on screen":
-  // the floating overlay passes `isOpen`, the tab passes `true`. `appForeground`
-  // additionally requires the window to be visible and focused: a reply landing
-  // while the app is backgrounded must stay unread so the sidebar badges it
-  // (MUL-4485); it clears the moment the user returns and this effect re-runs.
+  // 每当用户正盯着一个有未读的会话就自动标记已读。`isActive` 让调用方声明
+  // "我的界面在屏幕上"：悬浮浮层传 `isOpen`，标签页传 `true`。`appForeground`
+  // 额外要求窗口可见且聚焦：应用在后台时落地的回复必须保持未读，让侧栏能给它
+  // 打徽标（MUL-4485）；用户一回来、这个 effect 重跑就清掉。
   //
-  // The read is deferred by a tick and cancelled on cleanup, so a session that
-  // is only *momentarily* active never gets marked read. This is the fix for
-  // MUL-4360's mount race: `activeSessionId` is persisted, so on a bare `/chat`
-  // navigation the page restores the last session for one frame before its
-  // URL→store effect (which runs AFTER this hook's effects, since the hook is
-  // called first) clears it back to null. Without the defer, that restored-but-
-  // never-opened session was marked read in that gap — its badge vanished
-  // though the user never opened it (right pane still shows "select a chat").
-  // Deferring lets the subsequent activeSessionId change cancel the pending
-  // read via cleanup; the store re-check is a belt-and-suspenders guard. Only a
-  // session that stays active past the tick — a real select, deep link, or
-  // refresh — is read.
+  // 已读调用延迟一拍（下一个 tick）并在清理时取消，所以一个只是*瞬间*活动的
+  // 会话永远不会被标记已读。这是 MUL-4360 挂载竞态的修复：`activeSessionId` 是
+  // 持久化的，所以在一次裸 `/chat` 导航里，页面会先恢复上一个会话渲染一帧，
+  // 然后它的 URL→store effect（因为 hook 先被调用，这个 effect 后跑）才把它清回
+  // null。没有延迟，那个"恢复过却从未打开"的会话就会在这一瞬被标记已读——
+  // 徽标消失了，可用户根本没打开过它（右侧面板还显示着"select a chat"）。
+  // 延迟让随后的 activeSessionId 变化通过清理取消那次待执行的已读；store 复查
+  // 是双保险。只有撑过这一拍的会话——真正的选中、深链接或刷新——才会被读。
   const currentHasUnread =
     sessions.find((s) => s.id === activeSessionId)?.has_unread ?? false;
   useEffect(() => {
@@ -419,17 +401,15 @@ export function useChatController(opts?: { isActive?: boolean }) {
       markRead.mutate(sessionId);
     }, 0);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- markRead ref stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- markRead 引用稳定，不入依赖
   }, [isActive, appForeground, activeSessionId, currentHasUnread]);
 
   const sessionPromiseRef = useRef<Promise<string | null> | null>(null);
   const ensureSession = useCallback(
     async (titleSeed: string): Promise<string | null> => {
-      // Trust the current session id only when it's real: present in the
-      // loaded list, or a just-created one still awaiting the list refetch
-      // (has an optimistic write). A dangling id (deleted / no access) must not
-      // be treated as an existing session — fall through and create a fresh one
-      // so the message lands somewhere instead of POSTing into a 404.
+      // 只信任真实存在的会话 id：在已加载列表里，或是一个刚创建、还在等列表
+      // 重拉取的（有乐观写入）。悬空的 id（已删除 / 无权限）绝不能当作已有会话
+      // ——直接落下去新建一个，让消息有地方落地，而不是往 404 里 POST。
       if (
         activeSessionId &&
         (!sessionsLoaded ||
@@ -467,13 +447,11 @@ export function useChatController(opts?: { isActive?: boolean }) {
     ],
   );
 
-  // Self-heal a dangling `activeSessionId`. Once the sessions list has loaded
-  // and it isn't in the list — with no in-flight optimistic write exempting a
-  // just-created session — the id was deleted, lost access, or never existed
-  // (a stale `?session=` deep link, or a persisted floating-window selection).
-  // Clearing it stops BOTH surfaces (the tab and the floating window) from
-  // rendering an editable empty chat whose send would POST into a nonexistent
-  // session. Lives in the shared controller so every surface self-heals.
+  // 自愈悬空的 `activeSessionId`。会话列表一旦加载完、而它不在列表里——且没有
+  // 在途的乐观写入豁免一个刚创建的会话——那这个 id 就是被删了、失去权限、或
+  // 从未存在过（过期的 `?session=` 深链接，或持久化的悬浮窗口选中记录）。
+  // 清掉它能阻止两个界面（标签页 + 悬浮窗口）都渲染一个可编辑的空聊天，
+  // 发消息就会 POST 进一个不存在的会话。放在共享控制器里，每个界面都能自愈。
   useEffect(() => {
     if (!activeSessionId || !sessionsLoaded) return;
     if (sessions.some((s) => s.id === activeSessionId)) return;
@@ -482,8 +460,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
     setActiveSession(null);
   }, [activeSessionId, sessionsLoaded, sessions, qc, setActiveSession]);
 
-  // Upload transport moved into the coordinated-upload engine inside ChatInput
-  // (MUL-5181 L2); surfaces only forward whether the affordance exists.
+  // 上传传输已并入 ChatInput 内部的协调式上传引擎（MUL-5181 L2）；
+  // 界面层只转发"有没有这个入口"。
   const uploadEnabled = !!activeAgent;
 
   const handleSend = useCallback(
@@ -497,9 +475,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
         return false;
       }
-      // Read-only conversation: the agent is retired and can no longer pick up
-      // work, so refuse to enqueue a task that would sit orphaned forever. The
-      // input is disabled in this state; this is the belt-and-braces guard.
+      // 只读会话：agent 已退役、无法再接活，拒绝入队一条会永远搁置的任务。
+      // 输入框在这个状态下已被禁用；这里是双保险。
       if (isAgentArchived) {
         apiLogger.warn("sendChatMessage skipped: agent is archived", {
           sessionId: activeSessionId,
@@ -507,10 +484,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
         });
         return false;
       }
-      // Invoke permission was revoked while this session was open. The server
-      // would refuse with a 403 before persisting anything; not attempting the
-      // send keeps the draft and avoids a pointless roundtrip. The input is
-      // disabled in this state — this is the belt-and-braces guard.
+      // 会话开着的时候 invoke 权限被撤销了。服务端会在持久化任何东西之前用一个
+      // 403 拒绝；干脆不发能保住草稿、也省一次无谓往返。输入框在这个状态下已被
+      // 禁用——这是双保险。
       if (isAgentAccessRevoked) {
         apiLogger.warn("sendChatMessage skipped: invoke permission revoked", {
           sessionId: activeSessionId,
@@ -545,8 +521,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
         sessionId = await ensureSession(finalContent);
       } catch (err) {
         apiLogger.error("sendChatMessage.ensureSession.error", err);
-        // A revoked invoke permission blocks session create with a structured
-        // 403 (MUL-4525) — name the cause instead of a generic failure.
+        // 被撤销的 invoke 权限会用结构化 403 挡住会话创建（MUL-4525）——
+        // 点名原因，而不是一句笼统的失败。
         const reason = dispatchReasonCode(err);
         toast.error(
           reason === "invocation_not_allowed"
@@ -562,21 +538,18 @@ export function useChatController(opts?: { isActive?: boolean }) {
         return false;
       }
 
-      // Await-then-render: the composer keeps the user's text and attachments
-      // in place (editor locked, button spinning via `submitting`) until the
-      // server accepts the send. Nothing is written into the caches, and the
-      // draft is never cleared, before the roundtrip settles — a slow send never
-      // reads as "posted but the box is still full", and a rejected one keeps
-      // the draft for retry (ChatInput never cleared it).
+      // 等待-再渲染：在服务端接受发送之前，输入框保持用户文本与附件不动
+      // （编辑器锁定、按钮通过 `submitting` 转圈）。往返落定前不会往缓存写任何
+      // 东西，也绝不清草稿——一次慢发送永远不会读成"已发出但框还是满的"，
+      // 一次被拒的发送则保住草稿供重试（ChatInput 从未清它）。
       let result;
       try {
         result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
       } catch (err) {
         apiLogger.error("sendChatMessage.error", { sessionId, err });
-        // Invoke permission can be revoked mid-session; the send is refused with
-        // a structured 403 before anything persists (MUL-4525). Surface the
-        // specific cause so the user knows it is a permission change, not a
-        // transient failure they should retry.
+        // invoke 权限可能在会话中途被撤销；发送会在持久化前被结构化 403 拒绝
+        // （MUL-4525）。点名具体原因，让用户知道是权限变了、而不是该重试的
+        // 临时故障。
         const reason = dispatchReasonCode(err);
         toast.error(
           reason === "invocation_not_allowed"
@@ -593,13 +566,11 @@ export function useChatController(opts?: { isActive?: boolean }) {
         taskId: result.task_id,
       });
 
-      // Render the accepted message from the server response. Prime the message
-      // caches BEFORE publishing the session so the first useQuery read after
-      // activeSessionId flips hits data synchronously (no new-chat skeleton
-      // flash), and seed the pending task with the server's real id and
-      // created_at so the StatusPill mounts anchored to the true clock and the
-      // stale-session self-heal exempts this just-created session until the
-      // sessions-list refetch includes it.
+      // 用服务端响应渲染这条已被接受的消息。在发布会话之前先喂饱消息缓存，
+      // 让 activeSessionId 翻转后的第一次 useQuery 读取能同步拿到数据
+      // （不闪"新建会话"骨架屏）；再种下带服务端真实 id 与 created_at 的 pending
+      // 任务，让 StatusPill 一挂载就以真实时钟为锚，也让过期会话自愈在会话列表
+      // 重拉取把它包含进来前，豁免这个刚创建的会话。
       const sent: ChatMessage = {
         id: result.message_id,
         chat_session_id: sessionId,
@@ -609,10 +580,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
         created_at: result.created_at,
         attachments: draftAttachments,
       };
-      // Single door into the message caches (MUL-5711): idempotent by id, so
-      // this row and the chat:message echo of the same send converge in either
-      // arrival order, and this richer row (it carries the draft attachments)
-      // is never downgraded by the echo, which has no attachments field.
+      // 进入消息缓存的唯一入口（MUL-5711）：按 id 幂等，所以这行和同一次发送的
+      // chat:message 回显无论谁先到都会收敛；而更丰富的这行（带草稿附件）绝不会
+      // 被没有附件字段的回显降级。
       upsertChatMessageToCaches(qc, sessionId, sent, { seedIfMissing: true });
       seedAcceptedPendingTask(qc, sessionId, {
         task_id: result.task_id,
@@ -622,10 +592,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
         supports_queue: result.supports_queue,
         queued: result.queued,
       });
-      // Cache primed → publish the new active session, but only if the user
-      // hasn't navigated away mid-send. See isStillOnComposeTarget. commitInput
-      // clears the sent draft, and scrubs the shared editor only when the user
-      // is still on the session they sent from.
+      // 缓存喂饱 → 发布新的活动会话，但只在用户发送中途没有导航走掉时。
+      // 见 isStillOnComposeTarget。commitInput 负责清掉已发送的草稿，并且只在
+      // 用户仍在发出时的那个会话上时，才清扫共享编辑器。
       const live = useChatStore.getState();
       const stillOnSourceSession = isStillOnComposeTarget(live.activeSessionId, activeSessionId);
       if (stillOnSourceSession) {
@@ -697,9 +666,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
       previousSessionId: activeSessionId,
       previousPendingTask: pendingTaskId,
     });
-    // A fresh chat has no project unless the user explicitly chooses one.
-    // The open session's project is server-owned history, not a default for
-    // the next session.
+    // 新聊天默认不带项目，除非用户明确选一个。打开会话的项目是服务端持有的
+    // 历史，不是下一条会话的默认。
     setSelectedProjectId(null);
     setActiveSession(null);
     requestInputFocus();
@@ -711,10 +679,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
     requestInputFocus,
   ]);
 
-  // Start a fresh chat bound to a chosen agent. Unlike handleSelectAgent this
-  // does not no-op when the agent is unchanged — "new chat" always clears the
-  // active session so the user lands on an empty compose for that agent. The
-  // session row is created lazily on the first send (see ensureSession).
+  // 开始一个绑定到指定 agent 的全新聊天。与 handleSelectAgent 不同，agent 没变时
+  // 这里也不会空操作——"新聊天"总是清空活动会话，让用户落在该 agent 的空输入框。
+  // 会话行在第一次发送时才懒创建（见 ensureSession）。
   const handleStartNewChat = useCallback(
     (agent: Agent) => {
       uiLogger.info("startNewChat", {
@@ -737,8 +704,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
 
   const handleSelectSession = useCallback(
     (session: { id: string; agent_id: string; project_id?: string | null }) => {
-      // Sessions are bound 1:1 to an agent — picking a session from a
-      // different agent implicitly switches the agent too.
+      // 会话与 agent 一一绑定——从一个别的 agent 的会话里选一个会话，
+      // 会隐式地把 agent 一起切过去。
       if (activeAgent && session.agent_id !== activeAgent.id) {
         uiLogger.info("selectSession (cross-agent)", {
           from: activeAgent.id,
@@ -793,14 +760,11 @@ export function useChatController(opts?: { isActive?: boolean }) {
     ],
   );
 
-  // Archiving the chat currently in view would otherwise strand the
-  // conversation pane on a now read-only, "dangling" session. Mirror the Inbox
-  // list: advance selection to the next chat in the (sorted, non-archived)
-  // history, fall back to the previous one, and clear only when nothing is
-  // left. Routing the non-null advance through handleSelectSession keeps
-  // selectedAgentId in sync, so a follow-up "new chat" still defaults to the
-  // right agent even when the next chat belongs to a different agent. A no-op
-  // when the archived session isn't the open one — that selection stays put.
+  // 归档当前正看着的聊天，否则对话面板会卡在一个只读的"悬空"会话上。镜像
+  // Inbox 列表：把选中推进到（已排序、未归档）历史里的下一个聊天，没有就回退到
+  // 上一个，只剩一个也没有时才清空。非空的推进走 handleSelectSession，
+  // 让 selectedAgentId 保持同步——即使下一个聊天属于别的 agent，之后的"新建聊天"
+  // 仍会默认到正确的 agent。归档的不是当前打开的会话时是空操作——那个选中保持不动。
   const advanceSelectionAfterArchive = useCallback(
     (session: { id: string; agent_id: string }) => {
       if (activeSessionId !== session.id) return;
@@ -823,7 +787,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
   const hasMessages = messages.length > 0 || !!pendingTaskId;
 
   return {
-    // identity / lists
+    // 身份 / 各类列表
     wsId,
     user,
     agents,
@@ -846,7 +810,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
     customizeConversationStartersHref,
     noAgent,
     availability,
-    // messages
+    // 消息
     messages,
     pendingTask,
     pendingTaskId,
@@ -856,15 +820,15 @@ export function useChatController(opts?: { isActive?: boolean }) {
     hasOlderMessages: !!hasOlderMessages,
     isFetchingOlderMessages,
     fetchOlderMessages,
-    // draft restore
+    // 草稿恢复
     restoreDraftRequest,
     handleRestoreDraftApplied,
-    // compose-box focus nonce (bumped on new chat)
+    // 输入框聚焦 nonce（新建聊天时 +1）
     focusInputRequest,
     conversationStarterRequest,
     handleConversationStarterApplied,
     prefillConversationStarter,
-    // actions
+    // 动作
     handleSend,
     handleStop,
     handleSendQueuedTaskNow,
@@ -878,10 +842,11 @@ export function useChatController(opts?: { isActive?: boolean }) {
     handleProjectChange,
     advanceSelectionAfterArchive,
     archiveSession,
-    // store setters (for surfaces that sync selection to the URL, etc.)
+    // store setter（供需要把选中同步到 URL 等的界面使用）
     setActiveSession,
     setSelectedAgentId,
   };
 }
 
+/** `useChatController` 的返回值类型，供子组件按类型引用。 */
 export type ChatController = ReturnType<typeof useChatController>;

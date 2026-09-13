@@ -1,3 +1,5 @@
+// region_backfill.go：自托管升级修复路径——把“曾以部署级 URL 覆盖跑在 Lark
+// 国际版”的旧安装行的地域补标成 lark。
 package lark
 
 import (
@@ -7,29 +9,23 @@ import (
 	"strings"
 )
 
-// BackfillRegionFromLegacyOverride is the upgrade-repair path for self-host
-// deployments that ran the WHOLE Lark integration against Lark international
-// via the deployment-wide MULTICA_LARK_HTTP_BASE_URL /
-// MULTICA_LARK_CALLBACK_BASE_URL override, before per-installation region
-// existed.
+// BackfillRegionFromLegacyOverride 是为自托管部署准备的升级修复路径。这类部署
+// 在“按安装记录地域”字段出现之前，整条 Lark 集成都是经部署级
+// MULTICA_LARK_HTTP_BASE_URL / MULTICA_LARK_CALLBACK_BASE_URL 覆盖跑在 Lark
+// 国际版的。
 //
-// Migration 116 backfilled every existing row to 'feishu' (the mainland
-// default). On such a deployment every install is really Lark, so once
-// region drives the host those rows would route to open.feishu.cn and
-// break the moment the operator clears the override (which the new docs
-// invite them to do). When either override host is the Lark international
-// host, we flip the still-default rows to 'lark'.
+// Migration 116 把所有已存在的行回填成了 'feishu'（中国大陆默认值）。但这类
+// 部署上的每个安装其实都是 Lark：一旦地域开始驱动主机，这些行会路由到
+// open.feishu.cn——等操作者按新文档清掉覆盖后就立刻坏掉。因此只要两个覆盖
+// 主机之一是 Lark 国际版主机，就把这些仍是默认值的行翻成 'lark'。
 //
-// Gating on the override is what makes this safe: the override was
-// deployment-wide, so EVERY pre-existing install on it was Lark — there is
-// no mixed state to misclassify. It is idempotent (after the flip nothing
-// remains at 'feishu'), and new installs already carry the device-flow-
-// detected region, so this only ever touches the legacy rows. Mainland
-// deployments (no override, or override pointing at open.feishu.cn / a
-// mock) never run the UPDATE.
+// 用覆盖作为闸门是安全的：覆盖本来就是部署级的，所以它下面的每个存量安装都
+// 是 Lark——不存在会被误分类的混合状态。它是幂等的（翻完之后不会再剩
+// 'feishu'），而且新安装已经带着设备流探测出的地域，所以这里只会碰到遗留行。
+// 中国大陆部署（无覆盖，或覆盖指向 open.feishu.cn / mock）永远不执行 UPDATE。
 //
-// Callers should fire this from a goroutine at boot, like
-// BackfillBotUnionIDs, so a slow DB write cannot block listener startup.
+// 调用方应在启动时像 BackfillBotUnionIDs 一样用 goroutine 触发，避免慢 DB 写
+// 阻塞监听器启动。
 func BackfillRegionFromLegacyOverride(ctx context.Context, queries *ChannelStore, httpOverride, callbackOverride string, log *slog.Logger) {
 	if log == nil {
 		log = slog.Default()
@@ -38,8 +34,8 @@ func BackfillRegionFromLegacyOverride(ctx context.Context, queries *ChannelStore
 		return
 	}
 	if !isLarkInternationalHost(httpOverride) && !isLarkInternationalHost(callbackOverride) {
-		// No override, mainland override, or a mock/staging host: the
-		// migration's 'feishu' default is correct for these rows.
+		// 无覆盖、中国大陆覆盖或 mock/staging 主机：migration 的 'feishu'
+		// 默认值对这些行就是对的。
 		return
 	}
 	n, err := queries.BackfillLarkInstallationRegionToLark(ctx)
@@ -53,10 +49,9 @@ func BackfillRegionFromLegacyOverride(ctx context.Context, queries *ChannelStore
 	}
 }
 
-// isLarkInternationalHost reports whether a configured base-URL override
-// targets the Lark international open-platform host (open.larksuite.com).
-// It parses the URL and matches the host exactly so a mainland host, an
-// empty value, or a staging/mock URL never triggers the upgrade relabel.
+// isLarkInternationalHost 判断某个配置的 base-URL 覆盖是否指向 Lark 国际版
+// 开放平台主机（open.larksuite.com）。它解析 URL 并精确匹配 host，保证中国
+// 大陆主机、空值或 staging/mock URL 永不触发这次升级重贴。
 func isLarkInternationalHost(raw string) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

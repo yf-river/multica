@@ -1,3 +1,5 @@
+// 职责定位：构建 comment 相关的持久化事件（outbox envelope）——评论创建、变更（更新/解决/
+// 取消解决）与删除，供发布到 issue 流与崩溃后重放。
 package handler
 
 import (
@@ -9,9 +11,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// buildCommentCreatedEvent is the durable envelope for a newly-created
-// comment. The issue stream keeps replies and issue mutations ordered for
-// subscribers and activity projections.
+// buildCommentCreatedEvent 是「新评论已创建」的持久化信封。issue 流把回复与 issue 变更按序
+// 排给订阅者与 activity 投影。
 func buildCommentCreatedEvent(issue db.Issue, comment CommentResponse, actorType, actorID string) events.Event {
 	return events.Event{
 		Type:        protocol.EventCommentCreated,
@@ -30,10 +31,8 @@ func buildCommentCreatedEvent(issue db.Issue, comment CommentResponse, actorType
 	}
 }
 
-// buildCommentMutationEvent creates the durable envelope for a comment state
-// transition. The snapshot is intentionally built from the row returned by
-// the mutation, so realtime clients can update immediately while the outbox
-// remains the source of truth after a process restart.
+// buildCommentMutationEvent 创建一次评论状态转移（更新/解决/取消解决）的持久化信封。快照有意
+// 取自变更查询返回的行：实时客户端可以立即更新，进程重启后 outbox 仍是真源。
 func buildCommentMutationEvent(comment db.Comment, eventType, actorType, actorID string, issueRevision int64) events.Event {
 	commentID := util.UUIDToString(comment.ID)
 	issueID := util.UUIDToString(comment.IssueID)
@@ -56,8 +55,7 @@ func buildCommentMutationEvent(comment db.Comment, eventType, actorType, actorID
 	}
 }
 
-// buildCommentDeletedEvent keeps the deleted row's identity and revision in
-// the event because the row is unavailable to consumers after commit.
+// buildCommentDeletedEvent 把被删行的身份与 revision 带进事件——提交后该行对消费方已不存在。
 func buildCommentDeletedEvent(comment db.Comment, actorType, actorID string, issueRevision int64) events.Event {
 	event := buildCommentMutationEvent(comment, protocol.EventCommentDeleted, actorType, actorID, issueRevision)
 	event.Payload = map[string]any{
@@ -70,4 +68,5 @@ func buildCommentDeletedEvent(comment db.Comment, actorType, actorID string, iss
 	return event
 }
 
+// commentIDString 是评论 UUID 转字符串的简写。
 func commentIDString(comment db.Comment) string { return util.UUIDToString(comment.ID) }

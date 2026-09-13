@@ -7,103 +7,79 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// Type identifies an inbound channel platform — the discriminator the
-// Registry keys on and the value persisted in the channel_type column of
-// the generalized channel_* tables. Use the lower-case platform slug
-// ("feishu", "slack", "wecom", …); keep it stable, it is durable data.
+// 文件角色：全渠道通用契约的两个核心定义——Type（平台判别值）与 Channel 接口
+// （每个 IM 集成必须实现的那五个方法）。各平台适配器（feishu、slack、telegram…）
+// 把它们的所有平台细节都关在这五个方法后面；引擎/核心只面向这组方法编程，
+// 从不接触平台 SDK 或线上格式。Config 与 Factory 是配套的"按安装构建"约定。
+
+// Type 标识一个入站渠道平台——Registry 的键、也是通用 channel_* 表 channel_type 列里
+// 持久化的值。用平台的小写 slug（"feishu"、"slack"、"wecom"…）；保持稳定，它是持久数据。
 type Type string
 
 const (
-	// TypeFeishu is the Feishu / Lark adapter — the only implementation
-	// in phase 1. It serves both the mainland Feishu cloud and the Lark
-	// international cloud; the cloud (region) is per-installation config,
-	// not a separate Type.
+	// TypeFeishu 是飞书/Lark 适配器——第一阶段的唯一实现。它同时服务大陆飞书云与
+	// Lark 国际云；云（region）是安装级配置，不是独立的 Type。
 	TypeFeishu Type = "feishu"
 )
 
-// Channel is the platform-agnostic contract every IM integration
-// implements. An adapter keeps ALL platform specifics behind these five
-// methods: the core supervisor calls Connect/Disconnect to manage the
-// link, Send to deliver an outbound reply, and reads Capabilities to
-// decide how to render; it never touches platform SDKs or wire formats.
+// Channel 是每个 IM 集成都必须实现的平台无关契约。适配器把**所有**平台细节藏在这五个
+// 方法后面：核心的 supervisor 调 Connect/Disconnect 管理链路、调 Send 发送出站回复、
+// 读 Capabilities 决定怎么渲染；它从不直接碰平台 SDK 或线上格式。
 //
-// Inbound is intentionally NOT on this interface. A Channel pushes
-// normalized InboundMessage values into the core router via the wiring
-// established at construction (the adapter owns its receive loop); the
-// core does not poll the Channel for messages.
+// 入站消息刻意**不在**这个接口上：Channel 通过构造时建立的接线（adapter 自己持有收消息
+// 循环）把规范化后的 InboundMessage 推给核心 router；核心不会轮询 Channel 要消息。
 type Channel interface {
-	// Type reports the platform discriminator. It MUST equal the Type
-	// the Channel was registered under, and is stable for the lifetime
-	// of the instance.
+	// Type 返回平台判别值。它必须等于注册时的 Type，并且在实例生命周期内保持不变。
 	Type() Type
 
-	// Connect establishes the platform link (e.g. dials the outbound
-	// WebSocket long-conn, or starts the inbound HTTP listener) and then
-	// BLOCKS, running the receive loop, until the link ends. The
-	// connection mode is the implementation's choice and invisible to the
-	// core. It returns:
+	// Connect 建立平台链路（例如拨出站 WebSocket 长连接，或启动入站 HTTP 监听），
+	// 然后**阻塞**运行收消息循环，直到链路结束。连接形态是实现的选择、对核心不可见。
+	// 返回值语义：
 	//
-	//   - nil when ctx is cancelled (graceful shutdown / lease loss);
-	//   - a non-nil error when the link drops and cannot be recovered
-	//     locally — the supervisor treats this as "this attempt failed"
-	//     and reconnects under exponential backoff.
+	//   - ctx 被取消时返回 nil（优雅停机 / 租约丢失）；
+	//   - 链路断开且本地无法恢复时返回非 nil 错误——supervisor 把它当作"这次连接失败"
+	//     并按指数退避重连。
 	//
-	// While Connect runs, the adapter delivers each inbound message by
-	// invoking the InboundHandler it captured at construction
-	// (Config.Handler). Send may be called concurrently from another
-	// goroutine for the lifetime of the connection. Implementations MUST
-	// tolerate repeated Connect calls on different contexts: the
-	// supervisor may Connect, return, and Connect again after backoff.
+	// Connect 运行期间，adapter 靠构造时捕获的 InboundHandler（Config.Handler）投递每条
+	// 入站消息。Send 可能在连接存活期间被另一个 goroutine 并发调用。实现**必须**容忍
+	// 在不同 ctx 上被反复调用 Connect：supervisor 可能 Connect → 返回 → 退避后再 Connect。
 	Connect(ctx context.Context) error
 
-	// Disconnect tears the platform link down and releases its
-	// resources. It is safe to call after a failed Connect and safe to
-	// call more than once; a Channel that is already disconnected
-	// returns nil.
+	// Disconnect 拆除平台链路并释放其资源。在失败的 Connect 之后调用是安全的，多次调用
+	// 也安全；已经断开的 Channel 返回 nil。
 	Disconnect(ctx context.Context) error
 
-	// Send delivers a single outbound message and returns the platform's
-	// identifier for the delivered message. A non-nil error is reserved
-	// for real delivery failures (network, auth, rate limit) that the
-	// caller may retry.
+	// Send 投递一条出站消息，返回平台侧给这条已投递消息的标识。非 nil 错误只留给真正的
+	// 投递失败（网络、鉴权、限流）——这些调用方才可能重试。
 	Send(ctx context.Context, out OutboundMessage) (SendResult, error)
 
-	// Capabilities declares what this Channel supports. It is a pure
-	// declaration with no side effects and a stable result; callers read
-	// it to choose a rendering and degrade on their own (this package
-	// performs no degradation — see the Capability docs).
+	// Capabilities 声明这个 Channel 支持什么。它是无副作用、结果稳定的纯声明；调用方读它
+	// 选择渲染方式、自行降级（本包不做任何降级——见 Capability 文档）。
 	Capabilities() Capability
 }
 
-// Config is the normalized per-installation configuration a Factory
-// consumes. Type is the platform discriminator; Raw is the platform's
-// own credential/config blob (Feishu's app_id / encrypted app_secret /
-// tenant_key / region, Slack's bot/app tokens, …), carried opaquely so
-// the foundation never grows a per-platform field. It maps directly onto
-// the channel_type column + JSONB config of a channel_installation row
-// (MUL-3515 decision §3).
+// Config 是 Factory 消费的规范化"按安装"配置。Type 是平台判别值；Raw 是平台自己的
+// 凭据/配置 JSON（飞书的 app_id / 加密 app_secret / tenant_key / region，Slack 的
+// bot/app token…），原样携带、不为它加字段，这样核心基础永远不会长出"每平台一个字段"。
+// 它直接对应 channel_installation 一行的 channel_type 列 + JSONB config
+// （MUL-3515 决策 §3）。
 type Config struct {
 	Type Type
 	Raw  json.RawMessage
 
-	// ID is the channel_installation.id row this Channel is being built
-	// from. Zero when a build path doesn't have an installation (nothing
-	// in-tree does today, but Factory implementations should tolerate it
-	// rather than assume Valid). WeCom uses it to key its per-connection
-	// wsSender into a shared registry the OutboundReplier looks up by;
-	// Feishu and Slack don't currently read it.
+	// ID 是构建这条 Channel 所依据的 channel_installation.id。构建路径没有安装记录时为
+	// 零值（目前代码里没有这种路径，但 Factory 实现应容忍它而不是假定 Valid）。企微用它
+	// 把每条连接的 wsSender 放进共享注册表供 OutboundReplier 按 id 查找；飞书和 Slack
+	// 目前不读它。
 	ID pgtype.UUID
 
-	// Handler is the shared inbound entry point the engine injects so the
-	// built Channel can deliver normalized InboundMessage values into the
-	// core (see InboundHandler). A Factory captures it and invokes it from
-	// the Channel's receive loop. It may be nil when a Channel is built
-	// purely for its outbound Send path (no inbound delivery needed).
+	// Handler 是引擎注入的共享入站入口：构建好的 Channel 靠它把规范化 InboundMessage
+	// 送进核心（见 InboundHandler）。Factory 捕获它并在 Channel 的收消息循环里调用它。
+	// 当 Channel 仅为出站 Send 而构建（不需要入站投递）时它可以是 nil。
 	Handler InboundHandler
 }
 
-// Factory builds a Channel from its per-installation Config. Each adapter
-// registers exactly one Factory under its Type; the Registry calls it to
-// instantiate a per-installation Channel. A Factory should validate Raw
-// and return an error rather than a half-built Channel.
+// Factory 从按安装的 Config 构建一个 Channel。每个适配器在它的 Type 下恰好注册一个
+// Factory；Registry 调它来实例化每安装一条的 Channel。Factory 应当校验 Raw，
+// 出错就返回错误，而不是交回一个半成品 Channel。
 type Factory func(cfg Config) (Channel, error)

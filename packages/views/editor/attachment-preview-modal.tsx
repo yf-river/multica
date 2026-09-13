@@ -1,34 +1,29 @@
 "use client";
 
 /**
- * AttachmentPreviewModal — full-screen inline preview for an attachment.
+ * AttachmentPreviewModal — 附件的全屏内联预览。
  *
- * Single modal for every previewable kind. Handles 7 PreviewKinds:
+ * 所有可预览类型共用一个弹窗，处理 7 种 PreviewKind：
  *
- *   - image : <img> on the shared ZoomCanvas — fit on open, then wheel /
- *             drag / pinch / double-click / keyboard zoom, same controls as
- *             the Mermaid viewer. Replaces the previous standalone
- *             ImageLightbox.
- *   - pdf   : <iframe src={download_url}> — relies on the browser's PDF
- *             viewer.
+ *   - image : 在共享 ZoomCanvas 上渲染 <img> —— 打开时先适配，之后支持滚轮 /
+ *             拖拽 / 捏合 / 双击 / 键盘缩放，控制方式和 Mermaid 查看器一致。
+ *             它取代了之前独立的 ImageLightbox。
+ *   - pdf   : <iframe src={download_url}> —— 依赖浏览器的 PDF 查看器。
  *   - video : <video controls src={download_url}>
  *   - audio : <audio controls src={download_url}>
  *
- *   - markdown : fetch text via api.getAttachmentTextContent, render via
- *                the existing ReadonlyContent (full mention/mermaid/katex
- *                pipeline included).
- *   - html     : fetch text, hand to <iframe srcdoc={text}
- *                sandbox="allow-scripts">. The iframe runs in an opaque
- *                origin: scripts execute (chart libraries / vanilla SVG
- *                JS work), but cookie / localStorage / parent access /
- *                top-navigation / popups / forms stay blocked because
- *                `allow-same-origin` is intentionally NOT included.
- *   - text     : fetch text, highlight with lowlight if the extension
- *                maps to a known hljs language; otherwise plain <pre>.
+ *   - markdown : 通过 api.getAttachmentTextContent 抓取文本，再用现成的
+ *                ReadonlyContent 渲染（包含完整的 mention/mermaid/katex 管线）。
+ *   - html     : 抓取文本后交给 <iframe srcdoc={text} sandbox="allow-scripts">。
+ *                iframe 运行在不透明源里：脚本能执行（图表库 / 原生 SVG JS 能
+ *                跑），但 cookie / localStorage / 访问父页面 / 顶层跳转 /
+ *                弹窗 / 表单都被拦掉，因为刻意不包含 `allow-same-origin`。
+ *   - text     : 抓取文本，若扩展名能映射到已知的 hljs 语言就用 lowlight 高亮；
+ *                否则就是纯 <pre>。
  *
- * Media types load directly from the CloudFront signed `download_url`.
- * Text types go through `/api/attachments/{id}/content` to sidestep
- * CloudFront CORS (not configured) + Content-Disposition: attachment.
+ * 媒体类型直接从 CloudFront 签名的 `download_url` 加载。文本类型则走
+ * `/api/attachments/{id}/content`，以避开 CloudFront 的 CORS（未配置）和
+ * Content-Disposition: attachment（强制下载头）。
  */
 
 import {
@@ -81,30 +76,28 @@ import { HtmlPreviewBody } from "./html-preview-body";
 import { CodeBlockStatic } from "./code-block-static";
 
 // ---------------------------------------------------------------------------
-// Preview source — full attachment, or URL-only (media types only)
+// Preview source — 完整附件，或仅 URL（只支持媒体类型）
 // ---------------------------------------------------------------------------
 //
-// `full` carries the resolved Attachment record and supports every PreviewKind
-// (text types require the attachment id to call /api/attachments/{id}/content).
+// `full` 携带已解析的 Attachment 记录，支持所有 PreviewKind（文本类型需要
+// attachment id 去调 /api/attachments/{id}/content）。
 //
-// `url` carries just the signed URL + filename. It is what NodeViews fall back
-// to when `resolveAttachment(href)` returns undefined — typical when the URL
-// was copy-pasted across comments so the attachment record isn't reachable
-// from the current entity's `attachments` prop. Only media kinds (pdf / video
-// / audio) can be opened from a `url` source because those render directly
-// from the URL without hitting the text-content proxy.
+// `url` 只携带签名 URL + 文件名。它是 NodeView 在 `resolveAttachment(href)`
+// 返回 undefined 时的兜底——典型场景是 URL 被跨评论复制粘贴过，导致附件记录
+// 无法从当前实体的 `attachments` prop 里找到。只有媒体类型（pdf / video /
+// audio）能从 `url` 源打开，因为它们直接从 URL 渲染、不用经过文本内容代理。
 
+/** 预览来源：完整附件记录，或仅 URL 引用（后者只支持媒体类型）。 */
 export type PreviewSource =
   | { kind: "full"; attachment: Attachment }
   | { kind: "url"; url: string; filename: string };
 
-// PreviewKinds that can render from a URL-only source. Text-based kinds
-// (markdown / html / text) need the /content proxy which is ID-keyed.
+// 只凭 URL 就能渲染的 PreviewKind。文本类（markdown / html / text）需要按 id
+// 寻址的 /content 代理。
 const URL_ONLY_KINDS = new Set<PreviewKind>(["image", "pdf", "video", "audio"]);
 
-// Normalized view used everywhere downstream of `useAttachmentPreview`.
-// `attachmentId === null` signals URL-only mode (download falls back to
-// `openExternal`, text rendering branches are unreachable by the gate).
+// `useAttachmentPreview` 下游统一使用的归一化视图。`attachmentId === null`
+// 表示仅 URL 模式（下载回退到 `openExternal`，文本渲染分支被门控挡住、不可达）。
 interface PreviewState {
   filename: string;
   contentType: string;
@@ -119,14 +112,12 @@ function resolvePreviewMediaUrl(attachment: Attachment): string {
 }
 
 function normalize(source: PreviewSource): PreviewState {
-  // Resolve any server-relative URL (e.g. `/api/attachments/{id}/download`
-  // returned by the unified-endpoint metadata path when no CloudFront
-  // signer is configured) against the configured API base. Web with the
-  // default empty base keeps the relative path and resolves it against
-  // the page origin — same behaviour as before this PR. Desktop renderer
-  // (loaded from `app://` / file: / dev-server origin) needs the absolute
-  // form so `<img src>` / `<iframe src>` / `<video src>` actually point at
-  // the API server instead of the shell origin.
+  // 把任何服务器相对 URL（比如未配置 CloudFront 签名器时，统一端点元数据路径
+  // 返回的 `/api/attachments/{id}/download`）解析到已配置的 API 基地址上。Web
+  // 端默认基地址为空，保持相对路径并相对页面源解析——和本 PR 之前行为一致。
+  // Desktop 渲染器（从 `app://` / file: / dev-server 源加载）需要绝对形式，好让
+  // `<img src>` / `<iframe src>` / `<video src>` 真正指向 API 服务器而不是 shell
+  // 源。
   if (source.kind === "full") {
     return {
       filename: source.attachment.filename,
@@ -148,15 +139,14 @@ function normalize(source: PreviewSource): PreviewState {
 // ---------------------------------------------------------------------------
 
 /**
- * Position of this preview inside a surface's image sequence (MUL-5752).
+ * 这个预览在某个界面的图片序列里的位置（MUL-5752）。
  *
- * `onPrev` / `onNext` are undefined AT the boundaries — the sequence does not
- * wrap, so first/last simply disable the corresponding control. Supplied only
- * by `ImageSequenceProvider`; a standalone preview leaves this unset and
- * renders exactly as before.
+ * 在边界处 `onPrev` / `onNext` 是 undefined —— 序列不循环，所以第一张/最后一张
+ * 只是把对应的控制按钮禁用掉。只有 `ImageSequenceProvider` 会提供它；独立预览
+ * 则不设置这个字段，渲染行为和以前完全一样。
  */
 export interface PreviewSequence {
-  /** 0-based. Rendered as `index + 1` of `total`. */
+  /** 从 0 开始。渲染时显示为 `index + 1` / `total`。 */
   index: number;
   total: number;
   onPrev?: () => void;
@@ -168,37 +158,38 @@ interface AttachmentPreviewModalProps {
   open: boolean;
   onClose: () => void;
   sequence?: PreviewSequence;
-  /** Fired when the image kind fails to load — lets a gallery skip the frame. */
+  /** 图片类型加载失败时触发——让画廊能跳过这一帧。 */
   onImageError?: () => void;
 }
 
 // ---------------------------------------------------------------------------
-// Hook — local state + ready-to-mount modal JSX
+// Hook — 本地状态 + 可直接挂载的弹窗 JSX
 // ---------------------------------------------------------------------------
 //
-// Why no React context / provider: packages/views/ cannot mount a Context.Provider
-// inside CoreProvider (in packages/core/), and threading a new provider through
-// every app layout is more friction than it's worth for a feature with at most
-// one open modal at a time. Instead each entry point gets its own local state
-// and renders the returned `modal` node. Multiple entry points coexisting just
-// means each carries its own (collapsed) state — they never collide because
-// only one preview is open per user click.
+// 为什么不用 React context / provider：packages/views/ 无法在 CoreProvider
+// （位于 packages/core/）里挂 Context.Provider，而为一个「同时最多只开一个弹窗」
+// 的功能去给每个 app 布局都串一个新 provider，摩擦太大不划算。所以每个入口点
+// 各自持有本地状态，渲染返回的 `modal` 节点。多个入口点共存只是各自带各自的
+// （折叠态）状态——它们永远不会冲突，因为用户每次点击只会打开一个预览。
 
 export interface AttachmentPreviewHandle {
-  /** Try to open a preview for the source. Returns false when the file type
-   *  isn't previewable, OR when the source is URL-only but the kind requires
-   *  a full attachment (text/markdown/html). Callers can fall back to a
-   *  download flow. */
+  /** 尝试为这个 source 打开预览。当文件类型不可预览、或 source 是仅 URL 但
+   *  类型又需要完整附件（text/markdown/html）时返回 false。调用方可回退到
+   *  下载流程。 */
   tryOpen: (source: PreviewSource) => boolean;
-  /** Force-open a preview, skipping the previewable() guard. Use for cases
-   *  where the caller has already filtered. */
+  /** 强制打开预览，跳过 previewable() 的守卫。用于调用方已经提前过滤过的场景。 */
   open: (source: PreviewSource) => void;
-  /** Modal node to render somewhere in the caller's tree. Resolves to `null`
-   *  when no preview is active. Safe to render inside any container — the
-   *  modal portals to document.body. */
+  /** 要在调用方组件树某处渲染的弹窗节点。没有激活的预览时解析为 `null`。
+   *  渲染在任意容器里都安全——弹窗会 portal 到 document.body。 */
   modal: ReactNode;
 }
 
+/**
+ * 附件预览 hook：持有「当前要预览的内容」与「是否打开」的本地状态，并返回一个
+ * 可直接渲染的弹窗节点。
+ *
+ * @returns 一个 { open, tryOpen, modal } 句柄，其中 modal 是要挂到组件树里的弹窗 JSX。
+ */
 export function useAttachmentPreview(): AttachmentPreviewHandle {
   const [current, setCurrent] = useState<PreviewSource | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -211,7 +202,7 @@ export function useAttachmentPreview(): AttachmentPreviewHandle {
     const state = normalize(source);
     const kind = getPreviewKind(state.contentType, state.filename);
     if (!kind) return false;
-    // URL-only sources cannot drive text kinds — the /content proxy is ID-keyed.
+    // 仅 URL 的 source 驱动不了文本类——/content 代理是按 id 寻址的。
     if (source.kind === "url" && !URL_ONLY_KINDS.has(kind)) return false;
     setCurrent(source);
     setPreviewOpen(true);
@@ -235,20 +226,18 @@ export function useAttachmentPreview(): AttachmentPreviewHandle {
 }
 
 // ---------------------------------------------------------------------------
-// Image swap without a blank frame
+// 无白屏地切换图片
 // ---------------------------------------------------------------------------
 
-// Returns the last image URL that finished decoding, holding the previous one
-// on screen while the next downloads. Swapping `<img src>` (or remounting the
-// panel) the moment navigation happens blanks the canvas for the full
-// network+decode gap; decode-then-swap is the standard lightbox fix.
+// 返回「上一次解码完成」的图片 URL，在下一张下载期间把上一张保留在屏幕上。
+// 如果导航发生的那一刻就换掉 `<img src>`（或重新挂载面板），画布会在整个
+// 网络+解码间隙里白屏；「先解码、再切换」是灯箱的标准修法。
 //
-// On load failure the hook reports the error and keeps the last good frame —
-// when the whole remaining sequence is broken the reader stays on the last
-// image that worked (with the "unavailable" toast) instead of a broken glyph.
+// 加载失败时 hook 上报错误并保留上一帧好图——当剩余序列全都坏了，读者会停留在
+// 最后一张能显示的图片上（伴随「不可用」toast），而不是一个损坏的占位。
 //
-// Engines without `Image.decode()` (jsdom in tests) swap immediately: the old
-// pre-MUL-5752 behaviour, traded back for correctness there.
+// 没有 `Image.decode()` 的环境（测试里的 jsdom）会立即切换：这是 MUL-5752 之前
+// 的旧行为，在那里用正确性换回了它。
 function useSettledImageURL(
   targetUrl: string,
   enabled: boolean,
@@ -276,7 +265,7 @@ function useSettledImageURL(
         if (!cancelled) setSettled(targetUrl);
       },
       () => {
-        // Rejection covers both load failure and undecodable bytes.
+        // 被拒绝既可能是加载失败，也可能是字节无法解码，两种情况都算出错。
         if (!cancelled) onErrorRef.current?.();
       },
     );
@@ -288,9 +277,13 @@ function useSettledImageURL(
   return enabled ? settled : targetUrl;
 }
 
-// Warms the browser cache for a sequence neighbour so paging to it swaps
-// without a visible wait: runs the same URL re-sign the panel itself would,
-// then fetches the bytes through a detached <img>. Renders nothing.
+/**
+ * 为序列里的「相邻」图片预热浏览器缓存，让翻到它时切换无可见等待：它会先做面板
+ * 自己也会做的那套 URL 重新签名，再通过一个游离的 <img> 抓取字节。本身不渲染
+ * 任何东西。
+ *
+ * @param props.source - 要预取的那张图的预览来源
+ */
 export function PreviewImagePrefetch({ source }: { source: PreviewSource }) {
   const state = normalize(source);
   const url = useResignedInlineMediaURL(
@@ -312,6 +305,17 @@ export function PreviewImagePrefetch({ source }: { source: PreviewSource }) {
 // Modal — frame + dispatch
 // ---------------------------------------------------------------------------
 
+/**
+ * 附件全屏预览弹窗：按类型渲染图片 / PDF / 视频 / 音频 / 文本等内容，并提供
+ * 关闭、下载、序列翻页等通用操作。
+ *
+ * @param props.source - 要预览的附件来源
+ * @param props.open - 是否处于打开状态
+ * @param props.onClose - 关闭回调
+ * @param props.onExitComplete - 退出动画完成后的回调（清空当前内容）
+ * @param props.sequence - 图片序列信息（用于前后翻页）
+ * @param props.onImageError - 图片加载失败回调
+ */
 export function AttachmentPreviewModal({
   source,
   open,
@@ -323,8 +327,8 @@ export function AttachmentPreviewModal({
   const download = useDownloadAttachment();
   const shouldReduceMotion = useReducedMotion() ?? false;
   const state = normalize(source);
-  // useWorkspaceSlug (not useWorkspacePaths) — returns null outside a
-  // workspace route instead of throwing, so the new-tab button just hides.
+  // 用 useWorkspaceSlug（而不是 useWorkspacePaths）——它在工作区路由之外返回
+  // null 而不是抛异常，这样「新标签打开」按钮就直接隐藏。
   const slug = useWorkspaceSlug();
   const navigation = useNavigation();
 
@@ -338,10 +342,9 @@ export function AttachmentPreviewModal({
         onClose();
         return;
       }
-      // Arrow navigation only when this preview is part of a sequence. The
-      // zoom canvas gives its horizontal arrows up in that case (see
-      // `horizontalArrowPan` below), so exactly one of the two responds.
-      // Modified presses stay with the browser / OS.
+      // 只有这个预览属于某个序列时才响应方向键翻页。此时缩放画布会让出它的水平
+      // 方向键（见下面的 `horizontalArrowPan`），所以两者中恰好只有一方响应。
+      // 带修饰键的按键仍交给浏览器 / 操作系统。
       if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
       if (e.key === "ArrowLeft" && onPrev) {
         e.preventDefault();
@@ -357,9 +360,8 @@ export function AttachmentPreviewModal({
 
   const kind = getPreviewKind(state.contentType, state.filename);
 
-  // Download dispatcher: re-sign through `getAttachment` when an id is
-  // available; otherwise fall back to opening the (possibly stale) URL
-  // externally — same tradeoff as the file-card NodeView's download path.
+  // 下载分发：有 id 时通过 `getAttachment` 重新签名；否则回退到外部打开那个
+  // （可能已过期的）URL——和 file-card NodeView 下载路径的取舍一致。
   const handleDownload = () => {
     if (state.attachmentId) {
       download(state.attachmentId);
@@ -368,10 +370,9 @@ export function AttachmentPreviewModal({
     }
   };
 
-  // Open-in-new-tab mirrors HtmlAttachmentPreview's inline toolbar: only the
-  // `html` kind has a dedicated full-page route (/attachments/{id}/preview).
-  // Gated on slug + attachmentId for the same reason — URL-only sources
-  // can't address the /content proxy the page relies on.
+  // 「新标签打开」对齐 HtmlAttachmentPreview 的内联工具栏：只有 `html` 类型有
+  // 专属的全页路由（/attachments/{id}/preview）。同样用 slug + attachmentId
+  // 做门控——仅 URL 的 source 无法寻址该页面依赖的 /content 代理。
   const canOpenInNewTab = kind === "html" && !!slug && !!state.attachmentId;
   const handleOpenInNewTab = () => {
     if (!slug || !state.attachmentId) return;
@@ -391,10 +392,9 @@ export function AttachmentPreviewModal({
       {open && (
         <motion.div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          // Only a click that lands on the backdrop itself closes. A pan that
-          // starts on the zoom canvas and releases out here retargets its
-          // click through pointer capture, but this makes the intent explicit
-          // instead of relying on that.
+          // 只有落在背景遮罩自身上的点击才会关闭。从缩放画布开始、在外面松开的
+          // 拖拽会通过指针捕获把点击重新指向这里，但这里显式声明意图，而不是依赖
+          // 那个行为。
           onClick={(e) => {
             if (e.target === e.currentTarget) onClose();
           }}
@@ -417,10 +417,9 @@ export function AttachmentPreviewModal({
             },
           }}
         >
-          {/* Larger than the create-issue dialog (max-w-4xl, manualDialogContentClass)
-              because PDF / video previews want more room. Capped to viewport
-              minus the surrounding p-4 (1rem each side) so it never overflows
-              the screen on small displays / split panes. */}
+          {/* 比「新建工单」弹窗（max-w-4xl, manualDialogContentClass）更大，因为
+              PDF / 视频预览需要更多空间。上限是视口减去四周的 p-4（每边 1rem），
+              这样在小屏 / 分屏时也不会溢出屏幕。 */}
           <motion.div
             className="flex h-[min(90vh,calc(100vh-2rem))] w-full max-w-6xl flex-col overflow-hidden rounded-lg bg-background shadow-xl"
             onClick={(e) => e.stopPropagation()}
@@ -445,17 +444,14 @@ export function AttachmentPreviewModal({
               },
             }}
           >
-            {/* Below the `open &&` gate on purpose: the panel's zoom state is
-                destroyed on close, so every open re-fits instead of restoring
-                a stale zoom from the last time this image was viewed.
+            {/* 故意放在 `open &&` 门控下面：面板的缩放状态在关闭时被销毁，所以每次
+                打开都会重新适配，而不是恢复上一次看这张图时的过期缩放值。
 
-                Deliberately NOT keyed on the file: remounting the panel on
-                sequence navigation blanks the canvas for the whole
-                network+decode gap. The panel persists and swaps the image
-                only once the next one has decoded (`useSettledImageURL`).
-                Zoom still resets per image — `natural` passes through null on
-                every swap, so the canvas re-fits even across a run of
-                same-resolution screenshots. */}
+                刻意不把面板 key 到文件上：序列翻页时重挂载面板会让画布在整个
+                网络+解码间隙里白屏。面板保持挂载，只在下一张解码完成后才换图
+                （`useSettledImageURL`）。缩放仍会按每张图重置——`natural` 在每次
+                切换时都会先穿过 null，所以即便是一连串同分辨率的截图，画布也会
+                重新适配。 */}
             <PreviewPanel
               kind={kind}
               source={source}
@@ -475,12 +471,11 @@ export function AttachmentPreviewModal({
 }
 
 // ---------------------------------------------------------------------------
-// Panel — header + content area
+// Panel — 头部 + 内容区
 // ---------------------------------------------------------------------------
 
-// Header chrome and the content area live together because the image kind's
-// zoom controls sit in the header while the canvas they drive is the body:
-// one owner for that shared state, mounted and destroyed with the open modal.
+// 头部外壳和内容区放在一起，是因为图片类型的缩放控件在头部，而它们驱动的画布
+// 在主体：共享状态需要单一所有者，随打开的弹窗一起挂载、销毁。
 function PreviewPanel({
   kind,
   source,
@@ -502,31 +497,27 @@ function PreviewPanel({
 }) {
   const { t } = useT("editor");
 
-  // Gallery navigation hands this panel an attachment the reader never
-  // clicked, so — unlike the click-through path, where <Attachment> had
-  // already upgraded the URL — the modal has to run the re-sign itself. A
-  // no-op for URLs that are already loadable (signed CDN, public storage).
+  // 画廊翻页会把这个面板交给一张读者从没点过的附件，所以——不像点击直通路径里
+  // <Attachment> 已经升级过 URL——这里弹窗必须自己执行重新签名。对于本来就能
+  // 加载的 URL（已签名的 CDN、公开存储）则是空操作。
   const targetUrl = useResignedInlineMediaURL(
     state.attachmentId ?? undefined,
     state.mediaUrl,
     kind === "image",
   );
-  // The previous image stays on the canvas until this one has decoded — the
-  // swap itself is what used to flash. Also absorbs the re-sign URL upgrade
-  // (raw -> signed) without a second visible load.
+  // 上一张图片会一直留在画布上直到这张解码完成——以前会闪的就是切换那一下。
+  // 同时也能吸收「原始 URL → 签名 URL」的升级，不会出现第二次可见加载。
   const mediaUrl = useSettledImageURL(targetUrl, kind === "image", onImageError);
 
-  // Natural size is carried with the URL it was measured from, so a panel
-  // reused for a different attachment can never fit the new image against the
-  // old one's dimensions.
+  // 原始尺寸跟着它被测量时的那张 URL 一起保存，这样复用了同一个面板去显示不同
+  // 附件时，绝不会拿旧图尺寸去适配新图。
   const [measured, setMeasured] = useState<{ url: string; size: Size } | null>(
     null,
   );
   const natural =
     kind === "image" && measured?.url === mediaUrl ? measured.size : null;
-  // Left / right arrows belong to the sequence when there is one; the canvas
-  // keeps them for panning otherwise. Vertical arrows always pan, and a
-  // zoomed image still pans horizontally by drag / wheel.
+  // 有序列时，左右方向键归序列翻页；否则画布自己留着做平移。垂直方向键始终
+  // 平移，放大后的图片也仍能通过拖拽 / 滚轮水平平移。
   const canvas = useZoomCanvas({
     content: natural,
     horizontalArrowPan: !sequence,
@@ -549,10 +540,9 @@ function PreviewPanel({
     <>
       <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-4 py-2">
         <FileText className="size-4 shrink-0 text-muted-foreground" />
-        {/* Baseline group: filename (text-body) and type (text-caption) are
-            different type sizes on one line — the row's items-center would
-            center their unequal line boxes and visibly offset the smaller
-            text. Mixed-size text aligns by baseline. */}
+        {/* 基线对齐组：文件名（text-body）和类型（text-caption）字号不同，却挤在
+            同一行——如果整行用 items-center 居中，会把它们高度不等的行盒居中对齐，
+            让较小的文字明显偏移。混排字号文字应按基线对齐。 */}
         <div className="flex min-w-0 items-baseline gap-2">
           <p className="truncate text-body font-medium">{state.filename}</p>
           <span className="shrink-0 text-caption text-muted-foreground">
@@ -560,10 +550,9 @@ function PreviewPanel({
           </span>
         </div>
         <div className="ml-auto flex items-center gap-1">
-          {/* Navigation leads the action cluster, arrows off the image
-              (they covered exactly the content being looked at) and the
-              counter between the arrows it describes. min-w keeps the
-              arrows from shifting as digit counts change. */}
+          {/* 导航排在整个操作区最前面，箭头移出图片（否则正好盖住正在看的内容），
+              计数器放在它描述的两个箭头之间。min-w 保证数字位数变化时箭头不会
+              左右移动。 */}
           {sequence && (
             <div className="mr-1 flex shrink-0 items-center gap-0.5">
               <SequenceButton
@@ -587,12 +576,11 @@ function PreviewPanel({
               />
             </div>
           )}
-          {/* Standalone preview keeps the original gate — no controls until
-              the image is measured, and none at all for content that has no
-              intrinsic size to drive. In a sequence they stay mounted
-              (disabled while un-measured) instead: `natural` passes through
-              null on every swap, and controls that vanish and reappear shift
-              the buttons to their right on every navigation. */}
+          {/* 独立预览保留原来的门控——图片测量出尺寸之前不显示控件，而对于没有
+              固有尺寸可驱动的（非图片）内容则完全不显示。在序列里它们保持挂载
+              （未测量时置灰）而不是消失重现：因为 `natural` 在每次切换时都会先
+              穿过 null，控件若反复消失再出现，每次翻页都会把右侧按钮挤得左右
+              跳动。 */}
           {kind === "image" && (natural || sequence) && (
             <ZoomControls canvas={canvas} disabled={!natural} />
           )}
@@ -627,13 +615,11 @@ function PreviewPanel({
           </button>
         </div>
       </div>
-      {/* Image gets a flex column: the canvas sizes itself with `flex: 1 1
-          auto` and its content is absolutely positioned, so in a plain block
-          parent it would collapse to zero height and show nothing. It also
-          clips and handles its own wheel events — letting this wrapper scroll
-          too would fight the pan. Every other kind keeps the block scroller;
-          making them flex items would let tall text previews shrink to fit
-          instead of scrolling. */}
+      {/* 图片用 flex 列：画布靠 `flex: 1 1 auto` 撑开自身，且它的内容是绝对定位，
+          所以在普通块级父容器里会塌缩成零高度、什么都不显示。它还要自己裁剪并
+          处理滚轮事件——若让这个外层也滚动，会和平移手势打架。其它所有类型都保留
+          块级滚动；把它们变成 flex 子项会让较高的文本预览「缩小去适应」而不是
+          滚动。 */}
       <div
         className={cn(
           "relative min-h-0 flex-1 bg-background",
@@ -663,15 +649,13 @@ function PreviewPanel({
 }
 
 // ---------------------------------------------------------------------------
-// Sequence controls
+// 序列控件
 // ---------------------------------------------------------------------------
 
-// Header chevrons in the same idiom as the download/close buttons. `onClick`
-// undefined means "boundary reached": the button stays mounted but disabled,
-// so the reader can see they are at one end instead of the control vanishing
-// and shifting the counter into its place. `enabled:hover` so the disabled
-// state gets no hover feedback (and no pointer-events-none — a disabled
-// control should still catch the cursor and read as "nothing here").
+// 头部的翻页箭头，和下载/关闭按钮同一套风格。`onClick` 为 undefined 表示「到
+// 边界了」：按钮保持挂载但禁用，这样读者能看到自己已经到某一端，而不是控件消失、
+// 计数器被挤到它的位置。用 `enabled:hover` 让禁用态没有悬停反馈（也不用
+// pointer-events-none——禁用的控件仍应接住光标，读作「这里没有了」）。
 function SequenceButton({
   side,
   label,
@@ -720,10 +704,9 @@ function ImagePreview({
 
   const readNaturalSize = useCallback(
     (image: HTMLImageElement | null) => {
-      // naturalWidth is 0 for an image that hasn't decoded yet, and also for
-      // an SVG that declares only a viewBox — Chromium gives those no
-      // intrinsic size at all. Both fall back to the letterboxed branch;
-      // the first recovers on load, the second stays there.
+      // naturalWidth 在图片还没解码完时为 0；只声明了 viewBox 的 SVG 也是 0
+      // ——Chromium 压根不给它们固有尺寸。两种情况都回退到信箱（letterbox）分支；
+      // 前者加载后能恢复，后者就一直停在那里。
       if (!image || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
       onNaturalSize(url, {
         width: image.naturalWidth,
@@ -742,8 +725,8 @@ function ImagePreview({
       autoFocus
     >
       <img
-        // A cached image is already `complete` before React attaches onLoad,
-        // so that event never fires — measure from the ref as well.
+        // 缓存的图片在 React 挂上 onLoad 之前就已经是 `complete` 状态了，所以
+        // 那个事件根本不会触发——因此也要通过 ref 来测量。
         ref={readNaturalSize}
         onLoad={(e) => readNaturalSize(e.currentTarget)}
         onError={onError}
@@ -755,7 +738,7 @@ function ImagePreview({
             ? "block size-full"
             : "max-h-full max-w-full rounded-lg object-contain",
         )}
-        // Native image dragging would hijack the pan gesture.
+        // 原生的图片拖拽会劫持平移手势。
         draggable={false}
       />
     </ZoomCanvas>
@@ -763,13 +746,12 @@ function ImagePreview({
 }
 
 // ---------------------------------------------------------------------------
-// Dispatch
+// 分发
 // ---------------------------------------------------------------------------
 
-// Dispatch on PreviewKind. New cases go here; remember that the modal frame
-// (header, close, Download CTA, ESC handling) is shared — sub-renderers only
-// own the content area. `image` is handled by PreviewPanel itself because its
-// toolbar and canvas share zoom state.
+// 按 PreviewKind 分发。新类型都加在这里；记住弹窗外框（头部、关闭、下载按钮、
+// ESC 处理）是共享的——子渲染器只负责内容区。`image` 由 PreviewPanel 自己处理，
+// 因为它的工具栏和画布共享缩放状态。
 function PreviewContent({
   kind,
   source,
@@ -792,11 +774,9 @@ function PreviewContent({
     );
   }
 
-  // Text kinds need the attachment id for the /content proxy. The tryOpen
-  // gate prevents URL-only sources from reaching here for text kinds, but
-  // be defensive — a direct mount of <AttachmentPreviewModal> with a URL
-  // source whose filename later resolves to a text kind would otherwise
-  // crash on a null id.
+  // 文本类需要 attachment id 才能走 /content 代理。tryOpen 的门控会挡住文本类的
+  // 仅 URL source，但这里还是防御一下——否则直接用 URL source 挂载
+  // <AttachmentPreviewModal>，且其文件名后来解析成文本类时，会在 null id 上崩溃。
   if (
     (kind === "markdown" || kind === "html" || kind === "text") &&
     !state.attachmentId
@@ -881,13 +861,12 @@ function PreviewContent({
 }
 
 // ---------------------------------------------------------------------------
-// Text-backed preview — fetches body once, then hands to the render prop
+// 文本类预览 — 抓取一次正文，再交给 render prop
 // ---------------------------------------------------------------------------
 
-// React Query owns server state per the project convention; re-opening the
-// same attachment hits the cache instead of re-fetching. Query is keyed on
-// the attachment id alone — the 30 min TTL on the server-side signed URL
-// is much longer than any plausible preview session.
+// 按项目约定，服务端状态归 React Query 管；重复打开同一个附件会命中缓存而不是
+// 重新抓取。查询只以 attachment id 为 key——服务端签名 URL 的 30 分钟 TTL 比任何
+// 可想象的预览会话都长得多。
 function TextBackedPreview({
   attachmentId,
   onDownload,
@@ -937,7 +916,7 @@ function TextBackedPreview({
 }
 
 // ---------------------------------------------------------------------------
-// Fallback — used for 413 / 415 / unknown kinds
+// 兜底 — 用于 413 / 415 / 未知类型
 // ---------------------------------------------------------------------------
 
 function UnsupportedFallback({
@@ -964,6 +943,6 @@ function UnsupportedFallback({
   );
 }
 
-// Re-export the predicate from the dispatch util so entry-point components
-// only need a single import to gate the Eye button.
+// 从工具模块再导出「是否可预览」的判断函数，让各入口组件只用一个 import 就能
+// 门控「眼睛（预览）」按钮。
 export { isPreviewable } from "./utils/preview";

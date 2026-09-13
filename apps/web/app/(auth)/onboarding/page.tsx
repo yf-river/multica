@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * 首次用户 onboarding 流程的 Web 外壳：负责登录守卫、完成后的路由跳转，
+ * 内容渲染共享的 <OnboardingFlow />。
+ */
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@multica/core/auth";
@@ -12,17 +16,16 @@ import { useWorkspaceList } from "@multica/core/workspace";
 import { CliInstallInstructions, OnboardingFlow } from "@multica/views/onboarding";
 
 /**
- * Web shell for the onboarding flow. The route is the platform chrome on
- * web (matching `WindowOverlay` on desktop); content is the shared
- * `<OnboardingFlow />`. Kept minimal — guard on auth, render, exit.
+ * onboarding 流程的 Web 外壳。这个路由在 Web 端充当平台外壳（对应桌面的 `WindowOverlay`），
+ * 内容则是共享的 `<OnboardingFlow />`。保持极简——做登录守卫、渲染、退出。
  *
- * Runtime-connected onboarding opens the Mika session that the final step
- * created and started. Other exits land on the workspace issues list, or root
- * when no workspace exists.
+ * 接了 runtime 的 onboarding 会打开最后一步创建并启动的 Mika 会话；
+ * 其他退出路径落到 workspace 的 issues 列表，没有 workspace 时落到根路径。
  *
- * `CliInstallInstructions` is passed in as the `runtimeInstructions`
- * slot so the flow can render it inside the CLI dialog. The commands it
- * shows are hardcoded — nothing environmental to thread through.
+ * `CliInstallInstructions` 作为 `runtimeInstructions` 插槽传入，
+ * 让流程能把它渲染在 CLI 对话框里。它展示的命令是写死的——没有环境变量需要穿透。
+ *
+ * @returns onboarding 流程页面。
  */
 export default function OnboardingPage() {
   const router = useRouter();
@@ -32,13 +35,10 @@ export default function OnboardingPage() {
   const { workspaces, ready: workspacesReady } = useWorkspaceList({
     enabled: !!user,
   });
-  // The bootstrap path calls refreshMe() before returning, which flips
-  // hasOnboarded to true while the page is still mounted. Without this
-  // flag the guard below races onComplete: the guard's router.replace
-  // (issues list) can overtake onComplete's router.push (guide issue),
-  // dropping the user on the wrong destination. Marking the page as
-  // "completing" right before onComplete navigates keeps the guard
-  // silent for the in-flight transition.
+  // bootstrap 路径在返回前会调用 refreshMe()，这会在页面还挂着时就把 hasOnboarded 翻成 true。
+  // 没有这个标记，下面的守卫会跟 onComplete 抢跑：守卫的 router.replace（去 issues 列表）
+  // 可能抢在 onComplete 的 router.push（去引导 issue）之前，把用户丢到错误的目的地。
+  // 在 onComplete 导航前先把页面标成「正在完成」，就能让守卫在途中的跳转保持静默。
   const completingRef = useRef(false);
 
   useEffect(() => {
@@ -48,13 +48,11 @@ export default function OnboardingPage() {
     }
     if (!workspacesReady) return;
     if (completingRef.current) return;
-    // Bounce out only when onboarding genuinely doesn't apply: the user is
-    // already onboarded. We deliberately don't bounce on `workspaces.length`
-    // here — the flow creates a workspace mid-onboarding, and a
-    // hasWorkspaces bounce here would kick the user out before runtime and
-    // Mika setup can run. The new entry-point
-    // judgment in callback / login handles "where should this user go on
-    // login" so OnboardingPage no longer needs to second-guess it.
+    // 只有当 onboarding 确实不适用时才弹走：也就是用户已经 onboard 了。
+    // 这里故意不根据 `workspaces.length` 弹走——流程会在 onboarding 中途创建 workspace，
+    // 如果这里按 hasWorkspaces 弹走，用户还没跑完 runtime 和 Mika 设置就被踢出去了。
+    // 「登录后该去哪」的判断已经由 callback / login 里的新入口逻辑处理，
+    // 所以 OnboardingPage 不再需要自己去猜。
     if (hasOnboarded) {
       router.replace(resolvePostAuthDestination(workspaces, hasOnboarded));
     }
@@ -62,10 +60,9 @@ export default function OnboardingPage() {
 
   if (isLoading || !user || hasOnboarded) return null;
 
-  // Layout: page owns its own scroll (root layout sets `body {
-  // overflow: hidden }` for the app-shell convention). OnboardingFlow
-  // owns the per-step width constraint internally — Welcome renders a
-  // wide two-column hero, all other steps wrap themselves at max-w-xl.
+  // 布局：本页自己负责滚动（根布局为 app-shell 约定设置了 `body { overflow: hidden }`）。
+  // OnboardingFlow 在内部管理每步的宽度约束——Welcome 渲染一个宽的两栏 hero，
+  // 其余步骤自己包在 max-w-xl 里。
   return (
     <div className="h-full overflow-y-auto bg-background">
       <OnboardingFlow

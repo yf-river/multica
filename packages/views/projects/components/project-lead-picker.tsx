@@ -1,5 +1,7 @@
 "use client";
 
+// 项目负责人选择器：弹出搜索框，在「成员 / Agent」里按名字（支持拼音）过滤并
+// 指派项目负责人，也可清除负责人。
 import { useState } from "react";
 import { UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -12,6 +14,15 @@ import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { ActorAvatar } from "../../common/actor-avatar";
 
+/**
+ * 项目负责人选择器：Popover 里列出可指派为负责人的成员与（未归档的）Agent，
+ * 支持输入搜索（含拼音），选完通过 `handleUpdate` 写回。
+ *
+ * @param project 目标项目
+ * @param handleUpdate 写回更新对象的回调
+ * @param renderTrigger 负责渲染触发器内容（传入当前负责人名字）
+ * @param align 弹层对齐方向
+ */
 export function ProjectLeadPicker({ project, handleUpdate, renderTrigger, align = "start" }: {
   project: Project;
   handleUpdate: (data: UpdateProjectRequest) => void;

@@ -1,3 +1,6 @@
+// snapshot.go：ghsnapshot 的「取状态」半边——唯一一条 GraphQL 查询、contexts 分页，
+// 以及把 GitHub 的联合类型节点归一化成扁平的逐检查快照（PRSnapshot）。快照是每次抓取
+// 的最小原子写入单元，完整反映 GitHub API 当时返回的内容，不含任何增量推断。
 package ghsnapshot
 
 import (
@@ -7,17 +10,16 @@ import (
 	"strings"
 )
 
-// prSnapshotQuery is the single GraphQL query behind the whole feature. It
-// returns, in one round trip (Elon measured cost=1):
-//   - headRefOid: the head the snapshot describes (pins the anti-stale write);
-//   - mergeable: MERGEABLE / CONFLICTING / UNKNOWN — answers "is there a
-//     conflict" only;
-//   - mergeStateStatus: CLEAN / DIRTY / BLOCKED / BEHIND / UNSTABLE / ... —
-//     "Ready to merge" is derived ONLY from CLEAN;
-//   - statusCheckRollup: the overall CI verdict plus every check/status context.
+// prSnapshotQuery 是整个功能背后的唯一一条 GraphQL 查询。它在单次往返内返回
+// （Elon 实测 cost=1）：
+//   - headRefOid：快照所描述的 head（钉死防过期写入）；
+//   - mergeable：MERGEABLE / CONFLICTING / UNKNOWN——只回答「有没有冲突」；
+//   - mergeStateStatus：CLEAN / DIRTY / BLOCKED / BEHIND / UNSTABLE / ...——
+//     "Ready to merge" 只能由 CLEAN 推导；
+//   - statusCheckRollup：整体 CI 结论，外加每个 check/status context。
 //
-// $cursor paginates statusCheckRollup.contexts; the caller loops until
-// hasNextPage is false (acceptance criterion 2 — never assume <100 contexts).
+// $cursor 为 statusCheckRollup.contexts 分页；调用方循环到 hasNextPage 为 false 为止
+// （验收标准 2——绝不假设 context 少于 100 个）。
 const prSnapshotQuery = `query($owner:String!,$repo:String!,$number:Int!,$cursor:String){
   repository(owner:$owner,name:$repo){
     pullRequest(number:$number){
@@ -41,41 +43,36 @@ const prSnapshotQuery = `query($owner:String!,$repo:String!,$number:Int!,$cursor
   }
 }`
 
-// CheckContext is one normalized check for a PR head. Both GraphQL CheckRun and
-// StatusContext contexts are flattened into this shape (see normalizeNode), so
-// downstream storage and aggregation are uniform.
+// CheckContext 是 PR head 的某一条归一化后的检查。GraphQL 的 CheckRun 与 StatusContext
+// 两类 context 都被压平进这个结构（见 normalizeNode），下游的存储与聚合因此是统一的。
 type CheckContext struct {
 	Name string
-	// Status is the normalized lifecycle: "queued", "in_progress", or
-	// "completed".
+	// Status 是归一化后的生命周期："queued"、"in_progress" 或 "completed"。
 	Status string
-	// Conclusion is the normalized result: "success", "failure", "neutral",
-	// "cancelled", "skipped", "timed_out", "action_required", "startup_failure",
-	// "stale", or "error"; empty while the check is still running.
+	// Conclusion 是归一化后的结果："success"、"failure"、"neutral"、"cancelled"、
+	// "skipped"、"timed_out"、"action_required"、"startup_failure"、"stale" 或 "error"；
+	// 检查仍在跑时为空。
 	Conclusion      string
 	DetailsURL      string
 	IsStatusContext bool
 }
 
-// PRSnapshot is the atomic unit written per fetch. It mirrors exactly what the
-// API returned — no incremental inference.
+// PRSnapshot 是每次抓取写入的原子单元。它精确镜像 API 当时返回的内容——不做增量推断。
 type PRSnapshot struct {
 	HeadSHA          string
-	Mergeable        string // MERGEABLE / CONFLICTING / UNKNOWN (raw enum)
-	MergeStateStatus string // CLEAN / DIRTY / BLOCKED / BEHIND / UNSTABLE / ... (raw enum)
-	// RollupState is statusCheckRollup.state (SUCCESS/FAILURE/PENDING/ERROR/
-	// EXPECTED). Empty ONLY when HasChecks is false.
+	Mergeable        string // MERGEABLE / CONFLICTING / UNKNOWN（原始枚举）
+	MergeStateStatus string // CLEAN / DIRTY / BLOCKED / BEHIND / UNSTABLE / ...（原始枚举）
+	// RollupState 是 statusCheckRollup.state（SUCCESS/FAILURE/PENDING/ERROR/EXPECTED）。
+	// 仅当 HasChecks 为 false 时才为空。
 	RollupState string
-	// HasChecks is false when statusCheckRollup was null — GitHub reports "no
-	// checks have been created for this commit yet". This must NEVER be rendered
-	// as passed (acceptance criterion 5).
+	// HasChecks 在 statusCheckRollup 为 null 时为 false——GitHub 报告「该 commit 还没有
+	// 任何 check」。这绝不能渲染成「已通过」（验收标准 5）。
 	HasChecks bool
 	Contexts  []CheckContext
 }
 
-// Decided reports whether the snapshot has settled: no check is still running
-// and mergeability is known. An undecided snapshot on an open PR drives the
-// bounded chase-window re-fetch (refresh.go).
+// Decided 报告快照是否已尘埃落定：没有 check 还在跑、可合并状态已知。未决断的开放 PR
+// 快照会驱动有界 chase-window 重抓（refresh.go）。
 func (s *PRSnapshot) Decided() bool {
 	if s.Mergeable == "UNKNOWN" || s.Mergeable == "" {
 		return false
@@ -94,6 +91,7 @@ func (s *PRSnapshot) Decided() bool {
 	return true
 }
 
+// graphqlRollup 是 statusCheckRollup 的 JSON 结构：整体 state 加分页的 contexts。
 type graphqlRollup struct {
 	State    string `json:"state"`
 	Contexts struct {
@@ -105,6 +103,7 @@ type graphqlRollup struct {
 	} `json:"contexts"`
 }
 
+// graphqlPullRequest 是查询返回里 pullRequest 对象的 JSON 结构（只取我们需要的字段）。
 type graphqlPullRequest struct {
 	HeadRefOid       string `json:"headRefOid"`
 	Mergeable        string `json:"mergeable"`
@@ -118,6 +117,7 @@ type graphqlPullRequest struct {
 	} `json:"commits"`
 }
 
+// rollup 取最新提交的 statusCheckRollup；没有提交时返回 nil。
 func (pr *graphqlPullRequest) rollup() *graphqlRollup {
 	if len(pr.Commits.Nodes) == 0 {
 		return nil
@@ -125,25 +125,25 @@ func (pr *graphqlPullRequest) rollup() *graphqlRollup {
 	return pr.Commits.Nodes[0].Commit.StatusCheckRollup
 }
 
+// graphqlPRData 是最外层 data 的 JSON 结构。
 type graphqlPRData struct {
 	Repository struct {
 		PullRequest *graphqlPullRequest `json:"pullRequest"`
 	} `json:"repository"`
 }
 
+// maxSnapshotContextPages 是对 statusCheckRollup.contexts 分页的安全上限。
 const maxSnapshotContextPages = 100
 
-// FetchPRSnapshot runs prSnapshotQuery, paginating statusCheckRollup.contexts
-// to completion, and returns the normalized snapshot. A nil rollup yields
-// HasChecks=false with no contexts.
+// FetchPRSnapshot 执行 prSnapshotQuery，把 statusCheckRollup.contexts 分页拉完，返回
+// 归一化快照。rollup 为 nil 时得到 HasChecks=false 且无 contexts。
 func FetchPRSnapshot(ctx context.Context, c *Client, installationID int64, owner, repo string, number int32) (*PRSnapshot, error) {
 	if !c.Enabled() {
 		return nil, errors.New("ghsnapshot: client not configured")
 	}
 	snap := &PRSnapshot{}
 	cursor := ""
-	// Guard against a pathological cursor loop; 100 pages = 10k contexts, far
-	// beyond any real PR.
+	// 防御病态的游标死循环；100 页 = 1 万条 context，远超任何真实 PR。
 	for page := 0; page < maxSnapshotContextPages; page++ {
 		vars := map[string]any{"owner": owner, "repo": repo, "number": number}
 		if cursor != "" {
@@ -168,14 +168,13 @@ func FetchPRSnapshot(ctx context.Context, c *Client, installationID int64, owner
 			snap.Mergeable = pr.Mergeable
 			snap.MergeStateStatus = pr.MergeStateStatus
 		} else if pr.HeadRefOid != snap.HeadSHA {
-			// Every page re-reads the PR's latest commit. If a synchronize
-			// event advances the head while pagination is in progress, mixing
-			// those pages would label new-head contexts as the old head.
+			// 每一页都会重读 PR 的最新 commit。若分页过程中一次 synchronize 事件推进了
+			// head，把那些页混在一起会把「新 head 的 contexts」标成旧 head 的。
 			return nil, errors.New("ghsnapshot: pull request head changed during pagination")
 		}
 		rollup := pr.rollup()
 		if rollup == nil {
-			// statusCheckRollup is null → no checks yet. Nothing to paginate.
+			// statusCheckRollup 为 null → 还没有 check。没有可分页的内容。
 			if page > 0 {
 				return nil, errors.New("ghsnapshot: check rollup changed during pagination")
 			}
@@ -203,9 +202,9 @@ func FetchPRSnapshot(ctx context.Context, c *Client, installationID int64, owner
 	return nil, errors.New("ghsnapshot: check-context pagination exceeds page limit")
 }
 
-// normalizeNode flattens one GraphQL union node (CheckRun or StatusContext)
-// into a CheckContext. CheckRun statuses/conclusions map to lowercase; legacy
-// StatusContext states map onto the same lifecycle so aggregation is uniform:
+// normalizeNode 把一个 GraphQL 联合节点（CheckRun 或 StatusContext）压平成
+// CheckContext。CheckRun 的 statuses/conclusions 转小写；旧式 StatusContext 的 state
+// 映射到同一生命周期，让聚合口径统一：
 //
 //	SUCCESS  → completed / success
 //	FAILURE  → completed / failure
@@ -258,9 +257,8 @@ func normalizeNode(raw json.RawMessage) (CheckContext, bool) {
 	}
 }
 
-// normalizeRunStatus maps a GraphQL CheckRun.status enum to our lifecycle.
-// Only COMPLETED is terminal; QUEUED/IN_PROGRESS/WAITING/PENDING/REQUESTED are
-// all still running.
+// normalizeRunStatus 把 GraphQL 的 CheckRun.status 枚举映射到我们的生命周期。只有
+// COMPLETED 是终态；QUEUED/IN_PROGRESS/WAITING/PENDING/REQUESTED 都还在跑。
 func normalizeRunStatus(s string) string {
 	switch strings.ToUpper(s) {
 	case "COMPLETED":
@@ -272,8 +270,8 @@ func normalizeRunStatus(s string) string {
 	}
 }
 
-// normalizeStatusState maps a legacy StatusContext.state onto (status,
-// conclusion). Empty conclusion means still running.
+// normalizeStatusState 把旧式 StatusContext.state 映射成 (status, conclusion)。
+// conclusion 为空表示仍在跑。
 func normalizeStatusState(s string) (status, conclusion string) {
 	switch strings.ToUpper(s) {
 	case "SUCCESS":
@@ -284,7 +282,7 @@ func normalizeStatusState(s string) (status, conclusion string) {
 		return "completed", "error"
 	case "PENDING":
 		return "in_progress", ""
-	default: // EXPECTED and any unknown state
+	default: // EXPECTED 与任何未知状态
 		return "queued", ""
 	}
 }

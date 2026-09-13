@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * 加入工作区页面：根据分享链接里的邀请码展示邀请信息，
+ * 支持未登录用户跳去登录后再回来完成加入，并处理席位已满、已加入等分支。
+ */
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -11,6 +15,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type { ShareLinkInfo, Workspace } from "@multica/core/types";
 
+/** 加入页内容主体：加载邀请预览、处理加入动作与各类错误分支。 */
 function JoinInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -24,8 +29,7 @@ function JoinInner() {
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joined, setJoined] = useState(false);
 
-  // Load the share-link preview once. No auth needed: this endpoint only
-  // exposes the workspace name/slug and the inviter.
+  // 只加载一次分享链接预览。无需登录：这个接口只暴露 workspace 名称/slug 和邀请人。
   useEffect(() => {
     if (!code) {
       setInfoError("未找到邀请码，请使用有效的邀请链接。");
@@ -48,7 +52,7 @@ function JoinInner() {
   const handleJoin = () => {
     if (!code) return;
     if (!user) {
-      // Not logged in: send them to login, then return here to join.
+      // 未登录：先去登录，登录后回到本页继续加入。
       router.push(`/login?next=${encodeURIComponent(`/join?code=${code}`)}`);
       return;
     }
@@ -68,8 +72,7 @@ function JoinInner() {
         const code = errorCode(e);
         const msg = e instanceof Error ? e.message : "";
         if (msg.includes("already a member")) {
-          // Already joined: go straight to the workspace this invite points at
-          // rather than the account's first workspace.
+          // 已经加入过：直接去这个邀请指向的 workspace，而不是账号的第一个 workspace。
           if (info?.workspace_slug) {
             router.push(`/${info.workspace_slug}/issues`);
             return;
@@ -83,7 +86,7 @@ function JoinInner() {
               return;
             }
           } catch {
-            // Fall through to the home redirect below.
+            // 查询失败就落到下面的首页重定向。
           }
           router.push("/");
           return;
@@ -159,6 +162,11 @@ function JoinInner() {
   );
 }
 
+/**
+ * 加入页的默认导出：用 Suspense 包裹，避免 `useSearchParams` 触发 CSR bailout。
+ *
+ * @returns 加入页（加载态 / 邀请详情 / 错误态）。
+ */
 export default function JoinPage() {
   return (
     <Suspense fallback={<div className="flex min-h-screen items-center justify-center">正在加载……</div>}>

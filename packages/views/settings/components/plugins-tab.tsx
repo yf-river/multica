@@ -1,3 +1,6 @@
+// 本文件是「插件」设置标签页：管理员上传 .zip 发布插件包、评审并安装/升级指定版本，
+// 管理已安装插件的启停、授权 scope、定时任务与 MCP 工具审批；普通成员只读查看。
+
 "use client";
 
 import { useMemo, useRef, useState } from "react";
@@ -42,10 +45,9 @@ import { useLocale, useT } from "../../i18n";
 import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
 
 /**
- * The scope list is the entire trust model: there is no signature, no
- * publisher verification, and no trust tier. So the consent screen shows the
- * raw scope strings alongside a plain-language line, and never summarizes them
- * away.
+ * 权限（scope）列表就是整套信任模型：没有签名、没有发布者校验、也没有信任分层。
+ * 所以授权确认页把原始的 scope 字符串逐个亮出来，旁边配一句大白话解释，绝不把它们
+ * 概括掉——安装者得清楚插件到底要了什么权限。
  */
 function ScopeList({ scopes, highlighted }: { scopes: string[]; highlighted?: string[] }) {
   const { t } = useT("settings");
@@ -65,12 +67,14 @@ function ScopeList({ scopes, highlighted }: { scopes: string[]; highlighted?: st
   );
 }
 
+/** 声明了定时任务（cron 表达式）的 hook 的最小展示结构。 */
 type ScheduledHook = {
   key: string;
   name: string;
   schedule?: { cron: string; timezone: string; next_run_at?: string };
 };
 
+/** 定时任务列表：每个 hook 一行，展示中文频率描述、原始 cron 与时区，可选带"下次运行时间"。 */
 function ScheduleList({ hooks, showNextRun = false }: { hooks: ScheduledHook[]; showNextRun?: boolean }) {
   const { t } = useT("settings");
   const locale = useLocale();
@@ -95,6 +99,7 @@ function ScheduleList({ hooks, showNextRun = false }: { hooks: ScheduledHook[]; 
   );
 }
 
+/** 把 ISO 时间字符串按当前 locale 格式化成"日期 + 时间"，空值或非法值返回占位符 "—"。 */
 function formatScheduleTime(value: string | undefined, locale: string): string {
   if (!value) return "—";
   const timestamp = Date.parse(value);
@@ -107,6 +112,7 @@ function formatScheduleTime(value: string | undefined, locale: string): string {
 
 type Translate = ReturnType<typeof useT<"settings">>["t"];
 
+/** 把标准 5 段 cron 表达式翻译成自然语言频率（每 N 分钟 / 每小时 / 每天固定时刻），无法识别时回退"自定义"。 */
 function scheduleFrequency(cron: string, t: Translate): string {
   const fields = cron.trim().split(/\s+/);
   if (fields.length !== 5) return t(($) => $.plugins.schedule.frequency_custom);
@@ -126,6 +132,7 @@ function scheduleFrequency(cron: string, t: Translate): string {
   return t(($) => $.plugins.schedule.frequency_custom);
 }
 
+/** 把单个 scope 字符串翻译成一句人话（net: 前缀按域名解释，其余查表），未知的兜底为"未说明用途"。 */
 function scopeDescription(scope: string, t: Translate): string {
   if (scope.startsWith("net:")) {
     return t(($) => $.plugins.scopes.net, { domain: scope.slice("net:".length) });
@@ -146,9 +153,8 @@ function scopeDescription(scope: string, t: Translate): string {
 }
 
 /**
- * The configuration form is generated from the manifest, not supplied by the
- * plugin: rendering plugin-authored form markup in the host would put plugin
- * code on our origin.
+ * 配置表单是根据清单（manifest）字段生成的，而不是由插件提供：
+ * 若允许渲染插件自己写的表单标记，等于把插件代码放到了我们自己的源站上。
  */
 function ConfigForm({
   installation,
@@ -171,8 +177,8 @@ function ConfigForm({
 
   const submit = async () => {
     const payload: Record<string, unknown> = { ...values };
-    // Only send a secret the admin actually typed. Sending "" would clear a
-    // stored secret every time an unrelated field is saved.
+    // 只提交管理员真实输入过的 secret。若把空串也发出去，每次保存无关字段时
+    // 都会把已存的 secret 清空掉。
     for (const [key, value] of Object.entries(secrets)) {
       if (value.length > 0) payload[key] = value;
     }
@@ -286,9 +292,8 @@ function ConfigField({
             }}
           />
         ) : field.multiline === true ? (
-          // A field whose value is a list of lines is unreadable in a
-          // single-line input — and the generated form is the one piece of
-          // plugin UI the host owns, so getting it wrong is our bug.
+          // 值是多行文本的字段，塞进单行输入框根本没法读——而且这份由清单生成的表单
+          // 是宿主唯一自己掌控的插件 UI，做错了就是我们自己的锅，所以必须给多行输入框。
           <Textarea
             rows={4}
             disabled={disabled}
@@ -310,13 +315,11 @@ function ConfigField({
 }
 
 /**
- * Publishing, and installing what was published.
+ * 「发布插件」与「安装已发布的东西」。
  *
- * These are one screen because they are two halves of one story: an author
- * uploads an artifact, and an administrator installs one specific version of it.
- * There is no way to install code that was not published here first — which is
- * what makes the consent screen below a statement about the code and not just
- * about the manifest.
+ * 它们放同一屏，因为本来就是一个故事的上下两半：作者上传产物，管理员安装其中某个
+ * 具体版本。系统里不存在"没在这里发布过却能安装的代码"——这正是下面授权确认页的
+ * 分量所在：它陈述的是对这段代码本身的信任，而不只是对清单的信任。
  */
 function PublishAndInstall({ wsId, canManage }: { wsId: string; canManage: boolean }) {
   const { t } = useT("settings");
@@ -346,8 +349,8 @@ function PublishAndInstall({ wsId, canManage }: { wsId: string; canManage: boole
     } catch (error) {
       reportError(error);
     } finally {
-      // Cleared unconditionally so picking the same file again re-fires change,
-      // which is what a person does after fixing a rejected bundle.
+      // 无条件清空文件框的值：这样修复被拒的包后再次选择同一个文件，也能重新触发
+      // change 事件——而"再选一次同一个文件"正是开发者会做的动作。
       if (fileRef.current) fileRef.current.value = "";
     }
   };
@@ -476,6 +479,7 @@ function PublishAndInstall({ wsId, canManage }: { wsId: string; canManage: boole
   );
 }
 
+/** 单个已发布插件包：名称/标识 + 版本列表；可删除整个包，每个未安装版本可进入安装/升级评审。 */
 function PublishedPackage({
   pluginPackage,
   canManage,
@@ -490,9 +494,8 @@ function PublishedPackage({
   onDelete: (packageId: string) => void;
 }) {
   const { t } = useT("settings");
-  // Versions arrive newest first, and the installed one is marked rather than
-  // inferred: after a publish those are different rows, and that difference is
-  // the whole reason an upgrade is a decision somebody makes.
+  // 版本按新的在前返回，"已安装版本"靠标记而不是推断：发布之后它们是不同的行，
+  // 而这一点正是"要不要升级"需要有人来做决定的原因。
   const installed = pluginPackage.versions.find((version) => version.installed === true);
 
   return (
@@ -542,6 +545,7 @@ function PublishedPackage({
   );
 }
 
+/** 单个已安装插件的卡片：启停开关、卸载、授权 scope、定时任务活动、MCP 工具审批，以及清单生成的配置表单。 */
 function InstalledPlugin({
   installation,
   wsId,
@@ -560,12 +564,12 @@ function InstalledPlugin({
     toast.error(error instanceof Error ? error.message : t(($) => $.plugins.action_failed));
   };
 
-  // Only rendered when a hook contributes one: a plugin with no hooks has no
-  // failing calls to report.
+  // 只在插件确实贡献了 hook 时才渲染活动记录：没有 hook 的插件，自然也不会有
+  // 调用失败可供上报。
   const hasHooks = (installation.hooks ?? []).length > 0;
 
-  // An mcp hook is inert until its tools are approved, so the panel appears for
-  // every one of them rather than only when something is already pinned.
+  // mcp hook 在工具被批准之前是不生效的，所以只要存在就为每个 hook 都展示审批面板，
+  // 而不是只在已经挂着某个待批项时才出现。
   const mcpContributions = mcpHooks(installation.hooks ?? []);
   const scheduledHooks = (installation.hooks ?? []).filter((hook) => hook.schedule !== undefined);
 
@@ -668,6 +672,10 @@ function InstalledPlugin({
   );
 }
 
+/**
+ * 「插件」设置标签页：管理员可上传发布插件包、评审并安装/升级某个版本，管理已装插件的
+ * 启停与卸载、授权 scope、定时任务和 MCP 工具审批；普通成员只能看到只读提示与已装列表。
+ */
 export function PluginsTab() {
   const { t } = useT("settings");
   const workspace = useCurrentWorkspace();

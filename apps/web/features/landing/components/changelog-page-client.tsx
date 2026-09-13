@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * 官网「更新日志（Changelog）」页（客户端组件）：把 i18n 字典里的发布条目
+ * 按版本号分组渲染为时间线，左侧提供按月份分组的粘性目录，滚动时自动高亮当前版本，
+ * 点击目录则平滑滚到对应版本段。
+ */
 import {
   type MouseEvent,
   useEffect,
@@ -12,8 +17,10 @@ import { LandingFooter } from "./landing-footer";
 import { useLocale } from "../i18n";
 import type { Locale } from "../i18n/types";
 
+/** 拆解后的日期（年/月/日，来自 `YYYY-MM-DD`）。 */
 type ParsedDate = { year: number; month: number; day: number };
 
+/** 把 `YYYY-MM-DD` 字符串拆成数字年月日。 */
 function parseDate(dateStr: string): ParsedDate {
   const parts = dateStr.split("-");
   return {
@@ -23,6 +30,7 @@ function parseDate(dateStr: string): ParsedDate {
   };
 }
 
+/** 用 UTC 构造日期并回验三段数值，防止非法日期（如 2 月 30 日）被静默进位成合法日期。 */
 function utcDate(year: number, month: number, day: number) {
   const date = new Date(Date.UTC(year, month - 1, day));
   if (
@@ -35,6 +43,14 @@ function utcDate(year: number, month: number, day: number) {
   return date;
 }
 
+/**
+ * 把「年 + 月」格式化为本地化月份标签（如 2026 年 6 月），用于目录分组标题。
+ *
+ * @param year - 年份。
+ * @param month - 月份（1~12）。
+ * @param locale - 目标语言。
+ * @returns 本地化后的「月份 + 年份」文本。
+ */
 export function monthYearLabel(year: number, month: number, locale: Locale) {
   const date = utcDate(year, month, 1);
   if (!date) return "";
@@ -45,6 +61,13 @@ export function monthYearLabel(year: number, month: number, locale: Locale) {
   }).format(date);
 }
 
+/**
+ * 把 `YYYY-MM-DD` 格式化为本地化完整日期；非法日期则原样返回字符串兜底。
+ *
+ * @param dateStr - 日期字符串。
+ * @param locale - 目标语言。
+ * @returns 本地化日期文本。
+ */
 export function fullDateLabel(dateStr: string, locale: Locale) {
   const { year, month, day } = parseDate(dateStr);
   const date = utcDate(year, month, day);
@@ -57,6 +80,7 @@ export function fullDateLabel(dateStr: string, locale: Locale) {
   }).format(date);
 }
 
+/** 单个发布版本：版本号、日期、标题与各类变更条目。 */
 type Release = {
   version: string;
   date: string;
@@ -67,6 +91,7 @@ type Release = {
   fixes?: string[];
 };
 
+/** 同一自然月内的版本分组（目录按它聚合）。 */
 type MonthGroup = {
   key: string;
   year: number;
@@ -74,6 +99,7 @@ type MonthGroup = {
   entries: Release[];
 };
 
+/** 按月份顺序把发布条目聚成组（输入需已按日期升序）。 */
 function groupByMonth(entries: readonly Release[]): MonthGroup[] {
   const groups: MonthGroup[] = [];
   for (const entry of entries) {
@@ -89,10 +115,12 @@ function groupByMonth(entries: readonly Release[]): MonthGroup[] {
   return groups;
 }
 
+/** 版本号生成 DOM 锚点 id：`1.2.3` → `release-1-2-3`。 */
 function anchorId(version: string) {
   return `release-${version.replace(/\./g, "-")}`;
 }
 
+/** 带项目符号的变更条目列表。 */
 function ChangeList({ items }: { items: string[] }) {
   return (
     <ul className="mt-2 space-y-2">
@@ -109,6 +137,14 @@ function ChangeList({ items }: { items: string[] }) {
   );
 }
 
+/**
+ * 更新日志页内容主体（导出给 page.tsx 使用）。
+ *
+ * 用 IntersectionObserver 监测各版本段在视口的位置，据此驱动左侧目录的「当前版本」高亮；
+ * 点击目录跳转期间会短暂锁住该联动，避免经过中间条目时高亮闪烁。
+ *
+ * @returns 带官网导航与页脚的整页布局。
+ */
 export function ChangelogPageClient() {
   const { t, locale } = useLocale();
   const categoryLabels = t.changelog.categories;
@@ -132,9 +168,8 @@ export function ChangelogPageClient() {
           if (e.isIntersecting) visible.add(v);
           else visible.delete(v);
         });
-        // Ignore observer updates while we're programmatically scrolling
-        // to a clicked target — otherwise the active indicator flickers
-        // through each passing entry.
+        // 程序化滚动到点击目标期间忽略观察器回调，否则高亮会随着滚过
+        // 的每个条目来回闪烁。
         if (navLockRef.current !== null) return;
 
         const firstVisible = entries.find((r) => visible.has(r.version));

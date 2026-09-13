@@ -1,3 +1,8 @@
+// 文件职责：组装 server 进程的 HTTP 路由器——把全部中间件、健康检查、WebSocket、
+// 认证/daemon/公开 API 以及所有业务路由注册到 Chi router 上，并按环境变量有条件地
+// 接好各第三方集成的内部组件（Lark/Slack/WeCom/Telegram/DingTalk/Composio 等渠道
+// 引擎、对象存储、secretbox 加密盒、Redis 缓存与限流）。入口是 NewRouterWithOptions，
+// 它同时返回构造出来的 *handler.Handler（main.go 用它驱动后台生命周期）。
 package main
 
 import (
@@ -50,19 +55,18 @@ import (
 )
 
 var defaultOrigins = []string{
-	"http://localhost:3000", // Next.js dev
-	"http://localhost:5173", // electron-vite dev
-	"http://localhost:5174", // electron-vite dev (fallback port)
+	"http://localhost:3000", // Next.js 开发服务器
+	"http://localhost:5173", // electron-vite 开发服务器
+	"http://localhost:5174", // electron-vite 开发服务器（备用端口）
 }
 
+// pluginBridgePrefix 是宿主页面中继沙箱插件 surface 调用时用的内部路由前缀。
 const pluginBridgePrefix = "/api/plugin-bridge/v1"
 
-// corsAllowedHeaders must list every header the browser clients send. A header
-// missing here fails the preflight, so the request never reaches the handler at
-// all — the failure looks nothing like "the server ignored my header".
-// X-Client-Capabilities in particular was daemon-only (a Go client, never
-// preflighted) until the web app started advertising chat-draft-restore-v1 on
-// cancel.
+// corsAllowedHeaders 必须列出浏览器端会发送的每一个头。缺了哪个，预检（preflight）
+// 就失败，请求根本到不了处理函数——症状完全不像「服务器忽略了我的头」。
+// X-Client-Capabilities 尤其值得一提：它原本只有 daemon（Go 客户端，从不预检）会发，
+// 直到 web 应用开始在取消聊天时上报 chat-draft-restore-v1。
 var corsAllowedHeaders = []string{
 	"Accept",
 	"Authorization",
@@ -79,18 +83,15 @@ var corsAllowedHeaders = []string{
 	"X-Client-Version",
 	"X-Client-OS",
 	"X-Client-Capabilities",
-	// Sent by the host page when it relays a plugin surface's Action API call.
+	// 宿主页面在转发插件 surface 的 Action API 调用时设置。
 	"X-Multica-Plugin-Installation",
 }
 
-// corsExposedHeaders lists response headers browser clients are allowed to read.
-// Without this a custom response header is silently unreadable from JS on a
-// cross-origin request (only the CORS-safelisted response headers are exposed by
-// default) — the header arrives on the wire and then disappears, which looks
-// exactly like the server never sent it.
+// corsExposedHeaders 列出允许浏览器端读取的响应头。少了它，跨域请求里自定义响应头
+// 对 JS 静默不可读（默认只暴露 CORS 白名单内的少量头）——头其实到了线上却被丢掉了，
+// 看起来就像是服务器从没发过。
 //
-// Referencing the handler constant rather than re-typing the string keeps a
-// rename from quietly switching the signal off (MUL-5492).
+// 直接引用 handler 里的常量而不是重抄字符串，避免将来改名字时悄悄关掉这个信号（MUL-5492）。
 var corsExposedHeaders = []string{
 	"ETag",
 	"X-Request-ID",
@@ -98,6 +99,9 @@ var corsExposedHeaders = []string{
 	handler.HeaderTimelineTruncated,
 }
 
+// registerPluginActionRoutes 把公开 Plugin Action API 的一整套资源路由挂到 r 上：
+// 上下文、issue 读写、评论、键值存储。两个调用方共用——版本化的公开 /v1 前缀与
+// 浏览器会话中继用的 plugin-bridge 前缀。
 func registerPluginActionRoutes(r chi.Router, h *handler.Handler) {
 	r.Get(publicapiv1.PathContext, h.GetPluginContext)
 	r.Get(publicapiv1.PathIssue, h.GetPluginIssue)
@@ -110,6 +114,8 @@ func registerPluginActionRoutes(r chi.Router, h *handler.Handler) {
 	r.Delete(publicapiv1.PathStorageValue, h.DeletePluginStorage)
 }
 
+// allowedOrigins 解析 CORS 允许的来源列表。优先读 CORS_ALLOWED_ORIGINS，其次
+// FRONTEND_ORIGIN；两者都为空时退回本地开发用的 defaultOrigins。
 func allowedOrigins() []string {
 	raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
 	if raw == "" {
@@ -133,10 +139,9 @@ func allowedOrigins() []string {
 	return origins
 }
 
-// appURLFromEnv resolves the user-facing web app URL. It prefers
-// MULTICA_APP_URL and falls back to FRONTEND_ORIGIN, matching how the backend
-// resolves the app URL elsewhere (handler.daemonSetupURLsFromEnv) and the CLI
-// login flow (cmd/multica tryResolveAppURL). Empty when neither is set.
+// appURLFromEnv 解析面向用户的 web 应用地址。优先 MULTICA_APP_URL，退回
+// FRONTEND_ORIGIN，与后端他处（handler.daemonSetupURLsFromEnv）和 CLI 登录流程
+// （cmd/multica tryResolveAppURL）解析应用地址的方式保持一致。两者都没设时为空串。
 func appURLFromEnv() string {
 	if v := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_APP_URL")), "/"); v != "" {
 		return v
@@ -144,10 +149,9 @@ func appURLFromEnv() string {
 	return strings.TrimRight(strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")), "/")
 }
 
-// pluginActionBaseURL resolves the versioned public base a hook handler calls
-// back into. Managed deployments give the Plugin API its own hostname through
-// MULTICA_PLUGIN_API_URL; self-hosted and local deployments can leave it empty
-// and serve the same /v1 contract on MULTICA_PUBLIC_URL.
+// pluginActionBaseURL 解析 hook 处理函数回调回去用的、带版本的公开基址。托管部署用
+// MULTICA_PLUGIN_API_URL 给 Plugin API 独立域名；自托管/本地部署可以留空，把同一份
+// /v1 契约挂在 MULTICA_PUBLIC_URL 上。
 func pluginActionBaseURL(publicURL string) string {
 	if value := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PLUGIN_API_URL")), "/"); value != "" {
 		return value
@@ -159,11 +163,9 @@ func pluginActionBaseURL(publicURL string) string {
 	return publicURL + publicapiv1.BasePath
 }
 
-// parseTrustedProxies parses a comma-separated list of CIDR prefixes from the
-// MULTICA_TRUSTED_PROXIES env var. Invalid entries are dropped with a single
-// warn-line per entry rather than crashing the server — a typo in one CIDR
-// shouldn't take the whole API down. Returns nil for empty input, which the
-// rate limiter treats as "trust no proxy headers, use RemoteAddr only".
+// parseTrustedProxies 从 MULTICA_TRUSTED_PROXIES 环境变量解析逗号分隔的 CIDR 前缀
+// 列表。非法项按「每条一行 warn」丢弃而不是让服务器崩溃——某个 CIDR 打错字不该拖垮
+// 整个 API。空输入返回 nil，限流器把 nil 视作「不信任何代理头，只用 RemoteAddr」。
 func parseTrustedProxies(raw string) []netip.Prefix {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -186,13 +188,11 @@ func parseTrustedProxies(raw string) []netip.Prefix {
 	return out
 }
 
-// normalizeServerVersion maps the unstamped "dev" default (main.go's
-// `version` var, unchanged when the binary wasn't built with
-// -X main.version=<tag>) to an empty string. handler.Config.ServerVersion
-// feeds /api/config's server_version field with omitempty, so an empty
-// string hides the Help popover's version row instead of rendering
-// "Server version dev" for a local `go build`/`go run` or a self-hosted
-// `docker build` without --build-arg VERSION.
+// normalizeServerVersion 把未打版本戳的默认值 "dev"（即 main.go 的 `version` 变量，
+// 二进制未用 -X main.version=<tag> 构建时保持原样）映射为空串。
+// handler.Config.ServerVersion 供 /api/config 的 server_version 字段用（带 omitempty），
+// 空串能隐藏 Help 弹层里的版本行，而不是给本地 `go build`/`go run` 或未传
+// --build-arg VERSION 的自托管 `docker build` 渲染出「Server version dev」。
 func normalizeServerVersion(v string) string {
 	if v == "dev" {
 		return ""
@@ -200,61 +200,59 @@ func normalizeServerVersion(v string) string {
 	return v
 }
 
-// NewRouter creates the fully-configured Chi router with all middleware and routes.
-// rdb is optional: when non-nil the runtime local-skill request stores are
-// swapped for Redis-backed implementations so multiple API nodes share the
-// same pending queue (required for multi-node prod). This should be a request
-// path Redis client, not the realtime relay's blocking read client. A nil rdb
-// keeps the default in-memory stores which are fine for single-node dev and
-// tests.
+// NewRouter 用默认 RouterOptions 构造完整的 Chi 路由器并返回。
+// rdb 可选：非 nil 时，运行时的 local-skill 请求存储会换成 Redis 后端实现，让多个
+// API 节点共享同一待处理队列（多节点生产环境必需）。这里应当传「请求路径」用的
+// Redis 客户端，而不是 realtime relay 那个阻塞读客户端。nil 则保留默认的内存存储，
+// 单节点开发与测试用没问题。
 func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client) chi.Router {
 	r, _ := NewRouterWithOptions(pool, hub, bus, analyticsClient, rdb, RouterOptions{})
 	return r
 }
 
+// RouterOptions 是 NewRouterWithOptions 的注入参数集合：main.go 把生产环境需要的
+// 各种组件（指标接收器、Redis 租约、WeCom 转发器、feature flag、心跳调度器等）
+// 塞进来；测试通常留零值，从而得到内存版默认行为。字段零值一律表示「不启用」。
 type RouterOptions struct {
 	HTTPMetrics         *obsmetrics.HTTPMetrics
 	BusinessMetrics     *obsmetrics.BusinessMetrics
 	ChannelLeaseMetrics *obsmetrics.ChannelLeaseMetrics
-	// ChannelLeaseRedis is a dedicated non-blocking Redis client/pool. It is
-	// required only when CHANNEL_WS_LEASE_BACKEND=redis.
+	// ChannelLeaseRedis 是专用于渠道 WebSocket 租约的非阻塞 Redis 客户端/连接池。
+	// 仅当 CHANNEL_WS_LEASE_BACKEND=redis 时需要。
 	ChannelLeaseRedis *redis.Client
-	// WecomRelay is the realtime relay, seen through the two halves the WeCom
-	// adapter needs: publish a reply to the other replicas, and register as
-	// the consumer that delivers the ones they publish. Nil on a deployment
-	// with no Redis — where it is also unnecessary, because one replica both
-	// publishes the completion and holds the socket.
-	// WecomSenders is the process-wide installation→socket registry, minted in
-	// main so the relay's deliverer can be registered before the shard readers
-	// start. Nil is tolerated (tests, embedders): one is minted here instead.
+	// WecomRelay 是 realtime relay 按 WeCom 适配器需要的两半来看：把回复发布给其他
+	// 副本，以及注册为投递它们所发布帧的消费者。在没配 Redis 的部署上是 nil——那里
+	// 也不需要它，因为持有 socket 的副本同时也在发布完成事件。
+	// WecomSenders 是进程级的「安装→socket」注册表，在 main 里铸造，好让 relay 的
+	// 投递器在分片读循环启动前就注册好。nil 可容忍（测试、嵌入方）：会在本函数里
+	// 现铸一个。
 	WecomSenders *wecom.SendersRegistry
 
-	// WecomRelayOutbound is the cross-replica router, already registered with
-	// the relay and running. Nil on a deployment with no Redis, where it is
-	// also unnecessary: one replica publishes the completion and holds the
-	// socket both.
+	// WecomRelayOutbound 是跨副本路由器，已注册到 relay 且在运行。在没配 Redis 的
+	// 部署上是 nil——那里也不需要：发布完成事件与持有 socket 的是同一副本。
 	WecomRelayOutbound *wecom.RelayOutbound
 
-	// WecomMetrics is the WeCom adapter's health sink. Nil discards every
-	// counter, which is what a deployment with /metrics turned off gets.
+	// WecomMetrics 是 WeCom 适配器的健康指标接收器。nil 表示丢弃所有计数器，即关闭
+	// /metrics 的部署得到的待遇。
 	WecomMetrics *obsmetrics.WecomMetrics
 	DaemonHub    *daemonws.Hub
 	DaemonWakeup service.TaskWakeupNotifier
 	FeatureFlags *featureflag.Service
-	// HeartbeatScheduler, when non-nil, replaces the default synchronous
-	// passthrough scheduler on the constructed Handler. main.go injects a
-	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
-	// tests leave this nil and get the legacy synchronous behavior.
+	// HeartbeatScheduler 非 nil 时，替换构造出的 Handler 上默认的同步直通调度器。
+	// main.go 在这里注入一个 BatchedHeartbeatScheduler，调用方还可以驱动 Run/Stop；
+	// 测试留 nil 得到旧的同步行为。
 	HeartbeatScheduler handler.HeartbeatScheduler
-	// LLMMaxRetries carries the parsed MULTICA_LLM_MAX_RETRIES budget. Unlike
-	// its three MULTICA_LLM_* siblings it is injected rather than read here,
-	// because an invalid value must fail the boot and only main() can exit —
-	// terminating the process from inside a router constructor would also kill
-	// any test that happened to have the variable set. nil means unset, which
-	// is what tests and NewRouter get.
+	// LLMMaxRetries 携带解析后的 MULTICA_LLM_MAX_RETRIES 预算。与另外三个
+	// MULTICA_LLM_* 兄弟不同，它靠注入而非在本函数里读环境变量——非法值必须让启动
+	// 失败，而只有 main() 能退出进程；从路由构造函数内部 terminate 进程会把恰好设了
+	// 该变量的任何测试也一起杀掉。nil 表示未设置，正是测试与 NewRouter 得到的。
 	LLMMaxRetries *llm.RetryOverride
 }
 
+// buildChannelSupervisor 构造渠道引擎的 Supervisor：先按环境变量读出租约配置，再
+// 决定租约后端——默认 postgres，可选 redis（需 opts.ChannelLeaseRedis + 连通性探测）。
+// 任何配置缺失/非法都会记录错误并返回 nil（调用方把 h.ChannelSupervisor 留空，
+// 渠道自动运行即停用），而不是带着坏配置半启动。
 func buildChannelSupervisor(
 	installations engine.InstallationStore,
 	postgresLeases engine.LeaseStore,
@@ -309,19 +307,19 @@ func buildChannelSupervisor(
 	return engine.NewSupervisor(installations, leases, registry, inbound, cfg)
 }
 
-// channelLeasePollInterval is how often a Supervisor scans for installations
-// it should be holding, and therefore how long a WebSocket lease takes to
-// finish moving to another replica.
+// channelLeasePollInterval 返回 Supervisor 多久扫一次它应当持有的安装，因而也是
+// WebSocket 租约转移到另一副本要花的上限时间。
 //
-// Read through one function because two places are sized by it: the supervisor
-// itself, and the WeCom cross-replica dispatcher's re-offer chain — a frame
-// that arrives mid-move has to stay offerable until the move completes, and
-// pinning that to a constant of its own would let the two drift apart on any
-// deployment that tunes the knob.
+// 经由一个函数读取是因为有两处按它定尺寸：Supervisor 本身，以及 WeCom 跨副本
+// 分发器的再报价链路——移动中途到达的帧必须保持「可报价」直到移动完成；若让它
+// 自成一个常量，任何调节该旋钮的部署都会让两者脱节。
 func channelLeasePollInterval() (time.Duration, error) {
 	return strictPositiveDurationEnv("CHANNEL_WS_LEASE_POLL_INTERVAL", 30*time.Second)
 }
 
+// channelSupervisorConfigFromEnv 从环境变量读取渠道租约的整套定时参数并组装成
+// engine.Config：TTL、续租间隔、轮询间隔、错误重试间隔、过期安全裕量。任一环境变量
+// 非法都会整体报错（Supervisor 由此停用），不采用部分默认值。
 func channelSupervisorConfigFromEnv(leaseMetrics *obsmetrics.ChannelLeaseMetrics) (engine.Config, error) {
 	ttl, err := strictPositiveDurationEnv("CHANNEL_WS_LEASE_TTL", 180*time.Second)
 	if err != nil {
@@ -358,6 +356,8 @@ func channelSupervisorConfigFromEnv(leaseMetrics *obsmetrics.ChannelLeaseMetrics
 	return cfg, nil
 }
 
+// strictPositiveDurationEnv 读取一个「必须为正时长」的环境变量：空值用 fallback；
+// 解析失败或非正数则报错，点名该变量。
 func strictPositiveDurationEnv(name string, fallback time.Duration) (time.Duration, error) {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -370,6 +370,8 @@ func strictPositiveDurationEnv(name string, fallback time.Duration) (time.Durati
 	return value, nil
 }
 
+// seatCapacityExecutor 构造订阅席位容量校验执行器，Cloud URL 正确时返回真执行器；
+// 配置损坏时返回 fail-closed 的 NewUnavailable 执行器（见函数体内注释）。
 func seatCapacityExecutor(cloudURL string) seatcapacity.Executor {
 	executor, err := seatcapacity.New(seatcapacity.Config{
 		BaseURL: cloudURL,
@@ -377,22 +379,18 @@ func seatCapacityExecutor(cloudURL string) seatcapacity.Executor {
 	if err == nil {
 		return executor
 	}
-	// A Cloud-connected deployment with malformed connection settings must not
-	// silently restore unlimited membership. The fail-closed executor returns
-	// 503 until the operator repairs the Cloud URL; it is deliberately
-	// ineligible for recovery-worker startup so queued intents keep their retry
-	// budget while configuration is broken.
+	// 连上 Cloud 却带着畸形连接设置的部署，绝不能悄悄恢复成「成员数不限」。
+	// 这个 fail-closed 执行器在运维修好 Cloud URL 之前一直返回 503；并且特意
+	// 不够格参加 recovery-worker 启动，好让排队的 intents 在配置损坏期间保住
+	// 各自的重试预算。
 	slog.Error("subscription seat capacity executor unavailable", "error", err)
 	return seatcapacity.NewUnavailable(err)
 }
 
-// NewRouterWithOptions builds the fully-configured Chi router and
-// returns the *handler.Handler it was constructed from. Callers that
-// need to drive background lifecycle on services attached to the
-// handler (e.g. starting the Lark inbound Hub under a long-running
-// context, calling Wait on shutdown) use the returned handler;
-// callers that only need the HTTP handler (tests, the simple
-// NewRouter shim) discard the second value.
+// NewRouterWithOptions 构建配置完整的 Chi 路由器，并返回构造它所用的
+// *handler.Handler。需要驱动 Handler 所挂服务的后台生命周期的调用方（例如在长运行
+// context 下启动 Lark 入站 Hub、在关停时 Wait）用返回的 handler；只需要 HTTP 处理
+// 函数的调用方（测试、NewRouter 这个简单外壳）丢掉第二个返回值即可。
 func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client, opts RouterOptions) (chi.Router, *handler.Handler) {
 	queries := db.New(pool)
 	emailSvc := service.NewEmailService()
@@ -401,7 +399,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		daemonHub = daemonws.NewHub()
 	}
 
-	// Initialize storage with S3 as primary, fallback to local
+	// 存储初始化：优先 S3，回退到本地文件系统。
 	var store storage.Storage
 	s3 := storage.NewS3StorageFromEnv()
 	if s3 != nil {
@@ -462,9 +460,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.AutopilotService.Entitlements = entitlementClient
 		h.AutopilotService.QuotaMetrics = opts.BusinessMetrics
 	}
-	// Cloud Runtime and strict seat capacity are one managed deployment. Reuse
-	// the same base URL so Billing cannot be readable while invitation writes
-	// silently skip Cloud's authoritative seat policy.
+	// Cloud Runtime 与严格席位容量同属一个托管部署。复用同一个 base URL，好让
+	// Billing 可读的同时，邀请写入不会悄悄跳过 Cloud 的权威席位策略。
 	h.SeatCapacity = seatCapacityExecutor(signupConfig.CloudURL)
 	capacityLocker := seatcapacity.NewWorkspaceLocker(pool)
 	h.SeatCapacityLocker = capacityLocker
@@ -472,9 +469,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.SeatCapacityWorker = seatcapacity.NewWorker(queries, h.SeatCapacity, capacityLocker, seatcapacity.WorkerConfig{})
 	}
 	if opts.BusinessMetrics != nil {
-		// Wire the BusinessMetrics receiver into the cloud runtime client
-		// so every outbound Fleet/Gateway request feeds the
-		// multica_cloudruntime_request_* histograms.
+		// 把 BusinessMetrics 接收器接进 cloud runtime 客户端，让每次出站 Fleet/
+		// Gateway 请求都计入 multica_cloudruntime_request_* 直方图。
 		if client, ok := h.CloudRuntime.(*cloudruntime.Client); ok {
 			client.SetRecorder(opts.BusinessMetrics)
 		}
@@ -504,33 +500,26 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.InvitationRateLimiters = handler.NewRedisInvitationRateLimiters(rdb, invitationRateLimits)
 	}
 
-	// Channel engine (MUL-3620): the platform-agnostic inbound runtime.
-	// Built UNCONDITIONALLY — it drives any channel.Channel, not just
-	// Feishu, so it must not depend on the Lark master key (a future
-	// Slack-only deployment has no Lark key). Platform adapters register a
-	// Factory + ResolverSet into it below; the Supervisor enumerates active
-	// installations across ALL channel types and routes each to its
-	// registered platform's Factory. Installations whose channel_type has no
-	// registered Factory are skipped by the Supervisor — either no platform is
-	// configured, or (Slack/B2) the platform drives ONE deployment-level
-	// connection of its own outside the per-installation supervisor. The Router
-	// is the single shared inbound handler injected into every Channel.
+	// 渠道引擎（MUL-3620）：平台无关的入站运行时。无条件构建——它驱动任何
+	// channel.Channel，不只是飞书，所以不能依赖 Lark 的 master key（未来只接 Slack 的
+	// 部署没有 Lark key）。平台适配器把自己的 Factory + ResolverSet 注册进来；Supervisor
+	// 枚举所有渠道类型的活跃安装，把每个路由到其注册平台的 Factory。channel_type 没有
+	// 注册 Factory 的安装会被 Supervisor 跳过——要么没配平台，要么（Slack/B2）该平台在
+	// 逐安装 supervisor 之外自己驱动一条部署级连接。Router 是注入每个 Channel 的单一
+	// 共享入站处理函数。
 	channelRegistry := channel.NewRegistry()
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{
 		Logger: slog.Default(), Lifecycle: h,
 	})
-	// Debounce the per-session run trigger so a burst of messages collapses
-	// into one agent run instead of one per message (MUL-2968).
+	// 对每次会话的 run 触发做防抖：一梭子消息塌缩成一次 agent run，而不是每条消息
+	// 一次（MUL-2968）。
 	channelRouter.EnableRunBatching(engine.DefaultChatRunBatchWindow)
 	h.ChannelRouter = channelRouter
-	// Media intent-ledger reconciler: settles uploaded-but-unbound objects.
-	// Built ONLY when a storage backend exists — store is nil when S3 is not
-	// configured and the local upload dir failed to initialize, and a
-	// reconciler with nil Storage would panic the worker goroutine on the
-	// first unreferenced row (ledger rows can pre-exist from a boot where
-	// storage WAS configured). Without storage the resolver skips every
-	// upload, so no new rows appear and the ledger simply waits for a boot
-	// with working storage. Started from main.go as its own worker.
+	// 媒体 intent 台账对账器：处理「已上传但未绑定」的对象。只有存在存储后端时才
+	// 构建——store 在未配 S3 且本地上传目录初始化失败时是 nil；对账器拿到 nil
+	// Storage 会在处理第一条未引用记录时打爆 worker goroutine（台账行可能来自某次
+	// 配置了存储的启动，早已存在）。没有存储时 resolver 会跳过每次上传，不会产生新行，
+	// 台账只是在等待一次带可用存储的启动。作为独立 worker 由 main.go 启动。
 	if store != nil {
 		h.ChannelMediaReconciler = &service.ChannelMediaReconciler{
 			Queries: queries,
@@ -547,14 +536,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		opts,
 	)
 
-	// Lark integration. Only wired when MULTICA_LARK_SECRET_KEY is set:
-	// the InstallationService refuses to fall back to plaintext storage
-	// for app_secret, and the BindingTokenService cannot mint usable
-	// tokens without it either. When the key is absent the Lark
-	// handlers return 503 with a clear message; the rest of the server
-	// continues to start so self-host deployments that have not opted
-	// in to Lark are unaffected. Feishu registers its Factory + ResolverSet
-	// into the channel engine above.
+	// Lark 集成。仅在设置 MULTICA_LARK_SECRET_KEY 时接线：InstallationService 拒绝
+	// 把 app_secret 退回明文存储，BindingTokenService 没有它也铸不出可用令牌。key 缺失
+	// 时 Lark 各 handler 返回 503 并带清晰报错，server 其余部分照常启动，让未选择接入
+	// Lark 的自托管部署不受影响。飞书把自己的 Factory + ResolverSet 注册进上面的渠道引擎。
 	if larkKey, err := secretbox.LoadKey("MULTICA_LARK_SECRET_KEY"); err == nil {
 		box, err := secretbox.New(larkKey)
 		if err != nil {
@@ -568,53 +553,41 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				h.LarkBindingTokens = lark.NewBindingTokenService(queries, pool)
 				slog.Info("lark integration enabled")
 
-				// APIClient: wire the real Lark Open Platform HTTP client
-				// (IM v1 send/patch + binding-prompt + bot info). Setting
-				// MULTICA_LARK_SECRET_KEY is the operator's opt-in for
-				// the integration as a whole; we don't expose a separate
-				// "HTTP enabled" knob because the inbound dispatcher
-				// without outbound replies is not a useful production
-				// state, and CI / integration tests that want to avoid
-				// real Lark traffic can point MULTICA_LARK_HTTP_BASE_URL
-				// at a mock server.
+				// APIClient：接上真实的 Lark 开放平台 HTTP 客户端（IM v1 发送/编辑 +
+				// 绑定提示 + bot 信息）。设置 MULTICA_LARK_SECRET_KEY 即操作者对整条
+				// 集成的 opt-in；不再提供单独的「是否启用 HTTP」旋钮——没有出站回应的
+				// 入站分发器不是有用的生产形态；而想要避开真实 Lark 流量的 CI / 集成
+				// 测试可以把 MULTICA_LARK_HTTP_BASE_URL 指向一个 mock 服务器。
 				//
-				// MULTICA_LARK_HTTP_BASE_URL is an OPTIONAL deployment-wide
-				// override. Normal operation leaves it empty: each call then
-				// resolves its open-platform host from the installation's
-				// region (open.feishu.cn vs open.larksuite.com), so one
-				// deployment serves both clouds. Set it only to force every
-				// installation onto one host — a proxy, a mock for tests, or
-				// a single-cloud staging setup.
+				// MULTICA_LARK_HTTP_BASE_URL 是可选的部署级覆盖。正常运行留空：每次
+				// 调用都按安装的地区解析开放平台主机（open.feishu.cn vs
+				// open.larksuite.com），一个部署同时服务两个云。只有当想强制所有安装
+				// 走同一主机时才设置——代理、测试 mock、或单云 staging。
 				larkClient := lark.NewHTTPAPIClient(lark.HTTPClientConfig{
 					BaseURL: strings.TrimSpace(os.Getenv("MULTICA_LARK_HTTP_BASE_URL")),
 					Logger:  slog.Default(),
 				})
 				h.LarkAPIClient = larkClient
 
-				// Channel-backed store: routes the lark package's DB seams
-				// onto the channel_* tables (MUL-3515). Interface-wired
-				// consumers (patcher, typing indicator, dispatcher, hub,
-				// backfills) take it directly; the constructor-based services
-				// wrap *db.Queries internally, so they keep taking queries.
+				// Channel-backed 存储：把 lark 包的 DB 接缝路由到 channel_* 表
+				// （MUL-3515）。走接口的消费者（patcher、typing indicator、dispatcher、
+				// hub、backfills）直接用它；基于构造函数的服务在内部包装 *db.Queries，
+				// 所以它们继续接收 queries。
 				cs := lark.NewChannelStore(queries)
 				patcher := lark.NewPatcher(cs, installSvc, larkClient, lark.PatcherConfig{})
 				patcher.Register(bus)
 
-				// Typing indicator: shows a "processing" reaction on the user's
-				// message while the agent is working, then removes it before the
-				// reply is sent. Best-effort; failures are logged only.
+				// 打字指示：agent 干活时在用户消息上显示「处理中」reaction，回复发出前
+				// 移除。尽力而为；失败只记日志。
 				typingIndicator := lark.NewTypingIndicatorManager(larkClient, installSvc, cs, slog.Default())
 				patcher.SetTypingIndicatorManager(typingIndicator)
 
-				// Inbound pipeline seams: lark_inbound_audit logger and the
-				// shared channel-agnostic chat-session service. They back the
-				// Feishu ResolverSet that the engine.Router runs through,
-				// sharing the same IssueService + TaskService that back HTTP, so
-				// /issue-created issues share counter, dup guard, project
-				// boundary, broadcast, analytics and agent-enqueue with the rest
-				// of the product. Feishu is just another consumer of the shared
-				// engine.ChatSession (channel_type-keyed); the Lark session
-				// titles preserve the pre-cutover wording.
+				// 入站管线接缝：lark_inbound_audit 日志器与共享的、渠道无关的聊天会话
+				// 服务。它们支撑 engine.Router 所跑的飞书 ResolverSet，与支撑 HTTP 的
+				// 是同一个 IssueService + TaskService，因此 /issue-created 的 issue 在
+				// 计数、去重守卫、项目边界、广播、分析与 agent 入队上和产品其余部分
+				// 完全一致。飞书只是共享 engine.ChatSession（按 channel_type 分键）的
+				// 又一个消费者；Lark 会话标题保留了切换前的措辞。
 				auditLogger := lark.NewAuditLogger(queries)
 				feishuSession := engine.NewChatSession(queries, pool, channel.TypeFeishu, engine.SessionTitles{
 					Group:    "Lark group chat",
@@ -622,13 +595,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					Fallback: "Lark chat",
 				})
 
-				// OutcomeReplier wires the outbound side: NeedsBinding /
-				// AgentOffline / AgentArchived / issue-created translate to a
-				// Lark-side reply card. Requires the real APIClient and the
-				// binding token service; otherwise it falls back to the noop
-				// replier (outcomes logged, not delivered). We only register
-				// it on the ResolverSet when it can actually deliver, so a
-				// pre-outbound deployment pays no reply-goroutine cost.
+				// OutcomeReplier 接出站侧：NeedsBinding / AgentOffline /
+				// AgentArchived / issue-created 转成 Lark 侧的回复卡片。需要真实的
+				// APIClient 与绑定令牌服务；否则退回 noop replier（结果只记日志、不投递）。
+				// 只有当它真能投递时才把它注册到 ResolverSet 上，让「还没上线出站」的
+				// 部署不必付出回复 goroutine 的代价。
 				replier := lark.NewLarkOutcomeReplier(lark.OutcomeReplierConfig{
 					APIClient:   larkClient,
 					BindingSvc:  h.LarkBindingTokens,
@@ -642,21 +613,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					resolverReplier = replier
 				}
 
-				// Feishu adapter (MUL-3620): the WSLongConnConnector talks
-				// Lark's long-conn protocol over gorilla/websocket and wraps
-				// every read with a ctx-cancel watchdog so lease loss /
-				// shutdown breaks the blocking ReadMessage in bounded time —
-				// the invariant §4.4 leans on. If the endpoint fetcher fails
-				// to initialize (bad MULTICA_LARK_CALLBACK_BASE_URL or
-				// similar), buildLarkConnector logs and falls back to the
-				// NoopConnector so the lease / supervisor lifecycle still runs
-				// against real DB rows — inbound messages are silently dropped
-				// until the config is fixed, with the boot log labelling the
-				// mode "noop".
+				// 飞书适配器（MUL-3620）：WSLongConnConnector 用 gorilla/websocket 说
+				// Lark 长连接协议，并且每次读取都带一个 ctx-cancel 看门狗，使租约丢失/
+				// 关停能在有界时间内打断阻塞的 ReadMessage——§4.4 依赖的不变式。若端点
+				// 抓取器初始化失败（MULTICA_LARK_CALLBACK_BASE_URL 配错之类），
+				// buildLarkConnector 记日志并回退到 NoopConnector，让租约/supervisor
+				// 生命周期仍对着真实 DB 行运行——入站消息静默丢弃直到配置修好，启动日志
+				// 会标明当前模式为 "noop"。
 				//
-				// Registering the Factory (connect/send) + ResolverSet
-				// (inbound pipeline seams) is all it takes to add the platform
-				// to the engine — no engine edit.
+				// 注册 Factory（connect/send）+ ResolverSet（入站管线接缝）就足以把平台
+				// 加进引擎——不需要改引擎本身。
 				connector, connectorLabel := buildLarkConnector(installSvc, larkClient)
 				lark.RegisterFeishu(channelRegistry, lark.FeishuChannelDeps{
 					Connector:   connector,
@@ -670,35 +636,26 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				))
 				slog.Info("lark inbound pipeline wired", "connector", connectorLabel)
 
-				// One-shot union_id backfill for installations created
-				// before migration 112 added bot_union_id. Runs off the
-				// hot startup path so a slow Lark round-trip cannot block
-				// HTTP listener boot. New installs already write
-				// bot_union_id during the device-flow finalize, so this
-				// is bridge code — it will simply find no rows to update
-				// on a fresh deployment and exit. MUL-2671.
+				// 为迁移 112 加入 bot_union_id 之前创建的安装做一次性 union_id 回填。
+				// 跑在热启动路径之外，慢速的 Lark 往返不会阻塞 HTTP 监听器启动。新安装
+				// 在 device-flow 收尾时已写入 bot_union_id，所以这是座桥——在新部署上
+				// 找不到要更新的行就退出。MUL-2671。
 				go lark.BackfillBotUnionIDs(context.Background(), cs, larkClient, installSvc, slog.Default())
 
-				// Upgrade repair for deployments that ran the whole
-				// integration against Lark international via the deployment-
-				// wide base-URL override before per-installation region
-				// existed: migration 116 backfilled their rows to 'feishu',
-				// so relabel them to 'lark' (their true cloud) before the
-				// operator clears the override. No-op on mainland / fresh
-				// deployments. Off the hot startup path like the union_id
-				// backfill. MUL-3083.
+				// 升级修复：为那些在「逐安装地区」机制出现前，一直用部署级 base-URL
+				// 覆盖跑在国际版 Lark 上的部署准备的——迁移 116 把它们的行回填成
+				// 'feishu'，在操作者清掉覆盖前，把它们改标为 'lark'（真实云）。大陆/全新
+				// 部署上无操作。与 union_id 回填一样跑在热启动路径之外。MUL-3083。
 				go lark.BackfillRegionFromLegacyOverride(context.Background(), cs,
 					strings.TrimSpace(os.Getenv("MULTICA_LARK_HTTP_BASE_URL")),
 					strings.TrimSpace(os.Getenv("MULTICA_LARK_CALLBACK_BASE_URL")),
 					slog.Default())
 
-				// Device-flow registration service: end-to-end install
-				// pipeline that talks to accounts.feishu.cn (RFC 8628)
-				// for the QR-scan handshake and then commits the
-				// resulting Bot credentials + the installer's
-				// lark_user_binding in one DB transaction. The optional
-				// MULTICA_LARK_REGISTRATION_DOMAIN / _LARK_DOMAIN env
-				// vars override the protocol hosts for staging / dev.
+				// Device-flow 注册服务：端到端安装管线，向 accounts.feishu.cn 走
+				// RFC 8628（扫码握手），随后把得到的 Bot 凭据与安装者的
+				// lark_user_binding 放在一个 DB 事务里提交。可选环境变量
+				// MULTICA_LARK_REGISTRATION_DOMAIN / _LARK_DOMAIN 为 staging/dev
+				// 覆盖协议主机。
 				regCfg := lark.RegistrationConfig{
 					Domain:     strings.TrimSpace(os.Getenv("MULTICA_LARK_REGISTRATION_DOMAIN")),
 					LarkDomain: strings.TrimSpace(os.Getenv("MULTICA_LARK_REGISTRATION_LARK_DOMAIN")),
@@ -716,9 +673,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				if rerr != nil {
 					slog.Error("lark: RegistrationService init failed; install disabled", "error", rerr)
 				} else {
-					// Publish lark_installation:created at row-commit time so the
-					// connection badge refreshes on every workspace client, not just
-					// the tab that polls the install status to success.
+					// 在行提交时发布 lark_installation:created，让每个工作区客户端的
+					// 连接徽章都能刷新，而不只是轮询安装状态到成功的那一个标签页。
 					regSvc.SetEventBus(bus)
 					h.LarkRegistration = regSvc
 					slog.Info("lark device-flow install enabled")
@@ -729,62 +685,51 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("lark integration disabled (MULTICA_LARK_SECRET_KEY not set)")
 	}
 
-	// Slack integration. Multi-tenant B2 model (MUL-3666): Multica hosts ONE
-	// Slack app, workspaces self-install via OAuth, and inbound runs on a single
-	// deployment-level Socket Mode connection routed by team_id — replacing the
-	// stage-3 per-installation connection model (MUL-3516).
+	// Slack 集成。多租户 B2 模式（MUL-3666）：Multica 托管唯一一个 Slack app，工作区
+	// 经 OAuth 自助安装，入站跑在单条部署级 Socket Mode 连接上、按 team_id 路由——
+	// 取代第三阶段的逐安装连接模型（MUL-3516）。
 	//
-	// Two deployment-level env vars gate the two halves:
-	//   - MULTICA_SLACK_SECRET_KEY decrypts the per-installation bot token
-	//     (xoxb-) stored on the channel_installation row. It gates the inbound
-	//     ResolverSet + the outbound reply subscriber, so without it there is no
-	//     Slack at all.
-	//   - MULTICA_SLACK_APP_TOKEN is the app-level token (xapp-) authorizing the
-	//     single Socket Mode connection. It cannot be obtained via OAuth, so it
-	//     is a one-time operator config. Without it, inbound is disabled (the
-	//     ResolverSet + outbound are still wired so an existing install's replies
-	//     keep flowing, but no new events are received).
+	// 两个部署级环境变量分别把守两半：
+	//   - MULTICA_SLACK_SECRET_KEY 解密存在 channel_installation 行上的逐安装 bot
+	//     token（xoxb-）。它把守入站 ResolverSet + 出站回复订阅者，没有它 Slack
+	//     就完全不存在。
+	//   - MULTICA_SLACK_APP_TOKEN 是授权那单条 Socket Mode 连接的 app 级 token
+	//     （xapp-）。它拿不到 OAuth，属于一次性运维配置。没有它入站被禁用
+	//     （ResolverSet + 出站仍接好，既有安装的回复继续流动，但不再接收新事件）。
 	//
-	// The ResolverSet/Outbound share the same engine.ChatSession, channel_*
-	// tables, IssueService and TaskService as Feishu, so /issue, dedup, and
-	// run-triggering behave identically. Feishu is untouched. Each Slack
-	// installation is a bring-your-own-app (BYO) install carrying its OWN
-	// app-level token, so a per-installation Slack Factory is registered and the
-	// Supervisor drives one Socket Mode connection per installation (like Feishu).
+	// ResolverSet/Outbound 与飞书共享同一个 engine.ChatSession、channel_* 表、
+	// IssueService 与 TaskService，所以 /issue、去重与 run 触发行为一致。飞书不受影响。
+	// 每个 Slack 安装都是自带 app（BYO），自带 app 级 token，因此注册逐安装的 Slack
+	// Factory，Supervisor 为每个安装驱动一条 Socket Mode 连接（与飞书相同）。
 	if slackKey, err := secretbox.LoadKey("MULTICA_SLACK_SECRET_KEY"); err == nil {
 		box, err := secretbox.New(slackKey)
 		if err != nil {
 			slog.Error("slack: secretbox.New failed; slack integration disabled", "error", err)
 		} else {
-			// Outbound replier (MUL-3666): delivers NeedsBinding prompt /
-			// AgentOffline / AgentArchived / issue-created notices. The binding
-			// token service mints the single-use token embedded in the prompt's
-			// redeem link; the redeem endpoint (registered below, public) binds
-			// the Slack user to their Multica account.
+			// 出站回复器（MUL-3666）：投递 NeedsBinding 提示 / AgentOffline /
+			// AgentArchived / issue-created 通知。绑定令牌服务铸出提示内赎回链接里
+			// 的一次性令牌；赎回端点（下面注册的公开路由）把 Slack 用户绑定到其
+			// Multica 账号。
 			slackBindingSvc := slack.NewBindingTokenService(queries, pool)
 			h.SlackBindingTokens = slackBindingSvc
 			slackReplier := slack.NewOutboundReplier(slack.OutboundReplierConfig{
 				Binding: slackBindingSvc,
 				Decrypt: box.Open,
-				// The bind link (/slack/bind) is a web-app page, so it must use the
-				// app URL (MULTICA_APP_URL ?? FRONTEND_ORIGIN), NOT MULTICA_PUBLIC_URL
-				// (the backend/API URL). Mirrors the Lark replier (appURLFromEnv).
+				// 绑定链接（/slack/bind）是 web 应用页面，所以必须用应用 URL
+				// （MULTICA_APP_URL ?? FRONTEND_ORIGIN），而不是 MULTICA_PUBLIC_URL
+				// （后端/API URL）。与 Lark 回复器一致（appURLFromEnv）。
 				AppURL:  appURLFromEnv(),
 				Queries: queries,
 				Logger:  slog.Default(),
 			})
-			// Typing indicator (MUL-3874): a 👀 reaction on the user's message
-			// while the agent works, cleared when the run finishes or fails.
-			// Best-effort; failures are logged only. Registered before the
-			// outbound reply subscriber so, on EventChatDone, the reaction clears
-			// ahead of the reply (bus delivery is synchronous, in subscription
-			// order). Subscribing here is also the only path that clears the
-			// reaction on a failed run, which the outbound replier does not handle.
+			// 打字指示（MUL-3874）：agent 干活时在用户消息上放 👀 reaction，run 完成或
+			// 失败时清除。尽力而为；失败只记日志。注册在出站回复订阅者之前，这样
+			// EventChatDone 时 reaction 先于回复清除（bus 投递是同步的、按订阅顺序）。
+			// 在这里订阅也是清除失败 run reaction 的唯一路径——出站回复器不处理它。
 			slackTyping := slack.NewTypingIndicatorManager(queries, box.Open, slog.Default())
 			slackTyping.Register(bus)
-			// Slack attachments require object storage because each chat
-			// attachment points to an uploaded object. When storage is disabled,
-			// leave the media resolver unset and ingest Slack messages as text.
+			// Slack 附件需要对象存储，因为每条聊天附件都指向一个已上传对象。存储被
+			// 禁用时让媒体 resolver 保持未设置，把 Slack 消息当纯文本摄入。
 			var slackMedia engine.MediaResolver
 			if store != nil {
 				slackMedia = slack.NewMediaResolver(
@@ -797,15 +742,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			channelRouter.Register(slack.TypeSlack, slack.NewSlackResolverSet(queries, pool, slackReplier, slackTyping, slackMedia))
 			slack.NewOutbound(queries, box.Open, slog.Default()).Register(bus)
 
-			// On-demand history reader behind the unified `multica chat history`
-			// command (MUL-3871): pull the session's Slack conversation when the
-			// agent asks, instead of force-assembling it on every inbound.
+			// 按需历史读取器，服务统一的 `multica chat history` 命令（MUL-3871）：
+			// agent 要求时才拉取该会话的 Slack 对话，而不是每次入站都强制拼装。
 			h.SlackHistory = slack.NewHistory(queries, box.Open, slog.Default())
 
-			// `/issue`, `/new`, and `/clear` are real Slack slash commands delivered
-			// over the same Socket Mode connection. `/issue` enqueues quick-create;
-			// the two session controls reuse the shared route/context and task
-			// services. Every outcome receives a private ephemeral acknowledgement.
+			// `/issue`、`/new`、`/clear` 是真实的 Slack 斜杠命令，走同一条 Socket Mode
+			// 连接投递。`/issue` 入队 quick-create；两个会话控制复用共享的 route/context
+			// 与任务服务。每个结果都收到一条私有的 ephemeral 确认。
 			slackSlash := slack.NewSlashCommandProcessor(slack.SlashCommandConfig{
 				Queries: queries,
 				Tasks:   h.TaskService,
@@ -815,15 +758,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				Logger:  slog.Default(),
 			})
 
-			// Per-installation inbound: the Supervisor builds + supervises one
-			// Socket Mode connection per active Slack installation, authenticated
-			// with that installation's OWN app-level token (xapp-, pasted at BYO
-			// install) — no deployment-level app token, no single connection.
+			// 逐安装入站：Supervisor 为每条活跃 Slack 安装构建并照看一条 Socket Mode
+			// 连接，用该安装自己的 app 级 token（xapp-，BYO 安装时粘贴）鉴权——
+			// 没有部署级 app token，也没有单条连接。
 			slack.RegisterSlack(channelRegistry, slack.ChannelDeps{Decrypt: box.Open, Logger: slog.Default(), Slash: slackSlash})
 
-			// BYO self-serve install (paste bot token + app-level token). The
-			// InstallService needs only the at-rest encryption key — there is no
-			// hosted OAuth client credential.
+			// BYO 自助安装（粘贴 bot token + app 级 token）。InstallService 只需要
+			// 静态加密密钥——没有托管式 OAuth 客户端凭据。
 			installSvc, ierr := slack.NewInstallService(queries, pool, box, slog.Default())
 			if ierr != nil {
 				slog.Error("slack: InstallService init failed; install disabled", "error", ierr)
@@ -836,9 +777,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("slack integration disabled (MULTICA_SLACK_SECRET_KEY not set)")
 	}
 
-	// DingTalk uses one outbound Stream connection per BYO installation. The
-	// AppSecret is encrypted at rest and the integration is inert unless its
-	// dedicated deployment key is configured.
+	// DingTalk 每个 BYO 安装用一条出站 Stream 连接。AppSecret 静态加密，只有配置了
+	// 专属部署 key 时集成才起作用。
 	if dingtalkKey, err := secretbox.LoadKey("MULTICA_DINGTALK_SECRET_KEY"); err == nil {
 		box, err := secretbox.New(dingtalkKey)
 		if err != nil {
@@ -886,16 +826,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("dingtalk integration disabled (MULTICA_DINGTALK_SECRET_KEY not set)")
 	}
 
-	// WeCom smart-bot integration ("智能机器人" / aibot). Per-installation
-	// WebSocket long connection to wss://openws.work.weixin.qq.com; the
-	// Supervisor drives one connection per active wecom installation, gated
-	// by the shared ws_lease_token so multi-replica deployments still hold
-	// at most one active socket per bot (WeCom itself only permits one).
+	// WeCom 智能机器人集成（aibot）。逐安装的 WebSocket 长连接连到
+	// wss://openws.work.weixin.qq.com；Supervisor 为每条活跃 wecom 安装驱动一条连接，
+	// 用共享的 ws_lease_token 把关，保证多副本部署里每个 bot 至多一条活跃 socket
+	// （WeCom 本身只允许一条）。
 	//
-	// Gated by MULTICA_WECOM_SECRET_KEY. Without it, the whole block is
-	// skipped and the wecom Web-UI endpoints return 503; existing deployments
-	// are unaffected. The smart-bot flow does NOT require any public HTTP
-	// callback, so nothing else needs to be exposed to the internet.
+	// 由 MULTICA_WECOM_SECRET_KEY 把关。没设时整块跳过，wecom Web-UI 端点返回 503，
+	// 既有部署不受影响。智能机器人流程不需要任何公开 HTTP 回调，所以无需向公网暴露
+	// 其他东西。
 	if wecomKey, err := secretbox.LoadKey("MULTICA_WECOM_SECRET_KEY"); err == nil {
 		box, err := secretbox.New(wecomKey)
 		if err != nil {
@@ -909,21 +847,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				h.WecomStore = wecomStore
 				h.WecomCredentials = credsResolver
 
-				// Binding tokens back the per-user "link your Multica account"
-				// prompt sent to first-time WeCom senders. aibot userids are
-				// anonymized T-prefixed ids with no relation to real userids
-				// or emails, so an explicit binding table is the only correct
-				// answer — see wecom/binding.go for the rationale.
+				// 绑定令牌支撑发给首次发消息的 WeCom 用户的「关联你的 Multica 账号」
+				// 提示。aibot 的 userid 是匿名化的 T 前缀 id，与真实 userid 或邮箱毫无
+				// 关系，因此一张显式的绑定表才是唯一正确答案——理由见 wecom/binding.go。
 				wecomBinding := wecom.NewBindingTokenService(queries, pool)
 				h.WecomBindingTokens = wecomBinding
 
-				// Senders registry: the wecom OutboundReplier is created here
-				// at boot, but the live wsSender it needs to push
-				// aibot_send_msg only exists inside a running wecomChannel.
-				// wecom.NewSendersRegistry mints a shared map; the
-				// ChannelDeps write side and the Replier read side both
-				// receive it, and each Channel.Connect self-registers on
-				// entry and clears on exit.
+				// Senders 注册表：wecom OutboundReplier 在这里于启动时创建，但它推送
+				// aibot_send_msg 所需的、活的 wsSender 只存在于运行中的 wecomChannel 里。
+				// wecom.NewSendersRegistry 铸一张共享 map；ChannelDeps 的写侧与
+				// Replier 的读侧都拿到它，每个 Channel.Connect 进入时自注册、退出时清理。
 				wecomSenders := opts.WecomSenders
 				if wecomSenders == nil {
 					wecomSenders = wecom.NewSendersRegistry()
@@ -936,10 +869,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					Logger:  slog.Default(),
 				})
 
-				// Wecom shares the engine.ChatSession (channel_type-keyed) so
-				// /issue, dedup, and run-triggering behave identically across
-				// platforms. Session titles use the wecom-flavored wording
-				// (Chinese product voice — wecom deployments are China-only).
+				// WeCom 共享 engine.ChatSession（按 channel_type 分键），使 /issue、
+				// 去重与 run 触发跨平台行为一致。会话标题用 wecom 风味措辞（中文产品
+				// 口吻——wecom 部署仅限中国区）。
 				wecomSession := engine.NewChatSession(queries, pool, wecom.TypeWecom, engine.SessionTitles{
 					Group:    "企业微信群聊",
 					Direct:   "企业微信单聊",
@@ -952,12 +884,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					Metrics:     wecomMetricsOrNil(opts.WecomMetrics),
 					Logger:      slog.Default(),
 				})
-				// Inbound media: a callback carries a pre-signed COS url and
-				// a per-url key, so the resolver needs no WeCom credential —
-				// only somewhere durable to put the bytes. Without an object
-				// store there is nothing to point an attachment at, so the
-				// resolver is left nil and attachments stay as their
-				// placeholder text. Same nil-guard as DingTalk above.
+				// 入站媒体：回调带着一条预签名的 COS URL 和每 URL 一个的 key，所以
+				// resolver 不需要任何 WeCom 凭据——只需要一处能放字节的持久存储。没有
+				// 对象存储就没有可指向的附件，resolver 保持 nil，附件保留为占位文本。
+				// 与上面 DingTalk 的 nil 守卫相同。
 				var wecomMedia engine.MediaResolver
 				if store != nil {
 					wecomMedia = wecom.NewMediaResolver(
@@ -971,41 +901,31 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					wecomStore, wecomSession, wecomReplier, wecomMedia,
 				))
 
-				// EventChatDone subscriber: pushes the agent's chat reply
-				// back over the same aibot WebSocket the inbound loop owns.
-				// Mirrors slack.NewOutbound(...).Register(bus). Without it
-				// the agent's reply lands only in Multica's web UI — the
-				// user in WeCom sees no response.
+				// EventChatDone 订阅者：把 agent 的聊天回复经入站循环同一条 aibot
+				// WebSocket 推回去。与 slack.NewOutbound(...).Register(bus) 对位。
+				// 没有它，agent 的回复只会落进 Multica 的 web UI——WeCom 里的用户
+				// 看不到任何响应。
 				//
-				// WithAttachments adds the second hop: the files the agent
-				// bound to that reply are read back out of object storage and
-				// sent into the chat behind it. Passed only when this
-				// deployment configured storage — with none there is nothing
-				// to read an attachment out of, and the option is what the
-				// delivery path checks for.
+				// WithAttachments 追加第二跳：agent 绑定到该回复的文件从对象存储读回，
+				// 跟着消息发进聊天。仅当该部署配了存储时才传——没有存储就无物可读，
+				// 而这个选项正是投递路径检查的条件。
 				//
-				// DeclareChannelFileDelivery is the same condition said to the
-				// agent: a run only gets told it can send a file where this
-				// branch actually built the hop that sends it. The two lines
-				// sit together on purpose — a deployment that has the storage
-				// and a deployment whose agents are promised delivery must be
-				// the same deployment, and the only way to keep that true is
-				// for one `if` to decide both.
+				// DeclareChannelFileDelivery 是把同一条件说给 agent：只有当这个分支
+				// 真的搭起了发送文件那一跳时，一次 run 才会被告知可以发文件。两行故意
+				// 放在一起——「有存储的部署」与「agent 被承诺可投递文件的部署」必须是
+				// 同一个部署，唯一能保证这一点的方式就是一个 `if` 同时决定两者。
 				wecomOutboundOpts := []wecom.OutboundOption{}
 				if store != nil {
 					wecomOutboundOpts = append(wecomOutboundOpts, wecom.WithAttachments(store))
 					h.DeclareChannelFileDelivery(string(wecom.TypeWecom))
 				}
-				// The outbound subscriber reports to the same sink the
-				// connection path uses, so an operator reads "replies are
-				// being dropped, and for which reason" off the same dashboard
-				// as "the bot cannot connect".
+				// 出站订阅者把数据报给与连接路径相同的接收器，操作者就能在同一块仪表盘
+				// 上既看到「bot 连不上」，也看到「回复在被丢弃、以及为什么」。
 				wecomOutboundOpts = append(wecomOutboundOpts,
 					wecom.WithOutboundMetrics(wecomMetricsOrNil(opts.WecomMetrics)))
-				// Cross-replica routing. Built here rather than in main
-				// because the senders registry it guards is created here, and
-				// registered back onto the relay so every node's read loop
-				// reaches it. See wecom/relay_outbound.go.
+				// 跨副本路由。在这里而非 main 构建，因为它守护的 senders 注册表在这里
+				// 创建，且要注册回 relay，让每个节点的读循环都能到达它。见
+				// wecom/relay_outbound.go。
 				if opts.WecomRelayOutbound != nil {
 					opts.WecomRelayOutbound.SetMetrics(wecomMetricsOrNil(opts.WecomMetrics))
 					wecomOutboundOpts = append(wecomOutboundOpts, wecom.WithRelay(opts.WecomRelayOutbound))
@@ -1013,20 +933,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				}
 				wecomOutbound := wecom.NewOutbound(queries, wecomSenders, slog.Default(), wecomOutboundOpts...)
 				wecomOutbound.Register(bus)
-				// The dispatcher has been consuming since before this router
-				// existed; this is where it learns who performs a delivery.
-				// Anything it read in the meantime is waiting in its queue.
+				// dispatcher 在本路由存在之前就已在消费；这里才让它知道由谁执行投递。
+				// 它此前读到的一切都在自己的队列里等着。
 				if opts.WecomRelayOutbound != nil {
 					opts.WecomRelayOutbound.Attach(wecomOutbound)
 				}
 
-				// Ranges the media fetcher may dial despite looking reserved.
-				// Empty by default, which leaves the SSRF guard exactly as
-				// strict as it ships. A deployment behind a fake-IP proxy
-				// needs it: there, every public hostname resolves into the
-				// proxy's pool (198.18.0.0/15 is the common one), so WeCom's
-				// own COS host is indistinguishable from a metadata endpoint
-				// by address alone and every attachment is refused.
+				// 媒体抓取器尽管看似保留地址仍允许拨号的范围。默认空，SSRF 守卫维持
+				// 出厂时同样的严格度。在 fake-IP 代理后面的部署需要它：那里每个公网
+				// 主机名都会解析进代理的地址池（198.18.0.0/15 最常见），WeCom 自己的
+				// COS 主机因此单看地址无法与元数据端点区分，所有附件都会被拒。
 				if raw := strings.TrimSpace(os.Getenv("MULTICA_WECOM_MEDIA_ALLOW_CIDRS")); raw != "" {
 					for _, err := range wecom.SetMediaAllowedPrefixes(strings.Split(raw, ",")) {
 						slog.Error("wecom: ignoring malformed media allow cidr", "error", err)
@@ -1035,27 +951,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						"cidrs", raw)
 				}
 
-				// Frame tracing: off unless an operator asks for it. It
-				// records a bounded prefix of message text, so the fact that
-				// it is on has to be visible in the log it is writing into —
-				// otherwise a session gets left switched on and nobody
-				// notices message content accumulating.
+				// 帧追踪：默认关闭，除非操作者要求。它记录消息文本的有界前缀，因此
+				// 「它是否开启」必须显现在它正在写入的日志里——否则某个会话会被留成
+				// 开启而无人察觉消息内容在累积。
 				if wecom.SetTrace(os.Getenv("MULTICA_WECOM_TRACE") == "1") {
 					slog.Warn("wecom: frame tracing ON — records message text; unset MULTICA_WECOM_TRACE when done")
 				}
 
 				slog.Info("wecom integration enabled (smart bot, long connection)")
-				// SINGLE-REPLICA CONSTRAINT: WeCom outbound (agent replies +
-				// inbox pushes) is delivered only by the replica holding each
-				// bot's in-process WebSocket lease. On a multi-replica
-				// deployment, an EventChatDone/EventInboxNew published on another
-				// replica cannot reach the lease holder, so those replies are
-				// dropped. This is stated conditionally rather than gated on a
-				// replica-count signal: the server has no reliable count here,
-				// and REDIS_URL means "Redis configured" (it also gates rate
-				// limiting), not "more than one replica". See wecom/outbound.go
-				// and SELF_HOSTING.md. Remove once outbound routes to the lease
-				// holder.
+				// 单副本约束：WeCom 出站（agent 回复 + inbox 推送）只由持有每个 bot
+				// 进程内 WebSocket 租约的那条副本投递。多副本部署中，在另一条副本上
+				// 发布的 EventChatDone/EventInboxNew 到不了租约持有者，这些回复会被
+				// 丢弃。这里用条件叙述而非依赖副本计数信号：server 在此处没有可靠的
+				// 副本数，而 REDIS_URL 表示「配了 Redis」（它也把关限流），不等于
+				// 「不止一条副本」。见 wecom/outbound.go 与 SELF_HOSTING.md。待出站
+				// 能路由到租约持有者后移除。
 				if opts.WecomRelayOutbound != nil {
 					slog.Info("wecom integration: cross-replica outbound routing enabled — agent replies and inbox pushes produced on a replica that does not hold the bot's WebSocket lease are forwarded to the lease holder over the realtime relay. A reply produced while NO replica holds a live connection (every one mid-reconnect) is still lost; see wecom/relay_outbound.go.")
 				} else {
@@ -1067,13 +977,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("wecom integration disabled (MULTICA_WECOM_SECRET_KEY not set)")
 	}
 
-	// Telegram integration. Same shape as Slack: BYO bot token pasted at
-	// install, one getUpdates long-polling loop per active installation
-	// supervised by the shared engine.Supervisor, resolvers on the generic
-	// channel_* tables, outbound streaming via throttled editMessageText on
-	// the event bus. Gated by MULTICA_TELEGRAM_SECRET_KEY (the at-rest token
-	// encryption key); when unset the handlers return 503 and no Factory is
-	// registered.
+	// Telegram 集成。形态与 Slack 相同：BYO bot token 粘贴安装，每条活跃安装由共享的
+	// engine.Supervisor 照看一条 getUpdates 长轮询循环，resolver 落在通用 channel_* 表上，
+	// 出站经事件总线上节流的 editMessageText 流式发送。由 MULTICA_TELEGRAM_SECRET_KEY
+	// （静态 token 加密 key）把关；未设置时 handler 返回 503 且不注册任何 Factory。
 	if telegramKey, err := secretbox.LoadKey("MULTICA_TELEGRAM_SECRET_KEY"); err == nil {
 		box, err := secretbox.New(telegramKey)
 		if err != nil {
@@ -1084,8 +991,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			telegramReplier := telegram.NewOutboundReplier(telegram.OutboundReplierConfig{
 				Binding: telegramBindingSvc,
 				Decrypt: box.Open,
-				// The bind link (/telegram/bind) is a web-app page: app URL, not
-				// the API URL. Mirrors the Slack replier.
+				// 绑定链接（/telegram/bind）是 web 应用页面：应用 URL，不是 API URL。
+				// 与 Slack 回复器一致。
 				AppURL: appURLFromEnv(),
 				Logger: slog.Default(),
 			})
@@ -1095,8 +1002,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			telegramOutbound.Register(bus)
 			h.TelegramOutbound = telegramOutbound
 
-			// Per-installation inbound: the Supervisor builds + supervises one
-			// long-polling loop per active Telegram installation.
+			// 逐安装入站：Supervisor 为每条活跃 Telegram 安装构建并照看一条长轮询循环。
 			telegram.RegisterTelegram(channelRegistry, telegram.ChannelDeps{Decrypt: box.Open, Logger: slog.Default()})
 
 			installSvc, ierr := telegram.NewInstallService(queries, pool, box, slog.Default())
@@ -1111,18 +1017,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("telegram integration disabled (MULTICA_TELEGRAM_SECRET_KEY not set)")
 	}
 
-	// Composio integration (MUL-3720). Gated by COMPOSIO_API_KEY plus the
-	// composio_mcp_apps feature flag. The env var is the project-scoped key the
-	// standalone SDK authenticates Composio with (sent as x-api-key; the project
-	// is resolved from the key, so NO project id is configured). When unset or
-	// flag-disabled the whole block is skipped and the composio HTTP handlers
-	// return 503; existing deployments are unaffected. An operator opts in by
-	// setting COMPOSIO_API_KEY plus a callback base
-	// (COMPOSIO_CALLBACK_BASE_URL, falling back to MULTICA_PUBLIC_URL). The
-	// toolkit→auth-config mapping is NOT configured here — it is resolved
-	// dynamically from the project's /auth_configs at request time, so enabling
-	// a toolkit is a dashboard action, not a redeploy. State signing uses
-	// COMPOSIO_STATE_SECRET, or a key derived from JWT_SECRET when that is unset.
+	// Composio 集成（MUL-3720）。由 COMPOSIO_API_KEY 加 composio_mcp_apps 特性开关
+	// 把关。该环境变量是独立 SDK 用来向 Composio 鉴权的项目级 key（以 x-api-key 发送；
+	// 项目由 key 本身解析出来，因此不配置项目 id）。未设置或被开关禁用时整块跳过，
+	// composio 的 HTTP handler 返回 503，既有部署不受影响。操作者通过设置
+	// COMPOSIO_API_KEY 加一个回调基址（COMPOSIO_CALLBACK_BASE_URL，回退
+	// MULTICA_PUBLIC_URL）接入。toolkit→auth-config 映射不在这里配置——它在请求时
+	// 从项目 /auth_configs 动态解析，因此启用某 toolkit 是仪表盘操作，无需重新部署。
+	// 状态签名用 COMPOSIO_STATE_SECRET；未设置时用从 JWT_SECRET 派生的 key。
 	if composioAPIKey := strings.TrimSpace(os.Getenv("COMPOSIO_API_KEY")); composioAPIKey != "" {
 		if !featureflags.ComposioMCPAppsEnabled(context.Background(), opts.FeatureFlags) {
 			slog.Info("composio integration disabled (feature flag off)")
@@ -1148,14 +1050,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						slog.Error("composio: service init failed; composio integration disabled", "error", serr)
 					} else {
 						h.Composio = svc
-						// Stage 3 (MUL-3721) hook: feed the per-task MCP
-						// overlay builder into TaskService so every Enqueue*
-						// path attaches the initiator user's Composio session
-						// URL to the task row before the daemon claims it.
-						// taskSvc already exists by this point — it was
-						// constructed inside NewHandler — and exposes its
-						// Composio field for exactly this kind of late wiring,
-						// so no Handler-level mutation is needed.
+						// Stage 3（MUL-3721）钩子：把逐任务的 MCP overlay 构建器喂给
+						// TaskService，让每条 Enqueue* 路径在 daemon 认领前，先把发起人
+						// 的 Composio 会话 URL 挂到任务行上。taskSvc 到这里已存在——
+						// 它在 NewHandler 内部构建——并且正是为了这类迟到接线而暴露了
+						// 自己的 Composio 字段，所以无需 Handler 级改动。
 						if h.TaskService != nil {
 							h.TaskService.Composio = svc
 						}
@@ -1180,10 +1079,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("external credential token storage disabled (MULTICA_EXTERNAL_CREDENTIAL_KEY not set)")
 	}
 
-	// VCS at-rest encryption: the box encrypts per-workspace access tokens and
-	// webhook secrets for token-based providers (Forgejo / Gitea / GitLab).
-	// Without it, connect/webhook handlers return 503 (so a misconfigured
-	// self-host never stores plaintext secrets).
+	// VCS 静态加密：这个加密盒加密基于 token 的 provider（Forgejo / Gitea / GitLab）
+	// 的逐工作区访问令牌与 webhook 密钥。没有它，connect/webhook handler 返回 503
+	// （配错的自托管永远不会落明文密钥）。
 	if vcsKey, err := secretbox.LoadKey("MULTICA_VCS_SECRET_KEY"); err == nil {
 		box, err := secretbox.New(vcsKey)
 		if err != nil {
@@ -1196,22 +1094,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("vcs integration disabled (MULTICA_VCS_SECRET_KEY not set)")
 	}
 
-	// Plugin secrets use a dedicated deployment key. Keeping this separate from
-	// VCS and channel secrets gives operators an isolated rotation and blast
-	// radius; without it, saving a `secret` config field fails closed rather
-	// than storing plaintext.
+	// 插件机密用专用部署 key。与 VCS 和渠道机密分开，给操作者一个隔离的轮换与爆炸
+	// 半径；没有它，保存 `secret` 型配置字段会失败关闭，而不是落明文。
 	if pluginKey, err := secretbox.LoadKey("MULTICA_PLUGIN_SECRET_KEY"); err == nil {
 		box, err := secretbox.New(pluginKey)
 		if err != nil {
 			slog.Error("plugins: secretbox.New failed; Plugin secrets disabled", "error", err)
 		} else if h.PluginService != nil {
 			h.PluginService.Secrets = box
-			// The same deployment key, kept raw as well. Sealing and signing
-			// need different things from it: a secret config value is sealed
-			// and later opened, while a hook signature must be REPRODUCED on
-			// demand, which a box cannot do. Each installation's signing secret
-			// is derived from this rather than stored, so no row holds a usable
-			// one.
+			// 同一份部署 key 也保留原始形态。封口与签名需要它提供不同的东西：机密配置
+			// 值是先封口后开取，而 hook 签名必须按需可复现，加密盒做不到。每个安装的
+			// 签名机密都由它派生而非存储，这样任何行都不持有可用的签名机密。
 			h.PluginService.DeploymentKey = pluginKey
 			h.PluginSurfaceTokens, err = handler.NewPluginSurfaceTokenBox(pluginKey)
 			if err != nil {
@@ -1223,22 +1116,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("Plugin secrets disabled (MULTICA_PLUGIN_SECRET_KEY not set)")
 	}
 
-	// Hook engine. Event-triggered hooks are dispatched off the bus onto a
-	// worker pool: Bus.Publish runs listeners inline on the publishing request's
-	// goroutine, so anything that dials a third-party endpoint from there would
-	// put an outside server on the critical path of creating an issue.
+	// Hook 引擎。事件触发型 hook 从 bus 分发到 worker 池：Bus.Publish 在发布请求的
+	// goroutine 上同步跑监听器，若从那里拨任何第三方端点，等于把外部服务器放进了
+	// 「创建 issue」的关键路径。
 	if h.PluginService != nil {
 		h.PluginService.Callbacks = service.NewCallbackTokens()
-		// Omitted rather than sent relative: a third-party hook server cannot
-		// call a path-only URL, and a broken absolute URL is harder to diagnose
-		// than an absent one.
+		// 省略而不是发一个相对地址：第三方 hook 服务器无法调用纯路径 URL，而一个坏了
+		// 的绝对 URL 比缺失的更容易诊断。
 		if baseURL := pluginActionBaseURL(signupConfig.PublicURL); baseURL != "" {
 			h.PluginService.CallbackBaseURL = baseURL
 		} else {
 			slog.Warn("plugins: MULTICA_PLUGIN_API_URL and MULTICA_PUBLIC_URL are not set; hook callbacks will carry no callback_url")
 		}
-		// The flag reaches the event path only through the service: a worker has
-		// no request to read it from.
+		// 特性开关只能经服务到达事件路径：worker 没有可读它的请求。
 		h.PluginService.FeatureFlags = h.FeatureFlags
 		pluginEvents := service.NewPluginEventDispatcher(h.PluginService)
 		service.SubscribePluginEvents(bus, pluginEvents)
@@ -1247,49 +1137,43 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if opts.HeartbeatScheduler != nil {
 		h.HeartbeatScheduler = opts.HeartbeatScheduler
 	}
-	// Auth caches: PAT cache is shared between the regular Auth middleware,
-	// the DaemonAuth fallback (mul_) path, and the revoke handler
-	// (invalidate). DaemonTokenCache backs the DaemonAuth mdt_ path. Both
-	// constructors return nil when rdb is nil — every consumer handles that
-	// as "no cache, always hit DB".
+	// 认证缓存：PAT 缓存在常规 Auth 中间件、DaemonAuth 的 mul_ 回退路径与 revoke
+	// handler（invalidate）之间共享。DaemonTokenCache 支撑 DaemonAuth 的 mdt_ 路径。
+	// 两个构造函数在 rdb 为 nil 时都返回 nil——每个消费者把 nil 当作「不缓存，总打 DB」。
 	patCache := auth.NewPATCache(rdb)
 	daemonTokenCache := auth.NewDaemonTokenCache(rdb)
 	h.PATCache = patCache
 	h.DaemonTokenCache = daemonTokenCache
 	h.MembershipCache = auth.NewMembershipCache(rdb)
 
-	// Cloud PAT verifier: validates mcn_ tokens against Multica Cloud
-	// Fleet. Returns nil when no Cloud URL is configured — the Auth /
-	// DaemonAuth middlewares treat nil as "mcn_ not supported" and
-	// reject with 401, instead of falling through to mul_/JWT paths.
-	// Reuses MULTICA_CLOUD_URL (the same URL the cloud-runtime proxy uses) so a
-	// deployment has one authoritative multica-cloud connection.
+	// Cloud PAT 校验器：校验 mcn_ token 是否出自 Multica Cloud Fleet。未配置 Cloud
+	// URL 时返回 nil——Auth / DaemonAuth 中间件把 nil 当作「不支持 mcn_」并以 401
+	// 拒绝，而不是漏进 mul_/JWT 路径。复用 MULTICA_CLOUD_URL（cloud-runtime 代理也用
+	// 的同一个 URL），一个部署只有一条权威的 multica-cloud 连接。
 	cloudPATVerifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{
 		FleetBaseURL: signupConfig.CloudURL,
 		Redis:        rdb,
 	})
 
-	// Empty-claim cache: lets the daemon poll path skip a Postgres
-	// scan when a recent check confirmed the runtime had no queued
-	// task. Returns nil when rdb is nil — TaskService treats that
-	// as "no cache, always hit DB" (existing behavior).
+	// 空声明缓存：最近一次检查已确认 runtime 没有排队任务时，让 daemon 的轮询路径
+	// 跳过一次 Postgres 扫描。rdb 为 nil 时返回 nil——TaskService 把它当作「不缓存，
+	// 总打 DB」（既有行为）。
 	h.TaskService.EmptyClaim = service.NewEmptyClaimCache(rdb)
-	// Stale-dispatch reclaim has a separate schedule because an empty queued
-	// verdict cannot represent a claim response lost after commit. Missing or
-	// failed Redis state keeps the historical PostgreSQL fallback.
+	// 陈旧派发回收另排一张表，因为「队列空」的裁决无法代表一条已提交后丢失的认领
+	// 响应。Redis 状态缺失或失败时保留历史的 PostgreSQL 回退。
 	h.TaskService.ReclaimCheck = service.NewReclaimCheckCache(rdb)
 
-	// Wire WS heartbeat after stores are finalized so the WS path uses the
-	// same (possibly Redis-backed) stores as the HTTP path.
+	// 在存储定型后再接 WS 心跳，让 WS 路径使用与 HTTP 路径相同的（可能为 Redis
+	// 后端）存储。
 	daemonHub.SetHeartbeatHandler(h.HandleDaemonWSHeartbeat)
-	// WS-first claim (MUL-4257): route daemon:rpc_request frames (e.g.
-	// tasks.claim) through the same handlers as the HTTP endpoints.
+	// WS 优先认领（MUL-4257）：把 daemon:rpc_request 帧（如 tasks.claim）路由到与
+	// HTTP 端点相同的处理函数。
 	daemonHub.SetRPCHandler(h.DaemonRPCHandler)
 	health := newServerHealth(pool)
 
 	r := chi.NewRouter()
 
-	// Global middleware
+	// 全局中间件
 	r.Use(chimw.RequestID)
 	r.Use(middleware.ClientMetadata)
 	r.Use(middleware.RequestLogger)
@@ -1300,12 +1184,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Use(h.PluginSurfaceHostBoundary)
 	r.Use(middleware.ContentSecurityPolicy)
 
-	// Share allowed origins with WebSocket origin checker.
+	// 把允许的来源共享给 WebSocket 源检查器。
 	realtime.SetAllowedOrigins(origins)
 
-	// Share the same trusted-proxy CIDRs (MULTICA_TRUSTED_PROXIES) so the
-	// WebSocket origin check honors X-Forwarded-Host only from trusted proxies,
-	// using one config source instead of a parallel one.
+	// 共享同一批受信代理 CIDR（MULTICA_TRUSTED_PROXIES），让 WebSocket 源检查只信
+	// 来自受信代理的 X-Forwarded-Host——单一配置源，而不是另起一套平行的。
 	realtime.SetTrustedProxies(signupConfig.TrustedProxies)
 
 	r.Use(cors.Handler(cors.Options{
@@ -1317,20 +1200,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		MaxAge:           300,
 	}))
 
-	// Health / readiness checks
+	// 健康/就绪检查
 	r.Get("/health", health.liveHandler)
 	r.Get("/readyz", health.readyHandler)
 	r.Get("/healthz", health.readyHandler)
 
-	// Realtime subsystem metrics — connection counts, slow-client evictions,
-	// and per-event-type send QPS counters. Exposed as JSON so it can be
-	// scraped by ops or surfaced in the admin UI without adding a Prometheus
-	// dependency. See MUL-1138 (Phase 0).
+	// Realtime 子系统指标——连接数、慢客户端驱逐、各事件类型的发送 QPS 计数。以 JSON
+	// 暴露，运维可直接抓取或在管理 UI 里展示，无需引入 Prometheus 依赖。见 MUL-1138
+	// （阶段 0）。
 	//
-	// Access is restricted (MUL-1342): when REALTIME_METRICS_TOKEN is set,
-	// callers must present it via Authorization: Bearer <token>. When the
-	// env var is unset the handler only serves loopback callers so local
-	// dev keeps working without exposing the metrics on a public listener.
+	// 访问受限（MUL-1342）：设置了 REALTIME_METRICS_TOKEN 时，调用方必须以
+	// Authorization: Bearer <token> 出示它。环境变量未设时 handler 只服务 loopback
+	// 调用方，本地开发照常可用，又不会把指标暴露在公网监听上。
 	r.Get("/health/realtime", realtimeMetricsHandler(os.Getenv("REALTIME_METRICS_TOKEN")))
 
 	// WebSocket
@@ -1347,43 +1228,32 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		realtime.HandleWebSocket(hub, mc, pr, slugResolver, w, r)
 	})
 
-	// Local file serving (when using local storage). Served through the
-	// handler so /uploads/* carries the same preview security headers as the
-	// /api/attachments download endpoint; self-hosted split-origin/same-origin
-	// clients can then iframe-preview PDFs/HTML fetched straight from the
-	// static route instead of hitting the global frame-ancestors 'none' CSP.
-	// See MUL-3821 / #4477.
+	// 本地文件服务（使用本地存储时）。经 handler 服务，让 /uploads/* 与
+	// /api/attachments 下载端点携带同样的预览安全头；自托管的分源/同源客户端于是可以
+	// 直接从静态路由 iframe 预览 PDF/HTML，而不会撞上全局 frame-ancestors 'none' 的
+	// CSP。见 MUL-3821 / #4477。
 	if _, ok := store.(*storage.LocalStorage); ok {
 		r.Get("/uploads/*", h.ServeLocalUpload)
 	}
 
-	// Capability-authenticated attachment download (MUL-5292). Public by
-	// necessity: a native download (Electron's webContents.downloadURL, a
-	// cross-site webview <img>) carries neither Authorization nor a session
-	// cookie, so there is nothing here for middleware.Auth to read. The
-	// short-lived, single-attachment signature in the query is the credential,
-	// and it is only ever minted by the AUTHENTICATED GET
-	// /api/attachments/{id} after that request's membership check passed.
-	// The authenticated /api/attachments/{id}/download route below is
-	// unchanged — this one is purely additive.
+	// 带能力签名的附件下载（MUL-5292）。公开是必然的：原生下载（Electron 的
+	// webContents.downloadURL、跨站 webview <img>）既不带 Authorization 也不带会话
+	// cookie，middleware.Auth 无头可读。查询串里那个短期、单附件专用的签名才是凭据，
+	// 且它只由通过成员校验的「已认证 GET /api/attachments/{id}」铸造。下方已认证的
+	// /api/attachments/{id}/download 路由保持不变——这一条纯粹是追加的。
 	r.Get("/api/attachments/{id}/signed-download", h.DownloadAttachmentWithCapability)
 
-	// Avatar serving. Public for the same reason as the capability download
-	// above: the auth cookie is SameSite=Strict, so an auth-gated URL cannot
-	// be a native <img src> from Desktop / mobile webview or a split-origin
-	// self-hosted web app. The HMAC signature in the path is the credential.
-	// It covers the storage key, only image keys resolve, and the object must
-	// be avatar-class — see server/internal/handler/avatar.go (MUL-5393 /
-	// #6024).
+	// 头像服务。公开理由与上面能力下载相同：认证 cookie 是 SameSite=Strict，认证门户
+	// 下的 URL 没法给 Desktop/移动 webview 或分源自托管 web 应用当原生 <img src>。
+	// 路径里的 HMAC 签名就是凭据；它覆盖存储 key，只解析图片 key，对象必须是头像类
+	// ——见 server/internal/handler/avatar.go（MUL-5393 / #6024）。
 	r.Get("/api/avatars/{sig}/*", h.ServeAvatar)
 
-	// Hosted plugin documents are capability-authenticated and intentionally
-	// outside the session middleware: the configured content origin must stay
-	// cookie-free. The encrypted path token binds the installation, immutable
-	// version, surface and one bridge challenge.
+	// 托管插件文档走能力签名，且有意放在会话中间件之外：配置的内容源必须保持无
+	// cookie。加密路径令牌把安装、不可变版本、surface 与一次 bridge challenge 绑在一起。
 	r.Get("/plugin-surfaces/{token}", h.ServePluginSurface)
 
-	// Auth (public) — per-IP rate limiting.
+	// 认证（公开）——按 IP 限流。
 	if rdb == nil {
 		slog.Warn("auth rate limiting disabled: REDIS_URL not configured")
 	}
@@ -1394,49 +1264,42 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
 	r.Post("/auth/logout", h.Logout)
 
-	// Public API
+	// 公开 API
 	r.Get("/api/config", h.GetConfig)
 	r.With(contactSalesRL).Post("/api/contact-sales", h.CreateContactSales)
-	// Public share-link preview — no auth: shows the workspace name/slug and
-	// inviter so a not-yet-logged-in visitor can see what they're joining.
+	// 公开分享链接预览——无需认证：展示工作区名称/别名与邀请人，让还没登录的访客
+	// 看清自己要加入什么。
 	r.Get("/api/share-links/{code}", h.GetShareLinkInfo)
 
-	// Webhook ingress for autopilots. Outside the authenticated group on
-	// purpose: the bearer token in the URL path IS the credential. Workspace
-	// context is derived from the trigger row, never from request headers.
+	// autopilot 的 webhook 入口。有意放在认证组之外：URL 路径里的 bearer token 就是
+	// 凭据。工作区上下文来自触发器行，从不来自请求头。
 	r.Post("/api/webhooks/autopilots/{token}", h.HandleAutopilotWebhook)
-	// GitHub App webhook (no Multica auth — requests are authenticated via
-	// HMAC-SHA256 signature in the handler) and post-install setup callback.
+	// GitHub App webhook（无 Multica 认证——请求在 handler 内经 HMAC-SHA256 签名
+	// 认证）与安装后设置回调。
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
-	// Slack OAuth callback (no Multica auth in the path — it is hit by Slack's
-	// browser redirect; the workspace/agent/initiator are recovered from the
-	// sealed state). It exchanges the code, upserts the install, then bounces
-	// the browser back to Settings → Integrations.
-	// VCS webhook for token-based providers (Forgejo / Gitea / GitLab). No Multica
-	// auth — authenticated per-connection by the provider's signature scheme;
-	// the connection id in the path selects the workspace, provider, and
-	// decryption secret.
+	// Slack OAuth 回调（路径里无 Multica 认证——它被 Slack 的浏览器重定向命中；
+	// workspace/agent/发起人从密封的 state 里恢复）。它兑换 code、upsert 安装，再把
+	// 浏览器弹回 Settings → Integrations。
+	// 基于 token 的 provider（Forgejo / Gitea / GitLab）的 VCS webhook。无 Multica
+	// 认证——按连接用 provider 的签名方案鉴权；路径里的连接 id 选出工作区、provider
+	// 与解密密钥。
 	r.Post("/api/webhooks/vcs/{connectionId}", h.HandleVCSWebhook)
-	// Stripe webhook (no Multica auth — Stripe signs the raw body
-	// with a shared secret, the multica-cloud upstream verifies. We
-	// only forward the bytes + the Stripe-Signature header; see
-	// HandleCloudBillingStripeWebhook for the rationale).
+	// Stripe webhook（无 Multica 认证——Stripe 用共享密钥对原始 body 签名，
+	// multica-cloud 上游负责校验。这里只转发字节与 Stripe-Signature 头；理由见
+	// HandleCloudBillingStripeWebhook）。
 	r.Post("/api/webhooks/stripe", h.HandleCloudBillingStripeWebhook)
 
-	// Composio OAuth callback (MUL-3843). NOT under the Auth group on purpose:
-	// Composio 302-redirects the user's browser here at the end of the OAuth
-	// flow, and the cookie session is frequently absent (expired session,
-	// SameSite=Strict / Safari ITP stripping cross-site cookies, private
-	// windows, self-hosted callbacks on a different subdomain). Identity is NOT
-	// taken from the session — it comes from the HMAC-signed `state` query
-	// param, which CompleteCallback verifies (signature, expiry, replay) before
-	// doing anything. h.Composio == nil still returns 503. Keeping it inside the
-	// Auth group made a missing cookie a hard 401, breaking the flow for exactly
-	// the browsers above; the other four composio endpoints stay session-gated.
+	// Composio OAuth 回调（MUL-3843）。有意不在 Auth 组之下：Composio 在 OAuth 流程
+	// 末尾把用户浏览器 302 重定向到这里，而 cookie 会话经常缺失（会话过期、SameSite=
+	// Strict / Safari ITP 剥离跨站 cookie、隐私窗口、不同子域上的自托管回调）。身份
+	// 不从会话取——它来自 HMAC 签名的 `state` 查询参数，CompleteCallback 在做任何事
+	// 之前先校验（签名、过期、重放）。h.Composio == nil 仍返回 503。把它放进 Auth 组
+	// 会让缺 cookie 变成硬性 401，恰好破坏上述浏览器的流程；其余四个 composio 端点
+	// 仍是会话把关的。
 	r.Get("/api/integrations/composio/callback", h.ComposioCallback)
 
-	// Daemon API routes (require daemon token or valid user token)
+	// Daemon API 路由（需要 daemon token 或合法用户 token）
 	r.Route("/api/daemon", func(r chi.Router) {
 		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
 
@@ -1448,18 +1311,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/workspaces/{workspaceId}/repos", h.GetDaemonWorkspaceRepos)
 		r.Get("/workspaces/{workspaceId}/runtime-profiles", h.DaemonListRuntimeProfiles)
 
-		// Agent-triggered plugin hooks. The daemon's local MCP server calls
-		// this when an agent picks one of its tools; the server makes the
-		// signed request so the daemon never holds the signing secret.
+		// agent 触发的插件 hook。daemon 的本地 MCP server 在 agent 选中某个工具时调用
+		// 这里；server 负责发签名请求，daemon 从不持有签名机密。
 		r.Post("/tasks/{id}/plugin-hooks", h.InvokeAgentPluginHook)
-		// The broker asks for an mcp hook's credential at connection time, so
-		// a secret never sits in a task record.
+		// broker 在连接时索要某个 mcp hook 的凭据，机密因此从不躺在任务记录里。
 		r.Get("/tasks/{id}/plugin-mcp/{contributionId}/credential", h.ResolvePluginMCPCredential)
 
 		r.Post("/runtimes/{runtimeId}/tasks/claim", h.ClaimTaskByRuntime)
-		// Canonical machine-level batch claim (MUL-4257). `/claim` is a
-		// transitional alias; the daemon coordinator targets the canonical
-		// path.
+		// 规范的机器级批量认领（MUL-4257）。`/claim` 是过渡期别名；daemon 协调器
+		// 以规范路径为目标。
 		r.Post("/tasks/claim", h.ClaimTasksByRuntime)
 		r.Post("/claim", h.ClaimTasksByRuntime)
 		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/prepare-lease", h.ExtendTaskPrepareLease)
@@ -1491,10 +1351,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/session", h.PinTaskSession)
 	})
 
-	// Public Plugin Action API. This is the stable, globally versioned contract
-	// exposed on the Plugin API origin. It accepts only mpi_/mpc_ bearer tokens;
-	// browser sessions use the bridge group below and cannot cross this trust
-	// boundary even when both hostnames route to the same Go service.
+	// 公开 Plugin Action API。这是暴露在 Plugin API 源上的、稳定且全局带版本的契约。
+	// 只收 mpi_/mpc_ bearer token；浏览器会话走下面的 bridge 组，即使两个主机名都路由
+	// 到同一个 Go 服务也无法越过这条信任边界。
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.PluginBearerOnly)
 		r.Use(middleware.PluginRateLimit(rdb, envPositiveInt("RATE_LIMIT_PLUGIN_API", 120), time.Minute))
@@ -1505,16 +1364,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		})
 	})
 
-	// Browser-session relay for sandboxed plugin surfaces. The iframe talks to
-	// the host over MessagePort; the host calls this internal route with the
-	// signed-in user's session and the installation header. Keeping it outside
-	// /v1 prevents the Public API from accepting session cookies.
+	// 沙箱插件 surface 的浏览器会话中继。iframe 经 MessagePort 与宿主对话；宿主用
+	// 已登录用户的会话和安装头调用这条内部路由。放在 /v1 之外，防止 Public API 接受
+	// 会话 cookie。
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
 		r.Route(pluginBridgePrefix, func(r chi.Router) {
 			registerPluginActionRoutes(r, h)
-			// ui / manual only. `event` is dispatched by the host off the event
-			// bus; `agent` arrives over MCP rather than this HTTP endpoint.
+			// 仅 UI/手动触发。`event` 由宿主从事件总线分发；`agent` 走 MCP 而非这条
+			// HTTP 端点到达。
 			r.Post("/hooks/{key}", h.InvokePluginHook)
 		})
 	})
@@ -1533,91 +1391,72 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 		})
 
-		// Plugin Action API. Called by the HOST PAGE on the signed-in user's
-		// session after a surface asks for something over the postMessage
-		// bridge — the iframe holds no credential and never reaches these
-		// directly. Which installation is speaking arrives in a header the
-		// host sets; the workspace is derived from that installation rather
-		// than trusted from the client, and membership is then checked
-		// against it. Sits in the user-scoped group for that reason: there is
-		// no workspace in the path to gate on.
-		// --- User-scoped routes (no workspace context required) ---
+		// Plugin Action API。在 surface 通过 postMessage 桥提出请求后，由宿主页面以
+		// 已登录用户会话调用——iframe 不持有任何凭据，永远无法直达这些端点。说话的是
+		// 哪个安装，来自宿主设置的一个头；工作区从该安装推导而非信任客户端，成员资格
+		// 再对它校验。正因如此它落在用户作用域组里：路径上没有可用于把关的工作区。
+		// --- 用户作用域路由（无需工作区上下文） ---
 		r.Get("/api/me", h.GetMe)
 		r.Patch("/api/me", h.UpdateMe)
 		r.Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
 		r.Post("/api/me/onboarding/cloud-waitlist", h.JoinCloudWaitlist)
-		// DEPRECATED — shim routes for desktop < v3 during the rollout
-		// window. v3 frontend creates the Helper agent + starter issue
-		// via generic CreateAgent / CreateIssue and only calls /complete
-		// here. Remove once X-Client-Version telemetry confirms zero
-		// pre-v3 desktops are still calling these. Handlers live in
-		// server/internal/handler/onboarding_shim.go.
+		// 已废弃——桌面端 < v3 在滚动升级期用的垫片路由。v3 前端经通用的
+		// CreateAgent / CreateIssue 创建 Helper agent 与起始 issue，只在这里调用
+		// /complete。待 X-Client-Version 遥测确认没有 pre-v3 桌面端仍在调用后移除。
+		// handler 在 server/internal/handler/onboarding_shim.go。
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
 
-		// Note (MUL-4309): the generic OpenAI-compatible passthrough endpoints
-		// (POST /api/llm/v1/chat/completions[/stream]) were intentionally
-		// removed. Exposing a general LLM proxy backed by the deployment's own
-		// key let any logged-in user run arbitrary completions on our dime.
-		// LLM access is now server-internal only (see pkg/llm); anything the
-		// web/client needs must go through a purpose-built business endpoint
-		// that fixes the prompt/model server-side (e.g. chat title generation).
+		// 注（MUL-4309）：通用的 OpenAI 兼容直通端点（POST /api/llm/v1/chat/
+		// completions[/stream]）已被有意移除。暴露一个由部署自有 key 背书的一般性 LLM
+		// 代理，等于让任何登录用户拿我们的钱跑任意补全。LLM 访问现在只限 server 内部
+		//（见 pkg/llm）；web/客户端需要的任何东西都必须走为特定用途而建、在 server 端
+		// 固定 prompt/模型的业务端点（例如聊天标题生成）。
 
-		// Attachment download — user-scoped (auth-only), NOT
-		// workspace-scoped. The handler self-resolves the workspace
-		// from the attachment row and enforces membership inside, so
-		// this route is callable as a native browser <img>/<video>
-		// src that cannot attach X-Workspace-Slug / X-Workspace-ID
-		// headers. Persisting `/api/attachments/<id>/download` into
-		// comment markdown depends on this — see MUL-3130. The
-		// metadata / delete endpoints below stay workspace-scoped
-		// because they are JSON-API consumers that always have
-		// workspace context.
+		// 附件下载——用户作用域（仅认证），非工作区作用域。handler 从附件行自行解析
+		// 工作区并在内部校验成员资格，因此该路由可作为无法附加 X-Workspace-Slug /
+		// X-Workspace-ID 头的原生浏览器 <img>/<video> src 调用。把
+		// `/api/attachments/<id>/download` 持久化进评论 markdown 依赖于此——见
+		// MUL-3130。下面的元数据/删除端点保持工作区作用域，因为它们是 JSON-API 消费方，
+		// 总带有工作区上下文。
 		r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
 			r.Post("/", h.CreateWorkspace)
 			r.Route("/{id}", func(r chi.Router) {
-				// Member-level access
+				// 成员级访问
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/", h.GetWorkspace)
 					r.Get("/members", h.ListMembersWithUser)
 					r.Post("/leave", h.LeaveWorkspace)
 					r.Get("/invitations", h.ListWorkspaceInvitations)
-					// Listing GitHub installations is member-visible so the
-					// integrations tab no longer renders blank for non-admins;
-					// the handler strips the management handle and adds a
-					// can_manage hint so the UI can gate connect/disconnect.
+					// 列出 GitHub 安装对成员可见，让 integrations 标签页对非管理员不再渲染
+					// 空白；handler 剥掉管理句柄并加一个 can_manage 提示，UI 据此把关
+					// connect/disconnect。
 					r.Get("/github/installations", h.ListGitHubInstallations)
-					// VCS connections (Forgejo / Gitea / GitLab) — member-visible
-					// for the same reason as GitHub installations; connect /
-					// disconnect are admin-gated in the group below.
+					// VCS 连接（Forgejo / Gitea / GitLab）——与 GitHub 安装同理对成员可见；
+					// connect/disconnect 由下面管理组把关。
 					r.Get("/vcs/connections", h.ListVCSConnections)
-					// Custom runtime profiles — listing/reading is member-visible
-					// (the Runtime page renders for everyone; create/edit/delete
-					// are admin-gated below).
+					// 自定义 runtime profile——列出/读取对成员可见（Runtime 页面人人可渲染；
+					// 增删改由下面管理组把关）。
 					r.Get("/runtime-profiles", h.ListRuntimeProfiles)
 					r.Get("/runtime-profiles/{profileId}", h.GetRuntimeProfile)
-					// The workspace MCP library — member-visible so an agent
-					// owner can see what is available to add to their agent.
-					// The payload is names and transports only; the stored
-					// entries are write-only.
+					// 工作区 MCP 库——对成员可见，让 agent owner 能看到自己 agent 能加什么。
+					// 载荷只有名字与传输方式；存储的条目是只写的。
 					r.Get("/mcp-servers", h.ListWorkspaceMcpServers)
-					// Installed Plugins are member-visible so a member can
-					// see what is mounted in their workspace and which scopes
-					// it holds; install / configure / remove stay admin-only.
+					// 已安装 Plugin 对成员可见，让成员看到工作区里挂载了什么、持有哪些 scope；
+					// 安装/配置/移除保持 admin-only。
 					r.Get("/plugins", h.ListPlugins)
-					// One short-lived hosted surface launch. Member-visible
-					// because opening an issue is what asks for it; executable
-					// bytes stay off the authenticated app/API origin.
+					// 一次短命的托管 surface 启动。对成员可见，因为打开 issue 就会触发它；
+					// 可执行字节不落在已认证的应用/API 源上。
 					r.Get("/plugins/{installationId}/surfaces/{surfaceKey}/launch", h.GetPluginSurfaceLaunch)
 				})
-				// Admin-level access
+				// 管理级访问
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Put("/", h.UpdateWorkspace)
@@ -1630,41 +1469,36 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						r.Delete("/", h.DeleteMember)
 					})
 					r.Delete("/invitations/{invitationId}", h.RevokeInvitation)
-					// Curating the shared MCP library is an admin action.
-					// Creating an entry binds it to no agent; an agent owner
-					// adds it to their own agent through the agent routes.
+					// 策展共享 MCP 库是管理动作。创建条目不绑定任何 agent；agent owner
+					// 通过 agent 路由把它加进自己的 agent。
 					r.Post("/mcp-servers", h.CreateWorkspaceMcpServer)
 					r.Put("/mcp-servers/{serverId}", h.UpdateWorkspaceMcpServer)
 					r.Delete("/mcp-servers/{serverId}", h.DeleteWorkspaceMcpServer)
 					r.Post("/share-links", h.CreateShareLink)
 					r.Delete("/share-links/{linkId}", h.RevokeShareLink)
 					r.Get("/share-links", h.ListShareLinks)
-					// Custom runtime profile mutations (admin-only).
+					// 自定义 runtime profile 变更（admin-only）。
 					r.Post("/runtime-profiles", h.CreateRuntimeProfile)
 					r.Patch("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Put("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Delete("/runtime-profiles/{profileId}", h.DeleteRuntimeProfile)
-					// Publishing. The author uploads an artifact bundle and we
-					// store it; a version is immutable once published, so
-					// there is no update route here by design.
+					// 发布。作者上传一个制品包，我们负责存储；版本一经发布即不可变，
+					// 所以这里刻意没有 update 路由。
 					r.Get("/plugins/packages", h.ListPluginPackages)
 					r.Post("/plugins/packages", h.PublishPluginPackage)
 					r.Post("/plugins/packages/local", h.PublishLocalPluginPackage)
 					r.Delete("/plugins/packages/{packageId}", h.DeletePluginPackage)
-					// Installing a Plugin is two steps on purpose: preview
-					// reads the published version's manifest and returns the
-					// scope list without writing anything, so the consent
-					// screen has something to show before an installation
-					// exists. Both steps name the same version id, which is
-					// what makes the approved manifest and the running code
-					// the same artifact.
+					// 安装 Plugin 有意分两步：preview 读已发布版本的 manifest 并返回
+					// scope 列表而不写任何东西，让同意页在安装存在之前有可展示的内容。
+					// 两步都指名同一个版本 id——这正是让「已批准的 manifest」与「要跑的
+					// 代码」是同一制品的关键。
 					r.Post("/plugins/preview", h.PreviewPlugin)
 					r.Post("/plugins", h.InstallPlugin)
 					r.Get("/plugins/{installationId}/invocations", h.ListPluginInvocations)
 					r.Post("/plugins/{installationId}/token", h.RotatePluginToken)
 					r.Delete("/plugins/{installationId}/token", h.RevokePluginToken)
-					// mcp-transport approval. Discovery adopts nothing; the PUT
-					// is the grant, and it pins the tools by schema digest.
+					// mcp-transport 审批。发现（discovery）什么都不采纳；PUT 才是授权，
+					// 它按 schema 摘要钉住工具。
 					r.Get("/plugins/{installationId}/mcp/{hookKey}/tools", h.ListPluginMCPTools)
 					r.Put("/plugins/{installationId}/mcp/{hookKey}/tools", h.ApprovePluginMCPTools)
 					r.Put("/plugins/{installationId}/config", h.ConfigurePlugin)
@@ -1672,56 +1506,47 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/plugins/{installationId}/disable", h.DisablePlugin)
 					r.Delete("/plugins/{installationId}", h.UninstallPlugin)
 				})
-				// Owner-only access
+				// 仅 owner 访问
 				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
 
-				// GitHub integration — connect / disconnect remain admin-only;
-				// the read-only list endpoint lives in the member-level group
-				// above so non-admins can see the workspace's connection state.
+				// GitHub 集成——connect/disconnect 保持 admin-only；只读的列表端点在上面
+				// 的成员级组里，让非管理员也能看到工作区的连接状态。
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Get("/github/connect", h.GitHubConnect)
 					r.Get("/github/installations/{installationId}/repositories", h.ListGitHubInstallationRepositories)
 					r.Delete("/github/installations/{installationId}", h.DeleteGitHubInstallation)
-					// VCS connect / disconnect / webhook regeneration (admin-only).
+					// VCS connect/disconnect/webhook 再生成（admin-only）。
 					r.Post("/vcs/connections", h.ConnectVCS)
 					r.Post("/vcs/connections/{connectionId}/rotate-webhook", h.RotateVCSConnectionWebhook)
 					r.Delete("/vcs/connections/{connectionId}", h.DeleteVCSConnection)
 				})
 
-				// Lark integration. Every endpoint here only requires
-				// workspace membership at the router; the real authorization
-				// is per-agent and enforced inside each handler via
-				// canManageAgent (agent owner OR workspace owner/admin), so an
-				// agent's owner can bind/manage their own agent's Bot without
-				// being a workspace admin (MUL-4213). The router can't make
-				// that call itself: begin identifies the agent by an
-				// `agent_id` query param and revoke by an installation id,
-				// neither of which is a URL param the role middleware sees.
-				//   - Listing stays member-visible (same rationale as GitHub:
-				//     the Integrations tab must render for non-admins so they
-				//     see "wired up by whom").
-				//   - Begin / status / revoke each load the target agent and
-				//     run canManageAgent (status gates on the session
-				//     initiator or an admin) before doing anything.
+				// Lark 集成。这里的每个端点只要路由器层面的工作区成员资格；真正的授权
+				// 是逐 agent 的，在每个 handler 内经 canManageAgent（agent owner 或
+				// 工作区 owner/admin）执行，因此 agent 的 owner 不必是工作区管理员也能
+				// 绑定/管理自己 agent 的 Bot（MUL-4213）。路由器无法自己做这个判断：
+				// begin 用 `agent_id` 查询参数识别 agent，revoke 用安装 id，二者都不是
+				// 角色中间件能看到的 URL 参数。
+				//   - 列表保持成员可见（与 GitHub 同理：Integrations 标签页必须能为
+				//     非管理员渲染，让他们看到「谁接的线」）。
+				//   - Begin / status / revoke 各自先加载目标 agent 并跑 canManageAgent
+				//     （status 还要看会话发起人或管理员）再做任何事。
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/lark/installations", h.ListLarkInstallations)
 					r.Delete("/lark/installations/{installationId}", h.RevokeLarkInstallation)
-					// Device-flow scan-to-install. Begin opens a new
-					// registration session against Lark and returns
-					// the QR-code URL; the frontend dialog then polls
-					// /install/{sessionId}/status until success or
-					// terminal failure.
+					// Device-flow 扫码安装。Begin 对 Lark 开启一次新的注册会话并返回
+					// 二维码 URL；前端对话框随后轮询 /install/{sessionId}/status 直到
+					// 成功或终态失败。
 					r.Post("/lark/install/begin", h.BeginLarkInstall)
 					r.Get("/lark/install/{sessionId}/status", h.GetLarkInstallStatus)
 				})
 
-				// Slack integration (MUL-3666). Same admin/member split as
-				// Lark: listing is member-visible; OAuth begin + revoke are
-				// admin-only. The OAuth callback itself is a public route (it is
-				// hit by Slack's browser redirect with no workspace in the path)
-				// and is registered outside this workspace group.
+				// Slack 集成（MUL-3666）。与 Lark 相同的 admin/member 切分：列出对
+				// 成员可见；OAuth begin + revoke 是 admin-only。OAuth 回调本身是公开
+				// 路由（它被 Slack 的浏览器重定向命中，路径里没有工作区），注册在这个
+				// 工作区组之外。
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/slack/installations", h.ListSlackInstallations)
@@ -1744,8 +1569,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/dingtalk/install/byo", h.RegisterDingTalkBYO)
 				})
 
-				// Telegram integration. Same admin/member split as Slack:
-				// listing is member-visible; install + revoke are admin-only.
+				// Telegram 集成。与 Slack 相同的 admin/member 切分：列出对成员可见；
+				// 安装 + revoke 是 admin-only。
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/telegram/installations", h.ListTelegramInstallations)
@@ -1758,36 +1583,28 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 		})
 
-		// Lark binding-token redemption. NOT workspace-scoped because
-		// the redeemer hits this BEFORE they have any workspace
-		// context — the redemption itself is what mints their
-		// lark_user_binding row. Identity comes from the session;
-		// the token only proves "this open_id requested binding," and
-		// is combined with the logged-in user to create the mapping.
+		// Lark 绑定令牌赎回。非工作区作用域，因为赎回者在有任何工作区上下文之前就命中
+		// 它——赎回本身就是铸造其 lark_user_binding 行的动作。身份来自会话；令牌只证明
+		// 「这个 open_id 请求过绑定」，与已登录用户结合才形成映射。
 		r.Post("/api/lark/binding/redeem", h.RedeemLarkBindingToken)
-		// Slack binding-token redemption. Same rationale as Lark: NOT
-		// workspace-scoped because the redeemer hits this before they have any
-		// workspace context — the redemption itself mints their binding row. The
-		// logged-in user (from the session) is bound to the Slack id the token
-		// carries.
+		// Slack 绑定令牌赎回。与 Lark 同理：非工作区作用域，因为赎回者在有任何工作区
+		// 上下文之前命中它——赎回铸造其绑定行。已登录用户（来自会话）被绑定到令牌携带
+		// 的 Slack id。
 		r.Post("/api/slack/binding/redeem", h.RedeemSlackBindingToken)
-		// DingTalk binding redemption is user-scoped for the same reason as
-		// Slack: the token is redeemed before workspace context is selected.
+		// DingTalk 绑定赎回是用户作用域，理由与 Slack 相同：token 在选择工作区上下文
+		// 之前就被赎回。
 		r.Post("/api/dingtalk/binding/redeem", h.RedeemDingTalkBindingToken)
-		// WeCom smart-bot binding-token redemption. Same rationale as
-		// Lark/Slack: the session is the source of truth for the redeemer's
-		// Multica identity; the token only carries the WeCom userid to bind.
+		// WeCom 智能机器人绑定令牌赎回。与 Lark/Slack 同理：会话是赎回者 Multica
+		// 身份的真源；令牌只携带要绑定的 WeCom userid。
 		r.Post("/api/wecom/binding/redeem", h.RedeemWecomBindingToken)
-		// Telegram binding-token redemption. Same rationale: not
-		// workspace-scoped, identity from the session, token proves only
-		// "this Telegram user id requested binding".
+		// Telegram 绑定令牌赎回。同理：非工作区作用域，身份来自会话，令牌只证明
+		// 「这个 Telegram 用户 id 请求过绑定」。
 		r.Post("/api/telegram/binding/redeem", h.RedeemTelegramBindingToken)
 
-		// Composio integration (MUL-3720). User-scoped (no workspace context):
-		// a connection belongs to a user. These four require a logged-in
-		// session; the OAuth callback is the outlier and lives outside the Auth
-		// group (registered above with the other public OAuth/webhook routes —
-		// see MUL-3843). All return 503 when COMPOSIO_API_KEY is unset.
+		// Composio 集成（MUL-3720）。用户作用域（无工作区上下文）：连接属于某个用户。
+		// 这四个需要已登录会话；OAuth 回调是例外，落在 Auth 组之外（与其他公开
+		// OAuth/webhook 路由一起注册在上面——见 MUL-3843）。COMPOSIO_API_KEY 未设时
+		// 全部返回 503。
 		r.Route("/api/integrations/composio", func(r chi.Router) {
 			r.Post("/connect/init", h.ComposioConnectInit)
 			r.Get("/toolkits", h.ListComposioToolkits)
@@ -1795,7 +1612,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Delete("/connections/{id}", h.DeleteComposioConnection)
 		})
 
-		// User-scoped invitation routes (no workspace context required)
+		// 用户作用域的邀请路由（无需工作区上下文）
 		r.Get("/api/invitations", h.ListMyInvitations)
 		r.Get("/api/invitations/{id}", h.GetMyInvitation)
 		r.Post("/api/invitations/{id}/accept", h.AcceptInvitation)
@@ -1809,30 +1626,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Delete("/{id}", h.RevokePersonalAccessToken)
 		})
 
-		// Cloud Billing proxy. Same upstream service / port as
-		// cloud-runtime — multica-cloud's Fleet and Billing share
-		// :8080 and the same chi router. All routes here forward
-		// to /api/v1/billing/* with X-User-ID stamped from the
-		// authenticated context.
+		// Cloud Billing 代理。与 cloud-runtime 同一个上游服务/端口——multica-cloud 的
+		// Fleet 与 Billing 共享 :8080 和同一个 chi 路由器。这里所有路由都转发到
+		// /api/v1/billing/*，X-User-ID 从已认证上下文盖章。
 		//
-		// User-scoped (account-level), NOT workspace-scoped — sits
-		// outside the RequireWorkspaceMember group so a user can
-		// inspect their balance, top up, and open the Billing Portal
-		// without an active workspace selected. The upstream owner
-		// model is single-user; X-Workspace-ID would be ignored even
-		// if we sent it. The Stripe webhook is the public outlier
-		// and lives outside the entire Auth group (see above).
+		// 用户作用域（账号级），非工作区作用域——放在 RequireWorkspaceMember 组之外，
+		// 让用户在没有选中活跃工作区时也能查看余额、充值、打开 Billing Portal。上游的
+		// owner 模型是单用户的；即便发过去 X-Workspace-ID 也会被忽略。Stripe webhook
+		// 是公开例外，落在整个 Auth 组之外（见上）。
 		//
-		// IMPORTANT — task-token actors are blocked here. The Auth
-		// middleware happily turns an mat_ task token into a normal
-		// X-User-ID stamp (so agents can comment, claim issues, etc.
-		// as their owner), but billing is account-level and a running
-		// agent reading its owner's balance / opening a checkout
-		// session is the kind of lateral-movement we're explicitly
-		// trying to prevent. handler.RequireHumanActor checks the
-		// authoritative server-set X-Actor-Source header and 403s
-		// any task-token request. See actor_guards.go for the full
-		// rationale.
+		// 重要——这里屏蔽 task-token 的 actor。Auth 中间件乐于把 mat_ 任务令牌变成普通
+		// 的 X-User-ID 盖章（这样 agent 能以 owner 身份评论、认领 issue 等），但计费是
+		// 账号级的，运行中的 agent 去读 owner 余额/开 checkout 会话，正是我们明确要防的
+		// 横向移动。handler.RequireHumanActor 检查权威的 server 端 X-Actor-Source 头，
+		// 对任何 task-token 请求回 403。完整理由见 actor_guards.go。
 		r.Route("/api/cloud-billing", func(r chi.Router) {
 			r.Use(handler.RequireHumanActor)
 
@@ -1846,13 +1653,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/portal-sessions", h.CreateCloudBillingPortalSession)
 		})
 
-		// Workspace subscriptions use the same cloud transport and Stripe
-		// webhook as the existing owner-credit billing surface, but every request
-		// is workspace-scoped. Summary and prices are member-readable. Local role
-		// checks cheaply reject unauthorized writes; Cloud remains the final
-		// authority and validates every mutation before external writes. Handlers
-		// also enforce billing_workspace_subscriptions so a route refactor cannot
-		// accidentally bypass the rollout flag.
+		// 工作区订阅与既有 owner 信用计费面共用同一 cloud 传输与 Stripe webhook，但每个
+		// 请求都是工作区作用域的。摘要与价格对成员可读。本地角色检查廉价地拒绝未授权
+		// 写操作；Cloud 仍是最终权威，在任何外部写入前校验每次变更。Handler 还强制
+		// billing_workspace_subscriptions，保证路由重构不会意外绕过滚动开关。
 		r.Route("/api/cloud-subscriptions", func(r chi.Router) {
 			r.Use(handler.RequireHumanActor)
 			r.Group(func(r chi.Router) {
@@ -1870,11 +1674,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 		})
 
-		// --- Workspace-scoped routes (all require workspace membership) ---
+		// --- 工作区作用域路由（全部要求工作区成员资格） ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireWorkspaceMember(queries))
 
-			// Assignee frequency
+			// 指派频率
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
 
 			// Issues
@@ -1888,8 +1692,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/children", h.ListChildrenByParents)
 				r.Get("/grouped", h.ListGroupedIssues)
 				r.Get("/", h.ListIssues)
-				// POST twin of GET /api/issues for oversized filter sets
-				// (agents-working ids facet) — see QueryIssues.
+				// GET /api/issues 的 POST 孪生，用于超大的过滤器集合
+				// （agents-working 的 id facet）——见 QueryIssues。
 				r.Post("/query", h.QueryIssues)
 				r.Post("/", h.CreateIssue)
 				r.Post("/quick-create", h.QuickCreateIssue)
@@ -1937,12 +1741,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Task messages (user-facing, not daemon auth)
+			// 任务消息（面向用户，非 daemon 认证）
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 
-			// Issue quick actions (definitions; running one lives under
-			// /api/issues/{id}/quick-actions/{quickActionId}/run)
+			// Issue quick action（定义；运行在 /api/issues/{id}/quick-actions/{quickActionId}/run 之下）
 			r.Route("/api/quick-actions", func(r chi.Router) {
 				r.Get("/", h.ListQuickActions)
 				r.Post("/", h.CreateQuickAction)
@@ -1952,7 +1755,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Custom issue properties (definitions; values live under /api/issues/{id}/properties)
+			// 自定义 issue 属性（定义；值在 /api/issues/{id}/properties 下）
 			r.Route("/api/properties", func(r chi.Router) {
 				r.Get("/", h.ListProperties)
 				r.Post("/", h.CreateProperty)
@@ -1973,9 +1776,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Issue status catalog (MUL-6243). Reads are open to any member —
-			// every client needs the catalog to render a status. Writes are
-			// gated to workspace owner/admin inside the handlers.
+			// Issue 状态目录（MUL-6243）。读对任何成员开放——每个客户端都需要目录来渲染
+			// 状态。写在 handler 内把关到工作区 owner/admin。
 			r.Route("/api/issue-statuses", func(r chi.Router) {
 				r.Get("/", h.ListIssueStatuses)
 				r.Post("/", h.CreateIssueStatus)
@@ -1986,7 +1788,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Projects
+			// 项目
 			r.Route("/api/projects", func(r chi.Router) {
 				r.Get("/search", h.SearchProjects)
 				r.Get("/", h.ListProjects)
@@ -2002,7 +1804,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Squads
+			// 小组（Squad）
 			r.Route("/api/squads", func(r chi.Router) {
 				r.Get("/", h.ListSquads)
 				r.Post("/", h.CreateSquad)
@@ -2018,10 +1820,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Squad leader evaluation (writes to activity_log)
+			// Squad leader 评估（写 activity_log）
 			r.Post("/api/issues/{id}/squad-evaluated", h.RecordSquadLeaderEvaluation)
 
-			// Autopilots
+			// Autopilot
 			r.Route("/api/autopilots", func(r chi.Router) {
 				r.Get("/", h.ListAutopilots)
 				r.Post("/", h.CreateAutopilot)
@@ -2049,7 +1851,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Pins
+			// 固定项
 			r.Route("/api/pins", func(r chi.Router) {
 				r.Get("/", h.ListPins)
 				r.Post("/", h.CreatePin)
@@ -2057,7 +1859,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Delete("/{itemType}/{itemId}", h.DeletePin)
 			})
 
-			// Saved issue views (MUL-4796).
+			// 已保存的 issue 视图（MUL-4796）。
 			r.Get("/api/issue-view-preferences", h.GetIssueViewPreference)
 			r.Put("/api/issue-view-preferences", h.PutIssueViewPreference)
 			r.Route("/api/issue-views", func(r chi.Router) {
@@ -2070,17 +1872,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Attachments
+			// 附件
 			r.Get("/api/attachments/{id}", h.GetAttachmentByID)
-			// /api/attachments/{id}/download is registered in the
-			// outer Auth-only group above so it can be loaded as a
-			// native <img>/<video> src without workspace headers
-			// (MUL-3130). The handler self-resolves the workspace
-			// from the attachment row.
+			// /api/attachments/{id}/download 注册在外层仅认证的组里（见上），让它可以
+			// 不带工作区头被原生 <img>/<video> src 加载（MUL-3130）。handler 从附件行
+			// 自行解析工作区。
 			r.Get("/api/attachments/{id}/content", h.GetAttachmentContent)
 			r.Delete("/api/attachments/{id}", h.DeleteAttachment)
 
-			// Comments
+			// 评论
 			r.Route("/api/comments/{commentId}", func(r chi.Router) {
 				r.With(handler.RequireHumanActor).Get("/sub-issue-preview", h.PreviewCommentSubIssue)
 				r.With(handler.RequireHumanActor).Post("/sub-issues", h.CreateCommentSubIssue)
@@ -2096,10 +1896,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/agents", func(r chi.Router) {
 				r.Get("/", h.ListAgents)
 				r.Post("/", h.CreateAgent)
-				// The workspace's built-in Chief of Staff. Server-owned: the
-				// caller supplies only a runtime and a language, so a client
-				// cannot mint an agent carrying `system_key` and thereby claim
-				// the system instruction layer. Idempotent per workspace.
+				// 工作区内置的 Chief of Staff。server 所有：调用方只提供 runtime 与语言，
+				// 客户端因此无法铸出带 `system_key`、进而认领系统指令层的 agent。按工作区
+				// 幂等。
 				r.Post("/mika", h.CreateMikaAgent)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
@@ -2118,33 +1917,27 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/skills/{skillId}/enabled", h.SetAgentSkillEnabled)
 					r.Put("/runtime-skills/enabled", h.SetAgentRuntimeSkillEnabled)
 					r.Delete("/skills/{skillId}", h.RemoveAgentSkill)
-					// Workspace MCP servers assigned to this agent. Mirrors
-					// the skills routes above: a library entry does nothing
-					// until it is added here, and the binding carries its own
-					// enabled toggle.
+					// 分配给该 agent 的工作区 MCP server。与上面的 skills 路由对位：库条目
+					// 在加进这里之前不生效，绑定带自己的启用开关。
 					r.Get("/mcp-servers", h.ListAgentMcpServers)
 					r.Post("/mcp-servers", h.AddAgentMcpServer)
 					r.Put("/mcp-servers/{serverId}/enabled", h.SetAgentMcpServerEnabled)
 					r.Delete("/mcp-servers/{serverId}", h.RemoveAgentMcpServer)
-					// Dedicated env-management endpoint. Admits the agent
-					// owner or a workspace owner/admin; agent actors are
-					// denied. Every reveal / write is audited to
-					// activity_log. See MUL-2600, MUL-5438 and
-					// internal/handler/agent_env.go.
+					// 专用的 env 管理端点。允许 agent owner 或工作区 owner/admin；agent
+					// actor 被拒绝。每次查看/写入都审计进 activity_log。见 MUL-2600、
+					// MUL-5438 与 internal/handler/agent_env.go。
 					r.Get("/env", h.GetAgentEnv)
 					r.Put("/env", h.UpdateAgentEnv)
 				})
 			})
 
 			r.Route("/api/agent-builder/sessions", func(r chi.Router) {
-				// The creation studio's unfinished drafts. Builder sessions are
-				// invisible to every chat list (their carrier is kind='system'),
-				// so this is the only route back to one.
+				// 创建工作台里未完成的草稿。Builder 会话对所有聊天列表不可见（其载体
+				// kind='system'），所以这是回到它的唯一路由。
 				r.Get("/", h.ListAgentBuilderSessions)
 				r.Post("/", h.CreateAgentBuilderSession)
 				r.Patch("/{sessionId}/runtime", h.SwitchAgentBuilderRuntime)
-				// Autosaved configuration, including edits the user has typed
-				// but not sent. Read back through the list above.
+				// 自动保存的配置，含用户已敲但未发送的编辑。经上面的列表读回。
 				r.Put("/{sessionId}/draft", h.SaveAgentBuilderDraft)
 			})
 
@@ -2168,9 +1961,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Dashboard — workspace-wide token + run-time rollups for the
-			// "/{slug}/dashboard" page. Optional ?project_id filter scopes
-			// the rollup to a single project.
+			// 仪表盘——"/{slug}/dashboard" 页的工作区级 token 与运行时长汇总。可选
+			// ?project_id 过滤器把汇总限定到单个项目。
 			r.Route("/api/dashboard", func(r chi.Router) {
 				r.Get("/usage/daily", h.GetDashboardUsageDaily)
 				r.Get("/usage/by-agent", h.GetDashboardUsageByAgent)
@@ -2198,23 +1990,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/local-skills/import", h.InitiateImportLocalSkill)
 					r.Get("/local-skills/import/{requestId}", h.GetLocalSkillImportRequest)
 					r.Delete("/", h.DeleteAgentRuntime)
-					// Confirmed variant of DELETE: unbind every agent bound to
-					// this runtime (they keep their configuration and chats and
-					// need a new runtime to run again), cancel their tasks,
-					// detach their task history, then delete the runtime — all
-					// in one transaction. Used by the DeleteRuntimeDialog when
-					// the strict DELETE refused with
-					// `runtime_has_active_agents` and the user confirmed.
+					// DELETE 的确认变体：解绑绑定到该 runtime 的每个 agent（他们保留配置
+					// 与聊天，需要新 runtime 才能再跑）、取消其任务、剥离其任务历史，然后
+					// 删除 runtime——全部在一个事务里。DeleteRuntimeDialog 在严格 DELETE
+					// 以 `runtime_has_active_agents` 拒绝、用户确认后使用它。
 					r.Post("/unbind-agents-and-delete", h.UnbindAgentsAndDeleteRuntime)
-					// Legacy path for installed clients built against the
-					// archive-and-delete contract (MUL-5559 renamed the
-					// behaviour, not just the route). Same handler.
+					// 为按 archive-and-delete 契约构建的已安装客户端保留的旧路径
+					// （MUL-5559 改的是行为名，不只是路由）。同一 handler。
 					r.Post("/archive-agents-and-delete", h.UnbindAgentsAndDeleteRuntime)
 				})
 			})
 
-			// Cloud Runtime fleet proxy. The remote service URL is configured
-			// on SaaS API nodes only; self-hosted deployments return 503.
+			// Cloud Runtime fleet 代理。远程服务 URL 只在 SaaS API 节点上配置；
+			// 自托管部署返回 503。
 			r.Route("/api/cloud-runtime", func(r chi.Router) {
 				r.Get("/", h.GetCloudRuntimeService)
 				r.Get("/healthz", h.GetCloudRuntimeHealth)
@@ -2229,23 +2017,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/nodes/exec", h.ExecCloudRuntimeNode)
 			})
 
-			// Tasks (user-facing, with ownership check)
+			// Tasks（面向用户，带归属检查）
 			r.Post("/api/tasks/{taskId}/cancel", h.CancelTaskByUser)
 
-			// Workspace-wide agent task snapshot for presence derivation:
-			// every active task + each agent's most recent terminal task.
+			// 用于 presence 推导的工作区级 agent 任务快照：每条活跃任务 + 每个 agent
+			// 最近一条终态任务。
 			r.Get("/api/agent-task-snapshot", h.ListWorkspaceAgentTaskSnapshot)
 
-			// Independent workspace-level list backing the issues-header
-			// "agents working" chip and its assignee-id Table filter.
+			// 独立的、工作区级的列表，支撑 issues 头部的「agents working」芯片及其
+			// assignee-id 表格过滤器。
 			r.Get("/api/working-agents", h.ListWorkspaceWorkingAgents)
 
-			// Workspace-wide daily agent activity (last 30d, anchored on
-			// completed_at). Backs the Agents-list sparkline (trailing 7d
-			// slice) AND the agent detail "Last 30 days" panel.
+			// 工作区级每日 agent 活动（最近 30 天，锚定 completed_at）。同时支撑
+			// Agents 列表迷你走势（近 7 天切片）与 agent 详情「最近 30 天」面板。
 			r.Get("/api/agent-activity-30d", h.GetWorkspaceAgentActivity30d)
 
-			// Workspace-wide 30-day run counts per agent for the Agents-list RUNS column.
+			// Agents 列表 RUNS 列用的、每个 agent 的工作区级 30 天运行计数。
 			r.Get("/api/agent-run-counts", h.GetWorkspaceAgentRunCounts)
 
 			r.Route("/api/chat/sessions", func(r chi.Router) {
@@ -2259,8 +2046,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/", h.DeleteChatSession)
 					r.Post("/messages", h.SendChatMessage)
 					r.Post("/onboarding", h.StartMikaOnboarding)
-					// Explicit "refresh" of a turn's quick actions: re-runs the
-					// daemon suggestion pass for the latest assistant reply (MUL-5149).
+					// 明确「刷新」某轮的 quick actions：对最新 assistant 回复重跑一次
+					// daemon 建议流程（MUL-5149）。
 					r.Post("/quick-actions/regenerate", h.RegenerateChatQuickActions)
 					r.Get("/messages", h.ListChatMessages)
 					r.Get("/messages/page", h.ListChatMessagesPage)
@@ -2268,8 +2055,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/queued-tasks", h.ClearQueuedChatTasks)
 					r.Post("/queued-tasks/{taskId}/prioritize", h.PrioritizeQueuedChatTask)
 					r.Post("/read", h.MarkChatSessionRead)
-					// Deferred-cancellation draft restores (#5219):
-					// creator-only fetch + idempotent consume.
+					// 延迟取消的草稿恢复（#5219）：仅创建者可取、且幂等地消费。
 					r.Get("/draft-restores", h.ListChatDraftRestores)
 					r.Delete("/draft-restores/{restoreId}", h.ConsumeChatDraftRestore)
 				})
@@ -2277,7 +2063,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/chat/pending-tasks", h.ListPendingChatTasks)
 			r.Get("/api/chat/pending-tasks/has-any", h.HasPendingChatTasks)
 
-			// Life companion
+			// Life 陪伴
 			r.Route("/api/life", func(r chi.Router) {
 				r.Get("/companion", h.GetCompanionProfile)
 				r.Put("/companion", h.UpsertCompanionProfile)
@@ -2336,29 +2122,27 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/agent/jobs/{jobId}/complete", h.CompleteCompanionCognitionJob)
 			})
 
-			// Quick-agent bar: per-user pinned agents for one-tap new chats.
+			// Quick-agent 栏：每用户固定的 agent，一键开新聊天。
 			r.Get("/api/chat/pinned-agents", h.ListChatPinnedAgents)
 			r.Post("/api/chat/pinned-agents", h.PinChatAgent)
 			r.Delete("/api/chat/pinned-agents/{agentId}", h.UnpinChatAgent)
 
-			// Agent-facing channel reads (MUL-3871). The caller's task-scoped token
-			// resolves to its own chat session; no session/channel id is passed, so
-			// an agent can only read its own conversation. `history` is the channel
-			// overview (top-level messages + thread metadata); `thread` reads one
-			// thread (?id for a specific one, else the thread the session is in).
+			// agent 面向的渠道读取（MUL-3871）。调用方的作用域化任务 token 解析到它自己
+			// 的聊天会话；不传任何 session/channel id，所以 agent 只能读自己的会话。
+			// `history` 是渠道概览（顶层消息 + 线程元数据）；`thread` 读某个线程
+			// （?id 指定具体线程，否则读该会话所在的线程）。
 			r.Get("/api/chat/history", h.GetChatChannelHistory)
 			r.Get("/api/chat/thread", h.GetChatThread)
 
 			// Inbox
 			r.Route("/api/inbox", func(r chi.Router) {
 				r.Get("/", h.ListInbox)
-				// Archived notifications, for the inbox's "Archived" sub-view.
-				// Separate from "/" so the main list keeps its contract and
-				// never carries the unbounded archive.
+				// 归档通知，服务 inbox 的「Archived」子视图。与 "/" 分开，让主列表保持
+				// 自身契约、永不携带无界归档。
 				r.Get("/archived", h.ListArchivedInbox)
 				r.Get("/unread-count", h.CountUnreadInbox)
-				// Cross-workspace unread summary: account-level, keyed on the
-				// user. Backs the workspace-switcher dot for OTHER workspaces.
+				// 跨工作区未读汇总：账号级，按用户分键。支撑工作区切换器里「其他
+				// 工作区」的圆点。
 				r.Get("/unread-summary", h.UnreadInboxSummary)
 				r.Post("/mark-all-read", h.MarkAllInboxRead)
 				r.Post("/archive-all", h.ArchiveAllInbox)
@@ -2370,7 +2154,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/{id}/unarchive", h.UnarchiveInboxItem)
 			})
 
-			// Notification preferences
+			// 通知偏好
 			r.Route("/api/notification-preferences", func(r chi.Router) {
 				r.Get("/", h.GetNotificationPreferences)
 				r.Patch("/", h.PatchNotificationPreferences)
@@ -2382,23 +2166,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	return r, h
 }
 
-// buildLarkConnector wires the real WS long-conn connector that talks
-// to /callback/ws/endpoint directly with app_id/app_secret. The
-// connector wraps every read with a ctx-cancel watchdog so lease loss /
-// shutdown breaks the blocking ReadMessage in bounded time — the
-// invariant §4.4 leans on. A single connector instance serves every
-// installation; its Run is parameterized by the installation, so the
-// feishuChannel hands it the per-installation row.
+// buildLarkConnector 接好直接与 /callback/ws/endpoint 通信的真实 WS 长连接连接器
+// （app_id/app_secret 直连）。连接器每次读取都包一个 ctx-cancel 看门狗，使租约丢失/
+// 关停能在有界时间内打断阻塞的 ReadMessage——§4.4 依赖的不变式。一个连接器实例服务
+// 所有安装；其 Run 以安装为参数，feishuChannel 把逐安装的行交给它。
 //
-// If the endpoint fetcher fails to initialize (typically a malformed
-// MULTICA_LARK_CALLBACK_BASE_URL), we log and fall back to the
-// NoopConnector so the lease / supervisor lifecycle still exercises
-// against real DB rows. Inbound messages are silently dropped until
-// the config is fixed; the boot log labels the mode "noop" so the
-// degraded state is visible.
+// 若端点抓取器初始化失败（典型是 MULTICA_LARK_CALLBACK_BASE_URL 配错），记日志并
+// 回退到 NoopConnector，让租约/supervisor 生命周期仍对着真实 DB 行运转。入站消息在
+// 配置修好前静默丢弃；启动日志以 "noop" 标注降级状态，使其可见。
 //
-// Returns the connector plus a short label for the boot log:
-// "ws-long-conn" in the healthy case, "noop" in the fallback case.
+// 返回连接器加一个给启动日志的短标签：健康时为 "ws-long-conn"，回退时为 "noop"。
 func buildLarkConnector(installSvc *lark.InstallationService, apiClient lark.APIClient) (lark.EventConnector, string) {
 	endpointFetcher, err := lark.NewHTTPConnectionTokenFetcher(lark.HTTPConnectionTokenConfig{
 		BaseURL: strings.TrimSpace(os.Getenv("MULTICA_LARK_CALLBACK_BASE_URL")),
@@ -2428,11 +2205,9 @@ func buildLarkConnector(installSvc *lark.InstallationService, apiClient lark.API
 		}
 		return creds, nil
 	})
-	// Inbound enricher: expands quoted replies / forwarded bundles AND
-	// prefetches a window of surrounding group history (MUL-3084) into the
-	// agent's body via the IM API before dispatch. It shares the
-	// connector's resolved credentials and runs under the connector's
-	// EnrichTimeout so it cannot overrun the Lark long-conn ACK budget.
+	// 入站补全器：展开引用的回复/转发包，并在分发前经 IM API 把一段周边群历史
+	// （MUL-3084）预取进 agent 的 body。它共享连接器解析出的凭据，并在连接器的
+	// EnrichTimeout 下运行，因此不会超出 Lark 长连接的 ACK 预算。
 	enricher := lark.NewInboundEnricher(apiClient, lark.InboundEnricherConfig{
 		RecentContextSize: lark.DefaultRecentContextSize,
 		Logger:            slog.Default(),
@@ -2452,7 +2227,7 @@ func buildLarkConnector(installSvc *lark.InstallationService, apiClient lark.API
 	return conn, "ws-long-conn"
 }
 
-// membershipChecker implements realtime.MembershipChecker using database queries.
+// membershipChecker 基于数据库查询实现 realtime.MembershipChecker。
 type membershipChecker struct {
 	queries *db.Queries
 }
@@ -2465,10 +2240,9 @@ func (mc *membershipChecker) IsMember(ctx context.Context, userID, workspaceID s
 	return err == nil
 }
 
-// patResolver implements realtime.PATResolver using database queries.
-// patCache is shared with the Auth and DaemonAuth middlewares so a token
-// revoke through any path invalidates the cache for all of them. Nil
-// cache is supported and degrades to direct DB lookups.
+// patResolver 基于数据库查询实现 realtime.PATResolver。
+// patCache 与 Auth、DaemonAuth 中间件共享，任何路径的 token 吊销都会使三者缓存同时
+// 失效。支持 nil 缓存，退化为直接查 DB。
 type patResolver struct {
 	queries *db.Queries
 	cache   *auth.PATCache
@@ -2496,23 +2270,23 @@ func (pr *patResolver) ResolveToken(ctx context.Context, token string) (string, 
 
 	// Cache miss = first WS auth in this TTL window. Refresh last_used_at;
 	// subsequent connects within the window skip the write.
+	//
+	// 中文说明：缓存未命中 = 本 TTL 窗口内的第一次 WS 鉴权。顺手刷新一下
+	// last_used_at；窗口内后续连接会命中缓存，跳过这次写库。
 	go pr.queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
 
 	return userID, true
 }
 
-// parseUUID is a thin alias for util.MustParseUUID. Call sites here are all
-// internal round-trips of DB-sourced UUIDs (e.g. issue.ID, e.ActorID), so an
-// invalid value indicates a programming error and should panic loudly.
+// parseUUID 是 util.MustParseUUID 的薄别名。这里的调用点全是"库出身 UUID"的
+// 内部往返（例如 issue.ID、e.ActorID），非法值只可能是编程错误，应当响亮地 panic。
 func parseUUID(s string) pgtype.UUID {
 	return util.MustParseUUID(s)
 }
 
-// optionalUUID returns a NULL pgtype.UUID for an empty string and otherwise
-// behaves like parseUUID. Use this for actor IDs on events where the producer
-// may legitimately be a "system" actor with no member/agent attribution
-// (e.g. GitHub webhook auto-status sync) — the activity_log and inbox_item
-// tables both allow actor_id to be NULL.
+// optionalUUID 对空字符串返回 NULL 的 pgtype.UUID，否则与 parseUUID 行为一致。
+// 用于事件里"操作者可能是 system（没有 member/agent 归属）"的 actor ID——
+// activity_log 与 inbox_item 两表都允许 actor_id 为 NULL。
 func optionalUUID(s string) pgtype.UUID {
 	if s == "" {
 		return pgtype.UUID{}
@@ -2520,6 +2294,7 @@ func optionalUUID(s string) pgtype.UUID {
 	return util.MustParseUUID(s)
 }
 
+// splitAndTrim 把逗号分隔的字符串拆成去空白后的非空列表（空输入返回 nil）。
 func splitAndTrim(s string) []string {
 	if s == "" {
 		return nil
@@ -2535,10 +2310,9 @@ func splitAndTrim(s string) []string {
 	return res
 }
 
-// composioStateSecret resolves the HMAC key for the connect-state. Prefers an
-// explicit COMPOSIO_STATE_SECRET; otherwise derives a composio-specific key
-// from JWT_SECRET via SHA-256 so the two signing domains never share an
-// identical key. Returns nil when neither is set (composio stays disabled).
+// composioStateSecret 解析 connect-state 的 HMAC key：优先显式 COMPOSIO_STATE_SECRET，
+// 否则用 SHA-256 从 JWT_SECRET 派生一个 composio 专用 key，保证两个签名域绝不共用
+// 同一个 key。两者都没设时返回 nil（composio 保持禁用）。
 func composioStateSecret() []byte {
 	if v := strings.TrimSpace(os.Getenv("COMPOSIO_STATE_SECRET")); v != "" {
 		return []byte(v)
@@ -2550,9 +2324,8 @@ func composioStateSecret() []byte {
 	return nil
 }
 
-// composioCallbackBaseURL resolves the public API base used to build the
-// Composio callback URL. Prefers COMPOSIO_CALLBACK_BASE_URL, then the
-// already-resolved MULTICA_PUBLIC_URL, then the app URL.
+// composioCallbackBaseURL 解析拼 Composio 回调 URL 用的公开 API 基址：优先
+// COMPOSIO_CALLBACK_BASE_URL，其次已解析出的 MULTICA_PUBLIC_URL，再退到应用 URL。
 func composioCallbackBaseURL(publicURL string) string {
 	if v := strings.TrimRight(strings.TrimSpace(os.Getenv("COMPOSIO_CALLBACK_BASE_URL")), "/"); v != "" {
 		return v
@@ -2563,19 +2336,17 @@ func composioCallbackBaseURL(publicURL string) string {
 	return appURLFromEnv()
 }
 
-// WecomRelay is what the WeCom adapter needs from the realtime relay:
-// publish under ScopeWecomOutbound, and register the consumer that acts on
-// frames the other replicas publish. *realtime.ShardedStreamRelay and
-// *realtime.RedisRelay both satisfy it.
+// WecomRelay 是 WeCom 适配器从实时中继需要的接口两半：在 ScopeWecomOutbound 下发布，
+// 以及注册消费"其它副本发布帧"的消费者。*realtime.ShardedStreamRelay 与
+// *realtime.RedisRelay 都满足它。
 type WecomRelay interface {
 	PublishWithID(scopeType, scopeID, exclude string, frame []byte, id string) error
 	SetWecomOutboundDeliverer(d realtime.WecomOutboundDeliverer)
 }
 
-// wecomMetricsOrNil keeps a typed nil out of the adapter's interface field.
-// A *WecomMetrics that is nil still satisfies wecom.Metrics, so assigning it
-// directly would give the adapter a non-nil interface holding a nil pointer —
-// and the first counter call would panic on a deployment with /metrics off.
+// wecomMetricsOrNil 防止类型为 nil 的指针进入适配器的接口字段。nil 的
+// *WecomMetrics 仍满足 wecom.Metrics，直接赋值会让适配器拿到"装着 nil 指针的非
+// nil 接口"——在关闭了 /metrics 的部署上，第一次计数调用就会 panic。
 func wecomMetricsOrNil(m *obsmetrics.WecomMetrics) wecom.Metrics {
 	if m == nil {
 		return nil

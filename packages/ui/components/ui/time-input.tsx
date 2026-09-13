@@ -1,17 +1,22 @@
 "use client";
+// 本文件是分段式时间输入（TimeInput）：把 HH:MM 拆成「时」「分」两个 2 位
+// 数字段。键盘体验完整——上下箭头增减、直接敲数字补位、退格清空、左右箭头
+// 在段间移动。改编自 openstatusHQ/time-picker（MIT）。
 
 import * as React from "react";
 import { Clock } from "lucide-react";
 
 import { cn } from "@multica/ui/lib/utils";
 
-// Adapted from openstatusHQ/time-picker (MIT).
-// Segmented HH:MM input with keyboard arrow increment / digit typing.
-
+/** 补零到 2 位：5 → "05" */
 function pad2(n: number): string {
   return n.toString().padStart(2, "0");
 }
 
+/**
+ * 把一个数字串校验/约束成合法值：非法输入回落到 min；超界时按是否 loop
+ * 决定是「夹到边界」还是「回绕」（min ↔ max 循环）。统一返回补零的 2 位串。
+ */
 function getValidNumber(
   raw: string,
   { max, min = 0, loop = false }: { max: number; min?: number; loop?: boolean },
@@ -28,12 +33,14 @@ function getValidNumber(
   return pad2(n);
 }
 
+/** 按 step 增减当前值并回绕（如 23 加 1 → 00），用于上下箭头 */
 function arrowValue(current: string, step: number, min: number, max: number): string {
   const n = parseInt(current, 10);
   if (isNaN(n)) return pad2(min);
   return getValidNumber(String(n + step), { max, min, loop: true });
 }
 
+/** 把 "HH:MM" 拆开并按各自范围校验，得到 { hh, mm } 两个 2 位串 */
 function splitTime(value: string, hourMin: number): { hh: string; mm: string } {
   const [rawH, rawM] = (value || "").split(":");
   const hh = getValidNumber(rawH ?? "0", { max: 23, min: hourMin });
@@ -41,28 +48,33 @@ function splitTime(value: string, hourMin: number): { hh: string; mm: string } {
   return { hh, mm };
 }
 
+/** 单个段输入框（小时或分钟）的 props */
 interface SegmentInputProps {
+  /** 段的当前 2 位值 */
   value: string;
-  /** The segment's own range. Arrow keys wrap inside it, and typed digits are
-   *  clamped to it, so a segment whose range is narrowed by its neighbour — a
-   *  window's end hour, which can never precede its start — can neither be
-   *  arrowed nor typed out of bounds. */
+  // 本段取值范围。上下箭头会在范围内回绕，直接敲数字也会被夹到范围内——
+  // 因此范围被邻居收窄的段（例如窗口的结束小时，它永远不能早于开始小时）
+  // 无论是箭头还是直接敲数都出不了界。
   min: number;
   max: number;
-  /** What Backspace clears the segment to. Defaults to `min` — the neutral value
-   *  for a segment whose range starts at the field's own floor. A window's end
-   *  hour is not such a segment: its `min` is wherever the start currently sits,
-   *  so clearing it to `min` would collapse the window onto the start instead of
-   *  opening it to the end of the day. */
+  // 按退格时本段被清成的值。默认是 `min`——对「范围起点就是字段下限」的段
+  // 来说这是中性值。但窗口的结束小时不是这种段：它的 min 在开始小时当前所在
+  // 的位置，清成 min 等于把窗口塌缩回开始小时，而不是放开到当天结束。
   clearTo?: number;
+  /** 值变化回调（注意：这里收到的是处理完的 2 位串） */
   onValueChange: (next: string) => void;
+  /** 按 → 时把焦点让给右侧段 */
   onLeftFocus?: () => void;
+  /** 按 → 时把焦点让给右侧段 */
   onRightFocus?: () => void;
+  /** 禁用 */
   disabled?: boolean;
+  /** 无障碍名称（如 "Hour"），由调用方按场景提供 */
   ariaLabel: string;
-  /** `data-slot` for the segment itself. The segments are what a container's
-   *  focus styling has to see: they, not the wrapper, are what gets focused. */
+  // 段自身的 `data-slot`。容器如果要根据「段获得焦点」来点亮自己的边框，
+  // 看的就是段上的这个标记——被聚焦的是段，而不是它们的包装层。
   slot?: string;
+  /** 是否在挂载时聚焦该段 */
   autoFocus?: boolean;
 }
 
@@ -70,12 +82,12 @@ const SegmentInput = React.forwardRef<HTMLInputElement, SegmentInputProps>(funct
   { value, min, max, clearTo, onValueChange, onLeftFocus, onRightFocus, disabled, ariaLabel, slot, autoFocus },
   ref,
 ) {
-  // Two-digit typing window: the first digit pads with a leading 0; a second
-  // digit within 2s completes the pair. The first digit is remembered here
-  // rather than read back from `value`, so an owner that clamps the value
-  // between the two keystrokes cannot corrupt the number being typed.
+  // 两位数字的输入窗口：先敲的第一位会补一个前导 0 显示；2 秒内再敲第二位
+  // 就合成两位数。第一位记在这里而不从 `value` 读回来——即使外层在两次按键
+  // 之间对 value 做了夹取（clamp），也破坏不了正在输入的这个数。
   const [pendingFirst, setPendingFirst] = React.useState<string | null>(null);
 
+  // 2 秒后没敲第二位就放弃合成
   React.useEffect(() => {
     if (pendingFirst === null) return;
     const t = setTimeout(() => setPendingFirst(null), 2000);
@@ -108,9 +120,8 @@ const SegmentInput = React.forwardRef<HTMLInputElement, SegmentInputProps>(funct
         setPendingFirst(null);
         onRightFocus?.();
       } else {
-        // The first digit is clamped for display but remembered raw: in a
-        // segment starting at 09, a typed "1" must still show something legal
-        // while staying the tens digit of the 15 the user is halfway through.
+        // 第一位显示时会被夹到合法范围，但原样记住：比如一段从 09 开始的段，
+        // 用户敲「1」仍要显示合法值，同时它还是他正要输入的 15 的十位。
         onValueChange(getValidNumber("0" + e.key, { max, min }));
         setPendingFirst(e.key);
       }
@@ -127,8 +138,8 @@ const SegmentInput = React.forwardRef<HTMLInputElement, SegmentInputProps>(funct
     <input
       ref={ref}
       data-slot={slot}
-      // Caller-gated: only set when the user just switched into this control,
-      // never on first mount (see TimeInput's autoFocus doc).
+      // 由调用方控制：只在用户刚切进这个控件时才 true，绝不在一开始的挂载
+      // 就聚焦（见 TimeInput 的 autoFocus 说明）。
       autoFocus={autoFocus}
       type="text"
       inputMode="numeric"
@@ -137,48 +148,62 @@ const SegmentInput = React.forwardRef<HTMLInputElement, SegmentInputProps>(funct
       disabled={disabled}
       aria-label={ariaLabel}
       onChange={() => {
-        // Fully controlled by keydown; ignore native onChange.
+        // 完全由 keydown 驱动，忽略原生 onChange。
       }}
       onKeyDown={handleKeyDown}
       onFocus={(e) => e.currentTarget.select()}
-      // The two-digit window belongs to one visit to this segment. Left open, a
-      // "1" typed here and a "5" typed after a detour through another control
-      // would pair up into 15.
+      // 两位合成窗口只属于「这一次进入该段」。如果不在这里清掉，这段敲的
+      // 「1」和中间绕去别的控件后回来敲的「5」会被拼成 15。
       onBlur={() => setPendingFirst(null)}
       className="w-7 bg-transparent text-center text-body tabular-nums outline-none caret-transparent focus:text-foreground disabled:opacity-50"
     />
   );
 });
 
+/** TimeInput 的 props 定义 */
 export interface TimeInputProps {
+  /** 当前时间值，格式 "HH:MM"（受控） */
   value: string;
+  /** 值变化回调，收到新的 "HH:MM" */
   onChange: (value: string) => void;
+  /** 禁用整个输入 */
   disabled?: boolean;
+  /** 外层 class 名 */
   className?: string;
+  /** 是否显示时钟图标，默认 true */
   showIcon?: boolean;
-  /** Render only the hour segment. Used where the minute has no meaning, such as
-   *  the bounds of an hour-granular window. */
+  // 只渲染小时段（不渲染分钟与冒号）。用于分钟没有意义的场景，
+  // 例如以「整点」为粒度的窗口边界。
   hourOnly?: boolean;
-  /** Earliest hour this field may hold. The hour segment wraps and clamps within
-   *  [hourMin, 23] instead of [0, 23] — a window's end, which cannot precede its
-   *  start, arrows round to 23 rather than sticking at the start hour. */
+  // 该字段允许的最小小时。小时段在 [hourMin, 23] 内回绕和夹取，而不是
+  // [0, 23]——窗口的结束时间不能早于开始时间，箭头从小时下限回绕时去的是
+  // 23，而不是钉在开始小时上。
   hourMin?: number;
-  /** What Backspace clears the hour to, when that is not `hourMin` (see
-   *  SegmentInput's clearTo). */
+  // 退格清空小时时清成的值，用于该值不是 `hourMin` 的情况（见 SegmentInput
+  // 的 clearTo）。
   hourClearTo?: number;
-  /** Accessible names for the two segments. This package holds no translations,
-   *  so callers that render several time fields side by side — a window's start
-   *  and end, say — pass localized names that tell them apart. */
+  // 两个段各自的无障碍名称。本包不带翻译，所以并排渲染多个时间字段时
+  //（比如窗口的开始和结束），调用方要传入能区分它们的本地化名称。
   hourLabel?: string;
   minuteLabel?: string;
-  /** `data-slot` for the hour and minute segments, for a container that styles
-   *  itself from what is focused inside it (see InputGroupTimeInput). */
+  // 小时/分钟段的 `data-slot`：给那些「靠内部获得焦点的控件来点亮自己边框」
+  // 的容器用（见 InputGroupTimeInput）。
   segmentSlot?: string;
-  /** Focus the hour segment on mount. Callers gate this so it only fires when the
-   *  user just revealed this field, never on the first render of a form. */
+  // 挂载时聚焦小时段。调用方应把关：只在用户刚展开这个字段时才为 true，
+  // 绝不能在表单首次渲染时触发。
   autoFocus?: boolean;
 }
 
+/**
+ * TimeInput：HH:MM 分段时间输入。
+ *
+ * 内部是「时」「分」两个可独立编辑的 2 位输入段，用箭头/敲数字/退格编辑；
+ * 外层是一个带边框和可选时钟图标的容器，点击空白处把焦点交给小时段。
+ * hourOnly 时只保留小时段。
+ *
+ * @param props 见 TimeInputProps 定义
+ * @returns 时间输入控件
+ */
 export function TimeInput({
   value,
   onChange,
@@ -226,27 +251,23 @@ export function TimeInput({
         clearTo={hourClearTo}
         value={hh}
         onValueChange={setHour}
-        // Nowhere to advance to when the minute is off: focusing a disabled
-        // input is a no-op, and the keypress that asked for it is already
-        // swallowed, so the caret would appear stuck.
+        // hourOnly 时没有右侧可去：聚焦一个禁用的输入是无效操作，而发起这次
+        // 聚焦的按键已经被吞掉，光标会看起来卡住不动。
         onRightFocus={hourOnly ? undefined : () => minuteRef.current?.focus()}
         disabled={disabled}
         ariaLabel={hourLabel}
         slot={segmentSlot}
         autoFocus={autoFocus}
       />
-      {/* hourOnly drops the minute segment and its colon entirely, rather than
-          keeping an inert one for stable geometry: where the bounds are whole
-          hours, a greyed-out :00 is only wasted width. The field narrows on the
-          unit switch that sets this — the honest signal that minute-granular
-          bounds are gone. */}
+      {/* hourOnly 时整个去掉分钟段和冒号，而不是留一个不可用的 :00 维持宽度
+        * 稳定：当边界只到整点时，一个灰掉的 :00 纯粹是浪费宽度。字段会随着
+        * 切换到小时粒度而收窄——这本身就是「分钟级边界已经没了」的诚实信号。 */}
       {!hourOnly && (
         <>
-          {/* -translate-y-[1.5px]: the digits are cap-height figures whose
-              optical centre sits above the colon's two dots, so `items-center` —
-              which lines up the boxes, not the ink — leaves the colon reading
-              low. Nudge it up to the digits' centre. Transform, not margin, so
-              it shifts nothing else. */}
+          {/* -translate-y-[1.5px]：数字是等高大写字形，光学中心在冒号两点的
+            * 上方，所以 items-center（对齐的是盒子而不是墨迹）会让冒号看起来
+            * 偏低。把它往上顶一点到数字的中心。用 transform 而不是 margin，
+            * 免得挤动其它元素。 */}
           <span className="pointer-events-none -translate-y-[1.5px] select-none text-muted-foreground">
             :
           </span>

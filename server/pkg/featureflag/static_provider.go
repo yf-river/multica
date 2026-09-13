@@ -1,119 +1,111 @@
 package featureflag
 
+// 本文件职责：实现 StaticProvider——线程安全的内存态 Provider，规则要么
+// 编程式写入、要么从配置文件加载。它定义了单条规则的求值语义 Rule（Deny >
+// Allow > Percent > Default 的命中顺序），是生产环境的推荐基线 provider。
+
 import (
 	"context"
 	"slices"
 	"sync"
 )
 
-// Rule describes how a single flag is evaluated by the StaticProvider.
-// All fields are optional; an empty Rule evaluates to Default (false) for
-// everyone.
+// Rule 描述 StaticProvider 如何求值单个开关。所有字段可选；空的 Rule
+// 对所有人求值为 Default（false）。
 //
-// Evaluation order (first match wins):
+// 求值顺序（先命中者胜）：
 //
-//  1. Deny: if any value in the EvalContext matches an entry in Deny on
-//     attribute DenyBy (default "user_id"), the flag is OFF.
-//  2. Allow: if any value matches an entry in Allow on attribute AllowBy
-//     (default "user_id"), the flag is ON.
-//  3. Percent: if Percent is non-nil and the bucket for (key, identifier)
-//     falls inside Percent.Percent, the flag is ON.
-//  4. Default: returned otherwise.
+//  1. Deny：EvalContext 里 DenyBy（默认 "user_id"）对应的值命中 Deny 列表
+//     任一项，开关为 OFF。
+//  2. Allow：值命中 AllowBy（默认 "user_id"）对应列表任一项，开关为 ON。
+//  3. Percent：若 Percent 非 nil 且 (key, identifier) 的分桶落在
+//     Percent.Percent 内，开关为 ON。
+//  4. Default：以上都没命中就返回它。
 //
-// Allow / Deny lists are intentionally separate (rather than a single
-// targeting predicate) because operationally they cover different use
-// cases — Allow is "internal users only" and Deny is "kill switch for
-// these tenants" — and keeping them separate makes the data easy to audit
-// in source control.
+// Allow / Deny 刻意做成两份独立列表（而不是单个 targeting 谓词），因为运维上
+// 它们覆盖不同的场景——Allow 是「仅内部用户」，Deny 是「对这些租户急停」——
+// 分开写方便在代码仓库里审计。
 type Rule struct {
-	// Default is the value returned when no targeting rule matches.
+	// Default 是没有 targeting 规则命中时返回的值。
 	Default bool
 
-	// Variant is the variant identifier returned WHEN the rule evaluates
-	// to enabled=true. For multi-arm experiments, set Variant to the
-	// experiment-arm identifier (e.g. "experiment-v2"); for plain on/off
-	// flags leave it empty.
+	// Variant 是规则求值为 enabled=true 时返回的 variant 标识。
+	// 多臂实验时把 Variant 设为实验臂标识（如 "experiment-v2"）；
+	// 纯开/关开关留空即可。
 	//
-	// When the rule evaluates to enabled=false (default-off, deny hit,
-	// percent miss, ...) the resulting Decision's Variant is always the
-	// canonical "off". This is deliberate: a caller that branches on
-	// Variant("checkout_algo", "control") would otherwise be routed into
-	// the experiment arm even though the user did not roll into the
-	// experiment cohort.
+	// 当规则求值为 enabled=false（默认关、命中 Deny、percent 未命中……）时，
+	// 最终 Decision 的 Variant 永远是规范的 "off"。这是刻意为之：
+	// 否则一个以 Variant("checkout_algo", "control") 分支的调用方，即使
+	// 用户根本没滚进实验组，也会被路由进实验臂。
 	Variant string
 
-	// Allow is the set of identifier values that force the flag ON.
+	// Allow 是一组标识值，命中就强制把开关拨到 ON。
 	Allow []string
 
-	// AllowBy is the EvalContext attribute name used for Allow lookups.
-	// Defaults to "user_id" when empty.
+	// AllowBy 是 Allow 查表用的 EvalContext 属性名。
+	// 空串时默认 "user_id"。
 	AllowBy string
 
-	// Deny is the set of identifier values that force the flag OFF.
-	// Deny wins over Allow.
+	// Deny 是一组标识值，命中就强制把开关拨到 OFF。
+	// Deny 压过 Allow。
 	Deny []string
 
-	// DenyBy is the EvalContext attribute name used for Deny lookups.
-	// Defaults to "user_id" when empty.
+	// DenyBy 是 Deny 查表用的 EvalContext 属性名。
+	// 空串时默认 "user_id"。
 	DenyBy string
 
-	// Percent enables a deterministic percent rollout. When nil, no
-	// percent rollout is applied and Default is used as the fallback.
+	// Percent 启用确定性的百分比发布。为 nil 时不应用百分比发布，
+	// 回落到 Default。
 	Percent *PercentRollout
 }
 
-// PercentRollout describes a deterministic percent rollout.
+// PercentRollout 描述一次确定性的百分比发布。
 //
-// The bucket is computed from (flag key, EvalContext attribute By) using
-// FNV-1a, which guarantees that the same identifier always falls into the
-// same bucket across processes and across restarts. This is what callers
-// need so users do not flip in and out of an experiment between requests.
+// 分桶由（开关 key, EvalContext 属性 By）用 FNV-1a 算出，保证同一标识在
+// 不同进程、不同重启之间永远落进同一个桶。这正是调用方需要的：用户不会
+// 在两次请求之间反复进出实验。
 type PercentRollout struct {
-	// Percent is the rollout size in [0, 100]. 0 disables the rollout;
-	// 100 enables it for everyone. Out-of-range values are clamped.
+	// Percent 是发布规模，取值范围 [0, 100]。0 表示关闭发布；
+	// 100 表示对所有人开启。越界值会被钳制。
 	Percent int
 
-	// By selects the EvalContext attribute used as the bucketing
-	// identifier. Defaults to "user_id". Use "workspace_id" for
-	// workspace-scoped rollouts.
+	// By 选择用作分桶标识的 EvalContext 属性。默认 "user_id"；
+	// 要做 workspace 维度的发布就写 "workspace_id"。
 	By string
 }
 
-// StaticProvider is a thread-safe in-memory Provider populated either
-// programmatically or from a config file. It is the recommended baseline
-// provider for production: configuration lives in source control, moves
-// through CD alongside the binary, and changes require a deploy — which is
-// exactly the Continuous Delivery posture Martin Fowler recommends for
-// Release Toggles and most Permissioning Toggles.
+// StaticProvider 是线程安全的内存态 Provider，规则要么编程式写入、要么从
+// 配置文件加载。它是生产环境的推荐基线 provider：配置活在代码仓库里，随
+// 二进制走 CD 流水线，改动需要一次部署——这正是 Martin Fowler 对发布开关
+// （Release Toggles）和绝大多数权限开关（Permissioning Toggles）推荐的
+// 持续交付姿态。
 //
-// For dynamic flags (kill switches, A/B tests changed by product) compose
-// a StaticProvider with a DB-backed Provider behind a ChainProvider.
+// 需要动态开关（急停、产品侧改的 A/B 实验）时，把 StaticProvider 和 DB 后端
+// 的 Provider 一起放进 ChainProvider 组合使用。
 type StaticProvider struct {
 	mu    sync.RWMutex
 	rules map[string]Rule
 }
 
-// NewStaticProvider returns an empty StaticProvider. Use Set or
-// LoadRules to populate it.
+// NewStaticProvider 返回一个空的 StaticProvider。用 Set 或 LoadRules 填充。
 func NewStaticProvider() *StaticProvider {
 	return &StaticProvider{rules: map[string]Rule{}}
 }
 
-// Name implements Provider.
+// Name 实现 Provider 接口。
 func (*StaticProvider) Name() string { return "static" }
 
-// Set installs or replaces the rule for key. Concurrent callers are
-// serialized; readers (Lookup) never block writers for long.
+// Set 安装或替换 key 对应的规则。并发的写方会被串行化；读者（Lookup）
+// 不会长时间阻塞写方。
 func (p *StaticProvider) Set(key string, rule Rule) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.rules[key] = rule
 }
 
-// LoadRules atomically replaces every rule in the provider with the supplied
-// map. Use this when reloading from a config file: a partial reload could
-// otherwise leave the provider in a mixed state where some flags reflect the
-// new config and others the old.
+// LoadRules 把传入的 map 原子地替换掉 provider 里的全部规则。从配置文件
+// 重载时用这个入口：若是逐个替换，部分失败可能让 provider 处于新旧配置
+// 混杂的中间态。
 func (p *StaticProvider) LoadRules(rules map[string]Rule) {
 	clone := make(map[string]Rule, len(rules))
 	for k, v := range rules {
@@ -124,9 +116,8 @@ func (p *StaticProvider) LoadRules(rules map[string]Rule) {
 	p.rules = clone
 }
 
-// Keys returns the sorted set of flag keys this provider knows about. Useful
-// for diagnostic endpoints. The returned slice is a copy; mutating it does
-// not affect the provider.
+// Keys 返回该 provider 已知开关 key 的排序集合，诊断接口会用到。
+// 返回的切片是拷贝；改动它不影响 provider 内部。
 func (p *StaticProvider) Keys() []string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -138,7 +129,7 @@ func (p *StaticProvider) Keys() []string {
 	return out
 }
 
-// Lookup implements Provider.
+// Lookup 实现 Provider 接口。
 func (p *StaticProvider) Lookup(ctx context.Context, key string) (Decision, bool) {
 	p.mu.RLock()
 	rule, ok := p.rules[key]
@@ -150,9 +141,9 @@ func (p *StaticProvider) Lookup(ctx context.Context, key string) (Decision, bool
 	return evaluateRule(key, rule, ec), true
 }
 
+// evaluateRule 按 Deny > Allow > Percent > Default 的顺序对单条规则求值。
 func evaluateRule(key string, rule Rule, ec EvalContext) Decision {
-	// Deny wins over everything else. A kill switch must be reachable
-	// even when other targeting matches.
+	// Deny 压过一切。急停开关必须在任何 targeting 命中时都能生效。
 	denyBy := orDefault(rule.DenyBy, "user_id")
 	if len(rule.Deny) > 0 {
 		if v, ok := ec.Lookup(denyBy); ok && slices.Contains(rule.Deny, v) {
@@ -170,12 +161,10 @@ func evaluateRule(key string, rule Rule, ec EvalContext) Decision {
 	if rule.Percent != nil {
 		by := orDefault(rule.Percent.By, "user_id")
 		identifier, _ := ec.Lookup(by)
-		// An empty identifier still produces a deterministic bucket
-		// (the empty string hashes to a stable bucket) but in practice
-		// that means everyone-without-an-id lands in the same bucket.
-		// That's the desired behavior for percent rollouts at the edge:
-		// anonymous users get a single shared rollout decision per
-		// flag, not a uniformly random one.
+		// 空的标识符仍然会得到确定性的桶（空串哈希出的桶是稳定的），
+		// 但实际含义是「所有没有 id 的人都落进同一个桶」。这对百分比发布
+		// 在边缘情况下的表现正是想要的：匿名用户按开关各自共享一个发布
+		// 决策，而不是每个人得到一次均匀随机。
 		if inPercent(key, identifier, rule.Percent.Percent) {
 			return decisionFromRule(key, rule, true, ReasonPercent)
 		}
@@ -185,11 +174,11 @@ func evaluateRule(key string, rule Rule, ec EvalContext) Decision {
 	return decisionFromRule(key, rule, rule.Default, ReasonStatic)
 }
 
+// decisionFromRule 把一条规则的求值结果打包成 Decision。
 func decisionFromRule(key string, rule Rule, enabled bool, reason Reason) Decision {
-	// Variant policy: rule.Variant is the ON-variant. When the rule
-	// evaluates to false we return the canonical "off" so a caller
-	// branching on Variant() cannot accidentally enter the experiment
-	// arm for a user that did not roll in.
+	// Variant 策略：rule.Variant 是「开」时的 variant。规则求值为 false 时
+	// 返回规范的 "off"，这样按 Variant() 分支的调用方不可能因为用户没有
+	// 滚进实验组而误入实验臂。
 	variant := boolToVariant(enabled)
 	if enabled && rule.Variant != "" {
 		variant = rule.Variant

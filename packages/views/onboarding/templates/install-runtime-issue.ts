@@ -1,9 +1,10 @@
-/**
- * Runtime guide created when a member skips runtime setup during onboarding.
- * The title remains stable so existing onboarding issues can be deduplicated.
- */
+// 引导流程中用户「跳过运行时安装」时创建的那条引导 Issue 的固定文案模板。
+// 当用户从引导流程跳过运行时安装时，Multica 会以这些文案创建一条指引任务。
+
+/** 引导 Issue 的标题。保持稳定不变，让已存在的同类引导 Issue 能按标题去重。 */
 export const INSTALL_RUNTIME_ISSUE_TITLE = "连接运行时，和 Mika 开始";
 
+/** 引导 Issue 的正文模板（Markdown）：先介绍项目管理功能，再引导安装运行时。 */
 export const INSTALL_RUNTIME_ISSUE_BODY = `欢迎来到 Multica。
 
 智能体需要先连上运行时才能执行工作。运行时还没准备好时，你也可以先把 Multica 当作轻量项目管理工具体验起来。

@@ -1,5 +1,8 @@
 "use client";
 
+// 本文件是创建 Agent 各路由共享的表单状态 hook：一份 AgentDraft 草稿 + 表单要
+// 渲染的工作区目录（运行环境 / 成员 / 技能），并给出“创建按钮能否点”的就绪判定。
+
 import {
   useEffect,
   useMemo,
@@ -33,46 +36,41 @@ interface CreateAgentForm {
   setDraft: Dispatch<SetStateAction<AgentDraft>>;
   runtimes: RuntimeDevice[];
   runtimesLoading: boolean;
-  /** The runtime query answered — either data or an error. */
+  /** 运行环境查询已应答——无论数据还是错误。 */
   runtimesSettled: boolean;
-  /** Online runtimes this member is allowed to execute on. */
+  /** 本成员可执行、且在线的运行环境。 */
   usableRuntimes: RuntimeDevice[];
   selectedRuntime: RuntimeDevice | null;
   members: MemberWithUser[];
   workspaceSkills: SkillSummary[];
   currentUserId: string | null;
-  /** Every non-name precondition the create button depends on. */
+  /** 创建按钮依赖的除名字之外的全部前置条件。 */
   draftReady: boolean;
 }
 
 interface RuntimeSeed {
   /**
-   * False while the caller is still resolving which runtime this draft belongs
-   * to. The form seeds nothing until it flips, so the list-order fallback can
-   * never win a race against the authoritative answer.
+   * 调用方仍在解析“这条草稿属于哪台运行环境”时为 false。表单在它翻转前不播种，
+   * 让“按列表序兜底”永远不会赢过权威答案的竞态。
    */
   ready: boolean;
-  /** The runtime to adopt; empty falls back to the first usable one. */
+  /** 要采用的运行环境；空串回退到第一台可用者。 */
   runtimeId: string;
 }
 
 const IMMEDIATE_RUNTIME_SEED: RuntimeSeed = { ready: true, runtimeId: "" };
 
 /**
- * The state every agent-creation route shares: one draft plus the workspace
- * catalogs the form renders from.
+ * 创建 Agent 各路由共享的状态：一份草稿 + 表单要渲染的工作区目录。
  *
- * The draft itself is plain component state here. Making it survive navigation
- * is the caller's job, because the two routes answer it differently: the AI
- * route's configuration belongs to a conversation and lives on the server, the
- * manual route's has nothing to hang off and persists locally.
+ * 草稿在这里就是普通组件 state。让它跨导航存活是调用方的活，因为两条路由答案
+ * 不同：AI 路由的配置属于会话、存在服务端；手动路由的配置无处可挂、本地持久化。
  */
 export function useCreateAgentForm(options?: {
   /**
-   * Where the runtime comes from for a draft that already exists somewhere. A
-   * resumed builder conversation runs on the runtime its carrier is bound to,
-   * and the picker must show THAT — showing the first usable one instead is how
-   * MUL-5163 presented runtime A while every message ran on B.
+   * “已存在于某处的草稿”其运行环境从哪来。恢复的 builder 会话跑在其 carrier 绑定
+   * 的机器上，选择器必须显示“那台”——显示第一台可用机器正是 MUL-5163 的翻车
+   * 方式：界面显示运行时 A，每条消息却都跑在 B。
    */
   runtimeSeed?: RuntimeSeed;
 }): CreateAgentForm {
@@ -103,14 +101,11 @@ export function useCreateAgentForm(options?: {
   const selectedRuntime =
     runtimes.find((runtime) => runtime.id === draft.runtimeId) ?? null;
 
-  // Seeds the picker so a draft is submittable without a manual selection.
-  // Only fills an empty slot: once the draft names a runtime — chosen by the
-  // user, copied from a duplicate, resumed from the server — nothing may move
-  // it.
+  // 给选择器播种，让草稿无需手动选择即可提交。只填空槽：一旦草稿指名了运行环境
+  // ——用户选的、复制模板带来的、从服务端恢复的——谁都不许再动它。
   //
-  // One effect decides, not two: the authoritative seed and the list-order
-  // fallback resolve at different times, and letting them race is how the
-  // picker ends up on a runtime that executes nothing.
+  // 用一个 effect 拍板而非两个：权威种子与按列表序的兜底在各自的时间点 resolve，
+  // 放任它们竞态，正是选择器最终停在“什么都不执行的运行环境”上的方式。
   const seed = options?.runtimeSeed ?? IMMEDIATE_RUNTIME_SEED;
   const seedReady = seed.ready;
   const seedRuntimeId = seed.runtimeId;

@@ -1,5 +1,5 @@
-// Package repocache manages bare git clone caches for workspace repositories.
-// The daemon uses these caches as the source for creating per-task worktrees.
+// Package repocache 管理工作区仓库的裸 git clone 缓存。守护进程用这些缓存当
+// 数据源，为每个任务创建 worktree。
 package repocache
 
 import (
@@ -21,22 +21,18 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/processtree"
 )
 
-// gitEnv returns an environment for git subprocesses that contact remotes.
-// It passes the full daemon environment so credential helpers (e.g. gh) can
-// locate their config, and disables TTY prompting so auth failures produce
-// clear errors instead of blocking on a non-existent terminal.
+// gitEnv 构造给"需要联网的" git 子进程用的环境变量。它把守护进程的完整环境
+// 原样传下去，好让凭据助手（如 gh）能找到自己的配置；同时关掉 TTY 交互提示，
+// 这样鉴权失败时报出的是明确错误，而不是卡在没有终端的地方等人输入。
 //
-// safe.directory=* is set via GIT_CONFIG_* env vars so git trusts all
-// directories regardless of ownership. The daemon manages its own bare
-// caches and worktrees, so the ownership check adds no security value
-// and breaks CI environments where the runner UID differs from the
-// directory owner.
+// safe.directory=* 通过 GIT_CONFIG_* 环境变量注入，让 git 信任所有目录、不去
+// 校验属主。缓存和 worktree 都是守护进程自己建的，属主检查在这里起不到任何
+// 安全作用，反而会坑到 CI——runner 的 UID 往往和目录属主不一致。
 func gitEnv() []string {
 	base := os.Environ()
 
-	// Find the existing GIT_CONFIG_COUNT so we append at the next index
-	// rather than overwriting any env-scoped git config (auth, URL
-	// rewrites, extra headers, etc.).
+	// 先读出现有的 GIT_CONFIG_COUNT，好把我们的配置追加在下一个下标，而不是
+	// 覆盖掉环境里已有的 git config（比如 auth、URL 重写、extra headers 等）。
 	existing := 0
 	for _, e := range base {
 		if strings.HasPrefix(e, "GIT_CONFIG_COUNT=") {
@@ -73,8 +69,8 @@ const repoCacheGitTimeout = 10 * time.Minute
 
 func newGitCommand(args ...string) *exec.Cmd {
 	cmd := exec.Command("git", args...)
-	// A daemon can outlive the checkout it was launched from. Run Git from the
-	// filesystem root instead of inheriting a cwd that may have been deleted.
+	// 守护进程可能活得比启动它的那个 checkout 还久，所以别继承一个也许已被
+	// 删掉的 cwd，干脆从文件系统根目录跑 git。
 	cmd.Dir = filepath.VolumeName(os.TempDir()) + string(os.PathSeparator)
 	cmd.Env = gitEnv()
 	return cmd
@@ -152,47 +148,41 @@ func runGitWithTimeoutContext(parent context.Context, timeout time.Duration, arg
 	return err
 }
 
-// RepoInfo describes a repository to cache.
+// RepoInfo 描述一个需要缓存的仓库。
 type RepoInfo struct {
 	URL string
 }
 
-// CachedRepo describes a cached bare clone ready for worktree creation.
+// CachedRepo 描述一个已缓存、可以拿来建 worktree 的裸 clone。
 type CachedRepo struct {
-	URL       string // remote URL
-	LocalPath string // absolute path to the bare clone
+	URL       string // 远程 URL
+	LocalPath string // 裸 clone 的绝对路径
 }
 
-// Cache manages bare git clones for workspace repositories.
+// Cache 管理工作区仓库的裸 git clone。
 type Cache struct {
-	root   string // base directory for all caches (e.g. ~/multica_workspaces/.repos)
+	root   string // 所有缓存的根目录（如 ~/multica_workspaces/.repos）
 	logger *slog.Logger
-	// repoLocks maps bare repo path → dedicated mutex. Any mutating operation
-	// on a given bare repo (clone, fetch, worktree add, ref update) must
-	// hold its lock — git's own lockfiles (packed-refs.lock, config.lock,
-	// worktree admin dirs) don't tolerate parallel mutations on the same
-	// repo. Separate repos are independent and run concurrently.
+	// repoLocks 把每个裸仓库路径映射到一把专属互斥锁。任何对同一裸仓库的写
+	// 操作（clone、fetch、worktree add、ref 更新）都必须先拿这把锁——git 自己
+	// 的锁文件（packed-refs.lock、config.lock、worktree 管理目录）受不了对同一
+	// 仓库并发改；不同仓库之间互相独立，可以并发跑。
 	repoLocks sync.Map // barePath -> *repoLock
 }
 
-// ErrRepoBusy means a foreground checkout could not acquire its repository
-// within the caller's bounded wait. Callers that advertised retry support can
-// turn this into a retryable HTTP response instead of waiting until their
-// transport deadline expires.
+// ErrRepoBusy 表示前台 checkout 在调用方限定的等待时间内没拿到仓库锁。声明过
+// 支持重试的调用方可以把它转成可重试的 HTTP 响应，而不是一直干等到传输层超时。
 var ErrRepoBusy = errors.New("repository is busy")
 
-// Activity is the path-free repository coordination state exposed through the
-// daemon health endpoint. It is diagnostic only.
+// Activity 是不带路径的仓库协调状态，通过守护进程健康检查接口暴露。仅供诊断。
 type Activity struct {
 	MaintenanceActive int
 	ForegroundWaiters int
 }
 
-// repoLock is a foreground-priority mutex. Ordinary cache mutations serialize
-// exactly as they did with sync.Mutex. Low-priority maintenance is different:
-// it only starts on an idle repository and receives a context that is cancelled
-// as soon as a foreground operation queues. The maintenance holder remains
-// responsible for stopping its Git process tree before unlocking.
+// repoLock 是一把"前台优先"的互斥锁。普通缓存变更和原来 sync.Mutex 一样串行；
+// 低优先级维护不同：它只在仓库空闲时启动，且拿到的是一个"一旦有前台操作排队
+// 就会被取消"的 context。持有维护锁的一方有责任在解锁前停掉自己的 git 进程树。
 type repoLock struct {
 	mu                sync.Mutex
 	held              bool
@@ -202,8 +192,8 @@ type repoLock struct {
 	changed           chan struct{}
 }
 
-// ErrMaintenancePreempted is the cancellation cause delivered to a running
-// maintenance callback when foreground work needs the same repository.
+// ErrMaintenancePreempted 是前台工作需要同一个仓库时，传给正在跑的维护回调的
+// 取消原因。
 var ErrMaintenancePreempted = errors.New("repository maintenance preempted by foreground work")
 
 func newRepoLock() *repoLock {
@@ -298,13 +288,12 @@ func (l *repoLock) cancelMaintenanceAndWait() {
 	l.mu.Unlock()
 }
 
-// New creates a new repo cache rooted at the given directory.
+// New 在给定目录下新建一个仓库缓存。
 func New(root string, logger *slog.Logger) *Cache {
 	return &Cache{root: root, logger: logger}
 }
 
-// lockForRepo returns the mutex dedicated to the given bare repo path. See
-// the Cache.repoLocks field comment for semantics.
+// lockForRepo 取给定裸仓库路径专属的那把锁。语义见 Cache.repoLocks 字段注释。
 func (c *Cache) lockForRepo(barePath string) *repoLock {
 	if l, ok := c.repoLocks.Load(barePath); ok {
 		return l.(*repoLock)
@@ -314,8 +303,8 @@ func (c *Cache) lockForRepo(barePath string) *repoLock {
 	return actual.(*repoLock)
 }
 
-// Activity reports aggregate repository coordination without exposing cache
-// paths. It is safe to call while operations are starting or finishing.
+// Activity 汇总仓库协调状态，不暴露任何缓存路径。操作正在开始或结束时调用它也
+// 是安全的。
 func (c *Cache) Activity() Activity {
 	var activity Activity
 	c.repoLocks.Range(func(_, value any) bool {
@@ -329,12 +318,10 @@ func (c *Cache) Activity() Activity {
 	return activity
 }
 
-// CancelMaintenance stops every active low-priority repository operation and
-// waits for it to release repository ownership. Task dispatch uses this as a
-// barrier before launching an agent because a task may reuse an existing
-// worktree and never pass through CreateWorktree's gate. Waiting also ensures
-// interrupted-maintenance lock cleanup completes before direct agent Git work
-// can create its own lock files.
+// CancelMaintenance 停掉所有正在进行的低优先级仓库操作，并等它们把仓库所有权
+// 让出来。任务派发在拉起 agent 前用它当一道屏障：任务可能直接复用现成的
+// worktree、根本不经过 CreateWorktree 的闸门；同时等维护被中断后的锁清理完成，
+// 也能保证 agent 直接跑 git 时不会撞上别人残留的锁文件。
 func (c *Cache) CancelMaintenance() {
 	c.repoLocks.Range(func(_, value any) bool {
 		value.(*repoLock).cancelMaintenanceAndWait()
@@ -342,20 +329,19 @@ func (c *Cache) CancelMaintenance() {
 	})
 }
 
-// Sync ensures all repos for a workspace are cloned (or fetched if already cached).
-// Repos no longer in the list are left in place (cheap to keep, avoids re-cloning
-// if a repo is temporarily removed and re-added).
+// Sync 确保一个 workspace 的所有仓库都已被 clone（已在缓存里则 fetch 最新）。
+// 列表里已经没有的仓库原地保留（留着不花什么钱，还能避免仓库临时移除又加回时
+// 重新 clone）。
 //
-// Per-repo mutation serializes against CreateWorktree on the same bare path
-// via lockForRepo. Different repos run sequentially within a single Sync call
-// but concurrent Sync calls (different workspaces, or the same workspace
-// re-synced while checkouts are running) do not block each other.
+// 对同一裸路径的变更通过 lockForRepo 与 CreateWorktree 串行。一次 Sync 调用内
+// 不同仓库是顺序处理的，但并发多次 Sync（不同 workspace，或同一 workspace 在
+// checkout 进行中再次 sync）互不阻塞。
 func (c *Cache) Sync(workspaceID string, repos []RepoInfo) error {
 	return c.SyncContext(context.Background(), workspaceID, repos)
 }
 
-// SyncContext is Sync with cancellation propagated through repo lock waits,
-// clone, fetch, and ref-layout migration.
+// SyncContext 是 Sync 的可取消版本：取消会一路贯穿仓库锁等待、clone、fetch
+// 以及 ref 布局迁移。
 func (c *Cache) SyncContext(ctx context.Context, workspaceID string, repos []RepoInfo) error {
 	wsDir := filepath.Join(c.root, workspaceID)
 	if err := os.MkdirAll(wsDir, 0o755); err != nil {
@@ -377,7 +363,7 @@ func (c *Cache) SyncContext(ctx context.Context, workspaceID string, repos []Rep
 			return err
 		}
 		if isBareRepo(barePath) {
-			// Already cached — fetch latest.
+			// 已有缓存 —— 拉最新。
 			c.logger.Info("repo cache: fetching", "url", repo.URL, "path", barePath)
 			if err := gitFetchContext(ctx, barePath); err != nil {
 				c.logger.Warn("repo cache: fetch failed", "url", repo.URL, "error", err)
@@ -386,7 +372,7 @@ func (c *Cache) SyncContext(ctx context.Context, workspaceID string, repos []Rep
 				}
 			}
 		} else {
-			// Not cached — bare clone.
+			// 没有缓存 —— 从头裸 clone。
 			c.logger.Info("repo cache: cloning", "url", repo.URL, "path", barePath)
 			if err := gitCloneBareContext(ctx, repo.URL, barePath); err != nil {
 				c.logger.Error("repo cache: clone failed", "url", repo.URL, "error", err)
@@ -400,8 +386,7 @@ func (c *Cache) SyncContext(ctx context.Context, workspaceID string, repos []Rep
 	return firstErr
 }
 
-// Lookup returns the local bare clone path for a repo URL within a workspace.
-// Returns "" if not cached.
+// Lookup 返回某 workspace 内给定仓库 URL 对应的本地裸 clone 路径；没缓存返回 ""。
 func (c *Cache) Lookup(workspaceID, url string) string {
 	barePath := c.BarePath(workspaceID, url)
 	if isBareRepo(barePath) {
@@ -410,29 +395,26 @@ func (c *Cache) Lookup(workspaceID, url string) string {
 	return ""
 }
 
-// BarePath returns where a repo's bare cache lives, whether or not it exists
-// yet. Lookup is the "is it cached?" question; this is the "where would it be?"
-// question, which the GC needs to map a set of live repo URLs onto the
-// directories it is about to consider evicting.
+// BarePath 返回某仓库裸缓存"应该在"的位置，不管它现在存不存在。Lookup 回答
+// "缓存了吗？"，这里回答"将来会在哪？"——GC 需要靠它把一串仍在使用的仓库
+// URL 映射到它正准备考虑淘汰的目录上。
 func (c *Cache) BarePath(workspaceID, url string) string {
 	return filepath.Join(c.root, workspaceID, bareDirName(url))
 }
 
-// lastUsedFile records the last time a task asked for a worktree from this
-// bare repo. It lives inside the bare repo so it is removed with it.
+// lastUsedFile 记录某任务最后一次从这个裸仓库要 worktree 的时间。它放在裸仓库
+// 内部，仓库删了它也就跟着没了。
 //
-// Directory mtime cannot answer this question. Every daemon restart re-syncs
-// each registered workspace's full repo list, and that path fetches every
-// cached repo (see Sync), refreshing the mtime of repos no task has checked
-// out in months. atime is worse: noatime is common on Linux and Windows
-// disables it by default. So the signal has to be written explicitly, at the
-// one place that means a repo was really used — CreateWorktree.
+// 目录 mtime 回答不了这个问题：守护进程每次重启都会把已注册 workspace 的仓库
+// 列表整个再 sync 一遍，而 sync 会对每个缓存的仓库做 fetch（见 Sync），把几个月
+// 没任务 checkout 过的仓库 mtime 也刷新了。atime 更糟：Linux 普遍 noatime，
+// Windows 默认直接关掉。所以这个信号必须显式写出来，而且要写在唯一能证明仓库
+// 真被用过的地方——CreateWorktree。
 const lastUsedFile = ".multica_last_used"
 
-// MarkUsed records that this bare repo was just used for a checkout. Callers
-// must already hold the repo lock. Best-effort: a failed stamp only risks the
-// repo looking idle later, and the GC's own missing-stamp grace period
-// (see LastUsed) absorbs that.
+// MarkUsed 记录该裸仓库刚刚被用来 checkout 过。调用方必须先持有仓库锁。这里
+// 是尽力而为：写失败了顶多让仓库之后显得很"闲"，GC 对缺失时间戳的宽限期
+// （见 LastUsed）会兜住这种误差。
 func MarkUsed(barePath string, logger *slog.Logger) {
 	if barePath == "" {
 		return
@@ -443,14 +425,12 @@ func MarkUsed(barePath string, logger *slog.Logger) {
 	}
 }
 
-// LastUsed reports when this bare repo was last used for a checkout, and
-// whether a stamp existed at all.
+// LastUsed 报告该裸仓库上次被 checkout 使用的时间，以及是否存在时间戳。
 //
-// ok=false means "unknown", never "ancient". Every cache created before this
-// stamp existed reports unknown, so treating it as infinitely old would make
-// the first GC cycle after an upgrade wipe every repo cache on the machine and
-// force a full re-clone of each. Callers must stamp an unknown repo and let it
-// age from now.
+// ok=false 表示"未知"，绝不是"很久没用"。所有在这个时间戳机制之前建好的缓存
+// 都报未知——要是把未知当成无限久远，升级后的第一次 GC 就会把机器上所有仓库
+// 缓存清光、逼着每个仓库重新 clone 一遍。调用方应当给未知的仓库打上当前时间戳，
+// 让它从现在开始老化。
 func LastUsed(barePath string) (time.Time, bool) {
 	data, err := os.ReadFile(filepath.Join(barePath, lastUsedFile))
 	if err != nil {
@@ -463,14 +443,13 @@ func LastUsed(barePath string) (time.Time, bool) {
 	return stamp, true
 }
 
-// WithRepoLock serializes caller-supplied mutations on a bare repo against all
-// other same-repo operations that use the cache's lock (Sync, Fetch,
-// CreateWorktree, and daemon GC maintenance).
+// WithRepoLock 让调用方自带的裸仓库改动与所有走同一把锁的同仓库操作（Sync、
+// Fetch、CreateWorktree，以及守护进程 GC 维护）串行。
 func (c *Cache) WithRepoLock(barePath string, fn func() error) error {
 	return c.WithRepoLockContext(context.Background(), barePath, fn)
 }
 
-// WithRepoLockContext is the cancellable form of WithRepoLock.
+// WithRepoLockContext 是 WithRepoLock 的可取消版本。
 func (c *Cache) WithRepoLockContext(ctx context.Context, barePath string, fn func() error) error {
 	repoLock := c.lockForRepo(barePath)
 	if err := repoLock.LockContext(ctx); err != nil {
@@ -480,10 +459,9 @@ func (c *Cache) WithRepoLockContext(ctx context.Context, barePath string, fn fun
 	return fn()
 }
 
-// WithRepoMaintenance runs fn only when the repository is idle. A foreground
-// waiter cancels the context passed to fn, then waits for fn to stop its process
-// tree and release the repository. ran=false means maintenance was skipped
-// because foreground work already owned or was waiting for the repository.
+// WithRepoMaintenance 只在仓库空闲时才跑 fn。一旦有前台操作排队，就会取消传给
+// fn 的 context，然后等 fn 停掉自己的进程树、把仓库交出来。ran=false 表示本次
+// 维护被跳过——前台工作已经持有或在等待这个仓库。
 func (c *Cache) WithRepoMaintenance(ctx context.Context, barePath string, fn func(context.Context) error) (ran bool, err error) {
 	repoLock := c.lockForRepo(barePath)
 	maintenanceCtx, ok := repoLock.tryLockMaintenance(ctx)
@@ -494,20 +472,18 @@ func (c *Cache) WithRepoMaintenance(ctx context.Context, barePath string, fn fun
 	return true, fn(maintenanceCtx)
 }
 
-// Fetch runs `git fetch origin` on a cached bare clone to get latest refs.
+// Fetch 在已缓存的裸 clone 上执行 `git fetch origin` 拉最新 ref。
 func (c *Cache) Fetch(barePath string) error {
 	return c.WithRepoLock(barePath, func() error {
 		return gitFetch(barePath)
 	})
 }
 
-// bareDirName returns a filesystem-safe, collision-free directory name for
-// the bare clone of rawURL. The name is built from the host plus each
-// path segment, joined by '+'. '+' is disallowed in GitHub and GitLab
-// path segments, so two URLs produce the same name only if they point at
-// the same repository on the same host.
+// bareDirName 为 rawURL 的裸 clone 生成一个对文件系统安全、且不会撞名的目录名。
+// 名字由 host 加每一段路径用 '+' 拼接而成。'+' 在 GitHub/GitLab 的路径段里是
+// 不允许出现的字符，所以两个 URL 只有在"指向同一主机的同一仓库"时才会生成同名。
 //
-// Examples:
+// 示例：
 //
 //	https://github.com/org/my-repo.git           -> github.com+org+my-repo.git
 //	git@github.com:org/my-repo                   -> github.com+org+my-repo.git
@@ -517,18 +493,17 @@ func (c *Cache) Fetch(barePath string) error {
 //	git@gitlab.example.com:org/repo.git          -> gitlab.example.com+org+repo.git
 //	ssh://git@gitlab.example.com:22/g/s/r.git    -> gitlab.example.com%3A22+g+s+r.git
 //	git@gitlab.example.com-22:org/repo.git       -> gitlab.example.com-22+org+repo.git
-//	my-repo                                      -> my-repo.git (bare name fallback)
+//	my-repo                                      -> my-repo.git（裸名兜底）
 func bareDirName(rawURL string) string {
 	rawURL = strings.TrimRight(rawURL, "/")
 
 	host, path := splitHostAndPath(rawURL)
 	host = strings.ToLower(strings.TrimSpace(host))
-	// Encode ':' as '%3A' so host:port is lossless. A naive ':'->'-' rewrite
-	// would collapse `gitlab.example.com:22` onto a literal hostname
-	// `gitlab.example.com-22`, reintroducing the silent wrong-remote class
-	// this function exists to prevent. '%' is forbidden in valid hostnames
-	// (RFC 952 / RFC 1123), and in GitHub/GitLab path segments, so the
-	// encoded marker can never come from a legal input.
+	// 把 ':' 编码成 '%3A' 才能无损地保留 host:port。若天真地做 ':'->'-'，会把
+	// `gitlab.example.com:22` 撞成字面主机名 `gitlab.example.com-22`，把本函数
+	// 想防的"静默指向错误远端"那类问题又引回来。'%' 在合法主机名（RFC 952 /
+	// RFC 1123）以及 GitHub/GitLab 路径段里都是禁用的，所以这个编码标记绝不
+	// 可能来自合法输入。
 	host = strings.ReplaceAll(host, ":", "%3A")
 
 	var parts []string
@@ -551,15 +526,12 @@ func bareDirName(rawURL string) string {
 	return name
 }
 
-// splitHostAndPath extracts the host and path-with-namespace from the
-// supported git URL forms:
+// splitHostAndPath 从受支持的 git URL 形式里拆出 host 与"带命名空间的路径"：
 //
-//   - URL form (ssh://user@host[:port]/path, https://host/path) — returns
-//     u.Host verbatim (may include :port) and u.Path without the leading slash.
-//   - scp-style ([user@]host:path) — splits on the first ':' after the
-//     optional 'user@'.
-//   - Anything else (bare repo names, absolute filesystem paths) — returns
-//     an empty host and the raw input as the path.
+//   - URL 形式（ssh://user@host[:port]/path、https://host/path）——原样返回
+//     u.Host（可能带 :port），u.Path 去掉开头的斜杠。
+//   - scp 风格（[user@]host:path）——在可选的 'user@' 之后的第一个 ':' 处切开。
+//   - 其它任何形式（裸仓库名、绝对文件系统路径）——返回空 host，整个输入当路径。
 func splitHostAndPath(rawURL string) (host, path string) {
 	if u, err := url.Parse(rawURL); err == nil && u.Scheme != "" && u.Host != "" {
 		return u.Host, strings.TrimPrefix(u.Path, "/")
@@ -574,18 +546,17 @@ func splitHostAndPath(rawURL string) (host, path string) {
 	return "", s
 }
 
-// isBareRepo checks if a path looks like a bare git repository.
+// isBareRepo 判断一个路径看起来是不是裸 git 仓库。
 func isBareRepo(path string) bool {
-	// A bare repo has a HEAD file at the root.
+	// 裸仓库的特征：根目录下有个 HEAD 文件。
 	_, err := os.Stat(filepath.Join(path, "HEAD"))
 	return err == nil
 }
 
-// modernFetchRefspec is the remote-tracking refspec that keeps fetched heads
-// out of the bare repo's refs/heads/* namespace. That namespace is reserved
-// for per-task worktree branches created by `git worktree add -b ...`, and any
-// mirror-style fetch that targets refs/heads/* can collide with those locked
-// refs and abort the entire fetch.
+// modernFetchRefspec 是"远程跟踪"式 refspec：它把拉到的 heads 挡在裸仓库的
+// refs/heads/* 之外。那块命名空间是留给 `git worktree add -b ...` 创建的
+// 每任务 worktree 分支的，任何以 refs/heads/* 为目标的 mirror 式 fetch 都可能
+// 撞上那些已被锁定的 ref，导致整次 fetch 失败。
 const modernFetchRefspec = "+refs/heads/*:refs/remotes/origin/*"
 
 func gitCloneBare(url, dest string) error {
@@ -594,14 +565,13 @@ func gitCloneBare(url, dest string) error {
 
 func gitCloneBareContext(ctx context.Context, url, dest string) error {
 	if out, err := runGitCombinedOutputContext(ctx, "clone", "--bare", url, dest); err != nil {
-		// Clean up partial clone.
+		// 清掉半成品 clone。
 		os.RemoveAll(dest)
 		return fmt.Errorf("git clone --bare: %s: %w", strings.TrimSpace(string(out)), err)
 	}
-	// `git clone --bare` populates refs/heads/* as a snapshot and defaults to
-	// a mirror-style fetch refspec. Convert the bare repo to the standard
-	// remote-tracking layout immediately so subsequent fetches write to
-	// refs/remotes/origin/* and can't conflict with worktree-locked heads.
+	// `git clone --bare` 会以快照形式填 refs/heads/*，且默认是 mirror 式 fetch
+	// refspec。这里马上把裸仓库转成标准的 remote-tracking 布局，让之后的 fetch
+	// 写到 refs/remotes/origin/*，也就不会跟 worktree 锁定的 heads 冲突。
 	if err := ensureRemoteTrackingLayoutContext(ctx, dest); err != nil {
 		os.RemoveAll(dest)
 		return fmt.Errorf("configure fetch refspec: %w", err)
@@ -609,15 +579,12 @@ func gitCloneBareContext(ctx context.Context, url, dest string) error {
 	return nil
 }
 
-// gitFetch runs `git fetch origin` on a bare cache, migrating its fetch
-// refspec to the remote-tracking layout first if it's still using the legacy
-// mirror-style layout from an older version of this package. After a
-// successful fetch it also refreshes refs/remotes/origin/HEAD so a remote
-// default-branch change (e.g. master→main on an existing repo) actually
-// takes effect in getRemoteDefaultBranch. Plain `git fetch origin` never
-// touches that symref on its own, so without this call an existing cache
-// would keep basing new worktrees on the original default branch forever
-// after the remote flipped.
+// gitFetch 在裸缓存上跑 `git fetch origin`；如果它还在用这个包老版本留下的
+// mirror 式布局，会先把 fetch refspec 迁到 remote-tracking 布局。fetch 成功后
+// 还会刷新 refs/remotes/origin/HEAD，让远端默认分支的变更（比如已有仓库
+// master→main）能真正在 getRemoteDefaultBranch 里生效。裸的 `git fetch origin`
+// 不会自己动那个 symref——没有这次调用，远端翻转默认分支后，旧缓存会永远把
+// 新 worktree 建立在最初的默认分支上。
 func gitFetch(barePath string) error {
 	return gitFetchContext(context.Background(), barePath)
 }
@@ -629,18 +596,16 @@ func gitFetchContext(ctx context.Context, barePath string) error {
 	if err := runGitFetchContext(ctx, barePath); err != nil {
 		return err
 	}
-	// Refresh refs/remotes/origin/HEAD after every successful fetch.
-	// set-head --auto is lightweight (a single ls-remote HEAD round-trip)
-	// and non-fatal: if it fails we still have the step 2-5 fallbacks in
-	// getRemoteDefaultBranch, but the modern-cache default-branch-change
-	// path (the only path that can't be recovered any other way) relies
-	// on this call.
+	// 每次 fetch 成功后刷新 refs/remotes/origin/HEAD。set-head --auto 很轻量
+	// （只做一次 ls-remote HEAD 往返），且不致命：就算失败，getRemoteDefaultBranch
+	// 里还有第 2-5 步兜底，但"现代缓存的默认分支变更"这一路径（唯一没法用别
+	// 的方式恢复的路径）就指着这次调用。
 	_ = runGitContext(ctx, "-C", barePath, "remote", "set-head", "origin", "--auto")
 	return nil
 }
 
-// runGitFetch is the raw `git fetch origin` wrapper. Callers should go through
-// gitFetch, which migrates legacy caches first.
+// runGitFetch 是裸的 `git fetch origin` 包装。调用方应走 gitFetch——它会先迁移
+// 老缓存。
 func runGitFetch(barePath string) error {
 	return runGitFetchContext(context.Background(), barePath)
 }
@@ -652,13 +617,12 @@ func runGitFetchContext(ctx context.Context, barePath string) error {
 	return nil
 }
 
-// ensureRemoteTrackingLayout upgrades a bare repo from the legacy mirror
-// refspec (+refs/heads/*:refs/heads/*) to the standard remote-tracking refspec
-// (+refs/heads/*:refs/remotes/origin/*). It's idempotent: on an already-modern
-// cache it's a single `git config --get` call. On legacy caches it rewrites
-// the refspec, performs a backfill fetch to populate refs/remotes/origin/*,
-// and runs `git remote set-head origin --auto` so getRemoteDefaultBranch can
-// resolve the remote's default branch.
+// ensureRemoteTrackingLayout 把裸仓库从老式 mirror refspec
+// （+refs/heads/*:refs/heads/*）升级成标准的 remote-tracking refspec
+// （+refs/heads/*:refs/remotes/origin/*）。幂等：对已经是现代布局的缓存只做一次
+// `git config --get`。对老缓存则改写 refspec、做一次回填 fetch 来填出
+// refs/remotes/origin/*，并跑 `git remote set-head origin --auto` 让
+// getRemoteDefaultBranch 能解析出远端默认分支。
 func ensureRemoteTrackingLayout(barePath string) error {
 	return ensureRemoteTrackingLayoutContext(context.Background(), barePath)
 }
@@ -669,26 +633,24 @@ func ensureRemoteTrackingLayoutContext(ctx context.Context, barePath string) err
 		return err
 	}
 	if cur == modernFetchRefspec || cur == strings.TrimPrefix(modernFetchRefspec, "+") {
-		return nil // already modern
+		return nil // 已经是现代布局
 	}
 	if err := setFetchRefspecContext(ctx, barePath, modernFetchRefspec); err != nil {
 		return err
 	}
-	// Backfill refs/remotes/origin/* by fetching with the new refspec. This
-	// writes to the origin/* namespace, so even worktree-locked refs/heads/*
-	// branches can't collide.
+	// 用新 refspec 做一次回填 fetch 来填出 refs/remotes/origin/*。它写到
+	// origin/* 命名空间，即使 refs/heads/* 上有被 worktree 锁定的分支也不会撞。
 	if err := runGitFetchContext(ctx, barePath); err != nil {
 		return fmt.Errorf("backfill fetch after refspec migration: %w", err)
 	}
-	// Set refs/remotes/origin/HEAD so getRemoteDefaultBranch can read it.
-	// Non-fatal: if this fails we fall back to origin/main, origin/master.
+	// 设 refs/remotes/origin/HEAD 好让 getRemoteDefaultBranch 能读到。非致命：
+	// 若失败就退回 origin/main、origin/master。
 	_ = runGitContext(ctx, "-C", barePath, "remote", "set-head", "origin", "--auto")
 	return nil
 }
 
-// readFetchRefspec returns the current remote.origin.fetch config value, or
-// the empty string if it's not set. Distinguishes "missing" (exit 1) from
-// real git errors.
+// readFetchRefspec 返回当前 remote.origin.fetch 配置值；没设置则返回空串。区分
+// "key 不存在"（退出码 1）和真正的 git 错误。
 func readFetchRefspec(barePath string) (string, error) {
 	return readFetchRefspecContext(context.Background(), barePath)
 }
@@ -697,7 +659,7 @@ func readFetchRefspecContext(ctx context.Context, barePath string) (string, erro
 	out, err := runGitOutputContext(ctx, "-C", barePath, "config", "--get", "remote.origin.fetch")
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
-			return "", nil // key missing, not an error
+			return "", nil // key 不存在，不算错误
 		}
 		return "", fmt.Errorf("read remote.origin.fetch: %w", err)
 	}
@@ -716,55 +678,51 @@ func setFetchRefspecContext(ctx context.Context, barePath, refspec string) error
 	return nil
 }
 
-// WorktreeParams holds inputs for creating a worktree from a cached bare clone.
+// WorktreeParams 是"从缓存裸仓库建 worktree"的输入参数。
 type WorktreeParams struct {
-	WorkspaceID         string // workspace that owns the repo
-	RepoURL             string // remote URL to look up in the cache
-	WorkDir             string // parent directory for the worktree (e.g. task workdir)
-	Ref                 string // optional branch, tag, or commit to base the worktree on
-	AgentName           string // for branch naming
-	TaskID              string // for branch naming uniqueness
-	CoAuthoredByEnabled bool   // install prepare-commit-msg hook for Co-authored-by trailer
-	// LockWaitTimeout bounds only the wait for another same-repository
-	// operation. Zero preserves the historical unbounded wait for internal and
-	// older callers; retry-aware HTTP checkout requests set a finite value.
+	WorkspaceID         string // 拥有该仓库的 workspace
+	RepoURL             string // 要在缓存里查找的远程 URL
+	WorkDir             string // worktree 的父目录（如任务工作目录）
+	Ref                 string // 可选：worktree 基于的分支、tag 或 commit
+	AgentName           string // 用于分支命名
+	TaskID              string // 用于保证分支名唯一
+	CoAuthoredByEnabled bool   // 是否装 prepare-commit-msg 钩子以追加 Co-authored-by 尾注
+	// LockWaitTimeout 只限制"等另一笔同仓库操作"的时长。零值保持历史行为：
+	// 内部调用和旧调用方无限期等待；支持重试的 HTTP checkout 请求会设一个有限值。
 	LockWaitTimeout time.Duration
-	// IsolatedGitMetadata creates a local clone whose .git directory lives
-	// inside WorkDir instead of a linked worktree whose gitdir lives under the
-	// shared cache. Codex tasks need this because workspace-write keeps a
-	// resolved external worktree gitdir read-only even when it is explicitly
-	// listed as a writable root — on Linux (multica-ai/multica#2925) and on the
-	// Windows native sandbox (multica-ai/multica#6449).
+	// IsolatedGitMetadata 表示要建一个"本地 clone"式 checkout：.git 目录放在
+	// WorkDir 里面，而不是建一个 gitdir 落在共享缓存下的 linked worktree。
+	// Codex 任务需要它，因为 workspace-write 即使显式把一个已解析的外部 worktree
+	// gitdir 列为可写根，也仍会把它当只读——Linux 上（multica-ai/multica#2925）
+	// 和 Windows 原生沙箱里（multica-ai/multica#6449）都是这样。
 	IsolatedGitMetadata bool
 }
 
-// WorktreeResult describes a successfully created worktree.
+// WorktreeResult 描述一个成功建好的 worktree。
 type WorktreeResult struct {
-	Path       string `json:"path"`        // absolute path to the worktree
-	BranchName string `json:"branch_name"` // git branch created for this worktree
+	Path       string `json:"path"`        // worktree 的绝对路径
+	BranchName string `json:"branch_name"` // 为该 worktree 创建的 git 分支
 }
 
-// CreateWorktree looks up the bare cache for a repo, fetches latest, and creates
-// a git worktree in the agent's working directory. If a worktree already exists
-// at the target path (reused environment), it updates the existing worktree to
-// the latest remote default branch instead of failing.
+// CreateWorktree 在缓存里查仓库、拉最新代码，然后在 agent 工作目录里建一个 git
+// worktree。若目标路径上已有一个 worktree（环境被复用过），则把现有 worktree
+// 更新到最新远端默认分支，而不是报错。
 func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 	return c.CreateWorktreeContext(context.Background(), params)
 }
 
-// CreateWorktreeContext is CreateWorktree with cancellation propagated through
-// lock acquisition and every Git subprocess. Git work begins only after the
-// lock is held, so a client that times out behind maintenance cannot leave a
-// late, unwanted checkout.
+// CreateWorktreeContext 是 CreateWorktree 的可取消版本：取消会贯穿锁获取和每个
+// git 子进程。git 操作只在拿到锁之后才开始，所以一个卡在维护后面而超时的客户端
+// 不会留下一个迟到、多余的 checkout。
 func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams) (*WorktreeResult, error) {
 	barePath := c.Lookup(params.WorkspaceID, params.RepoURL)
 	if barePath == "" {
 		return nil, fmt.Errorf("repo not found in cache: %s (workspace: %s)", params.RepoURL, params.WorkspaceID)
 	}
 
-	// Serialize concurrent CreateWorktree calls on the same bare repo. Git's
-	// own lockfiles (packed-refs.lock, config.lock, worktree admin dirs)
-	// can't tolerate parallel fetch + worktree mutations on the same repo.
+	// 同一裸仓库上的并发 CreateWorktree 要串行。git 自己的锁文件
+	// （packed-refs.lock、config.lock、worktree 管理目录）受不了在同一仓库上
+	// 并行做 fetch + worktree 改动。
 	repoLock := c.lockForRepo(barePath)
 	lockCtx := ctx
 	cancel := func() {}
@@ -784,23 +742,20 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
 		return nil, context.Cause(ctx)
 	}
 
-	// Stamp before doing the work, not after: a task asking for a worktree is
-	// what "this cache is still wanted" means, whether or not the checkout
-	// ultimately succeeds. Stamping only on success would let a repo whose
-	// checkouts keep failing age out from under the tasks still trying to use it.
+	// 在动手前就打时间戳，而不是成功后：任务来要 worktree 这件事本身就代表
+	// "这个缓存还有人要"，无论 checkout 最终成不成。只在成功时打的话，一个
+	// checkout 老失败的仓库会从仍在尝试使用它的任务脚下被老化清走。
 	MarkUsed(barePath, c.logger)
 
-	// Fetch latest from origin. This also migrates the bare cache's refspec
-	// to the modern remote-tracking layout on first run, so subsequent fetches
-	// never collide with the refs/heads/agent/* branches that worktree creation
-	// locks in this same bare repo.
+	// 从 origin 拉最新。首次运行还会顺带把裸缓存的 refspec 迁到现代
+	// remote-tracking 布局，这样后续 fetch 永远不会撞上建 worktree 时在这个裸
+	// 仓库里锁定的 refs/heads/agent/* 分支。
 	if err := gitFetchContext(ctx, barePath); err != nil {
 		if ctx.Err() != nil {
 			return nil, context.Cause(ctx)
 		}
-		// Non-fatal: preserve cached state and continue, but make the warning
-		// loud enough that it's findable in the daemon log. The agent will
-		// receive an older snapshot than the remote head.
+		// 非致命：保留缓存里已有状态继续往下走，但要把告警喊得够响，保证在
+		// 守护进程日志里找得到。agent 拿到的是比远端 head 旧一点的快照。
 		c.logger.Warn("repo checkout: fetch failed, agent will see possibly stale code",
 			"url", params.RepoURL,
 			"error", err,
@@ -810,13 +765,11 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
 		return nil, context.Cause(ctx)
 	}
 
-	// Determine the ref to base the worktree on. By default this is the remote's
-	// default branch (resolved internally via getRemoteDefaultBranch, which walks
-	// origin/HEAD → origin/main, origin/master → bare-HEAD hint into origin/<same>
-	// → single-entry scan of origin/* → bare HEAD when origin/* is empty).
-	// Callers may request a specific branch, tag, or commit so review/QA agents
-	// can inspect the exact revision without trying to mutate the daemon-owned
-	// worktree metadata themselves.
+	// 决定 worktree 基于哪个 ref。默认用远端默认分支（内部由
+	// getRemoteDefaultBranch 解析：origin/HEAD → origin/main、origin/master →
+	// bare-HEAD 提示进 origin/<同款> → 扫描 origin/* 且只有一项 → origin/* 为空
+	// 时用 bare HEAD）。调用方可以指定分支、tag 或 commit，这样 review/QA agent
+	// 能检查到确切的版本，而不必自己去改守护进程托管的 worktree 元数据。
 	baseRef, err := resolveBaseRefContext(ctx, barePath, params.Ref)
 	if err != nil {
 		return nil, err
@@ -825,27 +778,24 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
 		return nil, context.Cause(ctx)
 	}
 
-	// Empty here means params.Ref was unset and getRemoteDefaultBranch couldn't
-	// resolve a default — the cache is in a state we refuse to guess from (no
-	// origin/HEAD, no main/master, bare HEAD doesn't match any origin/* entry,
-	// and origin/* has multiple candidates). The requested-ref path returns an
-	// explicit error before reaching here, so this branch only fires for the
-	// default-branch case.
+	// 这里为空说明 params.Ref 没设，且 getRemoteDefaultBranch 也解不出默认分支——
+	// 缓存处于一种我们拒绝瞎猜的状态（没有 origin/HEAD、没有 main/master、bare
+	// HEAD 匹配不上任何 origin/* 项、origin/* 又有多项）。指定 ref 的路径在这之前
+	// 就会返回显式错误，所以只有默认分支这条路径会走到这里。
 	if baseRef == "" {
 		return nil, fmt.Errorf("cannot resolve default branch for %s: bare cache at %s has no usable refs (origin/* is empty or ambiguous and bare HEAD has no match). The cache may be corrupted; delete it and retry", params.RepoURL, barePath)
 	}
 
-	// Build branch name: agent/{sanitized-name}/{task-id}
+	// 组分支名：agent/{清洗过的名字}/{task-id}
 	branchName := fmt.Sprintf("agent/%s/%s", sanitizeName(params.AgentName), taskKey(params.TaskID))
 
-	// Derive directory name from repo URL.
+	// 从仓库 URL 推导目录名。
 	dirName := repoNameFromURL(params.RepoURL)
 	worktreePath := filepath.Join(params.WorkDir, dirName)
 
-	// Once a workdir has moved to isolated metadata, keep using that safer
-	// shape even if a later task comes from an older CLI or a different runtime
-	// that omits the mode hint. This also makes provider transitions on a reused
-	// workdir backward compatible.
+	// 一旦某个 workdir 切到了 isolated 元数据模式，就继续沿用这种更稳的形态，
+	// 哪怕后来的任务来自没带这个模式提示的老 CLI 或别的 runtime。这也让复用的
+	// workdir 在不同 provider 之间切换时保持向后兼容。
 	if params.IsolatedGitMetadata || isIsolatedCheckoutContext(ctx, worktreePath) {
 		actualBranch, err := c.createOrUpdateIsolatedCheckoutContext(
 			ctx,
@@ -876,8 +826,8 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
 		return &WorktreeResult{Path: worktreePath, BranchName: actualBranch}, nil
 	}
 
-	// If worktree already exists (reused environment from a prior task),
-	// update it to the latest remote code instead of creating a new one.
+	// worktree 已存在（复用之前任务的环境）的话，把它更新到最新远端代码，而不
+	// 是新建一个。
 	if isGitWorktree(worktreePath) {
 		actualBranch, err := updateExistingWorktreeContext(ctx, worktreePath, branchName, baseRef)
 		if err != nil {
@@ -888,11 +838,9 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
 			_ = excludeFromGitContext(ctx, worktreePath, pattern)
 		}
 
-		// Reconcile the Co-authored-by hook and the workspace's recorded
-		// setting. The hook lives in the bare repo's shared hooks dir, so we
-		// must actively remove it when disabled — otherwise a previously
-		// installed hook keeps appending the trailer to every commit even
-		// after the user toggles the setting off.
+		// 把 Co-authored-by 钩子和 workspace 记录的开关对齐。钩子活在裸仓库的
+		// 共享 hooks 目录里，所以关掉时必须主动删——否则用户把开关切掉之后，
+		// 之前装的钩子还会继续往每个 commit 追加尾注。
 		c.applyCoAuthoredBySettingContext(ctx, worktreePath, params)
 		if err := ctx.Err(); err != nil {
 			return nil, context.Cause(ctx)
@@ -911,21 +859,20 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
 		}, nil
 	}
 
-	// Create a new worktree. createWorktree may rename the branch to avoid
-	// collisions with stale per-task refs left over from previous runs.
+	// 新建 worktree。createWorktree 可能为了避免和上次运行残留的陈旧 per-task
+	// ref 撞名而给分支改名。
 	actualBranch, err := createWorktreeContext(ctx, barePath, worktreePath, branchName, baseRef)
 	if err != nil {
 		return nil, fmt.Errorf("create worktree: %w", err)
 	}
 
-	// Exclude agent context files from git tracking.
+	// 把 agent 上下文文件排除出 git 跟踪。
 	for _, pattern := range agentGitExcludePatterns {
 		_ = excludeFromGitContext(ctx, worktreePath, pattern)
 	}
 
-	// Reconcile the Co-authored-by hook and the workspace's recorded setting.
-	// See the existing-worktree branch above for why removal is required when
-	// the setting is disabled.
+	// 把 Co-authored-by 钩子和 workspace 记录的开关对齐。开关被关掉时必须主动
+	// 删钩子，理由见上面"更新既有 worktree"分支里的说明。
 	c.applyCoAuthoredBySettingContext(ctx, worktreePath, params)
 	if err := ctx.Err(); err != nil {
 		return nil, context.Cause(ctx)
@@ -950,13 +897,11 @@ const (
 	isolatedCacheRemoteName     = "multica-cache"
 )
 
-// createOrUpdateIsolatedCheckout keeps Git metadata inside the task workdir.
-// The fresh path uses a local clone, so immutable Git objects are hard-linked
-// (copied on Windows, see localCloneArgs) from the daemon's cache while refs,
-// index, logs, config, and new objects remain private to the task checkout.
-// The temporary cache remote is then replaced with the real repository URL so
-// an agent's normal fetch / push commands still target GitHub rather than the
-// daemon-owned bare cache.
+// createOrUpdateIsolatedCheckout 让 git 元数据待在任务 workdir 里。全新路径用
+// local clone：不可变 git 对象会从守护进程缓存硬链接过来（Windows 上则是拷贝，
+// 见 localCloneArgs），而 refs、index、日志、config 和新对象都归任务 checkout
+// 私有。随后那个临时的缓存 remote 会被换成真实仓库 URL，这样 agent 平时跑
+// fetch / push 打到的仍是 GitHub，而不是守护进程托管的裸缓存。
 func (c *Cache) createOrUpdateIsolatedCheckout(barePath, repoURL, checkoutPath, branchName, baseRef string) (string, error) {
 	return c.createOrUpdateIsolatedCheckoutContext(context.Background(), barePath, repoURL, checkoutPath, branchName, baseRef)
 }
@@ -971,9 +916,9 @@ func (c *Cache) createOrUpdateIsolatedCheckoutContext(ctx context.Context, bareP
 		if err := setIsolatedCheckoutOriginContext(ctx, checkoutPath, repoURL); err != nil {
 			return "", err
 		}
-		// Idempotent, and required for a workdir that was first created while
-		// the cache was still a full clone: without it, a checkout backed by a
-		// blobless cache resolves missing blobs to nothing instead of fetching.
+		// 幂等，而且对"缓存还是完整 clone 时首次建出来的 workdir"是必须的：
+		// 没有它，靠 blobless 缓存支撑的 checkout 会把缺失的 blob 解析成空，
+		// 而不会去 fetch。
 		if isPartialCloneContext(ctx, barePath) {
 			if err := configurePromisorRemoteContext(ctx, checkoutPath); err != nil {
 				return "", err
@@ -986,17 +931,16 @@ func (c *Cache) createOrUpdateIsolatedCheckoutContext(ctx context.Context, bareP
 		if err != nil {
 			return "", err
 		}
-		// Drop earlier tasks' agent/* heads so a reused workdir doesn't grow a
-		// new local branch on every checkout. Non-fatal: leftover branches are
-		// harmless clutter and must never fail the checkout.
+		// 丢掉之前任务留下的 agent/* head，别让一个复用的 workdir 每次 checkout
+		// 都长一个新本地分支。非致命：残留分支只是无害杂物，绝不能拖垮 checkout。
 		if err := deleteStaleAgentBranchesContext(ctx, checkoutPath, actualBranch); err != nil {
 			c.logger.Warn("repo checkout: prune stale branches failed (non-fatal)", "error", err)
 		}
 		return actualBranch, nil
 	}
-	// A daemon upgrade can resume a pre-fix Codex workdir that still has a
-	// linked worktree. Remove it through Git (so the shared admin record is
-	// cleaned too), then recreate the same checkout path with local metadata.
+	// 守护进程升级后可能接住一个修复前 Codex 留下的、仍是 linked worktree 的
+	// workdir。用 git 命令移除它（把共享 admin 记录一并清掉），再用本地元数据把
+	// 同一 checkout 路径重建出来。
 	if isGitWorktree(checkoutPath) {
 		if err := removeLinkedWorktreeContext(ctx, barePath, checkoutPath); err != nil {
 			return "", err
@@ -1033,11 +977,9 @@ func removeLinkedWorktreeContext(ctx context.Context, barePath, checkoutPath str
 	return nil
 }
 
-// sameResolvedPath reports whether a and b denote the same location after
-// resolving to absolute, symlink-free, cleaned form. It is a path-equality
-// check (not a same-device check): the migration guard uses it to confirm a
-// linked worktree's git-common-dir really points at this cache bare repo
-// before removing the worktree.
+// sameResolvedPath 判断 a、b 在解析成绝对、无符号链接、清洗后的形式后是否指向
+// 同一位置。它做的是"路径相等"检查（不是"同一设备"检查）：迁移防护用它在删
+// worktree 前确认 linked worktree 的 git-common-dir 确实指向这个缓存裸仓库。
 func sameResolvedPath(a, b string) bool {
 	clean := func(path string) string {
 		abs, err := filepath.Abs(path)
@@ -1052,16 +994,14 @@ func sameResolvedPath(a, b string) bool {
 	return clean(a) == clean(b)
 }
 
-// localCloneArgs builds the `git clone --local` invocation that seeds a fresh
-// isolated checkout from the shared bare cache.
+// localCloneArgs 拼出 `git clone --local` 的命令行参数，用来从共享裸缓存"播种"
+// 出一个全新的 isolated checkout。
 //
-// On Windows the clone also passes --no-hardlinks. A local clone hardlinks
-// .git/objects whenever it can, but an NTFS hard link only exists within a
-// single volume and every link shares one underlying file *and* one security
-// descriptor. Copying the objects instead keeps a cache and workdir that live
-// on different drives working, and stops a task checkout — whose tree the
-// sandbox makes writable — from re-permissioning the daemon-owned cache's
-// object files. The cost is extra disk and a slower first checkout on Windows.
+// Windows 上 clone 还会带 --no-hardlinks。local clone 能硬链接 .git/objects 就
+// 会硬链接，但 NTFS 硬链接只存在于同一卷内，而且每个链接共享同一个底层文件、
+// 同一份安全描述符。改成拷贝对象可以让"缓存和 workdir 落在不同盘"照样工作，
+// 也能避免任务的 checkout——其文件树被沙箱设成可写——反过来改写守护进程缓存的
+// 对象文件权限。代价是 Windows 上首次 checkout 更慢、更费盘。
 func localCloneArgs(goos, barePath, checkoutPath string) []string {
 	args := []string{"clone", "--local", "--no-checkout", "--no-tags"}
 	if goos == "windows" {
@@ -1079,9 +1019,9 @@ func createIsolatedCheckoutContext(ctx context.Context, barePath, repoURL, check
 		ctx,
 		localCloneArgs(runtime.GOOS, barePath, checkoutPath)...,
 	); err != nil {
-		// Do not remove checkoutPath here. A different repository with the
-		// same basename could have won the path race after our pre-check; Git
-		// then fails safely, and deleting the path would destroy its checkout.
+		// 这里不要删 checkoutPath。若在我们预先检查之后，另一个同名但不同的
+		// 仓库赢了路径竞争，git 会安全地失败；此时删路径等于把人家刚建好的
+		// checkout 毁掉。
 		return "", fmt.Errorf("git clone --local: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	cleanup := true
@@ -1091,13 +1031,11 @@ func createIsolatedCheckoutContext(ctx context.Context, barePath, repoURL, check
 		}
 	}()
 
-	// The origin swap has to happen before the first checkout when the cache
-	// is a partial clone. `git clone --local` hardlinks the objects it can see
-	// and does NOT inherit the promisor configuration, so a blobless cache
-	// yields a checkout whose blobs are unreachable — and git reports that as
-	// success with every file "deleted" rather than as an error. Pointing
-	// origin at the real remote and restoring the promisor config first lets
-	// the checkout below lazily fetch what it needs.
+	// 缓存是 partial clone 时，origin 的替换必须先于第一次 checkout。
+	// `git clone --local` 只硬链接它看得到的对象、不会继承 promisor 配置，于是
+	// blobless 缓存造出的 checkout 里 blob 全部不可达——而 git 会把这事报成成功，
+	// 每个文件都显示成 "deleted" 而不是报错。先把 origin 指到真实远端并恢复
+	// promisor 配置，下面的 checkout 才能按需懒拉它缺的东西。
 	if out, err := runGitCombinedOutputContext(ctx, "-C", checkoutPath, "remote", "remove", isolatedCacheRemoteName); err != nil {
 		return "", fmt.Errorf("remove cache remote: %s: %w", strings.TrimSpace(string(out)), err)
 	}
@@ -1160,13 +1098,12 @@ func isIsolatedCheckoutContext(ctx context.Context, path string) bool {
 	return err == nil && strings.TrimSpace(string(out)) == isolatedCheckoutConfigValue
 }
 
-// partialCloneFilter is the object filter a blobless partial clone is created
-// with, and the value that has to be restored on any repository that inherits
-// such a clone's incomplete object store.
+// partialCloneFilter 是建 blobless partial clone 时用的对象过滤器；任何继承了
+// 这种 clone 的"不完整对象库"的仓库，都必须把这个值恢复回去。
 const partialCloneFilter = "blob:none"
 
-// isPartialClone reports whether a repository was created as a partial clone,
-// i.e. whether git will lazily fetch missing objects from its promisor remote.
+// isPartialClone 报告某个仓库是不是 partial clone 建出来的——也就是说 git 会
+// 不会从它的 promisor remote 按需懒拉缺失对象。
 func isPartialClone(repoPath string) bool {
 	return isPartialCloneContext(context.Background(), repoPath)
 }
@@ -1179,11 +1116,10 @@ func isPartialCloneContext(ctx context.Context, repoPath string) bool {
 	return strings.TrimSpace(string(out)) == "true"
 }
 
-// configurePromisorRemote marks origin as the promisor remote for a repository
-// whose object store is incomplete, so git lazily fetches missing blobs from
-// the real remote instead of failing. It mirrors the two config keys
-// `git clone --filter=blob:none` writes; `git clone --local` does not copy
-// them across, which is why they have to be restored by hand.
+// configurePromisorRemote 把 origin 标记为一个对象库不完整的仓库的 promisor
+// remote，让 git 从真实远端懒拉缺失 blob，而不是直接失败。它复刻了
+// `git clone --filter=blob:none` 写下的两个配置键；`git clone --local` 不会把
+// 它们带过来，所以得手工恢复。
 func configurePromisorRemote(repoPath string) error {
 	return configurePromisorRemoteContext(context.Background(), repoPath)
 }
@@ -1213,10 +1149,9 @@ func setIsolatedCheckoutOriginContext(ctx context.Context, path, repoURL string)
 	return nil
 }
 
-// syncIsolatedCheckoutRefs mirrors the cache's real origin/* and tag refs into
-// the task-local repository. It also fetches the selected base ref directly so
-// a reused checkout can move to a newly-fetched commit without depending on
-// the cache after this function returns.
+// syncIsolatedCheckoutRefs 把缓存里真实的 origin/* 与 tag ref 镜像进任务本地
+// 仓库。它还会直接 fetch 选中的 base ref，这样复用的 checkout 能挪到新拉到的
+// commit 上，且本函数返回后不再依赖缓存。
 func syncIsolatedCheckoutRefs(barePath, checkoutPath, baseRef string) error {
 	return syncIsolatedCheckoutRefsContext(context.Background(), barePath, checkoutPath, baseRef)
 }
@@ -1237,9 +1172,8 @@ func syncIsolatedCheckoutRefsContext(ctx context.Context, barePath, checkoutPath
 	return nil
 }
 
-// deleteAllLocalBranches removes the heads copied from the bare cache into a
-// fresh local clone. The clone is detached and has no task-created branches to
-// preserve yet.
+// deleteAllLocalBranches 删掉从裸缓存带进全新本地 clone 的那些 heads。这个
+// clone 是 detached 的，还没有任何需要保留的任务分支。
 func deleteAllLocalBranches(repoPath string) error {
 	return deleteAllLocalBranchesContext(context.Background(), repoPath)
 }
@@ -1248,8 +1182,8 @@ func deleteAllLocalBranchesContext(ctx context.Context, repoPath string) error {
 	return deleteLocalBranchesUnderContext(ctx, repoPath, "refs/heads/", "")
 }
 
-// deleteStaleAgentBranches prunes branches left by earlier Multica tasks while
-// preserving the current task branch and every user-created local branch.
+// deleteStaleAgentBranches 清理更早 Multica 任务留下的分支，同时保留当前任务
+// 分支和所有用户自建的本地分支。
 func deleteStaleAgentBranches(repoPath, keepBranch string) error {
 	return deleteStaleAgentBranchesContext(context.Background(), repoPath, keepBranch)
 }
@@ -1309,8 +1243,8 @@ func resolveBaseRefContext(ctx context.Context, barePath, requestedRef string) (
 		return getRemoteDefaultBranchContext(ctx, barePath), nil
 	}
 
-	// Prefer remote-tracking branches for human branch names. Then allow full
-	// local refs, tags, and raw commits that exist in the fetched bare cache.
+	// 优先用远程跟踪分支解析人类可读的分支名；其次才允许裸缓存里存在完整本地
+	// ref、tag 和裸 commit。
 	candidates := []string{
 		"refs/remotes/origin/" + ref,
 		"refs/tags/" + ref,
@@ -1332,26 +1266,24 @@ func gitRefExistsContext(ctx context.Context, repoPath, ref string) bool {
 	return runGitContext(ctx, "-C", repoPath, "rev-parse", "--verify", "--quiet", ref) == nil
 }
 
-// createWorktree creates a git worktree at the given path with a new branch.
-// Returns the actual branch name used — which may differ from the requested
-// branchName if a collision was resolved by appending a timestamp suffix.
+// createWorktree 在给定路径用一个新分支建 git worktree。返回实际用到的分支名——
+// 若撞名后以追加时间戳后缀消解，可能与请求的 branchName 不同。
 func createWorktree(gitRoot, worktreePath, branchName, baseRef string) (string, error) {
 	return createWorktreeContext(context.Background(), gitRoot, worktreePath, branchName, baseRef)
 }
 
 func createWorktreeContext(ctx context.Context, gitRoot, worktreePath, branchName, baseRef string) (string, error) {
-	// Pre-check: if the worktree path already exists we would get a confusing
-	// "already exists" error from `git worktree add` — which used to be
-	// misclassified as a branch collision, causing the retry to leak branches
-	// into the bare repo. Fail cleanly here instead. The caller is expected
-	// to route reused workdirs through updateExistingWorktree via isGitWorktree.
+	// 预先检查：目标路径若已存在，`git worktree add` 会报一句让人摸不着头脑的
+	// "already exists"——过去它还会被误判成分支撞名，导致重试逻辑往裸仓库里漏
+	// 出分支。这里干脆干净地失败。调用方应当通过 isGitWorktree 把复用的 workdir
+	// 路由到 updateExistingWorktree。
 	if _, err := os.Stat(worktreePath); err == nil {
 		return "", fmt.Errorf("worktree path already exists and is not a valid git worktree: %s", worktreePath)
 	}
 
 	err := runWorktreeAddContext(ctx, gitRoot, worktreePath, branchName, baseRef)
 	if err != nil && isBranchCollisionError(err) {
-		// Branch name collision: append timestamp and retry once.
+		// 分支名撞了：加时间戳，再试一次。
 		branchName = fmt.Sprintf("%s-%d", branchName, time.Now().Unix())
 		err = runWorktreeAddContext(ctx, gitRoot, worktreePath, branchName, baseRef)
 	}
@@ -1372,51 +1304,46 @@ func runWorktreeAddContext(ctx context.Context, gitRoot, worktreePath, branchNam
 	return nil
 }
 
-// isBranchCollisionError returns true if err is specifically about a branch
-// name already existing. Git's other "already exists" messages (notably path
-// collisions from `git worktree add`) must NOT be treated as branch
-// collisions, or the retry-with-timestamp logic will leak branches while
-// still failing on the original path collision.
+// isBranchCollisionError 判断 err 是否专门指"分支名已存在"。git 其它"已存在"
+// 类报错（尤其是 `git worktree add` 的路径撞名）绝不能当成分支撞名处理，否则
+// "加时间戳重试"的逻辑会在原路径冲突依旧失败的情况下白白漏出分支。
 func isBranchCollisionError(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	// Git's message is "fatal: a branch named 'X' already exists".
+	// git 的报错原文是 "fatal: a branch named 'X' already exists"。
 	return strings.Contains(msg, "a branch named")
 }
 
-// isGitWorktree checks if a path is an existing git worktree.
-// Worktrees have a .git *file* (not directory) that points to the main repo.
+// isGitWorktree 判断一个路径是不是已存在的 git worktree。worktree 的特征是
+// .git 是文件而非目录，文件内容指向主仓库。
 func isGitWorktree(path string) bool {
 	info, err := os.Stat(filepath.Join(path, ".git"))
 	return err == nil && !info.IsDir()
 }
 
-// updateExistingWorktree resets the worktree to a clean state and checks out a
-// new branch from the default branch. The caller is responsible for fetching
-// the bare cache beforehand (worktrees share the same object store).
-// Returns the actual branch name used (may differ from input on collision).
+// updateExistingWorktree 把 worktree 重置到干净状态，再从默认分支检出一个新
+// 分支。调用方要自己提前 fetch 裸缓存（worktree 与裸缓存共享同一对象库）。返回
+// 实际用到的分支名（撞名时可能与入参不同）。
 func updateExistingWorktree(worktreePath, branchName, baseRef string) (string, error) {
 	return updateExistingWorktreeContext(context.Background(), worktreePath, branchName, baseRef)
 }
 
 func updateExistingWorktreeContext(ctx context.Context, worktreePath, branchName, baseRef string) (string, error) {
-	// Discard any leftover uncommitted changes from the previous task.
+	// 丢掉上个任务残留的未提交改动。
 	if out, err := runGitCombinedOutputContext(ctx, "-C", worktreePath, "reset", "--hard"); err != nil {
 		return "", fmt.Errorf("git reset --hard: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
-	// Clean untracked files (e.g. build artifacts from previous task).
+	// 清掉未跟踪文件（比如上个任务的构建产物）。
 	if out, err := runGitCombinedOutputContext(ctx, "-C", worktreePath, "clean", "-fd"); err != nil {
 		return "", fmt.Errorf("git clean -fd: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
-	// Create a new branch from the resolved default-branch ref and switch to
-	// it. baseRef is a ref path returned by getRemoteDefaultBranch — usually
-	// "refs/remotes/origin/<branch>" but may be "refs/heads/<branch>" on a
-	// legacy/migration-pending cache. Either form is valid as a checkout
-	// startpoint.
+	// 从解析好的默认分支 ref 新建分支并切过去。baseRef 是 getRemoteDefaultBranch
+	// 返回的 ref 路径——通常是 "refs/remotes/origin/<分支>"，但老式/待迁移的缓存
+	// 也可能是 "refs/heads/<分支>"。两种形式都能当 checkout 起点用。
 	out, err := runGitCombinedOutputContext(ctx, "-C", worktreePath, "checkout", "-b", branchName, baseRef)
 	if err == nil {
 		return branchName, nil
@@ -1425,7 +1352,7 @@ func updateExistingWorktreeContext(ctx context.Context, worktreePath, branchName
 	if !isBranchCollisionError(wrapped) {
 		return "", wrapped
 	}
-	// Branch name collision: append timestamp and retry once.
+	// 分支名撞了：加时间戳，再试一次。
 	branchName = fmt.Sprintf("%s-%d", branchName, time.Now().Unix())
 	if out2, err2 := runGitCombinedOutputContext(ctx, "-C", worktreePath, "checkout", "-b", branchName, baseRef); err2 != nil {
 		return "", fmt.Errorf("git checkout -b (retry): %s: %w", strings.TrimSpace(string(out2)), err2)
@@ -1433,42 +1360,37 @@ func updateExistingWorktreeContext(ctx context.Context, worktreePath, branchName
 	return branchName, nil
 }
 
-// getRemoteDefaultBranch returns a ref path (e.g. "refs/remotes/origin/main")
-// that points at the remote's default branch in a bare cache. The return value
-// is usable directly as a `git worktree add` / `git checkout -b` startpoint.
+// getRemoteDefaultBranch 返回裸缓存中指向远端默认分支的 ref 路径（如
+// "refs/remotes/origin/main"），可直接当 `git worktree add` / `git checkout -b`
+// 的起点用。
 //
-// Resolution order:
-//  1. refs/remotes/origin/HEAD (verified; set by `git remote set-head origin --auto`)
-//  2. refs/remotes/origin/main, refs/remotes/origin/master (common defaults)
-//  3. The bare repo's own HEAD mapped into refs/remotes/origin/<same name> —
-//     `git clone --bare` sets HEAD to the remote's default, so this is a
-//     reliable hint for custom default branches (trunk, develop, …) when
-//     `git remote set-head --auto` failed to populate refs/remotes/origin/HEAD.
-//  4. Scan refs/remotes/origin/* — returns a result ONLY when exactly one
-//     non-HEAD ref exists. Multiple refs cannot be disambiguated from refname
-//     order alone (git for-each-ref sorts alphabetically), so we refuse to
-//     guess; returning a wrong default would silently base new agent work on
-//     an arbitrary feature branch.
-//  5. Legacy last-resort: the bare repo's own HEAD as a plain refs/heads/*
-//     ref, for caches that haven't populated refs/remotes/origin/* at all
-//     yet (e.g. a migration-pending cache whose backfill fetch failed).
-//     Gated on refs/remotes/origin/* being completely empty so we don't fall
-//     back to a stale snapshot when the cache has real remote-tracking refs
-//     but we just can't pick between them.
+// 解析顺序：
+//  1. refs/remotes/origin/HEAD（先做校验；由 `git remote set-head origin --auto`
+//     设置）。
+//  2. refs/remotes/origin/main、refs/remotes/origin/master（常见默认名）。
+//  3. 把裸仓库自己的 HEAD 映射进 refs/remotes/origin/<同名> —— `git clone --bare`
+//     会把 HEAD 设成远端默认分支，所以当 `git remote set-head --auto` 没填出
+//     refs/remotes/origin/HEAD 时，这是自定义默认分支（trunk、develop……）的
+//     可靠线索。
+//  4. 扫描 refs/remotes/origin/* —— 只有当恰好存在一个非 HEAD ref 时才返回。
+//     多个 ref 单看 refname 顺序消解不了歧义（git for-each-ref 按字母排），所以
+//     拒绝瞎猜；猜错默认分支会静默地把新的 agent 工作建立在某条功能分支上。
+//  5. 兜底的旧式路径：对还没填出 refs/remotes/origin/* 的缓存（比如回填 fetch
+//     失败的待迁移缓存），直接用裸仓库自己的 HEAD 当 refs/heads/* ref。以
+//     refs/remotes/origin/* 完全为空作为门槛——缓存明明有真实 remote-tracking
+//     ref、只是我们挑不出来时，绝不回退到陈旧的快照。
 //
-// Returns "" only when none of the above resolve — which the caller treats
-// as a hard error with a clear "cache has no usable refs" message.
+// 只有上述都解不出时才返回 ""——调用方会把它当成带清晰 "cache has no usable
+// refs" 报错的硬错误。
 func getRemoteDefaultBranch(barePath string) string {
 	return getRemoteDefaultBranchContext(context.Background(), barePath)
 }
 
 func getRemoteDefaultBranchContext(ctx context.Context, barePath string) string {
-	// 1) Primary: refs/remotes/origin/HEAD set by `git remote set-head
-	//    origin --auto` during ensureRemoteTrackingLayout. Verify the
-	//    target actually exists — a partial set-head or a manually-broken
-	//    repo can leave a symref pointing at a deleted ref, and returning
-	//    it here would later fail in `git worktree add` with a confusing
-	//    "invalid reference" error.
+	// 1) 首选：ensureRemoteTrackingLayout 期间由 `git remote set-head origin
+	//    --auto` 填出的 refs/remotes/origin/HEAD。要校验目标确实存在——一次不完整
+	//    的 set-head 或被人为弄坏的仓库可能留下指向已删 ref 的 symref，直接把它
+	//    返回会让后面的 `git worktree add` 报出莫名其妙的 "invalid reference"。
 	if out, err := runGitOutputContext(ctx, "-C", barePath, "symbolic-ref", "refs/remotes/origin/HEAD"); err == nil {
 		ref := strings.TrimSpace(string(out))
 		if ref != "" {
@@ -1477,18 +1399,16 @@ func getRemoteDefaultBranchContext(ctx context.Context, barePath string) string 
 			}
 		}
 	}
-	// 2) Common default branch names under the origin namespace.
+	// 2) origin 命名空间下常见的默认分支名。
 	for _, candidate := range []string{"refs/remotes/origin/main", "refs/remotes/origin/master"} {
 		if err := runGitContext(ctx, "-C", barePath, "rev-parse", "--verify", candidate); err == nil {
 			return candidate
 		}
 	}
-	// 3) Use the bare repo's own HEAD as a hint. `git clone --bare` sets HEAD
-	//    to the remote's default branch, so this reliably identifies custom
-	//    default branch names (trunk, develop, ...) when set-head --auto
-	//    didn't populate refs/remotes/origin/HEAD. We only return when the
-	//    matching origin/<name> exists, so we still pick up up-to-date code
-	//    rather than a stale local head.
+	// 3) 拿裸仓库自己的 HEAD 当线索。`git clone --bare` 把 HEAD 设成远端默认
+	//    分支，所以当 set-head --auto 没填出 refs/remotes/origin/HEAD 时，它
+	//    能可靠地认出自定义默认分支名（trunk、develop……）。只有对应的
+	//    origin/<同名> 存在时才返回，这样拿到的是最新代码而不是陈旧的本地 head。
 	bareRef := bareHeadBranchContext(ctx, barePath)
 	if bareRef != "" {
 		originRef := "refs/remotes/origin/" + strings.TrimPrefix(bareRef, "refs/heads/")
@@ -1496,12 +1416,10 @@ func getRemoteDefaultBranchContext(ctx context.Context, barePath string) string 
 			return originRef
 		}
 	}
-	// 4) Scan refs/remotes/origin/* — return a result ONLY when there's
-	//    exactly one non-HEAD candidate. Multiple candidates cannot be
-	//    disambiguated from refname order alone; returning the alphabetically-
-	//    first entry would silently base new agent work on a feature branch
-	//    instead of the real default. Count entries here so step 5 can tell
-	//    "legacy empty" apart from "ambiguous".
+	// 4) 扫描 refs/remotes/origin/* —— 只有恰好存在一个非 HEAD 候选时才返回。
+	//    多个候选没法单靠 refname 顺序消歧；返回按字母排第一个的条目会把新的
+	//    agent 工作静默建立在功能分支而非真正的默认分支上。在这里数一下条目，
+	//    好让第 5 步能区分"旧式空布局"和"多候选歧义"。
 	originCount := 0
 	var singleton string
 	if out, err := runGitOutputContext(ctx, "-C", barePath, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/"); err == nil {
@@ -1519,26 +1437,22 @@ func getRemoteDefaultBranchContext(ctx context.Context, barePath string) string 
 			return singleton
 		}
 	}
-	// 5) Last-resort fallback: legacy / migration-pending caches still have
-	//    refs/heads/* and a bare HEAD from the mirror-style layout. Gate this
-	//    on refs/remotes/origin/* being completely empty — if origin/* has
-	//    multiple refs but none match bare HEAD, the cache is in an
-	//    ambiguous state and returning the local head would mask the
-	//    problem with a stale snapshot. Let the caller fail loudly instead.
+	// 5) 兜底：旧式/待迁移缓存的 refs/heads/* 和 bare HEAD 还是 mirror 布局。
+	//    以 refs/remotes/origin/* 完全为空作为门槛——如果 origin/* 有多条 ref
+	//    只是都不匹配 bare HEAD，说明缓存处于歧义状态，此时返回本地 head 会拿
+	//    陈旧快照掩盖问题。让调用方大声失败就好。
 	if originCount == 0 && bareRef != "" {
 		return bareRef
 	}
 	return ""
 }
 
-// bareHeadBranch returns the bare repo's local HEAD ref (e.g.
-// "refs/heads/main") if HEAD is a symbolic ref to an existing branch.
-// Returns "" if HEAD is detached, missing, or points at a non-existent ref.
+// bareHeadBranch 返回裸仓库的本地 HEAD ref（如 "refs/heads/main"），前提是
+// HEAD 是指向某条现存分支的符号引用。HEAD 处于 detached、缺失或指向不存在的
+// ref 时返回 ""。
 //
-// Only used by getRemoteDefaultBranch as a last-resort fallback for caches
-// that haven't successfully populated refs/remotes/origin/* yet. Healthy
-// modern caches should never reach this path because origin/* resolution
-// succeeds first.
+// 只被 getRemoteDefaultBranch 用作对"还没成功填出 refs/remotes/origin/*"的缓存
+// 的最后兜底。健康的现代缓存走 origin/* 解析先成功，永远到不了这里。
 func bareHeadBranch(barePath string) string {
 	return bareHeadBranchContext(context.Background(), barePath)
 }
@@ -1558,40 +1472,35 @@ func bareHeadBranchContext(ctx context.Context, barePath string) string {
 	return ref
 }
 
-// multicaHookMarker is a sentinel comment embedded in every prepare-commit-msg
-// hook installed by the daemon. removeCoAuthoredByHook uses it to recognize
-// hooks it owns so it never deletes a hook installed by the user or another
-// tool. Do not change without bumping the recognition logic.
+// multicaHookMarker 是守护进程装的每个 prepare-commit-msg 钩子里都要嵌进去的
+// 哨兵注释。removeCoAuthoredByHook 靠它认出"自己装的"钩子，绝不会误删用户或
+// 其它工具装的钩子。改动它必须同步更新识别逻辑。
 const multicaHookMarker = "# multica:prepare-commit-msg:co-authored-by"
 
-// daemonInstalledHookSignatures lists substrings that identify a
-// prepare-commit-msg hook as one the daemon installed. removeCoAuthoredByHook
-// treats a hook as Multica-owned if its content contains ANY of these
-// substrings. The list deliberately includes the legacy comment that the
-// daemon used before multicaHookMarker existed, so disabling the toggle on
-// existing installations still cleans up old hooks seeded by previous daemon
-// versions. Add to this list — never remove from it — so future tweaks to
-// prepareCommitMsgHook keep recognizing every previously-shipped variant.
+// daemonInstalledHookSignatures 列出一组能识别 prepare-commit-msg 钩子是否由
+// 守护进程安装的子串。removeCoAuthoredByHook 只要看到钩子内容命中其中任意一个
+// 子串，就把它当作 Multica 所有。列表特意包含 multicaHookMarker 出现之前老版本
+// 守护进程用过的旧注释，这样在存量安装上关掉开关时，也能清掉更早守护进程种下的
+// 老钩子。往里加条目可以——永远不要删条目——这样将来调整 prepareCommitMsgHook
+// 时，仍能认出每一种历史上发布过的变体。
 var daemonInstalledHookSignatures = []string{
 	multicaHookMarker,
 	"# Installed by the Multica daemon.",
 }
 
-// coAuthoredByStateFile records the workspace's current Co-authored-by setting
-// for hooks that are already on disk. It lives beside the workspace's bare
-// caches (`<root>/<workspace-id>/`) and is rewritten every time the daemon
-// learns the setting, so a checkout made before the toggle was flipped still
-// commits under the current value. Without it the decision would be frozen
-// into the hook file at checkout time (MUL-6921).
+// coAuthoredByStateFile 记录 workspace 当前的 Co-authored-by 开关，供已落盘的
+// 钩子读取。它放在 workspace 的裸缓存旁边（`<root>/<workspace-id>/`），守护进程
+// 每次获知开关变化都会重写它——所以在开关翻转前就建好的 checkout，提交时也会
+// 按当前值来。没有它，这个决定会在 checkout 时刻被冻结进钩子文件里（MUL-6921）。
 const (
 	coAuthoredByStateFile     = ".multica_co_authored_by"
 	coAuthoredByStateEnabled  = "1"
 	coAuthoredByStateDisabled = "0"
 )
 
-// CoAuthoredByStatePath returns the file the prepare-commit-msg hook consults
-// at commit time for a workspace. Empty when the workspace is unknown, which
-// installs a hook with no gate — the pre-MUL-6921 behavior.
+// CoAuthoredByStatePath 返回 prepare-commit-msg 钩子在提交时查询的那个文件路径，
+// 按 workspace 区分。workspace 未知时返回空——此时装的是不带门控的钩子，即
+// MUL-6921 之前的行为。
 func (c *Cache) CoAuthoredByStatePath(workspaceID string) string {
 	if workspaceID == "" {
 		return ""
@@ -1599,14 +1508,13 @@ func (c *Cache) CoAuthoredByStatePath(workspaceID string) string {
 	return filepath.Join(c.root, workspaceID, coAuthoredByStateFile)
 }
 
-// WriteCoAuthoredByState publishes the workspace's current setting to every
-// prepare-commit-msg hook the daemon has installed for it, including hooks in
-// checkouts this call knows nothing about. The daemon calls it whenever it
-// refreshes workspace settings, which is what makes the toggle apply without
-// waiting for the repo to be checked out again.
+// WriteCoAuthoredByState 把 workspace 当前开关发布给守护进程为它装过的每一个
+// prepare-commit-msg 钩子，包括这次调用并不知晓的那些 checkout 里的钩子。守护
+// 进程每次刷新 workspace 设置都会调它——这就是开关无需等仓库再次 checkout 就能
+// 生效的原因。
 //
-// The write is atomic (temp file + rename) so a hook running concurrently
-// reads either the old value or the new one, never a half-written file.
+// 写入是原子的（临时文件 + rename），并发读的钩子只会看到旧值或新值，绝不会
+// 看到写到一半的文件。
 func (c *Cache) WriteCoAuthoredByState(workspaceID string, enabled bool) error {
 	path := c.CoAuthoredByStatePath(workspaceID)
 	if path == "" {
@@ -1617,9 +1525,8 @@ func (c *Cache) WriteCoAuthoredByState(workspaceID string, enabled bool) error {
 		value = coAuthoredByStateEnabled
 	}
 	if current, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(current)) == value {
-		// Already published. The daemon republishes on every workspace sync so
-		// the file survives cache GC and daemon restarts; skipping the rewrite
-		// keeps that cheap.
+		// 已经发布过了。守护进程每次 workspace sync 都会重新发布，好让这个文件
+		// 扛过缓存 GC 和守护进程重启；跳过重写能把这一步保持得很廉价。
 		return nil
 	}
 	dir := filepath.Dir(path)
@@ -1647,18 +1554,14 @@ func (c *Cache) WriteCoAuthoredByState(workspaceID string, enabled bool) error {
 	return nil
 }
 
-// applyCoAuthoredBySettingContext reconciles this checkout's hook file with the
-// workspace setting.
+// applyCoAuthoredBySettingContext 把本 checkout 的钩子文件和 workspace 开关对齐。
 //
-// It deliberately does NOT publish the state file. params.CoAuthoredByEnabled
-// is a snapshot the handler took before fetch and lock waits, so a checkout can
-// finish long after the value it captured stopped being true; writing that
-// snapshot to the workspace-wide state file would let a slow checkout resurrect
-// a trailer the user has since turned off. The daemon is the only publisher —
-// it holds the ordering between settings updates — and this reads what the
-// daemon published, falling back to the snapshot only when nothing has been
-// published yet (a cache driven without a daemon, or a state file removed under
-// us).
+// 它刻意不发布 state 文件。params.CoAuthoredByEnabled 是 handler 在 fetch 和等锁
+// 之前拍的快照，一笔 checkout 可能在这之后很久才跑完，而它抓到的值早已过时；把
+// 这份快照写进 workspace 级的 state 文件，等于让一笔慢 checkout 把用户已经关掉
+// 的尾注"复活"回来。只有守护进程能发布——它握着设置更新的先后顺序——这里只读
+// 守护进程发布的值，仅当还没人发布过（没有守护进程驱动的缓存，或 state 文件被
+// 人在脚下删了）才退回用那份快照。
 func (c *Cache) applyCoAuthoredBySettingContext(ctx context.Context, worktreePath string, params WorktreeParams) {
 	enabled := params.CoAuthoredByEnabled
 	if published, ok := c.readCoAuthoredByState(params.WorkspaceID); ok {
@@ -1675,9 +1578,8 @@ func (c *Cache) applyCoAuthoredBySettingContext(ctx context.Context, worktreePat
 	}
 }
 
-// readCoAuthoredByState reports the setting the daemon last published for a
-// workspace. ok is false when nothing has been published — the caller decides
-// what "unknown" means for it.
+// readCoAuthoredByState 报告守护进程最近为某 workspace 发布的开关。什么都没发布
+// 过时 ok 为 false——"未知"意味着什么由调用方自己定。
 func (c *Cache) readCoAuthoredByState(workspaceID string) (enabled, ok bool) {
 	path := c.CoAuthoredByStatePath(workspaceID)
 	if path == "" {
@@ -1697,19 +1599,17 @@ func (c *Cache) readCoAuthoredByState(workspaceID string) (enabled, ok bool) {
 	}
 }
 
-// ReconcileCoAuthoredByHooks brings the hooks in a workspace's bare caches in
-// line with enabled, without waiting for those repos to be checked out again.
+// ReconcileCoAuthoredByHooks 让某 workspace 各裸缓存里的钩子与 enabled 对齐，
+// 不必等这些仓库再次被 checkout。
 //
-// This is the migration path for hooks installed by earlier daemon versions:
-// they predate the state file and read nothing at commit time, so publishing a
-// new value cannot reach them. Enabled rewrites them to the current gated
-// script (a later toggle-off then applies at commit time); disabled deletes
-// them. Hooks the daemon does not own are never touched.
+// 这是给更早版本守护进程装的钩子准备的迁移路径：它们早于 state 文件，提交时
+// 什么都不读，所以光发布新值够不着它们。enabled 会把它们改写成当前带门控的
+// 脚本（之后切到 off 就能在提交时生效）；disabled 则直接删掉。不是守护进程装的
+// 钩子一律不碰。
 //
-// Only bare caches are enumerable here — the cache root is all this type
-// knows. Isolated checkouts keep their hook inside a task workdir; the daemon
-// finds those and reconciles them one at a time through
-// ReconcileCoAuthoredByHookInCheckout.
+// 这里只能枚举裸缓存——这个类型只知道缓存根目录。isolated checkout 的钩子放在
+// 任务 workdir 里；守护进程找到它们后，通过 ReconcileCoAuthoredByHookInCheckout
+// 逐个对齐。
 func (c *Cache) ReconcileCoAuthoredByHooks(workspaceID string, enabled bool) error {
 	if workspaceID == "" {
 		return nil
@@ -1739,14 +1639,13 @@ func (c *Cache) ReconcileCoAuthoredByHooks(workspaceID string, enabled bool) err
 	return firstErr
 }
 
-// ReconcileCoAuthoredByHookInCheckout applies the workspace setting to a single
-// checkout that owns its git metadata — an isolated checkout, whose .git lives
-// in the task workdir instead of the shared bare cache and is therefore
-// invisible to ReconcileCoAuthoredByHooks. The daemon knows where those
-// workdirs are and calls this for each one it finds.
+// ReconcileCoAuthoredByHookInCheckout 把 workspace 开关应用到单个"自持 git 元
+// 数据"的 checkout——即 isolated checkout，它的 .git 在任务 workdir 里而非共享
+// 裸缓存里，因此 ReconcileCoAuthoredByHooks 看不见它。守护进程知道这些 workdir
+// 在哪，每找到一个就调一次本函数。
 //
-// A linked worktree has a .git FILE pointing at the bare cache; it is skipped
-// here because its hook is reconciled through the bare cache instead.
+// linked worktree 的 .git 是个指向裸缓存的 FILE，这里会跳过它——它的钩子改走
+// 裸缓存那条路径对齐。
 func (c *Cache) ReconcileCoAuthoredByHookInCheckout(checkoutPath, workspaceID string, enabled bool) error {
 	if checkoutPath == "" || workspaceID == "" {
 		return nil
@@ -1759,15 +1658,14 @@ func (c *Cache) ReconcileCoAuthoredByHookInCheckout(checkoutPath, workspaceID st
 	return c.reconcileHookAt(filepath.Join(gitDir, "hooks"), workspaceID, enabled)
 }
 
-// reconcileHookAt applies the workspace setting to one hooks directory. It
-// leaves a hook the daemon did not install alone, and never creates a hooks
-// directory it did not find.
+// reconcileHookAt 把 workspace 开关应用到单个 hooks 目录。不是守护进程装的钩子
+// 保持原样，找不到的 hooks 目录也绝不新建。
 func (c *Cache) reconcileHookAt(hooksDir, workspaceID string, enabled bool) error {
 	hookPath := filepath.Join(hooksDir, "prepare-commit-msg")
 	current, err := os.ReadFile(hookPath)
 	switch {
 	case err == nil && !isDaemonInstalledHook(current):
-		return nil // user or third-party hook: not ours to reconcile
+		return nil // 用户或第三方钩子：不归我们管
 	case err != nil && !os.IsNotExist(err):
 		return fmt.Errorf("read prepare-commit-msg hook: %w", err)
 	}
@@ -1796,19 +1694,18 @@ func (c *Cache) reconcileHookAt(hooksDir, workspaceID string, enabled bool) erro
 	return nil
 }
 
-// prepareCommitMsgHook builds the prepare-commit-msg hook script that appends
-// a Co-authored-by trailer for the Multica Agent to every commit message.
+// prepareCommitMsgHook 生成 prepare-commit-msg 钩子脚本，往每次提交信息里追加
+// 一行 Multica Agent 的 Co-authored-by 尾注。
 //
-// The script re-reads statePath on every commit instead of trusting its own
-// presence on disk: the hook is installed in the git common directory and
-// outlives the checkout that created it, so a workspace toggled off after the
-// checkout must still stop the trailer at the very next commit — including
-// commits the daemon never sees, and `git commit --no-verify`, which bypasses
-// pre-commit and commit-msg but not prepare-commit-msg.
+// 脚本每次提交都重新读 statePath，而不是信任自己"已在盘上"这件事：钩子装在 git
+// common 目录里，活得比创建它的 checkout 还久，所以 checkout 之后才把开关关掉的
+// workspace，也必须让尾注在紧接着的下一笔提交就停——包括守护进程永远看不到的
+// 提交；也包括 `git commit --no-verify`：它虽然绕过 pre-commit 和 commit-msg，
+// 却绕不过 prepare-commit-msg。
 //
-// A missing or unreadable state file keeps the trailer: the hook only exists
-// because a checkout ran with the setting enabled, so "no state recorded" must
-// mean the same thing it meant before the state file existed.
+// state 文件缺失或不可读时依然保留尾注：钩子之所以存在，是因为某次 checkout 是
+// 在开关打开的状态下跑的，所以"没有记录到开关"必须和"state 文件出现之前"意思
+// 一致。
 func prepareCommitMsgHook(statePath string) string {
 	var gate string
 	if statePath != "" {
@@ -1848,19 +1745,18 @@ git interpret-trailers --in-place --trailer "$TRAILER" "$COMMIT_MSG_FILE"
 `
 }
 
-// shellSingleQuoted renders s as a POSIX shell single-quoted literal so a path
-// with spaces or shell metacharacters survives being embedded in the hook.
+// shellSingleQuoted 把 s 渲染成 POSIX shell 单引号字面量，让带空格或 shell 元
+// 字符的路径在嵌进钩子后依然安全。
 func shellSingleQuoted(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// installCoAuthoredByHook installs a prepare-commit-msg git hook that appends
-// a Co-authored-by trailer for the Multica Agent. The hook is installed in the
-// git common directory (the bare repo for worktrees) so it applies to all
-// worktrees created from this cache.
+// installCoAuthoredByHook 装一个会给提交追加 Multica Agent Co-authored-by 尾注
+// 的 prepare-commit-msg 钩子。钩子装在 git common 目录（对 worktree 就是裸仓库），
+// 所以对从这个缓存建出来的所有 worktree 都生效。
 //
-// statePath is the file the hook re-reads on every commit to decide whether
-// the trailer is still wanted; pass "" to install an ungated hook.
+// statePath 是钩子每次提交都要重读、以决定是否还要尾注的那个文件；传 "" 表示装
+// 不带门控的钩子。
 func installCoAuthoredByHook(worktreePath, statePath string) error {
 	return installCoAuthoredByHookContext(context.Background(), worktreePath, statePath)
 }
@@ -1887,9 +1783,9 @@ func installCoAuthoredByHookContext(ctx context.Context, worktreePath, statePath
 	return nil
 }
 
-// writeHookFile publishes a hook script by rename. A plain truncate-and-write
-// would be visible to a commit running at that moment as a half-written
-// script, and this path rewrites hooks in repos with checkouts live on them.
+// writeHookFile 用 rename 发布钩子脚本。直接截断再写的话，恰好在那时发生的提交
+// 会看到一个写了一半的脚本；而这条路径会在"仓库上正挂着 checkout 在跑"的情况下
+// 重写钩子。
 func writeHookFile(hookPath, contents string) error {
 	dir := filepath.Dir(hookPath)
 	tmp, err := os.CreateTemp(dir, ".multica-hook-*")
@@ -1917,10 +1813,9 @@ func writeHookFile(hookPath, contents string) error {
 	return nil
 }
 
-// isDaemonInstalledHook reports whether a prepare-commit-msg hook on disk was
-// installed by the Multica daemon (current or any previously released
-// version). It returns false for hooks that don't carry any known daemon
-// signature, so a user-installed hook at the same path is left alone.
+// isDaemonInstalledHook 判断盘上的 prepare-commit-msg 钩子是不是 Multica 守护
+// 进程装的（当前或任何历史发布版本都算）。钩子不带任何已知守护进程签名时返回
+// false——这样同路径下用户自装的钩子不会被碰。
 func isDaemonInstalledHook(contents []byte) bool {
 	body := string(contents)
 	for _, sig := range daemonInstalledHookSignatures {
@@ -1931,12 +1826,10 @@ func isDaemonInstalledHook(contents []byte) bool {
 	return false
 }
 
-// removeCoAuthoredByHook removes the prepare-commit-msg hook installed by
-// installCoAuthoredByHook. It only deletes the file when the content matches
-// a known daemon signature (current marker or any previously released hook
-// content), so a user-installed prepare-commit-msg hook is never touched.
-// Returns nil when no hook is present or when an unrelated hook occupies
-// the path.
+// removeCoAuthoredByHook 移除 installCoAuthoredByHook 装的 prepare-commit-msg
+// 钩子。只有内容命中已知守护进程签名（当前标记或任何历史发布过的钩子内容）时
+// 才删文件，用户自装的 prepare-commit-msg 钩子绝不碰。没有钩子、或路径被无关
+// 钩子占用时返回 nil。
 func removeCoAuthoredByHook(worktreePath string) error {
 	return removeCoAuthoredByHookContext(context.Background(), worktreePath)
 }
@@ -1960,7 +1853,7 @@ func removeCoAuthoredByHookContext(ctx context.Context, worktreePath string) err
 		return fmt.Errorf("read prepare-commit-msg hook: %w", err)
 	}
 	if !isDaemonInstalledHook(contents) {
-		// Unrelated hook (user or third-party): leave it alone.
+		// 无关钩子（用户或第三方装的）：别碰。
 		return nil
 	}
 	if err := os.Remove(hookPath); err != nil && !os.IsNotExist(err) {
@@ -1969,7 +1862,7 @@ func removeCoAuthoredByHookContext(ctx context.Context, worktreePath string) err
 	return nil
 }
 
-// excludeFromGit adds a pattern to the worktree's .git/info/exclude file.
+// excludeFromGit 往 worktree 的 .git/info/exclude 文件里加一条忽略模式。
 func excludeFromGit(worktreePath, pattern string) error {
 	return excludeFromGitContext(context.Background(), worktreePath, pattern)
 }
@@ -2008,8 +1901,8 @@ func excludeFromGitContext(ctx context.Context, worktreePath, pattern string) er
 	return nil
 }
 
-// repoNameFromURL extracts a short directory name from a git remote URL.
-// e.g. "https://github.com/org/my-repo.git" → "my-repo"
+// repoNameFromURL 从 git 远端 URL 里抽出简短目录名。如
+// "https://github.com/org/my-repo.git" → "my-repo"
 func repoNameFromURL(url string) string {
 	url = strings.TrimRight(url, "/")
 	url = strings.TrimSuffix(url, ".git")
@@ -2033,7 +1926,7 @@ func repoNameFromURL(url string) string {
 
 var nonAlphanumeric = regexp.MustCompile(`[^a-z0-9]+`)
 
-// sanitizeName produces a git-branch-safe name from a human-readable string.
+// sanitizeName 从一段人类可读的名字生成对 git 分支安全的名称。
 func sanitizeName(name string) string {
 	s := strings.ToLower(strings.TrimSpace(name))
 	s = nonAlphanumeric.ReplaceAllString(s, "-")
@@ -2048,16 +1941,15 @@ func sanitizeName(name string) string {
 	return s
 }
 
-// taskKeyLen mirrors execenv.taskKeyLen — see that constant for why the
-// segment is short: a branch name becomes a path under .git/refs/heads/ inside
-// the task checkout, and Windows enforces MAX_PATH there.
+// taskKeyLen 与 execenv.taskKeyLen 保持一致——那段为什么短见那边的常量说明：
+// 分支名在任务 checkout 里会变成 .git/refs/heads/ 下的路径，而 Windows 对那里
+// 有 MAX_PATH 限制。
 const taskKeyLen = 12
 
-// taskKey returns the git-safe branch segment identifying a task: the LAST
-// taskKeyLen hex chars of the id. Mirrors execenv.taskKey — a UUIDv7's LEADING
-// 8 hex chars are timestamp bits that only advance every ~65.5s, so taking the
-// front gave two concurrently created tasks the same branch name (#7326). The
-// tail is random.
+// taskKey 返回标识一个任务的、对 git 安全的短段：取 id 末尾 taskKeyLen 个十六
+// 进制字符。与 execenv.taskKey 保持一致——UUIDv7 开头的 8 位十六进制是时间戳
+// 位，大约每 65.5 秒才推进一次，取开头会让两个几乎同时建的任务撞同名分支
+// （#7326）；尾部是随机的。
 func taskKey(uuid string) string {
 	s := strings.ReplaceAll(uuid, "-", "")
 	if len(s) > taskKeyLen {
@@ -2066,8 +1958,8 @@ func taskKey(uuid string) string {
 	return s
 }
 
-// shortID returns the first 8 characters of a UUID string (dashes stripped).
-// Display and logging only — see taskKey for anything that must be unique.
+// shortID 返回 UUID 字符串（去掉连字符）的前 8 个字符。只用于展示和日志——需要
+// 唯一性的地方请用 taskKey。
 func shortID(uuid string) string {
 	s := strings.ReplaceAll(uuid, "-", "")
 	if len(s) > 8 {

@@ -1,3 +1,5 @@
+// 本文件实现自动驾驶列表页的视图偏好状态（scope、排序、列显隐、筛选），按工作区持久化。
+
 "use client";
 
 import { create } from "zustand";
@@ -8,18 +10,14 @@ import {
 } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
 
-// View preferences for the autopilots list page: scope, sort, column
-// visibility, and filters. Persisted per workspace (workspace-aware storage),
-// per user/device (localStorage). Search text and row selection are
-// deliberately NOT stored — they are session-scoped (same rationale as the
-// skills view store).
+// 自动驾驶列表页的视图偏好：scope、排序、列显隐和筛选。按工作区（工作区感知存储）、
+// 按用户/设备（localStorage）持久化。搜索文本和行选择刻意不存——它们是会话级的
+// （和 skills 视图 store 同样的理由）。
 
-// Status is the promoted SCOPE dimension (lifecycle stage, mutually
-// exclusive) — it therefore does NOT appear in `filters`; one dimension
-// lives in exactly one place. "all" = active + paused. There is no
-// archived scope because the product has no UI archiving flow (the DB
-// status value exists but nothing in the UI can set it); add the scope
-// back together with archive actions if that flow ever ships.
+// 状态是提升出来的 SCOPE 维度（生命周期阶段，互斥）——因此它不出现在 `filters` 里；
+// 一个维度只存在一处。「all」= active + paused。没有 archived 这个 scope，因为产品
+// 没有 UI 归档流程（DB 里存在该状态值但 UI 里没有任何东西能设置它）；如果以后
+// 上了归档流程，再把 scope 和归档动作一起加回来。
 export type AutopilotScope = "all" | "active" | "paused";
 
 export const AUTOPILOT_SCOPES: AutopilotScope[] = ["all", "active", "paused"];
@@ -28,7 +26,7 @@ export type AutopilotSortField = "name" | "lastRun" | "nextRun" | "created";
 
 export type AutopilotSortDirection = "asc" | "desc";
 
-/** Per-field direction applied when the user switches TO that field. */
+/** 切换到某个字段时应用的该字段默认排序方向。 */
 export const AUTOPILOT_SORT_DEFAULT_DIRECTION: Record<
   AutopilotSortField,
   AutopilotSortDirection
@@ -39,7 +37,7 @@ export const AUTOPILOT_SORT_DEFAULT_DIRECTION: Record<
   created: "desc",
 };
 
-/** Multi-select filter state. Empty array per dimension = inactive. */
+/** 多选筛选状态。每个维度空数组表示未启用。 */
 export interface AutopilotListFilters {
   assignees: string[];
   modes: string[];
@@ -54,8 +52,7 @@ export const EMPTY_AUTOPILOT_FILTERS: AutopilotListFilters = {
   creators: [],
 };
 
-// User-hideable columns. Name and the structural columns (checkbox, kebab)
-// are always visible.
+// 用户可隐藏的列。名称列和结构列（复选框、kebab 菜单）始终可见。
 export type AutopilotColumnKey =
   | "assignee"
   | "trigger"
@@ -65,13 +62,14 @@ export type AutopilotColumnKey =
   | "creator"
   | "created";
 
-/** Mode, creator and created are opt-in: hidden until the user enables them. */
+/** mode、creator、created 是选择加入的：用户启用前默认隐藏。 */
 export const AUTOPILOT_DEFAULT_HIDDEN_COLUMNS: AutopilotColumnKey[] = [
   "mode",
   "creator",
   "created",
 ];
 
+/** 自动驾驶列表视图的状态与动作。 */
 export interface AutopilotsViewState {
   scope: AutopilotScope;
   sortField: AutopilotSortField;
@@ -79,10 +77,9 @@ export interface AutopilotsViewState {
   hiddenColumns: AutopilotColumnKey[];
   filters: AutopilotListFilters;
   setScope: (scope: AutopilotScope) => void;
-  /** Header click: toggles direction on the active field, otherwise switches
-   *  to the field with its default direction. */
+  /** 表头点击：在当前字段上切换方向，否则切换到该字段并采用默认方向。 */
   toggleSort: (field: AutopilotSortField) => void;
-  /** Display panel select: switches field (default direction), no toggle. */
+  /** 展示面板选择：切换字段（默认方向），不做切换。 */
   setSortField: (field: AutopilotSortField) => void;
   setSortDirection: (direction: AutopilotSortDirection) => void;
   toggleColumn: (key: AutopilotColumnKey) => void;
@@ -152,15 +149,13 @@ export const useAutopilotsViewStore = create<AutopilotsViewState>()(
         hiddenColumns: state.hiddenColumns,
         filters: state.filters,
       }),
-      // On rehydrate, if the new workspace has no persisted value, reset to
-      // the defaults instead of leaving the previous workspace's in-memory
-      // view state in place (same rationale as the skills view store).
+      // 重新水合时，如果新工作区没有持久化值，重置为默认值，而不是保留上一个
+      // 工作区的内存视图状态（和 skills 视图 store 同样的理由）。
       merge: (persisted, current) => {
         if (!persisted) return { ...current, ...DEFAULTS };
         const p = persisted as Partial<AutopilotsViewState>;
-        // Deep-merge filters so a payload persisted before a new filter
-        // dimension existed still gets that key's default instead of
-        // dropping it to undefined (which crashes `.length` reads).
+        // 深度合并 filters，这样在新的筛选维度出现之前持久化的载荷，
+        // 仍能得到该 key 的默认值，而不是变成 undefined（那会让 `.length` 读取崩溃）。
         return {
           ...current,
           ...p,

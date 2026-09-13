@@ -1,3 +1,5 @@
+// 本文件是 issue-statuses（issue 状态目录）模块的对外出口（barrel）。
+
 export {
   issueStatusKeys,
   issueStatusListOptions,

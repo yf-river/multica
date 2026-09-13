@@ -14,6 +14,12 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { PageHeader } from "./page-header";
 
+/**
+ * 布局模块：集合页共用的页头、页头操作按钮和居中状态视图。
+ * 为 issues、项目、成员等列表页提供一致的头部与空/错误/未找到状态。
+ */
+
+/** 集合页头部组件的属性。 */
 interface CollectionPageHeaderProps {
   icon: LucideIcon;
   title: ReactNode;
@@ -28,8 +34,15 @@ interface CollectionPageHeaderProps {
 }
 
 /**
- * Shared dashboard collection header: entity icon, title, optional count and
- * supporting copy on the left; page-level actions on the right.
+ * 仪表盘集合页共用的页头：左侧是实体图标、标题、可选数量与说明文字，
+ * 右侧是页面级操作。
+ * @param icon 实体图标组件。
+ * @param title 标题。
+ * @param count 可选的数量徽标，大于 0 才显示。
+ * @param description 可选说明文字。
+ * @param learnMore 可选的「了解更多」外链。
+ * @param actions 右侧操作区。
+ * @param className 附加样式类名。
  */
 export function CollectionPageHeader({
   icon: Icon,
@@ -81,13 +94,18 @@ export function CollectionPageHeader({
   );
 }
 
+/** 集合页头操作按钮的属性。 */
 interface CollectionPageHeaderActionProps
   extends Omit<ComponentProps<typeof Button>, "children"> {
   icon: LucideIcon;
   label: string;
 }
 
-/** Responsive collection action: icon-only below md, labelled above md. */
+/**
+ * 响应式的集合页操作按钮：md 以下只显示图标，md 及以上显示图标加文字。
+ * @param icon 图标组件。
+ * @param label 按钮文字，也用作无障碍标签的兜底。
+ */
 export function CollectionPageHeaderAction({
   icon: Icon,
   label,
@@ -114,8 +132,10 @@ export function CollectionPageHeaderAction({
   );
 }
 
+/** 状态视图的色调：普通、危险、警告。 */
 type PageStateTone = "muted" | "destructive" | "warning";
 
+/** 集合页居中状态视图的属性。 */
 interface CollectionPageStateProps {
   icon: LucideIcon;
   title: ReactNode;
@@ -132,7 +152,16 @@ const stateToneClass: Record<PageStateTone, string> = {
   warning: "text-warning",
 };
 
-/** Shared centered state for collection empty, error and not-found views. */
+/**
+ * 集合页共用的居中状态视图，用于空态、错误态和未找到态。
+ * @param icon 状态图标。
+ * @param title 状态标题。
+ * @param description 可选说明。
+ * @param actions 可选操作按钮。
+ * @param tone 色调，默认 "muted"。
+ * @param role 无障碍角色，如 "alert" 或 "status"。
+ * @param className 附加样式类名。
+ */
 export function CollectionPageState({
   icon: Icon,
   title,

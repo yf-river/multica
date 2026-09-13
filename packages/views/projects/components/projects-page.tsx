@@ -1,5 +1,7 @@
 "use client";
 
+// 项目列表页：支持搜索、按状态/优先级/负责人筛选、多列排序与列显隐、以及
+// 「紧凑表格 / 舒适卡片」两种视图的切换，另有整行导航、行内编辑、批量置顶/删除。
 import { useCallback, useMemo, useState, type MouseEvent } from "react";
 import {
   ArrowDown,
@@ -112,7 +114,7 @@ import { ProjectLeadPicker } from "./project-lead-picker";
 import { PAGE_GUTTER, PAGE_TOOLBAR } from "../../layout/page-header";
 import { cn } from "@multica/ui/lib/utils";
 
-// Sort order maps for the enum columns (header sort needs a total order).
+// 枚举列排序用的次序映射（表头排序需要一个全序）。
 const PRIORITY_ORDER: Record<ProjectPriority, number> = {
   urgent: 4,
   high: 3,
@@ -131,17 +133,15 @@ const STATUS_ORDER: Record<ProjectStatus, number> = {
 const progressOf = (p: Project) =>
   p.issue_count > 0 ? p.done_count / p.issue_count : -1;
 
-// Composite "type:id" lead value so the string[] filter holds member/agent
-// refs alike.
+// 负责人筛选用「类型:id」复合键，这样同一份 string[] 筛选能同时容纳成员与 Agent。
 function leadFilterValue(p: Project): string | null {
   return p.lead_type && p.lead_id ? `${p.lead_type}:${p.lead_id}` : null;
 }
 
 // ---------------------------------------------------------------------------
-// Table (compact) view — ListGrid. Name + status are the core columns;
-// priority/progress/lead/issues/created collapse below @2xl, with min-width
-// + the wrapper's overflow as the escape valve. Rows use whole-row mouse
-// navigation; inline controls stop propagation so edit/menu clicks stay local.
+// 表格（紧凑）视图 — ListGrid。名称 + 状态是核心列；优先级/进度/负责人/任务数/
+// 创建时间在 @2xl 以下折叠，由 min-width + 外层 overflow 兜底。行支持整行鼠标
+// 导航；行内控件会 stopPropagation，让编辑/菜单的点击不冒泡到整行点击。
 // ---------------------------------------------------------------------------
 
 const COLUMN_WIDTHS: Record<ProjectColumnKey, number> = {
@@ -152,16 +152,13 @@ const COLUMN_WIDTHS: Record<ProjectColumnKey, number> = {
   created: 104,
 };
 
-// Fixed tracks: edges 12+12, checkbox 16, name min 200, status 116,
-// kebab 28 = 384, plus the 10 gap-x-3 gaps between the wide template's
-// 11 tracks.
+// 固定轨道宽：左右边距 12+12、勾选 16、名称最小 200、状态 116、kebab 28 = 384，
+// 再加上宽模板 11 条轨道之间 10 个 gap-x-3 的间距。
 const FIXED_TRACKS_WIDTH = 384 + 10 * 12;
 
-// Render/track order: checkbox, name, status (core, fixed 116px), priority,
-// progress, lead, issues, created, kebab. MUST be a literal string —
-// Tailwind can't see interpolated `grid-cols-[...]` arbitrary values, so an
-// interpolated width silently drops the whole template and the grid
-// collapses to one column.
+// 渲染/轨道顺序：勾选、名称、状态（核心列，固定 116px）、优先级、进度、负责人、
+// 任务数、创建时间、kebab。必须是字面字符串——Tailwind 看不见插值出来的
+// `grid-cols-[...]` 任意值，宽度一旦插值，整张模板会被静默丢弃、网格塌成一列。
 const GRID_COLS =
   "grid-cols-[0.75rem_1rem_minmax(120px,1fr)_116px_1.75rem_0.75rem] " +
   "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-issues)_var(--pjc-created)_1.75rem_0.75rem]";
@@ -189,6 +186,7 @@ function columnTrackVars(
   } as React.CSSProperties;
 }
 
+/** 完成度小圆环：任务为 0 时显示「—」，否则画百分比圆环 + 已办/总数。 */
 function ProgressRing({ project }: { project: Project }) {
   if (project.issue_count === 0) {
     return <span className="text-caption text-faint-foreground">—</span>;
@@ -219,8 +217,8 @@ function ProgressRing({ project }: { project: Project }) {
   );
 }
 
-// Compact rows own whole-row navigation; callers stop propagation around this
-// menu so action clicks do not bubble into the rowLink handler.
+// 紧凑行自己拥有整行导航；调用方要在这个菜单外加 stopPropagation，让操作点击
+// 不冒泡进 rowLink 的整行跳转。
 function ProjectRowActions({
   project,
   pinned,
@@ -334,6 +332,7 @@ function ProjectRowActions({
   );
 }
 
+/** 表格行选择用的勾选单元格（整行可点，勾选自己拦截冒泡）。 */
 function CheckboxCell({
   checked,
   onToggle,
@@ -361,6 +360,7 @@ function CheckboxCell({
   );
 }
 
+/** 表格（紧凑视图）的一行：整行可点击跳详情，行内嵌状态/优先级/负责人等行内编辑。 */
 function ProjectTableRow({
   project,
   pinned,
@@ -400,7 +400,7 @@ function ProjectTableRow({
         </span>
       </ListGridCell>
 
-      {/* status — core column, always visible */}
+      {/* 状态——核心列，始终显示 */}
       <ListGridCell onClick={stopRowNavigation} onAuxClick={stopRowNavigation}>
         <ProjectStatusBadge project={project} handleUpdate={handleUpdate} align="start" />
       </ListGridCell>
@@ -473,6 +473,7 @@ function ProjectTableRow({
   );
 }
 
+/** 表格（紧凑视图）的表头：支持全选与各列排序（名称/状态/优先级/进度/创建时间）。 */
 function ProjectTableHeader({
   sortField,
   sortDirection,
@@ -572,9 +573,10 @@ function ProjectTableHeader({
 }
 
 // ---------------------------------------------------------------------------
-// Card (comfortable) view — kept from the prior page.
+// 卡片（舒适）视图 — 沿用上一版页面的卡片。
 // ---------------------------------------------------------------------------
 
+/** 舒适视图的项目卡片：标题行（带操作菜单/状态徽标）+ 进度环 + 负责人/优先级/时间。 */
 function ProjectCard({
   project,
   pinned,
@@ -670,8 +672,7 @@ function ProjectCard({
 }
 
 // ---------------------------------------------------------------------------
-// Toolbar — search + result count + filter + display (compact only) + view
-// toggle.
+// 工具栏 — 搜索 + 结果计数 + 筛选 + 显示（仅紧凑视图）+ 视图切换。
 // ---------------------------------------------------------------------------
 
 const STATUS_VALUES: ProjectStatus[] = [
@@ -693,8 +694,8 @@ function countActiveFilters(f: ProjectListFilters): number {
   return c;
 }
 
-// Batch toolbar — page-anchored (not viewport). Pin all selected (any
-// member) + Delete (workspace admin). Mirrors the other lists.
+// 批量操作工具栏——锚定在页面（而非视口）底部居中的胶囊。全部置顶选中的项目
+// （任意成员可用）+ 批量删除（仅工作区管理员）。与其它列表的批量栏一致。
 function ProjectBatchToolbar({
   rows,
   pinnedIds,
@@ -790,9 +791,13 @@ function ProjectBatchToolbar({
 }
 
 // ---------------------------------------------------------------------------
-// Page
+// 页面主体
 // ---------------------------------------------------------------------------
 
+/**
+ * 项目列表页：拉取项目、按当前搜索/筛选/排序状态求可见集，并渲染紧凑表格或
+ * 舒适卡片两种视图，底部提供选中项的批量操作。
+ */
 export function ProjectsPage() {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
@@ -849,8 +854,8 @@ export function ProjectsPage() {
   const activeFilterCount = countActiveFilters(filters);
   const hasActiveFilters = activeFilterCount > 0;
 
-  // Filter option counts derive from the full set so toggling one dimension
-  // doesn't make the others vanish.
+  // 筛选选项的计数基于「全量项目」计算，这样切换一个维度不会让其它维度的
+  // 候选消失。
   const leadOptions = useMemo(() => {
     const m = new Map<string, { type: string; id: string; count: number }>();
     for (const p of projects) {
@@ -936,7 +941,7 @@ export function ProjectsPage() {
   );
 
   return (
-    // relative: positioning anchor for the page-centered batch toolbar.
+    // relative：作为页面居中批量操作栏的定位锚点。
     <div className="relative flex flex-1 min-h-0 flex-col">
       <CollectionPageHeader
         icon={FolderKanban}
@@ -963,7 +968,7 @@ export function ProjectsPage() {
         />
       ) : (
         <>
-          {/* Toolbar */}
+          {/* 工具栏 */}
           <div className={PAGE_TOOLBAR}>
             <div className="flex min-w-0 items-center gap-2">
               <div className="relative hidden md:block">
@@ -987,7 +992,7 @@ export function ProjectsPage() {
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
-              {/* Filter */}
+              {/* 筛选 */}
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
@@ -1099,10 +1104,9 @@ export function ProjectsPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              {/* Display (sort + columns). Always present — view mode is a
-                  pure presentation choice and must not reshape the toolbar.
-                  Sort applies to both views; the columns section is shown
-                  only in the table view (cards have no columns). */}
+              {/* 显示（排序 + 列显隐）——始终存在。视图模式是纯粹的展示选择，
+                  不应该重塑工具栏。排序对两种视图都生效；列区块只在表格视图显示
+                  （卡片没有列）。 */}
               <Popover>
                   <Tooltip>
                     <PopoverTrigger
@@ -1171,10 +1175,9 @@ export function ProjectsPage() {
                   </PopoverContent>
                 </Popover>
 
-              {/* View selector — a dropdown menu to pick the list view,
-                  aligned with the issue list's view menu. The trigger shows
-                  the active view; the menu carries every mode so new views
-                  can be added as menu items. Pure presentation. */}
+              {/* 视图选择器——用下拉菜单选列表视图，与任务列表的视图菜单一致。
+                  触发器显示当前视图；菜单里列出所有模式，以后加新视图只要加菜单项。
+                  纯展示。 */}
               <DropdownMenu>
                 <Tooltip>
                   <DropdownMenuTrigger
@@ -1223,7 +1226,7 @@ export function ProjectsPage() {
             </div>
           </div>
 
-          {/* Body */}
+          {/* 内容区 */}
           {isLoading ? (
             <LoadingState isCompact={isCompact} />
           ) : visible.length === 0 ? (
@@ -1294,6 +1297,7 @@ export function ProjectsPage() {
   );
 }
 
+/** 加载占位骨架：按视图模式渲染成表格行或卡片形状。 */
 function LoadingState({ isCompact }: { isCompact: boolean }) {
   if (isCompact) {
     return (

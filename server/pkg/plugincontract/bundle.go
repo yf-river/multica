@@ -1,5 +1,9 @@
 package plugincontract
 
+// 本文件职责：实现「发布包」的解析与校验——把作者上传的 zip（或本地目录）
+// 变成一包经过验证的 Bundle：解析 manifest、收齐 manifest 点名的每个文件并
+// 逐项做内容校验（surface 脚本可执行、skill 是合法文本），全程限流防膨胀。
+
 import (
 	"archive/zip"
 	"bytes"
@@ -15,57 +19,53 @@ import (
 	"github.com/tdewolff/parse/v2/js"
 )
 
-// A bundle is what an author publishes: the manifest plus every file the
-// manifest names. It is the unit the administrator consents to, so it is parsed
-// and validated once, at publish time, and never re-derived from anything the
-// author still controls.
+// bundle 就是作者发布的东西：manifest 加上 manifest 点名的每个文件。它是
+// 管理员批准的单位，所以在发布时刻被解析、校验一次，此后绝不再从任何作者仍
+// 能控制的东西里重新推导。
 //
-// Publish-time validation is the point. Under URL hosting, a surface whose entry
-// did not exist failed silently in the reader's browser months later; here the
-// publish is refused with the missing path named.
+// 发布时校验正是关键。在 URL 托管下，entry 指向的文件如果不存在，会在几个月
+// 后读者浏览器里静默失败；而这里发布会被拒绝，并指名缺失的路径。
 
 const (
-	// MaxBundleSize bounds the uploaded archive itself.
+	// MaxBundleSize 限制上传的压缩包本身的字节数。
 	MaxBundleSize = 2 << 20
 
-	// MaxBundleFileSize bounds one file inside it. A surface entry is a single
-	// script with its assets inlined, which is what this has to fit.
+	// MaxBundleFileSize 限制包里单个文件的大小。surface entry 是「一个脚本 +
+	// 内联资源」，这正是它要装下的东西。
 	MaxBundleFileSize = 1 << 20
 
-	// MaxBundleTotalSize bounds the sum of the files a version keeps. Checked
-	// against decompressed sizes as they are read, so an archive that expands
-	// far beyond its compressed size is refused rather than buffered.
+	// MaxBundleTotalSize 限制一个版本保留的全部文件总和解压大小。按「读一个
+	// 累加一次」的方式检查，所以解压后远大于压缩大小的压缩包会被拒绝而不是
+	// 被缓存下来。
 	MaxBundleTotalSize = 4 << 20
 
-	// MaxBundleEntries bounds how many entries the archive may contain at all,
-	// including ones the manifest never names.
+	// MaxBundleEntries 限制压缩包最多允许多少个条目，包括 manifest 从未点名的。
 	MaxBundleEntries = 512
 
-	// MaxSkillBytes bounds one SKILL.md. Generous for prose, small enough that
-	// publishing cannot be used to push a large body into the database.
+	// MaxSkillBytes 限制单个 SKILL.md 的大小。对散文足够宽松，又小到发布
+	// 不能被用来把大段内容塞进数据库。
 	MaxSkillBytes = 256 * 1024
 )
 
-// BundleFile is one stored file of a published version. Paths are the manifest's
-// own relative entries, so nothing has to be re-resolved at serve time.
+// BundleFile 是一个已发布版本的某个存档文件。路径就是 manifest 自己的相对
+// entry，所以服务时刻无需再解析一次。
 type BundleFile struct {
 	Path    string
 	Content []byte
 }
 
-// Bundle is a parsed, validated artifact package.
+// Bundle 是一包已解析、已校验的产物。
 type Bundle struct {
 	Manifest Manifest
-	// Canonical is the re-encoded manifest an installation stores as its
-	// consented snapshot, identical to what ParseManifest returns.
+	// Canonical 是安装时作为「已同意快照」存储的重编码 manifest，
+	// 与 ParseManifest 返回的一致。
 	Canonical []byte
-	// Files holds only the entries the manifest references, sorted by path.
-	// Anything else in the archive is dropped: nothing can ever serve it, so
-	// keeping it would be storage with no read path.
+	// Files 只保留 manifest 引用的条目，按路径排序。压缩包里其余一切都被
+	// 丢弃：没有任何东西会去服务它，留着只会是有读无路的存储。
 	Files []BundleFile
 }
 
-// File returns one file of the bundle by its manifest-relative path.
+// File 按 manifest 相对路径返回 bundle 里的某个文件。
 func (b Bundle) File(entry string) ([]byte, bool) {
 	for _, file := range b.Files {
 		if file.Path == entry {
@@ -75,7 +75,7 @@ func (b Bundle) File(entry string) ([]byte, bool) {
 	return nil, false
 }
 
-// TotalSize is the stored footprint of the bundle's files.
+// TotalSize 是 bundle 文件的存储占用总和。
 func (b Bundle) TotalSize() int {
 	total := 0
 	for _, file := range b.Files {
@@ -84,7 +84,7 @@ func (b Bundle) TotalSize() int {
 	return total
 }
 
-// ParseBundle reads a zip archive into a validated bundle.
+// ParseBundle 把一个 zip 压缩包读成一包已验证的 bundle。
 func ParseBundle(archive []byte) (Bundle, error) {
 	if len(archive) == 0 {
 		return Bundle{}, fmt.Errorf("plugin package is empty")
@@ -109,9 +109,8 @@ func ParseBundle(archive []byte) (Bundle, error) {
 		return Bundle{}, err
 	}
 
-	// Files are read lazily, so an archive full of large unreferenced entries
-	// costs nothing: only what the manifest names is decompressed, and the
-	// running total is checked as each one lands.
+	// 文件是惰性读取的，所以一个塞满巨大未引用条目的压缩包零成本：只有
+	// manifest 点名的才会被解压，且每落一个文件都检查累计总额。
 	total := 0
 	open := func(entry string) ([]byte, bool, error) {
 		file, ok := findZipFile(reader, prefix+entry)
@@ -131,9 +130,8 @@ func ParseBundle(archive []byte) (Bundle, error) {
 	return buildBundle(open, prefix)
 }
 
-// ParseBundleFromDir builds the same validated bundle from a filesystem
-// directory, for the local development channel. `read` is the caller's
-// containment-checked reader — this package never touches the filesystem.
+// ParseBundleFromDir 从文件系统目录构造同一份已验证 bundle，供本地开发通道
+// 使用。`read` 是调用方已做越界检查的读取器——本包绝不直接碰文件系统。
 func ParseBundleFromDir(read func(entry string) ([]byte, bool, error)) (Bundle, error) {
 	total := 0
 	open := func(entry string) ([]byte, bool, error) {
@@ -153,9 +151,8 @@ func ParseBundleFromDir(read func(entry string) ([]byte, bool, error)) (Bundle, 
 	return buildBundle(open, "")
 }
 
-// buildBundle is the shared half: parse the manifest, then collect exactly the
-// files it references. Both publish paths run this, so an uploaded package and a
-// local directory can never be validated to different standards.
+// buildBundle 是两条发布路径共享的后半段：解析 manifest，再精确收齐它引用的
+// 文件。上传包与本地目录都跑这里，因此两者绝不可能被按不同标准校验。
 func buildBundle(open func(entry string) ([]byte, bool, error), prefix string) (Bundle, error) {
 	rawManifest, ok, err := open(ManifestFilename)
 	if err != nil {
@@ -176,8 +173,8 @@ func buildBundle(open func(entry string) ([]byte, bool, error), prefix string) (
 	seen := map[string]bool{}
 	collect := func(entry string) ([]byte, error) {
 		if seen[entry] {
-			// Two contributions may legitimately name the same file; storing it
-			// twice would trip the (version_id, path) unique index.
+			// 两个贡献合法地指向同一文件是允许的；存两次会撞
+			// (version_id, path) 唯一索引。
 			content, _ := findFile(files, entry)
 			return content, nil
 		}
@@ -237,10 +234,9 @@ func findFile(files []BundleFile, entry string) ([]byte, bool) {
 	return nil, false
 }
 
-// validateSurfaceScript refuses what would only fail later in a reader's
-// browser. The host inlines this text into the surface document, so it has to be
-// text, and a static `import` cannot resolve there — a surface is one file with
-// no module graph, which is the contract the SDK is shipped for.
+// validateSurfaceScript 拒绝那些「只会在读者浏览器里更晚失败」的东西。host 把
+// 这段文本内联进 surface 文档，所以它必须是文本；而且静态 `import` 在那里
+// 解析不了——surface 是一个没有模块图的单文件，这正是 SDK 面向的契约。
 func validateSurfaceScript(entry string, content []byte) error {
 	if len(bytes.TrimSpace(content)) == 0 {
 		return fmt.Errorf("surface entry %q is empty", entry)
@@ -258,13 +254,11 @@ func validateSurfaceScript(entry string, content []byte) error {
 	return nil
 }
 
-// parseSurfaceScript uses a JavaScript parser rather than recognizing source
-// text by hand. Publishing is the boundary: a false positive blocks an author
-// with no workaround, while missed module-only syntax becomes a broken
-// classic-script frame. Lexical details such as regex literals, template
-// expressions, comments between `import` and `(`, and two statements on one
-// line therefore have to follow JavaScript grammar, not a local approximation
-// of it.
+// parseSurfaceScript 用真正的 JavaScript 解析器而不是手写识别源码文本。
+// 发布是边界：误报会毫无绕路地把作者挡在门外，而漏掉仅模块可用的语法会变成
+// 一帧坏掉的 classic-script。因此正则字面量、模板表达式、`import` 与 `(` 之间
+// 的注释、一行两条语句等词法细节都必须遵循 JavaScript 文法，而不是某种本地
+// 近似。
 func parseSurfaceScript(source []byte) (bool, error) {
 	ast, err := js.Parse(parse.NewInputBytes(source), js.Options{})
 	if err != nil {
@@ -275,10 +269,9 @@ func parseSurfaceScript(source []byte) (bool, error) {
 	return visitor.moduleOnly, nil
 }
 
-// tdewolff parses a module grammar at the root, where top-level await and
-// import.meta are valid. Surface entries execute as classic scripts, so walk
-// the parsed tree and reject those constructs explicitly. Await remains valid
-// inside a nested async function; import.meta is module-only at every depth.
+// tdewolff 在根上按模块文法解析，此时顶层 await 与 import.meta 都合法。surface
+// entry 按 classic script 执行，所以要遍历解析树、显式拒绝那些构造。嵌套的
+// async 函数里 await 仍合法；import.meta 在任何深度都只属于模块。
 type surfaceModuleSyntaxVisitor struct {
 	functionDepth int
 	moduleOnly    bool
@@ -318,22 +311,21 @@ func validateSkillFile(entry string, content []byte) error {
 	return nil
 }
 
-// zipEntryPaths returns the archive's file paths, refusing anything that could
-// escape a directory once written or read by path. The bundle is never unpacked
-// to disk, but the paths are matched against manifest entries, and a path that
-// normalizes differently than it reads is a way to ship one file and have
-// another consented to.
+// zipEntryPaths 返回压缩包的文件路径，拒绝任何「一旦按路径写盘或读取就能逃出
+// 目录」的东西。bundle 从不解压到磁盘，但路径会与 manifest entry 比对，而
+// 「归一化后与按字面读取不一致」的路径，是「发一个文件却让另一个文件获得
+// 同意」的通道。
 func zipEntryPaths(reader *zip.Reader) ([]string, error) {
 	paths := make([]string, 0, len(reader.File))
 	for _, file := range reader.File {
 		name := file.Name
 		if strings.HasSuffix(name, "/") {
-			continue // directory entry
+			continue // 目录条目
 		}
 		if file.Mode()&fs.ModeSymlink != 0 {
-			// Symlinks in a zip carry their target as content. Nothing here
-			// follows one, but storing it would publish a file whose meaning
-			// depends on a filesystem that does not exist on our side.
+			// zip 里的符号链接把目标当作内容携带。这里没有任何逻辑会去跟随
+			// 它，但把它存下来等于发布一个「含义取决于我们这边并不存在的
+			// 文件系统」的文件。
 			return nil, fmt.Errorf("plugin package must not contain symlinks (%q)", name)
 		}
 		if strings.ContainsRune(name, '\\') {
@@ -347,12 +339,11 @@ func zipEntryPaths(reader *zip.Reader) ([]string, error) {
 	return paths, nil
 }
 
-// manifestPrefix finds the directory the manifest sits in.
+// manifestPrefix 找出 manifest 所在的目录。
 //
-// Zipping a folder is what a person does, and it produces
-// `my-plugin/multica.plugin.json`. Accepting exactly one leading directory turns
-// the most common publish failure into a non-event; two different roots stay an
-// error, because then there is no single answer to what the package is.
+// 打包一个文件夹是人的自然动作，产出是 `my-plugin/multica.plugin.json`。
+// 接受恰好一层前导目录，能把最常见的发布失败变成无感事件；两个不同根仍是
+// 错误，因为那样「这个包是什么」就没有唯一答案了。
 func manifestPrefix(paths []string) (string, error) {
 	candidates := map[string]bool{}
 	for _, name := range paths {
@@ -387,9 +378,8 @@ func findZipFile(reader *zip.Reader, name string) (*zip.File, bool) {
 }
 
 func readZipFile(file *zip.File) ([]byte, error) {
-	// The archive declares an uncompressed size; it is a claim by whoever built
-	// it, so it is used only to refuse early. The read below is bounded on its
-	// own and does not trust it.
+	// 压缩包声明了未压缩大小；那只是构建它的人的一句自述，所以只用来提前
+	// 拒绝。下面的读取自带边界、不信任它。
 	if file.UncompressedSize64 > MaxBundleFileSize {
 		return nil, fmt.Errorf("plugin file %q exceeds %d bytes", file.Name, MaxBundleFileSize)
 	}

@@ -1,5 +1,5 @@
-// Package remotemcp implements the security boundary shared by Remote MCP
-// Plugin discovery and the daemon's task-scoped broker.
+// Package remotemcp 实现 Remote MCP 共享的安全边界——既服务插件发现，
+// 也服务 daemon 的按任务作用域划分的 broker。
 package remotemcp
 
 import (
@@ -19,24 +19,34 @@ import (
 	"time"
 )
 
+// MaxResponseBytes 限制远端 HTTP 响应体（含 SSE 单帧）的最大字节数，
+// 挡住恶意 server 灌爆内存。
+// ConnectTimeout 是单次拨号建连的超时。
+// CallTimeout 是单次 HTTP 调用（含读响应）的总超时。
 const (
 	MaxResponseBytes = 4 << 20
 	ConnectTimeout   = 10 * time.Second
 	CallTimeout      = 30 * time.Second
 )
 
+// Resolver 抽象「把主机名解析成 IP 地址」这一步，让测试可以注入假 DNS、
+// 验证各种 IP 都被正确拦截，而不用真去联网。
 type Resolver interface {
 	LookupNetIP(context.Context, string, string) ([]netip.Addr, error)
 }
 
+// ValidatePublicHTTPSEndpoint 校验一个远端 MCP 端点：必须是公网 HTTPS、
+// 不能带 userinfo/query/fragment，host 必须在 allowedHosts 白名单内（有白名单
+// 时），且解析出的每个地址都必须是公网地址（防 SSRF）。
+//
+// 返回规范化后的 *url.URL 供后续调用使用。
 func ValidatePublicHTTPSEndpoint(ctx context.Context, raw string, allowedHosts []string, resolver Resolver) (*url.URL, error) {
 	endpoint, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parse endpoint: %w", err)
 	}
-	// An operator-named dev origin skips the public-internet requirement and
-	// nothing else: the net: scope below still applies, so a Plugin still
-	// cannot reach a destination the administrator did not consent to.
+	// 运维点名的 dev origin 只跳过「必须公网」这一条，其余照旧：
+	// 下面 net: 作用域的检查仍然生效，所以插件依然到不了管理员没同意过的目的地。
 	if isDevOrigin(endpoint) {
 		devHost := strings.ToLower(strings.TrimSuffix(endpoint.Hostname(), "."))
 		if len(allowedHosts) > 0 && !hostAllowed(devHost, allowedHosts) {
@@ -69,6 +79,8 @@ func ValidatePublicHTTPSEndpoint(ctx context.Context, raw string, allowedHosts [
 	return endpoint, nil
 }
 
+// hostAllowed 判断 host 是否命中某条策略。策略支持精确匹配（"api.example.com"）
+// 与通配符后缀（"*.example.com" 匹配其任意子域，但不匹配裸域自身）。
 func hostAllowed(host string, policies []string) bool {
 	for _, policy := range policies {
 		policy = strings.ToLower(strings.TrimSuffix(policy, "."))
@@ -85,11 +97,14 @@ func hostAllowed(host string, policies []string) bool {
 	return false
 }
 
+// isPublicAddress 判断一个地址算不算「公网可及」：先排除 netip 辅助函数
+// 能识别的私网/回环/链路本地/组播/未指定地址，再排除 IANA 特殊用途与
+// 云元数据网段。
 func isPublicAddress(address netip.Addr) bool {
 	if !address.IsValid() || address.IsPrivate() || address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsMulticast() || address.IsUnspecified() {
 		return false
 	}
-	// IANA special-purpose and metadata ranges not covered by netip's helpers.
+	// IANA 特殊用途与元数据网段——netip 的辅助函数覆盖不到的部分。
 	blocked := []netip.Prefix{
 		netip.MustParsePrefix("100.64.0.0/10"),
 		netip.MustParsePrefix("192.0.0.0/24"),
@@ -111,18 +126,20 @@ func isPublicAddress(address netip.Addr) bool {
 	return address.IsGlobalUnicast()
 }
 
+// NewSecureHTTPClient 为某个已通过校验的端点构造一个安全 HTTP client：
+// 禁用代理、禁止跨 host 重定向、拨号时再次钉住目标 host 且复查「解析结果必须
+// 是公网地址」，防止 DNS 重绑定把请求带进内网。
 func NewSecureHTTPClient(endpoint *url.URL) *http.Client {
-	// Decided once, here, rather than inside the dialer: the endpoint is fixed
-	// for this client's lifetime, so a per-dial lookup could only differ if the
-	// environment changed mid-task, and honouring that would be a way to widen
-	// the guard after the connection was approved.
+	// dev 与否在这里一次性定死，而不是放到 dialer 里每次现查：端点对这只
+	// client 的整个生命周期是固定的，每次拨号都查只会在任务中途环境变化时
+	// 产生差异——那等于给「连接被批准后还能偷偷放宽守卫」留了口子。
 	devOrigin := isDevOrigin(endpoint)
 	dialer := &net.Dialer{Timeout: ConnectTimeout, KeepAlive: 30 * time.Second}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	if devOrigin {
-		// Trust an extra CA for this origin, never skip verification: a plugin
-		// author's local MCP server still presents a certificate.
+		// 只为此 origin 多信任一份额外 CA，绝不跳过校验：插件作者本地的
+		// MCP server 依然要出示证书。
 		if config := devTLSConfig(); config != nil {
 			transport.TLSClientConfig = config
 		}
@@ -141,9 +158,8 @@ func NewSecureHTTPClient(endpoint *url.URL) *http.Client {
 		}
 		for _, candidate := range addresses {
 			candidate = candidate.Unmap()
-			// The host pin above still holds for a dev origin, so a redirect
-			// pointing somewhere else is refused either way. What this skips is
-			// only "the address must be on the public internet".
+			// 上面那个 host 钉住对 dev origin 同样生效，所以重定向到别的
+			// 地方两种情形都会被拒。这里跳过的仅仅是「地址必须落在公网」。
 			if !devOrigin && !isPublicAddress(candidate) {
 				return nil, errors.New("remote MCP endpoint resolved to a non-public address")
 			}
@@ -163,6 +179,8 @@ func NewSecureHTTPClient(endpoint *url.URL) *http.Client {
 	}
 }
 
+// rpcResponse 是 MCP JSON-RPC 响应的最小线格式：id 保持 RawMessage，
+// 以便原样回显，Error 是 MCP 错误对象（规范里 code 为 -32700~-32603 等）。
 type rpcResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
@@ -173,18 +191,26 @@ type rpcResponse struct {
 	} `json:"error,omitempty"`
 }
 
+// discoveredTool 是远端 tools/list 返回的工具条目，inputSchema 与 MCP 规范
+// 一致用驼峰 inputSchema 命名（写入本地 Tool 时统一存成 input_schema）。
 type discoveredTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
-// SupportedProtocolVersions is the MCP protocol revisions this build speaks,
-// most preferred first. Discover offers the first and accepts any of them.
+// SupportedProtocolVersions 返回本构建支持的 MCP 协议修订版，
+// 最优先的排最前。Discover 会首选第一个、接受其中任意一个。
 func SupportedProtocolVersions() []string {
 	return []string{"2025-03-26", "2024-11-05"}
 }
 
+// Discover 连接一个远端 MCP server 完成发现握手：initialize → 确认协议版本 →
+// notifications/initialized → tools/list，把所有工具的 input schema 归一化后
+// 逐个摘要，最后返回整个工具集的集合摘要 digest。
+//
+// 这是把「管理员要批准的是一组什么工具」变成可审计指纹的地方——调用方只需
+// 保存 digest，之后任何 schema 漂移都会被它抓出来。
 func Discover(ctx context.Context, rawEndpoint string, allowedHosts, protocolVersions []string, headers http.Header) ([]Tool, string, error) {
 	endpoint, err := ValidatePublicHTTPSEndpoint(ctx, rawEndpoint, allowedHosts, nil)
 	if err != nil {
@@ -192,10 +218,9 @@ func Discover(ctx context.Context, rawEndpoint string, allowedHosts, protocolVer
 	}
 	client := NewSecureHTTPClient(endpoint)
 	sessionID := ""
-	// An empty list means "whatever this build supports", not "nothing is
-	// acceptable". The response is checked against this same slice further
-	// down, so leaving it empty rejected every server that answered correctly —
-	// which is exactly what it did to the first plugin that used this path.
+	// 空列表的意思是「本构建支持啥就用啥」，不是「一个都不接受」。响应会拿
+	// 这同一个切片去比对——如果这里留空，等于拒绝所有正确应答的 server，
+	// 第一个走这条路径的插件正是这么栽的。
 	if len(protocolVersions) == 0 {
 		protocolVersions = SupportedProtocolVersions()
 	}
@@ -269,6 +294,8 @@ func containsString(values []string, wanted string) bool {
 	return false
 }
 
+// notify 发送一条不需要应答的 MCP notification（如 notifications/initialized），
+// 顺便把响应体读掉并按最大字节数限额做保护。
 func notify(ctx context.Context, client *http.Client, endpoint *url.URL, headers http.Header, sessionID string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -306,6 +333,9 @@ func notify(ctx context.Context, client *http.Client, endpoint *url.URL, headers
 	return nil
 }
 
+// call 发送一条需要应答的 JSON-RPC 请求，读回并解码响应。HTTP 层失败、非 2xx、
+// 响应体超限或 JSON-RPC error 都会以错误返回；成功后返回响应头（调用方取
+// Mcp-Session-Id）与解码后的 rpcResponse。
 func call(ctx context.Context, client *http.Client, endpoint *url.URL, headers http.Header, sessionID string, payload any) (rpcResponse, http.Header, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -347,6 +377,9 @@ func call(ctx context.Context, client *http.Client, endpoint *url.URL, headers h
 	return decoded, response.Header, nil
 }
 
+// readResponse 读取一个 HTTP 响应并限制大小。对 text/event-stream 内容
+// （MCP streamable HTTP 会这样应答）逐行找 "data:" 帧取第一条数据；
+// 普通 JSON 则整包读回。
 func readResponse(response *http.Response) ([]byte, error) {
 	limited := io.LimitReader(response.Body, MaxResponseBytes+1)
 	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
@@ -376,6 +409,8 @@ func readResponse(response *http.Response) ([]byte, error) {
 	return raw, nil
 }
 
+// canonicalJSON 把一段 JSON 重新序列化一遍，得到语义等价、字节确定的
+// 规范形式——这样同样的 schema 无论键序如何都产出同一份摘要。
 func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		raw = json.RawMessage(`{"type":"object"}`)
@@ -388,6 +423,9 @@ func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
 	return json.RawMessage(canonical), err
 }
 
+// ToolSetDigest 把整组工具归一化后算出一个集合级摘要：每个 input schema 先
+// 规范化，工具按名字排序后再整体哈希。任何工具的添加/删除/schema 漂移都会
+// 改变这个值，是任务认领时比对「批准过的工具集」的可靠指纹。
 func ToolSetDigest(tools []Tool) (string, error) {
 	copyTools := append([]Tool(nil), tools...)
 	for i := range copyTools {

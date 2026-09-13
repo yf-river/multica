@@ -1,29 +1,26 @@
 "use client";
 
 /**
- * Tap-vs-drag gesture for a horizontally scrollable element.
+ * 可横向滚动元素上的「点按 vs 拖拽」手势判定。
  *
- * Solves a specific collision: the inline Mermaid diagram opens the viewer when
- * clicked, but a wide diagram also invites dragging to see the rest of it.
- * Without an intent test every drag ends in a `click` and the viewer opens on
- * top of the user, which reads as the diagram fighting back.
+ * 解决一个具体冲突：内联 Mermaid 图被点击时应打开查看器，但宽图本身也
+ * 允许拖拽滚动看剩余部分。如果不区分用户意图，每次拖拽结束都会冒泡出
+ * 一次 click，查看器就会盖到用户头上，看起来像图表在跟用户对着干。
  *
- * The rule (product decision, MUL-4908): once the pointer travels past a small
- * threshold the gesture is a drag for good, and releasing must not tap — even
- * when the element had no room to scroll, so an unscrollable diagram cannot
- * surprise the user by opening on release either.
+ * 规则（产品决策，MUL-4908）：指针一旦移动超过很小的阈值，该手势就永远
+ * 被认定为拖拽，松手时绝不能当作点按——即使元素已经没有滚动空间也一样，
+ * 否则一张滚不动的图会在用户松手时意外打开查看器。
  *
- * Touch is the one pointer type the browser already drag-scrolls by itself on
- * an `overflow-x: auto` element, and whose vertical drags belong to the page —
- * so touch is left alone here and only watched for intent, with the browser
- * announcing its takeover via `pointercancel`. Every other pointer (mouse, pen)
- * has no native drag-to-scroll and is panned below.
+ * 触摸是唯一一类浏览器会对 `overflow-x: auto` 元素原生做拖拽滚动、且其
+ * 竖向手势属于整页滚动的指针类型，所以这里不接管触摸，只记录意图；浏览器
+ * 接管后会通过 `pointercancel` 通知我们。其余指针类型（鼠标、笔）没有原生
+ * 拖拽滚动能力，由本 Hook 负责平移。
  */
 
 import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from "react";
 
-// Kim specced 4–6px. 5 sits in the middle: past the jitter of a real click
-// (including a shaky trackpad tap) while still well under a deliberate drag.
+// Kim 拍板的范围是 4–6px。取 5 在中间：既大于真实点击的抖动（含触控板
+// 手抖的轻点），又明显小于一次有意的拖拽。
 export const DRAG_THRESHOLD_PX = 5;
 
 interface GestureState {
@@ -39,6 +36,9 @@ function isTouch(gesture: GestureState): boolean {
   return gesture.pointerType === "touch";
 }
 
+/**
+ * 返回需要绑定到目标元素上的四个 pointer 事件处理器。
+ */
 export interface DragToScrollHandlers {
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -47,19 +47,22 @@ export interface DragToScrollHandlers {
 }
 
 /**
- * @param onTap Fired on release only when the gesture never became a drag.
+ * 给目标元素提供「点按 vs 拖拽」的手势判定。
+ *
+ * @param onTap 手势从未变成拖拽时，在松手那一刻触发。
+ * @returns 一组要绑定到元素上的 pointer 事件处理器。
  */
 export function useDragToScroll({
   onTap,
 }: {
   onTap: () => void;
 }): DragToScrollHandlers {
-  // A ref, not state: a drag updates on every pointermove, and re-rendering the
-  // diagram (and its iframe) at that rate would stutter the pan it is driving.
+  // 用 ref 而不是 state：拖拽过程中每个 pointermove 都要更新，若触发渲染，
+  // 会以这个频率重绘图表（及其 iframe），导致正在进行的平移卡顿。
   const gestureRef = useRef<GestureState | null>(null);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    // Secondary buttons open the context menu; they are not a tap or a drag.
+    // 鼠标右键走的是上下文菜单，不是点按也不是拖拽。
     if (event.pointerType === "mouse" && event.button !== 0) return;
 
     gestureRef.current = {
@@ -82,19 +85,17 @@ export function useDragToScroll({
     if (!gesture.dragged) {
       if (Math.hypot(deltaX, deltaY) <= DRAG_THRESHOLD_PX) return;
       gesture.dragged = true;
-      // Capture only once it is definitely a drag, and never for touch: taking
-      // the pointer at pointerdown would swallow ordinary clicks, and capturing
-      // a touch would fight the native scroll this relies on.
+      // 确认是拖拽后才捕获指针，并且触摸永不捕获：pointerdown 就捕获会
+      // 吞掉普通点击；捕获触摸则会干扰这里依赖的原生滚动。
       if (!isTouch(gesture)) {
         event.currentTarget.setPointerCapture?.(event.pointerId);
       }
     }
 
-    // Touch scrolls itself; driving scrollLeft here too would double the speed.
+    // 触摸本身就会滚动；这里再手动改 scrollLeft 会让速度翻倍。
     if (isTouch(gesture)) return;
-    // Assigning past either end is clamped by the browser, so an unscrollable
-    // diagram simply stays put — the gesture is still a drag, and still
-    // suppresses the tap below.
+    // 滚到任一端的越界值会被浏览器自动钳制，所以一张滚不动的图只会原地
+    // 不动——但手势仍然是拖拽，仍然会按下面逻辑抑制点按。
     event.currentTarget.scrollLeft = gesture.startScrollLeft - deltaX;
   }, []);
 
@@ -113,8 +114,8 @@ export function useDragToScroll({
     [onTap],
   );
 
-  // The browser took the gesture over (native touch scroll, or the pointer was
-  // otherwise lost). That is a drag by definition, so it must not tap.
+  // 浏览器接管了该手势（原生触摸滚动，或指针因故丢失）——这本身就是拖拽，
+  // 因此绝不能再触发点按。
   const onPointerCancel = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;

@@ -11,31 +11,24 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-// daemonIDFileName is the file that stores this machine's stable daemon
-// identifier. Once created, the UUID inside is the daemon's identity forever
-// — hostname changes, .local suffix drift, profile switches and system
-// renames no longer mint a new identity.
+// daemonIDFileName 保存这台机器稳定 daemon 标识符的文件。一旦创建，其中的 UUID
+// 就是 daemon 的永久身份——主机名变化、.local 后缀漂移、profile 切换与系统改名
+// 都不再会铸造出新的身份。
 const daemonIDFileName = "daemon.id"
 
-// EnsureDaemonID returns a stable UUID for this daemon instance, persisting
-// it to disk on first call. Identity is machine-scoped: every profile on the
-// same machine shares one UUID stored at `~/.multica/daemon.id`. Profile
-// boundaries are about which backend/account a daemon is talking to, not
-// about the physical machine's identity, so a single host running both the
-// CLI-spawned daemon and the desktop-spawned daemon (or toggling profiles)
-// registers as one runtime everywhere rather than N.
+// EnsureDaemonID 返回本 daemon 实例的稳定 UUID，首次调用时持久化到磁盘。
+// 身份按机器范围：同一台机器上的每个 profile 共享一个 UUID，存于
+// `~/.multica/daemon.id`。profile 边界关乎 daemon 对接哪个 backend/账号，而非
+// 物理机的身份，因此一台同时跑 CLI 拉起 daemon 与桌面拉起 daemon（或切换
+// profile）的主机，到处都注册成一个 runtime，而不是 N 个。
 //
-// The `profile` argument is retained purely for one-time migration: if the
-// canonical file does not yet exist and the current profile has a leftover
-// per-profile daemon.id from the pre-#1220 layout, promote it in place so a
-// user who previously ran the daemon under a named profile keeps the same
-// UUID instead of a fresh mint + merge round-trip. Any OTHER leftover
-// per-profile daemon.id files are surfaced separately via LegacyDaemonUUIDs
-// so the server can merge their runtime rows into the canonical row at
-// register time.
+// 保留 `profile` 参数纯粹是为了做一次性迁移：若规范文件尚不存在、而当前 profile
+// 有来自 pre-#1220 布局的每 profile daemon.id 遗留，就把就地提升它，让以前在具名
+// profile 下跑过 daemon 的用户保持同一 UUID，而不是"新铸造 + 合并"往返。任何
+// 其它遗留的每 profile daemon.id 文件会单独经 LegacyDaemonUUIDs 浮出，让服务器在
+// 注册时把它们的 runtime 行合并进规范行。
 //
-// If the file exists but is corrupt (unparseable), it is regenerated so the
-// daemon can continue starting up instead of hard-failing.
+// 若文件存在但损坏（解析不了），会重新生成它，使 daemon 能继续启动而不是硬失败。
 func EnsureDaemonID(profile string) (string, error) {
 	dir, err := cli.ProfileDir("")
 	if err != nil {
@@ -73,11 +66,10 @@ func EnsureDaemonID(profile string) (string, error) {
 	return id.String(), nil
 }
 
-// promoteProfileDaemonID copies a pre-change per-profile daemon.id into the
-// canonical machine-scoped location. Returns the promoted UUID and true on
-// success; returns "", false when there is nothing valid to promote (empty
-// profile, missing/corrupt source file, any I/O failure). Promotion is a
-// best-effort migration — a failure here falls through to fresh UUID mint.
+// promoteProfileDaemonID 把变更前布局遗留的每 profile daemon.id 复制到规范的机器
+// 级位置。成功时返回被提升的 UUID 与 true；无有效内容可提升（profile 为空、源文件
+// 缺失/损坏、任何 I/O 失败）返回 ("", false)。提升是一次 best-effort 迁移——这里
+// 失败会落入重新铸造 UUID。
 func promoteProfileDaemonID(profile, targetPath string) (string, bool) {
 	if profile == "" {
 		return "", false
@@ -101,7 +93,7 @@ func promoteProfileDaemonID(profile, targetPath string) (string, bool) {
 	return id, true
 }
 
-// writeDaemonIDFile writes the UUID to path atomically with 0600 mode.
+// writeDaemonIDFile 用 0600 权限原子地把 UUID 写入 path（先写临时文件再改名）。
 func writeDaemonIDFile(path, id string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create parent directory: %w", err)
@@ -131,24 +123,21 @@ func writeDaemonIDFile(path, id string) error {
 	return nil
 }
 
-// LegacyDaemonIDs returns the set of daemon_id values this machine may have
-// previously registered under, before the switch to a persistent UUID. The
-// server uses this list at registration time to merge old runtime rows into
-// the new UUID-keyed row (moving agents/tasks then deleting the stale row).
+// LegacyDaemonIDs 返回这台机器在改用持久 UUID 之前可能注册过的 daemon_id 集合。
+// 服务器在注册时用这份列表把旧 runtime 行合并进新 UUID 键控的行（移动 agent/任务
+// 然后删除过期行）。
 //
-// Three historical formats are covered:
+// 覆盖三种历史格式：
 //
-//   - pre-#906:  "<hostname>-<profile>"        (profile suffix, no .local strip)
-//   - pre-#1070: "<hostname>"                  (raw hostname, often ends in .local)
-//   - current:   "<hostname>" with .local drift depending on system state
+//   - pre-#906：  "<hostname>-<profile>"        （带 profile 后缀，不做 .local 剥离）
+//   - pre-#1070： "<hostname>"                  （裸主机名，常以 .local 结尾）
+//   - 当前：      "<hostname>"，按系统状态存在 .local 漂移
 //
-// .local drift is bidirectional — at different times os.Hostname() has
-// returned both "foo" and "foo.local" on the same machine (mDNS state,
-// system restart, login item order). So regardless of which form is current
-// now, we always emit BOTH the bare and .local-suffixed variants so migration
-// covers whichever form was persisted previously. Case drift is handled on
-// the server side via case-insensitive lookup, so we don't also emit cased
-// permutations here.
+// .local 漂移是双向的——同一台机器在不同时刻 os.Hostname() 返回过 "foo" 与
+// "foo.local"（mDNS 状态、系统重启、登录项顺序）。因此无论当前是哪种形态，我们
+// 总是同时输出裸主机名与带 .local 后缀两个变体，让迁移覆盖以前持久化过的任意
+// 形态。大小写漂移在服务器侧经大小写不敏感查找处理，因此这里不再额外输出大小写
+// 排列。
 func LegacyDaemonIDs(hostname, profile string) []string {
 	host := strings.TrimSpace(hostname)
 	if host == "" {
@@ -182,17 +171,14 @@ func LegacyDaemonIDs(hostname, profile string) []string {
 	return out
 }
 
-// LegacyDaemonUUIDs scans `~/.multica/profiles/*/daemon.id` and returns every
-// UUID that survives parsing. These are identities that were minted per
-// profile before daemon identity became machine-scoped; runtime rows
-// registered under them — potentially on multiple backends (prod/dev/self-
-// host) — need to be merged into the canonical machine UUID. The list is
-// safe to emit to every backend: a UUID that was never registered there
-// simply matches nothing in the server's merge lookup.
+// LegacyDaemonUUIDs 扫描 `~/.multica/profiles/*/daemon.id` 并返回每个能通过解析的
+// UUID。这些是在 daemon 身份变成机器级之前、按 profile 铸造出的身份；注册在它们
+// 下的 runtime 行——可能分布在多个 backend（prod/dev/自托管）——需要合并进规范
+// 机器 UUID。该列表可以安全发给每个 backend：一个从没在那个后端注册过的 UUID 在
+// 服务器合并查找里只是匹配不到任何东西。
 //
-// Errors reading individual profile files are swallowed: a bad file
-// shouldn't block daemon startup. A missing profiles directory returns
-// (nil, nil) — that's the common case on a clean install.
+// 读取单个 profile 文件的错误被吞掉：坏文件不应阻塞 daemon 启动。profiles 目录
+// 缺失返回 (nil, nil)——干净安装的常见情况。
 func LegacyDaemonUUIDs() ([]string, error) {
 	root, err := cli.ProfileDir("")
 	if err != nil {
@@ -225,9 +211,8 @@ func LegacyDaemonUUIDs() ([]string, error) {
 	return ids, nil
 }
 
-// filterLegacyIDs removes any entry equal to current (e.g. when the user
-// explicitly pins MULTICA_DAEMON_ID to the hostname itself, there's nothing
-// to migrate — the row is already keyed on the current id).
+// filterLegacyIDs 移除任何等于 current 的条目（例如用户显式把 MULTICA_DAEMON_ID
+// 钉到主机名本身时，没有需要迁移的——该行已经以当前 id 为键）。
 func filterLegacyIDs(ids []string, current string) []string {
 	if current == "" {
 		return ids

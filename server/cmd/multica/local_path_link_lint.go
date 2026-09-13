@@ -1,3 +1,16 @@
+// 文件职责：实现「本地路径链接 lint」——agent 交付物绝不能带指向本机文件系统的
+// 链接（MUL-4899）。runtime 简报把这条写成了约定，但提示词只是建议；这里是三道
+// 「把 agent 写的 markdown 发布给人类读者」命令上的强制执行兜底。
+//
+// 作用范围刻意在三个轴向上收窄，因为这里的误报会直接挡掉一件合法交付物：
+//
+//  1. 只在 agent 任务上下文生效。人类用 PAT 跑 CLI 不在 lint 范围：链接是他们
+//     自己的事，而且他们可能真有读者能打开的共享路径。
+//  2. 只查真正的 markdown 链接/图片目标。正文按 CommonMark 解析，只检查 Link /
+//     Image / AutoLink 的目标——代码片段或围栏块里的路径（agent 正常「讨论」某个
+//     路径的写法）结构上根本不可见。全文扫描做不出这种区分，会恰恰把解释这个 bug
+//     的注释误杀。
+//  3. 只收高置信目标。见 classifyLocalPathTarget。
 package main
 
 import (
@@ -12,39 +25,18 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-// Agent deliverables must never carry a link to the runtime's own filesystem
-// (MUL-4899). The runtime brief now states that contract, but a prompt is
-// advisory; this is the enforcement backstop on the three commands that publish
-// agent-authored markdown to a human reader.
-//
-// Scope is deliberately narrow on three axes, because a false positive here
-// blocks a legitimate deliverable outright:
-//
-//  1. Agent task context only. A human running the CLI with a PAT is not
-//     linting-eligible: their links are their own business, and they may well
-//     have a shared path the reader really can open.
-//  2. Real markdown link/image destinations only. The body is parsed as
-//     CommonMark and only Link / Image / AutoLink destinations are examined, so
-//     a path inside a code span or fenced block — the normal way an agent quotes
-//     a path it is *discussing* — is structurally invisible here. A full-text
-//     scan cannot make that distinction and would fail exactly the comments that
-//     explain this bug.
-//  3. High-confidence targets only. See classifyLocalPathTarget.
-
-// localPathLinkFinding is one markdown link/image destination that resolves to
-// this machine's filesystem. Reason states the evidence, so the error message
-// can tell the agent WHY its link was rejected rather than just that it was.
+// localPathLinkFinding 是一条解析到本机文件系统的 markdown 链接/图片目标。
+// Reason 给出证据，让报错能告诉 agent 它的链接为什么被拒，而不只是「被拒了」。
 type localPathLinkFinding struct {
 	Target string
 	Reason string
 }
 
-// findLocalPathLinks parses body as CommonMark and returns every link, image, or
-// autolink destination that is high-confidence a runtime-local path.
+// findLocalPathLinks 把 body 按 CommonMark 解析，返回每个高置信为「本机路径」的
+// link/image/autolink 目标。
 //
-// Only the destination is inspected — never the link text, and never the
-// surrounding prose. Findings are de-duplicated by target so a path linked five
-// times reports once.
+// 只检查目标本身——绝不看链接文本或上下文文字。命中按目标去重：同一路径被链五
+// 次只报一次。
 func findLocalPathLinks(body string) []localPathLinkFinding {
 	source := []byte(body)
 	doc := goldmark.New().Parser().Parse(text.NewReader(source))
@@ -62,8 +54,8 @@ func findLocalPathLinks(body string) []localPathLinkFinding {
 		case *ast.Image:
 			target = string(node.Destination)
 		case *ast.AutoLink:
-			// `<file:///Users/me/shot.png>` renders as a clickable link just like
-			// an inline one, so it is the same defect and belongs in scope.
+			// `<file:///Users/me/shot.png>` 渲染出来跟行内链接一样可点，是同一类
+			// 缺陷，应当纳入检查范围。
 			target = string(node.URL(source))
 		default:
 			return ast.WalkContinue, nil
@@ -83,33 +75,28 @@ func findLocalPathLinks(body string) []localPathLinkFinding {
 	return findings
 }
 
-// classifyLocalPathTarget returns the evidence that target is a runtime-local
-// path, or "" when it is not — or when we cannot tell.
+// classifyLocalPathTarget 返回「target 是本机路径」的证据；不是（或拿不准）返回 ""。
 //
-// Only three signals count, all of them positive evidence that the target names
-// THIS machine:
+// 只有三类信号算数，且都是能证明目标指向「这台机器」的正向证据：
 //
-//  1. A `file://` URL. Unresolvable for any reader by construction.
-//  2. An absolute path inside the current working directory — the task workdir,
-//     which is per-task and private.
-//  3. An absolute path that names a file existing on this machine right now.
+//  1. `file://` URL。任何读者都解析不到，结构上就是死链。
+//  2. 当前工作目录——即任务工作目录（按任务隔离、私有）内的绝对路径。
+//  3. 此刻在本机真实存在某个文件、且给出绝对路径的。
 //
-// Everything else is allowed through, and the omissions are the point. A bare
-// `/foo` is a valid origin-relative URI reference (RFC 3986 §4.2) and is exactly
-// how `/acme/issues/123` is written, so an absolute-looking target that neither
-// lives in the workdir nor exists on disk is indistinguishable from a legitimate
-// in-app link and must not be guessed at. Relative targets are left alone for
-// the same reason. The prompt contract in the runtime brief — not this lint — is
-// what covers the residue.
+// 其余一律放行，而「漏掉什么」正是关键。裸 `/foo` 是合法的 origin-relative URI
+// 引用（RFC 3986 §4.2），`/acme/issues/123` 正是这么写的；所以一个看着像绝对路径、
+// 但既不在工作目录内、磁盘上也不存在的目标，与应用内合法链接无法区分，绝不能猜。
+// 相对目标同理放行。runtime 简报里的提示词约定——而不是这个 lint——负责覆盖剩余
+// 情况。
 func classifyLocalPathTarget(target string) string {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return ""
 	}
 
-	// Order matters: a Windows drive-absolute path ("C:\Users\me\shot.png")
-	// parses as scheme "c" under RFC 3986, so the filesystem test has to run
-	// before any scheme sniffing or Windows paths would be dismissed as URLs.
+	// 顺序很关键：Windows 的盘符绝对路径（"C:\Users\me\shot.png"）在 RFC 3986
+	// 下会把 "c" 解析成 scheme，所以文件系统判断必须先于任何 scheme 嗅探，
+	// 否则 Windows 路径会被误当 URL 打发掉。
 	if filepath.IsAbs(target) {
 		if within, err := fileWithinWorkingDir(target); err == nil && within {
 			return "it is inside this task's working directory"
@@ -126,14 +113,12 @@ func classifyLocalPathTarget(target string) string {
 	return ""
 }
 
-// guardLocalPathLinks fails the command when an agent-authored body publishes a
-// link to a runtime-local path. Returns nil outside an agent task context.
+// guardLocalPathLinks 在 agent 创作的正文把本机路径当链接发出去时让命令失败；
+// 非 agent 任务上下文直接返回 nil 放行。
 //
-// deliveryHint is the caller's own fix instruction. It is a parameter rather
-// than a constant because the right answer differs per command, and one of them
-// is a trap: `multica issue update` has no --attachment flag, so a shared
-// "pass --attachment" message would send the agent to an argument that does not
-// exist and turn one failure into two.
+// deliveryHint 是调用方自己的修复指引。做成参数而不是常量，是因为每个命令的正解
+// 不同，而其中一个还是坑：`multica issue update` 没有 --attachment flag，共用一句
+// 「传 --attachment」会把 agent 指到不存在的参数上，一次失败变两次。
 func guardLocalPathLinks(body, field, deliveryHint string) error {
 	if !inAgentExecutionContext() {
 		return nil

@@ -1,5 +1,6 @@
 "use client";
 
+// 「什么坏了」标签页：失败 KPI、失败趋势、失败类型构成、失败者排行四块内容。
 import { useMemo, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import { NumberFlow } from "@multica/ui/components/ui/number-flow";
@@ -31,20 +32,16 @@ import { type Dim } from "./dashboard-shared";
 import { Segmented } from "./dashboard-shared";
 import { DimSegmented } from "./dim-segmented";
 
-// How many offenders the list shows before collapsing the tail behind a
-// toggle. The list is ranked by absolute failure count, so the tail is
-// agents that failed once or twice — real, but not what anyone opens this
-// view to see.
+// 失败者列表在折叠尾部前最多展示多少个。列表按绝对失败次数排名，所以被折起来的
+// 尾部是只失败了一两次的 Agent——真实存在，但没人打开这个视图是为了看它们。
 const TOP_OFFENDER_LIMIT = 8;
 
-// Shared by the offender column header and every offender row, so the two
-// cannot drift out of alignment.
+// 由失败者列头和每一行共用，保证两者不会出现错位。
 const OFFENDER_GRID =
   "grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_4rem_4rem_4rem] items-center gap-3";
 
-// Translated label for a failure class. The mapping is a switch rather than
-// an index into a lookup object so the type checker flags a class added to
-// FAILURE_CLASSES without matching copy.
+// 失败类型的翻译文案。用 switch 而不是查表对象，是为了让类型检查器能揪出
+// 新加到 FAILURE_CLASSES 里却没有配文案的类型。
 function useFailureClassLabel(): (c: FailureClass) => string {
   const { t } = useT("usage");
   return (c) => {
@@ -68,13 +65,21 @@ function useFailureClassLabel(): (c: FailureClass) => string {
 }
 
 /**
- * "What broke", as a full view rather than one compressed card at the bottom
- * of the spend page.
+ * 「什么坏了」，作为一个完整视图，而不是塞在开销页底部的一张压缩卡片。
  *
- * Reads top-down the way the question is actually asked: how bad is it (KPIs),
- * when did it happen (trend), what kind of thing broke (mix), and who it broke
- * for (offenders). Each of those used to be a subsection of a single card, or
- * a fifth option on a toggle whose other four were spend metrics.
+ * 自上而下按人们真正提问的顺序来读：有多糟（KPI）→ 什么时候发生（趋势）→
+ * 坏了哪类东西（构成）→ 坏了谁的（失败者排行）。这几块以前要么是单张卡片里的
+ * 一个小节，要么是一个切换器的第五个选项——其余四个还都是开销指标。
+ *
+ * @param days 当前选中的时间范围天数
+ * @param allowedDims 当前时间段允许的图表维度
+ * @param totals 失败总量（失败数/总数/失败率）
+ * @param classRows 按失败类型聚合的数据
+ * @param reasonRows 按原始失败原因聚合的数据
+ * @param agentRows 按 Agent 聚合的失败数据
+ * @param dailyErrors / weeklyErrors 日/周粒度的失败序列
+ * @param agents 可解析出名字的 Agent 列表
+ * @param locales 数字格式化 locale
  */
 export function ErrorsTab({
   days,
@@ -102,11 +107,9 @@ export function ErrorsTab({
   const { t } = useT("usage");
   const classLabel = useFailureClassLabel();
 
-  // Agents affected counts the rows of the offender list below, so the tile and
-  // the list can never disagree. Agents this viewer cannot resolve are already
-  // folded into one anonymous row upstream, which makes this a lower bound when
-  // several hidden agents fail — the alternative, counting them individually,
-  // would leak how many private agents exist.
+  // 「受影响的 Agent」直接统计下面失败者列表的行数，这样 KPI 和列表永远对得上。
+  // 这个查看者无法解析的 Agent 已在上游被折叠成一行匿名行，所以当有多个隐藏 Agent
+  // 失败时，这个数字是个下界——另一种做法（逐个计数）会泄露到底有多少私有 Agent 存在。
   const affectedAgents = agentRows.length;
   const worst = agentRows[0];
   const worstName = worst
@@ -129,11 +132,9 @@ export function ErrorsTab({
           }
           hint={t(($) => $.errors.kpi_failed_hint, { total: totals.total })}
         />
-        {/* The rate carries its denominator right below it. The Tasks tile on
-            the Usage tab quotes a different, smaller failure count — it only
-            counts tasks that actually started — and two bare percentages from
-            two denominators read as a contradiction unless each says what it
-            is counting. */}
+        {/* 失败率把分母直接写在它下面。Usage 标签页的 Tasks 卡片引用的是一个不同的、
+            更小的失败数——它只统计真正启动过的任务——两个来自不同分母的光秃百分比
+            读起来像互相矛盾，除非各自说明自己统计的是什么。 */}
         <KpiCard
           label={t(($) => $.errors.kpi_rate_label, { days })}
           value={formatRate(totals.failed, totals.total)}
@@ -195,9 +196,8 @@ export function ErrorsTab({
   );
 }
 
-/** Failures over time, on the same x-axis the spend charts use. Promoted from
- *  the fifth option of the spend toggle, where seeing failures meant hiding
- *  spend. */
+/** 失败随时间的变化趋势，和开销图表共用同一根 x 轴。它从开销切换器的第五个选项
+ *  晋升而来——在那里，想看失败就意味着必须藏起开销。 */
 function ErrorTrendCard({
   allowedDims,
   dailyErrors,
@@ -231,8 +231,7 @@ function ErrorTrendCard({
   );
 }
 
-/** What kind of thing broke: the class mix, with the raw wire enums one click
- *  away. */
+/** 坏了哪类东西：失败类型构成，原始的线上枚举值放在一键之遥的位置。 */
 function FailureMixCard({
   totals,
   classRows,
@@ -250,8 +249,8 @@ function FailureMixCard({
   return (
     <div className="rounded-lg border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 pt-4 pb-3">
-        {/* Spells out its own denominator: the rate tile above quotes a rate
-            over every run, this section splits the failures alone. */}
+        {/* 自己把分母写清楚：上面的失败率卡片是「所有运行」里的比率，而这一节
+            只对「失败」本身做拆分。 */}
         <h4 className="text-body font-semibold">
           {t(($) => $.errors.mix_title, { failed: totals.failed })}
         </h4>
@@ -276,7 +275,7 @@ function FailureMixCard({
   );
 }
 
-/** Who it broke for. */
+/** 坏了谁的（失败者排行）。 */
 function OffendersCard({
   agentRows,
   agents,
@@ -303,11 +302,9 @@ function OffendersCard({
     [agentRows, sortBy],
   );
 
-  // The leader fills the track, measured over every row rather than the
-  // visible ones so a bar means the same thing collapsed and expanded. Reading
-  // it off the leader (instead of a max over the raw rows) also keeps the Rate
-  // scale usable: a demoted small-sample row can out-rate the leader, and
-  // scaling to it would squash every meaningful bar to a sliver.
+  // 领先者铺满轨道，但最大值按所有行（而非仅可见行）计算，这样条宽在折叠和
+  // 展开时含义一致。用领先者（而不是对原始行取 max）也能让 Rate 排序的刻度可用：
+  // 一个被降级的小样本行可能失败率高于领先者，若按它缩放会把每根有意义的条压成一条缝。
   const leader = sortedAgents[0];
   const maxValue = leader ? OFFENDER_METRIC[sortBy](leader) : 0;
 
@@ -340,10 +337,9 @@ function OffendersCard({
         </div>
       </div>
       <div className="p-4 pt-0">
-        {/* Column headers, as on the leaderboard: `4 / 10 · 40%` was one
-            unlabelled blob and the reader had to guess which number was
-            which. The active metric's column is emphasised so it is
-            obvious what the ranking and the bars measure. */}
+        {/* 列头，和排行榜一样：`4 / 10 · 40%` 以前是一坨没有标签的数字，
+            读者得猜哪个数字是哪个。当前指标的列会被强调，这样排名和条在衡量什么
+            一目了然。 */}
         {sortedAgents.length > 0 ? (
           <div
             className={`${OFFENDER_GRID} border-b py-2 text-caption font-medium text-muted-foreground`}
@@ -381,11 +377,10 @@ function OffendersCard({
 }
 
 /**
- * Class breakdown as one 100%-stacked bar plus a legend.
+ * 失败类型构成：一根 100% 堆叠条 + 图例。
  *
- * The question this answers is "what is the mix", and a single bar shows
- * share-of-total directly — with separate bars the reader has to compare
- * lengths and mentally total them.
+ * 它回答的问题是「构成比例是多少」，一根条能直接看出各自占总量多少——
+ * 如果画成多根分离的条，读者就得去比长度、再在脑子里自己加总。
  */
 function ClassComposition({
   rows,
@@ -400,8 +395,7 @@ function ClassComposition({
 
   return (
     <div className="space-y-2.5">
-      {/* Segments are ordered by count desc (the aggregator's order), so the
-          bar reads heaviest-first left to right. */}
+      {/* 分段按数量降序排列（聚合器已经排好序），所以条从左到右是「占比最大在前」。 */}
       <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
         {rows.map((row) => (
           <div
@@ -437,9 +431,8 @@ function ClassComposition({
 }
 
 /**
- * Raw `failure_reason` values behind the class summary. Unlocalised on
- * purpose: they are the backend's wire enum, and an operator pasting one into
- * a log search or an issue needs the exact string.
+ * 类型汇总背后的原始 `failure_reason` 值。刻意不翻译：它们是后端的线上枚举，
+ * 运维把某个值粘到日志检索或 issue 里时，需要的是精确的原始字符串。
  */
 function ReasonList({ rows }: { rows: FailureReasonRow[] }) {
   const { t } = useT("usage");
@@ -468,15 +461,12 @@ function ReasonList({ rows }: { rows: FailureReasonRow[] }) {
 }
 
 /**
- * One offender row, shaped like the leaderboard row on the Usage tab:
- * identity, then a proportional bar, then one column per number.
+ * 一行失败者，形状和 Usage 标签页的排行榜行一致：身份 → 比例条 → 每个数字一列。
  *
- * The bar measures whatever the list is currently sorted by, and the matching
- * column is emphasised — the same lockstep the leaderboard keeps.
+ * 条的长度衡量列表当前排序所用的指标，对应的列也会被强调——和排行榜保持同样的同步。
  *
- * The bar is stacked by failure class, which is also the only thing its colour
- * means. A row that fails one way is a solid block; a row failing five ways is
- * visibly striped — a distinction a single dominant-class badge erased.
+ * 条按失败类型堆叠着色，颜色也只表达这一层含义。只以一种方式失败的是一整块实色；
+ * 以五种方式失败的会明显看到条纹——这种区分是过去「单一主导类型徽章」抹掉的。
  */
 function AgentFailureItem({
   row,
@@ -495,34 +485,30 @@ function AgentFailureItem({
   const wsPaths = useWorkspacePaths();
 
   const segments = FAILURE_CLASSES.filter((c) => row.classes[c] > 0);
-  // Text equivalent of the stacked bar. The bar is the only place the class
-  // split is rendered, so it has to carry a name for screen readers as well as
-  // a hover affordance for everyone else.
+  // 堆叠条的文本等价物。条是唯一渲染失败类型拆分的地方，所以它既要给屏幕阅读器
+  // 提供名称，也要给其他人提供悬停提示。
   const composition = segments
     .map((c) => `${classLabel(c)} ${row.classes[c]}`)
     .join(" · ");
 
-  // Clamped, not just scaled: under the Rate ranking a small-sample row is
-  // demoted below the leader while still able to carry a higher rate, and an
-  // unclamped width would overflow the track.
+  // 要「夹紧」而不是只「缩放」：在 Rate 排序下，小样本行会被降级到领先者之下，
+  // 却仍可能带着更高的失败率，不夹紧的宽度会溢出轨道。
   const value = OFFENDER_METRIC[sortBy](row);
   const pct = maxValue > 0 ? Math.min(100, (value / maxValue) * 100) : 0;
 
-  // Below MIN_RATE_SAMPLE runs the rate is arithmetic, not signal (1/1 is
-  // 100%). Those rows sort last under Rate and never take the emphasis that
-  // marks the active column, but they keep rendering and say why on hover.
+  // 低于 MIN_RATE_SAMPLE 时，失败率只是算术结果、不是有效信号（1/1 就是 100%）。
+  // 这些行在 Rate 排序下排最后，也拿不到标记当前列的那种强调，但它们仍会渲染，
+  // 并在悬停时说明原因。
   const weakSample = !hasRateSample(row);
 
-  // The row links into the agent's Overview, whose ActivityTab lists recent
-  // runs with each failure's reason — the drill-down from "this agent is the
-  // problem" to the actual failed runs. NOT the Work tab: that one lists the
-  // issues assigned to the agent, which is a different question entirely.
+  // 这一行链接到 Agent 的 Overview 页，那里的 ActivityTab 会列出近期运行及每次
+  // 失败的原因——即从「这个 Agent 是问题」下钻到真正失败的那些运行。不是 Work 标签：
+  // 那个列的是分配给该 Agent 的 issue，完全是另一个问题。
   //
-  // An agent with no resolvable name is either hard-deleted or private to
-  // someone else; either way there is no page to open and no name to show,
-  // so the row degrades to a neutral placeholder. Rendering `row.agentId`
-  // here would leak a bare UUID — and, for a private agent, leak its
-  // existence and failure profile to a member who cannot see it.
+  // 无法解析出名字的 Agent 要么被硬删了，要么对别人私有；无论哪种，都没有可打开的
+  // 页面、也没有可显示的名字，所以这一行退化成中性占位符。这里若渲染 `row.agentId`
+  // 会泄露一个光秃秃的 UUID——而对私有 Agent 来说，还会把它的存在和失败画像泄露给
+  // 一个根本看不到它的成员。
   const label = (
     <span
       className={`block truncate text-caption${name ? "" : " italic text-muted-foreground"}`}

@@ -1,3 +1,8 @@
+// 本文件实现 agent custom_env（自定义环境变量）的专属管理端点：
+// GET / PUT /api/agents/{id}/env。密钥值刻意不塞进通用 agent 资源；这里提供带
+// 审计的读取（写 activity_log，只记键名绝不记值，审计写失败则拒绝吐明文）与
+// 整体替换式更新（支持 **** 哨兵保留原值）。鉴权要求 actor 必须是人（拒绝任何
+// agent 令牌，MUL-2600）且是 agent 所有者或工作区 owner/admin（MUL-5438）。
 package handler
 
 import (
@@ -16,65 +21,50 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// envSentinel is the masked marker the UI / clients see in place of a
-// real value. A PUT body carrying it for a given key means "do not
-// overwrite the existing value for that key" — a defense-in-depth
-// guard so a client that round-trips a partially-revealed map cannot
-// silently destroy real secrets by saving the masked placeholder.
+// envSentinel 是 UI / 客户端在真实值位置上看到的掩码标记。PUT body 中某个键的
+// 值等于它即表示「不要覆盖该键的现有值」——纵深防御：客户端把一份部分脱敏的
+// map 原样往返回来时，不会把掩码占位符当真值保存而悄悄销毁真实密钥。
 const envSentinel = "****"
 
-// agentEnvActivityRevealed and agentEnvActivityUpdated are the
-// activity_log `action` constants for the two env-management
-// endpoints. Stored on rows where `issue_id IS NULL` (env access is not
-// tied to any issue). Owners can later query them — a queryable audit
-// UI is out of scope for this PR, but the rows are written now so the
-// data is captured from day one. Workspace activity history will
-// eventually surface them; for now they're forensic-only.
+// agentEnvActivityRevealed / agentEnvActivityUpdated 是两个 env 管理端点写入
+// activity_log 的 `action` 常量。存在 `issue_id IS NULL` 的行上（env 访问不挂在
+// 任何 issue 下）。所有者日后可查询——可查询的审计 UI 超出本 PR 范围，但现在就
+// 落行，数据从第一天起就被捕获。工作区活动历史最终会浮出它们；目前仅供取证。
 const (
 	agentEnvActivityRevealed = "agent_env_revealed"
 	agentEnvActivityUpdated  = "agent_env_updated"
 )
 
-// AgentEnvResponse is the wire shape for the dedicated env-management
-// endpoint. Kept distinct from `AgentResponse` so secrets cannot leak
-// back into the generic agent resource by accident — a future
-// refactor that adds a field to AgentResponse cannot accidentally
-// pull env values along.
+// AgentEnvResponse 是专属 env 管理端点的线格式。与 `AgentResponse` 保持区分，
+// 让密钥不会意外漏回通用 agent 资源——未来给 AgentResponse 加字段的重构不会
+// 顺带把 env 值拖进去。
 type AgentEnvResponse struct {
 	AgentID   string            `json:"agent_id"`
 	CustomEnv map[string]string `json:"custom_env"`
 }
 
-// UpdateAgentEnvRequest is the wire shape for `PUT
-// /api/agents/{id}/env`. Only `custom_env` is accepted — fewer
-// surfaces, less to misuse.
+// UpdateAgentEnvRequest 是 `PUT /api/agents/{id}/env` 的线格式。只接受
+// `custom_env`——面越少，越不易被滥用。
 type UpdateAgentEnvRequest struct {
 	CustomEnv map[string]string `json:"custom_env"`
 }
 
-// authorizeAgentEnv enforces the per-request auth contract for the env
-// endpoints:
+// authorizeAgentEnv 强制 env 端点按请求级的鉴权契约：
 //
-//  1. The actor MUST resolve to a member (human). Any request authored
-//     by an agent token — even one whose backing member is a workspace
-//     owner, or the very human who owns the target agent — is rejected.
-//     This is the key fix for the impersonation/lateral-movement risk
-//     that motivated MUL-2600: an agent running in the workspace cannot
-//     use its host's owner credentials to reveal another agent's
-//     secrets.
-//  2. The member must be a workspace owner/admin, or the agent's own
-//     human owner (MUL-5438).
+//  1. actor 必须解析为成员（人）。任何由 agent 令牌署名的请求——即使其背后的
+//     成员是工作区 owner，或正是目标 agent 所属的那个人——都被拒绝。这是修复
+//     MUL-2600 所针对的冒充/横移风险的关键：在工作区里运行的 agent 不能借宿主
+//     的 owner 凭据去读另一个 agent 的密钥。
+//  2. 成员必须是工作区 owner/admin，或该 agent 的本人所有者（MUL-5438）。
 //
-// Rule 2 used to be workspace-role-only, which made env the single
-// endpoint in the agent permission model that ignored agent ownership:
-// canManageAgent already lets the owner update/archive/restore, and
-// canViewAgentSecrets already lets the owner read mcp_config. The
-// asymmetry was worst on create — POST /api/agents accepts custom_env
-// from any member — so a member could write secrets into their own
-// agent and then never read or rotate them.
+// 规则 2 过去只认工作区角色，这让 env 成为 agent 权限模型里唯一无视 agent
+// 所有权的端点：canManageAgent 已允许所有者更新/归档/恢复，canViewAgentSecrets
+// 已允许所有者读 mcp_config。最不对称的是创建路径——POST /api/agents 允许任何
+// 成员提交 custom_env——于是成员可以把密钥写进自己的 agent，之后却再也读不出
+// 或轮换不了。
 //
-// Returns the loaded agent and the authenticated member on success.
-// All non-2xx branches write their own response and return ok=false.
+// 成功时返回加载的 agent 与鉴权过的成员。所有非 2xx 分支自己写好响应并返回
+// ok=false。
 func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.Agent, db.Member, bool) {
 	agentID := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, agentID)
@@ -85,10 +75,9 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	userID := requestUserID(r)
 
-	// Reject agent actors before anything else. resolveActor returns
-	// "agent" iff both X-Agent-ID and a valid X-Task-ID are present and
-	// the task belongs to that agent — so this guard is precise and
-	// cannot be tricked by a member-supplied header.
+	// 先于一切拒绝 agent actor。resolveActor 只有在 X-Agent-ID 与合法 X-Task-ID
+	// 同时存在、且该任务确实属于该 agent 时才返回 "agent"——所以这道守卫是精确
+	// 的，成员自己伪造请求头骗不过去。
 	actorType, _ := h.resolveActor(r, userID, workspaceID)
 	if actorType == "agent" {
 		writeError(w, http.StatusForbidden, "agents may not access env management endpoints")
@@ -107,18 +96,14 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 	return agent, member, true
 }
 
-// canManageAgentEnv is the pure half of the env authorization rule:
-// a workspace owner/admin, or the human who owns the agent. Mirrors
-// canManageAgent (update/archive) so a member who can manage an agent
-// can also rotate its secrets.
+// canManageAgentEnv 是 env 鉴权规则的纯函数半部：工作区 owner/admin，或拥有该
+// agent 的人。镜像 canManageAgent（update/archive），让能管理 agent 的成员也
+// 能轮换它的密钥。
 //
-// The owner comparison deliberately runs against member.UserID rather
-// than requestUserID(r). agent.owner_id is nullable (migration 001) and
-// uuidToString renders a NULL UUID as "", so comparing against a raw
-// header — which can also be empty — would make every NULL-owner agent
-// readable by anyone. member.UserID only exists after the membership
-// lookup succeeded, and the empty-owner guard below closes the case
-// from the other side as well.
+// owner 比较刻意针对 member.UserID 而非 requestUserID(r)。agent.owner_id 可空
+// （迁移 001），uuidToString 会把 NULL UUID 渲染成 ""，所以拿它跟同样可能为空的
+// 裸请求头比较，会让每个 NULL-owner 的 agent 对任何人都可读。member.UserID 在
+// 成员查询成功后才存在，下面的空 owner 守卫再从另一侧把这个洞补上。
 func canManageAgentEnv(agent db.Agent, member db.Member) bool {
 	if roleAllowed(member.Role, "owner", "admin") {
 		return true
@@ -127,18 +112,14 @@ func canManageAgentEnv(agent db.Agent, member db.Member) bool {
 	return ownerID != "" && ownerID == uuidToString(member.UserID)
 }
 
-// GetAgentEnv returns the plaintext custom_env map for a single agent
-// after gating through authorizeAgentEnv. Every successful read writes
-// an `agent_env_revealed` row to activity_log (keys only, never
-// values) so workspace owners have a trail of who saw which keys.
+// GetAgentEnv 在 authorizeAgentEnv 门控后返回单个 agent 的明文 custom_env map。
+// 每次成功读取都往 activity_log 写一条 `agent_env_revealed`（只记键名，绝不记
+// 值），让工作区 owner 有「谁看过哪些键」的轨迹。
 //
-// Audit semantics are fail-closed: if we cannot persist the audit row
-// we MUST NOT serve the plaintext. A reveal we cannot record is
-// indistinguishable from an unaudited reveal, which would silently
-// break the MUL-2600 promise of "every reveal leaves a queryable
-// trail". Operators who hit a 500 here see the audit-log outage and
-// can fix it; the alternative — quietly handing out secrets — is
-// invisible.
+// 审计语义失败关闭：审计行持久化不了就绝不吐明文。记录不了的 reveal 与未审计的
+// reveal 无法区分，会悄悄破坏 MUL-2600 承诺的「每次 reveal 都留下可查询轨迹」。
+// 在这里撞上 500 的运维能看到审计日志故障并去修；另一条路——悄悄把密钥交出去
+// ——是不可见的。
 func (h *Handler) GetAgentEnv(w http.ResponseWriter, r *http.Request) {
 	agent, member, ok := h.authorizeAgentEnv(w, r)
 	if !ok {
@@ -175,19 +156,13 @@ func (h *Handler) GetAgentEnv(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// UpdateAgentEnv replaces an agent's custom_env wholesale. The **** marker is
-// honoured per-key: any value equal to envSentinel is treated as
-// "keep the existing value for that key", protecting against the
-// scenario where a UI fetches the env, exposes some values but leaves
-// others masked, and then naively PUTs the whole map back. A
-// straightforward write would have stored literal `****` in place of
-// the real secret. Audit log captures the symmetric difference between
-// old and new keys but never values.
+// UpdateAgentEnv 整体替换 agent 的 custom_env。**** 掩码按键生效：任何等于
+// envSentinel 的值都当作「该键保留现有值」，防止这种场景——UI 抓取 env、只对部分
+// 值脱敏，然后草率地把整张 map PUT 回来。直接写入的话，真实密钥的位置会被存成
+// 字面量 `****`。审计日志记录新旧键集合之间的对称差，但永不记值。
 //
-// Persist + audit run inside one DB transaction so they commit
-// together or roll back together. An audit-write outage cannot leave
-// an unaudited env mutation on disk, and a persist failure does not
-// leave a phantom audit row claiming a change that never happened.
+// 持久化 + 审计跑在同一个数据库事务里，同生共死。审计写故障不会在磁盘上留下
+// 未审计的 env 变更；持久化失败也不会留下一条声称发生却未发生的幽灵审计行。
 func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 	agent, member, ok := h.authorizeAgentEnv(w, r)
 	if !ok {
@@ -270,10 +245,9 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Broadcast an agent:status update so connected clients refresh the
-	// "N variables configured" indicator. Payload is the redacted
-	// AgentResponse — no env values are sent. Skills are reloaded so the
-	// broadcast doesn't tell subscribers the agent has no skills (#3459).
+	// 广播 agent:status 更新，让已连接的客户端刷新「已配置 N 个变量」指示器。
+	// 负载是脱敏后的 AgentResponse——绝不发送 env 值。技能也要重载，否则广播会
+	// 让订阅者误以为该 agent 没有技能（#3459）。
 	resp := h.agentToResponse(updated)
 	if err := h.attachAgentSkills(r.Context(), &resp, updated.ID); err != nil {
 		slog.Warn("load agent skills after env update failed",
@@ -289,11 +263,9 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// envAudit summarises the diff between an agent's existing env and the
-// new one, broken down so an auditor can reconstruct exactly which
-// keys an operation touched without leaking values. All slices are
-// sorted to keep the activity row content deterministic for tests and
-// downstream tooling.
+// envAudit 总结 agent 既有 env 与新的 env 之间的差异，按类别拆开，让审计者能
+// 精确重建一次操作碰过哪些键，又不泄漏值。所有切片都排序，让 activity 行内容
+// 对测试与下游工具确定性可复现。
 type envAudit struct {
 	added     []string
 	removed   []string
@@ -301,20 +273,15 @@ type envAudit struct {
 	preserved []string
 }
 
-// mergeAgentEnv applies the **** sentinel rule and returns both the
-// final map to persist and an audit summary of which keys changed.
-// Behaviour:
-//   - request key present, value == "****", key exists in `existing`
-//     → keep the existing value, append to preserved
-//   - request key present, value == "****", key NOT in `existing`
-//     → drop the key (literal "****" is never a valid stored value)
-//   - request key present, value != "****", key already in existing
-//     with same value → no-op (not counted)
-//   - request key present, value != "****", different from existing
-//     → write new value, append to changed
-//   - request key present, value != "****", key NOT in existing
-//     → write new value, append to added
-//   - key in existing but absent from request → removed
+// mergeAgentEnv 应用 **** 哨兵规则，返回最终要持久化的 map 以及哪些键变化过的
+// 审计摘要。行为：
+//   - 请求含该键、值为 "****"、键在 `existing` 中 → 保留原值，计入 preserved
+//   - 请求含该键、值为 "****"、键不在 `existing` 中 → 丢弃该键（字面量 "****"
+//     永远不是合法存储值）
+//   - 请求含该键、值 != "****"、existing 已有同值 → no-op（不计）
+//   - 请求含该键、值 != "****"、与 existing 不同 → 写入新值，计入 changed
+//   - 请求含该键、值 != "****"、键不在 existing 中 → 写入新值，计入 added
+//   - 键在 existing 但请求没带 → removed
 func mergeAgentEnv(existing, request map[string]string) (map[string]string, envAudit) {
 	merged := make(map[string]string, len(request))
 	audit := envAudit{}
@@ -325,7 +292,7 @@ func mergeAgentEnv(existing, request map[string]string) (map[string]string, envA
 				merged[k] = old
 				audit.preserved = append(audit.preserved, k)
 			}
-			// else: drop. We never persist a literal "****".
+			// else（existing 无此键）：丢弃。字面量 "****" 永远不作为存储值落库。
 			continue
 		}
 		if old, ok := existing[k]; ok {
@@ -354,9 +321,8 @@ func mergeAgentEnv(existing, request map[string]string) (map[string]string, envA
 	return merged, audit
 }
 
-// unmarshalCustomEnv decodes an agent's stored custom_env bytea into a
-// map, returning an empty (never nil) map so callers can iterate
-// safely.
+// unmarshalCustomEnv 把 agent 存储的 custom_env 字节解码成 map，出错时返回空
+// （绝不返回 nil）map，让调用方可以安全迭代。
 func unmarshalCustomEnv(a db.Agent) map[string]string {
 	out := map[string]string{}
 	if len(a.CustomEnv) == 0 {

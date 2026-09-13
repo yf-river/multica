@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 详情页的“集成”标签页：把 Lark / Slack / 钉钉 / 企微 / Telegram
+// 这些外部渠道与 Agent 的“绑定入口”集中呈现。各平台卡片复用设置页的 BindButton，
+// 本页只围绕它们补上标题、说明与未配置/敬请期待/仅成员可见等说明性外壳。
+
 import { useQuery } from "@tanstack/react-query";
 import type { Agent } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
@@ -31,17 +35,13 @@ import { TelegramMark } from "../../../settings/components/telegram-mark";
 import { useT } from "../../../i18n";
 
 /**
- * Integrations tab on the agent detail page. Surfaces the same external-
- * channel bind entry point as the inspector's "Integrations" section
- * (Lark Bot today) — scan-to-bind when unbound, connected info when bound —
- * but with the room a tab affords for a heading, a description, and the
- * not-configured / coming-soon / members-only states the cramped sidebar
- * section has no space for.
+ * Agent 详情页的“集成”标签页。呈现与检查器 “Integrations” 小节相同的外部渠道
+ * 绑定入口（目前是 Lark 机器人）——未绑定时扫码绑定、已绑定时展示连接信息——
+ * 但用 Tab 页充足的空间放下标题、描述以及侧栏紧凑区放不下的“未配置 / 敬请期待 /
+ * 仅成员可见”等状态。
  *
- * The actionable affordance is the shared `LarkAgentBindButton`, the single
- * source of truth for "scan to bind vs. already connected". This tab only
- * adds the explanatory chrome around it, so the two entry points can never
- * drift.
+ * 真正可操作的是共享的 `LarkAgentBindButton`——“扫码绑定 vs 已连接”的唯一事实源。
+ * 本页只给它加上说明性的外壳，两个入口因此永远不会跑偏。
  */
 export function IntegrationsTab({ agent }: { agent: Agent }) {
   const { t } = useT("agents");
@@ -49,10 +49,9 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
   const wsId = useWorkspaceId();
   const user = useAuthStore((s) => s.user);
 
-  // Both queries are already issued by LarkAgentBindButton (and keyed per
-  // workspace), so re-reading them here is free — TanStack dedupes by key.
-  // We only need the derived booleans to pick which copy sits next to the
-  // button, mirroring the branch order LarkTab uses in Settings.
+  // 这两个查询 LarkAgentBindButton 本来就会发（且按工作区作 key），这里再读一次是
+  // 免费的——TanStack 按 key 去重。我们只需要推导出的布尔值来选按钮旁的文案，
+  // 分支顺序与 Settings 里 LarkTab 保持一致。
   const { data: listing } = useQuery({
     ...larkInstallationsOptions(wsId),
     enabled: !!wsId,
@@ -87,11 +86,10 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
     !!user?.id &&
     agent.owner_id != null &&
     agent.owner_id === user.id;
-  // Lark bind/manage is authorized for the agent's owner OR a workspace
-  // owner/admin (server/internal/handler/lark.go canManageAgent, MUL-4213).
-  // Slack's install/revoke routes are still workspace owner/admin-only, so
-  // its gate stays admin-only — the agent owner must not see a Slack CTA the
-  // backend would 403.
+  // Lark 的绑定/管理授权给“Agent 拥有者 或 工作区拥有者/管理员”
+  //（server/internal/handler/lark.go canManageAgent，MUL-4213）。
+  // Slack 的安装/撤销路由仍只限工作区拥有者/管理员，所以它的门槛保持仅管理员——
+  // 不能给一个后端必然 403 的 Agent 拥有者展示 Slack 操作入口。
   const canManageLark = isWorkspaceAdmin || isAgentOwner;
   const canManageSlack = isWorkspaceAdmin;
   const canManageWecom = isWorkspaceAdmin;
@@ -133,8 +131,8 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
     ? dingtalkGroupsListing?.bot_identities?.[dingtalkInstallation.id] ??
       getDingTalkBotIdentity(dingtalkGroups, dingtalkInstallation.id)
     : undefined;
-  // DingTalk uses the same per-agent management rule as Lark: the target
-  // agent's owner or a workspace owner/admin may connect and disconnect it.
+  // 钉钉与 Lark 同规则（按 Agent 管理）：目标 Agent 的拥有者或工作区拥有者/管理员
+  // 可连接/断开它。
   const canManageDingtalk = isWorkspaceAdmin || isAgentOwner;
 
   const wecomConfigured = wecomListing?.configured === true;
@@ -151,10 +149,9 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
       (inst) => inst.agent_id === agent.id && inst.status === "active",
     ) ?? false;
 
-  // Preserve the established Integrations management gate: a member who can
-  // manage no platform gets the read-only note instead of install controls.
-  // The agent-scoped DingTalk relationship remains visible because reaching
-  // this Agent detail already passed the server's Agent view permission gate.
+  // 维持既有的集成管理门槛：一个平台都不能管理的成员，看到的是只读提示而不是安装
+  // 控件。Agent 级绑定的钉钉关系仍保持可见——能进这个 Agent 详情，说明已通过
+  // 服务端对 Agent 的查看权限门槛。
   if (
     !canManageLark &&
     !canManageSlack &&
@@ -236,19 +233,16 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
         </div>
         <div className="border-t px-4 py-3">
           {!configured ? (
-            // No at-rest key on this deployment. The tab is only mounted
-            // when the feature is configured, so this is the rare "key was
-            // removed after an install existed" race.
+            // 这个部署没有持久密钥。本 Tab 只在功能已配置时才被挂载，所以这是
+            // 罕见的“安装存在后密钥被移除”竞态。
             <p className="text-caption text-muted-foreground">
               {ts(($) => $.lark.not_enabled_title)}
             </p>
           ) : !installSupported && !hasActiveInstall ? (
-            // Key is set but the device-flow transport isn't wired in this
-            // build — a fresh scan would fail at the post-poll bot-info step,
-            // so we surface the "coming soon" notice instead of a broken CTA.
-            // An agent that is ALREADY bound is exempt: install_supported only
-            // governs NEW installs, so the bound state must still render below
-            // (server/internal/handler/lark.go).
+            // 密钥在，但本构建没接入设备码传输——新扫码会在“轮询后取 bot 信息”
+            // 一步失败，所以显示“敬请期待”而不是一个注定坏掉的入口。
+            // 已绑定的 Agent 豁免：install_supported 只管“新安装”，已绑定的状态
+            // 仍要正常渲染（server/internal/handler/lark.go）。
             <div className="space-y-1">
               <p className="text-caption font-medium">{ts(($) => $.lark.preview_title)}</p>
               <p className="text-caption text-muted-foreground">
@@ -256,10 +250,9 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
               </p>
             </div>
           ) : (
-            // Agent owner or workspace owner/admin with either a supported
-            // transport or an existing bot: the shared button renders the
-            // scan-to-bind CTA or the already-connected "Manage in Lark"
-            // badge. It self-authorizes on agentOwnerId + role.
+            // Agent 拥有者或工作区拥有者/管理员，且要么传输受支持、要么已有机器人：
+            // 共享按钮会渲染“扫码绑定”入口或“已在 Lark 管理”徽章。它按
+            // agentOwnerId + 角色自我鉴权。
             <LarkAgentBindButton
               agentId={agent.id}
               agentName={agent.name}
@@ -283,9 +276,8 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
         </div>
         <div className="border-t px-4 py-3">
           {!canManageSlack ? (
-            // Slack install/revoke stay workspace owner/admin-only, so an
-            // agent owner who is not an admin only gets the read-only note
-            // here (unlike Lark above). Reuses the shared members note.
+            // Slack 安装/撤销仍限工作区拥有者/管理员，所以非管理员的 Agent 拥有者
+            // 在这里只能看到只读提示（不同于上方 Lark）。复用共享的 members 提示。
             <p className="text-caption text-muted-foreground">
               {t(($) => $.tab_body.integrations.members_note)}
             </p>
@@ -294,9 +286,8 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
               {ts(($) => $.slack.not_enabled_title)}
             </p>
           ) : !slackInstallSupported && !slackHasActiveInstall ? (
-            // Secret key is set but the OAuth client credentials aren't, so a
-            // fresh "Connect Slack" would 503. Surface the "coming soon" notice
-            // instead of a broken CTA; an already-bound agent still renders.
+            // 密钥在但缺 OAuth 客户端凭据，新点 “Connect Slack” 会 503。显示
+            // “敬请期待”而不是坏入口；已绑定的 Agent 仍正常渲染。
             <div className="space-y-1">
               <p className="text-caption font-medium">{ts(($) => $.slack.preview_title)}</p>
               <p className="text-caption text-muted-foreground">
@@ -323,8 +314,8 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
         </div>
         <div className="border-t px-4 py-3">
           {!canManageDingtalk ? (
-            // Viewers who cannot manage this agent still see its connected
-            // DingTalk identity and discovered groups as read-only details.
+            // 无法管理这个 Agent 的查看者，仍能以只读方式看到它连着的钉钉机器人身份
+            // 与发现的群。
             dingtalkInstallation ? (
               <DingTalkConnectionLabel
                 botName={dingtalkBotIdentity?.bot_name ?? ""}

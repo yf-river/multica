@@ -1,3 +1,13 @@
+// typing_indicator.go：入站消息的「处理中」指示灯——agent 干活时在用户消息上加
+// 个 👀 表情，跑完再摘掉。
+//
+// Slack 没有飞书那种动态的 "typing" 反应，这里约定用一个所有工作区都内置的表情
+// 👀（"eyes"，含义「看见了，正在办」）当指示灯。生命周期：消息被摄取时 Add 打上
+// 表情；agent 这次运行无论以哪种方式结束——ChatDone、TaskFailed 还是
+// TaskCancelled——Clear 都会把它摘掉。镜像 lark.TypingIndicatorManager：状态按
+// chat_session_id 记在进程内存里，Clear 时才从库里现解 bot 令牌（add 与 clear 之
+// 间内存里只留安装 id，绝不存令牌）；所有失败只记日志、绝不向上抛——指示灯是
+// 尽力而为的装饰，不能挡路或搞挂真正的回复。
 package slack
 
 import (
@@ -19,44 +29,36 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// typingEmoji is the Slack reaction name used as the "processing" indicator on
-// the user's message while the agent is working. Slack has no animated "typing"
-// reaction like Feishu's, so we use the universal 👀 ("seen, on it") convention
-// — a built-in emoji present in every workspace. Change this one constant to
-// swap the indicator. The installed Slack app needs the reactions:write scope
-// for the reaction to land; without it the add simply fails and is logged.
+// typingEmoji 是 agent 工作期间盖在用户消息上的 Slack 反应名，当「处理中」指示
+// 灯用。改这一个常量就能整体换掉指示灯。注意：装的 Slack 应用需要 reactions:write
+// 权限，反应才加得上去；没权限时加反应只是失败并被记日志，不影响业务。
 const typingEmoji = "eyes"
 
-// typingIndicatorMaxAge bounds how old an inbound message may be before we skip
-// the reaction, so a Socket Mode reconnect that replays old events does not
-// stamp "processing" badges onto long-finished conversations. Mirrors Feishu.
+// typingIndicatorMaxAge 限制「多老的消息还会被打灯」：超过这个时间就不打，免得
+// Socket Mode 重连时把旧事件回放出来的、早就聊完的对话又盖上「处理中」的章。
+// 与飞书保持一致。
 const typingIndicatorMaxAge = 2 * time.Minute
 
-// reactionAPI is the minimal Slack reaction surface the indicator needs.
-// *slack.Client satisfies it directly; tests inject a fake.
+// reactionAPI 是指示灯需要的极简 Slack 反应操作面。*slack.Client 直接满足它；
+// 测试注入假实现。
 type reactionAPI interface {
 	AddReactionContext(ctx context.Context, name string, item slack.ItemRef) error
 	RemoveReactionContext(ctx context.Context, name string, item slack.ItemRef) error
 }
 
-// typingState is what removing a reaction needs: the (channel, message ts) pair
-// Slack addresses the item by — it removes by emoji name + item ref, so there is
-// no reaction id to store — plus the installation whose bot token put the
-// reaction there. The installation id is recorded at add time because that is
-// the last moment it is certainly resolvable: it is reachable from the session's
-// channel_chat_session_binding, and a session delete drops that row while the
-// cancel it triggers is still on its way to this manager.
-// configSnapshot is the installation's encrypted config as it stood when the
-// reaction was added, for the one case where the id is no longer enough: a
-// runtime teardown deletes the installation inside the same transaction that
-// cancels the tasks (handler/runtime.go,
-// DeleteChannelInstallationsBySystemRuntimeAgents), so by the time the cancel
-// reaches Clear there is no row to resolve.
+// typingState 是摘反应所需的全部信息：Slack 按「表情名 + item 引用」定位反应、
+// 没有反应 id 可存，所以这里记 (channel, 消息 ts) 这一对，外加当初打灯用的是哪个
+// 安装的 bot 令牌。安装 id 在 Add 那一刻记录，因为那是它【必然还查得到】的最后
+// 时机——它藏在会话的 channel_chat_session_binding 里，而删除会话会连带删掉那行
+// 绑定，可删除触发的取消事件此刻还在赶往本管理器的路上。
+// configSnapshot 是打灯当时该安装的加密 config 快照，用于唯一一种「光有 id 不够」
+// 的情形：运行时销毁会在取消任务的那同一事务里删掉安装行（handler/runtime.go 的
+// DeleteChannelInstallationsBySystemRuntimeAgents），等取消到达 Clear 时，库里
+// 已经没有那行了。
 //
-// A FALLBACK, never the primary — a live lookup picks up a credential rotation
-// between add and clear and a snapshot cannot, so it is used only when the row
-// is gone. It holds the same encrypted blob the database holds; the bot token
-// is still decrypted only for the life of the clear.
+// 快照只是【兜底】而非首选——实时查询能感知 add 与 clear 之间发生的凭据轮换，
+// 快照不能；所以只在行真的没了时才用它。它持有的仍是数据库里同款加密 blob，
+// bot 令牌只在清除发生的这一刻被解密。
 type typingState struct {
 	ChannelID      string
 	MessageTS      string
@@ -64,22 +66,19 @@ type typingState struct {
 	configSnapshot []byte
 }
 
-// TypingIndicatorQueries is the narrow DB surface the manager needs to resolve
-// an installation's bot token when clearing a reaction. *db.Queries satisfies it.
+// TypingIndicatorQueries 是管理器 Clear 时解析安装 bot 令牌所需的窄 DB 面。
+// *db.Queries 满足它。
 type TypingIndicatorQueries interface {
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
 }
 
-// TypingIndicatorManager owns the "processing" reaction lifecycle for inbound
-// Slack messages: it adds a 👀 reaction when a message is ingested and removes
-// it however the agent's run ends — EventChatDone, EventTaskFailed or
-// EventTaskCancelled.
+// TypingIndicatorManager 管理入站 Slack 消息的「处理中」反应：消息被摄取时加一个
+// 👀，agent 的运行无论怎么结束——EventChatDone、EventTaskFailed 或
+// EventTaskCancelled——都把它摘掉。
 //
-// It mirrors lark.TypingIndicatorManager: state is held in memory keyed by
-// chat_session_id, the bot token is re-resolved from the DB on clear (only the
-// installation id is held in the map between add and clear, never the token),
-// and every failure is logged and swallowed — the indicator is best-effort and
-// must never block or fail a real reply.
+// 镜像 lark.TypingIndicatorManager：状态以 chat_session_id 为键记在进程内存；
+// Clear 时从库里重新解析 bot 令牌（add 与 clear 之间 map 里只留安装 id、绝不存
+// 令牌）；所有失败只记日志并吞掉——指示灯是尽力而为，绝不能阻塞或搞挂真正的回复。
 type TypingIndicatorManager struct {
 	q       TypingIndicatorQueries
 	decrypt Decrypter
@@ -87,12 +86,11 @@ type TypingIndicatorManager struct {
 	newAPI  func(creds credentials) reactionAPI
 
 	mu     sync.RWMutex
-	states map[string][]typingState // key = chat_session_id string
+	states map[string][]typingState // 键 = chat_session_id 的字符串形态
 }
 
-// NewTypingIndicatorManager builds a manager over the generated queries and the
-// bot-token decrypter. The Slack API client is constructed per call from the
-// installation's decrypted bot token (xoxb-), exactly like the outbound sender.
+// NewTypingIndicatorManager 基于生成查询与 bot 令牌解密器构造管理器。Slack API
+// 客户端按调用现建：用安装解密后的 bot 令牌（xoxb-），与出站发送器同款做法。
 func NewTypingIndicatorManager(q TypingIndicatorQueries, decrypt Decrypter, logger *slog.Logger) *TypingIndicatorManager {
 	if logger == nil {
 		logger = slog.Default()
@@ -106,10 +104,9 @@ func NewTypingIndicatorManager(q TypingIndicatorQueries, decrypt Decrypter, logg
 	}
 }
 
-// Add reacts to the just-ingested message and records the state under the chat
-// session. inst is the resolved installation row whose Config blob carries the
-// encrypted bot token. It is synchronous — the Router calls it in a detached,
-// time-bounded goroutine. Errors are logged and swallowed.
+// Add 给刚摄取的这条消息打上反应，并把状态记到该聊天会话名下。inst 是已解析的
+// 安装行，它的 Config blob 装着加密的 bot 令牌。本方法同步执行——Router 在一个
+// 脱离的、有超时的 goroutine 里调用它。错误只记日志并吞掉。
 func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstallation, sessionID pgtype.UUID, channelID, messageTS string) {
 	if channelID == "" || messageTS == "" {
 		return
@@ -136,18 +133,15 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstall
 	m.mu.Unlock()
 }
 
-// Clear removes every tracked reaction for the chat session and drops the state.
-// It re-resolves the bot token from the installation each state recorded, so no
-// decrypted token is held in memory between add and clear. Individual failures
-// are logged but do not abort the loop. Best-effort throughout.
+// Clear 摘掉该聊天会话名下所有被跟踪的反应并清掉状态。对每条状态，bot 令牌都从
+// 安装行重新解析——add 与 clear 之间内存里不存任何解密后的令牌。个别失败只记
+// 日志、不中断整个循环。全程尽力而为。
 //
-// The installation is read straight from the state rather than looked up through
-// the session's binding, because a clear can outlive that binding: deleting a
-// chat session drops the binding row inside the same transaction that cancels
-// the session's tasks, and the task:cancelled events that reach this manager are
-// broadcast after that transaction commits. A binding lookup would miss, and
-// since the state has already been taken here, there would be nothing left to
-// clear from. Installation rows survive the session.
+// 安装行是直接从状态里读的、而不是经会话绑定现查，因为一次 Clear 可能晚于那条
+// 绑定的寿命：删除聊天会话时，绑定行会在取消该会话任务的那【同一事务】里被删，
+// 而到达本管理器的 task:cancelled 事件是在那事务提交【之后】才广播的。按绑定查会
+// 扑空；而状态此刻又已经从这里取走，一旦扑空就再没有东西可清了。安装行比会话
+// 活得更久。
 func (m *TypingIndicatorManager) Clear(ctx context.Context, sessionID pgtype.UUID) {
 	key := util.UUIDToString(sessionID)
 	m.mu.Lock()
@@ -158,11 +152,9 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, sessionID pgtype.UUI
 		return
 	}
 
-	// One session's reactions normally share an installation, so the resolved
-	// clients are memoised; a session rebound to another installation mid-run
-	// still clears every reaction through the app that added it. A nil entry
-	// records an installation that failed to resolve, so it is not retried once
-	// per reaction.
+	// 同一会话的反应通常来自同一个安装，所以把解析出的客户端按安装缓存一下；若
+	// 会话中途重绑到别的安装，仍然通过各自「打灯的那个应用」把所有反应摘掉。nil
+	// 条目表示那个安装解析失败了，缓存住以免每条反应都白试一次。
 	apis := make(map[string]reactionAPI, 1)
 	for _, s := range states {
 		instKey := util.UUIDToString(s.InstallationID)
@@ -186,9 +178,8 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, sessionID pgtype.UUI
 	}
 }
 
-// apiForInstallation loads an installation row and turns its encrypted config
-// into a reaction client. The decrypted bot token exists only for the life of
-// this call.
+// apiForInstallation 加载一行安装并把它的加密 config 变成反应客户端。解密出的
+// bot 令牌只在这条调用里存活。
 func (m *TypingIndicatorManager) apiForInstallation(ctx context.Context, id pgtype.UUID, snapshot []byte) (reactionAPI, error) {
 	config := snapshot
 	inst, err := m.q.GetChannelInstallation(ctx, db.GetChannelInstallationParams{
@@ -199,10 +190,8 @@ func (m *TypingIndicatorManager) apiForInstallation(ctx context.Context, id pgty
 	case err == nil:
 		config = inst.Config
 	case errors.Is(err, pgx.ErrNoRows) && len(snapshot) > 0:
-		// The row is gone, which on this path means the runtime teardown
-		// deleted it in the transaction that cancelled these tasks. The
-		// reaction it added is still on the message and the snapshot is the
-		// only thing left that can take it off.
+		// 行没了。走到这里通常就是运行时销毁在取消这批任务的那个事务里把它删了；
+		// 反应还留在消息上，快照是唯一还能把它摘下来的东西。
 	default:
 		return nil, fmt.Errorf("lookup installation: %w", err)
 	}
@@ -213,42 +202,34 @@ func (m *TypingIndicatorManager) apiForInstallation(ctx context.Context, id pgty
 	return m.newAPI(creds), nil
 }
 
-// Register subscribes the manager to every task-lifecycle event that ends a run,
-// so the reaction comes off however the run finished. The outbound reply
-// subscriber only handles EventChatDone, so this is the only path that removes
-// the reaction on the other two endings.
+// Register 订阅所有能结束一次运行的 task-lifecycle 事件，这样无论运行怎么结束，
+// 反应都会被摘掉。出站回复订阅器只处理 EventChatDone，所以另两种结束只有这里会
+// 摘反应。
 //
-// EventTaskCancelled has to be here or a cancelled run leaves the 👀 on the
-// user's message for good: a cancellation publishes no chat-done and no
-// task-failed, so nothing else would ever take the reaction off.
+// EventTaskCancelled 必须订阅：否则被取消的运行会让 👀 永远留在用户消息上——
+// 取消不发布 chat-done、也不发布 task-failed，除了这里没有任何地方会去摘它。
 //
-// task:cancelled is broadcast once per cancelled row by CancelTask, the queued
-// follow-up cancel behind it, the agent- and issue-level bulk cancels, the
-// runtime and member revocations, and deleting the chat session. The delete is
-// the one that used to publish nothing: BroadcastCancelledTasks resolved each
-// task's workspace through its chat_session, the same row its transaction had
-// just deleted, and an event with no workspace is dropped before it reaches the
-// bus. It now takes the workspace from its caller.
+// task:cancelled 由 CancelTask、其后的排队补取消、agent/issue 级批量取消、运行时
+// 与成员吊销、以及删除聊天会话各自逐行广播一次。其中「删除聊天会话」以前什么都不
+// 广播：BroadcastCancelledTasks 曾通过任务的 chat_session 反查 workspace，而那一行
+// 正是它自己的事务刚删掉的；没有 workspace 的事件在到达总线前就被丢弃。现在改为
+// 从调用方拿 workspace。
 //
-// Two holes are left, and neither is a missing subscription.
+// 仍有两个洞，且都不是「漏了订阅」：
 //
-// Archiving an agent cancels its tasks without broadcasting per row, on the
-// grounds that the agent:archived event already invalidates every client's task
-// list (handler/agent.go, ArchiveAgent). No client-side list refresh takes a
-// reaction off a Slack message, so archiving an agent mid-run leaves the 👀 in
-// place.
+// 归档 agent 会取消其任务但不逐行广播——理由是 agent:archived 事件已经让每个客户
+// 端的任务列表整体失效（handler/agent.go 的 ArchiveAgent）。而没有任何客户端刷新
+// 会顺手摘掉 Slack 消息上的反应，所以运行中归档 agent 会把 👀 留在原地。
 //
-// And an ending that arrives while the reaction is still being added clears
-// nothing: Add records its state only after the Slack call returns, so Clear
-// finds an empty map, and the reaction lands after it with nothing left to take
-// it off. The Router adds on a detached goroutine, so a cancelled or very fast
-// run gets there first. This predates task:cancelled — chat-done and task-failed
-// race the add the same way — and closing it needs a per-session generation the
-// add can check when its call returns, which is its own change.
+// 另一个洞：结束事件跑得比加反应还快时就什么都清不掉——Add 要等 Slack 调用返回
+// 之后才记状态，此时 Clear 看到的是空 map，等反应真正加上去，已经没有东西来摘它
+// 了。Router 在脱离的 goroutine 里加反应，因此取消或极快的运行会先到。这个问题先
+// 于 task:cancelled 就存在（chat-done 与 task-failed 同样会抢跑），要彻底修需要给
+// 每个会话一个代数（generation），让 Add 的调用返回时可以核对——那是另一处独立
+// 改动。
 //
-// Call once at boot against a fresh bus; register it before the outbound
-// subscriber so the reaction clears ahead of the reply on EventChatDone (bus
-// delivery is synchronous, in subscription order).
+// 启动时对一条新总线调用一次；务必注册在出站订阅器之前，这样 EventChatDone 到来
+// 时反应先摘、回复后发（总线投递是同步的、按订阅顺序执行）。
 func (m *TypingIndicatorManager) Register(bus *events.Bus) {
 	bus.Subscribe(protocol.EventChatDone, m.handleEvent)
 	bus.Subscribe(protocol.EventTaskFailed, m.handleEvent)
@@ -258,20 +239,19 @@ func (m *TypingIndicatorManager) Register(bus *events.Bus) {
 func (m *TypingIndicatorManager) handleEvent(e events.Event) {
 	sessionID, ok := chatSessionIDFromEvent(e)
 	if !ok {
-		// Issue / autopilot tasks carry no chat_session — nothing to clear.
+		// issue / autopilot 任务不带 chat_session——没有可摘的反应。
 		return
 	}
-	// Bus delivery is synchronous; bound the reaction calls so a stuck Slack
-	// HTTP request cannot wedge the publish call site.
+	// 总线投递是同步的，给反应调用加超时，让一个卡死的 Slack HTTP 请求不至于把
+	// 发布侧钉住。
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	m.Clear(ctx, sessionID)
 }
 
-// chatSessionIDFromEvent recovers the chat session id from a task-lifecycle
-// event. EventChatDone sets it on the envelope; EventTaskFailed carries it only
-// in the broadcast payload map (chat tasks only), so both are checked.
-// Every EventTaskCancelled publisher sets both.
+// chatSessionIDFromEvent 从 task-lifecycle 事件里找回聊天会话 id。EventChatDone
+// 会把它放上信封；EventTaskFailed 只在广播负载 map 里带它（且仅限聊天任务），所以
+// 两处都要查。EventTaskCancelled 的各发布方都同时设这两处。
 func chatSessionIDFromEvent(e events.Event) (pgtype.UUID, bool) {
 	if e.ChatSessionID != "" {
 		if id, err := util.ParseUUID(e.ChatSessionID); err == nil && id.Valid {
@@ -288,9 +268,9 @@ func chatSessionIDFromEvent(e events.Event) (pgtype.UUID, bool) {
 	return pgtype.UUID{}, false
 }
 
-// isMessageTooOld reports whether a Slack message ts ("<seconds>.<micros>") is
-// older than typingIndicatorMaxAge. A malformed or empty ts is treated as fresh
-// (not skipped) — we would rather over-react than drop a real message.
+// isMessageTooOld 判断一条 Slack 消息 ts（"<秒>.<微秒>"）是否老过
+// typingIndicatorMaxAge。畸形或空的 ts 一律视为新鲜（不跳过）——宁可多打个灯，
+// 也别漏掉一条真消息。
 func isMessageTooOld(ts string) bool {
 	if ts == "" {
 		return false

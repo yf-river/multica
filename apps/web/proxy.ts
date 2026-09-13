@@ -1,11 +1,16 @@
+/**
+ * Next.js 运行时 proxy（中间件）：请求进入时做三件事——
+ * 1) 按 runtime-urls 把后端路径（/api、/uploads、/ws、/docs 等）改写到真实上游；
+ * 2) 把旧的、不带 workspace slug 的旧路由（/issues…）重定向到 /{slug}/…；
+ * 3) 对已登录用户把根路径 `/` 重定向到其最近工作区（官方营销域名除外）。
+ */
 import { NextResponse, type NextRequest } from "next/server";
 import { runtimeRewriteDestination } from "./config/runtime-urls";
 import { isOfficialMarketingHost } from "./lib/public-host";
 
-// Old workspace-scoped route segments that existed before the URL refactor
-// (pre-#1131). Any URL with these as the FIRST segment is a legacy URL that
-// needs to be rewritten to /{slug}/{route}/... so old bookmarks, deep links,
-// and post-revert-and-reapply users don't hit 404.
+// URL 重构（pre-#1131）之前存在过的旧工作区路由段。任何以这些作为「第一段」的
+// URL 都是旧链接：要改写成 /{slug}/{route}/…，否则旧书签、深链以及回滚重放过的
+// 用户会 404。
 const LEGACY_ROUTE_SEGMENTS = new Set([
   "issues",
   "projects",
@@ -20,10 +25,15 @@ const LEGACY_ROUTE_SEGMENTS = new Set([
   "usage",
 ]);
 
-// Next.js 16 renamed `middleware` → `proxy`. API surface (NextRequest /
-// NextResponse / cookies / matcher) is identical; the only behavioral
-// change is the runtime — proxy is forced to nodejs and cannot opt into
-// edge.
+// Next.js 16 把 `middleware` 改名成 `proxy`。API 面（NextRequest / NextResponse /
+// cookies / matcher）完全一致，唯一的行为差异是运行时：proxy 强制走 nodejs，
+// 不能再选择 edge。
+/**
+ * 请求代理入口。
+ *
+ * @param req - 收到的请求。
+ * @returns 改写 / 重定向 / 原样放行的响应。
+ */
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const runtimeDestination = runtimeRewriteDestination(pathname, process.env);
@@ -36,9 +46,9 @@ export function proxy(req: NextRequest) {
   const hasSession = req.cookies.has("multica_logged_in");
   const lastSlug = req.cookies.get("last_workspace_slug")?.value;
 
-  // --- Legacy URL redirect: /issues/... → /{slug}/issues/... ---
-  // Old bookmarks and clients that hit us before the slug migration would
-  // otherwise 404 since the route moved under [workspaceSlug].
+  // --- 旧 URL 重定向：/issues/... → /{slug}/issues/... ---
+  // 迁移到 slug 体系之前打进来的旧书签/客户端，由于路由挪到了 [workspaceSlug] 之下，
+  // 不改写就会 404。
   const firstSegment = pathname.split("/")[1] ?? "";
   if (LEGACY_ROUTE_SEGMENTS.has(firstSegment)) {
     const url = req.nextUrl.clone();
@@ -49,30 +59,26 @@ export function proxy(req: NextRequest) {
     }
 
     if (lastSlug) {
-      // Preserve deep-link path + query: /issues/abc → /{lastSlug}/issues/abc
+      // 保留深链路径与查询串：/issues/abc → /{lastSlug}/issues/abc
       url.pathname = `/${lastSlug}${pathname}`;
       return NextResponse.redirect(url);
     }
 
-    // Logged-in but no cookie yet (never opened a workspace, or the cookie was
-    // cleared). Root is the wrong destination: the root-path rule below leaves
-    // `/` on the public site for the official marketing hosts even with a
-    // session, so bouncing there dead-ends on the landing page instead of
-    // reaching the app. /login already resolves an authenticated visitor
-    // against their workspace list — including pending invitations and the
-    // no-workspace-yet case — and replaces to the right destination. Deep-link
-    // path and query are dropped rather than passed as `next`: they are legacy
-    // segments themselves, so feeding one back would land here again.
+    // 已登录但没有 cookie（从未打开过工作区，或 cookie 被清过）。根路径不是正确的
+    // 去处：下面的根路径规则即使在有会话时也会把 `/` 留给官方营销域名做公开站，
+    // 弹过去只会死循环式落在落地页而非进入应用。/login 自己会拿着 workspace 列表
+    // 解析已登录访客——包括待处理邀请和「还没有 workspace」的情况——再 replace 到
+    // 正确目的地。深链路径与查询串被丢弃而不作为 `next` 传递：它们本身是旧段，
+    // 传回去又会在旧路由逻辑里绕一圈。
     url.pathname = "/login";
     url.search = "";
     return NextResponse.redirect(url);
   }
 
-  // --- Root path: redirect logged-in users to their last workspace ---
-  // The official cloud host also serves the public marketing site. Visiting
-  // https://multica.ai/ must remain a public-site navigation even when a local
-  // desktop/runtime session has fresh auth cookies; explicit app routes such
-  // as /acme/issues and legacy /issues still route to the workspace app.
+  // --- 根路径：把已登录用户重定向到其最近工作区 ---
+  // 官方云主机还同时服务公开营销站。访问 https://multica.ai/ 即便本地桌面/运行时
+  // 会话带着新鲜 cookie，也必须保持是公开站导航；像 /acme/issues 这样的显式应用
+  // 路由以及旧 /issues 仍路由到工作区应用。
   if (
     pathname === "/" &&
     hasSession &&
@@ -87,6 +93,7 @@ export function proxy(req: NextRequest) {
   return NextResponse.next();
 }
 
+/** 该 proxy 匹配哪些路径（与运行时改写/重定向目标一致，其余路径直接放行）。 */
 export const config = {
   matcher: [
     "/v1/:path*",

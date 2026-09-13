@@ -1,3 +1,10 @@
+// 职责定位：Lark（飞书/国际版 Lark）接入的 HTTP 处理器：安装清单（普通成员可读）、吊销
+// 安装、bot 的「绑定账号」token 兑换，以及 device-flow 安装会话（begin/status 两步）。真正的
+// Lark API 交互、AppSecret 加密与注册会话状态在 internal/integrations/lark，这里只做 HTTP
+// 编排与授权。
+//
+// 授权口径：安装类操作按 agent 走 canManageAgent（绑定 agent 的 owner 或 workspace
+// owner/admin）；对已孤儿化（agent 被硬删）的安装回退成仅 owner/admin 可清理（MUL-4213）。
 package handler
 
 import (
@@ -13,12 +20,9 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// LarkInstallationResponse is the wire shape for an installation row.
-// `app_secret_encrypted` is INTENTIONALLY absent — the encrypted blob
-// is server-internal and there is no product reason to expose it (the
-// only consumer that needs the plaintext is the WS hub, which calls
-// InstallationService.DecryptAppSecret server-side). Likewise, the WS
-// lease columns are omitted; they are runtime state, not API surface.
+// LarkInstallationResponse 是安装记录的接口形态。`app_secret_encrypted` 刻意不出现——加密块
+// 是服务端内部机密，没有任何产品理由暴露它（唯一需要明文的消费方是 WS hub，它在服务端调
+// InstallationService.DecryptAppSecret）。WS 租约列也省略——那是运行时状态，不是 API 表面。
 type LarkInstallationResponse struct {
 	ID              string  `json:"id"`
 	WorkspaceID     string  `json:"workspace_id"`
@@ -28,15 +32,15 @@ type LarkInstallationResponse struct {
 	BotOpenID       string  `json:"bot_open_id"`
 	InstallerUserID string  `json:"installer_user_id"`
 	Status          string  `json:"status"`
-	// Region is the Lark cloud this installation lives on: "feishu"
-	// (mainland) or "lark" (international). The UI uses it to render a
-	// badge and to build the correct "Manage in Lark" dev-console host.
+	// Region 是这个安装所在的 Lark 云："feishu"（国内）或 "lark"（海外）。UI 用它渲染徽标，
+	// 以及拼出正确的「在 Lark 后台管理」的 dev-console 域名。
 	Region      string `json:"region"`
 	InstalledAt string `json:"installed_at"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
 
+// larkInstallationToResponse 把 lark.Installation 转成接口结构（TenantKey 可选）。
 func larkInstallationToResponse(row lark.Installation) LarkInstallationResponse {
 	resp := LarkInstallationResponse{
 		ID:              uuidToString(row.ID),
@@ -59,24 +63,17 @@ func larkInstallationToResponse(row lark.Installation) LarkInstallationResponse 
 }
 
 // ListLarkInstallations (GET /api/workspaces/{id}/lark/installations)
-// is member-visible — the Integrations tab should not render blank
-// for non-admins. Unlike the GitHub list, we do not strip any field
-// here because no API surface column doubles as a management handle:
-// revocation goes by the UUID id, which is meaningless without the
-// admin route's authorization, so exposing it is harmless.
+// 普通成员可见——Integrations tab 不该对非管理员渲染成空白。与 GitHub 列表不同，这里不摘掉
+// 任何字段：因为没有任何「API 表面列」同时充当管理句柄——吊销走 UUID id，而没有管理路由的
+// 授权，这个 id 毫无意义，所以暴露它是无害的。
 //
-// Response fields:
-//   - configured: at-rest encryption key is set (`LarkInstallations
-//     != nil`). When false, no install flow can succeed at all; the
-//     UI hides the tab.
-//   - install_supported: the device-flow install path is wired
-//     end-to-end: a RegistrationService exists (deployment supplied
-//     MULTICA_LARK_SECRET_KEY) AND the APIClient.IsConfigured signal
-//     is true (the real Lark HTTP client is in place — the stub
-//     cannot complete the post-poll GetBotInfo call). When false,
-//     the agent-detail "Bind" button stays hidden and the Settings
-//     tab surfaces a "coming soon" notice; already-installed bots
-//     still appear and remain manageable.
+// 响应字段：
+//   - configured：静态加密密钥已配置（`LarkInstallations != nil`）。为 false 时任何安装流程都
+//     不可能成功，UI 直接隐藏该 tab。
+//   - install_supported：device-flow 安装路径已端到端打通：存在 RegistrationService（部署配了
+//     MULTICA_LARK_SECRET_KEY）且 APIClient.IsConfigured 为 true（真实的 Lark HTTP 客户端就位
+//     ——stub 完成不了 poll 之后的 GetBotInfo）。为 false 时，agent 详情的「绑定」按钮保持隐藏，
+//     Settings tab 展示「即将上线」提示；已装好的 bot 仍会展示、仍可管理。
 func (h *Handler) ListLarkInstallations(w http.ResponseWriter, r *http.Request) {
 	if h.LarkInstallations == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -107,19 +104,14 @@ func (h *Handler) ListLarkInstallations(w http.ResponseWriter, r *http.Request) 
 }
 
 // RevokeLarkInstallation (DELETE /api/workspaces/{id}/lark/installations/{installationId})
-// flips status to 'revoked' so the WS hub drops the connection on its
-// next sweep. The row itself is preserved for audit; a re-install via
-// the device-flow path flips status back to 'active' atomically.
+// 把状态翻成 'revoked'，让 WS hub 在下一轮清扫时断开连接。行本身保留做审计；经 device-flow
+// 重新安装会把状态原子地翻回 'active'。
 //
-// Membership is checked at the router; the per-agent authorization
-// (canManageAgent: the bound agent's owner OR a workspace owner/admin)
-// is enforced here, symmetric with BeginLarkInstall so an agent owner
-// can unbind the bot they bound (MUL-4213). When the bound agent has
-// been hard-deleted the installation is an orphan (the active-connection
-// query skips it and disconnecting it is the documented cleanup path);
-// revoke then falls back to workspace owner/admin only, so the cleanup
-// entry point keeps working without handing a plain member orphan-row
-// rights.
+// 路由层校验 workspace 成员身份；per-agent 授权（canManageAgent：绑定 agent 的 owner 或
+// workspace owner/admin）在这里执行，与 BeginLarkInstall 对称——所以 agent 的 owner 能解绑
+// 自己绑的 bot（MUL-4213）。绑定 agent 被硬删后安装即「孤儿」（active 连接查询会跳过它，
+// 断开它就是文档里的清理路径）；此时吊销回退成仅 workspace owner/admin——清理入口保持可用，
+// 又不把孤儿行权利交给普通成员。
 func (h *Handler) RevokeLarkInstallation(w http.ResponseWriter, r *http.Request) {
 	if h.LarkInstallations == nil {
 		writeError(w, http.StatusServiceUnavailable, "lark integration not configured")
@@ -137,8 +129,7 @@ func (h *Handler) RevokeLarkInstallation(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	// Workspace-scoped lookup ensures one workspace cannot revoke
-	// another's installation by guessing the UUID.
+	// 按 workspace 范围查询：防止一个 workspace 靠猜 UUID 吊销另一家的安装。
 	inst, err := h.LarkInstallations.GetInWorkspace(r.Context(), instUUID, wsUUID)
 	if err != nil {
 		if errors.Is(err, lark.ErrInstallationNotFound) {
@@ -148,13 +139,10 @@ func (h *Handler) RevokeLarkInstallation(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to load installation")
 		return
 	}
-	// Authorize against the bound agent. Normally its owner or a workspace
-	// owner/admin may revoke (canManageAgent writes the 403/404 itself).
-	// If the agent has been hard-deleted the installation is an orphan, so
-	// fall back to workspace owner/admin-only cleanup instead of 404-ing
-	// the disconnect entry point (see ListByWorkspace vs the orphan-
-	// filtered active list). No FK/cascade: the missing agent is handled
-	// in the application layer.
+	// 对绑定 agent 做授权。一般场景是它的 owner 或 workspace owner/admin 可吊销
+	// （canManageAgent 自己会写 403/404）。agent 已被硬删则是孤儿安装——此时回退成仅
+	// owner/admin 清理，而不是给「断开连接」入口回 404（对照 ListByWorkspace 与按孤儿过滤的
+	// active 列表）。没有外键/级联：缺失的 agent 在应用层处理。
 	agent, agentErr := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 		ID:          inst.AgentID,
 		WorkspaceID: wsUUID,
@@ -176,37 +164,29 @@ func (h *Handler) RevokeLarkInstallation(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RedeemLarkBindingTokenRequest carries the raw token the user
-// clicked through from the Bot's "you need to bind" reply card.
+// RedeemLarkBindingTokenRequest 携带用户从 Bot 的「需要绑定」回复卡片里点过来的原始 token。
 type RedeemLarkBindingTokenRequest struct {
 	Token string `json:"token"`
 }
 
-// RedeemLarkBindingTokenResponse is the post-redemption shape. We
-// echo the workspace/installation/open_id so the frontend can render
-// "you are now bound to <workspace> via <agent>" without a second
-// fetch.
+// RedeemLarkBindingTokenResponse 是兑换成功后的响应形态。回显 workspace/安装/open_id，让
+// 前端不用再发一次请求就能渲染「你现在经 <agent> 绑到了 <workspace>」。
 type RedeemLarkBindingTokenResponse struct {
 	WorkspaceID    string `json:"workspace_id"`
 	InstallationID string `json:"installation_id"`
 	LarkOpenID     string `json:"lark_open_id"`
 }
 
-// RedeemLarkBindingToken (POST /api/lark/binding/redeem) is the only
-// path that writes a lark_user_binding row from user-driven action.
-// The redeemer's identity is taken from the session, not the token,
-// so a stolen token cannot bind a Lark open_id to an attacker's
-// Multica account. The token only proves "this open_id requested
-// binding" — combining it with the logged-in user is what creates
-// the (open_id ↔ user) mapping.
+// RedeemLarkBindingToken (POST /api/lark/binding/redeem) 是唯一「由用户动作写 lark_user_binding
+// 行」的路径。兑换者身份取自登录会话而不是 token——所以偷来的 token 没法把某个 Lark open_id
+// 绑到攻击者的站内账号上。token 只证明「这个 open_id 请求过绑定」；与登录用户结合才产生
+// (open_id ↔ user) 映射。
 //
-// Consume + bind happen inside a single DB transaction (see
-// lark.BindingTokenService.RedeemAndBind). The three failure modes
-// each map to a distinct status code so the frontend can render the
-// appropriate copy without a separate probe:
-//   - 410 Gone:       token unknown / consumed / expired
-//   - 409 Conflict:   open_id is already bound to a different user
-//   - 403 Forbidden:  redeemer is not a workspace member
+// 消费 + 绑定在同一个数据库事务里完成（见 lark.BindingTokenService.RedeemAndBind）。三种失败
+// 各映射一个状态码，前端不用另发探测就能渲染对应文案：
+//   - 410 Gone:       token 未知 / 已消费 / 已过期
+//   - 409 Conflict:   open_id 已绑到别的站内用户
+//   - 403 Forbidden:  兑换者不是 workspace 成员
 func (h *Handler) RedeemLarkBindingToken(w http.ResponseWriter, r *http.Request) {
 	if h.LarkBindingTokens == nil {
 		writeError(w, http.StatusServiceUnavailable, "lark integration not configured")
@@ -252,10 +232,9 @@ func (h *Handler) RedeemLarkBindingToken(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// BeginLarkInstallResponse is the payload the QR-code dialog consumes.
-// The frontend renders `qr_code_url` as a QR image (and as a tap-to-
-// open link fallback) and starts polling
-// /lark/install/{session_id}/status at the supplied cadence.
+// BeginLarkInstallResponse 是扫码弹窗消费的 payload。前端把 `qr_code_url` 渲染成二维码图
+// （并作为「点开链接」的兜底），并按给到的节奏轮询
+// /lark/install/{session_id}/status。
 type BeginLarkInstallResponse struct {
 	SessionID           string `json:"session_id"`
 	QRCodeURL           string `json:"qr_code_url"`
@@ -264,17 +243,14 @@ type BeginLarkInstallResponse struct {
 }
 
 // BeginLarkInstall (POST /api/workspaces/{id}/lark/install/begin)
-// opens a new device-flow registration session against Lark. The router
-// only requires workspace membership; this handler authorizes per-agent
-// via canManageAgent (the agent's owner OR a workspace owner/admin), so
-// an agent owner can bind their own agent's Bot without being a
-// workspace admin (MUL-4213). The agent_id query param picks which
-// Multica Agent the new Bot will be bound to; the agent must belong to
-// this workspace (RegistrationService re-checks that defense-in-depth).
+// 向 Lark 开一个新的 device-flow 注册会话。路由只要求 workspace 成员身份；这个 handler 再按
+// agent 走 canManageAgent 授权（agent 的 owner 或 workspace owner/admin）——所以 agent 的
+// owner 不必是 workspace admin 也能给自己 agent 绑 bot（MUL-4213）。agent_id 查询参数决定新
+// Bot 绑到哪个站内 agent；agent 必须属于本 workspace（RegistrationService 会再查一遍做纵深
+// 防御）。
 //
-// Returns 503 when the integration is not wired (no at-rest key, no
-// HTTP client, no RegistrationService); the UI hides the bind button
-// in that case so this should not be reached through the normal flow.
+// 集成没接通时返回 503（无静态密钥、无 HTTP client、无 RegistrationService）；那种情况下 UI
+// 隐藏绑定按钮，正常流程走不到这里。
 func (h *Handler) BeginLarkInstall(w http.ResponseWriter, r *http.Request) {
 	if h.LarkRegistration == nil {
 		writeError(w, http.StatusServiceUnavailable, "lark install not configured")
@@ -297,29 +273,22 @@ func (h *Handler) BeginLarkInstall(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// region is the cloud the user explicitly chose to bind against —
-	// "feishu" (mainland, accounts.feishu.cn) or "lark" (international,
-	// accounts.larksuite.com). The frontend now exposes two CTAs ("Bind
-	// to Feishu" / "Bind to Lark") so the QR is rendered against the
-	// right cloud up front rather than relying on the mid-poll
-	// tenant-brand auto-switch from a Feishu-first begin. We accept
-	// "feishu", "lark", and the empty string (for back-compat with
-	// callers that pre-date the split CTA, which RegionOrDefault inside
-	// the service maps to Feishu); any other value is a 400 — the
-	// service would normalize an unknown value to Feishu silently and
-	// that would mask a frontend regression where a typo'd region
-	// landed users on the wrong cloud without telling them.
+	// region 是用户明确选择要绑定的云——"feishu"（国内，accounts.feishu.cn）或 "lark"
+	// （海外，accounts.larksuite.com）。前端现在暴露两个 CTA（「绑定飞书」/「绑定 Lark」），
+	// 好让二维码一开始就对着正确的云渲染，而不是依赖 poll 中途按租户品牌从飞书优先自动切。
+	// 接受 "feishu"、"lark" 与空串（兼容拆分 CTA 之前的旧调用方——服务里的 RegionOrDefault
+	// 会把空串映射成飞书）；其它值一律 400——因为服务会把未知值静默归一成飞书，那会掩盖前端
+	// 打错 region 字导致用户落到错误云上的回归。
 	regionParam := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
 	switch regionParam {
 	case "", "feishu", "lark":
-		// ok — empty defaults to feishu downstream.
+		// ok —— 空串在下游默认成 feishu。
 	default:
 		writeError(w, http.StatusBadRequest, "region must be 'feishu' or 'lark'")
 		return
 	}
-	// Ownership pre-check at the HTTP boundary so a malformed
-	// agent_id surfaces 404 here (not an opaque service error from
-	// inside the service's own re-check).
+	// 在 HTTP 边界先做归属预检：agent_id 写错时在这里回 404（而不是服务内部重查时抛出的一团
+	// 不透明错误）。
 	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 		ID:          agentUUID,
 		WorkspaceID: wsUUID,
@@ -328,10 +297,9 @@ func (h *Handler) BeginLarkInstall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "agent not found in this workspace")
 		return
 	}
-	// Authorize the initiator against the target agent: its owner or a
-	// workspace owner/admin may bind. canManageAgent writes the 403/404
-	// itself, so a member who is neither is stopped here rather than at
-	// the (now member-level) router.
+	// 对发起人做目标 agent 授权：agent 的 owner 或 workspace owner/admin 才能绑。
+	// canManageAgent 自己会写 403/404，所以既不是 owner 也不是管理员的成员在（已降级到成员
+	// 级）路由之前就被挡在这里。
 	if !h.canManageAgent(w, r, agent) {
 		return
 	}
@@ -358,10 +326,9 @@ func (h *Handler) BeginLarkInstall(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// LarkInstallStatusResponse is the polling payload. `status` is one
-// of "pending" | "success" | "error"; on success `installation_id`
-// is populated, on error `error_reason` is a stable code (see
-// lark.RegistrationReason*).
+// LarkInstallStatusResponse 是轮询的 payload。`status` 取值 "pending" | "success" |
+// "error"；成功时填 `installation_id`，失败时 `error_reason` 是稳定错误码
+// （见 lark.RegistrationReason*）。
 type LarkInstallStatusResponse struct {
 	Status         string `json:"status"`
 	InstallationID string `json:"installation_id,omitempty"`
@@ -370,19 +337,13 @@ type LarkInstallStatusResponse struct {
 }
 
 // GetLarkInstallStatus (GET /api/workspaces/{id}/lark/install/{sessionId}/status)
-// returns the current state of an in-flight install session. The router
-// only requires workspace membership; this handler scopes the read to
-// the session's initiator OR a workspace owner/admin, so a member who
-// began an install (as its agent's owner) can poll their own session
-// without exposing it to unrelated members (MUL-4213). Unknown /
-// cross-workspace / GC'd sessions — and sessions the caller may not read
-// — return 404, which the frontend treats as "session lost, please
-// restart".
+// 返回一次进行中安装会话的当前状态。路由只要求 workspace 成员；这个 handler 把读取范围限定
+// 到「会话发起人」或 workspace owner/admin——所以作为 agent owner 发起安装的成员能轮询自己的
+// 会话，不会暴露给无关成员（MUL-4213）。未知/跨 workspace/已被 GC 的会话——以及调用方无权读
+// 的会话——一律回 404，前端把 404 当成「会话丢了，请重新开始」。
 //
-// On success this handler does NOT clean up the session — the
-// frontend may poll once more after the dialog closes to confirm
-// before the in-process GC sweep retires the entry; reading is
-// idempotent.
+// 成功时这个 handler 不会清理会话——前端可能在弹窗关闭后再轮询一次以确认（在进程内 GC 清扫
+// 淘汰条目之前）；读取是幂等的。
 func (h *Handler) GetLarkInstallStatus(w http.ResponseWriter, r *http.Request) {
 	if h.LarkRegistration == nil {
 		writeError(w, http.StatusServiceUnavailable, "lark install not configured")
@@ -410,10 +371,8 @@ func (h *Handler) GetLarkInstallStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load install session")
 		return
 	}
-	// Only the initiator or a workspace owner/admin may read the
-	// session. The session id is handed back only to the initiator, so
-	// treating anyone else as "session lost" (404, no existence leak) is
-	// consistent with the cross-workspace case above.
+	// 只有发起人或 workspace owner/admin 能读会话。会话 id 只发还给发起人，所以把「其他人」
+	// 一律当「会话丢失」（404，不泄露存在性）与上面跨 workspace 的情形是一致的。
 	if uuidToString(state.InitiatorID) != userID {
 		member, mErr := h.getWorkspaceMember(r.Context(), userID, uuidToString(wsUUID))
 		if mErr != nil || !roleAllowed(member.Role, "owner", "admin") {
@@ -428,11 +387,9 @@ func (h *Handler) GetLarkInstallStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if state.InstallationID.Valid {
 		resp.InstallationID = uuidToString(state.InstallationID)
-		// The lark_installation:created event is published by the
-		// RegistrationService at the row-commit point (see
-		// registration_service.go finishSuccess), not here — that keeps
-		// the connection-badge refresh independent of whether any browser
-		// polls this status endpoint to success.
+		// lark_installation:created 事件由 RegistrationService 在「行提交」时发布
+		// （见 registration_service.go finishSuccess），而不是这里——这样连接徽标的刷新
+		// 不依赖是否有浏览器把状态端点轮询到成功。
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

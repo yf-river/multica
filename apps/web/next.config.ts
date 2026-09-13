@@ -1,3 +1,7 @@
+/**
+ * Web 应用的 Next.js 配置：跨包转译、图片优化参数、CORS 开发来源，
+ * 以及「dev 用本地回退、生产保持严格」的 /docs 与后端上游改写规则。
+ */
 import type { NextConfig } from "next";
 import { config } from "dotenv";
 import { resolve } from "path";
@@ -9,13 +13,13 @@ import {
 } from "./config/runtime-urls";
 import { createMDX } from "fumadocs-mdx/next";
 
-// Load root .env so local next.config.ts rewrites see REMOTE_API_URL / DOCS_URL.
-// Production requests use proxy.ts runtime rewrites, which read process.env
-// when the Next.js server runs instead of baking these URLs at build time.
+// 加载根 .env，让本地 next.config.ts 的改写能看到 REMOTE_API_URL / DOCS_URL。
+// 生产请求改用 proxy.ts 的运行时改写——它读的是 Next.js 服务运行时
+// 的 process.env，而不是把这些 URL 在构建期写死。
 config({ path: resolve(__dirname, "../../.env") });
 
-// `next dev` falls back to the conventional localhost upstreams; builds use
-// the strict resolvers so prebuilt images keep unset upstreams unproxied.
+// `next dev` 回退到约定俗成的 localhost 上游；构建走严格解析器，
+// 让预构建镜像保持「未配置的上游不做代理」。
 const isDev = process.env.NODE_ENV === "development";
 const remoteApiUrl = isDev
   ? resolveDevRemoteApiUrl(process.env)
@@ -24,8 +28,8 @@ const docsUrl = isDev
   ? resolveDevDocsUrl(process.env)
   : resolveDocsUrl(process.env);
 
-// Parse hostnames from CORS_ALLOWED_ORIGINS so that Next.js dev server
-// allows cross-origin HMR / webpack requests (e.g. from Tailscale IPs).
+// 从 CORS_ALLOWED_ORIGINS 解析出 hostname，让 Next.js dev server 允许跨源
+// HMR / webpack 请求（例如来自 Tailscale IP）。
 const allowedDevOrigins = process.env.CORS_ALLOWED_ORIGINS
   ? process.env.CORS_ALLOWED_ORIGINS.split(",")
       .map((origin) => {
@@ -54,8 +58,7 @@ const nextConfig: NextConfig = {
   },
   async rewrites() {
     return {
-      // Run before file-system routes so /docs isn't shadowed by the
-      // [workspaceSlug] dynamic segment.
+      // 先于文件系统路由执行，让 /docs 不被 [workspaceSlug] 动态段遮蔽。
       beforeFiles: docsUrl
         ? [
             {
@@ -101,10 +104,10 @@ const nextConfig: NextConfig = {
   },
 };
 
-// fumadocs-mdx@12 is incompatible with Next 16's Turbopack: its loader fails to
-// dynamic-import `.source/source.config.mjs` under the Turbopack Node evaluator
-// (see fumadocs#2658). `dev`/`build` scripts pass `--webpack` to opt out.
-// Drop the flag once fumadocs-mdx ships a Turbopack-compatible loader.
+// fumadocs-mdx@12 与 Next 16 的 Turbopack 不兼容：它的 loader 在 Turbopack 的
+// Node 求值器下无法动态 import `.source/source.config.mjs`（见 fumadocs#2658）。
+// `dev`/`build` 脚本都传了 `--webpack` 来绕开。
+// 等 fumadocs-mdx 发布兼容 Turbopack 的 loader 后可去掉该参数。
 const withMDX = createMDX() as (config: NextConfig) => NextConfig;
 
 export default withMDX(nextConfig);

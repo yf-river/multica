@@ -1,4 +1,6 @@
 "use client"
+// 本文件是「命令面板」（Command）组件族（基于 cmdk）：一个可搜索的命令列表，
+// 常嵌在弹窗里做全局快捷搜索/操作入口（⌘K），支持键盘上下选择、回车执行。
 
 import * as React from "react"
 import { Command as CommandPrimitive } from "cmdk"
@@ -17,6 +19,7 @@ import {
 } from "@multica/ui/components/ui/input-group"
 import { SearchIcon, CheckIcon } from "lucide-react"
 
+/** Command：命令列表主体容器 */
 function Command({
   className,
   ...props
@@ -33,6 +36,10 @@ function Command({
   )
 }
 
+/**
+ * CommandDialog：把命令面板装进弹窗。标题与描述只用于无障碍（sr-only），
+ * 视觉上不展示。
+ */
 function CommandDialog({
   title = "Command Palette",
   description = "Search for a command to run...",
@@ -66,6 +73,7 @@ function CommandDialog({
   )
 }
 
+/** CommandInput：搜索输入框，嵌在 InputGroup 里并带放大镜图标 */
 function CommandInput({
   className,
   onKeyDown,
@@ -81,8 +89,8 @@ function CommandInput({
             className
           )}
           onKeyDown={(e) => {
-            // cmdk's root handler intercepts Home/End for list navigation;
-            // stop propagation so the browser moves the text caret instead.
+            // cmdk 的根处理器会截走 Home/End 做列表导航；
+            // 这里阻止冒泡，让浏览器把光标移到输入框文本开头/结尾。
             if (e.key === "Home" || e.key === "End") {
               e.stopPropagation();
             }
@@ -98,6 +106,7 @@ function CommandInput({
   )
 }
 
+/** CommandList：可滚动的候选项列表区 */
 function CommandList({
   className,
   ...props
@@ -114,6 +123,7 @@ function CommandList({
   )
 }
 
+/** CommandEmpty：无匹配结果时的占位文案 */
 function CommandEmpty({
   className,
   ...props
@@ -127,6 +137,7 @@ function CommandEmpty({
   )
 }
 
+/** CommandGroup：按组划分的候选项（组标题为小号弱化文字） */
 function CommandGroup({
   className,
   ...props
@@ -143,6 +154,7 @@ function CommandGroup({
   )
 }
 
+/** CommandSeparator：组与组之间的细分隔线 */
 function CommandSeparator({
   className,
   ...props
@@ -156,6 +168,10 @@ function CommandSeparator({
   )
 }
 
+/**
+ * CommandItem：单条命令/候选项。被选中（data-selected）时高亮；
+ * 有 value 时（多选/选中态）末尾显示一个对勾。
+ */
 function CommandItem({
   className,
   children,
@@ -176,6 +192,7 @@ function CommandItem({
   )
 }
 
+/** CommandShortcut：命令项右侧的快捷键提示文字 */
 function CommandShortcut({
   className,
   ...props

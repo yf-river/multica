@@ -1,8 +1,8 @@
+/** Dashboard 段路由切换时的 Suspense 加载骨架屏。 */
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 
-// Rendered by Next.js as the Suspense fallback during route transitions
-// inside the (dashboard) segment. Scoped to this segment only — auth /
-// landing keep their own full-screen fallbacks.
+// 由 Next.js 在 (dashboard) 段内路由切换时作为 Suspense fallback 渲染。
+// 仅作用于此段——登录/auth/落地页各自有全屏的加载态。
 export default function DashboardLoading() {
   return (
     <div className="flex h-svh w-full flex-col">

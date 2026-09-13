@@ -1,3 +1,4 @@
+// plugin_schedule.go —— 插件 hook 定时调度投影：安装/升级事务内做账本对齐，启停时激活/停用定时行。
 package service
 
 import (
@@ -10,10 +11,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
 )
 
-// reconcilePluginHookSchedules makes the durable schedule projection match the
-// consented manifest inside the caller's installation/upgrade transaction.
-// Unchanged cron/timezone pairs keep their generation: a code-only plugin
-// upgrade must not reset the schedule clock or orphan a retryable execution.
+// reconcilePluginHookSchedules 使持久化的定时投影与调用方安装/升级事务内的已同意 manifest 一致。
+// cron/时区未变的行保持其代号（generation）：纯代码升级的插件不得重置调度时钟或让可重试执行变孤儿。
 func (s *PluginService) reconcilePluginHookSchedules(
 	ctx context.Context,
 	queries *db.Queries,
@@ -36,13 +35,11 @@ func (s *PluginService) reconcilePluginHookSchedules(
 		}
 		nextRun, err := pluginScheduleNextRun(*hook.Schedule, now)
 		if err != nil {
-			// Published manifests were validated already. Surfacing drift here is
-			// safer than installing a schedule the runtime cannot evaluate.
+			// 已发布的 manifest 校验过。在此暴露偏差，比安装一条运行时无法求值的调度更安全。
 			return &PluginError{Kind: PluginErrorInvalid, Message: fmt.Sprintf("schedule for hook %q is invalid", hook.Key), Err: err}
 		}
 		if !installation.Enabled {
-			// Disabled installations have no meaningful "next" run. Re-enable
-			// rotates the generation and computes this projection from that time.
+			// 被禁用的安装没有有意义的 “下次” 运行。重新启用会轮换代号并从那一刻计算该投影。
 			nextRun = pgtype.Timestamptz{}
 		}
 
@@ -84,6 +81,7 @@ func (s *PluginService) reconcilePluginHookSchedules(
 	return nil
 }
 
+// pluginScheduleNextRun 计算插件事务的下一次发生（UTC；无下一次则返回无效 Timestamptz）。
 func pluginScheduleNextRun(schedule plugincontract.HookSchedule, after time.Time) (pgtype.Timestamptz, error) {
 	next, err := NextOccurrenceAfterUTC(schedule.Cron, schedule.Timezone, after)
 	if err != nil {
@@ -95,6 +93,8 @@ func pluginScheduleNextRun(schedule plugincontract.HookSchedule, after time.Time
 	return pgtype.Timestamptz{Time: next.UTC(), Valid: true}, nil
 }
 
+// setPluginHookSchedulesEnabled 批量启用/停用某安装的全部 hook 定时：停用直接清空 enabled；启用时重算每行
+// next_run_at 并复活。
 func (s *PluginService) setPluginHookSchedulesEnabled(
 	ctx context.Context,
 	queries *db.Queries,

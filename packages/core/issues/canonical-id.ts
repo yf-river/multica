@@ -1,3 +1,4 @@
+// 把路由里的议题标识（UUID 或 `MUL-123` 这种人类可读 id）解析成议题和它的规范 UUID。
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Issue } from "../types";
@@ -5,51 +6,45 @@ import { issueDetailOptions, issueKeys } from "./queries";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** True for a canonical issue UUID; false for an identifier like `MUL-123`. */
+/** 判断是否是规范议题 UUID；是 `MUL-123` 这种标识符则返回 false。 */
 export function isIssueUuid(value: string): boolean {
   return UUID_RE.test(value);
 }
 
 export interface CanonicalIssue {
   /**
-   * The issue's UUID, or `null` while an identifier is still resolving or if
-   * it resolved to nothing.
+   * 议题的 UUID；当标识符仍在解析中、或解析结果为空时为 `null`。
    */
   canonicalId: string | null;
-  /** The issue itself, read from the UUID-keyed entry. */
+  /** 议题本身，从以 UUID 为 key 的缓存条目里读取。 */
   issue: Issue | undefined;
   isResolving: boolean;
   /**
-   * Terminal: this identifier does not name an issue in this workspace.
+   * 终态：这个标识符在当前工作区里不指向任何议题。
    *
-   * Callers MUST branch on this and render a not-found state rather than
-   * handing the unresolved segment to a view that will query it again. A
-   * second observer mounting on the failed query refetches it
-   * (`retryOnMount`), which flips this hook back to resolving, unmounts that
-   * view, and remounts it when the refetch fails — an unbounded request loop
-   * that never settles on "not found".
+   * 调用方必须据此分支并渲染“未找到”状态，而不是把未解析的片段交给一个
+   * 会再次查询它的视图。因为第二个观察者挂载到失败的查询上时会重取
+   * （`retryOnMount`），把 hook 又翻回解析中，卸载那个视图，重取失败后再重新挂载——
+   * 形成永不停歇、也永远不会停在“未找到”的请求循环。
    */
   notFound: boolean;
 }
 
 /**
- * Resolve a raw `/{ws}/issues/{segment}` route parameter — a UUID or a
- * human-readable identifier (`MUL-123`) — to the issue and its UUID.
+ * 把原始的 `/{ws}/issues/{segment}` 路由参数——一个 UUID 或人类可读标识符
+ * （`MUL-123`）——解析成议题及其 UUID。
  *
- * Why callers must key on the UUID rather than the raw segment: the realtime
- * updaters patch `issueKeys.detail(wsId, issue.id)` with the UUID carried by
- * the websocket payload (`ws-updaters.ts`). A view keyed on the identifier
- * would sit on a cache entry no realtime event can ever reach, so the detail
- * page would render fine and then silently stop updating. The identifier stays
- * a presentation concern: it lives in the URL, never in a cache key.
+ * 为什么调用方必须以 UUID 而不是原始片段为 key：realtime 更新器用 WS 载荷携带的
+ * UUID 去修补 `issueKeys.detail(wsId, issue.id)`（见 `ws-updaters.ts`）。
+ * 以标识符为 key 的视图会停在一个任何 realtime 事件都够不到的缓存条目上，
+ * 于是详情页能正常渲染，随后却悄悄停止更新。标识符始终只是展示层的东西：
+ * 它待在 URL 里，绝不出现在缓存 key 里。
  *
- * Resolution reuses `GET /api/issues/{id}`, which accepts either form, so it is
- * the same request the detail view would have made anyway. Handing that
- * response to the canonical query as `initialData` is what holds it to ONE
- * request: `initialData` is applied while the observer is created, so the
- * canonical query never observes an empty cache and never fires a fetch of its
- * own. Seeding the cache from an effect instead would run after that decision
- * and leave the single-request property resting on hook ordering.
+ * 解析复用 `GET /api/issues/{id}`（两种形式都接受），所以它本来就是详情视图
+ * 本来就要发的那一次请求。把响应作为 `initialData` 交给规范查询，正是把它
+ * 控制在“一次请求”的关键：`initialData` 在观察者创建时就被应用，所以规范查询
+ * 永远不会观察到空缓存、也不会自己再发一次请求。若改成在 effect 里播种缓存，
+ * 就会跑到这个决策之后，让“单次请求”这个性质依赖 hook 的执行顺序。
  */
 export function useCanonicalIssue(wsId: string, routeId: string): CanonicalIssue {
   const qc = useQueryClient();
@@ -66,21 +61,18 @@ export function useCanonicalIssue(wsId: string, routeId: string): CanonicalIssue
   const detail = useQuery({
     ...issueDetailOptions(wsId, canonicalId ?? ""),
     enabled: !!canonicalId && !!wsId,
-    // Ignored once the entry holds data, so a row already patched by a realtime
-    // event is never overwritten by this older resolution response.
+    // 一旦条目已有数据就被忽略，所以已经被 realtime 事件修补过的行，
+    // 绝不会被这份更旧的解析响应覆盖。
     initialData: isUuid ? undefined : resolve.data,
   });
 
-  // Mirror the loaded row into its identifier-keyed entry, the reverse of the
-  // `initialData` hop above.
+  // 把已加载的行镜像到以标识符为 key 的条目里——即上面 `initialData` 一跳的逆操作。
   //
-  // In-app links still carry the UUID, so opening one lands on the UUID URL and
-  // the route then rewrites the address bar to the identifier. That rewrite is
-  // a navigation: the route re-renders with the identifier as its segment, and
-  // without this seed the resolution query above would miss on a cache entry
-  // nothing has filled and re-fetch an issue already in hand — a second request
-  // for one issue open. The `??` keeps a realtime-patched entry intact, and
-  // only `.id` is ever read back out, which never changes.
+  // 应用内链接仍带 UUID，所以打开一个链接会先落在 UUID URL 上，路由随后把地址栏
+  // 重写成标识符。那次重写是一次导航：路由带着标识符作为片段重新渲染，若没有这里
+  // 的播种，上面的解析查询会错过一个没有任何东西填充过的缓存条目，从而重新拉取
+  // 一个本已到手的议题——为打开一个议题多发一次请求。`??` 让 realtime 修补过的条目
+  // 保持原样，而且只会读回 `.id`（它永远不变）。
   const loadedIdentifier = detail.data?.identifier;
   const loadedIssue = detail.data;
   useEffect(() => {
@@ -91,10 +83,9 @@ export function useCanonicalIssue(wsId: string, routeId: string): CanonicalIssue
     );
   }, [qc, wsId, loadedIdentifier, loadedIssue, routeId]);
 
-  // Read the resolution query's own settled state rather than "pending and no
-  // data": a failed resolution must present as terminally not-found, never as
-  // still-resolving, or the caller flips back to a loading frame and the
-  // remount loop described on `notFound` starts.
+  // 读解析查询自己已“结算”的状态，而不是“pending 且无数据”：失败的解析必须
+  // 表现为“终态未找到”，绝不能是“仍在解析中”，否则调用方会翻回加载态，
+  // 触发 `notFound` 里描述的那种重挂载循环。
   const failed = resolveEnabled && resolve.isError;
 
   return {

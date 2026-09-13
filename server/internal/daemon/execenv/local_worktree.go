@@ -1,5 +1,28 @@
 package execenv
 
+// 文件导读：本文件实现 local_directory 资源的 worktree 执行模式——每个任务在
+// daemon 自有的 env root 里，给用户的仓库开一个独立的 git worktree。
+//
+// 背景：local_directory 资源本来让任务直接在用户目录里跑，同一目录的任务只能排队。
+// worktree 模式把每个任务放进它自己的 worktree，于是共享同一目录的多个任务可以
+// 并发执行；每个任务把成果作为一条分支留在用户自己的仓库里，用户用 `git branch`
+// 就能看到，无需新的结果通道。
+//
+// 本文件要保证的三条性质：
+//
+//  1. agent 看到的必须与用户看到的一致。光执行 `git worktree add` 只会检出 HEAD，
+//     把用户未提交的工作静默藏起来。这里改为把用户目录的「快照」重放进 worktree
+//     ——已跟踪的修改与未跟踪的文件合为一棵树（captureUserSnapshot）。
+//  2. 绝不写入用户的目录。所有东西——包括 Prepare 写的 sidecar 上下文文件——都
+//     落在可丢弃的 worktree 里。在用户仓库里持久存在的只有那条分支，外加每个分支
+//     一条隐藏 ref，记录它属于谁、携带了什么。
+//  3. 任何东西都不被静默丢弃。agent 未提交的遗留都会在 worktree 消失前提交到分支；
+//     用户那些无法合并的改动会在下一轮再次呈现，而不是被登记成「已交付」。
+//
+// 关键机制：用「提交对象」做用户目录快照、用分支名下隐藏 ref
+// （refs/multica/local-state/<branch>）记录状态与归属，靠 owner + checkpoint 双重
+// 证明一个分支仍是某个会话的，绝不单凭名字续用分支。
+
 import (
 	"context"
 	"crypto/sha256"
@@ -16,114 +39,76 @@ import (
 	"time"
 )
 
-// Local worktree mode gives every task on a local_directory resource its own
-// git worktree of the user's repo, created inside the daemon-owned env root.
-// Tasks on the same directory then run concurrently instead of queueing on the
-// per-path mutex, and each one delivers its work as a branch in the user's own
-// repo — discoverable with `git branch`, no new result channel needed.
-//
-// Three properties this file exists to guarantee:
-//
-//  1. The agent sees what the user sees. `git worktree add` alone would check
-//     out HEAD, silently hiding the user's uncommitted work. We replay a
-//     snapshot of their directory into the worktree instead — tracked edits and
-//     untracked files as one tree (captureUserSnapshot).
-//  2. The user's directory is never written to. Everything — including the
-//     sidecar context files Prepare writes — lands inside the worktree, which
-//     is disposable. What lasts in the user's repo is the branch, plus one
-//     hidden ref per branch recording who owns it and what it carries.
-//  3. Nothing is silently discarded. Whatever the agent leaves uncommitted is
-//     committed to the branch before the worktree goes away, and an edit of the
-//     user's that could not be merged is offered again next turn rather than
-//     recorded as delivered.
-
 const (
-	// localWorktreeDirName is the env-root-relative directory holding the
-	// worktree. Kept short: on Windows the worktree path plus the deepest
-	// repo path must stay under MAX_PATH for tools that predate long paths.
+	// localWorktreeDirName 是 worktree 相对 env root 的目录名。保持简短：Windows 上
+	// worktree 路径加上仓库最深路径必须在不支持长路径的工具面前保持在 MAX_PATH 内。
 	localWorktreeDirName = "worktree"
 
-	// gitTimeout bounds every git invocation this file makes. These are all
-	// local-only operations (no network), so a slow one means a wedged index
-	// lock rather than a slow remote; failing the task beats hanging a daemon
-	// slot forever.
+	// gitTimeout 约束本文件发起的每次 git 调用时长。这些都是纯本地操作（无网络），
+	// 变慢只意味着索引锁卡住而非远端缓慢；让任务失败比让 daemon 槽位永远挂死强。
 	gitTimeout = 2 * time.Minute
 
-	// maxUntrackedFiles / maxUntrackedBytes bound the untracked content a task
-	// will replay. `--exclude-standard` already drops anything gitignored
-	// (node_modules, build output, venvs), so a repo hitting these limits has an
-	// unusual amount of untracked-but-not-ignored content, and snapshotting it
-	// would write every byte of it into the user's own object database. The
-	// task refuses instead, naming the fix.
+	// maxUntrackedFiles / maxUntrackedBytes 限制任务将要重放的未跟踪内容规模。
+	// `--exclude-standard` 已先丢掉了所有被 gitignore 的内容（node_modules、构建产物、
+	// venvs），所以触到上限的仓库必然带着异常多「未跟踪却未被忽略」的内容，把它们
+	// 快照下来等于把每一字节都写进用户自己的对象库。任务宁可拒绝，并点名修复方向。
 	maxUntrackedFiles = 2000
 	maxUntrackedBytes = 200 << 20 // 200 MiB
 
-	// snapshotIndexFileName is the private index captureUserSnapshot builds the
-	// user's snapshot in. It lives in the task's env root, never in the user's
-	// repository: pointing GIT_INDEX_FILE at our own file is what keeps the
-	// capture off the user's index entirely — no writes to it, and no wait on
-	// .git/index.lock, which used to be able to end the task (#7434).
+	// snapshotIndexFileName 是 captureUserSnapshot 构建用户快照所用的私有索引文件名。
+	// 它位于任务的 env root，绝不在用户的仓库里：把 GIT_INDEX_FILE 指向我们自己的
+	// 文件，正是让捕获完全不碰用户索引的原因——既不写它，也不等待 .git/index.lock，
+	// 后者过去曾能终结任务（#7434）。
 	snapshotIndexFileName = ".multica-snapshot-index"
 
-	// localStateRefPrefix namespaces the per-branch record of the user's
-	// directory. Outside refs/heads so it never appears in the user's
-	// `git branch`, and a ref rather than a loose object so `git gc` in their
-	// repo cannot reclaim a snapshot between two turns.
+	// localStateRefPrefix 给「记录用户目录每个分支状态」的 ref 起命名空间。放在
+	// refs/heads 之外，永远不显示在用户的 `git branch` 里；用 ref 而非松散对象，是
+	// 让用户仓库里的 `git gc` 无法在两次轮次之间回收快照。
 	localStateRefPrefix = "refs/multica/local-state/"
 )
 
-// LocalWorktreeParams describes the worktree Prepare should build for a
-// local_directory task running in worktree mode.
+// LocalWorktreeParams 描述 worktree 模式下，Prepare 应为 local_directory 任务搭建
+// 的那种 worktree。
 type LocalWorktreeParams struct {
-	// LocalPath is the user's configured directory. It may be the repo root
-	// or any subdirectory of it; the worktree always covers the whole repo,
-	// and the agent's cwd is the matching subdirectory inside it.
+	// LocalPath 是用户配置的目录。它可以是仓库根，也可以是仓库里任意子目录；
+	// worktree 总是覆盖整个仓库，而 agent 的 cwd 落在 worktree 内与之对应的子目录。
 	LocalPath string
-	// EnvRoot is the daemon-owned task env root. The worktree is created
-	// inside it so the ordinary env-root GC reclaims it.
+	// EnvRoot 是 daemon 自有的任务 env root。worktree 建在它里面，普通 env-root
+	// GC 就会顺带回收它。
 	EnvRoot string
-	// AgentName and TaskID name the branch a task with no conversation behind
-	// it gets: agent/<name>/<short-task-id>.
+	// AgentName 与 TaskID 共同命名「背后没有会话」的任务的分支：
+	// agent/<name>/<short-task-id>。
 	AgentName string
 	TaskID    string
-	// ConversationKey names the work line this task belongs to — its issue, or
-	// its chat session. Tasks sharing a key share one branch, so the second
-	// turn of a conversation continues the first turn's work instead of
-	// forking from HEAD again (MUL-6881). Empty for a task with no durable
-	// conversation behind it; those keep the task-scoped branch.
+	// ConversationKey 命名本任务所属的工作线——它的 issue 或聊天会话。共享同一个
+	// key 的任务共享同一条分支，因此一次对话的第二轮接着第一轮的成果往下走，而不是
+	// 又从 HEAD 分叉（MUL-6881）。没有持久会话的任务为空，改用任务级分支。
 	//
-	// It is a DISPLAY key: `mul-6881` is what the user recognises in
-	// `git branch`, and two workspaces can produce the same one. Continuing a
-	// branch is therefore never decided by the name — see WorkspaceID /
-	// AgentID / ConversationID, which are what a branch's recorded owner is
-	// compared against.
+	// 它是「展示用」键：`mul-6881` 是用户在 `git branch` 里认得的东西，而两个不同
+	// workspace 可能产出相同的键。因此「是否续接某条分支」绝不靠名字决定——见
+	// WorkspaceID / AgentID / ConversationID，它们才是与分支记录的归属比对的对象。
 	ConversationKey string
-	// WorkspaceID, AgentID and ConversationID identify the conversation
-	// itself. They are recorded with the branch and re-checked before any
-	// later task continues it, so a same-named branch belonging to the user,
-	// to another agent, or to another workspace is never adopted. All three
-	// empty means "no conversation": the task gets a task-scoped branch.
+	// WorkspaceID、AgentID 与 ConversationID 标识会话本身。它们随分支一起记录，并在
+	// 任何后续任务续接该分支前重新核验：同名却属于用户、属于另一个 agent、或属于
+	// 另一个 workspace 的分支绝不收养。三者全空 = 没有会话：任务得到一条任务级分支。
 	WorkspaceID    string
 	AgentID        string
 	ConversationID string
 }
 
-// owner is the identity a branch created for this task is recorded under.
+// owner 返回「本任务创建的分支」应登记在谁名下的身份。
 func (p LocalWorktreeParams) owner() branchOwner {
 	return branchOwner{WorkspaceID: p.WorkspaceID, AgentID: p.AgentID, ConversationID: p.ConversationID}
 }
 
-// localWorktreeConversation names the work line a worktree task belongs to, so
-// every turn of it delivers onto one branch (MUL-6881).
+// localWorktreeConversation 命名一个 worktree 任务所属的工作线，使它的每一轮都交付
+// 到同一条分支上（MUL-6881）。
 //
-// Two values, because they answer different questions. The key is what the
-// branch is CALLED — the issue identifier is preferred there because it is what
-// the user recognises in `git branch`, agent/j/mul-6881 rather than a uuid
-// tail. The id is what the branch BELONGS to, and only it decides whether a
-// later task may continue that branch: identifiers are per-workspace and
-// human-chosen, so two workspaces can mint the same one for different issues.
-// Tasks with neither an issue nor a chat session have no conversation to
-// continue and get "", "".
+// 返回两个值，因为二者回答不同的问题。key 是分支「叫什么」——这里优先用 issue
+// 标识符，因为它是用户在 `git branch` 里认得的名字（agent/j/mul-6881 而不是一段
+// uuid 尾巴）。id 是分支「属于谁」，只有它能决定后续任务是否可以续接该分支：
+// identifier 是 per-workspace、由人选择的，两个 workspace 可能为不同 issue 铸出
+// 同一个它。既无 issue 也无聊天会话的任务没有可续接的会话，返回 "", ""。
 func localWorktreeConversation(params PrepareParams) (key, id string) {
 	if params.Task.IssueID != "" {
 		if params.IssueIdentifier != "" {
@@ -137,90 +122,73 @@ func localWorktreeConversation(params PrepareParams) (key, id string) {
 	return "", ""
 }
 
-// LocalWorktree is a prepared worktree plus everything the daemon needs to
-// finalize it after the agent exits.
+// LocalWorktree 是一个已就绪的 worktree，外加 daemon 在 agent 退出后做收尾
+// （Finalize）所需的全部信息。
 type LocalWorktree struct {
-	// GitRoot is the user's repository root — the repo that owns the branch.
+	// GitRoot 是用户的仓库根——拥有那条分支的仓库。
 	GitRoot string
-	// Path is the worktree root inside the env root.
+	// Path 是 env root 内 worktree 的根路径。
 	Path string
-	// WorkDir is the agent's cwd: Path, plus the offset of LocalPath inside
-	// the repo when the user pointed the resource at a subdirectory.
+	// WorkDir 是 agent 的 cwd：即 Path，当用户把资源指向仓库子目录时再叠加上
+	// LocalPath 相对仓库根的偏移。
 	WorkDir string
-	// Branch is the branch created for this task, in the user's repo.
+	// Branch 是本任务在用户仓库里创建/使用的那条分支。
 	Branch string
-	// BaseCommit is the commit the worktree started from — this turn's baseline
-	// when one was committed, otherwise the branch tip it continued. Finalize
-	// compares the delivered tip against it twice: to decide whether the task
-	// produced anything, and to decide whether it may be recorded at all.
+	// BaseCommit 是 worktree 出发的那个提交——本轮做了 baseline 提交就用它，
+	// 否则就是续接到的分支 tip。Finalize 拿「交付后的 tip」与它比两次：一次判断
+	// 任务是否产出了东西，一次判断该 tip 是否可以登记。
 	//
-	// It is the strongest commit this turn can point at, which is why the second
-	// question uses it rather than the checkpoint an earlier turn recorded. That
-	// checkpoint is only an ancestor of it: the user may have committed on the
-	// delivered branch since, and this turn's own baseline sits later still.
-	// Measuring against the older commit let a run reset away everything this
-	// turn replayed and still be recorded as having delivered it, which is how
-	// the user's edits went missing from the turn after (MUL-6881 review).
+	// 它是本轮能指向的最靠后的提交，所以第二个问题拿它、而非更早某轮登记的
+	// checkpoint 来比。那个 checkpoint 只是它的祖先：用户可能已在交付分支上又提交
+	// 过，而本轮自己的 baseline 更在其后。拿更老的提交来度量，会让一次「把本轮
+	// 重放的东西全部 reset 掉」的运行仍被登记成已交付——这正是用户的改动在下一轮
+	// 凭空消失的成因（MUL-6881 review）。
 	BaseCommit string
-	// DirtyBaseCaptured records that the user had uncommitted tracked edits
-	// which were replayed into the worktree.
+	// DirtyBaseCaptured 记录用户当时有未提交的已跟踪改动，且这些改动已被重放进
+	// worktree。
 	DirtyBaseCaptured bool
-	// Continued reports that this worktree checked out a branch an earlier turn
-	// of the same conversation left behind, instead of forking a new one from
-	// the user's HEAD.
+	// Continued 报告这个 worktree 检出的是「同会话更早一轮留下的分支」，而不是从
+	// 用户 HEAD 新分叉一条。
 	Continued bool
-	// ReplayConflicts names the files where the user's edits since the previous
-	// turn could not be merged with what the branch already carries. The
-	// worktree is handed to the agent WITH those conflicts in it — resolving
-	// them is ordinary git work, and it is the only party that can judge which
-	// version is right — so this is what the turn's prompt tells it to fix.
-	// Finalize refuses to deliver while any of them are still unmerged.
+	// ReplayConflicts 列出「自上一轮以来用户的改动」无法与分支已携带内容合并的
+	// 文件。worktree 会「带着这些冲突」交给 agent——解决冲突是普通 git 工作，而且
+	// 只有 agent 能判断哪一版才对——所以这也是本轮 prompt 让它去修的东西。
+	// Finalize 在它们仍有未合并时会拒绝交付。
 	ReplayConflicts []string
-	// createdBranch records that this prepare put the branch where it is, so
-	// dropping it discards nothing an earlier turn delivered. False for a
-	// continued branch: that one has to survive even a turn that produced
-	// nothing, because it carries every turn before it.
+	// createdBranch 记录「这条分支是这次 prepare 放上去的」，丢弃它不会丢掉任何更早
+	// 轮次交付的东西。续接而来的分支为 false：它承载着此前每一轮的成果，即使本轮
+	// 什么都没产出，它也必须存活。
 	createdBranch bool
-	// userState is the commit describing the user's directory as this task saw
-	// it: their tracked edits and untracked files in one tree. Recorded against
-	// the branch once it actually carries them, so the next turn replays only
-	// what changed after that.
+	// userState 是描述「用户目录在本任务眼中的样子」的那个提交：已跟踪改动与未跟踪
+	// 文件合为一棵树。一旦分支真的携带了它们就登记，使下一轮只重放之后变化的部分。
 	userState string
-	// owner is the conversation this branch belongs to, recorded with the
-	// snapshot so a later task can prove the branch is its own before
-	// continuing it.
+	// owner 是本分支所属的会话，随快照一起记录，让后续任务能在续接前证明分支是
+	// 自己的。
 	owner branchOwner
-	// tracksState is false for a branch no later turn will continue — a
-	// task-scoped branch, or the one a busy sibling forked. Recording a
-	// snapshot for those would leave a ref nothing ever reads.
+	// tracksState 为 false 表示没有后续轮次会续接这条分支——任务级分支，或被忙碌的
+	// 兄弟任务分叉出来的那条。给它们记录快照只会留下一个永远没人读的 ref。
 	tracksState bool
-	// priorState is the snapshot the branch carried when this turn started, and
-	// the one to record when this turn could not get its own into the branch.
+	// priorState 是本轮开始时分支携带的快照，也是本轮无法把自己的快照放上分支时
+	// 要回退登记的那份。
 	priorState string
-	// snapshotPending is set when Prepare left the user's edits unmerged in the
-	// worktree: the branch does not carry userState yet, and only a commit made
-	// after the agent resolves can put it there.
+	// snapshotPending 在 Prepare 把用户的改动以「未合并」状态留在 worktree 时置位：
+	// 分支尚未携带 userState，只有等 agent 解决冲突后的那次提交才能放上去。
 	snapshotPending bool
-	// aborted, when set, makes Finalize refuse to commit or remove anything.
-	// Set by the daemon when a pre-commit step failed in a way that would make
-	// the committed branch wrong (see AbortWithReason).
+	// aborted 置位后会让 Finalize 拒绝提交或删除任何东西。由 daemon 在「某个 commit
+	// 前的步骤以一种会让提交出的分支出错的方式失败」时设置（见 AbortWithReason）。
 	aborted error
 }
 
-// MarshalJSON / UnmarshalJSON carry this struct's unexported state across the
-// preparation helper boundary.
+// MarshalJSON / UnmarshalJSON 让本结构体的非导出状态能穿过「准备辅助进程」的边界。
 //
-// Prepare runs in a short-lived helper process (PrepareIsolated) and the
-// Environment it built comes back to the daemon as JSON, so everything Finalize
-// needs has to be on the wire. Ordinary struct marshalling drops unexported
-// fields silently: the daemon then finalized a worktree whose owner, snapshot
-// and tracksState were all zero, which turned every proof this file makes into
-// a no-op — no delivery verification, no record of the delivered tip, and a
-// read-only turn keeping its branch. Nothing failed; the guarantees were simply
-// absent in production while every in-process test still passed.
+// Prepare 跑在短命的辅助进程里（PrepareIsolated），搭好的 Environment 以 JSON 回到
+// daemon，因此 Finalize 需要的每一样东西都得在线。普通结构体序列化会静默丢掉非导出
+// 字段：daemon 于是收到一个 owner、snapshot、tracksState 全为零的 worktree，把本文件
+// 做的所有证明都变成空操作——没有交付校验、没有交付 tip 的记录、只读轮次保住分支。
+// 没有报错；只是这些保证在生产环境缺失，而每个进程内测试却仍然通过。
 //
-// aborted is deliberately NOT carried: it is set by the daemon after Prepare
-// returns (AbortWithReason), so it belongs to the parent process only.
+// aborted 刻意不带：它是 Prepare 返回后由 daemon 设置的（AbortWithReason），只属于
+// 父进程。
 func (w *LocalWorktree) MarshalJSON() ([]byte, error) {
 	type wire LocalWorktree
 	return json.Marshal(struct {
@@ -265,25 +233,22 @@ func (w *LocalWorktree) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// LocalWorktreeOutcome is what a finished worktree task delivered.
+// LocalWorktreeOutcome 是一个 worktree 任务结束时实际交付的东西。
 type LocalWorktreeOutcome struct {
-	// Branch is the branch holding the task's work, or "" when the task made
-	// no changes at all (a read-only run) — in that case the branch is deleted
-	// so it never shows up in the user's `git branch` as an empty artifact.
+	// Branch 是承载任务工作的分支；任务完全没做改动（只读运行）时为 ""——此时
+	// 分支会被删除，免得它作为一个空工件出现在用户的 `git branch` 里。
 	Branch string
-	// AutoCommitted is true when the agent left uncommitted changes that
-	// Finalize committed so they would survive the worktree's removal.
+	// AutoCommitted 为 true 表示 agent 留下了未提交的改动，由 Finalize 提交，使其
+	// 能在 worktree 被移除后存活。
 	AutoCommitted bool
-	// PreservedPath is set only when Finalize could NOT commit the agent's
-	// changes. The worktree at this path was intentionally left on disk because
-	// it is the only remaining copy of that work.
+	// PreservedPath 仅在 Finalize 无法提交 agent 改动时设置。位于此路径的 worktree
+	// 被有意留在磁盘上，因为它是那份工作仅存的副本。
 	PreservedPath string
 }
 
-// PrepareLocalWorktree creates the task's worktree and replays the user's
-// uncommitted state into it. It never writes to the user's working tree: the
-// snapshot is built in a private index inside the task's env root, which leaves
-// their index, their files and their refs exactly as they were.
+// PrepareLocalWorktree 创建任务的 worktree，并把用户未提交的状态重放进去。它绝不
+// 写入用户的工作树：快照构建在任务 env root 内的私有索引里，用户的索引、文件与
+// refs 都保持原样。
 func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*LocalWorktree, error) {
 	if params.LocalPath == "" {
 		return nil, errors.New("execenv: local worktree requires a local path")
@@ -300,14 +265,13 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 		return nil, err
 	}
 
-	// The agent's cwd keeps the user's chosen depth: a resource pointed at
-	// <repo>/services/api must land the agent in <worktree>/services/api, not
-	// at the repo root, or the task's whole notion of "the project" shifts.
+	// agent 的 cwd 保持用户选定的深度：指向 <repo>/services/api 的资源必须把 agent
+	// 放进 <worktree>/services/api，而不是仓库根，否则任务对「项目」的整个认知就
+	// 漂移了。
 	//
-	// Canonicalise before the comparison: gitRoot comes back canonical, while
-	// the configured path routinely isn't (on macOS every /tmp and /var path is
-	// a symlink into /private). Comparing the two forms directly reads a repo
-	// root as "outside itself".
+	// 比较前先做规范化：gitRoot 返回时已是规范路径，而配置路径经常不是（macOS 上
+	// 每个 /tmp、/var 路径都是指向 /private 的 symlink）。直接比较两种形式会把仓库
+	// 根误读成「在它自己之外」。
 	localPath := params.LocalPath
 	if resolved, evalErr := filepath.EvalSymlinks(localPath); evalErr == nil {
 		localPath = resolved
@@ -322,12 +286,10 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 
 	worktreePath := filepath.Join(params.EnvRoot, localWorktreeDirName)
 
-	// Everything below mutates the repo's worktree admin state or its refs, so
-	// take the per-repo lock first. It covers the stale-path cleanup, which runs
-	// `git worktree remove` and would otherwise race a sibling task's `worktree
-	// add`, and the branch decision, which has to see a branch that another task
-	// is creating at the same moment. The lock is cross-process because every
-	// prepare runs in its own helper process (#7434).
+	// 下面所有操作都会改动仓库的 worktree 管理状态或 refs，所以先取 per-repo 锁。
+	// 锁覆盖「陈旧路径清理」（它要跑 `git worktree remove`，否则会和兄弟任务的
+	// `worktree add` 竞态）以及分支决策（它必须看到别的任务在同一时刻正在创建的分
+	// 支）。锁跨进程生效，因为每次 prepare 都跑在各自的辅助进程里（#7434）。
 	unlock, err := lockGitRoot(gitRoot, logger)
 	if err != nil {
 		return nil, err
@@ -335,15 +297,13 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 	defer unlock()
 
 	if _, statErr := os.Stat(worktreePath); statErr == nil {
-		// Prepare wipes and recreates envRoot, so an existing worktree path
-		// means a stale registration in the user's repo pointing here. Remove
-		// both rather than failing the task.
+		// Prepare 会清空并重建 envRoot，所以一个已存在的 worktree 路径意味着用户
+		// 仓库里有一条指向这里的陈旧登记。把两者都清掉，而不是让任务失败。
 		removeLocalWorktreeDir(gitRoot, worktreePath, logger)
 	}
 
-	// Self-heal registrations orphaned by a crashed daemon: their env roots are
-	// long gone, but the user's repo still lists them. Prune only drops entries
-	// whose directory no longer exists, so it can never disturb a live task.
+	// 自愈被崩溃的 daemon 遗留的孤儿登记：它们的 env root 早已不存在，但用户仓库
+	// 仍列着它们。prune 只删「目录已不存在」的条目，因此绝不会打扰一个活动任务。
 	if out, pruneErr := runGit(gitRoot, "worktree", "prune"); pruneErr != nil && logger != nil {
 		logger.Warn("execenv: git worktree prune failed (non-fatal)",
 			"git_root", gitRoot, "output", out, "error", pruneErr)
@@ -356,24 +316,20 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 			"(worktree mode needs at least one commit; make an initial commit or switch the resource back to in_place): %w", gitRoot, err)
 	}
 
-	// Refuse an untracked payload too large to reproduce BEFORE snapshotting it:
-	// the snapshot writes every one of those bytes into the user's own object
-	// database, which is not something to do by accident on a directory full of
-	// un-ignored build output.
+	// 在快照之前就先拒绝「大得无法忠实重现」的未跟踪内容：快照会把那些字节一个
+	// 不落地写进用户自己的对象库，对一屋子未被忽略的构建产物目录来说不能这么随手
+	// 干。
 	if err := checkUntrackedReplayable(gitRoot, logger); err != nil {
 		return nil, err
 	}
 
-	// The commit describing the user's directory as this task sees it — their
-	// tracked edits and their untracked files in one tree. Everything below
-	// reasons about the user's state through this single object.
+	// 描述「用户目录在本任务眼中」的提交——已跟踪改动与未跟踪文件合为一棵树。
+	// 下面所有对用户状态的推理都经由这一个对象。
 	userState, err := captureUserSnapshot(gitRoot, params.EnvRoot, headSHA, logger)
 	if err != nil {
-		// Fail closed. The promise of this mode is that the agent reasons about
-		// the code the user actually has; silently starting from HEAD instead
-		// would have it review a tree the user never saw and report confidently
-		// on it. A task that does not start is recoverable — one that answers
-		// from the wrong sources is not.
+		// 关闭即失败。此模式的承诺是 agent 推理的是用户真实拥有的代码；静默地从
+		// HEAD 开始会让它 review 一棵用户从未见过的树，还信心满满地汇报。
+		// 一个不启动的任务可以重来；一个基于错误来源作答的任务则不能。
 		return nil, fmt.Errorf("execenv: could not capture the uncommitted changes in %q, "+
 			"so the worktree would not match what you have on disk: %w", gitRoot, err)
 	}
@@ -395,18 +351,15 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 		userState:     userState,
 		priorState:    plan.priorState,
 		owner:         plan.owner,
-		// A branch a sibling task forked because the conversation's own branch
-		// was busy is delivered once and never continued, so it records nothing.
+		// 兄弟任务因「会话自己的分支正忙」而分叉出来的分支只交付一次、不再被续接，
+		// 所以它什么也不记录。
 		tracksState: plan.tracksState && actualBranch == plan.name,
 	}
 
-	// Tear the worktree back down on every failure below. A half-replayed tree
-	// is the worst outcome available: it looks like a working checkout, so
-	// nothing downstream questions it, while the agent silently reads different
-	// code than the user has. The branch goes with it only when this prepare
-	// created it — a continued branch carries earlier turns' work, and dropping
-	// it because THIS turn could not start would destroy the very thing the
-	// task was meant to build on.
+	// 下面每个失败路径都要把 worktree 拆回去。半重放的树是最糟的结果：它看起来像
+	// 一个可用的检出，下游不会质疑，而 agent 静默地读着与用户不同的代码。分支只在
+	// 「本次 prepare 创建了它」时才一起删——续接而来的分支承载着更早轮次的成果，
+	// 只因本轮无法启动就丢弃它，等于毁掉任务本该立足其上的东西。
 	rollback := func() {
 		removeLocalWorktreeDir(gitRoot, worktreePath, logger)
 		if createdBranch {
@@ -414,82 +367,70 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 		}
 	}
 
-	// Replay the user's directory into the worktree.
+	// 把用户目录重放进 worktree。
 	//
-	// A branch forked from HEAD carries none of it, so the whole snapshot goes
-	// in. A continued branch already carries the snapshot the previous turn
-	// recorded, and the agent's commits sit on top of it, so only what the user
-	// changed after that is new information there.
+	// 从 HEAD 分叉的分支不携带其中任何内容，所以整个快照都要放进去。续接的分支
+	// 已携带上一轮记录的快照、上面还叠着 agent 的提交，因此那里只有「用户在其后改
+	// 了什么」才是新信息。
 	replay, replayErr := replayUserState(worktreePath, plan, userState, logger)
 	if replayErr != nil {
 		rollback()
 		return nil, replayErr
 	}
 	wt.ReplayConflicts = replay.conflicts
-	// An unresolved merge means the branch does not carry this turn's snapshot
-	// yet; only a commit after the agent resolves can put it there.
+	// 未解决的合并意味着分支还没携带本轮快照；只有 agent 解决后的那次提交才能把
+	// 它放上去。
 	wt.snapshotPending = len(replay.conflicts) > 0
-	// Whether the user has uncommitted work at all — replayed by this turn or
-	// already carried by the branch it continued.
+	// 用户到底有没有未提交的工作——被本轮重放，或已被续接的分支携带。
 	_, diffErr := runGit(gitRoot, "diff", "--quiet", headSHA, userState)
 	wt.DirtyBaseCaptured = diffErr != nil
 
-	// Commit the replayed state as a baseline so "did this task change
-	// anything?" has an exact answer later. Without it the user's own
-	// uncommitted work counts as a change: a read-only task on a repo with an
-	// untracked scratch file would auto-commit that file at the end and leave
-	// behind a branch the agent never touched. The baseline also makes the
-	// delivered branch readable — `git diff <baseline>..<branch>` is precisely
-	// the agent's work, with the user's WIP as its own labelled commit.
+	// 把重放的状态提交成一个 baseline，让「这个任务改过东西没有」之后有精确答案。
+	// 没有它，用户自己的未提交工作会被算作改动：一个只读任务若仓库里有个未跟踪的
+	// 临时文件，结束时就会自动提交那个文件并留下一支 agent 从没碰过的分支。baseline
+	// 也让交付的分支可读——`git diff <baseline>..<branch>` 恰好就是 agent 的成果，
+	// 用户 WIP 则作为带标签的独立提交。
 	//
-	// Skipped entirely while the replay is unresolved: an index with unmerged
-	// entries cannot be committed without committing conflict markers, and the
-	// agent has not had its turn at them yet.
+	// 重放未解决时整个跳过：带着未合并条目的索引提交会把冲突标记一并提交进去，
+	// 而 agent 还没轮到处理它们。
 	if len(replay.conflicts) == 0 {
 		dirty, dirtyErr := worktreeIsDirty(worktreePath)
 		if dirtyErr != nil {
 			rollback()
 			return nil, fmt.Errorf("execenv: could not inspect the prepared worktree for %q: %w", gitRoot, dirtyErr)
 		}
-		// A branch this prepare created gets its baseline even when there was
-		// nothing to replay. Two things need it. The empty case is the one that
-		// used to be skipped, and it is the one where the branch sits exactly on
-		// the user's own HEAD — so the branch had no commit of its own, and
-		// nothing distinguished it from a branch the user creates there
-		// themselves. And `git diff <baseline>..<branch>` is then the agent's
-		// work on every branch, not only on the ones that started dirty.
+		// 本次 prepare 创建的分支即便没什么可重放的也会拿到 baseline。两样东西需要
+		// 它：空的情形是过去被跳过的那个，而它恰是「分支正好停在用户自己的 HEAD」
+		// 的情形——分支没有属于自己的提交，与用户在那里自己创建的分支毫无区别。
+		// 并且有了它，`git diff <baseline>..<branch>` 就适用于每条分支，而不仅是从
+		// 脏状态起步的那些。
 		if dirty || !plan.continues {
 			baseline, baseErr := commitBaseline(worktreePath, plan.continues, dirty)
 			if baseErr != nil {
-				// Without a baseline the task cannot tell the user's work from the
-				// agent's, so it would later commit the user's files as if the agent
-				// had produced them. Refuse rather than deliver a misleading branch.
+				// 没有 baseline，任务就分不清用户的成果与 agent 的，稍后会把用户的
+				// 文件当作 agent 产出提交。宁可拒绝，也不交付误导性的分支。
 				rollback()
 				return nil, fmt.Errorf("execenv: could not record a baseline commit for the replayed state of %q: %w", gitRoot, baseErr)
 			}
-			// The branch now stands on a commit that carries this turn's snapshot,
-			// and everything downstream measures the delivery against it.
+			// 分支现在站在一个携带本轮快照的提交上，其后所有交付度量都针对它。
 			wt.BaseCommit = baseline
 		}
-		// The branch now carries this snapshot, so record it — together with the
-		// owner, which is what lets the next task prove this branch is its own
-		// before continuing it. Recorded here as well as at Finalize so a turn
-		// that never reaches Finalize still leaves the branch identifiable.
+		// 分支现在携带这份快照了，把它连同 owner 一起记录——owner 正是让下一个
+		// 任务能证明分支是自己的、进而续接它的依据。在 Finalize 之外这里也记一次，
+		// 使一个永远到不了 Finalize 的轮次仍让分支可被识别。
 		if err := wt.recordState(wt.BaseCommit, logger); err != nil && logger != nil {
 			logger.Warn("execenv: could not record the task branch before the run (non-fatal; Finalize records the delivered tip)",
 				"branch", wt.Branch, "error", err)
 		}
 	}
 
-	// Note on keeping sidecars out of the delivered branch: we deliberately do
-	// NOT write .git/info/exclude here. A linked worktree reads info/exclude
-	// from the repo's COMMON git dir, so the only file that would take effect
-	// is the user's own .git/info/exclude — editing it would change what `git
-	// status` shows in the user's checkout, which is theirs, not ours. Instead
-	// the daemon runs the existing CleanupRuntimeConfig + CleanupSidecars pass
-	// over the worktree before Finalize, so the sidecars are simply gone by the
-	// time anything is committed. That also preserves a genuine agent edit to a
-	// tracked CLAUDE.md, which a blanket exclude would have swallowed.
+	// 关于「不让 sidecar 进交付分支」的说明：这里刻意不写 .git/info/exclude。
+	// 链接式 worktree 从仓库的 COMMON git dir 读 info/exclude，所以唯一会生效的
+	// 文件是用户自己的 .git/info/exclude——改它等于改变用户检出里 `git status` 的
+	// 显示，那是用户的而非我们的。替代做法是：daemon 在 Finalize 前对 worktree 跑
+	// 一遍既有的 CleanupRuntimeConfig + CleanupSidecars，sidecar 在提交前就已消失。
+	// 这同时保留了对已跟踪 CLAUDE.md 的真实 agent 编辑——那种一刀切的 exclude 会
+	// 把它一起吞掉。
 
 	if logger != nil {
 		logger.Info("execenv: local worktree ready",
@@ -505,22 +446,17 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 	return wt, nil
 }
 
-// Finalize commits whatever the agent left behind, removes the worktree, and
-// reports the branch. Called after the agent exits, before the env root is
-// handed to the GC.
+// Finalize 提交 agent 留下的所有改动、移除 worktree，并汇报分支。在 agent 退出后、
+// env root 交给 GC 之前调用。
 //
-// The auto-commit is the reason a worktree task can't lose work: `git worktree
-// remove --force` would happily delete uncommitted edits, and the user would
-// have no way to get them back. Committing first turns "the agent edited files"
-// into "the branch has a commit", which is the delivery contract for this mode.
+// 自动提交正是 worktree 任务不丢工作的原因：`git worktree remove --force` 会爽快地
+// 删掉未提交的改动，用户将无法找回。先提交把「agent 改过文件」变成「分支上多了一
+// 个提交」，这就是本模式的交付契约。
 //
-// If that commit cannot be made — a repo with commit.gpgSign and no signing key
-// available to the daemon, a full disk, a ref lock we lost — Finalize returns an
-// error and DELIBERATELY LEAVES THE WORKTREE IN PLACE. Removing it would be the
-// one operation in this file that destroys work with no way back, and a warning
-// in the daemon log is not an acceptable substitute for the user's changes. The
-// surviving worktree stays registered in the user's repo, so `git worktree list`
-// points straight at it.
+// 若那次提交无法完成——仓库开了 commit.gpgSign 而 daemon 没有签名密钥、磁盘写满、
+// 或丢失了 ref 锁——Finalize 返回错误并「刻意把 worktree 留在原地」。移除它会是本
+// 文件中唯一「销毁工作且无法回头」的操作，而 daemon 日志里一条警告不能替代用户的
+// 改动。存活的 worktree 仍登记在用户仓库中，`git worktree list` 能直接指到它。
 func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, error) {
 	if w == nil {
 		return LocalWorktreeOutcome{}, nil
@@ -529,9 +465,8 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 
 	unlock, err := lockGitRoot(w.GitRoot, logger)
 	if err != nil {
-		// Nothing has been committed or removed yet, so the agent's work is
-		// still sitting in the worktree. Report it as preserved rather than
-		// naming a branch that does not carry it.
+		// 尚未提交或删除任何东西，agent 的工作仍躺在 worktree 里。汇报成「已保留」
+		// 而不是报一条并不携带它的分支名。
 		outcome.Branch = ""
 		outcome.PreservedPath = w.Path
 		return outcome, fmt.Errorf("could not lock %q to finalize branch %s: %w; "+
@@ -539,15 +474,13 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 	}
 	defer unlock()
 
-	// Something before the commit went wrong in a way that would make the
-	// delivered branch misleading. Commit nothing and keep the worktree: the
-	// agent's work is still in it, and so is whatever the caller could not
-	// clean up, which a human can now look at directly.
+	// 提交之前的某个环节出了「会让交付分支误导人」的问题。什么都不提交、保留
+	// worktree：agent 的工作还在里面，调用方没能清掉的东西也还在，人类现在可以直接
+	// 查看。
 	if w.aborted != nil {
-		// Report NO branch. One exists in the user's repo, but nothing was
-		// committed to it, so naming it as this task's result would point them
-		// at a branch that is missing the very work they are looking for. The
-		// preserved worktree path below is the honest pointer.
+		// 不汇报分支。用户仓库里确实存在一条，但什么都没提交上去，把它当作本任务
+		// 的结果会指向一条缺了用户正找的那份工作的分支。下面保留的 worktree 路径
+		// 才是诚实的指针。
 		outcome.Branch = ""
 		outcome.PreservedPath = w.Path
 		if logger != nil {
@@ -559,13 +492,11 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 			w.Branch, w.aborted, w.Path, w.GitRoot)
 	}
 
-	// An unresolved merge is never committed. The worktree may be carrying the
-	// user's edits from before this turn (replayUserState hands the conflict to
-	// the agent rather than dropping it), and `git add -A` would turn conflict
-	// markers into a delivered commit — the one way this mode can produce a
-	// branch that compiles nowhere and looks deliberate. Keep the worktree, say
-	// which files are still open, and leave the snapshot unrecorded so the next
-	// turn replays the same edits instead of assuming they landed.
+	// 未解决的合并绝不提交。worktree 可能还带着本轮之前用户的改动（replayUserState
+	// 把冲突交给 agent 而不是丢弃它），而 `git add -A` 会把冲突标记变成一次已交付
+	// 的提交——这是本模式唯一能产出「在哪都编不过、看起来却像有意为之」分支的途径。
+	// 保留 worktree、说明哪些文件仍待处理、并让快照保持未登记，使下一轮重新重放
+	// 同样的改动而不是假定它们已落地。
 	if unmerged, unmergedErr := unmergedPaths(w.Path); unmergedErr != nil || len(unmerged) > 0 {
 		outcome.Branch = ""
 		outcome.PreservedPath = w.Path
@@ -584,8 +515,8 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 			w.Branch, quotedPaths(unmerged), w.Path, w.GitRoot)
 	}
 
-	// Treat "can't tell" like "dirty": committing costs an empty commit at
-	// worst, while assuming clean risks deleting the agent's edits.
+	// 把「说不准」当「脏」处理：提交最多浪费一次空提交，而假设干净则可能删掉
+	// agent 的改动。
 	dirty, statusErr := worktreeIsDirty(w.Path)
 	if statusErr != nil {
 		if logger != nil {
@@ -609,28 +540,22 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 		outcome.AutoCommitted = committed
 	}
 
-	// A branch still sitting exactly on its base commit means the task changed
-	// nothing — the read-only case. Delete it so the user's branch list only
-	// ever grows for tasks that actually produced work. Only ever the branch
-	// this task created: a continued branch sits on its base precisely because
-	// this turn added nothing to what earlier turns delivered, and deleting it
-	// would take their work with it.
+	// 分支仍原样停在 baseline 提交上，说明任务什么都没改——只读的情形。删掉它，
+	// 让用户的分支列表只为真正产出过工作的任务增长。永远只删「本任务创建」的分支：
+	// 续接来的分支停在 baseline 上，恰恰因为本轮没给前几轮交付的成果加任何东西，
+	// 删它等于连同删掉它们。
 	tip, err := runGitTrimmed(w.Path, "rev-parse", "--verify", "HEAD")
 	producedWork := err != nil || tip != w.BaseCommit
 	dropped := !producedWork && w.createdBranch
 
-	// A turn that started mid-merge only gets to advance the branch's recorded
-	// state if it committed something after resolving. When the branch is still
-	// where THIS turn found it, nothing distinguishes "the agent resolved in
-	// favour of the version already on the branch" from "the agent threw the
-	// merge away" — the tree is identical either way — so the record keeps the
-	// state the branch is known to carry, and the next turn offers the user's
-	// edits again.
+	// 从「合并进行到一半」开始的一轮，只有解决冲突并提交过什么，才配推进分支记录
+	// 的状态。当分支仍停在「本轮找到它的地方」时，无法区分「agent 选择保留分支上
+	// 已有的版本」和「agent 把合并丢掉了」——两棵树完全相同——所以记录保持分支已知
+	// 携带的状态，下一轮把用户的改动再呈一次。
 	//
-	// The cost is a merge the agent may have to conclude more than once, in the
-	// one case where its conclusion left no trace. The alternative is recording
-	// edits as delivered that may have been discarded, which is how they go
-	// missing without anyone seeing it.
+	// 代价是：在「agent 的结论没留下任何痕迹」的那一种情况下，同一个合并可能要
+	// 重复收敛多次。另一选择是把「可能已被丢弃的改动」登记成已交付——那正是它们
+	// 会在无人察觉时消失的方式。
 	if w.snapshotPending && tip == w.BaseCommit {
 		if w.priorState == "" {
 			outcome.Branch = ""
@@ -647,12 +572,10 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 		w.userState = w.priorState
 	}
 
-	// Record BEFORE the worktree goes away, and treat a failure as a failure to
-	// deliver. The record is what makes the branch continuable: without it the
-	// next turn cannot prove the branch is this conversation's and starts a new
-	// line of work, stranding what this turn produced. Ordering it first is what
-	// makes that recoverable — the worktree is still there to preserve, exactly
-	// as for a commit that could not be made.
+	// 在 worktree 消失「之前」登记，并把失败当作「交付失败」。这份记录正是分支
+	// 可被续接的原因：没有它，下一轮无法证明分支是这段会话的，只能另起新工作线，
+	// 把本轮成果丢在那里。先做登记也使它可恢复——worktree 还在、可保留，与一次
+	// 无法完成的提交完全相同。
 	if !dropped {
 		if verifyErr := w.verifyDeliveryPoint(tip); verifyErr != nil {
 			outcome.Branch = ""
@@ -704,21 +627,18 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 	return outcome, nil
 }
 
-// Discard tears a worktree down without delivering anything: unregister it,
-// delete its directory, drop its branch.
+// Discard 不交付任何东西地拆掉一个 worktree：注销它、删除目录、丢弃其分支。
 //
-// For the abandon-before-the-agent-ran case only. Finalize is the path that
-// preserves work; this one assumes there is none to preserve, so callers must
-// be sure nothing has run in the worktree yet.
+// 只用于「agent 运行之前就放弃」的情形。Finalize 是保留工作的路径；本方法假定
+// 没有工作可保留，调用方必须确定 worktree 里还没有任何东西运行过。
 func (w *LocalWorktree) Discard(logger *slog.Logger) {
 	if w == nil {
 		return
 	}
 	unlock, err := lockGitRoot(w.GitRoot, logger)
 	if err != nil {
-		// Best-effort by contract: every step below only logs on failure. The
-		// registration this leaves behind is pruned by the next prepare on
-		// this repo, which is the same self-heal path a crashed daemon uses.
+		// 按契约尽力而为：下面每一步失败都只记日志。留下的登记会被本仓库的下一次
+		// prepare 清理——与崩溃 daemon 走同一条自愈路径。
 		if logger != nil {
 			logger.Warn("execenv: could not lock the repository to discard the task worktree",
 				"git_root", w.GitRoot, "path", w.Path, "branch", w.Branch, "error", err)
@@ -727,8 +647,8 @@ func (w *LocalWorktree) Discard(logger *slog.Logger) {
 	}
 	defer unlock()
 	removeLocalWorktreeDir(w.GitRoot, w.Path, logger)
-	// Same rule as every other teardown: a branch this prepare did not create
-	// belongs to the turns before it and outlives this task.
+	// 与其它所有拆除相同的规则：本次 prepare 没创建的分支属于它之前的轮次，
+	// 活得比这个任务久。
 	if w.createdBranch {
 		dropBranch(w.GitRoot, w.Branch, logger)
 	}
@@ -738,13 +658,12 @@ func (w *LocalWorktree) Discard(logger *slog.Logger) {
 	}
 }
 
-// AbortWithReason marks the worktree undeliverable. Finalize will then commit
-// nothing, remove nothing, and return an error naming the preserved path.
+// AbortWithReason 把 worktree 标记为不可交付。此后 Finalize 不提交、不删除任何东西，
+// 并返回一条点出保留路径的错误。
 //
-// This exists because the decision "is this branch safe to deliver?" is made
-// outside this package — the daemon knows whether its own sidecar cleanup
-// succeeded — while the only code that can act on it is Finalize. The first
-// reason wins: it is the one closest to the root cause.
+// 它存在的原因是「这条分支交付是否安全」的决定发生在包外——daemon 知道自己那趟
+// sidecar 清理是否成功——而能对决定采取行动的只有 Finalize。最先写入的原因胜出：
+// 它最接近根因。
 func (w *LocalWorktree) AbortWithReason(err error) {
 	if w == nil || err == nil || w.aborted != nil {
 		return
@@ -752,15 +671,13 @@ func (w *LocalWorktree) AbortWithReason(err error) {
 	w.aborted = err
 }
 
-// commitBaseline records the user's replayed uncommitted state as its own
-// commit on the task branch, returning the new tip. On a continued branch that
-// state is the increment since the previous turn, so the message says so rather
-// than claiming to be the branch's baseline.
+// commitBaseline 把用户重放后的未提交状态记为任务分支上的一个独立提交，返回新的
+// tip。续接的分支上，该状态是「自上一轮以来的增量」，所以提交信息如实说明，而不是
+// 自称是分支的 baseline。
 //
-// A new branch gets one even with nothing to record. The commit is then empty,
-// and that is the point: it is the branch's first commit of its own, the thing
-// that makes it distinguishable later from a branch the user creates at the
-// same place — see LocalWorktree.BaseCommit.
+// 新分支即使没什么可记录的也会得到一个（空）提交，而这正是关键：那是分支第一个
+// 属于自己的提交，是日后能把它与用户在同一位置创建的分支区分开的东西——见
+// LocalWorktree.BaseCommit。
 func commitBaseline(worktreePath string, continued, dirty bool) (string, error) {
 	message := "chore(agent): baseline — uncommitted work from the local directory"
 	switch {
@@ -779,27 +696,24 @@ func commitBaseline(worktreePath string, continued, dirty bool) (string, error) 
 	return tip, nil
 }
 
-// commitAll stages and commits everything the agent left behind. Returns
-// whether a commit was actually created; an error means the changes are still
-// only on disk and the caller must not delete the worktree.
+// commitAll 暂存并提交 agent 留下的所有内容。返回是否真的创建了一次提交；返回错误
+// 意味着改动仍只在磁盘上，调用方绝不能删除 worktree。
 func (w *LocalWorktree) commitAll(logger *slog.Logger) (bool, error) {
-	// Never --allow-empty here: an empty commit would make a read-only turn look
-	// like it produced work and leave its branch behind.
+	// 这里绝不 --allow-empty：一次空提交会让只读轮次看起来产出了工作，并把它的
+	// 分支留下来。
 	return commitEverything(w.Path, "chore(agent): uncommitted changes from task", false)
 }
 
-// commitEverything returns (false, nil) for the benign "there was nothing to
-// commit" case and (false, err) for a real failure — the distinction callers
-// need to decide whether the tree is safe to discard.
+// commitEverything 对良性「没有东西可提交」返回 (false, nil)，对真正的失败返回
+// (false, err)——调用方需要这个区分来决定树是否可以安全丢弃。
 func commitEverything(worktreePath, message string, allowEmpty bool) (bool, error) {
 	if out, err := runGit(worktreePath, "add", "-A"); err != nil {
 		return false, fmt.Errorf("git add: %s: %w", strings.TrimSpace(out), err)
 	}
-	// --no-verify: the user's commit hooks are written for the user's own
-	// workflow (interactive linters, test suites, signing prompts) and a hook
-	// failure here would mean losing the agent's work to save a lint run. Note
-	// it does NOT disable commit.gpgSign, which is why the caller has to treat
-	// a commit failure as "keep the worktree" rather than a warning.
+	// --no-verify：用户的 commit hooks 是为用户自己的工作流写的（交互式 lint、测试
+	// 套件、签名提示），一次 hook 失败在这里意味着为省一次 lint 而丢 agent 的工作。
+	// 注意它并不会禁用 commit.gpgSign——这正是调用方必须把「提交失败」当作「保留
+	// worktree」而不是一声警告的原因。
 	args := append(commitIdentityArgs(worktreePath), "commit", "--no-verify")
 	if allowEmpty {
 		args = append(args, "--allow-empty")
@@ -814,9 +728,8 @@ func commitEverything(worktreePath, message string, allowEmpty bool) (bool, erro
 	return true, nil
 }
 
-// commitIdentityArgs supplies a committer identity only when the repo doesn't
-// already have one. A repo with user.email configured keeps it, so commits
-// still look like they came from the user's own setup.
+// commitIdentityArgs 只在仓库本身没有提交者身份时提供一份。配了 user.email 的仓库
+// 保留它，使提交看起来仍出自用户自己的配置。
 func commitIdentityArgs(dir string) []string {
 	if email, err := runGitTrimmed(dir, "config", "user.email"); err == nil && email != "" {
 		return nil
@@ -835,9 +748,8 @@ func worktreeIsDirty(worktreePath string) (bool, error) {
 	return strings.TrimSpace(out) != "", nil
 }
 
-// removeLocalWorktreeDir unregisters the worktree from the user's repo and
-// deletes its directory. The branch is deliberately left alone — it is the
-// task's deliverable.
+// removeLocalWorktreeDir 从用户仓库注销 worktree 并删除其目录。分支被刻意留在
+// 原地——它是任务的交付物。
 func removeLocalWorktreeDir(gitRoot, worktreePath string, logger *slog.Logger) error {
 	var removeErr error
 	if out, err := runGit(gitRoot, "worktree", "remove", "--force", worktreePath); err != nil {
@@ -846,9 +758,8 @@ func removeLocalWorktreeDir(gitRoot, worktreePath string, logger *slog.Logger) e
 			logger.Warn("execenv: git worktree remove failed; pruning registration",
 				"path", worktreePath, "output", out, "error", err)
 		}
-		// Fall back to deleting the directory ourselves and dropping the now
-		// dangling registration, so the user's repo isn't left listing a
-		// worktree that no longer exists.
+		// 回退：自己删除目录并清掉现在悬空的登记，别让用户仓库列着一个已不存在的
+		// worktree。
 		if rmErr := os.RemoveAll(worktreePath); rmErr != nil {
 			removeErr = errors.Join(removeErr, rmErr)
 			if logger != nil {
@@ -859,8 +770,8 @@ func removeLocalWorktreeDir(gitRoot, worktreePath string, logger *slog.Logger) e
 			logger.Warn("execenv: git worktree prune failed", "output", out, "error", pruneErr)
 		}
 	}
-	// Lstat verifies the path entry itself is gone. Stat would treat a broken
-	// symlink as absent even though a stale entry still occupies the handoff path.
+	// 用 Lstat 而不是 Stat 确认路径条目本身消失：Stat 会把损坏的 symlink 当成
+	// 不存在，即便一个陈旧条目仍占着移交路径。
 	if _, statErr := os.Lstat(worktreePath); errors.Is(statErr, os.ErrNotExist) {
 		return nil
 	} else if statErr != nil {
@@ -872,9 +783,8 @@ func removeLocalWorktreeDir(gitRoot, worktreePath string, logger *slog.Logger) e
 	return errors.New("worktree directory still exists after git removal reported success")
 }
 
-// deleteBranch drops a task branch that carries nothing worth keeping — an
-// empty read-only run, or a prepare that aborted partway. Best-effort: a
-// leftover branch is untidy, never harmful.
+// deleteBranch 丢弃一条「没带任何值得保留内容」的任务分支——只读空跑，或中途失败
+// 的 prepare。尽力而为：留下分支只是不整洁，从不造成危害。
 func deleteBranch(gitRoot, branch string, logger *slog.Logger) {
 	if branch == "" {
 		return
@@ -885,11 +795,9 @@ func deleteBranch(gitRoot, branch string, logger *slog.Logger) {
 	}
 }
 
-// resolveGitRoot returns the repository root containing dir. Worktree mode is
-// opt-in per resource, so a non-git directory here is a misconfiguration the
-// user needs to see and fix — we fail closed with an actionable message rather
-// than silently degrading to the in-place lock, which would leave the user
-// wondering why their tasks still queue.
+// resolveGitRoot 返回包含 dir 的仓库根。worktree 模式是按资源逐个选择的，所以这里
+// 出现非 git 目录是需要用户看到并修复的配置错误——关闭即失败并给出可操作的提示，
+// 而不是静默降级到 in-place 锁（那会让用户困惑：为什么他们的任务还在排队）。
 func resolveGitRoot(dir string) (string, error) {
 	root, err := runGitTrimmed(dir, "rev-parse", "--show-toplevel")
 	if err != nil || root == "" {
@@ -897,32 +805,26 @@ func resolveGitRoot(dir string) (string, error) {
 			"but its project resource is set to execution_mode=worktree; "+
 			"initialise a repository there or switch the resource back to in_place", dir)
 	}
-	// EvalSymlinks so the root matches the path git reports from inside the
-	// worktree later — on macOS /tmp vs /private/tmp otherwise produce two
-	// different lock keys for one repo.
+	// EvalSymlinks 使根路径与 git 之后在 worktree 内报告的一致——macOS 上
+	// /tmp 与 /private/tmp 否则会让同一个仓库产生两把不同的锁。
 	if resolved, evalErr := filepath.EvalSymlinks(root); evalErr == nil {
 		root = resolved
 	}
 	return filepath.Clean(root), nil
 }
 
-// captureUserSnapshot records the user's working directory as one commit: their
-// tracked modifications AND their untracked-but-not-ignored files, in a single
-// tree parented at their HEAD.
+// captureUserSnapshot 把用户的工作目录记成一个提交：已跟踪的修改「和」未跟踪但未
+// 被忽略的文件，合并为以用户 HEAD 为父的一棵树。
 //
-// One snapshot rather than the older split — a `git stash create` for tracked
-// edits and a file copy for untracked ones — because a continued branch has to
-// answer "what has the user changed since the turn I already carry?", and that
-// question is unanswerable for a file no snapshot ever recorded: an untracked
-// file the agent then edited would be re-copied from the user's older version
-// every turn, or its later deletion would never carry. A tree also expresses
-// deletions and mode changes, which a copy cannot.
+// 用单一快照而非旧式拆分——`git stash create` 管已跟踪改动、文件复制管未跟踪文件
+// ——是因为续接的分支必须回答「用户在我已携带的那一轮之后改了些什么」，而这个问题
+// 对「从未被任何快照记录过的文件」无法回答：agent 随后编辑过的一个未跟踪文件，会
+// 每一轮都被用用户更早的版本重新复制，或者它的后来删除永远不会被携带。树还能表达
+// 删除与模式变更，文件复制做不到。
 //
-// Nothing here touches the user's index, working tree or refs. GIT_INDEX_FILE
-// points at a private index in the task's env root, so `git add` writes only
-// blob objects and that file — which is also what makes the capture immune to
-// the .git/index.lock races that used to be able to end the task (#7434): the
-// only lock taken is on our own temporary file.
+// 这里不碰用户的索引、工作树或 refs。GIT_INDEX_FILE 指向任务 env root 里的私有
+// 索引，所以 `git add` 只写 blob 对象和那个文件——这也让捕获免疫于过去能终结任务的
+// .git/index.lock 竞态（#7434）：唯一会被取用的锁是我们自己临时文件上的。
 func captureUserSnapshot(gitRoot, envRoot, headSHA string, logger *slog.Logger) (string, error) {
 	if envRoot == "" {
 		return "", errors.New("execenv: user snapshot requires an env root to build its index in")
@@ -931,14 +833,13 @@ func captureUserSnapshot(gitRoot, envRoot, headSHA string, logger *slog.Logger) 
 	if err := os.Remove(indexPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("clear snapshot index: %w", err)
 	}
-	// It is scratch space, not task state: the env root is handed to the agent.
+	// 它是临时空间，不是任务状态：env root 本来就会交给 agent。
 	defer os.Remove(indexPath)
 	env := []string{"GIT_INDEX_FILE=" + indexPath}
 
-	// Seed from the user's own index so git can trust its stat cache instead of
-	// re-hashing the whole repository on every turn. A missing or torn copy is
-	// not a failure — read-tree rebuilds a correct index, merely a colder one —
-	// so the fallback runs on any error from the add, not just from the copy.
+	// 从用户自己的索引播种，使 git 能信它的 stat 缓存，而不必每一轮重哈希整个仓库。
+	// 一份缺失或损坏的副本不是失败——read-tree 会重建一份正确但更「冷」的索引——
+	// 所以回退在 add 的任何错误上都会跑，而不只在复制失败时。
 	seeded := seedSnapshotIndex(gitRoot, indexPath)
 	addArgs := append([]string{"add", "-A", "--"}, snapshotExcludes()...)
 	if out, err := runGitEnv(gitRoot, env, addArgs...); err != nil {
@@ -960,9 +861,8 @@ func captureUserSnapshot(gitRoot, envRoot, headSHA string, logger *slog.Logger) 
 	if err != nil {
 		return "", fmt.Errorf("git write-tree: %w", err)
 	}
-	// The identity args cover a repo with no user.email configured: writing a
-	// commit object needs a committer, and without them the user's uncommitted
-	// work would be dropped on a technicality.
+	// identity args 覆盖没有配置 user.email 的仓库：写提交对象必须有 committer，
+	// 没有它们，用户的未提交工作会因这种技术性原因被丢弃。
 	args := append(commitIdentityArgs(gitRoot), "commit-tree", tree, "-p", headSHA, "-m",
 		"multica: local directory snapshot\n\nThe tree of this commit is the user's working directory as a task saw it.")
 	snapshot, err := runGitTrimmed(gitRoot, args...)
@@ -972,9 +872,8 @@ func captureUserSnapshot(gitRoot, envRoot, headSHA string, logger *slog.Logger) 
 	return snapshot, nil
 }
 
-// seedSnapshotIndex copies the repository's index to path, reporting whether it
-// got one. Read as a plain file rather than through git: git would want the
-// index lock, and this copy exists precisely to avoid waiting on it.
+// seedSnapshotIndex 把仓库的索引复制到 path，返回是否成功拿到一份。用「读普通文件」
+// 的方式而非经由 git：git 会想拿索引锁，而这份复制存在的目的恰恰是不等那把锁。
 func seedSnapshotIndex(gitRoot, path string) bool {
 	src, err := runGitTrimmed(gitRoot, "rev-parse", "--git-path", "index")
 	if err != nil || src == "" {
@@ -986,13 +885,10 @@ func seedSnapshotIndex(gitRoot, path string) bool {
 	return copyFile(src, path) == nil
 }
 
-// snapshotExcludes keeps the daemon's own sidecars out of the user's snapshot.
-// They are untracked files in the user's directory whenever an in_place task is
-// mid-flight on the same path, or was killed before its cleanup ran; carrying
-// them would put another issue's brief inside this task's worktree — where the
-// agent would read it as its own context — and commit it to the branch.
-// Matched at any depth, because an in_place resource may point at a
-// subdirectory of this repo.
+// snapshotExcludes 把 daemon 自己的 sidecar 挡在用户快照之外。同一路径上有 in_place
+// 任务在跑、或被杀死而没跑完清理时，它们是用户目录里的未跟踪文件；把它们带进来会
+// 把另一个 issue 的 brief 放进本任务的 worktree——agent 会把它读成自己的上下文——
+// 还会提交到分支。任意深度都匹配，因为 in_place 资源可能指向本仓库的子目录。
 func snapshotExcludes() []string {
 	specs := make([]string, 0, len(multicaSidecarDirNames))
 	for _, name := range multicaSidecarDirNames {
@@ -1001,11 +897,10 @@ func snapshotExcludes() []string {
 	return specs
 }
 
-// branchOwner is the conversation a task branch belongs to. Recorded with the
-// branch's snapshot and compared before any later task continues it: the branch
-// NAME carries a human-readable issue key, which the user can also type and
-// which two workspaces can mint identically, so the name alone can never
-// establish that a branch is ours to append to (MUL-6881 review).
+// branchOwner 是任务分支所属的会话。随分支快照一起记录，并在任何后续任务续接前
+// 比对：分支「名字」携带人类可读的 issue 键——用户能照打、两个 workspace 也可能铸出
+// 完全相同的它——因此光凭名字永远无法确立「这条分支属于我们、可追加」（MUL-6881
+// review）。
 type branchOwner struct {
 	WorkspaceID    string
 	AgentID        string
@@ -1016,9 +911,8 @@ func (o branchOwner) valid() bool {
 	return o.WorkspaceID != "" && o.AgentID != "" && o.ConversationID != ""
 }
 
-// fingerprint is the stable, collision-resistant form of the same identity,
-// used to name a branch when the readable name is already taken by someone
-// else's. Stable across turns, so the fallback branch is continued too.
+// fingerprint 是同一身份的稳定、抗碰撞形式；当可读名已被别人的分支占用时，用它给
+// 分支命名。跨轮次稳定，所以回退分支同样能被续接。
 func (o branchOwner) fingerprint() string {
 	sum := sha256.Sum256([]byte(o.WorkspaceID + "\x00" + o.AgentID + "\x00" + o.ConversationID))
 	return hex.EncodeToString(sum[:])[:12]
@@ -1030,33 +924,28 @@ const (
 	ownerTrailerConversation = "Multica-Conversation"
 )
 
-// branchRecord is what refs/multica/local-state/<branch> holds: a commit whose
-// TREE is the user's directory as the branch last carried it, whose SECOND
-// PARENT is the branch tip at that moment, and whose message names the owner.
+// branchRecord 是 refs/multica/local-state/<branch> 持有的内容：一个提交，其 TREE 是
+// 分支最后携带的用户目录、其「第二个父」是那一刻的分支 tip、其提交信息点名 owner。
 //
-// The checkpoint is what makes the record about this BRANCH rather than merely
-// about its name. Owner alone proved only that Multica once wrote a branch
-// called this, and that stayed true after the user deleted it and created their
-// own under the same name — the next task then continued into their work
-// (MUL-6881 review). Requiring the checkpoint to still be an ancestor of the
-// tip is the continuity proof: a branch deleted and recreated, force-moved onto
-// unrelated history, or rebased no longer contains the commit recorded here.
+// checkpoint 正是让记录是关于「这条分支」而非仅关于「这个名字」的东西。单有 owner
+// 只能证明 Multica 曾写过一条叫这个名字的分支，这在用户删了它、又用同名建了自己
+// 的分支之后依然成立——下一个任务于是续接到了用户的工作里（MUL-6881 review）。
+// 要求 checkpoint 仍是 tip 的祖先，就是连续性证明：一条被删又重建、被 force 移上
+// 无关历史、或被 rebase 过的分支，不再包含这里记录的提交。
 type branchRecord struct {
-	// state is the commit whose tree is the user snapshot the branch carries.
+	// state 是其树为「分支携带的用户快照」的提交。
 	state string
-	// checkpoint is the branch tip this record was written against.
+	// checkpoint 是这份记录对之写入时的分支 tip。
 	checkpoint string
 	owner      branchOwner
 }
 
-// writeBranchRecord records the branch as carrying userState at checkpoint, and
-// points the branch's ref at that record.
+// writeBranchRecord 把分支记录成「在 checkpoint 处携带 userState」，并把分支的 ref
+// 指向这份记录。
 //
-// The checkpoint is passed in, never re-read from the branch ref here: the
-// caller knows which commit it actually delivered, while the ref is the user's
-// and can move between the delivery and this write. Recording what we delivered
-// means a branch that moved in that window simply fails the ancestor test next
-// time, which is the safe direction.
+// checkpoint 由调用方传入，绝不在这里从分支 ref 重读：调用方知道它实际交付了哪个
+// 提交，而 ref 是用户的、可能在这交付与本写入之间移动。记录「我们交付了什么」意味着
+// 在窗口内移动过的分支下次只是祖先测试不过——这是安全方向。
 func writeBranchRecord(gitRoot, branch, userState, checkpoint string, owner branchOwner) (string, error) {
 	if checkpoint == "" {
 		return "", fmt.Errorf("no checkpoint to record for branch %s", branch)
@@ -1087,9 +976,9 @@ func branchRecordMessage(owner branchOwner) string {
 	return b.String()
 }
 
-// readBranchRecord reads back what a branch is recorded as carrying. A commit
-// without all three trailers or without a second parent — anything not written
-// by writeBranchRecord — yields a record that can never match a valid owner.
+// readBranchRecord 读回「分支被记录成携带什么」。缺少全部三个 trailer 或没有第二
+// 个父的提交——即不是 writeBranchRecord 写出的——会得到一份永远匹配不上任何有效
+// owner 的记录。
 func readBranchRecord(gitRoot, commit string) (branchRecord, error) {
 	body, err := runGitTrimmed(gitRoot, "log", "-1", "--format=%B", commit)
 	if err != nil {
@@ -1117,71 +1006,60 @@ func readBranchRecord(gitRoot, commit string) (branchRecord, error) {
 	return record, nil
 }
 
-// addLocalWorktree creates the worktree, retrying once under a suffixed branch
-// name when the branch already exists (a re-dispatched task keeps its id, so
-// its branch can survive from the previous run).
-// taskBranchPlan is the decision about which branch a task's worktree checks
-// out and which commit it starts from.
+// addLocalWorktree 创建 worktree；当分支已存在时（重新派发的任务保留同一 id，因此
+// 它的分支可能从上一次运行活下来），会带着带后缀的分支名重试一次。
+// taskBranchPlan 是「任务 worktree 检出哪条分支、从哪个提交出发」的决策。
 type taskBranchPlan struct {
-	// name is the branch to check out or create.
+	// name 是要检出或创建的分支。
 	name string
-	// base is the commit the worktree starts from.
+	// base 是 worktree 出发的提交。
 	base string
-	// continues is true when base is an earlier turn's branch tip rather than
-	// the user's HEAD, so the checkout already carries that turn's work.
+	// continues 为 true 表示 base 是更早一轮的分支 tip 而非用户 HEAD，检出已经携带
+	// 那一轮的成果。
 	continues bool
-	// priorState is the user snapshot that branch is recorded as already
-	// carrying. Set only when continues is true; it is the merge base for this
-	// turn's replay.
+	// priorState 是那条分支「已记录为携带」的用户快照。仅 continues 为 true 时设置；
+	// 它是本轮重放的合并基准。
 	priorState string
-	// priorCheckpoint is the commit that branch was recorded at and still
-	// contains — this turn's proof that the branch is the conversation's. The
-	// branch tip this turn starts from descends from it, so everything after
-	// prepare measures against that tip instead.
+	// priorCheckpoint 是那条分支被记录时所在、且至今仍包含的提交——本轮证明分支是
+	// 该会话所有的依据。本轮出发的分支 tip 由它衍生，所以 prepare 之后的一切度量都
+	// 对准那个 tip 而非它。
 	priorCheckpoint string
-	// reset is true when the conversation's branch exists but is fully merged
-	// into HEAD, and this task restarts it there.
+	// reset 为 true 表示会话分支存在但已完全并入 HEAD，本任务在 HEAD 处重启它。
 	reset bool
-	// conversational is true when name is keyed to the conversation rather than
-	// to this one task, so a sibling task may legitimately want it too.
+	// conversational 为 true 表示 name 挂在会话而非本任务上，兄弟任务按理也可以
+	// 想要它。
 	conversational bool
-	// tracksState is true when a later turn may continue this branch, and it
-	// therefore has to record what the user's directory looked like.
+	// tracksState 为 true 表示后续轮次可能续接这条分支，因此必须记录用户目录当时
+	// 的样子。
 	tracksState bool
-	// owner is the identity the branch is recorded under.
+	// owner 是分支登记在其下的身份。
 	owner branchOwner
 }
 
-// altName disambiguates a branch a live sibling already holds.
+// altName 为「活动兄弟任务已占着」的分支给出消歧名。
 func (p taskBranchPlan) altName(taskID string) string {
 	if p.conversational {
-		// Task-scoped, and readable next to the conversation branch it forked
-		// from: agent/j/mul-6881-<task>.
+		// 任务级命名，且要与它分叉来源的会话分支并列可读：agent/j/mul-6881-<task>。
 		return p.name + "-" + taskKey(taskID)
 	}
-	// Already task-scoped, so only a re-run of the same task can collide here.
+	// 已经是任务级，因此只有同一任务的重跑才会在这里撞名。
 	return fmt.Sprintf("%s-%d", p.name, time.Now().Unix())
 }
 
-// resolveTaskBranch picks the branch for this task.
+// resolveTaskBranch 为任务挑选分支。
 //
-// Tasks that belong to a conversation — the turns of one issue, one chat
-// session — share a branch, because they are one line of work: the user says
-// "now also fix the caller" and expects the agent to be standing on what it
-// wrote a minute ago. Keying the branch to the task instead gave every turn its
-// own branch forked from HEAD, so turn two started in a tree that did not
-// contain turn one's work and nothing said so (MUL-6881). Per-task env roots
-// stay as they are — sibling tasks still run concurrently, they just deliver
-// onto the branch their conversation owns.
+// 归属同一会话的任务——同一 issue、同一聊天会话的轮次——共享一条分支，因为它们是
+// 同一条工作线：用户说「顺带把调用方也修了」，期望 agent 站在它一分钟前写的东西上。
+// 若把分支挂在任务上，则每一轮都从 HEAD 分叉出自己的分支，第二轮于是从一个不含
+// 第一轮成果的树开始，而且没有任何信号提示这一点（MUL-6881）。per-task 的 env root
+// 保持原样——兄弟任务仍然并发跑，只是都交付到它们会话拥有的那条分支上。
 //
-// Continuing a branch is decided by its recorded OWNER, never by its name.
-// `agent/j/mul-6881` is a name the user can type, another agent of the same
-// display name can produce, and a second workspace can mint for a different
-// issue; appending to any of those would silently mix two lines of work. So a
-// same-named branch we cannot prove is ours pushes this task onto
-// `agent/j/mul-6881-<fingerprint>` — stable for this exact conversation, so its
-// own follow-ups continue it — and, if that is somehow taken too, onto a
-// task-scoped branch that continues nothing.
+// 是否续接一条分支，由它「记录的 OWNER」决定，绝不看名字。`agent/j/mul-6881` 是
+// 用户能照打的名字、另一个同名展示 agent 也能造出来、第三个 workspace 更可以为另一
+// 个 issue 铸出它；往其中任何一个追加都会静默地混两条工作线。所以一条同名却无法
+// 证明属于我们的分支，会把本任务推到 `agent/j/mul-6881-<fingerprint>`——对这个确切
+// 会话稳定，所以它自己的后续轮次继续它——万一连它也被人占着，就落到一条不续接
+// 任何东西的任务级分支上。
 func resolveTaskBranch(gitRoot string, params LocalWorktreeParams, headSHA string, logger *slog.Logger) taskBranchPlan {
 	agentSegment := sanitizeName(params.AgentName)
 	taskScoped := taskBranchPlan{name: fmt.Sprintf("agent/%s/%s", agentSegment, taskKey(params.TaskID)), base: headSHA}
@@ -1204,8 +1082,7 @@ func resolveTaskBranch(gitRoot string, params LocalWorktreeParams, headSHA strin
 	return taskScoped
 }
 
-// planForConversationBranch reports how this task would use one candidate
-// branch name, and whether it may use it at all.
+// planForConversationBranch 报告本任务将如何使用一个候选分支名，以及它是否可用它。
 func planForConversationBranch(gitRoot, name, headSHA string, owner branchOwner, logger *slog.Logger) (taskBranchPlan, bool) {
 	plan := taskBranchPlan{
 		name:           name,
@@ -1216,15 +1093,15 @@ func planForConversationBranch(gitRoot, name, headSHA string, owner branchOwner,
 	}
 	tip, err := runGitTrimmed(gitRoot, "rev-parse", "--verify", "--quiet", "refs/heads/"+name)
 	if err != nil || tip == "" {
-		// Free to create.
+		// 可以自由创建。
 		return plan, true
 	}
 	record, owned := branchOwnedBy(gitRoot, name, owner, logger)
 	if !owned {
 		return taskBranchPlan{}, false
 	}
-	// The user merged it: the branch tip carries nothing HEAD does not, so
-	// continuing from it would strand this task behind their own commits.
+	// 用户已合并它：分支 tip 不携带任何 HEAD 没有的东西，从它续接会让任务滞留于
+	// 用户自己提交的身后。
 	if _, mergedErr := runGit(gitRoot, "merge-base", "--is-ancestor", name, "HEAD"); mergedErr == nil {
 		plan.reset = true
 		return plan, true
@@ -1240,18 +1117,15 @@ func planForConversationBranch(gitRoot, name, headSHA string, owner branchOwner,
 	return plan, true
 }
 
-// branchOwnedBy reports whether a branch is still the one this conversation
-// recorded, returning the user snapshot it carries.
+// branchOwnedBy 报告一条分支是否仍是本会话记录的那条，并返回它所携带的用户快照。
 //
-// Two questions, and both have to hold. Is the record ours — workspace, agent
-// and conversation ids. And is the branch still the one it was written against
-// — the recorded checkpoint has to be an ancestor of the current tip. The
-// second is not pedantry: a branch the user deleted and recreated under the
-// same name still satisfies the first, and continuing it would append this
-// conversation onto their unrelated work.
+// 两个问题必须同时成立。其一，记录是否属于我们——workspace、agent、会话三个 id。
+// 其二，分支是否仍是当初对之写入的那条——记录的 checkpoint 必须是当前 tip 的祖先。
+// 第二问不是吹毛求疵：一条被用户删除后以同名重建的分支依然满足第一问，续接它等于
+// 把这段会话追加到用户无关的工作上。
 //
-// A branch with no record is not ours by definition: every branch this code
-// creates writes one before its task is allowed to run.
+// 没有记录的分支按定义不属于我们：本代码创建的每条分支都会在允许任务运行前写入
+// 一份记录。
 func branchOwnedBy(gitRoot, branch string, owner branchOwner, logger *slog.Logger) (branchRecord, bool) {
 	ref, err := readUserStateRef(gitRoot, branch)
 	if err != nil || ref == "" {
@@ -1271,22 +1145,20 @@ func branchOwnedBy(gitRoot, branch string, owner branchOwner, logger *slog.Logge
 	return record, true
 }
 
-// addLocalWorktree materialises the planned branch as a worktree and reports
-// the branch actually used, plus whether this call is the one that put it
-// there — the caller may only delete a branch it created itself.
+// addLocalWorktree 把计划好的分支物化成 worktree，并报告实际用到的分支、以及这次
+// 调用是否就是把它放到那里的人——调用方只能删除自己创建的分支。
 //
-// The fallback covers a sibling task already holding the conversation's branch:
-// git allows one worktree per branch, and refusing to run is worse than
-// delivering onto a task-scoped branch. It forks from the same base, so the
-// sibling still stands on the conversation's latest work.
+// 回退覆盖「兄弟任务已占着会话分支」的情形：git 每条分支只允许一个 worktree，而拒
+// 绝运行比交付到一条任务级分支更糟。它从同一个 base 分叉，因此兄弟仍站在会话最新
+// 的成果上。
 func addLocalWorktree(gitRoot, worktreePath string, plan taskBranchPlan, taskID string) (string, bool, error) {
 	var args []string
 	switch {
 	case plan.continues:
 		args = []string{"worktree", "add", worktreePath, plan.name}
 	case plan.reset:
-		// -B moves the branch to base. Nothing is lost: this path only runs
-		// once the branch has been proven an ancestor of HEAD.
+		// -B 把分支移动到 base。没有丢失任何东西：此路径只在分支被证明是 HEAD 的
+		// 祖先之后运行。
 		args = []string{"worktree", "add", "-B", plan.name, worktreePath, plan.base}
 	default:
 		args = []string{"worktree", "add", "-b", plan.name, worktreePath, plan.base}
@@ -1305,8 +1177,8 @@ func addLocalWorktree(gitRoot, worktreePath string, plan taskBranchPlan, taskID 
 	return alt, true, nil
 }
 
-// branchUnavailable recognises git refusing a branch that another worktree
-// holds, or that already exists under a name we meant to create.
+// branchUnavailable 识别 git 因「分支被别的 worktree 持有」或「分支已在我们打算
+// 创建的名字下存在」而拒绝的情况。
 func branchUnavailable(out string) bool {
 	lower := strings.ToLower(out)
 	return strings.Contains(lower, "already exists") ||
@@ -1314,35 +1186,29 @@ func branchUnavailable(out string) bool {
 		strings.Contains(lower, "already used by worktree")
 }
 
-// replayResult is what the replay left in the worktree.
+// replayResult 是重放留在 worktree 里的结果。
 type replayResult struct {
-	// conflicts names the files git could not merge. Non-empty means the
-	// worktree holds an unresolved merge, on purpose.
+	// conflicts 列出 git 无法合并的文件。非空表示 worktree 有意持有一个未解决的
+	// 合并。
 	conflicts []string
 }
 
-// replayUserState brings the user's directory into the worktree.
+// replayUserState 把用户的目录带进 worktree。
 //
-// Both branch kinds run the same operation against a different starting point:
-// cherry-pick the difference between the state the checkout already carries and
-// the state the user is in now. For a branch forked from HEAD the first is HEAD
-// itself, so the whole snapshot applies and cannot conflict. For a continued
-// branch it is the snapshot that branch recorded, which is what makes this a
-// replay of the user's LAST-TURN-TO-NOW edits rather than of their whole tree.
+// 两类分支对不同的出发点执行同一操作：cherry-pick「检出已携带状态」与「用户当前
+// 状态」之间的差异。从 HEAD 分叉的分支，前者就是 HEAD 本身，所以整个快照原样适用、
+// 不可能冲突。续接的分支，前者是它记录的快照——这使它成为对用户「上一轮→现在」
+// 改动的重放，而不是对整棵用户树的重放。
 //
-// Replaying the whole tree onto a continued branch is the tempting version and
-// it is wrong: that merge takes the user's HEAD as its base, so it re-proposes
-// work the branch already has, and conflicts against the agent's edits to the
-// same lines — which is to say, it conflicts exactly when the agent did what it
-// was asked to do. Verified: with the user's directory untouched between turns,
-// a plain `stash apply` onto the branch tip already fails.
+// 把整棵树重放到续接分支上是诱人而错误的版本：那次合并以用户 HEAD 为基准，会把
+// 分支已有的工作重新提议一遍，并与 agent 对同样几行的改动冲突——也就是说，它恰好
+// 在 agent 做了被要求的事时冲突。已被证实：在轮次之间用户目录保持不动的前提下，
+// 一条朴素的 `stash apply` 到分支 tip 就已经失败。
 //
-// A conflict here is a real disagreement — the user rewrote lines the agent
-// also rewrote — and it stays in the worktree for the agent to resolve with
-// ordinary git commands, which is both what the agent is for and the only way
-// the user's newer edit survives. Dropping it would lose that edit twice over:
-// once from this turn's tree, and again from every later turn, because the
-// snapshot would advance past a change the branch never took.
+// 这里的冲突是真实的意见分歧——用户改写了几行 agent 也改写过的行——它留在 worktree
+// 里由 agent 用普通 git 命令解决，这既是 agent 的本职，也是用户较新的改动得以存活的
+// 唯一方式。丢弃它会让那次改动双重丢失：一次丢出本轮树，再一次丢出之后每一轮——
+// 因为快照会越过分支从未采纳的改动前进。
 func replayUserState(worktreePath string, plan taskBranchPlan, snapshot string, logger *slog.Logger) (replayResult, error) {
 	carried := plan.base
 	if plan.continues {
@@ -1351,15 +1217,14 @@ func replayUserState(worktreePath string, plan taskBranchPlan, snapshot string, 
 	if carried == "" {
 		return replayResult{}, fmt.Errorf("execenv: no baseline to replay the local directory against for branch %s", plan.name)
 	}
-	// Nothing new since the state this checkout already carries. On a follow-up
-	// turn that is the ordinary case: the user commented, they did not edit.
+	// 自该检出已携带的状态以来没有新东西。后续轮次里这是常事：用户留了言，没改
+	// 代码。
 	if _, err := runGit(worktreePath, "diff", "--quiet", carried, snapshot); err == nil {
 		return replayResult{}, nil
 	}
 
-	// A commit whose parent is the carried state and whose tree is the user's
-	// current one. Its parent is what git uses as the merge base, and that is
-	// the entire point: it is not reachable any other way.
+	// 一个以「已携带状态」为父、以用户当前状态为树的提交。它的父正是 git 用作合并
+	// 基准的东西，而这正是全部要点：没有别的办法可达它。
 	args := append(commitIdentityArgs(worktreePath), "commit-tree", snapshot+"^{tree}", "-p", carried,
 		"-m", "multica: local directory edits to replay")
 	increment, err := runGitTrimmed(worktreePath, args...)
@@ -1373,26 +1238,23 @@ func replayUserState(worktreePath string, plan taskBranchPlan, snapshot string, 
 	}
 	conflicts, listErr := unmergedPaths(worktreePath)
 	if listErr != nil || len(conflicts) == 0 {
-		// Not a conflict, so the replay failed for a reason the agent cannot
-		// resolve. Fail closed rather than start on a half-applied tree.
+		// 不是冲突，说明重放因 agent 无法解决的原因失败。关闭即失败，而不是从一棵
+		// 半应用状态的树开始。
 		abortCherryPick(worktreePath, logger)
 		return replayResult{}, fmt.Errorf("execenv: could not replay your local edits into the task worktree "+
 			"(the agent would have seen a different tree than you have): %s: %w", strings.TrimSpace(out), pickErr)
 	}
 	if !plan.continues {
-		// Unreachable by construction: a fresh branch is checked out at the
-		// increment's own parent, so there is nothing for git to disagree with.
-		// If it ever happens the tree is not one the user would recognise, and
-		// the old fail-closed rule is the right one.
+		// 按构造不可达：全新分支检出在 increment 自己的父上，git 没有可争执的东西。
+		// 若真发生，那棵树不是用户认得的样子，旧有的关闭即失败规则是对的。
 		abortCherryPick(worktreePath, logger)
 		return replayResult{}, fmt.Errorf("execenv: could not replay your local edits onto a fresh task worktree: %s: %w",
 			strings.TrimSpace(out), pickErr)
 	}
 
-	// Keep the conflict, drop only the sequencer state: the agent should see an
-	// ordinary conflicted worktree it can resolve with `git status` / `git add`,
-	// not a cherry-pick it is expected to conclude with a command it never
-	// started.
+	// 保留冲突、只清掉 sequencer 状态：agent 应看到一个可以用 `git status` /
+	// `git add` 解决的普通冲突 worktree，而不是一个需要用一个它从未发起的命令来
+	// 收尾的 cherry-pick。
 	if out, quitErr := runGit(worktreePath, "cherry-pick", "--quit"); quitErr != nil && logger != nil {
 		logger.Warn("execenv: could not clear the cherry-pick state after a conflicting replay (non-fatal)",
 			"path", worktreePath, "output", strings.TrimSpace(out), "error", quitErr)
@@ -1404,10 +1266,9 @@ func replayUserState(worktreePath string, plan taskBranchPlan, snapshot string, 
 	return replayResult{conflicts: conflicts}, nil
 }
 
-// quotedPaths renders repository paths for a human-facing message. Quoted
-// because a git path may contain newlines, quotes or control characters, and
-// this string is read in logs and task errors where a raw one would look like
-// several entries.
+// quotedPaths 把人读信息中的仓库路径渲染成带引号的形式。要加引号是因为 git 路径
+// 可能含换行、引号或控制字符，而这串文本会被读进日志和任务错误——裸路径在那会像
+// 好几条记录。
 func quotedPaths(paths []string) string {
 	quoted := make([]string, 0, len(paths))
 	for _, path := range paths {
@@ -1416,23 +1277,19 @@ func quotedPaths(paths []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-// verifyDeliveryPoint checks that tip is a commit this conversation can put its
-// name on before it becomes the branch's recorded checkpoint.
+// verifyDeliveryPoint 检查 tip 是否是「这段会话可以把自己的名字盖上去」的提交，然后
+// 它才会成为分支记录的 checkpoint。
 //
-// Two things are asserted, and they are the two ways a delivery can be
-// something other than what this task built. The tip has to BE the task's
-// branch — a run that checked out something else, or a branch someone moved
-// underneath it, delivers a commit this record has no business describing. And
-// it has to still contain the commit this turn started from — this turn's own
-// baseline when it made one, otherwise the branch tip it continued. A run that
-// resets its worktree back to the user's own HEAD passes neither test but the
-// second is the one that matters, twice over: recording a plain user commit as
-// the checkpoint is what makes a branch they later recreate there look like
-// ours, and a tip without this turn's starting point no longer carries the
-// snapshot about to be recorded as delivered (MUL-6881 review).
+// 断言两件事，而它们正是交付「不是本任务构建的东西」的两种途径。tip 必须「就是」
+// 任务的分支——一次检出别的东西、或有人在下面移动了分支的运行，交付了一个本记录
+// 不该描述的提交。且 tip 必须仍包含本轮出发的那个提交——本轮自己做了 baseline 就用
+// baseline，否则用续接的分支 tip。一次把 worktree reset 回用户自己 HEAD 的运行两条
+// 都过不了，但第二条才是关键，而且双倍关键：把一个普通用户提交记录成 checkpoint，
+// 正是让「他们之后在那里重建的分支」看起来像我们的东西；而没有本轮出发点的 tip，
+// 不再携带即将被记录成「已交付」的快照（MUL-6881 review）。
 func (w *LocalWorktree) verifyDeliveryPoint(tip string) error {
 	if !w.tracksState {
-		// Nothing will be recorded for this branch, so there is nothing to prove.
+		// 这条分支不会记录任何东西，所以没什么可证明。
 		return nil
 	}
 	if tip == "" {
@@ -1456,7 +1313,7 @@ func (w *LocalWorktree) verifyDeliveryPoint(tip string) error {
 	return nil
 }
 
-// unmergedPaths lists the files git considers unresolved in a worktree.
+// unmergedPaths 列出 worktree 中 git 认为尚未解决的文件。
 func unmergedPaths(worktreePath string) ([]string, error) {
 	out, err := runGitStdout(worktreePath, "diff", "--name-only", "--diff-filter=U", "-z")
 	if err != nil {
@@ -1471,9 +1328,8 @@ func unmergedPaths(worktreePath string) ([]string, error) {
 	return paths, nil
 }
 
-// abortCherryPick returns the worktree to the branch tip. Used only where the
-// conflict is not something the agent can act on; the ordinary conflict path
-// deliberately leaves the worktree as git left it.
+// abortCherryPick 把 worktree 恢复到分支 tip。只在「冲突不是 agent 能处理的东西」时
+// 使用；普通冲突路径刻意保留 git 留下的 worktree。
 func abortCherryPick(worktreePath string, logger *slog.Logger) {
 	for _, args := range [][]string{{"cherry-pick", "--quit"}, {"reset", "--hard", "HEAD"}, {"clean", "-fdq"}} {
 		if out, err := runGit(worktreePath, args...); err != nil && logger != nil {
@@ -1483,31 +1339,25 @@ func abortCherryPick(worktreePath string, logger *slog.Logger) {
 	}
 }
 
-// userStateRef is where a branch's record lives: the snapshot of the user's
-// directory it already carries, the conversation it belongs to, and the tip it
-// was recorded at.
+// userStateRef 是分支记录存放的位置：它已携带的用户目录快照、所属会话、以及它被
+// 记录时的 tip。
 func userStateRef(branch string) string {
 	return localStateRefPrefix + branch
 }
 
-// readUserStateRef returns the recorded snapshot, or "" when the branch has
-// none.
+// readUserStateRef 返回记录的快照；分支没有记录时返回 ""。
 func readUserStateRef(gitRoot, branch string) (string, error) {
 	return runGitTrimmed(gitRoot, "rev-parse", "--verify", "--quiet", userStateRef(branch))
 }
 
-// recordState pins the user's directory as this task saw it together with the
-// commit the branch stands at. Two things depend on the record: the next turn
-// replays from its tree, and every later task proves the branch is still its
-// own from its owner and checkpoint.
+// recordState 把「用户目录在本任务眼中的样子」与分支所在的提交钉在一起。两样东西
+// 依赖这份记录：下一轮从它的树重放，之后每个任务凭它的 owner 与 checkpoint 证明
+// 分支仍是自己的。
 //
-// The checkpoint must be a commit the branch could not plausibly be sitting at
-// WITHOUT this conversation's work — that is the whole proof. A tip that is
-// still the user's own HEAD is not one: it is exactly where a branch they
-// delete and recreate lands, and recording it would authorise a later turn to
-// append onto their unrelated work. Prepare therefore records only once the
-// branch carries a commit of ours, and Finalize records the tip it actually
-// delivered.
+// checkpoint 必须是「分支不可能在缺了这段会话工作时恰好停着」的提交——这就是全部
+// 证明。仍是用户自己 HEAD 的 tip 不合格：那正是用户删除并重建分支后落下的位置，把
+// 它记录进去等于授权后续轮次追加到用户无关的工作上。因此 Prepare 只在分支带上我们
+// 的提交后记录，Finalize 记录它实际交付的 tip。
 func (w *LocalWorktree) recordState(checkpoint string, logger *slog.Logger) error {
 	if w == nil || !w.tracksState || w.Branch == "" || w.userState == "" {
 		return nil
@@ -1522,8 +1372,8 @@ func (w *LocalWorktree) recordState(checkpoint string, logger *slog.Logger) erro
 	return nil
 }
 
-// dropBranch deletes a task branch that carries nothing worth keeping, together
-// with its recorded snapshot — the two are meaningless apart.
+// dropBranch 删除一条「没带任何值得保留内容」的任务分支，连同它记录的快照——两者
+// 分开都毫无意义。
 func dropBranch(gitRoot, branch string, logger *slog.Logger) {
 	if branch == "" {
 		return
@@ -1535,13 +1385,11 @@ func dropBranch(gitRoot, branch string, logger *slog.Logger) {
 	}
 }
 
-// pruneOrphanedStateRefs drops the snapshot of any branch that is no longer
-// there. Multica deletes both together, but the branch is the user's to delete,
-// rename or merge away at any time, and a ref left behind would pin their whole
-// working tree as of some past turn against `git gc` forever.
+// pruneOrphanedStateRefs 清掉「分支已不存在」的快照。Multica 会两者一起删，但分支
+// 是用户的，随时可被删除、重命名或合并走；留下的 ref 会把用户的整棵工作树按某个
+// 过去的轮次钉住，永远对抗 `git gc`。
 //
-// Best-effort and non-fatal: this is housekeeping in the user's repository, not
-// a precondition for the task.
+// 尽力而为、非致命：这是在用户仓库里的保洁，不是任务的前提。
 func pruneOrphanedStateRefs(gitRoot string, logger *slog.Logger) {
 	out, err := runGitTrimmed(gitRoot, "for-each-ref", "--format=%(refname)", localStateRefPrefix)
 	if err != nil {
@@ -1576,16 +1424,13 @@ func pruneOrphanedStateRefs(gitRoot string, logger *slog.Logger) {
 	}
 }
 
-// checkUntrackedReplayable refuses a directory whose untracked content is too
-// large to reproduce faithfully, before anything is written anywhere.
+// checkUntrackedReplayable 在任何内容被写入任何地方之前，先拒绝「未跟踪内容大到
+// 无法忠实重现」的目录。
 //
-// The bounds are the same ones the older file-copy replay enforced, and they
-// exist for the same reason: `--exclude-standard` already drops everything
-// gitignored, so a repo past them is one whose build output was never ignored.
-// Snapshotting it would write every byte into the user's own object database.
-// The untracked symlink case is refused for a narrower reason — it is content
-// the user can see, and this replay does not decide whether to reproduce the
-// link or its target, including targets outside the repo.
+// 上限与旧式文件复制重放强制的一致，存在理由也相同：`--exclude-standard` 已经丢弃
+// 所有被 gitignore 的内容，越过上限的仓库意味着构建产物从未被忽略。把那些字节快照
+// 下来等于写进用户自己的对象库。未跟踪 symlink 的情形被拒绝则出于更窄的理由——它
+// 是用户看得见的内容，而本次重放不负责决定复制链接还是其目标（包括仓库外的目标）。
 func checkUntrackedReplayable(gitRoot string, logger *slog.Logger) error {
 	out, err := runGitStdout(gitRoot, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
@@ -1602,8 +1447,8 @@ func checkUntrackedReplayable(gitRoot string, logger *slog.Logger) error {
 		}
 		info, statErr := os.Lstat(filepath.Join(gitRoot, rel))
 		if statErr != nil {
-			// Listed a moment ago, unreadable now: the tree changed under us.
-			// git will simply not find it either, so this is not a refusal.
+			// 刚才还在清单里，现在不可读：树在我们脚下变了。git 同样找不到它，
+			// 所以这不算拒绝。
 			continue
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -1614,7 +1459,7 @@ func checkUntrackedReplayable(gitRoot string, logger *slog.Logger) error {
 			continue
 		}
 		if !info.Mode().IsRegular() {
-			// Sockets, FIFOs, devices: not content, and git will not add them.
+			// socket、FIFO、设备：不是内容，git 也不会添加。
 			continue
 		}
 		files++
@@ -1632,23 +1477,19 @@ func checkUntrackedReplayable(gitRoot string, logger *slog.Logger) error {
 		gitRoot, skipped, maxUntrackedFiles, maxUntrackedBytes>>20)
 }
 
-// multicaSidecarDirNames are the directories Prepare writes into a workdir. A
-// task running in_place on the same directory leaves these present as
-// untracked files for the length of its run, so a concurrent worktree snapshot
-// sees them. CLAUDE.md / AGENTS.md are deliberately absent: those are
-// ordinarily the user's own tracked files, and the runtime only injects a
-// marker block into them, which CleanupRuntimeConfig removes.
+// multicaSidecarDirNames 是 Prepare 会写进 workdir 的那些目录。同一目录上若有 in_place
+// 任务正在跑，这些目录会以未跟踪文件的形式存在整个运行期，因此并发的 worktree
+// 快照会看到它们。CLAUDE.md / AGENTS.md 刻意缺席：它们通常是用户自己的已跟踪文件，
+// 运行时只会往其中注入一块标记，而 CleanupRuntimeConfig 会移除它。
 var multicaSidecarDirNames = []string{
 	".agent_context",
 	".multica",
 }
 
-// isMulticaSidecarPath reports whether a repo-relative path is one of the
-// daemon's own sidecars rather than the user's content. Matched as a whole
-// path segment at ANY depth, not just the repo root: an in_place resource may
-// point at a subdirectory of this repo, in which case its sidecars sit at
-// <subdir>/.agent_context — replaying those would put another issue's brief
-// inside this task's worktree and commit it to the delivered branch.
+// isMulticaSidecarPath 报告一个仓库相对路径是 daemon 自己的 sidecar 还是用户内容。
+// 按「完整路径段」在任意深度匹配，而非只在仓库根：in_place 资源可能指向本仓库的
+// 子目录，此时它的 sidecar 位于 <subdir>/.agent_context——重放它们会把另一个 issue
+// 的 brief 放进本任务的 worktree，并提交到交付分支。
 func isMulticaSidecarPath(rel string) bool {
 	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
 		for _, name := range multicaSidecarDirNames {
@@ -1660,14 +1501,13 @@ func isMulticaSidecarPath(rel string) bool {
 	return false
 }
 
-// runGit runs git in dir and returns combined output. Callers inspect the
-// output for git's own error text, so stdout and stderr stay merged.
+// runGit 在 dir 里运行 git 并返回合并后的输出。调用方要读输出里的 git 错误文本，
+// 所以 stdout 与 stderr 保持合并。
 func runGit(dir string, args ...string) (string, error) {
 	return runGitEnv(dir, nil, args...)
 }
 
-// runGitEnv is runGit with extra environment entries, for the one caller that
-// has to redirect GIT_INDEX_FILE.
+// runGitEnv 是 runGit 加额外环境条目，供唯一需要重定向 GIT_INDEX_FILE 的调用方使用。
 func runGitEnv(dir string, extraEnv []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
@@ -1682,9 +1522,8 @@ func runGitEnv(dir string, extraEnv []string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// runGitTrimmed runs git for its stdout value, discarding stderr so a
-// diagnostic line can't be mistaken for the value (`rev-parse` output, a
-// config value, a stash sha).
+// runGitTrimmed 运行 git 取它的 stdout 值，丢弃 stderr，以免一行诊断文本被误当成
+// 值（`rev-parse` 输出、config 值、stash sha）。
 func runGitTrimmed(dir string, args ...string) (string, error) {
 	out, err := runGitStdout(dir, args...)
 	if err != nil {
@@ -1693,7 +1532,7 @@ func runGitTrimmed(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// runGitTrimmedEnv is runGitTrimmed with extra environment entries.
+// runGitTrimmedEnv 是 runGitTrimmed 加额外环境条目。
 func runGitTrimmedEnv(dir string, extraEnv []string, args ...string) (string, error) {
 	out, err := runGitEnv(dir, extraEnv, args...)
 	if err != nil {
@@ -1702,9 +1541,8 @@ func runGitTrimmedEnv(dir string, extraEnv []string, args ...string) (string, er
 	return strings.TrimSpace(out), nil
 }
 
-// runGitStdout is runGitTrimmed without the trimming, for output where
-// whitespace is significant — NUL-separated file listings, where a leading or
-// trailing space is part of a filename.
+// runGitStdout 是不做裁剪的 runGitTrimmed，用于空白有意义时的输出——NUL 分隔的文件
+// 清单里，首尾空格本是文件名的一部分。
 func runGitStdout(dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
@@ -1719,14 +1557,12 @@ func runGitStdout(dir string, args ...string) (string, error) {
 	return string(out), nil
 }
 
-// withGitStderr renders git's stderr into the error.
+// withGitStderr 把 git 的 stderr 渲染进错误。
 //
-// cmd.Output() already captures stderr into ExitError.Stderr, but nothing ever
-// read it back out, so every failure from this path reached the user as a bare
-// "exit status 1" — git's own explanation was collected and then thrown away
-// at the point it was needed. Discarding stderr from the RESULT is deliberate
-// (see runGitTrimmed: a diagnostic line must never be mistaken for a value);
-// discarding it from the error was not.
+// cmd.Output() 早已把 stderr 收进 ExitError.Stderr，但从没人把它读出来，于是这条
+// 路径的每次失败都以光秃秃的 "exit status 1" 抵达用户——git 自己的解释被收集起来、
+// 又在最需要它的地方被扔掉了。从「结果」里丢弃 stderr 是有意的（见 runGitTrimmed：
+// 诊断行绝不能与值混淆）；从「错误」里丢弃它则不是。
 func withGitStderr(err error) error {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {

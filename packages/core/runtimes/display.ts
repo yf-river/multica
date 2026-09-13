@@ -1,9 +1,11 @@
+// Runtime 的展示名/展示标签工具：自定义覆盖、并总是保留底层 provider 家族的信息。
 import type { AgentRuntime } from "../types";
 
 /**
- * The name to show for a runtime (MUL-4217): the user's custom override when
- * set, otherwise the daemon-proposed default. Defends against older backends
- * that omit custom_name and against whitespace-only overrides.
+ * 一台 runtime 要显示的名字（MUL-4217）：设了用户自定义覆盖就用它，否则用 daemon
+ * 提议的默认名。防御省略 custom_name 的旧后端，以及纯空白覆盖。
+ * @param runtime 含 name/custom_name 的 runtime。
+ * @returns 展示名。
  */
 export function runtimeDisplayName(
   runtime: Pick<AgentRuntime, "name" | "custom_name">,
@@ -13,13 +15,13 @@ export function runtimeDisplayName(
 }
 
 /**
- * A runtime label that always surfaces the provider family, even when a custom
- * alias is set (#5260). The daemon bakes the provider into `name`
- * ("Codex (host)"), but a user alias replaces that whole string via
- * runtimeDisplayName and hides which CLI actually backs the runtime. When an
- * alias is present we re-attach the provider in parentheses; without one `name`
- * already carries it, so we return it unchanged to avoid a duplicated provider
- * ("Codex (host) (codex)").
+ * 一个总是让 provider 家族浮出水面的 runtime 标签（即便设了自定义别名，#5260）。
+ * daemon 把 provider 烤进 `name`（"Codex (host)"），但用户别名经 runtimeDisplayName
+ * 把整串换掉，藏起了这台 runtime 实际由哪个 CLI 支撑。存在别名时我们用括号把
+ * provider 重新附上；没有别名时 `name` 已携带它，所以原样返回避免重复
+ * （"Codex (host) (codex)"）。
+ * @param runtime 含 name/custom_name/provider 的 runtime。
+ * @returns 展示标签。
  */
 export function runtimeDisplayLabel(
   runtime: Pick<AgentRuntime, "name" | "custom_name" | "provider">,
@@ -32,13 +34,12 @@ export function runtimeDisplayLabel(
 }
 
 /**
- * Provider slugs whose human display name isn't just a capitalization of the
- * slug. This MUST mirror the daemon's `runtimeDisplayNameOverrides`
- * (server/internal/daemon/daemon.go): the daemon bakes that display name into
- * `name` for the no-alias case (for example, "Trae (host)"), so the aliased label has to use
- * the exact same names or the two paths drift apart (#5260). `qoderclicn`,
- * `codearts`, `dsh`, `traecli`, `qwen`, `qwenpaw`, `mcode`, and `zeroclaw` need overrides today — every other provider is a
- * first-letter capitalization of its slug on both sides. Keep in sync with the daemon map.
+ * provider slug 中"人类可读名不只是 slug 的首字母大写"的那些。
+ * 必须镜像 daemon 的 `runtimeDisplayNameOverrides`（server/internal/daemon/daemon.go）：
+ * daemon 在无别名场景把该显示名烤进 `name`（例如 "Trae (host)"），所以别名标签必须
+ * 用完全相同的名字，否则两条路径会漂移（#5260）。今天 `qoderclicn`、`codearts`、`dsh`、
+ * `traecli`、`qwen`、`qwenpaw`、`mcode`、`zeroclaw` 需要覆盖——其它 provider 在两边
+ * 都是各自 slug 的首字母大写。请与 daemon 的映射保持同步。
  */
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   codearts: "CodeArts",
@@ -53,9 +54,10 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 };
 
 /**
- * Map a provider slug to its display name, matching the daemon's
- * providerDisplayName: an explicit override when listed, otherwise the slug
- * with its first letter capitalized.
+ * 把 provider slug 映射成展示名，与 daemon 的 providerDisplayName 一致：
+ * 命中显式覆盖表用覆盖值，否则返回首字母大写的 slug。
+ * @param provider 运行时 provider 标识。
+ * @returns 展示名。
  */
 export function providerDisplayName(provider: string): string {
   const known = PROVIDER_DISPLAY_NAMES[provider];

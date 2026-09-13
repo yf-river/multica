@@ -1,3 +1,8 @@
+// 文件职责：实现 `multica issue metadata` 子命令组——每个 issue 上挂一张 KV
+// 元数据表（供 agent 流水线跨运行保存状态），本文件提供 list/get/set/delete 四个
+// 子命令、把 CLI 的 --value/--type 转成 JSON 类型的 parseMetadataValue，以及 KV 表
+// 的表格渲染辅助。约束（key 正则、50 个上限、仅原始类型值、8KB 上限）见
+// server/internal/handler/issue_metadata.go。
 package main
 
 import (
@@ -16,12 +21,11 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-// buildMetadataFilterQueryParam converts repeated `--metadata key=value`
-// flags into the canonical JSON object passed as the `metadata` query
-// parameter to /api/issues. Values are typed by the same rules as
-// `metadata set --value` without --type — JSON-parsed when possible, else
-// taken as a literal string. Duplicate keys are rejected; AND semantics
-// require distinct keys.
+// buildMetadataFilterQueryParam 把可重复的 `--metadata key=value` flag 汇总成一个
+// canonical JSON 对象，作为 /api/issues 的 `metadata` 查询参数（供 `issue list`
+// 按元数据过滤）。值的类型判定与 `metadata set --value`（不带 --type）一致——能按
+// JSON 解析（true/数字/字符串）就按 JSON，否则按字符串。重复 key 直接报错：
+// 过滤是 AND 语义，同一 key 出现多次说明用户想表达的条件无法用并列表达。
 func buildMetadataFilterQueryParam(pairs []string) (string, error) {
 	if len(pairs) == 0 {
 		return "", nil
@@ -54,10 +58,9 @@ func buildMetadataFilterQueryParam(pairs []string) (string, error) {
 	return string(buf), nil
 }
 
-// multica issue metadata {list|get|set|delete} — KV map attached to each issue
-// for agent pipeline state. See server/internal/handler/issue_metadata.go for
-// the constraints (key regex, 50-key cap, primitive-only values, 8KB blob).
-
+// issueMetadataCmd 是 `issue metadata` 分组命令——管理挂在 issue 上的 KV 元数据表，
+// 子命令：list / get / set / delete。约束（key 正则、50 key 上限、仅支持原始类型值、
+// 8KB 上限）见 server/internal/handler/issue_metadata.go。
 var issueMetadataCmd = &cobra.Command{
 	Use:   "metadata",
 	Short: "Manage per-issue metadata (KV)",
@@ -116,15 +119,12 @@ func init() {
 	issueCmd.AddCommand(issueMetadataCmd)
 }
 
-// parseMetadataValue converts a CLI --value flag (and optional --type) into
-// the JSON-encoded payload sent to the server. Default sniffing: if the
-// raw text parses as a JSON bool / number / string, that type is used; any
-// other JSON shape (null, array, object) is rejected even under default
-// because the server would reject it too.
+// parseMetadataValue 把 CLI 的 --value（以及可选的 --type）转成发给 server 的
+// JSON 编码载荷。默认「嗅探」类型：裸文本能按 JSON bool/数字/字符串解析就用对应
+// 类型；其余 JSON 形态（null、数组、对象）即使走默认路径也被拒——server 本就会拒。
 //
-// forcedType non-empty overrides sniffing: "string" wraps verbatim as a
-// JSON string; "number" parses strictly as a number; "bool" requires the
-// literal text "true" or "false".
+// forcedType 非空时覆盖嗅探："string" 原样包成 JSON 字符串；"number" 严格要求能
+// 解析为数字；"bool" 只接受字面 "true" / "false"。
 func parseMetadataValue(raw, forcedType string) (json.RawMessage, error) {
 	switch forcedType {
 	case "string":
@@ -144,12 +144,13 @@ func parseMetadataValue(raw, forcedType string) (json.RawMessage, error) {
 		}
 		return json.RawMessage(raw), nil
 	case "":
-		// auto-infer below
+		// 无 --type：落到下面的自动推断。
 	default:
 		return nil, fmt.Errorf("unknown --type %q (expected string, number, or bool)", forcedType)
 	}
 
-	// Auto-infer: try JSON parse, fall back to string.
+	// 自动推断：先试 JSON 解析，能解析成字符串/bool/数字就直接用原样文本，
+	// 否则整体当字符串（如 "waiting"）。
 	var v any
 	if err := json.Unmarshal([]byte(raw), &v); err == nil {
 		switch v.(type) {
@@ -164,6 +165,8 @@ func parseMetadataValue(raw, forcedType string) (json.RawMessage, error) {
 	return buf, nil
 }
 
+// runIssueMetadataList 执行 `issue metadata list <issue-id>`：列出 issue 上的全部
+// 元数据 KV。见函数体内对 404 的「尽力降级」处理——那是给 agent 引导路径的保底。
 func runIssueMetadataList(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -179,16 +182,11 @@ func runIssueMetadataList(cmd *cobra.Command, args []string) error {
 
 	var result map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/metadata", &result); err != nil {
-		// Best-effort degradation: when the server does not expose the
-		// per-issue metadata endpoint (self-hosted backends running an
-		// older build, missing migration, or routing issues that surface
-		// as 404), an agent's bootstrap "metadata list" must not fail
-		// the entire run. Emit an empty map and exit 0 so the agent
-		// still gets the empty-metadata signal it would have gotten on
-		// a fresh issue. Other status codes (auth, server errors) keep
-		// real error semantics, and metadata get/set/delete are
-		// unaffected — those callers still need to know when something
-		// went wrong.
+		// 尽力降级：当 server 没暴露 per-issue metadata 端点（老版本自托管后端、
+		// 缺迁移、或路由问题表现为 404）时，agent 引导阶段的「metadata list」绝不能
+		// 让整次 run 失败。这里输出空 map 并以 0 退出，agent 仍能拿到「元数据为空」
+		// 的信号（和新建 issue 一致）。其余状态码（鉴权失败、server 错误）保留真实
+		// 错误语义；get/set/delete 不受影响——那些调用方仍需要知道何时出错了。
 		var httpErr *cli.HTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
 			output, _ := cmd.Flags().GetString("output")
@@ -210,6 +208,8 @@ func runIssueMetadataList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssueMetadataGet 执行 `issue metadata get <issue-id> --key <k>`：读单个元数据
+// key 的值，key 不存在时报错。
 func runIssueMetadataGet(cmd *cobra.Command, args []string) error {
 	key, _ := cmd.Flags().GetString("key")
 	if key == "" {
@@ -248,6 +248,9 @@ func runIssueMetadataGet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssueMetadataSet 执行 `issue metadata set <issue-id> --key <k> --value <v>`
+// （可加 --type 强制类型）：写入单个元数据 key，成功后展示刷新后的整张表。
+// --value 为空也算合法值，故用 Flags().Changed 而非空串判断是否提供。
 func runIssueMetadataSet(cmd *cobra.Command, args []string) error {
 	key, _ := cmd.Flags().GetString("key")
 	if key == "" {
@@ -291,6 +294,8 @@ func runIssueMetadataSet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runIssueMetadataDelete 执行 `issue metadata delete <issue-id> --key <k>`：删除
+// 单个元数据 key。删除成功后刷新整张表展示；刷新失败仍打印清晰的删除成功消息。
 func runIssueMetadataDelete(cmd *cobra.Command, args []string) error {
 	key, _ := cmd.Flags().GetString("key")
 	if key == "" {
@@ -314,7 +319,7 @@ func runIssueMetadataDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("delete metadata: %w", err)
 	}
 
-	// Refresh the metadata so the user sees the result.
+	// 刷新一下整张表，让用户直接看到删除结果。
 	var result map[string]any
 	output, _ := cmd.Flags().GetString("output")
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/metadata", &result); err != nil {
@@ -332,6 +337,8 @@ func runIssueMetadataDelete(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// printMetadataTable 把整张元数据 KV 表渲染成 KEY/VALUE/TYPE 三列，key 按字典序
+// 排列保证输出稳定。
 func printMetadataTable(metadata map[string]any) {
 	headers := []string{"KEY", "VALUE", "TYPE"}
 	keys := make([]string, 0, len(metadata))
@@ -347,6 +354,8 @@ func printMetadataTable(metadata map[string]any) {
 	cli.PrintTable(os.Stdout, headers, rows)
 }
 
+// formatMetadataValue 把元数据值渲染成可读文本；用于表格展示与 issue usage 的
+// token 统计列（整数形式的计数不会出现 3.000000e+06 这类科学计数法）。
 func formatMetadataValue(v any) string {
 	switch x := v.(type) {
 	case string:
@@ -357,8 +366,7 @@ func formatMetadataValue(v any) string {
 		}
 		return "false"
 	case float64:
-		// JSON numbers come back as float64; render integers without a
-		// trailing ".0" for ergonomics.
+		// JSON 数字解出来是 float64；整数去掉末尾 ".0"，显示更自然。
 		if x == float64(int64(x)) {
 			return strconv.FormatInt(int64(x), 10)
 		}
@@ -369,6 +377,8 @@ func formatMetadataValue(v any) string {
 	}
 }
 
+// metadataValueType 返回元数据值的类型标签（表格 TYPE 列用），与 server 端约定的
+// 原始类型命名保持一致：string / bool / number，其余归 unknown。
 func metadataValueType(v any) string {
 	switch v.(type) {
 	case string:

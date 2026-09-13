@@ -1,15 +1,13 @@
-// backfill_issue_last_activity reconstructs issue.last_activity_at from the
-// existing updated_at value. Run it after every issue-writing backend in a
-// rolling deployment has been upgraded; older writers do not maintain the new
-// column. The command is deliberately separate from migrations and startup so
-// a large issue table never blocks a deploy.
+// backfill_issue_last_activity —— 重建 issue.last_activity_at 字段。
 //
-// Each batch commits independently. SIGINT/SIGTERM, a database error, or
-// --max-batches can stop the walk, and a later invocation resumes from rows
-// whose last_activity_at is still NULL. Each pass advances by an id keyset
-// watermark instead of rescanning its completed prefix. A session advisory lock
-// serializes operators while SKIP LOCKED avoids waiting behind unrelated hot
-// rows; later passes wrap around to recover rows skipped while locked.
+// 从既有的 updated_at 值回填 last_activity_at。要在滚动部署中"所有写 Issue 的
+// 后端都已升级"之后再跑——老版本写入方不维护这个新列。本命令刻意与迁移、启动
+// 流程分开：巨大的 issue 表绝不会阻塞一次部署。
+//
+// 每个批次独立提交。SIGINT/SIGTERM、数据库错误或 --max-batches 都能停下遍历，
+// 之后再跑一次会从"last_activity_at 仍为 NULL"的行继续。每一趟用 id keyset
+// 水位前进，而不是重扫已完成的区间。会话级咨询锁串行化多个运维，同时 SKIP
+// LOCKED 避免在无关的热行后面干等；后续几趟会绕回头，把被锁而跳过的行补上。
 package main
 
 import (
@@ -28,15 +26,21 @@ import (
 )
 
 const (
-	advisoryLockName        = "issue_last_activity_backfill"
+	// advisoryLockName 是会话咨询锁的名字（防止多个运维同时回填）。
+	advisoryLockName = "issue_last_activity_backfill"
+	// defaultMaxStalledPasses 是默认的"连续空转趟数上限"。
 	defaultMaxStalledPasses = 10
 )
 
+// stalledPassGuard 监视连续"没有进展"的遍历趟数：超过上限就报错中止——通常意味
+// 着某些行锁被长时间持有，需要释放后重跑或调大 --max-stalled-passes。
 type stalledPassGuard struct {
 	max         int
 	consecutive int
 }
 
+// observe 记录一趟的结果：只要这趟动了行就清零连续计数，否则累加；达到上限即
+// 返回带剩余量的错误提示。
 func (g *stalledPassGuard) observe(passRows, remaining int64) error {
 	if passRows > 0 {
 		g.consecutive = 0
@@ -95,6 +99,7 @@ func run() error {
 		return fmt.Errorf("ping database: %w", err)
 	}
 
+	// 会话咨询锁：一次只允许一个回填进程。
 	lockConn, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire advisory-lock connection: %w", err)
@@ -136,9 +141,9 @@ func run() error {
 			next := result.LastID
 			afterID = &next
 		}
-		// A short/empty keyset batch marks the end of this pass, not necessarily
-		// completion: SKIP LOCKED may have left hot rows below the watermark.
-		// Count once per pass, then wrap to the start until those rows unlock.
+		// 短/空的一批 keyset 数据表示"这趟到头了"，但不代表全部完成：SKIP LOCKED
+		// 可能在水位之下留了热行。每趟结束数一次剩余，然后绕回起点继续，直到那些
+		// 行被解锁。
 		if result.Rows < int64(*batchSize) {
 			remaining, err = issueactivitybackfill.CountRemaining(ctx, pool, "")
 			if err != nil {

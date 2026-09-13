@@ -1,3 +1,5 @@
+// 本文件职责：「创建技能」弹窗——先选创建方式（手动编写 / 本地文件夹或 .skill 归档 /
+// URL 导入 / 本地 runtime 导入），再按所选方式走各自表单，创建成功回调并关闭。
 "use client";
 
 import { useRef, useState, type ChangeEvent } from "react";
@@ -50,8 +52,10 @@ import { RuntimeLocalSkillImportPanel } from "./runtime-local-skill-import-panel
 import { useT } from "../../i18n";
 import { isNameConflictError } from "../lib/utils";
 
+// 创建弹窗当前所处的方式：chooser（选择卡）或某一具体表单。
 type Method = "chooser" | "manual" | "local" | "url" | "runtime";
 
+/** 创建成功后：把返回的 skill 直接种进详情缓存，并让列表/agent 缓存失效刷新。 */
 function seedAfterCreate(
   qc: ReturnType<typeof useQueryClient>,
   wsId: string,
@@ -63,9 +67,10 @@ function seedAfterCreate(
 }
 
 // ---------------------------------------------------------------------------
-// Chooser — initial method picker (4 cards)
+// 方式选择器——初始的四种创建方式卡片
 // ---------------------------------------------------------------------------
 
+/** 方式选择器：列出四种创建方式（手动 / 本地 / URL / runtime）各一张可点卡片。 */
 function MethodChooser({ onChoose }: { onChoose: (m: Method) => void }) {
   const { t } = useT("skills");
   const methods: {
@@ -105,9 +110,10 @@ function MethodChooser({ onChoose }: { onChoose: (m: Method) => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// Manual form
+// 手动编写表单
 // ---------------------------------------------------------------------------
 
+/** 手动创建表单：填名称（回车可提交）+ 描述，名称冲突时给额外提示。 */
 function ManualForm({
   onCreated,
   onCancel,
@@ -242,11 +248,13 @@ function ManualForm({
 }
 
 // ---------------------------------------------------------------------------
-// URL import form
+// URL 导入表单
 // ---------------------------------------------------------------------------
 
+// 从 URL 里能嗅探出的托管来源。
 type DetectedSource = "clawhub" | "skills.sh" | "github" | null;
 
+/** 用主机名粗判 URL 属于哪个托管来源；都不匹配返回 null。 */
 function detectUrlSource(url: string): DetectedSource {
   const u = url.trim().toLowerCase();
   if (u.includes("clawhub.ai")) return "clawhub";
@@ -255,6 +263,7 @@ function detectUrlSource(url: string): DetectedSource {
   return null;
 }
 
+/** 某个受支持来源的说明卡片：展示示例地址，可点击去该站浏览。 */
 function SourceCard({
   label,
   exampleHost,
@@ -284,6 +293,7 @@ function SourceCard({
   );
 }
 
+/** URL 导入表单：粘贴来源链接，按嗅探到的来源给出差异化的「导入中…」文案。 */
 function UrlForm({
   onCreated,
   onCancel,
@@ -428,9 +438,13 @@ function UrlForm({
 }
 
 // ---------------------------------------------------------------------------
-// Local folder / archive import
+// 本地文件夹 / .skill 归档导入
 // ---------------------------------------------------------------------------
 
+/**
+ * 本地导入表单：从「文件夹」或「.skill/.zip 归档」二选一，预检（缺失 SKILL.md、
+ * 过大、为空、文件过多）通过后展示预览并允许导入。
+ */
 function LocalForm({
   prepared,
   preparing,
@@ -454,8 +468,8 @@ function LocalForm({
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
 
-  // Import stays disabled until a valid selection exists, so an invalid one
-  // never reaches here — `prepareError` below already explains why.
+  // 未选到「合法归档」前导入按钮不可用，因此非法选择到不了这里——下方 `prepareError`
+  // 已经解释了它为什么非法。
   const submit = async () => {
     if (!prepared?.ok) return;
     setLoading(true);
@@ -528,8 +542,8 @@ function LocalForm({
           </div>
         )}
 
-        {/* Source pickers belong in the body: four buttons in the footer
-            overflow the dialog width and clip Cancel (MUL-6794). */}
+        {/* 来源选择按钮放在正文里：四个按钮若都进 footer 会撑破弹窗宽度、夹掉取消钮
+            （MUL-6794）。 */}
         <div className="grid grid-cols-2 gap-2">
           <Button
             type="button"
@@ -605,9 +619,19 @@ function LocalForm({
 }
 
 // ---------------------------------------------------------------------------
-// Root dialog
+// 根弹窗——在四种创建方式间切换视图
 // ---------------------------------------------------------------------------
 
+/**
+ * 「创建技能」弹窗。
+ *
+ * 以 method 状态在「方式选择卡 → 具体表单」间切换：手动表单/本地导入/URL 导入/本地
+ * runtime 导入。本地导入保持隐藏的 <input type="file">（目录与归档各一）常驻挂载，
+ * 并专门处理「重新选同一文件夹」与异步预检的竞态。创建成功统一回调 onCreated 并关闭。
+ *
+ * @param onClose   关闭弹窗的回调
+ * @param onCreated 某技能创建成功后的回调
+ */
 export function CreateSkillDialog({
   onClose,
   onCreated,
@@ -661,9 +685,9 @@ export function CreateSkillDialog({
 
   const handleChoose = (next: Method) => {
     if (next === "local") {
-      // Switch first so cancelling the picker still lands on the local
-      // panel (choose-folder / choose-archive), rather than silently
-      // staying on the chooser with no way to pick a .skill file.
+      // 先切视图再弹选择器：这样即使用户取消了系统文件选择器，也会落在「本地导入」
+      // 面板上（那里有 choose-folder / choose-archive 两个按钮可重试），而不是无声地
+      // 停在选择卡、没有任何入口选 .skill 文件。
       setMethod("local");
       openFolderPicker();
       return;
@@ -673,9 +697,8 @@ export function CreateSkillDialog({
   };
 
   const onFolderPicked = async (e: ChangeEvent<HTMLInputElement>) => {
-    // FileList is live: clearing the input empties the same object. Snapshot
-    // File handles first so resetting `value` (to allow picking the same
-    // folder again) cannot drop the selection.
+    // FileList 是「活的」：清空 input 会同时清空同一个对象。先快照 File 句柄，
+    // 之后重置 `value`（以便能再次选同一文件夹）才不会把已选文件弄丢。
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
     if (files.length === 0) return;
@@ -719,7 +742,7 @@ export function CreateSkillDialog({
             : "!h-auto !max-h-[85vh] !max-w-md !w-full",
         )}
       >
-        {/* Header */}
+        {/* 头部——返回（非首屏时）/ 标题与说明 / 关闭 */}
         <div className="flex shrink-0 items-start justify-between gap-3 border-b px-5 pt-4 pb-3">
           <div className="flex items-start gap-2 min-w-0">
             {method !== "chooser" && (
@@ -768,8 +791,8 @@ export function CreateSkillDialog({
           </Tooltip>
         </div>
 
-        {/* Hidden pickers stay mounted so the chooser click can open them
-            in the same user-gesture (browsers otherwise block input.click()). */}
+        {/* 隐藏的文件选择器保持挂载，让「方式卡点击」能在同一个用户手势里触发选择器
+            （否则浏览器会拦截 input.click()）。 */}
         <input
           ref={bindDirectoryInput}
           type="file"
@@ -789,7 +812,7 @@ export function CreateSkillDialog({
           onChange={onArchivePicked}
         />
 
-        {/* Method body — each form owns its scroll middle + footer */}
+        {/* 方式主体——每个表单自带「滚动区 + footer」 */}
         {method === "chooser" && <MethodChooser onChoose={handleChoose} />}
         {method === "manual" && (
           <ManualForm

@@ -1,5 +1,10 @@
 "use client";
 
+// 本文件：视图栏（ViewBar）的下拉面板及删除确认。
+// ViewBar 在窄屏/溢出时把放不下的页签收进"更多"列表：这里提供那个可拖拽排序的
+// 面板 ViewListPanel（拖序即调整栏上可见哪些视图）、每行的行内操作菜单，
+// 以及各入口共用的"删除视图"二次确认对话框 DeleteViewConfirm。
+
 import {
   DndContext,
   PointerSensor,
@@ -47,7 +52,7 @@ import { cn } from "@multica/ui/lib/utils";
 import type { IssueView } from "@multica/core/api/schemas";
 import { useT } from "../../i18n";
 
-/** One entry on the bar: a built-in tab or a saved view. */
+/** 栏上的一个条目：内置页签或一个已保存视图。 */
 export interface ViewBarItem {
   barItemId: string;
   label: string;
@@ -56,18 +61,17 @@ export interface ViewBarItem {
   canManage?: boolean;
 }
 
-/** The vertical-locked row drag has no DragOverlay under the pointer, so
- *  the grabbing cursor is promoted to the document for the drag's duration
- *  (see the `data-dnd-dragging` contract in ui/styles/base.css). */
+/** 纵向锁定的行拖拽在指针下没有 DragOverlay 可供抓取，因此在拖拽期间把
+ *  "抓取"光标提升到整个文档（见 ui/styles/base.css 里的
+ *  `data-dnd-dragging` 约定）。 */
 function setDndCursor(on: boolean) {
   if (on) document.documentElement.dataset.dndDragging = "true";
   else delete document.documentElement.dataset.dndDragging;
 }
 
 /**
- * The one delete-view confirmation, shared by the manage dialog, the bar's
- * context menu, and the list-panel rows so every entrance carries identical
- * copy and the same "deletes the view only, never issues" contract.
+ * 唯一的"删除视图"确认框，由管理对话框、栏上右键菜单与面板行三处共用，
+ * 保证任何入口的文案一致、并共同遵守"只删视图、绝不删问题"的约定。
  */
 export function DeleteViewConfirm({
   view,
@@ -184,8 +188,7 @@ function SortablePanelRow({
             }
           />
           <DropdownMenuContent align="end" className="w-44">
-            {/* Same permission presentation as the tab context menu:
-                edit greys out, delete hides. */}
+            {/* 与页签右键菜单同一套权限呈现：无权限时"编辑"置灰、删除直接隐藏。 */}
             <DropdownMenuItem disabled={!item.canManage} onClick={onEdit}>
               <Pencil className="size-3.5" />
               {t(($) => $.view_bar.context_edit)}
@@ -215,11 +218,10 @@ function SortablePanelRow({
 }
 
 /**
- * The pulled-down list: EVERY tab on the bar, in bar order, drag to
- * reorder — the same preference document the bar's inline drag writes.
- * Because the bar shows the longest fitting prefix, reordering here IS
- * the control over what stays visible: drag something up to put it on
- * the bar, down to tuck it away. A separator marks the current fold.
+ * 下拉列表：栏上的全部页签，按栏上顺序排列，可拖拽重排——它与栏上的内联
+ * 拖拽写的是同一份偏好。因为栏只展示"能放得下"的最长前缀，这里的重排
+ * 就是控制哪些视图留在栏上的手段：往上拖让它上栏，往下拖收起来。
+ * 分隔线标出当前折叠位置。
  */
 export function ViewListPanel({
   items,
@@ -233,13 +235,13 @@ export function ViewListPanel({
   onTogglePin,
   onHideItem,
 }: {
-  /** All bar candidates in order (hidden ones excluded, as on the bar). */
+  /** 按顺序排列的全部候选条目（被隐藏的已排除，与栏上一致）。 */
   items: ViewBarItem[];
-  /** How many currently fit on the bar — the fold line. */
+  /** 当前栏上能放下的数量——即折叠线位置。 */
   fitCount: number;
   activeViewId: string | null;
   pinnedViewIds: ReadonlySet<string>;
-  /** Reorder request: move the item with `activeId` next to `overId`. */
+  /** 重排请求：把 `activeId` 那个条目移到 `overId` 旁边。 */
   onMoveItem: (activeId: string, overId: string) => void;
   onSelectItem: (item: ViewBarItem) => void;
   onEditView: (view: IssueView) => void;
@@ -275,7 +277,7 @@ export function ViewListPanel({
         >
           {items.map((item, index) => (
             <div key={item.barItemId}>
-              {/* The fold: everything above is on the bar right now. */}
+              {/* 折叠线：它之上的条目此刻就在栏上。 */}
               {index === fitCount && index > 0 && (
                 <div className="mx-1.5 my-1 border-t border-border" />
               )}

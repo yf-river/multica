@@ -1,5 +1,12 @@
 "use client";
 
+// 本文件：SwimLaneView —— 问题列表的"泳道（横向分组）视图"。
+// 每条泳道 = 分组头 + 一行按状态列的卡片格（每格镜像一张 BoardColumn）。
+// 支持按父任务 / 项目 / 负责人 / 服务端分组切换，行与卡片皆可拖拽（行=重排顺序，
+// 卡片=跨泳道/跨状态移动，落地前先做本地乐观更新、mutation 落定后再与缓存对账）。
+// 状态列是"类别"（自定义状态归入其行为对应的列）；泳道行由单一 Virtuoso 虚拟化，
+// 只挂载可视泳道。折叠/隐藏状态等偏好经 view store 按分组持久化。
+
 import { issueColumnCategory, issueStatusCategory, statusCategoryOfKey } from "@multica/core/issues";
 import { memo, useState, useCallback, useMemo, useEffect, useRef } from "react";
 import {
@@ -74,15 +81,13 @@ import type {
 const COLUMN_WIDTH = 280;
 const COLUMN_GAP = 16;
 
-// A swimlane row (header + one row of card cells) is ~300px+ tall — a
-// viewport fits ~3. The generic VIRTUOSO_SEED_COUNT (30, sized for 36px list
-// rows) made every surface remount synchronously mount up to 30 full lanes
-// (each lane = statuses x cells x cards); 6 covers the viewport with margin.
+// 一条泳道行（组头 + 一排卡片格）约 300px+ 高——一个视口大约装 3 条。通用的
+// VIRTUOSO_SEED_COUNT（30，按 36px 的列表行估的）会让每次 surface 重挂载都同步挂
+// 起最多 30 条完整泳道（每条 = 状态列 × 卡片格 × 卡片）；6 覆盖一个视口还留了余量。
 const SWIMLANE_LANE_SEED_COUNT = 6;
 
-// Hoisted out of SwimLaneView so its reference is stable across renders —
-// useQueries' combine option uses it through replaceEqualDeep, but keeping
-// the function stable saves the per-render reference check.
+// 从 SwimLaneView 里提升到模块级，保证引用跨渲染稳定——useQueries 的 combine 选项
+// 会经 replaceEqualDeep 用到它，但函数稳定就能省掉每次渲染的引用检查。
 function combineChildrenLists(
   results: { data: Issue[] | undefined }[],
 ): (Issue[] | undefined)[] {
@@ -113,10 +118,10 @@ function makeSwimLaneCollision(cellIds: Set<string>): CollisionDetection {
     if (pointer.length > 0) {
       let filtered = pointer;
       if (isLaneDrag) {
-        // Lane dragging: only consider other lane headers
+        // 拖的是泳道：只考虑其他泳道头
         filtered = pointer.filter((c) => (c.id as string).startsWith("lane:"));
       } else {
-        // Card dragging: ignore parent lane headers entirely
+        // 拖的是卡片：完全忽略父级泳道头
         filtered = pointer.filter((c) => !(c.id as string).startsWith("lane:"));
       }
 
@@ -170,16 +175,15 @@ function cellId(laneKey: string, status: IssueStatus): string {
 
 const LANE_ID_PREFIX = "lane:";
 
-/** Sentinel id slice (after the grouping prefix) for the pinned no-X lane. */
+/** 固定"无 X"泳道的哨兵 id 片段（分组前缀之后的部分）。 */
 const NONE_LANE_ID = "none";
 
-/** Sentinel id slice for the parent-grouping orphan fallback lane. */
+/** 父级分组"孤儿回退泳道"的哨兵 id 片段。 */
 const ORPHAN_LANE_ID = "__orphans__";
 
 /**
- * Sortable id for a draggable swimlane header. Pinned lanes (no-X) and the
- * orphan fallback get a stable but unique-per-grouping id so dnd-kit doesn't
- * silently collapse them onto a real lane id when both happen to be empty.
+ * 可拖拽泳道头的 sortable id。固定泳道（无-X）与孤儿回退泳道使用稳定、但
+ * 在同分组内唯一 的 id——避免两者都为空时 dnd-kit 悄悄把它们折叠到真实泳道 id 上。
  */
 function laneIdFor(grouping: SwimlaneGrouping, rawId: string): string {
   return `${LANE_ID_PREFIX}${grouping}:${rawId}`;
@@ -207,57 +211,52 @@ function computePosition(ids: string[], activeId: string, issueMap: Map<string, 
 }
 
 /**
- * One swimlane row. Lanes are produced by a per-grouping builder
- * (`buildParentLanes` / `buildProjectLanes` / `buildAssigneeLanes`) and then
- * consumed uniformly by the renderer. The matcher/move-updates closures hide
- * the grouping-specific details behind a single interface so the drag-end
- * handler doesn't need to branch on grouping.
+ * 一条泳道行。泳道由"按分组定制的构建器"（`buildParentLanes` / `buildProjectLanes` /
+ * `buildAssigneeLanes`）产出，再被渲染器统一消费。matcher / move-updates 闭包把
+ * 分组细节藏在同一个接口后面，这样 drag-end 处理器就不必按分组分支。
  */
 interface LaneGroup {
-  /** Full lane key — `<grouping>:<rawId>`. Used in cell ids and as the dictionary key. */
+  /** 完整泳道键——`<grouping>:<rawId>`。用于卡片格 id 与字典键。 */
   key: string;
-  /** Unique-within-grouping id slice (after the grouping prefix). */
+  /** 在同分组内唯一的 id 片段（分组前缀之后的部分）。 */
   rawId: string;
-  /** Pinned lane (no-X). Always rendered at the top, never draggable. */
+  /** 固定泳道（无-X）。永远置顶渲染，不可拖拽。 */
   isPinned: boolean;
   /**
-   * Display-only fallback bucket for the parent grouping — children whose
-   * canonical parent isn't in the loaded set. Drops in/out are rejected
-   * because we can't synthesize the missing parent id.
+   * 父级分组专用的"仅展示"回退桶——规范父级不在已加载集合里的子任务。
+   * 进/出的拖放都会被拒绝，因为我们无法合成缺失的父级 id。
    */
   isOrphan: boolean;
   title: string;
   identifier: string;
-  /** Parent issue (parent grouping only) — drives the open-parent link + status icon in the header. */
+  /** 父任务（仅父级分组）——驱动表头里的"打开父任务"链接与状态图标。 */
   parentIssue: Pick<Issue, "id" | "status"> | null;
-  /** Project metadata (project grouping only) — drives the icon in the header. */
+  /** 项目元数据（仅项目分组）——驱动表头里的图标。 */
   project: Project | null;
-  /** Actor (assignee grouping only) — drives the avatar in the header. */
+  /** 负责人（仅负责人分组）——驱动表头里的头像。 */
   actor: { type: IssueAssigneeType; id: string } | null;
-  /** Whether this lane owns `issue`. */
+  /** 该 issue 是否属于这条泳道。 */
   matches: (issue: Issue) => boolean;
   /**
-   * Payload fragment emitted to `onMoveIssue` when an issue is dropped into
-   * this lane. Status + position are filled in by the drag-end handler.
+   * issue 被放入这条泳道时交给 `onMoveIssue` 的负载片段。
+   * 状态与 position 由 drag-end 处理器补齐。
    */
   moveUpdates: SwimLaneMoveTargetUpdates;
-  /** Exact server count; legacy builders leave this undefined and use the
-   * loaded cell window as before. */
+  /** 精确的服务端计数；旧式构建器不填，沿用之前"以已加载单元格窗口为准"的做法。 */
   total?: number;
-  /** Opaque compound row keys by status. */
+  /** 按状态映射的"复合行键"（不透明）。 */
   serverCellKeys?: Partial<Record<IssueStatus, string>>;
 }
 
 const EMPTY_PROGRESS_MAP = new Map<string, ChildProgress>();
-// Stable reference for non-parent groupings — keeps the `statusTotals` /
-// `cells` memos from busting on every render when there are no headers.
+// 非父级分组用的稳定引用——没有表头时保住 `statusTotals` / `cells` 两个 memo
+// 不因每次渲染而失效。
 const EMPTY_HEADER_IDS = new Set<string>();
 const EMPTY_PROJECTS: Project[] = [];
 
 /**
- * Build parent-grouping lanes. The "No parent" lane is always pinned at the
- * top; the "Other parents" fallback (children whose parent isn't loaded) is
- * appended after it when present.
+ * 构建"父级分组"的泳道。"无父任务"泳道永远固定置顶；"其他父任务"回退桶
+ *（父级未加载的子任务）在出现时追加其后。
  */
 function buildParentLanes(
   visibleIssues: Issue[],
@@ -333,8 +332,7 @@ function buildParentLanes(
       parentIssue: null,
       project: null,
       actor: null,
-      // Match the canonical filter logic: a child whose parent isn't a
-      // header lane in the current render.
+      // 与规范的筛选逻辑一致：父级"不是当前渲染里某个表头泳道"的子任务。
       matches: () => false,
       moveUpdates: {},
     });
@@ -436,7 +434,7 @@ function buildAssigneeLanes(
     });
   }
 
-  // Sort by actor type (members before agents before squads) then by name.
+  // 先按 actor 类型（成员在 agent 与 squad 之前）再按名字排序。
   const typeOrder: Record<string, number> = { member: 0, agent: 1, squad: 2 };
   const orderIndex = new Map<string, number>();
   storedOrder.forEach((id, idx) => orderIndex.set(`assignee:${id}`, idx));
@@ -618,12 +616,10 @@ function SwimLaneViewImpl({
 }: {
   issues: Issue[];
   /**
-   * Status-unfiltered companion set used for parent metadata lookup and
-   * status totals. Lane discovery still drives off the visible `issues`
-   * set so that parents whose children are all in hidden statuses don't
-   * produce empty rows, but header chrome (identifier, title, issue ref
-   * for the Open-parent link) and hidden-column counts read from here so
-   * a parent in a hidden status still surfaces its label correctly.
+   * 不做状态过滤的伴生集合，用于父级元数据查找与状态总数。
+   * 泳道发现仍以可见的 `issues` 为驱动——让"子任务全在隐藏状态"的父级不要
+   * 产出空行——但表头装饰（编号、标题、供"打开父任务"链接用的 issue 引用）与
+   * 隐藏列计数从这里读取，使处于隐藏状态的父级也能正确显示标签。
    */
   unfilteredIssues?: Issue[];
   activeFilters?: Omit<IssueFilters, "statusFilters">;
@@ -636,7 +632,7 @@ function SwimLaneViewImpl({
   ) => void;
   childProgressMap?: Map<string, ChildProgress>;
   projectMap?: Map<string, Project>;
-  /** Pre-fills `project_id` on the create form for the in-cell "+" button. */
+  /** 为格内"+"按钮预填新建表单的 `project_id`。 */
   projectId?: string;
   onCreateIssue?: (defaults: IssueCreateDefaults) => void;
   groupBranches?: IssueGroupBranches;
@@ -655,23 +651,23 @@ function SwimLaneViewImpl({
   const { categoryOf } = useIssueStatuses(wsId);
 
   const activeFilters = useMemo(() => ({
-    // Status is enforced by visible-column rendering, not by filterIssues
+    // 状态由"可见列渲染"强制，不由 filterIssues 处理
     statusFilters: [],
     priorityFilters: activeFiltersProp?.priorityFilters ?? [],
     assigneeFilters: activeFiltersProp?.assigneeFilters ?? [],
     includeNoAssignee: activeFiltersProp?.includeNoAssignee ?? false,
     assigneeFilterActive: activeFiltersProp?.assigneeFilterActive ?? false,
-    // Extra children are not part of the server-grouped page yet, so apply
-    // the same running-task issue ids returned by `/api/working-agents`.
+    // 额外子任务尚不属于服务端分组页，所以这里沿用 `/api/working-agents`
+    // 返回的"正在运行任务"的 issue id 集合。
     agentRunningFilter: activeFiltersProp?.agentRunningFilter ?? false,
     runningIssueIds: activeFiltersProp?.runningIssueIds,
     creatorFilters: activeFiltersProp?.creatorFilters ?? [],
     projectFilters: activeFiltersProp?.projectFilters ?? [],
     includeNoProject: activeFiltersProp?.includeNoProject ?? false,
     labelFilters: activeFiltersProp?.labelFilters ?? [],
-    // Carry the "Show sub-issues" toggle through to the extra-children merge
-    // path (see `filterIssues(extra, activeFilters)` below); otherwise batch /
-    // per-parent loaded sub-issues get re-added even when the toggle is off.
+    // 把"显示子任务"开关带到额外子任务的合并路径（见下文的
+    // `filterIssues(extra, activeFilters)`）；否则即使开关关着，
+    // 批量/按父级加载的子任务也会被重新加回来。
     showSubIssues: activeFiltersProp?.showSubIssues ?? true,
   }), [activeFiltersProp]);
   const projects = useMemo(
@@ -685,9 +681,8 @@ function SwimLaneViewImpl({
 
   const laneSourceIssues = unfilteredIssues ?? issues;
 
-  // Re-impose canonical status order (ALL_STATUSES) on whatever the controller
-  // marked visible, so columns — including `cancelled`, ordered last — render
-  // in lifecycle order.
+  // 把规范的状态顺序（ALL_STATUSES）重新施加到"控制器标记为可见"的集合上，
+  // 让各列（包括排在最后的 `cancelled`）按生命周期顺序渲染。
   const sortedStatuses = useMemo(
     () => ALL_STATUSES.filter((s) => visibleStatuses.includes(s)),
     [visibleStatuses],
@@ -703,10 +698,9 @@ function SwimLaneViewImpl({
     [t],
   );
 
-  // Candidate parents for the batch fetch (parent grouping only). Union of:
-  //   - parent_issue_id of visible issues (child loaded, parent past page)
-  //   - id of visible issues with children per childProgressMap (parent
-  //     loaded, grandchild past page — the bug this PR fixes)
+  // 批量拉取的候选父级（仅父级分组）。并集：
+  //   - 可见 issue 的 parent_issue_id（子任务已加载、父任务已翻过页）
+  //   - 有子任务的可见 issue 的 id（父任务已加载、孙任务已翻过页——本 PR 修的 bug）
   const qc = useQueryClient();
   const batchParentIds = useMemo(() => {
     if (groupBranches?.enabled || swimlaneGrouping !== "parent") return [];
@@ -729,10 +723,8 @@ function SwimLaneViewImpl({
     childrenByParentsOptions(wsId, batchParentIds, qc),
   );
 
-  // Grows monotonically so lanes don't lose children when the batch key
-  // changes — once a parent's cache is hydrated it stays observed. Reset
-  // when grouping leaves "parent" so a long session that toggles groupings
-  // doesn't accumulate dead subscriptions.
+  // 只增不减，这样批量键变化时泳道不会丢子任务——某个父级缓存一旦被填充就持续被
+  // 观察。分组切出"父级"时重置，避免长会话里来回切换分组积累死订阅。
   const subscribedRef = useRef<Set<string>>(new Set());
   const sortedSubscribedRef = useRef<string[]>([]);
   const subscribedParentIds = useMemo(() => {
@@ -755,9 +747,8 @@ function SwimLaneViewImpl({
     return sortedSubscribedRef.current;
   }, [groupBranches?.enabled, swimlaneGrouping, issues, batchChildrenMap]);
 
-  // Pure cache observers — enabled:false so no fetch fires, just re-renders
-  // when setQueryData writes to these keys (from batch hydration, optimistic
-  // mutations, or WS events).
+  // 纯缓存观察者——enabled:false 不会触发任何网络请求，只在 setQueryData 写到这些键
+  // 时（批量填充、乐观 mutation 或 WS 事件）触发重渲染。
   const perParentChildrenLists = useQueries({
     queries: subscribedParentIds.map((parentId) => ({
       queryKey: issueKeys.children(wsId, parentId),
@@ -767,8 +758,7 @@ function SwimLaneViewImpl({
     combine: combineChildrenLists,
   });
 
-  // Merge paginated issues with batch-fetched children so parent lanes are
-  // populated even when children are beyond the first page.
+  // 把分页的 issue 与批量拉取的子任务合并，让父级泳道即使子任务超出第一页也非空。
   const mergedIssues = useMemo(() => {
     if (groupBranches?.enabled) return issues;
     if (swimlaneGrouping !== "parent") return issues;
@@ -819,9 +809,8 @@ function SwimLaneViewImpl({
     if (swimlaneGrouping === "assignee") {
       return buildAssigneeLanes(issues, getActorName, swimlaneOrder, laneLabels);
     }
-    // Discovery uses `mergedIssues` so batch-fetched grandchildren can
-    // promote their parents to lane headers. Metadata uses `laneSourceIssues`
-    // so headers resolve for parents in hidden statuses.
+    // 发现泳道用 `mergedIssues`，这样批量拉到的孙任务也能把父级提升成表头；
+    // 元数据用 `laneSourceIssues`，让隐藏状态里的父级也能解析出表头。
     return buildParentLanes(mergedIssues, laneSourceIssues, swimlaneOrder, laneLabels);
   }, [
     swimlaneGrouping,
@@ -837,10 +826,8 @@ function SwimLaneViewImpl({
     sortedStatuses,
   ]);
 
-  // For parent grouping: issues that are themselves lane headers should not
-  // also appear as cards (that would be a double-render). Other groupings
-  // never collide this way (lanes are projects/actors, not issues), so the
-  // set is empty there.
+  // 父级分组下：本身是泳道头的 issue 不应再作为卡片出现（否则双重渲染）。
+  // 其他分组不会这样撞车（泳道是项目/负责人，不是 issue），所以那里该集合为空。
   const headerIssueIds = useMemo(() => {
     if (swimlaneGrouping !== "parent") {
       return EMPTY_HEADER_IDS;
@@ -852,9 +839,8 @@ function SwimLaneViewImpl({
     );
   }, [laneGroups, swimlaneGrouping]);
 
-  // Map of issue id → owning lane key. Used by orphan detection for parent
-  // grouping (a child whose canonical parent isn't a lane header here lands
-  // in the fallback) and as the matcher hot-path for project/assignee.
+  // issue id → 所属泳道键 的映射。父级分组的孤儿检测用它（规范父级不是本组表头的
+  // 子任务落到回退桶里），项目/负责人分组的 matcher 热路径也用它。
   const cells = useMemo(() => {
     const result: Record<string, Record<string, string[]>> = {};
     for (const lane of laneGroups) {
@@ -875,9 +861,8 @@ function SwimLaneViewImpl({
       for (const lane of laneGroups) {
         if (lane.isOrphan) continue;
         if (lane.matches(issue)) {
-          // "No parent" lane only: skip issues that are themselves lane
-          // headers (avoid duplicate card + header). Real-parent lanes keep
-          // the dual render so grandparent lanes are never empty.
+          // 仅"无父任务"泳道：跳过本身就是泳道头的 issue（避免卡片+表头双份）。
+          // 真实父级泳道保留双重渲染，这样祖父级泳道永远不会空。
           if (
             swimlaneGrouping === "parent" &&
             lane.rawId === NONE_LANE_ID &&
@@ -886,9 +871,8 @@ function SwimLaneViewImpl({
             placed = true;
             break;
           }
-          // Cells are CATEGORIES: a custom status belongs to the column it
-          // behaves as, and keying the cell by the raw status key dropped
-          // those cards out of the grid entirely (MUL-6409).
+          // 格子是"类别"：自定义状态归入它行为对应的列；若按原始状态键作格键，
+          // 那些卡片会整个从网格里消失 (MUL-6409)。
           const status = issueColumnCategory(issue);
           if (result[lane.key]?.[status]) {
             result[lane.key]![status]!.push(issue.id);
@@ -897,8 +881,7 @@ function SwimLaneViewImpl({
           }
         }
       }
-      // Parent grouping: a child whose parent isn't a header here falls
-      // into the orphan fallback so it doesn't silently disappear.
+      // 父级分组：父级不是本组表头的子任务落入孤儿回退桶，以免悄悄消失。
       if (!placed && orphanLane && issue.parent_issue_id !== null) {
         const status = issueColumnCategory(issue);
         if (result[orphanLane.key]?.[status]) {
@@ -925,16 +908,13 @@ function SwimLaneViewImpl({
     return ids;
   }, [laneGroups, sortedStatuses]);
 
-  // Drives both visible status-header counts AND hidden-column panel rows.
-  // Known limitation (parent grouping): `headerIssueIds` is derived from
-  // lanes that exist in the current render (only parents with ≥1 visible
-  // child). A parent whose children are all hidden doesn't get a lane, so
-  // it counts as a card here. When the user un-hides that status the
-  // parent gets promoted to a lane header and the count for that status
-  // drops by 1. Tracked as a follow-up.
+  // 同时驱动"可见状态表头计数"与"隐藏列面板的行"。已知限制（父级分组）：
+  // `headerIssueIds` 由"当前渲染里存在的泳道"（只有子任务 ≥1 可见的父级）派生。
+  // 子任务全被隐藏的父级不会得到泳道，因此在这里被计为卡片；等用户取消隐藏该状态，
+  // 父级被提升为泳道头，该状态计数会 -1。记录为后续跟进项。
   const statusTotals = useMemo(() => {
-    // Columns are CATEGORIES, so totals bucket by category: a custom status
-    // contributes to the column it behaves as, never to a column of its own.
+    // 列是"类别"，所以总计按类别分桶：自定义状态归入它行为对应的列，
+    // 绝不归入自己的那一列。
     if (groupBranches?.enabled) {
       const totals = new Map<IssueStatusCategory, number>();
       for (const lane of groupBranches.descriptors) {
@@ -955,10 +935,9 @@ function SwimLaneViewImpl({
     return totals;
   }, [groupBranches, laneSourceIssues, headerIssueIds]);
 
-  // Collapsed swimlanes — persisted per-grouping via the view store. The
-  // store keys are raw lane ids (or sentinel `NONE_LANE_ID` / `ORPHAN_LANE_ID`
-  // for the pinned lanes), namespaced here as `<grouping>:<rawId>`. Convert
-  // on read/write so the store can stay grouping-agnostic.
+  // 折叠的泳道——经 view store 按分组持久化。store 的键是原始泳道 id（固定泳道用
+  // 哨兵 `NONE_LANE_ID` / `ORPHAN_LANE_ID`），在这里命名空间成 `<grouping>:<rawId>`。
+  // 读写时转换，让 store 保持"不知道分组"。
   const collapsedSwimlanesMap = useViewStore((s) => s.collapsedSwimlanes);
   const collapsedLanes = useMemo(() => {
     const stored = collapsedSwimlanesMap[swimlaneGrouping] ?? [];
@@ -978,11 +957,10 @@ function SwimLaneViewImpl({
   );
 
   const [activeIssue, setActiveIssue] = useState<Issue | null>(null);
-  // The outer scroll box is the customScrollParent for the lane Virtuoso.
+  // 外层滚动盒是泳道 Virtuoso 的 customScrollParent。
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
-  // Pull-based scroll restoration (MUL-4741): same wiring as board/list/
-  // issue-detail — ref-attach assigns the saved offset pre-paint, and the
-  // lane Virtuoso is born at it via initialScrollTop.
+  // 拉式滚动恢复 (MUL-4741)：与 board/list/issue-detail 同一套接线——ref 附着在
+  // 绘制前赋回保存的偏移量，泳道 Virtuoso 通过 initialScrollTop 出生在该位置。
   const restoredScrollTop = useRestoredScrollOffset("swimlane");
   const restoreScrollRef = useRestoredScrollRef("swimlane");
   const attachScroller = useCallback(
@@ -993,10 +971,9 @@ function SwimLaneViewImpl({
     [restoreScrollRef],
   );
   const isDraggingRef = useRef(false);
-  // Settle lock: held from drop until the move mutation settles, so a cache
-  // change that lands mid-flight (e.g. a membership refetch) does not rebuild
-  // localCells out from under the optimistic move. Mirrors board-view /
-  // list-view. settleVersion forces the resync once the lock releases.
+  // 落定锁：从 drop 到移动 mutation 落定一直持有，避免中途落下的缓存变化（如成员
+  // 重新拉取）在乐观移动脚下重建 localCells。与 board-view / list-view 同款。
+  // settleVersion 在锁释放时强制做一次重新对账。
   const isSettlingRef = useRef(false);
   const [settleVersion, setSettleVersion] = useState(0);
 
@@ -1043,8 +1020,7 @@ function SwimLaneViewImpl({
   const handleDragStart = useCallback((event: DragStartEvent) => {
     isDraggingRef.current = true;
     const activeId = event.active.id as string;
-    // Lane drags don't carry an Issue payload — clear the card overlay so
-    // we don't show a stale card during a lane reorder.
+    // 泳道拖动不带 Issue 负载——先清掉卡片浮层，免得重排泳道时显示出一张过期的卡片。
     if (parseLaneId(activeId) !== null) {
       setActiveIssue(null);
       return;
@@ -1071,11 +1047,9 @@ function SwimLaneViewImpl({
         ) {
           return prev;
         }
-        // The "Other parents" lane is display-only: never let a card
-        // enter or leave it via drag. The lane represents children whose
-        // canonical parent isn't loaded, so any cross-lane move would
-        // either lose that parent (when leaving) or invent a new one
-        // (when entering).
+        // "其他父任务"泳道仅供展示：绝不让卡片经拖拽进/出它。这条泳道代表"规范父级
+        // 未加载"的子任务，任何跨泳道移动要么丢掉那个父级（离开时）、要么凭空造一个
+        // 新的（进入时）。
         if (
           laneByKey.get(activeCell.laneKey)?.isOrphan ||
           laneByKey.get(overCell.laneKey)?.isOrphan
@@ -1083,7 +1057,7 @@ function SwimLaneViewImpl({
           return prev;
         }
 
-        // Self-parent guard — see handleDragEnd for rationale.
+        // 自为父级守卫——理由见 handleDragEnd。
         const overLane = laneByKey.get(overCell.laneKey);
         if (
           overLane &&
@@ -1096,7 +1070,7 @@ function SwimLaneViewImpl({
         recentlyMovedRef.current = true;
 
         if (activeCell.laneKey === overCell.laneKey) {
-          // Same lane row, different status column
+          // 同一泳道行内、不同状态列之间
           const row = prev[activeCell.laneKey] ?? {};
           const sourceIds = (row[activeCell.status] ?? []).filter((id) => id !== activeId);
           const targetIds = (row[overCell.status] ?? []).filter((id) => id !== activeId);
@@ -1115,7 +1089,7 @@ function SwimLaneViewImpl({
           };
         }
 
-        // Different lane rows
+        // 不同的泳道行之间
         const sourceRow = prev[activeCell.laneKey] ?? {};
         const targetRow = prev[overCell.laneKey] ?? {};
 
@@ -1158,8 +1132,7 @@ function SwimLaneViewImpl({
       const activeId = active.id as string;
       const overId = over.id as string;
 
-      // Lane reorder runs before the card-move logic because lane ids
-      // don't resolve to any cell.
+      // 泳道重排要先于卡片移动逻辑执行，因为泳道 id 无法解析到任何卡片格。
       const activeLaneRef = parseLaneId(activeId);
       const overLaneRef = parseLaneId(overId);
       if (
@@ -1167,7 +1140,7 @@ function SwimLaneViewImpl({
         overLaneRef &&
         activeLaneRef.rawId !== overLaneRef.rawId
       ) {
-        // Visible non-pinned lanes, in current render order.
+        // 当前渲染顺序里可见的、非固定的泳道。
         const visibleOrder = laneGroups
           .filter((g) => !g.isPinned && !g.isOrphan)
           .map((g) => g.rawId);
@@ -1176,12 +1149,10 @@ function SwimLaneViewImpl({
         if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
         const visibleNext = arrayMove(visibleOrder, fromIdx, toIdx);
 
-        // Merge into the persisted order without clobbering entries that
-        // aren't currently visible (e.g. hidden by a status filter).
-        // Walk stored, overwriting each visible slot with the next id
-        // from `visibleNext`; non-visible entries pass through verbatim.
-        // Any remaining `visibleNext` ids (visible lanes that weren't
-        // in stored at all) get appended at the end.
+        // 合并进已持久化的顺序，同时不冲掉"当前不可见"的条目（比如被状态筛选藏起来
+        // 的那些）。遍历 stored，把每个可见槽位替换成 `visibleNext` 的下一个 id；
+        // 不可见条目原样通过。`visibleNext` 里还剩的 id（stored 里压根没有的可见
+        // 泳道）统一追加到末尾。
         const stored =
           viewStoreApi.getState().swimlaneOrders[swimlaneGrouping] ?? [];
         const visibleSet = new Set(visibleOrder);
@@ -1205,10 +1176,8 @@ function SwimLaneViewImpl({
         return;
       }
 
-      // The "Other parents" lane is display-only. Refuse any drop where
-      // either the source or the original target cell belongs to it —
-      // no re-parenting (we don't know the canonical parent), no
-      // position write (siblings here belong to different parents).
+      // "其他父任务"泳道仅供展示。只要来源格或目标格属于它就拒绝这次 drop——
+      // 既不改父级（我们不知道规范父级），也不写 position（这里的兄弟分属不同父级）。
       if (
         laneByKey.get(activeCell.laneKey)?.isOrphan ||
         laneByKey.get(overCell.laneKey)?.isOrphan
@@ -1217,10 +1186,8 @@ function SwimLaneViewImpl({
         return;
       }
 
-      // Self-parent guard (parent grouping only): refuse drops where the
-      // dragged card is the same issue as the target lane's parent. The
-      // backend rejects this as a self-cycle; intercepting client-side
-      // avoids the optimistic-move → rollback flicker.
+      // 自为父级守卫（仅父级分组）：拒绝把"被拖卡片"放进"以它为父级"的目标泳道。
+      // 后端会以自环为由拒绝它；在客户端提前拦截，可避免"乐观移动 → 回滚"的闪烁。
       const targetLaneForGuard = laneByKey.get(overCell.laneKey);
       if (
         targetLaneForGuard &&
@@ -1232,7 +1199,7 @@ function SwimLaneViewImpl({
       }
 
       let finalCells = cols;
-      // Handle reordering within the same target cell upon drop.
+      // 处理 drop 到同一目标格内时的排序重排。
       if (
         activeCell.laneKey === overCell.laneKey &&
         activeCell.status === overCell.status
@@ -1270,13 +1237,13 @@ function SwimLaneViewImpl({
         return;
       }
 
-      // The cell names a CATEGORY, so "already here" is a category question.
+      // 格子名字是"类别"，所以"已经在这格"是一个类别层面的判断。
       const staysInCell =
         currentIssue !== undefined &&
         issueColumnCategory(currentIssue) === finalOverCell.status;
-      // ...and a card already here on a CUSTOM status keeps it: writing the
-      // cell's canonical key would rewrite `awaiting_response` to `in_review`
-      // — a real status change, which starts an agent run (MUL-6409).
+      // ……而已在某个"自定义状态"格里的卡片还要保留它的状态：如果写成格子的规范键，
+      // 会把 `awaiting_response` 改写回 `in_review`——那是真正的状态变更，会启动一个
+      // agent 运行 (MUL-6409)。
       const keepsStatus =
         staysInCell && currentIssue?.status !== finalOverCell.status;
       if (
@@ -1306,7 +1273,7 @@ function SwimLaneViewImpl({
     [cells, cellSet, laneByKey, laneGroups, onMoveIssue, swimlaneGrouping, viewStoreApi],
   );
 
-  // Grid template: one column per status, fixed width COLUMN_WIDTH, gap COLUMN_GAP.
+  // 网格模板：每状态一列，固定宽 COLUMN_WIDTH，间距 COLUMN_GAP。
   const trackWidth = sortedStatuses.length * COLUMN_WIDTH + Math.max(0, sortedStatuses.length - 1) * COLUMN_GAP;
   const gridStyle = useMemo(
     () => ({
@@ -1318,10 +1285,9 @@ function SwimLaneViewImpl({
     [sortedStatuses.length, trackWidth],
   );
 
-  // Lanes render in one Virtuoso so only on-screen lanes stay mounted. Pinned
-  // lanes keep their leading position; the SortableContext still wraps the
-  // whole set (its `items` are only the non-pinned lane ids, so reorder is
-  // unchanged), and per-cell droppables live on always-mounted lane cells.
+  // 泳道放进同一个 Virtuoso，只有上屏的泳道保持挂载。固定泳道保持前位；
+  // SortableContext 仍包住整组（它的 `items` 只含非固定泳道 id，重排逻辑不变），
+  // 每格的 droppable 放在常驻挂载的泳道格里。
   const orderedLanes = useMemo(
     () => [
       ...laneGroups.filter((g) => g.isPinned),
@@ -1336,8 +1302,8 @@ function SwimLaneViewImpl({
         .map((g) => laneIdFor(swimlaneGrouping, g.rawId)),
     [laneGroups, swimlaneGrouping],
   );
-  // Per-status load-more sentinels ride Virtuoso's Footer so they sit at the
-  // true end of the lane list; pt-4 reproduces the previous gap-4.
+  // 各状态的"加载更多"哨兵放在 Virtuoso 的 Footer 里，让它们贴着泳道列表的真末端；
+  // pt-4 复刻原来 gap-4 的间距。
   const laneComponents = useMemo(
     () => ({
       Footer: () =>
@@ -1358,10 +1324,9 @@ function SwimLaneViewImpl({
     ],
   );
 
-  // An aborted drag (pointercancel, window resize, tab hide, Escape) fires
-  // onDragCancel instead of onDragEnd. Releasing the drag lock here keeps
-  // localCells resyncing with the cache afterwards — see the same handler in
-  // list-view for the touch path that makes this routine (MUL-6240).
+  // 中断的拖拽（pointercancel、窗口缩放、标签页隐藏、Esc）会触发 onDragCancel 而
+  // 不是 onDragEnd。在这里释放拖拽锁，让 localCells 之后能继续与缓存重新同步——
+  // 触发这条路径的触摸场景与 list-view 的同一处理一致 (MUL-6240)。
   const handleDragCancel = useCallback(() => {
     isDraggingRef.current = false;
     setActiveIssue(null);
@@ -1410,7 +1375,7 @@ function SwimLaneViewImpl({
             {t(($) => $.table.load_more_failed_retry)}
           </button>
         )}
-        {/* Sticky status header row — visually matches the top of a BoardColumn */}
+        {/* 吸顶的状态标题行——视觉上与 BoardColumn 顶部一致 */}
         <div className="sticky top-0 z-10 mb-2 bg-background/95 pb-2 backdrop-blur supports-[backdrop-filter]:bg-background/75">
           <div style={gridStyle}>
             {sortedStatuses.map((status) => {
@@ -1422,8 +1387,7 @@ function SwimLaneViewImpl({
                   className={`flex items-center justify-between rounded-xl ${cfg?.columnBg ?? "bg-muted/40"} px-3 py-2`}
                 >
                   <StatusHeading status={status} count={total} />
-                  {/* Lazy-mounted like the board's column menu — see
-                      DeferredPopup. */}
+                  {/* 与看板列菜单一样懒挂载——见 DeferredPopup。 */}
                   <DeferredPopup
                     ariaHasPopup="menu"
                     triggerRender={
@@ -1476,19 +1440,16 @@ function SwimLaneViewImpl({
           </div>
         </div>
 
-        {/* Lane rows, virtualized. Pinned lanes (the no-X bucket, and
-            parent-grouping's orphan fallback) keep their leading position and
-            stay non-draggable; the SortableContext still lets the rest reorder
-            by dragging the grip handle (its `items` are only the non-pinned
-            lane ids). Only on-screen lanes stay mounted. */}
+        {/* 泳道行，虚拟化渲染。固定泳道（无-X 桶、父级分组的孤儿回退）保持前位且
+            不可拖；SortableContext 仍让其余泳道能拖把手重排（其 `items` 只含非固定
+            泳道 id）。只有上屏的泳道保持挂载。 */}
         <SortableContext
           items={nonPinnedLaneIds}
           strategy={verticalListSortingStrategy}
         >
-          {/* Seed a bounded slice of real lanes while the scroll ref hasn't
-              settled after a remount, so the lane area never paints blank; once
-              it's set, mount the Virtuoso with a matching `initialItemCount` to
-              survive the measurement frame (MUL-4750). */}
+          {/* 滚动 ref 在重挂载后尚未稳定时，先播种一截有界的真实泳道，避免泳道区
+              刷成空白；ref 就绪后再挂载带匹配 `initialItemCount` 的 Virtuoso，
+              扛过测量帧 (MUL-4750)。 */}
           {scrollEl ? (
             <Virtuoso
               customScrollParent={scrollEl}
@@ -1539,18 +1500,15 @@ function SwimLaneViewImpl({
 }
 
 /**
- * Renders a single swimlane (lane header + cells row).
+ * 渲染单条泳道（泳道头 + 一排卡片格）。
  *
- * Non-pinned lanes are made draggable via `useSortable` so users can reorder
- * them. Pinned lanes (the no-X bucket, and parent-grouping's orphan
- * fallback) pass through with `disabled: true` so they stay pinned and
- * unclickable for drag — `useSortable` must still be called unconditionally
- * to satisfy the rules of hooks.
+ * 非固定泳道经 `useSortable` 变可拖，让用户能重排它们。固定泳道（无-X 桶、父级分组
+ * 的孤儿回退）以 `disabled: true` 通过，从而保持固定、不可拖——但 `useSortable`
+ * 仍须无条件调用，以满足 hooks 规则。
  *
- * Click vs drag: `PointerSensor` has `activationConstraint: { distance: 5 }`,
- * so taps on the header still toggle collapse while a ≥5px drag starts the
- * sortable interaction. The "Open parent" pencil link stops pointer events
- * so users can click it without inadvertently starting a drag.
+ * 点击 vs 拖拽：`PointerSensor` 设了 `activationConstraint: { distance: 5 }`，
+ * 所以点击表头仍切换折叠，而 ≥5px 的拖动才开始排序交互。"打开父任务"铅笔链接
+ * 关停了指针事件，让用户点击它时不会无意触发拖拽。
  */
 function DraggableSwimLane({
   lane,
@@ -1606,10 +1564,8 @@ function DraggableSwimLane({
 
   return (
     <div ref={setNodeRef} style={style} className={`flex flex-col ${isDragging ? "opacity-50" : ""}`}>
-      {/* Non-interactive container — the inner collapse button and any
-          ancillary links (e.g. open-parent) are independent controls so we
-          don't nest an <a> inside a <button>. The drag listeners attach
-          here so the whole header row is the drag surface. */}
+      {/* 非交互容器——内部是独立的折叠按钮和辅助链接（如打开父任务），不能把 <a>
+          嵌进 <button>。拖拽监听挂在这里，让整条表头行都是拖拽面。 */}
       <div
         className="mb-2 flex w-full items-center gap-2 rounded-md px-1 py-1"
         {...attributes}
@@ -1670,7 +1626,7 @@ function DraggableSwimLane({
           />
         )}
       </div>
-      {/* Cells row — each cell mirrors a BoardColumn body */}
+      {/* 卡片格行——每格镜像一个 BoardColumn 主体 */}
       {!isCollapsed && (
         <div style={gridStyle}>
           {sortedStatuses.map((status) => {
@@ -1726,21 +1682,17 @@ function SwimLaneCell({
   projectId?: string;
   onCreateIssue?: (defaults: IssueCreateDefaults) => void;
   /**
-   * Display-only cell — the create affordance is suppressed and drag-end
-   * upstream refuses to honour drops that would re-anchor a card to this
-   * lane. Used by the parent-grouping orphan fallback whose contents
-   * belong to parents we don't have loaded.
+   * 只读格——抑制新建入口，上游的 drag-end 也拒绝会把卡片重新锚定到这条泳道的
+   * drop。用于父级分组下"内容属于未加载父级"的孤儿回退格。
    */
   readOnly?: boolean;
   page?: IssueGroupPageState;
 }) {
-  // The orphan cell stays enabled in the collision graph so that drops
-  // onto its whitespace area are absorbed here instead of falling through
-  // to the nearest real cell. The `isOrphan` guards in handleDragOver /
-  // handleDragEnd reject the actual move.
+  // 孤儿格在碰撞图中保持启用，让落到它空白区的 drop 在这里被吸收，而不是漏到
+  // 最近的真实格上。真正执行移动的拦截在 handleDragOver / handleDragEnd 的
+  // `isOrphan` 守卫里。
   const { setNodeRef, isOver: droppableIsOver } = useDroppable({ id: cId });
-  // Never show the hover highlight on a readOnly cell — the guards will
-  // reject the drop, so visual confirmation would be misleading.
+  // 只读格永不显示悬停高亮——守卫会拒绝这次 drop，视觉确认会误导人。
   const isOver = readOnly ? false : droppableIsOver;
   const { t } = useT("issues");
   const cfg = STATUS_CONFIG[statusCategoryOfKey(status)];
@@ -1756,8 +1708,7 @@ function SwimLaneCell({
 
   const handleAdd = useCallback(() => {
     const data: IssueCreateDefaults = { status, ...lane.moveUpdates };
-    // Per-page project override takes precedence (e.g. Project Detail
-    // pre-fills its own project id regardless of grouping).
+    // 按页的项目覆盖优先（例如项目详情页会预填自己的项目 id，与分组方式无关）。
     if (projectId) data.project_id = projectId;
     onCreateIssue?.(data);
   }, [status, lane, projectId, onCreateIssue]);
@@ -1798,9 +1749,8 @@ function SwimLaneCell({
           />
         )}
       </div>
-      {/* One of these per lane×status cell (~170 on a real swimlane) —
-          eagerly mounted tooltip roots here were the single largest slice
-          of swimlane mount cost. */}
+      {/* 每个 lane×status 格一个（真实泳道里约 170 个）——急切挂载的 tooltip 根
+          曾是泳道挂载成本里最大的一块。 */}
       {!readOnly && onCreateIssue && (
         <DeferredTooltip
           content={t(($) => $.board.add_issue_tooltip)}
@@ -1845,9 +1795,8 @@ function SwimLaneHiddenColumnsPanel({
 
 
 /**
- * Memoized: the surface controller re-renders on loading-flag flips (e.g. a
- * query enabling when the view changes) — without memo every such flip
- * re-rendered this entire view tree (hundreds of ms). All props are
- * referentially stable useMemo/useCallback outputs from the controller.
+ * 已 memo 化：surface 控制器会在加载标志翻转时重渲染（例如视图变化让某条查询被
+ * 启用）——没有 memo，每次这种翻转都会让整棵视图树重渲染（数百毫秒）。所有 props
+ * 都是控制器产出的、引用稳定的 useMemo/useCallback 结果。
  */
 export const SwimLaneView = memo(SwimLaneViewImpl);

@@ -1,8 +1,9 @@
-/** A Composio toolkit as surfaced by GET /api/integrations/composio/toolkits.
+// 本文件定义 Composio（第三方工具集成平台）相关的 API 类型。
+
+/** GET /api/integrations/composio/toolkits 返回的一个 Composio 工具包。
  *
- * Wire shape mirrors `ComposioToolkitResponse` in
- * `server/internal/handler/integrations_composio.go`. The backend only
- * returns toolkits with an enabled project auth configuration. */
+ * 线上结构对应 `server/internal/handler/integrations_composio.go` 里的
+ * `ComposioToolkitResponse`。后端只返回启用了项目鉴权配置的工具包。 */
 export interface ComposioToolkit {
   slug: string;
   name: string;
@@ -10,22 +11,21 @@ export interface ComposioToolkit {
   category?: string;
 }
 
-/** A user's Composio connected account, as returned by
- * GET /api/integrations/composio/connections. Mirrors
- * `ComposioConnectionResponse` server-side. */
+/** 某用户已连接的 Composio 账号，GET /api/integrations/composio/connections
+ * 返回。对应服务端的 `ComposioConnectionResponse`。 */
 export interface ComposioConnection {
   id: string;
   toolkit_slug: string;
-  /** Connection lifecycle state. `expired` surfaces a Reconnect affordance in
-   * the UI; the backend only starts emitting it once Stage 4 webhook handling
-   * lands (MUL-3719), but the client renders the branch ahead of that. */
+  /** 连接生命周期状态。`expired` 时 UI 展示「重新连接」入口；后端要等
+   * Stage 4 的 webhook 处理落地（MUL-3719）后才会发出该值，但客户端
+   * 提前渲染了这个分支。 */
   status: "active" | "expired" | "revoked" | string;
   connected_at: string;
   last_used_at?: string | null;
 }
 
-/** Response of POST /api/integrations/composio/connect/init — the hosted
- * Composio Connect Link the browser is redirected to. */
+/** POST /api/integrations/composio/connect/init 的响应——浏览器被重定向到的
+ * Composio 托管连接链接。 */
 export interface ComposioConnectInitResponse {
   redirect_url: string;
 }

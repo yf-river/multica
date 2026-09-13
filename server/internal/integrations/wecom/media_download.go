@@ -1,12 +1,9 @@
-package wecom
-
-// media_download.go — fetching the bytes a callback points at.
+// media_download.go —— 抓取回调里指向的那段字节。
 //
-// The URL is a pre-signed Tencent COS address: no access_token, no header,
-// good for five minutes. That makes the fetch itself trivial and puts all the
-// care somewhere else — the body arrives encrypted, its size is not declared
-// anywhere in the callback, and the only description of what the file IS
-// comes back in the response headers.
+// URL 是一个预签名的腾讯 COS 地址：不带 access_token、不带 header、五分钟有效。
+// 这让抓取本身变得平凡，把全部的讲究放到了别处——正文以密文到达、它的大小在
+// 回调里没有任何地方声明、而唯一描述「这个文件是什么」的信息来自响应 header。
+package wecom
 
 import (
 	"context"
@@ -22,63 +19,55 @@ import (
 	"unicode"
 )
 
-// maxMediaBytes is the ceiling on one downloaded body. WeCom caps smart-bot
-// files and video at 100 MB and does not document a cap for images, so this
-// is the ceiling for everything: whatever arrives above it is not something
-// the callback was supposed to hand us.
+// maxMediaBytes 是单次下载正文的上限。企微把智能机器人文件和视频都限在 100 MB，
+// 图片则没有文档化上限，所以这个数就是一切的顶：超过它的东西，本来就不该是回
+// 调塞给我们的。
 //
-// On this path the body is buffered whole — CBC decryption needs the tail
-// before the head can be trusted — so the ceiling is also the per-download
-// memory bound, multiplied by the router's media concurrency. This path is the
-// fallback: a storage backend implementing UploadStream (both shipped ones do)
-// goes through media_stream.go instead, where the same ceiling bounds disk.
+// 在本路径上正文是整体缓冲的——CBC 解密要先见尾才能信头——所以这个上限同时也
+// 是单次下载的内存边界，再乘上路由器的媒体并发数。本路径是兜底：实现了
+// UploadStream 的存储后端（两个随附后端都有）改走 media_stream.go，那里同一个
+// 上限约束的是磁盘。
 const maxMediaBytes = 100 << 20
 
-// mediaDownloadTimeout caps a single fetch. The router already runs media
-// resolution under a 45s budget shared by every attachment on the message and
-// by whatever is queued ahead of it, so one slow object must not eat all of
-// it.
+// mediaDownloadTimeout 约束单次抓取。路由器本来就在「45 秒、由消息上所有附件与
+// 队列前面的东西共享」的预算下跑媒体解析，所以一个慢对象绝不能把预算全吃掉。
 const mediaDownloadTimeout = 30 * time.Second
 
-// errMediaTooLarge is returned for a body past maxMediaBytes, either declared
-// in Content-Length or discovered while reading. Callers match on it to tell
-// the user the file was too big rather than that something went wrong.
+// errMediaTooLarge 在正文超过 maxMediaBytes 时返回——无论是 Content-Length 声
+// 明的，还是读到一半才发现的。调用方拿它做匹配，向用户说明是「文件太大」而不
+// 是「哪里出错了」。
 var errMediaTooLarge = fmt.Errorf("wecom: media exceeds the %d byte limit", maxMediaBytes)
 
-// mediaHeaders is what the response said about the file. Both fetch paths
-// return it, so the buffered and the streaming ingest learn the same things.
+// mediaHeaders 是响应关于这个文件说了什么。两条抓取路径都返回它，这样缓冲式和
+// 流式入站学到的是同样几件事。
 type mediaHeaders struct {
-	// Filename is the display name parsed out of Content-Disposition, or
-	// empty. The callback body carries no name, size or MIME type of its
-	// own, so this header is the only place the original name exists.
+	// Filename 是从 Content-Disposition 解析出的展示名，可能为空。回调 body 自
+	// 身不携带任何名字、大小或 MIME 类型，所以这个 header 是原始名字存在的唯一
+	// 地方。
 	Filename string
-	// Disposition is the Content-Disposition value exactly as it arrived,
-	// kept for the trace and for nothing else. What COS puts in that header
-	// is the one thing this package cannot check locally — the URL it came
-	// from lapses after five minutes, so a name that looks wrong cannot be
-	// re-fetched and must have been recorded at the time.
+	// Disposition 是 Content-Disposition 原样到达的值，只为 trace 保留、不为
+	// 别的。COS 往这个 header 里放的东西，是本包无法在本地核验的一件事——它来
+	// 自的 URL 五分钟就过期，所以一个看起来不对的名字无法重新抓来比对，只能靠
+	// 当时记录。
 	Disposition string
 }
 
-// downloadedMedia is one fetched body plus what the response said about it.
+// downloadedMedia 是一份抓取到的正文、外加响应对它说了什么。
 type downloadedMedia struct {
-	// Body is the raw response — still encrypted. decryptMedia turns it into
-	// the file.
+	// Body 是原始响应——仍是密文。decryptMedia 把它变成文件。
 	Body []byte
 	mediaHeaders
 }
 
-// downloadMedia GETs one media URL. Errors carry the reason (expired link,
-// oversize body, stalled server) because the caller turns them into something
-// a person reads.
+// downloadMedia GET 一个媒体 URL。错误会带上原因（链接过期、正文超限、服务器
+// 卡死），因为调用方要把它们变成人能读的话。
 func downloadMedia(ctx context.Context, hc *http.Client, rawURL string) (downloadedMedia, error) {
 	if err := checkMediaURL(rawURL); err != nil {
 		return downloadedMedia{}, err
 	}
-	// A missing client is a wiring bug, and the tempting recovery —
-	// http.DefaultClient — is precisely the unguarded fetch media_guard.go
-	// exists to prevent. Refusing turns that bug into a failed download
-	// instead of an SSRF.
+	// 缺 client 是接线 bug，而那个诱人的补救——http.DefaultClient——正是
+	// media_guard.go 要防的无防护抓取。把它拒掉，等于把那个 bug 变成一次失败的
+	// 下载，而不是一次 SSRF。
 	if hc == nil {
 		return downloadedMedia{}, errors.New("wecom: media download: no guarded http client configured")
 	}
@@ -99,16 +88,15 @@ func downloadMedia(ctx context.Context, hc *http.Client, rawURL string) (downloa
 		return downloadedMedia{}, errMediaTooLarge
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// A five-minute URL that has already lapsed is the ordinary failure
-		// here, and COS explains itself in a short XML body. Carry a snippet
-		// so the log says which kind of refusal it was.
+		// 五分钟 URL 已过期是这里的家常便饭，而 COS 会用一个短 XML 正文解释自
+		// 己。截一段带上，好让日志说出是哪一种拒绝。
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return downloadedMedia{}, fmt.Errorf("wecom: media download: http %d %s: %s",
 			resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(snippet)))
 	}
 
-	// LimitReader with one byte of headroom: reading exactly the cap cannot
-	// tell "the file is exactly at the limit" from "there is more coming".
+	// LimitReader 多放一个字节的余量：精确读到上限时，「文件恰好到顶」和「后面
+	// 还有」无法靠读本身区分。
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxMediaBytes+1))
 	if err != nil {
 		return downloadedMedia{}, fmt.Errorf("wecom: media download: read body: %w", err)
@@ -122,22 +110,19 @@ func downloadMedia(ctx context.Context, hc *http.Client, rawURL string) (downloa
 	}, nil
 }
 
-// mediaHeadersOf reads the one response header that describes the file.
+// mediaHeadersOf 读响应里唯一描述文件的那一个 header。
 func mediaHeadersOf(resp *http.Response) mediaHeaders {
 	raw := resp.Header.Get("Content-Disposition")
 	return mediaHeaders{Filename: mediaFilenameFromDisposition(raw), Disposition: raw}
 }
 
-// stripURL removes the request URL from a transport error before it can be
-// logged.
+// stripURL 在传输层错误被写进日志之前，把里面的请求 URL 摘掉。
 //
-// net/http wraps every failure in a *url.Error whose Error() prints the URL
-// it was fetching — and the URL here is a pre-signed COS link: a five-minute
-// bearer credential for a colleague's private attachment, good to anyone who
-// presents it. A DNS hiccup, a TCP reset, a TLS error or the download timeout
-// would each have written one into the application log, and from there into
-// whatever ships those logs onward. The wrapped cause carries the same
-// diagnosis with none of the credential, so that is what we keep.
+// net/http 会把每个失败都包成 *url.Error，其 Error() 会打印它正在抓取的 URL
+// ——而这里的 URL 是预签名 COS 链接：一条同事私有附件的五分钟 bearer 凭证，谁
+// 拿到都能用。一次 DNS 抖动、一次 TCP reset、一个 TLS 错误或下载超时，都会把它
+// 写进应用日志、再从那里进入任何转发日志的管道。被包裹的 cause 带着同样的诊断、
+// 却没有那份凭证，所以我们只留它。
 func stripURL(err error) error {
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) && urlErr.Err != nil {
@@ -146,9 +131,9 @@ func stripURL(err error) error {
 	return err
 }
 
-// checkMediaURL refuses anything the transport should not be pointed at. The
-// URL arrives over the authenticated socket, so this is a guard rail rather
-// than a defence, but it is a string from outside naming a host we then GET.
+// checkMediaURL 拒绝任何不该让传输层指向的东西。URL 是经鉴权的 socket 送来的，
+// 所以这是护栏而非防线，但它毕竟是一条指名了「接下来要 GET 的主机」的外部字符
+// 串。
 func checkMediaURL(rawURL string) error {
 	s := strings.TrimSpace(rawURL)
 	if s == "" {
@@ -156,8 +141,8 @@ func checkMediaURL(rawURL string) error {
 	}
 	u, err := url.Parse(s)
 	if err != nil {
-		// url.Parse's error text quotes the whole input, and the input here
-		// is a live pre-signed link. Say what was wrong, not what it was.
+		// url.Parse 的错误文本会引用整个输入，而这里的输入是一条活体预签名链接。
+		// 说出错在哪，别说它是什么。
 		return errors.New("wecom: media url is unparseable")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
@@ -169,30 +154,24 @@ func checkMediaURL(rawURL string) error {
 	return nil
 }
 
-// mediaFilenameFromDisposition reads the display name out of
-// Content-Disposition, preferring RFC 5987's extended `filename*` form over the
-// plain `filename=` beside it. Servers that send both put the real (non-ASCII)
-// name in the extended form and a mangled ASCII approximation in the plain
-// one, so taking the plain one would rename every Chinese attachment to
-// underscores. mime.ParseMediaType already resolves that preference for us
-// regardless of the order the two appear in; the tests pin it because it is a
-// property we depend on, not one we implement.
+// mediaFilenameFromDisposition 从 Content-Disposition 里读出展示名，优先 RFC
+// 5987 的扩展 `filename*` 形式、其次旁边的普通 `filename=`。两个都发的服务器，
+// 会把真实（非 ASCII）名字放在扩展形式里、把乱码的 ASCII 近似放在普通形式里，
+// 所以取普通形式等于把所有中文附件重命名成一串下划线。mime.ParseMediaType 无论
+// 二者以什么顺序出现，都已经替我们排好这个优先级；测试把它钉死，因为这是「我
+// 们依赖、但并非我们实现」的性质。
 //
-// A plain `filename=` from COS arrives form-urlencoded, and ParseMediaType
-// does not undo that (it percent-decodes only the extended form), so the
-// value needs decodeFormEncodedFilename before it is fit to show anyone. The
-// extended form is skipped there, because a server that sent `filename*`
-// declared its own encoding and ParseMediaType has already applied it —
-// decoding a second time would be guessing on top of a declaration.
+// COS 发来的普通 `filename=` 是 form-urlencoded 形态，而 ParseMediaType 不会解
+// 它（它只对扩展形式做百分号解码），所以这个值要再走 decodeFormEncodedFilename
+// 才配展示给人看。扩展形式则在那里被跳过：既然服务器发了 `filename*`，就说明
+// 它声明了自己的编码，而 ParseMediaType 已应用过它——再解一次等于在声明之上叠
+// 猜。
 //
-// The decode runs BEFORE the base-name reduction, not after: an escaped
-// separator (`..%2F..%2Fetc%2Fpasswd`) is a path only once it is decoded, and
-// a cleaner that ran first would hand a traversal straight through.
+// 解码要跑在「缩到基名」之前而不是之后：转义过的分隔符（`..%2F..%2Fetc%2Fpasswd`）
+// 只有在解码后才成其为路径，先做清理的代码会把路径穿越原样放行。
 //
-// The result goes through cleanMediaFilename, which reduces it to a base name
-// and strips control characters: the header is remote input, and once the
-// escapes above are undone it can carry a separator or a NUL that the raw
-// header could not.
+// 结果再过 cleanMediaFilename：它把名字缩成基名、剥掉控制字符——header 是远端
+// 输入，上面那些转义一旦被解开，它就能带上原始 header 带不进来的分隔符或 NUL。
 func mediaFilenameFromDisposition(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return ""
@@ -208,80 +187,64 @@ func mediaFilenameFromDisposition(raw string) string {
 	return cleanMediaFilename(name)
 }
 
-// hasExtendedFilename reports whether the header offered an RFC 5987
-// `filename*` at all. mime.ParseMediaType folds the extended parameter into
-// params["filename"] and does not say which form it came from, so the raw
-// header is the only place left to ask.
+// hasExtendedFilename 报告 header 是否提供了 RFC 5987 的 `filename*`。
+// mime.ParseMediaType 会把扩展参数折进 params["filename"]，却不说是哪种形式来
+// 的，所以原始 header 是唯一还能问的地方。
 //
-// A plain filename whose VALUE contains the text "filename*" reads as a false
-// positive here. That costs nothing: the only consequence is that the value
-// is left exactly as it arrived.
+// 一个普通 filename 的「值」里恰好含文本 "filename*" 时，这里会误判成正向——
+// 那没有代价：唯一后果是这个值被原样保留。
 func hasExtendedFilename(raw string) bool {
 	return strings.Contains(strings.ToLower(raw), "filename*")
 }
 
-// decodeFormEncodedFilename undoes application/x-www-form-urlencoding on a
-// filename that provably carries it, and leaves every other name byte for
-// byte.
+// decodeFormEncodedFilename 对一个「确凿带 form-urlencoding」的文件名做逆解
+// 码，其余名字则逐字节原样保留。
 //
-// Why this is needed: a live tenant sent "PC D&T Strategy 2026.docx" and it
-// was stored as "PC+D%26T+Strategy+2026.docx" — space as '+', '&' as %26,
-// which is exactly url.QueryEscape of the original. COS form-encodes the
-// plain filename parameter because that parameter is ASCII-only by
-// specification, and Chinese names take the same route: a non-ASCII name
-// cannot legally sit there, so it arrives as a run of percent escapes, and
-// without this the user is shown the escapes.
+// 为什么需要它：一个真实租户发过 "PC D&T Strategy 2026.docx"，存下来却成了
+// "PC+D%26T+Strategy+2026.docx"——空格成了 '+', '&' 成了 %26，正是原名的
+// url.QueryEscape。COS 会对普通 filename 参数做 form 编码，因为按规范该参数只
+// 允许 ASCII；中文名字也走这条路：非 ASCII 名字合法地放不进去，所以到达时是一
+// 长串百分号转义，不做这步用户看到的就是转义本身。
 //
-// Why it is conditional: url.QueryUnescape on its own reads '+' as a space,
-// so it would rewrite "C++ notes.docx" to "C   notes.docx". Both readings of
-// a bare '+' are legitimate and no header field distinguishes them. What does
-// distinguish them is self-consistency — a genuine form-encoding survives a
-// round trip through the encoder, and an accidental one usually does not:
-// "C++ notes.docx" re-encodes to "C+++notes.docx" (the literal space would
-// have been a '+' too) and is therefore left alone. So the rule is: decode
-// only when re-encoding the result reproduces the header value.
+// 为什么要有条件：url.QueryUnescape 本身会把 '+' 读成空格，于是它会把
+// "C++ notes.docx" 改写成 "C   notes.docx"。裸 '+' 的两种读法都合法，而任何
+// header 字段都无法区分它们。能区分它们的是自洽性——真正的 form 编码经一次
+// 「编回来」能幸存，偶然的通常不能："C++ notes.docx" 重编码成 "C+++notes.docx"
+// （字面空格本来也会编码成 '+'），因此被放行。所以规则是：仅当把结果重编码后
+// 能还原出 header 原值时才解码。
 //
-// What this does NOT handle, and why:
+// 它不处理什么、以及为什么不：
 //
-//   - Any name whose only encoder-touched character is a '+' IS a canonical
-//     encoding of the same name with spaces, so the round trip cannot rule it
-//     out and this decodes it, losing the pluses. That is a wider class than
-//     one odd example: "C++.docx" → "C  .docx", and so do "React+Redux.md",
-//     "Q1+Q2.xlsx", "C++11.pdf", "10+1.pdf". The ambiguity is irreducible from
-//     the header alone, and this is the side chosen deliberately — a name with
-//     a space is far more common than one with a '+' and no space, and a name
-//     with both is already safe by the round trip above.
-//   - A name percent-encoded in the RFC 3986 style, with %20 for space rather
-//     than '+' ("PC%20D&T.docx"), re-encodes to "PC+D%26T.docx", fails the
-//     check, and keeps its escapes.
-//   - A name from a server whose unreserved set is not Go's. The round trip
-//     re-encodes with url.QueryEscape, which leaves A-Za-z0-9-_.~ alone, so
-//     the check silently assumes the sender agreed on that set. Java's
-//     URLEncoder also passes '*', and PHP's urlencode escapes '~' as %7E, so
-//     "backup~.docx" from either arrives as "backup%7E.docx", re-encodes to
-//     "backup~.docx", and the lengths no longer match. The failure is
-//     all-or-nothing rather than partial: ONE character outside Go's set and
-//     the entire name keeps its escapes, so "Q1 report~.docx" is shown as
-//     "Q1+report%7E.docx" — the unreadable state this decode exists to
-//     remove, with the '+' still in it. Widening the comparison to tolerate
-//     an escape on either side would mean deciding which of several encoders
-//     wrote the header, and the evidence for that decision does not exist
-//     yet.
+//   - 任何「唯一被编码器动过的字符是 '+'」的名字，本身就是同名带空格版的标准
+//     编码，往返测试排除不了它，于是这里照解、把加号弄丢。这比一个孤例宽得
+//     多："C++.docx" → "C  .docx"，"React+Redux.md"、"Q1+Q2.xlsx"、
+//     "C++11.pdf"、"10+1.pdf" 全都如此。单凭 header 无法消除这种歧义，而这
+//     是有意选定的这一侧——带空格的名字远比「带加号且无空格」常见，两者皆有的
+//     名字已由上面的往返保住。
+//   - 按 RFC 3986 风格百分号编码、用 %20 而非 '+' 表示空格的名字
+//     （"PC%20D&T.docx"）重编码成 "PC+D%26T.docx"，通不过校验，保留转义。
+//   - 来自「unreserved 集合不是 Go 那套」的服务器的名字。往返用 url.QueryEscape
+//     重编码，它保留 A-Za-z0-9-_.~，所以校验在静默假设发送方认同同一集合。
+//     Java 的 URLEncoder 还多放过 '*', PHP 的 urlencode 会把 '~' 转成 %7E，所以
+//     两者来的 "backup~.docx" 到达时是 "backup%7E.docx"，重编码回 "backup~.docx"
+//     后长度对不上。失败是全有或全无而非局部的：只要有一个字符在 Go 的集合之
+//     外，整个名字就保留转义——所以 "Q1 report~.docx" 会显示成
+//     "Q1+report%7E.docx"，正是本解码要消除的那种不可读状态，且 '+' 还在里面。
+//     把比较放宽到容忍两侧任意的转义，等于要去裁决「到底是哪家的编码器写的这
+//     个 header」，而支持这个裁决的证据目前不存在。
 //
-// The gaps stay open because one stored filename is all the evidence there
-// is, and the URL that produced it is long expired. traceMediaHeaders records
-// the header as it arrives, so the next live run settles what COS really
-// sends with bytes rather than with another inference from one sample.
+// 这些缺口之所以留着，是因为唯一的证据就是存储中的那一个文件名，而产出它的
+// URL 早已过期。traceMediaHeaders 记录 header 到达时的原样，下次真实运行就能用
+// 字节、而不是又一次「从一个样本里推」来定案 COS 到底发了什么。
 func decodeFormEncodedFilename(name string) string {
-	// Nothing an encoder produces looks like this, so there is nothing to
-	// undo and no round trip worth running.
+	// 编码器产出的东西长不成这样，所以没有可逆的、也没有值得跑的往返。
 	if !strings.ContainsAny(name, "+%") {
 		return name
 	}
 	decoded, err := url.QueryUnescape(name)
 	if err != nil {
-		// A stray '%' that begins no valid escape ("100%.docx") means this is
-		// not an encoding at all, so there is nothing to undo.
+		// 一个开不出任何合法转义的孤立 '%'（"100%.docx"）说明这根本不是编码，
+		// 没什么可逆的。
 		return name
 	}
 	if decoded == name || !sameFormEncoding(url.QueryEscape(decoded), name) {
@@ -290,19 +253,16 @@ func decodeFormEncodedFilename(name string) string {
 	return decoded
 }
 
-// sameFormEncoding reports whether two form-encodings of the same value agree,
-// allowing only for the case of the hex digits inside percent escapes.
+// sameFormEncoding 报告同一值的两次 form 编码是否一致，只容忍百分号转义里十六
+// 进制数字的大小写差异。
 //
-// The tolerance is not cosmetic. url.QueryEscape writes upper-case hex and
-// plenty of servers write lower-case, so a byte comparison would reject
-// "%e5%ad%a3%e6%8a%a5.png" — a Chinese filename, the case this decode matters
-// most for, since a non-ASCII name is nothing but escapes — and quietly do
-// nothing.
+// 这份容忍不是装饰。url.QueryEscape 写大写十六进制，而不少服务器写小写，所以按
+// 字节比较会拒掉 "%e5%ad%a3%e6%8a%a5.png"——一个中文文件名，正是这个解码最该
+// 管的场景（非 ASCII 名除了转义什么都不是）——然后悄无声息地什么都不做。
 //
-// Hex case is the ONLY tolerance, which is what makes the round trip assume
-// the sender's unreserved set is url.QueryEscape's. A server that escapes one
-// character Go leaves alone fails the comparison outright; see the third gap
-// listed on decodeFormEncodedFilename for what that costs.
+// 大小写是唯一的容忍，这也正是往返测试在假设「发送方的 unreserved 集合等于
+// url.QueryEscape 的集合」的原因。某个被 Go 放行、却被服务器转义的字符会让整个
+// 比较直接失败；代价见 decodeFormEncodedFilename 上列出的第三个缺口。
 func sameFormEncoding(a, b string) bool {
 	if len(a) != len(b) {
 		return false
@@ -323,32 +283,25 @@ func sameFormEncoding(a, b string) bool {
 	return true
 }
 
-// cleanMediaFilename reduces a name from anywhere to a single path segment
-// with no control characters in it, or empty when nothing usable is left.
+// cleanMediaFilename 把来自任何地方的名字收成一个不含控制字符的单一路径段；
+// 实在没剩什么可用时返回空。
 //
-// The control-character strip is here because decodeFormEncodedFilename
-// widened what can reach this function. Almost none of them used to get this
-// far: measured against net/http, a raw TAB is passed through in a header
-// value, as is U+0085 (NEL, which is a control character to unicode.IsControl
-// and two ordinary bytes to the transport), while NUL, CR, LF, ESC and DEL all
-// make the transport reject the whole response. Since ParseMediaType never
-// percent-decodes the plain filename= form, `filename="a%00b.docx"` stayed the
-// printable string it looks like. Undoing the escapes turns all of them into
-// the bytes they name: %00 into a real NUL, %0D%0A into a real CRLF.
+// 控制字符剥离放在这里，是因为 decodeFormEncodedFilename 拓宽了能到达本函数的
+// 东西。过去几乎没有字符能走到这一步：对照 net/http，裸 TAB 会原样穿过 header
+// 值，U+0085（NEL——对 unicode.IsControl 是控制字符、对传输层只是两个普通字
+// 节）也一样，而 NUL、CR、LF、ESC、DEL 会让传输层把整个响应拒掉。由于
+// ParseMediaType 从不对普通 filename= 形式做百分号解码，`filename="a%00b.docx"`
+// 一直是它看起来那个样子（可打印字符串）。解开转义后，它们全都变成自己指代的
+// 字节：%00 变成真 NUL，%0D%0A 变成真 CRLF。
 //
-// NUL is the one that costs something. This name is written to
-// attachments.filename, which is Postgres TEXT, and Postgres cannot store a
-// NUL in a text value at all — the insert fails and the whole attachment is
-// lost, for a file whose bytes downloaded and decrypted perfectly. CR and LF
-// are the header-injection shape; internal/storage's ContentDisposition
-// already replaces them when it builds the download header, so that end is
-// covered, but the attachments row is written before that and there is no
-// reason to carry them to it.
+// NUL 是唯一会造成真损失的那个。这个名字要写进 attachments.filename——Postgres
+// TEXT——而 Postgres 根本存不了 NUL：插入失败、整个附件丢失，哪怕它的字节早已
+// 完美下载并解密。CR 与 LF 是 header 注入的形状；internal/storage 的
+// ContentDisposition 在构造下载 header 时已经替换它们，那一端有覆盖，但
+// attachments 行在那之前就写了，没有理由让它们带着走。
 //
-// Reaching any of this needs a malicious or buggy CDN — a user cannot type a
-// NUL into a filename. That is the right bar anyway: this header is remote
-// input, and this function is the single choke point both fetch paths reach it
-// through.
+// 走到这一步需要恶意或有 bug 的 CDN——用户没法往文件名里敲 NUL。这个标准本来就
+// 对：此 header 是远端输入，而本函数是两条抓取路径抵达它时共用的唯一咽喉。
 func cleanMediaFilename(name string) string {
 	name = strings.TrimSpace(stripControlRunes(name))
 	if name == "" {
@@ -361,18 +314,14 @@ func cleanMediaFilename(name string) string {
 	return name
 }
 
-// stripControlRunes drops every control character, dropping rather than
-// substituting: a placeholder would put a character in the name that the
-// sender did not type, and an attachment called "a_b.docx" that was really
-// called "ab.docx" is its own small lie.
+// stripControlRunes 丢弃每个控制字符——是「丢」而不是「换成占位符」：占位符会
+// 给名字里塞一个发送者没敲过的字符，而把真名 "ab.docx" 存成 "a_b.docx" 是它自己
+// 的一种小谎言。
 //
-// Bytes that decoded to invalid UTF-8 are a separate matter and are NOT
-// dropped: strings.Map replaces each of them with U+FFFD, which is what its
-// range loop yields for them. That is the useful answer rather than an
-// accident — Postgres TEXT will not take an invalid UTF-8 sequence either, so
-// a name that kept its raw bytes would fail the insert the same way a NUL
-// does, and U+FFFD is the standard way to say "a character was here and it did
-// not survive".
+// 解码后成了非法 UTF-8 的字节是另一回事，而且不被丢弃：strings.Map 会把其中每
+// 一个替换成 U+FFFD——这正是它对它们做 range 循环时给出的产物。这是有用的答案
+// 而非意外——Postgres TEXT 同样不收非法 UTF-8 序列，所以保留原始字节的名字会像
+// NUL 一样让插入失败，而 U+FFFD 是「这里有过一个字符、它没能存活」的标准说法。
 func stripControlRunes(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -382,15 +331,12 @@ func stripControlRunes(s string) string {
 	}, s)
 }
 
-// openMedia is downloadMedia without the buffer: it returns the body as a
-// stream so the caller can decrypt it as it arrives, plus the same
-// mediaHeaders the buffered path reads. Same guard, same status handling,
-// same ceiling — the ceiling is enforced by the LimitReader the caller reads
-// through, so a body that lies about its length still cannot run away with
-// the process.
+// openMedia 是去掉了缓冲的 downloadMedia：它把正文当作流返回，让调用方能边到边
+// 解密，外加缓冲式路径会读的那份 mediaHeaders。同样的闸门、同样的状态处理、同
+// 样的上限——上限由调用方经由其读取的 LimitReader 强制，所以一个谎报长度的正文
+// 也无法拖垮进程。
 //
-// The caller closes the reader. It owns the underlying response, so an early
-// return without a Close leaks a connection.
+// 调用方负责关闭 reader。它拥有底下的响应，提前 return 而不 Close 会漏掉连接。
 func openMedia(ctx context.Context, hc *http.Client, rawURL string) (io.ReadCloser, mediaHeaders, error) {
 	if err := checkMediaURL(rawURL); err != nil {
 		return nil, mediaHeaders{}, err
@@ -399,10 +345,9 @@ func openMedia(ctx context.Context, hc *http.Client, rawURL string) (io.ReadClos
 		return nil, mediaHeaders{}, errors.New("wecom: media download: no guarded http client configured")
 	}
 
-	// No context timeout here the way downloadMedia has one: the caller reads
-	// this body over the length of a decrypt, and a deadline that covers the
-	// fetch would cut the read off mid-file. The router's own media budget
-	// bounds the whole operation.
+	// 这里不像 downloadMedia 那样设 context 超时：调用方要在整个解密期间读这个
+	// 正文，一个盖住抓取期的 deadline 会把读拦腰截断。整个操作由路由器自己的媒
+	// 体预算约束。
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, mediaHeaders{}, fmt.Errorf("wecom: media request: %w", stripURL(err))
@@ -423,13 +368,12 @@ func openMedia(ctx context.Context, hc *http.Client, rawURL string) (io.ReadClos
 	}
 	return &cappedBody{
 		ReadCloser: resp.Body,
-		remaining:  maxMediaBytes + 1, // one byte of headroom, as downloadMedia has
+		remaining:  maxMediaBytes + 1, // 多一个字节余量，和 downloadMedia 一致
 	}, mediaHeadersOf(resp), nil
 }
 
-// cappedBody stops a response that keeps going past the ceiling, so an
-// undeclared length cannot be used to fill the disk the way it used to be
-// able to fill the heap.
+// cappedBody 拦住超过上限还一直往外吐的响应，这样一段没声明长度的正文没法像从
+// 前填爆堆那样去填爆磁盘。
 type cappedBody struct {
 	io.ReadCloser
 	remaining int64

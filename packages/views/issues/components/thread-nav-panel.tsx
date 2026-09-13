@@ -26,51 +26,45 @@ import { useLocale, useT } from "../../i18n";
 import { commentPreview } from "./thread-minimap";
 
 // ---------------------------------------------------------------------------
-// ThreadNavPanel — header entry point for jumping between comment threads
+// 本文件：ThreadNavPanel —— 评论线程间跳转的头部入口面板
 // ---------------------------------------------------------------------------
 //
-// The right-edge rail (ThreadMinimap) is a good position indicator and a bad
-// finder: a tick carries no text, so locating a specific thread costs one
-// hover per candidate, and once threads outgrow the rail's height the ticks
-// compress to their 5px floor and stop being countable at all. A list fixes
-// the cost model — 8-10 titles readable in one glance instead of one at a
-// time — and search/filter make 24 threads and 240 threads cost the same
-// (MUL-5755).
+// 右缘轨道（ThreadMinimap）擅长指示位置、不擅长"找东西"：刻度没有文字，
+// 想定位某个具体线程就得一颗颗悬停试，且线程数超过轨道高度后刻度会压到
+// 5px 下限、彻底数不过来。列表修正了成本模型——一眼能读 8–10 个标题，
+// 而不是一次一个——搜索/过滤让 24 个线程和 240 个线程花同样的功夫
+// （MUL-5755）。
 //
-// The panel deliberately does NOT mark which threads are currently on screen.
-// "On screen" is a set, not a point — a tall viewport holds several threads at
-// once, so the marker landed on two or three rows simultaneously and read as a
-// broken multi-select rather than as a position. Absolute position is the
-// rail's job, where a column of ticks can show a span honestly; the panel's job
-// is finding. Hovering a row still lights that thread's tick on the rail, which
-// links the two without duplicating the rail's answer.
+// 面板刻意不标记"哪些线程当前在屏幕上"。"在屏幕上"是一个集合，不是单点
+// ——高视口同时容纳多条线程，标记会同时落在两三行上，读起来像坏掉的多选
+// 而不是一个位置。绝对位置是轨道的差事，那里一列刻度能诚实展示区段；
+// 面板的差事是"找"。悬停某行仍会点亮轨道上对应刻度，把两者连起来，
+// 而不用复读轨道的答案。
 //
-// Open model — hover previews, press pins:
+// 打开模型 —— 悬停预览、按下钉住：
 //
-//   hover 200ms  -> open, unpinned. Pointer-out closes it. No focus is moved,
-//                   so a half-typed comment never loses the caret.
-//   press        -> pinned. Search takes focus, arrow keys drive the list, and
-//                   only Escape / outside press / a second press closes it.
-//   focus or scroll inside the panel -> pinned.
+//   hover 200ms  -> 打开、未钉住。指针移出即关。不移动焦点，
+//                   半打字的评论绝不丢光标。
+//   按下          -> 钉住。搜索框拿焦点、方向键驱动列表，
+//                   只有 Escape / 外部按下 / 再次按下才关。
+//   面板内聚焦或滚动 -> 钉住。
 //
-// Pure hover would have been the wrong trigger for a surface you must be able
-// to scroll, type into, and arrow through: all three need the pointer free to
-// leave the button. Pinning on *intent* (press, focus, scroll) rather than on
-// mere pointer-entry keeps a pass-through glide from leaving the panel stuck
-// open.
+// 纯 hover 对"必须能滚动、能打字、能方向键操作"的表面来说是错误触发器：
+// 三者都要求指针能离开按钮。按*意图*（按下、聚焦、滚动）钉住而非仅仅
+// 指针进入，让一次穿堂而过的滑行不至于把面板卡在打开状态。
 
-/** Below this the header button is noise — an issue with no discussion. */
+/** 低于这个数头部按钮就是噪音——没有讨论的问题不需要它。 */
 const MIN_THREADS = 1;
 
-/** Hover intent delay before the preview opens. */
+/** 预览打开的悬停意图延迟。 */
 const HOVER_OPEN_DELAY_MS = 200;
-/** Grace period on leave — long enough to travel from the button into the panel. */
+/** 离开的宽限期——够从按钮走到面板里。 */
 const HOVER_CLOSE_DELAY_MS = 200;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Footer hint keys. Built as real chords so ShortcutKeycaps renders each one
-// with the platform's own glyph and keycap chrome.
+// 底部提示快捷键。按真实和弦构建，让 ShortcutKeycaps 用平台自带的
+// 字形与键帽外观渲染每一个。
 const KEY_UP = createShortcutChord("Up");
 const KEY_DOWN = createShortcutChord("Down");
 const KEY_ENTER = createShortcutChord("Enter");
@@ -79,26 +73,25 @@ const KEY_ESCAPE = createShortcutChord("Escape");
 export type ThreadNavFilter = "all" | "unresolved" | "resolved" | "mine";
 
 export interface ThreadNavThread {
-  /** Root comment id — also the `comment-${id}` DOM anchor of the rendered row. */
+  /** 根评论 id —— 也是渲染行的 `comment-${id}` DOM 锚点。 */
   id: string;
-  /** The thread's root comment entry (preview text, author, timestamp). */
+  /** 线程的根评论条目（预览文字、作者、时间戳）。 */
   entry: TimelineEntry;
-  /** Derived by the caller with `deriveThreadResolution` — covers reply resolutions too. */
+  /** 由调用方用 `deriveThreadResolution` 派生——覆盖回复里的解决。 */
   resolved: boolean;
-  /** Replies under the root, excluding the root itself. */
+  /** 根评论下的回复数，不含根自身。 */
   replyCount: number;
-  /** The current user authored, replied to, or was @mentioned in this thread. */
+  /** 当前用户在本线程里写过、回过或被 @ 过。 */
   involvesMe: boolean;
 }
 
 export type ThreadDayGroup = "today" | "yesterday" | "earlier";
 
 /**
- * Bucket a thread by the calendar day of its root comment, in the reader's
- * local time zone. Only three buckets: past "yesterday" a per-day header
- * would produce more headers than rows on a long-running issue, which is
- * noise rather than structure — the timestamp on each row already carries
- * the exact date once the reader is in "earlier".
+ * 按根评论所在日历日给线程分桶，时区用读者本地时区。只有三个桶：
+ * 过了 "yesterday" 再按天分页，在长期问题上会产生比行还多的页头——
+ * 那是噪音不是结构；读者进入 "earlier" 后，每行自带的时间戳已经给出
+ * 确切日期。
  */
 export function threadDayGroup(createdAt: string, nowMs: number): ThreadDayGroup {
   const ts = Date.parse(createdAt);
@@ -109,17 +102,20 @@ export function threadDayGroup(createdAt: string, nowMs: number): ThreadDayGroup
   return "earlier";
 }
 
-/** A thread plus everything the row and the filters need, computed once. */
+/** 一条线程 + 行与过滤器需要的一切，一次性算好。 */
 interface PreparedThread {
   thread: ThreadNavThread;
   title: string;
   excerpt: string;
   authorName: string;
   group: ThreadDayGroup;
-  /** Lowercased `title + excerpt + author`, the haystack the query runs against. */
+  /** 小写的 `title + excerpt + author`——查询要跑的稻草堆。 */
   haystack: string;
 }
 
+/**
+ * 线程是否匹配给定过滤器。
+ */
 export function matchesFilter(thread: ThreadNavThread, filter: ThreadNavFilter): boolean {
   switch (filter) {
     case "unresolved":
@@ -131,22 +127,21 @@ export function matchesFilter(thread: ThreadNavThread, filter: ThreadNavFilter):
     case "all":
       return true;
     default:
-      // Server-driven values never reach this union, but an exhaustive
-      // default keeps a future filter from silently hiding every thread.
+      // 服务端驱动的值到不了这个联合类型，但穷尽式 default 能防止未来
+      // 新加的过滤器悄悄把每条线程都藏起来。
       return true;
   }
 }
 
 /**
- * Whether `content` @mentions `userId`.
+ * `content` 是否 @ 了 `userId`。
  *
- * Current mentions serialize as markdown links to `mention://member/<uuid>`,
- * but the legacy `[@ id="..." label="..."]` shortcode form is still sitting in
- * the database — `preprocessMarkdown` migrates it *on read*, not before
- * storage, and the timeline hands us raw content. Matching only the link form
- * silently dropped every thread whose sole mention of the reader was written in
- * the old format. `preprocessMentionShortcodes` returns its input untouched
- * when there is no `[@ ` in it, so the normal path costs one substring scan.
+ * 现行 @ 会序列化成 `mention://member/<uuid>` 的 markdown 链接，但旧的
+ * `[@ id="..." label="..."]` 短代码形式仍躺在数据库里——`preprocessMarkdown`
+ * 在*读取时*迁移它，而不是存储前；时间线交给我们的又是原始内容。只匹配
+ * 链接形式会静默丢掉每条"对读者的唯一提及是用老格式写的"线程。
+ * `preprocessMentionShortcodes` 在没有 `[@ ` 时原样返回输入，
+ * 所以正常路径只多花一次子串扫描。
  */
 export function mentionsUser(content: string | undefined, userId: string): boolean {
   if (!content || !userId) return false;
@@ -154,11 +149,10 @@ export function mentionsUser(content: string | undefined, userId: string): boole
 }
 
 /**
- * Split `text` on every case-insensitive occurrence of `query`, tinting the
- * matches. Without this a filtered list asks the reader to re-find the term
- * they just typed — the row that matched on its excerpt looks identical to the
- * one that matched on its title. Uses the same `--find-match` tint as the
- * in-page find bar so "this is your search term" reads the same everywhere.
+ * 把 `text` 按 `query` 的每一次大小写不敏感出现切分，并给命中处染色。
+ * 没有它，过滤后的列表会让读者重新去找刚打的词——靠摘要命中的行和靠标题
+ * 命中的行长一个样。复用页内查找条的同一款 `--find-match` 染色，
+ * 让"这就是你的搜索词"在任何地方读起来都一致。
  */
 export function highlightMatches(text: string, query: string): ReactNode {
   const needle = query.trim();
@@ -185,6 +179,9 @@ export function highlightMatches(text: string, query: string): ReactNode {
   return out;
 }
 
+/**
+ * 单行线程。可跳转按钮 + 高亮标题/摘要 + 作者/回复数/已解决标记。
+ */
 function ThreadRow({
   prepared,
   isActive,
@@ -194,11 +191,11 @@ function ThreadRow({
   onHover,
 }: {
   prepared: PreparedThread;
-  /** Keyboard cursor is on this row. */
+  /** 键盘光标在此行上。 */
   isActive: boolean;
-  /** Stable DOM id so the search field can point at this row. */
+  /** 稳定的 DOM id，好让搜索框能指向这一行。 */
   optionId: string;
-  /** Active search term, tinted inside the title and excerpt. */
+  /** 当前搜索词，在标题与摘要内染色。 */
   query: string;
   onJump: () => void;
   onHover: (threadId: string | null) => void;
@@ -209,11 +206,10 @@ function ThreadRow({
   return (
     <button
       type="button"
-      // Not a tab stop, and role=option: the search field keeps DOM focus and
-      // names this row through aria-activedescendant. Leaving the rows
-      // focusable produced two cursors — Tab to row 3, ArrowDown highlights
-      // row 2, Enter clicks row 3 — because DOM focus and the highlight were
-      // separate pieces of state with nothing keeping them in step.
+      // 不是 Tab 停靠点，role=option：搜索框保持 DOM 焦点，通过
+      // aria-activedescendant 点名本行。让行自身可聚焦会产生两个光标——
+      // Tab 到第 3 行、ArrowDown 高亮第 2 行、Enter 点第 3 行——因为 DOM
+      // 焦点与高亮是两块互不同步的状态。
       tabIndex={-1}
       role="option"
       id={optionId}
@@ -275,15 +271,13 @@ function ThreadRow({
 }
 
 /**
- * Wall-clock under a today/yesterday header, calendar date under "earlier" —
- * the header already names the day in the first two cases, so repeating it per
- * row would be redundant where it is known and missing where it is not.
+ * "今天/昨天"页头下用墙上时钟，"earlier"下用日历日期——前两种情况下
+ * 页头已点名那天，每行再重复是已知处的冗余；到了未知处（更早）反而缺失。
  *
- * Driven by the row's own group rather than a second "less than 48 hours ago"
- * test. Those two boundaries disagree for most of the day: an entry from
- * 23:41 the day before yesterday is under 48 hours old but groups under
- * "earlier", and it rendered as a bare `11:41 PM` with nothing saying which
- * day. One boundary, decided once, cannot drift from itself.
+ * 由行自己的分组驱动，而不是再测一次"是否 48 小时以内"。这两条边界在一天
+ * 的大多数时间里都不一致：前天的 23:41 距今不足 48 小时，但被分到
+ * "earlier"下，于是它渲染成光秃秃的 `11:41 PM`、没有任何信息说明是哪天。
+ * 一条边界、判定一次，就不会跟自己打架。
  */
 export function formatStamp(createdAt: string, group: ThreadDayGroup, locale: string): string {
   const ts = Date.parse(createdAt);
@@ -297,15 +291,18 @@ export function formatStamp(createdAt: string, group: ThreadDayGroup, locale: st
 interface ThreadNavPanelProps {
   threads: ThreadNavThread[];
   onJump: (threadId: string) => void;
-  /** Lights the matching tick on the right-edge rail. */
+  /** 点亮右缘轨道上对应的刻度。 */
   onHoverThread: (threadId: string | null) => void;
-  /** Controlled open state, so the global shortcut can pin the panel open. */
+  /** 受控的打开状态——好让全局快捷键能钉住面板。 */
   open: boolean;
   onOpenChange: (open: boolean, pinned: boolean) => void;
-  /** True when `open` was reached by a press / shortcut rather than by hover. */
+  /** `open` 是经由按下/快捷键到达的（而非悬停）时为 true。 */
   pinned: boolean;
 }
 
+/**
+ * 评论线程导航面板（职责见文件头）。
+ */
 export function ThreadNavPanel({
   threads,
   onJump,
@@ -316,9 +313,8 @@ export function ThreadNavPanel({
 }: ThreadNavPanelProps) {
   const { t } = useT("issues");
   const { getActorName } = useActorName();
-  // Subscribed, not snapshotted: `getShortcut` reads the store once with no
-  // subscription, so a rebind in Settings left this tooltip showing the old
-  // key while the actual keydown handler already used the new one.
+  // 订阅而非快照：`getShortcut` 只读一次 store、不订阅，所以在设置里重绑后
+  // 这个 tooltip 会一直显示旧键，而真正的 keydown 处理器早已用上新键。
   const openShortcutChord = useShortcut("openThreadNav");
   const listId = useId();
   const optionId = useCallback((threadId: string) => `${listId}-${threadId}`, [listId]);
@@ -330,8 +326,8 @@ export function ThreadNavPanel({
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
-  // Previews are cached by content so an unrelated timeline update (a reaction,
-  // a reply in another thread) doesn't re-flatten every root comment.
+  // 预览按内容缓存，让一条无关的时间线更新（一个表情、另一线程的一条回复）
+  // 不必重新把每条根评论扁平化一遍。
   const previewCacheRef = useRef(
     new Map<string, { content: string | undefined; preview: { title: string; body: string } }>(),
   );
@@ -382,7 +378,7 @@ export function ThreadNavPanel({
     [threads],
   );
 
-  // Each opening starts clean: no carried-over query, filter, or cursor.
+  // 每次打开都从干净状态起步：不带入上次的查询词、过滤器或光标。
   const openRef = useRef(open);
   useEffect(() => {
     if (open && !openRef.current) {
@@ -393,14 +389,14 @@ export function ThreadNavPanel({
     openRef.current = open;
   }, [open]);
 
-  // Filtering shrinks the list under the cursor; clamp instead of leaving it
-  // pointing past the end, where ↵ would do nothing.
+  // 过滤会让列表缩到光标之下；改成钳制而不是让它指到末端之后——
+  // 那样 ↵ 会毫无反应。
   useEffect(() => {
     setActiveIndex((prev) => (prev >= rows.length ? Math.max(0, rows.length - 1) : prev));
   }, [rows.length]);
 
-  // Keep the keyboard cursor in view — it can be driven far past the visible
-  // slice by held arrow keys.
+  // 让键盘光标保持在可视范围内——长按方向键可能把它推到可视切片
+  // 很远之外。
   useEffect(() => {
     if (!open) return;
     const row = rows[activeIndex];
@@ -412,10 +408,9 @@ export function ThreadNavPanel({
 
   const pin = useCallback(() => onOpenChange(true, true), [onOpenChange]);
 
-  // Focus follows `pinned`, not the press handler, so the global shortcut —
-  // which sets the pinned state directly — lands the caret in search too.
-  // Deferred a frame because Base UI runs its own focus pass on open and would
-  // otherwise take the caret back.
+  // 焦点跟随 `pinned` 而不是按下处理器，好让全局快捷键——它直接设置
+  // pinned 状态——也能把光标落进搜索框。延后一帧是因为 Base UI 在打开时
+  // 会跑自己的焦点流程，否则会把光标抢回去。
   useEffect(() => {
     if (!open || !pinned) return;
     const raf = requestAnimationFrame(() => searchRef.current?.focus());
@@ -444,15 +439,14 @@ export function ThreadNavPanel({
         else onOpenChange(true, false);
         return;
       }
-      // Pressing the trigger of a hover-preview means "keep this, I want to
-      // work in it" — not "close". Only a press on an already-pinned panel
-      // closes it.
+      // 按下一个"悬停预览"的触发器 = "留着它，我要进去干活"——
+      // 不是"关闭"。只有按下一个已经钉住的面板才关闭它。
       if (reason === "trigger-press" && !pinned) {
         pin();
         return;
       }
-      // A pinned panel outlives the pointer: the user has to be able to reach
-      // the scrollbar and the rows without the panel evaporating behind them.
+      // 钉住的面板活得比指针久：用户必须够得到滚动条和行，
+      // 而不必担心面板在身后蒸发。
       if (pinned && reason === "trigger-hover") return;
       close();
     },
@@ -461,48 +455,40 @@ export function ThreadNavPanel({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      // An IME commit arrives as Enter (and the aliases as plain letters) while
-      // composing. Acting on those would jump away mid-word and close the panel
-      // the moment a CJK user picked a candidate — the search field is the one
-      // place in this panel people type prose.
+      // IME 组词时会以 Enter（候选确认）和别名普通字母的形式到达事件。
+      // 对它们动手会在用户（尤其 CJK）选词的当口跳走并关掉面板——
+      // 搜索框正是本面板里人们会打整句正文的唯一位置。
       if (isImeComposing(e)) return;
-      // The search field owns the list keyboard, arrows included. Letting the
-      // arrows fire from anywhere in the popup while Enter fired only from the
-      // search field was the worst of both: focus on a filter pill, ArrowDown
-      // moved the highlight, and Enter then activated the pill — two cursors,
-      // disagreeing.
+      // 列表键盘归搜索框独占，方向键也算。让方向键在弹层任意位置都能发、
+      // 而 Enter 只在搜索框里发，是两者最差组合：焦点停在过滤器药丸上时
+      // ArrowDown 移高亮、Enter 却激活了药丸——两个光标各说各话。
       if (e.target !== searchRef.current) return;
-      // Arrow keys plus the Ctrl+N/J and Ctrl+P/K aliases, from the same policy
-      // the editor's pickers use — which in turn mirrors what cmdk's
-      // `vimBindings` gives the command bar for free. One list-with-a-highlight
-      // should not navigate differently from the next.
+      // 方向键外加 Ctrl+N/J 与 Ctrl+P/K 别名，沿用编辑器 pickers 同一策略
+      // ——它又镜像 cmdk 的 `vimBindings` 免费给命令条的东西。
+      // 一个有高亮的列表不该跟另一个导航得不一样。
       const direction = pickerNavigationDirection(e.nativeEvent);
       if (direction) {
-        // preventDefault matters for the letter aliases specifically: focus is
-        // in the search field, where Ctrl+K/N/P are readline editing commands
-        // that would otherwise mangle the query while moving the cursor.
+        // preventDefault 对字母别名尤其要紧：焦点在搜索框里，
+        // Ctrl+K/N/P 本是 readline 编辑命令——会一边移光标一边弄乱查询词。
         e.preventDefault();
         if (rows.length === 0) return;
         const step = direction === "next" ? 1 : -1;
         setActiveIndex((prev) => (prev + step + rows.length) % rows.length);
         return;
       }
-      // Enter is gated by the same target check above, which is what keeps the
-      // filter pills activatable: `preventDefault` on a button's keydown
-      // cancels the click the browser was about to synthesize, so handling
-      // Enter for the whole popup made "Resolved" jump instead of filter.
+      // Enter 受上面同样的 target 检查约束——正是它保住过滤器药丸可按：
+      // 对按钮 keydown 调 `preventDefault` 会取消浏览器即将合成的 click，
+      // 所以若对整个弹层处理 Enter，"Resolved"会跳走而不是过滤。
       if (e.key === "Enter") {
         const row = rows[activeIndex];
         if (!row) return;
         e.preventDefault();
         jump(row.thread.id);
       }
-      // Escape is Base UI's job — it already routes through onOpenChange and
-      // restores focus to the trigger.
+      // Escape 是 Base UI 的活——它已经走 onOpenChange 并把焦点还给触发器。
       //
-      // Tab is deliberately NOT an accept key here, unlike the editor pickers:
-      // this is a popover, and Tab has to stay focus navigation so the filter
-      // pills remain keyboard-reachable.
+      // Tab 在这里刻意*不*作为接受键，与编辑器 pickers 不同：这是 popover，
+      // Tab 必须保持焦点导航，这样过滤器药丸才能被键盘够到。
     },
     [activeIndex, jump, rows],
   );
@@ -521,14 +507,12 @@ export function ThreadNavPanel({
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
-      {/* Base UI puts the hover config on the Trigger, not the Root (a popover
-          may have several triggers). The trigger stays a real button so press
-          and keyboard still work for touch and a11y. */}
-      {/* Tooltip like every other control in this header, and the only place
-          the open shortcut is discoverable — same label + keycaps shape the
-          chat launcher uses. Held controlled for its whole life (never
-          `undefined`, which would flip it uncontrolled mid-flight) and forced
-          shut while the panel is open, so the tip never sits on top of it. */}
+      {/* Base UI 把悬停配置放在 Trigger 而非 Root 上（popover 可以有多个
+          触发器）。触发器保持真实按钮，按下与键盘对触屏和无障碍仍然有效。 */}
+      {/* Tooltip 与其他头部控件一样，也是唯一能发现打开快捷键的地方——
+          同一套标签 + 键帽，聊天启动器用的形状。全程受控（从不 `undefined`，
+          否则中途会翻成非受控）并在面板打开期间强制关闭，
+          让提示永不叠在它上面。 */}
       <Tooltip open={tooltipOpen && !open} onOpenChange={setTooltipOpen}>
         <TooltipTrigger
           render={
@@ -545,8 +529,8 @@ export function ThreadNavPanel({
                 />
               }
             >
-              {/* Explicit `size-4` so the icon matches the neighbouring header
-                  action buttons instead of the `sm` button's smaller default. */}
+              {/* 显式 `size-4`，让图标与相邻头部动作按钮一致，而不用
+                  `sm` 按钮更小的默认图标。 */}
               <MessagesSquare className="size-4" />
               <span className="text-caption font-medium tabular-nums">{threads.length}</span>
             </PopoverTrigger>
@@ -561,32 +545,26 @@ export function ThreadNavPanel({
       </Tooltip>
       <PopoverContent
         align="end"
-        // Step inside the right-edge rail's 32px strip so the two navigators
-        // stay readable together: the rail keeps showing absolute position
-        // while the panel does the finding. On the alignment axis a positive
-        // offset moves the popup toward the edge opposite the aligned one, so
-        // with `align="end"` this shifts left, away from the rail.
+        // 让进右缘轨道 32px 细条一步，两个导航器才能并排可读：轨道继续展示
+        // 绝对位置，面板负责找。对齐轴上，正偏移把弹层推向与对齐端相反的那
+        // 条边，所以配 `align="end"` 时它是左移、远离轨道。
         alignOffset={24}
-        // Hover previews must never steal the caret from a half-written
-        // comment; `pin()` focuses the search field explicitly instead.
+        // 悬停预览绝不能抢走半条评论里的光标；`pin()` 改为显式聚焦搜索框。
         initialFocus={false}
         onKeyDown={handleKeyDown}
-        // Any deliberate interaction inside the panel upgrades a preview to
-        // pinned. Pointer-entry alone deliberately does not: a glide across
-        // the panel on the way somewhere else should not leave it stuck open.
+        // 面板内任何刻意的交互都把预览升级为钉住。指针进入本身刻意不触发：
+        // 路过面板去别处的滑行不该把它留在打开状态。
         onFocusCapture={pinned ? undefined : pin}
-        // Every band insets its content to the same 14px: the search icon and
-        // the footer sit at px-3.5, while the pill row and the list reach it as
-        // container padding + item padding (6 + 8). At 10 / 18 / 12 the three
-        // bands were close enough to read as a mistake and far enough apart to
-        // see, which is what made the panel feel unsettled rather than dense.
-        // 400px rather than 380 so the wider inset costs no excerpt width.
+        // 每个横带都让内容内缩到同一个 14px：搜索图标与页脚坐在 px-3.5，
+        // 药丸行与列表靠"容器内边距 + 条目内边距"（6 + 8）够到它。
+        // 10 / 18 / 12 时三条横带近到像手滑、远到看得出缝——这正是面板
+        // 显得漂浮而不是密实的原因。400px 而非 380，让更宽的内缩
+        // 不牺牲摘要宽度。
         className="flex w-[400px] flex-col gap-0 p-0"
       >
-        {/* Search and filters are one header block, so the rule that used to
-            sit between them is gone: at three dividers a 380px popover read as
-            stacked bands rather than as one surface, and the filter row was the
-            thinnest band of the three. */}
+        {/* 搜索与过滤器是一个头部块，所以它们之间那条分隔线没了：
+            三道分隔线在 380px popover 里读起来像堆叠的横带而不是一个表面，
+            而过滤器行又是其中最细的横带。 */}
         <div className="flex h-11 shrink-0 items-center gap-2.5 px-3.5">
           <Search className="size-4 shrink-0 text-faint-foreground" />
           <input
@@ -611,9 +589,8 @@ export function ThreadNavPanel({
           )}
         </div>
 
-        {/* This divider stays: it is the top edge of a scroll region, and
-            without it the list slides under the pills with nothing marking the
-            boundary. */}
+        {/* 这条分隔线留着：它是一个滚动区域的顶边，没有它列表会滑到
+            药丸下面、没有任何东西标出边界。 */}
         <div className="flex shrink-0 items-center gap-1 border-b border-border px-1.5 py-2">
           {filterPills.map((pill) => (
             <button
@@ -641,8 +618,8 @@ export function ThreadNavPanel({
           id={listId}
           role="listbox"
           aria-label={t(($) => $.detail.thread_nav.search_placeholder)}
-          // Scrolling is an intent signal: the reader is working the list, so
-          // the panel should survive the pointer leaving afterwards.
+          // 滚动是一种意图信号：读者正在操作列表，
+          // 所以之后指针离开时面板也该活着。
           onScroll={pinned ? undefined : pin}
           className="max-h-[26rem] min-h-0 flex-1 overflow-y-auto p-1.5"
         >
@@ -656,9 +633,8 @@ export function ThreadNavPanel({
               const showHeader = !prev || prev.group !== row.group;
               return (
                 <div key={row.thread.id}>
-                  {/* Asymmetric on purpose — a day label belongs to the group
-                      under it, so it sits closer to its own first row than to
-                      the previous group's last one. */}
+                  {/* 刻意不对称——日期标签属于它下面的那组，所以它离自己组
+                      的首行比离上一组末行更近。 */}
                   {showHeader && (
                     <p className="px-2 pb-1 pt-3 text-micro font-medium text-faint-foreground">
                       {t(($) => $.detail.thread_nav.group[row.group])}
@@ -678,10 +654,9 @@ export function ThreadNavPanel({
           )}
         </div>
 
-        {/* Keycaps come from the shared ShortcutKeycaps, so these read as the
-            same keys the sidebar, command palette, and confirm dialogs draw —
-            real keycap chrome and the platform's own glyphs, not arrows typed
-            into a translation string. */}
+        {/* 键帽来自共享的 ShortcutKeycaps，读起来与侧栏、命令面板、确认弹窗
+            画的是同一批键——真实的键帽外观与平台自己的字形，而不是打进
+            翻译字符串里的箭头。 */}
         <div className="flex h-9 shrink-0 items-center gap-4 border-t border-border px-3.5 text-micro text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <span className="flex items-center gap-0.5">

@@ -1,3 +1,4 @@
+// 聊天页：以“双栏”形式展示会话列表（左）与对话内容（右），是本项目聊天功能的主要入口页面。
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -37,23 +38,17 @@ import { AgentAccessRevokedBanner } from "./components/agent-access-revoked-bann
 import { RuntimeRequiredBanner } from "./components/runtime-required-banner";
 
 /**
- * Chat tab — the first-class two-pane surface (thread list on the left,
- * conversation on the right), mirroring the Inbox page layout. Shares all
- * conversation logic with the floating FAB via `useChatController`; the
- * left rail reuses `ChatThreadList`.
+ * 聊天标签页：首选的双栏界面（左侧会话列表、右侧对话内容），布局与 Inbox 页一致。
+ * 通过 `useChatController` 与悬浮聊天窗口（FAB）共享同一套对话逻辑；左侧栏复用 `ChatThreadList`。
  *
- * Selection is URL-addressable via `?session=<id>` so a thread can be
- * deep-linked, opened from a notification, and survive refresh. The chat
- * store's `activeSessionId` stays the source of truth (both surfaces read
- * it); the URL is kept in sync in both directions. `?agent=<id>` is the
- * complementary one-shot deep link for a NEW chat: it starts a fresh compose
- * bound to that agent and is then stripped from the URL.
+ * 会话选中状态可以通过 URL 的 `?session=<id>` 定位，因此会话可以被深链接、从通知打开，
+ * 并在刷新后保持。聊天 store 里的 `activeSessionId` 是唯一数据源（两个界面都读它）；
+ * URL 与 store 之间保持双向同步。`?agent=<id>` 是另一个一次性的“新建聊天”深链接：
+ * 它会打开一个绑定到该 agent 的空白输入框，随后该参数会从 URL 中移除。
  *
- * Starting a chat is where the agent is chosen: the header ⊕ opens an agent
- * picker (see NewChatButton), so the compose box no longer needs its own
- * agent selector. Unlike the FAB, this page passes no `contextItems` to
- * `ChatInput`, so its `@` mentions fall back to manual search (issue-comment
- * style).
+ * 开始聊天时才会选择 agent：头部 ⊕ 按钮打开 agent 选择器（见 NewChatButton），
+ * 因此输入框不再需要自己的 agent 选择器。与 FAB 不同，本页面不向 `ChatInput`
+ * 传 `contextItems`，所以它的 `@` 提及会退化为手动搜索（类似 issue 评论的写法）。
  */
 export function ChatPage() {
   const { t } = useT("chat");
@@ -65,48 +60,44 @@ export function ChatPage() {
   const { data: quickActionsPending = null } = useQuery(
     chatQuickActionsPendingOptions(c.activeSessionId ?? ""),
   );
-  // Drop a stuck pending marker (dead daemon / failed supplement) so the pill
-  // spinner stops and a later refresh starts clean (MUL-5149).
+  // 丢弃卡住的“待处理”标记（daemon 挂了或补充生成失败），让 pill 上的转圈停下，
+  // 这样下一次刷新时能从干净状态开始（MUL-5149）。
   useQuickActionsPendingTimeout(c.activeSessionId ?? null, quickActionsPending);
-  // Toast when an accepted refresh later fails in the daemon (async half).
+  // 当已接受的刷新后来在 daemon 里失败时弹出 toast（异步的另一半）。
   useQuickActionsFailureToast(c.activeSessionId ?? null);
   const regenerateQuickActions = useRegenerateChatQuickActions();
   const urlSession = searchParams.get("session") || null;
   const urlAgent = searchParams.get("agent") || null;
 
-  // "Composing a brand-new chat" — the user hit ⊕ but hasn't sent yet, so no
-  // session exists. At compact widths this decides list-vs-conversation; on desktop the
-  // conversation pane is always mounted so it only needs to reset itself once a
-  // real session takes over.
+  // “正在新建一个全新的聊天”——用户点了 ⊕ 但还没发送，所以还不存在会话。
+  // 在窄屏下这个状态决定展示列表还是对话；在桌面端对话面板始终挂载，
+  // 所以它只需要在真正的会话接管时重置自己一次。
   const [composingNew, setComposingNew] = useState(false);
   useEffect(() => {
-    // Read the LIVE store value for the same reason as the session sync
-    // effects below: under StrictMode's double-invoke this effect replays
-    // with the render-captured snapshot, and a stale non-null session (a
-    // persisted chat the URL→store effect already cleared) would revert the
-    // composingNew=true that the later `?agent=` intent effect just set.
+    // 读取 store 的“实时”值，原因和下面的 session 同步 effect 相同：在 StrictMode
+    // 的双重调用下，这个 effect 会用渲染时捕获的快照重新执行，而一个过期的非空 session
+    // （URL→store effect 已经清掉的持久化聊天）会把稍后 `?agent=` 意图 effect 刚设置好的
+    // composingNew=true 给改回去。
     if (useChatStore.getState().activeSessionId) setComposingNew(false);
   }, [c.activeSessionId]);
 
-  // Two-way sync between the URL (`?session=`) and the chat store's
-  // activeSessionId. Both effects read the LIVE store value via
-  // `useChatStore.getState()` rather than the render-captured `c.activeSessionId`.
-  // That is what keeps them from fighting on mount: a naive mirror effect fires
-  // with the stale (null) snapshot and "corrects" the URL by stripping the
-  // session before the URL→store effect has applied — breaking deep links and
-  // making selection / new-chat feel unresponsive. Reading getState() sees the
-  // value the sibling effect just wrote, so the reconciliation converges in one
-  // pass and is idempotent under StrictMode's double-invoke.
+  // URL（`?session=`）与聊天 store 的 activeSessionId 之间的双向同步。
+  // 两个 effect 都通过 `useChatStore.getState()` 读取 store 的“实时”值，
+  // 而不是渲染时捕获的 `c.activeSessionId`。正是这一点让它们不会在挂载时互相打架：
+  // 一个天真的镜像 effect 会拿着过期的（null）快照执行，在 URL→store effect 生效前
+  // 就把 session 从 URL 上剥掉“纠正”回去——于是深链接失效、选中 / 新建聊天显得没反应。
+  // 读 getState() 能看到兄弟 effect 刚写入的值，所以同步只需一轮就能收敛，
+  // 并且在 StrictMode 双重调用下也是幂等的。
 
-  // URL → store: deep link, refresh, notification click, back/forward.
+  // URL → store：深链接、刷新、通知点击、前进/后退。
   useEffect(() => {
     if (urlSession !== useChatStore.getState().activeSessionId) {
       c.setActiveSession(urlSession);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to URL only
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应 URL 变化
   }, [urlSession]);
 
-  // store → URL: thread selection, "new chat", and sessions created by sending.
+  // store → URL：选中会话、“新建聊天”、以及发送后创建的会话。
   useEffect(() => {
     const live = useChatStore.getState().activeSessionId;
     const current = searchParams.get("session") || null;
@@ -114,20 +105,18 @@ export function ChatPage() {
       const base = wsPaths.chat();
       replace(live ? `${base}?session=${live}` : base);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to store only
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应 store 变化
   }, [c.activeSessionId]);
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: "multica_chat_layout",
   });
 
-  // `?agent=` intent bookkeeping. The ref holds the param value already
-  // consumed (or superseded) so the effect below fires at most once per deep
-  // link — it also bridges the async window between replace() and the
-  // searchParams actually dropping the param. Any explicit user action must
-  // supersede a still-pending intent: agent/member queries can resolve late,
-  // and a deferred intent firing after the user picked a thread (or started
-  // another chat) would clobber that choice.
+  // `?agent=` 意图的记账逻辑。ref 保存已经消费（或已被取代）的参数值，
+  // 这样下面的 effect 每个深链接最多只触发一次——它也填补了 replace() 和
+  // searchParams 真正丢掉参数之间的异步窗口。任何显式的用户操作都必须覆盖一个
+  // 仍然待处理的意图：agent/member 查询可能很晚才返回，如果一个被推迟的意图
+  // 在用户选中会话（或开了另一个聊天）之后才触发，就会把用户的选择给冲掉。
   const consumedAgentIntent = useRef<string | null>(null);
   const supersedeAgentIntent = () => {
     if (urlAgent) consumedAgentIntent.current = urlAgent;
@@ -139,11 +128,9 @@ export function ChatPage() {
     setComposingNew(false);
   };
 
-  // Single archive path for both entry points (thread-list row + conversation
-  // header). When the archived chat is the one in view, move the pane off it:
-  // on desktop advance to the next chat (Inbox-style); when compact drop back to
-  // the list, which reads more naturally than being thrown into an unrelated
-  // conversation full-screen. Archiving any other chat leaves the view put.
+  // 两个入口（会话列表行 + 对话头部）共用的单一归档路径。当被归档的聊天正是当前
+  // 正在看的那个时，把面板从它身上移开：桌面端前进到下一个聊天（Inbox 风格）；
+  // 窄屏下退回到列表，这比被扔进一个毫不相关的全屏对话更自然。归档其他聊天则保持视图不动。
   const handleArchive = (session: ChatSession) => {
     supersedeAgentIntent();
     if (session.id === c.activeSessionId) {
@@ -158,8 +145,8 @@ export function ChatPage() {
   };
 
   const startNewChat = (agent: Agent | null) => {
-    // A manual ⊕ pick outranks a pending deep link; when called FROM the
-    // intent effect the ref is already set to this param, so this is a no-op.
+    // 手动点 ⊕ 的选择优先级高于待处理的深链接；当从意图 effect 内部调用时，
+    // ref 已经被设置成这个参数，所以这里相当于空操作。
     supersedeAgentIntent();
     if (agent) c.handleStartNewChat(agent);
     else c.handleNewChat();
@@ -169,23 +156,18 @@ export function ChatPage() {
   const changeProjectContext = (projectId: string | null) => {
     if (projectId === c.activeProjectId) return;
     c.handleProjectChange(projectId);
-    // Removing a project stays in the current conversation. Choosing a
-    // project for an existing conversation starts a clean session, and a
-    // compact layout must stay in the compose pane after activeSessionId is
-    // cleared.
+    // 移除项目后仍停留在当前对话。为已有对话选择一个项目会开启一个全新的会话，
+    // 而在 activeSessionId 被清空后，窄屏布局必须停留在输入面板上。
     if (!c.currentSession || projectId !== null) setComposingNew(true);
   };
 
-  // URL → new chat: `?agent=<id>` is the deep link used by "DM" entry points
-  // (e.g. the agent detail page) to land on a fresh compose bound to that
-  // agent. The permission-filtered agent list loads async, so the intent is
-  // consumed on the render where the agent resolves, then the param is
-  // stripped so refresh / the session sync above don't replay it. The ref
-  // resets once the param is gone so a later identical deep link fires again.
-  // A settled miss (access revoked, agent archived, bad id) is a denial: it
-  // explains itself with a toast and consumes the intent so a later refetch
-  // that surfaces the agent cannot start a chat without a fresh click. While
-  // the queries are still loading the intent simply stays pending.
+  // URL → 新建聊天：`?agent=<id>` 是“私聊”入口（例如 agent 详情页）使用的深链接，
+  // 用来落在一个绑定到该 agent 的空白输入框上。经过权限过滤的 agent 列表是异步加载的，
+  // 所以意图在 agent 解析出来的那次渲染中被消费，随后参数被剥离，这样刷新 / 上面的
+  // session 同步不会重复触发它。参数消失后 ref 会重置，于是稍后一个相同的深链接又能再次触发。
+  // 一次已确定的未命中（权限被撤销、agent 已归档、id 非法）属于拒绝：它用 toast 说明原因，
+  // 并消费掉意图，这样之后一次重新拉取如果又出现了该 agent，也不会在没有新点击的情况下开启聊天。
+  // 当查询仍在加载时，意图就简单地保持待处理。
   useEffect(() => {
     if (!urlAgent) {
       consumedAgentIntent.current = null;
@@ -204,7 +186,7 @@ export function ChatPage() {
       toast.error(t(($) => $.page.agent_link_no_access));
       replace(wsPaths.chat());
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- consume when the URL param or the resolving agent list changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- URL 参数或解析出的 agent 列表变化时消费意图
   }, [urlAgent, c.availableAgents, c.agentsSettled]);
 
   const newChatButton = (
@@ -235,12 +217,11 @@ export function ChatPage() {
     </div>
   );
 
-  // The conversation pane: message list / skeleton / empty above a persistent
-  // banner + input. Identical composition to the floating window's body, so a
-  // brand-new chat (no active session) shows the agent-aware empty state + input.
-  // No compose-box agent selector — the agent is fixed when the chat starts.
-  // `@container`: the conversation column's gutter (CHAT_GUTTER) widens with
-  // THIS pane, which the user resizes independently of the browser window.
+  // 对话面板：消息列表 / 骨架屏 / 空状态，位于持久的横幅 + 输入框之上。
+  // 结构与悬浮窗口的主体完全相同，所以一个全新的聊天（没有活动会话）会显示
+  // 感知 agent 的空状态 + 输入框。输入框没有 agent 选择器——agent 在聊天开始时就已经固定。
+  // `@container`：对话栏的留白（CHAT_GUTTER）会随“这个”面板一起变宽，
+  // 而该面板是用户独立于浏览器窗口来调整大小的。
   const queuedTasks = c.pendingTask?.queued_tasks ?? [];
   const conversation = (
     <div className="flex flex-1 flex-col min-h-0 @container">
@@ -347,7 +328,7 @@ export function ChatPage() {
     </div>
   );
 
-  // -- Compact: list / conversation toggle -----------------------------------
+  // -- 窄屏：列表 / 对话 切换 -------------------------------------------------
   if (isCompact) {
     if (c.activeSessionId || composingNew) {
       return (
@@ -378,10 +359,9 @@ export function ChatPage() {
     );
   }
 
-  // -- Desktop: resizable two-panel. The conversation pane appears only once
-  // there is a chat target — an open thread or a new chat whose agent was just
-  // picked via ⊕. With nothing selected there is no agent, so we show a neutral
-  // prompt instead of an orphaned compose box. -------------------------------
+  // -- 桌面端：可调整大小的双栏。对话面板只在存在聊天目标时才出现——
+  // 一个已打开的会话，或一个刚通过 ⊕ 选好 agent 的新聊天。什么都没选中时就没有 agent，
+  // 所以我们显示一个中性的提示，而不是一个孤零零的输入框。 -------------------------------
   const hasTarget = !!c.activeSessionId || composingNew;
   return (
     <ResizablePanelGroup

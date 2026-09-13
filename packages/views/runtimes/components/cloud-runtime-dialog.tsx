@@ -1,3 +1,14 @@
+// ============================================================================
+// Cloud Runtime 对话框（CloudRuntimeDialog）——在云上开一台托管 runtime 节点
+//
+// 角色定位：SaaS 版 runtimes 页「Cloud Runtime」入口打开的弹窗，左半边是
+// 创建表单（名称 / 实例规格 / 磁盘大小），右半边是现有云端节点列表（可手动
+// 刷新、可删除）。
+//
+// 数据流：列表数据来自 cloudRuntimeNodeListOptions（只取最近 20 条，按创建
+// 时间倒序展示）；创建 / 删除都走 @multica/core 的 mutation，成功后弹 toast。
+// 与自托管 daemon 无关——这台节点由 multica 官方云托管，不占用户自己的机器。
+// ============================================================================
 "use client";
 
 import { useId, useMemo, useState } from "react";
@@ -34,10 +45,21 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
+// 云端节点可选的 EC2 实例规格（AWS t4g 系列），下拉框选项的唯一事实来源。
+// 加规格时同步改这里即可，表单与校验都自动跟随。
 const CLOUD_RUNTIME_INSTANCE_TYPES = ["t4g.medium", "t4g.large"] as const;
+// 默认选第一个规格；默认磁盘 20GB（表单留空时也用这个值兜底）。
 const DEFAULT_INSTANCE_TYPE = CLOUD_RUNTIME_INSTANCE_TYPES[0];
 const DEFAULT_DISK_SIZE_GB = 20;
 
+/**
+ * Cloud Runtime 对话框：创建并管理多台云端托管的 runtime 节点。
+ *
+ * @param onClose - 请求关闭对话框。
+ *
+ * 布局左右分栏：左侧创建表单、右侧节点列表。提交成功不自动关弹窗，而是清空
+ * 表单让用户连续创建；新节点出现在右侧列表，状态由后端驱动。
+ */
 export function CloudRuntimeDialog({ onClose }: { onClose: () => void }) {
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
@@ -54,6 +76,8 @@ export function CloudRuntimeDialog({ onClose }: { onClose: () => void }) {
   );
   const createNode = useCreateCloudRuntimeNode(wsId);
 
+  // 按创建时间倒序排，最新开的在最上面最显眼——无论接口返回什么顺序，这里
+  // 都显式排一遍，保证 UI 顺序稳定。
   const sortedNodes = useMemo(
     () =>
       (nodesQuery.data ?? []).toSorted(
@@ -65,6 +89,8 @@ export function CloudRuntimeDialog({ onClose }: { onClose: () => void }) {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // 磁盘大小留空时用默认值；填了就要求是正整数（允许 0 没有意义，
+    // 小数盘在云厂商那里也建不出来）。
     const diskSize = diskSizeGB.trim()
       ? Number(diskSizeGB.trim())
       : DEFAULT_DISK_SIZE_GB;
@@ -227,6 +253,8 @@ export function CloudRuntimeDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
+// 带 label 的表单项：传 options 时渲染成下拉框（Select），否则渲染成输入框。
+// 是「实例规格用下拉、名称 / 磁盘用输入」这一差异的统一封装。
 function LabeledInput({
   id,
   label,
@@ -295,6 +323,8 @@ function LabeledInput({
   );
 }
 
+// 右侧列表里的一行节点：展示标题（名称或实例 id，都没有才用兜底文案）、
+// 规格 / 区域 / 创建时间，以及一个带原生 confirm 的删除按钮。
 function CloudRuntimeNodeRow({ node, wsId }: { node: CloudRuntimeNode; wsId: string }) {
   const { t } = useT("runtimes");
   const deleteNode = useDeleteCloudRuntimeNode(wsId);
@@ -359,6 +389,9 @@ function CloudRuntimeNodeRow({ node, wsId }: { node: CloudRuntimeNode; wsId: str
   );
 }
 
+// 把后端返回的状态字符串归类成「正常 / 进行中 / 失败」三档，分别染成
+// 绿 / 黄 / 红。归类是白名单式的：不认识的新状态不做任何染色，灰底展示原文，
+// 避免把未知状态误标成成功或失败。
 function CloudRuntimeStatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase();
   const active = new Set(["running", "success"]);
@@ -386,11 +419,15 @@ function CloudRuntimeStatusBadge({ status }: { status: string }) {
   );
 }
 
+// 名称可留空：留空时转成 undefined 而不是空串发给后端——undefined 表示
+// 「未提供名字」，语义明确，避免把一个看起来合法的空名字存进去。
 function valueOrUndefined(value: string): string | undefined {
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
 }
 
+// 把 ISO 时间串格式化成「MMM d, HH:mm」给 UI 展示；解析失败（如空串或非法
+// 日期）返回 null，由调用方决定不显示时间，而不是把 "Invalid Date" 露出来。
 function formatDateTime(value: string): string | null {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;

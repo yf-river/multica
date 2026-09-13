@@ -1,3 +1,6 @@
+// 本文件职责：创建 issue 弹窗里「来源上下文（锚点评论所在 issue 的摘要）」的预览卡片。
+// 负责加载中/失败/成功三种态：失败时解析错误码生成用户可读的提示（来源已删、超出大小限制
+// 等），成功时展示可折叠的正文预览。
 "use client";
 
 import { useState } from "react";
@@ -9,16 +12,25 @@ import { ApiError } from "@multica/core/api";
 import { SourceContextContent } from "../issues/components/source-context-content";
 import { useT } from "../i18n";
 
+/** 从 ApiError 的错误体里安全取出 `code` 字段（body 是 unknown，需要先做形状判断）。 */
 function sourceContextErrorCode(error: unknown): unknown {
   if (!(error instanceof ApiError) || !error.body || typeof error.body !== "object") return undefined;
   return (error.body as { code?: unknown }).code;
 }
 
+/** 判断错误是否源于「锚点评论/来源 issue 已被删除」——这类错误重试没有意义。 */
 function isDeletedSourceError(error: unknown): boolean {
   const code = sourceContextErrorCode(error);
   return code === "anchor_comment_deleted" || code === "source_issue_deleted";
 }
 
+/**
+ * 生成「来源上下文预览失败」时的用户可读错误文案。
+ *
+ * 返回一个 `(error) => string | null` 函数，供各调用方在预览区里展示具体失败原因：
+ * 锚点评论/来源 issue 被删除、或预览体积超出各类限制（评论数、文本字节、附件数/大小）。
+ * 无法识别的错误返回 null，由调用方回退到通用失败文案。
+ */
 export function useSourceContextFailureMessage() {
   const { t } = useT("issues");
   return (error: unknown): string | null => {
@@ -56,6 +68,17 @@ export function useSourceContextFailureMessage() {
   };
 }
 
+/**
+ * 「来源上下文预览」卡片——创建 issue 弹窗内展示锚点评论来源的摘要区。
+ *
+ * 三种状态：加载中显示转圈提示行；失败（无 preview 或 `failed`）显示错误行，若可重试
+ * 则附「刷新」按钮（来源已被删除时重试无意义，隐藏按钮）；成功则渲染一条可折叠的
+ * 预览卡片——头部是「来源 issue 标识 + 评论数 + 评论作者」，点击头部在收起/展开间切换。
+ *
+ * 展开状态支持受控（`expanded` + `onExpandedChange`）与不受控（内部 state）两种用法；
+ * `constrainToParent` 让展开后的预览被约束在父级 flex 内容区内（是否带动弹窗高度变化
+ * 由宿主弹窗自己决定）。
+ */
 export function SourceContextPreviewCard({
   preview,
   loading,
@@ -71,8 +94,7 @@ export function SourceContextPreviewCard({
   failed?: boolean;
   error?: unknown;
   onRetry?: () => void;
-  /** Keep an expanded preview inside its parent's flex content area; the
-   *  owning dialog decides whether that expansion also changes its height. */
+  /** 让展开后的预览保持在其父级 flex 内容区内；父弹窗决定这一展开是否同步改变自身高度。 */
   constrainToParent?: boolean;
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;

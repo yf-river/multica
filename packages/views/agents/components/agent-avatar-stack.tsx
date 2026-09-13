@@ -1,5 +1,7 @@
 "use client";
 
+// 本文件提供一个重叠排列的 Agent 头像组，用于在紧凑空间里一次展示多个 Agent。
+
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { AVATAR_SIZE_PX, type AvatarSize } from "@multica/ui/lib/avatar-size";
 import { useActorName } from "@multica/core/workspace/hooks";
@@ -7,32 +9,28 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
 interface AgentAvatarStackProps {
-  // Agent ids to render, in display order. The component does NOT dedupe —
-  // callers are expected to pass a unique list (`new Set(...)` upstream).
+  // 要渲染的 Agent id，按展示顺序传入。组件本身不去重——调用方需要传
+  // 一份去重后的列表（在上游用 `new Set(...)` 处理过）。
   agentIds: readonly string[];
-  // Semantic avatar tier. Avatars overlap by ~30% so the visible spacing
-  // scales naturally with size. Defaults match a compact toolbar / card-corner
-  // density (sm / 20 px).
+  // 语义化的头像档位。头像之间重叠约 30%，因此可见间距会随尺寸自然缩放。
+  // 默认值对应紧凑工具栏 / 卡片角落的密度（sm / 20px）。
   size?: AvatarSize;
-  // Maximum head count before collapsing the tail into a `+N` chip. Three
-  // is the plan default — beyond that the stack visually crowds.
+  // 最多显示多少个头像，超出部分折叠成 `+N` 的角标。计划默认是 3 个，
+  // 再多视觉上就会拥挤。
   max?: number;
-  // `half` drops opacity to 50%. Used by IssueAgentActivityIndicator to
-  // signal a queued-only state (no running task) — same heads, weakened
-  // visual.
+  // `half` 会把整体不透明度降到 50%。由 IssueAgentActivityIndicator 用来
+  // 表示“只有排队、没有正在运行”的状态——同一批头像，弱化的视觉。
   opacity?: "full" | "half";
   className?: string;
 }
 
 /**
- * Overlapping avatar group for agents. Pure presentational — no data
- * fetching, no hover handling. Wrap it in a HoverCardTrigger upstream
- * (IssueAgentActivityIndicator / WorkspaceAgentWorkingChip) to surface
- * per-agent detail.
+ * 重叠排列的 Agent 头像组。纯展示组件——不做数据请求、不处理悬浮。
+ * 需要展示每个 Agent 详情时，在上游用 HoverCardTrigger 包一层
+ * （如 IssueAgentActivityIndicator / WorkspaceAgentWorkingChip）。
  *
- * `agentIds` is the full input list. We render up to `max` heads; if the
- * input is longer, we drop the tail and append a `+N` overflow chip styled
- * to match the avatar dimensions.
+ * `agentIds` 是完整输入列表。我们最多渲染 `max` 个头像；如果输入更长，
+ * 就丢弃尾部、追加一个 `+N` 溢出角标，样式对齐头像尺寸。
  */
 export function AgentAvatarStack({
   agentIds,
@@ -48,7 +46,7 @@ export function AgentAvatarStack({
   const visible = agentIds.slice(0, max);
   const overflow = agentIds.length - visible.length;
   const px = AVATAR_SIZE_PX[size];
-  // 30% overlap reads as "stacked" without obscuring the next avatar's icon.
+  // 30% 的重叠能让头像读作“叠在一起”，又不至于挡住下一个头像的图标。
   const overlap = Math.round(px * 0.3);
 
   return (
@@ -63,8 +61,8 @@ export function AgentAvatarStack({
       {visible.map((id, i) => (
         <span
           key={id}
-          // Each subsequent head sits negative-margin over the previous so
-          // the stack collapses horizontally instead of growing linearly.
+          // 后续每个头像用负 margin 叠在前一个之上，让整组头像在水平方向
+          // 收缩堆叠，而不是线性铺开。
           style={{ marginLeft: i === 0 ? 0 : -overlap }}
           className="ring-2 ring-background rounded-full inline-flex"
         >

@@ -1,3 +1,5 @@
+// issue_public.go —— IssueService 的公开 API 写原语，刻意与传输层/凭据类型无关：
+// App、PAT、Plugin 入口各自鉴权后调用同一业务操作。
 package service
 
 import (
@@ -9,23 +11,20 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// ErrIssueRevisionConflict means the caller based an update on a stale issue
-// revision. Transports map it to their stable conflict response.
+// ErrIssueRevisionConflict 表示调用方基于陈旧的 issue revision 做更新。传输层把它映射为稳定的冲突响应。
 var ErrIssueRevisionConflict = errors.New("issue revision conflict")
 
-// IssueContentPatch is the first shared Public API write primitive. It is
-// deliberately transport- and credential-agnostic: App, PAT, and Plugin
-// entrypoints authorize independently, then call the same business operation.
+// IssueContentPatch 是首个共享的 Public API 写原语，刻意与传输和凭据无关。
+// 字段均为可选指针：只更新被显式提供的字段。
 type IssueContentPatch struct {
 	Title            *string
 	Description      *string
 	ExpectedRevision *int64
 }
 
-// UpdateContent updates only the low-risk issue content fields exposed in the
-// first Public API slice. Assignment, status, project, and hierarchy changes
-// remain separate operations because each has additional policy and side
-// effects.
+// UpdateContent 只更新首批 Public API 暴露的低风险内容字段（标题/描述，可带乐观锁）。
+// 指派、状态、项目与层级变更仍是独立操作，因为它们各自带额外策略与副作用。
+// ExpectedRevision 提供而 DB 更新无行时返回 ErrIssueRevisionConflict。
 func (s *IssueService) UpdateContent(ctx context.Context, issue db.Issue, patch IssueContentPatch) (db.Issue, error) {
 	params := db.UpdateIssueParams{
 		ID:            issue.ID,

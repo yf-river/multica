@@ -1,7 +1,13 @@
+// 本文件定义「项目（Project）」与「项目资源」相关类型：项目分组议题，
+// 并可把外部资源（git 仓库 / 本机目录）挂到项目上供 agent 使用。
+
+/** 项目状态。 */
 export type ProjectStatus = "planned" | "in_progress" | "paused" | "completed" | "cancelled";
 
+/** 项目优先级。 */
 export type ProjectPriority = "urgent" | "high" | "medium" | "low" | "none";
 
+/** 一个项目。 */
 export interface Project {
   id: string;
   workspace_id: string;
@@ -12,8 +18,8 @@ export interface Project {
   priority: ProjectPriority;
   lead_type: "member" | "agent" | null;
   lead_id: string | null;
-  // Calendar days ("YYYY-MM-DD"), no time-of-day or timezone — same contract as
-  // issue.start_date / issue.due_date.
+  // 日历日期（"YYYY-MM-DD"），不带时刻与时区——与 issue.start_date /
+  // issue.due_date 同一契约。
   start_date: string | null;
   due_date: string | null;
   created_at: string;
@@ -23,6 +29,7 @@ export interface Project {
   resource_count: number;
 }
 
+/** 新建项目的请求体。 */
 export interface CreateProjectRequest {
   title: string;
   description?: string;
@@ -33,11 +40,12 @@ export interface CreateProjectRequest {
   lead_id?: string;
   start_date?: string;
   due_date?: string;
-  // Resources to attach in the same transaction as the project. Server returns
-  // 4xx (and rolls back) if any one is invalid or duplicate.
+  // 要在建项目的同一事务里附带的资源。任一资源无效或重复，服务器返回 4xx
+  //（并回滚）。
   resources?: CreateProjectResourceRequest[];
 }
 
+/** 更新项目的请求体。 */
 export interface UpdateProjectRequest {
   title?: string;
   description?: string | null;
@@ -46,31 +54,35 @@ export interface UpdateProjectRequest {
   priority?: ProjectPriority;
   lead_type?: "member" | "agent" | null;
   lead_id?: string | null;
-  // Omit the key to leave the date untouched; send null (or "") to clear it.
+  // 省略该键表示日期不动；传 null（或 ""）表示清除。
   start_date?: string | null;
   due_date?: string | null;
 }
 
+/** 项目列表接口响应。 */
 export interface ListProjectsResponse {
   projects: Project[];
   total: number;
 }
 
-// ProjectResource is a typed pointer from a project to an external resource.
-// The resource_ref shape depends on resource_type. New types add a case in
-// validateAndNormalizeResourceRef on the server and a renderer in the UI.
+// ProjectResource 是项目指向外部资源的类型化指针。resource_ref 的具体形状
+// 取决于 resource_type。新增类型时，在服务端 validateAndNormalizeResourceRef
+// 加一个分支、在 UI 加一个渲染器。
 //
-// Known types (UI must default-case unknown server-side additions):
-//   - github_repo: cloud-side git checkout, ref = { url, ref?, default_branch_hint? }
-//   - local_directory: agent execution on a specific daemon,
+// 已知类型（UI 必须对未知的服务端新增类型走 default 分支）：
+//   - github_repo: 云端 git 检出，ref = { url, ref?, default_branch_hint? }
+//   - local_directory: 在特定 daemon 上执行的 agent，
 //     ref = { local_path, daemon_id, label?, execution_mode? }
 export type ProjectResourceType = "github_repo" | "gongfeng_repo" | "local_directory";
 
+/** github_repo 类型的资源引用。 */
 export interface GithubRepoResourceRef {
   url: string;
   ref?: string;
   default_branch_hint?: string;
 }
+
+/** gongfeng_repo 类型的资源引用。 */
 export interface GongfengRepoResourceRef {
   url: string;
   project_path?: string;
@@ -79,25 +91,23 @@ export interface GongfengRepoResourceRef {
 }
 
 /**
- * How tasks sharing one local directory are executed.
+ * 共享同一个本地目录的任务如何执行。
  *
- * - `in_place`: the agent works directly in the user's directory and tasks run
- *   one at a time — a second task waits in `waiting_local_directory`. Edits
- *   land in the user's working copy.
- * - `worktree`: each task gets its own git worktree of that repo inside the
- *   runtime's workspace, so tasks run concurrently and deliver their work as a
- *   branch instead of touching the working copy. Every task of one conversation
- *   shares that branch — `agent/<agent>/<issue>` — so a follow-up continues the
- *   previous turn's work; a task with no conversation behind it gets
- *   `agent/<agent>/<task>`. Continuation is decided by an ownership record in
- *   the repo, not by the branch name, so a same-named branch the user made is
- *   never adopted.
+ * - `in_place`: agent 直接在该用户目录里工作，任务一个一个跑——第二个任务
+ *   会在 `waiting_local_directory` 状态里等待。改动落在用户的工作副本上。
+ * - `worktree`: 每个任务在 runtime 的 workspace 里为那个仓库建自己的 git
+ *   worktree，任务可并发执行，并以分支形式交付成果而不是改动工作副本。
+ *   同一会话的每个任务共享那条分支——`agent/<agent>/<issue>`——使后续
+ *   任务接续上一轮的工作；没有会话背景的任务得到 `agent/<agent>/<task>`。
+ *   是否接续由仓库里的一条归属记录决定，而不是看分支名，因此用户自己建的
+ *   同名分支绝不会被采纳。
  *
- * Absent means `in_place`: resources created before the mode existed keep their
- * original behavior, so this is optional rather than defaulted on the server.
+ * 缺失表示 `in_place`：在模式出现前创建的资源保持原有行为，所以该字段是
+ * 可选而非服务端默认。
  */
 export type LocalDirectoryExecutionMode = "in_place" | "worktree";
 
+/** local_directory 类型的资源引用。 */
 export interface LocalDirectoryResourceRef {
   local_path: string;
   daemon_id: string;
@@ -105,12 +115,14 @@ export interface LocalDirectoryResourceRef {
   execution_mode?: LocalDirectoryExecutionMode;
 }
 
+/** 资源引用的联合形状（按 resource_type 对应具体形态）。 */
 export type ProjectResourceRef =
   | GithubRepoResourceRef
   | GongfengRepoResourceRef
   | LocalDirectoryResourceRef
   | Record<string, unknown>;
 
+/** 一条项目资源记录。 */
 export interface ProjectResource {
   id: string;
   project_id: string;
@@ -123,6 +135,7 @@ export interface ProjectResource {
   created_by: string | null;
 }
 
+/** 新建项目资源的请求体。 */
 export interface CreateProjectResourceRequest {
   resource_type: ProjectResourceType;
   resource_ref: ProjectResourceRef;
@@ -130,15 +143,15 @@ export interface CreateProjectResourceRequest {
   position?: number;
 }
 
-// resource_type is immutable server-side; partial-update payload mirrors that.
-// Sending only the field(s) you want to change is fine — the server merges
-// the request body with the existing row, including resource_ref shortcuts.
+// resource_type 在服务端不可变；局部更新载荷与之对应。只发送要改的字段即可
+// ——服务器会把请求体与现有行合并，包括 resource_ref 的各种快捷形态。
 export interface UpdateProjectResourceRequest {
   resource_ref?: ProjectResourceRef;
   label?: string | null;
   position?: number;
 }
 
+/** 项目资源列表接口响应。 */
 export interface ListProjectResourcesResponse {
   resources: ProjectResource[];
   total: number;

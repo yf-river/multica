@@ -11,34 +11,29 @@ import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
 
 /**
- * Landing page for Stripe Checkout and Billing Portal returns.
+ * billing 模块：Stripe Checkout 与 Billing Portal 返回的落地页。
  *
- * Stripe only knows the return URLs a deployment configured, and a deployment
- * has exactly one set of them — so they cannot contain a workspace slug. Cloud
- * therefore appends the workspace it already authorized (`workspace_id`) plus
- * `result`, and this page turns that into the slug-based Settings URL the user
- * actually needs. Hardcoding one workspace's slug in the Stripe configuration
- * would strand every other workspace.
+ * Stripe 只知道部署时配置的那些 return URL，而一次部署只有一组——所以它们
+ * 不能包含工作区 slug。因此 Cloud 追加它已授权的工作区（`workspace_id`）与
+ * `result`，本页把它们转成用户真正需要的、基于 slug 的 Settings URL。若把
+ * 某一个工作区的 slug 写死在 Stripe 配置里，其它工作区就都回不来了。
  *
- * Three things this page deliberately does NOT do:
+ * 本页刻意不做三件事：
  *
- *   - It never trusts a redirect target from the query string. Only
- *     `workspace_id` and `result` are read, and the destination is rebuilt from
- *     `paths`, so a crafted return link cannot become an open redirect.
- *   - It does not report success on its own. `result=success` means Stripe
- *     finished, not that the subscription is recorded; the destination page is
- *     what waits for the webhook. This page only forwards the marker.
- *   - It does not silently drop the user somewhere else when something is
- *     wrong. Paying and then landing on an unexplained page is worse than a
- *     short message, so the failure states below say what happened.
+ *   - 绝不信任来自查询串的重定向目标。只读 `workspace_id` 与 `result`，目标
+ *     一律从 `paths` 重建，因此一个精心构造的返回链接无法变成开放重定向。
+ *   - 不自报成功。`result=success` 只表示 Stripe 完成，订阅未必已入账；等待
+ *     webhook 的是目标页，本页只是把这个标记转发过去。
+ *   - 出错时不会把用户默默丢到别处。付了钱却落在一个莫名其妙的页面，比一句
+ *     简短提示更糟，所以下面的失败态会说明发生了什么。
  */
 
 const RESULT_VALUES = new Set(["success", "cancel", "portal"]);
-// Same shape check the rest of core uses for route UUIDs. Only a well-formed ID
-// is worth carrying anywhere, and this one can end up in a third-party OAuth
-// state on the login detour below.
+// 与 core 其它地方校验路由 UUID 用同一套形状检查。只有格式正确的 id 才值得
+// 带到任何地方——而它可能会进入下面登录绕行时 Google OAuth 的 state。
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Stripe 返回页：把 workspace_id 换成对应 slug 并跳转到计费设置页。 */
 export function BillingReturnPage() {
   const { t } = useT("billing");
   const navigation = useNavigation();
@@ -65,22 +60,19 @@ export function BillingReturnPage() {
     workspaceIdParam && workspaces
       ? workspaces.find((ws) => ws.id === workspaceIdParam)
       : undefined;
-  // Only after the list has actually arrived can "not found" mean anything.
+  // 只有列表真的到了之后，「找不到」才有意义。
   const isUnresolvable = !!workspaces && !match;
 
   useEffect(() => {
     if (isAuthLoading) return;
-    // Checkout can take long enough for a session to expire, so an
-    // unauthenticated return is a normal case rather than an error. Carry enough
-    // to resume the return so the user does not land on their default workspace
-    // with no idea whether the payment took.
+    // Checkout 可能耗时到会话过期，所以未登录的返回是正常情况而不是错误。
+    // 带上足以继续返回现场的信息，这样用户不会落到默认工作区却完全不知道
+    // 付款到底成了没有。
     //
-    // Rebuilt from the two values this page actually uses, NOT forwarded whole:
-    // the login page embeds `next` verbatim in the Google OAuth `state`, so
-    // anything left in here — Stripe's `session_id`, any future cloud param —
-    // would be handed to a third party for no functional reason.
-    // sanitizeNextUrl on the login side also accepts relative paths only, so
-    // this cannot become an off-site redirect.
+    // 从本页真正使用的两个值重建，而不是整串转发：登录页会把 `next` 原样
+    // 嵌进 Google OAuth 的 `state`，所以这里剩的任何东西——Stripe 的
+    // `session_id`、将来云端的任何参数——都会被没有功能理由地交给第三方。
+    // 登录侧 sanitizeNextUrl 也只接受相对路径，因此这不可能变成站外重定向。
     if (!user) {
       const resume = new URLSearchParams();
       if (workspaceIdParam) resume.set("workspace_id", workspaceIdParam);
@@ -98,8 +90,8 @@ export function BillingReturnPage() {
     const destination = `${paths.workspace(match.slug).settings()}?tab=billing${
       result ? `&result=${result}` : ""
     }`;
-    // replace(), not push(): the Stripe hop should not sit in history where a
-    // back navigation would re-run this redirect.
+    // 用 replace() 而非 push()：Stripe 的中转不该留在历史里，否则一次后退
+    // 会重跑这个重定向。
     navigation.replace(destination);
   }, [
     isAuthLoading,
@@ -113,14 +105,13 @@ export function BillingReturnPage() {
     workspaces,
   ]);
 
-  // The workspace list is what turns an ID into a slug, so without it there is
-  // no destination to send anyone to. Retrying beats an endless spinner.
+  // 工作区列表正是把 id 换成 slug 的依据，没有它就没有可送的目的地。
+  // 重试好过一个转个没完的 spinner。
   //
-  // The copy below deliberately claims nothing about the outcome. This page
-  // cannot know it: `cancel` means the user backed out, `portal` may have been
-  // opened and closed, and even `success` only means Stripe finished — the
-  // subscription is not recorded until the webhook lands. Asserting "saved" on a
-  // payment result screen is the one thing worse than saying "check Billing".
+  // 下面的文案刻意不声称任何结果。本页无从得知：`cancel` 表示用户中途退出，
+  // `portal` 可能是打开了又关闭，连 `success` 也只代表 Stripe 完成——订阅要
+  // 等 webhook 落地才算入账。在支付结果页断言「已保存」，是唯一比「去 Billing
+  // 看看」更糟的事。
   if (isWorkspacesError) {
     return (
       <ReturnMessage
@@ -140,8 +131,7 @@ export function BillingReturnPage() {
     );
   }
 
-  // Deleted workspace, revoked membership, a missing or malformed workspace_id,
-  // or a hand-edited link.
+  // 工作区被删、成员身份被撤销、workspace_id 缺失或格式不对、或是手改过的链接。
   if (isUnresolvable) {
     return (
       <ReturnMessage
@@ -170,6 +160,7 @@ export function BillingReturnPage() {
   );
 }
 
+/** 统一的返回消息展示：标题 + 说明 + 操作按钮。 */
 function ReturnMessage({
   title,
   description,

@@ -1,9 +1,15 @@
 "use client"
+// 本文件是开关（Switch）组件（基于 Base UI 的 Switch）：
+// 表示二选一设置项的拨动开关，开启时填充品牌色并滑到右侧。
 
 import { Switch as SwitchPrimitive } from "@base-ui/react/switch"
 
 import { cn } from "@multica/ui/lib/utils"
 
+/**
+ * Switch：拨动开关。
+ * @param props.size 尺寸：'default' / 'sm'
+ */
 function Switch({
   className,
   size = "default",

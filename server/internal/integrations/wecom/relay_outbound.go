@@ -1,56 +1,41 @@
+// relay_outbound.go —— 一条回复怎样到达「能发送它的那个副本」。
+//
+// 企微是唯一没有出站 REST 路径的通道：每个写都走 aibot WebSocket，而 WS 租约保
+// 证只有恰好一个副本握着它。与此同时，chat:done 由「服务 daemon 的 POST
+// /tasks/{id}/complete 请求的那个副本」——一次负载均衡的决策——在进程内
+// events.Bus 上发布。离开租约时，outbound.go 过去除了丢弃回复无事可做（GH #7215、
+// #6890；SELF_HOSTING.md 写明由此产生的约束）。
+//
+// 本文件经仓库已经为「恰好这种形状的问题」在跑的 Redis Stream 中继路由它：
+// daemonws.RelayNotifier 以 ScopeDaemonRuntime 发布，唤醒连在另一副本上的
+// daemon；每个节点的 XREAD 循环把帧交给握着那条连接的人。
+//
+// 那套机制对它的消费者有三条要求，而照抄 daemon 唤醒形状的朴素版本满足不了：
+//
+//  1. 它会重放。分片读者从 (now - ReplayGrace) 而不是 "$" 开始读，所以 pod 宕机
+//     期间发布的事件会被重读——它自己的文档写着「下游消费者必须幂等」。进程内的
+//     seen-set 跨重启不幂等，也不跨两个副本。所以占位必须住在 Redis 里、以那一轮
+//     作键、寿命要舒舒服服长过重放窗口。Redis 在这里不是新依赖：它就是传输本身。
+//     没有 Redis 就没有中继，就没有跨副本投递、也就没有要去重的东西。
+//
+//  2. 它在分片读取循环上【同步】调用消费者。daemon 唤醒在那里的活是一次 map 查
+//     询加一次带缓冲写；我们的是网络往返、要等至多 ackTimeout 拿平台的裁定。内联
+//     干会让一个不健康的机器人拖垮浏览器实时流量、daemon 唤醒、以及那个分片上的
+//     每个其他机器人。所以 DeliverWecomOutbound 只把帧交给一条有界队列就返回。
+//
+//  3. 它的读者启动得很早。因此注册必须在 senders 注册表和订阅者存在之前就能发
+//     生：这个对象最先被构造和注册，Attach 稍后补上 handler。中间到达的帧在队列
+//     里等着，而不是撞上一个 nil 字段被丢弃。
+//
+// 顺序：同一条安装的每条回复由一条队列、一个 worker 承载，按到达顺序处理——包括
+// 跨一次「重新递出」。一帧必须再试一次时不会排到队列尾；它停在自己安装那条队的
+// 队首，后面一切都等它——因为「同一个人收到的两条回答顺序颠倒」正是本顺序机制存
+// 在要防的缺陷。
+//
+// 分片是并发上限、不是隔离保证：安装被哈希到 RelayConfig.Shards 条队列上，所以撞
+// 上同一分片的两台机器人确实会互相排队。分片数买来的是「一台慢机器人占不满所有
+// worker」。
 package wecom
-
-// relay_outbound.go — how a reply reaches the replica that can send it.
-//
-// WeCom is the one channel with no outbound REST path: every write goes over
-// the aibot WebSocket, and the WS lease means exactly one replica holds it.
-// chat:done, meanwhile, is published on the in-process events.Bus by whichever
-// replica served the daemon's POST /tasks/{id}/complete — a load-balancer
-// decision. Off-lease, outbound.go used to have nothing to do but drop the
-// reply (GH #7215, #6890; SELF_HOSTING.md states the resulting constraint).
-//
-// This routes it over the Redis Stream relay the repository already runs for
-// exactly this shape of problem: daemonws.RelayNotifier wakes a daemon
-// connected to another replica by publishing under ScopeDaemonRuntime, and
-// every node's XREAD loop hands the frame to whoever holds that connection.
-//
-// THREE THINGS THAT MECHANISM REQUIRES OF ITS CONSUMERS, and that a naive copy
-// of the daemon-wakeup shape does not satisfy:
-//
-//  1. It replays. A shard reader starts from (now - ReplayGrace), not "$", so
-//     events published while a pod was down are re-read — its own doc says
-//     "downstream consumers must be idempotent". A per-process seen-set is not
-//     idempotent across a restart, and does not span two replicas either. The
-//     claim therefore lives in Redis, keyed on the turn, with a lifetime that
-//     comfortably outlasts the replay window. Redis is not a new dependency
-//     here: it IS the transport. No Redis means no relay, which means no
-//     cross-replica delivery and nothing to deduplicate.
-//
-//  2. It calls the consumer SYNCHRONOUSLY on the shard read loop. The daemon
-//     wakeup's work there is a map lookup and a buffered write; ours is a
-//     network round trip that waits up to ackTimeout for the platform's
-//     verdict. Doing that inline would let one unhealthy bot stall browser
-//     realtime traffic, daemon wakeups, and every other bot on that shard. So
-//     DeliverWecomOutbound only hands the frame to a bounded queue and
-//     returns.
-//
-//  3. Its readers start early. Registration therefore has to be possible
-//     before the senders registry and the subscriber exist: this object is
-//     built and registered first, and Attach supplies the handler afterwards.
-//     Frames that arrive in between wait in the queue rather than being
-//     dropped against a nil field.
-//
-// ORDERING: every reply for one installation is carried by one queue and one
-// worker, in the order it arrived — INCLUDING across a re-offer. A frame that
-// has to be tried again does not go to the back of the queue; it parks at the
-// head of its own installation's line and everything behind it waits, because
-// two answers to the same person arriving in the wrong order is the defect
-// this ordering exists to prevent.
-//
-// Sharding is a CONCURRENCY bound, not an isolation guarantee: installations
-// are hashed onto RelayConfig.Shards queues, so two bots that collide on a
-// shard do wait behind each other. What the shard count buys is that one slow
-// bot cannot occupy every worker.
 
 import (
 	"context"
@@ -70,44 +55,39 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
-// relayPublisher is the slice of the realtime relay this package needs.
-// *realtime.ShardedStreamRelay and *realtime.RedisRelay both satisfy it.
+// relayPublisher 是本包要用的 realtime relay 切片。*realtime.ShardedStreamRelay
+// 和 *realtime.RedisRelay 都满足它。
 type relayPublisher interface {
 	PublishWithID(scopeType, scopeID, exclude string, frame []byte, id string) error
 }
 
-// DedupeStore is the at-most-once claim that spans a restart and two replicas.
-// Backed by Redis in production (see NewRedisDedupe); nil leaves only the
-// in-process gate, which is correct for a single-replica deployment because
-// there the relay is never used at all.
+// DedupeStore 是跨重启、跨两个副本的「至多一次」占位。生产用 Redis 撑底（见
+// NewRedisDedupe）；nil 只留下进程内的闸门——对单副本部署这是对的，因为那种部署
+// 根本不用中继。
 type DedupeStore interface {
-	// Claim reports whether the caller is the first to take key. It must be
-	// atomic across processes.
+	// Claim 报告调用方是不是第一个拿下 key 的人。它必须在跨进程间原子。
 	Claim(ctx context.Context, key string, ttl time.Duration) (bool, error)
-	// Release gives a claim back, for a delivery that provably did not happen.
+	// Release 把占位还回去，用于一次「可证没有发生」的投递。
 	Release(ctx context.Context, key string)
-	// Held reports whether key is claimed right now. It is how the publisher
-	// learns, after the fact, whether ANY replica took a delivery it routed —
-	// see RelayOutbound.watchOutcomes.
+	// Held 报告 key 此刻是否被占着。发布方靠它事后得知「它路由出去的那次投递是否
+	// 有哪个副本接」——见 RelayOutbound.watchOutcomes。
 	Held(ctx context.Context, key string) (bool, error)
-	// ClaimBudget is the longest ONE round trip above may take. The store
-	// states it because the store enforces it: outcomeGrace pays this budget
-	// once per offer, and a copy of the number kept by the dispatcher would be
-	// free to drift from the timeout actually applied.
+	// ClaimBudget 是上面任意一次单程往返最长能花多久。存储声明它，因为也是存储执
+	// 行它：outcomeGrace 每次递出付一次这个预算，而由分发器另存一个副本的数字可以
+	// 自由漂移、偏离实际生效的超时。
 	ClaimBudget() time.Duration
 }
 
-// minDedupeTTL floors the claim lifetime. The invariant the claim upholds is
-// that it outlives the relay's replay window — a claim that expires while the
-// frame is still replayable is not a claim — and that window is an OPERATOR
-// KNOB (REALTIME_RELAY_REPLAY_GRACE), not a constant, so the TTL cannot be one
-// either: a 2h grace against a fixed 1h TTL would re-send an answer the user
-// already read on any restart between the two. dedupeTTLFor derives it.
+// minDedupeTTL 给占位寿命定了底。占位维持的不变量是「它比中继的重放窗口活得
+// 久」——一帧还在可重放期就过期的占位不算占位——而那个窗口是 OPERATOR 旋钮
+// （REALTIME_RELAY_REPLAY_GRACE），不是常量，所以 TTL 也不能是：一个 2 小时的宽
+// 限期对着固定 1 小时 TTL，会在两者之间的任何一次重启上把用户已读过的回答重发一
+// 遍。dedupeTTLFor 从它推导。
 const minDedupeTTL = time.Hour
 
-// dedupeTTLFor is max(minDedupeTTL, 2×replayGrace): twice the grace so a claim
-// comfortably outlives the window it guards, floored so a tiny grace does not
-// produce a claim shorter than the hour the default always had.
+// dedupeTTLFor 是 max(minDedupeTTL, 2×replayGrace)：宽限期的两倍，好让占位稳稳
+// 活过它守护的窗口；取底是为了极小宽限期不会造出比「默认一直以来的那 1 小时」还
+// 短的占位。
 func dedupeTTLFor(replayGrace time.Duration) time.Duration {
 	if ttl := 2 * replayGrace; ttl > minDedupeTTL {
 		return ttl
@@ -115,58 +95,46 @@ func dedupeTTLFor(replayGrace time.Duration) time.Duration {
 	return minDedupeTTL
 }
 
-// RelayConfig sizes the dispatcher. None of these is a taste: each one has an
-// operational bound behind it, named in its comment, and the two whose bound
-// lives OUTSIDE this package are passed in rather than guessed — the relay's
-// replay window and the supervisor's lease poll interval.
+// RelayConfig 给分发器定尺寸。没有一项是口味问题：每一项背后都有一个运维边界，
+// 已写进各自注释；两个边界住在本包外的（中继的重放窗口、supervisor 的租约轮询间
+// 隔）以参数传入而不是靠猜。
 //
-// A zero field takes its documented default.
+// 零值字段取文档里的默认值。
 type RelayConfig struct {
-	// Shards is how many independent queues carry frames, and it is a
-	// concurrency bound rather than an ordering one: ordering comes from the
-	// hash putting one installation on one queue, and installations that
-	// collide on a shard DO wait behind each other. The number to size against
-	// is therefore how many bots may be slow at once before a healthy one
-	// queues behind them. Eight covers a deployment's worth of bots against
-	// the one thing that makes a delivery slow — ackTimeout, 5s — while
-	// keeping eight idle goroutines rather than one per installation.
+	// Shards 是多少条独立队列承载帧。它是并发上限而非顺序上限：顺序来自哈希把
+	// 一条安装放上一条队列，而撞在同一分片上的安装确实会互相排队。所以定尺寸时
+	// 该问的是「在健康机器人排到它们后面之前，允许多少台机器人同时变慢」。八条
+	// 覆盖一次部署量级的机器人、对着唯一会让投递变慢的东西——ackTimeout，5 秒
+	// ——同时只保留 8 个空闲 goroutine，而不是每安装一个。
 	Shards int
 
-	// QueueDepth is per shard, and the burst it must absorb is a restart's
-	// replay: the shard reader opens at (now - ReplayGrace) and hands over
-	// everything published in that window at once. 256 per shard is 2048
-	// frames in flight across the default eight — more than a replay window
-	// of WeCom answers can hold for one deployment, and small enough that a
-	// wedged bot sheds instead of growing the heap without bound.
+	// QueueDepth 是每分片的深度，而它必须吸收的突发是一次重启的重放：分片读者从
+	// (now - ReplayGrace) 打开、把窗口内发布的一切一次交出。每分片 256 在默认八
+	// 分片上是在飞 2048 帧——超过一次企微回答的重放窗口对单套部署能容纳的量，又
+	// 小到「被楔住的机器人只会被拒发、不会无界撑大堆」。
 	QueueDepth int
 
-	// DrainBudget bounds the WHOLE post-shutdown drain, not one delivery.
-	// Its bound is external: the drain runs inside the process's own
-	// shutdown, so it must fit under the channel supervisor's ShutdownTimeout
-	// (engine.Config, 15s by default) with room for the supervisor's own
-	// join. Ten seconds is that fit; whatever misses it is left to the claim
-	// TTL and the next replica's replay window.
+	// DrainBudget 约束关停后整个排空过程，不是单次投递。它的边界在外部：排空跑在
+	// 进程自己的关停里，所以必须能塞进通道 supervisor 的 ShutdownTimeout
+	// （engine.Config，默认 15s），还要给 supervisor 自己 join 留空间。十秒就是那
+	// 个合适尺寸；够不着的就留给占位 TTL 和下一副本的重放窗口。
 	DrainBudget time.Duration
 
-	// ReplayGrace is the relay's configured startup lookback. It sizes the
-	// claim TTL (dedupeTTLFor) and it is an operator knob
-	// (REALTIME_RELAY_REPLAY_GRACE), which is exactly why it is a parameter.
+	// ReplayGrace 是中继配置的启动回看窗口。它决定占位 TTL 的尺寸（dedupeTTLFor），
+	// 而且是运维旋钮（REALTIME_RELAY_REPLAY_GRACE）——这正是它作为参数的原因。
 	ReplayGrace time.Duration
 
-	// LeaseSettle is how long a WebSocket lease takes to finish moving to
-	// another replica, and it sizes the retry chain. Its bound is the channel
-	// supervisor's PollInterval (CHANNEL_WS_LEASE_POLL_INTERVAL, 30s by
-	// default): a replica learns it should hold an installation on its next
-	// sweep, so a frame that arrives mid-move has to be re-offered for at
-	// least that long or it is given up on while the holder is still on its
-	// way. The previous fixed five attempts at 200ms covered three seconds —
-	// a tenth of one poll — and expired long before the move it existed for.
+	// LeaseSettle 是 WebSocket 租约完成移动到另一副本要花的时间，它决定重试链的
+	// 尺寸。其边界是通道 supervisor 的 PollInterval（CHANNEL_WS_LEASE_POLL_INTERVAL，
+	// 默认 30s）：副本在它下一次清扫时才知道自己该持有某条安装，所以一帧在移动
+	// 中途到达时，至少要重递那么久，否则会在持有者还在路上的时候就放弃它。以前
+	// 固定 5 次、每次 200ms 只覆盖 3 秒——一次轮询的十分之一——早在它所服务的那
+	// 次移动结束前就过期了。
 	LeaseSettle time.Duration
 
-	// RetryBackoff is the FIRST wait between re-offers; the chain doubles from
-	// there, capped at a quarter of LeaseSettle so a lease that lands early is
-	// not sat out. Small on purpose: the common reason a re-offer succeeds is
-	// that the move has already finished.
+	// RetryBackoff 是两次重递之间的第一次等待；其后逐次翻倍、以 LeaseSettle 的四
+	// 分之一为顶——租约若提前落地，不必干坐。刻意取小：重递成功的常见原因就是移
+	// 动已经完成。
 	RetryBackoff time.Duration
 }
 
@@ -174,14 +142,13 @@ const (
 	defaultRelayShards      = 8
 	defaultRelayQueueDepth  = 256
 	defaultRelayDrainBudget = 10 * time.Second
-	// defaultRelayLeaseSettle is the supervisor's own default poll interval,
-	// referenced rather than repeated: it is the same quantity, and a copy
-	// here would be free to drift from the thing it is meant to outlast.
+	// defaultRelayLeaseSettle 是 supervisor 自己的默认轮询间隔，是引用而非重抄：
+	// 同一个量，在这里再存一份就可以自由漂移、偏离它本要「活得比它久」的那个东西。
 	defaultRelayLeaseSettle  = engine.DefaultPollInterval
 	defaultRelayRetryBackoff = 200 * time.Millisecond
 )
 
-// withDefaults fills the zero fields and returns the completed config.
+// withDefaults 填掉零字段并返回补全后的配置。
 func (c RelayConfig) withDefaults() RelayConfig {
 	if c.Shards <= 0 {
 		c.Shards = defaultRelayShards
@@ -201,14 +168,11 @@ func (c RelayConfig) withDefaults() RelayConfig {
 	return c
 }
 
-// retryPlan is the re-offer chain, computed once from the settle window rather
-// than written down: delays double from RetryBackoff, each capped at a quarter
-// of LeaseSettle, and the chain is long enough that its TOTAL covers one and a
-// half settle windows — the move itself, plus half of one for the reconnect
-// and subscribe that follow it.
+// retryPlan 是重递链，按 settle 窗口一次性算出来而不是手写：延迟从 RetryBackoff
+// 逐次翻倍、各自以 LeaseSettle 的四分之一为顶，链足够长到 TOTAL 覆盖一个半 settle
+// 窗口——移动本身，外加半个给随后而来的重连与订阅。
 //
-// Bounded twice over so a pathological config cannot produce an unbounded
-// chain: at most relayRetryChainCap entries.
+// 双保险设界，病态配置也造不出无界链：至多 relayRetryChainCap 项。
 const relayRetryChainCap = 24
 
 func (c RelayConfig) retryPlan() []time.Duration {
@@ -233,10 +197,9 @@ func (c RelayConfig) retryPlan() []time.Duration {
 	return plan
 }
 
-// relayFrame is one delivery in transit between replicas. It carries
-// identifiers rather than rendered payloads for anything the lease holder can
-// read for itself, so an attachment is fetched by the replica that will send
-// it rather than shipped through Redis.
+// relayFrame 是一次在副本之间运输途中的投递。凡租约持有方能自己读的东西，它带
+// id 而不是渲染好的 payload——所以附件由将要发送它的副本去取，而不是经 Redis 运
+// 送。
 type relayFrame struct {
 	Kind           string `json:"kind"` // relayKindReply | relayKindInbox
 	InstallationID string `json:"installation_id"`
@@ -255,37 +218,33 @@ const (
 	relayKindInbox = "inbox"
 )
 
-// relayHandler performs a delivery on the replica that holds the socket.
-// *Outbound implements it; the indirection is what lets this object be
-// registered with the relay before the subscriber exists.
+// relayHandler 在握着 socket 的那个副本上执行一次投递。*Outbound 实现它；这层间
+// 接让本对象能在订阅者存在之前就注册给中继。
 type relayHandler interface {
 	deliverRelayed(ctx context.Context, f relayFrame) deliveryOutcome
-	// ownsSocket answers "does this process hold that installation's live
-	// connection right now". It gates the global claim — see perform.
+	// ownsSocket 回答「本进程此刻是否握着那条安装的活连接」。它给全局占位把门
+	// ——见 perform。
 	ownsSocket(installationID string) bool
 }
 
-// deliveryOutcome tells the dispatcher whether the claim may be released.
+// deliveryOutcome 告诉分发器这次占位能否释放。
 type deliveryOutcome int
 
 const (
-	// outcomeNotOurs — this replica holds no socket for that installation.
-	// Another one will take the frame; the claim must go back.
+	// outcomeNotOurs —— 本副本没有那条安装的 socket。别个副本会接这帧；占位必须
+	// 还回去。
 	outcomeNotOurs deliveryOutcome = iota
-	// outcomeDone — delivered, or failed in a way that must not be retried.
+	// outcomeDone —— 已送达，或以「不可重试的方式」失败。
 	outcomeDone
-	// outcomeProvablyNotSent — nothing reached the wire, so the claim goes
-	// back and a replay or another replica may try again. Deliberately NOT
-	// used for an ack timeout: errAckTimeout means the frame may well have
-	// arrived, and this adapter's standing rule is that a caller retries such
-	// a send at its own risk.
+	// outcomeProvablyNotSent —— 什么都没上线路，所以占位还回去、重放或另一副本可
+	// 以再试。刻意不用于 ack 超时：errAckTimeout 意味着帧很可能已到，而本适配器
+	// 的既定规则是「调用方自担风险地重试这类发送」。
 	outcomeProvablyNotSent
 )
 
-// seenEvents is a bounded, per-process set of relay event ids already acted on.
-// It is a cheap first gate in front of the Redis claim — the publisher's own
-// copy of its own frame is the common case and never needs a round trip. It is
-// NOT the idempotency mechanism; DedupeStore is.
+// seenEvents 是进程内、有界的一批「已处理过」的中继事件 id 集合。它是挡在 Redis
+// 占位前的一道廉价首闸——发布方拿到自己刚发的帧是常见情形、不需要一次往返。它不
+// 是幂等机制；DedupeStore 才是。
 type seenEvents struct {
 	mu    sync.Mutex
 	ids   map[string]struct{}
@@ -324,31 +283,28 @@ func (s *seenEvents) forget(id string) {
 	delete(s.ids, id)
 }
 
-// queued is one frame waiting for a worker, with the id its claims are under
-// and how many times a worker has already picked it up.
+// queued 是一帧在等 worker，带着它各次占位所用的 id、以及 worker 已捡起过几次。
 type queued struct {
 	frame    relayFrame
 	eventID  string
 	attempts int
 }
 
-// A released claim has nobody to retry it EXCEPT this process: each replica
-// reads a given stream frame exactly once and replays only on restart, so
-// "release so the holder can take it" strands the reply whenever the holder
-// already processed its copy — it lost the claim race, returned, and nothing
-// will ever wake it again. The party that released is therefore the party
-// that re-offers it, on RelayConfig.retryPlan, until the lease settles.
+// 一次释放的占位除了本进程没人会去重试它：每个副本对给定流帧恰好读一次、只在重
+// 启时重放，所以「释放好让持有者来接」在持有者已处理过自己的那份拷贝时会把回复晾
+// 干——它抢占位输了、返回了，而永远不会再有人唤醒它。所以「释放的一方」就是「按
+// RelayConfig.retryPlan 重递、直到租约落定」的一方。
 
-// hold is one installation's line while its head is waiting out a re-offer.
-// items[0] is the frame being retried; everything after it arrived later and
-// must not overtake it. Owned by exactly one worker goroutine, so unlocked.
+// hold 是某条安装的一列队，当它的队首正在等一次重递超时。items[0] 是要重试的
+// 帧；它后面的一切都到得更晚、绝不能超车。恰好由一个 worker goroutine 拥有，所以
+// 不用加锁。
 type hold struct {
 	items   []queued
 	readyAt time.Time
 }
 
-// RelayOutbound publishes a delivery to the replica holding the bot's socket,
-// and performs the ones other replicas publish. One per process.
+// RelayOutbound 把一次投递发布给握着机器人 socket 的副本，并执行其他副本发布的
+// 那些。每进程一个。
 type RelayOutbound struct {
 	publisher relayPublisher
 	dedupe    DedupeStore
@@ -358,15 +314,13 @@ type RelayOutbound struct {
 	logger    *slog.Logger
 	seen      *seenEvents
 
-	// verify carries a routed reply's id to the outcome watcher — the one
-	// owner of "did anybody end up delivering this". Buffered and shed rather
-	// than blocking: the publisher is on a bus subscriber's goroutine.
+	// verify 把一条被路由回复的 id 带给结局观察者——「到底有没有人最终送达」的唯
+	// 一负责人。带缓冲、宁可拒发也不阻塞：发布方跑在总线订阅者的 goroutine 上。
 	verify chan pendingOutcome
 
-	// metrics arrives after construction: this object is built before the
-	// metrics registry exists, because the relay's shard readers start before
-	// both. Atomic because DeliverWecomOutbound runs on the shard reader while
-	// boot is still wiring.
+	// metrics 在构造之后才到：本对象在 metrics 注册表存在之前就建好了，因为中继的
+	// 分片读者比两者都先启动。用 atomic 是因为 boot 还在接线时 DeliverWecomOutbound
+	// 已经在分片读者上跑了。
 	metrics atomic.Value // Metrics
 
 	ready   chan struct{}
@@ -376,10 +330,9 @@ type RelayOutbound struct {
 	wg     sync.WaitGroup
 }
 
-// NewRelayOutbound builds the cross-replica router. replayGrace is the relay's
-// configured startup replay window, which sizes the claim TTL (dedupeTTLFor).
-// Call Attach with the subscriber and Start with the process context;
-// registering it on the relay is safe before either.
+// NewRelayOutbound 构造跨副本路由器。replayGrace 是中继配置的启动重放窗口，它决
+// 定占位 TTL 的尺寸（dedupeTTLFor）。拿订阅者调 Attach、拿进程 context 调 Start；
+// 在此之前把它注册给中继都是安全的。
 func NewRelayOutbound(publisher relayPublisher, dedupe DedupeStore, cfg RelayConfig, logger *slog.Logger) *RelayOutbound {
 	if logger == nil {
 		logger = slog.Default()
@@ -403,9 +356,8 @@ func NewRelayOutbound(publisher relayPublisher, dedupe DedupeStore, cfg RelayCon
 	return r
 }
 
-// SetMetrics installs the health sink. Called once during boot, before any
-// delivery can run (the workers wait on Attach), so the only concurrent reader
-// is the shed counter on the shard reader — which is why it is atomic.
+// SetMetrics 装健康出口。启动期间调一次、在任何投递能跑之前（worker 等 Attach），
+// 所以唯一的并发读者是分片读者上的拒发计数器——这就是它要用 atomic 的原因。
 func (r *RelayOutbound) SetMetrics(m Metrics) {
 	if r != nil && m != nil {
 		r.metrics.Store(m)
@@ -419,8 +371,8 @@ func (r *RelayOutbound) mx() Metrics {
 	return nopMetrics{}
 }
 
-// Attach supplies the handler that performs deliveries. Called once, after the
-// subscriber exists. Frames received before this wait in their queue.
+// Attach 提供执行投递的 handler。在订阅者存在之后调一次。此前收到的帧在各自队列
+// 里等待。
 func (r *RelayOutbound) Attach(h relayHandler) {
 	if r == nil {
 		return
@@ -429,9 +381,8 @@ func (r *RelayOutbound) Attach(h relayHandler) {
 	close(r.ready)
 }
 
-// Start runs the workers until ctx is done, then drains what is already
-// queued so a graceful shutdown does not strand a reply somebody is waiting
-// for.
+// Start 把 worker 跑到 ctx 结束，然后把已入队的东西排空，好让优雅关停不把某人正
+// 在等的回复晾干。
 func (r *RelayOutbound) Start(ctx context.Context) {
 	if r == nil {
 		return
@@ -444,17 +395,14 @@ func (r *RelayOutbound) Start(ctx context.Context) {
 	go r.watchOutcomes(ctx)
 }
 
-// handlerReady blocks until Attach has run, and reports whether there is a
-// handler to deliver with at all.
+// handlerReady 阻塞到 Attach 跑过，并报告是否确有可用来投递的 handler。
 func (r *RelayOutbound) handlerReady(ctx context.Context) bool {
 	select {
 	case <-r.ready:
 		return true
 	case <-ctx.Done():
-		// Cancelled before (or while) the handler arrived. If it IS already
-		// attached — the select picks between two ready channels arbitrarily —
-		// what is queued can still be drained; without it there is nothing a
-		// drain could deliver with.
+		// handler 到达前（或到达途中）被取消。若它确实已挂上——select 会在两条
+		// 已就绪 channel 间任意选——已入队的仍可排空；没有它，排空也无物可递。
 		select {
 		case <-r.ready:
 			return true
@@ -464,16 +412,13 @@ func (r *RelayOutbound) handlerReady(ctx context.Context) bool {
 	}
 }
 
-// work is one shard's whole life.
+// work 是一个分片的整个生命周期。
 //
-// Everything it touches belongs to this goroutine alone: the per-installation
-// lines and the one timer that wakes them. That is deliberate on both counts.
-// The lines are what keep a re-offered frame AT THE HEAD of its installation
-// rather than at the back of the queue, so a later reply for the same bot
-// cannot overtake it. The timer being the worker's own is what makes a pending
-// re-offer part of the worker — a timer scheduled outside it could fire after
-// the worker had drained and exited, and put a frame into a queue nobody is
-// reading.
+// 它碰的每样东西都只属于这个 goroutine：按安装的列队和唤醒它们的那个 timer。两
+// 者都是刻意的。列队让一帧被重递时待在它安装队列的队首而不是队尾，所以同一机器
+// 人后来的回复无法超车。timer 属于 worker 自己，让「挂起的重递」成为 worker 的一
+// 部分——在外部安排的 timer 可能等 worker 排空退出后才触发，把一帧放进一条没人读
+// 的队列。
 func (r *RelayOutbound) work(ctx context.Context, q chan queued) {
 	defer r.wg.Done()
 	if !r.handlerReady(ctx) {
@@ -499,9 +444,8 @@ func (r *RelayOutbound) work(ctx context.Context, q chan queued) {
 
 		select {
 		case item := <-q:
-			// The select is fair, so an item can win against an already-fired
-			// ctx.Done. Performing it on the cancelled context would misfile it
-			// as a dedupe outage; it belongs to the drain.
+			// select 是公平的，所以一条 item 可能赢过已触发的 ctx.Done。在已取消
+			// 的 context 上执行它会把该帧错记成去重故障；它属于排空。
 			if ctx.Err() != nil {
 				r.drainRemaining(ctx, q, lines, &item)
 				return
@@ -520,7 +464,7 @@ func (r *RelayOutbound) work(ctx context.Context, q chan queued) {
 	}
 }
 
-// earliestDue is the soonest moment any line's head may be offered again.
+// earliestDue 是任何一条队列的队首可被再次递出的最近时刻。
 func earliestDue(lines map[string]*hold) (time.Time, bool) {
 	var soonest time.Time
 	found := false
@@ -535,9 +479,8 @@ func earliestDue(lines map[string]*hold) (time.Time, bool) {
 	return soonest, found
 }
 
-// offer takes one frame off the shard queue. If its installation already has a
-// line waiting out a re-offer, it joins the BACK of that line: overtaking the
-// frame in front of it is exactly the reordering this exists to prevent.
+// offer 从分片队列取走一帧。若它的安装已有一条在等重递的队列，它排到那条队的队
+// 尾：超车它前面那帧，正是本机制存在要防的重排。
 func (r *RelayOutbound) offer(ctx context.Context, lines map[string]*hold, item queued) {
 	if h := lines[item.frame.InstallationID]; h != nil {
 		if len(h.items) >= r.cfg.QueueDepth {
@@ -550,9 +493,8 @@ func (r *RelayOutbound) offer(ctx context.Context, lines map[string]*hold, item 
 	r.step(ctx, lines, item)
 }
 
-// step runs one delivery and files what it means for the line. A frame that
-// needs another offer stays at the head of its installation's line with the
-// next delay on it; a finished one lets whatever queued behind it move up.
+// step 跑一次投递、把它的含义归档到队列上。需要再递一次的帧待在其安装队列队首、
+// 带着下一次延迟；结束的则让排它后面的东西上前。
 func (r *RelayOutbound) step(ctx context.Context, lines map[string]*hold, item queued) {
 	inst := item.frame.InstallationID
 	if r.perform(ctx, item) {
@@ -561,10 +503,8 @@ func (r *RelayOutbound) step(ctx context.Context, lines map[string]*hold, item q
 	}
 	delay, more := r.delayFor(item.attempts)
 	if !more {
-		// By far the likeliest reason to exhaust the chain is a claim held
-		// because another replica already delivered, so this is not counted as
-		// a drop. The publisher's outcome watch is what names a reply nobody
-		// delivered, and it names it once.
+		// 耗尽链条的最常见原因，是占位正被「另一副本已送达」持有，所以这不计为丢
+		// 弃。发布方的结局观察才是点名「没人投递」的东西，而且它只点名一次。
 		r.logger.Warn("wecom relay: giving up on a routed delivery after retries",
 			"installation_id", inst, "task_id", item.frame.TaskID,
 			"attempts", item.attempts+1)
@@ -577,27 +517,26 @@ func (r *RelayOutbound) step(ctx context.Context, lines map[string]*hold, item q
 		h = &hold{items: []queued{item}}
 		lines[inst] = h
 	} else {
-		h.items[0] = item // it is the head; step is only ever called on one
+		h.items[0] = item // 它是队首；step 只会被以队首调用
 	}
 	h.readyAt = time.Now().Add(delay)
 }
 
-// advance retires a finished head and lets the next frame for that
-// installation become due immediately.
+// advance 让一个已结束的队首退役、并让那条安装的下一帧立刻到期。
 func (r *RelayOutbound) advance(lines map[string]*hold, inst string) {
 	h := lines[inst]
 	if h == nil {
-		return // it came straight off the queue and never joined a line
+		return // 它直接来自队列、从未加入队列
 	}
 	h.items = h.items[1:]
 	if len(h.items) == 0 {
 		delete(lines, inst)
 		return
 	}
-	h.readyAt = time.Time{} // due now; the next loop turn picks it up
+	h.readyAt = time.Time{} // 现在到期；下一个循环轮次捡起它
 }
 
-// fireDue offers every line whose head has waited out its backoff.
+// fireDue 递出每一条队首已熬完退避的队列。
 func (r *RelayOutbound) fireDue(ctx context.Context, lines map[string]*hold) {
 	now := time.Now()
 	for inst, h := range lines {
@@ -612,7 +551,7 @@ func (r *RelayOutbound) fireDue(ctx context.Context, lines map[string]*hold) {
 	}
 }
 
-// delayFor is how long the next offer waits, and whether there is one.
+// delayFor 是下一次递出要等多久，以及是否还有下一次。
 func (r *RelayOutbound) delayFor(attempts int) (time.Duration, bool) {
 	if attempts < 0 || attempts >= len(r.retryPlan) {
 		return 0, false
@@ -620,23 +559,17 @@ func (r *RelayOutbound) delayFor(attempts int) (time.Duration, bool) {
 	return r.retryPlan[attempts], true
 }
 
-// shed records a frame refused for want of queue space. It is an ADMISSION
-// decision and nothing more: relay_shed, labelled by kind, on whichever
-// replica refused it.
+// shed 记录一帧因队列空间不足被拒。它是 ADMISSION（准入）决策、仅此而已：
+// relay_shed，按类型打标，记在拒它的那个副本上。
 //
-// It deliberately does not touch the reply counters. Every replica reads every
-// frame, so no replica can tell from here whether a shed cost the user
-// anything — the one that sheds may not be the one that would have sent it,
-// and during a lease handoff two replicas can hold a sender at once, so even
-// "do I hold the socket" is not proof of being the only one who could. Each
-// replica answering that question for itself is what produced one reply
-// counted as delivered and dropped at the same time.
+// 它刻意不动回复计数器。每个副本都读每一帧，所以没有副本能从这里判断「一次拒发
+// 是否让用户付出了代价」——拒发的那个未必是本来会发它的那个；而且租约交接期间两
+// 个副本可能同时握着 sender，所以连「我握着 socket」也不证明「只有我能发」。每个
+// 副本各答各的这个问题，正是让同一条回复被同时计为「已送达」和「已丢弃」的根源。
 //
-// So the reply outcome stays with the single owner that can settle it after
-// the fact: the publisher's watchOutcomes, which asks whether ANY replica ever
-// claimed the delivery and counts the loss once if none did. A shed that
-// really did cost the user the reply reaches that owner as an unclaimed
-// delivery, and is counted there.
+// 所以回复结局留在唯一能在事后结清它的那个主人手里：发布方的 watchOutcomes，它问
+// 「是否有任何副本认领过这次投递」，都没有才记一次损失。一次真正让用户丢了回复的
+// 拒发，会以「无人认领的投递」到达那个主人、并在那里被计。
 func (r *RelayOutbound) shed(item queued, why string) {
 	r.mx().RecordRelayShed(item.frame.Kind)
 	r.logger.Warn("wecom relay: shedding a routed delivery, "+why,
@@ -644,24 +577,18 @@ func (r *RelayOutbound) shed(item queued, why string) {
 		"installation_id", item.frame.InstallationID, "task_id", item.frame.TaskID)
 }
 
-// drainRemaining performs what is already queued so a graceful shutdown does
-// not strand a reply — under ONE bounded budget for the whole drain, so a full
-// shard cannot stack sequential ack waits. Deliveries started near the edge
-// inherit the deadline and abort with it. first is an item a worker had
-// already taken off the queue when the cancel won the race.
-// Frames parked in a line waiting out a re-offer go first and without their
-// backoff: the wait existed to give a lease time to move, and shutdown has
-// overtaken that.
+// drainRemaining 把已入队的东西执行完，好让优雅关停不把回复晾干——整个排空共用一
+// 个有界预算，所以一条满分片不会叠出一串串行的 ack 等待。临近边缘才启动的投递继
+// 承 deadline、随它中止。first 是取消抢赢竞态时 worker 已从队列取走的一条 item。
+// 待在队列里等重递的帧先走、且不等它们的退避：那次等待的存在是给租约时间移动，
+// 而关停已超过了那个诉求。
 func (r *RelayOutbound) drainRemaining(ctx context.Context, q chan queued, lines map[string]*hold, first *queued) {
 	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.cfg.DrainBudget)
 	defer cancel()
 	if first != nil {
-		// Join the back of its installation's line rather than jump it. This
-		// frame was taken off the queue AFTER whatever is parked at that
-		// line's head, and sending it first would invert two answers in the
-		// user's chat — the exact reordering offer() exists to prevent, undone
-		// on the way out. With no line for that installation there is nothing
-		// to overtake.
+		// 排到它安装队列的队尾而不是插队。这帧是在队列「队首已停着的任何东西」之
+		// 后被取出的，先发它会把用户会话里的两条回答颠过来——正是 offer() 存在要
+		// 防的重排，在出口处又做回去。那条安装没有队列时就没有可超车的。
 		if h := lines[first.frame.InstallationID]; h != nil {
 			h.items = append(h.items, *first)
 		} else {
@@ -690,14 +617,14 @@ func (r *RelayOutbound) drainRemaining(ctx context.Context, q chan queued, lines
 	}
 }
 
-// Wait blocks until every worker has stopped. For tests and shutdown.
+// Wait 阻塞到每个 worker 都停下。供测试与关停用。
 func (r *RelayOutbound) Wait() {
 	if r != nil {
 		r.wg.Wait()
 	}
 }
 
-// publish hands a delivery to the other replicas. Reports whether it went out.
+// publish 把一次投递交给其他副本。报告它是否出去了。
 func (r *RelayOutbound) publish(f relayFrame, eventID string) bool {
 	if r == nil || r.publisher == nil {
 		return false
@@ -712,17 +639,16 @@ func (r *RelayOutbound) publish(f relayFrame, eventID string) bool {
 			"error", err, "installation_id", f.InstallationID, "task_id", f.TaskID)
 		return false
 	}
-	// A published reply is now owed an outcome by somebody. watchOutcomes is
-	// that somebody — see its comment for why it cannot be anyone else.
+	// 一条已发布的回复自此欠某人一个结局。watchOutcomes 就是那个某人——为什么不
+	// 能是别人见它的注释。
 	if f.Kind == relayKindReply {
 		r.awaitOutcome(f, eventID)
 	}
 	return true
 }
 
-// DeliverWecomOutbound is realtime.WecomOutboundDeliverer. It must not block:
-// the caller is the shared shard read loop, and everything else on that shard
-// waits behind it.
+// DeliverWecomOutbound 是 realtime.WecomOutboundDeliverer。它绝不能阻塞：调用方是
+// 共享的分片读取循环，那分片上的一切都在它后面等。
 func (r *RelayOutbound) DeliverWecomOutbound(scopeID string, frame []byte, eventID string) {
 	if r == nil {
 		return
@@ -735,8 +661,8 @@ func (r *RelayOutbound) DeliverWecomOutbound(scopeID string, frame []byte, event
 	select {
 	case r.queues[r.shardFor(f.InstallationID)] <- queued{frame: f, eventID: eventID}:
 	default:
-		// Shed rather than stall the shard. Counted, because a reply nobody
-		// gets is exactly what this whole path exists to stop being silent.
+		// 宁可拒发也不卡住分片。要计数，因为「没人收到的回复」正是整条路径存在的
+		// 目的要终结的那种静默。
 		r.shed(queued{frame: f, eventID: eventID}, "dispatch queue full")
 	}
 }
@@ -747,21 +673,16 @@ func (r *RelayOutbound) shardFor(installationID string) int {
 	return int(h.Sum32() % uint32(len(r.queues)))
 }
 
-// perform runs one delivery under an at-most-once claim, and reports whether
-// this frame is FINISHED — delivered, refused, or not this replica's business.
-// False means it is owed another offer, which the caller schedules at the head
-// of the installation's line.
+// perform 在一次「至多一次」占位下执行一次投递，并报告这帧是否 FINISHED——已送
+// 达、被拒、或不归本副本。False 意味着它还欠一次递出，由调用方排在它安装队列的
+// 队首。
 func (r *RelayOutbound) perform(ctx context.Context, item queued) bool {
-	// Ownership FIRST, the global claim second. The claim is a cross-replica
-	// SET NX: every replica reads every frame, and if one that cannot send
-	// were allowed to win it, the replica that can send would lose the race,
-	// conclude somebody else has it, and return — while the winner discovers
-	// it holds no socket, releases the key, and nothing ever wakes the loser
-	// again. Every party behaves correctly and the reply is still lost. So a
-	// replica competes for the claim only after establishing it could honour
-	// it. The socket can still vanish between this check and the send; that
-	// window is why deliverRelayed re-checks and why a not-ours outcome
-	// releases the claim.
+	// 所有权先、全局占位第二。占位是跨副本的 SET NX：每个副本都读每一帧，若让一
+	// 个发不了的副本赢下它，能发的那副本就会输掉竞态、断定别人拿了、然后返回——
+	// 而赢家随后发现自己没 socket、释放 key，从此再没人唤醒输家。每方行为都正确、
+	// 回复还是丢了。所以副本只在「先确证自己能兑现」之后才去抢占位。socket 仍可能
+	// 在这检查与发送之间消失；那个窗口正是 deliverRelayed 要复查、以及 not-ours 结
+	// 局要释放占位的原因。
 	if !r.handler.ownsSocket(item.frame.InstallationID) {
 		return true
 	}
@@ -772,24 +693,20 @@ func (r *RelayOutbound) perform(ctx context.Context, item queued) bool {
 	if r.dedupe != nil {
 		won, err := r.dedupe.Claim(ctx, key, r.dedupeTTL)
 		if err != nil {
-			// A dedupe store that cannot answer must not silently become an
-			// at-least-once path: a duplicate answer in a room is worse than a
-			// late one. But nothing external retries a running process either
-			// — replay happens only on restart — so the retry is ours.
+			// 答不上来的去重存储不能悄悄变成「至少一次」路径：会话里出现重复回答
+			// 比晚到的回答更糟。但也没有外部机制去重试一个正在跑的进程——重放只在
+			// 重启时发生——所以重试是我们自己的。
 			r.seen.forget(item.eventID)
 			r.logger.WarnContext(ctx, "wecom relay: dedupe unavailable, retrying locally",
 				"error", err, "installation_id", item.frame.InstallationID)
 			return false
 		}
 		if !won {
-			// Losing the claim does NOT mean somebody else will deliver. In a
-			// mid-flight lease move the loser here can be the replica that
-			// NOW holds the socket, while the winner is about to discover it
-			// no longer does and release — and each replica reads a stream
-			// frame exactly once, so nothing external ever hands it back.
-			// The loser therefore checks again, bounded and backed off; the
-			// common case (the claim is held because the reply was
-			// delivered) burns the chain out and stops.
+			// 输掉占位并不等于「别人会去送」。在租约移动的半路上，这里的输家可能
+			// 正是【此刻】握着 socket 的副本，而赢家即将发现自己不再握着、释放
+			// ——而且每个副本对每条流帧恰好读一次，外部永远不会把它送回来。所以输
+			// 家要再查一次，有界、带退避；常见情形（占位被持有是因为回复已送达）
+			// 会把链条烧完、停住。
 			r.seen.forget(item.eventID)
 			return false
 		}
@@ -798,8 +715,8 @@ func (r *RelayOutbound) perform(ctx context.Context, item queued) bool {
 	if outcome == outcomeDone {
 		return true
 	}
-	// Not ours, or provably never written: give the claim back — and offer it
-	// again locally too, because release alone wakes nobody (see !won above).
+	// 不是我们的、或可证从未写出的：把占位还回去——并在本地也再递一次，因为光释
+	// 放唤醒不了任何人（见上面的 !won）。
 	r.seen.forget(item.eventID)
 	if r.dedupe != nil {
 		r.dedupe.Release(ctx, key)
@@ -809,7 +726,7 @@ func (r *RelayOutbound) perform(ctx context.Context, item queued) bool {
 
 func dedupeKey(eventID string) string { return "wecom:outbound:claim:" + eventID }
 
-// pendingOutcome is one routed reply whose end-to-end fate is not known yet.
+// pendingOutcome 是一条端到端命运尚未可知的已路由回复。
 type pendingOutcome struct {
 	key       string
 	sessionID string
@@ -818,18 +735,14 @@ type pendingOutcome struct {
 	dueAt     time.Time
 }
 
-// outcomeGrace is how long a routed reply is given to find a holder before the
-// publisher concludes nobody had one. It has to outlast the WHOLE re-offer
-// chain — a reply still being retried is in flight, not lost — plus the claim
-// round trip each of those offers pays for.
+// outcomeGrace 是一条被路由的回复在「发布方断定没人握着它」之前被给予的时间。它
+// 必须活过整条重递链——仍在重试的回复是在途、不是丢了——再加上链条上每一次递出
+// 要付的占位往返。
 func (r *RelayOutbound) outcomeGrace() time.Duration {
-	// One claim round trip per OFFER, not one for the chain. Every re-offer
-	// makes its own Claim call and each can burn the store's full claim budget, so a
-	// grace built from the backoffs plus a single round trip expires while the
-	// chain is still running against a slow store — and the watcher then
-	// records a loss that the next attempt contradicts by delivering. Sizing
-	// it for the worst case costs a later settle on a healthy store, which is
-	// the harmless direction.
+	// 每条「递出」一次占位往返，不是整条链一次。每次重递都要调一次自己的 Claim、
+	// 每次都能烧掉存储的整份 claim 预算，所以只用退避总和加一次往返算出的宽限期，
+	// 会在链条面对慢存储仍运转时过期——观察者随后记一次损失，而下一次尝试会以送
+	// 达反驳它。按最坏情况定尺寸，代价只是健康存储上「晚一点结清」，那是无害方向。
 	budget := defaultClaimBudget
 	if r.dedupe != nil {
 		budget = r.dedupe.ClaimBudget()
@@ -841,25 +754,21 @@ func (r *RelayOutbound) outcomeGrace() time.Duration {
 	return total
 }
 
-// watchOutcomes is the ONE owner of a routed reply's final outcome.
+// watchOutcomes 是一条已路由回复最终结局的唯一主人。
 //
-// Nobody else can be. The publisher hands the frame to Redis and returns; every
-// replica that reads it and holds no socket returns silently, correctly, and
-// counts nothing; the replica that does deliver counts the delivery. So when
-// NO replica holds the socket — all of them mid-reconnect — the reply is lost
-// with every party behaving properly and no counter moving. That is the window
-// SELF_HOSTING.md describes and that nothing could previously size.
+// 别人当不了。发布方把帧交给 Redis 就返回；每个读到它却没 socket 的副本静默、正
+// 确地返回、什么都不计；真送达的那副本计送达。所以当「没有任何副本握着 socket」
+// ——全都在重连中——时，回复在每一方都行为正确、没有计数器移动的情况下丢了。那
+// 正是 SELF_HOSTING.md 描述、而过去无法度量尺寸的窗口。
 //
-// The claim key is what makes it observable after the fact: it is set by
-// whoever took the delivery and released only by a replica that proved it sent
-// nothing. So once the re-offer chain can no longer be running, a key that is
-// absent means the reply reached nobody. One Redis EXISTS per routed reply,
-// and routed replies are the off-lease minority.
+// 占位 key 让它事后可观察：由拿走投递的人设、只由「证明自己什么也没发出」的副本
+// 释放。所以一旦重递链不可能还在跑，一个缺失的 key 就表示「这条回复谁也没送到」。
+// 每条已路由回复一次 Redis EXISTS，而已路由回复是「离租约」的少数。
 func (r *RelayOutbound) watchOutcomes(ctx context.Context) {
 	defer r.wg.Done()
 	if r.dedupe == nil {
-		// No claim store means no relay either (see DedupeStore), so there is
-		// no routed reply whose outcome could be in question.
+		// 没有占位存储也就没有中继（见 DedupeStore），所以没有结局会成疑的已路由
+		// 回复。
 		for {
 			select {
 			case <-r.verify:
@@ -888,7 +797,7 @@ func (r *RelayOutbound) watchOutcomes(ctx context.Context) {
 
 		select {
 		case p := <-r.verify:
-			pending = append(pending, p) // the grace is constant, so this stays sorted
+			pending = append(pending, p) // 宽限期是常量，所以它保持有序
 		case <-timer.C:
 			now := time.Now()
 			for len(pending) > 0 && !pending[0].dueAt.After(now) {
@@ -896,10 +805,8 @@ func (r *RelayOutbound) watchOutcomes(ctx context.Context) {
 				pending = pending[1:]
 			}
 		case <-ctx.Done():
-			// Shutdown is not evidence. A reply still inside its grace may yet
-			// be delivered by the replica that has it, and this process is
-			// leaving; counting it here would report a loss that did not
-			// happen.
+			// 关停不是证据。仍在宽限期内的回复也许会被握着它的副本送达，而本进程正
+			// 在离开；在这里计它等于报一条没有发生的损失。
 			if len(pending) > 0 {
 				r.logger.Info("wecom relay: shutting down with routed replies still unresolved",
 					"count", len(pending))
@@ -909,19 +816,18 @@ func (r *RelayOutbound) watchOutcomes(ctx context.Context) {
 	}
 }
 
-// settle asks whether anybody ever claimed one routed reply, and records the
-// loss if nobody did.
+// settle 问「是否有任何人认领过这一条已路由回复」，没人认领就记下损失。
 func (r *RelayOutbound) settle(ctx context.Context, p pendingOutcome) {
 	held, err := r.dedupe.Held(ctx, p.key)
 	if err != nil {
-		// An unreadable claim store proves nothing either way. Saying "lost"
-		// here would turn a Redis blip into a fleet of phantom drops.
+		// 读不了的占位存储两向都证明不了什么。在这里说「丢了」会把一次 Redis 抖动
+		// 变成一整批幻影丢弃。
 		r.logger.WarnContext(ctx, "wecom relay: could not settle a routed reply's outcome",
 			"error", err, "installation_id", p.instID, "task_id", p.taskID)
 		return
 	}
 	if held {
-		return // somebody took it; the replica that did is what counts it
+		return // 有人拿走了；计它的是拿走的那副本
 	}
 	r.mx().RecordOutboundDropped(string(dropNoConnection))
 	r.logger.WarnContext(ctx, "wecom outbound: reply not delivered",
@@ -934,8 +840,8 @@ func (r *RelayOutbound) settle(ctx context.Context, p pendingOutcome) {
 			"(see outbound_relay_shed_total)")
 }
 
-// awaitOutcome enrolls a routed reply for the check above. Never blocks: the
-// caller is a bus subscriber's goroutine.
+// awaitOutcome 为一条已路由回复报名参加上面的核查。绝不阻塞：调用方是总线订阅者
+// 的 goroutine。
 func (r *RelayOutbound) awaitOutcome(f relayFrame, eventID string) {
 	if r.dedupe == nil {
 		return
@@ -954,53 +860,47 @@ func (r *RelayOutbound) awaitOutcome(f relayFrame, eventID string) {
 	}
 }
 
-// WithRelay attaches the cross-replica router to the subscriber. Without it the
-// subscriber keeps the behaviour it had: a reply produced off-lease is dropped
-// where it stands.
+// WithRelay 把跨副本路由器挂到订阅者上。没有它，订阅者保持它从前的行为：离租约产
+// 生的回复就地丢弃。
 func WithRelay(r *RelayOutbound) OutboundOption {
 	return func(o *Outbound) { o.relay = r }
 }
 
-// relayEventID is the id every claim is keyed on. Derived from the turn rather
-// than minted, so a republish of the same completion — a retry of the publish,
-// a replayed stream entry, a second subscriber — is the same claim and cannot
-// become a second message in the chat.
+// relayEventID 是每条占位的键所系的那个 id。从那一轮派生而非现造，所以同一完成事
+// 件被重发——发布的重试、重放的流条目、第二个订阅者——是同一个占位，不可能变成会
+// 话里的第二条消息。
 func relayEventID(e events.Event, taskID pgtype.UUID) string {
 	return "wecom:" + e.Type + ":" + util.UUIDToString(taskID)
 }
 
-// relayInboxEventID is the same rule for an inbox push, which has no task.
+// relayInboxEventID 对没有任务的收件箱推送是同样的规则。
 func relayInboxEventID(itemID, recipientID string) string {
 	return "wecom:inbox:" + itemID + ":" + recipientID
 }
 
-// deliverRelayed performs a delivery published by another replica. It is the
-// relayHandler half, and it runs on a dispatcher worker — never on the shard
-// read loop.
+// deliverRelayed 执行一条由另一副本发布的投递。它是 relayHandler 那一半，跑在分发
+// worker 上——绝不在分片读取循环上。
 //
-// The frame carries identifiers, not payloads, for anything readable here: the
-// attachment rows are fetched by this replica, which is the one that can send
-// them, and are never shipped through Redis.
+// 凡这里可读的东西，帧只带 id、不带 payload：附件行由本副本去取——它就是能发它们
+// 的那个——且从不经 Redis 运送。
 func (o *Outbound) deliverRelayed(ctx context.Context, f relayFrame) deliveryOutcome {
 	instID, err := util.ParseUUID(f.InstallationID)
 	if err != nil || !instID.Valid {
-		return outcomeDone // unaddressable; a retry cannot make it addressable
+		return outcomeDone // 无法寻址；重试也无法让它可寻址
 	}
 	if o.senders == nil {
 		return outcomeNotOurs
 	}
 	sender := o.senders.get(instID)
 	if sender == nil {
-		return outcomeNotOurs // the replica holding the lease will take it
+		return outcomeNotOurs // 握着租约的副本会接它
 	}
 	if f.Content != "" {
 		if err := sender.sendTextCtx(ctx, f.ChatID, f.ChatType, f.Content); err != nil {
-			// The reply counters are for AGENT REPLIES — their documented
-			// unit. An inbox push routed here must not move them: the same
-			// push would otherwise count as a delivered reply, a dropped
-			// reply, or nothing at all depending on which replica happened to
-			// hold the socket, and the delivered/dropped ratio would track
-			// socket placement instead of outcomes.
+			// 回复计数器是给 AGENT REPLIES 的——它们文档化的单位。路由到这里的一条
+			// 收件箱推送不能动它们：同一条推送会随「哪个副本恰好握着 socket」而被计
+			// 成已送达回复、被丢弃回复、或什么都不计，delivered/dropped 比例就会追
+			// 踪 socket 的摆放而不是结局。
 			if f.Kind == relayKindReply {
 				if reason := unconfirmedReason(err); reason != "" {
 					o.unconfirmedFor(ctx, f.SessionID, f.Kind, reason, err)
@@ -1011,11 +911,9 @@ func (o *Outbound) deliverRelayed(ctx context.Context, f relayFrame) deliveryOut
 				o.logger.WarnContext(ctx, "wecom relay: inbox push failed on the lease holder",
 					"error", err, "installation_id", f.InstallationID)
 			}
-			// Only a failure PROVEN to precede the write releases the claim.
-			// Everything past that point — an attempted write, a verdict that
-			// never came, a context that expired while waiting — may have
-			// reached the peer, and releasing the claim there turns a retry
-			// into a duplicate answer in the user's chat.
+			// 只有「可证发生在写之前」的失败才释放占位。过了那一点的一切——一次已
+			// 尝试的写、一直没来的裁定、等待中过期的 context——都可能已到达对端，
+			// 在那里释放占位会把一次重试变成用户会话里的一条重复回答。
 			if provablyNotSent(err) {
 				return outcomeProvablyNotSent
 			}
@@ -1039,7 +937,7 @@ func (o *Outbound) deliverRelayed(ctx context.Context, f relayFrame) deliveryOut
 	return outcomeDone
 }
 
-// ownsSocket is the pre-claim ownership gate. Cheap by design: one map read.
+// ownsSocket 是占位前的所有权闸门。刻意做便宜：一次 map 读。
 func (o *Outbound) ownsSocket(installationID string) bool {
 	if o.senders == nil {
 		return false
@@ -1051,14 +949,11 @@ func (o *Outbound) ownsSocket(installationID string) bool {
 	return o.senders.get(id) != nil
 }
 
-// provablyNotSent reports whether a send error is one that certainly occurred
-// before any byte could leave. ws_sender marks the boundary itself: a failure
-// raised by the write is wrapped in errWriteAttempted, a missing verdict is
-// errAckTimeout, and a stated refusal is a *wecomAPIError — all three mean the
-// peer may have (or, for a refusal, definitely did) see the frame. A bare
-// context error is ambiguous — request() returns one both from its pre-write
-// check and from the post-write wait — so it is treated as possibly sent,
-// which costs an un-retried delivery rather than a duplicate.
+// provablyNotSent 报告某个发送错误是否确凿发生在「任何字节能出去」之前。ws_sender
+// 自己标出这条边界：写本身报的失败包着 errWriteAttempted、缺失的裁定是
+// errAckTimeout、说出口的拒绝是 *wecomAPIError——三者都意味着对端可能已（拒绝则是
+// 确已）看见这帧。裸 context 错误是有歧义的——request() 在写前检查和写后等待都会
+// 返回一个——所以按「可能已送出」处理，代价是一次不被重试的投递而非一条重复。
 func provablyNotSent(err error) bool {
 	var apiErr *wecomAPIError
 	switch {
@@ -1079,16 +974,14 @@ func provablyNotSent(err error) bool {
 
 var _ relayHandler = (*Outbound)(nil)
 
-// itemIDOf is the inbox item's own id, which is what makes a routed push
-// idempotent: two replicas reading the same replayed frame key their claims on
-// the same notification rather than on the moment they read it.
+// itemIDOf 是收件箱条目自己的 id，这正是让一条被路由的推送幂等的东西：两个副本读
+// 到同一帧重放时，把占位系在同一通知上、而不是系在它们各自读到它的那一刻。
 func itemIDOf(item map[string]any) string {
 	if s, _ := item["id"].(string); s != "" {
 		return s
 	}
-	// Older payloads carry no id. Falling back to the type plus the issue it
-	// belongs to is weaker than an id but still stable for one notification,
-	// which is what the claim needs.
+	// 老 payload 不带 id。退回「类型 + 它所属任务」比 id 弱，但对一条通知仍然稳
+	// 定——这正是占位需要的。
 	t, _ := item["type"].(string)
 	ref, _ := item["issue_id"].(string)
 	return t + ":" + ref

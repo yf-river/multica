@@ -1,14 +1,13 @@
-/**
- * Custom issue properties — workspace-defined, typed fields on issues
- * (MUL-4463). Definitions live in a workspace catalog (managed by owner/admin
- * only); values live on each issue in a bag keyed by definition id, so
- * renames never touch issue rows.
- *
- * Values are typed per definition: select stores an option id, multi_select
- * an array of option ids (config order), date a "YYYY-MM-DD" string, checkbox
- * a boolean, number a number, text/url strings, actor a "member:<user_id>"
- * reference string, multi_actor an array of them (insertion order).
- */
+// 本文件定义「自定义议题属性」相关类型（MUL-4463）：workspace 定义在议题上
+// 的类型化字段。定义存于 workspace 目录（仅 owner/admin 可管理）；值按定义 id
+// 为键存在每个议题的「值袋」里，因此重命名定义永远不碰议题行。
+//
+// 值按定义类型化：select 存选项 id，multi_select 存选项 id 数组（按配置顺序），
+// date 存 "YYYY-MM-DD" 字符串，checkbox 存布尔，number 存数字，text/url 存
+// 字符串，actor 存 "member:<user_id>" 引用串，multi_actor 存它们的数组（插入
+// 顺序）。
+
+/** 自定义属性的取值类型。 */
 export type IssuePropertyType =
   | "text"
   | "number"
@@ -20,6 +19,7 @@ export type IssuePropertyType =
   | "actor"
   | "multi_actor";
 
+/** 全部已知的属性类型列表。 */
 export const ISSUE_PROPERTY_TYPES: IssuePropertyType[] = [
   "text",
   "number",
@@ -32,41 +32,42 @@ export const ISSUE_PROPERTY_TYPES: IssuePropertyType[] = [
   "multi_actor",
 ];
 
+/** `type` 是否为已知的属性类型。 */
 export function isKnownPropertyType(type: string): type is IssuePropertyType {
   return (ISSUE_PROPERTY_TYPES as string[]).includes(type);
 }
 
 /**
- * Actor properties (MUL-6286) reference a workspace member. The assignee field
- * also accepts agents and squads; actor properties deliberately do not — an
- * agent reference would drag in agent-visibility rules, and a squad is a
- * routing target rather than a person.
+ * actor 属性（MUL-6286）引用一个 workspace 成员。经办人字段还接受 agent 与
+ * squad；actor 属性刻意不收——agent 引用会牵入 agent 可见性规则，squad 是
+ * 路由目标而不是人。
  *
- * The stored form is "<kind>:<uuid>", so widening this union later needs no
- * migration and no new property type.
+ * 存储形式是 "<kind>:<uuid>"，因此今后放宽该联合无需迁移，也无需新属性类型。
  */
 export type IssuePropertyActorKind = "member";
 
+/** 目前仅支持 kind = "member"。 */
 export const ISSUE_PROPERTY_ACTOR_KINDS: IssuePropertyActorKind[] = ["member"];
 
-/** Upper bound on a single multi_actor value; mirrors the server cap. */
+/** 单个 multi_actor 值的数量上限；与服务端上限一致。 */
 export const MAX_ISSUE_PROPERTY_ACTOR_VALUES = 20;
 
+/** 解析后的 actor 引用。 */
 export interface IssuePropertyActorRef {
   kind: IssuePropertyActorKind;
-  /** Members are referenced by `user_id`, matching the issue assignee pair. */
+  /** 成员以 `user_id` 引用，与议题经办人对的形式一致。 */
   id: string;
 }
 
+/** `type` 是否为 actor 型属性。 */
 export function isActorPropertyType(type: string): boolean {
   return type === "actor" || type === "multi_actor";
 }
 
 /**
- * Types the issue filter menu exposes for value + "No value" filtering.
- * Kept as an explicit enumeration (rather than delegating to
- * isKnownPropertyType) so a future property type must opt into filtering —
- * it should never become filterable by default.
+ * 议题筛选菜单为「有值 + 无值」筛选暴露的类型。显式枚举（而不是委托给
+ * isKnownPropertyType），让未来的属性类型必须主动选择是否支持筛选——它不该
+ * 默认就可筛。
  */
 export function isFilterablePropertyType(type: string): boolean {
   return (
@@ -78,18 +79,20 @@ export function isFilterablePropertyType(type: string): boolean {
   );
 }
 
-/** Single-valued scalar properties: text / number / date / url. */
+/** 单值标量属性类型：text / number / date / url。 */
 export type ScalarIssuePropertyType = Extract<IssuePropertyType, "text" | "number" | "date" | "url">;
 
+/** `type` 是否为单值标量属性类型。 */
 export function isScalarPropertyType(type: string): type is ScalarIssuePropertyType {
   return type === "text" || type === "url" || type === "number" || type === "date";
 }
 
+/** 把 kind + id 拼成存储用的引用串，如 "member:<uuid>"。 */
 export function formatActorRef(kind: IssuePropertyActorKind, id: string): string {
   return `${kind}:${id}`;
 }
 
-/** Returns null for anything that isn't a well-formed reference. */
+/** 解析一个 actor 引用串；不是合法引用时返回 null。 */
 export function parseActorRef(raw: unknown): IssuePropertyActorRef | null {
   if (typeof raw !== "string") return null;
   const separator = raw.indexOf(":");
@@ -102,13 +105,11 @@ export function parseActorRef(raw: unknown): IssuePropertyActorRef | null {
 }
 
 /**
- * Raw reference strings in stored order, INCLUDING kinds this build does not
- * know about.
+ * 以存储顺序取出原始引用串，包括本构建不认识的 kind。
  *
- * Editors must round-trip through this rather than through
- * `actorRefsFromValue`: a client talking to a newer backend would otherwise
- * drop every unknown-kind entry the moment the user toggles
- * one it does understand — a silent data loss the user never sees.
+ * 编辑器必须经此函数而非 `actorRefsFromValue` 做往返：否则连到更新后端的
+ * 客户端会在用户切换某个它能理解的条目时，丢掉所有未知 kind 的条目——一次
+ * 用户看不见的静默数据丢失。
  */
 export function actorRefValuesFromValue(value: IssuePropertyValue | undefined): string[] {
   if (typeof value === "string") return value ? [value] : [];
@@ -119,9 +120,8 @@ export function actorRefValuesFromValue(value: IssuePropertyValue | undefined): 
 }
 
 /**
- * Reads an actor property value as a list of refs this build can render.
- * Unknown kinds are dropped rather than thrown on — see
- * `actorRefValuesFromValue` for the edit path, which must keep them.
+ * 把 actor 属性值读成一组「本构建能渲染」的引用。未知 kind 被丢弃而非抛错
+ * ——见编辑路径用的 `actorRefValuesFromValue`，那条路径必须保留它们。
  */
 export function actorRefsFromValue(value: IssuePropertyValue | undefined): IssuePropertyActorRef[] {
   if (typeof value === "string") {
@@ -135,37 +135,39 @@ export function actorRefsFromValue(value: IssuePropertyValue | undefined): Issue
 }
 
 /**
- * True when an actor value holds at least one reference this build cannot
- * parse — i.e. a newer backend has widened the accepted kinds.
+ * actor 值里是否至少含一条本构建无法解析的引用——即更新的后端放宽了
+ * 接受的 kind。
  *
- * Editors must consult this before offering a normal edit. For `multi_actor`
- * the toggle already round-trips unknown entries, but for single `actor` an
- * unresolvable value renders as empty, and letting the user "fill in the empty
- * field" would overwrite a value they were never shown (MUL-6286 review).
+ * 编辑器在提供普通编辑前必须先查它。对 `multi_actor`，开关已能对未知条目
+ * 做往返；但对单个 `actor`，无法解析的值渲染为空，让用户「补上这个空字段」
+ * 会覆盖一条从未展示给他们的值（MUL-6286 review）。
  */
 export function hasUnknownActorRef(value: IssuePropertyValue | undefined): boolean {
   return actorRefValuesFromValue(value).length !== actorRefsFromValue(value).length;
 }
 
+/** select/multi_select 属性的一个可选项。 */
 export interface IssuePropertyOption {
   id: string;
   name: string;
-  /** Normalized lowercase hex color, e.g. `#3b82f6`. */
+  /** 规范化的小写十六进制颜色，如 `#3b82f6`。 */
   color: string;
 }
 
+/** 属性的类型相关配置（如选项列表）。 */
 export interface IssuePropertyConfig {
   options?: IssuePropertyOption[];
 }
 
+/** 一条自定义属性定义。 */
 export interface IssueProperty {
   id: string;
   workspace_id: string;
   name: string;
-  /** Lenient string: newer servers may ship types this client doesn't know. */
+  /** 宽松字符串：更新的服务器可能携带本客户端不认识的新类型。 */
   type: string;
   description?: string;
-  /** Optional catalog icon key; absent on backends predating icon support. */
+  /** 可选目录图标键；不支持图标的旧后端上缺失。 */
   icon?: string;
   config: IssuePropertyConfig;
   position: number;
@@ -176,20 +178,21 @@ export interface IssueProperty {
   updated_at: string;
 }
 
+/** 一个属性值的存储形态：字符串 / 数字 / 布尔 / 字符串数组。 */
 export type IssuePropertyValue = string | number | boolean | string[];
+/** 议题的全部属性值：定义 id → 值。 */
 export type IssuePropertyValues = Record<string, IssuePropertyValue>;
 
 /**
- * Structured operators for scalar property filters (#7692). A plain string
- * member still means exact equality — every pre-operator saved view, URL, and
- * API call keeps its meaning. Operators ride alongside as objects:
+ * 标量属性筛选的结构化操作符（#7692）。纯字符串成员仍表示精确相等——所有
+ * 操作符出现前保存的视图、URL 与 API 调用语义不变。操作符以对象形式并列：
  *
- * - `contains` — case-insensitive substring match (text / url)
- * - `gt` / `gte` / `lt` / `lte` — numeric comparison (number)
- * - `before` / `after` — lexicographic date comparison (date, "YYYY-MM-DD")
+ * - `contains` — 大小写不敏感的子串匹配（text / url）
+ * - `gt` / `gte` / `lt` / `lte` — 数值比较（number）
+ * - `before` / `after` — 字典序日期比较（date，"YYYY-MM-DD"）
  *
- * Within one definition all members still OR, so an operator member composes
- * with observed values and "No value" like any other alternative.
+ * 同一属性定义内的成员仍是 OR 关系，因此一个操作符成员与已观察值、「无值」
+ * 等任何替代项可组合。
  */
 export type PropertyFilterOp =
   | "contains"
@@ -200,6 +203,7 @@ export type PropertyFilterOp =
   | "before"
   | "after";
 
+/** 全部已知的操作符。 */
 export const PROPERTY_FILTER_OPS: readonly PropertyFilterOp[] = [
   "contains",
   "gt",
@@ -210,7 +214,7 @@ export const PROPERTY_FILTER_OPS: readonly PropertyFilterOp[] = [
   "after",
 ];
 
-/** Mathematical symbols shared by the scalar filter picker and active chips. */
+/** 标量筛选选择器与已激活 chips 共享的数学符号。 */
 export const PROPERTY_FILTER_OP_SYMBOLS: Partial<Record<PropertyFilterOp, string>> = {
   gt: ">",
   gte: "≥",
@@ -218,29 +222,30 @@ export const PROPERTY_FILTER_OP_SYMBOLS: Partial<Record<PropertyFilterOp, string
   lte: "≤",
 };
 
+/** `op` 是否为已知操作符。 */
 export function isKnownPropertyFilterOp(op: string): op is PropertyFilterOp {
   return (PROPERTY_FILTER_OPS as readonly string[]).includes(op);
 }
 
+/** 结构化操作符筛选成员。 */
 export interface PropertyOperatorFilter {
   op: PropertyFilterOp;
-  /** Raw user input; the server interprets it per op. */
+  /** 用户原始输入；服务器按操作符解释。 */
   value: string;
 }
 
-/** One OR-alternative of a property filter: equality (bare string), the
- *  "No value" sentinel, or a structured operator. */
+/** 属性筛选的一个 OR 替代项：相等（裸字符串）、「无值」哨兵或结构化操作符。 */
 export type PropertyFilterValue = string | PropertyOperatorFilter;
 
 /**
- * Canonical membership key for one filter member, so equality strings and
- * operator objects can live in `Set<string>`-shaped lookups (saved-view
- * baselines, chip deltas) without stringifying objects ad hoc.
+ * 单个筛选成员的规范化成员键，让相等字符串与操作符对象能在 Set<string>
+ * 形态的查找（保存视图基线、chip 增量）中共存，而不必临时序列化对象。
  */
 export function propertyFilterValueKey(value: PropertyFilterValue): string {
   return typeof value === "string" ? value : `${value.op}\u0000${value.value}`;
 }
 
+/** `value` 是否为结构化操作符筛选成员。 */
 export function isPropertyOperatorFilter(value: unknown): value is PropertyOperatorFilter {
   return (
     typeof value === "object" &&
@@ -251,11 +256,9 @@ export function isPropertyOperatorFilter(value: unknown): value is PropertyOpera
 }
 
 /**
- * Ops the filter menu offers per scalar property type, in display order.
- * "is" (equality) is not in the list — it is the default and commits a bare
- * string, so every pre-operator flow stays untouched. Non-scalar entries are
- * intentionally empty: keeping the record exhaustive forces each future
- * property type to make an explicit operator decision.
+ * 筛选菜单对每种标量属性类型提供的操作符，按展示顺序。列表里没有 "is"
+ *（相等）——它是默认项并提交裸字符串，因此所有操作符前的流程保持不变。
+ * 非标量条故意为空：保持记录穷尽，强制未来每种属性类型显式做出操作符决定。
  */
 export const PROPERTY_FILTER_OPS_BY_TYPE: Record<IssuePropertyType, readonly PropertyFilterOp[]> = {
   text: ["contains"],
@@ -269,6 +272,7 @@ export const PROPERTY_FILTER_OPS_BY_TYPE: Record<IssuePropertyType, readonly Pro
   multi_actor: [],
 };
 
+/** 新建自定义属性的请求体。 */
 export interface CreatePropertyRequest {
   name: string;
   type: IssuePropertyType;
@@ -277,21 +281,23 @@ export interface CreatePropertyRequest {
   config?: IssuePropertyConfig;
 }
 
+/** 更新自定义属性的请求体。 */
 export interface UpdatePropertyRequest {
   name?: string;
   description?: string;
-  /** Empty string clears the icon. */
+  /** 空字符串清除图标。 */
   icon?: string;
   config?: IssuePropertyConfig;
   archived?: boolean;
 }
 
+/** 自定义属性目录列表响应。 */
 export interface ListPropertiesResponse {
   properties: IssueProperty[];
   total: number;
 }
 
-/** Response of PUT/DELETE /api/issues/{id}/properties/{propertyId}: the full post-mutation bag. */
+/** PUT/DELETE /api/issues/{id}/properties/{propertyId} 的响应：变更后的完整值袋。 */
 export interface IssuePropertiesResponse {
   properties: IssuePropertyValues;
   issue_revision?: number;

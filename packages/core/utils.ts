@@ -1,3 +1,13 @@
+// 本文件提供一组通用前端工具函数：UUID/ID 生成、IME 组合输入判断、文本截断。
+
+/**
+ * 生成符合 RFC 4122 规范的 UUID v4 字符串。
+ *
+ * 实现原理：用 `crypto.getRandomValues` 取 16 字节随机数，再按规范把第 6、8 字节
+ * 打上版本号和变体标记，最后格式化成常见的 `8-4-4-4-12` 形式。
+ *
+ * @returns 形如 `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx` 的 UUID 字符串
+ */
 export function generateUUID(): string {
   const cryptoObj = globalThis.crypto;
 
@@ -8,8 +18,8 @@ export function generateUUID(): string {
   const bytes = new Uint8Array(16);
   cryptoObj.getRandomValues(bytes);
 
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40; // version 4
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80; // variant 1
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40; // 版本号 4
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80; // 变体 1
 
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -17,7 +27,10 @@ export function generateUUID(): string {
 }
 
 /**
- * Generate an id that prefers crypto.randomUUID but falls back in non-secure contexts.
+ * 生成一个安全 ID：优先使用浏览器原生的 `crypto.randomUUID`，
+ * 在非安全上下文（无 randomUUID 或调用失败）时回退到 `generateUUID`。
+ *
+ * @returns 一个 UUID 字符串
  */
 export function createSafeId(): string {
   const cryptoObj = globalThis.crypto;
@@ -26,33 +39,31 @@ export function createSafeId(): string {
     try {
       return cryptoObj.randomUUID();
     } catch {
-      // Fall through to fallback.
+      // 原生命中失败，走下面的回退逻辑。
     }
   }
 
   return generateUUID();
 }
 
-/** Request id helper used for logs/tracing headers. */
+/** 生成请求 ID，用于日志/链路追踪的 header。默认去掉连字符后截取前 8 位。 */
 export function createRequestId(length = 8): string {
   return createSafeId().replace(/-/g, "").slice(0, length);
 }
 
 /**
- * True when the keyboard event fires while an IME is composing a multi-key
- * input (e.g. Chinese pinyin, Japanese kana). The Enter that commits the
- * composition must NOT trigger submit/send/create handlers.
+ * 判断键盘事件是否发生在 IME 组合输入过程中（例如中文拼音、日文假名）。
+ * 用于提交组合文本的那次 Enter，绝不能触发表单提交/发送/创建等处理逻辑。
  *
- * Accepts both React synthetic events and native DOM `KeyboardEvent`s.
+ * 同时兼容 React 合成事件和原生 DOM `KeyboardEvent`。
  *
- * Why both `isComposing` and `keyCode === 229`:
- * - `isComposing` is the standard signal but Safari clears it on the keydown
- *   that ends composition, so a bare check misses the very Enter that submits.
- * - During composition the browser reports `keyCode === 229` regardless of
- *   the actual key, which keeps working in Safari's edge case.
+ * 为什么要同时检查 `isComposing` 和 `keyCode === 229`：
+ * - `isComposing` 是标准信号，但 Safari 在结束组合的那次 keydown 时已把它清掉，
+ *   只检查它就会漏掉真正提交的那次 Enter。
+ * - 组合输入期间浏览器会把 keyCode 上报为 229（与真实按键无关），
+ *   这条判断在 Safari 的边缘场景下依然有效。
  *
- * Always read from `nativeEvent` when present — React's synthetic event is
- * normalized but the native event reflects the browser's real state.
+ * 有 `nativeEvent` 时始终读它——React 合成事件会被规范化，而原生事件才反映浏览器真实状态。
  */
 export function isImeComposing(event: {
   isComposing?: boolean;
@@ -64,22 +75,18 @@ export function isImeComposing(event: {
 }
 
 /**
- * Truncate `text` to at most `maxLength` code points, appending an ellipsis
- * (`…`, U+2026) when it is longer. Text at or under the limit is returned
- * unchanged.
+ * 把 `text` 截断到最多 `maxLength` 个码点，超长时在末尾追加省略号（`…`，U+2026）。
+ * 未超长时原样返回。
  *
- * The ellipsis counts toward the limit, so a truncated result is at most
- * `maxLength` code points: the visible text is sliced to `maxLength - 1` and
- * has trailing whitespace trimmed before the ellipsis is appended. The bound
- * is measured in Unicode code points, not UTF-16 code units, so an emoji is
- * never cut into a lone surrogate — a returned string may therefore exceed
- * `maxLength` in `.length` (code units) while staying within `maxLength`
- * visible characters. When `maxLength` leaves no room for visible text, only
- * the ellipsis is returned; `maxLength <= 0` returns the empty string.
+ * 省略号本身计入长度限制，因此截断后的结果最多 `maxLength` 个码点：
+ * 可见文本被截到 `maxLength - 1` 个字符，去掉尾部空白后再拼上省略号。
+ * 长度按 Unicode 码点（而非 UTF-16 码元）计算，所以 emoji 不会被切成半个代理对——
+ * 返回的字符串其 `.length`（码元数）可能超过 `maxLength`，但可见字符数始终不超。
+ * 当 `maxLength` 连一个可见字符都放不下时只返回省略号；`maxLength <= 0` 时返回空串。
  */
 export function truncateWithEllipsis(text: string, maxLength: number): string {
-  // Fast path on code units: may fail to return early on astral text, but
-  // never truncates wrongly — the code-point check below is authoritative.
+  // 先用码元数做快速判断：遇到 astral 字符时可能不会提前返回，但绝不会误判截断——
+  // 下面的码点检查才是最终依据。
   if (text.length <= maxLength) {
     return text;
   }

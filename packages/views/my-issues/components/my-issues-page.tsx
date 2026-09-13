@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * my-issues 模块：我的 issue 页面。
+ * 基于当前用户与所选范围（指派给我/我创建的/与我相关等）渲染 issue 列表，
+ * 复用 issues 模块的 IssueSurface（board/list/table/swimlane 多种视图）。
+ */
+
 import { useStore } from "zustand";
 import { ListTodo } from "lucide-react";
 import { useAuthStore } from "@multica/core/auth";
@@ -12,6 +18,7 @@ import { IssueSurface } from "../../issues/surface/issue-surface";
 import { useT } from "../../i18n";
 import { MyIssuesHeader } from "./my-issues-header";
 
+/** 我的 issue 页主体：把当前用户 + 范围喂给通用的 IssueSurface。 */
 export function MyIssuesPage() {
   const { t } = useT("my-issues");
   const user = useAuthStore((s) => s.user);

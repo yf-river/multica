@@ -1,5 +1,26 @@
 package agent
 
+// 文件职责：本文件是 Claude Code CLI 的适配后端（Backend 实现），负责把一次任务执行变成
+// “spawn `claude` 子进程 + 按流式协议收发 JSON 帧”的过程，再把 CLI 的流式输出翻译成上层
+// 统一的 Message/Result 结构。
+//
+// 与外部 CLI 的交互：以非交互方式启动 claude，固定携带 `-p --output-format stream-json
+// --input-format stream-json --verbose --permission-mode bypassPermissions`；向 stdin 写一条
+// 初始 user 帧，逐行读 stdout 上的流式事件（assistant/user/system/result/log/
+// control_request），遇到 control_request 自动回一个“放行”的 control_response。所有工具调用
+// 走免确认模式，MCP 服务器由受管配置（--mcp-config）显式传入。
+//
+// 关键机制与坑：进程取消走“组内 SIGTERM→宽限期→SIGKILL”三级，绝不能在子进程还写 stdout 时
+// 关读端（#5918）；stdin 在首条消息后保持打开，因为协议中途可能还要写 control_response
+// （Claude stream-json 的怪癖）；stderr 同时进 daemon 日志和一个有界尾部缓冲，异常退出时把
+// 最后几 KB 拼进 Result.Error，避免“只剩退出码、无法定位 V8 abort / Bun panic”的局面。
+//
+// 本文件后半部分是各类共享助手：命令行参数过滤（filterCustomArgs，保护 daemon↔CLI 通信协议
+// flag）、--version 探测（detectCLIVersion）、MCP 临时配置文件的写与清理等。
+//
+// 内部组织：先是 backend 实现与 Execute（读 stdout 事件的主循环），然后是一组事件处理小函数
+// 与“Claude SDK JSON 类型”（stream-json 各帧的反序列化结构），再往后是命令行/输入构造、
+// resume 会话判定、环境变量过滤、参数过滤、版本探测等共享助手。
 import (
 	"context"
 	"encoding/json"
@@ -20,11 +41,11 @@ import (
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
-// claudeTerminateGraceNanos optionally overrides, in nanoseconds, how long a
-// cancelled claude process group is given to exit after SIGTERM before it is
-// SIGKILLed. Set via atomic store in tests; zero keeps the default.
+// claudeTerminateGraceNanos 可选地覆盖“被取消的 claude 进程组在 SIGTERM 后被强杀(SIGKILL)前
+// 的宽限期”，单位纳秒。测试里通过原子写注入；零值走默认 5s。
 var claudeTerminateGraceNanos atomic.Int64
 
+// claudeTerminateGrace 返回取消时的宽限期时长：测试注入了非零值就用它，否则默认 5 秒。
 func claudeTerminateGrace() time.Duration {
 	if n := claudeTerminateGraceNanos.Load(); n > 0 {
 		return time.Duration(n)
@@ -32,12 +53,17 @@ func claudeTerminateGrace() time.Duration {
 	return 5 * time.Second
 }
 
-// claudeBackend implements Backend by spawning the Claude Code CLI
-// with --output-format stream-json.
+// claudeBackend 实现 Backend 接口：以 `--output-format stream-json` 模式 spawn Claude Code
+// CLI 并与之对话。
 type claudeBackend struct {
 	cfg Config
 }
 
+// Execute 启动一个 claude 子进程执行单轮提示，并返回流式消息通道与最终结果通道。
+//
+// 主要步骤：解析可执行路径 → 构造命令行参数（buildClaudeArgs，含 MCP 受管配置）→ 接管取消
+// 语义（组内优雅关停而非立刻杀整组）→ 起 stdout 扫描 goroutine 边读边翻译事件 → 进程结束后
+// 归并出最终 Result（含是否因 resume 被拒而应开新会话）。
 func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
@@ -52,11 +78,10 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 	args := buildClaudeArgs(opts, b.cfg.Logger)
 
-	// If the caller provided an MCP config, write it to a temp file and pass
-	// --mcp-config <path> so the agent uses a controlled set of MCP servers
-	// instead of inheriting from the outer Claude Code session.
+	// 如果调用方给了 MCP 配置，就把它写进临时文件并传 --mcp-config <path>，让 agent 使用一套
+	// 受控的 MCP 服务器，而不是继承外层 Claude Code 会话里的那些。
 	var mcpConfigPath string
-	var mcpFileCleanup func() // non-nil while this function owns the temp file
+	var mcpFileCleanup func() // 本函数持有临时文件期间非 nil
 	if hasManagedMcpConfig(opts.McpConfig) {
 		path, err := writeMcpConfigToTemp(opts.McpConfig)
 		if err != nil {
@@ -67,7 +92,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		mcpFileCleanup = func() { cleanupMcpConfigTemp(mcpConfigPath) }
 		args = append(args, "--mcp-config", mcpConfigPath)
 	}
-	// Clean up the temp file if we return before the goroutine takes ownership.
+	// 若在 goroutine 接管所有权之前就返回，这里负责清掉临时文件。
 	defer func() {
 		if mcpFileCleanup != nil {
 			mcpFileCleanup()
@@ -76,11 +101,10 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 	cmd := b.cfg.commandAt(execPath).exec(runCtx, args...)
 	hideAgentWindow(cmd)
-	// Take over context cancellation: the default kills the whole group the
-	// instant runCtx is done. We instead drive a graceful group-wide
-	// SIGTERM→SIGKILL from the cancellation goroutine below and close stdout
-	// only after the tree has been signalled. Returning nil keeps os/exec from
-	// racing us with its own kill; WaitDelay remains the hard backstop.
+	// 接管上下文取消：os/exec 默认会在 runCtx 一结束就杀掉整组进程。这里改由下面的取消
+	// goroutine 驱动“组内 SIGTERM→SIGKILL”，并且只在整个进程树都被信号处理完后才关闭 stdout
+	// 读端。把 cmd.Cancel 设为空函数，是防止 os/exec 用自己的 kill 和我们抢跑；WaitDelay 仍是
+	// 兜底的后墙。
 	cmd.Cancel = func() error { return nil }
 	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(args))
 	cmd.WaitDelay = 10 * time.Second
@@ -105,11 +129,10 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	}
 	var closeStdinOnce sync.Once
 	closeStdin := func() { closeStdinOnce.Do(func() { _ = stdin.Close() }) }
-	// Capture stderr into both the daemon log (as before) and a bounded tail
-	// buffer so we can include the last few KB in Result.Error when claude
-	// exits unexpectedly. Without the tail, an exit-code-only failure looks
-	// like "claude exited with error: exit status 3" — which is useless for
-	// root-causing V8 aborts, Bun panics, or any other CLI-side crash.
+	// stderr 同时进 daemon 日志（和以前一样）和一个有界尾部缓冲：claude 意外退出时，能把这
+	// 最后几 KB 拼进 Result.Error。没有这个尾部，一个只有退出码的失败看起来就是
+	// "claude exited with error: exit status 3"——对定位 V8 abort、Bun panic 或任何 CLI 侧崩溃
+	// 毫无帮助。
 	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[claude:stderr] "), agentStderrTailBytes)
 	cmd.Stderr = stderrBuf
 
@@ -121,30 +144,25 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 	b.cfg.Logger.Info("claude started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
 
-	// The process started — transfer temp file ownership to the goroutine.
+	// 进程已经起来了——把临时文件的清理权移交给 goroutine。
 	mcpFileCleanup = nil
 
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
 
-	// procDone closes once cmd.Wait() returns, letting the cancellation handler
-	// skip a process that already exited and avoid signalling a dead/reused pid.
+	// procDone 在 cmd.Wait() 返回后关闭，让取消处理器能跳过“已经退出的进程”，避免对一个
+	// 已死/被复用的 pid 发信号。
 	procDone := make(chan struct{})
 
-	// writeClaudeInput runs in its own goroutine so it cannot deadlock
-	// against the stdout reader. With --verbose --output-format stream-json
-	// the CLI emits a startup banner before reading its first stdin frame;
-	// if nothing is draining stdout while we write the prompt, claude blocks
-	// writing stdout, never reads stdin, and our Write blocks until runCtx
-	// fires. The field symptom is "write |1: The pipe has been ended."
-	// surfacing exactly at the per-task timeout when the kill invalidates
-	// the still-blocked pipe.
+	// writeClaudeInput 在自己的 goroutine 里跑，这样它不会和 stdout 读取方互相死锁。
+	// 在 `--verbose --output-format stream-json` 下，CLI 在读第一条 stdin 帧之前会先打一段
+	// 启动横幅；如果 stdout 没人排空时我们就写 prompt，claude 会阻塞在写 stdout、永不读
+	// stdin，而我们的 Write 会一直阻塞到 runCtx 触发。现场症状是恰好在该任务超时时出现
+	// "write |1: The pipe has been ended."——kill 让仍然阻塞的管道失效。
 	//
-	// Keep stdin open after the initial user message. Claude's stream-json
-	// protocol can emit control_request events mid-run and expects matching
-	// control_response frames on the same input stream; closing stdin here
-	// leaves the child stuck waiting for a response until its own fallback
-	// timeout.
+	// 首条 user 消息之后 stdin 保持打开。Claude 的 stream-json 协议可能在运行中途发
+	// control_request 事件，期待在同一输入流上收到配对的 control_response 帧；在这里关闭
+	// stdin 会让子进程一直卡在等响应，直到它自己的兜底超时。
 	writeDone := make(chan error, 1)
 	go func() {
 		err := writeClaudeInput(stdin, prompt)
@@ -177,31 +195,25 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		toolUseCount := 0
 		unreadableAssistantCount := 0
 
-		// On cancellation / timeout, terminate claude (and every MCP server and
-		// tool subprocess it spawned) BEFORE unblocking the scanner. EOF stdin
-		// to nudge a clean exit, then SIGTERM the whole process group, give it a
-		// grace period, and SIGKILL the group if any member is still alive.
-		// SIGKILL is uncatchable, so once delivered no group member can write
-		// again — only then is it safe to close the stdout read end as a
-		// last-resort unblock for a scanner a wedged descendant still keeps
-		// open. WaitDelay is the final backstop (#5918).
+		// 取消/超时时：先让 claude（以及它 spawn 的每个 MCP server、工具子进程）退出，再解除
+		// scanner 的阻塞。做法是 EOF stdin 催它干净退出 → 对整组发 SIGTERM → 给一段宽限期 →
+		// 组里还有成员存活就 SIGKILL 整组。SIGKILL 不可捕获，一旦送达组内任何成员都无法再写，
+		// 只有到这时才适合关闭 stdout 读端——这是对一个仍被卡死后代占着 stdout 的 scanner 的
+		// 最后一招解锁。WaitDelay 是最终兜底（#5918）。
 		go func() {
 			select {
 			case <-procDone:
-				return // finished on its own; nothing to terminate
+				return // 进程自己跑完了，无需终止
 			case <-runCtx.Done():
 			}
 			closeStdin()
 			if cmd.Process != nil {
 				signalProcessGroup(cmd, syscall.SIGTERM)
-				// Escalate to a group SIGKILL unless the WHOLE process group has
-				// exited within the grace window. This must key off the process
-				// group, not procDone: procDone only means cmd.Wait() returned
-				// for the leader, so a SIGTERM-ignoring descendant that does not
-				// hold claude's stdout would let the leader exit, close procDone,
-				// and skip the SIGKILL — leaking exactly the orphan this fix
-				// targets. waitProcessGroupGone returns as soon as the group is
-				// empty, so the graceful case adds no latency.
+				// 除非整个进程组在宽限期内退出，否则升级为组级 SIGKILL。这里必须以进程组（而非
+				// procDone）为判据：procDone 只表示组长 cmd.Wait() 已返回，一个忽略 SIGTERM、
+				// 又不持有 claude stdout 的后代可以让组长先退出、关上 procDone、从而跳过
+				// SIGKILL——正好泄漏掉本修复要消灭的那个孤儿。waitProcessGroupGone 在组一空就
+				// 返回，所以顺利退出时这步不增加延迟。
 				if !waitProcessGroupGone(cmd, claudeTerminateGrace()) {
 					signalProcessGroup(cmd, syscall.SIGKILL)
 				}
@@ -266,25 +278,22 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 		scanErr := scanner.Err()
 		if scanErr != nil {
-			// Scanner stopped consuming stdout. Close the pipe before Wait so a
-			// child still writing a malformed/oversized event cannot deadlock on
-			// the full OS pipe; the scanner error remains the primary failure.
+			// scanner 停止消费 stdout 了。在 Wait 前关闭管道，防止仍有一个子进程在往写满的
+			// OS 管道里写畸形/超大事件而卡死；scanErr 仍是首要失败原因。
 			_ = stdout.Close()
 		}
 
 		closeStdin()
 
-		// Wait for process exit, then release the cancellation handler.
+		// 等进程退出，然后放开取消处理器。
 		exitErr := cmd.Wait()
 		close(procDone)
-		// The leader is reaped; drop ownership. On Windows that closes the Job
-		// Object, which kills anything still inside it — precisely what should
-		// happen to a descendant that outlived the CLI (GH #7522).
+		// 组长已回收，放弃所有权。在 Windows 上这会关闭 Job Object，杀死里面一切仍在运行的
+		// 东西——对“比 CLI 活得还久的后代”来说这正是应得的下场（GH #7522）。
 		releaseProcessGroup(cmd)
 		duration := time.Since(startTime)
-		// writeDone is buffered (cap 1) and the writer always sends — by the
-		// time cmd has exited, the prompt write has either succeeded, hit a
-		// broken pipe, or been unblocked by the kill that ended cmd.
+		// writeDone 是带缓冲的（容量 1）且 writer 一定会发送——cmd 退出时，prompt 写入要么已
+		// 成功、要么打到坏管道、要么被终结 cmd 的那次 kill 解除了阻塞。
 		writeErr := <-writeDone
 
 		completionGuardError := ""
@@ -309,11 +318,9 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			completionGuardError,
 		)
 
-		// cmd.Wait() has returned — os/exec's stderr copy goroutine has
-		// observed every byte claude wrote to stderr before exiting, so
-		// stderrBuf.Tail() is safe to sample now. Attach the tail to any
-		// non-empty failure message; callers upstream surface this as the
-		// task's error field, which is the only place users see it.
+		// cmd.Wait() 已返回——os/exec 的 stderr 拷贝 goroutine 已观察到 claude 退出前写向
+		// stderr 的每一个字节，所以现在取 stderrBuf.Tail() 是安全的。把尾部拼到非空的失败消息
+		// 上；上游调用方会把它展示成任务的 error 字段，那是用户唯一能看到它的地方。
 		stderrTail := stderrBuf.Tail()
 		if finalError != "" {
 			finalError = withAgentStderr(finalError, "claude", stderrTail)
@@ -338,8 +345,8 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 		b.cfg.Logger.Info("claude finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
 
-		// The account-binding 400 arrives in the result event (finalError);
-		// "no conversation found" is printed to stderr. Check both.
+		// “账号绑定”那个 400 会出现在 result 事件里（finalError）；"no conversation found"
+		// 则打印到 stderr。两个来源都要查。
 		resumeRejected := resumeWasRejected(opts.ResumeSessionID, sessionID, finalStatus == "failed", finalError, stderrTail)
 		reportedSessionID := resolveSessionID(opts.ResumeSessionID, sessionID, finalStatus == "failed", finalError, stderrTail)
 		if resumeRejected {
@@ -363,18 +370,21 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
+// handleAssistant 把一条 assistant 帧翻译成对外消息：正文文本 → MessageText、thinking 文本 →
+// MessageThinking、tool_use 块 → MessageToolUse，并按模型累计 token 用量。返回的 assistantTurn
+// 记录本回合是否读懂（understood）、正文、工具调用数。
 func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message, usage map[string]TokenUsage) assistantTurn {
 	var content claudeMessageContent
 	if err := json.Unmarshal(msg.Message, &content); err != nil {
-		// Unreadable body: understood stays false so the caller drops any
-		// fallback rather than let an older turn stand in for this one.
+		// 正文读不懂：让 understood 保持 false，这样调用方会丢弃兜底逻辑，而不会让更早的一
+		// 回合顶替这一回合。
 		return assistantTurn{}
 	}
 	turn := assistantTurn{understood: true}
 	var assistantText strings.Builder
 	toolUseCount := 0
 
-	// Accumulate token usage per model.
+	// 按模型累计 token 用量。
 	if content.Usage != nil && content.Model != "" {
 		u := usage[content.Model]
 		u.InputTokens += content.Usage.InputTokens
@@ -408,10 +418,9 @@ func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message,
 				Input:  input,
 			})
 		default:
-			// A block type we do not render may be carrying the model's answer
-			// in a shape we cannot read, so we must not claim this turn was
-			// silent. Recognising a new no-text block is a deliberate one-line
-			// addition here, not an accident of falling through.
+			// 一个我们不渲染的块类型，可能正以一种我们读不懂的形状承载着模型的答案，所以不能
+			// 声称这一回合是沉默的。识别新的“无文本”块是有意加在这里的一行逻辑，而不是 fall
+			// through 的偶然产物。
 			turn.understood = false
 		}
 	}
@@ -420,6 +429,8 @@ func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message,
 	return turn
 }
 
+// handleUser 把一条 user 帧翻译成工具结果消息（MessageToolResult）；若结果里出现异步任务
+// 启动标记则返回 true（调用方据此判定该运行不应继续）。
 func (b *claudeBackend) handleUser(msg claudeSDKMessage, ch chan<- Message) bool {
 	var content claudeMessageContent
 	if err := json.Unmarshal(msg.Message, &content); err != nil {
@@ -446,8 +457,9 @@ func (b *claudeBackend) handleUser(msg claudeSDKMessage, ch chan<- Message) bool
 	return sawAsyncLaunch
 }
 
+// handleControlRequest 应答一条 control_request 帧：在自主/daemon 模式下自动放行（allow）所有
+// 工具调用，并把强制前台执行的工具输入改写一并回传。
 func (b *claudeBackend) handleControlRequest(msg claudeSDKMessage, stdin interface{ Write([]byte) (int, error) }) {
-	// Auto-approve all tool uses in autonomous/daemon mode.
 	var req claudeControlRequestPayload
 	if err := json.Unmarshal(msg.Request, &req); err != nil {
 		return
@@ -490,6 +502,8 @@ func (b *claudeBackend) handleControlRequest(msg claudeSDKMessage, stdin interfa
 	}
 }
 
+// forceClaudeToolInputForeground 把工具输入里的 run_in_background 强制改回 false：Multica
+// 托管运行要求前台执行，不能让工具自己转后台。返回是否改写过。
 func forceClaudeToolInputForeground(input map[string]any) bool {
 	if runInBackground, ok := input["run_in_background"].(bool); ok && runInBackground {
 		input["run_in_background"] = false
@@ -498,6 +512,8 @@ func forceClaudeToolInputForeground(input map[string]any) bool {
 	return false
 }
 
+// claudeToolResultHasAsyncLaunch 判断一段工具结果里是否出现了“异步任务已启动”的标记
+// （status=="async_launched"）。结果可能是对象、对象数组或带 content 的对象，这里递归地找。
 func claudeToolResultHasAsyncLaunch(raw json.RawMessage) bool {
 	if len(raw) == 0 {
 		return false
@@ -520,6 +536,7 @@ func claudeToolResultHasAsyncLaunch(raw json.RawMessage) bool {
 	return false
 }
 
+// claudeArrayHasAsyncLaunchStatus 在一组元素里找 status=="async_launched" 的对象。
 func claudeArrayHasAsyncLaunchStatus(values []any) bool {
 	for _, value := range values {
 		if item, ok := value.(map[string]any); ok && claudeMapHasAsyncLaunchStatus(item) {
@@ -529,13 +546,16 @@ func claudeArrayHasAsyncLaunchStatus(values []any) bool {
 	return false
 }
 
+// claudeMapHasAsyncLaunchStatus 判断单个对象是否带 status=="async_launched" 标记。
 func claudeMapHasAsyncLaunchStatus(value map[string]any) bool {
 	status, ok := value["status"].(string)
 	return ok && status == "async_launched"
 }
 
-// ── Claude SDK JSON types ──
+// ── Claude SDK JSON 类型（stream-json 协议帧）──
 
+// claudeSDKMessage 是 claude `--output-format stream-json` 输出里每一行 JSON 的通用外壳。
+// 实际语义由 Type 决定，不同帧类型用到的字段也不一样（见下方按用途分组注释）。
 type claudeSDKMessage struct {
 	Type      string          `json:"type"`
 	Message   json.RawMessage `json:"message,omitempty"`
@@ -543,31 +563,33 @@ type claudeSDKMessage struct {
 	SessionID string          `json:"session_id,omitempty"`
 	Model     string          `json:"model,omitempty"`
 
-	// result fields
+	// result 帧字段
 	ResultText string `json:"result,omitempty"`
 	IsError    bool   `json:"is_error,omitempty"`
-	// TerminalReason is Claude Code's structured statement of why the turn
-	// ended. Read separately from IsError because the CLI computes the two
-	// independently — see claudeTerminalReasonFailure.
+	// TerminalReason 是 Claude Code 对自己为何结束这一轮的结构化陈述。要与 IsError 分开读，
+	// 因为 CLI 是独立计算这两个值的——见 claudeTerminalReasonFailure。
 	TerminalReason string                            `json:"terminal_reason,omitempty"`
 	DurationMs     float64                           `json:"duration_ms,omitempty"`
 	NumTurns       int                               `json:"num_turns,omitempty"`
 	Usage          *claudeUsage                      `json:"usage,omitempty"`
 	ModelUsage     map[string]claudeResultModelUsage `json:"modelUsage,omitempty"`
 
-	// log fields
+	// log 帧字段
 	Log *claudeLogEntry `json:"log,omitempty"`
 
-	// control request fields
+	// control request 帧字段
 	RequestID string          `json:"request_id,omitempty"`
 	Request   json.RawMessage `json:"request,omitempty"`
 }
 
+// claudeLogEntry 是 log 帧的载荷：一条带级别的日志消息。
 type claudeLogEntry struct {
 	Level   string `json:"level"`
 	Message string `json:"message"`
 }
 
+// claudeMessageContent 是 assistant/user 帧里 `message` 字段的结构：一组内容块，外加角色、
+// 模型与该消息的 token 用量。
 type claudeMessageContent struct {
 	Role    string               `json:"role"`
 	Model   string               `json:"model"`
@@ -575,6 +597,8 @@ type claudeMessageContent struct {
 	Usage   *claudeUsage         `json:"usage,omitempty"`
 }
 
+// claudeUsage 是助手消息自带的 token 用量（stream-json 帧内嵌的 usage 对象，字段为
+// snake_case）。缓存 token 分读/写两部分。
 type claudeUsage struct {
 	InputTokens              int64 `json:"input_tokens"`
 	OutputTokens             int64 `json:"output_tokens"`
@@ -582,6 +606,7 @@ type claudeUsage struct {
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 }
 
+// claudeResultModelUsage 是 result 帧按模型列出的 token 用量（camelCase 版本）。
 type claudeResultModelUsage struct {
 	InputTokens              int64 `json:"inputTokens"`
 	OutputTokens             int64 `json:"outputTokens"`
@@ -589,26 +614,21 @@ type claudeResultModelUsage struct {
 	CacheCreationInputTokens int64 `json:"cacheCreationInputTokens"`
 }
 
-// claudeTerminalReasonFailure turns Claude Code's structured terminal_reason
-// into an error string when the reason means the turn did not actually produce
-// an answer, and returns "" when it says nothing of the sort.
+// claudeTerminalReasonFailure 当 Claude Code 的结构化 terminal_reason 表示“这一轮并没有真正
+// 产出答案”时把它变成错误字符串；否则返回 ""。
 //
-// Only prompt_too_long is recognised, and deliberately so. Every other terminal
-// reason the CLI can report either already arrives with is_error set (api_error,
-// model_error, error_max_turns …) or is a legitimate completion, so widening
-// this would second-guess a contract that works — while prompt_too_long is the
-// one case observed reaching the platform as a clean success (GH #6402). The
-// CLI computes is_error from whether the last message it rendered was an API
-// error and terminal_reason from why the turn stopped; when compaction fails
-// and the run ends on a message that is not itself flagged, the two disagree
-// and only terminal_reason is telling the truth.
+// 只认 prompt_too_long，而且是有意为之。CLI 能上报的其余 terminal reason，要么本来就带着
+// is_error 到达（api_error、model_error、error_max_turns…），要么就是一次正常完成——放宽这个
+// 判断等于去质疑一个本来就正常工作的契约；而 prompt_too_long 是观察到的“明明该失败却以干净
+// 成功状态到达平台”的唯一案例（GH #6402）。CLI 用“它渲染的最后一条消息是不是 API 错误”来算
+// is_error、用“为什么这一轮停下”来算 terminal_reason；当压缩（compaction）失败、而运行又恰好
+// 结束在一条本身没被打标记的消息上时，两者不一致，只有 terminal_reason 说的是真话。
 //
-// The returned text quotes the enum token so taskfailure.Classify lands it in
-// agent_error.context_overflow without depending on the CLI's prose, which
-// varies by release and is empty in some shapes. That reason is on the resume
-// blacklist (GetLastTaskSession / GetLastChatTaskSession), so the saturated
-// session is retired and the next task on the issue starts fresh — the
-// automated form of the transcript-archiving workaround #6402 reported.
+// 返回文本里引用枚举 token，这样 taskfailure.Classify 能把它归类到
+// agent_error.context_overflow，而不依赖 CLI 的散文——后者随版本变化、某些形态下还是空的。
+// 这个 reason 在 resume 黑名单上（GetLastTaskSession / GetLastChatTaskSession），于是塞满的
+// 会话被退役，issue 上的下一个任务从干净状态重新开始——这正是 #6402 报告的“存档记录”变通
+// 方案的自动化形态。
 func claudeTerminalReasonFailure(terminalReason, resultText string) string {
 	if strings.TrimSpace(terminalReason) != taskfailure.TerminalReasonPromptTooLong {
 		return ""
@@ -621,6 +641,9 @@ func claudeTerminalReasonFailure(terminalReason, resultText string) string {
 	return msg
 }
 
+// claudeResultUsage 从 result 帧抽取按模型归类的用量。优先用帧里的 ModelUsage（按模型分开、
+// 且可能含多个模型）；缺失或全空时退回消息自带的 Usage，用 msg.Model（缺省再退回调用方给的
+// fallbackModel）做键。
 func claudeResultUsage(msg claudeSDKMessage, fallbackModel string) map[string]TokenUsage {
 	if len(msg.ModelUsage) > 0 {
 		usage := make(map[string]TokenUsage, len(msg.ModelUsage))
@@ -662,10 +685,13 @@ func claudeResultUsage(msg claudeSDKMessage, fallbackModel string) map[string]To
 	}
 }
 
+// claudeUsageHasTokens 判断一组用量里是否至少有一个维度 >0，用来筛掉全零的“空用量”帧。
 func claudeUsageHasTokens(input, output, cacheRead, cacheWrite int64) bool {
 	return input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
 }
 
+// claudeContentBlock 是消息内容里的单个块：文本、thinking 或工具调用（tool_use / tool_result）
+// 都共用一个结构，靠 Type 区分、按需取字段。
 type claudeContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
@@ -676,46 +702,46 @@ type claudeContentBlock struct {
 	Content   json.RawMessage `json:"content,omitempty"`
 }
 
+// claudeControlRequestPayload 是 control_request 帧请求体的结构：声明请求的子类型、涉及的
+// 工具名与（可能被改写后放行的）工具输入。
 type claudeControlRequestPayload struct {
 	Subtype  string          `json:"subtype"`
 	ToolName string          `json:"tool_name,omitempty"`
 	Input    json.RawMessage `json:"input,omitempty"`
 }
 
-// ── Shared helpers ──
+// ── 共享助手 ──
 
+// trySend 尝试往通道发一条消息；通道已满（消费者跟不上）就丢弃。Result.Output 是独立定稿的，
+// 所以受影响只限于“实时会话转播”的接收方。
 func trySend(ch chan<- Message, msg Message) {
 	select {
 	case ch <- msg:
 	default:
-		// Channel full — drop message. Result.Output is finalized independently,
-		// so only live transcript consumers are affected.
 	}
 }
 
-// claudeBlockedArgs are flags hardcoded by the daemon that must not be
-// overridden by user-configured custom_args. Overriding these would break
-// the daemon↔Claude communication protocol.
+// claudeBlockedArgs 是 daemon 写死的 flag，用户配置的 custom_args 不得覆盖。覆盖这些会破坏
+// daemon↔Claude 之间的通信协议。
 var claudeBlockedArgs = map[string]blockedArgMode{
-	"-p":                       blockedStandalone, // non-interactive mode
-	"--output-format":          blockedWithValue,  // stream-json protocol
-	"--input-format":           blockedWithValue,  // stream-json protocol
-	"--permission-mode":        blockedWithValue,  // bypassPermissions for autonomous operation
-	"--mcp-config":             blockedWithValue,  // set by daemon from agent.mcp_config
+	"-p":                       blockedStandalone, // 非交互模式
+	"--output-format":          blockedWithValue,  // stream-json 协议
+	"--input-format":           blockedWithValue,  // stream-json 协议
+	"--permission-mode":        blockedWithValue,  // bypassPermissions，自主运行所需
+	"--mcp-config":             blockedWithValue,  // 由 daemon 按 agent.mcp_config 设置
 	"--tools":                  blockedWithValue,
 	"--allowedTools":           blockedWithValue,
 	"--disallowedTools":        blockedList,
 	"--strict-mcp-config":      blockedStandalone,
 	"--no-session-persistence": blockedStandalone,
-	// `--effort` is owned by the per-agent thinking_level picker so a
-	// user-supplied custom_arg cannot silently outvote it. The daemon
-	// injects --effort only when opts.ThinkingLevel is set; if a user
-	// nevertheless writes it in custom_args we drop the duplicate and
-	// log a warning rather than letting the CLI receive two conflicting
-	// --effort values.
+	// `--effort` 归“按 agent 的 thinking_level 选择器”管，用户塞在 custom_args 里的同名单参数
+	// 不能悄悄把它否决。daemon 只在 opts.ThinkingLevel 设置时才注入 --effort；即使用户仍然在
+	// custom_args 里写了它，我们也丢弃重复值并记一条警告，而不是让 CLI 收到两个互相冲突的
+	// --effort。
 	"--effort": blockedWithValue,
 }
 
+// buildClaudeArgs 把 ExecOptions 组装成 claude 的命令行参数，并过滤掉被协议占用的 flag。
 func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
 	args := []string{
 		"-p",
@@ -723,50 +749,42 @@ func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
 		"--input-format", "stream-json",
 		"--verbose",
 		"--permission-mode", "bypassPermissions",
-		// AskUserQuestion is Claude Code's built-in interactive question tool.
-		// The daemon runs Claude in non-interactive stream-json mode and has
-		// no UI for the prompt to render in, so a call returns an empty
-		// answer and the agent ends up "inferring" silently — the user
-		// never sees the question (see GitHub #2588). User-facing
-		// clarification belongs in an issue comment instead.
+		// AskUserQuestion 是 Claude Code 内置的交互式提问工具。daemon 以非交互的 stream-json
+		// 模式运行 Claude，没有供 prompt 渲染的 UI，所以一次调用只会得到一个空答案，agent 会在
+		// 用户毫不知情的情况下“自行推断”（见 GitHub #2588）。面向用户的澄清应放进 issue 评论。
 		"--disallowedTools", "AskUserQuestion",
 	}
 	if opts.LifeCognition {
-		// Life cognition must not inherit coding tools or provider session state.
-		// MCP remains available through the explicitly managed Life server.
+		// 生命周期认知（Life cognition）模式不得继承编码工具或 provider 会话状态。MCP 仍可
+		// 通过显式受管的 Life server 使用。
 		args = append(args, "--tools", "", "--strict-mcp-config", "--no-session-persistence")
 	}
 	if hasManagedMcpConfig(opts.McpConfig) {
-		// A saved agent-level config is authoritative, including an explicitly
-		// empty object. With no managed config, omit strict mode so Claude can
-		// inherit the user's local runtime MCP servers.
+		// 已保存的 agent 级配置是权威的，哪怕它是一个显式的空对象。没有受管配置时不要开
+		// strict 模式，让 Claude 可以继承用户本地运行时配置的 MCP 服务器。
 		args = append(args, "--strict-mcp-config")
 	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
 	if opts.ThinkingLevel != "" {
-		// Slotted right after --model so the per-session effort runs
-		// against the same model selection the args advertise; the CLI
-		// itself accepts the flag in any order but this ordering makes
-		// the launch line readable in `agent command` logs.
+		// 紧挨着 --model 放，让“按会话的 effort”作用于参数所宣传的同一个模型选择；CLI 本身
+		// 接受任意顺序，但这种排法让 `agent command` 日志里的启动行更易读。
 		args = append(args, "--effort", opts.ThinkingLevel)
 	}
 	if opts.MaxTurns > 0 {
 		args = append(args, "--max-turns", fmt.Sprintf("%d", opts.MaxTurns))
 	}
-	// SystemPrompt is intentionally not forwarded as --append-system-prompt:
-	// Claude Code loads the per-task CLAUDE.md the daemon writes into the
-	// workdir, so inlining the same runtime brief would duplicate it on every
-	// turn. Verified against Claude Code 2.1.220 (MUL-5392).
+	// SystemPrompt 刻意不转成 --append-system-prompt 转发：Claude Code 会加载 daemon 写进
+	// 工作目录的按任务 CLAUDE.md，再把同一份运行时简报内联进去，等于每一轮都重复一遍。已对
+	// Claude Code 2.1.220 验证（MUL-5392）。
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}
 	blockedArgs := claudeBlockedArgs
 	if opts.ClaudeSettingsPath != "" {
-		// The daemon-owned --settings file is the enforcement layer for disabled
-		// inherited skills. Drop competing per-agent/default flags only while that
-		// policy is active, then append the managed file last.
+		// daemon 持有的 --settings 文件是“禁用被继承 skills”的执行层。只在策略生效时剔除与它
+		// 竞争的按 agent/默认 flag，然后把受管文件放到最后。
 		blockedArgs = make(map[string]blockedArgMode, len(claudeBlockedArgs)+1)
 		for key, mode := range claudeBlockedArgs {
 			blockedArgs[key] = mode
@@ -781,6 +799,7 @@ func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
 	return args
 }
 
+// writeClaudeInput 构造并写入 claude 的 stdin 初始帧。
 func writeClaudeInput(w io.Writer, prompt string) error {
 	data, err := buildClaudeInput(prompt)
 	if err != nil {
@@ -792,6 +811,7 @@ func writeClaudeInput(w io.Writer, prompt string) error {
 	return nil
 }
 
+// buildClaudeInput 把用户提示打包成 stream-json 的 user 帧：{"type":"user","message":{...}}。
 func buildClaudeInput(prompt string) ([]byte, error) {
 	payload := map[string]any{
 		"type": "user",
@@ -812,45 +832,37 @@ func buildClaudeInput(prompt string) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-// resumeRejectedPhrases are the provider messages that positively identify a
-// refused resume, as opposed to a failure that merely happened to occur during
-// a resumed run. Shared by the stream-json backends (claude, codebuddy, qwen);
-// the ACP backends match structured error codes via isACPSessionNotFound
-// instead.
+// resumeRejectedPhrases 是能正面判定“resume 被拒”的 provider 消息片段——区别于“碰巧在续跑
+// 期间发生的失败”。stream-json 后端（claude、codebuddy、qwen）共用这份清单；ACP 后端则改用
+// isACPSessionNotFound 匹配结构化错误码。
 //
-// Matching must stay tight: a false positive makes the daemon throw away a
-// recoverable session pointer and re-run the task, so anything ambiguous
-// belongs out of this list.
+// 匹配必须保持严格：误报会让 daemon 丢掉一个可恢复的会话指针并重跑任务，所以任何有歧义的东西
+// 都不该进这份清单。
 var resumeRejectedPhrases = []string{
-	// Verified: claude prints this when the transcript named by --resume is
-	// absent. Covered by TestResolveSessionID's existing stderr fixture.
+	// 已核实：--resume 指向的记录不存在时 claude 打印这句。TestResolveSessionID 现有的
+	// stderr fixture 覆盖到它。
 	"no conversation found",
-	// Verified: qwen-code 0.20.0, captured in
-	// testdata/qwen-code-0.20.0-resume-not-found.stderr.txt — "No saved
+	// 已核实：qwen-code 0.20.0，捕获于
+	// testdata/qwen-code-0.20.0-resume-not-found.stderr.txt —— "No saved
 	// session found with ID <id>. Run `qwen --resume` without an ID to
 	// choose from existing sessions."
 	"no saved session found",
-	// Reported verbatim in multica-ai/multica#5704 against Claude Code
-	// 2.1.207 (zh-CN): "400 此 session 已绑定另外的ai账号，请执行 /new 开启新
-	// session". This is the account-switch guardrail this signal exists for.
+	// 在 multica-ai/multica#5704 里对 Claude Code 2.1.207（zh-CN）逐字上报：
+	// "400 此 session 已绑定另外的ai账号，请执行 /new 开启新 session"。这正是该信号要拦截的
+	// “账号切换”护栏。
 	"已绑定另外",
-	// INFERRED, not yet observed: the en-US wording of the same guardrail has
-	// not been captured. These are guesses derived from the zh-CN text and
-	// should be corrected once a real English sample is available. A miss
-	// here degrades to a terminal failure carrying the provider's raw error,
-	// which is diagnosable — it does not silently mis-route the run.
+	// 推断而来、尚未观察到：同一条护栏的英文措辞还没有被捕获到。这些是根据 zh-CN 文案猜的，
+	// 等有真实英文样本后应修正。这里漏判会退化成“带着 provider 原始错误的终态失败”，仍然可
+	// 诊断——它不会悄悄把运行带错方向。
 	"bound to another account",
 	"bound to a different account",
 }
 
-// resumeWasRejected reports whether a failed run's --resume was itself
-// refused. It is the positive-evidence predicate behind Result.ResumeRejected:
-// only a rejected resume can be cured by starting a fresh session.
+// resumeWasRejected 判断一次失败运行的 --resume 是否本身被拒绝。它是 Result.ResumeRejected
+// 背后的“正向证据”谓词：只有 resume 被拒才值得用全新会话重跑一次来治愈。
 //
-// texts should include every place the provider may have written the reason —
-// the final error string and the stderr tail — because the account-binding 400
-// arrives in the stream-json result event while "no conversation found" is
-// printed to stderr.
+// texts 应包含 provider 可能写下原因的所有位置——最终错误串与 stderr 尾部——因为“账号绑定”
+// 400 出现在 stream-json 的 result 事件里，而 "no conversation found" 打印在 stderr。
 func resumeWasRejected(requestedResume, emitted string, failed bool, texts ...string) bool {
 	if !failed || requestedResume == "" {
 		return false
@@ -863,20 +875,16 @@ func resumeWasRejected(requestedResume, emitted string, failed bool, texts ...st
 			}
 		}
 	}
-	// Claude answered with a different session than the one we asked to
-	// continue: the requested transcript did not load.
+	// Claude 回答的会话与我们要它继续的会话不同：说明被请求的那份记录没有加载成功。
 	return emitted != "" && emitted != requestedResume
 }
 
-// resolveSessionID decides which session id to report on the Result. A session
-// known to be dead must not be persisted as the resume pointer, so a rejected
-// resume reports "" regardless of what claude echoed back.
+// resolveSessionID 决定在 Result 上报哪个会话 id。已知已死的会话绝不能当 resume 指针持久化，
+// 所以 resume 被拒时无论 claude 回显了什么，这里都上报 ""。
 //
-// This is deliberately no longer the signal the daemon reads to decide *why*
-// a run failed — Result.ResumeRejected carries that. An empty SessionID is
-// also produced by any failure before the first stream message (a 401, a
-// missing binary), which is why inferring "the resume was rejected" from it
-// was wrong in both directions.
+// 它刻意不再是 daemon 判断“这次运行为什么失败”所读的信号——那是 Result.ResumeRejected 的
+// 职责。空 SessionID 也会由“首条流消息之前就失败”（401、二进制缺失）产生，这正是过去从空
+// SessionID 推断“resume 被拒”两个方向都错的原因。
 func resolveSessionID(requestedResume, emitted string, failed bool, texts ...string) string {
 	if resumeWasRejected(requestedResume, emitted, failed, texts...) {
 		return ""
@@ -884,10 +892,13 @@ func resolveSessionID(requestedResume, emitted string, failed bool, texts ...str
 	return emitted
 }
 
+// buildEnv 由 daemon 自带环境 + 任务级额外变量组成子进程环境。
 func buildEnv(extra map[string]string) []string {
 	return mergeEnv(os.Environ(), extra)
 }
 
+// claudeRootSudoPreflight 在 root/sudo 下拦下“以 bypassPermissions 权限模式运行 Claude”的
+// 尝试：Claude Code 在这种权限组合下会拒绝启动。若在真正的容器/沙箱里（IS_SANDBOX=1）则放行。
 func claudeRootSudoPreflight(args, env []string) error {
 	if !argsRequestBypassPermissions(args) || os.Geteuid() != 0 || envHasSandbox(env) {
 		return nil
@@ -895,6 +906,8 @@ func claudeRootSudoPreflight(args, env []string) error {
 	return fmt.Errorf("Claude Code refuses bypassPermissions under root/sudo privileges. Run the Multica daemon as a non-root user, or set IS_SANDBOX=1 if running in a genuine container/sandbox")
 }
 
+// argsRequestBypassPermissions 判断命令行是否请求了免确认权限模式
+// （--dangerously-skip-permissions 或 --permission-mode bypassPermissions）。
 func argsRequestBypassPermissions(args []string) bool {
 	for i, arg := range args {
 		if arg == "--dangerously-skip-permissions" {
@@ -907,6 +920,7 @@ func argsRequestBypassPermissions(args []string) bool {
 	return false
 }
 
+// envHasSandbox 判断环境里 IS_SANDBOX 是否被置为真值（1/true/yes/on，大小写不敏感）。
 func envHasSandbox(env []string) bool {
 	for i := len(env) - 1; i >= 0; i-- {
 		key, value, ok := strings.Cut(env[i], "=")
@@ -926,13 +940,14 @@ func envHasSandbox(env []string) bool {
 	return false
 }
 
+// mergeEnv 合并基础环境与额外变量：基础环境里被过滤的内部键与 MULTICA_* 命名空间会被剔除，
+// 额外变量直接追加（覆盖同名项）。
 func mergeEnv(base []string, extra map[string]string) []string {
 	env := make([]string, 0, len(base)+len(extra))
 	for _, entry := range base {
 		key, _, _ := strings.Cut(entry, "=")
-		// MULTICA_* in the daemon's own environment is not task context. Drop
-		// the inherited namespace for every backend and append only the values
-		// daemon.go explicitly assembled for this task below.
+		// daemon 自己环境里的 MULTICA_* 不是任务上下文。对所有后端都丢掉继承下来的这一
+		// 命名空间，只追加下面 daemon.go 为这个任务显式拼好的值。
 		if isFilteredChildEnvKey(key) || strings.HasPrefix(strings.ToUpper(key), "MULTICA_") {
 			continue
 		}
@@ -944,60 +959,51 @@ func mergeEnv(base []string, extra map[string]string) []string {
 	return env
 }
 
-// isFilteredChildEnvKey reports whether an inherited env var is an internal
-// Claude Code runtime/session marker that must NOT leak into the spawned child
-// (otherwise the child mistakes itself for a nested or resumed session, or
-// inherits the parent's exec path / transport).
+// isFilteredChildEnvKey 判断一个继承来的环境变量是不是“内部 Claude Code 运行时/会话标记”，
+// 是则绝不能漏给 spawn 出来的子进程（否则子进程会把自己误认成嵌套/续跑会话，或继承父进程的
+// exec 路径/传输方式）。
 //
-// It must NOT strip the user-facing CLAUDE_CODE_* configuration namespace
-// (CLAUDE_CODE_GIT_BASH_PATH, CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_VERTEX,
-// CLAUDE_CODE_MAX_OUTPUT_TOKENS, CLAUDE_CODE_TMPDIR, ...): users set those
-// deliberately and the child needs them. Blanket-stripping the whole prefix is
-// what broke Windows — CLAUDE_CODE_GIT_BASH_PATH was silently removed, so Claude
-// Code could not find bash.exe and exited immediately. Strip internal markers by
-// exact name and let every other CLAUDE_CODE_* var through.
+// 它绝不能剥掉用户可见的 CLAUDE_CODE_* 配置命名空间（CLAUDE_CODE_GIT_BASH_PATH、
+// CLAUDE_CODE_USE_BEDROCK、CLAUDE_CODE_USE_VERTEX、CLAUDE_CODE_MAX_OUTPUT_TOKENS、
+// CLAUDE_CODE_TMPDIR、…）：那些是用户刻意设置的、子进程需要它们。当年一刀切剥掉整个前缀就
+// 把 Windows 弄坏过——CLAUDE_CODE_GIT_BASH_PATH 被悄悄移除，Claude Code 找不到 bash.exe、
+// 立刻退出。这里按精确名字剥内部标记，其余 CLAUDE_CODE_* 一律放行。
 //
-// The denylist holds only undocumented, per-process runtime markers. Anything in
-// the public env-vars reference (https://code.claude.com/docs/en/env-vars) is
-// user config and stays out of this list — including CLAUDE_CODE_TMPDIR, a
-// documented temp-dir override under which Claude Code creates its own
-// per-session subdir, so inheriting it is harmless.
+// 黑名单只放未写入文档的、按进程的运行时标记。公开 env-var 参考
+// （https://code.claude.com/docs/en/env-vars）里出现的任何东西都是用户配置，不得进这份名单
+// ——包括 CLAUDE_CODE_TMPDIR，一个有文档的临时目录覆盖项，Claude Code 会在其下自建按会话的
+// 子目录，继承它没有危害。
 func isFilteredChildEnvKey(key string) bool {
 	switch key {
-	case "CLAUDECODE", // "1" when running inside Claude Code
-		"CLAUDE_CODE_ENTRYPOINT", // entrypoint marker (cli/sdk-cli/...)
-		"CLAUDE_CODE_EXECPATH",   // path to the running CLI binary
-		"CLAUDE_CODE_SESSION_ID", // per-session identifier
-		"CLAUDE_CODE_SSE_PORT":   // IDE-extension transport port
+	case "CLAUDECODE", // 值为 "1" 时表示“正在 Claude Code 内运行”
+		"CLAUDE_CODE_ENTRYPOINT", // 入口点标记（cli/sdk-cli/…）
+		"CLAUDE_CODE_EXECPATH",   // 当前运行中 CLI 二进制的路径
+		"CLAUDE_CODE_SESSION_ID", // 按会话的标识符
+		"CLAUDE_CODE_SSE_PORT":   // IDE 扩展的传输端口
 		return true
 	}
-	// CLAUDECODE_* (no underscore between CLAUDE and CODE) is wholly internal;
-	// keep stripping it. The user-facing config namespace is CLAUDE_CODE_*.
+	// CLAUDECODE_*（CLAUDE 与 CODE 之间没有下划线）完全内部，继续剥。用户可见的配置命名空间是
+	// CLAUDE_CODE_*。
 	return strings.HasPrefix(key, "CLAUDECODE_")
 }
 
-// blockedArgMode specifies whether a blocked arg takes a value or is standalone.
+// blockedArgMode 指明一个被拦的 flag 是带值参数还是独立开关。
 type blockedArgMode int
 
 const (
-	blockedWithValue     blockedArgMode = iota // flag takes a value (next arg or =value)
-	blockedStandalone                          // flag is boolean, no value
-	blockedOptionalValue                       // flag may take the next non-flag arg or =value
-	blockedList                                // flag consumes all following non-flag values
+	blockedWithValue     blockedArgMode = iota // flag 带值（下个参数或 =value 形式）
+	blockedStandalone                          // flag 是布尔开关，不带值
+	blockedOptionalValue                       // flag 可选带值：可能是下个非 flag 参数或 =value
+	blockedList                                // flag 吞掉其后所有非 flag 的值
 )
 
-// filterCustomArgs removes protocol-critical flags from user-configured custom
-// args to prevent breaking daemon↔agent communication. Each backend defines its
-// own blocked set (the flags it hardcodes). This is intentionally narrow — we
-// only block args that would break the communication protocol, not every
-// possible dangerous flag. Workspace members are trusted to configure agents
-// sensibly, same as with custom_env.
+// filterCustomArgs 从用户配置的 custom args 里剔掉协议关键 flag，防止破坏 daemon↔agent 通信。
+// 每个后端定义自己的拦阻集（它硬编码的 flag）。这里刻意收得窄——只拦会破坏通信协议的参数，
+// 而不是每个可能的危险 flag。工作区成员被信任能合理配置 agent，与 custom_env 同理。
 //
-// Shell quoting is stripped from each arg before processing: users commonly
-// type custom_args in config fields using shell syntax (e.g.
-// --deny-tool='write'). Since the daemon spawns processes directly without a
-// shell, those quotes would otherwise be passed literally to the child process,
-// which typically rejects them as unrecognised flag values.
+// 处理每个参数前先剥掉 shell 引号：用户常用 shell 语法在配置字段里写 custom_args（例如
+// --deny-tool='write'）。daemon 不经 shell 直接 spawn 进程，若不剥引号，这些引号会被逐字传给
+// 子进程，而后者通常会当作不认识的 flag 值拒收。
 func filterCustomArgs(args []string, blocked map[string]blockedArgMode, logger *slog.Logger) []string {
 	if len(args) == 0 {
 		return args
@@ -1020,13 +1026,12 @@ func filterCustomArgs(args []string, blocked map[string]blockedArgMode, logger *
 					i++
 				}
 			} else if mode == blockedWithValue && !hasInlineValue {
-				// The next arg is the value for this flag — skip it too.
+				// 下一个参数就是这个 flag 的值——一并跳过。
 				i++
 			} else if mode == blockedOptionalValue && !hasInlineValue && i+1 < len(args) &&
 				!strings.HasPrefix(unshellQuoteArg(args[i+1]), "-") {
-				// Optional values are consumed only when the next token is not
-				// another flag, so a boolean form cannot swallow an unrelated
-				// option.
+				// 可选值只在“下一个 token 不是另一个 flag”时才被消费，这样布尔形态不会吞掉
+				// 一个无关选项。
 				i++
 			}
 			continue
@@ -1036,16 +1041,14 @@ func filterCustomArgs(args []string, blocked map[string]blockedArgMode, logger *
 	return filtered
 }
 
-// unshellQuoteArg strips a single layer of shell-style single or double quotes
-// from an argument. It handles two forms:
+// unshellQuoteArg 从参数上剥掉一层 shell 风格的单/双引号。处理两种形态：
 //
-//   - --flag='value' or --flag="value" → --flag=value
-//   - 'standalone' or "standalone"     → standalone
+//   - --flag='value' 或 --flag="value" → --flag=value
+//   - 'standalone' 或 "standalone"     → standalone
 //
-// Only flag-style args (`-x=…`, `--flag=…`) get inline value unquoting. Plain
-// assignment syntax like `model="o3"` is left alone because the quotes may be
-// semantic for the child process (for example Codex `-c model="o3"`). Only
-// matching outer quotes are stripped; no escape processing is done.
+// 只有 flag 形态（`-x=…`、`--flag=…`）会做内联值去引号。像 `model="o3"` 这种普通赋值语法
+// 不去动，因为引号对子进程可能是有语义的（例如 Codex `-c model="o3"`）。只剥匹配的外层引号，
+// 不做任何转义处理。
 func unshellQuoteArg(arg string) string {
 	if strings.HasPrefix(arg, "-") {
 		if idx := strings.Index(arg, "="); idx > 0 {
@@ -1062,9 +1065,8 @@ func unshellQuoteArg(arg string) string {
 	return arg
 }
 
-// stripSurroundingQuotes removes a matching outer pair of single or double
-// quotes from s and returns (unquoted, true). Returns (s, false) if s does not
-// start and end with the same quote character.
+// stripSurroundingQuotes 若 s 以同一对单/双引号开头和结尾，剥掉并返回 (去引号结果, true)；
+// 否则返回 (s, false)。
 func stripSurroundingQuotes(s string) (string, bool) {
 	if len(s) >= 2 {
 		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
@@ -1074,8 +1076,8 @@ func stripSurroundingQuotes(s string) (string, bool) {
 	return s, false
 }
 
-// writeMcpConfigToTemp writes MCP config JSON to a temporary file and returns
-// its path. The caller is responsible for removing it via cleanupMcpConfigTemp.
+// writeMcpConfigToTemp 把 MCP 配置 JSON 写进临时文件并返回其路径。调用方负责通过
+// cleanupMcpConfigTemp 删除。
 func writeMcpConfigToTemp(raw json.RawMessage) (string, error) {
 	dir, err := os.MkdirTemp("", "multica-mcp-*")
 	if err != nil {
@@ -1094,6 +1096,8 @@ func writeMcpConfigToTemp(raw json.RawMessage) (string, error) {
 	return path, nil
 }
 
+// cleanupMcpConfigTemp 删除 MCP 配置临时文件；若它位于我们自己的 multica-mcp-* 临时目录里，
+// 直接整目录删除（含目录里由 hardenBrowserMcpConfig 落地的其他文件）。
 func cleanupMcpConfigTemp(path string) {
 	if path == "" {
 		return
@@ -1106,105 +1110,84 @@ func cleanupMcpConfigTemp(path string) {
 	_ = os.Remove(path)
 }
 
-// detectVersionTimeout bounds a single `<cli> --version` probe. Version
-// detection runs inside the daemon's blocking preflight (registerRuntimesForWorkspace),
-// so a CLI that never returns from `--version` — e.g. a brew-installed claude
-// wedged by a bun regression (MUL-3812) — would otherwise stall the whole
-// registration loop, the daemon would never flip /health from "starting" to
-// "running", and *every* runtime on the host would appear disconnected. A real
-// `--version` returns well under this bound even on a cold cache or with
-// Windows AV scanning; the timeout exists only to fail a wedged probe fast and
-// in isolation so the remaining runtimes still register. A var (not const) so
-// tests can shrink it without waiting out the real bound.
+// detectVersionTimeout 约束单次 `<cli> --version` 探测。版本探测跑在 daemon 的阻塞式预检里
+// （registerRuntimesForWorkspace），所以一个对 `--version` 有去无回的 CLI——例如被 bun 回归
+// 卡死的 brew 版 claude（MUL-3812）——会把整个注册循环拖停，daemon 的 /health 永远停在
+// "starting" 到不了 "running"，宿主机上*每个*运行时都会显示为断开。真实的 `--version` 即使在
+// 冷缓存或 Windows 杀软扫描下也远低于这个上限；这个超时存在的唯一意义，是让卡死的探测快速、
+// 且各自独立地失败，其余运行时照常注册。用 var（而非 const）是为了让测试不用等真实上限就能
+// 把它调小。
 var detectVersionTimeout = 10 * time.Second
 
+// detectCLIVersion 运行 `<cli> --version` 探测并解析版本行。
 func detectCLIVersion(ctx context.Context, runtimeCmd Command) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, detectVersionTimeout)
 	defer cancel()
 	if runtime.GOOS == "windows" {
+		// Windows 上 npm 安装的 CLI shim 指向的真正二进制（例如 codearts）才认 --version，
+		// 先解析一下。
 		if native := resolveCodeArtsNativeFromShim(runtimeCmd.Path, os.Stat); native != "" {
 			runtimeCmd.Path = native
 		}
 	}
 
-	// outputOwned owns this probe. A broken CLI (node/bun shim) can
-	// leave grandchildren that inherited and still hold our stdout pipe open, and
-	// os/exec's Wait blocks until those pipes reach EOF — which is why this call
-	// carries a WaitDelay backstop, and why the deadline above needs one at all.
+	// outputOwned 拥有这次探测。一个坏掉的 CLI（node/bun shim）可能留下继承并仍持有我们
+	// stdout 管道的孙进程，而 os/exec 的 Wait 要等那些管道到 EOF 才返回——这正是这个调用要带
+	// WaitDelay 兜底、上面的 deadline 也必须有意义的原因。
 	//
-	// An earlier revision of this branch used the collector here, so that Wait
-	// returned on the *direct child's* exit whatever a descendant was holding.
-	// That is wrong on this path: a wrapper may exit successfully while the real
-	// CLI, its descendant, still owes us the version. Review measured it — the
-	// wrapper exits 0, its child prints the version 500ms later, and treating
-	// leader exit as completion killed the child and returned an empty version
-	// with a nil error, where outputOwned returns the version. Pipe EOF is the
-	// only signal that means "no more output is coming"; leader exit does not.
+	// 这个分支早前用过 collector，让 Wait 在*直接子进程*一退出就返回、不管后代还握着什么。
+	// 在这条路径上是错的：包装器可能成功退出，而真正该报版本的 CLI——它的后代——还欠我们
+	// 输出。Review 实测过：包装器退出 0，它的子进程 500ms 后才打印版本；把“组长退出”当完成
+	// 会杀掉子进程、返回一个空版本加 nil 错误，而 outputOwned 能返回版本。管道 EOF 才是唯一
+	// 表示“不会再有输出了”的信号；组长退出不是。
 	//
-	// What this branch still fixes here is the *reporting*: a lingering
-	// descendant makes Wait hit WaitDelay and report exec.ErrWaitDelay even
-	// though the version arrived, and a failed --version probe skips runtime
-	// registration entirely (#6084 reverted a WaitDelay backstop over exactly
-	// that). So the error is dropped when — and only when — the answer itself is
-	// present. See salvageProbeAnswer.
+	// 这个分支在这里仍然修的是*上报*：一个滞留的后代会让 Wait 撞上 WaitDelay、上报
+	// exec.ErrWaitDelay——尽管版本已经到了——而一次失败的 --version 探测会直接跳过运行时注册
+	// （#6084 曾因这点回退过一个 WaitDelay 兜底）。所以当且仅当“答案本身在场”时才丢弃该错误。
+	// 见 salvageProbeAnswer。
 	//
-	// Built through runtimeCmd.exec so a custom runtime's fixed_args prefix is
-	// still applied (MUL-6260).
+	// 经 runtimeCmd.exec 构造，这样自定义运行时的 fixed_args 前缀仍会被应用（MUL-6260）。
 	cmd := runtimeCmd.exec(ctx, "--version")
 	hideAgentWindow(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	data, err := outputOwned(cmd, runtimeCmd.logger)
 	version, recognised := extractVersionLine(string(data))
 	if err != nil {
-		// recognised, not `version != ""`. The two differ exactly where it
-		// matters: extractVersionLine falls back to the trimmed raw output when
-		// no line carries a semver token, so non-empty means "the CLI printed
-		// something", which on this path may be a banner its wrapper emitted
-		// before the real version existed. Review measured that — a stub
-		// printing "initializing plugins", exiting 0, with the version arriving
-		// after WaitDelay — registering `initializing plugins` as the version
-		// with a nil error. A salvage decision needs the stronger question, so
-		// it asks whether a version was actually recognised.
+		// 判断用 recognised 而不是 `version != ""`。两者恰好在该关键处不同：extractVersionLine
+		// 在没有一行带 semver token 时会退回“去空白的原始输出”，所以非空只表示“CLI 打印了
+		// 点什么”——在这条路径上，那可能是包装器在真正版本出现之前打的一段横幅。Review 实测
+		// 过：一个桩打印 "initializing plugins"、退出 0，而版本在 WaitDelay 之后才到——于是
+		// 把 "initializing plugins" 当版本登记下来、还带 nil 错误。做“是否抢救”的决定需要更
+		// 强的问题，所以要问“版本是否真的被识别出来”。
 		//
-		// The fallback still stands on the success path: a CLI that exits 0 with
-		// an unusual version format is reporting its version, and dropping that
-		// to empty would be a regression (#2516). It is only unusable as
-		// evidence that a *bounded, incomplete* read already contains the
-		// answer.
+		// 兜底在成功路径上仍然成立：一个正常退出 0、但版本格式不寻常的 CLI 确实是在报版本，
+		// 把它丢成空会是一次回归（#2516）。它只是不能当作“一次有界、不完整的读取已包含答案”
+		// 的证据。
 		if salvaged := salvageProbeAnswer(runtimeCmd, "--version", recognised, err); salvaged {
 			return version, nil
 		}
-		// One provider-agnostic boundary for probes: DetectVersion routes every
-		// provider through here, so an ENOEXEC diagnosis added at this point
-		// reaches the reason the daemon reports for a skipped runtime
-		// (MUL-6164).
+		// 所有探测共用一个 provider 无关的边界：DetectVersion 让每个 provider 都走这里，所以
+		// 在此处加一条 ENOEXEC 诊断，能到达 daemon 为“被跳过的运行时”上报的原因（MUL-6164）。
 		return "", fmt.Errorf("detect version for %s: %w", runtimeCmd, ExplainExecError(err))
 	}
 	return version, nil
 }
 
-// salvageProbeAnswer decides whether a one-shot probe that produced its answer
-// may ignore the error os/exec reported, and logs the decision.
+// salvageProbeAnswer 决定“一次一次性探测已经产出了答案、但 os/exec 报了错误”时能否忽略该
+// 错误，并记录这个决定。
 //
-// It exists for one shape: the CLI printed what we asked for, and then something
-// about its *lifecycle* failed — a descendant held the output pipes past
-// cmd.WaitDelay (exec.ErrWaitDelay), so Wait reports failure over an answer that
-// is already in the buffer. The answer is safe to use only when the parser has
-// positively recognised it; an arbitrary partial banner is not evidence.
+// 它只为一种形态而存在：CLI 打印了我们问的东西，然后它的*生命周期*出了问题——一个后代在
+// cmd.WaitDelay 之后仍握着输出管道（exec.ErrWaitDelay），于是 Wait 对一个已经在缓冲里的答案
+// 报了失败。只有解析器正面识别出答案时才允许使用它；一段任意的、不完整的横幅不是证据。
 //
-// Deliberately narrow, because "we have output" must never be confused with "we
-// have the answer":
+// 刻意收窄，因为“我们有输出”绝不能和“我们有答案”混为一谈：
 //
-//   - answered is the caller's own *recognition* of the answer, not a length
-//     check and not a parse that falls back to accepting anything. A version is
-//     salvaged only if extractVersionLine matched a version-shaped line — its
-//     trimmed-raw fallback does not qualify, since a wrapper's banner satisfies
-//     it — and a catalog only if it parsed.
-//   - Only ErrWaitDelay qualifies. A non-zero exit still fails: a CLI that
-//     printed something and then exited 1 is reporting a problem, and its stderr
-//     is the diagnosis. Cancellation and deadlines still fail too — reaching the
-//     deadline means the CLI never finished, and this is not the layer that
-//     decides a timeout was acceptable.
+//   - answered 是调用方自己对答案的*识别*，不是长度检查、也不是“退回接受任何东西”的解析。
+//     版本只有 extractVersionLine 命中“版本形态的行”才被抢救——它的“去空白原始输出”兜底不
+//     算，因为包装器的横幅就能满足它；目录只有解析成功才算。
+//   - 只有 ErrWaitDelay 合格。非零退出仍然算失败：一个打印了点东西然后退出 1 的 CLI 是在
+//     报告问题，它的 stderr 才是诊断。取消与超时同样算失败——撞上 deadline 意味着 CLI 根本没
+//     跑完，而这里不是决定“超时是否可以接受”的那一层。
 func salvageProbeAnswer(runtimeCmd Command, probe string, answered bool, err error) bool {
 	if !answered || !errors.Is(err, exec.ErrWaitDelay) {
 		return false
@@ -1217,24 +1200,17 @@ func salvageProbeAnswer(runtimeCmd Command, probe string, answered bool, err err
 	return true
 }
 
-// extractVersionLine pulls the version line out of a `<cli> --version` capture,
-// discarding leading shell noise. On Windows, npm-installed CLI shims (notably
-// gemini's) emit `chcp` output like `Active code page: 65001` before the real
-// version reaches stdout, and the raw concatenation was being persisted as the
-// runtime version (see #2516).
+// extractVersionLine 从 `<cli> --version` 的输出里抽出版本行，丢弃开头的 shell 噪声。在
+// Windows 上，npm 安装的 CLI shim（尤其是 gemini 的）会在真正版本到达 stdout 前打印 `chcp`
+// 输出，例如 `Active code page: 65001`；过去原始拼接会被直接持久化成运行时版本（见 #2516）。
 //
-// The heuristic: return the first non-empty line that contains a semver-shaped
-// token (matches versionRe). Full version strings like "2.1.5 (Claude Code)"
-// or "codex-cli 0.118.0" survive unchanged because the whole matching line is
-// returned. If no line carries a semver token, fall back to the trimmed raw
-// output so unusual version formats aren't silently dropped to empty.
+// 启发式：返回第一条含 semver 形态 token（命中 versionRe）的非空行。像 "2.1.5 (Claude Code)"
+// 或 "codex-cli 0.118.0" 这种完整版本串原样保留，因为返回的是整条命中的行。若没有任何行带
+// semver token，退回去空白的原始输出，避免把不寻常的版本格式悄悄丢成空。
 //
-// The second return reports whether that scan actually matched, i.e. whether the
-// first return is a recognised version or only the fallback. It exists because
-// the fallback accepts *any* non-empty text, which is fine when the CLI exited
-// cleanly (it said what it says) and unusable as evidence when a caller has to
-// decide whether an incomplete read already holds the answer — see
-// salvageProbeAnswer.
+// 第二个返回值报告这次扫描是否真的命中，即第一个返回值是“被识别的版本”还是“只是兜底”。它
+// 存在是因为兜底接受*任意*非空文本——CLI 干净退出时这没问题（它说了它说的话），但当调用方
+// 需要判断“一次不完整的读取是否已含答案”时，它不能当作证据——见 salvageProbeAnswer。
 func extractVersionLine(raw string) (string, bool) {
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
@@ -1248,12 +1224,13 @@ func extractVersionLine(raw string) (string, bool) {
 	return strings.TrimSpace(raw), false
 }
 
-// logWriter adapts a *slog.Logger to an io.Writer for capturing stderr.
+// logWriter 把 *slog.Logger 适配成 io.Writer，用于把子进程 stderr 转成日志行。
 type logWriter struct {
 	logger *slog.Logger
 	prefix string
 }
 
+// newLogWriter 构造一个给每行日志加 prefix 的 logWriter。
 func newLogWriter(logger *slog.Logger, prefix string) *logWriter {
 	return &logWriter{logger: logger, prefix: prefix}
 }

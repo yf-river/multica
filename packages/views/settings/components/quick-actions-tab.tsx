@@ -1,3 +1,7 @@
+// 本文件是「快捷操作」设置标签页（MUL-5465）：管理工作区里预置的「快捷操作」——
+// 一段绑定到某个 agent/小组的固定提示词，供用户一键复用。支持新建、编辑、搜索、
+// 归档/还原与删除。
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -64,26 +68,20 @@ import { AgentPicker } from "../../autopilots/components/pickers/agent-picker";
 import { useLocale, useT } from "../../i18n";
 import { SettingsTab } from "./settings-layout";
 
-// Quick Actions catalog (MUL-5465).
+// 排序按 use_count 降序而非创建时间：列表的职责是回答「这个工作区到底在用哪些」，
+// 创建早晚与这无关。从没被用过的行自然沉底——正好也是「没被用」的清理信号该出现的位置。
 //
-// Ordering is by use_count DESC, not created_at: the list's job is to answer
-// "what does this workspace actually use", and recency of creation says
-// nothing about that. Rows that have never been used sort last, which is also
-// where the "unused" cleanup signal belongs.
-//
-// Layout deliberately mirrors the Labels and Properties tabs: same search +
-// primary-action row, same bordered card, same responsive column grid that
-// collapses to stacked rows under `md`, same overflow menu. These three are
-// the workspace's "catalog of small named things" and reading as one surface
-// matters more than any per-tab cleverness.
+// 布局刻意对齐 Labels 与 Properties 两个标签页：同样的搜索 + 主操作行、同样的描边
+// 卡片、同样的在 `md` 断点下收成堆叠行的响应式列栅格、同样的 ⋯ 溢出菜单。这三个页
+// 都是工作区「一筐有名字的小物件」目录，读起来像同一块表面，比各自耍花样重要。
 
+/** 未使用达到该天数（90 天）就标成「久未使用」。 */
 const UNUSED_DAYS_THRESHOLD = 90;
 
 /**
- * A usage figure is only worth flagging once it has had time to be used. A
- * freshly created action is "never used" by definition, so colouring it on day
- * one trains people to ignore the colour — the signal has to mean "this has
- * been sitting here unused", not "this is new".
+ * 是否算「久未使用」。判断前提是给这个数字留出被使用的时间：新建的快捷操作天然是
+ * 「从未用过」，若第一天就标黄，人们会习惯性无视这个颜色——信号必须表达「闲置很久」
+ * 而非「这是新的」。优先按最近使用时间算，从未用过则回退到「创建至今已多久」。
  */
 function isStale(action: QuickAction): boolean {
   const sinceLastUse = daysSince(action.last_used_at);
@@ -92,6 +90,7 @@ function isStale(action: QuickAction): boolean {
   return age !== null && age >= UNUSED_DAYS_THRESHOLD;
 }
 
+/** 距今过去的天数；入参为空或解析失败返回 null。 */
 function daysSince(iso: string | null): number | null {
   if (!iso) return null;
   const then = new Date(iso).getTime();
@@ -99,11 +98,14 @@ function daysSince(iso: string | null): number | null {
   return Math.floor((Date.now() - then) / 86_400_000);
 }
 
+/** 取 useT 的翻译函数类型，供无组件上下文的小组件复用。 */
 type QuickActionsT = ReturnType<typeof useT<"settings">>["t"];
 
+/**
+ * 可见性角标（公开 / 私有）。visibility 是服务端下发的枚举：遇到不认识的新值时
+ * 落到通用兜底（直接显示原值），不能渲染成空白（API 兼容规则）。
+ */
 function VisibilityBadge({ action, t }: { action: QuickAction; t: QuickActionsT }) {
-  // Server-driven enum: an unknown value must land on a generic fallback
-  // rather than rendering nothing (API compatibility rule).
   switch (action.visibility) {
     case "public":
       return (
@@ -129,13 +131,12 @@ function VisibilityBadge({ action, t }: { action: QuickAction; t: QuickActionsT 
 }
 
 /**
- * The bound target plus its CURRENT reachability, as plain metadata.
+ * 目标行：展示绑定的 agent 及其「当前是否可被调用」的元信息。
  *
- * This replaces a derived "broken" flag: a `public` action whose agent has
- * since gone private simply reads wrong here — public badge, "private" target
- * — without a bespoke error state to maintain. The cost is that nobody is
- * actively notified; that trade was made deliberately (drift is rare and the
- * failure is loud at click time, not silent).
+ * 有意用这种纯元数据表达替代派生的「失效」布尔：一个公开动作若其 agent 后来转成
+ * 私有，这里读起来自然就是「公开角标 + 私有目标」，无需维护一套专属的错误态。
+ * 代价是谁都不会被主动通知——这是刻意取舍（漂移少见，且真到点击时才暴露、不是
+ * 悄悄失败）。
  */
 function TargetLine({ action, t }: { action: QuickAction; t: QuickActionsT }) {
   if (action.target_missing === true) {
@@ -156,6 +157,7 @@ function TargetLine({ action, t }: { action: QuickAction; t: QuickActionsT }) {
   );
 }
 
+/** 新建/编辑弹窗的表单状态。 */
 interface FormState {
   name: string;
   description: string;
@@ -165,6 +167,7 @@ interface FormState {
   visibility: QuickActionVisibility;
 }
 
+/** 空表单：默认公开可见、指派给 agent、无目标。 */
 const EMPTY_FORM: FormState = {
   name: "",
   description: "",
@@ -174,6 +177,7 @@ const EMPTY_FORM: FormState = {
   visibility: "public",
 };
 
+/** 把已存快捷操作映射成表单状态（供编辑回填）。 */
 function toFormState(action: QuickAction): FormState {
   return {
     name: action.name,
@@ -185,6 +189,11 @@ function toFormState(action: QuickAction): FormState {
   };
 }
 
+/**
+ * 「快捷操作」设置标签页：目录式列表（搜索 + 新建按钮 + 响应式表格），每行展示名称、
+ * 目标（绑定 agent 及可达性）、可见性、使用次数（久未用标黄）、更新时间，⋯ 菜单提供
+ * 编辑 / 归档或还原 / 删除。加载时先取含归档的完整列表再本地排序过滤。
+ */
 export function QuickActionsTab() {
   const { t } = useT("settings");
   const locale = useLocale();
@@ -200,8 +209,7 @@ export function QuickActionsTab() {
   const updateMutation = useUpdateQuickAction();
   const deleteMutation = useDeleteQuickAction();
 
-  // Usage-first ordering; never-used rows fall to the bottom where the
-  // "unused" signal is actionable.
+  // 按使用频次优先排序；归档的排到后面、未用过的沉底——「闲置」信号放在那里才好使。
   const sorted = useMemo(
     () =>
       [...actions].sort((a, b) => {
@@ -212,9 +220,8 @@ export function QuickActionsTab() {
     [actions],
   );
 
-  // Name + target search, matching the Labels tab's client-side filter: the
-  // catalog is capped at 30 rows, so there is nothing to gain from a server
-  // round-trip here.
+  // 名称 + 目标搜索，与 Labels 页的客户端过滤一致：目录最多 30 行，没必要为此
+  // 打一次服务端往返。
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return sorted;
@@ -434,6 +441,11 @@ export function QuickActionsTab() {
   );
 }
 
+/**
+ * 新建 / 编辑快捷操作的弹窗。字段：名称、可见性（公开 / 私有）、目标（AgentPicker）、
+ * 提示词；提交前在本地复刻服务端的校验（名称/提示词/目标非空、提示词不得含不支持的
+ * 模板变量），让作者边写边看到错误、而不是等提交后才弹错。
+ */
 function QuickActionDialog({
   open,
   action,
@@ -454,9 +466,8 @@ function QuickActionDialog({
     setForm(action ? toFormState(action) : EMPTY_FORM);
   }, [open, action]);
 
-  // Mirror the server's rejection inline so the author sees it while typing
-  // instead of on submit. The server stays the authority; this is an
-  // affordance.
+  // 在本地镜像服务端的拒绝规则，让作者边输入边看到、而不是等提交时被打回。
+  // 服务端仍是最终裁决方，这里只是个顺手提示。
   const templateToken = useMemo(() => findQuickActionTemplateToken(form.prompt), [form.prompt]);
 
   const canSave =
@@ -488,9 +499,8 @@ function QuickActionDialog({
           <DialogDescription>{t(($) => $.quick_actions.dialog_description)}</DialogDescription>
         </DialogHeader>
 
-        {/* space-y-5 against space-y-1.5 inside each group: the gap BETWEEN
-            fields has to clearly beat the gap between a label and its own
-            control, or the four groups read as one continuous block of text. */}
+        {/* space-y-5 与组内 space-y-1.5 的对比是刻意的：字段与字段之间的间隔必须
+            明显大于「标签和它自己的控件」之间的间隔，否则四个分组会读成连成一片的文本。 */}
         <div className="space-y-5">
           <div className="space-y-1.5">
             <FieldLabel htmlFor="qa-name">{t(($) => $.quick_actions.field_name)}</FieldLabel>
@@ -503,9 +513,8 @@ function QuickActionDialog({
             />
           </div>
 
-          {/* Visibility first: it is the one choice that constrains the rest
-              (a public action may only bind a publicly-invocable target), so
-              asking it up front avoids a rejected Save. */}
+          {/* 先问可见性：这是唯一一个会约束其余字段的选择（公开动作只能绑「可公开
+              调用」的目标），放前面问能避免填完点保存才被拒。 */}
           <div className="space-y-1.5">
             <FieldLabel>{t(($) => $.quick_actions.field_visibility)}</FieldLabel>
             <div className="grid grid-cols-2 gap-2">
@@ -552,9 +561,8 @@ function QuickActionDialog({
                 setForm((f) => ({ ...f, assigneeType: next.type, assigneeId: next.id }))
               }
             />
-            {/* Public promises "everyone can run this", so the server refuses a
-                target the team cannot invoke. Saying so here turns a 400 into
-                an expectation set before the user hits Save. */}
+            {/* 「公开」意味着「人人都能跑」，服务端会拒绝绑定一个团队无法调用的目标。
+                提前说清楚，把 400 变成用户点保存之前就该建立的预期。 */}
             {form.visibility === "public" ? (
               <p className="text-caption text-muted-foreground">
                 {t(($) => $.quick_actions.public_target_hint)}

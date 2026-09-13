@@ -1,31 +1,29 @@
+// 被阻止的 @agent / @squad 触发结果的本地化文案。输入框预览 chip 和发送后的 toast 共用，
+// 保证两处用同样的措辞描述同一个原因。`reason_code` 是线路上枚举安全的代码；它映射出的
+// 文案绝不暴露目标身份——目标名字由调用方从用户自己 @ 出来的标记里提供。
+//
+// 文案不能断言代码本身没携带的原因。`invocation_not_allowed` 在服务端是刻意模糊的
+// （见 dispatch/reason.go）：它同时覆盖「你无权调用该目标」和「这个 id 在这里解析不到任何东西」。
+// 如果文案只怪权限，会让人因为一个其实只是 mention uuid 打错了的问题，跑去排查智能体的可见性设置
+// （MUL-5548），所以两种文案都把这两种可能都点出来。
+//
+// `agent_runtime_required` 和 `runtime_offline` 也是同理才分开的（MUL-5559）：
+// 未绑定的智能体根本没有机器可重连，用「运行时离线」的文案会让用户去找一台不存在的电脑。
+// 它真正需要的修复是把智能体绑定到某个运行时。
+//
+// `runtime_unusable` 是这一族的第三个成员（MUL-6164）：机器是可达的，但上面的智能体 CLI
+// 无法执行，用「离线」文案会让用户去重连一个本来就已连接的东西。它需要的修复是在那台机器上
+// 重装，服务端留在问题上的系统评论会带精确的命令。
 import type { useT } from "../i18n";
 
-// Localized copy for a blocked @agent / @squad trigger outcome (MUL-4525 §2),
-// shared by the composer preview chip and the post-send toast so both name the
-// same reason the same way. `reason_code` is the enumeration-safe wire code; the
-// label it maps to never reveals the target's identity — the caller supplies the
-// name it already has from the user's own mention markup.
-//
-// A label must not assert a cause the code does not carry. `invocation_not_allowed`
-// is deliberately ambiguous server-side (see dispatch/reason.go): it covers BOTH
-// "you may not invoke this target" and "this id resolved to nothing here". Copy
-// that blamed permission alone sent people to audit agent visibility settings over
-// what was really a mistyped mention uuid (MUL-5548), so both labels name the two
-// possibilities instead.
-//
-// `agent_runtime_required` and `runtime_offline` are kept apart for the same
-// reason (MUL-5559): an unbound agent has no machine to reconnect, so "runtime
-// offline" copy sends the user looking for a computer that does not exist. The
-// fix it needs is binding the agent to a runtime.
-//
-// `runtime_unusable` is the third member of that family (MUL-6164): the machine
-// IS reachable and its agent CLI cannot be executed there, so "offline" copy
-// sends the user to reconnect something that is already connected. The fix is a
-// reinstall on that machine, and the system comment the server leaves on the
-// issue carries the exact command.
 type IssuesT = ReturnType<typeof useT<"issues">>["t"];
 
-// Full sentence — for tooltips and other surfaces with room to explain.
+/**
+ * 返回完整的阻断原因句子——用于提示框等有空间展开说明的地方。
+ * @param reasonCode - 服务端返回的阻断原因代码。
+ * @param t - issues 命名空间的翻译函数。
+ * @returns 对应的本地化文案。
+ */
 export function blockedReasonLabel(reasonCode: string, t: IssuesT): string {
   switch (reasonCode) {
     case "invocation_not_allowed":
@@ -43,8 +41,13 @@ export function blockedReasonLabel(reasonCode: string, t: IssuesT): string {
   }
 }
 
-// Short badge — for the inline chip and toast where the target name carries the
-// "who" and the reason only needs to say why in a couple of words.
+/**
+ * 返回简短的阻断原因徽标——用于行内 chip 和 toast，那里目标名字已经交代了「是谁」，
+ * 原因只需用一两个词说明「为什么」。
+ * @param reasonCode - 服务端返回的阻断原因代码。
+ * @param t - issues 命名空间的翻译函数。
+ * @returns 对应的简短本地化文案。
+ */
 export function blockedShortReasonLabel(reasonCode: string, t: IssuesT): string {
   switch (reasonCode) {
     case "invocation_not_allowed":

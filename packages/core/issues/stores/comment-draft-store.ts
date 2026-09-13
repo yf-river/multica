@@ -1,3 +1,7 @@
+// 每条评论草稿的持久化（MUL-5181）：正文 + 同一输入会话里发起的上传。
+// 可抵抗以下丢失场景：虚拟化卸载（TipTap 编辑器滚出 Virtuoso 视口后内存态丢失——
+// 这正是本 store 存在的原因）、误关标签页/Cmd-W、页面刷新。
+// 按"工作区隔离的存储 + 议题维度 key"双重分区，见下方 CommentDraftKey 说明。
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
@@ -13,81 +17,81 @@ import {
 import type { Attachment } from "../../types";
 
 /**
- * Per-comment draft persistence — survives:
- *  - virtualization unmount (the reason this exists: when a TipTap editor
- *    scrolls out of the Virtuoso viewport, its in-memory state is lost)
- *  - tab close / accidental Cmd-W
- *  - reload
+ * 每条评论草稿的持久化——能扛住以下场景：
+ *  - 虚拟化卸载（这就是它存在的原因：TipTap 编辑器滚出 Virtuoso 视口后，
+ *    其内存态随之丢失）
+ *  - 误关标签页 / 不小心 Cmd-W
+ *  - 刷新页面
  *
- * A draft holds both the in-progress text AND the uploads started in the same
- * composer session (MUL-5181). Uploads used to live in component `useState`,
- * so closing or scrolling the composer away dropped in-flight and already-
- * uploaded files; persisting them here keeps them recoverable exactly like the
- * text. Each upload is a {@link DraftUpload} that carries its status — an
- * in-flight placeholder (owned by the upload coordinator) becomes the full
- * attachment once it settles, and a placeholder still `uploading` at load time
- * is dropped because the bytes were never persisted.
+ * 一份草稿同时保存"进行中的正文"和"同一输入会话里开始的上传"（MUL-5181）。
+ * 上传以前放在组件的 `useState` 里，关闭输入框或把它滚走就会丢掉正在上传和
+ * 已上传完成的文件；把它们存到这里，恢复能力和正文一样。每个上传是一个带状态的
+ * {@link DraftUpload}——进行中的占位（归上传协调器管）落定后变成完整附件；
+ * 而加载时仍是 `uploading` 的占位会被丢弃，因为字节从未被持久化过。
  *
- * Keys are issue-scoped because createWorkspaceAwareStorage only partitions
- * by workspace, not by issue. Without issueId in the key, two issues with
- * thread replies open in adjacent desktop tabs would collide.
+ * key 要带议题维度：createWorkspaceAwareStorage 只按工作区分区、不按议题分。
+ * key 里没有 issueId 的话，相邻桌面标签页里打开两个带线程回复的议题会互相冲突。
  */
 
+/** 评论草稿的缓存 key 形状：
+ * - `new:${issueId}` —— 顶级评论输入框
+ * - `reply:${issueId}:${rootCommentId}` —— 线程里的回复输入框
+ * - `edit:${issueId}:${commentId}` —— 对已有评论的行内编辑 */
 export type CommentDraftKey =
-  | `new:${string}`              // top-level CommentInput, key = `new:${issueId}`
-  | `reply:${string}:${string}`  // ReplyInput inside a thread, key = `reply:${issueId}:${rootCommentId}`
-  | `edit:${string}:${string}`;  // inline edit on existing comment, key = `edit:${issueId}:${commentId}`
+  | `new:${string}`
+  | `reply:${string}:${string}`
+  | `edit:${string}:${string}`;
 
+/** 一份评论草稿的内容：正文 + 该输入会话的上传（占位 + 已完成）。 */
 interface CommentDraft {
   content: string;
-  /** Uploads (placeholders + completed) for this composer session. */
+  /** 本输入会话的上传（占位 + 已完成）。 */
   attachments: DraftUpload[];
   updatedAt: number;
 }
 
 interface CommentDraftStore {
   drafts: Record<string, CommentDraft>;
+  /** 取回该草稿的正文；无草稿返回 undefined。 */
   getDraft: (key: CommentDraftKey) => string | undefined;
-  /** Completed attachment rows only — the submit-bindable / preview set. */
+  /** 只取已完成附件的行——可提交 / 预览的那一组。 */
   getAttachments: (key: CommentDraftKey) => Attachment[];
-  /** Every upload for this draft (placeholders included) — for status chips. */
+  /** 取该草稿的所有上传（含占位）——用于状态徽标展示。 */
   getUploads: (key: CommentDraftKey) => DraftUpload[];
+  /** 设置草稿正文。 */
   setDraft: (key: CommentDraftKey, content: string) => void;
   /**
-   * Append a markdown fragment to the draft body (upload write-back,
-   * MUL-5181): an upload that finished after its composer unmounted has no
-   * live editor to insert its link, so the settle handler lands it here —
-   * the draft body stays the single source of truth for what gets bound.
+   * 往草稿正文末尾追加一段 markdown（上传写回，MUL-5181）：一个在其输入框
+   * 卸载后才完成的上传没有"活的"编辑器可插入链接，settle 处理器就把它落到这里——
+   * 草稿正文始终是"最终绑定什么"的唯一真相来源。
    */
   appendToDraftContent: (key: CommentDraftKey, markdown: string) => void;
-  /** Replace the upload list with completed attachments (legacy/compat path). */
+  /** 用已完成的附件替换上传列表（旧版/兼容路径）。 */
   setAttachments: (key: CommentDraftKey, attachments: Attachment[]) => void;
-  /** Record a placeholder the moment a file is picked (coordinator-owned). */
+  /** 在选中文件的瞬间记录一个占位（协调器持有）。 */
   addUpload: (key: CommentDraftKey, upload: DraftUpload) => void;
-  /** Swap a placeholder for its completed attachment. No-op if it's gone. */
+  /** 把一个占位换成它完成的附件；若占位已不在则什么都不做。 */
   settleUpload: (key: CommentDraftKey, clientUploadId: string, attachment: Attachment) => void;
-  /** Mark a placeholder failed. No-op if it's gone. */
+  /** 把占位标记为失败；若占位已不在则什么都不做。 */
   failUpload: (key: CommentDraftKey, clientUploadId: string, error?: string) => void;
-  /** Drop a placeholder (e.g. a dismissed failure). */
+  /** 丢弃一个占位（例如被关闭的失败提示）。 */
   removeUpload: (key: CommentDraftKey, clientUploadId: string) => void;
+  /** 清空某条草稿。 */
   clearDraft: (key: CommentDraftKey) => void;
 }
 
-// Drafts older than 30 days are dropped on store init. Without TTL the store
-// would accumulate every edit attempt across every issue indefinitely and
-// slowly leak localStorage quota.
+// 超过 30 天的草稿在 store 初始化时被清除。没有 TTL 的话，这个 store 会无限
+// 累积每个议题的每次编辑尝试，慢慢吃光 localStorage 配额。
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-// Stable empty references so reads on a missing/empty draft return the same
-// array every call — reading through a Zustand selector must not allocate, or
-// every store touch would re-render the composer.
+// 稳定的空引用，让"读取缺失/空草稿"每次返回同一个数组——穿过 Zustand 选择器
+// 的读取不能分配新对象，否则每次碰 store 都会让输入框重渲染。
 const EMPTY_UPLOADS: DraftUpload[] = [];
 const EMPTY_ATTACHMENTS: Attachment[] = [];
 
-// Derived completed-attachment lists, memoized by the uploads-array reference.
-// Every mutation replaces the uploads array, so a stable ref means the derived
-// list is unchanged — this keeps the `getAttachments` selector referentially
-// stable across unrelated store touches.
+// 派生"已完成附件列表"按 uploads 数组引用做记忆化。每次变更都替换 uploads 数组，
+// 因此引用稳定意味着派生列表不变——这让 `getAttachments` 选择器在无关的 store
+// 触碰之间保持引用稳定。
 const derivedCache = new WeakMap<DraftUpload[], Attachment[]>();
 function deriveUploaded(uploads: DraftUpload[]): Attachment[] {
   const cached = derivedCache.get(uploads);
@@ -98,18 +102,15 @@ function deriveUploaded(uploads: DraftUpload[]): Attachment[] {
   return result;
 }
 
-// A draft carries recoverable intent when it has non-blank text OR at least one
-// upload (in any state). Upload-only drafts (text deleted, a file still pending
-// or failed) are meaningful — pruning or dropping them would silently discard
-// the upload the whole persistence exists to protect.
+// 一份草稿"有可恢复的意图"当且仅当：有非空白正文，或至少有一个上传（任何状态）。
+// 仅上传的草稿（正文被删掉、但文件还在等待/失败）是有意义的——修剪或丢弃它会
+// 悄悄毁掉整个持久化机制想要保护的上传。
 function isMeaningful(content: string, uploads: DraftUpload[]): boolean {
   return content.trim().length > 0 || uploads.length > 0;
 }
 
-// Shared writer for setDraft/setAttachments/upload mutations: an entry with
-// neither text nor uploads carries nothing to recover, so drop it instead of
-// leaving a blank record behind (parity with the old onUpdate "clear on empty
-// text").
+// setDraft/setAttachments/上传变更共用的写入口：一条既无正文也无上传的记录没有
+// 可恢复内容，直接删掉而非留一份空白记录（与旧版 onUpdate 的"正文为空就清掉"对齐）。
 function writeDraft(
   drafts: Record<string, CommentDraft>,
   key: string,
@@ -122,10 +123,9 @@ function writeDraft(
     delete next[key];
     return next;
   }
-  // Idempotent on identical writes: the composers' visibilitychange/pagehide
-  // flush re-writes the same content on every tab switch, and the stale-submit
-  // guard compares entry identity — a fresh-but-equal entry would read as "the
-  // user edited during the request" and wrongly keep a submitted draft alive.
+  // 完全相同的写入保持幂等：输入框的 visibilitychange/pagehide 冲刷会在每次切标签
+  // 页时重写同样内容；"过期提交"守卫会比较条目身份——一份"新但相等"的条目会被
+  // 误读成"请求期间用户又编辑了"，从而错误地让已提交的草稿存活。
   const existing = drafts[key];
   if (existing && existing.content === content && existing.attachments === uploads) {
     return drafts;
@@ -133,17 +133,18 @@ function writeDraft(
   return { ...drafts, [key]: { content, attachments: uploads, updatedAt: Date.now() } };
 }
 
+/** 读出某 key 的上传列表；草稿不存在时返回共享的空数组。 */
 function uploadsOf(drafts: Record<string, CommentDraft>, key: string): DraftUpload[] {
   return drafts[key]?.attachments ?? EMPTY_UPLOADS;
 }
 
+/** 清理过期的持久化草稿（超出 TTL 的丢弃）。 */
 function pruneStaleDrafts(drafts: Record<string, CommentDraft>): Record<string, CommentDraft> {
   const cutoff = Date.now() - TTL_MS;
   const out: Record<string, CommentDraft> = {};
   for (const [k, v] of Object.entries(drafts)) {
-    // Normalize every persisted draft: legacy `Attachment[]` becomes uploaded
-    // placeholders, and any placeholder still `uploading` is dropped (the bytes
-    // were never persisted, so the upload cannot resume).
+    // 归一化每条持久化草稿：遗留的 `Attachment[]` 变成已上传占位；任何仍处于
+    // `uploading` 的占位被丢弃（字节从未持久化，上传无法续传）。
     const uploads = normalizeStoredUploads(v.attachments);
     if (v.updatedAt >= cutoff && isMeaningful(v.content, uploads)) {
       out[k] = { ...v, attachments: uploads };
@@ -152,6 +153,7 @@ function pruneStaleDrafts(drafts: Record<string, CommentDraft>): Record<string, 
   return out;
 }
 
+/** 评论草稿的 Zustand store：按 key 读写正文与上传，过期草稿自动清理。 */
 export const useCommentDraftStore = create<CommentDraftStore>()(
   persist(
     (set, get) => ({
@@ -166,6 +168,7 @@ export const useCommentDraftStore = create<CommentDraftStore>()(
       appendToDraftContent: (key, markdown) =>
         set((s) => {
           const existing = s.drafts[key]?.content ?? "";
+          // 正文非空时先压缩行尾空白再补两行空行，避免 markdown 粘在一起。
           const next = existing.trim() ? `${existing.replace(/\s+$/, "")}\n\n${markdown}` : markdown;
           return {
             drafts: writeDraft(s.drafts, key, next, uploadsOf(s.drafts, key)),
@@ -183,6 +186,7 @@ export const useCommentDraftStore = create<CommentDraftStore>()(
       addUpload: (key, upload) =>
         set((s) => {
           const current = uploadsOf(s.drafts, key);
+          // 同一 clientUploadId 已存在则跳过（幂等）。
           if (current.some((u) => u.clientUploadId === upload.clientUploadId)) return s;
           return {
             drafts: writeDraft(s.drafts, key, s.drafts[key]?.content ?? "", [...current, upload]),
@@ -191,6 +195,7 @@ export const useCommentDraftStore = create<CommentDraftStore>()(
       settleUpload: (key, clientUploadId, attachment) =>
         set((s) => {
           const current = uploadsOf(s.drafts, key);
+          // 占位已被移除则什么都不做（幂等）。
           if (!current.some((u) => u.clientUploadId === clientUploadId)) return s;
           const next = current.map((u) =>
             u.clientUploadId === clientUploadId
@@ -205,6 +210,7 @@ export const useCommentDraftStore = create<CommentDraftStore>()(
         set((s) => {
           const current = uploadsOf(s.drafts, key);
           const target = current.find((u) => u.clientUploadId === clientUploadId);
+          // 占位已被移除则什么都不做。
           if (!target) return s;
           const failed: PendingDraftUpload = {
             clientUploadId,
@@ -222,6 +228,7 @@ export const useCommentDraftStore = create<CommentDraftStore>()(
       removeUpload: (key, clientUploadId) =>
         set((s) => {
           const current = uploadsOf(s.drafts, key);
+          // 占位已被移除则什么都不做。
           if (!current.some((u) => u.clientUploadId === clientUploadId)) return s;
           const next = current.filter((u) => u.clientUploadId !== clientUploadId);
           return {
@@ -240,6 +247,7 @@ export const useCommentDraftStore = create<CommentDraftStore>()(
       name: "multica_comment_drafts",
       storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
       onRehydrateStorage: () => (state) => {
+        // 从存储里水合回来时，先清一遍超出 TTL 的过期草稿。
         if (state) {
           state.drafts = pruneStaleDrafts(state.drafts);
         }
@@ -248,8 +256,10 @@ export const useCommentDraftStore = create<CommentDraftStore>()(
   ),
 );
 
+// 切换工作区后重水合该工作区的评论草稿。
 registerForWorkspaceRehydration(() => useCommentDraftStore.persist.rehydrate());
 
+// 登出清理：把这个 store 的内存态清空（localStorage 清理由 cleanup-registry 处理）。
 registerDraftCleanup({
   storageKey: "multica_comment_drafts",
   workspaceScoped: true,

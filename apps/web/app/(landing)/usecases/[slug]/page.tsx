@@ -1,3 +1,8 @@
+/**
+ * 官网「客户案例」详情页：根据 URL 里的案例 slug + 当前请求 locale，
+ * 从源码库加载对应的 MDX 正文并渲染，自动生成右侧目录，并提供一套定制化 MDX 组件：
+ * 支持截图、中文占位图语法、主/次 CTA 按钮语法等营销文案便利标记。
+ */
 import type { Metadata } from "next";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import Link from "next/link";
@@ -18,6 +23,13 @@ type Params = { slug: string };
 
 type TocItem = { title: ReactNode; url: string; depth: number };
 
+/**
+ * 生成该案例页的 SEO 元信息：标题/描述来自案例正文的 frontmatter，
+ * 找不到对应案例则返回空元信息（渲染时由页面调用 notFound()）。
+ *
+ * @param props.params - Next.js 注入的动态路由参数（Promise 形式）。
+ * @returns 页面标题、描述、OpenGraph 与 canonical 等元数据。
+ */
 export async function generateMetadata(props: {
   params: Promise<Params>;
 }): Promise<Metadata> {
@@ -40,6 +52,7 @@ export async function generateMetadata(props: {
   };
 }
 
+/** 把 ReactNode 递归展开成纯字符串（数组拼接，其它类型忽略），用于在渲染前解析段落文本。 */
 function nodeToString(node: ReactNode): string {
   if (typeof node === "string") return node;
   if (typeof node === "number") return String(node);
@@ -47,6 +60,7 @@ function nodeToString(node: ReactNode): string {
   return "";
 }
 
+/** 占位图占位符：当 MDX 里写了 `[占位图: 描述文字]` 时渲染成虚线占位框（图片待补）。 */
 function PlaceholderImage({ label }: { label: string }) {
   return (
     <figure className="my-10 -mx-4 sm:mx-0">
@@ -63,6 +77,7 @@ function PlaceholderImage({ label }: { label: string }) {
   );
 }
 
+/** CTA 按钮：渲染主/次两种样式的链接，对应 MDX 里的 CTA 块语法。 */
 function MDXCTA({
   label,
   variant,
@@ -87,16 +102,22 @@ function MDXCTA({
   );
 }
 
-// Marker patterns accept both half-width (`:`) and full-width (`：`) colons so
-// content authors can type either without breaking the placeholder rendering.
-// `副 ` is the Chinese marker for the secondary CTA and `Secondary ` is the
-// English equivalent — either works in either language's mdx file.
+// 占位/CTA 的标记语法同时兼容半角（:）与全角（：）冒号，文案作者用哪种都不会解析失败。
+// `副 ` 是中文文案里次 CTA 的标记，`Secondary ` 是英文文案里对应的标记——两者在任意语言
+// 的 mdx 文件里都能用，避免写死某一套语言。
 const PLACEHOLDER_IMAGE_PREFIX = /^\[占位图[::]\s*/;
 const CTA_SECONDARY_PREFIX = "(?:副 |Secondary )";
 const CTA_BLOCK_TRIGGER = new RegExp(`^\\[${CTA_SECONDARY_PREFIX}?CTA[::]`);
 const CTA_LABEL_STRIP = new RegExp(`^${CTA_SECONDARY_PREFIX}?CTA[::]\\s*`);
 const CTA_PRIMARY = /^CTA[::]/;
 
+/**
+ * 生成「智能段落」组件：拦截 MDX 的 `<p>`，把特殊标记文本替换成占位图 / CTA 按钮组，
+ * 其余普通段落原样渲染。这样营销文案可以用简短语法表达富组件，而不用写 JSX。
+ *
+ * @param locale - 当前语言，决定次 CTA 默认跳转的文档地址。
+ * @returns 一个经过增强的 <p> 渲染函数。
+ */
 function createSmartParagraph(locale: SupportedLocale) {
   const secondaryHref = docsHrefForLocale(locale);
   return function SmartParagraph(props: ComponentPropsWithoutRef<"p">) {
@@ -135,6 +156,13 @@ function createSmartParagraph(locale: SupportedLocale) {
   };
 }
 
+/**
+ * 组装案例 MDX 的自定义组件映射：截图、带样式的标题/引用/列表/代码块等，
+ * 并让内部链接走 next/link（SPA 跳转）、外部链接保持原生 <a>。
+ *
+ * @param locale - 当前语言。
+ * @returns 传给 <MDX components={...}> 的组件表。
+ */
 function createMdxComponents(locale: SupportedLocale) {
   const SmartParagraph = createSmartParagraph(locale);
   return {
@@ -182,8 +210,7 @@ function createMdxComponents(locale: SupportedLocale) {
     a: ({ href, ...props }: ComponentPropsWithoutRef<"a">) => {
       const className =
         "underline decoration-[#0a0d12]/25 underline-offset-4 transition-colors hover:text-[#0a0d12] hover:decoration-[#0a0d12]/70";
-      // Internal links should keep SPA navigation (next/link); external links
-      // (mailto:, https://, etc.) stay as native anchors.
+      // 站内链接走 next/link 保持 SPA 导航；外部链接（mailto:、https:// 等）保留原生 <a>。
       if (href && href.startsWith("/")) {
         return <Link href={href} className={className} {...props} />;
       }
@@ -204,6 +231,15 @@ function createMdxComponents(locale: SupportedLocale) {
   };
 }
 
+/**
+ * 案例详情页默认导出（服务端组件）。
+ *
+ * 加载案例 MDX，正文顶部渲染文章标题与目录（仅 desktop 宽度显示），
+ * 用自定义组件渲染正文；slug 不存在时直接 notFound()。
+ *
+ * @param props.params - 动态路由参数，含案例 slug。
+ * @returns 案例详情页（含顶部营销导航与页脚）。
+ */
 export default async function UseCasePage(props: { params: Promise<Params> }) {
   const { slug } = await props.params;
   const locale = await getUseCaseLocale();

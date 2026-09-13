@@ -1,3 +1,21 @@
+// ============================================================================
+// 用量区（UsageSection）——「这台 runtime 这段时间花了多少钱」的核心区块
+//
+// 角色定位：单台 runtime 详情里的用量总览。自上而下由四层组成：
+//  1. 顶部周期选择器（7d/30d/90d/180d × 按天/按周）；
+//  2. 三张 KPI 卡（总费用 + 环比、缓存节省 + 命中率、总 token + 输入/输出拆分）；
+//  3. WHEN 图（每日/每周的费用或 token 堆叠图，可切换成 26 周活动热力图）；
+//  4. 成本归因（按 agent / 按模型）与可折叠的明细表。
+//
+// 数据流：后端按「查看者时区」的 UTC 小时滚桶 → useQuery 拉一次 180 天缓存 →
+// 用 utils.sliceWindow 客户端切成「所选窗口 / 上一等长窗口」→ 汇总与图表。所有
+// 聚合/估算函数来自 ../utils，把金额「厂商已收 + 费率表补差」两半相加。
+//
+// 周期选择器的唯一事实来源是 TIME_RANGES：KPI、WHEN 图、Cost-by 页签与
+// CSV 导出都读同一个 `days` 值，保证标签（如 "· 30D"）与数据切片永不一致。
+//
+// 界面结构：loading → UsageSkeleton；无用量 → UsageEmpty；否则四层内容。
+// ============================================================================
 "use client";
 
 import { useMemo, useState } from "react";
@@ -45,13 +63,12 @@ import {
 import { CustomPricingDialog } from "./custom-pricing-dialog";
 import { useT } from "../../i18n";
 
-// Single source of truth for the period selector. KPIs, the When-chart, the
-// Cost-by tabs, and the CSV export all read from the same `days` value so
-// the labels ("· 30D") and the data slice never disagree.
+// 周期选择器的唯一事实来源。KPI、WHEN 图、Cost-by 页签与 CSV 导出都读同一个
+// `days` 值，保证标签（如 "· 30D"）与数据切片永远不会互相矛盾。
 //
-// `dims` declares which dimensions each range is allowed in. 7 days at the
-// weekly grain is one bar, so 7d is daily-only; 180d is weekly-only because
-// 180 daily bars are visually unreadable.
+// `dims` 声明每个周期允许在哪些维度（按天/按周）下使用。7 天按周粒度聚合后
+// 只有一根柱，所以 7d 仅限按天；180 天画 180 根日柱视觉上不可读，因此 180d
+// 仅限按周。
 const TIME_RANGES = [
   { label: "7d", days: 7, dims: ["daily"] as const },
   { label: "30d", days: 30, dims: ["daily", "weekly"] as const },
@@ -62,13 +79,14 @@ const TIME_RANGES = [
 type TimeRange = (typeof TIME_RANGES)[number]["days"];
 type WhenTab = "daily" | "weekly" | "heatmap";
 
-// Default time range per dimension. Switching dimensions resets the period
-// to its default rather than keeping a now-invalid value.
+// 各维度对应的默认周期。切换维度时把周期重置为该维度的默认值，而不是保留
+// 一个已经非法的旧值。
 const DEFAULT_DAYS_BY_DIM: Record<Exclude<WhenTab, "heatmap">, TimeRange> = {
   daily: 30,
   weekly: 90,
 };
 
+// 返回某维度允许使用的周期选项。
 function rangesForDim(dim: Exclude<WhenTab, "heatmap">) {
   return TIME_RANGES.filter((r) =>
     (r.dims as readonly string[]).includes(dim),
@@ -76,9 +94,9 @@ function rangesForDim(dim: Exclude<WhenTab, "heatmap">) {
 }
 
 // ---------------------------------------------------------------------------
-// Local segmented control. shadcn's Tabs is wired for full tab pages with
-// keyboard nav and ARIA semantics that a compact toolbar pill doesn't need.
-// Visual: light-grey track + white "raised" active pill.
+// 本地分段控件。shadcn 的 Tabs 为整页页签设计，带有键盘导航与 ARIA 语义——
+// 这些对一块紧凑的工具条药丸来说都是多余的。视觉样式：浅灰轨道 + 白色
+// 「凸起」的活动药丸。
 // ---------------------------------------------------------------------------
 
 function Segmented<T extends string | number>({
@@ -118,42 +136,36 @@ function Segmented<T extends string | number>({
 }
 
 // ---------------------------------------------------------------------------
-// Top-level orchestrator. Owns the time window, fetches a 180-day usage
-// cache once, slices it into "current" / "prior" windows for delta math,
-// and threads everything into the four visual blocks below.
+// 顶层编排组件。持有时间窗口，一次性拉取 180 天用量缓存，切成「当前 / 上一」
+// 两个等长窗口做环比，再把数据分发给下面四个视觉区块。
 //
-// 180 days (vs the older 90) is sized for the Heatmap tab — it shows 26
-// weeks (~6 months) so the long view actually looks long. The 7d/30d/90d
-// period selector slices client-side; the prior-window delta on the Cost
-// KPI also benefits from having extra history available.
+// 180 天（相比旧版 90 天）是为热力图页签扩的——它展示 26 周（约 6 个月），
+// 长周期视图才真的「长」。7d/30d/90d 的周期选择在客户端切片；费用 KPI 的
+// 「上一周期」环比也受益于多出来的历史数据。
 // ---------------------------------------------------------------------------
 
 export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
   const { t, i18n } = useT("runtimes");
   const runtimeId = runtime.id;
-  // Reports render in the viewer's timezone — the backend slices the UTC
-  // hourly rollup on the same `tz` we pass here, so every frontend window
-  // calculation shares one axis with the server.
+  // 报表按查看者时区渲染——后端用与我们这里相同的 `tz` 切 UTC 小时滚桶，
+  // 因此前端每个窗口计算与服务端共享同一条时间轴。
   const tz = useViewingTimezone();
   const { data: usage = [], isLoading: loading } = useQuery(
     runtimeUsageOptions(runtimeId, 180, tz),
   );
   const [dim, setDim] = useState<Exclude<WhenTab, "heatmap">>("daily");
   const [days, setDays] = useState<TimeRange>(30);
-  // Subscribe so the KPI cards (which call estimateCost at render-time, not
-  // through a memo) re-evaluate when the user saves a custom rate. The
-  // aggregate sub-components (WhenChart, CostByBlock, ActivityHeatmap) each
-  // subscribe on their own and pass pricings as a memo dep there.
+  // 订阅自定义定价存储：KPI 卡在渲染时直接调 estimateCost（不经 memo），
+  // 用户保存自定义费率后必须重算。聚合子组件（WhenChart、CostByBlock、
+  // ActivityHeatmap）各自单独订阅，并把 pricings 作为各自 memo 的依赖。
   useCustomPricingStore((s) => s.pricings);
 
   if (loading) return <UsageSkeleton />;
   if (usage.length === 0) return <UsageEmpty />;
 
-  // Slice the cached 180-day window into the user's selected sub-window AND
-  // the immediately prior window of equal length. The KPI delta ("+18% vs
-  // prev") then compares like-for-like ranges instead of "this period vs
-  // all of history". Tz-aware so the cutoff lands on the same calendar
-  // boundary the backend used when bucketing rows.
+  // 把 180 天缓存切成用户选中的子窗口与紧邻其前的等长窗口。KPI 的环比
+  // （"+18% vs prev"）由此比较「等长的两段时间」，而不是「本期 vs 全部历史」。
+  // 感知时区：截断点落在后端分桶用的同一条自然日边界上。
   const { filtered, prevFiltered } = sliceWindow(usage, days, tz);
 
   const allowedRanges = rangesForDim(dim);
@@ -180,11 +192,9 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
 
   return (
     <div className="space-y-5">
-      {/* Page-wide period selector. Lives at the top because it controls
-          basically everything below: the KPI numbers and labels, the
-          daily / weekly chart window, and the cost-by aggregations. The
-          Heatmap tab is the only sub-view that ignores it (always shows
-          26 weeks), and its tab disables this control to telegraph that. */}
+      {/* 页面级周期选择器。放在顶部因为它控制着下面几乎一切：KPI 数字与
+          标签、日/周图窗口、cost-by 聚合。热力图页签是唯一忽略它的子视图
+          （永远显示 26 周），它的页签会禁用本控件来传达这一点。 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <span className="text-caption uppercase tracking-wider text-muted-foreground">
@@ -216,12 +226,10 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
         </div>
       </div>
 
-      {/* Pricing bar. Sits above the KPI grid so a *partial* unmapping
-          (some priced + some unpriced models in the same window) still has
-          a visible entry point into the manual-pricing dialog — otherwise
-          the chart would render normally and the unmapped tokens would silently
-          contribute $0 to totals. Stays reachable once every model is priced
-          if the user has saved overrides, so those rates remain editable. */}
+      {/* 定价栏。放在 KPI 网格上方：当窗口内「部分模型可定价、部分不可」时
+          （图表仍正常渲染），这里仍有一个进入手动定价对话框的可见入口——否则
+          未定价的 token 会静默以 $0 计入总额。一旦所有模型都已定价且用户保存过
+          覆盖价，这一栏仍保留入口，让那些费率随时可改、可删。 */}
       <CustomPricingBar usage={filtered} />
 
       <div className="grid grid-cols-3 divide-x rounded-lg border bg-card">
@@ -292,10 +300,9 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
         />
       </div>
 
-      {/* Layer 2 — WHEN chart. Dimension (Daily / Weekly) is owned by the
-          parent so the period selector at the top can react to it. The
-          Heatmap is an independent toggle inside this card — it ignores
-          the period selector by design (it's a fixed 26-week long-view). */}
+      {/* 第 2 层——WHEN 图。维度（日/周）由父组件持有，顶部的周期选择器才能
+          响应它。热力图是这张卡片内部的独立开关——按设计忽略周期选择器
+          （固定 26 周的长周期视图）。 */}
       <WhenChart
         usage={usage}
         filtered={filtered}
@@ -304,23 +311,20 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
         tz={tz}
       />
 
-      {/* Layer 3 — WHO/WHAT burned the spend. */}
+      {/* 第 3 层——是谁（哪个 agent / 哪个模型）烧掉了这笔钱。 */}
       <CostByBlock runtimeId={runtimeId} days={days} usage={filtered} tz={tz} />
 
-      {/* Layer 4 — Folded raw view. The Heatmap used to live here too; it
-          was promoted into the WHEN chart's toggle, leaving only the
-          breakdown table behind. */}
+      {/* 第 4 层——可折叠的原始视图。热力图原本也在这里，后来被提升到 WHEN
+          图的切换里，这里只剩明细表。 */}
       <FoldedRow usage={filtered} />
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// WhenChart — answers "WHEN was this runtime spending money?".
-// Dimension (Daily / Weekly) is owned by the parent so the page-level
-// period selector can react to it. Heatmap is an independent view toggled
-// inside this card; it ignores both the dimension and the period selector,
-// always showing the long 26-week view.
+// WhenChart——回答「这台 runtime 是在什么时候花钱的？」
+// 维度（日/周）由父组件持有，页面级周期选择器才能响应它。热力图是这张卡片
+// 内切换的独立视图；它同时忽略维度与周期选择器，永远展示 26 周长周期。
 // ---------------------------------------------------------------------------
 
 type Dim = Exclude<WhenTab, "heatmap">;
@@ -340,25 +344,22 @@ function WhenChart({
   tz: string;
 }) {
   const { t } = useT("runtimes");
-  // Heatmap is the "independent" sibling — toggled here, not part of the
-  // page-level dimension segmented (per the RFC).
+  // 热力图是「独立」的兄弟视图——在这里切换，不属于页面级维度分段控件。
   const [showHeatmap, setShowHeatmap] = useState(false);
-  // Daily and Weekly share a Cost-vs-Tokens metric toggle.
+  // 日/周视图共用同一个「费用 vs token」指标切换。
   const [chartMetric, setChartMetric] = useState<DailyMetric>("cost");
-  // Memo dep — the aggregates below run `estimateCost`, which now consults
-  // the user override store. Without listing pricings here the memos cache
-  // pre-override totals when query data hasn't changed.
+  // Memo 依赖——下面的聚合会执行 estimateCost，它现在会查用户覆盖存储。
+  // 不把 pricings 列进依赖，查询数据没变时 memo 会缓存「覆盖前的旧总额」。
   const pricings = useCustomPricingStore((s) => s.pricings);
 
   const { dailyCostStack, dailyTokens } = useMemo(
     () => aggregateByDate(filtered),
     [filtered, pricings],
   );
-  // Weekly aggregation builds exactly N trailing calendar weeks anchored at
-  // today (in the runtime tz). Buckets are pre-zeroed inside aggregateByWeek
-  // so weeks with no usage render as empty bars; rows outside the window are
-  // dropped. This avoids the earlier bug where slicing on a sparse 180-day
-  // aggregate surfaced old populated weeks instead of in-range empty ones.
+  // 周聚合恰好构建「锚定今天（运行时 tz）的 N 个尾部自然周」。空桶在
+  // aggregateByWeek 内部已预置零值，没有用量的周会渲染成空柱；窗口外的行被
+  // 丢弃。这避免了旧 bug：在稀疏的 180 天聚合上做切片，会冒出「早期有数据的
+  // 老周」而不是「窗口内的空周」。
   const weekCount = Math.max(1, Math.ceil(days / 7));
   const { weeklyTokens, weeklyCostStack } = useMemo(
     () => aggregateByWeek(usage, tz, weekCount),
@@ -366,9 +367,8 @@ function WhenChart({
   );
 
   const metricToggleVisible = !showHeatmap;
-  // Both metrics carry a cache-read segment now: the token stack always did,
-  // and the cost stack gained one when it stopped dropping cache-read spend
-  // from its total (MUL-6334).
+  // 两种指标现在都带缓存读取段：token 堆叠一直都有；费用堆叠在不再把缓存
+  // 读取的开销从总额中剔除后也补上了（MUL-6334）。
   const legendIncludesCacheRead = !showHeatmap;
 
   return (
@@ -376,8 +376,8 @@ function WhenChart({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <h4 className="text-body font-semibold">{t(($) => $.usage.when_title)}</h4>
-          {/* Cost / Tokens metric toggle — only meaningful when the chart
-              actually has two series-types to switch between. */}
+          {/* 费用 / token 指标切换——只有当图表真的有两种序列类型可切时才有
+              意义。 */}
           {metricToggleVisible && (
             <Segmented
               value={chartMetric}
@@ -390,9 +390,8 @@ function WhenChart({
               }
             />
           )}
-          {/* Heatmap toggle — independent of the page-level dim segmented.
-              "On" puts the card into a fixed 26-week long-view that ignores
-              the period selector. */}
+          {/* 热力图开关——独立于页面级的维度分段控件。打开后本卡片进入固定
+              26 周的长周期视图，忽略周期选择器。 */}
           <button
             type="button"
             onClick={() => setShowHeatmap((v) => !v)}
@@ -452,9 +451,8 @@ function DailyTab({
   usage: RuntimeUsage[];
 }) {
   if (metric === "tokens") {
-    // Token chart fires its own empty state: if no tokens were recorded the
-    // chart is genuinely empty (independent of pricing — unmapped models
-    // still contribute raw token counts).
+    // token 图自带空状态：若没有任何 token 被记录，图表确实为空（与定价无关
+    // ——未映射定价的模型仍然贡献原始 token 计数）。
     const totalTokens = tokensData.reduce(
       (s, d) => s + d.input + d.output + d.cacheRead + d.cacheWrite,
       0,
@@ -492,12 +490,10 @@ function WeeklyTab({
 }
 
 // ---------------------------------------------------------------------------
-// EmptyChartState — drop-in replacement for "the chart would render empty".
-// Two cases worth distinguishing:
-//   1. No tokens at all → "no usage" (genuinely nothing happened).
-//   2. Tokens present but cost is $0 → almost always means the model name
-//      reported by the daemon isn't in our pricing table. List the offenders
-//      so a developer can update MODEL_PRICING in one go.
+// EmptyChartState——「图表本会渲染成空白」时的替换占位。区分两种情况：
+//   1. 完全没有 token → 「没有用量」（确实什么都没发生）。
+//   2. 有 token 但费用是 $0 → 几乎总意味着 daemon 上报的模型名不在我们的
+//      定价表里。把「罪魁祸首」列出来，方便开发者一次性更新 MODEL_PRICING。
 // ---------------------------------------------------------------------------
 
 function EmptyChartState({ usage }: { usage: RuntimeUsage[] }) {
@@ -517,8 +513,8 @@ function EmptyChartState({ usage }: { usage: RuntimeUsage[] }) {
           {t(($) => $.usage.empty_no_usage)}
         </p>
       ) : unmapped.length > 0 ? (
-        // CTA lives in the page-level UnmappedPricingNotice above. Keep the
-        // chart-area copy descriptive only so the two surfaces don't bicker.
+        // 操作入口在上方页面级的 UnmappedPricingNotice 里。这里只写说明性
+        // 文案，避免两个 UI 互相抢话。
         <>
           <p className="text-caption text-muted-foreground">
             {t(($) => $.usage.empty_pricing_missing)}
@@ -540,25 +536,22 @@ function EmptyChartState({ usage }: { usage: RuntimeUsage[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// CustomPricingBar — the only entry point into the custom-pricing dialog,
-// rendered above the KPI grid. Two states:
+// CustomPricingBar——自定义定价对话框的唯一入口，渲染在 KPI 网格上方。两种状态：
 //
-//   1. The window contains unpriced models → warning banner. Covers the
-//      partial-unmapping case where the chart still renders (so
-//      EmptyChartState never fires) but some tokens silently contribute $0.
-//   2. Everything resolves, but the user has saved overrides → a quiet row
-//      that still offers the dialog. Gating the whole bar on "something is
-//      unmapped" used to hide it the moment the last override was saved:
-//      the override made the model resolve, the banner disappeared, and the
-//      saved rates could no longer be corrected or removed from the UI.
+//   1. 窗口内含无法定价的模型 → 告警横幅。覆盖「部分不可定价」的情形：图表
+//      仍会渲染（EmptyChartState 不会触发），但一些 token 在静默地以 $0 计入。
+//   2. 全部可定价、但用户保存过覆盖价 → 一行低调的提示，仍提供进入对话框的
+//      入口。以前把整条栏的显示条件绑在「有未定价模型」上，导致最后一个覆盖
+//      价保存后横幅就消失了：覆盖价让模型变得可解析、横幅消失，已保存的费率
+//      就再也没法从 UI 里更正或删除了。
 //
-// Hidden entirely when nothing is unmapped and nothing is overridden.
+// 当既无未定价模型、又无覆盖价时整条隐藏。
 // ---------------------------------------------------------------------------
 
 function CustomPricingBar({ usage }: { usage: RuntimeUsage[] }) {
   const { t } = useT("runtimes");
   const [dialogOpen, setDialogOpen] = useState(false);
-  // Boolean (not the object) so the selector stays referentially stable.
+  // 用布尔值而非对象本身作为选择器返回值，保证引用稳定、避免多余渲染。
   const hasOverrides = useCustomPricingStore(
     (s) => Object.keys(s.pricings).length > 0,
   );
@@ -611,15 +604,14 @@ function CustomPricingBar({ usage }: { usage: RuntimeUsage[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Chart legend — one coloured dot + label per stack segment, rendered in
-// WhenChart's header so the chart body keeps its full vertical real estate.
+// 图表图例——堆叠的每一段一个色点 + 标签，渲染在 WhenChart 头部，让图表主体
+// 保留全部纵向空间。
 // ---------------------------------------------------------------------------
 
 function ChartLegend({ includeCacheRead = false }: { includeCacheRead?: boolean }) {
   const { t } = useT("runtimes");
-  // The cache-read pip sits between output and cache-write, matching the
-  // segment order both the token and the cost stacks draw. Only the heatmap,
-  // which has no stack at all, leaves it out.
+  // 缓存读取的色点放在输出与缓存写入之间，与 token、费用两个堆叠的段序一致。
+  // 只有完全没堆叠的热力图不显示它。
   const items = [
     { label: t(($) => $.usage.legend_input), color: "var(--color-chart-1)" },
     { label: t(($) => $.usage.legend_output), color: "var(--color-chart-2)" },
@@ -644,7 +636,7 @@ function ChartLegend({ includeCacheRead = false }: { includeCacheRead?: boolean 
 }
 
 // ---------------------------------------------------------------------------
-// Cost-by block: two-tab attribution view (by agent / by model).
+// Cost-by 区块：双页签归因视图（按 agent / 按模型）。
 // ---------------------------------------------------------------------------
 
 function CostByBlock({
@@ -660,12 +652,12 @@ function CostByBlock({
 }) {
   const { t } = useT("runtimes");
   const [tab, setTab] = useState<"agent" | "model">("agent");
-  // Memo dep — same reason as WhenChart: aggregateCostBy{Agent,Model} call
-  // estimateCost, which now reads the override store.
+  // Memo 依赖——理由同 WhenChart：aggregateCostBy{Agent,Model} 会调
+  // estimateCost，后者现在会读覆盖存储。
   const pricings = useCustomPricingStore((s) => s.pricings);
 
-  // by-agent is server-side aggregation (fetched lazily on tab activation).
-  // by-model derives from the daily cache the parent already has — free.
+  // 按 agent 是服务端聚合（切到该页签时才懒加载）；按模型由父组件已有的
+  // 日粒度缓存推导——零额外请求。
   const { data: byAgentRows = [] } = useQuery({
     ...runtimeUsageByAgentOptions(runtimeId, days, tz),
     enabled: tab === "agent",
@@ -742,9 +734,8 @@ function CostByBlock({
   );
 }
 
-// Generic horizontal-bar list shared by both Cost-by tabs. Each row scales
-// its bar relative to the heaviest row in the set, so the visual ranking
-// is always 0..max and the biggest spender visually fills the column.
+// 两个 Cost-by 页签共用的通用横向条形列表。每行的条相对该组最重的一行
+// 缩放，视觉排名恒为 0..max，最大花销者视觉上占满整列。
 function CostByList({
   rows,
   renderKey,
@@ -793,9 +784,8 @@ function CostByList({
 }
 
 // ---------------------------------------------------------------------------
-// Folded row — single chevron-toggle link revealing the raw breakdown
-// table. The Activity heatmap used to live here too; it was promoted to a
-// WhenChart toggle, leaving only the breakdown table behind.
+// 可折叠行——一个 chevron 开关链接，展开后露出原始明细表。活动热力图原本
+// 也在这里，后被提升为 WhenChart 的切换项，这里只剩明细表。
 // ---------------------------------------------------------------------------
 
 function FoldedRow({ usage }: { usage: RuntimeUsage[] }) {
@@ -870,7 +860,7 @@ function DailyBreakdownTable({ usage }: { usage: RuntimeUsage[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Loading + empty states
+// 加载中与空状态
 // ---------------------------------------------------------------------------
 
 function UsageSkeleton() {
@@ -896,9 +886,10 @@ function UsageEmpty() {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
+// 把一行行用量聚成总额（四种 token、总费用、缓存节省），KPI 卡渲染用。
 interface UsageTotals {
   input: number;
   output: number;

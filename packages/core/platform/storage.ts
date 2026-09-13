@@ -1,6 +1,8 @@
+// 本文件提供浏览器/webview 客户端可用的默认 localStorage 适配器（SSR 安全）。
+
 import type { StorageAdapter } from "../types/storage";
 
-/** SSR-safe localStorage for browser and webview clients. */
+/** SSR 安全的 localStorage 适配器：浏览器里用 localStorage，服务端一律返回空。 */
 export const defaultStorage: StorageAdapter = {
   getItem: (k) =>
     typeof window !== "undefined" ? localStorage.getItem(k) : null,

@@ -1,6 +1,9 @@
+// 本文件：ProgressRing —— 微型圆环进度指示。
+// 未完成时渲染一个开口圆环按比例消隐，完成时填成一条实心弧。
+
 /**
- * Tiny circular progress ring. Renders an open ring when in-progress and
- * fills to a solid arc when complete.
+ * 微型圆环进度：`done/total` 决定弧的填充比例；进行中为开口环（主题色），
+ * 全部完成时弧收成一个点并变"成功"色（info）。total<=0 时视为 0 进度。
  */
 export function ProgressRing({
   done,

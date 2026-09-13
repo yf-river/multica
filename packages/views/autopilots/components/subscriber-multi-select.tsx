@@ -1,3 +1,7 @@
+// 订阅者多选控件：选择哪些成员会收到该 autopilot 的通知。已选成员以可删除的
+// chip 列出，加号触发器打开搜索选择器（支持按名称与拼音匹配）。完全受控——父级
+// 持有选择状态并随创建/更新请求提交。刻意仅限成员（按 RFC，MUL-2533）。
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -15,15 +19,19 @@ import {
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
 
-// Fully controlled — parent owns the selection state and ships it to the
-// create/update mutation. Members-only on purpose (per RFC, MUL-2533).
+/**
+ * 订阅成员多选。已选成员渲染成带移除按钮的 chip；"＋"打开搜索选择器选人。
+ * 搜索同时匹配显示名与拼音。
+ * @param selectedIds 当前已选成员的用户 ID 列表。
+ * @param onChange 选择变化时以新的完整列表回调。
+ */
 export function SubscriberMultiSelect({
   selectedIds,
   onChange,
 }: {
-  /** User IDs of the currently-selected member subscribers. */
+  /** 当前已选订阅成员的用户 ID。 */
   selectedIds: ReadonlyArray<string>;
-  /** Called with the new full list whenever the selection changes. */
+  /** 选择变化时回调新完整列表。 */
   onChange: (next: string[]) => void;
 }) {
   const { t } = useT("autopilots");
@@ -46,11 +54,13 @@ export function SubscriberMultiSelect({
     [members, query],
   );
 
+  // 已选成员按其成员顺序排列（不做全量重排，保证 chip 顺序稳定）。
   const selectedMembers = useMemo(
     () => members.filter((m) => selectedSet.has(m.user_id)),
     [members, selectedSet],
   );
 
+  // 在选择器里勾选/取消一个成员。
   const toggle = (userId: string) => {
     if (selectedSet.has(userId)) {
       onChange(selectedIds.filter((id) => id !== userId));
@@ -59,6 +69,7 @@ export function SubscriberMultiSelect({
     }
   };
 
+  // 在 chip 上移除一个成员。
   const remove = (userId: string) => {
     onChange(selectedIds.filter((id) => id !== userId));
   };

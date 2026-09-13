@@ -6,6 +6,10 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@multica/ui/lib/utils"
 import { Separator } from "@multica/ui/components/ui/separator"
 
+// 本文件是「列表条目」（Item）组件族：一种既像列表又像卡片的行项目，
+// 由 媒体(图标/图) + 标题 + 描述 + 操作 组成，常用于下拉菜单项、列表行等。
+
+/** ItemGroup：一组 Item 的容器，自动控制条目间的间距 */
 function ItemGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -20,6 +24,7 @@ function ItemGroup({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** ItemSeparator：条目之间的分隔横线 */
 function ItemSeparator({
   className,
   ...props
@@ -34,6 +39,7 @@ function ItemSeparator({
   )
 }
 
+/** 条目的视觉变体与尺寸：default 无边框 / outline 带边框 / muted 浅灰底 */
 const itemVariants = cva(
   "group/item flex w-full flex-wrap items-center rounded-lg border text-body transition-colors duration-100 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 [a]:transition-colors [a]:hover:bg-muted",
   {
@@ -56,6 +62,10 @@ const itemVariants = cva(
   }
 )
 
+/**
+ * Item：单条列表条目。默认渲染 div，可用 render 换成任意元素/组件
+ *（如 <a> 做整行链接）。样式通过 variant/size 控制。
+ */
 function Item({
   className,
   variant = "default",
@@ -80,6 +90,7 @@ function Item({
   })
 }
 
+/** 条目媒体位（图标/头像/图）的样式变体：icon 小图标 / image 方图 */
 const itemMediaVariants = cva(
   "flex shrink-0 items-center justify-center gap-2 group-has-data-[slot=item-description]/item:translate-y-0.5 group-has-data-[slot=item-description]/item:self-start [&_svg]:pointer-events-none",
   {
@@ -97,6 +108,7 @@ const itemMediaVariants = cva(
   }
 )
 
+/** ItemMedia：条目左侧的图标/图片区 */
 function ItemMedia({
   className,
   variant = "default",
@@ -112,6 +124,7 @@ function ItemMedia({
   )
 }
 
+/** ItemContent：条目的纵向正文区（标题 + 描述） */
 function ItemContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -125,6 +138,7 @@ function ItemContent({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** ItemTitle：条目标题，超长单行省略 */
 function ItemTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -138,6 +152,7 @@ function ItemTitle({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** ItemDescription：条目的辅助描述，最多两行省略 */
 function ItemDescription({ className, ...props }: React.ComponentProps<"p">) {
   return (
     <p
@@ -151,6 +166,7 @@ function ItemDescription({ className, ...props }: React.ComponentProps<"p">) {
   )
 }
 
+/** ItemActions：条目右侧的操作区（菜单、按钮等） */
 function ItemActions({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -161,6 +177,7 @@ function ItemActions({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** ItemHeader：条目内部第一行（标题与右侧信息左右分开） */
 function ItemHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -174,6 +191,7 @@ function ItemHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** ItemFooter：条目内部底行（左右分开的元信息/操作） */
 function ItemFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div

@@ -1,3 +1,10 @@
+// 文件职责：实现 CLI 的「ID 引用解析」公共逻辑——把用户在命令行里给的各种
+// 引用（完整 UUID、8 位短前缀、issue 的人类可读 key MUL-123）解析成规范的
+// resolvedID。issue 只认 key 与完整 UUID（见 resolveIssueRef 里的历史说明 GH #4701）；
+// 其余无人类可读 key 的资源（autopilot/project/label/task run 等）支持短前缀，
+// 通过按实体 fetch 候选列表 + resolveIDByPrefix 统一处理。文件末尾的
+// actorDisplayLookup 负责把 member/agent/squad 的 UUID 惰性渲染成可读名字，供各
+// 命令表格输出共用。
 package main
 
 import (
@@ -12,22 +19,27 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// minShortIDPrefixLen 是接受短 ID 前缀的最短长度（4 个十六进制字符）。
 const minShortIDPrefixLen = 4
+
+// resolverListPageLimit 是候选列表翻页抓取时每页上限（复用 server 允许的页码粒度）。
 const resolverListPageLimit = 50
 
+// resolvedID 是一次 ID 解析的成果：ID 是写进请求的规范 UUID。
 type resolvedID struct {
 	ID string
-	// Display is a best-effort label for human-facing messages. It may equal
-	// ID when resolution does not fetch display metadata from the server.
+	// Display 是给人看的尽力而为标签；当解析没从 server 拉展示元数据时它等于 ID。
 	Display string
 }
 
+// idCandidate 是短前缀解析里的一个候选实体（含展示名与明细，用于歧义报错）。
 type idCandidate struct {
 	ID      string
 	Display string
 	Detail  string
 }
 
+// displayID 按 --full-id 决定表格里显示完整 ID 还是截短的 ID。
 func displayID(id string, full bool) string {
 	if full {
 		return id
@@ -35,6 +47,8 @@ func displayID(id string, full bool) string {
 	return truncateID(id)
 }
 
+// issueDisplayKey 返回 issue 的人类可读 key（identifier，如 MUL-123）；响应缺
+// identifier 时回退到 UUID 并打警告。
 func issueDisplayKey(issue map[string]any) string {
 	if key := strVal(issue, "identifier"); key != "" {
 		return key
@@ -46,6 +60,7 @@ func issueDisplayKey(issue map[string]any) string {
 	return id
 }
 
+// issueCandidate 把 issue 响应包成 idCandidate（Display=identifier，Detail=标题）。
 func issueCandidate(issue map[string]any) idCandidate {
 	return idCandidate{
 		ID:      strVal(issue, "id"),
@@ -54,6 +69,8 @@ func issueCandidate(issue map[string]any) idCandidate {
 	}
 }
 
+// normalizeUUIDPrefix 把输入规整成用于前缀匹配的小写紧凑十六进制串（去横杠、
+// 转小写），并校验长度 ≥ minShortIDPrefixLen、纯十六进制。
 func normalizeUUIDPrefix(input string) (string, error) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
@@ -71,10 +88,14 @@ func normalizeUUIDPrefix(input string) (string, error) {
 	return prefix, nil
 }
 
+// compactUUID 把 UUID 规整成小写无横杠形态，供前缀比较统一使用。
 func compactUUID(id string) string {
 	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(id), "-", ""))
 }
 
+// resolveIDByPrefix 是短前缀解析的通用实现：完整 UUID 直接自识别返回；否则把输入
+// 当十六进制前缀，拉取全部候选，用紧凑 UUID 前缀匹配，恰好一个命中才返回，多个
+// 命中报歧义。fetch 负责按实体类型取候选列表。
 func resolveIDByPrefix(ctx context.Context, client *cli.APIClient, kind, input string, fetch func(context.Context, *cli.APIClient) ([]idCandidate, error)) (resolvedID, error) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
@@ -118,6 +139,8 @@ func resolveIDByPrefix(ctx context.Context, client *cli.APIClient, kind, input s
 	}
 }
 
+// ambiguousIDPrefixError 把多个前缀命中排成可读的歧义报错（按 ID 排序、列出全部
+// 匹配 UUID，提示多给几位或改用 --full-id）。
 func ambiguousIDPrefixError(kind, input string, matches []idCandidate) error {
 	sort.Slice(matches, func(i, j int) bool {
 		return matches[i].ID < matches[j].ID
@@ -129,20 +152,17 @@ func ambiguousIDPrefixError(kind, input string, matches []idCandidate) error {
 	return fmt.Errorf("ambiguous %s id prefix %q; matches:\n%s\nUse more characters or run the list command with --full-id", kind, input, strings.Join(parts, "\n"))
 }
 
-// resolveIssueRef accepts only the two canonical issue references:
+// resolveIssueRef 只接受两种 issue 规范引用：
 //
-//   - the human-facing issue key, e.g. "MUL-1852" (validated by
-//     looksLikeIssueIdentifier and resolved server-side);
-//   - the full UUID in dashed canonical form (validated by uuidRegexp).
+//   - 人类可读的 issue key，如 "MUL-1852"（由 looksLikeIssueIdentifier 校验、
+//     服务端解析）；
+//   - 虚线规范形态的完整 UUID（由 uuidRegexp 校验）。
 //
-// Short UUID prefixes (e.g. "1881abcd") were briefly supported but are no
-// longer — on large workspaces the CLI had to page the entire issue list
-// client-side to disambiguate, causing 14–35s timeouts (GH #4701). Since
-// `MUL-123` already covers every human use case for an issue reference, the
-// short-prefix path is removed instead of being moved server-side. Other
-// resources without a human-readable key (autopilots, projects, labels,
-// task runs, workspaces, ...) continue to accept short UUID prefixes; see
-// resolveIDByPrefix.
+// 短 UUID 前缀（如 "1881abcd"）一度支持但已移除——在大工作区里 CLI 得在客户端
+// 翻完整个 issue 列表来消歧，造成 14–35s 的超时（GH #4701）。既然 `MUL-123` 已
+// 覆盖 issue 引用的所有人肉使用场景，短前缀路径被直接删除而非挪到服务端。没有
+// 人类可读 key 的其它资源（autopilot、project、label、task run、workspace……）
+// 仍接受短 UUID 前缀，见 resolveIDByPrefix。
 func resolveIssueRef(ctx context.Context, client *cli.APIClient, input string) (resolvedID, error) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
@@ -153,22 +173,18 @@ func resolveIssueRef(ctx context.Context, client *cli.APIClient, input string) (
 		return fetchIssueRef(ctx, client, trimmed)
 	}
 	if uuidRegexp.MatchString(trimmed) {
-		// A full UUID is self-identifying: the resolver GET added a round
-		// trip and no information, and agents pay it several times per run
-		// during bootstrap (GH #7017). Lowercased to the canonical form the
-		// server emits. Messages without an issue response may show this UUID
-		// rather than the issue key, and failures now come from the command's
-		// next issue-aware endpoint. Every write path re-validates server-side
-		// (e.g. parent_issue_id on create), so nothing is stored on the strength
-		// of the ref alone.
+		// 完整 UUID 自识别即可：解析器为此 GET 一次纯属往返、毫无信息增益，而 agent
+		// 在引导阶段每轮要付好几次这个代价（GH #7017）。统一转小写成 server 输出的
+		// 规范形态。没有 issue 响应的消息可能显示此 UUID 而非 key；失败会由命令下一
+		// 个面向 issue 的端点暴露。所有写路径都在服务端二次校验（如 create 的
+		// parent_issue_id），不会仅凭这个 ref 存下什么。
 		id := strings.ToLower(trimmed)
 		return resolvedID{ID: id, Display: id}, nil
 	}
 
-	// Detect the common "I copied a truncated UUID" case and give a
-	// tailored hint. normalizeUUIDPrefix succeeds for any input that is
-	// ≥4 hex chars (after stripping dashes), which matches what the old
-	// resolver used to accept as a prefix.
+	// 识别常见的「复制了截断 UUID」场景并给出针对性提示。normalizeUUIDPrefix 对
+	// 任意 ≥4 位十六进制（去横杠后）的输入都能通过，正好覆盖旧解析器当年
+	// 当作前缀接受的范围。
 	if _, err := normalizeUUIDPrefix(trimmed); err == nil {
 		return resolvedID{}, fmt.Errorf(
 			"issue ref %q looks like a short UUID prefix; short prefixes are no longer supported for issues. "+
@@ -182,6 +198,8 @@ func resolveIssueRef(ctx context.Context, client *cli.APIClient, input string) (
 	)
 }
 
+// fetchIssueRef 按 key 向 server 解析 issue：GET /api/issues/{key} 拿回真实 UUID 与
+// identifier。
 func fetchIssueRef(ctx context.Context, client *cli.APIClient, ref string) (resolvedID, error) {
 	var issue map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(ref), &issue); err != nil {
@@ -194,6 +212,8 @@ func fetchIssueRef(ctx context.Context, client *cli.APIClient, ref string) (reso
 	return resolvedID{ID: c.ID, Display: c.Display}, nil
 }
 
+// looksLikeIssueIdentifier 粗略判断输入是否形如 "MUL-1852"（横杠前是字母数字前缀、
+// 横杠后是正整数）。仅作形态初筛，真实解析走 fetchIssueRef。
 func looksLikeIssueIdentifier(input string) bool {
 	if input == "" {
 		return false
@@ -212,6 +232,7 @@ func looksLikeIssueIdentifier(input string) bool {
 	return ok
 }
 
+// parsePositiveInt 解析严格正整数字符串，失败或非正返回 ok=false。
 func parsePositiveInt(input string) (int, bool) {
 	n, err := strconv.Atoi(strings.TrimSpace(input))
 	if err != nil || n <= 0 {
@@ -220,10 +241,12 @@ func parsePositiveInt(input string) (int, bool) {
 	return n, true
 }
 
+// resolveAutopilotID 按完整 UUID 或短前缀解析 autopilot。
 func resolveAutopilotID(ctx context.Context, client *cli.APIClient, input string) (resolvedID, error) {
 	return resolveIDByPrefix(ctx, client, "autopilot", input, fetchAutopilotCandidates)
 }
 
+// fetchAutopilotCandidates 分页拉取工作区全部 autopilot 作为前缀候选，按 id 去重。
 func fetchAutopilotCandidates(ctx context.Context, client *cli.APIClient) ([]idCandidate, error) {
 	if client.WorkspaceID == "" {
 		return nil, fmt.Errorf("workspace_id is required to resolve autopilot id prefixes")
@@ -284,6 +307,8 @@ func fetchAutopilotCandidates(ctx context.Context, client *cli.APIClient) ([]idC
 	return candidates, nil
 }
 
+// resolveTaskRunID 解析 task run 引用：完整 UUID 直接通过；短前缀要求必须带
+// --issue 限定范围——task run 只存在于某 issue 之下，不限范围无法消歧。
 func resolveTaskRunID(ctx context.Context, client *cli.APIClient, issueID, input string) (resolvedID, error) {
 	trimmed := strings.TrimSpace(input)
 	if uuidRegexp.MatchString(trimmed) {
@@ -298,6 +323,7 @@ func resolveTaskRunID(ctx context.Context, client *cli.APIClient, issueID, input
 	return resolveIDByPrefix(ctx, client, "task run", input, fetch)
 }
 
+// fetchTaskRunCandidatesForIssue 拉取某 issue 的全部 task run 作为前缀候选。
 func fetchTaskRunCandidatesForIssue(ctx context.Context, client *cli.APIClient, issueID string) ([]idCandidate, error) {
 	var runs []map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueID)+"/task-runs", &runs); err != nil {
@@ -317,6 +343,8 @@ func fetchTaskRunCandidatesForIssue(ctx context.Context, client *cli.APIClient, 
 	return candidates, nil
 }
 
+// resolveAutopilotTriggerID 在给定 autopilot 下解析其 trigger 引用（短前缀候选即
+// 该 autopilot 的全部 trigger）。
 func resolveAutopilotTriggerID(ctx context.Context, client *cli.APIClient, autopilotID, input string) (resolvedID, error) {
 	trimmed := strings.TrimSpace(input)
 	if uuidRegexp.MatchString(trimmed) {
@@ -349,10 +377,12 @@ func resolveAutopilotTriggerID(ctx context.Context, client *cli.APIClient, autop
 	return resolveIDByPrefix(ctx, client, "autopilot trigger", input, fetch)
 }
 
+// resolveProjectID 按完整 UUID 或短前缀解析 project。
 func resolveProjectID(ctx context.Context, client *cli.APIClient, input string) (resolvedID, error) {
 	return resolveIDByPrefix(ctx, client, "project", input, fetchProjectCandidates)
 }
 
+// fetchProjectCandidates 拉取工作区全部 project 作为前缀候选。
 func fetchProjectCandidates(ctx context.Context, client *cli.APIClient) ([]idCandidate, error) {
 	if client.WorkspaceID == "" {
 		return nil, fmt.Errorf("workspace_id is required to resolve project id prefixes")
@@ -378,6 +408,8 @@ func fetchProjectCandidates(ctx context.Context, client *cli.APIClient) ([]idCan
 	return candidates, nil
 }
 
+// resolveProjectResourceID 在给定 project 下解析其 resource 引用（短前缀候选为
+// 该项目全部资源）。
 func resolveProjectResourceID(ctx context.Context, client *cli.APIClient, projectID, input string) (resolvedID, error) {
 	fetch := func(ctx context.Context, client *cli.APIClient) ([]idCandidate, error) {
 		var result map[string]any
@@ -406,10 +438,12 @@ func resolveProjectResourceID(ctx context.Context, client *cli.APIClient, projec
 	return resolveIDByPrefix(ctx, client, "project resource", input, fetch)
 }
 
+// resolveLabelID 按完整 UUID 或短前缀解析 label。
 func resolveLabelID(ctx context.Context, client *cli.APIClient, input string) (resolvedID, error) {
 	return resolveIDByPrefix(ctx, client, "label", input, fetchLabelCandidates)
 }
 
+// fetchLabelCandidates 拉取工作区全部 label 作为前缀候选。
 func fetchLabelCandidates(ctx context.Context, client *cli.APIClient) ([]idCandidate, error) {
 	if client.WorkspaceID == "" {
 		return nil, fmt.Errorf("workspace_id is required to resolve label id prefixes")
@@ -435,12 +469,16 @@ func fetchLabelCandidates(ctx context.Context, client *cli.APIClient) ([]idCandi
 	return candidates, nil
 }
 
+// actorDisplayLookup 是 member/agent/squad 的惰性名字查找表：首用某一类时一次性
+// 拉取该类全部实体，之后表格多行渲染无需重复请求。struct 按值传递共享同一 state
+// 指针，避免重复加载。
 type actorDisplayLookup struct {
 	ctx    context.Context
 	client *cli.APIClient
 	state  *actorDisplayLookupState
 }
 
+// actorDisplayLookupState 保存已加载的实体名映射与各自的加载标记（防止重复拉取）。
 type actorDisplayLookupState struct {
 	members       map[string]string
 	agents        map[string]string
@@ -450,6 +488,7 @@ type actorDisplayLookupState struct {
 	squadsLoaded  bool
 }
 
+// loadActorDisplayLookup 创建一张空查找表（实体在首次使用时才加载）。
 func loadActorDisplayLookup(ctx context.Context, client *cli.APIClient) actorDisplayLookup {
 	return actorDisplayLookup{
 		ctx:    ctx,
@@ -458,6 +497,8 @@ func loadActorDisplayLookup(ctx context.Context, client *cli.APIClient) actorDis
 	}
 }
 
+// loadMembers 加载工作区 member 的 user_id → name 映射（只加载一次，失败静默，
+// 让调用方回退到 type:id 显示）。
 func (l actorDisplayLookup) loadMembers() {
 	if l.state == nil || l.state.membersLoaded {
 		return
@@ -477,6 +518,7 @@ func (l actorDisplayLookup) loadMembers() {
 	}
 }
 
+// loadAgents 加载工作区 agent 的 id → name 映射（只加载一次，失败静默）。
 func (l actorDisplayLookup) loadAgents() {
 	if l.state == nil || l.state.agentsLoaded {
 		return
@@ -497,6 +539,7 @@ func (l actorDisplayLookup) loadAgents() {
 	}
 }
 
+// loadSquads 加载 squad 的 id → name 映射（只加载一次，失败静默）。
 func (l actorDisplayLookup) loadSquads() {
 	if l.state == nil || l.state.squadsLoaded {
 		return
@@ -516,6 +559,8 @@ func (l actorDisplayLookup) loadSquads() {
 	}
 }
 
+// actor 把 (actorType, id) 渲染成 "member:Alice" 这类可读名字；查不到名字时回退
+// 成 "type:id" 原样返回，绝不因展示失败而报错。
 func (l actorDisplayLookup) actor(actorType, id string) string {
 	if actorType == "" || id == "" {
 		return ""
@@ -546,6 +591,7 @@ func (l actorDisplayLookup) actor(actorType, id string) string {
 	return actorType + ":" + id
 }
 
+// agent 把 agent id 渲染成纯名字（不带 "agent:" 前缀）；查不到时原样返回 id。
 func (l actorDisplayLookup) agent(id string) string {
 	if id == "" {
 		return ""

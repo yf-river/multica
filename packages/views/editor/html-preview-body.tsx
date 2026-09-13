@@ -1,22 +1,20 @@
 "use client";
 
 /**
- * HtmlPreviewBody — single source of truth for rendering an HTML document
- * inside a sandboxed iframe, regardless of whether the source is an inline
- * string (```html fenced code block) or an attachment id (HTML attachment).
+ * HtmlPreviewBody——「在沙箱 iframe 里渲染 HTML 文档」的单一事实来源，
+ * 无论来源是内联字符串（```html 围栏代码块）还是附件 id（HTML 附件）。
  *
- * The two paths used to duplicate iframe + sandbox + fragment-nav shim logic
- * across html-block-preview.tsx, html-attachment-preview.tsx, and
- * attachment-preview-modal.tsx. This component owns:
+ * 两条路径过去在 html-block-preview.tsx、html-attachment-preview.tsx 与
+ * attachment-preview-modal.tsx 之间重复了 iframe + sandbox + 片段导航补丁
+ * 的逻辑。本组件统一负责：
  *
- *   - srcDoc + sandbox="allow-scripts" via CodeBlockIframe
- *   - withFragmentNavShim() so anchor links inside the iframe scroll instead
- *     of silently failing in the sandbox's opaque origin
- *   - loading / typed-error placeholders for attachment sources
+ *   - 经 CodeBlockIframe 提供 srcDoc + sandbox="allow-scripts"
+ *   - 加 withFragmentNavShim()，让 iframe 内的锚点链接能滚动、而不是在沙箱
+ *     的不透明源里静默失败
+ *   - 附件源的加载中 / 类型化错误占位
  *
- * Callers (the toolbar wrappers) keep their own chrome — Copy / Source
- * toggle for code blocks, Download / Open-in-new-tab for attachments — and
- * just slot HtmlPreviewBody as the body.
+ * 调用方（工具栏包裹层）保留各自的 chrome——代码块有复制/源码切换，附件有
+ * 下载/新标签页打开——只需把 HtmlPreviewBody 作为主体塞进去。
  */
 
 import { cn } from "@multica/ui/lib/utils";
@@ -29,26 +27,30 @@ import { CodeBlockIframe } from "./code-block-iframe";
 import { withFragmentNavShim } from "./utils/iframe-fragment-nav";
 import { useAttachmentHtmlText } from "./hooks/use-attachment-html-text";
 
+/** HTML 来源：直接给字符串，或给附件 id（走正文代理接口取文本）。 */
 export type HtmlSource =
   | { kind: "inline"; html: string }
   | { kind: "attachment"; attachmentId: string };
 
 interface HtmlPreviewBodyProps {
   source: HtmlSource;
-  /** iframe title attribute (a11y). */
+  /** iframe 的 title 属性（无障碍）。 */
   title: string;
-  /** Tailwind height/sizing classes for the iframe (e.g. "h-[480px]" or "h-full"). */
+  /** iframe 的 Tailwind 高度/尺寸类（如 "h-[480px]" 或 "h-full"）。 */
   className?: string;
-  /** Override iframe styling (border / radius). Tailwind-merge resolves
-   *  conflicts so callers can pass "rounded-none border-0" for full-screen. */
+  /** 覆盖 iframe 样式（边框/圆角）。Tailwind-merge 解决冲突，调用方可为
+   *  全屏场景传 "rounded-none border-0"。 */
   iframeClassName?: string;
-  /** Sizing for loading / error placeholders. Defaults to className. */
+  /** 加载中/错误占位的尺寸。默认沿用 className。 */
   placeholderClassName?: string;
-  /** Optional data-testid on the error placeholder — preserved for
-   *  html-attachment-preview.test.tsx which asserts the testid is present. */
+  /** 错误占位上的可选 data-testid——保留给 html-attachment-preview.test.tsx，
+   *  它断言该 testid 存在。 */
   errorTestId?: string;
 }
 
+/**
+ * 渲染 HTML 预览主体：行内源直接进沙箱 iframe；附件源先取正文文本。
+ */
 export function HtmlPreviewBody({
   source,
   title,
@@ -79,6 +81,7 @@ export function HtmlPreviewBody({
   );
 }
 
+/** 附件主体的内部实现：拉取正文，处理加载/错误占位。 */
 function AttachmentBody({
   attachmentId,
   title,

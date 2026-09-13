@@ -1,5 +1,13 @@
 "use client";
 
+/**
+ * CodeBlockView——代码块的 React 节点视图。
+ *
+ * 负责三件事：普通代码的语法高亮（由低层 CSS/lowlight 处理）、Mermaid
+ * 图的实时预览、HTML 代码块的「预览/源码」切换，外加复制与显示语言名的
+ * 工具条。源码 `<pre>` 必须始终挂载（见下方注释）。
+ */
+
 import { useState } from "react";
 import { NodeViewWrapper, NodeViewContent } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
@@ -11,13 +19,11 @@ import { useT } from "../../i18n";
 import { MermaidDiagram } from "../mermaid-diagram";
 import { CodeBlockIframe } from "../code-block-iframe";
 
-// Coalesces fast keystrokes before re-rendering live previews.
-// `mermaid.initialize()` mutates a process-global config, so back-to-back
-// renders during typing can race a concurrent ReadonlyContent render
-// (e.g. a comment card) and clobber its theme variables. 200ms keeps the
-// "live preview" feel while making concurrent inits unlikely in practice.
-// HTML preview reuses the same debounce: re-keying iframe.srcDoc on every
-// keystroke causes the iframe to re-load and flicker.
+// 合并快速击键后再去重渲染实时预览。`mermaid.initialize()` 会改动进程级
+// 全局配置，打字时连续渲染可能抢跑一个并发的 ReadonlyContent 渲染（如评论
+// 卡片）并把它的主题变量弄乱。200ms 既保持「实时预览」手感，又让并发 init
+// 在实践中几乎不可能发生。HTML 预览复用同一防抖：每次击键都重设
+// iframe.srcDoc 会让 iframe 反复加载并闪烁。
 const PREVIEW_DEBOUNCE_MS = 200;
 
 const HTML_PREVIEW_HEIGHT = "h-[480px]";
@@ -25,10 +31,9 @@ const HTML_PREVIEW_HEIGHT = "h-[480px]";
 function CodeBlockView({ node }: NodeViewProps) {
   const { t } = useT("editor");
   const [copied, setCopied] = useState(false);
-  // HTML blocks default to "preview"; the user can flip to "source" to
-  // edit the markup directly. Note: the source `<pre>` MUST stay mounted
-  // (just hidden) so ProseMirror keeps its NodeView bindings — unmounting
-  // it would break editing.
+  // HTML 块默认「预览」；用户可切到「源码」直接改标记。注意：源码 `<pre>`
+  // 必须保持挂载（只是隐藏）让 ProseMirror 保住 NodeView 绑定——卸载它会
+  // 破坏编辑。
   const [view, setView] = useState<"preview" | "source">("preview");
   const language = node.attrs.language || "";
   const isMermaid = language === "mermaid";
@@ -67,9 +72,9 @@ function CodeBlockView({ node }: NodeViewProps) {
         </div>
       )}
       {isHtml && showHtmlPreview && (
-        // CSS-hidden when toggled off so the `<pre>` below stays mounted —
-        // unmounting either side would either lose ProseMirror bindings
-        // (source) or thrash iframe.srcDoc (preview).
+        // 切换走时用 CSS 隐藏，保证下面的 `<pre>` 一直挂载——任何一边被
+        // 卸载都会要么丢 ProseMirror 绑定（源码侧），要么让 iframe.srcDoc
+        // 反复重载（预览侧）。
         <div contentEditable={false} className="mb-1">
           <CodeBlockIframe
             html={debouncedHtml}
@@ -124,9 +129,8 @@ function CodeBlockView({ node }: NodeViewProps) {
           )}
         </button>
       </div>
-      {/* `<pre>` + NodeViewContent must remain mounted so the user can keep
-          editing the code block contents. When the HTML preview is showing
-          we just visually hide it — ProseMirror still tracks it. */}
+      {/* `<pre>` + NodeViewContent 必须保持挂载，用户才能继续编辑代码块
+          内容。显示 HTML 预览时只是视觉上隐藏它——ProseMirror 仍跟踪着它。 */}
       <pre
         spellCheck={false}
         className={cn(showHtmlPreview && "sr-only")}
@@ -139,4 +143,7 @@ function CodeBlockView({ node }: NodeViewProps) {
   );
 }
 
+/**
+ * CodeBlockView——代码块节点视图组件（供扩展挂载）。
+ */
 export { CodeBlockView };

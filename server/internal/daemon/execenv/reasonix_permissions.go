@@ -1,3 +1,8 @@
+// Reasonix 运行时的权限处理：为每次任务生成一份 reasonix.toml，在"照搬
+// 运行归属用户自己的 [permissions] 规则"的基础上，把 `ask` 工具加入 deny——
+// 无人值守的任务里没有人能回答问题，而 Reasonix 把无人应答视为放弃、直接
+// 取消整轮。拒绝该工具则让模型自己决策并继续干活。
+
 package execenv
 
 import (
@@ -11,36 +16,32 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// reasonixProjectConfigFile is Reasonix's project-scoped config. Reasonix
-// resolves configuration as flag > project ./reasonix.toml > user config.toml >
-// defaults, rooted at the session cwd — which for a task is the workdir — so a
-// file written here binds to this task only and leaves the runtime owner's
-// interactive sessions alone.
+// reasonixProjectConfigFile 是 Reasonix 的"项目级"配置文件名。Reasonix 的
+// 配置优先级为 flag > 项目 ./reasonix.toml > 用户 config.toml > 默认值，
+// 且以会话 cwd（对任务而言即工作目录）为根解析——所以写在这里的配置只对
+// 本任务生效，不会影响运行归属用户自己的交互式会话。
 const reasonixProjectConfigFile = "reasonix.toml"
 
-// reasonixUserConfigFile is the runtime owner's own Reasonix config; where it
-// lives is resolved in reasonix_user_config.go. It is never written to — the
-// daemon only reads the permissions the owner set there.
+// reasonixUserConfigFile 是运行归属用户自己的 Reasonix 配置；其位置在
+// reasonix_user_config.go 里解析。该文件永远不会被写——daemon 只读取
+// 用户在此设置的权限。
 const reasonixUserConfigFile = "config.toml"
 
-// reasonixAskTool is the Reasonix tool the per-task config denies.
+// reasonixAskTool 是每任务配置要拒绝的 Reasonix 工具。
 const reasonixAskTool = "ask"
 
-// reasonixProjectConfigHeader precedes the rendered [permissions] table.
+// reasonixProjectConfigHeader 是渲染出的 [permissions] 表之前的说明头。
 //
-// `ask` puts a multiple-choice question to a human mid-turn. An unattended task
-// has no human: Reasonix wires an asker for every ACP session, so the runtime's
-// own "no interactive user — decide for yourself" fallback is unreachable, the
-// daemon can only refuse the question, and Reasonix reads a refusal as a
-// dismissal and cancels the whole turn. The task fails over a decision the model
-// could have made itself.
+// `ask` 会在一轮对话中途向人类抛出一道选择题。无人值守的任务没有人类：
+// Reasonix 会给每个 ACP 会话都接一个 asker，于是运行时自带的"没有交互式
+// 用户——自己拿主意吧"兜底根本够不到，daemon 只能拒绝这个问题，而 Reasonix
+// 把"被拒"当作"被 dismiss"，进而取消整轮。任务就为一个"模型本可自己拍板"
+// 的决定而失败。
 //
-// A deny rule is the one lever that covers the whole turn. Reasonix checks deny
-// rules before the read-only allow fallthrough, so it applies to `ask` despite
-// `ask` being read-only, and the executor, the planner, and sub-agents all
-// decide against the same policy — where a tool-call hook would only ever reach
-// the executor. The model gets "denied by permission policy" back as an ordinary
-// tool result and keeps working.
+// deny 规则是唯一能覆盖"整轮"的杠杆。Reasonix 在"只读的 allow 兜底放行"
+// 之前先检查 deny 规则，所以即使 `ask` 是只读的，deny 也能约束到它；并且
+// executor、planner 与子 agent 都依据同一份策略做决定——而工具调用钩子只能
+// 够到 executor。模型拿到"被权限策略拒绝"就像拿到普通工具结果一样，继续干活。
 const reasonixProjectConfigHeader = `# Managed by Multica. Written per task, removed when the task env is cleaned up.
 # Edits are not preserved.
 #
@@ -51,11 +52,10 @@ const reasonixProjectConfigHeader = `# Managed by Multica. Written per task, rem
 
 `
 
-// reasonixOwnerPermissions returns the [permissions] table the runtime owner
-// configured, or nil when there is no config or no such table. An unreadable or
-// unparseable config is an error: the caller must not write a permissions table
-// it could not derive from the owner's, because the project file replaces the
-// owner's rules rather than adding to them.
+// reasonixOwnerPermissions 返回运行归属用户配置的 [permissions] 表；
+// 没有配置或没有该表时返回 nil。"文件存在但读不了/解析不了"视为错误：
+// 调用方绝不能写出一个"并非从用户表派生"的权限表，因为项目文件是"替换"
+// 用户的规则而不是"追加"到用户规则之上。
 func reasonixOwnerPermissions(path string) (map[string]any, error) {
 	if path == "" {
 		return nil, nil
@@ -82,11 +82,10 @@ func reasonixOwnerPermissions(path string) (map[string]any, error) {
 	return perms, nil
 }
 
-// withReasonixAskDenied copies the owner's permissions table and adds `ask` to
-// its deny list. The whole table is carried over, not just deny: the project
-// file overrides what it declares, so restating every key the owner set is what
-// keeps their policy intact whether Reasonix merges these layers per key or per
-// table.
+// withReasonixAskDenied 复制用户的权限表并把 `ask` 加进其 deny 列表。
+// 整张表都要搬过来而不只是 deny：项目文件会覆盖它声明的所有键，所以无论
+// Reasonix 是按键还是按表合并这些层，把用户设置过的每个键都复述一遍才能
+// 保住他们的策略。
 func withReasonixAskDenied(ownerPermissions map[string]any) (map[string]any, error) {
 	deny, err := reasonixDenyList(ownerPermissions["deny"])
 	if err != nil {
@@ -98,6 +97,7 @@ func withReasonixAskDenied(ownerPermissions map[string]any) (map[string]any, err
 	}
 	for _, rule := range deny {
 		if rule == reasonixAskTool {
+			// 用户本来就已经禁了 ask，无需重复添加。
 			merged["deny"] = deny
 			return merged, nil
 		}
@@ -106,9 +106,8 @@ func withReasonixAskDenied(ownerPermissions map[string]any) (map[string]any, err
 	return merged, nil
 }
 
-// reasonixDenyList reads the owner's deny rules as strings. A shape this cannot
-// restate faithfully is an error rather than a silent reset to ["ask"], which
-// would drop every rule the owner wrote.
+// reasonixDenyList 把用户的 deny 规则读成字符串切片。形状无法如实复述的
+// 一律报错，而不是静默重置为 ["ask"]——那会把用户写下的每条规则都丢掉。
 func reasonixDenyList(raw any) ([]string, error) {
 	if raw == nil {
 		return nil, nil
@@ -128,8 +127,8 @@ func reasonixDenyList(raw any) ([]string, error) {
 	return rules, nil
 }
 
-// reasonixProjectConfig renders the task's reasonix.toml from the owner's config
-// at userConfigPath (which need not exist).
+// reasonixProjectConfig 基于 userConfigPath（可以不存在）处的用户配置，
+// 渲染出本任务的 reasonix.toml 内容。
 func reasonixProjectConfig(userConfigPath string) ([]byte, error) {
 	ownerPermissions, err := reasonixOwnerPermissions(userConfigPath)
 	if err != nil {
@@ -146,20 +145,18 @@ func reasonixProjectConfig(userConfigPath string) ([]byte, error) {
 	return append([]byte(reasonixProjectConfigHeader), body...), nil
 }
 
-// writeReasonixProjectConfig lays down the per-task reasonix.toml in workDir,
-// denying the `ask` tool on top of the runtime owner's own permissions.
-// taskEnv is the agent's sanitized custom_env, which decides — together with the
-// daemon's own environment — which user config the Reasonix child will load
-// (reasonix_user_config.go).
+// writeReasonixProjectConfig 在 workDir 落下本任务的 reasonix.toml，在照搬
+// 运行归属用户自己权限的基础上额外禁用 `ask` 工具。taskEnv 是 agent 的
+// （已净化）custom_env，它连同 daemon 自身环境一起决定 Reasonix 子进程会
+// 加载哪份用户配置（见 reasonix_user_config.go）。
 //
-// A reasonix.toml that came with the repository is left untouched: sidecar
-// cleanup is a pure deletion of paths the daemon created, so it must never
-// overwrite user content. That case is a warning rather than a failure — the
-// task still runs, `ask` stays available, and a question that does arrive hits
-// the existing fail-closed permission handling in the reasonix backend.
+// 仓库自带的 reasonix.toml 一律不碰：sidecar 清理是"纯删除 daemon 创建的
+// 路径"，所以绝不该覆盖用户内容。这种情况记警告而非失败——任务照常运行，
+// `ask` 保持可用，若真有提问进来，会命中 reasonix 后端已有的 fail-closed
+// 权限处理。
 //
-// The same holds when the owner's config cannot be read or restated: the daemon
-// writes nothing rather than a table that silently drops their deny rules.
+// 用户的配置读不了/无法复述时同理：daemon 宁可什么都不写，也不写一张
+// 会悄悄丢掉用户 deny 规则的表。
 func writeReasonixProjectConfig(workDir string, taskEnv map[string]string, manifest *sidecarManifest, logger *slog.Logger) error {
 	if workDir == "" {
 		return nil

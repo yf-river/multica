@@ -1,3 +1,12 @@
+// 职责定位：工蜂（gongfeng，腾讯自建 GitLab）合并请求（MR / Pull Request）与 issue 关联的
+// HTTP 处理器。两条主路径：
+//  1. LinkPullRequestToIssue —— 由外部推送/前端主动上报一条已存在的 MR，把它记录进库并挂到
+//     issue 上（复用 GitHub PR 的存储表，Provider 标成 gongfeng）；
+//  2. CreateMergeRequestForIssue —— 用当前用户的工蜂凭据在工蜂远端真正创建 MR，再落库关联。
+//
+// 第三方依赖说明：真正的工蜂 HTTP 调用都收敛在本文件的 gongfengJSONRequest 及其包装函数里，
+// 出站 base 地址来自 gongfengAPIBase()（服务端配置）。recordIssuePullRequest 把「upsert PR +
+// 关联 issue」包在同一个事务里，保证两条写库要么都成要么都撤。
 package handler
 
 import (
@@ -21,6 +30,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// LinkPullRequestRequest 是「把一条已存在的 MR 关联到 issue」的请求体：描述 MR 的快照
+// （项目、标题、状态、分支、作者、改动行数等）。Provider 缺省按 gongfeng 处理。
 type LinkPullRequestRequest struct {
 	Provider       string  `json:"provider"`
 	ProjectPath    string  `json:"project_path"`
@@ -41,6 +52,7 @@ type LinkPullRequestRequest struct {
 	CloseIntent    bool    `json:"close_intent"`
 }
 
+// createMergeRequestRequest 是「在工蜂远端创建 MR」的请求体（未导出：仅本项目内使用）。
 type createMergeRequestRequest struct {
 	Provider     string `json:"provider"`
 	ProjectPath  string `json:"project_path"`
@@ -53,6 +65,8 @@ type createMergeRequestRequest struct {
 	Squash       bool   `json:"squash"`
 }
 
+// LinkPullRequestToIssue 把一条已存在的 MR 关联到 issue。关联成功的前提是 issue 在当前
+// workspace 且调用方有权限打开它；写入后广播 EventPullRequestLinked 供前端刷新。
 func (h *Handler) LinkPullRequestToIssue(w http.ResponseWriter, r *http.Request) {
 	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
@@ -116,6 +130,9 @@ func (h *Handler) LinkPullRequestToIssue(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// CreateMergeRequestForIssue 在工蜂远端给 issue 建一条 MR 再关联回来。需要当前用户有可用的
+// 工蜂凭据档案（profile），并解析出真实 token。远端建好后复用 PR 存储落库关联，返回响应中
+// 附上 iid / url / 分支等 MR 元信息。远端异常（5xx/网络）一律回 502。
 func (h *Handler) CreateMergeRequestForIssue(w http.ResponseWriter, r *http.Request) {
 	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
@@ -163,6 +180,7 @@ func (h *Handler) CreateMergeRequestForIssue(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if strings.TrimSpace(htmlURL) == "" {
+		// 工蜂响应里没给 URL 时拼一个标准的 git.code.tencent.com 地址兜底。
 		htmlURL = fmt.Sprintf("https://git.code.tencent.com/%s/merge_requests/%d", strings.Trim(normalized.ProjectPath, "/"), number)
 	}
 	repoOwner, repoName := splitRepositoryPath(normalized.ProjectPath)
@@ -218,6 +236,9 @@ func (h *Handler) CreateMergeRequestForIssue(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// recordIssuePullRequest 在同一个事务里完成「upsert PR 记录 + 关联到 issue」两步。
+// 工蜂 MR 复用了 GitHub PR 的表（所以参数类型叫 UpsertGitHubPullRequestParams），
+// 通过 InstallationID=0 与真实 GitHub 安装区分。
 func (h *Handler) recordIssuePullRequest(
 	ctx context.Context,
 	pullRequest db.UpsertGitHubPullRequestParams,
@@ -244,6 +265,10 @@ func (h *Handler) recordIssuePullRequest(
 	return created, nil
 }
 
+// normalizeIssuePullRequestLinkRequest 对「关联已存在 MR」的请求做规范化与宽松校验：
+// provider 大小写归一（缺省 gongfeng）、project_path/html_url 去空白；字段缺失时尽量从
+// 别的字段推导（project_path 可从 html_url/repo_url 反推，number 可从 iid 或 URL 反推，
+// title 缺省成 "MR !N"）。工蜂的 html_url 会被重写成规范的 git.code.tencent.com 地址。
 func normalizeIssuePullRequestLinkRequest(w http.ResponseWriter, req LinkPullRequestRequest) (LinkPullRequestRequest, bool) {
 	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
 	if req.Provider == "" {
@@ -306,6 +331,9 @@ func normalizeIssuePullRequestLinkRequest(w http.ResponseWriter, req LinkPullReq
 	return req, true
 }
 
+// normalizeGongfengPullRequestURL 尽力把任意形态的工蜂 MR 链接整理成标准形态
+// https://git.code.tencent.com/{project_path}/merge_requests/{number}。识别不出项目路径或
+// 编号、或链接根本不是 git.code.tencent.com 域时，原样返回不动。
 func normalizeGongfengPullRequestURL(rawURL, repoOwner, repoName string, number int32) string {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
@@ -327,6 +355,8 @@ func normalizeGongfengPullRequestURL(rawURL, repoOwner, repoName string, number 
 	return fmt.Sprintf("https://git.code.tencent.com/%s/merge_requests/%d", strings.Trim(projectPath, "/"), number)
 }
 
+// normalizeCreateMergeRequestRequest 对「创建 MR」的请求做规范化与必填/长度校验。目前只支持
+// gongfeng 一个 provider。
 func normalizeCreateMergeRequestRequest(w http.ResponseWriter, req createMergeRequestRequest) (createMergeRequestRequest, bool) {
 	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
 	if req.Provider == "" {
@@ -367,6 +397,8 @@ func normalizeCreateMergeRequestRequest(w http.ResponseWriter, req createMergeRe
 	return req, true
 }
 
+// normalizePullRequestState 把各种写法统一成内部状态：draft / closed / merged / open（其余
+// 一律 open）。
 func normalizePullRequestState(state string) string {
 	switch strings.ToLower(strings.TrimSpace(state)) {
 	case "draft":
@@ -380,6 +412,8 @@ func normalizePullRequestState(state string) string {
 	}
 }
 
+// splitRepositoryPath 把 "group/subgroup/repo" 拆成 owner 段（前 N-1 节）与仓库名（最后一节）；
+// 只有一段时视为没有 owner。
 func splitRepositoryPath(projectPath string) (string, string) {
 	parts := strings.Split(strings.Trim(projectPath, "/"), "/")
 	if len(parts) <= 1 {
@@ -388,6 +422,8 @@ func splitRepositoryPath(projectPath string) (string, string) {
 	return strings.Join(parts[:len(parts)-1], "/"), parts[len(parts)-1]
 }
 
+// gongfengProjectPathFromURL 从工蜂网页 URL 里抽出项目路径（如 group/repo）。遇到
+// tree/commit/merge_requests 等路径段就截断；不是 git.code.tencent.com 域返回空串。
 func gongfengProjectPathFromURL(rawURL string) string {
 	if rawURL == "" {
 		return ""
@@ -420,6 +456,8 @@ func gongfengProjectPathFromURL(rawURL string) string {
 	return strings.Join(parts[:stop], "/")
 }
 
+// gongfengMergeRequestIIDFromURL 从工蜂 MR 链接里抽出 MR 编号（merge_requests 段后一位）；
+// 解析不出返回 0。
 func gongfengMergeRequestIIDFromURL(rawURL string) int {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -435,6 +473,8 @@ func gongfengMergeRequestIIDFromURL(rawURL string) int {
 	return 0
 }
 
+// gongfengMergeRequestResponse 是工蜂 MR 相关接口返回的 JSON 形态。工蜂不同接口给编号时
+// 字段名不一致（iid / number），Number() 负责统一取。
 type gongfengMergeRequestResponse struct {
 	ID           int64  `json:"id"`
 	IID          int32  `json:"iid"`
@@ -452,6 +492,7 @@ type gongfengMergeRequestResponse struct {
 	} `json:"author"`
 }
 
+// Number 返回 MR 编号，优先取 iid（GitLab 系习惯），再退回 number。
 func (mr gongfengMergeRequestResponse) Number() int32 {
 	if mr.IID > 0 {
 		return mr.IID
@@ -459,10 +500,13 @@ func (mr gongfengMergeRequestResponse) Number() int32 {
 	return mr.NumberValue
 }
 
+// URL 返回 MR 页面地址，web_url 与 html_url 取先到者。
 func (mr gongfengMergeRequestResponse) URL() string {
 	return firstNonEmpty(mr.WebURL, mr.HTMLURL)
 }
 
+// gongfengJSONRequest 是发给工蜂的出站 HTTP 统一入口：JSON 编码、带 PRIVATE-TOKEN 头、
+// 30s 超时，响应体最多读 1MB。返回状态码与原始 body（上层负责解码与错误归类）。
 func gongfengJSONRequest(ctx context.Context, method, endpoint, token string, body []byte) (int, []byte, error) {
 	var reader io.Reader
 	if body != nil {
@@ -486,6 +530,8 @@ func gongfengJSONRequest(ctx context.Context, method, endpoint, token string, bo
 	return resp.StatusCode, payload, nil
 }
 
+// createGongfengMergeRequestForProject 向工蜂 projects/{id}/merge_requests POST 建一条 MR。
+// 失败时把状态码与脱敏后的响应体包进错误（token 绝不外泄）。
 func createGongfengMergeRequestForProject(ctx context.Context, token, projectID string, req createMergeRequestRequest) (gongfengMergeRequestResponse, error) {
 	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects/" + url.PathEscape(projectID) + "/merge_requests"
 	payload := map[string]any{
@@ -522,11 +568,14 @@ func createGongfengMergeRequestForProject(ctx context.Context, token, projectID 
 	return out, nil
 }
 
-// ensureGongfengMergeRequest reconciles the provider before and after create.
-// The Gongfeng API does not accept a caller idempotency key, so a timeout can
-// mean either "not created" or "created but the response was lost". Matching
-// the current open MR by its repository and branch pair makes a retry recover
-// that remote success instead of creating a second MR.
+// ensureGongfengMergeRequest 在创建前后都做一次「对账」，保证调用是幂等的。
+//
+// 背景：工蜂 API 不接受调用方传的幂等键，所以一次「创建超时」既可能是「根本没建上」，也
+// 可能是「建上了但响应丢了」。按仓库 + 分支对（source→target）找当前 open 的 MR，就能让
+// 重试时把远端那次已成功的创建「认回来」，而不是再建一条重复的 MR。
+//
+// 顺序：先 preflight 查一次（避免每次重复建）→ 创建 → 若创建成功且带回编号就直接返回；
+// 否则创建后再 recovery 查一次（覆盖超时丢响应的情况）。两边都失败才把错误原样上抛。
 func ensureGongfengMergeRequest(ctx context.Context, token string, req createMergeRequestRequest) (gongfengMergeRequestResponse, error) {
 	projectID, err := resolveGongfengProjectAPIID(ctx, token, req.ProjectPath)
 	if err != nil {
@@ -565,6 +614,8 @@ func ensureGongfengMergeRequest(ctx context.Context, token string, req createMer
 	return created, nil
 }
 
+// findOpenGongfengMergeRequest 按 (source_branch, target_branch) 在项目里找处于 opened 的 MR，
+// 用于幂等对账。
 func findOpenGongfengMergeRequest(
 	ctx context.Context,
 	token string,
@@ -600,6 +651,8 @@ func findOpenGongfengMergeRequest(
 	return gongfengMergeRequestResponse{}, false, nil
 }
 
+// resolveGongfengProjectAPIID 把「人类可读的项目路径」（group/repo）换算成工蜂 API 用的项目
+// ID。已传数字就直接当 ID；否则先按 ID 拉一次项目、再退化为 search 按路径匹配。
 func resolveGongfengProjectAPIID(ctx context.Context, token, projectPath string) (string, error) {
 	projectPath = strings.Trim(projectPath, "/")
 	if projectPath == "" {
@@ -638,11 +691,14 @@ func resolveGongfengProjectAPIID(ctx context.Context, token, projectPath string)
 	return "", fmt.Errorf("gongfeng project %q not found by path or search", projectPath)
 }
 
+// gongfengProjectResponse 是工蜂项目查询返回的最小形态。
 type gongfengProjectResponse struct {
 	ID                int64  `json:"id"`
 	PathWithNamespace string `json:"path_with_namespace"`
 }
 
+// fetchGongfengProjectByID 按 ID 拉取项目；401/403/404 视为「没拿到」（not found），其余
+// 非 2xx 才是真错误。用于解析「传入的 project_path 其实是个数字 ID」的快捷路径。
 func fetchGongfengProjectByID(ctx context.Context, token, projectID string) (gongfengProjectResponse, bool, error) {
 	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects/" + projectID
 	status, body, err := gongfengJSONRequest(ctx, http.MethodGet, endpoint, token, nil)
@@ -663,6 +719,8 @@ func fetchGongfengProjectByID(ctx context.Context, token, projectID string) (gon
 	}
 }
 
+// redactGongfengError 把工蜂错误响应里的 token/凭据等敏感字段替换成 <redacted>，并截断到
+// 1000 字符，防止错误信息把密钥带进日志或响应。
 func redactGongfengError(body []byte) string {
 	text := strings.TrimSpace(string(body))
 	if text == "" {
@@ -675,6 +733,8 @@ func redactGongfengError(body []byte) string {
 	return text
 }
 
+// normalizeGongfengMergeRequestState 把工蜂侧的状态统一成内部枚举：merged / closed / draft /
+// open（默认 open）。
 func normalizeGongfengMergeRequestState(state string) string {
 	switch strings.ToLower(strings.TrimSpace(state)) {
 	case "merged":
@@ -688,11 +748,13 @@ func normalizeGongfengMergeRequestState(state string) string {
 	}
 }
 
+// textFromNonEmpty 把去掉首尾空白的字符串包成 pgtype.Text：空串给无效值（NULL）。
 func textFromNonEmpty(value string) pgtype.Text {
 	value = strings.TrimSpace(value)
 	return pgtype.Text{String: value, Valid: value != ""}
 }
 
+// textFromOptional 把指针字符串转 pgtype.Text；nil 指针 → 无效值（NULL）。
 func textFromOptional(value *string) pgtype.Text {
 	if value == nil {
 		return pgtype.Text{}

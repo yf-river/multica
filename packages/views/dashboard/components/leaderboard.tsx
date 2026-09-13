@@ -1,5 +1,6 @@
 "use client";
 
+// 排行榜卡片：按 tokens/cost/time/tasks 给 Agent 排名，支持折叠尾部。
 import { useMemo, useState, type CSSProperties } from "react";
 import { EyeOff, Trash2 } from "lucide-react";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -15,9 +16,8 @@ import {
 import { Segmented } from "./dashboard-shared";
 import "./leaderboard.css";
 
-// Which metric ranks the leaderboard. Drives row order, progress bar
-// width, and which column header is emphasised — keeping the three in
-// lockstep so the user always sees what the ranking actually measures.
+// 排行榜按哪个指标排名。它决定行顺序、进度条宽度、以及哪个列头被高亮——
+// 三者保持同步，用户才能始终看清排名到底在衡量什么。
 type LeaderboardSort = "tokens" | "cost" | "time" | "tasks";
 
 const SORT_METRIC: Record<LeaderboardSort, (r: AgentDashboardRow) => number> = {
@@ -27,19 +27,16 @@ const SORT_METRIC: Record<LeaderboardSort, (r: AgentDashboardRow) => number> = {
   tasks: (r) => r.taskCount,
 };
 
-// How many agents the leaderboard ranks before collapsing the tail behind a
-// toggle, mirroring the offender list's cap. A workspace with dozens of agents
-// rendered every one of them, which pushed everything below it a full screen or
-// more down the page (MUL-5388). Ten answers "who is spending the most" — the
-// tail is reachable via the toggle.
+// 排行榜最多直接展示多少个 Agent，超出部分折叠到一个开关后面，和失败者列表的
+// 上限保持一致。几十个 Agent 的工作区以前会把每一个都渲染出来，把下面的内容
+// 往下挤了整整一屏甚至更多（MUL-5388）。十个足够回答「谁花得最多」，尾部通过
+// 开关仍可展开。
 const LEADERBOARD_LIMIT = 10;
 
-// The flexible columns own the readability constraints they protect instead
-// of deriving them from a detached total width. Agent keeps a 24px avatar, an
-// 8px gap, and 128px of readable name; Progress keeps its 8px bar at a 12:1
-// comparison length. `fit-content` lets those floors plus the fixed tracks,
-// gaps, and row padding form the intrinsic scroll width while the fr tracks
-// still expand on wider cards.
+// 弹性列自己声明可读性下限，而不是从一个脱离内容的总宽度反推。Agent 列保留 24px 头像、
+// 8px 间距和 128px 可读名字；Progress 列把 8px 高的条保持在 12:1 的对比长度。
+// `fit-content` 让这些下限加上固定轨道、间距、行内边距共同构成内容的自然滚动宽度，
+// 同时 fr 轨道在更宽的卡片上仍能继续伸展。
 const LEADERBOARD_GRID_STYLE = {
   minWidth: "fit-content",
   gridTemplateColumns:
@@ -48,6 +45,17 @@ const LEADERBOARD_GRID_STYLE = {
 
 const LEADERBOARD_GRID = "grid items-center gap-3";
 
+/**
+ * 排行榜卡片：列出各 Agent 的开销排行。
+ *
+ * 顶部是排序切换器（tokens/cost/time/tasks），中间是排行榜主体，超过上限的
+ * 尾部行折叠到「显示全部」开关后面。
+ *
+ * @param rows 合并后的每-Agent 一行数据（含可能的「已删除 Agent」/「受限 Agent」桶）
+ * @param agents 可解析出名字的 Agent 列表
+ * @param deletedAgentCount 被折叠进「已删除」桶的独立 Agent 数量，用于文案后缀
+ * @param lessThanMinuteLabel 不足一分钟时显示的文案
+ */
 export function Leaderboard({
   rows,
   agents,
@@ -73,17 +81,15 @@ export function Leaderboard({
     [t],
   );
 
-  // Re-rank when the metric changes; keep the merged input untouched so
-  // upstream `mergeAgentDashboardRows`'s tiebreaker (run time desc) still
-  // applies inside an equal-bucket.
+  // 指标变化时重新排序；不改动合并后的输入，这样上游 `mergeAgentDashboardRows`
+  // 的平局规则（按运行时长降序）在数值相同的一组里仍然生效。
   const sortedRows = useMemo(() => {
     const metric = SORT_METRIC[sortBy];
     return rows.toSorted((a, b) => metric(b) - metric(a));
   }, [rows, sortBy]);
 
-  // Measured across every row, not just the visible ones, so a bar's width
-  // means the same thing collapsed and expanded — the leader always fills the
-  // track and nothing re-scales when the tail comes into view.
+  // 最大值按所有行计算，而不是只看可见行，这样条宽在折叠和展开时含义一致——
+  // 领先者始终铺满轨道，尾部展开进来时也不会重新缩放。
   const maxValue = useMemo(() => {
     const metric = SORT_METRIC[sortBy];
     return sortedRows.reduce((m, r) => Math.max(m, metric(r)), 0);
@@ -93,16 +99,14 @@ export function Leaderboard({
     ? sortedRows
     : sortedRows.slice(0, LEADERBOARD_LIMIT);
 
-  // "N agents" counts the rows that actually name an agent. Up to two of the
-  // rows are synthetic buckets (deleted, restricted), and subtracting a fixed 1
-  // reported one agent too many whenever both were present.
+  // "N agents" 统计的是真正有名字的 Agent 行。最多有两行是合成桶（已删除、受限），
+  // 以前固定减 1 会在两个桶同时存在时多报一个 Agent。
   const namedAgentCount = useMemo(
     () => rows.filter((r) => !isSyntheticAgentRow(r.agentId)).length,
     [rows],
   );
 
-  // Active column gets foreground text; others stay muted. Helps the user
-  // see "this is what the bar is measuring" at a glance.
+  // 当前激活的列用前景色，其余保持弱化。帮用户一眼看出「条现在衡量的是什么」。
   const colClass = (key: LeaderboardSort) =>
     `text-right ${sortBy === key ? "text-foreground" : "text-muted-foreground"}`;
 
@@ -125,10 +129,9 @@ export function Leaderboard({
                 })
               : t(($) => $.leaderboard.caption, { count: namedAgentCount })}
           </span>
-          {/* The caption right beside this already states how many agents the
-              window covers, so the toggle carries a count only when
-              collapsing — spelling the total out twice reads as two different
-              numbers once the deleted-agents bucket splits the caption. */}
+          {/* 紧挨着的说明文字已经写明了窗口覆盖多少个 Agent，所以这个开关只在
+              折叠时带上数字——一旦「已删除 Agent」桶把说明文字拆成两部分，把总数
+              写两遍会读起来像两个不同的数字。 */}
           {sortedRows.length > LEADERBOARD_LIMIT ? (
             <button
               type="button"
@@ -173,26 +176,21 @@ export function Leaderboard({
                 {t(($) => $.leaderboard.header_tasks)}
               </span>
             </div>
-            {/* A real list, like the offender list on the Errors tab: the rows are
-                a truncated ranking, so screen readers need the count and the
-                item boundaries rather than a bag of divs. */}
+            {/* 用真正的列表，和 Errors 标签页的失败者列表一样：行是一份被截断的
+                排名，屏幕阅读器需要总数和条目边界，而不是一堆光秃秃的 div。 */}
             <ul aria-label={t(($) => $.leaderboard.title)} className="divide-y">
               {visibleRows.map((row) => {
-                // Two synthetic rows, neither a real agent: both render a neutral
-                // placeholder (no avatar fetch / hover card / UUID) instead of
-                // looking the id up in the agent list.
+                // 两种合成行，都不是真正的 Agent：两者都渲染一个中性的占位符
+                // （不拉头像 / 不显示悬停卡 / 不显示 UUID），而不是去 Agent 列表里查这个 id。
                 //
-                // Only the deleted bucket dashes out Time/Tasks — it genuinely
-                // never carries them (see bucketUnknownAgentRows). The server's
-                // bucket does: those agents are alive and ran, the server just
-                // merged them (MUL-5409), so zeroing their columns would
-                // under-report the workspace's run time.
+                // 只有「已删除」桶把 Time/Tasks 打成破折号——它本来就不携带这两项
+                // （见 bucketUnknownAgentRows）。服务端的受限桶是有的：那些 Agent 活着
+                // 且跑过，只是服务端把它们合并了（MUL-5409），所以把它们的列清零会
+                // 少报工作区的运行时长。
                 //
-                // Its copy is the neutral "Other agents" rather than anything
-                // about permissions, because it covers two populations: agents
-                // this viewer may not see, and the hidden system carriers behind
-                // agent-builder sessions, which nobody can name — including the
-                // admin who owns them.
+                // 它的文案用中性的「其他 Agent」而不提任何权限，因为它覆盖两类人：
+                // 这个查看者可能看不到的 Agent，以及 agent-builder 会话背后隐藏的系统
+                // 载体——连拥有它们的管理员也叫不出名字。
                 const isDeletedBucket = row.agentId === DELETED_AGENTS_ROW_ID;
                 const isRestrictedBucket =
                   row.agentId === RESTRICTED_AGENTS_ROW_ID;

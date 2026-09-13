@@ -1,3 +1,9 @@
+// autopilot 创建/编辑弹窗：左栏标题与提示词正文（runbook），右栏配置（执行者 /
+// 输出模式 / 项目 / 订阅者 / 触发类型与计划或 webhook 过滤）。提交时自动先存
+// autopilot 主体、再同步其调度触发；webhook 创建成功后弹窗不关闭，而是切换到展示
+// 新 URL 的确认态。编辑模式可展开为更大尺寸、可管理协作者访问。触发类型只在创建
+// 时可切换（编辑不支持就地互转，按 PLAN.md 是"删旧建新"）。
+
 "use client";
 
 import { useId, useMemo, useRef, useState } from "react";
@@ -74,9 +80,10 @@ import { formatSchedulePartialFailureToast } from "./autopilot-dialog-toast";
 import type { WebhookEventFilter } from "@multica/core/types";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
+// 编辑弹窗的初始表单值（autopilot 主体字段）。
 export interface AutopilotInitial {
   title: string;
   description: string;
@@ -87,6 +94,8 @@ export interface AutopilotInitial {
   subscriber_user_ids?: string[];
 }
 
+// 弹窗 Props：按模式区分——create 用 `initial`/`initialSchedule` 预填；edit 额外
+// 需要 autopilotId、现有 triggers/collaborators 与权限。
 export type AutopilotDialogProps =
   | {
       mode: "create";
@@ -107,7 +116,7 @@ export type AutopilotDialogProps =
     };
 
 // ---------------------------------------------------------------------------
-// Static schema-level data (not user-visible)
+// 静态 schema 级数据（不对用户可见）
 // ---------------------------------------------------------------------------
 
 const OUTPUT_MODE_KEYS: AutopilotExecutionMode[] = ["create_issue", "run_only"];
@@ -118,13 +127,12 @@ const OUTPUT_MODE_ICONS: Record<AutopilotExecutionMode, typeof FilePlus2> = {
 };
 
 // ---------------------------------------------------------------------------
-// Webhook event-filter dirty detection
+// webhook 事件过滤的脏检查
 // ---------------------------------------------------------------------------
 
-// serializeEventFilters returns a stable JSON string so the edit-mode dirty
-// check can compare the current filters against the snapshot taken on open
-// without depending on reference equality. Normalizes empty Actions to []
-// so omitted-vs-explicit-empty doesn't show as a phantom change.
+// serializeEventFilters 返回稳定 JSON 串，让编辑态的脏检查可把当前过滤器与打开时
+// 的快照比较而不依赖引用相等。把空 Actions 归一化为 []，使"省略 vs 显式空"不会
+// 显示成幽灵变更。
 function serializeEventFilters(filters: WebhookEventFilter[]): string {
   return JSON.stringify(
     filters.map((f) => ({ event: f.event, actions: f.actions ?? [] })),
@@ -135,6 +143,12 @@ function serializeEventFilters(filters: WebhookEventFilter[]): string {
 // AutopilotDialog
 // ---------------------------------------------------------------------------
 
+/**
+ * autopilot 创建/编辑弹窗。创建：标题/提示词 + 配置，提交先建 autopilot 再建
+ * 触发器（webhook 成功后留在弹窗展示 URL）；编辑：预填现有值，主体与调度触发分
+ * 别更新，支持事件过滤器编辑与协作者访问管理。见文件顶部导读。
+ * @param props 区分 create/edit 的完整 Props（见 AutopilotDialogProps）。
+ */
 export function AutopilotDialog(props: AutopilotDialogProps) {
   const { t } = useT("autopilots");
   const { open, onOpenChange } = props;
@@ -164,9 +178,8 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
     initial.subscriber_user_ids ?? [],
   );
 
-  // The schedule panel speaks for the autopilot's SCHEDULE trigger, not for
-  // `triggers[0]` — on a webhook- or api-triggered autopilot that row is one no
-  // cron may be written into.
+  // 计划面板代表 autopilot 的 SCHEDULE 触发器说话，不是 `triggers[0]`——在
+  // webhook/api 触发的 autopilot 上那一行不是能写 cron 的目标。
   const existingSchedule = isCreate
     ? null
     : props.triggers.find((trig) => trig.kind === "schedule") ?? null;
@@ -184,21 +197,16 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
   })();
   const [schedule, setSchedule] = useState<ScheduleConfig>(initialCfg);
 
-  // Editing an autopilot that has no schedule: the panel has nothing to
-  // reflect, so anything it showed would be a proposal dressed as the
-  // autopilot's state — and `scheduleDirty` below, comparing that proposal
-  // against itself, then dropped the save on the floor under a success toast
-  // (MUL-5649). The schedule is asked for explicitly instead: until the user
-  // adds one, the panel says the autopilot is manual, and once they do, Save
-  // writes what it shows whether or not they touched the default.
+  // 编辑一个没有计划的 autopilot：面板没有可回显的东西，它显示的任何东西都会是
+  // 披着"autopilot 状态"外衣的建议——而下方 `scheduleDirty` 拿建议对自身比较，
+  // 于是在成功 toast 下把保存静默丢弃（MUL-5649）。计划改为被显式索取：在用户添加
+  // 之前面板说 autopilot 是手动的，一旦添加，Save 就写它所显示的内容——无论用户
+  // 是否动过默认值。
   const [scheduleAdded, setScheduleAdded] = useState(false);
 
-  // Trigger kind selector. Only meaningful in create mode — edit mode does
-  // not support converting between kinds inline (PLAN.md calls that
-  // out as "delete old, create new" rather than ambiguous in-place
-  // updates), so the toggle is hidden when editing. The kind is
-  // initialized from the first existing trigger so we render the right
-  // panel without surprising the user.
+  // 触发类型选择器。只在创建模式有意义——编辑模式不支持就地互转类型（PLAN.md
+  // 把那种情况称作"删旧建新"，而非原地模糊更新），所以编辑时隐藏该切换。类型从
+  // 第一条现有触发器初始化，从而渲染正确的面板而不让用户吃惊。
   const initialKind: "schedule" | "webhook" = (() => {
     if (isCreate) return "schedule";
     const first = props.triggers[0];
@@ -207,6 +215,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
   })();
   const [triggerKind, setTriggerKind] = useState<"schedule" | "webhook">(initialKind);
 
+  // 打开时快照初始 cron/时区/事件过滤器，用于脏检查。
   const initialEventFilters: WebhookEventFilter[] =
     !isCreate && props.triggers[0]?.event_filters ? props.triggers[0].event_filters : [];
   const [eventFilters, setEventFilters] = useState<WebhookEventFilter[]>(initialEventFilters);
@@ -223,16 +232,15 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
   const firstTriggerIdRef = useRef(
     !isCreate && props.triggers[0] ? props.triggers[0].id : null,
   );
-  // The row the schedule write targets, snapshotted at mount like the one
-  // above. Null means there is none to patch, so the write creates one.
+  // 计划写入所瞄准的那一行，与上面同样在挂载时快照。null 表示没有可 PATCH 的行，
+  // 所以写入会新建一个。
   const scheduleTriggerIdRef = useRef(existingSchedule?.id ?? null);
 
   const triggerCount = isCreate ? 0 : props.triggers.length;
   const schedulePillDisabled = !isCreate && triggerCount >= 2;
 
-  // The manual-autopilot empty state, and the only path to a first schedule
-  // from this dialog. Skipped when the panel is locked (2+ triggers), which
-  // keeps that case rendering exactly the disabled editor it always has.
+  // 手动 autopilot 的空态，以及从本弹窗通往"第一个计划"的唯一入口。面板锁定时
+  // （≥2 个触发器）跳过——那种情况保持渲染它一贯展示的禁用编辑器。
   const showScheduleEmptyState =
     !isCreate && existingSchedule === null && !scheduleAdded && !schedulePillDisabled;
 
@@ -261,35 +269,29 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
   const updateTrigger = useUpdateAutopilotTrigger();
   const [submitting, setSubmitting] = useState(false);
 
-  // After a successful webhook-kind create, we don't close the dialog —
-  // we swap to a confirmation state showing the freshly minted URL with
-  // copy / done affordances. This avoids the "now go find your autopilot
-  // and click into it to grab the URL" friction.
+  // webhook 类型创建成功后不关弹窗——切换到展示新铸造 URL（带复制/完成操作）的
+  // 确认态。避免"现在去找你的 autopilot、点进去才能拿 URL"的摩擦。
   const [createdWebhookTrigger, setCreatedWebhookTrigger] = useState<AutopilotTrigger | null>(null);
 
   const scheduleGate = useScheduleSubmitGate(wsId);
 
-  // The schedule only gates submit when this save would actually write it. A
-  // locked schedule (2+ triggers) or a stored one the user never touched is not
-  // sent, so a preview 400 on the stored expression — an expression the server
-  // accepted once and may now reject, e.g. a timezone its tzdata dropped — must
-  // not veto edits to the title, prompt or assignee. A schedule the user just
-  // added has no stored counterpart to differ from: adding it IS the change.
+  // 计划只在本次保存确实会写它时才门控提交。锁定的计划（≥2 触发器）或用户没动过
+  // 的既有计划不会送出，因此存储表达式上的预览 400——一份服务器曾接受、现在可能
+  // 拒绝的表达式（如 tzdata 丢弃的时区）——不得否决对标题/提示词/执行者的编辑。
+  // 用户刚添加的计划没有可对比的已存版本：添加它本身就是这次变更。
   const scheduleWillBeWritten =
     triggerKind === "schedule" &&
     !schedulePillDisabled &&
     (isCreate || (existingSchedule !== null ? scheduleDirty : scheduleAdded));
 
-  // The FIRST empty required field in reading order — the user fills one, the
-  // next surfaces. Only these two are answered here: a rejected schedule is
-  // re-checked against the server below, which toasts its actual reason.
+  // 阅读顺序里第一个空的必填字段——用户填完一个，下一个浮现。这里只回应这两个：
+  // 被拒的计划下面会再对服务器复检，由它 toast 真实原因。
   const missingField: "title" | "assignee" | null =
     title.trim().length === 0 ? "title" : assigneeId.length === 0 ? "assignee" : null;
 
-  // Inline errors appear only after a submit attempt: a form that opens already
-  // shouting at the user for fields they have not reached yet is worse than the
-  // silence this replaces. Rendered as `showErrors && <field is still empty>`,
-  // so filling the field clears its error without a second submit.
+  // 内联报错只在一次提交尝试后出现：打开就在用户还没走到那些字段时对其吼叫的
+  // 表单，比它所取代的沉默更糟。以 `showErrors && 字段仍空` 渲染，所以填掉字段
+  // 就清了它的错，无需二次提交。
   const [showErrors, setShowErrors] = useState(false);
   const titleEditorRef = useRef<TitleEditorRef>(null);
   const assigneeTriggerRef = useRef<HTMLButtonElement>(null);
@@ -298,8 +300,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
   const handleSubmit = async () => {
     if (submitting) return;
     if (missingField !== null) {
-      // Reveal the inline errors and take the user to the field at fault;
-      // focusing scrolls the config column to it on its own.
+      // 亮出内联报错并把用户带到出错的字段；聚焦会顺带把配置列滚过去。
       setShowErrors(true);
       if (missingField === "title") titleEditorRef.current?.focus();
       else assigneeTriggerRef.current?.focus();
@@ -324,6 +325,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
             user_id,
           })),
         });
+        // 触发器创建失败不推翻 autopilot 主体：部分成功也要告诉用户存了什么。
         let triggerOk = true;
         let triggerErrMessage: string | null = null;
         let webhookTrigger: AutopilotTrigger | null = null;
@@ -348,8 +350,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
             err instanceof Error && err.message ? err.message : null;
         }
         if (triggerKind === "webhook" && webhookTrigger) {
-          // Stay in the dialog and surface the URL inline so the user
-          // can copy it without first navigating to the detail page.
+          // 留在弹窗内就地展示 URL，用户不必先跳去详情页再复制。
           setCreatedWebhookTrigger(webhookTrigger);
           toast.success(t(($) => $.dialog.toast_created));
           return;
@@ -358,9 +359,8 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
         if (triggerOk) {
           toast.success(t(($) => $.dialog.toast_created));
         } else {
-          // Partial success: autopilot saved, schedule failed. Show the
-          // server-provided reason so the user can act on it (cron syntax
-          // error, conflict, etc.) instead of seeing a generic message.
+          // 部分成功：autopilot 存了、计划/触发器失败。展示服务器给的原因，让用户
+          // 能行动（cron 语法错、冲突等），而不是看一句通用文案。
           toast.error(formatSchedulePartialFailureToast(t, "create", triggerErrMessage));
         }
       } else {
@@ -379,9 +379,8 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
         });
         let triggerOk = true;
         let triggerErrMessage: string | null = null;
-        // Skip the schedule sync when the autopilot's first trigger is a
-        // webhook — there's no cron to update there, and the schedule
-        // panel isn't even rendered for webhook autopilots.
+        // autopilot 首触发器是 webhook 时跳过计划同步——那里没有 cron 可更新，而且
+        // 计划面板对 webhook autopilot 本就不渲染。
         if (scheduleWillBeWritten) {
           const snapshottedTriggerId = scheduleTriggerIdRef.current;
           try {
@@ -406,11 +405,9 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
               err instanceof Error && err.message ? err.message : null;
           }
         }
-        // Webhook autopilots have no schedule, but the user can still edit
-        // event_filters from the same dialog. PATCH only when the snapshot
-        // taken on open differs from the live state. Sending an explicit
-        // empty array clears filters server-side (tri-state semantics — see
-        // UpdateAutopilotTriggerRequest in autopilot.go).
+        // webhook autopilot 没有计划，但用户仍可在同一弹窗编辑事件过滤器。只在打开
+        // 时的快照与当前状态不同时才 PATCH。发送显式空数组会清掉服务端的过滤器
+        //（三态语义——见 autopilot.go 的 UpdateAutopilotTriggerRequest）。
         if (
           triggerKind === "webhook" &&
           eventFiltersDirty &&
@@ -467,7 +464,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
           {isCreate ? t(($) => $.dialog.sr_create) : t(($) => $.dialog.sr_edit)}
         </DialogTitle>
 
-        {/* Header */}
+        {/* 头部 */}
         <div className="flex items-center justify-between px-5 pt-3 pb-2 shrink-0 border-b">
           <div className="flex items-center gap-2 text-caption">
             <div className="flex items-center gap-1.5">
@@ -556,12 +553,12 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
           />
         ) : (
           <>
-        {/* Body: two columns (stacks on narrow screens via flex-wrap at container level) */}
+        {/* Body: 双栏布局（窄屏经容器级 flex-wrap 纵向堆叠） */}
         <div
           key={contentKey}
           className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden"
         >
-          {/* Left: Runbook */}
+          {/* 左：runbook（标题 + 提示词） */}
           <div className="flex-none lg:flex-1 min-h-0 min-w-0 flex flex-col border-b lg:border-b-0 lg:border-r">
             <div className="px-6 pt-5 pb-3 shrink-0">
               <TitleEditor
@@ -573,10 +570,8 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
                 onChange={setTitle}
                 onSubmit={handleSubmit}
               />
-              {/* role="alert": the title is a contenteditable, so there is no
-                  input to hang aria-describedby off — announcing the error is
-                  the only way a screen-reader user learns why Create did
-                  nothing. */}
+              {/* role="alert"：标题是 contenteditable，没有可挂 aria-describedby 的
+                  input——宣告报错是读屏用户得知 Create 为何毫无反应的唯一途径。 */}
               {showErrors && title.trim().length === 0 && (
                 <p role="alert" className="mt-1.5 text-caption text-destructive">
                   {t(($) => $.dialog.error_title_required)}
@@ -606,7 +601,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
             </div>
           </div>
 
-          {/* Right: Configuration */}
+          {/* 右：配置 */}
           <aside className="w-full lg:w-[380px] shrink-0 overflow-visible lg:overflow-y-auto px-5 py-5 space-y-5 bg-muted/30">
             <AgentSection
               ref={assigneeTriggerRef}
@@ -621,14 +616,11 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
 
             <OutputModeSection mode={executionMode} onChange={setExecutionMode} />
 
-            {/* Shown for BOTH output modes (MUL-6681). The project is not only
-                issue routing: for a run_only autopilot it is the ONLY source of
-                project context the daemon has (there is no issue to inherit it
-                from), so it decides whether the run gets the project's
-                repository / local_directory — and with it worktree isolation —
-                or a bare workdir. Hiding it here left run_only autopilots with
-                no way to bind one, and the save below used to send null for
-                run_only, silently clearing a binding made via the CLI. */}
+            {/* 两种输出模式都显示（MUL-6681）。项目不只是 issue 路由：对 run_only
+                autopilot 它是 daemon 唯一可得的项目上下文来源（没有 issue 可继承），
+                它决定运行拿到项目的仓库/本地目录——连带 worktree 隔离——还是裸
+                workdir。藏起它会令 run_only autopilot 无法绑定项目，且下方的保存曾经
+                对 run_only 发 null，静默清掉经 CLI 建立的绑定。 */}
             <ProjectSection
               projectId={projectId}
               selectedProject={selectedProject}
@@ -652,20 +644,16 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
                 {showScheduleEmptyState ? (
                   <ScheduleEmptyState onAdd={() => setScheduleAdded(true)} />
                 ) : (
-                  /* No `onValidityChange` / `clearRejection` here, unlike the
-                     detail page's add-trigger dialog: nothing in this footer is
-                     gated on the schedule's validity any more, so the gate's
-                     `scheduleValid` would have no reader. The editor still shows
-                     its own inline rejection, and `ensureAccepted` re-asks the
-                     server on submit and toasts what it says. */
+                  /* 与详情页的"添加触发"弹窗不同，这里不传 `onValidityChange` /
+                     `clearRejection`：底部已没有任何东西再由计划的合法性门控，
+                     `scheduleValid` 会没有读者。编辑器仍展示自己的行内拒绝，且
+                     `ensureAccepted` 在提交时复问服务器并播报其回答。 */
                   <ScheduleEditor
                     value={schedule}
                     onChange={setSchedule}
                     wsId={wsId}
-                    // Locked while the save is in flight: the submit path validates
-                    // over the network and then writes the schedule it read before
-                    // that round trip, so an edit made in between would be dropped
-                    // on the floor with a success toast over it.
+                    // 保存飞行中锁定：提交路径经网络校验后写它在那次往返前读到的计划，
+                    // 中途落进来的编辑会被成功 toast 盖着丢地上。
                     disabled={schedulePillDisabled || submitting}
                     disabledReason={
                       schedulePillDisabled
@@ -685,13 +673,11 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
           </aside>
         </div>
 
-        {/* Footer */}
+        {/* 底部 */}
         <div className="flex items-center justify-between gap-3 px-5 py-3 border-t shrink-0 bg-background">
-          {/* The hint drops out while the schedule section states the autopilot
-              is manual — a footer promising automatic runs directly under that
-              is the same false promise the empty state exists to retire. The
-              slot itself stays, or `justify-between` would walk the buttons
-              over to the left edge. */}
+          {/* 计划区在陈述 autopilot 是手动时，提示语退出——直接在那一句下放"自动运行"
+              的承诺，正是空态要退休的那句假话。槽位本身保留，否则 justify-between 会
+              把按钮挤到左缘。 */}
           <div className="flex items-center gap-1.5 text-caption text-muted-foreground min-w-0">
             {!showScheduleEmptyState && (
               <>
@@ -704,11 +690,9 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
             <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>
               {t(($) => $.dialog.cancel)}
             </Button>
-            {/* Live whenever a save isn't already in flight — an unmet
-                requirement never dims it. A greyed-out button is a dead end
-                with no room for a reason (#6231); a live one answers the click
-                with an inline error on the field at fault, which says more than
-                any disabled state could. `handleSubmit` is the gate. */}
+            {/* 只要当前没有正在飞的保存就保持可用——未满足的要求从不把它变暗。置灰
+                按钮是条没有理由容身的死路（#6231）；活着的按钮用出错字段上的行内
+                报错回应点击，比任何禁用态都说得更多。`handleSubmit` 就是那个闸。 */}
             <Button
               size="sm"
               onClick={handleSubmit}
@@ -733,18 +717,17 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Right column sections
+// 右列区块
 // ---------------------------------------------------------------------------
 
+// 区块小标题；required 仅是有视力用户的预先提示。`role="button"` 不支持
+// aria-required，选择器无法携带它；读屏用户获得的替代是"被拦下的提交"的报错——
+// 经 aria-describedby 接到触发器、由自身 role="alert" 宣告。
 function SectionLabel({
   children,
   required,
 }: {
   children: React.ReactNode;
-  // Purely the sighted user's advance warning. `aria-required` is not supported
-  // on `role="button"`, so the picker cannot carry it; what a screen reader
-  // gets instead is the blocked submit's error, wired to the trigger through
-  // aria-describedby and announced by its own role="alert".
   required?: boolean;
 }) {
   return (
@@ -759,6 +742,7 @@ function SectionLabel({
   );
 }
 
+// 执行者区块（必填）：AgentPicker + 校验报错。
 function AgentSection({
   ref,
   selectedType,
@@ -775,7 +759,7 @@ function AgentSection({
   onChange: (next: AssigneeSelection) => void;
   selectedName?: string;
   selectedDescription?: string;
-  /** A submit was attempted with no assignee picked. */
+  /** 曾尝试提交但没选执行者。 */
   invalid: boolean;
   errorId: string;
 }) {
@@ -783,9 +767,8 @@ function AgentSection({
   const hasSelection = selectedId.length > 0;
   return (
     <div>
-      {/* Marked required, unlike the Project and Subscribers pickers below it:
-          the three look identical, and nothing else told the user that only
-          this one blocks Create (#6231). */}
+      {/* 标为必填，区别于下方项目与订阅者选择器：三者看起来一样，再没别处告诉用户
+          只有这个会拦住 Create（#6231）。 */}
       <SectionLabel required>{t(($) => $.dialog.section_assignee)}</SectionLabel>
       <AgentPicker
         assignee={hasSelection ? { type: selectedType, id: selectedId } : null}
@@ -838,6 +821,7 @@ function AgentSection({
   );
 }
 
+// 输出模式区块：单选卡片（建 issue / 仅运行）。
 function OutputModeSection({
   mode,
   onChange,
@@ -895,6 +879,8 @@ function OutputModeSection({
   );
 }
 
+// 项目区块（可选）：绑定该 autopilot 关联的项目。为什么 run_only 也显示，
+// 见上方 JSX 处 MUL-6681 的长注释。
 function ProjectSection({
   projectId,
   selectedProject,
@@ -941,6 +927,8 @@ function ProjectSection({
   );
 }
 
+// 订阅者区块：选择运行结果要通知到哪些成员（仅在 create_issue 输出模式下显示，
+// 见下方 `executionMode === "create_issue"` 的条件渲染）。
 function SubscribersSection({
   selectedUserIds,
   onChange,
@@ -964,11 +952,10 @@ function SubscribersSection({
 }
 
 
-// The schedule section of an autopilot that has none. Mirrors the detail
-// page's trigger empty state — a dashed card that states the autopilot is
-// manual — so the two surfaces agree on what "no schedule" looks like instead
-// of one of them showing a filled-in editor and a next-run preview for a
-// schedule that does not exist.
+// 没有计划的 autopilot（手动运行）在本弹窗里的空态卡片：只有点一下"添加"按钮
+// 才会真的长出计划编辑器。它要和详情页里触发器的空态保持同一种说法——都是虚线卡片
+// 标明"当前手动运行"——否则同一份"没计划"的数据，一个入口显示空态、另一个显示满配的
+// 编辑器和"下次运行"预览，用户就会以为已经有计划在跑了。
 function ScheduleEmptyState({ onAdd }: { onAdd: () => void }) {
   const { t } = useT("autopilots");
   return (
@@ -985,9 +972,11 @@ function ScheduleEmptyState({ onAdd }: { onAdd: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// Trigger kind segmented control + webhook help section
+// 触发类型分段选择器与 webhook 帮助区块
 // ---------------------------------------------------------------------------
 
+// 触发类型选择：仅在创建模式渲染（编辑不支持就地互转类型）。两种可选项——
+// schedule（按计划自动跑）与 webhook（等外部调用打进来）。
 function TriggerKindSection({
   kind,
   onChange,
@@ -1024,6 +1013,7 @@ function TriggerKindSection({
   );
 }
 
+// webhook 区块：一段解释性帮助文案（创建/编辑时措辞不同）+ 可编辑的事件过滤器。
 function WebhookSection({
   isCreate,
   eventFilters,
@@ -1053,8 +1043,8 @@ function WebhookSection({
 }
 
 // ---------------------------------------------------------------------------
-// Post-create state for webhook autopilots: shows the freshly minted URL
-// inline so the user can copy it without leaving the dialog.
+// webhook 类型创建成功后的收尾面板：就地展示刚铸造好的 URL，用户不必离开弹窗
+// 就能复制它（避免"先去找你的 autopilot、点进详情页才能拿 URL"的摩擦）。
 // ---------------------------------------------------------------------------
 
 function WebhookCreatedPanel({
@@ -1066,8 +1056,8 @@ function WebhookCreatedPanel({
 }) {
   const { t } = useT("autopilots");
 
-  // Same URL composition the trigger row uses: prefer the server-provided
-  // webhook_url, fall back to apiBaseUrl + webhook_path, then origin + path.
+  // 拼 URL 的方式和触发器列表行里用的是同一套：优先采用服务端提供的 webhook_url，
+  // 拿不到再退而求其次拼 apiBaseUrl + webhook_path，最后兜底用 origin + path。
   const url =
     buildAutopilotWebhookUrl({
       trigger,

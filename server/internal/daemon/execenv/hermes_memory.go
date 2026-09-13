@@ -1,3 +1,45 @@
+// 背景
+//
+// Hermes 把长期记忆（MEMORY.md / USER.md 以及 agent 写回的任何内容）放在
+// `<HERMES_HOME>/memories/`。Multica 必须接管 HERMES_HOME 才能注入 agent
+// 绑定的技能——Hermes 只从自己的 home 发现技能，从不看工作区（见
+// hermes_home.go）——于是叠加层"顺带继承了"记忆放哪里的决定，并把它变成了
+// 任务本地。
+//
+// 没有人刻意设计出以下两种并存的行为（issue #6638）：
+//
+//   - 绑定了技能的 agent，每个任务都拿到一份全新的 memories/，于是任务之间
+//     忘光一切。用户把这种表现读作"Hermes 失忆"，而且它是在绑定一个毫不相干
+//     的技能那一刻才出现的，没有任何 UI 信号。
+//   - 没绑技能的 agent 根本不建叠加层，直接跑在用户真实的 ~/.hermes 上，因而
+//     与运行时上所有其他"无技能 agent、任务、issue"共享一份 memories/。
+//
+// 本文件把记忆变成 Multica 拥有、按 agent 划分的存储：
+//
+//	<multica profile dir>/hermes-state/<agent>/<hermes profile>/memories
+//
+// 链进每任务叠加层。于是同一 agent 的记忆跨越任务与 issue 存活，绝不触碰
+// 用户的 home，其他 agent 也看不见。其形态刻意与"按 issue 划分的 Codex 会话
+// 存储"（codex_home.go）和"按 agent 划分的 Reasonix 状态 home"保持一致——
+// 同样的生命周期、同样的 GC、同样的 active-store 守卫。
+//
+// 粒度设为 (hermes profile, agent) 而非仅 agent，是为了镜像 Hermes 自己的模型：
+// 在那里 profile 是一个隔离的实例——把 agent 指向另一个 profile 等于给它另一
+// 个身份，因此也该有另一条记忆线。与 Codex 存储按 (profile, agent, issue) 键控
+// 的语义相同。
+//
+// 刻意不在本文件范围内：
+//
+//   - 会话数据库（state.db 及其 WAL 侧车）保持任务本地。在一个 agent 的并发
+//     任务间共享一份存活的 SQLite 数据库，需要普通内存文件不需要的加锁与
+//     一致性工作——外加 Windows 对 -shm 的字节区间锁。用户得到的是"记得约定
+//     "，而非"记得完整记录"。
+//   - 无技能的 Hermes agent 仍原样跑在宿主 home 上。收紧这一点会破坏 #6638
+//     报告者仅有的变通手段，且它属于平台级 memory_scope 工作（MUL-5969）。
+//
+// 已知取舍，与其取代的"宿主直通"行为一致：一个 agent 的并发任务写同一批
+// 文件，而 Hermes 会整体重写它们，所以并发记忆更新是"后写者胜"。
+
 package execenv
 
 import (
@@ -14,72 +56,23 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-// Background
-//
-// Hermes keeps its long-term memory (MEMORY.md / USER.md and whatever else the
-// agent writes back) in `<HERMES_HOME>/memories/`. Multica has to take over
-// HERMES_HOME to inject an agent's bound skills — Hermes discovers skills only
-// from its own home, never from the workspace (see hermes_home.go) — so the
-// overlay inherited the decision of where memory lives and made it task-local.
-//
-// Nobody designed the two behaviours that produced (issue #6638):
-//
-//   - An agent WITH skills bound got a fresh memories/ per task, so it forgot
-//     everything between tasks. Users read that as "Hermes 失忆", and it changed
-//     the moment they bound an unrelated skill, with no UI signal.
-//   - An agent with NO skills bound built no overlay at all, ran against the
-//     user's real ~/.hermes, and therefore shared one memories/ with every
-//     other skill-less agent, task, and issue on the runtime.
-//
-// This file makes memory an agent-scoped store Multica owns:
-//
-//	<multica profile dir>/hermes-state/<agent>/<hermes profile>/memories
-//
-// linked into the per-task overlay. Memory then survives across tasks and issues
-// for the same agent, never touches the user's home, and is invisible to other
-// agents. The shape is deliberately identical to the per-issue Codex session
-// store (codex_home.go) and the per-agent Reasonix state home — same lifecycle,
-// same GC, same active-store guard.
-//
-// Scoping to (hermes profile, agent) rather than agent alone mirrors Hermes' own
-// model, where a profile is an isolated instance: pointing an agent at a
-// different profile gives it a different identity, so it gets a different memory
-// line. Same semantics as the Codex store keying on (profile, agent, issue).
-//
-// Deliberately NOT covered here:
-//
-//   - The session database (state.db and its WAL sidecars) stays task-local.
-//     Sharing a live SQLite database between one agent's concurrent tasks needs
-//     lock and consistency work — plus Windows byte-range locks on -shm — that
-//     plain memory files do not. Users get "remembers the agreements", not
-//     "remembers the transcript".
-//   - Skill-less Hermes agents still run against the host home unchanged.
-//     Tightening that would break the only workaround #6638's reporter has, and
-//     it belongs with the platform-wide memory_scope work (MUL-5969).
-//
-// Known trade-off, shared with the host-passthrough behaviour it replaces: one
-// agent's concurrent tasks write the same files and Hermes rewrites them whole,
-// so concurrent memory updates are last-writer-wins.
-
-// hermesMemoryStoreRoot is the directory under the daemon's Multica profile dir
-// that holds every agent's persistent Hermes state. `hermes-state` (not
-// `hermes-memories`) because state.db joins it when the session half is solved.
+// hermesMemoryStoreRoot 是 daemon 的 Multica profile 目录下、承载每个 agent
+// 持久化 Hermes 状态的目录。取 `hermes-state`（而非 `hermes-memories`），
+// 是因为会话那半解决后 state.db 也会加入它。
 const hermesMemoryStoreRoot = "hermes-state"
 
-// hermesMemoriesEntry is the name of the memory directory inside both the store
-// and the overlay home — Hermes resolves it relative to HERMES_HOME.
+// hermesMemoriesEntry 是记忆目录在存储与叠加层 home 内共用的名字——Hermes
+// 相对 HERMES_HOME 解析它。
 const hermesMemoriesEntry = "memories"
 
-// HermesMemoryStorePath returns the persistent memory store for (daemonProfile,
-// agentID, sourceHome), or "" when memory must stay task-local — there is no
-// agent to key on, or the Multica profile dir cannot be resolved. The daemon
-// marks the returned path in-use for the task's duration so
-// PruneHermesMemoryStores never reclaims it mid-mount.
+// HermesMemoryStorePath 返回 (daemonProfile, agentID, sourceHome) 的持久记忆
+// 存储路径；记忆必须保持任务本地时返回 ""——没有 agent 可作键，或 Multica
+// profile 目录无法解析。daemon 会在任务期间把返回的路径标记为使用中，因此
+// PruneHermesMemoryStores 绝不会在挂载中途回收它。
 //
-// daemonProfile namespaces by Multica profile for free: profile dirs are already
-// disjoint, so a staging daemon's GC can never see a production daemon's stores
-// and no hashed namespace segment is needed (unlike the Codex store, which lives
-// in the shared ~/.codex).
+// daemonProfile 白送了按 Multica profile 命名空间的隔离：profile 目录本就互不
+// 相交，所以暂存 daemon 的 GC 永远看不到生产 daemon 的存储，也不需要哈希命名
+// 空间段（不同于住在共享 ~/.codex 下的 Codex 存储）。
 func HermesMemoryStorePath(daemonProfile, agentID, sourceHome string) string {
 	agent := sanitizePathSegment(agentID)
 	if agent == "" {
@@ -92,12 +85,10 @@ func HermesMemoryStorePath(daemonProfile, agentID, sourceHome string) string {
 	return filepath.Join(profileDir, hermesMemoryStoreRoot, agent, hermesMemoryProfileSegment(sourceHome))
 }
 
-// hermesMemoryProfileSegment maps a resolved Hermes source home to the store
-// segment that identifies it. Named profiles and the default home keep their
-// readable name so an operator (and the documented one-off import) can find the
-// directory; an out-of-tree custom HERMES_HOME falls back to a hash of its path,
-// which is opaque but cannot collide with a differently-located home of the same
-// basename.
+// hermesMemoryProfileSegment 把解析后的 Hermes 源 home 映射为标识它的存储段。
+// 具名 profile 与默认 home 保留可读名字，让运维（以及文档记载的一次性导入）
+// 能找到目录；自定义的树外 HERMES_HOME 则回退为其路径的哈希——不透明，但不会
+// 与"不同位置的同名 home"撞车。
 func hermesMemoryProfileSegment(sourceHome string) string {
 	home := strings.TrimSpace(sourceHome)
 	if home == "" {
@@ -111,11 +102,10 @@ func hermesMemoryProfileSegment(sourceHome string) string {
 	if home == nativeRoot {
 		return "default"
 	}
-	// <root>/profiles/<name> — the shape ResolveHermesProfile produces for an
-	// explicit -p/--profile, a sticky active_profile, or a profile-scoped
-	// custom_env HERMES_HOME. Profiles of the native root keep their bare name;
-	// a profile of some other root gets its root hashed in, so `<a>/profiles/x`
-	// and `<b>/profiles/x` cannot share one memory line.
+	// <root>/profiles/<name> —— 即 ResolveHermesProfile 对显式 -p/--profile、
+	// 粘性的 active_profile 或 profile 级 custom_env HERMES_HOME 生成的形态。
+	// 原生根的 profile 保留裸名；其他根的 profile 把根哈希进名字，于是
+	// `<a>/profiles/x` 与 `<b>/profiles/x` 不会共享一条记忆线。
 	if root := filepath.Dir(filepath.Dir(home)); filepath.Base(filepath.Dir(home)) == "profiles" {
 		if name := sanitizePathSegment(filepath.Base(home)); name != "" {
 			if root == nativeRoot {
@@ -127,23 +117,20 @@ func hermesMemoryProfileSegment(sourceHome string) string {
 	return "h_" + hashHermesHomePath(home)
 }
 
-// hashHermesHomePath returns a short, filesystem-safe digest of an absolute
-// home path — enough to keep two same-named homes in different locations apart
-// without pushing the segment near the 255-byte filename limit.
+// hashHermesHomePath 返回一个绝对 home 路径的短小、文件系统安全的摘要——
+// 足够把不同位置的两个同名 home 区分开，又不至于把目录段顶到 255 字节的
+// 文件名上限。
 func hashHermesHomePath(path string) string {
 	sum := sha256.Sum256([]byte(path))
 	return hex.EncodeToString(sum[:8])
 }
 
-// mountHermesMemories points the overlay's memories/ at storeDir, so the agent's
-// memory outlives the task. Idempotent across Reuse: a link already pointing at
-// the store is left alone.
+// mountHermesMemories 把叠加层的 memories/ 指向 storeDir，使 agent 的记忆活
+// 得比任务更久。对 Reuse 幂等：已指向存储的链接原样保留。
 //
-// A real memories/ directory left by an older daemon (or by a task that ran
-// without a store to key on) is migrated into the store rather than discarded —
-// but only into an empty store, so an upgrade never overwrites memory the agent
-// has already accumulated. A migration that cannot complete fails the overlay
-// rather than dropping the directory it could not carry over.
+// 旧 daemon（或在一个没有可作键存储的任务里跑过）留下的真实 memories/ 目录
+// 会被迁移进存储而非丢弃——但只迁进空存储，因此升级绝不会覆盖 agent 已积累
+// 的记忆。无法完成的迁移会让叠加层失败，而不是丢掉那份没能搬过去的目录。
 func mountHermesMemories(hermesHome, storeDir string, logger *slog.Logger) error {
 	dst := filepath.Join(hermesHome, hermesMemoriesEntry)
 
@@ -157,9 +144,9 @@ func mountHermesMemories(hermesHome, storeDir string, logger *slog.Logger) error
 				return nil
 			}
 		} else if fi.IsDir() {
-			// Runs before the store dir is created, so migration can publish a
-			// fully-copied tree with one atomic rename. Fails closed: the source
-			// dir below is only removed once every entry is safely in the store.
+			// 迁移发生在存储目录创建之前，因此迁移能以一次原子 rename 发布
+			// 一份完整复制的树。关闭即失败：下面的源目录只有在每个条目都安全
+			// 进入存储后才会被删除。
 			if err := migrateHermesTaskMemories(dst, storeDir, logger); err != nil {
 				return err
 			}
@@ -177,43 +164,35 @@ func mountHermesMemories(hermesHome, storeDir string, logger *slog.Logger) error
 	if err := createDirLink(storeDir, dst); err != nil {
 		return fmt.Errorf("link memories to store %s: %w", storeDir, err)
 	}
-	// Stamp the store as just-used: mounting it does not touch its mtime, so
-	// without this the GC's idle check could reclaim a long-idle agent's memory
-	// right as a task picks it back up.
+	// 给存储打上"刚用过"的戳：挂载本身不碰它的 mtime，不这样做的话 GC 的
+	// 空闲检查可能正好在任务重新拾起一位久闲 agent 的记忆时把它回收掉。
 	touchHermesMemoryStore(storeDir, logger)
 	return nil
 }
 
-// migrateHermesTaskMemories copies the contents of a pre-existing task-local
-// memories dir into an empty store, so upgrading a daemon does not drop what an
-// in-flight task had already remembered.
+// migrateHermesTaskMemories 把既存任务本地 memories 目录的内容复制进空存储，
+// 使 daemon 升级不会丢掉在途任务已经记住的东西。
 //
-// The caller removes the source directory as soon as this returns nil, so
-// "nil" has to mean "the source is safe to delete" and nothing else. Three
-// rules follow from that:
+// 调用方在本函数返回 nil 后立即删除源目录，所以 "nil" 只能意味着"源可以安全
+// 删除"，别无其他。由此推出三条规则：
 //
-//   - It copies rather than moves. A move is faster but fails across
-//     filesystems — the workspaces root and the Multica profile dir can be on
-//     different volumes — and a partial move leaves data in neither place.
-//   - It never reports success for anything it did not carry over. An I/O
-//     error reading either directory, or an entry it will not copy (symlink,
-//     device node — a link copied verbatim could point the store outside
-//     itself), is an error, not a silent skip.
-//   - It publishes with a single atomic rename from a staging directory, so
-//     two tasks of the same agent migrating at once cannot interleave into one
-//     half-populated store. First writer wins; the loser discards its staging
-//     and takes the winner's store, which is the same outcome as finding a
-//     store that was already populated.
+//   - 复制而非移动。移动更快，但跨文件系统会失败——workspaces 根与 Multica
+//     profile 目录可能在不同卷上——而一次半截的移动会让数据两头都不在。
+//   - 凡没搬过去的，绝不报成功。读任一个目录的 I/O 错误，或一个它不肯复制的
+//     条目（软链、设备节点——原样复制的链接可能把存储指向它自身之外），都是
+//     错误，而非静默跳过。
+//   - 用暂存目录 + 一次原子 rename 发布，因此同一 agent 的两个任务若同时迁移，
+//     不可能交错进一份半填充的存储。先写者赢；输家丢弃自己的暂存、采用赢家的
+//     存储——这与"发现一份早已填充的存储"结果相同。
 //
-// Only an absent or empty store is migrated into, so an upgrade never
-// overwrites memory the agent has already accumulated.
+// 只迁入不存在或为空的存储，因此升级绝不会覆盖 agent 已积累的记忆。
 func migrateHermesTaskMemories(taskDir, storeDir string, logger *slog.Logger) error {
 	stored, err := os.ReadDir(storeDir)
 	switch {
 	case err == nil && len(stored) > 0:
-		return nil // store already holds this agent's memory — never overwrite it
+		return nil // 存储已持有此 agent 的记忆——绝不覆盖
 	case err != nil && !os.IsNotExist(err):
-		// Treating this as "nothing to migrate" would delete the source below.
+		// 若把这种情形当"无可迁移"，下面就会删除源。
 		return fmt.Errorf("read hermes memory store %s: %w", storeDir, err)
 	}
 
@@ -229,7 +208,7 @@ func migrateHermesTaskMemories(taskDir, storeDir string, logger *slog.Logger) er
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(staging) // no-op once the staging dir has been promoted
+	defer os.RemoveAll(staging) // 暂存目录一经晋升，这里就是 no-op
 
 	for _, entry := range entries {
 		src := filepath.Join(taskDir, entry.Name())
@@ -250,14 +229,12 @@ func migrateHermesTaskMemories(taskDir, storeDir string, logger *slog.Logger) er
 	return nil
 }
 
-// newHermesStoreStaging creates the scratch directory a store migration copies
-// into. It is a sibling of the store so the promoting rename stays within one
-// filesystem, and dot-prefixed so it is obvious it is not a store of its own.
-// Shared by the memory migration here and the session-database migration in
-// hermes_sessions.go: both delete their source once the copy reports success,
-// so both need the same all-or-nothing publish.
-// MkdirTemp already creates it 0700, the same mode the store itself is created
-// with, so there is no follow-up chmod that could fail and strand it.
+// newHermesStoreStaging 创建存储迁移要复制进去的暂存目录。它是存储的兄弟
+// 目录，让晋升用的 rename 始终留在同一个文件系统内；带点前缀，让人一眼看出
+// 它不是一份独立存储。记忆迁移（本文件）与会话数据库迁移（hermes_sessions.go）
+// 共用它：两者都在复制报成功后删除源，所以都需要同一套"全有或全无"的发布。
+// MkdirTemp 创建时已是 0700，与存储自身创建时所用模式相同，因此没有后续
+// chmod 会失败并把它卡住。
 func newHermesStoreStaging(storeDir string) (string, error) {
 	parent := filepath.Dir(storeDir)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
@@ -270,56 +247,48 @@ func newHermesStoreStaging(storeDir string) (string, error) {
 	return staging, nil
 }
 
-// promoteHermesStoreStaging publishes a fully-copied staging dir as the store,
-// reporting whether this caller won. The empty store dir (if any) is removed
-// first: os.Remove only succeeds on an empty directory, so a store another task
-// already populated makes this a no-op, and Windows rejects a rename onto an
-// existing directory outright.
+// promoteHermesStoreStaging 把一份完整复制的暂存目录发布为存储，并报告本次
+// 调用是否胜出。空的存储目录（若有）先被删除：os.Remove 只在目录为空时成功，
+// 因此已被另一任务填充的存储会让它变成 no-op，而 Windows 干脆拒绝把 rename
+// 落到一个已存在的目录上。
 //
-// Losing the race is not an error — the winner's store holds the same agent's
-// state — but it has to be positively confirmed, never inferred from any
-// failure. The caller deletes the source directory whenever this returns
-// (false, nil), so a permission error, a read-only filesystem or a Windows
-// sharing violation must fail closed instead of passing for "someone else
-// published".
+// 输掉竞争不是错误——赢家的存储装着同一 agent 的状态——但必须被"肯定地确认"，
+// 绝不能从任何失败里推断。调用方在 (false, nil) 时总会删除源目录，所以一次
+// 权限错误、只读文件系统或 Windows 共享冲突必须关闭即失败，而不能冒充
+// "别人已发布"。
 //
-// published answers "did a competitor already publish real state here?" and is
-// the caller's to define, because the two stores disagree about what an
-// occupied directory looks like: any entry at all means memory, while a session
-// store can hold a zero-length database or orphan journal sidecars that carry no
-// transcript. Sharing one definition let a session migration read the store as
-// empty, copy into staging, then read it as occupied at publish time and report
-// a lost race — after which the caller deleted a source database that had never
-// been carried over.
+// published 回答"是否已有竞争者在此发布了真实状态"，由调用方定义——因为两种
+// 存储对"被占用的目录长什么样"看法不同：对记忆而言任何条目都算内容，而会话
+// 存储可能只装着一份零长度数据库或不带记录的孤儿日志侧车。若共享同一个定义，
+// 一次会话迁移可能在读存储时判定为空、复制进暂存，发布时又判为已占用并上报
+// 竞争失败——之后调用方就会删掉一份从未被搬走的源数据库。
 func promoteHermesStoreStaging(staging, storeDir string, published func(string) bool) (bool, error) {
 	if err := os.Remove(storeDir); err != nil && !os.IsNotExist(err) {
 		if published(storeDir) {
-			return false, nil // another task published first
+			return false, nil // 另一任务先发布了
 		}
 		return false, fmt.Errorf("clear empty hermes store %s before publishing: %w", storeDir, err)
 	}
 	if err := os.Rename(staging, storeDir); err != nil {
 		if published(storeDir) {
-			return false, nil // lost a narrow race between the remove and the rename
+			return false, nil // 在 remove 与 rename 之间输掉了一场极窄的竞争
 		}
 		return false, fmt.Errorf("publish hermes store %s: %w", storeDir, err)
 	}
 	return true, nil
 }
 
-// hermesStorePopulated reports whether storeDir is *confirmed* to hold
-// entries. Anything it cannot confirm — an unreadable directory, a path that is
-// not a directory — is false, so a caller asking "did another task publish?"
-// treats uncertainty as no.
+// hermesStorePopulated 报告 storeDir 是否"被确认"持有条目。任何无法确认的
+// 情形——目录不可读、路径不是目录——都返回 false，于是问"另一任务发布了吗"
+// 的调用方会把不确定当作"没有"。
 func hermesStorePopulated(storeDir string) bool {
 	entries, err := os.ReadDir(storeDir)
 	return err == nil && len(entries) > 0
 }
 
-// copyHermesMemoryEntry copies one entry of a memories dir into the staging
-// tree. Anything that is not a regular file or a directory is refused rather
-// than skipped: the caller deletes the source on success, so a silent skip
-// would be a silent loss.
+// copyHermesMemoryEntry 把 memories 目录的单个条目复制进暂存树。任何不是
+// 常规文件或目录的东西都被拒绝而非跳过：调用方成功后删除源，静默跳过就等于
+// 静默丢失。
 func copyHermesMemoryEntry(src, dst string, entry os.DirEntry) error {
 	info, err := entry.Info()
 	if err != nil {
@@ -341,10 +310,8 @@ func copyHermesMemoryEntry(src, dst string, entry os.DirEntry) error {
 	}
 }
 
-// copyHermesMemoryTree copies a directory under a memories dir recursively.
-// It refuses (rather than silently skips) nested symlinks and other irregular
-// files: this copy is the only thing standing between the source and its
-// deletion.
+// copyHermesMemoryTree 递归复制 memories 目录下的一个目录。它拒绝（而非静默
+// 跳过）嵌套的软链与其他不规则文件：这份复制是源与其被删除之间唯一的屏障。
 func copyHermesMemoryTree(src, dst string) error {
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -376,13 +343,11 @@ func copyHermesMemoryTree(src, dst string) error {
 	})
 }
 
-// detachHermesMemories gives the overlay a real, task-local memories dir. It is
-// the path taken when there is no store to key on (no agent, or an unresolvable
-// Multica profile dir), so it must actively replace a link left by a previous
-// run against the persistent store: a reused overlay still carries that link,
-// and MkdirAll would follow it and silently succeed, leaving the task writing to
-// a store the daemon no longer guards from the GC. An existing real directory is
-// kept — that is this task's own memory.
+// detachHermesMemories 给叠加层一份真实的、任务本地的 memories 目录。它用于
+// "没有存储可作键"（无 agent，或 Multica profile 目录无法解析）的路径，因此
+// 必须主动替换上次运行指向持久存储留下的链接：被复用的叠加层仍带着那个链接，
+// 而 MkdirAll 会顺着链接静默成功，让任务写进一个 daemon 已不再守卫于 GC 的
+// 存储。已存在的真实目录被保留——那是本任务自己的记忆。
 func detachHermesMemories(hermesHome string) error {
 	dst := filepath.Join(hermesHome, hermesMemoriesEntry)
 	if fi, err := os.Lstat(dst); err == nil {
@@ -398,9 +363,9 @@ func detachHermesMemories(hermesHome string) error {
 	return os.MkdirAll(dst, 0o700)
 }
 
-// touchHermesMemoryStore refreshes storeDir's mtime — the signal the GC reads as
-// last activity. Best-effort: a failed touch only risks an over-eager prune,
-// which the daemon's active-store guard still prevents.
+// touchHermesMemoryStore 刷新 storeDir 的 mtime——GC 把它读作"最近活动"信号。
+// 尽力而为：一次失败的 touch 最多带来一次过于激进的清理，而 daemon 的
+// active-store 守卫仍能阻止它。
 func touchHermesMemoryStore(storeDir string, logger *slog.Logger) {
 	now := time.Now()
 	if err := os.Chtimes(storeDir, now, now); err != nil {
@@ -408,19 +373,18 @@ func touchHermesMemoryStore(storeDir string, logger *slog.Logger) {
 	}
 }
 
-// PruneHermesMemoryStores reclaims per-agent Hermes memory stores untouched
-// within retention. The stores live outside the task-scoped envRoot the task GC
-// reclaims — that is the point, memory has to outlive the task — so without this
-// a deleted agent's memory would sit on disk forever. retention <= 0 disables
-// pruning entirely.
+// PruneHermesMemoryStores 回收 retention 内未被触碰的逐 agent Hermes 记忆
+// 存储。这些存储活在任务 GC 会回收的任务级 envRoot 之外——这正是关键，记忆
+// 必须比任务活得更久——因此不做本清理的话，已删除 agent 的记忆会永远躺在
+// 磁盘上。retention <= 0 则整体禁用清理。
 //
-// The default retention is deliberately long: unlike Codex rollouts (gigabytes
-// of transcript) these are a handful of markdown files, and reclaiming an
-// agent's memory is user-visible amnesia, not just a cache miss.
+// 默认保留期刻意设得很长：与 Codex 的 rollout（GB 级记录）不同，这里只有寥寥
+// 几个 markdown 文件，而回收一个 agent 的记忆是用户可见的失忆，不只是缓存未
+// 命中。
 //
-// reserve (may be nil) atomically claims a store for deletion, exactly as
-// PruneCodexSessionStores uses it: ok=false means a live task holds the store,
-// so it is left alone. nil disables the guard (tests).
+// reserve（可为 nil）以与 PruneCodexSessionStores 完全相同的方式原子认领一个
+// 待删存储：ok=false 表示有活任务持有该存储，于是留着它。nil 表示关闭守卫
+// （测试用）。
 func PruneHermesMemoryStores(daemonProfile string, retention time.Duration, now time.Time, reserve func(storeDir string) (commit func(), ok bool), logger *slog.Logger) (removed int, bytesFreed int64) {
 	if retention <= 0 {
 		return 0, 0
@@ -432,7 +396,7 @@ func PruneHermesMemoryStores(daemonProfile string, retention time.Duration, now 
 	root := filepath.Join(profileDir, hermesMemoryStoreRoot)
 	agents, err := os.ReadDir(root)
 	if err != nil {
-		return 0, 0 // not created yet, or unreadable — nothing to prune
+		return 0, 0 // 还没建，或不可读——没什么可清理的
 	}
 	for _, a := range agents {
 		if !a.IsDir() {
@@ -475,8 +439,8 @@ func PruneHermesMemoryStores(daemonProfile string, retention time.Duration, now 
 			removed++
 			bytesFreed += size
 		}
-		// Drop the agent dir once its last profile store is gone, so the tree
-		// does not leave empty <agent>/ shells behind.
+		// 最后一个 profile 存储没了就摘掉 agent 目录，避免树里留下空 <agent>/
+		// 空壳。
 		if kept == 0 {
 			_ = os.Remove(agentDir)
 		}
@@ -484,8 +448,8 @@ func PruneHermesMemoryStores(daemonProfile string, retention time.Duration, now 
 	return removed, bytesFreed
 }
 
-// hermesMemoryStoreStat walks dir once, returning the newest modification time
-// seen (the store's last activity) and its total byte size (for GC accounting).
+// hermesMemoryStoreStat 遍历 dir 一次，返回其中"最新修改时间"（存储的最近
+// 活动）与总字节大小（供 GC 记账）。
 func hermesMemoryStoreStat(dir string) (newest time.Time, size int64) {
 	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
 		if err != nil {

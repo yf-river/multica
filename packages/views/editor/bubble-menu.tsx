@@ -1,22 +1,20 @@
 "use client";
 
 /**
- * EditorBubbleMenu — floating formatting toolbar for text selection.
+ * EditorBubbleMenu——选中文本时浮出的格式化工具条。
  *
- * Positioned with @floating-ui/dom (computePosition + autoUpdate) and
- * portaled to document.body via createPortal. This escapes ALL overflow
- * containers in the ancestor chain (Card overflow:hidden, scrollable
- * containers, etc.) while autoUpdate monitors every ancestor scroll
- * container to keep the menu anchored to the selection.
+ * 用 @floating-ui/dom（computePosition + autoUpdate）定位，并借
+ * createPortal 挂到 document.body。这能脱离祖先链里所有 overflow 容器
+ * （Card 的 overflow:hidden、可滚动容器等），同时 autoUpdate 监听每个祖先
+ * 滚动容器，让菜单一直锚定选中内容。
  *
- * Key design decisions:
- * - contextElement on the virtual reference tells Floating UI where to
- *   find scroll ancestors, enabling the hide middleware to detect
- *   nested scroll container clipping.
- * - visibility:hidden (not display:none) keeps the element measurable
- *   so computePosition can size it correctly on first show.
- * - onMouseDown preventDefault on the portal root prevents all clicks
- *   inside the menu from stealing focus from the editor.
+ * 关键设计决策：
+ * - 虚拟引用上的 contextElement 告诉 Floating UI 到哪里找滚动祖先，
+ *   让 hide middleware 能检测嵌套滚动容器的裁剪。
+ * - 用 visibility:hidden（而非 display:none）保持元素可测量，computePosition
+ *   首次显示时才能正确定尺寸。
+ * - portal 根上的 onMouseDown preventDefault 防止菜单内所有点击把焦点
+ *   从编辑器抢走。
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -76,9 +74,10 @@ import {
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助
 // ---------------------------------------------------------------------------
 
+/** 判断当前选区是否应该显示气泡菜单。 */
 function shouldShowBubbleMenu(editor: Editor): boolean {
   if (!editor.isEditable) return false;
   const { selection } = editor.state;
@@ -92,7 +91,7 @@ function shouldShowBubbleMenu(editor: Editor): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Mark Toggle Button
+// Mark 开关按钮
 // ---------------------------------------------------------------------------
 
 type InlineMark = "bold" | "italic" | "strike" | "code" | "highlight";
@@ -105,6 +104,7 @@ const toggleMarkActions: Record<InlineMark, (editor: Editor) => void> = {
   highlight: (e) => e.chain().focus().toggleHighlight().run(),
 };
 
+/** 单个行内 mark 的开关按钮（带快捷键 tooltip）。 */
 function MarkButton({
   editor,
   mark,
@@ -144,23 +144,21 @@ function MarkButton({
 }
 
 // ---------------------------------------------------------------------------
-// URL normalisation
+// URL 规范化
 // ---------------------------------------------------------------------------
 
-/** Protocols that can execute code in the browser — the only ones we block. */
+/** 能在浏览器里执行代码的协议——也是唯一要拦截的。 */
 const DANGEROUS_PROTOCOL_RE = /^(javascript|data|vbscript):/i;
 const HAS_PROTOCOL_RE = /^[a-z][a-z0-9+.-]*:\/?\/?/i;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * Normalise a user-entered URL: add protocol, detect mailto, block XSS.
+ * 规范化用户输入的 URL：补协议、识别 mailto、拦截 XSS。
  *
- * Uses a blocklist (not allowlist) for protocols — only `javascript:`,
- * `data:`, and `vbscript:` are blocked. All other protocols pass through
- * because they can't execute code in the browser and are legitimate
- * deep-link targets in a team tool (slack://, vscode://, figma://).
- * Tiptap's `isAllowedUri` in the `setLink` command provides a second
- * safety layer.
+ * 协议用黑名单（而非白名单）——只拦 `javascript:`、`data:`、`vbscript:`。
+ * 其它协议全部放行，因为它们不能在浏览器里执行代码，在团队工具里是正当
+ * 的深链目标（slack://、vscode://、figma://）。
+ * Tiptap `setLink` 命令里的 `isAllowedUri` 提供了第二层安全网。
  */
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
@@ -174,9 +172,10 @@ function normalizeUrl(input: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Link Edit Bar
+// 链接编辑条
 // ---------------------------------------------------------------------------
 
+/** 链接编辑条：输入/修改当前选区链接的 URL，回车应用、Esc 关闭。 */
 function LinkEditBar({
   editor,
   onClose,
@@ -257,9 +256,10 @@ function LinkEditBar({
 }
 
 // ---------------------------------------------------------------------------
-// Heading Dropdown
+// 标题下拉
 // ---------------------------------------------------------------------------
 
+/** 标题层级下拉（正文/H1-H3 切换）。 */
 function HeadingDropdown({ editor, onOpenChange, activeLevel }: { editor: Editor; onOpenChange: (open: boolean) => void; activeLevel: number | undefined }) {
   const { t } = useT("editor");
   const [open, setOpen] = useState(false);
@@ -315,9 +315,10 @@ function HeadingDropdown({ editor, onOpenChange, activeLevel }: { editor: Editor
 }
 
 // ---------------------------------------------------------------------------
-// List Dropdown
+// 列表下拉
 // ---------------------------------------------------------------------------
 
+/** 列表下拉（圆点/有序/任务）。 */
 function ListDropdown({ editor, onOpenChange, isBullet, isOrdered, isTask }: { editor: Editor; onOpenChange: (open: boolean) => void; isBullet: boolean; isOrdered: boolean; isTask: boolean }) {
   const { t } = useT("editor");
   const [open, setOpen] = useState(false);
@@ -393,14 +394,13 @@ function ListDropdown({ editor, onOpenChange, isBullet, isOrdered, isTask }: { e
 }
 
 // ---------------------------------------------------------------------------
-// Create Sub-Issue Button
+// 创建子 issue 按钮
 // ---------------------------------------------------------------------------
 
 /**
- * Turns the current selection into a sub-issue of `parentIssueId` and replaces
- * the selection with a mention link to the new issue. Title is the selected
- * text (trimmed, collapsed whitespace, capped). Only rendered when a parent
- * issue is in scope; otherwise there's no meaningful "sub-issue of" target.
+ * 把当前选区变成一个 `parentIssueId` 的子 issue，并用指向新 issue 的
+ * mention 链接替换选区。标题取选中文本（trim、折叠空白、限长）。只在父
+ * issue 在场时渲染；否则没有有意义的「某 issue 的子 issue」目标。
  */
 function CreateSubIssueButton({
   editor,
@@ -418,8 +418,8 @@ function CreateSubIssueButton({
     const { from, to } = editor.state.selection;
     if (from === to) return;
 
-    // Title from selection: collapse whitespace, cap length. The full selection
-    // still becomes the link text — only the issue title is capped.
+    // 标题取自选区：折叠空白、限长。完整选区仍作为链接文本——只有 issue
+    // 标题被限长。
     const rawTitle = editor.state.doc.textBetween(from, to, " ", " ").trim();
     const title = rawTitle.replace(/\s+/g, " ").slice(0, 200);
     if (!title) return;
@@ -488,9 +488,12 @@ function CreateSubIssueButton({
 }
 
 // ---------------------------------------------------------------------------
-// Main Bubble Menu — @floating-ui/dom + portal to body
+// 主气泡菜单——@floating-ui/dom + portal 到 body
 // ---------------------------------------------------------------------------
 
+/**
+ * EditorBubbleMenu——选中文本的悬浮格式化工具条。
+ */
 function EditorBubbleMenu({
   editor,
   currentIssueId,
@@ -503,8 +506,8 @@ function EditorBubbleMenu({
   const [mode, setMode] = useState<"toolbar" | "link-edit">("toolbar");
   const floatingRef = useRef<HTMLDivElement>(null);
 
-  // Precise subscription to formatting state — only re-renders when these
-  // values actually change, not on every transaction.
+  // 对格式化状态的精确订阅——只有这些值真的变化才重渲染，而不是每个事务
+  // 都渲染。
   const fmt = useEditorState({
     editor,
     selector: ({ editor: e }) => ({
@@ -518,18 +521,17 @@ function EditorBubbleMenu({
       bulletList: e.isActive("bulletList"),
       orderedList: e.isActive("orderedList"),
       taskList: e.isActive("taskList"),
-      // The level itself, not one boolean per offered level: the schema accepts
-      // h1-h6 so the cursor can sit in an H4-H6 that Markdown brought in, and
-      // the dropdown has to report that honestly instead of falling through to
-      // "Normal text". It still only offers H1-H3 as choices (MUL-6060).
+      // 存的是层级本身，而不是每个可选项一个布尔：schema 接受 h1-h6，
+      // 光标可能坐在 Markdown 带进来的 H4-H6 里，下拉必须如实报告而不能
+      // 落回「正文」。它仍然只把 H1-H3 作为选项（MUL-6060）。
       headingLevel: e.isActive("heading")
         ? (e.getAttributes("heading").level as number | undefined)
         : undefined,
     }),
   });
 
-  // Virtual reference that tracks the text selection.
-  // contextElement tells autoUpdate/hide where to find scroll ancestors.
+  // 追踪文本选区的虚拟引用。
+  // contextElement 告诉 autoUpdate/hide 到哪里找滚动祖先。
   const virtualRef = useMemo(
     () => ({
       getBoundingClientRect: () => {
@@ -542,7 +544,7 @@ function EditorBubbleMenu({
     [editor],
   );
 
-  // Show/hide based on selection state
+  // 按选区状态显示/隐藏
   useEffect(() => {
     const onTransaction = () => {
       if (!editor.isInitialized) return;
@@ -552,7 +554,7 @@ function EditorBubbleMenu({
     return () => { editor.off("transaction", onTransaction); };
   }, [editor]);
 
-  // Hide on blur — debounced to allow focus to settle (e.g. clicking menu)
+  // 失焦隐藏——防抖让焦点先安定下来（例如点击菜单时）
   useEffect(() => {
     const onBlur = () => {
       setTimeout(() => {
@@ -567,7 +569,7 @@ function EditorBubbleMenu({
     return () => { editor.off("blur", onBlur); };
   }, [editor]);
 
-  // Position the floating element with autoUpdate when visible
+  // 可见时用 autoUpdate 定位浮动元素
   useEffect(() => {
     const el = floatingRef.current;
     if (!visible || !el || !editor.isInitialized) return;
@@ -586,13 +588,13 @@ function EditorBubbleMenu({
       });
     };
 
-    // autoUpdate monitors all scroll ancestors (via contextElement),
-    // resize, and animation frames — no manual scroll listener needed.
+    // autoUpdate 监听所有滚动祖先（经 contextElement）、resize 与动画帧——
+    // 不需要手动滚动监听。
     const cleanup = autoUpdate(virtualRef, el, updatePosition);
     return cleanup;
   }, [visible, editor, virtualRef]);
 
-  // Close on outside click
+  // 外部点击关闭
   useEffect(() => {
     if (!visible) return;
     const handle = (e: MouseEvent) => {
@@ -605,14 +607,14 @@ function EditorBubbleMenu({
     return () => document.removeEventListener("mousedown", handle);
   }, [visible, editor]);
 
-  // Reset mode on selection change
+  // 选区变化时重置模式
   useEffect(() => {
     const handler = () => setMode("toolbar");
     editor.on("selectionUpdate", handler);
     return () => { editor.off("selectionUpdate", handler); };
   }, [editor]);
 
-  // Refocus editor when Popover closes
+  // Popover 关闭时把焦点还给编辑器
   const handleMenuOpenChange = useCallback(
     (open: boolean) => { if (!open) editor.commands.focus(); },
     [editor],
@@ -657,11 +659,9 @@ function EditorBubbleMenu({
             <Separator orientation="vertical" className="mx-0.5 h-5" />
             <HeadingDropdown editor={editor} onOpenChange={handleMenuOpenChange} activeLevel={fmt.headingLevel} />
             <ListDropdown editor={editor} onOpenChange={handleMenuOpenChange} isBullet={fmt.bulletList} isOrdered={fmt.orderedList} isTask={fmt.taskList} />
-            {/* Dedicated one-click toggle for checkbox task lists — turns the
-                current line(s) into a `- [ ]` task item or back to a paragraph.
-                The same toggle also lives in the List dropdown, but a direct
-                button keeps the common "make this a checklist" action one tap
-                away instead of two. */}
+            {/* 复选框任务列表的专用一键开关——把当前行变成 `- [ ]` 任务项
+                或退回段落。同样的开关也存在于列表下拉里，但独立按钮把常见
+                的「把这个做成清单」动作从两步缩短到一步。 */}
             <Tooltip>
               <TooltipTrigger render={
                 <Toggle
@@ -703,4 +703,5 @@ function EditorBubbleMenu({
   );
 }
 
+/** 导出 EditorBubbleMenu 气泡菜单。 */
 export { EditorBubbleMenu };

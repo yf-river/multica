@@ -1,14 +1,17 @@
 package remotemcp
 
+// 本文件职责：定义 Remote MCP 在「插件发现 → 任务会话认领」间传递的核心线类型
+// （Tool、Connection）、插件贡献连接的 id 前缀约定，以及工具 schema 内容摘要函数。
+
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 )
 
-// Tool is one remote MCP tool pinned by an administrator. SchemaDigest freezes
-// the exact input schema that was approved so the daemon broker can reject a
-// server that later swaps a tool's contract underneath a running task.
+// Tool 是管理员「钉死」的一个远程 MCP 工具。SchemaDigest 冻结了当初被批准的
+// 精确输入 schema——daemon broker 可以用它拒绝那些「在任务运行中途偷换工具
+// 契约」的 MCP server。
 type Tool struct {
 	Name         string          `json:"name"`
 	Description  string          `json:"description,omitempty"`
@@ -17,9 +20,8 @@ type Tool struct {
 	Risk         string          `json:"risk,omitempty"`
 }
 
-// Connection is claim-time, task-scoped connection metadata. Credentials are
-// intentionally absent from this wire type and are resolved just-in-time by the
-// daemon broker.
+// Connection 是「认领时刻」的、按任务作用域划分的连接元数据。凭证刻意不出现
+// 在这个线类型里，由 daemon broker 在用时才即时解析。
 type Connection struct {
 	InstallationID       string          `json:"installation_id"`
 	ContributionID       string          `json:"contribution_id"`
@@ -37,18 +39,16 @@ type Connection struct {
 	FailurePolicy        string          `json:"failure_policy"`
 }
 
-// PluginContributionPrefix marks a connection contributed by an installed
-// Plugin rather than by a workspace's own Remote MCP configuration.
+// PluginContributionPrefix 标记一条连接来自「已安装的插件」贡献，而不是
+// workspace 自己的 Remote MCP 配置。
 //
-// The two kinds share one Connection shape and one broker, but their
-// credentials live in different places and are served by different routes. The
-// daemon holds only the contribution id at dial time, so the id is what has to
-// say which kind it is — inferring it from the string's shape would make a
-// cloud-issued id that happened to contain a colon resolve against the plugin
-// route.
+// 两种来源共用同一种 Connection 形状和同一个 broker，但凭证存放的位置不同、
+// 由不同的路由服务。daemon 在拨号时手里只有 contribution id，所以必须靠 id
+// 本身说明它是哪种——如果试图从字符串形状去推断，那一条恰好带冒号的云端
+// 签发 id 就会被错送去解析插件路由。
 const PluginContributionPrefix = "plugin:"
 
-// DigestBytes is the content digest used to pin approved tool schemas.
+// DigestBytes 计算内容摘要，用于钉死被批准的工具 schema。
 func DigestBytes(content []byte) string {
 	digest := sha256.Sum256(content)
 	return "sha256:" + hex.EncodeToString(digest[:])

@@ -1,3 +1,7 @@
+// Runtime 配置档案（profile）的查询与变更 + 删除冲突解析。
+// 注意：档案目录与已注册 runtime *实例*（runtimeKeys）是两种资源，失效事件不同；
+// 但删除档案会连带移除其注册实例并可能解绑它们的 Agent，所以也要失效实例列表——
+// 下面的 mutation 两类缓存都碰。
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { ApiError } from "../api";
@@ -8,11 +12,9 @@ import type {
 } from "../types/agent";
 import { runtimeKeys } from "./queries";
 
-// Query keys for the workspace-scoped custom runtime profile catalog. Kept
-// separate from `runtimeKeys` (which key the registered runtime *instances*)
-// because the two resources invalidate on different events — but a profile
-// delete removes its registered instances and can unbind their agents, so it
-// must also invalidate the instance list; the mutations below touch both.
+// 工作区级自定义 runtime 档案目录的 query key。与 `runtimeKeys`（给已注册 runtime
+// *实例*做 key）分开，因为两种资源在不同事件上失效——但档案删除会移除它的注册实例、
+// 还可能解绑它们的 Agent，所以也必须失效实例列表；下面 mutation 两者都碰。
 export const runtimeProfileKeys = {
   all: (wsId: string) => ["runtime-profiles", wsId] as const,
   list: (wsId: string) => [...runtimeProfileKeys.all(wsId), "list"] as const,
@@ -20,6 +22,7 @@ export const runtimeProfileKeys = {
     [...runtimeProfileKeys.all(wsId), "detail", profileId] as const,
 };
 
+/** 某工作区 runtime 档案列表查询配置。 */
 export function runtimeProfileListOptions(wsId: string) {
   return queryOptions({
     queryKey: runtimeProfileKeys.list(wsId),
@@ -27,6 +30,7 @@ export function runtimeProfileListOptions(wsId: string) {
   });
 }
 
+/** 创建 runtime 档案的 mutation hook（成功后失效档案目录缓存）。 */
 export function useCreateRuntimeProfile(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -38,6 +42,7 @@ export function useCreateRuntimeProfile(wsId: string) {
   });
 }
 
+/** 更新 runtime 档案的 mutation hook（改名/可见性变化会影响 runtime 列表的标签与可用性）。 */
 export function useUpdateRuntimeProfile(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -50,36 +55,34 @@ export function useUpdateRuntimeProfile(wsId: string) {
     }) => api.updateRuntimeProfile(wsId, profileId, patch),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: runtimeProfileKeys.all(wsId) });
-      // A rename / visibility change can affect how the runtime list
-      // labels bound instances; refresh that too.
+      // 改名/可见性变化可能影响 runtime 列表如何标注已绑定实例；那边也一起刷新。
       qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     },
   });
 }
 
+/** 删除 runtime 档案的 mutation hook（成功后档案与实例列表都失效）。 */
 export function useDeleteRuntimeProfile(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (profileId: string) => api.deleteRuntimeProfile(wsId, profileId),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: runtimeProfileKeys.all(wsId) });
-      // The strict DELETE refuses (409) while agents are bound, but once it
-      // succeeds the bound-instance picture may change — keep the runtime
-      // list in sync.
+      // 严格 DELETE 在仍有 Agent 绑定时拒绝（409），但一旦成功，已绑定实例的图景
+      // 就可能变了——让 runtime 列表保持同步。
       qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     },
   });
 }
 
-// The server returns a 409 with a machine-readable code when a delete is
-// refused because active agents are still bound to the profile. We surface
-// the server's human-readable message verbatim so the confirm dialog can
-// explain the refusal without re-deriving it. Non-409s and unrelated codes
-// collapse to `null` so callers fall through to the generic error path.
+// 删除因"仍有活跃 Agent 绑定该档案"被拒时，服务器返回带机器可读码的 409。
+// 我们原样透出服务器的人类可读文案，让确认弹窗能解释被拒原因而不必自己重推。
+// 非 409 与无关的码塌缩成 `null`，让调用方落入通用错误路径。
 export interface RuntimeProfileBoundConflict {
   message: string;
 }
 
+/** 从错误里解析"档案仍被 Agent 绑定"的 409 冲突；不是该冲突返回 null。 */
 export function parseRuntimeProfileBoundConflict(
   err: unknown,
 ): RuntimeProfileBoundConflict | null {

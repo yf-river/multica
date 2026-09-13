@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是“手动创建 Agent”页面：逐字段手填。`?duplicate=<id>` 从现有 Agent
+// 播种同一张表单而不是从空开始——两者共用一个路由，因为播种之后它们就是同一屏、
+// 同一条提交路径。草稿支持持久化（跨 Tab/刷新）与异步复制播种。
+
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -20,11 +24,10 @@ import {
 } from "./use-manual-draft-sync";
 
 /**
- * Manual agent creation: every field filled in by hand.
+ * 手动创建 Agent：每个字段手填。
  *
- * `?duplicate=<id>` seeds the same form from an existing agent instead of
- * starting empty — the two share one route because after seeding they are the
- * same screen with the same submit path.
+ * `?duplicate=<id>` 用现有 Agent 播种同一张表单而不是从空开始——两者共享这一个
+ * 路由，因为播种后它们就是同一张屏、同一条提交路径。
  */
 export function ManualCreateAgentPage() {
   const { t } = useT("agents");
@@ -41,36 +44,32 @@ export function ManualCreateAgentPage() {
     ? agents.find((agent) => agent.id === duplicateId) ?? null
     : null;
 
-  // True when a duplicate had to fall back to another runtime, which drops the
-  // source's model / thinking / speed. The notice explains the empty fields.
+  // 复制时必须回退到别的运行环境（会丢掉源 Agent 的模型/推理/档位）时为 true。
+  // 该提示解释那些空字段。
   const [duplicateRuntimeReset, setDuplicateRuntimeReset] = useState(false);
-  // A duplicate seeds asynchronously (it waits for the runtime query). Saving
-  // before that lands would persist the empty form the seed is about to
-  // replace, and restoring before it would be undone a tick later.
+  // 复制草稿异步播种（它要等运行环境查询）。在那之前保存，会把“待播种替换的空
+  // 表单”持久化；在那之前恢复，又会在下一拍被覆盖。
   const [duplicateSeeded, setDuplicateSeeded] = useState(false);
 
   useDuplicateDraftSeed({
     source: duplicateAgent,
-    // `buildDuplicateDraft` decides whether the copy can stay on the source
-    // runtime by looking it up in this list. An error is a decidable answer
-    // (the runtime cannot be confirmed, so the fallback is right); a pending
-    // query is not.
+    // `buildDuplicateDraft` 靠在这张列表里查找来决定“复制能否留在源运行环境上”。
+    // 查询报错是可判定答案（运行环境无法确认，走兜底是对的）；pending 则不是。
     runtimesSettled: form.runtimesSettled,
     runtimes: form.runtimes,
     currentUserId: form.currentUserId,
     fallbackRuntimeId: form.usableRuntimes[0]?.id ?? "",
     nameSuffix: t(($) => $.create_dialog.duplicate_copy_suffix),
     onSeed: (duplicated, runtimeReset) => {
-      // Only the forced fallback gets the notice; a later manual runtime switch
-      // is the user's own doing and needs no explanation.
+      // 只有“被迫回退”才提示；之后用户手动切运行环境是他自己的选择，无需解释。
       setDuplicateRuntimeReset(runtimeReset);
       form.setDraft(duplicated);
       setDuplicateSeeded(true);
     },
   });
 
-  // What #6287 reported: the desktop shell mounts only the active tab, so
-  // coming back from another tab is a remount and everything typed was gone.
+  // #6287 报告的正是：桌面外壳只挂载当前 Tab，从别的 Tab 回来就是一次重挂载，
+  // 之前输入的全没了。
   useManualDraftSync({
     duplicateId,
     draft: form.draft,
@@ -83,9 +82,8 @@ export function ManualCreateAgentPage() {
     runtimeId: form.selectedRuntime?.id ?? null,
     squadId,
     duplicateSource: duplicateAgent,
-    // The work is committed; leaving it stored would hand the finished agent's
-    // fields to whoever opens this form next. Only this flow's slot — another
-    // half-finished copy is still someone's unfinished work.
+    // 提交即工作完成；若还留在存储里，会把已建成 Agent 的字段递给下一个打开
+    // 这张表单的人。只清本流程的槽位——别人做到一半的复制仍是某人的未完成工作。
     onCreated: () => clearManualDraftForOwner(duplicateId),
   });
 
@@ -104,8 +102,8 @@ export function ManualCreateAgentPage() {
             : t(($) => $.creation_studio.title)
       }
       step={t(($) => $.creation_studio.step_configure)}
-      // A duplicate arrives from the agents list, not from the chooser, so it
-      // returns to where it came from instead of offering a method to pick.
+      // 复制操作从 Agent 列表页进来、不是从方式选择页，所以返回时回它来的地方，
+      // 而不是再给一次“选方式”的机会。
       onBack={() =>
         backOrReplace(duplicateId ? paths.agents() : paths.newAgent())
       }

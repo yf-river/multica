@@ -1,15 +1,13 @@
+// 本文件定义「语义化」的头像尺寸档位：使用者按角色场景选档（行内小图/列表行/
+// 区块标题/大图），而不是直接写像素数，保证同一「角色」在任何地方渲染成一致尺寸。
+
 /**
- * Semantic avatar size scale. Avatar consumers pick a role-based tier instead
- * of a raw pixel number so the same "role" (inline chip, list row, section
- * header, hero) renders at one consistent size everywhere.
- *
- * Tiers align to a 4px grid (Tailwind size-4/5/6/8/10/14). The px values are
- * the single source of truth for any component that still needs the concrete
- * diameter (font scaling, overlap math, presence-dot thresholds).
+ * 档位与 4px 网格对齐（对应 Tailwind 的 size-4/5/6/8/10/14）。像素直径是
+ * 任何仍需具体尺寸的地方（字号缩放、头像重叠间距、在线点阈值等）的唯一事实来源。
  */
 export type AvatarSize = "xs" | "sm" | "md" | "lg" | "xl" | "2xl";
 
-/** Pixel diameter for each semantic avatar size. */
+/** 每个语义档位对应的像素直径 */
 export const AVATAR_SIZE_PX: Record<AvatarSize, number> = {
   xs: 16,
   sm: 20,
@@ -19,6 +17,8 @@ export const AVATAR_SIZE_PX: Record<AvatarSize, number> = {
   "2xl": 56,
 };
 
-/** Default tier for avatars that don't specify a size. Matches the historical
- *  20px default of the base avatar so untyped call sites are unchanged. */
+/**
+ * 未显式指定尺寸时的默认档位。与基础头像的历史 20px 默认一致，
+ * 让没传 size 的旧调用点行为不变。
+ */
 export const DEFAULT_AVATAR_SIZE: AvatarSize = "sm";

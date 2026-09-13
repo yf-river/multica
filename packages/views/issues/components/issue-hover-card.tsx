@@ -1,5 +1,10 @@
 "use client";
 
+// 本文件：IssueHoverCard —— @提到的问题在悬停时展示的详情卡。
+// 行内 chip 能放下的只有状态、标识符和截断后的标题；卡片承载 chip 装不下
+// 的：完整标题、优先级、描述摘要、负责人与子问题进度。issue 提及是唯一带
+// 悬停预览的提及类型。放在这里而非 packages/ui，是因为它要读工作区查询。
+
 import { issueStatusCategory } from "@multica/core/issues";
 import { useStatusLabel } from "./../utils/status-label";
 import type { ReactNode } from "react";
@@ -24,35 +29,29 @@ interface IssueHoverCardProps {
   issueId: string;
   children: ReactNode;
   /**
-   * Identifier to name the issue with when the detail fetch fails (e.g.
-   * "MUL-7"). The same label the chip degrades to, so a card that cannot load
-   * still says which issue it is about.
+   * 详情拉取失败时用来称呼该问题的标识符（如 "MUL-7"）。与 chip 降级显示
+   * 用的同一个标签——加载不出来的卡片也仍然说得清它讲的是哪个问题。
    */
   fallbackLabel?: string;
   /**
-   * Open delay override, in milliseconds. Exists for tests only — production
-   * passes nothing, so the card uses Base UI's default of 600ms. Tests pass 0
-   * so hover assertions don't need to wait out the real delay.
+   * 打开延迟覆盖值，毫秒。仅为测试而存在——生产环境什么都不传，走 Base UI
+   * 默认的 600ms。测试传 0，悬停断言不必等真实延迟。
    */
   delay?: number;
 }
 
 /**
- * Detail for an issue mention, on hover.
+ * @提到的 issue 在悬停时的详情（职责见文件头）。
  *
- * The inline chip shows status, identifier, and as much title as fits inside
- * its `min(18rem, 100%)` cap — so a long title arrives truncated. The card
- * carries what the chip cannot: the full untruncated title, priority, a
- * description snippet, the assignee, and sub-issue progress. Issue mentions are
- * the only kind with a hover preview — member and agent mentions render as a
- * plain `.mention` span in rich-content.tsx. This lives here rather than in
- * packages/ui because it reads workspace queries.
+ * 行内 chip 显示状态、标识符和尽可能长的标题（封顶在 `min(18rem, 100%)`）
+ * ——长标题到达时是截断的。卡片承载 chip 装不下的：完整未截断标题、优先级、
+ * 描述摘要、负责人与子问题进度。issue 提及是唯一带悬停预览的提及类型——
+ * 成员与 agent 提及在 rich-content.tsx 里只渲染成普通 `.mention` span。
  *
- * Every query lives in IssueHoverCardBody rather than here on purpose: Base UI
- * mounts the popup only while the card is open, so this component adds no
- * request of its own until a card opens. Moving a query up into IssueHoverCard
- * would fire one per mention on render. (The chip inside the trigger has its
- * own unresolved-issue fetch; that is independent of this.)
+ * 所有查询都有意放在 IssueHoverCardBody 而不是这里：Base UI 只在卡片打开时
+ * 挂载弹层，所以本组件在卡片打开前不发任何请求。把查询提到 IssueHoverCard
+ * 会让每次提及在渲染时就发一次。（触发器里的 chip 自带一次未解决 issue 的
+ * 拉取；那与此无关。）
  */
 export function IssueHoverCard({
   issueId,
@@ -62,8 +61,8 @@ export function IssueHoverCard({
 }: IssueHoverCardProps) {
   return (
     <HoverCard>
-      {/* Rendered as a span, not the trigger's default anchor: the children are
-          already an AppLink, and an anchor inside an anchor is invalid. */}
+      {/* 渲染成 span 而不是触发器默认的锚点：children 本身已经是 AppLink，
+          锚点套锚点是无效 HTML。 */}
       <HoverCardTrigger delay={delay} render={<span />}>
         {children}
       </HoverCardTrigger>
@@ -75,12 +74,11 @@ export function IssueHoverCard({
 }
 
 /**
- * Assignee row of the card.
+ * 卡片的负责人行。
  *
- * Its own component so `useActorName` — which subscribes to the workspace
- * member list, a query nothing else on this path warms — mounts only for cards
- * that actually have an assignee to name. Inlining it back into the body would
- * make the first hover on any mention pull the member directory.
+ * 独立成组件，是为了让 `useActorName`——它订阅工作区成员列表，一条本路径上
+ * 其它东西都不会预热——只在实际有负责人要命名的卡片上挂载。若内联回正文，
+ * 首次悬停任意提及就会去拉成员目录。
  */
 function IssueHoverCardAssignee({
   actorType,
@@ -92,8 +90,8 @@ function IssueHoverCardAssignee({
   const { getActorName } = useActorName();
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      {/* This is already a hover card, and the agent live-peek variant would
-          fire its own request — so no nested card, no link. */}
+      {/* 这里本身就是悬停卡，agent live-peek 变体会再发自己的请求——
+          所以不嵌套卡片、也不放链接。 */}
       <ActorAvatar
         actorType={actorType}
         actorId={actorId}
@@ -119,13 +117,13 @@ function IssueHoverCardBody({
   const wsId = useWorkspaceId();
   const resolveStatusLabel = useStatusLabel(wsId);
   const detail = useQuery(issueDetailOptions(wsId, issueId));
-  // One workspace-wide progress snapshot shared with the issues list and issue
-  // detail, not a per-issue children fetch: opening a card reuses the cache.
+  // 一份与 issues 列表和 issue detail 共享的工作区级进度快照，不是按问题
+  // 的子节点拉取：打开卡片直接复用缓存。
   const { data: childProgress } = useQuery(childIssueProgressOptions(wsId));
   const { t } = useT("issues");
 
-  // A skeleton rather than localized loading text: only the pending phase gets
-  // it, so a settled query never animates forever.
+  // 用骨架屏而不是本地化加载文案：只有 pending 阶段用到它，因此已落定的
+  // 查询绝不会永远转圈。
   if (detail.isPending) {
     return (
       <div data-testid="issue-hover-card-skeleton" className="flex flex-col gap-1.5">
@@ -139,10 +137,9 @@ function IssueHoverCardBody({
 
   const issue = detail.data;
 
-  // Terminal state for every way the detail can fail to arrive: an error after
-  // retries, a deleted issue, or a mention the viewer cannot read. Named with
-  // the identifier the way the chip degrades, so the card still says which
-  // issue it is about.
+  // 每种"详情没到"的终结态都走这里：重试后仍报错、问题被删除、或提及是
+  // 读者读不到的。按 chip 降级的方式用标识符称呼它，卡片就仍说得清
+  // 它讲的是哪个问题。
   if (detail.isError || !issue) {
     return (
       <div className="flex flex-col gap-1.5">
@@ -162,18 +159,17 @@ function IssueHoverCardBody({
   const hasAssignee = !!assigneeType && !!assigneeId;
   const progress = childProgress?.get(issue.id);
   const hasProgress = !!progress && progress.total > 0;
-  // Board cards and list rows render the glyph into a fixed grid slot, so the
-  // "none" dash holds a column there. This card has no column to hold, leaving
-  // the dash a mark carrying no information in an already dense popup.
+  // 看板卡片与列表行把优先级字形画进固定的网格槽，所以"无"的那根短横
+  // 在那里占住一列。本卡片没有列要占——在这已很挤的弹层里，短横只是一枚
+  // 不携带任何信息的记号。
   const hasPriority = !!issue.priority && issue.priority !== "none";
 
   return (
     <div className="flex flex-col gap-1.5">
-      {/* Priority, status, identifier — the same lead-with-priority order as
-          BoardCardContent, at the icon size the status glyph already uses.
-          StatusIcon and PriorityIcon both render a bare <svg> that forwards no
-          aria props, so each glyph is named by an `role="img"` wrapper: on a
-          role-less span an aria-label is dropped by assistive tech. */}
+      {/* 优先级、状态、标识符——与 BoardCardContent 相同的"优先级打头"
+          顺序，字号与状态字形一致。StatusIcon 与 PriorityIcon 都只画裸
+          <svg>、不透传 aria props，所以每个字形都由一个 `role="img"`
+          包装命名：放在无角色的 span 上，aria-label 会被辅助技术丢弃。 */}
       <div className="flex items-center gap-1.5">
         {hasPriority && (
           <span role="img" aria-label={t(($) => $.priority[issue.priority])} className="flex">
@@ -195,9 +191,8 @@ function IssueHoverCardBody({
           {issue.identifier}
         </span>
       </div>
-      {/* The full title is the point of the card, so it never truncates — but
-          an unbroken token (a pasted URL) would blow past the max-w-80 cap
-          without a break opportunity. */}
+      {/* 完整标题才是这张卡存在的意义，所以它绝不截断——但一个不换行的
+          超长 token（如粘贴的 URL）没有断点就会顶破 max-w-80 上限。 */}
       <p className="text-body text-foreground break-words">{issue.title}</p>
 
       {preview && (

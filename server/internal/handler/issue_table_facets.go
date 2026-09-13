@@ -1,3 +1,5 @@
+// 职责定位：issue 表格的「分面统计」（facet counts）：在基础行查询之上对若干 facet 各算一次
+// 计数与可访问值，供前端筛选项展示计数。
 package handler
 
 import (
@@ -17,29 +19,36 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// The workspace property catalog is capped at 20 active definitions. Six
-// built-in dimensions plus that catalog fit under this guard with headroom,
-// while preventing a single request from scheduling hundreds of sequential
-// aggregation scans inside one snapshot transaction.
+// issueTableMaxFacets 限制单次 facet 请求最多 32 个。工作区属性目录上限 20 个活跃定义，六个
+// 内置维度加属性目录在这个上限下仍有富余；更重要的是防止单次请求在同一个快照事务里排上百次
+// 顺序聚合扫描。
 const issueTableMaxFacets = 32
 
+// issueTableFacetValueResponse 是一个分面取值桶：Key 是去重后的取值（含 __none__ 这类哨兵），
+// Count 是当前查询下命中该值的 issue 数。
 type issueTableFacetValueResponse struct {
 	Key   string `json:"key"`
 	Count int64  `json:"count"`
 }
 
+// issueTableFacetResponse 是一个分面的结果：Kind/PropertyID 标明分的是哪个维度，Values 是该
+// 维度下各可选值及其计数。
 type issueTableFacetResponse struct {
 	Kind       string                         `json:"kind"`
 	PropertyID string                         `json:"property_id,omitempty"`
 	Values     []issueTableFacetValueResponse `json:"values"`
 }
 
+// issueTableFacetsResponse 是 /table/facets 的响应体：与行查询同源的指纹、总行数与各分面结果。
 type issueTableFacetsResponse struct {
 	QueryFingerprint string                    `json:"query_fingerprint"`
 	Total            int64                     `json:"total"`
 	Facets           []issueTableFacetResponse `json:"facets"`
 }
 
+// issueTableQueryWithoutFacet 返回一份「去掉了某分面自己的维度」的查询副本——统计该分面可选值
+// 时，正是要看用户把它切到任意选项后还会看到哪些行。Filters 里其余维度与嵌套 map 都深拷贝，
+// 避免原地改动污染调用方的查询。
 func issueTableQueryWithoutFacet(input issueTableQuerySpec, facet issueTableFacetSpec) issueTableQuerySpec {
 	output := input
 	output.Filters = input.Filters
@@ -68,16 +77,17 @@ func issueTableQueryWithoutFacet(input issueTableQuerySpec, facet issueTableFace
 	case "property":
 		delete(output.Filters.Properties, facet.PropertyID)
 	case "working_agents":
-		// Disjunctive like every other facet: drop this facet's own dimension so
-		// the answer is "who would you see if you turned the agents-working
-		// filter ON", which is also the answer while it is already on. That
-		// makes the header chip's count stable across the toggle.
+		// 和其它分面一样是析取式：摘掉这个维度自身的过滤条件，答案就是「你若把 agents-working
+		// 开关打开会看到哪些 agent」——这正等于开关已打开时的答案，因此头部 chip 的计数在
+		// 开关切换前后保持稳定。
 		output.Filters.WorkingIssueIDs = nil
 		output.Filters.WorkingOnly = false
 	}
 	return output
 }
 
+// issueTableFacetIdentity 生成分面的稳定身份串：property 分面按 property_id 区分（同一 property
+// 不能重复请求两次），其余分面直接以 kind 为身份。
 func issueTableFacetIdentity(facet issueTableFacetSpec) string {
 	if facet.Kind == "property" {
 		return "property:" + facet.PropertyID
@@ -85,6 +95,9 @@ func issueTableFacetIdentity(facet issueTableFacetSpec) string {
 	return facet.Kind
 }
 
+// issueTableBaseFacetExpression 返回某个内置分面在基础行 WHERE 上可以直接 GROUP BY 的取值
+// 表达式，并给出「该维度当前是否已被过滤」：已带过滤的维度无法作为基座分面批量统计（见
+// ListIssueTableFacets 对 batch 与 individual 的切分）。不支持的 kind 返回 ok=false。
 func issueTableBaseFacetExpression(query issueTableQuerySpec, facet issueTableFacetSpec) (string, bool) {
 	switch facet.Kind {
 	case "status":
@@ -102,6 +115,10 @@ func issueTableBaseFacetExpression(query issueTableQuerySpec, facet issueTableFa
 	}
 }
 
+// issueTableBaseFacetQuery 在「基础行 WHERE」上一次算完多个可批量基座分面 + 可选总行数：每个
+// 分面带一个取值表达式进 GROUPING SETS，由 CASE 给结果行打分面 marker，includeTotal 时再补一个
+// 空分组 () 求总行数。它只处理「其维度当前未被查询过滤」的分面——已被过滤的维度在过滤结果里
+// 给不出有意义的可选值，必须走 issueTableFacetQuery 的 individual 路径（去掉自身维度重查）。
 func (h *Handler) issueTableBaseFacetQuery(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -182,6 +199,9 @@ GROUP BY GROUPING SETS (%s)`, strings.Join(markerCases, " "), strings.Join(value
 	return responses, total, true
 }
 
+// issueTableFacetQuery 为单个分面单独执行计数（individual 路径）：先把查询里该分面自身的维度
+// 过滤去掉（issueTableQueryWithoutFacet），再按其 kind 用对应 SQL 分组统计。label / working_agents
+// / property 走这类逐条计算；property 分面还须在库里核对定义是否存在、是否归档、类型是否支持。
 func (h *Handler) issueTableFacetQuery(w http.ResponseWriter, r *http.Request, requestQuery issueTableQuerySpec, facet issueTableFacetSpec) (issueTableFacetResponse, bool) {
 	response := issueTableFacetResponse{Kind: facet.Kind, PropertyID: facet.PropertyID, Values: []issueTableFacetValueResponse{}}
 	compiled, ok := h.compileIssueTableQuery(w, r, issueTableQueryWithoutFacet(requestQuery, facet))
@@ -204,13 +224,10 @@ func (h *Handler) issueTableFacetQuery(w http.ResponseWriter, r *http.Request, r
 	case "label":
 		query = fmt.Sprintf(`SELECT itl.label_id::text, COUNT(DISTINCT i.id)::bigint FROM issue i JOIN issue_to_label itl ON itl.issue_id = i.id WHERE %s GROUP BY itl.label_id`, compiled.where)
 	case "working_agents":
-		// One row per agent currently running issue work inside THIS surface,
-		// with its running-task count. Same predicate as
-		// ListWorkspaceWorkingAgents with type=issue (chat > autopilot > issue
-		// precedence, user-authored non-archived agents only), but the issue set
-		// comes from the surface's own compiled scope + filters instead of a
-		// second, independent workspace-wide definition. That is what keeps the
-		// header chip's count equal to the rows clicking it leaves (MUL-5525).
+		// 每个「正在本表格面里跑 issue 工作的 agent」一行，附运行中任务数。判定谓词与
+		// ListWorkspaceWorkingAgents type=issue 一致（chat > autopilot > issue 的优先级、仅用户
+		// 自建且未归档的 agent），但 issue 集合来自本面自己编译出的 scope + filters，而不是另起
+		// 一份独立的全工作区定义——这样才能让头部 chip 的计数与点开后留下的行数对得上（MUL-5525）。
 		query = fmt.Sprintf(`SELECT a.id::text, COUNT(*)::bigint
 FROM issue i
 JOIN agent_task_queue atq ON atq.issue_id = i.id
@@ -248,16 +265,13 @@ GROUP BY a.id`, compiled.where)
 		propertyKey := "'" + util.UUIDToString(property.ID) + "'"
 		switch property.Type {
 		case "select", "actor":
-			// Unset issues count under the "__none__" bucket so the filter menu's
-			// "No value" option carries a real count (issues without the key).
+			// 未设置该 key 的 issue 统一记进 __none__ 桶，让筛选项菜单里的「无值」带一个真实的
+			// 计数。
 			query = fmt.Sprintf(`SELECT COALESCE(i.properties ->> %s, '__none__'), COUNT(*)::bigint FROM issue i WHERE %s AND (jsonb_typeof(i.properties -> %s) = 'string' OR NOT (i.properties ? %s)) GROUP BY 1`, propertyKey, compiled.where, propertyKey, propertyKey)
 		case "text", "url", "date", "number":
-			// Scalar values are free-form, so grouping by distinct value would
-			// return one row per observed value with no bound. The filter menu
-			// only reads the "__none__" bucket for these types, so compute just
-			// the two bounded buckets instead of pulling the whole value space.
-			// Key existence is exact for "no value": stored values can never be
-			// null or empty, so a present key is always a set value.
+			// 标量值是自由文本，按 distinct 值分组会得到无上界的「每个取值一行」。筛选项菜单对
+			// 这种类型只读 __none__ 桶，所以只算已设/未设两个有界桶，而不是拉全量值空间。
+			// key 是否存在对「无值」是精确的：存下来的值不可能是 null 或空串，key 在就等于有值。
 			query = fmt.Sprintf(`SELECT CASE WHEN i.properties ? %s THEN '__set__' ELSE '__none__' END, COUNT(*)::bigint FROM issue i WHERE %s GROUP BY 1`, propertyKey, compiled.where)
 		case "multi_select", "multi_actor":
 			query = fmt.Sprintf(`SELECT COALESCE(property_value.value, '__none__'), COUNT(DISTINCT i.id)::bigint FROM issue i JOIN LATERAL (SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(i.properties -> %s) = 'array' THEN i.properties -> %s ELSE '[]'::jsonb END) AS value UNION ALL SELECT NULL WHERE NOT (i.properties ? %s)) property_value(value) ON TRUE WHERE %s GROUP BY 1`, propertyKey, propertyKey, propertyKey, compiled.where)
@@ -305,10 +319,9 @@ GROUP BY a.id`, compiled.where)
 	return response, true
 }
 
-// The working-agents facet keys are agent ids, so it discloses agent identity
-// and must pass the same visibility gate as every other workspace-wide agent
-// aggregation: a private or non-allow-listed agent is never exposed by its id,
-// its count, or even its presence.
+// filterAccessibleAgentFacetValues 对 working_agents 分面的取值做可见性过滤：该分面的取值键是
+// agent id，会暴露 agent 身份，所以必须与其它全工作区 agent 聚合走同一道可见性门槛——private
+// 或不在白名单里的 agent，绝不允许通过 id、计数甚至「它是否出现」泄漏出去。
 func (h *Handler) filterAccessibleAgentFacetValues(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -338,6 +351,8 @@ func (h *Handler) filterAccessibleAgentFacetValues(
 	return filtered, true
 }
 
+// ListIssueTableFacets 处理 POST /api/issues/table/facets：在只读快照事务里对每个请求的
+// facet 统计可筛取值计数（最多 issueTableMaxFacets 个、去重）。
 func (h *Handler) ListIssueTableFacets(w http.ResponseWriter, r *http.Request) {
 	if h.DB == nil {
 		writeError(w, http.StatusInternalServerError, "database is unavailable")

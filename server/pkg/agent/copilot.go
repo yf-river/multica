@@ -1,5 +1,19 @@
 package agent
 
+// 文件职责：本文件实现 Backend 接口中的「GitHub Copilot」后端。它在本机拉起 copilot
+// CLI（用 --output-format json 的 -p 一次性管道模式），把进程打印到 stdout 的 JSONL
+// 事件流逐行解析，翻译成系统统一的 Message 事件（thinking / text / 工具调用与结果 /
+// 日志 / 状态），并在进程结束后汇总出 Result（最终状态、最终文本、token 用量、会话 ID）。
+//
+// 数据流：Execute 拿到用户 prompt → 拼出命令行参数并启动进程 → 后台 goroutine 逐行
+// 读 stdout，每行是一个 JSON 信封事件（copilotEvent，type 为点分事件名），交给
+// handleCopilotEvent 一边更新 copilotEventState、一边产出零到多条 Message 经 msgCh 推给
+// 调用方（daemon/前端做流式展示）→ 进程退出后把最终解析结果放进 resCh。
+//
+// 事件格式约定：Copilot CLI v1.0.28+ 在 --output-format json 下输出 JSONL，事件形如
+// { "type": "assistant.message", "data": {...}, "id": "...", ... }，最后一行是 CLI 合成的
+// "result" 事件（sessionId/exitCode 在顶层）。各事件载荷类型见本文件后半部的 copilotXxx 系列。
+
 import (
 	"context"
 	"encoding/json"
@@ -10,68 +24,59 @@ import (
 	"time"
 )
 
-// copilotBackend implements Backend by spawning the GitHub Copilot CLI
-// with --output-format json and parsing its JSONL event stream.
+// copilotBackend 实现 Backend 接口：通过拉起 GitHub Copilot CLI（带
+// --output-format json）并解析它输出的 JSONL 事件流来驱动一次 Copilot 会话。
 //
-// The v1 integration uses the -p (pipe) mode which is the stable
-// automation/CI channel. The prompt is passed as a CLI argument (not stdin).
-// Events arrive as newline-delimited JSON on stdout in the Copilot CLI's
-// own envelope format: { "type": "dotted.event.name", "data": {...}, ... }
+// v1 集成用的是 -p（pipe 管道）模式，这是 Copilot CLI 面向自动化/CI 的稳定通道；
+// prompt 作为命令行参数传入（不是 stdin）。进程在 stdout 上按行输出 JSON 事件，
+// 信封格式为 { "type": "点分事件名", "data": {...}, ... }。
 type copilotBackend struct {
 	cfg Config
 }
 
-// copilotEventState holds mutable state accumulated while processing the JSONL
-// event stream. It is shared between production (Execute) and tests via
-// handleCopilotEvent, so the parsing logic is never duplicated.
+// copilotEventState 累积解析 JSONL 事件流过程中的可变状态。生产路径（Execute）与测试
+// 都通过 handleCopilotEvent 共享同一份解析逻辑，避免两处重复。
 type copilotEventState struct {
-	// output holds the latest COMPLETE assistant turn, not every turn joined:
-	// Result.Output is "final user-facing output selected by the backend"
-	// (agent.go), and a tool-using run's earlier turns are narration around the
-	// work, not the deliverable (GH #6006). Every turn still reaches the
-	// transcript through the emitted MessageText.
+	// output 保存的是最近一次「完整」的 assistant 回合内容，而不是把每个回合拼起来：
+	// Result.Output 要求是「后端挑选出的最终面向用户的输出」（见 agent.go）。一个会调
+	// 工具的回合里，前面几轮文本只是围绕工作的叙述，不是交付物（见 GH #6006）。但每个
+	// 回合的文本仍会作为 MessageText 事件发出去，完整进到 transcript 里。
 	output strings.Builder
-	// pendingDelta buffers the turn currently streaming. It is cleared when that
-	// turn's authoritative assistant.message lands, so it is non-empty only when
-	// the process died mid-turn — the one case where a partial beats the
-	// previous turn's complete text.
+	// pendingDelta 缓冲当前正在流式输出的回合片段。当该回合权威的 assistant.message
+	// 事件落地时会被清空，因此它非空只可能发生在「进程中途死掉」这一种场景——此时
+	// 残缺的当前回合比上一回合的完整文本更值得当结果，partial 胜过 complete。
 	pendingDelta strings.Builder
 	sessionID    string
 	activeModel  string
 	finalStatus  string
 	finalError   string
 
-	// Token usage arrives on up to three different events, so each source is
-	// accumulated separately and resolved once at the end by resolveUsage.
+	// token 用量最多会从三类不同事件里来，所以各自独立累加、最后在 resolveUsage 里
+	// 只挑一个口径：
 	//
-	//	session.shutdown   per-model session totals, full breakdown
-	//	assistant.usage    per model call, full breakdown
-	//	assistant.message  outputTokens only — legacy, older CLIs
+	//	session.shutdown  按模型汇总的整个会话总量，字段最全
+	//	assistant.usage   每次模型调用的完整明细
+	//	assistant.message 只有 outputTokens——老版本 CLI 才有的遗留字段
 	//
-	// They must never be summed together: all three describe the same tokens.
+	// 三者描述的是同一批 token，绝不能相加，否则会重复计费。
 	callUsage     map[string]TokenUsage
 	msgUsage      map[string]TokenUsage
 	shutdownUsage map[string]TokenUsage
-	// resumed marks a run that continued an existing Copilot session, which is
-	// what disqualifies the session.shutdown totals — see resolveUsage.
+	// resumed 标记这是一次续跑（接着已有 Copilot 会话继续）。续跑会使得
+	// session.shutdown 的会话级总量不可信，原因见 resolveUsage。
 	resumed bool
 }
 
-// resolveUsage picks the single best usage source this run produced, most
-// complete first.
+// resolveUsage 从本次运行可能出现的多个用量来源里挑出「最完整的那一个」返回。
 //
-// On a fresh session, session.shutdown is the CLI's own final accounting for
-// the whole session — which here IS this run — so it is the most complete
-// source available and cannot be short-changed by an individual model call
-// that failed to report. It is unusable on a resumed run: the CLI restores its
-// accumulators from a checkpoint, so it also carries every earlier turn's
-// tokens, and reporting that on a follow-up would bill the same tokens once per
-// turn. Under-reporting beats double-billing, so a resumed run falls through.
+// 全新会话时，session.shutdown 是 CLI 对整场会话（在这里就等于本次运行）的最终结算，
+// 是最完整的来源；个别模型调用没上报不会连累它。但续跑（resumed）时它不可用：CLI 会
+// 从 checkpoint 恢复累加器，于是它把之前每一轮的 token 都带上了，若再报一遍等于把同一
+// 批 token 按轮重复计费。少报好过双报，所以续跑会跳过它、继续往下看。
 //
-// assistant.usage is per model call, so it measures exactly this run either
-// way. assistant.message is last: it only ever carries output tokens, so
-// letting it win over a source with the full breakdown would silently drop the
-// input and cache tiers.
+// assistant.usage 是「按模型调用」计量的，无论是否续跑都能精确覆盖本次运行。
+// assistant.message 排最后：它只带 outputTokens，若让它压过带完整明细的来源，
+// 输入 token 与缓存档位就会被静默丢掉。
 func (st *copilotEventState) resolveUsage() map[string]TokenUsage {
 	if !st.resumed && hasTokens(st.shutdownUsage) {
 		return st.shutdownUsage
@@ -85,10 +90,9 @@ func (st *copilotEventState) resolveUsage() map[string]TokenUsage {
 	return map[string]TokenUsage{}
 }
 
-// hasTokens reports whether a source carries any real numbers. Presence alone
-// is not enough: every token field on assistant.usage is optional upstream, so
-// a usage event that names only a model would otherwise mark that source
-// "populated" and shadow one that actually has tokens.
+// hasTokens 报告一个用量来源里是否带有真实数字。光有「键存在」不够：assistant.usage
+// 里每个 token 字段在上游都是可选的，一个只报了模型名、没有数字的用量事件若被当成
+// 「已填充」，就会把真正有 token 的来源给遮住。
 func hasTokens(usage map[string]TokenUsage) bool {
 	for _, u := range usage {
 		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
@@ -98,14 +102,13 @@ func hasTokens(usage map[string]TokenUsage) bool {
 	return false
 }
 
-// addUsage folds one usage record into dst under model, ignoring records that
-// carry no tokens at all so an empty one never creates an entry.
+// addUsage 把一条用量记录按 model 归并进 dst；完全不携带 token 的记录会被忽略，
+// 避免一个空记录凭空制造出条目。
 //
-// Copilot reports cached tokens INSIDE inputTokens (its own event-log reducer
-// derives uncached input as inputTokens - cacheRead - cacheWrite), whereas
-// TokenUsage.InputTokens is the uncached remainder that prices at the input
-// rate. Subtract here so the cache tiers are not billed twice. reasoningTokens
-// are deliberately ignored: they are already part of outputTokens.
+// Copilot 上报时把缓存 token 也算在 inputTokens 里面（CLI 自己的事件日志 reduce 逻辑
+// 是用 inputTokens - cacheRead - cacheWrite 推出未命中缓存的输入量），而 TokenUsage.
+// InputTokens 语义是「按输入价计费的未命中缓存部分」。所以这里要先减掉再存，否则缓存
+// 档会被重复计费。reasoningTokens 被有意忽略：它们已经含在 outputTokens 里了。
 func addUsage(dst map[string]TokenUsage, model string, input, output, cacheRead, cacheWrite int64) {
 	cacheRead = nonNegativeTokens(cacheRead)
 	cacheWrite = nonNegativeTokens(cacheWrite)
@@ -129,8 +132,8 @@ func nonNegativeTokens(n int64) int64 {
 	return n
 }
 
-// finalOutput is the deliverable for Result.Output: the last complete assistant
-// turn, or the partial turn that was still streaming when the process died.
+// finalOutput 是最终要填进 Result.Output 的内容：取最后一个「完整」的 assistant
+// 回合；若进程是在某回合流式输出中途死掉的，则返回那段残缺的流式文本。
 func (st *copilotEventState) finalOutput() string {
 	if st.pendingDelta.Len() > 0 {
 		return st.pendingDelta.String()
@@ -138,6 +141,8 @@ func (st *copilotEventState) finalOutput() string {
 	return st.output.String()
 }
 
+// newCopilotEventState 构造事件状态机：seedModel 是会话首个回合的模型名兜底值
+// （真实模型会在后续事件里覆盖它），resumed 表示这次运行是否续跑已有会话。
 func newCopilotEventState(seedModel string, resumed bool) *copilotEventState {
 	return &copilotEventState{
 		activeModel:   seedModel,
@@ -149,9 +154,9 @@ func newCopilotEventState(seedModel string, resumed bool) *copilotEventState {
 	}
 }
 
-// handleCopilotEvent processes a single parsed copilotEvent, updates state,
-// and returns zero or more Messages to emit. Extracted so tests can call the
-// exact same logic without duplicating the switch body.
+// handleCopilotEvent 处理单条已解析的 copilotEvent：更新事件状态机，并返回需要对外
+// 发送的零到多条 Message。把它抽成独立函数是为了让测试也能走完全相同的分支逻辑，
+// 而不必复制一份 switch 主体。
 func handleCopilotEvent(evt copilotEvent, st *copilotEventState) []Message {
 	var msgs []Message
 
@@ -162,11 +167,10 @@ func handleCopilotEvent(evt copilotEvent, st *copilotEventState) []Message {
 			if ss.SelectedModel != "" {
 				st.activeModel = ss.SelectedModel
 			}
-			// Capture sessionId from session.start as well: the synthetic
-			// "result" event may never arrive (timeout, cancel, crash, or a
-			// session.error before result), and without this the daemon
-			// reports SessionID="" and the chat-session resume pointer can
-			// drift to a stale turn. result still wins when it does arrive.
+			// 这里也顺手从 session.start 里抓 sessionId：那个合成的 "result" 事件可能
+			// 根本不会来（超时、取消、崩溃，或在 result 之前先来了 session.error）。
+			// 不抓的话 daemon 上报的 SessionID 就是空的，聊天会话的「继续」指针会漂到
+			// 一个过期回合上。若之后 result 真来了，仍以 result 为准覆盖。
 			if ss.SessionID != "" {
 				st.sessionID = ss.SessionID
 			}
@@ -175,8 +179,8 @@ func handleCopilotEvent(evt copilotEvent, st *copilotEventState) []Message {
 	case "assistant.message_delta":
 		var delta copilotMessageDelta
 		if err := json.Unmarshal(evt.Data, &delta); err == nil && delta.DeltaContent != "" {
-			// Buffer deltas as defense-in-depth: if the process is killed before
-			// this turn's assistant.message arrives, we still have its text.
+			// 先把增量文本缓冲一份，作为纵深防御：万一进程在本次回合的 assistant.message
+			// 事件到达前就被杀掉，我们手里仍有这段文本可用。
 			st.pendingDelta.WriteString(delta.DeltaContent)
 			msgs = append(msgs, Message{Type: MessageText, Content: delta.DeltaContent})
 		}
@@ -186,23 +190,20 @@ func handleCopilotEvent(evt copilotEvent, st *copilotEventState) []Message {
 		if err := json.Unmarshal(evt.Data, &msg); err != nil {
 			return nil
 		}
-		// assistant.message carries the full turn content and supersedes both the
-		// deltas that streamed it and whatever earlier turn output held: a run
-		// that narrates, calls a tool, then answers must deliver the answer, not
-		// the pair joined together.
+		// assistant.message 携带的是该回合完整内容，会同时取代两样东西：流式输出的增量，
+		// 以及此前回合存下的 output。比如一个回合先叙述、再调工具、最后才回答，交付物应
+		// 是「回答」，而不是把三者拼在一起。
 		if msg.Content != "" {
 			st.output.Reset()
 			st.output.WriteString(msg.Content)
 		}
-		// Clear unconditionally — this event IS the turn boundary. A tool-only
-		// turn reports content:"" (the toolRequests below are the whole turn), and
-		// leaving its deltas buffered would let them be stitched onto the NEXT
-		// turn's partial text if the process then died mid-stream.
+		// 无条件清空增量缓冲——本事件本身就是回合边界。纯工具回合的 content 是空串
+		// （真正的内容都在下面的 ToolRequests 里），若不清掉残留的增量，进程恰好在下一
+		// 个回合流式中途死掉时，这段残留会被缝进下一回合的残缺文本里。
 		st.pendingDelta.Reset()
-		// The message names the model that produced it. Without this the first
-		// turn's tokens land under the seed model — the literal string
-		// "copilot" when no model was configured — which no price table maps,
-		// so a run that DID report tokens still estimated $0.00.
+		// 消息里带着产出它的模型名。没有它，第一个回合的 token 会被记到 seed model 名下
+		// ——没配置模型时就是字面字符串 "copilot"，而价格表里没有这个模型，于是明明报了
+		// token 的运行估算出来却是 $0.00。
 		if msg.Model != "" {
 			st.activeModel = msg.Model
 		}
@@ -226,15 +227,15 @@ func handleCopilotEvent(evt copilotEvent, st *copilotEventState) []Message {
 		}
 
 	case "assistant.usage":
-		// One record per model API call, with the full token breakdown. This is
-		// the only event that reports input and cache tokens at all.
+		// 每次模型 API 调用一条记录，带完整 token 明细；这是唯一会报输入 token 与缓存
+		// token 的事件。
 		var u copilotUsageData
 		if err := json.Unmarshal(evt.Data, &u); err != nil {
 			return nil
 		}
 		model := u.Model
-		// The CLI writes "unknown" when it cannot name the model; keep whatever
-		// the session already resolved rather than opening a bogus usage row.
+		// CLI 在认不出模型名时写的是 "unknown"。这里不另开一行假的用量记录，而是沿用
+		// 会话当前已解析出的模型名。
 		if model == "" || model == "unknown" {
 			model = st.activeModel
 		} else {
@@ -243,7 +244,7 @@ func handleCopilotEvent(evt copilotEvent, st *copilotEventState) []Message {
 		addUsage(st.callUsage, model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens)
 
 	case "session.shutdown":
-		// Session-wide per-model totals, emitted once as the session tears down.
+		// 按模型汇总的整场会话总量，随会话拆除时发一条。
 		var sd copilotShutdownData
 		if err := json.Unmarshal(evt.Data, &sd); err != nil {
 			return nil
@@ -256,7 +257,7 @@ func handleCopilotEvent(evt copilotEvent, st *copilotEventState) []Message {
 		}
 
 	case "assistant.reasoning", "assistant.reasoning_delta":
-		// Streaming thinking content — may arrive as full or delta.
+		// 流式思考内容——可能是完整一段，也可能是增量片段。
 		var r copilotReasoning
 		if err := json.Unmarshal(evt.Data, &r); err == nil {
 			text := r.Content
@@ -280,6 +281,7 @@ func handleCopilotEvent(evt copilotEvent, st *copilotEventState) []Message {
 		if tc.Success && tc.Result != nil {
 			resultContent = tc.Result.Content
 		} else if !tc.Success {
+			// 工具执行失败：优先把错误信息作为结果返回，让调用方（模型侧）能看到失败原因。
 			if tc.Error != nil {
 				resultContent = "Error: " + tc.Error.Message
 			} else if tc.Result != nil {
@@ -310,6 +312,9 @@ func handleCopilotEvent(evt copilotEvent, st *copilotEventState) []Message {
 		}
 
 	case "result":
+		// 合成的收尾事件：CLI 正常结束时会发它，携带权威的会话 ID 与退出码。
+		// 退出码非 0 意味着整场运行失败，把退出码并进错误信息；但若此前已有更具体
+		// 的错误（如 session.error）则保留原信息、只追加退出码后缀。
 		if evt.SessionID != "" {
 			st.sessionID = evt.SessionID
 		}
@@ -322,6 +327,8 @@ func handleCopilotEvent(evt copilotEvent, st *copilotEventState) []Message {
 	return msgs
 }
 
+// withCopilotExitCode 把「copilot exited with code N」这段退出信息并入错误消息 msg：
+// 若消息为空直接以退出信息为准；若已含同样内容则不重复追加；否则用分号拼接在末尾。
 func withCopilotExitCode(msg string, exitCode int) string {
 	exitMsg := fmt.Sprintf("copilot exited with code %d", exitCode)
 	msg = strings.TrimSpace(msg)
@@ -334,6 +341,13 @@ func withCopilotExitCode(msg string, exitCode int) string {
 	return msg + "; " + exitMsg
 }
 
+// Execute 是 Backend 接口的入口：拿一条用户 prompt 起一个 copilot 进程跑到结束。
+//
+// 流程：先确认可执行文件存在 → 构造带超时的运行上下文 → 拼命令行参数（-p 传 prompt、
+// --output-format json）→ 启动进程并接管它的 stdout（按 JSONL 流式读事件）/stderr（只
+// 保留尾部）→ 主 goroutine 循环解析事件、翻译成 Message 经 msgCh 发出 → 等进程退出后
+// 依据退出原因（超时/取消/正常结束）敲定 finalStatus，汇总 token 用量，把 Session/Result
+// 交给调用方。Result 与 Message 通过两个 channel 返回，支持调用方边等边收流式事件。
 func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	execName := b.cfg.ExecutablePath
 	if execName == "" {
@@ -435,11 +449,10 @@ func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 		b.cfg.Logger.Info("copilot finished", "pid", cmd.Process.Pid, "status", st.finalStatus, "duration", duration.Round(time.Millisecond).String())
 
 		usage := st.resolveUsage()
-		// A run that produced output but no tokens is a silent billing hole:
-		// the daemon skips reporting empty usage, so nothing surfaces anywhere
-		// downstream. This is the current state on Copilot CLI 1.0.77 (see
-		// copilotUsageData), and it went unnoticed until a user reported it —
-		// log it so the next regression is visible from the daemon log alone.
+		// 有产出却没有任何 token 上报，是一个无声的计费漏洞：daemon 会跳过空用量的
+		// 上报，于是下游任何地方都看不到它。Copilot CLI 1.0.77 目前就是这状态（见
+		// copilotUsageData 上的说明），而且一直没被发现，直到有用户反馈——所以这里打
+		// 一条日志，让下一次回归光看 daemon 日志就能露头。
 		if len(usage) == 0 && st.finalStatus == "completed" {
 			b.cfg.Logger.Warn("copilot reported no token usage",
 				"session", st.sessionID,
@@ -460,19 +473,19 @@ func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
-// ── Copilot CLI JSONL event types ──
+// ── Copilot CLI JSONL 事件类型 ──
 //
-// Copilot CLI v1.0.28+ with --output-format json emits JSONL on stdout.
-// Each line is a JSON object with:
+// Copilot CLI v1.0.28+ 配合 --output-format json 会在 stdout 上输出 JSONL。
+// 每行是一个 JSON 对象，结构如下：
 //
-//	{ "type": "dotted.event.name", "data": {...}, "id": "...",
+//	{ "type": "点分事件名", "data": {...}, "id": "...",
 //	  "timestamp": "...", "parentId": "...", "ephemeral": bool }
 //
-// The final line is a synthetic "result" event with top-level fields:
+// 最后一行是程序合成的 "result" 事件，字段放在顶层：
 //
 //	{ "type": "result", "sessionId": "...", "exitCode": 0, "usage": {...} }
 
-// copilotEvent is the envelope for all Copilot JSONL events.
+// copilotEvent 是所有 Copilot JSONL 事件的通用信封。
 type copilotEvent struct {
 	Type      string          `json:"type"`
 	Data      json.RawMessage `json:"data,omitempty"`
@@ -481,23 +494,22 @@ type copilotEvent struct {
 	ParentID  string          `json:"parentId,omitempty"`
 	Ephemeral bool            `json:"ephemeral,omitempty"`
 
-	// Top-level fields on the synthetic "result" event only.
+	// 下面这些只出现在合成的 "result" 事件上（顶层字段）。
 	SessionID string              `json:"sessionId,omitempty"`
 	ExitCode  int                 `json:"exitCode,omitempty"`
 	Usage     *copilotResultUsage `json:"usage,omitempty"`
 }
 
-// copilotSessionStart is data payload for "session.start".
+// copilotSessionStart 是 "session.start" 的 data 载荷。
 type copilotSessionStart struct {
 	SessionID     string `json:"sessionId"`
 	SelectedModel string `json:"selectedModel"`
 }
 
-// copilotAssistantMessage is data payload for "assistant.message".
+// copilotAssistantMessage 是 "assistant.message" 的 data 载荷。
 //
-// OutputTokens is optional in the CLI's own event schema and is the ONLY token
-// field that survives onto the `--output-format json` stream — see the
-// suppression note on copilotUsageData.
+// OutputTokens 在 CLI 自己的事件 schema 里就是可选的，并且是唯一能活着流到
+// `--output-format json` 输出里的 token 字段——详见 copilotUsageData 上被过滤掉的说明。
 type copilotAssistantMessage struct {
 	MessageID     string               `json:"messageId"`
 	Model         string               `json:"model"`
@@ -508,20 +520,18 @@ type copilotAssistantMessage struct {
 	ReasoningText string               `json:"reasoningText,omitempty"`
 }
 
-// copilotUsageData is data payload for "assistant.usage": one record per model
-// API call, carrying the only complete token breakdown the CLI produces.
+// copilotUsageData 是 "assistant.usage" 的 data 载荷：每次模型 API 调用一条记录，
+// 携带 CLI 能产出的唯一一份完整 token 明细。
 //
-// InputTokens INCLUDES the cached tiers; addUsage subtracts them back out. The
-// payload also carries reasoningTokens, deliberately not parsed here: those are
-// a subset of outputTokens, so counting them would double-bill reasoning.
+// InputTokens 是「包含」缓存档位的；addUsage 里会把它们减回去。载荷里还带
+// reasoningTokens，这里有意不解析：它们是 outputTokens 的子集，算上就会把思考部分
+// 重复计费。
 //
-// NOTE (Copilot CLI 1.0.77): the CLI's JSONL writer drops a fixed set of event
-// types before writing stdout, and both "assistant.usage" and
-// "session.shutdown" are on that list — so on a current CLI neither reaches us
-// and Copilot runs report no tokens at all. Everything here is still parsed
-// because older CLIs, and any future build that stops filtering them, deliver
-// real numbers through exactly these events. The `result` event we already
-// parse carries premiumRequests and durations but no token counts.
+// 注意（Copilot CLI 1.0.77）：CLI 的 JSONL 写入器会在写 stdout 前丢弃一组固定的事件
+// 类型，"assistant.usage" 和 "session.shutdown" 都在名单上——所以当前版本的 CLI 下两者
+// 都到不了我们手里，Copilot 运行干脆一份 token 都没有。这里的解析逻辑依然保留，是因为
+// 更老的 CLI、以及任何将来不再过滤这些事件的版本，恰恰是通过这些事件送出真实数字的。
+// 我们已解析的 `result` 事件带的是 premiumRequests 和时长，不含 token 计数。
 type copilotUsageData struct {
 	Model            string `json:"model"`
 	InputTokens      int64  `json:"inputTokens"`
@@ -530,17 +540,17 @@ type copilotUsageData struct {
 	CacheWriteTokens int64  `json:"cacheWriteTokens"`
 }
 
-// copilotShutdownData is data payload for "session.shutdown": session-wide
-// totals keyed by model.
+// copilotShutdownData 是 "session.shutdown" 的 data 载荷：按模型键控的整场会话总量。
 type copilotShutdownData struct {
 	ModelMetrics map[string]copilotShutdownModelMetric `json:"modelMetrics"`
 }
 
+// copilotShutdownModelMetric 是 shutdown 载荷里每个模型条目下再包一层的用量结构。
 type copilotShutdownModelMetric struct {
 	Usage copilotUsageData `json:"usage"`
 }
 
-// copilotToolRequest is one tool invocation inside assistant.message.
+// copilotToolRequest 是 assistant.message 里的一次工具调用。
 type copilotToolRequest struct {
 	ToolCallID       string          `json:"toolCallId"`
 	Name             string          `json:"name"`
@@ -549,13 +559,14 @@ type copilotToolRequest struct {
 	IntentionSummary string          `json:"intentionSummary,omitempty"`
 }
 
-// copilotMessageDelta is data payload for "assistant.message_delta".
+// copilotMessageDelta 是 "assistant.message_delta" 的 data 载荷（流式增量）。
 type copilotMessageDelta struct {
 	MessageID    string `json:"messageId"`
 	DeltaContent string `json:"deltaContent"`
 }
 
-// copilotToolExecComplete is data payload for "tool.execution_complete".
+// copilotToolExecComplete 是 "tool.execution_complete" 的 data 载荷：工具执行完毕的回报，
+// 成功时带 Result，失败时带 Error。
 type copilotToolExecComplete struct {
 	ToolCallID    string             `json:"toolCallId"`
 	Model         string             `json:"model"`
@@ -565,34 +576,37 @@ type copilotToolExecComplete struct {
 	Error         *copilotToolError  `json:"error,omitempty"`
 }
 
+// copilotToolResult 是一次成功工具调用的返回内容；DetailedContent 为可选的长格式说明。
 type copilotToolResult struct {
 	Content         string `json:"content"`
 	DetailedContent string `json:"detailedContent,omitempty"`
 }
 
+// copilotToolError 是一次失败工具调用的错误信息。
 type copilotToolError struct {
 	Message string `json:"message"`
 }
 
-// copilotReasoning is data payload for "assistant.reasoning" / "assistant.reasoning_delta".
+// copilotReasoning 是 "assistant.reasoning" / "assistant.reasoning_delta" 的 data 载荷：
+// Content 是完整一段思考、DeltaContent 是流式增量，二者二选一。
 type copilotReasoning struct {
 	Content      string `json:"content,omitempty"`
 	DeltaContent string `json:"deltaContent,omitempty"`
 }
 
-// copilotSessionError is data payload for "session.error".
+// copilotSessionError 是 "session.error" 的 data 载荷。
 type copilotSessionError struct {
 	ErrorType string `json:"errorType"`
 	Message   string `json:"message"`
 }
 
-// copilotSessionWarning is data payload for "session.warning".
+// copilotSessionWarning 是 "session.warning" 的 data 载荷。
 type copilotSessionWarning struct {
 	WarningType string `json:"warningType"`
 	Message     string `json:"message"`
 }
 
-// copilotResultUsage is the usage on the final "result" line.
+// copilotResultUsage 是收尾 "result" 事件上的用量信息：只含请求档位与耗时，没有 token 计数。
 type copilotResultUsage struct {
 	PremiumRequests    float64             `json:"premiumRequests"`
 	TotalAPIDurationMs int64               `json:"totalApiDurationMs"`
@@ -600,38 +614,43 @@ type copilotResultUsage struct {
 	CodeChanges        *copilotCodeChanges `json:"codeChanges,omitempty"`
 }
 
+// copilotCodeChanges 是 result 事件里关于本次改动的统计。
 type copilotCodeChanges struct {
 	LinesAdded    int      `json:"linesAdded"`
 	LinesRemoved  int      `json:"linesRemoved"`
 	FilesModified []string `json:"filesModified"`
 }
 
-// ── Arg builder ──
+// ── 参数构建 ──
 
-// copilotBlockedArgs are flags hardcoded by the daemon that must not be
-// overridden by user-configured custom_args.
+// copilotBlockedArgs 是 daemon 写死的参数清单，用户配置的 custom_args 不得覆盖它们——
+// 否则用户可能把模式、权限开关这些安全关键的参数改掉。
 var copilotBlockedArgs = map[string]blockedArgMode{
 	"-p":                blockedWithValue,
 	"--output-format":   blockedWithValue,
-	"--allow-all":       blockedStandalone, // tools + paths + URLs
+	"--allow-all":       blockedStandalone, // 放开全部工具 + 路径 + URL 的权限
 	"--allow-all-tools": blockedStandalone,
 	"--allow-all-paths": blockedStandalone,
 	"--allow-all-urls":  blockedStandalone,
 	"--yolo":            blockedStandalone,
 	"--no-ask-user":     blockedStandalone,
-	"--resume":          blockedWithValue,  // managed via ExecOptions.ResumeSessionID
-	"--acp":             blockedStandalone, // prevent switching to ACP mode
+	"--resume":          blockedWithValue,  // 会话续跑走 ExecOptions.ResumeSessionID 统一管理
+	"--acp":             blockedStandalone, // 防止切到 ACP 模式
 }
 
-// buildCopilotArgs assembles the argv for a one-shot copilot invocation.
+// buildCopilotArgs 拼出一次「跑完即退」的 copilot 调用的 argv。
+//
+// 目标是：
 //
 //	copilot -p "<prompt>" --output-format json --allow-all --no-ask-user
 //	        [--resume <session-id>] [--model <model>]
+//
+// 其中自定义参数需经 filterCustomArgs 过滤，剔除上面被 daemon 锁定不允许覆盖的项。
 func buildCopilotArgs(prompt string, opts ExecOptions, logger *slog.Logger) []string {
 	args := []string{
 		"-p", prompt,
 		"--output-format", "json",
-		"--allow-all", // tools + paths + URLs — full headless mode
+		"--allow-all", // 工具 + 路径 + URL 全放行 —— 完整无人值守模式
 		"--no-ask-user",
 	}
 	if opts.Model != "" {

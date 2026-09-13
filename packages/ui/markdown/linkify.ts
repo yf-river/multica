@@ -1,69 +1,74 @@
 import LinkifyIt from 'linkify-it'
 
+// 本文件负责 URL 与文件路径的检测：用 linkify-it 识别 URL/邮箱，用自定义正则识别本地文件路径，并提供给 markdown 预处理做自动链接。
 /**
- * Linkify - URL and file path detection for markdown preprocessing
+ * Linkify：面向 markdown 预处理的 URL 与文件路径检测。
  *
- * Uses linkify-it (12M downloads/week) for battle-tested URL detection,
- * plus custom regex for local file paths.
+ * 用经过大规模验证的 linkify-it 做 URL 检测，另加自定义正则识别本地文件路径。
  */
 
-// Keep fuzzy detection enabled so linkify-it can recognize `www.` URLs.
-// collectLinkifyMatches applies the stricter shared product policy below.
+// 保留模糊检测，让 linkify-it 能识别 `www.` 开头的 URL。
+// 下面 collectLinkifyMatches 会再套用更严格的共享产品策略。
 const linkify = new LinkifyIt()
 
-// Common source/config file extensions used by the file-path detector.
+// 文件路径检测器用到的常见源码/配置文件扩展名。
 const FILE_EXTENSIONS =
   'ts|tsx|js|jsx|mjs|cjs|md|json|yaml|yml|py|go|rs|css|scss|less|html|htm|txt|log|sh|bash|zsh|swift|kt|java|c|cpp|h|hpp|rb|php|xml|toml|ini|cfg|conf|env|sql|graphql|vue|svelte|astro|prisma|dockerfile|makefile|gitignore'
 
-// File path regex - detects /path, ~/path, ./path with common extensions
-// Matches paths that start with /, ~/, or ./ followed by path chars and a file extension
+// 文件路径正则：检测以 /、~/ 或 ./ 开头、后接路径字符和文件扩展名的路径。
 const FILE_PATH_REGEX = new RegExp(
   `(?:^|[\\s([{<])((\\/|~\\/|\\.\\/)[\\w\\-./@]+\\.(?:${FILE_EXTENSIONS}))(?=[\\s)\\]}.,;:!?>]|$)`,
   'gi'
 )
 
-// CJK full-width punctuation that should terminate a URL.
-// linkify-it only treats ASCII punctuation as URL boundaries, so in Chinese /
-// Japanese text a URL followed by e.g. "。" gets the punctuation and every
-// character up to the next whitespace swallowed into the href. We truncate the
-// detected URL at the first occurrence of any of these characters. Character
-// set mirrors the fix applied in mattermost/marked#22.
+// 应作为 URL 结尾的中日韩全角标点。
+// linkify-it 只把 ASCII 标点当作 URL 边界，所以在中文/日文里，URL 后面跟着
+// 如 "。" 时会把标点和直到下一个空白的所有字符都吞进 href。我们在这里截断
+// 到这些字符第一次出现的位置。字符集与 mattermost/marked#22 的修复保持一致。
 const CJK_URL_TERMINATOR_REGEX =
   /[！-／：-＠［-｀｛-～、。「-】]/
 
-// Markdown inline-formatting delimiters that linkify-it counts as URL characters
-// but which, at the very end of a bare URL, are almost always the author closing
-// an emphasis / strikethrough span (`**url**`, `*url*`, `~~url~~`) rather than
-// part of the URL. We drop a trailing run of them so the surrounding markdown
-// still parses — mirroring GFM's own autolink trailing-punctuation trim. A URL
-// that genuinely ends in `*` / `~` loses that character from the link, exactly
-// as it does on GitHub (MUL-4242).
+// linkify-it 会当作 URL 字符、但实际上在裸 URL 末尾几乎总是作者用来闭合强调/
+// 删除线标记（`**url**`、`*url*`、`~~url~~`）的 markdown 行内格式分隔符。我们
+// 去掉末尾连续的一串它们，让外层 markdown 仍能正常解析——与 GFM 自身的自动链接
+// 尾标点裁剪行为一致。一个真的以 `*`/`~` 结尾的 URL 会失去该字符，和 GitHub 上
+// 的行为完全相同（MUL-4242）。
 const TRAILING_MD_DELIMITER = /[*~]+$/
 
+/**
+ * 检测到的链接记录。
+ */
 interface DetectedLink {
+  /** 链接类型：URL / 邮箱 / 文件 */
   type: 'url' | 'email' | 'file'
+  /** 链接显示文本 */
   text: string
+  /** 链接目标地址 */
   url: string
+  /** 在原文中的起始下标 */
   start: number
+  /** 在原文中的结束下标 */
   end: number
 }
 
+/**
+ * 代码范围（一段区间），用于标记代码块/行内代码/公式的位置。
+ */
 export interface CodeRange {
   start: number
   end: number
 }
 
 /**
- * Product policy for automatic external links.
+ * 自动外链的产品策略。
  *
- * Detectors call this only after validating a candidate. This function decides
- * which validated text forms are safe to turn into a link without an explicit
- * user action: HTTP(S) URLs, `www.` URLs, and email addresses. In particular,
- * all other scheme-less domains stay plain text, which also prevents filenames
- * such as `plan.md` from being mistaken for websites.
+ * 检测器只在候选通过校验后才会调用它。本函数决定哪些已验证的文本形态可以
+ * 在无需用户显式操作时安全地转成链接：HTTP(S) URL、`www.` URL 和邮箱地址。
+ * 特别是，其它不带协议的域名一律保持纯文本，这也避免把 `plan.md` 这类文件名
+ * 误判成网站。
  *
- * Keep this predicate shared by the editor and markdown renderer so typing,
- * paste, and read-only display cannot drift again.
+ * 让编辑器和 markdown 渲染器共用这个判断，保证输入、粘贴和只读展示三处行为
+ * 不会再次漂移。
  */
 export function shouldAutoLink(value: string): boolean {
   return (
@@ -74,20 +79,23 @@ export function shouldAutoLink(value: string): boolean {
 }
 
 /**
- * Find all code block and inline code ranges in text
- * These ranges should be excluded from link detection
+ * 找出文本里所有代码块、行内代码、数学公式的区间。
+ * 这些区间应在链接检测时被排除。
+ *
+ * @param text 原文
+ * @returns 代码/公式区间数组
  */
 export function findCodeRanges(text: string): CodeRange[] {
   const ranges: CodeRange[] = []
 
-  // Find fenced code blocks (```...```)
+  // 找围栏代码块（```...```）
   const fencedRegex = /```[\s\S]*?```/g
   let match
   while ((match = fencedRegex.exec(text)) !== null) {
     ranges.push({ start: match.index, end: match.index + match[0].length })
   }
 
-  // Find display math blocks ($$...$$)
+  // 找显示数学公式块（$$...$$）
   const displayMathRegex = /\$\$[\s\S]*?\$\$/g
   while ((match = displayMathRegex.exec(text)) !== null) {
     const pos = match.index
@@ -97,7 +105,7 @@ export function findCodeRanges(text: string): CodeRange[] {
     }
   }
 
-  // Find inline math ($...$)
+  // 找行内数学公式（$...$）
   const inlineMathRegex = /(?<!\$)\$(?!\$)([^$\n]+)\$(?!\$)/g
   while ((match = inlineMathRegex.exec(text)) !== null) {
     const pos = match.index
@@ -107,12 +115,12 @@ export function findCodeRanges(text: string): CodeRange[] {
     }
   }
 
-  // Find inline code (`...`)
-  // But skip escaped backticks and code inside fenced blocks
+  // 找行内代码（`...`）
+  // 但跳过转义的反引号，以及围栏块内部的代码
   const inlineRegex = /(?<!`)`(?!`)([^`\n]+)`(?!`)/g
   while ((match = inlineRegex.exec(text)) !== null) {
     const pos = match.index
-    // Check if this is inside a fenced block or math block
+    // 检查是否在围栏块或公式块内部
     const insideOther = ranges.some((r) => pos >= r.start && pos < r.end)
     if (!insideOther) {
       ranges.push({ start: pos, end: pos + match[0].length })
@@ -123,7 +131,7 @@ export function findCodeRanges(text: string): CodeRange[] {
 }
 
 /**
- * Check if a position is inside any code range
+ * 判断某个位置是否落在任一代码区间内。
  */
 export function isInsideCode(pos: number, ranges: CodeRange[]): boolean {
   return ranges.some((r) => pos >= r.start && pos < r.end)
@@ -174,8 +182,8 @@ function findInlineLinkEnd(text: string, openParenIndex: number): number {
 }
 
 /**
- * Find existing markdown link/image spans so auto-linkification does not create
- * nested links inside their labels or destinations.
+ * 找出已有 markdown 链接/图片的区间，避免自动链接在其标签或目标地址里
+ * 再套一层链接。
  */
 export function findMarkdownLinkRanges(text: string): CodeRange[] {
   const ranges: CodeRange[] = []
@@ -212,20 +220,20 @@ export function findMarkdownLinkRanges(text: string): CodeRange[] {
 }
 
 /**
- * Check if a link at given position is already a markdown link
- * Looks for patterns like [text](url) or [text][ref]
+ * 判断给定位置的链接是否已经是一个 markdown 链接。
+ * 会识别 [text](url) 或 [text][ref] 这类形态。
  */
 function isAlreadyLinked(text: string, linkStart: number, linkEnd: number): boolean {
-  // Check if preceded by ]( which indicates we're inside a markdown link href
-  // Pattern: [text](URL) - we're checking if URL is our link
+  // 检查前面是否紧跟着 ](，说明我们处在 markdown 链接的目标地址里。
+  // 形态：[text](URL)——我们在判断 URL 是不是我们的链接。
   const before = text.slice(Math.max(0, linkStart - 2), linkStart)
   if (before.endsWith('](')) return true
 
-  // Check if preceded by ][ for reference links
+  // 检查前面是否紧跟着 ][，对应引用式链接。
   if (before.endsWith('][')) return true
 
-  // Check if the link text is wrapped in []
-  // Pattern: [URL](href) - URL is being used as link text
+  // 检查链接文本是否被 [] 包裹。
+  // 形态：[URL](href)——URL 被当作链接文本使用。
   const charBefore = text[linkStart - 1]
   const charAfter = text[linkEnd]
   if (charBefore === '[' && charAfter === ']') return true
@@ -234,7 +242,7 @@ function isAlreadyLinked(text: string, linkStart: number, linkEnd: number): bool
 }
 
 /**
- * Check if ranges overlap
+ * 判断两个区间是否重叠。
  */
 export function rangesOverlap(
   a: { start: number; end: number },
@@ -244,12 +252,12 @@ export function rangesOverlap(
 }
 
 /**
- * Run linkify-it on `text` and push normalized link records into `out`,
- * shifted by `offset`. Two boundary corrections linkify-it doesn't make itself:
- * - CJK punctuation ends a URL (linkify-it only breaks on ASCII); when it merged
- *   several URLs across CJK punctuation we truncate and re-scan the tail; and
- * - a trailing run of markdown delimiters (`*`, `~`) is dropped from the URL so
- *   `**url**` keeps its closing emphasis marker outside the link.
+ * 对 `text` 运行 linkify-it，把规范化后的链接记录压入 `out`，并按 `offset` 偏移。
+ * 这里做了两处 linkify-it 自身不做的边界修正：
+ * - 中日韩标点会结束一个 URL（linkify-it 只在 ASCII 处断开）；当它跨中日韩标点
+ *   吞并了多个 URL 时，我们截断并重新扫描尾部；
+ * - 从 URL 末尾去掉一串 markdown 分隔符（`*`、`~`），让 `**url**` 的闭合强调
+ *   标记留在链接外面。
  */
 function collectLinkifyMatches(text: string, offset: number, out: DetectedLink[]): void {
   const matches = linkify.match(text)
@@ -257,21 +265,20 @@ function collectLinkifyMatches(text: string, offset: number, out: DetectedLink[]
 
   for (const match of matches) {
     const cjkIdx = match.text.search(CJK_URL_TERMINATOR_REGEX)
-    if (cjkIdx === 0) continue // match starts with CJK punct — skip
+    if (cjkIdx === 0) continue // 匹配以中日韩标点开头——跳过
 
     const truncate = cjkIdx > 0
-    // URL text up to the first CJK terminator, then minus a trailing markdown
-    // delimiter run (e.g. the closing `**` of `**url**`). matchText stays a
-    // prefix of match.text, so the link end is just its length past match.index.
+    // URL 文本截到第一个中日韩标点为止，再去掉末尾一串 markdown 分隔符
+    // （如 `**url**` 的闭合 `**`）。matchText 始终是 match.text 的前缀，
+    // 所以链接结束位置就是 match.index 加上它的长度。
     const matchText = (truncate ? match.text.slice(0, cjkIdx) : match.text).replace(
       TRAILING_MD_DELIMITER,
       ''
     )
 
     if (matchText.length > 0 && shouldAutoLink(matchText)) {
-      // When we trimmed the raw match, rebuild the href from the scheme prefix
-      // linkify-it added (e.g. "http://" / "mailto:") plus the trimmed text;
-      // otherwise keep linkify-it's normalized url as-is.
+      // 当我们裁剪过原始匹配时，用 linkify-it 加上的协议前缀（如 "http://" /
+      // "mailto:"）加上裁剪后的文本重建 href；否则沿用 linkify-it 规范化后的 url。
       const trimmed = matchText.length !== match.text.length
       const schemePrefix = match.url.slice(0, match.url.length - match.text.length)
       const matchUrl =
@@ -291,8 +298,8 @@ function collectLinkifyMatches(text: string, offset: number, out: DetectedLink[]
     }
 
     if (truncate) {
-      // Rescan the tail after the CJK punct — linkify-it had greedily swallowed
-      // it, so any additional URLs after the punct were never emitted.
+      // 重新扫描中日韩标点之后的尾部——linkify-it 贪婪地把它吞进去了，
+      // 所以标点后可能存在的其它 URL 从未被输出。
       const tailStart = match.index + cjkIdx + 1
       collectLinkifyMatches(text.slice(tailStart), offset + tailStart, out)
       return
@@ -301,28 +308,31 @@ function collectLinkifyMatches(text: string, offset: number, out: DetectedLink[]
 }
 
 /**
- * Detect all links (URLs, emails, file paths) in text.
+ * 检测文本里所有链接（URL、邮箱、文件路径）。
+ *
+ * @param text 原文
+ * @returns 检测到的链接数组（按位置排序）
  */
 export function detectLinks(text: string): DetectedLink[] {
   const links: DetectedLink[] = []
 
-  // 1. Detect URLs and emails with linkify-it, applying boundary corrections.
+  // 1. 用 linkify-it 检测 URL 和邮箱，并做边界修正。
   collectLinkifyMatches(text, 0, links)
 
-  // 2. Detect file paths with custom regex
-  // Reset regex state
+  // 2. 用自定义正则检测文件路径
+  // 重置正则状态
   FILE_PATH_REGEX.lastIndex = 0
   let fileMatch
   while ((fileMatch = FILE_PATH_REGEX.exec(text)) !== null) {
     const path = fileMatch[1]
-    if (!path) continue // Skip if no capture group
+    if (!path) continue // 没有捕获组则跳过
 
-    // Calculate actual start position (after any leading whitespace/punctuation)
+    // 计算实际起始位置（跳过前导空白/标点）
     const fullMatch = fileMatch[0]
     const pathOffset = fullMatch.indexOf(path)
     const start = fileMatch.index + pathOffset
 
-    // Check for overlaps with URL matches (URLs take precedence)
+    // 检查是否与 URL 匹配重叠（URL 优先）
     const pathRange = { start, end: start + path.length }
     const overlapsUrl = links.some((link) => rangesOverlap(pathRange, link))
     if (overlapsUrl) continue
@@ -330,27 +340,29 @@ export function detectLinks(text: string): DetectedLink[] {
     links.push({
       type: 'file',
       text: path,
-      url: path, // File paths are passed as-is to onFileClick handler
+      url: path, // 文件路径原样传给 onFileClick 处理
       start,
       end: start + path.length
     })
   }
 
-  // Sort by position
+  // 按位置排序
   return links.sort((a, b) => a.start - b.start)
 }
 
 /**
- * Preprocess text to convert raw URLs and file paths into markdown links.
- * Skips code blocks and already-linked content.
+ * 预处理文本，把原始 URL 和文件路径转成 markdown 链接。
+ * 会跳过代码块和已经链接过的内容。
  *
- * Shared by the Tiptap editor and the read-only react-markdown renderers, so
- * both surfaces linkify identically. Trailing markdown delimiters are excluded
- * from the URL (see collectLinkifyMatches), which keeps `**url**` bold and its
- * link clean (MUL-4242).
+ * Tiptap 编辑器和只读的 react-markdown 渲染器共用此函数，保证两个界面
+ * 的链接化行为一致。URL 末尾的 markdown 分隔符会被排除（见
+ * collectLinkifyMatches），这样 `**url**` 能保持加粗、链接也干净（MUL-4242）。
+ *
+ * @param text 原始文本
+ * @returns 链接化后的 markdown 文本
  */
 export function preprocessLinks(text: string): string {
-  // Quick check - if no potential links, return early
+  // 快速检查——没有潜在链接就直接返回
   if (!linkify.pretest(text) && !/[~/.]\//.test(text)) {
     return text
   }
@@ -361,38 +373,38 @@ export function preprocessLinks(text: string): string {
 
   if (links.length === 0) return text
 
-  // Build result, converting raw links to markdown links
+  // 构建结果，把原始链接转成 markdown 链接
   let result = ''
   let lastIndex = 0
 
   for (const link of links) {
-    // Skip if inside code block
+    // 在代码块内则跳过
     if (isInsideCode(link.start, codeRanges)) continue
 
-    // Skip if this match is inside an existing markdown link or image.
+    // 在已有 markdown 链接或图片内则跳过。
     if (markdownLinkRanges.some((range) => rangesOverlap(link, range))) continue
 
-    // Skip if already a markdown link
+    // 已经是 markdown 链接则跳过
     if (isAlreadyLinked(text, link.start, link.end)) continue
 
-    // Add text before this link
+    // 追加链接之前的文本
     result += text.slice(lastIndex, link.start)
 
-    // Convert to markdown link
+    // 转成 markdown 链接
     result += `[${link.text}](${link.url})`
 
     lastIndex = link.end
   }
 
-  // Add remaining text
+  // 追加剩余文本
   result += text.slice(lastIndex)
 
   return result
 }
 
 /**
- * Test if text contains any detectable links
- * Useful for optimization - skip preprocessing if no links present
+ * 测试文本里是否含有任何可检测的链接。
+ * 用于优化——没有链接时跳过预处理。
  */
 export function hasLinks(text: string): boolean {
   return linkify.pretest(text) || /[~/.]\/[\w]/.test(text)

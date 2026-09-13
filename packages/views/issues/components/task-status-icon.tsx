@@ -1,11 +1,15 @@
+// 本文件：TaskStatusIcon —— 单次代理运行（AgentTask）的终态图标。
+// 由执行日志行与用量详情对话框共用，让"失败的运行"无论出现在哪都带同一记号。
+// 非终态状态不渲染任何图形：那些行挂着实时计时器或状态文字，
+// 旁边再放个图标会读成第二个、且相互矛盾的状态。
+
 import { Ban, CheckCircle2, XCircle } from "lucide-react";
 import type { AgentTask } from "@multica/core/types";
 
-// Terminal-status glyph for one agent run. Shared by the execution log rows
-// and the usage-detail dialog so a failed run carries the same mark wherever
-// it is listed. Non-terminal statuses render nothing: those rows carry a live
-// timer or a status word instead, and a glyph next to either reads as a
-// second, contradictory status.
+/**
+ * 代理运行终态图标：completed→对勾（成功色）、failed→叉（危险色）、
+ * cancelled→禁用斜杠（弱化色）；其余进行中/排队等状态返回 null（不渲染）。
+ */
 export function TaskStatusIcon({ status }: { status: AgentTask["status"] }) {
   switch (status) {
     case "completed":

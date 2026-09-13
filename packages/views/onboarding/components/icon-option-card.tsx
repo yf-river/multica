@@ -1,21 +1,20 @@
 "use client";
 
+// 问卷选项卡片：带图标/Logo/Emoji 的选项胶囊（单选或多选），以及选中后内嵌
+// 自由文本输入框的「其他」变体。由「关于你」引导步骤与工作区源回填问卷共用。
 import type { ReactNode } from "react";
 import { Check } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 
+/** 「其他」选项输入框允许的最大字符数（80），供本组件及调用方共用。 */
 const OTHER_INPUT_MAX_LENGTH = 80;
 
 /**
- * One option in a questionnaire card grid. `slug` is the persisted
- * enum value; `icon` is a React node (lucide icon, brand SVG, or emoji
- * span); `label` is the localized string already resolved by the
- * caller. `isOther` flips this card into a free-text input row.
- *
- * Shared by the About-you onboarding step and the workspace
- * source-backfill prompt, which both render their options through the
- * cards below.
+ * 问卷卡片网格里一个选项的数据描述。`slug` 是真正持久化到后端的枚举值；
+ * `icon` 是要显示在前面的 React 节点（lucide 图标、品牌 SVG 或 Emoji 块）；
+ * `label` 是由调用方预先解析好的本地化文案。`isOther` 让这张卡片切换成
+ * 「自由输入」那一行。
  */
 export interface QuestionOption {
   slug: string;
@@ -25,19 +24,21 @@ export interface QuestionOption {
 }
 
 /**
- * A questionnaire option, rendered as a wrapping chip.
+ * 一个问卷选项，渲染成可自动换行的胶囊按钮。
  *
- * These used to be full-width bordered cards in a 4-column grid. Inside the
- * onboarding column that grid had nowhere to go, and stacking 18 options as
- * full-width rows turned one screen into a long scroll. Chips are the block's
- * own answer for a many-option question, and they wrap to fit whatever width
- * the column has.
+ * 这些选项以前是四列网格里的通栏带边框卡片。在引导流程的窄列里网格没有容身之处，
+ * 而把 18 个选项堆成整行又会让一屏内容变成一次长滚动。胶囊就是这种「选项很多」
+ * 题型自己的答案：它们会自动换行来适配列宽。
  *
- * `mode` controls ARIA role: `"radio"` for single-select questions
- * (role, source), `"checkbox"` for multi-select (use case). Visual
- * style is identical — the tinted border already conveys "selected";
- * multi-select chips just additionally don't deselect other chips when
- * clicked, which is the parent's responsibility.
+ * `mode` 控制无障碍角色：单选问题用 `"radio"`（如 role、source），多选用
+ * `"checkbox"`（如 use case）。视觉上两者完全一致——高亮的描边本身已表达
+ * 「已选中」；多选胶囊的区别只是点击时不会取消其他胶囊，这是父组件的职责。
+ *
+ * @param icon 选项前面的图标
+ * @param label 选项文案
+ * @param selected 是否选中
+ * @param onSelect 点击时的回调
+ * @param mode 单选 radio / 多选 checkbox（仅影响无障碍语义）
  */
 export function IconOptionCard({
   icon,
@@ -78,10 +79,19 @@ export function IconOptionCard({
 }
 
 /**
- * "Other" variant — the same chip, but when selected its label slot becomes a
- * borderless input that inherits the chip's typography, so the row keeps the
- * same weight as its neighbours instead of jumping to a full-width field.
- * Auto-focuses on open; Enter triggers the parent's `onConfirm`.
+ * 「其他」变体——还是同一个胶囊，但选中后它的文案位置变成输入框：输入框无边框、
+ * 沿用胶囊本身的字体，所以这行和旁边的选项一样重，而不是突然跳成一条通栏输入域。
+ * 打开时自动聚焦；按 Enter 触发父组件的 `onConfirm`。
+ *
+ * @param icon 选项前面的图标
+ * @param label 未选中时显示的文案
+ * @param selected 是否选中
+ * @param onSelect 点击选中的回调（仅在未选中时触发）
+ * @param otherValue 输入框当前内容
+ * @param onOtherChange 输入内容变化回调
+ * @param onConfirm 按 Enter 确认时的回调
+ * @param placeholder 输入框占位文案（同时用作无障碍标签）
+ * @param mode 单选 radio / 多选 checkbox（仅影响无障碍语义）
  */
 export function IconOtherOptionCard({
   icon,
@@ -149,4 +159,5 @@ export function IconOtherOptionCard({
   );
 }
 
+/** 「其他」输入框的最大长度，随组件一并导出给需要保持一致上限的调用方。 */
 export { OTHER_INPUT_MAX_LENGTH };

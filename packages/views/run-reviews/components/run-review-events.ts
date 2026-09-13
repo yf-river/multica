@@ -1,3 +1,8 @@
+// 运行复盘「交互事件」的数据整理层：把执行树里的任务消息、trace 事件、工具调用
+// 链与时间线节点统一转成一行行的可读事件（RunReviewEventRowData），并支持过滤、
+// 搜索、按任务分组，以及把工具/命令输出翻译成人类可读语义（分类、标题、结果）。
+// 纯函数，不涉及 UI。
+
 import type {
   AgentTask,
   IssueExecutionNode,
@@ -19,11 +24,14 @@ import {
   truncateText,
 } from "./run-review-format";
 
+/** 按搜索词过滤事件行（大小写不敏感的子串匹配，匹配到任一字段即可）。 */
 export function filterRunReviewEventRows(eventRows: RunReviewEventRowData[], query: string): RunReviewEventRowData[] {
   const q = query.trim().toLowerCase();
   if (!q) return eventRows;
   return eventRows.filter((event) => runReviewEventSearchText(event).toLowerCase().includes(q));
 }
+
+/** 过滤掉「不值得展示」的事件，并去掉重复的用户输入快照（同一内容不重复刷屏）。 */
 export function filterVisibleRunReviewEventRows(eventRows: RunReviewEventRowData[]): RunReviewEventRowData[] {
   const seenUserInputSnapshots = new Set<string>();
   return eventRows.filter((event) => {
@@ -71,6 +79,7 @@ function isDuplicateVisibleUserInputSnapshot(event: RunReviewEventRowData, seen:
   return false;
 }
 
+// 这些 trace 类型过于嘈杂（如入队/分发/开始/完成、用量上报），正常状态下不展示。
 const RUN_REVIEW_NOISY_TRACE_EVENT_TYPES = new Set([
   "task.queued",
   "task.dispatched",
@@ -79,6 +88,7 @@ const RUN_REVIEW_NOISY_TRACE_EVENT_TYPES = new Set([
   "llm.usage_reported",
 ]);
 
+// 时间线节点里值得单独展示成事件行的类型（人工确认、子任务引用、来源抓取）。
 const RUN_REVIEW_VISIBLE_NODE_TYPES = new Set([
   "human_confirmation",
   "child_issue_ref",
@@ -102,6 +112,7 @@ function runReviewEventSearchText(event: RunReviewEventRowData) {
   ].filter(Boolean).join(" ");
 }
 
+/** 一条已排版好的交互事件行：UI 展示与搜索/导出的最小单元。 */
 export interface RunReviewEventRowData {
   id: string;
   kind: "message" | "trace" | "tool" | "node";
@@ -124,6 +135,7 @@ export interface RunReviewEventRowData {
   linkedRawPayloads?: Array<{ label: string; payload: unknown }>;
 }
 
+/** 一组交互事件（通常对应一次任务或一个系统来源），带时间范围与聚合指标。 */
 export interface RunReviewEventGroupData {
   key: string;
   label: string;
@@ -137,6 +149,10 @@ export interface RunReviewEventGroupData {
   outcome: string;
 }
 
+/**
+ * 把事件行按「任务 or 系统来源」分组，并给每组算时间范围 / Token 合计 / 严重级。
+ * 带 taskId 的按任务归组；无任务的系统事件按来源/对象归组。
+ */
 export function buildRunReviewEventGroups(
   eventRows: RunReviewEventRowData[],
   taskLabelById: Map<string, string> = new Map(),
@@ -178,6 +194,7 @@ export function buildRunReviewEventGroups(
     .toSorted((left, right) => eventGroupSortTime(left) - eventGroupSortTime(right) || left.label.localeCompare(right.label));
 }
 
+/** 从时间线节点建立「任务 id → 可读标题」映射，供分组时给任务组起名。 */
 export function buildEventTaskLabelById(timelineNodes: IssueTimelineNode[]) {
   const labels = new Map<string, string>();
   for (const node of timelineNodes) {
@@ -239,6 +256,10 @@ function formatEventGroupTimeRange(startMs: number | null, endMs: number | null)
   return `${formatDateTime(startMs)} - ${formatDateTime(endMs)}`;
 }
 
+/**
+ * 把整棵执行树展开成一条条事件行：任务消息、trace 事件、工具调用链都会独立成行；
+ * 工具调用链对应「use/result」消息会被合并进链事件里避免重复。最后按时间倒序排。
+ */
 export function buildRunReviewEventRows(
   tree: IssueExecutionTreeResponse | undefined,
   timelineNodes: IssueTimelineNode[],
@@ -288,6 +309,7 @@ export function buildRunReviewEventRows(
 function toolMessageKey(taskId: string, seq: number) {
   return `${taskId}:${seq}`;
 }
+/** 深度优先展开执行树，取回所有节点。 */
 function flattenExecutionNodes(tree: IssueExecutionTreeResponse | undefined): IssueExecutionNode[] {
   if (!tree) return [];
   const result: IssueExecutionNode[] = [];
@@ -298,6 +320,7 @@ function flattenExecutionNodes(tree: IssueExecutionTreeResponse | undefined): Is
   walk(tree.root);
   return result;
 }
+/** 从执行树里拍平出所有 AgentTask 列表。 */
 export function flattenExecutionTasks(tree: IssueExecutionTreeResponse | undefined): AgentTask[] {
   return flattenExecutionNodes(tree).flatMap((node) => node.tasks ?? []);
 }

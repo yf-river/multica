@@ -1,10 +1,14 @@
+// 本文件实现「工作区感知」的持久化命名空间：记录当前工作区、按工作区 slug
+// 给存储 key 加命名空间、订阅 slug 变化，并在切换工作区时让各持久化 store
+// 重新水合。
+
 import type { StateStorage } from "zustand/middleware";
 import type { StorageAdapter } from "../types/storage";
 
-// Paired module vars — always set/cleared together by the workspace layout.
-// _currentSlug is the primary identifier (matches the URL segment).
-// _currentWsId is derived (from the React Query workspace list) and used for
-// query keys and path-embedded API calls where UUID is required.
+// 成对出现的模块级变量——由工作区 layout 总是同时设置/清除。
+// _currentSlug 是主标识（与 URL 段一致）。
+// _currentWsId 是派生值（来自 React Query 工作区列表），在需要 UUID 的
+// query key 与路径内嵌 API 调用里使用。
 let _currentSlug: string | null = null;
 let _currentWsId: string | null = null;
 
@@ -14,27 +18,24 @@ let _pendingNotify = false;
 let _pendingRehydrate = false;
 
 /**
- * Update the current workspace identity. This is the single source of truth
- * for "which workspace is active"; everything downstream (WS connection,
- * persist namespace, cache-key derivation) follows from here.
+ * 更新当前工作区身份。这是「哪个工作区处于激活」的唯一真源；下游一切
+ * （WS 连接、持久化命名空间、缓存 key 推导）都由此而来。
  *
- * If the slug actually changed, two side effects fire:
- *   1. Subscribers are notified (e.g. WSProvider reconnects).
- *   2. All registered persist stores rehydrate from the new slug's namespace.
+ * 若 slug 真的变了，会触发两个副作用：
+ *   1. 通知订阅者（例如 WSProvider 重新连接）。
+ *   2. 所有已注册的持久化 store 从新 slug 的命名空间重新水合。
  *
- * Both side effects are idempotent on slug-equality: repeat calls with the
- * same slug are a pure no-op. This matters on desktop, where N tabs each
- * mount their own WorkspaceRouteLayout and each one naively tries to sync;
- * only the first call for a given slug does real work.
+ * 两个副作用在「slug 相等」时幂等：同一 slug 的重复调用是纯空操作。这在
+ * 桌面端很重要——那里 N 个标签页各自挂载自己的 WorkspaceRouteLayout、各自
+ * 天真地尝试同步；只有对给定 slug 的第一次调用做真活。
  *
- * Both side effects are deferred to a microtask because zustand persist
- * rehydrate + subscriber notifications both end up calling setState(), and
- * React 19 forbids "cross-component updates during render".
+ * 两个副作用都推迟到微任务执行：zustand persist 的水合与订阅通知最终都会调
+ * setState()，而 React 19 禁止「渲染期间跨组件更新」。
  */
 export function setCurrentWorkspace(slug: string | null, wsId: string | null) {
   if (_currentSlug === slug) {
-    // Slug unchanged: nothing to rehydrate, nothing to notify. Accept a
-    // (possibly) updated wsId for consumers that read the UUID mirror.
+    // slug 没变：没什么要水合的、没什么要通知的。接受（可能更新过的）wsId，
+    // 供读取 UUID 镜像的消费方使用。
     _currentWsId = wsId;
     return;
   }
@@ -63,19 +64,19 @@ export function setCurrentWorkspace(slug: string | null, wsId: string | null) {
   }
 }
 
-/** Current workspace slug (from URL). */
+/** 当前工作区 slug（来自 URL）。 */
 export function getCurrentSlug(): string | null {
   return _currentSlug;
 }
 
-/** Current workspace UUID (derived from slug + workspace list cache). */
+/** 当前工作区 UUID（由 slug + 工作区列表缓存推导）。 */
 export function getCurrentWsId(): string | null {
   return _currentWsId;
 }
 
 /**
- * Subscribe to changes of the current workspace slug. Returns an unsubscribe
- * function. Designed for React's `useSyncExternalStore` (WSProvider reconnect).
+ * 订阅当前工作区 slug 的变化。返回退订函数。为 React 的 `useSyncExternalStore`
+ * 设计（WSProvider 重连）。
  */
 export function subscribeToCurrentSlug(
   fn: (slug: string | null) => void,
@@ -86,22 +87,20 @@ export function subscribeToCurrentSlug(
   };
 }
 
-/** Register a persist store's rehydrate function to be called on workspace switch. */
+/** 注册某持久化 store 的水合函数，供切换工作区时调用。 */
 export function registerForWorkspaceRehydration(fn: () => void) {
   _rehydrateFns.push(fn);
 }
 
 /**
- * Storage that automatically namespaces keys with the current workspace slug.
- * Reads _currentSlug at call time, so it follows workspace switches dynamically.
+ * 会自动用当前工作区 slug 给 key 加命名空间的存储。读取/写入时实时取
+ * `_currentSlug`，因此会动态跟随工作区切换。
  *
- * When no workspace is active (e.g. zustand persist's initial hydration before
- * WorkspaceRouteLayout has called setCurrentWorkspace, or a setter firing from
- * a child component's mount-effect before the parent layout's effect has run),
- * reads return null and writes are dropped — explicitly NOT a fallback to the
- * un-namespaced bare key, which used to leak workspace-scoped data across
- * workspaces. Persisted stores get a real read once setCurrentWorkspace
- * triggers their registered rehydrate fn.
+ * 没有工作区激活时（例如 WorkspaceRouteLayout 调 setCurrentWorkspace 之前
+ * zustand persist 的首次水合，或子组件 mount-effect 里的 setter 早于父 layout
+ * effect 运行），读取返回 null、写入被丢弃——刻意不落到「无命名空间的裸 key」，
+ * 那会把工作区范围数据跨工作区泄漏。持久化 store 在 setCurrentWorkspace 触发
+ * 它们注册的水合函数后会读到真数据。
  */
 export function createWorkspaceAwareStorage(adapter: StorageAdapter): StateStorage {
   return {

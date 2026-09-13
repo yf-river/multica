@@ -1,5 +1,7 @@
 "use client";
 
+// 本地目录资源的「执行模式」选择弹窗：在「原地执行（改动直接出现在工作副本）」
+// 与「worktree 分支执行（改动进分支、由你审）」之间二选一。
 import { useEffect, useState } from "react";
 import { GitBranch, Pencil, TriangleAlert } from "lucide-react";
 import type { LocalDirectoryExecutionMode } from "@multica/core/types";
@@ -15,49 +17,54 @@ import {
 import { useT } from "../../i18n/use-t";
 
 /**
- * Why the worktree option may be unavailable.
+ * worktree 选项为什么不可用。
  *
- * Two reasons, and neither is a guess about the machine. `not_git` the client
- * establishes by itself — the folder either has a repository to branch from or
- * it does not, and the desktop picker checked. `server_outdated` is what the
- * SERVER says about itself: whether it understands `execution_mode` at all.
+ * 只有两种原因，而且都不是对机器的猜测。`not_git` 由客户端自己确定——这个文件夹
+ * 有没有可建分支的仓库，桌面端选择器已经查过了。`server_outdated` 是服务端对
+ * 自己的描述：它到底认不认识 `execution_mode` 这个字段。
  *
- * Whether the MACHINE can run the mode is deliberately absent. That is the
- * server's question, asked on every save, and a rejection comes back as
- * `errorMessage` rather than as a disabled option guessed at up front (#7113).
- * But deferring to the server is only safe once the server has said it will
- * actually check: older ones drop the field and answer 201, and the task then
- * edits the directory the user asked to isolate.
+ * 「机器到底能不能跑这种模式」刻意不在这里判断。那是服务端的问题，每次保存都会
+ * 问一遍；被拒会以 `errorMessage` 形式回来，而不是前端先猜一个禁用的选项
+ * （#7113）。但把判断交给服务端只有在服务端明确表态「我会查」之后才安全：老版本
+ * 服务端会丢弃该字段并直接回 201，任务就会去改用户本来想隔离的目录。
  *
- * `undefined` means available.
+ * `undefined` 表示可用。
  */
 export type WorktreeUnavailableReason = "not_git" | "server_outdated";
 
 interface LocalDirectoryModeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Absolute path being configured, shown so the user knows what they picked. */
+  /** 正在配置的绝对路径，展示出来让用户确认自己选的是哪。 */
   path: string;
-  /** Mode to preselect — the current mode when editing, in_place when adding. */
+  /** 预选的模式——编辑时是当前模式，新增时是 in_place。 */
   value: LocalDirectoryExecutionMode;
-  /** Set when worktree cannot be chosen; the option renders disabled with a reason. */
+  /** 设置了说明 worktree 不能选；对应选项会禁用并给出原因。 */
   unavailableReason?: WorktreeUnavailableReason;
-  /** Server-side rejection to show inline (e.g. a 422 that only the API can detect). */
+  /** 要内联展示的服务端拒绝原因（例如只有 API 才能发现的 422）。 */
   errorMessage?: string;
   saving?: boolean;
-  /** Confirm label differs between adding a resource and editing one. */
+  /** 确认按钮文案在「新增资源」与「编辑资源」时不同。 */
   confirmLabel: string;
   onConfirm: (mode: LocalDirectoryExecutionMode) => void;
 }
 
 /**
- * Mode picker for a local_directory resource.
+ * 本地目录资源的模式选择器。
  *
- * Deliberately does NOT surface the raw `in_place` / `worktree` identifiers as
- * the primary label. The choice a user is actually making is about how they get
- * their results back — edits appearing in their working copy versus a branch
- * they review — so the options lead with that, and the identifier is only a
- * secondary hint for anyone matching this against the CLI or the docs.
+ * 刻意不把原始的 `in_place` / `worktree` 标识当主文案。用户真正做的选择是
+ * 「结果怎么拿回来」——改动直接出现在工作副本里，还是进一条分支等他们审——
+ * 所以选项以此为主题，标识符只是给想对 CLI 或文档的读者看的次要提示。
+ *
+ * @param open 是否打开
+ * @param onOpenChange 打开状态变化回调
+ * @param path 被配置的目录绝对路径
+ * @param value 当前/预选模式
+ * @param unavailableReason worktree 不可用的原因（可选）
+ * @param errorMessage 内联展示的服务端错误（可选）
+ * @param saving 保存中标记（禁用操作按钮）
+ * @param confirmLabel 确认按钮文案
+ * @param onConfirm 确认时的回调（携带所选模式）
  */
 export function LocalDirectoryModeDialog({
   open,
@@ -73,8 +80,7 @@ export function LocalDirectoryModeDialog({
   const { t } = useT("projects");
   const [selected, setSelected] = useState<LocalDirectoryExecutionMode>(value);
 
-  // Re-sync when the dialog is reopened for a different resource, otherwise the
-  // previous row's mode would be preselected for this one.
+  // 弹窗为不同资源重新打开时重新同步一次选中值，否则上一行的模式会预选到这一行。
   useEffect(() => {
     if (open) setSelected(value);
   }, [open, value]);
@@ -130,11 +136,10 @@ interface LocalDirectoryModeOptionsProps {
 }
 
 /**
- * The two-option choice itself, without any surrounding chrome.
+ * 二选一的选项本体，不包任何外围壳。
  *
- * Shared so the dialog (editing an existing resource) and the compact picker in
- * the create-project modal offer literally the same options, copy and blocked
- * states — the decision is identical, only the container differs.
+ * 拆出来共享，是为了让弹窗（编辑已有资源）和创建项目弹窗里的紧凑选择器提供
+ * 完全相同的选项、文案和禁用态——决策逻辑相同，只是容器不同。
  */
 export function LocalDirectoryModeOptions({
   value,
@@ -202,8 +207,8 @@ function ModeOption({
       aria-checked={selected}
       disabled={disabled}
       onClick={onSelect}
-      // Selection is carried by border + ring rather than a background tint so
-      // it stays legible while hovered — hover only moves the background.
+      // 选中态用边框 + 外圈来表达，而不是背景色块：这样鼠标悬停时也仍然清晰——
+      // 悬停只会挪动背景。
       className={`flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
         selected
           ? "border-primary ring-1 ring-primary"

@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件：IssueDetail —— 单个问题（issue）的详情页核心组件。
+// 负责渲染标题、描述、子任务列表、活动/评论时间线、右侧属性边栏，
+// 并处理标题/描述的自动保存、滚动恢复、评论高亮跳转、子任务批量选择等交互。
+
 import {
   issueBehavesAs,
   issueBehavesAsAny,
@@ -152,9 +156,8 @@ import {
 
 export { issueHighlightMementoKey } from "./issue-highlight-memento";
 
-// Shared by the subscribe button and the unsubscribe menu trigger so the two
-// stay one control visually — they occupy the same slot and only differ in
-// what a click does.
+// 订阅按钮与"取消订阅"菜单触发器共用的样式，保证两者在视觉上是同一个控件——
+// 它们占据同一个位置，只是点击后行为不同。
 const SUBSCRIPTION_ACTION_CLASS =
   "text-caption text-muted-foreground hover:text-foreground transition-colors disabled:pointer-events-none disabled:opacity-50";
 
@@ -171,13 +174,11 @@ function SubscriberPopoverContent({
   subscribers: { user_type: string; user_id: string }[];
   toggleSubscriber: (id: string, type: "member" | "agent", subscribed: boolean) => void;
   /**
-   * Every checkbox here is drawn from `subscribers`, which defaults to an empty
-   * list until the query resolves — so an unresolved query renders everyone as
-   * unsubscribed. Acting on that is not a harmless no-op: an explicit subscribe
-   * rewrites the target's reason to 'manual' and clears any opt-out scope
-   * (server/pkg/db/queries/subscriber.sql), which would quietly discard a
-   * delegated subscription or someone's deliberate opt-out. So these rows wait
-   * for a real answer, not just for the in-flight mutation (MUL-5714).
+   * 这些复选框的数据都来自 `subscribers`，而它在查询完成前默认是空数组——
+   * 也就是说，查询未完成时所有人都会被渲染成"未订阅"。此时点击并不是无害的空操作：
+   * 显式订阅会把目标用户的 reason 改写为 'manual'，并清掉任何 opt-out 作用域
+   * （见 server/pkg/db/queries/subscriber.sql），从而悄悄丢弃掉一次委托订阅或某人主动的退订。
+   * 所以这些行要等真实结果回来，而不是只看进行中的 mutation（MUL-5714）。
    */
   togglesDisabled: boolean;
   t: ActivityT;
@@ -261,10 +262,8 @@ function shortDate(date: string | null, locale: string): string {
 type ActivityT = ReturnType<typeof useT<"issues">>["t"];
 
 /**
- * Labels a status key from the activity feed. `resolveLabel` is the workspace
- * catalog resolver, which names custom statuses; without it — or for a status
- * since deleted — a built-in still gets its i18n name and anything else falls
- * back to the raw key. (MUL-6243)
+ * 给活动流里的状态键标出可读名称。`resolveLabel` 是工作区目录解析器，用来给自定义状态取名；
+ * 没有它——或者该状态已被删除——内置状态仍会拿到它的 i18n 名称，其余情况回退为原始键值。(MUL-6243)
  */
 function statusLabel(
   status: string,
@@ -356,34 +355,31 @@ function formatActivity(
 
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
-// Stable reference for threads with no replies. Inline `[]` would create a
-// new array on every render and bust React.memo on CommentCard / ResolvedThreadBar.
+// 无回复线程的稳定引用。如果内联写 `[]`，每次渲染都会新建一个数组，
+// 从而破坏 CommentCard / ResolvedThreadBar 上的 React.memo 优化。
 const EMPTY_REPLIES: TimelineEntry[] = [];
 
 // ---------------------------------------------------------------------------
-// Sidebar progressive disclosure
+// 边栏属性的渐进式展示
 // ---------------------------------------------------------------------------
 //
-// Properties shown in the sidebar split into two groups:
-//   - core: always rendered (status / assignee / project)
-//   - optional: rendered only when the issue has a value for that field OR
-//     the user explicitly added it via "+ Add property" in this session
-//     (priority / due_date / labels)
+// 边栏里展示的属性分两组：
+//   - 核心属性：始终渲染（状态 / 负责人 / 项目）
+//   - 可选属性：只有当 issue 在该字段有值、或用户本次会话通过"+ 添加属性"显式加进来时
+//     才渲染（优先级 / 阶段 / 开始日期 / 截止日期 / 标签）
 //
-// Parent is not in either group — it has its own standalone section below
-// the Properties block, rendered only when the issue actually has a parent.
+// 父任务不在任何一组里——它在 Properties 块下方有自己独立的一节，
+// 只有当 issue 确实有父任务时才渲染。
 //
-// `OPTIONAL_PROP_KEYS` is the open set — adding a new optional field
-// means appending here, wiring its row in the JSX switch below, and
-// adding a locale key. The picker, visibility rules, and add-property
-// menu all flow from this one list.
-// `stage` is only meaningful for a sub-issue (relative to its siblings), so
-// its row and add-property entry are gated on `issue.parent_issue_id` at the
-// render site below — it stays in this list so seeding/visibility flow through
-// the same machinery as the other optional props.
+// `OPTIONAL_PROP_KEYS` 是开放集合——新增一个可选字段意味着：
+// 在这里追加一项、在下方 JSX switch 里接好对应行、再加一个语言包 key。
+// 选择器、可见性规则、添加属性菜单全都由这一份列表驱动。
+// `stage` 只对子任务有意义（相对于它的同级子任务），所以它的行和
+// "添加属性"入口在渲染处都受 `issue.parent_issue_id` 控制——它仍保留在这个列表里，
+// 是为了让初始化和可见性逻辑与其他可选属性走同一套机制。
 const OPTIONAL_PROP_KEYS = ["priority", "stage", "start_date", "due_date", "labels"] as const;
 type OptionalPropKey = (typeof OPTIONAL_PROP_KEYS)[number];
 
@@ -406,9 +402,13 @@ function isOptionalPropSet(
   }
 }
 
-// groupSubIssuesByStage orders a parent's children for display: staged groups
-// ascending by stage, then the unstaged group (stage === null) last. Callers
-// render a per-group stage header only when the set is actually staged.
+/**
+ * 把一个父任务的子任务按阶段（stage）分组排序，用于展示：
+ * 有阶段的组按 stage 升序排列，未分组（stage === null）的组放最后。
+ * 调用方只有在确实存在阶段时，才给每个组渲染阶段表头。
+ * @param children 父任务的直接子任务列表
+ * @returns 按阶段分好组的子任务列表（含一个 stage 为 null 的未分组项）
+ */
 export function groupSubIssuesByStage(
   children: Issue[],
 ): { stage: number | null; items: Issue[] }[] {
@@ -430,10 +430,9 @@ export function groupSubIssuesByStage(
   return groups;
 }
 
-// Shallow array equality by element identity. Used to reuse the previous
-// render's per-thread reply slice when nothing in *this* thread changed,
-// even if the surrounding `timeline` array was rebuilt by a WS event in
-// some unrelated thread.
+// 按元素引用做浅比较判断两个数组是否相等。用途：当"当前这条线程"没有变化时，
+// 复用上一次渲染的每线程回复切片——即使外层的 `timeline` 数组因为某个无关线程的
+// WS 事件被重建了，也不会影响本条线程的复用。
 function shallowEqualEntries(a: TimelineEntry[], b: TimelineEntry[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
@@ -443,11 +442,10 @@ function shallowEqualEntries(a: TimelineEntry[], b: TimelineEntry[]): boolean {
   return true;
 }
 
-// Flat per-item shape consumed by <Virtuoso>. Virtuoso needs a flat array
-// where each entry is one rendered row; we keep the grouping logic from
-// `timelineView.groups` (consecutive same-actor activities still collapse
-// into one activity-group row) but project it into a discriminated union
-// the itemContent dispatcher can switch on.
+// 交给 <Virtuoso> 使用的扁平化逐项结构。Virtuoso 需要一个扁平数组，
+// 每个元素对应一行要渲染的内容；我们保留 `timelineView.groups` 的分组逻辑
+// （连续同人活动仍会折叠成一个活动组行），但把它投射成一个可辨识联合类型，
+// 方便 itemContent 分发器按 kind 分支渲染。
 type TimelineItem =
   | { kind: "comment"; id: string; entry: TimelineEntry }
   | { kind: "resolved-bar"; id: string; entry: TimelineEntry }
@@ -501,17 +499,15 @@ function TimelineSkeleton() {
   );
 }
 
-// When the trailing block is expanded, we still truncate its body to the most
-// recent N entries — a single block of 50 status flips drowns the comment area
-// as badly as N blocks of 1 would. Older entries fold behind a "Show N more
-// activities" line that expands in place.
+// 即便尾部的活动块处于展开状态，我们仍把它的内容截断到最近的 N 条——
+// 一个包含 50 次状态变更的块，对评论区造成的淹没程度和 50 个各含 1 条的块一样严重。
+// 更早的条目会折叠在"显示 N 条更多活动"这一行后面，点击后原地展开。
 const LAST_ACTIVITY_BLOCK_VISIBLE_LIMIT = 8;
 
-// Collapsible wrapper for an activity block. Older blocks default to a single
-// "N activities" summary line so the timeline isn't dominated by status /
-// priority / assignee churn; the trailing block stays expanded because it
-// usually answers "what just happened?". Expansion state is owned by the
-// parent so it survives Virtuoso's mount/unmount on scroll.
+// 活动块的可折叠包装组件。较旧的块默认折叠成一行"N 条活动"摘要，
+// 避免时间线被状态/优先级/负责人的频繁变更刷屏；尾部的块保持展开，
+// 因为它通常能回答"刚刚发生了什么？"。展开状态由父组件持有，
+// 这样在 Virtuoso 滚动导致的挂载/卸载之后状态还能保留。
 function ActivityBlock({
   entries,
   expanded,
@@ -530,16 +526,15 @@ function ActivityBlock({
   entries: TimelineEntry[];
   expanded: boolean;
   onToggle: () => void;
-  // Trailing block only: when true, the body shows only the most recent
-  // LAST_ACTIVITY_BLOCK_VISIBLE_LIMIT entries with the older ones folded
-  // behind a "Show N more activities" inline toggle.
+  // 仅对尾部块生效：为 true 时，正文只显示最近 LAST_ACTIVITY_BLOCK_VISIBLE_LIMIT 条，
+  // 更早的条目折叠在"显示 N 条更多活动"的内联开关后面。
   truncateOlder: boolean;
   showOlder: boolean;
   onToggleShowOlder: () => void;
   getActorName: (type: string, id: string) => string;
   resolveStatusLabel: (statusKey: string) => string;
   resolveStatusCategory: (statusKey: string) => IssueStatusCategory;
-  /** A custom status's own `#rrggbb`; null for built-ins and unknown keys. */
+  /** 自定义状态自己的 `#rrggbb` 颜色；内置状态或未知键返回 null。 */
   resolveStatusColor: (statusKey: string) => string | null;
   t: ActivityT;
   timeAgo: (dateStr: string) => string;
@@ -566,12 +561,10 @@ function ActivityBlock({
       : 0;
   const visibleEntries =
     hiddenOlderCount > 0 ? entries.slice(-LAST_ACTIVITY_BLOCK_VISIBLE_LIMIT) : entries;
-  // Hide the "v N activities" collapse header while we're in the truncated
-  // default state. The "Show N more" link is the only control users need
-  // when they're glancing at recent activity — stacking two chevron rows
-  // looked like nested folds and added visual noise without value. Once the
-  // user explicitly reveals older entries, the header reappears so they can
-  // fold the whole block back to a single count line.
+  // 在默认的截断状态下隐藏"收起 N 条活动"的折叠表头。用户只是扫一眼近期活动时，
+  // "显示 N 条更多"链接是唯一需要的控件——叠放两行箭头看起来像嵌套折叠，
+  // 徒增视觉噪音。一旦用户显式展开更早条目，表头会重新出现，
+  // 好让他们能把整个块再折回成一条计数行。
   const showHeader = hiddenOlderCount === 0;
   return (
     <div className="pb-3 px-4 max-md:px-3 flex flex-col gap-3">
@@ -658,7 +651,7 @@ function ActivityBlock({
 }
 
 // ---------------------------------------------------------------------------
-// SubIssueRow — sub-issue list item with inline status & assignee editing
+// SubIssueRow —— 子任务列表项，支持内联编辑状态与负责人
 // ---------------------------------------------------------------------------
 
 function SubIssueRow({
@@ -668,11 +661,11 @@ function SubIssueRow({
   customProperties,
 }: {
   child: Issue;
-  /** The sub-issue's OWN children progress (it can itself be a parent). */
+  /** 该子任务自己作为父任务时的进度（它本身也可能有子任务）。 */
   childProgress?: { done: number; total: number };
-  /** User-level display preference: which built-in fields the row shows. */
+  /** 用户级展示偏好：该行要显示哪些内置字段。 */
   rowProps: SubIssueRowProperties;
-  /** Workspace custom properties the user opted into showing on rows. */
+  /** 用户选择在行上展示的工作区自定义属性。 */
   customProperties: IssueProperty[];
 }) {
   const { t } = useT("issues");
@@ -681,8 +674,8 @@ function SubIssueRow({
   const updateIssue = useUpdateIssue();
   const selected = useIssueSelectionStore((s) => s.selectedIds.has(child.id));
   const toggleSelected = useIssueSelectionStore((s) => s.toggle);
-  // Category, not key: a custom status in the done/cancelled categories is
-  // finished work and has to strike through like any other. (MUL-6243)
+  // 判断依据是"类别"而不是"键名"：处于 done/cancelled 类别的自定义状态
+  // 同样是已完成的工作，需要和其他完成状态一样显示删除线。(MUL-6243)
   const isDone = issueBehavesAsAny(child, ["done", "cancelled"]);
   const labels = rowProps.labels ? (child.labels ?? []) : [];
   const customPropsWithValue = customProperties.filter(
@@ -709,11 +702,11 @@ function SubIssueRow({
     [child.id, updateIssue, t],
   );
 
-  // AppLink wraps only the title/identifier area. Pickers and checkbox are
-  // siblings, so their clicks never navigate — no stopPropagation acrobatics
-  // and no risk of the native checkbox / picker triggers being blocked.
-  // Right-click anywhere on the row opens the shared issue actions menu
-  // (priority, labels, dates, delete, …) — the same menu as list rows.
+  // AppLink 只包住标题/标识区。选择器和复选框都是它的兄弟节点，
+  // 所以点击它们不会触发导航——不需要 stopPropagation 技巧，
+  // 也不会挡住原生复选框/选择器的触发。
+  // 在行的任意位置右键，会打开共享的问题操作菜单（优先级、标签、日期、删除等），
+  // 和列表行使用的是同一个菜单。
   return (
     <IssueActionsContextMenu issue={child}>
       <div
@@ -722,9 +715,9 @@ function SubIssueRow({
           selected && "bg-accent/30",
         )}
       >
-        {/* Priority ⇄ checkbox slot, mirroring the main list rows: the
-            priority icon yields to the selection checkbox on hover/focus.
-            Opacity (not display) swap keeps the checkbox keyboard-tabbable. */}
+        {/* 优先级图标 ⇄ 复选框的切换槽位，和主列表行一致：悬停/聚焦时，
+            优先级图标让位给选择复选框。用 opacity（而不是 display）切换，
+            是为了保证复选框始终能被键盘 Tab 到。 */}
         <div className="relative flex h-4 w-4 shrink-0 items-center justify-center">
           {rowProps.priority && (
             <PriorityIcon
@@ -873,11 +866,11 @@ function SubIssueRow({
 }
 
 // ---------------------------------------------------------------------------
-// SubIssueDisplayPopover — per-user "which properties do rows show" control
+// SubIssueDisplayPopover —— 用户级"行上要显示哪些属性"的开关
 // ---------------------------------------------------------------------------
 
-// Reuses the main Display panel's `card_*` labels — the property names are
-// identical, so the sub-issues control needs no locale keys of its own.
+// 复用主显示面板的 `card_*` 文案——属性名完全一致，
+// 所以子任务控件不需要自己的语言包 key。
 const SUB_ISSUE_ROW_PROPERTY_LABEL_KEY: Record<
   SubIssueRowPropertyKey,
   "card_priority" | "card_labels" | "card_child_progress" | "card_due_date" | "card_assignee"
@@ -962,46 +955,45 @@ function SubIssueDisplayPopover({
 }
 
 // ---------------------------------------------------------------------------
-// Props
+// 组件 Props
 // ---------------------------------------------------------------------------
 
 interface IssueDetailProps {
   issueId: string;
   onDelete?: () => void;
-  /** Called after the issue is marked as done via the toolbar button. */
+  /** 通过工具栏按钮把问题标记为已完成之后调用。 */
   onDone?: () => void;
   defaultSidebarOpen?: boolean;
   layoutId?: string;
-  /** When set, the issue detail will auto-scroll to this comment and briefly highlight it. */
+  /** 设置后，详情页会自动滚动到该评论并短暂高亮它。 */
   highlightCommentId?: string;
   /**
-   * Bump to replay the `highlightCommentId` landing on an already-mounted
-   * detail. A remount replays it by itself (fresh mount, cleared memento
-   * entry); this token is for the one path with neither remount nor
-   * guaranteed re-render — re-clicking the notification row that is already
-   * open (see InboxPage.handleSelect). The bump both re-arms the landing
-   * guard and forces the render that re-reads the cleared memento entry.
+   * 自增此值可在"已经挂载"的详情页上重放 `highlightCommentId` 的落地跳转。
+   * 重新挂载本身会重放（全新挂载 + 已清除的 memento 记录）；
+   * 这个 token 用于既没有重新挂载、也不能保证重新渲染的那条路径——
+   * 即重复点击已经打开的通知行（见 InboxPage.handleSelect）。
+   * 自增既重新武装落地守卫，也强制一次重新渲染来重读被清除的 memento 记录。
    */
   highlightRequestToken?: number;
   /**
-   * Far-left header slot, replacing the mobile sidebar trigger. A host that
-   * embeds this detail one level deep (the inbox, on a phone) passes its own
-   * "back" control here instead of stacking a second 48px bar above us — the
-   * breadcrumb this header already renders names the issue's container, not
-   * the surface the reader arrived from, so only the host can spell that trip.
+   * 头部最左侧的插槽，用来替换移动端的边栏触发器。把本详情页嵌入一层深度的宿主
+   * （比如手机上的收件箱）会在这里传入自己的"返回"控件，而不是在我们上方再叠一条
+   * 48px 的栏——这个头部已经渲染的面包屑描述的是问题所属的容器，
+   * 而不是读者来源的界面，所以只有宿主才知道该如何描述这段来路。
    */
   leadingAction?: ReactNode;
 }
 
 // ---------------------------------------------------------------------------
-// Not found
+// 未找到（Not found）
 // ---------------------------------------------------------------------------
 
 /**
- * Exported so `IssueDetailRoute` can render it for an identifier that names no
- * issue. The route must NOT fall through to `IssueDetail` in that case: doing
- * so mounts a second observer on the already-failed query, which refetches it
- * and restarts the resolve/remount cycle indefinitely.
+ * 导出此组件是为了让 `IssueDetailRoute` 在标识符对应不到任何 issue 时渲染它。
+ * 此时路由绝不能回退到 `IssueDetail`：那样会在已经失败的查询上再挂一个 observer，
+ * 触发重新请求并无限循环地重启 resolve/remount 周期。
+ * @param showBackLink 是否显示"返回"链接
+ * @param leading 宿主提供的返回控件（对应 IssueDetailProps.leadingAction）
  */
 export function IssueNotFound({
   showBackLink = true,
@@ -1009,10 +1001,8 @@ export function IssueNotFound({
 }: {
   showBackLink?: boolean;
   /**
-   * Host-supplied way back, mirrored from `IssueDetailProps.leadingAction`. A
-   * host that hands its whole screen to this component (the inbox, on a phone)
-   * has no bar of its own left, so this state has to carry the trip back or
-   * there is none.
+   * 宿主提供的返回方式，对应 `IssueDetailProps.leadingAction`。把整屏都交给本组件的宿主
+   * （比如手机上的收件箱）已经没有自己的栏可用，所以这个状态必须承担返回路径，否则就没有返回入口。
    */
   leading?: ReactNode;
 }) {
@@ -1039,20 +1029,19 @@ export function IssueNotFound({
 }
 
 // ---------------------------------------------------------------------------
-// Loading skeleton
+// 加载骨架屏
 // ---------------------------------------------------------------------------
 
 /**
- * Exported so `IssueDetailRoute` can show the identical frame while it resolves
- * an identifier URL to its issue — the two waits are indistinguishable to the
- * user, and rendering the same skeleton keeps them that way.
+ * 导出此组件是为了让 `IssueDetailRoute` 在把标识符 URL 解析成 issue 期间展示相同的骨架屏——
+ * 这两种等待对用户来说无法区分，渲染同一个骨架屏能保持体验一致。
+ * @param leading 宿主提供的返回控件（可选）
  */
 export function IssueDetailSkeleton({ leading }: { leading?: ReactNode } = {}) {
   return (
     <div className="flex flex-1 min-h-0 flex-col">
-      {/* The way back is real from the first frame, not once the issue lands:
-          a host that gave up its own bar for `leadingAction` has nothing else
-          to offer while this skeleton owns the screen. */}
+      {/* 返回路径从第一帧就是真实可用的，而不是等 issue 加载完成：
+          把自身栏位让给 `leadingAction` 的宿主，在骨架屏占屏期间没有别的东西可提供。 */}
       <div className={cn("flex h-12 shrink-0 items-center gap-2 border-b", PAGE_GUTTER)}>
         {leading ?? (
           <>
@@ -1063,11 +1052,9 @@ export function IssueDetailSkeleton({ leading }: { leading?: ReactNode } = {}) {
         )}
       </div>
       <div className="flex flex-1 min-h-0">
-        {/* Same scrollbar-gutter as the loaded scroller below, so the skeleton
-            column doesn't shift sideways when real content mounts. */}
+        {/* 和下方已加载滚动容器的 scrollbar-gutter 一致，避免真实内容挂载时骨架列横向偏移。 */}
         <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]">
-          {/* Gutters match the loaded column exactly (see its comment), so the
-              skeleton doesn't reflow sideways when real content mounts. */}
+          {/* 内边距与已加载的列完全一致（见其注释），避免真实内容挂载时骨架屏横向回流。 */}
           <div className="mx-auto w-full max-w-4xl px-3 py-6 space-y-6 md:px-8 md:py-8">
             <Skeleton className="h-8 w-3/4" />
             <div className="space-y-2">
@@ -1109,9 +1096,21 @@ export function IssueDetailSkeleton({ leading }: { leading?: ReactNode } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// IssueDetail
+// IssueDetail —— 问题详情页主体
 // ---------------------------------------------------------------------------
 
+/**
+ * 问题详情页组件：渲染单个 issue 的完整详情（标题、描述、子任务、时间线/评论、右侧属性边栏），
+ * 并处理标题/描述自动保存、滚动恢复、评论高亮跳转、子任务批量选择等交互。
+ * @param issueId 要展示的 issue 的 id
+ * @param onDelete 删除完成后的回调（可选）
+ * @param onDone 标记为已完成后的回调（可选）
+ * @param defaultSidebarOpen 桌面端边栏默认是否展开
+ * @param layoutId 用于持久化面板布局的 id
+ * @param highlightCommentId 需要自动滚动并高亮的评论 id（可选）
+ * @param highlightRequestToken 重放高亮跳转的令牌（可选）
+ * @param leadingAction 头部最左侧的自定义控件（可选）
+ */
 export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = true, layoutId = "multica_issue_detail_layout", highlightCommentId, highlightRequestToken, leadingAction }: IssueDetailProps) {
   const { t } = useT("issues");
   const locale = useLocale();
@@ -1121,14 +1120,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const paths = useWorkspacePaths();
   const openModal = useModalStore((state) => state.open);
 
-  // Issue navigation — read from TQ list cache
+  // 问题导航 —— 从 React Query 的列表缓存里读取
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  // Workspace owners and admins moderate any comment authored by anyone
-  // (mirrors backend `comment.go:507-512`). Computed here so per-comment
-  // rendering doesn't have to re-derive it for every row.
+  // 工作区 owner 和 admin 可以管理任何人写的评论（对应后端 `comment.go:507-512`）。
+  // 在这里算好，避免每条评论渲染时都要重复推导。
   const currentUserRole =
     members.find((m) => m.user_id === user?.id)?.role ?? null;
   const canModerateComments =
@@ -1151,18 +1149,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   );
   const { getActorName } = useActorName();
   const resolveStatusLabel = useStatusLabel(wsId);
-  // The glyph set is per CATEGORY (MUL-6243), so a status-change entry for a
-  // custom status drew the same icon as the built-in it sits beside — an
-  // "In Review → Awaiting Response" line looked like nothing had moved. Colour
-  // is what carries a custom status's own identity, as the inbox row and the
-  // status-changed detail label already render it. `colorOf` is what keeps a
-  // built-in on its semantic token instead of the catalog's seed hex.
+  // 图标集合是按"类别"（CATEGORY）来的（MUL-6243），所以一条自定义状态变更记录
+  // 会画出和它旁边内置状态一样的图标——"In Review → Awaiting Response" 这样一行
+  // 看起来像什么都没动。颜色才是承载自定义状态自身身份的东西，收件箱行和
+  // 状态变更详情标签都是这样渲染的。`colorOf` 保证内置状态继续用它的语义 token，
+  // 而不是目录里的种子十六进制色值。
   const { categoryOf: resolveStatusCategory, colorOf: resolveStatusColor } =
     useIssueStatuses(wsId);
-  // Description autosave is deliberately NOT gated (no explicit submit; the
-  // editor already strips `blob:` before serializing and binds ids on the
-  // later save). It still needs the failure toast, or a failed upload just
-  // erases its own placeholder and the file disappears unexplained.
+  // 描述的自动保存是有意不做条件限制的（没有显式提交；编辑器在序列化前已经去掉了 `blob:`，
+  // 并在之后的保存时绑定 id）。但它仍需要失败提示，否则一次失败的上传
+  // 会直接抹掉自己的占位符，文件就无声无息地消失了。
   const { uploadWithToast } = useEditorUpload();
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: layoutId,
@@ -1195,61 +1191,47 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const [metadataOpen, setMetadataOpen] = useState(false);
   const githubSettings = useGitHubSettings();
 
-  // Per-issue, per-session set of optional properties currently visible in
-  // the sidebar Properties section. Seeded on issue switch with whichever
-  // fields are already set; "+ Add property" adds an entry, clearing a
-  // value does *not* remove one (avoids row-flicker on edit → clear).
-  // Resets when the user navigates to a different issue.
+  // 每个 issue、每次会话各自维护的"当前在边栏 Properties 区可见的可选属性"集合。
+  // 切换到不同 issue 时，用"已经设值的字段"做初始化种子；"+ 添加属性"会加一项进来，
+  // 但清空值不会移除它（避免编辑→清空时行来回闪烁）。切换到另一个 issue 时重置。
   const [visibleOptionalProps, setVisibleOptionalProps] = useState<Set<OptionalPropKey>>(
     () => new Set(),
   );
-  // Same progressive-disclosure machinery for custom properties, keyed by
-  // property definition id instead of a static key union.
+  // 自定义属性走同一套渐进式展示机制，但按属性定义 id 而不是静态键联合类型来标识。
   const [visibleCustomProps, setVisibleCustomProps] = useState<Set<string>>(() => new Set());
   const [autoOpenCustomProp, setAutoOpenCustomProp] = useState<string | null>(null);
-  // Optional property to auto-open as soon as it's mounted (the user just
-  // picked it from "+ Add property" and we want them dropped straight into
-  // edit state). Consumed by the row that matches this key, cleared after.
+  // 挂载后要立即自动打开的可选属性（用户刚从"+ 添加属性"选中它，
+  // 我们希望直接把它送进编辑状态）。由匹配这个 key 的那一行消费，用完即清空。
   const [autoOpenProp, setAutoOpenProp] = useState<OptionalPropKey | null>(null);
-  // Controlled state for the "+ Add property" popover. Base UI's Popover
-  // doesn't auto-dismiss on item click (it's not a Menu primitive), so the
-  // popover would stay open behind the newly auto-opened picker — two
-  // popovers stacked. We close it explicitly in `addOptionalProp`.
+  // "+ 添加属性"弹出层的受控状态。Base UI 的 Popover 不会在点击选项后自动关闭
+  // （它不是 Menu 原语），所以弹出层会留在新自动打开的选择器后面——两个弹出层叠在一起。
+  // 我们在 `addOptionalProp` 里显式关闭它。
   const [addPropPopoverOpen, setAddPropPopoverOpen] = useState(false);
-  // Virtuoso's `customScrollParent` wants the HTMLElement, not a ref. A plain
-  // `useRef.current` does not trigger a re-render when it populates, so the
-  // Virtuoso prop would never receive the element. Callback ref + state fixes
-  // that: setState triggers the re-render that hands Virtuoso the element.
+  // Virtuoso 的 `customScrollParent` 需要 HTMLElement，而不是 ref。普通的
+  // `useRef.current` 在填充时不会触发重新渲染，所以 Virtuoso 的 prop 永远收不到元素。
+  // 用回调 ref + state 解决：setState 触发重新渲染，把元素交给 Virtuoso。
   const [scrollContainerEl, setScrollContainerEl] = useState<HTMLDivElement | null>(null);
-  // Bottom comment composer. Measured when scrolling a freshly posted comment
-  // into view so its bottom lands above the composer rather than behind it.
+  // 底部评论输入框。在把刚发布的评论滚进视野时测量它的高度，
+  // 好让评论底部落在输入框上方而不是被它挡住。
   const composerRef = useRef<HTMLDivElement | null>(null);
-  // Pull-based scroll restoration (MUL-4741): the platform serves the offset
-  // captured when this route was last left. The ref-attach assignment covers
-  // the flat render modes (real heights at commit); the virtualized browsing
-  // mode feeds the offset into Virtuoso's initialScrollTop below so the
-  // list's first render already materializes the rows around it.
+  // 基于拉取的滚动恢复（MUL-4741）：平台提供上一次离开该路由时记录的偏移量。
+  // ref 挂载赋值覆盖扁平渲染模式（提交时高度就是真实的）；虚拟化浏览模式
+  // 则把偏移量喂给下方 Virtuoso 的 initialScrollTop，让列表首次渲染就先把周边行物化出来。
   //
-  // The container key carries the issue id: on the issue route that is
-  // redundant with the route scoping, but in the inbox the selection lives
-  // in the query string while memento entries key by pathname — a bare
-  // "main" would restore notification A's offset into notification B's
-  // detail.
+  // 容器 key 带上 issue id：在 issue 路由里这和路由作用域是冗余的，
+  // 但在收件箱里选中项存在于 query string，而 memento 记录按 pathname 作键——
+  // 如果只写 "main"，就会把通知 A 的偏移量恢复到通知 B 的详情里。
   const scrollContainerKey = `main:${id}`;
   const restoredScrollTop = useRestoredScrollOffset(scrollContainerKey);
   const restoreScrollRef = useRestoredScrollRef(scrollContainerKey);
-  // Whether this issue's comment-highlight deep link already landed here
-  // (survives the tab's unmount, unlike didHighlightRef below): a remount
-  // that restores the view must not re-run the jump.
+  // 这个 issue 的评论高亮深链是否已经在这里落地过（能跨标签页卸载存活，
+  // 与下方 didHighlightRef 不同）：一次只是恢复视图的重新挂载，不能再重跑跳转。
   //
-  // The landing effect reads it through a ref, NOT through its dependency
-  // array: recording the landing writes this very value, and as an effect
-  // dependency that write would re-fire the effect one commit after the
-  // jump — whose cleanup cancels the centering rAF loop and the highlight
-  // fade before a single frame ran. Every path that must re-evaluate the
-  // landing already re-runs the effect through another dependency (mount,
-  // items arriving, token bump), and the render that precedes it refreshes
-  // this ref.
+  // 落地 effect 通过 ref 读取它，而不是通过依赖数组读取：记录落地会写入这个值本身，
+  // 如果作为 effect 依赖，那次写入会在跳转后的一次提交里重新触发 effect——
+  // 而它的清理函数会在第一帧运行前就取消居中 rAF 循环和高亮渐隐。所有需要重新评估落地的
+  // 路径，都已经通过其他依赖（挂载、条目到达、token 自增）重新跑了 effect，
+  // 且它之前的那次渲染会刷新这个 ref。
   const consumedHighlightId = useRestoredViewState(issueHighlightMementoKey(id));
   const consumedHighlightRef = useRef(consumedHighlightId);
   consumedHighlightRef.current = consumedHighlightId;
@@ -1268,21 +1250,18 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     setPendingPostedCommentId(commentId);
   }, []);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
-  // User preference: pin the bottom comment bar to the scroll viewport. Off
-  // below `md` regardless of the preference — see the hook.
+  // 用户偏好：是否把底部评论栏钉在滚动视口里。在 `md` 断点以下无论偏好如何都会关闭——见 hook。
   const stickyComposer = useStickyComposer();
 
-  // Per-session: which resolved threads the user has temporarily expanded.
-  // Not persisted (matches Linear) — reload collapses everything back to bars.
-  // Store-backed (not component state) so the command palette's fold/unfold
-  // all-comments commands can drive it from outside this page.
+  // 每次会话各自维护：用户临时展开过哪些"已解决"的线程。不持久化（和 Linear 一致）——
+  // 刷新后全部收拢回横条。用 store 承载（而非组件 state），
+  // 这样命令面板的"折叠/展开全部评论"命令能从页面外部驱动它。
   const expandedResolved = useResolvedExpandStore(selectExpandedResolved(id));
   const setResolvedExpanded = useResolvedExpandStore((s) => s.setExpanded);
   const toggleResolvedExpand = useCallback((commentId: string, expand: boolean) => {
     setResolvedExpanded(id, commentId, expand);
-    // On collapse the thread shrinks and the viewport would jump to whatever was
-    // below; pull the just-folded thread back into view with the smallest
-    // movement. rAF waits for the collapse to land before measuring.
+    // 收拢时线程会变矮，视口会跳到它下面的内容；用最小的位移把刚折叠的线程拉回视野。
+    // rAF 等折叠落地后再测量。
     if (!expand) {
       requestAnimationFrame(() =>
         document.getElementById(`comment-${commentId}`)?.scrollIntoView({ block: "nearest" }),
@@ -1293,20 +1272,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     setResolvedExpanded(id, commentId, false);
   }, [id, setResolvedExpanded]);
 
-  // Per-session activity-block expansion overrides. The default rule is
-  // "only the trailing block is expanded" (computed from timelineView.groups
-  // below); these two sets capture user clicks that diverge from the default.
-  // Two sets are needed because "default" can flip when a new activity block
-  // appends — without an explicit collapse override, a manually-collapsed
-  // older block would re-expand when it stops being the trailing one (or vice
-  // versa). Not persisted, matches the resolved-thread behaviour above.
+  // 每次会话各自维护的活动块展开覆盖。默认规则是"只展开尾部块"
+  // （由下方 timelineView.groups 计算）；这两个集合记录与默认不一致的用户点击。
+  // 之所以需要两个集合，是因为"默认"会在新活动块追加时翻转——
+  // 如果没有显式的收拢覆盖，一个被手动收拢的旧块会在它不再是尾部块时重新展开（反之亦然）。
+  // 不持久化，与上面已解决线程的行为一致。
   const [expandedActivityIds, setExpandedActivityIds] = useState<Set<string>>(() => new Set());
   const [collapsedActivityIds, setCollapsedActivityIds] = useState<Set<string>>(() => new Set());
-  // Block IDs where the user has explicitly chosen to also reveal the older
-  // (pre-last-8) entries within the trailing block. Kept independent of the
-  // expanded/collapsed sets so collapsing then re-expanding preserves the
-  // "show all" choice, and so the choice survives the block losing its
-  // trailing position when a new comment lands after it.
+  // 用户显式选择在尾部块里也展示更早（末尾 8 条之前）条目的块 id 集合。
+  // 与展开/收拢集合相互独立，这样"收拢再展开"能保留"显示全部"的选择，
+  // 并且当新评论落在该块之后、使其失去尾部位置时，这个选择也能保留。
   const [showOlderActivityIds, setShowOlderActivityIds] = useState<Set<string>>(() => new Set());
   const toggleActivityBlock = useCallback((id: string, currentlyExpanded: boolean) => {
     if (currentlyExpanded) {
@@ -1344,20 +1319,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     });
   }, []);
   const didHighlightRef = useRef<string | null>(null);
-  // Last seen highlightRequestToken; a bump re-arms didHighlightRef so the
-  // landing effect below replays on an already-mounted detail.
+  // 最近一次看到的 highlightRequestToken；自增会重新武装 didHighlightRef，
+  // 让下方的落地 effect 在已挂载的详情页上重放。
   const lastHighlightRequestTokenRef = useRef(highlightRequestToken);
 
-  // Issue data from TQ — uses detail query, seeded from list cache if available.
-  // Only seed when description is present; the list API omits it, so a partial
-  // list row must not masquerade as a hydrated issue detail.
+  // 来自 React Query 的 issue 数据——用详情查询，若可用则用列表缓存做种子。
+  // 只有存在 description 时才做种子；列表 API 不返回 description，
+  // 所以不完整的一行列表数据不能伪装成已水合的详情。
   const { data: issue = null, isLoading: issueLoading, refetch: refetchIssue } = useQuery({
     ...issueDetailOptions(wsId, id),
-    // List rows and issue-created realtime payloads intentionally omit the
-    // detail-only source-context snapshot. They can still seed this query via
-    // initialData, so always reconcile with the authoritative detail endpoint
-    // when the detail view mounts. Without this, the global Infinity staleTime
-    // hides source context until a full page refresh.
+    // 列表行和"问题已创建"的实时载荷有意省略了仅详情才有的 source-context 快照。
+    // 它们仍可能通过 initialData 为这个查询做种子，所以详情视图挂载时
+    // 始终和权威的详情端点做一次对齐。没有这个的话，全局 Infinity staleTime
+    // 会一直把 source context 藏到整页刷新为止。
     refetchOnMount: "always",
     initialData: () => {
       const cached = findCachedListIssue(id);
@@ -1377,7 +1351,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     });
   }, [issue, openModal]);
 
-  // Record recent visit
+  // 记录最近访问
   const recordVisit = useRecentIssuesStore((s) => s.recordVisit);
   const recordRecentContext = useRecentContextStore((s) => s.recordVisit);
   useEffect(() => {
@@ -1393,11 +1367,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     }
   }, [issue?.id, wsId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fire `onDelete` once when the issue transitions from loaded to missing.
-  // Delete goes through a shell-level modal, so the caller (e.g. inbox) can't
-  // be notified directly — instead, the detail page observes its own cache
-  // clearing and runs the callback. We navigate via `onDeletedFallbackPath` on
-  // the actions menu when no callback is supplied (standalone routes).
+  // 当 issue 从"已加载"变为"缺失"时触发一次 `onDelete`。删除走的是 shell 层模态框，
+  // 所以调用方（如收件箱）无法被直接通知——改为由详情页观察自身缓存被清空后执行回调。
+  // 当没有提供回调时（独立路由），通过操作菜单的 `onDeletedFallbackPath` 导航返回。
   const hadIssueRef = useRef(false);
   const firedDeleteCallbackRef = useRef(false);
   useEffect(() => {
@@ -1417,23 +1389,20 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     }
   }, [issue, issueLoading, onDelete]);
 
-  // Custom hooks — encapsulate timeline, reactions, subscribers
+  // 自定义 hooks —— 封装时间线、反应、订阅者逻辑
   const {
     timeline, loading: timelineLoading,
     submitComment, submitReply,
     editComment, deleteComment, toggleResolveComment, toggleReaction: handleToggleReaction,
   } = useIssueTimeline(id, user?.id);
 
-  // Resolve / unresolve must always clear the per-session expand entry so
-  // re-resolving an already-expanded thread folds it back to the bar (the
-  // expand Set is keyed only on commentId, not on resolution state). Without
-  // this wrapper, an expand → unresolve → resolve sequence keeps the thread
-  // visually expanded after the second resolve.
+  // 解决/取消解决必须总是清掉会话内的展开记录，这样重新解决一条已经展开的线程
+  // 会把它折回横条（展开集合只按 commentId 作键，不按解决状态）。没有这个包装的话，
+  // "展开 → 取消解决 → 解决"的序列会在第二次解决后仍让线程保持展开。
   const handleResolveToggle = useCallback(
     (commentId: string, resolved: boolean) => {
-      // Fold the thread back on any resolve change: clear the thread ROOT's
-      // expand entry (expand state is keyed on root id, but a resolve target
-      // can be a reply). Walk parent_id up to the root.
+      // 任何解决状态变更都要把线程折回：清掉线程 ROOT 的展开记录
+      // （展开状态按 root id 作键，但解决目标可能是回复）。沿 parent_id 向上走到 root。
       const byId = new Map(timeline.map((e) => [e.id, e]));
       let cur = byId.get(commentId);
       while (cur?.parent_id && byId.get(cur.parent_id)) cur = byId.get(cur.parent_id)!;
@@ -1443,21 +1412,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     [timeline, clearResolvedExpand, toggleResolveComment],
   );
 
-  // Memoized timeline grouping. Each render rebuilds the per-parent map from
-  // the latest timeline, then pre-flattens each thread's reply subtree into a
-  // dedicated `threadReplies` slice per root. Slices are stabilized against
-  // the previous render via `prevThreadRepliesRef`: if a thread's flat list
-  // is shallow-equal to the previous one, we reuse the previous array so
-  // React.memo on CommentCard / ResolvedThreadBar can short-circuit. Without
-  // this, every WS event (including reactions, edits, AI streaming on an
-  // unrelated thread) hands every card a brand-new prop reference and forces
-  // every thread subtree to re-render in lockstep.
+  // 记忆化的时间线分组。每次渲染都从最新 timeline 重建"每父级"映射，
+  // 然后把每条线程的回复子树预展平成一个专属的 `threadReplies` 切片（按 root 存储）。
+  // 切片通过 `prevThreadRepliesRef` 相对上一次渲染做稳定化：如果某条线程的扁平列表
+  // 和上一次浅比较相等，就复用上一次的数组，这样 CommentCard / ResolvedThreadBar 上的
+  // React.memo 才能短路。没有这个的话，每个 WS 事件（包括无关线程上的反应、编辑、AI 流式输出）
+  // 都会给每张卡片一个全新的 prop 引用，迫使所有线程子树齐步重渲染。
   const prevThreadRepliesRef = useRef<Map<string, TimelineEntry[]>>(new Map());
   const timelineView = useMemo(() => {
-    // Group entries: top-level = activities + root comments; replies are
-    // bucketed under their parent's id and rendered nested inside CommentCard.
-    // No orphan rescue needed: the timeline is fetched in full, so every
-    // reply's parent is always in the same array.
+    // 分组：顶层 = 活动 + 根评论；回复按父级 id 归桶，并在 CommentCard 内部嵌套渲染。
+    // 不需要孤儿救援：timeline 是全量拉取的，所以每条回复的父级总在同一个数组里。
     const topLevel = timeline.filter(
       (e) => e.type === "activity" || !e.parent_id,
     );
@@ -1470,9 +1434,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       }
     }
 
-    // Pre-flatten each top-level comment's thread subtree (parent + every
-    // descendant in render order). Reuse the previous array reference when
-    // the thread is unchanged so unrelated CommentCards keep their memo.
+    // 预展平每条顶层评论的线程子树（父评论 + 按渲染顺序的所有后代）。
+    // 当线程没变化时复用上一次的数组引用，让无关的 CommentCard 保持 memo。
     const prevThreadReplies = prevThreadRepliesRef.current;
     const threadReplies = new Map<string, TimelineEntry[]>();
     for (const root of topLevel) {
@@ -1486,10 +1449,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     }
     prevThreadRepliesRef.current = threadReplies;
 
-    // Coalesce consecutive activities from the same actor + action.
-    // - task_completed / task_failed: no time limit (these repeat across runs)
-    // - all other actions: within a 2-minute window
-    // - squad_leader_evaluated: never coalesce; outcome/reason are audit data
+    // 合并同一个执行者 + 同一种动作的连续活动。
+    // - task_completed / task_failed：无时间限制（它们会跨多次运行重复出现）
+    // - 其他所有动作：在 2 分钟窗口内合并
+    // - squad_leader_evaluated：永不合并；结果/原因是审计数据
     const COALESCE_MS = 2 * 60 * 1000;
     const NO_TIME_LIMIT_ACTIONS = new Set(["task_completed", "task_failed"]);
     const NEVER_COALESCE_ACTIONS = new Set(["squad_leader_evaluated"]);
@@ -1513,7 +1476,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       coalesced.push(entry);
     }
 
-    // Group consecutive activities together so the connector line works
+    // 把连续的活动归到一组，好让连接线正确渲染
     const groups: { type: "activities" | "comment"; entries: TimelineEntry[] }[] = [];
     for (const entry of coalesced) {
       if (entry.type === "activity") {
@@ -1531,32 +1494,29 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     return { threadReplies, groups };
   }, [timeline]);
 
-  // Flat array consumed by <Virtuoso>. Recomputed when timelineView.groups
-  // changes (timeline events) or expandedResolved flips (user toggles a
-  // resolved thread). Kept in a useMemo so Virtuoso's data identity is stable
-  // across unrelated re-renders.
+  // 交给 <Virtuoso> 的扁平数组。当 timelineView.groups 变化（时间线事件）
+  // 或 expandedResolved 翻转（用户切换已解决线程）时重新计算。
+  // 放在 useMemo 里，保证无关重渲染时 Virtuoso 的数据引用保持稳定。
   const items = useMemo<TimelineItem[]>(
     () => flattenGroups(timelineView.groups, expandedResolved),
     [timelineView.groups, expandedResolved],
   );
 
-  // In-page find (Cmd/Ctrl+F). `items.length` is the content signal that
-  // triggers a match recompute when comments are added/removed; text edits
-  // are caught by the hook's own MutationObserver. Opening find forces the
-  // timeline to render flat below so every comment is in the DOM to match.
+  // 页面内查找（Cmd/Ctrl+F）。`items.length` 是内容信号，在评论增删时触发匹配重算；
+  // 文本编辑由 hook 自己的 MutationObserver 捕获。打开查找会强制时间线在下方扁平渲染，
+  // 让每条评论都进 DOM 以便匹配。
   const find = useInPageFind({
     container: scrollContainerEl,
     contentKey: items.length,
     enabled: !!issue,
   });
-  // Close the bar (and drop highlights) when navigating to another issue —
-  // the web route reuses this component instead of remounting.
+  // 导航到另一个 issue 时关闭查找栏（并清除高亮）——web 路由是复用本组件而不是重新挂载。
   const closeFind = find.closeFind;
   useEffect(() => {
     closeFind();
   }, [id, closeFind]);
 
-  // ID of the trailing activity block — the only one expanded by default.
+  // 尾部活动块的 id——唯一默认展开的那个。
   const lastActivityGroupId = useMemo(() => {
     for (let i = timelineView.groups.length - 1; i >= 0; i--) {
       const g = timelineView.groups[i]!;
@@ -1565,10 +1525,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     return null;
   }, [timelineView.groups]);
 
-  // Map of reply-comment id → root-comment id, so a deep-link to a reply
-  // (which lives inside a CommentCard, not in the flat items array) can fall
-  // back to scrolling the root thread into view. Without this, an inbox
-  // notification on a reply would land at items[-1] and short-circuit.
+  // 回复评论 id → 根评论 id 的映射，这样指向某条回复的深链
+  // （回复在 CommentCard 内部，而不是扁平 items 数组里）能回退为把根线程滚进视野。
+  // 没有这个的话，指向回复的收件箱通知会落到 items[-1] 上直接短路。
   const replyToRoot = useMemo(() => {
     const map = new Map<string, string>();
     for (const [rootId, replies] of timelineView.threadReplies) {
@@ -1579,8 +1538,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     return map;
   }, [timelineView.threadReplies]);
 
-  // Deep-link target index in the flat items array. For root comments this is
-  // a direct findIndex hit; for reply ids we look up the enclosing root.
+  // 深链目标在扁平 items 数组里的下标。根评论是直接 findIndex 命中；
+  // 回复 id 则查它所属的根。
   const targetIdx = useMemo(() => {
     if (!highlightCommentId) return -1;
     const direct = items.findIndex((it) => it.id === highlightCommentId);
@@ -1590,26 +1549,23 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     return items.findIndex((it) => it.id === rootId);
   }, [items, highlightCommentId, replyToRoot]);
 
-  // One entry per comment thread (folded resolved bars included), activity
-  // groups skipped. Derived from the same flat `items` array Virtuoso renders
-  // so the order always matches the page. Feeds both thread navigators — the
-  // right-edge rail and the header panel — from one derivation, so they can
-  // never disagree about what the threads are or what order they are in.
+  // 每条评论线程一个条目（含已折叠的解决横条），跳过活动组。
+  // 从 Virtuoso 渲染的同一个扁平 `items` 数组派生，所以顺序始终和页面一致。
+  // 两个线程导航器——右边缘轨道和头部面板——都从这一处派生，
+  // 因此它们对"有哪些线程、顺序是什么"永远不会不一致。
   //
-  // The resolved flag comes from `deriveThreadResolution`, not from the
-  // `resolved-bar` kind: that kind only covers root resolutions that are
-  // currently folded, so it would miss reply resolutions and would flip off
-  // as soon as the user expanded a resolved thread.
+  // resolved 标志来自 `deriveThreadResolution`，而不是 `resolved-bar` 的 kind：
+  // 那个 kind 只覆盖当前处于折叠状态的根解决，会漏掉回复的解决，
+  // 并且会在用户展开一条已解决线程时立刻翻转为 false。
   const minimapThreads = useMemo<ThreadNavThread[]>(
     () =>
       items.flatMap((it) => {
         if (it.kind !== "comment" && it.kind !== "resolved-bar") return [];
         const replies = timelineView.threadReplies.get(it.id) ?? EMPTY_REPLIES;
         const currentUserId = user?.id ?? "";
-        // "@me" means the thread concerns this reader: they started it,
-        // answered in it, or were @mentioned anywhere in it. Authorship counts
-        // because a thread you spoke in is one you are expected to follow —
-        // narrowing to literal mentions would drop most of them.
+        // "@me" 表示这条线程跟当前读者有关：他发起过、回复过，或在某处被 @ 过。
+        // 作者身份也算——你在里面说过话的线程是你理应跟进的；
+        // 如果只算字面意义的 @ 提及，会把其中大部分都漏掉。
         const involvesMe =
           currentUserId !== "" &&
           ([it.entry, ...replies].some(
@@ -1630,22 +1586,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     [items, timelineView.threadReplies, user?.id],
   );
 
-  // When the timeline renders flat (deep-link or in-page find), there is no
-  // Virtuoso instance — minimap jumps drive the scroll container directly.
+  // 当时间线走"扁平渲染"（深链或页内查找）时没有 Virtuoso 实例——
+  // 此时 minimap 跳转直接驱动滚动容器本身。
   const isFlatTimeline = !!highlightCommentId || find.open;
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  // Scroll a freshly posted comment into view, aligned so its bottom sits just
-  // above the sticky composer (never behind it). A reply lives inside its root
-  // CommentCard, so the containing top-level row is the scroll target. Flat and
-  // virtualized timelines need separate scroll drivers, so they split into two
-  // effects below — kept apart because only the flat one depends on
-  // `scrollContainerEl`, and adding that dep to the virtualized effect would
-  // let a container re-measure cancel its in-flight scroll mid-flight.
+  // 把刚发布的那条评论滚进视野，让它的底部刚好停在吸底评论区上方（绝不被它挡住）。
+  // 回复嵌在它所属根评论的 CommentCard 里，所以滚动目标是装着它的那条顶层行。
+  // 扁平与虚拟化两条时间线需要各自的滚动驱动，因此拆成下面两个 effect——之所以拆开，
+  // 是因为只有扁平那条依赖 `scrollContainerEl`；把该依赖加进虚拟化 effect 的话，
+  // 一次容器重测就会在半路上取消掉正在进行的滚动。
 
-  // Virtualized mode: Virtuoso owns the scroll. The first jump materializes the
-  // row at its estimated height; once measured, the repeat aligns using the
-  // real height. The extra `offset` lifts the row's bottom clear of the sticky
-  // composer.
+  // 虚拟化模式：滚动由 Virtuoso 接管。第一次跳转会按估算高度先渲染出行；
+  // 测出真实高度后，第二次跳转再用真实高度对齐。额外的 `offset` 把行的底部
+  // 抬离吸底评论区，避免被它盖住。
   useEffect(() => {
     if (!pendingPostedCommentId || isFlatTimeline) return;
     const rootId = replyToRoot.get(pendingPostedCommentId) ?? pendingPostedCommentId;
@@ -1669,11 +1622,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     };
   }, [pendingPostedCommentId, items, replyToRoot, isFlatTimeline]);
 
-  // Flat mode (find bar / deep link) has no Virtuoso, so drive scrollTop by
-  // hand: align the row's bottom to the composer's top edge. The comment's
-  // async layout (markdown, code highlight, images) keeps shifting its height,
-  // so re-align each frame until it settles (within 1px) or ~0.5s elapses — the
-  // same rAF stabilization the deep-link landing uses.
+  // 扁平模式（查找栏 / 深链）没有 Virtuoso，只能手推 scrollTop：把行底对齐到
+  // 评论区顶边。评论的异步排版（markdown、代码高亮、图片）会不断改变它的高度，
+  // 所以每一帧都重新对齐，直到稳定（误差 1px 内）或约 0.5s 耗尽——
+  // 与深链落地用的 rAF 稳定逻辑相同。
   useEffect(() => {
     if (!pendingPostedCommentId || !isFlatTimeline) return;
     const rootId = replyToRoot.get(pendingPostedCommentId) ?? pendingPostedCommentId;
@@ -1711,9 +1663,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const jumpToThread = useCallback(
     (threadId: string) => {
       if (isFlatTimeline) {
-        // Flat mode mounts every row, so the anchor is always in the DOM.
-        // Drive the container's scrollTop directly — never native
-        // scrollIntoView, which also scrolls the desktop shell (#3929).
+        // 扁平模式挂载了每一行，锚点一定在 DOM 里。直接推容器的 scrollTop——
+        // 绝不用原生 scrollIntoView，它会连带滚动桌面壳层 (#3929)。
         const el = document.getElementById(`comment-${threadId}`);
         const container = scrollContainerEl;
         if (!el || !container) return;
@@ -1721,15 +1672,14 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         const e = el.getBoundingClientRect();
         container.scrollTop = Math.max(0, container.scrollTop + (e.top - c.top) - 16);
       } else {
-        // Virtualized mode: the target row may not be mounted, so scroll by
-        // index and let Virtuoso mount it. Offset leaves a small top gap.
+        // 虚拟化模式：目标行可能还没挂载，所以按下标滚动、让 Virtuoso 去挂载它。
+        // offset 留出一点顶部间距。
         const index = items.findIndex((it) => it.id === threadId);
         if (index < 0) return;
         virtuosoRef.current?.scrollToIndex({ index, align: "start", offset: -16 });
       }
-      // Flash the landed thread the same way inbox deep-links do, so the eye
-      // has an anchor after the instant jump. (Folded resolved bars don't
-      // take the highlight prop — the scroll itself is the feedback there.)
+      // 像收件箱深链那样给落点线程加一次闪烁，让眼睛在瞬间跳转后有个锚点。
+      //（已折叠的解决横条不接收高亮 prop——对它们来说滚动本身就是反馈。）
       setHighlightedId(threadId);
       if (jumpFlashTimerRef.current !== null) window.clearTimeout(jumpFlashTimerRef.current);
       jumpFlashTimerRef.current = window.setTimeout(() => setHighlightedId(null), 2000);
@@ -1737,11 +1687,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     [isFlatTimeline, items, scrollContainerEl],
   );
 
-  // Header thread navigator. `open` and `pinned` live here rather than inside
-  // the panel because the global shortcut has to be able to open it already
-  // pinned, and because the rail needs `threadNavHoverId` to light the tick
-  // the panel's pointer is resting on — the two navigators share one
-  // coordinate system (MUL-5755).
+  // 头部线程导航器。`open`/`pinned` 放在这里而不是面板内部，是因为全局快捷键
+  // 需要能"一打开就是钉住态"，也因为右缘轨道要用 `threadNavHoverId` 点亮
+  // 面板指针停留的那一格——两个导航器共用同一套坐标系 (MUL-5755)。
   const [threadNavOpen, setThreadNavOpen] = useState(false);
   const [threadNavPinned, setThreadNavPinned] = useState(false);
   const [threadNavHoverId, setThreadNavHoverId] = useState<string | null>(null);
@@ -1751,9 +1699,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     if (!open) setThreadNavHoverId(null);
   }, []);
 
-  // Global Mod+Shift+O. Scoped to the mounted issue detail and gated on
-  // visibility the same way Cmd+F is, so on desktop only the visible tab
-  // intercepts the key.
+  // 全局快捷键 Mod+Shift+O。作用域限于当前已挂载的问题详情，并像 Cmd+F 一样
+  // 以可见性为门槛，因此在桌面端只有当前可见的那个标签页会拦截按键。
   useEffect(() => {
     if (minimapThreads.length === 0) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1761,9 +1708,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       if (!shortcutMatchesEvent(getShortcut("openThreadNav"), e)) return;
       if (!scrollContainerEl || scrollContainerEl.getClientRects().length === 0) return;
       e.preventDefault();
-      // The shortcut is a deliberate act, so it opens the pinned state
-      // directly. Pressing it again over a hover preview pins that preview
-      // rather than closing it, matching what pressing the button does.
+      // 快捷键是用户的明确动作，所以直接打开"钉住"状态。在悬浮预览上再按一次
+      // 会把该预览钉住而非关闭，与点击按钮的行为保持一致。
       if (threadNavOpen && threadNavPinned) {
         handleThreadNavOpenChange(false, false);
       } else {
@@ -1792,13 +1738,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     unsubscribeFromSubtree: handleUnsubscribeSubtree,
   } = useIssueSubscribers(id, user?.id);
 
-  // Attachments uploaded against this issue. Drives the description
-  // editor's click-time fresh-sign download: NodeViews match
-  // `src`/`href` against this list to resolve an attachment id before
-  // calling `/api/attachments/{id}`.
+  // 上传到该 issue 的附件清单。驱动描述编辑器"点击时重新签名下载"：
+  // NodeView 会用这条列表去比对 `src`/`href`，在调用 `/api/attachments/{id}` 之前
+  // 先解析出附件 id。
   const { data: issueAttachments } = useQuery(issueAttachmentsOptions(id));
 
-  // Sub-issue queries
+  // 子任务相关的查询
   const parentIssueId = issue?.parent_issue_id;
   const { data: parentIssue = null } = useQuery({
     ...issueDetailOptions(wsId, parentIssueId ?? ""),
@@ -1806,8 +1751,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     initialData: () => findCachedListIssue(parentIssueId),
   });
 
-  // Project segment in the breadcrumb. The issue's project_id is the source of
-  // truth — same URL renders the same breadcrumb regardless of entry path.
+  // 面包屑里的"项目"段。以 issue 的 project_id 为准——同样的 URL 无论从哪条路
+  // 径进来都渲染出同样的面包屑。
   const issueProjectId = issue?.project_id;
   const { data: breadcrumbProject = null } = useQuery({
     ...projectDetailOptions(wsId, issueProjectId ?? ""),
@@ -1821,34 +1766,28 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     ...childIssuesOptions(wsId, id),
     enabled: !!issue,
   });
-  // Whether this issue has sub-issues, as opposed to "we have not looked yet".
-  // childIssuesOptions sets refetchOnMount: "always", so a cached snapshot is
-  // re-fetched on every mount and isSuccess alone still describes the previous
-  // visit. The unsubscribe control below picks a different server write from
-  // this answer, so a defaulted or stale empty array must not count as "no
-  // sub-issues" (MUL-5714).
+  // 记录"这个 issue 到底有没有子任务"，区别于"我们还没查过"。childIssuesOptions
+  // 把 refetchOnMount 设成了 "always"，所以每次挂载都会重新拉取缓存快照，
+  // 仅凭 isSuccess 仍只能描述上一次访问的状态。下面的退订控件会根据这个答案
+  // 选择不同的服务端写入，因此"默认值/过期的空数组"绝不能当成"没有子任务"(MUL-5714)。
   const childCountKnown = childIssuesLoaded && !childIssuesFetching;
-  // Parent's children — used to render the "x/y" progress next to the
-  // "Sub-issue of …" breadcrumb under the title.
+  // 父任务的子任务——用于在标题下方的"是 … 的子任务"面包屑旁渲染"x/y"进度。
   const { data: parentChildIssues = [] } = useQuery({
     ...childIssuesOptions(wsId, parentIssueId ?? ""),
     enabled: !!parentIssueId,
   });
-  // Workspace-wide parent→(done/total) map; lets each sub-issue row show its
-  // OWN nested progress ring without opening it. Same query the list
-  // surfaces use, so it's usually already cached.
+  // 工作区级的 父任务→(完成数/总数) 映射；让每行子任务不打开详情也能显示
+  // 自己的嵌套进度环。与列表视图用的是同一条查询，通常已命中缓存。
   const { data: subIssueProgress } = useQuery({
     ...childIssueProgressOptions(wsId),
     enabled: childIssues.length > 0,
   });
-  // User-level display preference for sub-issue rows (built-in field toggles
-  // + opted-in workspace custom properties). `subIssueCustomProps` resolves
-  // the persisted ids against this workspace's live, non-archived property
-  // definitions — ids from other workspaces or archived properties drop out.
+  // 用户级"子任务行显示什么字段"的偏好（内置字段开关 + 主动勾选的工作区自定义属性）。
+  // `subIssueCustomProps` 拿持久化的属性 id 去比对当前工作区里存活的、未归档的属性定义——
+  // 来自其他工作区或已归档属性的 id 会被过滤掉。
   const subIssueRowProps = useSubIssueDisplayStore((s) => s.rowProperties);
   const subIssueRowPropertyIds = useSubIssueDisplayStore((s) => s.rowPropertyIds);
-  // Store-backed (not useState) so the collapsed state survives leaving the
-  // issue and navigating back within the session.
+  // 用 store 而非 useState 承载，这样折叠状态能跨"离开该 issue 再返回"存续于本次会话内。
   const subIssuesCollapsed = useSubIssuesCollapseStore((s) =>
     s.collapsedIssueIds.has(issueId),
   );
@@ -1868,9 +1807,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     [issueId, setSubIssuesCollapsedFor],
   );
 
-  // Selection store is global (workspace-scoped); clear it whenever this
-  // issue detail is mounted or switched, so leftover selections from the
-  // main list view (or another sub-issue list) don't leak into this one.
+  // 选中 store 是全局的（按工作区作用域）；每当本详情页挂载或切换 issue 时都清一次，
+  // 避免主列表（或另一张子任务列表）遗留的选中项渗进当前列表。
   const clearSelection = useIssueSelectionStore((s) => s.clear);
   const selectedIds = useIssueSelectionStore((s) => s.selectedIds);
   const selectIds = useIssueSelectionStore((s) => s.select);
@@ -1894,34 +1832,28 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   const loading = issueLoading;
 
-  // Deep-link landing. Semantically equivalent to navigating to
-  // `#comment-${id}`: find the element with that id, scrollIntoView it.
-  // When `highlightCommentId` is set the timeline below renders flat (no
-  // virtualization), so every comment id is in the DOM by the time this
-  // effect runs after commit.
+  // 深链落地。语义上等价于跳转 `#comment-${id}`：找到那个 id 的元素并滚到视野中。
+  // 当设置了 `highlightCommentId` 时下方时间线走扁平渲染（不做虚拟化），
+  // 所以本 effect 在 commit 后执行时，每条评论的 id 都已进 DOM。
   //
-  // For a reply inside a folded resolved thread, the reply is not in items
-  // (only the resolved-bar root is). Auto-expand the thread first; the
-  // effect re-runs once items re-flatten.
+  // 若目标是"已折叠的已解决线程"里的一条回复：回复本身不在 items 中
+  //（只有横条根在）。需要先把线程自动展开，等 items 重新扁平化后 effect 再跑一次。
   //
-  // `scrollContainerEl` is in deps because the component early-returns a
-  // loading skeleton while the issue query is pending. The scroll-container
-  // ref populates only on the post-loading render, so it's the signal that
-  // the timeline (and the deep-link target id) has actually rendered.
+  // `scrollContainerEl` 放进依赖是因为：issue 查询未完成时本组件会提前 return 一个
+  // 加载骨架。滚动容器 ref 只有在加载完成的那次渲染后才会被填充，
+  // 所以它正是"时间线（以及深链目标 id）已经真正渲染出来"的信号。
   useEffect(() => {
     if (!highlightCommentId || items.length === 0) return;
-    // An explicit replay request (re-click on the already-open notification
-    // row): the host cleared the memento entry and bumped the token, so
-    // re-arm the landing guard and fall through to the jump.
+    // 这是一次显式的重播请求（再次点击已打开的那条通知）：宿主已经清掉 memento 条目
+    // 并递增了 token，所以重新武装落地守卫，然后照常执行跳转。
     if (lastHighlightRequestTokenRef.current !== highlightRequestToken) {
       lastHighlightRequestTokenRef.current = highlightRequestToken;
       didHighlightRef.current = null;
     }
     if (didHighlightRef.current === highlightCommentId) return;
-    // The deep link already landed before this mount (memento entry — a tab
-    // switch back or an in-tab return). The restored scroll offset is the
-    // state the user left, and the jump must not fight it. A fresh selection
-    // clears the entry, so this only ever suppresses a *repeat* landing.
+    // 这条深链在本次挂载前已经落过地（memento 里留有记录——比如切标签页回来或
+    // 页内返回）。此时恢复的滚动位置就是用户离开时的状态，跳转不能跟它抢。
+    // 新一次的选择会清掉记录，所以这里的拦截只作用于*重复*落地。
     if (consumedHighlightRef.current === highlightCommentId) {
       didHighlightRef.current = highlightCommentId;
       return;
@@ -1929,13 +1861,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
     const rootId = replyToRoot.get(highlightCommentId);
     if (rootId && rootId !== highlightCommentId) {
-      // Root resolved → the whole thread is a folded bar.
+      // 根评论已解决 → 整条线程是一根折叠横条。
       if (items[targetIdx]?.kind === "resolved-bar") {
         toggleResolvedExpand(rootId, true);
         return;
       }
-      // A reply is the resolution → the other replies fold behind the
-      // "N comments" bar; expand if the target is one of those folded replies.
+      // 解决者是某条回复 → 其余回复折进"N 条评论"横条后面；
+      // 若目标正是那些被折起的回复之一，就先展开。
       const rootItem = items[targetIdx];
       if (rootItem?.kind === "comment" && !expandedResolved.has(rootId)) {
         const resolution = deriveThreadResolution(
@@ -1954,22 +1886,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     if (!el || !container) return;
 
     didHighlightRef.current = highlightCommentId;
-    // Record the landing in the memento so a remount that merely restores
-    // this view (tab switch back) skips the jump instead of replaying it
-    // over the restored scroll position.
+    // 把这次落地记进 memento，让以后只是"恢复视图"的重挂载（切标签页回来）
+    // 跳过跳转，而不是在恢复的滚动位置上再重播一遍。
     writeViewState(issueHighlightMementoKey(id), highlightCommentId);
 
-    // Center the target comment WITHIN its own scroll container by driving the
-    // container's scrollTop directly — never native scrollIntoView. Native
-    // scrollIntoView is spec'd to scroll EVERY scrollable ancestor: on a cold
-    // mount where the timeline is still growing (streaming agent), the inner
-    // scroller can't satisfy centering on its own, so the scroll propagates up
-    // and moves the desktop shell's `overflow:hidden` wrapper — shoving the
-    // whole page, header included, off the top with no scrollbar to recover,
-    // until a resize reflows it (#3929). Scoping the scroll to `container`
-    // keeps it contained; re-centering across frames lands the comment
-    // precisely once async heights (markdown, code highlight, streamed replies)
-    // settle, instead of leaning on the ancestor scroll the way native did.
+    // 直接推容器自己的 scrollTop，把目标评论在它自己的滚动容器里居中——绝不用原生
+    // scrollIntoView。规范规定原生 scrollIntoView 会滚动*每一个*可滚动的祖先：
+    // 在冷启动挂载、时间线还在持续增长（agent 流式输出）时，内层滚动区自己无法完成
+    // 居中，滚动就会向上传导，带动桌面壳层的 `overflow:hidden` 容器——把整页连同头部
+    // 一起顶出屏幕顶部，且没有任何滚动条可以拉回来，直到一次 resize 重新排版 (#3929)。
+    // 把滚动限定在 `container` 内可保持受控；跨帧反复居中，等异步高度（markdown、代码
+    // 高亮、流式回复）稳定后即可精准落点——而不是像原生那样依赖祖先滚动。
     let rafId = 0;
     let frames = 0;
     let last = -1;
@@ -1981,8 +1908,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         container.scrollTop + (e.top - c.top) - (container.clientHeight - e.height) / 2,
       );
       container.scrollTop = target;
-      // Content is still laying out → the centered offset keeps shifting; keep
-      // re-centering until it stabilizes (within 1px) or we hit ~0.5s of frames.
+      // 内容仍在排版 → 居中偏移量还在变化；继续居中直到稳定（1px 内）或消耗约 0.5s 帧。
       if (Math.abs(target - last) > 1 && ++frames < 30) {
         last = target;
         rafId = requestAnimationFrame(center);
@@ -2009,17 +1935,15 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     baseMarkdown: string;
     attachmentIds: string[];
   } | null>(null);
-  // Keep the description editor mounted from the start. Unlike the empty
-  // composer shells, a long rendered description cannot swap between
-  // react-markdown and ProseMirror without small per-block height differences
-  // accumulating into a visible scroll/layout jump. The chunked Markdown path
-  // keeps this single eager editor affordable; title and composers stay lazy.
+  // 从一开始就保持描述编辑器处于挂载状态。与空的输入框外壳不同，一篇渲染完的长描述
+  // 不能在 react-markdown 与 ProseMirror 之间来回切换——每块微小的行高差异会累积成
+  // 可见的滚动/排版跳动。分块渲染 Markdown 的路径让这一份"急切"编辑器成本可控；
+  // 标题与输入框仍保持懒加载。
   const titleEditorRef = useRef<TitleEditorRef>(null);
   const titleBaseRef = useRef<string | undefined>(issue?.title);
   const [titleConflictDraft, setTitleConflictDraft] = useState<string | null>(null);
-  // Bumped when a conflicting title draft is discarded. TitleEditor reads its
-  // text from `defaultValue` at mount and exposes no imperative setter, so
-  // remounting is the only way to put the server's title back in the editor.
+  // 当有冲突的标题草稿被丢弃时递增。TitleEditor 只在挂载时读取 `defaultValue`，
+  // 也不暴露命令式 setter，所以"重新挂载"是把服务端标题放回编辑器的唯一办法。
   const [titleResetToken, setTitleResetToken] = useState(0);
   useEffect(() => {
     setTitleConflictDraft(null);
@@ -2034,16 +1958,14 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const { isDragOver: descDragOver, dropZoneProps: descDropZoneProps } = useFileDropZone({
     onDrop: (files) => files.forEach((file) => descEditorRef.current?.uploadFile(file)),
   });
-  // Pending uploads in the description editor. We don't pass `issueId` on
-  // upload (to avoid orphaning attachments when the user deletes the file
-  // from the markdown), so they start unattached and we re-bind them via
-  // `attachment_ids` on the next description save. Drives editor previews
-  // so text/code attachments show an Eye before the bind round-trips.
+  // 描述编辑器里"尚未完成绑定"的上传。上传时不带 `issueId`（避免用户在 markdown
+  // 里删掉该文件后产生孤儿附件），所以它们一开始是游离的，等下次保存描述时通过
+  // `attachment_ids` 重新绑定。这段逻辑还驱动编辑器预览——在绑定往返完成前，
+  // 文本/代码类附件就能先显示一个"眼睛"图标。
   const [descPendingAttachments, setDescPendingAttachments] = useState<Attachment[]>([]);
   const descPendingAttachmentsRef = useRef<Attachment[]>([]);
-  // Memoized because the image sequence below keys off this array: without it
-  // the concat branch hands a fresh reference to every render and rebuilds the
-  // whole issue's sequence on each one.
+  // 记忆化是因为下方图片序列以该数组作为依赖键：没有它的话，concat 分支每次渲染都
+  // 会给出一份新引用，导致整个 issue 的图片序列在每次渲染时都重建一遍。
   const descEditorAttachments = useMemo(
     () =>
       descPendingAttachments.length > 0
@@ -2052,16 +1974,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     [issueAttachments, descPendingAttachments],
   );
 
-  // Every image in this issue, in the order the page renders them: the
-  // description first, then each timeline comment with its thread replies
-  // nested under it (MUL-5752). Built from `items` rather than the flat
-  // timeline so a reply sits next to the root it renders under, and from data
-  // rather than the DOM because Virtuoso only mounts the visible window.
+  // 该 issue 里的每一张图片，按页面渲染顺序排列：先是描述，再是每条时间线评论
+  // 及其嵌套的回复子树 (MUL-5752)。之所以取自 `items` 而非扁平时间线，是为了让回复
+  // 紧挨着它渲染其下的根；之所以取自数据而非 DOM，是因为 Virtuoso 只挂载可见窗口。
   //
-  // A resolved thread that is currently collapsed still contributes its
-  // images: they belong to the issue and are one click from being on screen,
-  // so leaving them out would make the counter change depending on which
-  // threads happen to be folded.
+  // 当前折叠起来的已解决线程也照样贡献图片：它们属于该 issue，距上屏只差一次点击，
+  // 若排除它们，计数器就会随"哪些线程恰好被折起"而漂移。
   const imageSequence = useMemo(() => {
     const blocks: ImageSequenceBlock[] = [
       { content: issue?.description, attachments: descEditorAttachments },
@@ -2099,24 +2017,22 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     setDescPendingAttachments([]);
   }, [id]);
 
-  // Shared issue actions (mutations, pin, copy-link, modal dispatch, etc.).
-  // Called before the `if (!issue)` early return so hook order stays stable.
+  // 共享的 issue 操作（mutation、置顶、复制链接、派发模态框等）。
+  // 必须在 `if (!issue)` 提前 return 之前调用，以保证 hook 顺序稳定。
   const actions = useIssueActions(issue);
   const handleUpdateField = actions.updateField;
 
-  // Labels live in their own query (not on the issue body) — fetch the count
-  // here so seeding can decide whether the "Labels" optional row should be
-  // shown for an issue that already has labels attached.
+  // 标签放在独立的查询里（不在 issue 主体上）——这里先取到数量，
+  // 以便种子化逻辑决定"标签"这一可选行是否要为一个已带标签的 issue 显示。
   const { data: attachedLabels = [] } = useQuery(issueLabelsOptions(wsId, id));
   const attachedLabelsCount = attachedLabels.length;
 
-  // Custom property catalog. Includes archived definitions: an issue can
-  // still carry a value written before the archive, and that row must stay
-  // renderable (read-only) until someone clears it.
+  // 自定义属性目录。包含已归档的定义：issue 可能仍带有归档前写入的值，
+  // 在有人清掉它之前，那一行必须保持可渲染（只读）。
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(wsId, true));
 
-  // Sub-issue rows only surface live definitions: the display picker offers
-  // non-archived properties, and chips render only ids that resolve here.
+  // 子任务行只露出"存活"的定义：显示选择器只提供未归档属性，chip 也只渲染
+  // 能在这里解析到的 id。
   const activeWorkspaceProperties = useMemo(
     () => workspaceProperties.filter((p) => p.archived !== true),
     [workspaceProperties],
@@ -2129,11 +2045,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     [subIssueRowPropertyIds, activeWorkspaceProperties],
   );
 
-  // Seed the visible-optional-props set:
-  //   - on issue switch, reset to whichever fields are currently set
-  //   - on the SAME issue, additively pick up fields the user just set
-  //     (so the row stays visible after they edit + clear in one session)
-  // Removal happens only on issue switch — never on clear.
+  // 初始化"可见的可选属性"集合：
+  //   - 切换 issue 时，重置为当前已设置的那些字段
+  //   - 同一 issue 内，增量吸收用户刚设置的字段
+  //     （保证用户在一次会话里"编辑后又清空"，该行依然保持可见）
+  // 移除只发生在切换 issue 时——清空字段永不触发移除。
   const seededIssueIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!issue) return;
@@ -2180,8 +2096,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         return next;
       });
       setAutoOpenProp(key);
-      // Dismiss the "+ Add property" popover so it doesn't sit stacked
-      // behind the picker we're about to auto-open.
+      // 先收起"+ 添加属性"弹层，免得它叠在我们即将自动打开的选择器后面。
       setAddPropPopoverOpen(false);
     },
     [],
@@ -2198,9 +2113,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     setAddPropPopoverOpen(false);
   }, []);
 
-  // Clear the auto-open flag after the next render so pickers (which read
-  // `defaultOpen` once via a useState initializer) keep the open state they
-  // captured on mount, but later interactions don't re-trigger it.
+  // 在下一个渲染周期清掉"自动打开"标记：选择器通过 useState 初始化器只读取一次
+  // `defaultOpen`，这样它们能保留挂载时捕获的开合状态，同时后续交互不会再次触发它。
   useEffect(() => {
     if (autoOpenProp === null) return;
     setAutoOpenProp(null);
@@ -2233,19 +2147,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     restoreKey: `${wsId}:${id}`,
     scrollContainerEl,
     ready: !!issue && !loading && !timelineLoading,
-    // Disabled only while the comment deep link still has a landing to run —
-    // the jump owns the scroll then. Once the landing is consumed (a tab
-    // switch back), this hook's retry loop IS the restore: the one-shot
-    // ref-attach assignment clamps against a container whose async content
-    // (markdown, images) hasn't reached its captured height yet.
+    // 仅在评论深链仍有待执行的落地时禁用——那时滚动归跳转逻辑管。一旦落地被消费
+    //（比如切标签页回来），本 hook 的重试循环本身就是恢复逻辑：一次性 ref 附着所赋的值
+    // 会被一个"异步内容（markdown、图片）还没长到捕获高度"的容器截断。
     disabled: !!highlightCommentId && consumedHighlightId !== highlightCommentId,
-    // The tab memento's offset, when the platform serves one. It must win
-    // over this hook's module-level map — see the parameter doc.
+    // 平台若提供标签页 memento 的偏移量，则必须以它为准，压过本 hook 的模块级映射
+    // ——详见参数文档。
     overrideTop: restoredScrollTop,
   });
 
-  // Keep the identity value stable across unrelated issue-detail updates so
-  // context consumers only re-render when the owning issue changes identity.
+  // 让身份值在与 issue 详情无关的更新里保持稳定，这样 context 消费者只会在
+  // 所属 issue 的身份真正改变时重渲染。
   const resolvedIssueId = issue?.id;
   const resolvedIssueIdentifier = issue?.identifier;
   const currentIssueRenderContext = useMemo(
@@ -2283,10 +2195,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           const pending = pendingDescriptionSaveRef.current;
           pendingDescriptionSaveRef.current = null;
           if (pending) {
-            // Usually the accepted document is exactly what we submitted. If
-            // the server appended late channel media, keep the submitted body
-            // as the next editor baseline: the server can recognize that the
-            // only delta is media the editor never saw and preserve it again.
+            // 通常服务端接受的文档和我们提交的完全一致。若服务端补上了迟到的
+            // 渠道媒体，就把提交的正文当作下一版编辑器基线：服务端能识别出唯一
+            // 差异只是编辑器从未见过的媒体，从而再次把它保留下来。
             const nextBase = serverIssue.description === draft.markdown
               ? serverIssue.description
               : draft.markdown;
@@ -2321,7 +2232,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   const sidebarContent = (
     <div className="space-y-5">
-      {/* Properties */}
+      {/* 属性（Properties）——边栏第一个可折叠区块 */}
       <div>
         <button
           type="button"
@@ -2332,7 +2243,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${propertiesOpen ? "rotate-90" : ""}`} />
         </button>
         {propertiesOpen && <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pl-2">
-          {/* Core props — always rendered. */}
+          {/* 核心属性——始终渲染。 */}
           <PropRow label={t(($) => $.detail.prop_status)}>
             <StatusPicker status={issue.status} onUpdate={handleUpdateField} align="start" />
           </PropRow>
@@ -2346,9 +2257,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             />
           </PropRow>
 
-          {/* Optional props — rendered only when set on the issue OR added
-              via "+ Add property" in this session. Row order follows the
-              order of `OPTIONAL_PROP_KEYS`. */}
+          {/* 可选属性——仅当 issue 上已设置、或本次会话里通过"+ 添加属性"加入
+              时才渲染。行顺序与 `OPTIONAL_PROP_KEYS` 一致。 */}
           {visibleOptionalProps.has("priority") && (
             <PropRow label={t(($) => $.detail.prop_priority)}>
               <PriorityPicker
@@ -2398,10 +2308,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </PropRow>
           )}
 
-          {/* Custom properties — same progressive disclosure as the
-              built-in optional props: a row renders when the issue has a
-              value OR the user added the property this session. Archived
-              definitions render read-only until their value is cleared. */}
+          {/* 自定义属性——与内置可选属性相同的渐进式展示：当 issue 有该字段值、
+              或用户本次会话加入了该属性时才渲染该行。已归档的定义以只读方式渲染，
+              直到其值被清掉。 */}
           {workspaceProperties
             .filter(
               (p) =>
@@ -2426,10 +2335,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               </PropRow>
             ))}
 
-          {/* "+ Add property" — opens a Popover listing optional fields
-              not yet displayed. Hidden once every optional field is on
-              screen. Sits inside the same grid as a full-row, with its
-              own padding so the visual rhythm follows the rows above. */}
+          {/* "+ 添加属性"——弹出一个 Popover 列出尚未显示的字段。
+              当所有可选字段都上屏后即隐藏。放在与上面相同的网格里作为整行，
+              自带内边距，让视觉节奏跟随上方各行。 */}
           {(OPTIONAL_PROP_KEYS.some((k) => !visibleOptionalProps.has(k) && (k !== "stage" || issue.parent_issue_id != null)) ||
             workspaceProperties.some((p) => !p.archived && !visibleCustomProps.has(p.id) && issue.properties?.[p.id] === undefined)) && (
             <div className="col-span-2 mt-1">
@@ -2440,10 +2348,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   <Plus className="h-3 w-3 shrink-0" />
                   <span>{t(($) => $.detail.add_property_action)}</span>
                 </PopoverTrigger>
-                {/* Item visuals mirror the inspector rows' typography
-                    (text-caption, muted icons) and each option leads with the
-                    icon the resulting picker uses, so the dropdown reads
-                    as a preview of what will show up below. */}
+                {/* 选项外观镜像右侧属性区各行的排版（text-caption、灰调图标），
+                    且每项以所选 picker 会用的那个图标开头，让下拉列表像是
+                    "下方会出现什么"的预览。 */}
                 <PopoverContent align="start" className="w-44 p-1">
                   {OPTIONAL_PROP_KEYS.filter((k) => !visibleOptionalProps.has(k) && (k !== "stage" || issue.parent_issue_id != null)).map((k) => (
                     <button
@@ -2512,19 +2419,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>}
       </div>
 
-      {/* Quick actions — the sidebar's only "do something" block, so it sits
-          directly under Properties and above every read-only section. Renders
-          nothing when the workspace has no active action visible to this
-          member. It is NOT filtered by invoke permission: a member can see and
-          click an action they cannot run, and the refusal is explained at run
-          time rather than by a silently shorter list. */}
+      {/* 快捷操作——边栏里唯一"干点事"的区块，因此紧挨属性区下方、置于所有只读区块
+          之上。当工作区没有对该成员可见的激活操作时不渲染任何内容。它不按调用权限过滤：
+          成员能看到并点开一个他其实无权执行的操作，拒绝原因在执行时说明，
+          而不是靠一条悄悄变短的列表。 */}
       <QuickActionsSection issueId={issue.id} />
       <PluginPanelSection issueId={issue.id} />
 
-      {/* Parent issue — standalone section, only when the issue has a
-          parent. Setting a parent is reachable via the issue actions menu;
-          this card surfaces an existing parent without occupying sidebar
-          space for issues that don't have one. */}
+      {/* 父任务——独立区块，仅当 issue 确有父任务时渲染。设置父任务可从 issue 操作
+          菜单进入；这张卡片只用于展示已有的父任务，不为没有父任务的 issue 白白占用
+          边栏空间。 */}
       {parentIssue && (
         <div>
           <button
@@ -2563,9 +2467,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>
       )}
 
-      {/* Pull requests — hidden when the workspace disables the PR sidebar
-          (or the GitHub master switch is off). Backend data is kept either
-          way so re-enabling restores the section instantly. */}
+      {/* 拉取请求——工作区关闭 PR 边栏（或 GitHub 总开关关闭）时隐藏。两种情况下
+          后端数据都保留，因此重新开启时区块能立刻恢复。 */}
       {githubSettings.prSidebar && (
         <div>
           <button
@@ -2580,16 +2483,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>
       )}
 
-      {/* Execution log — active runs + collapsed past runs, each carrying its
-          own token spend, with the issue total on the section header.
-          Self-contained; owns its own collapse state and WS subscriptions.
-          Hides itself when there are no runs to show. */}
+      {/* 执行日志——进行中的运行 + 折叠的过往运行，每段都带自己的 token 消耗，
+          区块标题上汇总 issue 总计。自包含：自己管理折叠状态与 WS 订阅。
+          没有可展示的运行时会自行隐藏。 */}
       <ExecutionLogSection issueId={id} identifier={issue.identifier} />
 
-      {/* Details — creator and timestamps. Sits below the execution log
-          because it is the least-read block in the sidebar: the values
-          never change once the issue exists, while the log above it is
-          what people actually come here to check. */}
+      {/* 详情——创建人与时间戳。放在执行日志下方，因为它是边栏里最没人看的区块：
+          issue 一经创建这些值就不再变化，而上方的日志才是人们真正过来查看的。 */}
       <div>
         <button
           type="button"
@@ -2613,19 +2513,15 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>}
       </div>
 
-      {/* The standalone "Token usage" section that used to sit here is gone:
-          it showed the same issue totals the execution-log header now carries,
-          minus the cost and minus any way to tell which run spent them. Its
-          every field (input / output / cache / run count) lives in the usage
-          dialog that header opens. The `/api/issues/:id/usage` endpoint it
-          read stays — the CLI's `issue usage` command still uses it. */}
+      {/* 曾经放在这里的独立"Token 用量"区块已被移除：它展示的 issue 总计与现在
+          执行日志标题上携带的相同，却少了成本、也说不清是哪次运行花掉的。它的每个
+          字段（输入 / 输出 / 缓存 / 运行次数）现在都收进了日志标题打开的用量对话框。
+          它读取的 `/api/issues/:id/usage` 接口仍保留——CLI 的 `issue usage` 命令还在用。 */}
 
-      {/* Metadata — agent-facing free-form KV bag. The values almost
-          never mean anything to humans, so the trigger row matches the
-          sibling section headers (Pull requests / Details / Parent issue)
-          but clicking opens a dialog with the raw JSON instead of expanding
-          inline — the payload can be large and pushing the rest of the
-          sidebar down was noisy. */}
+      {/* 元数据——面向 agent 的自由 KV 袋。这些值对人类几乎毫无意义，所以触发器
+          这一行沿用同级区块标题（拉取请求 / 详情 / 父任务）的样式，但点击后打开的是
+          展示原始 JSON 的对话框而非就地展开——负载可能很大，就地展开会把边栏其余
+          内容往下推，很吵。 */}
       {Object.keys(issue.metadata ?? {}).length > 0 && (
         <>
           <button
@@ -2653,9 +2549,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     </div>
   );
 
-  // Shared row renderer for both timeline render modes (flat / virtualized).
-  // The wrapper `id="comment-..."` is the deep-link target — equivalent to
-  // a native `<a href="#comment-...">` anchor.
+  // 时间线两种渲染模式（扁平 / 虚拟化）共用的行渲染器。
+  // 外层 `id="comment-..."` 是深链目标——等价于原生 `<a href="#comment-...">` 锚点。
   const renderItem = (_i: number, item: TimelineItem): React.ReactElement => {
     if (item.kind === "resolved-bar") {
       return (
@@ -2693,7 +2588,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>
       );
     }
-    // activity-group
+    // 活动组（activity-group）
     const expanded = expandedActivityIds.has(item.id)
       ? true
       : collapsedActivityIds.has(item.id)
@@ -2720,12 +2615,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     );
   };
 
-  // Breadcrumb shows the single most-direct container, never a fabricated chain.
-  // project_id and parent_issue_id are orthogonal (a sub-issue can live in a
-  // different project than its parent), so we never render both: parent wins,
-  // else project, else nothing. The project is still shown in the properties
-  // panel. The workspace name is intentionally absent — "all issues" is a view,
-  // not a container.
+  // 面包屑只展示最直接的那个容器，绝不虚构链条。project_id 与 parent_issue_id 相互
+  // 正交（子任务可以住在与父任务不同的项目里），所以两者从不并排渲染：有父任务用
+  // 父任务，否则用项目，再否则为空。项目仍会出现在右侧属性面板中。工作区名被刻意
+  // 排除——"所有问题"只是一个视图，不是容器。
   const breadcrumbSegments: BreadcrumbSegment[] = parentIssue
     ? [{ href: paths.issueDetail(parentIssue.id), label: parentIssue.identifier }]
     : breadcrumbProject
@@ -2744,21 +2637,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       : [];
 
   const detailContent = (
-    // Hosts the one image viewer this issue's images page through — see
-    // ImageSequenceProvider. Wraps the whole column so the description
-    // editor's images and the timeline's images share one sequence.
+    // 承载本 issue 图片共用的唯一查看器——见 ImageSequenceProvider。包裹整根内容列，
+    // 让描述编辑器的图片与时间线的图片共享同一条序列。
     <CurrentIssueRenderContextProvider value={currentIssueRenderContext}>
     <ImageSequenceProvider items={imageSequence}>
     <div className="relative flex h-full min-w-0 flex-1 flex-col">
-        {/* In-page find bar — floats over the top-right of the content column
-            (below the breadcrumb header), outside the scroll container so it
-            stays put while the timeline scrolls and its own text isn't walked.
-            z-30: must beat every sticky affordance pinned at the timeline's
-            top-0 (comment headers z-10, resolve collapse bars z-20) — at equal
-            z the later-in-DOM sticky bar paints over the find bar and orphans
-            its close button (MUL-4414). On desktop it also steps inside the
-            thread rail's right-edge strip, so an open find bar can't cover
-            the topmost ticks. */}
+        {/* 页内查找栏——悬浮在内容列右上角（面包屑头下方），位于滚动容器之外，
+            因此时间线滚动时它纹丝不动，自身文本也不会被查找遍历。z-30：必须压过
+            钉在时间线 top-0 的一切吸顶控件（评论头 z-10、解决折叠条 z-20）——
+            z 相等时，DOM 靠后的吸顶条会盖在查找栏上，让它的关闭按钮变成孤儿
+            (MUL-4414)。在桌面端它还会往内让开线程轨道的右缘竖条，避免打开的
+            查找栏盖住最顶部的刻度。 */}
         {find.open && (
           <FindBar
             find={find}
@@ -2780,15 +2669,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           }
           actions={
             <>
-            {/* Live "agent is working" chip, leftmost in the right cluster so
-                it never overlaps the title (which truncates to make room).
-                It self-hides when no agent is active. */}
+            {/* "agent 工作中"实时 chip，位于右侧按钮组最左，避免与标题重叠
+                （标题会截断让位）。没有 agent 在跑时它自行隐藏。 */}
             <IssueAgentHeaderChip issueId={id} />
-            {/* Thread navigator. Leftmost of the action buttons because it
-                navigates the document, while everything to its right acts on
-                the issue. Hidden on mobile with the rail: the panel would work
-                there, but it needs a sheet rather than a popover to be usable
-                one-handed, which is its own change. */}
+            {/* 线程导航器。排在操作按钮最左，因为它导航的是文档内容，而它右侧
+                的一切都作用于 issue 本身。移动端与右缘轨道一起隐藏：面板在移动端
+                其实可用，但要单手操作得用 sheet 而非 popover——那是另一项改动。 */}
             {!isMobile && (
               <ThreadNavPanel
                 threads={minimapThreads}
@@ -2851,9 +2737,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             <IssueActionsDropdown
               issue={issue}
               align="end"
-              // When a parent passes `onDelete`, we detect deletion via effect
-              // above and skip navigation. Otherwise the modal takes us back
-              // to the list we came from, falling back to all issues.
+              // 当父组件传了 `onDelete` 时，删除通过上面的 effect 检测并跳过导航；
+              // 否则删除模态框把我们带回来源列表，兜底是"所有问题"。
               onDeletedFallbackPath={onDelete ? undefined : paths.issues()}
               trigger={
                 <Button variant="ghost" size="icon-sm" className="text-muted-foreground">
@@ -2880,23 +2765,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           }
         />
 
-        {/* scrollbar-gutter both-edges: with classic (space-taking) scrollbars —
-            macOS with a mouse or "always show", Windows, Linux — the global
-            `scrollbar-width: thin` carves ~11px off the right side only, so the
-            centered column reads 32px left vs 43px right (MUL-4404). Mirroring
-            the gutter restores symmetry; overlay-scrollbar platforms reserve
-            nothing and render unchanged. */}
+        {/* scrollbar-gutter both-edges：在使用经典（占空间）滚动条时——Mac 接鼠标或
+            "始终显示"、Windows、Linux——全局 `scrollbar-width: thin` 只从右侧挖走约
+            11px，让居中列读起来左边 32px、右边 43px 不对称 (MUL-4404)。左右镜像
+            沟槽恢复对称；使用悬浮式滚动条的平台不预留空间，渲染不受影响。 */}
         <div
           ref={attachScrollContainer}
           data-tab-scroll-root={scrollContainerKey}
           className="relative flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]"
         >
-        {/* Gutters: 32px is a comfortable reading margin on a desktop column
-            but eats 16% of a 393px phone, so below `md` they drop to 12px.
-            `max-md:pb-chat-launcher` reserves the launcher's corner at the end
-            of the scroll: below `md` the composer is not pinned (see
-            `useStickyComposer`), so it lands here — right where the launcher
-            floats — once the reader scrolls to the bottom. */}
+        {/* 左右留白：32px 在桌面列上是舒适的阅读边距，却占掉 393px 手机屏的 16%，
+            所以 `md` 以下收窄到 12px。`max-md:pb-chat-launcher` 在滚动末端给
+            launcher 的角落预留位置：`md` 以下评论区不再吸底（见 `useStickyComposer`），
+            所以当读者滚到底部时它恰好落在这里——正是 launcher 悬浮的那个角落。 */}
         <div className="mx-auto w-full max-w-4xl px-3 py-6 max-md:pb-chat-launcher md:px-8 md:py-8">
           {titleLazy.active && (
             <div className={titleLazy.ready ? undefined : "hidden"}>
@@ -2935,7 +2816,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               tabIndex={0}
               className="w-full cursor-text text-display-sm font-bold leading-snug tracking-tight"
               onClick={(e) => {
-                // A drag-selection (copying the title) must not summon the editor.
+                // 拖选文字（比如复制标题）不应唤起编辑器。
                 const sel = window.getSelection();
                 if (sel && !sel.isCollapsed) return;
                 titleBaseRef.current = issue.title;
@@ -2969,9 +2850,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   size="sm"
                   variant="outline"
                   onClick={() => {
-                    // Local-only: the server already holds this title, so
-                    // discarding writes nothing. The remount is what puts it
-                    // back into the editor (see titleResetToken).
+                    // 纯本地操作：服务端本来就保存着这个标题，所以丢弃不会写入任何
+                    // 内容。重新挂载才是把它放回编辑器的动作（见 titleResetToken）。
                     setTitleConflictDraft(null);
                     titleBaseRef.current = issue.title;
                     setTitleResetToken((token) => token + 1);
@@ -3073,23 +2953,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               value={descriptionConflictDraft ?? issue.description ?? ""}
               placeholder={t(($) => $.detail.desc_placeholder)}
               onUpdate={(md, baseMarkdown) => {
-                // Bind any pending uploads still referenced in the markdown
-                // so they appear in `issueAttachments` after refresh and the
-                // editor's text/code preview keeps working past reload.
+                // 把 markdown 里仍在引用的"待绑定上传"绑起来，让刷新后它们出现在
+                // `issueAttachments` 里，编辑器对文本/代码的预览在重载后也依然有效。
                 //
-                // Match with `contentReferencesAttachment`, NOT `md.includes(a.url)`:
-                // the editor persists the durable `markdownLink`
-                // (`/api/attachments/<id>/download` / `markdown_url`) into the
-                // body, never the raw storage `a.url`. A bare `md.includes(a.url)`
-                // therefore never matches, so the upload is never linked via
-                // `attachment_ids`. After reload it's absent from
-                // `issueAttachments`, the renderer can't resolve it to a
-                // freshly-signed `download_url`, and the persisted auth-gated
-                // download endpoint fails to load as a native <img> on clients
-                // whose origin isn't the API host (for example, a mobile
-                // webview) while still working on web via the cookie/proxy.
-                // This mirrors the comment/reply/chat composers, which already
-                // bind via `contentReferencesAttachment` (MUL-3130 / MUL-3192).
+                // 用 `contentReferencesAttachment` 匹配，而不是 `md.includes(a.url)`：
+                // 编辑器把持久的 `markdownLink`（`/api/attachments/<id>/download` /
+                // `markdown_url`）写进正文，从不写原始存储地址 `a.url`。裸的
+                // `md.includes(a.url)` 因此永远匹配不上，上传也就永远不会通过
+                // `attachment_ids` 关联。重载后它从 `issueAttachments` 里消失，
+                // 渲染器无法把它解析成新签名的 `download_url`；持久化的、带鉴权的
+                // 下载接口在"origin 不是 API 主机"的客户端（例如移动端 webview）上
+                // 无法以原生 <img> 加载——网页端还能靠 cookie/代理正常访问。
+                // 评论/回复/聊天输入框都已是这样用 `contentReferencesAttachment`
+                // 绑定（MUL-3130 / MUL-3192），此处与它们保持一致。
                 const ids = descPendingAttachmentsRef.current
                   .filter((a) => contentReferencesAttachment(md, a))
                   .map((a) => a.id);
@@ -3101,9 +2977,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               }}
               onUploadFile={handleDescriptionUpload}
               debounceMs={1500}
-              // Closing the issue modal must save what the user last saw —
-              // without the flush, a paste followed by a quick close loses
-              // the image markdown and its attachment_ids bind (MUL-3254).
+              // 关闭 issue 弹层前必须保存用户最后看到的内容——没有这次 flush，
+              // 一次粘贴后紧接着快速关闭会丢失图片 markdown 及其 attachment_ids
+              // 绑定 (MUL-3254)。
               flushPendingOnUnmount
               currentIssueId={id}
               attachments={descEditorAttachments}
@@ -3123,12 +2999,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                     size="sm"
                     variant="outline"
                     onClick={() => {
-                      // The editor is dirty — that is why this conflict
-                      // exists — so the `value` prop cannot land: ContentEditor
-                      // deliberately refuses to clobber unsaved bytes.
-                      // adoptContent is the explicit "take this content"
-                      // channel and applies without emitting an update, so
-                      // discarding never writes.
+                      // 编辑器是脏的——这正是冲突存在的原因——所以 `value` prop 无法
+                      // 直接生效：ContentEditor 刻意拒绝覆盖未保存的内容。
+                      // adoptContent 是显式的"采纳这份内容"通道，应用时不会触发更新，
+                      // 因此丢弃永不产生写入。
                       descEditorRef.current?.adoptContent(issue.description || "");
                       descriptionAttachmentIdsRef.current = [];
                       pendingDescriptionSaveRef.current = null;
@@ -3183,7 +3057,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             {descDragOver && <FileDropOverlay />}
           </div>
 
-          {/* Sub-issues — Linear-style */}
+          {/* 子任务——Linear 风格 */}
           {childIssues.length === 0 && (
             <div className="mt-6">
               <button
@@ -3199,11 +3073,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           {childIssues.length > 0 && (() => {
             const doneCount = childIssues.filter((c) => issueBehavesAs(c, "done")).length;
             return (
-              // Provider hosts the shared right-click actions menu the rows
-              // delegate to (one singleton menu, not one per row).
+              // Provider 承载各子任务行共同委托的右键操作菜单（全局单例菜单，
+              // 而非每行一个）。
               <IssueContextMenuProvider>
               <div className="mt-10 group/sub-issues">
-                {/* Header */}
+                {/* 区块标题栏 */}
                 <div className="flex items-center gap-2 mb-2">
                   <button
                     type="button"
@@ -3224,8 +3098,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                       {doneCount}/{childIssues.length}
                     </span>
                   </div>
-                  {/* issue.id, not the route param — the endpoint takes a
-                      UUID and the route may carry a human-readable id. */}
+                  {/* 传 issue.id 而不是路由参数——接口要的是 UUID，而路由里可能是
+                      人类可读的标识。 */}
                   <SubIssuesAgentWorkingChip parentIssueId={issue.id} />
                   <input
                     type="checkbox"
@@ -3262,11 +3136,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   </div>
                 </div>
 
-                {/* Inline batch toolbar — appears next to the rows when
-                    selections exist, instead of as a far-away fixed bar. */}
+                {/* 内联批量工具栏——有选中项时出现在行旁，而不是一条离得很远的
+                    固定长条。 */}
                 <BatchActionToolbar issues={childIssues} placement="inline" />
 
-                {/* List */}
+                {/* 子任务列表 */}
                 {!subIssuesCollapsed && (() => {
                   const groups = groupSubIssuesByStage(childIssues);
                   const staged = childIssues.some((c) => c.stage != null);
@@ -3302,23 +3176,21 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
           <div className="my-8 border-t" />
 
-          {/* Activity / Comments */}
+          {/* 活动 / 评论 */}
           <div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <h2 className="text-title-sm font-semibold">{t(($) => $.detail.activity_section)}</h2>
               </div>
               <div className="flex items-center gap-2">
-                {/* A delegated subscription is one the user never opted into
-                    by hand — their agent created this issue for them. Saying
-                    so is what keeps it from reading as the product quietly
-                    adding them to things (MUL-5483). */}
+                {/* "委托订阅"是指用户并未手动订阅——是他们的 agent 替他们创建了
+                    这个 issue。把这一点讲明，才不会让人误以为产品在偷偷把用户
+                    加到什么东西里 (MUL-5483)。 */}
                 {isSubscribed && subscriptionReason === "delegated" && (
                   <Tooltip>
-                    {/* Quiet surface, not plain body text: this is metadata
-                        explaining a state, and must not read as a second
-                        action sitting next to Unsubscribe. Uses the shared
-                        caption role rather than an ad-hoc size (MUL-5451). */}
+                    {/* 低调的表面，而非普通正文：这是解释状态的元信息，不能读起来
+                        像紧挨"退订"的第二个操作。沿用共享的 caption 角色，而不是
+                        临时凑的字号 (MUL-5451)。 */}
                     <TooltipTrigger className="cursor-default rounded-full bg-muted px-2 py-0.5 text-caption text-muted-foreground">
                       {t(($) => $.detail.delegated_subscription_badge)}
                     </TooltipTrigger>
@@ -3327,26 +3199,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                     </TooltipContent>
                   </Tooltip>
                 )}
-                {/* Nothing until the subscribers query resolves: the default
-                    empty list reads as "not subscribed" for everyone, so
-                    rendering it flashes Subscribe at someone who is already
-                    subscribed, and a click landing in that window sends a
-                    subscribe instead of the unsubscribe they meant. An
-                    unresolved state is better shown as no control than as the
-                    wrong one (MUL-5714). */}
+                {/* 订阅者查询未返回前什么都不渲染：默认的空列表会被解读成"谁都没
+                    订阅"，渲染它就会向已订阅的人闪一下"订阅"，且落在那个时间窗内的
+                    点击发出去的是订阅、而不是他想要的退订 (MUL-5714)。查询未决时，
+                    不显示任何控件好过显示错误的控件。 */}
                 {subscriptionKnown &&
                   (!isSubscribed || (childCountKnown && childIssues.length === 0) ? (
-                    /* One button, no menu, when there is nothing for the
-                       subtree option to cover. This is the root-only path
-                       (opt_out_scope='issue'), NOT the subtree one: even at
-                       zero children the two are different server writes,
-                       because a subtree tombstone also keeps FUTURE children
-                       from re-subscribing the user
-                       (server/pkg/db/queries/subscriber.sql). Declining one
-                       issue must not silently opt someone out of a tree that
-                       does not exist yet. While the child count is unknown we
-                       keep the menu below — it never picks a scope for the
-                       user. */
+                    /* 当子树选项没有可覆盖的东西时，只有一个按钮、没有菜单。
+                       这是纯根级路径（opt_out_scope='issue'），不是子树路径：
+                       即便子任务数为零，两者也是不同的服务端写入，因为子树的
+                       tombstone 还会让*未来的*子任务不再自动重订该用户
+                       (server/pkg/db/queries/subscriber.sql)。拒绝一个 issue
+                       绝不能悄悄把人从一个尚不存在的树里退订。当子任务数未知时
+                       保留下方菜单——它永远不会替用户选择作用域。 */
                     <button
                       type="button"
                       onClick={handleToggleSubscribe}
@@ -3365,12 +3230,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                       >
                         {t(($) => $.detail.unsubscribe)}
                       </DropdownMenuTrigger>
-                      {/* onClick, not onSelect: Base UI's Menu.Item exposes no
-                          onSelect (that is the Radix spelling), and because its
-                          props extend the full div attribute set, an onSelect
-                          typechecks and silently lands on the DOM node as the
-                          native text-selection event — the handler never runs
-                          (MUL-5710). */}
+                      {/* 用 onClick 而非 onSelect：Base UI 的 Menu.Item 不暴露
+                          onSelect（那是 Radix 的叫法）；因其 props 继承完整 div 属性集，
+                          onSelect 能通过类型检查却悄悄落在 DOM 节点的原生"文本选中"
+                          事件上——处理器永远不执行 (MUL-5710)。 */}
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
                           onClick={handleToggleSubscribe}
@@ -3425,49 +3288,40 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </div>
 
 
-            {/* The "agent is working" live signal now lives in the header
-                (IssueAgentHeaderChip) so it stays in one fixed place and
-                doesn't compete with sticky banners in this content column.
-                The per-task timeline + past runs live in the right panel
-                via ExecutionLogSection. */}
+            {/* "agent 工作中"的实时信号如今在头部（IssueAgentHeaderChip），这样它
+                固定在同一个位置，不与内容列里的吸顶横幅抢空间。单任务的实时时间线与
+                历史运行则在右面板的 ExecutionLogSection 展示。 */}
 
-            {/* Timeline entries — virtualized via react-virtuoso to keep
-                first-paint cost O(viewport) instead of O(N). On a 500-comment
-                issue the unvirtualized .map froze the page for several
-                seconds (markdown parse + lowlight code highlight runs per
-                CommentCard on mount).
+            {/* 时间线条目——通过 react-virtuoso 虚拟化，让首屏成本从 O(N) 降到
+                O(视口)。在一条 500 评论的 issue 上，未虚拟化的 .map 会让页面冻结
+                数秒（每张 CommentCard 挂载时都要跑 markdown 解析 + lowlight
+                代码高亮）。
 
-                customScrollParent guard: callback ref populates after the
-                first commit. Without this null guard Virtuoso falls back to
-                its own scroller, grabs 0 height inside overflow-y-auto, and
-                miscomputes total-height on first paint. */}
+                customScrollParent 守卫：回调 ref 在首次 commit 后才填充。没有这个
+                空值守卫，Virtuoso 会退回自己的滚动器，在 overflow-y-auto 里拿到
+                0 高度，首屏就把总高度算错。 */}
             {timelineLoading && timelineView.groups.length === 0 ? (
               <TimelineSkeleton />
             ) : (
-              // Two render modes:
-              //   - `highlightCommentId` set (came from inbox deep-link) →
-              //     render flat. Every comment mounts, every height is real,
-              //     the target id is in the DOM the instant the useEffect
-              //     above runs `scrollIntoView`. No virtualization estimate
-              //     errors, no spacer reflow drift. Pays cold-mount cost
-              //     proportional to items.length (markdown + lowlight per
-              //     comment), which is acceptable in the deep-link case —
-              //     the user has explicit intent to land on a specific item.
-              //   - `find.open` (in-page Cmd/Ctrl+F) → also render flat, so
-              //     every comment is in the DOM for the find walk to match
-              //     and highlight. Same explicit-intent cold-mount trade-off.
-              //   - otherwise → Virtuoso. Browsing mode, virtualization
-              //     wins on first-paint perf for long timelines.
+              // 两种渲染模式：
+              //   - 设置了 `highlightCommentId`（来自收件箱深链）→ 扁平渲染。
+              //     每条评论都挂载、每个高度都真实，上面的 useEffect 一执行
+              //     `scrollIntoView`，目标 id 就在 DOM 里。没有虚拟化的估算误差、
+              //     没有占位符回流漂移。代价是正比于 items.length 的冷挂载成本
+              //     （每条评论做 markdown + lowlight），在深链场景下可接受——
+              //     用户带着"就要落到某条"的明确意图而来。
+              //   - `find.open`（页内 Cmd/Ctrl+F）→ 同样扁平渲染，让每条评论都进
+              //     DOM，查找遍历才能匹配并高亮。同样的"明确意图换冷挂载"权衡。
+              //   - 其余情况 → Virtuoso。浏览模式下，长时间线虚拟化在首屏性能上
+              //     胜出。
               //
-              // The split is deliberate: virtualization and "land precisely
-              // on a target" have fundamentally opposed contracts (estimated
-              // heights vs real heights). Trying to satisfy both in one
-              // path is what produced the bug history this PR closes.
+              // 这种拆分是刻意的：虚拟化与"精准落在目标上"有着根本对立的契约
+              //（估算高度 vs 真实高度）。试图在同一条路径里同时满足两者，正是
+              // 本 PR 要关闭的那些历史 bug 的来源。
               !highlightCommentId && !find.open ? (
                 !scrollContainerEl ? (
-                  // Skeleton while the callback ref populates so the gap
-                  // between IssueDetail mount and Virtuoso mount doesn't
-                  // flash empty.
+                  // 回调 ref 填充期间先显示骨架屏，避免 IssueDetail 挂载与
+                  // Virtuoso 挂载之间的空隙闪成一片空白。
                   <TimelineSkeleton />
                 ) : (
                   <div className="mt-4">
@@ -3480,10 +3334,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                       increaseViewportBy={{ top: 800, bottom: 800 }}
                       computeItemKey={(_i, item) => `${item.kind}:${item.id}`}
                       skipAnimationFrameInResizeObserver
-                      // followOutput intentionally NOT set. Virtuoso treats
-                      // it as a sticky "is at bottom" flag and resets
-                      // scrollTop to maxScrollTop on every height-change
-                      // tick — issue-detail is document-shaped, not chat.
+                      // 刻意不设 followOutput。Virtuoso 会把它当成粘性的"是否在
+                      // 底部"标志，在每次高度变化时把 scrollTop 重置为最大——
+                      // issue 详情是文档形态，不是聊天窗口。
                       itemContent={renderItem}
                     />
                   </div>
@@ -3501,19 +3354,14 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
           </div>
 
-          {/* Bottom comment input — no avatar, full width. Direct child of
-              the content column (not the Activity section): a sticky box
-              can't leave its containing block, and the Activity div only
-              spans the timeline — at column level `sticky bottom-0` can pin
-              the composer across the whole scroll range.
+          {/* 底部评论输入框——无头像、通栏宽。它是内容列的直接子元素（而非活动区块的）：
+              吸底盒不能脱离自己的包含块，而 Activity 这个 div 只包住时间线——放在列
+              这一层，`sticky bottom-0` 才能让输入框在整个滚动范围内钉住。
 
-              Sticky treatment mirrors list-grid's sticky header, bottom
-              edge: opaque bg-background under/around the card (its rounded
-              corners would otherwise leak scrolled text), a 16px gradient
-              fade above (exactly the mt-4 gap, so at rest it sits over the
-              page background and is invisible), and pb-4 so the card floats
-              off the viewport edge — with -mb-4 giving the padding back to
-              the column's py-8 so the at-rest layout doesn't shift. */}
+              吸底处理镜像 list-grid 的吸顶表头、底部边缘：卡片下方/周围是不透明的
+              bg-background（否则它的圆角会漏出滚过的文字），上方一道 16px 渐变淡出
+              （正好覆盖 mt-4 的间距，静止时压在页面背景上、不可见），pb-4 让卡片
+              浮离视口边缘——-mb-4 把这内边距还给列的 py-8，使静止时的布局不位移。 */}
           <div
             ref={composerRef}
             className={cn(
@@ -3522,11 +3370,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 "sticky bottom-0 z-10 -mb-4 bg-background pb-4 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-4 before:bg-gradient-to-t before:from-background before:to-transparent",
             )}
           >
-            {/* key={id}: web's /issues/[id] route doesn't remount on
-                issueId change, so without an explicit key the editor
-                keeps the previous issue's in-memory content and the
-                next keystroke would flush it into the new issue's
-                draft key. */}
+            {/* key={id}：web 的 /issues/[id] 路由在 issueId 变化时不会重新挂载，
+                所以没有显式 key 的话，编辑器会保留上一个 issue 在内存里的内容，
+                下一次按键就会把它冲进新 issue 的草稿键里。 */}
             <CommentInput
               key={id}
               issueId={id}
@@ -3537,16 +3383,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>
         </div>
 
-        {/* Thread quick-jump rail — rides the scroll container's right edge,
-            next to the scrollbar, where the pointer already is while
-            scrolling (MUL-4522). right-3 is the inset that works in both
-            scrollbar modes: it clears a classic scrollbar's ~11px gutter,
-            and the rail's own 20px width lands it exactly on the content
-            column's px-8 padding when the gutter is 0 (overlay scrollbars),
-            so it covers neither the scrollbar nor body text. It also clears
-            the resize handle's 4px drag strip at the panel edge. Hover
-            previews a thread, click jumps to it. Hidden on mobile: no
-            hover, and the gutter is too tight. */}
+        {/* 线程快速跳转轨道——贴着滚动容器的右缘、紧挨滚动条，正好在读者滚动时
+            指针所在的位置 (MUL-4522)。right-3 是在两种滚动条模式下都成立的缩进：
+            它避开经典滚动条约 11px 的沟槽；当沟槽为 0（悬浮式滚动条）时，轨道自身
+            20px 的宽度刚好落在内容列 px-8 的留白上——既不盖滚动条也不盖正文。
+            它还避开了面板边缘调整手柄 4px 的拖拽条。悬停预览线程，点击跳转。
+            移动端隐藏：没有悬停，且沟槽太窄。 */}
         {!isMobile && (
           <ThreadMinimap
             threads={minimapThreads}

@@ -1,3 +1,7 @@
+// metrics.go 定义 realtime 子系统的轻量运行计数器：连接数、收发消息数、订阅/退订
+// 次数、Redis relay 的健康数字等，统一暴露成一个包级单例 M，供健康检查/调试接口
+// 打快照。刻意只依赖标准库 atomic/sync.Map，不引 Prometheus 依赖，把埋点成本压到
+// 最低；将来要上监控体系时再把同一批数字重新导出即可。
 package realtime
 
 import (
@@ -6,11 +10,10 @@ import (
 	"sync/atomic"
 )
 
-// Metrics collects lightweight counters describing the realtime subsystem.
+// Metrics 收集描述实时子系统的轻量计数器。
 //
-// Phase 1 (MUL-1138) extends the phase-0 counter set with subscribe / Redis /
-// per-scope-room counters. We keep using std-library atomics rather than a
-// Prometheus dependency; a future phase can re-export the same numbers.
+// 一期改造（MUL-1138）在 phase-0 的计数集合上补充了订阅、Redis、按作用域房间
+// 三类计数。仍用标准库原子计数而不是 Prometheus 依赖；后续阶段可以只换导出层。
 type Metrics struct {
 	ConnectsTotal        atomic.Int64
 	DisconnectsTotal     atomic.Int64
@@ -19,24 +22,21 @@ type Metrics struct {
 	MessagesSentTotal    atomic.Int64
 	MessagesDroppedTotal atomic.Int64
 
-	// InboundTooLargeTotal counts connections closed because a peer sent a
-	// message over inboundReadLimit, on either the pre-auth or the
-	// post-auth read path.
+	// InboundTooLargeTotal 统计「因对端发来单条超限消息（超过 inboundReadLimit）
+	// 而被关掉的连接数」，鉴权前/鉴权后两条读取路径都算。
 	InboundTooLargeTotal atomic.Int64
 
-	// Per-event-type send counters keyed by event type string.
-	// Value is *atomic.Int64.
+	// eventSent：按事件类型字符串分桶的发送计数。值为 *atomic.Int64。
 	eventSent sync.Map
 
-	// Per-scope subscribe / unsubscribe / deny counters. Keyed by scope
-	// type string ("workspace", "user", "task", "chat"). Value is
-	// *atomic.Int64. Scope-room gauges follow the same pattern.
+	// 按作用域类型字符串("workspace"/"user"/"task"/"chat")分桶的订阅/退订/被拒
+	// 计数，以及「某类型作用域当前活跃房间数」的仪表值。value 都是 *atomic.Int64。
 	subscribeTotal       sync.Map
 	unsubscribeTotal     sync.Map
 	subscribeDeniedTotal sync.Map
 	scopeRooms           sync.Map
 
-	// Redis relay counters. Zero unless the Redis broadcaster is enabled.
+	// Redis relay 的计数器。Redis 广播没启用时全是零。
 	RedisXAddTotal               atomic.Int64
 	RedisXAddErrors              atomic.Int64
 	RedisXReadTotal              atomic.Int64
@@ -60,28 +60,29 @@ type Metrics struct {
 	redisTTLStatusMu              sync.Mutex
 	redisStreamsWithoutTTLByRelay map[string]int64
 
-	// RedisConnected is set by the relay on startup / reconnect.
+	// RedisConnected 由 relay 在启动/重连成功时置 true。
 	RedisConnected atomic.Bool
-	// RedisLastError stores the most recent consumer error message.
+	// RedisLastError 记录最近一次消费端错误信息（下方 redisLastErr 字段的读写锁与缓存）。
 	redisLastErrMu sync.RWMutex
 	redisLastErr   string
 
-	// NodeID is set once at boot by the relay (or empty in single-node mode).
+	// NodeID 在启动时由 relay 设置一次（单机模式保持为空字符串）。
 	NodeID atomic.Value // string
 }
 
-// RedisStreamObservation is the latest low-frequency retention sample for one
-// relay stream. PTTLMillis uses Redis sentinel values: -1 means no expiry and
-// -2 means the key does not exist.
+// RedisStreamObservation 是某条 relay stream 最近一次低频留存抽样的结果。
+// PTTLMillis 采用 Redis 哨兵值：-1 表示该 key 没设过期，-2 表示 key 已不存在。
 type RedisStreamObservation struct {
 	Entries     int64 `json:"entries"`
 	MemoryBytes int64 `json:"memory_bytes"`
 	PTTLMillis  int64 `json:"pttl_millis"`
 }
 
-// M is the package-level metrics singleton.
+// M 是包级指标单例，realtime 各处（hub/relay/retention）都往它上面累加。
 var M = &Metrics{}
 
+// loadOrInitCounter 从 sync.Map 里取 key 对应的计数器；没有就新建一个放进去
+// （LoadOrStore 保证并发下也只会有一个实例生效，不会互相覆盖）。
 func loadOrInitCounter(m *sync.Map, key string) *atomic.Int64 {
 	if v, ok := m.Load(key); ok {
 		return v.(*atomic.Int64)
@@ -93,7 +94,7 @@ func loadOrInitCounter(m *sync.Map, key string) *atomic.Int64 {
 	return c
 }
 
-// RecordEvent increments the per-event-type send counter.
+// RecordEvent 让「按事件类型」的发送计数 +1。
 func (m *Metrics) RecordEvent(eventType string) {
 	if eventType == "" {
 		return
@@ -101,27 +102,26 @@ func (m *Metrics) RecordEvent(eventType string) {
 	loadOrInitCounter(&m.eventSent, eventType).Add(1)
 }
 
-// SubscribesTotal returns the per-scope-type counter for successful subscribes.
+// SubscribesTotal 返回某作用域类型下「成功订阅次数」的计数器。
 func (m *Metrics) SubscribesTotal(scopeType string) *atomic.Int64 {
 	return loadOrInitCounter(&m.subscribeTotal, scopeType)
 }
 
-// UnsubscribesTotal returns the per-scope-type counter for unsubscribes.
+// UnsubscribesTotal 返回某作用域类型下「退订次数」的计数器。
 func (m *Metrics) UnsubscribesTotal(scopeType string) *atomic.Int64 {
 	return loadOrInitCounter(&m.unsubscribeTotal, scopeType)
 }
 
-// SubscribeDeniedTotal returns the per-scope-type counter for denied subscribes.
+// SubscribeDeniedTotal 返回某作用域类型下「订阅被拒次数」的计数器。
 func (m *Metrics) SubscribeDeniedTotal(scopeType string) *atomic.Int64 {
 	return loadOrInitCounter(&m.subscribeDeniedTotal, scopeType)
 }
 
-// IncRoom / DecRoom adjust the active-rooms gauge for scopeType.
+// IncRoom / DecRoom 增减某作用域类型的活跃房间数仪表值。
 func (m *Metrics) IncRoom(scopeType string) { loadOrInitCounter(&m.scopeRooms, scopeType).Add(1) }
 func (m *Metrics) DecRoom(scopeType string) { loadOrInitCounter(&m.scopeRooms, scopeType).Add(-1) }
 
-// SetRedisLastError stores msg as the most recent Redis consumer error. An
-// empty msg clears it.
+// SetRedisLastError 把 msg 记成最近一次 Redis 消费端错误。传空串会清掉旧错误。
 func (m *Metrics) SetRedisLastError(msg string) {
 	m.redisLastErrMu.Lock()
 	m.redisLastErr = msg
@@ -134,7 +134,7 @@ func (m *Metrics) lastRedisErr() string {
 	return m.redisLastErr
 }
 
-// ObserveRedisStream replaces the latest sampled statistics for stream.
+// ObserveRedisStream 用一份新的采样替换 stream 的最新统计。
 func (m *Metrics) ObserveRedisStream(stream string, entries, memoryBytes, pttlMillis int64) {
 	m.redisStreamsMu.Lock()
 	defer m.redisStreamsMu.Unlock()
@@ -148,7 +148,7 @@ func (m *Metrics) ObserveRedisStream(stream string, entries, memoryBytes, pttlMi
 	}
 }
 
-// RedisStreamObservations returns a copy safe for metrics collection.
+// RedisStreamObservations 返回一份可供采集端安全读取的副本。
 func (m *Metrics) RedisStreamObservations() map[string]RedisStreamObservation {
 	m.redisStreamsMu.RLock()
 	defer m.redisStreamsMu.RUnlock()
@@ -159,9 +159,9 @@ func (m *Metrics) RedisStreamObservations() map[string]RedisStreamObservation {
 	return out
 }
 
-// SetRedisStreamsWithoutTTL updates one relay mode's latest count and exposes
-// the process-wide sum. Keeping per-mode state prevents dual mode collectors
-// from overwriting each other with whichever maintenance loop ran last.
+// SetRedisStreamsWithoutTTL 更新某一 relay 模式的「无 TTL stream 数」并暴露进程级
+// 总和。按模式分开存，是为了避免双模式采集时，后跑完的那轮维护循环覆盖另一模式
+// 的数据、把总数算错。
 func (m *Metrics) SetRedisStreamsWithoutTTL(relay string, count int64) {
 	m.redisTTLStatusMu.Lock()
 	defer m.redisTTLStatusMu.Unlock()
@@ -176,6 +176,8 @@ func (m *Metrics) SetRedisStreamsWithoutTTL(relay string, count int64) {
 	m.RedisRelayStreamsWithoutTTL.Store(total)
 }
 
+// snapshotCounters 把 sync.Map 里的计数器导成字符串→数值的普通 map，并按 key 排序，
+// 保证同一时刻多次打快照输出顺序稳定、便于肉眼比对。
 func snapshotCounters(s *sync.Map) map[string]int64 {
 	out := map[string]int64{}
 	s.Range(func(k, v any) bool {
@@ -194,7 +196,7 @@ func snapshotCounters(s *sync.Map) map[string]int64 {
 	return ordered
 }
 
-// Snapshot returns a JSON-friendly copy of the current counter values.
+// Snapshot 返回当前各计数器的 JSON 友好副本，供健康检查/调试输出。
 func (m *Metrics) Snapshot() map[string]any {
 	nodeID := ""
 	if v := m.NodeID.Load(); v != nil {
@@ -238,7 +240,7 @@ func (m *Metrics) Snapshot() map[string]any {
 	}
 }
 
-// Reset zeroes all counters. Tests only.
+// Reset 把所有计数器清零。仅供测试用。
 func (m *Metrics) Reset() {
 	m.ConnectsTotal.Store(0)
 	m.DisconnectsTotal.Store(0)

@@ -1,5 +1,11 @@
 "use client";
 
+// 本文件：ReplyInput —— 评论楼中楼的"回复"输入框（区别于顶层评论输入框）。
+// 与 CommentInput 共用同一套编辑器/上传/发送 hook 与草稿语义，差异点在于：
+// 回复完成后保留光标（供连续回复）、通常带发送者头像、可传 `draftKey`
+// 在虚拟化时间线里跨卸载持久化。与顶层输入框的关键差异一律"见 CommentInput"。
+// （MUL-5588 / MUL-5181）
+
 import { useRef, useState, useCallback, useEffect } from "react";
 import { ContentEditor, type ContentEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useUploadGate, useComposerSubmit } from "../../editor";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
@@ -17,31 +23,40 @@ import { useCommentUploads } from "./use-comment-uploads";
 import { useQuickActionMenu } from "../hooks/use-quick-action-menu";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型定义
 // ---------------------------------------------------------------------------
 
+/**
+ * 回复输入框的 props（差异点说明见各成员）。
+ */
 interface ReplyInputProps {
   issueId: string;
   parentId: string;
   placeholder?: string;
   avatarType: string;
   avatarId: string;
-  /** Resolves true on success, false on failure — the reply box keeps its text
-   *  (locked + spinning) until then, clearing only on success. */
+  /** 成功返回 true、失败返回 false——在此之前回复框保持文本（锁定 + 旋转），
+   *  只有成功才清空。 */
   onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[]) => Promise<string | boolean>;
-  /** Called after the server accepts the reply and the composer is cleared. */
+  /** 服务端接受回复、输入框被清空后被调用。 */
   onAccepted?: (commentId: string) => void;
   size?: "sm" | "default";
-  /** When set, hydrates/persists the in-progress reply via the draft store.
-   *  Required for replies inside virtualized timeline threads, where the
-   *  enclosing CommentCard may unmount on scroll-out. */
+  /** 设置后，进行中的回复会经草稿 store 水合/持久化。
+   *  虚拟化时间线线程里的回复必须传——那里的 CommentCard 可能因滚出而卸载。 */
   draftKey?: CommentDraftKey;
 }
 
 // ---------------------------------------------------------------------------
-// ReplyInput
+// ReplyInput 组件
 // ---------------------------------------------------------------------------
 
+/**
+ * 楼中楼"回复"输入框（职责见文件头）。
+ *
+ * `issueId` + `parentId` 标定回复落点；`avatarType`/`avatarId` 决定发送者
+ * 头像；`draftKey` 存在时把进行中草稿跨卸载持久化（虚拟化线程必需）；
+ * `size` 切换紧凑/常规两档。
+ */
 function ReplyInput({
   issueId,
   parentId,
@@ -59,14 +74,13 @@ function ReplyInput({
   const placeholderText = placeholder ?? t(($) => $.reply.placeholder);
   const editorRef = useRef<ContentEditorRef>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  // See CommentInput — replying mid-upload posts without the file.
+  // 见 CommentInput——回复时中途上传同样会把文件发丢。
   const uploadGate = useUploadGate(editorRef);
-  // Quick actions in the `/` menu — same catalog and same insert-don't-run
-  // behavior as the top-level composer. A reply posts to the same issue, so
-  // `/` has to offer the same thing here (MUL-5588).
+  // `/` 菜单里的快捷动作——与顶层输入框同一个目录、同样的"插入而不立即触发"
+  // 行为。回复投给同一条 issue，所以这里 `/` 必须提供同样的能力（MUL-5588）。
   const quickActionMenu = useQuickActionMenu(issueId);
-  // If a draft key is provided, hydrate from store on mount (defaultValue is
-  // the only injection point on ContentEditorRef) and flush on every onUpdate.
+  // 若给了草稿 key，挂载时从 store 水合（defaultValue 是 ContentEditorRef
+  // 唯一注入点），并在每次 onUpdate 时冲刷。
   const [initialDraft] = useState(() =>
     draftKey ? useCommentDraftStore.getState().getDraft(draftKey) : undefined,
   );
@@ -75,20 +89,16 @@ function ReplyInput({
   const [isEmpty, setIsEmpty] = useState(!initialDraft?.trim());
   const [suppressedAgentIds, setSuppressedAgentIds] = useState<Set<string>>(() => new Set());
   const triggerPreview = useCommentTriggerPreview({ issueId, parentId, content });
-  // Uploads for this reply session (MUL-5181) — owned by the coordinator. With
-  // a draftKey they persist in the draft store so scroll-out/close no longer
-  // drops an in-flight upload; without one (no persistence context) they fall
-  // back to session-local state inside the hook.
-  // `gate` widens the editor gate with coordinator-owned placeholders — see
-  // CommentInput.
+  // 本次回复会话的上传（MUL-5181）——归协调器所有。带 draftKey 时持久化在
+  // 草稿 store 里，滚出/关闭不再丢掉在途上传；不带（无持久化上下文）时回退
+  // 到 hook 内部的会话局部状态。
+  // `gate` 用协调器持有的占位符扩宽编辑器门禁——见 CommentInput。
   const { uploads, attachments: pendingAttachments, handleUpload, removeUpload, gate } =
     useCommentUploads(draftKey, { issueId }, uploadGate, editorRef);
 
-  // Readonly-first: static shell until intent; an unsent draft mounts the
-  // real editor immediately (see CommentInput). This is also what keeps the
-  // reply box working across Virtuoso scroll-out — a typed draft rehydrates
-  // into a live editor when the card remounts, an untouched box folds back
-  // to the shell.
+  // 只读优先：意图前为静态外壳；有未发送草稿则立即挂载真正编辑器
+  //（见 CommentInput）。这也是回复框能穿越 Virtuoso 滚出仍可用的原因——
+  // 打过的草稿在卡片重挂时重新水合成活编辑器，未触碰的空框则折回外壳。
   const lazy = useLazyEditor({
     initialActive:
       !!initialDraft?.trim() ||
@@ -99,7 +109,7 @@ function ReplyInput({
     onDrop: lazy.uploadOrQueue,
   });
 
-  // Flush on tab close / mobile background — same rationale as CommentInput.
+  // 关标签页/手机切后台时冲刷——理由同 CommentInput。
   useEffect(() => {
     if (!draftKey) return;
     const flush = () => {
@@ -136,9 +146,9 @@ function ReplyInput({
     });
   }, []);
 
-  // Await-then-render send (see CommentInput): the shared hook keeps the text,
-  // locks + spins, and clears only once the server accepts it.
-  // Stale-submit guard — see CommentInput.
+  // 先等待再渲染的发送（见 CommentInput）：共享 hook 保留文本、锁定 + 旋转，
+  // 并且只在服务端接受后才清空。
+  // 过期提交守卫——见 CommentInput。
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -147,8 +157,8 @@ function ReplyInput({
     };
   }, []);
   const submittedEntryRef = useRef<unknown>(null);
-  // See CommentInput: bound to the branch that actually wiped the editor, so a
-  // draft the stale-submit guard kept is never disturbed.
+  // 见 CommentInput：绑定在真正清空了编辑器的那个分支上，因此被过期提交
+  // 守卫保留的草稿绝不会被打扰。
   const editorScrubbedRef = useRef(false);
   const acceptedCommentIdRef = useRef<string | null>(null);
 
@@ -156,23 +166,21 @@ function ReplyInput({
     editorRef,
     uploadGate: gate,
     containerRef: composerRef,
-    // A thread reply is rarely the last thing the user has to say, so the caret
-    // stays in the box for the next one. Unlike a top-level comment, the posted
-    // reply lands directly above the box that is still focused — nothing needs
-    // to pull the eye elsewhere. `containerRef` keeps this from stealing focus
-    // if the user moved to another composer while the reply was in flight.
+    // 楼中楼回复通常不是用户最后要说的话，所以光标留在框里等下一句。
+    // 与顶层评论不同，发出的回复正好落在仍在聚焦的输入框正上方——无需把
+    // 视线引向别处。`containerRef` 用于在请求在途期间用户把焦点移到另一个
+    // 输入框时不抢焦点。
     afterAccepted: () => (editorScrubbedRef.current ? "refocus" : "none"),
     onSubmit: (content) => {
       editorScrubbedRef.current = false;
       if (draftKey) {
-        // Flush pending debounce before snapshotting — see CommentInput.
+        // 快照前先冲刷积压的防抖——见 CommentInput。
         const pending = editorRef.current?.flushPendingUpdate?.();
         if (pending != null) setDraft(draftKey, pending);
         submittedEntryRef.current = useCommentDraftStore.getState().drafts[draftKey];
       }
-      // Bind only uploads the body still references (see CommentInput):
-      // deleting an inline image really unbinds it; close-surviving uploads
-      // are written back into the body by the settle handler.
+      // 只绑定正文仍引用的上传（见 CommentInput）：删除内联图片就真的解绑；
+      // 关闭后幸存的上传由 settle 处理器写回正文。
       const activeIds = pendingAttachments
         .filter((a) => contentReferencesAttachment(content, a))
         .map((a) => a.id);
@@ -189,7 +197,7 @@ function ReplyInput({
       });
     },
     onAccepted: () => {
-      // Success may only consume the entry it submitted — see CommentInput.
+      // 成功只能消费它自己提交的那份条目——见 CommentInput。
       if (draftKey) {
         const lateMd = editorRef.current?.flushPendingUpdate?.();
         if (lateMd != null) setDraft(draftKey, lateMd);
@@ -229,7 +237,7 @@ function ReplyInput({
           !isEmpty && "pb-9",
         )}
       >
-        {/* Lock the editor while the reply is in flight — see CommentInput. */}
+        {/* 回复在途时锁死编辑器——见 CommentInput。 */}
         {lazy.active && (
         <div
           className={cn(
@@ -247,8 +255,7 @@ function ReplyInput({
             onUpdate={(md) => {
               setContent(md);
               setIsEmpty(!md.trim());
-              // setDraft keeps any pending attachments and drops the entry only
-              // when text AND attachments are both empty.
+              // setDraft 保留任何在途附件，只在文本与附件都为空时才丢弃条目。
               if (draftKey) setDraft(draftKey, md);
             }}
             onSubmit={submit}
@@ -263,8 +270,7 @@ function ReplyInput({
           />
         </div>
         )}
-        {/* Static shell — clones the empty single-line reply box (see
-            CommentInput for the pattern). */}
+        {/* 静态外壳——克隆空的单行回复框（模式见 CommentInput）。 */}
         {!lazy.ready && (
           <div
             data-testid="reply-composer-shell"
@@ -280,8 +286,8 @@ function ReplyInput({
               }
             }}
           >
-            {/* <p> under rich-text-editor: same type metrics as the real
-                editor's empty paragraph — no height jump on swap. */}
+            {/* rich-text-editor 下的 <p>：与真正编辑器空段落的字模度量一致——
+                切换时不会有高度跳动。 */}
             <p className="text-muted-foreground">{placeholderText}</p>
           </div>
         )}

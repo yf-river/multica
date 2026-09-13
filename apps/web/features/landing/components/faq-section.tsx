@@ -1,9 +1,17 @@
 "use client";
 
+/**
+ * 官网 FAQ 手风琴区块：问题可展开/收起，展开时用 grid-rows 动画平滑放缩答案高度。
+ */
 import { useState } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { useLocale } from "../i18n";
 
+/**
+ * FAQ 区块组件。
+ *
+ * @returns 常见问题列表（每次最多展开一项）。
+ */
 export function FAQSection() {
   const { t } = useLocale();
   const [openIndex, setOpenIndex] = useState<number | null>(null);

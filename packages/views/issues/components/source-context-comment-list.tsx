@@ -1,10 +1,23 @@
 "use client";
 
+// 本文件：SourceContextCommentList —— 来源上下文里的评论线程时间线列表。
+// 把捕获快照中的评论（含相对快照后来新增的评论）按创建时间升序合并渲染，
+// 并对相对快照发生变化的评论（新增/修改/删除）就地标注差异。
+
 import type { SourceContextCommentSnapshot } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { ReadonlyContent } from "../../editor";
 import { useT } from "../../i18n";
 
+/**
+ * 评论线程时间线列表（职责见文件头）。
+ *
+ * `comments` 是捕获时刻的评论；`addedComments` 是相对快照后来新增的评论
+ * （若与捕获快照重叠会被去重）。`changedCommentIds` / `removedCommentIds` /
+ * `addedComments` 用于给差异评论加底色并朗读差异类型。锚点评论
+ * （`anchorCommentId`）会带一枚"来源评论"徽章；作者名默认取自快照，
+ * 需要展示"捕获后改名/归档"等状态时由 `getAuthorLabel` 覆写。
+ */
 export function SourceContextCommentList({
   comments,
   anchorCommentId,

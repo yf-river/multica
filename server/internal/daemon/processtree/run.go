@@ -1,5 +1,5 @@
-// Package processtree runs bounded helper commands whose descendants must not
-// survive cancellation. It uses a Unix process group or a Windows Job Object.
+// Package processtree 用来运行"受边界约束"的辅助命令：这些命令的后裔进程在
+// 取消时不得存活。实现上，Unix 用进程组、Windows 用 Job Object 来圈住整棵树。
 package processtree
 
 import (
@@ -13,9 +13,8 @@ import (
 
 const gracefulStopTimeout = time.Second
 
-// CombinedOutput runs an unstarted command and returns its combined output.
-// Cancellation terminates the entire process tree, waits for it to disappear,
-// and returns the context cause rather than a platform-specific exit status.
+// CombinedOutput 运行一个尚未启动的命令并返回其合并后的输出。取消会终止整棵
+// 进程树、等待其彻底消失，并返回 context 的取消原因，而不是平台相关的退出码。
 func CombinedOutput(ctx context.Context, cmd *exec.Cmd, waitDelay time.Duration) ([]byte, error) {
 	var output bytes.Buffer
 	cmd.Stdout = &output
@@ -24,7 +23,7 @@ func CombinedOutput(ctx context.Context, cmd *exec.Cmd, waitDelay time.Duration)
 	return output.Bytes(), err
 }
 
-// Output is the process-tree-safe equivalent of exec.Cmd.Output.
+// Output 是 exec.Cmd.Output 的"进程树安全"等价物。
 func Output(ctx context.Context, cmd *exec.Cmd, waitDelay time.Duration) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -36,11 +35,14 @@ func Output(ctx context.Context, cmd *exec.Cmd, waitDelay time.Duration) ([]byte
 	return stdout.Bytes(), err
 }
 
-// Run executes an unstarted command while owning its complete process tree.
+// Run 执行一个尚未启动的命令，并全权负责其整棵进程树的清理。
 func Run(ctx context.Context, cmd *exec.Cmd, waitDelay time.Duration) error {
 	return run(ctx, cmd, waitDelay)
 }
 
+// run 是三个公开入口（CombinedOutput/Output/Run）共享的实现：先把命令放进一个
+// 进程组/Job 里启动，再在 ctx 取消时先 SIGTERM（优雅）后 SIGKILL（兜底）地杀掉
+// 整棵树，最后确认进程组已消失才返回，避免后裔进程泄漏。
 func run(ctx context.Context, cmd *exec.Cmd, waitDelay time.Duration) error {
 	if err := ctx.Err(); err != nil {
 		return context.Cause(ctx)

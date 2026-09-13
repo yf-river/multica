@@ -5,17 +5,14 @@ import (
 	"strings"
 )
 
-// IsLikelyBinaryFilePath reports whether the file's extension indicates a
-// non-text payload. Conservative blacklist — extensions not on the list are
-// assumed text and pass through.
+// IsLikelyBinaryFilePath 依据扩展名判断某文件是否是非文本载荷。采用保守黑名单——
+// 不在名单上的扩展名一律假定为文本并放行。
 //
-// Both skill ingestion paths need this, for the same reason from two
-// directions: an archive/URL import cannot put these bytes in a PG TEXT
-// column (SQLSTATE 22021), and runtime-local sync cannot carry them through
-// SkillFileData.Content, because encoding/json rewrites every invalid UTF-8
-// byte to U+FFFD on the daemon/server hop. Either way the bytes that come
-// back out are not the bytes that went in, so both paths skip the file
-// instead of storing a payload they would later hand back corrupted.
+// 两条 skill 摄入路径都需要它，理由相同但来自两个方向：归档/URL 导入不能把这些
+// 字节写进 PG TEXT 列（SQLSTATE 22021）；运行时本地同步不能经由 SkillFileData.Content
+// 携带它们，因为 encoding/json 会在 daemon/server 之间把每个非法 UTF-8 字节改写成
+// U+FFFD。无论哪条路，出来的字节都不是进去的字节，所以两条路径都跳过该文件，
+// 而不是存一份日后会被损坏地交回去的载荷。
 func IsLikelyBinaryFilePath(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {

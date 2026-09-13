@@ -1,3 +1,7 @@
+// 本文件实现「工作区上下文」相关中间件：从请求里解析请求要操作哪个工作区
+// （slug 优先、UUID 兜底，task token 已绑定工作区时以绑定为准），校验当前用户在
+// 该工作区的成员身份（可加角色要求），并把 member 与 workspace ID 注入请求 context，
+// 供下游 handler 使用。
 package middleware
 
 import (
@@ -10,7 +14,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Context keys for workspace-scoped request data.
+// 工作区维度请求数据的 context 键。
 type contextKey int
 
 const (
@@ -18,60 +22,52 @@ const (
 	ctxKeyMember
 )
 
-// MemberFromContext returns the workspace member injected by the workspace middleware.
+// MemberFromContext 返回工作区中间件注入的成员（db.Member）；没注入过则 ok=false。
 func MemberFromContext(ctx context.Context) (db.Member, bool) {
 	m, ok := ctx.Value(ctxKeyMember).(db.Member)
 	return m, ok
 }
 
-// WorkspaceIDFromContext returns the workspace ID injected by the workspace middleware.
+// WorkspaceIDFromContext 返回工作区中间件注入的工作区 ID；没有则返回空串。
 func WorkspaceIDFromContext(ctx context.Context) string {
 	id, _ := ctx.Value(ctxKeyWorkspaceID).(string)
 	return id
 }
 
-// SetMemberContext injects workspace ID and member into the context.
-// This is useful for handlers that resolve the workspace from an entity lookup
-// and want to share the member with downstream code.
+// SetMemberContext 把工作区 ID 与 member 注入 context。适合这样的 handler：
+// 自己通过实体查找解析出了工作区，又想把这个 member 共享给下游代码。
 func SetMemberContext(ctx context.Context, workspaceID string, member db.Member) context.Context {
 	ctx = context.WithValue(ctx, ctxKeyWorkspaceID, workspaceID)
 	ctx = context.WithValue(ctx, ctxKeyMember, member)
 	return ctx
 }
 
-// errWorkspaceNotFound is returned when a slug was provided but doesn't match
-// any workspace. This lets the middleware distinguish "no identifier provided"
-// (400) from "identifier provided but invalid" (404).
+// errWorkspaceNotFound 表示「给了 slug 但对不上任何工作区」。有了它中间件才能区分
+// 「没给任何标识」（400）与「给了标识但非法/不存在」（404）。
 var errWorkspaceNotFound = errors.New("workspace not found")
 
-// ResolveWorkspaceIDFromRequest returns the workspace UUID for an HTTP
-// request using the same priority order as the workspace middleware. This is
-// the single source of truth for "which workspace is this request targeting?",
-// shared by middleware-protected routes (via context fast path) and
-// middleware-less routes (e.g. /api/upload-file) that must resolve the slug
-// themselves.
+// ResolveWorkspaceIDFromRequest 按与工作区中间件相同的优先级，从 HTTP 请求里解析出
+// 工作区 UUID。它是「这个请求针对哪个工作区」这一问题的唯一权威答案，被两类路由共用：
+// 走中间件保护的路由（经 context 快路径）与不走中间件、必须自己解析 slug 的路由
+// （如 /api/upload-file）。
 //
-// Priority:
-//  1. task-token binding (X-Actor-Source == "task_token") — authoritative,
-//     server-set, cannot be re-negotiated by the client (MUL-2600)
-//  2. middleware-injected context (fast path for middleware-protected routes)
-//  3. X-Workspace-Slug header → GetWorkspaceBySlug → UUID (post-refactor frontend)
-//  4. ?workspace_slug query → GetWorkspaceBySlug → UUID
-//  5. X-Workspace-ID header (CLI/daemon compat)
-//  6. ?workspace_id query (CLI/daemon compat)
+// 优先级（从高到低）：
+//  1. task-token 绑定（X-Actor-Source == "task_token"）——权威、服务端设定，
+//     客户端无法重新协商（MUL-2600）；
+//  2. 中间件注入的 context（中间件保护路由的快路径）；
+//  3. X-Workspace-Slug 请求头 → GetWorkspaceBySlug → UUID（重构后的前端）；
+//  4. ?workspace_slug 查询参数 → GetWorkspaceBySlug → UUID；
+//  5. X-Workspace-ID 请求头（CLI/daemon 兼容）；
+//  6. ?workspace_id 查询参数（CLI/daemon 兼容）。
 //
-// Returns "" when no identifier was provided OR a slug was provided but
-// doesn't resolve to any workspace. Callers that need to distinguish "no
-// identifier" (400) from "invalid slug" (404) should use the middleware's
-// internal resolver instead — this helper collapses both cases to "" for
-// simpler handler-level checks.
+// 没有提供任何标识、或给了 slug 却解析不到工作区，都返回 ""。需要区分「没给标识」
+// （400）与「slug 无效」（404）的调用方应使用中间件内部的 resolver——本辅助函数把
+// 两种情形都折叠成 ""，方便 handler 侧做简单判断。
 func ResolveWorkspaceIDFromRequest(r *http.Request, queries *db.Queries) string {
-	// A mat_ task token is bound to exactly one workspace by the token
-	// row. Auth middleware writes that workspace into X-Workspace-ID
-	// after stripping any client-supplied X-Actor-Source. Any other
-	// workspace identifier on the request (slug header/query, ID
-	// query, URL param) is the agent trying to widen its blast
-	// radius — ignore it.
+	// mat_ 任务 token 在 token 行上绑定唯一工作区。Auth 中间件在剥掉客户端自带的
+	// X-Actor-Source 后，把该工作区写进 X-Workspace-ID。请求上任何其它工作区标识
+	// （slug 头/参数、ID 参数、URL 路径参数）都可能是 agent 在试图扩大它的影响半径
+	// ——一律忽略。
 	if r.Header.Get("X-Actor-Source") == "task_token" {
 		return r.Header.Get("X-Workspace-ID")
 	}
@@ -94,28 +90,26 @@ func ResolveWorkspaceIDFromRequest(r *http.Request, queries *db.Queries) string 
 	return r.URL.Query().Get("workspace_id")
 }
 
-// workspaceResolver extracts a workspace UUID from the request.
-// Returns ("", nil) if no workspace identifier was provided at all.
-// Returns ("", errWorkspaceNotFound) if a slug was provided but doesn't exist.
-// Returns (uuid, nil) on success.
+// workspaceResolver 从请求中提取工作区 UUID 的函数类型。三种返回：
+//   - ("", nil)：根本没提供任何工作区标识；
+//   - ("", errWorkspaceNotFound)：给了 slug 但不存在；
+//   - (uuid, nil)：解析成功。
 type workspaceResolver func(r *http.Request) (string, error)
 
-// resolveWorkspaceUUID builds a resolver that accepts slug-first identification.
+// resolveWorkspaceUUID 构造一个「slug 优先」的 resolver。
 //
-// Priority:
-//  1. task-token binding (X-Actor-Source == "task_token") — authoritative,
-//     server-set; the agent cannot widen its workspace scope by passing a
-//     different slug/id (MUL-2600)
-//  2. X-Workspace-Slug header / ?workspace_slug query → GetWorkspaceBySlug → UUID
-//  3. X-Workspace-ID header / ?workspace_id query → UUID directly (CLI/daemon compat)
+// 优先级（从高到低）：
+//  1. task-token 绑定（X-Actor-Source == "task_token"）——权威、服务端设定；
+//     agent 无法靠传不同的 slug/id 扩大工作区范围（MUL-2600）；
+//  2. X-Workspace-Slug 头 / ?workspace_slug 参数 → GetWorkspaceBySlug → UUID；
+//  3. X-Workspace-ID 头 / ?workspace_id 参数 → 直接用 UUID（CLI/daemon 兼容）。
 //
-// TODO: cache slug→UUID lookup (slug is immutable, safe to cache with short TTL)
+// TODO: 缓存 slug→UUID 的查询（slug 不可变，短 TTL 缓存是安全的）。
 func resolveWorkspaceUUID(queries *db.Queries) workspaceResolver {
 	return func(r *http.Request) (string, error) {
-		// Task-token-authenticated requests must operate on the
-		// token's bound workspace. The auth middleware wrote that ID
-		// into X-Workspace-ID; nothing the agent can put on the wire
-		// (slug header/query, id query, URL param) can override it.
+		// task-token 鉴权的请求必须操作 token 绑定的工作区。auth 中间件已把该 ID 写进
+		// X-Workspace-ID；agent 在线上塞的任何东西（slug 头/参数、id 参数、URL 参数）
+		// 都无法覆盖它。
 		if r.Header.Get("X-Actor-Source") == "task_token" {
 			id := r.Header.Get("X-Workspace-ID")
 			if id == "" {
@@ -123,7 +117,7 @@ func resolveWorkspaceUUID(queries *db.Queries) workspaceResolver {
 			}
 			return id, nil
 		}
-		// Slug path (preferred — frontend sends this after the URL refactor)
+		// slug 路径（首选——URL 重构后前端发这个）
 		if slug := r.URL.Query().Get("workspace_slug"); slug != "" {
 			ws, err := queries.GetWorkspaceBySlug(r.Context(), slug)
 			if err != nil {
@@ -138,7 +132,7 @@ func resolveWorkspaceUUID(queries *db.Queries) workspaceResolver {
 			}
 			return util.UUIDToString(ws.ID), nil
 		}
-		// UUID fallback (CLI, daemon, legacy clients)
+		// UUID 兜底（CLI、daemon、老客户端）
 		if id := r.URL.Query().Get("workspace_id"); id != "" {
 			return id, nil
 		}
@@ -149,27 +143,27 @@ func resolveWorkspaceUUID(queries *db.Queries) workspaceResolver {
 	}
 }
 
+// writeError 写一个极简 JSON 错误响应（Content-Type + 状态码 + {"error": msg}）。
 func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	w.Write([]byte(`{"error":"` + msg + `"}`))
 }
 
-// RequireWorkspaceMember resolves the workspace from slug (preferred) or UUID
-// (fallback), validates membership, and injects the member and workspace ID
-// into the request context.
+// RequireWorkspaceMember 解析工作区（slug 优先、UUID 兜底），校验当前用户是成员，
+// 并把 member 与 workspace ID 注入请求 context。不是成员返回 404（对外不暴露
+// 工作区是否存在）。
 func RequireWorkspaceMember(queries *db.Queries) func(http.Handler) http.Handler {
 	return buildMiddleware(queries, resolveWorkspaceUUID(queries), nil)
 }
 
-// RequireWorkspaceRole is like RequireWorkspaceMember but additionally checks
-// that the member has one of the specified roles.
+// RequireWorkspaceRole 同 RequireWorkspaceMember，但额外要求成员角色命中 roles 之一。
 func RequireWorkspaceRole(queries *db.Queries, roles ...string) func(http.Handler) http.Handler {
 	return buildMiddleware(queries, resolveWorkspaceUUID(queries), roles)
 }
 
-// RequireWorkspaceMemberFromURL resolves the workspace ID from a chi URL
-// parameter, validates membership, and injects into context.
+// RequireWorkspaceMemberFromURL 从 chi URL 路径参数取工作区 ID，校验成员身份并注入
+// context。供「路径里直接带工作区 ID」的路由使用。
 func RequireWorkspaceMemberFromURL(queries *db.Queries, param string) func(http.Handler) http.Handler {
 	return buildMiddleware(queries, func(r *http.Request) (string, error) {
 		id := chi.URLParam(r, param)
@@ -180,8 +174,8 @@ func RequireWorkspaceMemberFromURL(queries *db.Queries, param string) func(http.
 	}, nil)
 }
 
-// RequireWorkspaceRoleFromURL is like RequireWorkspaceMemberFromURL but
-// additionally checks that the member has one of the specified roles.
+// RequireWorkspaceRoleFromURL 同 RequireWorkspaceMemberFromURL，但额外要求成员角色
+// 命中 roles 之一。
 func RequireWorkspaceRoleFromURL(queries *db.Queries, param string, roles ...string) func(http.Handler) http.Handler {
 	return buildMiddleware(queries, func(r *http.Request) (string, error) {
 		id := chi.URLParam(r, param)
@@ -192,6 +186,11 @@ func RequireWorkspaceRoleFromURL(queries *db.Queries, param string, roles ...str
 	}, roles)
 }
 
+// buildMiddleware 是上面四个公开中间件的公共实现：解析工作区 → 校验 task-token 绑定 →
+// 取用户 → 查成员 → 按需校验角色 → 注入 context。
+//
+// 流程中的错误映射：slug 不存在 → 404；没提供标识 → 400；没带用户头/用户 ID 非法 →
+// 401；查不到成员 → 404；角色不符 → 403。
 func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -205,12 +204,9 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 				return
 			}
 
-			// Final task-token binding check: even when the workspace
-			// was resolved from a chi URL parameter
-			// (RequireWorkspaceMemberFromURL), the agent must not be
-			// allowed to operate on a workspace other than the one
-			// stamped into its task token. This is the catch-all
-			// behind resolveWorkspaceUUID's earlier check. MUL-2600.
+			// task-token 绑定的兜底校验：即使工作区是从 chi URL 路径参数解析出来的
+			// （RequireWorkspaceMemberFromURL），agent 也不许操作它 task token 里盖戳
+			// 之外的工作区。这是 resolveWorkspaceUUID 早先检查背后的收口逻辑。MUL-2600。
 			if r.Header.Get("X-Actor-Source") == "task_token" {
 				bound := r.Header.Get("X-Workspace-ID")
 				if bound == "" || workspaceID != bound {

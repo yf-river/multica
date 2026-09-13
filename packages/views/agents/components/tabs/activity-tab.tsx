@@ -1,5 +1,10 @@
 "use client";
 
+// 本文件是 Agent 详情页的“活动”标签页（含 Overview 侧栏的迷你性能摘要）：
+// 三个区段依次回答“现在在跑什么 / 最近 30 天表现如何 / 最近完成了什么”。
+// 全部读页面上其它部分已填充的缓存（任务快照、单 Agent 任务列表、7 天活动桶），
+// 页面水合后打开本 Tab 不会多发请求。
+
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import {
@@ -40,42 +45,38 @@ import { Sparkline } from "../sparkline";
 import { useT, useTimeAgo } from "../../../i18n";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-// Recent work pagination: small initial cohort to keep the section
-// scannable, then "Show more" reveals 20 at a time. Tasks are already
-// fully cached client-side (one listAgentTasks for the whole agent), so
-// "more" is a pure state flip — zero extra fetches.
+// “最近完成”分页：先给一小批让区段保持可扫读，之后 “Show more” 每次再放 20 条。
+// 任务本来就整体缓存在客户端（整个 Agent 就一次 listAgentTasks），所以“更多”
+// 只是状态翻转——零额外请求。
 const RECENT_INITIAL = 10;
 const RECENT_PAGE = 20;
-// Placeholder rows shown while the lazily-loaded per-agent task list is
-// still in flight, so first paint of the tab is a skeleton rather than the
-// "nothing finished yet" empty state (which reads as a wrong answer).
+// 懒加载的单 Agent 任务列表在途时先占几行骨架，让本 Tab 首屏是骨架而不是
+// “还没有完成任何任务”的空态（后者读起来像错误的结论）。
 const RECENT_SKELETON_ROWS = 4;
 
 interface ActivityTabProps {
+  /** 要展示的 Agent。 */
   agent: Agent;
+  /** 是否展示“最近 30 天”性能区段（概览侧栏的迷你摘要会传 false 用自家卡片）。 */
   showPerformance?: boolean;
 }
 
 /**
- * Right-pane Activity tab on the agent detail page. Three sections framed
- * around the user's three diagnostic questions, in scan order:
+ * Agent 详情页的活动标签页。三个区段围绕用户的三个诊断问题、按扫读顺序排布：
  *
- *   Now           — what's it doing right this second?
- *   Last 7 days   — how has it been doing in aggregate?
- *   Recent work   — what did it just finish?
+ *   现在       —— 它这一秒在干什么？
+ *   最近 7 天   —— 它总体干得怎么样？
+ *   最近完成   —— 它刚干完了什么？
  *
- * All three read from caches the rest of the page already fills (the
- * workspace task snapshot for "Now", per-agent task list for "Recent",
- * the workspace 7d activity buckets for the trend), so opening this tab
- * adds no extra fetches once the page is hydrated.
+ * 三处都读页面其余部分已填充的缓存（“现在”读工作区任务快照、“最近”读单 Agent
+ * 任务列表、趋势读工作区 7 天活动桶），页面水合后打开本 Tab 不再产生额外请求。
  */
 export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps) {
   const wsId = useWorkspaceId();
 
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  // `isLoading` (pending + fetching, no cached data) is true only on the
-  // very first fetch. Once the page has hydrated this cache elsewhere the
-  // tab opens straight into data with no skeleton flash.
+  // `isLoading`（pending + fetching，且无缓存数据）只在“第一次拉取”时为真。
+  // 一旦页面其它地方已把这个缓存水合好，本 Tab 就会直接展开成数据，无骨架闪烁。
   const { data: agentTasks = [], isLoading: isLoadingRecent } = useQuery(
     agentTasksOptions(wsId, agent.id),
   );
@@ -84,10 +85,9 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
 
   const [recentDisplayLimit, setRecentDisplayLimit] = useState(RECENT_INITIAL);
 
-  // Chat tasks are intentionally hidden across every Agent-scoped surface
-  // (list / detail / activity). They have their own UI in the chat
-  // experience; mixing them in here muddies "what is this agent doing
-  // for the team" with "what is this agent doing in private chat".
+  // 聊天任务在所有 Agent 视角的界面（列表 / 详情 / 活动）里都刻意隐藏。它们在聊天
+  // 体验里有自己的 UI；混进来会模糊“这个 Agent 在替团队干什么”和“这个 Agent 在
+  // 私聊里干什么”的区别。
   const isWorkflowTask = (t: AgentTask) => !t.chat_session_id;
 
   const activeTasks = useMemo(() => {
@@ -114,9 +114,8 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
       );
   }, [snapshot, agent.id]);
 
-  // Most recent terminal tasks. Includes cancelled — users searching
-  // "what just happened" want to see cancellations alongside completions
-  // and failures. Chat sessions filtered out for the same reason as above.
+  // 最近完成的终结态任务。包含被取消的——找“刚才发生了什么”的用户想同时看到
+  // 取消、完成与失败。聊天会话与上面同因被过滤。
   const recentTasksAll = useMemo(() => {
     return [...agentTasks]
       .filter(
@@ -145,9 +144,8 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
     [agentTasks],
   );
 
-  // Resolve issue identifiers + titles for any task we'll render. Going
-  // through `issueDetailOptions` is the same lookup the rest of the app
-  // uses, so the cache is shared and we don't pay for a duplicate request.
+  // 解析我们渲染的每个任务关联的 issue 标识与标题。走 `issueDetailOptions` 与应用
+  // 其它地方同一条查询，缓存共享，不会为重复数据花钱。
   const displayedTasks = useMemo(
     () => [...activeTasks, ...recentTasks],
     [activeTasks, recentTasks],
@@ -192,8 +190,7 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
   );
 }
 
-/** Compact performance context for the Overview sidebar. Kept separate from
- * the work list so metrics never outrank current tasks or failures. */
+/** Overview 侧栏用的紧凑性能摘要。与工作列表分开，让指标永远不压过当前任务与失败。 */
 export function AgentPerformanceSummary({ agent }: { agent: Agent }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
@@ -259,6 +256,7 @@ export function AgentPerformanceSummary({ agent }: { agent: Agent }) {
   );
 }
 
+/** 单个指标块：大数字 + 小标签（destructive 时标红）。 */
 function Metric({
   value,
   label,
@@ -282,6 +280,7 @@ function Metric({
   );
 }
 
+/** “现在”区段：正在跑 / 已派发 / 排队 的任务清单。 */
 function NowSection({
   tasks,
   issueMap,
@@ -315,6 +314,7 @@ function NowSection({
   );
 }
 
+/** “最近 30 天”区段：总运行数、成功率、平均耗时、失败数 + 吞吐/失败迷你图。 */
 function Last30dSection({
   activity,
   avgDurationMs,
@@ -368,10 +368,8 @@ function Last30dSection({
               )}
             </div>
           </div>
-          {/* Garnish, not hero — small enough that a sparse 30-day series
-              doesn't read as visually broken. Bottom-aligned with the
-              number so the dense end of the bars sits on the same
-              baseline as the digits. */}
+          {/* 点缀而非主角——足够小，稀疏的 30 天序列不会显得视觉上破碎。
+              与数字底对齐，让柱状密端与数字落在同一基线上。 */}
           <Sparkline
             buckets={summary.buckets}
             width={120}
@@ -384,6 +382,7 @@ function Last30dSection({
   );
 }
 
+/** “最近完成”区段：已终结任务列表 + “显示更多”分页。 */
 function RecentWorkSection({
   tasks,
   totalCount,
@@ -402,8 +401,7 @@ function RecentWorkSection({
   agent: Agent;
 }) {
   const { t } = useT("agents");
-  // While the first fetch is in flight we have no counts to summarise, so
-  // the subtitle stays blank rather than claiming "nothing finished yet".
+  // 首次请求还没返回时没有计数可概括，所以副标题留空，而不是声称“还没完成任何东西”。
   const subtitle = loading
     ? ""
     : tasks.length === 0
@@ -441,11 +439,9 @@ function RecentWorkSection({
 }
 
 /**
- * Loading placeholder for the Recent work list. Mirrors the completed-mode
- * TaskList shell (bordered, divided rows) and the two-line TaskRow rhythm —
- * a status glyph plus title and meta line — so the skeleton settles into the
- * real rows without a layout jump. Widths are staggered per row so it reads
- * as content rather than a solid block.
+ * “最近完成”列表的加载占位。镜像 completed 模式 TaskList 的外壳（带边框、
+ * 分隔行）与 TaskRow 两行节奏——状态图形 + 标题 + 元信息行——骨架落位时
+ * 不会产生布局跳动。宽度按行错开，读起来像内容而不是一整块。
  */
 function RecentWorkSkeleton() {
   const titleWidths = ["w-3/5", "w-4/5", "w-1/2", "w-2/3"];
@@ -468,6 +464,7 @@ function RecentWorkSkeleton() {
   );
 }
 
+/** 任务行列表外壳：completed 模式为“带边框分隔”的卡，active 模式为稀疏纵向间距。 */
 function TaskList({
   tasks,
   issueMap,
@@ -500,6 +497,7 @@ function TaskList({
   );
 }
 
+/** 单条任务行：状态图标 + 标题 + 元信息（状态/时间/耗时/失败原因/负责人）+ 悬停操作。 */
 function TaskRow({
   task,
   issueMap,
@@ -520,11 +518,11 @@ function TaskRow({
   const hasIssue = task.issue_id !== "";
   const issue = hasIssue ? issueMap.get(task.issue_id) : undefined;
   const isRunning = task.status === "running";
-  // Queued tasks have no messages yet — hiding the transcript button avoids
-  // a guaranteed "No execution data recorded." dialog open.
+  // 排队任务还没有任何消息——隐藏 transcript 按钮，免得一打开就撞上
+  // 必然出现的 “No execution data recorded.” 弹窗。
   const showTranscript = task.status !== "queued";
-  // Cancel only makes sense for the three active states. Terminal rows
-  // (completed / failed / cancelled) hide the button entirely.
+  // 只有三种活动态才谈得上“取消”。终结态行（completed / failed / cancelled）
+  // 完全隐藏该按钮。
   const showCancel =
     timeMode === "active" &&
     (task.status === "queued" ||
@@ -536,9 +534,8 @@ function TaskRow({
     setCancelling(true);
     try {
       await api.cancelTaskById(task.id);
-      // No manual invalidate needed — the task:cancelled WS event flows
-      // through useRealtimeSync's `task:` prefix path which already
-      // invalidates snapshot + per-agent + per-issue task lists.
+      // 无需手动 invalidate —— task:cancelled 的 WS 事件会经 useRealtimeSync
+      // 的 `task:` 前缀路径，把快照 + 单 Agent + 单 issue 的任务列表一并失效。
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t(($) => $.tab_body.activity.cancel_failed_toast));
       setCancelling(false);
@@ -583,21 +580,17 @@ function TaskRow({
         ? timeAgo(task.completed_at)
         : "—";
 
-  // Failure reason. The back-end emits "" on non-failed tasks (omitempty
-  // strips it on the wire) so the truthy guard is the right shape.
-  // failureReasonLabel takes the raw open string because the taxonomy grows,
-  // so there is no enum to cast to. Cancelled rows get a
-  // label only when the SERVER cancelled them for a persisted reason
-  // (worktree claim gate, preserved-work delivery); a user's own cancel
-  // stays a plain "Cancelled".
+  // 失败原因。后端对非失败任务下发 ""（omitempty 在线上去掉），所以真值判断
+  // 就是对的形状。failureReasonLabel 接受原始开放字符串，因为分类会不断增长，
+  // 没有可强转的枚举。已取消的行只有当“服务端”因持久化原因取消它时才给标签
+  //（worktree 认领门槛、保留工作投递）；用户自己取消保持朴素的 “Cancelled”。
   const failureLabel =
     task.status === "failed"
       ? failureReasonLabel(task.failure_reason, t)
       : cancelReasonLabel(task, t);
 
-  // Only show duration for terminal rows. An active row's duration is
-  // inferred from the timeText already ("Started 2m ago") and adding a
-  // second time bubble next to it just clutters the line.
+  // 只给终结态行显示耗时。活动行的时长已由时间文案隐含（“2 分钟前开始”），
+  // 旁边再加一个时间泡泡只会让这行更挤。
   let durationText: string | null = null;
   if (timeMode === "completed" && task.started_at && task.completed_at) {
     const dur =
@@ -633,11 +626,9 @@ function TaskRow({
             </span>
           )}
           {task.trigger_summary ? (
-            // Hover surfaces "why this task ran" — the snapshot lets the
-            // agent-side row stay anchored on issue.title (the
-            // identification axis here) while still letting the user
-            // dwell to see the trigger context. Same pattern as
-            // GitHub Actions surfacing the commit message on hover.
+            // 悬停揭示“这任务为何而跑”——快照让 agent 侧的行锚定在 issue.title
+            //（这里的识别轴），同时允许用户停留看触发上下文。与 GitHub Actions
+            // 悬停显示提交信息同款模式。
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -682,21 +673,15 @@ function TaskRow({
           {failureLabel && (
             <>
               <Sep />
-              {/* The localized reason is the whole user-facing explanation
-                  here. The raw `task.error` used to ride along as this
-                  element's `title`, which put untranslated English (and
-                  absolute paths) in front of every non-English workspace
-                  (#7411); the full diagnostic lives in the transcript's Run
-                  details instead. */}
+              {/* 本地化原因是这里面向用户的全部解释。裸 `task.error` 曾作为本元素
+                  `title` 一路跟随，结果每个非英语工作区都看到未翻译的英文（以及
+                  绝对路径）（#7411）；完整诊断在 transcript 的 Run 详情里。 */}
               <span className="text-destructive">{failureLabel}</span>
             </>
           )}
-          {/* Accountable member (MUL-4302 §9): whose behalf this run is on.
-              A leading separator keeps the avatar on the same middot rhythm as
-              the rest of the meta line instead of glued to the duration. The
-              guard mirrors the badge's own render condition (avatar-only needs
-              an initiator) so no dangling separator is left for an
-              unattributed run. */}
+          {/* 责任人（MUL-4302 §9）：这次运行代表谁。前导分隔符让头像融入整行的
+              中点节奏，而不是贴在耗时后面。守卫镜像徽章自身的渲染条件
+              （仅头像需要发起者），不会给无归属的运行留下悬空分隔符。 */}
           {task.attribution?.initiator && (
             <>
               <Sep />
@@ -709,10 +694,8 @@ function TaskRow({
         </div>
       </div>
 
-      {/* Hover-only actions. The row is intentionally non-clickable so
-          neither destination is privileged — issue detail and transcript
-          are equally valid follow-ups. focus-within keeps the slot
-          reachable for keyboard users. */}
+      {/* 悬停才出现的操作。行刻意不可点，不让任何一个目的地被优待——issue 详情
+          与 transcript 是同等有效的后续动作。focus-within 保证键盘用户也能触达。 */}
       <div className="ml-2 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100">
         {hasIssue && (
           <Tooltip>
@@ -759,6 +742,7 @@ function TaskRow({
   );
 }
 
+/** 区段容器：大标题 + 右侧小副标题。 */
 function Section({
   title,
   subtitle,
@@ -781,20 +765,21 @@ function Section({
   );
 }
 
+/** 斜体空态文案。 */
 function EmptyText({ children }: { children: ReactNode }) {
   return <p className="text-caption italic text-muted-foreground">{children}</p>;
 }
 
 function Sep() {
-  // mx-1 puts visible whitespace around the dot; without it inline JSX
-  // collapses neighbouring tokens to "100% success·avg 30s" which reads
-  // as "successdotavg" at a glance.
+  // mx-1 给圆点两侧留出可见空白；不加的话内联 JSX 会把相邻 token 挤成
+  // “100% 成功率·平均 30s”，一眼扫过去像 “successdotavg”。
   return <span className="mx-1 text-faint-foreground">·</span>;
 }
 
 type AgentsT = ReturnType<typeof useT<"agents">>["t"];
 type TimeAgoFn = (dateStr: string) => string;
 
+/** 把任务状态翻译成界面文案。 */
 function taskStatusLabel(status: AgentTask["status"], t: AgentsT): string {
   switch (status) {
     case "queued":
@@ -814,6 +799,7 @@ function taskStatusLabel(status: AgentTask["status"], t: AgentsT): string {
   }
 }
 
+/** 活动任务的相对时间文案：running→“x 前开始”，dispatched→“x 前派发”，其余→“x 前排队”。 */
 function activeTaskTimeText(task: AgentTask, t: AgentsT, timeAgo: TimeAgoFn): string {
   if (task.status === "running" && task.started_at) {
     return t(($) => $.tab_body.activity.started_prefix, { when: timeAgo(task.started_at) });
@@ -825,9 +811,7 @@ function activeTaskTimeText(task: AgentTask, t: AgentsT, timeAgo: TimeAgoFn): st
 }
 
 /**
- * Average wall-clock duration of completed/failed tasks whose completion
- * lands in the last 30 days. Pure function so callers can pass a
- * deterministic `now` in tests.
+ * 完成/失败于最近 30 天内的任务的平均墙钟耗时。纯函数，测试可传确定性的 `now`。
  */
 export function deriveAvgDurationLast30d(
   tasks: readonly AgentTask[],
@@ -851,9 +835,8 @@ export function deriveAvgDurationLast30d(
 }
 
 /**
- * Compact human-readable duration ("12s", "2m 04s", "1h 30m"). Pads the
- * seconds inside the minute formatter so the column stays visually
- * aligned across rows.
+ * 紧凑的人性化时长文案（“12s”、“2m 04s”、“1h 30m”）。分档内的秒数补零，
+ * 让列表视觉对齐。
  */
 export function formatDurationMs(ms: number): string {
   if (ms <= 0) return "—";

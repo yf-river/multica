@@ -1,5 +1,10 @@
 "use client";
 
+// 本文件：ManageViewsDialog —— 视图栏管理对话框。
+// 集中管理某个 surface 视图栏上的所有条目：拖拽排序、显隐开关、以及可管理
+// 保存视图的编辑/删除。排序与显隐乐观更新"每用户偏好文档"；编辑/删除则委托
+// 宿主处理（需要与 surface 状态接线的保存对话框/删除 mutation）。
+
 import { useEffect, useMemo, useState } from "react";
 import {
   DndContext,
@@ -35,10 +40,11 @@ import {
 } from "./view-bar-popover";
 import { useT } from "../../i18n";
 
-/** One row in the manager: a built-in tab or a saved view. */
-/** The vertical-locked row drag has no DragOverlay under the pointer, so
- *  the grabbing cursor is promoted to the document for the drag's duration
- *  (see the `data-dnd-dragging` contract in ui/styles/base.css). */
+/** 管理器里的一行：内置页签或一个已保存视图。 */
+
+/** 纵向锁定的行拖拽在指针下没有 DragOverlay 可供抓取，因此在拖拽期间把
+ *  "抓取"光标提升到整个文档（见 ui/styles/base.css 里的
+ *  `data-dnd-dragging` 约定）。 */
 function setDndCursor(on: boolean) {
   if (on) document.documentElement.dataset.dndDragging = "true";
   else delete document.documentElement.dataset.dndDragging;
@@ -54,7 +60,7 @@ function SortableRow({
 }: {
   item: ViewBarItem;
   hidden: boolean;
-  /** The anchor built-in cannot be hidden — its switch is disabled. */
+  /** 锚点内置页签不可隐藏——它的开关被禁用。 */
   anchor: boolean;
   onToggleHidden: () => void;
   onEdit?: () => void;
@@ -126,11 +132,9 @@ function SortableRow({
 }
 
 /**
- * Central manager for one surface's view bar: order (drag), visibility
- * (switch), edit/delete for manageable saved views. Order and visibility
- * write the per-user preference document optimistically; edit/delete
- * delegate to the host (they need the save dialog / delete mutation wired
- * to the surface's state).
+ * 单个 surface 视图栏的集中管理器：顺序（拖拽）、显隐（开关）、以及可管理
+ * 保存视图的编辑/删除。顺序与显隐会乐观写入"每用户偏好文档"；编辑/删除
+ * 委托给宿主（它们需要接到 surface 状态的保存对话框/删除 mutation）。
  */
 export function ManageViewsDialog({
   open,
@@ -145,7 +149,7 @@ export function ManageViewsDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Full ordered list (built-ins + views), pre-composed by the host. */
+  /** 完整的有序列表（内置 + 已保存视图），由宿主预先组装。 */
   items: ViewBarItem[];
   hiddenSet: Set<string>;
   anchorId: string;
@@ -158,11 +162,11 @@ export function ManageViewsDialog({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
   );
-  // Local order during a drag session so rows follow the pointer without a
-  // server round-trip per pixel; committed (one PUT) on drop.
+  // 拖拽期间维护一份本地顺序，让行能跟随指针移动而不必每个像素都打一次服务端；
+  // 松手时统一提交（一次 PUT）。
   const [localOrder, setLocalOrder] = useState<string[] | null>(null);
-  // If the dialog unmounts mid-drag (close on Escape, view deleted under
-  // us), dnd-kit fires no cancel — clear the document cursor ourselves.
+  // 若对话框在拖拽中途卸载（按 Escape 关闭、视图被删等），dnd-kit 不会触发
+  // cancel 事件——这里自己负责清掉文档级光标。
   useEffect(() => () => setDndCursor(false), []);
   useEffect(() => {
     if (!open) setLocalOrder(null);
@@ -211,9 +215,8 @@ export function ManageViewsDialog({
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
-              // Rows only ever swap vertically — same constraint the table
-              // header puts on column reordering, rotated 90°. Horizontal
-              // auto-scroll is likewise an axis this gesture cannot act on.
+              // 行与行只做纵向交换——与表格表头给列重排加的限制一致，只是转了 90°。
+              // 同理，横向自动滚动也不是这个手势能作用到的轴。
               modifiers={[restrictToVerticalAxis]}
               autoScroll={{ threshold: { x: 0, y: 0.15 } }}
               onDragStart={() => setDndCursor(true)}

@@ -1,3 +1,6 @@
+// 本文件职责：skill 文件树——把文件路径列表组织成树形展示（SKILL.md 置顶、目录优先、
+// 其余按名排序），支持选中/展开收起；可选提供编辑动作（编辑/重命名/删除，主文件保留
+// 编辑但不可改名删除）。只读视图则完全不带操作菜单。
 "use client";
 
 import { useRef, useState } from "react";
@@ -24,28 +27,28 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
 /**
- * What a row may offer beyond selection. Absent for read-only viewers, so the
- * tree never shows an action it would then have to refuse.
+ * 一行文件除了「选中」外还能提供的动作。只读查看器不传它，树就不会出现一个
+ * 之后又必须拒绝的操作。
  *
- * `reservedPath` narrows the menu rather than removing it: the primary file
- * cannot be renamed or deleted, but it is edited like any other row, so it
- * keeps the edit entry and loses the other two.
+ * `reservedPath` 收窄菜单而不是移除菜单：主文件（如 SKILL.md）不能改名/删除，
+ * 但它和其它行一样需要被编辑，所以保留「编辑」入口、去掉另外两个。
  */
 export interface FileTreeActions {
-  /** Open the row's file in the editor, caret already in it. */
+  /** 把该文件在编辑器里打开，光标直接落在其中。 */
   onEdit: (path: string) => void;
-  /** Returns an error message, or "" when the path is free to use. */
+  /** 返回错误消息；路径可用时返回空串。 */
   validatePath: (path: string, existing: string[]) => string;
   onRename: (from: string, to: string) => void;
   onDelete: (path: string) => void;
-  /** Path that owns the skill's primary content and cannot be moved or removed. */
+  /** 拥有 skill 主内容的路径，不可移动或删除。 */
   reservedPath: string;
 }
 
 // ---------------------------------------------------------------------------
-// Tree data structures
+// 树形数据结构
 // ---------------------------------------------------------------------------
 
+/** 一个树节点：文件或目录，目录带 children，叶子为文件。 */
 interface FileTreeNode {
   name: string;
   path: string;
@@ -53,6 +56,12 @@ interface FileTreeNode {
   children: FileTreeNode[];
 }
 
+/**
+ * 把平铺的文件路径列表建成一棵排序好的树。
+ *
+ * 按 `/` 分段逐层插入；排序规则：SKILL.md 恒排第一，之后目录在前文件在后，
+ * 同级再按名字字典序。排序会就地递归完成。
+ */
 function buildTree(filePaths: string[]): FileTreeNode[] {
   const root: FileTreeNode[] = [];
 
@@ -99,15 +108,22 @@ function buildTree(filePaths: string[]): FileTreeNode[] {
   return sortNodes(root);
 }
 
+/** 按扩展名挑文件图标：markdown 用文档图标，其余用通用文件图标。 */
 function getFileIcon(name: string) {
   if (name.endsWith(".md") || name.endsWith(".mdx")) return FileText;
   return File;
 }
 
 // ---------------------------------------------------------------------------
-// Tree node renderer
+// 树节点渲染
 // ---------------------------------------------------------------------------
 
+/**
+ * 单个树节点（文件或目录）的行。
+ *
+ * 目录行可点击展开/收起；文件行可被选中，并在提供 actions 时显示尾部「⋯」菜单
+ * （含编辑/重命名/删除）。重命名就地展开成一个输入行（见 RenameRow）。
+ */
 function TreeNodeItem({
   node,
   selectedPath,
@@ -165,9 +181,8 @@ function TreeNodeItem({
   }
 
   const Icon = getFileIcon(node.name);
-  // Two different questions: whether the row has a menu at all (any row does,
-  // once the viewer may edit), and whether that menu may offer rename/delete
-  // (the reserved primary file may not).
+  // 这是两个不同的问题：这一行「有没有菜单」（一旦查看器可编辑，任何一行都有），
+  // 以及菜单里「能不能提供重命名/删除」（被保留的主文件不行）。
   const hasMenu = !!actions;
   const canModify = !!actions && node.path !== actions.reservedPath;
 
@@ -191,9 +206,8 @@ function TreeNodeItem({
           ? "bg-surface-selected"
           : "hover:bg-surface-hover",
       )}
-      // Right-click opens the same menu the trailing button does. The menu
-      // anchors to that button rather than the cursor, which keeps one menu
-      // per row instead of a context-menu root beside a dropdown root.
+      // 右键弹出与尾部按钮相同的菜单。菜单锚定在那个按钮上而不是光标处，让每一行只
+      // 有「一个菜单」，而不是旁边再挂一个右键菜单根节点。
       onContextMenu={
         hasMenu
           ? (event) => {
@@ -229,19 +243,15 @@ function TreeNodeItem({
                 aria-label={t(($) => $.file_tree.actions.label, {
                   path: node.path,
                 })}
-                // Hidden until the row is hovered or something inside it holds
-                // focus, so a rail of ten files is not a rail of ten buttons.
-                // after:-inset-1 widens the hit area past the 20px glyph.
+                // 行被 hover、或其中某个元素持焦点时才显示——否则十个文件就是十颗
+                // 按钮。`after:-inset-1` 把命中区扩大到 20px 字形之外。
                 //
-                // `relative` is load-bearing, not decoration: it makes THIS
-                // button the containing block for that ::after. Without it the
-                // pseudo-element resolves against the row (the nearest
-                // positioned ancestor), so the invisible hit area covered the
-                // whole row and — being absolutely positioned, hence painted
-                // above the in-flow name button — swallowed every click on the
-                // file name. Selecting a supporting file opened this menu
-                // instead (MUL-5654). opacity-0 does not opt out of hit
-                // testing, so the row was unclickable even before hover.
+                // `relative` 是承重墙而非装饰：它让「这颗按钮」成为那个 ::after 的
+                // 包含块。去掉它，伪元素会相对最近的有定位祖先（整行）解析，于是这块
+                // 隐形命中区铺满整行——又因为是绝对定位、画在文档流里的名字按钮之上，
+                // 吃掉对文件名的每一次点击：想选一个支持文件结果弹出了这个菜单
+                // （MUL-5654）。opacity-0 并不退出命中测试，所以即使未 hover 整行也
+                // 会变得不可点。
                 className="relative mr-1 shrink-0 rounded p-0.5 text-faint-foreground opacity-0 transition-opacity after:absolute after:-inset-1 hover:text-foreground group-hover/row:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100"
                 onClick={(event) => event.stopPropagation()}
               >
@@ -277,10 +287,8 @@ function TreeNodeItem({
 }
 
 /**
- * Rename happens in the row rather than a dialog: the name is being edited in
- * the place it is read, and the surrounding paths stay visible to compare
- * against. Validation is the caller's, so the tree does not carry a second
- * copy of what counts as a legal path.
+ * 重命名发生在行内而不是弹窗里：名字在「它被读取的地方」就地编辑，周边的路径也仍然
+ * 可见、方便比对。校验交给调用方，树里不重复维护一份「什么路径合法」的规则。
  */
 function RenameRow({
   node,
@@ -342,9 +350,15 @@ function RenameRow({
 }
 
 // ---------------------------------------------------------------------------
-// Public component
+// 对外组件
 // ---------------------------------------------------------------------------
 
+/**
+ * skill 文件树。
+ *
+ * 把文件路径列表建成树并渲染；点击叶子通知 `onSelect`。不传 `actions` 时是纯只读
+ * 视图（无任何操作菜单）。
+ */
 export function FileTree({
   filePaths,
   selectedPath,
@@ -354,7 +368,7 @@ export function FileTree({
   filePaths: string[];
   selectedPath: string;
   onSelect: (path: string) => void;
-  /** Omit to render a read-only tree. */
+  /** 省略此参数即渲染为只读树。 */
   actions?: FileTreeActions;
 }) {
   const { t } = useT("skills");
@@ -369,8 +383,8 @@ export function FileTree({
     );
   }
 
-  // No `role="tablist"` here: the caller owns the list semantics so a rail
-  // split into "main" + "supporting" groups stays a single tab list.
+  // 这里不加 `role="tablist"`：列表语义由调用方负责——被拆成「主文件 + 支持文件」
+  // 两组的栏仍然只是一个 tab 列表。
   return (
     <div className="flex flex-col gap-0.5">
       {tree.map((node) => (

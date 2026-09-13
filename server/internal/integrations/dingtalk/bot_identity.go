@@ -1,3 +1,13 @@
+// bot_identity.go：查「机器人在群里的可读名字」并缓存，供入站归一化与群存在性
+// 元数据用。
+//
+// 背景：钉钉机器人消息回调里没有机器人自己的身份字段。为了让入站消息能剥离「@
+// 机器人」的提及、以及把「群里看到的 bot 名字」记进产品元数据，需要调钉钉的群
+// 机器人列表接口：POST /v1.0/robot/groups/robots/query 一次返回群内全部机器人，
+// 我们按 robotCode 精确匹配出那个名字。openConversationId 换名字。
+//
+// 查询要带 qyapi_chat_manage 权限。拿不到该权限（钉钉按「应用」而非按「群」授
+// 权）时，正常态就是把名字留空继续跑，并缓存这次拒绝避免每条入站都去撞一次接口。
 package dingtalk
 
 import (
@@ -18,10 +28,9 @@ const (
 	botNameLookupTimeout = 3 * time.Second
 	botNameCacheTTL      = time.Hour
 	botNameErrorCacheTTL = time.Minute
-	// qyapi_chat_manage is granted per DingTalk app, not per group. Cache a
-	// denial briefly across every group for the same Bot so the normal missing-
-	// permission state cannot trigger one OpenAPI request per inbound message.
-	// A 30-second bound keeps grant-and-mention remediation responsive.
+	// qyapi_chat_manage 按钉钉应用授予、不按群授予。同一 bot 的缺权限拒绝要跨群
+	// 短暂缓存，否则「正常缺权限」状态会变成每条入站消息都打一次 OpenAPI。30 秒
+	// 的上限让「补权限后再 @ 一次」的补救路径能及时生效。
 	botNamePermissionCacheTTL = 30 * time.Second
 	botNameCacheMaxSize       = 4096
 
@@ -40,9 +49,8 @@ type groupBotListItem struct {
 	Name      string `json:"name"`
 }
 
-// botNameInGroup returns the readable DingTalk name for one exact robot code
-// in a group. The API returns every bot in the group; callers must never infer
-// identity from list position or persist another bot's metadata.
+// botNameInGroup 返回某个精确 robotCode 的机器人在指定群里的可读名字。接口返回
+// 群内全部机器人；调用方绝不允许按列表位置猜身份，也不许把别的机器人的元数据落库。
 func (c *Client) botNameInGroup(ctx context.Context, appKey, appSecret, robotCode, conversationID string) (string, error) {
 	if strings.TrimSpace(robotCode) == "" || strings.TrimSpace(conversationID) == "" {
 		return "", errors.New("dingtalk: bot-name lookup requires robot code and conversation id")
@@ -84,22 +92,24 @@ func (c *Client) botNameInGroup(ctx context.Context, appKey, appSecret, robotCod
 	return "", fmt.Errorf("dingtalk: robot %q is absent from group %q bot list", robotCode, conversationID)
 }
 
+// cachedBotName 是一条缓存的查询结果：名字（或错误）+ 过期时刻。
 type cachedBotName struct {
 	name      string
 	err       error
 	expiresAt time.Time
 }
 
+// botNameFlightResult 是 singleflight 合流后带回的结果，额外记录本次实际查询用的
+// 群——成功结果跨群共享时，调用方需要知道它是在哪个群里验出来的。
 type botNameFlightResult struct {
 	name                 string
 	sourceConversationID string
 }
 
-// BotNameResolver resolves the real DingTalk bot identity through one observed
-// group. Names and app-scoped permission denials are cached across every group
-// for that Bot; only group-specific failures use a group key. Successful names
-// refresh hourly so renames converge. Permission denial refreshes after 30
-// seconds so grant-and-mention remediation remains responsive.
+// BotNameResolver 通过一个被观察到的群解析机器人真实的钉钉身份。机器人的名字与
+// 应用维度的缺权限拒绝跨群缓存；只有群相关的失败才按群分键。成功的名字每小时刷
+// 新一次，让改名能收敛；权限拒绝 30 秒后刷新，保证「补权限后再 @」的补救路径
+// 仍然灵敏。
 type BotNameResolver struct {
 	client  *Client
 	decrypt Decrypter
@@ -112,6 +122,7 @@ type BotNameResolver struct {
 	group singleflight.Group
 }
 
+// NewBotNameResolver 构造解析器；client 缺省指向真实的共享出站 Client。
 func NewBotNameResolver(client *Client, decrypt Decrypter) *BotNameResolver {
 	if client == nil {
 		client = NewClient(nil, "")
@@ -126,6 +137,7 @@ func NewBotNameResolver(client *Client, decrypt Decrypter) *BotNameResolver {
 	}
 }
 
+// Resolve 从安装行里解密出凭据，再按 (安装, 群) 解析机器人的可读名字。
 func (r *BotNameResolver) Resolve(ctx context.Context, installation db.ChannelInstallation, conversationID string) (string, error) {
 	credentials, err := decodeCredentials(installation.Config, r.decrypt)
 	if err != nil {
@@ -134,10 +146,9 @@ func (r *BotNameResolver) Resolve(ctx context.Context, installation db.ChannelIn
 	return r.resolveCredentials(ctx, credentials, conversationID)
 }
 
-// resolveCredentials is the adapter-ingest entry point. The Stream channel
-// already owns the decrypted credentials, so normalization can share the exact
-// same cache and OpenAPI implementation as group-presence discovery without a
-// database round trip or a second resolver.
+// resolveCredentials 是适配器入站摄取的入口。Stream 连接已经持有解密后的凭据，
+// 归一化路径因此能直接复用与「群存在性发现」同一套缓存与 OpenAPI 实现，既免掉一
+// 次数据库往返、也不需要第二个解析器。
 func (r *BotNameResolver) resolveCredentials(ctx context.Context, credentials credentials, conversationID string) (string, error) {
 	identityKey := "identity\x00" + credentials.AppKey + "\x00" + credentials.RobotCode
 	if cached, ok := r.cached(identityKey); ok {
@@ -154,10 +165,9 @@ func (r *BotNameResolver) resolveCredentials(ctx context.Context, credentials cr
 		return resolved.name, err
 	}
 
-	// Success and qyapi_chat_manage denial are app-scoped, so the identity
-	// flight may safely share them across groups. Any other failure can depend
-	// on the group used by the flight leader (for example, the Bot is absent
-	// there), so retry this caller's own group instead of returning that error.
+	// 成功与 qyapi_chat_manage 拒绝都是「应用」维度的，身份 flight 跨群共享是安全
+	// 的。其它失败可能取决于领飞者用的那个群（比如机器人不在那个群里），所以改用
+	// 调用方自己的群再查一次，而不是把这个错误原样返回。
 	resolved, err = r.resolveFlight(ctx, groupKey, identityKey, groupKey, credentials, conversationID)
 	return resolved.name, err
 }
@@ -171,6 +181,7 @@ func (r *BotNameResolver) resolveFlight(
 	conversationID string,
 ) (botNameFlightResult, error) {
 	result := r.group.DoChan(flightKey, func() (any, error) {
+		// 排队等 flight 的功夫里缓存可能已被领飞者填好；直接复用。
 		if cached, ok := r.cached(identityKey); ok {
 			return botNameFlightResult{name: cached.name}, cached.err
 		}
@@ -192,16 +203,19 @@ func (r *BotNameResolver) resolveFlight(
 		ttl := botNameCacheTTL
 		if lookupErr != nil {
 			if errors.Is(lookupErr, errMissingChatManagePermission) {
+				// 缺权限是应用维度的：按身份键缓存，所有群共享同一拒绝结论。
 				r.store(identityKey, cachedBotName{
 					err:       lookupErr,
 					expiresAt: r.now().Add(botNamePermissionCacheTTL),
 				})
 				return botNameFlightResult{sourceConversationID: conversationID}, lookupErr
 			}
+			// 其它失败按群缓存一分钟——可能只是这个群查不到，换个群会好。
 			ttl = botNameErrorCacheTTL
 			r.store(groupKey, cachedBotName{name: "", err: lookupErr, expiresAt: r.now().Add(ttl)})
 			return botNameFlightResult{sourceConversationID: conversationID}, lookupErr
 		}
+		// 查到的名字按身份键缓存一小时，让改名在小时内收敛。
 		r.store(identityKey, cachedBotName{name: name, expiresAt: r.now().Add(ttl)})
 		return botNameFlightResult{name: name, sourceConversationID: conversationID}, nil
 	})
@@ -213,6 +227,7 @@ func (r *BotNameResolver) resolveFlight(
 	}
 }
 
+// cached 读一条未过期的缓存条目。
 func (r *BotNameResolver) cached(key string) (cachedBotName, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -223,6 +238,8 @@ func (r *BotNameResolver) cached(key string) (cachedBotName, bool) {
 	return value, true
 }
 
+// store 写入一条缓存，必要时先做容量维护：先清掉已过期的条目，仍超 maxSize 再按
+// 「最早过期」淘汰一个（比随机淘汰更贴近 LRU 的效果）。
 func (r *BotNameResolver) store(key string, value cachedBotName) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -1,5 +1,12 @@
 "use client";
 
+// 本文件：CommentTriggerChips —— 评论输入框下方"将触发哪些 agent"的预览 chips。
+// 单 agent 时渲染完整 chip（头像 + 状态点 + 句子，点击切换跳过）；多个 agent
+// 折叠成重叠头像堆 + 计数句，逐 agent 的切换收进点击打开的 Popover。
+// 悬停层一律只读（Tooltip）。被跳过的目标以"亮度变暗"传达：亮 = 将触发，
+// 暗 = 已跳过。另处理"显式 @ 但不会触发"的目标（MUL-4525 §2）——渲染成
+// 带原因的名字 warning chip，而不是静默的 no-op。
+
 import { useMemo, useState } from "react";
 import { TriangleAlert } from "lucide-react";
 import type { CommentTriggerPreviewAgent, CommentTriggerOutcome } from "@multica/core/types";
@@ -19,28 +26,25 @@ import { AgentStatusDot } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 import { blockedReasonLabel, blockedShortReasonLabel } from "../blocked-trigger-copy";
 
-// One agent renders in full ("Walt will start working", avatar + presence
-// dot, click toggles). Several agents collapse to an overlapping avatar
-// stack + count sentence, mirroring WorkspaceAgentWorkingChip on the issues
-// header. Hover layers stay read-only (Tooltip); per-agent toggling lives in
-// a click-opened Popover so the layer survives consecutive clicks.
-// Suppression is communicated by brightness alone: lit = will trigger,
-// dimmed = skipped.
-// The single-agent avatar renders at the `xs` tier; the `+N` overflow chip
-// and stack overlap below reuse that tier's pixel diameter so the collapsed
-// stack lines up exactly with the avatars.
+// 单个 agent 完整渲染（"Walt 即将开始工作"，头像 + 状态点，点击切换）。
+// 多个 agent 折叠成重叠头像堆 + 计数句，与 issues 头部那个
+// WorkspaceAgentWorkingChip 相呼应。悬停层只读（Tooltip）；逐 agent 切换
+// 放在点击打开的 Popover 里，好让层级扛得住连续点击。
+// 抑制只用亮度传达：亮 = 将触发，暗 = 已跳过。
+// 单 agent 头像取 `xs` 档；`+N` 溢出 chip 与堆叠重叠也复用该档的像素直径，
+// 让折叠后的堆栈与头像精确对齐。
 const AVATAR_SIZE = AVATAR_SIZE_PX.xs;
 const MAX_STACK_HEADS = 4;
 
 interface CommentTriggerChipsProps {
   agents: CommentTriggerPreviewAgent[];
-  // Explicit @agent / @squad mentions that will NOT trigger if posted as-is
-  // (MUL-4525 §2). Each renders as a named warning chip so the user sees WHICH
-  // target won't run and why, not a silent no-op after sending.
+  // 显式 @agent/@squad、但按现状发出*不会*触发的提及（MUL-4525 §2）。
+  // 每个渲染成具名的 warning chip，让用户看清"哪个目标不会跑、为什么"，
+  // 而不是发送后得到一次静默的 no-op。
   blocked?: CommentTriggerOutcome[];
-  // The draft markdown, used only to label each blocked target with the name the
-  // user typed in its mention markup. The server omits blocked target names
-  // (enumeration-safety); this is the user's own text, so it discloses nothing new.
+  // 草稿 markdown——只用来给每个被拦目标标注用户在其提及语法里打的名字。
+  // 服务端省略被拦目标的名字（枚举安全）；这是用户自己的文本，
+  // 因此不会泄露任何新东西。
   draftContent?: string;
   suppressedAgentIds: Set<string>;
   onToggle: (agentId: string) => void;
@@ -61,10 +65,9 @@ function sourceLabel(source: string, t: IssuesT): string {
   }
 }
 
-// Assignee / @mention reasons are intentionally omitted: the header
-// (name · source) already says why they fire, so a reason line there would
-// just restate it. Only the squad-leader link (non-obvious) and the unknown
-// fallback carry information the header doesn't.
+// 负责人 / @提及的触发理由被有意省略：头部（名字 · 来源）已经说明了它们
+// 为什么触发，再加一行理由只是复述。只有小队队长链接（不明显）与未知
+// 兜底携带头部没有的信息。
 function sourceReason(agent: CommentTriggerPreviewAgent, t: IssuesT): string | null {
   switch (agent.source) {
     case "issue_assignee":
@@ -77,8 +80,8 @@ function sourceReason(agent: CommentTriggerPreviewAgent, t: IssuesT): string | n
   }
 }
 
-// Presence is display metadata only — the trigger list itself is always the
-// backend preview. Online-ish agents start right away; offline ones queue.
+// 在线状态只是展示元数据——触发列表本身永远是后端预览。接近在线的 agent
+// 立即开工；离线的排队。
 function useTriggerPresenceLine(agentId: string, t: IssuesT): string | null {
   const ws = useCurrentWorkspace();
   const detail = useAgentPresenceDetail(ws?.id, agentId);
@@ -88,8 +91,8 @@ function useTriggerPresenceLine(agentId: string, t: IssuesT): string | null {
     : t(($) => $.comment.trigger_starts_when_online);
 }
 
-// One tooltip body for every trigger surface (single chip, popover rows):
-// who · why it fires (+ presence) · what a click does.
+// 所有触发表面（单 chip、Popover 行）共用同一个 tooltip 正文：
+// 谁 · 为什么触发（+ 在线状态）· 点击会怎样。
 function TriggerAgentTooltipBody({
   agent,
   suppressed,
@@ -111,8 +114,8 @@ function TriggerAgentTooltipBody({
       ) : (
         <>
           {(() => {
-            // Reason (when present) and presence share one line; either may be
-            // absent, so join only the parts that exist to avoid a stray space.
+            // 理由（如有）与在线状态共用一行；二者都可能缺席，所以只拼接
+            // 存在的部分，避免多出多余空格。
             const line = [sourceReason(agent, t), presenceLine].filter(Boolean).join(" ");
             return line ? <div>{line}</div> : null;
           })()}
@@ -123,6 +126,13 @@ function TriggerAgentTooltipBody({
   );
 }
 
+/**
+ * "将触发哪些 agent"的预览 chips（职责见文件头）。
+ *
+ * `agents` 是要触发的 agent 列表；`blocked` 是显式 @ 但不会触发的目标；
+ * `draftContent` 仅用于反查被拦目标的名字；`suppressedAgentIds`/`onToggle`
+ * 共同实现"跳过某 agent"的开关。
+ */
 export function CommentTriggerChips({
   agents,
   blocked = [],
@@ -131,12 +141,12 @@ export function CommentTriggerChips({
   onToggle,
 }: CommentTriggerChipsProps) {
   const { t } = useT("issues");
-  // Blocked outcomes carry no name (enumeration-safety); recover the label the
-  // user typed from their own draft so each chip can say which target it is.
+  // 被拦结果不带名字（枚举安全）；从用户自己的草稿里找回他们打的标签，
+  // 让每个 chip 能说出拦的是哪个目标。
   const blockedLabels = useMemo(() => mentionLabelsByTarget(draftContent), [draftContent]);
 
-  // Loading and errors render nothing: the preview is an enhancement, and
-  // any interim chrome here reads as composer noise.
+  // 加载与错误都不渲染任何东西：预览只是增强，这里的任何临时 UI 都会
+  // 读成输入框噪音。
   if (agents.length === 0 && blocked.length === 0) return null;
 
   const allowed =
@@ -173,10 +183,9 @@ export function CommentTriggerChips({
   );
 }
 
-// One blocked mention: named like an allowed chip ("Go"), but with an error
-// indicator and a short reason ("Not found or no permission") instead of "will
-// start", so a refused @mention reads as a clear, specific error rather than a
-// vague count.
+// 单条被拦提及：长得像允许的 chip（"Go"），但带错误指示器与短理由
+//（"未找到或无权限"），而不是"将开始"——被拒的 @ 因而读作清晰具体的
+// 错误，而不是含糊的计数。
 function BlockedTriggerChip({
   outcome,
   label,
@@ -233,8 +242,8 @@ function SingleTriggerChip({
   const state = suppressed
     ? t(($) => $.comment.trigger_skipped_label)
     : sourceLabel(agent.source, t);
-  // The avatar carries "who"; the sentence carries only condition + outcome,
-  // so it stays fixed-width and never truncates on long agent names.
+  // 头像承载"谁"；句子只承载条件与结果，因此保持固定宽度、不因长 agent 名
+  // 而截断。
   const sentence = suppressed
     ? t(($) => $.comment.trigger_wont_trigger)
     : t(($) => $.comment.trigger_will_start);
@@ -249,8 +258,8 @@ function SingleTriggerChip({
             aria-label={t(($) => $.comment.trigger_chip_aria, { name: agent.name, state })}
             onClick={() => onToggle(agent.id)}
             className={cn(
-              // Sidebar-style resting state: muted until hover so the strip
-              // reads as metadata, not content (see app-sidebar nav items).
+              // 侧栏式静息态：弱化直到悬停，让这串 chip 读作元数据而非内容
+              //（见 app-sidebar 导航项）。
               "inline-flex h-6 min-w-0 max-w-full animate-in fade-in cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-micro font-medium text-muted-foreground transition-colors duration-200 hover:bg-muted hover:text-foreground",
             )}
           >
@@ -282,12 +291,10 @@ function MultiTriggerChip({
   const activeCount = agents.filter((a) => !suppressedAgentIds.has(a.id)).length;
   const heads = agents.slice(0, MAX_STACK_HEADS);
   const overflow = agents.length - heads.length;
-  // Mirror AgentAvatarStack: ~30% overlap reads as "stacked" without
-  // obscuring the next avatar.
+  // 对应 AgentAvatarStack：约 30% 重叠读作"堆叠"，又不遮住下一颗头像。
   const overlap = Math.round(AVATAR_SIZE * 0.3);
-  // The avatar stack shows who; the sentence promises only what WILL happen,
-  // so the count covers non-suppressed agents — skipped ones read as the
-  // dimmed heads right next to the number.
+  // 头像堆承载"谁"；句子只承诺"会发生什么"，因此计数覆盖未抑制的
+  // agent——被跳过的读作数字旁边那些变暗的头像。
   const sentence =
     activeCount === 0
       ? t(($) => $.comment.trigger_none_will_trigger)
@@ -296,8 +303,8 @@ function MultiTriggerChip({
   const popoverTrigger = (
     <PopoverTrigger
       render={
-        // Ghost-button affordance (hover fill + aria-expanded pin) so the
-        // stack reads as clickable, matching pickers across the app.
+        // 幽灵按钮式触达（悬停填充 + aria-expanded 钉住），让头像堆读作
+        // 可点击，与全应用的选择器一致。
         <button
           type="button"
           className={cn(

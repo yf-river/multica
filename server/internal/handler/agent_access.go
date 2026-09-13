@@ -1,3 +1,10 @@
+// 本文件是 agent 访问与调用权限模型（MUL-3963）的核心判定区：谁能「看」某个
+// agent（列表/详情导航、聊天记录读取、取消任务授权）与谁能「触发」一次运行
+// （canInvokeAgent）是两个不同问题。调用门禁是安全关键点——admin 不该仅因为是
+// admin 就能调用他人的 private agent（从而借用其所有者的 Composio/OAuth 连接）；
+// 授权语义以调用链顶端的人类发起者（originator）为准，杜绝 agent 绕开 owner
+// 白名单成链。文件还含 autopilot 派生的委派授权（MUL-4857 / MUL-6691）与
+// 聚合端点用的可访问/受限 agent 集合。
 package handler
 
 import (
@@ -11,53 +18,47 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Agent invocation permission model (MUL-3963).
+// Agent 调用权限模型（MUL-3963）。
 //
-// Two distinct questions, previously conflated in canAccessPrivateAgent:
+// 两个不同的问题，过去在 canAccessPrivateAgent 里被混为一谈：
 //
-//   - "can this actor SEE / open this agent in the UI"  -> canAccessPrivateAgent
-//   - "can this actor TRIGGER a run for this agent"      -> canInvokeAgent
+//   - "该 actor 能否在 UI 里 SEE / 打开这个 agent"  -> canAccessPrivateAgent
+//   - "该 actor 能否为这个 agent TRIGGER 一次运行"  -> canInvokeAgent
 //
-// The invoke gate is the security-critical one: a workspace admin must NOT be
-// able to invoke someone's private agent (and thereby use that owner's
-// Composio/OAuth connections) just because they are an admin. Admin retains
-// management + inventory visibility, not the ability to run.
+// invoke 门禁才是安全关键：工作区 admin 不能因为自己是 admin 就能调用某人的
+// private agent（从而用那个所有者的 Composio/OAuth 连接）。Admin 保留管理与库存
+// 可见性，但不保留「运行」权。
 //
-// permission_mode drives invoke:
-//   - private   -> only the agent owner may invoke; NO admin bypass, NO A2A bypass.
-//   - public_to -> the agent_invocation_target allow-list decides:
-//       * workspace target -> any workspace member (and workspace-internal
-//         agent/system principals) may invoke.
-//       * member target    -> only the specific user may invoke.
-//       * team target       -> reserved, inert in V1.
+// permission_mode 驱动 invoke：
+//   - private   -> 只有 agent 所有者可调用；无 admin 绕过、无 A2A 绕过。
+//   - public_to -> 由 agent_invocation_target 白名单决定：
+//     * workspace target -> 任何工作区成员（以及工作区内 agent/system 主体）
+//     都可调用。
+//     * member target    -> 只有指定用户可调用。
+//     * team target      -> 预留，V1 中不起作用。
 //
-// A2A is judged by the top-of-chain human originator, never by the immediate
-// agent actor: if user U triggers agent A and A @-mentions agent B, B is only
-// invocable when U (the originator) is in B's allow-list. This prevents agents
-// from forming a channel that bypasses the owner's white-list.
+// A2A 以调用链顶端的人类 originator 判定，绝不看直接 agent actor：用户 U 触发
+// agent A、A 再 @ 到 agent B 时，只有 U（originator）在 B 的白名单里，B 才可被
+// 调用。这防止 agent 之间形成绕过 owner 白名单的通道。
 
-// canInvokeAgent reports whether a run may be enqueued for `agent` on behalf of
-// the given actor. Judgement is by the *effective invoking user*:
-//   - member actor -> the member themselves (actorID)
-//   - agent actor  -> the top-of-chain human originator (originatorUserID)
-//   - system actor -> the originator when one was resolved, else no user
+// canInvokeAgent 判断能否为 `agent` 以给定 actor 的名义入队一次运行。判定依据
+// 「有效调用用户」：
+//   - member actor -> 成员本人（actorID）
+//   - agent actor  -> 调用链顶端的人类 originator（originatorUserID）
+//   - system actor -> 解析到 originator 时用它，否则无用户
 //
-// originatorUserID is the empty string when no human could be attributed. For
-// private agents that means "deny" (unless the actor is the owner). For
-// public_to agents, a workspace target still admits workspace-internal
-// agent/system principals, but member/team targets fail closed without a
-// matching human.
+// originatorUserID 在无法归因到人类时为空串。对 private agent 这意味着「拒绝」
+// （除非 actor 就是所有者）。对 public_to agent，workspace target 仍接收工作区
+// 内部的 agent/system 主体，但 member/team target 在没有匹配人类时失败关闭。
 func (h *Handler) canInvokeAgent(ctx context.Context, agent db.Agent, actorType, actorID, originatorUserID, workspaceID string) bool {
 	allowed := h.invokeAgentDecision(ctx, agent, actorType, actorID, originatorUserID, workspaceID)
 	if !allowed && actorType != "member" && originatorUserID == "" {
-		// MUL-6490: the wire reason stays the deliberately generic
-		// invocation_not_allowed (dispatch/reason.go — it must not reveal whether a
-		// target exists), which leaves the one denial a workspace CAN fix looking
-		// identical to a plain permission error. Name the root cause here, where
-		// only operators read it: the chain reached this gate with no human at its
-		// top, so member-scoped allow-lists could not match anyone. Without this
-		// line the reported failure mode (a broken originator chain N hops back)
-		// was only diagnosable by querying agent_task_queue directly.
+		// MUL-6490：线格式原因保持刻意通用的 invocation_not_allowed
+		// （dispatch/reason.go——不能暴露目标是否存在），这会让工作区本可修复的
+		// 那类拒绝看起来与普通权限错误无异。在此点名根因——只有运维会读：这条链
+		// 到达本门禁时顶端没有人类，因此 member 作用域的白名单匹配不到任何人。
+		// 没有这行，被报告的故障模式（断掉 N 跳的 originator 链）就只能直接查
+		// agent_task_queue 才能诊断。
 		slog.WarnContext(ctx, "agent invoke denied: delegation chain carries no human originator",
 			"agent_id", uuidToString(agent.ID),
 			"agent_permission_mode", agent.PermissionMode,
@@ -69,24 +70,23 @@ func (h *Handler) canInvokeAgent(ctx context.Context, agent db.Agent, actorType,
 	return allowed
 }
 
-// invokeAgentDecision is canInvokeAgent's pure verdict, split out so the gate has
-// exactly one place to observe a denial from.
+// invokeAgentDecision 是 canInvokeAgent 的纯判定，拆出来让门禁恰好有一个能观察
+// 拒绝的地方。
 func (h *Handler) invokeAgentDecision(ctx context.Context, agent db.Agent, actorType, actorID, originatorUserID, workspaceID string) bool {
 	effectiveUser := actorID
 	if actorType != "member" {
-		// agent / system: never trust the immediate principal, only the
-		// resolved human originator at the top of the chain.
+		// agent / system：绝不信任直接主体，只信任链顶解析出的人类 originator。
 		effectiveUser = originatorUserID
 	}
 
-	// The agent owner may always invoke their own agent.
+	// agent 所有者总能调用自己的 agent。
 	if effectiveUser != "" && uuidToString(agent.OwnerID) == effectiveUser {
 		return true
 	}
 
 	if agent.PermissionMode != "public_to" {
-		// private (or any unknown mode) is deny-by-default: no admin bypass,
-		// no A2A bypass. Only the owner branch above passes.
+		// private（或任何未知模式）默认拒绝：无 admin 绕过、无 A2A 绕过。只有
+		// 上面那个 owner 分支能通过。
 		return false
 	}
 
@@ -95,16 +95,13 @@ func (h *Handler) invokeAgentDecision(ctx context.Context, agent db.Agent, actor
 		return false
 	}
 
-	// Agents and system triggers are workspace-internal principals: a
-	// workspace target admits them even when no human originator resolved.
-	// This is a DELIBERATE, product-approved exception (MUL-3963): webhook /
-	// system / workspace-wide automation must be able to trigger a
-	// `public_to workspace` agent even though there is no human at the top of
-	// the chain. It is scoped tightly — it ONLY relaxes the *workspace* target.
-	// member/team targets still require a resolved human originator to match,
-	// so an unattributed agent/system trigger FAILS CLOSED against a
-	// member-/team-scoped private-ish allow-list and can never smuggle itself
-	// onto someone's specific-people grant.
+	// agent 与 system 触发器是工作区内部主体：workspace target 即使没解析出人类
+	// originator 也接收它们。这是「刻意为之、产品批准的例外」（MUL-3963）：
+	// webhook / system / workspace 级自动化必须能触发 `public_to workspace` 的
+	// agent，哪怕链顶没有人类。它被收得很紧——只放宽 *workspace* 这一个 target。
+	// member/team target 仍要求有解析出的人类 originator 才能匹配，因此无法归因
+	// 的 agent/system 触发对 member-/team- 作用域的近似 private 白名单失败关闭，
+	// 永远混不进某人的「指定人群」授权里。
 	workspaceBroad := actorType == "agent" || actorType == "system"
 	isWorkspaceMember := false
 	if effectiveUser != "" {
@@ -120,29 +117,28 @@ func (h *Handler) invokeAgentDecision(ctx context.Context, agent db.Agent, actor
 				return true
 			}
 		case "member":
-			// Requires a resolved human. agent/system triggers with no
-			// originator (effectiveUser == "") never match here — fail closed.
+			// 需要有解析出的人类。没有 originator（effectiveUser == ""）的
+			// agent/system 触发在这里永远不匹配——失败关闭。
 			if effectiveUser != "" && uuidToString(t.TargetID) == effectiveUser {
 				return true
 			}
 		case "team":
-			// Reserved: team membership does not exist yet in V1, so team
-			// targets never admit anyone (also fail-closed for system/agent).
+			// 预留：V1 尚不存在团队归属，team target 谁也不接收（对 system/agent
+			// 同样失败关闭）。
 		}
 	}
 	return false
 }
 
-// canAccessPrivateAgent gates the VIEW surfaces (list/detail navigation, chat
-// transcript read, task-cancel authorization). It is NOT the trigger gate —
-// see canInvokeAgent for that.
+// canAccessPrivateAgent 门控「查看」类表面（列表/详情导航、聊天记录读取、
+// 取消任务授权）。它不是触发门禁——触发见 canInvokeAgent。
 //
-// Rules:
-//   - agent actors always pass (A2A collaboration + inspection preserved).
-//   - the agent owner always passes.
-//   - workspace owner/admin pass (governance / inventory visibility retained).
-//   - a regular member passes for a public_to agent only when they hit a
-//     workspace or member target; private agents stay owner+admin only.
+// 规则：
+//   - agent actor 恒通过（保留 A2A 协作与巡检）。
+//   - agent 所有者恒通过。
+//   - 工作区 owner/admin 通过（保留治理/库存可见性）。
+//   - 普通成员只有在命中 public_to agent 的 workspace 或 member target 时才
+//     通过；private agent 保持仅 owner+admin 可见。
 func (h *Handler) canAccessPrivateAgent(ctx context.Context, agent db.Agent, actorType, actorID, workspaceID string) bool {
 	if actorType == "agent" {
 		return true
@@ -167,10 +163,9 @@ func (h *Handler) canAccessPrivateAgent(ctx context.Context, agent db.Agent, act
 	return memberHitsInvocationTargets(targets, actorID)
 }
 
-// memberHitsInvocationTargets is the pure predicate deciding whether a regular
-// member is on a public_to agent's allow-list, used by both the single-agent
-// view gate and the ListAgents batch filter. A workspace target admits any
-// member; a member target admits the matching user; team targets are inert.
+// memberHitsInvocationTargets 是决定「普通成员是否在 public_to agent 白名单上」
+// 的纯谓词，单 agent 视图门禁与 ListAgents 批量过滤器共用。workspace target 接收
+// 任何成员；member target 只接收匹配用户；team target 不起作用。
 func memberHitsInvocationTargets(targets []db.AgentInvocationTarget, userID string) bool {
 	for _, t := range targets {
 		switch t.TargetType {
@@ -185,11 +180,10 @@ func memberHitsInvocationTargets(targets []db.AgentInvocationTarget, userID stri
 	return false
 }
 
-// memberAllowedToViewAgent is the ListAgents / aggregation filter predicate.
-// Caller supplies the agent's already-batch-loaded invocation targets so the
-// list endpoint avoids an N+1. Workspace owner/admin and the agent owner see
-// everything; a regular member sees a public_to agent only when on its
-// allow-list, and never sees other members' private agents.
+// memberAllowedToViewAgent 是 ListAgents / 聚合端点的过滤谓词。调用方提供该
+// agent 已批量加载的 invocation targets，让列表端点避免 N+1。工作区 owner/admin
+// 与 agent 所有者看得到一切；普通成员只有命中 public_to agent 白名单才看得到它，
+// 永远看不到别人的 private agent。
 func memberAllowedToViewAgent(agent db.Agent, targets []db.AgentInvocationTarget, userID, role string) bool {
 	if roleAllowed(role, "owner", "admin") {
 		return true
@@ -203,12 +197,11 @@ func memberAllowedToViewAgent(agent db.Agent, targets []db.AgentInvocationTarget
 	return memberHitsInvocationTargets(targets, userID)
 }
 
-// invokeOriginatorFromRequest resolves the top-of-chain human user id for an
-// invocation initiated over HTTP. Members are their own originator; agent
-// actors inherit the originator from the task named by the X-Task-ID header
-// (set by the CLI on every request), matching
-// TaskService.resolveOriginatorFromTriggerComment. Returns "" when no human
-// can be attributed — canInvokeAgent then fails closed for member/team targets.
+// invokeOriginatorFromRequest 为 HTTP 发起的调用解析调用链顶端的人类用户 id。
+// 成员就是自己的 originator；agent actor 从 X-Task-ID 头（CLI 在每次请求上都
+// 打）所指的任务继承 originator，与 TaskService.resolveOriginatorFromTriggerComment
+// 一致。无法归因到人类时返回 ""——canInvokeAgent 随即对 member/team target 失败
+// 关闭。
 func (h *Handler) invokeOriginatorFromRequest(r *http.Request, actorType, actorID string) string {
 	if actorType == "member" {
 		return actorID
@@ -225,45 +218,40 @@ func (h *Handler) invokeOriginatorFromRequest(r *http.Request, actorType, actorI
 	return ""
 }
 
-// assignAuthorityScope tells the invoke gate WHAT an assignment is being made
-// against, so an unattributed autopilot run can only borrow authority for work
-// it is verifiably doing itself (MUL-6691).
+// assignAuthorityScope 告诉 invoke 门禁「一次指派是针对什么」做出的，让无法归因
+// 的 autopilot 运行只能为它可验证正在做的工作借用权威（MUL-6691）。
 //
-// Exactly which shape the caller vouched for decides what may be borrowed, so
-// the kinds are distinct rather than a single "some issue" pointer. The zero
-// value grants nothing — a caller that supplies no scope keeps the pre-MUL-4857
-// behavior of "real originator or deny", which is what the member-only entry
-// points want.
+// 调用方具体为哪种形态背书决定了可借到什么，因此几种 kind 彼此区分，而不是单一
+// 的「某个 issue」指针。零值什么也不授予——不带 scope 的调用方保持 pre-MUL-4857
+// 的「真实 originator 或拒绝」行为，这正是 member-only 入口点想要的。
 type assignAuthorityScope struct {
-	// Issue is the already-loaded issue the assignment binds to: the PARENT for
-	// scopeKindChildOf, the issue ITSELF for scopeKindExistingIssue. Its
-	// workspace must match the request's, and the speaking run must be
-	// verifiably attached to it (issueBoundToAutopilotTask) before any authority
-	// is borrowed.
+	// Issue 是指派绑定的、已加载的 issue：scopeKindChildOf 时是 PARENT，
+	// scopeKindExistingIssue 时是 issue 本身。它的 workspace 必须与请求一致，且
+	// 发言的运行必须可验证地挂在它上面（issueBoundToAutopilotTask），任何权威
+	// 才可被借用。
 	Issue *db.Issue
 
 	Kind assignScopeKind
 }
 
-// assignScopeKind distinguishes the assignment shapes, because they do NOT admit
-// the same fallbacks: only child creation — the surface MUL-4857 already shipped
-// — may fall back to the coarse autopilot-creator authority.
+// assignScopeKind 区分指派形态，因为不同形态不接受同样的回退：只有子创建——即
+// MUL-4857 已上线的那个表面——才能回退到粗粒度的 autopilot-创建者权威。
 type assignScopeKind int
 
 const (
-	// scopeKindNone: no autopilot authority may be borrowed at all.
+	// scopeKindNone: 完全不借任何 autopilot 权威。
 	scopeKindNone assignScopeKind = iota
-	// scopeKindChildOf: creating a child under Issue.
+	// scopeKindChildOf: 在 Issue 下创建子项。
 	scopeKindChildOf
-	// scopeKindExistingIssue: assigning Issue itself.
+	// scopeKindExistingIssue: 指派 Issue 本身。
 	scopeKindExistingIssue
-	// scopeKindNewTopLevelIssue: creating a parentless issue, which does not
-	// exist yet, so the binding is the speaking task's own autopilot run.
+	// scopeKindNewTopLevelIssue: 创建无父 issue——它尚不存在，因此绑定对象是发言
+	// 任务自己的 autopilot 运行。
 	scopeKindNewTopLevelIssue
 )
 
-// scopeChildOf binds the assignment to the parent a child is being created
-// under. A nil parent yields the empty scope, which grants nothing.
+// scopeChildOf 把指派绑到即将在其下创建子项的 parent 上。nil parent 得到空 scope，
+// 什么也不授予。
 func scopeChildOf(parent *db.Issue) assignAuthorityScope {
 	if parent == nil {
 		return assignAuthorityScope{}
@@ -271,7 +259,7 @@ func scopeChildOf(parent *db.Issue) assignAuthorityScope {
 	return assignAuthorityScope{Issue: parent, Kind: scopeKindChildOf}
 }
 
-// scopeExistingIssue binds the assignment to the issue being updated.
+// scopeExistingIssue 把指派绑到正在被更新的 issue 上。
 func scopeExistingIssue(issue *db.Issue) assignAuthorityScope {
 	if issue == nil {
 		return assignAuthorityScope{}
@@ -279,22 +267,20 @@ func scopeExistingIssue(issue *db.Issue) assignAuthorityScope {
 	return assignAuthorityScope{Issue: issue, Kind: scopeKindExistingIssue}
 }
 
-// scopeNewTopLevelIssue marks a create with no parent, where the issue being
-// assigned does not exist yet.
+// scopeNewTopLevelIssue 标记一个无父创建，此时被指派的 issue 尚不存在。
 func scopeNewTopLevelIssue() assignAuthorityScope {
 	return assignAuthorityScope{Kind: scopeKindNewTopLevelIssue}
 }
 
-// scopeNoDelegation disables the autopilot fallback entirely — for entry points
-// that only ever run as a member and must not gain an agent-borrowed path.
+// scopeNoDelegation 完全禁用 autopilot 回退——给那些只以 member 身份运行、绝不能
+// 长出 agent 借用路径的入口点用。
 func scopeNoDelegation() assignAuthorityScope {
 	return assignAuthorityScope{}
 }
 
-// effectiveInvocationAuthorityFromRequest returns the human principal used by
-// canInvokeAgent without changing attribution. A real top-of-chain originator
-// always wins. Only an unattributed AGENT request may fall back to an autopilot
-// authority, and only within the scope the caller vouched for.
+// effectiveInvocationAuthorityFromRequest 返回 canInvokeAgent 使用的人类主体，
+// 且不改变归因。真实的链顶 originator 总是赢。只有「无法归因的 AGENT 请求」才
+// 可能回退到 autopilot 权威，且仅限调用方背书过的 scope 内。
 func (h *Handler) effectiveInvocationAuthorityFromRequest(r *http.Request, scope assignAuthorityScope, actorType, actorID, workspaceID string) string {
 	originatorUserID := h.invokeOriginatorFromRequest(r, actorType, actorID)
 	if originatorUserID != "" {
@@ -303,24 +289,19 @@ func (h *Handler) effectiveInvocationAuthorityFromRequest(r *http.Request, scope
 	return h.autopilotAssignAuthorityFromRequest(r, scope, actorType, actorID, workspaceID)
 }
 
-// autopilotAssignAuthorityFromRequest resolves the borrowed authority for an
-// assignment made by an unattributed agent run, in precedence order:
+// autopilotAssignAuthorityFromRequest 为「无法归因的 agent 运行」做出的指派解析
+// 被借用的权威，按优先级：
 //
-//  1. the speaking task's OWN accountable human (autopilotTaskAssignAuthority) —
-//     precise, already recorded on the task row, and available for both
-//     autopilot execution modes;
-//  2. the autopilot's member creator (autopilotDelegationAuthority, MUL-4857) —
-//     the coarser pre-existing rule, kept ONLY where it already shipped: child
-//     creation under an `origin_type=autopilot` issue, so a leader task that
-//     predates attribution stamping does not lose the path it has today.
+//  1. 发言任务「自己」的可追责人类（autopilotTaskAssignAuthority）——精确、已记在
+//     任务行上，对 autopilot 的两种执行模式都可用；
+//  2. autopilot 的 member 创建者（autopilotDelegationAuthority, MUL-4857）——更
+//     粗的既有规则，只保留在已上线的地方：在 `origin_type=autopilot` 的 issue 下
+//     创建子项，让早于归因打点的 leader 任务不丢今天已有的路径。
 //
-// (2) is deliberately NOT available to the newly-wired surfaces. It performs no
-// liveness or attribution check of its own, so extending it to the assign verb
-// would have let a completed task, an `owner_fallback` task, or a task with no
-// attribution at all assign private agents whenever the autopilot's creator
-// happened to have rights — a strictly wider grant than this fix needs. The
-// request path additionally requires the speaking task to still be `running`;
-// the comment-replay resolvers keep their own semantics and are untouched.
+// (2) 刻意不对新接线的表面开放。它自身不做任何活性或归因检查，把它扩到 assign
+// 动词上，会让已完成任务、`owner_fallback` 任务或完全没有归因的任务在 autopilot
+// 创建者恰好有权限时去指派 private agent——比本修复所需严格更宽的授权。请求路径
+// 还额外要求发言任务仍处于 `running`；评论重放解析器保持各自的语义、不受影响。
 func (h *Handler) autopilotAssignAuthorityFromRequest(r *http.Request, scope assignAuthorityScope, actorType, actorID, workspaceID string) string {
 	if actorType != "agent" || scope.Kind == scopeKindNone {
 		return ""
@@ -329,7 +310,7 @@ func (h *Handler) autopilotAssignAuthorityFromRequest(r *http.Request, scope ass
 	if !ok {
 		return ""
 	}
-	// A finished run never lends authority over HTTP, on either branch below.
+	// 已结束的运行在任何分支下都不再经 HTTP 出借权威。
 	if task.Status != "running" {
 		return ""
 	}
@@ -342,44 +323,36 @@ func (h *Handler) autopilotAssignAuthorityFromRequest(r *http.Request, scope ass
 	return h.autopilotDelegationAuthority(r.Context(), *scope.Issue, actorType, actorID, task)
 }
 
-// autopilotTaskAssignAuthority resolves the effective invoking human for an
-// assignment performed by an unattributed autopilot run, keyed on the run's OWN
-// accountable human rather than on the autopilot's creator (MUL-6691).
+// autopilotTaskAssignAuthority 为「无法归因的 autopilot 运行」做出的指派解析有效
+// 调用人类，键在运行「自己」的可追责人类而非 autopilot 创建者上（MUL-6691）。
 //
-// WHY the accountable user and not autopilot.created_by_id: since MUL-4302 the
-// accountable human for a schedule/webhook run is the trigger_owner — whoever
-// last shaped the firing trigger — which need NOT be the autopilot's original
-// creator. Keying authorization on the creator while the audit trail names the
-// trigger owner would let the audit record one human and the private-agent /
-// OAuth access come from another. The task row already carries the resolved
-// value, so this reads it instead of re-deriving a different one.
+// 为什么用 accountable user 而不是 autopilot.created_by_id：自 MUL-4302 起，
+// schedule/webhook 运行的可追责人类是 trigger_owner——最后一个塑造该触发触发器
+// 的人——不必是 autopilot 最初的创建者。用创建者做授权、而审计轨迹点名触发器
+// 所有者，会让审计记一个人、private-agent/OAuth 访问却来自另一个人。任务行已带
+// 解析好的值，所以这里直接读它，而不是重推一个不同的值。
 //
-// SECURITY. The gate is unchanged; only the human handed to it is. Every one of
-// these must hold, and anything missing, mismatched, or unreadable returns ""
-// and leaves canInvokeAgent fail-closed:
+// 安全。门禁不变，变的只是递给它的人类。以下条件必须全部成立，任何缺失、不匹配
+// 或读不到都返回 "" 让 canInvokeAgent 失败关闭：
 //
-//   - the actor is an agent and IS the speaking task's agent;
-//   - the task is still `running` — a finished run cannot keep lending rights;
-//   - the task carries NO originator (a real one is preferred by the caller and
-//     must never be silently replaced by this coarser value);
-//   - originator_source is `trigger_owner` or `rule_owner`. This IS the
-//     autopilot-lineage proof: only the autopilot enqueue paths stamp those two
-//     labels. `owner_fallback` is deliberately excluded — that value is the
-//     AGENT OWNER, and borrowing it would let any unattributed autopilot run
-//     invoke its own owner's private agents, which is precisely the owner
-//     white-list bypass canInvokeAgent exists to prevent. `delegation` is
-//     excluded too, so authority does not propagate to descendant runs;
-//   - the assignment is bound to work this run verifiably owns —
-//     issueBoundToAutopilotTask for an existing issue (which for a run_only-created
-//     issue re-proves the run_only lineage, so a create_issue task cannot escape
-//     its same-issue bound via a fresh top-level issue), or the task's own
-//     verified autopilot run when creating a parentless issue;
-//   - the issue (when there is one) is in the request's workspace;
-//   - the accountable human is STILL a member of that workspace.
+//   - actor 是 agent 且正是该任务所属的 agent；
+//   - 任务仍 `running`——结束的运行不能再出借权限；
+//   - 任务不带 originator（真实 originator 被调用方优先采用，绝不能被这个更粗的
+//     值悄悄替换）；
+//   - originator_source 为 `trigger_owner` 或 `rule_owner`。这就是 autopilot
+//     血统证明：只有 autopilot 入队路径打这两个标签。`owner_fallback` 刻意排除
+//     ——那个值是 AGENT OWNER，借它会让任何无法归因的 autopilot 运行调用自己
+//     owner 的 private agent，正是 canInvokeAgent 要防的 owner 白名单绕过。
+//     `delegation` 也排除，让权威不向后代运行传播；
+//   - 指派绑在该运行可验证拥有的工作上——对既有 issue 是
+//     issueBoundToAutopilotTask（对 run_only 创建的 issue 会再次证明 run_only
+//     血统，create_issue 任务无法借全新顶层 issue 逃出它同一 issue 的绑定），对
+//     无父 issue 创建则是任务自己经核验的 autopilot 运行；
+//   - issue（若有）在请求的 workspace 内；
+//   - 可追责人类仍是该 workspace 的成员。
 //
-// The returned id is used for AUTHORIZATION only: the new issue and any task it
-// enqueues are attributed separately and stay unattributed, so the audit
-// semantics of "no human directly started this" are preserved.
+// 返回的 id 仅用于 AUTHORIZATION：新建的 issue 与其入队的任何任务都另行归因、
+// 保持不可归因，从而保留「没有人类直接发起」的审计语义。
 func (h *Handler) autopilotTaskAssignAuthority(ctx context.Context, scope assignAuthorityScope, actorType, actorID, workspaceID string, task db.AgentTaskQueue) string {
 	if actorType != "agent" {
 		return ""
@@ -431,28 +404,23 @@ func (h *Handler) autopilotTaskAssignAuthority(ctx context.Context, scope assign
 	return accountable
 }
 
-// issueBoundToAutopilotTask reports whether `task` verifiably owns the work on
-// `issue`, which is what keeps a borrowed autopilot authority from becoming a
-// workspace-wide capability (the confused-deputy bound MUL-4857 established).
-// Two shapes, one per autopilot execution mode:
+// issueBoundToAutopilotTask 判断 `task` 是否可验证地拥有 `issue` 上的工作——这
+// 正是让被借用的 autopilot 权威不至于变成工作区级能力的东西（MUL-4857 确立的
+// confused-deputy 边界）。两种形态，每种对应一种 autopilot 执行模式：
 //
-//   - create_issue: the autopilot created the issue (origin_type=autopilot) and
-//     the speaking task is the run working ON it (task.issue_id == issue.id) —
-//     the exact MUL-4857 binding.
-//   - run_only: no autopilot issue exists, so the binding is authorship. The
-//     issue was created by THIS task, which CreateIssue records as
-//     origin_type=agent_create + origin_id=<creating task id> (MUL-4305), AND the
-//     task must independently prove run_only lineage (its own autopilot run, in
-//     this workspace). Without that second half a create_issue-mode task could
-//     escape its `task.issue_id == issue.id` bound simply by creating a fresh
-//     top-level issue — which stamps its own task id — and then assigning that.
-//     Using the task id rather than the autopilot id also stops two concurrent
-//     runs of the same autopilot from borrowing on each other's issues, and needs
-//     no migration or backfill.
+//   - create_issue：autopilot 创建了该 issue（origin_type=autopilot），且发言任务
+//     是正在它上面工作的运行（task.issue_id == issue.id）——正是 MUL-4857 的绑定。
+//   - run_only：不存在 autopilot issue，因此绑定是「作者身份」。issue 由本任务
+//     创建（CreateIssue 记为 origin_type=agent_create + origin_id=<创建任务 id>，
+//     MUL-4305），且任务必须独立证明 run_only 血统（它自己的 autopilot 运行在本
+//     工作区内）。没有后半截，create_issue 模式的任务只要新建一个顶层 issue——
+//     它会打上自己的任务 id——再指派它，就能逃出 `task.issue_id == issue.id` 的
+//     绑定。用任务 id 而非 autopilot id，还能阻止同一 autopilot 的两次并发运行
+//     在彼此的 issue 上互借，且无需迁移或回填。
 //
-// A run_only leader therefore reaches only the issues it created (and, through
-// the child scope, their children) — never a pre-existing or foreign issue. A
-// create_issue leader reaches only the autopilot's own issue.
+// 因此 run_only leader 只够得到自己创建的 issue（以及经子 scope 到达它们的子项）
+// ——绝不碰既存或外来的 issue。create_issue leader 只够得到 autopilot 自己的
+// issue。
 func (h *Handler) issueBoundToAutopilotTask(ctx context.Context, issue db.Issue, task db.AgentTaskQueue, workspaceID string) bool {
 	if !issue.OriginType.Valid || !issue.OriginID.Valid || !issue.ID.Valid {
 		return false
@@ -469,12 +437,11 @@ func (h *Handler) issueBoundToAutopilotTask(ctx context.Context, issue db.Issue,
 	return false
 }
 
-// taskRunsAutopilotInWorkspace verifies run_only lineage: the task must belong to
-// an autopilot RUN whose autopilot lives in the request's workspace. Used both
-// when there is no issue to bind to yet and when binding to a run_only-created
-// issue. A create_issue-mode leader task carries no autopilot_run_id (it is
-// enqueued through the ordinary issue-assignment path), so it never qualifies
-// here and must go through the `origin_type=autopilot` binding instead.
+// taskRunsAutopilotInWorkspace 验证 run_only 血统：任务必须属于某个 autopilot
+// RUN，且该 autopilot 住在请求的 workspace 里。既用于还没有可绑定的 issue 时，
+// 也用于绑到 run_only 创建的 issue 时。create_issue 模式的 leader 任务不带
+// autopilot_run_id（它走普通 issue 指派路径入队），所以在这里永远不合格，必须
+// 走 `origin_type=autopilot` 绑定。
 func (h *Handler) taskRunsAutopilotInWorkspace(ctx context.Context, task db.AgentTaskQueue, workspaceID string) bool {
 	if !task.AutopilotRunID.Valid {
 		return false
@@ -487,8 +454,8 @@ func (h *Handler) taskRunsAutopilotInWorkspace(ctx context.Context, task db.Agen
 	if err != nil || !run.AutopilotID.Valid {
 		return false
 	}
-	// Workspace-scoped read: an autopilot run from another tenant resolves to
-	// no autopilot here, so a foreign run id cannot lend authority (MUL-4252).
+	// 工作区作用域读取：来自其它租户的 autopilot 运行在这里解析不到 autopilot，
+	// 因此外来 run id 无法出借权威（MUL-4252）。
 	if _, err := h.Queries.GetAutopilotInWorkspace(ctx, db.GetAutopilotInWorkspaceParams{
 		ID:          run.AutopilotID,
 		WorkspaceID: wsUUID,
@@ -498,52 +465,43 @@ func (h *Handler) taskRunsAutopilotInWorkspace(ctx context.Context, task db.Agen
 	return true
 }
 
-// autopilotDelegationAuthority resolves the effective invoking human for the A2A
-// invoke gate (canInvokeAgent) when a trigger comment is authored by an
-// UNATTRIBUTED autopilot dispatch delegating mid-chain on the very issue that
-// autopilot created (MUL-4857).
+// autopilotDelegationAuthority 为 A2A invoke 门禁（canInvokeAgent）解析有效调用
+// 人类——当触发评论由「无法归因的 autopilot 派发」在它自己创建的那条 issue 上
+// 中继式 @ 委托时（MUL-4857）。
 //
-// A schedule/webhook autopilot run carries no top-of-chain human originator by
-// design (MUL-4302). Without one, canInvokeAgent fails closed for the DEFAULT
-// private agent (and member-scoped public_to agents), so a mid-run @mention
-// delegation silently enqueues nothing — even though the SAME autopilot's first
-// dispatch was admitted via the autopilot creator (autopilotAdmitInvoke ->
-// canCreatorInvokeAgent). This restores exactly that first-dispatch authority for
-// the mid-run delegation path: the gate still runs, now keyed on the autopilot
-// creator, so NO unrestricted agent-to-agent bypass is reopened.
+// schedule/webhook 的 autopilot 运行按设计（MUL-4302）不带链顶人类 originator。
+// 没有它，canInvokeAgent 对 DEFAULT private agent（以及 member 作用域的 public_to
+// agent）失败关闭，于是运行中 @ 委托静默地什么都不入队——尽管同一个 autopilot 的
+// 首次派发曾经 autopilot 创建者被放行（autopilotAdmitInvoke ->
+// canCreatorInvokeAgent）。这里正是为中继委托路径恢复那首次派发的权威：门禁仍然
+// 会跑，只是键改成 autopilot 创建者——不会重新打开无约束的 agent-to-agent 绕过。
 //
-// SECURITY (confused-deputy defense, review MUL-4857): the creator's authority is
-// granted ONLY when the SPEAKING run is verified to be doing work on THIS very
-// autopilot-created issue. Binding to issue provenance + an empty originator alone
-// is NOT enough — an agent running a task on some OTHER issue can legitimately
-// comment here, and since MUL-6490 that cross-issue lineage IS persisted on
-// source_task_id (so the human originator chain survives the hop), so it could
-// otherwise borrow a stranger autopilot creator's invoke rights just by mentioning
-// on that autopilot's issue. The task.issue_id check below is what keeps that shut:
-// this function is the sole owner of the same-issue requirement, which is why the
-// stamp itself no longer carries it.
-// `task` MUST therefore come from a server-trusted source — the X-Task-ID header
-// on create/preview, or the stored comment.source_task_id on reconcile/edit —
-// never a client-supplied field, and authority is granted only when ALL hold:
-//   - the comment author is an agent and IS the task's agent;
-//   - the issue is autopilot-origin (origin_type=autopilot, origin_id set);
-//   - the speaking task is running on THIS issue (task.issue_id == issue.id).
+// 安全（confused-deputy 防御，评审见 MUL-4857）：创建者的权威只在「发言运行被
+// 验证为正在这个 autopilot 创建的 issue 上做工作」时授予。仅凭 issue 血统 + 空
+// originator 不够——在别的 issue 上跑任务的 agent 也可以合法地在这里评论，且自
+// MUL-6490 起这种跨 issue 血统确实持久化在 source_task_id 上（人类 originator 链
+// 能跨跳存活），否则它只要在该 autopilot 的 issue 上 @ 一句，就能借到陌生
+// autopilot 创建者的 invoke 权。下面 task.issue_id 的检查就是关死它的闸：本函数
+// 是 same-issue 要求的唯一所有者，这正是打点自身不再携带该要求的原因。
+// `task` 因而必须来自服务端可信源——create/preview 的 X-Task-ID 头，或
+// reconcile/edit 时存储的 comment.source_task_id——绝不能是客户端字段，且只有在
+// 以下全部成立时才授予权威：
+//   - 评论作者是 agent 且正是该任务的 agent；
+//   - issue 是 autopilot 起源（origin_type=autopilot、origin_id 已设）；
+//   - 发言任务正在这个 issue 上运行（task.issue_id == issue.id）。
 //
-// That last check is the load-bearing one: every unattributed agent task whose
-// issue_id is this autopilot issue is part of the work this autopilot set in
-// motion (the dispatched leader task, or a descendant it @mentioned into being),
-// while a foreign run's task carries a different issue_id and is rejected. Note we
-// do NOT key on autopilot_run_id: in create_issue mode (the reported scenario) the
-// leader task is enqueued through the ordinary issue-assignment path and carries
-// no autopilot_run_id — the run links back via its own issue_id, not the task's.
+// 最后一条是承重的：每条 issue_id 是这个 autopilot issue 的无法归因 agent 任务，
+// 都是该 autopilot 发起的这份工作的一部分（派发的 leader 任务，或它 @ 出来的
+// 后代），而外来运行的 task 带不同的 issue_id、会被拒绝。注意我们不以
+// autopilot_run_id 为键：create_issue 模式（即报告里的场景）的 leader 任务走普通
+// issue 指派路径入队、不带 autopilot_run_id——运行靠自己的 issue_id 而非任务的
+// 往回链接。
 //
-// Any mismatch, missing lineage, or lookup error returns "" and the gate stays
-// fail-closed. Only a MEMBER-created autopilot yields a user id; an agent-created
-// autopilot has no human to key the gate on, and the existing agent-actor
-// workspace-target exception in canInvokeAgent already covers the one case
-// (public_to workspace) it should. The returned id is used for AUTHORIZATION only
-// — the enqueued task's originator/attribution is computed separately and stays
-// unattributed.
+// 任何不匹配、缺失血统或查询错误都返回 ""，门禁保持失败关闭。只有 MEMBER 创建
+// 的 autopilot 才产出用户 id；agent 创建的 autopilot 没有可作门禁键的人类，而
+// canInvokeAgent 里既有的 agent-actor workspace-target 例外已覆盖它该覆盖的那
+// 一种情况（public_to workspace）。返回的 id 仅用于 AUTHORIZATION——入队任务的
+// originator/归因另行计算、保持不可归因。
 func (h *Handler) autopilotDelegationAuthority(ctx context.Context, issue db.Issue, authorType, authorID string, task db.AgentTaskQueue) string {
 	if authorType != "agent" {
 		return ""
@@ -551,8 +509,8 @@ func (h *Handler) autopilotDelegationAuthority(ctx context.Context, issue db.Iss
 	if !issue.OriginType.Valid || issue.OriginType.String != "autopilot" || !issue.OriginID.Valid {
 		return ""
 	}
-	// The speaking run must be authored by THIS agent and doing work on THIS
-	// autopilot issue — not a foreign run that merely commented here.
+	// 发言运行必须由该 agent 作者发起、且正在这个 autopilot issue 上做工作——而
+	// 不是一条仅仅在此评论的外来运行。
 	if !task.AgentID.Valid || uuidToString(task.AgentID) != authorID {
 		return ""
 	}
@@ -569,11 +527,10 @@ func (h *Handler) autopilotDelegationAuthority(ctx context.Context, issue db.Iss
 	return uuidToString(ap.CreatedByID)
 }
 
-// autopilotDelegationAuthorityFromRequest resolves the MUL-4857 delegation
-// authority for a comment being created or previewed over HTTP. The speaking task
-// is taken from the server-trusted X-Task-ID header (the CLI stamps it on every
-// agent request); autopilotDelegationAuthority then verifies its lineage. Returns
-// "" for member actors or when no valid task is named, keeping the gate closed.
+// autopilotDelegationAuthorityFromRequest 为正在创建/预览的 HTTP 评论解析
+// MUL-4857 委托权威。发言任务取自服务端可信的 X-Task-ID 头（CLI 在每次 agent
+// 请求上打）；autopilotDelegationAuthority 再验证它的血统。member actor 或没有
+// 命名到合法任务时返回 ""，保持门禁关闭。
 func (h *Handler) autopilotDelegationAuthorityFromRequest(r *http.Request, issue db.Issue, actorType, actorID string) string {
 	if actorType != "agent" {
 		return ""
@@ -585,11 +542,10 @@ func (h *Handler) autopilotDelegationAuthorityFromRequest(r *http.Request, issue
 	return h.autopilotDelegationAuthority(r.Context(), issue, actorType, actorID, task)
 }
 
-// autopilotDelegationAuthorityFromComment resolves the MUL-4857 delegation
-// authority when reconciling an already-persisted comment (retrigger after
-// cancel). The speaking task is taken from the stored comment.source_task_id — the
-// same server-trusted lineage CreateComment stamped for the authoring run — and
-// its lineage is verified by autopilotDelegationAuthority.
+// autopilotDelegationAuthorityFromComment 在调和对已持久化评论（取消后的重新
+// 触发）时解析 MUL-4857 委托权威。发言任务取自存储的 comment.source_task_id——
+// 与 CreateComment 为作者运行打下的同一条服务端可信血统——其血统由
+// autopilotDelegationAuthority 验证。
 func (h *Handler) autopilotDelegationAuthorityFromComment(ctx context.Context, issue db.Issue, comment db.Comment) string {
 	if comment.AuthorType != "agent" || !comment.SourceTaskID.Valid {
 		return ""
@@ -601,18 +557,16 @@ func (h *Handler) autopilotDelegationAuthorityFromComment(ctx context.Context, i
 	return h.autopilotDelegationAuthority(ctx, issue, comment.AuthorType, uuidToString(comment.AuthorID), task)
 }
 
-// commentSourceTaskID returns the agent's currently-executing task (from the
-// server-trusted X-Task-ID header), else an invalid UUID. This is the exact
-// lineage CreateComment stamps onto source_task_id, so an edit re-stamps what a
-// fresh authoring of the same content would have stamped and the two resolvers
-// can never disagree (MUL-6490).
+// commentSourceTaskID 返回 agent 当前正在执行的任务 id（来自服务端可信的
+// X-Task-ID 头），否则返回无效 UUID。这正是 CreateComment 打到 source_task_id
+// 上的同一条血统，所以一次编辑重新打上的与「同一内容重新创作」会打上的完全
+// 一致，两个解析器永远不会分歧（MUL-6490）。
 //
-// The task is NOT required to be running on the edited comment's issue: the
-// stamp records "which run wrote this", and a run may legitimately write on
-// another issue. Authority rules that additionally require same-issue work keep
-// that check themselves — autopilotDelegationAuthority verifies
-// task.issue_id == issue.id before granting the autopilot creator's invoke
-// rights, so a cross-issue lineage still fails closed there (MUL-4857).
+// 该任务不要求「正在被编辑评论的 issue」上运行：这个戳记录的是「哪条运行写的
+// 这个」，而一条运行可以合法地写在别的 issue 上。额外要求 same-issue 工作的权威
+// 规则会自己做那个检查——autopilotDelegationAuthority 在授予 autopilot 创建者
+// 的 invoke 权前验证 task.issue_id == issue.id，因此跨 issue 血统在那里依然失败
+// 关闭（MUL-4857）。
 func (h *Handler) commentSourceTaskID(r *http.Request) pgtype.UUID {
 	task, ok := h.taskFromRequestHeader(r)
 	if !ok {
@@ -621,9 +575,8 @@ func (h *Handler) commentSourceTaskID(r *http.Request) pgtype.UUID {
 	return task.ID
 }
 
-// taskFromRequestHeader resolves the agent's currently-executing task from the
-// X-Task-ID header (set by the CLI on every request). Returns ok=false when the
-// header is absent, malformed, or names no existing task.
+// taskFromRequestHeader 从 X-Task-ID 头（CLI 每次请求都打）解析 agent 当前执行
+// 的任务。头缺失、畸形或指向不存在的任务时返回 ok=false。
 func (h *Handler) taskFromRequestHeader(r *http.Request) (db.AgentTaskQueue, bool) {
 	taskIDHeader := r.Header.Get("X-Task-ID")
 	if taskIDHeader == "" {
@@ -640,11 +593,9 @@ func (h *Handler) taskFromRequestHeader(r *http.Request) (db.AgentTaskQueue, boo
 	return task, true
 }
 
-// accessibleAgentIDs returns the set of agent IDs in the workspace the actor
-// is allowed to see, for use by workspace-wide aggregation endpoints
-// (run counts, activity histograms, task snapshots) that need to filter out
-// private / non-allow-listed agents the member can't access. Returns nil and
-// false on error.
+// accessibleAgentIDs 返回工作区内 actor 被允许看到的 agent id 集合，供需要滤掉
+// 成员访问不到的 private / 未上白名单 agent 的工作区级聚合端点（运行计数、活动
+// 直方图、任务快照）使用。出错返回 nil 与 false。
 func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType, actorID, role string) (map[string]struct{}, bool) {
 	wsUUID, err := util.ParseUUID(workspaceID)
 	if err != nil {
@@ -670,32 +621,26 @@ func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType
 	return allowed, true
 }
 
-// restrictedAgentIDs returns the ids of agents that EXIST in the workspace but
-// must not be named to this actor. Aggregation endpoints that cannot simply drop
-// a row (the dashboard rollups, whose per-agent totals have to keep reconciling
-// with the workspace-level series rendered beside them) use it to fold those
-// agents onto a single sentinel instead.
+// restrictedAgentIDs 返回「存在于」工作区但绝不能被点名的 agent id。无法直接
+// 丢弃一行的聚合端点（dashboard rollup——其按 agent 的总数必须与并排渲染的
+// 工作区级序列持续对账）用它把这些 agent 折叠到单个哨兵上。
 //
-// Two populations land in the set, for two different reasons:
+// 两类群体因两种不同原因落进集合：
 //
-//  1. Every `kind != "user"` agent — the hidden execution carriers behind agent
-//     builder sessions. These are restricted for EVERYONE, owner and admin
-//     included: no list endpoint returns them (ListAgents / ListAllAgents filter
-//     on kind), so no client can ever resolve one to a name, yet they run real
-//     tasks and book real usage that the rollups aggregate all the same. Left
-//     alone they surface as a bare UUID whose spend and failure profile belong
-//     to whoever opened that builder session.
-//  2. For a plain member only, the user agents they may not view.
+//  1. 每个 `kind != "user"` 的 agent——agent builder 会话背后的隐藏执行载体。
+//     这些对「所有人」都受限，owner 与 admin 也不例外：没有列表端点返回它们
+//     （ListAgents / ListAllAgents 按 kind 过滤），于是任何客户端都解析不到名字，
+//     然而它们跑真实任务、记真实用量，rollup 同样聚合。放任不管它们会以裸 UUID
+//     现身，其开销与失败画像会归到打开该 builder 会话的人头上。
+//  2. 仅对普通成员：他们不能查看的 user agent。
 //
-// Hard-deleted agents are deliberately NOT in the set: they are already absent
-// from the agent table, have no visibility left to protect, and the dashboard
-// renders them as their own "deleted agents" bucket — folding them in here
-// would relabel a real deletion as a permission boundary.
+// 硬删除的 agent 刻意不进集合：它们已不在 agent 表里，没有可见性需要保护，
+// dashboard 把她们渲染成独立的「deleted agents」桶——把她们折进来会把真实删除
+// 重新标记成权限边界。
 //
-// Because of (1) this always reads the agent table, but the per-agent
-// invocation-target lookup is skipped for actors who see every user agent
-// (agent actors, workspace owner/admin) since nothing there can change their
-// answer.
+// 由于 (1)，本函数总是读 agent 表，但对能看见全部 user agent 的 actor（agent
+// actor、工作区 owner/admin）跳过按 agent 的 invocation-target 查询——那里面没有
+// 任何东西能改变它们的答案。
 func (h *Handler) restrictedAgentIDs(ctx context.Context, workspaceID, actorType, actorID, role string) (map[string]struct{}, bool) {
 	wsUUID, err := util.ParseUUID(workspaceID)
 	if err != nil {
@@ -706,7 +651,7 @@ func (h *Handler) restrictedAgentIDs(ctx context.Context, workspaceID, actorType
 		return nil, false
 	}
 
-	// Whether per-agent visibility can restrict anything for this actor at all.
+	// 按 agent 的可见性对这位 actor 是否还能限制任何东西。
 	judgeUserAgents := actorType == "member" && !roleAllowed(role, "owner", "admin")
 	var targetsByAgent map[string][]db.AgentInvocationTarget
 	if judgeUserAgents {
@@ -729,9 +674,8 @@ func (h *Handler) restrictedAgentIDs(ctx context.Context, workspaceID, actorType
 	return restricted, true
 }
 
-// loadInvocationTargetsByAgent batch-loads invocation targets for a set of
-// agents and buckets them by agent id string. Avoids the per-agent query the
-// list / aggregation paths would otherwise incur.
+// loadInvocationTargetsByAgent 为一组 agent 批量加载 invocation targets 并按
+// agent id 字符串分桶，避免列表/聚合路径逐个查询。
 func (h *Handler) loadInvocationTargetsByAgent(ctx context.Context, agents []db.Agent) (map[string][]db.AgentInvocationTarget, bool) {
 	ids := make([]pgtype.UUID, 0, len(agents))
 	for _, a := range agents {
@@ -752,12 +696,10 @@ func (h *Handler) loadInvocationTargetsByAgent(ctx context.Context, agents []db.
 	return out, true
 }
 
-// canEnqueueSquadLeader returns true when the given actor is allowed to
-// trigger the squad's private leader. It loads the leader agent and delegates
-// to canInvokeAgent so the leader-trigger path honours invocation permission
-// exactly like a direct assignment/mention. Non-public leaders require owner /
-// allow-list; system-initiated triggers (e.g. github webhooks) are judged as
-// system principals (workspace target only).
+// canEnqueueSquadLeader 判断给定 actor 能否触发 squad 的 private leader。它加载
+// leader agent 并委托给 canInvokeAgent，让 leader 触发路径与直接指派/提及一样遵守
+// 调用权限。非公开 leader 要求 owner/白名单；system 发起的触发（如 github
+// webhook）按 system 主体判定（仅 workspace target）。
 func (h *Handler) canEnqueueSquadLeader(ctx context.Context, leaderID pgtype.UUID, actorType, actorID, originatorUserID, workspaceID string) bool {
 	agent, err := h.Queries.GetAgent(ctx, leaderID)
 	if err != nil {

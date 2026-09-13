@@ -1,19 +1,26 @@
+// 本文件定义 GitHub 集成的特性开关结构，以及从工作区 settings JSONB 中
+// 推导这些开关的纯函数。
+
 import type { Workspace } from "../types";
 
+/** GitHub 集成的各项特性开关。所有子开关都以主开关 `enabled` 为前提。 */
 export interface GitHubSettings {
-  /** Master switch. When false, every UI affordance and side-effect is gated off. */
+  /** 总开关。为 false 时所有 UI 入口和副作用一律关闭。 */
   enabled: boolean;
-  /** Issue-detail PR sidebar visibility. Implies `enabled`. */
+  /** issue 详情里的 PR 侧边栏是否可见。隐含 `enabled`。 */
   prSidebar: boolean;
-  /** Co-authored-by trailer in agent commits. Implies `enabled`. */
+  /** agent 提交里是否追加 Co-authored-by 尾注。隐含 `enabled`。 */
   coAuthor: boolean;
-  /** Auto-link issues ↔ PRs from webhook payloads. Implies `enabled`. */
+  /** 是否根据 webhook 负载自动关联 issue ↔ PR。隐含 `enabled`。 */
   autoLinkPRs: boolean;
 }
 
 /**
- * Pure derivation from a workspace's settings JSONB. Defaults every flag to
- * true so workspaces predating MUL-2414 keep the historical "all on" behavior.
+ * 从工作区的 settings JSONB 纯推导各开关。每个开关都默认「开」，这样早于
+ * MUL-2414 创建的工作区继续保持历史上「全开」的行为。
+ *
+ * @param workspace - 当前工作区对象（可为空）
+ * @returns 推导出的 GitHub 设置
  */
 export function deriveGitHubSettings(
   workspace: Pick<Workspace, "settings"> | null | undefined,

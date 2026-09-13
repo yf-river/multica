@@ -1,5 +1,7 @@
 "use client";
 
+// 面向「引导时没填来源」老用户的来源归因弹窗：自己挂载在工作区外壳上，按
+// 两层门槛判断是否弹出，把「怎么知道 Multica 的」单选/自定义题补回来。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -44,6 +46,7 @@ import { mergedQuestionnairePatch } from "./source-backfill-merge";
 import { useSourceBackfillDismissCount } from "./source-backfill-dismiss";
 import { useT } from "../i18n";
 
+// 本弹窗只会改动这三个来源字段；其余问卷字段靠 mergedQuestionnairePatch 保留。
 const EMPTY_BACKFILL: Pick<
   QuestionnaireAnswers,
   "source" | "source_other" | "source_skipped"
@@ -54,39 +57,31 @@ const EMPTY_BACKFILL: Pick<
 };
 
 /**
- * Source-attribution prompt for onboarded users whose questionnaire
- * never recorded a source. The question is not asked during
- * onboarding at all — this prompt is its only collection point.
- * Rendered as a Dialog overlay on top of the workspace shell — the
- * user keeps their workspace context visible behind a dimmed backdrop.
+ * 给「问卷里从没记过来源」的已引导用户的来源归因弹窗。引导流程本身不问你来自
+ * 哪里——这个弹窗是唯一的采集点。以 Dialog 遮罩叠在工作区外壳之上，用户仍能隔着
+ * 变暗的背景看到自己的工作区上下文。
  *
- * Self-mounted: the caller drops `<SourceBackfillModal />` once inside
- * the dashboard layout. Two gates decide whether the dialog opens:
+ * 自己挂载：调用方只需在 dashboard 布局里放一次 `<SourceBackfillModal />`。
+ * 由两层门槛决定是否弹出：
  *
- *   1. User-level: `needsSourceBackfill(user, dismissCount)` — no
- *      source recorded, never declined, dismiss cap not reached.
- *   2. Workspace-level: agents (or squads) have completed at least
- *      SOURCE_BACKFILL_MIN_AGENT_DONE_ISSUES issues here. Attribution
- *      is a zero-payoff ask for the user, so it waits until Multica
- *      has visibly delivered value. The count query only runs while
- *      gate 1 passes, so settled users never pay for it.
+ *   1. 用户级：`needsSourceBackfill(user, dismissCount)`——没记过来源、
+ *      从没明确拒绝过、关闭次数未达上限。
+ *   2. 工作区级：这里的 Agent（或 squad）已完成至少
+ *      SOURCE_BACKFILL_MIN_AGENT_DONE_ISSUES 条任务。归因对用户是零回报的请求，
+ *      所以要等 Multica 已经明显交付了价值再问。计数查询只在门槛 1 通过时才跑，
+ *      已稳定的用户永远不为它买单。
  *
- * Once the dialog opens we capture the open decision in a ref so
- * subsequent re-renders that flip the predicate to false (e.g. after
- * submit, before refreshMe round-trips) don't tear the dialog away
- * mid-animation.
+ * 一旦弹窗打开，就把「这次打开」的决定记进 ref，这样后续把判定条件翻成 false 的
+ * 重渲染（例如提交后、refreshMe 还没往返前）不会在半路把弹窗拆掉。
  *
- * Three exit shapes:
- *   - Submit         → PATCH merged questionnaire, terminal.
- *   - Skip           → PATCH `source_skipped=true`, terminal (never
- *                       ask again).
- *   - Close X / ESC  → bump per-user dismiss counter; predicate
- *                       returns false on next mount once the cap is
- *                       reached.
+ * 三种退出形态：
+ *   - 提交        → PATCH 合并后的问卷，终结态。
+ *   - 跳过        → PATCH `source_skipped=true`，终结态（从此不再问）。
+ *   - 关闭 X / ESC → 该用户的关闭计数 +1；计数到上限后下次挂载判定为 false。
  *
- * State persistence is intentional:
- *   - source / source_other: server (JSONB merged with prior answers).
- *   - dismissCount: per-user localStorage, view-layer only.
+ * 状态存放是有意区分的：
+ *   - source / source_other：服务端（JSONB，与之前答案合并）。
+ *   - dismissCount：每用户 localStorage，仅视图层。
  */
 export function SourceBackfillModal() {
   const user = useAuthStore((s) => s.user);
@@ -94,9 +89,8 @@ export function SourceBackfillModal() {
   const [dismissCount, bumpDismissCount] =
     useSourceBackfillDismissCount(userId);
 
-  // Gate 1 first: it's pure and free. Gate 2 costs a (tiny) issues
-  // query, so it's `enabled` only while gate 1 says this user still
-  // owes an answer and we know which workspace to count in.
+  // 先查门槛 1：它纯计算、零成本。门槛 2 要花一次（很小的）任务数查询，所以只在
+  // 门槛 1 通过、且已知道要在哪个工作区里数时才启用。
   const userEligible = needsSourceBackfill(user, dismissCount);
   const wsId = useCurrentWorkspace()?.id ?? null;
   const { data: agentDoneCount } = useQuery({
@@ -107,18 +101,14 @@ export function SourceBackfillModal() {
     userEligible &&
     (agentDoneCount ?? 0) >= SOURCE_BACKFILL_MIN_AGENT_DONE_ISSUES;
 
-  // Decide once per (user, gate delta) whether the prompt should
-  // open. After it opens we stop reconsulting the predicate so a
-  // midflight refreshMe (which sets source) doesn't unmount the
-  // dialog while the submit animation is still running. `openedRef`
-  // is reset when the user identity changes.
+  // 对每个 (user, 门槛变化) 只决策一次「弹窗要不要开」。打开之后就不再回头重算
+  // 判定，这样提交动画还没跑完时、中途 refreshMe（会写入 source）不会把弹窗
+  // 卸载掉。`openedRef` 在用户身份变化时重置。
   //
-  // Strict-mode caveat: this effect runs twice in dev. The ref MUST
-  // only be stamped when the dialog actually opens — not when the
-  // effect schedules the timer — or the second strict-mode pass sees
-  // `openedForUserRef.current === user.id` and bails without setting
-  // up a new timer to replace the one strict-mode's cleanup just
-  // cleared, leaving the dialog forever closed.
+  // Strict-mode 注意：这个 effect 在开发模式下会跑两遍。ref 必须在弹窗真正打开
+  // 那一刻才盖章——而不是在 effect 调度定时器时就盖——否则第二遍 strict-mode
+  // 看到 `openedForUserRef.current === user.id` 就直接退出了，而它清理掉的定时器
+  // 又没人补，弹窗就永远关着。
   const [open, setOpen] = useState(false);
   const openedForUserRef = useRef<string | null>(null);
   useEffect(() => {
@@ -129,12 +119,10 @@ export function SourceBackfillModal() {
     }
     if (openedForUserRef.current === user.id) return;
     if (!shouldPrompt) return;
-    // Soft entrance: let the user see the workspace for a beat before
-    // the modal floats in, so it doesn't feel like a hard block. Common
-    // delight pattern — ~700ms is short enough that nobody starts an
-    // interaction first but long enough that the workspace renders.
-    // Honour `prefers-reduced-motion: reduce`: those users have opted
-    // out of incidental animations, so open immediately.
+    // 温和进入：先让用户看到工作区一拍，再让弹窗飘进来，不至于像被硬拦一道。
+    // 常见的讨喜做法——约 700ms 短到没人会先发起交互，又长到工作区已经渲染完。
+    // 尊重 `prefers-reduced-motion: reduce`：这类用户已选择不看不必要的动画，
+    // 那就立刻打开。
     const reducedMotion =
       typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
@@ -156,8 +144,8 @@ export function SourceBackfillModal() {
       open={open}
       onOpenChange={(next) => {
         if (next || !open) return;
-        // Base UI fires onOpenChange(false) for X, ESC, and outside
-        // click — all three count as "dismiss without committing".
+        // Base UI 对点 X、按 ESC、点遮罩都会触发 onOpenChange(false)——这三种
+        // 都算「未提交就关闭」。
         bumpDismissCount();
         setOpen(false);
       }}
@@ -172,10 +160,8 @@ export function SourceBackfillModal() {
 SourceBackfillModal.displayName = "SourceBackfillModal";
 
 /**
- * Inner panel split out so its expensive setup (option list, effects)
- * only runs while the dialog is actually open. Closing the dialog
- * unmounts this subtree and clears the picker state — the next open
- * starts fresh.
+ * 弹窗内层内容抽成独立组件，是为了让昂贵的初始化（选项列表、effects）只在弹窗
+ * 真正打开时运行。关闭弹窗会卸载这棵子树、清空选择状态——下次打开是全新状态。
  */
 function SourceBackfillDialogBody({
   onComplete,
@@ -206,12 +192,10 @@ function SourceBackfillDialogBody({
     [t],
   );
 
-  // Single-select: at most one slug in `source` at any time. The server
-  // schema keeps the array (back-compat with the v2 multi-select shape
-  // and with existing rows), but the modal UI commits exactly one pick
-  // — primary-source attribution is the documented industry default for
-  // HDYHAU prompts (Fairing, Recast, HockeyStack) and gives the team
-  // clean channel weights without splitting users across N buckets.
+  // 单选：`source` 数组里同时最多一个 slug。服务端 schema 保留数组形态
+  // （向后兼容 v2 多选结构以及已存在的行），但弹窗 UI 只提交一个选项——
+  // 归因问题按行业惯例（Fairing、Recast、HockeyStack 都是单选）只问「最主要
+  // 来源」，这样团队拿到的是干净的渠道权重，而不是把用户拆进 N 个桶里。
   const pickedSlug: string | null = answers.source[0] ?? null;
   const otherOption = options.find((o) => o.isOther) ?? null;
   const otherSelected = pickedSlug === otherOption?.slug;
@@ -219,8 +203,7 @@ function SourceBackfillDialogBody({
   const canSubmit =
     !busy &&
     pickedSlug !== null &&
-    // If the user picked Other, gate Submit on having typed something —
-    // an empty Other selection isn't useful attribution data.
+    // 选了「其他」的话，提交前必须有实际输入——空白的 Other 不算有效归因数据。
     (!otherSelected || otherFilled);
 
   const handleSelect = useCallback(
@@ -230,9 +213,8 @@ function SourceBackfillDialogBody({
         setAnswers((a) => ({
           ...a,
           source: [slug],
-          // Picking Other doesn't carry text from a prior Other pick
-          // forward: the text input auto-focuses fresh so the user can
-          // type immediately. A previous text value would be misleading.
+          // 从「其他」再选回「其他」时，不把上一次的输入文字带过来：输入框会
+          // 重新聚焦、保持空白让用户直接打。残留的旧文本只会误导。
           source_other: a.source[0] === "other" ? a.source_other : null,
           source_skipped: false,
         }));
@@ -257,10 +239,9 @@ function SourceBackfillDialogBody({
     if (!canSubmit) return;
     setBusy(true);
     try {
-      // PATCH /api/me/onboarding replaces the JSONB wholesale, so we
-      // re-read the stored answers from the auth store and overlay
-      // only the source slots — preserving role / use_case / version
-      // for the historical users this prompt targets.
+      // PATCH /api/me/onboarding 是整块覆盖 JSONB 的，所以这里从 auth store
+      // 重新读出已存答案、只覆盖 source 槽位——保住本弹窗目标人群（老用户）的
+      // role / use_case / version 不被冲掉。
       const stored =
         useAuthStore.getState().user?.onboarding_questionnaire ?? null;
       await saveQuestionnaire(

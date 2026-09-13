@@ -1,3 +1,4 @@
+// autopilot_projection.go —— 把 autopilot 创建 issue / 相关任务的终态投影回 autopilot_run（经调用方事务句柄）。
 package service
 
 import (
@@ -17,9 +18,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// ProjectAutopilotRunFromIssue applies the terminal state of an
-// autopilot-created issue through the caller's transaction-scoped queries.
-// A nil event means the issue is not an active autopilot run.
+// ProjectAutopilotRunFromIssue 经调用方事务内查询，应用 autopilot 创建 issue 的终态。事件为 nil 表示该 issue
+// 不是活跃 autopilot run。
 func ProjectAutopilotRunFromIssue(ctx context.Context, queries *db.Queries, issue db.Issue) (*events.Event, error) {
 	if !issue.OriginType.Valid || issue.OriginType.String != "autopilot" {
 		return nil, nil
@@ -50,9 +50,8 @@ func ProjectAutopilotRunFromIssue(ctx context.Context, queries *db.Queries, issu
 	}
 }
 
-// ProjectAutopilotRunFromTask applies a terminal task state. It handles both
-// run_only tasks linked directly to a run and create_issue tasks linked through
-// an issue. The caller owns the transaction and delivery receipt.
+// ProjectAutopilotRunFromTask 应用任务终态：既处理直接挂在 run 上的 run_only 任务，也处理经 issue 关联的
+// create_issue 任务。调用方持有事务与投递回执。
 func ProjectAutopilotRunFromTask(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (*events.Event, error) {
 	if task.AutopilotRunID.Valid {
 		return projectDirectAutopilotTask(ctx, queries, task)
@@ -63,6 +62,7 @@ func ProjectAutopilotRunFromTask(ctx context.Context, queries *db.Queries, task 
 	return projectLinkedIssueAutopilotTask(ctx, queries, task)
 }
 
+// projectDirectAutopilotTask 投影直接挂 run 的任务终态（仅当 run 处于 running/issue_created）。
 func projectDirectAutopilotTask(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (*events.Event, error) {
 	run, err := queries.GetAutopilotRun(ctx, task.AutopilotRunID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -91,6 +91,8 @@ func projectDirectAutopilotTask(ctx context.Context, queries *db.Queries, task d
 	}
 }
 
+// projectLinkedIssueAutopilotTask 投影经 issue 关联的失败任务：无重试子任务、issue 无其它活跃任务时，
+// 把该 autopilot run 判为失败。
 func projectLinkedIssueAutopilotTask(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (*events.Event, error) {
 	run, err := queries.GetAutopilotRunByIssue(ctx, task.IssueID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -121,11 +123,14 @@ func projectLinkedIssueAutopilotTask(ctx context.Context, queries *db.Queries, t
 	return terminalAutopilotRunEvent(autopilot, updated, "failed", err)
 }
 
+// updateAutopilotRunFailed 用任务失败原因更新 run 为 failed。
 func updateAutopilotRunFailed(ctx context.Context, queries *db.Queries, runID pgtype.UUID, task db.AgentTaskQueue) (db.AutopilotRun, error) {
 	reason := taskFailureReasonForAutopilotRun(task)
 	return updateAutopilotRunTerminalInProjection(ctx, queries, runID, "failed", nil, reason)
 }
 
+// updateAutopilotRunTerminalInProjection 用“带配额”的终态更新把 run 落到 completed/failed（completed 才消耗配额），
+// 并在无行变化时回退到空结果。
 func updateAutopilotRunTerminalInProjection(ctx context.Context, queries *db.Queries, runID pgtype.UUID, status string, result []byte, reason string) (db.AutopilotRun, error) {
 	row, err := queries.UpdateAutopilotRunTerminalWithQuota(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
 		TerminalStatus: status,
@@ -137,6 +142,7 @@ func updateAutopilotRunTerminalInProjection(ctx context.Context, queries *db.Que
 	return autopilotRunFromTerminalRow(row), err
 }
 
+// terminalAutopilotRunEvent 组装 autopilot:run_done 事件；ErrNoRows 时返回 nil（无事件）。
 func terminalAutopilotRunEvent(autopilot db.Autopilot, run db.AutopilotRun, status string, err error) (*events.Event, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -159,8 +165,7 @@ func terminalAutopilotRunEvent(autopilot db.Autopilot, run db.AutopilotRun, stat
 	return &event, nil
 }
 
-// CaptureAutopilotRunDone records best-effort analytics only after the
-// durable projection transaction has committed and emitted run_done.
+// CaptureAutopilotRunDone 只在 durable 投影事务提交并发出 run_done 之后记录 best-effort 分析数据。
 func (s *AutopilotService) CaptureAutopilotRunDone(ctx context.Context, event events.Event) {
 	if event.Type != protocol.EventAutopilotRunDone {
 		return

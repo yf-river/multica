@@ -1,5 +1,9 @@
 "use client";
 
+// 问题时间线 hook：管理一个问题详情页的完整时间线（评论 + 活动），
+// 提供发送/回复/编辑/删除评论、解决/取消解决、切换表情反应等能力，
+// 并通过 WS 实时把别人的评论、活动、反应增量合进 React Query 缓存。
+// 本文件直接使用服务端时间线缓存（单一事实来源），所以删除评论会连带删掉它的回复子树。
 import { useEffect, useRef, useCallback, useMemo } from "react";
 import {
   useQuery,
@@ -96,13 +100,18 @@ function applyCommentSnapshot(
     }),
   );
   if (missingRevision) {
-    // During a rolling deployment, an old server may emit an unversioned
-    // snapshot after this cache has already observed a versioned one. Never
-    // overwrite the ordered value; refetch from the authoritative API instead.
+    // 滚动发布期间，老版本服务端可能在本缓存已观察到带版本号的快照之后，再发出一份
+    // 不带版本号的快照。绝不能覆盖那个有序的值；改回从权威 API 重新拉取。
     qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
   }
 }
 
+/**
+ * 管理某问题的时间线：加载列表，发送/回复/编辑/删除评论、解决评论、切换表情，
+ * 并通过 WS 实时同步他人操作。
+ * @param issueId - 问题 id。
+ * @param userId - 当前用户 id（用于乐观地判断哪些反应/操作是「我」的）。
+ */
 export function useIssueTimeline(issueId: string, userId?: string) {
   const { t } = useT("issues");
   const qc = useQueryClient();
@@ -112,26 +121,25 @@ export function useIssueTimeline(issueId: string, userId?: string) {
 
   const timeline = useMemo<TimelineEntry[]>(() => data ?? [], [data]);
 
-  // Stable mutation handles. TanStack v5 returns a fresh result wrapper from
-  // useMutation per render, but the inner mutateAsync / mutate functions are
-  // stable. Pull just those so the useCallback identities downstream don't
-  // flip on every parent re-render — listing the whole mutation object would
-  // defeat React.memo on CommentCard.
+  // 稳定的 mutation 句柄。TanStack v5 每次渲染都会从 useMutation 返回一个新的结果
+  // 包装，但内部的 mutateAsync / mutate 函数是稳定的。只取出它们，让下游的
+  // useCallback 身份不会跟着父级每次重渲染而变——如果列出整个 mutation 对象，
+  // 会废掉 CommentCard 上的 React.memo。
   const { mutateAsync: createComment } = useCreateComment(issueId);
   const { mutateAsync: updateComment } = useUpdateComment(issueId);
   const { mutateAsync: deleteCommentAsync } = useDeleteComment(issueId);
   const { mutateAsync: resolveCommentAsync } = useResolveComment(issueId);
   const { mutate: toggleCommentReaction } = useToggleCommentReaction(issueId);
 
-  // Reconnect recovery: invalidate so the next render refetches the full
-  // timeline. Cheaper than diffing across a possibly-long disconnect.
+  // 断线重连后的恢复：让查询失效，下次渲染重新拉取整条时间线。
+  // 比去 diff 一次可能很长的断线要便宜。
   useWSReconnect(
     useCallback(() => {
       qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
     }, [qc, issueId]),
   );
 
-  // --- WS event handlers ---
+  // --- WS 事件处理器（把其他用户的操作增量合进缓存） ---
 
   useWSEvent(
     "comment:created",
@@ -162,12 +170,10 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     ),
   );
 
-  // Granular handlers for comment:resolved / comment:unresolved. The payload
-  // carries the full Comment with the new resolved_at/resolved_by_* fields,
-  // which `commentToTimelineEntry` already preserves, so the existing
-  // entry can simply be replaced in place. Without these handlers the only
-  // path that updated the cache was `useRealtimeSync`'s global invalidate,
-  // which forces a full timeline refetch and busts every CommentCard memo.
+  // 为 comment:resolved / comment:unresolved 提供细粒度的处理器。事件载荷携带完整的
+  // Comment（含新的 resolved_at/resolved_by_* 字段），`commentToTimelineEntry` 已能保留
+  // 它们，所以直接就地替换现有条目即可。没有这两个处理器时，唯一更新缓存的路径是
+  // `useRealtimeSync` 的全局失效——那会强制整条时间线重新拉取，打爆每个 CommentCard 的 memo。
   useWSEvent(
     "comment:resolved",
     useCallback(
@@ -200,8 +206,7 @@ export function useIssueTimeline(issueId: string, userId?: string) {
         if (issue_id !== issueId) return;
         qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) => {
           if (!old) return old;
-          // Cascade through replies (full timeline now lives in this single
-          // cache, so a flat sweep is sufficient).
+          // 级联删除整棵回复子树（整条时间线现在都在这一个缓存里，一次平铺扫描就够）。
           const idsToRemove = new Set<string>([comment_id]);
           let changed = true;
           while (changed) {
@@ -319,19 +324,17 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     ),
   );
 
-  // --- Mutation functions ---
+  // --- 各类评论/活动的 mutation 方法 ---
 
-  // The comment saved, but a mention did not clearly trigger (blocked, or an
-  // unknown/future status we must not assume succeeded). Warn instead of a
-  // silent no-op (MUL-4525 §2): the comment IS posted, but N explicitly-named
-  // targets were not triggered.
+  // 评论保存成功了，但某次 @ 提及没有明确触发（被阻止，或状态未知/未来态而不能假设成功）。
+  // 这种情况下要警告而不是静默无反应（MUL-4525 §2）：评论确实发出去了，
+  // 只是有 N 个被显式点名的目标没有被触发。
   const warnUnhandledTriggers = useCallback(
     (triggerOutcomes: unknown, content?: string) => {
       const unhandled = unhandledCommentTriggerOutcomes(triggerOutcomes);
       if (unhandled.length === 0) return;
-      // Name the target when a single mention was refused — the posted comment's
-      // markup carries the label the user typed (the wire outcome omits it for
-      // enumeration-safety). Several refusals fall back to a count.
+      // 只有单次提及被拒时才点名：已发布评论的标记里带着用户敲的标签
+      // （线上的 outcome 出于枚举安全省略了它）。多次被拒就回退成只报个数。
       if (unhandled.length === 1) {
         const outcome = unhandled[0]!;
         const name = mentionLabelsByTarget(content ?? "").get(
@@ -354,10 +357,9 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     [t],
   );
 
-  // Returns true on success, false on failure. The composer keeps the user's
-  // text (editor locked + button spinning) until this settles and clears only
-  // on success — so a slow send no longer leaves the box full next to an
-  // already-posted comment, and a failed send keeps the draft.
+  // 成功返回 true、失败返回 false。编辑器会一直保留用户的文字（编辑锁定 + 按钮转圈）
+  // 直到这里落定，并且只在成功时才清空——所以一次慢发送不会再让输入框旁边留着一条
+  // 已发送的评论，而一次失败的发送也会保留草稿。
   const submitComment = useCallback(
     async (content: string, attachmentIds?: string[], suppressAgentIds?: string[]): Promise<string | false> => {
       if (!content.trim() || !userId) return false;
@@ -448,9 +450,9 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     [resolveCommentAsync, t],
   );
 
-  // --- Optimistic UI for comment reactions ---
-  // Derive at render time from pending mutation variables instead of writing
-  // temp data into the cache (which would race with WS events).
+  // --- 评论表情的乐观 UI ---
+  // 在渲染时根据进行中的 mutation 参数推导，而不是往缓存里写临时数据
+  // （那会跟 WS 事件竞争）。
 
   const pendingReactionVars = useMutationState({
     filters: {
@@ -501,10 +503,9 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     });
   }, [timeline, pendingReactionVars, userId]);
 
-  // toggleReaction reads from a ref so its identity does not change with
-  // every WS event. Without this every memoized CommentCard down-tree would
-  // re-render on each timeline mutation, defeating the React.memo cost
-  // savings on long timelines (#1968).
+  // toggleReaction 通过 ref 读取数据，这样它的身份不会随每次 WS 事件变化。否则下游每个
+  // 被 memo 化的 CommentCard 都会在时间线每次变动时重渲染，长时间线上 React.memo
+  // 省下的开销就白费了（#1968）。
   const timelineRef = useRef(timeline);
   useEffect(() => {
     timelineRef.current = timeline;

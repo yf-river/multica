@@ -1,19 +1,19 @@
 "use client";
 
+// 仪表盘共享组件：时间范围常量、维度（日/周）切换控件、时长数字组件等，
+// 被 dashboard-page 和各卡片复用。
 import {
   NumberFlow,
   NumberFlowGroup,
 } from "@multica/ui/components/ui/number-flow";
 import { formatDuration } from "../utils";
 
-// Period selector — mirrors the runtime detail page so users see the same
-// option set across both dashboards. `dims` declares which chart dimensions
-// each range may be drawn at: 1d / 7d at the weekly grain collapse to a single
-// bar, 180d at the daily grain is 180 unreadable bars.
-//
-// 1d semantic: "today" (the natural calendar day from 00:00 in the viewer's
-// timezone), not "the last 24 hours". The `dailyCutoffIso` filter on the page
-// enforces this even at the midnight edge.
+/** 时间段选择项，和运行时详情页保持一致，这样两个仪表盘看到的选项是一样的。
+ *  `dims` 声明每个时间段允许按哪种图表维度（日/周）来画：1d/7d 若画成周粒度
+ *  会塌缩成一根柱子，180d 若画成日粒度则是 180 根没法看的柱子。
+ *
+ *  1d 的语义是「今天」（按查看者时区从 00:00 起的自然日历日），而不是「最近 24 小时」。
+ *  页面上的 `dailyCutoffIso` 过滤即使在午夜边缘也会守住这个语义。 */
 export const TIME_RANGES = [
   { label: "1d", days: 1, dims: ["daily"] as const },
   { label: "7d", days: 7, dims: ["daily"] as const },
@@ -22,19 +22,21 @@ export const TIME_RANGES = [
   { label: "180d", days: 180, dims: ["weekly"] as const },
 ] as const;
 
+/** 时间段选项，取值为该时间段的天数。 */
 export type TimeRange = (typeof TIME_RANGES)[number]["days"];
+/** 图表维度：按日聚合还是按周聚合。 */
 export type Dim = "daily" | "weekly";
 
 /**
- * Which chart dimensions the current range may be drawn at.
+ * 返回当前时间段允许使用的图表维度列表。
  *
- * The constraint between range and dimension used to be enforced in both
- * directions by two sibling controls in the page header: picking Weekly while
- * on 1d silently reset the range to 90d, which moved every KPI on the page.
- * The range is now the page-scoped filter and the dimension is card-scoped, so
- * the dependency runs one way only — a card offers whichever dimensions its
- * range allows, and nothing resets. A card-scoped control must never reach up
- * and change a page-scoped one (MUL-5759).
+ * 以前「时间段」和「维度」这层约束是双向的：在页面头部放两个控件，1d 时选了「周」
+ * 会悄悄把时间段重置成 90d，从而带动页面上每个 KPI。现在时间段是页面级筛选、
+ * 维度是卡片级控件，依赖只单向存在——卡片只提供它的时间段允许的维度，什么都不用重置。
+ * 卡片级控件绝不能反过来去改页面级控件（MUL-5759）。
+ *
+ * @param days 当前选中的时间段天数
+ * @returns 该时间段允许的维度数组（找不到时兜底返回 ["daily"]）
  */
 export function dimsForDays(days: TimeRange): readonly Dim[] {
   return (
@@ -42,24 +44,26 @@ export function dimsForDays(days: TimeRange): readonly Dim[] {
   );
 }
 
-/** Sentinel for "no project filter" — kept distinct from the empty string so
- *  it survives a refactor that ever lets a project be slug-keyed. */
+/** 表示「未按项目筛选」的哨兵值。特意和空字符串区分开，这样即使将来重构
+ *  允许用 slug 作为项目键，这个值也不会被撞上。 */
 export const ALL_PROJECTS = "__all__";
 
 /**
- * Card-local segmented control — the pill toggle used *inside* a card to pick
- * what that card shows. The page header deliberately uses outline Buttons
- * instead, so the shape of a control tells you its scope: pills change one
- * card, buttons change the page.
+ * 卡片级分段切换控件——放在卡片内部用来选「这张卡显示什么」的胶囊按钮。
+ * 页面头部刻意用 outline 按钮而不是它，这样靠控件形状就能看出作用范围：
+ * 胶囊改的是单张卡片，按钮改的是整个页面。
  *
- * shadcn's Tabs is wired for full tab pages with ARIA semantics the compact
- * toolbar pill doesn't need. Which option is active was expressed only as a
- * colour swap, which no screen reader can see, so `aria-pressed` carries it
- * too. `label` is required rather than optional because a naked group of
- * toggle buttons is announced without saying WHAT it toggles — "Rate, pressed"
- * is useless until you know the group is the offender ranking. Toggle buttons
- * rather than a radiogroup: a radiogroup owes the user arrow-key roving focus,
- * and these are tab stops wherever they appear in the page.
+ * 没用 shadcn 的 Tabs 是因为 Tabs 面向整页标签、带一堆这套紧凑工具栏胶囊用不上的
+ * ARIA 语义。以前「哪个选项选中」只靠颜色区分，屏幕阅读器根本看不到，所以现在用
+ * `aria-pressed` 一并表达。`label` 是必填而不是可选，因为一组光秃秃的切换按钮被读出来时
+ * 不会说明它在切换什么——在不知道这组是「失败者排行」之前，「Rate, 已按下」毫无意义。
+ * 用切换按钮而不是 radiogroup：radiogroup 需要支持方向键焦点漫游，而它无论出现在
+ * 页面哪里都只是普通 tab 停靠点。
+ *
+ * @param value 当前选中的值
+ * @param onChange 选项变化时的回调
+ * @param options 可选项列表（label 为显示文案，value 为实际值）
+ * @param label 这组按钮的无障碍名称，说明它在切换什么
  */
 export function Segmented<T extends string | number>({
   value,
@@ -97,6 +101,16 @@ export function Segmented<T extends string | number>({
   );
 }
 
+/**
+ * 带滚动动画的时长显示组件。
+ *
+ * 把秒数格式化（如 "1h 23m"）后，拆成数字和单位两段交给 NumberFlow 做滚动动画，
+ * 同时输出一份 sr-only 的完整文案给屏幕阅读器。
+ *
+ * @param seconds 时长（秒）
+ * @param lessThanMinuteLabel 不足一分钟时显示的文案
+ * @param locales 用于数字格式化的 locale
+ */
 export function DurationNumberFlow({
   seconds,
   lessThanMinuteLabel,

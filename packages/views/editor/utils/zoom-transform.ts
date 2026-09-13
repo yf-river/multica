@@ -1,58 +1,61 @@
 /**
- * Pan/zoom math for the shared zoom canvas — Mermaid diagrams and image
- * previews both drive their viewer through this module.
+ * 共享缩放画布的平移/缩放数学——Mermaid 图与图片预览都经由本模块驱动
+ * 各自的查看器。
  *
- * Content is never asked to zoom itself: a Mermaid diagram lives inside an
- * empty-sandbox iframe that cannot run scripts, and an `<img>` has no zoom of
- * its own either. All interaction is driven from the host document by
- * transforming the wrapper around the content, so this module stays pure
- * DOM-free math: it is the single place where "where is the content and how
- * big is it" is decided.
+ * 内容从不需要自己缩放：Mermaid 图住在一个不能跑脚本的空沙箱 iframe 里，
+ * `<img>` 也没有自带的缩放能力。所有交互都由宿主文档通过变换内容外层包裹
+ * 元素来实现，所以本模块保持为纯 DOM-free 的数学：它是决定「内容在哪、
+ * 有多大」的唯一地方。
  *
- * Coordinate model: the content wrapper has `transform-origin: 0 0` and is
- * positioned at the viewport's top-left, so a transform is applied as
- * `translate(x, y) scale(scale)`. `x`/`y` are viewport-space pixels of the
- * content's top-left corner; `scale` is the natural-size multiplier.
+ * 坐标模型：内容包裹层 `transform-origin: 0 0`，且定位在视口左上角，
+ * 于是变换按 `translate(x, y) scale(scale)` 施加。`x`/`y` 是内容左上角在
+ * 视口坐标系里的像素；`scale` 是相对原始尺寸的倍数。
  */
 
+/** 尺寸（宽高，px）。 */
 export interface Size {
   width: number;
   height: number;
 }
 
+/** 二维点坐标（px）。 */
 export interface Point {
   x: number;
   y: number;
 }
 
+/** 一次缩放变换：缩放倍数 + 内容左上角的平移量。 */
 export interface ZoomTransform {
   scale: number;
   x: number;
   y: number;
 }
 
-// Default lower zoom bound. Only a default: `computeMinScale` lowers it for
-// content that cannot fit at 25% — see the comment there.
+// 默认的最小缩放下限。只是默认值：`computeMinScale` 会对无法在 25% 下
+// 适配的内容继续调低它——见那边的注释。
 export const MIN_SCALE = 0.25;
 export const MAX_SCALE = 4;
 
-// How much of the content must stay inside the viewport. Panning is clamped so
-// the user can never fling the canvas out of sight and be left staring at an
-// empty viewport with no way back other than Reset.
+// 内容必须有多少留在视口内。平移被这样钳制后，用户永远不可能把画布
+// 甩到视野之外，然后面对一个除了 Reset 毫无办法的空视口。
 const MIN_VISIBLE_PX = 48;
 
-// Keyboard/button zoom step. 1.2 gives ~4 presses per doubling, which feels
-// responsive without skipping past the scale the user wanted.
+// 键盘/按钮的缩放步长。1.2 大约按 4 下翻一倍，手感跟手又不会跳过头
+// 错过用户想要的缩放级别。
 export const ZOOM_STEP = 1.2;
 
-// Keyboard pan step, in viewport pixels per arrow-key press.
+// 键盘平移步长：每次按方向键平移的视口像素数。
 export const PAN_STEP_PX = 48;
 
+/**
+ * 把缩放倍数钳制到 [minScale, MAX_SCALE]。非法值回退到 1。
+ */
 export function clampScale(scale: number, minScale: number = MIN_SCALE): number {
   if (!Number.isFinite(scale)) return 1;
   return Math.min(MAX_SCALE, Math.max(minScale, scale));
 }
 
+/** 尺寸是否有效（有限且大于 0）。 */
 function hasArea(size: Size): boolean {
   return (
     Number.isFinite(size.width) &&
@@ -63,14 +66,12 @@ function hasArea(size: Size): boolean {
 }
 
 /**
- * Scale that makes the content fit the viewport, never magnifying past natural
- * size. A small diagram or thumbnail opened in a large viewer should read at
- * 100%, not be blown up until it looks broken — same convention as macOS
- * Preview.
+ * 让内容恰好适配视口的缩放倍数，且绝不放大超过原始尺寸。在很大的查看器
+ * 里打开小图/缩略图，应显示在 100%，而不是被放得看起来坏了——与 macOS
+ * 预览同一约定。
  *
- * Deliberately NOT floored at MIN_SCALE: a full-page screenshot ten times
- * taller than the canvas fits at ~0.1, and returning 0.25 instead would open
- * it already cropped.
+ * 刻意不用 MIN_SCALE 兜底：一张比画布高十倍的整页截图约在 0.1 就能适配，
+ * 若这里返回 0.25，一打开它就被裁掉了。
  */
 export function computeFitScale(content: Size, viewport: Size): number {
   if (!hasArea(content) || !hasArea(viewport)) return 1;
@@ -82,19 +83,17 @@ export function computeFitScale(content: Size, viewport: Size): number {
 }
 
 /**
- * Lower zoom bound for a given content/viewport pair: MIN_SCALE normally, but
- * never above the fit scale.
+ * 给定内容/视口对的缩放下限：通常是 MIN_SCALE，但绝不会高于适配缩放。
  *
- * Without this, "fit to view" is unreachable for content more than 4x the
- * canvas in either axis — exactly the long-screenshot case — because every
- * clamp would snap the scale back up to 25% and leave the content cropped
- * with no way to see all of it.
+ * 没有它，「适配视图」对在任一方向上超过画布 4 倍的内容（正是长截图那种
+ * 情况）永远无法到达——因为每次钳制都会把缩放弹回 25%，内容被裁掉，
+ * 永远没法看全。
  */
 export function computeMinScale(content: Size, viewport: Size): number {
   return Math.min(MIN_SCALE, computeFitScale(content, viewport));
 }
 
-/** Centers `content` at `scale` inside `viewport`. */
+/** 在 `viewport` 内以 `scale` 倍数居中摆放 `content`。 */
 export function centerTransform(
   content: Size,
   viewport: Size,
@@ -107,15 +106,14 @@ export function centerTransform(
   };
 }
 
-/** Default view: fit to viewport, centered. */
+/** 默认视图：适配视口并居中。 */
 export function computeFitTransform(content: Size, viewport: Size): ZoomTransform {
   return centerTransform(content, viewport, computeFitScale(content, viewport));
 }
 
 /**
- * Keeps at least `MIN_VISIBLE_PX` of the content inside the viewport (or all of
- * it, when the content is smaller than that margin), so the canvas can never be
- * panned into nothing.
+ * 保证内容至少 `MIN_VISIBLE_PX` 留在视口内（内容本身比这个边距还小时
+ * 则全部保留），这样画布永远不可能被平移到什么都没有。
  */
 export function clampTransform(
   transform: ZoomTransform,
@@ -144,9 +142,8 @@ export function clampTransform(
 }
 
 /**
- * Zooms to `nextScale` while pinning the content point under `anchor` (in
- * viewport coordinates) to that same spot. This is what makes wheel and pinch
- * zoom track the cursor/fingers instead of drifting toward a corner.
+ * 缩放到 `nextScale`，同时把 `anchor`（视口坐标）下的内容点钉在屏幕原位。
+ * 这正是滚轮/捏合缩放能跟随光标/手指、而不是漂向某个角的原因。
  */
 export function zoomToAt(
   transform: ZoomTransform,
@@ -171,7 +168,7 @@ export function zoomToAt(
   );
 }
 
-/** Multiplicative zoom (wheel notch, +/- key, toolbar button) about `anchor`. */
+/** 以 `anchor` 为锚点做乘法缩放（滚轮一格、+/- 键、工具栏按钮）。 */
 export function zoomByAt(
   transform: ZoomTransform,
   factor: number,
@@ -182,7 +179,7 @@ export function zoomByAt(
   return zoomToAt(transform, transform.scale * factor, anchor, content, viewport);
 }
 
-/** Zoom about the viewport center — the anchor to use for keyboard/buttons. */
+/** 绕视口中心缩放——键盘/按钮应使用的锚点。 */
 export function zoomByAtCenter(
   transform: ZoomTransform,
   factor: number,
@@ -198,6 +195,9 @@ export function zoomByAtCenter(
   );
 }
 
+/**
+ * 在当前缩放下按给定增量平移（已做视野钳制）。
+ */
 export function panBy(
   transform: ZoomTransform,
   deltaX: number,
@@ -212,23 +212,24 @@ export function panBy(
   );
 }
 
-/** Distance between two active pointers — the pinch gesture's scale signal. */
+/** 两个活跃触点间的距离——捏合手势的缩放信号。 */
 export function distanceBetween(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+/** 两点的中点——捏合缩放围绕的锚点。 */
 export function midpointOf(a: Point, b: Point): Point {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
 /**
- * Converts a wheel notch into a zoom factor. `deltaMode` matters: mice report
- * lines (1) or pages (2) while trackpads report pixels (0), so a raw `deltaY`
- * comparison would make one of the two unusable.
+ * 把一格滚轮滚动换算成缩放因子。`deltaMode` 很关键：鼠标按行（1）或
+ * 整页（2）报，触控板按像素（0）报——若直接拿裸 `deltaY` 做比较，
+ * 两种设备里必有一种完全没法用。
  */
 export function wheelZoomFactor(deltaY: number, deltaMode: number): number {
   const pixels = deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * 100 : deltaY;
-  // Exponential mapping keeps zooming symmetric: equal and opposite scrolls
-  // return to the original scale. The 400 divisor tunes trackpad sensitivity.
+  // 指数映射保证缩放对称：等量反向滚动能回到原缩放。除数 400 是触控板
+  // 灵敏度调校值。
   return Math.exp(-pixels / 400);
 }

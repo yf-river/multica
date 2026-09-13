@@ -22,22 +22,18 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { LogOut, Mail, Users } from "lucide-react";
 
 /**
- * Batch invitation handling page for first-contact users who land here
- * because callback / login detected pending invitations on their email.
+ * invitations 模块：批量处理邀请的页面。
+ * 面向那些因回调/登录检测到邮箱有未处理邀请、而落到这里的新用户。
  *
- * Design:
- *  - This route is only reachable for un-onboarded users (the entry-point
- *    judgment in callback/login routes already-onboarded users straight
- *    into their workspace; new invites for those users surface in the
- *    sidebar's pending-invitations dropdown instead).
- *  - The user picks zero or more invitations to accept. "Submit" then:
- *      • zero selected → continue to /onboarding
- *      • ≥1 selected → accept each, mark onboarding complete, navigate
- *        into the first accepted workspace.
- *  - Unselected invitations are intentionally left as `pending` in the DB.
- *    The user can later decline them from the sidebar; we don't auto-decline
- *    here because closing/refreshing this page should not be a destructive
- *    action.
+ * 设计：
+ *  - 该路由只有未完成 onboarding 的用户可达（回调/登录入口会把已完成
+ *    onboarding 的用户直接送进工作区；这些用户的新邀请改在侧边栏的待处理
+ *    邀请下拉里呈现）。
+ *  - 用户勾选零个或多个邀请后点「提交」：
+ *      • 一个都没选 → 继续进 /onboarding
+ *      • 选了 ≥1 个 → 逐个接受、标记 onboarding 完成、跳进第一个接受的工作区。
+ *  - 未勾选的邀请刻意在数据库里保持 `pending`。用户之后可以从侧边栏拒绝
+ *    它们；这里不自动拒绝，因为关闭/刷新本页不该是一个破坏性动作。
  */
 export function InvitationsPage() {
   const { t } = useT("invite");
@@ -66,8 +62,7 @@ export function InvitationsPage() {
   const handleSubmit = async () => {
     setError(null);
 
-    // Zero selected: hand off to onboarding. Pending invites stay pending and
-    // can be picked up later from the sidebar.
+    // 一个都没选：交给 onboarding。待处理邀请保持 pending，之后可从侧边栏接。
     if (selected.size === 0) {
       push(paths.onboarding());
       return;
@@ -85,11 +80,9 @@ export function InvitationsPage() {
         (inv) => inv.id === acceptedIds[0],
       );
 
-      // markOnboardingComplete is a frontend-side belt to the backend braces:
-      // each AcceptInvitation transaction already sets onboarded_at via
-      // MarkUserOnboarded, but calling this from the client makes sure the
-      // returned `User` is freshly written and gives refreshMe something
-      // canonical to read.
+      // markOnboardingComplete 是前端侧对后端逻辑的双保险：每条 AcceptInvitation
+      // 事务已经经 MarkUserOnboarded 设置了 onboarded_at，但从客户端调用能保证
+      // 返回的 `User` 是刚写好的，也让 refreshMe 有权威数据可读。
       await api.markOnboardingComplete({
         completion_path: "invite_accept",
         workspace_id: firstAcceptedInvite?.workspace_id,
@@ -106,11 +99,9 @@ export function InvitationsPage() {
         ? wsList.find((w) => w.id === firstAcceptedInvite.workspace_id)
         : undefined;
 
-      // If we can't resolve the just-accepted workspace by id (shouldn't
-      // happen — the backend just inserted the membership and we just
-      // refetched), fall back to the resolver. Don't blindly route to
-      // wsList[0]: that could teleport the user into an unrelated old
-      // workspace they happen to also belong to.
+      // 如果按 id 解析不到刚接受的工作区（理论上不该发生——后端刚插入成员、
+      // 我们又刚重拉过），退回解析器。不要盲目跳到 wsList[0]：那可能把用户
+      // 瞬移到另一个他恰好也属于的、毫不相干的旧工作区。
       push(
         targetWs ? paths.workspace(targetWs.slug).issues() : paths.newWorkspace(),
       );
@@ -120,12 +111,11 @@ export function InvitationsPage() {
           ? e.message
           : t(($) => $.batch.error_generic),
       );
-      // Partial success: any accepts that landed before the failure ALREADY
-      // set onboarded_at on the backend (the AcceptInvitation transaction
-      // is atomic per invite). Refresh local user + workspace state so the
-      // sidebar reflects the partial accept and the user isn't stuck with a
-      // stale `onboarded_at == null` view. The next submit is safe — the
-      // server returns 4xx on re-accept and the catch path will surface that.
+      // 部分成功：失败之前落地的任何接受都已在后端设置 onboarded_at
+      // （AcceptInvitation 事务按邀请原子执行）。刷新本地用户 + 工作区状态，
+      // 让侧边栏反映部分接受，也避免用户被卡在过期的 `onboarded_at == null`
+      // 视图。再次提交是安全的——服务端对重复接受返回 4xx，会走进 catch 分支
+      // 把错误亮出来。
       if (acceptedIds.length > 0) {
         await useAuthStore.getState().refreshMe().catch(() => {});
         qc.invalidateQueries({ queryKey: workspaceKeys.list() });
@@ -152,9 +142,9 @@ export function InvitationsPage() {
     );
   }
 
-  // Empty / error: send the user on to onboarding so they're never stuck.
-  // Genuine fetch failure is rare; treating it as "no invites" is safer than
-  // trapping the user on an error screen they can't act on.
+  // 空 / 出错：把用户送去 onboarding，绝不把他们卡死。
+  // 真正的拉取失败很罕见；把「无邀请」处理成「没邀请」比把用户困在一个无从
+  // 操作的错误页更安全。
   if (fetchError || !invitations || invitations.length === 0) {
     return (
       <InvitationsShell>
@@ -230,6 +220,7 @@ export function InvitationsPage() {
   );
 }
 
+/** 邀请列表中的单行：勾选框 + 工作区名 + 邀请者与角色说明。 */
 function InvitationRow({
   invitation,
   checked,
@@ -271,6 +262,7 @@ function InvitationRow({
   );
 }
 
+/** 邀请页所有状态共用的外壳：居中内容 + 右上角退出登录按钮。 */
 function InvitationsShell({ children }: { children: ReactNode }) {
   const { t } = useT("invite");
   const logout = useLogout();

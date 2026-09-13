@@ -1,3 +1,5 @@
+// 本文件是 drafts（草稿持久化）模块的对外出口（barrel）。
+
 export {
   createDraftStore,
   type DraftStore,

@@ -1,5 +1,23 @@
 package agent
 
+// 文件职责：本文件实现 Backend 接口中的「CodeBuddy」后端。CodeBuddy 是 Claude Code
+// 的分支产品，本后端以 --output-format stream-json 拉起它的 CLI，并通过 stdin/stdout
+// 走 SDK 风格的 stream-json 协议：stdout 上每行是一个 JSON 事件（assistant / user /
+// system / result / log / control_request 等），prompt 作为一条 user 事件写进 stdin。
+//
+// 与 claude.go 的执行模型同构：stdin/stdout 并发读写避免管道死锁；写完后不关闭
+// stdin，保持开放以在运行中应答 control_request 的自动批准；用 runContext 实现
+// 「零超时 = 不设截止时间」的语义。
+//
+// 执行流程：Execute 拼好参数拉起进程 → 独立 goroutine 先把 prompt 写进 stdin → 主
+// goroutine 循环读 stdout 事件：assistant 消息拆出文本/思考/工具调用并推送；user 消
+// 息里的 tool_result 回填工具结果；result 事件汇总终态与用量；control_request 一律
+// 自动批准 → 进程退出后用 finalizeStreamResult 把各类信号综合成最终状态
+// （completed/failed/timeout/aborted），连同会话 ID、token 用量一起放进 Result。
+//
+// 会话续跑用 --resume；daemon 判定续跑被拒（resumeWasRejected）时会在 Result 里置
+// ResumeRejected，请求方会丢弃失效会话 ID 并用全新会话重试。
+
 import (
 	"context"
 	"encoding/json"
@@ -12,34 +30,38 @@ import (
 	"time"
 )
 
-// codebuddyBackend implements Backend by spawning the CodeBuddy CLI
-// (a Claude Code fork) with --output-format stream-json.
-// It mirrors claude.go's execution model: concurrent stdin/stdout to
-// avoid pipe deadlocks, open stdin for control_request auto-approval,
-// and runContext for zero-timeout = no-deadline semantics.
+// codebuddyBackend 实现 Backend 接口：以 --output-format stream-json 拉起 CodeBuddy
+// CLI（Claude Code 的一个分支）。
+// 与 claude.go 的执行模型一致：stdin/stdout 并发读写避免管道死锁；stdin 保持打开以便
+// 应答 control_request 的自动批准；用 runContext 实现「零超时 = 无截止时间」的语义。
 type codebuddyBackend struct {
 	cfg Config
 }
 
-// codebuddyBlockedArgs are flags hardcoded by the daemon that must not be
-// overridden by user-configured custom_args. Overriding these would break
-// the daemon↔codebuddy communication protocol.
+// codebuddyBlockedArgs 是 daemon 写死的参数清单，用户配置的 custom_args 不得覆盖它们。
+// 覆盖这些参数会破坏 daemon ↔ codebuddy 之间的通信协议，或绕过运行安全约束。
 var codebuddyBlockedArgs = map[string]blockedArgMode{
-	"-p":                       blockedStandalone, // non-interactive mode
-	"--output-format":          blockedWithValue,  // stream-json protocol
-	"--input-format":           blockedWithValue,  // stream-json protocol
-	"--permission-mode":        blockedWithValue,  // bypassPermissions for autonomous operation
-	"--mcp-config":             blockedWithValue,  // set by daemon from agent.mcp_config
-	"--tools":                  blockedWithValue,  // Life cognition may disable built-ins
-	"--allowedTools":           blockedWithValue,  // never let custom args widen Life access
+	"-p":                       blockedStandalone, // 非交互模式
+	"--output-format":          blockedWithValue,  // stream-json 协议所必需
+	"--input-format":           blockedWithValue,  // stream-json 协议所必需
+	"--permission-mode":        blockedWithValue,  // 由 bypassPermissions 接管，保证自主运行
+	"--mcp-config":             blockedWithValue,  // 由 daemon 依据 agent.mcp_config 注入
+	"--tools":                  blockedWithValue,  // 「生命认知」任务可能关掉内置工具
+	"--allowedTools":           blockedWithValue,  // 绝不让 custom_args 扩大 Life 的访问面
 	"--disallowedTools":        blockedList,
 	"--strict-mcp-config":      blockedStandalone,
 	"--no-session-persistence": blockedStandalone,
-	// `--effort` is owned by the per-agent thinking_level picker so a
-	// user-supplied custom_arg cannot silently outvote it.
+	// `--effort` 归「每个 agent 的 thinking_level 选择器」管，用户自带的 custom_arg
+	// 不能静默压过它。
 	"--effort": blockedWithValue,
 }
 
+// buildCodebuddyArgs 根据 ExecOptions 拼出 codebuddy 的一次性命令行参数。
+//
+// 固定前缀保证走 stream-json 协议并以 bypassPermissions 无人值守运行；随后按需追加
+// 模型、思考强度、最大回合数、系统提示词、续跑会话等；最后把用户 custom_args 与
+// ExtraArgs 经 blocked 清单过滤后接上。ExtraArgs 是 daemon 自己注入的扩展参数，
+// CustomArgs 是用户配置的，二者分别过滤再拼接。
 func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 	args := []string{
 		"-p",
@@ -47,43 +69,37 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 		"--input-format", "stream-json",
 		"--verbose",
 		"--permission-mode", "bypassPermissions",
-		// CodeBuddy's interactive tools have no UI to render in under the
-		// daemon's headless stream-json transport. AskUserQuestion and
-		// ExitPlanMode are both exempted from CodeBuddy's permission-mode
-		// finalization, so --permission-mode bypassPermissions does NOT
-		// auto-approve them — they always reach the permission bridge and
-		// stall the turn waiting for a confirmation nobody can give
-		// (GitHub #6012). EnterPlanMode is denied alongside them: leaving it
-		// enabled would let the model enter a plan mode it then has no tool
-		// to leave. Plan-shaped work still happens — the plan is written as
-		// ordinary assistant output instead of behind an approval gate.
+		// CodeBuddy 的交互式工具在 daemon 无头的 stream-json 传输下没有可渲染的 UI。
+		// AskUserQuestion 和 ExitPlanMode 都被排除在 CodeBuddy 的 permission-mode 终审
+		// 之外，所以 --permission-mode bypassPermissions 并不会自动批准它们——它们总会
+		// 走到权限桥，然后卡住回合、等一个永远不会有人给的确认（GitHub #6012）。
+		// EnterPlanMode 与它们一起被禁用：留着它，模型会进入一个「进去后没有工具能出
+		// 来」的计划模式。计划形态的工作仍然会发生——计划以普通 assistant 输出的形式
+		// 写出，而不是挡在一个审批闸门后面。
 		//
-		// Pass one value per tool: --disallowedTools is variadic and
-		// CodeBuddy compares each entry against the tool name exactly
-		// (PermissionUtils.matchPermissionRules), so a comma-joined string
-		// would match nothing despite what the CLI's own help text claims.
+		// 每个工具名单独传一个值：--disallowedTools 是可变参数，CodeBuddy 用精确比对把
+		// 每项与工具名对照（PermissionUtils.matchPermissionRules），所以逗号拼起来的
+		// 字符串一条都匹配不上——尽管 CLI 自己的帮助文本声称可以。
 		"--disallowedTools", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
 	}
 	if opts.LifeCognition {
-		// A cognition job is not a coding task. Disable every built-in tool and
-		// load only the task-scoped Life MCP server; this keeps shell/filesystem
-		// access unavailable even when the agent's normal profile grants it.
+		// 「生命认知」任务不是编码任务。禁用全部内置工具、只挂任务范围的 Life MCP
+		// 服务器；这样即使 agent 的常规 profile 授权了 shell/文件系统访问，这里也
+		// 一概不可用。
 		args = append(args, "--tools", "", "--strict-mcp-config", "--no-session-persistence")
 	}
-	// NOTE: --strict-mcp-config is deliberately never passed. It means "only
-	// use servers from --mcp-config", which drops CodeBuddy's user, project
-	// AND local scopes. Measured against CodeBuddy 2.x with one real MCP
-	// server registered per scope, using process spawns as the oracle:
+	// 注意：--strict-mcp-config 在常规路径上刻意永不传。它的含义是「只用 --mcp-config
+	// 里的服务器」，会把 CodeBuddy 的用户级、项目级和本地级配置全部丢掉。对照
+	// CodeBuddy 2.x、每一级各注册一个真实 MCP 服务器、用进程启动做基准实测的结果：
 	//
-	//	--mcp-config only ....... managed + user + local  <- what we want
-	//	--mcp-config + strict ... managed only
-	//	strict only ............. nothing at all
+	//	仅 --mcp-config ........ 托管级 + 用户级 + 本地级  <- 我们要的
+	//	--mcp-config + strict ... 只有托管级
+	//	仅 strict .............. 一个都没有
 	//
-	// The union is also what mergeRuntimeAndAgentMcpConfig promises: adding
-	// one managed server must not disable the user's own. CodeBuddy applies
-	// it natively, and a managed entry already wins a same-name collision
-	// (verified), so the daemon does not pre-merge — see the codebuddy note
-	// in loadRuntimeMcpServerConfigs.
+	// 这个并集也正是 mergeRuntimeAndAgentMcpConfig 承诺的效果：新增一个托管服务器不
+	// 应禁用用户自己的。CodeBuddy 原生就会做并集，且同名冲突时托管条目已经会赢
+	// （已验证），所以 daemon 不再预先合并——见 loadRuntimeMcpServerConfigs 里的
+	// codebuddy 说明。
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
@@ -104,6 +120,16 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 	return args
 }
 
+// Execute 是 Backend 接口的入口：拿一条用户 prompt，起一个 codebuddy CLI 进程，
+// 完成一轮 stream-json 会话并跑完整段对话。
+//
+// 流程：确认可执行文件存在 → buildCodebuddyArgs 拼参数 → 有托管 MCP 配置就先写成临时
+// 文件用 --mcp-config 传入（temp 文件所有权随后转移给读取协程）→ 起进程 → 独立
+// goroutine 写 prompt 到 stdin（写失败立即关 stdin）→ 主循环逐行解析 stdout 事件并
+// 翻译成 Message / 汇总用量 → 进程退出后由 finalizeStreamResult 综合（是否超时/取消/
+// 写 prompt 失败/扫描出错/CLI 有无回 result）得出最终状态 → 再把 stderr 尾部、协议观测
+// 日志、续跑被拒判定等收尾，最后把 Result 放进 resCh。结果与流式消息分别经两个
+// channel 返回。
 func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
@@ -118,15 +144,12 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 
 	args := buildCodebuddyArgs(opts, b.cfg.Logger)
 
-	// A managed agent config is written to a temp file and added with
-	// --mcp-config, which ADDS to whatever CodeBuddy loads from its own user,
-	// project and local scopes — buildCodebuddyArgs never passes
-	// --strict-mcp-config, so those stay on. A managed entry wins a same-name
-	// collision natively.
+	// 托管 agent 配置会写到临时文件、用 --mcp-config 传入——它是在 CodeBuddy 从自身
+	// 用户级、项目级和本地级 scope 加载的内容之上「追加」；buildCodebuddyArgs 从不过
+	// --strict-mcp-config，所以那些 scope 一直保留。同名的托管条目原生就能赢过冲突。
 	//
-	// Three-state, as everywhere else: a JSON `null` means "inherit the runtime
-	// configuration" and skips the flag entirely, while an explicitly empty
-	// object is a managed set that happens to contain no servers.
+	// 与其他地方一样是三态：JSON 的 `null` 表示「继承运行时配置」、干脆不传该 flag；
+	// 而一个显式的空对象是「一份恰好不含服务器的托管集合」。
 	var mcpConfigPath string
 	var mcpFileCleanup func()
 	if hasManagedMcpConfig(opts.McpConfig) {
@@ -139,7 +162,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		mcpFileCleanup = func() { cleanupMcpConfigTemp(mcpConfigPath) }
 		args = append(args, "--mcp-config", mcpConfigPath)
 	}
-	// Clean up the temp file if we return before the goroutine takes ownership.
+	// 若还没到 goroutine 接手就提前 return（例如后续管道/启动失败），先清掉临时文件。
 	defer func() {
 		if mcpFileCleanup != nil {
 			mcpFileCleanup()
@@ -179,17 +202,15 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 
 	b.cfg.Logger.Info("codebuddy started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
 
-	// cmd.Start() succeeded — transfer temp file ownership to the goroutine.
+	// cmd.Start() 已成功——临时文件所有权转给下面的 goroutine。
 	mcpFileCleanup = nil
 
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
 
-	// Write the prompt in a dedicated goroutine to prevent deadlock.
-	// CodeBuddy (like Claude Code) emits a startup banner to stdout before
-	// reading stdin; a synchronous write would block once the pipe buffer
-	// fills. Keep stdin open after writing so control_request events can
-	// be answered mid-run.
+	// 把 prompt 放进独立 goroutine 写，防止死锁：CodeBuddy（同 Claude Code）会先把
+	// 启动横幅打到 stdout 再去读 stdin；若同步写，一旦管道缓冲填满就会卡死。写完 prompt
+	// 后 stdin 保持打开，这样运行中来的 control_request 事件还能被应答。
 	writeDone := make(chan error, 1)
 	go func() {
 		err := writeCodebuddyInput(stdin, prompt)
@@ -220,7 +241,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		toolUseCount := 0
 		unreadableAssistantCount := 0
 
-		// Close stdout when the context is cancelled so scanner.Scan() unblocks.
+		// 上下文取消时关掉 stdout，让 scanner.Scan() 能解除阻塞返回。
 		go func() {
 			<-runCtx.Done()
 			closeStdin()
@@ -281,20 +302,19 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		}
 		scanErr := scanner.Err()
 		if scanErr != nil {
-			// Stop a malformed/oversized writer from blocking cmd.Wait after the
-			// scanner has stopped consuming stdout.
+			// 扫描器已停止消费 stdout；主动关掉它，防止一个畸形/超大的写端在
+			// cmd.Wait 时把进程堵住。
 			_ = stdout.Close()
 		}
 
 		closeStdin()
 
-		// Wait for process exit.
+		// 等待进程退出。
 		exitErr := cmd.Wait()
 		releaseProcessGroup(cmd)
 		duration := time.Since(startTime)
-		// writeDone is buffered (cap 1) and the writer always sends — by the
-		// time cmd has exited, the prompt write has either succeeded, hit a
-		// broken pipe, or been unblocked by the kill that ended cmd.
+		// writeDone 是有缓冲的（容量 1），且写端总会发送——到 cmd 退出时，prompt 写入
+		// 要么已成功、要么遇到 broken pipe、要么被结束 cmd 的 kill 解除阻塞。
 		writeErr := <-writeDone
 
 		finalStatus, finalOutput, finalError := finalizeStreamResult(
@@ -360,18 +380,24 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
+// handleAssistant 处理一条 assistant 事件：解析出内容块（文本 / 思考 / 工具调用），
+// 把每一块翻译成对应 Message 推送，按模型累加 token 用量，并返回本回合的归纳
+// （assistantTurn：文本、工具调用数、是否完全理解）。
+//
+// 理解不了正文时（JSON 解析失败或出现未知块类型），返回的 turn.understood 为 false，
+// 调用方就不会让旧回合的文本来顶替本回合。
 func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Message, usage map[string]TokenUsage) assistantTurn {
 	var content codebuddyMessageContent
 	if err := json.Unmarshal(msg.Message, &content); err != nil {
-		// Unreadable body: understood stays false so the caller drops any
-		// fallback rather than let an older turn stand in for this one.
+		// 正文读不懂：understood 保持 false，调用方会丢弃任何 fallback，而不是让更早的
+		// 回合来冒充这个回合。
 		return assistantTurn{}
 	}
 	turn := assistantTurn{understood: true}
 	var assistantText strings.Builder
 	toolUseCount := 0
 
-	// Accumulate token usage per model.
+	// 按模型累计 token 用量。
 	if content.Usage != nil && content.Model != "" {
 		u := usage[content.Model]
 		u.InputTokens += content.Usage.InputTokens
@@ -405,10 +431,8 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 				Input:  input,
 			})
 		default:
-			// A block type we do not render may be carrying the model's answer
-			// in a shape we cannot read, so we must not claim this turn was
-			// silent. Recognising a new no-text block is a deliberate one-line
-			// addition here, not an accident of falling through.
+			// 一个我们不渲染的块类型，可能正以我们读不懂的形状携带模型的回答，所以绝不
+			// 能把本回合当成「沉默」。识别新的无文本块是这里刻意加的一行，不是漏网。
 			turn.understood = false
 		}
 	}
@@ -417,6 +441,8 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 	return turn
 }
 
+// handleUser 处理一条 user 事件：把其中的 tool_result 块转成 MessageToolResult
+// 推送出去（按 tool_use_id 与之前的工具调用对上号）。
 func (b *codebuddyBackend) handleUser(msg codebuddySDKMessage, ch chan<- Message) {
 	var content codebuddyMessageContent
 	if err := json.Unmarshal(msg.Message, &content); err != nil {
@@ -438,8 +464,10 @@ func (b *codebuddyBackend) handleUser(msg codebuddySDKMessage, ch chan<- Message
 	}
 }
 
+// handleControlRequest 应答 control_request 事件：在自主/daemon 模式下自动批准所有
+// 工具调用——把批准响应写成 JSON 行写回 stdin。
 func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin interface{ Write([]byte) (int, error) }) {
-	// Auto-approve all tool uses in autonomous/daemon mode.
+	// 自主/daemon 模式下自动批准所有工具使用。
 	var req codebuddyControlRequestPayload
 	if err := json.Unmarshal(msg.Request, &req); err != nil {
 		return
@@ -459,10 +487,9 @@ func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin i
 			"subtype":    "success",
 			"request_id": msg.RequestID,
 			"response": map[string]any{
-				// CodeBuddy's SdkPermissionClient reads `allowed` and treats a
-				// missing key as a denial; `behavior` is Claude Code's spelling,
-				// which the fork still honours on its other permission paths.
-				// Send both so an approval is never read as a silent reject.
+				// CodeBuddy 的 SdkPermissionClient 读的是 `allowed`，键缺失即视为拒绝；
+				// `behavior` 是 Claude Code 的拼写，这个分支在其它权限路径上仍认它。
+				// 两个都发，避免一次「批准」被误读成「静默拒绝」。
 				"allowed":      true,
 				"behavior":     "allow",
 				"updatedInput": inputMap,
@@ -481,6 +508,8 @@ func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin i
 	}
 }
 
+// writeCodebuddyInput 把用户 prompt 包装成一条 stream-json 的 user 事件（含一条 text
+// 内容块）写入 stdin。CodeBuddy CLI 以换行分隔的 JSON 读入，故末尾补一个 '\n'。
 func writeCodebuddyInput(w io.Writer, prompt string) error {
 	payload := map[string]any{
 		"type": "user",
@@ -505,8 +534,11 @@ func writeCodebuddyInput(w io.Writer, prompt string) error {
 	return nil
 }
 
-// ── Codebuddy SDK JSON types ──
+// ── CodeBuddy SDK JSON 类型 ──
 
+// codebuddySDKMessage 是 stdout 上每一行 stream-json 事件的统一信封；不同 type 使用
+// 不同的字段子集（assistant/user 用 Message，result 用 result 字段，log 用 Log，
+// control_request 用 RequestID + Request）。
 type codebuddySDKMessage struct {
 	Type      string          `json:"type"`
 	Message   json.RawMessage `json:"message,omitempty"`
@@ -514,7 +546,7 @@ type codebuddySDKMessage struct {
 	SessionID string          `json:"session_id,omitempty"`
 	Model     string          `json:"model,omitempty"`
 
-	// result fields
+	// result 事件的字段
 	ResultText string                               `json:"result,omitempty"`
 	IsError    bool                                 `json:"is_error,omitempty"`
 	DurationMs float64                              `json:"duration_ms,omitempty"`
@@ -522,19 +554,22 @@ type codebuddySDKMessage struct {
 	Usage      *codebuddyUsage                      `json:"usage,omitempty"`
 	ModelUsage map[string]codebuddyResultModelUsage `json:"modelUsage,omitempty"`
 
-	// log fields
+	// log 事件的字段
 	Log *codebuddyLogEntry `json:"log,omitempty"`
 
-	// control request fields
+	// control_request 事件的字段
 	RequestID string          `json:"request_id,omitempty"`
 	Request   json.RawMessage `json:"request,omitempty"`
 }
 
+// codebuddyLogEntry 是 log 事件里的日志条目。
 type codebuddyLogEntry struct {
 	Level   string `json:"level"`
 	Message string `json:"message"`
 }
 
+// codebuddyMessageContent 是 assistant/user 事件 message 字段的内容：角色 + 内容块 +
+// 可选的用量与模型名。
 type codebuddyMessageContent struct {
 	Role    string                  `json:"role"`
 	Model   string                  `json:"model"`
@@ -542,6 +577,7 @@ type codebuddyMessageContent struct {
 	Usage   *codebuddyUsage         `json:"usage,omitempty"`
 }
 
+// codebuddyUsage 是内容块内的 token 用量明细（snake_case 拼写）。
 type codebuddyUsage struct {
 	InputTokens              int64 `json:"input_tokens"`
 	OutputTokens             int64 `json:"output_tokens"`
@@ -549,6 +585,7 @@ type codebuddyUsage struct {
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 }
 
+// codebuddyResultModelUsage 是 result 事件上按模型分的用量明细（camelCase 拼写）。
 type codebuddyResultModelUsage struct {
 	InputTokens              int64 `json:"inputTokens"`
 	OutputTokens             int64 `json:"outputTokens"`
@@ -556,6 +593,7 @@ type codebuddyResultModelUsage struct {
 	CacheCreationInputTokens int64 `json:"cacheCreationInputTokens"`
 }
 
+// codebuddyContentBlock 是消息内容里的一个块：文本 / 思考文本 / 工具调用 / 工具结果。
 type codebuddyContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
@@ -566,12 +604,16 @@ type codebuddyContentBlock struct {
 	Content   json.RawMessage `json:"content,omitempty"`
 }
 
+// codebuddyControlRequestPayload 是 control_request 事件里的权限请求载荷。
 type codebuddyControlRequestPayload struct {
 	Subtype  string          `json:"subtype"`
 	ToolName string          `json:"tool_name,omitempty"`
 	Input    json.RawMessage `json:"input,omitempty"`
 }
 
+// codebuddyResultUsage 从收尾的 result 事件里提取 token 用量，转成统一 TokenUsage 图。
+// 优先用按模型拆分的 ModelUsage；其次退回用整场 Usage + 模型名（fallbackModel 兜底）。
+// 带数字的模型条目才算数（codebuddyUsageHasTokens），全零或缺失就返回 nil。
 func codebuddyResultUsage(msg codebuddySDKMessage, fallbackModel string) map[string]TokenUsage {
 	if len(msg.ModelUsage) > 0 {
 		usage := make(map[string]TokenUsage, len(msg.ModelUsage))
@@ -613,6 +655,8 @@ func codebuddyResultUsage(msg codebuddySDKMessage, fallbackModel string) map[str
 	}
 }
 
+// codebuddyUsageHasTokens 报告这四项 token 计数里是否至少有一个大于 0——避免把
+// 「字段齐全但全零」的用量当有效数据。
 func codebuddyUsageHasTokens(input, output, cacheRead, cacheWrite int64) bool {
 	return input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
 }

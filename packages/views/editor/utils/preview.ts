@@ -1,17 +1,21 @@
 /**
- * Preview dispatch table for the AttachmentPreviewModal.
+ * AttachmentPreviewModal 的预览类型分发表。
  *
- * Add new previewable kinds here. To add a type:
- *   1. Add a new branch returning a new PreviewKind literal.
- *   2. Add the corresponding renderer in attachment-preview-modal.tsx's dispatch.
- *   3. If the renderer needs the file body as text, also extend isTextPreviewable
- *      in server/internal/handler/file.go so the proxy endpoint accepts it.
- *   4. If the renderer fetches a binary, decide whether to use download_url
- *      (CloudFront, no auth on the client side) or a new authenticated proxy.
+ * 新增可预览类型在这里加。要增加一个类型：
+ *   1. 新增一个分支，返回新的 PreviewKind 字面量。
+ *   2. 在 attachment-preview-modal.tsx 的分发逻辑里加对应渲染器。
+ *   3. 渲染器需要以文本形式读取文件正文的话，还要同步扩展
+ *      server/internal/handler/file.go 里的 isTextPreviewable，
+ *      让代理接口放行它。
+ *   4. 渲染器拉取二进制的话，想清楚用 download_url
+ *      （CloudFront，客户端无鉴权）还是一个新的带鉴权代理。
  */
 
 import { isImageAttachment } from "@multica/core/attachments/image-sequence";
 
+/**
+ * 附件预览类型：决定弹窗用哪个渲染器展示附件。
+ */
 export type PreviewKind =
   | "image"
   | "pdf"
@@ -21,15 +25,18 @@ export type PreviewKind =
   | "html"
   | "text";
 
+/**
+ * 扩展名 → hljs 语言标记 的对照表。值给到 lowlight 的 common 语言包。
+ */
 const EXT_LANGUAGE_MAP: Record<string, string> = {
-  // Markdown
+  // Markdown 文档
   md: "markdown",
   markdown: "markdown",
-  // Plain text — left undefined intentionally; lowlight renders the body
-  // unhighlighted when no language is supplied.
+  // 纯文本——txt 特意不映射到高亮语言，map 里没有对应语言时
+  // lowlight 会原样输出正文（不染色）。
   txt: "plaintext",
   log: "plaintext",
-  // Web
+  // Web 相关
   html: "xml",
   htm: "xml",
   xml: "xml",
@@ -38,7 +45,7 @@ const EXT_LANGUAGE_MAP: Record<string, string> = {
   scss: "scss",
   sass: "scss",
   less: "less",
-  // Config / data
+  // 配置 / 数据
   json: "json",
   yml: "yaml",
   yaml: "yaml",
@@ -48,11 +55,11 @@ const EXT_LANGUAGE_MAP: Record<string, string> = {
   dockerfile: "dockerfile",
   makefile: "makefile",
   gitignore: "plaintext",
-  // Shell
+  // Shell 脚本
   sh: "bash",
   bash: "bash",
   zsh: "bash",
-  // Languages
+  // 编程语言
   py: "python",
   rb: "ruby",
   go: "go",
@@ -80,7 +87,7 @@ const EXT_LANGUAGE_MAP: Record<string, string> = {
   tsv: "plaintext",
 };
 
-// Build files that are commonly extension-less.
+// 一些常见「没有扩展名」的构建文件，按文件名兜底识别。
 const BASENAME_LANGUAGE_MAP: Record<string, string> = {
   dockerfile: "dockerfile",
   makefile: "makefile",
@@ -88,13 +95,12 @@ const BASENAME_LANGUAGE_MAP: Record<string, string> = {
   ".gitignore": "plaintext",
 };
 
-// IMPORTANT — KEEP IN SYNC with isTextPreviewable() in
-// server/internal/handler/file.go. If an extension lands here but the proxy
-// rejects it, the user sees a 415 fallback in the modal. If the proxy accepts
-// but this set doesn't, the Eye button doesn't appear at all.
+// 重要——必须与 server/internal/handler/file.go 的 isTextPreviewable() 保持
+// 同步。若扩展名在这里但代理接口拒绝了，用户会在弹窗里看到 415 兜底；
+// 反过来代理放行而这里没有，眼睛按钮干脆就不出现。
 //
-// TODO(follow-up): extract to a JSON single-source-of-truth + generator
-// (mirror reserved-slugs pattern in server/internal/handler/reserved_slugs.json).
+// TODO(后续): 抽成 JSON 单一事实来源 + 生成器（参照 server/internal/
+// handler/reserved_slugs.json 的保留字模式）。
 const TEXT_EXTENSIONS = new Set<string>([
   "md", "markdown", "txt", "log", "csv", "tsv",
   "html", "htm", "json", "xml",
@@ -128,17 +134,16 @@ const TEXT_BASENAMES = new Set<string>([
   ".gitignore",
 ]);
 
-// Extension fallbacks for media kinds — used when contentType is empty
-// (URL-only preview source, no server-side metadata available).
+// 媒体类型没有 contentType 时的扩展名兜底（预览源只有 URL、拿不到
+// 服务端元数据的情形）。
 const VIDEO_EXTS = new Set<string>([
   "mp4", "m4v", "mov", "webm", "mkv", "avi", "ogv",
 ]);
 const AUDIO_EXTS = new Set<string>([
   "mp3", "wav", "m4a", "ogg", "oga", "flac", "aac", "opus",
 ]);
-// Image detection lives in @multica/core/attachments/image-sequence — the
-// gallery sequence builder needs the same answer and is shared with mobile,
-// which cannot import from packages/views.
+// 图片识别放在 @multica/core/attachments/image-sequence——画廊序列构造器
+// 需要同一个答案，且它要与移动端共享，而移动端无法 import packages/views。
 
 function extOf(filename: string): string {
   const base = filename.toLowerCase().split(/[\\/]/).pop() ?? "";
@@ -166,9 +171,13 @@ function isTextLike(contentType: string, filename: string): boolean {
   return TEXT_BASENAMES.has(baseOf(filename));
 }
 
-// Dispatch on PreviewKind. New cases go in attachment-preview-modal.tsx;
-// remember that the modal frame (header, close, Download CTA, ESC handling)
-// is shared — sub-renderers only own the content area.
+// 依据 PreviewKind 分发。新类型去 attachment-preview-modal.tsx 加；
+// 记住弹窗外框（标题栏、关闭、下载 CTA、ESC 处理）是共用的——子渲染器
+// 只负责内容区。
+/**
+ * 根据 contentType + filename 判定附件属于哪种可预览类型。
+ * @returns PreviewKind；无法预览时返回 null。
+ */
 export function getPreviewKind(
   contentType: string,
   filename: string,
@@ -181,13 +190,12 @@ export function getPreviewKind(
   if (ct.startsWith("video/") || (ext && VIDEO_EXTS.has(ext))) return "video";
   if (ct.startsWith("audio/") || (ext && AUDIO_EXTS.has(ext))) return "audio";
 
-  // Image — must come BEFORE the html/text branches because svg is
-  // text-like (XML), and image/* content-types include text/svg variants
-  // that isTextLike would otherwise catch.
+  // 图片判断必须放在 html/text 分支之前：svg 是文本类（XML），且 image/*
+  // 的 content-type 里有 text/svg 变体，会被 isTextLike 抢先判走。
   if (isImageAttachment(contentType, filename)) return "image";
 
-  // Markdown — covers both the well-typed case and the common
-  // server-side sniffer fallback (text/plain for .md).
+  // Markdown——既覆盖类型标注正确的情形，也覆盖服务端嗅探器常见的
+  // 兜底（.md 被报成 text/plain）。
   if (ct === "text/markdown" || ext === "md" || ext === "markdown") {
     return "markdown";
   }
@@ -199,15 +207,21 @@ export function getPreviewKind(
   return null;
 }
 
+/**
+ * 附件是否可预览（即能否得到一个非 null 的预览类型）。
+ */
 export function isPreviewable(contentType: string, filename: string): boolean {
   return getPreviewKind(contentType, filename) !== null;
 }
 
-// Pick the hljs language token for a file. Returns undefined when the file
-// doesn't have a recognizable extension — callers can fall back to a plain
-// `<pre>` render. Kept tiny and ext-driven on purpose: lowlight's `common`
-// pack covers the ~50 languages people upload in practice, anything else
-// rendered as plain text is preferable to importing the full pack.
+// 取文件的 hljs 语言标记。文件没有可识别扩展名时返回 undefined——调用方
+// 退回纯 `<pre>` 渲染即可。刻意保持又小又只认扩展名：lowlight 的 `common`
+// 包已覆盖人们实际会上传的约 50 种语言，其余类型当纯文本渲染也比导入整个
+// 语言包强。
+/**
+ * 把文件名映射成代码高亮语言标记。
+ * @returns hljs/lowlight 语言名；无法识别时返回 undefined。
+ */
 export function extensionToLanguage(filename: string): string | undefined {
   const ext = extOf(filename);
   if (ext && EXT_LANGUAGE_MAP[ext]) return EXT_LANGUAGE_MAP[ext];

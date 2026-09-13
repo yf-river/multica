@@ -1,3 +1,8 @@
+// 转录里单个"步骤输入/结果载荷"的渲染面：根据载荷类型（单文件 diff、整文件写入、
+// 多文件 patch、纯文本工具输出）选择对应的高亮与展示方式，并为超长内容提供
+// "淡出 + 显示全部"的折叠。从转录弹窗中拆出来，让弹窗文件只关心运行本身，这里只
+// 关心如何渲染一段载荷。
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -9,20 +14,14 @@ import { useT } from "../../i18n";
 import "../../editor/styles/code.css";
 import "./task-transcript.css";
 
-// Bodies for one step's input and result. Extracted from the transcript dialog
-// so the dialog file is about the run, and these are about rendering a payload.
-// ─── Tool detail surface ────────────────────────────────────────────────────
-
-/**
- * Long content fades out behind a "show all" affordance instead of trapping a
- * nested scrollbar inside the virtualized list.
- */
+// 长内容淡出在"显示全部"按钮后面，而不是在虚拟化列表里塞一个嵌套滚动条。
 type HighlightedSides = Record<"add" | "remove" | "context", string[] | null> | null;
 
 /**
- * Diff rows. Highlighting is looked up per side, since each side was
- * highlighted as its own block; a side that failed to highlight falls back to
- * plain text for that side only.
+ * 把 diff 行渲染成带增删列的 JSX。高亮按侧查表——每一侧都作为独立整块高亮过，
+ * 某一侧高亮失败则只把那侧回退为纯文本，不影响其他侧。
+ * @param lines diff 行数据。
+ * @param highlighted 每侧已按行分好的高亮 HTML（null 表示该侧无高亮）。
  */
 export function renderDiffRows(lines: TraceDiffLine[], highlighted: HighlightedSides) {
   const cursor: Record<"add" | "remove" | "context", number> = { add: 0, remove: 0, context: 0 };
@@ -30,7 +29,7 @@ export function renderDiffRows(lines: TraceDiffLine[], highlighted: HighlightedS
   return lines.map((line, index) => {
     if (line.kind === "gap") {
       return (
-        // Transcript events are immutable once persisted, so index is stable.
+        // 转录事件一经持久化就不可变，所以 index 做 key 是稳定的。
         <div key={index} className="select-none text-faint-foreground" aria-hidden>
           {"  ⋯"}
         </div>
@@ -48,8 +47,8 @@ export function renderDiffRows(lines: TraceDiffLine[], highlighted: HighlightedS
           "-mx-1 px-1",
           kind === "add" && "bg-success/10",
           kind === "remove" && "bg-destructive/10",
-          // Only tint the gutter for changed rows; the code itself keeps its
-          // syntax colours so a diff reads like the file it came from.
+          // 只有变更行给增删列染色；代码本身保留语法色，让 diff 读起来就像它来自
+          // 的那个文件。没有高亮时则整行用增/删语义色兜底。
           !html && kind === "add" && "text-success",
           !html && kind === "remove" && "text-destructive",
           !html && kind === "context" && "text-muted-foreground",
@@ -68,8 +67,8 @@ export function renderDiffRows(lines: TraceDiffLine[], highlighted: HighlightedS
         {html === undefined ? (
           redactSecrets(line.text)
         ) : (
-          // lowlight output only: text is escaped by the hast serializer and
-          // the sole elements are its own `hljs-*` spans.
+          // 只有 lowlight 的输出会到这里：文本已被 hast 序列化器转义，元素全是它
+          // 自己的 `hljs-*` span。
           <span className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
         )}
       </div>
@@ -78,9 +77,11 @@ export function renderDiffRows(lines: TraceDiffLine[], highlighted: HighlightedS
 }
 
 /**
- * A whole-file write has no before side, so it reads as plain content with a
- * line count rather than as an all-additions diff — the `+` gutter would carry
- * no information here.
+ * 整文件写入的展示面。没有"改动前"那一侧，所以按"纯内容 + 行数"来读，而不是
+ * 全量新增的 diff——那种场景下每条 `+` 增删列都不携带任何信息。
+ * @param text 文件全文。
+ * @param lineCount 文件总行数。
+ * @param path 文件路径（决定高亮语言）。
  */
 export function FileWriteSurface({
   text,
@@ -100,9 +101,11 @@ export function FileWriteSurface({
 }
 
 /**
- * A multi-file patch: one section per file, each reusing the single-file
- * surfaces. Codex's `patch_apply` routinely touches several files in one call,
- * so collapsing them into a single body would lose which change belongs where.
+ * 多文件补丁的展示面：每个文件一个分区，各自复用单文件展示组件。Codex 的
+ * `patch_apply` 一次调用常常碰多个文件，把它们揉成一个整体会丢掉"哪个改动属于
+ * 哪个文件"。
+ * @param files 补丁涉及的文件列表。
+ * @param truncated 是否整体被截断。
  */
 export function PatchDetailSurface({
   files,
@@ -115,7 +118,7 @@ export function PatchDetailSurface({
   return (
     <div className="divide-y divide-border/40">
       {files.map((file, index) => (
-        // Transcript events are immutable once persisted, so index is stable.
+        // 转录事件一经持久化就不可变，所以 path:index 组合 key 是稳定的。
         <div key={`${file.path}:${index}`}>
           <div className="flex items-center gap-2 px-3 pt-2 font-mono text-micro">
             {file.changeKind && (
@@ -167,9 +170,10 @@ export function PatchDetailSurface({
 }
 
 /**
- * A file change reads as a diff rather than two escaped string literals. Same
- * fade/"show all" shell as the text surface so both bodies behave alike inside
- * the virtualized list.
+ * 单文件变更展示面。按 diff（而非两个被转义的字符串字面量）来读；外壳与文本面
+ * 共用同一套淡出/"显示全部"，让两类内容在虚拟化列表里的行为一致。
+ * @param lines diff 行数据。
+ * @param path 文件路径（决定高亮语言）。
  */
 export function DiffDetailSurface({ lines, path }: { lines: TraceDiffLine[]; path: string }) {
   const { t } = useT("agents");
@@ -178,9 +182,8 @@ export function DiffDetailSurface({ lines, path }: { lines: TraceDiffLine[]; pat
   const added = lines.filter((l) => l.kind === "add").length;
   const removed = lines.filter((l) => l.kind === "remove").length;
 
-  // Each side is highlighted as one block so multi-line strings and comments
-  // keep their grammar, then split back per line to sit in the diff gutter.
-  // Runs only when the row is expanded, which is where this component mounts.
+  // 每一侧按整块高亮，多行字符串/注释才能保持语法一致，再按行拆开放进 diff 增删
+  // 列。useMemo 只在组件真正挂载（即 diff 被展开）时才跑，不浪费。
   const highlighted = useMemo(() => {
     const language = languageForPath(path);
     if (!language) return null;
@@ -217,8 +220,8 @@ export function DiffDetailSurface({ lines, path }: { lines: TraceDiffLine[]; pat
           <button
             type="button"
             onClick={() => setShowAll(true)}
-            // Opaque: the gradient alone does not clear the clipped line, so a
-            // transparent label lands on top of it and both become unreadable.
+            // 按钮底色必须不透明：单靠渐变盖不住被裁剪的行，透明的标签会叠在残行上
+            // 两边都看不清。
             className="mb-1.5 rounded border bg-background px-2 py-0.5 text-micro text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
           >
             {t(($) => $.transcript.show_all)}
@@ -229,11 +232,18 @@ export function DiffDetailSurface({ lines, path }: { lines: TraceDiffLine[]; pat
   );
 }
 
+/**
+ * 通用工具载荷展示面：一段文本（命令输出、工具结果等）的代码块渲染，支持语法
+ * 高亮与长内容折叠。脱敏由调用方决定是否执行（纯文本 diff 行/整文件写入在各自
+ * 入口脱敏），本组件只负责展示。
+ * @param text 展示文本。
+ * @param language 语法名，只有文件内容带语言；命令输出和 JSON 保持纯文本。
+ */
 export function ToolDetailSurface({ text, language }: { text: string; language?: string }) {
   const { t } = useT("agents");
   const [showAll, setShowAll] = useState(false);
   const isLong = text.length > 1600 || text.split("\n").length > 14;
-  // Only file bodies carry a language; command output and JSON stay plain.
+  // 只有文件内容带语言；命令输出和 JSON 保持纯文本。
   const html = useMemo(() => (language ? highlightBlock(text, language) : null), [text, language]);
 
   return (
@@ -247,8 +257,8 @@ export function ToolDetailSurface({ text, language }: { text: string; language?:
         {html === null ? (
           text
         ) : (
-          // lowlight output only: the hast serializer escapes text and the sole
-          // elements are its own `hljs-*` spans.
+          // 只有 lowlight 的输出会到这里：hast 序列化器已转义文本，元素全是它
+          // 自己的 `hljs-*` span。
           <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
         )}
       </pre>
@@ -257,8 +267,8 @@ export function ToolDetailSurface({ text, language }: { text: string; language?:
           <button
             type="button"
             onClick={() => setShowAll(true)}
-            // Opaque: the gradient alone does not clear the clipped line, so a
-            // transparent label lands on top of it and both become unreadable.
+            // 按钮底色必须不透明：单靠渐变盖不住被裁剪的行，透明的标签会叠在残行上
+            // 两边都看不清。
             className="mb-1.5 rounded border bg-background px-2 py-0.5 text-micro text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
           >
             {t(($) => $.transcript.show_all)}

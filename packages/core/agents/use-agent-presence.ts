@@ -1,5 +1,8 @@
 "use client";
 
+// Agent 在线/负载"呈现状态"的 React hooks：提供工作区级批量映射（推荐给列表/多行
+// 场景）与单 Agent 详情（推荐给单 Agent 场景）。底层依赖 30s 心跳推进 unstable→
+// offline 的衰变。
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { agentListOptions } from "../workspace/queries";
@@ -11,14 +14,14 @@ import {
 } from "./derive-presence";
 import type { AgentPresenceDetail } from "./types";
 
-// 30s tick, mirroring useRuntimeHealth. Presence depends on wall-clock time
-// for one reason: `unstable` (= RuntimeHealth.recently_lost) decays into
-// `offline` at the 5-minute mark with no new server data. Without a tick the
-// transition would only render on the next unrelated query update.
-// The earlier 2-minute "clear failed badge" tick was removed when failed
-// became sticky; this one re-introduces ticking with a different motivation.
+// 30s 心跳，镜像 useRuntimeHealth。呈现状态依赖墙钟时间只有一个原因：`unstable`
+//（= RuntimeHealth.recently_lost）在没有新服务器数据的情况下会在第 5 分钟衰变成
+// `offline`。没有心跳，这个过渡只会在下一次无关查询更新时渲染出来。
+// 更早那个 2 分钟的"清除失败徽标"心跳在失败变为 sticky 后被移除；这次重新引入
+// 心跳的动机不同。
 const PRESENCE_TICK_MS = 30_000;
 
+/** 每 30s +1 的计数器，作为 useMemo 的依赖以驱动重算。 */
 function usePresenceTick(): number {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -29,22 +32,21 @@ function usePresenceTick(): number {
 }
 
 /**
- * Workspace-wide presence map keyed by `agent.id`. **The single entry point
- * for any list / card / runtime sub-view that needs presence for more than
- * one agent.**
+ * 以 `agent.id` 为 key 的工作区级呈现映射。**任何需要为多个 Agent 展示呈现状态
+ * 的列表 / 卡片 / runtime 子视图的唯一入口。**
  *
- * Why this exists (vs calling `useAgentPresence` per row): the per-agent
- * hook subscribes to 3 queries. With 30+ rows that's a forest of redundant
- * memos. This batch hook pays the cost once for the whole page; rows just
- * `Map.get(id)` — O(1) reads, no extra subscriptions.
+ * 为什么存在（而不是每行调 `useAgentPresence`）：单 Agent hook 要订阅 3 个查询。
+ * 30+ 行时就是一整片冗余 memo。这个批量 hook 全页只付一次代价；每行只是
+ * `Map.get(id)`——O(1) 读取，没有额外订阅。
  *
- * Returned value:
- *   - `byAgent`: ready-to-read Map. Empty if data is still loading.
- *   - `loading`: true until all three input queries have resolved at least
- *      once. Callers can render skeletons during loading.
+ * 返回值：
+ *   - `byAgent`：可直接读取的 Map。数据仍在加载时为空。
+ *   - `loading`：三个输入查询都至少解析过一次之前为 true。调用方可在加载期渲染骨架。
  *
- * Single-agent consumers should keep using `useAgentPresenceDetail`; this
- * hook is for surfaces that already have a list of agents in hand.
+ * 单 Agent 消费方应继续用 `useAgentPresenceDetail`；本 hook 面向"已手握 Agent 列表"
+ * 的界面。
+ * @param wsId 工作区 id（为空时不查询）。
+ * @returns 按 Agent id 索引的呈现详情映射 + 加载标记。
  */
 export function useWorkspacePresenceMap(wsId: string | undefined): {
   byAgent: Map<string, AgentPresenceDetail>;
@@ -65,8 +67,8 @@ export function useWorkspacePresenceMap(wsId: string | undefined): {
   const tick = usePresenceTick();
 
   const byAgent = useMemo(() => {
-    // Treat errored queries as empty so the map still builds — a 404 on
-    // the snapshot endpoint shouldn't leave every row's presence blank.
+    // 把出错的查询当作空数据处理，让映射照样构建——快照接口 404 不该让每一行的
+    // 呈现状态都空着。
     const safeAgents = agents ?? (agentsErr ? [] : null);
     const safeRuntimes = runtimes ?? (runtimesErr ? [] : null);
     const safeSnapshot = snapshot ?? (snapshotErr ? [] : null);
@@ -84,9 +86,8 @@ export function useWorkspacePresenceMap(wsId: string | undefined): {
 
   return {
     byAgent,
-    // "loading" only while the queries are genuinely pending — once they
-    // settle (success OR error), we render with whatever we have. This
-    // matches the detail-version behaviour: don't spin forever on errors.
+    // 只在查询真正 pending 时算 "loading"——一旦 settle（成功或出错），就用手里
+    // 有的数据渲染。这与单 Agent 版本行为一致：出错也别永远转圈。
     loading:
       (agentsPending && !agentsErr) ||
       (runtimesPending && !runtimesErr) ||
@@ -95,19 +96,15 @@ export function useWorkspacePresenceMap(wsId: string | undefined): {
 }
 
 /**
- * Single-agent presence detail: availability + last task state + counts +
- * (when failed) failure reason and timestamp. Returns "loading" only while
- * the underlying queries haven't resolved yet — a missing runtime is a
- * real state (offline) and resolves into a non-loading detail.
+ * 单 Agent 呈现详情：可用性 + 最近任务状态 + 计数 +（失败时）失败原因与时间。
+ * 只在底层查询还没解析时返回 "loading"——runtime 缺失是真实状态（offline），
+ * 会解析成非 loading 的详情。
  *
- * For surfaces that already have a list of agents in hand (Agents page,
- * Runtime detail), prefer `useWorkspacePresenceMap` to avoid forest of
- * redundant subscriptions.
+ * 已手握 Agent 列表的界面（Agents 页、Runtime 详情）请优先用 `useWorkspacePresenceMap`，
+ * 避免一整片冗余订阅。
  */
-// Synthesised fallback shown when we can't resolve a real agent (deleted,
-// archived, or referenced by stale data) but still need to render something
-// next to the avatar. Yields a gray dot + idle last-task — better than a
-// skeleton spinning forever.
+// 无法解析出真实 Agent（被删、已归档、或被过期数据引用）但还得在头像旁渲染点什么时
+// 的合成兜底。给一颗灰点 + idle 最近任务——好过永远转圈的骨架。
 const MISSING_AGENT_DETAIL: AgentPresenceDetail = {
   availability: "offline",
   workload: "idle",
@@ -116,6 +113,13 @@ const MISSING_AGENT_DETAIL: AgentPresenceDetail = {
   capacity: 0,
 };
 
+/**
+ * 订阅单个 Agent 的呈现详情。
+ * @param wsId 工作区 id。
+ * @param agentId 目标 Agent id（为空返回 "loading"）。
+ * @param enabled 是否允许发起底层查询（默认 true）。
+ * @returns 呈现详情；查询未解析时返回 "loading"；Agent 不存在时返回灰色兜底。
+ */
 export function useAgentPresenceDetail(
   wsId: string | undefined,
   agentId: string | undefined,
@@ -138,22 +142,18 @@ export function useAgentPresenceDetail(
   return useMemo<AgentPresenceDetail | "loading">(() => {
     if (!wsId || !agentId) return "loading";
 
-    // Treat query errors as "no data" rather than "still loading". A 404 /
-    // 5xx on the snapshot endpoint (e.g. backend hasn't deployed the new
-    // route yet) used to leave the UI spinning forever; now we degrade to
-    // an empty list and the dot still renders based on runtime health.
+    // 把查询错误当"无数据"而不是"仍在加载"。快照接口 404 / 5xx（例如后端还没
+    // 上线新路由）曾让 UI 永远转圈；现在退化成空列表，圆点仍基于 runtime 健康渲染。
     const safeAgents = agents ?? (agentsErr ? [] : null);
     const safeRuntimes = runtimes ?? (runtimesErr ? [] : null);
     const safeSnapshot = snapshot ?? (snapshotErr ? [] : null);
     if (!safeAgents || !safeRuntimes || !safeSnapshot) return "loading";
 
     const agent = safeAgents.find((a) => a.id === agentId);
-    // Agent referenced but not in the workspace's active list (most often:
-    // archived assignee on an old issue). Render a gray-offline fallback
-    // instead of looping in "loading".
+    // Agent 被引用但不在工作区活跃列表里（最常见：旧议题上的已归档负责人）。
+    // 渲染灰色 offline 兜底，而不是在 "loading" 里循环。
     if (!agent) return MISSING_AGENT_DETAIL;
-    // Missing runtime is a legitimate state (offline) — pass null and let
-    // derive handle it.
+    // runtime 缺失是合法状态（offline）——传 null 交给 derive 处理。
     const runtime = safeRuntimes.find((r) => r.id === agent.runtime_id) ?? null;
 
     const tasks = safeSnapshot.filter((t) => t.agent_id === agentId);

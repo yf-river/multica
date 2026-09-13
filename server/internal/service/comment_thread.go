@@ -1,3 +1,5 @@
+// comment_thread.go —— 评论线程辅助：在调用方事务内“回复即重新打开已解决线程”，
+// 返回的事件须在该事务提交后再发布。
 package service
 
 import (
@@ -12,9 +14,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// UnresolveThreadOnReply reopens a resolved thread in the caller's
-// transaction. The returned event is published only after that transaction
-// commits.
+// UnresolveThreadOnReply 在调用方事务内重新打开已解决的线程：若线程根已解决则清除 resolved_at 并
+// 构造 comment:unresolved 事件返回（供提交后发布）；根为空或本未解决时返回 (空事件,false,nil)。
 func UnresolveThreadOnReply(ctx context.Context, queries *db.Queries, root *db.Comment, workspaceID, actorType, actorID string) (events.Event, bool, error) {
 	if root == nil {
 		return events.Event{}, false, nil

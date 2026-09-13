@@ -1,4 +1,7 @@
 "use client"
+// 本文件是「复合输入框」（InputGroup）组件族：把输入框和它周围的前缀/后缀
+// 文字、图标、按钮、下拉选择、时间输入等合成一个整体带边框的控件，
+// 常用来做搜索框、带单位的输入、成组操作按钮等。
 
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
@@ -10,6 +13,10 @@ import { SelectTrigger } from "@multica/ui/components/ui/select"
 import { Textarea } from "@multica/ui/components/ui/textarea"
 import { TimeInput } from "@multica/ui/components/ui/time-input"
 
+/**
+ * InputGroup：复合输入框的容器。整组共享一个边框，组内控件不带自己的边。
+ * 校验错误时整组边框变危险色；聚焦时整组亮聚焦环。
+ */
 function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -24,6 +31,7 @@ function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** 附加件（addon）的位置变体：inline-* 左右两侧 / block-* 上下两行 */
 const inputGroupAddonVariants = cva(
   "flex h-auto cursor-text items-center justify-center gap-2 py-1.5 text-body font-medium text-muted-foreground select-none group-data-[disabled=true]/input-group:opacity-50 [&>kbd]:rounded-[calc(var(--radius)-5px)] [&>svg:not([class*='size-'])]:size-4",
   {
@@ -44,7 +52,10 @@ const inputGroupAddonVariants = cva(
     },
   }
 )
-
+/**
+ * InputGroupAddon：贴在输入框左/右/上/下的附加区（前缀图标、单位、提示等）。
+ * 点击附加区等价于点输入框：会自动把焦点还给组内的 input（点其中的按钮除外）。
+ */
 function InputGroupAddon({
   className,
   align = "inline-start",
@@ -60,9 +71,9 @@ function InputGroupAddon({
         if ((e.target as HTMLElement).closest("button")) {
           return
         }
-        // The addon acts as part of the input, so a click on it must not move
-        // focus: the blur would land before the click below could focus back,
-        // and the input's blur handlers (commit, close) would already have run.
+        // 附加件算输入框的一部分：点它不能让输入框失焦——否则 blur 先发生，
+        // 等下面的 click 再把焦点移回来时，输入框的 blur 处理器（提交、关闭等）
+        // 早就已经跑过了。
         e.preventDefault()
       }}
       onClick={(e) => {
@@ -76,6 +87,7 @@ function InputGroupAddon({
   )
 }
 
+/** 组内按钮的尺寸变体，做成比独立按钮更贴合的紧凑尺寸 */
 const inputGroupButtonVariants = cva(
   "flex items-center gap-2 text-body shadow-none",
   {
@@ -94,6 +106,7 @@ const inputGroupButtonVariants = cva(
   }
 )
 
+/** InputGroupButton：组内的小按钮（如密码可见性切换、清空等） */
 function InputGroupButton({
   className,
   type = "button",
@@ -115,6 +128,7 @@ function InputGroupButton({
   )
 }
 
+/** InputGroupText：组内的一段静态文字/图标（如货币符号） */
 function InputGroupText({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
@@ -127,6 +141,7 @@ function InputGroupText({ className, ...props }: React.ComponentProps<"span">) {
   )
 }
 
+/** InputGroupInput：组内真正的文本框——去掉自身边框，融入组的整体框 */
 function InputGroupInput({
   className,
   ...props
@@ -143,13 +158,14 @@ function InputGroupInput({
   )
 }
 
-/** A Select that shares the group's box instead of bringing its own.
+/**
+ * InputGroupSelectTrigger：组内的下拉选择触发器——它复用了组的边框而不是自带。
  *
- *  The group lights its border from `[data-slot=input-group-control]:focus-visible`,
- *  and a trigger that kept its own slot would leave the box dark while the select
- *  it contains is the very thing focused — so the trigger takes that slot. Its
- *  border, ring and background are the group's now; what it keeps is its own
- *  content width, so the control ends where its longest option does. */
+ * 组的边框靠 `[data-slot=input-group-control]:focus-visible` 点亮；如果触发器
+ * 保留自己的 slot，那么下拉选项真正被聚焦时组框反而不亮。所以让触发器顶替
+ * control slot：边框、聚焦环、底色都归组所有；它只保留自己内容决定的宽度，
+ * 让下拉控件的落点恰好在其最长选项处。
+ */
 function InputGroupSelectTrigger({
   className,
   ...props
@@ -166,11 +182,11 @@ function InputGroupSelectTrigger({
   )
 }
 
-/** A TimeInput that shares the group's box instead of bringing its own.
- *
- *  The slot goes on the segments rather than on the field: the group lights its
- *  border from the control that has focus, and what has focus here is an hour or
- *  a minute, never their wrapper. */
+/**
+ * InputGroupTimeInput：组内的时间输入控件——同样复用组的边框。
+ * control slot 打在「时/分片段」上而不是整体字段上：组靠当前获得焦点的
+ * control 来点亮边框，而这里真正被聚焦的是小时或分钟片段，不会是它们的容器。
+ */
 function InputGroupTimeInput({
   className,
   ...props
@@ -187,6 +203,7 @@ function InputGroupTimeInput({
   )
 }
 
+/** InputGroupTextarea：组内的多行文本域——去掉自身边框融入组框 */
 function InputGroupTextarea({
   className,
   ...props

@@ -1,3 +1,8 @@
+// source_context.go —— 「来源上下文」的构建与持久化：把某条 issue/评论线程的只读历史快照（评论、
+// 附件、作者、描述等）固定下来，供 quick-create / 手动「基于评论建 issue」时给 agent 做背景材料。
+// 职责：① 构建不可变快照并计算内容摘要（digest），用于预览与创建之间的「来源未变」校验；
+// ② 对象级附件克隆（把原附件 URL 改写为克隆 URL），③ 快照与克隆附件的持久化，④ 孤儿克隆/过期
+// 上下文的清理。文件里的数据限制与模式版本常量都导出让调用方复用。
 package service
 
 import (
@@ -20,18 +25,19 @@ import (
 )
 
 const (
-	SourceContextVersion     = int16(1)
+	// SourceContextVersion 是快照结构的当前 schema 版本，渲染/agent 侧按它做兼容。
+	SourceContextVersion = int16(1)
+	// SourceContextUsage 标识该上下文的用途：只读的历史背景信息。
 	SourceContextUsage       = "read_only_historical_background"
 	SourceContextMaxComments = 256
-	// SourceContextMaxTextBytes preserves the general/manual capture limit.
+	// SourceContextMaxTextBytes 是通用/手动捕获的文本字节上限，沿用既有口径。
 	SourceContextMaxTextBytes = 1 << 20
-	// SourceContextMaxAgentSnapshotBytes is lower because agent mode quotes the
-	// immutable snapshot into its first user prompt.
+	// SourceContextMaxAgentSnapshotBytes 更小：agent 模式会把不可变快照原文引到它的第一个用户
+	// prompt 里。
 	SourceContextMaxAgentSnapshotBytes = 64 << 10
-	// SourceContextMaxAgentInputBytes includes the snapshot plus the new
-	// instruction. A tokenizer cannot emit more tokens than the input has bytes;
-	// keeping the dynamic input below 72 KiB leaves more than 100k tokens for the
-	// stable quick-create wrapper, runtime brief, system prompt, and tools.
+	// SourceContextMaxAgentInputBytes 覆盖「快照 + 新指令」的总预算。分词器产出的 token 数不可能
+	// 超过输入的字节数；把动态输入压在 72 KiB 以下，才能给稳定的 quick-create 外壳、runtime 简报、
+	// 系统 prompt 与工具留出 10 万+ token 的空间。
 	SourceContextMaxAgentInputBytes  = 72 << 10
 	SourceContextMaxAgentPromptBytes = 96 << 10
 	SourceContextMaxAttachments      = 100
@@ -39,20 +45,19 @@ const (
 )
 
 const (
-	// sourceContextObjectDeleteTimeout bounds a single object-store delete.
-	// Cleanup runs on its own sweeper goroutine, so an unhealthy endpoint can no
-	// longer starve runtime and task recovery, but without a per-object deadline
-	// one hung delete would still hold a whole cleanup round open.
+	// sourceContextObjectDeleteTimeout 限制单次对象存储删除的时长。清理跑在独立 sweeper goroutine
+	// 上，不健康的存储端点因此无法再饿死 runtime/task 恢复；但没有单对象超时的话，一次卡死的删除
+	// 仍会拖住整轮清理。
 	sourceContextObjectDeleteTimeout = 30 * time.Second
-	// sourceContextIntentReleaseTimeout bounds the retry-backoff write that
-	// follows a failed delete. It runs detached from the caller's round budget:
-	// when the budget is what cut the delete short, a cancelled release would
-	// leave the intent immediately claimable and every later round would retry
-	// the same unhealthy object ahead of the ones queued behind it.
+	// sourceContextIntentReleaseTimeout 限制删除失败后的重试退避写入。它刻意脱离调用方的轮次预算：
+	// 当正是预算把删除截断时，一次被取消的 release 会让 intent 立刻可被认领，之后每一轮都会继续
+	// 优先重试同一个不健康对象，而把排在后面的对象晾着。
 	sourceContextIntentReleaseTimeout = 5 * time.Second
 )
 
 var (
+	// 下面这组哨兵错误贯穿「捕获 → 校验 → 创建」链路：handler 靠 errors.Is 区分各类冲突场景，
+	// 再翻译成对应的 HTTP 状态或提示文案。
 	ErrAnchorCommentDeleted          = errors.New("anchor comment deleted")
 	ErrSourceIssueDeleted            = errors.New("source issue deleted")
 	ErrSourceContextChanged          = errors.New("source context changed")
@@ -61,6 +66,7 @@ var (
 	ErrSourceContextRetryUnavailable = errors.New("source context retry unavailable")
 )
 
+// validateSourceContextAgentBytes 校验快照字节数与总输入是否都落在 agent 模式预算内。
 func validateSourceContextAgentBytes(snapshotBytes int, prompt string) error {
 	if snapshotBytes < 0 || snapshotBytes > SourceContextMaxAgentSnapshotBytes || snapshotBytes+len(prompt) > SourceContextMaxAgentInputBytes {
 		return ErrSourceContextTooLarge
@@ -68,19 +74,17 @@ func validateSourceContextAgentBytes(snapshotBytes int, prompt string) error {
 	return nil
 }
 
-// ValidateSourceContextAgentInput keeps every accepted source-context
-// quick-create within the prompt budget that the daemon regression test locks
-// against its complete user-message wrapper. Project the persisted snapshot,
-// including capture metadata, cloned attachment IDs, and rewritten URLs, so
-// the preview payload cannot undercount what the daemon will actually quote.
-// This runs before object cloning or task enqueue and has no external effects.
+// ValidateSourceContextAgentInput 保证每个被接受的 source-context quick-create 都在 daemon 回归测试
+// 锁定的 prompt 预算内（以它完整的用户消息外壳计）。它先投影「将要持久化的快照」——含捕获元数据、
+// 克隆附件 id、改写后的 URL——预览 payload 因此不会低估 daemon 真正会引用的体积。本函数在对象克隆
+// 与任务入队之前运行，无外部副作用。
 func ValidateSourceContextAgentInput(build SourceContextBuild, capturedBy pgtype.UUID, prompt string) error {
 	projectedCloneID := pgtype.UUID{Valid: true}
 	clones := make([]SourceContextClone, len(build.Rows))
 	for i := range clones {
 		clones[i].ID = projectedCloneID
 	}
-	// RFC3339Nano emits its longest representation when nanoseconds are nonzero.
+	// RFC3339Nano 在纳秒非零时输出最长表示——用它当最坏情况来估。
 	projectedCapturedAt := time.Date(2000, time.January, 1, 0, 0, 0, 999999999, time.UTC)
 	projected, err := PrepareSourceContextCapture(
 		build,
@@ -100,6 +104,8 @@ func ValidateSourceContextAgentInput(build SourceContextBuild, capturedBy pgtype
 	return validateSourceContextAgentBytes(len(payload), prompt)
 }
 
+// SourceContextLimitUsage 是构建后统计出的快照规模：评论条数、文本字节、附件个数与字节总和，
+// 用作文档化上限（SourceContextMax*）的判定输入。
 type SourceContextLimitUsage struct {
 	CommentCount    int   `json:"comment_count"`
 	TextBytes       int   `json:"text_bytes"`
@@ -107,6 +113,7 @@ type SourceContextLimitUsage struct {
 	AttachmentBytes int64 `json:"attachment_bytes"`
 }
 
+// SourceContextAttachment 是快照里附件行的 JSON 形态。SourceAttachmentID 仅在克隆改写后填原附件 id。
 type SourceContextAttachment struct {
 	ID                 string `json:"id"`
 	SourceAttachmentID string `json:"source_attachment_id,omitempty"`
@@ -118,12 +125,14 @@ type SourceContextAttachment struct {
 	CreatedAt          string `json:"created_at"`
 }
 
+// SourceContextAuthor 是评论作者的 JSON 形态（member/agent + id + 展示名）。
 type SourceContextAuthor struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
+// SourceContextIssueSnapshot 是来源 issue 的只读快照，不含评论线程。
 type SourceContextIssueSnapshot struct {
 	ID          string                    `json:"id"`
 	Identifier  string                    `json:"identifier"`
@@ -136,6 +145,7 @@ type SourceContextIssueSnapshot struct {
 	Attachments []SourceContextAttachment `json:"attachments"`
 }
 
+// SourceContextCommentSnapshot 是线程里单条评论的只读快照。ParentID 为空表示线程根。
 type SourceContextCommentSnapshot struct {
 	ID          string                    `json:"id"`
 	ParentID    *string                   `json:"parent_id"`
@@ -148,6 +158,7 @@ type SourceContextCommentSnapshot struct {
 	Attachments []SourceContextAttachment `json:"attachments"`
 }
 
+// SourceContextSnapshot 是完整捕获的不可变 JSON 快照：来源 issue + 锚点评论所在线程 + 元数据。
 type SourceContextSnapshot struct {
 	Version          int16                          `json:"version,omitempty"`
 	CapturedByUserID string                         `json:"captured_by_user_id,omitempty"`
@@ -157,6 +168,7 @@ type SourceContextSnapshot struct {
 	AnchorCommentID  string                         `json:"anchor_comment_id"`
 }
 
+// SourceContextBuild 是一次「构建」的产物：快照 + 内容摘要 + 校验 token + 规模统计 + 原附件行。
 type SourceContextBuild struct {
 	Snapshot SourceContextSnapshot
 	Digest   string
@@ -165,6 +177,7 @@ type SourceContextBuild struct {
 	Rows     []db.Attachment
 }
 
+// SourceContextClone 描述一次附件克隆（从原附件对象复制出的新对象，持有新 id/URL）。
 type SourceContextClone struct {
 	ID          pgtype.UUID
 	Filename    string
@@ -173,6 +186,7 @@ type SourceContextClone struct {
 	SizeBytes   int64
 }
 
+// SourceContextCapture 是准备好落库的捕获：上下文行 + 把原附件 id 改写为克隆 id 后的快照 + 克隆清单。
 type SourceContextCapture struct {
 	ID               pgtype.UUID
 	WorkspaceID      pgtype.UUID
@@ -185,10 +199,12 @@ type SourceContextCapture struct {
 	Clones           []SourceContextClone
 }
 
+// sourceContextTime 把 pgtype.Timestamptz 归一化成 RFC3339Nano 的 UTC 字符串，供快照 JSON 使用。
 func sourceContextTime(v pgtype.Timestamptz) string {
 	return v.Time.UTC().Format(time.RFC3339Nano)
 }
 
+// sourceContextText 把 pgtype.Text 转成 *string（无效值 → nil），描述类可空字段用。
 func sourceContextText(v pgtype.Text) *string {
 	if !v.Valid {
 		return nil
@@ -197,6 +213,7 @@ func sourceContextText(v pgtype.Text) *string {
 	return &s
 }
 
+// sourceContextAuthorName 解析 author 的展示名：member 查用户，agent 查工作区内 agent。
 func sourceContextAuthorName(ctx context.Context, q *db.Queries, workspaceID pgtype.UUID, authorType string, authorID pgtype.UUID) (string, error) {
 	switch authorType {
 	case "member":
@@ -215,6 +232,7 @@ func sourceContextAuthorName(ctx context.Context, q *db.Queries, workspaceID pgt
 	return "", fmt.Errorf("unsupported source-context author type %q", authorType)
 }
 
+// attachmentSnapshot 把 DB 附件行转成快照里的 JSON 形态。
 func attachmentSnapshot(row db.Attachment, ownerType, ownerID string) SourceContextAttachment {
 	return SourceContextAttachment{
 		ID:          util.UUIDToString(row.ID),
@@ -227,11 +245,13 @@ func attachmentSnapshot(row db.Attachment, ownerType, ownerID string) SourceCont
 	}
 }
 
+// sourceContextDigest 计算快照的规范内容摘要（sha256）。版本、捕获人、捕获时刻与变更元数据（更新时间、
+// revision）被清零——它们不属于「来源内容」的比对范畴；这样同一段来源无论何时捕获、由谁捕获，摘要
+// 都稳定，预览 token 才能在创建时再次对上。
 func sourceContextDigest(snapshot SourceContextSnapshot) (string, error) {
 	canonical := snapshot
-	// CommentThread is a slice, so copying the enclosing struct alone would keep
-	// sharing its backing array with the snapshot that will be persisted. The
-	// digest projection must never erase capture metadata from that snapshot.
+	// CommentThread 是切片，只复制外层结构的话会与「将被持久化的那个 snapshot」共享底层数组；
+	// 摘要投影绝不能把捕获元数据从那个 snapshot 里擦掉。
 	canonical.CommentThread = append([]SourceContextCommentSnapshot(nil), snapshot.CommentThread...)
 	canonical.Version = 0
 	canonical.CapturedByUserID = ""
@@ -239,9 +259,8 @@ func sourceContextDigest(snapshot SourceContextSnapshot) (string, error) {
 	canonical.SourceIssue.UpdatedAt = ""
 	canonical.SourceIssue.Revision = 0
 	for i := range canonical.CommentThread {
-		// Display names are live identity metadata, not source content. A rename
-		// between preview and creation must not invalidate an otherwise identical
-		// capture; detail rendering reports the rename independently.
+		// 显示名是活的身份元数据，不是来源内容。预览与创建之间的一次改名不应让一份本就相同的捕获
+		// 失效；改名由详情渲染独立报告。
 		canonical.CommentThread[i].Author.Name = ""
 		canonical.CommentThread[i].UpdatedAt = ""
 		canonical.CommentThread[i].Revision = 0
@@ -254,10 +273,8 @@ func sourceContextDigest(snapshot SourceContextSnapshot) (string, error) {
 	return hex.EncodeToString(digestBytes[:]), nil
 }
 
-// BuildSourceIssueSnapshot builds the issue-owned portion of a source
-// snapshot without requiring the anchor comment to still exist. Detail
-// rendering uses it to report source_issue_state accurately after a source
-// comment (or one of its ancestors) has been deleted.
+// BuildSourceIssueSnapshot 构建快照中「issue 所有」的部分，不要求锚点评论仍存在。来源评论（或其某个
+// 祖先）已被删除时，详情渲染用它在删除后仍能准确上报 source_issue_state。
 func BuildSourceIssueSnapshot(ctx context.Context, q *db.Queries, workspaceID, issueID pgtype.UUID) (SourceContextIssueSnapshot, []db.Attachment, error) {
 	issue, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: workspaceID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -289,6 +306,8 @@ func BuildSourceIssueSnapshot(ctx context.Context, q *db.Queries, workspaceID, i
 	}, attachments, nil
 }
 
+// buildSourceContextCommentSnapshots 把评论线程历史行连同各评论附件打包成快照数组，附件按 id 排序、
+// 按评论分组保证确定性输出。
 func buildSourceContextCommentSnapshots(
 	ctx context.Context,
 	q *db.Queries,
@@ -345,11 +364,9 @@ func buildSourceContextCommentSnapshots(
 	return commentThread, commentAttachments, nil
 }
 
-// BuildSourceContextThreadAtCaptureBoundary rebuilds the surviving portion of
-// a captured thread when its anchor no longer exists. The immutable root and
-// anchor timestamp preserve the original chronological boundary, allowing the
-// detail response to classify changes to every captured node instead of only
-// reporting the deleted anchor.
+// BuildSourceContextThreadAtCaptureBoundary 在锚点评论已不存在时，按「捕获时的边界」重建线程中仍
+// 存活的部分。用不可变根与锚点时间戳保住原有的时间边界，让详情响应能分类「每个被捕获节点」的变化，
+// 而不是只报一条被删的锚点。
 func BuildSourceContextThreadAtCaptureBoundary(
 	ctx context.Context,
 	q *db.Queries,
@@ -397,6 +414,10 @@ func BuildSourceContextThreadAtCaptureBoundary(
 	return commentThread, err
 }
 
+// BuildSourceContext 以某条锚点评论为基准构建一次来源上下文：快照 + 摘要 + token + 规模统计。
+// 它校验锚点存在且是普通评论、祖先链路完整无环且封顶、线程内容非空且与祖先路径两端一致，超出
+// SourceContextMax* 上限即返回 ErrSourceContextTooLarge。token 形如 "sha256:<digest>:<issueID>"，
+// 供预览后创建时做来源未变校验。
 func BuildSourceContext(ctx context.Context, q *db.Queries, workspaceID, anchorCommentID pgtype.UUID) (SourceContextBuild, error) {
 	anchor, err := q.GetCommentInWorkspace(ctx, db.GetCommentInWorkspaceParams{ID: anchorCommentID, WorkspaceID: workspaceID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -490,9 +511,8 @@ func BuildSourceContext(ctx context.Context, q *db.Queries, workspaceID, anchorC
 	if limits.TextBytes > SourceContextMaxTextBytes || limits.AttachmentCount > SourceContextMaxAttachments || limits.AttachmentBytes > SourceContextMaxAttachmentBytes {
 		return SourceContextBuild{Snapshot: snapshot, Limits: limits}, ErrSourceContextTooLarge
 	}
-	// Revisions and update timestamps are useful capture metadata, but they are
-	// not part of the canonical content comparison. A source that was edited
-	// and restored byte-for-byte must match the preview token again.
+	// revision 与更新时间是有用的捕获元数据，但不属于规范内容比对。一段被改了又逐字节还原的来源，
+	// 必须再次匹配上预览 token。
 	digest, err := sourceContextDigest(snapshot)
 	if err != nil {
 		return SourceContextBuild{}, err
@@ -506,6 +526,7 @@ func BuildSourceContext(ctx context.Context, q *db.Queries, workspaceID, anchorC
 	}, nil
 }
 
+// ParseSourceContextToken 解析校验 token，拆出 digest 与来源 issue id；格式不对返回 ok=false。
 func ParseSourceContextToken(token string) (digest string, sourceIssueID pgtype.UUID, ok bool) {
 	parts := strings.Split(token, ":")
 	if len(parts) != 3 || parts[0] != "sha256" || len(parts[1]) != sha256.Size*2 {
@@ -521,13 +542,14 @@ func ParseSourceContextToken(token string) (digest string, sourceIssueID pgtype.
 	return parts[1], id, true
 }
 
+// PrepareSourceContextCapture 把一次构建升级为「可落库的捕获」：把快照里的原附件 id/URL 改写成克隆
+// 对象，并盖上版本与捕获元数据。clones 必须与 build.Rows 一一对应。
 func PrepareSourceContextCapture(build SourceContextBuild, contextID, workspaceID, capturedBy pgtype.UUID, capturedAt time.Time, clones []SourceContextClone) (SourceContextCapture, error) {
 	if len(clones) != len(build.Rows) {
 		return SourceContextCapture{}, fmt.Errorf("source context clone count mismatch")
 	}
-	// The preview build can remain cached by the caller while storage cloning
-	// runs. Deep-copy before replacing original attachment IDs with clone IDs so
-	// the preview/token input remains immutable.
+	// 存储克隆运行时，预览构建仍可被调用方缓存。先深拷贝再替换原附件 id 为克隆 id，保证预览/token
+	// 输入保持不可变。
 	snapshotJSON, err := json.Marshal(build.Snapshot)
 	if err != nil {
 		return SourceContextCapture{}, fmt.Errorf("copy source context snapshot: %w", err)
@@ -549,9 +571,8 @@ func PrepareSourceContextCapture(build SourceContextBuild, contextID, workspaceI
 			sourceDownloadPath,
 			cloneDownloadPath,
 		)
-		// Public-storage deployments persist the attachment object's URL
-		// directly. It is just as source-owned as the stable API route and must
-		// resolve through the clone after the original object is removed.
+		// 公共存储部署会把附件对象的 URL 直接持久化。它和稳定 API 路由一样属于「来源所有」，必须
+		// 在原对象删除后仍能经克隆解析到。
 		if row.Url != "" && row.Url != sourceDownloadPath {
 			replacements = append(replacements, row.Url, cloneDownloadPath)
 		}
@@ -594,6 +615,8 @@ func issueUUID(value string) pgtype.UUID {
 	return id
 }
 
+// PersistSourceContext 把一次捕获落库：上下文行 + 各克隆附件行，并清理该上下文待处理的删除意图。
+// issueID 有效即视为已附着（attached），否则保持 pending（等后续创建附着）。
 func PersistSourceContext(ctx context.Context, q *db.Queries, capture SourceContextCapture, issueID, taskID pgtype.UUID) (db.IssueSourceContext, error) {
 	state := "pending"
 	var attachedAt pgtype.Timestamptz
@@ -636,21 +659,17 @@ func PersistSourceContext(ctx context.Context, q *db.Queries, capture SourceCont
 	return row, nil
 }
 
-// CleanupSourceContextObjectIntents reconciles clone uploads that never
-// reached the context transaction (request cancellation, crash, or ambiguous
-// storage/DB failure). The one-hour settle window is fenced by a DB state
-// claim: once cleanup owns an intent, PersistSourceContext cannot delete the
-// full pending intent set and therefore rolls back instead of attaching an
-// object being reclaimed.
+// CleanupSourceContextObjectIntents 对账「从未走到上下文事务」的克隆上传（请求取消、崩溃、存储/DB
+// 失败边界模糊）。一小时结算窗口由 DB 状态认领围栏保护：一旦清理方占有了 intent，PersistSourceContext
+// 就无法删掉完整的 pending intent 集合，只能回滚而不是把正被回收的对象挂上去。
 func (s *TaskService) CleanupSourceContextObjectIntents(ctx context.Context, limit int) (int, error) {
 	if s == nil || s.SourceContextStorage == nil || limit <= 0 {
 		return 0, nil
 	}
 	cleaned := 0
-	// limit bounds ATTEMPTS, not successes. Counting successes alone made one
-	// round's work proportional to the number of due intents rather than to the
-	// batch size, which is exactly what a storage outage produces: every delete
-	// fails, nothing increments, and the round keeps claiming the next row.
+	// limit 约束的是「尝试次数」而不是「成功数」。只数成功会让一轮的工作量与到期 intent 数成正比
+	// 而非与批次大小成正比——这正是存储故障时的表现：每次删除都失败、成功数不动，轮次却一直认领
+	// 下一行。
 	for attempt := 0; attempt < limit; attempt++ {
 		if ctx.Err() != nil {
 			return cleaned, nil
@@ -661,8 +680,7 @@ func (s *TaskService) CleanupSourceContextObjectIntents(ctx context.Context, lim
 			break
 		}
 		if err != nil {
-			// A round that ran out of budget mid-claim is a normal stop, not a
-			// failure worth alerting on; the next round resumes where this left off.
+			// 一轮在认领中途花光预算，是正常收尾而非值得告警的失败；下一轮从这里继续。
 			if ctx.Err() != nil {
 				return cleaned, nil
 			}
@@ -696,11 +714,9 @@ func (s *TaskService) CleanupSourceContextObjectIntents(ctx context.Context, lim
 	return cleaned, nil
 }
 
-// releaseSourceContextObjectIntent stamps the retry backoff for an intent this
-// round could not settle. The write is detached from the round budget on
-// purpose: when the budget is what stopped the delete, a cancelled release
-// would leave the row claimable with no backoff, so the next round would pick
-// the same unhealthy object again instead of making progress on the rest.
+// releaseSourceContextObjectIntent 为本轮没解决的 intent 盖上重试退避。该写入刻意脱离调用方轮次
+// 预算：当正是预算拦下删除时，一次被取消的 release 会让行在无退避状态下可被认领——下一轮又会挑中
+// 同一个不健康对象，而不是推进其余工作。
 func (s *TaskService) releaseSourceContextObjectIntent(ctx context.Context, intent db.IssueSourceContextObjectIntent, leaseToken pgtype.UUID, cause error) {
 	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sourceContextIntentReleaseTimeout)
 	defer cancel()
@@ -713,13 +729,10 @@ func (s *TaskService) releaseSourceContextObjectIntent(ctx context.Context, inte
 	}
 }
 
-// CleanupAbandonedSourceContexts abandons terminal quick-create captures only
-// after their 30-day retry window. Retry creation transfers origin_task_id to
-// the successor, so the terminal row selected here is the latest attempt.
-// Object deletion deliberately runs after the state transaction commits and
-// without a row lock. Failed deletes leave the abandoned context and its
-// attachment rows for an idempotent retry. Once every object is gone, the
-// attachment inventory and full captured snapshot are removed together.
+// CleanupAbandonedSourceContexts 只在 30 天重试窗口之后放弃终态的 quick-create 捕获。重试创建会把
+// origin_task_id 转给后继者，所以这里选中的终态行必是最新一次尝试。对象删除刻意放在状态事务提交后、
+// 不持行锁执行；删除失败会留下被弃上下文与其附件行，供幂等重试。当对象全部清掉后，附件清单与完整
+// 快照才一并移除。
 func (s *TaskService) CleanupAbandonedSourceContexts(ctx context.Context, limit int32) (int, error) {
 	if s == nil || s.TxStarter == nil || s.SourceContextStorage == nil || limit <= 0 {
 		return 0, nil
@@ -752,8 +765,7 @@ func (s *TaskService) CleanupAbandonedSourceContexts(ctx context.Context, limit 
 	}
 	removed := 0
 	for _, sourceContext := range abandoned {
-		// Stop cleanly when the round budget is gone. Every deletion below is
-		// idempotent, so the next round resumes from whatever is still abandoned.
+		// 轮次预算耗尽就干净地停。下面的每次删除都幂等，下一轮从仍被弃的状态继续。
 		if ctx.Err() != nil {
 			return removed, nil
 		}
@@ -792,9 +804,8 @@ func (s *TaskService) CleanupAbandonedSourceContexts(ctx context.Context, limit 
 		if err != nil {
 			return removed, fmt.Errorf("delete abandoned source context: %w", err)
 		}
-		// Multiple server instances can sweep the same abandoned row. Storage
-		// deletes are idempotent; a zero-row delete means another instance won
-		// the final DB cleanup and is therefore already the desired outcome.
+		// 多个 server 实例可能同时清扫同一条被弃行。存储删除是幂等的；删除 0 行意味着另一个实例
+		// 赢下了最终 DB 清理——那正是我们想要的结果。
 		if changed == 0 {
 			continue
 		}

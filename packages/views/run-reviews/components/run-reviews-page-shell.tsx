@@ -1,5 +1,7 @@
 "use client";
 
+// 运行复盘页的懒加载外壳：真正的页面体量很大，延迟到首帧渲染后再拉取，
+// 期间展示一套和真实布局同构的骨架屏，避免整页白等。
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 
@@ -10,8 +12,13 @@ const RunReviewsPageContent = lazy(() =>
   import("./run-reviews-page").then((module) => ({ default: module.RunReviewsPage })),
 );
 
+/**
+ * 运行复盘页的懒加载入口：首帧先渲染骨架屏（让用户立刻看到页面结构），
+ * 之后再切换成真正加载出来的复盘页主体。
+ */
 export function RunReviewsPage() {
   const { t } = useT("run-reviews");
+  // 挂载后下一个 tick 再加载，先交付出骨架屏，避免可交互前白屏等待。
   const [showContent, setShowContent] = useState(false);
   useEffect(() => {
     const timer = window.setTimeout(() => setShowContent(true), 0);

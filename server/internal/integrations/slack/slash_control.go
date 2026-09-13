@@ -1,3 +1,12 @@
+// slash_control.go：`/new`、`/clear` 斜杠命令的会话控制实现——在 Slack 私聊里
+// 开启新聊天 / 清空 agent 上下文。
+//
+// /new 调 engine.ChatSession.StartSession 起一个新会话：正文为空只建会话、等下一
+// 句话进来；非空则把这句话当首条消息、在提交会话的同一事务里投任务。/clear 走
+// EnsureSession + MarkPendingFreshWithDedup（空正文）或 AppendUserMessage
+// (ForceFresh)（带正文——先把这条消息补进去再清）。两者共用「route changed 就
+// 重试」的循环（maxSlackControlRouteRetries 封顶），并用 deduper + Socket Mode
+// 信封 id 做防重。任务投递成功后才广播会话生命周期事件与收尾（FinalizeChatTaskEnqueue）。
 package slack
 
 import (
@@ -17,12 +26,17 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// slashControlTasks 是会话控制里投递/收尾聊天任务所需的 *service.TaskService
+// 窄接口。
 type slashControlTasks interface {
 	PrepareChatTaskEnqueue(ctx context.Context, agentID, initiator pgtype.UUID) (service.PreparedChatTaskEnqueue, error)
 	EnqueuePreparedChannelChatTaskInTx(ctx context.Context, tx pgx.Tx, session db.ChatSession, initiator pgtype.UUID, forceFresh bool, contextRevision int64, prepared service.PreparedChatTaskEnqueue) (db.AgentTaskQueue, error)
 	FinalizeChatTaskEnqueue(ctx context.Context, task db.AgentTaskQueue)
 }
 
+// slackDMControlStarter 是 /new 与 /clear 背后真正的执行器（实现
+// slashControlStarter 接口）。它持有引擎的 ChatSession 与会话生命周期事件
+// 广播面。
 type slackDMControlStarter struct {
 	q         *db.Queries
 	session   *engine.ChatSession
@@ -30,8 +44,13 @@ type slackDMControlStarter struct {
 	lifecycle engine.ChannelChatLifecycle
 }
 
+// maxSlackControlRouteRetries 封顶 /new、/clear 遇到「路由变了」时的重试次数。
+// 路由修订每轮会推进，正常情况下一次或两次就稳定；这个上限防止极端情况下无限
+// 空转。
 const maxSlackControlRouteRetries = 8
 
+// NewSlackDMControlStarter 组装控制执行器：用 TypeSlack 与空标题规则建一个引擎
+// ChatSession，供 /new、/clear 共用。
 func NewSlackDMControlStarter(q *db.Queries, tx engine.TxStarter, tasks slashControlTasks, lifecycle engine.ChannelChatLifecycle) slashControlStarter {
 	return &slackDMControlStarter{
 		q: q, tasks: tasks, lifecycle: lifecycle,
@@ -39,6 +58,8 @@ func NewSlackDMControlStarter(q *db.Queries, tx engine.TxStarter, tasks slashCon
 	}
 }
 
+// StartSlackDMChat 处理 `/new`：在 Slack 私聊里开一个新会话（可选带首条消息），
+// 全程持有信封去重，成功后才广播会话已启动、并触发标题生成。
 func (s *slackDMControlStarter) StartSlackDMChat(ctx context.Context, inst engine.ResolvedInstallation, userID pgtype.UUID, cmd slack.SlashCommand, envelopeID string) error {
 	if envelopeID == "" {
 		return errors.New("slack /new: missing socket envelope id")
@@ -65,6 +86,8 @@ func (s *slackDMControlStarter) StartSlackDMChat(ctx context.Context, inst engin
 	}
 	var task db.AgentTaskQueue
 	var started engine.StartSessionResult
+	// 会话路由可能在解析之后被别的入口重绑（route revision 推进）；StartSession
+	// 这时返回 ErrRouteChanged，重新来一轮即可，最多试 maxSlackControlRouteRetries 次。
 	for attempt := 0; ; attempt++ {
 		task = db.AgentTaskQueue{}
 		started, err = s.session.StartSession(ctx, engine.StartSessionInput{
@@ -117,6 +140,9 @@ func (s *slackDMControlStarter) StartSlackDMChat(ctx context.Context, inst engin
 	return nil
 }
 
+// ClearSlackDMContext 处理 `/clear`：清空该 Slack 私聊会话里的 agent 上下文。
+// 空正文只做 pending/fresh 标记；带正文则先把这句「清空」请求本身作为新上下文的
+// 首条消息追加进去再清。同样带信封去重与路由重试，任务成功投递后才收尾。
 func (s *slackDMControlStarter) ClearSlackDMContext(ctx context.Context, inst engine.ResolvedInstallation, userID pgtype.UUID, cmd slack.SlashCommand, envelopeID string) error {
 	if envelopeID == "" {
 		return errors.New("slack /clear: missing socket envelope id")

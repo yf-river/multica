@@ -12,42 +12,34 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// errWSRPCUnavailable is returned by wsRPCClient.Call when there is no live WS
-// connection to carry the request. Callers treat it as the signal to fall back
-// to HTTP.
+// errWSRPCUnavailable 在 wsRPCClient.Call 发现没有可用的 WS 连接来承载请求时返回。
+// 调用方把它当作“回退到 HTTP”的信号。
 var errWSRPCUnavailable = errors.New("ws rpc: no active connection")
 
-// errWSRPCUncertain is returned when a request's frame WAS sent but the
-// connection dropped before a definitive response. The outcome is unknown (the
-// server may have committed), so the caller must NOT fall back to another
-// transport for the same work — that risks a double claim (MUL-4257).
+// errWSRPCUncertain 在“请求帧确实已发出，但连接在拿到确定答复前断开”时返回。此时
+// 结果未知（服务器可能已经落库），调用方绝不能为同一份工作再回退到别的传输通道——
+// 那会造成重复认领（MUL-4257）。
 var errWSRPCUncertain = errors.New("ws rpc: sent but outcome unknown (connection lost)")
 
-// wsRPCResponseGrace is how much longer the daemon waits for an RPC response
-// beyond the server-side execution budget it requested, so a claim that
-// committed just before the server deadline still reports back before the
-// daemon gives up (MUL-4257).
+// wsRPCResponseGrace 是 daemon 在服务端自己申请的执行预算之外再多等的响应时间：
+// 这样“刚好在服务器截止前完成提交”的 claim 也能在 daemon 放弃前报回来（MUL-4257）。
 const wsRPCResponseGrace = 2 * time.Second
 
 var wsClaimUncertainFallbackDelay = batchClaimRequestTimeout + wsRPCResponseGrace
 
-// errWSRPCWriteBufferFull is returned when the connection's write buffer is
-// saturated; the caller falls back to HTTP rather than blocking the socket.
+// errWSRPCWriteBufferFull 在连接写缓冲区写满时返回；调用方此时回退 HTTP 而不是把
+// socket 卡死。
 var errWSRPCWriteBufferFull = errors.New("ws rpc: write buffer full")
 
-// wsRPCClient is the daemon-side half of the generic WS request/response
-// transport (MUL-4257). It correlates responses to requests by request_id over
-// the shared, multiplexed WS control connection so multiple RPCs can be in
-// flight concurrently. Sending is delegated to an injected sendFrame func
-// (which pushes onto the active connection's write channel); when no connection
-// is attached, Call fails fast with errWSRPCUnavailable and the caller uses
-// HTTP.
-// wsOutbound is a frame queued for the WS writer. It is cancelable so an RPC
-// caller that gives up (timeout/detach) before the frame has hit the socket can
-// prevent it from being delivered later — otherwise a backpressured writer
-// could deliver a stale tasks.claim after the daemon already HTTP-fell-back,
-// double-claiming (MUL-4257, Sol-Boy review). sent/cancel race under mu so the
-// decision is atomic: whoever wins determines whether the frame is delivered.
+// wsRPCClient 是通用 WS 请求/响应通道（MUL-4257）的 daemon 侧实现。它在共享、复用的
+// WS 控制连接上按 request_id 把响应与请求关联起来，因此允许多个 RPC 同时在途。发送
+// 委托给注入的 sendFrame 函数（把帧推进活动连接的写通道）；当没有连接挂上来时 Call
+// 会以 errWSRPCUnavailable 快速失败，调用方改走 HTTP。
+// wsOutbound 是排队等着 WS writer 发送的一帧。它可被取消：当某个 RPC 调用方在帧真正
+// 落到 socket 之前放弃（超时/连接脱离）时，可以阻止它稍后被送出——否则一个被背压的
+// writer 可能在 daemon 已经 HTTP 回退之后才把过期的 tasks.claim 发出去，造成重复认领
+// （MUL-4257，Sol-Boy review）。sent/cancel 在 mu 之下竞争，保证决策原子：谁先到就决定
+// 了这帧到底送不送。
 type wsOutbound struct {
 	data     []byte
 	mu       sync.Mutex
@@ -55,9 +47,8 @@ type wsOutbound struct {
 	canceled bool
 }
 
-// beginWrite is called by the writer immediately before WriteMessage. It
-// returns false when the frame was already cancelled (skip it); otherwise it
-// marks the frame sent so a concurrent cancel() can no longer un-send it.
+// beginWrite 由 writer 在 WriteMessage 之前调用。若这帧已被取消则返回 false（跳过
+// 不送）；否则把帧标记为 sent，使并发的 cancel() 无法再“收回”它。
 func (o *wsOutbound) beginWrite() bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -68,9 +59,8 @@ func (o *wsOutbound) beginWrite() bool {
 	return true
 }
 
-// cancel is called by an RPC caller giving up. Returns true if the frame was
-// still pending (now cancelled — the writer will skip it, so it is guaranteed
-// NOT delivered); false if the writer already began sending it.
+// cancel 由正在放弃的 RPC 调用方调用。若帧仍在排队则返回 true（现在已取消——writer
+// 会跳过它，保证绝不送达）；若 writer 已经开始发它，返回 false。
 func (o *wsOutbound) cancel() bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -85,14 +75,12 @@ type wsRPCClient struct {
 	mu        sync.Mutex
 	pending   map[string]chan protocol.RPCResponsePayload
 	sendFrame func([]byte) (*wsOutbound, error)
-	// rpcV1Supported belongs to the currently attached connection. attach
-	// clears it before exposing a replacement sender so a claim that races a
-	// reconnect can never carry negotiation state across connections.
+	// rpcV1Supported 属于“当前挂着的这条连接”。attach 在换上新 sender 之前会先清掉
+	// 它，因此“claim 与重连竞态”时协商状态绝不会被带到下一条连接上。
 	rpcV1Supported bool
 	generation     uint64
-	// grace is added to a call's server-side timeout budget to get how long the
-	// daemon waits for the response, so a claim that committed just before the
-	// server deadline still reports back before the daemon gives up (MUL-4257).
+	// grace 叠加到一次调用的服务端超时预算上，得到 daemon 实际等响应的时长：这样
+	// 刚好在服务器截止前完成提交的 claim 也能在 daemon 放弃前报回来（MUL-4257）。
 	grace time.Duration
 }
 
@@ -103,11 +91,9 @@ func newWSRPCClient(grace time.Duration) *wsRPCClient {
 	}
 }
 
-// attach binds a live connection's frame writer and clears the previous
-// connection's negotiated capability. Passing nil detaches (on disconnect),
-// after which Call fails fast until the next attach and rpc-v1 heartbeat ack.
-// Any pending requests are failed so their callers fall back to HTTP
-// immediately.
+// attach 把一条存活连接的帧 writer 绑定进来，并清掉上一条连接协商出的能力位。
+// 传 nil 表示脱离（断开时），此后 Call 会快速失败直到下一次 attach 且 rpc-v1
+// heartbeat ack 确认。所有仍挂起的请求都会被失败处理，让调用方立刻回退 HTTP。
 func (c *wsRPCClient) attach(sendFrame func([]byte) (*wsOutbound, error)) uint64 {
 	c.mu.Lock()
 	c.generation++
@@ -122,9 +108,8 @@ func (c *wsRPCClient) attach(sendFrame func([]byte) (*wsOutbound, error)) uint64
 	return generation
 }
 
-// markRPCV1Supported records explicit server support for the currently
-// attached connection. Heartbeat acks received without a live sender cannot
-// enable a future connection.
+// markRPCV1Supported 记录当前挂着的连接明确支持 rpc-v1。没有活 sender 时收到的
+// heartbeat ack 不能启用未来某条连接。
 func (c *wsRPCClient) markRPCV1Supported(generation uint64) {
 	if c == nil {
 		return
@@ -145,10 +130,8 @@ func (c *wsRPCClient) currentGeneration() uint64 {
 	return c.generation
 }
 
-// supportsRPCV1 reports whether the live connection explicitly negotiated
-// rpc-v1. Call repeats this check while capturing the sender under the same
-// mutex, so this method is only a fast-path hint and cannot authorize a send by
-// itself.
+// supportsRPCV1 报告当前连接是否明确协商过 rpc-v1。Call 会在同一把锁下重查这个
+// 条件并捕获 sender，因此本方法只是快速路径提示，本身不能单独授权一次发送。
 func (c *wsRPCClient) supportsRPCV1() bool {
 	if c == nil {
 		return false
@@ -158,26 +141,22 @@ func (c *wsRPCClient) supportsRPCV1() bool {
 	return c.sendFrame != nil && c.rpcV1Supported
 }
 
-// Call issues an RPC on any attached connection. Transport-level tests and
-// callers that have their own negotiation contract use this directly.
+// Call 在任意已附着的连接上发起一次 RPC。传输层测试与自带协商契约的调用方直接用
+// 这个。
 func (c *wsRPCClient) Call(ctx context.Context, method string, serverTimeout time.Duration, reqBody, respBody any) (int, error) {
 	return c.call(ctx, method, serverTimeout, reqBody, respBody, false)
 }
 
-// CallIfRPCV1Supported issues an RPC only when the currently attached
-// connection explicitly negotiated rpc-v1. The capability check and sender
-// capture happen under the same mutex, so a reconnect cannot redirect a call
-// authorized by the previous connection onto its replacement.
+// CallIfRPCV1Supported 只在当前附着连接明确协商过 rpc-v1 时才发起 RPC。能力位检查
+// 与 sender 捕获在同一把锁下完成，因此重连不会把“上一条连接授权过的调用”改道到
+// 替换它的新连接上。
 func (c *wsRPCClient) CallIfRPCV1Supported(ctx context.Context, method string, serverTimeout time.Duration, reqBody, respBody any) (int, error) {
 	return c.call(ctx, method, serverTimeout, reqBody, respBody, true)
 }
 
-// call blocks until the response, the per-request timeout, or ctx
-// cancellation. reqBody is marshaled into the request envelope; on a 2xx
-// response respBody (if non-nil) is unmarshaled from the response body. It
-// returns the response status (0 when the call never reached the server) so the
-// caller can distinguish transport failure (→ HTTP fallback) from a
-// server-side error.
+// call 一直阻塞到收到响应、单请求超时或 ctx 被取消。reqBody 被序列化进请求信封；
+// 收到 2xx 时若 respBody 非空，会从响应体反序列化进去。返回响应状态码（请求从未到
+// 达服务器时为 0），让调用方区分传输失败（→ HTTP 回退）与服务端错误。
 func (c *wsRPCClient) call(ctx context.Context, method string, serverTimeout time.Duration, reqBody, respBody any, requireRPCV1 bool) (int, error) {
 	if c == nil {
 		return 0, errWSRPCUnavailable
@@ -225,11 +204,9 @@ func (c *wsRPCClient) call(ctx context.Context, method string, serverTimeout tim
 		return 0, fmt.Errorf("ws rpc: send: %w", err)
 	}
 
-	// giveUp resolves an abandoned request. If the frame is still queued we
-	// cancel it so the writer never delivers it — a definitively-not-sent
-	// outcome that is safe to HTTP-fall-back. If the writer already began
-	// sending it, it may reach the server, so the outcome is uncertain and the
-	// caller must NOT fall back (that would double-claim, MUL-4257).
+	// giveUp 处理一次被放弃的请求。若帧还在排队就取消它，让 writer 永不送达——这是
+	// “确定没发出去”的结果，可安全地 HTTP 回退；若 writer 已开始发送，则它可能到达
+	// 服务器，结果不确定，调用方绝不能回退（会重复认领，MUL-4257）。
 	giveUp := func() error {
 		if item.cancel() {
 			return errWSRPCUnavailable
@@ -237,9 +214,8 @@ func (c *wsRPCClient) call(ctx context.Context, method string, serverTimeout tim
 		return errWSRPCUncertain
 	}
 
-	// Wait the server-side budget PLUS a grace margin: a claim that committed
-	// just before the server deadline must still report back before the daemon
-	// gives up and falls back to HTTP, or we would double-claim (MUL-4257).
+	// 等服务端预算外加一段宽限：刚好在服务器截止前完成提交的 claim 必须在 daemon
+	// 放弃并回退 HTTP 之前报回来，否则就会重复认领（MUL-4257）。
 	timeout := serverTimeout + c.grace
 	if timeout <= 0 {
 		timeout = 5 * time.Second
@@ -250,9 +226,8 @@ func (c *wsRPCClient) call(ctx context.Context, method string, serverTimeout tim
 	select {
 	case resp, ok := <-ch:
 		if !ok {
-			// The connection detached. Whether the server saw this request
-			// depends on whether the frame had already left the writer, so let
-			// giveUp() decide (not-sent → safe fallback; sent → uncertain).
+			// 连接脱离了。服务器是否看到这个请求取决于帧是否已离开 writer，因此交给
+			// giveUp() 判断（没发出去 → 可安全回退；发出去了 → 结果不确定）。
 			return 0, giveUp()
 		}
 		if resp.Status >= 200 && resp.Status < 300 {
@@ -269,10 +244,8 @@ func (c *wsRPCClient) call(ctx context.Context, method string, serverTimeout tim
 		}
 		return resp.Status, errors.New(msg)
 	case <-timer.C:
-		// The budget elapsed. If the frame is still queued behind a
-		// backpressured writer, cancel it so it is never delivered after we
-		// fall back (giveUp → not-sent). If it already left the writer, the
-		// outcome is uncertain and we must not fall back.
+		// 预算耗尽。若帧还堵在背压的 writer 后面，取消它，确保我们回退后它不会被送
+		// 出（giveUp → 没发出）；若它已离开 writer，结果不确定，不能回退。
 		if err := giveUp(); errors.Is(err, errWSRPCUncertain) {
 			return 0, err
 		}
@@ -283,11 +256,9 @@ func (c *wsRPCClient) call(ctx context.Context, method string, serverTimeout tim
 	}
 }
 
-// deliver routes an inbound rpc_response frame to the waiting Call. The send
-// happens under the mutex so it is serialized with attach(nil)'s close+delete:
-// a channel present in pending is guaranteed not yet closed, so this never
-// sends on a closed channel. Unknown request ids (already timed out / detached)
-// are dropped.
+// deliver 把一条入站的 rpc_response 帧转给正在等待的 Call。发送在锁内完成，因此与
+// attach(nil) 的 close+delete 串行：仍在 pending 里的 channel 保证还没被关闭，这里
+// 绝不会向已关闭的 channel 发送。未知的 request id（已超时/已脱离）直接丢弃。
 func (c *wsRPCClient) deliver(resp protocol.RPCResponsePayload) {
 	if c == nil {
 		return
@@ -304,18 +275,14 @@ func (c *wsRPCClient) deliver(resp protocol.RPCResponsePayload) {
 	}
 }
 
-// ClaimTasksWSFirst is the WS-first claim policy (MUL-4257): it issues the
-// tasks.claim RPC over the WS control connection when one is attached, and
-// falls back to the HTTP claim endpoint on transport failures that are known not
-// to have reached the server (no connection, write-buffer full, unsent timeout)
-// or server error. A sent-frame disconnect/timeout is uncertain, so it is
-// retried over HTTP only after a short safety window. The request/response bodies
-// are identical to the HTTP endpoint so both transports are interchangeable.
-// Wired into the claim poller as part of the poller cutover.
+// ClaimTasksWSFirst 是“WS 优先”的 claim 策略（MUL-4257）：当 WS 控制连接已附着时
+// 通过它发起 tasks.claim RPC，遇到“确定没到达服务器”的传输失败（无连接、写缓冲满、
+// 未发送就超时）或服务端错误时回退到 HTTP claim 端点。已发送但断连/超时属于结果
+// 不确定，只在短暂的安全窗口过后才经 HTTP 重试。请求/响应体与 HTTP 端点完全一致，
+// 两种传输可互换。作为轮询切换的一部分接入 claim 轮询器。
 func (d *Daemon) ClaimTasksWSFirst(ctx context.Context, daemonID string, runtimeIDs []string, maxTasks int) ([]*Task, error) {
-	// Un-upgraded server without the batch route: a prior poll already learned
-	// this (via a 404), so go straight to the legacy per-runtime claim and skip
-	// the WS + batch attempts each cycle.
+	// 没升级、没有 batch 路由的服务器：之前的某次轮询已经学到这一点（通过 404），
+	// 因此直接走旧版按 runtime 的 claim，每轮都跳过 WS + batch 尝试。
 	if d.batchClaimUnsupported.Load() {
 		return d.client.claimTasksLegacy(ctx, runtimeIDs, maxTasks)
 	}
@@ -337,8 +304,8 @@ func (d *Daemon) ClaimTasksWSFirst(ctx context.Context, daemonID string, runtime
 		var resp struct {
 			Tasks []*Task `json:"tasks"`
 		}
-		// batchClaimRequestTimeout is the server-side execution budget; the
-		// daemon waits that plus the client's grace margin for the response.
+		// batchClaimRequestTimeout 是服务端执行预算；daemon 等这么久再加客户端的
+		// 宽余量来收响应。
 		_, err := d.wsRPC.CallIfRPCV1Supported(ctx, "tasks.claim", batchClaimRequestTimeout, map[string]any{
 			"daemon_id":   daemonID,
 			"runtime_ids": runtimeIDs,
@@ -348,12 +315,10 @@ func (d *Daemon) ClaimTasksWSFirst(ctx context.Context, daemonID string, runtime
 			return resp.Tasks, nil
 		}
 		if errors.Is(err, errWSRPCUncertain) {
-			// The WS claim may have committed server-side; claiming the same
-			// free slots again over HTTP immediately would double-claim. Skip
-			// this cycle, then force one HTTP batch claim after the server-side
-			// execution budget plus response grace has elapsed. If the WS claim
-			// committed, the task is already dispatched and stale reclaim owns
-			// recovery; if it did not, HTTP regains liveness for the queued task.
+			// 这次 WS claim 可能已在服务端提交；立刻再用 HTTP 去认领同样的空闲槽会
+			// 重复认领。跳过本轮，等“服务端执行预算 + 响应宽限”过去之后强制做一次
+			// HTTP batch claim。若 WS claim 已提交，任务已被派发，交给 stale reclaim
+			// 兜底恢复；若没提交，HTTP 让排队任务恢复活性。
 			delay := wsClaimUncertainFallbackDelay
 			if delay < 0 {
 				delay = 0
@@ -368,9 +333,8 @@ func (d *Daemon) ClaimTasksWSFirst(ctx context.Context, daemonID string, runtime
 	if err == nil {
 		return tasks, nil
 	}
-	// Server has no batch route (404): freeze the old API contract by falling
-	// back to the legacy per-runtime claim loop, and remember it so we don't
-	// re-probe every cycle.
+	// 服务器没有 batch 路由（404）：冻结旧 API 契约，回退到旧的逐 runtime claim 循环，
+	// 并记住这个事实，免得每个周期都重新探测。
 	if isBatchClaimUnsupported(err) {
 		d.batchClaimUnsupported.Store(true)
 		d.logger.Info("batch claim route unsupported by server; using legacy per-runtime claim")

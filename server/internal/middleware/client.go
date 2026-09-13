@@ -1,3 +1,7 @@
+// 本文件实现「客户端元信息」中间件：从 X-Client-Platform / X-Client-Version /
+// X-Client-OS 三个请求头里读出调用方是谁（Web/CLI/Daemon、版本、操作系统），
+// 塞进请求 context。这样日志/指标/功能开关能按客户端区分，而不必去反解
+// User-Agent 或升级消息载荷。
 package middleware
 
 import (
@@ -5,38 +9,35 @@ import (
 	"net/http"
 )
 
-// Client metadata context keys.
+// 客户端元信息的 context 键。
 //
-// Populated by ClientMetadata middleware from X-Client-Platform / X-Client-Version /
-// X-Client-OS request headers. Sent by first-party clients (Web, CLI, and
-// Daemon) so the server can split logs / metrics / gating decisions by caller
-// without having to reverse-engineer User-Agent strings or upgrade payloads.
+// 由 ClientMetadata 中间件从 X-Client-Platform / X-Client-Version / X-Client-OS
+// 请求头填充。这三个头由第一方客户端（Web、CLI、Daemon）发送，服务端据此切分日志/
+// 指标/开关判定，无需反解 User-Agent 字符串或升级消息载荷。
 //
-// All three values are best-effort: handlers must treat missing values as
-// "unknown" and never make security decisions based on them — these headers
-// are client-controlled and trivial to spoof.
+// 三个值都是尽力而为：handler 必须把缺失值当 "unknown"，且绝不能用它们做安全决策
+// ——这些头由客户端控制，伪造毫无成本。
 type clientMetadataKey int
 
+// 具体三个 context 键（iota 生成私有 int，防止与其它包冲突）。
 const (
 	ctxKeyClientPlatform clientMetadataKey = iota
 	ctxKeyClientVersion
 	ctxKeyClientOS
 )
 
-// Header names — exported so other packages (request logger, realtime hub)
-// can stay in sync without re-declaring magic strings.
+// 请求头名——导出给其它包（请求日志、realtime hub）引用，避免各处重抄魔法字符串。
 const (
 	HeaderClientPlatform = "X-Client-Platform"
 	HeaderClientVersion  = "X-Client-Version"
 	HeaderClientOS       = "X-Client-OS"
 )
 
-// ClientMetadata extracts X-Client-Platform / X-Client-Version / X-Client-OS
-// from the request and stashes them in the request context so downstream
-// handlers and the request logger can read them via ClientMetadataFromContext.
+// ClientMetadata 从请求头里取三个 X-Client-* 值（缺哪个就不写哪个），存进请求
+// context，供下游 handler 与请求日志经 ClientMetadataFromContext 读取。
 //
-// Wired in router.go before route mounting so every authenticated and
-// unauthenticated handler benefits from the same observability dimensions.
+// 在 router.go 里于路由挂载前接线，这样鉴权与非鉴权 handler 都能拿到同一套
+// 可观测维度。
 func ClientMetadata(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -53,9 +54,8 @@ func ClientMetadata(next http.Handler) http.Handler {
 	})
 }
 
-// ClientMetadataFromContext returns the platform/version/os captured from
-// X-Client-* headers. Empty strings are returned for any value that wasn't
-// sent — callers must treat missing values as "unknown" rather than failing.
+// ClientMetadataFromContext 从 context 里取出此前存下的 platform/version/os。
+// 任何没存过的值都返回空串——调用方必须把缺失当 "unknown"，而不是当错误处理。
 func ClientMetadataFromContext(ctx context.Context) (platform, version, os string) {
 	platform, _ = ctx.Value(ctxKeyClientPlatform).(string)
 	version, _ = ctx.Value(ctxKeyClientVersion).(string)
@@ -63,9 +63,9 @@ func ClientMetadataFromContext(ctx context.Context) (platform, version, os strin
 	return platform, version, os
 }
 
-// SetClientMetadata explicitly attaches client metadata to a context. Used
-// by the realtime hub, where metadata arrives via WS query parameters
-// (`client_platform`, `client_version`, `client_os`) instead of headers.
+// SetClientMetadata 显式把客户端元信息写入 context。供 realtime hub 使用——那边
+// 的元信息来自 WS 查询参数（client_platform / client_version / client_os），
+// 不走请求头。
 func SetClientMetadata(ctx context.Context, platform, version, os string) context.Context {
 	if platform != "" {
 		ctx = context.WithValue(ctx, ctxKeyClientPlatform, platform)

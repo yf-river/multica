@@ -1,18 +1,13 @@
-// Package delegatedrecoverybackfill provides bounded, resumable batches that
-// retire delegated-failure recovery comments already closed by a terminal
-// delivery receipt.
+// Package delegatedrecoverybackfill 提供有界、可续跑的批处理，用来清退那些
+// 已被终端送达回执关闭、但仍挂着"委托失败恢复"评论的历史记录。
 //
-// migrations 444/445 add comment.recovery_settled_at and the partial index that
-// only holds unsettled recovery comments, and TaskService writes the marker
-// inside every terminal task transaction. Neither reaches the history written
-// before the marker existed: those rows keep matching the index predicate and
-// keep being re-proven settled by the sweeper's outbox scan on every tick. This
-// walk marks them once.
+// 迁移 444/445 新增了 comment.recovery_settled_at 及只包含"未结算恢复评论"的
+// 部分索引；TaskService 会在每条终端任务事务里写该标记。但标记存在之前写下的历史
+// 记录覆盖不到：这些行仍命中索引条件，sweeper 的 outbox 扫描每次 tick 都会反复
+// 证明它们已结算。本遍历给这些行补一次标记。
 //
-// Run it after every backend in a rolling deployment carries the writing code.
-// Running it earlier is not harmful — an in-flight task simply gets marked by
-// whichever path reaches its terminal receipt first — but it leaves rows behind
-// that a second pass has to pick up.
+// 请在滚动发布里所有后端都带上写入代码之后再运行。提前运行也无害——进行中的任务
+// 只会被最先到达其终端回执的那条路径标记——但会留下一些行等第二轮清理。
 package delegatedrecoverybackfill
 
 import (
@@ -23,49 +18,44 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// DefaultBatchSize bounds the candidate comments examined per statement.
+// DefaultBatchSize 限制每条语句检查的候选评论数。
 //
-// Measured on a synthetic table of 500k comments / 200k tasks / 50k unsettled
-// recoveries, total walk time is flat across batch size — 50x228ms at 1000,
-// 10x1016ms at 5000, 5x2199ms at 10000, all ~11s — because the per-batch
-// agent_task_queue read is not the dominant cost. Batch size therefore only
-// trades how long a single statement holds row locks on comment, so take the
-// smallest of the equal-throughput options. The command's inter-batch delay is
-// what actually paces the walk.
+// 在合成数据（50 万评论 / 20 万任务 / 5 万未结算恢复）上实测：批大小不变时总遍历
+// 时间基本持平——1000 时 50x228ms、5000 时 10x1016ms、10000 时 5x2199ms，都约 11 秒——
+// 因为每批的 agent_task_queue 读取不是主要成本。因此批大小只影响单条语句持有 comment
+// 行锁的时长，取这些吞吐相等的选项中最小者即可。命令的批间延迟才是真正决定遍历节奏的。
 const DefaultBatchSize = 1000
 
-// Cursor is the keyset position of a walk. It is (created_at, id) rather than
-// id alone so it matches idx_comment_delegated_failure_unsettled — an id-only
-// keyset cannot use that index for both the predicate and the ordering, which
-// is the same "LIMIT bounds what is returned, not what is examined" mistake
-// this whole change set exists to remove.
+// Cursor 是一次遍历的 keyset 位置。用 (created_at, id) 而不是只用 id，是为了匹配
+// idx_comment_delegated_failure_unsettled 索引——仅按 id 的 keyset 无法让该索引同时
+// 服务条件与排序，这正是整个改动要消除的"LIMIT 只限制返回、不限制扫描"的问题。
 type Cursor struct {
 	CreatedAt time.Time
 	ID        string
 }
 
-// Options controls one backfill batch. Zero values are production defaults.
+// Options 控制一批回填。零值是生产默认值。
 type Options struct {
+	// BatchSize 覆盖 DefaultBatchSize。
 	BatchSize int
-	// After is the exclusive keyset watermark. Nil starts from the beginning.
+	// After 是排他性的 keyset 水位。nil 表示从头开始。
 	After *Cursor
-	// Schema is a trusted identifier override used only by tests.
+	// Schema 是仅测试使用的可信标识符覆盖项。
 	Schema string
 }
 
-// BatchResult advances a caller's keyset walk.
+// BatchResult 推进调用方的 keyset 遍历。
 //
-// Last tracks the SCANNED candidates rather than the settled ones: a recovery
-// that is genuinely still pending — or that is currently excluded only by a
-// reversible condition such as its issue sitting in 'done' — must never be
-// marked, and must not stall the walk either. Last is nil only when the batch
-// found no candidates at all, which is how the caller detects the end.
+// Last 记录的是扫描过的候选而非已结算者：一条真正仍挂起的恢复——或只是被某可逆条件
+// （如 issue 处于 'done'）暂时排除的——绝不能被打标记，也不能卡住遍历。只有整批找不到
+// 任何候选时 Last 才是 nil，调用方以此判断遍历结束。
 type BatchResult struct {
 	Scanned int64
 	Settled int64
 	Last    *Cursor
 }
 
+// qualify 给表名加 schema 前缀（测试用隔离 schema），空 schema 则原样返回。
 func qualify(schema, table string) string {
 	if schema == "" {
 		return table
@@ -73,20 +63,16 @@ func qualify(schema, table string) string {
 	return fmt.Sprintf("%q.%s", schema, table)
 }
 
-// Batch settles at most BatchSize candidate recovery comments.
+// Batch 至多结算 BatchSize 条候选恢复评论。
 //
-// A candidate is settled only when some terminal task already recorded it in
-// delivered_comment_ids — the one exclusion in
-// ListPendingDelegatedFailureRecoveries that cannot be taken back. Every other
-// exclusion that query applies is reversible, so a row it currently skips for
-// another reason is deliberately left pending here.
+// 只有某条终端任务已经把它写进 delivered_comment_ids 时才结算——这是
+// ListPendingDelegatedFailureRecoveries 里唯一不可撤回的排除项。该查询应用的其余
+// 排除都可逆，所以因为其他原因被跳过的行在这里刻意保持挂起。
 //
-// The receipt lookup is inverted relative to the runtime query: instead of
-// asking "does any terminal task hold THIS comment" once per candidate — which
-// re-reads agent_task_queue, the largest table in the database, for every row
-// examined — it reads agent_task_queue once per BATCH and hash-joins the
-// delivered ids back against the candidates. Both CTEs are MATERIALIZED so that
-// stays true regardless of how the planner would otherwise inline them.
+// 回执查询与运行时查询方向相反：不是逐条候选问"有没有终端任务持有这条评论"——那会为
+// 每条被查的行反复读数据库最大表 agent_task_queue——而是每批读一次 agent_task_queue，
+// 再把 delivered 的 id 与候选做 hash join。两个 CTE 都 MATERIALIZED，无论规划器如何
+// 内联都保持该行为。
 func Batch(ctx context.Context, pool *pgxpool.Pool, opts Options) (BatchResult, error) {
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
@@ -146,9 +132,9 @@ SELECT (SELECT count(*)::bigint FROM batch),
 	return result, nil
 }
 
-// CountRemaining reports how many recovery comments are still unsettled, which
-// is exactly the row count of idx_comment_delegated_failure_unsettled. After a
-// completed walk this should be the genuinely pending backlog, not history.
+// CountRemaining 报告仍未结算的恢复评论数，它正好等于
+// idx_comment_delegated_failure_unsettled 的行数。完整遍历后，这个值应当是真正
+// 挂起的积压量，而不是历史遗留量。
 func CountRemaining(ctx context.Context, pool *pgxpool.Pool, schema string) (int64, error) {
 	var count int64
 	if err := pool.QueryRow(ctx, fmt.Sprintf(`

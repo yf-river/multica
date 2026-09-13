@@ -1,89 +1,82 @@
 package agent
 
+// 文件职责：内置运行时身份（built-in runtime identity）的注册表与构造入口——
+// 那些"不在 SupportedTypes 里的协议族衍生体"（如 omp 之于 pi）。daemon 对每个
+// 内置运行时独立探测并注册，再派发给它所属协议族的 backend。
+//
+// 关键解耦：描述符（BuiltinRuntime）是运行时身份的单一声明点——agents_probe.go、
+// config.go、daemon.go 的显示名覆盖、execenv 的技能/配置路径、local_skills.go、
+// ListModels 与前端显示都由它派生。给既有运行时加一个兼容分支 = 加一条描述符，
+// 而不是动一整条链路。本文件还定义了 NewRuntime（构造内置运行时后端）与
+// ResolveBackend（按 provider key 路由到 New 或 NewRuntime 的唯一生产入口）。
+
 import (
 	"context"
 	"fmt"
 )
 
-// BuiltinRuntime describes a built-in runtime identity that the daemon probes
-// and registers automatically — independent of the custom runtime profile
-// protocol_family whitelist. Multiple runtime identities can share one
-// protocol family (e.g. both "pi" and "omp" use the "pi" protocol backend).
+// BuiltinRuntime 描述一个 daemon 会自动探测并注册的内置运行时身份——它独立于
+// 自定义运行时 profile 的 protocol_family 白名单。多个运行时身份可以共享一个协议族
+// （例如 "pi" 与 "omp" 都用 "pi" 协议后端）。
 //
-// The descriptor is the single declaration site for a runtime identity:
-// agents_probe.go, config.go, daemon.go display-name overrides, execenv
-// skill/config paths, local_skills.go, ListModels, and the frontend display
-// maps all derive from this. Adding a new compatible fork of an existing
-// runtime is a descriptor entry, not a cross-stack change.
+// 描述符是运行时身份的唯一声明点：agents_probe.go、config.go、daemon.go 的显示名
+// 覆盖、execenv 技能/配置路径、local_skills.go、ListModels 与前端显示映射都由它
+// 派生。给既有运行时加一个兼容分支，是加一条描述符条目，而不是动整个链路。
 type BuiltinRuntime struct {
-	// ID is the provider key the daemon registers under (e.g. "omp").
-	// It is NOT a protocol_family — it does not appear in SupportedTypes or
-	// the runtime_profile.protocol_family CHECK constraint.
+	// ID 是 daemon 注册时用的 provider key（如 "omp"）。它*不是* protocol_family
+	// ——不会出现在 SupportedTypes 或 runtime_profile.protocol_family 的 CHECK
+	// 约束里。
 	ID string
 
-	// ProtocolFamily is the execution backend this runtime dispatches to.
-	// It MUST be in SupportedTypes. NewRuntime builds that family's backend
-	// via New(), then applies this descriptor's ID-specific defaults
-	// (executable, label) to it.
+	// ProtocolFamily 是这个运行时派发到的执行后端。它必须在 SupportedTypes 里。
+	// NewRuntime 用 New() 构建该族的 backend，再把描述符按 ID 的专属默认值
+	// （可执行文件、标签）套上去。
 	ProtocolFamily string
 
-	// DefaultCommand is the bare CLI name the probe looks up on PATH
-	// when MULTICA_<ID>_PATH is not set (e.g. "omp").
+	// DefaultCommand 是未设 MULTICA_<ID>_PATH 时、探测程序在 PATH 上找的裸 CLI
+	// 名（如 "omp"）。
 	DefaultCommand string
 
-	// EnvPrefix is the MULTICA_ prefix for *_PATH and *_MODEL env overrides
-	// (e.g. "MULTICA_OMP" → MULTICA_OMP_PATH / MULTICA_OMP_MODEL).
+	// EnvPrefix 是 *_PATH 与 *_MODEL 环境变量覆盖的 MULTICA_ 前缀
+	// （如 "MULTICA_OMP" → MULTICA_OMP_PATH / MULTICA_OMP_MODEL）。
 	EnvPrefix string
 
-	// DisplayName is the human-facing runtime name. The daemon and frontend
-	// both use this so they never drift apart.
+	// DisplayName 是面向人类的运行时名。daemon 与前端都用它，保证永不漂移。
 	DisplayName string
 
-	// SkillsDir is the project-level skills directory relative to the
-	// workdir (e.g. ".omp/skills").
+	// SkillsDir 是相对工作目录的项目级技能目录（如 ".omp/skills"）。
 	SkillsDir string
 
-	// UserSkillsDir is the user-level skills directory relative to $HOME
-	// (e.g. ".omp/agent/skills").
+	// UserSkillsDir 是相对 $HOME 的用户级技能目录（如 ".omp/agent/skills"）。
 	UserSkillsDir string
 
-	// LaunchHeader is the user-visible launch skeleton shown in the UI
-	// (e.g. "omp (json mode)").
+	// LaunchHeader 是 UI 里展示的用户可见启动骨架（如 "omp (json mode)"）。
 	LaunchHeader string
 
-	// DefaultExecutable is the binary name the backend falls back to when
-	// cfg.ExecutablePath is empty (passed to piBackend.defaultExecutable).
+	// DefaultExecutable 是 cfg.ExecutablePath 为空时 backend 回退用的二进制名
+	// （传给 piBackend.defaultExecutable）。
 	DefaultExecutable string
 
-	// ProviderLabel is the label used in log/error messages (passed to
-	// piBackend.providerLabel).
+	// ProviderLabel 是日志/错误消息里用的标签（传给 piBackend.providerLabel）。
 	ProviderLabel string
 
-	// ModelDiscovery is the strategy for discovering available models.
-	// When set, it replaces the protocol family's discovery entirely — omp
-	// uses `omp models --json`, a different command and output shape from
-	// pi's `--list-models`. When nil, ListModels returns an empty catalog
-	// rather than falling back to the family's command: running a
-	// semantically incompatible one (omp exits non-zero on `--list-models`)
-	// is worse than degrading to manual entry.
+	// ModelDiscovery 是发现可用模型的策略。设了它，就整个替换协议族的发现——
+	// omp 用 `omp models --json`，命令与输出形态都和 pi 的 `--list-models` 不同。
+	// 为 nil 时 ListModels 返回空目录而不是回退到协议族的命令：跑一条语义不兼容
+	// 的命令（omp 遇到 `--list-models` 会非零退出）比降级到手动录入更糟。
 	ModelDiscovery ModelDiscoveryFunc
 }
 
-// ModelDiscoveryFunc discovers available models for a runtime identity.
-// It receives the context and the resolved command — executable plus the
-// runtime's launch prefix — and returns a model catalog. When the binary is
-// missing or too old, it returns an empty slice (ListModels swallows the
-// error and degrades to manual entry).
+// ModelDiscoveryFunc 为某运行时身份发现可用模型。它拿到 context 与解析后的
+// 命令（可执行文件 + 运行时启动前缀），返回模型目录。二进制缺失或太旧时返回空
+// 切片（ListModels 吞掉错误、降级到手动录入）。
 type ModelDiscoveryFunc func(ctx context.Context, runtimeCmd Command) ([]Model, error)
 
-// BuiltinRuntimes is the registry of built-in runtime identities that are
-// NOT in SupportedTypes (they are protocol-family derivatives, not families
-// themselves). The daemon probes each one independently and dispatches it
-// to its protocol family's backend.
+// BuiltinRuntimes 是"不在 SupportedTypes 里"的内置运行时身份注册表（它们是
+// 协议族衍生体，本身不是族）。daemon 逐个独立探测，再派发到其协议族的 backend。
 //
-// A runtime identity appears here when it needs its own probe/display/skills
-// but reuses an existing backend's protocol. The first entry is omp (oh-my-pi):
-// a separate CLI that speaks the pi JSON event protocol.
+// 一个运行时身份在"需要自己的探测/展示/技能、却复用既有 backend 协议"时出现在
+// 这里。第一个条目是 omp（oh-my-pi）：一个说 pi JSON 事件协议的独立 CLI。
 var BuiltinRuntimes = []BuiltinRuntime{
 	{
 		ID:                "omp",
@@ -100,8 +93,7 @@ var BuiltinRuntimes = []BuiltinRuntime{
 	},
 }
 
-// BuiltinRuntimeByID returns the descriptor for the given runtime identity,
-// or false if no such built-in runtime exists.
+// BuiltinRuntimeByID 返回给定运行时身份的描述符；不存在则返回 false。
 func BuiltinRuntimeByID(id string) (BuiltinRuntime, bool) {
 	for _, r := range BuiltinRuntimes {
 		if r.ID == id {
@@ -111,15 +103,15 @@ func BuiltinRuntimeByID(id string) (BuiltinRuntime, bool) {
 	return BuiltinRuntime{}, false
 }
 
-// IsBuiltinRuntime reports whether id is a registered built-in runtime
-// identity (as opposed to a protocol family in SupportedTypes).
+// IsBuiltinRuntime 报告 id 是否已注册的内置运行时身份（区别于 SupportedTypes
+// 里的协议族）。
 func IsBuiltinRuntime(id string) bool {
 	_, ok := BuiltinRuntimeByID(id)
 	return ok
 }
 
-// BuiltinRuntimeCommands returns the default CLI command names for all
-// built-in runtimes, for the daemon's defaultAgentCommandNames list.
+// BuiltinRuntimeCommands 返回全部内置运行时的默认 CLI 命令名，供 daemon 的
+// defaultAgentCommandNames 列表使用。
 func BuiltinRuntimeCommands() []string {
 	cmds := make([]string, len(BuiltinRuntimes))
 	for i, r := range BuiltinRuntimes {
@@ -128,29 +120,25 @@ func BuiltinRuntimeCommands() []string {
 	return cmds
 }
 
-// backendOverrideApplicator is the interface that lets a descriptor apply
-// per-runtime overrides (executable, label) to the backend its protocol family
-// returned. A family whose backend does not implement it cannot host a runtime
-// identity at all: NewRuntime fails closed rather than handing back a backend
-// with the overrides silently dropped.
+// backendOverrideApplicator 是让描述符把"按运行时覆盖项"（可执行文件、标签）套到
+// 其协议族返回的 backend 上的接口。若某个族的 backend 没实现它，这个族就完全无法
+// 承载运行时身份：NewRuntime 保守失败，而不是还回一个"覆盖项被悄悄丢掉"的
+// backend。
 type backendOverrideApplicator interface {
 	applyBuiltinRuntimeOverrides(desc BuiltinRuntime)
 }
 
-// piBackend already implements this via its defaultExecutable and
-// providerLabel fields. The method is defined here (not in pi.go) to keep
-// the descriptor→backend contract in one file.
+// piBackend 已通过它的 defaultExecutable 与 providerLabel 字段实现了该接口。
+// 方法定义在这里（而不是 pi.go），是为了让"描述符→backend 契约"集中在一个文件里。
 func (b *piBackend) applyBuiltinRuntimeOverrides(desc BuiltinRuntime) {
 	b.defaultExecutable = desc.DefaultExecutable
 	b.providerLabel = desc.ProviderLabel
 }
 
-// ResolveBackend is the single production entry point the daemon uses to
-// construct a backend from a provider key. It routes built-in runtime
-// identities (e.g. "omp") through NewRuntime, and protocol families (e.g.
-// "pi", "claude") through New. This keeps both factories meaning exactly one
-// thing: New() is family-only, NewRuntime() is runtime-identity-only, and
-// the daemon never has to know which is which.
+// ResolveBackend 是 daemon 用来按 provider key 构造 backend 的唯一生产入口。
+// 它把内置运行时身份（如 "omp"）路由到 NewRuntime，把协议族（如 "pi"、"claude"）
+// 路由到 New。这让两个工厂各只有一个含义：New() 只服务协议族，NewRuntime() 只服务
+// 运行时身份，daemon 永远不用关心二者区别。
 func ResolveBackend(provider string, cfg Config) (Backend, error) {
 	if IsBuiltinRuntime(provider) {
 		return NewRuntime(provider, cfg)
@@ -158,16 +146,13 @@ func ResolveBackend(provider string, cfg Config) (Backend, error) {
 	return New(provider, cfg)
 }
 
-// NewRuntime creates a Backend for a built-in runtime identity (e.g. "omp").
-// It builds the descriptor's protocol family backend via New(), then applies
-// the per-runtime overrides through the backendOverrideApplicator interface.
-// This is the production entry point for runtime identities; New() is
-// family-only and rejects runtime ids.
+// NewRuntime 为内置运行时身份（如 "omp"）创建 Backend。它先用 New() 构建描述符
+// 协议族的 backend，再经 backendOverrideApplicator 接口套上按运行时的覆盖项。
+// 这是运行时身份的生产入口；New() 只服务协议族、会拒收运行时 id。
 //
-// Fails closed: if the protocol family backend does not implement
-// backendOverrideApplicator, the descriptor's overrides cannot be applied and
-// the runtime would launch under the wrong executable and label — so
-// NewRuntime returns an error rather than returning an unmodified backend.
+// 保守失败：若协议族 backend 没实现 backendOverrideApplicator，描述符的覆盖项
+// 就无法应用，运行时会在错误的可执行文件与标签下启动——所以 NewRuntime 返回错误，
+// 而不是还回一个未修饰的 backend。
 func NewRuntime(runtimeID string, cfg Config) (Backend, error) {
 	desc, ok := BuiltinRuntimeByID(runtimeID)
 	if !ok {

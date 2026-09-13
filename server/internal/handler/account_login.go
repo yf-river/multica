@@ -1,3 +1,8 @@
+// Package handler 是整个 HTTP API 的处理器集合。
+//
+// 本文件（account_login.go）实现"账号密码登录/自动注册"：登录失败且该账号
+// 不存在时，若注册开放则自动创建账号（first-run 自助引导）。账号规则、
+// 密码强度校验与 PBKDF2 口令哈希都集中在这里。
 package handler
 
 import (
@@ -14,8 +19,11 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 )
 
+// accountPasswordIterations 是 PBKDF2 口令哈希的迭代次数（210k）。
 const accountPasswordIterations = 210000
 
+// accountName 规范化账号名（小写去空格），并校验格式：3~64 位，仅允许
+// 小写字母/数字/点/横线/下划线。合法返回规范化后的名字。
 func accountName(value string) (string, bool) {
 	v := strings.ToLower(strings.TrimSpace(value))
 	if len(v) < 3 || len(v) > 64 {
@@ -29,6 +37,8 @@ func accountName(value string) (string, bool) {
 	return v, true
 }
 
+// accountPasswordValid 校验注册时的密码强度：8~32 位，字符属于允许集合，
+// 且大小写字母/数字/符号至少占三类（即至少含三种字符族）。
 func accountPasswordValid(v string) bool {
 	if len(v) < 8 || len(v) > 32 {
 		return false
@@ -57,10 +67,14 @@ func accountPasswordValid(v string) bool {
 	return n >= 3
 }
 
+// accountPasswordLoginValid 仅校验登录时的密码长度（不查强度，避免
+// 历史弱密码账号无法登录）。
 func accountPasswordLoginValid(v string) bool {
 	return len(v) >= 8 && len(v) <= 32
 }
 
+// accountPasswordHash 用随机盐做 PBKDF2-SHA256，返回
+// "pbkdf2_sha256$<迭代次数>$<盐>$<哈希>"四段式编码，可自描述地存库。
 func accountPasswordHash(password string) (string, error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
@@ -73,6 +87,8 @@ func accountPasswordHash(password string) (string, error) {
 	return strings.Join([]string{"pbkdf2_sha256", strconv.Itoa(accountPasswordIterations), base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)}, "$"), nil
 }
 
+// accountPasswordMatches 校验明文密码与存储编码是否匹配；用常量时间比较
+// 防时序侧信道。迭代次数从编码里读取，支持将来升级。
 func accountPasswordMatches(password, encoded string) bool {
 	p := strings.Split(encoded, "$")
 	if len(p) != 4 || p[0] != "pbkdf2_sha256" {
@@ -94,6 +110,8 @@ func accountPasswordMatches(password, encoded string) bool {
 	return err == nil && subtle.ConstantTimeCompare(got, want) == 1
 }
 
+// AccountPasswordLogin 账号密码登录：账号不存在时若允许注册则当场创建
+// （首次登录即自助开通）；成功后签发 JWT 并设置认证 cookie。
 func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Account  string `json:"account"`

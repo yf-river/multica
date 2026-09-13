@@ -1,3 +1,6 @@
+// 本文件封装「更新通知偏好」的 React Query 变更，并把同一工作区的偏好写入
+// 串行化，避免慢的旧请求覆盖用户最新的开关切换。
+
 import {
   useMutation,
   useQueryClient,
@@ -18,6 +21,7 @@ import {
   rollbackNotificationPreferencePatch,
 } from "./patch";
 
+/** 变更内部使用的变量：完整偏好 + 已推导出的补丁 + 工作区定位信息。 */
 interface NotificationPreferenceMutationVariables {
   preferences: NotificationPreferences;
   patch: NotificationPreferences;
@@ -25,11 +29,13 @@ interface NotificationPreferenceMutationVariables {
   workspaceSlug: string;
 }
 
+/** 乐观更新的上下文：回滚所需的旧值快照与 query key。 */
 interface NotificationPreferenceMutationContext {
   previous: NotificationPreferenceResponse | undefined;
   key: readonly unknown[];
 }
 
+/** 外部调用方看到的 mutation options 类型（变量是「完整偏好」）。 */
 type ExternalMutationOptions = MutateOptions<
   NotificationPreferenceResponse,
   Error,
@@ -37,6 +43,7 @@ type ExternalMutationOptions = MutateOptions<
   NotificationPreferenceMutationContext
 >;
 
+/** 内部 mutation 的 options 类型（变量是带补丁的内部结构）。 */
 type InternalMutationOptions = MutateOptions<
   NotificationPreferenceResponse,
   Error,
@@ -44,6 +51,7 @@ type InternalMutationOptions = MutateOptions<
   NotificationPreferenceMutationContext
 >;
 
+/** 把外部 options 里的回调，映射成接收内部变量的形式。 */
 function mapMutationOptions(
   preferences: NotificationPreferences,
   options: ExternalMutationOptions | undefined,
@@ -66,6 +74,14 @@ function mapMutationOptions(
   };
 }
 
+/**
+ * 更新通知偏好。
+ *
+ * 把工作区偏好写入串行化：较慢的早先 PATCH 不会覆盖用户最新的开关切换。
+ * 变量里同时带着工作区 slug，因为排队中的 mutation 可能在跳转之后才执行。
+ *
+ * @returns mutation 对象（mutate / mutateAsync 接受「完整偏好」而不是补丁）
+ */
 export function useUpdateNotificationPreferences() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -76,9 +92,8 @@ export function useUpdateNotificationPreferences() {
   const renderedPreferencesRef = useRef(renderedPreferences);
   renderedPreferencesRef.current = renderedPreferences;
 
-  // Serialize the workspace's preference writes so a slower earlier PATCH
-  // cannot overwrite the user's latest toggle. Variables also capture the
-  // workspace slug because a queued mutation may execute after navigation.
+  // 把工作区偏好写入串行化，避免慢的早先 PATCH 覆盖用户最新开关；变量同时
+  // 捕获 slug，因为排队的 mutation 可能在导航之后才执行。
   const mutation = useMutation<
     NotificationPreferenceResponse,
     Error,
@@ -117,8 +132,8 @@ export function useUpdateNotificationPreferences() {
     },
     onSettled: (_data, _error, { workspaceId }, context) => {
       const mutationKey = notificationPreferenceKeys.all(workspaceId);
-      // The current mutation is still counted during onSettled. Reconcile
-      // only after every queued optimistic patch for this workspace finishes.
+      // onSettled 期间当前 mutation 仍被计入在途数。要等该工作区所有排队的
+      // 乐观补丁都结束后再做对账。
       if (qc.isMutating({ mutationKey }) > 1) return;
       qc.invalidateQueries({ queryKey: context?.key ?? mutationKey });
     },

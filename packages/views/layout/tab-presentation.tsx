@@ -37,29 +37,28 @@ import { useT } from "../i18n";
 import { ROUTE_ICON_COMPONENTS } from "./route-icon-components";
 
 /**
- * Desktop tab presentation: turn a tab URL into a leading visual and a title,
- * live from the query cache. This is the view half of the contract whose pure
- * core is `@multica/core/paths` (`parseTabSubject` + `resolveTabPresentation`).
+ * 布局模块：桌面端标签的展示信息。
+ * 把一个标签 URL 转成前导视觉和标题，数据实时取自查询缓存。这是纯逻辑
+ * 核心 `@multica/core/paths`（`parseTabSubject` + `resolveTabPresentation`）
+ * 对应的视图半边。
  *
- * Cache-only reads: every query in `useTabEntityData` is `enabled: false`. It
- * observes whatever the pages/directory already loaded and re-renders when that
- * data changes, so an open tab's icon/title stay in sync (project renamed,
- * issue status changed, chat session retitled) without amplifying requests. A
- * resource that has not loaded yet renders a stable type fallback until its
- * page fills the cache.
+ * 只读缓存：`useTabEntityData` 里的每个查询都是 `enabled: false`。它观察
+ * 页面/目录已经加载的数据，并在数据变化时重渲染，让已打开标签的图标和
+ * 标题保持同步（项目改名、issue 状态变化、会话重命名）而不会放大请求。
+ * 还没加载的资源先渲染稳定的类型兜底，直到它的页面填满缓存。
  *
- * The one exception is an actor tab's avatar: `ResourceLeadingVisual` renders
- * `ActorAvatar`, which loads the (workspace-global, sidebar-warmed) member /
- * agent / squad directories itself. That is intentional — it resolves the
- * avatar and, in turn, the name this hook reads from the same lists.
+ * 唯一的例外是 actor 标签的头像：`ResourceLeadingVisual` 渲染的
+ * `ActorAvatar` 会自己去加载（工作区全局、侧边栏已预热的）member/agent/
+ * squad 目录。这是有意为之——它解析出头像，进而也让本 hook 从同样的
+ * 列表里读到了名字。
  */
 
-// Placeholder id for a detail query that this tab doesn't need — its key is
-// never populated, so the read returns undefined without any fetch.
+// 该标签不需要的详情查询占位 id——它的 key 永远不会被填充，读取直接
+// 返回 undefined 而不发起任何请求。
 const NONE = "__tab_presentation_none__";
 
-// Resource kinds where a persisted title is a good first-frame fallback while
-// the live data loads. Flow/unknown/attachment always use their type label.
+// 这些资源类型在实时数据加载期间，用持久化的标题作为首帧兜底比较合适。
+// flow/unknown/attachment 始终使用各自的类型标签。
 const PENDING_RESOURCE_KEYS: ReadonlySet<TabLabelKey> = new Set<TabLabelKey>([
   "issue",
   "project",
@@ -72,13 +71,12 @@ const PENDING_RESOURCE_KEYS: ReadonlySet<TabLabelKey> = new Set<TabLabelKey>([
   "runtime",
 ]);
 
-/** Gather cached entity data for a subject. All reads are cache-only. */
+/** 为一个 subject 收集缓存里的实体数据，所有读取都只走缓存。 */
 function useTabEntityData(subject: TabSubject, wsId: string): TabEntityData {
   const { t: chatT } = useT("chat");
 
-  // Read both inbox lists cache-only; the archived view keeps its own list, so
-  // an archived selection has to resolve against the archived cache — the same
-  // list the InboxPage populates when `?view=archived` is active.
+  // 两个收件箱列表都只读缓存；归档视图维护自己的列表，所以归档项要对着
+  // 归档缓存解析——正是 `?view=archived` 生效时 InboxPage 填充的那个列表。
   const inboxList = useQuery({ ...inboxListOptions(wsId), enabled: false }).data;
   const archivedInboxList = useQuery({
     ...archivedInboxListOptions(wsId),
@@ -93,16 +91,15 @@ function useTabEntityData(subject: TabSubject, wsId: string): TabEntityData {
         ) ?? null)
       : null;
 
-  // One issue query serves both a direct issue tab and an inbox-selected issue.
+  // 一个 issue 查询同时服务直接的 issue 标签和收件箱选中的 issue。
   const issueId =
     subject.kind === "issue"
       ? subject.id
       : (inboxItem?.issue_id ?? "");
-  // An issue tab's URL segment may be a human-readable identifier (`MUL-123`).
-  // The route seeds that entry when it resolves, but only the UUID-keyed entry
-  // receives realtime patches — so hop through it, or a tab opened by
-  // identifier would freeze on the title and status it had when first opened.
-  // Both reads stay cache-only, and a UUID segment resolves to itself.
+  // issue 标签的 URL 段可能是人类可读的标识符（如 `MUL-123`）。路由在解析
+  // 时会先填那条记录，但只有 UUID 为 key 的记录才会收到实时补丁——所以要
+  // 从这里跳过去，否则按标识符打开的标签会永远冻结在首次打开时的标题和状态。
+  // 两次读取都只走缓存，UUID 段会解析到它自己。
   const rawIssue = useQuery({
     ...issueDetailOptions(wsId, issueId || NONE),
     enabled: false,
@@ -201,7 +198,7 @@ function useTabEntityData(subject: TabSubject, wsId: string): TabEntityData {
   return data;
 }
 
-/** Localize a title spec, preferring a persisted fallback while pending. */
+/** 把一个标题规格本地化，加载中时优先用持久化的兜底标题。 */
 function useTabTitle(spec: TabTitleSpec, fallbackTitle?: string): string {
   const { t: layoutT } = useT("layout");
   switch (spec.kind) {
@@ -219,17 +216,21 @@ function useTabTitle(spec: TabTitleSpec, fallbackTitle?: string): string {
   }
 }
 
+/** 标签展示信息的返回结果。 */
 export interface TabPresentationResult {
+  /** 前导视觉（图标/状态/头像等）。 */
   visual: TabVisual;
+  /** 解析后的标题。 */
   title: string;
 }
 
 /**
- * Resolve a tab URL into its live leading visual and title.
+ * 把一个标签 URL 解析成实时的前导视觉和标题。
  *
- * `fallbackTitle` (the tab's persisted title) is used only as a first-frame
- * fallback for a still-loading resource; once the cache resolves, the live
- * presentation wins.
+ * `fallbackTitle`（标签的持久化标题）只用作仍处于加载中的资源的首帧兜底；
+ * 一旦缓存解析出来，就以实时展示信息为准。
+ * @param url 标签的 URL。
+ * @param fallbackTitle 可选的兜底标题。
  */
 export function useTabPresentation(
   url: string,
@@ -242,8 +243,8 @@ export function useTabPresentation(
   const { visual, title: titleSpec } = resolveTabPresentation(subject, data);
   const title = useTabTitle(titleSpec, fallbackTitle);
 
-  // The actor avatar resolves through workspace directory queries and throws
-  // if rendered before the workspace exists. Until it does, show a type icon.
+  // actor 头像要通过工作区目录查询解析，在工作区还没就绪时渲染会抛错。
+  // 所以在那之前先显示一个类型图标。
   const safeVisual: TabVisual =
     visual.kind === "actor" && !wsId
       ? {
@@ -261,10 +262,11 @@ export function useTabPresentation(
 }
 
 /**
- * Render a tab's leading visual into a fixed 16×16 slot so the tab never
- * reflows when the visual resolves from a type fallback to the real identity.
- * Shared by the desktop tab bar (and reusable by any resource row that wants
- * the same identity rules).
+ * 把标签的前导视觉渲染进一个固定的 16×16 槽位，这样当视觉从类型兜底
+ * 解析成真实身份时，标签不会发生重排。桌面端标签栏共用（任何想用同一套
+ * 身份规则的资源行也可复用）。
+ * @param visual 要渲染的前导视觉。
+ * @param className 附加样式类名。
  */
 export function ResourceLeadingVisual({
   visual,
@@ -281,7 +283,7 @@ export function ResourceLeadingVisual({
       break;
     }
     case "issue-status":
-      // A null status (loading) renders StatusIcon's neutral fallback glyph.
+      // null 状态（加载中）会渲染 StatusIcon 的中性兜底图标。
       inner = (
         <StatusIcon
           status={visual.status ?? ""}

@@ -1,3 +1,8 @@
+// 本文件实现「禁用某个 runtime 本地技能」的 per-agent 覆盖：
+// agent 会从当前分配的本地 runtime 继承一批运行时技能，这里按 (runtime, provider,
+// root, key) 精确标识单个技能并落一条禁用以外的白名单状态（disabled_runtime_skills）。
+// 处理逻辑含身份归一化/越界校验、事务内加锁复查 runtime 归属、落库后广播
+// agent:status 让其它客户端刷新缓存。
 package handler
 
 import (
@@ -15,11 +20,11 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// maxRuntimeSkillKeyLength 是 runtime 技能 key 的长度上界（也复用于 name）。
 const maxRuntimeSkillKeyLength = 512
 
-// DisabledRuntimeSkill identifies one runtime-local skill that an agent must
-// not inherit. RuntimeID scopes the choice to a single machine/runtime so a
-// same-named skill on another runtime is unaffected.
+// DisabledRuntimeSkill 标识一个 agent 不得继承的 runtime-local 技能。RuntimeID
+// 把选择限定到单台机器/单个 runtime，另一台 runtime 上的同名技能不受影响。
 type DisabledRuntimeSkill struct {
 	RuntimeID string `json:"runtime_id"`
 	Provider  string `json:"provider"`
@@ -29,6 +34,8 @@ type DisabledRuntimeSkill struct {
 	Plugin    string `json:"plugin,omitempty"`
 }
 
+// decodeDisabledRuntimeSkills 把存储的 disabled_runtime_skills 字节解码为切片，
+// 空/坏数据一律回落为空切片。
 func decodeDisabledRuntimeSkills(raw []byte) []DisabledRuntimeSkill {
 	if len(raw) == 0 {
 		return []DisabledRuntimeSkill{}
@@ -40,6 +47,7 @@ func decodeDisabledRuntimeSkills(raw []byte) []DisabledRuntimeSkill {
 	return skills
 }
 
+// disabledRuntimeSkillsFor 从全部禁用列表中过滤出指定 (runtime, provider) 的项。
 func disabledRuntimeSkillsFor(raw []byte, runtimeID, provider string) []DisabledRuntimeSkill {
 	all := decodeDisabledRuntimeSkills(raw)
 	result := make([]DisabledRuntimeSkill, 0, len(all))
@@ -51,6 +59,10 @@ func disabledRuntimeSkillsFor(raw []byte, runtimeID, provider string) []Disabled
 	return result
 }
 
+// normalizeRuntimeSkillIdentity 校验并归一化 runtime 技能的 (root, key, plugin)
+// 三元组：key 非空且不越界、清除路径穿越（..、绝对路径）；root 为 provider/
+// universal 时 plugin 置空，为 plugin 时必须有 plugin 名。返回 ok=false 表示
+// 身份非法。
 func normalizeRuntimeSkillIdentity(root, key, plugin string) (string, string, string, bool) {
 	root = strings.TrimSpace(root)
 	key = strings.TrimSpace(key)
@@ -75,13 +87,15 @@ func normalizeRuntimeSkillIdentity(root, key, plugin string) (string, string, st
 	return root, cleaned, plugin, true
 }
 
+// sameDisabledRuntimeSkill 判断两条禁用项是否指同一技能（去重比较用）。
 func sameDisabledRuntimeSkill(a, b DisabledRuntimeSkill) bool {
 	return a.RuntimeID == b.RuntimeID && a.Provider == b.Provider &&
 		a.Root == b.Root && a.Key == b.Key && a.Plugin == b.Plugin
 }
 
-// SetAgentRuntimeSkillEnabled persists a per-agent override for a skill that
-// is discovered from the agent's currently assigned local runtime.
+// SetAgentRuntimeSkillEnabled 为「从 agent 当前分配的本地 runtime 发现的某个
+// 技能」持久化一条 per-agent 覆盖：enabled=false 把该技能加入禁用列表，
+// enabled=true 则从列表移除（重新继承）。
 func (h *Handler) SetAgentRuntimeSkillEnabled(w http.ResponseWriter, r *http.Request) {
 	agentID := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, agentID)
@@ -192,21 +206,19 @@ func (h *Handler) SetAgentRuntimeSkillEnabled(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Broadcast the updated agent so every other open web/desktop/mobile client
-	// invalidates its cached agent and picks up the new disabled_runtime_skills
-	// state. The workspace-skill toggle does the same through
-	// writeUpdatedAgentSkills (skill.go); the realtime layer keys off the
-	// "agent:status" event to invalidate workspaceKeys.agents. Without this only
-	// the initiating tab refreshes and other clients keep showing stale toggles.
+	// 广播更新后的 agent，让每个其它打开的 web/desktop/mobile 客户端作废缓存并
+	// 拿到新的 disabled_runtime_skills 状态。工作区技能开关在 skill.go 里经
+	// writeUpdatedAgentSkills 做同样的事；实时层靠 "agent:status" 事件作废
+	// workspaceKeys.agents。没有这一步就只有发起标签页刷新，其它客户端会一直
+	// 显示过期的开关状态。
 	locked.DisabledRuntimeSkills = payload
 	resp := h.agentToResponse(locked)
 	if err := h.enrichAgentResponseWithTargets(r.Context(), &resp, locked.ID); err != nil {
 		slog.Warn("runtime skill toggle: load invocation targets for broadcast failed",
 			append(logger.RequestAttrs(r), "error", err, "agent_id", agentID)...)
 	}
-	// agentToResponse initialises Skills as []; reload the junction-table
-	// bindings so the broadcast mirrors reality instead of signalling other
-	// clients that this agent's skills were cleared (#3459).
+	// agentToResponse 把 Skills 初始化为 []；重载 junction-table 绑定，让广播如实
+	// 反映现状，而不是向其它客户端暗示该 agent 的技能被清空了（#3459）。
 	if err := h.attachAgentSkills(r.Context(), &resp, locked.ID); err != nil {
 		slog.Warn("runtime skill toggle: load agent skills for broadcast failed",
 			append(logger.RequestAttrs(r), "error", err, "agent_id", agentID)...)

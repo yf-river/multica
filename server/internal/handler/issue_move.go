@@ -1,3 +1,6 @@
+// 职责定位：把 issue 拖拽移动（MoveIssue）从「客户端算好的绝对 position」改成「相对邻居」：
+// 服务端解析前后锚点、自己推导新 position，再转交 UpdateIssue 走同一条既有校验/实时/触发/
+// 父级通知路径。
 package handler
 
 import (
@@ -14,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
+// issueMoveFields 是 MoveIssue 接受的字段白名单（其余字段直接拒绝，防止夹带）。
 var issueMoveFields = map[string]struct{}{
 	"status":            {},
 	"assignee_type":     {},
@@ -25,12 +29,10 @@ var issueMoveFields = map[string]struct{}{
 	"expected_revision": {},
 }
 
-// MoveIssue accepts relative neighbors instead of a client-authored canonical
-// position. It resolves both anchors inside the issue's workspace, derives the
-// position server-side, then delegates the actual write to UpdateIssue so all
-// existing validation, realtime, task-trigger and parent-notification behavior
-// stays on one path. The legacy PUT endpoint remains unchanged for released
-// clients.
+// MoveIssue 处理 POST /api/issues/:id/move：接受相对邻居（before_id/after_id）而不是客户端自造
+// 的规范 position。它在 issue 所属工作区内解析两个锚点、在服务端推导 position，然后把真正的
+// 写入委托给 UpdateIssue——所有既有校验、实时、任务触发与父级通知行为都收在一条路径上。
+// 面向已发布客户端的旧 PUT 端点保持不变。
 func (h *Handler) MoveIssue(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	current, ok := h.loadIssueForUser(w, r, id)
@@ -106,14 +108,10 @@ func (h *Handler) MoveIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// V1 intentionally keeps the canonical write on UpdateIssue so released
-	// clients and the new move endpoint share validation, realtime and task
-	// side effects. That means anchor resolution and the write are not one
-	// transaction: stale/out-of-order anchors fail closed with 409 where
-	// detectable, and an exhausted float gap also returns 409 instead of
-	// silently renumbering neighboring issues. A future rebalance must move
-	// every position writer (including the legacy PUT path) behind one
-	// transactional ordering boundary.
+	// V1 刻意把规范写留在 UpdateIssue 上，让已发布客户端与新 move 端点共享校验、实时与任务
+	// 副作用。这意味着「锚点解析」与「写入」不是同一事务：可检测时过期/乱序锚点用 409 失败
+	// 关闭；float 间距耗尽也返回 409 而不是悄悄给邻居重编号。未来的 rebalance 必须把所有
+	// position 写入者（含 legacy PUT 路径）挪到同一个事务性排序边界后。
 	beforePosition, ok := h.issueMoveAnchorPosition(w, r, current.WorkspaceID, beforeID)
 	if !ok {
 		return
@@ -141,6 +139,7 @@ func (h *Handler) MoveIssue(w http.ResponseWriter, r *http.Request) {
 	h.UpdateIssue(w, r)
 }
 
+// decodeIssueMoveAnchor 把 before_id/after_id 的原始 JSON 解成 *pgtype.UUID（显式 null 为 nil）。
 func decodeIssueMoveAnchor(w http.ResponseWriter, raw json.RawMessage, field string) (*pgtype.UUID, bool) {
 	if rawJSONNull(raw) {
 		return nil, true
@@ -158,10 +157,13 @@ func decodeIssueMoveAnchor(w http.ResponseWriter, raw json.RawMessage, field str
 	return &id, true
 }
 
+// rawJSONNull 判断一段原始 JSON 是不是字面量 null。
 func rawJSONNull(raw json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
+// issueMoveAnchorPosition 读某锚点 issue 的 position（工作区范围内）；锚点为 nil（表示移到
+// 列表头/尾）时直接返回 nil、无错误。
 func (h *Handler) issueMoveAnchorPosition(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -188,6 +190,8 @@ func (h *Handler) issueMoveAnchorPosition(
 	return &position, true
 }
 
+// issueMovePosition 在前后锚点之间取中点作为新 position（float 排序用）；只给一边时 ±1。
+// 间距耗尽、上下溢或出现 NaN/Inf 都报错，由调用方回 409 让用户刷新重试。
 func issueMovePosition(current float64, before, after *float64) (float64, error) {
 	switch {
 	case before != nil && after != nil:

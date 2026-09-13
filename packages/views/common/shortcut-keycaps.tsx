@@ -1,3 +1,4 @@
+// 快捷键键帽展示组件：把快捷键组合按平台渲染成带图标的 Kbd 键帽序列，供快捷键提示 UI 使用。
 "use client";
 
 import {
@@ -78,6 +79,15 @@ function shortcutTokens(
   return tokens;
 }
 
+/**
+ * 快捷键键帽。把快捷键组合按平台渲染成一系列带图标或文本的 Kbd 键帽。
+ * @param shortcut 快捷键组合。
+ * @param platform 目标平台，默认用 getShortcutPlatform() 探测。
+ * @param size 键帽尺寸（sm / md）。
+ * @param decorative 父级已命名动作时，隐藏多余提示（无角色、无 aria-label）。
+ * @param className 外层样式。
+ * @param keyClassName 单个键帽样式。
+ */
 export function ShortcutKeycaps({
   shortcut,
   platform = getShortcutPlatform(),
@@ -89,7 +99,7 @@ export function ShortcutKeycaps({
   shortcut: ShortcutChord;
   platform?: ShortcutPlatform;
   size?: "sm" | "md";
-  /** Hide a redundant hint when its parent already names the action. */
+  /** 父级已命名动作时，隐藏多余的提示。 */
   decorative?: boolean;
   className?: string;
   keyClassName?: string;

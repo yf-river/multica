@@ -2,6 +2,14 @@ import * as React from "react"
 
 import { cn } from "@multica/ui/lib/utils"
 
+// 本文件是卡片（Card）组件族：带边框、圆角、阴影的内容容器，通常由
+// Header（标题/描述/操作）+ Content + Footer 拼装，顶层图片会自动贴合圆角。
+
+/**
+ * Card：卡片容器。可放 Header/Content/Footer 或任意内容。
+ * 顶层若放图片会自动裁成圆角；存在 Footer 时底部内边距让给 Footer。
+ * `size` 控制内边距与字号档位（default/sm）。
+ */
 function Card({
   className,
   size = "default",
@@ -20,6 +28,7 @@ function Card({
   )
 }
 
+/** CardHeader：卡片头部区，容纳标题、描述与右上角操作；可切换容器查询 */
 function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -33,6 +42,7 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** CardTitle：卡片标题 */
 function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -46,6 +56,7 @@ function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** CardDescription：卡片标题下的辅助说明文字 */
 function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -56,6 +67,7 @@ function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** CardAction：钉在头部右上角的操作位（按钮/菜单等） */
 function CardAction({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -69,6 +81,7 @@ function CardAction({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** CardContent：卡片主体内容区 */
 function CardContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -79,6 +92,7 @@ function CardContent({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** CardFooter：卡片底部操作区，浅色底 + 顶部细分隔线 */
 function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div

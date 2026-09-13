@@ -1,30 +1,30 @@
 package featureflag
 
+// 本文件职责：实现框架层的「开关路由」Service——业务代码只问它要某个开关的
+// 决策，它再转问配置好的 Provider。含默认值兜底、nil Service 容错与
+// ReasonError 告警逻辑。
+
 import (
 	"context"
 	"log/slog"
 )
 
-// Service is the framework-level Toggle Router. Business code asks the
-// Service for flag decisions; the Service in turn consults its configured
-// Provider. The Service is safe for concurrent use and is the only type
-// callers should hold a reference to.
+// Service 是框架层的开关路由器。业务代码向 Service 要开关决策，Service 再
+// 转查自己配好的 Provider。Service 并发安全，也是调用方唯一需要持有引用的类型。
 //
-// A nil *Service is valid and behaves as if every flag were missing: every
-// call returns the supplied default with Reason=ReasonDefault. This lets
-// callers compose Service without first guarding against nil, which in
-// practice is the most common cause of feature-flag-related nil panics.
+// nil *Service 也是合法的，行为等同「所有开关都缺失」：每次调用都返回调用方
+// 传入的默认值，Reason=ReasonDefault。这样调用方组合 Service 时不用先防 nil——
+// 实践中 nil 解引用正是功能开关相关 panic 最常见的来源。
 type Service struct {
 	provider Provider
 	logger   *slog.Logger
 }
 
-// Option configures optional Service behavior.
+// Option 用来配置 Service 的可选行为。
 type Option func(*Service)
 
-// WithLogger attaches a structured logger that the Service will use to emit
-// warnings for malformed flag configuration. By default the Service is
-// silent so it can be embedded in tests without polluting output.
+// WithLogger 给 Service 挂一个结构化日志器，用于对「配错的功能开关配置」
+// 发出告警。默认 Service 是安静的，方便在测试里内嵌而不污染输出。
 func WithLogger(l *slog.Logger) Option {
 	return func(s *Service) {
 		if l != nil {
@@ -33,9 +33,8 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
-// NewService returns a Service backed by the supplied provider. Passing a
-// nil provider is allowed and is equivalent to the always-default behavior;
-// see the package doc for the rationale.
+// NewService 返回由给定 provider 支撑的 Service。允许传 nil provider，
+// 效果等同于「永远走默认值」；理由见包文档。
 func NewService(provider Provider, opts ...Option) *Service {
 	s := &Service{provider: provider}
 	for _, opt := range opts {
@@ -44,12 +43,11 @@ func NewService(provider Provider, opts ...Option) *Service {
 	return s
 }
 
-// IsEnabled returns true when the named flag evaluates to an "on" state for
-// the EvalContext attached to ctx. When the flag is unknown or its provider
-// errors, the supplied default is returned so business code can ship with
-// confidence that a missing flag never crashes a request.
+// IsEnabled 返回指定开关在 ctx 携带的 EvalContext 下是否处于「开」。开关未知
+// 或 provider 出错时返回传入的默认值，让业务代码可以放心上线——缺失的开关
+// 永远不会让一次请求崩溃。
 //
-// IsEnabled is the most common Toggle Point in business code:
+// IsEnabled 是业务代码里最常见的开关接入点：
 //
 //	if flags.IsEnabled(ctx, "billing_new_invoice_email", false) {
 //	    return s.sendNewInvoiceEmail(ctx, invoice)
@@ -59,19 +57,17 @@ func (s *Service) IsEnabled(ctx context.Context, key string, defaultVal bool) bo
 	return s.Decision(ctx, key, defaultVal).Enabled
 }
 
-// Variant returns the raw variant value for the named flag, falling back to
-// defaultVal when no provider matches. Use Variant for multi-arm flags
-// (A/B/C tests, "control"/"experiment"/"holdout"). For simple on/off flags,
-// prefer IsEnabled.
+// Variant 返回指定开关的原始 variant 值；没有任何 provider 命中时回落到
+// defaultVal。多臂开关（A/B/C 测试、"control"/"experiment"/"holdout"）
+// 用 Variant；简单开/关开关优先用 IsEnabled。
 func (s *Service) Variant(ctx context.Context, key string, defaultVal string) string {
 	d := s.decisionWithVariantDefault(ctx, key, defaultVal)
 	return d.Variant
 }
 
-// Decision returns the full structured Decision for a flag. The supplied
-// boolean default is used to populate both Variant and Enabled when no
-// provider matches the key. Diagnostic endpoints and tests use this entry
-// point to surface Reason and Source.
+// Decision 返回一个开关的完整结构化决策。当没有 provider 命中 key 时，
+// 用传入的布尔默认值同时填 Variant 与 Enabled。诊断接口和测试走这个入口，
+// 以暴露 Reason 和 Source。
 func (s *Service) Decision(ctx context.Context, key string, defaultVal bool) Decision {
 	if s == nil || s.provider == nil {
 		return defaultDecision(key, boolToVariant(defaultVal), defaultVal)
@@ -90,9 +86,8 @@ func (s *Service) Decision(ctx context.Context, key string, defaultVal bool) Dec
 	return d
 }
 
-// decisionWithVariantDefault is the variant-aware twin of Decision. It is
-// kept private because callers who care about reasons can rely on Decision
-// + IsEnabled; Variant is a convenience.
+// decisionWithVariantDefault 是 Decision 的 variant 感知孪生版。它保持私有：
+// 在意 Reason 的调用方可以直接用 Decision + IsEnabled；Variant 只是便利入口。
 func (s *Service) decisionWithVariantDefault(ctx context.Context, key, defaultVariant string) Decision {
 	if s == nil || s.provider == nil {
 		return defaultDecision(key, defaultVariant, variantEnabled(defaultVariant))
@@ -105,9 +100,8 @@ func (s *Service) decisionWithVariantDefault(ctx context.Context, key, defaultVa
 	return d
 }
 
-// Provider exposes the wrapped Provider so diagnostic endpoints can iterate
-// known flags. Callers MUST NOT mutate the returned Provider; the contract
-// is read-only.
+// Provider 暴露被包裹的 Provider，让诊断接口能遍历已知开关。
+// 调用方绝不能改动返回的 Provider——该契约是只读的。
 func (s *Service) Provider() Provider {
 	if s == nil {
 		return nil
@@ -125,10 +119,9 @@ func defaultDecision(key, variant string, enabled bool) Decision {
 	}
 }
 
-// boolToVariant produces the canonical variant string for a boolean flag.
-// "on" / "off" is used rather than "true" / "false" so that string-typed
-// providers (e.g. env vars) do not collide with the user's own bool-as-text
-// values.
+// boolToVariant 把布尔值转成布尔开关的规范 variant 字符串。
+// 用 "on"/"off" 而非 "true"/"false"，是避免字符串型 provider（如环境变量）
+// 与用户自己「布尔转文本」的值撞车。
 func boolToVariant(b bool) string {
 	if b {
 		return "on"
@@ -136,10 +129,10 @@ func boolToVariant(b bool) string {
 	return "off"
 }
 
-// variantEnabled reports whether a variant string projects to "enabled".
-// Empty and "off" are the only false values; everything else, including
-// arbitrary variant identifiers like "experiment-v2", is enabled. Callers
-// who care about specific variants should compare with == directly.
+// variantEnabled 判断一个 variant 字符串是否投影为「开」。
+// 只有空串和 "off"（以及 "false"/"0"）算关；其余一切值——包括
+// "experiment-v2" 这样的任意 variant 标识——都算开。在意具体 variant 的
+// 调用方应该直接用 == 比较。
 func variantEnabled(v string) bool {
 	switch v {
 	case "", "off", "false", "0":

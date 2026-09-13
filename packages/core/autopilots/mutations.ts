@@ -1,3 +1,5 @@
+// 本文件定义自动驾驶（autopilot）相关的变更操作（mutation），封装对后端的增删改触发。
+
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { autopilotKeys } from "./queries";
@@ -11,6 +13,9 @@ import type {
   UpdateAutopilotTriggerRequest,
 } from "../types";
 
+/**
+ * 创建自动驾驶的 mutation。成功后把新项插入列表缓存，并最终失效列表查询。
+ */
 export function useCreateAutopilot() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -29,6 +34,10 @@ export function useCreateAutopilot() {
   });
 }
 
+/**
+ * 更新自动驾驶的 mutation。采用乐观更新：先改列表与详情缓存，失败时回滚，
+ * 最终失效详情和列表查询以拉取权威数据。
+ */
 export function useUpdateAutopilot() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -39,9 +48,8 @@ export function useUpdateAutopilot() {
       qc.cancelQueries({ queryKey: autopilotKeys.list(wsId) });
       const prevList = qc.getQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId));
       const prevDetail = qc.getQueryData<GetAutopilotResponse>(autopilotKeys.detail(wsId, id));
-      // Request shape (AutopilotSubscriberInput) lacks `created_at`, so it's
-      // not assignable to the response shape. onSettled invalidates the
-      // detail query and refetches the authoritative server payload.
+      // 请求形状（AutopilotSubscriberInput）缺少 `created_at`，因此不能赋给响应形状。
+      // onSettled 会失效详情查询并重新拉取权威的服务端载荷。
       const { subscribers: _omitSubs, ...optimistic } = data;
       qc.setQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId), (old) =>
         old
@@ -69,6 +77,9 @@ export function useUpdateAutopilot() {
   });
 }
 
+/**
+ * 删除自动驾驶的 mutation。乐观地从列表移除并删除详情缓存，失败时回滚。
+ */
 export function useDeleteAutopilot() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -92,6 +103,9 @@ export function useDeleteAutopilot() {
   });
 }
 
+/**
+ * 手动触发一次自动驾驶的 mutation。结束后失效该自动驾驶的运行列表和详情。
+ */
 export function useTriggerAutopilot() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -104,6 +118,9 @@ export function useTriggerAutopilot() {
   });
 }
 
+/**
+ * 授予某用户访问自动驾驶权限的 mutation。结束后失效该自动驾驶详情。
+ */
 export function useGrantAutopilotAccess() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -116,6 +133,9 @@ export function useGrantAutopilotAccess() {
   });
 }
 
+/**
+ * 撤销某用户访问自动驾驶权限的 mutation。结束后失效该自动驾驶详情。
+ */
 export function useRevokeAutopilotAccess() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -128,6 +148,9 @@ export function useRevokeAutopilotAccess() {
   });
 }
 
+/**
+ * 创建自动驾驶触发器的 mutation。结束后失效所属自动驾驶的详情。
+ */
 export function useCreateAutopilotTrigger() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -140,6 +163,9 @@ export function useCreateAutopilotTrigger() {
   });
 }
 
+/**
+ * 更新自动驾驶触发器的 mutation。结束后失效所属自动驾驶的详情。
+ */
 export function useUpdateAutopilotTrigger() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -152,6 +178,9 @@ export function useUpdateAutopilotTrigger() {
   });
 }
 
+/**
+ * 删除自动驾驶触发器的 mutation。结束后失效所属自动驾驶的详情。
+ */
 export function useDeleteAutopilotTrigger() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -164,6 +193,9 @@ export function useDeleteAutopilotTrigger() {
   });
 }
 
+/**
+ * 轮换自动驾驶 webhook 触发器 token 的 mutation。结束后失效所属自动驾驶的详情。
+ */
 export function useRotateAutopilotTriggerWebhookToken() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -176,10 +208,11 @@ export function useRotateAutopilotTriggerWebhookToken() {
   });
 }
 
-// Replay re-dispatches a previously-recorded delivery. The server creates
-// a new delivery row (with `replayed_from_delivery_id`) and synchronously
-// kicks off a new autopilot run. We invalidate both deliveries and runs so
-// the new delivery and any resulting run show up immediately.
+/**
+ * 重放一次已记录的投递（delivery）。服务端会创建一条新的投递记录
+ * （带 `replayed_from_delivery_id`）并同步启动一次新的自动驾驶运行。
+ * 我们同时失效投递和运行两类查询，让新投递及可能产生的运行立即显现。
+ */
 export function useReplayAutopilotDelivery() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();

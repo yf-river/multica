@@ -1,3 +1,7 @@
+// jobs_task_usage.go 定义并接线「task_usage 小时级汇总」这个调度任务：封装成 JobSpec
+// 注册进 scheduler。handler 调用既有的 `rollup_task_usage_hourly()` SQL 函数做真正
+// 的汇总，调度器这边只负责租约、心跳与审计行；函数内部自带 advisory lock 4246，
+// 与遗留的 pg_cron tick / 手工调用并发执行也是安全的。
 package scheduler
 
 import (
@@ -12,21 +16,19 @@ import (
 	"github.com/multica-ai/multica/server/internal/taskusagebackfill"
 )
 
-// JobNameRollupTaskUsageHourly is the canonical name used in audit
-// rows. Stable across releases — do not rename without a migration.
+// JobNameRollupTaskUsageHourly 是审计行里使用的规范任务名。跨版本必须保持稳定——
+// 改名必须带迁移。
 const JobNameRollupTaskUsageHourly = "rollup_task_usage_hourly"
 
-// TaskUsageHourlyJob returns the JobSpec that drives the
-// task_usage_hourly rollup. The handler calls the existing
-// `rollup_task_usage_hourly()` SQL function, which already holds
-// advisory lock 4246 internally so a concurrent legacy pg_cron tick or
-// manual call is safe (RFC §11.3).
+// TaskUsageHourlyJob 返回驱动 task_usage_hourly 汇总的 JobSpec。handler 调用既有的
+// `rollup_task_usage_hourly()` SQL 函数——该函数内部已持有 advisory lock 4246，
+// 所以与遗留的 pg_cron tick 或手工调用并发执行是安全的（RFC §11.3）。
 //
-// The spec is the canonical settings from the RFC §11.1:
+// 该 spec 即 RFC §11.1 里的规范配置：
 //
 //	cadence:               5m
 //	schedule_delay:        5m
-//	catch_up_mode:         latest_only (handler watermark drives history)
+//	catch_up_mode:         latest_only（历史由 handler 的水位线驱动）
 //	run_timeout:           25m
 //	stale_timeout:         30m
 //	heartbeat_interval:    30s
@@ -55,12 +57,10 @@ func TaskUsageHourlyJob(pool *pgxpool.Pool) JobSpec {
 	}
 }
 
-// makeTaskUsageHourlyHandler reads the watermark before/after the SQL
-// function so the audit row records whether business state advanced.
-// The function call itself acquires advisory lock 4246 inside SQL — if
-// another writer holds the lock the function returns 0 immediately and
-// this attempt completes as SUCCESS with rows_affected=0, which is the
-// correct "lost the inner race, no work to do" outcome.
+// makeTaskUsageHourlyHandler 在调用 SQL 函数前后各读一次水位线，好让审计行记录「业务
+// 状态是否推进了」。函数调用本身在 SQL 内部获取 advisory lock 4246——若别的写入者正
+// 持有该锁，函数立刻返回 0，本次尝试以 rows_affected=0 的 SUCCESS 收场，这正是
+// 「内层竞争没赢、没有活可干」的正确结局。
 func makeTaskUsageHourlyHandler(pool *pgxpool.Pool) Handler {
 	return func(ctx context.Context, in HandlerInput) (HandlerResult, error) {
 		watermarkBefore, err := readTaskUsageWatermark(ctx, pool)
@@ -78,8 +78,8 @@ func makeTaskUsageHourlyHandler(pool *pgxpool.Pool) Handler {
 			return HandlerResult{}, fmt.Errorf("read watermark after: %w", err)
 		}
 
-		// Light heartbeat at the end keeps stale_after fresh for jobs
-		// that ran much shorter than HeartbeatInterval.
+		// 结尾轻量心跳一次，让跑得比 HeartbeatInterval 短得多的任务也能把 stale_after
+		// 保持在新鲜状态。
 		if in.Heartbeat != nil {
 			_ = in.Heartbeat(ctx)
 		}
@@ -100,9 +100,8 @@ func makeTaskUsageHourlyHandler(pool *pgxpool.Pool) Handler {
 	}
 }
 
-// readTaskUsageWatermark reads the current watermark; returns zero
-// time.Time if the row is missing (shouldn't happen post-101, but the
-// handler should not panic in that case).
+// readTaskUsageWatermark 读当前水位线；行缺失时返回零值 time.Time（101 迁移之后
+// 不应该发生，但 handler 遇到时也不该 panic）。
 func readTaskUsageWatermark(ctx context.Context, pool *pgxpool.Pool) (time.Time, error) {
 	var t time.Time
 	err := pool.QueryRow(ctx, `

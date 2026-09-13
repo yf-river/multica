@@ -1,4 +1,7 @@
 "use client"
+// 本文件是下拉菜单（DropdownMenu）组件族（基于 Base UI 的 Menu）：
+// 点击触发器弹出菜单面板，含普通项/勾选项/单选组/多级子菜单/分隔线等，
+// 是行内「···」菜单、按钮下拉等场景的标准实现。
 
 import * as React from "react"
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
@@ -6,18 +9,28 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu"
 import { cn } from "@multica/ui/lib/utils"
 import { ChevronRightIcon, CheckIcon } from "lucide-react"
 
+/** DropdownMenu：下拉菜单根组件 */
 function DropdownMenu({ ...props }: MenuPrimitive.Root.Props) {
   return <MenuPrimitive.Root data-slot="dropdown-menu" {...props} />
 }
 
+/** DropdownMenuPortal：把菜单面板传送到 body 末端 */
 function DropdownMenuPortal({ ...props }: MenuPrimitive.Portal.Props) {
   return <MenuPrimitive.Portal data-slot="dropdown-menu-portal" {...props} />
 }
 
+/** DropdownMenuTrigger：打开菜单的触发元素 */
 function DropdownMenuTrigger({ ...props }: MenuPrimitive.Trigger.Props) {
   return <MenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />
 }
 
+/**
+ * DropdownMenuContent：弹出的菜单面板。
+ * 特意拦截了点击事件的冒泡：Base UI 把弹层传送到 <body>，DOM 上虽然已脱离
+ * 触发器，但 React 的合成事件仍沿组件树冒泡——不拦截的话，点在包在 <a>
+ * 里的行（Agent/运行时列表行）上的某个菜单项，会同时触发整行的 onClick，
+ * 造成误导航。
+ */
 function DropdownMenuContent({
   align = "start",
   alignOffset = 0,
@@ -32,11 +45,7 @@ function DropdownMenuContent({
     MenuPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset" | "anchor"
   >) {
-  // Stop click events from bubbling out of the menu. Base UI portals the
-  // popup so DOM is detached, but React's synthetic event system still
-  // bubbles through the React component tree — without this, clicking a
-  // menu item inside a row that's wrapped in <a> (agent / runtime list
-  // rows) would ALSO fire the row's onClick → unintended navigation.
+  // 阻止点击事件冒泡出菜单（原因见上方组件注释）；同时透传调用方的 onClick
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
@@ -61,10 +70,12 @@ function DropdownMenuContent({
   )
 }
 
+/** DropdownMenuGroup：菜单项分组容器 */
 function DropdownMenuGroup({ ...props }: MenuPrimitive.Group.Props) {
   return <MenuPrimitive.Group data-slot="dropdown-menu-group" {...props} />
 }
 
+/** DropdownMenuLabel：组标题标签；inset 时缩进对齐带图标的项 */
 function DropdownMenuLabel({
   className,
   inset,
@@ -85,6 +96,10 @@ function DropdownMenuLabel({
   )
 }
 
+/**
+ * DropdownMenuItem：菜单中的普通项。
+ * variant="destructive" 时文字变危险色（用于删除类操作）；inset 用于缩进对齐。
+ */
 function DropdownMenuItem({
   className,
   inset,
@@ -108,10 +123,12 @@ function DropdownMenuItem({
   )
 }
 
+/** DropdownMenuSub：多级子菜单的根 */
 function DropdownMenuSub({ ...props }: MenuPrimitive.SubmenuRoot.Props) {
   return <MenuPrimitive.SubmenuRoot data-slot="dropdown-menu-sub" {...props} />
 }
 
+/** DropdownMenuSubTrigger：子菜单的展开项（右侧带 › 箭头） */
 function DropdownMenuSubTrigger({
   className,
   inset,
@@ -136,6 +153,7 @@ function DropdownMenuSubTrigger({
   )
 }
 
+/** DropdownMenuSubContent：子菜单展开的面板，默认从父项右侧弹出 */
 function DropdownMenuSubContent({
   align = "start",
   alignOffset = -3,
@@ -157,6 +175,7 @@ function DropdownMenuSubContent({
   )
 }
 
+/** DropdownMenuCheckboxItem：带勾选状态的菜单项（右侧显示/隐藏对勾） */
 function DropdownMenuCheckboxItem({
   className,
   children,
@@ -191,6 +210,7 @@ function DropdownMenuCheckboxItem({
   )
 }
 
+/** DropdownMenuRadioGroup：单选组的容器 */
 function DropdownMenuRadioGroup({ ...props }: MenuPrimitive.RadioGroup.Props) {
   return (
     <MenuPrimitive.RadioGroup
@@ -200,14 +220,17 @@ function DropdownMenuRadioGroup({ ...props }: MenuPrimitive.RadioGroup.Props) {
   )
 }
 
+/**
+ * DropdownMenuRadioItem：单选菜单项（右侧显示选中圆点）。
+ *
+ * Base UI 默认单选类项 closeOnClick=false（为那种一次进来调多个选项的菜单
+ * 调优）。我们的单选菜单几乎都是「单选即走」的选择器，所以选中应当立刻收起
+ * 菜单；确实要一边选一边继续操作的菜单用 closeOnClick={false} 退出这个默认。
+ */
 function DropdownMenuRadioItem({
   className,
   children,
   inset,
-  // Base UI defaults radio items to closeOnClick=false (tuned for menus where
-  // the user adjusts several options in one visit). Our radio menus are almost
-  // all single-select pickers, so selecting should dismiss; menus that mix a
-  // radio group with further actions opt back out with closeOnClick={false}.
   closeOnClick = true,
   ...props
 }: MenuPrimitive.RadioItem.Props & {
@@ -238,6 +261,7 @@ function DropdownMenuRadioItem({
   )
 }
 
+/** DropdownMenuSeparator：菜单分组间的分隔线 */
 function DropdownMenuSeparator({
   className,
   ...props
@@ -251,6 +275,7 @@ function DropdownMenuSeparator({
   )
 }
 
+/** DropdownMenuShortcut：菜单项右侧的快捷键提示 */
 function DropdownMenuShortcut({
   className,
   ...props

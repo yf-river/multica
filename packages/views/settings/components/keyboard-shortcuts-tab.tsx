@@ -1,3 +1,6 @@
+// 本文件是「键盘快捷键」设置标签页：列出所有可自定义的快捷键动作，支持点击按钮
+// 重新录制、禁用单项、单项还原与一键全部还原；下方另列一组不可修改的固定快捷键。
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -40,6 +43,8 @@ import {
   SettingsTab,
 } from "./settings-layout";
 
+/** 录制快捷键失败时的错误分类：与其它动作冲突 / 撞上系统保留键 / 特定动作不允许 /
+ *  一般性不安全 / 无错误。 */
 type CaptureError =
   | { kind: "conflict"; actionId: ShortcutActionId }
   | { kind: "reserved" }
@@ -47,6 +52,11 @@ type CaptureError =
   | { kind: "unsafe" }
   | null;
 
+/**
+ * 「键盘快捷键」标签页。每个可自定义动作一行：中间是当前快捷键按键帽（点击进入
+ * 「录制中」状态，直接按想要的新组合），右侧是还原、禁用两个图标按钮。搜索框按
+ * 动作名称/描述过滤列表。
+ */
 export function KeyboardShortcutsTab() {
   const { t } = useT("settings");
   const [query, setQuery] = useState("");
@@ -74,16 +84,21 @@ export function KeyboardShortcutsTab() {
 
   const groups: readonly ShortcutCategory[] = ["general", "navigation"];
 
+  // 录制核心：把用户按下的组合键套用到指定动作上。按 keydown 事件的顺序先拦下
+  // 冒泡与浏览器默认行为，再做一连串校验，全部通过才写入。
   const capture = (actionId: ShortcutActionId, event: React.KeyboardEvent) => {
     event.preventDefault();
     event.stopPropagation();
+    // 长按自动重复的 keydown 事件与输入法组字阶段的按键都跳过，避免误录。
     if (event.repeat || isImeComposing(event)) return;
     if (event.key === "Escape") {
+      // Esc 结束录制、什么都不改。
       setRecording(null);
       setCaptureError(null);
       return;
     }
     if (event.key === "Backspace" || event.key === "Delete") {
+      // 退格/删除视为「禁用该快捷键」（把覆盖设为 null）。
       setShortcut(actionId, null);
       setRecording(null);
       setCaptureError(null);
@@ -92,14 +107,17 @@ export function KeyboardShortcutsTab() {
 
     const shortcut = shortcutFromEvent(event.nativeEvent);
     if (!shortcut) return;
+    // 系统/浏览器保留键（如单独 Ctrl）不可被占用。
     if (isReservedShortcut(shortcut)) {
       setCaptureError({ kind: "reserved" });
       return;
     }
+    // 个别动作对按键有硬性限制（如发送消息不允许吞掉回车），违规直接拒绝。
     if (!isShortcutAllowedForAction(actionId, shortcut)) {
       setCaptureError({ kind: actionId === "send" ? "send" : "unsafe" });
       return;
     }
+    // 新组合不能与其它已占用动作冲突；冲突时把对手动作名带进错误提示。
     const conflict = findShortcutConflict(actionId, shortcut);
     if (conflict) {
       setCaptureError({ kind: "conflict", actionId: conflict });
@@ -236,6 +254,12 @@ export function KeyboardShortcutsTab() {
   );
 }
 
+/**
+ * 单个可自定义快捷键的行：左侧动作名/说明，右侧当前按键帽（可点击进入录制）、
+ * 还原与禁用按钮。录制中时把按钮变成「录制中」并监听按键；底部显示错误提示
+ * （冲突/保留/受限）或「按新快捷键」的提示。对「发送」动作且当前是纯回车时，
+ * 额外给一条品牌色说明（回车保留了特殊含义）。
+ */
 function ShortcutRow({
   action,
   shortcut,
@@ -355,6 +379,7 @@ function ShortcutRow({
   );
 }
 
+/** 固定快捷键的展示行：只读渲染按键帽，不提供自定义。 */
 function FixedShortcutRow({ label, shortcut }: { label: string; shortcut: ShortcutChord }) {
   return (
     <SettingsRow label={label}>

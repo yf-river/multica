@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * life 模块：陪伴（companion）页。
+ * 若尚未设置陪伴 agent，展示可选 agent 列表让用户选择一个作为陪伴搭子；
+ * 若已设置，展开聊天并定位到陪伴 agent 的会话。
+ */
+
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
@@ -13,6 +19,7 @@ import { PageHeader } from "../../layout/page-header";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 
+/** 陪伴页：设置陪伴 agent，或直接进入与它的聊天。 */
 export function CompanionPage() {
   const { t } = useT("life");
   const wsId = useWorkspaceId();

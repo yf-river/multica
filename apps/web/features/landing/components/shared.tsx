@@ -1,9 +1,17 @@
+/**
+ * 官网 landing 各组件的共享资源：社交/产品/工具 logo 的内联 SVG、
+ * 官网外链常量，以及头部/首屏按钮共用的样式工具函数。
+ */
 import { cn } from "@multica/ui/lib/utils";
 
+/** GitHub 仓库地址。 */
 export const githubUrl = "https://github.com/multica-ai/multica";
+/** 官方 X（Twitter）账号地址。 */
 export const twitterUrl = "https://x.com/MulticaAI";
+/** Discord 社区邀请地址。 */
 export const discordUrl = "https://discord.gg/W8gYBn226t";
 
+/** GitHub 八爪鱼图标。 */
 export function GitHubMark({ className }: { className?: string }) {
   return (
     <svg
@@ -17,6 +25,7 @@ export function GitHubMark({ className }: { className?: string }) {
   );
 }
 
+/** Discord 游戏手柄图标。 */
 export function DiscordMark({ className }: { className?: string }) {
   return (
     <svg
@@ -30,6 +39,7 @@ export function DiscordMark({ className }: { className?: string }) {
   );
 }
 
+/** X（原 Twitter）图标。 */
 export function XMark({ className }: { className?: string }) {
   return (
     <svg
@@ -43,6 +53,7 @@ export function XMark({ className }: { className?: string }) {
   );
 }
 
+/** 通用「图片」占位图标（轮廓风格）。 */
 export function ImageIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -63,6 +74,7 @@ export function ImageIcon({ className }: { className?: string }) {
   );
 }
 
+/** Claude Code（Anthropic）产品 logo。 */
 export function ClaudeCodeLogo({ className }: { className?: string }) {
   return (
     <svg
@@ -76,6 +88,7 @@ export function ClaudeCodeLogo({ className }: { className?: string }) {
   );
 }
 
+/** OpenAI Codex 产品 logo。 */
 export function CodexLogo({ className }: { className?: string }) {
   return (
     <svg
@@ -89,6 +102,7 @@ export function CodexLogo({ className }: { className?: string }) {
   );
 }
 
+/** Google Gemini CLI logo。 */
 export function GeminiCliLogo({ className }: { className?: string }) {
   return (
     <svg
@@ -102,6 +116,7 @@ export function GeminiCliLogo({ className }: { className?: string }) {
   );
 }
 
+/** OpenCode 工具 logo。 */
 export function OpenCodeLogo({ className }: { className?: string }) {
   return (
     <svg
@@ -116,6 +131,13 @@ export function OpenCodeLogo({ className }: { className?: string }) {
   );
 }
 
+/**
+ * 头部按钮的共用样式。
+ *
+ * @param tone - `solid` 实心主按钮 / `ghost` 描边次要按钮。
+ * @param variant - 深色头部还是浅色头部，决定配色。
+ * @returns 合并后的按钮 className。
+ */
 export function headerButtonClassName(
   tone: "ghost" | "solid",
   variant: "dark" | "light" = "dark",
@@ -132,6 +154,7 @@ export function headerButtonClassName(
   );
 }
 
+/** 首屏 Hero 按钮的共用样式（深色 Hero 上专用配色）。 */
 export function heroButtonClassName(tone: "ghost" | "solid") {
   return cn(
     "inline-flex items-center justify-center gap-2 rounded-[12px] px-5 py-3 text-body font-semibold transition-colors",

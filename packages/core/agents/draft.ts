@@ -1,3 +1,5 @@
+// Agent 创建流程的"草稿"模型：构建/校验/提交。所有创建入口（手动、复制、AI 构建器）
+// 共享同一套字段与转换，保证无论从哪个入口进来，处理方式都一致。
 import { isRuntimeUsableForUser } from "../runtimes/access";
 import type {
   Agent,
@@ -13,14 +15,13 @@ import {
   AGENT_MAX_CONCURRENT_TASKS_MIN,
 } from "./constants";
 
-// Declared with the other agent wire types so `StoredAgentDraft` can name it
-// without types/ having to import from agents/.
+// 与其他 Agent 线上类型放一起声明，让 `StoredAgentDraft` 能引用它，而 types/
+// 不必反向 import agents/ 的内容。
 export type { AgentPermissionScope };
 
 /**
- * The in-progress configuration of an agent being created. Shared by every
- * creation surface (manual, duplicate, AI builder) so the same field set is
- * validated, seeded and submitted the same way regardless of entry point.
+ * 正在被创建的 Agent 的"进行中配置"。所有创建界面（手动、复制、AI 构建器）共用，
+ * 使同一组字段无论从哪个入口进来都以同样的方式被校验、预填与提交。
  */
 export interface AgentDraft {
   name: string;
@@ -30,17 +31,18 @@ export interface AgentDraft {
   avatarUrl: string | null;
   runtimeId: string;
   model: string;
-  /** Runtime-native reasoning/effort token, scoped to `model`. */
+  /** 运行时原生的推理档位参数（thinking level），限定于当前 `model`。 */
   thinkingLevel: string;
-  /** Runtime-native execution tier (Codex Speed), scoped to `model`. */
+  /** 运行时原生的执行档位（如 Codex Speed 的服务等级），限定于当前 `model`。 */
   serviceTier: string;
   skillIds: Set<string>;
   permissionScope: AgentPermissionScope;
   memberIds: Set<string>;
-  /** Team grants are not editable in this form yet, but duplicates must preserve them. */
+  /** 团队授权目前还不能在此表单里编辑，但复制 Agent 时必须保留。 */
   teamIds: Set<string>;
 }
 
+/** 一份全空的 Agent 创建草稿（各入口的起点）。 */
 export const EMPTY_AGENT_DRAFT: AgentDraft = {
   name: "",
   description: "",
@@ -58,13 +60,14 @@ export const EMPTY_AGENT_DRAFT: AgentDraft = {
 };
 
 /**
- * Draft fields whose only meaning comes from the currently selected
- * runtime + model pair. A runtime change invalidates all three; a model
- * change invalidates the two that hang off the exact model catalog. Keeping
- * them together is what stops an orphan `thinking_level` / `service_tier`
- * from being persisted for a model that never advertised it — the daemon
- * would silently fall back at execution time and the settings page would
- * disagree with what actually ran (MUL-5390).
+ * 草稿里那些"只有配合当前选中的 runtime + model 才有意义"的字段。
+ * 换 runtime 会让这三个全部失效；换 model 则失效挂在该精确 model 目录下的两个。
+ * 把它们放在一起，才能阻止一份孤儿 `thinking_level` / `service_tier` 为一个从未
+ * 声明过它的 model 被持久化——否则 daemon 执行时会静默回退，设置页展示的与实际
+ * 跑的不一致（MUL-5390）。
+ * @param draft 当前草稿。
+ * @param runtimeId 新选中的运行时 id。
+ * @returns 换过运行时、清空 model 相关字段的新草稿。
  */
 export function applyDraftRuntimeChange(
   draft: AgentDraft,
@@ -79,7 +82,7 @@ export function applyDraftRuntimeChange(
   };
 }
 
-/** Model change: drop the per-model capability overrides, keep the runtime. */
+/** 换 model：丢弃依赖该 model 的能力覆盖项，保留 runtime 本身。 */
 export function applyDraftModelChange(
   draft: AgentDraft,
   model: string,
@@ -89,15 +92,16 @@ export function applyDraftModelChange(
 }
 
 /**
- * Mirrors the server's `utf8.RuneCountInString` check (agent.go:1013). The
- * textarea's `maxLength` covers typing and pasting, but a duplicated agent or
- * an AI-builder draft can seed a longer value programmatically — without this
- * the create button would submit into a guaranteed 400.
+ * 镜像服务器的 `utf8.RuneCountInString` 检查（agent.go:1013）。textarea 的
+ * `maxLength` 能拦住打字和粘贴，但复制出来的 Agent 或 AI 构建器的草稿可能被程序化
+ * 地种进更长的值——没有这层检查，点创建会必然撞上 400。
  */
 export function isDraftDescriptionWithinLimit(description: string): boolean {
   return [...description].length <= AGENT_DESCRIPTION_MAX_LENGTH;
 }
 
+/** 按草稿的权限范围生成调用目标列表（private 为空、workspace 为全空间、
+ *  members 为勾选的成员+团队）。 */
 export function buildInvocationTargets(
   draft: AgentDraft,
 ): AgentInvocationTargetInput[] {
@@ -117,6 +121,7 @@ export function buildInvocationTargets(
   ];
 }
 
+/** 从被复制的 Agent 的线上字段，还原出草稿的访问控制部分（private/workspace/成员列表）。 */
 export function deriveDuplicateAccess(
   agent: Pick<Agent, "permission_mode" | "invocation_targets">,
 ): Pick<AgentDraft, "permissionScope" | "memberIds" | "teamIds"> {
@@ -143,6 +148,7 @@ export function deriveDuplicateAccess(
   const teamIds = targets
     .filter((target) => target.target_type === "team" && target.target_id)
     .map((target) => target.target_id as string);
+  // 名义上是 public_to 却没有成员也没有团队：视同 private 更安全。
   if (memberIds.length === 0 && teamIds.length === 0) {
     return {
       permissionScope: "private",
@@ -158,15 +164,13 @@ export function deriveDuplicateAccess(
 }
 
 /**
- * Seeds the create draft from the agent being duplicated.
+ * 用"被复制的 Agent"为创建草稿做种子填充。
  *
- * `model` / `thinkingLevel` / `serviceTier` only mean something on the runtime
- * they were chosen for, so they ride along only when the copy stays on that
- * exact runtime. When the source runtime is gone, private to somebody else or
- * offline, the draft falls back to another runtime and the three are cleared
- * for the user to pick again — the same rule `multica agent copy` already
- * enforces server-side (cmd_agent_copy.go). Before MUL-5390 the fallback kept
- * the source `model` and silently persisted a cross-provider value.
+ * `model` / `thinkingLevel` / `serviceTier` 只在它们当初被选中的那个 runtime 上有意义，
+ * 所以只有副本留在完全相同的 runtime 上时才一并带过去。源 runtime 已消失、属于别人的
+ * 私有设备或离线时，草稿回退到另一个 runtime，并把这三项清空让用户重选——与
+ * `multica agent copy` 在服务端强制的规则一致（cmd_agent_copy.go）。MUL-5390 之前，
+ * 回退会保留源的 `model`，静默持久化一个跨提供商的取值。
  */
 export function buildDuplicateDraft(
   source: Agent,
@@ -177,6 +181,7 @@ export function buildDuplicateDraft(
     nameSuffix: string;
   },
 ): AgentDraft {
+  // 只有"源 runtime 还在、当前用户可用它"时才沿用它。
   const keepsRuntime =
     !!source.runtime_id &&
     options.runtimes.some(
@@ -203,15 +208,14 @@ export function buildDuplicateDraft(
 }
 
 /**
- * Assembles the `POST /api/agents` body. Empty execution overrides are omitted
- * rather than sent as `""` so the runtime resolves its own default, and the
- * duplicate-only fields are the runtime-independent ones (`custom_args`,
- * concurrency) — mirroring `multica agent copy`.
+ * 组装 `POST /api/agents` 的请求体。空的执行覆盖项用"省略"而不是 `""` 发送，
+ * 让 runtime 解析出自己的默认；仅复制需要的字段是与 runtime 无关的（`custom_args`、
+ * 并发数）——镜像 `multica agent copy` 的行为。
  */
 export function buildCreateAgentRequest(options: {
   draft: AgentDraft;
   runtimeId: string;
-  /** Creation-source attribution for the `agent_created` analytics event. */
+  /** 创建来源标记，用于 `agent_created` 分析事件。 */
   template?: string;
   duplicateSource?: Agent | null;
 }): CreateAgentRequest {
@@ -240,6 +244,7 @@ export function buildCreateAgentRequest(options: {
     template,
   };
   if (duplicateSource) {
+    // 仅复制来源：带过来它的自定义参数与合法范围内的并发上限。
     if (duplicateSource.custom_args.length > 0) {
       request.custom_args = duplicateSource.custom_args;
     }

@@ -1,3 +1,5 @@
+// 聊天输入框 "@" 提及的上下文来源：把"当前正在看的 issue/项目"与"最近打开过的
+// issue/项目"汇总成可提及的条目列表（发聊天时的快捷上下文，类似 issue 评论写法）。
 "use client";
 
 import { issueStatusCategory } from "@multica/core/issues";
@@ -26,9 +28,9 @@ function issueToMentionItem(
     type: "issue",
     description: issue.title,
     status: issue.status,
-    // Carried, not dropped: the list picks its glyph and its dimming from the
-    // category, so losing it here made a custom done status in Current/Recent
-    // render as an active Todo. (MUL-6243)
+    // 这里要带着而不是丢掉状态类别：列表从类别决定图标字形和置灰效果，
+    // 丢在这里会让 Current/Recent 里自定义的"已完成"状态被渲染成活动的
+    // Todo 图标。（MUL-6243）
     statusCategory: issueStatusCategory(issue) ?? undefined,
     group,
   };
@@ -66,6 +68,10 @@ function hydrateRecentEntry(entry: RecentContextEntry, data: Issue | Project | u
     : projectToMentionItem(data as Project, "recent");
 }
 
+/**
+ * 从当前路由解析"正在看的上下文"：`/issues/:id`、`/projects/:id`，
+ * 以及带 `?issue=` 参数的 inbox 页；都不是则返回 null。
+ */
 export function parseCurrentContextRoute(pathname: string, searchParams: URLSearchParams): { type: "issue" | "project"; id: string } | null {
   const issueMatch = pathname.match(/^\/[^/]+\/issues\/([^/]+)$/);
   if (issueMatch?.[1]) return { type: "issue", id: decodeURIComponent(issueMatch[1]) };
@@ -80,6 +86,11 @@ export function parseCurrentContextRoute(pathname: string, searchParams: URLSear
   return null;
 }
 
+/**
+ * 组装聊天输入框 @ 提及的候选列表：当前上下文的 issue/项目排在最前，
+ * 后面跟最近打开过的条目（去重、截断）。每个条目都用实时查询把缓存里可能
+ * 过期的最近条目水合（hydrate）成完整信息。
+ */
 export function useChatContextItems(wsId: string, enabled = true): MentionItem[] {
   const { pathname, searchParams } = useNavigation();
   const currentRoute = parseCurrentContextRoute(pathname, searchParams);

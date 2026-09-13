@@ -8,10 +8,9 @@ import (
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
-// loadCodeArtsConfiguredModels reads OpenCode-compatible custom providers
-// from CodeArts' user configuration. CodeArts can use these providers in its
-// TUI even when its `models` command is blocked by the Huawei Cloud login
-// preflight, so they are the daemon's non-network discovery fallback.
+// loadCodeArtsConfiguredModels 从 CodeArts 的用户配置里读取 OpenCode 兼容的自定义
+// provider。CodeArts 的 TUI 即使在其 `models` 命令被华为云登录预检挡住时也能使用
+// 这些 provider，所以这是 daemon 无需联网的模型发现兜底方案。
 func loadCodeArtsConfiguredModels(home string) ([]agent.Model, error) {
 	raw, err := os.ReadFile(codeArtsUserConfigPath(home))
 	if os.IsNotExist(err) {
@@ -29,6 +28,7 @@ func loadCodeArtsConfiguredModels(home string) ([]agent.Model, error) {
 		return []agent.Model{}, nil
 	}
 
+	// provider 名字排序后再逐个处理，保证输出顺序稳定、可复现。
 	providerNames := make([]string, 0, len(providers))
 	for name := range providers {
 		providerNames = append(providerNames, name)
@@ -57,6 +57,7 @@ func loadCodeArtsConfiguredModels(home string) ([]agent.Model, error) {
 				continue
 			}
 			label := modelName
+			// 配置里可为模型提供一个人类可读的 name，作为展示用 label。
 			if modelConfig, ok := configuredModels[rawModelName].(map[string]any); ok {
 				if configuredLabel, ok := modelConfig["name"].(string); ok && strings.TrimSpace(configuredLabel) != "" {
 					label = strings.TrimSpace(configuredLabel)

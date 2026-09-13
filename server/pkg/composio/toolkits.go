@@ -8,9 +8,8 @@ import (
 	"strconv"
 )
 
-// Toolkit is the minimal toolkit descriptor used as a nested field inside
-// connected accounts, sessions, and the toolkit list endpoint. Only fields
-// useful for UI / dispatch decisions are typed.
+// Toolkit 是最小化的 toolkit 描述，用作已连接账号、会话和 toolkit 列表接口里的
+// 嵌套字段。只把 UI / 分发决策用到的字段类型化了。
 type Toolkit struct {
 	Slug        string         `json:"slug"`
 	Name        string         `json:"name,omitempty"`
@@ -21,24 +20,24 @@ type Toolkit struct {
 	Meta        map[string]any `json:"meta,omitempty"`
 }
 
-// ListToolkitsRequest carries the optional filters of GET /toolkits.
+// ListToolkitsRequest 携带 GET /toolkits 的可选过滤参数。
 type ListToolkitsRequest struct {
 	Category string
 	Limit    int
 	Cursor   string
-	// SortBy is the upstream sort order. Per the v3.1 spec the valid enum
-	// values are "usage" and "alphabetically".
+	// SortBy 是上游的排序方式。按 v3.1 规范，合法枚举值是 "usage"
+	// （按使用量）和 "alphabetically"（按字母序）。
 	SortBy string
 }
 
-// ListToolkitsResponse is the typed paginated response.
+// ListToolkitsResponse 是分页响应的类型化表示。
 type ListToolkitsResponse struct {
 	Items      []Toolkit `json:"items"`
 	NextCursor string    `json:"next_cursor,omitempty"`
 	TotalItems int       `json:"total_items,omitempty"`
 }
 
-// ListToolkits returns toolkits available to the project.
+// ListToolkits 返回该项目可用（已授权/可连接）的 toolkit 列表。
 func (c *Client) ListToolkits(ctx context.Context, req ListToolkitsRequest) (*ListToolkitsResponse, error) {
 	q := url.Values{}
 	if req.Category != "" {
@@ -64,7 +63,7 @@ func (c *Client) ListToolkits(ctx context.Context, req ListToolkitsRequest) (*Li
 	return &out, nil
 }
 
-// GetToolkit fetches a single toolkit by its slug (e.g. "notion", "github").
+// GetToolkit 按 slug（例如 "notion"、"github"）拉取单个 toolkit。
 func (c *Client) GetToolkit(ctx context.Context, slug string) (*Toolkit, error) {
 	if slug == "" {
 		return nil, errors.New("composio: GetToolkit: slug is required")

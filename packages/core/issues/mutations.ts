@@ -1,3 +1,6 @@
+// 议题的所有写操作（mutation hook）：创建/更新/删除/批量操作/评论/订阅等。
+// 每个 hook 都通过 cache-coordinator 的"规则表"做乐观更新与回滚，
+// 让"自己改"与"别人改"（WS 路径）共用同一套缓存传播规则。
 import { normalizeStatusPatch } from "./status-category";
 import { hashKey, useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { api } from "../api";
@@ -44,38 +47,45 @@ import {
 } from "./ws-updaters";
 
 // ---------------------------------------------------------------------------
-// Shared mutation variable types — used by both mutation hooks and
-// useMutationState consumers to keep the type assertion in sync.
+// 共享的 mutation 变量类型——同时被 mutation hooks 和 useMutationState
+// 的使用方引用，保证那处类型断言始终同步。
 // ---------------------------------------------------------------------------
 
+/** 切换某条评论上的某个表情反应的入参。 */
 export type ToggleCommentReactionVars = {
   commentId: string;
   emoji: string;
   existing: Reaction | undefined;
 };
 
+/** 切换议题本身的某个表情反应的入参。 */
 export type ToggleIssueReactionVars = {
   emoji: string;
   existing: IssueReaction | undefined;
 };
 
+/** 更新议题的输入：`id` 加上服务端可接受的全部更新字段。 */
 export type UpdateIssueMutationInput = {
   id: string;
   /**
-   * Present only for drag/drop. `position` remains in the optimistic patch,
-   * while the request sent to the server contains relative anchors instead.
+   * 只在拖拽（drag/drop）时出现。乐观补丁里保留 `position`，
+   * 而真正发给服务器的请求换成相对锚点（before_id / after_id）。
    */
   move_intent?: Pick<MoveIssueRequest, "before_id" | "after_id">;
 } & UpdateIssueRequest;
 
 // ---------------------------------------------------------------------------
-// Per-status pagination
+// 按状态的加分页（暂无内容，占位说明用）
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Issue CRUD
+// 议题增删改（CRUD）
 // ---------------------------------------------------------------------------
 
+/**
+ * 议题创建类 mutation 的公共骨架：所有"创建一个新议题"的 hook 共用。
+ * @param mutationFn 具体的创建请求函数（返回新创建的议题）。
+ */
 function useIssueCreateMutation<TVariables>(
   mutationFn: (variables: TVariables) => Promise<Issue>,
 ) {
@@ -87,16 +97,16 @@ function useIssueCreateMutation<TVariables>(
       for (const [key, data] of qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) })) {
         if (data) qc.setQueryData<ListIssuesCache>(key, addIssueToBuckets(data, newIssue));
       }
-      // Surface the just-created issue in cmd+k's Recent list without
-      // requiring the user to open it first.
+      // 让刚创建的议题出现在 Cmd+K 的"最近"列表里，不必等用户先打开它一次。
       useRecentIssuesStore.getState().recordVisit(wsId, newIssue.id);
-      // Invalidate parent's children query so sub-issues list updates immediately
+      // 失效父议题的子议题查询，让"子议题列表"立刻反映新创建的子议题。
       if (newIssue.parent_issue_id) {
         qc.invalidateQueries({ queryKey: issueKeys.children(wsId, newIssue.parent_issue_id) });
         qc.invalidateQueries({ queryKey: issueKeys.childProgress(wsId) });
       }
     },
     onSettled: () => {
+      // 所有列表类聚合缓存无法从单个议题精确修补，统一失效等重取。
       qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
@@ -108,10 +118,12 @@ function useIssueCreateMutation<TVariables>(
   });
 }
 
+/** 创建一条普通议题（可能带父议题、项目等默认值）的 mutation hook。 */
 export function useCreateIssue() {
   return useIssueCreateMutation((data: CreateIssueRequest) => api.createIssue(data));
 }
 
+/** 在指定评论下创建子议题的 mutation hook。 */
 export function useCreateCommentSubIssue() {
   return useIssueCreateMutation(({
     anchorCommentId,
@@ -122,6 +134,12 @@ export function useCreateCommentSubIssue() {
   }) => api.createCommentSubIssue(anchorCommentId, data));
 }
 
+/**
+ * 更新（或拖拽移动）单个议题的 mutation hook。
+ *
+ * 通过 {@link applyIssueChange} 走跨缓存规则表：乐观修补/重分桶、必要时跨视图移除、
+ * 无法确定的列表标记过期；onError 回滚、onSuccess 用服务端权威实体做外科手术式对账。
+ */
 export function useUpdateIssue() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -132,12 +150,10 @@ export function useUpdateIssue() {
       return api.moveIssue(id, { ...target, ...moveIntent });
     },
     onMutate: ({ id, move_intent: _moveIntent, ...data }) => {
-      // suppress_run / handoff_note are write-time control fields, not Issue
-      // columns. description_base is merge metadata, while description itself
-      // is resolved against that base on the server and therefore is not safe
-      // to predict optimistically. Keep the authoritative raw description in
-      // cache so hidden channel-media markers remain available as the base for
-      // a rapid follow-up edit. mutationFn still sends the full payload.
+      // suppress_run / handoff_note 是"写入时"的控制字段，不是议题列。
+      // description_base 是合并元数据，而 description 由服务端基于该 base 解析，
+      // 因此不能乐观预测。把权威的原始 description 留在缓存里，隐藏的频道媒体
+      // 标记才能在紧接着的二次编辑中继续作为 base 使用。mutationFn 仍会发送完整载荷。
       const {
         suppress_run: _suppressRun,
         handoff_note: _handoffNote,
@@ -147,10 +163,9 @@ export function useUpdateIssue() {
         expected_revision: _expectedRevision,
         ...patch
       } = data;
-      // Fire-and-forget cancelQueries — keeps onMutate synchronous so the
-      // cache update happens in the same tick as mutate(). Awaiting would
-      // yield to the event loop, letting @dnd-kit reset its visual state
-      // before the optimistic update lands.
+      // 不等待的 cancelQueries——保证 onMutate 同步执行，缓存更新与 mutate()
+      // 发生在同一拍内。若 await 会把执行权让给事件循环，让 @dnd-kit 在乐观更新
+      // 落地前先重置视觉状态（拖拽闪烁的根源）。
       qc.cancelQueries({ queryKey: issueKeys.list(wsId) });
       qc.cancelQueries({ queryKey: issueKeys.myAll(wsId) });
       qc.cancelQueries({ queryKey: issueKeys.flatAll(wsId) });
@@ -159,21 +174,17 @@ export function useUpdateIssue() {
         qc.cancelQueries({ queryKey: inboxKeys.all(wsId) });
       }
       const prevDetail = qc.getQueryData<Issue>(issueKeys.detail(wsId, id));
-      // The coordinator owns the cross-cache rules: surgical patch/rebucket
-      // where the card is loaded and still belongs, surgical REMOVE where the
-      // change moves it off a filtered surface, stale-key bookkeeping where
-      // the server result may have drifted (invalidated on settle, not here —
-      // a mid-flight refetch would stomp the optimistic state).
+      // 协调器拥有跨缓存规则：卡片已加载且仍属于该列表 → 外科手术式修补/重分桶；
+      // 变更让它离开某过滤视图 → 外科手术式移除；服务器结果可能漂移（涉及成员关系
+      // 不确定）→ 标记过期 key（在 settle 而非这里失效——飞行中的重取会踩掉乐观状态）。
       const change = applyIssueChange(qc, wsId, id, patch as Partial<Issue>, {
         changed: issueChangedDims(patch, prevDetail),
         baseIssue: prevDetail,
       });
 
-      // Resolve parent_issue_id from the freshest source so we can keep the
-      // parent's children cache in sync (used by the parent issue's
-      // sub-issues list). Falls back to scanning loaded children caches —
-      // when the user navigates straight to a parent's detail page, the
-      // child may live only there, not in detail/list.
+      // 从最新鲜的来源解析 parent_issue_id，以便同步父议题的"子议题列表"缓存
+      // （父议题详情页的子议题列表渲染它）。找不到时回退到扫描已加载的 children 缓存——
+      // 当用户直接打开某个父议题详情页时，该子议题可能只存在于那里，而不在详情/列表缓存。
       let parentId: string | null =
         prevDetail?.parent_issue_id ??
         change.prevIssue?.parent_issue_id ??
@@ -196,12 +207,10 @@ export function useUpdateIssue() {
         : undefined;
 
       if (parentId) {
-        // When the write re-parents this issue away from `parentId` (detach
-        // to standalone, or move under a different parent), prune it from the
-        // old parent's children cache. The parent's sub-issues list renders
-        // that array directly, so a bare patch to parent_issue_id: null would
-        // leave an orphaned row in the list until the settle refetch lands.
-        // onError restores prevChildren, so the prune rolls back on failure.
+        // 当本次写入把议题从这个 parentId 改挂走（脱离成独立议题，或挂到别的父议题下），
+        // 先从旧父议题的 children 缓存里把它移除。父议题的"子议题列表"直接渲染该数组，
+        // 只裸补丁 parent_issue_id: null 会让列表残留一行孤儿，直到 settle 重取才消失。
+        // onError 会恢复 prevChildren，所以失败时移除也会回滚。
         const detachedFromParent =
           Object.prototype.hasOwnProperty.call(patch, "parent_issue_id") &&
           patch.parent_issue_id !== parentId;
@@ -225,11 +234,9 @@ export function useUpdateIssue() {
           ctx.prevChildren,
         );
       }
-      // A remote revision may have landed through WS after onMutate captured
-      // its rollback snapshot. Restoring that snapshot on any failed request
-      // can therefore transiently put an older entity back into cache; refresh
-      // every loaded owner projection after rollback. A revision conflict is
-      // the common case, but transport/5xx failures have the same interleave.
+      // onMutate 捕获回滚快照之后，可能有更新的远端 revision 已通过 WS 落地。
+      // 此时无脑恢复快照可能把更旧的实体暂时放回缓存；所以回滚后刷新每个已加载的
+      // 归属投影。revision 冲突最常见，但传输错误/5xx 也有同样的交错风险。
       qc.invalidateQueries({ queryKey: issueKeys.detail(wsId, vars.id) });
       qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.myAll(wsId) });
@@ -237,18 +244,14 @@ export function useUpdateIssue() {
       qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
     },
     onSuccess: (serverIssue, vars) => {
-      // Reconcile with the authoritative server entity by patching the one card
-      // in place — NOT by invalidating + refetching the list. The list refetch
-      // is what made a successful move flicker: the optimistic card was already
-      // in the right place, then the refetch replaced the whole column and the
-      // card re-landed. updateIssue returns the full issue and a position update
-      // touches only that row, so a surgical patch is the authoritative
-      // reconcile and is a visual no-op when the optimistic value matched.
+      // 用权威的服务端实体"就地修补那一张卡"来对账——而不是失效 + 重取列表。
+      // 列表重取正是让一次成功的拖拽闪烁的原因：乐观卡片已经落在正确位置，
+      // 重取却把整列替换掉、卡片再次落位。updateIssue 返回完整议题、position 更新
+      // 只影响那一行，所以外科手术式修补就是权威对账，且当乐观值与之一致时视觉上零操作。
       //
-      // baseIssue = serverIssue: membership moves were already handled
-      // optimistically; against the post-write entity the changed dims come
-      // out false unless the server coerced a different value, so this pass
-      // is the plain surgical patch it always was.
+      // baseIssue = serverIssue：成员关系移动在乐观阶段已处理；对着写入后的实体，
+      // 除非服务器强制了不同值，否则 changed dims 都是 false，因此这轮就是它一直以来的
+      // 纯外科修补。
       const {
         suppress_run: _suppressRun,
         handoff_note: _handoffNote,
@@ -257,19 +260,17 @@ export function useUpdateIssue() {
         id: _id,
         ...intent
       } = vars;
-      // Drop `properties` from the reconcile payload: the bag is owned by the
-      // property mutation pipeline (single-key atomic writes + its own
-      // optimistic state). An UpdateIssue snapshot taken before a concurrent
-      // property write resolves would otherwise overwrite the newer bag
-      // (clean-room review F3 response-ordering race).
+      // 从对账载荷里丢弃 `properties`：这个袋子由"属性变更管线"独占
+      // （单 key 原子写 + 自己的乐观状态）。若在并发属性写完成前捕获的
+      // UpdateIssue 快照落到这里，会覆盖掉更新的袋子（clean-room review F3
+      // 的响应排序竞态）。
       const { properties: _staleBag, ...reconcilable } = serverIssue;
       const reconcile = applyIssueChange(qc, wsId, serverIssue.id, reconcilable as typeof serverIssue, {
         changed: issueChangedDims(intent, serverIssue),
         baseIssue: serverIssue,
-        // The HTTP response can arrive after a newer WS event. Reconcile the
-        // committed snapshot only into projections that have not already
-        // advanced beyond it; otherwise an older successful response would
-        // undo a later remote write in cache.
+        // HTTP 响应可能晚于更新的 WS 事件到达。只把已提交的快照对账进那些
+        // "尚未推进到它之后"的投影；否则一份较旧的、但成功的响应会在缓存里
+        // 撤销之后发生的远端写入。
         acceptCurrent: (current) =>
           current.revision === undefined ||
           (serverIssue.revision !== undefined &&
@@ -281,20 +282,16 @@ export function useUpdateIssue() {
         serverIssue.id,
         serverIssue.revision,
       );
-      // The server has committed — safe to flush any drift it reported now.
+      // 服务器已提交——现在可以安全地冲刷它报告的任何漂移。
       invalidateStaleListKeys(qc, reconcile.staleKeys);
     },
     onSettled: (_data, _err, vars, ctx) => {
-      // The issue's own list + detail caches are reconciled surgically in
-      // onSuccess / onError, so they are deliberately NOT invalidated here — a
-      // full-list refetch on settle is what made drags flicker. Only aggregate
-      // caches that cannot be patched from a single issue are refreshed, plus
-      // the specific list keys the coordinator flagged as drifted (unknown
-      // membership, enter/leave beyond the loaded window, bucket-count drift).
-      // Those stale keys are the surgical replacement for the old blanket
-      // "invalidate myAll on project move" safety net (MUL-3669 / #4548): the
-      // old project's loaded list already had the card removed in onMutate,
-      // and only genuinely undecidable lists refetch here.
+      // 议题自己的列表 + 详情缓存在 onSuccess / onError 里已做外科手术式对账，
+      // 所以这里刻意不失效它们——settle 时整表重取正是拖拽闪烁的来源。只有无法从
+      // 单个议题修补出来的聚合缓存需要刷新，外加协调器标记为漂移的特定列表 key
+      // （成员关系不确定、在已加载窗口之外进出、桶计数漂移）。
+      // 这些过期 key 是旧版"项目移动就全量失效 myAll"安全网的精准替代（MUL-3669 / #4548）：
+      // 旧项目的已加载列表在 onMutate 里已把卡片移除，这里只重取真正无法判定的列表。
       invalidateIssueDerivatives(qc, wsId, {
         statusOrProjectChanged:
           vars.status !== undefined ||
@@ -304,21 +301,20 @@ export function useUpdateIssue() {
       if (ctx) {
         invalidateStaleListKeys(qc, ctx.change.staleKeys);
       }
-      // Refresh the issue's attachments cache when the description editor
-      // bound new uploads — the description editor reads `issueAttachments`
-      // to resolve text-preview Eye gates, and unlike other mutations this
-      // payload mutates the attachment join table.
+      // 当描述编辑器绑定了新上传的附件时，刷新该议题的附件缓存——描述编辑器
+      // 读取 `issueAttachments` 来解析文本预览的 Eye 门；与其它 mutation 不同，
+      // 这个载荷会改动附件关联表。
       if (vars.attachment_ids?.length) {
         qc.invalidateQueries({ queryKey: issueKeys.attachments(vars.id) });
       }
-      // Invalidate old parent's children cache
+      // 失效旧父议题的 children 缓存。
       if (ctx?.parentId) {
         qc.invalidateQueries({
           queryKey: issueKeys.children(wsId, ctx.parentId),
         });
         qc.invalidateQueries({ queryKey: issueKeys.childProgress(wsId) });
       }
-      // Invalidate new parent's children cache when parent_issue_id changed
+      // parent_issue_id 变化时，失效新父议题的 children 缓存。
       const newParentId = vars.parent_issue_id;
       if (newParentId && newParentId !== ctx?.parentId) {
         qc.invalidateQueries({
@@ -326,12 +322,9 @@ export function useUpdateIssue() {
         });
         qc.invalidateQueries({ queryKey: issueKeys.childProgress(wsId) });
       }
-      // Invalidate the batched-children cache only when the parent link
-      // actually changed. The WS path (ws-updaters.ts) invalidates
-      // unconditionally because it doesn't know what the server change
-      // touched; here onMutate already patched issueKeys.children(parent)
-      // optimistically, so we only need to flush when the parent relation
-      // itself moved.
+      // 只有当父子关系真的变化时才失效"批量 children"缓存。WS 路径（ws-updaters.ts）
+      // 无条件失效是因为它不知道服务器改了哪些东西；而这里 onMutate 已乐观修补了
+      // issueKeys.children(parent)，只有当父关系本身移动过才需要额外冲刷。
       if (ctx?.parentId || newParentId) {
         qc.invalidateQueries({ queryKey: issueKeys.childrenByParentsAll(wsId) });
       }
@@ -339,6 +332,10 @@ export function useUpdateIssue() {
   });
 }
 
+/**
+ * 删除单个议题的 mutation hook：乐观地修剪列表/子议题缓存并移除详情，
+ * 失败时整体还原，成功后做全量缓存清理。
+ */
 export function useDeleteIssue() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -356,6 +353,7 @@ export function useDeleteIssue() {
           qc.cancelQueries({ queryKey: issueKeys.children(wsId, parentId) }),
         ),
       );
+      // 在动手前把所有受影响的缓存快照留存，失败时逐一还原。
       const prevLists = qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) });
       const prevMyLists = qc.getQueriesData<ListIssuesCache>({
         queryKey: issueKeys.myAll(wsId),
@@ -372,6 +370,7 @@ export function useDeleteIssue() {
         );
       }
 
+      // 乐观移除：从各列表/子议题缓存剔除该议题并移除详情缓存。
       pruneDeletedIssueFromListCaches(qc, wsId, id);
       pruneDeletedIssueFromParentChildrenCaches(qc, wsId, id, metadata);
       qc.removeQueries({ queryKey: issueKeys.detail(wsId, id) });
@@ -386,6 +385,7 @@ export function useDeleteIssue() {
       };
     },
     onError: (_err, _id, ctx) => {
+      // 失败：把乐观阶段清掉的东西原样放回缓存。
       if (ctx?.prevLists) {
         for (const [key, snapshot] of ctx.prevLists) {
           qc.setQueryData(key, snapshot);
@@ -411,10 +411,12 @@ export function useDeleteIssue() {
       }
     },
     onSuccess: (_data, id, ctx) => {
+      // 让 Cmd+K 的"最近上下文"遗忘这个已删除的议题，避免点开即 404。
       useRecentContextStore.getState().forgetContext(wsId, { type: "issue", id });
       cleanupDeletedIssueCaches(qc, wsId, id, ctx?.metadata);
     },
     onSettled: (_data, _err, _id, ctx) => {
+      // 无法从单议题增量算出的聚合缓存统一失效重取。
       qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
@@ -427,6 +429,11 @@ export function useDeleteIssue() {
   });
 }
 
+/**
+ * 批量更新多个议题的 mutation hook（例如批量改状态/优先级/负责人/项目）。
+ * 逐个议题跑同一套协调器规则，因此批量编辑在工作区看板与每个过滤的 myList
+ * 视图上的修补/移除行为与单条更新完全一致。
+ */
 export function useBatchUpdateIssues() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -439,10 +446,9 @@ export function useBatchUpdateIssues() {
       updates: UpdateIssueRequest;
     }) => api.batchUpdateIssues(ids, updates),
     onMutate: async ({ ids, updates }) => {
-      // Control and description-merge fields are not safe optimistic cache
-      // patches. The server resolves description against description_base, so
-      // preserve the authoritative raw description (including media markers)
-      // until a refetch returns the committed result.
+      // 控制字段与描述合并字段不适合做乐观缓存修补。服务端会基于 description_base
+      // 解析 description，因此在重取返回提交结果前，保留权威的原始 description
+      // （含媒体标记）。
       const {
         suppress_run: _suppressRun,
         handoff_note: _handoffNote,
@@ -458,12 +464,10 @@ export function useBatchUpdateIssues() {
         await qc.cancelQueries({ queryKey: inboxKeys.all(wsId) });
       }
 
-      // Run every issue through the coordinator — the same rules table the
-      // single-issue update uses, so a batch edit patches/removes across the
-      // workspace board AND every filtered myList surface identically.
-      // Snapshots are first-wins per cache key: after the first issue's
-      // application a cache already carries partial patches, so only the
-      // first snapshot per key is pristine for rollback.
+      // 让每个议题都经过协调器——与单条更新同一张规则表，因此批量编辑会在工作区
+      // 看板 AND 每个过滤的 myList 视图上做一致的修补/移除。
+      // 快照按缓存 key 取"第一个胜出"：第一个议题应用后缓存已带部分补丁，所以每个
+      // key 只有第一份快照是干净可回滚的。
       const prevListByHash = new Map<string, [QueryKey, ListIssuesCache]>();
       const prevFlatListByHash = new Map<string, [QueryKey, IssueFlatCache]>();
       const prevTableRowByHash = new Map<
@@ -509,8 +513,8 @@ export function useBatchUpdateIssues() {
         staleKeys.push(...change.staleKeys);
       }
 
-      // Mirror the optimistic patch into any loaded children cache so
-      // sub-issue rows on a parent's detail page reflect the change too.
+      // 把乐观补丁镜像进任何已加载的 children 缓存，让父议题详情页上的子议题行
+      // 也立即反映本次变更。
       const idSet = new Set(ids);
       const childrenCaches = qc.getQueriesData<Issue[]>({
         queryKey: [...issueKeys.all(wsId), "children"],
@@ -577,14 +581,10 @@ export function useBatchUpdateIssues() {
       }
     },
     onSettled: (_data, _err, _vars, ctx) => {
-      // Deliberately NOT invalidating issueKeys.list / myAll here: the onMutate
-      // pass above is a complete surgical reconcile for the loaded bucketed
-      // boards, so a full-board refetch on settle would only re-introduce the
-      // flicker the single-issue update already removed. Aggregate / grouped
-      // caches that cannot be recomputed from a single-issue patch are
-      // refreshed below, plus the specific keys the coordinator flagged as
-      // drifted — the surgical replacement for the old blanket "invalidate
-      // myAll on project move" safety net (MUL-3669 / #4548).
+      // 刻意不失效 issueKeys.list / myAll：上面 onMutate 的一轮已经是已加载分桶看板
+      // 的完整外科对账，settle 时整板重取只会把单条更新刚消除的闪烁带回来。下面只刷新
+      // 无法从单议题补丁重算的聚合/分组缓存，外加协调器标记为漂移的特定 key——
+      // 即旧版"项目移动就全量失效 myAll"安全网的精准替代（MUL-3669 / #4548）。
       invalidateIssueDerivatives(qc, wsId, {
         statusOrProjectChanged:
           _vars.updates.status !== undefined ||
@@ -606,6 +606,11 @@ export function useBatchUpdateIssues() {
   });
 }
 
+/**
+ * 批量删除多个议题的 mutation hook。先按每个被删议题收集涉及的父议题，
+ * 乐观移除后失败整体还原；全部删除成功才做清理，部分失败（`deleted < length`）
+ * 则还原并改为失效。
+ */
 export function useBatchDeleteIssues() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -617,6 +622,7 @@ export function useBatchDeleteIssues() {
         qc.cancelQueries({ queryKey: issueKeys.myAll(wsId) }),
         qc.cancelQueries({ queryKey: issueKeys.flatAll(wsId) }),
       ]);
+      // 为每个待删议题收集它涉及的父议题 id（扫描详情/列表/children 各类缓存）。
       const metadataById = new Map(
         ids.map((id) => [
           id,
@@ -741,11 +747,17 @@ export function useBatchDeleteIssues() {
 }
 
 // ---------------------------------------------------------------------------
-// Comments / Timeline
+// 评论 / 时间线
 // ---------------------------------------------------------------------------
 
+/** 议题时间线缓存的元素类型（`TimelineEntry` 数组）。 */
 type TimelineCache = TimelineEntry[];
 
+/**
+ * 在议题下创建一条评论的 mutation hook。成功时把服务端返回的评论拼成
+ * TimelineEntry 就地插入时间线缓存，并同步议题的辅助投影与按活跃度排序的列表。
+ * @param issueId 所属议题 id。
+ */
 export function useCreateComment(issueId: string) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -783,29 +795,29 @@ export function useCreateComment(issueId: string) {
         created_at: comment.created_at,
         updated_at: comment.updated_at,
       };
-      // Dedupe by id: the `comment:created` WS event may have already added
-      // this entry from the broadcast path before this onSuccess fires. Skip
-      // the append if the entry is already in the cache.
+      // 按 id 去重：广播路径上 `comment:created` 的 WS 事件可能已在本次
+      // onSuccess 触发前把这条例程加进缓存。若已存在则跳过追加。
       qc.setQueryData<TimelineCache>(issueKeys.timeline(issueId), (old) => {
         if (!old) return [entry];
         if (old.some((e) => e.id === entry.id)) return old;
         return sortTimelineEntriesAsc([...old, entry]);
       });
-      // Posting a comment changes the trigger answer itself (the enqueued
-      // task now dedupes follow-up triggers), so cached previews for this
-      // issue are stale the moment the create lands.
+      // 发评论这件事本身会改变触发器答案（入队的任务现在会对后续触发去重），
+      // 所以这条议题缓存的触发预览在创建落地的瞬间就已过期。
       qc.invalidateQueries({ queryKey: issueKeys.commentTriggerPreview(issueId) });
     },
-    // No onSettled invalidate. The `comment:created` WS broadcast keeps
-    // the timeline cache fresh after a successful create, and reconnect
-    // recovery in useIssueTimeline already invalidates if the connection
-    // dropped. Re-fetching on every submit replaces every entry's
-    // reference, which forces every memoized CommentCard subtree to
-    // re-render (visible as a flash across sibling threads during AI
-    // streaming).
+    // 没有 onSettled 失效：成功创建后，`comment:created` 的 WS 广播会保持时间线
+    // 缓存新鲜；若连接断开，useIssueTimeline 里的重连恢复逻辑会做失效。
+    // 每次提交都整表重取会把每条记录的引用换掉，逼着所有被 memo 化的 CommentCard
+    // 子树重渲染（AI 流式输出时，兄弟线程会可见地闪一下）。
   });
 }
 
+/**
+ * 编辑一条评论的 mutation hook：乐观替换时间线里的正文并过滤附件，
+ * 成功后同步辅助投影与活跃度列表，最终失效时间线缓存以对账。
+ * @param issueId 所属议题 id。
+ */
 export function useUpdateComment(issueId: string) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -847,8 +859,7 @@ export function useUpdateComment(issueId: string) {
       if (comment.issue_revision) {
         onIssueAuxiliaryRevision(qc, wsId, issueId, comment.issue_revision);
       } else {
-        // Mixed-version fallback: an older backend may have committed the
-        // aggregate revision without returning it.
+        // 混版本回退：旧版后端可能已提交聚合 revision 但没返回它。
         invalidateIssueOwnerProjections(qc, wsId, issueId);
       }
       invalidateLastActivitySortedIssueLists(qc, wsId);
@@ -859,6 +870,11 @@ export function useUpdateComment(issueId: string) {
   });
 }
 
+/**
+ * 删除一条评论的 mutation hook。乐观移除时会沿 parent_id 级联把整棵回复子树
+ * （后代评论）一并清出缓存，失败则整体还原。
+ * @param issueId 所属议题 id。
+ */
 export function useDeleteComment(issueId: string) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -868,7 +884,7 @@ export function useDeleteComment(issueId: string) {
       await qc.cancelQueries({ queryKey: issueKeys.timeline(issueId) });
       const prev = qc.getQueryData<TimelineCache>(issueKeys.timeline(issueId));
 
-      // Cascade: collect all descendants of the deleted comment.
+      // 级联：收集被删评论的所有后代。
       const toRemove = new Set<string>([commentId]);
       if (prev) {
         let changed = true;
@@ -898,9 +914,8 @@ export function useDeleteComment(issueId: string) {
       }
     },
     onSuccess: () => {
-      // The endpoint remains 204 for compatibility, so the local caller has
-      // no body carrying issue_revision. The realtime event will narrow this
-      // with its revision when connected; this is the no-WS safety net.
+      // 该接口为兼容性仍返回 204，本地调用方拿不到携带 issue_revision 的响应体。
+      // 连上 WS 时 realtime 事件会用它的 revision 收窄处理；这里是断线时的安全网。
       invalidateIssueOwnerProjections(qc, wsId, issueId);
       invalidateLastActivitySortedIssueLists(qc, wsId);
     },
@@ -910,11 +925,9 @@ export function useDeleteComment(issueId: string) {
   });
 }
 
-// Every comment id in the same thread as `commentId` — the thread root plus
-// every descendant. Mirrors the server's thread walk in
-// ClearOtherThreadResolutions so the resolve optimistic update can clear sibling
-// resolutions exactly as the backend will, instead of briefly showing two
-// resolutions until the refetch settles.
+// 与 `commentId` 同属一条线程的所有评论 id——线程根加上每个后代。
+// 镜像服务端 ClearOtherThreadResolutions 的线程遍历，使"标记解决"的乐观更新能
+// 与后端一样精确清除同级解决状态，而不是在重取落地前短暂地显示两条解决。
 function collectThreadCommentIds(
   entries: TimelineCache,
   commentId: string,
@@ -923,7 +936,7 @@ function collectThreadCommentIds(
   for (const e of entries) {
     if (e.type === "comment") byId.set(e.id, e);
   }
-  // Walk up to the thread root (cycle-guarded against malformed parent chains).
+  // 向上走到线程根（带环保护，防御畸形的 parent 链）。
   let rootId = commentId;
   const guard = new Set<string>();
   let cur = byId.get(commentId);
@@ -932,7 +945,7 @@ function collectThreadCommentIds(
     rootId = cur.parent_id;
     cur = byId.get(cur.parent_id);
   }
-  // Expand back down over the whole subtree.
+  // 再自顶向下展开整棵子树。
   const childrenByParent = new Map<string, string[]>();
   for (const e of byId.values()) {
     if (e.parent_id) {
@@ -955,6 +968,12 @@ function collectThreadCommentIds(
   return ids;
 }
 
+/**
+ * 把一条评论标记为已解决 / 取消解决的 mutation hook。
+ * 乐观更新会镜像服务端"同线程只保留一条解决"的规则：标记解决时清除线程内其它
+ * 解决状态；取消解决只清自己的行。
+ * @param issueId 所属议题 id。
+ */
 export function useResolveComment(issueId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -965,11 +984,10 @@ export function useResolveComment(issueId: string) {
       const prev = qc.getQueryData<TimelineCache>(issueKeys.timeline(issueId));
       qc.setQueryData<TimelineCache>(issueKeys.timeline(issueId), (old) => {
         if (!old) return old;
-        // Resolving makes this comment the sole resolution in its thread, so
-        // mirror the server (ClearOtherThreadResolutions) and clear every other
-        // resolution in the same thread. Without this the cache shows two
-        // resolutions until the settle refetch, which is exactly the flash the
-        // single-resolution fix removes. Unresolve only clears its own row.
+        // 标记解决会让这条评论成为其线程里的唯一解决，因此镜像服务端
+        // （ClearOtherThreadResolutions），把同线程的其它解决清掉。不做这一步，
+        // 缓存会同时显示两条解决直到 settle 重取——正是"单解决"修复要消除的闪烁。
+        // 取消解决只清自己的行。
         const threadIds = resolved ? collectThreadCommentIds(old, commentId) : null;
         return old.map((e) => {
           if (e.id === commentId) {
@@ -999,6 +1017,10 @@ export function useResolveComment(issueId: string) {
   });
 }
 
+/**
+ * 切换某条评论上的表情反应（有则移除、无则添加）的 mutation hook。
+ * @param issueId 所属议题 id。
+ */
 export function useToggleCommentReaction(issueId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -1021,9 +1043,13 @@ export function useToggleCommentReaction(issueId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Issue-level Reactions
+// 议题级表情反应
 // ---------------------------------------------------------------------------
 
+/**
+ * 切换议题本身某个表情反应（有则移除、无则添加）的 mutation hook。
+ * @param issueId 所属议题 id。
+ */
 export function useToggleIssueReaction(issueId: string) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -1049,9 +1075,13 @@ export function useToggleIssueReaction(issueId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Issue Subscribers
+// 议题订阅者（关注人）
 // ---------------------------------------------------------------------------
 
+/**
+ * 订阅 / 取消订阅议题的 mutation hook（乐观更新订阅者列表，失败回滚）。
+ * @param issueId 所属议题 id。
+ */
 export function useToggleIssueSubscriber(issueId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -1118,10 +1148,10 @@ export function useToggleIssueSubscriber(issueId: string) {
 }
 
 /**
- * Leave an issue AND its whole sub-tree (MUL-5483). Not optimistic: it writes
- * to an unknown number of other issues' subscriber lists, so there is nothing
- * determinate to patch — invalidate every subscriber query instead and let the
- * server be the source of truth.
+ * 取消订阅一个议题 AND 它的整棵子树（MUL-5483）。不做乐观更新：它写入的是
+ * 未知数量其它议题的订阅者列表，没有可确定修补的目标——改为失效所有订阅者查询，
+ * 让服务器当唯一真相来源。
+ * @param issueId 根议题 id。
  */
 export function useUnsubscribeFromIssueSubtree(issueId: string) {
   const qc = useQueryClient();

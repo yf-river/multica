@@ -1,17 +1,13 @@
-package wecom
-
-// wecom_channel.go — the Channel + Factory the engine.Supervisor drives, plus
-// the WebSocket run loop for one aibot smart-bot connection. WeCom allows
-// only one active connection per bot; the Supervisor's WS lease enforces
-// that same "at most one per replica" invariant at the process layer, so the
-// combination gives us a single global connection per installation without
-// wecom-specific coordination.
+// wecom_channel.go —— engine.Supervisor 驱动的 Channel + Factory，外加一条 aibot
+// 智能机器人连接的 WebSocket 运行循环。企业微信每台机器人只允许一条活跃连接；
+// Supervisor 的 WS 租约在进程层强制同样的「每副本至多一条」不变量，两者叠加，
+// 就在不需要 wecom 特有协调的前提下给了我们「每条安装全局单连接」。
 //
-// The read loop lives on this file (rather than in a shared connector as
-// with lark/ws_connector.go) because the aibot protocol is small enough
-// that a per-installation loop is clearer than an EventConnector abstraction.
-// Slack takes the same shape in slack_channel.go — the per-installation
-// receive loop is inlined into Channel.Connect.
+// 读取循环放在本文件（而不是像 lark/ws_connector.go 那样放进一个共享连接器），
+// 是因为 aibot 协议小到「按安装循环」比「抽一层 EventConnector 抽象」更清晰。
+// Slack 在 slack_channel.go 里也是同样的形态——按安装的接收循环直接内联在
+// Channel.Connect 里。
+package wecom
 
 import (
 	"context"
@@ -32,66 +28,56 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
-// DefaultWSURL is the aibot long-connection endpoint. WeCom publishes a
-// single global endpoint for every bot; the (bot_id, secret) pair carried in
-// the aibot_subscribe frame after the WS handshake identifies which bot the
-// connection belongs to.
+// DefaultWSURL 是 aibot 长连接端点。企微对每个机器人发布同一个全局端点；WS 握手
+// 后 aibot_subscribe 帧里携带的 (bot_id, secret) 对标识这条连接属于哪台机器人。
 const DefaultWSURL = "wss://openws.work.weixin.qq.com"
 
-// pingInterval is the client-driven heartbeat cadence. WeCom's docs
-// prescribe 30s; below that they may kill the socket, above that we spam.
+// pingInterval 是客户端主动的心跳节奏。企微文档规定 30s；低于它对方可能杀掉
+// socket，高于它就是我们刷屏。
 const pingInterval = 30 * time.Second
 
-// subscribeTimeout caps the wait between "sent aibot_subscribe" and
-// "received the errcode 0 ack". The server responds within a few hundred
-// milliseconds in practice; this bound protects against a silent socket.
+// subscribeTimeout 限定「发出 aibot_subscribe」到「收到 errcode 0 的 ack」之间
+// 的等待。服务端实际几百毫秒内就回；这个上限防的是静默的 socket。
 const subscribeTimeout = 10 * time.Second
 
-// readDeadline is refreshed on every successful read. If no bytes arrive
-// within this window we assume the socket is dead and force-close it — the
-// Supervisor then handles reconnect. It MUST exceed pingInterval by a
-// comfortable margin so a pong is not late enough to trigger a false trip.
+// readDeadline 在每次成功读后刷新。窗口内没有字节到达就假设 socket 已死、强制
+// 关闭——随后交给 Supervisor 去重连。它必须比 pingInterval 大出舒适的余量，让
+// pong 不会迟到到触发误判。
 const readDeadline = 90 * time.Second
 
-// writeDeadline caps a single frame's write budget. Below this a genuinely
-// slow socket is preferable to an infinitely stuck goroutine.
+// writeDeadline 限定单帧的写预算。宁可要一条真慢的 socket，也不要一个无限卡住
+// 的 goroutine。
 const writeDeadline = 10 * time.Second
 
-// handshakeTimeout bounds the initial TCP + WS handshake dial.
+// handshakeTimeout 约束初始 TCP + WS 握手拨号。
 const handshakeTimeout = 15 * time.Second
 
-// unsupportedMsgTypeReceipt is the one line sent back for a message this
-// adapter cannot read at all. It used to say "我目前只能处理文字消息" — text
-// only — which stopped being true the moment photos, files, videos and
-// 图文混排 started routing: a person who has just watched the bot answer a
-// screenshot, then gets told it only handles text, reads that as the bot
-// being broken rather than as this one kind not being supported.
+// unsupportedMsgTypeReceipt 是对「本适配器完全读不了的消息」回的那一行。它以前写
+// 的是 "我目前只能处理文字消息"——纯文字——但从照片、文件、视频和图文混排开始
+// 路由的那一刻起，这话就不对了：一个刚看着机器人回答完截图、转头被告知它只能处
+// 理文字的人，读出来的意思是「机器人坏了」，而不是「这一种类型不支持」。
 const unsupportedMsgTypeReceipt = "抱歉，我暂时无法处理这类消息。"
 
-// wecomChannel is one installation's aibot smart-bot WebSocket connection.
-// The engine.Supervisor builds one per active installation via the
-// registered Factory and drives lease / reconnect lifecycle; Connect blocks
-// on the receive loop until ctx is cancelled or the link drops.
+// wecomChannel 是一条安装的 aibot 智能机器人 WebSocket 连接。engine.Supervisor
+// 通过注册的 Factory 为每条活跃安装建一条，并驱动租约 / 重连生命周期；Connect
+// 阻塞在接收循环上，直到 ctx 被取消或链路断开。
 type wecomChannel struct {
 	installationID pgtype.UUID
 	botID          string
 	secret         string
-	// botDisplayName is what this bot is called in a chat, from the
-	// installation config. Empty on every installation that has not filled it
-	// in; see stripLeadingMentions for what an empty name falls back to.
+	// botDisplayName 是这台机器人在会话里的名字，来自安装配置。尚未填它的安装为
+	// 空；空名字退回什么见 stripLeadingMentions。
 	botDisplayName string
 	handler        channel.InboundHandler
 	dialer         Dialer
 	wsURL          string
 	logger         *slog.Logger
-	// senders is the package-level installation→wsSender registry (see
-	// senders_registry.go). We hold a reference so Connect can register
-	// itself on entry and clear on exit. nil in tests that don't exercise
-	// the OutboundReplier path.
+	// senders 是包级的 installation→wsSender 注册表（见 senders_registry.go）。
+	// 我们持有引用，好让 Connect 进入时登记、退出时清除。不锻炼 OutboundReplier
+	// 路径的测试里为 nil。
 	senders *sendersRegistry
-	// metrics is the health sink (metrics.go). Never read directly — go
-	// through mx(), which substitutes the no-op sink for a channel built
-	// without one.
+	// metrics 是健康信号出口（metrics.go）。绝不直接读——一律走 mx()，它会为没
+	// 带出口构建的 channel 换上空实现。
 	metrics Metrics
 }
 
@@ -99,9 +85,8 @@ var _ channel.Channel = (*wecomChannel)(nil)
 
 func (c *wecomChannel) Type() channel.Type { return TypeWecom }
 
-// mx returns a sink that is always safe to call. Tests construct
-// wecomChannel literals without one, and a deployment with /metrics off
-// wires nil deliberately.
+// mx 返回一个永远可以安全调用的出口。测试用字面量构造 wecomChannel、不给出
+// 口；关掉 /metrics 的部署刻意接线 nil。
 func (c *wecomChannel) mx() Metrics {
 	if c.metrics == nil {
 		return nopMetrics{}
@@ -109,26 +94,23 @@ func (c *wecomChannel) mx() Metrics {
 	return c.metrics
 }
 
-// Capabilities declares what the aibot adapter supports today. Inbound
-// attachments are downloaded, decrypted and bound (media_ingest.go), so
-// CapAttachment holds in the same direction it holds for DingTalk
-// (dingtalk_channel.go:52). Sending media back out is a separate matter —
-// it needs WeCom's aibot_upload_media_* handshake — and is not claimed here.
+// Capabilities 声明 aibot 适配器目前支持什么。入站附件会被下载、解密并绑定
+// （media_ingest.go），所以 CapAttachment 成立的方向和钉钉一致
+// （dingtalk_channel.go:52）。把媒体发回去是另一回事——它需要企微的
+// aibot_upload_media_* 握手——本文件不声称这项能力。
 func (c *wecomChannel) Capabilities() channel.Capability {
 	return channel.CapText | channel.CapAttachment
 }
 
-// Disconnect is a no-op: the WS connection's whole lifetime is scoped to
-// Connect (it returns when the run context is cancelled), so there is no
-// long-lived resource to release here. Mirrors feishuChannel / slackChannel.
+// Disconnect 是空操作：WS 连接的整个生命周期都局限在 Connect 内（run context
+// 一取消它就返回），所以这里没有需要释放的长生命周期资源。与 feishuChannel /
+// slackChannel 对齐。
 func (c *wecomChannel) Disconnect(ctx context.Context) error { return nil }
 
-// Connect dials the aibot long-connection endpoint, sends the subscribe
-// frame, and runs the read loop until ctx is cancelled or the link drops.
-// Every exit path cancels the derived runCtx and waits for the read
-// goroutine to observe it, so a transient failure tears the live connection
-// down before the Supervisor reconnects — no leaked socket goroutine
-// consuming events into an unread channel.
+// Connect 拨号 aibot 长连接端点、发订阅帧，然后跑读取循环直到 ctx 被取消或链路
+// 断开。每个退出路径都会取消派生的 runCtx 并等待读 goroutine 观察到它，所以一
+// 次瞬时失败会在 Supervisor 重连之前就把活连接拆干净——不会泄漏一个把事件灌进无
+// 人读 channel 的 socket goroutine。
 func (c *wecomChannel) Connect(ctx context.Context) (err error) {
 	if c.handler == nil {
 		return errors.New("wecom: inbound handler not configured")
@@ -165,13 +147,11 @@ func (c *wecomChannel) Connect(ctx context.Context) (err error) {
 
 	sender := newWSSender(conn, log)
 
-	// Watchdog: bridges ctx cancellation to the blocking ReadMessage() call.
-	// gorilla's ReadMessage does not observe ctx; cancelling our ctx flips
-	// ctx.Done but does not touch the read syscall. We close the socket on
-	// ctx.Done so the in-flight Read returns immediately with a
-	// "use of closed connection" error. The watchdog also runs on any other
-	// exit path (via `done`) so we never leak this goroutine, and close is
-	// idempotent so double-close on a normal exit is safe.
+	// 看门狗：把 ctx 取消桥接到阻塞的 ReadMessage() 调用上。gorilla 的
+	// ReadMessage 不感知 ctx；取消我们的 ctx 只会翻转 ctx.Done，并不会碰到读系统
+	// 调用。我们在 ctx.Done 时关掉 socket，让在途的 Read 立即以 "use of closed
+	// connection" 错误返回。看门狗也会在（经 done 的）任何其他退出路径上跑，保证
+	// 这个 goroutine 永不泄漏；close 是幂等的，正常退出时双关也是安全的。
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -182,55 +162,47 @@ func (c *wecomChannel) Connect(ctx context.Context) (err error) {
 	}()
 	defer close(done)
 
-	// Subscribe — auth the connection. Any error here yields the loop back
-	// to the Supervisor for backoff + retry.
+	// 订阅——给连接做鉴权。这里任何错误都会把循环交还给 Supervisor 去退避重试。
 	if err := c.subscribe(ctx, conn, sender, log); err != nil {
 		return err
 	}
 	log.Info("wecom: subscribe ok")
 
-	// Install the sender on the package-level registry so the OutboundReplier
-	// (created at boot, not per-installation) can locate this connection by
-	// installation id and push aibot_send_msg over the same socket. Cleared
-	// on exit so a stale sender for a dead connection is never dispatched to.
+	// 把 sender 装进包级注册表，让 OutboundReplier（启动时建的，不是按安装建的）
+	// 能按 installation id 找到这条连接、经同一条 socket 推 aibot_send_msg。退出
+	// 时清除，绝不给一条已死连接的僵尸 sender 派活。
 	if c.senders != nil && c.installationID.Valid {
 		c.senders.set(c.installationID, sender)
 		defer c.senders.clear(c.installationID, sender)
 	}
 
-	// Heartbeat — WeCom kills silent sockets past ~90s. We ping every 30s
-	// via the shared writer mutex so it interleaves cleanly with other
-	// outbound frames.
+	// 心跳——企微约 90s 后杀静默 socket。我们每 30s 经共享的写互斥锁 ping 一次，
+	// 让它和其他出站帧干净交错。
 	pingCtx, pingCancel := context.WithCancel(ctx)
 	pingDone := make(chan struct{})
 	go func() {
 		defer close(pingDone)
 		c.pingLoop(pingCtx, sender, log)
 	}()
-	// Cancel and wait in ONE defer, in that order. Two separate defers would
-	// run LIFO — the wait first, the cancel second — and pingLoop only returns
-	// on pingCtx.Done. On any exit path where the parent ctx is still live
-	// (read error, dispatch error) nothing would ever cancel pingCtx, so the
-	// wait would block forever and Connect would never return to the
-	// Supervisor for reconnect.
+	// 在一个 defer 里按这个顺序做「取消 + 等待」。拆成两个 defer 会按 LIFO 跑——
+	// 先等、后取消——而 pingLoop 只在 pingCtx.Done 后才返回。任何父 ctx 仍然活着
+	// 的退出路径（读错误、分发错误）上将永远无人取消 pingCtx，等待会永远卡住，
+	// Connect 也永远不会把控制权还给 Supervisor 去重连。
 	defer func() {
 		pingCancel()
 		<-pingDone
 	}()
 
-	// Inbound callbacks run on their own worker, not on the read loop. The
-	// read loop is the sole deliverer of server verdicts, so anything that
-	// handles a callback inline cannot also wait for the ack of a frame it
-	// writes — it would be waiting on itself. DingTalk's adapter is already
-	// shaped this way.
+	// 入站回调跑在它们自己的 worker 上，不跑在读取循环上。读取循环是服务端裁定
+	// 的唯一投递者，所以任何内联处理回调的东西都不能再去等它自己写的那帧的 ack
+	// ——那等于等自己。钉钉适配器已经是这个形状。
 	//
-	// ONE worker, not a pool: WeCom delivers a chat's messages in order, and
-	// the engine's dedup and turn batching assume that order survives.
+	// 只用一个 worker、不用池：企微按序投递一个会话的消息，而引擎的去重与轮次批
+	// 处理都假设那个顺序能存活。
 	//
-	// A full queue BLOCKS the read loop rather than dropping. Backpressure
-	// costs a reconnect; dropping costs a user's message with nothing to say
-	// so. That only holds while somebody is still receiving, so the read
-	// loop's send also watches cbDone — see the send site below.
+	// 队列满了会 BLOCK 读取循环，而不是丢消息。背压的代价是一次重连；丢弃的代价
+	// 是一条用户消息、且无从解释。这个成立的前提是仍有人在接收，所以读取循环的
+	// send 同时盯着 cbDone——见下面的发送点。
 	callbacks := make(chan frameEnvelope, callbackQueueDepth)
 	cbDone := make(chan struct{})
 	var cbErr error
@@ -239,10 +211,9 @@ func (c *wecomChannel) Connect(ctx context.Context) (err error) {
 		for env := range callbacks {
 			if e := c.dispatchFrame(ctx, env, sender, log); e != nil {
 				cbErr = e
-				// Wake the read loop if it is parked in ReadMessage; a
-				// cancelled context alone will not move it. A read loop
-				// parked on the queue send is woken by cbDone instead —
-				// closing a socket does not move a channel send.
+				// 若读取循环正卡在 ReadMessage 里，唤醒它；光取消 ctx 推不动它。
+				// 卡在队列发送上的读取循环改由 cbDone 唤醒——关 socket 推不动一
+				// 个 channel 发送。
 				_ = conn.Close()
 				return
 			}
@@ -251,37 +222,32 @@ func (c *wecomChannel) Connect(ctx context.Context) (err error) {
 	defer func() {
 		close(callbacks)
 		<-cbDone
-		// The worker's error is the real cause; the read error that followed
-		// it is just the socket we closed to get here. Only on a live ctx: a
-		// shutdown or a lease-loss cancel that catches a callback mid-flight
-		// is an ordinary stop, and promoting that callback's error would
-		// report a spurious "connection exited with error".
+		// worker 的错误才是真实原因；随之而来的读错误只是「为走到这里」关掉的
+		// socket。只在 ctx 仍活着时采用：关停或租约丢失的取消若恰好逮住一条在飞
+		// 的回调，那是普通停止，把那条回调的错误升上来会报出虚假的「连接带错退
+		// 出」。
 		if cbErr != nil && ctx.Err() == nil {
 			err = cbErr
 		}
 	}()
 
-	// Read loop. Every frame comes back through the same decode → dispatch
-	// → (maybe) reply path. A single bad frame does NOT tear the socket
-	// down — only transport / handler errors escalate.
+	// 读取循环。每帧都走同一条 解码 → 分发 →（可能）回复 的路径。单帧坏帧不会
+	// 拆掉 socket——只有传输 / handler 错误才会升级。
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
-		// Armed immediately before the read, and nowhere else.
+		// 在读取前立刻布防，别处都不布防。
 		//
-		// It used to be armed after ReadMessage returned, which put
-		// everything the loop then did inside the window. Only the server's
-		// pong resets the deadline on a quiet bot and our ping goes out every
-		// 30s, so on a loaded pool the next read could time out on a socket
-		// that was perfectly healthy. The idle window should measure idleness.
+		// 它以前在 ReadMessage 返回之后才布防，把循环随后做的一切都放进窗口内。
+		// 静默机器人上只有服务端的 pong 会重置 deadline、而我们的 ping 每 30s 出
+		// 一次，所以负载重的池上，下一次读可能在一把完全健康的 socket 上超时。
+		// 空闲窗口量度的应当就是空闲本身。
 		//
-		// The error is no longer discarded: a socket that refuses a deadline
-		// is not one to keep reading from.
+		// 这个错误不再被丢弃：拒绝设 deadline 的 socket 不值得继续读。
 		if err := conn.SetReadDeadline(time.Now().Add(readDeadline)); err != nil {
-			// The shutdown path closes the socket, and a closed socket
-			// refuses a deadline. That is an ordinary stop, not a failure to
-			// report to the Supervisor.
+			// 关停路径会关闭 socket，而关闭的 socket 拒绝设 deadline。那是普通停
+			// 止，不是要上报给 Supervisor 的失败。
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -311,34 +277,29 @@ func (c *wecomChannel) Connect(ctx context.Context) (err error) {
 				c.mx().RecordCallbackQueued()
 				continue
 			default:
-				// The worker is behind. Blocking is the deliberate choice
-				// (see below), and it is also the thing an operator wants to
-				// know about — from here on the socket stops being drained,
-				// and if it lasts, WeCom replaces the connection.
+				// worker 落后了。阻塞是刻意的选择（见下面），也是运维要知道的事
+				// ——从这一刻起 socket 不再被排空，若持续下去企微会顶掉这条连接。
 				c.mx().RecordCallbackQueueBlocked()
 			}
 			select {
 			case callbacks <- env:
 				c.mx().RecordCallbackQueued()
 			case <-cbDone:
-				// The worker has stopped, so this send has no receiver — and
-				// no closer either: the queue is closed by a defer that
-				// cannot run until this loop returns. With a full queue that
-				// is a permanent park, because the worker's conn.Close()
-				// wakes a read loop sitting in ReadMessage, not one sitting
-				// on a send, and ctx stays live on this path. Nothing would
-				// ever reconnect: the Supervisor would keep renewing the
-				// lease for a connection that had stopped reading.
+				// worker 已停，这次发送没有接收者——也没有关闭者：队列要由一条
+				// 必须等本循环返回才能跑的 defer 关闭。队列满时这就是永久停泊，
+				// 因为 worker 的 conn.Close() 唤醒的是坐在 ReadMessage 上的读取
+				// 循环，不是坐在发送上的那个，而这条路径上 ctx 一直活着。那将永
+				// 远没有重连：Supervisor 会为一条已停止读取的连接不断续租。
 				//
-				// Return and let the deferred handler substitute the
-				// worker's error, which is the real cause.
+				// 返回，让 defer 里的 handler 用 worker 的错误（真正的根因）来顶
+				// 替。
 				return nil
 			case <-ctx.Done():
 				return nil
 			}
 		default:
-			// Acks, pings and pongs stay on the read loop: they are the
-			// frames the worker's own writes are waiting for.
+			// ack、ping、pong 留在读取循环上：它们是 worker 自己那些写正在等的
+			// 帧。
 			if err := c.dispatchFrame(ctx, env, sender, log); err != nil {
 				return err
 			}
@@ -346,26 +307,21 @@ func (c *wecomChannel) Connect(ctx context.Context) (err error) {
 	}
 }
 
-// callbackQueueDepth is how far the callback worker may fall behind the read
-// loop before the read loop blocks. Past this the socket stops being drained,
-// WeCom notices, and the connection is replaced — which is the correct
-// outcome: a replica that cannot keep up should hand the bot to one that can,
-// not quietly discard the messages it could not reach.
+// callbackQueueDepth 是回调 worker 落后读取循环多远之后、读取循环才阻塞。超过
+// 它 socket 不再被排空、企微发现后顶掉连接——这是正确结局：跟不上的副本本应把
+// 机器人交给跟得上的那个，而不是悄悄丢弃它够不到的消息。
 const callbackQueueDepth = 64
 
-// subscribe sends the aibot_subscribe frame and waits (up to
-// subscribeTimeout) for the server's ack. The ack shape is a frame with
-// echoed headers.req_id + errcode; errcode == 0 means good.
+// subscribe 发出 aibot_subscribe 帧，并等待（至多 subscribeTimeout）服务端 ack。
+// ack 形态是一帧回显 headers.req_id + errcode 的帧；errcode == 0 即成功。
 //
-// A non-zero errcode goes through classifySubscribeAck — the same function the
-// install-time credential probe uses on the same ack, so the two cannot answer
-// the same code differently. 40001 / 40013 come back as ErrCredentialsRejected:
-// the refusal that repeats identically on every backoff until somebody fixes
-// the installation. Every other non-zero code is ErrCredentialsUnverifiable,
-// because a throttle (45009, 45033) or a platform-side failure clears on its
-// own, and counting one as a credential failure would page an operator about a
-// tenant whose bot is fine. Both sentinels are exported, so channel/engine —
-// which is what receives this error out of Connect() — can branch on them.
+// 非零 errcode 走 classifySubscribeAck——安装时凭证探测对同一个 ack 用的也是这
+// 个函数，所以两者对同一个码不可能答出不同的答案。40001 / 40013 归成
+// ErrCredentialsRejected：这种拒绝会在每次退避后原样重演，直到有人修好安装。其余
+// 非零码一律 ErrCredentialsUnverifiable，因为限流（45009、45033）或平台侧故障会
+// 自行消退，把它算成凭证失败会为一个机器人明明没问题的租户去 paging 运维。两个
+// 哨兵都导出，让 channel/engine——正是从 Connect() 收到这个错误的那层——可以分
+// 支处理。
 func (c *wecomChannel) subscribe(ctx context.Context, conn wsConn, sender *wsSender, log *slog.Logger) error {
 	reqID := newReqID()
 	if err := sender.write(map[string]any{
@@ -377,10 +333,8 @@ func (c *wecomChannel) subscribe(ctx context.Context, conn wsConn, sender *wsSen
 		return fmt.Errorf("wecom: send subscribe: %w", err)
 	}
 
-	// Wait for the matching ack — the server writes it as a frame with
-	// cmd empty (or absent) and headers.req_id equal to ours. Any other
-	// frame that arrives first is dropped (subscribe is the very first
-	// exchange, so this is rare in practice).
+	// 等待配对的 ack——服务端把它写成 cmd 为空（或缺失）、headers.req_id 与我们
+	// 相同的一帧。先到的任何其他帧都被丢弃（订阅是最早的交换，实际很少发生）。
 	deadline := time.Now().Add(subscribeTimeout)
 	_ = conn.SetReadDeadline(deadline)
 	for {
@@ -389,12 +343,10 @@ func (c *wecomChannel) subscribe(ctx context.Context, conn wsConn, sender *wsSen
 		}
 		typ, payload, err := conn.ReadMessage()
 		if err != nil {
-			// The socket died, the ack never arrived inside
-			// subscribeTimeout, or our own ctx was cancelled mid-read and
-			// the watchdog closed the socket under us. Infrastructure or a
-			// shutdown — nobody has to be told either way, and the next
-			// backoff may well succeed. A rolling restart therefore adds a
-			// few counts here; the rate matters, a handful does not.
+			// socket 死了、ack 在 subscribeTimeout 内没到、或我们自己的 ctx 在读
+			// 中途被取消、看门狗在脚下关掉了 socket。基建问题或关停——两者都不必
+			// 特意告诉谁，下一次退避很可能就成功了。滚动重启因此会在这里加几个
+			// 计数；看的是速率，几个不足为道。
 			c.mx().RecordConnectFailure()
 			return fmt.Errorf("wecom: subscribe read: %w", err)
 		}
@@ -405,33 +357,28 @@ func (c *wecomChannel) subscribe(ctx context.Context, conn wsConn, sender *wsSen
 		if err := json.Unmarshal(payload, &env); err != nil {
 			continue
 		}
-		// Traced before the req_id filter: a subscribe that is rejected, or
-		// answered on a req_id we never sent, is exactly the failure an
-		// operator turns tracing on to see.
+		// 在 req_id 过滤之前就追踪：一次被拒的订阅、或用我们从未发出的 req_id 回
+		// 答的订阅，正是运维开 trace 要看的那种失败。
 		traceIn(log, env)
 		if env.Headers.ReqID != reqID {
 			continue
 		}
 		if env.ErrCode != 0 {
-			// Which of the two counters this is depends on what the ack
-			// means, and classifySubscribeAck already decides that — the
-			// same verdict the install-time credential probe gets. Branch on
-			// its answer rather than testing the errcode again here: a
-			// second copy of rejectionErrCodes would be free to drift from
-			// the probe's, and then the dashboard and the install screen
-			// would disagree about the same code.
+			// 进两个计数器中的哪一个，取决于这个 ack 意味着什么——而
+			// classifySubscribeAck 已经定了这个：和安装时凭证探测拿到的是同一个
+			// 裁定。按它的回答分支，而不是在这里再测一遍 errcode：rejectionErrCodes
+			// 再抄一份就随时可能和探测的那份漂移，然后仪表盘和安装页会对同一个码
+			// 给出矛盾的说法。
 			err := classifySubscribeAck(log, env.ErrCode, env.ErrMsg)
 			if errors.Is(err, ErrCredentialsRejected) {
-				// Refused on its merits: a wrong secret, a deleted bot.
-				// Counted apart from every other connection failure because
-				// it is the only one that repeats identically on every
-				// backoff until a person changes something.
+				// 凭其本身被拒：密钥错、机器人已删。单独计数、区别于其他所有连接
+				// 失败，因为它是唯一「每次退避都原样重演、直到有人改点什么」的失
+				// 败。
 				c.mx().RecordAuthFailure()
 			} else {
-				// Unverifiable — a throttle, or a platform-side failure.
-				// It clears on its own, exactly like a dial that did not
-				// land, so it belongs on that counter and not on the one an
-				// operator reads as "go rotate a credential".
+				// 无法核验——限流或平台侧故障。它会自行消退，和一次没落地的拨号
+				// 一模一样，所以该进那个计数器、不该进运维读作「去轮换一个凭证」
+				// 的那个。
 				c.mx().RecordConnectFailure()
 			}
 			return err
@@ -440,9 +387,8 @@ func (c *wecomChannel) subscribe(ctx context.Context, conn wsConn, sender *wsSen
 	}
 }
 
-// dispatchFrame routes one server frame. Only aibot_msg_callback ever
-// escalates back to the loop's caller (as a handler infra failure);
-// events are logged + acked and everything else is silently dropped.
+// dispatchFrame 路由一条服务端帧。只有 aibot_msg_callback 会（作为 handler 基建
+// 失败）升级回循环的调用方；事件记日志 + 回 ack，其余一切静默丢弃。
 func (c *wecomChannel) dispatchFrame(ctx context.Context, env frameEnvelope, sender *wsSender, log *slog.Logger) error {
 	switch env.Cmd {
 	case cmdMsgCallback:
@@ -452,20 +398,16 @@ func (c *wecomChannel) dispatchFrame(ctx context.Context, env frameEnvelope, sen
 			return nil
 		}
 		text, ok := mc.ownText()
-		// Traced with the RESOLVED body, not mc.Text.Content: that field is
-		// empty for every voice, media and 图文混排 callback, so tracing it
-		// would print len=0 for exactly the messages an operator turned
-		// tracing on to look at.
+		// 用解析后的正文追踪，而不是 mc.Text.Content：后者对每条语音、媒体和图
+		// 文混排回调都是空的，追踪它会恰好给「运维开 trace 要看的那些消息」打出
+		// len=0。
 		traceInbound(log, mc, text)
 		msg := channelMessageFromCallback(c.botID, c.botDisplayName, mc, text, env.Headers.ReqID)
 		if !ok {
-			// Nothing in this message can be read: a kind the adapter does
-			// not know (a location card), or a known kind that arrived
-			// without the one field that makes it usable — a voice note whose
-			// recognition came back empty, an image callback carrying no url.
-			// Silence reads as a broken bot, so answer the same chat with a
-			// one-line receipt and stop. Best-effort: a send failure degrades
-			// to the prior silent drop.
+			// 这条消息里没有任何可读的东西：一种适配器不认识的类型（位置卡片），
+			// 或一种认识、却缺了让它可用的那个字段到达——识别返回空的语音、不带
+			// url 的图片回调。沉默读起来像机器人坏了，所以往同一个会话回一行回执
+			// 就停。尽力而为：发送失败退化成原来的静默丢弃。
 			log.Debug("wecom: unsupported message kind, replying with a receipt", "msg_type", mc.MsgType, "msg_id", mc.MsgID)
 			if err := sender.sendText(msg.Source.ChatID, aibotChatTypeFromChannel(msg.Source.ChatType), unsupportedMsgTypeReceipt); err != nil {
 				log.Debug("wecom: unsupported-kind receipt send failed", "error", err, "msg_id", mc.MsgID)
@@ -484,16 +426,15 @@ func (c *wecomChannel) dispatchFrame(ctx context.Context, env frameEnvelope, sen
 		}
 		switch ec.Event.EventType {
 		case eventDisconnected:
-			// Another connection displaced ours. Return so the Supervisor
-			// can backoff and reconnect (which will in turn displace THAT
-			// one — the last writer wins).
+			// 另一条连接顶掉了我们的。返回让 Supervisor 退避重连（它随后又会顶掉
+			// 那一条——后写者胜）。
 			return errors.New("wecom: received disconnected_event (superseded)")
 		default:
 			log.Debug("wecom: event", "type", ec.Event.EventType)
 			return nil
 		}
 	case cmdServerPing:
-		// Server-initiated ping (rare per the docs, but handle defensively).
+		// 服务端发起的 ping（按文档很少见，但防御性处理）。
 		if err := sender.write(map[string]any{
 			"cmd":     cmdPong,
 			"headers": frameHeaders{ReqID: env.Headers.ReqID},
@@ -502,18 +443,15 @@ func (c *wecomChannel) dispatchFrame(ctx context.Context, env frameEnvelope, sen
 		}
 		return nil
 	case cmdPong:
-		// Ack for our client-initiated ping — no-op.
+		// 对我们客户端主动 ping 的 ack——空操作。
 		return nil
 	default:
-		// Anonymous ack frames (empty cmd) for our writes. Most are
-		// errcode=0 no-ops, but aibot_send_msg / aibot_respond_msg /
-		// aibot_upload_media_* can reject with a non-zero errcode
-		// (e.g. wrong msgtype, rate limit, chat not writable). Log the
-		// error so a failed outbound is visible without having to
-		// packet-capture the socket.
-		// Hand it to whoever wrote the frame, if anybody is waiting. An
-		// unclaimed ack is not an error — the pushes that do not wait for a
-		// verdict share this connection.
+		// 对我们某次写出的匿名 ack 帧（cmd 为空）。多数是 errcode=0 的空操作，
+		// 但 aibot_send_msg / aibot_respond_msg / aibot_upload_media_* 可能带非零
+		// errcode 拒绝（比如 msgtype 错、被限流、会话不可写）。把错误记进日志，
+		// 让一次失败的出站无需抓包就能看见。
+		// 若有谁在等，交给写那帧的人。无人认领的 ack 不是错误——不等待裁定的推送
+		// 与请求共用这条连接。
 		if sender.routeResponse(env) {
 			return nil
 		}
@@ -528,9 +466,8 @@ func (c *wecomChannel) dispatchFrame(ctx context.Context, env frameEnvelope, sen
 	}
 }
 
-// pingLoop sends heartbeat frames every pingInterval until ctx is
-// cancelled. A write failure surfaces on the next ReadMessage error path;
-// we log it here but do not tear the loop down ourselves.
+// pingLoop 每隔 pingInterval 发一次心跳帧，直到 ctx 被取消。写失败会在下一条
+// ReadMessage 的错误路径上浮出水面；我们在这里记日志，但不自己拆循环。
 func (c *wecomChannel) pingLoop(ctx context.Context, sender *wsSender, log *slog.Logger) {
 	t := time.NewTicker(pingInterval)
 	defer t.Stop()
@@ -549,73 +486,59 @@ func (c *wecomChannel) pingLoop(ctx context.Context, sender *wsSender, log *slog
 	}
 }
 
-// Send is the outbound Channel entry the engine calls with a normalized
-// OutboundMessage. Iteration 1 always uses aibot_send_msg (WeCom's
-// "proactive push" cmd) rather than aibot_respond_msg — send_msg has no 5s
-// deadline and works regardless of whether the message ever ties back to a
-// specific inbound frame. The one caveat is chat_type: aibot_send_msg needs
-// to know whether the ChatID is a single-user id or a group id. We piggy-
-// back on the length heuristic used by internal-customer-service (chat ids
-// are ≥33 chars, userids are shorter), which is stable in practice.
+// Send 是引擎用规范化 OutboundMessage 调用的出站 Channel 入口。第一版迭代一律用
+// aibot_send_msg（企微的「主动推送」cmd）而不是 aibot_respond_msg——send_msg 没
+// 有 5 秒期限，且无论消息是否要回连到某条特定入站帧都能用。唯一的麻烦是
+// chat_type：aibot_send_msg 需要知道 ChatID 是单聊用户 id 还是群 id。我们借用内
+// 部客服号用过的长度启发式（chat id ≥33 字符、userid 更短），实践中它很稳定。
 //
-// The Channel is not the primary outbound path in the multica engine — the
-// EventChatDone subscriber and the OutboundReplier handle most sends — but
-// Channel.Send is still the contract that lets the engine deliver ad-hoc
-// replies, so we implement it here for parity with feishuChannel /
-// slackChannel.
+// Channel 不是 multica 引擎里主要的出站路径——EventChatDone 订阅者和
+// OutboundReplier 处理大多数发送——但 Channel.Send 仍是让引擎投递临时回复的契约，
+// 所以为与 feishuChannel / slackChannel 对齐，我们还是实现了它。
 func (c *wecomChannel) Send(ctx context.Context, out channel.OutboundMessage) (channel.SendResult, error) {
-	// Not used. Outbound for wecom goes through OutboundReplier / Outbound
-	// (EventChatDone + EventInboxNew), which know the message's real
-	// Source.ChatType and address the correct chat. The generic
-	// Channel.Send seam is never invoked by the engine for this channel; a
-	// stub here previously guessed single-vs-group from len(ChatID) > 32,
-	// the only chat-type inference in the package. Return not-supported
-	// rather than keep a second, heuristic outbound path alive.
+	// 不用它。wecom 出站走 OutboundReplier / Outbound（EventChatDone +
+	// EventInboxNew），它们知道消息真实的 Source.ChatType、发给正确的会话。通用
+	// 的 Channel.Send 接缝对本通道从不会被引擎调用；这里过去的 stub 用
+	// len(ChatID) > 32 猜单聊还是群聊——本包唯一的会话类型推断。与其保留第二条
+	// 启发式出站路径，不如直接回 not-supported。
 	_ = ctx
 	_ = out
 	return channel.SendResult{}, ErrSendNotSupported
 }
 
-// ErrSendNotSupported is returned by wecomChannel.Send. WeCom's generic
-// Channel.Send seam has no honest implementation — channel.OutboundMessage
-// carries no chat_type, and outbound already flows through OutboundReplier /
-// Outbound, which read the chat type off the inbound frame.
+// ErrSendNotSupported 由 wecomChannel.Send 返回。企微的通用 Channel.Send 接缝没
+// 有诚实的实现——channel.OutboundMessage 不带 chat_type，而出站本来就走
+// OutboundReplier / Outbound——它们从入站帧上读会话类型。
 var ErrSendNotSupported = errors.New("wecom: Channel.Send is not supported; outbound goes through OutboundReplier/Outbound")
 
 // ---- factory ----
 
-// ChannelDeps bundles the shared dependencies the wecom Factory closes
-// over. The engine inbound handler is supplied per-build via
-// channel.Config.Handler; the CredentialsResolver decrypts the stored
-// secret.
+// ChannelDeps 打包 wecom Factory 闭包要用的共享依赖。引擎入站 handler 经
+// channel.Config.Handler 按构建提供；CredentialsResolver 解密已存的密钥。
 type ChannelDeps struct {
 	Credentials CredentialsResolver
 	Logger      *slog.Logger
 
-	// Senders is the package-level installation→wsSender registry.
-	// OutboundReplier and Outbound both look up the live wsSender through
-	// it. Boot passes ONE registry instance shared with the OutboundReplier
-	// constructor. Nil in tests that don't exercise outbound.
+	// Senders 是包级的 installation→wsSender 注册表。OutboundReplier 和 Outbound
+	// 都经它查活 wsSender。启动传一份与 OutboundReplier 构造器共享的同一实例。
+	// 不锻炼出站的测试里为 nil。
 	Senders *sendersRegistry
 
-	// Metrics is the health sink every built channel reports through. Nil
-	// discards every counter, which is what a deployment with /metrics
-	// turned off gets.
+	// Metrics 是每条建出来的 channel 上报的健康出口。nil 丢弃所有计数器——关掉
+	// /metrics 的部署正是这样。
 	Metrics Metrics
 
-	// Dialer overrides the default gorilla dialer. Tests point it at an
-	// httptest server; production leaves this nil.
+	// Dialer 覆盖默认 gorilla 拨号器。测试把它指向 httptest server；生产留 nil。
 	Dialer Dialer
 
-	// WSURL overrides DefaultWSURL. Same test-only intent as Dialer.
+	// WSURL 覆盖 DefaultWSURL。与 Dialer 一样的测试专用意图。
 	WSURL string
 }
 
-// RegisterWecom registers the per-installation wecom smart-bot Factory so
-// the engine.Supervisor builds + supervises one wecomChannel per active
-// installation. "Adding wecom smart-bot inbound" is this call plus the
-// adapter — no engine edit (same contract as lark.RegisterFeishu /
-// slack.RegisterSlack).
+// RegisterWecom 注册按安装的企微智能机器人 Factory，让 engine.Supervisor 为每条
+// 活跃安装建造并监管一个 wecomChannel。「接入企微智能机器人入站」就是这个调用加
+// 适配器本身——无需改引擎（与 lark.RegisterFeishu / slack.RegisterSlack 同一契
+// 约）。
 func RegisterWecom(reg *channel.Registry, deps ChannelDeps) {
 	reg.Register(TypeWecom, newWecomFactory(deps))
 }
@@ -660,9 +583,8 @@ func newWecomFactory(deps ChannelDeps) channel.Factory {
 
 // ---- request id ----
 
-// newReqID returns a random correlation id for a WebSocket frame's
-// headers.req_id. The server echoes it back on each ack so the client can
-// pair replies with requests.
+// newReqID 为一条 WebSocket 帧的 headers.req_id 返回随机关联 id。服务端在每个
+// ack 上把它回显，客户端靠它把回复与请求配对。
 func newReqID() string {
 	var buf [8]byte
 	if _, err := cryptorand.Read(buf[:]); err != nil {

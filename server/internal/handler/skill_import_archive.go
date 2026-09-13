@@ -1,3 +1,7 @@
+// 本文件实现「上传技能归档」导入路径（POST /api/skills/import 的 multipart 分支）：
+// 读取 .skill / .zip 归档，解压成 importedSkill，再交共享的 finishSkillImport 收尾。
+// 安全重点：压缩前体积封顶、zip-slip / 绝对路径防护、逐文件解压限流（zip 头部
+// 谎报体积也不能撑爆内存）、保留 SKILL.md 专属名、按单包字节/文件数上限把关。
 package handler
 
 import (
@@ -14,25 +18,23 @@ import (
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 )
 
-// maxImportArchiveUploadSize bounds the compressed upload accepted by the
-// archive import path. The decompressed bundle is still held to the existing
-// per-file / total / file-count caps (maxImportFileSize, maxImportTotalSize,
-// maxImportFileCount); this outer cap just stops a client from streaming an
-// unbounded compressed body before those decompression limits can apply.
+// maxImportArchiveUploadSize 限制归档导入路径接受的压缩上传体。解压后的资源包仍
+// 受既有的单文件/总量/文件数上限（maxImportFileSize、maxImportTotalSize、
+// maxImportFileCount）约束；这个外层上限只是防止客户端在解压限流能生效之前就
+// 流进一个无界的压缩体。
 const maxImportArchiveUploadSize = 16 << 20 // 16 MiB
 
-// isMultipartForm reports whether the request carries a multipart/form-data
-// body (an uploaded skill archive) rather than the JSON URL-import body.
+// isMultipartForm 判断请求是否携带 multipart/form-data body（上传的技能归档），
+// 而不是 JSON 的 URL 导入 body。
 func isMultipartForm(r *http.Request) bool {
 	return strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data")
 }
 
-// importSkillFromArchive handles POST /api/skills/import when the body is an
-// uploaded skill archive (.skill / .zip). It reads the file plus the optional
-// on_conflict form field, decompresses the archive into an importedSkill, and
-// hands off to the shared finishSkillImport tail. The archive path always
-// produces structured (status / skill / existing_skill) results — there is no
-// legacy pre-on_conflict client for it to stay compatible with.
+// importSkillFromArchive 处理 body 是上传技能归档（.skill / .zip）时的
+// POST /api/skills/import。它读取文件与可选的 on_conflict 表单字段，把归档解压
+// 成 importedSkill，再交给共享的 finishSkillImport 收尾。归档路径总是产出结构化
+// （status / skill / existing_skill）结果——没有需要兼容的 legacy pre-on_conflict
+// 客户端。
 func (h *Handler) importSkillFromArchive(w http.ResponseWriter, r *http.Request, workspaceID string, workspaceUUID, creatorUUID pgtype.UUID, creatorID string) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxImportArchiveUploadSize)
 	if err := r.ParseMultipartForm(maxImportArchiveUploadSize); err != nil {
@@ -81,28 +83,23 @@ func (h *Handler) importSkillFromArchive(w http.ResponseWriter, r *http.Request,
 	h.finishSkillImport(w, r, workspaceID, workspaceUUID, creatorUUID, creatorID, strategy, true, imported)
 }
 
-// parseSkillArchive decompresses an uploaded skill archive (.skill / .zip) into
-// an importedSkill. A .skill file is a standard zip whose entries sit either at
-// the archive root (SKILL.md, scripts/...) or nested under a single top-level
-// directory (my-skill/SKILL.md, my-skill/scripts/...) — the layout produced by
-// Anthropic's package_skill. Both are accepted by rooting on the shallowest
-// SKILL.md found.
+// parseSkillArchive 把上传的技能归档（.skill / .zip）解压成 importedSkill。
+// .skill 是标准 zip，其条目要么位于归档根（SKILL.md、scripts/...），要么嵌套在
+// 单个顶层目录下（my-skill/SKILL.md、my-skill/scripts/...）——即 Anthropic 的
+// package_skill 产出的布局。两种都以找到的最浅 SKILL.md 为根来接受。
 //
-// Safety: every entry is validated against traversal / absolute paths
-// (zip-slip), the reserved SKILL.md supporting path is dropped, per-file size is
-// bounded while reading (so a lying zip header can't blow up memory), and the
-// shared addFile enforces the per-bundle byte and file-count caps.
+// 安全：每个条目都校验穿越/绝对路径（zip-slip）；保留的 SKILL.md 附带路径被
+// 丢弃；读取时对单文件大小设限（zip 头部谎报也不会撑爆内存）；共享的 addFile
+// 强制单包字节与文件数上限。
 func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, fmt.Errorf("uploaded file is not a valid .skill/.zip archive")
 	}
 
-	// Locate the skill root: the directory of the shallowest SKILL.md. This
-	// accepts both a root-level SKILL.md and the common single-wrapper layout.
-	// The candidate path is validated up front (absolute / traversal entries are
-	// rejected) so a malicious archive cannot smuggle an unsafe path in as the
-	// primary content — keeping every accepted entry zip-slip-safe.
+	// 定位技能根：最浅 SKILL.md 所在的目录。这同时接受根级 SKILL.md 与常见的
+	// 单层包装布局。候选路径前置校验（拒绝绝对/穿越条目），恶意归档无法把不安全
+	// 路径偷渡成主内容——保证每个被接受的条目都 zip-slip 安全。
 	var skillMd *zip.File
 	rootPrefix := ""
 	for _, f := range zr.File {
@@ -150,7 +147,7 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 			continue
 		}
 		clean := path.Clean(f.Name)
-		// Only files under the resolved skill root belong to this skill.
+		// 只有解析出的技能根之下的文件才属于这个技能。
 		if rootPrefix != "" && !strings.HasPrefix(clean, rootPrefix) {
 			continue
 		}
@@ -158,27 +155,25 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 		if rel == "" {
 			continue
 		}
-		// A SKILL.md at any depth is never a supporting file: the top-level one
-		// is the primary content, and a nested one would collide with the
-		// reserved primary-content name. Mirrors the daemon's local-skill rule.
+		// 任何深度的 SKILL.md 都不算附带文件：顶层的那个是主内容，嵌套的会与保留
+		// 的主内容名撞名。镜像 daemon 的 local-skill 规则。
 		if strings.EqualFold(path.Base(rel), skillpkg.ContentFilename) {
 			continue
 		}
 		if isIgnoredArchiveEntry(rel) {
 			continue
 		}
-		// zip-slip / absolute-path guard.
+		// zip-slip / 绝对路径防护。
 		if !validateFilePath(rel) {
 			continue
 		}
 		fileContent, ferr := readZipFile(f, maxImportFileSize)
 		if ferr != nil {
-			// An oversize or unreadable individual asset is skipped rather than
-			// failing the whole import, matching the local-runtime importer.
+			// 单个超大或不可读的素材被跳过而不是让整个导入失败，与 local-runtime
+			// 导入器一致。
 			continue
 		}
-		// addFile enforces the per-bundle caps and drops binary assets; a cap
-		// breach aborts the import instead of silently truncating it.
+		// addFile 强制单包上限并丢弃二进制素材；超限会让导入中止而不是悄悄截断。
 		if err := imported.addFile(rel, fileContent); err != nil {
 			return nil, err
 		}
@@ -190,9 +185,8 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 	return imported, nil
 }
 
-// archiveEntryPrefix returns the directory prefix (with trailing slash) of a
-// cleaned, slash-delimited archive entry: "" for a root entry, "my-skill/" for
-// "my-skill/SKILL.md".
+// archiveEntryPrefix 返回某个已清洗、斜杠分隔的归档条目的目录前缀（含尾斜杠）：
+// 根条目为 ""，"my-skill/SKILL.md" 为 "my-skill/"。
 func archiveEntryPrefix(cleanName string) string {
 	dir := path.Dir(cleanName)
 	if dir == "." || dir == "/" {
@@ -201,9 +195,8 @@ func archiveEntryPrefix(cleanName string) string {
 	return dir + "/"
 }
 
-// skillNameFromArchive derives a fallback skill name when SKILL.md carries no
-// name field: the wrapper directory name if the skill is nested, else the
-// uploaded filename without its extension.
+// skillNameFromArchive 在 SKILL.md 没有 name 字段时派生兜底技能名：技能嵌套时用
+// 包装目录名，否则用去掉扩展名的上传文件名。
 func skillNameFromArchive(rootPrefix, filename string) string {
 	if rootPrefix != "" {
 		base := path.Base(strings.TrimSuffix(rootPrefix, "/"))
@@ -219,8 +212,8 @@ func skillNameFromArchive(rootPrefix, filename string) string {
 	return strings.TrimSpace(base)
 }
 
-// isIgnoredArchiveEntry filters editor/OS noise and license files out of the
-// supporting bundle, mirroring the daemon's local-skill discovery rules.
+// isIgnoredArchiveEntry 把编辑器/操作系统噪音与 license 文件从附带包里滤掉，
+// 镜像 daemon 的 local-skill 发现规则。
 func isIgnoredArchiveEntry(rel string) bool {
 	for _, seg := range strings.Split(rel, "/") {
 		if seg == "" || seg == "__MACOSX" || strings.HasPrefix(seg, ".") {
@@ -234,9 +227,8 @@ func isIgnoredArchiveEntry(rel string) bool {
 	return false
 }
 
-// readZipFile reads a single zip entry, capping the read at maxSize+1 bytes so a
-// header that under-reports its uncompressed size cannot force an unbounded
-// allocation. Entries larger than maxSize are rejected.
+// readZipFile 读取单个 zip 条目，把读取封顶在 maxSize+1 字节——头部少报未压缩
+// 体积的条目无法逼迫无界分配。超过 maxSize 的条目被拒绝。
 func readZipFile(f *zip.File, maxSize int64) (string, error) {
 	rc, err := f.Open()
 	if err != nil {

@@ -1,3 +1,6 @@
+// 文件职责：实现 `multica login` 命令——走标准 auth 登录流程（见 cmd_auth.go 的
+// runAuthLogin），登录成功后自动发现并 watch 用户全部工作区。若当前账号还没有
+// workspace，会尝试打开浏览器引导创建并轮询等待（见 waitForWorkspaceCreation）。
 package main
 
 import (
@@ -12,8 +15,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-// tryResolveAppURL returns the app URL if configured, or "" if not available.
-// Unlike resolveAppURL, it never calls os.Exit.
+// tryResolveAppURL 返回配置里的 app URL，取不到返回 ""。与 resolveAppURL 不同，
+// 它绝不调用 os.Exit。
 func tryResolveAppURL(cmd *cobra.Command) string {
 	for _, key := range []string{"MULTICA_APP_URL", "FRONTEND_ORIGIN"} {
 		if val := strings.TrimSpace(os.Getenv(key)); val != "" {
@@ -28,51 +31,49 @@ func tryResolveAppURL(cmd *cobra.Command) string {
 	return ""
 }
 
+// loginCmd 是 `multica login` 命令。
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate and set up workspaces",
 	Long:  "Log in to Multica, then automatically discover and watch all your workspaces.",
-	// Up to one positional is accepted so `--token mul_...` / `--token mcn_...`
-	// (space form) can recover the token in runAuthLogin even though pflag
-	// won't bind it.
+	// 允许最多一个位置参数，这样 `--token mul_...` / `--token mcn_...`（空格分隔
+	// 形式）虽然 pflag 不绑定值，runAuthLogin 也能借它恢复出 token。
 	Args: cobra.MaximumNArgs(1),
 	RunE: runLogin,
 }
 
-// tokenPromptSentinel is the value pflag assigns to `--token` when the flag
-// is supplied without an explicit value. runAuthLoginToken treats it as
-// "prompt me interactively", preserving the legacy `multica login --token`
-// no-value form alongside the documented `--token mul_...` / `--token mcn_...`
-// value form.
+// tokenPromptSentinel 是 pflag 在 `--token` 无显式值时所赋的值。runAuthLoginToken
+// 把它当作「交互式提示我输入」，从而在保留老式 `multica login --token`（不带值）
+// 形态的同时，也支持文档化的 `--token mul_...` / `--token mcn_...`（带值）形态。
 //
-// The sentinel must be printable: pflag renders NoOptDefVal verbatim in help
-// output ("--token string[=\"prompt\"]") and uses "\x00" internally as its
-// column-alignment marker, so a NUL-prefixed sentinel corrupts `login -h`.
-// Colliding with a user literally typing `--token prompt` is harmless — that
-// string is never a valid PAT, and prompting is a reasonable response.
+// sentinel 必须是可打印字符：pflag 会把 NoOptDefVal 原样渲染进帮助输出
+// （"--token string[=\"prompt\"]"），而 "\x00" 在内部被当作列对齐标记，NUL 前缀
+// 的 sentinel 会破坏 `login -h`。与用户真的敲 `--token prompt` 撞车也无害——
+// 那个字符串从来不是合法 PAT，交互式提示也算合理应对。
 const tokenPromptSentinel = "prompt"
 
 func init() {
-	// No backticks in the usage string: pflag's UnquoteUsage treats the first
-	// backquoted segment as the flag's value placeholder in help output.
+	// usage 串里别放反引号：pflag 的 UnquoteUsage 把第一段反引号内容当作该 flag
+	// 在帮助输出里的取值占位符。
 	loginCmd.Flags().String("token", "", "Authenticate using a personal access token (mul_... user PAT or mcn_... Cloud Node PAT). Pass --token mul_... / --token mcn_... to supply it inline, or --token alone to be prompted interactively.")
-	// NoOptDefVal lets `--token` (no value) keep its old prompt-mode behavior
-	// while `--token mul_...` / `--token mcn_...` and the `=value` form
-	// consume the value normally.
+	// NoOptDefVal 让 `--token`（不带值）保留老式提示输入的行为，同时
+	// `--token mul_...` / `--token mcn_...` 及 `=value` 形式照常取值。
 	loginCmd.Flags().Lookup("token").NoOptDefVal = tokenPromptSentinel
 	loginCmd.Flags().String(callbackHostFlag, "", callbackHostFlagHelp)
 }
 
+// runLogin 执行 `login`：先过 human/local 命令守卫，再走标准 auth 流程，成功后
+// 自动 watch 全部工作区。autoWatchWorkspaces 失败不致命——提示手动设置即可。
 func runLogin(cmd *cobra.Command, args []string) error {
 	if err := requireHumanLocalCommand("login"); err != nil {
 		return err
 	}
-	// Run the standard auth login flow.
+	// 执行标准 auth 登录流程。
 	if err := runAuthLogin(cmd, args); err != nil {
 		return err
 	}
 
-	// Auto-discover and watch all workspaces.
+	// 自动发现并 watch 所有工作区。
 	if err := autoWatchWorkspaces(cmd); err != nil {
 		fmt.Fprintf(os.Stderr, "\nCould not auto-configure workspaces: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Run 'multica workspace list' and 'multica workspace watch <id>' to set up manually.\n")
@@ -83,11 +84,11 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// autoWatchWorkspaces 用刚登录的 profile 拉取工作区列表并设默认工作区。
 func autoWatchWorkspaces(cmd *cobra.Command) error {
-	// runLogin has already passed the human/local command guard and saved the
-	// newly authenticated profile. Read that exact profile here rather than the
-	// general task-safe resolvers, which intentionally fail closed on a lone
-	// MULTICA_DAEMON_PORT signal.
+	// runLogin 已过 human/local 守卫并保存了新登录的 profile。这里直接读该
+	// profile 而不是用那些对任务不友好的通用解析器——后者遇到孤立的
+	// MULTICA_DAEMON_PORT 信号会失败关闭。
 	profile := resolveProfile(cmd)
 	cfg, err := cli.LoadCLIConfigForProfile(profile)
 	if err != nil {
@@ -124,7 +125,7 @@ func autoWatchWorkspaces(cmd *cobra.Command) error {
 		}
 	}
 
-	// Set default workspace if not set.
+	// 没有工作区时设默认工作区为第一个。
 	if cfg.WorkspaceID == "" {
 		cfg.WorkspaceID = workspaces[0].ID
 	}
@@ -148,16 +149,16 @@ func autoWatchWorkspaces(cmd *cobra.Command) error {
 	return nil
 }
 
-// waitForWorkspaceCreation opens the web workspace-creation page and polls
-// until the user creates a workspace, returning the new workspace list.
+// waitForWorkspaceCreation 打开网页版「创建工作区」页面并轮询等待用户建好，
+// 返回新的工作区列表。
 func waitForWorkspaceCreation(cmd *cobra.Command, client *cli.APIClient) ([]struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }, error) {
 	appURL := tryResolveAppURL(cmd)
 	if appURL == "" {
-		// No app URL available (e.g. token login without prior setup).
-		// Can't open the browser — tell the user to create a workspace manually.
+		// 拿不到 app URL（如纯 token 登录、此前没配置过）。开不了浏览器——
+		// 提示用户手动去网页建工作区。
 		fmt.Fprintln(os.Stderr, "\nNo workspaces found.")
 		fmt.Fprintln(os.Stderr, "Create a workspace in the web dashboard, then run 'multica login' again.")
 		return nil, nil
@@ -172,16 +173,14 @@ func waitForWorkspaceCreation(cmd *cobra.Command, client *cli.APIClient) ([]stru
 	fmt.Fprintf(os.Stderr, "If the browser didn't open, visit:\n  %s\n", createWorkspaceURL)
 	fmt.Fprintln(os.Stderr, "\nWaiting for workspace creation...")
 
-	// Poll until a workspace appears or timeout (5 minutes).
+	// 轮询直到出现工作区或超时（5 分钟）。
 	const pollInterval = 2 * time.Second
 	const pollTimeout = 5 * time.Minute
 	deadline := time.Now().Add(pollTimeout)
 
-	// Per-poll request budget. We keep a short 10s floor so the loop stays
-	// responsive (a hung request shouldn't block a single iteration for long),
-	// but it still honors MULTICA_HTTP_TIMEOUT via AtLeastAPITimeout so a user
-	// who raised the timeout for a slow network isn't capped below it. The
-	// overall wait is bounded by pollTimeout regardless.
+	// 每次轮询的请求预算：留 10s 下限保证循环保持灵敏（挂起的请求不该拖住单轮
+	// 太久），但通过 AtLeastAPITimeout 仍尊重 MULTICA_HTTP_TIMEOUT——为慢网络把
+	// 超时调高的用户不会被压回 10s 以下。整体等待仍由 pollTimeout 封顶。
 	pollRequestTimeout := cli.AtLeastAPITimeout(10 * time.Second)
 
 	for time.Now().Before(deadline) {
@@ -196,7 +195,7 @@ func waitForWorkspaceCreation(cmd *cobra.Command, client *cli.APIClient) ([]stru
 		cancel()
 
 		if err != nil {
-			continue // transient error, keep polling
+			continue // 瞬时错误，继续轮询
 		}
 		if len(workspaces) > 0 {
 			return workspaces, nil

@@ -1,3 +1,10 @@
+// 职责定位：账号认证相关端点：Google OAuth 登录（授权码换 token → 拉用户资料 → 按邮箱
+// find-or-create 用户 → 签发站内 JWT 与 cookie）、给浏览器会话换发 CLI 用的 bearer token、
+// 登出清理 cookie、以及 /me 的读与更新。
+//
+// 注册管控：是否允许自注册由实例级配置控制（h.cfg.AllowSignup + 邮箱/域名白名单），失败以
+// SignupError 表达；「被临时禁用」的账号在发 token 与登录两处都会拦截（见 internal/auth）。
+// 时区/简介等字段有长度与时区名合法性校验。真实口令登录在 account_login.go。
 package handler
 
 import (
@@ -23,7 +30,8 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// SignupError represents signup restriction errors
+// SignupError 表示注册被限制类错误（配置不允许自注册、邮箱不在白名单等），message 可直接
+// 给用户看。
 type SignupError struct {
 	Message string
 }
@@ -35,13 +43,14 @@ func (e SignupError) Error() string {
 var ErrSignupProhibited = SignupError{Message: "user registration is disabled on this self-hosted instance"}
 var ErrEmailNotAllowed = SignupError{Message: "email address or domain not allowed on this instance"}
 
+// UserResponse 是用户资料的接口形态。
 type UserResponse struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
 	Account   string  `json:"account"`
 	Email     string  `json:"email"`
 	AvatarURL *string `json:"avatar_url"`
-	// Pinned IANA tz; nil = no preference (use browser-detected tz).
+	// 钉住的 IANA 时区；nil = 未设置（用浏览器探测的时区）。
 	Timezone                *string         `json:"timezone"`
 	OnboardedAt             *string         `json:"onboarded_at"`
 	OnboardingQuestionnaire json.RawMessage `json:"onboarding_questionnaire"`
@@ -51,16 +60,13 @@ type UserResponse struct {
 	UpdatedAt               string          `json:"updated_at"`
 }
 
-// MaxProfileDescriptionLen caps the user-supplied profile_description body.
-// Picked at 2000 chars per MUL-2406: enough room for role / stack / a few
-// preferences, short enough that injecting it into every agent brief
-// doesn't move the needle on prompt cost.
+// MaxProfileDescriptionLen 是用户 profile_description 的上限。按 MUL-2406 定为 2000 字符：
+// 足够写清角色/技术栈/少量偏好，又短到「每次注入 agent brief」都不至于让提示词成本起飞。
 const MaxProfileDescriptionLen = 2000
 
 func (h *Handler) userToResponse(u db.User) UserResponse {
-	// JSONB column is []byte with DEFAULT '{}', so it's never nil at the DB
-	// level. Defensive coalesce just in case a future ALTER makes the column
-	// nullable and some row comes back with no default applied.
+	// JSONB 列是带 DEFAULT '{}' 的 []byte，库层面不会为 nil。这里做防御性兜底，以防将来
+	// 有 ALTER 把列改成可空、某行回来时没套默认值。
 	q := u.OnboardingQuestionnaire
 	if len(q) == 0 {
 		q = []byte("{}")
@@ -81,11 +87,14 @@ func (h *Handler) userToResponse(u db.User) UserResponse {
 	}
 }
 
+// LoginResponse 是登录成功后的响应：站内 JWT + 用户资料。
 type LoginResponse struct {
 	Token string       `json:"token"`
 	User  UserResponse `json:"user"`
 }
 
+// issueJWT 为已登录用户签发 HS256 JWT（sub/account/email/name，带过期时间）。被临时禁用的
+// 用户在这里会被拒。account 缺省时退回用 email。
 func (h *Handler) issueJWT(user db.User) (string, error) {
 	if auth.IsTemporarilyDisabledUser(uuidToString(user.ID), user.Email) {
 		return "", auth.ErrTemporarilyDisabledUser
@@ -105,9 +114,8 @@ func (h *Handler) issueJWT(user db.User) (string, error) {
 	return token.SignedString(auth.JWTSecret())
 }
 
-// findOrCreateUser returns the existing user for an email, or creates one if
-// none exists. isNew reports whether this call created the user — the signup
-// event fires when a new user enters through an authentication provider.
+// findOrCreateUser 按邮箱取已存在的用户，不存在则创建。isNew 报告本次调用是否新建了用户——
+// 新用户经认证提供方首次进来时，会用它触发 signup 埋点。已禁用用户在两端都会被拒。
 func (h *Handler) findOrCreateUser(ctx context.Context, email string) (user db.User, isNew bool, err error) {
 	if auth.IsTemporarilyDisabledUserEmail(email) {
 		return db.User{}, false, auth.ErrTemporarilyDisabledUser
@@ -145,18 +153,13 @@ func (h *Handler) findOrCreateUser(ctx context.Context, email string) (user db.U
 	return created, true, nil
 }
 
-// signupSourceFromRequest reads the attribution cookie the web frontend
-// sets on the first pageview (UTM + referrer bundle). The frontend writes
-// a JSON string URL-encoded into the cookie value — Go does not
-// auto-decode Cookie.Value, so we have to unescape here before the string
-// lands in PostHog. Missing cookie / decode failures collapse to the
-// empty string; that simply omits signup_source from the event rather
-// than sending percent-encoded garbage. Never fall back to r.Referer() —
-// the frontend has already sanitised attribution and a raw referer can
-// leak OAuth code/state from the callback URL.
+// signupSourceFromRequest 读 web 前端在首次访问时种下的归因 cookie（UTM + referrer 捆绑）。
+// 前端把 JSON 字符串 URL 编码后放进 cookie 值——Go 不会自动解码 Cookie.Value，所以必须先
+// 在这里 unescape，字符串才能干净地进 PostHog。cookie 缺失/解码失败一律归空串：效果只是
+// signup_source 不出现在事件里，而不是把百分号编码的垃圾发出去。绝不要退回 r.Referer()——
+// 前端已经清洗过归因，而原始 referer 可能从回调 URL 里漏出 OAuth code/state。
 //
-// The cap is the server-side defence against a client that manages to set
-// an oversize cookie; it matches SIGNUP_SOURCE_MAX_LEN on the frontend.
+// 上限是服务端对「客户端塞了个超大 cookie」的防御；与前端 SIGNUP_SOURCE_MAX_LEN 对齐。
 const signupSourceMaxLen = 512
 
 func signupSourceFromRequest(r *http.Request) string {
@@ -174,9 +177,11 @@ func signupSourceFromRequest(r *http.Request) string {
 	return decoded
 }
 
+// checkSignupAllowed 决定是否允许新注册：已存在的用户总能登录；新用户依次看「邮箱白名单 →
+// 域名白名单 → 全局开关」，并遵守「设了白名单就必须命中白名单」的语义。
 func (h *Handler) checkSignupAllowed(email string, isNewUser bool) error {
 	if !isNewUser {
-		return nil // existing users always allowed to log in
+		return nil // 已存在用户始终允许登录
 	}
 
 	email = strings.ToLower(email)
@@ -185,22 +190,22 @@ func (h *Handler) checkSignupAllowed(email string, isNewUser bool) error {
 		domain = email[at+1:]
 	}
 
-	// 1. explicit email whitelist always wins
+	// 1. 显式邮箱白名单永远优先
 	if len(h.cfg.AllowedEmails) > 0 && contains(h.cfg.AllowedEmails, email) {
 		return nil
 	}
 
-	// 2. domain whitelist always wins
+	// 2. 域名白名单永远优先
 	if len(h.cfg.AllowedEmailDomains) > 0 && contains(h.cfg.AllowedEmailDomains, domain) {
 		return nil
 	}
 
-	// 3. general signup flag
+	// 3. 全局注册开关
 	if !h.cfg.AllowSignup {
 		return ErrSignupProhibited
 	}
 
-	// 4. if allowlists are set but didn't match, block
+	// 4. 配了白名单但没命中 → 拒绝（白名单模式 = 默认全拒）
 	if len(h.cfg.AllowedEmailDomains) > 0 || len(h.cfg.AllowedEmails) > 0 {
 		return ErrSignupProhibited
 	}
@@ -208,6 +213,7 @@ func (h *Handler) checkSignupAllowed(email string, isNewUser bool) error {
 	return nil
 }
 
+// contains 大小写不敏感地判断 slice 里是否含 s。
 func contains(slice []string, s string) bool {
 	for _, item := range slice {
 		if strings.EqualFold(item, s) {
@@ -217,6 +223,7 @@ func contains(slice []string, s string) bool {
 	return false
 }
 
+// UpdateMeRequest 是「更新我的资料」请求体：指针为 nil 表示不改对应字段。
 type UpdateMeRequest struct {
 	Name               *string `json:"name"`
 	AvatarURL          *string `json:"avatar_url"`
@@ -224,23 +231,30 @@ type UpdateMeRequest struct {
 	Timezone           *string `json:"timezone"`
 }
 
+// GoogleLoginRequest 是 Google OAuth 登录请求体：前端交过来的授权码与重定向地址。
 type GoogleLoginRequest struct {
 	Code        string `json:"code"`
 	RedirectURI string `json:"redirect_uri"`
 }
 
+// googleTokenResponse 是 Google token 交换接口的最小响应形态。
 type googleTokenResponse struct {
 	AccessToken string `json:"access_token"`
 	IDToken     string `json:"id_token"`
 	TokenType   string `json:"token_type"`
 }
 
+// googleUserInfo 是 Google userinfo 接口的最小响应形态。
 type googleUserInfo struct {
 	Email   string `json:"email"`
 	Name    string `json:"name"`
 	Picture string `json:"picture"`
 }
 
+// GoogleLogin 走 Google OAuth 登录：授权码换 token → 拉用户资料 → find-or-create 用户 →
+// 签发站内 JWT 并种 cookie。新用户会补发带 auth_method=google 的 signup 埋点，并把 Google
+// 的真实姓名/头像回填进用户资料（仅当名字还是默认的邮箱前缀、或还没头像时）。完成后给
+// Cloudflare（CF）签一套短期 cookie。依赖 GOOGLE_CLIENT_ID/SECRET 已配置，否则 503。
 func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 	var req GoogleLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -265,7 +279,7 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 		redirectURI = os.Getenv("GOOGLE_REDIRECT_URI")
 	}
 
-	// Exchange authorization code for tokens.
+	// 用授权码向 Google 换 access/id token。
 	tokenResp, err := http.PostForm("https://oauth2.googleapis.com/token", url.Values{
 		"code":          {req.Code},
 		"client_id":     {clientID},
@@ -298,7 +312,7 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch user info from Google.
+	// 拿 access token 去 Google 拉用户基本信息。
 	userInfoReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "https://www.googleapis.com/oauth2/v2/userinfo", nil)
 	if err != nil {
 		slog.Error("failed to create userinfo request", "error", err)
@@ -352,8 +366,8 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 		obsmetrics.RecordEvent(h.Analytics, h.Metrics, evt)
 	}
 
-	// Update name and avatar from Google profile if the user was just created
-	// (default name is email prefix) or has no avatar yet.
+	// 把 Google 档案里的姓名/头像回填进站内资料：仅在用户「刚创建（默认名还是邮箱前缀）」
+	// 或「还没有头像」时才覆盖。
 	needsUpdate := false
 	newName := user.Name
 	newAvatar := user.AvatarUrl
@@ -406,9 +420,8 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// IssueCliToken returns a fresh JWT for the authenticated user.
-// This allows cookie-authenticated browser sessions to obtain a bearer token
-// that can be handed off to the CLI via the cli_callback redirect.
+// IssueCliToken 给已认证用户发一枚全新 JWT。用途：让 cookie 认证的浏览器会话能拿到一个
+// bearer token，经 cli_callback 重定向交给 CLI 使用。
 func (h *Handler) IssueCliToken(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -435,11 +448,13 @@ func (h *Handler) IssueCliToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"token": tokenString})
 }
 
+// Logout 清掉认证 cookie 并返回成功。
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	auth.ClearAuthCookies(w)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
 }
 
+// GetMe 返回当前登录用户的完整资料。
 func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -453,6 +468,9 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.userToResponse(user))
 }
 
+// UpdateMe 更新当前用户资料。name / avatar_url / profile_description / timezone 只有传了非
+// nil 才更新；头像走 acceptAvatarURL 的白名单与远程校验；简介按「字符数」（非字节）限长；
+// timezone 若传了必须是合法 IANA 时区。
 func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -492,9 +510,8 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		params.AvatarUrl = pgtype.Text{String: avatarURL, Valid: true}
 	}
 	if req.ProfileDescription != nil {
-		// Count runes, not bytes: 2000 chars of Chinese must not be rejected
-		// as ~6000 bytes. utf8.RuneCountInString handles invalid UTF-8 by
-		// counting each bad byte as one rune, which still bounds the column.
+		// 按「字符」而非「字节」数：2000 字的中文不该被当成约 6000 字节而拒掉。
+		// utf8.RuneCountInString 对非法 UTF-8 会把每个坏字节算成一个 rune，仍然兜得住列宽。
 		desc := strings.TrimSpace(*req.ProfileDescription)
 		if utf8.RuneCountInString(desc) > MaxProfileDescriptionLen {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("profile_description exceeds %d characters", MaxProfileDescriptionLen))
@@ -504,9 +521,8 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Timezone != nil {
-		// Valid=false → column untouched; Valid=true + "" → clear to
-		// NULL; Valid=true + IANA → set. Three-way semantics enforced
-		// in the UpdateUser SQL CASE.
+		// 三态语义由 UpdateUser 的 SQL CASE 落实：Valid=false → 不动该列；Valid=true + "" →
+		// 清成 NULL；Valid=true + IANA 名 → 设置。
 		tz := strings.TrimSpace(*req.Timezone)
 		if tz != "" {
 			if loc, err := time.LoadLocation(tz); err != nil || loc == nil {

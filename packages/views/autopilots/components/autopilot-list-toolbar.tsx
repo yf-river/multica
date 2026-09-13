@@ -1,3 +1,8 @@
+// autopilot 列表页的工具栏：左侧范围切换（全部/运行中/已暂停 + 计数），右侧过滤
+// （执行者/触发方式/运行模式/创建者）、显示设置（排序字段/方向/列显隐）。过滤与
+// 排序状态存于共享 store，列表排序也写同一份。执行者与创建者是"类型:ID"复合值，
+// 让 string[] 过滤器可统一容纳智能体/小队/成员引用。
+
 "use client";
 
 import {
@@ -45,12 +50,13 @@ import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { useT } from "../../i18n";
 import { PAGE_TOOLBAR } from "../../layout/page-header";
 
-// Composite "type:id" value for polymorphic actor filter dimensions, so the
-// string[] filter store can hold agent/squad/member references alike.
+/** 多态"执行者"过滤维度的复合 "类型:ID" 值，让 string[] 过滤器 store 能同存
+ *  智能体/小队/成员引用。 */
 export function actorFilterValue(type: string, id: string): string {
   return `${type}:${id}`;
 }
 
+// 可切换显示的列（与表头一致）。
 const COLUMN_KEYS: AutopilotColumnKey[] = [
   "assignee",
   "trigger",
@@ -61,6 +67,7 @@ const COLUMN_KEYS: AutopilotColumnKey[] = [
   "created",
 ];
 
+// 可排序字段。
 const SORT_FIELDS: AutopilotSortField[] = [
   "name",
   "lastRun",
@@ -68,9 +75,11 @@ const SORT_FIELDS: AutopilotSortField[] = [
   "created",
 ];
 
+// 运行模式与触发方式的可选项。
 const MODES = ["create_issue", "run_only"] as const;
 const TRIGGER_KINDS = ["schedule", "webhook", "api"] as const;
 
+/** 统计当前生效的过滤维度数（有几个维度选了值）。 */
 export function countActiveFilterDimensions(
   filters: AutopilotListFilters,
 ): number {
@@ -82,6 +91,24 @@ export function countActiveFilterDimensions(
   return count;
 }
 
+/**
+ * autopilot 列表工具栏。左侧范围按钮 + 计数；右侧过滤下拉（各维度可复选、带数量
+ * 徽标与悬停勾选）与显示设置 popover（排序字段/方向、列显隐开关）。
+ * @param scope 当前范围。
+ * @param onScopeChange 范围切换回调。
+ * @param scopeCounts 各范围总数——来自全集，范围计数忽略过滤。
+ * @param filters 当前过滤条件。
+ * @param onToggleFilter 切换某维度的某个值的回调。
+ * @param onClearFilters 清空所有过滤回调。
+ * @param sortField 当前排序字段。
+ * @param sortDirection 当前排序方向。
+ * @param onSortFieldChange 排序字段回调。
+ * @param onSortDirectionChange 排序方向回调。
+ * @param hiddenColumns 隐藏的列。
+ * @param onToggleColumn 切换某列显隐。
+ * @param allRows 当前范围内未过滤的行——过滤选项列表与计数都从这个集合推出。
+ * @param visibleCount 经过过滤后存活的行的数量——收窄时显示为 "n / total"。
+ */
 export function AutopilotListToolbar({
   scope,
   onScopeChange,
@@ -100,7 +127,7 @@ export function AutopilotListToolbar({
 }: {
   scope: AutopilotScope;
   onScopeChange: (scope: AutopilotScope) => void;
-  /** Per-scope totals from the FULL set — scope counts ignore filters. */
+  /** 各范围总数——来自全集，范围计数忽略过滤。 */
   scopeCounts: Record<AutopilotScope, number>;
   filters: AutopilotListFilters;
   onToggleFilter: (key: keyof AutopilotListFilters, value: string) => void;
@@ -111,10 +138,9 @@ export function AutopilotListToolbar({
   onSortDirectionChange: (direction: AutopilotSortDirection) => void;
   hiddenColumns: AutopilotColumnKey[];
   onToggleColumn: (key: AutopilotColumnKey) => void;
-  /** Rows within the current scope, unfiltered — filter option lists and
-   *  counts derive from this set. */
+  /** 当前范围内未过滤的行——过滤选项列表与计数都由它推出。 */
   allRows: Autopilot[];
-  /** Rows surviving the filters — shown as "n / total" when narrowed. */
+  /** 过滤后存活的行的数量——收窄时显示 "n / total"。 */
   visibleCount: number;
 }) {
   const { t } = useT("autopilots");
@@ -123,8 +149,8 @@ export function AutopilotListToolbar({
   const activeCount = countActiveFilterDimensions(filters);
   const hasActiveFilters = activeCount > 0;
 
-  // Option lists with counts, derived from the scope's unfiltered rows so
-  // toggling one dimension doesn't make the others' options vanish.
+  // 带计数的选项列表，从当前范围未过滤的行推出——这样切换一个维度不会让别的维度
+  // 的选项消失。
   const assigneeOptions = new Map<
     string,
     { type: string; id: string; count: number }
@@ -193,12 +219,10 @@ export function AutopilotListToolbar({
 
   return (
     <div className={PAGE_TOOLBAR}>
-      {/* Left: scope buttons + result count. Scope is the promoted status
-          dimension (it does NOT appear in the filter dropdown). No search
-          box: scope buttons already partition the (small) set, so search
-          was dropped by product call. The count only appears while filters
-          narrow the list. Button styling and the <md dropdown collapse
-          follow the issues header's scope buttons. */}
+      {/* 左侧：范围按钮 + 结果计数。范围是被提升的状态维度（它不出现在过滤下拉里）。
+          没有搜索框：范围按钮已把（小规模的）集合切分完毕，搜索是产品裁定砍掉的。
+          计数只在过滤收窄列表时出现。按钮样式与 <md 下拉折叠沿用 issues 头部的
+          范围按钮。 */}
       <div className="flex min-w-0 items-center gap-2">
         <div className="hidden shrink-0 items-center gap-1 md:flex">
           {AUTOPILOT_SCOPES.map((s) => (
@@ -264,7 +288,7 @@ export function AutopilotListToolbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-        {/* Filter */}
+        {/* 过滤 */}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -314,7 +338,7 @@ export function AutopilotListToolbar({
             }
           />
           <DropdownMenuContent align="end" className="w-auto">
-            {/* Assignee */}
+            {/* 执行者 */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">
@@ -351,7 +375,7 @@ export function AutopilotListToolbar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Trigger kind */}
+            {/* 触发方式 */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">
@@ -385,7 +409,7 @@ export function AutopilotListToolbar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Mode */}
+            {/* 运行模式 */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">
@@ -413,7 +437,7 @@ export function AutopilotListToolbar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Creator */}
+            {/* 创建者 */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">
@@ -448,9 +472,8 @@ export function AutopilotListToolbar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Display settings — same paradigm as skills: sort select +
-            direction toggle + column switches, mutating the same store the
-            list header sort buttons use. */}
+        {/* 显示设置——与技能同范式：排序字段选择 + 方向切换 + 列显隐开关，写的是
+            列表表头排序按钮也在用的同一个 store。 */}
         <Popover>
           <Tooltip>
             <PopoverTrigger

@@ -63,6 +63,13 @@ import type { Squad, SquadMember, SquadMemberStatus, SquadMemberStatusValue, Age
 import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
+/**
+ * squads 模块：小队详情页。
+ * 展示单个小队的完整信息：左侧检查器（头像 / 名称 / 简介 / 负责人 / 成员数
+ * / 创建与更新时间，均可内联编辑），右侧标签页面板（成员列表与 Instructions）。
+ * 非管理员只读；创建者/工作区管理员可管理。
+ */
+
 export function SquadDetailPage() {
   const { t } = useT("squads");
   const workspace = useCurrentWorkspace();
@@ -84,10 +91,9 @@ export function SquadDetailPage() {
     enabled: !!workspace?.id && !!squadId,
   });
 
-  // Per-squad working/idle/offline + active-issue snapshot. WS task / agent /
-  // daemon events invalidate this via use-realtime-sync; the staleTime is a
-  // tab-focus safety net. Indexed by member_id so SquadMembersTab can look up
-  // its row in O(1).
+  // 每个小队的工作中/空闲/离线状态 + 进行中 issue 快照。WS 的 task / agent /
+  // daemon 事件通过 use-realtime-sync 使其失效；staleTime 是切回标签页时的
+  // 安全兜底。以 member_id 为索引，让 SquadMembersTab 能 O(1) 查找对应行。
   const { data: memberStatusResp } = useQuery({
     ...squadMemberStatusOptions(wsId, squadId),
     enabled: !!workspace?.id && !!squadId,
@@ -107,11 +113,10 @@ export function SquadDetailPage() {
     return wsMembers.find((m) => m.user_id === currentUser.id)?.role ?? null;
   }, [wsMembers, currentUser]);
   const isWorkspaceAdmin = myRole === "owner" || myRole === "admin";
-  // Per-squad management gate: workspace owner/admin manage every squad; the
-  // creator manages the squads they created. Mirrors canManageSquad in
-  // server/internal/handler/squad.go so editable controls appear exactly when
-  // the API will accept the write, and everyone else gets a read-only view
-  // instead of controls that 403 (MUL-4223).
+  // 每小队的管理门槛：工作区 owner/admin 可管理所有小队；创建者管理自己
+  // 创建的小队。与 server/internal/handler/squad.go 的 canManageSquad 保持
+  // 一致，保证可编辑控件只在 API 会接受写入时出现，其余人看到的是只读
+  // 视图而不是会 403 的控件（MUL-4223）。
   const canManage =
     isWorkspaceAdmin || (!!currentUser && squad?.creator_id === currentUser.id);
 
@@ -219,9 +224,8 @@ export function SquadDetailPage() {
         }
       />
 
-      {/* Two-column grid mirrors agent-detail-page: left inspector (identity +
-          properties + leader), right pane with tabs (Members | Instructions).
-          Mobile collapses to stacked single column. */}
+      {/* 双栏布局与 agent 详情页一致：左栏检查器（身份 + 属性 + 负责人），
+          右栏带标签页的面板（成员 | Instructions）。移动端塌缩成单列堆叠。 */}
       <div className="flex flex-1 min-h-0 flex-col gap-3 overflow-y-auto p-3 md:grid md:grid-cols-[280px_minmax(0,1fr)] md:gap-4 md:overflow-hidden md:p-6 lg:grid-cols-[320px_minmax(0,1fr)]">
         <SquadDetailInspector
           squad={squad}
@@ -294,9 +298,8 @@ export function SquadDetailPage() {
   );
 }
 
-// Initial-load skeleton — mirrors the two-column layout of the loaded page
-// (left inspector + right tabs panel) so the swap to real content doesn't
-// shift layout. Column widths match the md:/lg: breakpoints used below.
+// 首屏加载骨架——对齐加载后页面的双栏布局（左检查器 + 右标签面板），让切换
+// 到真实内容时版面不跳动。列宽与下面 md:/lg: 断点一致。
 function SquadDetailSkeleton() {
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -328,9 +331,8 @@ function SquadDetailSkeleton() {
   );
 }
 
-// Compact 16px avatar shown next to the name in the page header. Falls back
-// to the Users icon when no custom avatar is set so the squad still has a
-// recognisable glyph in the breadcrumb strip.
+// 页面标题旁展示的 16px 紧凑头像。未设置自定义头像时退回 Users 图标，让
+// 小队在面包屑条里仍有一个可辨识的图形。
 function SquadHeaderAvatar({ squad, initials }: { squad: Squad; initials: string }) {
   if (!squad.avatar_url) {
     return <Users className="h-4 w-4 text-muted-foreground" />;
@@ -346,9 +348,8 @@ function SquadHeaderAvatar({ squad, initials }: { squad: Squad; initials: string
   );
 }
 
-// Read-only 64px avatar for viewers who can't manage the squad — same visual
-// as the editable control's resting state but without the click/upload
-// affordance.
+// 给无法管理小队的人看的只读 64px 头像——与可编辑控件的静止态视觉一致，
+// 但不带点击/上传交互。
 function SquadStaticAvatar({ squad, initials }: { squad: Squad; initials: string }) {
   return (
     <div className="h-16 w-16 shrink-0 overflow-hidden rounded-full bg-muted">
@@ -368,9 +369,8 @@ function SquadStaticAvatar({ squad, initials }: { squad: Squad; initials: string
   );
 }
 
-// Inline name editor — reveals a Pencil affordance on hover, opens a small
-// popover with a single-line input. Mirrors the NameAndDescription editor
-// in the agent inspector.
+// 内联名称编辑器——悬停时露出 Pencil 图标，点击打开带单行输入框的小弹层。
+// 与 agent 检查器里的 NameAndDescription 编辑器保持一致。
 function SquadNameEditor({
   value,
   onSave,
@@ -403,6 +403,10 @@ function SquadNameEditor({
   );
 }
 
+/**
+ * 通用的行内编辑弹层：由子元素渲染触发器按钮，打开带单行输入框的小弹层。
+ * 校验失败停在原处，内容未变直接关闭，保存成功/失败用 toast 提示。
+ */
 function InlineEditPopover({
   value,
   onSave,
@@ -497,12 +501,11 @@ function InlineEditPopover({
   );
 }
 
-// Two-step add-member dialog (mirrors CreateAgentDialog's compact layout):
-// 1) pick a target — Members + Agents in one searchable popover, each row
-//    with an avatar so visual recognition matches the issue assignee picker;
-// 2) optionally describe the role they'll play in this squad. Description
-//    lives here (not on the picker) because role is per-squad context that
-//    only makes sense at the moment of joining.
+// 两步式「添加成员」弹窗（对齐 CreateAgentDialog 的紧凑布局）：
+// 1) 选目标——成员 + agents 合在一个可搜索弹层里，每行带头像，视觉识别
+//    与 issue 指派人的选择器一致；
+// 2) 可选地描述该成员在本小队里承担的角色。角色框放在这里（而不是选择器
+//    上），因为角色是加入时的、属于特定小队的上下文。
 function AddMemberDialog({
   availableMembers,
   availableAgents,
@@ -652,10 +655,9 @@ function AddMemberDialog({
   );
 }
 
-// Inline click-to-edit role line. Renders the current role as muted text;
-// click (or click the placeholder when empty) to swap in an input that
-// commits on blur / Enter and cancels on Escape. Avoids opening a modal
-// for what is usually a one-word change.
+// 行内点击即改的角色编辑行。把当前角色渲染成弱化文字；点击（或角色为空时
+// 点占位符）切换成输入框，失焦 / 回车提交、Esc 取消。避免为一个通常只有
+// 一两个词的小改动打开弹窗。
 function RoleEditor({ value, onSave }: { value: string; onSave: (next: string) => Promise<void> }) {
   const { t } = useT("squads");
   const [editing, setEditing] = useState(false);
@@ -672,7 +674,7 @@ function RoleEditor({ value, onSave }: { value: string; onSave: (next: string) =
       await onSave(next);
       setEditing(false);
     } catch {
-      // toast handled by mutation
+      // 错误 toast 由外层 mutation 统一处理
     } finally {
       setSaving(false);
     }
@@ -709,9 +711,8 @@ function RoleEditor({ value, onSave }: { value: string; onSave: (next: string) =
 }
 
 // ---------------------------------------------------------------------------
-// SquadDetailInspector — left 320px column, mirrors AgentDetailInspector.
-// Holds identity (avatar / name / description) + leader / member count /
-// timestamps. All inline-editable.
+// SquadDetailInspector——左侧 320px 列，对齐 AgentDetailInspector。
+// 承载身份（头像 / 名称 / 简介）+ 负责人 / 成员数 / 时间戳。全部可内联编辑。
 // ---------------------------------------------------------------------------
 function SquadDetailInspector({
   squad,
@@ -727,9 +728,8 @@ function SquadDetailInspector({
   memberCount: number;
   leaderName: string;
   creatorName: string;
-  // When false the identity block renders as static text (no avatar upload,
-  // no rename/description popovers) — the viewer can read the squad but not
-  // edit it. Mirrors the agent inspector's `canEdit` read-only treatment.
+  // 为 false 时身份块渲染成纯文本（不上传头像、不弹名称/简介编辑）——
+  // 访客可读小队但不能编辑。与 agent 检查器的 `canEdit` 只读处理一致。
   canManage: boolean;
   onUploadAvatar: (url: string) => Promise<unknown>;
   onRename: (next: string) => Promise<void>;
@@ -746,7 +746,7 @@ function SquadDetailInspector({
 
   return (
     <aside className="flex w-full flex-col rounded-lg border bg-background md:h-full md:min-h-0 md:overflow-y-auto">
-      {/* Identity */}
+      {/* 身份区块 */}
       <div className="flex flex-col gap-3 border-b px-5 pb-5 pt-5">
         {canManage ? (
           <>
@@ -784,7 +784,7 @@ function SquadDetailInspector({
         )}
       </div>
 
-      {/* Details — read-only */}
+      {/* 详情（只读） */}
       <div className="border-b px-5 py-4">
         <div className="mb-1 -mx-2 px-2 text-micro font-medium uppercase tracking-wider text-muted-foreground">
           {t(($) => $.inspector.details_section)}
@@ -817,6 +817,7 @@ function SquadDetailInspector({
   );
 }
 
+/** 检查器里一行「标签：值」的布局辅助。 */
 function InspectorRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <>
@@ -826,10 +827,9 @@ function InspectorRow({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-// Click-to-edit description editor for the inspector. Mirrors
-// agent-detail-inspector's DescriptionEditor: opens a modal with a textarea
-// (enough room for multi-paragraph descriptions); the inline trigger shows
-// the current value (or a placeholder) with a hover-revealed Pencil.
+// 检查器里点击即改的简介编辑器。对齐 agent-detail-inspector 的
+// DescriptionEditor：打开一个带 textarea 的弹窗（给多段简介留足空间）；
+// 行内触发器展示当前值（或占位文案），悬停露出 Pencil 图标。
 function SquadDescriptionEditor({
   value,
   onSave,
@@ -869,6 +869,7 @@ function SquadDescriptionEditor({
   );
 }
 
+/** 简介编辑弹窗的实际内容：textarea + 保存/取消，Cmd/Ctrl+Enter 快捷提交。 */
 function SquadDescriptionEditorBody({
   initialValue,
   onSave,
@@ -893,7 +894,7 @@ function SquadDescriptionEditorBody({
       await onSave(draft);
       onClose();
     } catch {
-      // toast handled by parent's mutation
+      // 错误 toast 由父级 mutation 处理
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -932,9 +933,9 @@ function SquadDescriptionEditorBody({
 }
 
 // ---------------------------------------------------------------------------
-// SquadOverviewPane — right column with two tabs (Members | Instructions).
-// Mirrors AgentOverviewPane: dirty-guard via AlertDialog when switching tabs
-// with unsaved Instructions.
+// SquadOverviewPane——右栏，带两个标签页（成员 | Instructions）。
+// 对齐 AgentOverviewPane：Instructions 未保存时切换标签页会先弹 AlertDialog
+// 确认（脏数据守卫）。
 // ---------------------------------------------------------------------------
 type SquadDetailTab = "members" | "instructions";
 
@@ -943,6 +944,10 @@ const squadDetailTabs: { id: SquadDetailTab; icon: typeof FileText }[] = [
   { id: "instructions", icon: FileText },
 ];
 
+/**
+ * 右栏主面板：管理「成员 | Instructions」两个标签页的切换，并在切走含未保存
+ * 编辑的标签时弹脏数据确认框。
+ */
 function SquadOverviewPane({
   squad,
   members,
@@ -962,17 +967,16 @@ function SquadOverviewPane({
   squad: Squad;
   members: SquadMember[];
   memberStatusById: Map<string, SquadMemberStatus>;
-  // Gates every mutating control in the Members and Instructions tabs. When
-  // false the tabs render read-only (no add/remove/leader/role edits, no
-  // Save). See canManageSquad in server/internal/handler/squad.go.
+  // 把关 Members 与 Instructions 两个标签页里所有会改数据的控件。为 false
+  // 时标签页只读（没有增/删/负责人/角色编辑，也没有保存按钮）。
+  // 见 server/internal/handler/squad.go 的 canManageSquad。
   canManage: boolean;
   isLeader: (m: SquadMember) => boolean;
   isArchived: (m: SquadMember) => boolean;
   getEntityName: (type: string, id: string) => string;
   onAddMemberClick: () => void;
-  // Optional — only passed when the current user can manage the squad
-  // (workspace owner/admin or the creator). Hidden otherwise so viewers
-  // don't see a button they can't action.
+  // 可选——只有当前用户能管理该小队（工作区 owner/admin 或创建者）时才传入。
+  // 否则隐藏，避免访客看到一个点了也没用的按钮。
   createAgentHref?: string;
   onSetLeader: (agentId: string) => void;
   onRemoveMember: (m: SquadMember) => void;
@@ -1072,12 +1076,11 @@ function SquadOverviewPane({
   );
 }
 
-// Visual config for the five squad member status buckets. Mirrors
-// availabilityConfig + workloadConfig in packages/views/agents/presence.ts —
-// same semantic tokens so a status dot here matches the agent page's dot.
-// Unknown / null statuses (human members, server-side enum drift) render as
-// a neutral muted pill; this is the "downgrade, don't crash" defense from
-// CLAUDE.md > API Response Compatibility.
+// 五种小队成员状态的视觉配置。对齐 packages/views/agents/presence.ts 里的
+// availabilityConfig + workloadConfig——用同一套语义色，让这里的状态点与
+// agent 页面一致。未知 / 空状态（人类成员、服务端枚举漂移）渲染成中性灰
+// 药丸；这是 CLAUDE.md > API Response Compatibility 里「降级而不是崩溃」的
+// 防御手段。
 const SQUAD_STATUS_DOT_CLASS: Record<SquadMemberStatusValue, string> = {
   working: "bg-success",
   idle: "bg-muted-foreground/40",
@@ -1086,7 +1089,7 @@ const SQUAD_STATUS_DOT_CLASS: Record<SquadMemberStatusValue, string> = {
   archived: "bg-muted-foreground/40",
 };
 
-// Members tab body — re-uses the existing list/role editing patterns.
+// 成员标签页主体——复用现有的列表 / 角色编辑模式。
 function SquadMembersTab({
   members,
   memberStatusById,
@@ -1103,14 +1106,14 @@ function SquadMembersTab({
 }: {
   members: SquadMember[];
   memberStatusById: Map<string, SquadMemberStatus>;
-  // When false, add/create/leader/remove controls and role editing are hidden;
-  // the roster stays visible and read-only.
+  // 为 false 时，新增/创建/负责人/移除控件与角色编辑全部隐藏；名册保持
+  // 可见但只读。
   canManage: boolean;
   isLeader: (m: SquadMember) => boolean;
   isArchived: (m: SquadMember) => boolean;
   getEntityName: (type: string, id: string) => string;
   onAddMemberClick: () => void;
-  // Hidden for viewers who can't manage — see SquadOverviewPane.
+  // 不能管理的访客看不到——见 SquadOverviewPane。
   createAgentHref?: string;
   onSetLeader: (agentId: string) => void;
   onRemoveMember: (m: SquadMember) => void;
@@ -1168,9 +1171,8 @@ function SquadMembersTab({
           const activeIssues = status?.active_issues ?? [];
           const primaryIssue = activeIssues[0];
           const extraIssueCount = Math.max(0, activeIssues.length - 1);
-          // Show last_active only when the agent isn't currently working —
-          // a "working" pill already implies the agent is live, and a
-          // "last active 2s ago" line next to it is just noise.
+          // 只在 agent 非「工作中」时展示 last_active——「工作中」药丸本身
+          // 就说明 agent 在线，旁边再放一行「2 秒前活跃」纯属噪音。
           const showLastActive =
             m.member_type === "agent" && statusValue && statusValue !== "working" && status?.last_active_at;
           return (
@@ -1308,9 +1310,9 @@ function SquadMembersTab({
   );
 }
 
-// Instructions tab body — mirrors agent's InstructionsTab. ContentEditor +
-// Save button. The squad leader's prompt picks these up at task claim time
-// (server/internal/handler/daemon.go).
+// Instructions 标签页主体——对齐 agent 的 InstructionsTab。ContentEditor +
+// 保存按钮。小队 leader 领取任务时会读取这里的提示词
+// （server/internal/handler/daemon.go）。
 function SquadInstructionsTab({
   squad,
   canManage,
@@ -1332,7 +1334,7 @@ function SquadInstructionsTab({
   }, [squad.id, squad.instructions]);
 
   useEffect(() => {
-    // A read-only viewer never has unsaved changes to guard on tab-switch.
+    // 只读访客永远没有未保存的修改需要在切标签时守卫。
     onDirtyChange?.(canManage && isDirty);
   }, [canManage, isDirty, onDirtyChange]);
 
@@ -1341,7 +1343,7 @@ function SquadInstructionsTab({
     try {
       await onSave(value);
     } catch {
-      // toast handled by parent
+      // 错误 toast 由父级处理
     } finally {
       setSaving(false);
     }
@@ -1353,10 +1355,9 @@ function SquadInstructionsTab({
         {t(($) => $.instructions_tab.description)}
       </p>
 
-      {/* When the viewer can't manage the squad, the editor is wrapped in a
-          pointer-events-none / aria-disabled shell — ContentEditor reads
-          `editable` at mount and can't be toggled, so this is the documented
-          way to present it read-only (see editor/content-editor.tsx). */}
+      {/* 访客不能管理小队时，编辑器外面包一层 pointer-events-none /
+          aria-disabled 外壳——ContentEditor 只在挂载时读 `editable`，之后
+          无法切换，所以这是把它做成只读的既定方式（见 editor/content-editor.tsx）。 */}
       <div
         aria-disabled={!canManage}
         className={`flex-1 min-h-0 overflow-y-auto rounded-md border bg-background px-4 py-3 transition-colors ${

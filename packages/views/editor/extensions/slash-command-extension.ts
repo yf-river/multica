@@ -5,6 +5,12 @@ import { SlashCommandView } from "./slash-command-view";
 import { formatSlashCommandLabel } from "./slash-command-utils";
 import { escapeMarkdownLabel } from "../utils/escape-markdown-label";
 
+/**
+ * SlashCommandExtension——编辑里的「斜杠命令」/ 技能引用节点。
+ *
+ * 复用 Mention 的扩展骨架：斜杠技能以 `/技能名` 的标记插入文档，序列化成
+ * `[/技能名](slash://skill/<id>)`，编辑态由 SlashCommandView 呈现。
+ */
 export const SlashCommandExtension = Mention.extend({
   name: "slashCommand",
 
@@ -36,9 +42,8 @@ export const SlashCommandExtension = Mention.extend({
     name: "slashCommand",
     level: "inline" as const,
     start(src: string) {
-      // Backslash is excluded from the char class so "\x" runs can only be
-      // consumed by \\. — overlapping alternatives backtrack in 2^n ways
-      // (ReDoS, GitHub #4881).
+      // 反斜杠被排除出字符类，使 "\x" 只能由 \\. 消费——否则重叠的两支
+      // 会按 2^n 种方式回溯（ReDoS，GitHub #4881）。
       return src.search(/\[\/(?:\\.|[^\]\\])+\]\(slash:\/\/skill\//);
     },
     tokenize(src: string) {
@@ -46,9 +51,8 @@ export const SlashCommandExtension = Mention.extend({
         /^\[\/((?:\\.|[^\]\\])+)\]\(slash:\/\/skill\/([^)]+)\)/,
       );
       if (!match) return undefined;
-      // Reverse escapeMarkdownLabel: unescape \[ \] \\ \( \). Must mirror the
-      // escaped set exactly, or a label containing "\" fails to round-trip
-      // through the linear tokenizer.
+      // 反转 escapeMarkdownLabel：把 \[ \] \\ \( \) 还原。必须与转义集
+      // 完全镜像，否则含 "\" 的标签无法穿过线性 tokenizer 往返。
       const rawLabel = match[1]?.replace(/\\([[\]\\()])/g, "$1");
       return {
         type: "slashCommand",
@@ -64,8 +68,8 @@ export const SlashCommandExtension = Mention.extend({
 
   renderMarkdown: (node: any) => {
     const { id, label } = node.attrs || {};
-    // Escape [ ] \ ( ) so the label survives the linear tokenizer; must stay in
-    // sync with the unescape in tokenize() above.
+    // 转义 [ ] \ ( ) 让标签能穿过线性 tokenizer；必须与上面 tokenize()
+    // 里的反转义保持同步。
     const safeLabel = escapeMarkdownLabel(formatSlashCommandLabel(label));
     return `[/${safeLabel}](slash://skill/${id})`;
   },

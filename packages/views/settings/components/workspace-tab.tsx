@@ -1,3 +1,7 @@
+// 本文件是「工作区」设置标签页（通用）：编辑工作区资料（logo、名称、描述、背景
+// 上下文、issue 编号前缀），均自动保存；危险区提供「退出工作区」与「删除工作区」
+// （删除需要输入工作区名二次确认）。
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -47,12 +51,14 @@ import {
 } from "./settings-layout";
 import { useAutoSave } from "./use-auto-save";
 
+/** 工作区资料编辑的草稿：名称 / 描述 / 背景上下文。 */
 interface WorkspaceDetailsDraft {
   name: string;
   description: string;
   context: string;
 }
 
+/** 两份资料草稿是否相同，供自动保存判断有无改动。 */
 function workspaceDetailsEqual(
   left: WorkspaceDetailsDraft,
   right: WorkspaceDetailsDraft,
@@ -64,16 +70,21 @@ function workspaceDetailsEqual(
   );
 }
 
+/**
+ * 「工作区」设置标签页。包含两块：
+ * - 资料区：logo 上传 + 名称/描述/背景上下文（自动保存）+ slug（只读）+ issue 前缀
+ *   （失焦时先弹确认再保存，因为前缀一变会重写所有 issue 编号的读法）；
+ * - 危险区：退出工作区（唯一 owner 不允许退出）与删除工作区（输入全名确认）。
+ * 编辑权限：仅 owner / admin。
+ */
 export function WorkspaceTab() {
   const { t } = useT("settings");
   const user = useAuthStore((s) => s.user);
   const workspace = useCurrentWorkspace();
-  // Derive the id from useCurrentWorkspace instead of the throwing
-  // useWorkspaceId: this component can legitimately render while the
-  // workspace is gone from the list cache but the URL slug hasn't changed
-  // yet (post-delete invalidation before navigation completes, or an
-  // external delete of the workspace we're on). The `!workspace` guard
-  // below renders null for that window; a throwing hook would crash first.
+  // 这里有意用 useCurrentWorkspace 派生出 id，而不是用会抛错的 useWorkspaceId：
+  // 本组件存在一种合理场景——工作区已从列表缓存消失但 URL slug 还没变（删除后缓存
+  // 失效先于导航完成，或正在查看的工作区被外部删除）。下方 `!workspace` 守卫会在
+  // 那个窗口期渲染 null；而用会抛错的钩子会先崩溃。
   const wsId = workspace?.id;
   const { data: members = [], isFetched: membersFetched } = useQuery({
     ...memberListOptions(wsId ?? ""),
@@ -86,43 +97,31 @@ export function WorkspaceTab() {
   const hasOnboarded = useHasOnboarded();
 
   /**
-   * Send the user to a safe URL, computed from the current cached workspace
-   * list minus the workspace that's going away.
+   * 把用户导航到一个安全页面，目的地根据「当前缓存的列表减掉即将消失的工作区」算出。
    *
-   * Call ordering differs per flow:
-   *   - Delete calls this AFTER the mutation succeeds. The realtime
-   *     `workspace:deleted` handler skips self-initiated deletes (see
-   *     pending-delete.ts), so nothing races this navigation.
-   *   - Leave still calls this BEFORE the mutation fires: `member:removed`
-   *     has no self-initiated marker yet, so if the user were still on the
-   *     workspace's URL when that event arrives, the realtime handler in
-   *     `use-realtime-sync.ts` would trigger a parallel full-page relocate
-   *     that races the mutation's `invalidateQueries` refetch — the loser's
-   *     in-flight fetch gets cancelled, surfacing as an unhandled
-   *     `CancelledError`. Navigating first makes the handler's
-   *     "current === lost workspace" check fail and its relocate no-op.
-   *     Known debt: give leave the same await-then-navigate shape as delete.
+   * 调用时机随流程而异：
+   *   - 删除：在删除成功「之后」再调。实时 `workspace:deleted` 处理器会跳过自发删除
+   *     （见 pending-delete.ts），所以不会有别的东西和这次导航抢跑。
+   *   - 退出：仍在 mutation 发起「之前」调用——`member:removed` 目前没有自发标记，
+   *     若用户还停留在这个工作区的 URL 上，该事件到达时 use-realtime-sync.ts 的处理器
+   *     会触发一次并发的整页跳转，与 mutation 的 invalidateQueries 重取互相竞争，
+   *     输家正在进行的请求会被取消，冒泡成未处理的 CancelledError。先导航走，处理器里
+   *     「当前工作区 === 已丢失工作区」的判定就会失败、它的跳转自动空转。
+   *     已知债：应让退出也改成与删除一致的「先等成功、再导航」形态。
    */
   const navigateAwayFromCurrentWorkspace = () => {
     const cachedList =
       qc.getQueryData<Workspace[]>(workspaceListOptions().queryKey) ?? [];
     const remaining = cachedList.filter((w) => w.id !== workspace?.id);
-    // Clear the workspace-context singleton BEFORE navigating. Three
-    // downstream consumers read it:
-    //  1. Realtime relocate handlers' "current === lost workspace" check
-    //     (`member:removed` for leave; also a second line of defense for
-    //     delete) — if the singleton still points at the lost workspace
-    //     when the WS event arrives, they fire a parallel full-page
-    //     relocate that races this navigation.
-    //  2. Chrome gating (`{slug && <AppSidebar />}` on desktop) — if the
-    //     singleton lingers, the sidebar stays mounted while the deleted
-    //     workspace is no longer in the list, and `useWorkspaceId` throws.
-    //  3. API client's `X-Workspace-Slug` header — stale header post-
-    //     delete is at best a 404, at worst leaks into the next query.
-    // WorkspaceRouteLayout re-sets the singleton when a new workspace's
-    // route mounts; clearing here is safe — either the next workspace
-    // takes over immediately, or the new-workspace overlay takes over
-    // (which has no workspace context, so null is correct).
+    // 在导航之前先清掉「工作区上下文」单例。有三个下游会读它：
+    //  1. 实时跳转处理器的「当前 === 已丢失工作区」判定（退出的 member:removed；
+    //     也是删除的第二道防线）——WS 事件到达时单例仍指向已丢失工作区的话，它们会
+    //     触发一次与本次导航竞争的整页跳转。
+    //  2. 壳层的 gating（桌面端 `{slug && <AppSidebar />}`）——单例残留时侧边栏会
+    //     继续挂载，而已删工作区已不在列表里，`useWorkspaceId` 会抛错。
+    //  3. API 客户端的 `X-Workspace-Slug` 头——删除后残留旧头最坏会漏进下一个请求。
+    // WorkspaceRouteLayout 在新工作区路由挂载时会重设这个单例；这里先清掉是安全的——
+    // 要么下一个工作区立刻接管，要么新工作区引导浮层接管（它没有工作区上下文，null 正好）。
     setCurrentWorkspace(null, null);
     navigation.push(resolvePostAuthDestination(remaining, hasOnboarded));
   };
@@ -145,18 +144,16 @@ export function WorkspaceTab() {
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
   const canManageWorkspace = currentMember?.role === "owner" || currentMember?.role === "admin";
   const isOwner = currentMember?.role === "owner";
-  // Mirror the backend invariant (server/internal/handler/workspace.go:569):
-  // a workspace must always have at least one owner, so the sole owner can't
-  // leave. Pre-flight here instead of letting the 400 round-trip become a
-  // confusing toast — disable Leave and tell the user what they need to do.
+  // 镜像后端不变量（server/internal/handler/workspace.go:569）：工作区任何时候都要
+  // 至少有一个 owner，因此唯一的 owner 不能退出。这里在前端预判，而不是等后端 400
+  // 回来再变成一条令人困惑的 toast——直接禁用「退出」并告诉用户该怎么做。
   const ownerCount = members.filter((m) => m.role === "owner").length;
   const isSoleOwner = isOwner && ownerCount <= 1;
   const isSoleMember = members.length <= 1;
 
-  // Reset form state only when the user switches to a different workspace.
-  // Keying on workspace?.id (not the object ref) avoids wiping unsaved edits
-  // when an unrelated mutation — e.g. avatar/logo upload — replaces the
-  // cached Workspace object via setQueryData.
+  // 只在用户切到另一个工作区时重置表单。以 workspace?.id（而非对象引用）为键，
+  // 避免某个无关的 mutation——例如头像/logo 上传用 setQueryData 替换了缓存里的
+  // Workspace 对象——把未保存的编辑内容一并冲掉。
   useEffect(() => {
     setName(workspace?.name ?? "");
     setDescription(workspace?.description ?? "");
@@ -165,9 +162,8 @@ export function WorkspaceTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on id only; see comment above
   }, [workspace?.id]);
 
-  // Letters + digits only, uppercase, capped at 10 chars. The backend
-  // uppercases and trims on its side too — this is purely a UX guardrail
-  // so the value the user sees in the input matches what gets persisted.
+  // 只保留字母和数字、转大写、最长 10 个字符。后端自己也会做同样的大写与去空白——
+  // 这里是纯 UX 护栏，保证输入框里看到的值和最终落库的一致。
   const normalizePrefix = (raw: string) =>
     raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
 
@@ -226,8 +222,8 @@ export function WorkspaceTab() {
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
         old?.map((ws) => (ws.id === updated.id ? updated : ws)),
       );
-      // Issue identifiers are computed from the workspace prefix at read time,
-      // so every cached issue key is stale after this confirmed change.
+      // issue 编号是读取时按前缀现算的，所以这次（确认过的）改动之后，所有缓存的
+      // issue 键都过期了，必须整片失效重取。
       await qc.invalidateQueries({ queryKey: issueKeys.all(updated.id) });
       setPrefixSaveStatus("saved");
       toast.success(t(($) => $.workspace.toast_saved), {
@@ -280,13 +276,10 @@ export function WorkspaceTab() {
   const handleConfirmDelete = async () => {
     if (!workspace) return;
     setActionId("delete-workspace");
-    // Await the DELETE with the dialog in its loading state, and only
-    // navigate on success (CLAUDE.md: flows that navigate must await the
-    // server; no optimistic removal). The realtime `workspace:deleted`
-    // handler skips self-initiated deletes via the pending-delete registry,
-    // so it can't race this navigation with its own full-page relocate.
-    // On failure the dialog stays open, the cache was never touched, and
-    // the user is exactly where they started.
+    // 让删除弹窗保持加载态去等 DELETE 完成，只在成功后才导航（CLAUDE.md：会导航的
+    // 流程必须先等服务端成功，不做乐观删除）。实时的 `workspace:deleted` 处理器通过
+    // pending-delete 注册表跳过自发删除，所以不会用整页跳转和本次导航竞争。
+    // 失败时弹窗保持打开、缓存没被动过，用户原地不动。
     try {
       await deleteWorkspace.mutateAsync(workspace.id);
       setDeleteDialogOpen(false);
@@ -464,9 +457,8 @@ export function WorkspaceTab() {
         </SettingsCard>
       </SettingsSection>
 
-      {/* Danger Zone — gated on the member query settling so the owner-only
-          Delete button and the sole-owner Leave guidance don't flash in
-          after mount. */}
+      {/* 危险区——等成员查询落定后再渲染，避免仅 owner 可见的「删除」按钮与
+          唯一 owner 的「退出」提示在挂载后才闪现出来。 */}
       {membersFetched && (
         <SettingsSection
           title={
@@ -546,8 +538,7 @@ export function WorkspaceTab() {
         loading={actionId === "delete-workspace"}
         open={deleteDialogOpen}
         onOpenChange={(open) => {
-          // Ignore close requests while the delete mutation is in flight
-          // so the user can't accidentally dismiss mid-operation.
+          // 删除请求进行中时忽略关闭请求，防止用户中途误把弹窗关掉。
           if (actionId === "delete-workspace" && !open) return;
           setDeleteDialogOpen(open);
         }}

@@ -1,3 +1,5 @@
+// 本文件封装项目的各类变更：创建、更新、删除（均带乐观更新与失败回滚）。
+
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { projectKeys } from "./queries";
@@ -7,6 +9,7 @@ import { clearIssueSurfaceViewState } from "../issues/stores/surface-view-store"
 import { issueScopeKey } from "../issues/surface/scope";
 import type { Project, CreateProjectRequest, UpdateProjectRequest, ListProjectsResponse } from "../types";
 
+/** 创建项目，成功后写进列表缓存（按 id 去重）。 */
 export function useCreateProject() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -25,6 +28,7 @@ export function useCreateProject() {
   });
 }
 
+/** 更新项目，乐观同步到列表与详情缓存，失败回滚。 */
 export function useUpdateProject() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -54,6 +58,7 @@ export function useUpdateProject() {
   });
 }
 
+/** 删除项目：乐观移除列表条目、清掉详情缓存，成功后清理相关本地状态。 */
 export function useDeleteProject() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();

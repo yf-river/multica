@@ -1,28 +1,41 @@
+// 本文件实现认证状态管理：登录/登出、用户信息维护，以及与埋点、工作区存储的联动。
+
 import { create } from "zustand";
 import type { User, StorageAdapter } from "../types";
 import { identify as identifyAnalytics, resetAnalytics } from "../analytics";
 import type { ApiClient } from "../api/client";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 
+/** 创建认证 store 所需的依赖配置。 */
 export interface AuthStoreOptions {
+  /** API 客户端，用于调用登录/登出/获取用户接口。 */
   api: ApiClient;
+  /** 存储适配器，用于持久化 token 等。 */
   storage: StorageAdapter;
+  /** 登录成功后的回调（可选）。 */
   onLogin?: () => void;
+  /** 登出后的回调（可选）。 */
   onLogout?: () => void;
-  /** When true, rely on HttpOnly cookies instead of localStorage for auth tokens. */
+  /** 为 true 时，认证 token 依赖 HttpOnly cookie 而非 localStorage。 */
   cookieAuth?: boolean;
 }
 
+/** 认证状态机所处的阶段。 */
 export type AuthStatus =
   | "authenticating"
   | "authenticated"
   | "unauthenticated"
   | "recovering";
 
+/** 认证 store 的状态与动作。 */
 export interface AuthState {
+  /** 当前登录用户，未登录为 null。 */
   user: User | null;
+  /** 是否正在加载用户信息。 */
   isLoading: boolean;
+  /** 当前认证状态。 */
   status: AuthStatus;
+  /** 重试代数，递增触发重新认证。 */
   retryGeneration: number;
 
   retryAuthentication: () => void;
@@ -34,6 +47,12 @@ export interface AuthState {
   refreshMe: () => Promise<void>;
 }
 
+/**
+ * 创建认证 store。
+ *
+ * @param options - 认证依赖配置
+ * @returns Zustand 认证 store
+ */
 export function createAuthStore(options: AuthStoreOptions) {
   const { api, storage, onLogin, onLogout, cookieAuth } = options;
 
@@ -84,7 +103,7 @@ export function createAuthStore(options: AuthStoreOptions) {
 
     logout: () => {
       if (cookieAuth) {
-        // Clear server-side HttpOnly cookie.
+        // 清除服务端的 HttpOnly cookie。
         api.logout().catch(() => {});
       }
       storage.removeItem("multica_token");

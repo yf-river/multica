@@ -13,9 +13,8 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// runtimeLocalMcpServerSummary is the intentionally non-secret inventory
-// shown in Agent capabilities. Never add command arguments, URLs, headers, or
-// environment values here: this payload leaves the user's machine.
+// runtimeLocalMcpServerSummary 是在 Agent 能力页展示的“故意不含秘密”的清单条目。
+// 千万别往这里加命令参数、URL、请求头或环境变量：这份载荷要离开用户机器。
 type runtimeLocalMcpServerSummary struct {
 	Name      string `json:"name"`
 	Transport string `json:"transport,omitempty"`
@@ -23,16 +22,14 @@ type runtimeLocalMcpServerSummary struct {
 	Enabled   bool   `json:"enabled"`
 }
 
-// mergeRuntimeAndAgentMcpConfig builds the task-local MCP configuration used
-// when an agent has MCP servers managed by Multica. Runtime servers are the
-// base layer and the agent's entries win on a same-name collision. The merge
-// happens inside the local daemon so runtime URLs, headers, commands, and env
-// values never need to leave the machine.
+// mergeRuntimeAndAgentMcpConfig 构造 agent 由 Multica 托管 MCP server 时使用的
+// 任务级 MCP 配置。runtime（用户本机）server 是底层，同名的 agent 条目胜出。合并
+// 在本地 daemon 里完成，因此 runtime 的 URL、请求头、命令与环境变量都不需要离开
+// 这台机器。
 //
-// A nil/null agent config keeps the provider's native inheritance path intact.
-// A present config (including an empty mcpServers map) opts into the merged,
-// task-local config so adding one managed server no longer disables unrelated
-// runtime servers.
+// agent 配置为 nil/null 时，保留 provider 原生的继承路径不变。配置存在时（哪怕
+// mcpServers 是空 map）就选用这份合并后的任务级配置——这样新增一个托管 server 不再
+// 会连带禁用掉无关的 runtime server。
 func mergeRuntimeAndAgentMcpConfig(provider string, agentConfig json.RawMessage) (json.RawMessage, error) {
 	trimmed := bytes.TrimSpace(agentConfig)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -55,9 +52,9 @@ func mergeRuntimeAndAgentMcpConfig(provider string, agentConfig json.RawMessage)
 	if servers, ok := nestedRuntimeMcpMap(agentDocument, "mcpServers"); ok {
 		agentServers = servers
 	} else if provider == "opencode" || provider == "codearts" {
-		// Older OpenCode agents may store the provider-native top-level `mcp`
-		// map. Its individual entries can still flow through the existing
-		// OpenCode adapter when placed under the canonical mcpServers envelope.
+		// 老版本 OpenCode agent 可能把配置存在 provider 原生的顶层 `mcp` map 里。
+		// 只要把它们挪进规范的 mcpServers 信封，单条 entry 仍能走既有 OpenCode
+		// adapter。
 		if servers, ok := nestedRuntimeMcpMap(agentDocument, "mcp"); ok {
 			agentServers = servers
 		}
@@ -78,8 +75,8 @@ func mergeRuntimeAndAgentMcpConfig(provider string, agentConfig json.RawMessage)
 	return raw, nil
 }
 
-// codeArtsUserConfigPath returns the first CodeArts user config file present,
-// following the official launcher's codearts_cli.json/codearts_cli.jsonc order.
+// codeArtsUserConfigPath 返回 CodeArts 首个存在的用户配置文件，遵循官方启动器的
+// codearts_cli.json/codearts_cli.jsonc 优先顺序。
 func codeArtsUserConfigPath(home string) string {
 	configDir := filepath.Join(home, ".codeartsdoer")
 	candidates := []string{
@@ -94,22 +91,19 @@ func codeArtsUserConfigPath(home string) string {
 	return candidates[0]
 }
 
-// codebuddyUserMcpConfigPath returns the user-scope MCP config file CodeBuddy
-// actually reads.
+// codebuddyUserMcpConfigPath 返回 CodeBuddy 真正会读取的用户级 MCP 配置文件。
 //
-// CodeBuddy is a Claude Code fork but resolves its own config, so `~/.claude.json`
-// is never consulted. Its config directory is `$CODEBUDDY_CONFIG_DIR`, defaulting
-// to `~/.codebuddy`, and the user-scope MCP file is the FIRST of these that
-// exists — the list is a fallback chain, not a merge:
+// CodeBuddy 是 Claude Code 的分支，但它解析自己的配置，所以永远不会去看
+// `~/.claude.json`。它的配置目录是 `$CODEBUDDY_CONFIG_DIR`，缺省 `~/.codebuddy`，
+// 用户级 MCP 文件取下列“第一个存在”的——这份列表是回退链，不是合并：
 //
-//	<configDir>/.mcp.json   (what `codebuddy mcp add --scope user` writes)
+//	<configDir>/.mcp.json   (`codebuddy mcp add --scope user` 写的就是它)
 //	<configDir>/mcp.json
 //	~/.codebuddy.json
 //
-// When none exist the first candidate is returned so the caller's read fails
-// with os.ErrNotExist and is treated as "no runtime servers", matching the
-// other providers. Verified against CodeBuddy 2.x by writing each file in turn
-// and reading back `codebuddy mcp list`.
+// 一个都不存在时返回第一个候选，让调用方读文件得到 os.ErrNotExist、按“无 runtime
+// server”处理，与其它 provider 行为一致。已对照 CodeBuddy 2.x 逐个写入并读回
+// `codebuddy mcp list` 验证过。
 func codebuddyUserMcpConfigPath(home string) string {
 	configDir := strings.TrimSpace(os.Getenv("CODEBUDDY_CONFIG_DIR"))
 	if configDir == "" {
@@ -128,9 +122,9 @@ func codebuddyUserMcpConfigPath(home string) string {
 	return candidates[0]
 }
 
-// unmarshalRuntimeMcpConfig decodes one runtime's config file. "jsonc" is JSON
-// with comments and trailing commas, which CodeBuddy accepts in its MCP files —
-// parsing those as strict JSON would drop every server behind a single `//`.
+// unmarshalRuntimeMcpConfig 解码某个 runtime 的配置文件。格式 "jsonc" 指“带注释与
+// 尾逗号的 JSON”，CodeBuddy 的 MCP 文件就接受这种写法——用严格 JSON 去解析会因单个
+// `//` 丢掉其后所有 server。
 func unmarshalRuntimeMcpConfig(raw []byte, format string) (map[string]any, error) {
 	var cfg map[string]any
 	switch format {
@@ -154,30 +148,24 @@ func unmarshalRuntimeMcpConfig(raw []byte, format string) (map[string]any, error
 	return cfg, nil
 }
 
-// stripJSONC rewrites JSONC into strict JSON: `//` and `/* */` comments become
-// spaces and a single trailing comma before `}` / `]` is dropped. String
-// literals are copied verbatim, so a `//` or a comma inside a command argument
-// survives.
+// stripJSONC 把 JSONC 改写成严格 JSON：`//` 与 `/* */` 注释变成空格，`}` / `]`
+// 前的一个尾逗号被删掉。字符串字面量原样拷贝，因此命令参数里的 `//` 或逗号不会
+// 被误伤。
 //
-// Output is always the same length as the input — comments and the dropped
-// comma are blanked, never deleted — so a parse-error offset still points at
-// the byte the user actually wrote.
+// 输出与输入等长——注释和被删的逗号是“抹成空格”，不是删字符——这样解析报错时的
+// 偏移仍指向用户实际写下的那个字节。
 //
-// Only the LAST comma before a closer is blanked, so genuinely malformed input
-// stays malformed: `[1,,,]` does not silently become `[1]`. This is a
-// pragmatic subset of JSONC covering what CodeBuddy's MCP files use in
-// practice; anything it cannot repair is reported as a parse error rather than
-// guessed at.
+// 只有闭合符前的“最后一个”逗号会被抹掉，所以真正非法的输入保持非法：`[1,,,]`
+// 不会悄悄变成 `[1]`。这是按 CodeBuddy MCP 文件实际用法裁剪出的 JSONC 实用子集；
+// 修不了的内容报解析错误，而不是靠猜。
 //
-// An unterminated `/*` is an error rather than a blank-to-EOF, so the Agent >
-// MCP tab cannot list servers out of a file CodeBuddy itself rejects. Verified:
-// the CLI reports "No MCP servers configured" for both an unterminated comment
-// and the `/*/` near-miss, where the opener's `*` must not double as the
-// closer's.
+// 未闭合的 `/*` 是错误而非“一路抹到文件尾”，因此 Agent > MCP 页不会列出 CodeBuddy
+// 自己也拒绝的文件。已验证：对未闭合注释和 `/*/` 这种“开头的 * 想同时充当结尾”的
+// 近似命中，CLI 都会报 "No MCP servers configured"。
 func stripJSONC(raw []byte) ([]byte, error) {
 	out := make([]byte, 0, len(raw))
-	// Offset into out of the one comma still eligible for removal, or -1.
-	// Reset by any value token, so only a genuinely trailing comma is dropped.
+	// 指向 out 里仍可被删除的那个逗号的偏移；-1 表示没有。遇到任何值 token 都会
+	// 重置它，因此只删真正“尾随”的逗号。
 	lastComma := -1
 	inString := false
 	escaped := false
@@ -204,7 +192,7 @@ func stripJSONC(raw []byte) ([]byte, error) {
 			lastComma = -1
 			out = append(out, c)
 		case c == '/' && i+1 < len(raw) && raw[i+1] == '/':
-			// Blank through end of line, preserving the newline itself.
+			// 整行抹成空格，但保留换行符本身。
 			for i < len(raw) && raw[i] != '\n' {
 				out = append(out, ' ')
 				i++
@@ -213,16 +201,15 @@ func stripJSONC(raw []byte) ([]byte, error) {
 				out = append(out, raw[i])
 			}
 		case c == '/' && i+1 < len(raw) && raw[i+1] == '*':
-			// Consume the opener first so `/*/` cannot reuse its own `*` as the
-			// closer's, then blank the body, newlines included, so line numbers
-			// and the total byte count both survive.
+			// 先消费掉开头两个字符，让 `/*/` 无法把开头的 `*` 复用作结尾的 `*`；
+			// 再把注释体（含换行）抹成空格，保证行号与总字节数都不变。
 			out = append(out, ' ', ' ')
 			i += 2
 			closed := false
 			for i < len(raw) {
 				if raw[i] == '*' && i+1 < len(raw) && raw[i+1] == '/' {
 					out = append(out, ' ', ' ')
-					i++ // consume '*'; the loop's i++ consumes '/'
+					i++ // 消费 '*'; 循环末尾的 i++ 再消费 '/'
 					closed = true
 					break
 				}
@@ -255,10 +242,9 @@ func stripJSONC(raw []byte) ([]byte, error) {
 	return out, nil
 }
 
-// loadRuntimeMcpServerConfigs returns full, secret-bearing runtime MCP entries
-// for task-local merging. Callers must never send the result to the server or
-// logs; the public capabilities endpoint continues to use the redacted summary
-// type above.
+// loadRuntimeMcpServerConfigs 返回“含完整秘密”的 runtime MCP 条目，供任务级合并
+// 使用。调用方绝不能把结果发给服务器或写进日志；公开的能力端点一直用上面那个脱敏
+// 的 summary 类型。
 func loadRuntimeMcpServerConfigs(provider string) (map[string]any, bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -271,12 +257,10 @@ func loadRuntimeMcpServerConfigs(provider string) (map[string]any, bool, error) 
 		path, key, format = filepath.Join(home, ".claude.json"), "mcpServers", "json"
 	case "codearts":
 		path, key, format = codeArtsUserConfigPath(home), "mcp", "jsonc"
-	// codebuddy is deliberately absent. CodeBuddy loads its own user, project
-	// and local scopes on every launch (codebuddy.go never passes
-	// --strict-mcp-config), and a managed entry already wins a same-name
-	// collision, so the daemon pre-merging them would only duplicate what the
-	// CLI does natively — while losing the scope precedence and the approval
-	// gate that protects project-scope servers.
+	// codebuddy 有意缺席。CodeBuddy 每次启动都会自己加载 user、project、local 三个
+	// scope（codebuddy.go 从不传 --strict-mcp-config），且托管条目在同名冲突时本来就
+	// 会赢，所以 daemon 预合并只会重复 CLI 原生在做的事——还会丢掉保护 project-scope
+	// server 的 scope 优先级与审批闸门。
 	case "codex":
 		codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
 		if codexHome == "" {
@@ -312,8 +296,7 @@ func loadRuntimeMcpServerConfigs(provider string) (map[string]any, bool, error) 
 	}
 
 	if provider == "claude" {
-		// User configuration has the same precedence Claude uses: plugin
-		// servers only fill names not already defined by the user.
+		// 用户配置与 Claude 的优先级一致：插件 server 只补“用户配置没定义”的名字。
 		for name, entry := range loadClaudePluginMcpServerConfigs(home) {
 			if _, exists := servers[name]; !exists {
 				servers[name] = entry
@@ -323,14 +306,15 @@ func loadRuntimeMcpServerConfigs(provider string) (map[string]any, bool, error) 
 	return servers, true, nil
 }
 
+// normalizeRuntimeMcpEntry 把各 provider 的字段差异归一到 Multica 内部形态；目前只
+// 对 codex 特殊处理。
 func normalizeRuntimeMcpEntry(provider string, value any) any {
 	entry, ok := value.(map[string]any)
 	if !ok || provider != "codex" {
 		return value
 	}
-	// Multica's canonical remote shape calls these `headers`; Codex stores
-	// them as `http_headers`. Keep the original key as well so less common
-	// Codex-specific settings round-trip through renderCodexMcpServersBlock.
+	// Multica 的规范远程形态把这组字段叫 `headers`；Codex 存的是 `http_headers`。
+	// 原键也保留，让较少见的 Codex 专用设置在 renderCodexMcpServersBlock 往返时不丢。
 	if headers, ok := entry["http_headers"]; ok {
 		if _, exists := entry["headers"]; !exists {
 			entry["headers"] = headers
@@ -344,6 +328,7 @@ func normalizeRuntimeMcpEntry(provider string, value any) any {
 	return entry
 }
 
+// loadClaudePluginMcpServerConfigs 汇总所有已启用 Claude 插件声明的 MCP server。
 func loadClaudePluginMcpServerConfigs(home string) map[string]any {
 	out := map[string]any{}
 	for _, plugin := range listEnabledClaudePlugins(home) {
@@ -376,6 +361,8 @@ func loadClaudePluginMcpServerConfigs(home string) map[string]any {
 	return out
 }
 
+// listRuntimeLocalMcpServers 返回可展示给用户的脱敏 runtime MCP server 清单
+// （不含 URL、命令、环境变量等秘密）。
 func listRuntimeLocalMcpServers(provider string) ([]runtimeLocalMcpServerSummary, bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -392,10 +379,9 @@ func listRuntimeLocalMcpServers(provider string) ([]runtimeLocalMcpServerSummary
 	case "codebuddy":
 		path, key, source, format = codebuddyUserMcpConfigPath(home), "mcpServers", "User config", "jsonc"
 	case "kimi":
-		// Inventory only — kimi is deliberately absent from
-		// loadRuntimeMcpServerConfigs. `kimi acp` merges this file with the
-		// ephemeral `mcpServers` we send in session/new, so merging it in
-		// again would spawn every user server twice.
+		// 只做清单——kimi 有意不进 loadRuntimeMcpServerConfigs。`kimi acp` 会把这份
+		// 文件与我们随 session/new 发的临时 `mcpServers` 合并，再合一次就会把每个
+		// 用户 server 拉两份。
 		kimiHome := strings.TrimSpace(os.Getenv("KIMI_CODE_HOME"))
 		if kimiHome == "" {
 			kimiHome = filepath.Join(home, ".kimi-code")
@@ -416,15 +402,12 @@ func listRuntimeLocalMcpServers(provider string) ([]runtimeLocalMcpServerSummary
 		}
 		path, key, source, format = filepath.Join(configHome, "opencode", "opencode.json"), "mcp", "User config", "json"
 	case "omp":
-		// Inventory scope: omp discovers servers from a multi-level precedence
-		// chain (.omp/mcp.json, .omp/.mcp.json, profile/user-level configs, and
-		// third-party tool configs such as .claude.json, .cursor/mcp.json,
-		// .vscode/mcp.json, and project-root mcp.json/.mcp.json). This inventory
-		// reads only ~/.omp/agent/mcp.json — the user-scope entry point — so a
-		// user who clears every server in the UI may still inherit servers from
-		// lower-precedence sources. This matches the simplification other
-		// providers already make and avoids sending full tool-chain state over
-		// the wire.
+		// 清单范围的取舍：omp 按多级优先链发现 server（.omp/mcp.json、.omp/.mcp.json、
+		// profile/用户级配置，以及第三方工具配置如 .claude.json、.cursor/mcp.json、
+		// .vscode/mcp.json 与项目根 mcp.json/.mcp.json）。这里的清单只读
+		// ~/.omp/agent/mcp.json——用户级入口——所以“在 UI 里清光所有 server”的用户仍
+		// 可能从低优先级来源继承到 server。这与其它 provider 已经做的简化一致，也避免
+		// 把整套工具链状态发上线。
 		path, key, source, format = filepath.Join(home, ".omp", "agent", "mcp.json"), "mcpServers", "User config", "json"
 	default:
 		return []runtimeLocalMcpServerSummary{}, false, nil
@@ -448,8 +431,7 @@ func listRuntimeLocalMcpServers(provider string) ([]runtimeLocalMcpServerSummary
 		out = append(out, listClaudePluginMcpServers(home)...)
 	}
 
-	// User configuration wins on a same-name collision. Plugin entries are
-	// appended afterwards and only fill names the user config did not define.
+	// 同名冲突时用户配置优先。插件条目在后面追加、只补用户配置没定义的名字。
 	deduped := make([]runtimeLocalMcpServerSummary, 0, len(out))
 	seen := make(map[string]bool)
 	for _, server := range out {
@@ -466,6 +448,8 @@ func listRuntimeLocalMcpServers(provider string) ([]runtimeLocalMcpServerSummary
 	return out, true, nil
 }
 
+// runtimeMcpSummaries 把一条条 server 配置条目压缩成对外可见的摘要（名字、传输
+// 方式、来源、是否启用）。
 func runtimeMcpSummaries(servers map[string]any, source string) []runtimeLocalMcpServerSummary {
 	out := make([]runtimeLocalMcpServerSummary, 0, len(servers))
 	for name, value := range servers {
@@ -490,6 +474,8 @@ func runtimeMcpSummaries(servers map[string]any, source string) []runtimeLocalMc
 	return out
 }
 
+// listClaudePluginMcpServers 汇总所有已启用 Claude 插件声明的 MCP server 摘要，
+// 来源标注为对应插件名。
 func listClaudePluginMcpServers(home string) []runtimeLocalMcpServerSummary {
 	out := make([]runtimeLocalMcpServerSummary, 0)
 	for _, plugin := range listEnabledClaudePlugins(home) {
@@ -518,6 +504,8 @@ func listClaudePluginMcpServers(home string) []runtimeLocalMcpServerSummary {
 	return out
 }
 
+// nestedRuntimeMcpMap 按点分路径（如 "mcpServers"）逐层下钻配置 map，全程要求
+// 每一层都是 map[string]any；任一层不是或缺失都返回 false。
 func nestedRuntimeMcpMap(cfg map[string]any, path string) (map[string]any, bool) {
 	current := cfg
 	parts := strings.Split(path, ".")
@@ -538,6 +526,8 @@ func nestedRuntimeMcpMap(cfg map[string]any, path string) (map[string]any, bool)
 	return nil, false
 }
 
+// runtimeMcpTransport 从一条 entry 里推断其传输类型：优先看 type 字段，再看有没有
+// command（本地 stdio）或 url（远程 http），都判断不了返回 "unknown"。
 func runtimeMcpTransport(entry map[string]any) string {
 	kind, _ := entry["type"].(string)
 	switch strings.ToLower(kind) {

@@ -1,7 +1,7 @@
 import { TextSelection } from "@tiptap/pm/state";
 import type { Editor } from "@tiptap/core";
 
-/** Minimal shape of a ProseMirror JSON node — enough to walk and patch. */
+/** ProseMirror JSON 节点的最小形态——够用来遍历和修补即可。 */
 interface JsonNode {
   type?: string;
   content?: JsonNode[];
@@ -9,15 +9,14 @@ interface JsonNode {
 }
 
 /**
- * Ensure every list item starts with a paragraph.
+ * 确保每个列表项都以段落开头。
  *
- * `listItem`/`taskItem` content is `paragraph block*`, so a valid item's first
- * child must be a paragraph. `@tiptap/markdown` violates that two ways for an
- * empty item: a top-level empty item (`"1. "`) parses to a childless item, and
- * a nested one (`"1. \n   1. "`) parses to an outer item whose only child is the
- * sub-list. Both are schema-invalid and leave the document without a text
- * cursor. Recurse depth-first, then prepend an empty paragraph to any item that
- * doesn't already lead with one. Attrs (e.g. a task item's `checked`) are kept.
+ * `listItem`/`taskItem` 的内容结构是 `paragraph block*`，所以合法列表项的
+ * 第一个子节点必须是段落。`@tiptap/markdown` 解析空列表项时有两种违反：
+ * 顶层空项（`"1. "`）会被解析成没有子节点的项；嵌套空项（`"1. \n   1. "`）
+ * 会解析成唯一子节点是子列表的外层项。两者都不合 schema，且会让文档失去
+ * 文本光标。这里先深度优先递归，再给任何不以段落开头的项前插一个空段落。
+ * Attr（如任务项的 `checked`）会保留。
  */
 function repairListItems(node: JsonNode): { node: JsonNode; changed: boolean } {
   let changed = false;
@@ -43,23 +42,20 @@ function repairListItems(node: JsonNode): { node: JsonNode; changed: boolean } {
 }
 
 /**
- * Repair markdown-parsed empty list items so they hold a valid text cursor.
+ * 修复 markdown 解析出的空列表项，让文档重新拥有合法的文本光标。
  *
- * The document left after typing `1.` (or `- `) in a comment is persisted as the
- * draft `"1. \n\n"`. On remount `@tiptap/markdown` parses that empty item into a
- * schema-invalid, childless `listItem` (see {@link repairListItems}); the
- * document is then left with an `AllSelection` instead of a cursor, so the
- * browser paints the caret on the following block — the reported bug: "type
- * `1.`, switch issues, come back, the caret jumps off the list item and can't be
- * moved back." Note this only affects the round-trip of an *empty* item;
- * non-empty items (`"1. buy milk"`) round-trip byte-identically.
+ * 在评论里输入 `1.`（或 `- `）后留下的文档，会以草稿 `"1. \n\n"` 持久化。
+ * 重新挂载时 `@tiptap/markdown` 把那个空项解析成不含子节点、不合 schema
+ * 的 `listItem`（见 {@link repairListItems}）；随后文档只剩 `AllSelection`
+ * 而没有一个光标，浏览器就把插入符画到下一个块上——即被报告的那个 bug：
+ * “输入 `1.`，切走工单再切回来，光标跳到列表项外面，怎么都移不回去。”
+ * 注意这只影响*空*项的往返；非空项（`"1. buy milk"`）会逐字节原样往返。
  *
- * `preferredSelection` (the caret captured before an external re-parse) is
- * restored when given, snapped to a valid text position; otherwise the caret
- * lands at the first valid text position (the list item's paragraph). No-op when
- * every list item is already valid, so ordinary content is untouched.
+ * 传入 `preferredSelection`（外部重新解析前捕获的光标）时，会把它贴回
+ * 最近的合法文本位置；否则光标落在第一个合法文本位置（列表项开头的段落）。
+ * 若每个列表项本来就合法，则什么都不做，普通内容不受影响。
  *
- * Returns true when it repaired the document (and therefore set the caret).
+ * @returns 是否真的修复了文档（因此也重置了光标）。
  */
 export function repairEmptyListItems(
   editor: Editor,
@@ -72,19 +68,17 @@ export function repairEmptyListItems(
   );
   if (!changed) return false;
 
-  // The corrupt parse leaves an `AllSelection`. Re-setting content while that
-  // selection is live makes ProseMirror's replace collapse the whole list into
-  // bare paragraphs, so first pin the selection to a real position.
+  // 损坏的解析留下了 `AllSelection`。若在选区仍存活的时重设内容，会让
+  // ProseMirror 的 replace 把整个列表压成裸段落，所以要先把选区钉在真实位置。
   editor.view.dispatch(
     editor.state.tr
       .setSelection(TextSelection.near(editor.state.doc.resolve(0)))
       .setMeta("addToHistory", false),
   );
 
-  // Rebuild from the repaired tree. This is a normalization of externally
-  // parsed content, not a user edit: `setMeta("addToHistory", false)` keeps it
-  // off the undo stack (otherwise Ctrl-Z would restore the broken item), and
-  // `emitUpdate: false` avoids a self-write back to the draft/server.
+  // 用修好的树重建内容。这是对外部解析内容的规范化，不是用户的编辑操作：
+  // `setMeta("addToHistory", false)` 让它不进撤销栈（否则 Ctrl-Z 会把坏项
+  // 又还回来），`emitUpdate: false` 则避免把结果写回草稿/服务端造成自回写。
   editor
     .chain()
     .setMeta("addToHistory", false)

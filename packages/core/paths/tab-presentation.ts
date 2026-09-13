@@ -1,21 +1,17 @@
-/**
- * Pure presentation resolver for workspace navigation.
- *
- * Given a {@link TabSubject} (what the tab points at) and whatever entity data
- * is currently available from cache, produce the tab's leading *visual* and its
- * *title* spec. This is the single place the "what should this tab look like"
- * decision lives — icon and title no longer come from two unrelated code paths.
- *
- * It is pure and React-free: the visual is a descriptor (rendered by
- * `@multica/views`' `ResourceLeadingVisual`) and the title is a spec that is
- * either literal text or a localization key (localized by the view layer).
- * Keeping it pure makes the whole "URL + data → icon + title" matrix unit
- * testable without React, which is exactly what the tab behavior needs guarded.
- *
- * Missing entity data is a first-class state: a resource whose data has not
- * loaded yet renders a stable type icon and a type label, never a wrong or
- * empty identity, and never borrows the Issues icon.
- */
+// 本文件是工作区导航的「纯展示解析器」。
+//
+// 给定 {@link TabSubject}（标签页指向什么）和当前从缓存能拿到的实体数据，
+// 产出标签页的「主导视觉」与「标题 spec」。这是「这个标签页该长什么样」这一
+// 决策唯一所在的地方——图标和标题不再来自两条无关的代码路径。
+//
+// 纯、无 React：视觉是一个描述符（由 `@multica/views` 的 `ResourceLeadingVisual`
+// 渲染），标题是「字面文本」或「本地化 key」的 spec（由视图层本地化）。保持
+// 纯让整套「URL + 数据 → 图标 + 标题」矩阵无需 React 就能做单元测试——这正是
+// 标签页行为需要被守护的地方。
+//
+// 实体数据缺失是一等状态：数据未加载的资源渲染稳定的类型图标与类型文案，
+// 绝不渲染错误或空的身份，也绝不借用 Issues 的图标。
+
 import type { IssueStatus, IssueStatusCategory } from "../types";
 import { issueStatusCategory } from "../issues/status-category";
 import {
@@ -25,20 +21,19 @@ import {
 } from "./route-icons";
 import type { TabActorType, TabSubject } from "./tab-subject";
 
-/** The leading visual a tab should render. */
+/** 标签页应渲染的主导视觉。 */
 export type TabVisual =
-  /** A static Lucide icon (page icon or resourceless type icon). */
+  /** 静态 Lucide 图标（页面图标或无资源时的类型图标）。 */
   | { kind: "icon"; icon: RouteIconName }
-  /** An issue's live status glyph. `null` while the issue is loading.
-   *  `category` is what selects the glyph — carried here so the tab strip
-   *  never has to resolve a custom status key on its own. (MUL-6243) */
+  /** issue 的实时状态字形。加载中为 `null`。`category` 决定选哪个字形——
+   *  带在这里，让标签条永远不必自己去解析自定义状态 key。(MUL-6243) */
   | { kind: "issue-status"; status: IssueStatus | null; category?: IssueStatusCategory }
-  /** A project's own icon. `null` falls back to the default project glyph. */
+  /** project 自己的图标。`null` 回退到默认 project 字形。 */
   | { kind: "project-icon"; icon: string | null }
-  /** An actor's avatar, resolved by the view layer from `actorType`+`id`. */
+  /** 身份主体的头像，由视图层按 `actorType`+`id` 解析。 */
   | { kind: "actor"; actorType: TabActorType; id: string };
 
-/** Localization keys under the `layout.tab` namespace for tab type labels. */
+/** `layout.tab` 命名空间下、各标签页「类型标签」的本地化 key。 */
 export type TabLabelKey =
   | "issue"
   | "project"
@@ -53,49 +48,50 @@ export type TabLabelKey =
   | "create_agent"
   | "unknown";
 
-/** How a tab's title should be produced. */
+/** 标签页标题该怎么产出。 */
 export type TabTitleSpec =
-  /** Fully resolved literal text (a resource's own name/title). */
+  /** 已完全解析的字面文本（资源自己的名字/标题）。 */
   | { kind: "text"; text: string }
-  /** A page name — localize via `layout.nav.<navKey>`. */
+  /** 页面名——用 `layout.nav.<navKey>` 本地化。 */
   | { kind: "nav"; navKey: NavLabelKey }
-  /** A type label (loading / flow / unknown) — localize via `layout.tab.<tabKey>`. */
+  /** 类型文案（加载中 / 流程 / 未知）——用 `layout.tab.<tabKey>` 本地化。 */
   | { kind: "tab"; tabKey: TabLabelKey };
 
+/** 一个标签页的展示结果：主导视觉 + 标题 spec。 */
 export interface TabPresentation {
   visual: TabVisual;
   title: TabTitleSpec;
 }
 
-/** Resolved inbox selection, as computed by the view layer from cache. */
+/** 已解析的 Inbox 选中项，由视图层从缓存计算。 */
 export type InboxSelectionData =
   | { kind: "issue"; identifier: string; title: string }
   | { kind: "item"; title: string };
 
 /**
- * Entity data the view layer has resolved from cache for the tab's subject.
- * Every field is optional: `undefined` means "not loaded yet" and yields the
- * pending (type-label + type-icon) presentation.
+ * 视图层已从缓存解析出的、针对该标签页主体的实体数据。
+ * 每个字段都可选：`undefined` 表示「还没加载」，产出「待定」（类型文案 +
+ * 类型图标）的呈现。
  */
 export interface TabEntityData {
   issue?: { identifier: string; title: string; status: IssueStatus };
   project?: { icon: string | null; title: string };
   autopilot?: { title: string };
-  /** Resolved display name for an actor subject. */
+  /** 身份主体已解析的展示名。 */
   actorName?: string;
   skill?: { name: string };
   machine?: { name: string };
   runtime?: { name: string };
-  /** Resolved chat session title (already includes the "New chat" fallback). */
+  /** 已解析的聊天会话标题（已含 "New chat" 兜底）。 */
   chatSessionTitle?: string;
-  /** Resolved inbox selection (issue identifier/title or item title). */
+  /** 已解析的 Inbox 选中项（issue 标识/标题 或 条目标题）。 */
   inboxSelection?: InboxSelectionData;
 }
 
-/** Neutral visual used when nothing better can be resolved. */
+/** 什么都解析不出来时用的中性视觉。 */
 export const DEFAULT_TAB_VISUAL: TabVisual = { kind: "icon", icon: "FileQuestion" };
 
-/** Literal text if non-empty, otherwise the given type label. */
+/** 文本非空时用字面文本，否则用给定的类型文案。 */
 function textOr(text: string | undefined | null, tabKey: TabLabelKey): TabTitleSpec {
   const trimmed = text?.trim();
   return trimmed ? { kind: "text", text: trimmed } : { kind: "tab", tabKey };
@@ -107,9 +103,8 @@ const ACTOR_LABEL: Record<TabActorType, TabLabelKey> = {
   squad: "squad",
 };
 
-// Extension → file-type icon. The preview URL only carries the filename, so the
-// extension is the available signal; anything unrecognized uses the generic
-// File glyph.
+// 扩展名 → 文件类型图标。预览 URL 只带文件名，扩展名是能用的信号；无法识别
+// 的一律用通用 File 字形。
 const EXTENSION_ICON: Record<string, RouteIconName> = {};
 const registerExtensions = (icon: RouteIconName, exts: string[]) => {
   for (const ext of exts) EXTENSION_ICON[ext] = icon;
@@ -129,7 +124,7 @@ registerExtensions("FileText", [
   "html", "htm", "xml", "rtf", "odt",
 ]);
 
-/** Choose the file icon for an attachment from its filename, else generic File. */
+/** 从附件文件名选文件图标；取不到则用通用 File。 */
 export function iconForAttachment(filename: string | null): RouteIconName {
   if (!filename) return "File";
   const dot = filename.lastIndexOf(".");
@@ -139,9 +134,13 @@ export function iconForAttachment(filename: string | null): RouteIconName {
 }
 
 /**
- * Resolve a subject + available data into the tab's leading visual and title.
- * Exhaustive over every {@link TabSubject} kind so a new route/resource type
- * forces an explicit presentation choice rather than a silent default.
+ * 把「主体 + 可用数据」解析成标签页的主导视觉与标题。
+ * 对每个 {@link TabSubject} 种类穷尽处理——新增路由/资源类型会强制给出显式
+ * 的展示选择，而不是落入静默默认。
+ *
+ * @param subject - 标签页语义目标
+ * @param data - 缓存中可用到的实体数据
+ * @returns 展示结果
  */
 export function resolveTabPresentation(
   subject: TabSubject,
@@ -197,9 +196,8 @@ export function resolveTabPresentation(
         title: textOr(data.runtime?.name, "runtime"),
       };
     case "attachment":
-      // The preview URL carries the filename (`?name=`), so use it for the
-      // title and pick a matching file icon from its extension. Only fall back
-      // to the generic File glyph + "Attachment" label when it's missing.
+      // 预览 URL 带文件名（`?name=`），所以标题用它、图标按扩展名选匹配的
+      // 文件图标。只有它缺失时才回退到通用 File 字形 + "Attachment" 文案。
       return {
         visual: { kind: "icon", icon: iconForAttachment(subject.filename) },
         title: subject.filename
@@ -207,7 +205,7 @@ export function resolveTabPresentation(
           : { kind: "tab", tabKey: "attachment" },
       };
     case "inbox": {
-      // The container icon never changes; only the title tracks the selection.
+      // 容器图标恒定不变；只有标题跟随选中项。
       const sel = subject.selectedKey ? data.inboxSelection : undefined;
       let title: TabTitleSpec;
       if (!sel) {

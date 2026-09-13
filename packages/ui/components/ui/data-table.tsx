@@ -11,12 +11,10 @@ import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import * as React from "react";
 import { createPortal } from "react-dom";
 
-// We deliberately use the lower-level shadcn primitives (TableHeader /
-// TableBody / TableRow / TableHead / TableCell) but NOT the wrapping
-// <Table> component. shadcn's <Table> nests the <table> inside an
-// `overflow-x-auto` <div>, which would compete with our outer scroll
-// container and pin the horizontal scrollbar to the bottom of the
-// table rather than the viewport.
+// 我们刻意用 shadcn 低层原语（TableHeader/TableBody/TableRow/TableHead/TableCell）
+// 而不是外层 <Table>。shadcn 的 <Table> 会把 <table> 嵌进一个
+// `overflow-x-auto` 的 div 里，这会让它和我们自己的外层滚动容器抢活，
+// 并把横向滚动条钉在表格底部而不是视口上。
 import {
   TableBody,
   TableCell,
@@ -27,57 +25,52 @@ import {
 import { columnSizeVar, getCellStyle } from "@multica/ui/lib/data-table";
 import { cn } from "@multica/ui/lib/utils";
 
-// Pointer travel that turns a press on the resize handle into a drag. Matches
-// the column-reorder sensor's activation distance so both gestures on the same
-// header behave alike, and keeps a plain click from committing a width.
+// 指针移动超过该距离，才把「按下拖拽柄」判定为一次拖拽。与列排序拖拽
+// 传感器的激活距离一致，让同一表头上两种手势手感一致；同时保证单纯点一下
+// 不会真的提交一列宽度。
 const RESIZE_DRAG_THRESHOLD = 4;
 
+/** DataTable 组件的 props 定义 */
 interface DataTableProps<TData> extends React.ComponentProps<"div"> {
+  /** TanStack Table 实例（由调用方 useReactTable 创建并传进来） */
   table: TanstackTable<TData>;
-  // Optional bar shown below the table when ≥1 row is selected. We
-  // don't currently use selection — kept on the API surface for parity
-  // with Dice UI's component so future row-select features just work.
+  // 选中 ≥1 行时显示在表格下方的操作条。目前产品还没启用行选中——
+  // 保留在 API 里是为了和 Dice UI 原组件对齐，未来要做行选择功能时直接用。
   actionBar?: React.ReactNode;
-  // Override for the empty-state cell text.
+  /** 空数据时表格里展示的文案覆盖 */
   emptyMessage?: React.ReactNode;
-  // Called when the user clicks a row (anywhere outside an interactive
-  // descendant — buttons / dropdowns inside cells should call
-  // event.stopPropagation in their own handlers). Used to navigate to
-  // a detail page on row click without nesting an <a> around <tr>,
-  // which is invalid HTML. Receives the mouse event so callers can honor
-  // modifier keys; middle clicks arrive through the same callback (the
-  // caller reads `event.button`).
+  // 用户点击某行时触发（点可交互子元素不算——单元格里的按钮/下拉要在
+  // 自己的事件里 stopPropagation）。用整行点击跳详情页，而不在 <tr> 里嵌
+  // <a>（那是非法 HTML）。回调会带上鼠标事件，调用方可以处理修饰键；
+  // 中键点击也走同一个回调（调用方自己读 event.button 区分）。
   onRowClick?: (row: Row<TData>, event: React.MouseEvent) => void;
-  // Optional escape hatch for semantic rows such as collapsible group
-  // headers. Return null/undefined to use the standard data row renderer.
+  // 语义行的逃生舱：比如可折叠的分组表头。返回 null/undefined 时用
+  // 标准数据行渲染。
   renderRow?: (row: Row<TData>) => React.ReactNode;
-  // A caller-supplied <tfoot> (summary / quick-create rows, for example).
+  /** 调用方自带的 <tfoot>（合计行 / 快捷新建行等） */
   footer?: React.ReactNode;
-  // Render only the visible row window for large tables. Callers should use
-  // this when their rows have a stable height; the footer remains part of the
-  // same scroll surface and is reachable after the virtual row space.
+  // 大表只渲染可见的那一段行窗口。行高稳定时调用方应开启；footer 仍属于
+  // 同一滚动面，在虚拟行空间之后仍可滚到。
   virtualizeRows?: boolean;
+  /** 行高估计值（虚拟滚动用，会被实际测量纠正） */
   virtualRowHeight?: number;
+  /** 可视窗口上下额外渲染的行数（滚动缓冲） */
   virtualOverscan?: number;
 }
 
-// Headless data-table shell — adapted from Dice UI's data-table
-// registry (https://diceui.com/r/data-table). Renders a TanStack Table
-// instance using shadcn/ui's table primitives.
+// 无头（headless）数据表格壳，改编自 Dice UI 的 data-table
+//（https://diceui.com/r/data-table）：拿到一个 TanStack Table 实例，
+// 用 shadcn/ui 的表格原语把它渲染出来。
 //
-// Layout behaviour:
-//   - `w-full` + `table-fixed` keeps the table at viewport width and
-//     makes each column's width come from its first row's <th>
-//     inline width. column.size is authoritative for sized columns.
-//   - Columns flagged `meta.grow: true` skip their inline width, so
-//     fixed table-layout assigns them the leftover space until the user
-//     resizes them. Once resized, the explicit width is applied.
-//   - The table's `min-width` is the sum of every column's TanStack
-//     size (`table.getTotalSize()`). That gives grow columns a real
-//     floor — fixed mode ignores cell-level min-width, but it does
-//     respect `min-width` on the table itself. When the container is
-//     wider than min-width the table tracks it; when narrower, the
-//     table pins to min-width and the outer overflow-auto scrolls.
+// 布局行为：
+//   - `w-full` + `table-fixed` 让表格始终是视口宽，且每列的宽度来自首行
+//     <th> 的行内宽。对设置了宽度的列，column.size 是权威值。
+//   - 标了 `meta.grow: true` 的列不写行内宽，fixed 布局会把剩余空间分给它；
+//     等用户手动拖过之后才应用明确宽度。
+//   - 表格的 min-width = 所有列 TanStack size 之和（table.getTotalSize()）。
+//     这给 grow 列一个真实下限——fixed 模式忽略单元格级 min-width，但会
+//     尊重表格自身的 min-width。容器比 min-width 宽时表格跟着撑满；更窄时
+//     表格钉在 min-width，外层 overflow-auto 负责滚动。
 export function DataTable<TData>({
   table,
   actionBar,
@@ -122,12 +115,10 @@ export function DataTable<TData>({
     [clampColumnWidth, table],
   );
 
-  // Fixed table-layout shares out whatever space is left when the configured
-  // widths add up to less than the table, so every column renders wider than
-  // it is configured. Committing one column changes that leftover and rescales
-  // all the others, which makes a drag run ahead of the pointer. Pinning every
-  // column to the width it already renders at removes the leftover, so from
-  // that point the drag maps 1:1 onto pointer movement.
+  // fixed 表格布局会把「配置宽度总和小余表格宽度」的那部分空间摊给所有列，
+  // 于是每列实际渲染都比配置宽。提交某一列的宽度会改变剩余空间并连带缩放
+  // 其它列，造成「拖拽跑在指针前面」。先把每一列都钉到它当前实际渲染的宽度，
+  // 消除剩余空间，此后拖拽就能与指针移动 1:1 对应。
   const freezeRenderedWidths = React.useCallback(
     (headerRow: Element | null): ColumnSizingState => {
       const frozen: ColumnSizingState = {};
@@ -146,17 +137,15 @@ export function DataTable<TData>({
     [clampColumnWidth],
   );
 
-  // Double-click on the resize handle sizes the column to its content, the
-  // convention every spreadsheet and grid shares. It replaces column.resetSize,
-  // which cleared the stored width and let TanStack fall back to its generic
-  // 150 — a number unrelated to any of this table's designed widths, so
-  // "reset" widened some columns and collapsed others.
+  // 双击拖拽柄让该列自适应到内容宽度——这是所有表格/网格软件共享的约定。
+  // 用它替代 column.resetSize：resetSize 会清掉已存宽度让 TanStack 退回它的
+  // 通用默认 150，这个数和本表任何设计宽度都无关，于是「重置」反而有的列变宽
+  // 有的列塌掉。
   //
-  // Fixed table-layout ignores content, and cells truncate their own text, so
-  // nothing on screen reports the width the content actually wants. The
-  // measurement lifts both constraints on the column's cells, reads them, and
-  // puts everything back within the same task — the browser paints once, after
-  // the restore, so the intermediate layout is never seen.
+  // fixed 布局不理会内容宽度，单元格又会截断自身文本，所以屏幕上没有任何东西
+  // 报出内容真正想要的宽度。这里的测量做法是：临时解除这两条约束（tableLayout
+  // 改 auto、单元格放开宽度），量完立刻在同一次任务里全部还原——浏览器只在
+  // 还原之后统一绘制一次，中间那个临时布局永远不会被看到。
   const autoFitColumn = React.useCallback(
     (header: TanstackHeader<TData, unknown>) => {
       const container = scrollRef.current;
@@ -199,6 +188,7 @@ export function DataTable<TData>({
     [setColumnWidth],
   );
 
+  /** 拖拽开始时在表头上绑「拖拽线宽度」，双击、右键等均由此进入 */
   const beginColumnResize = React.useCallback(
     (
       header: TanstackHeader<TData, unknown>,
@@ -213,8 +203,8 @@ export function DataTable<TData>({
       const handleEl = event.currentTarget;
       const { pointerId } = event;
       const headerCell = handleEl.closest("th");
-      // The rendered width, not column.getSize(): the drag has to continue from
-      // the edge the user grabbed, which sits wherever the stretch put it.
+      // 取「实际渲染宽」而不是 column.getSize()：拖拽必须从用户抓到的那条边
+      // 继续走，而那条边正好在表格被撑开后实际所在的位置。
       const startWidth =
         headerCell?.getBoundingClientRect().width ?? header.column.getSize();
 
@@ -224,11 +214,11 @@ export function DataTable<TData>({
 
       const handlePointerMove = (pointerEvent: PointerEvent) => {
         const delta = pointerEvent.clientX - startX;
-        // Nothing is committed below the threshold, so a press on its own can
-        // no longer pin a column at the width the stretch happened to give it.
+        // 位移小于阈值时不提交任何宽度：单独按一下（不拖动）就不会把列钉在
+        // 它被撑出来的宽度上。
         if (!frozen && Math.abs(delta) < RESIZE_DRAG_THRESHOLD) return;
-        // Measured once, on the frame the drag starts — every later frame
-        // reuses it, so the baseline can't drift as widths change underneath.
+        // 基线只在拖动开始的那一帧量一次，之后每帧都复用，保证下面宽度变化
+        // 时基线不会跟着漂。
         frozen ??= freezeRenderedWidths(handleEl.closest("tr"));
 
         table.setColumnSizing((old) => ({
@@ -246,7 +236,7 @@ export function DataTable<TData>({
         window.removeEventListener("pointerup", stopResize);
         window.removeEventListener("pointercancel", stopResize);
         window.removeEventListener("blur", stopResize);
-        // Detached before releasing capture — releasing fires this same event.
+        // 要在释放指针捕获前先解绑——释放本身会再次触发这个事件。
         handleEl.removeEventListener("lostpointercapture", stopResize);
         if (handleEl.hasPointerCapture?.(pointerId)) {
           handleEl.releasePointerCapture?.(pointerId);
@@ -257,17 +247,17 @@ export function DataTable<TData>({
       window.addEventListener("pointermove", handlePointerMove);
       window.addEventListener("pointerup", stopResize);
       window.addEventListener("pointercancel", stopResize);
-      // Releasing outside the window or switching apps mid-drag never delivers
-      // pointerup. Without these the gesture stays armed and the column keeps
-      // tracking the pointer once the user comes back.
+      // 拖出窗口外或拖拽中途切走应用时永远不会派发 pointerup。不加这两个
+      // 兜底，手势会一直保持「武装」状态，等用户回来列还会继续追着指针跑。
       window.addEventListener("blur", stopResize);
       handleEl.addEventListener("lostpointercapture", stopResize);
-      // Optional call: jsdom has no pointer capture.
+      // 可选调用：jsdom 没有指针捕获。
       handleEl.setPointerCapture?.(pointerId);
     },
     [clampColumnWidth, freezeRenderedWidths, table],
   );
 
+  /** 键盘微调列宽：左右方向键 ±8px，按住 Shift ±20px */
   const handleResizeKeyDown = React.useCallback(
     (
       header: TanstackHeader<TData, unknown>,
@@ -279,6 +269,7 @@ export function DataTable<TData>({
       event.stopPropagation();
 
       const headerCell = event.currentTarget.closest("th");
+      // 有显式宽度就读配置值；否则读实际渲染宽（fixed 布局下更接近视觉）
       const currentWidth = hasExplicitSize(header.column.id)
         ? header.column.getSize()
         : (headerCell?.getBoundingClientRect().width ??
@@ -291,9 +282,9 @@ export function DataTable<TData>({
     [hasExplicitSize, setColumnWidth],
   );
 
-  // Every column's width, published once on the <table>. Cells reference these
-  // instead of each calling column.getSize(), so a resize costs one style
-  // update on one element rather than one per cell.
+  // 把每一列的宽度一次性发布到 <table> 上。单元格引用这些 CSS 变量而不是
+  // 各自调 column.getSize()，于是调整一列宽只更新一个元素的一条样式，
+  // 而不是每个单元格各来一次。
   const leafColumns = table.getVisibleLeafColumns();
   const columnSizeVars = React.useMemo(() => {
     const vars: Record<string, string> = {};
@@ -301,22 +292,21 @@ export function DataTable<TData>({
       vars[columnSizeVar(column.id)] = `${column.getSize()}px`;
     }
     return vars;
-    // column.getSize() reads columnSizing, which the rule cannot see through
-    // the call. getVisibleLeafColumns is memoised on visibility and order, so
-    // without it the widths would freeze at whatever they were on mount.
+    // column.getSize() 内部读的是 columnSizing，但本规则透过调用看不到这层
+    // 依赖；getVisibleLeafColumns 只在列可见性与顺序变化时重算，若不把
+    // columnSizing 列为依赖，宽度会冻结在挂载时。
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getSize() reads columnSizing
   }, [columnSizing, leafColumns]);
 
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
 
-  // Drives the pinned columns' trailing shadow. It only means something once
-  // content is passing beneath them, so it stays off at rest. The state is a
-  // boolean rather than the offset: it flips twice per scroll excursion
-  // instead of once per scroll event, and React bails out on the repeats.
+  // 驱动「固定列右侧拖影」的显示：只有内容滚到固定列底下时才有意义，所以
+  // 静止时不亮。状态用布尔而不是偏移量：一次滚动往返只翻转两次，而不是每个
+  // 滚动事件翻一次，重复时 React 会自动跳过重渲染。
   const [isScrolledHorizontally, setIsScrolledHorizontally] =
     React.useState(false);
 
-  // Where the frozen block ends, in the scroll container's own coordinates.
+  // 固定块右边界在滚动容器自己坐标系里的位置（拖影就钉在那里）
   const [pinnedEdge, setPinnedEdge] = React.useState<number | null>(null);
 
   React.useEffect(() => {
@@ -335,9 +325,8 @@ export function DataTable<TData>({
     sync();
     element.addEventListener("scroll", sync, { passive: true });
     return () => element.removeEventListener("scroll", sync);
-    // Re-measured on column sizing too, not scrolling alone: resizing a frozen
-    // column while the surface is scrolled moves the boundary the shadow is
-    // pinned to, and no scroll event follows to correct it.
+    // 列尺寸变化时也要重测，不能只等滚动事件：在表面已横向滚动的情况下调整
+    // 固定列的宽度会挪动拖影所钉的边界，而之后不会有滚动事件来纠正它。
   }, [columnSizing]);
 
   const rows = table.getRowModel().rows;
@@ -351,12 +340,10 @@ export function DataTable<TData>({
     estimateSize: () => virtualRowHeight,
     getItemKey: getVirtualRowKey,
     overscan: virtualOverscan,
-    // Rows are not all one height. Callers use renderRow for group headers and
-    // end-of-column footers, which are shorter than a data row, so a single
-    // estimate drifts from the real layout as those accumulate — the window
-    // lands off the rows it should be showing and the scrollbar overshoots the
-    // bottom. Each mounted row reports its own height instead, and the
-    // estimate only covers rows that have never been on screen.
+    // 数据行并不等高：调用方用 renderRow 渲染的分组表头、列尾合计行都比数据行
+    // 矮，固定估高会随这些行累积而偏离真实布局——可视窗口会落在它该显示的行
+    // 之外，滚动条也会冲过底部。因此每个已挂载的行都上报自己的实际高度，
+    // 估计值只覆盖从未上过屏的行。
     measureElement: (element) => element.getBoundingClientRect().height,
   });
   const virtualItems = rowVirtualizer.getVirtualItems();
@@ -398,14 +385,11 @@ export function DataTable<TData>({
             ...columnSizeVars,
           }}
         >
-          {/* Opaque rather than translucent-and-blurred. A backdrop-filter on
-            * a sticky element with content scrolling beneath it is a known
-            * Chromium compositing fault (chromium#339841685) —
-            * the blur layer has to recompute its backdrop every frame while
-            * virtualisation adds and removes the rows underneath it, and the
-            * strip flickers black. The mix resolves to the same colour
-            * bg-muted/30 composited to, and a header that scrolled content
-            * passes behind has no reason to show it through anyway. */}
+          {/* 用不透明色而不是半透明 + 模糊：在 sticky 元素上做 backdrop-filter
+            * 且底下有内容在滚，是已知的 Chromium 合成层故障（chromium#339841685）——
+            * 每帧都要重算模糊层底下的内容，而虚拟化还在不断增删行，结果那条
+            * 条带会闪黑。这里的 color-mix 合成结果与 bg-muted/30 是一致的，
+            * 而且滚过的内容也没必要透过表头显示出来。 */}
           <TableHeader className="sticky top-0 z-10 bg-[color-mix(in_oklab,var(--muted)_30%,var(--background))]">
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id} className="hover:bg-transparent">
@@ -422,34 +406,25 @@ export function DataTable<TData>({
                     <TableHead
                       key={header.id}
                       colSpan={header.colSpan}
-                      // Lets a drag measure every column by id instead of
-                      // pairing <th> elements with columns positionally.
+                      // 让拖拽能按 id 量每一列，而不是按位置把 <th> 和列配对。
                       data-column-id={header.column.id}
-                      // Marks the frozen block's trailing edge for the scroll
-                      // shadow to measure against. Rendered widths differ from
-                      // configured ones under fixed table-layout, so the
-                      // boundary has to be read off the DOM, not summed.
+                      // 标记固定块右边界，供滚动拖影测量用。fixed 布局下实际
+                      // 渲染宽与配置宽不同，所以边界必须从 DOM 读，不能相加。
                       data-pinned-edge={
                         isPinned === "left" &&
                         header.column.getIsLastColumn("left")
                           ? ""
                           : undefined
                       }
-                      // Header typography overrides for a "spreadsheet
-                      // header" look: smaller, all-caps, wider letter
-                      // spacing, muted colour. shadcn's <TableHead>
-                      // defaults to text-body + text-foreground +
-                      // font-medium, which reads as too heavy here.
-                      // h-8 (32px) tightens the strip vs the default
-                      // h-10 (40px).
-                      // overflow-hidden caps any cell content that
-                      // exceeds column.size. Tooltip / dropdown /
-                      // hover-card bodies are portaled, so they are
-                      // unaffected.
-                      // Pinned cells must be opaque: translucent backgrounds
-                      // reveal horizontally scrolled columns underneath. Mix
-                      // muted with background to preserve the same visual tone
-                      // as muted/30 without introducing alpha.
+                      // 表头的「表格样式」覆写：更小、全大写、更宽字距、弱化色。
+                      // shadcn 的 <TableHead> 默认是 text-body + text-foreground +
+                      // font-medium，在这里显得太重。h-8（32px）比默认 h-10（40px）
+                      // 更紧凑。
+                      // overflow-hidden 兜住任何超出 column.size 的单元格内容；
+                      // tooltip / 下拉 / 悬停卡都是传送到 body 的，不受影响。
+                      // 固定列必须不透明：半透明背景会透出底下横向滚动的内容。
+                      // 用 muted 与 background 的 color-mix 保持 muted/30 的视觉，
+                      // 同时去掉 alpha。
                       className={cn(
                         "relative h-8 overflow-hidden border-r px-4 py-2 text-caption uppercase tracking-wider text-muted-foreground last:border-r-0",
                         isPinned &&
@@ -473,22 +448,17 @@ export function DataTable<TData>({
                             aria-orientation="vertical"
                             tabIndex={0}
                             className={cn(
-                              // The line sits exactly on the column's own
-                              // border (hence -right-px, since `right-0` would
-                              // land just inside it and read as a double rule)
-                              // and recolours it. Three states have to stay
-                              // apart on one hairline: at rest it is the faint
-                              // grid rule, hovered it goes translucent brand,
-                              // and for the whole drag it holds at full brand —
-                              // brightening rather than fading, so the edge
-                              // being moved stays the most definite thing on
-                              // screen even once the pointer leaves the handle.
-                              // right-0, never a negative offset: the <th> is
-                              // overflow-hidden and clips at its padding edge,
-                              // so anything nudged out to sit on the border
-                              // itself is simply not painted. The bar lands
-                              // just inside the rule instead, and at 2px it
-                              // stays legible next to it.
+                              // 高亮线精确落在该列自己的边框上（所以是
+                              // -right-px：right-0 会落在边框内侧，看起来像
+                              // 双重线）并给它重新着色。一条发丝线上要区分
+                              // 三种状态：静止时是淡淡的网格线，悬停变半透明
+                              // 品牌色，整个拖拽过程保持全品牌色——是变亮而
+                              // 不是变淡，这样即使指针已经离开拖拽柄，正在被
+                              // 拖动的那条边仍是屏幕上最明确的东西。
+                              // 用 right-0 而不是负偏移：<th> 是 overflow-hidden
+                              // 的，内容裁到内边距边缘，凡是挪到边框上的部分
+                              // 根本不会被绘制。于是高亮条落在边框内侧，2px 宽
+                              // 在细线旁仍清晰可辨。
                               "absolute top-0 right-0 h-full w-2 cursor-col-resize touch-none select-none outline-none",
                               "after:absolute after:inset-y-0 after:right-0 after:w-0.5 after:bg-transparent after:transition-colors after:duration-100",
                               "hover:after:bg-brand/60 focus-visible:after:bg-brand/60",
@@ -514,9 +484,8 @@ export function DataTable<TData>({
               </TableRow>
             ))}
           </TableHeader>
-          {/* Widths reach the body through the custom properties above, so
-            * while a column is being dragged the body has nothing to re-render:
-            * swap in the memoized copy and let the browser do the resizing. */}
+          {/* 宽度通过上面那些自定义属性到达 body，所以拖列期间 body 完全不用
+            * 重渲染：换用记忆化的那份拷贝，把调宽全交给浏览器去做。 */}
           {resizingColumnId !== null ? (
             <MemoizedDataTableBody {...bodyProps} />
           ) : (
@@ -525,12 +494,10 @@ export function DataTable<TData>({
           {footer}
         </table>
       </div>
-      {/* Cast past the frozen block rather than drawn inside it. The border
-        * between the frozen columns and the rest is permanent and says where
-        * the boundary is; this says something is currently passing underneath,
-        * so it appears only while scrolled. An inset box-shadow on the pinned
-        * cell could only darken that cell's own edge — the depth belongs on
-        * the content sliding beneath it. */}
+      {/* 拖影画在固定块外侧、盖住滑动中的内容，而不是画在固定块内部。固定列
+        * 与其余列之间的那条分隔边框是常驻的，说明边界在哪；这个拖影说的是
+        * 「此刻有东西正从下面滑过」，所以只在滚动时才出现。给固定格加内嵌
+        * box-shadow 只能加深那一格自己的边——立体感应该落在从底下滑过的内容上。 */}
       {isScrolledHorizontally && pinnedEdge !== null && (
         <div
           aria-hidden
@@ -544,15 +511,12 @@ export function DataTable<TData>({
         />
       )}
       </div>
-      {/* A viewport-wide layer that only exists for the duration of a column
-        * drag. It owns the cursor so descendants that declare their own
-        * (rows are `cursor-pointer`, cells hold text) cannot override it, and
-        * it keeps the text underneath unselectable. Setting these on
-        * document.body instead loses both fights, since a descendant's own
-        * cursor wins over an inherited one. Pointer events still reach the
-        * gesture: it listens on `window`, which the layer's events bubble to.
-        * Portaled to body so an ancestor with a transform / filter / contain
-        * cannot turn `fixed` into "relative to that ancestor". */}
+      {/* 只在列拖拽期间存在的一个铺满视口的层。它持有光标：这样后代那些自带
+        * 光标的元素（行是 cursor-pointer、单元格有文本光标）都压不过它；它还让
+        * 底下的文字在拖拽期间不可选中。直接设在 document.body 上两头都赢不了，
+        * 因为后代自己的光标会胜过继承来的。指针事件仍能到达手势处理：监听在
+        * window，而这层的冒泡事件照样能冒上去。传送到 body，以免某个带
+        * transform / filter / contain 的祖先把 fixed 变成「相对那个祖先」。 */}
       {resizingColumnId !== null &&
         typeof document !== "undefined" &&
         createPortal(
@@ -570,6 +534,7 @@ export function DataTable<TData>({
   );
 }
 
+/** DataTableBody 的 props 定义（由 DataTable 组好传入） */
 interface DataTableBodyProps<TData> {
   table: TanstackTable<TData>;
   rows: Row<TData>[];
@@ -577,7 +542,7 @@ interface DataTableBodyProps<TData> {
   onRowClick?: (row: Row<TData>, event: React.MouseEvent) => void;
   renderRow?: (row: Row<TData>) => React.ReactNode;
   hasExplicitSize: (columnId: string) => boolean;
-  // The virtualizer's own measuring ref; rows report their height through it.
+  // 虚拟滚动器的测量 ref；数据行通过它上报自己的真实高度。
   measureRow: (element: HTMLElement | null) => void;
   virtualizeRows: boolean;
   virtualItems: VirtualItem[];
@@ -585,6 +550,7 @@ interface DataTableBodyProps<TData> {
   virtualPaddingBottom: number;
 }
 
+/** 表格的 <tbody>：渲染数据行（或虚拟行窗口），空表时渲染占位文案 */
 function DataTableBody<TData>({
   table,
   rows,
@@ -599,10 +565,9 @@ function DataTableBody<TData>({
   virtualPaddingBottom,
 }: DataTableBodyProps<TData>) {
   const renderDataRow = (row: Row<TData>, index?: number) => {
-    // The virtualizer reads an element's own height off `data-index`, so a row
-    // has to be tagged and handed the measuring ref. renderRow returns a <tr>
-    // the caller built; cloning is how it joins in without every caller having
-    // to thread the two through.
+    // 虚拟滚动器靠 `data-index` 读元素自身高度，所以行要打上标记并拿到测量
+    // ref。renderRow 返回调用方自建的 <tr>；克隆它来接入这两样，调用方就不用
+    // 自己去穿线。
     const measured =
       index === undefined
         ? {}
@@ -630,8 +595,8 @@ function DataTableBody<TData>({
               }
             : undefined
         }
-        // Middle click never produces a `click` event; forward it through the
-        // same callback (button === 1 only — button 2 is the context menu).
+        // 中键点击永远不产生 `click` 事件，这里把它透传进同一个回调（只放行
+        // button === 1；button 2 是右键菜单，不管）。
         onAuxClick={
           onRowClick
             ? (e) => {
@@ -641,9 +606,8 @@ function DataTableBody<TData>({
               }
             : undefined
         }
-        // `group` lets pinned cells track row hover via group-hover (their bg
-        // is in className, not on the row, so they stay opaque enough to cover
-        // content scrolling beneath them).
+        // `group` 让固定格能通过 group-hover 跟随行的悬停态（固定格自己的底色
+        // 写在 className 而非行上，才能足够不透明地盖住底下滚动的内容）。
         className={cn("group", onRowClick && "cursor-pointer")}
       >
         {row.getVisibleCells().map((cell) => {
@@ -653,11 +617,10 @@ function DataTableBody<TData>({
             <TableCell
               key={cell.id}
               data-column-id={cell.column.id}
-              // px-4 across the board so cell content aligns with the
-              // surrounding toolbar's px-4. Narrow trailing columns
-              // (chevron / actions) declare enough width for icon + padding.
-              // Pinned cells need an opaque bg + group-hover so they cover
-              // content scrolling beneath them and follow row hover state.
+              // 统一 px-4，让单元格内容与外面工具栏的 px-4 对齐。窄的尾部列
+              // （箭头/操作）声明的宽度要足够容纳图标加内边距。
+              // 固定格需要不透明底色 + group-hover，才能盖住底下滚动的内容
+              // 并跟随行的悬停态。
               className={cn(
                 "overflow-hidden border-r px-4 py-2 last:border-r-0",
                 isPinned &&
@@ -719,11 +682,10 @@ function DataTableBody<TData>({
   );
 }
 
-// Rendered in place of DataTableBody for the duration of a column drag. Only
-// the row data is compared: during a drag the widths travel as custom
-// properties and nothing else in the body can change, so skipping the render
-// entirely is what keeps hundreds of cells off the main thread per frame.
-// React.memo erases the generic, so the cast restores the original signature.
+// 在列拖拽期间用 MemoizedDataTableBody 顶替 DataTableBody。比较时只看行数据：
+// 拖拽期间宽度是以自定义属性传播的，body 里其它内容不可能变化，所以整段跳过
+// 渲染能让每帧几百个单元格不再占用主线程。React.memo 会抹掉泛型签名，
+// 这个 as 断言把它还原成原本的类型。
 const MemoizedDataTableBody = React.memo(
   DataTableBody,
   (prev, next) => prev.table.options.data === next.table.options.data,

@@ -1,3 +1,6 @@
+// 文件职责：实现 `multica chat` 命令组——读取「当前聊天会话」所在的频道概览
+// （history）与单个线程的消息（thread）。只允许读 agent 当前正在跑的会话，拿不到
+// 别的会话/频道。agent 通过它理解 @提及自己的上下文。
 package main
 
 import (
@@ -12,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// chatCmd 是 `multica chat` 父命令，子命令：history / thread。
 var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "Work with the current chat conversation",
@@ -57,6 +61,7 @@ func init() {
 	chatCmd.AddCommand(chatThreadCmd)
 }
 
+// runChatHistory 执行 `chat history`：拉取当前频道的总览（顶层消息+线程清单）。
 func runChatHistory(cmd *cobra.Command, _ []string) error {
 	resp, err := fetchChatRead(cmd, "/api/chat/history", "")
 	if err != nil {
@@ -65,6 +70,8 @@ func runChatHistory(cmd *cobra.Command, _ []string) error {
 	return renderChatRead(cmd, resp, true)
 }
 
+// runChatThread 执行 `chat thread [id]`：不带 id 读当前所在线程；带 id（history
+// 里给的 thread_id）读指定线程。
 func runChatThread(cmd *cobra.Command, args []string) error {
 	threadID := ""
 	if len(args) == 1 {
@@ -77,8 +84,8 @@ func runChatThread(cmd *cobra.Command, args []string) error {
 	return renderChatRead(cmd, resp, false)
 }
 
-// fetchChatRead builds the request (shared --limit/--before paging, plus the
-// optional thread id) and decodes the response.
+// fetchChatRead 拼请求（共用的 --limit/--before 翻页参数，外加可选的线程 id）并
+// 解码响应。
 func fetchChatRead(cmd *cobra.Command, basePath, threadID string) (map[string]any, error) {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -112,8 +119,8 @@ func fetchChatRead(cmd *cobra.Command, basePath, threadID string) (map[string]an
 	return resp, nil
 }
 
-// renderChatRead prints the response as JSON (default) or a table. The overview
-// table adds the thread columns so the agent can pick a thread_id to drill into.
+// renderChatRead 默认按 JSON 打响应，--output table 时打表格。总览（history）模式
+// 的表格额外带线程列，让 agent 能挑个 thread_id 下钻。
 func renderChatRead(cmd *cobra.Command, resp map[string]any, overview bool) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output != "table" {
@@ -146,7 +153,7 @@ func renderChatRead(cmd *cobra.Command, resp map[string]any, overview bool) erro
 	return nil
 }
 
-// numVal renders a numeric JSON field as a string, blank when zero/absent.
+// numVal 把 JSON 数值字段渲染成字符串；为 0 或缺失时输出空串。
 func numVal(m map[string]any, key string) string {
 	if v, ok := m[key].(float64); ok && v != 0 {
 		return strconv.Itoa(int(v))

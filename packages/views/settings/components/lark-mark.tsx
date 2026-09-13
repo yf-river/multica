@@ -1,9 +1,9 @@
-// The SVG paths in LarkMark below are copied verbatim from
-// `packages/semi-icons/src/svgs/feishu_logo.svg` in ByteDance's Semi Design
-// icon set, used under the MIT License. Source:
+// 本文件提供飞书（Lark）品牌图标组件，用于设置页集成频道等处展示飞书的可识别图标。
+
+// 下方 LarkMark 中的 SVG 路径逐字复制自字节跳动 Semi Design 图标库的
+// `packages/semi-icons/src/svgs/feishu_logo.svg`，依据 MIT 许可证使用。来源：
 // https://github.com/DouyinFE/semi-design/blob/a542506ab2b9d6976d51e5e2df074e7ff09ece42/packages/semi-icons/src/svgs/feishu_logo.svg
-// The original per-path `fill="black"` was hoisted to currentColor on the root
-// for theme compatibility.
+// 原来每条路径上的 `fill="black"` 被提升到根节点的 currentColor，以便跟随主题换色。
 //
 // Copyright (c) 2021 DouyinFE
 //
@@ -25,14 +25,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// The Lark (飞书) brand mark. lucide-react carries no brand icons, so the
-// Settings → Integrations channel icon fell back to the generic Webhook glyph,
-// which neither says which platform the section is for nor describes the flow
-// (Lark binds over a QR device flow — there is no webhook). Feishu is a
-// ByteDance product and Semi Design is ByteDance's own design system, so the
-// artwork is the vendor's own mark rather than a redrawing of it; see the
-// license notice above. Same 24x24 box and currentColor fill as WecomMark next
-// door, so every channel mark shares one sizing contract.
+// 飞书（Lark）品牌图标。lucide-react 不携带品牌图标，设置页「集成」频道的图标
+// 一度回退成通用的 Webhook 图形，既看不出是哪个平台，也说不清接入流程
+// （飞书是通过扫码设备流绑定的，并不存在 webhook）。飞书是字节跳动产品，
+// Semi Design 是字节自家设计系统，因此这些图形是官方原图而非重绘，见上方许可证。
+// 与隔壁 WecomMark 一样使用 24x24 画布和 currentColor 填充，保证所有频道图标尺寸统一。
+/**
+ * 飞书（Lark）品牌图标。
+ * @param props.className - 可选，附加到 svg 上的 CSS 类名，用于控制尺寸与颜色。
+ */
 export function LarkMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="currentColor">

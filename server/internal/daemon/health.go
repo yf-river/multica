@@ -16,67 +16,59 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 )
 
-// HealthResponse is returned by the daemon's local health endpoint.
+// HealthResponse 是 daemon 本地健康端点返回的响应。
 type HealthResponse struct {
 	Status string `json:"status"`
 	PID    int    `json:"pid"`
-	// OS is the daemon's runtime.GOOS. Callers can compare it with their host OS
-	// before attempting lifecycle operations across a forwarded connection (for
-	// example, a Linux daemon reached from a Windows host). See #3916.
+	// OS 是 daemon 的 runtime.GOOS。调用方在跨转发连接做生命周期操作前，可先把它与
+	// 自己主机的系统对比（例如从 Windows 主机连到一个 Linux daemon）。见 #3916。
 	OS     string `json:"os"`
 	Uptime string `json:"uptime"`
-	// Profile names the CLI profile this daemon was started with, empty for
-	// the default profile. Health ports are derived by hashing the profile
-	// name into a 1000-port range, so two names can collide and a caller has
-	// no other way to tell whose daemon answered: `--profile a daemon stop`
-	// would happily kill profile b's daemon (#6694).
+	// Profile 是启动本 daemon 所用的 CLI profile 名；默认 profile 为空。健康端口是把
+	// profile 名哈希进一个 1000 端口区间推出来的，因此两个名字可能撞出同一个端口，而
+	// 调用方没有别的办法分辨应答的是谁：`--profile a daemon stop` 会顺手把 profile b
+	// 的 daemon 杀掉（#6694）。
 	//
-	// Deliberately NOT omitempty. The empty string is a real answer — "I am
-	// the default profile's daemon" — and must stay distinguishable from a
-	// pre-#6694 daemon that cannot identify itself at all. Callers key off
-	// the field's presence, so collapsing the two would make every default
-	// daemon look unidentifiable.
+	// 故意不写 omitempty。空串是一个真实答案——“我是默认 profile 的 daemon”——必须
+	// 和 #6694 之前“完全无法自报家门”的老 daemon 区分开。调用方以该字段是否存在为
+	// 判断依据，把两者合并会让每个默认 daemon 都显得无法辨认。
 	Profile    string `json:"profile"`
 	DaemonID   string `json:"daemon_id"`
 	DeviceName string `json:"device_name"`
 	ServerURL  string `json:"server_url"`
 	CLIVersion string `json:"cli_version"`
-	// ActiveTaskCount remains the compatibility/safety count of every claimed
-	// handleTask lifecycle. The additive counters split actual provider
-	// execution from local-directory parking for throughput and diagnostics.
+	// ActiveTaskCount 保持对每个已认领 handleTask 生命周期的“兼容/安全总数”。后面那
+	// 几个可累加计数器则是为了把“真实 provider 执行”与“本地目录停放”分开，便于看
+	// 吞吐与诊断。
 	ActiveTaskCount       int64 `json:"active_task_count"`
 	RunningTaskCount      int64 `json:"running_task_count"`
 	ResourceWaitTaskCount int64 `json:"resource_wait_task_count"`
-	// Repo maintenance stays a liveness-safe background activity, so health
-	// remains HTTP 200/running. These additive counters explain degraded repo
-	// checkout capacity to operators without exposing local cache paths.
+	// 仓库维护是“不影响存活性”的后台活动，因此健康仍是 HTTP 200/running。下面这些
+	// 可累加计数器向运维解释仓库检出能力为何下降，同时不暴露本地缓存路径。
 	RepoMaintenanceActive int      `json:"repo_maintenance_active,omitempty"`
 	RepoCheckoutWaiters   int      `json:"repo_checkout_waiters,omitempty"`
 	Agents                []string `json:"agents"`
-	// SkippedAgents maps a provider that WAS discovered on this machine to the
-	// reason the last registration round dropped it (version undetectable,
-	// below the minimum supported version). Purely diagnostic, and omitted when
-	// empty so older consumers see no change.
+	// SkippedAgents 记录“本机确实发现了某 provider，但上一轮注册把它丢掉”的原因
+	// （版本探不出来、低于最低支持版本）。纯诊断用途，为空时省略，让老消费端看不出
+	// 变化。
 	//
-	// Without it, "CLI not installed" and "CLI installed but rejected" both
-	// render as an absent runtime, which is what made GH #6077 unactionable for
-	// the reporter (MUL-5439).
+	// 没有它，“CLI 没装”和“装了但被拒”都会渲染成 runtime 缺席——这正是 GH #6077
+	// 让反馈者无从下手的原因（MUL-5439）。
 	SkippedAgents map[string]string `json:"skipped_agents,omitempty"`
-	// ReloadPendingReason explains why the daemon has confirmed a multica
-	// version change on disk but hasn't restarted into it yet — it was busy at
-	// the last barrier check and will retry when idle. Omitted when empty, so
-	// older consumers see no change. Diagnostic only: nothing keys off it.
+	// ReloadPendingReason 解释 daemon 为何已确认磁盘上的 multica 版本变了却还没重启
+	// 进去——上次屏障检查时正忙，空闲后会重试。为空时省略，老消费端看不出变化。仅
+	// 诊断用途：没有任何逻辑依赖它。
 	ReloadPendingReason string            `json:"reload_pending_reason,omitempty"`
 	Workspaces          []healthWorkspace `json:"workspaces"`
 }
 
+// healthWorkspace 是健康响应里单个 workspace 及其 runtime 列表的形态。
 type healthWorkspace struct {
 	ID       string   `json:"id"`
 	Runtimes []string `json:"runtimes"`
 }
 
-// listenHealth binds the health port. Returns the listener or an error if
-// another daemon is already running (port taken).
+// listenHealth 绑定健康端口。返回监听器；若端口被占（另一个 daemon 已在运行）则报错。
 func (d *Daemon) listenHealth() (net.Listener, error) {
 	addr := fmt.Sprintf("127.0.0.1:%d", d.cfg.HealthPort)
 	ln, err := net.Listen("tcp", addr)
@@ -86,7 +78,7 @@ func (d *Daemon) listenHealth() (net.Listener, error) {
 	return ln, nil
 }
 
-// repoCheckoutRequest is the body of a POST /repo/checkout request.
+// repoCheckoutRequest 是 POST /repo/checkout 请求的请求体。
 type repoCheckoutRequest struct {
 	URL          string `json:"url"`
 	WorkspaceID  string `json:"workspace_id"`
@@ -95,11 +87,12 @@ type repoCheckoutRequest struct {
 	AgentName    string `json:"agent_name"`
 	TaskID       string `json:"task_id"`
 	CheckoutMode string `json:"checkout_mode,omitempty"`
-	// RetryBusy is sent by clients that understand 503 + Retry-After. Older
-	// clients omit it and retain their historical unbounded lock-wait behavior.
+	// RetryBusy 由“认识 503 + Retry-After”的客户端发送。老客户端省略它，沿用历史上
+	// 无限期等锁的行为。
 	RetryBusy bool `json:"retry_busy,omitempty"`
 }
 
+// activeRepoCheckoutTask 是登记在册、正被某个活动任务持有的仓库检出身份。
 type activeRepoCheckoutTask struct {
 	WorkspaceID string
 	TaskID      string
@@ -108,11 +101,9 @@ type activeRepoCheckoutTask struct {
 	WorkDir     string
 }
 
-// registerActiveRepoCheckoutTask binds checkout identity to the active task.
-// The token prevents unauthenticated localhost callers from choosing another
-// task's identity or workdir. It is not an OS-user isolation boundary: another
-// process that can steal the child's environment token can authenticate as
-// that task and already holds its API credential.
+// registerActiveRepoCheckoutTask 把检出身份绑定到活动任务上。token 防止本机的
+// 未认证调用方冒用别的任务身份或 workdir。它不是操作系统用户级隔离边界：能偷走子
+// 进程环境里 token 的另一进程可冒充该任务，而它本就持有该任务的 API 凭据。
 func (d *Daemon) registerActiveRepoCheckoutTask(token string, task activeRepoCheckoutTask) {
 	d.repoCheckoutTasksMu.Lock()
 	defer d.repoCheckoutTasksMu.Unlock()
@@ -122,36 +113,36 @@ func (d *Daemon) registerActiveRepoCheckoutTask(token string, task activeRepoChe
 	d.repoCheckoutTasks[token] = task
 }
 
+// clearActiveRepoCheckoutTask 在任务结束时摘掉 token 绑定，使该 token 立即失效。
 func (d *Daemon) clearActiveRepoCheckoutTask(token string) {
 	d.repoCheckoutTasksMu.Lock()
 	delete(d.repoCheckoutTasks, token)
 	d.repoCheckoutTasksMu.Unlock()
 }
 
-// repoCheckoutAuthResult distinguishes the two ways /repo/checkout auth fails.
-// They look identical to a caller but have completely different fixes, and
-// collapsing them into one 401 is what made #7520 take 13 hours to diagnose.
+// repoCheckoutAuthResult 区分 /repo/checkout 鉴权失败的两种方式。两者在调用方眼里
+// 长得一样，但修法完全不同——把它们并成一个 401 正是 #7520 花了 13 小时才定位的
+// 原因。
 type repoCheckoutAuthResult int
 
 const (
 	repoCheckoutAuthOK repoCheckoutAuthResult = iota
-	// repoCheckoutAuthNoCredential: the request carried no usable Authorization
-	// header. The current CLI always sends one, so in practice this is a
-	// `multica` binary older than repoCheckoutMinCLIVersion — a permanent
-	// failure that no retry fixes.
+	// repoCheckoutAuthNoCredential: 请求没带可用的 Authorization 头。当前 CLI 总是
+	// 会发，所以实际遇到的多是比 repoCheckoutMinCLIVersion 更老的 `multica` 二进制
+	// ——永久性失败，重试也救不了。
 	repoCheckoutAuthNoCredential
-	// repoCheckoutAuthUnknownCredential: a token was presented but is not bound
-	// to a task running in THIS daemon — the task already finished, or the
-	// daemon restarted while the agent process kept running.
+	// repoCheckoutAuthUnknownCredential: 带了一个 token，但它没有绑定到“跑在本
+	// daemon 里”的任务——该任务已经结束，或 daemon 在 agent 进程仍存活时重启过。
 	repoCheckoutAuthUnknownCredential
 )
 
-// repoCheckoutMinCLIVersion is the first release whose `multica repo checkout`
-// sends the Authorization header this endpoint requires. The header and the
-// check landed in the same commit (#7205), so every older CLI is rejected here
-// no matter how healthy the task is.
+// repoCheckoutMinCLIVersion 是首个让 `multica repo checkout` 发送本端点所需
+// Authorization 头的版本。请求头与这个校验落在同一个提交里（#7205），因此无论任务
+// 多健康，比它老的 CLI 都会在这里被拒。
 const repoCheckoutMinCLIVersion = "v0.4.30"
 
+// activeRepoCheckoutTask 从请求里解析 Bearer token 并查出绑定的活动任务，同时区分
+// “没带凭据”与“凭据不认识”两类鉴权失败。
 func (d *Daemon) activeRepoCheckoutTask(r *http.Request) (activeRepoCheckoutTask, repoCheckoutAuthResult) {
 	const bearer = "Bearer "
 	header := strings.TrimSpace(r.Header.Get("Authorization"))
@@ -171,10 +162,9 @@ func (d *Daemon) activeRepoCheckoutTask(r *http.Request) (activeRepoCheckoutTask
 	return task, repoCheckoutAuthOK
 }
 
-// repoCheckoutListBinariesCommand names the platform's "show every copy on
-// PATH" command. The whole point of the rejection is that the caller ran the
-// wrong binary, so handing them a command their shell does not have just moves
-// the dead end.
+// repoCheckoutListBinariesCommand 给出对应平台的“列出 PATH 上每个副本”的命令。
+// 被拒的要点就是“调用方跑错了二进制”，要是再丢给它一个 shell 里不存在的命令，
+// 只是把死胡同换了个位置。
 func repoCheckoutListBinariesCommand() string {
 	if runtime.GOOS == "windows" {
 		return "where.exe multica"
@@ -182,20 +172,17 @@ func repoCheckoutListBinariesCommand() string {
 	return "which -a multica"
 }
 
-// repoCheckoutAuthErrorMessage builds the rejection body. It has to be
-// self-explanatory: the caller is an agent inside a task, and the CLI prints
-// this string as the whole failure. Anything it does not say has to be
-// reconstructed from daemon logs the agent cannot read.
+// repoCheckoutAuthErrorMessage 构造被拒响应体。它必须能自解释：调用方是任务里的
+// agent，CLI 会把这个字符串当作整个失败信息打出来。任何没写明白的内容，都得靠 agent
+// 读不到的 daemon 日志去还原。
 //
-// Compatibility advice deliberately lives HERE rather than in the CLI. The
-// population that hits repoCheckoutAuthNoCredential is, by definition, running
-// a CLI too old to have received any client-side fix; the daemon is the only
-// component on this path guaranteed to be current.
+// 兼容性建议故意放在这里而不是 CLI 里。会命中 repoCheckoutAuthNoCredential 的人群，
+// 按定义就是“老得没收到任何客户端修复”的版本；而这条路径上唯一保证是最新版本的
+// 组件，就是 daemon。
 //
-// Every claim here has to survive Windows and Linux as well as macOS, and has
-// to be true rather than merely likely — advice that is wrong on the reader's
-// platform, or that asserts a version match nobody verified, recreates exactly
-// the misdirection this message exists to end.
+// 这里的每句说法都要同时经得起 Windows、Linux 与 macOS 的考验，而且必须是真的而非
+// “大概率是真的”——给出读者平台上错误的建议，或断言一个无人核实的版本匹配，恰好
+// 会复现本消息想要终结的那种误导。
 func (d *Daemon) repoCheckoutAuthErrorMessage(result repoCheckoutAuthResult) string {
 	if result == repoCheckoutAuthUnknownCredential {
 		return "repo checkout credential is not bound to a task running in this daemon: " +
@@ -217,12 +204,10 @@ func (d *Daemon) repoCheckoutAuthErrorMessage(result repoCheckoutAuthResult) str
 	b.WriteString(repoCheckoutListBinariesCommand())
 	b.WriteString("`, check each one's version, then upgrade the stale one with `multica update`")
 	b.WriteString(" — it handles Homebrew and direct installs on every platform.")
-	// os.Executable() reports where this process was STARTED from, which is not
-	// a promise about the bytes on disk now: the daemon deliberately supports a
-	// binary being replaced out of band while a restart is deferred (see
-	// trySelfReload). Claiming a version match here could hand a version-skew
-	// victim a second stale binary, so state the provenance and let the reader
-	// verify the version.
+	// os.Executable() 报告的是本进程“从哪儿被启动”，并不承诺磁盘上现在的字节：
+	// daemon 刻意支持“重启被推迟、二进制已被越权替换”的场景（见 trySelfReload）。
+	// 在这里断言版本匹配，可能给版本错位的受害者递上第二份过期二进制，所以只说明
+	// 来源、让读者自己去核对版本。
 	if selfBin, err := resolveSelfExecutable(); err == nil {
 		b.WriteString(" This daemon started from ")
 		b.WriteString(selfBin)
@@ -236,10 +221,9 @@ func (d *Daemon) repoCheckoutAuthErrorMessage(result repoCheckoutAuthResult) str
 	return b.String()
 }
 
-// writeRepoCheckoutAuthError rejects the request and leaves a trace in
-// daemon.log. Before this, the 401 branch logged nothing at all, so a failure
-// the agent saw on stderr was invisible to whoever went looking for it (#7520).
-// The token is never logged: it is a live task credential.
+// writeRepoCheckoutAuthError 拒绝请求并在 daemon.log 留痕。之前 401 分支什么都不
+// 记，agent 在 stderr 看到的失败，对想查它的人完全不可见（#7520）。token 永不写
+// 日志：它是活的任务凭据。
 func (d *Daemon) writeRepoCheckoutAuthError(w http.ResponseWriter, result repoCheckoutAuthResult) {
 	message := d.repoCheckoutAuthErrorMessage(result)
 	reason := "no_credential"
@@ -254,6 +238,8 @@ func (d *Daemon) writeRepoCheckoutAuthError(w http.ResponseWriter, result repoCh
 	http.Error(w, message, http.StatusUnauthorized)
 }
 
+// authorizeRepoCheckoutWorkDir 校验请求的 workdir 落在活动任务 workdir 之内（符号
+// 链接解析后），防止越权指到别的目录；通过则返回规范化后的 workdir。
 func authorizeRepoCheckoutWorkDir(activeRoot, requested string) (string, error) {
 	root, err := filepath.Abs(activeRoot)
 	if err != nil {
@@ -285,8 +271,8 @@ const (
 	repoCheckoutRetryValueBusy  = "repo-busy"
 )
 
-// healthHandler returns the /health HTTP handler. Extracted from serveHealth
-// so tests can exercise it without spinning up a listener.
+// healthHandler 返回 /health 的 HTTP 处理器。从 serveHealth 里拆出来，是为了让测试
+// 不用起监听就能直接调用它。
 func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
@@ -304,12 +290,10 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			agents = append(agents, name)
 		}
 
-		// "starting" until preflight (PAT renew + initial workspace sync +
-		// runtime registration) completes; "running" once the daemon can
-		// actually claim tasks. The health port is bound before preflight for
-		// liveness/diagnostics, so callers must not treat a reachable endpoint
-		// as ready — they gate on this status. Consumers that only know
-		// "running" safely treat "starting" as not-ready.
+		// preflight（PAT 续期 + 首次 workspace 同步 + runtime 注册）完成前是
+		// "starting"，daemon 真正能认领任务后才是 "running"。健康端口在 preflight 前
+		// 就绑定了（为了存活与诊断），所以调用方不能把“端口通”当就绪——它们靠这个
+		// 状态判断。只认 "running" 的消费端会把 "starting" 安全地当未就绪。
 		status := "starting"
 		if d.ready.Load() {
 			status = "running"
@@ -345,12 +329,10 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 	}
 }
 
-// shutdownHandler triggers a graceful daemon shutdown by cancelling the
-// top-level context. Used by `multica daemon stop` so we don't depend on
-// OS-signal delivery, which is unreliable on Windows once the daemon is
-// spawned with DETACHED_PROCESS (no shared console with the stop caller).
-// The listener is bound to 127.0.0.1 only, so only local processes can hit
-// this endpoint.
+// shutdownHandler 通过取消顶层 context 触发一次优雅关停。供 `multica daemon stop`
+// 使用，这样就不依赖 OS 信号投递——一旦 daemon 以 DETACHED_PROCESS 方式拉起（与
+// stop 调用方没有共享控制台），Windows 上的信号投递并不可靠。监听器只绑在
+// 127.0.0.1，所以只有本机进程能碰到这个端点。
 func (d *Daemon) shutdownHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -360,15 +342,13 @@ func (d *Daemon) shutdownHandler() http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "shutting down"})
 		if d.cancelFunc != nil {
-			// Cancel asynchronously so the response flushes first; otherwise
-			// srv.Close() races with the writer.
+			// 异步取消，让响应先冲刷出去；否则 srv.Close() 会和写响应竞态。
 			go d.cancelFunc()
 		}
 	}
 }
 
-// serveHealth runs the health HTTP server on the given listener.
-// Blocks until ctx is cancelled.
+// serveHealth 在给定监听器上运行健康 HTTP server，阻塞直到 ctx 被取消。
 func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt time.Time) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", d.healthHandler(startedAt))
@@ -388,6 +368,8 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	}
 }
 
+// repoCheckoutHandler 处理 POST /repo/checkout：先鉴权、核对任务上下文与 workdir
+// 归属，再经 repo cache 完成隔离检出。
 func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -431,9 +413,8 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			http.Error(w, "repo checkout workdir is not owned by the active task", http.StatusForbidden)
 			return
 		}
-		// Identity is derived from the token-bound active task. AgentName and the
-		// other caller-supplied fields are compatibility inputs only and never
-		// decide branch ownership.
+		// 身份一律取自绑定 token 的活动任务。AgentName 与其它由调用方填的字段只是
+		// 兼容输入，绝不参与分支归属的决定。
 		req.WorkspaceID = activeTask.WorkspaceID
 		req.TaskID = activeTask.TaskID
 		req.AgentName = activeTask.AgentName

@@ -1,3 +1,5 @@
+// 本文件：当某次「触发」因目标 Agent 的 CLI 无法在其机器上运行而被拒绝时，在 issue 上
+// 落一条系统备注（runtime 不可用提示）。详细设计见下。
 package handler
 
 import (
@@ -11,22 +13,19 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-// noteRuntimeUnusable records, on the issue itself, that a trigger was refused
-// because the target's agent CLI cannot run on its machine.
+// noteRuntimeUnusable 在 issue 上记录「触发被拒是因为目标 Agent 的 CLI 在它的机器上跑不了」。
 //
-// Written for EVERY author, not only the unattended ones. The composer chip and
-// the post-send toast do reach whoever was typing, but they carry the reason
-// code alone — the repair command is too long for a chip and too important to
-// put in something that disappears. An agent-authored @mention has nobody
-// watching a response at all. So both get the same durable record, and the
-// transient surfaces stay a preview of it rather than the only copy (MUL-6164).
+// 对每个作者都写，不只无人值守的那类。composer 里的提示块和发送后的 toast 确实能触达正在
+// 输入的人，但它们只带原因码——修复命令对提示块太长、放进会消失的东西里又太重要。而
+// Agent 自己发起的 @mention 根本没有人在看响应。所以两类场景都落这条持久记录，瞬态界面
+// 只是它的预览而非唯一副本（MUL-6164）。
 //
-// Best-effort by construction: the refusal already happened and is correct
-// whether or not this note lands, so a failure here is logged, never returned.
+// 设计上就是尽力而为：拒绝本身已经发生且是否正确与这条备注无关，所以这里的失败只记日志、
+// 绝不向上返回。
 func (h *Handler) noteRuntimeUnusable(ctx context.Context, issue db.Issue, agent db.Agent, verdict service.AgentVerdict) {
 	content := service.RuntimeUnusableNotice(agent.Name, verdict)
-	// author_type='system', author_id=zero UUID — same shape as the sub-issue
-	// completion notice; clients branch on author_type, not the UUID value.
+	// author_type='system'、author_id 为零 UUID——与子 issue 完成备注同形状；客户端按
+	// author_type 分支，不关心 UUID 具体值。
 	if h.TxStarter == nil {
 		slog.Warn("runtime unusable notice: transaction starter unavailable", "issue_id", uuidToString(issue.ID))
 		return

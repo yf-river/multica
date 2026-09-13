@@ -1,3 +1,13 @@
+// ============================================================================
+// 单行可选的 runtime 卡片（CompactRuntimeRow）
+//
+// 角色定位：在「把 Mika 指派给某台 runtime」的引导场景（Step 3 的 Web CLI
+// 展开面板）里，把一台 runtime 渲染成一行可点击的候选：厂商 logo + 名称 +
+// 厂商名，右侧一个小圆点表示在线/离线。点击整行即选中。
+//
+// 约定：本组件刻意保持无状态——选中态由调用方驱动，这样 StepPlatformFork
+// 与将来任何内嵌方都能共用它，不必各自复制一套勾选逻辑。
+// ============================================================================
 import { cn } from "@multica/ui/lib/utils";
 import type { AgentRuntime } from "@multica/core/types";
 import { runtimeDisplayName } from "@multica/core/runtimes";
@@ -5,11 +15,12 @@ import { ProviderLogo } from "./provider-logo";
 import { useT } from "../../i18n";
 
 /**
- * One-line runtime row for Step 3's web CLI expand. Provider logo,
- * name + subtitle, online indicator on the right. Selection state is
- * driven by the caller (kept stateless so both StepPlatformFork and
- * any future embedder can share it without duplicating the picker
- * plumbing).
+ * 单行 runtime 候选：logo + 名称 + 在线小圆点。选中态由调用方传入。
+ *
+ * @param runtime - 要展示/选择的 runtime。
+ * @param selected - 是否处于选中态（驱动边框高亮与 aria-pressed）。
+ * @param onSelect - 用户点选整行时的回调。
+ * @param disabled - 提交进行中置灰，禁止在提交期间改选。
  */
 export function CompactRuntimeRow({
   runtime,
@@ -20,16 +31,15 @@ export function CompactRuntimeRow({
   runtime: AgentRuntime;
   selected: boolean;
   onSelect: () => void;
-  /** Set while a submit is in flight, so the choice cannot change under it. */
+  /** 提交请求在途时置 true：选择不能在提交中途被换掉。 */
   disabled?: boolean;
 }) {
   const { t: tAgents } = useT("agents");
   const online = runtime.status === "online";
   return (
-    // A real button rather than role="button": it brings disabled, focus, and
-    // Enter/Space for free. The hand-rolled keydown branch this replaces did
-    // not honour disabled at all, so a member could switch runtimes mid-submit
-    // and end up with Mika on a machine they no longer had selected.
+    // 用真正的 <button> 而不是 role="button" 的 div：disabled、焦点态、
+    // Enter/Space 键行为全部白拿。替换掉的手写 keydown 分支完全不认 disabled，
+    // 导致成员能在提交中途换 runtime，最后把 Mika 挂到他其实没选中的那台机器上。
     <button
       type="button"
       onClick={onSelect}

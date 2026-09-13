@@ -1,3 +1,7 @@
+// Webhook 事件过滤配置区：让用户声明"只对哪些事件触发"。每个过滤规则含一个事件
+// 名（必填）与可选的 action 列表（以逗号分隔的字符串输入，提交时切分）。规则以
+// chip 列出、可单独删除。用于 autopilot 创建/编辑对话框。
+
 "use client";
 
 import { useState } from "react";
@@ -11,6 +15,13 @@ interface WebhookEventFilterSectionProps {
   onChange: (filters: WebhookEventFilter[]) => void;
 }
 
+/**
+ * Webhook 事件过滤器编辑区。上方列出已添加的过滤 chip（事件名 + 可选的 actions），
+ * 下方两个输入框分别填事件名与 action 列表、按 Enter 或点"添加"生效。空事件名
+ * 无法添加；文档链接按界面语言指向中/英文文档。
+ * @param filters 当前过滤规则列表。
+ * @param onChange 规则变化时以新列表回调。
+ */
 export function WebhookEventFilterSection({
   filters,
   onChange,
@@ -22,6 +33,7 @@ export function WebhookEventFilterSection({
     ? `https://multica.ai/docs/zh/autopilots#${encodeURIComponent("事件过滤")}`
     : "https://multica.ai/docs/autopilots#event-filters";
 
+  // 把两个输入框的内容拼成一条过滤规则追加进列表，并清空输入框。
   const addFilter = () => {
     const event = newEvent.trim();
     if (!event) return;

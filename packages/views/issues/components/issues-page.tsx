@@ -1,5 +1,10 @@
 "use client";
 
+// 本文件：IssuesPage —— 全局"问题"列表页（/issues）。
+// 外层用 PageHeader 渲染标题面包屑，主体委托给 IssueSurface（surface 控制器
+// 负责数据窗口/分页/各视图模式/批量工具栏），并把 IssuesHeader 作为
+// renderHeader 传入，提供与项目详情页一致的筛选与视图切换体验。
+
 import { ListTodo } from "lucide-react";
 import type {
   Issue,
@@ -46,6 +51,11 @@ function IssuesSurfaceHeader({
   );
 }
 
+/**
+ * 全局问题页。按工作区范围渲染 IssueSurface，开启 看板/列表/表格/泳道
+ * 四种视图模式与"列表式"批量操作工具栏；空结果时展示引导文案。
+ * 范围（全部/成员/代理）切换由 IssuesSurfaceHeader 里的 IssuesHeader 承接。
+ */
 export function IssuesPage() {
   const { t } = useT("issues");
   const scope = useIssuesScope("issues");

@@ -1,3 +1,7 @@
+// 文件职责：实现 `multica auth` 命令（status/logout）与三处共享的登录逻辑：
+// token 直登（runAuthLoginToken）、浏览器 OAuth 回环登（runAuthLoginBrowser，
+// 在本机起回调服务器接 JWT 再换 PAT）、token/AppURL 解析。browser 流里「回调地址
+// 指向哪台机器」是易错点，resolveCallbackBinding 单独抽出并做单元测试。
 package main
 
 import (
@@ -22,16 +26,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-// loginTokenPrefixes are the token prefixes `multica login --token` accepts.
-// The CLI used to hardcode `mul_` only, which made it impossible to log in
-// with a Multica Cloud Node PAT (`mcn_`) even though the server happily
-// authenticates both kinds. Keep this list in sync with the prefix branches
-// in server/internal/middleware/auth.go.
+// loginTokenPrefixes 是 `multica login --token` 接受的前缀。CLI 曾只写死 `mul_`，
+// 结果就算 server 两种都认，也没法用 Multica Cloud Node 的 PAT（`mcn_`）登录。
+// 保持与 server/internal/middleware/auth.go 里的前缀分支同步。
 var loginTokenPrefixes = []string{"mul_", auth.CloudPATPrefix}
 
-// validateLoginTokenPrefix returns nil if token starts with one of the
-// CLI-recognised PAT prefixes, or an error describing the accepted set.
-// Extracted so the prefix list has one obvious test surface.
+// validateLoginTokenPrefix 校验 token 以某个 CLI 认可的前缀开头，否则返回描述
+// 可接受集合的错误。抽出成函数让前缀列表有单一、显眼的测试面。
 func validateLoginTokenPrefix(token string) error {
 	for _, p := range loginTokenPrefixes {
 		if strings.HasPrefix(token, p) {
@@ -58,11 +59,11 @@ var authLogoutCmd = &cobra.Command{
 	RunE:  runAuthLogout,
 }
 
-// callbackHostFlag lets users override the host/IP that goes into the OAuth
-// cli_callback URL. Useful when the CLI sits behind a reverse proxy or the
-// auto-detected LAN IP isn't the one the browser can reach.
+// callbackHostFlag 让用户覆盖进入 OAuth cli_callback URL 的主机/IP。CLI 在反向
+// 代理后、或自动探测出的局域网 IP 不是浏览器能访问的那个时很管用。
 const callbackHostFlag = "callback-host"
 
+// callbackHostFlagHelp 是 --callback-host 的帮助文案（与命令一起注册）。
 const callbackHostFlagHelp = "Host/IP the OAuth callback URL points at when the browser can reach this CLI directly. For SSH-only machines, use the printed tunnel hint instead."
 
 func init() {
@@ -70,14 +71,15 @@ func init() {
 	authCmd.AddCommand(authLogoutCmd)
 }
 
+// resolveToken 按优先级取当前有效 token：MULTICA_TOKEN 环境变量 > 用户配置。
 func resolveToken(cmd *cobra.Command) string {
 	if v := strings.TrimSpace(os.Getenv("MULTICA_TOKEN")); v != "" {
 		return v
 	}
-	// Inside a daemon-managed task, never fall back to the user-global config
-	// token: that silent fallback is how agent writes land as the wrong actor.
-	// inDaemonManagedExecutionContext already covers the MULTICA_DAEMON_PORT
-	// signal for subprocesses that lost MULTICA_AGENT_ID / MULTICA_TASK_ID.
+	// daemon 管理的任务内部绝不能静默回退到用户全局配置 token：正是这种静默回退
+	// 会让 agent 的写入落到错误的执行者头上。inDaemonManagedExecutionContext 已
+	// 覆盖丢失 MULTICA_AGENT_ID / MULTICA_TASK_ID 的子进程的 MULTICA_DAEMON_PORT
+	// 信号。
 	if inDaemonManagedExecutionContext() {
 		return ""
 	}
@@ -86,6 +88,8 @@ func resolveToken(cmd *cobra.Command) string {
 	return cfg.Token
 }
 
+// resolveAppURL 解析 App 前端 URL（环境变量优先，其次配置）。取不到时打印引导并
+// os.Exit(1)——浏览器登录流程没有它就走不下去。
 func resolveAppURL(cmd *cobra.Command) string {
 	for _, key := range []string{"MULTICA_APP_URL", "FRONTEND_ORIGIN"} {
 		if val := strings.TrimSpace(os.Getenv(key)); val != "" {
@@ -99,9 +103,11 @@ func resolveAppURL(cmd *cobra.Command) string {
 	}
 	fmt.Fprintln(os.Stderr, "No app URL configured. Run 'multica setup' first.")
 	os.Exit(1)
-	return "" // unreachable
+	return "" // 不可达（上面已 os.Exit）
 }
 
+// openBrowser 用平台默认浏览器打开 URL（darwin: open / linux: xdg-open /
+// windows: rundll32）。
 func openBrowser(url string) error {
 	var cmd string
 	var args []string
@@ -121,16 +127,17 @@ func openBrowser(url string) error {
 	return exec.Command(cmd, args...).Start()
 }
 
+// runAuthLogin 是 `login`/`auth login` 的入口分发：传了 --token 就走 token 直登，
+// 否则走浏览器 OAuth。
 func runAuthLogin(cmd *cobra.Command, args []string) error {
 	if err := requireHumanLocalCommand("login"); err != nil {
 		return err
 	}
 	if cmd.Flags().Changed("token") {
 		tokenFlag, _ := cmd.Flags().GetString("token")
-		// `--token mul_xxx` (space form) is what users actually type — that's
-		// the form from the docs and from #1994. NoOptDefVal prevents pflag
-		// from consuming the next arg as the flag value, so it lands here as
-		// a positional. Promote it to the token value.
+		// `--token mul_xxx`（空格分隔）是用户真实会敲的形态——文档和 #1994 里的
+		// 写法。NoOptDefVal 阻止 pflag 把下一个参数当 flag 值消费，于是它作为位置
+		// 参数落到这里。提升为 token 值。
 		if tokenFlag == tokenPromptSentinel && len(args) == 1 {
 			tokenFlag = args[0]
 		}
@@ -139,47 +146,38 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 	return runAuthLoginBrowser(cmd)
 }
 
-// resolveCallbackBinding picks the host that goes into the `cli_callback`
-// URL and the interface the CLI should bind its local HTTP listener to.
+// resolveCallbackBinding 选出写进 `cli_callback` URL 的主机，以及 CLI 本地 HTTP
+// 监听器绑定的网卡地址。
 //
-// The browser running the login flow is on the *server's* machine (or
-// wherever the user clicked the link), not on the CLI host. That means the
-// callback URL must resolve to an address the browser can actually reach,
-// which is different in each topology:
+// 跑登录流程的浏览器在 *server* 的机器上（或用户点开链接的地方），不在 CLI
+// 主机上。因此回调 URL 必须解析成浏览器真能访问的地址，各拓扑下不同：
 //
-//   - hosted / public app URL: browser and CLI are on the same machine,
-//     localhost works.
-//   - self-host, CLI on server box: same as above.
-//   - self-host, CLI on a different LAN box: the callback URL must point at
-//     the CLI's own LAN IP, not the server's.
-//   - reverse-proxied / FQDN setups: auto-detection can't know the right
-//     host — the user supplies it via --callback-host.
+//   - hosted / 公网 app URL：浏览器与 CLI 同机，localhost 即可。
+//   - 自托管、CLI 在 server 主机上：同上。
+//   - 自托管、CLI 在另一台局域网机器：回调 URL 必须指向 CLI 自己的局域网 IP，
+//     而不是 server 的。
+//   - 反代 / FQDN 场景：自动探测不知道正确主机——由用户经 --callback-host 提供。
 //
-// detectOutbound is injected so tests can exercise the routing decisions
-// without real network calls.
+// detectOutbound 是注入的，让测试不发起真实网络调用也能覆盖路由决策。
 func resolveCallbackBinding(flagHost, serverURL, appURL string, detectOutbound func(string) net.IP) (callbackHost, bindAddr string) {
-	// Explicit flag always wins. Bind on all interfaces so the browser can
-	// reach us regardless of which interface the host name resolves to.
+	// 显式 flag 永远优先。绑定所有网卡，无论主机名落到哪块网卡浏览器都能访问到。
 	if h := strings.TrimSpace(flagHost); h != "" {
 		return h, "0.0.0.0"
 	}
 
 	appIP := urlPrivateIP(appURL)
 	if appIP == nil {
-		// Public hostname, FQDN without private-IP mapping, or parse error.
-		// Loopback is the only safe default — on hosted/public setups the
-		// browser and CLI live on the same machine.
+		// 公网主机名、没有私有 IP 映射的 FQDN，或解析失败。回环是唯一安全默认——
+		// hosted/公网部署里浏览器与 CLI 同机。
 		return "localhost", "127.0.0.1"
 	}
 
-	// app_url is a private LAN IP. Figure out whether the CLI is on that
-	// same box or a different one by asking the kernel which local address
-	// it would use to reach the server. Same box → loopback is fine.
-	// Different box → use the CLI's outbound IP so the browser can reach us.
+	// app_url 是私有局域网 IP。向内核询问去往 server 时会用哪个本地地址，据此判断
+	// CLI 与该 server 同机还是异机。同机 → 回环即可；异机 → 用 CLI 的出站 IP，
+	// 让浏览器能找到我们。
 	cliIP := detectOutbound(serverURL)
 	if cliIP == nil {
-		// Detection failed (offline, unreachable server, etc.). Fall back to
-		// the app IP — preserves the pre-existing same-machine behaviour.
+		// 探测失败（离线、server 不可达等）。回退到 app IP——保持先前同机部署的行为。
 		return appIP.String(), "0.0.0.0"
 	}
 	if cliIP.Equal(appIP) {
@@ -188,8 +186,8 @@ func resolveCallbackBinding(flagHost, serverURL, appURL string, detectOutbound f
 	return cliIP.String(), "0.0.0.0"
 }
 
-// urlPrivateIP returns the hostname of rawURL parsed as an RFC 1918 IP, or
-// nil if the URL is unparsable or the host is not a private literal.
+// urlPrivateIP 把 rawURL 解析后取出主机名；只有它是 RFC 1918 私有字面 IP 才返回，
+// 否则（URL 解析失败或主机不是私有 IP）返回 nil。
 func urlPrivateIP(rawURL string) net.IP {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -202,9 +200,8 @@ func urlPrivateIP(rawURL string) net.IP {
 	return ip
 }
 
-// detectOutboundIP returns the local IPv4 address the OS would use to reach
-// serverURL, or nil if detection fails. The UDP dial does not send packets —
-// it just causes the kernel to pick a source IP for the destination route.
+// detectOutboundIP 返回 OS 去往 serverURL 时会用的本地 IPv4，探测失败返回 nil。
+// UDP dial 并不发包——只是让内核为这条目的路由挑一个源 IP。
 func detectOutboundIP(serverURL string) net.IP {
 	parsed, err := url.Parse(serverURL)
 	if err != nil || parsed.Hostname() == "" {
@@ -227,14 +224,15 @@ func detectOutboundIP(serverURL string) net.IP {
 	if !ok || local.IP == nil {
 		return nil
 	}
-	// Normalise to 4-byte form so Equal() comparisons match net.ParseIP
-	// output consistently.
+	// 归一成 4 字节形态，让 Equal() 与 net.ParseIP 的输出一致可比。
 	if v4 := local.IP.To4(); v4 != nil {
 		return v4
 	}
 	return local.IP
 }
 
+// runAuthLoginBrowser 走浏览器 OAuth：在本机起一个仅回调用的 HTTP 服务，带 CSRF
+// state 的登录 URL 打开浏览器后等待 JWT 回调，随后用它换 PAT 并保存到配置。
 func runAuthLoginBrowser(cmd *cobra.Command) error {
 	serverURL := resolveHumanServerURL(cmd)
 	appURL := resolveAppURL(cmd)
@@ -242,10 +240,9 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 	flagHost := callbackHostFlagValue(cmd)
 	callbackHost, bindAddr := resolveCallbackBinding(flagHost, serverURL, appURL, detectOutboundIP)
 
-	// Pin to "tcp4" — a bare "tcp" on macOS can produce an IPv6-only socket
-	// that IPv4 clients (including browsers resolving localhost → 127.0.0.1)
-	// cannot reach. The callback URL is always an IPv4 literal or hostname,
-	// so an IPv4 listener is what the browser actually needs.
+	// 钉到 "tcp4"：macOS 上裸 "tcp" 可能产出纯 IPv6 的 socket，IPv4 客户端
+	// （包括把 localhost 解析成 127.0.0.1 的浏览器）连不上。回调 URL 永远是 IPv4
+	// 字面量或主机名，IPv4 监听器正是浏览器需要的。
 	listener, err := net.Listen("tcp4", bindAddr+":0")
 	if err != nil {
 		return fmt.Errorf("could not start the local login callback server (used to receive the browser sign-in); a firewall or another process may be blocking local ports: %w", err)
@@ -255,7 +252,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 	port := listener.Addr().(*net.TCPAddr).Port
 	callbackURL := fmt.Sprintf("http://%s:%d/callback", callbackHost, port)
 
-	// Generate a random state parameter for CSRF protection.
+	// 为 CSRF 防护生成随机 state 参数。
 	stateBytes := make([]byte, 16)
 	if _, err := rand.Read(stateBytes); err != nil {
 		return fmt.Errorf("failed to generate state: %w", err)
@@ -264,7 +261,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 
 	loginURL := fmt.Sprintf("%s/login?cli_callback=%s&cli_state=%s", appURL, url.QueryEscape(callbackURL), url.QueryEscape(state))
 
-	// Channel to receive the JWT from the browser callback.
+	// 接收浏览器回调 JWT 的通道。
 	jwtCh := make(chan string, 1)
 	errCh := make(chan error, 1)
 
@@ -293,14 +290,14 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 	}()
 	defer srv.Close()
 
-	// Open the browser.
+	// 打开浏览器。
 	fmt.Fprintln(os.Stderr, "Opening browser to authenticate...")
 	if err := openBrowser(loginURL); err != nil {
 		fmt.Fprintf(os.Stderr, "Could not open browser automatically.\n")
 	}
 	fmt.Fprint(os.Stderr, browserLoginInstructions(loginURL, callbackHost, port, runningInSSHSession()))
 
-	// Wait for the JWT from the callback (timeout 5 minutes).
+	// 等回调带回 JWT（5 分钟超时）。
 	var jwtToken string
 	select {
 	case jwtToken = <-jwtCh:
@@ -310,7 +307,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 		return fmt.Errorf("timed out waiting for authentication")
 	}
 
-	// Use the JWT to create a PAT via the existing API.
+	// 用 JWT 走既有 API 换一个 PAT。
 	client := cli.NewAPIClient(serverURL, "", jwtToken)
 
 	ctx, cancel := cli.APIContext(context.Background())
@@ -334,7 +331,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 		return cli.WithUserMessage("Sign-in did not complete: the server could not issue an access token for the CLI. Run `multica login` again.", err)
 	}
 
-	// Verify the PAT works.
+	// 验证 PAT 可用。
 	patClient := cli.NewAPIClient(serverURL, "", patResp.Token)
 	var me struct {
 		Name  string `json:"name"`
@@ -344,8 +341,8 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 		return cli.WithUserMessage("Sign-in did not complete: the server did not accept the new credential. Run `multica login` again.", err)
 	}
 
-	// Save to config. Reset workspace data on every login — the user or
-	// server may have changed, so stale workspaces must not persist.
+	// 保存进配置。每次登录都清掉工作区数据——用户或 server 可能已变，过期的工作区
+	// 不该残留。
 	profile := resolveProfile(cmd)
 	cfg, _ := cli.LoadCLIConfigForProfile(profile)
 	cfg.WorkspaceID = ""
@@ -360,6 +357,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 	return nil
 }
 
+// runningInSSHSession 判断当前是否在 SSH 会话里（用于给用户加端口转发提示）。
 func runningInSSHSession() bool {
 	for _, key := range []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"} {
 		if strings.TrimSpace(os.Getenv(key)) != "" {
@@ -369,6 +367,7 @@ func runningInSSHSession() bool {
 	return false
 }
 
+// callbackHostFlagValue 从命令链（含父命令与继承 flag）里找 --callback-host 的值。
 func callbackHostFlagValue(cmd *cobra.Command) string {
 	for c := cmd; c != nil; c = c.Parent() {
 		if value := nonEmptyFlagValue(c.Flags(), callbackHostFlag); value != "" {
@@ -384,6 +383,7 @@ func callbackHostFlagValue(cmd *cobra.Command) string {
 	return ""
 }
 
+// nonEmptyFlagValue 取 flag 的非空字符串值。
 func nonEmptyFlagValue(flags *pflag.FlagSet, name string) string {
 	if flag := flags.Lookup(name); flag != nil {
 		return strings.TrimSpace(flag.Value.String())
@@ -391,6 +391,7 @@ func nonEmptyFlagValue(flags *pflag.FlagSet, name string) string {
 	return ""
 }
 
+// callbackHostIsLoopback 判断回调主机是否指向回环（localhost 或回环 IP）。
 func callbackHostIsLoopback(host string) bool {
 	h := strings.Trim(strings.TrimSpace(host), "[]")
 	if h == "localhost" {
@@ -400,6 +401,8 @@ func callbackHostIsLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// browserLoginInstructions 拼浏览器登录的指引文本：URL 之外，SSH 会话且回调是
+// 回环时附上 `ssh -L` 端口转发命令，否则浏览器根本够不到 CLI 的回调端口。
 func browserLoginInstructions(loginURL, callbackHost string, port int, remoteSSH bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "If the browser didn't open, visit:\n  %s\n", loginURL)
@@ -410,10 +413,11 @@ func browserLoginInstructions(loginURL, callbackHost string, port int, remoteSSH
 	return b.String()
 }
 
+// runAuthLoginToken 走 token 直登：providedToken 为空（或等于 prompt sentinel）时
+// 交互式读取；前缀不合法即拒；用 token 验证 /api/me 后写入配置。
 func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
-	// The prompt sentinel is what pflag substitutes for `--token` with no
-	// value (see loginCmd init); treat it the same as an empty string so we
-	// fall through to the interactive prompt.
+	// prompt sentinel 是 pflag 给无值的 `--token` 换上的东西（见 loginCmd init）；
+	// 把它当空串处理，落到下面的交互提示。
 	if providedToken == tokenPromptSentinel {
 		providedToken = ""
 	}
@@ -463,6 +467,9 @@ func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
 	return nil
 }
 
+// runAuthStatus 执行 `auth status`：展示登录状态。任务上下文强制要求 mat_ 前缀的
+// 任务级 token；未登录或 token 失效都给明确的下一步指引（不返回错误——「未认证」
+// 本身是合法状态）。
 func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	if err := requireTaskLocalConfigRoot(); err != nil {
 		return err
@@ -545,6 +552,7 @@ const callbackSuccessHTML = `<!DOCTYPE html>
 </body>
 </html>`
 
+// runAuthLogout 执行 `auth logout`：清掉本机配置里的 token。
 func runAuthLogout(cmd *cobra.Command, _ []string) error {
 	if err := requireHumanLocalCommand("logout"); err != nil {
 		return err

@@ -1,7 +1,11 @@
+// 本文件定义「议题执行详情」相关类型：单个议题从任务、消息、trace 事件、
+// 工具调用链到执行树/时间线的完整展开结构。
+
 import type { AgentTask } from "./agent";
 import type { TaskMessagePayload } from "./events";
 import type { Issue } from "./issue";
 
+/** 任务执行过程中的一条 trace 事件（某次模型调用的阶段记录）。 */
 export interface TaskTraceEvent {
   id: string;
   task_id: string;
@@ -27,6 +31,7 @@ export interface TaskTraceEvent {
   created_at: string;
 }
 
+/** 一次 agent 工具调用的请求/响应链。 */
 export interface ToolCallChain {
   id: string;
   task_id?: string;
@@ -43,6 +48,7 @@ export interface ToolCallChain {
   completed_at?: string;
 }
 
+/** 任务产出的一份文件（artifact）。 */
 export interface AgentTaskArtifact {
   id: string;
   filename: string;
@@ -53,6 +59,7 @@ export interface AgentTaskArtifact {
   created_at: string;
 }
 
+/** 执行树里的一个节点：一个议题 + 其任务与全部执行细节，外加子议题递归。 */
 export interface IssueExecutionNode {
   issue: Issue;
   tasks: AgentTask[];
@@ -62,6 +69,7 @@ export interface IssueExecutionNode {
   children: IssueExecutionNode[];
 }
 
+/** 议题时间线上的节点类型。 */
 type IssueTimelineNodeType =
   | "agent_task"
   | "squad_step"
@@ -74,6 +82,7 @@ type IssueTimelineNodeType =
   | "source_fetch"
   | "status_change";
 
+/** 议题时间线上的单个节点（按执行阶段折叠成的展示单元）。 */
 export interface IssueTimelineNode {
   root_task_id?: string;
   node_id: string;
@@ -98,6 +107,7 @@ export interface IssueTimelineNode {
   artifacts?: AgentTaskArtifact[];
 }
 
+/** 议题整次执行的时间线汇总指标。 */
 export interface IssueTimelineSummary {
   total_duration_ms: number;
   agent_execution_duration_ms?: number;
@@ -112,6 +122,7 @@ export interface IssueTimelineSummary {
   acceptance_status: string;
 }
 
+/** 议题执行树接口响应：根节点 + 汇总 + 可选时间线。 */
 export interface IssueExecutionTreeResponse {
   root: IssueExecutionNode;
   summary: Record<string, number>;

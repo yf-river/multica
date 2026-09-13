@@ -1,3 +1,7 @@
+// 本文件实现「从源头刷新技能」端点：按技能存储的 config.origin 溯源重新下载并
+// 就地覆盖。来源 URL 钉在技能自身（管理源不可注入任意内容），资格校验发生在任何
+// 网络请求之前（不给越权调用者烧 45s 抓取预算）。身份/绑定保留，正文与文件换成
+// 上游最新状态。
 package handler
 
 import (
@@ -14,19 +18,19 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// errSkillNotRefreshable marks a skill whose stored provenance cannot be
-// re-fetched: manual skills, archive uploads (no origin), runtime-local
-// copies, or a hand-edited origin whose source_url no longer matches its type.
+// errSkillNotRefreshable 标记一个「存储溯源无法再抓取」的技能：手工创建的技能、
+// 归档上传（没有 origin）、runtime-local 副本，或来源 URL 与其类型不再匹配的
+// 手工编辑 origin。
 var errSkillNotRefreshable = errors.New("this skill was not imported from a refreshable source (GitHub, skills.sh, or ClawHub)")
 
-// skillOriginRef is the minimal provenance needed to re-run an import.
+// skillOriginRef 是重跑一次导入所需的最小溯源信息。
 type skillOriginRef struct {
 	Type      string
 	SourceURL string
 }
 
-// parseSkillOrigin extracts config.origin.{type,source_url} from a skill's
-// JSONB config blob. ok is false when config has no decodable origin object.
+// parseSkillOrigin 从技能的 JSONB config 块里解出 config.origin.{type,source_url}。
+// config 中没有可解码的 origin 对象时 ok=false。
 func parseSkillOrigin(config []byte) (skillOriginRef, bool) {
 	if len(config) == 0 {
 		return skillOriginRef{}, false
@@ -49,9 +53,9 @@ func parseSkillOrigin(config []byte) (skillOriginRef, bool) {
 	}, true
 }
 
-// refreshableOriginSource maps a stored origin type onto the importSource its
-// source_url must resolve to. ok is false for origins that cannot be
-// re-fetched (manual, runtime_local, archive uploads).
+// refreshableOriginSource 把存储的 origin 类型映射到它的 source_url 必须解析到
+// 的 importSource。无法重抓的 origin（manual、runtime_local、归档上传）返回
+// ok=false。
 func refreshableOriginSource(originType string) (importSource, bool) {
 	switch originType {
 	case "github":
@@ -65,11 +69,10 @@ func refreshableOriginSource(originType string) (importSource, bool) {
 	}
 }
 
-// fetchImportedSkillFromOrigin re-runs the import fetch for a skill's stored
-// provenance. Eligibility is validated before any network call: a
-// non-refreshable origin type, an empty source_url, or a source_url that does
-// not resolve to the origin's own source (hand-edited config) all return
-// errSkillNotRefreshable without contacting the upstream.
+// fetchImportedSkillFromOrigin 按技能存储的溯源重跑一次导入抓取。任何网络调用前
+// 先校验资格：不可刷新的 origin 类型、空的 source_url、或 source_url 解析不到该
+// origin 自己的来源（手工改过的 config）都会在不触达上游的情况下返回
+// errSkillNotRefreshable。
 func fetchImportedSkillFromOrigin(ctx context.Context, httpClient *http.Client, origin skillOriginRef) (*importedSkill, error) {
 	expected, ok := refreshableOriginSource(origin.Type)
 	if !ok || origin.SourceURL == "" {
@@ -90,10 +93,9 @@ func fetchImportedSkillFromOrigin(ctx context.Context, httpClient *http.Client, 
 	return nil, errSkillNotRefreshable
 }
 
-// mergeSkillConfigOrigin rewrites only the origin key of a skill's config,
-// preserving any other keys a user may have set via the API or CLI. This is
-// deliberately narrower than the import-overwrite path, which replaces config
-// wholesale: refresh touches provenance, not user configuration.
+// mergeSkillConfigOrigin 只改写技能 config 的 origin 键，保留用户可能经 API/CLI
+// 设置的任何其它键。这刻意比「导入即整体覆盖」的路径更窄：刷新只动溯源，不碰
+// 用户配置。
 func mergeSkillConfigOrigin(existingConfig []byte, origin map[string]any) map[string]any {
 	config := map[string]any{}
 	if len(existingConfig) > 0 {
@@ -108,13 +110,11 @@ func mergeSkillConfigOrigin(existingConfig []byte, origin map[string]any) map[st
 	return config
 }
 
-// RefreshSkill re-downloads a skill from its stored config.origin source and
-// overwrites the skill in place. Identity (id, created_by, created_at) and
-// agent_skill bindings are preserved; name, description, content, files, and
-// config.origin are replaced with the fresh upstream state. Unlike the
-// creator-only import-overwrite path, refresh follows the canManageSkill
-// policy (workspace owner/admin or creator): the source URL is pinned on the
-// skill itself, so a refreshing admin cannot inject arbitrary content.
+// RefreshSkill 从技能存储的 config.origin 源重新下载并就地覆盖技能。身份
+// （id、created_by、created_at）与 agent_skill 绑定保留；name、description、
+// content、files、config.origin 替换为上游最新状态。与仅限创建者的导入覆盖路径
+// 不同，刷新走 canManageSkill 策略（工作区 owner/admin 或创建者）：来源 URL 钉在
+// 技能自身，因此刷新的 admin 无法注入任意内容。
 func (h *Handler) RefreshSkill(w http.ResponseWriter, r *http.Request) {
 	skill, ok := h.loadSkillForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
@@ -125,9 +125,8 @@ func (h *Handler) RefreshSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Permission before any upstream fetch, so a forbidden caller cannot burn
-	// the 45s fetch budget. Mirrors canManageSkill, keeping the member row to
-	// re-check permission inside the overwrite transaction.
+	// 任何上游抓取之前先做权限校验，越权调用者烧不掉 45s 的抓取预算。镜像
+	// canManageSkill，保留 member 行用于在覆盖事务内复查权限。
 	workspaceID := uuidToString(skill.WorkspaceID)
 	member, ok := h.requireWorkspaceRole(w, r, workspaceID, "skill not found", "owner", "admin", "member")
 	if !ok {

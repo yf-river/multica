@@ -4,30 +4,23 @@ import { useCallback } from "react";
 import { useNavigation } from "./context";
 
 /**
- * Leave a page whose subject no longer exists, returning the user to wherever
- * they came from.
+ * navigation 模块：离开「主体已不存在」的页面，把用户送回他来的地方。
  *
- * Deleting an issue from its detail page is the canonical case: the user may
- * have opened it from My Issues, a project's list, a search result or a pin,
- * and every one of those is a better destination than a hardcoded workspace
- * list. Going back is the only thing that knows which — no caller has to
- * thread a "source view" through the URL or a store.
+ * 从详情页删除一个 issue 就是典型场景：用户可能是从 My Issues、项目列表、
+ * 搜索结果或置顶项进来的，而每一条都比写死的工作区列表更好的目的地。「后退」
+ * 是唯一知道是哪个的来源——调用方不必把「来源视图」穿过 URL 或 store 传下来。
  *
- * `fallback` covers the case where there is nothing to go back to: a shared
- * link opened cold, a new tab, a pasted URL. Stepping back from those would
- * leave Multica entirely, so we navigate to `fallback` instead.
+ * `fallback` 覆盖「无可后退」的情况：冷打开的分享链接、新标签页、粘贴的
+ * URL。从这些地方后退会整个离开 Multica，所以改为导航到 `fallback`。
  *
- * It also covers every platform that cannot answer the question — the desktop
- * issue window, test stubs, and browsers with no Navigation API. That branch
- * is the behaviour those surfaces had before this hook existed, so a platform
- * going quiet costs the user a better destination and nothing more. Only ever
- * answer `canGoBack` from something that knows; a hopeful guess here is what
- * puts a user outside the app.
+ * 它同样覆盖所有回答不了该问题的平台——桌面端 issue 窗口、测试桩、以及没有
+ * Navigation API 的浏览器。那个分支正是这些界面在本 hook 出现前的行为，所以
+ * 平台一旦沉默，用户损失只是一个更好的目的地，仅此而已。`canGoBack` 只能由
+ * 真正知道答案的东西来回答；这里抱乐观乱猜，就会把用户带出应用。
  *
- * Never `push`: the page we are leaving is dead, so its URL must not be left
- * on the back stack for the back button to land on a 404. Stepping back still
- * leaves it ahead of us in forward history — that is the browser's own
- * contract, and reachable only by an explicit Forward.
+ * 永远不 `push`：我们离开的页面已经死了，它的 URL 不能留在返回栈上让返回键
+ * 落进一个 404。后退仍会把它留在我们前方的历史里——那是浏览器自己的契约，
+ * 只有显式 Forward 才够得着。
  */
 export function useBackOrReplace(): (fallback: string) => void {
   const { back, replace, canGoBack } = useNavigation();

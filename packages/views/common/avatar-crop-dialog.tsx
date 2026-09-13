@@ -1,3 +1,4 @@
+// 头像裁剪对话框：对选中的图片进行拖拽/缩放/旋转，套在圆形裁剪框内预览，确认后输出固定尺寸的方形头像文件。
 "use client";
 
 import { useEffect, useState } from "react";
@@ -25,25 +26,30 @@ const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.1;
 
 interface AvatarCropDialogProps {
-  /** The picked source file. `null` keeps the dialog empty. */
+  /** 选中的源文件，`null` 时对话框保持空白。 */
   file: File | null;
+  /** 是否打开对话框。 */
   open: boolean;
-  /** Parent's upload/save is in flight — locks the controls and blocks close. */
+  /** 父级的上传/保存正在进行中——锁定控件并阻止关闭。 */
   busy?: boolean;
+  /** 打开状态变化回调。 */
   onOpenChange: (open: boolean) => void;
-  /** Fires with the cropped, compressed file. The parent uploads + persists. */
+  /** 裁剪并压缩完成后触发，父级负责上传和持久化。 */
   onCropped: (file: File) => void;
 }
 
 /**
- * Avatar cropper. The image pans/zooms/rotates beneath a fixed round crop
- * window; everything outside the window is dimmed. Output is a square {@link
- * AVATAR_OUTPUT_SIZE}px image — the round mask is display-only, never baked
- * into the pixels.
+ * 头像裁剪器。图片在固定的圆形裁剪窗口下方平移/缩放/旋转，窗口外的区域
+ * 变暗。输出是一张 {@link AVATAR_OUTPUT_SIZE} 像素的方形图片——圆形遮罩只是
+ * 展示效果，绝不会写入像素。
  *
- * Interaction (drag / zoom / rotate + the dim overlay) is delegated to
- * react-easy-crop; this component owns the chrome (header, zoom slider, rotate
- * / reset controls) and the encode/upload handoff.
+ * 交互（拖拽 / 缩放 / 旋转 + 变暗遮罩）委托给 react-easy-crop；本组件只负责
+ * 外框（标题、缩放滑杆、旋转/重置控件）和编码/上传的交接。
+ * @param file 要裁剪的源文件。
+ * @param open 是否打开。
+ * @param busy 上传中标识，锁控件并阻止关闭。
+ * @param onOpenChange 打开状态变化回调。
+ * @param onCropped 裁剪完成回调。
  */
 export function AvatarCropDialog({
   file,
@@ -62,8 +68,8 @@ export function AvatarCropDialog({
   );
   const [loadError, setLoadError] = useState(false);
 
-  // One object URL per picked file, alive for the dialog's lifetime; reset the
-  // transform so a new pick starts centered and unrotated.
+  // 每个选中文件对应一个 object URL，在对话框存续期间有效；重置变换，
+  // 让新选中的图片从居中、未旋转的状态开始。
   useEffect(() => {
     if (!file) {
       setObjectUrl(null);
@@ -96,8 +102,7 @@ export function AvatarCropDialog({
         output: AVATAR_OUTPUT_SIZE,
         type,
         quality,
-        // JPEG has no alpha; give transparent/rotated corners a white bed
-        // instead of the canvas default black.
+        // JPEG 没有透明通道；给透明/旋转后的角落铺白色底，而不是画布默认的黑色。
         background: type === "image/jpeg" ? "#ffffff" : undefined,
       });
       onCropped(blobToAvatarFile(blob, file.name, type));
@@ -112,7 +117,7 @@ export function AvatarCropDialog({
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        // Never let a close slip through while an upload is committing.
+        // 上传提交期间绝不允许关闭对话框。
         if (busy) return;
         onOpenChange(next);
       }}

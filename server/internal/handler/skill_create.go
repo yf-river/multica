@@ -1,3 +1,8 @@
+// 本文件是技能创建的底层原语：createSkillWithFiles（自带事务的独立创建）与
+// overwriteSkillWithFiles（单事务内把资源包「重导入」到既有技能上）。两者都落
+// skill:created / skill:updated 域事件。覆盖路径在锁内复查目标技能仍存在、调用者
+// 仍有覆盖权（默认仅创建者），并把错误分类为 NOT_FOUND / FORBIDDEN /
+// NAME_MISMATCH / NAME_CONFLICT，绝不回退成新建。
 package handler
 
 import (
@@ -14,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// skillCreateInput 是一次技能创建所需的全部入参（不含事务）。
 type skillCreateInput struct {
 	WorkspaceID pgtype.UUID
 	CreatorID   pgtype.UUID
@@ -24,11 +30,10 @@ type skillCreateInput struct {
 	Files       []CreateSkillFileRequest
 }
 
-// createSkillWithFilesInTx writes a skill plus its supporting files using the
-// provided sqlc Queries handle, which must already be bound to an open
-// transaction. Callers compose skill creation with other writes (e.g. agent
-// template materialization) inside one outer transaction. For standalone
-// skill creation, prefer createSkillWithFiles, which manages its own tx.
+// createSkillWithFilesInTx 用给定的 sqlc Queries 句柄写一个技能及其附带文件，该
+// 句柄必须已绑定到一个打开的事务上。调用方把技能创建与其它写入（例如 agent
+// 模板落地）组合进同一个外层事务。独立创建技能请用自管事务的
+// createSkillWithFiles。
 func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillCreateInput) (SkillWithFilesResponse, error) {
 	config, err := json.Marshal(input.Config)
 	if err != nil {
@@ -52,8 +57,8 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 
 	fileResps := make([]SkillFileResponse, 0, len(input.Files))
 	for _, f := range input.Files {
-		// SKILL.md is reserved for the primary skill content (skill.Content).
-		// Supporting files must carry additional assets, not duplicate the main file.
+		// SKILL.md 预留给主技能正文（skill.Content）。附带文件必须承载额外素材，
+		// 而不是复制主文件。
 		if skillpkg.IsReservedContentPath(f.Path) {
 			continue
 		}
@@ -75,6 +80,7 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 }
 
 func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInput) (SkillWithFilesResponse, error) {
+	// 独立创建的默认入口：自管事务，成功则广播 skill:created 事件。
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
@@ -110,11 +116,9 @@ func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInp
 	return result, nil
 }
 
-// errSkillOverwriteNotFound / errSkillOverwriteForbidden are the terminal
-// boundary cases of overwriteSkillWithFiles: the target was deleted (or moved
-// out of the workspace) or the caller lost overwrite permission between the
-// user's confirm and this write. Callers map them to a failed import and must
-// NOT fall back to creating a new skill.
+// errSkillOverwriteNotFound / errSkillOverwriteForbidden 是
+// overwriteSkillWithFiles 的终态边界：目标被删除（或移出工作区）、或调用者在这
+// 次写入前丢掉了覆盖权。调用方把它们映射为导入失败，绝不能回退去新建技能。
 var (
 	errSkillOverwriteNotFound     = errors.New("target skill not found")
 	errSkillOverwriteForbidden    = errors.New("not permitted to overwrite target skill")
@@ -122,21 +126,20 @@ var (
 	errSkillOverwriteNameConflict = errors.New("another skill in the workspace already has the imported name")
 )
 
+// skillOverwriteInput 是一次「覆盖既有技能」所需的全部入参。
 type skillOverwriteInput struct {
 	WorkspaceID   pgtype.UUID
 	TargetSkillID pgtype.UUID
 	UserID        string // re-checked against the skill creator inside the tx
-	// ExpectedName, when non-empty, must equal the target's current name. Guards
-	// against a client sending the wrong target_skill_id and overwriting a
-	// different skill than the one the conflict dialog showed the user. The
-	// caller passes the sanitized effective import name.
+	// ExpectedName 非空时必须等于目标当前名。防止客户端发错 target_skill_id、把
+	// 与冲突对话框展示的技能不同的那个给覆盖了。调用方传入清洗后的有效导入名。
 	ExpectedName string
-	// NewName, when non-empty, renames the target to the imported skill's name.
-	// A collision with another skill in the workspace (UNIQUE(workspace_id,
-	// name)) fails the whole overwrite with errSkillOverwriteNameConflict.
+	// NewName 非空时把目标改名为导入技能的名字。与工作区内另一技能撞名
+	// （UNIQUE(workspace_id, name)）会让整个覆盖以 errSkillOverwriteNameConflict
+	// 失败。
 	NewName string
-	// AllowOverwrite overrides the in-tx permission recheck. Nil keeps the
-	// default creator-only policy (canOverwriteSkillByLocalImport).
+	// AllowOverwrite 覆盖事务内的权限复查。为 nil 时保持默认的仅创建者策略
+	// （canOverwriteSkillByLocalImport）。
 	AllowOverwrite func(userID string, skill db.Skill) bool
 	Description    string
 	Content        string
@@ -144,18 +147,16 @@ type skillOverwriteInput struct {
 	Files          []CreateSkillFileRequest
 }
 
-// overwriteSkillWithFiles re-imports a bundle onto an existing skill in a single
-// transaction. It re-verifies, inside that tx, that the target still exists in
-// the workspace and that UserID may overwrite it (creator-only — see
-// canOverwriteSkillByLocalImport). A target deleted or a creator change between
-// the user's confirm and this write fails cleanly via errSkillOverwriteNotFound
-// / errSkillOverwriteForbidden rather than falling back to create.
+// overwriteSkillWithFiles 在单事务内把资源包重新导入到既有技能上。它在该事务
+// 内复查目标仍存在于工作区、且 UserID 有权覆盖（仅创建者——见
+// canOverwriteSkillByLocalImport）。若用户确认到本次写入之间目标被删或创建者
+// 变了，则以 errSkillOverwriteNotFound / errSkillOverwriteForbidden 干净失败，
+// 而不是回退去新建。
 //
-// Preserved: id, created_by, created_at, name, and agent_skill bindings (the
-// row identity and the binding table are never touched). Replaced: description,
-// content, config (origin), and the full file set — files absent from the new
-// bundle are pruned via DeleteSkillFilesBySkill. On any error the tx rolls back,
-// leaving the original skill unchanged.
+// 保留：id、created_by、created_at、name 与 agent_skill 绑定（行身份与绑定表
+// 从不触碰）。替换：description、content、config（origin）与整个文件集合——新
+// 包里缺席的文件经 DeleteSkillFilesBySkill 修剪。任何错误都回滚事务，原技能保持
+// 不变。
 func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwriteInput) (SkillWithFilesResponse, error) {
 	config, err := json.Marshal(input.Config)
 	if err != nil {
@@ -190,18 +191,15 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	if !allowOverwrite(input.UserID, existing) {
 		return SkillWithFilesResponse{}, errSkillOverwriteForbidden
 	}
-	// The overwrite is keyed on target_skill_id, but the conflict the user
-	// confirmed was a same-name collision; reject if the target's name no longer
-	// matches the imported skill so a stale/wrong target_skill_id can't write
-	// one skill's content onto another.
+	// 覆盖以 target_skill_id 为键，但用户确认的冲突是同名碰撞；若目标名已不再
+	// 匹配导入技能就拒绝——过期/错误的 target_skill_id 不能把一个技能的内容写进
+	// 另一个。
 	if input.ExpectedName != "" && existing.Name != input.ExpectedName {
 		return SkillWithFilesResponse{}, errSkillOverwriteNameMismatch
 	}
 
-	// Name stays unset by default (COALESCE keeps the existing name): the
-	// import-conflict overwrite targets the same-name skill, so preserving it
-	// avoids any unique-name churn. Refresh-from-source passes NewName to adopt
-	// an upstream rename.
+	// name 默认保持未设置（COALESCE 保留现有名）：导入冲突覆盖瞄准的就是同名
+	// 技能，保留它避免任何唯一名抖动。从源头刷新会传 NewName 来采纳上游改名。
 	var newName pgtype.Text
 	if n := sanitizeNullBytes(input.NewName); n != "" && n != existing.Name {
 		newName = pgtype.Text{String: n, Valid: true}
@@ -214,9 +212,9 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 		Config:      config,
 	})
 	if err != nil {
-		// A committed concurrent DELETE can land between the read above and this
-		// UPDATE (READ COMMITTED), so UpdateSkill matches 0 rows. Classify it as
-		// the same "target gone" terminal case rather than a generic failure.
+		// 已提交的并发 DELETE 可能落在上面的读与本次 UPDATE 之间（READ
+		// COMMITTED），使 UpdateSkill 匹配 0 行。把它归类为同样的「目标已消失」
+		// 终态，而不是笼统失败。
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SkillWithFilesResponse{}, errSkillOverwriteNotFound
 		}
@@ -226,8 +224,8 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 		return SkillWithFilesResponse{}, err
 	}
 
-	// Full replace: drop every existing file, then re-insert the new set so
-	// files no longer present in the local source are removed.
+	// 整体替换：先清空全部既有文件，再重插新集合——本地源中已缺席的文件随之
+	// 移除。
 	if err := qtx.DeleteSkillFilesBySkill(ctx, skill.ID); err != nil {
 		return SkillWithFilesResponse{}, err
 	}

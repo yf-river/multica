@@ -1,15 +1,14 @@
-// Package plugincontract defines the versioned public contract between plugin
-// authors and the Multica host. It must stay independent from private handlers,
-// services, and database implementations.
+// Package plugincontract 定义插件作者与 Multica host 之间带版本的公共契约。
+// 它必须与私有 handler、service 和数据库实现保持独立。
 //
-// A plugin relates to Multica in exactly three ways:
+// 插件与 Multica 的关系恰好有三种：
 //
-//   - Action   (plugin -> Multica): host capabilities the plugin calls.
-//   - Hook     (Multica -> plugin): plugin capabilities the host calls.
-//   - Resource (no call at all):    static contributions such as skill text.
+//   - Action   (plugin -> Multica)：插件调用 host 的能力。
+//   - Hook     (Multica -> plugin)：host 调用插件的能力。
+//   - Resource (双向都不调用)：    静态贡献，如 skill 文本。
 //
-// "Who triggers" and "what capability is called" are orthogonal: a hook is
-// declared once and may be invoked by any of the triggers it opts into.
+// 「谁触发」与「调用什么能力」是正交的：hook 只声明一次，可被它选择加入的
+// 任意 trigger 调用。
 package plugincontract
 
 import (
@@ -26,29 +25,28 @@ import (
 )
 
 const (
-	// ManifestVersion1 is the only manifest version this host understands.
+	// ManifestVersion1 是本 host 认识的唯一 manifest 版本。
 	ManifestVersion1 = 1
 
-	// ManifestFilename is the conventional file name inside a plugin package.
+	// ManifestFilename 是插件包内约定的清单文件名。
 	ManifestFilename = "multica.plugin.json"
 
-	// MaxManifestSize bounds a fetched manifest before it is parsed.
+	// MaxManifestSize 限制拉取到的 manifest 在解析前的字节数。
 	MaxManifestSize = 1 << 20
 
-	// MaxVersionLength mirrors the plugin_installation.version column bound.
+	// MaxVersionLength 对齐 plugin_installation.version 列的宽度上限。
 	MaxVersionLength = 64
 )
 
-// Surface types. A surface is an iframe the host mounts at a fixed location.
+// Surface 类型。surface 是 host 在固定位置挂载的一个 iframe。
 const (
 	SurfaceIssuePanel   = "issue_panel"
 	SurfaceSidebarPanel = "sidebar_panel"
 	SurfaceModal        = "modal"
 )
 
-// Hook triggers. Declaring a trigger says who may invoke the hook, never what
-// the hook does. `event` and `schedule` are asynchronous, and neither blocks a
-// user-facing host request.
+// Hook 的 trigger。声明 trigger 说的是「谁可以调用这个 hook」，而不是 hook 干
+// 什么。`event` 与 `schedule` 是异步的，都不会阻塞面向用户的 host 请求。
 const (
 	TriggerUI       = "ui"
 	TriggerManual   = "manual"
@@ -57,27 +55,27 @@ const (
 	TriggerSchedule = "schedule"
 )
 
-// Scheduled hooks are a polling primitive, not a high-frequency timer. The
-// floor keeps one installation from turning its manifest into an unbounded
-// source of outbound traffic and leaves enough room for the HTTP timeout plus
-// durable retries before the next plan becomes due.
+// 定时 hook 是一种轮询原语，不是高频定时器。这个下限既能防止某个安装把它的
+// manifest 变成无限出站流量的来源，也留出了 HTTP 超时加可靠重试的空间，
+// 不至于下一次执行已经到期。
 const MinimumScheduleInterval = 5 * time.Minute
 
+// scheduleCronParser 只接受标准 5 段 cron（分/时/日/月/周），拒绝秒级写法。
 var scheduleCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
-// Hook transports.
+// Hook 的传输方式。
 const (
 	TransportHTTP = "http"
 	TransportMCP  = "mcp"
 )
 
-// Resource types. Resources involve no call in either direction.
+// Resource 类型。resource 两个方向都不产生调用。
 const (
 	ResourceSkill = "skill"
 )
 
-// Config field types. This is a deliberately small subset of JSON Schema: the
-// host renders the configuration form from it, so plugins never ship form UI.
+// 配置字段类型。这是 JSON Schema 的一个刻意很小的子集：host 要根据它渲染配置
+// 表单，所以插件永远不需要自带表单 UI。
 const (
 	ConfigString = "string"
 	ConfigNumber = "number"
@@ -86,8 +84,8 @@ const (
 	ConfigSecret = "secret"
 )
 
-// Scopes. This list is complete and closed; anything else is rejected at parse
-// time. `net:<domain>` is the only parameterized form.
+// Scopes。这份清单完整且封闭；其它任何值都会在解析期被拒绝。
+// `net:<domain>` 是唯一带参数的形式。
 const (
 	ScopeIssuesRead       = "issues:read"
 	ScopeIssuesWrite      = "issues:write"
@@ -100,12 +98,12 @@ const (
 	ScopeStorageUser      = "storage:user"
 	ScopeStorageWorkspace = "storage:workspace"
 
-	// ScopeNetPrefix guards outbound network access: both the iframe CSP
-	// connect-src allowlist and the hook transport host check derive from it.
+	// ScopeNetPrefix 管辖插件出站网络：iframe 的 CSP connect-src 白名单与
+	// hook 传输层的 host 检查都从它推导。
 	ScopeNetPrefix = "net:"
 )
 
-// Product events an `event`-triggered hook may subscribe to.
+// 一个以 `event` 触发的 hook 可以订阅的产品事件。
 const (
 	EventIssueCreated       = "issue.created"
 	EventIssueUpdated       = "issue.updated"
@@ -116,6 +114,7 @@ const (
 	EventTaskFailed         = "task.failed"
 )
 
+// fixedScopes 是不带参数的全部固定 scope。
 var fixedScopes = map[string]bool{
 	ScopeIssuesRead:       true,
 	ScopeIssuesWrite:      true,
@@ -138,8 +137,7 @@ func hasScope(scopes []string, want string) bool {
 	return false
 }
 
-// eventReadScope maps each event onto the scope a plugin would have needed to
-// read the same content through the Action API.
+// eventReadScope 把每个事件映射到「想通过 Action API 读同一份内容所需的 scope」。
 var eventReadScope = map[string]string{
 	EventIssueCreated:       ScopeIssuesRead,
 	EventIssueUpdated:       ScopeIssuesRead,
@@ -160,11 +158,15 @@ var knownEvents = map[string]bool{
 	EventTaskFailed:         true,
 }
 
-// IsKnownEvent reports whether an event may be subscribed to by a manifest.
-// Exported so the dispatcher cannot publish an event no plugin could ever
-// receive — the two lists have to agree, and only one of them is authoritative.
+// IsKnownEvent 报告某个事件是否可被 manifest 订阅。导出它，是为了让分发器
+// 不可能发布一个任何插件都收不到的事件——两份清单必须一致，而其中只有一份
+// 是权威的。
 func IsKnownEvent(event string) bool { return knownEvents[event] }
 
+// 校验用正则。pluginKeySegmentPattern 允许小写字母数字加连字符的反向 DNS 段；
+// contributionKeyPattern 允许带连字符/下划线的贡献 key；semverPattern 是
+// 宽松版 semver；netDomainPattern 是普通域名；relativePathPattern 是不含协议、
+// 前导斜杠与越界的相对路径。
 var (
 	pluginKeySegmentPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`)
 	contributionKeyPattern  = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$`)
@@ -173,6 +175,7 @@ var (
 	relativePathPattern     = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`)
 )
 
+// Manifest 是插件的顶层清单：身份、作者、scope 申请、配置 schema 与贡献清单。
 type Manifest struct {
 	ManifestVersion int          `json:"manifest_version"`
 	Key             string       `json:"key"`
@@ -186,19 +189,21 @@ type Manifest struct {
 	Contributes     Contributes  `json:"contributes"`
 }
 
+// Author 是插件作者署名。
 type Author struct {
 	Name string `json:"name"`
 	URL  string `json:"url,omitempty"`
 }
 
+// Contributes 汇总插件贡献的三类东西：surfaces、hooks、resources。
 type Contributes struct {
 	Surfaces  []Surface  `json:"surfaces,omitempty"`
 	Hooks     []Hook     `json:"hooks,omitempty"`
 	Resources []Resource `json:"resources,omitempty"`
 }
 
-// Surface is a host-mounted iframe. The host owns where it appears; the plugin
-// owns what renders inside it.
+// Surface 是一个由 host 挂载的 iframe。出现在哪由 host 决定；里面渲染什么由
+// 插件决定。
 type Surface struct {
 	Key       string   `json:"key"`
 	Type      string   `json:"type"`
@@ -207,8 +212,8 @@ type Surface struct {
 	Platforms []string `json:"platforms,omitempty"`
 }
 
-// Hook is one plugin-side capability. Triggers say who may invoke it; the host
-// never invents a call site that is not listed here.
+// Hook 是插件侧的一项能力。Triggers 说明谁可以调用它；host 绝不会发明一个
+// 不在此列出的调用点。
 type Hook struct {
 	Key         string          `json:"key"`
 	Name        string          `json:"name"`
@@ -221,29 +226,28 @@ type Hook struct {
 	TimeoutMs   int             `json:"timeout_ms,omitempty"`
 }
 
-// HookSchedule declares the one automatic cadence attached to a hook. Multiple
-// cadences are represented by multiple hook keys, which keeps the durable
-// execution identity unambiguous.
+// HookSchedule 声明挂到某个 hook 上的唯一一个自动节奏。多个节奏用多个 hook
+// key 表示——这样持久化执行身份保持无歧义。
 type HookSchedule struct {
 	Cron     string `json:"cron"`
 	Timezone string `json:"timezone"`
 }
 
+// HookTransport 描述 hook 怎么被调用：类型（http/mcp）与目标 URL。
 type HookTransport struct {
 	Type string `json:"type"`
 	URL  string `json:"url"`
 }
 
-// Resource is a static contribution. No call happens in either direction, so a
-// resource is not a hook.
+// Resource 是一次静态贡献。两个方向都没有调用发生，所以 resource 不是 hook。
 type Resource struct {
 	Type  string `json:"type"`
 	Key   string `json:"key"`
 	Entry string `json:"entry"`
 }
 
-// ConfigField is one host-rendered configuration input. Secrets are stored
-// write-only and never echoed back by any read endpoint.
+// ConfigField 是一个由 host 渲染的配置输入。Secret 只写不读，
+// 任何读接口都不会把它回显。
 type ConfigField struct {
 	Key         string   `json:"-"`
 	Type        string   `json:"type"`
@@ -252,20 +256,22 @@ type ConfigField struct {
 	Required    bool     `json:"required,omitempty"`
 	Options     []string `json:"options,omitempty"`
 	Placeholder string   `json:"placeholder,omitempty"`
-	// Multiline asks the host to render a textarea. Only meaningful for string
-	// fields; without it a value that is a list of lines is unreadable in the
-	// generated form, which is the one thing the host owns rendering for.
+	// Multiline 请 host 渲染成 textarea。只对 string 字段有意义；没有它，
+	// 一个内容是「多行列表」的值在生成的表单里根本没法读——而那正是 host
+	// 负责渲染的唯一一件事。
 	Multiline bool `json:"multiline,omitempty"`
 }
 
-// ConfigSchema keeps declaration order so the generated form is stable across
-// installs. The wire format stays a JSON object keyed by field name.
+// ConfigSchema 保留声明顺序，让生成的表单在多次安装间保持稳定。
+// 线格式仍是「按字段名作键」的 JSON 对象。
 type ConfigSchema struct {
 	Fields []ConfigField
 }
 
+// Len 返回配置字段数量。
 func (c ConfigSchema) Len() int { return len(c.Fields) }
 
+// Field 按键名查配置字段。
 func (c ConfigSchema) Field(key string) (ConfigField, bool) {
 	for _, field := range c.Fields {
 		if field.Key == key {
@@ -275,6 +281,7 @@ func (c ConfigSchema) Field(key string) (ConfigField, bool) {
 	return ConfigField{}, false
 }
 
+// MarshalJSON 把 ConfigSchema 序列化成按声明顺序排列的 JSON 对象。
 func (c ConfigSchema) MarshalJSON() ([]byte, error) {
 	if len(c.Fields) == 0 {
 		return []byte("{}"), nil
@@ -309,6 +316,8 @@ func (c ConfigSchema) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// UnmarshalJSON 把 JSON 对象解回 ConfigSchema：字段名作 key、保留对象内的
+// 出现顺序、拒绝重复字段与未知子字段。
 func (c *ConfigSchema) UnmarshalJSON(raw []byte) error {
 	c.Fields = nil
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -353,10 +362,9 @@ func (c *ConfigSchema) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
-// ParseManifest decodes a strict v1 manifest and returns the canonical bytes an
-// installation stores as its consented snapshot. Unknown fields fail instead of
-// being ignored so a typo cannot silently weaken what the administrator
-// approved.
+// ParseManifest 严格解码 v1 manifest，并返回安装时作为「已同意快照」存储的
+// 规范化字节。未知字段直接报错而不是忽略——这样一个拼写错误不可能悄悄削弱
+// 管理员批准过的东西。
 func ParseManifest(raw []byte) (Manifest, []byte, error) {
 	if len(raw) == 0 {
 		return Manifest{}, nil, fmt.Errorf("plugin manifest is empty")
@@ -386,6 +394,7 @@ func ParseManifest(raw []byte) (Manifest, []byte, error) {
 	return manifest, canonical, nil
 }
 
+// rejectTrailingJSON 确保主文档之后没有任何多余 JSON 内容。
 func rejectTrailingJSON(decoder *json.Decoder) error {
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
@@ -397,6 +406,7 @@ func rejectTrailingJSON(decoder *json.Decoder) error {
 	return nil
 }
 
+// Validate 对一份 Manifest 做完整语义校验（结构已在解码期保证）。
 func (m Manifest) Validate() error {
 	if m.ManifestVersion != ManifestVersion1 {
 		return fmt.Errorf("manifest_version must be %d", ManifestVersion1)
@@ -413,10 +423,9 @@ func (m Manifest) Validate() error {
 	if strings.ContainsAny(m.Description, "\r") {
 		return fmt.Errorf("description must not contain carriage returns")
 	}
-	// Bounded before the regex result is trusted: semver permits unbounded
-	// build/prerelease segments, and plugin_installation.version is capped at
-	// 64. Rejecting here turns a constraint violation at INSERT time into a
-	// parse error that names the field.
+	// 先卡长度再相信正则结果：semver 允许无界的构建/预发布段，而
+	// plugin_installation.version 上限是 64。在这里拒绝，把 INSERT 时刻的约束
+	// 违例变成指名道姓字段的解析错误。
 	if len(m.Version) > MaxVersionLength {
 		return fmt.Errorf("version exceeds %d bytes", MaxVersionLength)
 	}
@@ -445,6 +454,7 @@ func (m Manifest) Validate() error {
 	return m.validateContributions()
 }
 
+// validateScopes 校验 scope 列表：非空、有上限、无重复、逐项合法。
 func (m Manifest) validateScopes() error {
 	if len(m.Scopes) == 0 {
 		return fmt.Errorf("scopes must not be empty")
@@ -465,7 +475,7 @@ func (m Manifest) validateScopes() error {
 	return nil
 }
 
-// ValidateScope reports whether a single scope string is one this host defines.
+// ValidateScope 报告单个 scope 字符串是否属于本 host 定义的范围。
 func ValidateScope(scope string) error {
 	if fixedScopes[scope] {
 		return nil
@@ -479,8 +489,7 @@ func ValidateScope(scope string) error {
 	return fmt.Errorf("unsupported scope %q", scope)
 }
 
-// NetDomains returns the domains an installation may reach, taken only from the
-// scopes it was granted.
+// NetDomains 返回某个安装可以触达的域名，只取自它被授予的 scope。
 func NetDomains(scopes []string) []string {
 	domains := make([]string, 0, len(scopes))
 	for _, scope := range scopes {
@@ -491,6 +500,7 @@ func NetDomains(scopes []string) []string {
 	return domains
 }
 
+// validateConfig 校验配置 schema 的字段：个数、命名、类型专属约束。
 func (m Manifest) validateConfig() error {
 	if m.Config.Len() > 32 {
 		return fmt.Errorf("config must not exceed 32 fields")
@@ -544,6 +554,8 @@ func (m Manifest) validateConfig() error {
 	return nil
 }
 
+// validateContributions 校验贡献清单：至少一项、总量上限、key 唯一、各 surface/
+// hook/resource 的类型与字段逐一合法。
 func (m Manifest) validateContributions() error {
 	total := len(m.Contributes.Surfaces) + len(m.Contributes.Hooks) + len(m.Contributes.Resources)
 	if total == 0 {
@@ -574,11 +586,10 @@ func (m Manifest) validateContributions() error {
 		if err := validateRelativePath(field+".entry", surface.Entry); err != nil {
 			return err
 		}
-		// The host generates the surface's HTML document and loads this script
-		// into it. That is what lets the host attach the CSP derived from the
-		// manifest's net: scopes — a plugin-authored HTML document would carry
-		// whatever policy its own server sent, so net: would be a claim rather
-		// than a control.
+		// host 自己生成 surface 的 HTML 文档，并把这段脚本加载进去。这正是
+		// host 能给文档挂上「由 manifest 的 net: scope 推导出的 CSP」的前提——
+		// 若是插件自带 HTML，策略就随它自己的 server 走了，net: 会从「控制」
+		// 变成一句声明。
 		if !strings.HasSuffix(surface.Entry, ".js") && !strings.HasSuffix(surface.Entry, ".mjs") {
 			return fmt.Errorf("%s.entry must be a .js or .mjs script; the host renders the surface document itself", field)
 		}
@@ -607,8 +618,8 @@ func (m Manifest) validateContributions() error {
 		if err := validateDisplayText(field+".name", hook.Name, 160); err != nil {
 			return err
 		}
-		// The description is what an agent reads as the MCP tool description,
-		// so it is mandatory and may be multi-line.
+		// description 是 agent 会当作 MCP 工具描述来读的内容，所以它必填、
+		// 且允许跨多行。
 		if strings.TrimSpace(hook.Description) == "" || len(hook.Description) > 2000 {
 			return fmt.Errorf("%s.description must be non-empty and at most 2000 bytes", field)
 		}
@@ -649,12 +660,11 @@ func (m Manifest) validateContributions() error {
 					return fmt.Errorf("%s.events contains duplicate event %q", field, event)
 				}
 				eventSeen[event] = true
-				// An event PUSHES the same content the Action API would have
-				// required a scope to pull: issue.* carries the description,
-				// comment.created carries the body. Without this, subscribing is
-				// a way to receive what reading was not granted — one dataset
-				// with two standards. Enforced at install, so the consent screen
-				// shows the read scope the subscription actually implies.
+				// 事件推送的内容，正是 Action API 需要 scope 才能拉到的那份：
+				// issue.* 带 description，comment.created 带正文。没有这条，
+				// 订阅就成了「没被授予读权也能收到同一份数据」——同一份数据
+				// 两套标准。安装期就强制，让同意页面上展示的读 scope 与订阅
+				// 实际隐含的一致。
 				if required := eventReadScope[event]; required != "" && !hasScope(m.Scopes, required) {
 					return fmt.Errorf("%s.events subscribes to %q, which delivers content requiring the %s scope", field, event, required)
 				}
@@ -706,14 +716,15 @@ func (m Manifest) validateContributions() error {
 	return nil
 }
 
+// validateHookSchedule 校验定时 hook 的 cron 与时区，并保证执行间隔不低于
+// MinimumScheduleInterval。
 func validateHookSchedule(field string, schedule HookSchedule) error {
 	expression := strings.TrimSpace(schedule.Cron)
 	if expression == "" {
 		return fmt.Errorf("%s.cron must not be empty", field)
 	}
-	// Timezone belongs in its own field. Besides keeping the public shape
-	// singular, rejecting an inline prefix avoids robfig/cron's malformed-prefix
-	// panic path and prevents two timezone declarations from disagreeing.
+	// 时区放在它自己的字段里。除了让公共形状保持单一，拒绝行内前缀还能避开
+	// robfig/cron 对畸形前缀的 panic 路径，并防止两处时区声明互相矛盾。
 	if strings.HasPrefix(expression, "TZ=") || strings.HasPrefix(expression, "CRON_TZ=") {
 		return fmt.Errorf("%s.cron must not contain an inline timezone", field)
 	}
@@ -729,11 +740,10 @@ func validateHookSchedule(field string, schedule HookSchedule) error {
 		return fmt.Errorf("%s.timezone is invalid: %w", field, err)
 	}
 
-	// A 400-day window covers every month plus a DST cycle. High-frequency
-	// expressions fail after their first two occurrences; compliant five-minute
-	// expressions stay below 116k iterations, bounded work at publish/preview
-	// time rather than on every scheduler tick. A monthly/yearly expression with
-	// zero or one occurrence in the window is valid by definition.
+	// 400 天的窗口覆盖所有月份加一个 DST 周期。高频率表达式在前两次出现后
+	// 就会失败；合规的五分钟表达式保持在 11.6 万次迭代以内——代价付在发布/
+	// 预览时刻，而不是每个调度 tick 上。月/年表达式在窗口内零或一次出现是
+	// 合法定义。
 	start := time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC).In(location)
 	end := start.AddDate(0, 0, 400)
 	previous := parsed.Next(start)
@@ -750,9 +760,8 @@ func validateHookSchedule(field string, schedule HookSchedule) error {
 	return nil
 }
 
-// validateHookTransport enforces that a hook can only reach a host the manifest
-// declared through a `net:` scope. Without this the consent screen would not
-// describe where plugin data actually goes.
+// validateHookTransport 强制 hook 只能触达 manifest 通过 `net:` scope 声明过的
+// host。没有这条，同意页面就描述不了插件数据实际流向哪里。
 func (m Manifest) validateHookTransport(field string, transport HookTransport) error {
 	switch transport.Type {
 	case TransportHTTP, TransportMCP:
@@ -766,11 +775,10 @@ func (m Manifest) validateHookTransport(field string, transport HookTransport) e
 	if err != nil {
 		return fmt.Errorf("%s.transport.url is invalid", field)
 	}
-	// Exact host, never a suffix match. The consent screen renders one line per
-	// scope ("send data to example.com"), and the same scope list becomes the
-	// iframe's CSP connect-src, which is exact-host. A suffix match here would
-	// make one scope string mean two different things in two places. A plugin
-	// that needs a subdomain declares it: net:api.example.com.
+	// 精确匹配 host，绝不用后缀匹配。同意页面每个 scope 渲染一行
+	// （"send data to example.com"），同一份 scope 列表又成为 iframe 的 CSP
+	// connect-src，而 CSP 是精确 host 匹配。这里若用后缀匹配，同一个 scope
+	// 字符串在两处会变成两种意思。需要子域的插件自己声明：net:api.example.com。
 	host := strings.ToLower(strings.TrimSuffix(endpoint.Hostname(), "."))
 	for _, domain := range NetDomains(m.Scopes) {
 		if host == domain {
@@ -780,6 +788,7 @@ func (m Manifest) validateHookTransport(field string, transport HookTransport) e
 	return fmt.Errorf("%s.transport.url host %q is not covered by a net: scope", field, host)
 }
 
+// validatePluginKey 校验插件 key：反 DNS 命名空间、段数 ≥2、每段合法。
 func validatePluginKey(key string) error {
 	if len(key) > 255 {
 		return fmt.Errorf("key exceeds 255 bytes")
@@ -796,6 +805,7 @@ func validatePluginKey(key string) error {
 	return nil
 }
 
+// validateDisplayText 校验一段给人看的短文本：非空、无首尾空白、单行、长度受限。
 func validateDisplayText(field, value string, maxBytes int) error {
 	if value == "" || value != strings.TrimSpace(value) {
 		return fmt.Errorf("%s must be non-empty without surrounding whitespace", field)
@@ -809,6 +819,7 @@ func validateDisplayText(field, value string, maxBytes int) error {
 	return nil
 }
 
+// validateRelativePath 校验相对路径：非空、长度受限、无协议/前导斜杠/越界。
 func validateRelativePath(field, value string) error {
 	if value == "" || len(value) > 1024 {
 		return fmt.Errorf("%s must be a relative path of at most 1024 bytes", field)
@@ -824,6 +835,8 @@ func validateRelativePath(field, value string) error {
 	return nil
 }
 
+// validateHTTPSURL 校验一个纯 HTTPS URL：长度受限、https 协议、无 userinfo
+// 与 fragment。
 func validateHTTPSURL(field, value string) error {
 	if len(value) > 2048 {
 		return fmt.Errorf("%s exceeds 2048 bytes", field)

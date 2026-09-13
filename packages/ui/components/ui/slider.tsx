@@ -1,10 +1,16 @@
 "use client"
+// 本文件是滑块（Slider）组件（基于 Base UI 的 Slider）：
+// 沿轨道拖动一个或多个手柄取值，支持范围（双值）、垂直方向等原生能力。
 
 import * as React from "react"
 import { Slider as SliderPrimitive } from "@base-ui/react/slider"
 
 import { cn } from "@multica/ui/lib/utils"
 
+/**
+ * Slider：取值滑块。可以受控（传 value）或非受控（传 defaultValue）。
+ * 手柄数量由值数组长度决定：传两个值就是范围滑块。
+ */
 function Slider({
   className,
   defaultValue,
@@ -13,6 +19,8 @@ function Slider({
   max = 100,
   ...props
 }: SliderPrimitive.Root.Props) {
+  // 决定渲染几个手柄：优先用受控 value，其次 defaultValue，
+  // 都没有则默认按双值范围（min、max）处理
   const _values = React.useMemo(
     () =>
       Array.isArray(value)

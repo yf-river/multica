@@ -1,3 +1,5 @@
+// ws_connector.go：生产环境的 EventConnector——持有飞书长连接 WebSocket、
+// 解码开放平台服务器推来的二进制 Frame 信封，把规范化事件交给上游分发。
 package lark
 
 import (
@@ -13,133 +15,102 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// WSLongConnConnector is the production EventConnector that holds the
-// Lark long-conn WebSocket open, decodes the binary Frame envelope
-// the open-platform server pushes, and forwards normalized inbound
-// events to the Hub's Dispatcher.
+// WSLongConnConnector 是生产环境的 EventConnector：保持 Lark 长连接 WebSocket
+// 打开，解码开放平台服务器推来的二进制 Frame 信封，并把规范化事件转发给
+// dispatcher。
 //
-// Protocol layer (aligned with `larksuite/oapi-sdk-go/v3/ws`):
+// 协议层（与 `larksuite/oapi-sdk-go/v3/ws` 对齐）：
 //
-//  1. EndpointFetcher does the POST /callback/ws/endpoint bootstrap.
-//     Lark returns a single-use wss URL with `device_id` + `service_id`
-//     query parameters acting as the credential. The `service_id` is
-//     extracted and used as Frame.Service on every outbound frame.
-//  2. Every WebSocket frame is a binary protobuf Frame. JSON envelopes
-//     are wrapped inside Frame.Payload for data events; control,
-//     ping, pong, ack frames are pure-binary.
-//  3. The client emits an app-layer ping frame (NewPingFrame) on the
-//     PingInterval the server returned in the bootstrap ClientConfig.
-//     WebSocket protocol-level PING is NOT used — Lark's server
-//     ignores it. The server can also push pings at any time; we
-//     reply with NewPongFrame.
-//  4. Every data frame requires an ACK back. The ACK reuses the
-//     inbound frame's Headers verbatim (Lark correlates by
-//     message_id) and writes a JSON Response{code:200, ...} as the
-//     Payload. We send ACK 200 on successful Dispatcher emit, 500
-//     when the Dispatcher reported an infra failure so Lark retries.
+//  1. EndpointFetcher 做 POST /callback/ws/endpoint 引导。Lark 返回一个带
+//     `device_id` + `service_id` 查询参数作为凭据的一次性 wss URL。`service_id`
+//     被提取出来，作为每条出站帧的 Frame.Service。
+//  2. 每个 WebSocket 帧都是二进制 protobuf Frame。数据事件里 JSON 信封包在
+//     Frame.Payload 内；control / ping / pong / ack 帧是纯二进制的。
+//  3. client 按服务器在引导 ClientConfig 里返回的 PingInterval 发应用层 ping 帧
+//     （NewPingFrame）。不使用 WebSocket 协议层 PING——Lark 服务器会无视它。
+//     服务器也能随时推 ping；我们回 NewPongFrame。
+//  4. 每个数据帧都要回 ACK。ACK 原样复用入站帧的 Headers（Lark 按 message_id
+//     关联），并在 Payload 里写一个 JSON Response{code:200, ...}。Dispatcher
+//     emit 成功就回 ACK 200；Dispatcher 上报基础架构失败时回 500，让 Lark 重试。
 //
-// Ownership of the §4.4 invariant (ctx cancel breaks blocking read):
+// §4.4 不变量的归属（ctx 取消要能打断阻塞读）：
 //
-// gorilla/websocket.ReadMessage blocks on the TCP socket and does NOT
-// observe a context. Cancelling our ctx flips ctx.Done but does not
-// touch the read syscall. We bridge ctx → read interrupt with a
-// watchdog goroutine that calls conn.Close once ctx fires;
-// gorilla.Close causes any in-flight Read to return immediately with
-// a "use of closed connection" error. The watchdog also runs on a
-// normal exit (so we never leak a goroutine) and is idempotent
-// because conn.Close is safe to call multiple times. This invariant
-// MUST be preserved by any future protocol change: without it,
-// renewLeaseUntil's cancelRun is meaningless and two replicas can
-// process the same installation during a healthy-but-silent socket.
+// gorilla/websocket.ReadMessage 阻塞在 TCP socket 上，观察不到 context。取消
+// ctx 会触发 ctx.Done，但碰不到 read 系统调用。我们用看门狗 goroutine 把
+// ctx → 读中断桥接起来：ctx 一旦触发就调 conn.Close；gorilla 的 Close 会让任何
+// 在途 Read 立刻带着 "use of closed connection" 错误返回。看门狗在正常退出时
+// 也会跑（绝不泄漏 goroutine），且幂等——conn.Close 可安全多次调用。任何未来
+// 协议改动都必须保住这条不变量：没了它，renewLeaseUntil 的 cancelRun 就毫无
+// 意义，两个副本可能会在“连接健康但静默”期间处理同一条安装。
 //
-// PersonalAgent compatibility risk: the official Feishu docs describe
-// long-conn as "supports 企业自建应用 only". PersonalAgent device-flow
-// apps are not listed as supported. If the bootstrap call returns a
-// structured error from Lark, this connector exits Run with the error
-// wrapped and the Hub's backoff loop logs it on every retry — making
-// the misconfiguration visible. See MUL-2671 review thread for the
-// smoke-test path.
+// PersonalAgent 兼容性风险：官方飞书文档把长连接描述成“仅支持企业自建应用”。
+// PersonalAgent 设备流 app 不在支持列表里。若引导调用返回 Lark 的结构化错误，
+// 本 connector 会带着包装后的错误退出 Run，Hub 的退避循环会在每次重试时记录它
+// ——让错误配置显形。冒烟路径见 MUL-2671 评审线程。
 type WSLongConnConnector struct {
 	cfg WSConnectorConfig
 }
 
-// WSConnectorConfig wires the connector's dependencies. All injected
-// interfaces are required; nil dependencies cause NewWSLongConnConnector
-// to return an error rather than producing a connector that would panic
-// at first use. Time / logger fields default at construction.
+// WSConnectorConfig 装配 connector 的依赖。所有注入接口都必须提供；nil 依赖会
+// 让 NewWSLongConnConnector 返回错误，而不是产出一个首次使用就 panic 的
+// connector。时间/日志字段在构造时兜底。
 type WSConnectorConfig struct {
-	// Dialer opens the WebSocket transport. Defaults to gorilla's
-	// DefaultDialer with a bounded HandshakeTimeout. Tests inject a
-	// fake that points at an httptest server.
+	// Dialer 打开 WebSocket 传输。默认 gorilla 的 DefaultDialer 带限定的
+	// HandshakeTimeout。测试注入指向 httptest server 的 fake。
 	Dialer WSDialer
 
-	// EndpointFetcher resolves the per-installation WS URL + server
-	// config (ping interval, service id) via the bootstrap POST. The
-	// connector calls it once per Run, so a transient failure here
-	// causes a Hub-level backoff retry rather than an in-Run reconnect
-	// storm.
+	// EndpointFetcher 经引导 POST 解析每个安装的 WS URL + 服务器配置（ping
+	// 间隔、service id）。connector 每次 Run 调一次，所以这里的瞬时失败触发
+	// Hub 级退避重试，而不是 Run 内重连风暴。
 	EndpointFetcher EndpointFetcher
 
-	// FrameDecoder turns a single decoded Frame into either a
-	// normalized InboundMessage (to be emitted upstream) or a
-	// "control / heartbeat / unknown" signal that the connector
-	// drops silently. Errors from the decoder do NOT exit the loop
-	// — they log + drop — because one malformed Lark event payload
-	// should not tear down the entire connection.
+	// FrameDecoder 把单个已解码 Frame 变成规范化 InboundMessage（向上游 emit）
+	// 或“control / 心跳 / 未知”信号（connector 静默丢弃）。decoder 的错误不会
+	// 退出循环——只记日志并丢弃——因为单条畸形 Lark 事件负载不该拆掉整条连接。
 	FrameDecoder FrameDecoder
 
-	// Enricher optionally expands a decoded message's body with the
-	// context the user explicitly attached (quoted reply / forwarded
-	// bundle) before it is emitted to the dispatcher. It runs on the
-	// inbound read loop, so it is bounded by EnrichTimeout to protect
-	// the Lark long-conn ACK budget; on timeout / fetch failure the
-	// enricher degrades to a placeholder rather than blocking. Nil
-	// disables enrichment (the decoded body is emitted as-is).
+	// Enricher 可选地先用用户显式附上的上下文（引用回复 / 转发包）展开已解码
+	// 消息的正文，再 emit 给 dispatcher。它跑在入站读循环上，受 EnrichTimeout
+	// 约束以保护 Lark 长连接的 ACK 预算；超时/拉取失败时 enricher 退化成
+	// 占位符而不是阻塞。nil 表示禁用富化（解码后的正文原样 emit）。
 	Enricher Enricher
 
-	// EnrichTimeout caps a single message's enrichment (at most two
-	// GetMessage calls). It MUST stay well under Lark's ~3s long-conn
-	// ACK window, since enrichment runs before the frame is ACKed.
-	// Zero defaults to 2 seconds.
+	// EnrichTimeout 限制单条消息的富化耗时（至多两次 GetMessage 调用）。它必须
+	// 明显小于 Lark ~3 秒的长连接 ACK 窗口，因为富化跑在帧被 ACK 之前。零值
+	// 默认 2 秒。
 	EnrichTimeout time.Duration
 
-	// CredentialsProvider returns the InstallationCredentials the
-	// EndpointFetcher needs. Typically wraps
-	// InstallationService.DecryptAppSecret so the plaintext secret
-	// never sits on the LarkInstallation row in memory.
+	// CredentialsProvider 返回 EndpointFetcher 需要的 InstallationCredentials。
+	// 通常包一层 InstallationService.DecryptAppSecret，让明文 secret 不驻留在
+	// 内存里的 LarkInstallation 行上。
 	CredentialsProvider CredentialsProvider
 
-	// PingInterval is the fallback cadence for the app-layer ping.
-	// In production it is overridden per-installation by the
-	// PingInterval Lark returns in the bootstrap ClientConfig.
-	// Zero defaults to 2 minutes (matches the SDK default in
-	// `larksuite/oapi-sdk-go/v3/ws/client.go`).
+	// PingInterval 是应用层 ping 的兜底节奏。生产里会被引导 ClientConfig 里
+	// Lark 返回的 PingInterval 按安装覆盖。零值默认 2 分钟（与
+	// `larksuite/oapi-sdk-go/v3/ws/client.go` 的 SDK 默认一致）。
 	PingInterval time.Duration
 
-	// ReadDeadline bounds a single ReadMessage call. Re-armed before
-	// each read; expiry yields a transient read error which the
-	// connector logs and uses to exit, deferring to the Hub's
-	// reconnect backoff. Zero defaults to 6 minutes so a healthy
-	// connection with the 2-minute default ping never trips it.
+	// ReadDeadline 限制单次 ReadMessage 调用。每次读前重新武装；到期产出一个
+	// 瞬时读错误，connector 记日志后借此退出，把重连退避交给 Hub。零值默认 6
+	// 分钟，带 2 分钟默认 ping 的健康连接不会触到它。
 	ReadDeadline time.Duration
 
-	// WriteTimeout bounds a single WriteMessage. Zero defaults to 10s.
+	// WriteTimeout 限制单次 WriteMessage。零值默认 10 秒。
 	WriteTimeout time.Duration
 
-	// ChunkTTL bounds how long the chunk assembler holds a partial
-	// multi-frame event before discarding the buffered chunks. Mirrors
-	// the SDK's 5-second default — long enough to absorb pacing across
-	// several chunks, short enough that an abandoned multi-frame event
-	// does not leak memory. Zero defaults to 5 seconds.
+	// ChunkTTL 限制分块组装器在丢弃缓冲分块前保留半成品多帧事件多久。镜像 SDK
+	// 5 秒默认——足够吸收多块间的节奏，又短到被放弃的多帧事件不会泄漏内存。
+	// 零值默认 5 秒。
 	ChunkTTL time.Duration
 
-	// Now is overridable for deterministic tests. Defaults to time.Now.
+	// Now 可覆盖，用于确定性测试。默认 time.Now。
 	Now func() time.Time
 
-	// Logger optional; defaults to slog.Default.
+	// Logger 可选；默认 slog.Default。
 	Logger *slog.Logger
 }
 
+// withDefaults 填充配置默认值。
 func (c WSConnectorConfig) withDefaults() WSConnectorConfig {
 	if c.PingInterval == 0 {
 		c.PingInterval = 2 * time.Minute
@@ -165,8 +136,7 @@ func (c WSConnectorConfig) withDefaults() WSConnectorConfig {
 	return c
 }
 
-// NewWSLongConnConnector validates the supplied config and returns a
-// reusable connector.
+// NewWSLongConnConnector 校验配置并返回一个可复用的 connector。
 func NewWSLongConnConnector(cfg WSConnectorConfig) (*WSLongConnConnector, error) {
 	if cfg.Dialer == nil {
 		return nil, errors.New("lark ws connector: Dialer is required")
@@ -183,10 +153,9 @@ func NewWSLongConnConnector(cfg WSConnectorConfig) (*WSLongConnConnector, error)
 	return &WSLongConnConnector{cfg: cfg.withDefaults()}, nil
 }
 
-// Run satisfies EventConnector. Opens one WebSocket session, reads
-// binary Frame envelopes until either the ctx is cancelled or the
-// connection errors, and returns. Nil return = clean exit; non-nil
-// return = connection failed (Hub steps up backoff).
+// Run 实现 EventConnector。开一条 WebSocket 会话、读二进制 Frame 信封，直到 ctx
+// 被取消或连接出错，然后返回。返回 nil = 干净退出；返回非 nil = 连接失败
+// （Hub 提高退避档位）。
 func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit EventEmitter) error {
 	log := c.cfg.Logger.With(
 		"installation_id", uuidString(inst.ID),
@@ -203,9 +172,8 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 		return fmt.Errorf("resolve ws endpoint: %w", err)
 	}
 
-	// Server-pushed PingInterval beats the static default; this is the
-	// SDK behaviour. A zero (server omitted the field) falls back to
-	// our static default so we never degenerate to "ping every 0s".
+	// 服务器推的 PingInterval 优先于静态默认——这是 SDK 行为。零值（服务器省略
+	// 该字段）退回静态默认，绝不会退化到“每 0 秒 ping 一次”。
 	pingInterval := endpoint.PingInterval
 	if pingInterval <= 0 {
 		pingInterval = c.cfg.PingInterval
@@ -216,10 +184,9 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 		return fmt.Errorf("dial ws: %w", err)
 	}
 
-	// runCtx fans out cancellation to the watchdog + ping goroutines
-	// on EVERY Run exit, not just on outer-ctx cancel. A read error or
-	// emit-infra failure would otherwise leave the ping goroutine
-	// ticking on the outer ctx — and the deferred join would deadlock.
+	// runCtx 在【每次】 Run 退出时都向看门狗与 ping goroutine 扇出取消，而不仅
+	// 在外层 ctx 取消时。否则读错误或 emit 基础架构失败会把 ping goroutine 留在
+	// 外层 ctx 上滴答——而 defer 的 join 会死锁。
 	runCtx, runCancel := context.WithCancel(ctx)
 
 	var closeOnce sync.Once
@@ -229,9 +196,8 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 		})
 	}
 
-	// Watchdog: ctx fires → close the socket so blocking ReadMessage
-	// returns immediately. Also runs on any other exit path so we
-	// never leak the goroutine.
+	// 看门狗：ctx 触发 → 关 socket，让阻塞的 ReadMessage 立即返回。也跑在任何
+	// 其它退出路径上，保证绝不泄漏 goroutine。
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -241,20 +207,16 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 		}
 	}()
 
-	// writeMu serializes WriteMessage from the read loop (ACK send)
-	// and the ping goroutine. gorilla/websocket forbids concurrent
-	// writers; without this, ack + ping interleaving would corrupt
-	// the binary frame stream.
+	// writeMu 序列化来自读循环（ACK 发送）与 ping goroutine 的 WriteMessage。
+	// gorilla/websocket 禁止并发写者；没有它，ack 与 ping 交错会毁掉二进制帧流。
 	var writeMu sync.Mutex
 
-	// Per-Run chunk assembler. State does not need to outlive a single
-	// long-conn session — Lark re-sends multi-frame events from chunk 0
-	// after a reconnect — so the assembler is built here and dropped
-	// when Run returns, which also releases any partial buffers held by
-	// an abandoned event.
+	// 每次 Run 独立的分块组装器。状态不需要活得比单次长连接会话更久——飞书在
+	// 重连后会从第 0 块重新下发多帧事件——所以组装器在这里构建、Run 返回时
+	// 丢弃，同时释放被放弃事件持有的任何半成品缓冲。
 	assembler := newChunkAssembler(c.cfg.ChunkTTL, c.cfg.Now)
 
-	// Ping loop: app-layer binary ping frames at the server's PingInterval.
+	// Ping 循环：按服务器的 PingInterval 发应用层二进制 ping 帧。
 	pingDone := make(chan struct{})
 	go c.pingLoop(runCtx, conn, &writeMu, endpoint.ServiceID, pingInterval, log, pingDone)
 
@@ -271,8 +233,7 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 	)
 
 	for {
-		// Re-arm the read deadline before every Read so a stalled
-		// connection eventually unblocks the syscall.
+		// 每次读前重新武装读截止时间，让卡死的连接最终能解开系统调用。
 		if err := conn.SetReadDeadline(c.cfg.Now().Add(c.cfg.ReadDeadline)); err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -294,8 +255,8 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 			}
 			return fmt.Errorf("read message: %w", err)
 		}
-		// Lark only sends binary frames. A text frame is a Lark-side
-		// schema regression — log + drop to be safe.
+		// 飞书只发二进制帧。文本帧属于飞书侧 schema 回归——记日志并丢弃，图个
+		// 安全。
 		if msgType != websocket.BinaryMessage {
 			log.Warn("lark ws connector: dropped non-binary frame",
 				"type", msgType,
@@ -313,9 +274,8 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 			continue
 		}
 
-		// Control frames carry ping / pong / config updates. We
-		// only have to act on pings (reply with a pong); pongs and
-		// config payloads are accepted silently.
+		// Control 帧承载 ping / pong / 配置更新。我们只需响应 ping（回 pong）；
+		// pong 与配置负载静默接受。
 		if frame.Method == FrameMethodControl {
 			if frame.HeaderValue(FrameHeaderTypeKey) == FrameHeaderTypePing {
 				if werr := c.writeFrame(&writeMu, conn, NewPongFrame(endpoint.ServiceID)); werr != nil {
@@ -325,12 +285,10 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 			continue
 		}
 
-		// Multi-frame events: stash the chunk and skip ACK until the
-		// full payload has arrived. This mirrors the SDK's combine()
-		// behaviour — the SDK does NOT ACK partial chunks; Lark
-		// reconciles delivery on its side using sum/seq, so ACKing
-		// partials would tell Lark "we got it" before we actually
-		// have the assembled payload.
+		// 多帧事件：先存分块、跳过 ACK，直到完整负载到齐。镜像 SDK 的
+		// combine() 行为——SDK 不对半成品分块 ACK；飞书用自己的 sum/seq 在侧边
+		// 协调投递，所以对半成品 ACK 等于在真正拿到拼装负载之前告诉 Lark “我们
+		// 收到了”。
 		sum, seq, msgID := parseChunkHeaders(frame)
 		payload := frame.Payload
 		if sum > 1 {
@@ -352,18 +310,16 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 			)
 		}
 
-		// Data frames: hand the (possibly reassembled) JSON payload to
-		// the decoder, emit if it resolved to a message, and ACK back.
+		// 数据帧：把（可能已拼装的）JSON 负载交给 decoder，解析成消息就 emit，
+		// 并回 ACK。
 		msg, ok, derr := c.cfg.FrameDecoder.Decode(payload, inst)
 		if derr != nil {
 			log.Warn("lark ws connector: frame decode failed",
 				"err", derr.Error(),
 				"payload_len", len(frame.Payload),
 			)
-			// A decode failure still gets a 200 ACK: the message is
-			// valid wire-wise, we just can't act on it. NACKing would
-			// trigger a Lark-side retry storm of a payload we've
-			// already proven we can't parse.
+			// 解码失败也回 200 ACK：消息在线上是合法的，只是我们无法处理它。
+			// NACK 会触发飞书侧对一份已证明解析不了的负载的重试风暴。
 			if werr := c.writeFrame(&writeMu, conn, NewAckFrame(frame, true)); werr != nil {
 				log.Warn("lark ws connector: ack-after-decode-error write failed", "err", werr.Error())
 				return fmt.Errorf("write ack: %w", werr)
@@ -371,9 +327,8 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 			continue
 		}
 		if !ok {
-			// Heartbeat / unhandled event type. ACK 200 so the server
-			// stops sending it; the decoder owns the "what we handle"
-			// policy.
+			// 心跳 / 未处理的事件类型。回 ACK 200 让服务器停止重发；“我们处理
+			// 什么”的策略归 decoder 所有。
 			if werr := c.writeFrame(&writeMu, conn, NewAckFrame(frame, true)); werr != nil {
 				log.Warn("lark ws connector: ack-after-drop write failed", "err", werr.Error())
 				return fmt.Errorf("write ack: %w", werr)
@@ -381,12 +336,9 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 			continue
 		}
 
-		// Enrich the decoded body with explicitly-attached context
-		// (quoted reply / forwarded bundle) before emitting. This runs
-		// before the frame ACK, so it is bounded by EnrichTimeout and
-		// degrades to a placeholder on failure rather than blocking the
-		// pipeline. Most messages need no enrichment and return
-		// immediately without any network call.
+		// emit 之前先用显式附上的上下文（引用回复 / 转发包）富化解码后的正文。
+		// 这跑在帧被 ACK 之前，受 EnrichTimeout 约束，失败退化成占位符而不是阻塞
+		// 管线。大多数消息无需富化，不发任何网络调用就直接返回。
 		if c.cfg.Enricher != nil {
 			enrichCtx, cancelEnrich := context.WithTimeout(ctx, c.cfg.EnrichTimeout)
 			msg = c.cfg.Enricher.Enrich(enrichCtx, msg, creds)
@@ -395,9 +347,8 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 
 		_, emitErr := emit(ctx, msg)
 		if emitErr != nil {
-			// Infra failure from Dispatcher (DB down, etc.). NACK so
-			// Lark retries this event on a healthy replica; then
-			// return so the Hub backs off and reconnects.
+			// Dispatcher 的基础架构失败（DB 挂等）。NACK 让 Lark 在健康副本上
+			// 重试该事件；然后返回，让 Hub 退避并重连。
 			if werr := c.writeFrame(&writeMu, conn, NewAckFrame(frame, false)); werr != nil {
 				log.Warn("lark ws connector: nack write failed", "err", werr.Error())
 			}
@@ -414,9 +365,8 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 	}
 }
 
-// writeFrame serializes a Frame and writes it as a binary WebSocket
-// message under the connector's write mutex. Caller MUST NOT hold
-// writeMu when calling.
+// writeFrame 序列化一个 Frame 并在连接写互斥锁下以二进制 WebSocket 消息写出。
+// 调用方持锁时【不得】调用本方法。
 func (c *WSLongConnConnector) writeFrame(mu *sync.Mutex, conn WSConn, f *Frame) error {
 	payload := f.Marshal()
 	mu.Lock()
@@ -428,14 +378,12 @@ func (c *WSLongConnConnector) writeFrame(mu *sync.Mutex, conn WSConn, f *Frame) 
 	return conn.WriteMessage(websocket.BinaryMessage, payload)
 }
 
-// pingLoop sends a periodic app-layer ping frame on the cadence Lark
-// asked for. The previous implementation used WebSocket protocol PING
-// (WriteControl), which the SDK source confirms Lark ignores.
+// pingLoop 按 Lark 要求的节奏定期发应用层 ping 帧。旧实现用 WebSocket 协议层
+// PING（WriteControl）——SDK 源码证实 Lark 会无视它。
 func (c *WSLongConnConnector) pingLoop(ctx context.Context, conn WSConn, writeMu *sync.Mutex, serviceID int32, interval time.Duration, log *slog.Logger, done chan<- struct{}) {
 	defer close(done)
 	if interval <= 0 {
-		// A zero / negative interval would tick infinitely; bail out
-		// quietly. We logged the chosen interval at connect time.
+		// 零/负间隔会无限滴答；安静地退出。连接时已记录过选定的间隔。
 		<-ctx.Done()
 		return
 	}
@@ -448,22 +396,21 @@ func (c *WSLongConnConnector) pingLoop(ctx context.Context, conn WSConn, writeMu
 		case <-t.C:
 			if err := c.writeFrame(writeMu, conn, NewPingFrame(serviceID)); err != nil {
 				log.Warn("lark ws connector: ping write failed", "err", err.Error())
-				// Don't tear down here — the read loop will exit on
-				// its own when the conn dies. Closing here would race
-				// with the read loop's own cleanup.
+				// 别在这里拆连接——conn 挂掉时读循环会自己退出。在这里关会跟读
+				// 循环自己的清理竞争。
 				return
 			}
 		}
 	}
 }
 
-// WSDialer is the dialer surface this connector consumes. *websocket.Dialer
-// satisfies it directly (via DialContext); tests inject a fake.
+// WSDialer 是本 connector 消费的拨号器面。*websocket.Dialer 直接满足它（经
+// DialContext）；测试注入 fake。
 type WSDialer interface {
 	DialContext(ctx context.Context, urlStr string, requestHeader http.Header) (WSConn, *http.Response, error)
 }
 
-// WSConn is the subset of *websocket.Conn this connector uses.
+// WSConn 是本 connector 用到的 *websocket.Conn 子集。
 type WSConn interface {
 	ReadMessage() (messageType int, p []byte, err error)
 	WriteMessage(messageType int, data []byte) error
@@ -472,18 +419,15 @@ type WSConn interface {
 	Close() error
 }
 
-// EndpointFetcher resolves the per-installation bootstrap response.
-// The implementation is responsible for the POST /callback/ws/endpoint
-// call and surfacing the server-pushed ClientConfig.
+// EndpointFetcher 解析每个安装的引导响应。实现负责 POST /callback/ws/endpoint
+// 调用并浮出服务器推的 ClientConfig。
 type EndpointFetcher interface {
 	Endpoint(ctx context.Context, creds InstallationCredentials) (WSEndpoint, error)
 }
 
-// WSEndpoint is the resolved transport target plus the server-pushed
-// runtime configuration the connector needs to honor (ping cadence,
-// reconnect hints). ServiceID is parsed out of the wss URL's
-// `service_id` query parameter — it identifies which Lark backend
-// service ID our outbound frames belong to.
+// WSEndpoint 是解析出的传输目标，加上 connector 需要遵守的服务器推送运行时
+// 配置（ping 节奏、重连提示）。ServiceID 从 wss URL 的 `service_id` 查询参数
+// 解析出来——它标识我们的出站帧属于哪个 Lark 后端服务。
 type WSEndpoint struct {
 	URL               string
 	Headers           http.Header
@@ -494,59 +438,59 @@ type WSEndpoint struct {
 	ReconnectCount    int
 }
 
-// FrameDecoder turns the JSON payload of a data Frame into either an
-// InboundMessage (ok=true) or a no-op (ok=false). The connector
-// treats a decoder error as per-frame: log + drop, do not tear down
-// the connection. The decoder receives the JSON payload bytes — the
-// outer binary Frame envelope is stripped by the connector.
+// FrameDecoder 把数据帧的 JSON 负载变成 InboundMessage（ok=true）或空操作
+// （ok=false）。connector 把 decoder 错误当逐帧处理：记日志并丢弃，不拆连接。
+// decoder 收到的是 JSON 负载字节——外层二进制 Frame 信封已由 connector 剥掉。
 type FrameDecoder interface {
 	Decode(payload []byte, inst Installation) (msg InboundMessage, ok bool, err error)
 }
 
-// CredentialsProvider supplies the plaintext InstallationCredentials a
-// connector needs for its EndpointFetcher call.
+// CredentialsProvider 为 connector 的 EndpointFetcher 调用提供明文
+// InstallationCredentials。
 type CredentialsProvider interface {
 	Credentials(ctx context.Context, inst Installation) (InstallationCredentials, error)
 }
 
-// CredentialsProviderFunc adapts a free function.
+// CredentialsProviderFunc 把自由函数适配成 CredentialsProvider。
 type CredentialsProviderFunc func(ctx context.Context, inst Installation) (InstallationCredentials, error)
 
+// Credentials 实现 CredentialsProvider。
 func (f CredentialsProviderFunc) Credentials(ctx context.Context, inst Installation) (InstallationCredentials, error) {
 	return f(ctx, inst)
 }
 
-// EndpointFetcherFunc adapts a plain function to EndpointFetcher.
+// EndpointFetcherFunc 把普通函数适配成 EndpointFetcher。
 type EndpointFetcherFunc func(ctx context.Context, creds InstallationCredentials) (WSEndpoint, error)
 
+// Endpoint 实现 EndpointFetcher。
 func (f EndpointFetcherFunc) Endpoint(ctx context.Context, creds InstallationCredentials) (WSEndpoint, error) {
 	return f(ctx, creds)
 }
 
-// FrameDecoderFunc adapts a plain function to FrameDecoder.
+// FrameDecoderFunc 把普通函数适配成 FrameDecoder。
 type FrameDecoderFunc func(payload []byte, inst Installation) (InboundMessage, bool, error)
 
+// Decode 实现 FrameDecoder。
 func (f FrameDecoderFunc) Decode(payload []byte, inst Installation) (InboundMessage, bool, error) {
 	return f(payload, inst)
 }
 
-// GorillaDialer is the production WSDialer.
+// GorillaDialer 是生产环境的 WSDialer。
 type GorillaDialer struct {
 	Dialer *websocket.Dialer
 
-	// Proxy is the proxy function for WebSocket connections. When nil
-	// (the zero value), the dialer defaults to http.ProxyFromEnvironment
-	// so standard HTTPS_PROXY / HTTP_PROXY / NO_PROXY environment
-	// variables are respected. Set Proxy to a non-nil func to override
-	// (e.g. for custom proxy auth or a fixed proxy URL). To disable proxy
-	// entirely, pass a func that returns (nil, nil).
+	// Proxy 是 WebSocket 连接的代理函数。为 nil（零值）时拨号器默认用
+	// http.ProxyFromEnvironment，尊重标准 HTTPS_PROXY / HTTP_PROXY / NO_PROXY
+	// 环境变量。设为非 nil 函数可覆盖（例如自定义代理鉴权或固定代理 URL）。
+	// 要完全禁用代理，传一个返回 (nil, nil) 的函数。
 	Proxy func(*http.Request) (*url.URL, error)
 
-	// ProxyURL is an optional fixed HTTP CONNECT proxy URL for the
-	// WebSocket handshake. When set, it takes precedence over Proxy.
+	// ProxyURL 是 WebSocket 握手的可选固定 HTTP CONNECT 代理 URL。设置后优先于
+	// Proxy。
 	ProxyURL string
 }
 
+// NewGorillaDialer 构造带 15 秒握手超时默认值的生产拨号器。
 func NewGorillaDialer() *GorillaDialer {
 	return &GorillaDialer{
 		Dialer: &websocket.Dialer{
@@ -555,12 +499,13 @@ func NewGorillaDialer() *GorillaDialer {
 	}
 }
 
+// DialContext 实现 WSDialer。
 func (g *GorillaDialer) DialContext(ctx context.Context, urlStr string, requestHeader http.Header) (WSConn, *http.Response, error) {
 	d := g.Dialer
 	if d == nil {
 		d = websocket.DefaultDialer
 	}
-	// Shallow copy so we don't mutate the shared dialer's Proxy field.
+	// 浅拷贝，避免改到共享拨号器的 Proxy 字段。
 	dd := *d
 	if g.ProxyURL != "" {
 		proxyURL, err := url.Parse(g.ProxyURL)

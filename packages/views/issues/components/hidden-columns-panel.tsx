@@ -1,5 +1,11 @@
 "use client";
 
+// 本文件：HiddenColumnsPanel / HiddenColumnRow —— "隐藏列"侧栏。
+// 看板类视图（看板 board 与泳道 swimlane）把被用户隐藏的状态列收进右侧这个面板，
+// 每行对应一个状态、可一键恢复。面板外壳是唯一的事实来源，各行计数由调用方
+// 通过 renderRow 槽位自定（如看板取服务端状态 facet 的精确总数，泳道用内存里
+// 已加载问题的总数）。
+
 import { statusCategoryOfKey } from "@multica/core/issues";
 import { Eye, MoreHorizontal } from "lucide-react";
 import type { IssueStatusCategory } from "@multica/core/types";
@@ -15,14 +21,11 @@ import { StatusIcon } from "./status-icon";
 import { useT } from "../../i18n";
 
 /**
- * Single source of truth for the "Hidden columns" side panel rendered by
- * the kanban-style views (board and swimlane).
+ * "隐藏列"侧栏（由看板类视图渲染）的统一外壳。
  *
- * Each consumer renders its own per-row count via the {@link renderRow} slot —
- * the board reads the server status facet's exact total, while the swimlane
- * uses an in-memory total derived from already-loaded issues. Centralising
- * the chrome here keeps a future view (calendar / timeline / etc.) from
- * forking yet another copy.
+ * 各使用方通过 {@link renderRow} 槽位自行渲染每行的计数——看板读服务端
+ * 状态 facet 的精确总数，泳道用由已加载问题推导出的内存总数。
+ * 外壳集中在这里，可以让未来的新视图（日历/时间线等）不至于再造一份拷贝。
  */
 export function HiddenColumnsPanel({
   hiddenStatuses,
@@ -47,8 +50,8 @@ export function HiddenColumnsPanel({
 }
 
 /**
- * One row inside {@link HiddenColumnsPanel}. Pure presentational — the caller
- * computes `total` however it likes (cached query vs. in-memory aggregate).
+ * {@link HiddenColumnsPanel} 里的一行。纯展示——`total` 由调用方自行计算
+ *（缓存查询或内存聚合都行），本组件只负责排版与"恢复该列"按钮。
  */
 export function HiddenColumnRow({
   status,

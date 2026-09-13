@@ -7,11 +7,10 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
-// sessionContinuityNoticeFor picks the notice matching what this surface
-// actually lost. See the constants in execenv for the full reasoning; the
-// question is whether the conversation is still READABLE, not whether it is a
-// chat — an issue's comments, a Slack channel's history, and a web chat's /
-// Feishu's / WeCom's / DingTalk's chat_message transcript all are (MUL-5722).
+// sessionContinuityNoticeFor 挑出与该会话表面“实际丢了什么”匹配的提示。完整论证见
+// execenv 里的常量；关键问题是“对话是否还可读”，而不是“是不是 chat”——issue 的评论、
+// Slack 频道历史、网页 chat / 飞书 / 企微 / 钉钉的 chat_message 记录，全都是可读的
+// （MUL-5722）。
 func sessionContinuityNoticeFor(task Task) string {
 	if task.ChatSessionID == "" {
 		return execenv.SessionContinuityNoticeIssue
@@ -19,27 +18,23 @@ func sessionContinuityNoticeFor(task Task) string {
 	if task.ChatChannelType == execenv.ChannelTypeSlack {
 		return execenv.SessionContinuityNoticeChannelHistory
 	}
-	// Every other chat session that persists a transcript (web chat, Feishu,
-	// WeCom, DingTalk) reads it back via `multica chat history`; Slack alone
-	// reads the live channel. Only a surface that never stored a transcript
-	// falls through to Unrecoverable — see SurfacePersistsTranscript.
+	// 其它所有“持久化 transcript”的 chat 会话（网页 chat、飞书、企微、钉钉）都经
+	// `multica chat history` 读回；只有 Slack 读的是活频道。只有“从未存过 transcript”的
+	// 表面才落到 Unrecoverable——见 SurfacePersistsTranscript。
 	if execenv.SurfacePersistsTranscript(task.ChatChannelType) {
 		return execenv.SessionContinuityNoticeChatTranscript
 	}
 	return execenv.SessionContinuityNoticeUnrecoverable
 }
 
-// backendResumeContinuityNotice returns the notice the BACKEND should inject if
-// it lands on a fresh thread, or "" when the prompt already carries one.
+// backendResumeContinuityNotice 返回后端在“落到全新线程”时应注入的提示；prompt 已
+// 携带一条时返回 ""。
 //
-// Only one notice may reach a turn. Two paths can produce it — the daemon,
-// which appends it to the prompt whenever it already knows the resume is gone,
-// and the backend, which is the only one that can see a live resume RPC being
-// rejected mid-run. Before MUL-5722 both fired on the codex overflow retry, so
-// the same paragraph was paid for twice in one turn and maintained as two
-// hand-written strings. Deriving the backend's copy from the daemon's, and
-// suppressing it exactly when the prompt already said it, makes a duplicate
-// structurally impossible rather than merely unlikely.
+// 一轮只能出现一条提示。能产出它的路径有两条——daemon（一旦它已知续接已丢失就把提示
+// 追加进 prompt）与后端（只有它能看见“活着的续接 RPC 在运行中被拒”）。MUL-5722 之前
+// 两者在 codex 溢出重试时都会触发，同一段话在一轮里被付了两次钱、还作为两条手写字串
+// 维护。让后端的副本从 daemon 的派生、并恰好在 prompt 已说过时抑制它，使重复在结构上
+// 不可能，而不只是不太可能。
 func backendResumeContinuityNotice(task Task) string {
 	if task.PriorSessionResumeUnavailable {
 		return ""
@@ -47,19 +42,16 @@ func backendResumeContinuityNotice(task Task) string {
 	return sessionContinuityNoticeFor(task)
 }
 
-// perTurnContextBlocks renders the run-scoped context blocks that used to live
-// in the runtime brief (CLAUDE.md / AGENTS.md).
+// perTurnContextBlocks 渲染“每个运行”的上下文块——它们以前住在 runtime brief
+// （CLAUDE.md / AGENTS.md）里。
 //
-// Every value here changes from one run to the next on the same issue — the
-// initiator differs whenever another person comments, the continuity notice is
-// true of one run and false of the next, and the connected-app set is resolved
-// per run from the runtime MCP overlay. Claude Code loads the brief into
-// messages[0], ahead of the entire conversation, so rendering these there threw
-// away the prompt cache for the whole history on every resume. Appending them
-// to the per-turn user message puts them after the cached prefix instead, where
-// changing them costs only this turn's own tokens (MUL-5377).
+// 这里每个值都会在同一 issue 的相邻两轮之间变化——换一个人评论发起者就不同，连续性提示
+// 这轮为真下轮为假，connected-app 集合按轮从 runtime MCP overlay 解析。Claude Code 把
+// brief 加载进 messages[0]、位于整段对话之前，所以把这些渲染到那里会在每次续接时丢掉
+// 整段历史的 prompt 缓存。把它们追加进每轮 user 消息则相反——落在缓存前缀之后，改动只
+// 花本轮自己的 token（MUL-5377）。
 //
-// Returns "" when none of the blocks apply.
+// 没有任何块适用时返回 ""。
 func perTurnContextBlocks(task Task, opts promptOpts) string {
 	var b strings.Builder
 	b.WriteString(buildActiveSiblingRunsBlock(task.IssueID, task.ActiveSiblingRuns))
@@ -73,43 +65,38 @@ func perTurnContextBlocks(task Task, opts promptOpts) string {
 	return b.String()
 }
 
-// promptOpts carries per-run facts the claimed Task does not: things only the
-// daemon's own execution context can answer. Kept behind PromptOption so the
-// common BuildPrompt(task, provider) call sites stay unchanged.
+// promptOpts 携带已认领 Task 不包含的“每运行”事实：只有 daemon 自己的执行上下文能
+// 回答的东西。藏到 PromptOption 后面，让常见的 BuildPrompt(task, provider) 调用点保持
+// 不变。
 type promptOpts struct {
 	sharedLocalDirectory    bool
 	worktreeReplayConflicts []string
 }
 
-// PromptOption tunes per-turn prompt copy with run-scoped context.
+// PromptOption 用运行级上下文调整每轮 prompt 文案。
 type PromptOption func(*promptOpts)
 
-// WithSharedLocalDirectory marks a turn that runs inside the user's own
-// directory WITHOUT holding its path mutex — today, a chat turn on an in_place
-// local_directory resource (see localDirectoryLockExempt). Such a turn may
-// overlap a coding task writing to the same tree, and unlike every other task
-// it got there by design rather than by winning the lock, so it is the one that
-// has to be told (issue #7344).
+// WithSharedLocalDirectory 标记一轮“在用户自己的目录里运行、却未持有其路径互斥锁”
+// 的回合——今天指 in_place local_directory 资源上的 chat 回合（见
+// localDirectoryLockExempt）。这样的回合可能与“正在往同一棵树写”的编码任务重叠；与
+// 其它任务不同，它是靠设计而不是靠赢下锁到达这里的，所以它才是必须被告诉的那一个
+// （issue #7344）。
 func WithSharedLocalDirectory() PromptOption {
 	return func(o *promptOpts) { o.sharedLocalDirectory = true }
 }
 
-// WithWorktreeReplayConflicts names the files whose merge this turn has to
-// finish. Worktree mode continues one branch per conversation, and when the
-// user edits the same lines in their own directory between two turns, git
-// cannot decide which version wins — so the turn starts on a conflicted tree
-// and the agent, which is the only party that knows what the change was FOR,
-// resolves it (MUL-6881).
+// WithWorktreeReplayConflicts 点名本轮必须收尾合并的文件。worktree 模式每个会话继续
+// 用同一条分支，当用户在两轮之间于自己目录里改了同一批行，git 无法裁决哪个版本胜出——
+// 于是本轮从一棵冲突树开始，而 agent 是唯一知道“那次改动是为啥”的一方，由它解决
+// （MUL-6881）。
 func WithWorktreeReplayConflicts(files []string) PromptOption {
 	return func(o *promptOpts) { o.worktreeReplayConflicts = files }
 }
 
-// buildSharedLocalDirectoryBlock warns an unlocked turn that its working
-// directory is shared live. Deliberately guidance and not a prohibition: the
-// mutex never covered the user's own editor either, so refusing writes here
-// would buy a restriction the surrounding system does not actually enforce.
-// What the turn cannot infer on its own is that a sibling task may be mid-edit
-// in the same tree — so state that, and let it size its writes accordingly.
+// buildSharedLocalDirectoryBlock 警告“未加锁的回合”：它的工作目录正被实时共享。
+// 刻意是引导而非禁止：互斥锁本来也没盖住用户自己的编辑器，在这里禁写只会买回一个“外
+// 围系统并不真执行”的限制。回合自己推断不出的是“同树的兄弟任务可能正编辑到一半”——
+// 所以点明这一点，让它据此掂量写入的规模。
 func buildSharedLocalDirectoryBlock(shared bool) string {
 	if !shared {
 		return ""
@@ -121,31 +108,23 @@ func buildSharedLocalDirectoryBlock(shared bool) string {
 	return b.String()
 }
 
-// maxConflictListBytes bounds the RENDERED file list, in bytes of the escaped
-// output rather than in entries: a git path can be as long as the filesystem
-// allows, so a per-entry count bounds nothing. 4 KiB is roughly a thousand
-// tokens — small next to any provider's context, large enough for the tens of
-// paths a real merge conflict spans, and the remainder is one `git status` away
-// inside the worktree. It is the whole block's share of the turn: this text is
-// re-sent every turn the merge stays open, and a pathological repository must
-// not be able to spend that turn on filenames.
+// maxConflictListBytes 限制*渲染后的*文件列表长度——按转义输出的字节数而非条目数：
+// git 路径可以长到文件系统允许的程度，按条计数等于没限制。4 KiB 大约一千个 token——
+// 相对任何 provider 的上下文都很小，对真实合并冲突覆盖的几十条路径又足够大，余下的在
+// worktree 里一条 `git status` 就能看到。它是整块文本在这轮里的配额：只要合并还开着，
+// 这段文字每轮都重发，病态仓库绝不能把那一轮全花在文件名上。
 const maxConflictListBytes = 4 << 10
 
-// buildWorktreeReplayConflictBlock tells the turn that its own working tree
-// starts out mid-merge, and that finishing that merge comes before the task.
+// buildWorktreeReplayConflictBlock 告诉本轮：它自己的工作树是从“合并进行到一半”开始
+// 的，而完成那场合并要先于任务。
 //
-// Nothing else can say it: `git status` shows the conflict but not where it
-// came from, and the two sides are "what you wrote last turn" and "what the
-// user changed since" — neither of which is visible from inside the worktree.
-// Silence here is what the earlier version of this feature got wrong: it
-// resolved the conflict by discarding the user's edit, which lost that edit
-// from every later turn as well.
+// 没有别的渠道能说清这事：`git status` 只显示冲突、不显示它从哪来，而两侧分别是“你上
+// 一轮写的”与“用户之后改的”——这两者在 worktree 内部都不可见。这里的沉默正是这个功能
+// 早前版本做错的地方：它靠丢弃用户编辑来解决冲突，导致那笔编辑在往后的每轮里也丢了。
 //
-// The names are QUOTED, not wrapped in a code span. They come from the user's
-// repository, and a git path may contain newlines, backticks and quotes — a
-// raw one could close the list item and continue as its own instruction line in
-// the prompt. %q keeps every path on one line with its own delimiters, so a
-// crafted filename can only ever read as a filename.
+// 文件名是 *引号转义的*，不是包在 code span 里。它们来自用户的仓库，git 路径可能含
+// 换行、反引号与引号——裸的会关掉列表项、在 prompt 里继续当自己的指令行。%q 让每个
+// 路径待在各自带定界符的一行上，精心构造的文件名永远只能被读作文件名。
 func buildWorktreeReplayConflictBlock(files []string) string {
 	if len(files) == 0 {
 		return ""
@@ -156,9 +135,8 @@ func buildWorktreeReplayConflictBlock(files []string) string {
 	listed, used := 0, 0
 	for _, file := range files {
 		entry := fmt.Sprintf("- %q\n", file)
-		// Budget checked before writing, so a single very long path cannot
-		// overrun it either — in that case the list is empty and the line below
-		// carries the whole count.
+		// 先算预算再写，单条超长路径也不会超——那种情况下列表为空、下面那行扛起全部
+		// 数量。
 		if used+len(entry) > maxConflictListBytes {
 			break
 		}
@@ -175,10 +153,9 @@ func buildWorktreeReplayConflictBlock(files []string) string {
 }
 
 func buildActiveSiblingRunsBlock(currentIssueID string, runs []ActiveSiblingRunData) string {
-	// Sibling issue work is useful context only for another issue task. Chat,
-	// autopilot, and quick-create tasks have no current target issue whose claim
-	// history they could inspect, so rendering this block there creates an
-	// unactionable warning.
+	// 兄弟 issue 的工作只对“另一个 issue 任务”是有用上下文。chat、autopilot 与
+	// quick-create 任务没有“可查 claim 历史的当前目标 issue”，在那里渲染这块只会造出
+	// 一条无法行动的警告。
 	if currentIssueID == "" || len(runs) == 0 {
 		return ""
 	}
@@ -208,22 +185,19 @@ func buildActiveSiblingRunsBlock(currentIssueID string, runs []ActiveSiblingRunD
 	return b.String()
 }
 
-// BuildPrompt constructs the task prompt for an agent CLI.
-// Keep this minimal — detailed instructions live in CLAUDE.md / AGENTS.md
-// injected by execenv.InjectRuntimeConfig. The provider string is threaded
-// through to comment-triggered tasks' per-turn reply template; that template
-// is provider-agnostic AND host-agnostic now (every OS → write a UTF-8 file,
-// post with `--content-file`) because the shell-layer corruption it guards
-// against is not specific to any one provider or host (MUL-2904, #4182).
+// BuildPrompt 构造发给 agent CLI 的任务 prompt。
+// 保持极简——详细指令住在 execenv.InjectRuntimeConfig 注入的 CLAUDE.md / AGENTS.md。
+// provider 字符串一路透传到“评论触发任务”的每轮回复模板；那个模板现在与 provider 无
+// 关、也与宿主机无关（每个 OS → 写 UTF-8 文件、用 `--content-file` 发），因为它防的
+// shell 层损坏并不专属于某个 provider 或主机（MUL-2904, #4182）。
 func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 	var opts promptOpts
 	for _, apply := range options {
 		apply(&opts)
 	}
 	body := buildPromptBody(task, provider)
-	// Run-scoped context is appended, never prepended: everything ahead of it
-	// is stable across runs of a resumed session, and appending keeps it after
-	// the cached prefix (MUL-5377).
+	// 运行级上下文是追加、绝不前置：它前面的一切在“续接会话的各轮”间稳定，追加让它
+	// 落在缓存前缀之后（MUL-5377）。
 	if blocks := perTurnContextBlocks(task, opts); blocks != "" {
 		if !strings.HasSuffix(body, "\n\n") {
 			body += "\n"
@@ -252,9 +226,8 @@ func buildPromptBody(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
-	// Assignment handoff (MUL-3375): a free-text instruction the person who
-	// assigned/promoted this issue left for you. Frame it as a handoff, not a
-	// comment to reply to — there is no comment thread to answer here.
+	// 分配交接（MUL-3375）：指派/提升本 issue 的人留给你的自由文本指令。把它当交接来框，
+	// 而不是一条要回复的评论——这里没有可回应的评论线程。
 	if task.HandoffNote != "" {
 		b.WriteString("You were handed this issue with a handoff note. Treat it as the assigner's scoping instruction for this run; follow it before doing anything broader, and do not reply to it as if it were a comment:\n\n")
 		fmt.Fprintf(&b, "> %s\n\n", task.HandoffNote)
@@ -265,13 +238,10 @@ func buildPromptBody(task Task, provider string) string {
 	return b.String()
 }
 
-// buildQuickCreatePrompt constructs a prompt for quick-create tasks. The
-// user typed a single natural-language sentence in the create-issue modal;
-// the agent's job is to translate it into one `multica issue create` CLI
-// invocation, using its judgment to decide whether fetching referenced URLs
-// would produce a better issue. No issue exists yet, so the agent must NOT
-// call `multica issue get` or attempt to comment — there's nothing to read
-// or reply to.
+// buildQuickCreatePrompt 构造 quick-create 任务的 prompt。用户在创建 issue 弹窗里打
+// 了一句话自然语言；agent 的任务是把它翻译成一次 `multica issue create` CLI 调用，并用
+// 自己的判断决定“要不要抓取引用的 URL 以产出更好的 issue”。此刻还没有 issue，因此
+// agent 绝不能调 `multica issue get` 或试图评论——没什么可读、没什么可回。
 func buildQuickCreatePrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a quick-create assistant for a Multica workspace.\n\n")
@@ -290,10 +260,10 @@ func buildQuickCreatePrompt(task Task) string {
 
 	b.WriteString("Field rules:\n\n")
 
-	// title
+	// title 字段规则
 	b.WriteString("- **title**: required. A concise but semantically rich summary. If the input references external resources (PRs, issues, URLs), use your judgment on whether fetching the resource would produce a meaningfully better title — e.g. \"review PR #123\" → \"Review PR #123: Refactor auth module to OAuth2\". Strip filler words but preserve key semantic information.\n\n")
 
-	// description — the core optimization
+	// description —— 核心优化点
 	b.WriteString("- **description**: The description is the executing agent's primary context. Aim for high fidelity — they should grasp the user's intent as if they had read the raw input themselves. Use a two-section structure:\n\n")
 	b.WriteString("  1. **User request** — Faithfully restate what the user wants in their own words. Preserve specific names, identifiers, file paths, code snippets, and technical terms verbatim. Strip non-spec material before writing it (this is removal, not paraphrasing): verbal routing wrappers about creating the issue or routing it (e.g. \"create an issue\", \"分配给 X\", \"让 @X 处理\") and pure conversational fillers (e.g. \"对吧？\"). When in doubt, keep it.\n\n")
 	b.WriteString("     CC exception: `multica issue create` has no `--subscriber` flag, and the platform auto-subscribes members whose `[@Name](mention://member/<uuid>)` link appears in the description. When the user wrote \"cc @Y\", strip the verbal \"cc\" wrapper from the User request body and append a final `CC: <mention link(s)>` line to the description so the cc routing still fires.\n\n")
@@ -320,10 +290,8 @@ func buildQuickCreatePrompt(task Task) string {
 	}
 	switch {
 	case task.SquadID != "":
-		// The user opened quick-create with a SQUAD selected. The task
-		// runs on the squad's leader agent, but the squad is the expected
-		// owner — assigning to the leader would mask the squad's
-		// delegation flow. Always point the default at the squad UUID.
+		// 用户带着选中的 SQUAD 打开 quick-create。任务跑在小队队长 agent 上，但小队才是
+		// 预期属主——指派给队长会掩盖小队的委派流。默认始终指向小队 UUID。
 		if task.SquadName != "" {
 			fmt.Fprintf(&b, "    - When the user did NOT name an assignee, default to the picker SQUAD %q: pass `--assignee-id %q` (the squad's UUID). The user opened quick-create with the squad selected; you (the leader agent) are running on the squad's behalf, so the squad — not you — is the expected owner. Never leave the issue unassigned, and do not assign it to your own agent UUID.\n\n", task.SquadName, task.SquadID)
 		} else {
@@ -341,10 +309,8 @@ func buildQuickCreatePrompt(task Task) string {
 		fmt.Fprintf(&b, "- **due-date**: required for this run. Pass `--due-date %s`; the quick-create selection is authoritative.\n\n", task.QuickCreateDueDate)
 	}
 
-	// project — pinned by the modal when the user picked one, otherwise
-	// omitted so the platform routes to the workspace default. Always pass
-	// the UUID (never a name) so the issue lands in the right project even
-	// when several share a title.
+	// project ——用户在选择器里挑过时由弹窗钉住；否则省略，让平台路由到 workspace 默认。
+	// 总是传 UUID（绝不传名字），这样即便多个项目标题相同，issue 也落进对的工程。
 	if task.ProjectID != "" {
 		if task.ProjectTitle != "" {
 			fmt.Fprintf(&b, "- **project**: required for this run. Pass `--project %q` so the new issue lands in project %q (the user picked it in the quick-create modal). Do not infer a different project from the prompt text — the modal selection is authoritative.\n", task.ProjectID, task.ProjectTitle)
@@ -354,11 +320,9 @@ func buildQuickCreatePrompt(task Task) string {
 	} else {
 		b.WriteString("- **project**: omit. The platform will route the issue to the workspace default.\n")
 	}
-	// parent — pinned by the modal when the user opened it from "Add sub
-	// issue" on an existing issue. Pass the UUID (never the identifier) so
-	// the create lands the sub-issue under the right parent even when the
-	// workspace prefix changes; the identifier is included in the prose
-	// purely as human-readable context for the agent.
+	// parent ——用户从既有 issue 的 "Add sub issue" 打开时由弹窗钉住。传 UUID（绝不传
+	// 标识符），这样即便 workspace 前缀改变，create 也会把子 issue 挂到正确的父级下；
+	// 标识符只是给 agent 的人类可读上下文，写进散文里。
 	if task.ParentIssueID != "" {
 		if task.ParentIssueIdentifier != "" {
 			fmt.Fprintf(&b, "- **parent**: required for this run. Pass `--parent %q` so the new issue is filed as a sub-issue of %s (the user opened quick-create from that issue's \"Add sub issue\" entry). Do not infer a different parent from the prompt text — the modal entry point is authoritative.\n", task.ParentIssueID, task.ParentIssueIdentifier)
@@ -369,7 +333,7 @@ func buildQuickCreatePrompt(task Task) string {
 	b.WriteString("- **status**: omit (defaults to `todo`).\n")
 	b.WriteString("- **attachments**: `--attachment` takes LOCAL file paths, never URLs. Image URLs in the user input are already markdown — keep them inline. Files you produced: see `## Output`.\n\n")
 
-	// output format
+	// output format 输出格式
 	b.WriteString("Output format:\n")
 	b.WriteString("- Run exactly one `multica issue create --output json` invocation. Do not retry for any reason — even on non-zero exit. The issue may already exist; another attempt would create a duplicate.\n")
 	b.WriteString("- Parse the JSON response to read the created issue's `identifier` (preferred) or `id` (fallback). Do not scrape human output and do not assume any workspace issue prefix such as `MUL-`; workspaces can use custom prefixes.\n")
@@ -379,12 +343,10 @@ func buildQuickCreatePrompt(task Task) string {
 	return b.String()
 }
 
-// buildCommentPrompt constructs a prompt for comment-triggered tasks.
-// The triggering comment content is embedded directly so the agent cannot
-// miss it, even when stale output files exist in a reused workdir.
-// The reply instructions (including the current TriggerCommentID as --parent)
-// are re-emitted on every turn so resumed sessions cannot carry forward a
-// previous turn's --parent UUID.
+// buildCommentPrompt 构造评论触发任务的 prompt。触发评论内容直接内嵌，agent 即使在
+// “复用的 workdir 里有陈旧输出文件”时也不会错过它。
+// 回复指令（含作为 --parent 的当前 TriggerCommentID）每轮都会重新发出，续接会话就不会
+// 把上一轮的 --parent UUID 带下来。
 func buildCommentPrompt(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
@@ -402,14 +364,10 @@ func buildCommentPrompt(task Task, provider string) string {
 		}
 		fmt.Fprintf(&b, "[NEW COMMENT] %s just left a new comment. Focus on THIS comment — do not confuse it with previous ones:\n\n", authorLabel)
 		fmt.Fprintf(&b, "> %s\n\n", task.TriggerCommentContent)
-		// MUL-4195: comments that arrived before this run started were folded
-		// into it rather than dropped. The trigger above is the newest; the
-		// agent must ALSO address these earlier ones so no deliberate user
-		// instruction is silently lost. Prefer the embedded detail so the agent
-		// does not have to guess which thread each folded comment lives in
-		// (they may span multiple threads — review should-fix #3); fall back to
-		// a thread-agnostic issue-wide fetch hint for old servers that only send
-		// the ids.
+		// MUL-4195: 本运行开始前到达的评论被并入它而不是丢弃。上面的触发评论是最新的；
+		// agent 还*必须*处理这些更早的，让任何刻意的用户指令不被悄悄丢掉。优先用内嵌
+		// 细节，agent 就不必猜每条被并入评论住在哪个线程（它们可能横跨多个线程——review
+		// should-fix #3）；对“只发 id”的老服务器回退到一条与线程无关的全 issue 拉取提示。
 		if len(task.CoalescedComments) > 0 {
 			fmt.Fprintf(&b, "This run also covers %d earlier comment(s) posted before it started — you must read and address them too, not just the one above. They may be in different threads, so each is reproduced here with its own thread:\n\n", len(task.CoalescedComments))
 			for _, cc := range task.CoalescedComments {
@@ -439,32 +397,24 @@ func buildCommentPrompt(task Task, provider string) string {
 			}
 			fmt.Fprintf(&b, "\nIf you need the surrounding discussion for any of them, fetch its thread with `multica issue comment list %s --thread <thread-id> --tail 30 --compact --output json` using the thread id shown above.\n\n", task.IssueID)
 		} else if len(task.CoalescedCommentIDs) > 0 {
-			// MUL-5442: this fallback used to send the agent at `--recent 30`.
-			// That flag caps THREADS, not comments, and every returned thread
-			// carries all of its descendants — so on an issue with fewer than 30
-			// root threads it returned the entire comment history to locate a
-			// handful of ids. It also contradicted the brief's own catch-up step,
-			// which tells the agent to read in two bounded steps and never make
-			// one bulk pull (MUL-5372): the platform was recommending exactly the
-			// shape it forbids elsewhere.
+			// MUL-5442: 这个兜底以前让 agent 用 `--recent 30`。那个参数封顶的是*线程*数
+			// 而非评论数，而返回的每个线程都带全部分支——于是少于 30 个根线程的 issue
+			// 会为定位寥寥几个 id 返回整段评论历史。它还跟 brief 自己的补读步骤矛盾，后者
+			// 让 agent 分两步有界地读、绝不一次整拉（MUL-5372）：平台推荐的恰恰是它在别处
+			// 禁止的形状。
 			//
-			// The replacement is a per-id lookup, which is what makes it
-			// deterministic: `--thread` accepts ANY comment id, reply or root, and
-			// the server resolves it to the containing thread. So each id can be
-			// fetched directly and bounded, without knowing its thread and without
-			// guessing which threads look recent.
+			// 替代方案是按 id 查——这才让它确定：`--thread` 接受任意评论 id（回复或根），
+			// 服务器会把它解析到所在线程。因此每个 id 都能直接、有界地取回，无需知道它的
+			// 线程、也无需猜哪些线程看着新鲜。
 			//
-			// `--since` is only a prefetch, never the guarantee. Two ways it can
-			// miss an id, so the per-id pass below is unconditional:
-			//   - A retry inherits the previous attempt's coalesced_comment_ids
-			//     verbatim (queries/agent.sql RetryTask), while the anchor is
-			//     recomputed from the last STARTED task's started_at
-			//     (GetLastTaskStartedAtForIssueAndAgent). An inherited id can
-			//     therefore predate the anchor.
-			//   - The anchor is only populated when some comment landed after it,
-			//     which is independent of where these ids sit.
-			// It is also not a precise fetch in the other direction: the window
-			// carries the trigger comment and unrelated comments too.
+			// `--since` 只是预取，绝不是保证。它可能漏 id 的两种方式，因此下面的按 id 扫描
+			// 是无条件的：
+			//   - 一次重试逐字继承上一次尝试的 coalesced_comment_ids
+			//     （queries/agent.sql RetryTask），而锚点是从“最近一次已 STARTED 任务的
+			//     started_at”重算的（GetLastTaskStartedAtForIssueAndAgent）。继承来的 id
+			//     因此可能早于锚点。
+			//   - 锚点只在“锚点之后有评论落地”时才填充，与这些 id 的位置无关。
+			// 它也不是另一个方向的精确拉取：窗口会带上触发评论与无关评论。
 			fmt.Fprintf(&b, "This run also covers %d earlier comment(s) posted before it started — you must read and address every one of them, not just the one above: %s. They may be in DIFFERENT threads, so do not assume they share the triggering thread.\n\n",
 				len(task.CoalescedCommentIDs), strings.Join(task.CoalescedCommentIDs, ", "))
 			if task.NewCommentsSince != "" {
@@ -479,12 +429,9 @@ func buildCommentPrompt(task Task, provider string) string {
 		}
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)
-	// Comment-reading pointer. Warm path with new comments: issue-wide
-	// since-delta count, but steer the agent to read the triggering thread
-	// first. Warm resumed path with no new comments: the trigger is already
-	// injected, so don't force a duplicate thread read. Cold path: read the
-	// triggering thread, not the flat timeline. Final fallback (no trigger id,
-	// shouldn't happen here): plain read.
+	// 读评论的指引。热路径有新评论：issue 级 since 增量计数，但把 agent 引向先读触发
+	// 线程。热续接路径无新评论：触发内容已注入，别逼它重复读线程。冷路径：读触发线程
+	// 而不是平铺时间线。最终兜底（没有触发 id，这里不该发生）：普通读取。
 	if hint := execenv.BuildNewCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID, task.NewCommentsSince, task.NewCommentCount); hint != "" {
 		b.WriteString(hint)
 	} else if task.PriorSessionID != "" {
@@ -495,11 +442,9 @@ func buildCommentPrompt(task Task, provider string) string {
 		fmt.Fprintf(&b, "Read the discussion: scan with `multica issue comment list %s --roots-only --summary --compact --output json`, then expand what matters with `--thread <thread-id> --tail 30`.\n\n", task.IssueID)
 	}
 	writeSourceContextPrompt(&b, task)
-	// Reply routing. When this run coalesced comments spanning MORE THAN ONE
-	// root thread, answer each thread in its own thread instead of dumping one
-	// merged comment (MUL-4348). Same-thread follow-ups collapse to a single
-	// group upstream, so they keep the ordinary single-parent path below and can
-	// never be split into duplicate replies.
+	// 回复路由。当本次运行并入的评论横跨*不止一个*根线程时，逐线程在各自线程里作答，
+	// 而不是倒成一条合并评论（MUL-4348）。同一线程的后续回复上游会折叠成一组，所以它们
+	// 保持下面的普通单父路径、绝不裂成重复回复。
 	if targets := commentReplyThreads(task); len(targets) >= 2 {
 		b.WriteString(execenv.BuildMultiThreadCommentReplyInstructions(task.IssueID, targets, taskIsSquadLeader(task)))
 	} else {
@@ -508,28 +453,21 @@ func buildCommentPrompt(task Task, provider string) string {
 	return b.String()
 }
 
-// commentReplyThreads groups this run's trigger + coalesced comments by their
-// root thread, in first-seen order (coalesced comments oldest-first, the newest
-// trigger last). A run that coalesced several @mentions from the SAME thread
-// yields a single group, so same-thread follow-ups get exactly one consolidated
-// reply and can never be split into duplicates; comments from different root
-// threads yield one group each so the agent replies inside each thread instead
-// of merging them into one blob (MUL-4348).
+// commentReplyThreads 把本次运行的触发评论 + 并入评论按它们的根线程分组，按首见顺序
+// （并入评论旧到新，最新触发评论最后）。并入同一线程多条 @ 提及时只产出一组，因此同
+// 线程后续回复恰好收到一条合并回复、绝不裂成重复；不同根线程的评论各产一组，让 agent
+// 逐线程作答而不是并成一坨（MUL-4348）。
 //
-// The reply for each thread targets the NEWEST comment that triggered this run
-// in that thread (coalesced comments arrive oldest-first and the trigger is the
-// newest overall, so a simple last-write-wins yields the newest per thread).
-// That nests the answer next to the most recent question in the thread rather
-// than at the thread root, and makes the trigger's own thread (--parent =
-// trigger comment) consistent with every other thread instead of a special
-// case. Returns nil when there is no trigger or only a single distinct thread —
-// the caller then keeps the existing single-parent reply path unchanged.
+// 每个线程的回复瞄准“该线程里触发本次运行的最新评论”（并入评论旧到新到达、触发评论
+// 全局最新，所以简单“后写胜”就得每线程最新）。这把答案嵌在“线程里最近的问题”旁边而
+// 不是线程根上，也让触发评论自己的线程（--parent = 触发评论）与每个其它线程一致，而
+// 不是特例。没有触发或只有单一不同线程时返回 nil——调用方保持现有单父回复路径不变。
 func commentReplyThreads(task Task) []execenv.ThreadReplyTarget {
 	if task.TriggerCommentID == "" {
 		return nil
 	}
-	// A comment with no explicit thread id is a root comment: it is its own
-	// thread, so fall back to the comment id itself as the thread key.
+	// 没有显式 thread id 的评论是根评论：它自己就是线程，所以回退到“评论 id 自己”作为
+	// 线程键。
 	threadKey := func(threadID, commentID string) string {
 		if threadID != "" {
 			return threadID
@@ -539,9 +477,8 @@ func commentReplyThreads(task Task) []execenv.ThreadReplyTarget {
 
 	order := make([]string, 0, len(task.CoalescedComments)+1)
 	parentByThread := make(map[string]string, len(task.CoalescedComments)+1)
-	// note records first-seen order but lets the newest comment win the reply
-	// target: inputs are chronological (coalesced oldest-first, trigger last),
-	// so the last write for a thread is its newest triggering comment.
+	// note 记录首见顺序，但让最新评论赢下回复目标：输入按时间序（并入的旧到新、触发
+	// 评论最后），所以对某线程的最后一次写入就是它最新的触发评论。
 	note := func(threadID, parentID string) {
 		if _, ok := parentByThread[threadID]; !ok {
 			order = append(order, threadID)
@@ -549,14 +486,13 @@ func commentReplyThreads(task Task) []execenv.ThreadReplyTarget {
 		parentByThread[threadID] = parentID
 	}
 
-	// Coalesced (older) comments first: reply under the specific comment that
-	// mentioned the agent, not the thread root, so a mid-thread mention gets its
-	// answer next to the question.
+	// 先放并入的（更老）评论：回复挂在“提及 agent 的那条具体评论”下而不是线程根下，
+	// 让中段提及的答案挨着问题。
 	for _, cc := range task.CoalescedComments {
 		note(threadKey(cc.ThreadID, cc.ID), cc.ID)
 	}
-	// The newest trigger last: it always wins its own thread's reply target,
-	// overriding any earlier coalesced comment that shared the trigger's thread.
+	// 最新的触发评论最后：它总是赢下自己线程的回复目标，覆盖任何与它同线程的更早并入
+	// 评论。
 	note(threadKey(task.TriggerThreadID, task.TriggerCommentID), task.TriggerCommentID)
 
 	if len(order) <= 1 {
@@ -569,10 +505,9 @@ func commentReplyThreads(task Task) []execenv.ThreadReplyTarget {
 	return targets
 }
 
-// buildChatPrompt constructs a prompt for interactive chat tasks.
+// buildChatPrompt 构造交互式 chat 任务的 prompt。
 func buildChatPrompt(task Task) string {
-	// Legacy compatibility for historical proactive-introduction sessions.
-	// New agent creation no longer creates a chat or runs this prompt.
+	// 对历史“主动介绍会话”的兼容遗留。新建 agent 不再创建 chat、也不再跑这个 prompt。
 	if task.ChatIntro {
 		var b strings.Builder
 		b.WriteString("You are running as a chat assistant for a Multica workspace.\n")
@@ -582,10 +517,9 @@ func buildChatPrompt(task Task) string {
 
 	var b strings.Builder
 	b.WriteString("You are running as a chat assistant for a Multica workspace.\n")
-	// Audience is per-session context, so keep it out of the cached runtime
-	// brief. The compact anchors here preserve the non-inferable boundaries: a
-	// group reply is not private to its sender and people not otherwise present
-	// in the run context may read it. Unknown never defaults to private.
+	// 受众是每会话上下文，所以别放进被缓存的 runtime brief。这里的紧凑锚点守住“无法
+	// 推断”的边界：群回复对其发送者并不私密，运行上下文之外的人也可能会读。Unknown 绝不
+	// 默认成 private。
 	switch execenv.AudienceOf(task.ChatChannelType, task.ChatType) {
 	case execenv.ChatAudienceGroup:
 		b.WriteString("Audience: group room; not private; unseen members may read replies.\n\n")
@@ -604,32 +538,23 @@ func buildChatPrompt(task Task) string {
 			b.WriteString("\n```\n\n")
 		}
 	}
-	// Channel awareness (MUL-3871). When the session is backed by an IM channel,
-	// the agent must KNOW it is operating inside that channel — otherwise an ask
-	// like "what did you just talk about" sends it to read Multica instead of the
-	// channel conversation. A web-only chat session gets no such block — its
-	// history is the Multica chat_session the agent already resumes.
+	// 频道感知（MUL-3871）。当会话由 IM 频道承载，agent 必须*知道*自己正运行在那个频道
+	// 里——否则“你们刚才聊了什么”这类请求会把它引去读 Multica 而不是读频道对话。纯网页
+	// chat 会话拿不到这块——它的历史就是 agent 已在续接的那个 Multica chat_session。
 	//
-	// The history half: `multica chat history` is served by handler/chat_history.go,
-	// which reads the live channel for Slack and falls back to the stored
-	// chat_message transcript for every other surface — so Slack, Feishu, WeCom
-	// and DingTalk can all read the conversation back. Slack additionally has
-	// `multica chat thread` (thread expansion); the transcript surfaces have no
-	// thread reader, so they get the transcript command without the thread
-	// drill-down (MUL-4899).
+	// 历史那半：`multica chat history` 由 handler/chat_history.go 服务，它对 Slack 读活
+	// 频道、对其它每种表面回退到存储的 chat_message 记录——所以 Slack、飞书、企微与钉钉
+	// 都能读回对话。Slack 另有 `multica chat thread`（线程展开）；记录型表面没有线程读取
+	// 器，它们拿到的是不带线程下钻的记录命令（MUL-4899）。
 	//
-	// WHERE the conversation lives is therefore per-branch, not shared: only the
-	// unconditional "don't go looking in issues/comments" survives up top. Saying
-	// "its history lives in the channel, NOT in Multica" for every channel type
-	// contradicted the very next line on a transcript surface, which tells the
-	// agent Multica stored it and hands it the command to read it back. An agent
-	// given both reasonably believes the read cannot work and skips it.
+	// 因此对话*住在哪*是按分支的、不是共享的：只有顶上的无条件“别去 issue/评论里找”能
+	// 存活。对每种频道类型都说“它的历史住在频道里、不在 Multica”，会在记录型表面上与
+	// 紧接着的下一行矛盾——那行告诉 agent Multica 存了它、还递上读回的命令。两条都给的
+	// agent 会合理相信读取不可行而跳过它。
 	//
-	// The no-narration rule is a THIRD axis and belongs to neither half: it is a
-	// property of delivering to an IM channel at all, so it is emitted for every
-	// channel type. #4776 introduced it that way; the MUL-4899 split moved it into
-	// the Slack branch along with the read commands it happened to mention, which
-	// silently dropped it for Feishu/Lark (GH #6006).
+	// 禁止复述规则是第三条轴、不属于任何一半：它是“向 IM 频道投递”本身的属性，所以对
+	// 每种频道类型都发。是 #4776 以这种方式引入的；MUL-4899 的拆分把它连同恰好提到的读
+	// 命令一起挪进了 Slack 分支，于是悄悄对飞书/Lark 丢掉了它（GH #6006）。
 	if task.ChatChannelType != "" {
 		platform := channelDisplayName(task.ChatChannelType)
 		fmt.Fprintf(&b, "You are operating inside a %s conversation — not the Multica web app. Never look in Multica issues or comments for this conversation.\n", platform)
@@ -642,16 +567,15 @@ func buildChatPrompt(task Task) string {
 			} else {
 				b.WriteString("You were @mentioned at the channel top level: start with `multica chat history` to see the channel, then read a specific thread's contents with `multica chat thread <thread_id>`.\n")
 			}
-			// These reads are the agent's private context-gathering; narrating them
-			// into a chat reply reads as noise (the user reported every reply being
-			// prefixed with "我先读取…"). Tell the agent to keep them out of its answer.
+			// 这些读取是 agent 私下的上下文收集；把它们复述进 chat 回复读起来是噪音（用户
+			// 反映过每条回复都被 "我先读取…" 前缀）。告诉 agent 别把读取写进回答。
 			b.WriteString("Do these reads SILENTLY as an internal step — they are how you gather context, not part of your answer.\n")
 		} else if execenv.SurfacePersistsTranscript(task.ChatChannelType) {
 			fmt.Fprintf(&b, "The conversation happens in %s, and Multica stores a transcript of it. The message below may be only what triggered you — read it back with `multica chat history` when you need earlier context that is not below.\n", platform)
 		} else {
 			fmt.Fprintf(&b, "This conversation and its history live in %s, NOT in Multica, and Multica has no history reader for it. Work from the context already provided to you below — no command can fetch more of this conversation. If you genuinely need earlier context that is not here, ask the user for it rather than guessing.\n", platform)
 		}
-		// Scoped to process, not results — a completion confirmation IS the deliverable.
+		// 作用域是“过程”而非“结果”——完成确认本身才是要交付的东西。
 		fmt.Fprintf(&b, "Reply to %s with the final outcome only. Do NOT narrate planned or in-progress steps (\"我先读取…\"); completed actions are part of the outcome.\n", platform)
 		b.WriteString("\n")
 	}
@@ -687,12 +611,9 @@ func buildChatPrompt(task Task) string {
 		}
 	}
 	fmt.Fprintf(&b, "User message:\n%s\n", task.ChatMessage)
-	// List attachments by id + filename so the agent can fetch them via
-	// the CLI. We deliberately do NOT inline the URL: chat attachments
-	// live behind a signed CDN with a short TTL, so by the time the agent
-	// has finished thinking the URL embedded in the markdown body may
-	// have expired. `multica attachment download <id>` re-signs at click
-	// time and is the only reliable path.
+	// 按 id + 文件名列出附件，agent 才能用 CLI 取它们。我们刻意不内嵌 URL：chat 附件
+	// 放在签名 CDN 后面、TTL 很短，等 agent 想完，markdown 正文里嵌的 URL 可能已过期。
+	// `multica attachment download <id>` 在点击时重新签名，是唯一可靠路径。
 	if len(task.ChatMessageAttachments) > 0 {
 		b.WriteString("\nAttachments on this message:\n")
 		for _, a := range task.ChatMessageAttachments {
@@ -705,24 +626,18 @@ func buildChatPrompt(task Task) string {
 		b.WriteString("Use `multica attachment download <id>` to fetch each file locally before referring to it.\n")
 		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
 	}
-	// Outbound attachments: how the agent puts an image/file INTO its reply.
-	// This is the DELIVERY layer of the channel policy, and it has three
-	// answers, not two (MUL-4899). `attachment upload` binds a file to the
-	// Multica chat reply on every surface; what differs is whether anything
-	// goes back for it. Web/mobile renders it as a card in the browser. A
-	// channel-backed chat gets the upload guidance only where the server said
-	// this deployment performs the last hop, and otherwise the upload reaches
-	// nobody and the agent must say so in words. The answer arrives on the
-	// claim; do not re-derive it from the channel type, do not collapse it back
-	// into "is there a channel at all", and do not collapse it into the HISTORY
-	// layer above, which is Slack-only and asks a different question.
+	// 出站附件：agent 怎么把图片/文件放进自己的回复。这是频道策略的 DELIVERY 层，答案
+	// 有三个而不是两个（MUL-4899）。`attachment upload` 在每个表面上都把文件绑到 Multica
+	// chat 回复；不同的是“有没有人把它取回去”。网页/移动端把它渲染成浏览器里的卡片。
+	// 频道承载的 chat 只在“服务器说本次部署会做最后一跳”时才拿到上传指引，否则上传无人
+	// 接收、agent 必须用文字说明。答案在 claim 上到达；不要从频道类型反推，不要把它塌缩
+	// 回“到底有没有频道”，也不要并进上面那个只属于 Slack、问的是另一个问题的 HISTORY
+	// 层。
 	//
-	// This is the ONLY place the verdict is stated. The brief's `## Output`
-	// section carries the web/mobile answer, which is fixed, and for a
-	// channel-backed chat points here instead of answering — the verdict flips
-	// under a resumed session, and the brief is the prompt-cache prefix
-	// (MUL-5377). So a channel chat learns how to deliver a file only from the
-	// line below, which means one must be emitted on every turn.
+	// 这是唯一陈述该裁决的地方。brief 的 `## Output` 段带的是网页/移动端答案——它固定
+	// 不变——对频道 chat 只指向这里而不作答：裁决在续接会话下会翻转，而 brief 是
+	// prompt-cache 前缀（MUL-5377）。因此频道 chat 只能从下面这行学怎么投递文件——这
+	// 意味着每轮都必须发一行。
 	switch {
 	case task.ChatChannelType == "":
 		b.WriteString("\nTo include a file or image you produced in your reply, run `multica attachment upload <local-path>`. The file binds to your reply automatically and appears as an attachment card below it even if you paste nothing. The command also returns a `markdown` snippet you may paste on its own line to place the item where you want it (files render as a card, images inline).\n")
@@ -734,9 +649,8 @@ func buildChatPrompt(task Task) string {
 	return b.String()
 }
 
-// buildLifeJobPrompt is the only prompt used by durable Life cognition jobs.
-// It deliberately describes a no-repository, structured-tool execution so a
-// background task cannot mutate the shared world by improvising a CLI command.
+// buildLifeJobPrompt 是持久 Life 认知任务使用的唯一 prompt。它刻意描述一种“无仓库、
+// 只用结构化工具”的执行，让后台任务无法靠临场编 CLI 命令去改动共享世界。
 func buildLifeJobPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as this user's long-term life companion for a private background cognition job.\n")
@@ -818,14 +732,14 @@ func lifeJobOutputContract(jobType string) string {
 	}
 }
 
-// channelDisplayName renders a chat_channel_type for prompt copy. The mapping
-// itself lives in execenv so the per-turn prompt (here) and the runtime brief
-// (execenv.writeOutput) cannot drift into naming the same platform differently.
+// channelDisplayName 为 prompt 文案渲染 chat_channel_type。映射本身放在 execenv，
+// 让每轮 prompt（这里）与 runtime brief（execenv.writeOutput）不会漂移到“给同一平台取
+// 不同名”。
 func channelDisplayName(channelType string) string {
 	return execenv.ChannelDisplayName(channelType)
 }
 
-// buildAutopilotPrompt constructs a prompt for run_only autopilot tasks.
+// buildAutopilotPrompt 构造 run_only autopilot 任务的 prompt。
 func buildAutopilotPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
@@ -857,43 +771,32 @@ func buildAutopilotPrompt(task Task) string {
 	} else {
 		b.WriteString("Complete the instructions above.\n")
 	}
-	// The issue-command boundary (execenv.AutopilotIssueCommandsGuard) is NOT
-	// restated here: the brief's autopilot workflow section is its single
-	// emission point, and a second hand-maintained per-turn copy is exactly
-	// how the two surfaces drifted into conflict before (MUL-5696).
+	// issue 命令边界（execenv.AutopilotIssueCommandsGuard）在这里不重述：brief 的
+	// autopilot 工作流段是它唯一的发射点，而第二份手维护的每轮副本正是当初两个表面漂移
+	// 到冲突的原因（MUL-5696）。
 	return b.String()
 }
 
-// squadBriefingMarker is the first heading of the squad-leader briefing the
-// server appends to Instructions. It is ONLY a legacy role signal — see
-// taskIsSquadLeader — never a role signal against a current server.
+// squadBriefingMarker 是服务器追加到 Instructions 的“小队队长简报”的第一个标题。它
+// 只是*旧版*的角色信号——见 taskIsSquadLeader——面对当前服务器绝不当作角色信号。
 const squadBriefingMarker = "## Squad Operating Protocol"
 
-// taskIsSquadLeader reports whether THIS TASK runs the agent as a squad
-// leader. Leadership is a PER-TASK role — the same agent can be leader one
-// turn and worker the next — and a current server says so explicitly on the
-// wire: `is_leader_task` for issue-bound leader runs, `squad_id` for
-// quick-create runs the squad picker routed to its leader. The claim handler
-// sets each field on exactly the responses it injected a briefing into, and
-// advertises that it did so with `leader_role_resolved`.
+// taskIsSquadLeader 报告本次任务是否把 agent 当作小队队长跑。领导权是*每任务*角色——
+// 同一 agent 这轮当队长、下轮当工人——当前服务器会在线上显式声明：issue 背书的队长运
+// 行用 `is_leader_task`，quick-create 运行由小队选择器路由到其队长时用 `squad_id`。
+// claim 处理器只在“它注入了简报”的响应上设对应字段，并用 `leader_role_resolved` 宣告
+// 自己这么做了。
 //
-// The role used to be inferred by sniffing Instructions for the briefing's
-// first heading, which made detection depend on user-writable Markdown: any
-// ordinary agent whose own instructions happened to contain that heading was
-// promoted to leader and handed the leader rules (mandatory `multica squad
-// activity`, silent no_action exit).
+// 这个角色过去靠嗅探 Instructions 里的简报首标题推断，这让检测依赖用户可写的
+// Markdown：任何“自己指令恰好含那个标题”的普通 agent 都会被提拔成队长、被塞进队长规则
+// （强制 `multica squad activity`、静默 no_action 退出）。
 //
-// The capability gate is load-bearing, not ceremony. Servers without it split
-// into two groups, and neither can be read by fields alone. Before #4951 the
-// claim response carried no `is_leader_task` at all, so a real leader arrives
-// with the full briefing and both fields at zero — reading fields would
-// silently demote it to a worker. From #4951 until the capability landed the
-// flag IS sent, but nothing yet guaranteed it implies an injected briefing, so
-// a true flag can arrive with no roster and no protocol. Absent capability
-// therefore means "this server never authoritatively answered the question",
-// and the legacy text inference — exactly today's behavior against both
-// groups — is the only correct read. Drop this branch once a minimum server
-// version is enforced (MUL-5811).
+// 能力位是承重的，不是仪式。没有它的服务器分成两组，而单看字段哪组都读不出来。#4951
+// 之前 claim 响应根本不带 `is_leader_task`，所以真队长带着完整简报到达、两个字段都为零
+// ——读字段会悄悄把它降成工人。从 #4951 到能力位落地之间，标志*会*发，但还没有任何东西
+// 保证它意味着“简报已注入”，因此真标志可能带着“无名册、无协议”到达。因此“能力缺失”
+// 意味着“这个服务器从未权威地回答过这个问题”，而旧版文本推断——恰好是今天对这两组的
+// 行为——是唯一正确的读法。一旦强制最低服务器版本就删掉这个分支（MUL-5811）。
 func taskIsSquadLeader(task Task) bool {
 	if !task.LeaderRoleResolved {
 		return task.Agent != nil && strings.Contains(task.Agent.Instructions, squadBriefingMarker)

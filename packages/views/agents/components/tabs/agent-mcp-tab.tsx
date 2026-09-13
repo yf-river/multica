@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 详情页里“仅创建者可看”的 MCP 标签页（MUL-3870）：让 Agent 拥有者
+// 挑选“自己的”哪些有效 Composio 连接可作为 MCP 服务挂给这个 Agent，选中结果写入
+// agent.composio_toolkit_allowlist。
+
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Loader2, Lock, Plug } from "lucide-react";
@@ -19,22 +23,17 @@ import { AppLink } from "../../../navigation";
 import { useT } from "../../../i18n";
 
 /**
- * Creator-only MCP tab on the agent detail page (MUL-3870). Lets the agent
- * owner pick which of *their own* active Composio connections this agent may
- * mount as MCP servers — the selection is written to
- * `agent.composio_toolkit_allowlist`. At dispatch the overlay is mounted for
- * ANY run that passes the agent's invocation permission and always uses the
- * agent OWNER's Composio connection (MUL-3963) — it is no longer gated on the
- * run originator being the owner. That is why sharing the agent (public_to)
- * surfaces the warning banner below: everyone who can invoke the agent can
- * drive these apps through it.
+ * Agent 详情页的 MCP 标签页（仅创建者，MUL-3870）。Agent 拥有者可挑选“自己的”
+ * 哪些有效 Composio 连接允许挂成 MCP 服务——选择写入
+ * `agent.composio_toolkit_allowlist`。派发时，只要任务通过 Agent 的调用权限，
+ * overlay 就会挂载（MUL-3963），且始终使用 Agent“拥有者”的 Composio 连接——不再
+ * 要求任务发起者就是拥有者。正因如此，把 Agent 分享出去（public_to）就会触发下方
+ * 的警告横幅：能调用它的所有人，都能借它驱动这些应用。
  *
- * Visibility is enforced by the parent (the tab entry isn't rendered unless
- * `agent.owner_id === viewer.id`), so this component assumes the owner. It
- * still renders a defensive "hidden" state if the server redacted the
- * allowlist, and reads the checked state straight from the agent prop so the
- * optimistic cache write in `useUpdateAgentAllowlist` flips each box
- * instantly.
+ * 可见性由父层把关（不是拥有者就不渲染本标签入口），所以本组件假定自己是拥有者。
+ * 若服务端把 allowlist 脱敏了，仍防御性地渲染“已配置但隐藏”的状态；勾选状态直接
+ * 读 agent prop，`useUpdateAgentAllowlist` 里的乐观缓存写入因此能让每个勾选框
+ * 即时翻转。
  */
 export function AgentMcpTab({ agent }: { agent: Agent }) {
   const { t } = useT("agents");
@@ -51,18 +50,16 @@ export function AgentMcpTab({ agent }: { agent: Agent }) {
     enabled: composioEnabled,
   });
 
-  // Toolkit metadata (name / logo) keyed by slug, so each connection row can
-  // render a friendly label instead of the bare slug. The catalog is a
-  // best-effort enrichment — a missing entry just falls back to the slug.
+  // toolkit 元信息（名字 / logo）按 slug 建索引，让每条连接显示友好名而不是裸 slug。
+  // 目录只是尽力而为的增强——缺条目就回退显示 slug。
   const toolkitBySlug = useMemo(() => {
     const m = new Map<string, ComposioToolkit>();
     for (const tk of toolkitsQuery.data ?? []) m.set(tk.slug, tk);
     return m;
   }, [toolkitsQuery.data]);
 
-  // Only ACTIVE connections are selectable — an expired / revoked connection
-  // can't back an MCP mount, so offering its checkbox would be a dead toggle.
-  // Dedupe by slug (a user could in theory hold two rows for one toolkit).
+  // 只有“有效（active）”的连接可选——过期/已撤销的连接撑不起 MCP 挂载，
+  // 给它个勾选框只会是死开关。按 slug 去重（用户理论上可能对同一 toolkit 持两行）。
   const activeSlugs = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -82,11 +79,10 @@ export function AgentMcpTab({ agent }: { agent: Agent }) {
 
   const settingsHref = `${paths.settings()}?tab=integrations`;
 
-  // Composio access warning (MUL-3963). Once an agent is shared, anyone who
-  // can invoke it can drive the Composio apps enabled here on the owner's
-  // behalf — so surface a heads-up whenever the agent is not private and
-  // there's something to enable (or already enabled). Public-to-workspace
-  // gets the stronger copy because it opens the apps to every member.
+  // Composio 访问警告（MUL-3963）。Agent 一旦被分享出去，任何能调用它的人都能
+  // 以拥有者的名义驱动这里启用的 Composio 应用——所以只要 Agent 不是 private、
+  // 且有可启用（或已启用）的应用，就提示一句。对“整个工作区公开”用更强的文案，
+  // 因为那等于把应用开放给每一位成员。
   const isPrivate = agent.permission_mode === "private";
   const isWorkspacePublic =
     agent.permission_mode === "public_to" &&
@@ -110,10 +106,9 @@ export function AgentMcpTab({ agent }: { agent: Agent }) {
     });
   };
 
-  // Defensive: the tab is owner-gated, so a redacted allowlist should never
-  // reach here. If it somehow does (stale cache, future fan-out), show the
-  // same "configured but hidden" affordance as the MCP config tab rather than
-  // an empty editor that a Save could clobber.
+  // 防御性：本标签由拥有者把关，脱敏的 allowlist 本不该走到这里。万一走到了
+  //（过期缓存、未来接口扩展），就展示和 MCP 配置标签一致的“已配置但隐藏”提示，
+  // 而不是一个点了保存就会被覆盖的空编辑器。
   if (agent.composio_toolkit_allowlist_redacted === true) {
     return (
       <div className="space-y-3">

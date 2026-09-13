@@ -1,5 +1,12 @@
 "use client";
 
+// 本文件：BoardView —— 问题列表的"看板（纵列分组）视图"。
+// 列可按状态 / 负责人 / 项目 / 自定义 select 属性分组；卡片可跨列拖拽移动（改
+// 所属分组字段）与同列内拖拽排序（仅在手动排序下）。拖动期间本地列镜像由
+// useDragSettle 锁住、防缓存刷新重建；属性分组列的移动走属性 mutation，其余走
+// 通用 onMoveIssue。支持用左键拖动空白处横向平移画布（#6700），以及隐藏列面板、
+// 服务端分组列的无限滚动。整体 memo 化以扛住 surface 控制器的加载态重渲染。
+
 import { useState, useCallback, useMemo, useEffect, useRef, memo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -69,9 +76,8 @@ function isStatusGroup(
 
 interface ProjectColumnLabels {
   noProject: string;
-  /** A project id the projects query cannot resolve — deleted, or not visible
-   *  to this member. Shares the Table's wording so one board column and one
-   *  table group row never describe the same project differently. */
+  /** 项目查询解析不到的项目 id——已删除或对该成员不可见。与 Table 共用措辞，
+   *  让同一项目的看板列与表格分组行永不说出两种说法。 */
   unavailableProject: string;
 }
 
@@ -84,9 +90,8 @@ interface BuildGroupsContext extends ProjectColumnLabels {
 }
 
 /**
- * One project column. Shared by the client fallback (columns derived from
- * loaded cards) and the server path (columns derived from group descriptors)
- * so the two can never describe the same project differently.
+ * 一个项目列。客户端回退（从已加载卡片派生）与服务端路径（从分组描述符派生）
+ * 共用本函数，保证两者对同一项目永不说出两种描述。
  */
 function projectColumn(
   id: string,
@@ -109,10 +114,9 @@ function projectColumn(
 }
 
 /**
- * Keep the "No project" column present as a drop target — clearing a card's
- * project by dragging has to stay possible even in a workspace where every
- * card currently has one. A board with no columns at all is left alone: that
- * is the surface's empty state, not a board missing one column.
+ * 让"无项目"列始终作为 drop 目标存在——即便工作区里每张卡片当前都挂着项目，拖拽清空
+ * 某卡片的项目也必须可行。完全没有列的空看板则原样放过：那是该 surface 的空态，
+ * 不是"少了一列的看板"。
  */
 function withNoProjectColumn(
   columns: BoardColumnGroup[],
@@ -121,8 +125,8 @@ function withNoProjectColumn(
 ): BoardColumnGroup[] {
   if (columns.length === 0) return columns;
   if (columns.some((column) => column.projectId === null)) return columns;
-  // No-project sorts first server-side, so it is always in the first page of
-  // descriptors when it exists — an absent one cannot arrive with a later page.
+  // "无项目"在服务端排序第一，所以它一旦存在必在描述符第一页——
+  // 不会出现"这一页没有，后面某页才补上"的情况。
   return [
     projectColumn(projectGroupId(null), null, projectMap, labels, 0),
     ...columns,
@@ -151,9 +155,8 @@ function buildGroups(
     }));
   }
 
-  // Select-property board: one column per option (definition order) plus a
-  // trailing "No value" column. Empty columns stay visible — they are drop
-  // targets for assigning the value.
+  // select 属性看板：每个选项一列（按定义顺序），末尾跟一列"无值"。空列保持可见——
+  // 它们是"把值赋给卡片"的 drop 目标。
   if (groupingProperty) {
     const columns: BoardColumnGroup[] = (groupingProperty.config.options ?? []).map(
       (option) => ({
@@ -173,10 +176,8 @@ function buildGroups(
     return columns;
   }
 
-  // Project board: one column per project the loaded cards reference, plus the
-  // "No project" column. Ordering mirrors the server's group order (no-project
-  // first, then project title) so the client fallback and the paged server
-  // columns cannot disagree.
+  // 项目看板：已加载卡片引用到的每个项目一列，外加"无项目"列。排序镜像服务端的
+  // 组顺序（无项目在前，然后按项目名），让客户端回退与分页的服务端列不可能不一致。
   if (grouping === "project") {
     const columns = new Map<string, BoardColumnGroup>();
     for (const issue of issues) {
@@ -260,7 +261,7 @@ function BoardViewImpl({
   onMoveIssue: (issueId: string, updates: DragMoveUpdates, onSettled?: () => void) => void;
   childProgressMap?: Map<string, ChildProgress>;
   projectMap?: Map<string, Project>;
-  /** When set, the per-column "+" pre-fills the project on the create form. */
+  /** 设置时，每列的"+"会在新建表单里预填项目。 */
   projectId?: string;
   onCreateIssue?: (defaults: IssueCreateDefaults) => void;
   statusPagination?: IssueStatusPagination;
@@ -275,8 +276,8 @@ function BoardViewImpl({
   const groupingProperty = groupingPropertyId
     ? workspaceProperties.find((p) => p.id === groupingPropertyId && p.type === "select") ?? null
     : null;
-  // A persisted `property:<id>` grouping whose definition is gone (archived,
-  // deleted, other workspace) falls back to status columns.
+  // 持久化的 `property:<id>` 分组，若其属性定义已消失（归档/删除/来自其他工作区），
+  // 回退到状态列。
   const grouping: IssueGrouping =
     groupingPropertyId && !groupingProperty ? "status" : storeGrouping;
   const groupingOptionIds = useMemo(
@@ -291,9 +292,8 @@ function BoardViewImpl({
   const applyPropertyGroupValue = useCallback(
     (group: BoardColumnGroup, issueId: string) => {
       if (group.propertyId === undefined) return;
-      // Surface failures like status/assignee drags do (use-issue-surface-
-      // actions): the mutation rolls the card back, but without a toast the
-      // snap-back reads as a UI glitch instead of a rejected write.
+      // 像状态/负责人拖拽那样把失败浮出来（use-issue-surface-actions）：mutation
+      // 会把卡片滚回去，但没有 toast，回弹看起来就像 UI 故障而非一次被拒绝的写入。
       const onError = (err: unknown) => {
         toast.error(
           err instanceof Error && err.message
@@ -376,9 +376,10 @@ function BoardViewImpl({
         descriptor.value.kind === "project"
           ? [
               projectColumn(
-                // The descriptor key, not our own: it is what `groupPagination`
-                // is keyed by. `projectGroupId` reproduces it exactly, which is
-                // what lets cards bucket into these columns at all.
+                // 用服务端分组描述符自带的 key 当列 id，而不是自己另拼一个：
+                // `groupPagination`（分页状态）正是按这个 key 对齐的；
+                // 而 `projectGroupId` 生成的 id 又和它逐字符一致——
+                // 卡片能落进这些列，靠的就是这条"同构"关系。
                 descriptor.key,
                 descriptor.value.project_id ?? null,
                 projectMap,
@@ -465,13 +466,13 @@ function BoardViewImpl({
     [groupIds],
   );
 
-  // --- Drag state ---
+  // --- 拖拽状态 ---
   const [activeIssue, setActiveIssue] = useState<Issue | null>(null);
-  // Shared drag/settle primitive: owns the local column mirror, the
-  // dragging/settling locks, the post-move animation-frame throttle, and the
-  // settle callback. Shared with list-view (and swimlane) so the surfaces
-  // can't drift apart. Local columns follow TQ between drags via the resync
-  // effect below; during a drag/settle they are frozen by the locks.
+  // 共享的拖拽/落定原语（list-view、swimlane 与看板共用同一份实现，
+  // 三个视图的拖拽行为才不会互相漂移）。它统一负责：本地列镜像、
+  // "拖拽中/落定中"两把锁、移动结束后动画帧内的合并节流，以及落定回调。
+  // 两次拖拽之间，本地列由下方的 resync effect 跟随 TanStack Query 缓存；
+  // 拖拽/落定期间则被锁冻结、不再跟随。
   const {
     columns,
     setColumns,
@@ -489,9 +490,9 @@ function BoardViewImpl({
     }
   }, [groupedIssues, groups, grouping, groupingOptionIds, settleVersion, setColumns, isDraggingRef, isSettlingRef]);
 
-  // --- Issue map ---
-  // Frozen during drag so BoardColumn/DraggableBoardCard props stay
-  // referentially stable even if a TQ refetch lands mid-drag.
+  // --- issue 映射 ---
+  // 拖拽期间冻结这份映射：即使 TanStack Query 恰好在拖到一半时刷新，
+  // 传给 BoardColumn / DraggableBoardCard 的 props 引用也能保持稳定。
   const issueMap = useMemo(() => {
     const map = new Map<string, Issue>();
     for (const issue of groupedIssues) map.set(issue.id, issue);
@@ -509,8 +510,8 @@ function BoardViewImpl({
     })
   );
 
-  // #6700: drag empty board background with the left button to pan horizontally
-  // (Trello/Linear). Card drags start on `[data-board-card]` and are ignored.
+  // #6700：按住鼠标左键拖动看板的空白背景，横向平移整块画布（Trello/Linear
+  // 的交互）。从卡片（`[data-board-card]`）上发起的拖拽是卡片拖拽，不受此影响。
   const pan = useBoardDragPan<HTMLDivElement>();
 
   const handleDragStart = useCallback(
@@ -574,7 +575,7 @@ function BoardViewImpl({
         return;
       }
 
-      // Same-column reorder (manual sort only)
+      // 同列内重排（仅在手动排序模式下生效）
       let finalColumns = cols;
       if (activeCol === overCol && sortBy === "position") {
         const ids = cols[activeCol]!;
@@ -603,19 +604,17 @@ function BoardViewImpl({
       const map = issueMapRef.current;
 
       if (sortBy !== "position") {
-        // Cross-column: only update group (status/assignee), keep original position.
+        // 跨列移动：只更新所属分组字段（状态/负责人），保留卡片在组内的原有顺序。
         const currentIssue = map.get(activeId);
         if (!currentIssue || issueMatchesGroup(currentIssue, finalGroup)) {
           resetColumns();
           return;
         }
-        // Optimistically move the card into the target column *now*. Without
-        // this, the sortBy != "position" path never touches local columns on
-        // drop, so onDragOver having been a no-op leaves the card in its origin
-        // column for the whole request — it only jumps across when the mutation
-        // settles. That is the "snaps back to origin, then moves" glitch.
-        // Placement mirrors the cache (insertByPosition) so the settle rebuild
-        // from TanStack Query is a visual no-op.
+        // 立刻乐观地把卡片移进目标列。否则在 sortBy != "position" 的分支里，
+        // onDragOver 全程不碰本地列，卡片会停在原列直到 mutation 落定才跳过去——
+        // 正是"先弹回原列、再移动"的闪烁根因。插入位置按缓存同款逻辑
+        // （insertByPosition）推算，落定时 TanStack Query 用缓存重建的列与
+        // 当前显示完全一致，视觉上没有任何跳动。
         const targetIds = insertIdByPosition(
           (cols[overCol] ?? []).filter((id) => id !== activeId),
           activeId,
@@ -650,11 +649,10 @@ function BoardViewImpl({
         return;
       }
 
-      // beginSettle() holds the lock and returns the onSettled callback that
-      // releases it and resyncs local columns from the cache: a no-op on
-      // success (onSuccess already patched the moved card in place), the revert
-      // on error (onError restored the snapshot). Without it a failed move would
-      // strand the card at the drop target, since onSettled no longer refetches.
+      // beginSettle() 先持有落定锁，并返回一个 onSettled 回调：它负责释放锁、
+      // 再用缓存重建本地列——成功时是空操作（onSuccess 已把移动的卡片就地补丁
+      // 到位），失败时则是回滚（onError 已恢复移动前的快照）。没有它，一次失败的
+      // 移动会让卡片滞留目标列，因为 onSettled 已不再负责重新拉取。
       onMoveIssue(
         activeId,
         {
@@ -668,10 +666,10 @@ function BoardViewImpl({
     [groupedIssues, groups, grouping, groupingOptionIds, onMoveIssue, groupIds, groupMap, sortBy, beginSettle, columnsRef, isDraggingRef, setColumns, applyPropertyGroupValue],
   );
 
-  // An aborted drag (pointercancel, window resize, tab hide, Escape) fires
-  // onDragCancel instead of onDragEnd. Releasing the drag lock here keeps the
-  // column mirror resyncing with the cache afterwards — see the same handler in
-  // list-view for the touch path that makes this routine (MUL-6240).
+  // 一次拖拽被中止（pointercancel、窗口缩放、标签页隐藏、Escape）时，dnd-kit
+  // 触发的是 onDragCancel 而非 onDragEnd。在这里释放拖拽锁，列镜像才能在事后
+  // 继续与缓存同步——list-view 里同样位置也有一个处理器，触屏路径正是靠它
+  // 兜底才成为常规路径的 (MUL-6240)。
   const handleDragCancel = useCallback(() => {
     isDraggingRef.current = false;
     setActiveIssue(null);
@@ -864,9 +862,9 @@ function BoardHiddenColumnsPanel({
 }
 
 /**
- * Memoized: the surface controller re-renders on loading-flag flips (e.g. a
- * query enabling when the view changes) — without memo every such flip
- * re-rendered this entire view tree (hundreds of ms). All props are
- * referentially stable useMemo/useCallback outputs from the controller.
+ * 看板视图（套了 memo）。为什么 memo：surface 控制器会在加载标志翻转时
+ * （例如视图切换使某个查询转为启用）重渲染——没有 memo，每次这样的翻转
+ * 都会重渲染整棵看板视图树（数百毫秒）。这里传入的全部 props 都是控制器
+ * 产出的、引用稳定的 useMemo / useCallback 结果，因此 memo 能安全短路。
  */
 export const BoardView = memo(BoardViewImpl);

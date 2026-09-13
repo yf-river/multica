@@ -1,3 +1,6 @@
+// 本文件实现「导航记忆」store：记住用户最后访问的工作区内部路径，供登录/
+// 切换回来后跳转回原处。
+
 "use client";
 
 import { create } from "zustand";
@@ -8,10 +11,10 @@ import {
 } from "../platform/workspace-storage";
 import { defaultStorage } from "../platform/storage";
 
-// Paths that should not be persisted as "last visited":
-//  - Auth flows (/login, /signup, /logout)
-//  - Pre-workspace routes (/workspaces/new, /auth/, /invite/)
-//  - Pair flow (/pair/)
+// 这些前缀下的路径不该被记成「最后访问」：
+//  - 认证流程（/login、/signup、/logout）
+//  - 工作区之前的路由（/workspaces/new、/auth/、/invite/）
+//  - 配对流程（/pair/）
 const EXCLUDED_PREFIXES = [
   "/login",
   "/signup",
@@ -22,11 +25,15 @@ const EXCLUDED_PREFIXES = [
   "/pair/",
 ];
 
+/** 导航记忆 store 的状态结构。 */
 interface NavigationState {
+  /** 最后访问的工作区内部路径（初始为 null）。 */
   lastPath: string | null;
+  /** 路径变化时调用：非排除前缀的路径会被记为 lastPath。 */
   onPathChange: (path: string) => void;
 }
 
+/** 导航记忆 store：只持久化 lastPath，按工作区 slug 分桶。 */
 export const useNavigationStore = create<NavigationState>()(
   persist(
     (set) => ({
@@ -45,5 +52,5 @@ export const useNavigationStore = create<NavigationState>()(
   ),
 );
 
-// Workspace-aware: re-read lastPath when current workspace changes.
+// 工作区感知：当前工作区切换时重新读取 lastPath。
 registerForWorkspaceRehydration(() => useNavigationStore.persist.rehydrate());

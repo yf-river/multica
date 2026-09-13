@@ -1,9 +1,12 @@
 "use client"
+// 本文件是悬浮提示（Tooltip）组件族（基于 Base UI 的 Tooltip）：
+// 鼠标悬停/键盘聚焦在目标上时弹出小气泡说明，通常用于图标按钮的解释。
 
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip"
 
 import { cn } from "@multica/ui/lib/utils"
 
+/** TooltipProvider：全局 Tooltip 配置（统一弹出延迟等），一般挂在应用根部 */
 function TooltipProvider({
   delay = 200,
   ...props
@@ -17,14 +20,19 @@ function TooltipProvider({
   )
 }
 
+/** Tooltip：tooltip 根组件，管理显示状态 */
 function Tooltip({ ...props }: TooltipPrimitive.Root.Props) {
   return <TooltipPrimitive.Root data-slot="tooltip" {...props} />
 }
 
+/** TooltipTrigger：被提示的目标元素 */
 function TooltipTrigger({ ...props }: TooltipPrimitive.Trigger.Props) {
   return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />
 }
 
+/**
+ * TooltipContent：弹出的提示气泡。支持 side/align 定位，可内嵌 Kbd 快捷键。
+ */
 function TooltipContent({
   className,
   side = "top",

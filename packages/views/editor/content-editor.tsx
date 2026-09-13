@@ -1,33 +1,28 @@
 "use client";
 
 /**
- * ContentEditor — the rich-text editor used wherever the user TYPES content.
+ * ContentEditor——用户**输入**内容处所用的富文本编辑器。
  *
- * Architecture decisions (April 2026 refactor):
+ * 架构决策（2026 年 4 月重构）：
  *
- * 1. EDITING ONLY. Read-only display is handled by `ReadonlyContent` (a
- *    react-markdown renderer), not this component. There used to be an
- *    `editable` prop here that toggled between modes, but every readonly
- *    callsite migrated to ReadonlyContent and the prop only invited
- *    misuse — Tiptap's `useEditor` reads `editable` at mount, so toggling
- *    the prop later silently failed (mounted-as-readonly editors stayed
- *    unfocusable forever). To express "currently disabled", wrap this
- *    component in a layout that sets `pointer-events-none` / `aria-disabled`
- *    — don't reach into the editor.
+ * 1. 只做编辑。只读展示交给 `ReadonlyContent`（react-markdown 渲染器），
+ *    本组件不管。这里过去有个 `editable` prop 在两种模式间切换，但所有只读
+ *    调用点都迁去 ReadonlyContent 后，那个 prop 只会引来误用——Tiptap 的
+ *    `useEditor` 在挂载时读 `editable`，稍后切换 prop 会静默失败（以只读挂载
+ *    的编辑器永远无法聚焦）。要表达「当前禁用」，请在外层布局用
+ *    `pointer-events-none` / `aria-disabled`——别伸手进编辑器。
  *
- * 2. ONE MARKDOWN PIPELINE via @tiptap/markdown. Content is loaded with
- *    `contentType: 'markdown'` and saved with `editor.getMarkdown()`.
- *    Previously we had a custom `markdownToHtml()` pipeline (Marked library)
- *    for loading and regex post-processing for saving — two asymmetric paths
- *    that caused roundtrip inconsistencies. The @tiptap/markdown extension
- *    (v3.21.0+) handles table cell <p> wrapping and custom mention tokenizers
- *    natively, eliminating the need for the HTML detour.
+ * 2. 单一 Markdown 管线：经 @tiptap/markdown。内容以 `contentType:
+ *    'markdown'` 载入、以 `editor.getMarkdown()` 保存。过去我们用自定义
+ *    `markdownToHtml()` 管线（Marked 库）载入 + 正则后处理保存——两条不对称
+ *    的路径造成了往返不一致。@tiptap/markdown 扩展（v3.21.0+）原生处理表格
+ *    单元格 <p> 包裹与自定义 mention tokenizer，不再需要 HTML 绕行。
  *
- * 3. PREPROCESSING is minimal: only legacy mention shortcode migration and
- *    URL linkification (preprocessMarkdown). No HTML conversion.
+ * 3. 预处理尽量少：只有旧式 mention 短码迁移与 URL 链接化
+ *    （preprocessMarkdown）。不做 HTML 转换。
  *
- * Tech: Tiptap v3 (ProseMirror wrapper), @tiptap/markdown for
- * bidirectional Markdown ↔ ProseMirror JSON conversion.
+ * 技术栈：Tiptap v3（ProseMirror 封装）、@tiptap/markdown 做双向的
+ * Markdown ↔ ProseMirror JSON 转换。
  */
 
 import {
@@ -76,36 +71,32 @@ import "katex/dist/katex.min.css";
 import "./styles/index.css";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助
 // ---------------------------------------------------------------------------
 
-/** Canonical comparison form for a markdown string: drop the blank lines a
- *  block leaves behind at either end, so both sides of a dirty check compare
- *  like-for-like.
+/** markdown 字符串的规范化比较形态：去掉块在两端留下的空行，让脏检查两侧
+ *  能对等比较。
  *
- *  This used to also strip `blob:` image lines with a regex, because an
- *  in-flight image serialised its process-local blob URL into the body. That
- *  is now impossible at the source: the image and fileCard `renderMarkdown`
- *  implementations emit nothing while `attrs.uploading` is set, so a
- *  placeholder never becomes text that has to be scrubbed back out.
+ *  过去这里还用正则剥 `blob:` 图片行，因为在途图片会把进程级 blob URL
+ *  序列化进正文。如今这已在源头不可能：image 与 fileCard 的 `renderMarkdown`
+ *  在 `attrs.uploading` 置位时什么都不输出，占位符绝不会变成需要事后擦掉的
+ *  文本。
  *
- *  Leading blank lines are trimmed too, not just trailing: a placeholder in
- *  the FIRST block leaves its blank line at the head of the document, and a
- *  draft that opens with an empty line is the same content as one that does
- *  not. (The old regex left one such newline behind for the same reason.) */
+ *  开头空行同样要 trim，不只是结尾：第一个块里的占位符会把它那行空行留在
+ *  文档头，而开头带空行的草稿与不带的是同一内容。（旧正则也会为此留下一个
+ *  换行。） */
 function normalizeMarkdown(md: string): string {
   return md.trim();
 }
 
-/** `normalizeMarkdown` applied to the live editor's serialized content. */
+/** 对实时编辑器序列化内容应用 `normalizeMarkdown`。 */
 function normalizeEditorMarkdown(editor: Editor): string {
   return normalizeMarkdown(editor.getMarkdown());
 }
 
-/** True when any node in the document is mid-upload (`attrs.uploading`). The
- *  `return !found` early-out matches the original inline scans verbatim: in
- *  ProseMirror it only stops descending into the matched node's subtree (not
- *  the whole walk), but once `found` flips true the boolean result is fixed. */
+/** 文档里是否有节点处于上传中（`attrs.uploading`）。`return !found` 的提前
+ *  返回与原来的行内扫描逐字一致：在 ProseMirror 里它只停止进入命中节点的
+ *  子树（而非整个遍历），但 `found` 一旦为 true，布尔结果就已定。 */
 function hasUploadingNode(editor: Editor): boolean {
   let found = false;
   editor.state.doc.descendants((node) => {
@@ -121,10 +112,9 @@ function hasUploadingNode(editor: Editor): boolean {
 
 interface ContentEditorBaseProps {
   /**
-   * `baseMarkdown` is the last authoritative controlled value this editor
-   * actually adopted before producing `markdown`. A dirty-editor realtime
-   * guard may intentionally skip newer server content, so callers must not
-   * substitute the latest prop value for this base.
+   * `baseMarkdown` 是本编辑器在产出 `markdown` 之前真正采纳的最后一个权威
+   * 受控值。脏编辑器的实时守卫可能有意跳过更新的服务端内容，因此调用方
+   * 绝不能用最新 prop 值替代这个 base。
    */
   onUpdate?: (markdown: string, baseMarkdown: string) => void;
   placeholder?: string;
@@ -133,115 +123,98 @@ interface ContentEditorBaseProps {
   onSubmit?: () => void;
   onBlur?: () => void;
   /**
-   * Upload transport. `uploadId` is minted by the editor when it inserts the
-   * placeholder node; a host backed by a draft store MUST adopt it as the
-   * upload's `clientUploadId` so both records share one identity — that is
-   * what lets a settle find its placeholder in a document a later mount
-   * rebuilt. Hosts with no persistence may ignore it.
+   * 上传通道。`uploadId` 由编辑器在插入占位节点时铸造；后端有草稿 store 的
+   * 宿主必须把它采纳为上传的 `clientUploadId`，让两份记录共享同一身份——
+   * 这正是 settle 能在后来挂载重建的文档里找到自己占位符的原因。没有持久化
+   * 的宿主可忽略它。
    */
   onUploadFile?: (file: File, uploadId: string) => Promise<UploadResult | null>;
   /**
-   * Character count above which a plain-text paste is uploaded as a
-   * `pasted-text.txt` attachment instead of being inserted as body text.
-   * Requires `onUploadFile`; without an uploader the paste stays text.
+   * 纯文本粘贴超过该字符数时，改为作为 `pasted-text.txt` 附件上传而非正文。
+   * 需要 `onUploadFile`；没有上传器则粘贴保持文本。
    *
-   * Opt-in ON PURPOSE, and today only chat passes it: a wall of pasted text
-   * there is context handed to an agent for one turn, and reads better as an
-   * attachment than as a body nobody scrolls. Every other editor keeps the
-   * paste inline — in issue and project descriptions a long paste IS the
-   * content, and in issue comments it is prose a human reader is expected to
-   * see in the thread.
+   * 刻意选开，今天只有 chat 传它：那里的一大段粘贴文本是交给 agent 的一个
+   * 回合的上下文，作为附件比作为没人会滚动的正文可读得多。其余编辑器都保持
+   * 粘贴行内——issue 与 project 描述里长粘贴**就是**内容，issue 评论里则是
+   * 期望人类读者在线程里看到的散文。
    */
   pasteAsFileThreshold?: number;
   /**
-   * Fired whenever this editor's "any attachment still uploading" answer
-   * flips. The document IS the upload queue — every path (paste, drop, the
-   * upload button, the imperative `uploadFile`) inserts a node with
-   * `attrs.uploading` before awaiting, and clears or removes it on settle —
-   * so hosts can drive a submit gate off one source of truth instead of a
-   * counter of their own that a manual node delete would desync.
+   * 本编辑器「是否仍有附件在上传」的答案翻转时触发。文档本身就是上传队列——
+   * 每条路径（粘贴、拖放、上传按钮、命令式 `uploadFile`）都会在 await 前插入
+   * 一个 `attrs.uploading` 的节点，落定时清除或移除它——所以宿主可以基于单一
+   * 事实来源驱动提交门禁，而不是自己维护一个会被手动删节点打乱的计数器。
    *
-   * Pair it with the submit-time `hasActiveUploads()` second check: this
-   * callback drives the rendered button state, and the ref read is what a
-   * keyboard submit racing the last upload's settle must consult.
+   * 与提交时刻的 `hasActiveUploads()` 二次检查搭配使用：本回调驱动渲染出来的
+   * 按钮状态，而 ref 读取是键盘提交与最后一次上传落定竞争时必须咨询的。
    *
-   * Hosts that don't gate (the autosaved description editor) omit it and
-   * pay nothing — the scan below is skipped entirely when it's absent.
+   * 不做门禁的宿主（自动保存的描述编辑器）省略它并零成本——它在缺席时整段
+   * 扫描都被跳过。
    */
   onUploadingChange?: (uploading: boolean) => void;
-  /** Show the floating formatting toolbar on text selection. Defaults true. */
+  /** 文本选中时显示浮动格式化工具条。默认 true。 */
   showBubbleMenu?: boolean;
   /**
-   * ID of the issue this editor belongs to. When set, the bubble menu exposes
-   * a "Create sub-issue from selection" action that parents the new issue
-   * under this ID and replaces the selection with a mention link.
+   * 本编辑器所属的 issue id。设置时，气泡菜单提供「从选区创建子 issue」动作，
+   * 把新 issue 挂在它下面并用 mention 链接替换选区。
    */
   currentIssueId?: string;
   /**
-   * When true, the `@` suggestion picker is disabled but the mention node
-   * type remains in the schema, so existing mentions pasted in from other
-   * Multica editors still render as the normal pill. Use for editors where
-   * *creating* a new mention has no business meaning (e.g. agent system
-   * prompts) but *preserving* an existing one still matters.
+   * 为 true 时禁用 `@` 建议弹层，但 mention 节点类型仍留在 schema 里，让从
+   * 其它 Multica 编辑器粘贴进来的既有 mention 仍渲染成普通胶囊。用于「新建
+   * mention 没有业务意义、但保留既有 mention 仍重要」的编辑器（如 agent
+   * 系统提示词）。
    */
   disableMentions?: boolean;
-  /** Chat can surface current/recent issue/project suggestions. Other editors use default mention behavior. */
+  /** chat 可呈现当前/最近 issue/project 建议。其它编辑器用默认 mention 行为。 */
   mentionMode?: "default" | "context";
   mentionContextItems?: MentionItem[];
-  /** Enable the `/` command picker. Defaults false. */
+  /** 启用 `/` 命令选择器。默认 false。 */
   enableSlashCommands?: boolean;
   /**
-   * Which `/` menu to show when enableSlashCommands is true: "skill" (default)
-   * lists the active agent's skills (chat); "command" shows the fixed built-in
-   * command menu (issue comments), e.g. /note.
+   * enableSlashCommands 为 true 时显示哪种 `/` 菜单："skill"（默认）列出
+   * 当前 agent 的技能（chat）；"command" 显示固定的内建命令菜单（issue
+   * 评论），如 /note。
    */
   slashCommandMode?: "skill" | "command";
   /**
-   * Quick actions to offer in the "command" `/` menu, plus the resolver that
-   * turns a pick into the text it would post (MUL-5465). Read through
-   * functions so a newly created action appears without remounting the editor.
+   * "command" `/` 菜单要提供的快捷动作，外加把选择解析成它将发布的文本的
+   * resolver（MUL-5465）。经函数读取，新建的动作无需重挂编辑器即可出现。
    */
   quickActionMenu?: BuiltinCommandSuggestionOptions;
   /**
-   * Attachments referenced by this content. The download buttons on file
-   * cards and images inside the editor look up an attachment by `url` and
-   * fetch a fresh CloudFront signature at click time, so a stale URL
-   * persisted in markdown never opens. Pass `issue.attachments` /
-   * `comment.attachments` etc.; omit when no attachment context is
-   * available (NodeView buttons fall back to opening the raw URL).
+   * 本内容引用的附件。编辑器内文件卡片与图片上的下载按钮会按 `url` 查附件、
+   * 在点击时刻取新 CloudFront 签名，因此持久化在 markdown 里的过期 URL 从不
+   * 打开。传 `issue.attachments` / `comment.attachments` 等；没有附件上下文
+   * 时省略（NodeView 按钮退回打开原始 URL）。
    */
   attachments?: Attachment[];
   /**
-   * Flush a pending debounced `onUpdate` when the editor unmounts instead of
-   * dropping it. Default false ON PURPOSE: most composers clear their draft
-   * and then unmount (comment edit cancel, create-issue / feedback submit),
-   * and a flush there would hand the discarded content right back to
-   * `onUpdate`, resurrecting the cleared draft. Opt in only where closing
-   * means "keep what the user last saw" — e.g. the issue-detail description
-   * editor, whose 1500ms debounce would otherwise drop a paste made just
-   * before the modal closes.
+   * 编辑器卸载时冲刷挂起的防抖 `onUpdate` 而不是丢弃。默认 false 是刻意的：
+   * 大多数 composer 先清草稿再卸载（评论编辑取消、create-issue / feedback
+   * 提交），那里冲刷会把刚丢弃的内容立刻交回 `onUpdate`，复活被清掉的草稿。
+   * 只在「关闭=保留用户最后所见」处选开——如 issue 详情描述编辑器，否则
+   * 1500ms 防抖会丢掉恰好赶在弹窗关闭前的粘贴。
    */
   flushPendingOnUnmount?: boolean;
   /**
-   * Called once when the Tiptap instance exists and its initial content is
-   * set (creation is deferred past first paint by `immediatelyRender: false`).
-   * Readonly-first hosts such as comment and reply composers use this as the
-   * signal to swap their static shell for the live editor.
+   * Tiptap 实例存在且初始内容已设置时调用一次（`immediatelyRender: false`
+   * 把创建推迟到首帧之后）。评论/回复 composer 等只读优先宿主以此为信号，
+   * 把静态外壳换成实时编辑器。
    */
   onReady?: () => void;
 }
 
 type ContentEditorValueProps =
   | {
-      /** Initial markdown, read once when the editor mounts. */
+      /** 初始 markdown，编辑器挂载时读一次。 */
       defaultValue?: string;
       value?: never;
     }
   | {
       /**
-       * Externally synchronized markdown. Use only when changes from outside
-       * this editor must replace its document (for example realtime server
-       * updates or switching the document held by a stable editor instance).
+       * 外部同步的 markdown。只在「外部变化必须替换本编辑器文档」时使用
+       * （例如实时服务端更新，或切换稳定编辑器实例所持有的文档）。
        */
       value: string;
       defaultValue?: never;
@@ -254,56 +227,45 @@ interface ContentEditorRef {
   clearContent: () => void;
   focus: () => void;
   /**
-   * Focus and place the caret at the document position under the given
-   * viewport coordinates. Used by readonly-first hosts so the click that
-   * summoned the editor lands the caret where the user clicked, matching
-   * the always-mounted editor's behavior. Falls back to focusing the end
-   * when no position resolves (click below the last line). Must be called
-   * while the editor element is laid out (not display: none).
+   * 聚焦并把光标放到给定视口坐标下的文档位置。供只读优先宿主使用，让那次
+   * 召唤编辑器的点击把光标落在用户点击处，与常驻编辑器行为一致。坐标解不出
+   * 位置时（点击最后一行下方）退回聚焦到末尾。必须在编辑器元素已布局
+   * （非 display:none）时调用。
    */
   focusAtCoords: (coords: { x: number; y: number }) => void;
   /**
-   * Focus and place the caret at the document position a text anchor
-   * resolves to. Preferred over `focusAtCoords` for readonly-first hosts:
-   * the anchor is a logical position ("block N, character M"), so it is
-   * immune to layout differences between the readonly render and the
-   * editor render — which is exactly where pixel coordinates drift on
-   * long documents.
+   * 聚焦并把光标放到文本锚点解析出的文档位置。只读优先宿主优先用
+   * `focusAtCoords` 的它：锚点是逻辑位置（「第 N 块、第 M 个字符」），对
+   * 只读渲染与编辑器渲染之间的布局差异免疫——那正是长文档上像素坐标漂移
+   * 的地方。
    */
   focusAtAnchor: (anchor: TextAnchor) => void;
-  /** Drop focus from the editor. Used by `useComposerSubmit`'s
-   *  `afterAccepted: "blur"` on surfaces where a send ends the turn, so the
-   *  composer stops reading as "still writing". */
+  /** 让编辑器失焦。供 `useComposerSubmit` 的 `afterAccepted: "blur"` 在
+   *  「发送结束回合」的界面使用，让 composer 不再像「还在写」。 */
   blur: () => void;
   uploadFile: (file: File) => void;
-  /** True when file uploads are still in progress. */
+  /** 文件上传是否仍在进行中。 */
   hasActiveUploads: () => boolean;
   /**
-   * Append a markdown fragment to the end of the document (parsed, not raw
-   * text), firing the normal `onUpdate` pipeline. For the upload write-back
-   * path (MUL-5181): an upload that outlived the mount that started it settles
-   * while a NEW editor instance is showing the same draft — that editor never
-   * owned the upload's promise, so this is how the finished attachment's link
-   * lands in the visible document instead of only in the persisted draft.
+   * 把一个 markdown 片段追加到文档末尾（解析、非原始文本），触发正常的
+   * `onUpdate` 管线。供上传回写路径使用（MUL-5181）：一次活过发起挂载的
+   * 上传落定时，一个新的编辑器实例正在展示同一份草稿——那个编辑器从未拥有
+   * 该上传的 promise，所以这是让完成附件的链接落进可见文档（而不仅是持久化
+   * 草稿）的方式。
    *
-   * Returns whether the insert actually landed. The imperative handle exists
-   * from the component's first commit, but the Tiptap instance is created in a
-   * passive effect — in that window (and after destroy) this is a no-op and
-   * returns false so the caller can fall back or retry instead of silently
-   * losing the fragment.
+   * 返回插入是否真正落地。命令式句柄在组件首次 commit 就存在，但 Tiptap
+   * 实例在被动 effect 里创建——在那段窗口内（以及销毁后）这是 no-op 并
+   * 返回 false，调用方可以回退或重试，而不是静默丢片段。
    */
   insertMarkdownAtEnd: (markdown: string) => boolean;
   /**
-   * Draw a placeholder for an upload this document is not showing yet, and
-   * report whether it landed.
+   * 为「本文档还没展示的上传」画占位符，并报告是否落地。
    *
-   * A composer that reopens over an upload a previous mount started has the
-   * draft's record of it but no node — placeholders are never serialised, so
-   * they die with the document that drew them. Without this the user faces a
-   * composer that looks idle while a send gate quietly blocks on the upload.
-   * Returns false when the Tiptap instance is not up yet (the handle exists
-   * from first commit, the instance arrives a passive effect later), so the
-   * caller can retry rather than assume.
+   * 在前一挂载启动的上传之上重开的 composer 持有草稿里的记录但没有节点——
+   * 占位符从不序列化，随画它的文档一起消亡。没有它，用户面对一个看起来空闲
+   * 的 composer，而发送门禁却在悄悄等上传。Tiptap 实例还没就绪时返回 false
+   *（句柄首次 commit 即有、实例晚一个被动 effect 才到），调用方可以重试
+   * 而非想当然。
    */
   insertUploadPlaceholder: (upload: {
     uploadId: string;
@@ -311,41 +273,34 @@ interface ContentEditorRef {
     size?: number;
   }) => boolean;
   /**
-   * Turn a placeholder into the finished attachment, in place. False when this
-   * document holds no node for the id — the caller then falls back to
-   * appending the link.
+   * 把占位符原位替换成已完成的附件。本文档没有该 id 的节点时返回 false——
+   * 调用方随后退回追加链接。
    */
   settleUploadPlaceholder: (uploadId: string, result: UploadResult) => boolean;
   /**
-   * Cancel the pending debounced `onUpdate` and hand its markdown back to the
-   * caller instead of firing it. Returns null when nothing is pending.
+   * 取消挂起的防抖 `onUpdate`，并把它的 markdown 交还给调用方而不是触发。
+   * 没有挂起内容时返回 null。
    *
-   * For hosts that re-point ONE editor instance at a different destination
-   * (chat swaps `draftKey` between sessions). A debounce armed under the old
-   * destination would otherwise fire after the switch and, because `onUpdate`
-   * always resolves to the latest render's closure, write the old document
-   * into the NEW destination. Taking the markdown back lets the host commit it
-   * where it was actually typed. Flushing also marks the editor clean, so the
-   * dirty guard stops suppressing the incoming synchronized `value`.
+   * 供把**同一个**编辑器实例重新指向另一目标的宿主使用（chat 在会话间切换
+   * `draftKey`）。旧目标下武装的防抖会在切换后触发，且因 `onUpdate` 总是
+   * resolve 到最新一次渲染的闭包，把旧文档写进**新**目标。把 markdown 收回，
+   * 宿主就能把它提交到真正输入它的地方。冲刷也把编辑器标为干净，脏守卫不再
+   * 压制进来的同步 `value`。
    *
-   * Distinct from `flushPendingOnUnmount`: this is for a LIVE editor changing
-   * targets, so it reads the current document rather than a cached copy.
+   * 与 `flushPendingOnUnmount` 不同：这是为**活着**的编辑器换目标准备的，
+   * 所以读的是当前文档而不是缓存副本。
    */
   flushPendingUpdate: () => string | null;
   /**
-   * Force `markdown` into the document, bypassing the synchronized `value`
-   * guards.
+   * 强制把 `markdown` 塞进文档，绕过同步 `value` 守卫。
    *
-   * Those guards SKIP permanently rather than defer: `lastSyncedValueRef`
-   * advances before they run, so a `value` they refuse is never
-   * re-applied. That is correct for their usual case (the cache will send
-   * another value), but not for a host that re-points ONE instance at a
-   * different document and must land it exactly once — chat's draft switch,
-   * where an in-flight upload makes Guard 0 refuse the swap.
+   * 那些守卫是永久跳过而非推迟：`lastSyncedValueRef` 在它们运行前就前进了，
+   * 被拒绝的 `value` 不会再被应用。这对它们的常规场景正确（缓存会再发一个
+   * value），但不适用于「把**一个**实例重新指向另一份文档、必须恰好落地一次」
+   * 的宿主——chat 的草稿切换，其中在途上传会让守卫 0 拒绝本次切换。
    *
-   * The caller owns the safety the guards normally provide: only call once the
-   * reason for the block is gone (upload settled) and any pending edits have
-   * been flushed, or this destroys them.
+   * 调用方自己负责守卫通常提供的安全：只在阻挡理由消失（上传落定）、挂起
+   * 编辑已被冲刷后才调用，否则会毁掉它们。
    */
   adoptContent: (markdown: string) => void;
 }
@@ -384,9 +339,8 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
   ) {
     const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
     const flushPendingOnUnmountRef = useRef(flushPendingOnUnmount);
-    // Markdown serialized at `onUpdate` time, awaiting its debounce fire. The
-    // unmount flush emits this cached copy — it runs mid-teardown and can't
-    // assume the editor instance is still readable.
+    // 在 `onUpdate` 时刻序列化、等待防抖触发的 markdown。卸载冲刷输出这份
+    // 缓存副本——它跑在卸载拆除中途，不能假设编辑器实例仍可读。
     const pendingFlushRef = useRef<string | null>(null);
     const pendingBaseRef = useRef<string | null>(null);
     const onUpdateRef = useRef(onUpdate);
@@ -397,57 +351,46 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     const onUploadFileRef = useRef<
       ((file: File, uploadId: string) => Promise<UploadResult | null>) | undefined
     >(undefined);
-    // Same reasoning as placeholderRef below: the extension array is built once
-    // at mount, so the paste-as-file threshold is read through a ref to stay
-    // live without remounting the editor.
+    // 与下面 placeholderRef 同理：扩展数组在挂载时只建一次，粘贴成文件阈值
+    // 经 ref 读取才能不重挂编辑器地保持最新。
     const pasteAsFileThresholdRef = useRef<number | undefined>(pasteAsFileThreshold);
     const mentionContextItemsRef = useRef<MentionItem[]>(mentionContextItems ?? []);
-    // Kept in a ref for the same reason as mentionContextItems: the extension
-    // set is built once at mount, so a directly-captured options object would
-    // freeze whatever closures existed then and stop seeing new quick actions.
+    // 放进 ref 与 mentionContextItems 同理：扩展集挂载时只建一次，直接捕获
+    // options 对象会冻结当时存在的闭包、看不到新加的快捷动作。
     const quickActionMenuRef = useRef<BuiltinCommandSuggestionOptions | undefined>(quickActionMenu);
     const lastEmittedRef = useRef<string | null>(null);
-    // `content` already consumes the initial synchronized value when Tiptap
-    // mounts. Track later changes separately so the sync effect does not parse
-    // the initial document twice when Markdown serialization canonicalizes it.
+    // `content` 在 Tiptap 挂载时已经消费了初始同步值。之后的变化单独跟踪，
+    // 让同步 effect 不会在 Markdown 序列化把它规范化时把初始文档解析两遍。
     const lastSyncedValueRef = useRef(value);
-    // Authoritative Markdown behind the document the user is editing. Keep the
-    // raw controlled value rather than the editor serialization: Tiptap may
-    // omit invisible channel-media provenance comments while retaining the
-    // visible image, and the server needs those comments in the merge base.
+    // 用户正在编辑的文档背后的权威 markdown。保留原始受控值而非编辑器序列化
+    // 结果：Tiptap 可能省略不可见的 channel-media 来源注释、只保留可见图片，
+    // 而服务端在合并基准里需要那些注释。
     const documentBaseRef = useRef(normalizeMarkdown(value ?? defaultValue ?? ""));
-    // Live placeholder text. Passed into the Placeholder extension as a getter
-    // (not a static string) so the plugin re-reads it on every decoration pass —
-    // the sync effect below updates this ref and nudges a repaint. Tiptap
-    // snapshots a *string* placeholder at mount, so a getter is what lets it
-    // change without remounting the editor.
+    // 实时占位文本。以 getter（而非静态字符串）传给 Placeholder 扩展，插件在
+    // 每次装饰扫描时重新读取——下面的同步 effect 更新该 ref 并触发一次重绘。
+    // Tiptap 会把*字符串*占位符在挂载时快照，getter 才能让它不重挂就变化。
     const placeholderRef = useRef(placeholderText);
 
-    // In-session record of attachments freshly uploaded through this editor.
-    // Surfaces (like the quick-create modal) that don't have a server-supplied
-    // `attachments` prop still need the AttachmentDownloadProvider to know
-    // about images the user just pasted/dropped — without a record in scope,
-    // Attachment.normalize() can't swap the persisted /api/attachments/<id>/
-    // download URL to a freshly-loadable one, and the <img> renders broken in
-    // any environment where the document origin doesn't proxy /api to the
-    // API host (MUL-3192).
+    // 本会话内经本编辑器新上传的附件记录。没有服务端 `attachments` prop 的
+    // 界面（如快速创建弹窗）仍需 AttachmentDownloadProvider 知道用户刚
+    // 粘贴/拖放的图片——作用域里没有记录的话，Attachment.normalize() 无法把
+    // 持久化的 /api/attachments/<id>/download URL 换成可重新加载的版本，在
+    // 文档源不把 /api 代理到 API 宿主的任何环境里 <img> 都会渲染坏
+    //（MUL-3192）。
     const [sessionUploads, setSessionUploads] = useState<Attachment[]>([]);
-    // Wrap the caller-supplied uploader so we can stash each successful result
-    // in `sessionUploads`. The wrapper is rebuilt only when the underlying
-    // `onUploadFile` identity changes, so the inner ref handed to Tiptap stays
-    // stable across renders the way the original passthrough did.
+    // 包一层调用方提供的上传器，把每次成功结果存进 `sessionUploads`。包装器
+    // 只在底层 `onUploadFile` 身份变化时重建，让交给 Tiptap 的内层 ref 与
+    // 原来直通时一样跨渲染稳定。
     const wrappedOnUploadFile = useMemo(() => {
       if (!onUploadFile) return undefined;
       return async (file: File, uploadId: string): Promise<UploadResult | null> => {
         const result = await onUploadFile(file, uploadId);
-        // Only track attachments that carry a persisted id — the no-workspace
-        // avatar branch returns an id-less record that the resolver can't key
-        // off of, and tracking it would just bloat memory without helping
-        // anyone. See useFileUpload's `markdownLink` docstring for why.
+        // 只跟踪带持久化 id 的附件——无工作区头像分支返回的 id-less 记录，
+        // resolver 无法以其为键，跟踪它只会白白占内存。原因见 useFileUpload
+        // 的 `markdownLink` 文档。
         if (result?.id) {
           setSessionUploads((prev) =>
-            // Deduplicate on id so a re-upload (or a paste-then-drop of the
-            // same blob) doesn't create a parallel record.
+            // 按 id 去重，重复上传（或同 blob 先粘后拖）不会产生并行记录。
             prev.some((a) => a.id === result.id) ? prev : [...prev, result],
           );
         }
@@ -455,17 +398,14 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       };
     }, [onUploadFile]);
 
-    // Merged list fed to AttachmentDownloadProvider. Caller-supplied attachments
-    // (issue / comment editors that pre-load the full attachments[] from the
-    // server) take precedence — we only append session uploads the caller
-    // doesn't already have, so a parent re-render that includes the same record
-    // doesn't end up with two copies.
+    // 喂给 AttachmentDownloadProvider 的合并列表。调用方提供的附件（从服务端
+    // 预载完整 attachments[] 的 issue/comment 编辑器）优先——我们只追加调用方
+    // 没有的会话上传，父组件重渲染带上同一记录也不会出现两份。
     //
-    // One exception on id collision: when the caller's copy has an EMPTY
-    // `download_url` (the create-issue draft strips the short-lived signed URL
-    // before persisting), backfill it from the session upload. The session copy
-    // holds the this-response signed URL, so the just-pasted image first-paints
-    // from it instead of taking an extra redirect hop through `markdown_url`.
+    // id 冲突的一个例外：调用方副本的 `download_url` 为空时（create-issue
+    // 草稿持久化前会剥掉短时效签名 URL），用会话上传补上。会话副本持有本次
+    // 响应的签名 URL，刚粘贴的图片首帧就能从中绘制，而不是经 `markdown_url`
+    // 多一次重定向跳转。
     const providerAttachments = useMemo(() => {
       if (sessionUploads.length === 0) return attachments;
       const sessionById = new Map(sessionUploads.map((a) => [a.id, a]));
@@ -483,21 +423,19 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       return merged;
     }, [attachments, sessionUploads]);
 
-    // Current workspace slug kept in a ref so the click handler always sees the
-    // latest value without recreating the editor. Used by openLink to prefix
-    // legacy /issues/... style paths that lack a workspace slug.
+    // 当前工作区 slug 放在 ref 里，点击处理器总能看到最新值而无需重建编辑器。
+    // openLink 用它给缺工作区 slug 的旧式 /issues/... 路径补前缀。
     const workspaceSlug = useWorkspaceSlug();
     const workspaceSlugRef = useRef(workspaceSlug);
     workspaceSlugRef.current = workspaceSlug;
 
-    // Same reasoning for this deployment's app origin: it tells openLink which
-    // absolute URLs address this app and must route in-app instead of opening
-    // the system browser.
+    // 本部署应用源同理：它告诉 openLink 哪些绝对 URL 指向本应用、必须站内
+    // 路由而不是打开系统浏览器。
     const appOrigin = useAppOrigin();
     const appOriginRef = useRef(appOrigin);
     appOriginRef.current = appOrigin;
 
-    // Keep refs in sync without recreating editor
+    // 不重建编辑器地保持 ref 同步
     onUpdateRef.current = onUpdate;
     onSubmitRef.current = onSubmit;
     onBlurRef.current = onBlur;
@@ -511,12 +449,11 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
 
     const queryClient = useQueryClient();
 
-    // Linear-style bare identifier autolink resolver. Fully lazy — it runs only
-    // on user input, never on render, so it adds no query hook to this widely
-    // used component. It reads the current workspace from the query cache (via
-    // the slug ref) and returns null outside a workspace, for non-identifier
-    // tokens, or when the prefix can't match this workspace, so no network call
-    // happens for those; the exact-match filter enforces correctness.
+    // Linear 风格裸标识符自动链接 resolver。完全惰性——只在用户输入时跑，
+    // 绝不在渲染时跑，因此不给这个广泛使用的组件加任何 query hook。它从查询
+    // 缓存（经 slug ref）读当前工作区；工作区外、非标识符 token、或前缀匹配
+    // 不上本工作区时返回 null，所以那些情况不发网络请求；精确匹配过滤保证
+    // 正确性。
     const resolveIssueIdentifierRef = useRef<IssueIdentifierResolver | undefined>(
       undefined,
     );
@@ -542,30 +479,27 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
 
     const initialMarkdown = value ?? defaultValue ?? "";
     const initialContent = initialMarkdown
-      ? // One-shot read: the editor preprocesses its initial document once at
-        // load. Unlike the readonly renderer it does not need to re-run when
-        // the CDN config lands later — the user's own edits drive the document
-        // from here on.
+      ? // 一次性读取：编辑器在载入时对初始文档预处理一次。与只读渲染器不同，
+        // CDN 配置后来落地时不需要重跑——从此文档由用户自己的编辑驱动。
         preprocessMarkdown(initialMarkdown, {
           cdnDomain: configStore.getState().cdnDomain,
         })
       : "";
-    // With `immediatelyRender: false` the Tiptap instance is created after
-    // mount, so an imperative `focus()` fired on the same tick (e.g. chat
-    // auto-focusing a brand-new conversation) would hit a null editor and no-op.
-    // Latch the intent here and honor it in `onCreate` once the editor exists.
+    // `immediatelyRender: false` 下 Tiptap 实例在挂载后创建，同一 tick 触发的
+    // 命令式 `focus()`（如 chat 给全新会话自动聚焦）会撞上 null 编辑器而
+    // no-op。把意图锁在这里，待 `onCreate` 里编辑器存在后再兑现。
     const focusOnReadyRef = useRef(false);
-    // Large markdown is parsed in chunks to dodge marked's O(n²) tokenizer (see
-    // parseMarkdownChunked). Small docs stay on the single-parse fast path.
+    // 大 markdown 分块解析以避开 marked 的 O(n²) tokenizer（见
+    // parseMarkdownChunked）。小文档走单次解析快路径。
     const mountChunked = initialContent.length > MARKDOWN_CHUNK_THRESHOLD;
 
     const editor = useEditor({
       immediatelyRender: false,
-      // Explicit for clarity — the real perf win is useEditorState in BubbleMenu.
+      // 显式说明——真正的性能收益在 BubbleMenu 的 useEditorState。
       shouldRerenderOnTransaction: false,
       onCreate: ({ editor: ed }) => {
-        // For large docs we mount empty (below) and parse in chunks here, so the
-        // O(n²) marked tokenizer never sees the whole document at once.
+        // 大文档下面先空挂载、再分块解析，让 O(n²) 的 marked tokenizer 永远
+        // 不会一次看到整份文档。
         if (mountChunked) {
           const manager = (
             ed.storage as { markdown?: { manager?: MarkdownManagerLike } }
@@ -582,9 +516,9 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
             });
           }
         }
-        // A markdown draft ending in an empty list item (e.g. `"1. \n\n"` left
-        // after typing `1.`) parses into a caretless, schema-invalid item;
-        // repair it so the mounted editor has a real cursor in the list.
+        // 以空列表项结尾的 markdown 草稿（如敲完 `1.` 留下的 `"1. \n\n"`）
+        // 会解析出无光标、不合 schema 的项；修复它，让挂载好的编辑器在列表
+        // 里有一个真实光标。
         repairEmptyListItems(ed);
         lastEmittedRef.current = normalizeEditorMarkdown(ed);
         if (focusOnReadyRef.current) {
@@ -643,7 +577,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
         handleDOMEvents: {
           click(_view, event) {
             const target = event.target as HTMLElement;
-            // Skip links inside NodeView wrappers — they handle their own clicks
+            // 跳过 NodeView 包裹层里的链接——它们自己处理点击
             if (target.closest("[data-node-view-wrapper]")) return false;
 
             const link = target.closest("a");
@@ -659,8 +593,8 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
             );
             return true;
           },
-          // Middle click never produces a `click` event. Route it through the
-          // same path as a modifier-click so it opens a background tab.
+          // 中键永不产生 `click` 事件。让它走与修饰键点击相同的路径，从而在
+          // 后台页签打开。
           auxclick(_view, event) {
             if (event.button !== 1) return false;
             const target = event.target as HTMLElement;
@@ -683,9 +617,9 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       },
     });
 
-    // Signal hosts that the deferred editor instance now exists. Fired from a
-    // passive effect (not `onCreate`) so it runs after the commit in which
-    // <EditorContent> attached the editor DOM — callers can measure/focus it.
+    // 告诉宿主：延迟创建的编辑器实例现已存在。从被动 effect（而非 `onCreate`）
+    // 触发，跑在 <EditorContent> 挂接编辑器 DOM 的 commit 之后——调用方可对它
+    // 测量/聚焦。
     const readyFiredRef = useRef(false);
     useEffect(() => {
       if (!editor || readyFiredRef.current) return;
@@ -693,26 +627,22 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       onReadyRef.current?.();
     }, [editor]);
 
-    // Publish upload-queue transitions to the host so it can gate submit.
+    // 把上传队列的变化发布给宿主，让它能门禁提交。
     //
-    // Deliberately NOT derived from `onUpdate`: that path is debounced and
-    // drops emissions whose markdown matches the last one — and a FAILED
-    // upload removes its placeholder to leave byte-identical markdown (the
-    // blob URL was stripped from it all along), so the un-gate would never
-    // fire. Transactions carry the attr flip regardless of what serializes.
+    // 刻意不从 `onUpdate` 推导：那条路径有防抖、还会丢弃与上次相同 markdown
+    // 的发射——而失败的**上传会移除它的占位符、留下逐字节相同的 markdown**
+    //（blob URL 从一开始就被剥掉了），于是解除门禁永远不会触发。事务无论序列
+    // 化出什么都会携带 attr 翻转。
     useEffect(() => {
       if (!editor || !onUploadingChange) return;
-      // Publish the current answer UNCONDITIONALLY on subscribe, then only on
-      // flips. The host's state outlives any one editor instance — comment
-      // edit unmounts the editor on cancel and mounts a fresh one on re-entry,
-      // and chat swaps the editor by `key` when the agent changes. An editor
-      // torn down mid-upload takes its pending node with it, so a host left
-      // holding `uploading: true` has nothing left to un-gate it: skipping
-      // this first emission because the new instance also reads "not
-      // uploading" is exactly how submit gets wedged shut for good.
+      // 订阅时**无条件**发布当前答案，之后只在翻转时发布。宿主状态活得过任何
+      // 单个编辑器实例——评论编辑取消时卸载编辑器、重进时挂新的，chat 在
+      // agent 变化时按 `key` 换编辑器。中途被拆掉的编辑器会带走它的挂起节点，
+      // 于是仍持有 `uploading: true` 的宿主没有任何东西能解除门禁：因为新实例
+      // 也读「没在上传」就跳过这首次发射，正是提交被永久卡死的成因。
       //
-      // `last` is per-subscription rather than a ref for the same reason: flip
-      // tracking must not survive the instance it describes.
+      // `last` 按订阅存储而非放 ref，理由相同：翻转跟踪绝不能活过它所描述
+      // 的实例。
       let last = hasUploadingNode(editor);
       onUploadingChangeRef.current?.(last);
       const check = () => {
@@ -726,15 +656,14 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       return () => {
         editor.off("transaction", check);
       };
-      // `onUploadingChange` is read for presence only; the ref carries the
-      // live callback, so a host passing an inline arrow doesn't rebind.
+      // `onUploadingChange` 只按存在性读取；实时回调由 ref 携带，宿主传行内
+      // 箭头也不会重复绑定。
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [editor, !!onUploadingChange]);
 
-    // Cleanup on unmount. A pending debounced update is DROPPED by default,
-    // not flushed — see the `flushPendingOnUnmount` prop doc for why. When the
-    // owner opted in, emit the markdown cached at `onUpdate` time so a long
-    // debounce can't swallow the last edit when the surrounding modal closes.
+    // 卸载清理。挂起的防抖更新默认被丢弃而不是冲刷——原因见
+    // `flushPendingOnUnmount` prop 文档。属主选开时，输出 `onUpdate` 时刻缓存
+    // 的 markdown，长防抖不能在外层弹窗关闭时吞掉最后一次编辑。
     useEffect(() => {
       return () => {
         if (!debounceRef.current) return;
@@ -751,21 +680,19 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       };
     }, []);
 
-    // Replace the live document with external markdown. Shared by the
-    // synchronized `value` effect below and the imperative `adoptContent`, so
-    // both land content identically — chunked parse for large docs, no
-    // onUpdate echo, caret preserved. Callers own the decision to apply;
-    // the guards live in the effect, not here.
+    // 用外部 markdown 替换实时文档。被下面同步 `value` effect 与命令式
+    // `adoptContent` 共用，两条路径落地内容的方式一致——大文档分块解析、
+    // 不回显 onUpdate、保留光标。是否应用由调用方决定；守卫住在 effect 里、
+    // 不在这里。
     const applyExternalContent = useCallback(
       (markdown: string) => {
         if (!editor || editor.isDestroyed) return;
         documentBaseRef.current = normalizeMarkdown(markdown);
         const before = normalizeEditorMarkdown(editor);
 
-        // A controlled host commonly echoes the exact Markdown this editor
-        // just emitted. Recognize that acknowledgment before preprocessing:
-        // preprocessing a half-typed token can change its meaning (for
-        // example `dev.de` used to become a link during a debounce pause).
+        // 受控宿主通常会回显本编辑器刚发出的那串 markdown。在预处理前认出
+        // 这种确认：预处理半个未打完的 token 会改变它的含义（例如防抖暂停
+        // 期间 `dev.de` 曾变成链接）。
         if (normalizeMarkdown(markdown) === before) return;
 
         const incoming = markdown
@@ -774,15 +701,14 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
             })
           : "";
         const incomingNormalized = normalizeMarkdown(incoming);
-        // Normalized-equal short-circuit. Avoids a no-op transaction when the
-        // preprocessed input serializes to the document already on screen.
+        // 规范化后相等的短路。避免预处理输入序列化出来就是屏上文档时产生
+        // 一次 no-op 事务。
         if (incomingNormalized === before) return;
 
-        // `emitUpdate: false`. Tiptap v3's setContent defaults to
-        // `emitUpdate: true`; without this we would re-trigger onUpdate →
-        // server save → self-write loop.
+        // `emitUpdate: false`。Tiptap v3 的 setContent 默认 `emitUpdate:
+        // true`；不设会重新触发 onUpdate → 服务端保存 → 自写循环。
         const { from, to } = editor.state.selection;
-        // Same chunked path on WS-driven re-parse of a large description.
+        // WS 驱动的大描述重解析走同一分块路径。
         const manager =
           incoming.length > MARKDOWN_CHUNK_THRESHOLD
             ? (editor.storage as { markdown?: { manager?: MarkdownManagerLike } })
@@ -799,10 +725,9 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
           });
         }
 
-        // An empty list item in the incoming markdown parses into a caretless,
-        // schema-invalid node; repair it and let it own the caret. Otherwise clamp
-        // the prior selection to the new doc size so the caret doesn't snap to
-        // position 0 after ProseMirror replaces the document.
+        // 外来 markdown 里的空列表项会解析成无光标、不合 schema 的节点；
+        // 修复它并让它拥有光标。否则把旧选区钳到新文档尺寸，让 ProseMirror
+        // 替换文档后光标不会弹回位置 0。
         if (!repairEmptyListItems(editor, { from, to })) {
           const docSize = editor.state.doc.content.size;
           editor.commands.setTextSelection({
@@ -816,100 +741,86 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       [editor],
     );
 
-    // Sync explicit external `value` changes into the editor. `defaultValue`
-    // is deliberately mount-only, matching React's normal uncontrolled-input
-    // contract; drafts therefore cannot feed their own debounced writes back
-    // into the live editor.
-    // Tiptap v3 `useEditor` reads `content` only at mount (ueberdosis/tiptap#5831);
-    // without this effect, a WS-driven description update keeps the editor
-    // showing stale content until the issue is closed and reopened.
+    // 把显式外部 `value` 变化同步进编辑器。`defaultValue` 刻意只挂载时读，
+    // 符合 React 普通非受控输入契约；草稿因此不会把自己的防抖回写喂回实时
+    // 编辑器。
+    // Tiptap v3 `useEditor` 只在挂载时读 `content`（ueberdosis/tiptap#5831）；
+    // 没有本 effect，WS 驱动的描述更新会让编辑器一直显示过期内容，直到 issue
+    // 关闭再重开。
     useEffect(() => {
       if (!editor || editor.isDestroyed || value === undefined) return;
 
       const previousValue = lastSyncedValueRef.current;
       lastSyncedValueRef.current = value;
 
-      // The initial value was already parsed through useEditor's
-      // `content` option (or in onCreate for the chunked path). Comparing that
-      // source Markdown to Tiptap's canonical serialization can differ even
-      // when they represent the same document, and used to cause an immediate
-      // second full parse. Only later prop changes belong to this sync effect.
+      // 初始值已经经 useEditor 的 `content` 选项（或 chunked 路径的 onCreate）
+      // 解析过。把那份源 markdown 与 Tiptap 的规范序列化相比，即使表示同一
+      // 文档也可能不同，过去会造成立刻的第二次全量解析。只有后来的 prop
+      // 变化才属于本同步 effect。
       if (value === previousValue) return;
 
-      // Guard 0: never clobber an in-flight upload. An external `value`
-      // change can arrive mid-upload — e.g. chat lazy-creates a session on the
-      // first file upload, which flips `activeSessionId` → the draft key →
-      // `value`. If we `setContent` over a document that still holds an
-      // `uploading` image/fileCard node, that node is wiped and the upload's
-      // finalize can no longer find it (the file vanishes, leaving an empty
-      // `!file[name]()`). Like the dirty guards below, an uploading node is
-      // local state that an external sync must not overwrite.
+      // 守卫 0：绝不覆盖在途上传。外部 `value` 变化可能在上传中途到达——例如
+      // chat 在首次上传文件时惰性创建会话，翻转 `activeSessionId` → 草稿 key
+      // → `value`。若对仍持有 `uploading` image/fileCard 节点的文档做
+      // `setContent`，该节点被抹掉、上传收尾再也找不到它（文件消失，留下空的
+      // `!file[name]()`）。与下面脏守卫一样，上传中节点是外部同步不得覆盖的
+      // 本地状态。
       //
-      // NOTE: this (like every guard here) SKIPS the sync permanently for this
-      // value — `lastSyncedValueRef` has already advanced, so the effect will
-      // not re-run for it. A host that must still land this content once the
-      // block clears has to say so explicitly, via `adoptContent`.
+      // 注意：它（与这里的每个守卫一样）对本次 value **永久跳过**同步——
+      // `lastSyncedValueRef` 已前进，effect 不会为它重跑。仍必须在此内容上
+      // 落地的宿主得显式说出来——经 `adoptContent`。
       if (hasUploadingNode(editor)) return;
 
       const current = normalizeEditorMarkdown(editor);
-      // "Dirty" = user has local edits not yet flushed through the debounced
-      // `onUpdate`. `lastEmittedRef` is advanced only after a debounce fire,
-      // so a divergence means the editor holds unsaved bytes.
+      // 「脏」= 用户有尚未经防抖 `onUpdate` 冲刷出去的本地编辑。
+      // `lastEmittedRef` 只在防抖触发后前进，所以一旦分歧说明编辑器持有未保存
+      // 字节。
       const isDirty =
         lastEmittedRef.current !== null && current !== lastEmittedRef.current;
 
-      // Guard 1: focused AND dirty — protect bytes the user is actively
-      // typing. Focused-but-clean falls through: applying setContent is safe
-      // (no user input to lose) and necessary, because onBlur has no replay
-      // mechanism and a focused clean editor would otherwise drop this sync
-      // permanently.
+      // 守卫 1：聚焦且脏——保护用户正在敲的字节。聚焦但干净则继续往下走：
+      // 应用 setContent 是安全的（没有用户输入可丢）且必要，因为 onBlur 没有
+      // 重放机制，聚焦且干净的编辑器否则会永久丢掉这次同步。
       if (editor.isFocused && isDirty) return;
 
-      // Guard 2: unfocused-but-dirty — blur happened but the debounce window
-      // (debounceMs, 1500ms for description) hasn't flushed yet. The pending
-      // onUpdate will reach the server and the cache will reconcile; skipping
-      // here avoids overwriting unsaved local edits.
+      // 守卫 2：失焦但脏——blur 发生了但防抖窗口（debounceMs，描述是 1500ms）
+      // 还没冲刷。挂起的 onUpdate 会到达服务端、缓存会调和；这里跳过可以避免
+      // 覆盖未保存的本地编辑。
       if (isDirty) return;
 
       applyExternalContent(value);
     }, [value, editor, applyExternalContent]);
 
-    // Sync external `placeholder` changes into the mounted editor.
-    // The Placeholder extension is configured with a getter over `placeholderRef`
-    // (see createEditorExtensions above), which the plugin re-invokes every time
-    // it recomputes its decorations. Update the ref, then dispatch an empty
-    // transaction to force that recompute — the placeholder refreshes without a
-    // remount. Without this, it stays frozen at its mount value: switching
-    // between an archived and an active chat session under the same agent (no
-    // editor remount) leaves the input stuck on "This session is archived" even
-    // though it is usable.
+    // 把外部 `placeholder` 变化同步进已挂载编辑器。
+    // Placeholder 扩展配置为对 `placeholderRef` 的 getter（见上面
+    // createEditorExtensions），插件每次重算装饰都会重调它。更新 ref 后派发
+    // 一个空事务强制重算——占位文本无需重挂即刷新。没有它，占位文本会冻结在
+    // 挂载值：同一 agent 下在归档与活跃会话间切换（不重挂编辑器）会让输入框
+    // 一直停在「此会话已归档」。
     useEffect(() => {
       if (placeholderRef.current === placeholderText) return;
       placeholderRef.current = placeholderText;
       if (!editor || editor.isDestroyed) return;
-      // `docChanged` is false on an empty transaction, so onUpdate never fires
-      // and no self-write loop is triggered.
+      // 空事务 `docChanged` 为 false，onUpdate 不会触发，不会造成自写循环。
       editor.view.dispatch(editor.state.tr);
     }, [editor, placeholderText]);
 
     useImperativeHandle(ref, () => ({
-      // Intentionally NOT routed through `normalizeMarkdown` — see the "stays
-      // untrimmed" safety net in content-editor.test.tsx. It used to also pass
-      // through `stripBlobUrls`; that wrapper is gone because an in-flight
-      // placeholder no longer serialises at all, which is strictly stronger
-      // than scrubbing it back out afterwards.
+      // 刻意不经过 `normalizeMarkdown`——见 content-editor.test.tsx 里
+      // 「保持不 trim」的安全网。过去它也过 `stripBlobUrls`；那个包装已移除，
+      // 因为在途占位符如今根本不再序列化，比事后擦掉它更强。
       getMarkdown: () => editor?.getMarkdown() ?? "",
       clearContent: () => {
         editor?.commands.clearContent();
       },
       focus: () => {
         if (editor) editor.commands.focus();
-        // Editor not mounted yet — defer the focus to `onCreate`.
+        // 编辑器还没挂载——把聚焦推迟到 `onCreate`。
         else focusOnReadyRef.current = true;
       },
       focusAtCoords: (coords: { x: number; y: number }) => {
         if (!editor) {
-          // Editor not mounted yet — degrade to the latched plain focus.
+          // 编辑器还没挂载——降级为锁定的普通聚焦。
           focusOnReadyRef.current = true;
           return;
         }
@@ -919,7 +830,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       },
       focusAtAnchor: (anchor: TextAnchor) => {
         if (!editor) {
-          // Editor not mounted yet — degrade to the latched plain focus.
+          // 编辑器还没挂载——降级为锁定的普通聚焦。
           focusOnReadyRef.current = true;
           return;
         }
@@ -950,28 +861,27 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
         return true;
       },
       flushPendingUpdate: () => {
-        // No armed timer = nothing typed since the last emit. The editor is
-        // already clean, so the host has nothing to re-route.
+        // 没有武装定时器 = 上次发射后没有输入。编辑器已干净，宿主没有可重路由
+        // 的内容。
         if (!debounceRef.current) return null;
         clearTimeout(debounceRef.current);
         debounceRef.current = undefined;
         pendingFlushRef.current = null;
         pendingBaseRef.current = null;
         if (!editor || editor.isDestroyed) return null;
-        // Read the live document: unlike the unmount flush, the instance is
-        // still alive here, so this is the freshest possible copy.
+        // 读实时文档：与卸载冲刷不同，实例在这里还活着，所以这是最新鲜的
+        // 副本。
         const md = normalizeEditorMarkdown(editor);
         if (md === lastEmittedRef.current) return null;
-        // Advance the emit watermark so the editor reads as clean — the host
-        // is taking responsibility for these bytes, and the dirty guard must
-        // now let the incoming synchronized value through.
+        // 推进发射水位让编辑器读起来干净——宿主正为这些字节负责，脏守卫现在
+        // 必须放行进来的同步 `value`。
         lastEmittedRef.current = md;
         return md;
       },
       adoptContent: (markdown: string) => applyExternalContent(markdown),
     }));
 
-    // Link hover card — disabled when BubbleMenu is active (has selection)
+    // 链接悬停卡片——BubbleMenu 活跃（有选区）时禁用
     const wrapperRef = useRef<HTMLDivElement>(null);
     const hoverDisabled = !editor?.state.selection.empty;
     const hover = useLinkHover(wrapperRef, hoverDisabled);

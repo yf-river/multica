@@ -1,3 +1,13 @@
+// outbound.go：把 agent 的聊天回复投回钉钉——整条往返的出站半边，监听
+// EventChatDone / EventTaskFailed。
+//
+// 事件到来后先确认任务确实源自钉钉（channel_task_delivery 的 channel_type + task
+// 输入来源判定），找到对应聊天绑定与安装，再用该安装的凭据把回复（或失败提示）
+// 发回来源会话。没有钉钉绑定的会话直接忽略，因此能与飞书、Slack 订阅器在共享
+// 事件总线上共存；仅在钉钉被配置时注册。
+//
+// 之所以也订阅 task-failed：失败时钉钉会话要与 Web 记录保持一致——缺了它，用户
+// 会对着那条「👀 On it」的 ack 永远等下去。
 package dingtalk
 
 import (
@@ -16,8 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// outboundQueries is the slice of generated queries the DingTalk outbound
-// subscriber needs. *db.Queries satisfies it.
+// outboundQueries 是钉钉出站订阅器需要的生成查询子集。*db.Queries 满足它。
 type outboundQueries interface {
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	TaskHasChannelIngestedMessages(ctx context.Context, taskID pgtype.UUID) (bool, error)
@@ -25,13 +34,10 @@ type outboundQueries interface {
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
 }
 
-// Outbound delivers an agent's chat reply back to DingTalk — the outbound half
-// of the round trip. On EventChatDone / EventTaskFailed
-// it finds the DingTalk chat binding for the task's session and posts the reply
-// (or failure notice) into the originating conversation. Sessions with no
-// DingTalk binding are ignored, so it coexists with the Feishu and Slack
-// subscribers on the shared event bus. Registered only when DingTalk is
-// configured.
+// Outbound 把 agent 的聊天回复投回钉钉——整条往返的出站半边。监听到
+// EventChatDone / EventTaskFailed 后，为任务的会话找出钉钉聊天绑定，把回复（或
+// 失败提示）发进来源会话。没有钉钉绑定的会话被忽略，所以能与飞书、Slack 订阅器
+// 在共享事件总线上共存。仅在钉钉被配置时注册。
 type Outbound struct {
 	q       outboundQueries
 	decrypt Decrypter
@@ -39,8 +45,8 @@ type Outbound struct {
 	logger  *slog.Logger
 }
 
-// NewOutbound builds the DingTalk outbound subscriber over the generated queries,
-// the AppSecret decrypter, and the shared token-caching Client.
+// NewOutbound 基于生成查询、AppSecret 解密器与共享的令牌缓存 Client 构造钉钉
+// 出站订阅器。
 func NewOutbound(q outboundQueries, decrypt Decrypter, client *Client, logger *slog.Logger) *Outbound {
 	if logger == nil {
 		logger = slog.Default()
@@ -51,17 +57,16 @@ func NewOutbound(q outboundQueries, decrypt Decrypter, client *Client, logger *s
 	return &Outbound{q: q, decrypt: decrypt, client: client, logger: logger}
 }
 
-// Register subscribes to chat-done and task-failed. Task-failed keeps the DingTalk
-// conversation consistent with the web transcript — without it a failed run
-// leaves the user staring at the "👀 On it" ack forever.
+// Register 订阅 chat-done 与 task-failed。订阅 task-failed 是为了让钉钉会话与
+// Web 记录保持一致——没有它，失败的那轮会让用户对着「👀 On it」ack 永远等下去。
 func (o *Outbound) Register(bus *events.Bus) {
 	bus.Subscribe(protocol.EventChatDone, o.handleEvent)
 	bus.Subscribe(protocol.EventTaskFailed, o.handleEvent)
 }
 
+// handleEvent 是事件的同步回调。总线投递是同步的，卡住的钉钉 HTTP 调用绝不能把
+// 发布侧钉死：这里新建带 10 秒硬超时的 ctx 再往下走。
 func (o *Outbound) handleEvent(e events.Event) {
-	// Bus delivery is synchronous, so a stuck DingTalk HTTP call must not wedge
-	// the publish call site: use a fresh ctx with a tight timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := o.processEvent(ctx, e); err != nil {
@@ -70,20 +75,22 @@ func (o *Outbound) handleEvent(e events.Event) {
 	}
 }
 
+// processEvent 执行一次事件处理主流程：抽任务/会话 -> 判定来源 -> 取安装凭据 ->
+// 发送。任何一步失败都返回错误记日志（不影响总线其它订阅者）。
 func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 	taskID, sessionID, ok := taskAndSessionFromEvent(e)
 	if !ok || !sessionID.Valid {
-		// Issue / autopilot tasks carry no chat_session.
+		// issue / autopilot 任务不带 chat_session，直接跳过。
 		return nil
 	}
 	content := eventContent(e)
 	if content == "" {
-		return nil // nothing to say (empty completion, or a retry-pending failure)
+		return nil // 没有要说的内容（空补全，或处于等待重试的失败）
 	}
 	delivery, err := o.q.GetChannelTaskDelivery(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil // direct Multica task or violated snapshot invariant: fail closed
+			return nil // 纯 Multica 任务或快照不变式被打破：关门失败
 		}
 		return fmt.Errorf("lookup dingtalk task delivery: %w", err)
 	}
@@ -110,7 +117,7 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 		return fmt.Errorf("load dingtalk installation: %w", err)
 	}
 	if inst.Status != "active" {
-		return nil // revoked between trigger and reply
+		return nil // 事件触发到回复之间安装被吊销了
 	}
 	creds, err := decodeCredentials(inst.Config, o.decrypt)
 	if err != nil {
@@ -123,6 +130,8 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 	return nil
 }
 
+// bindingFromTaskDelivery 把投递行转成聊天会话绑定结构：两者同源，只是
+// channel_task_delivery 用扁平的 channel_* 列、会话绑定用统一结构。
 func bindingFromTaskDelivery(delivery db.ChannelTaskDelivery) db.ChannelChatSessionBinding {
 	return db.ChannelChatSessionBinding{
 		ID: delivery.BindingID, InstallationID: delivery.InstallationID,
@@ -133,14 +142,12 @@ func bindingFromTaskDelivery(delivery db.ChannelTaskDelivery) db.ChannelChatSess
 	}
 }
 
-// eventContent extracts the deliverable text from an EventChatDone payload
-// (typed, or its map form after a serialization round trip) or an
-// EventTaskFailed payload. Empty means stay silent.
+// eventContent 从 EventChatDone 负载（类型化，或序列化往返后的 map 形态）或
+// EventTaskFailed 负载里取出要投的正文。取空则保持沉默。
 //
-// For task-failed the text mirrors the web transcript's failure chat_message:
-// the broadcast's `error` field carries the same redacted failure text and is
-// omitted while an auto-retry is pending (the retry attempt reports its own
-// outcome), so error-present means deliverable.
+// 对 task-failed，正文镜像 Web 记录的失败 chat_message：广播的 `error` 字段带
+// 的是同一份脱敏失败文本；若自动重试还在挂起则【不带】该字段（重试那轮会报它
+// 自己的结果），所以「error 在场」就表示可投递。
 func eventContent(e events.Event) string {
 	switch p := e.Payload.(type) {
 	case protocol.ChatDonePayload:
@@ -162,6 +169,8 @@ func eventContent(e events.Event) string {
 	return ""
 }
 
+// taskAndSessionFromEvent 从事件信封或类型化/map 负载里找回任务 id 与会话 id。
+// 返回 ok=true 表示至少任务 id 是有效的。
 func taskAndSessionFromEvent(e events.Event) (taskID, sessionID pgtype.UUID, ok bool) {
 	if e.TaskID != "" {
 		_ = taskID.Scan(e.TaskID)

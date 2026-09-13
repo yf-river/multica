@@ -1,3 +1,6 @@
+// 本文件是「访问令牌」设置标签页：列出当前个人访问令牌（Personal Access Token，
+// 可用于 CLI 等场景登录），支持新建、复制与吊销；下方还嵌入了外部研发账号凭据面板。
+
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
@@ -41,8 +44,16 @@ import { useLocale, useT } from "../../i18n";
 import { SettingsSection, SettingsTab } from "./settings-layout";
 import { ExternalCredentialPanel } from "./external-credential-panel";
 
+/** 令牌有效期下拉的取值：分别代表 30 / 90 / 365 天与「永不过期」。 */
 const EXPIRY_KEYS = ["30", "90", "365", "never"] as const;
 
+/**
+ * 「访问令牌」标签页。
+ * 新建：填名称、选有效期后创建——令牌明文只在创建成功那一刻返回一次，之后任何
+ * 接口都拿不到原文，所以要用弹窗当场展示并提醒复制保存（含「已妥善保存」勾选闸门）。
+ * 列表：展示各令牌的简称前缀、创建/最近使用/过期时间，可吊销（吊销经二次确认）。
+ * 该组件仅在服务端支持下可用。
+ */
 export function TokensTab() {
   const { t } = useT("settings");
   const locale = useLocale();
@@ -63,6 +74,7 @@ export function TokensTab() {
   const [tokensLoading, setTokensLoading] = useState(true);
   const [tokensLoadFailed, setTokensLoadFailed] = useState(false);
 
+  // 拉取令牌列表；失败时保留空列表并标记失败，由界面给出「加载失败」提示。
   const loadTokens = useCallback(async () => {
     try {
       const list = await api.listPersonalAccessTokens();
@@ -81,6 +93,7 @@ export function TokensTab() {
   const handleCreateToken = async () => {
     setTokenCreating(true);
     try {
+      // 「永不过期」时不给服务端传过期天数；否则把字符串天数转成数字。
       const expiresInDays = tokenExpiry === "never" ? undefined : Number(tokenExpiry);
       const result = await api.createPersonalAccessToken({ name: tokenName, expires_in_days: expiresInDays });
       setNewToken(result.token);
@@ -107,6 +120,7 @@ export function TokensTab() {
     }
   };
 
+  // 复制成功后把图标临时切成「勾」2 秒，给用户即时的成功反馈。
   const handleCopyToken = async () => {
     if (!newToken) return;
     if (await copyText(newToken)) {
@@ -115,6 +129,7 @@ export function TokensTab() {
     }
   };
 
+  // 同上：把「用该令牌登录 CLI」的整条命令复制进剪贴板。
   const handleCopyCommand = async () => {
     if (!newToken) return;
     if (await copyText(`multica login --token ${newToken}`)) {

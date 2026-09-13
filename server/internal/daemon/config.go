@@ -21,39 +21,31 @@ const (
 	DefaultServerURL         = "ws://localhost:8080/ws"
 	DefaultPollInterval      = 30 * time.Second
 	DefaultHeartbeatInterval = 15 * time.Second
-	// DefaultAgentTimeout is the optional absolute wall-clock cap on a single
-	// agent run. 0 = no cap: a run is bounded only by the inactivity watchdog
-	// (DefaultAgentIdleWatchdog), so a session that keeps emitting events is
-	// never killed merely for running long (MUL-3064). Operators who want a
-	// hard ceiling for cost/resource control can set MULTICA_AGENT_TIMEOUT.
+	// DefaultAgentTimeout 是单次 agent 运行的可选绝对墙钟上限。0 = 不设上限：一次运行
+	// 只受不活跃看门狗（DefaultAgentIdleWatchdog）约束，因此“一直发事件”的会话绝不会
+	// 仅仅因为跑得久就被杀（MUL-3064）。想要成本/资源硬上限的运维可设
+	// MULTICA_AGENT_TIMEOUT。
 	DefaultAgentTimeout                   = 0
 	DefaultCodexSemanticInactivityTimeout = 10 * time.Minute
 	DefaultCodexHandshakeTimeout          = 30 * time.Second
 	DefaultCodexThreadHandshakeTimeout    = 60 * time.Second
-	// DefaultOpenCodeIdleWatchdog shortens the no-message budget for OpenCode
-	// runs while they are not executing a tool. OpenCode streams text and tool
-	// events incrementally, so a completely silent interval here covers both a
-	// missing first model token and a stalled response stream. The generic
-	// AgentIdleWatchdog remains the global enable/disable switch.
+	// DefaultOpenCodeIdleWatchdog 缩短 OpenCode 运行在“未执行工具”时的无消息预算。
+	// OpenCode 增量地流式输出文本与工具事件，因此这里一段完全静默的间隔同时覆盖“首个
+	// 模型 token 缺失”与“响应流卡住”。通用 AgentIdleWatchdog 仍是总开关。
 	DefaultOpenCodeIdleWatchdog = 10 * time.Minute
-	// DefaultAgentIdleWatchdog is the per-task safety net that force-stops a
-	// run when the backend has emitted no message for this long AND its
-	// message queue is empty. Backends like Claude Code can hang indefinitely
-	// on a stuck child process (e.g. `docker ps` against a frozen dockerd),
-	// in which case `cmd.Wait()` never returns. With no wall-clock cap
-	// (DefaultAgentTimeout = 0) such a run would otherwise sit at "running"
-	// forever, so this watchdog is its sole liveness net.
+	// DefaultAgentIdleWatchdog 是每任务安全网：后端在这么长时间内没有任何消息、且消息
+	// 队列为空时强制停掉一次运行。Claude Code 这类后端可能无限期卡在卡死的子进程上
+	// （例如对着冻结的 dockerd 跑 `docker ps`），此时 `cmd.Wait()` 永远不返回。在无墙
+	// 钟上限（DefaultAgentTimeout = 0）下，这样的运行会永远停在 "running"，所以本看门
+	// 狗是它唯一的存活网。
 	//
-	// The budget answers one question: how long may the LONGEST legitimate
-	// silent step take? Not "how fast do we want to notice a hang". Those
-	// two costs are wildly asymmetric — force-stopping a healthy run throws
-	// away the work and flips the issue to blocked, while noticing a hang
-	// late only holds a concurrency slot. So the value tracks the legitimate
-	// end: a single RFC-length assistant message (MUL-2300, which moved this
-	// from 5 min to 30 min), a subagent, a full test suite. 30 min still cut
-	// real work short, so this is 2h.
+	// 预算只回答一个问题：最长合法“静默步骤”可以有多长？不是“我们多想早点发现卡死”。
+	// 两者代价极不对称——强停一个健康运行会丢掉工作、把 issue 翻成 blocked，而晚点发现
+	// 卡死只是占着一个并发槽。所以这个值跟随合法端点走：一条 RFC 长度的 assistant 消息
+	// （MUL-2300 把它从 5 分钟挪到 30 分钟）、一个子 agent、一整轮测试套件。30 分钟仍
+	// 会腰斩真实工作，所以现在是 2h。
 	//
-	// Set MULTICA_AGENT_IDLE_WATCHDOG=0 to disable the whole watchdog suite.
+	// 设 MULTICA_AGENT_IDLE_WATCHDOG=0 可关掉整套看门狗。
 	DefaultAgentIdleWatchdog              = 2 * time.Hour
 	DefaultRuntimeName                    = "Local Agent"
 	DefaultWorkspaceBootstrapSyncInterval = 30 * time.Second
@@ -63,105 +55,97 @@ const (
 	DefaultHealthPort                     = 19514
 	DefaultMaxConcurrentTasks             = 20
 	DefaultGCInterval                     = 2 * time.Hour
-	DefaultGCTTL                          = 24 * time.Hour      // 1 day — AI-coding issues rarely stay open long
-	DefaultGCCompletedTaskTTLCloud        = 14 * 24 * time.Hour // 14 days — Multica Cloud bounds completed issue-task env retention by default; see defaultGCCompletedTaskTTL
-	DefaultGCCompletedTaskTTLSelfHost     = 0                   // disabled — self-host keeps every completed env until its issue goes terminal, unless an operator opts in
-	DefaultGCOrphanTTL                    = 72 * time.Hour      // 3 days — orphans with no meta (crashes, pre-GC leftovers)
-	DefaultGCArtifactTTL                  = 12 * time.Hour      // 12h — drop regenerable artifacts once a task has been completed this long
-	DefaultGCCodexSessionTTL              = 14 * 24 * time.Hour // 14 days — reclaim per-issue Codex session stores untouched this long
-	DefaultGCHermesMemoryTTL              = 90 * 24 * time.Hour // 90 days — reclaim per-agent Hermes memory stores untouched this long (long: reclaiming these is visible amnesia, and they are a few markdown files)
-	DefaultGCHermesSessionTTL             = 14 * 24 * time.Hour // 14 days — reclaim per-conversation Hermes session stores untouched this long (matches Codex: these hold transcripts, and losing an idle one restarts the thread rather than the agent's notes)
-	DefaultGCRepoTTL                      = 30 * 24 * time.Hour // 30 days — evict a bare repo cache no task has checked out this long
-	// DefaultGCTaskTempLegacyTTL is 0 — disabled. Per-task temp dirs left by a
-	// daemon predating the temp dir execution lock carry no liveness signal at
-	// all, and age cannot supply one: a task may legitimately run for weeks
-	// (DefaultAgentTimeout is 0), a pre-lock daemon on another profile can
-	// still be running one, and every daemon on the machine shares the temp
-	// base. Reclaiming those is therefore an operator's explicit call, made
-	// when no pre-lock daemon is running here. Dirs that DO carry the lock are
-	// reclaimed on liveness and never touch this knob.
+	DefaultGCTTL                          = 24 * time.Hour      // 1 天——AI 编码 issue 很少长期开着
+	DefaultGCCompletedTaskTTLCloud        = 14 * 24 * time.Hour // 14 天——Multica Cloud 默认限制已完成 issue 任务环境的保留期；见 defaultGCCompletedTaskTTL
+	DefaultGCCompletedTaskTTLSelfHost     = 0                   // 禁用——自托管保留每个已完成环境直到其 issue 终态，除非运维显式开启
+	DefaultGCOrphanTTL                    = 72 * time.Hour      // 3 天——无 meta 的孤儿目录（崩溃、GC 前遗留）
+	DefaultGCArtifactTTL                  = 12 * time.Hour      // 12h——任务完成这么久后丢弃可再生 artifact
+	DefaultGCCodexSessionTTL              = 14 * 24 * time.Hour // 14 天——回收这么久未动的“每 issue”Codex session store
+	DefaultGCHermesMemoryTTL              = 90 * 24 * time.Hour // 90 天——回收这么久未动的“每 agent”Hermes memory store（长：回收这些等于可见的失忆，而且只是几个 markdown 文件）
+	DefaultGCHermesSessionTTL             = 14 * 24 * time.Hour // 14 天——回收这么久未动的“每会话”Hermes session store（与 Codex 一致：装 transcript，丢一个闲置的只是重开线程而非丢 agent 笔记）
+	DefaultGCRepoTTL                      = 30 * 24 * time.Hour // 30 天——驱逐这么久没有任务 checkout 过的裸仓库缓存
+	// DefaultGCTaskTempLegacyTTL 是 0——禁用。早于“临时目录执行锁”的 daemon 留下的
+	// 每任务临时目录完全不带活性信号，年龄也无法提供：任务合法地可能跑数周
+	// （DefaultAgentTimeout 是 0），另一个 profile 上的 pre-lock daemon 可能还在跑它，
+	// 而机器上每个 daemon 共享同一个 temp 基。因此回收它们是运维的显式决定——在确认本
+	// 机没有 pre-lock daemon 在跑时做。带锁的目录按活性回收，永远不碰这个开关。
 	DefaultGCTaskTempLegacyTTL     = time.Duration(0)
-	DefaultAutoUpdateCheckInterval = 6 * time.Hour // how often the daemon polls GitHub for a newer CLI release
+	DefaultAutoUpdateCheckInterval = 6 * time.Hour // daemon 多久轮询一次 GitHub 找更新的 CLI 版本
 )
 
-// DefaultGCArtifactPatterns lists basename matches that the GC loop treats as
-// regenerable build artifacts. Kept conservative: only directories that are
-// always cheap to recreate (`pnpm install`, `next build`, `turbo build`). Things
-// like `dist/`, `build/`, `.cache/` or `.venv/` may legitimately hold source or
-// release output in some repos and are NOT included by default — set
-// MULTICA_GC_ARTIFACT_PATTERNS to extend the list per deployment.
+// DefaultGCArtifactPatterns 列出 GC 循环视为“可再生构建产物”的 basename 匹配项。
+// 保持保守：只收“总是便宜能重建”的目录（`pnpm install`、`next build`、
+// `turbo build`）。`dist/`、`build/`、`.cache/` 或 `.venv/` 之类在某些仓库可能合法地
+// 装着源码或发布产物，默认*不*包含——按部署用 MULTICA_GC_ARTIFACT_PATTERNS 扩展列表。
 var DefaultGCArtifactPatterns = []string{"node_modules", ".next", ".turbo"}
 
-// Config holds all daemon configuration.
+// Config 持有 daemon 的全部配置。
 type Config struct {
 	ServerBaseURL                  string
 	DaemonID                       string
-	LegacyDaemonIDs                []string // historical daemon_ids this machine may have registered under; reported at register time so the server can merge old runtime rows
+	LegacyDaemonIDs                []string // 这台机器历史上可能注册过的 daemon_id；注册时上报，让服务器能合并旧的 runtime 行
 	DeviceName                     string
 	RuntimeName                    string
-	CLIVersion                     string                // multica CLI version (e.g. "0.1.13")
-	LaunchedBy                     string                // "desktop" when spawned by the Electron app, empty for standalone
-	Profile                        string                // profile name (empty = default)
-	Agents                         map[string]AgentEntry // keyed by provider; includes built-in runtime identities from agent.BuiltinRuntimes
-	WorkspacesRoot                 string                // base path for execution envs (default: ~/multica_workspaces)
-	KeepEnvAfterTask               bool                  // preserve env after task for debugging
-	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
-	MaxConcurrentTasks             int                   // max tasks running in parallel (default: 20)
-	GCEnabled                      bool                  // enable periodic workspace garbage collection (default: true)
-	GCInterval                     time.Duration         // how often the GC loop runs (default: 2h)
-	GCTTL                          time.Duration         // clean dirs whose issue is done/cancelled and updated_at < now()-TTL (default: 24h)
-	GCCompletedTaskTTL             time.Duration         // fully clean inactive issue-task envs completed at least this long ago, regardless of parent issue status (default: 14d on Multica Cloud, 0/disabled elsewhere; local_directory envs are never fully removed)
-	GCOrphanTTL                    time.Duration         // clean orphan dirs with no meta, or dirs whose issue gc-check returns 404, once they exceed this age (default: 72h). The 404 path uses the same TTL — a scoped-down token can't instantly wipe live workspaces.
-	GCArtifactTTL                  time.Duration         // once a task has been completed for at least this long, drop regenerable artifacts: pattern-matched build outputs when the parent record keeps the directory (an open issue), and the exact daemon-managed Codex cache for every task kind (default: 12h, set 0 to disable both)
-	GCArtifactPatterns             []string              // basename patterns whose subtrees are removed during artifact cleanup (default: node_modules, .next, .turbo)
-	GCRepoTTL                      time.Duration         // evict a cached bare repo under .repos once no task has created a worktree from it for this long, it has no worktrees left, and it is no longer attached to any watched workspace (default: 30d, set 0 to disable)
-	GCRepoMaintenanceEnabled       bool                  // run reflog expiry and git gc after stale agent refs are removed (default: true; disable independently as an operational kill switch)
-	GCCodexSessionTTL              time.Duration         // reclaim a per-issue Codex session store (~/.codex/multica-sessions/<agent>/<issue>) untouched for at least this long, so a done/abandoned issue's conversation history does not accumulate forever (default: 14d, set 0 to disable)
-	GCHermesMemoryTTL              time.Duration         // reclaim a per-agent Hermes memory store (<profile dir>/hermes-state/<agent>/<profile>) untouched for at least this long, so a deleted agent's memory does not sit on disk forever (default: 90d, set 0 to disable)
-	GCHermesSessionTTL             time.Duration         // reclaim a per-conversation Hermes session store (<profile dir>/hermes-sessions/<agent>/<profile>/<conversation>) untouched for at least this long, so a done or abandoned conversation's transcript does not accumulate forever (default: 14d, set 0 to disable)
-	GCTaskTempLegacyTTL            time.Duration         // reclaim a per-task temp dir (<temp base>/multica-task-*) that carries no execution lock — i.e. left by a daemon predating the lock — once nothing inside it has been touched for this long. Dirs that DO carry the lock are reclaimed on liveness, never on age, so this knob does not apply to them. Neither does it reclaim a dir holding no task content — an old empty leftover, or a shell left by a daemon that died between creating the dir and publishing its lock — because holding no content is exactly what a dir currently being published looks like (default: 0, disabled — see DefaultGCTaskTempLegacyTTL)
-	AutoUpdateEnabled              bool                  // periodically check for a newer CLI release and self-update when idle (default: true on Multica Cloud, false on self-host)
-	AutoUpdateCheckInterval        time.Duration         // how often the auto-update loop polls for a new release (default: 6h)
-	AutoReloadEnabled              bool                  // restart when the multica binary on disk no longer matches the running version (default: true for CLI-launched daemons)
+	CLIVersion                     string                // multica CLI 版本（如 "0.1.13"）
+	LaunchedBy                     string                // 被 Electron app 拉起时为 "desktop"，独立启动为空
+	Profile                        string                // profile 名（空 = 默认）
+	Agents                         map[string]AgentEntry // 按 provider 为键；含 agent.BuiltinRuntimes 里的内置 runtime 身份
+	WorkspacesRoot                 string                // 执行环境的基础路径（缺省：~/multica_workspaces）
+	KeepEnvAfterTask               bool                  // 任务后保留环境供调试
+	HealthPort                     int                   // 健康检查本地 HTTP 端口（缺省：19514）
+	MaxConcurrentTasks             int                   // 并行运行的最大任务数（缺省：20）
+	GCEnabled                      bool                  // 启用周期 workspace 垃圾回收（缺省：true）
+	GCInterval                     time.Duration         // GC 循环多久跑一次（缺省：2h）
+	GCTTL                          time.Duration         // 清理“issue 已 done/cancelled 且 updated_at 早于 now()-TTL”的目录（缺省：24h）
+	GCCompletedTaskTTL             time.Duration         // 完全清理“完成至少这么久的不活跃 issue 任务环境”，无论父 issue 状态（缺省：Multica Cloud 14d，其它 0/禁用；local_directory 环境绝不整删）
+	GCOrphanTTL                    time.Duration         // 清理“无 meta 的孤儿目录，或 issue gc-check 返回 404 的目录”，超过该年龄即清（缺省：72h）。404 路径用同一个 TTL——被缩小权限的 token 无法瞬间抹掉活 workspace。
+	GCArtifactTTL                  time.Duration         // 任务完成至少这么久后，丢弃可再生 artifact：父记录保住目录时（开着的 issue）删按模式命中的构建产物；对每种任务都删确切的 daemon 受管 Codex 缓存（缺省：12h，设 0 同时禁用两者）
+	GCArtifactPatterns             []string              // artifact 清理时删除其子树的 basename 模式（缺省：node_modules, .next, .turbo）
+	GCRepoTTL                      time.Duration         // 没有任务用某个 .repos 下缓存裸仓库创建 worktree 这么久、它也没有剩余 worktree、且不再挂接任何受管 workspace 时驱逐它（缺省：30d，设 0 禁用）
+	GCRepoMaintenanceEnabled       bool                  // 删掉过期 agent 引用后跑 reflog expire 与 git gc（缺省：true；可独立禁用作为运维急停开关）
+	GCCodexSessionTTL              time.Duration         // 回收至少这么久未动的“每 issue”Codex session store（~/.codex/multica-sessions/<agent>/<issue>），让 done/被放弃 issue 的对话历史不会无限累积（缺省：14d，设 0 禁用）
+	GCHermesMemoryTTL              time.Duration         // 回收至少这么久未动的“每 agent”Hermes memory store（<profile dir>/hermes-state/<agent>/<profile>），让被删 agent 的记忆不会永远留在磁盘（缺省：90d，设 0 禁用）
+	GCHermesSessionTTL             time.Duration         // 回收至少这么久未动的“每会话”Hermes session store（<profile dir>/hermes-sessions/<agent>/<profile>/<conversation>），让 done 或被放弃对话的 transcript 不会无限累积（缺省：14d，设 0 禁用）
+	GCTaskTempLegacyTTL            time.Duration         // 回收“不带执行锁”（即早于该锁的 daemon 留下）的每任务临时目录（<temp base>/multica-task-*），一旦里面没什么被触碰这么久。带锁的目录按活性回收、从不按年龄，所以此开关与它们无关。它也不回收“不含任何任务内容”的目录——旧空遗留，或“创建目录后、发布锁前就死了”的 daemon 留下的 shell——因为“正被发布”的目录长得正是“没内容”（缺省：0，禁用——见 DefaultGCTaskTempLegacyTTL）
+	AutoUpdateEnabled              bool                  // 周期性检查更新的 CLI 版本并在空闲时自更新（缺省：Multica Cloud true，自托管 false）
+	AutoUpdateCheckInterval        time.Duration         // 自动更新循环多久轮询一次新版本（缺省：6h）
+	AutoReloadEnabled              bool                  // 磁盘上的 multica 二进制不再匹配运行版本时重启（缺省：CLI 拉起的 daemon true）
 	PollInterval                   time.Duration
 	HeartbeatInterval              time.Duration
 	AgentTimeout                   time.Duration
 	CodexSemanticInactivityTimeout time.Duration
-	// CodexFirstTurnNoProgressTimeout is an explicit override for the Codex
-	// first-turn no-progress ceiling (MULTICA_CODEX_FIRST_TURN_TIMEOUT). 0 means
-	// unset: the backend keeps its default ceiling, which CodexSemanticInactivityTimeout
-	// can only shrink. A positive value raises (or lowers) that ceiling outright,
-	// for app-servers that are legitimately slow to their first event (GH #3262).
+	// CodexFirstTurnNoProgressTimeout 是 Codex“首轮无进展”上限的显式覆盖
+	// （MULTICA_CODEX_FIRST_TURN_TIMEOUT）。0 表示未设置：后端保留默认上限，
+	// CodexSemanticInactivityTimeout 只能把它收窄。正值直接抬高（或压低）那个上限，供
+	// “首个事件确实慢”的 app-server 使用（GH #3262）。
 	CodexFirstTurnNoProgressTimeout time.Duration
 	CodexHandshakeTimeout           time.Duration
 	CodexThreadHandshakeTimeout     time.Duration
-	OpenCodeIdleWatchdog            time.Duration // OpenCode-specific no-message window; 0 falls back to AgentIdleWatchdog and values above it cannot extend the global bound
-	AgentIdleWatchdog               time.Duration // force-stop a run when the backend goes silent this long with an empty queue (0 = disabled)
-	AgentToolWatchdog               time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = never force-stop during a tool call); defaults to AgentIdleWatchdog, so operators tune one number unless they deliberately want a wider tool budget
+	OpenCodeIdleWatchdog            time.Duration // OpenCode 专用无消息窗口；0 回退到 AgentIdleWatchdog，大于它的值不能突破全局上限
+	AgentIdleWatchdog               time.Duration // 后端静默这么久且队列为空时强制停一次运行（0 = 禁用）
+	AgentToolWatchdog               time.Duration // 单个工具调用在途（静默）这么久时强制停一次运行（0 = 工具调用期间绝不强停）；缺省等于 AgentIdleWatchdog，让运维只调一个数，除非故意想要更宽的工具预算
 	ClaudeArgs                      []string
 	CodexArgs                       []string
 	CodebuddyArgs                   []string
 	QwenArgs                        []string
 	QwenpawArgs                     []string
 
-	// ProfileCommandOverrides maps a custom runtime profile_id -> the absolute
-	// executable path to use for that profile on THIS machine (MUL-3284).
-	// Sourced from the local CLI config (cli.CLIConfig.ProfileCommandOverrides),
-	// written by `multica runtime profile set-path`. appendProfileRuntimes
-	// prefers a matching, executable override over resolving the profile's
-	// command_name on PATH. nil/empty means "always resolve via PATH".
+	// ProfileCommandOverrides 把自定义 runtime profile_id 映射到“本机该 profile 要用的
+	// 可执行文件绝对路径”（MUL-3284）。来自本地 CLI 配置
+	// （cli.CLIConfig.ProfileCommandOverrides，由 `multica runtime profile set-path`
+	// 写入）。appendProfileRuntimes 优先用“匹配且可执行”的覆盖，而不是在 PATH 上解析
+	// profile 的 command_name。nil/空表示“一律经 PATH 解析”。
 	ProfileCommandOverrides map[string]string
 }
 
-// Overrides allows CLI flags to override environment variables and defaults.
-// Zero values are ignored and the env/default value is used instead.
+// Overrides 允许 CLI 参数覆盖环境变量与缺省值。零值被忽略、改用 env/缺省值。
 type Overrides struct {
 	ServerURL         string
 	WorkspacesRoot    string
 	PollInterval      time.Duration
 	HeartbeatInterval time.Duration
-	// AgentTimeout is a pointer so an explicit `--agent-timeout 0` (no cap) is
-	// distinguishable from "flag not passed". nil = use env/default.
+	// AgentTimeout 是指针，这样显式 `--agent-timeout 0`（不设上限）能与“没传参数”
+	// 区分开。nil = 用 env/缺省。
 	AgentTimeout                   *time.Duration
 	CodexSemanticInactivityTimeout time.Duration
 	CodexHandshakeTimeout          time.Duration
@@ -169,26 +153,23 @@ type Overrides struct {
 	DaemonID                       string
 	DeviceName                     string
 	RuntimeName                    string
-	Profile                        string // profile name (empty = default)
-	HealthPort                     int    // health check port (0 = use default)
-	// AllowNoAgents is reserved for read-only local configuration probes. Daemon
-	// startup keeps the default false and still refuses to run with no agent CLI.
+	Profile                        string // profile 名（空 = 默认）
+	HealthPort                     int    // 健康检查端口（0 = 用缺省）
+	// AllowNoAgents 保留给只读的本地配置探测。daemon 启动保持默认 false，没有 agent
+	// CLI 仍拒绝运行。
 	AllowNoAgents bool
-	// DisableAutoUpdate, when true, forces the auto-update poller off. There
-	// is no symmetric "force on" override because the env/default already
-	// resolves to enabled; the flag exists so users can opt out from the CLI.
+	// DisableAutoUpdate 为 true 时强制关掉自动更新轮询。没有对称的 "force on" 覆盖，
+	// 因为 env/缺省本来就解析成启用；这个参数让用户能经 CLI 退出。
 	DisableAutoUpdate       bool
-	AutoUpdateCheckInterval time.Duration // 0 = use env/default
-	// DisableAutoReload, when true, forces the on-disk version watcher off.
-	// Single-direction for the same reason as DisableAutoUpdate: the
-	// env/default already resolves to enabled.
+	AutoUpdateCheckInterval time.Duration // 0 = 用 env/缺省
+	// DisableAutoReload 为 true 时强制关掉磁盘版本监视器。单向，理由与
+	// DisableAutoUpdate 相同：env/缺省本来就解析成启用。
 	DisableAutoReload bool
 }
 
-// LoadConfig builds the daemon configuration from environment variables
-// and optional CLI flag overrides.
+// LoadConfig 从环境变量与可选的 CLI 参数覆盖构建 daemon 配置。
 func LoadConfig(overrides Overrides) (Config, error) {
-	// Server URL: override > env > default
+	// Server URL：覆盖 > env > 缺省
 	rawServerURL := envOrDefault("MULTICA_SERVER_URL", DefaultServerURL)
 	if overrides.ServerURL != "" {
 		rawServerURL = overrides.ServerURL
@@ -203,9 +184,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		slog.Warn("could not load CLI config for backend overrides; proceeding without",
 			"profile", overrides.Profile, "err", err)
 	} else {
-		// Per-machine custom-runtime command path overrides (MUL-3284).
-		// Copy into our own map so later mutation of the loaded config can't
-		// alias daemon state, and so an empty map normalizes to nil.
+		// 每机器的自定义 runtime 命令路径覆盖（MUL-3284）。拷进自己的 map，这样之后对
+		// 已加载配置的改动不会别名 daemon 状态，空 map 也能归一化成 nil。
 		if len(cliCfg.ProfileCommandOverrides) > 0 {
 			profileCommandOverrides = make(map[string]string, len(cliCfg.ProfileCommandOverrides))
 			for id, path := range cliCfg.ProfileCommandOverrides {
@@ -217,8 +197,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		}
 	}
 
-	// Discover installed agent CLIs. Extracted so the periodic workspace sync
-	// can re-run the same discovery on a live daemon (MUL-5439).
+	// 发现已装的 agent CLI。抽出来让周期 workspace 同步能在活 daemon 上重跑同一发现
+	// （MUL-5439）。
 	agents := probeAgentCLIs()
 	if len(agents) == 0 && !overrides.AllowNoAgents {
 		return Config{}, fmt.Errorf("no agent CLI found: install a supported agent CLI and ensure it is on PATH")
@@ -245,13 +225,13 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
-	// Host info
+	// 主机信息
 	host, err := os.Hostname()
 	if err != nil || strings.TrimSpace(host) == "" {
 		host = "local-machine"
 	}
 
-	// Durations: override > env > default
+	// 时长：覆盖 > env > 缺省
 	pollInterval, err := durationFromEnv("MULTICA_DAEMON_POLL_INTERVAL", DefaultPollInterval)
 	if err != nil {
 		return Config{}, err
@@ -276,63 +256,48 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		agentTimeout = *overrides.AgentTimeout
 	}
 
-	// MULTICA_AGENT_IDLE_WATCHDOG=0 disables the per-task idle watchdog. We
-	// route 0 through durationFromEnv so the operator can opt out without
-	// patching the binary; any positive duration overrides DefaultAgentIdleWatchdog.
+	// MULTICA_AGENT_IDLE_WATCHDOG=0 禁用每任务 idle 看门狗。我们把 0 也经
+	// durationFromEnv 送进，让运维不改二进制就能退出；任何正时长覆盖
+	// DefaultAgentIdleWatchdog。
 	agentIdleWatchdog, err := durationFromEnv("MULTICA_AGENT_IDLE_WATCHDOG", DefaultAgentIdleWatchdog)
 	if err != nil {
 		return Config{}, err
 	}
-	// MULTICA_OPENCODE_IDLE_WATCHDOG narrows the no-message window for
-	// OpenCode's streamed model responses. Zero removes the provider-specific
-	// override and falls back to MULTICA_AGENT_IDLE_WATCHDOG; positive values
-	// cannot extend the global bound, and the global zero still disables the
-	// whole mechanism.
+	// MULTICA_OPENCODE_IDLE_WATCHDOG 收窄 OpenCode 流式模型响应的无消息窗口。零移除
+	// provider 专用覆盖、回退到 MULTICA_AGENT_IDLE_WATCHDOG；正值不能突破全局上限，
+	// 全局为零仍禁用整套机制。
 	openCodeIdleWatchdog, err := durationFromEnv("MULTICA_OPENCODE_IDLE_WATCHDOG", DefaultOpenCodeIdleWatchdog)
 	if err != nil {
 		return Config{}, err
 	}
 
-	// The in-flight-tool budget defaults to the idle budget: the tool window
-	// only ever existed because 30 min was too short for a real build/install/
-	// test, and now that the idle budget is sized for the longest legitimate
-	// silent step it already covers those.
+	// 在途工具预算缺省等于 idle 预算：工具窗口之所以存在，只是因为 30 分钟对一次真实
+	// build/install/test 太短；而既然 idle 预算已按“最长合法静默步骤”定尺寸，它已覆盖
+	// 那些场景。
 	//
-	// The derivation tracks in BOTH directions, which is the point of collapsing
-	// this to one number. Raising MULTICA_AGENT_IDLE_WATCHDOG no longer leaves
-	// tool calls silently pinned to the old ceiling — and lowering it now also
-	// lowers the tool budget, where previously a shortened idle window left
-	// tools at a separate, larger 2h. That second direction is a real behaviour
-	// change for anyone who had deliberately shortened the idle window; the
-	// override below is how they keep the two apart.
+	// 推导双向跟随——这正是把它们收敛成一个数的意义。抬高
+	// MULTICA_AGENT_IDLE_WATCHDOG 不再会让工具调用静默钉在旧上限——而调低它现在也会
+	// 调低工具预算，过去缩短 idle 窗口只把工具留在另一个更大的 2h。后一方向对任何“刻意
+	// 缩短过 idle 窗口”的人是真实行为变化；下面的覆盖是让两者分开的办法。
 	//
-	// MULTICA_AGENT_TOOL_WATCHDOG still overrides for the deliberate "tools may
-	// run longer than the model may think" case, and 0 keeps its meaning: never
-	// force-stop while a tool is in flight.
+	// MULTICA_AGENT_TOOL_WATCHDOG 仍可覆盖“刻意让工具跑得比模型思考久”的情形，且 0
+	// 保持原意：工具在途时绝不强停。
 	agentToolWatchdog, err := durationFromEnv("MULTICA_AGENT_TOOL_WATCHDOG", agentIdleWatchdog)
 	if err != nil {
 		return Config{}, err
 	}
 
-	// Codex runs a semantic-inactivity timer of its own inside the app-server
-	// protocol, and unlike the daemon's watchdog it is NOT tool-aware: a
-	// commandExecution that emits nothing for the whole window trips it even
-	// though a tool is plainly in flight. That one timer therefore stands in
-	// for BOTH daemon watchdogs on a Codex run, so it has to be sized like the
-	// larger of them — otherwise a quiet test suite or an output-buffering
-	// `docker build` dies at the Codex ceiling long before the daemon budget
-	// that was supposed to protect it, and "we raised the budget to 2h" is
-	// simply false for Codex users.
+	// Codex 在 app-server 协议内部跑自己的语义不活跃计时器；与 daemon 看门狗不同，它
+	// 对工具不感知：整窗口不发任何东西的 commandExecution 也会触发它，哪怕明明有工具
+	// 在途。因此那个计时器要替 Codex 运行上的*两个* daemon 看门狗站岗，尺寸必须按两者
+	// 较大者来——否则一段安静的测试套件或输出缓冲的 `docker build` 会先死在 Codex 上限
+	// 上，远早于本应保护它的 daemon 预算；“我们把预算抬到 2h”对 Codex 用户就是不成立。
 	//
-	// A tool budget of 0 means "never force-stop while a tool is in flight",
-	// which this timer cannot express — it has no way to see the tool. It falls
-	// back to the idle budget rather than running unbounded, which is the
-	// conservative reading.
+	// 工具预算 0 表示“工具在途绝不强停”，而这个计时器表达不了——它没有看工具的手段。
+	// 它回退到 idle 预算而不是无限跑，这是保守读法。
 	//
-	// When the whole watchdog suite is disabled (idle = 0), Codex keeps its own
-	// built-in default. Disabling the daemon's watchdogs has never disabled this
-	// timer, and quietly turning it into "unbounded" here would be a much larger
-	// change than this one.
+	// 整套看门狗被禁用（idle = 0）时，Codex 保留它自己内置的缺省。禁用 daemon 看门狗
+	// 从未禁用过这个计时器，在这里悄悄把它变成 "unbounded" 会是一个大得多的改动。
 	codexSemanticDefault := agentIdleWatchdog
 	if agentToolWatchdog > codexSemanticDefault {
 		codexSemanticDefault = agentToolWatchdog
@@ -348,23 +313,17 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		codexSemanticInactivityTimeout = overrides.CodexSemanticInactivityTimeout
 	}
 
-	// 0 = unset: the codex backend keeps its default first-turn ceiling. A
-	// positive value is an explicit operator override (GH #3262 / #5959).
+	// 0 = 未设置：codex 后端保留默认首轮上限。正值是运维的显式覆盖（GH #3262 / #5959）。
 	codexFirstTurnNoProgressTimeout, err := durationFromEnv("MULTICA_CODEX_FIRST_TURN_TIMEOUT", 0)
 	if err != nil {
 		return Config{}, err
 	}
-	// The first-turn override only raises the first-turn watchdog, not the
-	// concurrent semantic-inactivity timer that the same first status:running
-	// arms — and the semantic timer is armed FIRST (codex.go resets it before
-	// creating the first-turn timer). When the override is >= the semantic
-	// timeout the effective first-item wait is truncated to the semantic
-	// timeout: at equal durations the semantic deadline is reached first, and
-	// even when both fire together Go's select does not deterministically
-	// favour the first-turn branch. The failure is then classified as semantic
-	// inactivity rather than first-turn no-progress, which disables the
-	// transient model-catalog startup retry (GH #3291). Warn unless the semantic
-	// timeout is set strictly above the first-turn timeout.
+	// 首轮覆盖只抬高首轮看门狗，抬不动同一 status:running 武装的并发语义不活跃计时器
+	// ——而且语义计时器先武装（codex.go 在创建首轮计时器前先重置它）。覆盖 >= 语义超时
+	// 时，有效首轮等待被截断到语义超时：等长时语义截止先到，即便两者同时触发，Go 的
+	// select 也不确定性偏向首轮分支。于是失败会被归类成“语义不活跃”而非“首轮无进展”，
+	// 进而禁用瞬态模型目录启动重试（GH #3291）。除非语义超时严格高于首轮超时，否则给
+	// 出警告。
 	if codexFirstTurnNoProgressTimeout > 0 {
 		effectiveSemanticTimeout := codexSemanticInactivityTimeout
 		if effectiveSemanticTimeout <= 0 {
@@ -388,10 +347,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if overrides.CodexHandshakeTimeout > 0 {
 		codexHandshakeTimeout = overrides.CodexHandshakeTimeout
 	}
-	// Preserve the legacy global override semantics while giving the heavy
-	// thread RPCs a wider built-in default. The CLI resolves flag, env and
-	// persisted config values into Overrides, while embedded callers may reach
-	// LoadConfig with the environment directly.
+	// 保留旧版全局覆盖语义，同时给重量级线程 RPC 一个更宽的缺省。CLI 把参数、env 与
+	// 持久化配置值解析进 Overrides；内嵌调用方可能直接拿环境调 LoadConfig。
 	codexThreadHandshakeTimeout := DefaultCodexThreadHandshakeTimeout
 	if raw, ok := os.LookupEnv("MULTICA_CODEX_HANDSHAKE_TIMEOUT"); ok && strings.TrimSpace(raw) != "" {
 		if parsed, parseErr := parseFlexDuration(strings.TrimSpace(raw)); parseErr == nil && parsed > 0 {
@@ -413,12 +370,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// Profile
 	profile := overrides.Profile
 
-	// daemon_id resolution: override > env > persistent UUID on disk.
-	// The persistent UUID is written once to `<profile-dir>/daemon.id` and
-	// then reused forever so hostname drift (.local suffix, system rename,
-	// mDNS state, profile switch) no longer mints a new runtime identity.
-	// Callers may still pin a specific id via MULTICA_DAEMON_ID or the
-	// override field (e.g. for tests or embedded environments).
+	// daemon_id 解析：覆盖 > env > 磁盘上的持久 UUID。
+	// 持久 UUID 一次性写到 `<profile-dir>/daemon.id` 之后永远复用，让主机名漂移
+	// （.local 后缀、系统改名、mDNS 状态、profile 切换）不再铸造新的 runtime 身份。
+	// 调用方仍可经 MULTICA_DAEMON_ID 或覆盖字段钉住特定 id（例如测试或内嵌环境）。
 	daemonID := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_ID"))
 	if overrides.DaemonID != "" {
 		daemonID = overrides.DaemonID
@@ -430,22 +385,18 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		}
 		daemonID = persisted
 	}
-	// Historical daemon_ids derived from the current hostname/profile. The
-	// server uses these at register time to merge any pre-UUID runtime rows
-	// for this machine into the new UUID-keyed row and delete the stale ones.
+	// 由当前主机名/profile 推导出的历史 daemon_id。服务器注册时用它们把本机“UUID 化
+	// 之前”的 runtime 行并入新的 UUID 键行并删掉旧的。
 	legacyDaemonIDs := LegacyDaemonIDs(host, profile)
-	// Pre-change (#1220) daemon identity was stored per profile, which means
-	// the same machine could end up with multiple leftover daemon.id files
-	// — e.g. ~/.multica/daemon.id (default) plus ~/.multica/profiles/<x>/
-	// daemon.id. Surface those UUIDs so the server can merge their runtime
-	// rows into the canonical machine UUID. Fatal-free: a broken profiles
-	// dir shouldn't block startup.
+	// 变更（#1220）之前的 daemon 身份按 profile 存储，意味着同一台机器可能残留多个
+	// daemon.id 文件——例如 ~/.multica/daemon.id（默认）加 ~/.multica/profiles/<x>/
+	// daemon.id。把这些 UUID 暴露出来，让服务器能把它们的 runtime 行并入规范机器 UUID。
+	// 无致命错误：坏掉的 profiles 目录不该挡启动。
 	if uuids, err := LegacyDaemonUUIDs(); err == nil {
 		legacyDaemonIDs = append(legacyDaemonIDs, uuids...)
 	}
-	// Strip anything that collides with the resolved daemon_id (e.g. when
-	// the user explicitly pins MULTICA_DAEMON_ID=<hostname>, or when the
-	// canonical id was itself promoted from a pre-change profile file).
+	// 剔除任何与解析出的 daemon_id 冲突的项（例如用户显式钉了
+	// MULTICA_DAEMON_ID=<hostname>，或规范 id 本身就是从变更前的 profile 文件升上来的）。
 	legacyDaemonIDs = filterLegacyIDs(legacyDaemonIDs, daemonID)
 
 	deviceName := envOrDefault("MULTICA_DAEMON_DEVICE_NAME", host)
@@ -458,22 +409,22 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		runtimeName = overrides.RuntimeName
 	}
 
-	// Workspaces root: override > env > default (~/multica_workspaces or ~/multica_workspaces_<profile>)
+	// Workspaces 根：覆盖 > env > 缺省（~/multica_workspaces 或 ~/multica_workspaces_<profile>）
 	workspacesRoot, err := ResolveWorkspacesRoot(profile, overrides.WorkspacesRoot)
 	if err != nil {
 		return Config{}, err
 	}
 
-	// Health port: override > default
+	// 健康端口：覆盖 > 缺省
 	healthPort := DefaultHealthPort
 	if overrides.HealthPort > 0 {
 		healthPort = overrides.HealthPort
 	}
 
-	// Keep env after task: env > default (false)
+	// 任务后保留环境：env > 缺省（false）
 	keepEnv := os.Getenv("MULTICA_KEEP_ENV_AFTER_TASK") == "true" || os.Getenv("MULTICA_KEEP_ENV_AFTER_TASK") == "1"
 
-	// GC config: env > defaults
+	// GC 配置：env > 缺省
 	gcEnabled := true
 	if v := os.Getenv("MULTICA_GC_ENABLED"); v == "false" || v == "0" {
 		gcEnabled = false
@@ -521,15 +472,12 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	gcRepoMaintenanceEnabled := boolFromEnv("MULTICA_GC_REPO_MAINTENANCE_ENABLED", true)
 	gcArtifactPatterns := patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", DefaultGCArtifactPatterns)
 
-	// Auto-update config: default -> env override -> CLI override.
+	// 自动更新配置：缺省 -> env 覆盖 -> CLI 覆盖。
 	//
-	// Default is opt-in on Multica Cloud (api.multica.ai) and opt-out for
-	// self-hosted instances. Self-host operators frequently run a fork with
-	// their own patches, and silently upgrading their daemon to an upstream
-	// GitHub release would clobber that work; they also commonly stay on an
-	// older server build, which a fresh CLI may no longer talk to. Keeping
-	// auto-update off by default for self-host avoids both footguns (MUL-2381).
-	// Operators on either side can flip the default with MULTICA_DAEMON_AUTO_UPDATE.
+	// 缺省在 Multica Cloud（api.multica.ai）上默认开、自托管默认关。自托管运维常跑一个
+	// 带自己补丁的 fork，悄悄把 daemon 升级到上游 GitHub release 会冲掉那些成果；他们也
+	// 常停留在旧版服务器构建上，新 CLI 可能已不兼容。自托管默认关掉自动更新能同时避免
+	// 这两个坑（MUL-2381）。两侧运维都可用 MULTICA_DAEMON_AUTO_UPDATE 翻转缺省。
 	autoUpdateEnabled := boolFromEnv("MULTICA_DAEMON_AUTO_UPDATE", isOfficialCloudServer(serverBaseURL))
 	if overrides.DisableAutoUpdate {
 		autoUpdateEnabled = false
@@ -542,12 +490,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		autoUpdateInterval = overrides.AutoUpdateCheckInterval
 	}
 
-	// Auto-reload is deliberately NOT gated on autoUpdateEnabled. "Don't pull
-	// new versions from GitHub" and "follow the binary I replaced myself" are
-	// different concerns, and the self-host rationale for defaulting the former
-	// off (don't clobber my fork) argues the opposite way for the latter: an
-	// operator who installed a build by hand wants the daemon to run it.
-	// Default on for every CLI-launched daemon; Desktop opts out at the loop.
+	// 自动重载刻意不 gate 在 autoUpdateEnabled 上。"不从 GitHub 拉新版本"与"跟随我自己
+	// 替换的二进制"是两件不同的事，而自托管把前者默认关掉的理据（别冲掉我的 fork）恰好
+	// 对后者指向相反方向：手工装了构建的运维，就是要 daemon 去跑它。
+	// 对每个 CLI 拉起的 daemon 默认开；Desktop 在循环处退出。
 	autoReloadEnabled := boolFromEnv("MULTICA_DAEMON_AUTO_RELOAD", true)
 	if overrides.DisableAutoReload {
 		autoReloadEnabled = false
@@ -600,20 +546,16 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	}, nil
 }
 
-// officialCloudHost is the hostname of Multica's hosted cloud. It's the only
-// origin we treat as "official" for the auto-update default — staging,
-// preview, and any future *.multica.ai subdomains are deliberately excluded
-// so they inherit the safer self-host default until explicitly opted in.
+// officialCloudHost 是 Multica 托管云的主机名。它是我们唯一当作自动更新默认值
+// "official" 的来源——staging、preview 与任何将来的 *.multica.ai 子域都被刻意排除，
+// 让它们继承更安全的自托管缺省，直到显式开启。
 const officialCloudHost = "api.multica.ai"
 
-// isOfficialCloudServer reports whether the resolved server base URL points
-// at Multica's hosted cloud. Used to pick defaults that are safe on
-// infrastructure we operate but not on someone else's: auto-update (cloud
-// users run a server that publishes the matching CLI release, so opt-in
-// self-update is safe, while self-host users may run a fork or pin to an
-// older server) and the completed-task retention TTL (see
-// defaultGCCompletedTaskTTL). Matching is host-only and case-insensitive —
-// port and path are ignored.
+// isOfficialCloudServer 报告解析出的服务器基地址是否指向 Multica 托管云。用于挑选
+// “在我们运维的基础设施上安全、在别人那不安全”的缺省：自动更新（云用户跑一个发布配套
+// CLI 版本的服务器，因此自更新开安全；自托管用户可能跑 fork 或钉住老服务器）与已完成
+// 任务保留 TTL（见 defaultGCCompletedTaskTTL）。匹配只看主机且不区分大小写——端口与
+// 路径忽略。
 func isOfficialCloudServer(baseURL string) bool {
 	u, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil {
@@ -622,22 +564,17 @@ func isOfficialCloudServer(baseURL string) bool {
 	return strings.EqualFold(u.Hostname(), officialCloudHost)
 }
 
-// defaultGCCompletedTaskTTL picks the completed-task retention default from the
-// deployment kind, the same way the auto-update default is picked.
+// defaultGCCompletedTaskTTL 按部署类型挑选“已完成任务保留”缺省，方式与自动更新缺省
+// 相同。
 //
-// Full removal of a completed task environment is irreversible: it takes the
-// checkout, .git (including work an agent left uncommitted), output/ and logs/
-// with it. On Multica Cloud that trade is ours to make — we operate the nodes,
-// a full disk is our incident rather than a user's, and unbounded retention has
-// no operator watching it. On self-host the same default would turn a routine
-// daemon upgrade into a silent deletion of data the operator never agreed to
-// give up, so it stays disabled until they set MULTICA_GC_COMPLETED_TASK_TTL
-// themselves. Either side can override in either direction; cloud disables it
-// again with an explicit 0.
+// 完全删除一个已完成任务环境不可逆：它带走检出、.git（包括 agent 留下未提交的工作）、
+// output/ 与 logs/。在 Multica Cloud 上这笔交易该我们做——节点是我们运营的，磁盘满
+// 是我们的事故而非用户的，无界保留又没有运维在盯。自托管上同样的缺省会把一次例行
+// daemon 升级变成“删除运维从没同意放弃的数据”的静默事故，所以保持禁用直到他们自己设
+// MULTICA_GC_COMPLETED_TASK_TTL。任一侧都可向任一方向覆盖；云用显式 0 再次禁用它。
 //
-// Non-production cloud origins (staging, previews) fall to the self-host value
-// along with everything else officialCloudHost excludes, and opt in explicitly
-// if they want the bound.
+// 非生产云来源（staging、previews）与 officialCloudHost 排除的一切一起落到自托管值，
+// 想要该上限就显式开启。
 func defaultGCCompletedTaskTTL(serverBaseURL string) time.Duration {
 	if isOfficialCloudServer(serverBaseURL) {
 		return DefaultGCCompletedTaskTTLCloud
@@ -645,7 +582,7 @@ func defaultGCCompletedTaskTTL(serverBaseURL string) time.Duration {
 	return DefaultGCCompletedTaskTTLSelfHost
 }
 
-// NormalizeServerBaseURL converts a WebSocket or HTTP URL to a base HTTP URL.
+// NormalizeServerBaseURL 把 WebSocket 或 HTTP URL 转成 HTTP 基地址 URL。
 func NormalizeServerBaseURL(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
@@ -669,20 +606,17 @@ func NormalizeServerBaseURL(raw string) (string, error) {
 	return strings.TrimRight(u.String(), "/"), nil
 }
 
-// TaskWorkspacesRootEnv carries the workspaces root of the daemon that owns a
-// managed task into that task's environment. Task-mode `daemon disk-usage`
-// reads this and nothing else: ResolveWorkspacesRoot derives its default from
-// $HOME and the --profile name, so a task hosted by a named-profile daemon
-// would otherwise scan the default root and silently report the wrong tree.
+// TaskWorkspacesRootEnv 把“拥有某个受管任务的 daemon 的 workspaces 根”带进该任务的
+// 环境。任务模式的 `daemon disk-usage` 只读它、不读别的：ResolveWorkspacesRoot 从
+// $HOME 与 --profile 名推导缺省，因此由命名 profile daemon 托管的任务若不如此会去扫
+// 默认根、悄悄报错一棵树。
 const TaskWorkspacesRootEnv = "MULTICA_TASK_WORKSPACES_ROOT"
 
-// ResolveWorkspacesRoot returns the absolute path that the daemon and CLI
-// should treat as the workspaces root. Resolution order: explicit override >
-// MULTICA_WORKSPACES_ROOT env > default ($HOME/multica_workspaces, or
-// $HOME/multica_workspaces_<profile> for a named profile). Read-only callers
-// (e.g. `multica daemon disk-usage`) use this directly so they pick the same
-// directory the running daemon would have picked. Inside a managed task use
-// TaskWorkspacesRootEnv instead — see resolveDiskUsageRoot.
+// ResolveWorkspacesRoot 返回 daemon 与 CLI 应视为 workspaces 根的绝对路径。解析顺序：
+// 显式覆盖 > MULTICA_WORKSPACES_ROOT env > 缺省（$HOME/multica_workspaces，命名
+// profile 为 $HOME/multica_workspaces_<profile>）。只读调用方（如 `multica daemon
+// disk-usage`）直接用这个，从而选中与运行中 daemon 相同的目录。在受管任务内部请改用
+// TaskWorkspacesRootEnv——见 resolveDiskUsageRoot。
 func ResolveWorkspacesRoot(profile, override string) (string, error) {
 	root := strings.TrimSpace(os.Getenv("MULTICA_WORKSPACES_ROOT"))
 	if override != "" {
@@ -706,18 +640,16 @@ func ResolveWorkspacesRoot(profile, override string) (string, error) {
 	return abs, nil
 }
 
-// ArtifactPatternsFromEnv returns the configured artifact patternSet — the
-// same list the GC loop consults when it runs the artifact-only cleanup. The
-// disk-usage CLI uses this to make sure the "artifact size" it reports
-// matches what the GC would actually reclaim.
+// ArtifactPatternsFromEnv 返回配置的 artifact 模式集合——与 GC 循环跑“仅 artifact”
+// 清理时查询的同一列表。disk-usage CLI 用这个确保它上报的 "artifact size" 与 GC 实际
+// 能回收的一致。
 func ArtifactPatternsFromEnv() []string {
 	return patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", DefaultGCArtifactPatterns)
 }
 
-// patternsFromEnv reads a comma-separated list from env. Patterns containing
-// path separators are silently dropped — the GC artifact cleanup only matches
-// directory basenames, never paths, so a pattern like "foo/bar" is meaningless
-// and accepting it would just be a footgun.
+// patternsFromEnv 从 env 读逗号分隔列表。含路径分隔符的模式被静默丢弃——GC artifact
+// 清理只匹配目录 basename、绝不匹配路径，所以像 "foo/bar" 的模式没有意义，接受它只是
+// 埋个雷。
 func patternsFromEnv(name string, defaults []string) []string {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -737,6 +669,7 @@ func patternsFromEnv(name string, defaults []string) []string {
 	return out
 }
 
+// shellArgsFromEnv 把 env 里的命令参数字符串按 shell 词法拆成切片。
 func shellArgsFromEnv(name string) ([]string, error) {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -749,18 +682,14 @@ func shellArgsFromEnv(name string) ([]string, error) {
 	return args, nil
 }
 
-// resolveAgentExecutablePath returns the executable entry point the daemon
-// should keep for an agent command. Bare command names are pinned to the path
-// resolved during startup so later PATH changes cannot redirect task launches.
-// Ordinary executables are pinned to their concrete target; entrypoints owned
-// by a name-dispatching shim keep the command name the manager needs to select
-// the right package (see discoveredExecutablePath).
-// On Windows this deliberately keeps the stable discovered junction path;
-// resolveAgentEntryWithHeal follows it for each launch so installer upgrades
-// that retarget a still-live junction take effect without a daemon restart.
-// When ~/.multica/hooks shadows a real agent binary, skip that hooks directory:
-// previously generated hook wrappers can execute the same command name and
-// recurse forever if the daemon records or launches the wrapper.
+// resolveAgentExecutablePath 返回 daemon 应为某个 agent 命令保留的可执行入口点。裸
+// 命令名会钉到启动时解析出的路径，让之后的 PATH 变化无法改道任务启动。普通可执行文件
+// 钉到具体目标；由“按名分发的垫片”所有的入口点保留管理器选择正确包所需的命令名（见
+// discoveredExecutablePath）。
+// Windows 上它刻意保留稳定的 discovered junction 路径；resolveAgentEntryWithHeal 每次
+// 启动都跟随它，让“重定向仍存活 junction”的安装器升级无需重启 daemon 即生效。
+// 当 ~/.multica/hooks 遮蔽了真实 agent 二进制时，跳过那个 hooks 目录：早先生成的钩子
+// 包装器会执行同一命令名，若 daemon 记录或拉起的是包装器，就会无限递归。
 func resolveAgentExecutablePath(cmd string) (string, error) {
 	resolved, err := exec.LookPath(cmd)
 	if err != nil {
@@ -777,11 +706,10 @@ func resolveAgentExecutablePath(cmd string) (string, error) {
 	return discoveredExecutablePath(resolved), nil
 }
 
-// agentExecutablePresent reports whether path currently resolves to a runnable
-// executable, using the exact check the agent backends apply at launch
-// (exec.LookPath). A pinned AgentEntry.Path that fails this has vanished from
-// disk — typically because a version manager did an in-place upgrade and
-// deleted the old versioned directory the path pointed into (MUL-4486).
+// agentExecutablePresent 报告 path 当前是否解析成一个可运行的可执行文件，使用 agent
+// 后端启动时应用的同一检查（exec.LookPath）。钉住的 AgentEntry.Path 若通不过这个检查，
+// 说明它已从磁盘消失——典型是版本管理器做了原地升级、删掉了路径指向的旧版本目录
+// （MUL-4486）。
 func agentExecutablePresent(path string) bool {
 	if path == "" {
 		return false
@@ -790,14 +718,11 @@ func agentExecutablePresent(path string) bool {
 	return err == nil
 }
 
-// reresolveAgentCommand re-runs the startup resolution for a single agent
-// command name, returning the freshly resolved absolute path. It mirrors the
-// probe() order in LoadConfig: exec.LookPath (with the ~/.multica/hooks
-// exclusion preserved via resolveAgentExecutablePath) first, then the login
-// shell fallback for a bare command name a GUI-launched daemon can't see on
-// its own PATH. It is only called on the miss path — when a previously pinned
-// path has disappeared — so the login-shell cost is paid rarely, never on a
-// normal launch.
+// reresolveAgentCommand 对单个 agent 命令名重跑启动时的解析，返回新解析出的绝对路径。
+// 它镜像 LoadConfig 里 probe() 的顺序：先 exec.LookPath（经 resolveAgentExecutablePath
+// 保留 ~/.multica/hooks 排除），再对“GUI 拉起的 daemon 在自己 PATH 上看不到的裸命令
+// 名”做登录 shell 兜底。它只在 miss 路径被调用——先前钉住的路径已消失——因此登录
+// shell 代价很少付，正常启动从不付。
 func reresolveAgentCommand(cmd string) (string, bool) {
 	if cmd == "" {
 		return "", false
@@ -805,11 +730,9 @@ func reresolveAgentCommand(cmd string) (string, bool) {
 	if path, err := resolveAgentExecutablePath(cmd); err == nil {
 		return path, true
 	}
-	// A bare command name the daemon's own PATH can't see: retry via the
-	// user's login shell, exactly as the startup probe does for
-	// fnm/nvm/native-installer prefixes. Absolute/relative overrides skip
-	// this — an operator-pinned MULTICA_*_PATH that no longer exists should
-	// stay a hard miss rather than silently resolve a different binary.
+	// daemon 自身 PATH 看不到的裸命令名：像启动探测对 fnm/nvm/native-installer 前缀
+	// 那样，经用户登录 shell 重试。绝对/相对覆盖跳过这里——运维钉的 MULTICA_*_PATH
+	// 若已不存在应保持硬 miss，而不是悄悄解析出另一个二进制。
 	if !strings.ContainsAny(cmd, "/\\") {
 		if path, ok := resolveAgentsViaLoginShell([]string{cmd})[cmd]; ok {
 			return path, true
@@ -818,6 +741,8 @@ func reresolveAgentCommand(cmd string) (string, bool) {
 	return "", false
 }
 
+// lookPathExcludingMulticaHooks 手工走 PATH、跳过 ~/.multica/hooks 目录找第一个匹配
+// 的可执行文件，用于摘掉自生成钩子包装器对真实二进制的遮蔽。
 func lookPathExcludingMulticaHooks(cmd string) (string, error) {
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		if dir == "" {
@@ -869,6 +794,8 @@ func samePathDir(a, b string) bool {
 	return absA == absB
 }
 
+// canonicalExecutablePath 把配置路径尽量解析成“真实文件”的规范绝对路径；解析失败时
+// 降级保留原路径。
 func canonicalExecutablePath(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -891,26 +818,21 @@ func isExecutableFile(path string) bool {
 	return info.Mode()&0o111 != 0
 }
 
-// defaultAgentCommandNames lists the command names the agent probe loop tries
-// before any MULTICA_*_PATH override is applied. Kept in sync with the
-// `probe(...)` calls in LoadConfig — the shell-fallback resolver uses this
-// list to pre-fetch canonical paths for every known agent in a single shell
-// invocation, instead of paying the cost-per-miss.
+// defaultAgentCommandNames 列出 agent 探测循环在应用任何 MULTICA_*_PATH 覆盖之前要试
+// 的命令名。与 LoadConfig 里的 `probe(...)` 调用保持同步——shell 兜底解析器用这份列表
+// 在单次 shell 调用里为每个已知 agent 预取规范路径，而不是“每次 miss 付一次钱”。
 //
-// Built-in runtime identity commands (e.g. "omp") are appended from the
-// descriptor registry (agent.BuiltinRuntimeCommands) so adding a new fork
-// doesn't require editing this list by hand.
+// 内置 runtime 身份命令（如 "omp"）从描述符注册表（agent.BuiltinRuntimeCommands）
+// 追加，因此新增一个分支不必手工改这份列表。
 var defaultAgentCommandNames = append([]string{
 	"claude", "codex", "opencode", "codearts", "deveco", "hermes",
 	"pi", "cursor-agent", "copilot", "kimi", "reasonix", "dsh", "kiro-cli", "codebuddy", "agy", "qodercli", "qoderclicn", "traecli", "grok", "qwen", "qwenpaw", "mcode", "dim", "zeroclaw",
 }, agent.BuiltinRuntimeCommands()...)
 
-// codexDesktopAppBundlePaths returns candidate macOS app-bundle locations for
-// the bundled Codex CLI. OpenAI relocated the Desktop app from Codex.app to
-// ChatGPT.app (#5205). Candidates are ordered by install location first
-// (system /Applications before user ~/Applications); within each location the
-// new ChatGPT.app path is tried before the legacy Codex.app path, so updated
-// installs win while older installs still resolve.
+// codexDesktopAppBundlePaths 返回内置 Codex CLI 的候选 macOS app-bundle 位置。OpenAI
+// 把 Desktop app 从 Codex.app 迁到 ChatGPT.app（#5205）。候选先按安装位置排序（系统
+// /Applications 在用户 ~/Applications 前）；每个位置内先试新的 ChatGPT.app 路径再试
+// 旧的 Codex.app 路径，于是更新过的安装获胜，旧安装仍能解析。
 var codexDesktopAppBundlePaths = func() []string {
 	paths := []string{
 		"/Applications/ChatGPT.app/Contents/Resources/codex",
@@ -925,29 +847,22 @@ var codexDesktopAppBundlePaths = func() []string {
 	return paths
 }
 
-// loginShellResolveTimeout caps how long the daemon will wait for the user's
-// login shell to print canonical agent paths. A broken rc file should not
-// block startup — if the shell takes longer than this, we proceed without
-// shell-resolved fallbacks and the daemon falls back to the same behaviour
-// it had before this code was added.
+// loginShellResolveTimeout 限制 daemon 等用户登录 shell 打印规范 agent 路径的时间上限。
+// 坏掉的 rc 文件不该挡启动——shell 超过这个时间就让步，不采用 shell 解析兜底，daemon
+// 回退到与本代码加入前相同的行为。
 const loginShellResolveTimeout = 3 * time.Second
 
-// loginShellResolveWaitDelay is the hard cap that runs *after*
-// loginShellResolveTimeout has elapsed and `CommandContext` has signalled the
-// shell to exit. The context kills the shell process itself, but rc files in
-// the wild routinely background things that inherit stdout (`nvm` shims,
-// `direnv hook`, `eval $(starship init)`, plain `&`). Those survivors keep
-// the stdout pipe open and `cmd.Output()` will block on EOF for as long as
-// they live. Cmd.WaitDelay (Go 1.20+) forcibly closes the pipes and returns
-// once this delay elapses, so the total daemon-startup penalty caused by a
-// pathological rc file is bounded by `timeout + waitDelay`, not by however
-// long the user's background processes happen to run.
+// loginShellResolveWaitDelay 是 *在* loginShellResolveTimeout 过后、`CommandContext`
+// 已示意 shell 退出之后再跑的硬上限。context 杀掉 shell 进程本身，但真实世界的 rc 文件
+// 经常后台化“继承了 stdout”的东西（`nvm` 垫片、`direnv hook`、`eval $(starship
+// init)`、裸 `&`）。这些幸存者一直握着 stdout 管道，`cmd.Output()` 会为 EOF 阻塞到它们
+// 结束。Cmd.WaitDelay（Go 1.20+）在该延迟过后强制关闭管道并返回，因此病态 rc 文件造成
+// 的总启动代价上界是 `timeout + waitDelay`，而不是“用户后台进程恰好跑多久”。
 const loginShellResolveWaitDelay = 2 * time.Second
 
-// supportedLoginShells limits which interpreters we will invoke via
-// `<shell> -ilc <script>`. Sticking to POSIX-compatible shells means the
-// resolver script below works unchanged. Notably absent: fish (uses
-// `command -s` and a different syntax for command substitution).
+// supportedLoginShells 限制我们会以 `<shell> -ilc <script>` 调用的解释器。只支持
+// POSIX 兼容 shell，让下面的解析脚本原样可用。刻意缺席：fish（用 `command -s`，命令
+// 替换语法不同）。
 var supportedLoginShells = map[string]struct{}{
 	"bash": {},
 	"zsh":  {},
@@ -956,40 +871,34 @@ var supportedLoginShells = map[string]struct{}{
 	"ksh":  {},
 }
 
-// resolveAgentsViaLoginShell asks the user's login shell to print an absolute,
-// invocation-safe path to each name in `names`. It returns a map
-// of name → path for whatever the shell could find, and an empty map if the
-// shell is unavailable / unsupported / times out / produces no usable output.
+// resolveAgentsViaLoginShell 请用户的登录 shell 为 `names` 里的每个名字打印一个绝对、
+// 可安全调用的路径。返回 shell 能找到的 name → path map；shell 不可用/不支持/超时/
+// 无可用的输出时返回空 map。
 //
-// Why we need this:
+// 为什么需要它：
 //
-// Daemon-style processes on macOS/Linux do not inherit the user's interactive
-// PATH. `claude --version` working in Terminal.app is no guarantee that
-// exec.LookPath("claude") will work from a binary spawned by Launchpad, the
-// Electron app, or `launchctl`. The most common offenders are fnm/nvm/volta
-// "multishell" prefix dirs (per-shell, ephemeral) and the Anthropic native
-// installer (`~/.claude/local/`) — both leave their binaries on a path that
-// only `.zshrc` knows about.
+// macOS/Linux 上的 daemon 式进程不继承用户交互 PATH。Terminal.app 里 `claude
+// --version` 能用，并不保证从 Launchpad、Electron app 或 `launchctl` 拉起的二进制里
+// exec.LookPath("claude") 也能用。最常见的元凶是 fnm/nvm/volta 的 "multishell" 前缀
+// 目录（每 shell、临时）与 Anthropic 原生安装器（`~/.claude/local/`）——两者都把二进制
+// 放在只有 `.zshrc` 知道的路径上。
 //
-// Implementation notes:
+// 实现要点：
 //
-//   - We invoke `$SHELL -ilc <script>` with both -i (interactive) and -l
-//     (login) so we pick up PATH set in either ~/.zshrc / ~/.bashrc OR
-//     ~/.zprofile / ~/.bash_profile. Real users put it in both places.
-//   - The script resolves symlinks via `cd "$dirname" && pwd -P` while the
-//     spawned shell is still alive. fnm/nvm "multishell" directories vanish
-//     on shell exit, so the canonical path must be captured before stdout is
-//     returned to Go — by then the original path is already gone.
-//   - We only trust outputs that look like an absolute path AND still pass a
-//     fresh exec.LookPath check from the daemon's vantage point. That filters
-//     out aliases (`command -v` prints the alias definition for those, not a
-//     path) and per-shell paths the shell happened not to fully canonicalise.
-//   - Agent names are restricted to the bare set in defaultAgentCommandNames
-//     (`[A-Za-z0-9._-]` only); we inline them into the script unquoted to
-//     keep the script readable. Custom MULTICA_*_PATH values never reach this
-//     resolver — those go through exec.LookPath directly.
+//   - 用 `$SHELL -ilc <script>`，同时带 -i（交互）与 -l（登录），以便同时拾取
+//     ~/.zshrc / ~/.bashrc 或 ~/.zprofile / ~/.bash_profile 里设的 PATH。真实用户两个
+//     都会放。
+//   - 脚本在拉起的 shell 还活着时经 `cd "$dirname" && pwd -P` 解析符号链接。
+//     fnm/nvm 的 "multishell" 目录在 shell 退出时消失，所以规范路径必须在 stdout 回到
+//     Go 之前捕获——到那时原路径已经没了。
+//   - 只信“看起来是绝对路径且从 daemon 视角重新 exec.LookPath 仍过”的输出。这能滤掉
+//     别名（对别名 `command -v` 打印的是别名定义而非路径）与 shell 没完全规范化的
+//     per-shell 路径。
+//   - agent 名限制为 defaultAgentCommandNames 里的裸集合（只含 `[A-Za-z0-9._-]`）；
+//     不加引号内联进脚本以保持可读。自定义 MULTICA_*_PATH 值永不进这个解析器——它们
+//     直接走 exec.LookPath。
 //
-// A var so tests can stub the fork without a real login shell.
+// 做成 var，测试就能不 fork 真实登录 shell 来打桩。
 var resolveAgentsViaLoginShell = func(names []string) map[string]string {
 	out := map[string]string{}
 	if len(names) == 0 {
@@ -1032,12 +941,9 @@ var resolveAgentsViaLoginShell = func(names []string) map[string]string {
 		if !filepath.IsAbs(path) {
 			continue
 		}
-		// Final reality check: the path the shell gave us must still be
-		// executable from the daemon's perspective right now. fnm
-		// multishells are the motivating example — pwd -P inside the
-		// helper shell can fail to break out of the per-session bin dir,
-		// and we'd rather report "not found" than hand back a path that
-		// vanishes between detection and execution.
+		// 最终现实检查：shell 给我们的路径此刻从 daemon 视角必须仍可执行。fnm
+		// multishell 是典型例子——辅助 shell 里 pwd -P 可能冲不出每会话 bin 目录，
+		// 我们宁可报 "not found" 也不交还一条“在探测与执行之间就消失”的路径。
 		if _, err := exec.LookPath(path); err != nil {
 			continue
 		}
@@ -1046,37 +952,31 @@ var resolveAgentsViaLoginShell = func(names []string) map[string]string {
 	return out
 }
 
-// buildLoginShellResolveScript returns the shell script that resolveAgentsViaLoginShell
-// runs inside `$SHELL -ilc`. The script:
+// buildLoginShellResolveScript 返回 resolveAgentsViaLoginShell 在 `$SHELL -ilc`
+// 里运行的 shell 脚本。脚本：
 //
-//  1. iterates the provided command names,
-//  2. strips any locally-defined alias and shell function with that name so
-//     `command -v` reaches through to a real binary on PATH (see below),
-//  3. uses POSIX `command -v` to find each one on the interactive PATH,
-//  4. rejects results that are not absolute paths (defence in depth — if the
-//     unalias/unset -f pair somehow didn't take effect, `command -v` would
-//     still print the alias/function definition, and we'd rather drop it
-//     than hand back garbage),
-//  5. canonicalises the directory via `cd ... && pwd -P` so symlinked prefix
-//     dirs (fnm/nvm/volta) collapse to stable paths while the invoked command
-//     name is kept,
-//  6. if the resolved path lives in ~/.multica/hooks, searches the same
-//     shell-expanded PATH for the first executable outside that hooks dir,
-//  7. prints `<name>\t<canonical_path>` one entry per line for the caller.
+//  1. 遍历给定的命令名，
+//  2. 剥掉同名“本地定义的别名与 shell 函数”，让 `command -v` 穿透到 PATH 上的真实
+//     二进制（见下），
+//  3. 用 POSIX `command -v` 在交互 PATH 上找每个名字，
+//  4. 拒绝非绝对路径的结果（纵深防御——万一 unalias/unset -f 这对没生效，`command -v`
+//     仍会打印别名/函数定义，我们宁丢不交回垃圾），
+//  5. 经 `cd ... && pwd -P` 规范化目录，让符号链接前缀目录（fnm/nvm/volta）塌缩成
+//     稳定路径，同时保留被调用的命令名，
+//  6. 若解析出的路径在 ~/.multica/hooks，就在同一份 shell 展开的 PATH 里找 hooks 目录
+//     外的第一个可执行文件，
+//  7. 对调用方按 `<name>\t<canonical_path>` 每行一条打印。
 //
-// Why steps 2 is important — and why this PR's first revision missed #2512:
-// the motivating case has `alias claude=...` in ~/.zshrc *and* fnm's real
-// claude binary further down on PATH. With `-i` set, the alias loads, and
-// `command -v claude` returns `claude: aliased to ...` (zsh) or `alias
-// claude='...'` (bash) — neither starts with `/`, so step 4 drops them, and
-// the loop never looks at PATH again. Unaliasing inside the same shell makes
-// `command -v` fall back to the PATH search the daemon actually wants.
-// Shell functions exhibit the same shadowing in bash/zsh, hence `unset -f`.
-// Both calls are wrapped in `2>/dev/null` so the harmless "no such alias"
-// error never reaches stderr.
+// 第 2 步为什么重要——以及为什么本 PR 的第一版漏了 #2512：动机案例是 ~/.zshrc 里
+// 有 `alias claude=...`，PATH 更深处还有 fnm 的真实 claude 二进制。开了 -i，别名加载，
+// `command -v claude` 返回 `claude: aliased to ...`（zsh）或 `alias claude='...'`
+// （bash）——都不以 `/` 开头，被第 4 步丢弃，循环再也不会回头找 PATH。在同一个 shell
+// 里 unalias 让 `command -v` 回落到 daemon 真正想要的 PATH 搜索。bash/zsh 里 shell
+// 函数有同样的遮蔽行为，故 `unset -f`。两个调用都用 `2>/dev/null` 包着，让无害的
+// "no such alias" 错误永不进 stderr。
 //
-// All input names are vetted by isSafeAgentName before they reach this
-// function, so inlining them unquoted into the for-loop word list is safe.
+// 所有输入名在到达本函数前都经 isSafeAgentName 审查，因此把它们不加引号内联进 for
+// 循环词表是安全的。
 func buildLoginShellResolveScript(names []string) string {
 	var b strings.Builder
 	b.WriteString("for n in")
@@ -1108,11 +1008,9 @@ func buildLoginShellResolveScript(names []string) string {
 	return b.String()
 }
 
-// isSafeAgentName checks that `s` is a bare command name composed only of
-// characters that are safe to inline into a shell script (ASCII letters,
-// digits, dot, dash, underscore). The agent names this daemon ships with all
-// satisfy the predicate; it exists to guard against future drift, not to
-// constrain operator-supplied paths (those never reach the shell resolver).
+// isSafeAgentName 检查 `s` 是否为“只含可安全内联进 shell 脚本的字符”（ASCII 字母、
+// 数字、点、横线、下划线）的裸命令名。daemon 随附的 agent 名都满足该谓词；它防的是
+// 将来漂移，不是约束运维提供的路径（那些永不进 shell 解析器）。
 func isSafeAgentName(s string) bool {
 	if s == "" {
 		return false

@@ -1,10 +1,19 @@
+// 本文件提供设置页的通用布局组件：标签页容器、分区、卡片、行，以及保存状态指示。
+
 import type { ReactNode } from "react";
 import { AlertCircle, Check, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { cn } from "@multica/ui/lib/utils";
 
+/** 设置项自动保存的四种状态：空闲、保存中、已保存、出错。 */
 export type SettingsSaveStatus = "idle" | "saving" | "saved" | "error";
 
+/**
+ * 单个设置标签页的容器：顶部放标题和描述，下面是具体内容。
+ * @param props.title - 标签页标题。
+ * @param props.description - 可选，标题下的说明文字。
+ * @param props.children - 标签页主体内容。
+ */
 export function SettingsTab({
   title,
   description,
@@ -29,6 +38,14 @@ export function SettingsTab({
   );
 }
 
+/**
+ * 设置卡片内的一个分区，包含可选的标题、说明、右侧操作按钮和内容。
+ * @param props.title - 可选，分区标题。
+ * @param props.description - 可选，分区说明。
+ * @param props.action - 可选，右侧操作区（如按钮）。
+ * @param props.children - 分区内容。
+ * @param props.className - 可选，附加到 section 上的 CSS 类名。
+ */
 export function SettingsSection({
   title,
   description,
@@ -62,6 +79,11 @@ export function SettingsSection({
   );
 }
 
+/**
+ * 设置页使用的卡片容器，内部会用分割线把各行隔开。
+ * @param props.children - 卡片内容，通常是一组 SettingsRow。
+ * @param props.className - 可选，附加到 Card 上的 CSS 类名。
+ */
 export function SettingsCard({
   children,
   className,
@@ -79,27 +101,35 @@ export function SettingsCard({
 }
 
 /**
- * Width tiers for the control column. Within a card, every text-entry
- * control shares the `text` tier so their edges align; a row may only
- * drop to a smaller tier when the field is deliberately short (a code,
- * an enum select) — the difference must read as intentional. Pick a
- * tier instead of adding per-row ad-hoc widths.
+ * 控件列宽度档位。同一张卡片内，所有文本输入控件共用 `text` 档以保证边缘对齐；
+ * 只有当字段本身就短（如代码、枚举下拉）时才降到更小的档位——这种差异必须是
+ * 有意为之。请选择档位，而不是给每一行临时加宽度。
  */
 const SETTINGS_CONTROL_WIDTHS = {
-  /** Text inputs and textareas — the standard control column. */
+  /** 文本输入框和文本域——标准控件列宽度。 */
   text: "sm:w-96",
-  /** Selects/pickers with long option labels (timezone, model). */
+  /** 选项文案较长的下拉/选择器（时区、模型）。 */
   "select-wide": "sm:w-72",
-  /** Compact enum selects (theme, language). */
+  /** 紧凑的枚举下拉（主题、语言）。 */
   select: "sm:w-48",
-  /** Short fixed-format codes (issue prefix). */
+  /** 短小的固定格式代码（issue 前缀）。 */
   code: "sm:w-40",
-  /** Unconstrained — non-input content like avatar uploads. */
+  /** 不限制——头像上传这类非输入内容。 */
   none: "sm:max-w-none",
 } as const;
 
+/** 控件列宽度档位的键名，供 SettingsRow 的 size 属性使用。 */
 export type SettingsControlSize = keyof typeof SETTINGS_CONTROL_WIDTHS;
 
+/**
+ * 设置卡片里的一行：左侧是标签和说明，右侧是控件。
+ * @param props.label - 行标签。
+ * @param props.description - 可选，标签下方的说明文字。
+ * @param props.children - 右侧控件内容。
+ * @param props.className - 可选，附加到行容器上的 CSS 类名。
+ * @param props.size - 可选，控件列宽度档位；按钮、开关这类自适应控件可省略。
+ * @param props.align - 控件与标签的垂直对齐方式，默认居中。
+ */
 export function SettingsRow({
   label,
   description,
@@ -112,7 +142,7 @@ export function SettingsRow({
   description?: ReactNode;
   children: ReactNode;
   className?: string;
-  /** Control column width tier; omit for content-hugging controls (buttons, switches). */
+  /** 控件列宽度档位；按钮、开关这类自适应内容可省略。 */
   size?: SettingsControlSize;
   align?: "center" | "start";
 }) {
@@ -144,6 +174,13 @@ export function SettingsRow({
   );
 }
 
+/**
+ * 显示设置项的保存状态（转圈/成功/失败），空闲时什么都不渲染。
+ * @param props.status - 当前保存状态。
+ * @param props.savingLabel - 保存中提示文字。
+ * @param props.savedLabel - 已保存提示文字。
+ * @param props.errorLabel - 出错提示文字。
+ */
 export function SettingsSaveState({
   status,
   savingLabel,

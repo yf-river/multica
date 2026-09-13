@@ -1,3 +1,6 @@
+// 职责定位：构建并返回单条 issue 的「执行证据树」与时间线（GET .../execution-tree）：
+// 自 root issue 向下最多 issueExecutionTreeMaxDepth 层的 issue 层级，各层附任务运行、
+// SOP 运行、trace 事件、产物与唤醒评论，并归纳出时间线节点与摘要。只读，全部从既有事实推导。
 package handler
 
 import (
@@ -14,6 +17,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// issueExecutionTreeResponse 是 GET .../execution-tree 的响应体：以 root 为根的层级树、全树
+// 计数摘要、拍平成一条条的 timeline 节点（按时间排序），以及整棵树的汇总统计。
 type issueExecutionTreeResponse struct {
 	Root          issueExecutionNodeResponse   `json:"root"`
 	Summary       map[string]int               `json:"summary"`
@@ -21,6 +26,9 @@ type issueExecutionTreeResponse struct {
 	IssueSummary  issueTimelineSummaryResponse `json:"issue_summary"`
 }
 
+// issueTimelineNodeResponse 是时间线上一个节点：统一把 task、工具调用、trace 事件、来源抓取、
+// 子 issue 引用、唤醒评论、人工确认等来源归一成这种平铺结构，前端按 NodeType 渲染。节点间的
+// 父子关系由 ParentNodeID 指向同数组内其它节点表达（跨层级见 ChildIssueID 等定位字段）。
 type issueTimelineNodeResponse struct {
 	IssueID               string                      `json:"issue_id"`
 	RootTaskID            string                      `json:"root_task_id,omitempty"`
@@ -52,12 +60,16 @@ type issueTimelineNodeResponse struct {
 	Metadata              map[string]any              `json:"metadata,omitempty"`
 }
 
+// issueTimelineEvidenceRef 是时间线节点指向证据对象（task/附件/评论/活动等）的引用，供前端
+// 跳转或归并证据。
 type issueTimelineEvidenceRef struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
 	Href string `json:"href,omitempty"`
 }
 
+// issueTimelineSummaryResponse 是根 issue 全树的时间线汇总：起止时刻、各段耗时拆分（agent 执行 /
+// 人工确认 / 子 issue 等待）、token 用量与消息数、失败摘要与验收状态。
 type issueTimelineSummaryResponse struct {
 	IssueID                     string `json:"issue_id"`
 	NodeCount                   int    `json:"node_count"`
@@ -81,6 +93,7 @@ type issueTimelineSummaryResponse struct {
 	FullAnalysisDeepLink        string `json:"full_analysis_deep_link"`
 }
 
+// ptrString 解引用字符串指针；nil 返回空串。
 func ptrString(value *string) string {
 	if value == nil {
 		return ""
@@ -88,6 +101,9 @@ func ptrString(value *string) string {
 	return *value
 }
 
+// issueExecutionNodeResponse 是执行证据树上的一个 issue 节点：包含该 issue 自身的任务运行、
+// 任务消息、trace 事件、工具调用链/摘要、产物、各角色评论与活动日志，以及按层级递归的
+// Children。ManualComments/AgentComments/WakeupComments 按作者与语义分桶，便于时间线归类。
 type issueExecutionNodeResponse struct {
 	Issue           IssueResponse                 `json:"issue"`
 	Tasks           []AgentTaskResponse           `json:"tasks"`
@@ -103,6 +119,8 @@ type issueExecutionNodeResponse struct {
 	Children        []issueExecutionNodeResponse  `json:"children"`
 }
 
+// agentTaskArtifactResponse 是 agent 任务产物（附件）的时间线视图：标出归属的任务/评论/issue，
+// 并给出文件名、kind、下载与 markdown 渲染地址。
 type agentTaskArtifactResponse struct {
 	ID          string `json:"id"`
 	TaskID      string `json:"task_id"`
@@ -118,6 +136,8 @@ type agentTaskArtifactResponse struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+// issueCommentBriefResponse 是评论的精简视图（执行树只展示评论元信息与内容，不展开评论的
+// 回复结构），SourceTaskID 标注该评论由哪条 agent 任务触发产生。
 type issueCommentBriefResponse struct {
 	ID           string  `json:"id"`
 	IssueID      string  `json:"issue_id"`
@@ -129,6 +149,8 @@ type issueCommentBriefResponse struct {
 	CreatedAt    string  `json:"created_at"`
 }
 
+// issueActivityBriefResponse 是活动日志条目的精简视图，Details 保留原始 JSON 字典供前端按
+// action 类型解读。
 type issueActivityBriefResponse struct {
 	ID        string         `json:"id"`
 	IssueID   string         `json:"issue_id"`
@@ -139,10 +161,9 @@ type issueActivityBriefResponse struct {
 	CreatedAt string         `json:"created_at"`
 }
 
-// GetIssueExecutionTree returns the cross-issue execution evidence rooted at
-// one issue: issue hierarchy, task runs, SOP runs, trace events and child-done
-// wakeup comments. It is intentionally read-only and derives from existing
-// facts instead of introducing another persistence layer.
+// GetIssueExecutionTree 处理 GET /api/issues/:id/execution-tree：返回以该 issue 为根的跨 issue
+// 执行证据——issue 层级、任务运行、SOP 运行、trace 事件与 child-done 唤醒评论。它刻意只读，
+// 从既有事实推导，而不是再加一层持久化。
 func (h *Handler) GetIssueExecutionTree(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -164,8 +185,12 @@ func (h *Handler) GetIssueExecutionTree(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// issueExecutionTreeMaxDepth 是执行证据树的最大向下深度。树按需随层级展开，子 issue 层级每层
+// 都要加载任务/评论/活动等，深树会放大查询量；2 层是「父 + 直属子」的实用窗口。
 const issueExecutionTreeMaxDepth = 2
 
+// buildIssueExecutionNode 递归构建单条 issue 的执行证据节点：加载其任务、评论、trace、产物、
+// 活动日志并按角色分桶，深度未达上限时继续展开子 issue。所有数据都来自查询，无持久化副作用。
 func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, prefix string, depth int) (issueExecutionNodeResponse, error) {
 	tasks, err := h.Queries.ListTasksByIssue(ctx, issue.ID)
 	if err != nil {
@@ -321,6 +346,7 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 	}, nil
 }
 
+// issueCommentBrief 把一条数据库评论行压缩成时间线用的精简视图。
 func issueCommentBrief(comment db.Comment) issueCommentBriefResponse {
 	return issueCommentBriefResponse{
 		ID:           uuidToString(comment.ID),
@@ -334,6 +360,8 @@ func issueCommentBrief(comment db.Comment) issueCommentBriefResponse {
 	}
 }
 
+// issueActivityBrief 把一条活动日志转成精简视图；Details 是存储的 JSON，这里解析成 map 供
+// 前端按 action 类型解读，解析失败则给空 map（不影响响应）。
 func issueActivityBrief(activity db.ActivityLog) issueActivityBriefResponse {
 	details := map[string]any{}
 	if len(activity.Details) > 0 {
@@ -350,6 +378,8 @@ func issueActivityBrief(activity db.ActivityLog) issueActivityBriefResponse {
 	}
 }
 
+// agentTaskArtifactToResponse 把附件转成任务产物响应，补上所属 task / issue 与标题、kind、
+// 下载地址。用 stable 的 URL 模式，保证同一产物在不同请求里得到一致链接。
 func (h *Handler) agentTaskArtifactToResponse(attachment db.Attachment, taskID, issueID pgtype.UUID) agentTaskArtifactResponse {
 	att := h.attachmentToResponse(attachment, attachmentURLModeStable)
 	return agentTaskArtifactResponse{
@@ -368,6 +398,8 @@ func (h *Handler) agentTaskArtifactToResponse(attachment db.Attachment, taskID, 
 	}
 }
 
+// agentTaskArtifactSemanticKey 从产物字段拼出不区分大小写的语义键，用于对同一次运行里重复
+// 上传的产物去重（只保留最新一份）。
 func agentTaskArtifactSemanticKey(artifact agentTaskArtifactResponse) string {
 	return strings.ToLower(strings.Join([]string{
 		strings.TrimSpace(artifact.TaskID),
@@ -377,6 +409,8 @@ func agentTaskArtifactSemanticKey(artifact agentTaskArtifactResponse) string {
 	}, ":"))
 }
 
+// artifactCreatedAtAfterOrEqual 比较两个产物的 CreatedAt：都能解析时按时间比，否则退回字符串
+// 比较，保证任一输入都得到确定答案（时间戳都来自同一格式化函数，两种比较结论基本一致）。
 func artifactCreatedAtAfterOrEqual(left, right agentTaskArtifactResponse) bool {
 	leftAt, leftErr := time.Parse(time.RFC3339, left.CreatedAt)
 	rightAt, rightErr := time.Parse(time.RFC3339, right.CreatedAt)
@@ -386,6 +420,8 @@ func artifactCreatedAtAfterOrEqual(left, right agentTaskArtifactResponse) bool {
 	return left.CreatedAt >= right.CreatedAt
 }
 
+// summarizeIssueExecutionTree 遍历整棵执行树，累加一份中文标签的计数摘要（任务/子任务/观测
+// 事件/工具调用/唤醒评论等），作为响应里的 Summary。
 func summarizeIssueExecutionTree(root issueExecutionNodeResponse) map[string]int {
 	summary := map[string]int{
 		"任务数":   0,
@@ -428,6 +464,9 @@ func summarizeIssueExecutionTree(root issueExecutionNodeResponse) map[string]int
 	return summary
 }
 
+// buildIssueTimelineNodes 把单条 issue 的执行证据拍平、统一成时间线节点数组：agent 任务、其
+// 下的工具调用链、trace 事件、issue 元数据里的来源抓取、子 issue 引用、唤醒（评审）评论与
+// 人工确认段。最后按开始时间稳定排序，并保证产物字段非 nil（见末尾注释）。
 func buildIssueTimelineNodes(root issueExecutionNodeResponse) []issueTimelineNodeResponse {
 	nodes := make([]issueTimelineNodeResponse, 0)
 	rootTaskID := ""
@@ -595,9 +634,8 @@ func buildIssueTimelineNodes(root issueExecutionNodeResponse) []issueTimelineNod
 		}
 		return left < right
 	})
-	// Arrays are part of the execution-tree wire contract. A nil slice would
-	// encode as JSON null and force clients to discard the otherwise valid
-	// tree, including usage totals and child-issue lanes.
+	// 产物数组属于执行树响应的线格式契约：nil 切片会序列化成 JSON null，导致客户端丢弃整棵
+	// 本来有效的树（包括 token 汇总与子 issue 泳道）。统一补成空数组。
 	for i := range nodes {
 		if nodes[i].Artifacts == nil {
 			nodes[i].Artifacts = []agentTaskArtifactResponse{}
@@ -606,6 +644,10 @@ func buildIssueTimelineNodes(root issueExecutionNodeResponse) []issueTimelineNod
 	return nodes
 }
 
+// buildHumanConfirmationTimelineNodes 构造「人工确认」段的时间线节点：当用户（手动评论）在上
+// 一段 agent 任务完成后、下一段任务启动前给出了确认/推进，就为每段这样的确认生成一个
+// human_confirmation 节点，其跨度即两段任务间的等待。若还有一段未收到回应的确认，则追加一个
+// 状态为 running 的待确认节点（见 buildPendingHumanConfirmationTimelineNode）。
 func buildHumanConfirmationTimelineNodes(root issueExecutionNodeResponse, rootTaskID string) []issueTimelineNodeResponse {
 	if len(root.Tasks) == 0 {
 		return nil
@@ -673,6 +715,9 @@ func buildHumanConfirmationTimelineNodes(root issueExecutionNodeResponse, rootTa
 	return nodes
 }
 
+// pendingHumanConfirmationCandidate 是一次「尚在等待人工确认」的候选信息：相关任务、等待起点、
+// 信号时刻与摘要，以及指向证据的引用和元数据。多条候选按信号时刻取最新者（见
+// laterPendingHumanConfirmationCandidate）。
 type pendingHumanConfirmationCandidate struct {
 	task         AgentTaskResponse
 	startAt      time.Time
@@ -682,6 +727,10 @@ type pendingHumanConfirmationCandidate struct {
 	metadata     map[string]any
 }
 
+// buildPendingHumanConfirmationTimelineNode 在 issue 未完成、且确实存在一条已发出等待信号却
+// 尚未收到回应的确认段时，构造一个 running 状态的待确认节点，让时间线在 issue 中途也能提示
+// 「此刻正卡在等用户」。信号来源有三种：squad leader 评估的活动日志、leader 任务的评论正文、
+// 或 leader 任务结果里的输出文案；取信号时刻最新的一种。issue 已 done 时返回 nil。
 func buildPendingHumanConfirmationTimelineNode(root issueExecutionNodeResponse, rootTaskID string, tasks []AgentTaskResponse) *issueTimelineNodeResponse {
 	if isCompletedIssueStatus(root.Issue.Status) {
 		return nil
@@ -790,6 +839,8 @@ func buildPendingHumanConfirmationTimelineNode(root issueExecutionNodeResponse, 
 	}
 }
 
+// laterPendingHumanConfirmationCandidate 返回两个候选中「信号时刻更晚」的那个；current 为 nil
+// 时直接返回 candidate。用于从多条来源信号里选出时间线上最新的一次等待。
 func laterPendingHumanConfirmationCandidate(current *pendingHumanConfirmationCandidate, candidate pendingHumanConfirmationCandidate) *pendingHumanConfirmationCandidate {
 	if current == nil || candidate.signalAt.After(current.signalAt) {
 		copy := candidate
@@ -798,6 +849,8 @@ func laterPendingHumanConfirmationCandidate(current *pendingHumanConfirmationCan
 	return current
 }
 
+// pendingHumanConfirmationStart 推断一次待确认的起点时刻与触发评论：任务已完成后，取该任务在
+// completedAt 之后的第一条「等待确认」评论为起点；找不到则退回任务完成时刻，无评论引用。
 func pendingHumanConfirmationStart(root issueExecutionNodeResponse, task AgentTaskResponse, fallback time.Time) (time.Time, string) {
 	if completedAt, ok := parseTaskCompletedAt(task); ok {
 		for _, comment := range root.AgentComments {
@@ -815,6 +868,8 @@ func pendingHumanConfirmationStart(root issueExecutionNodeResponse, task AgentTa
 	return fallback, ""
 }
 
+// isStillPendingHumanConfirmation 判断 startAt 之后是否仍没有「回应」：一旦 startAt 之后出现
+// 任何人工评论、或启动了另一条任务，就认为本次确认已经结束（收到回应或已搁置），返回 false。
 func isStillPendingHumanConfirmation(root issueExecutionNodeResponse, taskID string, startAt time.Time) bool {
 	for _, comment := range root.ManualComments {
 		commentAt, err := time.Parse(time.RFC3339, comment.CreatedAt)
@@ -835,6 +890,7 @@ func isStillPendingHumanConfirmation(root issueExecutionNodeResponse, taskID str
 	return true
 }
 
+// taskAgentName 返回任务响应上挂的 agent 显示名；未解析到时返回空串。
 func taskAgentName(task AgentTaskResponse) string {
 	if task.Agent != nil && task.Agent.Name != "" {
 		return task.Agent.Name
@@ -842,10 +898,13 @@ func taskAgentName(task AgentTaskResponse) string {
 	return ""
 }
 
+// isTerminalTimelineStatus 判断时间线状态是否已终局（完成或失败），终局任务才可能携带待人工
+// 确认的尾声信号。
 func isTerminalTimelineStatus(status string) bool {
 	return isCompletedTimelineStatus(status) || isFailedTimelineStatus(status)
 }
 
+// parseTaskCompletedAt 解析任务的 CompletedAt（RFC3339）；为空或解析失败返回 ok=false。
 func parseTaskCompletedAt(task AgentTaskResponse) (time.Time, bool) {
 	if task.CompletedAt == nil || *task.CompletedAt == "" {
 		return time.Time{}, false
@@ -854,6 +913,8 @@ func parseTaskCompletedAt(task AgentTaskResponse) (time.Time, bool) {
 	return completedAt, err == nil
 }
 
+// pendingHumanConfirmationTaskSummary 取任务结果里的输出文案作为待确认摘要，没有输出时退回
+// timelineTaskSummary。
 func pendingHumanConfirmationTaskSummary(task AgentTaskResponse) string {
 	if output := taskResultOutput(task.Result); output != "" {
 		return output
@@ -861,6 +922,7 @@ func pendingHumanConfirmationTaskSummary(task AgentTaskResponse) string {
 	return timelineTaskSummary(task)
 }
 
+// taskResultOutput 从任务结果（map 形态）里提取 output 字符串字段；nil 或类型不符返回空串。
 func taskResultOutput(result any) string {
 	if result == nil {
 		return ""
@@ -873,6 +935,8 @@ func taskResultOutput(result any) string {
 	return ""
 }
 
+// pendingHumanConfirmationSummary 从一段原始文案里提炼待确认摘要：取第一行有语义的 markdown
+// 文本，超出长度截断；拿不到就用整段并截断；实在为空才退回「等待用户确认」。
 func pendingHumanConfirmationSummary(value string) string {
 	content := firstSemanticMarkdownLine(value)
 	if content == "" {
@@ -884,6 +948,9 @@ func pendingHumanConfirmationSummary(value string) string {
 	return truncateTimelineSummary(content)
 }
 
+// isPendingHumanConfirmationText 用关键词组（如「等待用户确认」「需人工确认」「确认后继续」）
+// 判断一段文本是否表达了「正在等用户确认」。任一组词全部出现即命中，覆盖 agent / 提示词在
+// 措辞上的常见变化。
 func isPendingHumanConfirmationText(value string) bool {
 	text := strings.TrimSpace(value)
 	if text == "" {
@@ -913,6 +980,8 @@ func isPendingHumanConfirmationText(value string) bool {
 	return false
 }
 
+// latestCompletedTaskBefore 返回 `before` 时刻之前最后完成的一条任务及其完成时刻；不存在返回
+// ok=false。用于把一条人工评论对齐到它之前刚结束的那段任务上。
 func latestCompletedTaskBefore(tasks []AgentTaskResponse, before time.Time) (AgentTaskResponse, time.Time, bool) {
 	var selected AgentTaskResponse
 	var selectedAt time.Time
@@ -935,6 +1004,8 @@ func latestCompletedTaskBefore(tasks []AgentTaskResponse, before time.Time) (Age
 	return selected, selectedAt, true
 }
 
+// compareTimelineTasks 比较两条任务的先后：优先触发评论时间、其次开始/派发/创建时间，最后用
+// id 兜底定序，使同一触发评论只选一条代表任务时结果确定。
 func compareTimelineTasks(left, right AgentTaskResponse) int {
 	leftValue := firstNonEmpty(left.TriggerCommentCreatedAt, ptrString(left.StartedAt), ptrString(left.DispatchedAt), left.CreatedAt, left.ID)
 	rightValue := firstNonEmpty(right.TriggerCommentCreatedAt, ptrString(right.StartedAt), ptrString(right.DispatchedAt), right.CreatedAt, right.ID)
@@ -953,6 +1024,8 @@ func compareTimelineTasks(left, right AgentTaskResponse) int {
 	return 0
 }
 
+// responsibilityDurationMs 计算任务从「责任人视角的开始」到完成之间经过的毫秒数——startedAt 是
+// 触发评论/创建时间这类早于实际开跑的时点；任一时间缺失或结束不晚于开始都返回 0。
 func responsibilityDurationMs(task AgentTaskResponse, startedAt string) int64 {
 	if startedAt == "" || task.CompletedAt == nil {
 		return 0
@@ -965,6 +1038,7 @@ func responsibilityDurationMs(task AgentTaskResponse, startedAt string) int64 {
 	return end.Sub(start).Milliseconds()
 }
 
+// humanConfirmationSummary 把一段人工确认评论压成「等待人工确认：<摘要>」的节点文案。
 func humanConfirmationSummary(comment issueCommentBriefResponse) string {
 	content := strings.TrimSpace(comment.Content)
 	if content == "" {
@@ -973,6 +1047,9 @@ func humanConfirmationSummary(comment issueCommentBriefResponse) string {
 	return "等待人工确认：" + truncateTimelineSummary(content)
 }
 
+// summarizeIssueTimeline 汇总根 issue 整条时间线：节点数、起止与各段耗时（墙钟/agent 执行/
+// 人工确认/子 issue 等待）、token 与消息统计、失败摘要与验收状态。优先用 issue 上落库的
+// WorkStartedAt/WorkCompletedAt，缺失时才从节点时间回推；失败仅取「影响验收」的首条。
 func summarizeIssueTimeline(issue IssueResponse, nodes []issueTimelineNodeResponse) issueTimelineSummaryResponse {
 	summary := issueTimelineSummaryResponse{
 		IssueID:              issue.ID,
@@ -1070,18 +1147,26 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []issueTimelineNodeRespon
 	return summary
 }
 
+// timelineNodeAffectsAcceptance 判断某类节点是否参与「验收判定」：只有 agent 任务与子 issue
+// 引用影响验收结论，人工确认/工具调用等中间节点不算。
 func timelineNodeAffectsAcceptance(node issueTimelineNodeResponse) bool {
 	return node.NodeType == "agent_task" || node.NodeType == "child_issue_ref"
 }
 
+// isRecoveredRuntimeFailure 判断某失败节点是否为「运行时可恢复」故障：只有整条 issue 已 done、
+// 且失败原因为 runtime_recovery（被守护逻辑救回）时才算，这类失败不写入最终验收摘要。
 func isRecoveredRuntimeFailure(issue IssueResponse, node issueTimelineNodeResponse) bool {
 	return isCompletedIssueStatus(issue.Status) && strings.TrimSpace(node.FailureReason) == "runtime_recovery"
 }
 
+// isCompletedIssueStatus 判断 issue 状态是否算「已完成」：目前只有 done 命中。验收摘要把它
+// 当作整条 issue 的终态依据。
 func isCompletedIssueStatus(status string) bool {
 	return status == "done"
 }
 
+// isFailedTimelineStatus 判断状态是否算失败/异常：兼容英文关键字与中文业务文案两类取值，命中
+// failed/blocked/cancelled/失败/异常/阻塞/已取消任一即视为失败。
 func isFailedTimelineStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "failed", "blocked", "cancelled", "失败", "异常", "阻塞", "已取消":
@@ -1091,6 +1176,7 @@ func isFailedTimelineStatus(status string) bool {
 	}
 }
 
+// isCompletedTimelineStatus 判断状态是否算完成：兼容 completed / done / 已完成 等取值。
 func isCompletedTimelineStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "completed", "done", "已完成":
@@ -1100,6 +1186,8 @@ func isCompletedTimelineStatus(status string) bool {
 	}
 }
 
+// timelineAgentWorkBounds 扫所有 agent_task 节点，返回最早开始与最晚完成的时刻（RFC3339Nano），
+// 作为整条时间线工作段的边界；没有任何任务节点时两个值都为空串。
 func timelineAgentWorkBounds(nodes []issueTimelineNodeResponse) (startedAt string, completedAt string) {
 	var started *time.Time
 	var completed *time.Time
@@ -1129,11 +1217,15 @@ func timelineAgentWorkBounds(nodes []issueTimelineNodeResponse) (startedAt strin
 	return startedAt, completedAt
 }
 
+// timelineInterval 表示时间线上一个半开区间，供同类节点（agent 执行、人工确认、子 issue 等待）
+// 合并统计耗时。
 type timelineInterval struct {
 	start time.Time
 	end   time.Time
 }
 
+// mergedWaitDurationMs 对指定 nodeTypes 的节点先各取其 [开始, 完成] 区间，合并重叠后再求总
+// 时长（毫秒）——重叠的等待不计两次。无有效区间返回 0。
 func mergedWaitDurationMs(nodes []issueTimelineNodeResponse, nodeTypes ...string) int64 {
 	allowed := make(map[string]bool, len(nodeTypes))
 	for _, nodeType := range nodeTypes {
@@ -1165,6 +1257,7 @@ func mergedWaitDurationMs(nodes []issueTimelineNodeResponse, nodeTypes ...string
 	return total
 }
 
+// mergeTimelineIntervals 把区间按起点排序并合并所有重叠/相接区间，返回不相交的并集。
 func mergeTimelineIntervals(intervals []timelineInterval) []timelineInterval {
 	if len(intervals) == 0 {
 		return nil
@@ -1190,6 +1283,7 @@ func mergeTimelineIntervals(intervals []timelineInterval) []timelineInterval {
 	return merged
 }
 
+// artifactTitle 由文件名去掉扩展名得到展示标题；空文件名退回「产物」。
 func artifactTitle(filename string) string {
 	base := strings.TrimSpace(filename)
 	if base == "" {
@@ -1201,6 +1295,8 @@ func artifactTitle(filename string) string {
 	return base
 }
 
+// artifactKind 依据文件名与 ContentType 把产物归类：.md / markdown 类型归 stage_markdown
+// （阶段产物文档），其余一律 agent_attachment（普通任务附件）。kind 决定前端展示方式。
 func artifactKind(filename, contentType string) string {
 	lowerName := strings.ToLower(strings.TrimSpace(filename))
 	lowerType := strings.ToLower(strings.TrimSpace(contentType))
@@ -1210,6 +1306,9 @@ func artifactKind(filename, contentType string) string {
 	return "agent_attachment"
 }
 
+// timelineTaskSummary 给任务节点选一条时间线摘要：leader 任务或已终局任务优先取结果输出的
+// 意图行；其次取触发摘要；都没有时对 leader 任务退回「SOP leader[: <name>]」，普通任务退回
+// 失败原因或「Agent task <status>」。
 func timelineTaskSummary(task AgentTaskResponse) string {
 	resultSummary := taskResultIntentSummary(task.Result)
 	if (task.IsLeaderTask || isTerminalTimelineStatus(task.Status)) && resultSummary != "" {
@@ -1230,6 +1329,8 @@ func timelineTaskSummary(task AgentTaskResponse) string {
 	return firstNonEmpty(task.FailureReason, "Agent task "+task.Status)
 }
 
+// taskResultIntentSummary 从任务结果里取 output，再提取其中的语义首行并截断，作为任务在结果
+// 里自述的意图摘要；拿不到则空串。
 func taskResultIntentSummary(result any) string {
 	output := taskResultOutput(result)
 	if output == "" {
@@ -1242,6 +1343,8 @@ func taskResultIntentSummary(result any) string {
 	return ""
 }
 
+// truncateTimelineSummary 把时间线摘要截到 maxRunes=80 字符内，超出加省略号，保证时间线文案
+// 长度可控。
 func truncateTimelineSummary(value string) string {
 	const maxRunes = 80
 	runes := []rune(value)
@@ -1251,6 +1354,8 @@ func truncateTimelineSummary(value string) string {
 	return value
 }
 
+// firstSemanticMarkdownLine 扫描 markdown 文本，返回第一条「有语义」的非空行：跳过空行、分隔
+// 线、代码块标记，并剥掉行首 # 标题、两侧 * 强调与 ` 反引号后再判一次；都剥空仍算无意义。
 func firstSemanticMarkdownLine(value string) string {
 	for _, rawLine := range strings.Split(value, "\n") {
 		line := strings.TrimSpace(rawLine)
@@ -1268,6 +1373,8 @@ func firstSemanticMarkdownLine(value string) string {
 	return ""
 }
 
+// isNonSemanticMarkdownLine 判断一行是否为「无语义」的 markdown 噪声：空行、---/... 分隔线、
+// ``` 代码块标记，或全由装饰符组成。
 func isNonSemanticMarkdownLine(line string) bool {
 	if line == "" {
 		return true
@@ -1279,6 +1386,8 @@ func isNonSemanticMarkdownLine(line string) bool {
 	return trimmed == ""
 }
 
+// traceDurationMs 从 trace 事件的三个候选时长字段里取首个 >0 的值（DurationMs/TotalMs/RunMs，
+// 兼容不同来源 trace 的字段差异）；全为空返回 0。
 func traceDurationMs(event TaskTraceEventResponse) int64 {
 	for _, value := range []*int64{event.DurationMs, event.TotalMs, event.RunMs} {
 		if value != nil && *value > 0 {
@@ -1288,6 +1397,8 @@ func traceDurationMs(event TaskTraceEventResponse) int64 {
 	return 0
 }
 
+// hasUsageUnavailableTrace 报告这批 trace 事件里是否含 llm.usage_unavailable——有则时间线应打
+// 上「用量不可用」标记，避免把缺 token 数据误当成零用量。
 func hasUsageUnavailableTrace(events []TaskTraceEventResponse) bool {
 	for _, event := range events {
 		if event.EventType == "llm.usage_unavailable" {
@@ -1297,6 +1408,7 @@ func hasUsageUnavailableTrace(events []TaskTraceEventResponse) bool {
 	return false
 }
 
+// int64PtrValue 解引用 *int64；nil 返回 0。
 func int64PtrValue(value *int64) int64 {
 	if value == nil {
 		return 0
@@ -1304,6 +1416,7 @@ func int64PtrValue(value *int64) int64 {
 	return *value
 }
 
+// stringValue 从 any 值里取出字符串；类型不是 string 或缺失返回空串。
 func stringValue(value any) string {
 	if text, ok := value.(string); ok {
 		return text

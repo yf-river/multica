@@ -26,17 +26,19 @@ import { KpiCard } from "../../runtimes/components/shared";
 import { useStatusLabel, useTriggerText } from "./task-run-labels";
 import { TaskStatusIcon } from "./task-status-icon";
 
-// Per-run cost breakdown for one issue — the surface the execution log's
-// header total opens.
+// 本文件：IssueUsageDialog —— 单条问题"按次运行花费"的明细弹窗，
+// 由执行日志头部用量合计打开。
 //
-// The execution log answers "how much did this run cost" one row at a time;
-// this answers "which run cost the most, and why". That comparison needs the
-// input / output / cache split side by side, which the 288px sidebar cannot
-// hold, so it lives here instead of expanding the rows.
+// 执行日志逐行回答"这次运行花了多少"；这里回答"哪次运行最贵、为什么"。
+// 该对比需要输入/输出/缓存命中拆分并排展示，288px 侧栏放不下，
+// 所以它住在这里而不是去扩展那些行。
 //
-// Every figure comes from the same `summarizeTaskUsage` helpers the sidebar
-// uses, so the total here can never disagree with the total that opened it.
+// 每个数字都来自侧栏同款 `summarizeTaskUsage` 辅助函数，
+// 因此这里的合计与打开它的合计永远不会不一致。
 
+/**
+ * 单问题按次花费弹窗：KPI 卡 + 按 agent 条形 + 明细表（职责见文件头）。
+ */
 export function IssueUsageDialog({
   open,
   onOpenChange,
@@ -49,17 +51,15 @@ export function IssueUsageDialog({
   tasks: AgentTask[];
 }) {
   const { t } = useT("issues");
-  // `estimateCost` reads custom rates imperatively out of the Zustand store,
-  // so nothing re-renders this dialog when the user saves a new rate. Subscribe
-  // to the snapshot and carry it into every memo that prices usage — otherwise
-  // the totals, the per-run costs, and the "unmapped model" notice all keep
-  // showing the old price until the task list happens to refetch. Same reason
-  // the runtime usage page subscribes in usage-section.tsx.
+  // `estimateCost` 是从 Zustand store 命令式读自定义费率的，
+  // 所以用户保存新费率不会让本弹窗自己重渲染。订阅快照并把它带进每一个
+  // 给用量定价的 memo——否则合计、按次花费与"未映射模型"提示都会一直
+  // 显示旧价格，直到任务列表碰巧重新拉取。runtime 用量页在 usage-section.tsx
+  // 订阅也是同一个原因。
   const pricings = useCustomPricingStore((s) => s.pricings);
 
-  // Only runs that actually recorded usage earn a row: a run with no figure
-  // contributes nothing to compare and would just add an all-em-dash line.
-  // Their existence is still accounted for in the footnote below.
+  // 只有真实记录到用量的运行才配占一行：没有数字的运行无从比较，
+  // 只会贡献一行全是破折号。它们的存在仍由下面脚注交代。
   const priced = useMemo(
     () => tasks.filter((task) => (task.usage?.length ?? 0) > 0),
     [tasks],
@@ -76,18 +76,17 @@ export function IssueUsageDialog({
     [priced],
   );
 
-  // Models with no rate-table entry and no provider-reported cost: their
-  // tokens are counted but their spend is not, so the totals below understate
-  // reality. Saying so is the difference between an estimate and a wrong number.
+  // 既无费率表条目、也无服务端报价的模型：token 计入、花费不计，
+  // 因此下面的合计会低于实际。说破这一点，是"估算"与"错误数字"的区别。
   const unmapped = useMemo(
     () => collectUnmappedModels(priced.flatMap((task) => task.usage ?? [])),
     [priced, pricings],
   );
 
-  // Floor, not round: on a cache-heavy issue 99.55% rounds to "100% hit rate",
-  // which claims every single token came from cache. Flooring only ever says
-  // 100% when it is actually 100%, and one percentage point of pessimism is
-  // cheaper than an impossible-looking number.
+  // 向下取整而非四舍五入：缓存密集型问题上 99.55% 会四舍五入成
+  // "命中率 100%"——那等于宣称每一个 token 都来自缓存。向下取整只在
+  // 真是 100% 时才说 100%，一个百分点的悲观比一个看着就不可能
+  // 的数字便宜。
   const cacheHitRate =
     total && total.input + total.cacheRead > 0
       ? Math.floor((total.cacheRead / (total.input + total.cacheRead)) * 100)
@@ -95,12 +94,11 @@ export function IssueUsageDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* DialogContent's base is `sm:max-w-sm`, which the same-specificity
-          `max-w-4xl` does not beat — the table then overflows the box instead
-          of the box growing. `!` wins it, matching the transcript dialog.
-          5xl rather than 4xl because nine columns plus the token bar need
-          ~920px: at 4xl the Cost column — the one people open this for —
-          landed outside the scroll viewport. */}
+      {/* DialogContent 的基础是 `sm:max-w-sm`，同特异度的 `max-w-4xl`
+          压不过它——于是表格溢出盒子而不是盒子长大。`!` 赢下这场较量，
+          与 transcript 弹窗一致。用 5xl 而非 4xl，因为九列加 token 条
+          需要约 920px：4xl 时 Cost 列——正是人们为它打开本弹窗的那列——
+          会落在滚动视口之外。 */}
       <DialogContent className="!max-w-5xl !w-[calc(100vw-4rem)]">
         <DialogHeader>
           <DialogTitle>{t(($) => $.usage_detail.title)}</DialogTitle>
@@ -117,12 +115,10 @@ export function IssueUsageDialog({
             {t(($) => $.usage_detail.empty)}
           </p>
         ) : (
-          /* `min-w-0`: DialogContent is a grid, and a grid item defaults to
-             `min-width: auto` — it sizes to its content's minimum rather than
-             to the track. Without this the wide run table pushes this column
-             past the dialog's own max-width, and every sibling (KPI cards,
-             by-agent bars, footnotes) stretches with it and paints outside
-             the box. */
+          /* `min-w-0`：DialogContent 是 grid，grid 项默认
+             `min-width: auto`——它按内容最小值而非轨道尺寸定宽。没有它，
+             超宽运行表会把本列顶过弹窗自身的 max-width，所有兄弟元素
+             （KPI 卡、按 agent 的条、脚注）跟着一起拉伸、画到盒子外面。 */
           <div className="flex min-w-0 flex-col gap-5">
             <div className="grid grid-cols-3 divide-x rounded-lg border bg-card">
               <KpiCard
@@ -173,9 +169,9 @@ export function IssueUsageDialog({
   );
 }
 
-// "N failed runs account for X%" — the single most useful thing the total can
-// say about itself, and the reason this dialog exists. Rendered only when
-// there IS a failed run with a cost, so a healthy issue gets no scolding hint.
+// "N 次失败运行占了 X%"——合计能对自己说的最有用的一句话，也是本弹窗
+// 存在的原因。只在确实存在"有花费的失败运行"时渲染，
+// 健康的问题不会看到唠叨提示。
 function CostConcentrationHint({
   tasks,
   total,
@@ -203,9 +199,9 @@ function CostConcentrationHint({
   );
 }
 
-// Same bar language as the runtime usage page's "Cost by agent" block: one row
-// per agent, bar scaled to the biggest spender. Hidden entirely for a
-// single-agent issue, where a one-bar chart says nothing the total didn't.
+// 与 runtime 用量页"按 agent 成本"块同一套条形语言：每个 agent 一行，
+// 条长按最大花费者缩放。单 agent 的问题整体隐藏——一条独条柱状图
+// 说不了任何合计没说过的信息。
 function CostByAgent({
   tasks,
   agentIds,
@@ -270,6 +266,9 @@ function CostByAgent({
   );
 }
 
+/**
+ * 按次运行明细表。
+ */
 function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummary }) {
   const { t } = useT("issues");
   const maxTokens = tasks.reduce(
@@ -278,14 +277,12 @@ function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummar
   );
 
   return (
-    // Nine columns of numbers have a floor width; on a narrow window they
-    // scroll sideways rather than squeezing the trigger text to nothing or
-    // pushing the totals outside the dialog.
+    // 九列数字有最小宽度；窗口窄时横向滚动，
+    // 而不是把触发文本挤成渣或把合计推出弹窗。
     //
-    // `min-w-0` is what makes `overflow-auto` actually clip: as a flex item
-    // this box defaults to `min-width: auto`, so it grows to the table's
-    // min-content width and never scrolls. Removing it puts the table back
-    // outside the dialog.
+    // `min-w-0` 才是让 `overflow-auto` 真正生效裁剪的东西：作为 flex 项，
+    // 本盒子默认 `min-width: auto`，会长到表格 min-content 宽度、
+    // 永不滚动。去掉它表格就又被顶出弹窗。
     <div className="max-h-[45vh] min-w-0 overflow-auto">
       <table className="w-full min-w-[46rem]">
         <thead className="sticky top-0 bg-popover">
@@ -323,6 +320,9 @@ function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummar
   );
 }
 
+/**
+ * 明细表的一行（一条运行）。
+ */
 function RunRow({ task, maxTokens }: { task: AgentTask; maxTokens: number }) {
   const { t } = useT("issues");
   const trigger = useTriggerText(task);
@@ -348,23 +348,20 @@ function RunRow({ task, maxTokens }: { task: AgentTask; maxTokens: number }) {
             </span>
           ) : (
             <>
-              {/* TaskStatusIcon is aria-hidden, so the glyph alone leaves a
-                  screen reader with no way to tell a failed run from a
-                  completed one. Same sr-only pairing the execution log rows
-                  use. */}
+              {/* TaskStatusIcon 是 aria-hidden 的，单靠那个图形读屏器无法
+                  区分失败运行与完成运行。与执行日志行同款 sr-only 配对。 */}
               <TaskStatusIcon status={task.status} />
               <span className="sr-only">{statusLabel}</span>
             </>
           )}
         </div>
       </td>
-      {/* A run that spilled across models lists them all, and real model ids
-          are long (`claude-haiku-4-5-20251001, claude-opus-5[1m]`). Left
-          uncapped that single cell sets the table's width and forces every
-          other issue's dialog to scroll sideways, so cap it and keep the full
-          list in the title. `whitespace-nowrap` comes from the row, so the
-          cell needs its own width bound for `truncate` to have anything to
-          truncate against. */}
+      {/* 一次跨模型的运行会把它们全列出来，而真实模型 id 很长
+          （`claude-haiku-4-5-20251001, claude-opus-5[1m]`）。不加上限时，
+          这一个单元格就定了整张表的宽度、逼着每条其它问题的弹窗横向滚动，
+          所以封顶并把完整清单放进 title。`whitespace-nowrap` 来自行级样式，
+          因此本单元格需要自己的宽度边界，`truncate` 才有东西可截。
+          长模型名也放进 title。 */}
       <td className="max-w-[11rem] text-micro text-muted-foreground">
         <span className="block truncate" title={summary.models.join(", ")}>
           {summary.models.join(", ") || "—"}

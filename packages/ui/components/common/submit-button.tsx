@@ -1,4 +1,7 @@
 "use client";
+// 本文件是「发送/停止」按钮：消息输入框旁的圆形按钮。空闲时是发送箭头；
+// 正在运行（AI 作答中）时切换成方形「停止」按钮；loading/busy 时显示旋转圈。
+// 按钮按下时会阻止默认事件，避免点按钮让安卓软键盘收起。
 
 import type { ReactNode, SyntheticEvent } from "react";
 import { ArrowUp, Loader2, Square } from "lucide-react";
@@ -9,41 +12,62 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 
+/**
+ * SubmitButton 组件的 props 定义。
+ */
 interface SubmitButtonProps {
+  /** 点击发送时的回调 */
   onClick: () => void;
+  /** 禁用发送按钮（前置条件不满足） */
   disabled?: boolean;
+  /** 是否正在发送（转圈） */
   loading?: boolean;
   /**
-   * Blocked on background work the user started (an attachment still
-   * uploading) rather than on a missing precondition. Disables the button and
-   * marks it `aria-busy`, so a screen reader reaching it with a virtual cursor
-   * reads "busy" rather than an unexplained dead control. It is NOT tab
-   * reachable while disabled, so callers should also carry the reason in
-   * `ariaLabel` / `tooltip` and in the visible label where there is one.
+   * 是否处于「后台忙」状态——用户已发起的后台工作还没完成（例如附件仍在
+   * 上传），而不是前置条件缺失。此时按钮禁用并标记 `aria-busy`，屏幕阅读器
+   * 用虚拟光标读到时是「忙碌」而不是一个莫名其妙的死控件。注意 busy 时按钮
+   * 不可 Tab 聚焦，所以调用方还应把原因写进 `ariaLabel` / `tooltip`，
+   * 以及（如果有）可见的标签文本里。
    */
   busy?: boolean;
+  /** 是否正在运行（AI 作答中）——true 时显示「停止」按钮 */
   running?: boolean;
+  /** 点击「停止」按钮时的回调 */
   onStop?: () => void;
   /**
-   * Tooltip shown over the send button when idle. Pass a string or a node
-   * (e.g. `Send · ⌘↵`). Omit to render no tooltip.
-   * Callers compose the shortcut hint themselves to keep this component
-   * free of `@multica/core` (platform-detection) and i18n imports.
+   * 空闲（可发送）时悬浮在发送按钮上的提示。可传字符串或节点（如 `Send · ⌘↵`）。
+   * 不传则不渲染 tooltip。
+   * 快捷键提示由调用方自己拼接，让本组件不依赖 `@multica/core`（平台检测）
+   * 与 i18n。
    */
   tooltip?: ReactNode;
-  /** Accessible name for the icon-only submit button. */
+  /** 纯图标发送按钮的可访问名称 */
   ariaLabel?: string;
-  /** Tooltip shown over the stop button while a run is in progress. */
+  /** 运行中悬浮在「停止」按钮上的提示 */
   stopTooltip?: ReactNode;
-  /** Accessible name for the icon-only stop button. */
+  /** 纯图标「停止」按钮的可访问名称 */
   stopAriaLabel?: string;
 }
 
-/** Keep the composer focused so Send and Stop do not dismiss Android's keyboard. */
+/**
+ * 让输入区保持焦点：阻止 pointerdown / mousedown 的默认行为，
+ * 这样点发送/停止不会让安卓软键盘收起。
+ */
 function keepFocusInComposer(event: SyntheticEvent<HTMLButtonElement>) {
   event.preventDefault();
 }
 
+/**
+ * SubmitButton：发送 ⇄ 停止的二态圆形按钮。
+ *
+ * - running：显示「停止」方块按钮，点击触发 onStop
+ * - loading / busy：显示旋转圈；loading 是发送中转圈，busy 是后台忙时也转圈
+ *   （见 busy 的 prop 说明）
+ * - 其余：显示发送箭头
+ *
+ * @param props 见 SubmitButtonProps 定义
+ * @returns 发送/停止按钮（可选包一层 tooltip）
+ */
 function SubmitButton({
   onClick,
   disabled,
@@ -90,11 +114,10 @@ function SubmitButton({
       aria-label={ariaLabel}
     >
       {loading || busy ? (
-        // `busy` spins too, not just greys out: an upload can be running with
-        // nothing else on screen to explain the disabled control (a reopened
-        // composer is still rebuilding its placeholder, or the user deleted
-        // it). A spinner says "waiting on something" without a hover; the
-        // tooltip says what.
+        // busy 也要转圈、不能只是置灰：上传可能在后台跑，而屏幕上没有别的
+        // 东西解释为什么按钮是禁用的（比如重新打开输入框还在重建占位内容，
+        // 或者用户把它删了）。转圈在不用悬浮的情况下就能表达「在等什么」，
+        // tooltip 负责说明具体原因。
         <Loader2 className="animate-spin" aria-hidden="true" />
       ) : (
         <ArrowUp aria-hidden="true" />

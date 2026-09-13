@@ -1,15 +1,13 @@
 "use client";
 
 /**
- * Comment-composer binding for the coordinated-upload engine (MUL-5181, L2).
+ * 评论输入区与"协调上传引擎"的绑定（MUL-5181, L2）。
  *
- * All upload mechanics — coordinator ownership, generation guards, the
- * confirmed write-back of a finished upload's link into the draft body, the
- * combined submit gate — live in `editor/use-coordinated-uploads`. This file
- * only maps the engine onto the comment draft store, keyed by
- * {@link CommentDraftKey}. Without a key (a reply box with no persistence
- * context) the engine falls back to component-local uploads that die with the
- * mount, matching pre-L2 behavior.
+ * 所有上传机制——协调器所有权、代际守卫、已完成上传的链接写回草稿正文、
+ * 合并后的提交闸门——都在 `editor/use-coordinated-uploads` 里。
+ * 本文件只把引擎映射到评论草稿 store 上，按键为 {@link CommentDraftKey}。
+ * 没有 key（一个没有持久化上下文的回复框）时引擎退回到随挂载消亡的
+ * 组件本地上传，与 L2 之前的旧行为一致。
  */
 
 import { useMemo, type RefObject } from "react";
@@ -26,8 +24,13 @@ import {
 
 const EMPTY_UPLOADS: DraftUpload[] = [];
 
+/** 评论上传结果集合（转发协调上传引擎的类型）。 */
 export type CommentUploads = CoordinatedUploads;
 
+/**
+ * 把协调上传引擎绑到"以 draftKey 分区的评论草稿 store"上：
+ * 无 draftKey 时上传退化为组件本地、随挂载结束即失效（兼容旧行为）。
+ */
 export function useCommentUploads(
   draftKey: CommentDraftKey | undefined,
   ctx: UploadContext,
@@ -38,9 +41,8 @@ export function useCommentUploads(
     draftKey ? s.getUploads(draftKey) : EMPTY_UPLOADS,
   );
 
-  // Referentially stable per key — settle closures capture it and must keep
-  // working after this component unmounts, so every accessor goes through
-  // getState().
+  // 每个 key 有引用稳定的绑定——settle 闭包会捕获它、且在本组件卸载后仍需
+  // 继续工作，因此所有访问器都走 getState()。
   const binding = useMemo<UploadDraftBinding | undefined>(() => {
     if (!draftKey) return undefined;
     return {

@@ -1,3 +1,5 @@
+// 本文件是 onboarding（新用户引导）模块的对外出口（barrel）。
+
 export type {
   OnboardingStep,
   OnboardingCompletionPath,

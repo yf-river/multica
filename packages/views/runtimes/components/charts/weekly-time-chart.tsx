@@ -1,3 +1,10 @@
+// ============================================================================
+// 每周运行时长柱状图（runtime 用量页「周视图」运行时间）
+//
+// 角色定位：DailyTimeChart 的周粒度版本——同样单序列柱状图，但每根柱代表
+// 周一到周日累计的运行秒数。进行中的周半透明显示，并在悬浮提示标注
+// 「(进行中 · N / 7 天)」，避免把未满的一周误读成突然下降。
+// ============================================================================
 import {
   BarChart,
   Bar,
@@ -14,14 +21,13 @@ import {
 } from "@multica/ui/components/ui/chart";
 import { useT } from "../../../i18n";
 
-// Weekly counterpart of DailyTimeChart — same single-series bar, but each
-// bar represents Mon–Sun run-time totals. Partial weeks render at half
-// opacity and tag their tooltip with "(partial · N / 7 days)" so the user
-// can't misread an in-progress week as a sudden drop.
+// 单序列配色：周运行时长用品牌 chart-1 色（与日视图一致）。
 const weeklyTimeChartConfig = {
   totalSeconds: { label: "Run time", color: "var(--chart-1)" },
 } satisfies ChartConfig;
 
+// 每周一条：周起止/展示标签/范围文案 + 是否进行中（partial）+ 已过天数 +
+// 该周累计运行秒数。
 export interface WeeklyTimeData {
   weekStart: string;
   weekEnd: string;
@@ -32,6 +38,9 @@ export interface WeeklyTimeData {
   totalSeconds: number;
 }
 
+/**
+ * 每周运行时长柱状图。进行中的周（partial=true）半透明显示、提示标注天数。
+ */
 export function WeeklyTimeChart({
   data,
   formatY,

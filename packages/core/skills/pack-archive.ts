@@ -1,27 +1,36 @@
+// 本文件负责「技能包归档」的组装与校验：限制技能文件/包大小与数量、从目录
+// 选择或已有归档里挑出合法成员（应用忽略/二进制/超限规则）、就地打成 ZIP
+// （STORE 无压缩），并解析 SKILL.md 的 frontmatter 用于预览信息。
+// 规则与 Go 侧技能导入器（server/internal/skill / skill_import_archive.go）
+// 保持一致。
+
 import { parseFrontmatter } from "./frontmatter";
 
-/** Mirrors server/internal/handler maxImportFileSize. */
+/** 单个技能文件最大字节数（镜像 server/internal/handler 的 maxImportFileSize）。 */
 export const MAX_SKILL_FILE_BYTES = 1 << 20; // 1 MiB
-/** Mirrors server/internal/handler maxImportTotalSize (supporting files). */
+/** 支撑文件总字节上限（镜像 maxImportTotalSize）。 */
 export const MAX_SKILL_BUNDLE_BYTES = 8 << 20; // 8 MiB
-/** Mirrors server/internal/handler maxImportFileCount. */
+/** 支撑文件数量上限（镜像 maxImportFileCount）。 */
 export const MAX_SKILL_FILE_COUNT = 256;
-/** Mirrors server/internal/handler maxImportArchiveUploadSize. */
+/** 归档上传总大小上限（镜像 maxImportArchiveUploadSize）。 */
 export const MAX_SKILL_ARCHIVE_BYTES = 16 << 20; // 16 MiB
 
 const SKILL_MD = "skill.md";
 
+/** 一条归档成员：相对路径 + 字节内容。 */
 export type SkillArchiveEntry = {
   relativePath: string;
   data: Uint8Array;
 };
 
+/** 技能包准备失败的错误种类。 */
 export type PreparedSkillArchiveError =
   | "missing_skill_md"
   | "empty"
   | "too_large"
   | "too_many_files";
 
+/** 技能包准备结果：成功带回 File 与预览信息；失败带回错误码。 */
 export type PreparedSkillArchive =
   | {
       ok: true;
@@ -36,11 +45,13 @@ export type PreparedSkillArchive =
     }
   | { ok: false; error: PreparedSkillArchiveError };
 
+/** 文件名是否像技能包归档（.skill 或 .zip）。 */
 export function isSkillArchiveFilename(name: string): boolean {
   const lower = name.toLowerCase();
   return lower.endsWith(".skill") || lower.endsWith(".zip");
 }
 
+/** 直接复用一份已存在的技能归档：只校验总大小，其余交给服务端解析。 */
 export function wrapExistingSkillArchive(file: File): PreparedSkillArchive {
   if (file.size > MAX_SKILL_ARCHIVE_BYTES) {
     return { ok: false, error: "too_large" };
@@ -60,6 +71,12 @@ export function wrapExistingSkillArchive(file: File): PreparedSkillArchive {
   };
 }
 
+/**
+ * 从内存里的归档条目准备技能包。
+ *
+ * @param entries - 原始归档成员列表
+ * @returns 组装好的技能包；失败时返回错误码
+ */
 export function prepareSkillArchiveFromEntries(
   entries: SkillArchiveEntry[],
 ): PreparedSkillArchive {
@@ -79,10 +96,9 @@ export function prepareSkillArchiveFromEntries(
 const EMPTY_BYTES = new Uint8Array();
 
 /**
- * Shared tail of both prepare paths: zip the members `selectSkillArchiveMembers`
- * already approved and derive the preview. `dataFor` supplies the bytes of a
- * selected path — the entries path holds them in memory, the picker path reads
- * them only once selection is done.
+ * 两条准备路径共用的收尾：把 `selectSkillArchiveMembers` 已批准的成员打成 zip，
+ * 并推导预览信息。`dataFor` 提供选中路径的字节——entries 路径在内存里持有
+ * 它们，picker 路径只在选择完成后才读。
  */
 function buildPreparedArchive(
   selection: SkillArchiveSelection,
@@ -120,26 +136,26 @@ function buildPreparedArchive(
   };
 }
 
+/** 一条待选成员的元信息（路径已规范化 + 字节数）。 */
 export type SkillArchiveMemberMeta = {
   path: string;
   size: number;
 };
 
+/** 一次成员选择的结果。 */
 export type SkillArchiveSelection = {
-  /** Members to pack, in input order, with normalized paths. */
+  /** 要打包的成员，按输入顺序、带规范化路径。 */
   selected: SkillArchiveMemberMeta[];
-  /** Normalized path of the SKILL.md that rooted the skill. */
+  /** 作为技能根的那份 SKILL.md 的规范化路径。 */
   skillMdPath: string;
-  /** Directory prefix of the skill root; "" when SKILL.md sits at the root. */
+  /** 技能根所在目录前缀；SKILL.md 就在根上时为 ""。 */
   prefix: string;
 };
 
 /**
- * The single place the ignore rules and the size / count limits are applied.
- * Decides membership from path + size alone — no I/O — so the picker path can
- * reject a directory before reading it, and both prepare paths stay in step by
- * construction rather than by keeping two copies of these rules in agreement.
- * Mirrors the server importer.
+ * 忽略规则与大小/数量限制唯一生效的地方。仅凭路径 + 大小做成员判定——不做
+ * I/O——所以 picker 路径可以在读目录之前就拒绝它，而两条准备路径通过「共用
+ * 这一处」保持同步，而不是各自维护一份规则副本。镜像服务端导入器。
  */
 export function selectSkillArchiveMembers(
   files: SkillArchiveMemberMeta[],
@@ -200,6 +216,7 @@ export function selectSkillArchiveMembers(
   };
 }
 
+/** 取 picker 文件的相对路径（webkitRelativePath 不可用时退回文件名）。 */
 function pickerRelativePath(file: File): string {
   const rel =
     typeof file.webkitRelativePath === "string" && file.webkitRelativePath
@@ -209,8 +226,8 @@ function pickerRelativePath(file: File): string {
 }
 
 /**
- * Pack a directory picker result. Ignored, binary, oversized and out-of-root
- * files are dropped from path + `File.size` before any `arrayBuffer()` call.
+ * 打包一次「目录选择器」的结果。被忽略的、二进制的、超限的和出根的文件，会
+ * 在任何 `arrayBuffer()` 调用前就按「路径 + File.size」被丢弃。
  */
 export async function prepareSkillArchiveFromPickerFiles(
   files: File[],
@@ -238,7 +255,7 @@ export async function prepareSkillArchiveFromPickerFiles(
   return buildPreparedArchive(picked, (path) => data.get(path) ?? EMPTY_BYTES);
 }
 
-// --- zip (STORE / uncompressed) -------------------------------------------
+// --- zip（STORE / 无压缩）-------------------------------------------------
 
 const CRC32_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -252,6 +269,7 @@ const CRC32_TABLE = (() => {
   return table;
 })();
 
+/** 计算一段数据的 CRC-32 校验值。 */
 function crc32(data: Uint8Array): number {
   let c = 0xffffffff;
   for (let i = 0; i < data.length; i++) {
@@ -260,10 +278,12 @@ function crc32(data: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
+/** 字符串按 UTF-8 编码。 */
 function utf8(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
+/** Uint8Array → ArrayBuffer（拷贝，避免共享底层缓冲）。 */
 function uint8ToArrayBuffer(data: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(data.byteLength);
   copy.set(data);
@@ -271,8 +291,8 @@ function uint8ToArrayBuffer(data: Uint8Array): ArrayBuffer {
 }
 
 /**
- * Builds an uncompressed zip. The server parser (`parseSkillArchive`) accepts
- * STORE archives; skipping compression keeps this helper dependency-free.
+ * 打一个无压缩 zip。服务端解析器（`parseSkillArchive`）接受 STORE 归档；
+ * 跳过压缩让这个辅助函数保持零依赖。
  */
 export function packStoreZip(entries: { path: string; data: Uint8Array }[]): Uint8Array {
   const files = entries.map((e) => ({
@@ -296,8 +316,8 @@ export function packStoreZip(entries: { path: string; data: Uint8Array }[]): Uin
     localOffsets.push(offset);
     view.setUint32(offset, 0x04034b50, true);
     view.setUint16(offset + 4, 20, true);
-    view.setUint16(offset + 6, 0x0800, true); // UTF-8 names
-    view.setUint16(offset + 8, 0, true); // STORE
+    view.setUint16(offset + 6, 0x0800, true); // UTF-8 文件名
+    view.setUint16(offset + 8, 0, true); // STORE（无压缩）
     view.setUint16(offset + 10, 0, true);
     view.setUint16(offset + 12, 0, true);
     view.setUint32(offset + 14, f.crc, true);
@@ -345,23 +365,27 @@ export function packStoreZip(entries: { path: string; data: Uint8Array }[]): Uin
   return out;
 }
 
-// --- path helpers (mirror skill_import_archive.go) ------------------------
+// --- 路径辅助（镜像 skill_import_archive.go）------------------------------
 
+/** 规范化相对路径：反斜杠变正斜杠、去掉前导斜杠。 */
 function normalizeRelPath(p: string): string {
   return p.replace(/\\/g, "/").replace(/^\/+/, "");
 }
 
+/** 路径基底（去掉目录后的文件名）是否为 skill.md（大小写不敏感）。 */
 function isSkillMdPath(path: string): boolean {
   const base = path.split("/").pop() ?? "";
   return base.toLowerCase() === SKILL_MD;
 }
 
+/** 取路径所在目录前缀（含尾部斜杠）；没有目录时返回空串。 */
 function archiveEntryPrefix(cleanName: string): string {
   const i = cleanName.lastIndexOf("/");
   if (i <= 0) return "";
   return cleanName.slice(0, i + 1);
 }
 
+/** 从前缀里推导外层目录名（用作展示名）；无目录或名字为 . / .. 时返回空串。 */
 function wrapperNameFromPrefix(prefix: string): string {
   const trimmed = prefix.replace(/\/+$/, "");
   if (!trimmed) return "";
@@ -370,6 +394,8 @@ function wrapperNameFromPrefix(prefix: string): string {
   return base;
 }
 
+/** 该相对路径是否该被忽略：空段、__MACOSX 目录、任何以点开头的段，或名为
+ * license / license.md / license.txt 的文件。 */
 export function isIgnoredArchiveEntry(rel: string): boolean {
   const segments = rel.split("/");
   for (const seg of segments) {
@@ -379,6 +405,7 @@ export function isIgnoredArchiveEntry(rel: string): boolean {
   return base === "license" || base === "license.md" || base === "license.txt";
 }
 
+/** 扩展名是否大概率是二进制文件（图片/字体/压缩包/Office 文档/音视频等）。 */
 export function isLikelyBinaryFilePath(path: string): boolean {
   const ext = extensionOf(path);
   switch (ext) {
@@ -434,6 +461,7 @@ export function isLikelyBinaryFilePath(path: string): boolean {
   }
 }
 
+/** 取路径的小写扩展名（含点）；无扩展名返回空串。 */
 function extensionOf(path: string): string {
   const base = path.split("/").pop() ?? path;
   const i = base.lastIndexOf(".");
@@ -441,10 +469,12 @@ function extensionOf(path: string): string {
   return base.slice(i).toLowerCase();
 }
 
+/** 去掉 .skill / .zip 后缀（大小写不敏感）。 */
 function stripArchiveExtension(name: string): string {
   return name.replace(/\.(skill|zip)$/i, "");
 }
 
+/** 把名字清洗成可安全用作文件名的基底；清空后回退为 "skill"。 */
 function sanitizeArchiveBasename(name: string): string {
   const cleaned = name.replace(/[/\\?%*:|"<>]/g, "-").trim();
   return cleaned || "skill";

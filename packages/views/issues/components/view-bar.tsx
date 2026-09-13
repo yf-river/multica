@@ -1,5 +1,12 @@
 "use client";
 
+// 本文件：ViewBar —— 视图栏。
+// 把内置页签与已保存视图拼成一行扁平、可按用户顺序横向拖拽重排的页签行。
+// 放不下的条目折叠进"更多"下拉（ViewListPanel，可拖序/置顶/隐藏/编辑/删除）；
+// 当被打开的那个视图溢出时，它会把触发器顶替为自己的名字，保证"正在看的视图
+// 永远可见"。栏尾 [⧉] 菜单提供"新建视图/管理视图"；删除确认与拖拽重排分别
+// 走 DeleteViewConfirm 与 ManageViewsDialog。行宽用隐藏镜像逐帧测量（useSingleRowFit）。
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -75,6 +82,7 @@ import {
 } from "./view-bar-popover";
 import { useT } from "../../i18n";
 
+/** 内置页签的宿主侧描述（如"全部/成员/代理"这类固定页签）。 */
 export interface ViewBarBuiltin {
   key: string;
   label: string;
@@ -83,16 +91,15 @@ export interface ViewBarBuiltin {
   onSelect: () => void;
 }
 
-/** Width shared by every tab: fits short names, truncates long ones. */
+/** 每个页签共享的最大宽度：能放下短名称、超长的截断。 */
 const TAB_MAX_W = "max-w-40";
-/** Reserved px beside the tabs, by what actually renders there: the [⧉]
- *  menu is permanent; the "more" trigger exists only while something is
- *  overflowed; the promoted active tab is the wide shape. */
+/** 页签旁边按实际渲染内容预留的像素：行尾的 [⧉] 菜单常驻；"更多"触发器只在
+ *  有溢出时出现；被顶替的活动页签是最宽的形态。 */
 const RESERVE_MENU = 36;
 const RESERVE_MORE = RESERVE_MENU + 32;
 const RESERVE_PROMOTED = RESERVE_MENU + 200;
 
-/** One bar tab: sortable in place; suppresses the click that ends a drag. */
+/** 一个栏上页签：可原位拖拽；并吞掉一次拖拽结束时落到它身上的点击。 */
 function SortableBarTab({
   id,
   children,
@@ -109,17 +116,17 @@ function SortableBarTab({
       return;
     }
     if (!wasDragged.current) return;
-    // A drop lands as a click (swallowed below); a cancelled drag (Escape)
-    // produces none — clear the flag a tick later so the NEXT real click
-    // isn't eaten by a drag that never dropped.
+    // 松手会以一次 click 收尾（在下方被吞掉）；被取消的拖拽（按 Escape）不会
+    // 产生 click——这里推迟一个 tick 再清标志，避免下一次真正的点击被一次
+    // 从未落下的拖拽误吞。
     const timer = window.setTimeout(() => {
       wasDragged.current = false;
     }, 0);
     return () => window.clearTimeout(timer);
   }, [isDragging]);
   return (
-    // Listeners only — dnd-kit's aria attributes would make this span a
-    // second focusable role=button wrapping the real tab button.
+    // 只挂 listeners——dnd-kit 的 aria 属性会让这个 span 变成第二个可聚焦的
+    // role=button，反而包住了真正的页签按钮。
     <span
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
@@ -138,7 +145,7 @@ function SortableBarTab({
   );
 }
 
-/** Shared tab chrome so the real row and the measurement mirror agree. */
+/** 页签通用外观——真实行与测量镜像共用，保证两者宽度完全一致。 */
 function BarTabButton({
   label,
   active,
@@ -167,12 +174,10 @@ function BarTabButton({
 }
 
 /**
- * The view bar: built-in tabs and saved views as one flat, per-user
- * orderable single row. Everything that fits renders as a tab (drag to
- * reorder, horizontal axis); the rest collapses into a "more" popover
- * that appears only when needed. The OPEN view is always visible — when
- * overflowed it takes the trigger slot with its own name. The [⧉] menu
- * (new view / manage views) is unchanged.
+ * 视图栏：内置页签与已保存视图拼成一行扁平、按用户排序、可横向拖拽的页签行。
+ * 放得下的全部以页签呈现（可拖拽重排）；放不下的收进一个"更多"弹层，
+ * 该弹层仅在确有溢出时才出现。当前打开的视图永远可见——它溢出时会把
+ * "更多"触发器顶替成自己的名字。行尾的 [⧉] 菜单（新建视图 / 管理视图）不变。
  */
 export function ViewBar({
   wsId,
@@ -189,12 +194,12 @@ export function ViewBar({
   scope: IssueViewScope;
   builtins: ViewBarBuiltin[];
   views: IssueView[];
-  /** True once the views list has actually loaded — see savePrefs. */
+  /** 视图列表真正加载完成后才会置 true——见 savePrefs 的说明。 */
   viewsReady: boolean;
   activeView: IssueView | null;
   onSelectView: (view: IssueView | null) => void;
   onNewView: () => void;
-  /** Opens the edit dialog seeded from the view's own definition. */
+  /** 打开以视图自身定义为种子的编辑对话框。 */
   onEditView: (view: IssueView) => void;
 }) {
   const { t } = useT("issues");
@@ -207,8 +212,8 @@ export function ViewBar({
   const [moreOpen, setMoreOpen] = useState(false);
   const [deleting, setDeleting] = useState<IssueView | null>(null);
 
-  // The same manage rule the server enforces: owner, or workspace
-  // owner/admin for shared views. Members load from cache in one query.
+  // 与管理规则一致：所有者，或共享视图的工作区 owner/admin 才能管理。
+  // 成员用一条查询从缓存加载。
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const myRole = useMemo(
     () => members.find((m) => m.user_id === currentUserId)?.role ?? null,
@@ -249,10 +254,9 @@ export function ViewBar({
     [builtins, views, currentUserId, myRole],
   );
 
-  // Synchronous mirror of a just-dropped order. The preference mutation is
-  // optimistic but its onMutate is async — without this, the dropped tab
-  // renders back at its OLD slot for a frame before the cache lands, which
-  // reads as a bounce. Cleared as soon as the preference data catches up.
+  // 刚刚落下的顺序的同步镜像。偏好 mutation 是乐观的，但它的 onMutate 是异步的——
+  // 没有这个镜像，落下的页签会在缓存生效前、先在自己的旧位置渲染一帧，看起来像
+  // 弹了一下。偏好数据追上来后立即清空镜像。
   const [localOrder, setLocalOrder] = useState<string[] | null>(null);
   useEffect(() => {
     setLocalOrder(null);
@@ -272,11 +276,10 @@ export function ViewBar({
     [builtins],
   );
 
-  // --- single-row fit -----------------------------------------------------
-  // The reserve feeds back into the fit, but only ever grows when items
-  // fall out (the "more" trigger appears, then the promoted active tab
-  // widens it), which shrinks the fit further and keeps them out — the
-  // settle is monotonic in both directions.
+  // --- 单行容纳度计算 ------------------------------------------------
+  // 预留宽度会反哺回容纳度，但它只在有条目被挤出去时才会变大（"更多"触发器出现、
+  // 随后被顶替的活动页签又把它加宽），这会让容纳度进一步缩小、把条目继续挡在外面——
+  // 收敛过程在两个方向上都单调，不会来回抖动。
   const activeBarId = activeView ? `view:${activeView.id}` : null;
   const [reserveTier, setReserveTier] = useState<"menu" | "more" | "promoted">(
     "menu",
@@ -303,12 +306,11 @@ export function ViewBar({
   const promoted = reserveTier === "promoted" && activeOverflowed;
 
   const savePrefs = (next: { hidden: string[]; order: string[] }) => {
-    // A drag can land before the views list has loaded; pruning against an
-    // in-flight (empty) list would persist "every saved view was deleted"
-    // and wipe the user's order and hidden sets. Drop the write instead —
-    // the gesture is re-doable one moment later.
+    // 拖拽可能落在视图列表加载完成之前；拿一份进行中的（空）列表去做修剪，
+    // 会把"所有保存视图都被删了"误写持久化，抹掉用户的顺序与隐藏集。
+    // 这里干脆放弃这次写入——手势稍后即可重做。
     if (!viewsReady) return;
-    // Prune ids that no longer resolve so deleted views don't accumulate.
+    // 修剪掉已无法解析的 id，避免被删除的视图在偏好里无限累积。
     const known = new Set(items.map((item) => item.barItemId));
     updatePreference.mutate({
       hidden: next.hidden.filter((id) => known.has(id)),
@@ -319,8 +321,8 @@ export function ViewBar({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
   );
-  // Apply a move NOW (mirror) and persist it — both drag surfaces route
-  // through here so the drop lands visually in the same frame.
+  // 立即应用这次移动（镜像）并持久化——两条拖拽通路都经过这里，
+  // 让落下与视觉更新发生在同一帧。
   const applyMove = (activeId: string, overId: string) => {
     const ids = ordered.map((item) => item.barItemId);
     const from = ids.indexOf(activeId);
@@ -350,8 +352,8 @@ export function ViewBar({
       hidden: [...nextHidden],
       order: ordered.map((item) => item.barItemId),
     });
-    // Hiding the open view exits it — an invisible active view would
-    // strand the surface with no matching tab.
+    // 隐藏正在打开的视图等于退出它——一个看不见的活动视图会让 surface
+    // 处于没有对应页签的"悬空"状态。
     if (hidden && activeView && barItemId === `view:${activeView.id}`) {
       onSelectView(null);
     }
@@ -395,9 +397,8 @@ export function ViewBar({
           <span className="truncate">{view.name}</span>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-44">
-          {/* Edit stays visible but disabled without permission — the greyed
-              row IS the "you can't" signal. Delete is hidden entirely: a
-              destructive dead-end invites a doomed confirm flow. */}
+          {/* 无权限时"编辑"保持可见但置灰——那行灰色本身就是在说"你不能"；
+              删除则整个隐藏——一条毁灭性的死路只会引出注定失败的确认流程。 */}
           <ContextMenuItem
             disabled={!item.canManage}
             onClick={() => onEditView(view)}
@@ -431,7 +432,7 @@ export function ViewBar({
       ref={containerRef}
       className="relative flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-hidden"
     >
-      {/* Measurement mirror: every visible candidate at natural width. */}
+      {/* 测量镜像：让每个可见候选按自然宽度渲染一次。 */}
       <div
         ref={measureRef}
         aria-hidden
@@ -447,8 +448,8 @@ export function ViewBar({
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
-        // Same gesture contract as the table's column reordering: tabs slide
-        // along the row only. Overflowed items reorder via the manage dialog.
+        // 与表格表头列重排同一套手势契约：页签只沿行滑动。
+        // 溢出的条目通过管理对话框重排。
         modifiers={[restrictToHorizontalAxis]}
         onDragEnd={handleDragEnd}
       >
@@ -485,11 +486,9 @@ export function ViewBar({
         </SortableContext>
       </DndContext>
 
-      {/* "More" is an overflow indicator: it renders only while something
-          is actually collapsed. Reordering in its panel decides what fits
-          on the bar; the open view becomes the trigger when it overflows
-          so it never disappears. With nothing overflowed, reorder lives on
-          the bar itself and management on the [⧉] menu. */}
+      {/* "更多"是溢出指示器：只在确有折叠内容时渲染。面板里重排决定栏上放什么；
+          打开的视图溢出时顶替触发器，因此它永远不会消失。没有溢出时，
+          重排发生在栏上、管理走 [⧉] 菜单。 */}
       {overflowed.length > 0 && (
       <Popover open={moreOpen} onOpenChange={setMoreOpen}>
         <PopoverTrigger
@@ -591,7 +590,7 @@ export function ViewBar({
         onDeleteView={confirmDelete}
       />
 
-      {/* Context-menu / overflow-row delete share one confirm. */}
+      {/* 右键菜单与溢出行的删除共用同一个确认框。 */}
       <DeleteViewConfirm
         view={deleting}
         onOpenChange={(open) => {

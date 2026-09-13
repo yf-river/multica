@@ -1,3 +1,14 @@
+// 本文件实现 issue 订阅（subscriber）的 HTTP 端点：列出订阅者、显式订阅、取消
+// 订阅，以及「整棵子树取消订阅」（含对后续新子议题的静默防打扰墓碑，MUL-5483）。
+//
+// 订阅行由 issue_subscriber 表承载，带 Reason 区分来源（manual 显式订阅、rule 规则
+// 驱动、delegation 委派等）。显式订阅会清除之前任何「取消订阅」墓碑——用户是在覆盖
+// 自己先前的退订决定，而规则驱动的订阅刻意做不到这点。
+//
+// 子树退订是一条独立路由而不是 /unsubscribe 上的旗标：前端随 merge 自动部署、后端
+// 手工部署，新客户端常会对话老服务器。老服务器会把未知的 "subtree": true 静默解成
+// 无、只退订根并回 200——用户以为整棵树静音了，实际每个现存与未来的子议题还在
+// 通知。未知路由则直接 404，客户端大声失败、用户可重试，而不是信任一次静默空操作。
 package handler
 
 import (
@@ -15,7 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// SubscriberResponse is the JSON shape returned for each issue subscriber.
+// SubscriberResponse 是每个 issue 订阅者的对外 JSON 结构。
 type SubscriberResponse struct {
 	IssueID   string `json:"issue_id"`
 	UserType  string `json:"user_type"`
@@ -24,6 +35,7 @@ type SubscriberResponse struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// subscriberToResponse 把订阅行转成对外结构。
 func subscriberToResponse(s db.IssueSubscriber) SubscriberResponse {
 	return SubscriberResponse{
 		IssueID:   uuidToString(s.IssueID),
@@ -34,7 +46,7 @@ func subscriberToResponse(s db.IssueSubscriber) SubscriberResponse {
 	}
 }
 
-// ListIssueSubscribers returns all subscribers for an issue.
+// ListIssueSubscribers 返回某 issue 的全部订阅者。
 func (h *Handler) ListIssueSubscribers(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -56,8 +68,8 @@ func (h *Handler) ListIssueSubscribers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// SubscribeToIssue subscribes a user to an issue with reason "manual".
-// If request body contains user_id, subscribes that user; otherwise subscribes the caller.
+// SubscribeToIssue 以 reason=manual 把某用户订阅到一个 issue。请求体里若带了 user_id，
+// 就订阅该用户；否则订阅调用者本人。
 func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -66,8 +78,8 @@ func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workspaceID := uuidToString(issue.WorkspaceID)
-	// Default target: the caller, derived via resolveActor so an agent caller
-	// (X-Agent-ID set) subscribes itself rather than the underlying member.
+	// 默认目标：调用者，经 resolveActor 解析——这样 agent 调用者（设了 X-Agent-ID）
+	// 订阅的是它自己，而不是其背后的成员。
 	callerActorType, callerActorID := h.resolveActor(r, requestUserID(r), workspaceID)
 	targetUserType := callerActorType
 	targetUserID := callerActorID
@@ -90,9 +102,8 @@ func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Explicit action, so this CLEARS any earlier opt-out tombstone — the user
-	// is overriding their own unsubscribe. Rule-driven subscribes deliberately
-	// cannot do that (see AddIssueSubscriber).
+	// 这是显式动作，所以它会清掉早前的任何退订墓碑——用户是在覆盖自己先前的退订
+	// 决定。规则驱动的订阅刻意做不到这点（见 AddIssueSubscriber）。
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start subscription transaction")
@@ -128,28 +139,24 @@ func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"subscribed": true})
 }
 
-// UnsubscribeFromIssue removes a user's subscription from an issue.
-// If request body contains user_id, unsubscribes that user; otherwise unsubscribes the caller.
+// UnsubscribeFromIssue 把某用户的订阅从 issue 移除。请求体里若带 user_id，退订该用户；
+// 否则退订调用者本人。
 func (h *Handler) UnsubscribeFromIssue(w http.ResponseWriter, r *http.Request) {
 	h.unsubscribeFromIssue(w, r, false)
 }
 
-// UnsubscribeFromIssueSubtree leaves this issue AND every descendant, and —
-// via the ancestor opt-out check the delegated rule runs — keeps future
-// children of this tree from re-subscribing the user (MUL-5483).
+// UnsubscribeFromIssueSubtree 退订本 issue 及其所有后代，并且——经由委托规则运行的
+// 祖先退订检查——让本树未来新增的子议题不再重新订阅该用户（MUL-5483）。
 //
-// This is a SEPARATE ROUTE rather than a flag on /unsubscribe on purpose.
-// Frontend staging deploys automatically on merge while backend staging is
-// deployed by hand, so a new client routinely talks to an older server. A
-// server that predates this feature decodes an unknown "subtree": true into
-// nothing, unsubscribes the root only, and answers 200 — the user is told the
-// whole tree is muted while every existing and future child keeps notifying.
-// An unknown ROUTE 404s instead, so the client fails loudly and the user can
-// retry rather than trusting a silent no-op.
+// 它刻意是独立路由，而不是 /unsubscribe 上的旗标：前端随 merge 自动部署、后端手工
+// 部署，新客户端常会对话老服务器。老服务器把未知的 "subtree": true 静默解成无、只
+// 退订根并回 200——用户被告知整棵树已静音，可每个现存与未来的子议题还在通知。
+// 未知路由则直接 404，客户端大声失败、用户可重试，而不是信任一次静默空操作。
 func (h *Handler) UnsubscribeFromIssueSubtree(w http.ResponseWriter, r *http.Request) {
 	h.unsubscribeFromIssue(w, r, true)
 }
 
+// unsubscribeFromIssue 是退订的公共实现；subtree=true 时走整树退订（带序列化边界）。
 func (h *Handler) unsubscribeFromIssue(w http.ResponseWriter, r *http.Request, subtree bool) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -158,8 +165,8 @@ func (h *Handler) unsubscribeFromIssue(w http.ResponseWriter, r *http.Request, s
 	}
 
 	workspaceID := uuidToString(issue.WorkspaceID)
-	// Default target: the caller, derived via resolveActor so an agent caller
-	// (X-Agent-ID set) unsubscribes itself rather than the underlying member.
+	// 默认目标：调用者，经 resolveActor 解析——agent 调用者（设了 X-Agent-ID）退订
+	// 的是它自己，而不是其背后的成员。
 	callerActorType, callerActorID := h.resolveActor(r, requestUserID(r), workspaceID)
 	targetUserType := callerActorType
 	targetUserID := callerActorID
@@ -182,25 +189,20 @@ func (h *Handler) unsubscribeFromIssue(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 
-	// Canonicalize before the target reaches either the advisory lock or a
-	// broadcast. The lock keys on the UUID value, and clients dedupe on the
-	// user_id string, so an uppercase request must not spell either one
-	// differently from the delegated rule's canonical form
-	// (MUL-5483 review round 8).
+	// 先规范化，再让目标进入告警锁或广播。锁按 UUID 值作键，客户端按 user_id 字符串
+	// 去重，所以大写的请求不能把两者的拼写与委托规则的规范形态弄出差异
+	// （MUL-5483 第 8 轮评审）。
 	targetUserID = uuidToString(parseUUID(targetUserID))
 
-	// Every issue this call actually left. The subtree variant reports the whole
-	// set so each one gets its own broadcast: a client with a CHILD issue open
-	// never sees the root's event, and would otherwise keep showing a
-	// subscription the server has already retired.
+	// 本次调用真正离开的每个 issue。子树变体要上报完整集合，让每个 issue 各自收到
+	// 广播：开着 CHILD issue 的客户端永远看不到根的事件，否则它会一直显示一个服务端
+	// 早已撤销的订阅。
 	var committedEvents []events.Event
 	if subtree {
-		// A subtree opt-out is only meaningful if it also covers children the
-		// agent files a moment later, so it must not interleave with the
-		// delegated rule's eligibility check. Both take the same
-		// (workspace, user) lock for the length of their transaction; without
-		// it a child created between the tombstone write and the rule's read
-		// comes back as an active watcher (MUL-5483 review round 7).
+		// 子树退订只有同时覆盖 agent 片刻之后才归档的子议题才有意义，所以它绝不能与
+		// 委托规则的资格检查交错执行。两者在各自事务期间持有同一个 (workspace, user)
+		// 锁；没有它，墓碑写入与规则读取之间新建的子议题会作为活跃观察者回来
+		// （MUL-5483 第 7 轮评审）。
 		_, committed, err := h.unsubscribeSubtreeSerialized(r.Context(), workspaceID, issue.ID, targetUserType, targetUserID, callerActorType, callerActorID)
 		if errors.Is(err, errTargetNoLongerMember) {
 			writeError(w, http.StatusForbidden, "target user is not a member of this workspace")
@@ -247,14 +249,12 @@ func (h *Handler) unsubscribeFromIssue(w http.ResponseWriter, r *http.Request, s
 	writeJSON(w, http.StatusOK, map[string]bool{"subscribed": false})
 }
 
-// errTargetNoLongerMember reports that the target left the workspace between
-// the handler's pre-check and the serialized write, so the caller can answer
-// 403 exactly as the pre-check would have.
+// errTargetNoLongerMember 报告目标在 handler 预检与序列化写入之间离开了 workspace，
+// 使调用方能按预检同样的方式回 403。
 var errTargetNoLongerMember = errors.New("target user is no longer a workspace member")
 
-// unsubscribeSubtreeSerialized tombstones the tree inside the same
-// (workspace, user) serialization boundary the delegated auto-subscribe rule
-// uses, and returns every issue it actually retired.
+// unsubscribeSubtreeSerialized 在委托自动订阅规则使用的同一个 (workspace, user) 序列化
+// 边界内给整棵树写退订墓碑，并返回实际撤销的每个 issue。
 func (h *Handler) unsubscribeSubtreeSerialized(
 	ctx context.Context, workspaceID string, rootID pgtype.UUID, userType, userID, actorType, actorID string,
 ) ([]pgtype.UUID, []events.Event, error) {
@@ -272,17 +272,13 @@ func (h *Handler) unsubscribeSubtreeSerialized(
 		return nil, nil, err
 	}
 
-	// The membership pre-check in the caller ran against its own snapshot,
-	// before this transaction existed — it describes the past. A revoke that
-	// commits in between clears this user's subscriptions and deletes their
-	// member row, and writing a tombstone behind it would leave an opt-out that
-	// outlives the membership and is inherited on re-invite. Re-assert it here,
-	// holding the row, now that the lock guarantees no revoke can interleave
-	// (MUL-5483 review round 8).
+	// 调用方的成员资格预检跑在它自己的快照上、早于本事务存在——它描述的是过去。
+	// 若其间提交了一次撤销，会把该用户的订阅清掉并删掉他的 member 行；在其后写墓碑，
+	// 会留下一个比成员资格活得更久、在重新邀请时还会继承的退订标记。现在持锁重查
+	// 一次成员资格——锁保证不会有撤销插进这中间（MUL-5483 第 8 轮评审）。
 	//
-	// Members only: an agent target has no member row, and revoke's subscription
-	// cleanup is member-scoped, so the outlives-membership problem does not
-	// arise for agents.
+	// 仅成员：agent 目标没有 member 行，而撤销的订阅清理是成员维度的，所以 agent
+	// 不存在「墓碑比成员资格活得更久」的问题。
 	if userType == "member" {
 		if _, err := qtx.LockActiveMember(ctx, db.LockActiveMemberParams{
 			UserID:      parseUUID(userID),
@@ -320,6 +316,7 @@ func (h *Handler) unsubscribeSubtreeSerialized(
 	return ids, committedEvents, nil
 }
 
+// buildSubscriberEvent 组装订阅增删的领域事件（幂等键以 issue+user 唯一）。
 func buildSubscriberEvent(eventType, issueID, workspaceID, actorType, actorID, userType, userID, reason string) events.Event {
 	return events.Event{
 		Type:           eventType,

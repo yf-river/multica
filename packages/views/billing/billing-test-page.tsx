@@ -1,26 +1,21 @@
 "use client";
 
-// Test-quality billing page. Stuffs every /api/cloud-billing/* surface
-// onto a single screen so we can verify the proxy + Stripe flow
-// end-to-end without a designed UI. Sections:
+// 测试用的计费页。把 /api/cloud-billing/* 的每个接口都塞进一个屏幕，以便在
+// 还没有正式 UI 前端到端验证代理 + Stripe 流程。区块：
 //
-//   1. Balance card
-//   2. Stripe-success banner (visible only when the URL carries a
-//      ?session_id=... — the user just came back from Stripe Checkout
-//      and we poll the upstream until the topup is terminal).
-//   3. Buy section: server-authoritative price tier buttons that POST
-//      a checkout-session and redirect.window.location.href = url.
-//   4. Billing Portal button.
-//   5. Three lists: transactions / batches / topups.
+//   1. 余额卡片
+//   2. Stripe 成功横幅（仅当 URL 携带 ?session_id=... 时可见——用户刚从
+//      Stripe Checkout 回来，我们轮询上游直到充值进入终态）。
+//   3. 购买区：以服务端价格为权威的档位按钮，POST 一个 checkout-session 后
+//      window.location.href = url 跳转。
+//   4. Billing Portal 按钮。
+//   5. 三个列表：交易记录 / 批次 / 充值记录。
 //
-// Anything past "make the API talk to Stripe and surface results" is
-// out of scope here on purpose — when the real billing UI ships it
-// will live elsewhere and this whole page can be deleted. Strings
-// are still routed through useT() so the package-wide
-// i18next/no-literal-string lint rule passes; the namespace is
-// `billing` and the en/zh-Hans bundles live alongside the other
-// namespaces. When the real UI lands, both the namespace and this
-// file get deleted together.
+// 超过「让 API 能对话 Stripe 并把结果展示出来」的部分刻意不在本页范围——
+// 等真正的计费 UI 上线它会另居他处，这一整页都可以删掉。文案仍然走 useT()，
+// 以通过包级 i18next/no-literal-string lint 规则；命名空间是 `billing`，
+// en/zh-Hans 语言包与其它命名空间并排放置。真正的 UI 落地时，命名空间和本
+// 文件会一起被删除。
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -54,19 +49,18 @@ import {
 import { useLocale, useT } from "../i18n";
 import { useNavigation } from "../navigation";
 
-// 1 credit = 1_000_000 micro-credit; cents → dollars factor for the
-// Stripe-side display column. Documented at the top of the cloud
-// billing.md so we don't sprinkle magic numbers through the UI.
+// 1 credit = 1_000_000 micro-credit；cents → 美元的换算因子用于 Stripe 侧展示
+// 列。数值含义记录在 cloud billing.md 顶部，避免在 UI 里到处撒魔法数字。
 const MICRO_PER_CREDIT = 1_000_000;
 const CENTS_PER_DOLLAR = 100;
 
+/** 计费测试页：集中展示余额、购买、Portal 与三类记录列表。 */
 export function BillingTestPage() {
   const { t } = useT("billing");
   const { searchParams, replace, pathname } = useNavigation();
 
-  // The Stripe success URL on the cloud side has the literal
-  // {CHECKOUT_SESSION_ID} placeholder which Stripe substitutes before
-  // redirecting the browser. So when we land here, the param is real.
+  // 云端 Stripe 成功 URL 带有字面的 {CHECKOUT_SESSION_ID} 占位符，Stripe 在
+  // 重定向前会替换它。所以落到这里时，参数是真实存在的。
   const sessionId = searchParams.get("session_id") ?? "";
 
   return (
@@ -82,10 +76,8 @@ export function BillingTestPage() {
         <CheckoutSessionStatusBanner
           sessionId={sessionId}
           onDismiss={() => {
-            // After we've shown the terminal status we strip
-            // session_id from the URL so a refresh doesn't re-poll a
-            // stale order. `replace` keeps the browser at the same
-            // pathname without adding history.
+            // 展示完终态后把 session_id 从 URL 里去掉，这样刷新不会重新轮询
+            // 一个过期订单。`replace` 让浏览器留在同一 pathname 而不新增历史。
             replace(pathname);
           }}
         />
@@ -104,10 +96,10 @@ export function BillingTestPage() {
   );
 }
 
-// ─── Stripe-success banner ───────────────────────────────────────────
+// ─── Stripe 成功横幅 ───────────────────────────────────────────────
 
-// Polls /checkout-sessions/{id} every 2s until the order reaches a
-// terminal state. Mounted only when ?session_id is in the URL.
+// 每 2 秒轮询一次 /checkout-sessions/{id}，直到订单进入终态。仅在 URL 里有
+// ?session_id 时挂载。
 function CheckoutSessionStatusBanner({
   sessionId,
   onDismiss,
@@ -125,21 +117,16 @@ function CheckoutSessionStatusBanner({
   const terminal =
     status === "credited" || status === "failed" || status === "canceled";
 
-  // When the polling reaches a terminal state, the rest of the page
-  // (balance, transactions, batches, topups) is still showing the
-  // pre-checkout snapshot. Without this effect the user would see
-  // "Final status: credited" up here while the balance card still
-  // displays the old number — the only signal that things were stale
-  // would be a manual refresh click. Invalidate the dependent
-  // queries so they re-fetch in the background.
+  // 轮询到达终态时，页面其余部分（余额、交易、批次、充值）仍展示着 checkout
+  // 前的旧快照。没有这个 effect，用户会看到上面写着「最终状态：credited」，
+  // 余额卡却还是旧数字——唯一的过期信号只剩手动点刷新。失效这些依赖查询，
+  // 让它们在后台重新拉取。
   //
-  // Dep list `terminal`: terminal only flips from false→true once
-  // per session-id, so the invalidation fires exactly once. If the
-  // caller mounts this banner with a session that is already in a
-  // terminal state (e.g. user revisits the success URL after closing
-  // and reopening the tab), terminal flips false→true on the first
-  // data load and we still re-fetch — which is what we want, because
-  // the cached snapshot is just as stale in that case.
+  // 依赖列表 `terminal`：terminal 每个 session-id 只会从 false→true 翻转一次，
+  // 所以失效恰好触发一次。若调用方带着一个已处终态的 session 挂载本横幅
+  // （例如用户关闭再打开标签页后回访成功 URL），terminal 在首次数据加载时就
+  // false→true，我们仍会重新拉取——这正是想要的，因为那种情况下缓存快照
+  // 同样过期。
   const invalidateBillingDataAfterCredit = useInvalidateBillingDataAfterCredit();
   useEffect(() => {
     if (terminal) invalidateBillingDataAfterCredit();
@@ -205,8 +192,9 @@ function CheckoutSessionStatusBanner({
   );
 }
 
-// ─── Balance ─────────────────────────────────────────────────────────
+// ─── 余额 ─────────────────────────────────────────────────────────
 
+/** 余额卡片：展示当前 credit 余额与来源元信息。 */
 function BalanceCard() {
   const { t } = useT("billing");
   const locale = useLocale();
@@ -253,8 +241,9 @@ function BalanceCard() {
   );
 }
 
-// ─── Buy + Portal ────────────────────────────────────────────────────
+// ─── 购买 + Portal ─────────────────────────────────────────────────
 
+/** 购买区：各档位购买按钮 + 打开 Billing Portal 的入口。 */
 function BuyAndPortalSection() {
   const { t } = useT("billing");
   const tiers = useQuery(billingPriceTiersOptions());
@@ -270,10 +259,9 @@ function BuyAndPortalSection() {
         toast.error(t(($) => $.buy.toast_no_url));
         return;
       }
-      // Redirect via window.location instead of window.open so the
-      // browser back button returns the user to this page after
-      // Stripe redirects out. Stripe-hosted pages handle their own
-      // SPA-like behaviour from there.
+      // 用 window.location 而不是 window.open 重定向，这样 Stripe 转出去后，
+      // 浏览器返回键能把用户带回本页。Stripe 托管的页面会自己处理之后的
+      // SPA 式行为。
       window.location.href = url;
     } catch (err) {
       toast.error(
@@ -291,14 +279,12 @@ function BuyAndPortalSection() {
         toast.error(t(($) => $.buy.toast_no_portal_url));
         return;
       }
-      // Open in a new tab — the portal is a customer self-service
-      // surface and keeping our session in this tab makes it easy to
-      // come back and verify the resulting state via this same page.
+      // 新标签页打开——Portal 是客户自助界面，本页保留登录会话便于回来后
+      // 用同一页验证结果状态。
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (err) {
-      // 400 is the documented "no Stripe customer yet" case from
-      // upstream. Surface the body verbatim — it's the most useful
-      // signal during testing.
+      // 400 是上游文档化的「还没有 Stripe 客户」场景。原样展示响应正文——
+      // 测试期间这是最有用的信号。
       toast.error(
         err instanceof Error ? err.message : t(($) => $.buy.toast_portal_failed),
       );
@@ -358,6 +344,7 @@ function BuyAndPortalSection() {
   );
 }
 
+/** 单个档位的购买按钮：金额 → 可得 credit 数（含可选赠送与有效期）。 */
 function TierButton({
   tier,
   busy,
@@ -408,8 +395,9 @@ function TierButton({
   );
 }
 
-// ─── Lists ───────────────────────────────────────────────────────────
+// ─── 记录列表 ───────────────────────────────────────────────────────
 
+/** 交易记录卡片：最近 20 条额度变动流水。 */
 function TransactionsCard() {
   const { t } = useT("billing");
   const txs = useQuery(billingTransactionsOptions({ page: 1, page_size: 20 }));
@@ -451,6 +439,7 @@ function TransactionsCard() {
   );
 }
 
+/** 单条交易记录行：类型、来源、增减额与变更后余额。 */
 function TransactionRow({ row }: { row: BillingTransaction }) {
   const { t } = useT("billing");
   const locale = useLocale();
@@ -490,6 +479,7 @@ function TransactionRow({ row }: { row: BillingTransaction }) {
   );
 }
 
+/** 批次（credit batch）卡片：各充值批次的总量 / 剩余量。 */
 function BatchesCard() {
   const { t } = useT("billing");
   const batches = useQuery(billingBatchesOptions({ page: 1, page_size: 20 }));
@@ -531,6 +521,7 @@ function BatchesCard() {
   );
 }
 
+/** 单行批次：来源类型、已用 / 总量与过期时间。 */
 function BatchRow({ row }: { row: BillingBatch }) {
   const { t } = useT("billing");
   const locale = useLocale();
@@ -563,6 +554,7 @@ function BatchRow({ row }: { row: BillingBatch }) {
   );
 }
 
+/** 充值（topup）卡片：历次 Stripe 充值记录。 */
 function TopupsCard() {
   const { t } = useT("billing");
   const topups = useQuery(billingTopupsOptions({ page: 1, page_size: 20 }));
@@ -604,6 +596,7 @@ function TopupsCard() {
   );
 }
 
+/** 单行充值：金额 → credit（含赠送）与状态徽标。 */
 function TopupRow({ row }: { row: BillingTopup }) {
   const { t } = useT("billing");
   const locale = useLocale();
@@ -647,8 +640,9 @@ function TopupRow({ row }: { row: BillingTopup }) {
   );
 }
 
-// ─── Shared bits ─────────────────────────────────────────────────────
+// ─── 共用小件 ─────────────────────────────────────────────────────
 
+/** 列表底部的分页摘要文案。 */
 function PagingFooter({
   page,
   pageSize,
@@ -671,6 +665,7 @@ function PagingFooter({
   );
 }
 
+/** 卡片右上角的手动刷新按钮（加载时转圈并禁用）。 */
 function RefreshButton({
   isLoading,
   onClick,
@@ -694,6 +689,7 @@ function RefreshButton({
   );
 }
 
+/** 红色的错误提示文本。 */
 function ErrorText({ error }: { error: unknown }) {
   const { t } = useT("billing");
   return (
@@ -703,17 +699,21 @@ function ErrorText({ error }: { error: unknown }) {
   );
 }
 
+/** 列表为空时的灰字提示。 */
 function EmptyText({ children }: { children: React.ReactNode }) {
   return <p className="text-caption text-muted-foreground">{children}</p>;
 }
 
+/**
+ * 把以分为单位的金额格式化成带货币符号的本地化文本。
+ * 这里用 Intl 没问题——没有货币换算，只是用周围翻译句子的同一 locale 做
+ * 规范化展示。
+ */
 function formatMoney(
   amountCents: number,
   currency: string,
   locale: string,
 ): string {
-  // Intl is fine here — no currency conversion happening, just canonical
-  // display in the same locale as the surrounding translated sentence.
   try {
     return new Intl.NumberFormat(locale, {
       style: "currency",
@@ -724,12 +724,10 @@ function formatMoney(
   }
 }
 
-// formatDate returns an ISO-ish localized string or the locale's "—"
-// dash for missing/invalid input. The dash itself goes through the
-// translation bundle so it stays consistent if either locale ever
-// wants to swap it for a localized placeholder. Caller passes in `t`
-// so we don't run useT() inside a util (the rule of hooks would
-// trip on the conditional path).
+// formatDate 返回 ISO 风格本地化字符串，缺失/非法输入时返回 locale 的
+// "—" 破折号。破折号本身也走翻译包，这样若任一 locale 想换成本地化的占位符
+// 也能保持一致。由调用方传入 `t`，避免在 util 里调用 useT()（hooks 规则会
+// 被这里的条件路径绊倒）。
 function formatDate(
   value: string | undefined,
   t: ReturnType<typeof useT<"billing">>["t"],

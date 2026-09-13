@@ -1,18 +1,18 @@
+// 本文件职责：把「协调式上传引擎」绑定到 issue 创建流程（MUL-5181, L2），
+// 暴露 useIssueCreateUploads 供手动/Agent 两个创建面板共用同一份上传池。
 "use client";
 
 /**
- * Issue-create binding for the coordinated-upload engine (MUL-5181, L2).
+ * issue 创建流程对「协调式上传引擎」（MUL-5181, L2）的绑定。
  *
- * Both create panels (manual form and agent prompt) share ONE upload pool —
- * `draft.shared.attachments` — so a file survives a mode switch from either
- * side. What differs per mode is the BODY the upload's link belongs to: the
- * manual description or the agent prompt. The binding captures the mode that
- * started the upload, so a settle that arrives after the dialog closed (or
- * after the user flipped modes) writes the link back into the body it was
- * pasted into, never the other side's.
+ * 手动表单和 Agent prompt 两个创建面板共享同一个上传池——`draft.shared.attachments`——
+ * 所以无论从哪一侧开始上传，文件都能跨「手动 ↔ Agent」模式切换存活。两侧的差异只在于
+ * 上传链接要写回哪个 BODY：手动描述还是 Agent prompt。该绑定记住「发起上传时的模式」，
+ * 这样即使用户关了弹窗（或中途切了模式）之后上传才完成，链接也只会写回当初粘贴它的
+ * 那个正文，而不会写到另一侧。
  *
- * Uploads here carry no issue/comment context — the issue does not exist yet;
- * the server binds attachments at create time from `attachment_ids`.
+ * 这里的上传不携带 issue/评论上下文——issue 还不存在；服务端在创建时才通过
+ * `attachment_ids` 把附件真正挂上。
  */
 
 import { useMemo, type RefObject } from "react";
@@ -27,6 +27,7 @@ import {
   type UploadDraftBinding,
 } from "../editor/use-coordinated-uploads";
 
+/** 把一段 markdown 追加到已有正文末尾（正文非空时用空行分隔，并去掉多余的行尾空白）。 */
 function appendMarkdown(existing: string, markdown: string): string {
   return existing.trim() ? `${existing.replace(/\s+$/, "")}\n\n${markdown}` : markdown;
 }
@@ -39,6 +40,16 @@ function setSharedUploads(next: DraftUpload[]): void {
   useIssueDraftStore.getState().setShared({ attachments: next });
 }
 
+/**
+ * 获取「按当前创建模式绑定的」上传协调器。
+ *
+ * 上传池是共享草稿里的 `shared.attachments`，但上传完成的 markdown 链接要写回
+ * 发起上传时所在模式的正文（manual → 描述，agent → prompt），绑定即实现该隔离。
+ *
+ * @param mode       当前创建模式（manual / agent），决定链接写回哪个正文
+ * @param editorGate 编辑器自己的上传闸门，作为协调器的外置闸门一并生效
+ * @param editorRef  对应编辑器的 ref，供协调器触发 flush 等操作
+ */
 export function useIssueCreateUploads(
   mode: CreateMode,
   editorGate: UploadGate,
@@ -58,8 +69,8 @@ export function useIssueCreateUploads(
       settleUpload: (id, att) => {
         const cur = sharedUploads();
         if (!cur.some((u) => u.clientUploadId === id)) return;
-        // attachmentToDraftUpload strips the response-scoped signed
-        // download_url before the row is persisted.
+        // attachmentToDraftUpload 会在记录落库前剥掉响应里那个带作用域的
+        // signed download_url，避免把临时签名地址持久化。
         setSharedUploads(
           cur.map((u) =>
             u.clientUploadId === id ? { ...attachmentToDraftUpload(att), clientUploadId: id } : u,

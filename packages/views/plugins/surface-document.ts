@@ -1,4 +1,12 @@
-/** Design tokens forwarded over the bridge so a surface looks native. */
+/**
+ * plugins（插件）模块：构造插件 surface 的「受信任外层文档」。
+ *
+ * 通过桥转发设计令牌使插件页面看起来原生，并生成包裹单个不受信任插件文档的
+ * 宿主侧 HTML（含严格 CSP 与外层/内层双层 frame 隔离）。也负责把主题变量
+ * 从 DOM 读成令牌表。
+ */
+
+/** 通过桥转发给 surface 的设计令牌名——有了它们，插件界面才显得原生。 */
 export const SURFACE_THEME_TOKENS = [
   "--background",
   "--foreground",
@@ -13,9 +21,12 @@ export const SURFACE_THEME_TOKENS = [
   "--text-body",
 ] as const;
 
+/** 桥的握手消息类型常量（与 surface-bridge.ts 对应）。 */
 export const SURFACE_BRIDGE_CONNECT_MESSAGE = "multica:plugin-bridge-connect";
+/** 桥协议版本号（与 surface-bridge.ts 对应）。 */
 export const SURFACE_BRIDGE_PROTOCOL_VERSION = 2;
 
+/** 从指定元素的计算样式里读出已定义的令牌，供推送主题使用。 */
 export function readThemeTokens(element: Element | null): Record<string, string> {
   if (!element || typeof getComputedStyle !== "function") return {};
   const computed = getComputedStyle(element);
@@ -27,10 +38,12 @@ export function readThemeTokens(element: Element | null): Record<string, string>
   return tokens;
 }
 
+/** 把字符串转义成可在 HTML 属性里安全使用的形式。 */
 function escapeAttribute(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** UTF-8 安全的 base64 编码（原生 btoa 只能吃 Latin-1）。 */
 function encodeUTF8(value: string): string {
   const bytes = new TextEncoder().encode(value);
   let binary = "";
@@ -40,25 +53,25 @@ function encodeUTF8(value: string): string {
   return btoa(binary);
 }
 
+/** 构造外层 frame 文档所需的输入。 */
 export interface SurfaceFrameDocumentInput {
-  /** Short-lived URL on Multica's dedicated, cookie-free content origin. */
+  /** Multica 专属无 cookie 内容域上的短期 URL。 */
   url: string;
-  /** Single-use proof embedded in both trusted documents, never plugin code. */
+  /** 同时嵌入两份受信任文档的一次性凭据——绝不进入插件代码。 */
   bridgeToken: string;
 }
 
 /**
- * Builds the trusted outer frame around one untrusted plugin document.
+ * 为单个不受信任的插件文档构造受信任的外层 frame 文档。
  *
- * The outer frame exists so its `frame-src` applies to only this plugin. A
- * page-wide policy would also have to allow every attachment preview origin;
- * that wider list would let a hostile surface navigate to those origins. Here
- * the only network navigation an inner frame may make is back to the exact
- * Multica content origin that served it.
+ * 外层 frame 存在是为了让它的 `frame-src` 只作用于这一个插件。整页范围的安全
+ * 策略还得放行所有附件预览域名；这个更宽的白名单会让恶意的 surface 导航到
+ * 那些域名。这里内层 frame 允许的网络跳转只能是回到提供它的那个 Multica
+ * 内容域。
  *
- * The outer frame is host-authored and same-origin with the app. The INNER
- * frame is still `sandbox="allow-scripts"` without `allow-same-origin`, so two
- * plugins receive distinct opaque origins and cannot inspect each other.
+ * 外层 frame 由宿主编写、与应用同源。内层 frame 仍然只有
+ * `sandbox="allow-scripts"`、没有 `allow-same-origin`，所以两个插件各自得到
+ * 互不透明的 origin，无法互相检查对方。
  */
 export function buildSurfaceFrameDocument({ url, bridgeToken }: SurfaceFrameDocumentInput): string {
   const parsed = new URL(url);
@@ -110,8 +123,8 @@ body { overflow: hidden; background: transparent; }
   function stopSurface(type) {
     if (state === "terminal") return;
     state = "terminal";
-    // After connection the host owns the transferred port; this terminal
-    // signal makes it close the bridge and unmount this wrapper.
+    // 连接建立后，port 的所有权已转移给宿主；这个终态信号让宿主关闭桥并
+    // 卸载本包裹层。
     parent.postMessage({ type: type }, "*");
   }
 

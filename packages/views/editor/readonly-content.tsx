@@ -1,17 +1,14 @@
 "use client";
 
 /**
- * ReadonlyContent — compatibility wrapper over the canonical <RichContent>.
+ * ReadonlyContent——对规范 <RichContent> 的兼容包裹层。
  *
- * The renderer itself moved to packages/views/rich-content/ (MUL-4922) so Chat,
- * Issue descriptions and Comments all share ONE implementation of Markdown
- * parsing, sanitize, fenced-code dispatch, mentions, links and attachments.
- * This file stays only so existing document-density callers (comment cards,
- * issue detail, autopilot detail, Markdown attachment preview) keep their
- * import path and props.
+ * 渲染器本身已迁到 packages/views/rich-content/（MUL-4922），让 Chat、issue
+ * 描述与评论共用**同一份** Markdown 解析、消毒、围栏代码分发、mention、链接
+ * 与附件实现。本文件保留，只为让既有「文档密度」调用方（评论卡片、issue
+ * 详情、autopilot 详情、Markdown 附件预览）保持 import 路径与 props。
  *
- * Do not reintroduce rendering logic here. New behaviour belongs in
- * RichContent, where every surface picks it up at once.
+ * 不要在此重新引入渲染逻辑。新行为应放 RichContent，那里所有界面一次全收到。
  */
 
 import { memo } from "react";
@@ -22,13 +19,15 @@ interface ReadonlyContentProps {
   content: string;
   className?: string;
   /**
-   * Attachments associated with the surrounding entity (comment / issue body).
-   * Callers SHOULD pass a stable reference; a fresh array on every parent
-   * render busts the memo.
+   * 周边实体（评论 / issue 正文）关联的附件。调用方应传稳定引用；父组件
+   * 每次渲染都给新数组会击穿 memo。
    */
   attachments?: Attachment[];
 }
 
+/**
+ * ReadonlyContent——只读渲染 markdown 内容（文档密度）。
+ */
 export const ReadonlyContent = memo(function ReadonlyContent({
   content,
   className,

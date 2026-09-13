@@ -5,12 +5,20 @@ interface UseFileDropZoneOptions {
   enabled?: boolean;
 }
 
+/**
+ * 把一组拖放事件处理器绑定给一个「放下文件即可上传」的区域。
+ *
+ * @param onDrop 有文件放下时回调（一次给全量 File 数组）。
+ * @param enabled 为 false 时忽略拖放并隐藏拖拽高亮。
+ * @returns isDragOver（是否正拖拽文件到区域内）与要展开到目标元素上的
+ *  drag 事件 props。
+ */
 function useFileDropZone({ onDrop, enabled = true }: UseFileDropZoneOptions) {
   const [isDragOver, setIsDragOver] = useState(false);
   const onDropRef = useRef(onDrop);
   onDropRef.current = onDrop;
 
-  // Clear on any document-level drop or dragend (e.g. user drops outside the zone)
+  // 任何文档级 drop/dragend 都清掉高亮（例如用户把文件放到了区域之外）。
   useEffect(() => {
     if (!enabled) return;
     const clear = () => setIsDragOver(false);

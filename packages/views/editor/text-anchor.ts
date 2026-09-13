@@ -1,50 +1,44 @@
 /**
- * Text-anchor caret mapping between the readonly stand-in and the editor.
+ * 只读占位视图与编辑器之间的「文本锚点」光标映射。
  *
- * The lazy-editor swap used to land the caret with raw pixel coordinates
- * (`posAtCoords`), which assumes the readonly render and the Tiptap render
- * are pixel-identical. They never are on long documents: per-block height
- * differences (tables, code headers, mention cards) accumulate top-to-bottom,
- * and NodeViews/images keep reflowing after `onReady` — so clicks landed
- * lines away from the target. A text anchor sidesteps layout entirely:
- * record WHICH character of WHICH top-level block was clicked, then resolve
- * that logical position in the ProseMirror document.
+ * lazy-editor 切换过去时曾用原始像素坐标（`posAtCoords`）落光标，这假设
+ * 只读渲染与 Tiptap 渲染逐像素一致。长文档里从不成立：逐块高度差异
+ * （表格、代码头、mention 卡片）自上而下累积，且 NodeView/图片在 `onReady`
+ * 之后还在回流——于是点击会落到目标好几行之外。文本锚点则完全绕开布局：
+ * 记录点击的是**哪个**顶层块里的**第几个字符**，再把这个逻辑位置在
+ * ProseMirror 文档里解出来。
  *
- * Offsets count NON-WHITESPACE characters only. The two renderers disagree
- * about whitespace inside container blocks — react-markdown keeps the HTML
- * source's inter-element newlines as text nodes ("URL: x\nTitle: y"), while
- * ProseMirror's textContent concatenates with no separator ("URL: xTitle: y")
- * — so raw character offsets drift one per list item / nested block. The
- * non-whitespace character sequence, however, is identical on both sides.
- * The whitespace ambiguity this creates at word boundaries ("end of this
- * word" vs "start of the next") is resolved by `bias`, captured from what
- * the user actually clicked next to.
+ * 偏移只数**非空白**字符。两个渲染器对容器块内的空白有分歧——react-markdown
+ * 保留 HTML 源码里的元素间换行为文本节点（"URL: x\nTitle: y"），而
+ * ProseMirror 的 textContent 无分隔拼接（"URL: xTitle: y"）——原始字符偏移
+ * 会逐列表项/嵌套块漂移。但非空白字符序列两侧完全一致。单词边界上由此产生
+ * 的空白歧义（"词末"还是"下一个词首"）由 `bias` 化解，它取自用户实际点击
+ * 位置附近的内容。
  *
- * Known drift: content the two renderers textify differently (a mention's
- * display name is text in the readonly render but an atom — zero text — in
- * the doc) shifts offsets within that one block; resolution clamps to the
- * block end, so worst case the caret lands earlier in the same block, never
- * in another block.
+ * 已知漂移：两侧文本化结果不同的内容（mention 的显示名在只读渲染里是文本、
+ * 在文档里是 atom——零文本）会让偏移在**那一个块内**偏；解析时会钳到块末，
+ * 最坏情况光标落进同一块稍前的位置，绝不会跑到别的块。
  */
 
 import type { Node as PMNode } from "@tiptap/pm/model";
 
+/** 文本锚点：标识只读内容里的一个逻辑字符位置。 */
 export interface TextAnchor {
-  /** Index of the top-level block (readonly root child ↔ doc child). */
+  /** 顶层块的序号（只读根子元素 ↔ doc 子节点一一对应）。 */
   block: number;
-  /** Count of non-whitespace characters before the caret within the block. */
+  /** 该块内光标之前的非空白字符数。 */
   offset: number;
   /**
-   * Which neighbor the caret attaches to when whitespace separates the
-   * offset-th non-whitespace character from the next one: 1 = just before
-   * the next non-whitespace character (user clicked a line/word start),
-   * -1 = just after the previous one (user clicked a line/word end).
+   * 当空白分隔第 offset 个非空白字符与下一个字符时，光标贴向哪一侧：
+   * 1 = 恰好在下个非空白字符前（用户点了行/词首），
+   * -1 = 恰好在上一个字符后（用户点了行/词尾）。
    */
   bias: 1 | -1;
 }
 
 const NON_WS = /\S/;
 
+/** 数一段文本里的非空白字符个数。 */
 function countNonWs(s: string): number {
   let n = 0;
   for (let i = 0; i < s.length; i++) if (NON_WS.test(s.charAt(i))) n++;
@@ -52,11 +46,10 @@ function countNonWs(s: string): number {
 }
 
 /**
- * Resolve a click point inside the readonly render to a text anchor.
- * `root` is the markdown container whose element children correspond 1:1 to
- * the document's top-level blocks. Returns null when the point yields no
- * caret position (unsupported API, click on empty margin below content) —
- * callers fall back to coordinate focus.
+ * 把只读渲染里的一个点击点解析成文本锚点。
+ * `root` 是 markdown 容器，它的元素子节点与文档顶层块一一对应。
+ * 该点落不出光标位置（API 不支持、点在内容下方的空白边距）时返回 null——
+ * 调用方退回按坐标聚焦。
  */
 export function anchorFromPoint(
   x: number,
@@ -66,7 +59,7 @@ export function anchorFromPoint(
   const doc = root.ownerDocument;
   let node: Node | null = null;
   let nodeOffset = 0;
-  // Standard API (Chromium/Firefox), then the WebKit legacy one.
+  // 标准 API（Chromium/Firefox），然后是 WebKit 旧 API。
   if (typeof doc.caretPositionFromPoint === "function") {
     const p = doc.caretPositionFromPoint(x, y);
     if (p) {
@@ -82,7 +75,7 @@ export function anchorFromPoint(
   }
   if (!node || !root.contains(node) || node === root) return null;
 
-  // Climb to the top-level block (the direct child of `root`).
+  // 向上爬到顶层块（`root` 的直接子节点）。
   let blockEl: Node = node;
   while (blockEl.parentNode && blockEl.parentNode !== root) {
     blockEl = blockEl.parentNode;
@@ -93,10 +86,9 @@ export function anchorFromPoint(
   const block = Array.prototype.indexOf.call(root.children, blockEl);
   if (block < 0) return null;
 
-  // Text before the caret within the block. Range.toString() handles both
-  // text-node carets and element carets (offset = child index), and yields
-  // a prefix of the block's textContent — which lets us peek at the char
-  // right after the caret for the bias.
+  // 取块内光标前的文本。Range.toString() 同时处理文本节点光标与元素光标
+  // （offset = 子节点下标），结果是该块 textContent 的前缀——用它还能偷看
+  // 光标后紧邻的字符以定 bias。
   const range = doc.createRange();
   try {
     range.setStart(blockEl, 0);
@@ -114,9 +106,8 @@ export function anchorFromPoint(
 }
 
 /**
- * Resolve a text anchor to a ProseMirror position. Out-of-range values clamp
- * (block → last block, offset → block end) so a stale or drifted anchor still
- * lands inside the intended block instead of throwing.
+ * 把文本锚点解析成 ProseMirror 位置。越界值会钳制（块 → 最后一块，
+ * 偏移 → 块末），让过期或漂移的锚点仍落进预期块内而不是抛错。
  */
 export function posFromAnchor(doc: PMNode, anchor: TextAnchor): number {
   if (doc.childCount === 0) return 0;
@@ -130,8 +121,7 @@ export function posFromAnchor(doc: PMNode, anchor: TextAnchor): number {
 
   const wanted = Math.max(0, anchor.offset);
   let seen = 0;
-  // Caret position right after the `wanted`-th non-whitespace character
-  // (block content start while none have been passed yet).
+  // 光标位于第 `wanted` 个非空白字符之后（一个都还没过时，就是块内容起点）。
   let afterPrev = contentStart;
   let resolved: number | null = null;
   block.descendants((child, pos) => {
@@ -141,7 +131,7 @@ export function posFromAnchor(doc: PMNode, anchor: TextAnchor): number {
     for (let i = 0; i < text.length; i++) {
       if (!NON_WS.test(text.charAt(i))) continue;
       if (seen === wanted) {
-        // This is the first non-whitespace character AFTER the caret.
+        // 这是光标之后的第一个非空白字符。
         resolved = anchor.bias === 1 ? contentStart + pos + i : afterPrev;
         return false;
       }
@@ -151,8 +141,7 @@ export function posFromAnchor(doc: PMNode, anchor: TextAnchor): number {
     return true;
   });
   if (resolved !== null) return resolved;
-  // Caret past the last non-whitespace character: exact end lands after it;
-  // an overshoot (renderer textified something the doc doesn't, e.g. a
-  // mention label) clamps to the block's content end.
+  // 光标越过最后一个非空白字符：精确落在它之后；过冲（渲染器把文档没有的
+  // 内容文本化，如 mention 标签）则钳到块内容末尾。
   return seen === wanted ? afterPrev : blockStart + block.nodeSize - 1;
 }

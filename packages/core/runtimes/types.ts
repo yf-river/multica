@@ -1,10 +1,10 @@
-// Derived "health" type for runtimes — the user-facing state we display
-// in lists, cards, and tooltips. The raw server field is binary (online /
-// offline + last_seen_at); this enum splits the offline state into three
-// time-bucketed flavors so users can tell "just lost" from "long gone".
+// Runtime 的派生"健康"类型——在列表、卡片与提示里展示的用户可见状态。
+// 原始服务器字段是二元的（online / offline + last_seen_at）；这个枚举把离线态
+// 拆成三个按时间分桶的口味，让用户能区分"刚断"和"很久没见"。
 
+/** Runtime 的四态健康：在线 / 刚失去 / 离线 / 长期离线。 */
 export type RuntimeHealth =
-  | "online" // green — within heartbeat threshold
-  | "recently_lost" // amber — offline < 5 minutes (likely transient)
-  | "offline" // grey — offline 5 minutes ~ 6 days
-  | "long_offline"; // destructive — offline beyond 6 days
+  | "online" // 绿——心跳阈值内
+  | "recently_lost" // 琥珀——离线 < 5 分钟（多半是暂时的）
+  | "offline" // 灰——离线 5 分钟 ~ 6 天
+  | "long_offline"; // 红——离线超过 6 天

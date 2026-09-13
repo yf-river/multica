@@ -12,48 +12,51 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// Background
+// 文件导读：本文件决定并写入每个任务 Codex config.toml 里的沙箱策略块。
 //
-// On macOS, Codex's Seatbelt sandbox in the `workspace-write` mode silently
-// ignores `[sandbox_workspace_write] network_access = true`. DNS resolution is
-// blocked at the syscall layer, so processes inside the sandbox see
-// `no such host` errors when calling out (for example, `multica issue get`
-// hitting the Multica API). See upstream issue openai/codex#10390.
+// 各平台背景不同：macOS 上 Codex Seatbelt 的 workspace-write 模式会静默忽略
+// `[sandbox_workspace_write] network_access = true`（见 openai/codex#10390），必须回退
+// 到 danger-full-access 让 agent 能访问 Multica API；Linux 上跑 danger-full-access 是
+// 明确的产品决定而非兼容回退（隔离来自 daemon 自身运行所在边界）；Windows 上默认
+// danger-full-access 是兼容选择，用户显式选 windows.sandbox 时保留 workspace-write，
+// 无法判定时关闭即失败。本文件写出的受管块位于文件顶部、只用顶层点号键，避免把用户
+// 内容错误地卷进 `[table]` 作用域。
+
+// 背景
 //
-// Until a fixed Codex release ships, the per-task Codex config on macOS needs
-// to fall back to `sandbox_mode = "danger-full-access"` so the agent can
-// actually reach the Multica API.
+// macOS 上 Codex 的 Seatbelt 沙箱在 `workspace-write` 模式下会静默忽略
+// `[sandbox_workspace_write] network_access = true`。DNS 解析在系统调用层被阻断，因此
+// 沙箱内的进程向外呼叫时会看到 `no such host` 错误（例如 `multica issue get` 打
+// Multica API）。见上游 issue openai/codex#10390。
 //
-// Linux runs danger-full-access as a deliberate product decision (MUL-5578,
-// #6218), not as a compatibility fallback — see codexSandboxPolicyFor.
+// 在有修复的 Codex 版本发布之前，macOS 的 per-task Codex 配置必须回退到
+// `sandbox_mode = "danger-full-access"`，让 agent 能真正连上 Multica API。
 //
-// CodexDarwinNetworkAccessFixedVersion is the earliest Codex CLI version in
-// which `network_access = true` is honored under Seatbelt on macOS. Bump this
-// constant when the upstream fix ships. Empty string means "no known fixed
-// release yet — always treat macOS Codex as broken for network access".
+// Linux 跑 danger-full-access 是刻意的产品决定（MUL-5578、#6218），而非兼容回退——
+// 见 codexSandboxPolicyFor。
+
+// CodexDarwinNetworkAccessFixedVersion 是「macOS 上 Seatbelt 下 `network_access =
+// true` 得到尊重」的最早 Codex CLI 版本。上游修复发布时请更新此常量。空字符串表示
+// 「尚无已知修复版本——macOS 的 Codex 在网络访问上一律按坏的对待」。
 const CodexDarwinNetworkAccessFixedVersion = ""
 
-// codexSandboxPolicy describes how the per-task Codex config.toml should
-// configure the sandbox.
+// codexSandboxPolicy 描述 per-task Codex config.toml 应如何配置沙箱。
 type codexSandboxPolicy struct {
-	// Mode is the value written as `sandbox_mode = "..."`.
+	// Mode 是写为 `sandbox_mode = "..."` 的值。
 	Mode string
-	// NetworkAccess controls `[sandbox_workspace_write] network_access`.
-	// Only meaningful when Mode is "workspace-write".
+	// NetworkAccess 控制 `[sandbox_workspace_write] network_access`。
+	// 仅 Mode == "workspace-write" 时有意义。
 	NetworkAccess bool
-	// Reason is a short human-readable label used in warn-level logs.
+	// Reason 是用于 warn 级日志的简短人类可读说明。
 	Reason string
-	// Hint is an optional, actionable remediation surfaced in warn-level logs
-	// when Mode is danger-full-access. It is empty when there is no generic
-	// action to surface (e.g. the Windows compatibility fallback, where
-	// enabling Codex's native sandbox is deferred follow-up work rather than a
-	// version bump), so the log omits the hint instead of showing an irrelevant
-	// one.
+	// Hint 是 Mode 为 danger-full-access 时、在 warn 级日志里呈现的可操作修复建议。
+	// 没有可呈现的通用动作时为空（例如 Windows 兼容回退——启用 Codex 原生沙箱属于
+	// 后续跟进工作，而非版本升级），日志便会省略 hint 而不展示无关内容。
 	Hint string
 }
 
-// resolveGOOS returns goos, or runtime.GOOS when goos is empty. Callers pass an
-// explicit goos in tests; production leaves it empty to use the host platform.
+// resolveGOOS 返回 goos；goos 为空时返回 runtime.GOOS。测试调用方显式传 goos；
+// 生产环境留空以使用宿主平台。
 func resolveGOOS(goos string) string {
 	if goos == "" {
 		return runtime.GOOS
@@ -61,40 +64,32 @@ func resolveGOOS(goos string) string {
 	return goos
 }
 
-// codexSandboxPolicyFor picks the default policy for the given platform and
-// detected Codex CLI version. It is the platform baseline; per-task user config
-// can refine it (see codexSandboxPolicyForConfig).
+// codexSandboxPolicyFor 为给定平台与探测到的 Codex CLI 版本挑选默认策略。它是平台
+// 基线；per-task 用户配置可以进一步细化它（见 codexSandboxPolicyForConfig）。
 //
-//   - Linux (and any other non-darwin, non-windows platform):
-//     danger-full-access on the daemon user's real HOME. Landlock could enforce
-//     workspace-write here, but enforcing it meant redirecting HOME/XDG per task
-//     and seeding a hand-maintained allowlist of credential paths back into it,
-//     which left every un-listed host CLI (aws, kube, gcloud, glab, rclone, …)
-//     unconfigured inside tasks and could not converge. The containment it
-//     bought was also narrower than it looked: workspace-write restricts writes
-//     only — reads and network were already unrestricted, so credentials under
-//     the real HOME were readable and exfiltratable regardless. The task
-//     filesystem boundary is therefore the boundary the daemon itself runs
-//     inside (VM, container, or dedicated Unix user), matching macOS/Windows.
-//     See MUL-5578 / #6218, and apps/docs security-model.
-//   - Windows: danger-full-access, as a deliberate compatibility choice.
-//     Codex ships a native Windows sandbox (windows.sandbox = "unelevated" via
-//     a Restricted Token, or "elevated"), but it is still experimental with
-//     known reliability limitations, so the daemon does not enable it by
-//     default. When no native windows.sandbox is configured, Codex cannot
-//     enforce workspace-write on Windows (it downgrades to read-only) and then
-//     rejects non-safe mutation commands "by policy" — e.g. `multica issue
-//     create` fails — because under approval_policy = "never" the request never
-//     reaches the daemon's auto-approver. danger-full-access sidesteps that.
-//     Enabling the native sandbox is tracked as separate follow-up work. See
-//     MUL-4957. A user who has opted into windows.sandbox (via config.toml or a
-//     `-c` custom arg) keeps workspace-write instead of this fallback, and an
-//     undecidable config fails closed; that logic lives in
-//     codexSandboxPolicyForConfig / resolveWindowsSandboxState.
-//   - darwin with a version at or above CodexDarwinNetworkAccessFixedVersion:
-//     workspace-write with network access (upstream bug fixed).
-//   - darwin otherwise (including when the version is unknown): fall back to
-//     danger-full-access so the Multica CLI can reach the API.
+//   - Linux（以及任何其它非 darwin、非 windows 平台）：
+//     danger-full-access，跑在 daemon 用户真实 HOME 上。Landlock 本可在这里强制
+//     workspace-write，但那样做意味着每个任务都要重定向 HOME/XDG、并在其中播种一份
+//     手工维护的凭据路径白名单——这会让每个没被列出的宿主 CLI（aws、kube、gcloud、
+//     glab、rclone……）在任务里没配置，而且无法收敛。它买到的围栏也比看上去窄：
+//     workspace-write 只限制写入——读与网络本就不受限，所以真实 HOME 下的凭据无论如何
+//     都可读、可外传。因此任务的文件系统边界就是 daemon 自身运行所在的边界（VM、
+//     容器或专用 Unix 用户），与 macOS/Windows 对齐。见 MUL-5578 / #6218，以及
+//     apps/docs 的 security-model。
+//   - Windows：danger-full-access，作为刻意的兼容选择。Codex 自带原生 Windows 沙箱
+//     （经 Restricted Token 的 windows.sandbox = "unelevated"，或 "elevated"），但仍属
+//     实验特性、存在已知可靠性限制，所以 daemon 默认不启用。未配置原生 windows.sandbox
+//     时，Codex 在 Windows 上无法强制 workspace-write（会降级为只读），随后在
+//     approval_policy = "never" 下按 "policy" 拒绝非安全变更命令——例如 `multica issue
+//     create` 会失败——因为请求根本到不了 daemon 的自动批准器。danger-full-access
+//     绕开它。启用原生沙箱另作跟进。见 MUL-4957。已选择 windows.sandbox（经
+//     config.toml 或 `-c` 自定义参数）的用户保留 workspace-write 而非本回退；无法判定
+//     的配置关闭即失败；逻辑在 codexSandboxPolicyForConfig /
+//     resolveWindowsSandboxState。
+//   - darwin 且版本不低于 CodexDarwinNetworkAccessFixedVersion：
+//     workspace-write + 网络访问（上游 bug 已修复）。
+//   - darwin 其余情况（含版本未知）：回退 danger-full-access，使 Multica CLI 能连上
+//     API。
 func codexSandboxPolicyFor(goos, detectedVersion string) codexSandboxPolicy {
 	if goos == "" {
 		goos = runtime.GOOS
@@ -131,35 +126,30 @@ func codexSandboxPolicyFor(goos, detectedVersion string) codexSandboxPolicy {
 	}
 }
 
-// windowsSandboxConfig is the tri-state of a native Codex Windows sandbox
-// selection. It is three-valued (not a bool) so an undecidable config fails
-// closed — the daemon never loosens to danger-full-access when it cannot
-// confirm the user's intent. See MUL-4957.
+// windowsSandboxConfig 是原生 Codex Windows 沙箱选择的三态。做成三值（而非 bool）
+// 是为了让「无法判定」的配置关闭即失败——daemon 无法确认用户意图时绝不放宽到
+// danger-full-access。见 MUL-4957。
 type windowsSandboxConfig int
 
 const (
-	// windowsSandboxAbsent: confidently no native sandbox is selected anywhere,
-	// so the danger-full-access compatibility fallback is safe to apply.
+	// windowsSandboxAbsent：确定任何地方都没选原生沙箱，应用 danger-full-access
+	// 兼容回退是安全的。
 	windowsSandboxAbsent windowsSandboxConfig = iota
-	// windowsSandboxNative: a valid windows.sandbox = "unelevated"|"elevated"
-	// is selected, so keep workspace-write and let Codex enforce isolation.
+	// windowsSandboxNative：选了合法的 windows.sandbox = "unelevated"|"elevated"，
+	// 保留 workspace-write 让 Codex 强制隔离。
 	windowsSandboxNative
-	// windowsSandboxUndecidable: the config could not be read/parsed, or holds
-	// a windows.sandbox value Codex does not accept. The daemon cannot tell
-	// whether the user asked for isolation, so it must NOT loosen — fail closed.
+	// windowsSandboxUndecidable：配置读不出/解析不了，或带着 Codex 不接受的
+	// windows.sandbox 值。daemon 无法判断用户是否要隔离，因此绝不能放宽——关闭即失败。
 	windowsSandboxUndecidable
 )
 
-// codexSandboxPolicyForConfig returns the platform default from
-// codexSandboxPolicyFor for linux/darwin. On Windows it applies the resolved
-// native-sandbox state (see resolveWindowsSandboxState): a user who opted into
-// windows.sandbox keeps workspace-write, an undecidable config fails closed to
-// workspace-write, and only a confidently absent sandbox gets the
-// danger-full-access compatibility fallback. See MUL-4957.
+// codexSandboxPolicyForConfig 对 linux/darwin 返回 codexSandboxPolicyFor 的平台默认。
+// Windows 上套用解析后的原生沙箱状态（见 resolveWindowsSandboxState）：选择
+// windows.sandbox 的用户保留 workspace-write；无法判定的配置关闭即失败为
+// workspace-write；只有「确定缺失」才拿 danger-full-access 兼容回退。见 MUL-4957。
 //
-// This is intentionally the branch point for the eventual native-sandbox
-// rollout: flipping the Windows default later means writing windows.sandbox
-// ourselves and defaulting winState to native, not restructuring callers.
+// 这刻意作为将来原生沙箱上线的分支点：日后翻转 Windows 默认，只需自己写
+// windows.sandbox 并把 winState 默认成 native，而无需重构调用方。
 func codexSandboxPolicyForConfig(goos, detectedVersion string, winState windowsSandboxConfig) codexSandboxPolicy {
 	if goos == "" {
 		goos = runtime.GOOS
@@ -170,10 +160,9 @@ func codexSandboxPolicyForConfig(goos, detectedVersion string, winState windowsS
 	return codexSandboxPolicyFor(goos, detectedVersion)
 }
 
-// codexSandboxPolicyForWindows maps a resolved native-sandbox state to a
-// policy. Native and Undecidable both keep workspace-write (Undecidable is the
-// fail-closed case — it never loosens on doubt); only a confidently absent
-// native sandbox gets the danger-full-access compatibility fallback.
+// codexSandboxPolicyForWindows 把解析后的原生沙箱状态映射成策略。Native 与
+// Undecidable 都保留 workspace-write（Undecidable 是关闭即失败的情形——绝不因存疑而
+// 放宽）；只有确定缺失的原生沙箱才拿 danger-full-access 兼容回退。
 func codexSandboxPolicyForWindows(state windowsSandboxConfig) codexSandboxPolicy {
 	switch state {
 	case windowsSandboxNative:
@@ -196,12 +185,11 @@ func codexSandboxPolicyForWindows(state windowsSandboxConfig) codexSandboxPolicy
 	}
 }
 
-// windowsSandboxFromConfig classifies the windows.sandbox selection in a
-// config.toml body. Codex accepts only the exact-lowercase variants
-// "unelevated"/"elevated" and refuses to load a config with any other value, so
-// anything else present is treated as undecidable (fail closed) rather than a
-// safe "absent". Unparseable TOML is likewise undecidable — Codex would reject
-// the same file. An absent windows.sandbox key is a genuine "absent".
+// windowsSandboxFromConfig 对一段 config.toml 正文里的 windows.sandbox 选择归类。
+// Codex 只接受精确小写变体 "unelevated"/"elevated"，遇到任何其它值都拒绝加载配置，
+// 因此其它存在值一律按「无法判定」（关闭即失败）处理，而不是安全的「缺失」。无法解析
+// 的 TOML 同样无法判定——Codex 会拒绝同一文件。windows.sandbox 键缺席才是货真价实
+// 的「缺失」。
 func windowsSandboxFromConfig(config string) windowsSandboxConfig {
 	var probe struct {
 		Windows struct {
@@ -214,19 +202,16 @@ func windowsSandboxFromConfig(config string) windowsSandboxConfig {
 	return classifyWindowsSandboxValue(probe.Windows.Sandbox)
 }
 
-// codexConfigOverrideValueRe matches the value token of a Codex `-c` /
-// `--config` windows.sandbox override, e.g. `windows.sandbox = "unelevated"`.
-// It tolerates whitespace around the dotted key and the `=`, matching Codex's
-// own lenient `-c` parsing.
+// codexWindowsSandboxOverrideRe 匹配 Codex `-c` / `--config` 的 windows.sandbox 覆盖
+// 值的键 token，例如 `windows.sandbox = "unelevated"`。容忍点号键与 `=` 周围空白，
+// 对齐 Codex 自己宽松的 `-c` 解析。
 var codexWindowsSandboxOverrideRe = regexp.MustCompile(`^\s*windows\s*\.\s*sandbox\s*=`)
 
-// windowsSandboxFromCustomArgs classifies a native Windows sandbox selection
-// passed via Codex `-c windows.sandbox=...` / `--config windows.sandbox=...`
-// args. These never land in config.toml (they stay in argv and are applied on
-// top of it), so config-only detection would miss them — the MUL-4957 review's
-// second must-fix. Mirrors the override-parsing shape in server/pkg/agent's
-// buildCodexArgs: inline (`-c=windows.sandbox=x`) and two-token
-// (`-c windows.sandbox=x`) forms, last occurrence winning (Codex is last-wins).
+// windowsSandboxFromCustomArgs 对经 Codex `-c windows.sandbox=...` / `--config
+// windows.sandbox=...` 参数传入的原生 Windows 沙箱选择归类。它们从不落进 config.toml
+// （留在 argv、叠在其上生效），只看配置会漏掉它们——MUL-4957 review 的第二必修项。
+// 镜像 server/pkg/agent 的 buildCodexArgs 里解析覆盖的形态：内联（`-c=windows.sandbox=x`）
+// 与双 token（`-c windows.sandbox=x`）两种，最后一次出现生效（Codex 后写覆盖）。
 func windowsSandboxFromCustomArgs(args []string) windowsSandboxConfig {
 	state := windowsSandboxAbsent
 	for i := 0; i < len(args); i++ {
@@ -252,7 +237,7 @@ func windowsSandboxFromCustomArgs(args []string) windowsSandboxConfig {
 		if !codexWindowsSandboxOverrideRe.MatchString(value) {
 			continue
 		}
-		// A windows.sandbox override token: take the part after its first `=`.
+		// 是 windows.sandbox 覆盖 token：取它首个 `=` 之后的部分。
 		if eq := strings.Index(value, "="); eq >= 0 {
 			state = classifyWindowsSandboxValue(value[eq+1:])
 		}
@@ -260,11 +245,9 @@ func windowsSandboxFromCustomArgs(args []string) windowsSandboxConfig {
 	return state
 }
 
-// classifyWindowsSandboxValue maps a raw windows.sandbox value (from config.toml
-// or a `-c` arg, possibly surrounded by whitespace/quotes) to a tri-state. Only
-// the exact-lowercase variants Codex accepts count as native; a present but
-// unaccepted value is undecidable (Codex would refuse the config); an empty
-// value is absent.
+// classifyWindowsSandboxValue 把原始 windows.sandbox 值（来自 config.toml 或 `-c`
+// 参数，可能带空白/引号）映射成三态。只有 Codex 接受的精确小写变体算原生；存在但
+// 不被接受的值是无法判定（Codex 会拒绝该配置）；空值是缺失。
 func classifyWindowsSandboxValue(raw string) windowsSandboxConfig {
 	v := strings.TrimSpace(raw)
 	v = strings.Trim(v, `"'`)
@@ -279,9 +262,9 @@ func classifyWindowsSandboxValue(raw string) windowsSandboxConfig {
 	}
 }
 
-// resolveWindowsSandbox folds per-layer states into one. Undecidable wins over
-// everything (any broken/ambiguous layer means fail closed), then Native over
-// Absent (an opt-in in any layer keeps isolation).
+// resolveWindowsSandbox 把各层状态折叠成一个。Undecidable 胜过一切（任何一层坏掉/
+// 歧义都意味着关闭即失败）；其次是 Native 胜过 Absent（任意一层的显式选择都保持
+// 隔离）。
 func resolveWindowsSandbox(states ...windowsSandboxConfig) windowsSandboxConfig {
 	result := windowsSandboxAbsent
 	for _, s := range states {
@@ -295,8 +278,8 @@ func resolveWindowsSandbox(states ...windowsSandboxConfig) windowsSandboxConfig 
 	return result
 }
 
-// codexDarwinNetworkAccessFixed returns true if the given detected version is
-// known to honor `network_access = true` under Seatbelt on macOS.
+// codexDarwinNetworkAccessFixed 在给定探测版本「已知会尊重 macOS Seatbelt 下的
+// `network_access = true`」时返回 true。
 func codexDarwinNetworkAccessFixed(detectedVersion string) bool {
 	if CodexDarwinNetworkAccessFixedVersion == "" || detectedVersion == "" {
 		return false
@@ -312,43 +295,38 @@ func codexDarwinNetworkAccessFixed(detectedVersion string) bool {
 	return !got.lessThan(fixed)
 }
 
-// codexUpgradeHint returns a short, actionable hint for users running a Codex
-// version that suffers from the macOS network_access bug.
+// codexUpgradeHint 给跑在受 macOS network_access bug 影响版本上的用户返回简短、
+// 可操作的提示。
 func codexUpgradeHint() string {
 	return "upgrade Codex CLI (e.g. `brew upgrade codex` or `npm i -g @openai/codex`) once a release including openai/codex#10390 is available to restore workspace-write + network_access"
 }
 
-// codexLinuxIsolationHint returns the actionable remediation for the Linux
-// full-access default: unlike the macOS bug, there is no version to upgrade to —
-// the containment has to come from the boundary the daemon runs inside.
+// codexLinuxIsolationHint 返回 Linux full-access 默认值的可操作补救：与 macOS bug
+// 不同，这里没有可升级到的版本——围栏必须来自 daemon 运行所在的边界。
 func codexLinuxIsolationHint() string {
 	return "run the daemon inside a VM, container, or dedicated Unix user — tasks can read and write everything that user can"
 }
 
-// multicaManagedBeginMarker / multicaManagedEndMarker delimit the block the
-// daemon writes into the per-task config.toml. Everything between the markers
-// is owned by the daemon and will be rewritten idempotently; anything outside
-// the markers is preserved as-is.
+// multicaManagedBeginMarker / multicaManagedEndMarker 界定 daemon 写进 per-task
+// config.toml 的受管块。标记之间的一切都归 daemon、会被幂等重写；标记之外的内容原样
+// 保留。
 const (
 	multicaManagedBeginMarker = "# BEGIN multica-managed (do not edit; regenerated by daemon)"
 	multicaManagedEndMarker   = "# END multica-managed"
 )
 
-// renderMulticaManagedBlock produces the managed block for the given policy.
+// renderMulticaManagedBlock 为给定策略产出受管块。
 //
-// The block contains only top-level key=value assignments — no `[table]`
-// headers — and uses TOML dotted-key syntax for nested values. This is
-// important because the block is inserted into a user-owned config.toml:
+// 块里只有顶层 key=value 赋值——没有 `[table]` 头——嵌套值用 TOML 点号键语法。
+// 这很重要，因为块要插进用户自有的 config.toml：
 //
-//   - If the block opened a `[sandbox_workspace_write]` header, any user
-//     content that happened to sit below it would be silently reparented into
-//     that table.
-//   - If the block were appended after a file that already ends inside some
-//     other table (e.g. `[permissions.multica]`), a bare `sandbox_mode = ...`
-//     key would be parsed as a child of that preceding table.
+//   - 若块开了 `[sandbox_workspace_write]` 头，恰好位于其下的任何用户内容都会被静默
+//     改姓、归进该表。
+//   - 若块被追加到「已在某张其它表里结尾」的文件末尾（如 `[permissions.multica]`），
+//     一条裸 `sandbox_mode = ...` 会被解析成前一张表的子键。
 //
-// Keeping the block as pure top-level dotted-key assignments, and placing it
-// at the top of the file (see upsertMulticaManagedBlock), avoids both traps.
+// 让块保持纯顶层点号键赋值、并放在文件顶部（见 upsertMulticaManagedBlock），可同时
+// 避开这两个坑。
 func renderMulticaManagedBlock(policy codexSandboxPolicy) string {
 	var b strings.Builder
 	b.WriteString(multicaManagedBeginMarker)
@@ -362,30 +340,25 @@ func renderMulticaManagedBlock(policy codexSandboxPolicy) string {
 	return b.String()
 }
 
-// managedBlockRe captures the daemon-owned block (including the surrounding
-// markers and any trailing blank lines) so it can be replaced idempotently.
-// `\n*` rather than `\n?` so reruns don't accumulate blank lines when the
-// block coexists with another managed block (e.g. multi-agent) in the file.
+// managedBlockRe 捕获 daemon 自有的块（含四周标记与尾部空行），以便幂等替换。
+// 用 `\n*` 而非 `\n?`，使块与另一受管块（如 multi-agent）共存于文件时重跑不会累积
+// 空行。
 var managedBlockRe = regexp.MustCompile(
 	`(?ms)^` + regexp.QuoteMeta(multicaManagedBeginMarker) +
 		`.*?^` + regexp.QuoteMeta(multicaManagedEndMarker) + `\n*`)
 
-// upsertMulticaManagedBlock returns the config content with the multica-managed
-// block placed at the very top of the file. Any previously written managed
-// block is removed in place; user content outside the markers is preserved.
+// upsertMulticaManagedBlock 返回「受管块位于文件最顶部」的配置内容。任何先前写下的
+// 受管块被原地移除；标记之外的用户内容原样保留。
 //
-// The block is always hoisted to the top (rather than replaced in place or
-// appended to EOF) so that its top-level keys are parsed at the TOML root,
-// regardless of whether the user's config ends inside a table like
-// `[permissions.multica]` or `[profiles.foo]`. Combined with the dotted-key
-// form used by renderMulticaManagedBlock, this means the managed block neither
-// leaks into nor inherits from any surrounding table scope.
+// 块总是被提升到顶部（而非原地替换或追加到 EOF），使其顶层键总在 TOML 根被解析，
+// 无论用户配置是否在某张表（如 `[permissions.multica]`、`[profiles.foo]`）内部结尾。
+// 配合 renderMulticaManagedBlock 的点号键形式，受管块既不会漏进任何外围表作用域、
+// 也不会继承它。
 func upsertMulticaManagedBlock(content string, policy codexSandboxPolicy) string {
-	// Drop any previously written managed block (wherever it sits).
+	// 移除任何先前写下的受管块（无论它在哪）。
 	content = managedBlockRe.ReplaceAllString(content, "")
 	block := renderMulticaManagedBlock(policy)
-	// Trim leading blank lines left behind by the removal so we don't grow
-	// the file on every idempotent rewrite.
+	// 去掉移除后留下的前导空行，别让每次幂等重写都把文件撑大。
 	content = strings.TrimLeft(content, "\n")
 	if content == "" {
 		return block
@@ -393,13 +366,11 @@ func upsertMulticaManagedBlock(content string, policy codexSandboxPolicy) string
 	return block + "\n" + content
 }
 
-// stripLegacySandboxDirectives removes top-level `sandbox_mode = ...` lines
-// and any `[sandbox_workspace_write]` section that would otherwise conflict
-// with the managed block. This lets the daemon migrate tasks whose config.toml
-// was produced by an older daemon that wrote those values inline.
+// stripLegacySandboxDirectives 移除会与受管块冲突的顶层 `sandbox_mode = ...` 行与任何
+// `[sandbox_workspace_write]` 段。这让 daemon 能迁移「由更早 daemon 写成、把那些值内联
+// 写入」的任务 config.toml。
 //
-// Only top-level entries are stripped; anything under an unrelated section
-// header (like `[permissions.foo]`) is preserved untouched.
+// 只剥顶层条目；无关段头（如 `[permissions.foo]`）下的一切原样保留。
 func stripLegacySandboxDirectives(content string) string {
 	lines := strings.Split(content, "\n")
 	out := make([]string, 0, len(lines))
@@ -407,7 +378,7 @@ func stripLegacySandboxDirectives(content string) string {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") {
-			// Entering a new section. Exit legacy-tracking if we were in one.
+			// 进入新段。若先前在旧式段内则退出追踪。
 			inLegacyWorkspaceWrite = trimmed == "[sandbox_workspace_write]"
 			if inLegacyWorkspaceWrite {
 				continue
@@ -416,11 +387,11 @@ func stripLegacySandboxDirectives(content string) string {
 			continue
 		}
 		if inLegacyWorkspaceWrite {
-			// Drop the legacy section body until the next section.
+			// 丢弃旧式段体，直到下一段。
 			continue
 		}
 		if strings.HasPrefix(trimmed, "sandbox_mode") {
-			// Drop legacy top-level sandbox_mode declarations.
+			// 丢弃旧式顶层 sandbox_mode 声明。
 			continue
 		}
 		out = append(out, line)
@@ -428,15 +399,11 @@ func stripLegacySandboxDirectives(content string) string {
 	return strings.Join(out, "\n")
 }
 
-// ensureCodexSandboxConfig writes the multica-managed sandbox block into the
-// given config.toml according to the policy. It is idempotent: running it
-// twice produces the same file contents. The file is created if it doesn't
-// exist.
+// ensureCodexSandboxConfig 按策略把 multica 管理的 sandbox 块写进给定 config.toml。
+// 幂等：连跑两次产出相同文件内容。文件不存在则创建。
 //
-// The function logs (at warn level) whenever the resolved mode is
-// danger-full-access — the Linux default, the macOS seatbelt fallback, and the
-// Windows no-native-sandbox fallback alike — so that every unsandboxed task is
-// visible in daemon logs.
+// 只要解析出的模式是 danger-full-access——Linux 默认、macOS seatbelt 回退、Windows
+// 无原生沙箱回退都是——本函数就记 warn 日志，使每个无沙箱任务在 daemon 日志里可见。
 func ensureCodexSandboxConfig(configPath string, policy codexSandboxPolicy, detectedVersion string, logger *slog.Logger) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -444,8 +411,8 @@ func ensureCodexSandboxConfig(configPath string, policy codexSandboxPolicy, dete
 	}
 	existing := string(data)
 
-	// Drop inline sandbox_mode / [sandbox_workspace_write] from older daemon
-	// versions so they don't collide with the managed block.
+	// 剥掉更老 daemon 版本留下的内联 sandbox_mode / [sandbox_workspace_write]，免得
+	// 它们与受管块撞车。
 	if existing != "" && !managedBlockRe.MatchString(existing) {
 		existing = stripLegacySandboxDirectives(existing)
 	}
@@ -477,9 +444,8 @@ func ensureCodexSandboxConfig(configPath string, policy codexSandboxPolicy, dete
 	return nil
 }
 
-// --- small semver helper, scoped to this package to avoid an import cycle
-// with server/pkg/agent. The agent package already has a similar parser; we
-// duplicate the minimal bits here because execenv cannot depend on agent.
+// --- 迷你 semver 助手，限定在本包内以避免与 server/pkg/agent 形成导入环。
+// agent 包已有类似解析器；这里复制最小片段，因为 execenv 不能依赖 agent。
 
 type codexSemver struct {
 	Major, Minor, Patch int
@@ -487,6 +453,7 @@ type codexSemver struct {
 
 var codexSemverRe = regexp.MustCompile(`v?(\d+)\.(\d+)\.(\d+)`)
 
+// parseCodexSemver 从形如 `v0.121.0` 的字符串解析出三段的 semver。
 func parseCodexSemver(raw string) (codexSemver, error) {
 	m := codexSemverRe.FindStringSubmatch(raw)
 	if m == nil {
@@ -498,6 +465,7 @@ func parseCodexSemver(raw string) (codexSemver, error) {
 	return codexSemver{Major: maj, Minor: min, Patch: pat}, nil
 }
 
+// lessThan 按先 major、再 minor、最后 patch 的顺序比较两个版本。
 func (v codexSemver) lessThan(o codexSemver) bool {
 	if v.Major != o.Major {
 		return v.Major < o.Major

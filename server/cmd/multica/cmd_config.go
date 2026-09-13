@@ -1,3 +1,7 @@
+// 文件职责：实现 `multica config` 命令（show/set）——读写 CLI 本地配置
+// config.json。配置既存于单机文件也存于 profile 目录（见 cli.LoadCLIConfigForProfile），
+// 其中一批「daemon 键」（poll_interval、agent_timeout 等）与 `daemon start` 的
+// --flag/环境变量互为镜像：优先级为 --flag > MULTICA_… env > config.json > 内置默认。
 package main
 
 import (
@@ -13,21 +17,23 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// configCmd 是 `multica config` 父命令，直接执行时等价于 `config show`。
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage configuration for multica",
 	RunE:  runConfigShow,
 }
 
+// configShowCmd 显示当前生效的 CLI 配置。
 var configShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show current CLI configuration",
 	RunE:  runConfigShow,
 }
 
-// configSetSupportedKeys is the whitelist consumed by both `config set`'s
-// switch and its --help output, so a new key gets validation, error text,
-// and documentation in one place. Order matches configShow output.
+// configSetSupportedKeys 是 `config set` 支持的白名单，同时被其 switch 分支和
+// --help 文案引用，保证加新 key 时校验、报错文本、文档三处只改一处。顺序与
+// `config show` 的输出一致。
 var configSetSupportedKeys = []string{
 	"server_url",
 	"app_url",
@@ -46,6 +52,8 @@ var configSetSupportedKeys = []string{
 	"disable_auto_reload",
 }
 
+// configSetCmd 是 `config set <key> <value>` 命令，详细语义见其 Long 帮助文本
+// （key 清单、优先级、duration 规则、disable_* 单向开关、空串清除等）。
 var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a CLI configuration value",
@@ -79,6 +87,8 @@ func init() {
 	configCmd.AddCommand(configSetCmd)
 }
 
+// runConfigShow 执行 `config`（或 `config show`）：要求先确定配置根目录（拒绝在
+// 未定位配置目录时运行），按 profile 加载配置，把各项逐个打印到 stdout。
 func runConfigShow(cmd *cobra.Command, _ []string) error {
 	if err := requireTaskLocalConfigRoot(); err != nil {
 		return err
@@ -112,6 +122,9 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runConfigSet 执行 `config set <key> <value>`：先加载现有配置，applyConfigSet
+// 就地改值并校验，通过后才落盘保存（校验失败绝不写盘）。workspaces_root 会先
+// 转成绝对路径再存，所以成功提示里回显的是规范化后的值。
 func runConfigSet(cmd *cobra.Command, args []string) error {
 	if err := requireTaskLocalConfigRoot(); err != nil {
 		return err
@@ -140,16 +153,13 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// applyConfigSet mutates cfg in place per (key, value). Split out from
-// runConfigSet so tests can exercise the validation branches without
-// touching disk. Unknown keys and bad values return errors; the caller
-// only saves when this returns nil.
+// applyConfigSet 按 (key, value) 就地改 cfg，返回 nil 表示改动完成。从
+// runConfigSet 拆出来是为了让测试不碰磁盘也能覆盖各校验分支。未知 key / 非法值
+// 都报错；调用方只在返回 nil 时才保存。
 //
-// Validation rules keep the on-disk config sane at write time so the
-// daemon doesn't have to re-check on every start: an empty duration
-// string is treated as "clear the field" (parity with `config set
-// server_url ""` clearing a URL), a non-parseable duration is rejected
-// up front rather than being persisted and re-erroring later.
+// 校验规则把「落盘配置的合法性」卡在写入时刻，这样 daemon 每次启动不必复查：
+// 空 duration 串视为「清除该字段」（与 `config set server_url ""` 清 URL 一致），
+// 无法解析的 duration 提前拒绝，而不是先存进去等运行时报错。
 func applyConfigSet(cfg *cli.CLIConfig, key, value string) error {
 	switch key {
 	case "server_url":
@@ -195,12 +205,9 @@ func applyConfigSet(cfg *cli.CLIConfig, key, value string) error {
 		if err != nil {
 			return fmt.Errorf("poll_interval must be a Go duration (e.g. 10s, 500ms): %w", err)
 		}
-		// Reject zero and negative durations. Persisting "0s" would look
-		// configured in `config show` but be silently ignored at daemon
-		// start (the resolver only substitutes strictly positive values),
-		// which is exactly the trap reported in #3824's review. Empty
-		// string is the one and only way to clear a previously persisted
-		// value.
+		// 拒绝 0 与负数 duration。把 "0s" 存进去会让 `config show` 看着已配置、
+		// 而 daemon 启动时被静默忽略（解析器只替换严格正值）——正是 #3824 评审中
+		// 指出的坑。空串是清除已存值的唯一方式。
 		if d <= 0 {
 			return fmt.Errorf("poll_interval must be positive (got %s); use `config set poll_interval \"\"` to clear it", d)
 		}
@@ -210,11 +217,9 @@ func applyConfigSet(cfg *cli.CLIConfig, key, value string) error {
 			return err
 		}
 	case "agent_timeout":
-		// agent_timeout is the one duration knob where "0s" is a
-		// meaningful persisted value (it explicitly disables the
-		// wall-clock cap; see cli.CLIConfig.AgentTimeout). Store the raw
-		// string via a pointer so we can distinguish "not set" (nil)
-		// from "disabled" (non-nil, "0s") and any positive value.
+		// agent_timeout 是唯一允许 "0s" 的 duration 键——它显式关闭墙钟上限
+		// （见 cli.CLIConfig.AgentTimeout）。经指针存原始串，从而区分「未设置」
+		// （nil）与「显式禁用」（非 nil 且为 "0s"）以及任意正数。
 		if value == "" {
 			cfg.AgentTimeout = nil
 			return nil
@@ -254,8 +259,8 @@ func applyConfigSet(cfg *cli.CLIConfig, key, value string) error {
 	return nil
 }
 
-// assignBool parses value as a strict bool into dst. Shared by the
-// disable_* toggles. Empty string clears the field (false).
+// assignBool 把 value 严格解析成 bool 写进 dst，供两个 disable_* 开关共用。
+// 空串清除该字段（置 false）。
 func assignBool(dst *bool, key, value string) error {
 	if value == "" {
 		*dst = false
@@ -269,10 +274,9 @@ func assignBool(dst *bool, key, value string) error {
 	return nil
 }
 
-// assignPositiveDuration parses value as a strictly-positive Go duration
-// and writes the raw string into dst. Shared by every persisted daemon
-// duration knob except agent_timeout, whose zero value is meaningful.
-// Empty string clears the field.
+// assignPositiveDuration 把 value 解析成严格正的 Go duration 并写原始串进 dst。
+// 被除 agent_timeout 外的所有持久化 daemon duration 键共用——只有 agent_timeout
+// 的零值有意义。空串清除字段。
 func assignPositiveDuration(dst *string, key, value string) error {
 	if value == "" {
 		*dst = ""
@@ -290,10 +294,8 @@ func assignPositiveDuration(dst *string, key, value string) error {
 	return nil
 }
 
-// agentTimeoutDisplay renders the tri-state agent_timeout value for
-// `config show`. nil = not persisted (fall through to env/default);
-// non-nil "0s" = explicitly disabled; any other non-nil = the persisted
-// duration string.
+// agentTimeoutDisplay 渲染 agent_timeout 的三态值供 `config show`：nil = 未持久化
+// （回落 env/默认）；非 nil "0s" = 显式禁用；其它非 nil = 已持久化的 duration 串。
 func agentTimeoutDisplay(v *string) string {
 	if v == nil {
 		return "(not set)"
@@ -307,6 +309,7 @@ func agentTimeoutDisplay(v *string) string {
 	return *v
 }
 
+// valueOrDefault 空串时返回 fallback（表格展示 "(not set)" 用）。
 func valueOrDefault(v, fallback string) string {
 	if v == "" {
 		return fallback
@@ -314,6 +317,7 @@ func valueOrDefault(v, fallback string) string {
 	return v
 }
 
+// intOrDefault 0 值时返回 fallback（表格展示 "(not set)" 用）。
 func intOrDefault(v int, fallback string) string {
 	if v == 0 {
 		return fallback
@@ -321,8 +325,8 @@ func intOrDefault(v int, fallback string) string {
 	return strconv.Itoa(v)
 }
 
-// joinKeys renders the supported-keys list for the error message. Cheap
-// to keep tiny rather than pulling in strings.Join through Sprintf tricks.
+// joinKeys 把支持键清单拼成 "a, b, c" 供报错信息展示。手写小循环避免为
+// strings.Join 绕 Sprintf 的折腾。
 func joinKeys(keys []string) string {
 	out := ""
 	for i, k := range keys {

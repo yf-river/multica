@@ -1,5 +1,11 @@
 "use client";
 
+// 本文件：StatusPicker —— 问题状态选择器。
+// 选项来自工作区状态目录（`useStatusOptions`），归档状态不参与——归档
+// 让一个状态退役、不再被新分配，但已用它的问题保持不动。目录落地前回退到
+// 7 个内置状态，保证冷启动渲染出的就是以前的老样子，而不是空弹层（MUL-6243）。
+// 选项超过阈值自动开启搜索。
+
 import { useMemo, useState } from "react";
 import type { IssueStatus, UpdateIssueRequest } from "@multica/core/types";
 import { STATUS_CONFIG } from "@multica/core/issues/config";
@@ -11,9 +17,12 @@ import { useT } from "../../../i18n";
 import { useStatusLabel } from "../../utils/status-label";
 import { useStatusOptions } from "../../utils/status-options";
 
-/** Above this many options the flat list stops being scannable. */
+/** 选项超过这个数量时，平铺列表不再可一眼扫完（自动开搜索）。 */
 const SEARCH_THRESHOLD = 9;
 
+/**
+ * 状态选择器。
+ */
 export function StatusPicker({
   status,
   onUpdate,
@@ -24,10 +33,9 @@ export function StatusPicker({
   align,
 }: {
   /**
-   * The currently-selected status, used to check the matching row. `null`
-   * means "no single current value" (e.g. a batch selection spanning several
-   * statuses) — no row is checked. Single-issue callers always pass a concrete
-   * status.
+   * 当前选中的状态，用来勾选匹配行。`null` 表示"没有单一当前值"
+   * （例如跨多个状态的批量选择）——此时没有行被勾选。单问题调用方总是传
+   * 具体状态。
    */
   status: IssueStatus | null;
   onUpdate: (updates: Partial<UpdateIssueRequest>) => void;
@@ -42,20 +50,18 @@ export function StatusPicker({
   const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [query, setQuery] = useState("");
   const { t } = useT("issues");
-  // Every StatusPicker call site lives inside the workspace shell (issue
-  // detail, table, board batch toolbar, create-issue modal), so the provider
-  // is guaranteed here.
+  // StatusPicker 的每个调用点都在工作区外壳内（issue detail、表格、看板批量
+  // 工具条、创建问题弹窗），所以这里的 provider 一定有。
   const wsId = useWorkspaceId();
   const { categoryOf, colorOf } = useIssueStatuses(wsId);
   const labelOf = useStatusLabel(wsId);
 
   /**
-   * Offerable statuses as one flat list, in canonical category order.
+   * 可提供的状态，平铺成一张列表，按规范类别顺序排列。
    *
-   * Archived statuses are excluded: archiving retires a status from future
-   * assignment while leaving the issues already on it untouched. Falls back to
-   * the 7 built-ins until the catalog lands, so a cold render offers exactly
-   * what it always did instead of an empty popover. (MUL-6243)
+   * 归档状态被排除：归档让一个状态从未来分配中退役，但不动已经在用它的问题。
+   * 目录落地前回退到 7 个内置状态，让冷渲染提供的选项与以往完全一致，
+   * 而不是一个空弹层。（MUL-6243）
    */
   const allOptions = useStatusOptions(wsId);
 

@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * 官网「下载/安装」页（客户端组件）：深色 Hero + CLI 安装区块 + 云运行时
+ * waitlist 区块 + 页脚。
+ */
 import { Terminal } from "lucide-react";
 import { LandingHeader } from "@/features/landing/components/landing-header";
 import { LandingFooter } from "@/features/landing/components/landing-footer";
@@ -7,6 +11,11 @@ import { CliSection } from "@/features/landing/components/download/cli-section";
 import { CloudSection } from "@/features/landing/components/download/cloud-section";
 import { useLocale } from "@/features/landing/i18n";
 
+/**
+ * 下载页内容主体。
+ *
+ * @returns 下载页整页布局。
+ */
 export function DownloadClient() {
   const { t } = useLocale();
 

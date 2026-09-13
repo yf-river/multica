@@ -1,3 +1,13 @@
+// 本文件是「Skill（技能）」资源的 HTTP 处理器集合：技能 CRUD、技能文件的
+// 增删改查、agent↔skill 关联（set/add/remove/enable），以及「从外部导入技能」
+// ——支持三个来源：clawhub.ai、skills.sh（本质走 GitHub）、github.com 直接
+// 导入，还有上传 .skill/.zip 归档的导入。
+// 安全与健壮性要点：
+//   - 所有写 Postgres 的文本先经 sanitizeNullBytes（去 NUL、替换非法 UTF-8）；
+//   - 技能文件路径要校验防目录穿越，SKILL.md 保留给正文；
+//   - 远端拉取有单文件/总量/文件数硬上限，超限直接失败（绝不静默截断）；
+//   - 名字冲突按 on_conflict 策略处理（fail/overwrite/rename/skip），
+//     overwrite 仅限原创建者（MUL-2701 / MUL-2800）。
 package handler
 
 import (
@@ -29,22 +39,21 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// sanitizeNullBytes makes a string safe for a PostgreSQL TEXT column.
+// sanitizeNullBytes 让字符串安全进入 PostgreSQL TEXT 列。
 //
-// Thin alias for util.SanitizeTextForPostgres, kept because ~20 call sites
-// spell it this way. The shared helper is the single definition of what
-// "safe to persist" means, so the daemon task endpoints and the
-// comment/skill/property endpoints can no longer drift into storing
-// different text for the same input (GH #7098 review).
+// 是 util.SanitizeTextForPostgres 的薄别名，保留是因为约 20 个调用点都这么写。
+// 共享助手统一了「可安全持久化」的定义，daemon 任务端点与 comment/skill/property
+// 端点不会再对同一输入存出不同文本（GH #7098 评审）。
 //
-// One behaviour change came with the move: invalid UTF-8 is now replaced
-// with U+FFFD rather than dropped silently. NUL is still removed outright.
+// 随本次收敛有一处行为变化：非法 UTF-8 现在替换为 U+FFFD 而非静默丢弃；
+// NUL 依旧直接移除。
 func sanitizeNullBytes(s string) string {
 	return util.SanitizeTextForPostgres(s)
 }
 
-// --- Response structs ---
+// --- 响应结构体 ---
 
+// SkillResponse 是技能详情的完整线格式（含 SKILL.md 正文 content）。
 type SkillResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
@@ -57,11 +66,9 @@ type SkillResponse struct {
 	UpdatedAt   string  `json:"updated_at"`
 }
 
-// SkillSummaryResponse is the list-endpoint shape: everything SkillResponse
-// has except `content`. SKILL.md bodies routinely run 50–200KB and shipping
-// them in list payloads bloats responses past CLI timeouts on high-latency
-// links (GH multica-ai/multica#2174). Detail endpoints still return the full
-// SkillResponse with content.
+// SkillSummaryResponse 是列表端点的形状：SkillResponse 除 `content` 外的全部字段。
+// SKILL.md 正文常达 50–200KB，放进列表会撑爆高延迟链路下的 CLI 超时（GH
+// multica-ai/multica#2174）。详情端点仍返回带 content 的完整 SkillResponse。
 type SkillSummaryResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
@@ -71,16 +78,15 @@ type SkillSummaryResponse struct {
 	CreatedBy   *string `json:"created_by"`
 	CreatedAt   string  `json:"created_at"`
 	UpdatedAt   string  `json:"updated_at"`
-	// Enabled is only populated for agent-scoped skill responses. Workspace
-	// skill lists describe the skill itself, so they omit assignment state.
+	// Enabled 只在 agent 作用域的技能响应里填充。工作区技能列表描述技能本身，
+	// 故省略指派状态。
 	Enabled *bool `json:"enabled,omitempty"`
 }
 
-// AgentSkillSummary is the still-narrower shape used for skills embedded in
-// an Agent payload (`GET /api/agents`, `GET /api/agents/{id}`). The agent
-// list batch query only joins enough columns to render the assignee chip in
-// the UI; the standalone `/api/agents/{id}/skills` endpoint returns the full
-// SkillSummaryResponse for callers that need the source/origin info.
+// AgentSkillSummary 是内嵌进 Agent 负载（`GET /api/agents`、`GET
+// /api/agents/{id}`）的更窄形状。agent 列表批量查询只联出渲染 UI 指派者徽章
+// 所需的列；独立端点 `/api/agents/{id}/skills` 返回完整 SkillSummaryResponse，
+// 供需要 source/origin 信息的调用者使用。
 type AgentSkillSummary struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -88,6 +94,7 @@ type AgentSkillSummary struct {
 	Enabled     bool   `json:"enabled"`
 }
 
+// SkillFileResponse 是单个技能支持文件的完整线格式（含正文 content）。
 type SkillFileResponse struct {
 	ID        string `json:"id"`
 	SkillID   string `json:"skill_id"`
@@ -97,26 +104,27 @@ type SkillFileResponse struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
-// SkillFileMetadataResponse is the file-listing shape: everything
-// SkillFileResponse has except `content`, plus the size and hash that answer
-// "which file makes this skill big?" without downloading any of it.
+// SkillFileMetadataResponse 是文件列表形状：SkillFileResponse 除 `content` 外的
+// 全部字段，外加 size 与 hash，能回答「哪个文件让技能变这么大」而无需下载任何
+// 文件。
 //
-// A ~600KB skill could not be listed at all while every row carried its full
-// body, so the one command that would have diagnosed the problem was itself a
-// casualty of it (GH multica-ai/multica#7498). A list endpoint lists.
+// 约 600KB 的技能在每行都携带完整正文时根本无法列出——能诊断问题的命令本身
+// 成了问题（GH multica-ai/multica#7498）。列表端点就该只做列表。
 type SkillFileMetadataResponse struct {
 	ID      string `json:"id"`
 	SkillID string `json:"skill_id"`
 	Path    string `json:"path"`
-	// Size is the byte length of the file body, computed in Postgres.
+	// Size 是文件正文字节长度，在 Postgres 内计算。
 	Size int64 `json:"size"`
-	// ContentHash is the hex SHA-256 of the file body. Callers that cache
-	// skill files can use it to skip an unchanged download.
+	// ContentHash 是文件正文的十六进制 SHA-256。缓存技能文件的调用方可借此
+	// 跳过未变更的下载。
 	ContentHash string `json:"content_hash"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
 
+// SkillSearchCandidateResponse 是技能搜索/浏览结果里单个外部仓库技能的候选条目
+// （含仓库/安装数/star 等元数据，供列表 UI 决定导入来源）。
 type SkillSearchCandidateResponse struct {
 	Name         string  `json:"name"`
 	URL          string  `json:"url"`
@@ -127,24 +135,25 @@ type SkillSearchCandidateResponse struct {
 	Description  string  `json:"description"`
 }
 
+// SkillWithFilesResponse 是技能+全部文件正文的组合响应（导入/创建/更新用）。
 type SkillWithFilesResponse struct {
 	SkillResponse
 	Files []SkillFileResponse `json:"files"`
 }
 
-// SkillWithFileMetadataResponse is `GET /api/skills/{id}?include=metadata`:
-// the skill without its SKILL.md body, and its files without theirs. Sizes and
-// hashes stand in for the content that was dropped, so a caller can still see
-// how large the skill is and which part of it is large.
+// SkillWithFileMetadataResponse 是 `GET /api/skills/{id}?include=metadata` 的形状：
+// 技能不带 SKILL.md 正文，其文件也不带正文。用大小与 hash 顶替被去掉的内容，
+// 调用者仍能看到技能有多大、哪部分大。
 type SkillWithFileMetadataResponse struct {
 	SkillSummaryResponse
-	// ContentSize / ContentHash describe the SKILL.md body that `content`
-	// would have carried.
+	// ContentSize / ContentHash 描述 `content` 本会携带的 SKILL.md 正文。
 	ContentSize int64                       `json:"content_size"`
 	ContentHash string                      `json:"content_hash"`
 	Files       []SkillFileMetadataResponse `json:"files"`
 }
 
+// SkillImportResult 是导入类端点的结构化结果：成功（created/updated）、
+// 冲突（conflict/require 决策）或跳过（skipped）。
 type SkillImportResult struct {
 	Status        string                  `json:"status"`
 	Reason        string                  `json:"reason,omitempty"`
@@ -152,6 +161,8 @@ type SkillImportResult struct {
 	ExistingSkill *ExistingSkillIdentity  `json:"existing_skill,omitempty"`
 }
 
+// ExistingSkillIdentity 描述与导入技能撞名的既有技能，供客户端决定
+// overwrite/rename/skip。
 type ExistingSkillIdentity struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -159,6 +170,7 @@ type ExistingSkillIdentity struct {
 	CanOverwrite bool   `json:"can_overwrite,omitempty"`
 }
 
+// writeSkillImportDuplicateConflict 返回旧的重复名冲突响应（带 existing_skill 信息）。
 func writeSkillImportDuplicateConflict(w http.ResponseWriter, existing ExistingSkillIdentity) {
 	writeJSON(w, http.StatusConflict, map[string]any{
 		"error":          "a skill with this name already exists",
@@ -206,8 +218,8 @@ func existingSkillIdentity(skill db.Skill, userID string) ExistingSkillIdentity 
 	return identity
 }
 
-// decodeSkillConfig decodes a JSONB skill.config blob, defaulting to {} when
-// missing or unparseable so the API surface always returns a JSON object.
+// decodeSkillConfig 解码 JSONB 的 skill.config，缺失或不可解析时默认 {}，
+// 保证 API 面恒返回 JSON 对象。
 func decodeSkillConfig(raw []byte) any {
 	var config any
 	if raw != nil {
@@ -261,16 +273,18 @@ func skillFileMetadataToResponse(f db.ListSkillFileMetadataRow) SkillFileMetadat
 	}
 }
 
-// contentHash is the hex SHA-256 the metadata shapes report in place of a
-// body. It matches Postgres `encode(sha256(content::bytea), 'hex')`, so a
-// SKILL.md hash computed here and a file hash computed in SQL are comparable.
+// contentHash 是元数据形状代替正文上报的十六进制 SHA-256。与 Postgres
+// `encode(sha256(content::bytea), 'hex')` 一致，因此这里算出的 SKILL.md hash 与
+// SQL 里算出的文件 hash 可比较。
 func contentHash(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
 }
 
-// --- Request structs ---
+// --- 请求结构体 ---
 
+// CreateSkillRequest 是创建技能的请求体：SKILL.md 的 name/description/content +
+// 可选附带文件列表。
 type CreateSkillRequest struct {
 	Name        string                   `json:"name"`
 	Description string                   `json:"description"`
@@ -279,11 +293,14 @@ type CreateSkillRequest struct {
 	Files       []CreateSkillFileRequest `json:"files,omitempty"`
 }
 
+// CreateSkillFileRequest 是随技能创建/更新的单个附带文件的请求体（相对路径+正文）。
 type CreateSkillFileRequest struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
 }
 
+// UpdateSkillRequest 是更新技能的请求体：指针字段区分「未传」与「显式清空」，
+// Files 传了就整体替换附带文件集合。
 type UpdateSkillRequest struct {
 	Name        *string                  `json:"name"`
 	Description *string                  `json:"description"`
@@ -292,17 +309,19 @@ type UpdateSkillRequest struct {
 	Files       []CreateSkillFileRequest `json:"files,omitempty"`
 }
 
+// SetAgentSkillsRequest 是整体替换 agent 已启用技能集合的请求体。
 type SetAgentSkillsRequest struct {
 	SkillIDs []string `json:"skill_ids"`
 }
 
+// AddAgentSkillsRequest 是给 agent 追加技能的请求体。
 type AddAgentSkillsRequest struct {
 	SkillIDs []string `json:"skill_ids"`
 }
 
-// --- Helpers ---
+// --- 辅助函数 ---
 
-// validateFilePath checks that a file path is safe (no traversal, no absolute paths).
+// validateFilePath 检查文件路径是否安全（不得穿越目录、不得为绝对路径）。
 func validateFilePath(p string) bool {
 	if p == "" {
 		return false
@@ -340,8 +359,9 @@ func (h *Handler) loadSkillForUser(w http.ResponseWriter, r *http.Request, id st
 	return skill, true
 }
 
-// --- Skill CRUD ---
+// --- 技能 CRUD ---
 
+// ListSkills 处理 GET /api/skills，返回工作区技能摘要列表（不含 SKILL.md 正文）。
 func (h *Handler) ListSkills(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 
@@ -362,6 +382,8 @@ func (h *Handler) ListSkills(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// SearchSkills 处理 GET /api/skills/search?q=...，在 ClawHub 上按 q 搜索候选
+// 技能（供「从社区安装」选择器使用）。上游异常时返回 502 + upstream_unavailable。
 func (h *Handler) SearchSkills(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
@@ -381,28 +403,23 @@ func (h *Handler) SearchSkills(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, candidates)
 }
 
-// Values for the `include` query parameter shared by the skill detail and
-// skill-file list endpoints.
+// skill 详情与 skill 文件列表端点共享的 `include` 查询参数取值。
 const (
 	skillIncludeContent  = "content"
 	skillIncludeMetadata = "metadata"
 )
 
-// resolveSkillInclude reads `?include=`. `content` inlines the SKILL.md body
-// and every file body; `metadata` returns path/size/hash only.
+// resolveSkillInclude 读取 `?include=`。`content` 内联 SKILL.md 与每个文件正文；
+// `metadata` 只返回 path/size/hash。
 //
-// A request that says nothing keeps getting content, on both endpoints. The
-// clients that call them are installed software — desktop builds for the skill
-// editor, older CLI versions whose `skill files list --output json` scripts
-// read `content` — and none of them can be asked retroactively to send a query
-// parameter. Flipping a default here would make a server deploy silently
-// change what an un-upgraded client receives, which no client-side change can
-// prevent.
+// 什么都不带的请求在两个端点都继续拿 content。调用它们的是已安装软件——技能
+// 编辑器的桌面版、`skill files list --output json` 脚本读 `content` 的旧 CLI——
+// 无法回溯地要求它们发查询参数。在这里翻默认值会让一次服务端部署悄悄改变
+// 未升级客户端的所见，客户端侧无从阻止。
 //
-// So the shrink is opt-in and travels with the caller: the CLI sends
-// `include=metadata` itself, which fixes GH #7498 without requiring the server
-// and every client to ship together. The default can flip once clients that
-// send `include=content` have aged in.
+// 因此瘦身是自愿且随调用方走的：CLI 自己发 `include=metadata`，修复 GH #7498
+// 而无需服务端与所有客户端同步发版。待发 `include=content` 的客户端老化后可
+// 再翻转默认值。
 func resolveSkillInclude(w http.ResponseWriter, r *http.Request) (bool, bool) {
 	switch strings.TrimSpace(r.URL.Query().Get("include")) {
 	case "":
@@ -417,6 +434,8 @@ func resolveSkillInclude(w http.ResponseWriter, r *http.Request) (bool, bool) {
 	}
 }
 
+// GetSkill 处理 GET /api/skills/{id}。默认返回技能+全部文件正文（兼容旧客户端）；
+// ?include=metadata 时只回元数据（SKILL.md 大小/hash + 文件 path/size/hash）。
 func (h *Handler) GetSkill(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	includeContent, ok := resolveSkillInclude(w, r)
@@ -450,10 +469,9 @@ func (h *Handler) GetSkill(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// writeSkillMetadata answers GET /api/skills/{id}?include=metadata. The skill
-// row is already loaded (loadSkillForUser needs it for the tenant check), so
-// the SKILL.md size and hash cost nothing extra; only the file bodies are
-// worth a separate metadata query.
+// writeSkillMetadata 响应 GET /api/skills/{id}?include=metadata。技能行已加载
+// （loadSkillForUser 需要它做租户检查），因此 SKILL.md 的大小与 hash 无需额外
+// 成本；只有文件正文值得单独走一次元数据查询。
 func (h *Handler) writeSkillMetadata(w http.ResponseWriter, r *http.Request, skill db.Skill) {
 	files, err := h.Queries.ListSkillFileMetadata(r.Context(), skill.ID)
 	if err != nil {
@@ -477,6 +495,9 @@ func (h *Handler) writeSkillMetadata(w http.ResponseWriter, r *http.Request, ski
 	})
 }
 
+// CreateSkill 处理 POST /api/skills。请求者须为工作区成员；名字必填、文件路径
+// 需安全。同名冲突（含并发插入竞态）返回 409。创建带文件的技能走
+// createSkillWithFiles。
 func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 
@@ -528,8 +549,8 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-// canManageSkill checks whether the current user can update or delete a skill.
-// The skill creator or workspace owner/admin can manage any skill.
+// canManageSkill 判断当前用户能否更新/删除技能。技能创建者或工作区 owner/admin
+// 可管理任意技能。失败时已写好错误响应。
 func (h *Handler) canManageSkill(w http.ResponseWriter, r *http.Request, skill db.Skill) bool {
 	wsID := uuidToString(skill.WorkspaceID)
 	member, ok := h.requireWorkspaceRole(w, r, wsID, "skill not found", "owner", "admin", "member")
@@ -545,15 +566,16 @@ func (h *Handler) canManageSkill(w http.ResponseWriter, r *http.Request, skill d
 	return true
 }
 
-// canOverwriteSkillByLocalImport reports whether userID may overwrite skill via
-// a runtime-local-skill re-import. This is intentionally NARROWER than
-// canManageSkill: only the original creator may overwrite by re-importing.
-// Workspace owners/admins who want to change a skill they did not create must
-// edit it in-app instead. See MUL-2701 / MUL-2800.
+// canOverwriteSkillByLocalImport 判断 userID 是否可经「runtime 本地技能重新导入」
+// 覆盖该技能。这里有意比 canManageSkill 更窄：只有原创建者可经重新导入覆盖。
+// 想改非自己创建技能的工作区 owner/admin 请在应用内编辑。见 MUL-2701 / MUL-2800。
 func canOverwriteSkillByLocalImport(userID string, skill db.Skill) bool {
 	return skill.CreatedBy.Valid && uuidToString(skill.CreatedBy) == userID
 }
 
+// UpdateSkill 处理 PUT /api/skills/{id}。门控 canManageSkill；名字/描述/正文写入
+// 前经 sanitizeNullBytes；提供 Files 时整体替换文件集（跳过保留路径 SKILL.md）。
+// 行更新、文件替换与 skill:updated 事件同一事务。名字冲突返回 409。
 func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	skill, ok := h.loadSkillForUser(w, r, id)
@@ -613,7 +635,7 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If files are provided, replace all files.
+	// 若提供了 Files，整体替换所有文件。
 	var fileResps []SkillFileResponse
 	if req.Files != nil {
 		if err := qtx.DeleteSkillFilesBySkill(r.Context(), skill.ID); err != nil {
@@ -622,7 +644,7 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		}
 		fileResps = make([]SkillFileResponse, 0, len(req.Files))
 		for _, f := range req.Files {
-			// SKILL.md is reserved for the primary skill content (skill.Content).
+			// SKILL.md 保留给技能主正文（skill.Content）。
 			if skillpkg.IsReservedContentPath(f.Path) {
 				continue
 			}
@@ -669,6 +691,8 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// DeleteSkill 处理 DELETE /api/skills/{id}。门控 canManageSkill。事务内先清标签
+// 指派再删技能并记录 skill:deleted 事件；成功返回 204。
 func (h *Handler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	skill, ok := h.loadSkillForUser(w, r, id)
@@ -716,18 +740,19 @@ func (h *Handler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- Skill import ---
+// --- 技能导入 ---
 
+// ImportSkillRequest 是 URL 导入的请求体：url + on_conflict 冲突策略。
 type ImportSkillRequest struct {
 	URL        string `json:"url"`
 	OnConflict string `json:"on_conflict,omitempty"`
 }
 
 const (
-	importOnConflictFail      = "fail"
-	importOnConflictOverwrite = "overwrite"
-	importOnConflictRename    = "rename"
-	importOnConflictSkip      = "skip"
+	importOnConflictFail      = "fail"      // 撞名直接报冲突
+	importOnConflictOverwrite = "overwrite" // 撞名则覆盖（仅原创建者）
+	importOnConflictRename    = "rename"    // 撞名则加 -N 后缀改名导入
+	importOnConflictSkip      = "skip"      // 撞名则跳过并报告
 )
 
 const maxImportRenameAttempts = 50
@@ -740,24 +765,22 @@ func validImportOnConflict(strategy string) bool {
 	return false
 }
 
-// Per-import bundle limits. These mirror the local-runtime importer so that
-// URL imports cannot smuggle in payloads that the rest of the stack would
-// reject. fetchRawFile enforces the per-file cap; importedSkill.addFile
-// enforces the bundle-wide caps.
+// 每次导入的包级限额，镜像本地 runtime 导入器，URL 导入不能偷运其余栈会拒绝的
+// 负载。fetchRawFile 执行单文件上限；importedSkill.addFile 执行包级上限。
 const (
-	maxImportFileSize  = 1 << 20 // 1 MiB per file
-	maxImportTotalSize = 8 << 20 // 8 MiB per import bundle (sum of supporting files)
-	maxImportFileCount = 256     // max number of supporting files
+	maxImportFileSize  = 1 << 20 // 单文件 1 MiB
+	maxImportTotalSize = 8 << 20 // 每次导入 8 MiB（支持文件总大小）
+	maxImportFileCount = 256     // 支持文件数量上限
 )
 
-// importedSkill holds the data extracted from an external source.
+// importedSkill 保存从外部源抽取出来的数据。
 type importedSkill struct {
 	name        string
 	description string
-	content     string // SKILL.md body
+	content     string // SKILL.md 正文
 	files       []importedFile
-	bundleSize  int            // running sum of file content bytes for cap enforcement
-	origin      map[string]any // written into skill.config.origin so the UI can show provenance
+	bundleSize  int            // 用于限额检查的文件内容字节累计
+	origin      map[string]any // 写入 skill.config.origin，让 UI 能展示来源
 }
 
 type importedFile struct {
@@ -765,30 +788,25 @@ type importedFile struct {
 	content string
 }
 
-// errImportCapExceeded marks an error caused by a per-file or per-bundle cap.
-// Such errors must abort the import — silently dropping a file would otherwise
-// produce an incomplete skill that looks valid to the user.
+// errImportCapExceeded 标记由单文件/包级限额导致的错误。这类错误必须中止导入
+// ——静默丢文件会产生一个看似完整实则残缺的技能。
 var errImportCapExceeded = errors.New("import cap exceeded")
 
-// errImportSourceUnavailable marks a transient failure to read the upstream
-// source (e.g. the GitHub tree API rate limiting). The import can't proceed
-// safely but should be retried, so it maps to a retryable HTTP status rather
-// than a permanent error.
+// errImportSourceUnavailable 标记读取上游源的瞬时失败（如 GitHub tree API
+// 限流）。导入无法安全继续但应重试，因此映射为重试型 HTTP 状态而非永久错误。
 var errImportSourceUnavailable = errors.New("import source temporarily unavailable")
 
-// isCapError reports whether err is (or wraps) errImportCapExceeded.
+// isCapError 报告 err 是否为（或包装了）errImportCapExceeded。
 func isCapError(err error) bool {
 	return errors.Is(err, errImportCapExceeded)
 }
 
-// addFile appends a supporting file while enforcing the per-bundle caps. It
-// returns an error when either the file count or aggregate byte budget would
-// be exceeded so the caller fails the import instead of silently truncating.
+// addFile 追加一个支持文件，同时执行包级限额。文件数或总字节预算将被超出时
+// 返回错误，让调用方中止导入而不是静默截断。
 //
-// Binary files (images, fonts, archives) are silently skipped: their bytes
-// can't survive a PG TEXT column (SQLSTATE 22021), and they're reference
-// assets the agent never reads as text anyway. Logging the skip leaves a
-// breadcrumb if a user expected one of these to import.
+// 二进制文件（图片、字体、归档）被静默跳过：其字节无法存活于 PG TEXT 列
+// （SQLSTATE 22021），且它们本就是 agent 不会当文本读的引用资源。记录跳过日志，
+// 若用户期待其中某个导入成功可留下痕迹。
 func (s *importedSkill) addFile(path, content string) error {
 	if skillpkg.IsLikelyBinaryFilePath(path) {
 		slog.Info("skill import: skipping binary file", "path", path, "size", len(content))
@@ -805,7 +823,7 @@ func (s *importedSkill) addFile(path, content string) error {
 	return nil
 }
 
-// --- ClawHub types ---
+// --- ClawHub 类型 ---
 
 var clawHubAPIBase = "https://clawhub.ai/api/v1"
 
@@ -858,12 +876,12 @@ type clawhubFileEntry struct {
 	Size int64  `json:"size"`
 }
 
-// --- GitHub types (for skills.sh) ---
+// --- GitHub 类型（用于 skills.sh）---
 
 type githubContentEntry struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
-	Type        string `json:"type"` // "file" or "dir"
+	Type        string `json:"type"` // "file" 或 "dir"
 	URL         string `json:"url"`
 	DownloadURL string `json:"download_url"`
 }
@@ -879,12 +897,11 @@ type githubTreeResponse struct {
 
 type githubTreeEntry struct {
 	Path string `json:"path"`
-	Type string `json:"type"` // "blob" or "tree"
-	Size int64  `json:"size"` // blob byte size (absent/0 for tree entries)
+	Type string `json:"type"` // "blob" 或 "tree"
+	Size int64  `json:"size"` // blob 字节大小（tree 条目缺席/为 0）
 }
 
-// fetchGitHubDefaultBranch returns the default branch of a GitHub repository.
-// Falls back to "main" if the API call fails.
+// fetchGitHubDefaultBranch 返回 GitHub 仓库的默认分支。API 调用失败时退回 "main"。
 func fetchGitHubDefaultBranch(ctx context.Context, httpClient *http.Client, owner, repo string) string {
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s",
 		url.PathEscape(owner), url.PathEscape(repo))
@@ -904,9 +921,9 @@ func fetchGitHubDefaultBranch(ctx context.Context, httpClient *http.Client, owne
 	return info.DefaultBranch
 }
 
-// --- URL detection ---
+// --- URL 来源识别 ---
 
-// importSource identifies where a URL points.
+// importSource 标识 URL 指向的来源。
 type importSource int
 
 const (
@@ -915,8 +932,7 @@ const (
 	sourceGitHub
 )
 
-// detectImportSource determines the source from a URL.
-// Returns the source and a normalized URL (with scheme).
+// detectImportSource 从 URL 判断来源。返回来源与（带 scheme 的）规范化 URL。
 func detectImportSource(raw string) (importSource, string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -942,7 +958,7 @@ func detectImportSource(raw string) (importSource, string, error) {
 	case host == "github.com" || host == "www.github.com":
 		return sourceGitHub, normalized, nil
 	default:
-		// If no host (bare slug), default to clawhub
+		// 无 host（裸 slug）时默认按 clawhub 处理
 		if !strings.Contains(raw, "/") || !strings.Contains(raw, ".") {
 			return sourceClawHub, raw, nil
 		}
@@ -950,23 +966,23 @@ func detectImportSource(raw string) (importSource, string, error) {
 	}
 }
 
-// --- ClawHub import ---
+// --- ClawHub 导入 ---
 
-// parseClawHubSlug extracts the skill slug from a clawhub.ai URL.
+// parseClawHubSlug 从 clawhub.ai URL 抽取技能 slug。
 func parseClawHubSlug(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return "", fmt.Errorf("invalid URL: %w", err)
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	// /{owner}/{slug} — take the last segment as the slug
+	// /{owner}/{slug}——取最后一段作为 slug
 	if len(parts) == 2 {
 		return parts[1], nil
 	}
 	if len(parts) == 1 && parts[0] != "" {
 		return parts[0], nil
 	}
-	// Bare slug (no path)
+	// 裸 slug（无路径）
 	if raw == parsed.Host || parsed.Path == "" || parsed.Path == "/" {
 		return "", fmt.Errorf("missing skill slug in URL")
 	}
@@ -1051,7 +1067,7 @@ func fetchFromClawHub(ctx context.Context, httpClient *http.Client, rawURL strin
 
 	apiBase := clawHubAPIBase
 
-	// 1. Fetch skill metadata
+	// 1. 拉取技能元数据
 	skillReq, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/skills/"+url.PathEscape(slug), nil)
 	if err != nil {
 		return nil, err
@@ -1075,7 +1091,7 @@ func fetchFromClawHub(ctx context.Context, httpClient *http.Client, rawURL strin
 	}
 	chSkill := chResp.Skill
 
-	// 2. Determine latest version and fetch file list
+	// 2. 确定最新版本并拉取文件清单
 	latestVersion := ""
 	if v, ok := chSkill.Tags["latest"]; ok {
 		latestVersion = v
@@ -1104,7 +1120,7 @@ func fetchFromClawHub(ctx context.Context, httpClient *http.Client, rawURL strin
 		}
 	}
 
-	// 3. Download each file
+	// 3. 逐个下载文件
 	result := &importedSkill{
 		name:        chSkill.DisplayName,
 		description: chSkill.Summary,
@@ -1125,15 +1141,13 @@ func fetchFromClawHub(ctx context.Context, httpClient *http.Client, rawURL strin
 		}
 		body, err := fetchRawFile(ctx, httpClient, fileURL)
 		if err != nil {
-			// Cap violations must abort: silently dropping a file would
-			// produce an incomplete bundle that looks valid. SKILL.md is
-			// load-bearing, so any failure on it is fatal too.
+			// 超限必须中止：静默丢文件会产出看似完整实则残缺的包。SKILL.md 是
+			// 承重的，任何关于它的失败同样致命。
 			if isCapError(err) || fp == "SKILL.md" {
 				return nil, fmt.Errorf("clawhub import: %s: %w", fp, err)
 			}
-			// A cancelled context (overall deadline / client disconnect) is
-			// fatal for the same reason: skipping every remaining file would
-			// persist a half-populated bundle as a success.
+			// 取消的 context（整体截止/客户端断开）同样致命：跳过剩余每个文件
+			// 会把半填的包当作成功持久化。
 			if ctx.Err() != nil {
 				return nil, fmt.Errorf("clawhub import: fetch aborted at %s: %w", fp, ctx.Err())
 			}
@@ -1156,10 +1170,10 @@ func fetchFromClawHub(ctx context.Context, httpClient *http.Client, rawURL strin
 	return result, nil
 }
 
-// --- skills.sh import ---
+// --- skills.sh 导入 ---
 
-// parseSkillsShParts extracts owner, repo, skill-name from a skills.sh URL.
-// URL format: https://skills.sh/{owner}/{repo}/{skill-name}
+// parseSkillsShParts 从 skills.sh URL 抽取 owner、repo、skill-name。
+// URL 格式：https://skills.sh/{owner}/{repo}/{skill-name}
 func parseSkillsShParts(raw string) (owner, repo, skillName string, err error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -1178,27 +1192,22 @@ func fetchFromSkillsSh(ctx context.Context, httpClient *http.Client, rawURL stri
 		return nil, err
 	}
 
-	// A skills.sh URL maps onto a GitHub repository. Both skill-directory
-	// resolution and supporting-file enumeration are driven by a single
-	// recursive tree fetch. This collapses what used to be one contents-API
-	// call per directory — hundreds of sequential requests for a large mono-repo
-	// like api-gateway-skill, which pushed the request past the reverse-proxy
-	// gateway timeout (504) — into one call, and lets the import caps be checked
-	// from the tree metadata before any file is downloaded.
+	// skills.sh URL 映射到 GitHub 仓库。技能目录解析与支持文件枚举都由一次递归
+	// tree 拉取驱动。它把过去「每个目录一次 contents API 调用」——大 monorepo
+	// （如 api-gateway-skill）会产生数百次串行请求、把请求推到反代网关超时
+	// （504）之外——坍缩为一次调用，还可在下载任何文件前先用 tree 元数据做
+	// 限额检查。
 	defaultBranch := fetchGitHubDefaultBranch(ctx, httpClient, owner, repo)
 	rawPrefix := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s",
 		url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(defaultBranch))
 
 	tree, truncated, treeErr := fetchGitHubTree(ctx, httpClient, owner, repo, defaultBranch)
 	if treeErr != nil {
-		// The tree fetch failed (typically GitHub API rate limiting, which also
-		// takes down the contents API). Without the tree we cannot safely
-		// resolve which directory is the skill: a raw-probe + root-SKILL.md
-		// fallback would re-select the repository root whenever its name
-		// collides with the slug (the api-gateway-skill case) and the same
-		// rate limiting would then leave the crawl empty — persisting the wrong
-		// SKILL.md with zero supporting files as a "successful" import. Fail
-		// with a retryable error instead so nothing incorrect is saved.
+		// tree 拉取失败（通常是 GitHub API 限流，同样会击穿 contents API）。
+		// 没有 tree 就无法安全解析哪个目录是技能：裸探测+根 SKILL.md 兜底会在
+		// 仓库名与 slug 撞名时（api-gateway-skill 案例）重新选中仓库根，而同一
+		// 限流会让爬取为空——最终把「错误的 SKILL.md + 零支持文件」当成成功导入
+		// 持久化。改为返回可重试错误，不保存任何错误内容。
 		slog.Warn("skills.sh import: repository tree fetch failed",
 			"owner", owner, "repo", repo, "error", treeErr)
 		return nil, fmt.Errorf("%w: could not read the %s/%s repository tree (usually GitHub API rate limiting — set GITHUB_TOKEN on the server or retry): %v",
@@ -1213,8 +1222,8 @@ func fetchFromSkillsSh(ctx context.Context, httpClient *http.Client, rawURL stri
 	result := newSkillsShImportedSkill(skillMdBody, skillName, rawURL, owner, repo)
 
 	if truncated {
-		// The tree is incomplete, so it can't drive enumeration; use the legacy
-		// per-directory crawl scoped to the resolved skill directory.
+		// tree 不完整，无法驱动枚举；退回到限定在已解析技能目录里的旧式逐目录
+		// 爬取。
 		if err := addSupportingFilesViaCrawl(ctx, httpClient, result, owner, repo, defaultBranch, skillDir); err != nil {
 			return nil, err
 		}
@@ -1227,8 +1236,8 @@ func fetchFromSkillsSh(ctx context.Context, httpClient *http.Client, rawURL stri
 	return result, nil
 }
 
-// newSkillsShImportedSkill builds the importedSkill shell (name, description,
-// SKILL.md content, provenance) from a fetched SKILL.md body.
+// newSkillsShImportedSkill 从拉取到的 SKILL.md 正文构建 importedSkill 外壳
+// （名字、描述、内容、来源信息）。
 func newSkillsShImportedSkill(skillMdBody []byte, skillName, rawURL, owner, repo string) *importedSkill {
 	name, description := skillpkg.ParseSkillFrontmatter(string(skillMdBody))
 	if name == "" {
@@ -1248,14 +1257,11 @@ func newSkillsShImportedSkill(skillMdBody []byte, skillName, rawURL, owner, repo
 	}
 }
 
-// addSupportingFilesViaCrawl is the legacy per-directory enumeration path, used
-// as a fallback only for a truncated recursive tree (and by the github.com
-// importer). A tree-fetch failure no longer routes here — it returns a retryable
-// error instead. It lists skillDir via the contents API, recurses
-// subdirectories, and downloads each file. It stays lenient on a genuine listing
-// failure (returns with only SKILL.md, matching prior behavior under GitHub API
-// rate limiting) but treats a cancelled context as fatal so a mid-crawl deadline
-// or disconnect can't persist an incomplete bundle as a success.
+// addSupportingFilesViaCrawl 是旧式逐目录枚举路径，仅作为递归 tree 被截断时的
+// 兜底（github.com 导入器也在用）。tree 拉取失败不再走这里——那会返回可重试
+// 错误。它经 contents API 列出 skillDir、递归子目录并逐个下载。对真实的列举
+// 失败保持宽容（只带 SKILL.md 返回，与 GitHub API 限流下的旧行为一致），但把
+// context 被取消视为致命，避免爬取中途的截止/断线把残缺包当作成功持久化。
 func addSupportingFilesViaCrawl(ctx context.Context, httpClient *http.Client, result *importedSkill, owner, repo, ref, skillDir string) error {
 	apiURL := buildGitHubContentsURL(owner, repo, skillDir, ref)
 	dirResp, err := doGitHubAPIGet(ctx, httpClient, apiURL)
@@ -1263,9 +1269,8 @@ func addSupportingFilesViaCrawl(ctx context.Context, httpClient *http.Client, re
 		if dirResp != nil {
 			dirResp.Body.Close()
 		}
-		// A cancelled context (overall deadline / client disconnect) must abort
-		// rather than being swallowed as "no supporting files", which would
-		// persist an incomplete bundle as a success.
+		// context 被取消（整体截止/客户端断开）必须中止，不能吞成「无支持文件」，
+		// 否则会把残缺包当成功持久化。
 		if ctx.Err() != nil {
 			return fmt.Errorf("github import: directory listing aborted: %w", ctx.Err())
 		}
@@ -1275,10 +1280,8 @@ func addSupportingFilesViaCrawl(ctx context.Context, httpClient *http.Client, re
 
 	var entries []githubContentEntry
 	if err := json.NewDecoder(dirResp.Body).Decode(&entries); err != nil {
-		// A cancelled context surfaces as a decode error when the deadline or a
-		// client disconnect lands while the response body is still being read.
-		// Treat it as fatal rather than swallowing it — otherwise the import is
-		// saved with a valid SKILL.md but zero supporting files.
+		// context 被取消会以解码错误的形式出现（截止或断线发生在响应体读取期间）。
+		// 视为致命而非吞掉——否则导入被保存为「SKILL.md 有效但零支持文件」。
 		if ctx.Err() != nil {
 			return fmt.Errorf("github import: directory listing read aborted: %w", ctx.Err())
 		}
@@ -1288,8 +1291,8 @@ func addSupportingFilesViaCrawl(ctx context.Context, httpClient *http.Client, re
 
 	var allFiles []githubContentEntry
 	collectGitHubFiles(ctx, httpClient, entries, &allFiles, apiURL)
-	// collectGitHubFiles is lenient on a failed subdirectory listing; if the
-	// context was cancelled mid-crawl the collected set is incomplete, so abort.
+	// collectGitHubFiles 对子目录列举失败保持宽容；若爬取途中 context 被取消，
+	// 收集到的集合是不完整的，因此这里中止。
 	if ctx.Err() != nil {
 		return fmt.Errorf("github import: directory crawl aborted: %w", ctx.Err())
 	}
@@ -1321,12 +1324,10 @@ func addSupportingFilesViaCrawl(ctx context.Context, httpClient *http.Client, re
 	return nil
 }
 
-// fetchGitHubTree fetches the full recursive git tree for a ref in a single API
-// call. Each returned blob entry carries its path and byte size, which lets the
-// importer both resolve the skill directory and enforce the import caps without
-// the per-directory contents crawl that previously issued one API call per
-// directory — hundreds of sequential requests for a large mono-repo, which is
-// what pushed skills.sh imports past the reverse-proxy gateway timeout (504).
+// fetchGitHubTree 用一次 API 调用拉取某个 ref 的完整递归 git tree。每个 blob
+// 条目都带路径与字节大小，导入器既可据此解析技能目录，也能在无需逐目录 contents
+// 爬取（过去大 monorepo 下每目录一次 API 调用、数百次串行请求，正是把 skills.sh
+// 导入推过反代网关超时 504 的原因）的情况下执行导入限额。
 func fetchGitHubTree(ctx context.Context, httpClient *http.Client, owner, repo, ref string) (entries []githubTreeEntry, truncated bool, err error) {
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/trees/%s?recursive=1",
 		url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(ref))
@@ -1345,15 +1346,11 @@ func fetchGitHubTree(ctx context.Context, httpClient *http.Client, owner, repo, 
 	return tree.Tree, tree.Truncated, nil
 }
 
-// resolveSkillDirFromTree resolves the skill directory and its SKILL.md body
-// from an already-fetched repository tree. It prefers the most specific
-// frontmatter-verified match (a SKILL.md whose directory matches the skill
-// name), only considering the repository root when nothing deeper matches — so
-// a repo-root SKILL.md whose name happens to collide with the skill name no
-// longer captures the whole repository. When frontmatter matching finds nothing
-// it falls back to accepting a conventional skill location by path (preserving
-// the pre-tree importer's lenient semantics). When the tree is truncated it
-// falls back to a bounded per-prefix listing.
+// resolveSkillDirFromTree 从已拉取的仓库 tree 解析技能目录与它的 SKILL.md 正文。
+// 优先选择经 frontmatter 验证的最具体匹配（目录名匹配技能名的 SKILL.md），仅当
+// 更深的匹配都不存在时才考虑仓库根——这样目录名与技能名恰巧撞名的根 SKILL.md
+// 不会再捕获整个仓库。frontmatter 匹配无果时按路径接受惯用位置（保留 tree 导入
+// 器之前的宽容语义）。tree 被截断时退回有界的逐前缀列举。
 func resolveSkillDirFromTree(ctx context.Context, httpClient *http.Client, owner, repo, defaultBranch, rawPrefix, skillName string, tree []githubTreeEntry, truncated bool) (string, []byte, error) {
 	skillPaths := extractSkillMdPaths(tree)
 	preferred, remaining := partitionSkillMdPaths(skillName, skillPaths)
@@ -1364,15 +1361,12 @@ func resolveSkillDirFromTree(ctx context.Context, httpClient *http.Client, owner
 		if dir, body, ok := findMatchingSkillDirByFrontmatter(ctx, httpClient, rawPrefix, skillName, remaining); ok {
 			return dir, body, nil
 		}
-		// Frontmatter matching found nothing. Fall back to path-based
-		// acceptance so a skill living at a conventional location
-		// (skills/<name>/SKILL.md, etc.) still imports even when its
-		// frontmatter name doesn't byte-match the URL slug — e.g. `name: Foo`
-		// for slug `foo`. This restores the pre-tree importer's semantics and
-		// matches what the rate-limited legacy fallback already accepts, using
-		// only the tree we already have (at most one extra raw fetch, never a
-		// directory crawl). Kept after the frontmatter pass so the bare repo
-		// root is never eligible here — the collision fix stays intact.
+		// frontmatter 匹配无果。退回按路径接受，让位于惯用位置（skills/<name>/
+		// SKILL.md 等）的技能即使其 frontmatter 名与 URL slug 非逐字节一致也能导入
+		// ——例如 slug `foo` 配 `name: Foo`。这恢复了 tree 导入器之前的语义，并与
+		// 受限兜底已接受的规则一致，只用已拿到的 tree（至多多一次 raw 拉取，绝无
+		// 目录爬取）。放在 frontmatter 之后，裸仓库根在此永不入围——撞名修复保持
+		// 完整。
 		if dir, body, ok := acceptConventionalSkillDir(ctx, httpClient, rawPrefix, skillName, skillPaths, true); ok {
 			return dir, body, nil
 		}
@@ -1383,19 +1377,17 @@ func resolveSkillDirFromTree(ctx context.Context, httpClient *http.Client, owner
 	if dir, body, ok := findSkillDirFromConventionalPrefixes(ctx, httpClient, owner, repo, defaultBranch, rawPrefix, skillName); ok {
 		return dir, body, nil
 	}
-	// Same path-based acceptance as the untruncated branch, so a conventional
-	// skill with a display-name frontmatter imports identically regardless of
-	// whether GitHub truncated the tree. The tree can't prove absence here, so
-	// the helper probes each candidate directly.
+	// 与未截断分支相同的按路径接受，带显示名 frontmatter 的惯用技能无论 GitHub
+	// 是否截断 tree 都同样导入。此处 tree 无法证明路径不存在，因此助手直接探测
+	// 每个候选。
 	if dir, body, ok := acceptConventionalSkillDir(ctx, httpClient, rawPrefix, skillName, skillPaths, false); ok {
 		return dir, body, nil
 	}
 	return "", nil, fmt.Errorf("repository %s/%s tree is too large to scan exhaustively for skill %s", owner, repo, skillName)
 }
 
-// conventionalSkillMdPaths returns the SKILL.md locations the importer accepts
-// by path (without a frontmatter name check) for a given skill slug. Order is
-// significant: it mirrors the pre-tree importer's probe order.
+// conventionalSkillMdPaths 返回导入器对给定技能 slug 按路径接受（不查 frontmatter
+// 名）的 SKILL.md 位置。顺序有意义：镜像 tree 导入器之前的探测顺序。
 func conventionalSkillMdPaths(skillName string) []string {
 	return []string{
 		"skills/" + skillName + "/SKILL.md",
@@ -1405,17 +1397,14 @@ func conventionalSkillMdPaths(skillName string) []string {
 	}
 }
 
-// acceptConventionalSkillDir accepts a skill by its conventional path
-// (skills/<name>/SKILL.md, etc.) without requiring a frontmatter name match,
-// restoring the pre-tree importer's lenient path-based acceptance. It never
-// accepts the bare repo root, so a root SKILL.md whose name collides with the
-// slug can only be selected through the frontmatter pass — the collision fix
-// stays intact.
+// acceptConventionalSkillDir 按惯用路径（skills/<name>/SKILL.md 等）接受技能，
+// 不要求 frontmatter 名匹配，恢复 tree 导入器之前基于路径的宽容接受。它绝不
+// 接受裸仓库根——与 slug 撞名的根 SKILL.md 只能经 frontmatter 阶段被选中——
+// 撞名修复保持完整。
 //
-// When treeComplete is true, the untruncated tree proves which conventional
-// paths exist, so absent candidates are skipped without a network call. When
-// the tree was truncated it can't prove absence, so each candidate is probed
-// directly (a missing candidate simply 404s and is skipped).
+// treeComplete 为 true 时，未截断的 tree 能证明哪些惯用路径存在，缺席候选直接
+// 跳过、不产生网络调用。tree 被截断时无法证明缺席，因此直接探测每个候选
+// （缺失候选 404 即被跳过）。
 func acceptConventionalSkillDir(ctx context.Context, httpClient *http.Client, rawPrefix, skillName string, treeSkillPaths []string, treeComplete bool) (string, []byte, bool) {
 	present := make(map[string]struct{}, len(treeSkillPaths))
 	for _, p := range treeSkillPaths {
@@ -1424,14 +1413,13 @@ func acceptConventionalSkillDir(ctx context.Context, httpClient *http.Client, ra
 	for _, candidate := range conventionalSkillMdPaths(skillName) {
 		if treeComplete {
 			if _, ok := present[candidate]; !ok {
-				continue // a complete tree proves this path is absent
+				continue // 完整 tree 证明该路径不存在
 			}
 		}
 		body, err := fetchRawFile(ctx, httpClient, buildRawGitHubURL(rawPrefix, candidate))
 		if err != nil {
-			// With a complete tree the path was proven present, so a fetch
-			// error is unexpected and worth a breadcrumb; with a truncated tree
-			// this is just a probe miss.
+			// 完整 tree 下路径已被证明存在，拉取失败出乎意料、值得留痕；截断
+			// tree 下这只是普通探测未命中。
 			if treeComplete {
 				slog.Warn("skills.sh import: conventional SKILL.md fetch failed", "path", candidate, "error", err)
 			}
@@ -1442,29 +1430,24 @@ func acceptConventionalSkillDir(ctx context.Context, httpClient *http.Client, ra
 	return "", nil, false
 }
 
-// treeDownloadConcurrency bounds how many supporting files are downloaded in
-// parallel during tree-based collection. Small enough that one import cannot
-// open hundreds of sockets to GitHub at once, large enough to keep the download
-// phase well under the overall import deadline for a full (256-file) bundle.
+// treeDownloadConcurrency 限制基于 tree 收集期间并行下载的支持文件数。小到单次
+// 导入不会一次向 GitHub 打开数百个 socket，大到对完整（256 文件）包仍能把下载
+// 阶段压在整个导入截止之前。
 const treeDownloadConcurrency = 8
 
-// addSupportingFilesFromTree enumerates the supporting files under skillDir from
-// a single recursive git tree, enforces the per-file / count / total-byte caps
-// arithmetically from the tree metadata BEFORE downloading anything (so an
-// over-limit skill fails fast with a clear error instead of timing out), then
-// downloads the surviving files concurrently and appends them in a stable path
-// order. It replaces the legacy per-directory contents crawl (collectGitHubFiles).
+// addSupportingFilesFromTree 从单次递归 git tree 枚举 skillDir 下的支持文件：
+// 先纯用 tree 元数据算术式执行单文件/数量/总字节上限（超限技能快速失败并给出
+// 清晰错误而非超时），再并发下载存活文件并按稳定路径顺序追加。取代旧式逐目录
+// contents 爬取（collectGitHubFiles）。
 func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, result *importedSkill, tree []githubTreeEntry, rawPrefix, skillDir string) error {
 	basePath := ""
 	if skillDir != "" {
 		basePath = skillDir + "/"
 	}
 
-	// Select the eligible supporting-file blobs under skillDir, mirroring the
-	// filters the download loop / addFile would otherwise apply: skip the
-	// skill's own SKILL.md, LICENSE files, and binary assets (which addFile
-	// drops anyway). Keeping the filter here makes the arithmetic cap check
-	// below match what actually gets imported.
+	// 选出 skillDir 下合格的支持文件 blob，镜像下载循环/addFile 本会应用的过滤：
+	// 跳过技能自身 SKILL.md、LICENSE 文件与二进制资源（addFile 反正会丢）。过滤
+	// 放在这里能让下面的算术限额检查与实际导入内容一致。
 	type treeFile struct {
 		repoPath string
 		relPath  string
@@ -1492,11 +1475,10 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 		eligible = append(eligible, treeFile{repoPath: entry.Path, relPath: relPath, size: entry.size()})
 	}
 
-	// Stable order so imports are deterministic regardless of download timing.
+	// 稳定顺序，导入结果与下载时序无关，可复现。
 	sort.Slice(eligible, func(i, j int) bool { return eligible[i].relPath < eligible[j].relPath })
 
-	// Arithmetic cap pre-check on the tree metadata — no downloads required to
-	// reject an over-limit bundle.
+	// 基于 tree 元数据的算术限额预检——拒绝超限包无需任何下载。
 	if len(eligible) > maxImportFileCount {
 		return fmt.Errorf("%w: import bundle would contain %d files, exceeding the %d file limit", errImportCapExceeded, len(eligible), maxImportFileCount)
 	}
@@ -1511,7 +1493,7 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 		return fmt.Errorf("%w: import bundle is %d bytes, exceeding the %d byte limit", errImportCapExceeded, totalSize, maxImportTotalSize)
 	}
 
-	// Download concurrently, then append in the pre-sorted order.
+	// 并发下载，然后按预排序顺序追加。
 	contents := make([]string, len(eligible))
 	fetched := make([]bool, len(eligible))
 	g, gctx := errgroup.WithContext(ctx)
@@ -1524,18 +1506,14 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 				if isCapError(err) {
 					return fmt.Errorf("github import: %s: %w", f.repoPath, err)
 				}
-				// A cancelled context (overall import deadline exceeded, or the
-				// client disconnecting) must abort, not be swallowed as a
-				// per-file skip: otherwise every remaining download fails the
-				// same way, g.Wait returns nil, and the user gets a bundle that
-				// looks complete but is silently missing files. Let it surface
-				// so importFetchErrorResponse maps the deadline to a readable
-				// 504.
+				// context 被取消（整体导入截止超时，或客户端断开）必须中止而不能吞
+				// 成单文件跳过：否则每个剩余下载同样失败、g.Wait 返回 nil，用户拿到
+				// 一个看似完整实则静默缺文件的包。让它冒泡，importFetchErrorResponse
+				// 会把截止映射成可读的 504。
 				if gctx.Err() != nil {
 					return fmt.Errorf("github import: fetch aborted at %s: %w", f.repoPath, gctx.Err())
 				}
-				// Otherwise match the legacy loop's leniency: a single failed
-				// supporting file is logged and skipped, not fatal.
+				// 其余情况匹配旧循环的宽容：单个失败的支持文件记日志跳过，不致命。
 				slog.Warn("github import: file download failed", "path", f.repoPath, "error", err)
 				return nil
 			}
@@ -1559,8 +1537,7 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 	return nil
 }
 
-// size returns the blob byte size, guarding against a negative value from a
-// malformed tree response.
+// size 返回 blob 字节大小，防御畸形 tree 响应里的负值。
 func (e githubTreeEntry) size() int64 {
 	if e.Size < 0 {
 		return 0
@@ -1568,11 +1545,11 @@ func (e githubTreeEntry) size() int64 {
 	return e.Size
 }
 
-// collectGitHubFiles recursively collects file entries from a GitHub directory listing.
+// collectGitHubFiles 从 GitHub 目录列举里递归收集文件条目。
 func collectGitHubFiles(ctx context.Context, httpClient *http.Client, entries []githubContentEntry, out *[]githubContentEntry, parentURL string) {
 	for _, entry := range entries {
-		// Stop descending once the context is cancelled; the caller checks
-		// ctx.Err() afterwards and aborts rather than importing a partial crawl.
+		// context 一取消就停止下行；调用方事后检查 ctx.Err() 并中止，避免导入
+		// 半个爬取结果。
 		if ctx.Err() != nil {
 			return
 		}
@@ -1583,7 +1560,7 @@ func collectGitHubFiles(ctx context.Context, httpClient *http.Client, entries []
 		if entry.Type == "file" {
 			*out = append(*out, entry)
 		} else if entry.Type == "dir" {
-			// Fetch subdirectory contents
+			// 拉取子目录内容
 			subURL := entry.URL
 			if subURL == "" {
 				parsed, err := url.Parse(parentURL)
@@ -1787,19 +1764,17 @@ func skillNameHints(skillName string) []string {
 	return hints
 }
 
-// --- GitHub import ---
+// --- GitHub 导入 ---
 
-// errGitHubAPIBlocked signals that an api.github.com probe was rejected for
-// auth/rate-limit reasons (401/403/429) rather than because the resource
-// genuinely does not exist. Resolvers treat this as "indeterminate" and may
-// fall back to the optimistic URL split rather than aborting the import.
+// errGitHubAPIBlocked 表示对 api.github.com 的探测因鉴权/限流（401/403/429）被拒，
+// 而非资源真不存在。解析器把这种情况视为「不确定」，可退回乐观的 URL 切分而不
+// 中止导入。
 var errGitHubAPIBlocked = errors.New("github API blocked (rate limit or auth)")
 
-// doGitHubAPIGet performs a GET against an api.github.com URL, attaching the
-// GITHUB_TOKEN bearer header when the env var is set. Unauthenticated GitHub
-// API requests are capped at 60/hour per IP, which is trivially exhausted on
-// shared self-hosted servers and surfaces to users as 403 errors during
-// skill imports. Setting GITHUB_TOKEN raises the limit to 5000/hour.
+// doGitHubAPIGet 对 api.github.com URL 执行 GET，并在设置 GITHUB_TOKEN 环境变量
+// 时附加 bearer 头。未鉴权的 GitHub API 请求按 IP 限 60 次/小时，在共享的自托管
+// 服务器上一眨眼就用完，用户在技能导入期看到的是 403。设置 GITHUB_TOKEN 可提到
+// 5000 次/小时。
 func doGitHubAPIGet(ctx context.Context, httpClient *http.Client, apiURL string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
@@ -1818,37 +1793,33 @@ func addGitHubAuthHeader(req *http.Request) {
 	}
 }
 
-// githubSpec captures the parsed components of a github.com URL pointing at a
-// skill (or single-skill repository).
+// githubSpec 保存指向某技能（或单技能仓库）的 github.com URL 的解析结果。
 type githubSpec struct {
 	owner    string
 	repo     string
-	ref      string // empty → caller resolves the default branch
-	skillDir string // relative directory within the repo, "" for the repository root
+	ref      string // 空 → 调用方解析默认分支
+	skillDir string // 仓库内相对目录，"" 表示仓库根
 
-	// refSegments holds the raw path segments after /tree/ or /blob/ that
-	// jointly encode (ref, skillDir). GitHub's web URLs do not delimit the
-	// boundary between branch/tag name and in-repo path, so when a ref
-	// contains '/' (e.g. "release/v2") segments[0] alone is not the ref.
-	// fetchFromGitHub uses resolveGitHubRefAndPath to walk these segments
-	// and ask the API which prefix is a real branch/tag/commit. When this
-	// slice is empty, ref/skillDir above are authoritative (root URL).
+	// refSegments 保存 /tree/ 或 /blob/ 之后、共同编码 (ref, skillDir) 的原始路径
+	// 段。GitHub web URL 不划分支/标签名与仓库内路径的边界，所以当 ref 含 '/'
+	// （如 "release/v2"）时，仅 segments[0] 不是 ref。fetchFromGitHub 用
+	// resolveGitHubRefAndPath 遍历这些段并向 API 询问哪个前缀是真正的
+	// branch/tag/commit。此切片为空时，上方 ref/skillDir 为权威（根 URL）。
 	refSegments []string
-	// kind is "tree" or "blob"; "" for root URLs. blob requires the last
-	// segment to be SKILL.md, which is already stripped from refSegments.
+	// kind 是 "tree" 或 "blob"；根 URL 为 ""。blob 要求最后一段为 SKILL.md，
+	// 该段已从 refSegments 剥掉。
 	kind string
 }
 
-// parseGitHubURL extracts the owner, repo, and the raw post-/tree|/blob
-// segments from a github.com URL. Supported forms:
+// parseGitHubURL 从 github.com URL 抽取 owner、repo，以及 /tree|/blob 之后的原始段。
+// 支持的形态：
 //
-//	github.com/{owner}/{repo}                                → root, default branch
-//	github.com/{owner}/{repo}/tree/{ref}/{path...}           → ref / skill dir
-//	github.com/{owner}/{repo}/blob/{ref}/{path.../SKILL.md}  → ref / skill dir
+//	github.com/{owner}/{repo}                                → 根，默认分支
+//	github.com/{owner}/{repo}/tree/{ref}/{path...}           → ref / 技能目录
+//	github.com/{owner}/{repo}/blob/{ref}/{path.../SKILL.md}  → ref / 技能目录
 //
-// A simple-ref shortcut (segments[0] is the ref, the rest is the path) is
-// stored in spec.ref/spec.skillDir; refSegments is also populated so that
-// fetchFromGitHub can disambiguate refs containing '/' against the API.
+// 简单-ref 快捷方式（segments[0] 是 ref，其余是路径）存入 spec.ref/spec.skillDir；
+// refSegments 也一并填充，供 fetchFromGitHub 对 API 消歧含 '/' 的 ref。
 func parseGitHubURL(raw string) (githubSpec, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -1880,8 +1851,8 @@ func parseGitHubURL(raw string) (githubSpec, error) {
 			return githubSpec{}, fmt.Errorf("missing ref after /blob/")
 		}
 	}
-	// Decode URL-escaped segments (e.g. spaces) so paths match the repo's
-	// real on-disk layout. Re-escaping happens in buildRawGitHubURL.
+	// 解码 URL 转义的段（如空格），让路径与仓库真实磁盘布局匹配。转义在
+	// buildRawGitHubURL 里重新进行。
 	decoded := make([]string, len(rest))
 	for i, p := range rest {
 		d, err := url.PathUnescape(p)
@@ -1894,9 +1865,8 @@ func parseGitHubURL(raw string) (githubSpec, error) {
 		decoded[i] = d
 	}
 	spec.refSegments = decoded
-	// Optimistic split: assume the simple case where the ref is one segment.
-	// fetchFromGitHub will re-resolve via the API and overwrite both fields
-	// when the optimistic guess does not validate (e.g. release/v2 refs).
+	// 乐观切分：假设简单情形 ref 为一段。若乐观猜测验证失败（如 release/v2 型
+	// ref），fetchFromGitHub 会经 API 重解并覆写这两个字段。
 	spec.ref = decoded[0]
 	if len(decoded) > 1 {
 		spec.skillDir = strings.Join(decoded[1:], "/")
@@ -1904,22 +1874,20 @@ func parseGitHubURL(raw string) (githubSpec, error) {
 	return spec, nil
 }
 
-// resolveGitHubRefAndPath walks the parsed refSegments and asks the GitHub
-// commits API which prefix corresponds to a real branch, tag, or commit.
-// This is what makes refs containing '/' (e.g. "release/v2") work correctly:
-// the URL github.com/o/r/tree/release/v2/skills/foo is ambiguous between
-// (ref=release, path=v2/skills/foo) and (ref=release/v2, path=skills/foo),
-// so we probe /repos/{o}/{r}/commits/{candidate} from longest to shortest
-// and accept the first one the server confirms exists.
+// resolveGitHubRefAndPath 遍历解析出的 refSegments，向 GitHub commits API 询问
+// 哪个前缀对应真实的 branch/tag/commit。这正是让含 '/' 的 ref（如 "release/v2"）
+// 正确工作的关键：URL github.com/o/r/tree/release/v2/skills/foo 在
+// (ref=release, path=v2/skills/foo) 与 (ref=release/v2, path=skills/foo) 之间有歧义，
+// 因此按从长到短探测 /repos/{o}/{r}/commits/{candidate}，接受服务器确认存在的
+// 第一个。
 //
-// On success spec.ref and spec.skillDir are overwritten with the resolved
-// pair. On failure (no candidate resolves) a single error is returned that
-// names every candidate that was tried.
+// 成功后覆写 spec.ref 与 spec.skillDir。失败（无候选可解析）返回列出每个试过
+// 候选的单一错误。
 func resolveGitHubRefAndPath(ctx context.Context, httpClient *http.Client, spec *githubSpec) error {
 	if len(spec.refSegments) == 0 {
 		return nil
 	}
-	// Try longest prefix first so that release/v2 wins over release.
+	// 先试最长前缀，让 release/v2 胜过 release。
 	tried := make([]string, 0, len(spec.refSegments))
 	blocked := false
 	for n := len(spec.refSegments); n >= 1; n-- {
@@ -1927,15 +1895,13 @@ func resolveGitHubRefAndPath(ctx context.Context, httpClient *http.Client, spec 
 		tried = append(tried, candidate)
 		ok, err := githubRefExists(ctx, httpClient, spec.owner, spec.repo, candidate)
 		if errors.Is(err, errGitHubAPIBlocked) {
-			// 401/403/429 means we can't tell whether the ref exists. Keep
-			// trying the remaining (shorter) candidates so we don't punish
-			// the common single-segment-ref case for one bad probe.
+			// 401/403/429 表示无法判定 ref 是否存在。继续试更短的候选，别让一次
+			// 坏探测连累常见的单段 ref 情形。
 			blocked = true
 			continue
 		}
 		if err != nil {
-			// Network / transport errors should not be silently treated as
-			// "ref does not exist" — surface them so the caller can retry.
+			// 网络/传输错误不应静默当作「ref 不存在」——冒泡让调用方可重试。
 			return fmt.Errorf("validating ref %q: %w", candidate, err)
 		}
 		if ok {
@@ -1949,11 +1915,9 @@ func resolveGitHubRefAndPath(ctx context.Context, httpClient *http.Client, spec 
 		}
 	}
 	if blocked {
-		// Every probe was either a confirmed 404 or rate-limited and we never
-		// got a confirmation. Fall back to the optimistic single-segment
-		// split that parseGitHubURL populated. If that's wrong, the
-		// subsequent raw-file fetch will surface a clearer "SKILL.md not
-		// found" error than failing the whole import on a 403.
+		// 每个探测要么确认 404 要么被限流，从未得到确认。退回 parseGitHubURL
+		// 填好的乐观单段切分。若那是错的，后续 raw 拉取会给出更清晰的
+		// 「SKILL.md 未找到」错误，而不是让整次导入栽在一个 403 上。
 		slog.Warn("github import: ref resolution blocked by GitHub API (rate limit or auth); falling back to optimistic single-segment ref. Set GITHUB_TOKEN to enable disambiguation of slash-bearing refs.",
 			"owner", spec.owner, "repo", spec.repo, "tried", tried)
 		return nil
@@ -1962,12 +1926,10 @@ func resolveGitHubRefAndPath(ctx context.Context, httpClient *http.Client, spec 
 		spec.owner, spec.repo, strings.Join(tried, ", "))
 }
 
-// githubRefExists returns true when GitHub recognizes ref as a branch, tag,
-// or commit SHA on owner/repo. It uses the commits endpoint because that
-// single call accepts all three ref kinds (unlike /branches or /tags which
-// only match one). 404 means the ref does not exist; any other non-200
-// status is treated as an error so the caller can distinguish "missing"
-// from "API down".
+// githubRefExists 当 GitHub 把 ref 识别为 owner/repo 上的 branch、tag 或 commit
+// SHA 时返回 true。用 commits 端点是因为一次调用即可接受全部三种 ref（/branches
+// 或 /tags 只能匹配一种）。404 表示 ref 不存在；其它非 200 状态视为错误，调用方
+// 可区分「缺失」与「API 挂了」。
 func githubRefExists(ctx context.Context, httpClient *http.Client, owner, repo, ref string) (bool, error) {
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s",
 		url.PathEscape(owner), url.PathEscape(repo), escapeRefPath(ref))
@@ -1975,8 +1937,8 @@ func githubRefExists(ctx context.Context, httpClient *http.Client, owner, repo, 
 	if err != nil {
 		return false, err
 	}
-	// Per GitHub docs: Accept: application/vnd.github.v3.sha returns just
-	// the SHA when the ref resolves, which is the cheapest possible probe.
+	// 按 GitHub 文档：Accept: application/vnd.github.v3.sha 在 ref 可解析时只返回
+	// SHA——这是最廉价的探测方式。
 	req.Header.Set("Accept", "application/vnd.github.v3.sha")
 	addGitHubAuthHeader(req)
 	resp, err := httpClient.Do(req)
@@ -2002,8 +1964,7 @@ func fetchFromGitHub(ctx context.Context, httpClient *http.Client, rawURL string
 		return nil, err
 	}
 	if len(spec.refSegments) > 0 {
-		// Disambiguate slash-bearing refs (release/v2 etc.) against the API
-		// before issuing any raw or contents requests.
+		// 在发出任何 raw/contents 请求前，先对 API 消歧含 '/' 的 ref（release/v2 等）。
 		if err := resolveGitHubRefAndPath(ctx, httpClient, &spec); err != nil {
 			return nil, err
 		}
@@ -2051,11 +2012,9 @@ func fetchFromGitHub(ctx context.Context, httpClient *http.Client, rawURL string
 		},
 	}
 
-	// Enumerate supporting files from a single recursive tree, checking the
-	// import caps against the tree metadata before downloading anything. Fall
-	// back to the per-directory contents crawl when the tree is unavailable or
-	// truncated (kept lenient so a rate-limited listing doesn't fail an import
-	// that already produced a valid SKILL.md).
+	// 从单次递归 tree 枚举支持文件，在下载任何文件前先用 tree 元数据核对导入
+	// 限额。tree 不可用或被截断时退回逐目录 contents 爬取（保持宽容，限流的列举
+	// 不会毁掉一次已产出有效 SKILL.md 的导入）。
 	tree, truncated, treeErr := fetchGitHubTree(ctx, httpClient, spec.owner, spec.repo, spec.ref)
 	if treeErr == nil && !truncated {
 		if err := addSupportingFilesFromTree(ctx, httpClient, result, tree, rawPrefix, spec.skillDir); err != nil {
@@ -2069,17 +2028,15 @@ func fetchFromGitHub(ctx context.Context, httpClient *http.Client, rawURL string
 	return result, nil
 }
 
-// --- Shared helpers ---
+// --- 共享辅助函数 ---
 
-// rawGitHubContentHost serves raw GitHub file content. fetchRawFile attaches the
-// GITHUB_TOKEN only for this host: the same function downloads files from
-// non-GitHub skill sources (clawhub.ai, skills.sh), and an unconditional auth
-// header would leak the token to those third-party hosts.
+// rawGitHubContentHost 承载 GitHub raw 文件内容。fetchRawFile 只对这个 host
+// 附加 GITHUB_TOKEN：同一函数还会从非 GitHub 技能源（clawhub.ai、skills.sh）
+// 下载文件，无条件的鉴权头会把 token 泄漏给那些第三方 host。
 const rawGitHubContentHost = "raw.githubusercontent.com"
 
-// fetchRawFile downloads a URL and returns the body bytes. Returns an error
-// if the response exceeds maxImportFileSize so we never silently truncate a
-// half-downloaded skill file into the workspace.
+// fetchRawFile 下载 URL 并返回响应体字节。响应超过 maxImportFileSize 时返回
+// 错误，绝不静默把下载了一半的技能文件截进工作区。
 func fetchRawFile(ctx context.Context, httpClient *http.Client, fileURL string) ([]byte, error) {
 	req, err := newRawFileRequest(ctx, fileURL)
 	if err != nil {
@@ -2103,11 +2060,9 @@ func fetchRawFile(ctx context.Context, httpClient *http.Client, fileURL string) 
 	return body, nil
 }
 
-// newRawFileRequest builds the GET request for a raw skill file, attaching the
-// GitHub auth header only when the URL targets GitHub's raw content host. The
-// host gate lives here, separate from the round-trip, so it can be unit tested
-// without a live network call — GITHUB_TOKEN must never reach a non-GitHub
-// skill host.
+// newRawFileRequest 构建 raw 技能文件的 GET 请求，仅在 URL 指向 GitHub raw
+// 内容 host 时附加 GitHub 鉴权头。host 门控放在这里、独立于往返，便于无网络
+// 单测——GITHUB_TOKEN 绝不能到达非 GitHub 技能 host。
 func newRawFileRequest(ctx context.Context, fileURL string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
@@ -2119,10 +2074,9 @@ func newRawFileRequest(ctx context.Context, fileURL string) (*http.Request, erro
 	return req, nil
 }
 
-// escapeRefPath percent-encodes each segment of a git ref individually so
-// that slash-bearing refs like "release/v2" are sent to GitHub as
-// "release/v2" (path separators preserved) rather than "release%2Fv2"
-// (which GitHub does not accept on the commits / raw endpoints).
+// escapeRefPath 逐段百分号编码 git ref，让含 '/' 的 ref（如 "release/v2"）以
+// "release/v2"（保留路径分隔符）发给 GitHub，而非 "release%2Fv2"（commits/raw
+// 端点不接受后者）。
 func escapeRefPath(ref string) string {
 	parts := strings.Split(ref, "/")
 	for i, p := range parts {
@@ -2272,8 +2226,12 @@ func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// --- Import handler ---
+// --- 导入处理器 ---
 
+// ImportSkill 处理 POST /api/skills/import。两种入参形态：multipart/form-data
+// 上传 .skill/.zip 归档（走 importSkillFromArchive），或 JSON 的 URL 导入。
+// 需工作区成员；on_conflict 决定撞名策略。全程置于 importFetchTimeout 之下的
+// 整体截止内。
 func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 
@@ -2287,9 +2245,8 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 	}
 	creatorUUID := parseUUID(creatorID)
 
-	// An uploaded skill archive (.skill / .zip) arrives as multipart/form-data;
-	// a hosted-URL import arrives as JSON. Both converge on the same create +
-	// conflict tail via finishSkillImport.
+	// 上传的技能归档（.skill / .zip）以 multipart/form-data 到达；hosted URL 导入
+	// 以 JSON 到达。两者经 finishSkillImport 汇合到同一「创建+冲突」尾巴。
 	if isMultipartForm(r) {
 		h.importSkillFromArchive(w, r, workspaceID, workspaceUUID, creatorUUID, creatorID)
 		return
@@ -2318,11 +2275,9 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 
-	// Bound the whole server-side fetch under an overall deadline that is
-	// shorter than the reverse-proxy / CDN gateway timeout in front of the API.
-	// If an upstream is slow, the import returns a clear error instead of the
-	// proxy severing the connection with a 504, and a client disconnect cancels
-	// the in-flight fetch instead of letting it run on orphaned.
+	// 把整个服务端拉取约束在比 API 前的反向代理/CDN 网关超时更短的整体截止下。
+	// 上游慢时，导入返回清晰错误而不是被代理用 504 切断；客户端断开会取消在途
+	// 拉取，而不是让它孤儿式继续跑。
 	ctx, cancel := context.WithTimeout(r.Context(), importFetchTimeout)
 	defer cancel()
 
@@ -2344,16 +2299,12 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 	h.finishSkillImport(w, r, workspaceID, workspaceUUID, creatorUUID, creatorID, strategy, structuredResult, imported)
 }
 
-// importFetchTimeout bounds the total time spent fetching a skill's files from
-// the upstream source. It is deliberately below the reverse-proxy gateway
-// timeout so a slow or oversized source surfaces as a readable API error rather
-// than a proxy 504.
+// importFetchTimeout 限制从上游源抓取技能文件的总耗时。它刻意低于反向代理网关
+// 超时，让慢或过大的源以可读的 API 错误呈现，而不是代理 504。
 const importFetchTimeout = 45 * time.Second
 
-// importFetchErrorResponse maps a fetch failure onto an HTTP status and message.
-// Cap violations become 413 (the skill is too large to import), an exhausted
-// deadline becomes 504, a transiently unavailable source becomes a retryable
-// 503, and everything else stays 502.
+// importFetchErrorResponse 把拉取失败映射为 HTTP 状态与消息。超限→413（技能
+// 太大无法导入）、截止耗尽→504、瞬时不可用源→可重试 503，其余保持 502。
 func importFetchErrorResponse(ctx context.Context, err error) (int, string) {
 	if isCapError(err) {
 		return http.StatusRequestEntityTooLarge, err.Error()
@@ -2367,8 +2318,8 @@ func importFetchErrorResponse(ctx context.Context, err error) (int, string) {
 	return http.StatusBadGateway, err.Error()
 }
 
-// importedSkillFileRequests maps a fetched bundle's supporting files onto
-// CreateSkillFileRequest, dropping entries whose path fails validateFilePath.
+// importedSkillFileRequests 把抓取到的包内支持文件映射成 CreateSkillFileRequest，
+// 丢弃路径过不了 validateFilePath 的条目。
 func importedSkillFileRequests(imported *importedSkill) []CreateSkillFileRequest {
 	files := make([]CreateSkillFileRequest, 0, len(imported.files))
 	for _, f := range imported.files {
@@ -2383,16 +2334,14 @@ func importedSkillFileRequests(imported *importedSkill) []CreateSkillFileRequest
 	return files
 }
 
-// finishSkillImport runs the shared tail of every skill import — whether the
-// bundle came from a hosted URL or an uploaded archive (.skill / .zip). It maps
-// the extracted files onto CreateSkillFileRequest, records provenance into
-// config.origin, and creates the skill, routing same-name collisions through
-// the on_conflict strategy.
+// finishSkillImport 执行所有技能导入共享的尾巴——无论包来自 hosted URL 还是上传
+// 的归档（.skill / .zip）。它把抽取出的文件映射为 CreateSkillFileRequest、把来源
+// 信息记入 config.origin，然后创建技能；撞名按 on_conflict 策略路由。
 func (h *Handler) finishSkillImport(w http.ResponseWriter, r *http.Request, workspaceID string, workspaceUUID, creatorUUID pgtype.UUID, creatorID, strategy string, structuredResult bool, imported *importedSkill) {
 	files := importedSkillFileRequests(imported)
 
-	// Persist provenance into skill.config.origin so list/detail UI can show
-	// "Imported from GitHub / ClawHub / Skills.sh" and link back to the source.
+	// 把来源信息持久化进 skill.config.origin，让列表/详情 UI 能展示
+	// 「从 GitHub / ClawHub / Skills.sh 导入」并回链到源。
 	config := map[string]any{}
 	if imported.origin != nil {
 		config["origin"] = imported.origin
@@ -2438,8 +2387,10 @@ func (h *Handler) finishSkillImport(w http.ResponseWriter, r *http.Request, work
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-// --- Skill File endpoints ---
+// --- 技能文件端点 ---
 
+// ListSkillFiles 处理 GET /api/skills/{id}/files。?include=metadata 时返回
+// path/size/hash（不下载正文），否则返回全部文件正文。
 func (h *Handler) ListSkillFiles(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	includeContent, ok := resolveSkillInclude(w, r)
@@ -2478,6 +2429,8 @@ func (h *Handler) ListSkillFiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// UpsertSkillFile 处理 PUT /api/skills/{id}/files。门控 canManageSkill；路径需
+// 安全且非保留的 SKILL.md；写入前经 sanitizeNullBytes。
 func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	skill, ok := h.loadSkillForUser(w, r, id)
@@ -2516,6 +2469,8 @@ func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, skillFileToResponse(sf))
 }
 
+// DeleteSkillFile 处理 DELETE /api/skills/{id}/files/{fileId}。门控 canManageSkill；
+// 校验该文件确属刚授权过的父技能。成功返回 204。
 func (h *Handler) DeleteSkillFile(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	skill, ok := h.loadSkillForUser(w, r, id)
@@ -2531,8 +2486,7 @@ func (h *Handler) DeleteSkillFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Verify the file belongs to the parent skill we just authorized — guards
-	// against deleting a file owned by a different skill via the URL param.
+	// 校验该文件确属刚授权过的父技能——防止借 URL 参数删除属于别的技能的文件。
 	file, err := h.Queries.GetSkillFile(r.Context(), fileUUID)
 	if err != nil || uuidToString(file.SkillID) != uuidToString(skill.ID) {
 		writeError(w, http.StatusNotFound, "skill file not found")
@@ -2545,8 +2499,10 @@ func (h *Handler) DeleteSkillFile(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- Agent-Skill junction ---
+// --- Agent-Skill 关联 ---
 
+// ListAgentSkills 处理 GET /api/agents/{id}/skills，返回该 agent 绑定的技能
+// 摘要（enabled 反映 agent_skill 行的启用状态）。
 func (h *Handler) ListAgentSkills(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
@@ -2571,6 +2527,9 @@ func (h *Handler) ListAgentSkills(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// SetAgentSkills 处理 PUT /api/agents/{id}/skills——整体替换 agent 绑定的技能
+// 集合。门控 canManageAgent；所有 skill 必须属于该工作区。事务内先清后加并记录
+// 事件。
 func (h *Handler) SetAgentSkills(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
@@ -2632,6 +2591,8 @@ func (h *Handler) SetAgentSkills(w http.ResponseWriter, r *http.Request) {
 	h.writeUpdatedAgentSkills(w, r, agent, updatedEvent)
 }
 
+// AddAgentSkills 处理 POST /api/agents/{id}/skills——增量绑定技能。门控与
+// 校验同 SetAgentSkills。
 func (h *Handler) AddAgentSkills(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
@@ -2687,6 +2648,8 @@ func (h *Handler) AddAgentSkills(w http.ResponseWriter, r *http.Request) {
 	h.writeUpdatedAgentSkills(w, r, agent, updatedEvent)
 }
 
+// SetAgentSkillEnabled 处理 PATCH /api/agents/{id}/skills/{skillId}——启用或
+// 停用某条 agent-skill 绑定。门控 canManageAgent；绑定不存在返回 404。
 func (h *Handler) SetAgentSkillEnabled(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
@@ -2742,6 +2705,8 @@ func (h *Handler) SetAgentSkillEnabled(w http.ResponseWriter, r *http.Request) {
 	h.writeUpdatedAgentSkills(w, r, agent, updatedEvent)
 }
 
+// RemoveAgentSkill 处理 DELETE /api/agents/{id}/skills/{skillId}——解除一条
+// agent-skill 绑定。门控 canManageAgent。
 func (h *Handler) RemoveAgentSkill(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
@@ -2782,6 +2747,8 @@ func (h *Handler) RemoveAgentSkill(w http.ResponseWriter, r *http.Request) {
 	h.writeUpdatedAgentSkills(w, r, agent, updatedEvent)
 }
 
+// validateAgentSkillIDsInWorkspace 校验待绑定技能都属该 agent 所在工作区且存在
+// （去重后逐个查）；不合法时已写好 404 响应。
 func (h *Handler) validateAgentSkillIDsInWorkspace(w http.ResponseWriter, r *http.Request, agent db.Agent, skillUUIDs []pgtype.UUID) bool {
 	seen := map[string]struct{}{}
 	for _, skillID := range skillUUIDs {
@@ -2801,6 +2768,8 @@ func (h *Handler) validateAgentSkillIDsInWorkspace(w http.ResponseWriter, r *htt
 	return true
 }
 
+// writeUpdatedAgentSkills 重载 agent 的最新技能列表写入事件负载并发布，然后以
+// 该列表作为变更端点响应。
 func (h *Handler) writeUpdatedAgentSkills(w http.ResponseWriter, r *http.Request, agent db.Agent, event events.Event) {
 	skills, err := h.Queries.ListAgentSkillSummaries(r.Context(), agent.ID)
 	if err != nil {

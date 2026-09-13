@@ -1,3 +1,13 @@
+// ============================================================================
+// 每周成本四段堆叠图（runtime 用量页「周视图」费用）
+//
+// 角色定位：DailyCostChart 的周粒度版本。序列、颜色与顺序保持完全一致，让
+// 「周」读作同一张「日」图的更粗切分，而不是另一张新图。进行中的周半透明
+// 显示，「本周尚未结束」不需要单独图例就能一眼看出。
+//
+// 数据：utils.ts 的 aggregateByWeek 产出（WeeklyCostStackData），每根柱 =
+// 一个自然周的四个计费组成。
+// ============================================================================
 import {
   BarChart,
   Bar,
@@ -15,10 +25,9 @@ import {
 import type { WeeklyCostStackData } from "../../utils";
 import { useT } from "../../../i18n";
 
-// Same four-segment stack as DailyCostChart — keeping series, colours, and
-// ordering identical so the user reads "Weekly" as a coarser cut of the same
-// chart, not a different chart. Partial-week bars render at half-opacity so
-// "this week is in progress" is visually obvious without a separate legend.
+// 与 DailyCostChart 相同的四段堆叠——序列、颜色与顺序保持一致，让用户把
+// 「周视图」读作同一张图更粗的切分，而非不同的图。进行中的周半透明渲染，
+// 让「本周尚未结束」无需额外图例也一目了然。
 export const weeklyCostStackConfig = {
   input: { label: "Input", color: "var(--chart-1)" },
   output: { label: "Output", color: "var(--chart-2)" },
@@ -26,6 +35,9 @@ export const weeklyCostStackConfig = {
   cacheWrite: { label: "Cache write", color: "var(--chart-3)" },
 } satisfies ChartConfig;
 
+/**
+ * 每周成本堆叠柱状图。进行中的周（partial=true）半透明显示。
+ */
 export function WeeklyCostChart({ data }: { data: WeeklyCostStackData[] }) {
   const { t } = useT("runtimes");
   return (

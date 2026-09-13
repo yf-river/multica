@@ -1,75 +1,75 @@
 package protocol
 
+// 本文件职责：定义 server / daemon / web 客户端之间 WebSocket 消息的负载
+// （payload）结构——任务派发与进度、聊天回合、心跳与挂起动作、daemon↔server
+// 的 RPC 信封等。协议消息外层统一是 Message{Type, Payload}，Type 的取值与语义
+// 见 events.go。
+
 import "encoding/json"
 
+// daemon 与 app 客户端用来宣告「我支持哪些能力」的字符串常量。server / daemon
+// 靠它们做协议协商：daemon 报 capability、server 报 server_capabilities，
+// 双方都只启用对方声明支持的特性。
 const (
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
 	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"
 	DaemonCapabilityExecutionManifestV1 = "execution-manifest-v1"
 	DaemonCapabilityAgentSkillV1        = "agent-skill-v1"
 	DaemonCapabilityRemoteMCPV1         = "remote-mcp-v1"
-	// DaemonCapabilityLocalWorktreeV1 advertises that the daemon implements
-	// worktree mode for local_directory resources (execution_mode=worktree).
+	// DaemonCapabilityLocalWorktreeV1 宣告 daemon 实现了 local_directory 资源的
+	// worktree 模式（execution_mode=worktree）。
 	//
-	// This is a CAPABILITY rather than a version check on purpose. The failure
-	// mode of getting it wrong is not a missing field — a daemon without the
-	// implementation json-skips execution_mode and runs the task IN PLACE,
-	// editing the working copy the user asked to isolate. Version strings
-	// cannot answer that reliably: a git-describe dev build ("v0.4.21-24-g…")
-	// is deliberately exempted from the version floor so `make daemon` stays
-	// unblocked, which let exactly such a daemon through (MUL-5707). A daemon
-	// that implements the mode says so; one that does not, cannot.
+	// 刻意做成 CAPABILITY 而非版本号检查。判错它的失败形态不是缺字段——
+	// 一个没实现该功能的 daemon 会在 json 解析时跳过 execution_mode，
+	// 然后在用户要求隔离的工作副本「就地」跑任务。版本字符串回答不了这个：
+	// git-describe 的开发构建（"v0.4.21-24-g…"）被刻意豁免于版本下限，
+	// 让 `make daemon` 不被卡住——结果恰恰放进来过这样的 daemon（MUL-5707）。
+	// 实现了该模式的 daemon 自己说「我会」；没实现的，说不出来。
 	DaemonCapabilityLocalWorktreeV1 = "local-worktree-v1"
-	// DaemonCapabilitySourceContextQuickCreateV1 advertises support for the
-	// two-section quick-create prompt that keeps a new instruction separate
-	// from immutable historical source context.
+	// DaemonCapabilitySourceContextQuickCreateV1 宣告支持「两段式 quick-create
+	// 提示」，把新指令与不可变的历史源上下文分开携带。
 	DaemonCapabilitySourceContextQuickCreateV1 = "source_context_quick_create_v1"
 
-	// DaemonCapabilityRPCV1 advertises that the daemon can carry
-	// request/response RPCs over the WebSocket control connection (MUL-4257).
-	// Gated so only daemons+servers that both support it route claim over WS;
-	// everyone else keeps using the HTTP claim endpoint.
+	// DaemonCapabilityRPCV1 宣告 daemon 能在 WebSocket 控制连接上承载
+	// request/response RPC（MUL-4257）。开关式能力：只有双方都支持时，
+	// 认领任务才走 WS；其余情况继续走 HTTP claim 端点。
 	DaemonCapabilityRPCV1 = "rpc-v1"
 
-	// AppCapabilityChatDraftRestoreV1 is advertised (X-Client-Capabilities) by
-	// app clients that understand the durable draft-restore recovery path:
-	// chat:cancel_finalized as an invalidation hint plus the draft-restores
-	// endpoint. Cancelling a started-but-empty chat task defers the
-	// empty/non-empty judgment (#5219), so its cancel response carries no
-	// synchronous restore — a client without this capability would silently
-	// drop the user's prompt, and keeps the legacy synchronous restore instead.
+	// AppCapabilityChatDraftRestoreV1 由理解「持久化草稿恢复」路径的 app
+	// 客户端用 X-Client-Capabilities 宣告：chat:cancel_finalized 作为失效提示，
+	// 加草稿恢复端点。取消一个「已开始但空」的聊天任务时，空/非空判断被推迟
+	// （#5219），所以它的取消响应不带同步恢复——没有这个能力的客户端会静默
+	// 丢掉用户的提示，因此继续用旧的同步恢复路径。
 	AppCapabilityChatDraftRestoreV1 = "chat-draft-restore-v1"
 )
 
-// ChatQuickAction is a server-validated follow-up attached to one assistant
-// reply. Label is the concise chip text; Prompt is the full next user turn.
+// ChatQuickAction 是一条服务端校验过的「后续动作」，挂到某条 assistant 回复上。
+// Label 是简洁的胶囊文案；Prompt 是完整的下一轮用户发言。
 type ChatQuickAction struct {
 	Label   string `json:"label"`
 	Prompt  string `json:"prompt"`
 	Primary bool   `json:"primary,omitempty"`
 }
 
-// RPCRequestPayload is the generic daemon→server request envelope carried in a
-// protocol.Message of type EventDaemonRPCRequest. RequestID correlates the
-// response; Method selects the server-side handler (e.g. "tasks.claim"); Body
-// is the method-specific request JSON.
+// RPCRequestPayload 是 daemon→server 的通用请求信封，装进
+// EventDaemonRPCRequest 类型消息的 payload。RequestID 用于把响应和请求配对；
+// Method 选择 server 侧处理器（例如 "tasks.claim"）；Body 是该方法专属的
+// 请求 JSON。
 type RPCRequestPayload struct {
 	RequestID string          `json:"request_id"`
 	Method    string          `json:"method"`
 	Body      json.RawMessage `json:"body,omitempty"`
-	// TimeoutMs is the server-side execution budget in milliseconds. The server
-	// bounds the handler's context by it so a slow RPC is cancelled (its work
-	// rolled back) rather than committing after the daemon has already timed
-	// out waiting and fallen back to HTTP (MUL-4257). 0 means no server-side
-	// bound (connection-lifetime only).
+	// TimeoutMs 是 server 侧的执行预算（毫秒）。server 用它约束 handler 的
+	// context，让慢 RPC 被取消（其工作回滚），而不是在 daemon 已等超时并
+	// 回落到 HTTP 之后才提交（MUL-4257）。0 表示不设 server 侧上限
+	// （只受连接生命周期约束）。
 	TimeoutMs int64 `json:"timeout_ms,omitempty"`
 }
 
-// RPCResponsePayload is the server→daemon reply, carried in a
-// protocol.Message of type EventDaemonRPCResponse. RequestID echoes the
-// request. Status mirrors an HTTP status so the daemon can treat WS and HTTP
-// outcomes uniformly. Exactly one of Body / Error is meaningful: Body on
-// success (2xx), Error on failure.
+// RPCResponsePayload 是 server→daemon 的应答，装进 EventDaemonRPCResponse
+// 类型消息。RequestID 回显请求。Status 镜像 HTTP 状态码，让 daemon 能统一
+// 处理 WS 与 HTTP 两种结果。Body / Error 二选一有意义：成功（2xx）时是 Body，
+// 失败时是 Error。
 type RPCResponsePayload struct {
 	RequestID string          `json:"request_id"`
 	Status    int             `json:"status"`
@@ -77,13 +77,13 @@ type RPCResponsePayload struct {
 	Error     string          `json:"error,omitempty"`
 }
 
-// Message is the envelope for all WebSocket messages.
+// Message 是所有 WebSocket 消息的外层信封。
 type Message struct {
 	Type    string          `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }
 
-// TaskDispatchPayload is sent from server to daemon when a task is assigned.
+// TaskDispatchPayload 是任务被指派时 server 发给 daemon 的消息。
 type TaskDispatchPayload struct {
 	TaskID      string `json:"task_id"`
 	IssueID     string `json:"issue_id"`
@@ -91,49 +91,44 @@ type TaskDispatchPayload struct {
 	Description string `json:"description"`
 }
 
-// TaskAvailablePayload is sent from server to daemon as a wakeup hint. The
-// daemon still claims work through the existing HTTP claim endpoint.
+// TaskAvailablePayload 是 server 发给 daemon 的唤醒提示。daemon 仍然通过既有
+// HTTP claim 端点认领工作。
 type TaskAvailablePayload struct {
 	RuntimeID string `json:"runtime_id"`
 	TaskID    string `json:"task_id,omitempty"`
 }
 
-// RuntimeProfilesChangedPayload is sent from server to daemon as a wakeup hint
-// when a workspace custom runtime profile is created, edited, disabled, or
-// deleted. The daemon still fetches profiles and registers runtimes through the
-// existing HTTP endpoints.
+// RuntimeProfilesChangedPayload 是 workspace 的自定义 runtime profile 被创建、
+// 编辑、禁用或删除时，server 发给 daemon 的唤醒提示。daemon 仍然通过既有
+// HTTP 端点拉取 profile、注册 runtime。
 type RuntimeProfilesChangedPayload struct {
 	WorkspaceID      string `json:"workspace_id"`
 	RuntimeProfileID string `json:"runtime_profile_id,omitempty"`
 }
 
-// WorkspacesChangedPayload is an account-scoped hint that asks a daemon to
-// reconcile its workspace membership set. The server remains authoritative;
-// no workspace data is embedded in the event.
+// WorkspacesChangedPayload 是一个账号维度的提示，请 daemon 校准自己的
+// workspace 成员集合。server 始终是权威方；事件里不嵌任何 workspace 数据。
 type WorkspacesChangedPayload struct{}
 
-// PendingWorkKind values carried by PendingWorkPayload.Kind. The kind is
-// advisory only — the daemon reacts identically to every kind (one immediate
-// heartbeat, which claims whatever is queued) — so an unknown value from a
-// newer server stays safe on an older daemon.
+// PendingWorkPayload.Kind 携带的取值。kind 仅供参考——daemon 对每种 kind 的
+// 反应都一样（一次立即心跳，把队列里排着的活认走）——所以较新 server 发出的
+// 未知值在老 daemon 上也安全。
 const (
 	PendingWorkKindModelList        = "model_list"
 	PendingWorkKindLocalSkills      = "local_skills"
 	PendingWorkKindLocalSkillImport = "local_skill_import"
 )
 
-// PendingWorkPayload is sent from server to daemon as a wakeup hint when a
-// heartbeat-carried request is enqueued for a runtime. The daemon responds by
-// sending one immediate heartbeat for RuntimeID instead of waiting for its next
-// scheduled tick; the request itself is still claimed through the normal
-// heartbeat path, so this event carries no work and is safe to lose, duplicate,
-// or ignore (MUL-5444).
+// PendingWorkPayload 是某 runtime 有「由心跳携带的请求」入队时，server 发给
+// daemon 的唤醒提示。daemon 的响应方式是立刻为 RuntimeID 发一次心跳，而不是
+// 等下一个调度 tick；请求本身仍走常规心跳路径被认领，所以这个事件不携带工作
+// 内容，丢了、重复、被忽略都无害（MUL-5444）。
 type PendingWorkPayload struct {
 	RuntimeID string `json:"runtime_id"`
 	Kind      string `json:"kind,omitempty"`
 }
 
-// TaskProgressPayload is sent from daemon to server during task execution.
+// TaskProgressPayload 是任务执行过程中 daemon 发给 server 的进度消息。
 type TaskProgressPayload struct {
 	TaskID  string `json:"task_id"`
 	Summary string `json:"summary"`
@@ -141,59 +136,56 @@ type TaskProgressPayload struct {
 	Total   int    `json:"total,omitempty"`
 }
 
-// TaskCompletedPayload is sent from daemon to server when a task finishes.
+// TaskCompletedPayload 是任务结束时 daemon 发给 server 的完成消息。
 type TaskCompletedPayload struct {
 	TaskID string `json:"task_id"`
 	PRURL  string `json:"pr_url,omitempty"`
 	Output string `json:"output,omitempty"`
 }
 
-// ChatQuickActionsPayload supplements one completed chat turn with the
-// sanitized follow-up actions from the daemon's suggestion pass. An empty
-// QuickActions list is a meaningful terminal state — it resolves the
-// pending skeleton with "no suggestions this turn".
+// ChatQuickActionsPayload 用 daemon 建议扫描产出的「净化后」后续动作，补全一轮
+// 已完成的聊天回合。空的 QuickActions 列表是一个有意义的终态——它把挂起的骨架
+// 解析为「本回合无建议」。
 type ChatQuickActionsPayload struct {
 	ChatSessionID string            `json:"chat_session_id"`
 	TaskID        string            `json:"task_id"`
 	MessageID     string            `json:"message_id"`
 	QuickActions  []ChatQuickAction `json:"quick_actions"`
-	// Failed marks a supplement that resolves the client's refresh spinner
-	// because the regeneration FAILED (the provider pass or its delivery), not
-	// because it produced new suggestions. QuickActions then carries the turn's
-	// unchanged pills; the client shows a "couldn't refresh" notice instead of
-	// treating unchanged content as a silent success (MUL-5149). Omitted (false)
-	// on the normal success path and for the automatic best-effort pass.
+	// Failed 标记：这次补全是为了结束客户端的刷新转圈，因为重新生成失败
+	// （provider 阶段或投递阶段），而不是生成了新建议。此时 QuickActions 装的是
+	// 本回合未变的药丸；客户端展示「刷新失败」提示，而不是把未变的内容当作
+	// 静默成功（MUL-5149）。正常成功路径与自动 best-effort 扫描时为 false（省略）。
 	Failed bool `json:"failed,omitempty"`
 }
 
-// TaskMessagePayload represents a single agent execution message (tool call, text, etc.)
+// TaskMessagePayload 表示单条 agent 执行消息（工具调用、文本等）。
 type TaskMessagePayload struct {
 	TaskID    string         `json:"task_id"`
 	IssueID   string         `json:"issue_id,omitempty"`
 	Seq       int            `json:"seq"`
-	Type      string         `json:"type"`              // "text", "tool_use", "tool_result", "error"
-	Tool      string         `json:"tool,omitempty"`    // tool name for tool_use/tool_result
-	Content   string         `json:"content,omitempty"` // text content
-	Input     map[string]any `json:"input,omitempty"`   // tool input (tool_use only)
-	Output    string         `json:"output,omitempty"`  // tool output (tool_result only)
+	Type      string         `json:"type"`              // "text"、"tool_use"、"tool_result"、"error"
+	Tool      string         `json:"tool,omitempty"`    // tool_use/tool_result 时的工具名
+	Content   string         `json:"content,omitempty"` // 文本内容
+	Input     map[string]any `json:"input,omitempty"`   // 工具入参（仅 tool_use）
+	Output    string         `json:"output,omitempty"`  // 工具输出（仅 tool_result）
 	CreatedAt string         `json:"created_at,omitempty"`
 }
 
-// DaemonRegisterPayload is sent from daemon to server on connection.
+// DaemonRegisterPayload 是 daemon 连接建立时发给 server 的注册消息。
 type DaemonRegisterPayload struct {
 	DaemonID string        `json:"daemon_id"`
 	AgentID  string        `json:"agent_id"`
 	Runtimes []RuntimeInfo `json:"runtimes"`
 }
 
-// RuntimeInfo describes an available agent runtime on the daemon's machine.
+// RuntimeInfo 描述 daemon 机器上某个可用的 agent runtime。
 type RuntimeInfo struct {
 	Type    string `json:"type"`
 	Version string `json:"version"`
 	Status  string `json:"status"`
 }
 
-// ChatMessagePayload is broadcast when a new chat message is created.
+// ChatMessagePayload 是新聊天消息创建时广播的负载。
 type ChatMessagePayload struct {
 	ChatSessionID string `json:"chat_session_id"`
 	MessageID     string `json:"message_id"`
@@ -203,40 +195,34 @@ type ChatMessagePayload struct {
 	CreatedAt     string `json:"created_at"`
 }
 
-// Chat message kinds (chat_message.message_kind). Additive: unknown values
-// degrade to ChatMessageKindMessage on older readers.
+// 聊天消息的种类（chat_message.message_kind）。只增不改：老读者遇到未知值会
+// 退化当成 ChatMessageKindMessage。
 const (
-	// ChatMessageKindMessage is an ordinary user/assistant message.
+	// ChatMessageKindMessage 是普通的用户/assistant 消息。
 	ChatMessageKindMessage = "message"
-	// ChatMessageKindNoResponse marks a direct-chat turn the agent completed
-	// without any text reply — a visible, deliberate terminal outcome rather
-	// than a silently-dropped turn (MUL-4351).
+	// ChatMessageKindNoResponse 标记一次「agent 完成了直接聊天回合却没有任何
+	// 文字回复」——这是可见、刻意的终态，而不是被静默丢掉的回合（MUL-4351）。
 	ChatMessageKindNoResponse = "no_response"
-	// ChatMessageKindOnboardingKickoff is the server-authored, hidden first
-	// turn used to start Mika's onboarding conversation. It is persisted so
-	// the runtime receives a normal immutable chat input batch. User-facing
-	// APIs filter it out; clients also ignore the kind defensively.
+	// ChatMessageKindOnboardingKickoff 是服务端撰写的、隐藏的第一轮发言，
+	// 用来启动 Mika 的 onboarding 对话。它会被持久化，让 runtime 收到一份
+	// 正常的不可变聊天输入批次。面向用户的 API 会滤掉它；客户端也会防御性地
+	// 忽略该 kind。
 	ChatMessageKindOnboardingKickoff = "onboarding_kickoff"
-	// ChatMessageKindOnboardingOpening marks the assistant reply produced by
-	// the onboarding kickoff. The kickoff row itself never reaches clients, so
-	// the opening self-describes: chat renders the starter cards under this
-	// kind instead of quick-action chips (MUL-5765).
+	// ChatMessageKindOnboardingOpening 标记 onboarding kickoff 产出的 assistant
+	// 回复。kickoff 行本身永远不会到客户端，所以 opening 自我描述：聊天界面
+	// 在这个 kind 下渲染「引导卡片」，而不是快捷动作胶囊（MUL-5765）。
 	ChatMessageKindOnboardingOpening = "onboarding_opening"
 )
 
-// ChatDonePayload is broadcast when an agent finishes responding to a chat
-// message. Carries the freshly-persisted assistant ChatMessage so the client
-// can write it into the messages cache inline — avoids a refetch round-trip
-// during the live-timeline → AssistantMessage handoff that previously caused
-// a visible flicker (#2123).
+// ChatDonePayload 在 agent 回复完某条聊天消息后广播。它带上刚持久化的
+// assistant ChatMessage，客户端可以就地写进消息缓存——省掉一次重新拉取，
+// 避免 live-timeline → AssistantMessage 交接时曾出现的可见闪烁（#2123）。
 //
-// MessageKind is additive (MUL-4351): older clients ignore it and fall back to
-// the non-empty Content the server always sends, so a no_response turn still
-// renders a real bubble instead of an empty one. Because direct-chat completion
-// now always writes exactly one assistant row (message or no_response),
-// MessageID/Content/CreatedAt/ElapsedMs are always populated for direct chat —
-// the omitempty tags only elide fields for the legacy paths that broadcast
-// without a row.
+// MessageKind 只增不改（MUL-4351）：老客户端忽略它，回落到 server 总会发的
+// 非空 Content，于是 no_response 回合仍渲染出一个真实气泡而非空气泡。因为
+// 直接聊天的完成现在总是恰好写一条 assistant 行（message 或 no_response），
+// MessageID/Content/CreatedAt/ElapsedMs 在直接聊天里总是有值——omitempty
+// 只会在「没有行的旧路径」上省掉字段。
 type ChatDonePayload struct {
 	ChatSessionID string            `json:"chat_session_id"`
 	TaskID        string            `json:"task_id"`
@@ -246,57 +232,51 @@ type ChatDonePayload struct {
 	CreatedAt     string            `json:"created_at,omitempty"`
 	MessageKind   string            `json:"message_kind,omitempty"`
 	QuickActions  []ChatQuickAction `json:"quick_actions,omitempty"`
-	// QuickActionsPending tells clients a chat:quick_actions supplement will
-	// follow for this turn (render a placeholder). Never true when
-	// QuickActions is already populated.
+	// QuickActionsPending 告诉客户端本回合稍后会来一条 chat:quick_actions 补全
+	// （先渲染占位）。当 QuickActions 已填好时绝不会为 true。
 	QuickActionsPending bool `json:"quick_actions_pending,omitempty"`
 }
 
-// Outcome values carried by ChatCancelFinalizedPayload.
+// ChatCancelFinalizedPayload.Outcome 的取值。
 const (
-	// ChatCancelOutcomeStopped: the transcript turned out non-empty, so a
-	// "Stopped." assistant message was persisted.
+	// ChatCancelOutcomeStopped：transcript 结果非空，于是持久化了一条
+	// "Stopped." assistant 消息。
 	ChatCancelOutcomeStopped = "stopped"
-	// ChatCancelOutcomeRestored: the transcript stayed empty, so the
-	// triggering user message was deleted and its content should be
-	// restored into the composer as a draft.
+	// ChatCancelOutcomeRestored：transcript 始终为空，于是触发它的用户消息被
+	// 删除，其内容应作为草稿恢复到输入框。
 	ChatCancelOutcomeRestored = "restored"
 )
 
-// ChatCancelFinalizedPayload is broadcast when a cancelled chat task's
-// deferred finalization settles (#5219). The cancel HTTP response cannot
-// carry this outcome — it is only known after the daemon's transcript flush —
-// so clients react to this event instead: outcome "stopped" inserts the
-// assistant message (MessageID/Content/... describe the new row, shaped like
-// ChatDonePayload), outcome "restored" removes the deleted user message from
-// caches and prompts the initiator's client to fetch the durable draft
-// restore from the creator-authorized endpoint. The restored prompt's content
-// and attachments deliberately never ride this workspace-wide broadcast.
+// ChatCancelFinalizedPayload 在一个被取消聊天任务的「推迟收尾」落定时广播
+// （#5219）。取消的 HTTP 响应带不了这个结果——要等 daemon 冲掉 transcript
+// 才知道——所以客户端靠这个事件反应：outcome "stopped" 插入那条 assistant
+// 消息（MessageID/Content/... 描述新行，形状同 ChatDonePayload）；outcome
+// "restored" 把被删的用户消息从缓存移除，并提示发起方客户端去「仅创建者有权」
+// 的端点取持久化草稿恢复。恢复出来的提示内容与附件刻意永不搭这条
+// workspace 级广播走。
 type ChatCancelFinalizedPayload struct {
 	Outcome       string `json:"outcome"`
 	ChatSessionID string `json:"chat_session_id"`
 	TaskID        string `json:"task_id"`
-	// InitiatorUserID is the human who triggered the cancelled task. Only
-	// this user's client needs to fetch the draft restore (the endpoint is
-	// creator-authorized regardless); clients treat a missing value as
-	// "not me".
+	// InitiatorUserID 是触发被取消任务的人类。只有这个用户的客户端需要去取
+	// 草稿恢复（那个端点本就只给创建者授权）；客户端把缺值当成「不是我」。
 	InitiatorUserID string `json:"initiator_user_id,omitempty"`
 	MessageID       string `json:"message_id,omitempty"`
-	// Content/MessageKind/CreatedAt/ElapsedMs describe the persisted
-	// "Stopped." assistant row and are set only for outcome "stopped" —
-	// the same exposure surface as chat:done.
+	// Content/MessageKind/CreatedAt/ElapsedMs 描述持久化的 "Stopped."
+	// assistant 行，只在 outcome 为 "stopped" 时设置——暴露面与 chat:done 相同。
 	Content     string `json:"content,omitempty"`
 	MessageKind string `json:"message_kind,omitempty"`
 	CreatedAt   string `json:"created_at,omitempty"`
 	ElapsedMs   int64  `json:"elapsed_ms,omitempty"`
 }
 
-// ChatSessionReadPayload is broadcast when the creator marks a session as read.
-// Fires to other devices so their unread counts stay in sync.
+// ChatSessionReadPayload 在创建者把某会话标记为已读时广播。
+// 发给其它设备，让它们的未读数保持同步。
 type ChatSessionReadPayload struct {
 	ChatSessionID string `json:"chat_session_id"`
 }
 
+// ChatSessionCreatedPayload 在新聊天会话创建时广播（包括来源渠道与路由信息）。
 type ChatSessionCreatedPayload struct {
 	WorkspaceID           string                   `json:"workspace_id"`
 	ChatSessionID         string                   `json:"chat_session_id"`
@@ -307,59 +287,55 @@ type ChatSessionCreatedPayload struct {
 	IsCurrentChannelRoute bool                     `json:"is_current_channel_route"`
 }
 
+// ChatSessionChannelSource 描述该聊天会话经由哪条渠道路由而来（用于渠道级会话
+// 路由判断与展示）。
 type ChatSessionChannelSource struct {
 	ChannelType    string `json:"channel_type"`
 	InstallationID string `json:"installation_id"`
 	RouteRevision  int64  `json:"route_revision"`
 }
 
-// ChatSessionDeletedPayload is broadcast when a chat session is hard-deleted
-// so other tabs/devices drop it from their session lists and reset the active
-// pointer if it referenced the deleted session.
+// ChatSessionDeletedPayload 在聊天会话被硬删除时广播，让其它标签页/设备把它
+// 从会话列表移除；若活跃指针正指向被删会话，则重置它。
 type ChatSessionDeletedPayload struct {
 	ChatSessionID string `json:"chat_session_id"`
 }
 
-// ChatSessionUpdatedPayload is broadcast when a user-editable field on a
-// chat session changes (today: title via inline rename). Other tabs/devices
-// patch the session row in their cached list so the dropdown stays in sync
-// without a full refetch.
+// ChatSessionUpdatedPayload 在聊天会话的某个用户可编辑字段变化时广播
+// （目前：标题的行内重命名）。其它标签页/设备在自己缓存里的会话行上打补丁，
+// 让下拉列表同步，而无需整表重拉。
 type ChatSessionUpdatedPayload struct {
 	ChatSessionID string `json:"chat_session_id"`
 	Title         string `json:"title"`
-	// ProjectID is set only by the project-context update path. The double
-	// pointer distinguishes an omitted field from an explicit JSON null.
+	// ProjectID 只由「项目上下文更新」路径设置。双重指针区分「字段省略」与
+	// 「显式 JSON null」。
 	ProjectID **string `json:"project_id,omitempty"`
-	// Pinned is set only by the pin/unpin path; nil on a plain rename so a
-	// receiver leaves the existing pin state untouched.
+	// Pinned 只由钉/解钉路径设置；普通重命名时为 nil，让接收方保持现有钉状态。
 	Pinned *bool `json:"pinned,omitempty"`
-	// Status is set only by the archive/unarchive path ("active"/"archived");
-	// nil on rename/pin so a receiver leaves the existing status untouched.
+	// Status 只由归档/取消归档路径设置（"active"/"archived"）；重命名/钉时
+	// 为 nil，让接收方保持现有状态。
 	Status    *string `json:"status,omitempty"`
 	UpdatedAt string  `json:"updated_at"`
 }
 
-// DaemonHeartbeatRequestPayload is sent from daemon to server over WebSocket
-// to update last_seen_at and pull pending actions for a single runtime.
-// Mirrors the body of POST /api/daemon/heartbeat so both transports share
-// identical semantics.
+// DaemonHeartbeatRequestPayload 是 daemon 经 WebSocket 发给 server 的心跳，
+// 用于更新 last_seen_at 并为单个 runtime 拉取挂起动作。镜像 POST
+// /api/daemon/heartbeat 的请求体，让两种传输共享相同语义。
 type DaemonHeartbeatRequestPayload struct {
 	RuntimeID           string `json:"runtime_id"`
 	SupportsBatchImport bool   `json:"supports_batch_import,omitempty"`
 }
 
-// DaemonHeartbeatAckPayload is the server's reply to DaemonHeartbeatRequestPayload.
-// JSON shape mirrors the HTTP heartbeat response so daemon code can decode either.
-// ServerCapabilities is explicit server-to-daemon protocol negotiation. A
-// daemon must not infer support from its own advertised client capabilities.
+// DaemonHeartbeatAckPayload 是 server 对 DaemonHeartbeatRequestPayload 的应答。
+// JSON 形状镜像 HTTP 心跳响应，daemon 代码两种都能解。ServerCapabilities 是
+// 显式的 server→daemon 协议协商——daemon 绝不能从自己宣告的客户端能力反推
+// server 支持什么。
 //
-// RuntimeGone is the WebSocket replacement for the HTTP 404 "runtime not found"
-// response. When the server discovers the runtime row was deleted (UI delete,
-// 7-day offline GC), it sends back an ack with Status=HeartbeatStatusRuntimeGone
-// and RuntimeGone=true rather than tearing down the connection with an error.
-// The daemon reads this signal, prunes the stale runtime from its local state
-// and re-registers; without it the dead UUID would keep heartbeating until the
-// daemon process restarts.
+// RuntimeGone 是 HTTP 404「runtime not found」在 WebSocket 上的替代。当 server
+// 发现 runtime 行已被删除（UI 删除、7 天离线 GC）时，它回一个
+// Status=HeartbeatStatusRuntimeGone、RuntimeGone=true 的 ack，而不是带着错误
+// 拆掉连接。daemon 读到该信号后，从本地状态清除过期 runtime 并重新注册；
+// 没有它，死 UUID 会一直心跳到 daemon 进程重启为止。
 type DaemonHeartbeatAckPayload struct {
 	RuntimeID               string                                  `json:"runtime_id"`
 	Status                  string                                  `json:"status"`
@@ -369,38 +345,34 @@ type DaemonHeartbeatAckPayload struct {
 	PendingModelList        *DaemonHeartbeatPendingModelList        `json:"pending_model_list,omitempty"`
 	PendingLocalSkills      *DaemonHeartbeatPendingLocalSkills      `json:"pending_local_skills,omitempty"`
 	PendingLocalSkillImport *DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_import,omitempty"`
-	// PendingLocalSkillImports carries multiple import requests in a single
-	// heartbeat so the daemon can process them concurrently. Old daemons
-	// that don't know this field silently ignore it (standard JSON behavior)
-	// and fall back to the singular PendingLocalSkillImport above.
+	// PendingLocalSkillImports 在同一次心跳里携带多条导入请求，让 daemon 可以
+	// 并发处理。不认识该字段的老 daemon 会按标准 JSON 行为静默忽略它，
+	// 回落到上面单数的 PendingLocalSkillImport。
 	PendingLocalSkillImports []DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_imports,omitempty"`
 }
 
-// HeartbeatStatusRuntimeGone is the ack Status used when the runtime row no
-// longer exists server-side. Companion to DaemonHeartbeatAckPayload.RuntimeGone.
+// HeartbeatStatusRuntimeGone 是 ack 在 runtime 行已从 server 侧消失时使用的
+// Status 值。与 DaemonHeartbeatAckPayload.RuntimeGone 配套。
 const HeartbeatStatusRuntimeGone = "runtime_gone"
 
-// DaemonHeartbeatPendingUpdate describes a CLI-update action the daemon
-// should run for the runtime.
+// DaemonHeartbeatPendingUpdate 描述 daemon 应为该 runtime 执行的一次 CLI 更新。
 type DaemonHeartbeatPendingUpdate struct {
 	ID            string `json:"id"`
 	TargetVersion string `json:"target_version"`
 }
 
-// DaemonHeartbeatPendingModelList describes a request for the daemon to
-// enumerate the runtime's supported models.
+// DaemonHeartbeatPendingModelList 描述一个让 daemon 枚举 runtime 支持模型的请求。
 type DaemonHeartbeatPendingModelList struct {
 	ID string `json:"id"`
 }
 
-// DaemonHeartbeatPendingLocalSkills describes a request for the runtime's
-// local-skill inventory.
+// DaemonHeartbeatPendingLocalSkills 描述一个请求 runtime 本地 skill 清单的请求。
 type DaemonHeartbeatPendingLocalSkills struct {
 	ID string `json:"id"`
 }
 
-// DaemonHeartbeatPendingLocalSkillImport describes a request to import a
-// specific runtime local skill.
+// DaemonHeartbeatPendingLocalSkillImport 描述一个导入某条具体 runtime 本地
+// skill 的请求。
 type DaemonHeartbeatPendingLocalSkillImport struct {
 	ID       string `json:"id"`
 	SkillKey string `json:"skill_key"`

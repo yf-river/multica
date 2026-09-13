@@ -1,3 +1,9 @@
+// resolvers.go：把与渠道无关的入站流水线与 Slack 安装路由、身份绑定、去重、
+// 会话持久化、审计、反应、回复、附件摄取接起来的 resolver 集合。共享渠道状态
+// 全部落在通用 channel_* 表上。
+//
+// 各流水线阶段的 Slack 实现在这里组装成一个 engine.ResolverSet；会话层用
+// 「bindingKey + config」约定来做隔离与出站路由（见 slackSessionRouting）。
 package slack
 
 import (
@@ -15,20 +21,12 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-// Slack resolvers connect the channel-agnostic inbound pipeline to Slack
-// installation routing, identity binding, deduplication, session persistence,
-// auditing, reactions, replies, and attachment ingestion. They store shared
-// channel state through the generic channel tables.
-
-// originSlackChat is the issue.origin_type label for issues created via the
-// Slack /issue command.
+// originSlackChat 是经 Slack /issue 命令建出的 issue 的 origin_type 标签。
 const originSlackChat = "slack_chat"
 
-// NewSlackResolverSet assembles the Slack implementation of each inbound
-// pipeline stage. The replier sends binding and status notices, typing manages
-// the processing reaction, and media stores inbound attachments. Each optional
-// dependency may be nil to disable only that capability while preserving normal
-// Slack message ingestion.
+// NewSlackResolverSet 装配入站流水线每个阶段的 Slack 实现。replier 负责绑定引导
+// 与状态提示、typing 管理「处理中」反应、media 落盘入站附件。每个可选依赖都可
+// 以传 nil 只关掉那一项能力，不影响普通 Slack 消息摄取的正常流转。
 func NewSlackResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing *TypingIndicatorManager, media engine.MediaResolver) engine.ResolverSet {
 	set := engine.ResolverSet{
 		Installation: &installationResolver{q: q},
@@ -44,8 +42,8 @@ func NewSlackResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.Outb
 		Replier:    replier,
 		OriginType: originSlackChat,
 	}
-	// Assign the interface only for a concrete manager. A typed nil would make
-	// the interface compare non-nil and fail when the pipeline invokes it.
+	// 只有拿到的是具体 manager 才赋接口。若把一个「类型化 nil」塞进接口字段，
+	// 接口本身会判成非 nil，流水线调用时就会崩。
 	if typing != nil {
 		set.Typing = &slackTypingNotifier{mgr: typing}
 	}
@@ -61,39 +59,35 @@ var (
 	_ engine.TypingNotifier       = (*slackTypingNotifier)(nil)
 )
 
-// slackBindingConfig is the opaque outbound routing persisted on the chat
-// binding's config. When the binding key is a composite (Slack channel thread),
-// the real channel id lives here so the outbound path can post back.
+// slackBindingConfig 是持久化在聊天绑定 config 上的出站路由信息。当绑定键是
+// 复合形态（Slack 频道内的某个线程）时，真实频道 id 放在这里，出站路径才能投回
+// 正确的会话。
 type slackBindingConfig struct {
 	ChannelID string `json:"channel_id"`
 }
 
-// slackSessionRouting derives, from one inbound Slack message, the three things
-// the session layer needs kept distinct (Elon's round-2 must-fix):
+// slackSessionRouting 从一条入站 Slack 消息推导出会话层需要分开维护的三样东西
+// （Elon 第二轮必改项）：
 //
-//   - bindingKey: the session-isolation key (stored as channel_chat_id). A DM is
-//     one continuous session per channel, so the key is the channel id. A
-//     channel/group message is isolated by THREAD ROOT — key = "channel:root" —
-//     so two @bot threads in one channel are two sessions, matching Hermes. The
-//     thread root is the inbound thread_ts when replying in a thread, else the
-//     message ts (a top-level @mention starts a new root).
-//   - config: the real channel id, so outbound works even when the key is
-//     composite.
-//   - replyThread: the thread_ts to reply into (the thread root for groups; the
-//     inbound thread for DMs, which may be empty for a top-level send).
+//   - bindingKey：会话隔离键（存成 channel_chat_id）。私聊按频道就是一条连续的
+//     会话，所以键就是频道 id。频道/群消息则按【线程根】隔离——键 =
+//     "channel:root"——于是同一频道里的两个 @bot 线程是两段会话，与 Hermes 一致。
+//     线程根是：在线程里回复时取入站 thread_ts，否则取消息自身 ts（一条顶层的
+//     @ 提及会开一个新的根）。
+//   - config：真实频道 id，绑定键是复合形态时出站也能工作。
+//   - replyThread：回复要挂的 thread_ts（群取线程根；私聊取入站线程，顶层发送
+//     时可能为空）。
 //
-// It is a pure function so the isolation contract is unit-tested without a DB.
+// 做成纯函数，隔离契约无需 DB 就能做单测。
 func slackSessionRouting(msg channel.InboundMessage) (bindingKey string, config []byte, replyThread string) {
 	chatID := msg.Source.ChatID
 	cfg, _ := json.Marshal(slackBindingConfig{ChannelID: chatID})
 	if msg.Source.ChatType == channel.ChatTypeP2P {
 		return chatID, cfg, msg.Source.ThreadID
 	}
-	// The thread root is the inbound thread_ts when the @mention is a reply
-	// inside an existing thread, else the message's own ts (a top-level mention
-	// becomes the root the bot threads its reply under). Either way the root is
-	// recoverable later from the binding (channel_chat_id suffix / last_thread_id),
-	// which is what the history reader uses to read the thread.
+	// 线程根在 @ 提及是「既有线程里的回复」时取入站 thread_ts，否则取消息自身的
+	// ts（顶层提及成为 bot 回复所挂的根）。无论哪种，根之后都能从绑定里找回来
+	// （channel_chat_id 的后缀 / last_thread_id）——历史读取器正是靠它去读线程的。
 	threadRoot := msg.Source.ThreadID
 	if threadRoot == "" {
 		threadRoot = msg.MessageID
@@ -101,6 +95,8 @@ func slackSessionRouting(msg channel.InboundMessage) (bindingKey string, config 
 	return chatID + ":" + threadRoot, cfg, threadRoot
 }
 
+// decodeSlackRaw 把入站消息里打好的 Slack 原始信封解出来。消息没有 Raw 或解析
+// 失败都算错误——resolver 侧宁可显式失败也不拿空结构硬扛。
 func decodeSlackRaw(msg channel.InboundMessage) (slackRawEvent, error) {
 	var raw slackRawEvent
 	if len(msg.Raw) == 0 {
@@ -112,6 +108,8 @@ func decodeSlackRaw(msg channel.InboundMessage) (slackRawEvent, error) {
 	return raw, nil
 }
 
+// nullText 把空串转成「NULL」的 pgtype.Text，非空则带上值；入库时可空列的统一
+// 写法。
 func nullText(s string) pgtype.Text {
 	if s == "" {
 		return pgtype.Text{}
@@ -119,31 +117,31 @@ func nullText(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: true}
 }
 
-// installTeamID reads the real Slack team id from a stored installation config,
-// or "" if absent/undecodable. Unlike decodeCredentials / DecodePublicConfig it
-// does NOT fall back to app_id: team routing and identity reuse must match the
-// actual Slack workspace, and app_id != team_id for BYO apps.
+// installTeamID 从存库的安装 config 里读出真实 Slack team id，读不到/解不开就
+// 返回 ""。与 decodeCredentials / DecodePublicConfig 不同，它【不】回退到
+// app_id：team 路由与身份复用必须对上真实的 Slack 工作区，而 BYO 应用的
+// app_id != team_id。
 func installTeamID(installConfigJSON json.RawMessage) string {
 	var cfg installConfig
 	_ = json.Unmarshal(installConfigJSON, &cfg)
 	return cfg.TeamID
 }
 
-// installationServesTeam reports whether an installation (its stored config) may
-// serve events from eventTeamID. Inbound routing keys on api_app_id, which
-// identifies the Slack APP, not the Slack workspace: a BYO app distributed /
-// installed into another Slack workspace emits events carrying the SAME app id.
-// So we additionally require the event's team to match the team the installed
-// bot belongs to. An installation with no recorded team (legacy) is permissive.
+// installationServesTeam 判断某安装（按它存的 config）能否服务 eventTeamID 的
+// 事件。入站路由按 api_app_id 走，而 api_app_id 标识的是 Slack【应用】不是
+// Slack【工作区】：一个 BYO 应用若被分发/安装进另一个 Slack 工作区，它发的事件
+// 会带着【同一个】 app id。所以这里额外要求事件的 team 与已装 bot 所属的 team
+// 一致。老安装没记 team（历史数据）时采取宽松放行。
 func installationServesTeam(installConfigJSON json.RawMessage, eventTeamID string) bool {
 	teamID := installTeamID(installConfigJSON)
 	return teamID == "" || teamID == eventTeamID
 }
 
-// ---- installation routing ----
+// ---- 安装路由 ----
 
 type installationResolver struct{ q *db.Queries }
 
+// ResolveInstallation 按入站事件里的 api_app_id 查回安装，并校验事件 team 归属。
 func (r *installationResolver) ResolveInstallation(ctx context.Context, msg channel.InboundMessage) (engine.ResolvedInstallation, error) {
 	raw, err := decodeSlackRaw(msg)
 	if err != nil {
@@ -151,10 +149,9 @@ func (r *installationResolver) ResolveInstallation(ctx context.Context, msg chan
 	}
 	inst, err := r.q.GetChannelInstallationByAppID(ctx, db.GetChannelInstallationByAppIDParams{
 		ChannelType: string(TypeSlack),
-		// Route by the event's api_app_id: each BYO installation stores its real
-		// Slack app id in the routing-key slot (config->>'app_id'), and the
-		// per-installation Socket Mode connection only ever delivers events for
-		// its own app, so api_app_id uniquely identifies the installation.
+		// 按事件的 api_app_id 路由：每份 BYO 安装都把真实 Slack app id 存进路由
+		// 键槽（config->>'app_id'），而按安装建立的 Socket Mode 连接只投递自家
+		// 应用的事件，所以 api_app_id 能唯一确定安装。
 		AppID: raw.APIAppID,
 	})
 	if err != nil {
@@ -176,11 +173,11 @@ func (r *installationResolver) ResolveInstallation(ctx context.Context, msg chan
 	}, nil
 }
 
-// ---- identity ----
+// ---- 身份解析 ----
 
-// identityQueries is the slice of generated queries the identityResolver needs.
-// It is an interface (not *db.Queries) so the cross-installation reuse path is
-// unit-tested with fakes, mirroring slashQueries. *db.Queries satisfies it.
+// identityQueries 是 identityResolver 需要的生成查询子集。抽成接口（而非
+// *db.Queries）是为了跨安装复用路径能用假实现做单测（与 slashQueries 同理）。
+// *db.Queries 满足它。
 type identityQueries interface {
 	GetChannelUserBindingByUserID(ctx context.Context, arg db.GetChannelUserBindingByUserIDParams) (db.ChannelUserBinding, error)
 	FindReusableChannelUserBinding(ctx context.Context, arg db.FindReusableChannelUserBindingParams) (db.ChannelUserBinding, error)
@@ -190,6 +187,9 @@ type identityQueries interface {
 
 type identityResolver struct{ q identityQueries }
 
+// ResolveSender 把 Slack 发送者解析成 Multica 用户：先查本安装的直接绑定，没有
+// 就尝试复用同工作区、同 team 下其它安装的绑定（见 reusableBinding），最后再验
+// 成员资格。
 func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) (engine.ResolvedIdentity, error) {
 	senderID := msg.Source.SenderID
 	binding, err := r.q.GetChannelUserBindingByUserID(ctx, db.GetChannelUserBindingByUserIDParams{
@@ -201,9 +201,9 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return engine.ResolvedIdentity{}, err
 		}
-		// Not linked to THIS installation. Before prompting, reuse a link the same
-		// Slack user already made to another installation of the same team in this
-		// workspace (MUL-3911): one link per Slack workspace, not per app.
+		// 没绑到【当前这个】安装。在提示绑定之前，先试试复用同一 Slack 用户对
+		// 本工作区里【另一个】同 team 安装做过的绑定（MUL-3911）：每 Slack 工作
+		// 区只绑一次，而不是每个应用绑一次。
 		cand, ok, ferr := r.reusableBinding(ctx, inst, senderID)
 		if ferr != nil {
 			return engine.ResolvedIdentity{}, ferr
@@ -213,17 +213,16 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 		}
 		binding, reused = cand, true
 	}
-	// Binding existence no longer proves membership (no FK); re-check. For a
-	// reused link this also gates materialization: we never persist a binding for
-	// a user who has since left the workspace.
+	// 绑定存在不再证明成员资格（没有外键），需要复核。对复用的绑定这一步同时
+	// 也是落地门槛：绝不替一个已经离开工作区的用户持久化绑定。
 	if _, err := r.q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 		UserID:      binding.MulticaUserID,
 		WorkspaceID: inst.WorkspaceID,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			if reused {
-				// Same human, no longer a member: prompt a fresh link rather than
-				// surface "not a member" for an app they never linked.
+				// 同一人、但已不是成员：提示他重新绑定而不是对一个他从未在这个
+				// 应用上绑过的身份报「不是成员」。
 				return engine.ResolvedIdentity{}, engine.ErrSenderUnbound
 			}
 			return engine.ResolvedIdentity{}, engine.ErrSenderNotMember
@@ -231,10 +230,9 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 		return engine.ResolvedIdentity{}, err
 	}
 	if reused {
-		// Materialize the reused link as a binding on THIS installation so later
-		// messages resolve on the fast per-installation path and are pruned with
-		// the member like any other. Idempotent via ON CONFLICT; a concurrent
-		// first message that already wrote it returns the same row.
+		// 把复用到的绑定「物化」成当前安装自己的绑定行：此后消息走快的按安装
+		// 路径解析，也会像其它绑定一样随成员一起被清理。ON CONFLICT 保证幂等；
+		// 并发首条消息抢先写好的情况下返回同一行。
 		if _, err := r.q.CreateChannelUserBinding(ctx, db.CreateChannelUserBindingParams{
 			WorkspaceID:    inst.WorkspaceID,
 			MulticaUserID:  binding.MulticaUserID,
@@ -249,11 +247,10 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 	return engine.ResolvedIdentity{UserID: binding.MulticaUserID}, nil
 }
 
-// reusableBinding looks for a link the same Slack user already made to ANOTHER
-// installation of the SAME workspace + SAME Slack team, so a second app in one
-// Slack workspace need not re-prompt (MUL-3911). ok=false (nil error) means "no
-// reuse — prompt to link": the installation records no team (legacy), its
-// Platform is not a ChannelInstallation, or no matching binding exists.
+// reusableBinding 找同一 Slack 用户对【另一个】安装——必须同工作区 + 同 Slack
+// team——做过的绑定，让一个 Slack 工作区里的第二个应用不必再让用户重新绑定
+// （MUL-3911）。ok=false（且无错误）表示「没有可复用的，提示绑定」：安装没记
+// team（老数据）、Platform 不是 ChannelInstallation、或没有匹配的绑定行。
 func (r *identityResolver) reusableBinding(ctx context.Context, inst engine.ResolvedInstallation, senderID string) (db.ChannelUserBinding, bool, error) {
 	ci, ok := inst.Platform.(db.ChannelInstallation)
 	if !ok {
@@ -278,10 +275,13 @@ func (r *identityResolver) reusableBinding(ctx context.Context, inst engine.Reso
 	return cand, true, nil
 }
 
-// ---- dedup ----
+// ---- 去重 ----
 
+// deduper 基于 channel_* 去重表实现引擎的 Deduper 契约。
 type deduper struct{ q *db.Queries }
 
+// Claim 尝试占住 (installation, message) 的去重槽；已经占过的（重复消息）返回
+// engine.ErrDuplicate。
 func (r *deduper) Claim(ctx context.Context, installationID pgtype.UUID, messageID string) (pgtype.UUID, error) {
 	claim, err := r.q.ClaimChannelInboundDedup(ctx, db.ClaimChannelInboundDedupParams{
 		InstallationID: installationID,
@@ -314,8 +314,10 @@ func (r *deduper) Release(ctx context.Context, installationID pgtype.UUID, messa
 	return err
 }
 
-// ---- session bind / append ----
+// ---- 会话绑定/追加 ----
 
+// sessionBinder 把引擎的会话契约转发给引擎 ChatSession，参数由
+// slackSessionRouting 换算（bindingKey/config/回复线程）。
 type sessionBinder struct{ session *engine.ChatSession }
 
 func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessionParams) (pgtype.UUID, error) {
@@ -386,12 +388,13 @@ func (r *sessionBinder) BindMedia(ctx context.Context, p engine.BindMediaParams)
 	})
 }
 
-// ---- audit ----
+// ---- 审计 ----
 
+// auditor 把入站丢弃事件记进 channel_* 丢弃审计表。
 type auditor struct{ q *db.Queries }
 
 func (r *auditor) RecordDrop(ctx context.Context, instID pgtype.UUID, msg channel.InboundMessage, reason engine.DropReason) error {
-	raw, _ := decodeSlackRaw(msg) // event_type is best-effort; a decode miss still audits the drop
+	raw, _ := decodeSlackRaw(msg) // event_type 是尽力而为：解不开也照记这次丢弃
 	return r.q.RecordChannelInboundDrop(ctx, db.RecordChannelInboundDropParams{
 		ID:               dbid.NewV7(),
 		ChannelType:      string(TypeSlack),
@@ -404,15 +407,15 @@ func (r *auditor) RecordDrop(ctx context.Context, instID pgtype.UUID, msg channe
 	})
 }
 
-// ---- typing indicator ----
+// ---- 打字指示（处理中反应） ----
 
+// slackTypingNotifier 把引擎的 TypingNotifier 契约转发给 TypingIndicatorManager。
 type slackTypingNotifier struct{ mgr *TypingIndicatorManager }
 
-// OnIngested fires when a Slack message is successfully ingested. It reacts to
-// the user's message (channel = Source.ChatID, ts = MessageID) so the user sees
-// the bot is processing it. The resolved installation carries the bot token in
-// its Config blob — the InstallationResolver stashed the db.ChannelInstallation
-// row in Platform, the documented adapter boundary the core never reads.
+// OnIngested 在 Slack 消息成功摄取后触发：给用户消息打上反应（频道 = Source.
+// ChatID，ts = MessageID），让用户看到 bot 正在处理。解析好的安装把 bot 令牌装在
+// Config blob 里——InstallationResolver 把 db.ChannelInstallation 行塞进了
+// Platform，这是文档约定的适配器边界，核心层从不读它。
 func (n *slackTypingNotifier) OnIngested(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID) {
 	ci, ok := inst.Platform.(db.ChannelInstallation)
 	if !ok {
@@ -421,9 +424,9 @@ func (n *slackTypingNotifier) OnIngested(ctx context.Context, inst engine.Resolv
 	n.mgr.Add(ctx, ci, sessionID, msg.Source.ChatID, msg.MessageID)
 }
 
-// OnSettled clears the reaction when the run trigger enqueued no task (agent
-// offline / archived, or an enqueue failure) — the bus-driven clear on
-// chat-done / task-failed never fires for those, so without this the 👀 sticks.
+// OnSettled 在「这次运行没能投出任务」时清掉反应（agent 离线/归档，或投递失败）——
+// 这些情形不会广播 chat-done / task-failed，总线驱动的清理永远不触发，不在这里
+// 摘的话 👀 就永久粘住了。
 func (n *slackTypingNotifier) OnSettled(ctx context.Context, sessionID pgtype.UUID) {
 	n.mgr.Clear(ctx, sessionID)
 }

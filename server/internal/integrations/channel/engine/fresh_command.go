@@ -2,13 +2,15 @@ package engine
 
 import "strings"
 
+// 角色定位：共享会话控制命令（/clear 与 /new）的统一解析器。这两个指令的入站语法刻意
+// 完全相同，区别只在 Router 规范化之后执行的产品动作。解析逻辑放在共享引擎里，所有
+// 渠道的适配器就不用各自实现一遍"从用户消息里剥掉指令前缀"。
+
 const freshSessionCommandPrefix = "/clear"
 const newChatCommandPrefix = "/new"
 
-// ControlCommandKind identifies the shared session-control directive on the
-// first non-empty line of an inbound channel message. Adapters may normalize
-// transport details (for example, a platform bot mention or rich-media
-// layout), but only Router applies these product semantics.
+// ControlCommandKind 标识"入站渠道消息首行"上的共享会话控制指令。适配器可以规范化
+// 传输细节（例如平台 bot 提及或富媒体排版），但**只有** Router 应用这些产品语义。
 type ControlCommandKind uint8
 
 const (
@@ -16,15 +18,14 @@ const (
 	ControlCommandNewChat
 )
 
-// ControlCommand is one parsed channel session-control directive.
+// ControlCommand 是一条解析出来的渠道会话控制指令。
 type ControlCommand struct {
 	Kind ControlCommandKind
-	Body string
+	Body string // 剥掉指令后的剩余正文
 }
 
-// ParseControlCommand classifies /clear and /new through one parser. Their
-// inbound syntax is intentionally identical; the only distinction is the
-// product action Router applies after normalization.
+// ParseControlCommand 用同一个解析器分类 /clear 与 /new。二者入站语法刻意完全一致；
+// 唯一区别是规范化后 Router 执行的产品动作。
 func ParseControlCommand(body string) (ControlCommand, bool) {
 	if parsed, ok := parseLeadingCommand(body, newChatCommandPrefix); ok {
 		return ControlCommand{Kind: ControlCommandNewChat, Body: parsed}, true
@@ -35,14 +36,12 @@ func ParseControlCommand(body string) (ControlCommand, bool) {
 	return ControlCommand{}, false
 }
 
-// ParseFreshSessionCommand extracts a first-line /clear command from a channel
-// message. It returns the user prompt with the directive removed. The command
-// is shared product behavior: every channel that reaches Router gets the same
-// fresh-session affordance without reimplementing parsing in its adapter.
+// ParseFreshSessionCommand 从渠道消息里抽出一条首行 /clear 指令。返回去掉指令后的用户
+// 提示。这是共享产品行为：任何走到 Router 的渠道都拿到同一套"开全新会话"能力，适配器
+// 无需各自重写解析。
 //
-// Matching follows the /issue command rules: case-sensitive, token-bounded,
-// and only the first non-empty line can be a command. That means /clear and
-// /issue are mutually exclusive on the same first line.
+// 匹配规则与 /issue 命令一致：大小写敏感、按 token 边界匹配、只有第一个非空行可以是
+// 命令——这意味着 /clear 与 /issue 在同一首行上是互斥的。
 func ParseFreshSessionCommand(body string) (string, bool) {
 	command, ok := ParseControlCommand(body)
 	if !ok || command.Kind != ControlCommandFreshSession {
@@ -51,9 +50,8 @@ func ParseFreshSessionCommand(body string) (string, bool) {
 	return command.Body, true
 }
 
-// ParseNewChatCommand extracts the shared /new command. Parsing intentionally
-// matches /clear so adapters only normalize transport details; route rotation is
-// always owned by the shared engine.
+// ParseNewChatCommand 抽出共享的 /new 命令。解析刻意与 /clear 保持一致，适配器只需
+// 规范化传输细节；路由轮换永远由共享引擎负责。
 func ParseNewChatCommand(body string) (string, bool) {
 	command, ok := ParseControlCommand(body)
 	if !ok || command.Kind != ControlCommandNewChat {
@@ -62,9 +60,12 @@ func ParseNewChatCommand(body string) (string, bool) {
 	return command.Body, true
 }
 
+// parseLeadingCommand 若正文的**第一个非空行**以 prefix 开头（且紧跟空白或行尾，保证
+// 不会把 "/clearx" 误判成 "/clear"），则返回剥掉 prefix 后的正文。
 func parseLeadingCommand(body, prefix string) (string, bool) {
 	lines := strings.Split(body, "\n")
 
+	// 找到第一个非空行；跳过文件开头可能出现的空行/纯空白行。
 	firstIdx := -1
 	for i, line := range lines {
 		if strings.TrimSpace(line) != "" {
@@ -81,6 +82,7 @@ func parseLeadingCommand(body, prefix string) (string, bool) {
 		return "", false
 	}
 
+	// prefix 后面要么是行尾，要么必须以空白接正文——"/clearfoo" 不算 /clear 命令。
 	rest := trimmed[len(prefix):]
 	if rest != "" {
 		if r0 := rest[0]; r0 != ' ' && r0 != '\t' {

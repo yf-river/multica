@@ -1,5 +1,11 @@
 "use client";
 
+// 本文件：IssueMentionCard —— 可导航的问题提及卡片（编辑器/聊天里的 @问题）。
+// 把 IssueChip 包进指向问题详情的 AppLink；hover 打开 IssueHoverCard 展示
+// chip 装不下的详情。AppLink 拥有点击语义（普通点击就地导航、修饰键/中键开新
+// 页），刻意不做任何按界面或偏好的覆盖。当所指即"当前正在查看的问题"时，
+// chip 文字换成"当前问题 · <编号>"以示区别。
+
 import { AppLink } from "../../navigation";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { IssueChip } from "./issue-chip";
@@ -9,7 +15,7 @@ import { useCurrentIssueRenderContext } from "../current-issue-render-context";
 
 interface IssueMentionCardProps {
   issueId: string;
-  /** Fallback text when issue is not in store (e.g. "MUL-7") */
+  /** store 里没有该问题时（例如"MUL-7"）的回退文本。 */
   fallbackLabel?: string;
 }
 
@@ -26,18 +32,15 @@ function CurrentIssueChipContent({ identifier }: { identifier: string }) {
 }
 
 /**
- * Navigable chip — wraps IssueChip in an AppLink pointing at the issue's
- * detail page. Hover/cursor affordance is layered onto the chip itself so
- * the visual target matches the clickable target.
+ * 可导航的问题提及 chip——把 IssueChip 包进指向问题详情的 AppLink。
+ * 悬停/光标暗示直接叠在 chip 上，让"看的到的目标"与"点得中的目标"一致。
  *
- * AppLink owns the click semantics: plain click navigates in place, modifier
- * and middle clicks open tabs. There is deliberately no per-surface or
- * per-preference override.
+ * AppLink 拥有点击语义：普通点击就地导航，修饰键/中键开新标签页。
+ * 刻意不做任何按界面或按偏好的覆盖。
  *
- * Hovering opens IssueHoverCard, which shows the detail the chip has no room
- * for. No `delay` is passed, so it opens on Base UI's default dwell. The same
- * `fallbackLabel` the chip degrades to names the card when the detail fetch
- * fails.
+ * hover 时打开 IssueHoverCard，展示 chip 没有空间放的详情。不传 `delay`，
+ * 因此按 Base UI 的默认停留时长触发。chip 兜底用的同一个 `fallbackLabel`
+ * 在详情拉取失败时用来给卡片命名。
  */
 export function IssueMentionCard({ issueId, fallbackLabel }: IssueMentionCardProps) {
   const p = useWorkspacePaths();

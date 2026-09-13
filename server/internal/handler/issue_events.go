@@ -1,3 +1,5 @@
+// 职责定位：构建 issue 更新/删除/附件变更/父级剥离相关的持久化事件。这些事件承载
+// activity、audience、notification、autopilot 等投影需要的完整快照与「哪些字段变了」标记。
 package handler
 
 import (
@@ -12,10 +14,9 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// buildIssueUpdatedEvent creates the complete snapshot consumed by activity,
-// audience, notification and autopilot projections. The revision is part of
-// the idempotency key: two legitimate edits of one issue must remain distinct,
-// while a retry of the same committed edit returns the existing envelope.
+// buildIssueUpdatedEvent 创建 activity、audience、notification、autopilot 投影消费的完整
+// 快照。revision 是幂等键的一部分：同一 issue 的两次正当编辑必须保持不同，而同一已提交编辑
+// 的重试会拿到既有信封。
 func buildIssueUpdatedEvent(ctx context.Context, h *Handler, updated, previous db.Issue, req UpdateIssueRequest, rawFields map[string]json.RawMessage, actorType, actorID string) events.Event {
 	resp := issueToResponse(updated, h.getIssuePrefix(ctx, updated.WorkspaceID))
 	assigneeTouched := req.AssigneeType != nil || req.AssigneeID != nil
@@ -75,6 +76,7 @@ func buildIssueUpdatedEvent(ctx context.Context, h *Handler, updated, previous d
 	}
 }
 
+// datePointersDiffer 判断两个可空日期字符串指针是否不同（nil 参与比较）。
 func datePointersDiffer(a, b *string) bool {
 	if a == nil || b == nil {
 		return a != b
@@ -82,6 +84,7 @@ func datePointersDiffer(a, b *string) bool {
 	return *a != *b
 }
 
+// optionalTextValuesDiffer 判断两个 pgtype.Text 是否不同（有效性不同即不同）。
 func optionalTextValuesDiffer(a, b pgtype.Text) bool {
 	if a.Valid != b.Valid {
 		return true
@@ -89,6 +92,7 @@ func optionalTextValuesDiffer(a, b pgtype.Text) bool {
 	return a.Valid && a.String != b.String
 }
 
+// buildIssueDeletedEvent 创建「issue 已删除」事件（只带 id，行已被删）。
 func buildIssueDeletedEvent(issue db.Issue, actorType, actorID string) events.Event {
 	return events.Event{
 		Type:           protocol.EventIssueDeleted,
@@ -101,6 +105,7 @@ func buildIssueDeletedEvent(issue db.Issue, actorType, actorID string) events.Ev
 	}
 }
 
+// buildIssueAttachmentsChangedEvent 创建「issue 附件集变更」事件。
 func buildIssueAttachmentsChangedEvent(issue db.Issue, actorType, actorID string) events.Event {
 	return events.Event{
 		Type:           protocol.EventIssueAttachmentsChanged,
@@ -116,6 +121,8 @@ func buildIssueAttachmentsChangedEvent(issue db.Issue, actorType, actorID string
 	}
 }
 
+// buildIssueDetachedEvent 创建「子 issue 因父级删除被剥离」的 issue:updated 事件——载荷里
+// 特地把 parent_changed 标记为 true，让客户端把该行从泳道/父级树里摘出来。
 func buildIssueDetachedEvent(issue db.Issue, actorType, actorID string) events.Event {
 	return events.Event{
 		Type:           protocol.EventIssueUpdated,

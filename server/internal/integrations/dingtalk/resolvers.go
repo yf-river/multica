@@ -1,3 +1,13 @@
+// resolvers.go：钉钉的 ResolverSet——把渠道无关的 engine.Router 入站管道接到
+// 钉钉特有查询上的一组平台缝。
+//
+// 角色：Router 处理一条入站消息时依次调用这些 resolver：安装反查（盖了 AppKey 的
+// 信封 → channel_installation）、发送者身份（绑定 + 工作区成员复查）、消息去重、
+// 会话绑定与追加、丢弃审计。全部只建在通用 channel_* 查询与共享 engine.ChatSession
+// 之上，镜像飞书与 Slack 的 ResolverSet。
+//
+// 群存在性元数据：额外带一个 groupPresenceObserver，在消息通过「@ 到了机器人 +
+// 成员身份」门槛后，把「机器人在哪个群、群里叫什么」记进产品元数据表。
 package dingtalk
 
 import (
@@ -16,23 +26,15 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-// originDingTalkChat is the issue.origin_type label for issues created through
-// the DingTalk /issue command. Keep it aligned with the database CHECK
-// constraint, like the existing lark_chat and slack_chat channel origins.
+// originDingTalkChat 是经钉钉 /issue 命令建出的 issue 的 origin_type 标签。要与
+// 数据库 CHECK 约束保持同步（与已有的 lark_chat / slack_chat 渠道 origin 一致）。
 const originDingTalkChat = "dingtalk_chat"
 
-// This file is the DingTalk ResolverSet: the platform-specific seams the
-// channel-agnostic engine.Router runs the inbound pipeline through. It is built
-// entirely on the generic channel_* queries plus the shared engine.ChatSession,
-// mirroring the Feishu and Slack ResolverSets.
-
-// NewDingTalkResolverSet assembles the DingTalk ResolverSet over the generated
-// queries + a tx starter (for the shared session service). The replier delivers
-// the outbound binding-prompt / status / issue-created notices; pass a nil
-// engine.OutboundReplier to disable them. The classic robot send API exposes no
-// per-message reaction, so the ack notifier stands in for a typing indicator (a
-// "working on it" message on ingest); pass nil to disable it. Media is optional:
-// when configured it uses the shared MediaResolver and intent-ledger pipeline.
+// NewDingTalkResolverSet 基于生成查询 + tx 启动器（供共享 session 服务用）装配
+// 钉钉 ResolverSet。replier 负责投递出站的绑定引导/状态/issue 已建等通知，传 nil
+// 即停用。经典机器人发送 API 没有按消息的 reaction，ack 通知器顶替打字指示灯
+// （摄取时发一条「正在处理」），传 nil 即停用。media 可选：配置后走共享
+// MediaResolver 与媒体意图台账管道。
 func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, ack *ackNotifier, media engine.MediaResolver, botNames *BotNameResolver) engine.ResolverSet {
 	groupPresence := &groupPresenceObserver{
 		q:        q,
@@ -52,8 +54,8 @@ func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.O
 		Replier:    replier,
 		OriginType: originDingTalkChat,
 	}
-	// Guard against assigning a nil *ackNotifier into the interface field (which
-	// would make set.Typing a non-nil typed-nil); mirrors Slack/Feishu.
+	// 防的是把 nil *ackNotifier 塞进接口字段（那样 set.Typing 会变成一个非 nil 的
+	// 类型化 nil，判 nil 判不出来）；与 Slack/飞书同款防护。
 	if ack != nil {
 		set.Typing = ack
 	}
@@ -71,21 +73,18 @@ var (
 	_ engine.Auditor              = (*auditor)(nil)
 )
 
-// dingtalkBindingConfig is the opaque outbound routing persisted on the chat
-// binding's config: enough to address a proactive reply back into the
-// originating conversation. StaffID is the lone recipient of a 1:1 chat; for a
-// group it is empty (the group is addressed by its conversation id).
+// dingtalkBindingConfig 是聊天绑定 config 上持久化的不透明出站路由：足够把一条主动
+// 回复寻址回来源会话。StaffID 是 1:1 私聊的唯一收件人；群聊里它为空（群用
+// conversation id 寻址）。
 type dingtalkBindingConfig struct {
 	ConversationType string `json:"conversation_type"`
 	ConversationID   string `json:"conversation_id"`
 	StaffID          string `json:"staff_id,omitempty"`
 }
 
-// dingtalkSessionRouting derives the session-isolation key and the outbound
-// routing config from one inbound message. DingTalk has no threads, so a
-// conversation (1:1 or group) is one continuous session keyed by its
-// conversation id; the config carries everything the outbound path needs to send
-// back.
+// dingtalkSessionRouting 从一条入站消息推导「会话隔离键」与出站路由 config。钉钉没
+// 有线程，所以一个会话（私聊或群聊）就是一条持续会话，用 conversation id 做键；
+// config 带上出站路径回发所需的一切。
 func dingtalkSessionRouting(msg channel.InboundMessage) (bindingKey string, config []byte) {
 	chatID := msg.Source.ChatID
 	cfg := dingtalkBindingConfig{
@@ -100,8 +99,8 @@ func dingtalkSessionRouting(msg channel.InboundMessage) (bindingKey string, conf
 	return chatID, raw
 }
 
-// outboundTarget recovers the send target from a chat binding's config, falling
-// back to the channel_chat_id when the config is missing or unparsable.
+// outboundTarget 从聊天绑定的 config 还原出投递目标；config 缺失或不可解析时回退
+// 到 channel_chat_id（当群聊发）。
 func outboundTarget(b db.ChannelChatSessionBinding) sendTarget {
 	target := sendTarget{ConversationType: convTypeGroup, ConversationID: b.ChannelChatID}
 	if len(b.Config) > 0 {
@@ -119,6 +118,7 @@ func outboundTarget(b db.ChannelChatSessionBinding) sendTarget {
 	return target
 }
 
+// decodeDingTalkRaw 把消息 Raw 里的钉钉特有信封解回来；Raw 为空或解不动都算错误。
 func decodeDingTalkRaw(msg channel.InboundMessage) (dingtalkRawEvent, error) {
 	var raw dingtalkRawEvent
 	if len(msg.Raw) == 0 {
@@ -130,6 +130,7 @@ func decodeDingTalkRaw(msg channel.InboundMessage) (dingtalkRawEvent, error) {
 	return raw, nil
 }
 
+// nullText 把空串映射成无效的 pgtype.Text（落库为 NULL），非空映射成有效值。
 func nullText(s string) pgtype.Text {
 	if s == "" {
 		return pgtype.Text{}
@@ -137,19 +138,17 @@ func nullText(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: true}
 }
 
-// ---- installation routing ----
+// ---- 安装反查：AppKey → 安装 ----
 
 type installationResolver struct{ q *db.Queries }
 
+// ResolveInstallation 用接收连接盖在信封上的 AppKey 反查安装行。每份安装各有一条
+// Stream 连接，盖上的 AppKey 就能唯一确定安装（钉钉回调本身不带 robotCode）。
 func (r *installationResolver) ResolveInstallation(ctx context.Context, msg channel.InboundMessage) (engine.ResolvedInstallation, error) {
 	raw, err := decodeDingTalkRaw(msg)
 	if err != nil {
 		return engine.ResolvedInstallation{}, err
 	}
-	// Route by the AppKey the receiving connection stamped into the envelope.
-	// Each installation has its own Stream connection, so the stamped AppKey
-	// uniquely identifies the installation (the DingTalk callback itself carries
-	// no robot code).
 	inst, err := r.q.GetChannelInstallationByAppID(ctx, db.GetChannelInstallationByAppIDParams{
 		ChannelType: string(TypeDingTalk),
 		AppID:       raw.AppID,
@@ -170,10 +169,13 @@ func (r *installationResolver) ResolveInstallation(ctx context.Context, msg chan
 	}, nil
 }
 
-// ---- identity ----
+// ---- 发送者身份 ----
 
 type identityResolver struct{ q *db.Queries }
 
+// ResolveSender 把发送者的钉钉 staff id 映射成 Multica 用户。先查该安装下的用户绑
+// 定；绑定存在后还要再查一次工作区成员关系——本系统没有成员外键，绑定存在并不能
+// 证明成员资格，必须显式复查。
 func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) (engine.ResolvedIdentity, error) {
 	binding, err := r.q.GetChannelUserBindingByUserID(ctx, db.GetChannelUserBindingByUserIDParams{
 		InstallationID: inst.ID,
@@ -185,7 +187,7 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 		}
 		return engine.ResolvedIdentity{}, err
 	}
-	// Binding existence no longer proves membership (no FK); re-check.
+	// 绑定的存在不再证明成员资格（没有外键）；显式复查工作区成员。
 	if _, err := r.q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 		UserID:      binding.MulticaUserID,
 		WorkspaceID: inst.WorkspaceID,
@@ -198,10 +200,12 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 	return engine.ResolvedIdentity{UserID: binding.MulticaUserID}, nil
 }
 
-// ---- dedup ----
+// ---- 消息去重 ----
 
 type deduper struct{ q *db.Queries }
 
+// Claim 尝试领取一条消息的去重 claim：领到返回 claim token；重复消息（已处理/处理
+// 中）返回 engine.ErrDuplicate。
 func (r *deduper) Claim(ctx context.Context, installationID pgtype.UUID, messageID string) (pgtype.UUID, error) {
 	claim, err := r.q.ClaimChannelInboundDedup(ctx, db.ClaimChannelInboundDedupParams{
 		InstallationID: installationID,
@@ -216,6 +220,7 @@ func (r *deduper) Claim(ctx context.Context, installationID pgtype.UUID, message
 	return claim.ClaimToken, nil
 }
 
+// Mark 把已领取的消息标记为处理完成。
 func (r *deduper) Mark(ctx context.Context, installationID pgtype.UUID, messageID string, claimToken pgtype.UUID) error {
 	_, err := r.q.MarkChannelInboundDedupProcessed(ctx, db.MarkChannelInboundDedupProcessedParams{
 		InstallationID: installationID,
@@ -225,6 +230,7 @@ func (r *deduper) Mark(ctx context.Context, installationID pgtype.UUID, messageI
 	return err
 }
 
+// Release 释放一条已领取但最终失败的消息 claim，让它能被重新投递（或过期清理）。
 func (r *deduper) Release(ctx context.Context, installationID pgtype.UUID, messageID string, claimToken pgtype.UUID) error {
 	_, err := r.q.ReleaseChannelInboundDedup(ctx, db.ReleaseChannelInboundDedupParams{
 		InstallationID: installationID,
@@ -234,7 +240,7 @@ func (r *deduper) Release(ctx context.Context, installationID pgtype.UUID, messa
 	return err
 }
 
-// ---- session bind / append ----
+// ---- 会话绑定 / 消息追加 ----
 
 type chatSession interface {
 	EnsureSession(ctx context.Context, in engine.EnsureSessionInput) (pgtype.UUID, error)
@@ -250,14 +256,16 @@ type groupPresenceQueries interface {
 	RecordDingTalkGroupActivity(ctx context.Context, arg db.RecordDingTalkGroupActivityParams) (pgtype.UUID, error)
 }
 
-// groupPresenceObserver records product metadata after group-addressing and
-// sender-membership checks have accepted the message.
+// groupPresenceObserver 在消息通过「群内 @ 到了机器人 + 发送者成员身份」两道门槛
+// 之后，把产品元数据落库：机器人在这个群里的可读身份 + 群的「见过」记录。
 type groupPresenceObserver struct {
 	q        groupPresenceQueries
 	botNames *BotNameResolver
 	logger   *slog.Logger
 }
 
+// Observe 为一条已被受理的群消息记录群存在性：upsert 机器人身份行（含缺权限标记），
+// 再记录该群出现过。只在群消息上动作。
 func (o *groupPresenceObserver) Observe(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) error {
 	if o == nil || o.q == nil || msg.Source.ChatType != channel.ChatTypeGroup {
 		return nil
@@ -306,9 +314,8 @@ func (o *groupPresenceObserver) Observe(ctx context.Context, inst engine.Resolve
 	return err
 }
 
-// RecordActivity advances the counters only after AppendUserMessage commits.
-// Presence discovery runs earlier, after addressing and membership checks, but
-// counting there would include messages whose durable append later fails.
+// RecordActivity 只在 AppendUserMessage 提交成功后推进活跃计数。存在性发现跑得更
+// 早（在寻址与成员校验之后），但若在那里计数，会把「后续落库失败」的消息也计进来。
 func (o *groupPresenceObserver) RecordActivity(ctx context.Context, installationID pgtype.UUID, msg channel.InboundMessage) error {
 	if o == nil || o.q == nil || msg.Source.ChatType != channel.ChatTypeGroup {
 		return nil
@@ -320,6 +327,8 @@ func (o *groupPresenceObserver) RecordActivity(ctx context.Context, installation
 	return err
 }
 
+// StartSession 处理开启一段新会话（会话首条消息）：确保会话行并追加首条消息，再记
+// 群存在性，消息确实落库后推进活跃计数。
 func (r *sessionBinder) StartSession(ctx context.Context, p engine.StartSessionParams) (engine.StartSessionResult, error) {
 	bindingKey, config := dingtalkSessionRouting(p.Message)
 	result, err := r.session.StartSession(ctx, engine.StartSessionInput{
@@ -337,6 +346,7 @@ func (r *sessionBinder) StartSession(ctx context.Context, p engine.StartSessionP
 	if err != nil {
 		return engine.StartSessionResult{}, err
 	}
+	// 群存在性只是尽力而为的元数据，失败绝不让一条合法群消息变成失败。
 	if err := r.groupPresence.Observe(ctx, p.Installation, p.Message); err != nil {
 		logger := slog.Default()
 		if r.groupPresence != nil && r.groupPresence.logger != nil {
@@ -367,11 +377,14 @@ func (r *sessionBinder) StartSession(ctx context.Context, p engine.StartSessionP
 	}, nil
 }
 
+// sessionBinder 是 engine.SessionBinder 的钉钉实现，把所有入站会话/追加请求转交给
+// 共享 engine.ChatSession，并在关键节点附带群存在性元数据。
 type sessionBinder struct {
 	session       chatSession
 	groupPresence *groupPresenceObserver
 }
 
+// EnsureSession 确保会话行存在（沿用现有会话），返回会话 id。
 func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessionParams) (pgtype.UUID, error) {
 	bindingKey, config := dingtalkSessionRouting(p.Message)
 	sessionID, err := r.session.EnsureSession(ctx, engine.EnsureSessionInput{
@@ -386,8 +399,8 @@ func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessio
 	if err != nil {
 		return pgtype.UUID{}, err
 	}
-	// Group inventory is best-effort metadata. A lookup or write failure must
-	// not turn a valid group mention into a failed chat message.
+	// 群清单是尽力而为的元数据。查询或写入失败绝不能把一条合法的群 @ 消息变成失败
+	// 的聊天消息。
 	if err := r.groupPresence.Observe(ctx, p.Installation, p.Message); err != nil {
 		logger := slog.Default()
 		if r.groupPresence != nil && r.groupPresence.logger != nil {
@@ -402,10 +415,13 @@ func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessio
 	return sessionID, nil
 }
 
+// MarkPendingFresh 透传给共享 chatSession 记录一条待生效标记（参数原样转发）。
 func (r *sessionBinder) MarkPendingFresh(ctx context.Context, sessionID pgtype.UUID, messageID string) error {
 	return r.session.MarkPendingFresh(ctx, sessionID, messageID)
 }
 
+// AppendMessage 把一条后续消息追加进现有会话（含去重 mark）。落库成功后顺手推进群
+// 活跃计数。
 func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams) (engine.AppendResult, error) {
 	commandText := p.Message.CommandText
 	if commandText == "" {
@@ -426,9 +442,8 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 	if err != nil {
 		return engine.AppendResult{}, err
 	}
-	// Group inventory is best-effort product metadata. The message and dedup
-	// mark are already durable, so a counter write failure must not release the
-	// claim or make DingTalk retry and risk a duplicate user-visible turn.
+	// 群清单是尽力而为的产品元数据。消息与去重 mark 已经落库，计数写入失败绝不能
+	// 反过来释放 claim 或触发钉钉重试——那会带来一次重复的用户可见轮次。
 	if err := r.groupPresence.RecordActivity(ctx, p.InstallationID, p.Message); err != nil {
 		logger := slog.Default()
 		if r.groupPresence != nil && r.groupPresence.logger != nil {
@@ -443,6 +458,8 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 	return result, nil
 }
 
+// BindMedia 把已上传的媒体引用绑到消息/issue 上。共享 session 若实现了带返回值
+// 的绑定接口就走它，否则退化为纯副作用调用。
 func (r *sessionBinder) BindMedia(ctx context.Context, p engine.BindMediaParams) (engine.BindMediaResult, error) {
 	in := engine.BindMediaInput{
 		MessageID:            p.MessageID,
@@ -463,10 +480,11 @@ func (r *sessionBinder) BindMedia(ctx context.Context, p engine.BindMediaParams)
 	return engine.BindMediaResult{}, r.session.BindMediaRefs(ctx, in)
 }
 
-// ---- audit ----
+// ---- 丢弃审计 ----
 
 type auditor struct{ q *db.Queries }
 
+// RecordDrop 把一条被引擎拒绝的入站消息记进丢弃审计表（含丢弃原因）。
 func (r *auditor) RecordDrop(ctx context.Context, instID pgtype.UUID, msg channel.InboundMessage, reason engine.DropReason) error {
 	return r.q.RecordChannelInboundDrop(ctx, db.RecordChannelInboundDropParams{
 		ID:               dbid.NewV7(),

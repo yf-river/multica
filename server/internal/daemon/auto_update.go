@@ -10,25 +10,23 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-// Indirections over the real release / version helpers so tests can run the
-// auto-update loop deterministically without reaching out to GitHub or
-// shelling out to brew/curl. Mirrors the pattern used at the top of daemon.go
-// for `isBrewInstall` / `getBrewPrefix` / `matchKnownBrewPrefix`.
+// 对真实 release / 版本工具的间接层，让测试能确定性地跑自动更新循环，不必真的去
+// GitHub 或 shell 调用 brew/curl。镜像 daemon.go 顶部对 `isBrewInstall` /
+// `getBrewPrefix` / `matchKnownBrewPrefix` 的做法。
 var (
 	fetchLatestRelease = cli.FetchLatestRelease
 	isReleaseVersion   = cli.IsReleaseVersion
 	isNewerVersion     = cli.IsNewerVersion
 )
 
-// detectSelfVersion runs `<path> --version` and returns the version field.
-// Indirection so tests never fork a real process.
+// detectSelfVersion 执行 `<path> --version` 并返回版本字段。做成间接层，测试就不用
+// fork 真实进程。
 var detectSelfVersion = func(ctx context.Context, path string) (string, error) {
 	cmd := exec.CommandContext(ctx, path, "--version")
-	// Context cancellation only kills the direct child; a descendant that
-	// inherited our stdout pipe keeps Output() blocked past the deadline.
-	// WaitDelay force-closes the pipes after the kill — without it a replaced
-	// binary that misbehaves would park the autoUpdateLoop goroutine forever
-	// with the updating flag held. Same guard as detectCLIVersion.
+	// 取消 context 只会杀掉直接子进程；继承了 stdout 管道、还赖在 Output() 上的孙进程
+	// 会拖过截止时间。WaitDelay 在 kill 之后强制关闭管道——没有它，一个行为异常的被替换
+	// 二进制会带着 updating 标志把 autoUpdateLoop 的 goroutine 永久挂起。与
+	// detectCLIVersion 相同的护栏。
 	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.Output()
 	if err != nil {
@@ -37,20 +35,18 @@ var detectSelfVersion = func(ctx context.Context, path string) (string, error) {
 	return ParseSelfVersion(string(out)), nil
 }
 
-// ParseSelfVersion pulls the version out of `multica --version` output, whose
-// first line is rendered by cmd/multica's version template:
+// ParseSelfVersion 从 `multica --version` 输出里取出版本号；该输出的第一行由
+// cmd/multica 的版本模板渲染：
 //
 //	multica 0.3.7 (commit: abc1234, built: 2026-07-29T10:00:00Z)
 //	go: go1.26.1, os/arch: darwin/arm64
 //
-// The extracted field is exactly what ldflags put in main.version, which is
-// also what lands in Config.CLIVersion — so the two are directly comparable.
-// Anything that doesn't match the template shape is returned trimmed, which
-// compares unequal and is therefore reported rather than silently ignored.
+// 抽出的字段正是 ldflags 写进 main.version、也会落到 Config.CLIVersion 的东西——所以
+// 两者可直接比较。任何不符合模板形态的内容都会被去空白后原样返回——比较结果不等，
+// 于是会上报而不是被悄悄忽略。
 //
-// Exported solely so cmd/multica can pin that contract from the producing side:
-// this parser and the version template have to agree, and nothing else would
-// notice if a template edit silently broke the auto-reload probe.
+// 之所以导出，纯粹为了让 cmd/multica 从生产端锁死这个契约：本解析器与版本模板必须
+// 一致，而如果模板改动悄悄弄坏了自动重载探测，没有别的东西会注意到。
 func ParseSelfVersion(raw string) string {
 	line, _, _ := strings.Cut(raw, "\n")
 	line = strings.TrimSpace(line)
@@ -60,55 +56,42 @@ func ParseSelfVersion(raw string) string {
 	return line
 }
 
-// autoUpdateInitialDelay is how long the loop waits after Run() returns before
-// performing its first version check. The daemon has plenty to do at startup
-// (auth, register, sync workspaces, kick off heartbeats); we don't want to add
-// an outbound HTTPS call to GitHub on top of that. The delay is also short
-// enough that a brand-new install with an available update still self-updates
-// within a couple of minutes rather than after the full check interval.
+// autoUpdateInitialDelay 是循环在 Run() 返回后、做首次版本检查前等待的时长。daemon
+// 启动时有大量事要做（鉴权、注册、同步 workspace、发起心跳），不想再叠加一次对 GitHub
+// 的出站 HTTPS 调用。同时这延迟也足够短——有更新可用的全新安装会在几分钟内自更新，
+// 而不用等满整个检查间隔。
 var autoUpdateInitialDelay = 2 * time.Minute
 
-// selfReloadCheckInterval is how often the loop compares the version compiled
-// into this process against the `--version` output of the binary it would
-// re-exec. One fork/exec per tick, machine-level (not per workspace, not per
-// runtime), so the cost is fixed no matter how big the daemon's workload is.
-// Overridable for tests.
+// selfReloadCheckInterval 是循环把“编译进本进程的版本”与“重启会 exec 的那个二进制的
+// --version 输出”做比较的频率。每个 tick 一次 fork/exec，机器级（不是每 workspace、
+// 不是每 runtime），因此成本固定，不受 daemon 负载大小影响。测试可覆盖。
 //
-// The value bounds how long a user waits after replacing the binary themselves,
-// not how often we ship: the "is there a new release" question belongs to
-// DefaultAutoUpdateCheckInterval, and only that one should track release
-// cadence. It also compounds, because a tick that lands while the daemon is
-// busy defers to the next one rather than interrupting a task — so the wait is
-// really "the first tick that is both due and idle". Ten minutes keeps the
-// average wait around five and the multiplier tolerable on a busy host; an hour
-// would not, and would put us back in sight of the "I upgraded and nothing
-// happened" problem this check exists to remove.
+// 这个值约束的是“用户自己替换二进制之后要等多久”，不是发布频率：“有没有新 release”
+// 归 DefaultAutoUpdateCheckInterval 管，只有它该跟随发版节奏。它还会累加——落在 daemon
+// 忙碌期间的 tick 会顺延到下一个而不是打断任务——所以真实等待是“第一个既到点又空闲的
+// tick”。十分钟让平均等待在五分钟上下，繁忙主机上倍数也可接受；一小时则不行，那会
+// 让我们重新回到“我升级了却啥也没发生”这个本检查想消除的问题上。
 var selfReloadCheckInterval = 10 * time.Minute
 
-// selfReloadProbeTimeout bounds the `--version` fork/exec. Generous: the point
-// of the timeout is to stop a wedged binary from parking the loop goroutine,
-// not to police a slow disk.
+// selfReloadProbeTimeout 约束 `--version` 的 fork/exec。给得很宽裕：超时的意义是防止
+// 卡死的二进制挂住循环 goroutine，而不是去给慢磁盘计时。
 var selfReloadProbeTimeout = 10 * time.Second
 
-// autoUpdateLoop owns everything that can end in "restart this daemon into a
-// different multica binary". It runs two independent checks on one goroutine,
-// which is what keeps them from racing each other into triggerRestart:
+// autoUpdateLoop 拥有所有“以把 daemon 重启进另一个 multica 二进制而告终”的逻辑。它
+// 在同一个 goroutine 上跑两个相互独立的检查——这本身就阻止了它们互相竞争冲进
+// triggerRestart：
 //
-//   - tryAutoUpdate: poll GitHub for a newer release and, when the daemon is
-//     idle, run the same brew-or-download upgrade as the server-triggered path.
-//   - trySelfReload: notice that the binary on disk was replaced out of band
-//     and re-exec into it.
+//   - tryAutoUpdate: 轮询 GitHub 找更新的 release，daemon 空闲时执行与“服务器触发
+//     路径”相同的 brew-or-download 升级。
+//   - trySelfReload: 察觉磁盘上的二进制被越权替换，重新 exec 进它。
 //
-// The GitHub half is additionally skipped when the operator opted out
-// (--no-auto-update / MULTICA_DAEMON_AUTO_UPDATE=false), when the server is
-// self-hosted (default-off, MUL-2381), or when the running version isn't a
-// tagged release — source builds (`make daemon`) report a `git describe`-style
-// version and upgrading them to a public release would silently discard the dev
-// work on the machine. None of those apply to the on-disk half, which follows a
-// binary the operator installed themselves; see trySelfReload.
+// GitHub 那半边在以下情况额外跳过：运维显式关闭（--no-auto-update /
+// MULTICA_DAEMON_AUTO_UPDATE=false）、服务器是自托管（默认关，MUL-2381）、或运行版本
+// 不是打 tag 的 release——源码构建（`make daemon`）报的是 `git describe` 风格版本，
+// 把它们升级到公开 release 会悄悄丢掉机器上的开发成果。这些都不适用于磁盘半边，它
+// 跟随的是运维亲手装的二进制；见 trySelfReload。
 //
-// Each tick is silent on the happy path so the log stays uncluttered for users
-// who run the daemon for weeks at a time.
+// 快乐路径下每个 tick 保持安静，让一跑就是数周的 daemon 日志不被刷屏。
 func (d *Daemon) autoUpdateLoop(ctx context.Context) {
 	pullEnabled := d.cfg.AutoUpdateEnabled
 	switch {
@@ -130,8 +113,8 @@ func (d *Daemon) autoUpdateLoop(ctx context.Context) {
 	if pullInterval <= 0 {
 		pullInterval = DefaultAutoUpdateCheckInterval
 	}
-	// Log what each half will do before the startup delay, so a user reading
-	// daemon.log right after `daemon start` sees it immediately.
+	// 在启动延迟前就把各半边要做什么记进日志，让 `daemon start` 之后立刻读 daemon.log
+	// 的用户马上看到。
 	if pullEnabled {
 		d.logger.Info("auto-update: started", "interval", pullInterval, "current", d.cfg.CLIVersion)
 	}
@@ -150,11 +133,10 @@ func (d *Daemon) autoUpdateLoop(ctx context.Context) {
 		d.trySelfReload(ctx)
 	}
 
-	// Tickers start only now, after the first check. Starting them before the
-	// delay would let an interval shorter than autoUpdateInitialDelay buffer a
-	// tick and fire a second check immediately after the first.
+	// Ticker 到此刻才开始，排在首次检查之后。若在延迟前就启动，比 autoUpdateInitialDelay
+	// 短的间隔会缓冲一个 tick，在第一次检查后立刻再触发一次。
 	//
-	// A disabled half leaves its channel nil, which never fires in a select.
+	// 被禁用的半边 channel 保持 nil，在 select 里永远不会触发。
 	var pullTick, reloadTick <-chan time.Time
 	if pullEnabled {
 		ticker := time.NewTicker(pullInterval)
@@ -179,29 +161,23 @@ func (d *Daemon) autoUpdateLoop(ctx context.Context) {
 	}
 }
 
-// tryAutoUpdate runs one check-and-maybe-upgrade cycle. Bails early on any of:
-// already updating (server-triggered upgrade in flight), active tasks (defer
-// to next tick — we never interrupt running agents), version fetch failure,
-// or no newer release. The function never returns an error: a check that
-// fails today will be retried at the next tick, and we don't want a transient
-// network blip to escalate to a process-level shutdown.
+// tryAutoUpdate 跑一轮“检查并可能升级”。出现以下任一情况提前返回：已在升级中（服务器
+// 触发的升级在途）、有活动任务（顺延到下一 tick——绝不打断运行中的 agent）、版本拉取
+// 失败、或没有更新的 release。函数从不返回错误：今天失败的检查下个 tick 会重试，我们
+// 也不希望一次瞬时网络抖动升级成进程级关停。
 func (d *Daemon) tryAutoUpdate(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	// Don't race the server-triggered update path. If a manual update from
-	// the Runtimes page is already in flight, let it finish and re-check next
-	// tick (by which time we'll either be on the new binary or it failed and
-	// we can retry).
+	// 别和服务器触发的升级路径竞速。Runtimes 页的“手动更新”若已在途，就让它跑完，
+	// 下个 tick 再检查（届时要么已在跑新二进制，要么失败了可重试）。
 	if d.updating.Load() {
 		d.logger.Debug("auto-update: skip — update already in progress")
 		return
 	}
-	// Cheap pre-fetch idle check: the release-metadata fetch below makes an
-	// HTTPS call to GitHub, and there is no point paying that cost (or the
-	// rate-limit budget) when we already know we are going to defer. A task
-	// that starts between this load and the barrier check below is caught
-	// by the strict re-check under claimMu inside trySetClaimBarrier.
+	// 便宜的预取空闲检查：下面的 release 元数据拉取要打一次到 GitHub 的 HTTPS，既然
+	// 已经知道会顺延，就没必要花这个代价（以及限流预算）。本 Load 与下面的屏障检查之间
+	// 新开始的任务，会被 trySetClaimBarrier 里 claimMu 之下的严格复检拦住。
 	if running := d.activeTasks.Load(); running > 0 {
 		d.logger.Debug("auto-update: skip — tasks running", "active", running)
 		return
@@ -219,10 +195,9 @@ func (d *Daemon) tryAutoUpdate(ctx context.Context) {
 		return
 	}
 
-	// CAS the updating flag so a concurrent server-triggered handleUpdate
-	// dropped onto a heartbeat tick can't double-fire. Release on every exit
-	// path before triggerRestart — once that lands, the daemon ctx is
-	// cancelled and the flag dies with the process.
+	// 用 CAS 置位 updating 标志，防止“服务器触发的 handleUpdate 恰好落在心跳 tick 上”
+	// 造成双触发。在 triggerRestart 之前的每条退出路径上都释放——一旦触发，daemon ctx
+	// 被取消，标志随进程一起消亡。
 	if !d.updating.CompareAndSwap(false, true) {
 		d.logger.Debug("auto-update: skip — update already in progress (raced)")
 		return
@@ -233,14 +208,11 @@ func (d *Daemon) tryAutoUpdate(ctx context.Context) {
 			d.updating.Store(false)
 		}
 	}()
-
-	// Strict barrier: between the cheap pre-fetch idle check and now the
-	// release fetch took anywhere from tens of milliseconds (typical) to
-	// seconds (slow link, GitHub hiccup), plenty of time for a poller to
-	// claim a fresh task. trySetClaimBarrier checks claimsInFlight +
-	// activeTasks under claimMu and only flips pauseClaims to true if both
-	// are zero, so once it returns true we can run the upgrade knowing that
-	// no in-flight task will be cancelled by triggerRestart.
+	// 严格屏障：从便宜的预取空闲检查到现在，release 拉取花了少则几十毫秒（常见）、多则
+	// 几秒（慢链路、GitHub 抖动）——足够一个轮询器认领全新任务。trySetClaimBarrier 在
+	// claimMu 下检查 claimsInFlight + activeTasks，只有两者都为零才把 pauseClaims 翻成
+	// true；所以一旦它返回 true，就能放心执行升级——不会有在途任务被 triggerRestart
+	// 取消。
 	if !d.trySetClaimBarrier() {
 		d.logger.Info("auto-update: deferring — task or claim in flight at barrier check")
 		return
@@ -263,57 +235,44 @@ func (d *Daemon) tryAutoUpdate(ctx context.Context) {
 
 	d.logger.Info("auto-update: upgrade completed, restarting", "target", release.TagName, "output", output)
 	if !d.triggerRestart() {
-		// The upgrade landed but the handoff target could not be resolved, so
-		// no process exit is coming. Fall through to both deferred restores:
-		// holding the updating flag and the claim barrier for a restart that
-		// will never happen stops this daemon from claiming any task, forever.
-		// The next tick retries — and since the binary on disk is already the
-		// new one, trySelfReload will keep trying too.
+		// 升级落地了，但交接目标解析不出来，不会有进程退出到来。落到两个 deferred
+		// 恢复：为一次永远不会发生的重启死抱着 updating 标志与 claim 屏障，会让本
+		// daemon 从此再也认领不了任何任务。下个 tick 会重试——而且既然磁盘上的二进制
+		// 已经是新的，trySelfReload 也会一直重试。
 		d.logger.Error("auto-update: upgrade completed but restart could not be scheduled — resuming claims")
 		return
 	}
-	// triggerRestart cancels the root context, which causes Run() to return
-	// and the parent (cmd_daemon.go) to re-exec the new binary. Leave both
-	// the updating flag and the claim barrier held — process exit is
-	// imminent and clearing either would open a window for new claims / a
-	// second auto-update tick to fire mid-shutdown.
+	// triggerRestart 会取消根 context，使 Run() 返回、父进程（cmd_daemon.go）重新 exec
+	// 新二进制。让 updating 标志与 claim 屏障保持置位——进程退出在即，清掉任一个都会
+	// 在关停途中给“新认领 / 第二个自动更新 tick”开窗。
 	released = true
 	barrierReleased = true
 }
 
-// trySelfReload restarts the daemon when the multica binary on disk no longer
-// reports the version compiled into this process.
+// trySelfReload 在磁盘上的 multica 二进制不再报告“编译进本进程的版本”时重启 daemon。
 //
-// This is the out-of-band half of self-update. `brew upgrade multica`, a
-// re-download, or a developer's `make build` all replace the binary at the same
-// path, and the daemon then keeps serving the version it booted with: its own
-// version string is frozen at compile time, and the pinned-path self-heal in
-// resolveAgentEntry only fires when a path *vanishes*, which an in-place
-// overwrite never does.
+// 这是自更新的“越权”半边。`brew upgrade multica`、重新下载或开发者的 `make build`
+// 都会在同一路径替换二进制，而 daemon 仍继续服务它启动时那个版本：自己的版本字符串
+// 在编译期就已冻结，而 resolveAgentEntry 里的“固定路径自愈”只在路径*消失*时触发——
+// 原地覆盖永远不会让路径消失。
 //
-// tryAutoUpdate does eventually recover the most common shape of this — the
-// running version is older than the latest release, so it re-runs the upgrade
-// (a no-op under brew) and restarts. What it cannot recover is the rest:
-// self-hosted daemons where auto-update is default-off (MUL-2381), dev builds
-// skipped by isReleaseVersion, and installing something GitHub doesn't consider
-// newer (a deliberate downgrade, or an intermediate version). It is also up to
-// a full check interval slow. This check closes all of that, which is why it
-// has its own switch (--no-auto-reload / MULTICA_DAEMON_AUTO_RELOAD=false /
-// disable_auto_reload) rather than riding on MULTICA_DAEMON_AUTO_UPDATE.
+// tryAutoUpdate 最终能覆盖其中最常见的一种形态——运行版本比最新 release 老，所以它
+// 重跑升级（brew 下是无操作）并重启。它覆盖不了的是其余：自动更新默认关闭的自托管
+// daemon（MUL-2381）、被 isReleaseVersion 跳过的开发构建、以及安装 GitHub 不认为是
+// “更新”的东西（刻意降级，或中间版本）。而且它最多慢一个完整检查间隔。本检查补齐了
+// 所有这些，因此它有自己的开关（--no-auto-reload /
+// MULTICA_DAEMON_AUTO_RELOAD=false / disable_auto_reload），而不是挂在
+// MULTICA_DAEMON_AUTO_UPDATE 上。
 //
-// Restart mechanics are shared with tryAutoUpdate rather than reinvented:
-// the same trySetClaimBarrier keeps a running task from being interrupted, and
-// the same triggerRestart performs the handoff. There is deliberately no
-// pending-restart state machine and no drain hook — a busy daemon just defers
-// to the next tick, so the check cannot leave claiming paused while waiting for
-// something to wake it. The deferral is recorded in reloadPendingReason purely
-// so /health can explain why the daemon is still on the old version.
+// 重启机制与 tryAutoUpdate 共用而不是另起炉灶：同一个 trySetClaimBarrier 保证不打断
+// 运行中的任务，同一个 triggerRestart 执行交接。刻意没有“待重启”状态机、没有 drain
+// 钩子——繁忙 daemon 直接顺延到下一 tick，本检查绝不可能在等什么东西唤醒它时一直压着
+// 认领。顺延会写进 reloadPendingReason，纯粹为了让 /health 能解释 daemon 为何还在旧
+// 版本上。
 //
-// A failed probe is never treated as a version change. The binary is most
-// likely to be unreadable during the few hundred milliseconds of the very
-// upgrade this check exists to detect (vanished path, ETXTBSY — the same class
-// runtimeVersionProbeAttempts documents), and "couldn't read the version" is
-// not a reason to restart into one.
+// 一次探测失败绝不会被当成版本变化。二进制最可能不可读的窗口，恰恰是本检查要探测的
+// 那次升级的几百毫秒（路径消失、ETXTBSY——runtimeVersionProbeAttempts 记录的同类），
+// 而“读不出版本”不是重启进它的理由。
 func (d *Daemon) trySelfReload(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
@@ -321,18 +280,14 @@ func (d *Daemon) trySelfReload(ctx context.Context) {
 	if d.RestartBinary() != "" {
 		return
 	}
-	// Acquire update ownership rather than sampling it. A plain Load() is only a
-	// hint: handleUpdate could win the CAS in the gap between the read and
-	// triggerRestart, and this path would then cancel the root context while the
-	// binary is still being replaced — re-execing a half-written file and cutting
-	// the server-triggered update's status reporting off partway. The CAS is the
-	// only thing that actually arbitrates, because the claim barrier does not:
-	// handleUpdate reaches it through tryBeginServerUpdate, and the two never
-	// inspect each other's state. Same shape tryAutoUpdate uses.
+	// 用 CAS 抢升级所有权而不是采样。纯 Load() 只是提示：handleUpdate 可能在“读取”与
+	// triggerRestart 之间的缝隙里赢下 CAS，本路径随后会趁二进制还在被替换时就取消根
+	// context——exec 到半写文件、并中途切断服务器触发升级的状态上报。真正仲裁的只有
+	// CAS，因为 claim 屏障不管这事：handleUpdate 经 tryBeginServerUpdate 到屏障，两者
+	// 从不看对方的状态。与 tryAutoUpdate 同款。
 	//
-	// Released on every exit below except a successful handoff, where the process
-	// is about to go down and clearing it would let a second attempt start
-	// mid-shutdown.
+	// 除成功交接外，下面每条退出路径都会释放；交接时进程即将退出，清掉它会让第二次尝试
+	// 在关停中途启动。
 	if !d.updating.CompareAndSwap(false, true) {
 		d.logger.Debug("auto-reload: skip — update already in progress")
 		return
@@ -344,9 +299,8 @@ func (d *Daemon) trySelfReload(ctx context.Context) {
 		}
 	}()
 
-	// Probe the binary the restart would actually exec, not os.Executable():
-	// under brew those differ, and following the stable symlink is the whole
-	// point of restartTargetBinary.
+	// 探测“重启实际会 exec 的那个二进制”，不是 os.Executable()：brew 下两者不同，而
+	// 跟随稳定符号链接正是 restartTargetBinary 的意义所在。
 	target, err := d.restartTargetBinary()
 	if err != nil {
 		d.logger.Warn("auto-reload: could not resolve own executable — will retry", "error", err)
@@ -360,11 +314,9 @@ func (d *Daemon) trySelfReload(ctx context.Context) {
 			"binary", target, "error", err)
 		return
 	}
-	// Either side blank makes the comparison meaningless, and acting on it would
-	// be worse than doing nothing: a blank on-disk version is a probe that
-	// technically exited 0 without telling us anything, and a blank running
-	// version would restart into a successor that reads blank too — a reload
-	// every tick, forever.
+	// 任一侧为空都会让比较失去意义，据此行动比什么都不做更糟：空磁盘版本是一次“技术上
+	// 退出 0 却什么也没告诉我们的”探测，空运行版本则会重启进一个同样读出空白的后继者——
+	// 从此每个 tick 都重启一次，永无休止。
 	if onDisk == "" || d.cfg.CLIVersion == "" {
 		d.logger.Warn("auto-reload: version unavailable — will retry, not treating it as a change",
 			"binary", target, "on_disk", onDisk, "running", d.cfg.CLIVersion)
@@ -391,31 +343,29 @@ func (d *Daemon) trySelfReload(ctx context.Context) {
 
 	d.logger.Info("auto-reload: restarting into the binary on disk", "reason", reason, "binary", target)
 	if !d.triggerRestart() {
-		// Resolution failed at the handoff. Both deferred restores run: a failed
-		// restart must never cost the daemon its ability to claim, nor leave the
-		// update flag held against a restart that is not coming. The next tick
-		// re-probes from scratch, so there is no stale baseline to re-detect.
+		// 交接时解析失败。两个 deferred 恢复都会跑：一次失败的重启绝不能夺走 daemon 的
+		// 认领能力，也不能让 updating 标志替一场不会来的重启守着。下个 tick 从零重新
+		// 探测，所以不存在需要复检的过期基线。
 		return
 	}
 	released = true
 	barrierReleased = true
 }
 
-// setReloadPending records that a multica version change is confirmed but the
-// restart is waiting for the daemon to go idle. Purely diagnostic — surfaced on
-// /health and `daemon status` — and it gates nothing, so it can never park the
-// daemon the way a pending-state machine could.
+// setReloadPending 记录“multica 版本变化已确认，但重启在等 daemon 空闲”。纯诊断——
+// 在 /health 与 `daemon status` 上可见——不 gate 任何东西，因此绝不可能像 pending
+// 状态机那样把 daemon 挂死。
 func (d *Daemon) setReloadPending(reason string) {
 	d.reloadPendingReason.Store(&reason)
 }
 
-// clearReloadPending drops the note once the on-disk version matches again
-// (the operator reverted the binary before the daemon went idle).
+// clearReloadPending 在磁盘版本重新匹配后（运维在 daemon 空闲前回退了二进制）丢掉
+// 该记录。
 func (d *Daemon) clearReloadPending() {
 	d.reloadPendingReason.Store(nil)
 }
 
-// reloadPending reports the deferred-restart reason, empty when none.
+// reloadPending 返回顺延重启的原因；没有则为空串。
 func (d *Daemon) reloadPending() string {
 	if reason := d.reloadPendingReason.Load(); reason != nil {
 		return *reason

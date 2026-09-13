@@ -8,43 +8,41 @@ import (
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
 
-// AgentEntry describes a single available agent CLI.
+// AgentEntry 描述一个本机可用 agent CLI 的条目。
 type AgentEntry struct {
-	Path string // stable startup-resolved CLI entry point; launch resolution may follow platform links to a concrete path
-	// Command is the bare command name or MULTICA_*_PATH value that Path was
-	// resolved from at startup. It is kept so the daemon can re-resolve Path
-	// if the pinned executable later vanishes — e.g. a version manager
-	// (Homebrew Cask, nvm/fnm) does an in-place upgrade that deletes the old
-	// versioned directory Path points into. Empty for synthesized entries
-	// (custom runtime profiles) that carry an absolute path directly. See
-	// Daemon.resolveAgentEntry and MUL-4486.
+	Path string // 启动时解析出的稳定 CLI 入口路径；真正拉起时可能沿平台链接追到具体可执行文件
+	// Command 是启动时 Path 所解析自的命令名或 MULTICA_*_PATH 环境变量值。
+	// 保留它的目的是：当被固定的可执行文件后来消失时（比如版本管理器
+	// Homebrew Cask、nvm/fnm 原地升级会删掉 Path 指向的旧版本目录），
+	// daemon 还能据此重新解析 Path。对于直接携带绝对路径的合成条目
+	// （自定义 runtime profile），此字段为空。参见 Daemon.resolveAgentEntry
+	// 与 MUL-4486。
 	Command string
-	Model   string // model override (optional)
+	Model   string // 可选的模型覆盖
 }
 
-// Runtime represents a registered daemon runtime.
+// Runtime 表示一个已注册的 daemon runtime。
 type Runtime struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Provider string `json:"provider"`
 	Status   string `json:"status"`
-	// ProfileID is non-empty when this runtime was registered from a
-	// workspace custom runtime profile (MUL-3284). It links the runtime row
-	// back to the profile so the daemon can resolve the profile's
-	// command_name to the executable to launch. Built-in (provider-detected)
-	// runtimes leave this empty.
+	// ProfileID 当该 runtime 是从 workspace 自定义 runtime profile 注册而来时非空
+	// （MUL-3284）。它把 runtime 记录与 profile 关联起来，使 daemon 能把 profile
+	// 里的 command_name 解析成要拉起的可执行文件。内置的（按 provider 探测到的）
+	// runtime 此字段为空。
 	ProfileID string `json:"profile_id,omitempty"`
 }
 
-// RepoData holds repository information from the workspace.
+// RepoData 存放来自 workspace 的仓库信息。
 type RepoData struct {
 	URL         string `json:"url"`
 	Description string `json:"description,omitempty"`
 	Ref         string `json:"ref,omitempty"`
 }
 
-// ProjectResourceData mirrors handler.ProjectResourceData — a single project
-// resource as delivered to the daemon. resource_ref is type-specific JSON.
+// ProjectResourceData 镜像 handler.ProjectResourceData——单个传给 daemon 的项目
+// 资源。resource_ref 是随类型而异的 JSON。
 type ProjectResourceData struct {
 	ID           string          `json:"id"`
 	ResourceType string          `json:"resource_type"`
@@ -52,13 +50,12 @@ type ProjectResourceData struct {
 	Label        string          `json:"label,omitempty"`
 }
 
-// ConnectedAppData keeps the claim-response field local to daemon types while
-// sharing the canonical JSON shape with the runtime app metadata package.
+// ConnectedAppData 把 claim 响应当中的字段留在 daemon 侧类型里，同时与
+// runtime 应用元数据包共用同一份权威 JSON 形状。
 type ConnectedAppData = runtimeapps.ConnectedApp
 
-// ActiveSiblingRunData mirrors the claim-time warning context returned by the
-// server for another in-flight issue task owned by this agent. Queued tasks are
-// intentionally excluded from this context.
+// ActiveSiblingRunData 镜像服务器在 claim 时返回的告警上下文：同一个 agent 名下
+// 另一个正在执行中的 issue 任务。排队中的任务被有意排除在这个上下文之外。
 type ActiveSiblingRunData struct {
 	TaskID          string `json:"task_id"`
 	IssueID         string `json:"issue_id"`
@@ -69,9 +66,9 @@ type ActiveSiblingRunData struct {
 	StartedAt       string `json:"started_at,omitempty"`
 }
 
-// IssueStatusData mirrors one active custom workspace status from the claim
-// payload (MUL-6460). Mirror field: internal/handler/agent.go
-// TaskIssueStatusData, same JSON names.
+// IssueStatusData 镜像 claim 载荷里的一个活动中的自定义 workspace 状态
+// （MUL-6460）。镜像字段：internal/handler/agent.go 里的
+// TaskIssueStatusData，JSON 字段名一致。
 type IssueStatusData struct {
 	Key         string `json:"key"`
 	Name        string `json:"name"`
@@ -79,8 +76,8 @@ type IssueStatusData struct {
 	Description string `json:"description,omitempty"`
 }
 
-// Task represents a claimed task from the server.
-// Agent data (name, skills) is populated by the claim endpoint.
+// Task 表示一条从服务器认领（claim）到的任务。
+// Agent 数据（name、skills）由 claim 端点填充。
 type Task struct {
 	ID                   string                 `json:"id"`
 	AgentID              string                 `json:"agent_id"`
@@ -90,129 +87,129 @@ type Task struct {
 	WorkspaceSlug        string                 `json:"workspace_slug,omitempty"`
 	IssueIdentifier      string                 `json:"issue_identifier,omitempty"`
 	RemoteMCPConnections []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
-	// RemoteMCPDaemonToken stays inside the daemon and authenticates the local
-	// broker's credential-resolution calls. It must never enter agent env/config.
+	// RemoteMCPDaemonToken 只留在 daemon 内部，用于给本地 broker 的凭证解析调用
+	// 做鉴权。它绝不能进入 agent 的环境变量或配置。
 	RemoteMCPDaemonToken string `json:"remote_mcp_daemon_token,omitempty"`
-	// PluginHookTools are this workspace's agent-trigger plugin hooks, which
-	// the local MCP server presents to the agent as tools. Resolved by the
-	// server at claim time; the daemon never reads plugin state itself.
+	// PluginHookTools 是该 workspace 的 agent 触发型插件钩子，本地 MCP server 会以
+	// 工具的形式把它们呈现给 agent。由服务器在 claim 时解析好；daemon 自己从不读
+	// 插件状态。
 	PluginHookTools []PluginHookTool `json:"plugin_hook_tools,omitempty"`
-	// WorkspaceContext mirrors workspace.context (the per-workspace system
-	// prompt set in Settings → General). Server populates this on every claim
-	// regardless of task kind so the daemon can inject `## Workspace Context`
-	// into the brief. Empty when the owner hasn't set one.
+	// WorkspaceContext 镜像 workspace.context（Settings → General 里设置的
+	// 每个 workspace 的系统提示词）。服务器无论任务类型每次 claim 都会填充它，
+	// 好让 daemon 把 `## Workspace Context` 注入 brief。所属者没设置时为空。
 	WorkspaceContext string                      `json:"workspace_context,omitempty"`
 	SourceContext    *protocol.TaskSourceContext `json:"source_context,omitempty"`
-	// IssueStatuses mirrors the claim payload's active CUSTOM status catalog
-	// (MUL-6460): key/name/category/description per status, already in catalog
-	// order. Rendered into the brief's status-command line; empty (including on
-	// old servers that never send the field) keeps the brief byte-identical to
-	// the built-in-only form. IssueStatusesOmitted is the cap overflow count.
-	IssueStatuses                 []IssueStatusData      `json:"issue_statuses,omitempty"`
-	IssueStatusesOmitted          int                    `json:"issue_statuses_omitted,omitempty"`
-	ActiveSiblingRuns             []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
-	ThreadName                    string                 `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
-	Agent                         *AgentData             `json:"agent,omitempty"`
-	ConnectedApps                 []ConnectedAppData     `json:"connected_apps,omitempty"` // per-run app capabilities mounted through runtime MCP overlays
-	Repos                         []RepoData             `json:"repos,omitempty"`
-	ProjectID                     string                 `json:"project_id,omitempty"`                       // active project for this task, when present
-	ProjectTitle                  string                 `json:"project_title,omitempty"`                    // human-readable project title for context injection
-	ProjectDescription            string                 `json:"project_description,omitempty"`              // durable project-level context injected into the brief
-	ProjectResources              []ProjectResourceData  `json:"project_resources,omitempty"`                // project-scoped resources to expose to the agent
-	IsLeaderTask                  bool                   `json:"is_leader_task,omitempty"`                   // true when executing in the squad-leader coordinator role
-	LeaderRoleResolved            bool                   `json:"leader_role_resolved,omitempty"`             // server capability: IsLeaderTask/SquadID authoritatively answer "is this a leader run". Absent on servers predating it — those before #4951 never sent is_leader_task at all, later ones send it without this guarantee — so taskIsSquadLeader falls back to the briefing marker for both (MUL-5811)
-	PriorSessionID                string                 `json:"prior_session_id,omitempty"`                 // Claude session ID from a previous task on this issue
-	PriorWorkDir                  string                 `json:"prior_work_dir,omitempty"`                   // work_dir from a previous task on this issue
-	PriorSessionResumeUnavailable bool                   `json:"prior_session_resume_unavailable,omitempty"` // MUL-5305: server signals a more recent Codex session was withheld (rollout missing) and PriorSessionID (if any) is an older fallback; the run must disclose the continuity gap even if that older session resumes cleanly. Absent/false on old servers.
-	TriggerCommentID              string                 `json:"trigger_comment_id,omitempty"`               // comment that triggered this task
-	CoalescedCommentIDs           []string               `json:"coalesced_comment_ids,omitempty"`            // MUL-4195: earlier comments folded into this run while it was still queued; the agent must address these in addition to the (newest) triggering comment. Empty for old servers / non-merged runs
-	CoalescedComments             []CoalescedCommentData `json:"coalesced_comments,omitempty"`               // MUL-4195: full detail of the folded comments (thread_id/author/created_at/content) so the prompt can address each without assuming a shared thread. Empty for old servers / non-merged runs
-	TriggerThreadID               string                 `json:"trigger_thread_id,omitempty"`                // root comment ID for the triggering thread; falls back to trigger_comment_id on old servers
-	TriggerCommentContent         string                 `json:"trigger_comment_content,omitempty"`          // content of the triggering comment
-	TriggerAuthorType             string                 `json:"trigger_author_type,omitempty"`              // "agent" or "member" — author kind for the triggering comment
-	TriggerAuthorName             string                 `json:"trigger_author_name,omitempty"`              // display name of the triggering comment author
-	NewCommentCount               int                    `json:"new_comment_count,omitempty"`                // issue-wide comments since this agent's last run (excludes its own and the injected trigger); 0/omitted for old daemons or cold start
-	NewCommentsSince              string                 `json:"new_comments_since,omitempty"`               // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
-	ChatSessionID                 string                 `json:"chat_session_id,omitempty"`                  // non-empty for chat tasks
-	ChatChannelType               string                 `json:"chat_channel_type,omitempty"`                // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Drives the channel-awareness block in the prompt
-	ChatChannelDeliversFiles      bool                   `json:"chat_channel_delivers_files,omitempty"`      // server capability: this deployment carries a file the agent produces the last hop into this conversation. Absent on a server predating it, which reads as false — the run is told to describe its file in words, and the worst case is a delivery that could have happened did not. Must never be re-derived from chat_channel_type: whether the hop exists depends on the SERVER's storage and adapter wiring, which no daemon can see (MUL-4899)
-	ChatType                      string                 `json:"chat_type,omitempty"`                        // "group" when the channel conversation is a shared room, "p2p" for a 1:1 with the bot. Empty for a web chat or an old server; the per-turn prompt then reports unknown rather than guessing 1:1
-	ChatInThread                  bool                   `json:"chat_in_thread,omitempty"`                   // true when the latest @mention was a thread reply; selects which read command the prompt tells the agent to start with
-	ChatMessage                   string                 `json:"chat_message,omitempty"`                     // user message content for chat tasks
-	ChatMessageIDs                []string               `json:"chat_message_ids,omitempty"`                 // user message ids sealed into this chat turn
-	ChatMessageAttachments        []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`         // attachments linked to the chat message; agent uses these to `multica attachment download <id>`
-	ChatIntro                     bool                   `json:"chat_intro,omitempty"`                       // legacy compatibility for historical is_agent_intro sessions; new agent creation no longer creates these chats
-	// IsCompanion marks a chat or background cognition task that must use the
-	// governed Life context rather than provider-owned history.
-	IsCompanion               bool            `json:"is_companion,omitempty"`
-	LifeContext               string          `json:"life_context,omitempty"`
-	LifeJobID                 string          `json:"life_job_id,omitempty"`
-	LifeJobType               string          `json:"life_job_type,omitempty"`
-	LifeJobInput              json.RawMessage `json:"life_job_input,omitempty"`
-	RegenerateQuickActionsFor string          `json:"regenerate_quick_actions_for,omitempty"` // set only by servers predating server-side quick-actions generation (MUL-5573). Read as a REFUSAL marker, never executed: see the guard in runTask
-	AutopilotRunID            string          `json:"autopilot_run_id,omitempty"`             // non-empty for autopilot run_only tasks
-	AutopilotID               string          `json:"autopilot_id,omitempty"`                 // autopilot that spawned this run
-	AutopilotTitle            string          `json:"autopilot_title,omitempty"`              // autopilot title used as task context
-	AutopilotDescription      string          `json:"autopilot_description,omitempty"`        // autopilot description used as task prompt
-	AutopilotSource           string          `json:"autopilot_source,omitempty"`             // manual, schedule, webhook, or api
-	AutopilotTriggerPayload   json.RawMessage `json:"autopilot_trigger_payload,omitempty"`    // optional trigger payload for webhook/api runs
-	QuickCreatePrompt         string          `json:"quick_create_prompt,omitempty"`          // user's natural-language input for quick-create tasks
-	QuickCreatePriority       string          `json:"quick_create_priority,omitempty"`        // explicit priority selected in quick-create
-	QuickCreateDueDate        string          `json:"quick_create_due_date,omitempty"`        // explicit calendar due date selected in quick-create
-	QuickCreateAttachmentIDs  []string        `json:"quick_create_attachment_ids,omitempty"`  // attachments uploaded in the quick-create prompt and bound by issue create
-	QuickCreateSourceContext  json.RawMessage `json:"quick_create_source_context,omitempty"`  // immutable historical context, separate from the new instruction
-	HandoffNote               string          `json:"handoff_note,omitempty"`                 // assignment handoff instruction; rendered into the opening prompt + issue_context.md
+	// IssueStatuses 镜像 claim 载荷里活动中的 CUSTOM 状态目录（MUL-6460）：
+	// 每个状态的 key/name/category/description，已按目录顺序排好。会被渲染进
+	// brief 的状态命令那几行；为空时（包括从没发过该字段的老服务器）brief 仍与
+	// 只用内置状态的形态逐字节一致。IssueStatusesOmitted 是超出容量被丢弃的个数。
+	IssueStatuses        []IssueStatusData      `json:"issue_statuses,omitempty"`
+	IssueStatusesOmitted int                    `json:"issue_statuses_omitted,omitempty"`
+	ActiveSiblingRuns    []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
+	ThreadName           string                 `json:"thread_name,omitempty"` // 给 provider 原生会话/线程历史用的语义化标题
+	Agent                *AgentData             `json:"agent,omitempty"`
+	ConnectedApps        []ConnectedAppData     `json:"connected_apps,omitempty"` // 本次运行通过 runtime MCP overlays 挂载的每运行应用能力
+	Repos                []RepoData             `json:"repos,omitempty"`
+	ProjectID            string                 `json:"project_id,omitempty"`          // 本任务所在的活动项目（若有）
+	ProjectTitle         string                 `json:"project_title,omitempty"`       // 人类可读的项目标题，用于注入上下文
+	ProjectDescription   string                 `json:"project_description,omitempty"` // 持久化的项目级上下文，注入 brief
+	ProjectResources     []ProjectResourceData  `json:"project_resources,omitempty"`   // 需要暴露给 agent 的项目级资源
+	IsLeaderTask         bool                   `json:"is_leader_task,omitempty"`      // 为 true 表示本次在“小队队长”协调角色下执行
+	// LeaderRoleResolved 是服务器能力位：IsLeaderTask/SquadID 权威地回答了“这次是不是队长运行”。
+	// 早于该能力的服务器不保证这一点——#4951 之前的服务器从不发 is_leader_task，之后的虽然会发
+	// 但没有这个保证——因此 taskIsSquadLeader 对这两种情况都回退到 brief 里的标记（MUL-5811）。
+	LeaderRoleResolved bool   `json:"leader_role_resolved,omitempty"`
+	PriorSessionID     string `json:"prior_session_id,omitempty"` // 本 issue 上一次任务留下的 Claude 会话 ID
+	PriorWorkDir       string `json:"prior_work_dir,omitempty"`   // 本 issue 上一次任务使用的 work_dir
+	// PriorSessionResumeUnavailable: MUL-5305 中服务器提示“更新的 Codex 会话被扣下
+	// （rollout 缺失），如果带 PriorSessionID 那也只是较旧的回退”，因此即使旧会话能干净
+	// 续接，本次运行也必须向用户披露这段连续性缺口。老服务器上该字段缺失/为 false。
+	PriorSessionResumeUnavailable bool                   `json:"prior_session_resume_unavailable,omitempty"`
+	TriggerCommentID              string                 `json:"trigger_comment_id,omitempty"`      // 触发本任务的评论
+	CoalescedCommentIDs           []string               `json:"coalesced_comment_ids,omitempty"`   // MUL-4195: 任务还在排队时被并入本次运行的更早评论；agent 除了（最新的）触发评论外还必须处理它们。老服务器/未合并运行时为 nil
+	CoalescedComments             []CoalescedCommentData `json:"coalesced_comments,omitempty"`      // MUL-4195: 被并入评论的完整细节（thread_id/author/created_at/content），prompt 可以逐条处理而无需假设它们共享同一线程。老服务器/未合并运行为 nil
+	TriggerThreadID               string                 `json:"trigger_thread_id,omitempty"`       // 触发线程的根评论 ID；老服务器上回退到 trigger_comment_id
+	TriggerCommentContent         string                 `json:"trigger_comment_content,omitempty"` // 触发评论的内容
+	TriggerAuthorType             string                 `json:"trigger_author_type,omitempty"`     // "agent" 或 "member"——触发评论的作者类型
+	TriggerAuthorName             string                 `json:"trigger_author_name,omitempty"`     // 触发评论作者的显示名
+	// NewCommentCount 是本 agent 上次运行以来 issue 全局新增的评论数（不含自己的
+	// 与注入的触发评论）；老 daemon 或冷启动时为 0/缺省。
+	NewCommentCount  int    `json:"new_comment_count,omitempty"`
+	NewCommentsSince string `json:"new_comments_since,omitempty"` // RFC3339 锚点（上次运行 started_at），计数从此算起；冷启动为空
+	ChatSessionID    string `json:"chat_session_id,omitempty"`    // chat 任务时非空
+	// ChatChannelType: 当 chat 会话由 IM 频道承载时为 "slack"；纯网页 chat 为空。
+	// 驱动 prompt 里的“频道感知”那一块。
+	ChatChannelType          string               `json:"chat_channel_type,omitempty"`
+	ChatChannelDeliversFiles bool                 `json:"chat_channel_delivers_files,omitempty"` // 服务器能力位：本次部署能把 agent 产出的文件走最后一跳投进该会话。早于该能力的服务器读出来是 false——此时会告诉 agent 用文字描述文件，最坏情况只是“本来能投而没投”。绝不能从 chat_channel_type 反推：是否有这一跳取决于服务器端的存储与 adapter 接线，daemon 根本看不到（MUL-4899）
+	ChatType                 string               `json:"chat_type,omitempty"`                   // 频道会话是共享房间时为 "group"，与机器人 1:1 为 "p2p"。网页 chat 或老服务器为空；此时每轮 prompt 报 unknown 而不是猜成 1:1
+	ChatInThread             bool                 `json:"chat_in_thread,omitempty"`              // 最新一次 @ 提及是楼层回复时为 true；决定 prompt 让 agent 先用哪条读取命令
+	ChatMessage              string               `json:"chat_message,omitempty"`                // chat 任务的用户消息内容
+	ChatMessageIDs           []string             `json:"chat_message_ids,omitempty"`            // 封进本回合的用户消息 id
+	ChatMessageAttachments   []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`    // 关联到 chat 消息的附件；agent 用它们执行 `multica attachment download <id>`
+	ChatIntro                bool                 `json:"chat_intro,omitempty"`                  // 对历史 is_agent_intro 会话的兼容遗留；新建 agent 不再产生这类 chat
+	// IsCompanion 标记一种必须使用“受管辖的 Life 上下文”而非 provider 自有历史的
+	// chat 或后台认知任务。
+	IsCompanion  bool            `json:"is_companion,omitempty"`
+	LifeContext  string          `json:"life_context,omitempty"`
+	LifeJobID    string          `json:"life_job_id,omitempty"`
+	LifeJobType  string          `json:"life_job_type,omitempty"`
+	LifeJobInput json.RawMessage `json:"life_job_input,omitempty"`
+	// RegenerateQuickActionsFor 只有早于“服务端生成快捷动作”的服务器才会设置
+	// （MUL-5573）。读出来要当作“拒绝”标记，绝不能执行：见 runTask 里的守卫。
+	RegenerateQuickActionsFor string          `json:"regenerate_quick_actions_for,omitempty"`
+	AutopilotRunID            string          `json:"autopilot_run_id,omitempty"`            // autopilot 的 run_only 任务时非空
+	AutopilotID               string          `json:"autopilot_id,omitempty"`                // 产生本次运行的 autopilot
+	AutopilotTitle            string          `json:"autopilot_title,omitempty"`             // 作为任务上下文的 autopilot 标题
+	AutopilotDescription      string          `json:"autopilot_description,omitempty"`       // 作为任务 prompt 的 autopilot 描述
+	AutopilotSource           string          `json:"autopilot_source,omitempty"`            // manual、schedule、webhook 或 api
+	AutopilotTriggerPayload   json.RawMessage `json:"autopilot_trigger_payload,omitempty"`   // webhook/api 运行的可选触发载荷
+	QuickCreatePrompt         string          `json:"quick_create_prompt,omitempty"`         // 快速创建任务时用户输入的自然语言
+	QuickCreatePriority       string          `json:"quick_create_priority,omitempty"`       // 快速创建时显式选的优先级
+	QuickCreateDueDate        string          `json:"quick_create_due_date,omitempty"`       // 快速创建时显式选的日历截止日
+	QuickCreateAttachmentIDs  []string        `json:"quick_create_attachment_ids,omitempty"` // 快速创建 prompt 里上传、由 issue 创建绑定的附件
+	QuickCreateSourceContext  json.RawMessage `json:"quick_create_source_context,omitempty"` // 不可变的过往上下文，与新的指令分开存放
+	HandoffNote               string          `json:"handoff_note,omitempty"`                // 分配交接指令；渲染进开场 prompt 与 issue_context.md
 
-	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
-	SquadName             string `json:"squad_name,omitempty"`              // display name for the picker squad, used in prompt text
-	ParentIssueID         string `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier string `json:"parent_issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, used in prompt context
-	// RequestingUserName + RequestingUserProfileDescription describe the human
-	// the agent is working on behalf of. v1 sources them from the runtime
-	// owner (the user who registered the daemon). Empty when the runtime has
-	// no owner (cloud / system runtimes) or the user hasn't set a description.
-	// Injected into the brief under `## Requesting User`; omitted entirely
-	// when description is empty so the agent doesn't see a useless heading.
+	SquadID               string `json:"squad_id,omitempty"`                // 选择器用的是小队时，小队 UUID；Agent 仍是解析出的队长
+	SquadName             string `json:"squad_name,omitempty"`              // 选择器小队的显示名，用于 prompt 文案
+	ParentIssueID         string `json:"parent_issue_id,omitempty"`         // 从“添加子 issue”打开的快速创建任务——新 issue 应挂到的父 issue UUID
+	ParentIssueIdentifier string `json:"parent_issue_identifier,omitempty"` // 快速创建父 issue 的人类可读标识（如 MUL-123），用于 prompt 上下文
+	// RequestingUserName 与 RequestingUserProfileDescription 描述 agent 为之干活的
+	// 人类用户。v1 从 runtime 属主（注册 daemon 的用户）那里取。runtime 无属主
+	// （云/系统 runtime）或用户没填描述时为空。注入 brief 的 `## Requesting User`
+	// 块；description 为空时整块省略，避免 agent 看到一个没用的标题。
 	RequestingUserName               string `json:"requesting_user_name,omitempty"`
 	RequestingUserProfileDescription string `json:"requesting_user_profile_description,omitempty"`
-	// Initiator* identify the actor who triggered THIS task (the real
-	// requester behind the current comment/mention or chat message) as
-	// distinct from the runtime owner whose credentials the agent runs with.
-	// Comment-triggered tasks resolve to the triggering comment's author;
-	// chat tasks resolve to the chat session creator. Empty for task kinds
-	// with no attributable human initiator (on-assign, autopilot,
-	// quick-create). InitiatorEmail is set only for member initiators. The
-	// daemon emits these into the brief under `## Task Initiator` so a
-	// workspace-visible agent can attribute the request per person. The
-	// agent's effective credentials stay owner-scoped — this is an attested
-	// identity, not a credential. See MUL-2645.
+	// Initiator* 标识“触发本次任务”的行为人（当前评论/@提及或 chat 消息背后真正的
+	// 请求者），与 agent 运行所用的凭据属主（runtime owner）区分开。评论触发的任务
+	// 解析成触发评论作者；chat 任务解析成会话创建者。对没有可归属人类发起者的任务
+	// 类型（on-assign、autopilot、quick-create）为空。InitiatorEmail 只有发起者是
+	// member 时才填。daemon 把它们放进 brief 的 `## Task Initiator`，让可见于
+	// workspace 的 agent 能按人归属请求。agent 的有效凭据仍是 owner 范围——
+	// 这是一份经证实的身份声明，不是凭据。见 MUL-2645。
 	InitiatorType  string `json:"initiator_type,omitempty"`
 	InitiatorID    string `json:"initiator_id,omitempty"`
 	InitiatorName  string `json:"initiator_name,omitempty"`
 	InitiatorEmail string `json:"initiator_email,omitempty"`
-	// AuthToken is the task-scoped credential the server mints at claim time.
-	// The daemon injects it into the spawned agent as MULTICA_TOKEN so the
-	// agent never sees the daemon's own (often workspace-owner) credential.
-	// Empty or non-task-scoped values are fatal for writable agent tasks; the
-	// daemon must not fall back to its own token. See MUL-3292.
+	// AuthToken 是服务器在 claim 时铸造的任务级凭据。daemon 把它作为 MULTICA_TOKEN
+	// 注入被拉起的 agent，使 agent 永远看不到 daemon 自己的（通常是 workspace 属主
+	// 的）凭据。为空或非任务级的值对可写 agent 任务是致命的；daemon 绝不能回退到
+	// 自己的 token。见 MUL-3292。
 	AuthToken string `json:"auth_token,omitempty"`
 }
 
-// ChatAttachmentMeta is the structured attachment metadata the daemon
-// hands to the agent for chat tasks. We pass id + filename + content_type
-// so the chat prompt can list them explicitly and instruct the agent to
-// run `multica attachment download <id>` instead of guessing from a
-// signed CDN URL (which expires).
+// ChatAttachmentMeta 是 daemon 递给 chat 任务 agent 的结构化附件元数据。传
+// id + filename + content_type，是为了让 chat prompt 能显式列出附件并指导 agent
+// 执行 `multica attachment download <id>`，而不是去猜一个会过期的签名 CDN URL。
 type ChatAttachmentMeta struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type,omitempty"`
 }
 
-// CoalescedCommentData mirrors the server-side struct (handler.CoalescedCommentData):
-// the full detail of a comment folded into this run while it was still queued
-// (MUL-4195). The prompt embeds each one directly so the agent addresses every
-// folded comment without assuming they all live in the triggering thread.
+// CoalescedCommentData 镜像服务端结构（handler.CoalescedCommentData）：任务还在
+// 排队时被并入本次运行的评论的完整细节（MUL-4195）。prompt 会逐条内嵌它们，让
+// agent 能覆盖每条被并入的评论，而无需假设它们都挂在触发线程下。
 type CoalescedCommentData struct {
 	ID         string `json:"id"`
 	ThreadID   string `json:"thread_id,omitempty"`
@@ -222,7 +219,7 @@ type CoalescedCommentData struct {
 	CreatedAt  string `json:"created_at,omitempty"`
 }
 
-// AgentData holds agent details returned by the claim endpoint.
+// AgentData 存放 claim 端点返回的 agent 详情。
 type AgentData struct {
 	ID                    string                     `json:"id"`
 	Name                  string                     `json:"name"`
@@ -236,14 +233,13 @@ type AgentData struct {
 	ThinkingLevel         string                     `json:"thinking_level,omitempty"`
 	ServiceTier           string                     `json:"service_tier,omitempty"`
 	DisabledRuntimeSkills []DisabledRuntimeSkillData `json:"disabled_runtime_skills,omitempty"`
-	// RuntimeConfig is the per-provider runtime_config JSON as stored on
-	// the agent record, forwarded verbatim by the claim endpoint. Each
-	// provider may decode its own fields; other backends ignore it.
+	// RuntimeConfig 是 agent 记录上按 provider 存放的 runtime_config JSON，claim
+	// 端点原样转发。各 provider 可自行解码自己的字段；其余后端忽略它。
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
 
-// DisabledRuntimeSkillData is the task-wire identity of one runtime-local
-// skill that must be hidden from this agent's provider process.
+// DisabledRuntimeSkillData 是某个“必须对该 agent 的 provider 进程隐藏”的
+// runtime 本地技能在任务链路上的身份标识。
 type DisabledRuntimeSkillData struct {
 	RuntimeID string `json:"runtime_id"`
 	Provider  string `json:"provider"`
@@ -253,7 +249,7 @@ type DisabledRuntimeSkillData struct {
 	Plugin    string `json:"plugin,omitempty"`
 }
 
-// SkillData represents a structured skill for task execution.
+// SkillData 表示一个用于任务执行的结构化技能。
 type SkillData struct {
 	ID          string          `json:"id"`
 	Source      string          `json:"source,omitempty"`
@@ -265,7 +261,7 @@ type SkillData struct {
 	Files       []SkillFileData `json:"files,omitempty"`
 }
 
-// SkillFileData represents a supporting file within a skill.
+// SkillFileData 表示技能内的一个支撑文件。
 type SkillFileData struct {
 	Path      string `json:"path"`
 	Content   string `json:"content"`
@@ -273,6 +269,7 @@ type SkillFileData struct {
 	SizeBytes int64  `json:"size_bytes,omitempty"`
 }
 
+// SkillRefData 是技能引用：只描述技能的身份与内容指纹，不含文件内容本体。
 type SkillRefData struct {
 	ID          string             `json:"id"`
 	Source      string             `json:"source"`
@@ -284,13 +281,14 @@ type SkillRefData struct {
 	Files       []SkillFileRefData `json:"files,omitempty"`
 }
 
+// SkillFileRefData 是技能引用的单个文件指纹条目。
 type SkillFileRefData struct {
 	Path      string `json:"path"`
 	SHA256    string `json:"sha256"`
 	SizeBytes int64  `json:"size_bytes"`
 }
 
-// TaskUsageEntry represents token usage for a single model during a task execution.
+// TaskUsageEntry 表示一次任务执行中单个模型的 token 用量。
 type TaskUsageEntry struct {
 	Provider         string `json:"provider"`
 	Model            string `json:"model"`
@@ -298,44 +296,40 @@ type TaskUsageEntry struct {
 	OutputTokens     int64  `json:"output_tokens"`
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
-	// CostUSDTicks is the provider's own price for this usage, in 1e-10 USD.
-	// Omitted when the agent reports no cost, which is the common case — the
-	// server then leaves the column NULL and the client estimates from the
-	// pricing table instead. See agent.TokenUsage.CostUSDTicks.
+	// CostUSDTicks 是 provider 对该用量给出的价格，单位 1e-10 美元。agent 没上报
+	// 花费时省略——这是常见情况——此时服务端把列留 NULL，改由客户端用定价表估算。
+	// 参见 agent.TokenUsage.CostUSDTicks。
 	CostUSDTicks int64 `json:"cost_usd_ticks,omitempty"`
 }
 
-// TaskResult is the outcome of executing a task.
+// TaskResult 是一次任务执行的结果。
 type TaskResult struct {
 	Status     string `json:"status"`
 	Comment    string `json:"comment"`
 	BranchName string `json:"branch_name,omitempty"`
 	EnvType    string `json:"env_type,omitempty"`
-	SessionID  string `json:"session_id,omitempty"` // Claude session ID for future resumption
-	WorkDir    string `json:"work_dir,omitempty"`   // working directory used during execution
-	// DurableWorkDir replaces WorkDir only after a disposable local worktree
-	// was finalized and its removal was confirmed. Empty keeps WorkDir authoritative.
+	SessionID  string `json:"session_id,omitempty"` // 供将来续接用的 Claude 会话 ID
+	WorkDir    string `json:"work_dir,omitempty"`   // 执行期间使用的工作目录
+	// DurableWorkDir 仅在“一次性本地 worktree 被定稿并确认已删除”后取代 WorkDir。
+	// 为空时 WorkDir 依然权威。
 	DurableWorkDir string `json:"durable_work_dir,omitempty"`
-	EnvRoot        string `json:"-"` // env root dir for writing GC metadata (not sent to server)
-	FailureReason  string `json:"-"` // classifier forwarded to FailTask on the blocked path; empty falls back to 'agent_error'
-	// SessionRolloutMissing is set when the daemon withheld this task's Codex
-	// session because its rollout was not in the store (MUL-5305). Forwarded to
-	// the terminal report so the server clears the resume pointer and flags the
-	// continuity gap for the next claim. Not part of the wire result itself.
+	EnvRoot        string `json:"-"` // 写 GC 元数据用的环境根目录（不发服务器）
+	FailureReason  string `json:"-"` // 在 blocked 路径上转发给 FailTask 的分类器；为空则回退 'agent_error'
+	// SessionRolloutMissing: daemon 因该任务的 Codex 会话不在 store 里而扣下未用它
+	// 时置位（MUL-5305）。转发给最终报告，让服务器清掉续接指针并给下一次 claim
+	// 标记出连续性缺口。不属于线路上的结果字段本身。
 	SessionRolloutMissing bool `json:"-"`
-	// RetiredSessionID names a session this run was told to resume and then
-	// abandoned as unresumable (GH #6066). Forwarded on every terminal path,
-	// including the completed one: a fresh-session retry that SUCCEEDS is
-	// precisely when the abandoned id would otherwise stay selectable.
+	// RetiredSessionID 记录本次运行被告知续接、后又因不可续接而放弃的会话
+	// （GH #6066）。在所有终结路径上都会转发，包括成功那条：恰恰是“换新会话重试
+	// 且成功”时，被放弃的 id 不转发就还会留在候选里。
 	RetiredSessionID string           `json:"-"`
-	Usage            []TaskUsageEntry `json:"usage,omitempty"` // per-model token usage
+	Usage            []TaskUsageEntry `json:"usage,omitempty"` // 各模型的 token 用量
 }
 
-// PluginHookTool is one agent-trigger plugin hook, as the agent will see it.
+// PluginHookTool 是一个 agent 触发型插件钩子，agent 视角下即一个工具。
 //
-// Mirrors service.PluginHookTool on the wire. Declared here rather than
-// imported so the daemon does not depend on the server's service package —
-// same reason Task itself is a daemon-side type.
+// 线上镜像 service.PluginHookTool。在这里声明而非 import，是为了让 daemon 不依赖
+// 服务端 service 包——Task 本身放在 daemon 侧类型也是同一个原因。
 type PluginHookTool struct {
 	InstallationID string          `json:"installation_id"`
 	HookKey        string          `json:"hook_key"`

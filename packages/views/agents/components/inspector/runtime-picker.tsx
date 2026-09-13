@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 设置表单里的两级“运行环境选择器”：第一级列机器（daemon），
+// 第二级列该机器下真正可区分的各运行环境。用户从“我的/全部”切换归属范围，
+// 打开时直接落在当前所选运行环境所在机器里。
+
 import { useMemo, useState } from "react";
 import {
   Check,
@@ -28,17 +32,15 @@ import { useT } from "../../../i18n";
 
 type Filter = "mine" | "all";
 
-// How many provider logos a machine row previews before collapsing to "+N".
+// 机器行预览多少枚 provider 图标，超出折叠成 “+N”。
 const MACHINE_PROVIDER_PREVIEW = 4;
 
 /**
- * Two-level runtime picker for the agent settings form. A machine-level
- * rename stamps the same custom name on every runtime of a daemon
- * (MUL-4217), so the previous flat list rendered N indistinguishable
- * "Jiayuan's MacBook Pro" rows. Level 1 lists machines; drilling in lists
- * that machine's runtimes labelled by what actually differs — the runtime
- * itself. Opening lands inside the selected runtime's machine so the common
- * case (switching runtime on the same machine) costs no extra click.
+ * Agent 设置表单用的两级运行环境选择器。机器的重命名会把同一个自定义名字盖到该
+ * daemon 的每台运行环境上（MUL-4217），所以旧的扁平列表会渲染 N 行难以区分的
+ * “Jiayuan's MacBook Pro”。第一级列机器；钻进去后按“真正有差异的东西”——运行环境
+ * 本身——来列该机器下的运行环境。打开时落在当前所选运行环境所在机器，
+ * 让最常见操作（同一台机器上换运行环境）零多余点击。
  */
 export function RuntimePicker({
   value,
@@ -54,7 +56,7 @@ export function RuntimePicker({
   runtimes: AgentRuntime[];
   members: MemberWithUser[];
   currentUserId: string | null;
-  /** When false, render a static read-only display and skip the popover. */
+  /** false 时渲染静态只读展示，不弹层。 */
   canEdit?: boolean;
   variant?: "chip" | "field";
   showLabel?: boolean;
@@ -63,22 +65,19 @@ export function RuntimePicker({
   const { t } = useT("agents");
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>("mine");
-  // Level 2 target. `null` shows the machine list; a machine id shows that
-  // machine's runtimes. Falls back to the machine list at render time when
-  // the id no longer resolves (e.g. the daemon was GC'd over WS).
+  // 第二级的目标机器。`null` 显示机器列表；某个机器 id 显示该机器下的运行环境。
+  // 若 id 已解析不到（如 daemon 经 WS 被回收），渲染时回退到机器列表。
   const [machineId, setMachineId] = useState<string | null>(null);
 
   const selected = runtimes.find((r) => r.id === value) ?? null;
 
-  // Same predicate the create / duplicate / builder surfaces use, so a
-  // runtime this picker locks is exactly the one the API and CLI refuse
-  // (MUL-6126) — no workspace-role exception on either side.
+  // 与创建 / 复制 / builder 各界面共用的同一判定，保证这里锁住的运行环境，
+  // 正是 API 与 CLI 拒绝的那台（MUL-6126）——两边都不存在工作区角色的例外。
   const isDisabled = (r: AgentRuntime): boolean =>
     !isRuntimeUsableForUser(r, currentUserId);
 
-  // Machine grouping over the unfiltered list — resolves the selected
-  // runtime's machine for the trigger label regardless of the Mine/All
-  // scope, and is reused as-is for the list whenever the scope is "all".
+  // 在“未过滤全量列表”上做机器分组——无论当前范围是“我的/全部”，都能据此解析出
+  // 所选运行环境属于哪台机器（供触发器标签用）；当范围是“全部”时这份分组直接复用为列表。
   const allMachines = useMemo(
     () => buildRuntimeMachines(runtimes, { now: Date.now() }),
     [runtimes, currentUserId],
@@ -101,10 +100,9 @@ export function RuntimePicker({
   const selectedLabel = selected
     ? runtimeRowLabel(selected, selectedMachine?.title ?? "")
     : null;
-  // Combined "Claude · Jiayuan's MacBook Pro" string for compact surfaces
-  // (chip, read-only field, tooltips). The dedupe guard covers runtimes
-  // whose whole label already is the machine title (single unnamed cloud
-  // workers and the like).
+  // 组合成 “Claude · Jiayuan's MacBook Pro” 这样的串，供紧凑表面使用
+  //（chip、只读字段、tooltip）。去重保护覆盖“整个标签本身就是机器标题”的运行环境
+  //（单台未命名的云 worker 等）。
   const combinedLabel = selected
     ? selectedMachine && selectedMachine.title !== selectedLabel
       ? `${selectedLabel} · ${selectedMachine.title}`
@@ -179,9 +177,8 @@ export function RuntimePicker({
   const getOwner = (id: string | null) =>
     id ? members.find((m) => m.user_id === id) ?? null : null;
 
-  // The single owner shared by every runtime on a machine, or null when the
-  // machine merges runtimes from several owners (possible for legacy rows
-  // grouped by device name instead of daemon id).
+  // 同一台机器上的运行环境共享一个拥有者；机器合并了多个拥有者的运行环境时
+  //（按设备名而不是 daemon id 分组的旧数据可能出现）返回 null。
   const machineOwner = (machine: RuntimeMachine): MemberWithUser | null => {
     const ownerIds = new Set(
       machine.runtimes.map((r) => r.owner_id).filter(Boolean),
@@ -194,10 +191,9 @@ export function RuntimePicker({
 
   const handleOpenChange = (next: boolean) => {
     if (next) {
-      // Land where the selection lives. Widen to the All scope first when
-      // the selected runtime isn't ours — the Mine list can never contain
-      // its machine. With no selection, a single-machine list is pure
-      // friction, so skip straight into it.
+      // 落在选中项所在处。先判断是否需要把范围扩到“全部”：选中的运行环境不是我的时，
+      // “我的”列表里永远不会有它那台机器。没选中时，若机器只有一台就直接钻进去，
+      // 免去多余一步。
       const nextFilter: Filter =
         selected && currentUserId && selected.owner_id !== currentUserId
           ? "all"
@@ -494,6 +490,7 @@ export function RuntimePicker({
   return picker;
 }
 
+/** “我的/全部”小切换按钮。 */
 function FilterButton({
   active,
   onClick,

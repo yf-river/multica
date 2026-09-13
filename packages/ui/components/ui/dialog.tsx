@@ -1,4 +1,6 @@
 "use client"
+// 本文件是弹窗（Dialog）组件族（基于 Base UI 的 Dialog）：
+// 模态对话框，带遮罩、居中内容与内置关闭按钮，用于表单、确认等交互。
 
 import * as React from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
@@ -7,22 +9,27 @@ import { cn } from "@multica/ui/lib/utils"
 import { Button } from "@multica/ui/components/ui/button"
 import { XIcon } from "lucide-react"
 
+/** Dialog：弹窗根组件，管理打开/关闭与焦点圈定 */
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }
 
+/** DialogTrigger：打开弹窗的触发元素 */
 function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
   return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
 }
 
+/** DialogPortal：把弹窗内容传送到 body 末端 */
 function DialogPortal({ ...props }: DialogPrimitive.Portal.Props) {
   return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
 }
 
+/** DialogClose：关闭弹窗的元素/按钮 */
 function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
+/** DialogOverlay：遮住背景的半透明遮罩 */
 function DialogOverlay({
   className,
   ...props
@@ -39,6 +46,10 @@ function DialogOverlay({
   )
 }
 
+/**
+ * DialogContent：弹窗主体（含遮罩）。右上角默认带一个 X 关闭按钮，
+ * 可通过 showCloseButton={false} 关闭。
+ */
 function DialogContent({
   className,
   children,
@@ -80,6 +91,7 @@ function DialogContent({
   )
 }
 
+/** DialogHeader：弹窗头部内容区（标题 + 描述等） */
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -90,6 +102,10 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/**
+ * DialogFooter：弹窗底部操作区。移动端竖排、桌面端右对齐横排。
+ * showCloseButton 时在末尾追加一个「Close」outline 按钮。
+ */
 function DialogFooter({
   className,
   showCloseButton = false,
@@ -117,6 +133,7 @@ function DialogFooter({
   )
 }
 
+/** DialogTitle：弹窗标题（无障碍地标识弹窗） */
 function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
@@ -130,6 +147,7 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   )
 }
 
+/** DialogDescription：弹窗补充说明文字 */
 function DialogDescription({
   className,
   ...props

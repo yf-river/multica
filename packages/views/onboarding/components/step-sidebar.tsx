@@ -1,5 +1,7 @@
 "use client";
 
+// 引导流程的常驻进度侧栏（窄屏时由顶部进度条 StepProgressBar 替代）：展示当前
+// 位于哪一步、支持返回上一步或点选回到已完成的步骤。
 import type { CSSProperties, ReactNode } from "react";
 import { ArrowLeft, Check } from "lucide-react";
 import {
@@ -22,42 +24,19 @@ import {
 import { useT } from "../../i18n";
 
 /**
- * The persistent rail: where the member is in onboarding, and how to go back.
+ * 进度栏的窄屏版：在窄到放不下侧栏的宽度下，仍然回答「我在哪、怎么返回」。
+ * 只在 `md` 以下渲染——此时 StepSidebar 处于隐藏状态。
  *
- * This replaces a horizontal row of dots that carried a "Step 2 of 3" counter
- * and nothing else. The counter told a member how much was left but never what
- * was coming, so each step arrived unannounced.
+ * 用「几段进度条 + 当前步名称」而不是重复整份步骤列表：375px 宽度下的目标是
+ * 尽量少占纵向空间，而列表本来要传达的也就是「当前是哪一步、走到第几步」。
+ * 文案复用同一个 `step_nav` 词条，翻译只此一处。
  *
- * Structurally it follows the ReUI onboarding-3 block: an inset panel with a
- * brand lockup at the top, the step list centred in the remaining height, and
- * a footer row — rather than a flat rail with everything crowded against the
- * top edge.
- *
- * Three things worth knowing:
- *
- *   - **`dark` on the panel, not inverted utilities.** `.dark` is a plain
- *     class selector in our token sheet, so scoping it here redefines the
- *     custom properties for this subtree only. `text-muted-foreground` then
- *     means the right thing on a dark surface. The first version of this
- *     hand-mixed `text-background/60` shades instead, which is how the Log
- *     out button ended up near-invisible.
- *   - **It is not a tablist.** The ported stepper defaults to `role="tablist"`
- *     with each trigger owning `aria-controls` on a panel id — correct for a
- *     stepper that renders its own panels, wrong here, where the panel is a
- *     routed step and those ids would dangle. We use the presentational slots
- *     and mark position with `aria-current="step"` instead.
- *   - **Only completed steps are clickable.** Forward navigation has to run
- *     each step's validation and submit, so jumping ahead from the rail would
- *     skip it; going back is always safe.
- */
-/**
- * The rail's job — where am I, and how do I go back — at widths too narrow to
- * hold the rail itself. Rendered only below `md`, where StepSidebar is hidden.
- *
- * Segments rather than a repeat of the full step list: the point at 375px is
- * to spend as little vertical space as possible, and the current step's name
- * plus how far along it sits is what the list was communicating anyway. It
- * reuses the same `step_nav` copy, so there is one place to translate.
+ * @param currentStep 当前步骤
+ * @param onBack 返回上一步的回调
+ * @param backDisabled 是否禁用返回
+ * @param footer 同侧栏页脚位置的插槽——「退出登录」出口。这里必须重复放一份
+ *   而不能只靠侧栏：侧栏在 md 以下会被隐藏，若不重复，除 Welcome 之外的每一步
+ *   都会失去退出通道
  */
 export function StepProgressBar({
   currentStep,
@@ -68,9 +47,8 @@ export function StepProgressBar({
   currentStep: OnboardingStep;
   onBack?: () => void;
   backDisabled?: boolean;
-  /** Same slot the rail's footer takes — the Log out escape hatch. It has to
-   *  be repeated here rather than left to the rail: the rail is hidden at
-   *  these widths, which stranded every step but Welcome with no way out. */
+  /** 与侧栏页脚同槽位的「退出登录」出口。这里必须重复放一份而不能只靠侧栏：
+   *  这些宽度下侧栏是隐藏的，不重复的话除 Welcome 外每步都会失去退出通道。 */
   footer?: ReactNode;
 }) {
   const { t } = useT("onboarding");
@@ -118,6 +96,37 @@ export function StepProgressBar({
   );
 }
 
+/**
+ * 常驻进度侧栏：告诉用户引导走到哪一步、以及如何往回退。
+ *
+ * 它取代了原来一条只带「第 2 / 3 步」计数、别无一物的横向圆点行。计数器只告诉
+ * 用户还剩多少，却从不说接下来是什么，于是每一步都像是「突然出现」的。
+ *
+ * 结构上照着 ReUI onboarding-3 区块做：一块内嵌面板，顶部放品牌标识，步骤列表
+ * 在剩余高度中居中，底部再放一行页脚——而不是把所有东西挤在上边缘的扁平侧栏。
+ *
+ * 有三点值得知道：
+ *
+ *   - **面板上用 `dark` 而不是反色工具类。** `.dark` 在我们 tokens 表里只是一个
+ *     普通类选择器，作用域限定在这里后只会重定义这一子树的颜色变量，
+ *     `text-muted-foreground` 因此在深色表面上取到正确的值。初版在这里手拼
+ *     `text-background/60` 的灰阶，这正是「退出登录」按钮最终近不可见的原因。
+ *   - **它不是 tablist。** 移植来的 stepper 默认带 `role="tablist"`，每个触发器
+ *     用 `aria-controls` 关联一个面板 id——对自带面板的 stepper 是正确语义，
+ *     但这里面板是按路由切换的步骤，那些 id 会悬空。所以这里只用纯展示插槽，
+ *     改用 `aria-current="step"` 标注当前位置。
+ *   - **只有已完成步骤可点击。** 向前跳转必须逐步骤跑过该校验和提交逻辑，从进度
+ *     栏直接跳到后面会跳过它们；往回退则始终安全。
+ *
+ * @param currentStep 当前步骤
+ * @param onBack 返回上一步的回调
+ * @param backDisabled 是否禁用返回
+ * @param onStepChange 回到某个已完成步骤的回调。由流程注入（它掌握步骤顺序）；
+ *   缺省表示侧栏仅作展示、不可跳转
+ * @param footer 由流程注入的「退出登录」出口。做成插槽而非直接渲染，让本组件
+ *   保持纯展示：若就地渲染退出登录的变更逻辑，就得往五个步骤测试文件里塞
+ *   QueryClient
+ */
 export function StepSidebar({
   currentStep,
   onBack,
@@ -127,25 +136,21 @@ export function StepSidebar({
 }: {
   currentStep: OnboardingStep;
   onBack?: () => void;
-  /** Workspace step disables Back while its create request is in flight. */
+  /** 工作区步骤在创建请求进行中会禁用「返回」。 */
   backDisabled?: boolean;
-  /** Return to an already-completed step. Injected by the flow, which owns
-   *  step order; absent means the rail is display-only. */
+  /** 回到某个已完成步骤。由流程注入（它掌握步骤顺序）；缺省表示进度栏只展示。 */
   onStepChange?: (step: OnboardingStep) => void;
-  /** Injected by the flow — the Log out escape hatch. A slot rather than a
-   *  direct render so this stays presentational: rendering the logout
-   *  mutation inline forced a QueryClient into five step test files. */
+  /** 由流程注入的「退出登录」出口。做成插槽而不是直接渲染，让这里保持纯展示：
+   *  直接渲染退出登录的变更逻辑，会让五个步骤测试文件被迫引入 QueryClient。 */
   footer?: ReactNode;
 }) {
   const { t } = useT("onboarding");
   const currentIndex = Math.max(0, ONBOARDING_STEP_ORDER.indexOf(currentStep));
 
   return (
-    // Hidden below `md`, where it does not fit: the panel never went under
-    // 15rem while the content pane kept its 3rem gutter, so a 375px browser
-    // was left with ~87px of form. StepProgressBar carries the same
-    // information — and the Back button that lives in this header — at those
-    // widths.
+    // md 以下隐藏：侧栏面板从未窄于 15rem，而内容区还留着 3rem 的 gutter，
+    // 375px 宽的浏览器最后只剩约 87px 给表单。StepProgressBar 在这个宽度下承担
+    // 同样的信息——连同本头部里的「返回」按钮。
     <aside className="hidden w-[15rem] shrink-0 p-2 md:block md:w-[19rem] md:p-3 lg:w-[22rem] lg:p-4">
       <div className="dark relative isolate flex h-full w-full flex-col overflow-hidden rounded-2xl bg-background px-5 pb-5 text-foreground ring-1 ring-border">
         <div
@@ -271,18 +276,17 @@ export function StepSidebar({
                         </div>
                       )}
 
-                      {/* One continuous hairline behind the row rather than a
-                          stub between rows, so the rail reads as a single
-                          track. -order-1 puts it under the content. */}
+                      {/* 每行后面是一条贯穿始终的连续细线，而不是行与行之间的
+                          短线，这样整条轨道读起来是一条线。用 -order-1 把它放到
+                          内容下层。 */}
                       {!isLast ? (
                         <StepperSeparator
                           className={cn(
                             "absolute left-2 top-6 -order-1 m-0 w-px -translate-x-1/2",
-                            // StepperSeparator hardcodes a 3rem height for
-                            // vertical navs, which overshot the row and drew
-                            // the line straight through the next indicator.
-                            // Same variant, so tailwind-merge drops theirs
-                            // rather than us needing !important.
+                            // StepperSeparator 对竖向导航硬编码了 3rem 高度，
+                            // 超出本行会直接把线画穿下一个指示器。这里复用它
+                            // 自己的 variant，让 tailwind-merge 丢弃它的高度
+                            // 类，就不用再写 !important。
                             "group-data-[orientation=vertical]/stepper-nav:h-[calc(100%-1.75rem)]",
                             isDone ? "bg-muted-foreground" : "bg-border",
                           )}

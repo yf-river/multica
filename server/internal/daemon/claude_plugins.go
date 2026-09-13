@@ -8,12 +8,15 @@ import (
 	"strings"
 )
 
+// claudePluginInstall 描述一个已安装并被 Claude Code 启用的插件实例。
 type claudePluginInstall struct {
 	ID          string
 	Name        string
 	InstallPath string
 }
 
+// claudeInstalledPluginsFile 对应 ~/.claude/plugins/installed_plugins.json 的结构：
+// 每个插件 ID 可有多条安装记录（不同 scope）。
 type claudeInstalledPluginsFile struct {
 	Plugins map[string][]struct {
 		Scope       string `json:"scope"`
@@ -21,20 +24,21 @@ type claudeInstalledPluginsFile struct {
 	} `json:"plugins"`
 }
 
+// claudeSettingsFile 对应 ~/.claude/settings.json：插件是否启用。
 type claudeSettingsFile struct {
 	EnabledPlugins map[string]bool `json:"enabledPlugins"`
 }
 
+// claudePluginManifest 对应插件目录里 .claude-plugin/plugin.json 的子集字段。
 type claudePluginManifest struct {
 	Name       string          `json:"name"`
 	Skills     json.RawMessage `json:"skills"`
 	MCPServers json.RawMessage `json:"mcpServers"`
 }
 
-// listEnabledClaudePlugins resolves the current user-scope plugin installs
-// that Claude Code itself has enabled. Reading the install registry is
-// deliberate: recursively scanning ~/.claude/plugins would surface both the
-// marketplace checkout and every cached version of the same plugin.
+// listEnabledClaudePlugins 解析 Claude Code 自己在用户 scope 内启用的插件安装。
+// 特意读安装注册表而不是递归扫 ~/.claude/plugins：后者会同时浮出 marketplace
+// checkout 与同一插件的每个缓存版本。
 func listEnabledClaudePlugins(home string) []claudePluginInstall {
 	settingsRaw, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
 	if err != nil {
@@ -91,6 +95,8 @@ func listEnabledClaudePlugins(home string) []claudePluginInstall {
 	return plugins
 }
 
+// readClaudePluginManifest 读取并解析某安装目录下的插件清单；缺失或非法返回
+// (零值, false)。
 func readClaudePluginManifest(installPath string) (claudePluginManifest, bool) {
 	raw, err := os.ReadFile(filepath.Join(installPath, ".claude-plugin", "plugin.json"))
 	if err != nil {
@@ -103,6 +109,9 @@ func readClaudePluginManifest(installPath string) (claudePluginManifest, bool) {
 	return manifest, true
 }
 
+// claudePluginComponentPaths 把插件清单里的 skills/mcpServers 字段（可能是单个
+// 字符串也可能是数组）解析成绝对路径集合，追加到 defaults 后去重并做包含性校验：
+// 相对路径以 installPath 为基准解析，任何逃逸出安装目录的候选都被丢弃。
 func claudePluginComponentPaths(installPath string, raw json.RawMessage, defaults ...string) []string {
 	paths := append([]string(nil), defaults...)
 	var one string

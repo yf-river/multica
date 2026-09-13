@@ -1,3 +1,8 @@
+// 文件职责：实现 `multica issue timeline`（别名 history）命令——把 issue 的
+// activity 日志（状态/优先级/assignee/标题/日期变更，以及 server 写入的
+// task_completed/task_failed 记录）与评论按时间从旧到新合并成一份时间线输出，
+// 用来回答「这个 issue 是怎么走到现在这步的」「卡在当前状态多久了」这类问题。
+// 过滤在客户端做（timelineFilter），因为端点一次返回全部、本身不收过滤参数。
 package main
 
 import (
@@ -16,17 +21,18 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-// noneMarker stands in for a missing side of a transition — an issue that had
-// no assignee before, or was unassigned after.
+// noneMarker 用于替代表格里「变更的一侧缺失」的情况——例如 issue 之前没指派、
+// 或变更后被取消指派。
 const noneMarker = "(none)"
 
-// headerTimelineTruncated mirrors handler.HeaderTimelineTruncated. Declared as
-// a literal rather than imported because the CLI does not depend on the
-// handler package (same convention as the X-Multica-Next-Before cursors in
-// `issue comment list`). Value is a comma-separated kind list: "activity",
-// "comment", or "activity,comment".
+// headerTimelineTruncated 与 handler.HeaderTimelineTruncated 对应。用字面量而非
+// import，是因为 CLI 不依赖 handler 包（与 `issue comment list` 里
+// X-Multica-Next-Before 游标头的做法一致）。值是逗号分隔的种类列表：
+// "activity"、"comment" 或 "activity,comment"。
 const headerTimelineTruncated = "X-Timeline-Truncated"
 
+// issueTimelineCmd 是 `issue timeline <id>`（别名 history）命令，时间线用法与
+// 语义见其 Long 帮助文本。
 var issueTimelineCmd = &cobra.Command{
 	Use:     "timeline <id>",
 	Aliases: []string{"history"},
@@ -79,6 +85,9 @@ func init() {
 	issueCmd.AddCommand(issueTimelineCmd)
 }
 
+// runIssueTimeline 执行 `issue timeline <id>`：不带分页参数地整条拉取时间线
+// （该端点只有在不带 limit/before/after/around 时才返回扁平的旧→新数组），随后
+// 应用客户端过滤、检查 truncation 头并输出。
 func runIssueTimeline(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -98,8 +107,8 @@ func runIssueTimeline(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve issue: %w", err)
 	}
 
-	// Deliberately sent without limit/before/after/around: the endpoint only
-	// returns the flat oldest-first array when no pagination param is present.
+	// 特意不带 limit/before/after/around：端点只有在没有任何分页参数时才返回
+	// 扁平、旧→新的完整数组。
 	var entries []map[string]any
 	respHeaders, err := client.GetJSONWithHeaders(ctx, "/api/issues/"+url.PathEscape(issueRef.ID)+"/timeline", &entries)
 	if err != nil {
@@ -119,14 +128,13 @@ func runIssueTimeline(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// warnTimelineTruncated surfaces the server's truncation signal on stderr, so
-// it never contaminates a piped --output json read.
+// warnTimelineTruncated 把 server 的「截断」信号写到 stderr，避免污染
+// --output json 的管道输出。
 //
-// The endpoint caps each kind independently and reports which ones lost rows.
-// Swallowing that makes a partial read look complete, which is precisely wrong
-// for this command's headline question: if the transition that set the current
-// status fell off the back of the window, --action status_changed returns a
-// plausible, shorter, wrong answer to "how long has this been stuck".
+// 端点按种类独立设上限，并用响应头报告哪类丢了行。吞掉这个信号会让一次「读少了」
+// 看起来像「读全了」——对本命令的主打问题（卡在当前状态多久）恰恰是错的：
+// 若「置成当前状态」的那次变更正好落在窗口外，--action status_changed 会给出一个
+// 看起来合理、却更短的错误答案。
 func warnTimelineTruncated(w io.Writer, kinds string) {
 	if kinds == "" {
 		return
@@ -135,17 +143,18 @@ func warnTimelineTruncated(w io.Writer, kinds string) {
 		"Durations and \"first entered <status>\" cannot be concluded from this read.\n", kinds)
 }
 
-// timelineFilter narrows a timeline response client-side. The endpoint takes no
-// filter parameters and returns the whole timeline in one shot, so every flag
-// here is applied after the fetch: it bounds what the caller has to read, not
-// what the server has to do.
+// timelineFilter 在客户端收窄时间线响应。端点不收任何过滤参数、一次返回整条
+// 时间线，所以这里的每个 flag 都在拉取之后应用：它限制的是「调用方要读多少」，
+// 而不是「server 要做多少」。
 type timelineFilter struct {
-	activityOnly bool
-	actions      map[string]bool
-	since        time.Time
-	tail         int
+	activityOnly bool            // 只保留 activity 记录，丢弃评论。
+	actions      map[string]bool // 只保留这些 action（如 status_changed）的 activity。
+	since        time.Time       // 只保留晚于此时间（created_at）的条目。
+	tail         int             // 只保留最近 N 条（在所有其它过滤之后应用）。
 }
 
+// timelineFilterFromFlags 从命令行 flag 构建 timelineFilter，并做本地参数校验
+// （--tail >= 0、--since 必须是 RFC3339 时间）。
 func timelineFilterFromFlags(cmd *cobra.Command) (timelineFilter, error) {
 	var f timelineFilter
 
@@ -167,8 +176,8 @@ func timelineFilterFromFlags(cmd *cobra.Command) (timelineFilter, error) {
 		f.actions[a] = true
 	}
 	if len(f.actions) > 0 {
-		// Comments carry no action, so filtering by action can only ever mean
-		// activities.
+		// 评论没有 action 字段，按 action 过滤只会命中 activity——顺手把它
+		// 隐含成 activity-only，省得用户多传一个 flag。
 		f.activityOnly = true
 	}
 
@@ -183,6 +192,9 @@ func timelineFilterFromFlags(cmd *cobra.Command) (timelineFilter, error) {
 	return f, nil
 }
 
+// apply 把过滤器套到一批条目上，返回满足全部条件的新切片。条目天然旧→新，
+// tail 就直接取末尾切片。created_at 解析失败的时间线条目，无法判定是否落在
+// --since 窗口内，时间受限的读取会把它们丢掉。
 func (f timelineFilter) apply(entries []map[string]any) []map[string]any {
 	out := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
@@ -193,8 +205,7 @@ func (f timelineFilter) apply(entries []map[string]any) []map[string]any {
 			continue
 		}
 		if !f.since.IsZero() {
-			// An entry whose timestamp will not parse cannot be shown to fall
-			// inside the window, so a time-bounded read drops it.
+			// 时间戳解析不了的条目不可能被证明落在窗口内，时间受限读取会丢弃它。
 			ts, err := time.Parse(time.RFC3339, strVal(e, "created_at"))
 			if err != nil || !ts.After(f.since) {
 				continue
@@ -203,13 +214,15 @@ func (f timelineFilter) apply(entries []map[string]any) []map[string]any {
 		out = append(out, e)
 	}
 
-	// Entries arrive oldest-first, so the most recent N is the trailing slice.
+	// 条目旧→新到达，最近的 N 条就是末尾切片。
 	if f.tail > 0 && len(out) > f.tail {
 		out = out[len(out)-f.tail:]
 	}
 	return out
 }
 
+// printIssueTimelineTable 把时间线条目渲染成 TIME/TYPE/ACTOR/DETAIL 四列；
+// TYPE 列对带 action 的 activity 显示 action（比字面 "activity" 更可读）。
 func printIssueTimelineTable(entries []map[string]any, actors actorDisplayLookup, fullID bool) {
 	headers := []string{"TIME", "TYPE", "ACTOR", "DETAIL"}
 	rows := make([][]string, 0, len(entries))
@@ -218,8 +231,7 @@ func printIssueTimelineTable(entries []map[string]any, actors actorDisplayLookup
 		if len(when) >= 16 {
 			when = when[:16]
 		}
-		// An activity is far more legible labelled by its action than by the
-		// literal "activity".
+		// activity 用它的 action 标注比字面的 "activity" 可读得多。
 		kind := strVal(e, "type")
 		if action := strVal(e, "action"); action != "" {
 			kind = action
@@ -234,17 +246,16 @@ func printIssueTimelineTable(entries []map[string]any, actors actorDisplayLookup
 	cli.PrintTable(os.Stdout, headers, rows)
 }
 
-// timelineActor renders an actor as "member:Alice", falling back to a shortened
-// id when the workspace lookup cannot name it (deleted member, foreign id).
+// timelineActor 把 actor 渲染成 "member:Alice"；工作区查找表叫不出名字时
+// （成员已删除、外部 ID）回退到缩短后的 id。
 func timelineActor(actorType, actorID string, actors actorDisplayLookup, fullID bool) string {
 	switch {
 	case actorType == "" && actorID == "":
 		return ""
 	case actorID == "":
-		// System-authored activities carry a type with no id, and the lookup
-		// returns nothing for those. A GitHub PR merge flipping the issue to
-		// done is exactly this shape, so leaving the column blank would erase
-		// the actor on the transition this command exists to explain.
+		// 系统代写的 activity 常带 type 却没有 id，查找表对它们返回空。
+		// 比如 GitHub PR 合并把 issue 翻成 done 就是这种形态——把这一列留空
+		// 等于抹掉了本命令存在意义所在的变更主体。
 		return actorType
 	case actorType == "":
 		if fullID {
@@ -259,10 +270,9 @@ func timelineActor(actorType, actorID string, actors actorDisplayLookup, fullID 
 	return display
 }
 
-// timelineDetail renders one entry's payload for table output: a comment's
-// clipped body, or an activity's transition. Activity details are free-form
-// JSON keyed per action, so unrecognised shapes fall back to sorted key=value
-// rather than being dropped.
+// timelineDetail 渲染单条条目给表格看：评论取截断后的正文，activity 渲染成
+// 「变更」。activity 的 details 是每种 action 自由格式的 JSON，认不出的形态
+// 就按 key=value 排序拼出兜底文案，而不是丢弃。
 func timelineDetail(entry map[string]any, actors actorDisplayLookup, fullID bool) string {
 	if strVal(entry, "type") == "comment" {
 		return clipTimelineText(singleLineText(strVal(entry, "content")), 60)
@@ -273,7 +283,7 @@ func timelineDetail(entry map[string]any, actors actorDisplayLookup, fullID bool
 		return ""
 	}
 
-	// status / priority / title / date changes: {"from": ..., "to": ...}
+	// status / priority / title / date 类变更：{"from": ..., "to": ...}
 	if _, ok := details["from"]; ok {
 		return transitionText(strVal(details, "from"), strVal(details, "to"))
 	}
@@ -281,8 +291,8 @@ func timelineDetail(entry map[string]any, actors actorDisplayLookup, fullID bool
 		return transitionText("", strVal(details, "to"))
 	}
 
-	// assignee_changed: {"from_type","from_id","to_type","to_id"}, any of which
-	// is absent when that side was unassigned.
+	// assignee_changed：{"from_type","from_id","to_type","to_id"}——哪一侧没指派，
+	// 那一侧的字段就不存在。
 	if hasAnyKey(details, "from_type", "from_id", "to_type", "to_id") {
 		return transitionText(
 			timelineActor(strVal(details, "from_type"), strVal(details, "from_id"), actors, fullID),
@@ -302,6 +312,7 @@ func timelineDetail(entry map[string]any, actors actorDisplayLookup, fullID bool
 	return clipTimelineText(strings.Join(parts, " "), 60)
 }
 
+// transitionText 把变更前后拼成 "旧 → 新"，任一侧为空串时用 noneMarker 占位。
 func transitionText(from, to string) string {
 	if from == "" {
 		from = noneMarker
@@ -312,6 +323,7 @@ func transitionText(from, to string) string {
 	return from + " → " + to
 }
 
+// hasAnyKey 判断 m 里是否至少出现一个给定 key。
 func hasAnyKey(m map[string]any, keys ...string) bool {
 	for _, k := range keys {
 		if _, ok := m[k]; ok {
@@ -321,10 +333,12 @@ func hasAnyKey(m map[string]any, keys ...string) bool {
 	return false
 }
 
+// singleLineText 把一段文本折叠成单行（连续的空白/换行压成一个空格）。
 func singleLineText(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// clipTimelineText 把文本裁到最多 max 个字符（按 rune 数），超出的末尾加 "..."。
 func clipTimelineText(s string, max int) string {
 	if max <= 0 || utf8.RuneCountInString(s) <= max {
 		return s

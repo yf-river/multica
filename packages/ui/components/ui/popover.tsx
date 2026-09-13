@@ -1,18 +1,28 @@
 "use client"
+// 本文件是弹出气泡（Popover）组件族（基于 Base UI 的 Popover）：
+// 点击触发器后在其附近浮出的小面板（菜单、选择器、气泡卡片等）。
 
 import * as React from "react"
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 
 import { cn } from "@multica/ui/lib/utils"
 
+/** Popover：弹出气泡根组件 */
 function Popover({ ...props }: PopoverPrimitive.Root.Props) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />
 }
 
+/** PopoverTrigger：打开气泡的触发元素 */
 function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
 
+/**
+ * PopoverContent：浮出的气泡面板。
+ * @param props.keepMounted 为 true 时关闭后仍把弹层留在 DOM 里——当气泡内容
+ * 承载一个由点击打开的更上层弹窗（确认框/转写面板）时必须要开：否则焦点一
+ * 移进那个弹窗，气泡弹层就被卸载，把里面的弹窗一起拆掉了。
+ */
 function PopoverContent({
   className,
   align = "center",
@@ -26,10 +36,6 @@ function PopoverContent({
     PopoverPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset"
   > &
-  // Keep the popup in the DOM while closed. Needed when the content hosts a
-  // modal (confirm dialog / transcript) that opens on click: without it the
-  // popup unmounts the moment focus leaves for the dialog, tearing the dialog
-  // down with it.
   Pick<PopoverPrimitive.Portal.Props, "keepMounted">) {
   return (
     <PopoverPrimitive.Portal keepMounted={keepMounted}>
@@ -53,6 +59,7 @@ function PopoverContent({
   )
 }
 
+/** PopoverHeader：气泡头部区（标题 + 描述） */
 function PopoverHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -63,6 +70,7 @@ function PopoverHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** PopoverTitle：气泡标题 */
 function PopoverTitle({ className, ...props }: PopoverPrimitive.Title.Props) {
   return (
     <PopoverPrimitive.Title
@@ -73,6 +81,7 @@ function PopoverTitle({ className, ...props }: PopoverPrimitive.Title.Props) {
   )
 }
 
+/** PopoverDescription：气泡辅助说明文字 */
 function PopoverDescription({
   className,
   ...props

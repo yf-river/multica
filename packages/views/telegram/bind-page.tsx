@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * telegram（Telegram）集成模块：绑定凭据兑换落地页。
+ * 机器人的「关联你的账号」提示会指向这里，结构与 SlackBindPage 相同。
+ * 兑换前必须登录：兑换者的 Multica 身份取自会话，绝不来自 token。
+ */
+
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -15,9 +21,7 @@ type RedeemState =
   | { kind: "needs-auth" }
   | { kind: "error"; reason: string };
 
-// TelegramBindPage is the destination the bot's "link your account" prompt
-// points at, mirroring SlackBindPage. Auth is required before redeeming: the
-// redeemer's Multica identity comes from the session, never the token.
+/** Telegram 绑定页主体：兑换 token 并按结果展示相应状态。 */
 export function TelegramBindPage({ token }: { token: string | null }) {
   const { t } = useT("common");
   const user = useAuthStore((s) => s.user);
@@ -116,6 +120,7 @@ export function TelegramBindPage({ token }: { token: string | null }) {
   );
 }
 
+/** 把兑换失败异常归类成一个稳定的原因字符串，供文案分支使用。 */
 function redemptionFailureReason(err: unknown): string {
   const msg = err instanceof Error ? err.message : "";
   const lower = msg.toLowerCase();

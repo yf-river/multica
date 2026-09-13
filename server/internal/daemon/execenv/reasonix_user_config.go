@@ -1,3 +1,10 @@
+// 定位 Reasonix 运行归属用户的配置文件路径。
+//
+// 注意这不是"尽力而为"的查找：每任务的 reasonix.toml 会替换用户设置过的
+// [permissions]，因此 daemon 一旦没找到某份配置，就等于任务静默丢掉了用户
+// 的整条 deny 列表。找到的文件必须是 Reasonix 子进程"实际会加载"的那一份，
+// 并且要在所有平台、用户可能挪动的各种方式下都成立。
+
 package execenv
 
 import (
@@ -8,53 +15,45 @@ import (
 	"strings"
 )
 
-// Finding the runtime owner's Reasonix config is not a best-effort lookup: the
-// per-task reasonix.toml replaces whatever [permissions] the owner set, so a
-// config the daemon fails to find is a deny list the task silently drops. The
-// file has to be the one the Reasonix child will actually load, on every
-// platform and for every way the owner can move it.
+// 下面的解析是 Reasonix 自身逻辑（DeepSeek-Reasonix 里的
+// internal/config/paths.go，v2）的移植，而不是对其的近似：
 //
-// So the resolution below is a port of Reasonix's own (internal/config/paths.go
-// in DeepSeek-Reasonix, v2), not an approximation of it:
+//   - REASONIX_HOME 优先，需先做 ${VAR} / ${VAR:-default} 展开、~ 处理与
+//     绝对路径规范化。
+//   - 未设置时，home 在 Windows 上是 %AppData%\reasonix（回退到
+//     %USERPROFILE%\AppData\Roaming\reasonix），其他平台是 ~/.reasonix。
+//   - 该 home 下的 config.toml 是主路径。当它不存在"且"未设置 REASONIX_HOME
+//     时，Reasonix 会改读旧的 OS 支持目录与 XDG 位置——所以 daemon 也得去
+//     那些地方找。
 //
-//   - REASONIX_HOME wins, after ${VAR} / ${VAR:-default} expansion, ~ handling,
-//     and absolute-path normalization.
-//   - Without it, the home is %AppData%\reasonix on Windows (falling back to
-//     %USERPROFILE%\AppData\Roaming\reasonix) and ~/.reasonix everywhere else.
-//   - config.toml under that home is the primary path. When it does not exist
-//     AND REASONIX_HOME is unset, Reasonix reads the legacy OS-support and XDG
-//     locations instead — so the daemon has to look there too.
-//
-// Divergence here is a security bug, not a cosmetic one. Keep this in step with
-// upstream.
+// 这里与上游不一致是"安全 bug"而非外观问题。务必与上游保持同步。
 
-// reasonixGOOS is runtime.GOOS, overridable so tests can cover the Windows
-// resolution from any runner. Never assigned outside tests.
+// reasonixGOOS 就是 runtime.GOOS，允许被覆盖以便测试在任意运行环境覆盖
+// Windows 分支的解析。除测试外绝不被赋值。
 var reasonixGOOS = runtime.GOOS
 
-// reasonixVarRef matches ${VAR} and ${VAR:-default}, mirroring Reasonix's
-// ExpandVars.
+// reasonixVarRef 匹配 ${VAR} 与 ${VAR:-default}，对应 Reasonix 的 ExpandVars。
 var reasonixVarRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}`)
 
-// reasonixEnv is the environment the task's Reasonix child will see: the
-// agent's custom_env (already stripped of daemon-blocklisted keys) layered over
-// the daemon's own environment, the way the agent process builds its child env.
+// reasonixEnv 是任务内 Reasonix 子进程会看到的环境：agent 的 custom_env
+// （已剥离 daemon 黑名单键）叠加在 daemon 自身环境之上，与 agent 进程构造
+// 其子进程环境的方式一致。
 //
-// Presence is what makes this a map rather than a single home string: an agent
-// that sets REASONIX_HOME="" has overridden it to empty, which sends the child
-// back to the platform default — reading the daemon's own REASONIX_HOME there
-// would point at a different config than the one the task runs against.
+// 用 map 而非单一 home 字符串，关键在"键是否存在"：若某 agent 把
+// REASONIX_HOME="" 视为"显式覆盖为空"，子进程就会退回平台默认值——若此处
+// 去读 daemon 自己的 REASONIX_HOME，指向的配置就会与任务真正使用的配置
+// 不一致。
 type reasonixEnv map[string]string
 
-// lookup resolves one variable the way the child would: the agent's override
-// when it declared one, else the daemon's own environment.
+// lookup 按子进程的规则解析一个变量：agent 声明过就用其覆盖值，否则回退
+// 到 daemon 自身环境。
 func (e reasonixEnv) lookup(name string) string {
 	if v, ok := e[name]; ok {
 		return v
 	}
 	if reasonixGOOS == "windows" {
-		// Windows environment names are case-insensitive, and so is os.Getenv
-		// there; an agent that wrote "APPDATA" still overrides "AppData".
+		// Windows 的环境变量名不区分大小写，那里的 os.Getenv 也一样；
+		// agent 若写了 "APPDATA"，仍应覆盖 "AppData"。
 		for k, v := range e {
 			if strings.EqualFold(k, name) {
 				return v
@@ -64,8 +63,8 @@ func (e reasonixEnv) lookup(name string) string {
 	return os.Getenv(name)
 }
 
-// expandVars substitutes ${VAR} / ${VAR:-default}. An unset OR empty variable
-// takes the default, matching Reasonix.
+// expandVars 替换 ${VAR} / ${VAR:-default}。未设置"或"为空时取默认值，
+// 与 Reasonix 行为一致。
 func (e reasonixEnv) expandVars(s string) string {
 	if !strings.Contains(s, "${") {
 		return s
@@ -82,8 +81,8 @@ func (e reasonixEnv) expandVars(s string) string {
 	})
 }
 
-// cleanDir reads a directory-valued variable the way Reasonix's cleanEnvDir
-// does: trim, expand, resolve a leading ~, make absolute, clean.
+// cleanDir 按 Reasonix cleanEnvDir 的方式读取一个"目录型"变量：去空白、
+// 变量展开、解析开头的 ~、转绝对路径、清理冗余段。
 func (e reasonixEnv) cleanDir(name string) string {
 	dir := strings.TrimSpace(e.lookup(name))
 	if dir == "" {
@@ -107,7 +106,7 @@ func (e reasonixEnv) cleanDir(name string) string {
 	return filepath.Clean(dir)
 }
 
-// userHomeDir ports os.UserHomeDir against the child's env.
+// userHomeDir 基于子进程的环境移植 os.UserHomeDir。
 func (e reasonixEnv) userHomeDir() string {
 	if reasonixGOOS == "windows" {
 		return e.lookup("USERPROFILE")
@@ -115,7 +114,7 @@ func (e reasonixEnv) userHomeDir() string {
 	return e.lookup("HOME")
 }
 
-// userConfigDir ports os.UserConfigDir against the child's env.
+// userConfigDir 基于子进程的环境移植 os.UserConfigDir。
 func (e reasonixEnv) userConfigDir() string {
 	switch reasonixGOOS {
 	case "windows":
@@ -129,7 +128,7 @@ func (e reasonixEnv) userConfigDir() string {
 	default:
 		if dir := e.lookup("XDG_CONFIG_HOME"); dir != "" {
 			if !filepath.IsAbs(dir) {
-				return "" // os.UserConfigDir rejects a relative XDG_CONFIG_HOME
+				return "" // os.UserConfigDir 会拒绝相对路径的 XDG_CONFIG_HOME
 			}
 			return dir
 		}
@@ -141,13 +140,13 @@ func (e reasonixEnv) userConfigDir() string {
 	}
 }
 
-// isolatedHome is Reasonix's IsolatedHomeDir: a non-empty REASONIX_HOME marks a
-// self-contained runtime, which switches off every legacy fallback below.
+// isolatedHome 对应 Reasonix 的 IsolatedHomeDir：REASONIX_HOME 非空即表示
+// 一个自包含运行时，会关闭下面所有的传统回退。
 func (e reasonixEnv) isolatedHome() string {
 	return e.cleanDir("REASONIX_HOME")
 }
 
-// homeDir is Reasonix's reasonixHomeDir.
+// homeDir 对应 Reasonix 的 reasonixHomeDir。
 func (e reasonixEnv) homeDir() string {
 	if dir := e.isolatedHome(); dir != "" {
 		return dir
@@ -170,7 +169,7 @@ func (e reasonixEnv) homeDir() string {
 	return ""
 }
 
-// userConfigPath is the primary config.toml under the Reasonix home.
+// userConfigPath 是 Reasonix home 下的主 config.toml。
 func (e reasonixEnv) userConfigPath() string {
 	dir := e.homeDir()
 	if dir == "" {
@@ -179,8 +178,8 @@ func (e reasonixEnv) userConfigPath() string {
 	return filepath.Join(dir, reasonixUserConfigFile)
 }
 
-// legacyOSSupportDir is the pre-Reasonix-home OS app-support directory, empty
-// when REASONIX_HOME isolates the runtime or when it is the home already.
+// legacyOSSupportDir 是"引入 Reasonix home 之前"的 OS 应用支持目录；当
+// REASONIX_HOME 隔离了运行时、或该目录本就是当前 home 时返回空。
 func (e reasonixEnv) legacyOSSupportDir() string {
 	if e.isolatedHome() != "" {
 		return ""
@@ -196,7 +195,7 @@ func (e reasonixEnv) legacyOSSupportDir() string {
 	return path
 }
 
-// legacyUserConfigPath is the legacy OS app-support config.toml.
+// legacyUserConfigPath 是旧版 OS 应用支持位置上的 config.toml。
 func (e reasonixEnv) legacyUserConfigPath() string {
 	dir := e.legacyOSSupportDir()
 	if dir == "" {
@@ -209,8 +208,8 @@ func (e reasonixEnv) legacyUserConfigPath() string {
 	return path
 }
 
-// legacyXDGConfigPaths are the deprecated XDG locations, Unix-only and only
-// while REASONIX_HOME is unset.
+// legacyXDGConfigPaths 是被弃用的 XDG 位置，仅 Unix 且仅在 REASONIX_HOME
+// 未设置时生效。
 func (e reasonixEnv) legacyXDGConfigPaths() []string {
 	if e.isolatedHome() != "" || reasonixGOOS == "windows" {
 		return nil
@@ -237,9 +236,9 @@ func (e reasonixEnv) legacyXDGConfigPaths() []string {
 	return paths
 }
 
-// userConfigLoadPath is the config.toml the child will read: the primary path
-// when it exists, else the first legacy location that does, else the primary
-// path again (which simply does not exist yet). Ports userConfigLoadPath.
+// userConfigLoadPath 返回子进程实际会读的 config.toml：主路径存在就用主
+// 路径，否则用第一个存在的传统位置，再否则回到主路径（即它当前还不存在）。
+// 移植自 userConfigLoadPath。
 func (e reasonixEnv) userConfigLoadPath() string {
 	primary := e.userConfigPath()
 	if primary == "" {
@@ -264,6 +263,8 @@ func (e reasonixEnv) userConfigLoadPath() string {
 	return primary
 }
 
+// reasonixSamePath 判断两个路径是否指向同一位置（都转绝对路径后按清理
+// 结果比较）。
 func reasonixSamePath(a, b string) bool {
 	if a == "" || b == "" {
 		return false

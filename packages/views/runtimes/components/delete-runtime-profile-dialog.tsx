@@ -1,3 +1,11 @@
+// ============================================================================
+// 删除自定义 runtime profile 的确认对话框（DeleteRuntimeProfileDialog）
+//
+// 角色定位：profile 管理弹窗详情面板里「删除」按钮打开的确认框。删除前用户看到
+// 一条破坏性确认；若仍有关联（bound）该 profile 的 agent，服务端会用 409 拒绝，
+// 本对话框把拒绝原因内联展示在按钮上方并保持打开，而不是弹一条原始错误 toast——
+// 让管理员读明白原因后能体面地放弃删除。
+// ============================================================================
 "use client";
 
 import { useEffect, useState } from "react";
@@ -17,10 +25,19 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "../../i18n";
 
-// Confirmation dialog for deleting a custom runtime profile. The server
-// refuses with a 409 when agents are still bound to the profile; we surface
-// that refusal inline (and keep the dialog open) instead of dumping a raw
-// error toast, so the admin can read why and back out gracefully.
+/**
+ * 删除自定义 runtime profile 的确认对话框。
+ *
+ * @param open - 是否展示。
+ * @param onOpenChange - 开关回调（提交中被忽略）。
+ * @param profile - 要删除的 profile。
+ * @param wsId - 工作区 id。
+ * @param onDeleted - 删除成功后的回调（父组件负责刷新列表 / 关闭）。
+ *
+ * 冲突处理：删除时若仍有 agent 绑定该 profile，服务端返回结构化 409——
+ * parseRuntimeProfileBoundConflict 解析出后，把原因（优先服务端原文，否则本地
+ * 兜底文案）内联展示并让用户自行决定是否继续/放弃。
+ */
 export function DeleteRuntimeProfileDialog({
   open,
   onOpenChange,
@@ -37,8 +54,8 @@ export function DeleteRuntimeProfileDialog({
   const { t } = useT("runtimes");
   const deleteProfile = useDeleteRuntimeProfile(wsId);
   const [submitting, setSubmitting] = useState(false);
-  // Server-issued "agents still bound" message, shown inline above the
-  // actions. Reset whenever the dialog re-opens.
+  // 服务端下发的「仍有 agent 绑定」提示，内联展示在按钮区上方；每次重新打开
+  // 对话框时重置，避免上次的旧消息残留。
   const [boundMessage, setBoundMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -63,8 +80,8 @@ export function DeleteRuntimeProfileDialog({
     } catch (err) {
       const conflict = parseRuntimeProfileBoundConflict(err);
       if (conflict) {
-        // Prefer the server's specific wording; fall back to our localized
-        // generic "still bound" copy when the body carried no message.
+        // 优先用服务端给出的具体措辞；body 里没带消息时，退回本地通用的
+        // 「仍有绑定」文案。
         setBoundMessage(
           conflict.message ||
             t(($) => $.profiles.delete_dialog.error_bound),

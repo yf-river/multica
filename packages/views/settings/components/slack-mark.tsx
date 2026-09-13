@@ -1,5 +1,7 @@
-// The SVG path in SlackMark below is copied verbatim from `icons/slack.svg` in
-// Bootstrap Icons, used under the MIT License. Source:
+// 本文件提供 Slack 品牌图标组件，用于设置页集成频道等处展示 Slack 的可识别图标。
+
+// 下方 SlackMark 中的 SVG 路径逐字复制自 Bootstrap Icons 的 `icons/slack.svg`，
+// 依据 MIT 许可证使用。来源：
 // https://github.com/twbs/icons/blob/8d88686c03c3768a2d82ba4f20c3c4e1b100fa29/icons/slack.svg
 //
 // The MIT License (MIT)
@@ -24,13 +26,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// The Slack brand mark. lucide-react carries no brand icons, so the Settings →
-// Integrations channel icon fell back to the generic MessagesSquare speech
-// bubble — the same glyph WeCom used before WecomMark landed (#6585), and it
-// failed here for the same reason: nothing on the row said which platform it
-// was. Bootstrap Icons ships Slack's own mark under MIT with currentColor
-// already on the root. The 16x16 viewBox scales to whatever `className` sets,
-// exactly like the 24x24 and 48x48 marks next door.
+// Slack 品牌图标。lucide-react 不携带品牌图标，设置页「集成」频道的图标一度
+// 回退成通用的 MessagesSquare 气泡——和 WeCom 之前用的是同一个图形，也同样失败：
+// 这一行上没有任何信息能说明是哪个平台。Bootstrap Icons 以 MIT 许可证提供了 Slack
+// 官方图标，根节点已经用了 currentColor。16x16 的 viewBox 会随 className 缩放，
+// 与隔壁的 24x24、48x48 图标一致。
+/**
+ * Slack 品牌图标。
+ * @param props.className - 可选，附加到 svg 上的 CSS 类名，用于控制尺寸与颜色。
+ */
 export function SlackMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true" className={className} fill="currentColor">

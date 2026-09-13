@@ -1,3 +1,4 @@
+// plugin_skill.go —— 插件的 `skill` 资源安装：写入普通 skill 表并在安装事务内修剪不再声明的项。
 package service
 
 import (
@@ -10,32 +11,24 @@ import (
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
 )
 
-// Skill resources.
+// 关于 skill 资源。
 //
-// A plugin's `skill` resource becomes an ordinary row in the existing skill
-// table. Not a plugin-owned copy, not a bundle, not an artifact with a digest:
-// the previous plugin system built all of that across fourteen tables and, at
-// the end of it, delivered one SKILL.md that this table could already hold.
+// 插件的 `skill` 资源变成既有 skill 表里一行普通记录——不是插件自有副本、不是 bundle、不是带摘要的产物：旧插件
+// 系统跨十四张表造了所有这些，最终交付的不过是一份 SKILL.md，本表早就能装下。
 //
-// The only thing the platform has to remember is which installation contributed
-// which skill, so uninstall removes exactly those and nothing a person wrote.
-// That is one nullable column.
+// 平台只需记得“哪个安装贡献了哪个技能”，使卸载恰好移除那些、不碰任何人写的东西。那只是一个可空列。
 //
-// A resource is not a hook — nothing calls anything. The file was validated and
-// stored when the author published the version, so installing it is a read from
-// our own database rather than a fetch of whatever the author is serving today.
+// 资源不是 hook——没有任何东西会被调用。文件在作者发布版本时已校验并存好，因此安装是从我们自己的数据库
+// 读取，而不是抓取作者今天正在提供的内容。
 
-// InstallSkillResources writes the manifest's skill resources and prunes the
-// ones this installation no longer declares.
+// InstallSkillResources 写入 manifest 声明的 skill 资源，并修剪该安装不再声明的旧项。
 //
-// Called inside the install transaction: a plugin that half-installs its skills
-// is worse than one that fails, because the missing half is invisible.
+// 在安装事务内调用：一个只装了一半技能的插件比失败的更糟——缺失的半边不可见。
 func (s *PluginService) InstallSkillResources(ctx context.Context, queries *db.Queries, installation db.PluginInstallation, manifest plugincontract.Manifest, userID pgtype.UUID) error {
 	resources := skillResources(manifest)
 
-	// Prune first, so a rename frees its old name before the new one is
-	// written. The reverse order would collide with the table's unique
-	// (workspace_id, name) on any rename that only changes case or spacing.
+	// 先修剪：改名先释放旧名、再写新名。反序会在任何“只改大小写或空格”的改名上与表的 (workspace_id, name)
+	// 唯一约束冲突。
 	keep := make([]string, 0, len(resources))
 	for _, resource := range resources {
 		keep = append(keep, resource.Key)
@@ -57,9 +50,8 @@ func (s *PluginService) InstallSkillResources(ctx context.Context, queries *db.Q
 		}
 		content := string(raw)
 		_, description := skill.ParseSkillFrontmatter(content)
-		// The manifest key is authoritative for the name, not the frontmatter.
-		// The consent screen listed the key, the tool namespace uses it, and a
-		// file that disagrees must not silently install under another name.
+		// manifest key 才是名字的权威，不是 frontmatter。授权屏列出 key、工具命名空间用它，
+		// 内容与其不符的文件绝不能悄悄以别的名字安装。
 		name := resource.Key
 		if strings.TrimSpace(description) == "" {
 			description = "Provided by the " + manifest.Name + " Plugin."
@@ -83,6 +75,7 @@ func (s *PluginService) InstallSkillResources(ctx context.Context, queries *db.Q
 	return nil
 }
 
+// skillResources 从 manifest 中筛出全部类型为 skill 的资源。
 func skillResources(manifest plugincontract.Manifest) []plugincontract.Resource {
 	resources := make([]plugincontract.Resource, 0, len(manifest.Contributes.Resources))
 	for _, resource := range manifest.Contributes.Resources {

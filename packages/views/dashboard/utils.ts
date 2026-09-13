@@ -1,3 +1,7 @@
+// 工作区仪表盘（Usage / Errors）的数据聚合纯函数：把后端按 (日期, 模型) 与
+// (Agent, 模型) 返回的原始行，折叠成图表 / KPI / 排行需要的按日或按周聚合，
+// 并负责失败分类与「匿名桶」的归并。所有函数无副作用。
+
 import type {
   DashboardUsageDaily,
   DashboardUsageByAgent,
@@ -32,20 +36,18 @@ import type {
 } from "../runtimes/components/charts";
 
 // ---------------------------------------------------------------------------
-// Dashboard data aggregations
+// 仪表盘数据聚合
 //
-// The workspace dashboard returns the same per-(date, model) and
-// per-(agent, model) shapes the runtime page does, so cost math reuses
-// `estimateCost` / `estimateCostBreakdown` from the runtimes utils. What
-// the runtimes view does with `aggregateByDate` (works on RuntimeUsage,
-// which carries a `provider` field) we replicate here with a tighter
-// type — fewer optional fields, less conditional logic on the consumer
-// side.
+// 工作区仪表盘返回的 (日期, 模型) 与 (Agent, 模型) 形状和运行时页一致，所以
+// 成本计算复用 runtimes utils 的 `estimateCost` / `estimateCostBreakdown`。
+// 运行时页用 `aggregateByDate`（面向带 `provider` 字段的 RuntimeUsage）做的
+// 事，这里用一个更紧的类型重写——可选字段更少，消费端条件逻辑也更少。
 // ---------------------------------------------------------------------------
 
-// Mirrors `DailyCostStackData` in the runtimes utils, including its cache-read
-// segment — the dashboard feeds the very same DailyCostChart, so a category
-// missing here is a category missing from the chart's total (MUL-6334).
+// 与 runtimes utils 的 `DailyCostStackData` 保持一致（包括它的缓存读段）——
+// 仪表盘喂的是同一个 DailyCostChart，这里少一类就意味着图表总额里少一类
+// (MUL-6334)。
+/** 按日聚合后的成本堆叠数据（输入/输出/缓存读写四段）。 */
 export interface DailyCostStack {
   date: string;
   label: string;
@@ -57,17 +59,14 @@ export interface DailyCostStack {
 }
 
 function formatDateLabel(d: string): string {
-  // Anchor to local midnight so the formatted label matches the bucket the
-  // server picked (which is already in workspace time). Pasting the raw
-  // date as the body of `new Date()` would interpret it as UTC and shift
-  // by the user's offset.
+  // 锚定到本地零点，让格式化出来的标签与后端（已在工作区时区）选取的桶对齐。
+  // 直接把裸日期塞给 `new Date()` 会被当成 UTC，再按用户时区偏移。
   const date = new Date(d + "T00:00:00");
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-// Per-(date, model) rows → 1 row per date with cost broken into the four
-// segments the stacked bar chart consumes. Stable sort by date asc so the
-// chart x-axis is left-to-right oldest-to-newest.
+/** 把 (日期, 模型) 行 → 每天一行，将成本拆成堆叠柱状图消费的四段。
+ *  按日期升序稳定排序，x 轴从左到右就是旧到新。 */
 export function aggregateDailyCost(usage: DashboardUsageDaily[]): DailyCostStack[] {
   const map = new Map<
     string,
@@ -107,12 +106,10 @@ export function aggregateDailyCost(usage: DashboardUsageDaily[]): DailyCostStack
     });
 }
 
-// Per-(date, model) rows → 1 row per date with raw token counts split
-// across the four chart segments. Independent of pricing — unmapped
-// models still contribute here, even if they're excluded from cost.
-// Mirrors `aggregateByDate(...).dailyTokens` from the runtimes utils so
-// the Tokens chart on the Usage page consumes the same shape as the one
-// on the runtime-detail page.
+/** 把 (日期, 模型) 行 → 每天一行，将原始 token 数拆进四个图表段。与定价无关——
+ *  未映射价格的模型在这里仍会计入，即使它们不计入成本。镜像 runtimes utils 里
+ *  `aggregateByDate(...).dailyTokens`，让 Usage 页的 Tokens 图和运行时详情页用同
+ *  一形状。 */
 export function aggregateDailyTokens(usage: DashboardUsageDaily[]): DailyTokenData[] {
   const map = new Map<
     string,
@@ -143,6 +140,7 @@ export function aggregateDailyTokens(usage: DashboardUsageDaily[]): DailyTokenDa
     }));
 }
 
+/** 整个时间窗口的合计指标（KPI 磁贴用）。 */
 export interface DashboardTokenTotals {
   input: number;
   output: number;
@@ -152,11 +150,9 @@ export interface DashboardTokenTotals {
   taskCount: number;
 }
 
-// Whole-window totals for the KPI tiles. taskCount sums DISTINCT task counts
-// per row — these are already collapsed server-side per (date, model), so
-// the value can over-count if the same task has tokens in two days; that's
-// acceptable for a KPI ("rough volume") and the per-agent run-time card
-// gives the precise figure.
+/** 整个时间窗的总计，给 KPI 磁贴。taskCount 是把每行的去重任务数相加——服务端
+ *  已经按 (日期, 模型) 折叠过，所以同一任务若跨越两天会重复计；对 KPI（「大概的
+ *  量」）可接受，精确值由 per-agent 运行时间卡给出。 */
 export function computeDailyTotals(usage: DashboardUsageDaily[]): DashboardTokenTotals {
   return usage.reduce<DashboardTokenTotals>(
     (acc, u) => ({
@@ -171,6 +167,7 @@ export function computeDailyTotals(usage: DashboardUsageDaily[]): DashboardToken
   );
 }
 
+/** 单个 Agent 的聚合成本/token 行（由按 (Agent, 模型) 的原始行折叠而来）。 */
 export interface AgentCostRow {
   agentId: string;
   tokens: number;
@@ -178,9 +175,8 @@ export interface AgentCostRow {
   taskCount: number;
 }
 
-// Fold per-(agent, model) rows into one row per agent. Cost is the sum
-// across this agent's models, which is the figure the user cares about.
-// Sort by cost desc so the heaviest spender lands first.
+/** 把按 (Agent, 模型) 的行折叠成每个 Agent 一行：成本是该 Agent 各模型花销之和，
+ *  这才是用户真正关心的数字；按成本倒序排，让花钱最多的排在最前。 */
 export function aggregateAgentTokens(rows: DashboardUsageByAgent[]): AgentCostRow[] {
   const map = new Map<string, AgentCostRow>();
   for (const r of rows) {
@@ -199,6 +195,7 @@ export function aggregateAgentTokens(rows: DashboardUsageByAgent[]): AgentCostRo
   return Array.from(map.values()).toSorted((a, b) => b.cost - a.cost);
 }
 
+/** 合并后的单 Agent 仪表盘行：token/成本 + 运行秒数 + 任务数。 */
 export interface AgentDashboardRow {
   agentId: string;
   tokens: number;
@@ -207,15 +204,15 @@ export interface AgentDashboardRow {
   taskCount: number;
 }
 
-// Merge per-agent token totals with per-agent run-time totals into one
-// row per agent.
-//
-// taskCount comes from `runTimeRows` when available — that rollup is a
-// true per-agent distinct count (`COUNT(*)` on (agent, terminal-task) in
-// SQL). The token rollup's per-(agent, model) counts double-count a task
-// when it spans multiple models, so we only fall back to it for agents
-// with no terminal run yet (in-flight tasks reported tokens but haven't
-// completed). Sorted by cost desc, then run time desc.
+/**
+ * 把「每 Agent 的 token 合计」与「每 Agent 的运行时长合计」合并成每 Agent 一行。
+ *
+ * taskCount 优先取 runTimeRows 里的值——那份汇总才是 SQL 里按 (agent,
+ * terminal-task) 做 `COUNT(*)` 得到的真·去重计数；token 汇总按 (agent, model)
+ * 统计，任务跨多个模型时会被重复计数，所以只在「该 Agent 还没有终止运行」时
+ * 兜底回退到它的 taskCount（进行中的任务已上报 token 但尚未跑完）。
+ * 排序：先按成本倒序，再按运行时长倒序。
+ */
 export function mergeAgentDashboardRows(
   tokenRows: AgentCostRow[],
   runTimeRows: DashboardAgentRunTime[],
@@ -234,9 +231,8 @@ export function mergeAgentDashboardRows(
       taskCount: rt ? rt.task_count : r.taskCount,
     });
   }
-  // Agents with run-time rows but zero tokens still belong on the list
-  // (a task that errored before producing usage). Their token columns
-  // stay at 0.
+  // 有运行时长行但没有 token 的 Agent 仍该留在列表里（例如一个在产出用量前就
+  // 报错的任务）。它们的 token 列保持 0。
   for (const r of runTimeRows) {
     if (merged.has(r.agent_id)) continue;
     merged.set(r.agent_id, {
@@ -253,46 +249,41 @@ export function mergeAgentDashboardRows(
   });
 }
 
-// Synthetic agentId for the row that aggregates all hard-deleted agents.
-// Sentinel (not a real UUID) so the component can detect it and render a
-// placeholder instead of looking the id up in the agent list.
+/** 汇聚「所有被硬删除的 Agent」这一聚合行的合成 agentId。哨兵值（不是真实
+ *  UUID），组件可据此识别它并渲染占位名，而不是去 Agent 列表里查这个 id。 */
 export const DELETED_AGENTS_ROW_ID = "__deleted_agents__";
 
-// Synthetic agentId the SERVER sends for the bucket aggregating every agent it
-// refuses to name (MUL-5409): agents the viewer may not see, plus the hidden
-// system carriers behind agent-builder sessions, which no client can resolve to
-// a name for anyone. Mirrors `restrictedAgentsRowID` in
-// server/internal/handler/dashboard.go — the two strings must stay in sync.
-//
-// Distinct from DELETED_AGENTS_ROW_ID on purpose: those agents are gone, these
-// are alive and still running. Labelling them "Deleted agents" told the user
-// something false, which is why the bucket renders as a neutral "Other agents".
+/** 服务端对「它拒绝具名的所有 Agent」的聚合桶所用的合成 agentId（MUL-5409）：
+ *  包括查看者看不到的 Agent，以及 agent-builder 会话背后那些隐藏的系统载体——
+ *  任何客户端都无法给它们解析出名字。与 server/internal/handler/dashboard.go 里
+ *  的 `restrictedAgentsRowID` 互为镜像，两个字符串必须保持同步。
+ *
+ *  刻意区别于 DELETED_AGENTS_ROW_ID：那些 Agent 已消失，这些还活着、仍在跑。
+ *  把它们标注成「Deleted agents」对用户是假话，因此该桶以中性的「Other agents」
+ *  渲染。 */
 export const RESTRICTED_AGENTS_ROW_ID = "__restricted_agents__";
 
-// Fold usage rows whose agent no longer exists in the workspace into a single
-// aggregated "Deleted agents" row instead of dropping them. The agent list is
-// fetched with `include_archived: true`, so archived agents keep their names
-// and stay on the leaderboard as themselves; only hard-deleted agents fall out
-// of `knownAgentIds` and collapse into the bucket.
-//
-// MUL-3771 (PR #4637) originally *dropped* these rows so they'd stop rendering
-// as a bare UUID — but the top-line Cost/Tokens KPIs still count their spend
-// (those totals aggregate `task_usage_hourly` without joining `agent`), so the
-// per-agent breakdown no longer reconciled with the totals (MUL-3776, #4640).
-// Aggregating instead of dropping keeps `sum(visible rows) == KPI total` while
-// still never exposing a UUID. The bucket carries tokens + cost only; seconds
-// and taskCount stay 0 because the run-time rollups inner-join `agent`, so
-// deleted agents already contribute nothing to the Time/Tasks KPIs — the
-// component renders those two columns as "—" for this row.
-//
-// `knownAgentIds` is `null` while the agent list is still loading; callers
-// pass `null` in that case so the rows pass through untouched instead of the
-// whole leaderboard collapsing into one bucket on a slow fetch.
-//
-// The server's restricted bucket is NOT in `knownAgentIds` either (it is not an
-// agent), so it is passed through explicitly rather than swept into the deleted
-// bucket. It also keeps its seconds / taskCount: unlike a hard-deleted agent it
-// really did run, and the run-time rollup folds those numbers into it.
+/**
+ * 把「工作区里已不存在的 Agent」的用量行收进一个合成的「Deleted agents」聚合
+ * 行，而不是丢弃它们。Agent 列表以 `include_archived: true` 拉取，所以归档的
+ * Agent 会保留名字、继续以自己的身份留在排行榜上；只有被硬删除的 Agent 才会
+ * 掉出 `knownAgentIds`、收进这个桶。
+ *
+ * MUL-3771（PR #4637）最初是*丢弃*这些行、让它们不再渲染成一串裸 UUID——但
+ * 顶行 Cost/Tokens KPI 仍然把它们算进花费（那些汇总聚合 `task_usage_hourly`
+ * 时不 join `agent`），于是分 Agent 明细与总计对不上了（MUL-3776, #4640）。
+ * 改成聚合而不是丢弃，既保住「sum(可见行) == KPI 总计」，又始终不暴露 UUID。
+ * 该桶只携带 tokens + cost；seconds 与 taskCount 保持 0，因为运行时长汇总
+ * 内连接 `agent`，已删除的 Agent 本来就不给 Time/Tasks KPI 贡献任何东西——
+ * 组件对这一行把这两列渲染成「—」。
+ *
+ * Agent 列表还在加载时 `knownAgentIds` 为 `null`；调用方此时传 `null`，让行
+ * 原样通过，而不是慢拉取下整个排行榜塌缩成一个桶。
+ *
+ * 服务端的 restricted 桶同样不在 `knownAgentIds` 里（它不是 agent），所以显式
+ * 放行、不把它扫进 deleted 桶。它也保留自己的 seconds / taskCount：与硬删除的
+ * Agent 不同，它真的运行过，运行时长汇总把那些数字折进了它。
+ */
 export function bucketUnknownAgentRows(
   rows: AgentDashboardRow[],
   knownAgentIds: ReadonlySet<string> | null,
@@ -319,20 +310,18 @@ export function bucketUnknownAgentRows(
   return hasDeleted ? [...known, bucket] : known;
 }
 
-// Rows the leaderboard renders as a synthetic bucket rather than an agent.
-// `deletedAgentCount` and the caption's agent count both have to exclude these,
-// or the card claims more agents (or more deletions) than it is showing.
+/** 判断某 agentId 是否为一个合成的桶行（渲染成聚合桶而不是单个 Agent）。
+ *  `deletedAgentCount` 和 caption 里的 agent 数都必须排除这些，否则卡片宣称的
+ *  Agent 数（或删除数）会多于它实际展示的。 */
 export function isSyntheticAgentRow(agentId: string): boolean {
   return agentId === DELETED_AGENTS_ROW_ID || agentId === RESTRICTED_AGENTS_ROW_ID;
 }
 
 // ---------------------------------------------------------------------------
-// Weekly fold for run-time + tasks. Mirrors `aggregateByWeek` in
-// `runtimes/utils.ts` which already covers cost / tokens — same calendar
-// week semantics (Mon–Sun anchored at today-in-tz), same pre-zeroed buckets,
-// same partial-week metadata. Workspace dashboard uses the user-chosen
-// timezone here; the runtime page uses the runtime's IANA tz. Behaviour is
-// identical apart from where the tz comes from.
+// 运行时长 + 任务数的「按周折叠」。镜像 `runtimes/utils.ts` 里已覆盖成本 /
+// token 的 `aggregateByWeek`：同样的日历周语义（周一到周日、锚定「今天所在
+// 时区」）、同样的预置零桶、同样的部分周元信息。行为只在时区来源上不同——
+// 工作区仪表盘用这里用户选的时区，运行时页用运行时的 IANA 时区。
 // ---------------------------------------------------------------------------
 
 interface WeekShell {
@@ -344,10 +333,8 @@ interface WeekShell {
   daysCovered: number;
 }
 
-// Build N trailing calendar week shells anchored at today-in-tz. Each shell
-// carries the labels and partial-week metadata the chart components consume;
-// downstream aggregators fold their own per-week values onto the matching
-// shell.
+// 以「今天所在时区」为锚点构建 N 个末尾日历周的「周外壳」。每个外壳携带图表
+// 组件消费的标签与部分周元信息；下游聚合器把自己的每周值折到匹配的外壳上。
 function buildWeekShells(tz: string, weekCount: number): WeekShell[] {
   const count = Math.max(1, Math.floor(weekCount));
   const today = todayIso(tz);
@@ -358,8 +345,8 @@ function buildWeekShells(tz: string, weekCount: number): WeekShell[] {
     const weekStart = addDaysIso(firstWeekStart, i * 7);
     const weekEnd = addDaysIso(weekStart, 6);
     const partial = today < weekEnd;
-    // Inclusive count of how many days of this week have actually elapsed.
-    // Closed weeks sit at 7; the current week reports 1..6.
+    // 这一周实际上已经历了多少天的「含端点」计数。已过去的完整周为 7；当前周
+    // 报 1..6。
     const clampedToday =
       today < weekStart ? weekStart : today < weekEnd ? today : weekEnd;
     const elapsed = Math.min(7, Math.max(1, diffDaysIso(weekStart, clampedToday) + 1));
@@ -383,6 +370,7 @@ function diffDaysIso(from: string, to: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
+/** 把 (日期, 运行时长) 行折叠成每周一行，值为该周落在各外壳上的总运行秒数。 */
 export function aggregateWeeklyTime(
   rows: DashboardRunTimeDaily[],
   tz: string,
@@ -399,6 +387,7 @@ export function aggregateWeeklyTime(
   return shells.map((s) => ({ ...s, totalSeconds: totals.get(s.weekStart) ?? 0 }));
 }
 
+/** 把 (日期, 运行时长) 行折叠成每周一行的完成/失败/取消计数。 */
 export function aggregateWeeklyTasks(
   rows: DashboardRunTimeDaily[],
   tz: string,
@@ -434,9 +423,8 @@ export function aggregateWeeklyTasks(
   });
 }
 
-// Per-date run-time rows → one row per date with `totalSeconds` for the
-// DailyTimeChart. Sorted ascending so the x-axis reads oldest-to-newest,
-// matching the cost / tokens aggregators.
+/** 把按日期的运行时长行 → 每日一行、带 `totalSeconds`，供 DailyTimeChart 使用。
+ *  升序排序，让 x 轴从左到右就是旧到新，与成本/token 聚合器保持一致。 */
 export function aggregateDailyTime(rows: DashboardRunTimeDaily[]): DailyTimeData[] {
   return rows.toSorted((a, b) => a.date.localeCompare(b.date))
     .map((r) => ({
@@ -446,11 +434,10 @@ export function aggregateDailyTime(rows: DashboardRunTimeDaily[]): DailyTimeData
     }));
 }
 
-// Per-date run-time rows → one row per date with `completed`, `failed` and
-// `cancelled` counts for the DailyTasksChart's stacked bar. failed_count and
-// cancelled_count are disjoint subsets of task_count, so the succeeded count
-// is the remainder. Subtracting cancelled matters: without it a run the user
-// stopped would render in the green "completed" segment.
+/** 把按日期的运行时长行 → 每日一行、带 completed/failed/cancelled 计数，供
+ *  DailyTasksChart 的堆叠柱使用。failed_count 与 cancelled_count 是 task_count
+ *  不相交的子集，所以成功数就是余数。减掉 cancelled 很关键：不减的话，一条
+ *  用户主动停掉的运行会渲染进绿色的「已完成」段。 */
 export function aggregateDailyTasks(rows: DashboardRunTimeDaily[]): DailyTasksData[] {
   return rows.toSorted((a, b) => a.date.localeCompare(b.date))
     .map((r) => {
@@ -467,10 +454,9 @@ export function aggregateDailyTasks(rows: DashboardRunTimeDaily[]): DailyTasksDa
     });
 }
 
-// Compact human duration: "1h 23m" / "12m 30s" / "45s" / "<1m". Used for
-// the dashboard run-time KPI and the per-agent run-time column. Keeps two
-// segments max — three segments adds visual noise without precision the
-// dashboard actually needs.
+/** 紧凑的人类可读时长："1h 23m" / "12m 30s" / "45s" / "<1m"。用于仪表盘运行
+ *  时长 KPI 与每 Agent 的运行时长列。最多保留两段——三段只添视觉噪音，仪表盘
+ *  并不需要那种精度。 */
 export function formatDuration(seconds: number, lessThanMinuteLabel: string): string {
   if (seconds < 0 || !Number.isFinite(seconds)) return lessThanMinuteLabel;
   if (seconds < 60) {
@@ -493,19 +479,15 @@ export function formatDuration(seconds: number, lessThanMinuteLabel: string): st
 }
 
 // ---------------------------------------------------------------------------
-// Failure aggregations
+// 失败聚合
 //
-// The two failure rollups ship every terminal task, with `failure_reason: ""`
-// marking the succeeded bucket. Keeping successes in the same payload is what
-// lets these helpers produce an error *rate* whose numerator and denominator
-// come from identical filters — the run-time rollups can't serve as the
-// denominator because they require `started_at IS NOT NULL` and a task that
-// expired in the queue never started.
+// 两个失败汇总接口会下发每一条终止任务，用 `failure_reason: ""` 标记成功桶。
+// 成功项留在同一载荷里，正是这些辅助函数能算「错误率」的原因：分子分母来自
+// 相同的过滤条件——运行时汇总不能当分母，因为它们要求 `started_at IS NOT
+// NULL`，而一条在队列里就过期、从未启动的任务不算数。
 //
-// Everything here folds raw reasons into the seven display classes from
-// `@multica/core/dashboard`; the raw reason survives only in
-// `aggregateFailureReasons`, which powers the detail rows under the class
-// summary.
+// 这里把所有原始 reason 折叠进 `@multica/core/dashboard` 的七个展示类；原始
+// reason 只在 `aggregateFailureReasons` 里存活，它负责类别汇总下面的明细行。
 // ---------------------------------------------------------------------------
 
 function emptyClassCounts(): FailureClassCounts {
@@ -514,8 +496,8 @@ function emptyClassCounts(): FailureClassCounts {
   ) as FailureClassCounts;
 }
 
-// Fold one rollup row into a mutable accumulator. `failure_reason: ""` is the
-// succeeded bucket: it moves `total` only, never `failed` or a class.
+// 把一行汇总折进可变的累加器。`failure_reason: ""` 是成功桶：它只推进 `total`，
+// 从不推进 `failed` 或某个类别。
 function foldFailureRow(
   acc: FailureClassCounts & FailureBucketTotals,
   reason: string,
@@ -527,9 +509,8 @@ function foldFailureRow(
   acc[failureClassOf(reason)] += count;
 }
 
-// Per-(date, reason) rows → one row per date with per-class failure counts
-// and the day's failed / total totals. Sorted date asc to match the other
-// daily aggregators.
+/** 把 (日期, reason) 行 → 每日一行，带各类别失败计数和该日 failed/total 合计。
+ *  日期升序排列，与其他每日聚合器保持一致。 */
 export function aggregateDailyErrors(
   rows: DashboardFailureDaily[],
 ): DailyErrorsData[] {
@@ -551,9 +532,8 @@ export function aggregateDailyErrors(
     }));
 }
 
-// Weekly counterpart. Buckets are pre-zeroed from the same week shells the
-// time / tasks weekly aggregators use, so a week with no terminal tasks
-// renders as an empty bar instead of collapsing the x-axis.
+/** 周版对应物。桶用与 time/tasks 周聚合器相同的周外壳预置零，所以没有终止任务
+ *  的一周渲染成空柱而不是让 x 轴塌缩。 */
 export function aggregateWeeklyErrors(
   rows: DashboardFailureDaily[],
   tz: string,
@@ -575,15 +555,15 @@ export function aggregateWeeklyErrors(
   }));
 }
 
-// Whole-window failure totals for the Errors KPI hint and the breakdown
-// header. `rate` is a fraction in [0, 1]; 0 when the window has no terminal
-// tasks at all.
+/** 全窗口失败合计，给 Errors KPI 提示和 breakdown 头部用。`rate` 是 [0, 1]
+ *  的比率；窗口内完全没有终止任务时为 0。 */
 export interface FailureTotals {
   failed: number;
   total: number;
   rate: number;
 }
 
+/** 计算整个窗口的失败合计：失败数、总数与失败率（总数为 0 时率为 0）。 */
 export function computeFailureTotals(
   rows: { failure_reason: string; task_count: number }[],
 ): FailureTotals {
@@ -596,14 +576,14 @@ export function computeFailureTotals(
   return { failed, total, rate: total > 0 ? failed / total : 0 };
 }
 
+/** 单个失败类别行（类别 + 计数）。 */
 export interface FailureClassRow {
   failureClass: FailureClass;
   count: number;
 }
 
-// Per-class window totals, heaviest first, zero-count classes dropped. Ties
-// break on FAILURE_CLASSES order so the list doesn't reshuffle between
-// renders when two classes sit at the same count.
+/** 全窗口按类别统计，最重的在前，零计数类别丢弃。计数相同时按 FAILURE_CLASSES
+ *  的顺序打破平局，这样两个类别同计数时列表不会在渲染之间重排。 */
 export function aggregateFailureClasses(
   rows: { failure_reason: string; task_count: number }[],
 ): FailureClassRow[] {
@@ -620,14 +600,15 @@ export function aggregateFailureClasses(
     .toSorted((a, b) => b.count - a.count);
 }
 
+/** 单条原始 reason 行（在更粗的类别汇总下面回答「具体是哪个错误」）。 */
 export interface FailureReasonRow {
   reason: string;
   failureClass: FailureClass;
   count: number;
 }
 
-// Per-raw-reason window totals, heaviest first. This is the row set that
-// answers "which specific error", under the coarser class summary.
+/** 全窗口按原始 reason 统计，最重的在前。这是回答「哪个具体错误」的行集，
+ *  位于更粗的类别汇总之下。 */
 export function aggregateFailureReasons(
   rows: { failure_reason: string; task_count: number }[],
 ): FailureReasonRow[] {
@@ -645,35 +626,31 @@ export function aggregateFailureReasons(
     .toSorted((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
 }
 
-// Synthetic agentId for the row aggregating every agent the viewer can't
-// resolve to a name. Distinct from DELETED_AGENTS_ROW_ID because this bucket
-// covers two populations at once: hard-deleted agents, and the server's
-// already-anonymized restricted bucket. Naming it after deletion would be a
-// lie for the second group, so the Errors card labels it neutrally
-// ("Other agents"), which is honest for both.
+/** 汇总「查看者无法解析出名字的所有 Agent」这一聚合行的合成 agentId。刻意
+ *  区别于 DELETED_AGENTS_ROW_ID，因为这个桶一次覆盖两类人群：硬删除的 Agent，
+ *  以及服务端已匿名化的 restricted 桶。按「删除」来命名对第二类是说谎，所以
+ *  Errors 卡片中性标注它为「Other agents」，对两类都诚实。 */
 export const UNRESOLVED_AGENTS_ROW_ID = "__unresolved_agents__";
 
+/** 单 Agent 的失败合计行。 */
 export interface AgentFailureRow {
   agentId: string;
   failed: number;
   total: number;
   rate: number;
-  // Full per-class split of this agent's failures, which the offender row
-  // draws as a stacked bar. Carries the whole composition rather than just
-  // the heaviest class: "fails one way" and "fails five ways" are different
-  // problems, and a single dominant-class label collapsed them into the same
-  // row. Every class is present (0 when unused) so the bar can be built
-  // without existence checks.
+  // 该 Agent 失败的完整分类拆分，offender 行按它画堆叠柱。带完整构成而不是只
+  // 带最重的一类：「只有一种失败方式」和「有五种失败方式」是不同的问题，用单一
+  // 主导类别标签会把它们压成同一行。每个类别都在（未用为 0），这样堆叠柱无需
+  // 存在性判断就能搭出来。
   classes: FailureClassCounts;
 }
 
-// Per-agent failure totals, worst first. Default order is absolute failure
-// count: an agent with 1/1 failed is a 100% rate but is rarely the thing an
-// operator should look at before the agent that failed 40 times. The rate
-// rides along on the row, and `sortAgentFailures` can re-rank on it.
-//
-// Agents with zero failures are dropped — this list is a triage aid, not a
-// census; the leaderboard above it already shows every agent.
+/** 每 Agent 的失败合计，最差的在前。默认顺序是绝对失败数：1/1 失败的 Agent
+ *  是 100% 失败率，但很少是操作者该先看的（相比失败 40 次的 Agent）。rate
+ *  随行携带，`sortAgentFailures` 可按它重新排名。
+ *
+ *  零失败的 Agent 会被丢掉——这个列表是排查辅助，不是人口普查；它上方的
+ *  leaderboard 已展示每个 Agent。 */
 export function aggregateAgentFailures(
   rows: DashboardFailureByAgent[],
 ): AgentFailureRow[] {
@@ -706,11 +683,10 @@ export function aggregateAgentFailures(
   );
 }
 
-// Which metric ranks the offender list, and therefore how long its bars are.
-// The two used to disagree: the list ranked on absolute failures while the
-// most prominent number on the row was the rate, so the bar looked like it
-// measured a percentage it had nothing to do with. Mirrors LeaderboardSort's
-// contract — sort metric, bar length and the emphasised column move together.
+/** offender 列表按哪个指标排序，因此也决定条形的长度。这两者以前曾不一致：列表
+ *  按绝对失败数排名，而行上最显眼的数字却是失败率，于是条形看起来在丈量一个它
+ *  无关的百分比。镜像 LeaderboardSort 的约定——排序指标、条形长度与强调列一起
+ *  联动。 */
 export type OffenderSort = "failed" | "rate";
 
 export const OFFENDER_METRIC: Record<
@@ -721,22 +697,21 @@ export const OFFENDER_METRIC: Record<
   rate: (r) => r.rate,
 };
 
-// Minimum terminal runs before an agent's failure rate is allowed to compete
-// on the Rate ranking. One run that failed is a 100% rate, and without a floor
-// that row wins outright and buries every agent worth looking at.
-//
-// Small-sample rows are demoted, NOT hidden: this list has to keep reconciling
-// with the workspace failure count above it, and an agent that failed its only
-// two runs is still a real thing an operator may want to see.
+/** 在 Agent 的失败率可以参与 Rate 排名之前，其所需的最小终止运行次数。一次
+ *  运行就失败是 100% 失败率，没有下限的话那一行会直接登顶、埋没所有值得看
+ *  的 Agent。
+ *
+ *  小样本行被降级而不是隐藏：这个列表必须继续与上方的工作区失败总数对得上账，
+ *  而且一个「仅有的两次运行都失败」的 Agent 仍是操作者可能想看的事实。 */
 export const MIN_RATE_SAMPLE = 10;
 
+/** 该 Agent 是否已达到失败率排名所需的最小样本量。 */
 export function hasRateSample(row: AgentFailureRow): boolean {
   return row.total >= MIN_RATE_SAMPLE;
 }
 
-// Re-rank the offender rows for the selected metric. Ties break on the other
-// metric so an equal-valued bucket keeps a stable, meaningful order instead of
-// reshuffling on every render.
+/** 按所选指标给 offender 行重新排名。同值时用另一指标打破平局，使等值的桶保持
+ *  稳定、有意义的顺序，而不是每次渲染都重排。 */
 export function sortAgentFailures(
   rows: AgentFailureRow[],
   sortBy: OffenderSort,
@@ -750,29 +725,25 @@ export function sortAgentFailures(
   );
 }
 
-// Fold rows whose agent the viewer cannot resolve into one aggregated bucket
-// so the Errors list never renders a bare agent UUID.
-//
-// The privacy boundary itself now lives on the server: GetDashboardFailuresByAgent
-// folds agents the caller may not view onto RESTRICTED_AGENTS_ROW_ID before
-// serializing (MUL-5409), because client-side filtering is decoration — one
-// curl bypasses it. This function stays as the display-side backstop: it still
-// owns hard-deleted agents, whose ids the server has no reason to hide but
-// which resolve to no name, and it re-anonymizes the server's bucket into the
-// same neutral row so the card has one "not an agent you can open" case.
-//
-// `knownAgentIds` is null while the agent list is still loading. Unlike
-// `bucketUnknownAgentRows`, which passes rows through in that window, this
-// one anonymizes them: a transient flash of UUIDs is exactly the leak the
-// function exists to prevent, and one merged row for a few hundred
-// milliseconds is the cheaper failure.
-//
-// This rewrites the RAW per-(agent, reason) rows rather than merging the
-// aggregated ones, so the bucket is just another agent_id by the time
-// `aggregateAgentFailures` runs: its totals, rate, class split and rank all
-// come out of the same code path as every other row. Merging aggregated rows
-// would mean re-deriving `total` and `rate` by hand at the merge site — a
-// second, easily-skewed copy of arithmetic that already exists once.
+/**
+ * 把「查看者无法解析其身份」的 Agent 的行折叠成一个聚合桶，让 Errors 列表永远
+ * 不渲染裸的 Agent UUID。
+ *
+ * 隐私边界本身如今住在服务端：GetDashboardFailuresByAgent 在序列化前把调用者
+ * 不可见的 Agent 折到 RESTRICTED_AGENTS_ROW_ID（MUL-5409），因为客户端侧过滤
+ * 只是装饰——一条 curl 就能绕过。本函数仍是显示侧的兜底：它继续处理硬删除的
+ * Agent（服务端没理由藏它们的 id，但它们解析不出名字），并把服务端的桶重新匿名
+ * 到同一个中性行，让卡片只有一种「不是你可以打开的 Agent」情形。
+ *
+ * Agent 列表还在加载时 `knownAgentIds` 为 null。与 `bucketUnknownAgentRows` 在
+ * 那个窗口期让行原样通过不同，这里选择匿名化：一瞬闪现的 UUID 正是本函数要防的
+ * 泄露，几百毫秒合并成一行是代价更小的失败。
+ *
+ * 本函数改写的是 RAW 的按 (agent, reason) 行，而不是去合并已聚合的行——这样等
+ * `aggregateAgentFailures` 跑起来时，桶只是又一个 agent_id：它的 totals、rate、
+ * 类别拆分和排名全来自与其它行相同的代码路径。合并聚合行意味着要在合并处手写
+ * 重推 `total` 与 `rate`——对一份已存在一次的算术做第二个易失真的拷贝。
+ */
 export function anonymizeUnresolvedAgentRows(
   rows: DashboardFailureByAgent[],
   knownAgentIds: ReadonlySet<string> | null,

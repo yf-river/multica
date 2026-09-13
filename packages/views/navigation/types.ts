@@ -1,3 +1,11 @@
+/**
+ * navigation 模块：跨平台（Web / 桌面）导航适配器的接口定义。
+ * 不同的运行平台各自实现这套接口，再注入 NavigationProvider；共享视图只与
+ * 该抽象打交道，从而在不感知底层路由库的前提下跳转、读当前地址、取可分享
+ * 链接等。
+ */
+
+/** 平台导航能力的抽象接口。 */
 export interface NavigationAdapter {
   push(path: string): void;
   replace(path: string): void;
@@ -5,35 +13,32 @@ export interface NavigationAdapter {
   pathname: string;
   searchParams: URLSearchParams;
   /**
-   * Current fragment, including its leading `#`, or `""` when the location has
-   * none. Part of "where am I" alongside `pathname` / `searchParams`: shared
-   * views that rebuild the current URL (copy link, feedback) must keep a deep
-   * link such as `#comment-…` intact. Compose the three with `currentPath()`
-   * rather than concatenating them at each call site.
+   * 当前 URL fragment（含开头的 `#`），没有则为 `""`。它与 `pathname` /
+   * `searchParams` 一起构成「我在哪」：那些要重建当前 URL 的共享视图（复制
+   * 链接、反馈）必须保留像 `#comment-…` 这样的深链。请用 `currentPath()`
+   * 组合三者，而不要在每个调用处自己拼接。
    */
   hash: string;
-  /** Return an absolute, shareable URL for an application path. */
+  /** 为某个应用路径返回绝对、可分享的 URL。 */
   getShareableUrl: (path: string) => string;
   /**
-   * Optional: warm up route assets / RSC payload for a path. Callers must
-   * invoke via `prefetch?.(href)`.
+   * 可选：为某个路径预热路由资源 / RSC payload。调用方必须通过
+   * `prefetch?.(href)` 触发。
    */
   prefetch?: (path: string) => void;
   /**
-   * Optional: is there an in-app page behind the current one, so that `back()`
-   * lands somewhere inside Multica rather than stepping off the app? Only the
-   * platform can answer. Adapters that cannot answer leave this undefined and
-   * callers must treat that as `false`.
+   * 可选：当前地址后面是否还有一个应用内页面——让 `back()` 落在 Multica
+   * 内部而不是一步走出应用？只有平台自己答得了。无法回答的适配器就留空，
+   * 调用方须把空当成 `false`。
    *
-   * Read it through `useBackOrReplace()` rather than calling it directly.
+   * 请通过 `useBackOrReplace()` 读取，而不是直接调用。
    */
   canGoBack?: () => boolean;
   /**
-   * Optional: step forward through history, the inverse of `back()`. It remains
-   * optional because not every adapter owns a forward stack. Callers must
-   * invoke it via `forward?.()`.
+   * 可选：沿历史前进一步，`back()` 的逆操作。保持可选是因为并非每个适配器
+   * 都持有前向栈。调用方必须通过 `forward?.()` 触发。
    */
   forward?: () => void;
-  /** Open an application path in a new desktop tab/window when supported. */
+  /** 受支持时，在一个新的桌面标签页/窗口打开应用路径。 */
   openInNewTab?: (path: string, title?: string, options?: { activate?: boolean }) => void;
 }

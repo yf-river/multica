@@ -1,15 +1,44 @@
+// ============================================================================
+// runtime-machines.ts——把一条条原始 runtime 记录聚合成「机器」视图的纯逻辑模块
+//
+// 角色定位：runtimes 列表页 / 详情页需要先按「物理 / 托管单元」把 runtime 归并成
+// 机器行（RuntimeMachine）再渲染。本模块只做聚合、筛选、排序与字段推导，不碰 UI、
+// 不发请求，是页面数据层的纯函数部分。
+//
+// 背景知识：一台机器（如装了 multica daemon 的电脑、或云端托管节点）上往往同时
+// 跑着多个 agent runtime——每个厂商的 CLI 各注册一行。所以「机器 = 一组 runtime」，
+// 机器的标题 / 健康 / 版本等属性都要从这组 runtime 里推导出来。
+//
+// 分组规则（runtimeMachineId）：优先按 daemon（daemon_id 相同即同一台机器）；
+// 没有 daemon 的记录退化为按「设备名」，还不行才让这条 runtime 自己单独成一台。
+//
+// 关键概念：
+//  - 机器标题（machineTitle）：用户显式改的名（机器级改名会把同一 custom_name 盖到
+//    这台机器全部 runtime 上，见 sharedCustomName / MUL-4217）最优先，其次是 OS
+//    上报的设备名，再其次是「厂商 cloud」，最后兜底 daemon id 缩写。
+//  - 健康（health）：机器下所有 runtime 取「最差」档，但只要有一个 online 就整台算
+//    online——机器还在跑就有资格被当作在线。
+//  - 排序（compareRuntimeMachines）：remote（本机/远程 daemon）排在 cloud 前；
+//    同档内在线数多的在前，再按标题字母序。
+// ============================================================================
 import { deriveRuntimeHealth, type RuntimeHealth } from "@multica/core/runtimes";
 import type { AgentRuntime } from "@multica/core/types";
 import { formatDeviceInfo } from "../utils";
 
+// 机器的两种来源：remote = 装了 daemon 的远端/本机机器，cloud = multica 云端托管节点。
 export type RuntimeMachineSection = "remote" | "cloud";
+// 列表过滤维度：全部 / 至少一个在线 / 有问题的机器。
 export type RuntimeMachineFilter = "all" | "online" | "issues";
 
+// 一台机器当前承载的工作负载摘要（汇总自它名下各 runtime）。
 export interface RuntimeWorkloadSummary {
   runningCount: number;
   queuedCount: number;
 }
 
+// 聚合后的「机器」行：由同名 daemon（或设备）下的若干 runtime 汇总而来，
+// 是列表页与详情页的渲染单位。字段要么来自 daemon 共享属性，要么由整组
+// runtime 推导（健康取最差、标题按优先级猜、计数是求和）。
 export interface RuntimeMachine {
   id: string;
   daemonId: string | null;
@@ -34,6 +63,7 @@ interface RuntimeMachineOptions {
   workloadByRuntimeId?: Map<string, RuntimeWorkloadSummary>;
 }
 
+// 聚合过程中的中间态：先按 key 攒 runtime，攒齐后再一次推导全部展示字段。
 interface RuntimeMachineDraft {
   id: string;
   daemonId: string | null;
@@ -41,6 +71,7 @@ interface RuntimeMachineDraft {
   runtimes: AgentRuntime[];
 }
 
+// 健康档次的严重程度数字，用于把整组 runtime 里「最严重」的那个挑出来当机器健康。
 const HEALTH_SEVERITY: Record<RuntimeHealth, number> = {
   online: 0,
   recently_lost: 1,
@@ -48,6 +79,13 @@ const HEALTH_SEVERITY: Record<RuntimeHealth, number> = {
   long_offline: 3,
 };
 
+/**
+ * 把「名字（主机名）」形态的 runtime 名字拆成基础名与括号里的主机名。
+ *
+ * daemon 上报的 runtime 名形如 "Claude Code (alice-mac.local)"——括号内是
+ * 这台机器的 OS 主机名，是判断「哪些 runtime 属于同一台机器」的证据之一。
+ * 没有括号就原样返回，hostname 给 null。
+ */
 export function splitRuntimeName(name: string): {
   base: string;
   hostname: string | null;
@@ -57,11 +95,10 @@ export function splitRuntimeName(name: string): {
   return { base: m[1], hostname: m[2] };
 }
 
-// The label for a runtime rendered under (or next to) its machine's name.
-// A machine-level rename stamps the same custom_name on every runtime of
-// the daemon (MUL-4217), so repeating it per runtime is noise — fall back
-// to the provider base (e.g. "Claude"). A one-off per-runtime rename that
-// differs from the machine name stays visible verbatim.
+// 显示在机器名下方/旁边的单条 runtime 标签。机器级改名会把同一个 custom_name
+// 盖到这台 daemon 的每个 runtime 上（MUL-4217），此时逐行重复同一个名字只是噪音
+// ——回退到协议族基础名（如 "Claude"）。只有某条 runtime 被单独改名、与机器名
+// 不同时，才原样展示这个自定义名。
 export function runtimeRowLabel(
   runtime: AgentRuntime,
   machineTitle: string,
@@ -71,6 +108,17 @@ export function runtimeRowLabel(
   return splitRuntimeName(runtime.name).base;
 }
 
+/**
+ * 把扁平的一串 runtime 记录按所属机器聚合成 RuntimeMachine 列表。
+ *
+ * @param runtimes - 后端返回的全部 runtime（来自 runtimeListOptions）。
+ * @param options - now 用于推导健康（时间阈值判断）；workloadByRuntimeId 是
+ *   「runtime id → 正在跑/排队数」的索引，用于汇总每台机器的负载。
+ * @returns 聚合好的机器列表，已按 compareRuntimeMachines 排好序。
+ *
+ * 内部流程：先按 runtimeMachineId 分组攒 draft，再逐个 finalizeRuntimeMachine
+ * 推导标题/健康/负载等字段。
+ */
 export function buildRuntimeMachines(
   runtimes: AgentRuntime[],
   options: RuntimeMachineOptions,
@@ -98,6 +146,15 @@ export function buildRuntimeMachines(
   return machines.sort(compareRuntimeMachines);
 }
 
+/**
+ * 按「状态页签 + 关键字」过滤机器列表。
+ *
+ * @param machines - buildRuntimeMachines 的结果。
+ * @param query - 关键字，大小写不敏感；命中标题 / 副标题 / 设备信息 /
+ *   daemon id / 厂商名 / runtime 名与自定义名任一即可。
+ * @param filter - "online" 只要至少一个 runtime 在线的机器；
+ *   "issues" 只要有问题（非全部在线）的机器。
+ */
 export function filterRuntimeMachines(
   machines: RuntimeMachine[],
   query: string,
@@ -126,6 +183,11 @@ export function filterRuntimeMachines(
   });
 }
 
+/**
+ * 汇总机器列表各页签的计数（全部 / 至少一个在线 / 有问题），喂给顶部的
+ * Tab 徽标。注意 "online" 计的是「机器数」而非 runtime 数，与
+ * filterRuntimeMachines 的判据一致。
+ */
 export function runtimeMachineCounts(machines: RuntimeMachine[]): {
   all: number;
   online: number;
@@ -138,6 +200,8 @@ export function runtimeMachineCounts(machines: RuntimeMachine[]): {
   };
 }
 
+// 把一个分组 draft 加工成完整的 RuntimeMachine：统一给组内 runtime 排序、挑标题、
+// 推导副标题 / 健康 / 负载汇总，并选出有代表性的版本号与最后在线时间。
 function finalizeRuntimeMachine(
   draft: RuntimeMachineDraft,
   options: RuntimeMachineOptions,
@@ -199,6 +263,9 @@ function finalizeRuntimeMachine(
   };
 }
 
+// 机器分组 key，按可靠度递减：同一 daemon_id 必是同一台机器（前缀 runtime_mode
+// 是为了让本地 / 云的同 id 不撞）；没有 daemon 的旧记录退化用设备名归类；两者都
+// 拿不到就只好让每条 runtime 单独成一台机器。
 function runtimeMachineId(runtime: AgentRuntime): string {
   if (runtime.daemon_id) return `${runtime.runtime_mode}:${runtime.daemon_id}`;
   const deviceName = runtimeDeviceName(runtime);
@@ -206,6 +273,9 @@ function runtimeMachineId(runtime: AgentRuntime): string {
   return `${runtime.runtime_mode}:runtime:${runtime.id}`;
 }
 
+// 从 runtime 记录里捞「设备名」：优先取名字括号里的主机名（形如
+// "Claude Code (my-mac)" → "my-mac"）；没有括号就取 device_info 里以 " · "
+// 分隔的首段当设备名兜底。
 function runtimeDeviceName(runtime: AgentRuntime): string | null {
   const host = splitRuntimeName(runtime.name).hostname;
   if (host) return host;
@@ -215,11 +285,13 @@ function runtimeDeviceName(runtime: AgentRuntime): string | null {
   return raw.split(" · ")[0]?.trim() || null;
 }
 
-// The custom name shared by every runtime on a machine (MUL-4217). A
-// machine-level rename writes the same custom_name to all runtimes on the
-// daemon, so a name shared by all of them is the machine's label. A one-off
-// per-runtime rename (not shared) is deliberately ignored here so it can't
-// masquerade as the whole machine's name.
+/**
+ * 返回这台机器上「所有 runtime 共享的自定义名」，没有就返回 null。
+ *
+ * 背景（MUL-4217）：机器级改名会把同一个 custom_name 写到这台 daemon 的全部
+ * runtime 上，所以「所有 runtime 同名」的那个名字就是机器的标签；而只给单条
+ * runtime 改的名（与他人不同）会被刻意忽略，避免它冒充整台机器的名字。
+ */
 export function sharedCustomName(runtimes: AgentRuntime[]): string | null {
   if (runtimes.length === 0) return null;
   const names = runtimes.map((r) => r.custom_name?.trim() ?? "");
@@ -229,8 +301,7 @@ export function sharedCustomName(runtimes: AgentRuntime[]): string | null {
 }
 
 function machineTitle(runtimes: AgentRuntime[]): string {
-  // An explicit user-set machine name wins over everything, including the
-  // OS-reported local machine name.
+  // 用户显式设过的机器名优先于一切，包括 OS 上报的本机名。
   const shared = sharedCustomName(runtimes);
   if (shared) return shared;
 
@@ -277,10 +348,9 @@ function compactDeviceInfo(
   const primary = parts[0];
   if (!primary) return null;
 
-  // Reshape OS+arch produced by formatDeviceInfo (e.g. "macOS (x86_64)")
-  // into the more scannable "x86_64 macOS". Version strings — the only
-  // other shape that historically carried parens — are filtered out
-  // above so they can't pollute the per-machine subtitle.
+  // 把 formatDeviceInfo 产出的「OS (arch)」（如 "macOS (x86_64)"）重排成更好扫读的
+  // 「arch OS」——"x86_64 macOS"。带括号的另一形态是版本号，已在上面的过滤里被
+  // 剔掉，不会混进每台机器的副标题。
   const osArch = primary.match(/^(.+?)\s+\(([^)]+)\)$/);
   if (osArch?.[1] && osArch[2]) {
     return `${osArch[2]} ${osArch[1]}`;
@@ -288,11 +358,10 @@ function compactDeviceInfo(
   return primary;
 }
 
-// True for parts that carry an agent CLI version, not machine info —
-// e.g. "2.1.5 (Claude Code)", "codex-cli 0.118.0", "1.0.20", "claude 1.0.0".
-// Those describe a runtime, not the host, so they should never become a
-// machine's subtitle (otherwise every claude-equipped daemon's row reads
-// "Claude Code …", drowning out actual per-machine differences).
+// 命中「某 agent CLI 版本号」而不是机器信息的分段（如 "2.1.5 (Claude Code)"、
+// "codex-cli 0.118.0"、"1.0.20"、"claude 1.0.0"）。这类内容是描述 runtime 的，
+// 与宿主机无关，绝不该成为机器的副标题——否则每台装了 claude 的 daemon 行都
+// 显示成 "Claude Code …"，真正的机器差异反而被淹没。
 function isAgentVersionLike(part: string): boolean {
   return /(?:^|\s)v?\d+\.\d+\.\d+/.test(part);
 }

@@ -1,3 +1,10 @@
+// durable_receipts.go
+//
+// 职责：给"业务变更已在源事务里完成、且没有额外数据库投影"的事件登记可靠
+// 消费回执（terminal receipt）。可靠投递里，事件只有被消费者显式回执后才算
+// "关闭"；像 Issue/评论/成员这类目录变更，数据早已随源事务写进主表，没有
+// 投影要做，但若不消费回执，这些事件会永远停留在 pending，堵住同一事件流上
+// 后面的事件。本文件给整批这类事件挂一个"空消费者"，只负责回执不干活。
 package main
 
 import (
@@ -9,16 +16,19 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// registerDurableTerminalReceipts closes durable streams for events whose
-// business mutation was already performed by the originating transaction and
-// which have no additional database projection. Without a receipt these rows
-// remain pending forever and can block later events on the same stream.
+// registerDurableTerminalReceipts 为一批"业务写入已由源事务完成、再无额外
+// 数据库投影"的事件注册可靠消费回执。没有回执的话，这些行会永远停留在
+// pending 状态，进而阻塞同一条事件流上更晚的事件。
 func registerDurableTerminalReceipts(dispatcher *eventoutbox.Dispatcher) error {
 	return registerDurableEvents(dispatcher, "terminal_receipt", consumeDurableTerminalReceipt,
 		// Catalog and resource mutations do not have a database projection in
 		// the dispatcher; the originating transaction already changed the
 		// canonical row. A receipt still matters: it closes the event and keeps
 		// later events on the same stream claimable.
+		//
+		// 中文说明：目录/资源类变更在 dispatcher 里没有对应的数据库投影——
+		// 源事务早已改好了权威行。但回执仍然重要：它负责"关闭"这条事件，
+		// 让同一事件流上更晚的事件可以被认领投递。
 		protocol.EventIssueCreated,
 		protocol.EventIssueUpdated,
 		protocol.EventIssueDeleted,
@@ -118,6 +128,8 @@ func registerDurableTerminalReceipts(dispatcher *eventoutbox.Dispatcher) error {
 	)
 }
 
+// consumeDurableTerminalReceipt 是"空消费者"：这些事件没有任何投影或派生要
+// 做，回执即完成。返回 nil 表示不派生出新事件。
 func consumeDurableTerminalReceipt(_ context.Context, _ *db.Queries, _ events.Event) ([]events.Event, error) {
 	return nil, nil
 }

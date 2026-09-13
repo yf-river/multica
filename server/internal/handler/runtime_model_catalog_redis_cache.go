@@ -1,3 +1,6 @@
+// 本文件：ModelCatalogCache 的 Redis 实现，让每个 API 副本共享同一份「每台 runtime 的
+// 预热模型目录」。没有它，每个节点各存各的 map，用户在负载均衡后面来回跳节点时，大多数
+// 打开操作仍要付一次完整的 daemon 往返（与 RedisModelListStore 同一套多节点考量）。
 package handler
 
 import (
@@ -10,24 +13,18 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Redis-backed ModelCatalogCache so every API replica shares one warm model
-// catalog per runtime. Without it each node would keep its own map and a user
-// bouncing between replicas behind a load balancer would still pay the full
-// daemon round trip on most opens (same multi-node reasoning as
-// RedisModelListStore).
+// Key 布局——每台 runtime 一个普通字符串 key，TTL = 服务窗口，到期由 Redis 负责回收，
+// 没有任何需要清扫的东西：
 //
-// Key layout — one plain string key per runtime, TTL = serve window, so
-// expiry is Redis's job and there is nothing to sweep:
+//	mul:runtime_model_catalog:<runtime_id> → JSON 编码的 ModelCatalogSnapshot
 //
-//	mul:runtime_model_catalog:<runtime_id> → JSON-encoded ModelCatalogSnapshot
-//
-// No hash tag: every operation here is single-key, so cluster slot co-location
-// buys nothing (unlike the Lua-scripted pending queues).
+// 不需要 hash tag：这里每个操作都只碰单个 key，集群槽位共置没有收益（不同于要跑 Lua 脚本
+// 的 pending 队列）。
 const modelCatalogKeyPrefix = "mul:runtime_model_catalog:"
 
 func modelCatalogKey(runtimeID string) string { return modelCatalogKeyPrefix + runtimeID }
 
-// RedisModelCatalogCache is the multi-node implementation of ModelCatalogCache.
+// RedisModelCatalogCache 是 ModelCatalogCache 的多节点实现。
 type RedisModelCatalogCache struct {
 	rdb *redis.Client
 	ttl time.Duration
@@ -50,14 +47,12 @@ func (c *RedisModelCatalogCache) Get(ctx context.Context, runtimeID string) (*Mo
 	}
 	var snapshot ModelCatalogSnapshot
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
-		// A snapshot we cannot decode is indistinguishable from a cold cache;
-		// drop it so the next Put replaces the bad value.
+		// 解码不了的快照与缓存未命中无法区分——直接丢掉，让下一次 Put 覆盖这个坏值。
 		c.rdb.Del(ctx, modelCatalogKey(runtimeID))
 		return nil, fmt.Errorf("decode model catalog: %w", err)
 	}
-	// Guard against a snapshot whose TTL outlived the serve window (TTL is set
-	// from the same constant, but a config change or a manual write could
-	// diverge) — the age check is the contract, not the TTL.
+	// 防一手「快照的存龄超过了服务窗口」：TTL 虽然来自同一常量，但配置变更或手工写入可能
+	// 让两者分叉——按 StoredAt 年龄判断才是契约，TTL 只是手段。
 	if snapshot.StoredAt.IsZero() || time.Since(snapshot.StoredAt) > c.ttl {
 		return nil, nil
 	}
@@ -65,8 +60,8 @@ func (c *RedisModelCatalogCache) Get(ctx context.Context, runtimeID string) (*Mo
 }
 
 func (c *RedisModelCatalogCache) Put(ctx context.Context, runtimeID string, models []ModelEntry, supported bool) error {
-	// fallback=false: ReportModelListResult refuses to Put a fallback catalog
-	// at all, so anything reaching a cache backend is a real discovery result.
+	// fallback=false：ReportModelListResult 根本拒绝把 fallback 目录 Put 进来，所以能到
+	// 缓存后端的都是真实发现结果。
 	if runtimeID == "" || !cacheableModelCatalog(models, supported, false) {
 		return nil
 	}

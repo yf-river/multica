@@ -1,3 +1,7 @@
+// 文件职责：实现 `multica autopilot` 命令组——自动化编排（autopilot）的
+// list/get/create/update/delete、手动触发（trigger）、执行历史（runs），以及其
+// 触发器管理（trigger-add/list/update/delete/rotate-url，支持 schedule 定时与
+// webhook 两种）。webhook 凭据默认脱敏，get 需 --show-secrets 才原样给出。
 package main
 
 import (
@@ -15,11 +19,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// autopilotCmd 是 `multica autopilot` 父命令。
 var autopilotCmd = &cobra.Command{
 	Use:   "autopilot",
 	Short: "Manage autopilots (scheduled/triggered agent automations)",
 }
 
+// autopilotListCmd 列出工作区的 autopilot。
 var autopilotListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List autopilots in the workspace",
@@ -148,9 +154,9 @@ func init() {
 	autopilotUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// delete
-	// (no flags)
+	// （无 flag）
 
-	// trigger (manual run)
+	// trigger（手动触发一次）
 	autopilotTriggerCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// runs
@@ -158,7 +164,7 @@ func init() {
 	autopilotRunsCmd.Flags().Int("offset", 0, "Pagination offset")
 	autopilotRunsCmd.Flags().String("output", "table", "Output format: table or json")
 
-	// trigger-add — supports schedule and webhook
+	// trigger-add — schedule 与 webhook 两种都支持
 	autopilotTriggerAddCmd.Flags().String("kind", "schedule", "Trigger kind: schedule or webhook")
 	autopilotTriggerAddCmd.Flags().String("cron", "", "Cron expression (required for --kind schedule)")
 	autopilotTriggerAddCmd.Flags().String("timezone", "", "IANA timezone (default UTC; schedule only)")
@@ -169,7 +175,7 @@ func init() {
 	autopilotTriggerListCmd.Flags().String("output", "table", "Output format: table or json")
 	autopilotTriggerListCmd.Flags().Bool("full-id", false, "Show full UUIDs in table output")
 
-	// trigger-rotate-url — webhook only
+	// trigger-rotate-url — 仅 webhook
 	autopilotTriggerRotateURLCmd.Flags().String("output", "json", "Output format: table or json")
 	autopilotTriggerRotateURLCmd.Flags().BoolP("yes", "y", false, "Skip the interactive confirmation prompt")
 
@@ -182,9 +188,10 @@ func init() {
 }
 
 // ---------------------------------------------------------------------------
-// Autopilot commands
+// Autopilot commands —— 各 autopilot 子命令
 // ---------------------------------------------------------------------------
 
+// runAutopilotList 执行 `autopilot list`：列出工作区 autopilot（--status 过滤）。
 func runAutopilotList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -217,9 +224,9 @@ func runAutopilotList(cmd *cobra.Command, _ []string) error {
 
 	fullID, _ := cmd.Flags().GetBool("full-id")
 	actors := loadActorDisplayLookup(ctx, client)
-	// NEXT_RUN is what distinguishes a scheduled autopilot from one with no
-	// trigger at all. The list payload has carried next_run_at all along, but
-	// the table dropped it, leaving the two indistinguishable here (MUL-6680).
+	// NEXT_RUN 正是区分「有排期的 autopilot」与「根本没配触发器」的那一列：列表
+	// 载荷其实一直带着 next_run_at，但表格之前把它丢了，导致两种状态无法区分
+	// （MUL-6680）。
 	headers := []string{"ID", "TITLE", "STATUS", "MODE", "ASSIGNEE", "NEXT_RUN", "LAST_RUN"}
 	rows := make([][]string, 0, len(resp.Autopilots))
 	for _, a := range resp.Autopilots {
@@ -237,6 +244,8 @@ func runAutopilotList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runAutopilotGet 执行 `autopilot get <id>`：取详情；webhook 凭据默认脱敏，
+// --show-secrets 才显示（日志不安全）。
 func runAutopilotGet(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	showSecrets, _ := cmd.Flags().GetBool("show-secrets")
@@ -287,6 +296,8 @@ func runAutopilotGet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// redactAutopilotWebhookCredentials 把响应里的 webhook 凭据字段抹掉（仅当没有
+// --show-secrets 时），防止 secret 泄进日志/终端。
 func redactAutopilotWebhookCredentials(resp map[string]any) {
 	triggers, ok := resp["triggers"].([]any)
 	if !ok {
@@ -323,15 +334,15 @@ func redactAutopilotWebhookCredentials(resp map[string]any) {
 	}
 }
 
-// relativeTimestamp renders an RFC3339 timestamp as a short, fixed-width-ish
-// relative string ("in 2h", "3d ago", "—" when absent or unparseable). Table
-// columns use this instead of the raw timestamp so NEXT_RUN fits alongside the
-// existing columns on a narrow terminal, and so "never scheduled" reads as a
-// visibly different value rather than an empty cell (MUL-6680).
+// relativeTimestamp 把 RFC3339 时间戳渲染成短小、近似等宽的相对字符串
+// （"in 2h"、"3d ago"，缺失或解析不了则显示 "—"）。表格列用它替代原始时间戳，
+// 让 NEXT_RUN 在窄终端上能跟既有列挤进同一行，也让「从未排期」显示成肉眼可辨
+// 的值而不是一个空单元格（MUL-6680）。相对差按当前时间（time.Now）计算。
 func relativeTimestamp(ts string) string {
 	return relativeTimestampAt(ts, time.Now())
 }
 
+// relativeTimestampAt 把 ts 相对 now 渲染成 "3m ago" 这类可读标签。
 func relativeTimestampAt(ts string, now time.Time) string {
 	trimmed := strings.TrimSpace(ts)
 	if trimmed == "" {
@@ -368,6 +379,7 @@ func relativeTimestampAt(ts string, now time.Time) string {
 	return magnitude + suffix
 }
 
+// webhookTokenHint 把 webhook 的 token 缩写成一截提示文本。
 func webhookTokenHint(token string) string {
 	if len(token) < 4 {
 		return ""
@@ -375,6 +387,8 @@ func webhookTokenHint(token string) string {
 	return token[len(token)-4:]
 }
 
+// runAutopilotCreate 执行 `autopilot create`：--title/--agent/--mode 必填；可选
+// subscriber 列表与 create_issue 的 issue-title-template。
 func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -447,6 +461,8 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runAutopilotUpdate 执行 `autopilot update <id>`：只更新显式 Changed 字段；subscriber
+// 整表替换，--clear-subscribers 清空。
 func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -538,6 +554,7 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runAutopilotDelete 执行 `autopilot delete <id>`：删除 autopilot。
 func runAutopilotDelete(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -559,6 +576,7 @@ func runAutopilotDelete(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runAutopilotTrigger 执行 `autopilot trigger <id>`：手动触发一次运行。
 func runAutopilotTrigger(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -586,6 +604,7 @@ func runAutopilotTrigger(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runAutopilotRuns 执行 `autopilot runs <id>`：列出该 autopilot 的执行历史。
 func runAutopilotRuns(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -641,6 +660,8 @@ func runAutopilotRuns(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runAutopilotTriggerList 执行 `autopilot trigger-list <autopilot-id>`：列出该
+// autopilot 的触发器（id 供 trigger-update/-delete/-rotate-url 用）。
 func runAutopilotTriggerList(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -655,10 +676,9 @@ func runAutopilotTriggerList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve autopilot: %w", err)
 	}
 
-	// The detail endpoint already returns triggers as a top-level sibling of
-	// "autopilot"; this command exists so the ids that trigger-update /
-	// trigger-delete / trigger-rotate-url require are discoverable without
-	// knowing that envelope shape (MUL-6680).
+	// 详情端点把 triggers 作为 "autopilot" 的顶层兄弟返回；单独提供这条命令，让
+	// trigger-update / trigger-delete / trigger-rotate-url 所需的 id 不用先弄懂
+	// 那层信封结构就能查到（MUL-6680）。
 	var resp map[string]any
 	if err := client.GetJSON(ctx, "/api/autopilots/"+autopilotRef.ID, &resp); err != nil {
 		return fmt.Errorf("get autopilot: %w", err)
@@ -703,6 +723,8 @@ func runAutopilotTriggerList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runAutopilotTriggerAdd 执行 `autopilot trigger-add <autopilot-id>`：加一条
+// schedule（--kind schedule --cron）或 webhook（--kind webhook）触发器。
 func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -764,9 +786,9 @@ func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// printWebhookURL emits the webhook URL with the priority webhook_url >
-// composed-from-base. Keeps the table-output flow useful — without this the
-// table renderer drops the most important new piece of information.
+// printWebhookURL 输出 webhook URL，优先取 webhook_url、否则按 base 拼
+// webhook_path。它保住表格输出的可用性——没有它，表格渲染会丢掉新信息里最重要
+// 的这一条。
 func printWebhookURL(client *cli.APIClient, trigger map[string]any) {
 	if u := strVal(trigger, "webhook_url"); u != "" {
 		fmt.Printf("Webhook URL: %s\n", u)
@@ -796,10 +818,9 @@ func runAutopilotTriggerRotateURL(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve trigger: %w", err)
 	}
 
-	// Confirmation: rotation invalidates the current URL immediately. The UI
-	// version uses an AlertDialog; the CLI mirrors that with a y/N prompt
-	// unless --yes was passed for scripted use. Style matches confirmOverwrite
-	// in cmd_setup.go.
+	// 二次确认：轮换会立刻让当前 URL 失效。网页端用的是 AlertDialog；CLI 用
+	// y/N 提示做镜像，除非脚本场景传了 --yes。样式对齐 cmd_setup.go 里的
+	// confirmOverwrite。
 	yes, _ := cmd.Flags().GetBool("yes")
 	if !yes {
 		fmt.Fprintln(os.Stderr, "This will invalidate the current webhook URL immediately. Continue? [y/N] ")
@@ -934,14 +955,14 @@ func resolveAutopilotSubscriberInputs(ctx context.Context, client *cli.APIClient
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
-// uuidRegexp matches a canonical UUID (8-4-4-4-12 hex).
+// uuidRegexp 匹配规范 UUID（8-4-4-4-12 位十六进制）。
 var uuidRegexp = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// resolveAgent accepts either a UUID or an agent name (case-insensitive substring)
-// and returns the agent's UUID. Errors on no match or ambiguous match.
+// resolveAgent 接受一个 UUID 或 agent 名（忽略大小写的子串匹配），返回该
+// agent 的 UUID。无匹配或匹配歧义时报错。
 func resolveAgent(ctx context.Context, client *cli.APIClient, nameOrID string) (string, error) {
 	if uuidRegexp.MatchString(nameOrID) {
 		return nameOrID, nil

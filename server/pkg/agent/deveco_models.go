@@ -1,10 +1,9 @@
 package agent
 
-// DevEco Code model discovery. Self-contained and independent of the OpenCode
-// model parser: DevEco maintains its own catalog and CLI, so its discovery code
-// lives here rather than reusing parseOpenCodeModels. A missing CLI or empty
-// catalog returns an empty list so the caller (the runtime model picker) falls
-// back to manual model entry instead of erroring.
+// 文件职责：DevEco Code 的模型发现（自包含，不依赖 OpenCode 的模型解析器）。
+// DevEco 维护自己的目录与 CLI，所以发现逻辑放这里而不是复用 parseOpenCodeModels。
+// CLI 缺失或目录为空时返回空列表，让调用方（运行时模型选择器）退回手动输入模型，
+// 而不是报错卡死。
 
 import (
 	"context"
@@ -13,10 +12,9 @@ import (
 	"time"
 )
 
-// discoverDevecoModels enumerates the `deveco models` catalog. It shells out to
-// the DevEco Code CLI and parses `provider/model` rows. Discovery failures
-// (binary missing, non-zero exit, unparseable output) silently yield an empty
-// list so model selection degrades to manual entry rather than blocking.
+// discoverDevecoModels 枚举 `deveco models` 目录：调 DevEco Code CLI 并解析
+// `provider/model` 行。发现失败（二进制缺失、非零退出、输出不可解析）静默返回
+// 空列表，让模型选择降级到手动输入而不是卡住。
 func discoverDevecoModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
 	if runtimeCmd.Path == "" {
 		runtimeCmd.Path = "deveco"
@@ -24,8 +22,8 @@ func discoverDevecoModels(ctx context.Context, runtimeCmd Command) ([]Model, err
 	if _, err := exec.LookPath(runtimeCmd.Path); err != nil {
 		return []Model{}, nil
 	}
-	// `deveco models` may sync its hosted catalog over the network on first
-	// run; allow a generous timeout so the picker isn't empty on a cold start.
+	// `deveco models` 首次运行可能联网同步托管目录；给个宽裕的超时，免得冷启动时
+	// 选择器是空的。
 	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	cmd := runtimeCmd.exec(runCtx, "models")
@@ -38,12 +36,10 @@ func discoverDevecoModels(ctx context.Context, runtimeCmd Command) ([]Model, err
 	return models, nil
 }
 
-// parseDevecoModels extracts `provider/model` IDs from `deveco models` output.
-// Each non-empty line's first whitespace-delimited token is treated as a model
-// id when it contains a `/` and does not look like a header row or JSON. Output
-// is de-duplicated, preserving first-seen order. Per-model variant/thinking
-// annotation is not parsed here; the thinking-level picker is not offered for
-// DevEco in this revision (see thinking.go).
+// parseDevecoModels 从 `deveco models` 输出里抽取 `provider/model` id。每行非空时，
+// 第一个以空白分隔的 token 只要含 `/`、且不像表头或 JSON，就当模型 id 处理。
+// 输出去重、保持先见顺序。这里不解析按模型变体/思考档位的标注——本版本对 DevEco
+// 不提供思考档位选择器（见 thinking.go）。
 func parseDevecoModels(output string) []Model {
 	var models []Model
 	seen := map[string]bool{}
@@ -57,14 +53,14 @@ func parseDevecoModels(output string) []Model {
 			continue
 		}
 		id := fields[0]
-		// Skip JSON objects/arrays, quoted strings, and header rows such as
-		// "PROVIDER/MODEL".
+		// 跳过 JSON 对象/数组、带引号字符串，以及 "PROVIDER/MODEL" 这类表头。
 		if strings.HasPrefix(id, "{") || strings.HasPrefix(id, "[") || strings.HasPrefix(id, "\"") {
 			continue
 		}
 		if !strings.Contains(id, "/") {
 			continue
 		}
+		// 全大写多半是表头或非模型文本，跳过。
 		if id == strings.ToUpper(id) {
 			continue
 		}

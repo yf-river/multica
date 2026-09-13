@@ -1,3 +1,4 @@
+// 本文件职责：创建 issue 流程的外层「壳」，拥有唯一的 Dialog/DialogContent，负责在「手动模式」和「Agent 模式」之间切换内部面板。
 "use client";
 
 import { useLayoutEffect, useState } from "react";
@@ -15,24 +16,25 @@ import { useIssueDraftStore } from "@multica/core/issues/stores/draft-store";
 import { useWorkspaceId } from "@multica/core/hooks";
 
 /**
- * Shell that owns the single `<Dialog>` AND `<DialogContent>` for the
- * create-issue flow. Mode switching unmounts/mounts only the inner panel
- * body — the Portal, Backdrop, and Popup all stay in the DOM, so Base UI
- * never replays the open animation. That's what makes the switch feel
- * instant; an earlier version put `<DialogContent>` inside each panel and
- * the close→open animation cycle still fired on every toggle.
+ * 创建 issue 流程的外层「壳」。
  *
- * `initialMode` comes from the modal registry (`quick-create-issue` →
- * agent, `create-issue` → manual). Subsequent switches are local state
- * only and never round-trip through the modal store.
+ * 它负责持有唯一的 `<Dialog>` 和 `<DialogContent>`：切换模式时只卸载/挂载内部面板，
+ * Portal、遮罩层、弹窗本体都一直留在 DOM 里，因此 Base UI 不会重复播放打开动画，
+ * 切换才会感觉是瞬时的。早先版本把 `<DialogContent>` 放在每个面板里，每次切换都会
+ * 重放一遍关闭→打开的动画。
  *
- * Carry payload: when a panel switches mode it can hand a payload up via
- * `onSwitchMode`; the shell stores it as the next panel's `data` so seeding
- * works exactly like a fresh open.
+ * `initialMode` 来自弹窗注册表（`quick-create-issue` → agent，`create-issue` → manual）。
+ * 之后的切换只是本地 state，不再回写弹窗 store。
  *
- * Manual-mode `isExpanded` is lifted up because it drives `DialogContent`'s
- * className — the className lives here in the shell since the Popup is here,
- * but the toggle for that state lives in the manual panel body.
+ * 携带数据：面板切换模式时可以通过 `onSwitchMode` 把一份数据交给外壳，外壳会把它
+ * 存成下一个面板的 `data`，这样预填效果和「重新打开」完全一致。
+ *
+ * 手动模式的 `isExpanded` 被提升到外壳：因为它驱动 `DialogContent` 的 className——
+ * Popup 在这里，所以 className 也放在外壳；但切换这个状态的开关在手动面板内部。
+ *
+ * @param onClose     关闭弹窗的回调
+ * @param initialMode 初始模式（agent 或 manual）
+ * @param data        弹窗打开时传入的上下文，可携带预填字段或锚点评论等
  */
 export function CreateIssueDialog({
   onClose,
@@ -137,19 +139,16 @@ function CreateIssueDialogBody({
       ? cn(
           "p-0 gap-0 flex flex-col overflow-hidden",
           "!top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2",
-          // Smooth size transition when switching modes — the manual mode
-          // uses the same easing.
+          // 切换模式时的平滑尺寸过渡——手动模式用的是同一套缓动曲线。
           "!transition-all !duration-300 !ease-out",
-          // Phone gutter. The widths below are `!important` so they beat
-          // DialogContent's own sizing — which also made them beat its
-          // `max-w-[calc(100%-2rem)]` safety margin, leaving the card flush
-          // against both screen edges on a 430px viewport (MUL-6236). Restore
-          // the margin here and let the `sm:` widths take over above 640px.
+          // 手机端留边。下面的宽度是 `!important`，能压过 DialogContent 自身的
+          // 尺寸——但这也一并压过了它的 `max-w-[calc(100%-2rem)]` 安全边距，
+          // 让卡片在 430px 视口下贴着屏幕两侧（MUL-6236）。在这里恢复边距，
+          // 640px 以上再交给 `sm:` 的宽度接管。
           "!w-full !max-w-[calc(100vw-1.5rem)]",
-          // Source-context create needs numeric collapsed/expanded endpoints
-          // so its preview transition can interpolate the height. Ordinary
-          // quick create has no expanding preview and keeps its original
-          // content-driven height, capped for mobile browser chrome.
+          // 带来源上下文的创建需要「收起/展开」的数值化高度端点，这样预览过渡
+          // 才能插值高度。普通快速创建没有可展开的预览，保持原来的内容驱动高度，
+          // 仅对移动端浏览器工具栏做上限截断。
           isExpanded
             ? "!h-5/6 sm:!max-w-4xl"
             : sourceContextData

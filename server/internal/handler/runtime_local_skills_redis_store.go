@@ -1,3 +1,5 @@
+// 本文件是 LocalSkillListStore / LocalSkillImportStore 的 Redis 实现（多节点共享状态用的
+// 存储），文件头下面的注释说明了它的存储布局与认领原子性设计。
 package handler
 
 import (
@@ -10,30 +12,28 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Redis-backed implementations of LocalSkillListStore / LocalSkillImportStore.
+// 设计说明（list 与 import 两条流程共用，只是 key 前缀不同）：
 //
-// Storage layout (for both list and import flows, differing only in key prefix):
-//
-//   <prefix>:<request_id>                 → JSON-encoded request, TTL = retention
+// 存储布局：
+//   <prefix>:<request_id>                 → JSON 编码的请求，TTL = 保留时长
 //   <prefix>:pending:<runtime_id>         → ZSET { member = request_id, score = created_at UnixNano }
-//                                           TTL = retention, refreshed on Create
+//                                           TTL = 保留时长，Create 时刷新
 //
-// PopPending is the critical multi-node primitive. It MUST atomically:
-//  1. pick the oldest pending request id for this runtime
-//  2. claim it (remove from the pending zset) AND transition its record to
-//     "running" in a single step — otherwise a crash / transient Redis error
-//     between the two writes strands the request (no longer pending, record
-//     still says pending; no node will ever re-dispatch it).
+// PopPending 是多节点下最关键的原语，必须原子完成两件事：
+//  1. 挑出这台 runtime 最老的 pending 请求 id
+//  2. 认领它（从 pending zset 移除）并同时把记录置为 "running"——否则两步之间一旦进程
+//     崩溃或 Redis 抖动，请求就被困在中间态（不再 pending、记录却仍写着 pending），
+//     任何节点都不会再派发它。
 //
-// Doing this as two round-trips is racy; we use a Lua script so Redis runs
-// ZREM + SET atomically server-side. If ZREM returns 0 (another node already
-// claimed it), the SET is skipped. This is the fix for the PR-1557 review
-// finding about the "request disappears under Redis hiccups" path.
+// 拆成两次往返有竞态，所以用 Lua 脚本让 Redis 在服务端原子执行 ZREM + SET。若 ZREM
+// 返回 0（已被别的节点认领）就跳过 SET。这正是 PR-1557 评审发现的「Redis 抖动下请求
+// 消失」路径的修复。
 
 const (
+	// 哈希标签（hash tag）让这些 key 都落在同一个 Redis 槽上，保证多 key 的原子操作可用。
 	runtimePendingRedisHashTag = "{runtime_pending}"
 
-	// Namespaced so we don't collide with the realtime relay's ws:* keys.
+	// 加命名空间前缀，避免和实时中继（realtime relay）的 ws:* key 撞车。
 	localSkillListKeyPrefix       = "mul:" + runtimePendingRedisHashTag + ":local_skill:list:"
 	localSkillListPendingPrefix   = "mul:" + runtimePendingRedisHashTag + ":local_skill:list:pending:"
 	localSkillImportKeyPrefix     = "mul:" + runtimePendingRedisHashTag + ":local_skill:import:"
@@ -41,16 +41,14 @@ const (
 	localSkillRedisPopMaxRetries  = 5
 )
 
-// claimPendingScript atomically claims a pending request:
+// claimPendingScript 原子地认领一个 pending 请求：
 //
-//	KEYS[1] = pending zset    ARGV[1] = request id to claim
-//	KEYS[2] = record key       ARGV[2] = new record JSON (status=running)
-//	                           ARGV[3] = record TTL in seconds
+//	KEYS[1] = pending zset    ARGV[1] = 要认领的 request id
+//	KEYS[2] = 记录 key         ARGV[2] = 新记录 JSON（status=running）
+//	                           ARGV[3] = 记录 TTL（秒）
 //
-// Returns 1 when this caller won the claim (zset entry removed, record
-// updated), 0 when the entry was already gone (another node won).
-// Either the ZREM and the SET both happen or neither does — Redis executes
-// a Lua script as a single atomic unit.
+// 返回 1 表示本调用方赢得了认领（zset 项已移除、记录已更新），0 表示该请求已被别的节点
+// 抢先认领。ZREM 与 SET 要么都发生要么都不发生——Redis 把 Lua 脚本当单一原子单元执行。
 var claimPendingScript = redis.NewScript(`
 local removed = redis.call('ZREM', KEYS[1], ARGV[1])
 if removed == 0 then
@@ -69,8 +67,8 @@ func localSkillImportPendingKey(runtimeID string) string {
 	return localSkillImportPendingPrefix + runtimeID
 }
 
-// RedisLocalSkillListStore stores pending / running / completed list requests
-// in Redis so every API node agrees on the same state.
+// RedisLocalSkillListStore 把 pending/running/completed 的清单请求存在 Redis 里，
+// 让所有 API 节点对同一份状态达成一致。各方法语义见 LocalSkillListStore 接口注释。
 type RedisLocalSkillListStore struct {
 	rdb *redis.Client
 }
@@ -96,18 +94,16 @@ func (s *RedisLocalSkillListStore) Create(ctx context.Context, runtimeID string)
 
 	requestKey := localSkillListKey(req.ID)
 	pendingKey := localSkillListPendingKey(runtimeID)
-	// Creation does not require a Redis transaction: the request is not
-	// observable by dispatchers until it is added to the pending set. A plain
-	// pipeline also works on managed Redis deployments that deny MULTI.
+	// 创建不需要 Redis 事务：请求在进入 pending 集合之前对派发方不可见。纯 pipeline
+	// 在禁 MULTI 的托管 Redis 上也能跑。
 	pipe := s.rdb.Pipeline()
 	pipe.Set(ctx, requestKey, data, runtimeLocalSkillStoreRetention)
 	pipe.ZAdd(ctx, pendingKey, redis.Z{
 		Score:  float64(now.UnixNano()),
 		Member: req.ID,
 	})
-	// Keep the pending ZSET alive a bit longer than the individual request
-	// so stale members still in the zset can be swept lazily on PopPending
-	// without blocking the create path on deletion.
+	// 让 pending ZSET 的存活时间比单条请求更长，这样仍滞留在 zset 里的过期成员可以由
+	// PopPending 惰性清扫，不会阻塞创建路径做删除。
 	pipe.Expire(ctx, pendingKey, runtimeLocalSkillStoreRetention*2)
 	if _, err := pipe.Exec(ctx); err != nil {
 		_ = s.rdb.Del(ctx, requestKey).Err()
@@ -121,9 +117,8 @@ func (s *RedisLocalSkillListStore) Get(ctx context.Context, id string) (*Runtime
 	return s.loadListRequest(ctx, id)
 }
 
-// loadListRequest fetches a single record, applies timeout transitions if the
-// stored state has aged past the threshold, and persists the transition when
-// applicable so sibling nodes observe the same terminal state.
+// loadListRequest 读取单条记录；若存储状态已超过阈值就推进超时转换，并把转换结果持久化，
+// 让其它节点也能观察到同样的终态。
 func (s *RedisLocalSkillListStore) loadListRequest(ctx context.Context, id string) (*RuntimeLocalSkillListRequest, error) {
 	raw, err := s.rdb.Get(ctx, localSkillListKey(id)).Bytes()
 	if errors.Is(err, redis.Nil) {
@@ -137,10 +132,9 @@ func (s *RedisLocalSkillListStore) loadListRequest(ctx context.Context, id strin
 		return nil, fmt.Errorf("decode list request: %w", err)
 	}
 	if applyLocalSkillListTimeout(&req, time.Now()) {
-		// Persist the timeout so subsequent Get / PopPending on any node see
-		// the terminal state. Also drop the id from the pending zset —
-		// PopPending would do this itself, but doing it here keeps the set
-		// clean even for readers that never call PopPending.
+		// 持久化超时态，让之后任何节点上的 Get / PopPending 都能看到终态。同时把该 id 从
+		// pending zset 里移除——PopPending 本来也会做，但在这里做能让从未调 PopPending 的
+		// 读取路径也把集合保持干净。
 		if err := s.persistListRequest(ctx, &req); err != nil {
 			return nil, err
 		}
@@ -160,10 +154,9 @@ func (s *RedisLocalSkillListStore) persistListRequest(ctx context.Context, req *
 	return nil
 }
 
-// HasPending is a cheap read-only probe (ZCARD) used by hot paths to decide
-// whether to invoke the side-effecting PopPending. It does NOT sweep
-// expired / already-claimed entries — a spurious "true" is fine because the
-// follow-up PopPending still handles the race correctly.
+// HasPending 是廉价只读探测（ZCARD），热路径用它判断要不要调用有副作用的 PopPending。
+// 它不清扫过期/已被认领的项——偶尔误报 "true" 没关系，后续的 PopPending 本身能正确处理
+// 这种竞态。
 func (s *RedisLocalSkillListStore) HasPending(ctx context.Context, runtimeID string) (bool, error) {
 	cnt, err := s.rdb.ZCard(ctx, localSkillListPendingKey(runtimeID)).Result()
 	if err != nil {
@@ -190,14 +183,13 @@ func (s *RedisLocalSkillListStore) PopPending(ctx context.Context, runtimeID str
 			return nil, err
 		}
 		if req == nil {
-			// Record expired but the zset still references it — drop and retry.
+			// 记录已过期但 zset 还引用着它——摘掉后重试。
 			s.rdb.ZRem(ctx, pendingKey, id)
 			continue
 		}
 		if req.Status != RuntimeLocalSkillPending {
-			// Either the timeout fired inside loadListRequest or another node
-			// already picked it up. Either way, unlink from the pending set
-			// and move on to the next one.
+			// 要么 loadListRequest 里触发了超时，要么别的节点已经取走了。两种情况都把它从
+			// pending 集合断开，继续看下一条。
 			s.rdb.ZRem(ctx, pendingKey, id)
 			continue
 		}
@@ -220,9 +212,8 @@ func (s *RedisLocalSkillListStore) PopPending(ctx context.Context, runtimeID str
 			return nil, fmt.Errorf("claim pending: %w", err)
 		}
 		if result == 0 {
-			// Another node won the race. The record still says pending and is
-			// owned by the winner; we just retry to pick up whatever else is
-			// queued (or nothing).
+			// 别的节点赢了竞态。记录仍写着 pending，归赢家所有；我们继续重试认领队列里
+			// 剩下的（或没有）。
 			continue
 		}
 		return req, nil
@@ -261,10 +252,9 @@ func (s *RedisLocalSkillListStore) Fail(ctx context.Context, id string, errMsg s
 	return s.persistListRequest(ctx, req)
 }
 
-// RedisLocalSkillImportStore mirrors RedisLocalSkillListStore for import
-// requests. Kept as a separate type (rather than a generic) because the
-// request shape carries import-specific fields (skill_key, optional rename,
-// creator id) and Go generics don't buy us much for two concrete impls.
+// RedisLocalSkillImportStore 与 RedisLocalSkillListStore 同思路，面向导入请求。单独保留
+// 类型（不做成泛型）是因为请求结构带导入专属字段（skill_key、可选改名、creator id），
+// 而两种实现下泛型的收益不大。
 type RedisLocalSkillImportStore struct {
 	rdb *redis.Client
 }
@@ -296,8 +286,7 @@ func (s *RedisLocalSkillImportStore) Create(ctx context.Context, input LocalSkil
 
 	requestKey := localSkillImportKey(req.ID)
 	pendingKey := localSkillImportPendingKey(input.RuntimeID)
-	// Match the other request stores: creation only needs ordered batching, and
-	// avoiding MULTI keeps this path compatible with restricted managed Redis.
+	// 与另一个请求存储一致：创建只需要有序批量写，避开 MULTI 也让这条路径兼容受限的托管 Redis。
 	pipe := s.rdb.Pipeline()
 	pipe.Set(ctx, requestKey, data, runtimeLocalSkillStoreRetention)
 	pipe.ZAdd(ctx, pendingKey, redis.Z{
@@ -349,10 +338,9 @@ func (s *RedisLocalSkillImportStore) persistImportRequest(ctx context.Context, r
 	return nil
 }
 
-// The RuntimeLocalSkillImportRequest type marks CreatorID / RunStartedAt as
-// `json:"-"` so those fields survive HTTP responses without leaking state.
-// For Redis persistence we need those fields, so we wrap in an internal
-// envelope that re-promotes them.
+// RuntimeLocalSkillImportRequest 类型把 CreatorID / RunStartedAt 标成了 `json:"-"`，
+// 这两个字段因此不会在 HTTP 响应里泄露内部状态。但 Redis 持久化需要它们，所以用一个
+// 内部信封把它们重新提升出来。
 type redisImportEnvelope struct {
 	Public       *RuntimeLocalSkillImportRequest `json:"r"`
 	CreatorID    string                          `json:"c"`
@@ -385,8 +373,7 @@ func (s *RedisLocalSkillImportStore) unmarshalImport(raw []byte) (*RuntimeLocalS
 	return env.Public, nil
 }
 
-// HasPending mirrors RedisLocalSkillListStore.HasPending — cheap ZCARD probe
-// for hot-path gating.
+// HasPending 与 RedisLocalSkillListStore.HasPending 相同——廉价的 ZCARD 探测，供热路径做闸门。
 func (s *RedisLocalSkillImportStore) HasPending(ctx context.Context, runtimeID string) (bool, error) {
 	cnt, err := s.rdb.ZCard(ctx, localSkillImportPendingKey(runtimeID)).Result()
 	if err != nil {
@@ -449,7 +436,7 @@ func (s *RedisLocalSkillImportStore) PopPending(ctx context.Context, runtimeID s
 func (s *RedisLocalSkillImportStore) PopPendingBatch(ctx context.Context, runtimeID string, limit int) ([]*RuntimeLocalSkillImportRequest, error) {
 	pendingKey := localSkillImportPendingKey(runtimeID)
 
-	// Fetch up to limit candidate IDs from the sorted set.
+	// 从有序集合里取最多 limit 个候选 id。
 	ids, err := s.rdb.ZRange(ctx, pendingKey, 0, int64(limit)-1).Result()
 	if err != nil {
 		return nil, fmt.Errorf("zrange pending batch: %w", err)
@@ -458,9 +445,8 @@ func (s *RedisLocalSkillImportStore) PopPendingBatch(ctx context.Context, runtim
 		return nil, nil
 	}
 
-	// Try to claim each candidate individually using the existing atomic
-	// Lua script. This is safe under multi-node contention: each ZREM is
-	// atomic, so two nodes never claim the same request.
+	// 逐个用现有的原子 Lua 脚本认领每个候选。多节点竞争下也安全：每个 ZREM 都是原子的，
+	// 两个节点不可能认领到同一个请求。
 	var result []*RuntimeLocalSkillImportRequest
 	for _, id := range ids {
 		req, err := s.loadImportRequest(ctx, id)

@@ -1,36 +1,34 @@
 /**
- * Legacy `/favicon.ico` requests point at the real SVG favicon.
+ * 处理旧的 `/favicon.ico` 请求，把它们重定向到真正的 SVG favicon。
  *
- * The `Location` is deliberately relative. `Response.redirect()` only accepts
- * an absolute URL, which forces resolving against `request.url` — and on a
- * self-hosted deployment that carries the server's own listen address, not the
- * public origin. `Dockerfile.web` sets `HOSTNAME=0.0.0.0` / `PORT=3000`, and a
- * plain `next start` defaults to the same, so the redirect came back as
- * `http://0.0.0.0:3000/favicon.svg`: unreachable for every client, and a leak
- * of the internal bind address. A relative `Location` is valid per RFC 7231
- * §7.1.2 and resolves against whatever origin the client actually used, so it
- * needs no trust in `Host` / `X-Forwarded-Host`.
+ * 这里的 `Location` 故意用相对路径。`Response.redirect()` 只接受绝对 URL，
+ * 这会强制基于 `request.url` 来解析——而在自托管部署里，`request.url` 携带的是服务器自己的监听地址，
+ * 不是对外公开的域名。`Dockerfile.web` 设置了 `HOSTNAME=0.0.0.0` / `PORT=3000`，
+ * 裸跑 `next start` 也默认如此，于是重定向会变成 `http://0.0.0.0:3000/favicon.svg`：
+ * 对任何客户端都不可达，还泄露了内部绑定地址。相对 `Location` 符合 RFC 7231 §7.1.2，
+ * 会基于客户端实际使用的 origin 解析，因此无需信任 `Host` / `X-Forwarded-Host`。
  */
 
 /**
- * Keep the handler off the prerender cache path.
+ * 让这个 handler 避开预渲染缓存路径。
  *
- * Reading `request.url` used to mark this route dynamic implicitly. Dropping
- * that argument left nothing dynamic for Next to detect, so it treated the
- * route as cacheable and tried to store the response — whose body is zero
- * bytes, which the prerender LRU rejects outright:
+ * 过去读取 `request.url` 会隐式地把该路由标记为动态。去掉那个参数后，Next 检测不到任何动态因素，
+ * 就把它当成可缓存路由，并尝试存储响应——而响应体是零字节，预渲染 LRU 直接拒绝：
  *
  *   Failed to update prerender cache for /favicon.ico
  *   Error: LRUCache: calculateSize returned 0, but size must be > 0.
  *
- * Every browser requests `/favicon.ico` unprompted, so that is one error line
- * per request in every deployment, against a cache write that can never
- * succeed. Forcing dynamic restores the per-request semantics the old
- * `request.url` read gave us by accident, without reintroducing the absolute
- * URL. Do not remove this alongside a "the handler takes no arguments" tidy-up.
+ * 每个浏览器都会主动请求 `/favicon.ico`，所以每个部署里每一次请求都会打一条这样的错误，
+ * 而对应的缓存写入永远不可能成功。强制动态恢复了旧版 `request.url` 读取碰巧带来的「按请求处理」语义，
+ * 又不会重新引入绝对 URL。别在「这个 handler 没参数」的清理里顺手删掉这行。
  */
 export const dynamic = "force-dynamic";
 
+/**
+ * 处理 GET 请求。
+ *
+ * @returns 一个 308 永久重定向响应，把请求指向 `/favicon.svg`。
+ */
 export function GET() {
   return new Response(null, {
     status: 308,

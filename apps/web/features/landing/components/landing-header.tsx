@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * 官网顶部导航栏（客户端组件）：深色变体用于覆盖在深色 Hero 上，浅色变体用于
+ * 白底页面。包含 Logo、导航链接（案例/文档/更新日志）、GitHub 星标入口，
+ * 以及按登录态区分的 CTA（未登录「开始使用」/ 已登录「进入控制台」）；
+ * 移动端收起为汉堡菜单。
+ */
 import { useState } from "react";
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
@@ -11,6 +17,13 @@ import { useDashboardCtaHref } from "../utils/use-dashboard-cta";
 import { formatStarCount, useGithubStars } from "../utils/use-github-stars";
 import { GitHubMark, githubUrl, headerButtonClassName } from "./shared";
 
+/**
+ * 官网头部导航。
+ *
+ * @param props.variant - 配色变体：`dark` 适配深色 Hero（无背景、白色字），
+ *   `light` 适配白底页面（带底部边框）。
+ * @returns 导航栏（桌面横排 + 移动端汉堡菜单）。
+ */
 export function LandingHeader({
   variant = "dark",
 }: {
@@ -159,11 +172,9 @@ export function LandingHeader({
   );
 }
 
-/** Star-count segment appended to the header's GitHub button — a faint
- *  divider and the compact count (e.g. "37.6k"). No star glyph: in the GitHub
- *  button context the number reads as the star count on its own. Inherits the
- *  button's text color so it adapts to both the dark and light header
- *  variants. */
+/** 加在 GitHub 按钮里的星标徽章：一条浅色细分隔线 + 紧凑数字（如 37.6k）。
+ *  不放星星图标——放在按钮语境里，数字本身就能读作「Star 数」。
+ *  文字颜色继承按钮，因此深/浅两种头部变体都自动适配。 */
 function GitHubStarsBadge({ label }: { label: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 tabular-nums">
@@ -173,6 +184,7 @@ function GitHubStarsBadge({ label }: { label: string }) {
   );
 }
 
+/** 桌面端导航链接样式（随明暗变体切换配色）。 */
 function navLinkClassName(variant: "dark" | "light") {
   return cn(
     "inline-flex h-9 items-center rounded-[9px] px-3 text-label font-medium transition-colors",
@@ -182,6 +194,7 @@ function navLinkClassName(variant: "dark" | "light") {
   );
 }
 
+/** 移动端汉堡菜单里的链接样式。 */
 function mobileNavLinkClassName(variant: "dark" | "light") {
   return cn(
     "flex min-h-11 items-center gap-2 rounded-[10px] px-3 text-body font-medium transition-colors",

@@ -1,11 +1,21 @@
 "use client";
 
+/**
+ * suggestion 弹层的通用渲染器：把 Tiptap Suggestion 插件的回调接到一个
+ * React 组件上，用 Floating UI 把它定位在光标（虚拟元素）附近，并处理好
+ * 生命周期（打开/更新/键盘/外部点击关闭）。
+ *
+ * mention 与斜杠命令两个弹层共用同一套定位与关闭逻辑，只差列表组件本身。
+ */
+
 import type { ComponentType } from "react";
 import { autoUpdate, computePosition, flip, offset, shift, size } from "@floating-ui/dom";
 import { ReactRenderer } from "@tiptap/react";
 import { exitSuggestion, type SuggestionKeyDownProps, type SuggestionProps } from "@tiptap/suggestion";
 import type { PluginKey } from "@tiptap/pm/state";
 
+/** createSuggestionPopupRender 的配置：插件的 key、要渲染的组件，以及把
+ *  SuggestionProps 翻译成组件 props 的函数。 */
 interface SuggestionPopupRenderOptions<
   TItem,
   TSelected = TItem,
@@ -21,6 +31,10 @@ interface SuggestionPopupRenderOptions<
   ) => boolean;
 }
 
+/**
+ * 生成一份可传给 Suggestion 插件的渲染回调对象（onStart/onUpdate/onKeyDown/
+ * onExit）。列表内容的 key 处理由 getProps 接入的组件自行负责。
+ */
 export function createSuggestionPopupRender<
   TItem,
   TSelected = TItem,
@@ -100,16 +114,14 @@ export function createSuggestionPopupRender<
         getBoundingClientRect: () => clientRect() ?? new DOMRect(),
       };
       computePosition(virtualEl, el, {
-        // Open upward by default. The dominant hosts are bottom-anchored
-        // composers (chat input, issue comment/reply) whose roomy side is above
-        // the caret; preferring that side means `size` clamps to a large budget
-        // with no visible compression, and `flip` only sends it down in the rare
-        // case the caret sits near the viewport top. A `bottom-start` default
-        // instead stayed down whenever *any* space existed below — even when far
-        // more room was above — which read as "mostly opens down and gets
-        // squashed". Document-body editors (issue/project description, agent
-        // instructions) also host this popup; there the caret usually has room
-        // both ways, so `flip` keeps them on-screen regardless of the default.
+        // 默认向上打开。主要宿主是底部锚定的 composer（聊天输入框、issue
+        // 评论/回复），其空间充足侧在光标上方；优先那边，`size` 会钳到较大的
+        // 预算而不产生可见压缩，`flip` 只在光标贴近视口顶部这种罕见情况下
+        // 才把它翻下去。若反过来默认 `bottom-start`，只要下方还剩一丁点
+        // 空间弹层就赖在下面——哪怕上方明明宽裕得多——观感就是「多半向下
+        // 开然后被挤扁」。正文型编辑器（issue/project 描述、agent 指令）也
+        // 挂这个弹层，那里光标上下通常都有空间，所以无论默认取哪边 `flip`
+        // 都能保证它在屏幕内。
         placement: "top-start",
         strategy: "fixed",
         middleware: [
@@ -119,18 +131,16 @@ export function createSuggestionPopupRender<
           size({
             padding: 8,
             apply({ availableHeight }) {
-              // Publish the viewport-aware height budget as a CSS variable so
-              // the list component (the real scroll container) can clamp its own
-              // max-height to `min(designMax, availableHeight)`. Writing
-              // maxHeight on this wrapper is inert — the wrapper does not clip,
-              // the inner list scrolls — so it would let a fixed-height list
-              // overflow past the viewport edge. No floor here: when space is
-              // tight a short scrollable list beats one clipped off-screen.
+              // 把「视口可用高度」作为 CSS 变量发出去，让列表组件（真正的
+              // 滚动容器）自己把 max-height 钳到
+              // `min(designMax, availableHeight)`。在这个包裹层上写 maxHeight
+              // 是无效的——包裹层不裁剪、内部列表在滚——那样固定高度的列表
+              // 会溢出视口边缘。这里不给下限：空间紧张时，一个短些的可滚动
+              // 列表也胜过被裁出屏幕的列表。
               el.style.setProperty(
                 "--suggestion-available-height",
-                // Guard against a negative budget (caret scrolled just out of
-                // the boundary): a negative max-height is invalid CSS and would
-                // drop the clamp entirely, letting the list overflow.
+                // 防负预算（光标恰好滚出边界）：负的 max-height 是非法 CSS，
+                // 会让钳制整个失效、列表直接溢出。
                 `${Math.max(0, Math.round(availableHeight))}px`,
               );
             },
@@ -190,17 +200,15 @@ export function createSuggestionPopupRender<
       },
 
       onKeyDown: (props: SuggestionKeyDownProps) => {
-        // `Esc` is the legacy alias the suggestion plugin also matches on.
+        // `Esc` 是 suggestion 插件也会匹配的旧别名。
         if (props.event.key === "Escape" || props.event.key === "Esc") {
-          // Escape while a picker is open must close ONLY the picker. Returning
-          // true makes ProseMirror call preventDefault(), but ProseMirror never
-          // stops propagation, and Base UI's dismiss layer listens for Escape on
-          // `document` in the bubble phase without consulting defaultPrevented.
-          // Without stopPropagation the same keypress that closes this popup
-          // also closes the host Dialog and discards the draft (MUL-5429).
-          // This handler is the only layer that knows a picker is open, so
-          // stopping here fixes every host at once (create-issue dialog, chat
-          // input, comment composer).
+          // 弹层开着时按 Escape 必须只关弹层。返回 true 会让 ProseMirror 调
+          // preventDefault()，但 ProseMirror 从不阻止冒泡，而 Base UI 的关闭
+          // 层在 `document` 上以冒泡阶段监听 Escape 且不看 defaultPrevented。
+          // 不 stopPropagation 的话，这次关闭弹层的按键会连带关闭宿主 Dialog、
+          // 丢掉草稿（MUL-5429）。本 handler 是唯一知道「弹层开着」的层，
+          // 在这里拦住一次性修好所有宿主（建 issue 弹窗、聊天输入、评论
+          // composer）。
           props.event.preventDefault();
           props.event.stopPropagation();
           cleanup();

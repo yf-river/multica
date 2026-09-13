@@ -1,3 +1,8 @@
+// plugin_hook.go —— hook 引擎：Multica 唯一会「向外呼叫插件自有服务器」的地方。
+// 在此之前的每一条路径都反着走——沙箱化的 surface 请求宿主、宿主以登录用户的会话行事，所以没有任何
+// 请求会凭插件一句话就离开我们的基础设施。hook 会离开，因此这里的检查都针对「目的地」而非「调用方」：
+// 目的地必须是 manifest 通过 `net:` 权限声明过的宿主、在拨号那一刻解析到公网地址，且 body 必须签名，
+// 让接收方能分辨我们的调用与别人的调用。
 package service
 
 import (
@@ -23,47 +28,32 @@ import (
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
 
-// The hook engine: the one place Multica calls OUT to a plugin's own server.
-//
-// Everything before this ran the other way — a sandboxed surface asked the host
-// and the host acted on the signed-in user's session, so no request ever left
-// our infrastructure on a plugin's say-so. A hook does leave, which is why the
-// checks here are about the destination rather than the caller: the host must
-// be one the manifest declared through a `net:` scope, it must resolve to a
-// public address at dial time, and the body must be signed so the receiver can
-// tell our call from anyone else's.
-
 const (
-	// Signature scheme version, carried in the header so the scheme can change
-	// without every handler guessing which one it is looking at.
+	// 签名方案版本，随 header 携带——方案演进时每个 handler 不必猜自己看到的是哪一版。
 	hookSignatureVersion = "v1"
-	// How far a request timestamp may be from our clock. Bounds replay: a
-	// captured request is only reusable inside this window, and a handler that
-	// also remembers signatures can close it entirely.
+	// 请求时间戳与我们时钟的最大偏差。限住重放：被截获的请求只在这个窗口内可复用；handler 若再
+	// 记住已见签名，就能把窗口彻底关死。
 	hookTimestampTolerance = 5 * time.Minute
-	// Fallback when a manifest omits timeout_ms.
+	// manifest 未声明 timeout_ms 时的兜底超时。
 	hookDefaultTimeout = 10 * time.Second
-	// Response bodies are read for the caller, so they are capped. A hook that
-	// answers with a gigabyte should fail, not consume the host.
+	// 响应体会被读给调用方，所以要封顶。回一 GB 的 hook 应当失败，而不是拖垮宿主。
 	hookMaxResponseBytes = 1 << 20
 
-	// Event retry schedule. Three attempts total, then the call is abandoned.
+	// 事件重试节奏。共三次尝试，之后放弃该次调用。
 	hookEventAttempts = 3
 	hookEventBackoff  = 2 * time.Second
 
-	// Circuit breaker. After this many failures inside the window, background
-	// delivery for the hook stops until the window rolls off — an endpoint that
-	// has been down for a minute does not need one request per event or schedule
-	// occurrence to notice.
+	// 熔断器。窗口内失败数达到该值，该 hook 的后台投递暂停直到窗口滑走——已经宕了一分钟的端点，
+	// 不需要每来一个事件/每次计划 occurrence 都去打扰它一次才知道。
 	hookBreakerThreshold = 5
 	hookBreakerWindow    = 5 * time.Minute
 
-	// Per-hook rate limit, counted in attempts.
+	// 每个 hook 的限流，按尝试次数计。
 	hookRateLimit  = 120
 	hookRateWindow = time.Minute
 )
 
-// HookResult is what a completed hook call returns to whoever invoked it.
+// HookResult 是一次 hook 调用完成后返回给调用方的结果。
 type HookResult struct {
 	Status   string          `json:"status"`
 	Output   json.RawMessage `json:"output,omitempty"`
@@ -74,45 +64,39 @@ type HookResult struct {
 	Attempts int             `json:"attempts"`
 }
 
-// HookActor is who the resulting writes belong to.
+// HookActor 是「由此产生的写入」归属谁。
 //
-// This is the whole identity model for hooks, and it follows the trigger rather
-// than the plugin: a ui/manual hook runs because a person pressed something, so
-// its writes stay that person's (marked via_plugin_id); event/schedule hooks
-// have no person behind them and must not borrow the last one who touched the
-// resource.
+// 这是 hook 的整套身份模型，且它跟随触发而非插件：ui/manual hook 因某人按下某个按钮而跑，所以它的
+// 写入保持那个人的（标记 via_plugin_id）；event/schedule hook 背后没有人，绝不能借用最后碰过该资源的
+// 那个人。
 type HookActor struct {
 	Type string
 	ID   pgtype.UUID
 }
 
-// HookInvocation is one call the engine has been asked to make.
+// HookInvocation 是一次引擎被请求执行的调用。
 type HookInvocation struct {
-	// ID is allocated before the outbound request. The receiver can log it and
-	// correlate a response with the durable invocation row even when the call
-	// itself fails.
+	// ID 在出站请求前分配。接收方可以记下它，把响应与持久化调用行关联起来——哪怕调用本身失败。
 	ID           pgtype.UUID
 	Installation db.PluginInstallation
 	Hook         plugincontract.Hook
 	Trigger      string
-	// EventType is set only for the event trigger, and names what happened.
+	// EventType 只在 event 触发时设置，点明发生了什么。
 	EventType string
 	Actor     HookActor
-	// IssueID is the issue this call is about, when there is one. It narrows the
-	// callback token so a handler answering about one issue cannot use the same
-	// grant to reach across the workspace.
+	// IssueID 是本次调用涉及的那个 issue（若有）。它收窄回调令牌——处理某条 issue 的 handler 无法
+	// 用同一个授权去够工作区里别的东西。
 	IssueID pgtype.UUID
 	Input   any
-	// DeliveryID is stable across retries of the same scheduled occurrence.
-	// PlannedAt is the canonical UTC cron occurrence, not delivery wall time.
+	// DeliveryID 在同一次计划 occurrence 的各次重试间保持稳定。PlannedAt 是规范的 UTC cron occurrence
+	// 时间，不是投递的墙上钟时间。
 	DeliveryID string
 	PlannedAt  pgtype.Timestamptz
 	Attempt    int
 }
 
-// hookRequestBody is the wire format. Stable and small on purpose: a hook
-// handler written against v1 should not have to care what else the host learns
-// how to send later.
+// hookRequestBody 是线上格式。刻意稳定而小巧：按 v1 写的 hook handler 不必关心宿主日后还会发送
+// 什么别的东西。
 type hookRequestBody struct {
 	Version      int       `json:"version"`
 	InvocationID string    `json:"invocation_id"`
@@ -124,27 +108,20 @@ type hookRequestBody struct {
 	EventType    string    `json:"event_type,omitempty"`
 	WorkspaceID  string    `json:"workspace_id"`
 	Installation string    `json:"installation_id"`
-	// IssueID is the issue this call is about, as resolved and permission-checked
-	// by the host. Sent because the alternative is every handler reading it out
-	// of client-supplied `input` — unvalidated, and absent entirely for the event
-	// trigger, where no client was involved at all.
+	// IssueID 是本次调用涉及的 issue，已经宿主解析并做权限校验。发出它，是因为否则每个 handler
+	// 都得从客户端自带的 `input` 里读——未经校验，且 event 触发时压根没有客户端参与、会完全缺席。
 	IssueID string           `json:"issue_id,omitempty"`
 	Actor   hookRequestActor `json:"actor"`
 	Input   json.RawMessage  `json:"input,omitempty"`
-	// Config is the installation's non-secret configuration, the values an
-	// administrator typed into the host-rendered form. Sent because the handler
-	// has no other way to read them — the Action API deliberately has no config
-	// endpoint — and a plugin forced to keep its own second copy would make the
-	// manifest's config block decorative.
+	// Config 是安装的非 secret 配置，即管理员在宿主渲染表单里敲的值。发出它，是因为 handler 没有
+	// 别的途径读这些值——Action API 刻意没有配置端点——而插件被迫自存第二份副本的话，manifest 的
+	// config 块就沦为装饰。
 	//
-	// Secret-typed fields are NEVER included. They are the plugin's credentials
-	// for ITS OWN services; it already has them, and putting them on the wire
-	// would hand every value to whoever holds the endpoint.
+	// Secret 型字段绝不包含。它们是插件为「它自己的服务」准备的凭证；插件本来就有，放上线路等于把
+	// 每个值都递给任何持有端点的人。
 	Config map[string]any `json:"config,omitempty"`
-	// CallbackToken lets the handler call the Action API back for the few
-	// minutes it is valid. Narrower than the installation's own token and tied
-	// to this one call, so a handler that leaks it leaks a few minutes of the
-	// scopes it was already using, not standing access.
+	// CallbackToken 让 handler 在它有效的几分钟内回调 Action API。比安装自带的 token 更窄、且绑死
+	// 这一次调用——handler 泄漏它，泄漏的只是几分钟它本就在用的权限，而非长期访问。
 	CallbackToken string               `json:"callback_token,omitempty"`
 	CallbackURL   string               `json:"callback_url,omitempty"`
 	Schedule      *hookRequestSchedule `json:"schedule,omitempty"`
@@ -159,12 +136,10 @@ type hookRequestSchedule struct {
 	PlannedAt time.Time `json:"planned_at"`
 }
 
-// FindHook returns the named hook from an installation's consented manifest.
+// FindHook 从安装的（被同意的）manifest 里找出指定名字的 hook。
 //
-// Read from the installation row, never from the manifest the source URL serves
-// right now: the admin consented to a specific set of endpoints, and a plugin
-// that later repoints its own hook at somewhere else must go through the
-// upgrade flow to have that take effect.
+// 从安装行读取，绝不用来源 URL 此刻供应的 manifest：管理员同意的是具体的一组端点，插件日后若把自己
+// 的 hook 重新指向别处，必须走升级流程才生效。
 func FindHook(installation db.PluginInstallation, hookKey string) (plugincontract.Hook, error) {
 	manifest, err := ParseInstallationManifest(installation)
 	if err != nil {
@@ -178,8 +153,7 @@ func FindHook(installation db.PluginInstallation, hookKey string) (plugincontrac
 	return plugincontract.Hook{}, pluginErrf(PluginErrorNotFound, "this Plugin has no hook named %q", hookKey)
 }
 
-// HookAllowsTrigger reports whether the hook declared this trigger. A trigger
-// the manifest did not list is not a call site the host may invent.
+// HookAllowsTrigger 报告 hook 是否声明过该触发。manifest 没列的触发，不是宿主可以自行发明的调用点。
 func HookAllowsTrigger(hook plugincontract.Hook, trigger string) bool {
 	for _, declared := range hook.Triggers {
 		if declared == trigger {
@@ -189,11 +163,10 @@ func HookAllowsTrigger(hook plugincontract.Hook, trigger string) bool {
 	return false
 }
 
-// InvokeHook performs one call and records it.
+// InvokeHook 执行一次调用并记录它。
 //
-// Callers pick the blocking behaviour, not this function: ui/manual await the
-// result because a person is watching, event delivery runs outside the host
-// request, and schedule delivery runs under the durable scheduler lease.
+// 阻塞与否由调用方决定，不由本函数：ui/manual 等人看结果所以 await，event 投递跑在宿主请求之外，
+// schedule 投递跑在持久化调度租约下。
 func (s *PluginService) InvokeHook(ctx context.Context, invocation HookInvocation, attempt int) (HookResult, error) {
 	if !invocation.ID.Valid {
 		invocation.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
@@ -241,31 +214,25 @@ func (s *PluginService) InvokeHook(ctx context.Context, invocation HookInvocatio
 	return result, nil
 }
 
-// callHookEndpoint is the network half: validate the destination, sign, send.
+// callHookEndpoint 是网络那一半：校验目的地、签名、发送。
 func (s *PluginService) callHookEndpoint(ctx context.Context, invocation HookInvocation) (json.RawMessage, error) {
 	installation := invocation.Installation
 	granted := decodeScopes(installation.GrantedScopes)
 
-	// The destination must be inside the consented `net:` set. Passing the
-	// granted domains as the allowlist means the same string the admin approved
-	// on the consent screen is what bounds the request — there is no second
-	// list to fall out of sync.
+	// 目的地必须在被同意的 `net:` 集合内。把已授予的域直接当白名单用，意味着管理员在授权屏上
+	// 同意的那串字符串就是约束请求的东西——没有第二张表可能不同步。
 	domains := plugincontract.NetDomains(granted)
 	if len(domains) == 0 {
 		return nil, pluginErrf(PluginErrorForbidden, "this Plugin was granted no net: scope, so it cannot call out")
 	}
 
-	// Two ways to reach an endpoint, and only the network guard differs between
-	// them. The consent check does not: a destination outside the granted `net:`
-	// set is refused on both paths, because that is what the admin approved and
-	// no deployment setting may widen it.
+	// 两条到达端点的路，只有网络守卫不同。同意检查不因路径而异：落在被授予 `net:` 集合外的
+	// 目的地，两条路都被拒——那正是管理员同意的内容，任何部署配置都不得放大它。
 	var endpoint *url.URL
 	client := &http.Client{}
 	if s.isDevOrigin(invocation.Hook.Transport.URL) {
-		// The operator named this exact origin in MULTICA_PLUGIN_DEV_ORIGINS —
-		// the same opt-in that lets a manifest be served from a local dev
-		// server, for the same reason: an author building a hook has nowhere
-		// public to point it yet.
+		// 运维在 MULTICA_PLUGIN_DEV_ORIGINS 里点名了这个确切 origin——与「允许 manifest 从本地开发
+		// 服务器发布」同一种选择加入、出于同一个理由：正在开发 hook 的作者，还没有公网地方可指。
 		parsed, err := url.Parse(invocation.Hook.Transport.URL)
 		if err != nil {
 			return nil, &PluginError{Kind: PluginErrorInvalid, Message: "hook endpoint is not a valid URL", Err: err}
@@ -283,9 +250,8 @@ func (s *PluginService) callHookEndpoint(ctx context.Context, invocation HookInv
 			return nil, &PluginError{Kind: PluginErrorForbidden, Message: "hook endpoint is not allowed", Err: err}
 		}
 		endpoint = validated
-		// NewSecureHTTPClient re-resolves at dial and refuses a non-public
-		// address, so a hostname that passed validation and then flipped to a
-		// private IP cannot be used to reach inside the network.
+		// NewSecureHTTPClient 会在拨号时重新解析并拒绝非公网地址——通过校验后翻脸成私网 IP 的
+		// 主机名，因此无法用来打进网络内部。
 		client = remotemcp.NewSecureHTTPClient(endpoint)
 	}
 
@@ -293,9 +259,8 @@ func (s *PluginService) callHookEndpoint(ctx context.Context, invocation HookInv
 	if err != nil {
 		return nil, err
 	}
-	// The grant lives exactly as long as the call it was issued for. Without
-	// this it would stay usable for the rest of its TTL after the handler has
-	// already answered.
+	// 授权活得与它为之签发的那次调用一样长。没有这一步，handler 已经应答后它还会在其 TTL 的剩余
+	// 时间里一直可用。
 	if s.Callbacks != nil && body.CallbackToken != "" {
 		defer s.Callbacks.Revoke(body.CallbackToken)
 	}
@@ -348,12 +313,10 @@ func (s *PluginService) callHookEndpoint(ctx context.Context, invocation HookInv
 	return json.RawMessage(payload), nil
 }
 
-// nonSecretConfig reads the installation's stored configuration and drops
-// anything the manifest declared as a secret.
+// nonSecretConfig 读取安装的已存配置，丢弃 manifest 声明为 secret 的任何值。
 //
-// Filtered against the MANIFEST rather than against the stored shape: secrets
-// live in their own table and should never appear in the config column at all,
-// so this is the check that would catch it if one ever did.
+// 按 MANIFEST 过滤而不是按已存形状过滤：secret 住在自己的表里、本就不该出现在 config 列——所以
+// 万一真出现，这道检查会把它拦住。
 func nonSecretConfig(installation db.PluginInstallation) map[string]any {
 	if len(installation.Config) == 0 {
 		return nil
@@ -364,8 +327,7 @@ func nonSecretConfig(installation db.PluginInstallation) map[string]any {
 	}
 	manifest, err := ParseInstallationManifest(installation)
 	if err != nil {
-		// Without a manifest there is no way to tell which keys are secret, so
-		// send none of them.
+		// 没有 manifest 就无法判断哪些键是 secret，那就一个都不发。
 		return nil
 	}
 	for key := range values {
@@ -380,6 +342,7 @@ func nonSecretConfig(installation db.PluginInstallation) map[string]any {
 	return values
 }
 
+// buildHookBody 组装出站请求体：invocation 元数据 + 非 secret 配置 + 回调令牌。
 func (s *PluginService) buildHookBody(ctx context.Context, invocation HookInvocation) (hookRequestBody, error) {
 	attempt := invocation.Attempt
 	if attempt < 1 {
@@ -423,12 +386,10 @@ func (s *PluginService) buildHookBody(ctx context.Context, invocation HookInvoca
 	return body, nil
 }
 
-// SignHookPayload produces the hex HMAC a receiver checks.
+// SignHookPayload 算出接收方校验用的 hex HMAC。
 //
-// The signed string joins the timestamp and the body with a separator that
-// cannot appear in the timestamp. Signing the body alone would let a captured
-// request be replayed forever; signing a plain concatenation would let a
-// crafted timestamp and body pair swap bytes between the two fields.
+// 被签名的串以「时间戳 + 不可能出现在时间戳里的分隔符 + body」拼成。只签 body，会让被截获的请求
+// 永远可重放；签朴素拼接，则让精心构造的时间戳与 body 能在两个字段之间交换字节。
 func (s *PluginService) SignHookPayload(installationID pgtype.UUID, timestamp string, body []byte) (string, error) {
 	key, err := s.hookSigningKey(installationID)
 	if err != nil {
@@ -441,15 +402,11 @@ func (s *PluginService) SignHookPayload(installationID pgtype.UUID, timestamp st
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
-// hookSigningKey derives this installation's signing secret from the deployment
-// key.
+// hookSigningKey 从部署密钥派生出该安装的签名密钥。
 //
-// Derived rather than stored, and this is the asymmetry that decides it: the
-// host must PRODUCE this value to sign with it, so a one-way hash is not an
-// option, and storing a recoverable copy of it in every installation row would
-// put a usable secret in reach of any database read. The install token goes the
-// other way — the plugin produces it and the host only ever verifies — so that
-// one is stored hashed. Same deployment key, opposite directions.
+// 派生而非存储，而这正是那个决定性的不对称：宿主必须「产出」这个值来签名，所以单向哈希不可行；
+// 而把可恢复的副本存进每个安装行，等于把可用的密钥放在任何数据库读取都够得到的地方。安装 token
+// 方向相反——插件产出、宿主只校验——所以那个存的是哈希。同一个部署密钥，两个相反方向。
 func (s *PluginService) hookSigningKey(installationID pgtype.UUID) ([]byte, error) {
 	if len(s.DeploymentKey) == 0 {
 		return nil, pluginErrf(PluginErrorUnavailable, "hooks are disabled: MULTICA_PLUGIN_SECRET_KEY is not configured")
@@ -463,8 +420,8 @@ func (s *PluginService) hookSigningKey(installationID pgtype.UUID) ([]byte, erro
 	return mac.Sum(nil), nil
 }
 
-// HookSigningSecret is the same value in the form an author configures on their
-// own server. Shown once at install time next to the install token.
+// HookSigningSecret 是同一值、以作者在自己的服务器上配置时用的形式给出。安装时与 install token
+// 并排展示一次。
 func (s *PluginService) HookSigningSecret(installationID pgtype.UUID) (string, error) {
 	key, err := s.hookSigningKey(installationID)
 	if err != nil {
@@ -473,9 +430,8 @@ func (s *PluginService) HookSigningSecret(installationID pgtype.UUID) (string, e
 	return "whsec_" + hex.EncodeToString(key), nil
 }
 
-// VerifyHookSignature is the receiver's half, exported so a plugin written in Go
-// and our own tests check signatures the same way — a scheme only one side can
-// implement is a scheme nobody can review.
+// VerifyHookSignature 是接收方的一半；导出让用 Go 写插件的作者与我们的测试用同一种方式校验签名——
+// 只有一方能实现的方案，是没人能评审的方案。
 func VerifyHookSignature(secretHex, timestamp string, body []byte, presented string, now time.Time) error {
 	secretHex = strings.TrimPrefix(secretHex, "whsec_")
 	key, err := hex.DecodeString(secretHex)
@@ -499,15 +455,14 @@ func VerifyHookSignature(secretHex, timestamp string, body []byte, presented str
 	mac.Write(body)
 	expected := hex.EncodeToString(mac.Sum(nil))
 	presented = strings.TrimPrefix(presented, hookSignatureVersion+"=")
-	// Constant time: a byte-at-a-time comparison leaks how much of a guessed
-	// signature was right, which is enough to find the rest.
+	// 常量时间比较：逐字节比较会泄漏「猜对的签名长度」，那足以让人推出剩余部分。
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(presented)) != 1 {
 		return errors.New("signature does not match")
 	}
 	return nil
 }
 
-// checkHookRate caps how often one hook may be called.
+// checkHookRate 限制单个 hook 的调用频次。
 func (s *PluginService) checkHookRate(ctx context.Context, installationID pgtype.UUID, hookKey string) error {
 	since := pgtype.Timestamptz{Time: time.Now().Add(-hookRateWindow), Valid: true}
 	count, err := s.Queries.CountRecentPluginInvocations(ctx, db.CountRecentPluginInvocationsParams{
@@ -516,7 +471,7 @@ func (s *PluginService) checkHookRate(ctx context.Context, installationID pgtype
 		CreatedAt:      since,
 	})
 	if err != nil {
-		// A telemetry read that fails must not take the feature down with it.
+		// 一次失败的遥测读取，不该把功能一起拖下水。
 		return nil
 	}
 	if count >= hookRateLimit {
@@ -525,8 +480,7 @@ func (s *PluginService) checkHookRate(ctx context.Context, installationID pgtype
 	return nil
 }
 
-// HookBreakerOpen reports whether background delivery for this hook is
-// currently suspended after repeated failures.
+// HookBreakerOpen 报告该 hook 的后台投递是否因连续失败而暂停中。
 func (s *PluginService) HookBreakerOpen(ctx context.Context, installationID pgtype.UUID, hookKey string) bool {
 	since := pgtype.Timestamptz{Time: time.Now().Add(-hookBreakerWindow), Valid: true}
 	failures, err := s.Queries.CountRecentPluginFailures(ctx, db.CountRecentPluginFailuresParams{
@@ -540,6 +494,7 @@ func (s *PluginService) HookBreakerOpen(ctx context.Context, installationID pgty
 	return failures >= hookBreakerThreshold
 }
 
+// recordInvocation 把一次调用落成调用记录行。
 func (s *PluginService) recordInvocation(ctx context.Context, invocation HookInvocation, status string, attempt, latency int, message string) {
 	params := db.CreatePluginInvocationParams{
 		ID:             invocation.ID,
@@ -563,10 +518,11 @@ func (s *PluginService) recordInvocation(ctx context.Context, invocation HookInv
 	if message != "" {
 		params.Error = pgtype.Text{String: truncate(message, 500), Valid: true}
 	}
-	// Best effort: telemetry must never fail the call it is describing.
+	// 尽力而为：遥测绝不能让它正在描述的那次调用失败。
 	_, _ = s.Queries.CreatePluginInvocation(ctx, params)
 }
 
+// hookFailureStatus 把调用错误归成记录用的状态：明确被拒（refused）、超时（timeout）还是失败（failed）。
 func hookFailureStatus(err error) string {
 	var pluginErr *PluginError
 	if errors.As(err, &pluginErr) {
@@ -581,9 +537,8 @@ func hookFailureStatus(err error) string {
 	return "failed"
 }
 
-// redactHookError keeps the host's own description and drops anything the
-// remote end supplied. An endpoint that echoes its input could otherwise write
-// issue content into a table that has no deletion path for it.
+// redactHookError 保留宿主自己的描述、丢掉远端提供的一切。会把输入回显出来的端点，否则可能把 issue
+// 内容写进一张没有删除路径的表。
 func redactHookError(err error) string {
 	var pluginErr *PluginError
 	if errors.As(err, &pluginErr) {
@@ -595,9 +550,8 @@ func redactHookError(err error) string {
 	return "hook call failed"
 }
 
-// hostInNetScopes is the exact-host check the consent screen promises. Never a
-// suffix match: one scope string must mean the same thing here as it does in
-// the surface CSP and on the authorization screen.
+// hostInNetScopes 是授权屏承诺的「精确主机」检查。绝不做后缀匹配：一条 scope 串在这里、在 surface
+// CSP 里、在授权屏上必须指同一个东西。
 func hostInNetScopes(host string, domains []string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	for _, domain := range domains {
@@ -608,6 +562,7 @@ func hostInNetScopes(host string, domains []string) bool {
 	return false
 }
 
+// truncate 按字节截断到上限（超限即硬切）。
 func truncate(value string, limit int) string {
 	if len(value) <= limit {
 		return value

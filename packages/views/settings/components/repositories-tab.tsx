@@ -1,3 +1,7 @@
+// 本文件是「代码仓库」设置标签页：维护当前工作区关联的仓库列表。
+// 支持手动填写 git 地址、从 GitHub 安装里批量勾选导入、以及探活后导入工蜂（腾讯 Git）仓库；
+// 列表增删改通过 useAutoSave 自动保存到服务端。
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -63,8 +67,10 @@ import {
 import { useAutoSave } from "./use-auto-save";
 import { GitHubMark } from "./github-mark";
 
+// 空列表的默认值：复用同一个常量引用，方便自动保存时做引用级比较判断"有没有改动"。
 const EMPTY_REPOSITORIES: WorkspaceRepo[] = [];
 
+/** 判断两份仓库列表在关键字段上是否逐项一致，供自动保存对比前后差异。 */
 function repositoriesEqual(left: WorkspaceRepo[], right: WorkspaceRepo[]) {
   if (left.length !== right.length) return false;
   const fields: Array<keyof WorkspaceRepo> = [
@@ -78,6 +84,11 @@ function repositoriesEqual(left: WorkspaceRepo[], right: WorkspaceRepo[]) {
   });
 }
 
+/**
+ * 把仓库地址归一化成"主机/路径"形式的身份标识（小写、去首尾斜杠与 .git 后缀），
+ * 兼容 "git@host:path" 的 scp 写法与 https 等完整 URL，用于判断两个仓库地址是否指向同一个仓库。
+ * 地址为空、既不是 scp 写法也无法按 URL 解析时返回 null。
+ */
 export function repositoryIdentity(rawURL: string): string | null {
   const value = rawURL.trim();
   if (!value) return null;
@@ -108,6 +119,10 @@ export function repositoryIdentity(rawURL: string): string | null {
   return `${host.toLowerCase()}/${normalizedPath}`;
 }
 
+/**
+ * 「代码仓库」设置标签页：展示并编辑当前工作区的仓库列表，支持手动添加/删除、
+ * 从已安装的 GitHub App 中搜索勾选批量导入、以及探活后导入工蜂仓库；改动自动保存。
+ */
 export function RepositoriesTab() {
   const { t } = useT("settings");
   const user = useAuthStore((state) => state.user);
@@ -185,12 +200,13 @@ export function RepositoriesTab() {
 
   useEffect(() => {
     setRepositories(workspace?.repos ?? EMPTY_REPOSITORIES);
-    // A cache update after auto-save replaces the Workspace object. Keying on
-    // identity prevents that response from wiping a newer local keystroke.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on workspace identity
+    // 自动保存成功后缓存更新会整体替换 workspace 对象并再次走到这里；只依赖 id 触发，
+    // 是为了避免服务端回包把用户在保存往返期间新敲进去的字符覆盖掉。
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 有意只按 workspace 身份触发
   }, [workspace?.id]);
 
   useEffect(() => {
+    // 当前选中的安装若已不在安装列表里（列表刷新、安装被移除等），回退选中第一个安装，保证下拉有值。
     if (
       selectedInstallationID &&
       githubInstallations.some(
@@ -203,6 +219,8 @@ export function RepositoriesTab() {
   }, [githubInstallations, selectedInstallationID]);
 
   useEffect(() => {
+    // GitHub OAuth 回调完成后会带着 github_connected / github_error 查询参数跳回本页，这里统一收尾：
+    // 失败弹错误提示；成功且开通了浏览权限就直接打开仓库选择器；最后把参数从地址栏清掉，避免刷新页面重复提示。
     const connected = navigation.searchParams.get("github_connected") === "1";
     const githubError = navigation.searchParams.get("github_error");
     if ((!connected && !githubError) || !canManageWorkspace) return;
@@ -270,6 +288,7 @@ export function RepositoriesTab() {
     isEqual: repositoriesEqual,
   });
 
+  // 「连接」按钮：先让服务端探活这个工蜂仓库，拿到默认分支与分支列表，供用户确认后导入。
   const probeGongfengRepository = async () => {
     if (!workspace || !gongfengURL.trim() || gongfengPending) return;
     setGongfengPending(true);
@@ -288,6 +307,7 @@ export function RepositoriesTab() {
     }
   };
 
+  // 「导入」按钮：把已探活的工蜂仓库解析成工作区仓库记录，追加进列表并立刻自动保存。
   const importGongfengRepository = async () => {
     if (!workspace || !gongfengProbe || !gongfengBranch || gongfengPending) return;
     setGongfengPending(true);
@@ -340,6 +360,7 @@ export function RepositoriesTab() {
   };
 
   const handleGitHubAction = async () => {
+    // 已装过 GitHub App 就直接弹出"选仓库"弹窗；没装过则先跳转 OAuth 授权（在新窗口完成）。
     if (githubInstallations.length > 0) {
       openGitHubPicker();
       return;
@@ -386,6 +407,7 @@ export function RepositoriesTab() {
       toast.error(t(($) => $.repositories.complete_manual_entry_first));
       return;
     }
+    // 只导入尚未添加且未归档的仓库：按"身份标识"去重，避免同一仓库被重复加进列表。
     const additions: WorkspaceRepo[] = [];
     const known = new Set(existingRepositoryIdentities);
     for (const repository of selectedRepositories.values()) {

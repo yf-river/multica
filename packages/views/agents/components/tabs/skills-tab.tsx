@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 详情页的“技能”标签页：上半部分管理工作区技能（添加/移除/启停，
+// 点击看详情），下半部分展示并启停“运行时本地技能”（由运行环境发现，继承给 Agent），
+// 并按运行环境在线与否分情况给提示。
+
 import { useState } from "react";
 import {
   Loader2,
@@ -43,11 +47,20 @@ import { cn } from "@multica/ui/lib/utils";
 import { SkillAddDialog } from "../skill-add-dialog";
 import { useT } from "../../../i18n";
 
+/** 详情弹窗当前展示的技能：工作区技能（按 id）或运行时本地技能（整个摘要对象）。 */
 type SelectedSkill =
   | { kind: "workspace"; id: string }
   | { kind: "runtime"; skill: RuntimeLocalSkillSummary }
   | null;
 
+/**
+ * 技能标签页。两栏：已分配的工作区技能（可增删、启停、看详情）与
+ * 运行时本地技能（只能启停、看详情）。运行时不在线/无权限时下半部分退化为提示行。
+ * @param agent 当前 Agent（agent.skills 为已分配工作区技能；disabled_runtime_skills 为禁用的运行时技能）。
+ * @param runtime 绑定运行环境；不同状态决定运行时技能区展示。
+ * @param currentUserId 当前用户 id，用于判断是否可读该运行环境的技能。
+ * @param canEdit 是否有编辑权；为 false 时隐藏所有增删/启停控件。
+ */
 export function SkillsTab({
   agent,
   runtime,
@@ -361,10 +374,12 @@ export function SkillsTab({
   );
 }
 
+/** 给运行时技能拼个稳定的“忙碌键”（root:key:plugin），用于并发操作时的按钮级禁用。 */
 function runtimeSkillIdentity(skill: RuntimeLocalSkillSummary): string {
   return `runtime:${skill.root ?? "unknown"}:${skill.key}:${skill.plugin ?? ""}`;
 }
 
+/** 判断某运行时技能是否已被禁用（四元组精确匹配 disabled_runtime_skills 条目）。 */
 function isRuntimeSkillDisabled(
   disabledSkills: DisabledRuntimeSkill[] | undefined,
   runtimeId: string | undefined,
@@ -381,6 +396,7 @@ function isRuntimeSkillDisabled(
   );
 }
 
+/** 带标题、说明与右上角动作的小节容器。 */
 function CapabilitySection({
   title,
   description,
@@ -406,6 +422,7 @@ function CapabilitySection({
   );
 }
 
+/** 空态占位：图标 + 标题 + 提示。 */
 function EmptyState({ icon, title, hint }: { icon: React.ReactNode; title: string; hint: string }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-10 text-muted-foreground">
@@ -416,6 +433,7 @@ function EmptyState({ icon, title, hint }: { icon: React.ReactNode; title: strin
   );
 }
 
+/** 运行时状态提示行（离线/无权限/不支持/发现失败/为空等，loading 时转圈）。 */
 function RuntimeNotice({ text, loading = false }: { text: string; loading?: boolean }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-dashed px-4 py-6 text-caption text-muted-foreground">
@@ -429,6 +447,7 @@ function RuntimeNotice({ text, loading = false }: { text: string; loading?: bool
   );
 }
 
+/** 技能详情弹窗：运行时技能展示来源/provider/插件/文件数，工作区技能展示内容与附件文件。 */
 function SkillDetailDialog({
   selected,
   onOpenChange,

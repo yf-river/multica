@@ -1,3 +1,6 @@
+// 本文件封装「自定义属性」的变更：创建/更新属性定义，以及给某个 issue 设置/
+// 取消某个属性的值（后者带乐观更新与并发安全处理）。
+
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { propertyKeys } from "./queries";
@@ -19,6 +22,7 @@ import type {
   ListIssuesCache,
 } from "../types";
 
+/** 创建一条属性定义，成功后失效属性目录缓存。 */
 export function useCreateProperty() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -31,9 +35,8 @@ export function useCreateProperty() {
 }
 
 /**
- * Definition updates (rename, options, archive). No optimistic patch: edits
- * happen in the settings dialog where a round-trip is acceptable, and config
- * canonicalization (option id assignment) is server-side anyway.
+ * 属性定义的更新（改名、选项、归档）。不做乐观补丁：编辑发生在设置对话框里，
+ * 一次往返可接受，而且配置的规范化（选项 id 分配）反正归服务端。
  */
 export function useUpdateProperty() {
   const qc = useQueryClient();
@@ -43,19 +46,17 @@ export function useUpdateProperty() {
       api.updateProperty(id, data),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: propertyKeys.all(wsId) });
-      // Issue caches embed the value bag; a definition change (rename,
-      // option edits) changes how values render, and rows referencing an
-      // archived definition must drop out of "+ Add property" menus.
+      // issue 缓存内嵌属性值包；定义变化（改名、选项编辑）会改变值的渲染，
+      // 而引用已归档定义的行也必须从「+ 添加属性」菜单里消失。
       qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
     },
   });
 }
 
 /**
- * Read the issue's current property bag from whichever cache holds it: the
- * detail cache first, then any list cache bucket. Board/list surfaces never
- * populate the detail cache, so stopping there would make the optimistic
- * merge below overwrite the whole bag with a single key.
+ * 从任一份持有该 issue 的缓存里读它的属性值包：先看详情缓存，再看各列表缓存
+ * 桶。看板/列表界面从不填充详情缓存，只停在详情缓存的话，会让下面的乐观合并
+ * 用单个 key 覆盖整个值包。
  */
 function readIssueProperties(qc: ReturnType<typeof useQueryClient>, wsId: string, issueId: string): IssuePropertyValues | undefined {
   const detail = qc.getQueryData<Issue>(issueKeys.detail(wsId, issueId));
@@ -82,6 +83,7 @@ function readIssueProperties(qc: ReturnType<typeof useQueryClient>, wsId: string
   return undefined;
 }
 
+/** 属性变更前，把会受影响的各类 issues 查询全部取消在途。 */
 async function cancelIssuePropertyMutationQueries(
   qc: ReturnType<typeof useQueryClient>,
   wsId: string,
@@ -97,20 +99,16 @@ async function cancelIssuePropertyMutationQueries(
 }
 
 /**
- * Optimistic single-property write on an issue.
+ * 给某个 issue 乐观地写入单个属性。
  *
- * Concurrency contract (MUL-4463 review round 1/2):
- *   - Mutations for the SAME issue serialize via TanStack's mutation
- *     `scope`, so full-bag responses cannot land out of order and rapid
- *     multi-select toggles cannot interleave.
- *   - The optimistic patch merges into the bag read from ANY cache
- *     (detail or list) — never replaces it — so board-only surfaces keep
- *     the issue's other property values.
- *   - Failure restores the snapshot; if no snapshot existed, it falls back
- *     to invalidation.
- *   - The LAST settled mutation for the issue does an authoritative
- *     invalidate of the detail cache plus the definition catalog (usage
- *     counts), reconciling any raced WS snapshots under staleTime:Infinity.
+ * 并发契约（MUL-4463 评审第 1/2 轮）：
+ *   - 同一 issue 的变更通过 TanStack mutation 的 `scope` 串行化，因此「全量
+ *     值包」的响应不会乱序落地，快速的多选开关不会互相穿插。
+ *   - 乐观补丁是「合并」进从任一缓存（详情或列表）读到的值包——绝不整体替换
+ *     ——因此只显示看板的界面也能保住该 issue 的其他属性值。
+ *   - 失败恢复快照；若原本没有快照，则回退为失效。
+ *   - 该 issue 最后一次落定的变更会权威地失效详情缓存与定义目录（用量计数），
+ *     在 staleTime:Infinity 下对齐任何赛跑的 WS 快照。
  */
 export function useSetIssueProperty() {
   const qc = useQueryClient();
@@ -121,8 +119,8 @@ export function useSetIssueProperty() {
     scope: { id: `issue-properties:${wsId}` },
     mutationKey: ["issue-properties", wsId],
     onMutate: async ({ issueId, propertyId, value }) => {
-      // A response snapshotted before this write must not land after the
-      // optimistic patch and revert any denormalized issue projection.
+      // 本次写入之前快照的响应，绝不能落在乐观补丁之后，把反规范化的 issue
+      // 投影回滚掉。
       await cancelIssuePropertyMutationQueries(qc, wsId, issueId);
       const prev = readIssueProperties(qc, wsId, issueId);
       patchIssueProperties(qc, wsId, issueId, { ...(prev ?? {}), [propertyId]: value });
@@ -141,6 +139,7 @@ export function useSetIssueProperty() {
   });
 }
 
+/** 取消某个 issue 上的某个属性值（乐观移除该 key）。 */
 export function useUnsetIssueProperty() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -173,10 +172,10 @@ export function useUnsetIssueProperty() {
 }
 
 /**
- * Roll back exactly the key this mutation touched, against the CURRENT bag.
- * Restoring the whole onMutate snapshot would erase concurrent remote writes
- * to other keys that landed via WS while this request was in flight
- * (clean-room review F2 interleave B).
+ * 只回滚本次变更动过的那一个 key，基于「当前」值包。
+ *
+ * 恢复整个 onMutate 快照会抹掉请求在途期间、别的 key 经 WS 落地的并发远端
+ * 写入（净室评审 F2 交错 B）。
  */
 function rollbackSingleKey(
   qc: ReturnType<typeof useQueryClient>,
@@ -194,14 +193,13 @@ function rollbackSingleKey(
   patchIssueProperties(qc, wsId, ctx.issueId, next);
 }
 
-/** Authoritative reconcile once the LAST in-flight property write settles. */
+/** 最后一个在途的属性写入落定时，做一次权威对账。 */
 function settleIssuePropertyCaches(qc: ReturnType<typeof useQueryClient>, wsId: string, issueId: string) {
   if (qc.isMutating({ mutationKey: ["issue-properties", wsId] }) > 1) return;
   qc.invalidateQueries({ queryKey: issueKeys.detail(wsId, issueId) });
   qc.invalidateQueries({ queryKey: propertyKeys.all(wsId) });
-  // Server-filtered/-sorted windows must refetch: the write may have moved
-  // this issue across pages or reordered it (onIssuePropertiesChanged
-  // already fires this for the WS path; local mutations need it on settle
-  // because the self-emitted WS event may be suppressed or raced).
+  // 服务端过滤/排序的窗口必须重新拉取：写入可能让这个 issue 跨页移动或重排
+  // （onIssuePropertiesChanged 已为 WS 路径触发这个；本地变更需要在 settle 时
+  // 补上，因为自产 WS 事件可能被抑制或赛跑）。
   invalidatePropertyWindowQueries(qc, wsId);
 }

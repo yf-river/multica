@@ -1,3 +1,4 @@
+// 头像上传控件：点击后选择图片、裁剪并上传，支持用 emoji 替代图片；上传与持久化职责分离，由调用方保存。
 "use client";
 
 import { Suspense, lazy, useRef, useState } from "react";
@@ -21,48 +22,49 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../i18n";
 import { AvatarCropDialog } from "./avatar-crop-dialog";
 
-// The full emoji-mart picker is ~1MB of emoji data. Only the handful of
-// suggestions render eagerly; the searchable set loads when asked for.
+// 完整的 emoji-mart 选择器约有 1MB 的 emoji 数据。只有少量建议 emoji 立即渲染，
+// 可搜索的完整集合在需要时才加载。
 const EmojiPicker = lazy(() =>
   import("@multica/ui/components/common/emoji-picker").then((m) => ({
     default: m.EmojiPicker,
   })),
 );
 
+/** 头像上传控件的适用对象类型：用户 / 智能体 / 小队 / 工作区。 */
 export type AvatarUploadVariant = "user" | "agent" | "squad" | "workspace";
 
 interface AvatarUploadControlProps {
-  /** Current avatar URL, raw (unresolved). `null` renders the empty state. */
+  /** 当前头像 URL（原始、未解析）。`null` 渲染空状态。 */
   value: string | null;
-  /** Drives the empty-state fallback icon/initials. */
+  /** 决定空状态的兜底图标/首字母。 */
   variant: AvatarUploadVariant;
-  /** Name used for initials / first-letter fallback and the image alt. */
+  /** 用于首字母/首字符兜底和图片 alt 的名称。 */
   name?: string;
-  /** Pixel diameter of the circle. Defaults to 64. */
+  /** 圆形头像的直径（像素），默认 64。 */
   size?: number;
+  /** 是否禁用。 */
   disabled?: boolean;
   /**
-   * Fires with the uploaded file URL after a successful crop + upload. The
-   * parent persists it (updateMe / updateWorkspace / updateAgent /
-   * updateSquad, or stashing it for a create call). The crop dialog stays in
-   * its busy state until this resolves, then closes.
+   * 裁剪并上传成功后携带文件 URL 触发。父级负责持久化（updateMe /
+   * updateWorkspace / updateAgent / updateSquad，或暂存用于创建调用）。
+   * 裁剪对话框会保持忙碌状态直到此回调完成，然后关闭。
    */
   onUploaded: (url: string) => void | Promise<unknown>;
   /**
-   * When provided, the avatar offers emoji as an alternative to an image:
-   * clicking it opens a picker with the suggested set, full emoji search, and
-   * the upload entry. Fires with the value to persist (`emoji:🚀`) — the same
-   * `avatar_url` shape as `onUploaded`, so the caller stores both the same
-   * way. Omit it and the control keeps its click-straight-to-upload behavior.
+   * 提供后，头像允许用 emoji 替代图片：点击会打开一个选择器，含建议集合、
+   * 完整 emoji 搜索和上传入口。以要持久化的值触发（如 `emoji:🚀`），与
+   * `onUploaded` 的 `avatar_url` 形状一致，调用方用相同方式存储。省略时
+   * 控件保持"点击直接上传"的行为。
    */
   onEmojiSelected?: (value: string) => void | Promise<unknown>;
   /**
-   * When provided, shows a small clear affordance. Used by create flows to
-   * drop a not-yet-persisted choice; edit flows omit it (removing a saved
-   * avatar is out of scope).
+   * 提供后，显示一个小型清除按钮。用于创建流程丢弃尚未持久化的选择；编辑
+   * 流程省略它（移除已保存头像不在范围内）。
    */
   onClear?: () => void;
+  /** 附加样式。 */
   className?: string;
+  /** 自定义 aria-label。 */
   ariaLabel?: string;
 }
 
@@ -102,15 +104,13 @@ function AvatarFallback({
 }
 
 /**
- * Runs the caller's persistence callback and reports whether it succeeded.
+ * 执行调用方的持久化回调，并报告是否成功。
  *
- * A rejection is deliberately swallowed rather than toasted: the caller that
- * performed the write already owns that feedback. `AgentDetailPage.handleUpdate`
- * toasts and then rethrows so autosave can render a failed state, and the
- * settings tabs toast their own; the create flows only stash the value in
- * local state and cannot fail at all. Reporting it here too would show the
- * same failure twice. The upload this control runs itself has no other owner,
- * so that one is still announced.
+ * 故意吞掉拒绝而不是弹 toast：执行写入的调用方已经负责了那份反馈。
+ * `AgentDetailPage.handleUpdate` 会弹 toast 再重新抛出，好让自动保存渲染失败
+ * 状态；设置页签各自弹自己的 toast；创建流程只是把值暂存在本地状态，根本不会
+ * 失败。在这里再报告一次就会把同一个失败弹两遍。而本控件自己执行的上传没有
+ * 其他负责人，所以那一个仍然要提示。
  */
 async function persistedByCaller(
   save: () => void | Promise<unknown>,
@@ -124,13 +124,21 @@ async function persistedByCaller(
 }
 
 /**
- * Shared click-to-upload avatar control for web/desktop. Renders the current
- * avatar with a hover "change" affordance; on pick it opens {@link
- * AvatarCropDialog} for reposition/zoom, then uploads the cropped image
- * through the existing `/api/upload-file` chain and hands the URL back via
- * `onUploaded`. With `onEmojiSelected` the click opens a picker that offers
- * an emoji instead — both paths produce an `avatar_url` value. Business
- * persistence stays with the caller.
+ * 供 web/desktop 共用的"点击上传"头像控件。渲染当前头像并带悬停"更换"提示；
+ * 选中图片后打开 {@link AvatarCropDialog} 进行重定位/缩放，再通过现有的
+ * `/api/upload-file` 链路上传裁剪后的图片，并通过 `onUploaded` 把 URL 交回。
+ * 提供 `onEmojiSelected` 时，点击会打开一个改用 emoji 的选择器——两条路径
+ * 都产出 `avatar_url` 值。业务持久化由调用方负责。
+ * @param value 当前头像 URL。
+ * @param variant 头像对象类型。
+ * @param name 名称（用于首字母兜底与 alt）。
+ * @param size 直径（像素）。
+ * @param disabled 是否禁用。
+ * @param onUploaded 上传成功回调。
+ * @param onEmojiSelected 选择 emoji 回调。
+ * @param onClear 清除回调。
+ * @param className 附加样式。
+ * @param ariaLabel 自定义 aria-label。
  */
 export function AvatarUploadControl({
   value,
@@ -174,7 +182,7 @@ export function AvatarUploadControl({
 
   const handlePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-selecting the same file
+    e.target.value = ""; // 清空，允许再次选择同一个文件
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       toast.error(t(($) => $.avatar_upload.select_image));
@@ -195,7 +203,7 @@ export function AvatarUploadControl({
       setPickedFile(null);
       toast.success(t(($) => $.avatar_upload.updated));
     } catch (err) {
-      // Only the upload above can land here — see persistedByCaller.
+      // 只有上面的上传才会走到这里——见 persistedByCaller。
       toast.error(
         err instanceof Error ? err.message : t(($) => $.avatar_upload.failed),
       );
@@ -204,14 +212,12 @@ export function AvatarUploadControl({
     }
   };
 
-  // Busy for the whole save, same as an upload: an edit caller PATCHes on every
-  // pick, so leaving the trigger live would let a second pick race the first.
-  // Both writes are last-one-to-arrive-wins on the server, and the loser can be
-  // the one the user chose last — a permanently wrong avatar, since the
-  // invalidate that follows only converges on whatever the server kept.
+  // 整个保存过程都保持忙碌，和上传一样：编辑型调用方每次选择都会 PATCH，
+  // 若触发器仍可用，第二次选择会和第一次竞争。两次写入在服务端都是
+  // "后到者胜"，输掉的可能是用户最后选的那个——这样头像就会永久错误，
+  // 因为随后的失效刷新只会收敛到服务端最终保留的值。
   //
-  // No success toast on purpose: the avatar swaps to the chosen emoji in place,
-  // so the change is already visible.
+  // 故意不弹成功 toast：头像会就地换成所选 emoji，变化已经可见。
   const handleEmojiSelected = async (picked: string) => {
     closePicker();
     setPreviewError(false);
@@ -228,9 +234,8 @@ export function AvatarUploadControl({
   const avatarButton = (
     <button
       type="button"
-      // With emoji enabled this button is the popover trigger and Base UI
-      // supplies the click handler; without it the click goes straight to the
-      // file dialog, which is this control's original single-purpose shape.
+      // 启用 emoji 时，这个按钮是弹层触发器，点击处理器由 Base UI 提供；
+      // 未启用时点击直接打开文件对话框，这是本控件最初单一用途的形态。
       onClick={emojiEnabled ? undefined : openFileDialog}
       disabled={disabled || busy}
       aria-label={ariaLabel ?? t(($) => $.avatar_upload.change)}
@@ -283,8 +288,7 @@ export function AvatarUploadControl({
           <PopoverTrigger render={avatarButton} />
           <PopoverContent
             align="start"
-            // The emoji-mart picker sizes itself; only the suggestion grid is
-            // laid out against the popover's own width.
+            // emoji-mart 选择器会自己定尺寸；只有建议网格按弹层自身宽度布局。
             className={cn("gap-0 p-0", emojiSearchOpen ? "w-auto" : "w-72")}
           >
             {emojiSearchOpen ? (

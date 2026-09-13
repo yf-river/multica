@@ -8,66 +8,52 @@ import (
 	"strings"
 )
 
-// Background
-//
-// Codex CLI ships a native auto-memory subsystem: by default it writes
-// summaries of agent turns to `$CODEX_HOME/memories/raw_memories.md`
-// plus `state_*.sqlite`, and reads them back into the model context on
-// the next turn. The decision of what gets written is internal to Codex
-// — users cannot audit or edit the contents from any Multica UI.
-//
-// This conflicts with the Multica daemon's context model. Multica
-// already keeps per-(agent, issue) state via PriorSessionID, the issue
-// description / comments, issue metadata, and CLAUDE.md skill memory —
-// each channel is explicit, user-visible, and editable. Layering Codex
-// native memory on top introduces an opaque, daemon-uncontrolled second
-// store that can leak across tasks and (worse) across workspaces:
-//
-//   - Per-task `codex-home/memories/` is preserved across `Reuse()` and
-//     is never cleared by `prepareCodexHomeWithOpts`, so stale memories
-//     from a prior turn on the same (agent, issue) feed into the next.
-//   - Codex CLI may also read user-level state from `~/.codex/memories/`
-//     entirely outside the daemon's per-task isolation, dragging
-//     unrelated host-project context into Multica tasks. The reproduction
-//     in github.com/multica-ai/multica#3130 saw Raw Memories from
-//     `D:\Project\MoHaYu\WowChat` (a host-local project) injected into a
-//     brand-new Multica issue's first Codex turn.
-//
-// Mitigation: write a managed block into the per-task `config.toml` that
-// disables both the `features.memories` flag and the `memories.*`
-// generation/consumption switches. Codex then neither writes nor reads
-// from its memory subsystem, eliminating both leak paths regardless of
-// where the residual files sit on disk. The user's global
-// `~/.codex/config.toml` is never modified.
-//
-// Users who explicitly want Codex native memory inside a Multica task
-// (and accept the leak risk) can keep the feature enabled by setting
-// `MULTICA_CODEX_MEMORY=1` in the daemon environment. The long-term
-// answer for durable agent context is a Multica-owned, user-visible,
-// project- or issue-scoped memory store — not re-enabling Codex's
-// hidden auto-memory.
-//
-// Layout note
-//
-// TOML rejects redefining a table that has already been created —
-// including implicitly via a dotted key — so the managed block must
-// adapt to the user's existing config. Two independent managed blocks
-// are written:
-//
-//   1. memory-feature: disables `features.memories`. If the user's
-//      config contains a top-level `[features]` table, the override is
-//      injected inside that table; otherwise it goes at the file root
-//      in dotted-key form.
-//   2. memory-config: disables `memories.generate_memories` and
-//      `memories.use_memories`. If the user's config contains a
-//      top-level `[memories]` table, the overrides are injected inside
-//      that table; otherwise they go at the file root in dotted-key
-//      form.
+// 文件导读：本文件在 daemon 管理的任务会话里禁用 Codex 原生 auto-memory（自动记忆），
+// 并把开关写进 per-task 的 config.toml，杜绝跨任务、跨 workspace 的上下文泄漏。用户
+// 可用 MULTICA_CODEX_MEMORY 环境变量逃生门重新开启。
 
-// MulticaCodexMemoryEnv is the env var users can set to keep Codex
-// native memory enabled inside daemon-managed tasks. Anything truthy
-// (1, true, yes, on; case-insensitive) keeps the feature on; everything
-// else (including unset) disables it.
+// 背景
+//
+// Codex CLI 自带原生自动记忆子系统：默认把 agent 轮次的摘要写进
+// `$CODEX_HOME/memories/raw_memories.md` 以及 `state_*.sqlite`，下一轮再读回模型
+// 上下文。写什么由 Codex 内部决定——用户无法从任何 Multica UI 审计或编辑这些内容。
+//
+// 这与 Multica daemon 的上下文模型冲突。Multica 已经用 PriorSessionID、issue
+// 描述/评论、issue 元数据与 CLAUDE.md 技能记忆维护 per-(agent, issue) 状态——每条
+// 通道都显式、用户可见、可编辑。再叠上 Codex 原生记忆，等于引入一个 opaque、daemon
+// 无法控制的第二个存储，可能跨任务泄漏、更糟的是跨 workspace：
+//
+//   - per-task 的 `codex-home/memories/` 跨 `Reuse()` 保留、`prepareCodexHomeWithOpts`
+//     从不清理，于是同一 (agent, issue) 上一轮的陈旧记忆会喂进下一轮。
+//   - Codex CLI 还可能从 daemon per-task 隔离之外的 `~/.codex/memories/` 读用户级
+//     状态，把无关宿主项目上下文拖进 Multica 任务。github.com/multica-ai/multica#3130
+//     的复现里，`D:\Project\MoHaYu\WowChat`（一个宿主机本地项目）的 Raw Memories
+//     被注入到一个全新 Multica issue 的第一轮 Codex 对话。
+//
+// 缓解：往 per-task 的 `config.toml` 写一个受管块，同时禁用 `features.memories` 标志
+// 与 `memories.*` 的生成/消费开关。Codex 于是既不写也不读它的记忆子系统，无论残留
+// 文件在磁盘上哪个位置，两条泄漏路径都被切断。用户全局的 `~/.codex/config.toml`
+// 永不被改。
+//
+// 明确想在 Multica 任务里用 Codex 原生记忆（并接受泄漏风险）的用户，可以在 daemon
+// 环境里设 `MULTICA_CODEX_MEMORY=1` 保持启用。持久 agent 上下文的长期答案应是
+// Multica 自有、用户可见、按项目/issue 归类的记忆存储——而不是重新启用 Codex 隐藏
+// 的自动记忆。
+//
+// 布局说明
+//
+// TOML 拒绝重定义一个已创建的表——包括经点号键隐式创建的——因此受管块必须适配
+// 用户既有配置。这里写两块相互独立的受管块：
+//
+//   1. memory-feature：禁用 `features.memories`。用户配置含顶层 `[features]` 表时，
+//      覆盖注入该表内部；否则以点号键形式放在文件根。
+//   2. memory-config：禁用 `memories.generate_memories` 与 `memories.use_memories`。
+//      用户配置含顶层 `[memories]` 表时，覆盖注入该表内部；否则以点号键形式放在
+//      文件根。
+
+// MulticaCodexMemoryEnv 是用户可设、用来在 daemon 管理任务里保持 Codex 原生记忆
+// 启用的环境变量。任意真值（1、true、yes、on，不区分大小写）保持启用；其它一切
+// （含未设置）都禁用。
 const MulticaCodexMemoryEnv = "MULTICA_CODEX_MEMORY"
 
 const (
@@ -77,8 +63,7 @@ const (
 	multicaMemoryConfigEndMarker    = "# END multica-managed memory-config"
 )
 
-// `\n*` rather than `\n?` so reruns don't accumulate blank lines when
-// these blocks coexist with the sandbox / multi-agent blocks.
+// 用 `\n*` 而非 `\n?`，使这些块与 sandbox / multi-agent 块共存时重跑不会累积空行。
 var memoryFeatureBlockRe = regexp.MustCompile(
 	`(?ms)^` + regexp.QuoteMeta(multicaMemoryFeatureBeginMarker) +
 		`.*?^` + regexp.QuoteMeta(multicaMemoryFeatureEndMarker) + `\n*`)
@@ -88,24 +73,21 @@ var memoryConfigBlockRe = regexp.MustCompile(
 		`.*?^` + regexp.QuoteMeta(multicaMemoryConfigEndMarker) + `\n*`)
 
 var (
-	// matches a top-level `[memories]` table header.
+	// 匹配顶层 `[memories]` 表头。
 	rootMemoriesTableHeaderRe = regexp.MustCompile(`^\s*\[\s*memories\s*\]\s*(?:#.*)?$`)
-	// matches `memories = ...` inside a `[features]` table.
+	// 匹配 `[features]` 表内的 `memories = ...`。
 	featuresTableMemoriesRe = regexp.MustCompile(`^\s*memories\s*=`)
-	// matches `features.memories = ...` at the TOML root.
+	// 匹配 TOML 根的 `features.memories = ...`。
 	rootDottedFeaturesMemoriesRe = regexp.MustCompile(`^\s*features\s*\.\s*memories\s*=`)
-	// matches `generate_memories = ...` / `use_memories = ...` inside a
-	// `[memories]` table.
+	// 匹配 `[memories]` 表内的 `generate_memories = ...` / `use_memories = ...`。
 	memoriesTableGenerateRe = regexp.MustCompile(`^\s*generate_memories\s*=`)
 	memoriesTableUseRe      = regexp.MustCompile(`^\s*use_memories\s*=`)
-	// matches `memories.generate_memories = ...` / `memories.use_memories = ...`
-	// at the TOML root.
+	// 匹配 TOML 根的 `memories.generate_memories = ...` / `memories.use_memories = ...`。
 	rootDottedMemoriesGenerateRe = regexp.MustCompile(`^\s*memories\s*\.\s*generate_memories\s*=`)
 	rootDottedMemoriesUseRe      = regexp.MustCompile(`^\s*memories\s*\.\s*use_memories\s*=`)
 )
 
-// codexMemoryEnabled reports whether the user opted into keeping Codex
-// native memory on for daemon-managed tasks.
+// codexMemoryEnabled 报告用户是否选择在 daemon 管理任务里保持 Codex 原生记忆开启。
 func codexMemoryEnabled() bool {
 	raw := strings.TrimSpace(os.Getenv(MulticaCodexMemoryEnv))
 	switch strings.ToLower(raw) {
@@ -115,9 +97,8 @@ func codexMemoryEnabled() bool {
 	return false
 }
 
-// renderMulticaMemoryFeatureBlock returns the daemon-managed memory-feature
-// block. The body uses `memories = false` when injected inside a
-// `[features]` table, and `features.memories = false` otherwise.
+// renderMulticaMemoryFeatureBlock 返回 daemon 管理的 memory-feature 块。注入
+// `[features]` 表内部时块体用 `memories = false`，否则用 `features.memories = false`。
 func renderMulticaMemoryFeatureBlock(inFeaturesTable bool) string {
 	var b strings.Builder
 	b.WriteString(multicaMemoryFeatureBeginMarker)
@@ -132,9 +113,8 @@ func renderMulticaMemoryFeatureBlock(inFeaturesTable bool) string {
 	return b.String()
 }
 
-// renderMulticaMemoryConfigBlock returns the daemon-managed memory-config
-// block. The body uses bare keys when injected inside a `[memories]` table
-// and dotted-key form otherwise.
+// renderMulticaMemoryConfigBlock 返回 daemon 管理的 memory-config 块。注入 `[memories]`
+// 表内部时块体用裸键，否则用点号键形式。
 func renderMulticaMemoryConfigBlock(inMemoriesTable bool) string {
 	var b strings.Builder
 	b.WriteString(multicaMemoryConfigBeginMarker)
@@ -151,22 +131,19 @@ func renderMulticaMemoryConfigBlock(inMemoriesTable bool) string {
 	return b.String()
 }
 
-// stripUserMemoryDirectives removes user-written directives that would
-// conflict with the managed blocks:
+// stripUserMemoryDirectives 移除会与受管块冲突的用户写入指令：
 //
-//   - `features.memories = ...` and `memories.{generate,use}_memories = ...`
-//     at the TOML root (dotted-key form).
-//   - `memories = ...` inside a top-level `[features]` table.
-//   - `generate_memories = ...` / `use_memories = ...` inside a top-level
-//     `[memories]` table.
+//   - TOML 根的 `features.memories = ...` 与 `memories.{generate,use}_memories = ...`
+//     （点号键形式）。
+//   - 顶层 `[features]` 表内的 `memories = ...`。
+//   - 顶层 `[memories]` 表内的 `generate_memories = ...` / `use_memories = ...`。
 //
-// Other tables (`[features.experimental]`, `[memories.advanced]`, ...) are
-// preserved untouched: they live under their own scope and don't redefine
-// the keys the managed blocks set at the root / in the canonical tables.
+// 其它表（`[features.experimental]`、`[memories.advanced]`……）原样保留：它们各在
+// 自己作用域下，不会重定义受管块在根/规范表里设置的键。
 func stripUserMemoryDirectives(content string) string {
 	lines := strings.Split(content, "\n")
 	out := make([]string, 0, len(lines))
-	currentTable := "" // empty = TOML root
+	currentTable := "" // 空 = TOML 根
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if rootFeaturesTableHeaderRe.MatchString(line) {
@@ -206,10 +183,9 @@ func stripUserMemoryDirectives(content string) string {
 	return strings.Join(out, "\n")
 }
 
-// hasRootMemoriesTable reports whether the file contains a top-level
-// `[memories]` table header. Sub-tables like `[memories.advanced]` do NOT
-// count: they implicitly create `memories` but don't conflict with a
-// root-level `memories.generate_memories` dotted key.
+// hasRootMemoriesTable 报告文件是否含顶层 `[memories]` 表头。`[memories.advanced]`
+// 这类子表不算：它们会隐式创建 `memories`，但不会与根级 `memories.generate_memories`
+// 点号键冲突。
 func hasRootMemoriesTable(content string) bool {
 	for _, line := range strings.Split(content, "\n") {
 		if rootMemoriesTableHeaderRe.MatchString(line) {
@@ -219,33 +195,27 @@ func hasRootMemoriesTable(content string) bool {
 	return false
 }
 
-// injectMemoryFeatureBlockIntoFeaturesTable inserts the in-table
-// memory-feature block immediately after the first `[features]` header
-// line. Caller must have already stripped any prior managed block and any
-// user-set `memories` directive from inside the table.
+// injectMemoryFeatureBlockIntoFeaturesTable 把「表内形式」的 memory-feature 块插到
+// 首个 `[features]` 表头行之后。调用方必须先剥掉任何旧受管块与表内任何用户设置的
+// `memories` 指令。
 func injectMemoryFeatureBlockIntoFeaturesTable(content string) string {
 	return injectAfterHeader(content, rootFeaturesTableHeaderRe, renderMulticaMemoryFeatureBlock(true))
 }
 
-// injectMemoryConfigBlockIntoMemoriesTable inserts the in-table
-// memory-config block immediately after the first `[memories]` header
-// line. Caller must have already stripped any prior managed block and any
-// user-set `generate_memories` / `use_memories` directive from inside the
-// table.
+// injectMemoryConfigBlockIntoMemoriesTable 把「表内形式」的 memory-config 块插到首个
+// `[memories]` 表头行之后。调用方必须先剥掉任何旧受管块与表内任何用户设置的
+// `generate_memories` / `use_memories` 指令。
 func injectMemoryConfigBlockIntoMemoriesTable(content string) string {
 	return injectAfterHeader(content, rootMemoriesTableHeaderRe, renderMulticaMemoryConfigBlock(true))
 }
 
-// injectAfterHeader inserts block right after the first line matching
-// headerRe. Blank lines that would otherwise sit between the inserted
-// block and the next non-blank line are dropped so the END marker is
-// butted against the next table / key. Without this normalization, the
-// `\n*` quantifier in memoryFeatureBlockRe / memoryConfigBlockRe would
-// greedily consume those blank lines on the next strip, and the rewrite
-// would no longer be byte-exact idempotent.
+// injectAfterHeader 把 block 插到首个匹配 headerRe 的行之后。会丢掉「被插入块与下一
+// 非空行之间」的空行，使 END 标记紧贴下一张表/键。没有这个归一化，memoryFeatureBlockRe
+// / memoryConfigBlockRe 里的 `\n*` 量词会在下一次剥除时贪婪地吃掉那些空行，重写就
+// 不再逐字节幂等。
 //
-// The trailing "" element produced by Split when the file ends with `\n`
-// is preserved so the rewritten file keeps its EOF newline.
+// 文件以 `\n` 结束时 Split 产生的尾部 "" 元素被保留，让重写后的文件保持其 EOF
+// 换行。
 func injectAfterHeader(content string, headerRe *regexp.Regexp, block string) string {
 	blockLines := strings.Split(strings.TrimRight(block, "\n"), "\n")
 	lines := strings.Split(content, "\n")
@@ -254,8 +224,7 @@ func injectAfterHeader(content string, headerRe *regexp.Regexp, block string) st
 			continue
 		}
 		tail := lines[i+1:]
-		// Drop leading blanks that follow the inserted block, but never
-		// strip the lone trailing-newline marker.
+		// 去掉紧随被插入块的前导空行，但绝不剥掉那个孤立的「尾部换行标记」。
 		for len(tail) > 1 && tail[0] == "" {
 			tail = tail[1:]
 		}
@@ -268,15 +237,12 @@ func injectAfterHeader(content string, headerRe *regexp.Regexp, block string) st
 	return content
 }
 
-// ensureCodexMemoryConfig writes the daemon-managed memory blocks into the
-// per-task config.toml so Codex native memory stays disabled. Idempotent:
-// running it twice produces the same file.
+// ensureCodexMemoryConfig 把 daemon 管理的 memory 块写进 per-task config.toml，使
+// Codex 原生记忆保持禁用。幂等：连跑两次产出同一文件。
 //
-// When MULTICA_CODEX_MEMORY is set to a truthy value, the function is a
-// no-op — the user has explicitly opted into Codex native memory and
-// accepts the leak risk. Toggling the env var across prepare runs is not
-// supported: the per-task config is short-lived (recreated per task), so
-// users should set the var once at daemon start.
+// MULTICA_CODEX_MEMORY 设成真值时本函数是空操作——用户已明确选择 Codex 原生记忆并
+// 接受泄漏风险。跨 prepare 运行来回切换该环境变量不受支持：per-task 配置短命（每个
+// 任务重建），用户应在 daemon 启动时一次性设置。
 func ensureCodexMemoryConfig(configPath string, logger *slog.Logger) error {
 	if codexMemoryEnabled() {
 		if logger != nil {
@@ -293,19 +259,16 @@ func ensureCodexMemoryConfig(configPath string, logger *slog.Logger) error {
 	}
 	existing := string(data)
 
-	// Always strip any previously written managed blocks (root or in-table
-	// form) so reruns and layout transitions stay clean.
+	// 总是先剥掉任何先前写下的受管块（根或表内形式），让重跑与布局切换保持干净。
 	existing = memoryFeatureBlockRe.ReplaceAllString(existing, "")
 	existing = memoryConfigBlockRe.ReplaceAllString(existing, "")
-	// Strip user-set directives in every encoding; the managed blocks re-add
-	// the canonical forms below.
+	// 再剥掉用户指令的每种编码；受管块稍后重新加上规范形式。
 	existing = stripUserMemoryDirectives(existing)
 
 	hasFeatures := hasRootFeaturesTable(existing)
 	hasMemories := hasRootMemoriesTable(existing)
 
-	// In-table injections happen first so the root-prepended blocks land
-	// at the very top of the file (above any user tables).
+	// 表内注入先做，让随后前插的根级块落在文件最顶部（用户表之上）。
 	if hasFeatures {
 		existing = injectMemoryFeatureBlockIntoFeaturesTable(existing)
 	}
@@ -313,7 +276,7 @@ func ensureCodexMemoryConfig(configPath string, logger *slog.Logger) error {
 		existing = injectMemoryConfigBlockIntoMemoriesTable(existing)
 	}
 
-	// Build the root-form blocks (if any) and prepend them.
+	// 组装根级块（若有）并前插。
 	var prepend strings.Builder
 	if !hasFeatures {
 		prepend.WriteString(renderMulticaMemoryFeatureBlock(false))

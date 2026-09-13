@@ -1,3 +1,7 @@
+// 文件职责：实现 `multica issue mr` 子命令组——create（在 gongfeng 上创建合并
+// 请求并链到 issue）、link（把已有的 gongfeng/github MR/PR 链到 issue，例如 agent
+// 完成编码后回填链接）、list（复用 cmd_issue.go 的 runIssuePullRequests）。另外
+// 提供请求体构造辅助 flagNameToJSONKey 与结果打印辅助。
 package main
 
 import (
@@ -11,11 +15,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// issueMRCmd 是 `issue mr` 分组命令：create / link / list。
 var issueMRCmd = &cobra.Command{
 	Use:   "mr",
 	Short: "Work with issue merge requests",
 }
 
+// issueMRCreateCmd 在 gongfeng 上新建合并请求，并把它的引用链回 issue。
 var issueMRCreateCmd = &cobra.Command{
 	Use:   "create <issue-id>",
 	Short: "Create a Gongfeng merge request and link it to an issue",
@@ -23,6 +29,7 @@ var issueMRCreateCmd = &cobra.Command{
 	RunE:  runIssueMRCreate,
 }
 
+// issueMRLinkCmd 把一个已存在的 gongfeng/github PR 记录链到 issue 上。
 var issueMRLinkCmd = &cobra.Command{
 	Use:   "link <issue-id>",
 	Short: "Link a Gongfeng/GitHub merge request to an issue",
@@ -30,6 +37,7 @@ var issueMRLinkCmd = &cobra.Command{
 	RunE:  runIssuePullRequestLink,
 }
 
+// issueMRListCmd 复用 runIssuePullRequests，列出一个 issue 关联的全部 PR/MR。
 var issueMRListCmd = &cobra.Command{
 	Use:   "list <issue-id>",
 	Short: "List merge requests linked to an issue",
@@ -46,6 +54,7 @@ func init() {
 	issueMRListCmd.Flags().String("output", "table", "Output format: table or json")
 }
 
+// addIssuePullRequestLinkFlags 给 `issue mr link` 挂上 PR/MR 元数据 flag。
 func addIssuePullRequestLinkFlags(cmd *cobra.Command) {
 	cmd.Flags().String("provider", "gongfeng", "MR provider: gongfeng or github")
 	cmd.Flags().String("project-path", "", "Repository project path, e.g. ChainWeaver/ida/user-center")
@@ -67,6 +76,7 @@ func addIssuePullRequestLinkFlags(cmd *cobra.Command) {
 	cmd.Flags().String("output", "table", "Output format: table or json")
 }
 
+// addIssueMRCreateFlags 给 `issue mr create` 挂上创建 MR 所需 flag。
 func addIssueMRCreateFlags(cmd *cobra.Command) {
 	cmd.Flags().String("provider", "gongfeng", "MR provider: gongfeng")
 	cmd.Flags().String("project-path", "", "Repository project path, e.g. ChainWeaver/ida/user-center")
@@ -81,6 +91,10 @@ func addIssueMRCreateFlags(cmd *cobra.Command) {
 	cmd.Flags().String("output", "table", "Output format: table or json")
 }
 
+// runIssuePullRequestLink 执行 `issue mr link <issue-id>`：把调用方提供的 PR/MR
+// 元数据（provider/project/number/分支等）POST 到 issue 的 pull-requests 关联上，
+// 从而在平台侧留下「这个 PR 是为解决该 issue」的痕迹。只有非零/非空的 flag 才
+// 进请求体，避免把默认零值当真实值上报。
 func runIssuePullRequestLink(cmd *cobra.Command, args []string) error {
 	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
@@ -119,6 +133,9 @@ func runIssuePullRequestLink(cmd *cobra.Command, args []string) error {
 	return printIssuePullRequestMutationResult(cmd, result)
 }
 
+// runIssueMRCreate 执行 `issue mr create <issue-id>`：经 /merge-requests/create
+// 端点直接在 gongfeng 上创建 MR 并链到 issue。--description 优先用
+// --description-file 的内容覆盖（适用于脚本/agent 从文件读长描述）。
 func runIssueMRCreate(cmd *cobra.Command, args []string) error {
 	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
@@ -155,6 +172,8 @@ func runIssueMRCreate(cmd *cobra.Command, args []string) error {
 	return printIssuePullRequestMutationResult(cmd, result)
 }
 
+// printIssuePullRequestMutationResult 输出 link/create 这类「变更型」命令的结果：
+// --output json 直接透传响应；表格则从结果里抽出 pull_request 打表。
 func printIssuePullRequestMutationResult(cmd *cobra.Command, result map[string]any) error {
 	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
@@ -164,6 +183,8 @@ func printIssuePullRequestMutationResult(cmd *cobra.Command, result map[string]a
 	return nil
 }
 
+// flagNameToJSONKey 把 kebab-case 的 flag 名（如 project-path）转成 snake_case
+// 的 JSON 字段名（project_path），供请求体 key 使用。
 func flagNameToJSONKey(name string) string {
 	return strings.ReplaceAll(name, "-", "_")
 }

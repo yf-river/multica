@@ -25,11 +25,12 @@ import {
 } from "../onboarding/templates";
 
 /**
- * One-shot welcome experience for users who explicitly skipped runtime
- * setup during onboarding.
+ * workspace 模块：面向「在 onboarding 中明确跳过运行时安装」用户的欢迎弹窗。
  *
- * Runtime-connected onboarding creates Mika before entering the workspace
- * and therefore never writes this no-runtime signal.
+ * 只在一次完成 onboarding 时出现：预先创建一个「安装运行时」引导 issue，
+ * 再弹完成提示，指引用户去 runtimes 页用真实引导流程补上运行时。
+ * 运行时已连接的 onboarding 在进入工作区前就创建了 Mika，永远不会写这个
+ * no-runtime 信号。
  */
 export function WelcomeAfterOnboarding() {
   const me = useAuthStore((state) => state.user);
@@ -38,8 +39,8 @@ export function WelcomeAfterOnboarding() {
   const dismissed = useWelcomeStore((state) => state.dismissed);
   const dismiss = useWelcomeStore((state) => state.dismiss);
 
-  // The store is global while this component is workspace-scoped. Wait
-  // until the matching workspace is visible before seeding guide issues.
+  // store 是全局的，而这个组件按工作区作用域。等到匹配的工作区可见后再
+  // 去种引导 issue。
   if (
     !me ||
     !signal ||
@@ -59,11 +60,14 @@ export function WelcomeAfterOnboarding() {
 }
 
 /**
- * Module-level dedupe keeps React StrictMode double-mounts from racing
- * identical issue or comment creation requests.
+ * 模块级去重：避免 React StrictMode 双挂载时对同一个 issue/评论发出两次
+ * 相同的创建请求。
  */
 const pendingIssueSeed = new Map<string, Promise<Issue>>();
 
+/**
+ * 带去重的 issue 预创建：同一 cacheKey 的并发请求共享同一个 Promise。
+ */
 function seedIssueDeduped(
   cacheKey: string,
   body: CreateIssueRequest,
@@ -93,9 +97,9 @@ interface SkipWelcomeProps {
 }
 
 /**
- * Provision one focused runtime guide before showing the completion modal.
- * Once a runtime appears, the Runtimes page offers "Start with Mika" and
- * runs the same real bootstrap used by connected onboarding.
+ * 在展示完成弹窗之前，先准备好一条聚焦的运行时引导 issue。
+ * 一旦出现运行时，Runtimes 页会提供「Start with Mika」并跑与连接型 onboarding
+ * 相同的真实引导流程。
  */
 function SkipWelcome({ workspaceId, onDismiss }: SkipWelcomeProps) {
   const { t } = useT("onboarding");
@@ -141,12 +145,11 @@ function SkipWelcome({ workspaceId, onDismiss }: SkipWelcomeProps) {
 
   if (!me) return null;
 
-  // A failure used to dismiss the surface silently. Nothing recovered it: the
-  // welcome signal is deliberately not persisted, onboarding is already marked
-  // complete, and seedIssueDeduped's cache is one in-flight promise — so a
-  // blip left the member with no guide issue, no message, and no way back.
-  // Retry re-runs the effect (the `failed` guard is what gates it), and
-  // dismissing is now a choice rather than the default.
+  // 失败过去是被静默关闭的，没有人能再恢复它：欢迎信号刻意不持久化，
+  // onboarding 已标记完成，seedIssueDeduped 的缓存只是一次在途的 Promise——
+  // 一次抖动会让成员既没有引导 issue、没有任何提示、也没有回头路。
+  // 「重试」会重跑这个 effect（失败标记正是它的闸门），而关闭现在是一个
+  // 选择，而不是默认结局。
   if (failed) {
     return (
       <Dialog
@@ -236,6 +239,7 @@ function SkipWelcome({ workspaceId, onDismiss }: SkipWelcomeProps) {
   );
 }
 
+/** 完成弹窗里展示引导卡片（标题 + 状态徽标 + 说明）的预览组件。 */
 function SkipPreviewCard({
   cardKey,
   statusLabel,
@@ -266,6 +270,7 @@ function SkipPreviewCard({
   );
 }
 
+/** 全屏加载遮罩，用于引导 issue 预创建期间展示。 */
 function FullScreenLoading({ label }: { label: string }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
@@ -277,6 +282,7 @@ function FullScreenLoading({ label }: { label: string }) {
   );
 }
 
+/** 解析工作区 slug：先查缓存里的工作区列表，miss 再回源取一次。 */
 async function resolveWorkspaceSlug(
   queryClient: ReturnType<typeof useQueryClient>,
   workspaceId: string,

@@ -1,14 +1,21 @@
 "use client";
 
+// 项目截止日期选择胶囊：共享 DateOnlyPicker 的薄封装，逾期时把过去日期标红。
 import { CalendarDays } from "lucide-react";
 import type { UpdateProjectRequest } from "@multica/core/types";
 import { DateOnlyPicker } from "../../common/date-only-picker";
 import { useT } from "../../i18n";
 
 /**
- * Project due-date pill. Thin wrapper over the shared DateOnlyPicker (see
- * ProjectStartDatePicker); `highlightOverdue` paints a past due date red, the
- * same as the issue due-date pill.
+ * 项目截止日期胶囊。共享 DateOnlyPicker 的薄封装（详见 ProjectStartDatePicker）；
+ * `highlightOverdue` 会把已经过去的截止日期标红，和任务的截止日期胶囊一致。
+ *
+ * @param dueDate 当前截止日期（YYYY-MM-DD 或 null）
+ * @param onUpdate 变更回调（携带局部更新对象）
+ * @param triggerRender 自定义触发器（如创建弹窗里的药丸按钮）
+ * @param align 弹层对齐方向
+ * @param open 受控的打开状态——让 ⋯ 溢出菜单能「展开并打开」这个胶囊
+ * @param onOpenChange 打开状态变化回调
  */
 export function ProjectDueDatePicker({
   dueDate,
@@ -20,10 +27,10 @@ export function ProjectDueDatePicker({
 }: {
   dueDate: string | null;
   onUpdate: (updates: Partial<UpdateProjectRequest>) => void;
-  /** Custom trigger element (e.g. a pill button in the create modal). */
+  /** 自定义触发器元素（例如创建弹窗里的胶囊按钮）。 */
   triggerRender?: React.ReactElement<Record<string, unknown>>;
   align?: "start" | "center" | "end";
-  /** Controlled open state — lets a ⋯ overflow menu reveal + open the pill. */
+  /** 受控打开状态——让 ⋯ 溢出菜单能展开并打开这个胶囊。 */
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
 }) {

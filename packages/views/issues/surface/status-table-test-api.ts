@@ -1,3 +1,5 @@
+// 给旧式（pre-Table）测试夹具用的过渡适配器。生产代码永远不会 import 这个模块；
+// 它让既有 surface 测试既能保留小型「按状态分内存」数据源，又能断言新的请求约定。
 import { ALL_STATUSES } from "@multica/core/issues/config";
 import type {
   Issue,
@@ -15,19 +17,18 @@ type LegacyListIssues = (
   params?: ListIssuesParams,
 ) => Promise<ListIssuesResponse>;
 
-/** One agent holding running issue tasks, as the working-agents projection
- *  reports it. `issue_ids` may name issues outside the queried surface — the
- *  facet is expected to drop those, which is the whole point of MUL-5525. */
+/** 一个持有多条运行中问题任务的智能体，按「工作中智能体」投影报告。
+ *  `issue_ids` 可能指向所查询 surface 之外的问题——facet 预期会丢弃它们，
+ *  这正是 MUL-5525 的意义。 */
 export interface WorkingTaskFixture {
   id: string;
   issue_ids: readonly string[];
 }
 
 /**
- * Data for the `working_agents` facet. `rows` is read directly rather than
- * through the legacy list endpoint: several tests assert that a Table surface
- * never touches that endpoint, and a facet stand-in that called it would make
- * them pass or fail for the wrong reason.
+ * `working_agents` facet 的数据。`rows` 直接读取而不是走旧式 list 接口：
+ * 有多个测试断言 Table surface 从不触碰那个接口，一个又去调用它的 facet 替身
+ * 会让这些测试以错误的理由通过或失败。
  */
 export interface WorkingAgentsFixture {
   rows: () => readonly Issue[];
@@ -35,11 +36,9 @@ export interface WorkingAgentsFixture {
 }
 
 /**
- * Group-key axis for a status grouping. Board / list / swimlane surfaces page by
- * CATEGORY (`status_category:<category>`); the table still groups by concrete
- * status key. This fixture holds only built-in statuses, where a key IS its own
- * category, so the two axes select the same rows — only the key shape differs.
- * (MUL-6243)
+ * 状态分组的「分组 key 轴」。看板/列表/泳道 surface 按「分类」分页
+ * （`status_category:<category>`）；表格仍按具体状态 key 分组。这个夹具只装
+ * 内置状态——它们 key 即分类——所以两个轴选中同一批行，只是 key 形状不同。（MUL-6243）
  */
 function statusAxis(group: { kind: string }): string {
   return group.kind === "status_category" ? "status_category" : "status";
@@ -114,8 +113,8 @@ async function allRows(
   return rows.flat();
 }
 
-// The working-agents facet drops only ITS dimension, so every other filter in
-// the spec still applies. Mirrors the two predicates `rowsForStatus` enforces.
+// working-agents facet 只丢弃「它自己」这一维，所以 spec 里的其他筛选依然生效。
+// 与 `rowsForStatus` 施行的两个谓词保持一致。
 function workingAgentFacetValues(
   query: IssueTableQuerySpec,
   fixture: WorkingAgentsFixture,
@@ -190,15 +189,16 @@ function primaryDescriptor(
 }
 
 /**
- * Transitional adapter for pre-Table test fixtures. Production code never
- * imports this module; it lets existing surface tests keep their small
- * per-status in-memory data source while asserting the new request contract.
+ * 给旧式（pre-Table）测试夹具用的过渡适配器：把旧的 `listIssues` 数据源包装成
+ * Table 请求约定的三个方法。生产代码从不 import 本模块。
+ * @param listIssues - 旧式的按状态列问题的接口。
+ * @param workingAgents - 服务端「问题 ↔ 运行中任务」联接的替身。提供它才能演练
+ *   `working_agents` facet；不提供时 facet 回答为空，等价于一个什么都没在跑的工作区。
  */
 export function statusTableMethodsFromLegacy(
   listIssues: LegacyListIssues,
-  // Stand-in for the server's issue↔running-task join. Supply it to exercise
-  // the `working_agents` facet; without it the facet answers empty, matching a
-  // workspace where nothing is running.
+  // 服务端「问题 ↔ 运行中任务」联接的替身。提供它才能演练 `working_agents` facet；
+  // 不提供时 facet 回答为空，等价于一个什么都没在跑的工作区。
   workingAgents: WorkingAgentsFixture = { rows: () => [], agents: () => [] },
 ) {
   return {
@@ -317,9 +317,8 @@ export function statusTableMethodsFromLegacy(
       };
     },
     listIssueTableFacets: async (request: IssueTableFacetsRequest) => {
-      // Only touch the legacy list endpoint when a status facet is actually
-      // asked for: Table surfaces request other facets while asserting that
-      // endpoint is never called.
+      // 只有在真正请求了状态 facet 时才去碰旧式 list 接口：Table surface 会请求其他
+      // facet，同时断言那个接口永远不会被调用。
       const groups = request.facets.some((facet) => facet.kind === "status")
         ? await Promise.all(
             ALL_STATUSES.map(async (status) => ({

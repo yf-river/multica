@@ -1,3 +1,5 @@
+// agent_ready.go —— agent 就绪判定：用调用方真正分支的词汇给出 readiness 结论（available/waitable/blocked），
+// 作为所有准入路径的单一事实来源。
 package service
 
 import (
@@ -9,99 +11,77 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// AgentAvailability is what a readiness check concluded, in the vocabulary the
-// callers actually branch on.
+// AgentAvailability 是就绪检查的结论，用调用方真正分支的词汇表达。
 //
-// The distinction that matters is not "ready or not" but whether WAITING is a
-// plan. A sleeping laptop comes back on its own, so queued work is right to
-// wait for it; an agent bound to nothing, or bound to a machine whose CLI
-// cannot run, will never pick that work up until a human acts. dispatch's
-// reason codes already draw that line — this type is the server-side half so
-// every admission path draws it the same way.
+// 要紧的区分不是 “就绪与否”，而是 WAITING 是否可行。休眠的笔记本会自己回来，排队工作等它是对的；而绑到
+// 空 runtime、或绑到 CLI 无法运行的机器的 agent，在人类介入前永远不会拿起工作。dispatch 的原因码早已画出这条线
+// ——本类型是服务端半边，让每条准入路径按同样方式画。
 type AgentAvailability int
 
 const (
-	// AgentAvailable: the agent can take work now.
+	// AgentAvailable：agent 现在就能接活。
 	AgentAvailable AgentAvailability = iota
-	// AgentWaitable: not runnable right now, but nothing is broken — the
-	// machine is offline and work queued for it runs when it returns.
+	// AgentWaitable：现在跑不了，但没坏——机器离线，为它排队的活会在其回归时运行。
 	AgentWaitable
-	// AgentBlocked: nothing will claim this agent's work until someone
-	// intervenes. Callers must refuse the trigger and say why.
+	// AgentBlocked：在有人介入前无人会认领该 agent 的工作。调用方必须拒绝触发并说明原因。
 	AgentBlocked
 )
 
-// AgentVerdict is a readiness decision plus everything a caller needs to act on
-// it: the wire reason code, and — when the daemon reported one — the command
-// that repairs the runtime.
+// AgentVerdict 是一次就绪决策加上调用方据以行动的全部信息：线协议原因码，以及（daemon 上报时）修复 runtime 的
+// 命令。
 type AgentVerdict struct {
 	Availability AgentAvailability
-	// Reason is the dispatch code for a non-available verdict, empty otherwise.
+	// Reason 是非可用结论的 dispatch 原因码，可用结论下为空。
 	Reason dispatch.ReasonCode
-	// Repair is the fix the daemon reported for an unusable runtime: the npm
-	// package that owns the broken entry point and the command that reinstalls
-	// it. Absent for every other verdict, and for a runtime whose daemon is too
-	// old to report one.
+	// Repair 是 daemon 为不可用 runtime 上报的修复：拥有坏入口的 npm 包与重装它的命令。其它结论以及 daemon
+	// 太老没上报时为缺失。
 	Repair *RuntimeRepair
-	// Detail is the daemon's own description, for logs and for the record left
-	// on a blocked non-interactive trigger. Never parsed.
+	// Detail 是 daemon 自己的描述，供日志与“被阻断的非交互触发”留档。从不解析。
 	Detail string
 }
 
-// Ready reports whether the agent can take work right now.
+// Ready 判断 agent 现在能否接活。
 func (v AgentVerdict) Ready() bool { return v.Availability == AgentAvailable }
 
-// Blocked reports whether waiting is futile and the caller must refuse the
-// trigger rather than queue it.
+// Blocked 判断等待是否徒劳、调用方必须拒绝触发而非入队。
 func (v AgentVerdict) Blocked() bool { return v.Availability == AgentBlocked }
 
-// RuntimeRepair mirrors the daemon's agent.ExecFormatRepair over the wire.
+// RuntimeRepair 是 daemon agent.ExecFormatRepair 的线协议镜像。
 type RuntimeRepair struct {
 	Package string `json:"package,omitempty"`
 	Command string `json:"command,omitempty"`
-	// Shell is the interpreter Command is written for, as reported by the
-	// machine that must run it ("bash", "powershell"). Rendered as the code
-	// block's language so a Windows user is not handed POSIX syntax in a bash
-	// fence. Empty from a daemon too old to report it.
+	// Shell 是 Command 所面向的解释器，由必须运行它的机器上报（“bash”、“powershell”）。作为代码块的 language
+	// 渲染，Windows 用户不会被塞进 bash 栅栏里的 POSIX 语法。daemon 太老未上报时为空。
 	Shell string `json:"shell,omitempty"`
 }
 
-// runtimeOfflineReason is the daemon's structured explanation, stored on the
-// runtime row's metadata by the deregister handler.
+// runtimeOfflineReason 是 daemon 的结构化离线解释，由注销 handler 存在 runtime 行 metadata 上。
 type runtimeOfflineReason struct {
 	Code   string         `json:"code"`
 	Detail string         `json:"detail"`
 	Repair *RuntimeRepair `json:"repair"`
 }
 
-// runtimeOfflineCodeNotExecutable is the daemon's code for "the OS refuses to
-// execute this agent CLI" (daemon.RuntimeOfflineCodeNotExecutable). Compared as
-// a string because the server must not import the daemon package.
+// runtimeOfflineCodeNotExecutable 是 daemon 对 “OS 拒绝执行该 agent CLI” 的原因码（daemon.RuntimeOfflineCode
+// NotExecutable）。按字符串比较，因为服务端不得 import daemon 包。
 const runtimeOfflineCodeNotExecutable = "not_executable"
 
-// AgentReadiness reports whether an agent can accept new work right now, and
-// what the caller should do when it cannot.
+// AgentReadiness 报告 agent 现在能否接新活，以及不能时调用方该怎么办。
 //
-// The lookup carries the connection to read on plus the source label the
-// runtime read is attributed to (MUL-6884), so each admission path stays
-// distinguishable in multica_agent_runtime_lookup_total.
+// lookup 携带“读取所用连接”与“该 runtime 读取归属的来源标签”（MUL-6884），使每条准入路径在
+// multica_agent_runtime_lookup_total 中都可区分。
 //
-// err is non-nil only on DB lookup failure for the runtime row. Callers that
-// treat a transient DB error as "do not skip" (the autopilot admission gate)
-// should swallow it; callers that need a hard yes/no (the squad-leader
-// pre-enqueue check in the handler) should fail closed.
+// 只有对 runtime 行的 DB 查找失败时 err 非 nil。把瞬时 DB 错误当 “不跳过” 的调用方（autopilot 准入闸门）应
+// 吞掉它；需要硬性是/否的调用方（handler 的 squad-leader 入队前检查）应 fail closed。
 //
-// This is the single source of truth shared by:
-//   - service.shouldSkipDispatch (autopilot admission gate)
-//   - service.dispatchRunOnly    (squad-leader runtime check, MUL-2429)
-//   - handler.isSquadLeaderReady (issue-assign / comment-trigger path)
-//   - the direct-agent trigger paths, which consult it for the BLOCKED verdict
-//     only: an offline machine still queues, because that wait ends by itself.
+// 这是下列各方的单一事实来源：
+//   - service.shouldSkipDispatch（autopilot 准入闸门）
+//   - service.dispatchRunOnly（squad-leader runtime 检查，MUL-2429）
+//   - handler.isSquadLeaderReady（issue 指派 / 评论触发路径）
+//   - 直接 agent 触发路径，只为 BLOCKED 结论查询它：离线机器仍会排队，因为那种等待会自行结束。
 //
-// Keeping these aligned matters because the paths can otherwise drift — e.g.
-// one starts allowing "starting" runtimes while another doesn't, and the bug
-// only surfaces when a user assigns the same agent through two different entry
-// points. Touch this function, all of them move together.
+// 保持它们一致很重要，否则各路径会漂移——例如一条开始允许 “starting” runtime 而另一条不允许，当用户经两个
+// 不同入口指派同一 agent 时 bug 才浮现。动这个函数，它们一起动。
 func AgentReadiness(ctx context.Context, lookup RuntimeLookup, agent db.Agent) (AgentVerdict, error) {
 	if agent.ArchivedAt.Valid {
 		return AgentVerdict{
@@ -124,14 +104,12 @@ func AgentReadiness(ctx context.Context, lookup RuntimeLookup, agent db.Agent) (
 	return runtimeVerdict(rt), nil
 }
 
-// runtimeVerdict is the half of the decision that depends only on the runtime
-// row, split out so every branch is testable without a database.
+// runtimeVerdict 是只依赖 runtime 行的那半判定，拆出来使每个分支都能无 DB 测试。
 func runtimeVerdict(rt db.AgentRuntime) AgentVerdict {
 	if rt.Status == "online" {
 		return AgentVerdict{Availability: AgentAvailable}
 	}
-	// Offline with a reason the daemon says a human must repair: refuse rather
-	// than queue, and carry the repair so the caller can show it.
+	// 离线且原因属于 daemon 说的“人类须修复”：拒绝而非排队，并携带修复命令供调用方展示。
 	if reason, ok := parseRuntimeOfflineReason(rt.Metadata); ok && reason.Code == runtimeOfflineCodeNotExecutable {
 		return AgentVerdict{
 			Availability: AgentBlocked,
@@ -147,9 +125,8 @@ func runtimeVerdict(rt db.AgentRuntime) AgentVerdict {
 	}
 }
 
-// parseRuntimeOfflineReason reads the daemon's explanation off a runtime row.
-// A row with no reason, or metadata this server cannot parse, simply has no
-// explanation — never a different verdict.
+// parseRuntimeOfflineReason 从 runtime 行读取 daemon 的解释。无原因或服务端解析不了的 metadata，只是没有解释
+// ——绝不会得出不同的结论。
 func parseRuntimeOfflineReason(metadata []byte) (runtimeOfflineReason, bool) {
 	if len(metadata) == 0 {
 		return runtimeOfflineReason{}, false
@@ -163,15 +140,11 @@ func parseRuntimeOfflineReason(metadata []byte) (runtimeOfflineReason, bool) {
 	return *envelope.OfflineReason, true
 }
 
-// RuntimeUnusableNotice is the durable explanation left on an issue when a
-// trigger is refused because the target's agent CLI cannot run on its machine.
+// RuntimeUnusableNotice 是触发被拒（因目标 agent CLI 无法在其机器上运行）时留在 issue 上的持久解释。
 //
-// It lives here, next to the verdict, because two layers write it: the handler
-// for a refused @mention and the service for a refused assignment. One text,
-// one place to fix it. It names the repair command when the daemon reported
-// one and stays useful when it did not — a natively installed CLI has no
-// postinstall to re-run, and inventing a command would send the user somewhere
-// that does not exist.
+// 它放在这里、紧邻 verdict，因为有两层会写它：拒绝 @mention 的 handler 与拒绝指派的 service。一个文本、一个
+// 修改点。daemon 上报了修复命令时点名它，没上报时依然有用——原生安装的 CLI 没有可重跑的 postinstall，编个命令
+// 会把用户送到不存在的地方。
 func RuntimeUnusableNotice(agentName string, verdict AgentVerdict) string {
 	name := agentName
 	if name == "" {
@@ -193,9 +166,8 @@ func RuntimeUnusableNotice(agentName string, verdict AgentVerdict) string {
 	)
 }
 
-// repairFenceLanguage labels the code block with the shell the command was
-// written for. A daemon too old to report one predates the Windows rendering
-// entirely, so its command is POSIX by construction.
+// repairFenceLanguage 用命令所面向的 shell 标记代码块。太老、没上报 shell 的 daemon 早于 Windows 渲染，
+// 其命令按构造即 POSIX。
 func repairFenceLanguage(shell string) string {
 	if shell == "powershell" {
 		return "powershell"

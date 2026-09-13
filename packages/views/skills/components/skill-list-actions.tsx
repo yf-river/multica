@@ -1,3 +1,6 @@
+// 本文件职责：技能列表上的「操作」相关 UI——行内 ⋯ 菜单、悬浮批量工具栏，以及它们
+// 背后共享的弹窗（添加到 agent、删除、从来源批量更新）。所有权限与可操作集合的判断
+// 都基于上下文 SkillActionsContext。
 "use client";
 
 import { useState } from "react";
@@ -56,26 +59,26 @@ import { isRefreshableOrigin, readOrigin } from "../lib/origin";
 import { RefreshSkillDialog } from "./refresh-skill-dialog";
 import type { SkillRow } from "./skills-page";
 
-// Shared context the row kebab and the batch toolbar both need. Assembled
-// once at the page level.
+/**
+ * 行内 ⋯ 菜单与批量工具栏共用的共享上下文，由页面层一次性组装好后透传下来，
+ * 内含发起各类操作所需的全部信息（工作区、agent 列表、当前用户、是否 admin）。
+ */
 export interface SkillActionsContext {
   wsId: string;
   agents: Agent[];
   currentUserId: string | null;
-  /** Workspace owner/admin — may manage every agent, not only their own. */
+  /** 工作区 owner/admin——可以管理所有 agent，而不只是自己创建的。 */
   isAdmin: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// Add-to-agent dialog (multi-select; shared by row kebab and batch toolbar)
+// 「添加到 agent」弹窗（多选；行内菜单与批量工具栏共用）
 // ---------------------------------------------------------------------------
 
-// Attaching is permission-gated by the TARGET agent (its owner, or a
-// workspace owner/admin — server/internal/handler/agent.go canManageAgent).
-// Members therefore only see their own agents; admins additionally see
-// everyone else's. Agents that already have every selected skill render
-// checked-out and disabled; partial overlap stays selectable because the
-// endpoint is additive ("ensure these skills") and idempotent.
+// 「挂载 skill」的权限挂在目标 agent 上（它的 owner，或工作区 owner/admin——
+// 见 server/internal/handler/agent.go canManageAgent）。因此普通成员只能看到自己的
+// agent；admin 额外能看到其他人的。已经拥有全部所选技能的 agent 显示为勾选且禁用；
+// 部分重叠仍可勾选，因为该接口是「确保这些技能」的增量语义且幂等。
 function partitionAgents(ctx: SkillActionsContext) {
   const active = ctx.agents.filter((a) => !a.archived_at);
   const mine = active.filter(
@@ -89,6 +92,7 @@ function partitionAgents(ctx: SkillActionsContext) {
   return { mine, others };
 }
 
+/** 单个 agent 的选择行：统计它已拥有的技能数，已全部拥有则禁用并打勾。 */
 function AgentPickerRow({
   agent,
   skillIds,
@@ -120,7 +124,7 @@ function AgentPickerRow({
             : "hover:bg-accent/50",
       )}
     >
-      {/* Indicator only — the wrapping <button> handles clicks. */}
+      {/* 仅作展示——点击事件由外层包裹的 <button> 处理。 */}
       <Checkbox
         checked={hasAll || selected}
         tabIndex={-1}
@@ -145,12 +149,12 @@ function AgentPickerRow({
   );
 }
 
-// Shows the first few skill names as chips so the dialog says WHAT is being
-// added; the overflow collapses into a "+N" badge with the remaining names
-// in a tooltip. Number-agnostic, so single-row and batch share the layout.
+// 把前几个技能名渲染成小胶囊，让弹窗说清楚「要添加的是什么」；超出部分折叠成「+N」
+// 徽标，其余名字放进 tooltip。与数量无关，单条与批量共用同一布局。
 const MAX_SKILL_CHIPS = 3;
 const MAX_TOOLTIP_NAMES = 10;
 
+/** 技能名胶囊行：前 N 个直接展示，多余折叠成带 tooltip 的「+N」。 */
 function SkillChips({ skills }: { skills: SkillSummary[] }) {
   const visible = skills.slice(0, MAX_SKILL_CHIPS);
   const overflow = skills.slice(MAX_SKILL_CHIPS);
@@ -185,8 +189,7 @@ function SkillChips({ skills }: { skills: SkillSummary[] }) {
   );
 }
 
-// Collapsible agent group; "my agents" opens by default, other people's
-// agents start collapsed.
+// 可折叠的 agent 分组；「我的 agent」默认展开，别人的 agent 默认收起。
 function AgentGroup({
   label,
   agents,
@@ -225,6 +228,13 @@ function AgentGroup({
   );
 }
 
+/**
+ * 「把所选技能添加到 agent」弹窗（多选）。
+ *
+ * agent 按「我的 / 其他」分组、支持名称搜索；每个 agent 展示它已拥有/缺少的情况，
+ * 已全部拥有的自动禁用。确认后逐个补齐缺失技能（接口是「确保」语义，可重复执行），
+ * 成功后刷新 agent 缓存并 toast。
+ */
 export function AddToAgentDialog({
   skills,
   ctx,
@@ -248,10 +258,9 @@ export function AddToAgentDialog({
   const { mine, others } = partitionAgents(ctx);
   const count = selectedIds.size;
 
-  // Search across both groups by agent name. Filtering is applied per group
-  // so the "My agents" / "Other agents" split is preserved; when a query is
-  // active both groups are force-expanded (via the remount key below) so
-  // matches in the normally-collapsed "Other agents" group stay visible.
+  // 跨两个分组按 agent 名搜索。过滤逐组进行，以保留「我的 / 其他」的分组结构；一旦
+  // 输入了查询，两组都被强制展开（靠下面的重挂载 key 实现），让通常收起状态下的
+  // 「其他 agent」里的命中项保持可见。
   const trimmedQuery = query.trim().toLowerCase();
   const searching = trimmedQuery.length > 0;
   const matchesQuery = (a: Agent) =>
@@ -313,9 +322,9 @@ export function AddToAgentDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      {/* Fixed-height dialog: header/chips/footer stay put, only the agent
-          list scrolls (flex-1 + min-h-0). One size up from the default
-          confirm dialogs — this is a working picker, not a prompt. */}
+      {/* 固定高度弹窗：头部/胶囊/footer 保持原位，只有 agent 列表滚动
+          （flex-1 + min-h-0）。比默认确认弹窗高一档——这是干活用的选择器，不是一句
+          提问。 */}
       <DialogContent className="flex h-[32rem] max-h-[85svh] max-w-lg flex-col">
         <DialogHeader>
           <DialogTitle className="text-body">
@@ -403,9 +412,13 @@ export function AddToAgentDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Delete confirmation (single row and batch share one dialog)
+// 删除确认（单条与批量共用一个弹窗）
 // ---------------------------------------------------------------------------
 
+/**
+ * 「删除技能」确认弹窗。删除前逐条调用接口并给出明确警告；单条时额外点名该技能正被
+ * 哪些 agent 使用（有使用方时文案更郑重），成功/失败均有 toast。
+ */
 export function DeleteSkillsDialog({
   rows,
   ctx,
@@ -511,21 +524,17 @@ export function DeleteSkillsDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Bulk update-from-source (batch toolbar)
+// 从来源批量更新（批量工具栏）
 // ---------------------------------------------------------------------------
 
 /**
- * Confirm-and-run dialog for updating several imported skills from their
- * sources. Every updatable selection entry is re-downloaded — deliberately
- * no upstream freshness probe first (product call on #6930): re-fetching an
- * already-current skill costs one download on an explicit Update click,
- * which beats probing every source to find out it was current.
+ * 「从来源批量更新」的确认并执行弹窗。每个可更新的选中项都会重新下载——刻意不先做
+ * 「上游是否新鲜」的探测（产品决策 #6930）：在明确的「更新」点击下，把一个本已最新
+ * 的技能重拉一次的成本，好过去逐个探测每个来源来确认它们是最新的。
  *
- * Refreshes run sequentially with per-item failure tolerance (unlike bulk
- * delete's all-or-nothing loop): a single 409 from an upstream rename
- * collision must not strand the rest of the batch. A partial failure keeps
- * the selection (`onUpdated` only fires on a clean run) so retry is one
- * click away.
+ * 刷新顺序执行且「逐条容错」（区别于批量删除的全有或全无循环）：某条更新上游改名导致
+ * 409 时，不能让整个批次卡住。部分失败会保留当前选择（`onUpdated` 只在干净跑完时触发），
+ * 这样重试只需再点一次。
  */
 export function UpdateSkillsDialog({
   rows,
@@ -535,14 +544,14 @@ export function UpdateSkillsDialog({
   onOpenChange,
   onUpdated,
 }: {
-  /** The updatable subset of the selection (canEdit + refreshable origin). */
+  /** 选择集中「可更新」的子集（有编辑权限 + 来源可刷新）。 */
   rows: SkillRow[];
-  /** Selection entries that are not updatable (manual, runtime, no permission). */
+  /** 选择集中「不可更新」的条目数（手动、runtime、无权限）。 */
   skippedCount: number;
   ctx: SkillActionsContext;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Fired only after a fully successful run, so a partial failure keeps the selection for retry. */
+  /** 只在整批全部成功后触发——部分失败时保留选择，便于一键重试。 */
   onUpdated?: () => void;
 }) {
   const { t } = useT("skills");
@@ -646,13 +655,13 @@ export function UpdateSkillsDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Row kebab
+// 行内 ⋯ 菜单
 // ---------------------------------------------------------------------------
 
-// The row is a plain `<div>` whose whole-row navigation is a mouse `onClick`
-// (see `useRowLink`), not an ancestor `<a>`. The wrapper span stops click
-// propagation so opening this menu never navigates the row — just
-// stopPropagation, no preventDefault (there is no native anchor to cancel).
+// 行是普通的 `<div>`，整行导航是鼠标 `onClick`（见 useRowLink），并没有祖先 `<a>`。
+// 这里用一层 span 阻止事件冒泡，让打开菜单不会顺带触发行导航——只需 stopPropagation，
+// 不需要 preventDefault（没有原生锚点要取消）。
+/** 单行技能的 ⋯ 菜单：新标签打开详情 / 添加到 agent /（可刷新时）从来源更新 / 删除。 */
 export function SkillRowActions({
   row,
   ctx,
@@ -751,9 +760,13 @@ export function SkillRowActions({
 }
 
 // ---------------------------------------------------------------------------
-// Batch toolbar (floating bottom bar, same shape as the issues batch bar)
+// 批量工具栏（悬浮于底部的操作条，与 issues 批量栏同构）
 // ---------------------------------------------------------------------------
 
+/**
+ * 多选后的悬浮批量工具栏：显示已选数量（可一键清除），提供「添加到 agent」、
+ * 「从来源更新」（仅当存在可更新的行）与「删除」（全部行都可删时才可点）。
+ */
 export function SkillBatchToolbar({
   rows,
   ctx,
@@ -806,10 +819,8 @@ export function SkillBatchToolbar({
 
   return (
     <>
-      {/* Anchored to the page root (relative), NOT the viewport: with a
-          sidebar/split pane open, viewport-centering sits visibly off the
-          list's own center. Same rule for every future list page's batch
-          toolbar. */}
+      {/* 锚定到页面根（relative）而不是视口：开着侧边栏/分栏时，按视口居中会明显偏离
+          列表自身的中心。以后每个列表页的批量工具栏都遵循同一规则。 */}
       <div className="absolute bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg max-md:above-chat-launcher">
         <div className="mr-1 flex items-center gap-1.5 border-r pl-1 pr-2">
           <span className="text-body font-medium">

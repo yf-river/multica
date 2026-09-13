@@ -48,32 +48,35 @@ import { localDirectoryLabel } from "./local-directory-label";
 import { useT } from "../../i18n";
 import { githubShortLabel } from "../../common/github-url";
 
-// Project Resources sidebar section.
+// 项目详情侧栏里的「资源」小节：列出并管理挂在项目上的外部仓库 / 本地目录 /
+// 工蜂仓库等资源（添加、改名、移除、切换执行模式）。
 //
-// Type-dispatched at the row + add-flow level. Add a new resource_type by:
-//   (1) extending the server validator
-//   (2) extending ProjectResourceType in @multica/core/types
-//   (3) adding a render case in ResourceRow and an add-control here
+// 按类型分派发生在「行渲染」与「添加流程」两级。新增一种 resource_type 需要：
+//   (1) 扩展服务端校验器
+//   (2) 扩展 @multica/core/types 里的 ProjectResourceType
+//   (3) 在 ResourceRow 加一个渲染分支、在这里加对应的添加控件
+/** 判断是否是 GitHub 仓库类型的资源。 */
 function isGithubRef(r: ProjectResource): r is ProjectResource & {
   resource_ref: GithubRepoResourceRef;
 } {
   return r.resource_type === "github_repo";
 }
 
+/** 判断是否是本地目录类型的资源。 */
 function isLocalDirectoryRef(r: ProjectResource): r is ProjectResource & {
   resource_ref: LocalDirectoryResourceRef;
 } {
   return r.resource_type === "local_directory";
 }
+/** 判断是否是工蜂（腾讯内部 Git）仓库类型的资源。 */
 function isGongfengRef(r: ProjectResource): r is ProjectResource & { resource_ref: GongfengRepoResourceRef } {
   return r.resource_type === "gongfeng_repo";
 }
 
 /**
- * Reads the execution mode off a stored ref. An absent or unrecognised value is
- * reported as in_place, matching the server: the field is optional, and a mode
- * written by a newer client must not render as anything other than the
- * conservative default here.
+ * 从存下来的 ref 读出执行模式。缺失或未被识别的值一律按 in_place 处理，
+ * 与服务端一致：该字段可选，而较新客户端写入的模式在这里不能渲染成别的什么，
+ * 只能落回保守的默认值。
  */
 function executionModeOf(
   ref: LocalDirectoryResourceRef,
@@ -81,16 +84,20 @@ function executionModeOf(
   return ref.execution_mode === "worktree" ? "worktree" : "in_place";
 }
 
-/** Pending mode edit for an existing local-directory resource. */
+/** 对已有本地目录资源的、待确认的模式修改。 */
 type ModeDialogState = {
   path: string;
   mode: LocalDirectoryExecutionMode;
-  /** The browser cannot inspect the remote path; the daemon validates it. */
+  /** 浏览器无法检查远程路径；由 daemon 来校验它是不是 Git 仓库。 */
   isGitRepo: boolean | undefined;
-  /** Set for an edit; absent when adding a new resource. */
+  /** 编辑已存在资源时设置；新增资源时缺省。 */
   resource?: ProjectResource & { resource_ref: LocalDirectoryResourceRef };
 };
 
+/**
+ * 项目资源区：展示已关联的仓库/目录行，并提供「添加 GitHub 仓库 / 粘贴自定义
+ * URL / 关联工蜂仓库」入口与本地目录的改名、模式编辑、移除操作。
+ */
 export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
@@ -162,17 +169,15 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
       await updateResource.mutateAsync({
         resourceId: modeDialog.resource.id,
         data: {
-          // Spread first so every other ref field survives the edit — the
-          // server replaces the whole ref, it does not deep-merge.
+          // 先展开原 ref，保证编辑后其它字段都在——服务端整块替换 ref，不会深合并。
           resource_ref: { ...ref, execution_mode: mode },
         },
       });
       toast.success(t(($) => $.resources.toast_local_mode_updated));
       setModeDialog(null);
     } catch (err) {
-      // Keep the dialog open and show the reason inline: the most likely
-      // failure is the server's daemon-version gate, and closing the dialog
-      // would leave the user with a toast and no way to act on it.
+      // 保留弹窗并把原因内联展示：最可能的失败是服务端对 daemon 版本的门槛，
+      // 直接关弹窗只会留个 toast，用户无从处理。
       setModeError(
         err instanceof Error && err.message
           ? err.message
@@ -203,16 +208,13 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     const trimmed = nextLabel.trim();
     if (trimmed === localDirectoryLabel(resource)) return;
     try {
-      // Top-level label ONLY — renaming must not resend resource_ref.
+      // 只改顶层 label——改名绝不能重新发 resource_ref。
       //
-      // The server replaces the ref wholesale with whatever it can parse, so a
-      // server that predates a ref field drops it and answers 200. On a backend
-      // rolled back below v0.4.25 (documented as supported while the runtimes
-      // stay current) that turned "rename this folder" into "silently forget
-      // this folder was isolated", and the next task edited the working copy
-      // (#7113). Omitting the ref keeps the stored one untouched on every
-      // server version — the same reason it must not be resent for any other
-      // unrelated edit either.
+      // 服务端会把它能解析到的 ref 整体替换，所以如果服务端不认识某个 ref 字段，
+      // 它会丢弃该字段然后回 200。在回滚到 v0.4.25 以下（在运行时保持当前版本时
+      // 这是文档支持的）的后端上，「给文件夹改名」就会变成「悄悄忘掉这个文件夹
+      // 被隔离过」，下一个任务就直接去改工作副本了（#7113）。省略 ref 能让存储的
+      // ref 在所有服务端版本上都保持原样——这也正是任何无关编辑都不该重发它的原因。
       await updateResource.mutateAsync({
         resourceId: resource.id,
         data: { label: trimmed },
@@ -259,8 +261,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                     setModeDialog({
                       path: target.resource_ref.local_path,
                       mode: executionModeOf(target.resource_ref),
-                      // The path is already saved; the daemon remains the
-                      // authority for whether the selected mode can run.
+                      // 路径已经保存过了；所选模式能不能跑，权威是 daemon。
                       isGitRepo: undefined,
                       resource: target,
                     });
@@ -315,9 +316,9 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                       const isAttached = attachedUrls.has(repo.url);
                       const isDisabled = isAttached || createResource.isPending;
                       return (
-                        // Use aria-disabled instead of the native `disabled` attribute so
-                        // hover events still reach the tooltip trigger on attached rows
-                        // (browsers suppress pointer events on disabled form controls).
+                        // 用 aria-disabled 而不是原生 `disabled` 属性：原生禁用会
+                        // 吞掉指针事件，导致「已关联」行上的 tooltip 触发器收不到
+                        // hover（浏览器会抑制禁用表单控件的指针事件）。
                         <button
                           key={repo.url}
                           type="button"
@@ -396,6 +397,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   );
 }
 
+/** 从工蜂仓库 URL 里解析出「组织/项目」路径；不是工蜂域名时返回空串。 */
 function gongfengProjectPath(rawURL: string): string {
   try {
     const parsed = new URL(rawURL);
@@ -409,11 +411,10 @@ function gongfengProjectPath(rawURL: string): string {
 }
 
 /**
- * Which blocker (if any) applies to the worktree option.
+ * worktree 选项当前受什么阻碍（如果有）。
  *
- * The daemon remains authoritative for the selected execution mode. A known
- * non-repository path cannot use worktree mode; an unknown path is left
- * available so existing resources can be edited from any browser.
+ * 所选执行模式能否运行，权威仍是 daemon。已知不是仓库的路径不能用 worktree；
+ * 未知路径保持可用，这样已有资源能任浏览器打开编辑。
  */
 function worktreeUnavailableReason(
   isGitRepo: boolean | undefined,
@@ -434,6 +435,7 @@ interface ResourceRowProps {
   ) => void;
 }
 
+/** 单条资源行：按类型分别渲染成 GitHub 仓库链接 / 本地目录行 / 工蜂仓库链接。 */
 function ResourceRow({
   resource,
   onRemove,
@@ -520,6 +522,7 @@ interface LocalDirectoryRowProps {
   ) => void;
 }
 
+/** 本地目录资源的行：可改名、可编辑执行模式、可移除；worktree 模式常显徽标。 */
 function LocalDirectoryRow({
   resource,
   onRemove,
@@ -583,10 +586,9 @@ function LocalDirectoryRow({
           </TooltipContent>
         </Tooltip>
       )}
-      {/* Always visible, unlike the hover-only actions: without it there is no
-          way to tell whether tasks on this folder edit it directly or hand back
-          a branch, which is the first thing someone asks when a task queues (or
-          does not). */}
+      {/* 常显而不是像其它操作那样 hover 才出现：没有它，用户无从分辨这个文件夹
+          上的任务到底是直接改副本、还是交回一条分支——这正是任务排队（或没排队）
+          时大家第一个会问的问题。 */}
       {mode === "worktree" && !editing && (
         <Tooltip>
           <TooltipTrigger
@@ -634,6 +636,7 @@ function LocalDirectoryRow({
   );
 }
 
+/** 「粘贴自定义仓库 URL」的提交表单（行内小表单）。 */
 function CustomRepoForm({
   onSubmit,
 }: {

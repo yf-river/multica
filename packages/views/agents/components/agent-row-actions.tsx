@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 列表里每一行的“操作菜单”（行尾的 ⋯ 下拉）：根据 Agent 生命周期
+// （正常/已归档）和当前用户权限，动态给出“新标签页打开 / 全部停任务 / 复制为模板 /
+// 恢复 / 归档”等动作，其中停任务和归档都带二次确认弹窗。
+
 import { useState } from "react";
 import {
   AlertCircle,
@@ -39,29 +43,27 @@ import { useT } from "../../i18n";
 import { AppLink, useIntentNavigate } from "../../navigation";
 
 interface AgentRowActionsProps {
+  /** 本行对应的 Agent。 */
   agent: Agent;
+  /** 该 Agent 的实时在场详情（正在跑/排队中的任务数），用于判断是否显示“停止”动作。 */
   presence: AgentPresenceDetail | null | undefined;
-  // True when the current user can manage this agent (owner of agent or
-  // workspace admin/owner). Mirrors the back-end's canManageAgent check —
-  // the server is still the source of truth, this only hides UI for ops
-  // the user can't perform.
+  // 当前用户能否管理这个 Agent（是 Agent 的拥有者，或是工作区管理员/拥有者）。
+  // 与后端的 canManageAgent 校验保持一致——服务端仍是最终裁决，这里只是把用户
+  // 没权限执行的操作从界面上藏起来。
   canManage: boolean;
-  // Destination of "Duplicate" — the manual create form, pre-populated with
-  // this agent's config as a template. A href rather than a callback so the
-  // menu item is a real link (modifier-click opens it in a new tab).
+  // “复制为模板”跳转的目标：手动创建表单页，并用本 Agent 的配置预填好模板。
+  // 用 href 而不是回调，是为了让菜单项成为真正的链接（按住修饰键点击可新开标签页）。
   duplicateHref: string;
 }
 
 /**
- * Per-row dropdown menu for the agents list. The set of actions is derived
- * from (a) the agent's lifecycle state (active vs archived) and (b) the
- * caller's permission level. "Open in new tab" applies to every row, so the
- * trigger always renders.
+ * Agent 列表行级的下拉操作菜单。显示哪些动作，取决于 (a) Agent 的生命周期状态
+ * （正常 vs 已归档）和 (b) 调用者的权限等级。“新标签页打开”对每一行都适用，
+ * 所以触发器始终渲染。
  *
- * The row is a plain `<div>` whose whole-row navigation is a mouse `onClick`
- * (see `useRowLink`), not an ancestor `<a>`. The host cell stops click
- * propagation so opening this menu never navigates the row; the trigger
- * itself needs no guard. Menu and dialog content is portaled out of the row.
+ * 行本身是普通 `<div>`，整行跳转靠鼠标 `onClick`（见 `useRowLink`），而不是包一层
+ * `<a>`。宿主单元格会阻止事件冒泡，所以打开本菜单不会误触发行跳转；菜单和弹窗
+ * 内容都通过 portal 渲染到行结构之外，也不受影响。
  */
 export function AgentRowActions({
   agent,
@@ -84,14 +86,12 @@ export function AgentRowActions({
   const queuedCount = presence?.queuedCount ?? 0;
   const hasActiveWork = runningCount + queuedCount > 0;
 
-  // Derive which menu items to render. Doing this once here keeps the JSX
-  // below a flat list of conditionals rather than a tangle of role/state
-  // branches.
+  // 这里一次性推导出菜单里该显示哪些项，让下面 JSX 保持一长串扁平的条件渲染，
+  // 而不是嵌套一堆“角色/状态”的分支判断。
   const showStop = canManage && !isArchived && hasActiveWork;
-  const showDuplicate = !isArchived; // any workspace member can duplicate
-  // Multica's built-in agents cannot be archived — the server refuses it, and
-  // the workspace's entry point runs through one. Hide the action rather than
-  // let it fail with a toast.
+  const showDuplicate = !isArchived; // 任何工作区成员都能复制
+  // 系统内置 Agent 不允许归档——服务端会拒绝，且工作区的入口本来就跑在其中一个上面。
+  // 与其让它点下去弹失败 toast，不如直接不显示这个动作。
   const isSystemAgent = !!agent.system_key;
   const showArchive = canManage && !isArchived && !isSystemAgent;
   const showRestore = canManage && isArchived;
@@ -149,10 +149,8 @@ export function AgentRowActions({
           }
         />
         <DropdownMenuContent align="end" className="w-auto">
-          {/* Same shape as every other entity row menu: an explicit CTA is a
-              foreground open executed through the adapter (an anchor-based
-              item would depend on native activation surviving the menu
-              closing under it). */}
+          {/* 和所有其他实体行菜单同构：显式 CTA 通过导航适配器以前台标签页打开
+              （如果用锚点式菜单项，就得指望原生点击能在菜单关闭前活下来）。 */}
           <DropdownMenuItem
             onClick={() =>
               intentNavigate(
@@ -278,6 +276,7 @@ export function AgentRowActions({
 
 type AgentsT = ReturnType<typeof useT<"agents">>["t"];
 
+/** 拼出“停止全部任务”确认弹窗里的影响描述：无任务 / 有正在跑或排队任务两种文案。 */
 function describeCancelImpact(running: number, queued: number, t: AgentsT): string {
   if (running === 0 && queued === 0) {
     return t(($) => $.row_actions.cancel_dialog_no_tasks);

@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件提供一个工作区技能的“多选列表”面板：顶部搜索框 + 可勾选的技能行。
+// 同时被技能添加弹窗（SkillAddDialog）和创建表单的技能多选（SkillMultiSelect）复用，
+// 行布局、搜索、空态/加载态、勾选指示都只在这里实现一份。
+
 import { useState } from "react";
 import { Search } from "lucide-react";
 import { SkillIcon } from "../../skills/lib/skill-icon";
@@ -10,44 +14,37 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
 interface SkillPickerListProps {
-  /** Skills to show. Callers filter (e.g. exclude already-attached
-   *  skills in SkillAddDialog) before passing — this component just
-   *  renders the rows. */
+  /** 要展示的技能列表。过滤（比如 SkillAddDialog 里剔除已挂上的技能）由调用方
+   *  提前做好——本组件只负责渲染行。 */
   skills: readonly SkillSummary[];
 
-  /** Currently-toggled rows. Selected rows get a checked Checkbox and a
-   *  subtle background; click toggles. */
+  /** 当前被勾选中的技能 id。选中行显示打勾的 Checkbox 和浅色背景，点击即切换。 */
   selectedIds: ReadonlySet<string>;
 
-  /** Fires on every row click. Caller updates `selectedIds`. */
+  /** 每点一行触发一次；由调用方负责更新 `selectedIds`。 */
   onToggle: (skill: SkillSummary) => void;
 
-  /** Show the search input at the top. Default true. */
+  /** 是否在顶部显示搜索框，默认 true。 */
   searchable?: boolean;
 
-  /** Loading state for the skills query. */
+  /** 技能查询是否在加载中，加载时显示转圈文案。 */
   loading?: boolean;
 
-  /** Caller-supplied empty / no-match copy. Falls back to generic i18n
-   *  strings when omitted — the dialog and the create-form pass their
-   *  own flavour-specific copy. */
+  /** 空列表/无匹配时的文案。调用方提供更贴场景的话术；缺省时回退到通用 i18n——
+   *  弹窗和创建表单各自传自己风格的文案。 */
   emptyMessage?: string;
   noMatchMessage?: string;
 
-  /** Outer-wrapper className. Defaults to `w-full`; callers pass
-   *  e.g. `max-w-md` to constrain width. */
+  /** 外层容器 className。默认 `w-full`；调用方可传 `max-w-md` 之类限制宽度。 */
   className?: string;
 }
 
 /**
- * Headless multi-select list of workspace skills. Used by both
- * SkillAddDialog (filtered to unattached skills) and SkillMultiSelect
- * (create-form selection). One surface owns row layout, the search
- * input, empty/loading states, and the shadcn Checkbox indicator, so
- * tweaks land in one place.
+ * 工作区技能的多选列表（“有头无脑”的纯渲染组件）。SkillAddDialog（过滤掉已挂技能）
+ * 和 SkillMultiSelect（创建表单里选技能）都用它——行布局、搜索框、空态/加载态、
+ * shadcn Checkbox 指示都收在这一个面板里，以后改样式只改一处。
  *
- * Rows truncate the name + description columns inside `flex-1 min-w-0`
- * so long text doesn't push the Checkbox out of view.
+ * 行内的名称 + 描述放在 `flex-1 min-w-0` 里做截断，避免长文本把 Checkbox 挤出视野。
  */
 export function SkillPickerList({
   skills,
@@ -115,9 +112,9 @@ export function SkillPickerList({
                   isSelected ? "bg-accent" : "hover:bg-accent/50",
                 )}
               >
-                {/* Indicator only — the wrapping <button> handles clicks,
-                    so the Checkbox is non-interactive on its own. We
-                    pass `checked` so the visual matches the row state. */}
+                {/* 这里 Checkbox 只是“视觉指示器”——真正响应点击的是外面那层
+                    <button>。所以让它不参与交互（tabIndex=-1、pointer-events-none），
+                    只随行状态显示勾没勾。 */}
                 <Checkbox
                   checked={isSelected}
                   tabIndex={-1}

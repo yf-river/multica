@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 详情页的 General 设置表单（Inspector）：头像、名字、描述（自动保存），
+// 以及“执行”分区里的运行环境 / 模型 / 推理档位 / 服务档位 / 并发数。紧凑的检查器
+// chip 在这里都换成全尺寸可点的 field 形态。
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
@@ -39,15 +43,21 @@ import { ThinkingSettingField } from "./inspector/thinking-prop-row";
 import { ServiceTierSettingField } from "./inspector/service-tier-setting-field";
 
 interface InspectorProps {
+  /** 当前展示的 Agent。 */
   agent: Agent;
+  /** Agent 绑定的运行环境；未绑定时为 null。 */
   runtime: AgentRuntime | null;
+  /** 全部可选运行环境（供“更换运行环境”下拉用）。 */
   runtimes: AgentRuntime[];
+  /** 工作区成员（用于展示运行环境拥有者）。 */
   members: MemberWithUser[];
   currentUserId: string | null;
   canEdit: boolean;
+  /** 任一字段落库：id + 变更字段对象。 */
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
 }
 
+/** “名字 + 描述”这一对自动保存字段的草稿形态。 */
 interface ProfileDraft {
   name: string;
   description: string;
@@ -58,9 +68,8 @@ function profileDraftsEqual(left: ProfileDraft, right: ProfileDraft) {
 }
 
 /**
- * Full-width General settings form. Every editable value is presented as an
- * explicit field; compact inspector chips are used only through their
- * settings-field variants, where the whole control is a visible click target.
+ * 全宽 General 设置表单。每个可编辑值都以显式字段呈现；紧凑的检查器 chip
+ * 只经由各自 settings-field 变体使用——在那里，整个控件本身就是可见的点击目标。
  */
 export function AgentDetailInspector({
   agent,
@@ -84,8 +93,8 @@ export function AgentDetailInspector({
   useEffect(() => {
     setName(agent.name);
     setDescription(agent.description ?? "");
-    // Reset only when moving to another agent. Cache updates from this form
-    // must not erase a newer local draft while an autosave is in flight.
+    // 只在切到另一个 Agent 时重置。自动保存还在途时，本表单触发的缓存更新
+    // 绝不能把更新的本地草稿抹掉。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.id]);
 
@@ -123,9 +132,8 @@ export function AgentDetailInspector({
   const canDiscoverRuntimeModels = isOnline && canReadRuntime;
   const nameInvalid = name.trim().length === 0;
 
-  // Same query the Thinking / Speed fields already use, so switching model
-  // costs no extra request. `null` = not authoritative (offline runtime, still
-  // loading, or discovery failed) and must not trigger any clearing.
+  // 与 Thinking / Speed 字段共用同一查询，换模型不再多花一次请求。`null` = 不可信
+  //（离线运行环境 / 仍在加载 / 发现失败），此时绝不能触发任何清理。
   const modelsQuery = useQuery(
     runtimeModelsOptions(canDiscoverRuntimeModels ? agent.runtime_id : null),
   );
@@ -254,9 +262,8 @@ export function AgentDetailInspector({
               members={members}
               currentUserId={currentUserId}
               canEdit={canEdit}
-              // Model, thinking level, and service tier are runtime/model
-              // native. Clear them together so the new runtime resolves its
-              // own defaults instead of inheriting incompatible tokens.
+              // 模型、推理档位、服务档位都是“运行时/模型”原生的。换运行环境时一并清空，
+              // 让新运行环境解析自己的默认，而不是继承一批不兼容的旧值。
               onChange={(id) =>
                 update({
                   runtime_id: id,
@@ -319,6 +326,7 @@ export function AgentDetailInspector({
   );
 }
 
+/** 并发上限数字输入框：失去焦点或按回车时提交；越界则回滚为上次存的值。 */
 function ConcurrencyField({
   value,
   canEdit,

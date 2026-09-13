@@ -1,3 +1,7 @@
+// 文件职责：实现 `multica attachment` 命令组——download（按 ID 下载附件到本地
+// 文件）与 upload（把本地文件上传为当前聊天任务的回复附件，返回可粘贴的 markdown
+// 片段）。upload 面向在聊天任务里运行的 agent（任务 ID 取自 daemon 注入的
+// MULTICA_TASK_ID）。
 package main
 
 import (
@@ -13,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// attachmentCmd 是 `multica attachment` 父命令，子命令：download / upload。
 var attachmentCmd = &cobra.Command{
 	Use:   "attachment",
 	Short: "Work with attachments",
@@ -60,6 +65,10 @@ func init() {
 	attachmentUploadCmd.Flags().String("task", "", "Chat task id to attach to (defaults to MULTICA_TASK_ID)")
 }
 
+// runAttachmentUpload 执行 `attachment upload <path>`：把本地文件上传并标记到
+// 当前聊天任务上——任务完成时 server 会把附件绑到 assistant 回复上。返回 JSON
+// （含可粘贴的 markdown 片段）：文件类用 !file[name](url) 卡片，图片用 ![name](url)
+// 内联。
 func runAttachmentUpload(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -92,10 +101,8 @@ func runAttachmentUpload(cmd *cobra.Command, args []string) error {
 	}
 
 	filename := filepath.Base(path)
-	// Escape markdown label metacharacters in the filename so a name like
-	// `report[v2].pdf` does not truncate the snippet's label. Files render as a
-	// block-level attachment card via `!file[...]( )`; images render inline via
-	// `![...]( )`.
+	// 转义文件名里的 markdown 标签元字符：像 `report[v2].pdf` 这样的名字不会把
+	// 片段标签截断。文件渲染成块级附件卡片 !file[...]( )；图片用 ![...]( ) 内联。
 	label := escapeMarkdownLabel(filename)
 	markdown := fmt.Sprintf("!file[%s](%s)", label, att.MarkdownURL)
 	if strings.HasPrefix(att.ContentType, "image/") {
@@ -111,11 +118,10 @@ func runAttachmentUpload(cmd *cobra.Command, args []string) error {
 	})
 }
 
-// escapeMarkdownLabel escapes the metacharacters a markdown link/image label
-// may not contain unescaped ([ ] ( ) and backslash), so a filename like
-// `report[v2].pdf` stays a single valid label instead of truncating the
-// snippet. Kept in sync with the renderers' unescape set
-// (packages/ui/markdown/file-cards.ts).
+// escapeMarkdownLabel 转义 markdown 链接/图片标签中不允许裸用的元字符
+// （[ ] ( ) 和反斜杠），使 `report[v2].pdf` 这样的文件名仍是一整个合法标签而不是
+// 把片段截断。与渲染端的反转义集合保持一致
+// （packages/ui/markdown/file-cards.ts）。
 func escapeMarkdownLabel(s string) string {
 	return strings.NewReplacer(
 		`\`, `\\`,
@@ -126,6 +132,8 @@ func escapeMarkdownLabel(s string) string {
 	).Replace(s)
 }
 
+// runAttachmentDownload 执行 `attachment download <attachment-id>`：先取附件元数据
+// （含签名的 download_url），再下载内容写到 -o 目录（目录不存在会自动创建）。
 func runAttachmentDownload(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -135,7 +143,7 @@ func runAttachmentDownload(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cli.AtLeastAPITimeout(60*time.Second))
 	defer cancel()
 
-	// Fetch attachment metadata (includes signed download_url).
+	// 先取附件元数据（含签名 download_url）。
 	var att map[string]any
 	if err := client.GetJSON(ctx, "/api/attachments/"+args[0], &att); err != nil {
 		return fmt.Errorf("get attachment: %w", err)
@@ -151,15 +159,14 @@ func runAttachmentDownload(cmd *cobra.Command, args []string) error {
 		filename = args[0]
 	}
 
-	// Download the file content.
+	// 下载文件内容。
 	data, err := client.DownloadFile(ctx, downloadURL)
 	if err != nil {
 		return fmt.Errorf("download file: %w", err)
 	}
 
-	// Write to the output directory, creating it if needed so `-o` works
-	// against a directory that does not exist yet (the help example's
-	// `-o ./attachments` in a clean workdir).
+	// 写到输出目录；目录不存在就先创建，让 `-o` 对着尚不存在的目录也能工作
+	// （帮助示例里干净工作目录下的 `-o ./attachments` 就是这种情况）。
 	outputDir, _ := cmd.Flags().GetString("output-dir")
 	if outputDir != "" {
 		if err := os.MkdirAll(outputDir, 0o755); err != nil {
@@ -172,14 +179,14 @@ func runAttachmentDownload(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("write file: %w", err)
 	}
 
-	// Print the absolute path so agents can reference the file.
+	// 打印绝对路径，agent 好引用该文件。
 	abs, err := filepath.Abs(destPath)
 	if err != nil {
 		abs = destPath
 	}
 	fmt.Fprintln(os.Stderr, "Downloaded:", abs)
 
-	// Also print as JSON for --output json compatibility.
+	// 再以 JSON 输出，兼容 --output json 的消费方。
 	return cli.PrintJSON(os.Stdout, map[string]any{
 		"id":       strVal(att, "id"),
 		"filename": filename,

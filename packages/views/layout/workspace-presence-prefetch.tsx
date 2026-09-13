@@ -6,10 +6,13 @@ import { useWorkspacePresencePrefetch } from "@multica/core/agents";
 
 const PRESENCE_PREFETCH_DELAY_MS = 6_000;
 
-// Mount once inside any subtree that's already gated on "workspace resolved"
-// (DashboardLayout on web, WorkspaceRouteLayout on desktop). useWorkspaceId
-// throws when called outside a resolved workspace — the gating in those
-// layouts guarantees this component never sees that state.
+/**
+ * 布局模块：工作区在线状态（presence）的预取器。
+ * 在工作区解析完成后延迟、空闲时预热在线状态数据，避免打开时卡顿。
+ */
+// 只挂载在已经用「工作区已解析」做门控的子树里（Web 端 DashboardLayout、
+// 桌面端 WorkspaceRouteLayout）。useWorkspaceId 在未解析的工作区外调用会
+// 抛错——那些布局的门控保证了这个组件永远不会遇到那种状态。
 export function WorkspacePresencePrefetch() {
   const wsId = useWorkspaceId();
   const [enabled, setEnabled] = useState(false);

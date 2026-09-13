@@ -1,3 +1,5 @@
+// 本文件是「我的账户」标签页：编辑头像、昵称和个人简介，带自动保存。
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -17,21 +19,25 @@ import {
 } from "./settings-layout";
 import { useAutoSave } from "./use-auto-save";
 
-// Mirror server/internal/handler/auth.go:MaxProfileDescriptionLen. Counted in
-// JS String.length (UTF-16 code units) here while the server counts runes,
-// so a profile full of supplementary-plane emoji will trip the client cap
-// before the server's — which is the safer direction of drift.
+// 与服务端 server/internal/handler/auth.go:MaxProfileDescriptionLen 保持一致。
+// 这里用 JS 的 String.length（UTF-16 码元）计数，而服务端按 rune 计数，
+// 所以一个充满扩展平面 emoji 的简介会先触发客户端上限、再触发服务端上限——这是更安全的偏差方向。
 const MAX_PROFILE_DESCRIPTION_LEN = 2000;
 
+/** 个人资料草稿：昵称和简介。 */
 interface ProfileDraft {
   name: string;
   profileDescription: string;
 }
 
+/** 判断两份资料草稿是否相同，用于自动保存时判断有没有改动。 */
 function profilesEqual(left: ProfileDraft, right: ProfileDraft) {
   return left.name === right.name && left.profileDescription === right.profileDescription;
 }
 
+/**
+ * 「我的账户」标签页：展示并编辑头像、昵称、个人简介，改动后自动保存到服务端。
+ */
 export function AccountTab() {
   const { t } = useT("settings");
   const user = useAuthStore((s) => s.user);
@@ -45,9 +51,8 @@ export function AccountTab() {
   useEffect(() => {
     setProfileName(user?.name ?? "");
     setProfileDescription(user?.profile_description ?? "");
-    // Preserve in-progress edits when an avatar upload or auto-save replaces
-    // the current user object in the auth store.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on user identity
+    // 当头像上传或自动保存替换了 auth store 里的用户对象时，保留正在编辑中的内容。
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 有意只按用户身份（id）触发
   }, [user?.id]);
 
   const descriptionTooLong = profileDescription.length > MAX_PROFILE_DESCRIPTION_LEN;

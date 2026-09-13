@@ -1,9 +1,11 @@
-/** A DingTalk robot installation bound to a single Multica agent.
+// 本文件定义钉钉（DingTalk）集成相关类型：机器人安装、群组发现、群组内
+// 观察到的机器人状态，以及自带应用（BYO）安装的请求/响应。
+
+/** 绑定到单个 Multica agent 上的一个钉钉机器人安装。
  *
- * Wire shape mirrors `DingTalkInstallationResponse` in
- * `server/internal/handler/dingtalk.go`. New fields the backend adds in the
- * future MUST default to optional so older desktop builds keep parsing the
- * response — see CLAUDE.md → API Compatibility. */
+ * 线上结构对应 `server/internal/handler/dingtalk.go` 里的
+ * `DingTalkInstallationResponse`。后端以后新增的字段必须默认可选，让旧版
+ * 桌面端仍能解析响应——见 CLAUDE.md → API Compatibility。 */
 export interface DingTalkInstallation {
   id: string;
   workspace_id: string;
@@ -13,67 +15,65 @@ export interface DingTalkInstallation {
   installed_at: string;
   created_at: string;
   updated_at: string;
-  /** False only when a workspace admin is viewing an orphaned installation
-   * whose Agent no longer exists. Optional for older backends. */
+  /** 仅当 workspace 管理员查看一条 agent 已不存在的孤儿安装时才为 false。
+   *  旧后端可选。 */
   agent_available?: boolean;
-  /** DingTalk staff ids linked by the currently authenticated Multica user for
-   * this bot. Member-scoped so the member-visible installation endpoint does
-   * not disclose other members' DingTalk identities. */
+  /** 当前已鉴权 Multica 用户为该机器人关联的钉钉员工 id。按成员隔离，
+   *  因此对成员可见的安装端点不会泄露其它成员的钉钉身份。 */
   bound_dingtalk_user_ids?: string[];
 }
 
+/** 列出钉钉安装的接口响应。 */
 export interface ListDingTalkInstallationsResponse {
   installations: DingTalkInstallation[];
-  /** Whether the deployment has the at-rest secret key configured. When false
-   * the connect entry points are hidden and the panel renders an "ask the
-   * operator to enable DingTalk" state. */
+  /** 部署是否配置了静态加密密钥。为 false 时隐藏连接入口，面板展示
+   *  「请联系运维开启钉钉」状态。 */
   configured: boolean;
-  /** Whether the install path is available (true whenever DingTalk is
-   * configured, i.e. the at-rest key is set — a bring-your-own-app install
-   * needs no hosted credentials). Kept as a separate flag for forward/backward
-   * compat; optional so an older desktop build that predates it treats it as
-   * off. */
+  /** 安装通道是否可用（只要钉钉已配置即为 true，即静态密钥已设置——
+   *  自带应用安装无需托管凭证）。单独拆出开关以便前后兼容；可选字段，
+   *  早于它的旧桌面构建按「关」处理。 */
   install_supported?: boolean;
 }
 
-/** One connected Multica bot observed in a DingTalk group. */
+/** 在某钉钉群里观察到一个已连接的多米卡机器人。 */
 export interface DingTalkGroupBot {
   installation_id: string;
   agent_id: string;
-  /** Readable DingTalk bot name. Empty on older backends, transient lookup
-   * failures, or until the app is granted qyapi_chat_manage. */
+  /** 可读的钉钉机器人名。在旧后端、瞬时查询失败或应用尚未获得
+   *  qyapi_chat_manage 权限时为空。 */
   bot_name: string;
-  /** Machine-readable reason the readable identity is unavailable. */
+  /** 可读身份不可用的机器可读原因。 */
   bot_identity_issue: string;
-  /** Latest accepted @mention from this group, in RFC 3339. Optional for
-   * compatibility with older backends; empty when no durable message remains. */
+  /** 该群最近一次被接受的 @提及，RFC 3339 格式。与旧后端兼容设为可选；
+   *  没有留存消息时为空。 */
   last_active_at?: string;
-  /** Number of deduplicated group messages accepted for this bot. */
+  /** 该机器人在此群被接受的去重消息数。 */
   mention_count?: number;
 }
 
-/** A DingTalk group observed after a validated @bot callback. */
+/** 在收到一次校验通过的 @bot 回调后观察到的钉钉群。 */
 export interface DingTalkGroup {
   conversation_id: string;
   conversation_title: string;
   bots: DingTalkGroupBot[];
 }
 
+/** 列出钉钉群的接口响应。 */
 export interface ListDingTalkGroupsResponse {
   groups: DingTalkGroup[];
-  /** False when an installed client is connected to a backend that predates
-   * group discovery. Callers use it to avoid polling an absent endpoint. */
+  /** 当已安装客户端连到早于群发现特性的后端时为 false。调用方据此避免轮询
+   *  一个不存在的端点。 */
   group_discovery_supported: boolean;
-  /** Historical observations outside the 90-day active window, keyed by bot
-   * installation. Additive for compatibility with older servers. */
+  /** 90 天活跃窗口之外的历史观察，按机器人安装为键。为兼容旧服务器而设的
+   *  增量字段。 */
   inactive_group_counts?: Record<string, number>;
-  /** App-wide identity keyed by installation, available even when every group
-   * for that bot is outside the active window. */
+  /** 按安装为键的应用级身份，即使某机器人的所有群都在活跃窗口外也可用。 */
   bot_identities?: Record<string, DingTalkGroupBot>;
-  /** Offset for the next inactive page. Absent when the page is complete. */
+  /** 下一页不活跃数据的偏移量。页面已完整时缺失。 */
   next_offset?: number;
 }
 
+/** 钉钉群搜索的查询参数。 */
 export interface ListDingTalkGroupsParams {
   activity?: "inactive";
   installationId?: string;
@@ -81,17 +81,16 @@ export interface ListDingTalkGroupsParams {
   limit?: number;
 }
 
-/** Request body for a bring-your-own-app (BYO) install: the AppKey and
- * AppSecret an agent owner or workspace admin pastes from the DingTalk
- * Stream-mode robot they created. The backend validates both before persisting,
- * then returns the created DingTalkInstallation. */
+/** 自带应用（BYO）安装的请求体：agent 拥有者或 workspace 管理员从其创建的
+ * 钉钉 Stream 模式机器人粘贴 AppKey 与 AppSecret。后端校验两者后才持久化，
+ * 随后返回新建的 DingTalkInstallation。 */
 export interface RegisterDingTalkBYORequest {
   client_id: string;
   client_secret: string;
 }
 
-/** Post-redemption echo: the DingTalk user id the token carried is now bound to
- * the logged-in Multica user in this workspace/installation. */
+/** 兑换后的回显：token 携带的钉钉用户 id 现在已在该 workspace/安装下绑定到
+ * 当前登录的 Multica 用户。 */
 export interface RedeemDingTalkBindingTokenResponse {
   workspace_id: string;
   installation_id: string;

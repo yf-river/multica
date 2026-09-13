@@ -1,3 +1,7 @@
+/**
+ * 官网「客户案例」列表页（服务端组件）：加载当前 locale 的案例集，
+ * 按更新时间倒序排列并渲染成带头图的卡片网格。
+ */
 import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
@@ -6,12 +10,14 @@ import { LandingFooter } from "@/features/landing/components/landing-footer";
 import { getUseCasePagesForLocale } from "@/lib/use-cases-source";
 import { getUseCaseLocale, useCaseText } from "@/lib/use-cases-i18n";
 
+/** 案例 MDX 里可选的扩展 frontmatter 字段。 */
 type ExtraFrontmatter = {
   category?: string;
   updated_at?: string;
   hero_image?: string;
 };
 
+/** 生成案例列表页的 SEO 元信息（标题/描述来自 i18n 文案）。 */
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getUseCaseLocale();
   const text = useCaseText["zh-Hans"];
@@ -29,15 +35,19 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
+/**
+ * 案例列表页默认导出。
+ *
+ * @returns 深色标题区 + 案例卡片网格 + 页脚。
+ */
 export default async function UseCasesIndexPage() {
   const locale = await getUseCaseLocale();
   const text = useCaseText["zh-Hans"];
   const pages = getUseCasePagesForLocale(locale)
     .slice()
     .sort((a, b) => {
-      // Sort descending by updated_at. Missing dates fall to the bottom by
-      // comparing against the epoch placeholder rather than the empty string
-      // (which would make ordering undefined when multiple entries omit it).
+      // 按 updated_at 倒序；缺日期的条目用 1900-01-01 占位排到最底，
+      // 而不是拿空字符串比较（否则多个条目都缺日期时排序结果不稳定）。
       const da = (a.data as ExtraFrontmatter).updated_at ?? "1900-01-01";
       const db = (b.data as ExtraFrontmatter).updated_at ?? "1900-01-01";
       return db.localeCompare(da);
@@ -66,9 +76,8 @@ export default async function UseCasesIndexPage() {
               const extra = page.data as ExtraFrontmatter;
               const heroImage = extra.hero_image;
               const category = extra.category;
-              // Construct the URL from the page slug rather than `page.url`.
-              // Fumadocs may prefix locale-specific URLs, but our public
-              // route stays prefix-free and resolves locale from the request.
+              // 从页面 slug 拼公开路由 URL 而不是用 page.url：Fumadocs 会给本地化
+              // URL 加前缀，而我们的公开路由不带前缀、按请求动态解析 locale。
               const href = `/usecases/${page.slugs.join("/")}`;
 
               return (

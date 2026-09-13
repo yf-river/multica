@@ -1,18 +1,17 @@
 "use client";
 
 /**
- * MermaidViewer — full-screen diagram viewer.
+ * MermaidViewer——全屏图查看器。
  *
- * Built on the shared `Dialog` (Base UI) rather than a bespoke portal, so it
- * inherits the behaviors the old Mermaid lightbox was missing: a real backdrop,
- * focus trap, background scroll lock, focus restore, and Escape-to-close.
+ * 基于共享 `Dialog`（Base UI）而非定制的 portal，因此继承了旧 Mermaid
+ * 灯箱缺失的行为：真正的背景遮罩、焦点陷阱、背景滚动锁定、焦点还原、
+ * Esc 关闭。
  *
- * The diagram stays inside an `sandbox=""` iframe — the isolation boundary is
- * not relaxed to buy interactivity. Instead the iframe is `pointer-events:
- * none` and pan/zoom is applied from this document as a transform on the
- * wrapper (see `useDiagramCanvas`). A side effect worth keeping: because the
- * iframe never takes focus, key events cannot get stranded in a document the
- * dialog can't hear, which is why Escape used to stop working after a click.
+ * 图仍然待在 `sandbox=""` iframe 里——隔离边界不会为了可交互而放宽。改为
+ * 给 iframe 设 `pointer-events: none`，由本文档把平移/缩放作为包裹层上的
+ * transform 施加（见 `useDiagramCanvas`）。有个值得保留的副作用：因为
+ * iframe 永不拿焦点，键盘事件不会困在对话框听不到的文档里——这正是过去
+ * 点击后 Esc 失效的原因。
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -48,15 +47,15 @@ import type { Size } from "./utils/zoom-transform";
 const COPY_FEEDBACK_MS = 2000;
 
 interface MermaidViewerContentProps {
-  /** Mermaid source, for the source view and `.mmd` export. */
+  /** Mermaid 源码，供源码视图与 `.mmd` 导出。 */
   chart: string;
-  /** Rendered SVG markup, for export. */
+  /** 渲染出的 SVG 标记，供导出。 */
   svg: string | null;
-  /** Sandboxed document that draws the diagram at natural size. */
+  /** 按原始尺寸画图的沙箱文档。 */
   viewerDocument: string | null;
-  /** Natural size of the diagram. */
+  /** 图的原始尺寸。 */
   layout: Size;
-  /** Colors resolved from the host theme, so exports match what is on screen. */
+  /** 从宿主主题解析出的颜色，导出内容与屏上所见一致。 */
   exportBackground: string;
   exportFontFamily: string;
 }
@@ -64,12 +63,12 @@ interface MermaidViewerContentProps {
 export interface MermaidViewerProps extends MermaidViewerContentProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Focus returns here on close — the button that opened the viewer. */
+  /** 关闭后焦点回到这里——打开查看器的那个按钮。 */
   finalFocusRef?: React.RefObject<HTMLElement | null>;
 }
 
-// Viewer-only chrome (source toggle, copy, close). The zoom buttons come from
-// the shared <ZoomControls>.
+// 查看器专属 chrome（源码切换、复制、关闭）。缩放按钮来自共享的
+// <ZoomControls>。
 function ToolbarButton({
   onClick,
   disabled,
@@ -95,6 +94,9 @@ function ToolbarButton({
   );
 }
 
+/**
+ * MermaidViewer——全屏查看器：Dialog + 可平移缩放的画布 + 导出菜单。
+ */
 export function MermaidViewer({
   open,
   onOpenChange,
@@ -110,17 +112,15 @@ export function MermaidViewer({
         showCloseButton={false}
         initialFocus={canvasRef}
         finalFocus={finalFocusRef}
-        // Dynamic viewport units: on mobile Safari and other narrow webviews,
-        // `vh` includes retracted browser chrome, which would push the
-        // toolbar off-screen — the exact "can't find the close button"
-        // failure this viewer exists to remove.
+        // 动态视口单位：移动端 Safari 等窄 webview 里 `vh` 会算进收缩的
+        // 浏览器 chrome，把工具条推出屏——这正是本查看器想消灭的
+        // 「找不到关闭按钮」问题。
         className="!max-w-[calc(100vw-2rem)] !h-[min(90dvh,calc(100dvh-2rem))] !w-[calc(100vw-2rem)] flex flex-col gap-0 overflow-hidden p-0 xl:!max-w-[80rem]"
         aria-label={t(($) => $.mermaid.viewer_title)}
       >
-        {/* Body state (zoom, pan, source toggle) deliberately lives below the
-            portal boundary so it is destroyed on close. Each open is a fresh
-            read that re-fits, rather than restoring a stale zoom from the last
-            time this diagram happened to be opened. */}
+        {/* 正文状态（缩放、平移、源码切换）刻意活在 portal 边界之下，关闭即
+            销毁。每次打开都是一次重新适配的全新读取，而不是恢复上次打开这张
+            图时的过期缩放。 */}
         <MermaidViewerContent
           {...content}
           canvasRef={canvasRef}
@@ -131,6 +131,7 @@ export function MermaidViewer({
   );
 }
 
+/** 查看器主体：画布/源码切换 + 缩放 + 导出。 */
 function MermaidViewerContent({
   chart,
   svg,
@@ -189,9 +190,8 @@ function MermaidViewerContent({
       const blob = await renderSvgToPngBlob(standaloneSvg, layout);
       downloadBlob(blob, `${filenameStem}.png`);
     } catch {
-      // Rasterization is best-effort: `.svg` and `.mmd` remain available, and
-      // failing loudly here would put an error dialog over the diagram the
-      // user is reading.
+      // 栅格化是尽力而为：`.svg` 与 `.mmd` 仍可用，这里响亮报错会在读者
+      // 正看的图上叠一个错误弹窗。
     }
   }, [standaloneSvg, layout, filenameStem]);
 
@@ -199,8 +199,8 @@ function MermaidViewerContent({
 
   return (
     <>
-      {/* Sibling of the scrolling canvas, never inside it: the toolbar must
-          stay put no matter how far the diagram is panned or zoomed. */}
+      {/* 与滚动画布平级、绝不放进画布里：无论图平移/缩放到多远，工具条都
+          必须原地不动。 */}
       <header className="flex shrink-0 items-center gap-1 border-b border-border bg-muted/30 px-3 py-2">
           <DialogTitle className="mr-1 truncate text-body font-medium">
             {t(($) => $.mermaid.viewer_title)}

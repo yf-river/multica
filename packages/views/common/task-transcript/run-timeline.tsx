@@ -1,3 +1,7 @@
+// 运行时间线图：把一次运行的时间花在哪，画在真实墙钟轴上。模型泳道（思考/汇报）
+// 与工具泳道各占一行，条块可点击跳转到对应步骤，支持 1×/2×/4×/8× 缩放并保持
+// 视口中点不动。时间线数据由 build-steps 产出。
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -12,24 +16,16 @@ import {
 } from "./build-steps";
 import { useT } from "../../i18n";
 
-/**
- * Where a run's time went, on a real wall-clock axis.
- *
- * Two lanes, not one: model turns and tool calls never overlap in an agent
- * loop, so on a single row they can only occlude each other. Split, each lane
- * reads as its own comb and carries its own total — "was it the model or the
- * commands" is answerable without hovering anything.
- *
- * Two lanes, not four: the tool lane could split by what the calls did, but in
- * a real run one kind dominates by orders of magnitude (commands run for
- * minutes, reads and edits finish in milliseconds), so a lane per kind draws
- * three near-empty tracks. That breakdown rides the lane's tooltip instead.
- *
- * Colour carries state, never taxonomy: the token set has one blue lightness
- * ramp and no categorical palette, so which lane a bar sits in says what kind
- * of work it was, and colour is spent on delivered (success) and failed
- * (destructive) instead.
- */
+// 为什么是两条泳道而不是一条：智能体循环里模型回合与工具调用绝不重叠，塞在同一行
+// 只会互相遮挡。拆开后每条泳道是独立的梳齿、带自己的合计——"是模型慢还是命令慢"
+// 不用悬停就能看出来。
+//
+// 为什么不是四条：工具泳道按行为拆分看似可行，但真实运行里某一种工具会以数量级
+// 优势占掉绝大多数时间（命令一跑几分钟，读文件/编辑几毫秒就完），按工具分就会画
+// 出三条近乎空白的轨道。那个细分放到工具泳道的悬停 tooltip 里呈现。
+//
+// 颜色只表状态、不表分类：token 色板只有一条蓝色明度渐变、没有分类调色板，所以
+// 块在哪个泳道说明它是哪类工作，颜色留给成功（绿）与失败（红）。
 
 const SEGMENT_TONE: Record<LaneSegment["kind"], string> = {
   tool: "bg-chart-2",
@@ -38,11 +34,12 @@ const SEGMENT_TONE: Record<LaneSegment["kind"], string> = {
   error: "bg-destructive",
 };
 
-/** Fit-to-width, then powers of two. Past 8x a 30-minute run is 20 screens of
- *  scrolling, which stops being navigation. */
+/** 适配宽度后按 2 的幂放大。超过 8 倍时一次 30 分钟的运行要滚 20 屏，那就不是
+ *  导航而是折磨了。 */
 const ZOOM_STEPS = [1, 2, 4, 8] as const;
 const LABEL_WIDTH = "5.75rem";
 
+// 刻度文本格式化：自动按量级切到 秒 / 分:秒 / 时:分。刻度只在整数值处出现。
 function formatTick(ms: number): string {
   const totalSeconds = Math.round(ms / 1000);
   if (totalSeconds < 60) return `${totalSeconds}s`;
@@ -54,6 +51,12 @@ function formatTick(ms: number): string {
   return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
 }
 
+/**
+ * 泳道合计文本格式化：给每个泳道末尾的耗时合计用，分钟/秒数补零对齐
+ * （"3m 05s"），方便同一列上下两行对齐阅读。
+ * @param ms 时长（毫秒）。
+ * @returns 形如 "45s" / "3m 05s" / "2h 03m" 的文本。
+ */
 export function formatLaneTotal(ms: number): string {
   const totalSeconds = Math.round(ms / 1000);
   if (totalSeconds < 60) return `${totalSeconds}s`;
@@ -64,6 +67,7 @@ export function formatLaneTotal(ms: number): string {
   return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
+// 泳道左侧的固定标签行：名称 + 右侧对齐的合计。
 function LaneLabel({ label, total, title }: { label: string; total: string; title?: string }) {
   return (
     <div
@@ -76,6 +80,7 @@ function LaneLabel({ label, total, title }: { label: string; total: string; titl
   );
 }
 
+// 泳道主体：一条灰色底轨上按时间比例排布各段色块，每块可点击跳到对应步骤。
 function LaneTrack({
   label,
   segments,
@@ -107,6 +112,15 @@ function LaneTrack({
   );
 }
 
+/**
+ * 运行时间线。两条泳道（模型/工具）画在真实时间轴上，刻度随缩放保持屏上密度
+ * 恒定；条块点击触发 `onSeek` 跳到对应步骤。可选地把选中步骤画成跨两条泳道的
+ * 播放头。
+ * @param lanes 分泳道的时间线段数据。
+ * @param toolKinds 工具泳道合计背后的细分（命令/写入/读取/其他），悬停展示。
+ * @param selectedOffsetMs 选中步骤的起始偏移，画成播放头。
+ * @param onSeek 点击某时间段的跳转回调。
+ */
 export function RunTimeline({
   lanes,
   toolKinds,
@@ -114,9 +128,9 @@ export function RunTimeline({
   onSeek,
 }: {
   lanes: TraceLanes;
-  /** Breakdown behind the tool lane's total, shown on hover. */
+  /** 工具泳道合计的细分构成，悬停显示。 */
   toolKinds?: ToolKindTotals;
-  /** Offset of the selected step, drawn as a playhead across both lanes. */
+  /** 选中步骤的时间偏移，画成贯穿两条泳道的播放头。 */
   selectedOffsetMs?: number;
   onSeek: (ms: number) => void;
 }) {
@@ -124,8 +138,8 @@ export function RunTimeline({
   const [zoom, setZoom] = useState(1);
   const scrollerRef = useRef<HTMLDivElement>(null);
 
-  // More screen means more room for labels: ticks scale with zoom so their
-  // on-screen density stays constant instead of thinning out as you zoom in.
+  // 屏更宽意味着标签更有地方放：刻度间隔随 zoom 放大，保证它们在屏上的密度恒定，
+  // 而不是放大后越变越稀。
   const ticks = useMemo(() => timelineTicks(lanes.totalMs, 6 * zoom), [lanes.totalMs, zoom]);
 
   const setZoomAround = useCallback(
@@ -134,8 +148,7 @@ export function RunTimeline({
       const previous = zoom;
       setZoom(next);
       if (!el) return;
-      // Keep whatever is under the middle of the viewport under it after the
-      // zoom, so zooming never teleports the reader somewhere else.
+      // 放大后仍让视口中点下面的内容留在中点，缩放就不会把读者瞬移到别处。
       const centerRatio = (el.scrollLeft + el.clientWidth / 2) / (el.clientWidth * previous);
       requestAnimationFrame(() => {
         el.scrollLeft = centerRatio * el.clientWidth * next - el.clientWidth / 2;
@@ -144,7 +157,7 @@ export function RunTimeline({
     [zoom],
   );
 
-  // A selected step off-screen would leave the playhead invisible.
+  // 选中的步骤如果滚出了屏外，播放头就看不见了——把它拉回视口。
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el || selectedOffsetMs === undefined || zoom === 1) return;
@@ -173,8 +186,7 @@ export function RunTimeline({
   return (
     <div className="group/timeline relative shrink-0 border-b px-4 pb-2.5 pt-2">
       <div className="flex items-start">
-        {/* Labels stay put while the track scrolls — a total that scrolls away
-            is a total you cannot read against the bars it belongs to. */}
+        {/* 标签固定不动、轨道滚动——合计跟着滚走的话，就对着不属于它的条块读了。 */}
         <div className="shrink-0" style={{ width: LABEL_WIDTH }}>
           <div className="h-3" />
           <div className="mt-1 space-y-1">
@@ -190,14 +202,12 @@ export function RunTimeline({
           </div>
         </div>
 
-        {/* Zoom scrolls this track sideways; nothing ever scrolls it down.
-            Saying so matters: `overflow-x: auto` alone computes `overflow-y`
-            to `auto` as well, so a stray pixel of paint below the lanes buys a
-            vertical scrollbar, and that scrollbar narrows the track, which
-            re-decides whether the horizontal one is needed. Two lanes 15px
-            tall have no fixed point to settle on, and any `:hover` inside
-            re-runs the decision every frame — the timeline shakes for as long
-            as the pointer rests on a bar (#6278). */}
+        {/* 缩放时这条轨道横向滚动，永远不需要竖向滚动。必须显式写
+            overflow-y-hidden：单独 `overflow-x: auto` 会把 overflow-y 也算成 auto，
+            于是泳道下沿多出一个像素的绘制就能买到竖向滚动条，而滚动条会挤窄轨道、
+            反过来又影响要不要横向滚动条——两条 15px 高的泳道没有可收敛的固定点，
+            轨道内任何 `:hover` 都会每帧重跑一次判定，时间线在指针停在一块条上期间
+            一直抖（#6278）。 */}
         <div
           ref={scrollerRef}
           className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain"
@@ -238,8 +248,8 @@ export function RunTimeline({
             {selectedOffsetMs !== undefined && (
               <div
                 aria-hidden
-                // Ends on the lanes, not below them: the track clips its own
-                // vertical overflow now, so an overhang would only be cropped.
+                // 播放头两端落在泳道上而不是伸出轨道下方：轨道现在会裁切自己的
+                // 竖直溢出，伸出去的部分只会被切掉。
                 className="pointer-events-none absolute bottom-0 top-2.5 w-0.5 rounded-full bg-brand"
                 style={{
                   left: `${
@@ -252,9 +262,8 @@ export function RunTimeline({
         </div>
       </div>
 
-      {/* Zoom is the answer to a long run compressing its bars to slivers.
-          Resting state stays clean: the control appears on hover, and stays
-          visible once zoomed so the way back is never hidden. */}
+      {/* 缩放是对付"长运行把条块压成细线"的答案。静止状态保持干净：控件悬停才
+          出现；一旦放大过就常驻可见，回去的路永远能找到。 */}
       <div
         className={cn(
           "absolute right-3 top-1 flex items-center gap-0.5 rounded-md border bg-surface/95 p-0.5 shadow-sm transition-opacity",

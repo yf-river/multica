@@ -1,5 +1,8 @@
 "use client";
 
+// WebSocket 的 React Provider：负责建立/断开与当前工作区绑定的 WS 连接，
+// 把连接实例通过 context 提供给 subscribe/onReconnect hooks，
+// 并把 WS 事件统一同步进 React Query 缓存（useRealtimeSync）。
 import {
   createContext,
   use,
@@ -32,17 +35,17 @@ const WSContext = createContext<WSContextValue | null>(null);
 
 export interface WSProviderProps {
   children: ReactNode;
-  /** WebSocket server URL (e.g. "ws://localhost:8080/ws") */
+  /** WebSocket 服务器地址（如 "ws://localhost:8080/ws"）。 */
   wsUrl: string;
-  /** Platform-created auth store instance */
+  /** 平台创建的 auth store 实例。 */
   authStore: UseBoundStore<StoreApi<AuthState>>;
-  /** Platform-specific storage adapter for reading auth tokens */
+  /** 平台提供的存储适配器，用于读取认证 token。 */
   storage: StorageAdapter;
-  /** When true, use HttpOnly cookies instead of token query param for WS auth. */
+  /** 为 true 时用 HttpOnly cookie（而非 token query 参数）做 WS 认证。 */
   cookieAuth?: boolean;
-  /** Identifies the WS client to the server (sent as query params on the upgrade URL). */
+  /** 向服务器标识本 WS 客户端（以升级 URL 上的 query 参数发送）。 */
   identity?: ClientIdentity;
-  /** Optional callback for showing toast messages (platform-specific, e.g. sonner) */
+  /** 显示 toast 消息的回调（平台相关，如 sonner）。 */
   onToast?: (message: string, type?: "info" | "error") => void;
 }
 
@@ -56,11 +59,10 @@ export function WSProvider({
   onToast,
 }: WSProviderProps) {
   const user = authStore((s) => s.user);
-  // Reactive read of the current workspace slug (URL-driven singleton in
-  // packages/core/platform/workspace-storage.ts). When the workspace switches,
-  // the useEffect below tears down the old WS connection and opens a new one
-  // bound to the new workspace slug. SSR snapshot is `null` because this
-  // provider only renders client-side under CoreProvider.
+  // 对当前工作区 slug 做响应式读取（packages/core/platform/workspace-storage.ts 里的
+  // URL 驱动单例）。工作区切换时，下面 useEffect 会拆掉旧 WS 连接、打开一条绑定到
+  // 新 slug 的新连接。SSR 快照为 `null`，因为这个 Provider 只在 CoreProvider 下的
+  // 客户端渲染。
   const wsSlug = useSyncExternalStore(
     subscribeToCurrentSlug,
     getCurrentSlug,
@@ -68,10 +70,8 @@ export function WSProvider({
   );
   const [wsClient, setWsClient] = useState<WSClient | null>(null);
 
-  // Depend on identity primitives instead of the object reference so a parent
-  // re-render that passes a new `{ platform, version, os }` literal does not
-  // tear down and reconnect the WS when nothing about the identity actually
-  // changed.
+  // 依赖 identity 的原语而非对象引用：父组件重渲染传一个新的
+  // `{ platform, version, os }` 字面量时，只要 identity 本身没真变，就不拆线重连。
   const identityPlatform = identity?.platform;
   const identityVersion = identity?.version;
   const identityOS = identity?.os;
@@ -79,8 +79,8 @@ export function WSProvider({
   useEffect(() => {
     if (!user || !wsSlug) return;
 
-    // In token mode we need a token from storage; in cookie mode the HttpOnly
-    // cookie is sent automatically with the WS upgrade request.
+    // token 模式需要从存储取 token；cookie 模式的 HttpOnly cookie 会随 WS 升级
+    // 请求自动带上。
     const token = cookieAuth ? null : storage.getItem("multica_token");
     if (!cookieAuth && !token) return;
 
@@ -117,7 +117,7 @@ export function WSProvider({
 
   const stores: RealtimeSyncStores = { authStore };
 
-  // Centralized WS -> store sync (uses state so it re-subscribes when WS changes)
+  // 集中的 WS → store 同步（用 hook state，WS 变化时自动重新订阅）。
   useRealtimeSync(wsClient, stores, onToast);
 
   const subscribe = useCallback(
@@ -143,6 +143,7 @@ export function WSProvider({
   );
 }
 
+/** 在 WSProvider 内拿到订阅/重连接口；在 Provider 外使用会报错。 */
 export function useWS() {
   const ctx = use(WSContext);
   if (!ctx) throw new Error("useWS must be used within WSProvider");

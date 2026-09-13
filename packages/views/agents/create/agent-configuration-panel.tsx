@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是创建 Agent（手动页与 builder 右侧实时草稿共用）的整份配置面板：
+// 身份（头像/名字/描述）、行为（指令/开场白/技能）、执行（运行环境/模型/推理档位/
+// 档位）、访问权限（三档 + 成员名单）。builder 场景还支持“重绑服务端 carrier”。
+
 import { useEffect, useRef, type ReactNode } from "react";
 import {
   AGENT_DESCRIPTION_MAX_LENGTH,
@@ -35,6 +39,15 @@ const PERMISSION_SCOPES: AgentPermissionScope[] = [
   "members",
 ];
 
+/**
+ * 创建 Agent 的配置面板：身份 / 行为 / 执行 / 访问四个分区，所有字段都落在
+ * AgentDraft 草稿上（受控）。
+ * @param compact 紧凑版（builder 右侧栏）布局。
+ * @param onRuntimeSelect 提供时用于“builder 重绑服务端 carrier”；普通创建流程
+ *   不传，草稿是唯一存在的状态，改草稿即可。
+ * @param runtimeSwitchPending 有 builder 回复在途，服务端会拒绝重绑。
+ * @param runtimeSwitchInFlight 已有一次重绑请求在途。
+ */
 export function AgentConfigurationPanel({
   draft,
   onChange,
@@ -58,13 +71,12 @@ export function AgentConfigurationPanel({
   nameError: string | null;
   onNameChange: (name: string) => void;
   compact?: boolean;
-  /** Builder sessions rebind the server-side carrier instead of only editing
-   *  the draft. Absent for the plain create flows, where the draft is the only
-   *  state that exists. */
+  /** builder 会话要重绑服务端 carrier，而不只是改草稿。普通创建流程不传——
+   *  那里草稿是唯一存在的状态。 */
   onRuntimeSelect?: (runtimeId: string) => void;
-  /** A builder reply is in flight, so the server would refuse the rebind. */
+  /** 有 builder 回复在途，服务端会拒绝这次重绑。 */
   runtimeSwitchPending?: boolean;
-  /** A rebind request is in flight. */
+  /** 已有一条重绑请求在途。 */
   runtimeSwitchInFlight?: boolean;
 }) {
   const { t } = useT("agents");
@@ -85,9 +97,8 @@ export function AgentConfigurationPanel({
       onRuntimeSelect(id);
       return;
     }
-    // Model is per-runtime; clear it — and the per-model thinking / speed
-    // overrides — on runtime change so the new runtime resolves its own
-    // defaults instead of stale values.
+    // 模型按运行环境区分；换运行环境时一并清掉按模型绑定的推理/档位覆盖，
+    // 让新机器解析自己的默认，而不是沿用一批过期值。
     onChange(applyDraftRuntimeChange(draft, id));
   };
 
@@ -136,9 +147,8 @@ export function AgentConfigurationPanel({
                 onChange={(event) => set("description", event.target.value)}
                 placeholder={t(($) => $.create_dialog.description_placeholder)}
                 rows={compact ? 3 : 4}
-                // The create API rejects >255 characters with a 400. Cap the
-                // input and show the counter so the limit is visible before
-                // submitting, matching the settings page.
+                // 创建 API 对 >255 字符的输入直接回 400。限制输入长度并展示计数器，
+                // 让上限在提交前就可见——与设置页一致。
                 maxLength={AGENT_DESCRIPTION_MAX_LENGTH}
                 className="resize-y"
               />
@@ -210,9 +220,8 @@ export function AgentConfigurationPanel({
                 onSelect={handleRuntimeSelect}
                 disabled={runtimeLocked}
               />
-              {/* A silently greyed-out picker is the worst version of this: the
-                  user reaches for it exactly when the current runtime has gone
-                  wrong, so say what unblocks it instead of just refusing. */}
+              {/* 静默置灰的选择器是这一切里最糟的版本：用户恰恰是在当前运行环境出
+                  问题时才去够它——所以告诉他什么能解锁，而不是一味拒绝。 */}
               {runtimeSwitchPending && (
                 <p className="mt-1.5 text-caption text-muted-foreground">
                   {t(($) => $.creation_studio.builder.switch_runtime_pending)}
@@ -224,16 +233,14 @@ export function AgentConfigurationPanel({
               runtimeOnline={selectedRuntime?.status === "online"}
               value={draft.model}
               onChange={(value) => onChange(applyDraftModelChange(draft, value))}
-              // A successful switch clears the model, so an edit made while the
-              // rebind is in flight would be silently discarded.
+              // 成功的重绑会清空模型，所以重绑在途时做的修改会被悄悄丢弃。
               disabled={!selectedRuntime || runtimeSwitchInFlight}
             />
           </div>
-          {/* Both fields fail closed: they render only when the exact selected
-              model's live catalog advertises the capability (or a value is
-              already set and needs clearing), so an offline runtime, a failed
-              discovery or an empty model shows nothing instead of an input
-              that cannot be honoured. */}
+          {/* 两个字段都失败关闭：只有精确选中模型的实时目录宣称具备该能力时（或
+              已有值需要被清掉时）才渲染——离线运行环境、发现失败或“跟随运行时默认”
+              的空模型，都显示空白而不是一个兑现不了的输入框。与设置页同一套
+              失败关闭规则，也就不会发出 daemon 拒绝兑现的值。 */}
           <AgentExecutionOverrides
             draft={draft}
             runtime={selectedRuntime}
@@ -330,6 +337,7 @@ export function AgentConfigurationPanel({
   );
 }
 
+/** Agent 名字输入行：有错时聚焦并全选文本，方便直接重敲。 */
 export function AgentNameField({
   name,
   error,
@@ -381,12 +389,10 @@ export function AgentNameField({
 }
 
 /**
- * Per-model execution overrides (thinking level + Codex speed) for the create
- * flow. Capability comes from the exact selected model's live catalog on the
- * selected runtime, so nothing renders while that cannot be resolved — an
- * offline runtime, failed discovery, or an empty "use the runtime default"
- * model. That is the same fail-closed rule the settings page follows, and it is
- * why no value can be sent that the daemon would refuse to honour.
+ * 创建流程里的按模型执行覆盖（推理档位 + Codex 档位）。能力来自“精确选中模型”在
+ * 所选运行环境上的实时目录，所以目录解析不了时什么都不渲染——离线运行环境、发现
+ * 失败、或“跟随运行时默认”的空模型。与设置页同一套失败关闭规则，因此绝不会发出
+ * daemon 拒绝兑现的值。
  */
 export function AgentExecutionOverrides({
   draft,
@@ -427,6 +433,7 @@ export function AgentExecutionOverrides({
   );
 }
 
+/** 设置卡里一行字段的布局容器：左侧标签（可 for 关联）、右侧控件；compact 纵向堆叠。 */
 function DraftFieldRow({
   label,
   children,

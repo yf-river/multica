@@ -1,3 +1,7 @@
+// email.go —— EmailService：站内邮件发送（邀请邮件）。
+// 支持两条通道：Resend HTTP API（配 RESEND_API_KEY）或直接 SMTP 中继（配
+// SMTP_HOST 等），并兼容多种中继差异（STARTTLS/隐式 TLS、PLAIN/LOGIN 认证、
+// 8BITMIME 探测回退 quoted-printable、EHLO 名称等）。含发送逻辑与标题净化逻辑。
 package service
 
 import (
@@ -18,11 +22,12 @@ import (
 	"github.com/resend/resend-go/v2"
 )
 
-// maxSubjectFieldRunes bounds how much user-controlled text (workspace name,
-// inviter name) can land in an email Subject. Prevents attackers from stuffing
-// a full phishing pitch into a workspace name that gets sent from our domain.
+// maxSubjectFieldRunes 限制能进邮件 Subject 的用户可控文本（工作区名、邀请人名字）
+// 的长度，防止攻击者把一整段钓鱼话术塞进工作区名、再借我们的域名发出去。
 const maxSubjectFieldRunes = 60
 
+// EmailService 封装两种邮件后端的选择与各自参数。根据环境变量决定走 SMTP 还是
+// Resend；客户端为 nil 且没有 SMTP 时（开发环境）只打印不发。
 type EmailService struct {
 	client          *resend.Client
 	fromEmail       string
@@ -35,11 +40,13 @@ type EmailService struct {
 	smtpEHLOName    string
 }
 
+// smtpAuthClient 是 net/smtp.Client 上“做认证 + 查扩展”的最小接口，用于测试替身。
 type smtpAuthClient interface {
 	Auth(smtp.Auth) error
 	Extension(string) (bool, string)
 }
 
+// smtpClientAdapter 把 *smtp.Client 适配成 smtpAuthClient。
 type smtpClientAdapter struct {
 	client *smtp.Client
 }
@@ -56,6 +63,8 @@ func isLocalhost(name string) bool {
 	return name == "localhost" || name == "127.0.0.1" || name == "::1"
 }
 
+// loginAuth 实现老式 LOGIN 认证（AUTH LOGIN）。部分中继只认它，不认 PLAIN；
+// Start 里还会校验链路已加密（或对方是 localhost），避免明文把口令送出去。
 type loginAuth struct {
 	username string
 	password string
@@ -77,6 +86,7 @@ func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 		return nil, nil
 	}
 
+	// 服务端提示词可能带 base64，先还原成明文再匹配关键词，两种都认。
 	raw := strings.TrimSpace(string(fromServer))
 	challenge := strings.ToLower(raw)
 	if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil {
@@ -93,6 +103,8 @@ func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 	}
 }
 
+// smtpAuthWithFallback 先试 PLAIN；只有当中继明确表示“不认识这种认证类型”时才回退
+// 到 LOGIN（返回 fallbackToLogin=true 让调用方决定是否重连重试）。
 func smtpAuthWithFallback(c smtpAuthClient, host, username, password string) (bool, error) {
 	plainErr := c.Auth(smtp.PlainAuth("", username, password, host))
 	if plainErr == nil {
@@ -111,6 +123,8 @@ func smtpAuthWithFallback(c smtpAuthClient, host, username, password string) (bo
 	return true, plainErr
 }
 
+// resolveFromEmail 按优先级决定发件人地址：走 SMTP 时优先 SMTP_FROM_EMAIL 再退到
+// RESEND_FROM_EMAIL；没配 SMTP 则用 RESEND_FROM_EMAIL，最后兜底 noreply@multica.ai。
 func resolveFromEmail(smtpHost string) string {
 	resendFrom := strings.TrimSpace(os.Getenv("RESEND_FROM_EMAIL"))
 	if smtpHost == "" {
@@ -125,6 +139,8 @@ func resolveFromEmail(smtpHost string) string {
 	return resendFrom
 }
 
+// openSMTPClient 建立一条可用的 SMTP 连接：按配置走隐式 TLS（SMTPS）或明文直连，
+// 再做 STARTTLS 升级、设置 30 秒整体读写截止时间，并按需发送自定义 EHLO 名。
 func (s *EmailService) openSMTPClient() (*smtp.Client, error) {
 	addr := net.JoinHostPort(s.smtpHost, s.smtpPort)
 
@@ -174,6 +190,8 @@ func (s *EmailService) openSMTPClient() (*smtp.Client, error) {
 	return c, nil
 }
 
+// NewEmailService 从环境变量组装 EmailService。核心决策：SMTP_HOST 非空走 SMTP，
+// 否则有 RESEND_API_KEY 走 Resend，两者都没有时进入“开发模式打印”路径。
 func NewEmailService() *EmailService {
 	apiKey := os.Getenv("RESEND_API_KEY")
 	smtpHost := strings.TrimSpace(os.Getenv("SMTP_HOST"))
@@ -186,30 +204,27 @@ func NewEmailService() *EmailService {
 	smtpTLSInsecure := os.Getenv("SMTP_TLS_INSECURE") == "true"
 	from := resolveFromEmail(smtpHost)
 
-	// EHLO/HELO name, only relevant on the SMTP relay send path. net/smtp defaults
-	// to "localhost", which strict relays (e.g. smtp-relay.gmail.com) reject from a
-	// public source. Fall back to the machine hostname when SMTP_EHLO_NAME is unset.
-	// Resolved only in SMTP mode so the Resend/DEV paths never touch os.Hostname()
-	// or emit its failure log.
+	// EHLO/HELO 名称只在 SMTP 中继发送路径上有意义。net/smtp 默认发 "localhost"，
+	// 严格的中继（如 smtp-relay.gmail.com）会拒绝来自公网的这种问候。SMTP_EHLO_NAME
+	// 没配时退到机器主机名。只在 SMTP 模式下解析，让 Resend/DEV 路径永远不碰
+	// os.Hostname()、也不会打印它的失败日志。
 	var smtpEHLOName string
 	if smtpHost != "" {
 		smtpEHLOName = strings.TrimSpace(os.Getenv("SMTP_EHLO_NAME"))
 		if smtpEHLOName == "" {
 			hostname, hostErr := os.Hostname()
 			if hostErr != nil {
-				// Empty name makes sendSMTP skip Hello() and fall back to net/smtp's
-				// lazy "localhost" — which strict relays reject. Surface it so operators
-				// know to set SMTP_EHLO_NAME explicitly.
+				// 空名称会让 sendSMTP 跳过 Hello()，退回 net/smtp 惰性的 "localhost"
+				// ——严格中继会拒收。把它打印出来，让运维知道要显式设 SMTP_EHLO_NAME。
 				fmt.Printf("EmailService: os.Hostname() failed (%v); SMTP EHLO falls back to \"localhost\" — set SMTP_EHLO_NAME for strict relays\n", hostErr)
 			}
 			smtpEHLOName = hostname
 		}
 	}
 
-	// SMTP_TLS=implicit forces an immediate TLS handshake on connect (SMTPS).
-	// Required by providers like Aliyun enterprise mail that only offer port 465
-	// SSL and do not advertise STARTTLS. Default (empty / "starttls") preserves
-	// the prior STARTTLS-upgrade behavior.
+	// SMTP_TLS=implicit 要求连上后立刻做一次 TLS 握手（SMTPS）。阿里企业邮箱这类
+	// 只开放 465 SSL、不广播 STARTTLS 的服务商需要它。默认（空或 "starttls"）保持
+	// 原先 STARTTLS 升级的行为。
 	smtpTLSMode := strings.ToLower(strings.TrimSpace(os.Getenv("SMTP_TLS")))
 	smtpTLSImplicit := smtpTLSMode == "implicit" || smtpTLSMode == "smtps" || smtpTLSMode == "ssl"
 	if smtpTLSMode == "" && smtpPort == "465" {
@@ -248,10 +263,10 @@ func NewEmailService() *EmailService {
 	}
 }
 
-// sendSMTP delivers an HTML email via an SMTP server.
-// Supports unauthenticated relay (SMTP_USERNAME empty) and authenticated SMTP.
-// Upgrades to STARTTLS when advertised by the server.
-// Set SMTP_TLS_INSECURE=true for self-signed or private CA certificates.
+// sendSMTP 经一台 SMTP 服务器投递 HTML 邮件。
+// 支持免认证中继（SMTP_USERNAME 为空）和认证 SMTP。
+// 服务器广播 STARTTLS 时自动升级加密。
+// 自签名或私有 CA 证书可设 SMTP_TLS_INSECURE=true。
 func (s *EmailService) sendSMTP(to, subject, htmlBody string) error {
 	if strings.TrimSpace(s.fromEmail) == "" {
 		return fmt.Errorf("SMTP_FROM_EMAIL or RESEND_FROM_EMAIL is required when SMTP_HOST is set")
@@ -264,6 +279,7 @@ func (s *EmailService) sendSMTP(to, subject, htmlBody string) error {
 	defer c.Close()
 
 	if s.smtpUsername != "" {
+		// PLAIN 认证可能被某些中继拒绝，此时若对方支持 LOGIN 就重连改走 LOGIN。
 		fallbackToLogin, authErr := smtpAuthWithFallback(smtpClientAdapter{client: c}, s.smtpHost, s.smtpUsername, s.smtpPassword)
 		if authErr != nil {
 			if !fallbackToLogin {
@@ -283,9 +299,9 @@ func (s *EmailService) sendSMTP(to, subject, htmlBody string) error {
 		}
 	}
 
-	// Probe 8BITMIME after (possible) STARTTLS so the extension list is current.
-	// Use quoted-printable for relays that don't advertise 8BITMIME — safer for
-	// non-ASCII workspace/inviter names crossing strict or older SMTP hops.
+	// 在（可能的）STARTTLS 之后才探测 8BITMIME，确保扩展列表是最新的。
+	// 不广播 8BITMIME 的中继改用 quoted-printable 编码正文——对非 ASCII 的工作区/
+	// 邀请人名字穿越严格或老旧 SMTP 节点更安全。
 	has8Bit, _ := c.Extension("8BITMIME")
 	encodedSubject := mime.QEncoding.Encode("utf-8", subject)
 	msgID := fmt.Sprintf("<%d@%s>", time.Now().UnixNano(), s.smtpHost)
@@ -332,6 +348,8 @@ func (s *EmailService) sendSMTP(to, subject, htmlBody string) error {
 	return c.Quit()
 }
 
+// SendInvitationEmail 发送一封“XX 邀请你加入工作区”的邮件。按配置分流：SMTP 模式
+// 走 sendSMTP；Resend 模式走 Resend API；两者都没有则打印一行开发提示并当成功。
 func (s *EmailService) SendInvitationEmail(to, inviterName, workspaceName, invitationID string) error {
 	appURL := strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN"))
 	if appURL == "" {
@@ -352,9 +370,8 @@ func (s *EmailService) SendInvitationEmail(to, inviterName, workspaceName, invit
 	return err
 }
 
-// buildInvitationParams assembles the email request for an invitation.
-// Separated from SendInvitationEmail so the sanitization behavior is unit-testable
-// without needing to mock the Resend SDK or an SMTP server.
+// buildInvitationParams 组装一封邀请邮件的请求体。从 SendInvitationEmail 里拆出来，
+// 是为了让净化行为可以不 mock Resend SDK、也不起 SMTP 服务就做单元测试。
 func buildInvitationParams(from, to, inviterName, workspaceName, inviteURL string) *resend.SendEmailRequest {
 	safeWorkspace := html.EscapeString(workspaceName)
 	safeInviter := html.EscapeString(inviterName)
@@ -377,12 +394,10 @@ func buildInvitationParams(from, to, inviterName, workspaceName, inviteURL strin
 	}
 }
 
-// sanitizeSubjectField prepares user-controlled text for the email Subject line.
-// Subject is not HTML-rendered, so HTML-escaping would leak literal entities
-// (e.g. &lt;script&gt;) into the recipient's inbox. Instead strip control
-// characters (defense in depth against header-injection-adjacent abuse even
-// though Resend also filters CR/LF) and cap length so attackers can't stuff
-// a full phishing subject into a workspace name.
+// sanitizeSubjectField 把用户可控文本净化后放进邮件 Subject。Subject 不做 HTML
+// 渲染，直接做 HTML 转义会把字面实体（如 &lt;script&gt;）漏进收件箱。做法是去掉
+// 控制字符（即使 Resend 也过滤 CR/LF，这里仍纵深防御类似“头注入”的滥用）并限制
+// 长度，让攻击者没法把一整句钓鱼主题塞进工作区名。
 func sanitizeSubjectField(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))

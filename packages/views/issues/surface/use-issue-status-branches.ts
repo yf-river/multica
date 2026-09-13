@@ -1,5 +1,9 @@
 "use client";
 
+// 状态分支数据 hook：给列表视图和按状态分组的看板提供服务端权威的分列数据。
+// 每列的分页用的是与 Table 相同的 keyset 分页 `/table/rows` 约定；列的总数来自
+// 析取式的状态 facet，所以隐藏/空的列从不依赖已加载的卡片窗口。
+// 这里的「状态」都是看板列，而列是「分类」。
 import {
   useCallback,
   useEffect,
@@ -28,6 +32,7 @@ import type {
   IssueTableRowsResponse,
 } from "@multica/core/types";
 
+/** 单列（单个状态分类）的分页状态与控制方法。 */
 export interface IssueStatusPageState {
   total: number;
   loaded: number;
@@ -39,6 +44,7 @@ export interface IssueStatusPageState {
   retry: () => void;
 }
 
+/** 按状态分类组织的分页状态表。 */
 export type IssueStatusPagination = Record<
   IssueStatusCategory,
   IssueStatusPageState
@@ -62,27 +68,23 @@ interface StatusBranchData {
   isError: boolean;
   headUpdatedAt: number;
   headFetching: boolean;
-  /** The head (cursor === null) page alone is still loading with nothing to
-   * show. Distinct from `isLoading`, which also accumulates tail pages so the
-   * per-branch load-more sentinel can spin. */
+  /** 只有头部页（cursor === null）还在加载、且没有任何东西可显示时为 true。
+   *  与 `isLoading` 不同——后者还会累积尾部页，让每列自己的「加载更多」哨兵能转圈。 */
   headPending: boolean;
 }
 
-// Every "status" in this hook is a board COLUMN, and columns are categories:
-// a workspace's custom statuses live inside their category's column rather than
-// adding one of their own. (MUL-6243)
+// 本 hook 里的每个「状态」都是看板「列」，而列是分类：工作区自定义状态住在它所属
+// 分类的列里，而不是自成一列。（MUL-6243）
 function statusGroupKey(status: IssueStatusCategory, byCategory: boolean) {
   return byCategory ? `status_category:${status}` : `status:${status}`;
 }
 
 /**
- * The grouping contract this hook pages with.
+ * 这个 hook 分页所用的分组约定。
  *
- * `status_category` is a server contract this feature introduced, so it is only
- * sent once the workspace is KNOWN to have custom statuses — see
- * `IssueStatusCatalog.hasCustomStatuses` for why that is both the
- * rolling-deploy guard and the cold-load guard. Everyone else keeps the exact
- * request they made before. (MUL-6243)
+ * `status_category` 是本特性引入的服务端约定，所以只有在「确认工作区有自定义状态」后
+ * 才发送——参见 `IssueStatusCatalog.hasCustomStatuses` 为什么它既是滚动发布的守卫、
+ * 又是冷加载的守卫。其他人都保留过去发起的那个请求原样。（MUL-6243）
  */
 const CATEGORY_GROUP = { kind: "status_category" } as const;
 const STATUS_GROUP = { kind: "status" } as const;
@@ -117,25 +119,20 @@ function rebaseCursorState(
 }
 
 /**
- * Per-column totals from the server's status facet.
+ * 从服务端的状态 facet 算出每列的精确总数。
  *
- * The facet is keyed by concrete status KEY, while columns are categories, so
- * custom keys are folded into their category instead of being discarded —
- * dropping them made a column's total disagree with the cards it rendered.
+ * facet 按具体状态 KEY 组织，而列是分类，所以自定义 key 要被折进它的分类而不是丢弃
+ * ——丢弃它们会让列的总数和它渲染的卡片对不上。
  *
- * A key the LOADED catalog does not know is dropped rather than guessed into
- * `todo`: `categoryOf` cannot distinguish "custom status created seconds ago
- * elsewhere" from "not a status at all", and inflating an arbitrary column's
- * header is worse than a total that is briefly one card short. Before the
- * catalog loads there is nothing to fold, so only built-ins are counted — which
- * is exactly the pre-feature behavior. (MUL-6243)
+ * 已加载目录里都不认识的 key 会被丢弃，而不是猜进 `todo`：`categoryOf` 区分不了
+ * 「几秒前在别处刚建的自定义状态」和「根本不是状态」，而把一个任意列的计数虚高，
+ * 比总数短暂少一张卡片更糟。目录加载前没有东西可折，只数内置状态——这正是本特性
+ * 出现前的行为。（MUL-6243）
  *
- * The status facet is DISJUNCTIVE — the server answers it with the status
- * filter dropped, so the filter menu can show what each option would select.
- * A column header is the opposite question, so an active filter narrows the
- * fold to the keys it selected. Without that, filtering by one custom status
- * headed the In Review column with every in_review issue (220) above the 5
- * cards that actually matched. (MUL-6409)
+ * 状态 facet 是「析取式」的——服务端回答它时会丢掉状态筛选，好让筛选菜单展示每个
+ * 选项会选中什么。列标题是相反的问题，所以激活筛选时要把折并范围收窄到它选中的那些
+ * key。否则按某个自定义状态筛选，会把全部 in_review 问题（220 个）都算进 In Review
+ * 列的标题，而实际匹配的只有 5 张卡。（MUL-6409）
  */
 function statusCountsFromFacets(
   facets: IssueTableFacetsResponse | undefined,
@@ -158,6 +155,7 @@ function statusCountsFromFacets(
   return counts;
 }
 
+/** useIssueStatusBranches 返回的状态分支数据。 */
 export interface IssueStatusBranches {
   enabled: boolean;
   issues: Issue[];
@@ -169,10 +167,17 @@ export interface IssueStatusBranches {
 }
 
 /**
- * Server-authoritative status branches shared by List and status-grouped
- * Board. Every branch page is the same keyset-paged `/table/rows` contract
- * used by Table; status totals come from the disjunctive status facet, so
- * hidden/empty columns never depend on the loaded card window.
+ * 列表视图与按状态分组的看板共享的服务端权威状态分支数据 hook。每个分支的分页
+ * 用的是与 Table 相同的 keyset 分页 `/table/rows` 约定；状态总数来自析取式的状态
+ * facet，所以隐藏/空列从不依赖已加载的卡片窗口。
+ * @param options.wsId - 工作区 id。
+ * @param options.query - 表格查询规格。
+ * @param options.statuses - 要加载哪些状态分类（看板列）。
+ * @param options.facets - 服务端 facet 响应（状态总数来源）。
+ * @param options.facetsPending - facets 是否还在加载。
+ * @param options.facetsFetching - facets 是否正在重新拉取。
+ * @param options.enabled - 是否启用查询。
+ * @returns 展开的问题列表与每列分页状态。
  */
 export function useIssueStatusBranches({
   wsId,
@@ -195,11 +200,9 @@ export function useIssueStatusBranches({
   const catalog = useIssueStatuses(wsId);
   const { hasCustomStatuses } = catalog;
   const group = hasCustomStatuses ? CATEGORY_GROUP : STATUS_GROUP;
-  // The grouping contract is part of the cursor identity, not just the query:
-  // it flips from `status` to `status_category` the moment the catalog lands,
-  // and a cursor minted against the old contract is meaningless to the new one.
-  // Without this, catalog arrival carried stale `status:` cursors into
-  // `status_category:` requests. (MUL-6243)
+  // 分组约定是游标身份的一部分，而不只是查询的一部分：目录一落定它就由 `status`
+  // 翻成 `status_category`，而按旧约定铸出的游标对新约定毫无意义。没有这条，目录到达
+  // 会把过期的 `status:` 游标带进 `status_category:` 请求。（MUL-6243）
   const identity = useMemo(
     () => JSON.stringify({ query, group: group.kind }),
     [group.kind, query],
@@ -248,10 +251,9 @@ export function useIssueStatusBranches({
             parent_id: null,
             page: { limit: 50, cursor },
           }),
-          // useQueries replaces observers when the query hash changes, so its
-          // built-in keepPreviousData cannot bridge a filter/sort transition.
-          // Retain only the last settled HEAD per fixed status branch. Tails
-          // are deliberately detached; exact facets remain server-owned.
+          // useQueries 在查询哈希变化时会替换 observer，所以它内置的 keepPreviousData
+          // 撑不过筛选/排序的切换。这里只为每个固定的状态分支保留最后一份落定的
+          // HEAD 数据。尾部页刻意断开；精确 facet 仍归服务端所有。
           ...(placeholder ? { placeholderData: () => placeholder } : {}),
           enabled,
         };
@@ -312,9 +314,8 @@ export function useIssueStatusBranches({
       const target = pageTargets[index];
       const queryResult = pageResults[index];
       if (!target || !queryResult) continue;
-      // A broad invalidation makes every cursor stale as soon as the head
-      // starts refreshing. Hide detached tails immediately; the effect below
-      // trims their cursor observers before their responses can re-enter.
+      // 大范围失效会让 HEAD 一开始刷新、所有游标就立刻过期。立即藏起已断开的尾部页；
+      // 下面的 effect 会在它们的响应重新进入前就把游标 observer 修剪掉。
       if (target.cursor !== null && headFetching.has(target.status)) continue;
 
       const current = result.get(target.status);
@@ -323,11 +324,9 @@ export function useIssueStatusBranches({
       if (page) {
         const seen = seenByStatus.get(target.status) ?? new Set<string>();
         for (const row of page.rows) {
-          // Realtime can patch an issue's status before the broad query
-          // invalidation has moved it between branch caches. Never render a
-          // patched card under a column it no longer belongs to. The comparison
-          // is against the CATEGORY, so a custom status stays in its column
-          // instead of being dropped for not equalling the column key.
+          // 实时事件可能在宽范围失效把它挪到别的分支缓存之前，先修补了问题状态。
+          // 绝不要把一张已修补的卡片渲染在它已不属于的列下。比较对象是「分类」，
+          // 所以自定义状态留在自己的列里，而不是因为不等于列 key 被丢弃。
           if (issueColumnCategory(row.issue) !== target.status) continue;
           if (seen.has(row.issue.id)) continue;
           seen.add(row.issue.id);
@@ -353,8 +352,8 @@ export function useIssueStatusBranches({
     statuses,
   ]);
 
-  // Once a head page refreshes, its old cursor chain no longer belongs to the
-  // current snapshot. Match Table's branch behavior by dropping every tail.
+  // 一旦 HEAD 页刷新过，它旧的游标链就不再属于当前快照。跟 Table 的分支行为对齐：
+  // 丢掉所有尾部页。
   const headRevisionRef = useRef<{
     identity: string;
     revisions: Partial<Record<IssueStatusCategory, number>>;
@@ -464,10 +463,9 @@ export function useIssueStatusBranches({
   );
   const isTotalKnown = facets !== undefined;
   const total = facets?.total ?? issues.length;
-  // Surface-level loading reflects only each branch's HEAD page. A tail page
-  // (load-more) is pending/fetching while the already-rendered rows stay on
-  // screen, so it must never re-trigger the full-surface skeleton or the
-  // global refreshing indicator — the per-branch sentinel owns "loading more".
+  // surface 级的加载只反映每个分支的 HEAD 页。尾部页（加载更多）pending/fetching 时，
+  // 已渲染的行还留在屏幕上，所以它绝不能再次触发整个 surface 的骨架屏或全局刷新
+  // 指示——「加载更多」由每分支自己的哨兵负责。
   const headsPending = statuses.some(
     (status) => branchData.get(status)?.headPending,
   );

@@ -1,3 +1,6 @@
+// 本文件职责：「创建小队（Squad）」弹窗——填写小队名称、描述、头像，从「我的 Agent /
+// 工作区 Agent」里单选一名队长（Leader），并可多选其它 Agent 与工作区成员加入小队，
+// 创建成功跳转小队详情页。
 "use client";
 
 import { useMemo, useState } from "react";
@@ -44,15 +47,25 @@ import {
 import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { useT } from "../i18n";
 
+// 一个「额外成员」条目：要么是 agent，要么是工作区成员（member），各带自己的 id 和名字。
 type SelectedMember = {
   type: "agent" | "member";
   id: string;
   name: string;
 };
 
-// How many chips we show inline before collapsing the tail into "+N".
+// 触发按钮内联展示的成员胶囊上限，超出部分折叠成「+N」。
 const CHIP_DISPLAY_LIMIT = 3;
 
+/**
+ * 「创建小队」弹窗主组件。
+ *
+ * 收集小队名称/描述/头像，用 LeaderPicker 单选队长、用 AdditionalMembersPicker
+ * 多选成员；提交时先建小队，再逐个添加成员（单条失败只警告不中断），随后刷新
+ * 小队相关缓存并跳转到小队详情页。队长必须是一个「在线」（绑定了 runtime）的 agent。
+ *
+ * @param onClose 关闭弹窗的回调
+ */
 export function CreateSquadModal({ onClose }: { onClose: () => void }) {
   const { t } = useT("modals");
   const router = useNavigation();
@@ -77,9 +90,8 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
   const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>([]);
   const [creating, setCreating] = useState(false);
 
-  // Promoting an agent to leader must actually drop it from selectedMembers,
-  // not merely hide it. Otherwise switching leader away later resurrects the
-  // hidden pick and silently submits it as a member.
+  // 把某 agent 升为队长时，必须真正把它从已选成员里移除，而不是仅仅隐藏掉——
+  // 否则之后把队长换成别人时，这个「被隐藏的选中项」会复活，并作为普通成员静默提交。
   const handleLeaderChange = (id: string) => {
     setLeaderId(id);
     if (id) {
@@ -154,8 +166,8 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
 
         <div className="flex-1 overflow-y-auto p-5">
           <div className="space-y-4 min-w-0">
-            {/* Identity row mirrors CreateAgentDialog so the two creates read
-                as siblings — avatar (left) + name/description stack (right). */}
+            {/* 身份信息行与 CreateAgentDialog 保持一致，让两个「创建」读起来像同类——
+                左边头像、右边名称/描述堆叠。 */}
             <div className="flex items-start gap-4">
               <AvatarUploadControl
                 variant="squad"
@@ -224,9 +236,8 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        {/* Inline footer — see CreateAgentDialog: shadcn DialogFooter applies
-            negative margins assuming a padded DialogContent. Our content is
-            p-0, so a plain bordered row is the right call. */}
+        {/* 内联 footer——参考 CreateAgentDialog：shadcn 的 DialogFooter 默认带负外边距，
+            那是假设 DialogContent 有内边距。我们的内容是 p-0，所以用普通带边框的行即可。 */}
         <div className="flex items-center justify-end gap-2 border-t bg-background px-5 py-3">
           <Button variant="ghost" onClick={onClose}>
             {t(($) => $.create_squad.cancel)}
@@ -243,9 +254,8 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// LeaderPicker — single-select agent picker, grouped "My Agents" first then
-// "Workspace Agents". Empty workspaces render a disabled trigger that points
-// the user at agent creation.
+// LeaderPicker —— 单选 agent 的队长选择器，分组为「我的 Agent」在前、「工作区 Agent」
+// 在后。工作区里一个 agent 都没有时，渲染一个指向「去创建 agent」的禁用提示条。
 // ---------------------------------------------------------------------------
 function LeaderPicker({
   agents,
@@ -386,10 +396,9 @@ function LeaderPicker({
 }
 
 // ---------------------------------------------------------------------------
-// AdditionalMembersPicker — multi-select agents + workspace members. The
-// trigger shows up to 3 chips inline; the rest collapse into "+N". The popup
-// stays open while the user toggles selections so they can pick multiple
-// without re-opening it.
+// AdditionalMembersPicker —— 多选「agent + 工作区成员」的成员选择器。触发按钮内联展示
+// 最多 3 个成员胶囊，其余折叠成「+N」。弹层在勾选期间保持打开，方便一次挑选多个而无需
+// 反复开关。
 // ---------------------------------------------------------------------------
 function AdditionalMembersPicker({
   agents,
@@ -473,10 +482,9 @@ function AdditionalMembersPicker({
           if (!v) setFilter("");
         }}
       >
-        {/* render={<div role="combobox" />} — chips contain their own remove
-            <button>, so the trigger cannot itself be a <button> without
-            nesting interactive content. Base UI injects click/keyboard/ARIA
-            wiring into the rendered element. */}
+        {/* render={<div role="combobox" />}——胶囊内部自带各自的「移除」按钮，所以触发器
+            本身不能是 <button>，否则会形成按钮套按钮的非法嵌套。由 Base UI 往这个 div
+            里注入点击/键盘/ARIA 逻辑。 */}
         <PopoverTrigger
           render={
             <div
@@ -588,6 +596,10 @@ function AdditionalMembersPicker({
   );
 }
 
+/**
+ * 成员胶囊——展示单个已选成员（头像 + 名字），附带「移除」小按钮。移除按钮
+ * preventDefault/stopPropagation 是为了避免误触到外层 Popover 触发器的打开逻辑。
+ */
 function MemberChip({
   m,
   onRemove,

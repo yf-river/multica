@@ -1,5 +1,7 @@
 "use client";
 
+// 本文件提供一个堆叠柱状迷你图（sparkline），用一列柱子同时表达吞吐量与失败率。
+
 interface ActivityBucketLike {
   total: number;
   failed: number;
@@ -7,10 +9,10 @@ interface ActivityBucketLike {
 
 interface SparklineProps {
   /**
-   * Buckets in display order (oldest → newest). One column per bucket;
-   * total drives column height, failed renders on top in destructive so
-   * the column conveys *throughput + failure share* in one glance — both
-   * dimensions live on the same shape, no extra row chrome required.
+   * 按展示顺序（旧 → 新）排列的桶数组。每个桶对应一列柱子：
+   * `total` 决定柱子总高度，`failed` 会以“失败色”叠加在柱子顶部，
+   * 让这一列一眼就能同时看出“吞吐量 + 失败占比”——两个维度放在同一个形状里，
+   * 无需额外增加行的装饰。
    */
   buckets: readonly ActivityBucketLike[];
   width: number;
@@ -25,27 +27,21 @@ const BASELINE_FILL = "var(--color-muted-foreground)";
 const BASELINE_OPACITY = 0.25;
 
 /**
- * Stacked bar sparkline — success bottom, failure top. One row, one shape,
- * two dimensions:
+ * 堆叠柱状迷你图：成功段在底部、失败段在顶部。一行、一个形状，承载两个维度：
  *
- *   - **Column height** = total throughput that day (per-component scaled
- *     so a quiet agent reads "its own shape", not flattened by a noisy
- *     neighbour).
- *   - **Red share** = failure rate. A 100-runs-1-failed agent and a
- *     100-runs-99-failed agent must be told apart at scan speed; the only
- *     way to do that with a single column is to encode the second
- *     dimension *inside* the column.
+ *   - **柱子高度** = 当天的总吞吐量（按每个组件独立缩放，让低流量 Agent
+ *     呈现“自己的形状”，而不是被邻居某个繁忙的日期压扁）。
+ *   - **红色占比** = 失败率。一个“跑了 100 次失败 1 次”的 Agent 和
+ *     “跑了 100 次失败 99 次”的 Agent，必须在快速扫视时就能区分；用单根柱子
+ *     做到这一点的唯一办法，就是把第二个维度编码在柱子内部。
  *
- * Why not just colour the whole column red on any failure (the "binary"
- * approach we shipped first)? Because it loses the failure-rate dimension
- * — 1/100 and 99/100 paint the same. Splitting the segment keeps the
- * dimension while staying within "one element per cell", which is the
- * scan-speed budget.
+ * 为什么不在出现失败时把整根柱子染红（我们最初上线的“二值”做法）？
+ * 因为那样会丢失失败率这一维度——1/100 和 99/100 会画成一样。把失败段单独切出来，
+ * 既保留了维度，又守住了“每个格子一个元素”的扫视速度预算。
  *
- * Pre-life days (the agent didn't exist yet) and real zero days look the
- * same here on purpose — distinguishing them adds row variety the column
- * doesn't earn (Tufte data-ink); the tooltip carries "Created N days ago"
- * where it actually matters.
+ * Agent 尚未创建的日子和真正为 0 的日子在这里故意长得一样——区分它们会带来
+ * 列本不该有的额外变化（参考 Tufte 的数据墨水原则）；真正需要区分的地方，
+ * 由 tooltip 上的“Created N days ago”来承载。
  */
 export function Sparkline({
   buckets,
@@ -66,20 +62,20 @@ export function Sparkline({
     );
   }
 
-  // Column geometry — gap = 1px, columns share the rest equally. Round to
-  // whole pixels so sub-pixel rects don't render fuzzy at this size.
+  // 列几何布局：列间距 gap = 1px，剩余宽度由各列均分。取整到像素，
+  // 避免亚像素矩形在这个尺寸下渲染模糊。
   const gap = 1;
   const colWidth = Math.max(1, Math.floor((width - gap * (n - 1)) / n));
   const usedWidth = colWidth * n + gap * (n - 1);
   const offsetX = Math.floor((width - usedWidth) / 2);
 
-  // Per-component max so a low-volume agent's shape isn't flattened by a
-  // single noisy day from a neighbour.
+  // 取每个组件自己的最大值做缩放，让低流量 Agent 的形状不被邻居某个
+  // 繁忙日期压扁。
   let maxTotal = 0;
   for (const b of buckets) if (b.total > maxTotal) maxTotal = b.total;
   const scaleDenominator = Math.max(1, maxTotal);
 
-  // Reserve 1px so columns visually sit on something rather than floating.
+  // 底部预留 1px，让柱子视觉上有“落脚点”而不是悬浮着。
   const baselineY = height - 1;
   const usableH = height - 1;
 
@@ -91,8 +87,7 @@ export function Sparkline({
       className={className}
       aria-hidden
     >
-      {/* Faint floor — a row with zero history still reads as "a row",
-          not a missing cell. */}
+      {/* 淡淡的底线：没有历史数据的一行仍能读作“一行”，而不是缺失的格子。 */}
       <rect
         x={0}
         y={baselineY}
@@ -108,9 +103,8 @@ export function Sparkline({
           1,
           Math.round((usableH * b.total) / scaleDenominator),
         );
-        // 1px floor on the failed segment so a single failure is still
-        // visible; clamp by total so 1-of-1 doesn't make the failed
-        // segment taller than the column itself.
+        // 失败段保留 1px 底线，让哪怕只有 1 次失败也依然可见；再用 total
+        // 做上限截断，避免 1/1 这种情况把失败段画得比整根柱子还高。
         const failedH =
           b.failed > 0
             ? Math.min(

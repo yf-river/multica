@@ -1,3 +1,6 @@
+// 职责定位：记录 issue 的「来源抓取」（source fetch）事实——agent/服务从外部系统（当前支持
+// TAPD）抓取原始材料后回写元数据与不可变快照，供 issue 详情展示与溯源。也处理 TAPD 链接的
+// 自动补抓。
 package handler
 
 import (
@@ -23,6 +26,16 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// RecordIssueSourceFetchRequest 是一次来源抓取结果的记录请求。
+//
+// 几个非显然字段的语义：
+//   - Provider：外部系统类型（tapd / gongfeng），缺省按 tapd 处理；
+//   - FetchProvider：本次抓取实际走的通道，缺省派生为 <provider>_mcp；
+//   - Status：抓取结论，fetched 或 fetch_failed；
+//   - WorkspaceID / ResourceType / ResourceID：定位「外部资源」自身的三元组——对 TAPD 指 TAPD
+//     侧的 workspace、story / markdown_wiki、ID，与 issue 所在的工作区是两个概念；
+//   - AutoFetch：为 true 时由服务端用当前用户的 TAPD 凭证代抓（当前仅支持 tapd），成功后本
+//     请求里其它抓取字段会被抓取结果覆盖。
 type RecordIssueSourceFetchRequest struct {
 	Provider      string `json:"provider"`
 	FetchProvider string `json:"fetch_provider"`
@@ -40,6 +53,7 @@ type RecordIssueSourceFetchRequest struct {
 	AutoFetch     bool   `json:"auto_fetch"`
 }
 
+// tapdSourceRef 是从 TAPD URL 里解析出的资源引用。
 type tapdSourceRef struct {
 	WorkspaceID  string
 	ResourceType string
@@ -47,6 +61,7 @@ type tapdSourceRef struct {
 	URL          string
 }
 
+// parseTAPDSourceURL 识别并解析 TAPD 的 story / markdown_wiki 页面 URL 成结构化引用。
 func parseTAPDSourceURL(value string) (tapdSourceRef, bool) {
 	parsed, err := url.Parse(strings.Join(strings.Fields(value), ""))
 	if err != nil || !strings.HasSuffix(strings.ToLower(parsed.Host), "tapd.cn") {
@@ -76,6 +91,9 @@ func parseTAPDSourceURL(value string) (tapdSourceRef, bool) {
 	return tapdSourceRef{}, false
 }
 
+// RecordIssueSourceFetch 处理 POST .../issues/:id/source-fetch：记录一次来源抓取（agent / 服务从
+// 外部系统抓取原始材料）的结果——把 provider/URL/摘要等元数据写进 issue.metadata，并在调用方
+// 通过 X-Task-ID 声明 agent 任务时，以幂等键沉淀一条 task trace 事件。AutoFetch 时服务端代抓。
 func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request) {
 	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
@@ -91,6 +109,8 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	existing := util.JSONObjectOrEmpty(issue.Metadata)
+	// 记录客户端原始请求快照，用于随后计算幂等指纹：auto_fetch 会改写 req，指纹必须基于客户端
+	// 真正提交的载荷，否则同一请求重发会算出不同指纹、绕过幂等。
 	requestFingerprint := req
 	if req.AutoFetch {
 		fetched, err := h.autoFetchTAPDSource(r.Context(), userID, req, existing)
@@ -114,6 +134,8 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 	}
 
 	metadataUpdates := sourceFetchMetadata(normalized)
+	// metadata 会整体作为事件 payload 广播，须受总 key 数上限约束：统计本次将要新增的 key 数，
+	// 与现有 key 相加超过上限就直接拒绝请求。
 	newKeyCount := 0
 	for key := range metadataUpdates {
 		if _, present := existing[key]; !present {
@@ -152,6 +174,8 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if normalized.Status == "fetched" {
+		// 抓取成功：清掉上次失败残留的 source_fetch_error 键，并重读最新行——后续 metadata
+		// 变更事件要基于清过脏值后的权威状态构造。
 		if _, err := qtx.DeleteIssueMetadataKey(r.Context(), db.DeleteIssueMetadataKeyParams{
 			ID:          issue.ID,
 			WorkspaceID: issue.WorkspaceID,
@@ -168,6 +192,8 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 		updated = latest
 	}
 
+	// 只有调用方通过 X-Task-ID 声明这次抓取属于某条 agent 任务时，才把抓取沉淀为 task trace
+	// 事件（ID 用幂等键，重复提交返回 409）；普通来源的写入不产生 trace。
 	traceResponse := map[string]any(nil)
 	if taskID := strings.TrimSpace(r.Header.Get("X-Task-ID")); taskID != "" {
 		idempotencyKey, ok := requireIdempotencyKey(w, r)
@@ -267,6 +293,8 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// 事务提交之后才广播 metadata 变更事件，让其它端刷新 issue 详情。广播属尽力而为——此后任何
+	// 一步出错都不能回滚已落库的抓取事实。
 	h.publishEvent(event)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"metadata":    metadata,
@@ -274,6 +302,8 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// normalizeSourceFetchRequest 归一化并校验抓取记录请求：小写化 provider、补缺省值、按 status 强制
+// 必填项、逐字段限长。非法输入直接写 4xx 并返回 ok=false。
 func normalizeSourceFetchRequest(w http.ResponseWriter, req RecordIssueSourceFetchRequest) (RecordIssueSourceFetchRequest, bool) {
 	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
 	if req.Provider == "" {
@@ -338,6 +368,9 @@ func normalizeSourceFetchRequest(w http.ResponseWriter, req RecordIssueSourceFet
 	return req, true
 }
 
+// autoFetchTAPDSource 用当前用户账户级的 TAPD 凭证替客户端代抓来源文档：先从请求或 issue 既有
+// metadata 里解析出 TAPD 资源三元组（必要时用 URL 反推），再取默认凭证 profile、解析 token 抓取。
+// 返回填充好抓取字段的请求；任何一步失败都以带可读原因的错误返回（上层会据此记 fetch_failed）。
 func (h *Handler) autoFetchTAPDSource(ctx context.Context, userID string, req RecordIssueSourceFetchRequest, metadata map[string]any) (RecordIssueSourceFetchRequest, error) {
 	provider := strings.ToLower(strings.TrimSpace(firstNonEmpty(req.Provider, "tapd")))
 	if provider != externalCredentialProviderTAPD {
@@ -404,6 +437,7 @@ func (h *Handler) autoFetchTAPDSource(ctx context.Context, userID string, req Re
 	return req, nil
 }
 
+// tapdSourceDocument 是 TAPD 源文档在本地加工后的展示形态：标题 + 一段摘要 + 正文摘录 + 版本戳。
 type tapdSourceDocument struct {
 	Title       string
 	Summary     string
@@ -411,8 +445,13 @@ type tapdSourceDocument struct {
 	Version     string
 }
 
+// tapdAutoFetchMaxAttempts 是代抓 TAPD 的重试上限（含首次尝试）。网络类瞬时错误（见
+// isTransientTAPDAutoFetchError）才会触发重试，指数式退避等待。
 const tapdAutoFetchMaxAttempts = 3
 
+// fetchTAPDSourceDocumentWithRetry 带重试地抓取 TAPD 源文档：遇到瞬时错误（网络抖动、连接被
+// 重置、上游限流/5xx 等）按退避重试，最多 tapdAutoFetchMaxAttempts 次；上下文取消则立即返回
+// 取消错误。重试耗尽后返回最后一次的原始错误。
 func fetchTAPDSourceDocumentWithRetry(ctx context.Context, token, workspaceID, resourceType, resourceID string) (tapdSourceDocument, error) {
 	var lastErr error
 	for attempt := 1; attempt <= tapdAutoFetchMaxAttempts; attempt++ {
@@ -435,6 +474,9 @@ func fetchTAPDSourceDocumentWithRetry(ctx context.Context, token, workspaceID, r
 	return tapdSourceDocument{}, lastErr
 }
 
+// isTransientTAPDAutoFetchError 判断错误是否属「值得重试」的瞬时故障。判断方式是做错误消息的
+// 关键词匹配：连接层/超时/限流/TAPD 5xx 等提示重发可能成功；TAPD 401/403（凭证或权限问题）与
+// 4xx 一律不在名单里，重试多少次结果都一样。
 func isTransientTAPDAutoFetchError(err error) bool {
 	if err == nil {
 		return false
@@ -460,6 +502,9 @@ func isTransientTAPDAutoFetchError(err error) bool {
 	return false
 }
 
+// fetchTAPDSourceDocument 不带重试地抓取一次 TAPD 源文档：按 resource_type 选端点、以 Bearer
+// token 请求对应 API，解析并校验响应（必须有标题与正文），再折叠成本地文档形态。响应体被
+// LimitReader 限制在 2 MiB 以内，防止上游异常返回海量 body 撑爆内存。
 func fetchTAPDSourceDocument(ctx context.Context, token, workspaceID, resourceType, resourceID string) (tapdSourceDocument, error) {
 	endpoint, ok := tapdSourceEndpoint(resourceType)
 	if !ok {
@@ -517,6 +562,8 @@ func fetchTAPDSourceDocument(ctx context.Context, token, workspaceID, resourceTy
 	return doc, nil
 }
 
+// tapdSourceEndpoint 把本地 resource_type 映射到 TAPD API 端点名；不支持的资源类型返回 ok=false。
+// markdown_wiki 落到 tapd_wikis 接口，story / task 各落其接口，空类型默认按 markdown_wiki 处理。
 func tapdSourceEndpoint(resourceType string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(resourceType)) {
 	case "", "markdown_wiki":
@@ -530,6 +577,9 @@ func tapdSourceEndpoint(resourceType string) (string, bool) {
 	}
 }
 
+// tapdDocumentFromPayload 从 TAPD API 返回的任意结构 JSON 中提取标题/正文/版本：先逐层剥掉
+// 外层包装（data 字段、结果数组第一项），再把整棵树压平成「小写键 -> 首个非空字符串」的字典，
+// 最后按多个可能的键名顺序取值。这样可容忍 TAPD 各端点字段名的差异。
 func tapdDocumentFromPayload(payload any) tapdSourceDocument {
 	if root, ok := payload.(map[string]any); ok {
 		payload = root["data"]
@@ -548,6 +598,8 @@ func tapdDocumentFromPayload(payload any) tapdSourceDocument {
 	}
 }
 
+// flattenJSONStrings 深度遍历任意 JSON 值，把树中所有「键 -> 非空字符串」对收进小写键字典。
+// 深层的标量/对象字段因此能被 tapdDocumentFromPayload 用统一键名取到，无需知道响应精确形状。
 func flattenJSONStrings(value any) map[string]string {
 	out := map[string]string{}
 	var walk func(any)
@@ -570,14 +622,19 @@ func flattenJSONStrings(value any) map[string]string {
 	return out
 }
 
+// htmlTagPattern 匹配尖括号 HTML/XML 标签，用于剥掉 TAPD 正文里的富文本标记。
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 
+// compactPlainText 把带 HTML 标记的正文压成一段无标签、无多余空白的纯文本：标签换成空格、
+// 常见 HTML 实体还原成字符，再按空白折叠。供展示用的摘要/摘录需要的是干净文本而不是原始 HTML。
 func compactPlainText(value string) string {
 	value = htmlTagPattern.ReplaceAllString(value, " ")
 	value = strings.NewReplacer("&nbsp;", " ", "&amp;", "&", "&lt;", "<", "&gt;", ">").Replace(value)
 	return strings.Join(strings.Fields(value), " ")
 }
 
+// truncateRunes 按「字符数」截断文本到 limit 以内（超出直接切掉，不加省略号），空串或 limit<=0
+// 返回空串。摘要/摘录的存储有长度上限，按 rune 计数避免把多字节中文从中间切开。
 func truncateRunes(value string, limit int) string {
 	if limit <= 0 {
 		return ""
@@ -589,6 +646,7 @@ func truncateRunes(value string, limit int) string {
 	return string(runes[:limit])
 }
 
+// stringFromMetadata 从 issue.metadata 里读指定 key 的字符串值（类型不符或缺键都返回空串）。
 func stringFromMetadata(metadata map[string]any, key string) string {
 	if metadata == nil {
 		return ""
@@ -599,6 +657,9 @@ func stringFromMetadata(metadata map[string]any, key string) string {
 	return ""
 }
 
+// sourceFetchMetadata 把归一化后的抓取结果展开成要写进 issue.metadata 的一组键值。provider/
+// status/观测时间必写；其余字段只在非空时写，避免用空串污染 metadata（source_fetch_error 只在
+// fetch_failed 时有值）。
 func sourceFetchMetadata(req RecordIssueSourceFetchRequest) map[string]any {
 	out := map[string]any{
 		"source_fetch_provider":    req.FetchProvider,

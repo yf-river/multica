@@ -1,3 +1,13 @@
+// 本文件实现「自托管 Git 提供方」连接的 Web 管理端点（仅自托管部署启用，托管云
+// 关闭）：列出、连接、断开与轮换 webhook 密钥。
+//
+// 一次连接 = workspace 到某个自托管实例（Forgejo/Gitea/GitLab 等）的接入：管理员
+// 提供实例 URL + 访问令牌，服务器先拿它对真实实例验证（取回账号名），再铸造 webhook
+// 密钥，两者都加密落库。连接的 webhook 入站处理见 vcs_webhook.go。
+//
+// 安全约定：secret 从不通过 API 回显；webhook 密钥只在 connect / rotate 时明文返回
+// 一次（VCSConnectResponse），让用户粘进提供方配置里。isVCSAvailable 是产品开关
+// （自托管才有），isVCSConfigured 表示加密密钥是否已配置，两者相互独立。
 package handler
 
 import (
@@ -18,11 +28,10 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// ── Response shapes ─────────────────────────────────────────────────────────
+// ── 响应结构 ──────────────────────────────────────────────────────────────
 
-// VCSConnectionResponse is the JSON shape for a stored Git provider connection.
-// Secrets are never included; the webhook secret is returned exactly once at
-// create time via VCSConnectResponse.
+// VCSConnectionResponse 是一条已存 Git 提供方连接的 JSON 结构。secret 从不包含；
+// webhook 密钥仅在创建时刻经 VCSConnectResponse 返回一次。
 type VCSConnectionResponse struct {
 	ID           string `json:"id"`
 	WorkspaceID  string `json:"workspace_id"`
@@ -34,27 +43,28 @@ type VCSConnectionResponse struct {
 	CreatedAt    string `json:"created_at"`
 }
 
-// VCSConnectResponse embeds the stored connection plus the one-time plaintext
-// webhook secret the user must paste into the provider (the HMAC secret for
-// Forgejo/Gitea, the X-Gitlab-Token value for GitLab). Not retrievable after.
+// VCSConnectResponse 内嵌已存连接，外加用户必须粘进提供方配置的一次性明文 webhook
+// 密钥（Forgejo/Gitea 用 HMAC secret，GitLab 用 X-Gitlab-Token 值）。此后不可再取。
 type VCSConnectResponse struct {
 	VCSConnectionResponse
 	WebhookSecret string `json:"webhook_secret"`
 }
 
+// vcsWebhookPathPrefix 是所有 VCS webhook 入站地址的前缀，path 尾部是 connection id。
 const vcsWebhookPathPrefix = "/api/webhooks/vcs/"
 
-// isVCSAvailable reports whether this deployment offers the self-hosted Git
-// provider integration at all. It is the product boundary (self-host only) and
-// is independent of isVCSConfigured (whether the encryption key is set): the
-// managed cloud leaves it off, so connect/rotate/webhook reject and the UI
-// hides the section rather than surfacing an operator-only "missing key" hint.
+// isVCSAvailable 报告本部署是否提供自托管 Git 提供方集成。它是产品边界（仅自托管），
+// 与 isVCSConfigured（加密密钥是否已设置）无关：托管云把它关掉，于是 connect/rotate/
+// webhook 都拒绝、UI 隐藏整个区块，而不是暴露一条「缺密钥」的运维提示。
 func (h *Handler) isVCSAvailable() bool { return h.cfg.VCSIntegrationEnabled }
 
+// isVCSConfigured 判断 VCS secret 加密盒是否已就绪（需要 MULTICA_VCS_SECRET_KEY）。
 func (h *Handler) isVCSConfigured() bool { return h.VCSSecretBox != nil }
 
+// vcsWebhookPath 返回某连接的 webhook 相对路径。
 func (h *Handler) vcsWebhookPath(connID string) string { return vcsWebhookPathPrefix + connID }
 
+// vcsWebhookURL 用配置的公网基址拼出某连接的完整 webhook URL；基址为空时返回空串。
 func (h *Handler) vcsWebhookURL(connID string) string {
 	base := strings.TrimRight(h.cfg.PublicURL, "/")
 	if base == "" {
@@ -63,6 +73,7 @@ func (h *Handler) vcsWebhookURL(connID string) string {
 	return base + h.vcsWebhookPath(connID)
 }
 
+// vcsConnectionToResponse 把连接行转成对外结构（含拼出的 webhook URL/路径）。
 func (h *Handler) vcsConnectionToResponse(c db.VcsConnection) VCSConnectionResponse {
 	id := uuidToString(c.ID)
 	return VCSConnectionResponse{
@@ -77,6 +88,7 @@ func (h *Handler) vcsConnectionToResponse(c db.VcsConnection) VCSConnectionRespo
 	}
 }
 
+// sealVCSSecret 用 secret 盒加密明文，返回 base64 密文供落库。
 func (h *Handler) sealVCSSecret(plaintext string) (string, error) {
 	sealed, err := h.VCSSecretBox.Seal([]byte(plaintext))
 	if err != nil {
@@ -85,6 +97,7 @@ func (h *Handler) sealVCSSecret(plaintext string) (string, error) {
 	return base64.StdEncoding.EncodeToString(sealed), nil
 }
 
+// openVCSSecret 解开 base64 密文并解密；空串直接返回空明文（未设置）。
 func (h *Handler) openVCSSecret(enc string) (string, error) {
 	if enc == "" {
 		return "", nil
@@ -100,10 +113,10 @@ func (h *Handler) openVCSSecret(enc string) (string, error) {
 	return string(plaintext), nil
 }
 
-// ── Handlers ────────────────────────────────────────────────────────────────
+// ── 端点 ────────────────────────────────────────────────────────────────────
 
-// ListVCSConnections (GET /workspaces/{id}/vcs/connections) is member-visible;
-// connect/disconnect are admin-gated by the router. No secrets returned.
+// ListVCSConnections（GET /workspaces/{id}/vcs/connections）对成员可见；connect/
+// disconnect 在路由层限定 admin。不返回任何 secret。
 func (h *Handler) ListVCSConnections(w http.ResponseWriter, r *http.Request) {
 	workspaceID := chi.URLParam(r, "id")
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
@@ -113,10 +126,9 @@ func (h *Handler) ListVCSConnections(w http.ResponseWriter, r *http.Request) {
 	member, _ := middleware.MemberFromContext(r.Context())
 	canManage := roleAllowed(member.Role, "owner", "admin")
 
-	// Deployments where the integration is off (the managed cloud) report
-	// available=false and nothing else, so the UI hides the whole section
-	// instead of showing an operator-only "missing key" hint. No connections
-	// can exist there anyway (connect is rejected), so skip the query.
+	// 集成关闭的部署（托管云）只回 available=false，UI 据此隐藏整个区块，而不是
+	// 显示一条仅运维可见的「缺密钥」提示。这种部署反正不可能存在连接（connect 会被
+	// 拒），所以连查询都省了。
 	if !h.isVCSAvailable() {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"connections": []VCSConnectionResponse{},
@@ -144,16 +156,16 @@ func (h *Handler) ListVCSConnections(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// connectVCSRequest 是连接请求体：提供方类型、实例 URL 与访问令牌。
 type connectVCSRequest struct {
 	Provider    string `json:"provider"`
 	InstanceURL string `json:"instance_url"`
 	AccessToken string `json:"access_token"`
 }
 
-// ConnectVCS (POST /workspaces/{id}/vcs/connections) validates the supplied
-// instance URL + token against the live instance for the chosen provider, mints a
-// webhook secret, stores both secrets encrypted, and returns the connection
-// plus the one-time webhook secret. Reconnecting the same instance rotates it.
+// ConnectVCS（POST /workspaces/{id}/vcs/connections）用实例 URL + token 对该提供方
+// 的真实实例做校验，铸造 webhook 密钥、把两个 secret 加密落库，返回连接与一次性
+// webhook 密钥。重复连接同一实例即轮换（upsert）。
 func (h *Handler) ConnectVCS(w http.ResponseWriter, r *http.Request) {
 	workspaceID := chi.URLParam(r, "id")
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
@@ -244,7 +256,8 @@ func (h *Handler) ConnectVCS(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DeleteVCSConnection (DELETE /workspaces/{id}/vcs/connections/{connectionId}).
+// DeleteVCSConnection（DELETE /workspaces/{id}/vcs/connections/{connectionId}）
+// 删除一条连接（同一 workspace 内校验）。
 func (h *Handler) DeleteVCSConnection(w http.ResponseWriter, r *http.Request) {
 	workspaceID := chi.URLParam(r, "id")
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
@@ -268,9 +281,8 @@ func (h *Handler) DeleteVCSConnection(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RotateVCSConnectionWebhook (POST /workspaces/{id}/vcs/connections/{connectionId}/rotate-webhook)
-// generates a fresh webhook secret for an existing VCS connection, stores it encrypted,
-// and returns the connection plus the one-time plaintext secret.
+// RotateVCSConnectionWebhook（POST /workspaces/{id}/vcs/connections/{connectionId}/rotate-webhook）
+// 为已有连接生成新的 webhook 密钥、加密落库，并返回连接与一次性明文密钥。
 func (h *Handler) RotateVCSConnectionWebhook(w http.ResponseWriter, r *http.Request) {
 	workspaceID := chi.URLParam(r, "id")
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
@@ -326,7 +338,7 @@ func (h *Handler) RotateVCSConnectionWebhook(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// newVCSWebhookSecret returns a 32-byte random secret as hex (64 chars).
+// newVCSWebhookSecret 返回 32 字节随机数的 hex 编码（64 字符）。
 func newVCSWebhookSecret() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

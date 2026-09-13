@@ -1,3 +1,9 @@
+// Package handler 是整个 HTTP API 的处理器集合。
+//
+// 本文件（life_agent.go）实现 agent 进程（daemon 里的 companion/观察者）
+// 与 Life 系统之间的 HTTP 接口：任务作用域鉴权、证据解析（ResolveLifeEvidence）、
+// 候选记忆/行动建议/主动关怀回执的创建，以及认知任务完成提交。
+// 这里特别强调"任务归属校验"——任何 agent 调用都必须落在任务绑定的用户身上。
 package handler
 
 import (
@@ -17,12 +23,16 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// companionTaskScope 是 companion 相关任务接口的请求作用域：继承成员范围，
+// 再带上发起调用的 agentID 与 taskID。
 type companionTaskScope struct {
 	lifeRequestScope
 	agentID pgtype.UUID
 	taskID  pgtype.UUID
 }
 
+// lifeJobTaskScope 是认知任务相关接口的作用域：在 companion 作用域基础上
+// 再携带当前要处理的认知任务行 job。
 type lifeJobTaskScope struct {
 	lifeRequestScope
 	agentID pgtype.UUID
@@ -30,11 +40,15 @@ type lifeJobTaskScope struct {
 	job     db.LifeCognitionJob
 }
 
+// lifeEvidenceReference 是 ResolveLifeEvidence 里单条证据引用的请求体。
 type lifeEvidenceReference struct {
 	SourceType string `json:"source_type"`
 	SourceID   string `json:"source_id"`
 }
 
+// requireLifeJobTaskScope 校验一次"认知任务完成"调用的作用域：请求必须来自
+// agent，且其 task 必须处于 running、绑定到同一条认知任务，任务所属用户/
+// workspace 还必须与发起 token 的用户一致。
 func (h *Handler) requireLifeJobTaskScope(w http.ResponseWriter, r *http.Request) (lifeJobTaskScope, bool) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -63,9 +77,8 @@ func (h *Handler) requireLifeJobTaskScope(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusForbidden, "life cognition job not found")
 		return lifeJobTaskScope{}, false
 	}
-	// The task token is bound to the human who owns the Life data.  Do not
-	// derive the scope from the job row alone: a forged/forwarded task header
-	// must never let one authenticated user complete another user's job.
+	// 任务 token 绑定的是 Life 数据的属主本人。不能只凭 job 行推导作用域：
+	// 伪造/转发的 task 头绝不能让某个已认证用户去完成别人的 job。
 	if !strings.EqualFold(strings.TrimSpace(userID), uuidToString(job.UserID)) {
 		writeError(w, http.StatusForbidden, "life cognition job user mismatch")
 		return lifeJobTaskScope{}, false
@@ -75,10 +88,9 @@ func (h *Handler) requireLifeJobTaskScope(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusForbidden, "life cognition job workspace mismatch")
 		return lifeJobTaskScope{}, false
 	}
-	// New worker claims carry an opaque token and context version in both the
-	// job row and task context.  Refuse a task whose context was copied from a
-	// different claim; legacy rows without a token remain readable so an
-	// upgrade can drain them, but their completion path uses the old CAS.
+	// 新 worker claim 在 job 行与 task context 里都带不透明 token 与上下文版本。
+	// 拒绝那些"上下文从别的 claim 拷来"的任务；没有 token 的旧行保持可读，
+	// 以便升级期间能排空，但它们的完成路径走旧的 CAS。
 	if job.ClaimToken.Valid {
 		var taskContext struct {
 			ClaimToken     string `json:"claim_token"`
@@ -95,6 +107,9 @@ func (h *Handler) requireLifeJobTaskScope(w http.ResponseWriter, r *http.Request
 	}, true
 }
 
+// requireCompanionTaskScope 校验一次 companion 任务调用的作用域：agent 的
+// task 必须 running，且能归因到某用户——优先取 task 发起者，其次取任务所属
+// 会话的创建者；最后确认该 agent 确实是这位用户的 companion。
 func (h *Handler) requireCompanionTaskScope(w http.ResponseWriter, r *http.Request) (companionTaskScope, bool) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -158,6 +173,9 @@ func (h *Handler) requireCompanionTaskScope(w http.ResponseWriter, r *http.Reque
 	}, true
 }
 
+// requireLifeEvidenceTaskScope 校验"读证据"调用的作用域。若该 task 绑定着
+// 一条认知任务则按任务归属校验；否则退回 companion 式校验（发起者/会话归属），
+// 并确认该 agent 要么是用户 companion、要么是用户的某个观察者。
 func (h *Handler) requireLifeEvidenceTaskScope(w http.ResponseWriter, r *http.Request) (companionTaskScope, bool) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -233,6 +251,9 @@ func (h *Handler) requireLifeEvidenceTaskScope(w http.ResponseWriter, r *http.Re
 	}, true
 }
 
+// ResolveLifeEvidence 供 agent 按引用（source_type + source_id）取回人生
+// 记录原文作为证据：素材/编年史/记忆/观察者知识四类。已"被遗忘"或已归档的
+// 记录不可作为新认知的证据，返回 available=false 并保持引用可见。
 func (h *Handler) ResolveLifeEvidence(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeEvidenceTaskScope(w, r)
 	if !ok {
@@ -333,8 +354,8 @@ func (h *Handler) ResolveLifeEvidence(w http.ResponseWriter, r *http.Request) {
 				item["available"] = true
 				item["memory"] = resolved
 			} else if loadErr == nil {
-				// Archived memories are governance records, not valid evidence
-				// for new cognition. Keep the reference visible but unavailable.
+				// 已归档记忆是治理记录，不能当作新认知的有效证据：
+				// 保留引用可见但标记为不可用。
 			} else if !errors.Is(loadErr, pgx.ErrNoRows) {
 				writeError(w, http.StatusInternalServerError, "failed to resolve life memory")
 				return
@@ -363,6 +384,8 @@ func (h *Handler) ResolveLifeEvidence(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"purpose": req.Purpose, "context_version": lifeContextVersion, "evidence": items})
 }
 
+// lifeMaterialForgottenForRequest 用内容哈希查询素材是否已被永久遗忘
+// （有 tombstone 记录即视为遗忘）。
 func lifeMaterialForgottenForRequest(ctx context.Context, q *db.Queries, scope companionTaskScope, material db.LifeMaterial) (bool, error) {
 	digest := sha256.Sum256([]byte(material.Content))
 	return q.IsLifeMaterialForgotten(ctx, db.IsLifeMaterialForgottenParams{
@@ -374,6 +397,7 @@ func lifeMaterialForgottenForRequest(ctx context.Context, q *db.Queries, scope c
 	})
 }
 
+// parseLifeEvidenceID 解析证据引用的 source_id（必须是 UUID）。
 func parseLifeEvidenceID(raw string) (pgtype.UUID, error) {
 	id, err := util.ParseUUID(raw)
 	if err != nil {
@@ -382,6 +406,8 @@ func parseLifeEvidenceID(raw string) (pgtype.UUID, error) {
 	return id, nil
 }
 
+// CreateCompanionMemoryCandidate 以 agent 身份创建一条候选记忆
+// （走通用的 createLifeMemory，创建者记为 agent）。
 func (h *Handler) CreateCompanionMemoryCandidate(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireCompanionTaskScope(w, r)
 	if !ok {
@@ -390,6 +416,8 @@ func (h *Handler) CreateCompanionMemoryCandidate(w http.ResponseWriter, r *http.
 	h.createLifeMemory(w, r, scope.lifeRequestScope, "agent", scope.agentID)
 }
 
+// CreateCompanionActionProposal 创建一条"行动建议"（默认 internal_draft，
+// 也可直接 pending_confirmation 待用户确认）。
 func (h *Handler) CreateCompanionActionProposal(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireCompanionTaskScope(w, r)
 	if !ok {
@@ -448,6 +476,8 @@ func (h *Handler) CreateCompanionActionProposal(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusCreated, lifeProposalToResponse(proposal))
 }
 
+// PresentCompanionActionProposal 把草稿行动建议呈现在用户面前
+// （internal_draft → pending_confirmation 的状态迁移）。
 func (h *Handler) PresentCompanionActionProposal(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireCompanionTaskScope(w, r)
 	if !ok {
@@ -492,6 +522,8 @@ func (h *Handler) PresentCompanionActionProposal(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, lifeProposalToResponse(presented))
 }
 
+// CreateCompanionProactiveCheck 记录一次主动关怀触达的回执：本次是 silent
+// （没打扰用户）还是 spoke（说上话了），并附触发源与当时上下文快照。
 func (h *Handler) CreateCompanionProactiveCheck(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireCompanionTaskScope(w, r)
 	if !ok {
@@ -549,6 +581,9 @@ func (h *Handler) CreateCompanionProactiveCheck(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusCreated, lifeProactiveCheckToResponse(check))
 }
 
+// CompleteCompanionCognitionJob 提交认知任务的最终输出：事务内先落地任务
+// 的结构化输出并推进 job 状态，再把底层 agent task 置为完成并广播终态事件；
+// 提交后刷新该 agent 的可用状态。
 func (h *Handler) CompleteCompanionCognitionJob(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireLifeJobTaskScope(w, r)
 	if !ok {
@@ -576,10 +611,9 @@ func (h *Handler) CompleteCompanionCognitionJob(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "invalid output")
 		return
 	}
-	// Life output and the queue terminal transition share one transaction. A
-	// process failure between two independent commits could otherwise leave
-	// durable understanding without a completed task (or a task that can never
-	// be retried after its output was already applied).
+	// Life 输出落地与队列的终态迁移必须共享同一事务：若拆成两次独立提交，
+	// 进程中途失败可能留下"理解已持久化但任务未完成"，或"输出已生效却永远
+	// 无法重试"的中间态。
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start life completion")
@@ -621,8 +655,7 @@ func (h *Handler) CompleteCompanionCognitionJob(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to commit life completion")
 		return
 	}
-	// The durable event is now committed. Publish it after commit and refresh
-	// the agent's derived availability outside the transaction.
+	// 持久化事件现已提交。事务外再发布它，并刷新 agent 的派生可用状态。
 	if terminalEvent.ID != "" {
 		h.TaskService.PublishCommittedEvent(terminalEvent)
 	}

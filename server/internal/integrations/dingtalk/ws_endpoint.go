@@ -1,3 +1,9 @@
+// ws_endpoint.go：打开一条钉钉 Stream 连接——向网关 POST 一次，换回一次性
+// WebSocket 端点 + ticket。
+//
+// 本文件替代厂商 SDK 的 client.Start 握手：POST /v1.0/gateway/connections/open
+// 返回的 URL（endpoint 上拼好 ticket）就是连接器要拨的地址。apiBase 与
+// httpClient 沿用共享的出站 Client，测试可把它们指向 httptest server。
 package dingtalk
 
 import (
@@ -12,26 +18,21 @@ import (
 	"time"
 )
 
-// This file opens a DingTalk Stream connection: a POST to the gateway that
-// returns a single-use WebSocket endpoint + ticket. It replaces the vendor SDK's
-// client.Start handshake. The returned URL (endpoint with the ticket appended)
-// is what the connector dials.
-
 const (
 	connectionsOpenPath = "/v1.0/gateway/connections/open"
 	streamUserAgent     = "multica-dingtalk/1.0"
 	openConnectTimeout  = 5 * time.Second
 )
 
-// streamSubscription is one {type, topic} entry in the open request. The chatbot
-// connection subscribes to the two SYSTEM control topics plus the bot-message
-// callback topic.
+// streamSubscription 是 open 请求里的一个 {type, topic} 订阅条目。聊天机器人
+// 连接订阅两个 SYSTEM 控制主题 + 一个机器人消息回调主题。
 type streamSubscription struct {
 	Type  string `json:"type"`
 	Topic string `json:"topic"`
 }
 
-// chatbotSubscriptions is the fixed subscription set for a bot-message stream.
+// chatbotSubscriptions 是机器人消息流固定的订阅集合：心跳 ping、断连通知，以及
+// 机器人消息回调。
 func chatbotSubscriptions() []streamSubscription {
 	return []streamSubscription{
 		{Type: frameTypeSystem, Topic: systemTopicPing},
@@ -40,6 +41,7 @@ func chatbotSubscriptions() []streamSubscription {
 	}
 }
 
+// openConnectionRequest 是 connections/open 的请求体：凭据 + 订阅清单。
 type openConnectionRequest struct {
 	ClientID      string               `json:"clientId"`
 	ClientSecret  string               `json:"clientSecret"`
@@ -47,14 +49,15 @@ type openConnectionRequest struct {
 	UserAgent     string               `json:"ua"`
 }
 
+// openConnectionResponse 是 connections/open 的成功响应：可拨的端点与一次性票。
 type openConnectionResponse struct {
 	Endpoint string `json:"endpoint"`
 	Ticket   string `json:"ticket"`
 }
 
-// openConnection registers a Stream connection and returns the dial-ready wss
-// URL (endpoint?ticket=…). apiBase + httpClient come from the shared outbound
-// Client so tests can point them at an httptest server.
+// openConnection 注册一条 Stream 连接，返回可以直接拨号的 wss URL
+// （endpoint?ticket=…）。apiBase + httpClient 来自共享的出站 Client，测试可指向
+// httptest server。
 func openConnection(ctx context.Context, httpClient *http.Client, apiBase, appKey, appSecret string) (string, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -95,6 +98,8 @@ func openConnection(ctx context.Context, httpClient *http.Client, apiBase, appKe
 		return "", fmt.Errorf("open connection: empty endpoint or ticket")
 	}
 	endpoint, err := url.Parse(out.Endpoint)
+	// 强校验只接受 wss 且带主机的端点：ticket 会拼在 URL 查询串里当凭据用，
+	// 走非 TLS 或不可信地址等于把入场券交给中间人。
 	if err != nil || endpoint.Scheme != "wss" || endpoint.Host == "" {
 		return "", errors.New("open connection: invalid secure websocket endpoint")
 	}

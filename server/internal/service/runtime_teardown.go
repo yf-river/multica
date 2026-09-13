@@ -1,3 +1,5 @@
+// runtime_teardown.go —— runtime 拆除的共享变更阶段：删除 agent_runtime 行前解绑用户 agent、取消任务、
+// 停用 autopilot、摘离任务历史并清理系统 agent 的依赖行。
 package service
 
 import (
@@ -11,33 +13,28 @@ import (
 )
 
 var (
-	// ErrRuntimeNotDrained means a runtime or one of its bound user agents
-	// still owns a non-terminal task. Callers must abort the transaction rather
-	// than deleting the runtime and relying on database cascades.
+	// ErrRuntimeNotDrained 表示该 runtime 或它的某个绑定用户 agent 仍持有非终态任务。调用方必须中止事务，
+	// 而不是删除 runtime 后指望数据库级联。
 	ErrRuntimeNotDrained = errors.New("runtime still has non-terminal tasks")
-	// ErrRuntimeWorkspaceMismatch protects tenant isolation if legacy or
-	// corrupted data binds an agent to a runtime from another workspace.
+	// ErrRuntimeWorkspaceMismatch 保护租户隔离：legacy 或损坏数据把 agent 绑到别的工作区的 runtime 时拦截。
 	ErrRuntimeWorkspaceMismatch = errors.New("runtime agent workspace mismatch")
 )
 
-// RuntimeTeardownOptions controls the only intentional semantic difference
-// between user-confirmed deletion and retention GC. Manual deletion cancels
-// active work; automatic GC must fail closed and leave it untouched.
+// RuntimeTeardownOptions 控制“用户确认删除”与“保留型 GC”之间唯一有意的语义差别：手动删除取消活跃工作；
+// 自动 GC 必须 fail closed、保持活跃工作不动。
 type RuntimeTeardownOptions struct {
 	CancelNonTerminalTasks bool
 }
 
-// RuntimeTeardownResult reports committed business-object changes so callers
-// can publish events after their transaction commits.
+// RuntimeTeardownResult 汇报已提交的业务对象变更，供调用方在自身事务提交后发布事件。
 type RuntimeTeardownResult struct {
 	UnboundAgents    []db.Agent
 	CancelledTasks   []db.AgentTaskQueue
 	PausedAutopilots []db.Autopilot
 }
 
-// ValidateRuntimeAgentWorkspaces refuses to mutate cross-workspace bindings.
-// agent.runtime_id is not backed by a composite workspace foreign key, so this
-// application-layer guard is required before a runtime teardown changes data.
+// ValidateRuntimeAgentWorkspaces 拒绝改动跨工作区的绑定。agent.runtime_id 没有组合工作区外键背书，
+// 因此在 runtime 拆除改数据前必须先做这道应用层守卫。
 func ValidateRuntimeAgentWorkspaces(runtime db.AgentRuntime, agents []db.Agent) error {
 	for _, agent := range agents {
 		if agent.WorkspaceID != runtime.WorkspaceID {
@@ -47,16 +44,12 @@ func ValidateRuntimeAgentWorkspaces(runtime db.AgentRuntime, agents []db.Agent) 
 	return nil
 }
 
-// TeardownRuntime performs the shared mutation phase used immediately before
-// deleting an agent_runtime row. It takes the runtime and bound-user-agent row
-// locks itself; callers that already locked them for a confirmation check can
-// safely acquire the same locks again in their transaction.
+// TeardownRuntime 执行删除 agent_runtime 行前立即使用的共享变更阶段。它自行取 runtime 与绑定用户 agent 行锁；
+// 已为确认检查锁过它们的调用方可在自己事务里安全地再次获取同样锁。
 //
-// User agents are persistent business objects and survive unbound. System
-// agents are runtime-local infrastructure and are deleted only after their
-// non-FK dependencies are pruned; their runtime-local builder drafts and chat
-// draft restores are deleted with them. Task history is detached before runtime
-// deletion so the legacy ON DELETE CASCADE cannot erase it.
+// 用户 agent 是持久业务对象，解绑后存活。系统 agent 是 runtime 本地的基建，只在修剪掉其非 FK 依赖后删除；
+// 它们 runtime 本地的构建草稿与聊天草稿恢复随之删除。任务历史在 runtime 删除前摘离，避免 legacy 的
+// ON DELETE CASCADE 抹掉它。
 func TeardownRuntime(ctx context.Context, qtx *db.Queries, runtimeID pgtype.UUID, opts RuntimeTeardownOptions) (RuntimeTeardownResult, error) {
 	var out RuntimeTeardownResult
 
@@ -88,9 +81,8 @@ func TeardownRuntime(ctx context.Context, qtx *db.Queries, runtimeID pgtype.UUID
 		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
 			return out, err
 		}
-		// Runtime deletion also removes system agents and their chat sessions.
-		// Record each cancellation before those links disappear so the durable
-		// event retains the original workspace and chat scope.
+		// runtime 删除还会移除系统 agent 及其 chat 会话。在这些链接消失前记录每条取消，使 durable 事件保留原
+		// 工作区与 chat 作用域。
 		if _, err := enqueueTaskTerminalEvents(ctx, qtx, protocol.EventTaskCancelled, cancelled); err != nil {
 			return out, fmt.Errorf("record cancelled task events: %w", err)
 		}
@@ -135,8 +127,7 @@ func TeardownRuntime(ctx context.Context, qtx *db.Queries, runtimeID pgtype.UUID
 		return out, fmt.Errorf("task history still references runtime after detach: %d", remaining)
 	}
 
-	// These tables intentionally lack agent foreign keys, so they must be
-	// pruned before the system-agent rows disappear.
+	// 这些表刻意没有 agent 外键，因此必须在系统 agent 行消失前修剪。
 	if err := qtx.DeleteAgentInvocationTargetsBySystemRuntimeAgents(ctx, runtimeID); err != nil {
 		return out, fmt.Errorf("clean up agent invocation targets: %w", err)
 	}
@@ -158,8 +149,8 @@ func TeardownRuntime(ctx context.Context, qtx *db.Queries, runtimeID pgtype.UUID
 	return out, nil
 }
 
-// pruneRuntimeSystemAgentChatDraftRestores removes rows without a database FK
-// before the system agents and their chat sessions cascade away.
+// pruneRuntimeSystemAgentChatDraftRestores 在系统 agent 及其 chat 会话级联删除前，移除没有 DB 外键的行
+// （聊天草稿恢复、构建草稿）。
 func pruneRuntimeSystemAgentChatDraftRestores(ctx context.Context, q *db.Queries, runtimeID pgtype.UUID) error {
 	if _, err := q.LockChatSessionsBySystemRuntimeAgents(ctx, runtimeID); err != nil {
 		return err

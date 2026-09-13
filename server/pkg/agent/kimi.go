@@ -1,5 +1,24 @@
 package agent
 
+// 文件导读：Kimi Code CLI 的 ACP 驱动封装。
+//
+// 角色定位：把 Kimi Code CLI（https://github.com/MoonshotAI/kimi-cli）适配成 daemon 的
+// Backend。Kimi 通过 `kimi acp` 子命令原生支持 ACP（Agent Client Protocol，stdin/stdout 上的
+// JSON-RPC 2.0），本文件拉起该子进程并驱动完整会话生命周期（initialize → session/new|resume
+// → 可选 session/set_model / set_config_option → session/prompt），把正文、工具调用、权限
+// 批准等翻译成 Message/Result 上抛。
+//
+// 职责边界：与 reasonix 后端同源——两者都复用 hermesClient 这套 ACP 传输层（同一套协议），
+// 本文件只保留 Kimi 特有部分：可执行文件与启动参数、终端（terminal）能力开关、工具名归一化
+// （kimiToolNameFromTitle）、思考级别经 session/set_config_option 生效，以及「从 kimi 的
+// session wire 日志回读 token 用量」的兜底扫描。
+//
+// 核心约定：① Kimi 在 api.kimi.com 返回 4xx/5xx 时 session/prompt 仍会报 stopReason=end_turn，
+// 因此必须嗅探 stderr 里 provider 级错误来把这类假成功提升为失败；② kimi-code 0.33.0 不通过
+// ACP 上报 token 计数（只报上下文占用），计费数据要从它每个会话的 wire.jsonl 日志里按模型
+// 汇总（见 scanKimiSessionUsage，MUL-5773 / #6448）；③ 历史回放不重播——同 reasonix 后端，
+// 用 streamingCurrentTurn 闸门丢弃 session/resume 时补发的前几轮记录。
+
 import (
 	"bytes"
 	"context"
@@ -14,30 +33,33 @@ import (
 	"time"
 )
 
-// kimiBlockedArgs are flags hardcoded by the daemon that must not be
-// overridden by user-configured custom_args. `acp` is the protocol
-// subcommand that drives the ACP JSON-RPC transport for Kimi Code CLI;
-// overriding it would break the daemon↔Kimi communication contract.
+// kimiBlockedArgs 是 daemon 固定写死、不允许用户经 custom_args 覆盖的开关。其中 `acp` 是驱动
+// Kimi Code CLI 的 ACP JSON-RPC 传输所需的协议子命令，覆盖它会破坏 daemon ↔ Kimi 的通信契约。
 var kimiBlockedArgs = map[string]blockedArgMode{
 	"acp": blockedStandalone,
 }
 
-// kimiReaderDrainGrace bounds how long the turn waits for trailing ACP
-// notifications after the session/prompt response. A var, not a const, so
-// tests can shorten it. Mirrors qoderReaderDrainGrace / traecliReaderDrainGrace.
+// kimiReaderDrainGrace 限制轮次在 session/prompt 响应之后还等多久「尾部的 ACP 通知」。用变量
+// 而非常量，是为了让测试能缩短它。与 qoderReaderDrainGrace / traecliReaderDrainGrace 的用意
+// 一致。
 var kimiReaderDrainGrace = 2 * time.Second
 
-// kimiBackend implements Backend by spawning `kimi acp` and communicating
-// via the ACP (Agent Client Protocol) JSON-RPC 2.0 over stdin/stdout.
+// kimiBackend 通过拉起 `kimi acp`、经 stdin/stdout 上的 ACP（Agent Client Protocol）JSON-RPC
+// 2.0 通信来实现 Backend。
 //
-// Kimi Code CLI (https://github.com/MoonshotAI/kimi-cli) supports ACP out of
-// the box via the `kimi acp` subcommand. We reuse the existing hermesClient
-// ACP transport since both runtimes speak the same protocol — only the
-// binary, env, and tool-name extraction differ.
+// Kimi Code CLI（https://github.com/MoonshotAI/kimi-cli）通过 `kimi acp` 子命令原生支持 ACP。
+// 这里复用现成的 hermesClient ACP 传输层——两个运行时说同一套协议，只有二进制名、环境与
+// 工具名提取方式不同。
 type kimiBackend struct {
 	cfg Config
 }
 
+// Execute 驱动一次完整的 Kimi ACP 会话并返回其产出。
+//
+// 流程：定位可执行文件、把 mcp_config 翻译成 ACP 数组形态 → 拉起 `kimi acp` 子进程 → 后台
+// 读 stdout（每行一个 JSON-RPC 消息），主 goroutine 按 initialize → session/new|resume →
+// （可选）session/set_model / thinking 配置覆盖 → session/prompt 的顺序驱动会话 → prompt
+// 完成后等通知静默，把 stderr 侧 provider 失败与用量兜底扫描的结果合并 → 生成最终 Result。
 func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
@@ -47,10 +69,9 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		return nil, fmt.Errorf("kimi executable not found at %q: %w", execPath, err)
 	}
 
-	// Translate the agent's mcp_config (Claude-style object of objects)
-	// into the array shape ACP `session/new` expects. Fail closed on
-	// malformed JSON so the launch surfaces the real error instead of
-	// silently dropping all MCP servers.
+	// 把 agent 的 mcp_config（Claude 风格的对象套对象）翻译成 ACP `session/new` 期望的数组
+	// 形态。畸形 JSON 要直接失败（fail closed），让启动把真实错误暴露出来，而不是静默丢掉
+	// 全部 MCP 服务器。
 	mcpServers, err := buildACPMcpServers(opts.McpConfig, b.cfg.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("kimi: invalid mcp_config: %w", err)
@@ -59,11 +80,10 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 	timeout := opts.Timeout
 	runCtx, cancel := runContext(ctx, timeout)
 
-	// `kimi acp` ignores --yolo / --auto-approve (they're flags on the
-	// root `kimi` command, not on the `acp` subcommand). Instead, the
-	// daemon auto-approves in hermesClient.handleAgentRequest by selecting
-	// a safe granting option the agent offered (see
-	// selectACPApprovalOptionID) for each session/request_permission request.
+	// `kimi acp` 会忽略 --yolo / --auto-approve（它们挂在根命令 `kimi` 上，不在 `acp`
+	// 子命令上）。daemon 的自动批准改由 hermesClient.handleAgentRequest 完成：对每次
+	// session/request_permission 请求，从 agent 提供的选项里挑一个安全的授予项
+	// （见 selectACPApprovalOptionID）。
 	kimiArgs := append([]string{"acp"}, filterCustomArgs(opts.CustomArgs, kimiBlockedArgs, b.cfg.Logger)...)
 	cmd := b.cfg.commandAt(execPath).exec(runCtx, kimiArgs...)
 	hideAgentWindow(cmd)
@@ -83,18 +103,14 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		cancel()
 		return nil, fmt.Errorf("kimi stdin pipe: %w", err)
 	}
-	// Forward stderr to the daemon log *and* sniff provider-level
-	// errors out of it so we can surface them in the task result.
-	// Kimi's session/prompt still reports stopReason=end_turn when
-	// the underlying HTTP call to api.kimi.com returns 4xx/5xx, so
-	// without this the daemon reports a misleading "empty output"
-	// and the actionable error (expired token, rate limit, upstream
-	// 5xx, …) stays buried in the daemon log.
+	// stderr 既要进 daemon 日志，也要被嗅探器提取 provider 级错误，好把它们呈现到任务结果
+	// 里。Kimi 的 session/prompt 在底层调用 api.kimi.com 返回 4xx/5xx 时仍会报
+	// stopReason=end_turn——不嗅探的话 daemon 只会报一句误导性的 "empty output"，而真正可
+	// 操作的错误（token 过期、限流、上游 5xx 等）会埋进 daemon 日志。
 	//
-	// StderrPipe + an explicit copier give us a join point
-	// (`stderrDone`) that fires before the failure-promotion
-	// decision; see the matching comment in hermes.go for why the
-	// io.MultiWriter form races with stopReason=end_turn under load.
+	// 用 StderrPipe 加显式 copier 是为了拿到一个 join 点（stderrDone），它保证在「把失败
+	// 提升到结果」的决策之前已经排干；为什么 io.MultiWriter 的形式在负载下会和
+	// stopReason=end_turn 竞态，见 hermes.go 里的对应注释。
 	providerErr := newACPProviderErrorSniffer("kimi")
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -119,21 +135,18 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
 
-	// Kimi streams interim narration and the final answer as the same
-	// agent_message_chunk type; the tracker keeps only the post-tool-call block
-	// for Result.Output while retaining the full text for error detection.
+	// Kimi 把中途叙述与最终答案都作为同一种 agent_message_chunk 类型流出；tracker 只保留
+	// 「最后一次工具调用之后」的那段作为 Result.Output，同时保留全文供错误检测用。
 	var deliverable acpDeliverableTracker
-	// streamingCurrentTurn gates all session updates so that history replay
-	// (Kimi sends full prior-turn transcripts on session/resume, and may
-	// flush queued chunks before our session/prompt response streams) is
-	// dropped instead of duplicating the previous answer into output. We
-	// flip it to true only after session/prompt is sent.
+	// streamingCurrentTurn 闸住所有会话更新：历史回放（Kimi 在 session/resume 时会补发前几轮
+	// 的完整记录，也可能在我们 session/prompt 的响应流出前先冲刷积压分片）一律丢弃，避免把
+	// 上一轮答案重复并进 output。只有在 session/prompt 发出后才置为 true。
 	var streamingCurrentTurn atomic.Bool
 
 	promptDone := make(chan hermesPromptResult, 1)
 	activity := make(chan struct{}, 1)
 
-	// Reuse the hermesClient ACP transport — Kimi speaks the same protocol.
+	// 复用 hermesClient 这个 ACP 传输层——Kimi 说的是同一套协议。
 	c := &hermesClient{
 		cfg:             b.cfg,
 		stdin:           stdin,
@@ -157,14 +170,11 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			if !streamingCurrentTurn.Load() {
 				return
 			}
-			// hermesClient.handleToolCallStart has already mapped
-			// the raw ACP title via hermesToolNameFromTitle — which
-			// covers lowercase hermes-style titles ("read:", "patch
-			// (replace)", …) but not capitalised kimi-style ones
-			// ("Read file: …", "Run command: …"). Re-normalise so
-			// the UI sees consistent snake_case identifiers across
-			// both backends. No-op when the name is already normal
-			// form (e.g. already mapped to "read_file").
+			// hermesClient.handleToolCallStart 已经把原始 ACP title 经 hermesToolNameFromTitle
+			// 映射过一遍——它覆盖 hermes 风格的小写 title（"read:"、"patch (replace)" 等），
+			// 但不覆盖 Kimi 风格的大写形式（"Read file: …"、"Run command: …"）。这里再归一化
+			// 一次，让 UI 在两个后端看到一致的 snake_case 标识符；名字已是正常形态时是 no-op
+			// （例如已经映射成 "read_file"）。
 			if msg.Type == MessageToolUse {
 				msg.Tool = kimiToolNameFromTitle(msg.Tool)
 			}
@@ -182,7 +192,7 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		},
 	}
 
-	// Start reading stdout in background.
+	// 后台开始读 stdout。
 	readerDone := make(chan struct{})
 	go func() {
 		defer close(readerDone)
@@ -197,7 +207,7 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		c.closeAllPending(fmt.Errorf("kimi process exited"))
 	}()
 
-	// Drive the ACP session lifecycle in a goroutine.
+	// 在 goroutine 里驱动 ACP 会话生命周期。
 	go func() {
 		defer cancel()
 		defer close(msgCh)
@@ -212,12 +222,11 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		finalStatus := "completed"
 		var finalError string
 		var sessionID string
-		// Set when the ACP runtime refuses the session we asked to
-		// resume. Only that is curable by starting a fresh session, so
-		// handshake/network failures below must leave it false.
+		// 在「ACP 运行时拒绝了我们要求续接的会话」时置位。只有这种情况能靠新建会话治愈，
+		// 所以下面遇到的握手/网络类失败必须保持它为 false。
 		var resumeRejected bool
 
-		// 1. Initialize handshake.
+		// 1. 握手初始化。声明 terminal 能力，让运行时知道可以下发终端工具。
 		initResult, err := c.request(runCtx, "initialize", map[string]any{
 			"protocolVersion": 1,
 			"clientInfo": map[string]any{
@@ -235,23 +244,20 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			return
 		}
 
-		// Drop MCP entries whose remote transport the runtime didn't
-		// advertise. See the matching comment in hermes.go for the why —
-		// shipping an http/sse entry to a stdio-only runtime tanks the
-		// whole session/new.
+		// 丢弃运行时未宣传其远程传输方式的 MCP 条目。原因见 hermes.go 的对应注释：把一个
+		// http/sse 条目塞给只支持 stdio 的运行时，会拖垮整个 session/new。
 		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "kimi", b.cfg)
 
-		// 2. Create or resume a session.
+		// 2. 新建或续接会话。
 		cwd := opts.Cwd
 		if cwd == "" {
 			cwd = "."
 		}
 
 		if opts.ResumeSessionID != "" {
-			// Per ACP Session Setup, session/resume accepts mcpServers and
-			// the runtime re-connects them as part of the resume. Without
-			// this, a resumed Kimi task lost access to MCP tools that a
-			// fresh task on the same agent would have.
+			// 按 ACP Session Setup 约定，session/resume 接受 mcpServers，运行时会在续接时
+			// 一并重连它们。不传的话，同一 agent 上新建任务能用的 MCP 工具，续接任务反而会
+			// 丢掉。
 			result, err := c.request(runCtx, "session/resume", map[string]any{
 				"cwd":        cwd,
 				"sessionId":  opts.ResumeSessionID,
@@ -295,16 +301,11 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		c.sessionID = sessionID
 		b.cfg.Logger.Info("kimi session created", "session_id", sessionID)
 
-		// 3. If the caller picked a model (via agent.model from the
-		// UI dropdown), ask kimi to switch the session to it before
-		// we send any prompt. Kimi's ACP server exposes
-		// `session/set_model` and advertises available models via
-		// the `models.availableModels` block returned by
-		// `session/new` — we pass the chosen modelId through
-		// verbatim. This MUST fail the task on error: silently
-		// falling back to kimi's default model would let the user
-		// believe their pick was honoured while the task actually
-		// ran on something else.
+		// 3. 若调用方通过 agent.model（UI 下拉框）选了模型，就在发任何 prompt 前让 kimi 把
+		// 会话切到该模型。Kimi 的 ACP 服务端暴露 `session/set_model`，并经由 session/new
+		// 返回的 `models.availableModels` 块宣传可用模型——这里把选中的 modelId 原样透传。
+		// 这一步出错必须让任务失败：静默回退到 kimi 的默认模型，会让用户以为选择已生效，而
+		// 任务其实跑在了别的模型上。
 		if opts.Model != "" {
 			if _, err := c.request(runCtx, "session/set_model", map[string]any{
 				"sessionId": sessionID,
@@ -314,10 +315,9 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 				finalStatus = "failed"
 				finalError = fmt.Sprintf("kimi could not switch to model %q: %v", opts.Model, err)
 				if opts.ResumeSessionID != "" && isACPSessionNotFound(err) {
-					// On a resumed session with a model override, the dead
-					// session surfaces here instead of at session/prompt.
-					// Same fix as the prompt path below: clear the id so
-					// the daemon's resume-failure fallback retries fresh.
+					// 续接的会话叠加模型覆盖时，死会话在这里就会暴露（而不是拖到
+					// session/prompt）。与下面 prompt 路径同一处理：清掉 id，让 daemon 的
+					// 「续接失败」回退逻辑用新会话重试。
 					b.cfg.Logger.Warn("resumed session not found at set_model time; clearing session id so the daemon retries fresh",
 						"backend", "kimi",
 						"session_id", sessionID,
@@ -337,16 +337,12 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			b.cfg.Logger.Info("kimi session model set", "model", opts.Model)
 		}
 
-		// 3b. Apply a persisted thinking override through Kimi's native ACP
-		// config option before prompting. As with other providers, a configuration
-		// failure does not block the task: the prompt goes out either way, and the
-		// warnings below are the only record that the level shown in the UI may not
-		// be the level in effect. Which level that is depends on how the call
-		// failed. If the request itself fails, the session keeps whatever it had
-		// beforehand — the CLI's own setting on a fresh session, the previous
-		// turn's level on a resumed one. If Kimi answers but confirms a different
-		// value, the session sits at that value. If it answers without a `thinking`
-		// currentValue at all, we cannot tell which level is in effect.
+		// 3b. 发 prompt 前，通过 Kimi 原生的 ACP 配置项应用一次持久化的思考级别覆盖。与其它
+		// provider 一样，配置失败不阻断任务：prompt 无论如何都会发出，下面这几条告警是 UI
+		// 上显示的级别可能与实际生效级别不一致时仅有的记录。实际生效成哪个级别取决于失败
+		// 方式：若请求本身失败，会话维持原有级别（新建会话是 CLI 自带设置，续接会话是上一轮
+		// 的级别）；若 Kimi 应答但确认了别的值，会话就停在该值；若它应答却完全没带回
+		// `thinking` 的 currentValue，则无法判断实际级别。
 		if opts.ThinkingLevel != "" {
 			configResult, err := c.request(runCtx, "session/set_config_option", map[string]any{
 				"sessionId": sessionID,
@@ -375,13 +371,13 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			}
 		}
 
-		// 4. Build the prompt content. If we have a system prompt, prepend it.
+		// 4. 组装 prompt 内容：若有系统提示词，先拼到任务 prompt 前面。
 		userText := prompt
 		if opts.SystemPrompt != "" {
 			userText = opts.SystemPrompt + "\n\n---\n\n" + prompt
 		}
 
-		// 5. Send the prompt and wait for PromptResponse.
+		// 5. 发 prompt 并等 PromptResponse。
 		streamingCurrentTurn.Store(true)
 		_, err = c.request(runCtx, "session/prompt", map[string]any{
 			"sessionId": sessionID,
@@ -400,12 +396,9 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 				finalStatus = "failed"
 				finalError = fmt.Sprintf("kimi session/prompt failed: %v", err)
 				if opts.ResumeSessionID != "" && isACPSessionNotFound(err) {
-					// See the hermes backend: the runtime echoes the
-					// requested id back from session/resume even when
-					// the session is gone, so the stale id only fails
-					// here, at prompt time. Empty SessionID lets the
-					// daemon's resume-failure fallback retry fresh and
-					// store the replacement id.
+					// 参见 hermes 后端：即使会话已不存在，运行时也会把请求的 id 原样回显
+					// （来自 session/resume），所以这个过期 id 只会在 prompt 这一刻才失败。
+					// 清空 SessionID 让 daemon 的续接失败回退用新会话重试并保存替换后的 id。
 					b.cfg.Logger.Warn("resumed session not found at prompt time; clearing session id so the daemon retries fresh",
 						"backend", "kimi",
 						"session_id", sessionID,
@@ -421,11 +414,9 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 					finalStatus = "aborted"
 					finalError = "kimi cancelled the prompt"
 				}
-				// kimi-code 0.33.0 sends no usage at all on this path,
-				// so this is inert today; it exists so a future
-				// kimi that does populate the ACP result is billed
-				// correctly instead of silently dropping cache or cost
-				// fields. scanKimiSessionUsage below is the live path.
+				// kimi-code 0.33.0 在这条路径上完全不发 usage，所以这行目前不起作用；它留着是
+				// 为了让将来某个会填充 ACP 结果的 kimi 能正确计费，而不是悄悄丢掉缓存或成本
+				// 字段。当下真正生效的是下面的 scanKimiSessionUsage。
 				c.mergeUsage(pr.usage)
 			default:
 			}
@@ -439,36 +430,28 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		cancel()
 
 		<-readerDone
-		// Ensure the stderr copier has drained before consulting the
-		// provider-error sniffer; see hermes.go for the failure mode.
+		// 先确认 stderr copier 已排干，再去查 provider 错误嗅探器；失败模式见 hermes.go。
 		<-stderrDone
 		streamingCurrentTurn.Store(false)
 
 		finalOutput, providerErrorOutput := deliverable.result()
 
-		// Promote completed→failed when stderr or the agent text
-		// stream show a terminal upstream-LLM failure (HTTP 4xx /
-		// rate-limit / expired token). See the helper docs for the
-		// full signal set; the key safety property is that transient
-		// per-attempt warnings followed by a successful retry stay
-		// "completed". It reads the full text stream, not the
-		// deliverable, so a give-up turn that lands before a tool call
-		// stays visible.
+		// 当 stderr 或 agent 文本流展现出「上游 LLM 终态失败」（HTTP 4xx / 限流 / token 过期）
+		// 时，把 completed 提升为 failed。完整信号集见辅助函数文档；关键安全性质是：瞬时性的
+		// 单次尝试告警后面跟了成功重试的，必须保持 "completed"。这里读的是完整文本流而不是
+		// deliverable，所以「在工具调用前就放弃」的一轮仍然可见。
 		finalStatus, finalError = promoteACPResultOnProviderError(finalStatus, finalError, providerErrorOutput, providerErr)
 
 		u := c.accumulatedUsage()
 
-		// Fallback: kimi-code 0.33.0 exports no token counters over ACP.
-		// Its session/prompt result carries only stopReason, and its
-		// `usage_update` notification carries only {used,size} — context
-		// window occupancy, not billing. Verified against the CLI Multica's
-		// own onboarding installs. Without this scan every kimi task lands
-		// on the usage dashboard with no row at all (MUL-5773 / #6448).
+		// 兜底：kimi-code 0.33.0 不通过 ACP 导出任何 token 计数器。它的 session/prompt 结果
+		// 只带 stopReason，`usage_update` 通知只带 {used,size}——那是上下文窗口占用，不是计费
+		// 数据（已对 Multica 自己 onboarding 装的 CLI 验证过）。没有这段扫描，每条 kimi 任务
+		// 在用量看板上都会一行都没有（MUL-5773 / #6448）。
 		//
-		// The counters do exist in kimi's per-session wire log, so read
-		// them from there, the same way codex.go falls back to Codex
-		// rollouts. Bound by sessionID so a concurrent kimi session is
-		// never billed to this task.
+		// 这些计数器确实存在于 kimi 的按会话 wire 日志里，所以像 codex.go 回退读 Codex
+		// rollouts 那样从这里读。以 sessionID 为界，保证并发的另一个 kimi 会话不会被记到本
+		// 任务的账上。
 		fallbackModel := opts.Model
 		if fallbackModel == "" {
 			fallbackModel = "unknown"
@@ -478,9 +461,8 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		if acpTokenUsagePresent(u) {
 			usageMap = map[string]TokenUsage{fallbackModel: u}
 		} else {
-			// Keyed per model by the scan itself: a task whose subagent
-			// or compaction step ran on a different model must not have
-			// that model's tokens priced at the main model's rate.
+			// 由扫描本身按模型分桶：一个子 agent 或压缩步骤跑在别的模型上的任务，不能把那个
+			// 模型的 token 按主模型的费率计价。
 			usageMap = scanKimiSessionUsage(kimiUsageScan{
 				startTime:     startTime,
 				kimiHome:      b.cfg.Env["KIMI_CODE_HOME"],
@@ -488,9 +470,8 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 				resumed:       opts.ResumeSessionID != "",
 				fallbackModel: fallbackModel,
 			})
-			// A future Kimi build may expose provider cost before it exposes
-			// token buckets over ACP. Preserve that cost alongside the current
-			// wire-log fallback instead of dropping either source.
+			// 将来某个 Kimi 构建可能先暴露 provider 成本、后暴露 ACP token 桶。与其丢掉任一
+			// 数据源，不如把这份成本并进当前的 wire 日志兜底结果里。
 			if u.CostUSDTicks > 0 {
 				modelUsage := usageMap[fallbackModel]
 				modelUsage.CostUSDTicks = u.CostUSDTicks
@@ -515,23 +496,21 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
-// kimiToolNameFromTitle normalises tool names emitted by Kimi's ACP
-// server into the snake_case identifiers the Multica UI expects.
+// kimiToolNameFromTitle 把 Kimi 的 ACP 服务端发出的工具名归一化成 Multica UI 期望的
+// snake_case 标识符。
 //
-// Kimi follows the ACP spec where `title` is a short human-readable
-// label such as "Read file: /path/to/foo.go" or "Run command: ls".
-// hermesToolNameFromTitle upstream handles hermes' lowercase
-// convention ("read:", "patch (replace)") but not kimi's capitalised
-// format — so we get called on the already-mapped name from hermes
-// and fix up anything that slipped through. Empty input returns "".
+// Kimi 遵循 ACP 规范，`title` 是简短的人读标签，例如 "Read file: /path/to/foo.go" 或
+// "Run command: ls"。上游的 hermesToolNameFromTitle 处理的是 hermes 的小写约定（"read:"、
+// "patch (replace)"），覆盖不到 kimi 的大写格式——所以这里拿到的是 hermes 已经映射过一轮的
+// 名字，再修掉漏网之鱼。空输入返回 ""。
 func kimiToolNameFromTitle(title string) string {
 	t := strings.TrimSpace(title)
 	if t == "" {
 		return ""
 	}
 
-	// Strip everything after the first colon — ACP titles often look like
-	// "Tool Name: argument detail" and we want only the tool name.
+	// 剥掉第一个冒号之后的所有内容——ACP title 往往形如 "Tool Name: argument detail"，我们
+	// 只要工具名。
 	if idx := strings.Index(t, ":"); idx > 0 {
 		t = strings.TrimSpace(t[:idx])
 	}
@@ -558,30 +537,25 @@ func kimiToolNameFromTitle(title string) string {
 		return "todo_write"
 	}
 
-	// Fallback: snake_case the title so the UI gets a stable identifier.
+	// 兜底：把 title 转成 snake_case，让 UI 拿到稳定标识符。
 	return strings.ReplaceAll(lower, " ", "_")
 }
 
-// kimiUsageRecordType is the wire-log entry kimi-code writes after every LLM
-// call. Its sibling `step.end` loop event repeats the same numbers, so only
-// this type may be summed — counting both double-bills every turn.
+// kimiUsageRecordType 是 kimi-code 在每次 LLM 调用后写进 wire 日志的记录类型。它的孪生事件
+// `step.end` 循环里会重复同一组数字，所以只能对这一个类型求和——两个都加等于每轮重复计费。
 const kimiUsageRecordType = "usage.record"
 
-// kimiWireUsage is one `usage.record` entry from a kimi session wire log.
+// kimiWireUsage 是 kimi 会话 wire 日志里的一条 `usage.record` 记录。
 //
-// The buckets are mutually exclusive: on a verified two-turn session the
-// records read {inputOther:4844, inputCacheRead:17664, output:22} and
-// {inputOther:272, inputCacheRead:22272, output:22}, and each turn's three
-// fields sum exactly to the `used` figure kimi reports over ACP (22530 and
-// 22566). So `inputOther` is uncached input only and maps straight onto
-// TokenUsage.InputTokens with no cached-prefix subtraction — unlike the ACP
-// `inputTokens` case excludeACPCachedInput exists to correct.
+// 各桶互斥：在一次验证过的两轮会话里，记录分别是 {inputOther:4844, inputCacheRead:17664,
+// output:22} 与 {inputOther:272, inputCacheRead:22272, output:22}，每轮三个字段之和恰好等于
+// kimi 经 ACP 上报的 `used` 数（22530 与 22566）。因此 `inputOther` 只是未命中缓存的输入，
+// 可以直接映射成 TokenUsage.InputTokens，无需像 ACP 的 `inputTokens` 那样用
+// excludeACPCachedInput 去减缓存前缀。
 type kimiWireUsage struct {
 	Type string `json:"type"`
-	// Time is the record's epoch-millisecond write time. It is what keeps a
-	// resumed session from being billed twice: kimi appends to the same wire
-	// log across resumes, so the file still holds the previous task's
-	// records.
+	// Time 是这条记录的 epoch 毫秒写入时间。它防止续接会话被重复计费：kimi 在多次续接里都
+	// 追加写到同一个 wire 日志，所以文件里仍留着上一个任务的记录。
 	Time  int64  `json:"time"`
 	Model string `json:"model"`
 	Usage struct {
@@ -592,31 +566,27 @@ type kimiWireUsage struct {
 	} `json:"usage"`
 }
 
-// kimiUsageScan parameterises a wire-log scan.
+// kimiUsageScan 参数化一次 wire 日志扫描。
 type kimiUsageScan struct {
 	startTime time.Time
 	kimiHome  string
 	sessionID string
-	// resumed marks a turn that continued an existing kimi session. Those
-	// append to the wire log the previous task already billed, so records are
-	// filtered by their own timestamp, not just by the file's mtime.
+	// resumed 标记这一轮续接的是既有 kimi 会话。这类会话会往上一个任务已经计过费的 wire
+	// 日志里追加，所以记录要按各自的时间戳过滤，而不是只按文件的 mtime。
 	resumed bool
-	// fallbackModel keys records that carry no model of their own.
+	// fallbackModel 作为没有自带模型名的记录的归属模型。
 	fallbackModel string
 }
 
-// scanKimiSessionUsage returns the usage kimi-code recorded for this session,
-// bucketed by the model that produced each record.
+// scanKimiSessionUsage 返回 kimi-code 为本会话记录的用量，按产生各记录的模型分桶。
 //
-// Records are per-LLM-call and incremental, never cumulative: a verified
-// two-step turn logged one record per `llm.request`, with the second call's
-// uncached input far below the first's as the prefix moved into cache. So the
-// total for a task is the plain sum over every record in the session.
+// 记录按次 LLM 调用计、是增量而非累计：一次验证过的两步 turn，每次 `llm.request` 记一条，
+// 第二条的未缓存输入因前缀进入缓存而远低于第一条。因此任务总量就是对会话内所有记录直接
+// 求和。
 //
-// Subagent turns get their own `agents/<name>/wire.jsonl` and may run a
-// different model, which is why the result is a map rather than one total:
-// billing only `agents/main` would drop delegated work, and folding every
-// agent into one model name would price it wrong.
+// 子 agent 的 turn 有自己的 `agents/<name>/wire.jsonl`，且可能跑不同模型——这正是结果用 map
+// 而非单一总量的原因：只给 `agents/main` 计费会丢掉委派出去的工作，把每个 agent 都折进
+// 一个模型名下则会算错价格。
 func scanKimiSessionUsage(scan kimiUsageScan) map[string]TokenUsage {
 	root := kimiSessionRoot(scan.kimiHome)
 	if root == "" {
@@ -624,14 +594,12 @@ func scanKimiSessionUsage(scan kimiUsageScan) map[string]TokenUsage {
 	}
 
 	usage := make(map[string]TokenUsage)
-	// Some filesystems round mtimes down to whole seconds. Compare against a
-	// cutoff at the same precision so a log written during this turn is not
-	// discarded before its authoritative per-record timestamps are checked.
+	// 有些文件系统把 mtime 按整秒向下取整。与同精度的截止线比较，避免本 turn 刚写的日志在
+	// 其权威的逐记录时间戳被核验前就被误删。
 	mtimeCutoff := scan.startTime.Truncate(time.Second)
 	for _, path := range kimiSessionWireLogs(root, scan.sessionID) {
-		// A wire log clearly untouched since before the turn began belongs to
-		// an earlier run of a resumed session. The record-level filter below
-		// remains the authority at the turn boundary.
+		// 一份显然在 turn 开始前就没再动过的 wire 日志，属于续接会话更早的一次运行。在 turn
+		// 边界上，逐记录的过滤仍然是最权威的判据。
 		if info, err := os.Stat(path); err != nil || info.ModTime().Before(mtimeCutoff) {
 			continue
 		}
@@ -643,18 +611,16 @@ func scanKimiSessionUsage(scan kimiUsageScan) map[string]TokenUsage {
 	return usage
 }
 
-// kimiSessionWireLogs returns the wire logs belonging to sessionID.
+// kimiSessionWireLogs 返回属于 sessionID 的 wire 日志路径列表。
 //
-// kimi names the session directory with the ACP session id verbatim
-// (`<root>/<workspace>/<sessionID>/agents/<name>/wire.jsonl`), so the session
-// is addressed by exact path rather than by globbing every session and
-// filtering after: session history only grows, and this runs on the billing
-// path at the end of every task. Building the path also keeps the agent's
-// session id out of a glob pattern, where a `*` or `[` would be read as a
-// wildcard — as would one in a custom KIMI_CODE_HOME.
+// kimi 用 ACP 会话 id 原样命名会话目录
+// （`<root>/<workspace>/<sessionID>/agents/<name>/wire.jsonl`），因此这里按精确路径寻址会话，
+// 而不是 glob 出所有会话再事后过滤：会话历史只增不减，而本函数跑在每条任务结束时的计费
+// 路径上。拼路径也避免了把 agent 的会话 id 放进 glob 模式——其中的 `*` 或 `[`（以及自定义
+// KIMI_CODE_HOME 里出现的）会被当成通配符。
 func kimiSessionWireLogs(root, sessionID string) []string {
 	sessionID = strings.TrimSpace(sessionID)
-	// Guard the path join: the id comes from the agent.
+	// 防路径穿越：id 来自 agent 侧，加入路径前必须校验。
 	if sessionID == "" || sessionID == "." || sessionID == ".." ||
 		strings.ContainsRune(sessionID, '/') || strings.ContainsRune(sessionID, os.PathSeparator) {
 		return nil
@@ -684,11 +650,9 @@ func kimiSessionWireLogs(root, sessionID string) []string {
 	return paths
 }
 
-// accumulateKimiWireUsage adds one wire log's records into usage, keyed by the
-// model each record names. A malformed or truncated line is skipped rather
-// than failing the scan: the log is appended to live, so the tail can be a
-// partial write, and reporting the records we could read beats reporting
-// nothing.
+// accumulateKimiWireUsage 把一份 wire 日志里的记录累加进 usage，按各记录点名的模型分桶。
+// 畸形或截断的行跳过而不是让扫描失败：日志是活的、边跑边追加，尾部可能是半行写入——能报
+// 出读到的记录总比什么都不报强。
 func accumulateKimiWireUsage(usage map[string]TokenUsage, path string, scan kimiUsageScan) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -722,14 +686,11 @@ func accumulateKimiWireUsage(usage map[string]TokenUsage, path string, scan kimi
 	}
 }
 
-// kimiWireRecordInTurn reports whether a usage record belongs to the turn that
-// started at startTime.
+// kimiWireRecordInTurn 判断一条用量记录是否属于 startTime 开始的这一轮。
 //
-// kimi-code 0.33.0 stamps every usage record, so the untimed case is only a
-// guard against a future format change. There it errs toward billing on a
-// fresh session (whose records are all ours anyway) and toward dropping on a
-// resume, where counting an untimed record risks charging a user twice for
-// tokens the earlier task already reported.
+// kimi-code 0.33.0 会给每条用量记录打时间戳，所以「无时间戳」的情况只是对未来格式变化的
+// 一道防线。遇到时倾向：新建会话记上（反正记录都是我们的）；续接会话丢弃——给一条无时间戳
+// 的记录计费，有让用户为更早任务已报过的 token 付两次钱的风险。
 func kimiWireRecordInTurn(recordTimeMillis int64, startTime time.Time, resumed bool) bool {
 	if recordTimeMillis <= 0 {
 		return !resumed
@@ -740,16 +701,13 @@ func kimiWireRecordInTurn(recordTimeMillis int64, startTime time.Time, resumed b
 	return recordTimeMillis >= startTime.UnixMilli()
 }
 
-// kimiSessionRoot resolves kimi's session directory: an explicitly configured
-// home first, then the ambient KIMI_CODE_HOME, then ~/.kimi-code. Mirrors
-// codexSessionRoot.
+// kimiSessionRoot 解析 kimi 的会话目录：优先用显式配置的 home，其次环境里的 KIMI_CODE_HOME，
+// 最后回退 ~/.kimi-code。与 codexSessionRoot 的解析顺序一致。
 //
-// The env lookup is not redundant with cfg.Env: the kimi subprocess inherits
-// os.Environ() via buildEnv, so a KIMI_CODE_HOME exported to the daemon
-// relocates kimi's sessions without ever appearing in cfg.Env. Reading only
-// cfg.Env would leave the scan looking in ~/.kimi-code while kimi wrote
-// somewhere else. The stat check keeps a home without a sessions directory
-// from disabling the scan.
+// 查环境变量这一步与 cfg.Env 并不重复：kimi 子进程经 buildEnv 继承的是 os.Environ()，所以
+// 一个导出给 daemon 的 KIMI_CODE_HOME 会搬走 kimi 的会话，却根本不会出现在 cfg.Env 里。只
+// 读 cfg.Env 的话，扫描会在 ~/.kimi-code 里找，而 kimi 其实写到了别处。stat 校验保证一个
+// 没有 sessions 目录的 home 不会让扫描直接停摆。
 func kimiSessionRoot(kimiHome string) string {
 	if kimiHome = strings.TrimSpace(kimiHome); kimiHome == "" {
 		kimiHome = strings.TrimSpace(os.Getenv("KIMI_CODE_HOME"))

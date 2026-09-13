@@ -1,3 +1,11 @@
+// 本文件处理「通用 VCS webhook」入站：HandleVCSWebhook 接收基于 token 的各类 Git
+// 提供方（GitHub / GitLab / 工蜂等，凡实现 vcs.Provider 接口的）推来的 webhook，
+// 验签后按事件类型解析，并把 PR / CI 状态「镜像」进自己的表。
+//
+// 镜像（mirror）语义：把上游的 PR 元数据与 commit status 存成行（upsert），按议题
+// 编号自动把 PR 关联到对应 issue（标题/分支/正文的关键词），并在 PR 合并/关闭时
+// 重算该 issue 的 PR 关闭聚合、条件成立则推进 issue 到 done。所有下游通知走
+// EventPullRequestUpdated 事件广播。处理带乱序保护（旧事件重投不能回滚新状态）。
 package handler
 
 import (
@@ -16,11 +24,10 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// ── Response mappers ────────────────────────────────────────────────────────
+// ── 响应映射 ────────────────────────────────────────────────────────────────
 
-// vcsPullRequestToResponse maps a stored VCS PR onto the shared PR response
-// shape for single-PR webhook broadcasts (no aggregated check counts; the
-// frontend re-queries the issue's PR list for fresh counts).
+// vcsPullRequestToResponse 把存储的 VCS PR 行映射到共享的 PR 响应结构，供单条 PR 的
+// webhook 广播用（不带聚合的检查计数——前端会重新拉取该 issue 的 PR 列表拿最新计数）。
 func vcsPullRequestToResponse(p db.VcsPullRequest) GitHubPullRequestResponse {
 	return GitHubPullRequestResponse{
 		ID:               uuidToString(p.ID),
@@ -47,8 +54,8 @@ func vcsPullRequestToResponse(p db.VcsPullRequest) GitHubPullRequestResponse {
 	}
 }
 
-// vcsPullRequestRowToResponse maps an issue's PR-list row, which carries the
-// aggregated commit-status counts, onto the shared response shape.
+// vcsPullRequestRowToResponse 把 issue 的 PR 列表行（带聚合的 commit-status 计数）
+// 映射到共享的响应结构。
 func vcsPullRequestRowToResponse(p db.ListVCSPullRequestsByIssueRow) GitHubPullRequestResponse {
 	return GitHubPullRequestResponse{
 		ID:               uuidToString(p.ID),
@@ -81,17 +88,15 @@ func vcsPullRequestRowToResponse(p db.ListVCSPullRequestsByIssueRow) GitHubPullR
 	}
 }
 
-// ── Webhook ─────────────────────────────────────────────────────────────────
+// ── Webhook 入站 ────────────────────────────────────────────────────────────
 
-// HandleVCSWebhook (POST /api/webhooks/vcs/{connectionId}) authenticates and
-// mirrors webhooks from any token-based Git provider. The connection id in the path
-// selects the workspace, the provider, and the decryption secret; the provider
-// adapter handles the provider-specific signature scheme, event header, and
-// payload shape, returning normalized events to the shared mirror logic below.
+// HandleVCSWebhook（POST /api/webhooks/vcs/{connectionId}）鉴权并接收任意基于 token
+// 的 Git 提供方的 webhook。路径里的 connection id 选出 workspace、提供方与解密密钥；
+// 提供方适配器处理各自的签名方案、事件头与载荷形状，把规范化事件交给下面共享的
+// 镜像逻辑。
 func (h *Handler) HandleVCSWebhook(w http.ResponseWriter, r *http.Request) {
-	// Where the integration is off (the managed cloud) the endpoint behaves as
-	// if it does not exist — a bare 404 that reveals nothing about config, the
-	// same response a genuinely unknown connection id gets below.
+	// 集成关闭时（托管云环境）本端点表现得像不存在一样——裸 404 不透任何配置信息，
+	// 与下方「connection id 真不存在」的响应一致。
 	if !h.isVCSAvailable() {
 		writeError(w, http.StatusNotFound, "unknown connection")
 		return
@@ -104,7 +109,7 @@ func (h *Handler) HandleVCSWebhook(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10 MiB cap
+	body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10 MiB 上限
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "read body failed")
 		return
@@ -150,11 +155,14 @@ func (h *Handler) HandleVCSWebhook(w http.ResponseWriter, r *http.Request) {
 			h.mirrorVCSCIStatus(r.Context(), conn, st)
 		}
 	default:
-		// Acknowledge unmodelled events so the provider doesn't flag the hook.
+		// 未建模的事件照单全收地确认，避免提供方把 hook 标记为失败。
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// mirrorVCSPullRequest 把一条 PR 事件镜像进本地表并维护与 issue 的关联。流程：upsert
+// PR 行 → 乱序保护（若库中行严格更新则直接放弃）→ 从标题/正文/分支抽议题编号建立
+// 关联 → 合并/关闭事件到来时重算关闭聚合、必要时推进 issue。
 func (h *Handler) mirrorVCSPullRequest(ctx context.Context, conn db.VcsConnection, ev vcs.PullRequestEvent) {
 	if ev.RepoOwner == "" || ev.RepoName == "" || ev.Number == 0 {
 		slog.Warn("vcs: pull_request missing repo identity", "provider", conn.Provider)
@@ -188,16 +196,13 @@ func (h *Handler) mirrorVCSPullRequest(ctx context.Context, conn db.VcsConnectio
 		return
 	}
 
-	// Out-of-order guard for the link metadata. UpsertVCSPullRequest keeps the
-	// newer persisted row on a stale redelivery, so `pr` may reflect a newer
-	// event than this `ev`. Everything the link write derives below —
-	// close_intent, reference_only, preserveCloseIntent — comes from `ev`, so
-	// rewriting the link from a stale event would corrupt what the newer event
-	// already set (e.g. a redelivered older "opened" event flipping a merged
-	// PR's link back to reference_only, blocking auto-advance). If the persisted
-	// row is strictly newer than this event, the newer event already linked and
-	// published — stop here. (An event with no usable timestamp falls back to
-	// now(), which is never strictly after the stored value, so it proceeds.)
+	// 关联元数据的乱序守卫。UpsertVCSPullRequest 在「过期的重投」到来时保留更新的
+	// 持久行，所以 pr 可能比本次 ev 更新。下面链接写入所派生的一切——close_intent、
+	// reference_only、preserveCloseIntent——都来自 ev，用一条过期事件重写链接会破坏
+	// 新事件已写好的状态（例如重投的旧 "opened" 事件会把已合并 PR 的链接翻回
+	// reference_only，挡住自动推进）。若持久行严格新于本次事件，说明新事件已经完成
+	// 链接与发布——就此打住。（无可用时间戳的事件回退到 now()，而 now() 永远不会
+	// 严格晚于已存值，所以它照常继续。）
 	evUpdatedAt := parseGHTimeRequired(ev.UpdatedAt)
 	if pr.PrUpdatedAt.Valid && evUpdatedAt.Valid && pr.PrUpdatedAt.Time.After(evUpdatedAt.Time) {
 		return
@@ -206,23 +211,20 @@ func (h *Handler) mirrorVCSPullRequest(ctx context.Context, conn db.VcsConnectio
 	workspaceID := uuidToString(conn.WorkspaceID)
 	resp := vcsPullRequestToResponse(pr)
 
-	// Auto-link to issues by identifiers in title/body/branch. Connecting a
-	// a provider is the opt-in, so there is no separate per-workspace flag. The
-	// issue-side machinery is shared with GitHub.
+	// 按标题/正文/分支里的议题编号自动把 PR 关联到 issue。连上提供方即视为选择加入，
+	// 所以没有额外的每-workspace 开关。issue 侧机制与 GitHub 共用。
 	linkedIssueIDs := make([]string, 0)
 	idents := extractIdentifiers(ev.Title, ev.Body, ev.Branch)
 	closingIdents := map[string]struct{}{}
 	for _, c := range extractClosingIdentifiers(ev.Title, ev.Body) {
 		closingIdents[c] = struct{}{}
 	}
-	// qualifyingIdents genuinely tie this PR to an issue: a title prefix, a
-	// branch-name reference, or a body closing keyword. An identifier matched
-	// ONLY by a bare body mention is reference_only — it links (so the PR shows
-	// in history) but is hidden from the issue PR list and excluded from the
-	// close aggregate, so a drive-by "Related MUL-1" neither looks like a
-	// working PR nor blocks a genuine Closes sibling from advancing the issue.
-	// Mirrors the GitHub path (MUL-3739); branch is deliberately excluded from
-	// the closing-keyword scan there and here.
+	// qualifyingIdents 是「真正把 PR 钉到 issue」的编号：标题前缀、分支名引用、或正文
+	// 里的关闭关键词。只有正文里一次顺带 mention 才命中的编号是 reference_only——
+	// 它会建立链接（PR 会出现在历史里），但不进 issue 的 PR 列表、也不参与关闭聚合，
+	// 于是顺手的 "Related MUL-1" 既不会看起来像在干活的 PR，也不会挡着真正的
+	// Closes 兄弟 PR 推进 issue。镜像 GitHub 路径（MUL-3739）；分支名在此与 GitHub
+	// 一样刻意不参与关闭关键词扫描。
 	qualifyingIdents := map[string]struct{}{}
 	for _, id := range extractIdentifiers(ev.Title, ev.Branch) {
 		qualifyingIdents[id] = struct{}{}
@@ -230,7 +232,7 @@ func (h *Handler) mirrorVCSPullRequest(ctx context.Context, conn db.VcsConnectio
 	for c := range closingIdents {
 		qualifyingIdents[c] = struct{}{}
 	}
-	// Freeze close_intent once the terminal merge/close event has arrived.
+	// 终态的 merge/close 事件到来后冻结 close_intent。
 	preserveCloseIntent := !ev.Terminal() && (ev.State == "merged" || ev.State == "closed")
 	prefix := h.getIssuePrefix(ctx, conn.WorkspaceID)
 	reevalIssues := make([]db.Issue, 0, len(idents))
@@ -261,7 +263,7 @@ func (h *Handler) mirrorVCSPullRequest(ctx context.Context, conn db.VcsConnectio
 
 	if ev.State == "merged" || ev.State == "closed" {
 		for _, issue := range reevalIssues {
-			// A custom terminal status counts as terminal here. (MUL-6243)
+			// 自定义终态在这里同样算终态。（MUL-6243）
 			if s := issuestatus.Effective(ctx, h.Queries, issue.WorkspaceID, issue.Status); s == "done" || s == "cancelled" {
 				continue
 			}
@@ -282,14 +284,15 @@ func (h *Handler) mirrorVCSPullRequest(ctx context.Context, conn db.VcsConnectio
 	})
 }
 
+// mirrorVCSCIStatus 把一条 CI 状态事件写入本地 commit status 表，并向该 commit 所属
+// PR 关联的 issue 广播刷新事件。
 func (h *Handler) mirrorVCSCIStatus(ctx context.Context, conn db.VcsConnection, ev vcs.CIStatusEvent) {
 	if ev.SHA == "" || ev.State == "" {
 		return
 	}
-	// Use the provider's own event timestamp so UpsertVCSCommitStatus's
-	// monotonic guard has something real to compare — writing time.Now() here
-	// made the guard always true, so an out-of-order redelivery could regress a
-	// status. Falls back to now() only when the payload carried no timestamp.
+	// 用提供方自己的事件时间戳，让 UpsertVCSCommitStatus 的单调守卫有真实可比的依据
+	// ——以前在这里写 time.Now()，守卫永远为真，乱序重投就能把状态回退。仅当载荷
+	// 没带时间戳时才回退到 now()。
 	if err := h.Queries.UpsertVCSCommitStatus(ctx, db.UpsertVCSCommitStatusParams{
 		ConnectionID: conn.ID,
 		Sha:          ev.SHA,

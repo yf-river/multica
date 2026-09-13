@@ -1,5 +1,25 @@
 "use client";
 
+// 本文件：CustomPropertyPicker —— 问题"自定义属性值"的编辑/展示组件族。
+//
+// CustomPropertyValueEditor    —— 带乐观更新的编辑入口（issue detail 用）；
+// CustomPropertyValueInput     —— 无变更副作用（不写 store/请求）的编辑器本体，
+//                                 创建问题等草稿流程直接复用，issue detail 在
+//                                 外层再包上乐观 mutation；
+// CustomPropertyValueDisplay   —— 属性值的只读展示（行触发器 / 后续卡片）。
+//
+// 编辑器形态跟随属性定义类型：
+//   select        → PropertyPicker（每选项一行）
+//   multi_select  → PropertyPicker + 点击切换行（保持打开）
+//   date          → 日历弹层（镜像 DueDatePicker）
+//   checkbox      → 是/否选择器
+//   actor         → 成员选择器（提交即关闭）
+//   multi_actor   → 成员选择器 + 切换行（保持打开）
+//   text/number/url → 弹层内输入框，Enter 提交
+//
+// 已归档的定义强制只读（弹层只提供"清空"——服务端拒绝给已归档属性写新值，
+// 但始终允许 unset）；比当前构建更新的未知类型降级为只读视图。
+
 import { useEffect, useState } from "react";
 import { CalendarDays, Check, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
@@ -39,16 +59,14 @@ const EDITABLE_PROPERTY_TYPES = [
 ];
 
 /**
- * Whether the editor must degrade to read-only (Clear is still offered, so a
- * stale value can always be cleaned up). Three reasons:
+ * 编辑器是否必须降级为只读（"清空"仍然提供——过期的值始终可被清理）。
+ * 三种原因：
  *
- *   1. The definition is archived.
- *   2. The definition's type is newer than this build.
- *   3. A single `actor` value references a kind this build cannot parse. It
- *      would otherwise render as empty and the user, believing the field is
- *      unset, would overwrite a value they were never shown. `multi_actor` is
- *      exempt: its toggle round-trips unknown entries instead of replacing the
- *      whole value (MUL-6286 review).
+ *   1. 定义已被归档。
+ *   2. 定义的类型比当前构建更新。
+ *   3. 单个 `actor` 值引用了本构建无法解析的种类。否则它会渲染成空值，
+ *      用户以为字段未设置，就会覆盖一个从未被展示过的值。`multi_actor`
+ *      豁免：它的开关往返保留未知条目而非整体替换（MUL-6286 review）。
  */
 export function isCustomPropertyReadOnly(
   property: IssueProperty,
@@ -61,20 +79,9 @@ export function isCustomPropertyReadOnly(
 }
 
 /**
- * Value editor for one custom property on one issue. The editor shape
- * follows the definition type:
- *
- *   select        → PropertyPicker with one PickerItem per option
- *   multi_select  → PropertyPicker with toggling items (stays open)
- *   date          → Calendar popover (mirrors DueDatePicker)
- *   checkbox      → Yes / No picker
- *   actor         → member picker (commits and closes)
- *   multi_actor   → member picker with toggling items (stays open)
- *   text/number/url → popover with an input, Enter commits
- *
- * Archived definitions render read-only: the popover only offers Clear
- * (the server rejects new values on archived properties but always allows
- * unset). Unknown types from newer servers degrade to the read-only view.
+ * 单个问题、单个自定义属性的值编辑器。编辑器形态跟随定义类型（见文件头）。
+ * 内部走乐观 mutation；已归档定义渲染只读（弹层只提供"清空"——
+ * 服务端拒绝新值但允许 unset）。来自更新服务端的未知类型降级为只读视图。
  */
 export function CustomPropertyValueEditor({
   issue,
@@ -120,9 +127,8 @@ export function CustomPropertyValueEditor({
 }
 
 /**
- * Mutation-free custom-property editor. Create flows use this while an issue
- * still exists only as a draft; issue detail wraps it above with the normal
- * optimistic mutations.
+ * 无变更副作用的自定义属性编辑器。创建流程在问题还只是草稿时使用它；
+ * issue detail 在它外层用正常的乐观 mutation 包装。
  */
 export function CustomPropertyValueInput({
   property,
@@ -161,9 +167,8 @@ export function CustomPropertyValueInput({
     </span>
   );
 
-  // Empty value as the first row, not a footer button — the position every
-  // other picker uses for "no value", and being a real row it can carry the
-  // checkmark when the property is unset.
+  // 空值作为第一行，而不是页脚按钮——这正是其他所有选择器放"无值"的位置，
+  // 且作为真实的一行，属性未设置时可以承载对勾标记。
   const emptyRow = (
     <PickerItem
       emptyValue
@@ -285,7 +290,7 @@ export function CustomPropertyValueInput({
             {valueTrigger}
           </PopoverTrigger>
           <PopoverContent className="w-auto p-0" align="start">
-            {/* Empty value above the calendar — same position as DateOnlyPicker. */}
+            {/* 日历上方的空值行——与 DateOnlyPicker 同一位置。 */}
             <button
               type="button"
               onClick={() => {
@@ -359,7 +364,7 @@ export function CustomPropertyValueInput({
   }
 }
 
-/** Popover-with-input editor shared by text / number / url. */
+/** text / number / url 共用的"弹层内输入框"编辑器。 */
 function TextishPropertyEditor({
   property,
   value,
@@ -460,10 +465,9 @@ function TextishPropertyEditor({
 }
 
 /**
- * Read view of a custom property value, shared by row triggers everywhere
- * (sidebar rows now; cards/filters later). Option ids resolve to named,
- * colored chips; unknown ids (option deleted from the definition) are
- * silently dropped rather than rendering raw UUIDs.
+ * 自定义属性值的只读视图，各处行触发器共用（先覆盖侧栏行，之后卡片/过滤器）。
+ * 选项 id 解析为带名字和颜色的 chip；未知 id（定义里已被删除的选项）
+ * 静默丢弃，绝不渲染原始 UUID。
  */
 export function CustomPropertyValueDisplay({
   property,

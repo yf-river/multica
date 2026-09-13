@@ -1,32 +1,27 @@
+// 一条"已落定"的 chat 消息进消息缓存时必经的唯一门（MUL-5711）。
+// 以 message.id 为身份做合并，两条路径重复到达时收敛而不是重复/降级。
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import { chatKeys } from "./queries";
 import type { ChatMessage, ChatMessagesPage } from "../types";
 
 /**
- * The single door a settled chat message goes through on its way into the
- * message caches (MUL-5711).
+ * 一条已落定的 chat 消息进消息缓存的唯一门（MUL-5711）。
  *
- * Before this, every writer rolled its own: `chat:done` inline-inserted the
- * assistant reply, `chat:message` threw its payload away and only invalidated,
- * and the three send paths each appended by hand — two of them to both caches,
- * the Agent Builder to the flat one only. The gap that produced this bug was in
- * that inconsistency, not in any single writer: a human's own message was the
- * one row no WebSocket handler ever wrote, so it reached the transcript solely
- * through a refetch, and a refetch that gets cancelled takes the message with
- * it.
+ * 在此之前每个写入方都自搞一套：`chat:done` 就地插入助手回复，`chat:message`
+ * 把自己的载荷丢掉只做失效，三条发送路径各自手写追加——其中两条会写两个缓存、
+ * Agent Builder 只写扁平缓存。这个 bug 的缺口正在这种不一致里，而不在任何一个
+ * 写入方：用户自己的那条消息是任何 WS 处理器都不写的一行，它只能靠重取进入会话记录，
+ * 而一次被取消的重取会把那条消息一起带走。
  *
- * Two rules, both order-independent, so the same message arriving twice by
- * different routes converges instead of duplicating or downgrading:
+ * 两条规则都与顺序无关，同一消息经不同路径到达两次会收敛而不是重复或降级：
  *
- *   1. Identity is `message.id`. A second write for an id already present
- *      merges instead of appending.
- *   2. On merge the row already in cache wins every field it defines; the
- *      incoming row only fills fields that are missing. A send response
- *      carrying `attachments` therefore survives the WebSocket echo that has
- *      no attachments field at all — in either arrival order.
+ *   1. 身份是 `message.id`。对已存在 id 的第二次写入做合并，而不是追加。
+ *   2. 合并时缓存里已有的行在自己定义的每个字段上赢；入站行只补缺失字段。
+ *      因此带 `attachments` 的发送响应不会被"根本没有 attachments 字段"的
+ *      WebSocket 回声冲掉——无论哪种到达顺序。
  */
 
-/** Fields present on `incoming` fill only the gaps in `existing`. */
+/** 入站消息上存在的字段只填充既有消息缺失的空隙。 */
 function mergeChatMessage(existing: ChatMessage, incoming: ChatMessage): ChatMessage {
   const fills: Partial<ChatMessage> = {};
   let filled = false;
@@ -35,14 +30,13 @@ function mergeChatMessage(existing: ChatMessage, incoming: ChatMessage): ChatMes
     Object.assign(fills, { [key]: incoming[key] });
     filled = true;
   }
-  // Reference-stable when nothing was filled, so observers do not re-render.
+  // 什么也没填时保持引用稳定，避免观察者被多余地重渲染。
   return filled ? { ...existing, ...fills } : existing;
 }
 
 /**
- * Merge into the row with this id if the list has one. Never appends — the
- * caller decides where a genuinely new message goes, which for a paged cache is
- * one specific page.
+ * 若列表里已有该 id 的行则与之合并。绝不追加——真正的新消息该放哪儿由调用方决定，
+ * 对分页缓存而言是某一个具体页。
  */
 function mergeIntoList(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
   const index = messages.findIndex((m) => m.id === message.id);
@@ -52,20 +46,21 @@ function mergeIntoList(messages: ChatMessage[], message: ChatMessage): ChatMessa
   return messages.map((m, i) => (i === index ? merged : m));
 }
 
+/** 存在则合并，不存在则追加到列表末尾。 */
 function upsertIntoList(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
   const merged = mergeIntoList(messages, message);
   if (merged !== messages) return merged;
   return messages.some((m) => m.id === message.id) ? messages : [...messages, message];
 }
 
+/** 往分页缓存里 upsert 一条消息（在它当前所在页就地合并；新消息追加到第 0 页）。 */
 function upsertIntoPages(
   data: InfiniteData<ChatMessagesPage>,
   message: ChatMessage,
 ): InfiniteData<ChatMessagesPage> {
   const seen = data.pages.some((page) => page.messages.some((m) => m.id === message.id));
   if (seen) {
-    // Merge in place, wherever the row already lives. Appending here instead
-    // would drop a copy into every OTHER page.
+    // 就地合并，无论行现在躺在哪一页。这里若是追加，会给每一*其它*页都丢进一份副本。
     let changed = false;
     const pages = data.pages.map((page) => {
       const next = mergeIntoList(page.messages, message);
@@ -75,8 +70,7 @@ function upsertIntoPages(
     });
     return changed ? { ...data, pages } : data;
   }
-  // Page 0 is the newest window (later pages are older cursor pages), so a new
-  // message belongs at the end of it.
+  // 第 0 页是最新的窗口（后面的页是更旧的游标页），所以新消息属于它的末尾。
   return {
     ...data,
     pages: data.pages.map((page, index) =>
@@ -85,6 +79,7 @@ function upsertIntoPages(
   };
 }
 
+/** 用单条消息构造一个占位首页（供从未拉取过的会话首次渲染）。 */
 function seedPage(message: ChatMessage): InfiniteData<ChatMessagesPage> {
   return {
     pages: [{ messages: [message], limit: 50, has_more: false, next_cursor: null }],
@@ -92,28 +87,30 @@ function seedPage(message: ChatMessage): InfiniteData<ChatMessagesPage> {
   };
 }
 
+/** upsert 到缓存时的可选行为配置。 */
 export interface UpsertChatMessageOptions {
   /**
-   * Create the cache entry when the session has never been fetched.
+   * 会话从未被拉取过时是否创建缓存条目。
    *
-   * Send paths pass `true`: a brand-new session must render its first message
-   * before any fetch exists, and the send's own invalidate reconciles the
-   * placeholder page immediately after.
+   * 发送路径传 `true`：一个全新会话必须在任何 fetch 之前渲染出它的第一条消息，
+   * 且发送自己的失效会在之后立刻对账这个占位页。
    *
-   * WebSocket handlers pass `false` (the default). An event for a session this
-   * client has not opened must not fabricate a one-message history that a later
-   * reader would mistake for the whole transcript — the first real fetch owns
-   * that.
+   * WebSocket 处理器传 `false`（默认）。针对"本客户端没打开过的会话"的事件，
+   * 绝不能捏造一份一消息历史、让之后的读者误以为它就是完整会话记录——
+   * 首次真实拉取才拥有那份权利。
    */
   seedIfMissing?: boolean;
 }
 
 /**
- * Upsert one settled message into both message caches.
+ * 把一条已落定的消息 upsert 进两个消息缓存。
  *
- * Both are written because both are read: `chatKeys.messagesPage` backs the
- * chat surfaces, `chatKeys.messages` backs the Agent Builder. Writing one and
- * not the other is how they drift.
+ * 两个都要写，因为两个都会被读：`chatKeys.messagesPage` 支撑聊天界面，
+ * `chatKeys.messages` 支撑 Agent Builder。只写一个不写另一个，它们就会漂移。
+ * @param qc React Query 客户端。
+ * @param sessionId 会话 id。
+ * @param message 已落定的消息。
+ * @param options 是否在缓存缺失时播种（默认否）。
  */
 export function upsertChatMessageToCaches(
   qc: QueryClient,

@@ -1,3 +1,14 @@
+// markdown.go：把一段较长的回复正文切成多条钉钉 sampleMarkdown 消息的分片器，
+// 以及从正文第一条标题推导聊天列表预览（title）的小工具。
+//
+// 背景：钉钉的机器人发消息接口（oToMessages.batchSend / groupMessages.send）
+// 对 sampleMarkdown 正文硬性拒绝约 20000 字节以上的负载，而且超限会整条消息
+// 丢弃、连个错误都不给。所以 agent 的长回复必须先在这里切成小块再逐条发送，
+// 每条都控制在硬限制之下。
+//
+// 分片注意两件事：1) 限额按 UTF-8「字节」而非「字符」计，因为钉钉量的是编码后
+// 的载荷；2) 如果分片边界正好落在代码围栏（```）中间，要在前片末尾补上收尾围栏、
+// 在后片开头重新打开，保证每一片都是自洽的 markdown，而不是一半被渲染成坏块。
 package dingtalk
 
 import (
@@ -5,34 +16,25 @@ import (
 	"unicode/utf8"
 )
 
-// DingTalk's robot send APIs (oToMessages.batchSend / groupMessages.send) hard-
-// reject a sampleMarkdown body over ~20000 bytes and drop the whole message, so
-// we chunk well under that. The budget is measured in UTF-8 BYTES, not runes,
-// because the limit is on the encoded payload. A code fence open at a chunk
-// boundary is closed at the end of the chunk and reopened at the start of the
-// next, so neither half renders as broken markdown.
-
 const (
-	// markdownByteBudget bounds one chunk's body in UTF-8 bytes.
+	// markdownByteBudget 限制单片正文的字节数。选 16000 远低于钉钉约 20000 字节的
+	// 硬上限，给标题、围栏收尾等其它开销留出余量。
 	markdownByteBudget = 16000
-	// A split inside a code block appends "\n```" to make the emitted chunk
-	// self-contained. Keep this space out of the content budget so the final
-	// wire body, not just the pre-rendered slice, stays under the hard limit.
+	// 落在代码块中间切分时，会在片尾补上 "\n```" 让该片自含。这段合成开销不计入
+	// 内容预算，保证真正上线的整条负载（而不是预渲染时的切片）也在硬限制之内。
 	markdownSyntheticFenceCloseBytes = len("\n```")
 	markdownContentByteBudget        = markdownByteBudget - markdownSyntheticFenceCloseBytes
-	// A continuation repeats the opening fence line. Bound that synthetic
-	// prefix so an adversarially long info string cannot consume the entire
-	// piece budget (or make it negative) when the next code line is split.
+	// 续片要重复写一遍开头那行围栏。给这段合成前缀设上限，防止恶意超长 info 串
+	// 在切下一行代码时吃光整片预算（甚至算成负数）。
 	maxMarkdownFenceInfoBytes = 256
-	// defaultMarkdownTitle is the chat-list notification preview used when the
-	// body carries no leading heading. DingTalk shows the title only in the push
-	// preview, not in the message body.
+	// defaultMarkdownTitle 是正文没有前导标题时，聊天列表推送预览用的兜底文案。
+	// 钉钉只在推送预览里显示 title，正文里不出现。
 	defaultMarkdownTitle = "Multica has replied."
 )
 
-// markdownTitle derives the sampleMarkdown title (the notification preview) from
-// the body's first ATX heading, falling back to a default. The heading is left
-// in the body; only its leading hashes are stripped for the preview.
+// markdownTitle 从正文第一个 ATX 标题（# 开头行）推导 sampleMarkdown 的
+// title（通知预览），没有就落到默认文案。标题行本身仍保留在正文里，只去掉行首的
+// 井号用来做预览文字。
 func markdownTitle(body string) string {
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -49,11 +51,9 @@ func markdownTitle(body string) string {
 	return defaultMarkdownTitle
 }
 
-// chunkMarkdown splits body into pieces each at most markdownByteBudget bytes,
-// preferring line boundaries. A code fence (```) left open at a boundary is
-// closed at the end of the chunk and reopened at the start of the next so each
-// chunk is self-contained markdown. A single line longer than the budget is
-// hard-split on a byte boundary that respects UTF-8 rune edges.
+// chunkMarkdown 把 body 切成每片不超过 markdownByteBudget 字节的多条消息，优先
+// 在行边界切。若某片末尾代码围栏仍开着，就补收尾围栏、在下片开头重新打开，保证
+// 单片自含。比预算还长的单行，按 UTF-8 字符边界硬切（绝不从多字节字符中间下刀）。
 func chunkMarkdown(body string) []string {
 	if len(body) <= markdownByteBudget {
 		return []string{body}
@@ -63,10 +63,9 @@ func chunkMarkdown(body string) []string {
 		chunks    []string
 		cur       strings.Builder
 		fenceOpen bool
-		// fenceInfo is the opening fence line (e.g. "```go") of the currently open
-		// block, so a continuation chunk can reopen with the SAME info string.
-		// DingTalk highlights by that language tag; a bare "```" reopen renders the
-		// continuation unhighlighted.
+		// fenceInfo 是当前打开代码块的围栏行原文（如 "```go"），续片用它重开围栏
+		// 以保留同样的语言标注——钉钉按语言 tag 做高亮，续片若用裸 "```" 重开会
+		// 失去高亮。
 		fenceInfo string
 	)
 	flush := func(reopen bool) {
@@ -77,9 +76,8 @@ func chunkMarkdown(body string) []string {
 		if fenceOpen {
 			text += "\n```"
 		}
-		// Drop a chunk that carries only fence/blank lines — e.g. an opening fence
-		// stranded right before an oversized line, or a reopened fence with nothing
-		// after it — so it never renders as an empty code block.
+		// 丢弃只含围栏/空行的片——比如开围栏正好撞上超长行、或重开围栏后没有内容
+		// 的空片——避免渲染出一个空代码块。
 		if !isBlankChunk(text) {
 			chunks = append(chunks, text)
 		}
@@ -90,7 +88,7 @@ func chunkMarkdown(body string) []string {
 	}
 
 	for _, line := range splitKeepNewline(body) {
-		// A single oversized line cannot fit a chunk; hard-split it.
+		// 单行超预算装不进任何一片，直接硬切。
 		if len(line) > markdownContentByteBudget {
 			flush(true)
 			pieceBudget := markdownContentByteBudget
@@ -98,8 +96,7 @@ func chunkMarkdown(body string) []string {
 				pieceBudget = markdownByteBudget - len(fenceInfo) - len("\n") - len("\n```")
 			}
 			for _, piece := range hardSplit(line, pieceBudget) {
-				// A piece split out of an oversized line inside a code block must
-				// carry its own fences, or it would render as plain text.
+				// 从代码块内超长行硬切出来的片，必须自带完整围栏，否则会按纯文本渲染。
 				if fenceOpen {
 					piece = fenceInfo + "\n" + piece + "\n```"
 				}
@@ -133,9 +130,9 @@ func continuationFence(line string) string {
 	return fence
 }
 
-// splitKeepNewline splits s into lines, keeping the trailing "\n" on each line
-// so reassembly (strings.Join) is exact. SplitAfter yields a trailing "" when s
-// ends in "\n"; drop it so an exact-newline body does not gain a blank line.
+// splitKeepNewline 把 s 按行切开，但保留每行结尾的 "\n"，这样用 strings.Join
+// 重拼回去时字节完全一致。s 以 "\n" 结尾时 SplitAfter 会多产一个空串尾巴，
+// 这里把它去掉，避免「恰好以换行结尾」的正文被凭空多补一行空行。
 func splitKeepNewline(s string) []string {
 	lines := strings.SplitAfter(s, "\n")
 	if n := len(lines); n > 0 && lines[n-1] == "" {
@@ -144,15 +141,13 @@ func splitKeepNewline(s string) []string {
 	return lines
 }
 
-// isFenceLine reports whether a line opens or closes a fenced code block (its
-// first non-space content is ```).
+// isFenceLine 判断一行是不是围栏代码块的开关（去掉行首空格后以 ``` 开头）。
 func isFenceLine(line string) bool {
 	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
 }
 
-// isBlankChunk reports whether text carries no renderable content — every line
-// is blank or a fence marker. Such a chunk would render as an empty code block,
-// so the chunker drops it instead of sending it.
+// isBlankChunk 判断 text 是否没有任何可渲染内容——每一行都是空行或围栏标记。
+// 这样的片发出去只会渲染成一个空代码块，所以分片器直接丢弃而不发送。
 func isBlankChunk(text string) bool {
 	for _, line := range strings.Split(text, "\n") {
 		t := strings.TrimSpace(line)
@@ -163,11 +158,10 @@ func isBlankChunk(text string) bool {
 	return true
 }
 
-// hardSplit breaks s into byte-budget pieces without cutting a UTF-8 rune.
+// hardSplit 把 s 按字节预算切成多段，切点绝不落在 UTF-8 多字节字符中间。
 func hardSplit(s string, budget int) []string {
-	// All production callers provide a much larger budget. Keep this helper
-	// total anyway: a future synthetic prefix change must not turn a malformed
-	// budget into an infinite loop, negative slice, or split UTF-8 rune.
+	// 生产调用方给的预算都远大于此。这里仍保留下限，是为了让函数「总不会出错」：
+	// 将来若有人把合成前缀算成负预算，也不至于死循环、负切片或切开多字节字符。
 	if budget < utf8.UTFMax {
 		budget = utf8.UTFMax
 	}

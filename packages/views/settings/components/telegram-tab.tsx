@@ -1,3 +1,7 @@
+// 本文件包含两块：① 设置页「集成」里的 Telegram 频道面板（TelegramTab），列出
+// 已接入的机器人并支持管理员断开；② 供 agent 详情页复用的「绑定 Telegram 机器人」
+// 按钮与其已连接态展示（TelegramAgentBindButton 及两个配套小组件）。
+
 "use client";
 
 import { useState } from "react";
@@ -38,12 +42,12 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { openExternal } from "../../platform";
 import { useLocale, useT } from "../../i18n";
 
-// TelegramTab is the workspace settings panel for Telegram bot installations,
-// mirroring SlackTab: listing is member-visible; the disconnect action is
-// admin-only (backend-enforced; the UI hides the button to match). Adding a
-// new installation flows through the Agent detail page — the install path is
-// per-agent (one bot per agent, the (workspace_id, agent_id, channel_type)
-// UNIQUE in channel_installation).
+/**
+ * Telegram 频道设置面板，与 SlackTab 镜像：列表对所有成员可见；断开操作仅限管理员
+ * （后端强制校验，前端把按钮藏掉与之对齐）。新装机器人不在这里发起——装机器人的
+ * 路径在 agent 详情页、按 agent 走（每个 agent 一个机器人，(workspace_id, agent_id,
+ * channel_type) 构成 channel_installation 表的唯一约束）。
+ */
 export function TelegramTab() {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -69,8 +73,7 @@ export function TelegramTab() {
     if (!disconnectTarget || disconnecting) return;
     setDisconnecting(true);
     try {
-      // Await the server before touching cache/UI (repo rule: no optimistic
-      // removal on flows that confirm/destroy).
+      // 先等服务端返回再动缓存/界面（仓库规则：确认后销毁类的流程不做乐观删除）。
       await api.deleteTelegramInstallation(wsId, disconnectTarget);
       await qc.invalidateQueries({ queryKey: telegramKeys.installations(wsId) });
       toast.success(t(($) => $.telegram.toast_disconnected));
@@ -176,6 +179,8 @@ export function TelegramTab() {
   );
 }
 
+/** 单个已接入机器人的行：agent 头像 + 名称（可带 @机器人名与「已撤销」角标）、
+ *  接入时间；仅对「活跃且当前有管理权」的行显示断开按钮。 */
 function InstallationRow({
   installation,
   canManage,
@@ -231,8 +236,8 @@ function InstallationRow({
   );
 }
 
-// telegramDocsUrl points at the Telegram integration guide on the docs site,
-// localized like the Slack docs link.
+// telegramDocsUrl 指向文档站点的 Telegram 接入指南，前缀按界面语言本地化
+// （与 Slack 文档链接的做法一致）。
 function telegramDocsUrl(lang: string | undefined): string {
   const prefix = lang?.startsWith("zh")
     ? "/zh"
@@ -244,10 +249,13 @@ function telegramDocsUrl(lang: string | undefined): string {
   return `https://multica.ai/docs${prefix}/telegram-bot-integration`;
 }
 
-// TelegramAgentBindButton is the per-agent CTA on the agent detail page.
-// Telegram uses the paste-a-token model: the admin creates a bot with
-// @BotFather and pastes its token; the backend validates via getMe before
-// persisting. Visibility mirrors SlackAgentBindButton (owner/admin only).
+/**
+ * agent 详情页上的「绑定 Telegram 机器人」按钮（供 agent 页复用）。
+ * 采用「粘贴令牌」模型：管理员先用 @BotFather 建好机器人并把令牌粘进来，后端在
+ * 持久化前会通过 getMe 校验令牌。可见性与 SlackAgentBindButton 对齐（仅 owner/admin）。
+ * 若该 agent 已连接：有 onShowConnectedDetails 时渲染可点击的只读状态行，否则渲染
+ * 完整的「已连接」角标。
+ */
 export function TelegramAgentBindButton({
   agentId,
   agentName,
@@ -257,9 +265,8 @@ export function TelegramAgentBindButton({
   agentId: string;
   agentName?: string;
   className?: string;
-  /** Compact read-only connected row that invokes this instead of the full
-   * badge — the agent inspector passes a "jump to the Integrations tab"
-   * handler so management actions live in one place. */
+  /** agent 检查器会传一个「跳到集成设置页」的处理器，此时只渲染紧凑的只读已连接行、
+   *  把管理动作都收口在集成设置页一处。 */
   onShowConnectedDetails?: () => void;
 }) {
   const { t, i18n } = useT("settings");
@@ -318,8 +325,8 @@ export function TelegramAgentBindButton({
       if (!installation.id || installation.status !== "active") {
         throw new Error("Telegram connection returned an invalid installation");
       }
-      // The telegram_installation realtime event also refreshes this list, but
-      // invalidate explicitly so the connected badge appears immediately.
+      // telegram_installation 的实时事件也会刷新这个列表，但这里仍显式失效一次，
+      // 让「已连接」角标立刻出现、不依赖事件到达。
       await qc.invalidateQueries({ queryKey: telegramKeys.installations(wsId) });
       toast.success(t(($) => $.telegram.connect_success_toast));
       setDialogOpen(false);
@@ -389,7 +396,7 @@ export function TelegramAgentBindButton({
               type="password"
               value={botToken}
               onChange={(e) => setBotToken(e.target.value)}
-              // Telegram token shape: a format hint, not copy.
+              // 只是提示令牌格式的占位文案，不是可复制的真实示例（故对该行做了禁用检查）。
               // eslint-disable-next-line no-restricted-syntax
               placeholder="123456789:AA…"
               autoComplete="off"
@@ -424,8 +431,8 @@ export function TelegramAgentBindButton({
   );
 }
 
-// TelegramAgentBotStatusRow is the compact, read-only connected affordance the
-// agent inspector renders; it deep-links into the Integrations tab.
+// TelegramAgentBotStatusRow 是 agent 检查器渲染的紧凑只读「已连接」入口，
+// 点击跳到「集成」设置页里做管理。
 function TelegramAgentBotStatusRow({
   onClick,
   className,
@@ -451,8 +458,8 @@ function TelegramAgentBotStatusRow({
   );
 }
 
-// TelegramAgentBotConnectedBadge is the full "already connected" affordance:
-// status + Disconnect, then an "Open in Telegram" deep link to the bot.
+// TelegramAgentBotConnectedBadge 是完整的「已连接」展示：状态 + 断开按钮，
+// 外加一个打开机器人对话的「在 Telegram 中打开」链接。
 function TelegramAgentBotConnectedBadge({
   installation,
   className,

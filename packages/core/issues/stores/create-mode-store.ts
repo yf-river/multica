@@ -1,20 +1,20 @@
 "use client";
 
+// 记录用户上次使用的"创建议题"模式（手动创建 / Agent 创建），
+// 并据此决定全局 `c` 快捷键与各入口该打开哪个弹窗。
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { defaultStorage } from "../../platform/storage";
 import { useModalStore } from "../../modals";
 
 /**
- * Last create-issue mode the user landed on. Drives the global `c` shortcut
- * and the in-modal mode switch — pressing `c` opens whichever modal the user
- * used last, and the switch button in either modal updates this so the
- * preference sticks.
+ * 用户上次停留的"创建议题"模式。驱动全局 `c` 快捷键和弹窗内的模式切换——
+ * 按 `c` 打开的是用户上次用的那个弹窗；任一弹窗里的切换按钮会更新这里，
+ * 让偏好被记住。
  *
- * Workspace-agnostic on purpose: the user's mental preference for "how do I
- * file an issue" doesn't change per workspace, so this lives in plain
- * localStorage rather than the workspace-aware StateStorage that scopes
- * per-workspace stores like quick-create-store / draft-store.
+ * 刻意不做工作区隔离：用户对"我该用哪种方式提交议题"的心理偏好不会随工作区变化，
+ * 所以它存在普通 localStorage，而不是像 quick-create-store / draft-store 那样
+ * 用按工作区隔离的 StateStorage。
  */
 export type CreateMode = "agent" | "manual";
 
@@ -37,11 +37,10 @@ export const useCreateModeStore = create<CreateModeState>()(
 );
 
 /**
- * Open the create-issue flow in whichever mode the user landed on last.
- * Generic entry points (sidebar button, command palette, `c` shortcut) call
- * this so the persisted preference actually takes effect; entry points that
- * pre-seed manual-only fields (status, parent_issue_id) keep opening
- * "create-issue" directly because agent mode can't honour those seeds.
+ * 以"用户上次用过的模式"打开创建议题流程。通用入口（侧边栏按钮、命令面板、
+ * `c` 快捷键）都走这里，让持久化的偏好真正生效；而那些需要预填仅手工表单字段
+ * （状态、父议题 id）的入口仍直接打开"创建议题"，因为 Agent 模式无法承载这些预填。
+ * @param data 传给创建弹窗的初始数据。
  */
 export function openCreateIssueWithPreference(
   data?: Record<string, unknown> | null,

@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是检查器里的行内模型选择器（ModelDropdown 的轻量版）：同用 runtimeModelsOptions
+// 数据源，但渲染在 PropertyPicker 内、适配单个 PropRow。去掉了“先选运行环境”的态，
+// 因为检查器只在绑定运行环境后才渲染它。
+
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Cpu, Loader2, Plus } from "lucide-react";
@@ -14,17 +18,13 @@ import { CHIP_CLASS } from "./chip";
 import { useT } from "../../../i18n";
 
 /**
- * Inline model picker for the agent inspector. Lighter cousin of
- * `ModelDropdown` (which is used in the create-agent dialog) — same data
- * source via `runtimeModelsOptions`, but renders inside a PropertyPicker so
- * it fits a single PropRow. Drops the "select a runtime first" state because
- * the inspector only renders this picker after a runtime is bound.
+ * 检查器里的行内模型选择器。`ModelDropdown`（创建 Agent 弹窗用的）的轻量表亲——
+ * 数据同源（`runtimeModelsOptions`），但包在 PropertyPicker 里以放进单个 PropRow；
+ * 去掉了“先选运行环境”状态，因为检查器只在运行环境绑定后才渲染它。
  *
- * Providers whose runtime ignores per-agent model selection report
- * `supported=false` and render an inert italic "Managed by runtime" label
- * instead of a clickable picker. No built-in provider sets this today
- * (Antigravity gained `--model` in agy 1.0.6), but the branch stays for any
- * future model-less runtime.
+ * 不支持“按 Agent 选模型”的运行时（supported=false）不渲染可点选择器，
+ * 而是渲染一行斜体的“由运行时管理”。目前没有内置 provider 设此标记
+ * （Antigravity 在 agy 1.0.6 起支持 `--model`），但分支保留给未来无模型的运行时。
  */
 export function ModelPicker({
   runtimeId,
@@ -38,7 +38,7 @@ export function ModelPicker({
   runtimeId: string | null;
   runtimeOnline: boolean;
   value: string;
-  /** When false, render a static read-only display and skip the popover. */
+  /** false 时渲染静态只读展示，不弹层。 */
   canEdit?: boolean;
   variant?: "chip" | "field";
   showLabel?: boolean;
@@ -52,9 +52,8 @@ export function ModelPicker({
     runtimeModelsOptions(runtimeOnline ? runtimeId : null),
   );
   const supported = modelsQuery.data?.supported ?? true;
-  // Memoise the model list so every downstream useMemo gets a stable
-  // reference; `?? []` would mint a fresh array on every render and
-  // invalidate filters needlessly.
+  // 模型列表 memo 化，让下游每个 useMemo 拿到稳定引用；直接 `?? []` 会在每次
+  // 渲染都新建数组，白白让过滤逻辑失效重算。
   const models = useMemo(
     () => modelsQuery.data?.models ?? [],
     [modelsQuery.data],
@@ -215,18 +214,15 @@ export function ModelPicker({
             key={m.id}
             selected={m.id === value}
             onClick={() => void select(m.id)}
-            // Tooltip carries the canonical model id even when the chip
-            // shows the friendlier label, so users can always see what
-            // string actually ships to the agent.
+            // tooltip 总是携带规范模型 id——即使 chip 上显示的是更友好的 label——
+            // 这样用户永远能看清真正下发到 Agent 的是哪个字符串。
             tooltip={m.label !== m.id ? `${m.label} · ${m.id}` : m.id}
           >
-            {/* PickerItem wraps children in a flex `<span>`. Putting a
-                `<div>` inside that <span> is block-in-inline (invalid
-                HTML5) and triggers the browser-default centering quirk
-                that pushes descendants off-axis (model IDs floated to the
-                center instead of left-aligning under their labels). Use
-                `<span block text-left>` to keep layout deterministic —
-                matches the fix already applied in thinking-picker.tsx. */}
+            {/* PickerItem 会把子内容包在 flex `<span>` 里。塞 `<div>` 会变成
+                inline 里嵌 block（HTML5 非法），触发浏览器默认居中怪癖、把后代
+                推离轴（模型 id 会漂到中间而不是在 label 下方左对齐）。用
+                `<span block text-left>` 保证布局确定——与 thinking-picker.tsx
+                里已修过的一致。 */}
             <span className="block min-w-0 flex-1 text-left">
               <span className="block truncate text-label font-medium">{m.label}</span>
               {m.label !== m.id && (

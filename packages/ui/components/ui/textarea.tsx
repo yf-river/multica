@@ -2,6 +2,12 @@ import * as React from "react"
 
 import { cn } from "@multica/ui/lib/utils"
 
+// 本文件是多行文本框（Textarea）组件：与 Input 同族的标准外观与状态色，
+// 高度随内容自动伸缩（field-sizing-content）。
+
+/**
+ * Textarea：多行文本输入区。原生 textarea 属性全部透传。
+ */
 function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
   return (
     <textarea

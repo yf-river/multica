@@ -1,3 +1,7 @@
+// 文件职责：实现 `multica runtime` 命令组——列出工作区的 agent runtime（list）、
+// 查某 runtime 的 token 用量与每小时任务活跃度、改名（rename）、发起 CLI 更新
+// （update）、删除 runtime（delete）。runtime 的 profile 管理在
+// cmd_runtime_profile.go（`runtime profile ...`）。
 package main
 
 import (
@@ -15,6 +19,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// runtimeCmd 是 `multica runtime` 父命令，挂 list/usage/activity/update/rename/
+// delete 及 profile 子命令组。
 var runtimeCmd = &cobra.Command{
 	Use:   "runtime",
 	Short: "Work with agent runtimes",
@@ -26,6 +32,7 @@ var runtimeListCmd = &cobra.Command{
 	RunE:  runRuntimeList,
 }
 
+// runtimeUsageCmd 查某 runtime 近 N 天（默认 90）的每日 token 用量。
 var runtimeUsageCmd = &cobra.Command{
 	Use:   "usage <runtime-id>",
 	Short: "Get token usage for a runtime",
@@ -33,6 +40,7 @@ var runtimeUsageCmd = &cobra.Command{
 	RunE:  runRuntimeUsage,
 }
 
+// runtimeActivityCmd 查某 runtime 每小时的任务活跃数。
 var runtimeActivityCmd = &cobra.Command{
 	Use:   "activity <runtime-id>",
 	Short: "Get hourly task activity for a runtime",
@@ -40,6 +48,7 @@ var runtimeActivityCmd = &cobra.Command{
 	RunE:  runRuntimeActivity,
 }
 
+// runtimeUpdateCmd 让某 runtime 上的 CLI 更新到指定版本。
 var runtimeUpdateCmd = &cobra.Command{
 	Use:   "update <runtime-id>",
 	Short: "Initiate a CLI update on a runtime",
@@ -57,6 +66,7 @@ var runtimeRenameCmd = &cobra.Command{
 	RunE: runRuntimeRename,
 }
 
+// runtimeDeleteCmd 从工作区删除某 runtime。
 var runtimeDeleteCmd = &cobra.Command{
 	Use:   "delete <runtime-id>",
 	Short: "Delete a runtime from the workspace",
@@ -101,9 +111,10 @@ func init() {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime commands
+// Runtime commands —— 各 runtime 子命令的 RunE 实现
 // ---------------------------------------------------------------------------
 
+// runRuntimeList 执行 `runtime list`：拉取工作区 runtime 列表并按 --output 输出。
 func runRuntimeList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -139,6 +150,7 @@ func runRuntimeList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runRuntimeUsage 执行 `runtime usage <runtime-id>`：按日取 token 用量明细。
 func runRuntimeUsage(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -181,6 +193,7 @@ func runRuntimeUsage(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runRuntimeActivity 执行 `runtime activity <runtime-id>`：取每小时任务计数。
 func runRuntimeActivity(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -212,6 +225,9 @@ func runRuntimeActivity(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runRuntimeDelete 执行 `runtime delete <runtime-id>`：普通删除遇到「仍有活跃 agent
+// 绑定」（409）时给出引导；带 --cascade 则走解绑+删除端点（把期望的活跃 agent ID
+// 一起带过去，防止竞态删除后又被重绑的 agent）。
 func runRuntimeDelete(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -255,6 +271,8 @@ func runRuntimeDelete(cmd *cobra.Command, args []string) error {
 	return printRuntimeDeleteResult(cmd, result)
 }
 
+// runRuntimeRename 执行 `runtime rename <runtime-id> <name>`：设/清自定义显示名；
+// --machine 时把名字应用到同机所有 runtime。
 func runRuntimeRename(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -288,6 +306,9 @@ func runRuntimeRename(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runRuntimeUpdate 执行 `runtime update <runtime-id> --target-version <v>`：发起远端
+// runtime 的 CLI 更新。带 --wait 时每 2 秒轮询一次更新状态直到 completed/failed/
+// timeout 或整体超时。
 func runRuntimeUpdate(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -321,7 +342,7 @@ func runRuntimeUpdate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Poll until completed/failed/timeout.
+	// 轮询直到 completed/failed/timeout 或整体超时。
 	updateID := strVal(update, "id")
 	for {
 		select {
@@ -350,6 +371,8 @@ func runRuntimeUpdate(cmd *cobra.Command, args []string) error {
 	}
 }
 
+// runtimeDeleteConflictPayload 是删除 runtime 时 409 冲突响应体：列出仍绑定的活跃
+// agent，供报错与 cascade 请求用。
 type runtimeDeleteConflictPayload struct {
 	Code         string `json:"code"`
 	Error        string `json:"error"`
@@ -359,6 +382,8 @@ type runtimeDeleteConflictPayload struct {
 	} `json:"active_agents"`
 }
 
+// runtimeDeleteConflict 尝试把删除错误解成 runtime_has_active_agents 冲突；
+// 非 409、code 不匹配或没有活跃 agent 时返回 ok=false。
 func runtimeDeleteConflict(err error) (runtimeDeleteConflictPayload, bool) {
 	var httpErr *cli.HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict {
@@ -374,6 +399,7 @@ func runtimeDeleteConflict(err error) (runtimeDeleteConflictPayload, bool) {
 	return payload, true
 }
 
+// AgentIDs 返回冲突里活跃 agent 的 ID 列表（供 cascade 请求体使用）。
 func (p runtimeDeleteConflictPayload) AgentIDs() []string {
 	ids := make([]string, 0, len(p.ActiveAgents))
 	for _, agent := range p.ActiveAgents {
@@ -384,6 +410,7 @@ func (p runtimeDeleteConflictPayload) AgentIDs() []string {
 	return ids
 }
 
+// AgentDisplays 把活跃 agent 渲染成 "名字 (ID)" 形式的人类可读清单，供报错信息用。
 func (p runtimeDeleteConflictPayload) AgentDisplays() []string {
 	displays := make([]string, 0, len(p.ActiveAgents))
 	for _, agent := range p.ActiveAgents {
@@ -399,6 +426,9 @@ func (p runtimeDeleteConflictPayload) AgentDisplays() []string {
 	return displays
 }
 
+// printRuntimeDeleteResult 渲染删除结果：cascade 删除（带 agents_unbound）与普通
+// 删除各给不同提示；并对老版本 server 只返回 agents_archived 的响应做兼容（MUL-5559
+// 之前的镜像字段）。
 func printRuntimeDeleteResult(cmd *cobra.Command, result map[string]any) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
@@ -413,8 +443,7 @@ func printRuntimeDeleteResult(cmd *cobra.Command, result map[string]any) error {
 		fmt.Fprintln(os.Stderr, ".")
 		return nil
 	}
-	// Compatibility fallback for an older server that only returns the
-	// pre-MUL-5559 mirror.
+	// 老版本 server 只回 MUL-5559 之前的镜像字段，做个兼容回退。
 	if agentsArchived, ok := result["agents_archived"]; ok {
 		fmt.Fprintf(os.Stderr, "Runtime %s deleted; processed %v agent(s).\n", strVal(result, "id"), agentsArchived)
 		return nil

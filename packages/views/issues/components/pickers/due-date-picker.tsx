@@ -1,10 +1,18 @@
 "use client";
 
+// 本文件：DueDatePicker —— "截止日期"选择器。
+// 薄封装通用 DateOnlyPicker：改值即调 onUpdate({ due_date })，并对已过期日期
+// 高亮提示。支持受控/非受控两种用法（trigger 自带内容时按需惰性挂载浮层）。
+
 import { CalendarDays } from "lucide-react";
 import type { UpdateIssueRequest } from "@multica/core/types";
 import { DateOnlyPicker } from "../../../common/date-only-picker";
 import { useT } from "../../../i18n";
 
+/**
+ * 截止日期选择器：值变更 → `onUpdate({ due_date })`；`highlightOverdue`
+ * 让过期日期以警示色呈现。
+ */
 export function DueDatePicker({
   dueDate,
   onUpdate,
@@ -22,8 +30,7 @@ export function DueDatePicker({
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
   align?: "start" | "center" | "end";
-  /** Open the popover on first mount. Used by progressive-disclosure
-   *  sidebars so a newly-added field immediately enters edit state. */
+  /** 首次挂载即展开浮层。供"渐进式展示"的侧栏用——新加的字段立刻进入编辑态。 */
   defaultOpen?: boolean;
 }) {
   const { t } = useT("issues");

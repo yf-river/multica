@@ -26,11 +26,11 @@ import {
 import { resolveRouteIconName, type RouteIconName } from "@multica/core/paths";
 
 /**
- * Icon name → component registry: the rendering half of the route icon
- * contract defined in `@multica/core/paths`.
+ * 布局模块：路由图标名到图标组件的注册表。
+ * 是 `@multica/core/paths` 定义的路由图标契约的渲染半边。
  *
- * Every {@link RouteIconName} must have an entry — the `Record` type makes a
- * missing key a compile error.
+ * 每个 {@link RouteIconName} 都必须有对应条目——`Record` 类型让缺失的 key
+ * 直接变成编译错误。
  */
 export const ROUTE_ICON_COMPONENTS: Record<RouteIconName, LucideIcon> = {
   Inbox,
@@ -58,16 +58,15 @@ export const ROUTE_ICON_COMPONENTS: Record<RouteIconName, LucideIcon> = {
 };
 
 /**
- * Resolve the icon component for a workspace-scoped path or resource URL.
+ * 根据工作区作用域路径或资源 URL 解析出图标组件。
  *
- * This is the only entry point navigation surfaces should use: it takes the
- * path they already have rather than an icon name, so no caller has to hold,
- * persist, or cast an icon name. `resolveRouteIconName` always returns a
- * valid name and the registry is total, so the result is never undefined — an
- * unknown route falls back to the default icon instead of rendering nothing.
+ * 这是导航界面唯一应该使用的入口：它接收它们已有的路径而不是图标名，
+ * 所以调用方无需持有、持久化或强转图标名。`resolveRouteIconName` 总返回
+ * 一个有效名字，注册表也是完整的，因此结果永远不会是 undefined——未知
+ * 路由会退回默认图标，而不是什么都不渲染。
  *
- * Navigation surfaces call this for their page-level icon, so a route has one
- * fallback icon everywhere.
+ * 导航界面用它来取页面级图标，所以一条路由在任何地方都只有同一个兜底图标。
+ * @param path 工作区作用域路径或资源 URL。
  */
 export function routeIconForPath(path: string): LucideIcon {
   return ROUTE_ICON_COMPONENTS[resolveRouteIconName(path)];

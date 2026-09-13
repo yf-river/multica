@@ -1,22 +1,18 @@
-/**
- * Registry of workspace navigation *pages* and their icons.
- *
- * A "page" here is a collection or tool surface that has no specific resource
- * of its own — Issues, Projects, Settings, etc. Its icon is a stable, static
- * choice keyed by the URL route segment (`/{slug}/{segment}/...`).
- *
- * This is the source of truth the sidebar nav uses (via `resolveRouteIconName`
- * / `routeIconForPath`). Resource navigation uses the same registry for its
- * page-level fallback.
- *
- * Icon values are *names*, not React components, so this module stays
- * React-free and safe inside `@multica/core`. The name → component registry
- * lives in `packages/views/layout/route-icon-components.tsx`; its
- * `Record<RouteIconName, LucideIcon>` type makes a missing component a compile
- * error.
- */
+// 本文件提供路由图标的登记：每个工作区「页面」（集合/工具型界面）对应的
+// 静态图标，以及「路径 → 图标名」的解析。
+//
+// 这里的「页面」指没有具体资源实例的集合或工具界面——Issues、Projects、
+// Settings 等。它的图标是按 URL 路由段（`/{slug}/{segment}/...`）选取的稳定
+// 静态选择。
+//
+// 这是侧边栏导航的真源（经 `resolveRouteIconName` / `routeIconForPath`）。
+// 资源型导航也用同一登记做「页面级兜底」。
+//
+// 图标值是「名字」而不是 React 组件，让本模块保持无 React、在 `@multica/core`
+// 里安全。名字 → 组件的注册表在 `packages/views/layout/route-icon-components.tsx`；
+// 它的 `Record<RouteIconName, LucideIcon>` 类型让「缺组件」成为编译错误。
 
-/** Every icon name a nav page or resource type can resolve to. */
+/** 导航页或资源类型能解析到的全部图标名。 */
 export type RouteIconName =
   | "Inbox"
   | "MessageSquare"
@@ -41,7 +37,7 @@ export type RouteIconName =
   | "FileVideo"
   | "FileQuestion";
 
-/** i18n label key (under the `layout.nav` namespace) for a page. */
+/** 页面的 i18n 文案 key（在 `layout.nav` 命名空间下）。 */
 export type NavLabelKey =
   | "inbox"
   | "chat"
@@ -58,7 +54,7 @@ export type NavLabelKey =
   | "settings"
   | "life";
 
-/** Stable identifier for each workspace navigation page. */
+/** 每个工作区导航页的稳定标识。 */
 export type WorkspacePageKey =
   | "inbox"
   | "chat"
@@ -75,18 +71,18 @@ export type WorkspacePageKey =
   | "settings"
   | "life";
 
+/** 一个工作区导航页的注册条目。 */
 export interface WorkspacePage {
-  /** Route segment at index 1 of `/{slug}/{segment}/...`. */
+  /** `/{slug}/{segment}/...` 里下标 1 的路由段。 */
   segment: string;
-  /** Static page icon. */
+  /** 静态页面图标。 */
   icon: RouteIconName;
-  /** `layout.nav.<navKey>` — the localized page name. */
+  /** `layout.nav.<navKey>` —— 本地化的页面名。 */
   navKey: NavLabelKey;
 }
 
 /**
- * Single source of truth for workspace nav pages. Keep aligned with the nav
- * destinations in paths.ts and the sidebar nav groups.
+ * 工作区导航页的唯一真源。保持与 paths.ts 里的导航目标和侧边栏导航分组对齐。
  */
 export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
   inbox: { segment: "inbox", icon: "Inbox", navKey: "inbox" },
@@ -105,7 +101,7 @@ export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
   life: { segment: "life", icon: "Heart", navKey: "life" },
 };
 
-/** Reverse lookup: route segment → page key. */
+/** 反向查找：路由段 → 页面 key。 */
 const PAGE_BY_SEGMENT: Record<string, WorkspacePageKey> = Object.fromEntries(
   (Object.keys(WORKSPACE_PAGES) as WorkspacePageKey[]).map((key) => [
     WORKSPACE_PAGES[key].segment,
@@ -113,24 +109,25 @@ const PAGE_BY_SEGMENT: Record<string, WorkspacePageKey> = Object.fromEntries(
   ]),
 );
 
-/** The page whose route segment is `segment`, or null if none matches. */
+/** 返回路由段对应的页面 key；没有匹配返回 null。 */
 export function pageForSegment(segment: string): WorkspacePageKey | null {
   return PAGE_BY_SEGMENT[segment] ?? null;
 }
 
-/** Fallback icon name used when a path's route segment has no explicit page. */
+/** 路径的路由段没有显式页面时用的兜底图标名。 */
 export const DEFAULT_ROUTE_ICON_NAME: RouteIconName = "ListTodo";
 
 /**
- * Resolve the *page* icon name for a workspace-scoped path or full tab URL.
+ * 解析工作区范围路径（或完整标签页 URL）的「页面级」图标名。
  *
- * Nav and page paths are `/{slug}/{segment}/...`, so the route segment lives
- * at index 1; any search/hash suffix is ignored. Sub-routes keep the parent
- * page's icon. Returns {@link DEFAULT_ROUTE_ICON_NAME} for unknown or
- * too-short paths, so the result is always a renderable name.
+ * 导航页路径是 `/{slug}/{segment}/...`，路由段在下标 1；忽略任何 search/hash
+ * 后缀。子路由沿用父页面的图标。未知或过短的路径返回
+ * {@link DEFAULT_ROUTE_ICON_NAME}，保证结果总是可渲染的图标名。
  *
- * This is the sidebar/nav entry point. Resource detail routes use the richer
- * presentation resolver instead.
+ * 这是侧边栏/导航的入口。资源详情路由请用更丰富的展示解析器。
+ *
+ * @param path - 工作区范围路径或完整 URL
+ * @returns 图标名
  */
 export function resolveRouteIconName(path: string): RouteIconName {
   const pathname = path.split(/[?#]/)[0] ?? "";

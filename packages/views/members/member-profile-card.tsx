@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * members 模块：成员资料卡片。
+ * 展示成员的姓名、邮箱、角色徽标与头像，以及该成员拥有的 agents 列表
+ * （按近 30 天运行次数排序）。供引用成员的界面（如悬停卡、指派区）内嵌展示。
+ */
+
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, MemberRole } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core";
@@ -13,18 +19,18 @@ import { ActorAvatar } from "../common/actor-avatar";
 import { AppLink } from "../navigation";
 import { useT } from "../i18n";
 
+/** 成员资料卡组件的属性。 */
 interface MemberProfileCardProps {
-  // The User UUID — matches member.user_id and agent.owner_id. We accept user_id
-  // (not member.id) because every existing call site passes user_id (assignee_id,
-  // commenter_id, owner_id are all User UUIDs in the polymorphic actor model).
+  // 用户的 UUID——与 member.user_id、agent.owner_id 对应。接收 user_id
+  // （而非 member.id），是因为每个现有调用点传的都是 user_id（指派者、评论
+  // 者、owner 在多态 actor 模型里都是 User UUID）。
   userId: string;
 }
 
-// Mirrors AgentProfileCard's structure so the two hover surfaces feel like
-// twins ("agent and human are both first-class team members"). Content is
-// asymmetric on purpose: humans get identity + the AI agents they own; they
-// don't get a status dot because there's no member-presence backbone today
-// and we don't want to fabricate one.
+// 对齐 AgentProfileCard 的结构，让两个悬停面看起来像一对（「agent 和人类成员
+// 都是平级团队成员」）。内容刻意不对称：人类成员展示身份 + 他们拥有的 AI
+// agents；没有状态点，因为今天还没有成员在线状态（member-presence）骨架，
+// 我们也不打算臆造一个。
 export function MemberProfileCard({ userId }: MemberProfileCardProps) {
   const { t } = useT("members");
   const wsId = useWorkspaceId();
@@ -61,9 +67,9 @@ export function MemberProfileCard({ userId }: MemberProfileCardProps) {
     .toUpperCase()
     .slice(0, 2);
 
-  // Sort owned agents by 30-day run count (most-used first); break ties on
-  // name for a stable order. Run counts come from the same workspace-wide
-  // query that powers the Agents-list RUNS column — no extra fetch.
+  // 按 30 天运行次数给拥有的 agents 排序（最常用的在前）；次数相同按名称，
+  // 保证顺序稳定。运行次数来自驱动 Agents 列表 RUNS 列的同一个工作区级查询
+  // ——不额外发请求。
   const runCountById = new Map(runCounts.map((r) => [r.agent_id, r.run_count]));
   const ownedAgents = agents
     .filter((a) => a.owner_id === userId && !a.archived_at)
@@ -102,6 +108,7 @@ export function MemberProfileCard({ userId }: MemberProfileCardProps) {
   );
 }
 
+/** 成员角色的彩色文字徽标（owner/admin/member）。 */
 function RoleBadge({ role }: { role: MemberRole }) {
   const { t } = useT("members");
   return (
@@ -115,14 +122,14 @@ function RoleBadge({ role }: { role: MemberRole }) {
   );
 }
 
+/** 该成员拥有的 agents 区块：至多展示前 2 个，每行链接到 agent 详情页。 */
 function OwnedAgentsSection({ agents }: { agents: Agent[] }) {
   const { t } = useT("members");
-  // Top-2 by frequency (parent already sorted), each row links to the agent
-  // detail page. The presence dot is overlaid on the avatar via ActorAvatar's
-  // showStatusDot — `enableHoverCard` deliberately omitted to avoid
-  // popover-in-popover nesting; the click-through covers "want to know more".
-  // AppLink uses the platform navigation adapter so this works on web (Next
-  // router) and desktop (react-router-dom) without per-app branching.
+  // 按频率取前 2（父级已排序），每行都链到 agent 详情页。在线状态点经
+  // ActorAvatar 的 showStatusDot 叠在头像上——刻意不传 `enableHoverCard`，
+  // 避免 popover 套 popover 的嵌套；点进去就够满足「想了解更多」。AppLink
+  // 使用平台导航适配器，因此在 Web（Next 路由）与桌面（react-router-dom）上
+  // 无需按应用分叉。
   const p = useWorkspacePaths();
   const visible = agents.slice(0, 2);
   const overflow = agents.length - visible.length;

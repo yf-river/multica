@@ -1,3 +1,7 @@
+// 本文件实现 CoreProvider：把 core 的各类单例（API、auth、chat、持久化存储、
+// 实时 WS）在首帧初始化，并组装 Provider 树（Query → Auth → 用量上报 → WS →
+// i18n）。
+
 "use client";
 
 import { useEffect, useMemo } from "react";
@@ -17,11 +21,13 @@ import type { StorageAdapter } from "../types/storage";
 import { ClientUsageReporter } from "../client-usage";
 import { configureShortcutPlatform } from "../shortcuts/platform";
 
-// Module-level singletons — created once at first render, never recreated.
-// Vite HMR preserves module-level state, so these survive hot reloads.
+// 模块级单例——首次渲染时创建一次，绝不重建。
+// Vite HMR 保留模块级状态，所以它们能扛过热重载。
 let initialized = false;
 let authStore: ReturnType<typeof createAuthStore>;
 let chatStore: ReturnType<typeof createChatStore>;
+
+/** 只执行一次的 core 单例初始化。 */
 function initCore(
   apiBaseUrl: string,
   storage: StorageAdapter,
@@ -50,15 +56,14 @@ function initCore(
   setApiInstance(api);
   setSchemaLogger(createLogger("api-schema"));
 
-  // In token mode, hydrate token from storage.
+  // token 模式下从存储里水合 token。
   if (!cookieAuth) {
     const token = storage.getItem("multica_token");
     if (token) api.setToken(token);
   }
-  // Workspace identity is URL-driven: the [workspaceSlug] layout resolves
-  // the slug and calls setCurrentWorkspace(slug, wsId) on mount. The api
-  // client reads the slug from that singleton for the X-Workspace-Slug
-  // header. No boot-time hydration from storage is required.
+  // 工作区身份由 URL 驱动：[workspaceSlug] layout 解析 slug，并在挂载时调
+  // setCurrentWorkspace(slug, wsId)。API 客户端从那个单例读 slug 以生成
+  // X-Workspace-Slug 头。无需启动时从存储水合。
 
   authStore = createAuthStore({ api, storage, onLogin, onLogout, cookieAuth });
   registerAuthStore(authStore);
@@ -69,6 +74,7 @@ function initCore(
   initialized = true;
 }
 
+/** CoreProvider：初始化单例并组装 core 的 Provider 树。 */
 export function CoreProvider({
   children,
   apiBaseUrl = "",
@@ -81,18 +87,18 @@ export function CoreProvider({
   locale,
   resources,
 }: CoreProviderProps) {
-  // Initialize singletons on first render only. Dependencies are read-once:
-  // apiBaseUrl, storage, and callbacks are set at app boot and never change at runtime.
+  // 只在首次渲染时初始化单例。依赖只读一次：apiBaseUrl、storage 与回调在应用
+  // 启动时设定，运行期不变。
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useMemo(() => initCore(apiBaseUrl, storage, onLogin, onLogout, cookieAuth, identity), []);
 
-  // Client-only freeze watchdog. No-op on the server and idempotent.
+  // 仅客户端运行的卡死看门狗。服务端空操作、幂等。
   useEffect(() => {
     installFreezeWatchdog();
   }, []);
 
-  // I18nProvider wraps everything else: server and client must use the same
-  // Chinese resources to avoid hydration mismatch.
+  // I18nProvider 包住其余所有：服务端与客户端必须用同一份中文资源，避免
+  // hydration 不一致。
   const tree = (
     <QueryProvider>
       <AuthInitializer

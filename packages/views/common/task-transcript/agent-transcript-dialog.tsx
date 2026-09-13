@@ -1,3 +1,9 @@
+// 任务执行实录（transcript）主弹窗：把一次智能体运行完整地展现在一个可滚动的
+// 四层界面上——发生了什么（头部）、产出了什么（结果行）、时间花在哪（时间线）、
+// 以及证据（步骤列表）。任意时刻只有一层被展开：步骤检查器按需打开，而不是在读者
+// 还没问任何问题之前就把界面劈成两半。支持实时任务追尾、倒序/正序、按工具过滤、
+// 站内搜索、步骤详情与图片结果展示。
+
 "use client";
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, forwardRef } from "react";
@@ -104,10 +110,9 @@ import {
 import "../../editor/styles/code.css";
 import "./task-transcript.css";
 
-// The run surface, read in four layers: what happened (header), what it
-// produced (outcome), where the time went (timeline), and the evidence (steps).
-// Only one layer is expanded at a time — the inspector opens on demand rather
-// than splitting the surface in two before the reader has asked anything.
+// 运行界面按四层阅读：发生了什么（头部）、产出了什么（结果）、时间花在哪
+// （时间线）、证据（步骤）。同一时刻只展开一层——检查器按需打开，而不是在读者
+// 还没问任何问题前就把界面劈成两半。
 
 interface AgentTranscriptDialogProps {
   open: boolean;
@@ -117,21 +122,22 @@ interface AgentTranscriptDialogProps {
   agentName: string;
   isLive?: boolean;
   /**
-   * Optional content rendered between the header chips and the event list.
-   * Used by autopilot run rows to surface the inbound webhook trigger
-   * payload so it's visible regardless of whether the agent echoes it.
-   * The dialog stays generic — slot content is the caller's concern.
+   * 渲染在头部 chip 与事件列表之间的可选内容。autopilot 运行行用来把入站的
+   * webhook 触发载荷摆出来，让它在智能体是否复述都可见。弹窗保持通用——
+   * 插槽内容由调用方负责。
    */
   headerSlot?: React.ReactNode;
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── 辅助函数 ──────────────────────────────────────────────────────────────
 
+// 两个 ISO 时间之间的时长，格式化成人读文本（头部与行上列用）。
 function formatDuration(start: string, end: string): string {
   const ms = new Date(end).getTime() - new Date(start).getTime();
   return formatElapsedMs(ms);
 }
 
+// 毫秒数格式化成 "Xs" / "Xm Ys" 的人读文本。
 function formatElapsedMs(ms: number): string {
   const seconds = Math.floor(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -140,7 +146,7 @@ function formatElapsedMs(ms: number): string {
   return `${minutes}m ${secs}s`;
 }
 
-/** A step's own duration, in the compact form the right column carries. */
+/** 单步自身的时长，用右列那种紧凑格式显示（秒带一位小数，分带补零秒）。 */
 function formatStepDuration(ms: number): string {
   if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
@@ -149,7 +155,7 @@ function formatStepDuration(ms: number): string {
   return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
 }
 
-/** Offset from the run's start, which is what a step's position means. */
+/** 距运行起点的偏移，即一个步骤"位置"的含义。 */
 function formatOffset(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -175,18 +181,21 @@ function timeMs(iso: string | undefined): number | undefined {
   return Number.isFinite(ms) ? ms : undefined;
 }
 
+// 单步的过滤键：调用按其工具名（带 "tool:" 前缀以区分同名不同类），其余按其
+// kind。
 function stepFilterKey(step: TraceStep): TranscriptFilterKey {
   return step.kind === "call" ? `tool:${step.tool}` : step.kind;
 }
 
-/** Lowercased haystack for the in-run search. Outputs are clipped: a match
- *  past 4KB of command output is not one anybody is scanning for. */
+/** 站内搜索用的小写 haystack。输出被裁剪：命令输出 4KB 之后的内容不可能是
+ *  任何人想搜的目标。 */
 function stepHaystack(step: TraceStep): string {
   if (step.kind !== "call") return (step.item.content ?? "").toLowerCase();
   const input = step.call?.input ? JSON.stringify(step.call.input) : "";
   return `${step.tool} ${input} ${(step.result?.output ?? "").slice(0, 4000)}`.toLowerCase();
 }
 
+// 按步骤类型挑图标：思考用大脑、错误用告警三角、文本用机器人。
 function StepIcon({ step, className }: { step: TraceStep; className?: string }) {
   if (!isCallStep(step)) {
     if (step.kind === "thinking") return <Brain className={className} />;
@@ -194,7 +203,8 @@ function StepIcon({ step, className }: { step: TraceStep; className?: string }) 
     return <Bot className={className} />;
   }
 
-  // Tool names differ per provider, so the input's shape picks the glyph.
+  // 工具名因 provider 而异，所以图标由入参的形状决定：命令→终端，写文件→笔，
+  // 查询/正则→放大镜，路径→文件，其余→扳手。
   const input = step.call?.input;
   if (input) {
     if (typeof input.command === "string") return <Terminal className={className} />;
@@ -208,9 +218,8 @@ function StepIcon({ step, className }: { step: TraceStep; className?: string }) 
   return <Wrench className={className} />;
 }
 
-// ─── Run detail row (ⓘ popover) ─────────────────────────────────────────────
-// One labeled fact in the diagnostic popover. When `onCopy` is given the whole
-// row is a copy button (used for the workdir path).
+// ─── 运行详情行（ⓘ 弹层） ─────────────────────────────────────────────────
+// 诊断弹层里的一行带标签事实。给 `onCopy` 时整行都是复制按钮（工作目录路径用）。
 function RunDetailRow({
   label,
   value,
@@ -255,11 +264,11 @@ function RunDetailRow({
   );
 }
 
-// ─── Main dialog ────────────────────────────────────────────────────────────
+// ─── 主弹窗 ────────────────────────────────────────────────────────────────
 
-// Virtuoso mounts rows as direct children of its List element; carry the
-// divider styling the plain list container used to provide. Defined at module
-// scope — an inline `components` object would remount the list every render.
+// Virtuoso 把行作为其 List 元素的直接子元素挂载；这里由我们自己提供分隔线样式
+// （原先是列表容器带的）。定义在模块作用域——若把 `components` 对象写成内联的，
+// 每次渲染都会重挂整个列表。
 const VirtuosoList = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   function VirtuosoList(props, ref) {
     return <div ref={ref} {...props} className="divide-y" />;
@@ -268,6 +277,8 @@ const VirtuosoList = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElem
 const LIST_COMPONENTS: Components<TraceRow> = { List: VirtuosoList };
 const COPY_FEEDBACK_DURATION_MS = 2000;
 
+// 复制反馈 Hook：复制动作后把"已复制 ✓"状态点亮约 2 秒再熄灭。卸载后不再动
+// state，避免在异步回调里对已卸载组件 setState。
 function useCopyFeedback() {
   const [copied, setCopied] = useState(false);
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -297,6 +308,19 @@ function useCopyFeedback() {
   return [copied, showCopied] as const;
 }
 
+/**
+ * 任务执行实录弹窗：展示一次运行的完整过程。头部给出结果状态/身份/耗时/成本；
+ * 结果行概括"它碰了哪些文件、跑了几条命令"；可选时间线画出时间去向；主区是按
+ * 时间排列的步骤列表，支持工具过滤、站内搜索、倒序/正序，点行在右侧检查器展开
+ * 该步的输入与结果。实时任务会随新事件增长（最新在前时自动钉在最新行）。
+ * @param open 是否打开。
+ * @param onOpenChange 开关回调。
+ * @param task 智能体任务。
+ * @param items 时间线条目。
+ * @param agentName 智能体名称。
+ * @param isLive 任务是否实时进行中。
+ * @param headerSlot 事件列表上方的可选插槽内容。
+ */
 export function AgentTranscriptDialog({
   open,
   onOpenChange,
@@ -323,25 +347,27 @@ export function AgentTranscriptDialog({
   );
   const sortDirection = useTranscriptViewStore((s) => s.sortDirection);
   const setSortDirection = useTranscriptViewStore((s) => s.setSortDirection);
-  // Filters always persist across opens — a facet a run doesn't have simply
-  // no-ops (see activeFilterKeys), so there is no reason to make persistence a
-  // user-facing toggle.
+  // 过滤条件总是跨打开保留——运行没有的面就空操作（见 activeFilterKeys），
+  // 所以没必要把它做成可开关的"持久化"选项。
   const selectedFilterKeys = useTranscriptViewStore((s) => s.selectedFilterKeys);
   const toggleFilterKey = useTranscriptViewStore((s) => s.toggleFilterKey);
   const clearFilters = useTranscriptViewStore((s) => s.clearFilterKeys);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  // Newest-first live follow (#5921): all latch decisions live in the pure
-  // controller (see transcript-follow.ts for the model); this component only
-  // wires DOM events to it. A stable instance, never re-rendered by scroll
-  // traffic.
+  // 最新在前实时跟随（#5921）：所有锁存决策都在纯控制器里（模型见
+  // transcript-follow.ts）；本组件只负责把 DOM 事件接给它。实例稳定，
+  // 绝不被滚动流量重新渲染。
   const followCtl = useMemo(() => createLiveEndFollow(), []);
   const detachScrollerRef = useRef<(() => void) | null>(null);
 
+  // Virtuoso 回调 scrollerRef 时，把跟随状态机接到滚动元素的各类事件上：
+  // 滚轮/触屏/键盘是"输入"，滚动事件本身做"归因与钉回判定"。返回清理函数。
   const handleScrollerRef = useCallback(
     (el: HTMLElement | Window | null) => {
       detachScrollerRef.current?.();
       detachScrollerRef.current = null;
       if (!(el instanceof HTMLElement)) return;
+      // 输入先暂存给状态机，下一帧再清掉没被滚动确认的部分（见 transcript-follow
+      // 的 input/endInputFrame 契约）。
       let inputFrame: number | null = null;
       const stageInput = (delta: number) => {
         followCtl.input(delta);
@@ -351,11 +377,13 @@ export function AgentTranscriptDialog({
           followCtl.endInputFrame();
         });
       };
+      // 滚轮事件：把 deltaMode 统一换算成像素（行→行高基准，页→滚动区高度）。
       const onWheel = (e: WheelEvent) => {
         const scale =
           e.deltaMode === 1 ? LINE_SCROLL_PX : e.deltaMode === 2 ? el.clientHeight : 1;
         stageInput(e.deltaY * scale);
       };
+      // 触屏：跟踪单指竖直位移作为滚动输入。多指手势只认第一根手指。
       let touchId: number | null = null;
       let lastTouchY: number | null = null;
       const trackedTouch = (touches: TouchList) =>
@@ -371,7 +399,7 @@ export function AgentTranscriptDialog({
       const onTouchMove = (e: TouchEvent) => {
         const touch = trackedTouch(e.touches);
         if (!touch) return;
-        // Finger moving up scrolls the content down (away from the live end).
+        // 手指上滑让内容向下滚（远离实时末端），传给状态机的是反向的 Y 位移。
         if (lastTouchY !== null) stageInput(lastTouchY - touch.clientY);
         lastTouchY = touch.clientY;
       };
@@ -381,21 +409,20 @@ export function AgentTranscriptDialog({
         lastTouchY = null;
         followCtl.touchEnd();
       };
+      // 键盘滚动：只有焦点就在滚动元素本身时才算滚动意图；行内控件冒泡上来的
+      // Space/方向键不算。
       const onKeyDown = (e: KeyboardEvent) => {
-        // Only keys aimed at the scroller itself; Space/arrows bubbling from
-        // row controls are not scroll intent.
         if (e.target !== el) return;
         if (e.key === "ArrowDown") stageInput(LINE_SCROLL_PX);
         else if (e.key === "ArrowUp") stageInput(-LINE_SCROLL_PX);
         else if (e.key === "PageDown") stageInput(el.clientHeight);
-        // Shift+Space pages up — toward this list's live end.
+        // Shift+Space 向上翻页——朝本列表的实时末端方向。
         else if (e.key === " ") stageInput(e.shiftKey ? -el.clientHeight : el.clientHeight);
         else if (e.key === "PageUp") stageInput(-el.clientHeight);
         else if (e.key === "End") followCtl.disengage();
       };
-      // Scrollbar drags hit the scroller element itself; clicks on row
-      // content hit children (tracked too — enforcement must not fight text
-      // selection autoscroll while the button is held).
+      // 滚动条拖动会落在滚动元素自身；点行内容则落在子元素（也要跟踪——按住期间
+      // 的强制回钉不能和选中文本的自动滚动打架）。
       const onPointerDown = (e: MouseEvent) => {
         followCtl.pointerDown(e.target === el);
       };
@@ -403,12 +430,10 @@ export function AgentTranscriptDialog({
         followCtl.pointerUp();
       };
       const onScroll = () => {
-        // Enforce the follow here, on the scroll event itself: Virtuoso's
-        // prepend compensation lands after React effects, so an effect-timed
-        // snap alone stays one flush behind. NOTE: this direct write staying
-        // ahead of Virtuoso's own state relies on react-virtuoso registering
-        // its scroll listener after calling scrollerRef (true in 4.18.7); if
-        // that inverts, route the write through virtuosoRef.scrollTo instead.
+        // 就在滚动事件上执行跟随：Virtuoso 的前置补偿落在 React effects 之后，
+        // 因此只在 effect 里钉会慢一拍。注意：这段直接写 scrollTop 要抢在
+        // Virtuoso 自身状态之前，依赖 react-virtuoso 在调用 scrollerRef 之后才
+        // 注册滚动监听（4.18.7 如此）；若顺序反转，需改走 virtuosoRef.scrollTo。
         if (followCtl.onScroll(el.scrollTop)) el.scrollTop = 0;
       };
       el.addEventListener("wheel", onWheel, { passive: true });
@@ -432,8 +457,8 @@ export function AgentTranscriptDialog({
         el.removeEventListener("mousedown", onPointerDown);
         window.removeEventListener("mouseup", onPointerUp, { capture: true });
         el.removeEventListener("scroll", onScroll);
-        // The scroller can detach mid-drag (listEpoch remount); a stuck
-        // held-mouse flag would suppress enforcement forever.
+        // 滚动区可能在拖动中途脱离（listEpoch 重挂载）；卡住的"按住鼠标"标记
+        // 会永久压制强制回钉，所以清理时补发松开。
         followCtl.pointerUp();
         followCtl.touchEnd();
       };
@@ -443,23 +468,20 @@ export function AgentTranscriptDialog({
 
   useEffect(() => () => detachScrollerRef.current?.(), []);
 
-  // A different run is a different reading position: drop the selection and
-  // any group the reader had opened.
+  // 换了运行就换了阅读位置：清掉选中的步骤与读者打开过的任何组。
   useEffect(() => {
     setSelectedSeq(null);
     setExpandedGroups(new Set());
   }, [task.id]);
 
-  // ── Derived model ────────────────────────────────────────────────────────
+  // ── 派生模型 ────────────────────────────────────────────────────────────
 
-  // One step per tool call, with its result folded in — see build-steps.ts for
-  // why the pairing is positional.
+  // 每次工具调用一个步骤，其结果折叠在步内——为何按位置配对见 build-steps.ts。
   const steps = useMemo(() => buildSteps(items), [items]);
 
-  // A facet reads as what its rows look like: the glyph the rows carry, and the
-  // name the rows print. The first step of a kind stands in for the glyph. The
-  // `tool:` prefix stays in the key (it is what gets persisted) but never
-  // reaches the menu — the rows say `Bash`, so the facet says `Bash` too.
+  // 一个筛选面读起来就像它的行：行带的字形与行印的名字。每种类型的第一步骤
+  // 充当字形。"tool:" 前缀留在键里（它是被持久化的内容），但绝不进入菜单——
+  // 行上写的是 `Bash`，筛选面也就写 `Bash`。
   const filterOptions = useMemo(() => {
     const options = new Map<string, { label: string; step: TraceStep }>();
     for (const step of steps) {
@@ -499,12 +521,12 @@ export function AgentTranscriptDialog({
     });
   }, [steps, activeFilterSet, trimmedQuery]);
 
-  // Grouping runs on what the reader is looking at: filtering breaks adjacency,
-  // and a group that spans a hidden step would be a lie about what ran.
+  // 分组建立在读者正在看的东西上：过滤会打断相邻关系，横跨被藏步骤的组等于在
+  // 撒谎说"这些是连着跑的"。
   const rows = useMemo(() => groupSteps(filteredSteps), [filteredSteps]);
 
-  // Apply user-chosen sort direction. Reverse is a pure presentation concern —
-  // the underlying steps (and their seq numbers) are untouched.
+  // 应用用户选择的排序方向。倒序是纯粹的展示问题——底层步骤（及它们的 seq）不被
+  // 改动。
   const displayRows = useMemo(
     () => (sortDirection === "newest_first" ? [...rows].reverse() : rows),
     [rows, sortDirection],
@@ -512,6 +534,7 @@ export function AgentTranscriptDialog({
 
   const runStart = task.started_at ?? task.dispatched_at ?? steps[0]?.startedAt;
   const runStartMs = timeMs(runStart);
+  // 运行的结束时刻：完成时间优先，否则取最后一个带时间戳的步骤。
   const lastStamp = useMemo(() => {
     for (let i = steps.length - 1; i >= 0; i--) {
       const step = steps[i]!;
@@ -523,8 +546,7 @@ export function AgentTranscriptDialog({
   const runEnd = task.completed_at ?? lastStamp;
 
   const lanes = useMemo(() => buildLanes(steps, runStart, runEnd), [steps, runStart, runEnd]);
-  // A short run's timeline says less than the durations already on each row,
-  // so it does not render at all.
+  // 短运行的时间线信息量不如每行已写着的时长，所以干脆不渲染。
   const showTimeline = shouldShowTimeline(steps, lanes);
   const toolKinds = useMemo(() => toolKindTotals(steps), [steps]);
   const outcome = useMemo(() => buildRunOutcome(steps), [steps]);
@@ -539,19 +561,17 @@ export function AgentTranscriptDialog({
       ? Math.max(0, (timeMs(selectedStep.startedAt) ?? runStartMs) - runStartMs)
       : undefined;
 
-  // Keyed on the run having produced nothing at all, not on the filtered view
-  // being empty — a filter that hides every step is not a runtime limitation.
+  // 以"运行本身什么都没产出"为键，而不是"过滤后的视图为空"——过滤把步骤全藏掉
+  // 不是运行能力的限制。
   const isAntigravityLiveEmpty =
     isLive && steps.length === 0 && runtimeInfo?.provider === "antigravity";
 
-  // Newest-first shows live events as PREPENDS, and Virtuoso items opt out of
-  // native scroll anchoring (`overflow-anchor: none`), so without compensation
-  // every 500ms flush shifts the reading position. Virtuoso's contract: a
-  // decrease of firstItemIndex by N anchors the viewport across an N-item
-  // prepend, and the value must never increase within an instance — counting
-  // down from a large base satisfies that while the list only grows. Sort,
-  // filter, or task changes can shrink the list, so `listEpoch` remounts the
-  // instance (fresh at top) instead of letting firstItemIndex climb.
+  // 最新在前视图把实时事件作为 PREPEND（插到顶部），而 Virtuoso 条目退出了原生
+  // 滚动锚定（overflow-anchor: none），所以没有补偿的话每 500ms 一次刷盘都会挪动
+  // 阅读位置。Virtuoso 的契约：firstItemIndex 减少 N 会让视口跨过 N 条前置插入，
+  // 而该值在同一实例内绝不能增大——从一个大基数往下数满足"列表只增不减"；排序、
+  // 过滤或换任务会让列表变短，所以用 `listEpoch` 重挂实例（重新从顶部开始），
+  // 而不是让 firstItemIndex 回升。
   const firstItemIndex =
     sortDirection === "newest_first" ? 1_000_000 - displayRows.length : 0;
   const listEpoch = `${task.id}:${sortDirection}:${activeFilterKeys.join(",")}:${trimmedQuery}`;
@@ -569,25 +589,23 @@ export function AgentTranscriptDialog({
     followCtl.setActive(isLive && sortDirection === "newest_first");
   }, [followCtl, isLive, sortDirection]);
 
-  // A new list instance (task/sort/filter change) mounts at its live end with
-  // the follow engaged — the same contract as first open.
+  // 新列表实例（换任务/排序/过滤）在其实时末端挂载并带着跟随状态——与首次打开
+  // 的契约一致。
   useLayoutEffect(() => {
     followCtl.reset();
   }, [followCtl, listEpoch]);
 
-  // Live follow for newest-first (#5921): while the latch is engaged, every
-  // flush snaps back to the newest row — prepend anchoring would otherwise
-  // hold the viewport on the previous first row. Instant (not smooth): a
-  // smooth animation spans multiple flushes and its in-flight position reads
-  // as user displacement. The scroll-event enforcement in handleScrollerRef
-  // is the authoritative pin; this effect just shortens the first-paint gap.
+  // 最新在前的实时跟随（#5921）：锁存保持接合时，每次刷盘都钉回最新行——否则
+  // 前置锚定会把视口钉在之前的首行上。瞬时而非平滑：平滑动画跨多次刷盘，其飞行
+  // 中的位置会被读成用户的位移。handleScrollerRef 里的滚动事件强制才是权威回钉；
+  // 本 effect 只是缩短首绘的空窗。
   const displayCount = displayRows.length;
   useLayoutEffect(() => {
     if (!followCtl.isFollowing()) return;
     virtuosoRef.current?.scrollToIndex({ index: 0, align: "start", behavior: "auto" });
   }, [followCtl, displayCount]);
 
-  // Fetch agent and runtime metadata when dialog opens
+  // 弹窗打开时拉取智能体与运行时元数据。
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -609,7 +627,7 @@ export function AgentTranscriptDialog({
     return () => { cancelled = true; };
   }, [open, task.agent_id, task.runtime_id]);
 
-  // Elapsed time for live tasks
+  // 实时任务的已耗时：每秒刷新一次展示文本。
   useEffect(() => {
     if (!isLive || (!task.started_at && !task.dispatched_at)) return;
     const startRef = task.started_at ?? task.dispatched_at!;
@@ -623,16 +641,15 @@ export function AgentTranscriptDialog({
     (seq: number) => {
       const index = displayRows.findIndex((row) => row.seq === seq || rowCalls(row).some((c) => c.seq === seq));
       if (index < 0) return;
-      // Explicit navigation away from the live end unlatches the newest-first
-      // follow — otherwise the scroll-event enforcement would pin the viewport
-      // straight back to the top. Scrolling back re-engages it as usual.
+      // 显式跳到别处会解除最新在前跟随——否则滚动事件强制会把视口直接钉回顶部。
+      // 滚回来时照常重新接合。
       if (index > 0) followCtl.disengage();
       virtuosoRef.current?.scrollToIndex({ index, align: "center", behavior: "smooth" });
     },
     [displayRows, followCtl],
   );
 
-  // Clicking the timeline lands on the first step at or after that offset.
+  // 点时间线落到该偏移处的第一个步骤（含起点的步骤）。
   const handleSeek = useCallback(
     (offsetMs: number) => {
       if (runStartMs === undefined) return;
@@ -658,8 +675,8 @@ export function AgentTranscriptDialog({
     });
   }, [workdirCopyTarget, showCopiedWorkdir]);
 
-  // Worktree-mode runs deliver a branch instead of edits in the working copy,
-  // so copying the name is the fastest path to `git diff <branch>`.
+  // 工作树模式下的运行交付的是分支而非工作副本里的改动，所以复制分支名是通向
+  // `git diff <branch>` 的最快路径。
   const handleCopyBranch = useCallback(() => {
     if (!task.branch_name) return;
     void copyText(task.branch_name).then((ok) => {
@@ -669,9 +686,8 @@ export function AgentTranscriptDialog({
   }, [task.branch_name, showCopiedBranch]);
 
   const handleCopyAll = useCallback(() => {
-    // Copy the full body of each event (not the truncated row summary), with
-    // the same secret redaction the detail view applies. A step copies as its
-    // call followed by its result, which is the order it happened in.
+    // 复制每个事件的完整正文（而非截断的行摘要），并施加详情视图同款的敏感信息
+    // 脱敏。一个步骤按其调用+结果的顺序复制，也就是它实际发生的顺序。
     const events: TimelineItem[] = [];
     for (const row of displayRows) {
       if (row.kind === "group") {
@@ -717,8 +733,8 @@ export function AgentTranscriptDialog({
       ? t(($) => $.transcript.copy_filtered)
       : t(($) => $.transcript.copy_all);
 
-  // Status badge — full state machine, so queued/dispatched/cancelled render as
-  // proper labels instead of raw enum text.
+  // 状态徽章——完整状态机，让 queued/dispatched/cancelled 显示成正经文案而不是
+  // 裸枚举文本。
   const effectiveStatus = isLive ? "running" : task.status;
   const statusBadge = (() => {
     const base = "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-caption font-medium";
@@ -745,13 +761,10 @@ export function AgentTranscriptDialog({
           </span>
         );
       case "cancelled": {
-        // A server-cancelled run (worktree claim gate, preserved-work
-        // delivery) carries a persisted reason the user must act on; surface
-        // it on the badge instead of a bare "Cancelled". User-initiated
-        // cancels have no reason and keep the plain label. The badge carries
-        // no `title`: the raw `task.error` behind it is untranslated
-        // operator prose (#7411) and belongs in Run details, not in hover
-        // text on a status pill.
+        // 被服务器取消的运行（工作树认领闸、保留工作交付）带有用户必须行动的持久
+        // 原因；把它放在徽章上而不是只写个"已取消"。用户主动取消没有原因、保持
+        // 简洁文案。徽章不带 `title`：背后的原始 `task.error` 是未翻译的运维 prose
+        // （#7411），属于运行详情，不该悬停在状态药丸上。
         const cancelReason = cancelReasonLabel(task, t);
         return (
           <span className={cn(base, "bg-muted text-muted-foreground")}>
@@ -789,8 +802,8 @@ export function AgentTranscriptDialog({
     }
   })();
 
-  // Trigger source: one word answering "why does this run exist" — more useful
-  // up front than the runtime/provider diagnostics, which live in the ⓘ popover.
+  // 触发来源：一个词回答"为什么会有这次运行"——比运行时/provider 的诊断更有用，
+  // 那些放在 ⓘ 弹层里。
   const triggerLabel = task.parent_task_id
     ? t(($) => $.transcript.trigger_retry)
     : task.kind === "comment" || task.trigger_comment_id
@@ -805,30 +818,25 @@ export function AgentTranscriptDialog({
               ? t(($) => $.transcript.trigger_direct)
               : t(($) => $.transcript.trigger_initial);
 
-  // Diagnostic detail for the ⓘ popover: everything a reader needs only when
-  // debugging this specific run, kept off the always-visible surface.
+  // ⓘ 弹层的诊断详情：只在调试这一具体运行时才需要的一切，不放进常显界面。
   const providerLabel = runtimeInfo?.provider ? transcriptProviderLabel(runtimeInfo.provider) : null;
   const createdLabel = task.created_at ? formatRunTime(task.created_at, locale) : null;
   const startedLabel = task.started_at ? formatRunTime(task.started_at, locale) : null;
   const completedLabel = task.completed_at ? formatRunTime(task.completed_at, locale) : null;
   const hasTriggeredBy = !!task.attribution?.initiator;
-  // This run's own spend. Present on transcripts opened from the issue
-  // execution log (the endpoint that hydrates usage); absent elsewhere, where
-  // the chip and the usage rows below simply don't render.
+  // 本次运行自己的花费。从 issue 执行日志打开的转录（那个端点会填充 usage）才有；
+  // 别处没有时，下面的 chip 与用量行自然不渲染。
   //
-  // `summarizeTaskUsage` prices through the custom-rate store, which it reads
-  // imperatively — subscribing here is what makes a saved rate change reach
-  // this figure, same as on the other usage surfaces.
+  // `summarizeTaskUsage` 通过自定义费率 store 计价，它是命令式读取的——这里订阅
+  // 一下正是为了让保存过的费率变化能传导到这个数字，跟其他用量界面一样。
   useCustomPricingStore((s) => s.pricings);
   const usage = summarizeTaskUsage(task.usage);
-  // Two separate things, deliberately not one string (#7411):
-  //   • `reasonLabel` — the localized reason, derived from the stable
-  //     `failure_reason` enum. This is the user-facing explanation.
-  //   • `task.error` — the raw diagnostic the server/daemon persisted, in
-  //     English, for classification and logs. Kept readable (it is how you
-  //     find "which worktree holds my preserved work" and "which machine
-  //     needs upgrading") but labelled as a technical detail rather than
-  //     presented as the reason, and never merged into the localized text.
+  // 两件刻意不拼成一个字符串的事（#7411）：
+  //   • `reasonLabel` —— 本地化的原因，由稳定的 `failure_reason` 枚举推导。
+  //      这是面向用户的解释。
+  //   • `task.error` —— 服务器/daemon 持久化的原始诊断（英文），供归类与日志。
+  //      保持可读（它是找到"我的保留工作在哪棵 worktree"与"哪台机器要升级"的
+  //      途径），但标注为技术细节而非当作原因呈现，绝不混入本地化文本。
   const reasonLabel =
     task.status === "failed"
       ? failureReasonLabel(task.failure_reason, t)
@@ -852,15 +860,13 @@ export function AgentTranscriptDialog({
       >
         <DialogTitle className="sr-only">{t(($) => $.transcript.dialog_title)}</DialogTitle>
 
-        {/* ── Header: outcome, identity, spend ─────────────────────────
-            Everything a viewer needs BEFORE reading: how it ended, who ran
-            it, why it exists, how long it took and what it cost. Diagnostics
-            stay in the ⓘ popover. */}
+        {/* ── 头部：结果、身份、花费 ────────────────────────────────
+            读者开读前就要的一切：它怎么结束的、谁跑的、为什么存在、花了多久、
+            成本多少。诊断留在 ⓘ 弹层。 */}
         <div className="border-b px-4 py-3 shrink-0">
           <div className="flex min-w-0 items-center gap-3">
             {statusBadge}
-            {/* Primary identity: the agent that ran this. It is the one
-                foreground entity — avatar + medium weight. */}
+            {/* 主身份：跑这次运行的智能体。它是唯一的前景实体——头像 + 中等字重。 */}
             <div className="flex min-w-0 items-center gap-2">
               {task.agent_id ? (
                 <ActorAvatar actorType="agent" actorId={task.agent_id} size="sm" enableHoverCard />
@@ -873,10 +879,9 @@ export function AgentTranscriptDialog({
                 {agentName || agentInfo?.name || ""}
               </span>
             </div>
-            {/* Provenance, one muted secondary unit set apart from the agent:
-                who triggered the run and how — reads as "<person> · <how>",
-                not three peer entities. The person's avatar is dropped here so
-                two same-size faces don't read as two agents. */}
+            {/* 出处，一个与智能体拉开距离的弱化次要单元：谁触发的、以何种方式——
+                读作 "<人> · <方式>"，而不是三个平级实体。这里略去人的头像，避免
+                两张同尺寸的脸被读成两个智能体。 */}
             <div className="flex min-w-0 flex-1 items-center gap-x-1.5 overflow-hidden text-caption text-muted-foreground">
               {hasTriggeredBy && (
                 <>
@@ -900,10 +905,8 @@ export function AgentTranscriptDialog({
               )}
             </div>
 
-            {/* What this run cost, in the header of the run you are reading —
-                so "why was this one expensive" is answerable without going
-                back to the list. The split lives one click away in the ⓘ
-                popover. */}
+            {/* 这次运行花了多少钱，就放在你正在读的这次运行的头部——"为什么这
+                次这么贵"不用回到列表就能回答。明细拆分在 ⓘ 弹层里点一下就到。 */}
             {usage && (
               <span
                 className="flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-micro tabular-nums"
@@ -985,9 +988,8 @@ export function AgentTranscriptDialog({
                           copyTitle={t(($) => $.transcript.copy_branch)}
                         />
                       )}
-                      {/* The localized reason, from the stable
-                          `failure_reason` enum — this is the explanation, and
-                          it reads in the user's language. */}
+                      {/* 本地化的原因，来自稳定的 `failure_reason` 枚举——
+                          这才是解释，且以用户的语言呈现。 */}
                       {reasonLabel && (
                         <RunDetailRow
                           label={t(($) => $.transcript.details_reason)}
@@ -1003,13 +1005,10 @@ export function AgentTranscriptDialog({
                       {completedLabel && (
                         <RunDetailRow label={t(($) => $.transcript.details_completed)} value={completedLabel} />
                       )}
-                      {/* The raw persisted diagnostic, last and behind its own
-                          divider. It is English prose written by the server
-                          and daemon for logs and classification, so it is
-                          labelled "Technical details" — a translated heading
-                          over untranslated content — rather than shown as the
-                          run's reason (#7411). Still the place where "which
-                          worktree holds my preserved work" is readable. */}
+                      {/* 原始持久化诊断，放最后、带自己的分隔线。它是服务器与 daemon
+                          写给日志与归类用的英文 prose，所以标为"技术细节"——翻译过的
+                          标题盖着未翻译的内容——而不是当作运行原因展示（#7411）。
+                          这里仍是"我的保留工作在哪棵 worktree"可以读出的地方。 */}
                       {task.error && (
                         <>
                           <div className="my-2 h-px bg-border" />
@@ -1066,10 +1065,10 @@ export function AgentTranscriptDialog({
           </div>
         </div>
 
-        {/* ── What the run produced ──────────────────────────────────── */}
+        {/* ── 运行产出了什么 ──────────────────────────────────────────── */}
         <RunOutcomeRow outcome={outcome} branch={task.branch_name} />
 
-        {/* ── Where the time went ────────────────────────────────────── */}
+        {/* ── 时间花在哪 ──────────────────────────────────────────────── */}
         {showTimeline && lanes && (
           <RunTimeline
             lanes={lanes}
@@ -1079,14 +1078,14 @@ export function AgentTranscriptDialog({
           />
         )}
 
-        {/* ── Optional header slot (e.g. webhook payload preview) ── */}
+        {/* ── 可选头部插槽（如 webhook 载荷预览） ── */}
         {headerSlot && (
           <div className="border-b px-4 py-3 shrink-0 bg-muted/20">
             {headerSlot}
           </div>
         )}
 
-        {/* ── List toolbar: search left, the two menus right ── */}
+        {/* ── 列表工具栏：左搜索，右侧两个菜单 ── */}
         <div className="flex items-center gap-2 border-b px-4 py-1.5 shrink-0">
           <label className="flex h-7 min-w-0 max-w-xs flex-1 items-center gap-1.5 rounded-md bg-muted px-2 text-caption">
             <Search aria-hidden className="h-3 w-3 shrink-0 text-faint-foreground" />
@@ -1153,9 +1152,8 @@ export function AgentTranscriptDialog({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {/* Sort and copy are the run-level actions nobody needs on the way
-              in, so they live behind one overflow control instead of two
-              permanent buttons. */}
+          {/* 排序与复制是进入阅读时谁都不需要的运行级动作，所以收进一个溢出控件
+              而不是两个常驻按钮。 */}
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -1194,7 +1192,7 @@ export function AgentTranscriptDialog({
           </DropdownMenu>
         </div>
 
-        {/* ── Steps, and the inspector when one is selected ───────────── */}
+        {/* ── 步骤列表，选中某步时的检查器 ── */}
         <div className="flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1 flex-col">
             {displayRows.length === 0 ? (
@@ -1216,17 +1214,15 @@ export function AgentTranscriptDialog({
                 )}
               </div>
             ) : (
-              // Virtualized so a multi-thousand-step run mounts a bounded
-              // number of DOM rows (#5733).
+              // 虚拟化：数千步的运行也只挂载有限数量的 DOM 行（#5733）。
               <Virtuoso
                 key={listEpoch}
                 ref={virtuosoRef}
                 style={{ height: "100%" }}
                 data={displayRows}
                 firstItemIndex={firstItemIndex}
-                // Open a live chronological transcript pinned to the newest
-                // step (#5921); the per-listEpoch remount re-applies this after
-                // task / sort / filter changes.
+                // 打开实时正序转录并钉在最新一步（#5921）；每次 listEpoch 重挂载后
+                // 在任务/排序/过滤变化时重新应用本设置。
                 initialTopMostItemIndex={
                   isLive && sortDirection !== "newest_first"
                     ? { index: "LAST", align: "end" }
@@ -1268,23 +1264,22 @@ export function AgentTranscriptDialog({
   );
 }
 
-// Provider slugs this view names differently from the runtime list. The daemon
-// has no display-name override for Claude, so the shared formatter answers
-// "Claude" — but a run's diagnostics have always named the tool "Claude Code",
-// and `claude-code` is a legacy provider value still present on older tasks
-// (title-casing it alone would read as "Claude-code"). Every other provider
-// defers to the shared formatter so this row cannot drift from the runtime
-// list the way it did before (#5260).
+// 本视图对 provider 的叫法与运行时列表不同。daemon 对 Claude 没有显示名覆盖，
+// 共享格式化器只会答 "Claude"——但运行的诊断一向管这个工具叫 "Claude Code"，
+// 且 `claude-code` 是旧任务上仍然存在的历史 provider 值（光做首字母大写会读成
+// "Claude-code"）。其他 provider 一律交给共享格式化器，让这一行再也不会像从前
+// 那样与运行时列表漂移（#5260）。
 const TRANSCRIPT_PROVIDER_LABELS: Record<string, string> = {
   claude: "Claude Code",
   "claude-code": "Claude Code",
 };
 
+// 把 provider 名转成转录视图的显示名。
 function transcriptProviderLabel(provider: string): string {
   return TRANSCRIPT_PROVIDER_LABELS[provider.toLowerCase()] ?? providerDisplayName(provider);
 }
 
-// ─── Facts line separator ───────────────────────────────────────────────────
+// ─── 事实行分隔符 ─────────────────────────────────────────────────────────
 
 function FactDot() {
   return (
@@ -1294,15 +1289,14 @@ function FactDot() {
   );
 }
 
-// ─── Outcome row ────────────────────────────────────────────────────────────
+// ─── 结果行 ────────────────────────────────────────────────────────────────
 
 /**
- * What the run produced, above the evidence for it. For most readers this is
- * the whole answer — "it touched these files and ran these commands" settles
- * "can I trust this" without opening a single step.
+ * 运行产出了什么，放在证据之上。对多数读者这就是全部答案——"它碰了这些文件、
+ * 跑了这些命令"足以判定"能信吗"，一个步骤都不用打开。
  *
- * Renders nothing when the run produced nothing nameable; a row of zeroes
- * would read as "it did nothing" rather than "we have nothing to summarize".
+ * 运行没有可命名的产出时不渲染任何东西；一行全零读起来像"它没干活"，而不是
+ * "我们无可总结"。
  */
 function RunOutcomeRow({
   outcome,
@@ -1352,7 +1346,7 @@ function RunOutcomeRow({
   );
 }
 
-// ─── Rows ───────────────────────────────────────────────────────────────────
+// ─── 行 ───────────────────────────────────────────────────────────────────
 
 interface TranscriptRowProps {
   row: TraceRow;
@@ -1364,6 +1358,8 @@ interface TranscriptRowProps {
   onSelect: (seq: number) => void;
 }
 
+// 按行类型分流渲染：组行 → GroupRow；文本（智能体叙述）→ ProseRow；其余
+// （调用/思考/错误）→ StepRow。
 function TranscriptRow(props: TranscriptRowProps) {
   const { row } = props;
   if (isGroupRow(row)) return <GroupRow {...props} row={row} />;
@@ -1371,7 +1367,7 @@ function TranscriptRow(props: TranscriptRowProps) {
   return <StepRow {...props} row={row} />;
 }
 
-/** The offset column: where in the run this happened. */
+/** 偏移列：这一步发生在运行的哪个时刻。 */
 function OffsetCell({ startedAt, runStartMs }: { startedAt?: string; runStartMs?: number }) {
   const locale = useLocale();
   const at = timeMs(startedAt);
@@ -1386,6 +1382,7 @@ function OffsetCell({ startedAt, runStartMs }: { startedAt?: string; runStartMs?
   );
 }
 
+// 右列的时长单元格：调用仍无结果（实时进行中）时转圈；无时长数据时占位空位。
 function DurationCell({ ms, pending }: { ms?: number; pending?: boolean }) {
   const { t } = useT("agents");
   if (pending) {
@@ -1405,23 +1402,19 @@ function DurationCell({ ms, pending }: { ms?: number; pending?: boolean }) {
 }
 
 /**
- * The agent's own words, at body size and in reading measure.
+ * 智能体自己的话，用正文字号与阅读行长呈现。
  *
- * This is the layer inversion the redesign turns on: the report used to look
- * exactly like a `Read`, so the one thing worth reading was the hardest thing
- * to find. Prose is content and stays open; tool calls are evidence and fold.
+ * 这是改版所依赖的层级反转：报告过去长得跟一次 `Read` 一模一样，唯一值得读的
+ * 东西反而最难找。叙述是内容、保持展开；工具调用是证据、折叠待查。
  *
- * Identity is deliberately absent here. A transcript is one run by one agent —
- * `TraceMessageStep` carries no per-step actor, so an avatar and name on the
- * row would be the same two values repeated for every step, and the header
- * already states them. Repeating them cost a semibold 12px line above 12px
- * body text, which on a run of short steps made the row's heaviest element its
- * least informative one.
+ * 这里刻意不显示身份。一份转录是一个智能体跑的一次运行——`TraceMessageStep` 不带
+ * 每步的行动者，所以在行上放头像与名字等于每一行都重复两个相同的值，而头部已经
+ * 声明过了。重复它们要在 12px 正文上方多占一行半粗 12px，在一串短步骤的运行上，
+ * 会让行里最重的元素成为信息量最低的那个。
  *
- * What the row does keep is its kind: the same `StepIcon` column every other
- * row carries, so "Agent" in the filter has something to point at. Kind, not
- * identity — the glyph says "the agent's own words", which is what the facet
- * selects, and it says it in 12px without a repeated string.
+ * 行保留的是它的"种类"：与其他行相同的 `StepIcon` 列，让筛选里的 "Agent" 有个
+ * 可指的对象。种类而非身份——字形说的是"智能体自己的话"，这正是该筛选面要选的，
+ * 而且它用 12px 说出来、不重复字符串。
  */
 function ProseRow({ row, runStartMs }: TranscriptRowProps & { row: TraceMessageStep }) {
   return (
@@ -1440,8 +1433,7 @@ function ProseRow({ row, runStartMs }: TranscriptRowProps & { row: TraceMessageS
   );
 }
 
-/** One call, one thinking block, or one error: a line, with its detail one
- *  click away in the inspector. */
+/** 一次调用、一个思考块或一个错误：一行，详情在检查器里点一下就到。 */
 function StepRow({
   row,
   runStartMs,
@@ -1519,7 +1511,7 @@ function StepRow({
   );
 }
 
-/** Consecutive same-tool calls, folded to one line until asked. */
+/** 连续同工具调用在展开前被折叠成一行。 */
 function GroupRow({
   row,
   runStartMs,
@@ -1556,8 +1548,8 @@ function GroupRow({
         />
         <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
           <span className="shrink-0 text-caption font-medium">{row.tool}</span>
-          {/* Name the first thing it touched, not just how many: "Read · 4
-              calls" hides the one detail that makes a folded group scannable. */}
+          {/* 说它第一个碰了什么，而不是只报个数："Read · 4 次调用"恰恰藏起了让
+              折叠组可扫读的那一个细节。 */}
           <span className="truncate font-mono text-micro text-muted-foreground">
             {callSummary(row.steps[0]!, summaryLabels)}
           </span>
@@ -1594,11 +1586,10 @@ function GroupRow({
 }
 
 /**
- * The one line a call is worth in the list: what it was asked to do.
+ * 一次调用在列表里值一行字：它被要求做什么。
  *
- * Deliberately the call's argument, never the result — the result row is where
- * base64 screenshots and 8KB command dumps used to land in the middle of the
- * list. Only a call we never saw falls back to its output.
+ * 刻意取调用的入参而非结果——结果行正是 base64 截图与 8KB 命令转储过去堆在列表
+ * 中间的位置。只有从未见过的调用才回退到它的输出。
  */
 function callSummary(step: TraceCallStep, labels: TraceSummaryLabels): string {
   if (step.call) {
@@ -1614,13 +1605,13 @@ function firstLineOf(value: string | undefined): string {
   return value?.split("\n").find((line) => line.trim().length > 0) ?? "";
 }
 
-// ─── Inspector ──────────────────────────────────────────────────────────────
+// ─── 检查器 ──────────────────────────────────────────────────────────────
 
 /**
- * The evidence for one step, opened on demand.
+ * 单个步骤的证据，按需打开。
  *
- * Input and result are stacked rather than tabbed: at this width both fit, and
- * a tab would hide half the evidence behind a click to save nothing.
+ * 输入与结果上下堆叠而非分页签：这个宽度下两者都放得下，分页签则要把一半证据
+ * 藏在一记点击后面，却什么也没省。
  */
 function StepInspector({
   step,
@@ -1719,6 +1710,7 @@ function StepInspector({
   );
 }
 
+// 检查器里的一个小节：小标题 + 内容。
 function InspectorSection({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <section className="border-b last:border-b-0">
@@ -1730,13 +1722,14 @@ function InspectorSection({ label, children }: { label: string; children: React.
   );
 }
 
-/** One payload, rendered as what it is. */
+/** 一份载荷，按它本来的样子渲染：图片显示成图，diff/patch/整文件写入各用各的
+ *  展示面，其余按文本代码块处理（超长截断并标注）。 */
 function StepBody({ item }: { item: TimelineItem }) {
   const { t } = useT("agents");
   const detail = useMemo(() => traceEventDetail(item), [item]);
   const image = useMemo(() => readImageResult(item.output), [item.output]);
 
-  // A screenshot is a picture, not a 200KB base64 string in a <pre>.
+  // 截图是图片，不是塞在 <pre> 里的一串 200KB base64。
   if (image) {
     return (
       <figure className="px-2 py-1">

@@ -1,3 +1,5 @@
+// 任务状态小胶囊：在消息列表顶部展示当前 pending 任务进行到哪一步
+// （排队/启动/思考/输入中/工具调用等），并附带已耗时时长。
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -9,11 +11,11 @@ import { formatElapsedSecs } from "../lib/format";
 import { useT } from "../../i18n";
 
 interface Props {
-  /** Server-authoritative pending-task snapshot (`created_at` anchors the timer). */
+  /** 服务端权威的 pending 任务快照（`created_at` 是计时起点）。 */
   pendingTask: ChatPendingTask;
-  /** Live task-message stream — the latest non-error entry decides the running-stage label. */
+  /** 实时任务消息流——最新一条非错误条目决定"运行中"阶段文案。 */
   taskMessages: readonly TaskMessagePayload[];
-  /** Resolved presence; pass `undefined` to suppress availability hints. */
+  /** 已解析的在线状态；传 `undefined` 隐藏在线提示。 */
   availability: AgentAvailability | undefined;
 }
 
@@ -40,7 +42,7 @@ type ToolKey =
   | "searching_web"
   | "fallback";
 
-// Tool slug → translation key. Unknown tools fall back to "Working".
+// 工具 slug → 翻译 key 映射。未知工具回退到"Working"。
 const TOOL_KEY_BY_SLUG: Record<string, Exclude<ToolKey, "fallback">> = {
   bash: "running_command",
   exec: "running_command",
@@ -55,9 +57,12 @@ const TOOL_KEY_BY_SLUG: Record<string, Exclude<ToolKey, "fallback">> = {
   websearch: "searching_web",
 };
 
-// Pure stage decision returning translation keys. The hook below maps these
-// keys into localized labels — keeping the decision pure makes it easy to
-// follow the priority rules without translation noise.
+// 纯函数式的阶段决策，返回的是翻译 key。下面的 hook 再把这些 key 映射成本地化文案
+// ——把决策保持纯净，让优先级规则不掺杂翻译噪音，更容易阅读。
+/**
+ * 根据任务状态 / 任务消息流 / agent 在线状态，决定应显示哪个阶段的 key。
+ * 纯函数，不读 hook 状态，便于单测与阅读。
+ */
 export function pickStageKeys(
   status: string | undefined,
   taskMessages: readonly TaskMessagePayload[],
@@ -68,9 +73,8 @@ export function pickStageKeys(
   static?: boolean;
   needsWaitReason?: boolean;
 } {
-  // A deferred chat task is an older turn waiting for its retry backoff, not
-  // active model work. Keep this ahead of availability hints so the specific
-  // retry state never degrades to a misleading queued/thinking label.
+  // 被延期的聊天任务是等退避重试的旧轮次，不是活跃的模型工作。把它排在在线提示
+  // 前面，让这种明确的"重试中"状态永远不会降级成误导性的 queued/thinking 文案。
   if (status === "deferred") return { stageKey: "retrying" };
   if (
     (status === "queued" || status === "dispatched") &&
@@ -84,11 +88,9 @@ export function pickStageKeys(
   ) {
     return { stageKey: "reconnecting" };
   }
-  // Daemon-emitted hold state for the local_directory flow: the project is
-  // pinned to a path that another task currently owns. The daemon publishes
-  // this status string when it dequeues a task but can't acquire the path
-  // lock; the renderer surfaces a dedicated label so the user understands
-  // why a queued task isn't moving.
+  // daemon 为 local_directory 流程发出的阻塞状态：项目被钉在一条当前由别的任务
+  // 占用的路径上。daemon 出队任务却拿不到路径锁时发布这个状态串；渲染层给出专门
+  // 的文案，让用户理解为什么排队的任务一直不动。
   if (status === "waiting_local_directory") {
     return {
       stageKey: "waiting_local_directory",
@@ -99,7 +101,7 @@ export function pickStageKeys(
   if (status === "queued") return { stageKey: "queued" };
   if (status === "dispatched") return { stageKey: "starting_up" };
 
-  // running: latest meaningful message decides the label.
+  // running：由最新一条有意义的消息决定文案。
   let latest: TaskMessagePayload | null = null;
   for (let i = taskMessages.length - 1; i >= 0; i--) {
     const m = taskMessages[i];
@@ -115,19 +117,23 @@ export function pickStageKeys(
   if (latest.type === "tool_use") {
     const tool = (latest.tool ?? "").toLowerCase();
     const toolKey = TOOL_KEY_BY_SLUG[tool] ?? "fallback";
-    // tool_use is technically still "thinking + tool" — surface the tool
-    // label in the toolKey channel; main stage label uses the tool one.
+    // tool_use 严格说仍是"thinking + tool"——工具名走 toolKey 通道输出，
+    // 阶段文案主体也采用工具文案。
     return { stageKey: "thinking", toolKey };
   }
   return { stageKey: "thinking" };
 }
 
+/**
+ * 计算"有效状态"：有任务消息流就认为已开始运行，除非服务端随后把同一任务移进
+ * 重试退避（deferred）。
+ */
 export function effectiveTaskStatus(
   status: string | undefined,
   taskMessages: readonly TaskMessagePayload[],
 ): string | undefined {
-  // A retry keeps the task's earlier stream history. Deferred is the newer,
-  // server-authoritative state and must win over that stale running evidence.
+  // 重试会保留任务早先的流历史。deferred 是更新的、服务端权威的状态，
+  // 必须压过那段过期的 running 证据。
   if (status === "deferred") return status;
   return taskMessages.length > 0 ? "running" : status;
 }
@@ -146,10 +152,9 @@ function useResolveStage(): (
         label: t(($) => $.status_pill.tools[decision.toolKey!]),
       };
     }
-    // A parked task that names what it is parked on turns an unexplained wait
-    // into an actionable one: the user can see it is a sibling task, not a
-    // hung agent, and decide whether cancelling is worth it. Older servers send
-    // no reason, so the bare label has to stay reachable.
+    // 停住的任务如果说明了卡在什么上，就能把一段无法解释的等待变成可行动的：
+    // 用户能看到那是另一个兄弟任务，而不是挂死的 agent，从而决定取消是否值得。
+    // 旧版服务端不传原因，所以裸文案必须仍然可用。
     const reason = waitReason?.trim();
     if (decision.needsWaitReason && reason) {
       return {
@@ -166,16 +171,21 @@ function useResolveStage(): (
   };
 }
 
+/**
+ * 任务状态小胶囊：显示当前任务进行到哪个阶段 + 已耗时。
+ * @param pendingTask - 服务端权威的 pending 任务快照。
+ * @param taskMessages - 实时任务消息流。
+ * @param availability - agent 在线状态。
+ */
 export function TaskStatusPill({
   pendingTask,
   taskMessages,
   availability,
 }: Props) {
   const resolveStage = useResolveStage();
-  // Anchor: locked on first render. Once set we never reassign — otherwise
-  // the timer would visibly snap backwards when an optimistic-seeded
-  // `Date.now()` anchor is later replaced by a server-side created_at that
-  // happened a few hundred ms earlier. Monotonic elapsed > strict accuracy.
+  // 计时锚点：在首次渲染时锁死，之后绝不再赋值——否则当乐观种下的 `Date.now()`
+  // 锚点被早几百毫秒的服务端 created_at 替换时，计时器会明显往回跳。
+  // 单调递增的耗时比精确到毫秒更重要。
   const anchorRef = useRef<number | null>(null);
   if (anchorRef.current === null) {
     if (pendingTask.created_at) {
@@ -193,13 +203,11 @@ export function TaskStatusPill({
     return () => clearInterval(timer);
   }, []);
 
-  // Effective status — streamed messages prove a task has started, except
-  // when the server has since moved that same task into retry backoff.
+  // 有效状态——有流式消息就证明任务已开始，除非服务端此后把同一任务移进重试退避。
   const status = effectiveTaskStatus(pendingTask.status, taskMessages);
   const elapsedSecs = Math.max(0, Math.floor((now - anchor) / 1000));
-  // Read the reason only when the effective status is still the waiting one:
-  // streamed messages can promote a cached waiting task to "running" locally
-  // before the next server payload clears the stored text.
+  // 只在有效状态仍是"等待中"时才读原因：流式消息可能在下一个服务端载荷清掉已存
+  // 文案之前，先在本地把缓存里的等待任务提升成 "running"。
   const stage = resolveStage(
     status,
     taskMessages,

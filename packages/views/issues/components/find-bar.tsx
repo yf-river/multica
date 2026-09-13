@@ -1,5 +1,11 @@
 "use client";
 
+// 本文件：FindBar —— 问题详情页的"页内查找"浮动条。
+// 纯展示组件：所有搜索状态、高亮与滚动逻辑都在 `useInPageFind` 里。
+// 仅在 `find.open` 时被渲染，因此输入框的 autoFocus 每次打开都会触发。
+//
+// `data-find-ignore` 让本浮动条自身文字不被纳入匹配遍历范围。
+
 import type { KeyboardEvent } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { Input } from "@multica/ui/components/ui/input";
@@ -8,11 +14,10 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 import type { UseInPageFindResult } from "../hooks/use-in-page-find";
 
-// Floating find-in-page bar for the issue detail page. Presentational — all
-// search state, highlighting, and scrolling live in `useInPageFind`. Rendered
-// only while `find.open`, so the input's autoFocus fires on every open.
-//
-// `data-find-ignore` keeps the bar's own text out of the match walk.
+/**
+ * 页内查找浮动条。props 见文件头说明；`find` 聚合了查询词、命中计数、
+ * 当前命中的高亮位置与上一条/下一条/关闭等动作。
+ */
 export function FindBar({
   find,
   className,

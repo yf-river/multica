@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是 Agent 列表主页：顶部页头 + 工具栏（搜索/范围/筛选/排序/列显隐）+ 虚拟滚动
+// 列表 + 批量操作浮动栏。行数据统一在此组装（运行环境/在场/活动/计数/拥有者都打好包），
+// 单元格只读不自己拉数据；可隐藏列、排序、筛选状态都放 core 的 view store。
+
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -76,30 +80,27 @@ import {
 import { useLocale, useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
-// Column template — single source of truth for header, rows, and skeletons.
-// Same conventions as the skills/autopilots lists (see list-grid.tsx):
-// deterministic var-width tracks, two-zone responsiveness (≥@2xl WYSIWYG
-// with min-width + horizontal-scroll escape valve; <@2xl static core set of
-// name + status, toggles don't apply).
+// 列模板——表头、行、骨架屏的唯一事实源。与 skills/autopilots 列表同约定
+//（见 list-grid.tsx）：确定宽度的可变轨道、两档响应（≥@2xl 所见即所得，
+// 带 min-width + 横向滚动逃生阀；<@2xl 只显示静态核心集 = 名字 + 状态，
+// 列显隐开关不生效）。
 //
-// Agents are identity-type entities (few, avatar + persona), so rows are
-// the TWO-LINE form: avatar left, name + description right, 64px tall —
-// the documented exception to the single-line management-list rule.
+// Agent 属于“身份型”实体（数量少、头像 + 人格），所以行用两行式：
+// 左侧头像、右侧名字 + 描述，高 64px —— 这是对“单行管理列表”规则的明文例外。
 const GRID_COLS =
   "grid-cols-[0.75rem_minmax(120px,1fr)_var(--agc-status-mobile)_1.75rem_0.75rem] " +
   "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_var(--agc-status-desktop)_var(--agc-owner)_var(--agc-access)_var(--agc-runtime)_var(--agc-lastactive)_var(--agc-runs)_var(--agc-model)_var(--agc-created)_1.75rem_0.75rem]";
 
-// Two-line rows; the virtualizer's fixed-size contract.
+// 两行式行高；虚拟列表“定高”契约就靠它。
 const ROW_HEIGHT = 64;
 
-// Single source for hideable column widths: track vars and the grid's
-// min-width derive from the same numbers.
+// 可隐藏列宽的唯一来源：轨道变量和 grid 的 min-width 都由同一组数推导。
 const COLUMN_WIDTHS: Record<AgentColumnKey, number> = {
-  // Sized for the worst case "Online · 2 tasks" (~140px incl. padding);
-  // idle rows show only the dot + label and leave some in-track slack.
+  // 按最坏情况 “Online · 2 tasks”（含 padding 约 140px）定的宽度；
+  // 空闲行只显示圆点 + 标签，轨道里会留一点余量。
   status: 144,
   owner: 144,
-  // Fits the longest label "Specific people" (~120px incl. padding).
+  // 能放下最长的标签 “Specific people”（含 padding 约 120px）。
   access: 132,
   runtime: 144,
   lastActive: 120,
@@ -108,11 +109,11 @@ const COLUMN_WIDTHS: Record<AgentColumnKey, number> = {
   created: 104,
 };
 
-// Fixed tracks (edges 12+12, checkbox 16, name min 200, kebab 28) plus the
-// 11 gap-x-3 gaps between the wide template's 12 tracks (zero-width tracks
-// still carry gaps).
+// 固定轨道宽（左右 12+12、勾选框 16、名字最小 200、kebab 按钮 28），
+// 加上宽模板 12 条轨道之间 11 个 gap-x-3 的间隔（零宽轨道也照样带 gap）。
 const FIXED_TRACKS_WIDTH = 268 + 11 * 12;
 
+/** 计算每列宽度的 CSS 变量（可见列给实宽，隐藏列给 0px），并汇总出 grid 的最小宽度。 */
 function columnTrackVars(
   isVisible: (key: AgentColumnKey) => boolean,
 ): React.CSSProperties {
@@ -144,16 +145,15 @@ export interface AgentListRow {
   presence: AgentPresenceDetail | null;
   activity: AgentActivity | null;
   runCount: number;
-  /** Days since the last bucket with runs; null = nothing in the window. */
+  /** 距最近一次有任务执行的时间桶的天数；null = 30 天窗口内无任务。 */
   lastActiveDays: number | null;
   owner: MemberWithUser | null;
   isOwnedByMe: boolean;
   canManage: boolean;
 }
 
-// Most recent activity bucket with runs, as "days ago" (0 = today).
-// Day-granularity by design — derived from the same 30-day buckets the
-// detail page charts, no extra API.
+// 最近一个“有任务执行”的活动桶距今多少天（0 = 今天）。
+// 刻意按天粒度——直接复用详情页图表同源的 30 天桶数据，不再多发请求。
 function lastActiveDaysAgo(activity: AgentActivity | null): number | null {
   if (!activity) return null;
   for (let i = activity.buckets.length - 1; i >= 0; i--) {
@@ -163,6 +163,7 @@ function lastActiveDaysAgo(activity: AgentActivity | null): number | null {
   return null;
 }
 
+/** 行搜索匹配：名字 / 描述按子串 + 拼音匹配。空查询直接放行。 */
 function matchesAgentSearch(row: AgentListRow, query: string): boolean {
   if (!query) return true;
   const { agent } = row;
@@ -175,11 +176,9 @@ function matchesAgentSearch(row: AgentListRow, query: string): boolean {
 }
 
 /**
- * Pure row-filter predicate: returns true if the row matches all active
- * filter dimensions. Empty filter arrays are inactive (the row passes). The
- * `access` dimension derives its key via `effectiveAccessScope` so the column
- * and the filter share one derivation. Exported for testing — the page wires
- * it inside its `useMemo`.
+ * 纯行过滤谓词：行命中所有激活的筛选维度才返回 true。空的筛选数组视为“未激活”
+ *（行通过）。`access` 维度用 `effectiveAccessScope` 推导 key，保证列与筛选取同一
+ * 口径。导出供测试使用——页面在 useMemo 里调用它。
  */
 export function rowMatchesFilters(
   row: AgentListRow,
@@ -226,10 +225,9 @@ export function rowMatchesFilters(
 }
 
 /**
- * Bulk-access dialog confirm-button enablement is centralized in
- * `@multica/core/agents` as `isAccessChangeReady` (MUL-3963). The dialog
- * consumes it; the picker also gates its internal Save button on the same
- * predicate (its own Save button is hidden via `hideFooter` in the bulk flow).
+ * 批量访问弹窗“确认”按钮的可用性判定集中放在 `@multica/core/agents` 的
+ * `isAccessChangeReady`（MUL-3963）。弹窗消费它；选择器内部的 Save 按钮也
+ * 用同一谓词把关（批量流程里它自己的 Save 按钮通过 `hideFooter` 隐藏）。
  */
 import { isAccessChangeReady } from "@multica/core/agents";
 import { AgentBatchToolbar } from "./agent-batch-toolbar";
@@ -239,6 +237,7 @@ export { isAccessChangeReady };
 // Page header
 // ---------------------------------------------------------------------------
 
+/** 页面顶部集合头：标题 + 计数 + 简介 + “新建 Agent”按钮。 */
 function PageHeaderBar({
   totalCount,
   onCreate,
@@ -268,6 +267,7 @@ function PageHeaderBar({
   );
 }
 
+/** 列表加载失败的整页状态（红色告警 + 重试）。 */
 function ListError({
   onCreate,
   listError,
@@ -301,6 +301,7 @@ function ListError({
   );
 }
 
+/** 工作区还没有任何 Agent 时的空态。 */
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   const { t } = useT("agents");
   return (
@@ -322,6 +323,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 // Cells
 // ---------------------------------------------------------------------------
 
+/** 行首的多选框单元格。用透明占位 + 悬停显现（选中后常显）。 */
 function CheckboxCell({
   checked,
   onToggle,
@@ -352,10 +354,9 @@ function CheckboxCell({
   );
 }
 
-// Two-line identity cell: avatar left, name + description right. The
-// documented exception to the single-line rule — agents are few and
-// identity-rich, so this is the "team roster" form (GitHub org members,
-// Slack member list).
+// 两行式身份单元格：左侧头像、右侧名字 + 描述。这是“单行规则”的明文例外——
+// Agent 数量少且身份信息丰富，所以采用“团队花名册”形态（GitHub 组织成员、
+// Slack 成员列表同款）。
 function NameCell({ row }: { row: AgentListRow }) {
   const { t } = useT("agents");
   const { agent, isOwnedByMe } = row;
@@ -405,8 +406,8 @@ function NameCell({ row }: { row: AgentListRow }) {
   );
 }
 
-// Availability dot + label, with the workload folded in as a suffix
-// ("Online · 2 tasks") — a 0-2 integer doesn't earn its own column.
+// 可用状态圆点 + 标签，把负载折成后缀一起显示（“在线 · 2 个任务”）——
+// 0-2 的整数不值得单独开一列。
 function StatusCell({ row }: { row: AgentListRow }) {
   const { t } = useT("agents");
   const { agent, presence } = row;
@@ -454,9 +455,8 @@ function StatusCell({ row }: { row: AgentListRow }) {
   );
 }
 
-// Owner = the agent's owner_id, which is set to the creator at creation and
-// never transferred (so owner ≡ creator). It carries management rights, so
-// the column is "Owner", not "Created by".
+// 拥有者 = Agent 的 owner_id（创建时定为创建者、从不转移，所以拥有者 ≡ 创建者）。
+// 拥有者带管理权，所以这列叫 “Owner” 而不是 “Created by”。
 function OwnerCell({ row }: { row: AgentListRow }) {
   const { agent, owner } = row;
   if (!agent.owner_id) {
@@ -476,9 +476,8 @@ function OwnerCell({ row }: { row: AgentListRow }) {
   );
 }
 
-// Effective access scope derived from permission_mode + invocation_targets
-// (not the lossy derived `visibility`). Text label, not icon-only, so screen
-// readers announce the scope.
+// 从 permission_mode + invocation_targets 推导“有效访问范围”（而非有损的
+// `visibility` 派生值）。用文字标签而不是纯图标，让屏幕阅读器能读出范围。
 export function AccessCell({ row }: { row: AgentListRow }) {
   const { t } = useT("agents");
   const scope = useMemo(
@@ -520,8 +519,7 @@ function RuntimeCell({ row }: { row: AgentListRow }) {
   return (
     <ListGridCell className="hidden @2xl:flex">
       {runtime ? (
-        // Provider mark before the label: scanning this column for "which of
-        // these run on Codex" is a shape match, not a read.
+        // 图标放在标签前面：扫这一列找“哪些跑在 Codex 上”靠形状一眼识别，而不是读字。
         <span className="inline-flex min-w-0 items-center gap-1.5">
           <ProviderLogo
             provider={runtime.provider}
@@ -538,6 +536,7 @@ function RuntimeCell({ row }: { row: AgentListRow }) {
   );
 }
 
+/** “最近活跃”列：显示今天/N天前/从不；已归档显示横杠。 */
 function LastActiveCell({ row }: { row: AgentListRow }) {
   const { t } = useT("agents");
   const days = row.lastActiveDays;
@@ -562,6 +561,7 @@ function LastActiveCell({ row }: { row: AgentListRow }) {
 // Header row + skeleton
 // ---------------------------------------------------------------------------
 
+/** 表头行：全选/半选勾选框 + 各列（可隐藏列给占位格子保持轨道对齐）。 */
 function AgentListHeader({
   sortField,
   sortDirection,
@@ -679,6 +679,7 @@ function AgentListHeader({
   );
 }
 
+/** 列表初次加载/等待辅助查询时的骨架屏（列结构与真网格一致）。 */
 function LoadingSkeleton() {
   return (
     <ListGrid
@@ -757,6 +758,11 @@ function LoadingSkeleton() {
 // Page
 // ---------------------------------------------------------------------------
 
+/**
+ * Agent 列表主页。职责：拉取并把行数据装配成 AgentListRow（运行环境/在场/活动/计数/
+ * 拥有者都在这打包，单元格不再自己拉数据），按范围/搜索/筛选/排序出可见行并虚拟滚动
+ * 渲染，还托管工具栏、行操作、批量操作栏与首屏就绪门槛。
+ */
 export function AgentsPage() {
   const { t } = useT("agents");
   const locale = useLocale();
@@ -838,8 +844,7 @@ export function AgentsPage() {
     return me?.role === "owner" || me?.role === "admin";
   }, [members, currentUser]);
 
-  // Scope counts come from the FULL set (filters never affect them).
-  // Archived ignores the ownership lens (see the view store comment).
+  // 范围计数来自“全集”（筛选不影响它）。已归档忽略归属视角（见 view store 注释）。
   const scopeCounts = useMemo<Record<AgentsScope, number>>(() => {
     let mine = 0;
     let all = 0;
@@ -855,9 +860,8 @@ export function AgentsPage() {
     return { mine, all, archived };
   }, [agents, currentUser]);
 
-  // Rows within the current scope, unfiltered, fully assembled — the
-  // toolbar's option lists and the "n / total" denominator derive from
-  // this; cells never pull their own queries.
+  // 当前范围内的行（未过滤）、完整装配好——工具栏的选项列表和“n / total”分母
+  // 都从它推导；各单元格从不自己发查询。
   const scopeRows = useMemo<AgentListRow[]>(() => {
     const inScope = agents.filter((a) => {
       if (scope === "archived") return !!a.archived_at;
@@ -894,7 +898,7 @@ export function AgentsPage() {
     isWorkspaceAdmin,
   ]);
 
-  // Visible rows: local search + filters, then sort.
+  // 可见行：本地搜索 + 筛选，再排序。
   const rows = useMemo<AgentListRow[]>(() => {
     const filtered = scopeRows.filter((row) => rowMatchesFilters(row, filters, search));
 
@@ -913,9 +917,8 @@ export function AgentsPage() {
           dir
         );
       }
-      // lastActive: smaller daysAgo = more recent. "desc" (the default)
-      // means most recently active first; never-active rows sort last in
-      // both directions. Run count breaks ties.
+      // lastActive：daysAgo 越小越新。“desc”（默认）= 最近活跃的排最前；
+      // 从没活跃过的两种方向都排最后。同天数用运行次数破平局。
       const av = a.lastActiveDays ?? Number.POSITIVE_INFINITY;
       const bv = b.lastActiveDays ?? Number.POSITIVE_INFINITY;
       const byDays = sortDirection === "desc" ? av - bv : bv - av;
@@ -945,14 +948,11 @@ export function AgentsPage() {
     return t(($) => $.no_matches.title);
   }, [filters, scope, search, t]);
 
-  // Row virtualization — headless math, offsets as padding on the rows
-  // wrapper, fixed-height rows. The scroll element is the SINGLE outer
-  // scroller (both axes): splitting horizontal scrolling (wrapper) from
-  // vertical scrolling (an inner element) connected by an h-full
-  // percentage bridge caused a non-converging layout loop (flickering
-  // double scrollbars) and clipped the last row under the horizontal
-  // scrollbar. The sticky header pins inside this scroller; the vertical
-  // scrollbar spans the full pane height (Linear's structure).
+  // 行虚拟化——无头数学计算，偏移量做成行容器的 padding，行高固定。滚动元素是
+  // “单个”外层滚动器（双向滚）：若把横向滚动（外层容器）和纵向滚动（内层元素）
+  // 拆开、再用 h-full 百分比桥接，会陷入不收敛的布局循环（双滚动条闪烁），
+  // 还会在横滚动条下面裁掉最后一行。sticky 表头钉在这个滚动器内；纵向滚动条
+  // 贯通整个面板高度（Linear 的结构）。
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -961,8 +961,8 @@ export function AgentsPage() {
     overscan: 10,
   });
 
-  // Straight to the manual form: a duplicate already has every field decided,
-  // so the method chooser would be a step with nothing to choose.
+  // 直接进手动表单：复制出来的 Agent 每个字段都已定好，再走“选创建方式”那一步
+  // 只会让用户面对一个无可选择的选择页。
   const duplicateHref = useCallback(
     (agent: Agent) =>
       `${paths.newAgentManual()}?duplicate=${encodeURIComponent(agent.id)}`,
@@ -1001,19 +1001,14 @@ export function AgentsPage() {
   const totalCount = agents.filter((a) => !a.archived_at).length;
   const showEmpty = !isLoading && agents.length === 0;
 
-  // The active sort field / availability filter reads columns that arrive in
-  // separate queries from the main agent list (activity → lastActiveDays,
-  // run-counts → runCount, presence → availability). Rendering real rows
-  // before those land would sort on placeholder values (lastActiveDays
-  // null→Infinity, runCount 0) and visibly re-order the list once each query
-  // resolves. Gate the first real paint on exactly the auxiliary queries the
-  // current sort / filter depends on — nothing for name/created, run-counts
-  // for runs, activity + run-counts (its tiebreaker) for the default
-  // lastActive, plus presence whenever an availability filter is active. The
-  // queries still run in parallel, so this defers the first paint by at most
-  // one extra round-trip (shown as skeleton) and never serialises them. An
-  // empty workspace (showEmpty) skips the gate so the empty state is never
-  // blocked on the auxiliary queries.
+  // 当前激活的排序列 / 可用性筛选读到的列，来自主列表以外的独立查询（活动 →
+  // lastActiveDays、运行计数 → runCount、在场 → availability）。若这些数据没到就渲染
+  // 真实行，会按占位值排序（lastActiveDays null→∞、runCount 0），等每个查询返回后
+  // 列表又会肉眼可见地重排。所以把“首次真实渲染”的门槛精确设成当前排序/筛选所依赖
+  // 的那几个辅助查询——name/created 什么都不等；runs 等运行计数；默认 lastActive
+  // 等活动 + 运行计数（它的破平局项）；激活了可用性筛选就再等在场的。这些查询本来
+  // 并行跑，所以首屏最多多等一个往返（显示骨架屏），绝不会串行化。空工作区
+  // （showEmpty）跳过门槛，让空态永不因辅助查询而卡住。
   const needsRunCounts = sortField === "lastActive" || sortField === "runs";
   const needsActivity = sortField === "lastActive";
   const needsPresence = filters.availability.length > 0;
@@ -1023,8 +1018,7 @@ export function AgentsPage() {
     (!needsPresence || !presenceLoading);
 
   return (
-    // relative: positioning anchor for the batch toolbar (page-centered,
-    // not viewport-centered).
+    // relative：作为批量工具栏的定位锚点（相对页面居中，而非视口居中）。
     <div className="relative flex flex-1 min-h-0 flex-col">
       <PageHeaderBar
         totalCount={totalCount}

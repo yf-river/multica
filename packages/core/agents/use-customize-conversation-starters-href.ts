@@ -1,5 +1,6 @@
 "use client";
 
+// 聊天空状态里的"自定义开场白"入口链接 hook：能编辑才返回指向该 Agent 配置页的链接。
 import type { Agent } from "../types";
 import { useConfigStore } from "../config";
 import { useWorkspacePaths } from "../paths";
@@ -7,11 +8,13 @@ import { useAgentPermissions } from "../permissions";
 import { canCustomizeConversationStarters } from "./conversation-starters";
 
 /**
- * Where the "customize" affordance in a chat's empty state should point, or
- * `null` when this viewer should not see one at all.
+ * 聊天空状态里"自定义"入口应指向的地址；该查看者不应看到入口时返回 `null`。
  *
- * Both chat surfaces render that empty state from separate call sites, so the
- * wiring lives here and the rule itself in `canCustomizeConversationStarters`.
+ * 两个聊天界面各自渲染空状态、来自不同的调用点，所以接线放这里，
+ * 而规则本身在 `canCustomizeConversationStarters` 里。
+ * @param agent 目标 Agent（可能为空）。
+ * @param wsId 工作区 id。
+ * @returns 可跳转的 href；无权限/不支持/Agent 不存在时返回 null。
  */
 export function useCustomizeConversationStartersHref(
   agent: Agent | null,

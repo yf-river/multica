@@ -1,3 +1,8 @@
+// Webhook 触发载荷预览：把服务器端 normalizeWebhookPayload 产出的 WebhookEnvelope
+// 形状内联展示在 autopilot 运行详情里。默认折叠、点击展开，展开后展示事件名、
+// 接收时间、content-type 与格式化的 JSON（超长截断显示，复制仍给完整内容）。
+// 刻意只读且不绑定任何具体弹窗——它被放进 AgentTranscriptDialog 的 headerSlot。
+
 "use client";
 
 import { useState, useMemo } from "react";
@@ -9,19 +14,15 @@ import { useT } from "../../i18n";
 
 interface WebhookPayloadPreviewProps {
   payload: unknown;
-  /** Default open vs collapsed. The dialog has limited vertical space, so
-   *  we collapse by default and let the user expand. */
+  /** 默认展开还是折叠。弹窗纵向空间有限，所以默认折叠、由用户展开。 */
   defaultOpen?: boolean;
 }
 
 /**
- * Renders a webhook trigger payload (the WebhookEnvelope shape produced
- * server-side by normalizeWebhookPayload) inline with the autopilot run
- * detail. Falls back gracefully when the payload isn't an envelope —
- * showing whatever JSON is there with a generic header.
- *
- * This is intentionally read-only and decoupled from any specific dialog
- * — it gets dropped into AgentTranscriptDialog's headerSlot.
+ * Webhook 触发载荷预览。若载荷不是信封结构（调用方直接写了 trigger_payload、
+ * 历史行损坏等），回退为把整个载荷当作 eventPayload 展示，任何内容都不隐藏。
+ * @param payload 服务器侧产生的触发载荷（WebhookEnvelope 或任意 JSON）。
+ * @param defaultOpen 默认是否展开。
  */
 export function WebhookPayloadPreview({
   payload,
@@ -31,6 +32,8 @@ export function WebhookPayloadPreview({
   const [open, setOpen] = useState(defaultOpen);
   const [copied, setCopied] = useState(false);
 
+  // 从信封结构里提取展示字段：event 名、eventPayload 主体、request.receivedAt 与
+  // request.contentType。信封里没有的字段保持 null、不在界面渲染。
   const { event, receivedAt, contentType, fullJSON, displayJSON, isTruncated } = useMemo(() => {
     let event: string | null = null;
     let eventPayload: unknown = null;
@@ -47,18 +50,15 @@ export function WebhookPayloadPreview({
         if (typeof r.contentType === "string") contentType = r.contentType;
       }
     }
-    // If the payload didn't match the envelope shape (caller wrote
-    // directly to trigger_payload, malformed history row, etc.), show
-    // the whole thing as the eventPayload so nothing is hidden.
+    // 载荷没匹配信封结构时（调用方直接写了 trigger_payload、历史行损坏等），把整
+    // 个东西当 eventPayload 展示，任何内容都不藏。
     if (eventPayload === null && payload !== null && payload !== undefined) {
       eventPayload = payload;
     }
     const fullJSON = JSON.stringify(eventPayload, null, 2);
-    // Truncate the in-DOM string so the dialog stays responsive even when a
-    // provider sent a 256 KiB envelope. The Copy button still yields the
-    // full string, so the user never loses the data. 4 KiB is large enough
-    // to show the envelope header + first object-level fields of a typical
-    // webhook payload.
+    // 截断进 DOM 的字符串，让弹窗在 provider 发了 256 KiB 信封时依然流畅。复制
+    // 按钮仍产出完整字符串，用户绝不丢数据。4 KiB 足以展示信封头 + 典型 webhook
+    // 载荷的首批对象级字段。
     const TRUNCATE_AT = 4096;
     const isTruncated = fullJSON.length > TRUNCATE_AT;
     const displayJSON = isTruncated ? fullJSON.slice(0, TRUNCATE_AT) : fullJSON;

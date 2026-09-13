@@ -1,3 +1,4 @@
+// 议题缓存的“单一规则表”：统一描述一次议题变更如何在 React Query 缓存里传播。
 import { issueStatusCategory, normalizeStatusPatch } from "./status-category";
 import {
   hashKey,
@@ -39,71 +40,54 @@ export type IssueFlatCache = InfiniteData<ListIssuesResponse, number>;
 export type IssueTableRowCache = IssueTableRowsResponse;
 
 /**
- * IssueCacheCoordinator — the one rules table for how a single issue change
- * propagates through the query cache.
+ * IssueCacheCoordinator —— 一张“规则表”，统一描述一次议题变更如何在查询缓存中传播。
  *
- * Every write path converges here: `useUpdateIssue` (onMutate optimistic +
- * onSuccess server reconcile), `useBatchUpdateIssues`, and the WS
- * `issue:updated` handler all call {@link applyIssueChange}, so "I changed
- * it" and "someone else changed it" follow the same rules by construction.
+ * 所有写路径都汇聚到这里：`useUpdateIssue`（onMutate 乐观更新 + onSuccess 服务端对账）、
+ * `useBatchUpdateIssues`，以及 WS 的 `issue:updated` 处理器，都会调用 {@link applyIssueChange}。
+ * 因此“我改了它”和“别人改了它”从构造上就遵循同一套规则。
  *
- * The rules, per loaded bucketed list (workspace board + every myList
- * scope — My Issues, Project, actor panels, workspace members/agents tabs):
+ * 对每个已加载的分桶列表（工作区看板 + 每个 myList 视图——My Issues、Project、
+ * actor 面板、工作区成员/Agent 标签页），规则如下：
  *
- *   card present, filter untouched by the change → surgical patch (rebucket
- *     on status, position-slot insert; never a refetch — refetching the
- *     visible list is what made drags flicker)
- *   card present, no longer matches the list's filter → surgical REMOVE
- *     (bucket total decremented) — the "issue left this surface" case that a
- *     filter-blind patch used to leave behind (MUL-3669)
- *   card present, membership undecidable client-side (involves / my:all) →
- *     patch + mark the key stale
- *   card absent, change can't affect this list → skip
- *   card absent, stayed a member + status changed → move one unit of the
- *     server total between the two buckets immediately, then mark the key
- *     stale: the row's slot in the destination bucket's loaded window is
- *     server knowledge, and under staleTime: Infinity an explicit
- *     invalidation is the only channel that ever fills it in
- *   card absent, left the list (reassigned / re-projected) → old status
- *     bucket total -1
- *   card absent, may have ENTERED, or anything undecidable (no base entity,
- *     unknown membership) → mark the key stale (never hard-insert: the
- *     right page/slot under the list's sort+filter is server knowledge)
+ *   卡片在、且该变更不影响该列表的过滤条件 → 精确修补（状态变化时重新分桶、
+ *     position 变化时按槽位插入；绝不整表重取——重取可见列表正是拖拽闪烁的根源）
+ *   卡片在、但已不再匹配该列表的过滤条件 → 精确移除（桶 total 减一）——
+ *     这是“议题离开了这个视图”的场景，盲目的字段修补会把它漏掉（MUL-3669）
+ *   卡片在、但客户端无法判断成员关系（涉及 / my:all）→ 修补 + 把 key 标记为过期
+ *   卡片不在、且该变更不可能影响此列表 → 跳过
+ *   卡片不在、仍是成员 + 状态变了 → 立即在两个桶之间挪动 1 个服务器 total，
+ *     然后把 key 标记为过期：目标桶已加载窗口里的行槽位是服务器知识，而在
+ *     staleTime: Infinity 下，显式失效是唯一能补上它的通道
+ *   卡片不在、已离开列表（被重新分配 / 重新投影）→ 原状态桶 total 减一
+ *   卡片不在、可能“进入”了，或任何无法确定的情况（没有基础实体、成员关系未知）
+ *     → 标记 key 过期（绝不硬插入：在该列表排序+过滤下正确的页/槽位是服务器知识）
  *
- * Stale keys are NOT invalidated here — timing is the caller's contract:
- * mutations defer them to onSettled (invalidating mid-flight would refetch
- * uncommitted state and stomp the optimistic patch), the WS path invalidates
- * immediately (the server already committed).
+ * 过期的 key 不在这里失效——时机是调用方的职责：mutation 会推迟到 onSettled
+ * 再失效（在飞行中失效会重取未提交的状态、覆盖乐观补丁），而 WS 路径立即失效
+ * （服务器已提交）。
  *
- * The detail cache and the Inbox issue projections are patched in the
- * same pass. Aggregate projections that cannot be recomputed from one entity
- * (assignee-grouped boards, Gantt, project metrics) go through
- * {@link invalidateIssueDerivatives}.
+ * 详情缓存和 Inbox 的议题投影在同一轮里一并修补。无法从单个实体重新计算的聚合投影
+ * （按负责人分组的看板、Gantt、项目指标）走 {@link invalidateIssueDerivatives}。
  */
 
 export interface IssueCacheChangeResult {
-  /** Pre-change snapshots of every cache this change touched — feed back to
-   *  {@link rollbackIssueChange} from onError. */
+  /** 本次变更触碰过的每个缓存的“变更前快照”——onError 时回传给 {@link rollbackIssueChange}。 */
   prevLists: [QueryKey, ListIssuesCache][];
   prevFlatLists: [QueryKey, IssueFlatCache][];
   prevTableRows: [QueryKey, IssueTableRowCache][];
   prevDetail: Issue | undefined;
   prevInboxList: InboxItem[] | undefined;
   prevArchivedInboxList: InboxItem[] | undefined;
-  /** Loaded list keys whose server result may have drifted (membership
-   *  unknown, possible enter/leave beyond the loaded window, bucket-count
-   *  drift). Invalidate on settle (mutation) or immediately (WS). */
+  /** 服务器结果可能已经漂移的已加载列表 key（成员关系未知、可能在加载窗口外进出、
+   *  桶计数漂移）。mutation 在 settle 时失效，WS 则立即失效。 */
   staleKeys: QueryKey[];
-  /** The freshest pre-change copy of the issue found while reconciling —
-   *  callers use it for parent/children bookkeeping without re-scanning. */
+  /** 对账过程中找到的最新“变更前”议题副本——调用方用它做父子关系记账，无需重新扫描。 */
   prevIssue: Issue | undefined;
 }
 
-/** The server contract a bucketed list key encodes. `myListSorted` keys are
- *  `["issues", wsId, "my", scope, filter, sort]`; the workspace list is
- *  `["issues", wsId, "list", sort]` and carries no filter. The `byStatus`
- *  shape check upstream keeps grouped/flat caches under the same prefixes out
- *  of this path. */
+/** 从分桶列表的 query key 里解析出服务器契约。`myListSorted` 类型的 key 形如
+ *  `["issues", wsId, "my", scope, filter, sort]`；工作区列表是 `["issues", wsId, "list", sort]`
+ *  且不带过滤条件。上游的 `byStatus` 形状检查会把同前缀下的分组/平铺缓存挡在这条路径之外。 */
 function listContractFromKey(key: QueryKey): {
   scope: string | undefined;
   filter: MyIssuesFilter;
@@ -124,17 +108,14 @@ function listContractFromKey(key: QueryKey): {
 }
 
 /**
- * SHAPE-FILTERED CACHE SCANS.
+ * 带“形状过滤”的缓存扫描。
  *
- * `getQueriesData` matches a key PREFIX, and every issue-surface prefix also
- * covers sibling queries that hold a different shape: `myAll` covers the
- * assignee-grouped caches, `tableAll` covers the grouped (infinite) and facet
- * caches next to the row pages, `flatAll` covers the export window. Reading
- * `data.rows` / `data.pages` / `data.byStatus` off those siblings throws
- * ("Cannot read properties of undefined"), and inside a mutation's onSuccess
- * that throw surfaces as a failed write the server already accepted
- * (MUL-6394). Every scan goes through these helpers so the shape check can't
- * be forgotten at a new call site.
+ * `getQueriesData` 按 key 的“前缀”匹配，而每个议题视图前缀也会覆盖到形状不同的兄弟查询：
+ * `myAll` 会覆盖到按负责人分组的缓存，`tableAll` 会覆盖到行分页旁边的分组（infinite）和
+ * 分面缓存，`flatAll` 会覆盖到导出窗口。从这些兄弟缓存上读 `data.rows` / `data.pages` /
+ * `data.byStatus` 会抛错（“Cannot read properties of undefined”），而在 mutation 的
+ * onSuccess 里抛错，表现就是“服务器已接受、但本地写失败”（MUL-6394）。
+ * 所有扫描都走这些辅助函数，保证新调用点不会忘记做形状检查。
  */
 export function bucketedListEntries(
   qc: QueryClient,
@@ -174,8 +155,7 @@ export function tableRowEntries(
     );
 }
 
-/** Caches under `prefix` that hold a plain `Issue[]` — per-parent children and
- *  the project Gantt list. */
+/** `prefix` 下、内容为纯 `Issue[]` 的缓存——即每个父议题的子议题列表和项目 Gantt 列表。 */
 export function issueArrayEntries(
   qc: QueryClient,
   prefix: readonly unknown[],
@@ -206,10 +186,9 @@ function patchFieldChanged<K extends keyof Issue>(
   return !base || !Object.is(patch[field], base[field]);
 }
 
-/** Whether the patch changes at least one issue field relative to `base`.
- *  Every persisted edit also advances `updated_at` server-side even though the
- *  optimistic request payload does not carry that timestamp, so this doubles
- *  as "did updated_at advance" for `updated_at`-sorted surfaces. */
+/** 相对 `base`，该补丁是否至少改了一个议题字段。
+ *  每次持久化的编辑服务器端都会推进 `updated_at`（尽管乐观请求体不带该时间戳），
+ *  所以这个函数对按 `updated_at` 排序的视图，等价于“updated_at 是否前进了”。 */
 function patchChangesAnyIssueField(
   patch: Partial<Issue>,
   base: Issue | undefined,
@@ -219,11 +198,9 @@ function patchChangesAnyIssueField(
   );
 }
 
-// Fields whose direct mutation is part of the issue's semantic activity
-// contract. Position-only moves deliberately stay out: they are layout edits,
-// not user-visible activity. Full server snapshots carry last_activity_at, so
-// prefer that authoritative clock when present; the field list is the
-// mixed-version/optimistic fallback for patches that do not carry it yet.
+// 直接改动这些字段才算议题的“语义活动”。纯位置移动有意排除在外：那只是排版编辑，
+// 不算用户可见的活动。完整的服务器快照会带 last_activity_at，所以优先用那个权威时钟；
+// 这个字段列表是混合版本 / 乐观补丁在还没带该时间戳时的回退方案。
 const issueActivityFields = [
   "title",
   "description",
@@ -250,9 +227,8 @@ function patchChangesIssueActivity(
   );
 }
 
-/** Whether a patch can change a flat window's membership or ordering. A
- * loaded row is always patched optimistically; only windows whose server
- * contract depends on the changed field need the follow-up refetch. */
+/** 判断一个补丁是否会改变某平铺窗口的成员关系或排序。
+ *  已加载的行总是被乐观修补；只有当窗口的服务器契约依赖被改的字段时，才需要后续重取。 */
 function flatWindowNeedsReconcile(
   key: QueryKey,
   patch: Partial<Issue>,
@@ -301,8 +277,9 @@ function flatWindowNeedsReconcile(
     case "created_at":
       return patchFieldChanged(patch, base, "created_at");
     case "updated_at":
-      // Every persisted issue edit advances updated_at even though the
-      // optimistic request payload does not carry the server timestamp.
+      // 服务端会给每次落库的议题编辑刷新 updated_at，即使乐观请求的载荷里并没有
+      // 携带新的服务端时间戳——所以只要“任一业务字段被改”，按 updated_at 排序的
+      // 列表就要重排/重取，不能因为补丁里没带时间戳就误判为“没动过”。
       return anyIssueFieldChanged;
     case "last_activity":
       return patchChangesIssueActivity(patch, base);
@@ -313,35 +290,43 @@ function flatWindowNeedsReconcile(
     case "position":
       return patchFieldChanged(patch, base, "position");
     default:
-      // Custom-property ordering is reconciled by the dedicated property
-      // mutation/WS pipeline, which has the full property-bag snapshot.
+      // 按自定义属性值排序的列表不在这里处理：那种排序由专属的属性 mutation/WS
+      // 管线对账（它持有完整的属性包快照）。落到 default 意味着本次补丁不会牵动
+      // 该排序依据，直接返回 false 即可。
       return false;
   }
 }
 
+/**
+ * 把一次议题变更应用到 React Query 缓存的所有相关视图上——乐观更新的核心入口。
+ * @param qc 查询客户端。
+ * @param wsId 工作区 id。
+ * @param id 被改议题的 id。
+ * @param rawPatch 要合并进议题的字段补丁（通常只有被改动的字段）。
+ * @param opts 附加选项。
+ * @returns 本次变更触碰过的所有缓存的“变更前快照”，供 onError 回滚。
+ */
 export function applyIssueChange(
   qc: QueryClient,
   wsId: string,
   id: string,
   rawPatch: Partial<Issue>,
   opts: {
-    /** Which membership dimensions this change actually moved — compute via
-     *  `issueChangedDims` (mutations) or the server's WS flags. */
+    /** 本次变更实际动了哪些“成员关系维度”——mutation 用 `issueChangedDims` 计算，
+     *  WS 路径用服务器下发的标记。 */
     changed: IssueChangedDims;
-    /** Freshest full pre-change entity, used to judge membership for lists
-     *  where the card is not loaded. Omitting it degrades those judgments to
-     *  "unknown" → a deferred refetch, never a wrong patch. */
+    /** 变更前最新的完整实体，用于判断“卡片未加载”的列表的成员关系。
+     *  省略它会让这些判断退化成“未知”→ 推迟重取，但绝不会补错。 */
     baseIssue?: Issue;
-    /** Optional per-cache admission guard. Realtime uses this to reject a
-     *  non-increasing revision in a fresh cache while still healing another
-     *  loaded projection that holds an older revision of the same issue. */
+    /** 可选的逐缓存准入守卫。Realtime 用它拒绝一个非递增的 revision 写入新缓存，
+     *  同时仍然修复另一个持有同一议题旧 revision 的已加载投影。 */
     acceptCurrent?: (current: Issue) => boolean;
   },
 ): IssueCacheChangeResult {
   const { changed, baseIssue, acceptCurrent = () => true } = opts;
-  // Normalize ONCE, at the door. Every write below is a `{...entity, ...patch}`
-  // spread, and an optimistic `{status}` patch would otherwise leave the stale
-  // status_category on the entity while the card moves buckets. (MUL-6243)
+  // 只在入口处归一化一次。下面每次写入都是 `{...entity, ...patch}` 的展开，
+  // 一个乐观的 `{status}` 补丁若不归一化，会让实体在卡片换桶时还带着过期的
+  // status_category（状态分类）。（MUL-6243）
   const patch = normalizeStatusPatch(rawPatch);
   const prevLists: [QueryKey, ListIssuesCache][] = [];
   const prevFlatLists: [QueryKey, IssueFlatCache][] = [];
@@ -355,12 +340,10 @@ export function applyIssueChange(
     if (loc && !acceptCurrent(loc.issue)) continue;
     const filterTouched = listFilterDependsOn(scope, filter, changed);
 
-    // "Updated date" sort: every persisted edit advances updated_at, but the
-    // optimistic patch carries no server timestamp and a loaded card keeps its
-    // slot, so the board has drifted out of order. The right slot is server
-    // knowledge — mark the key stale so the refetch re-sorts it. This mirrors
-    // the updated_at case in flatWindowNeedsReconcile and, like it, does not
-    // gate on this list's membership (an off-window member should surface too).
+    // “按更新日期”排序：每次持久化编辑都会推进 updated_at，但乐观补丁不带服务器时间戳，
+    // 已加载的卡片又留在原槽位，于是看板顺序已经漂移了。正确的槽位是服务器知识——
+    // 把 key 标记为过期，让重取重新排序。这与 flatWindowNeedsReconcile 里的 updated_at
+    // 分支一致，同样不判断该列表的成员关系（窗口外的成员也应该浮上来）。
     if (
       sort.sort_by === "updated_at" &&
       patchChangesAnyIssueField(patch, loc?.issue ?? baseIssue)
@@ -376,10 +359,9 @@ export function applyIssueChange(
 
     if (loc) {
       if (!prevIssue) prevIssue = loc.issue;
-      // A status this client cannot resolve to a category makes
-      // patchIssueInBuckets a no-op. The row DID move on the server, so
-      // treating that as "nothing to do" would leave the card in its old
-      // column forever — force a refetch instead. (MUL-6243)
+      // 客户端无法解析出分类的状态会让 patchIssueInBuckets 变成空操作。
+      // 但这行在服务器上确实移动了，若当作“无事发生”，卡片会永远卡在旧列——
+      // 所以要强制重取。（MUL-6243）
       if (patchNeedsInvalidation(patch)) staleKeys.push(key);
       let next: ListIssuesCache;
       if (filterTouched) {
@@ -404,9 +386,8 @@ export function applyIssueChange(
       continue;
     }
 
-    // Card not loaded here. Only a change that can move the issue across
-    // this list's filter — or shift a per-status count for an issue beyond
-    // the loaded window — needs a reconcile; anything else is a no-op.
+    // 这里没加载这张卡片。只有“可能让议题跨过该列表过滤条件”的变更——
+    // 或者让已加载窗口之外的议题的某个状态计数变化——才需要对账；其余都是空操作。
     if (!filterTouched && !changed.status) continue;
     const wasMember = baseIssue
       ? issueMatchesListFilter(baseIssue, scope, filter)
@@ -416,32 +397,27 @@ export function applyIssueChange(
       scope,
       filter,
     );
-    // Neither before nor after the change does this issue belong to the
-    // list — its pages and counts are untouched.
+    // 变更前后该议题都不属于这个列表——它的分页和计数都不用动。
     if (wasMember === false && isMember === false) continue;
 
-    // Certain count arithmetic — branch on the membership OUTCOME, never on
-    // which field changed, so status / assignee / project (and future team)
-    // all flow through the same two cases. wasMember === true implies a
-    // baseIssue exists, so the old status is known.
+    // 确定性的计数运算——按成员关系的“结果”分支，而不是按改了哪个字段分支，
+    // 这样 status / assignee / project（以及将来的 team）都走同样的两种情况。
+    // wasMember === true 意味着 baseIssue 存在，所以旧状态是已知的。
     if (wasMember === true && baseIssue) {
       if (isMember === true) {
-        // Still a member. Only a status change moves a count between
-        // buckets; anything else (e.g. member→member reassignment) leaves
-        // this list's pages and counts untouched.
+        // 仍是成员。只有状态变化才会在桶之间挪计数；其它情况
+        // （例如成员→成员的重新分配）不会动这个列表的分页和计数。
         if (!changed.status || patch.status === undefined) continue;
-        // Bucket totals are per category (MUL-6243).
-        // patch.status_category is authoritative when the server sent it; the
-        // key-only fallback covers built-ins.
+        // 桶的 total 按分类计（MUL-6243）。
+        // 服务器发来 patch.status_category 时以它为准；只有 key 的回退方案覆盖内置状态。
         const fromCategory = issueStatusCategory(baseIssue);
         const toCategory = issueStatusCategory({
           status: patch.status,
           status_category: patch.status_category,
         });
         if (!fromCategory || !toCategory) {
-          // An unresolvable custom status must NOT be a silent no-op: the row
-          // moved on the server, so leaving this cache untouched drifts the
-          // off-window totals permanently. Force a refetch instead.
+          // 无法解析的自定义状态绝不能静默空操作：这行在服务器上已经移动了，
+          // 缓存不动会让窗口外的 total 永久偏离。改为强制重取。
           staleKeys.push(key);
           continue;
         }
@@ -449,16 +425,15 @@ export function applyIssueChange(
         if (next !== data) {
           prevLists.push([key, data]);
           qc.setQueryData<ListIssuesCache>(key, next);
-          // The count moved but the row can't be inserted client-side (its
-          // page/slot under the list's sort is server knowledge). Leave the
-          // reconcile trigger: with staleTime: Infinity nothing else ever
-          // brings the destination bucket's window in line with its total.
+          // 计数动了，但这行没法在客户端插入（它在列表排序下的页/槽位是服务器知识）。
+          // 保留这个对账触发：在 staleTime: Infinity 下，没有别的东西能让目标桶的窗口
+          // 跟它的 total 对齐。
           staleKeys.push(key);
         }
         continue;
       }
       if (isMember === false) {
-        // Left the list entirely — the bucket it was counted in loses one.
+        // 彻底离开了这个列表——它原来被计入的那个桶减一。
         const leavingCategory = issueStatusCategory(baseIssue);
         if (!leavingCategory) {
           staleKeys.push(key);
@@ -472,15 +447,13 @@ export function applyIssueChange(
         continue;
       }
     }
-    // Entering (its page/slot under the list's sort is server knowledge) or
-    // any uncertainty (no base, unknown membership) → refetch instead of
-    // guessing.
+    // “进入”了（它在列表排序下的页/槽位是服务器知识），或任何不确定的情况
+    // （没有 base、成员关系未知）→ 与其猜，不如重取。
     staleKeys.push(key);
   }
 
-  // Patch loaded flat rows immediately. Only refetch windows whose encoded
-  // server filter/sort actually depends on this change; e.g. a title edit in
-  // a position-sorted unfiltered table is fully reconciled by the patch.
+  // 立即修补已加载的平铺行。只有其编码的服务器过滤/排序确实依赖本次变更的窗口
+  // 才需要重取；例如在一个按 position 排序、无过滤的表格里改标题，补丁本身就完全对账了。
   for (const [key, data] of flatListEntries(qc, wsId)) {
     let found: Issue | undefined;
     const pages = data.pages.map((page) => ({
@@ -502,11 +475,9 @@ export function applyIssueChange(
     }
   }
 
-  // Table branch pages are partial server-owned projections, so membership,
-  // counts and ordering still reconcile through the existing tableAll
-  // invalidation on settle. The entity snapshot inside every loaded row is
-  // determinate, though: patch it immediately so inline edits never flash the
-  // old title/status/assignee while the authoritative branch refetch runs.
+  // Table 分支页是“服务器部分拥有的投影”，所以成员关系、计数和排序仍通过 settle 时
+  // 已有的 tableAll 失效来对账。但每一行里的实体快照是确定的：立即修补它，
+  // 让行内编辑在权威分支重取期间不会闪现旧的标题/状态/负责人。
   for (const [key, data] of tableRowEntries(qc, wsId)) {
     let found: Issue | undefined;
     const rows = data.rows.map((row) => {
@@ -530,9 +501,8 @@ export function applyIssueChange(
     if (!prevIssue) prevIssue = prevDetail;
   }
 
-  // Inbox rows carry issue status/priority snapshots used by presentation and
-  // filtering. The issue is the real state, so both projections follow every
-  // write immediately.
+  // Inbox 行带着用于展示和过滤的议题 status/priority 快照。议题才是真实状态，
+  // 所以两个投影都要立即跟随每一次写入。
   let prevInboxList: InboxItem[] | undefined;
   let prevArchivedInboxList: InboxItem[] | undefined;
   if (patch.status !== undefined || patch.priority !== undefined) {
@@ -558,8 +528,7 @@ export function applyIssueChange(
   };
 }
 
-/** Restore every snapshot captured by {@link applyIssueChange} — the onError
- *  leg of the optimistic lifecycle. */
+/** 恢复 {@link applyIssueChange} 捕获的所有快照——乐观更新生命周期的 onError 回滚分支。 */
 export function rollbackIssueChange(
   qc: QueryClient,
   wsId: string,
@@ -598,10 +567,8 @@ export function rollbackIssueChange(
 }
 
 /**
- * Refresh the aggregate projections a single-entity patch cannot recompute:
- * assignee-grouped boards (regrouping is server logic), every Project Gantt
- * (schedule membership + row mirrors), and project metrics when the change
- * could shift per-project counts.
+ * 刷新那些单实体补丁无法重新计算的聚合投影：按负责人分组的看板（重新分组是服务器逻辑）、
+ * 每个项目 Gantt（排期成员关系 + 行镜像），以及当变更可能改变各项目计数时的项目指标。
  */
 export function invalidateIssueDerivatives(
   qc: QueryClient,
@@ -616,9 +583,8 @@ export function invalidateIssueDerivatives(
   }
 }
 
-/** True when any object part of a query key encodes the requested ordering.
- * Bucketed, flat and grouped surfaces use `sort_by`; server Table queries use
- * the nested `sort.field` contract. */
+/** 当 query key 的某个对象片段编码了指定的排序方式时返回 true。
+ *  分桶、平铺和分组视图用 `sort_by`；服务器 Table 查询用嵌套的 `sort.field` 契约。 */
 function queryKeyHasSort(key: QueryKey, field: string): boolean {
   return key.some(
     (part) => {
@@ -637,15 +603,12 @@ function queryKeyHasSort(key: QueryKey, field: string): boolean {
 }
 
 /**
- * Refetch every loaded issue list/board ordered by "Updated date" so a card
- * whose `updated_at` just advanced re-sorts to its true slot. Used by events
- * that bump `updated_at` without carrying the new timestamp or a field patch:
- * `comment:created` (MUL-5009) and the property/metadata WS events, all of
- * which advance the issue's `updated_at` server-side but bypass the
- * coordinator's field-diff path. Covers status boards, flat tables, AND
- * assignee-grouped boards (workspace + My Issues); only `updated_at`-sorted
- * keys are touched. The refetch is authoritative (server order + tie-breaks),
- * which also surfaces a touched card sitting beyond the loaded window.
+ * 重取所有按“更新日期”排序的已加载议题列表/看板，让刚刚推进了 `updated_at` 的卡片
+ * 重新排到它真正的位置。用于那些会推进 `updated_at`、却不带新时间戳或字段补丁的事件：
+ * `comment:created`（MUL-5009）以及属性/元数据的 WS 事件——它们都在服务器端推进了议题的
+ * `updated_at`，却绕过了协调器的字段 diff 路径。覆盖状态看板、平铺表格，以及按负责人分组的
+ * 看板（工作区 + My Issues）；只触碰按 `updated_at` 排序的 key。这次重取是权威的
+ * （服务器排序 + 打破平局的规则），也能把坐在加载窗口之外被触碰的卡片浮出来。
  */
 export function invalidateUpdatedAtSortedIssueLists(
   qc: QueryClient,
@@ -657,9 +620,8 @@ export function invalidateUpdatedAtSortedIssueLists(
   });
 }
 
-/** Refetch only issue surfaces ordered by semantic activity. Auxiliary
- * mutations carry no full Issue snapshot or sortable timestamp, so an
- * authoritative refetch is the only safe way to restore their order. */
+/** 只重取按“语义活动”排序的议题视图。辅助类 mutation 不带完整 Issue 快照、
+ *  也没有可排序的时间戳，所以权威重取是恢复其顺序的唯一安全手段。 */
 export function invalidateLastActivitySortedIssueLists(
   qc: QueryClient,
   wsId: string,
@@ -670,8 +632,8 @@ export function invalidateLastActivitySortedIssueLists(
   });
 }
 
-/** Invalidate the stale keys reported by {@link applyIssueChange}, deduped —
- *  a batch over N issues can report the same key N times. */
+/** 去重后失效 {@link applyIssueChange} 上报的过期 key——对 N 个议题的批量操作
+ *  可能把同一个 key 上报 N 次。 */
 export function invalidateStaleListKeys(qc: QueryClient, staleKeys: QueryKey[]) {
   const seen = new Set<string>();
   for (const key of staleKeys) {

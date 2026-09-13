@@ -1,3 +1,28 @@
+// ===========================================================================
+// 文件职责：types 目录的"总出口"（barrel）。本文件不做任何定义，只把各
+// 领域文件的类型与少量常量/纯函数统一 re-export，让外部（packages/core 的
+// 其它模块、apps/web、packages/views 等）可以一条 import 全取：
+//
+//   import type { Issue, Agent, ChatSession } from "@multica/core/types";
+//
+// 分组说明（与源文件一一对应）：
+//   - issue-execution：issue 的执行树 / 时间线节点
+//   - issue / issue-status：议题本体与状态目录
+//   - agent：Agent 实体、调用权限、运行时、任务、用量、技能（最大的一块）
+//   - workspace / project / squad / label / property / pin：组织与元数据
+//   - comment / activity / subscriber / inbox：协作与通知
+//   - chat / autopilot / quick-action：对话与自动化
+//   - events / api：WS 实时事件与后端接口签名
+//   - attachment / attachment-url：附件及下载地址工具函数
+//   - plugin / github / vcs / lark / slack / dingtalk / wecom / telegram /
+//     composio / external-credential：插件与外部集成
+//   - storage：存储适配器接口；life / billing：计费与额度
+//
+// 维护约定：每新增一个源文件，记得在这里补一行 re-export，并保持导出名
+// 大写字母开头（type）与常量函数的区分；纯类型用 `export type`，运行时可
+// 用的值/函数用 `export`。
+// ===========================================================================
+
 export type {
   AgentTaskArtifact,
   IssueExecutionNode,

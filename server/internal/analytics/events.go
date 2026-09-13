@@ -1,9 +1,10 @@
+// events.go 是产品遥测事件名的「权威目录」：集中定义所有 canonical 事件常量与
+// 各自的事件构建函数。请与 packages/core/analytics 保持同步。
 package analytics
 
 import "strings"
 
-// Event names. This file is the source-of-truth catalog; keep
-// packages/core/analytics in sync with it.
+// 事件名目录。本文件是权威来源；请与 packages/core/analytics 保持同步。
 const (
 	EventSignup                        = "signup"
 	EventWorkspaceCreated              = "workspace_created"
@@ -33,27 +34,21 @@ const (
 
 const EventSchemaVersion = 2
 
-// metricsOnlyEvents lists every server-side event that is recorded to
-// Prometheus (via metrics.IncForEvent, for Grafana) but deliberately NOT
-// shipped to PostHog. metrics.RecordEvent consults this set and skips the
-// PostHog Capture for these names while still incrementing the counter.
+// metricsOnlyEvents 列出「记入 Prometheus（经 metrics.IncForEvent，给 Grafana），
+// 但刻意不发给 PostHog」的每个服务端事件。metrics.RecordEvent 会查这张表，对这些名字
+// 跳过 PostHog Capture，但仍递增计数器。
 //
-// As of MUL-4127, PostHog is no longer used for server-side product analytics:
-// the acquisition / activation / expansion funnel is now read straight from the
-// operational database and from these Grafana counters, so the redundant
-// PostHog copy of every product event was retired. That makes ALL server-side
-// events metrics-only — both the product-behaviour group and the original
-// high-volume runtime/autopilot telemetry are Prometheus-only. PostHog now only
-// receives frontend error/crash telemetry ($exception, client_crash,
-// client_unresponsive); see packages/core/analytics.
+// 自 MUL-4127 起，PostHog 不再用于服务端产品分析：获客/激活/扩张漏斗改为直接从运维
+// 数据库与这些 Grafana 计数器读取，于是「把每个产品事件再复制一份到 PostHog」的冗余
+// 被退役了。这让所有服务端事件都变成 metrics-only——无论产品行为组还是原本高量的
+// runtime/autopilot 遥测都只进 Prometheus。PostHog 现在只收前端错误/崩溃遥测
+// （$exception、client_crash、client_unresponsive）；见 packages/core/analytics。
 //
-// Note: agent_task_* lifecycle events are also Prometheus-only, but their
-// Prometheus side is handled by typed BusinessMetrics.RecordTask* methods, so
-// they never build an analytics.Event in the first place and don't need an
-// entry here.
+// 注意：agent_task_* 生命周期事件同样只进 Prometheus，但它们的 Prometheus 一侧由
+// 带类型的 BusinessMetrics.RecordTask* 方法负责，所以它们从头到尾都不会构造
+// analytics.Event，也就无需在此登记。
 var metricsOnlyEvents = map[string]struct{}{
-	// Product-behaviour events — DB + Grafana are the source of truth
-	// (MUL-4127); the PostHog copy was redundant.
+	// 产品行为事件——DB + Grafana 是权威（MUL-4127）；PostHog 那份冗余。
 	EventSignup:                        {},
 	EventWorkspaceCreated:              {},
 	EventIssueCreated:                  {},
@@ -71,8 +66,8 @@ var metricsOnlyEvents = map[string]struct{}{
 	EventContactSalesSubmitted:         {},
 	EventSquadCreated:                  {},
 	EventAutopilotCreated:              {},
-	// High-volume runtime / autopilot execution-lifecycle telemetry — always
-	// Prometheus-only (Grafana already carries the equivalent counters).
+	// 高量 runtime / autopilot 执行生命周期遥测——永远只进 Prometheus（Grafana 早已
+	// 携带等价计数器）。
 	EventRuntimeRegistered:     {},
 	EventRuntimeReady:          {},
 	EventRuntimeFailed:         {},
@@ -82,14 +77,14 @@ var metricsOnlyEvents = map[string]struct{}{
 	EventAutopilotRunFailed:    {},
 }
 
-// IsMetricsOnly reports whether an event name is recorded to Prometheus but must
-// not be sent to PostHog. As of MUL-4127 this is true for every server-side
-// event. See metricsOnlyEvents.
+// IsMetricsOnly 报告某事件名是否「记入 Prometheus 但绝不能发 PostHog」。
+// 自 MUL-4127 起，这对每个服务端事件都为 true。见 metricsOnlyEvents。
 func IsMetricsOnly(name string) bool {
 	_, ok := metricsOnlyEvents[name]
 	return ok
 }
 
+// 事件产生渠道（Source 维度）取值。
 const (
 	SourceOnboarding = "onboarding"
 	SourceManual     = "manual"
@@ -98,10 +93,8 @@ const (
 	SourceAPI        = "api"
 )
 
-// CoreProperties are the shared join and segmentation fields used by the
-// canonical PostHog events. Empty values are omitted, except is_demo which is
-// always stamped so dashboards can filter demo data without sparse-property
-// edge cases.
+// CoreProperties 是 canonical PostHog 事件共用的「联表 / 分段」字段。空值省略，
+// 但 is_demo 总会打上——让仪表盘能过滤演示数据，而不受稀疏属性边界问题困扰。
 type CoreProperties struct {
 	UserID         string
 	WorkspaceID    string
@@ -116,31 +109,30 @@ type CoreProperties struct {
 	IsDemo         bool
 }
 
+// TaskContext 是任务上下文维度字段的别名（与 CoreProperties 同构）。
 type TaskContext = CoreProperties
 
-// Onboarding completion paths. Keep in sync with packages/core/analytics.
+// 新手引导的完成路径。与 packages/core/analytics 保持同步。
 const (
-	OnboardingPathFull           = "full"            // reached first_issue end of flow
-	OnboardingPathRuntimeSkipped = "runtime_skipped" // completed without connecting a runtime
-	OnboardingPathCloudWaitlist  = "cloud_waitlist"  // completed via cloud waitlist soft exit
-	OnboardingPathSkipExisting   = "skip_existing"   // "I've done this before" from welcome
-	OnboardingPathInviteAccept   = "invite_accept"   // accepted at least one invitation from /invitations
-	OnboardingPathUnknown        = "unknown"         // fallback when the server can't derive the path
+	OnboardingPathFull           = "full"            // 走到 first_issue 流程结束
+	OnboardingPathRuntimeSkipped = "runtime_skipped" // 未连接 runtime 也完成了
+	OnboardingPathCloudWaitlist  = "cloud_waitlist"  // 经 cloud waitlist 软退出完成
+	OnboardingPathSkipExisting   = "skip_existing"   // 从欢迎页选「我以前弄过」
+	OnboardingPathInviteAccept   = "invite_accept"   // 从 /invitations 接受了至少一张邀请
+	OnboardingPathUnknown        = "unknown"         // 服务端推不出路径时的兜底
 )
 
-// Platform is used as the "platform" event property so funnels can split by
-// web / cli. Request-path events use PlatformServer as a fallback
-// when the caller is a server-originating action (e.g. auto-created user);
-// otherwise the frontend passes the real platform via a header / body field
-// in later iterations.
+// Platform 用作事件的 "platform" 属性，让漏斗可按 web / cli 拆分。请求路径事件在调用方
+// 属于服务端发起的动作（例如自动创建的用户）时用 PlatformServer 兜底；否则前端在后续
+// 迭代里经头/body 字段传真实平台。
 const (
 	PlatformServer = "server"
 	PlatformWeb    = "web"
 	PlatformCLI    = "cli"
 )
 
-// Signup builds the signup event. signupSource is populated from the
-// frontend's stored UTM/referrer cookie if present; leave empty otherwise.
+// Signup 构造 signup 事件。signupSource 若有值，来自前端存的 UTM/referrer cookie；
+// 否则留空。
 func Signup(userID, email, signupSource string) Event {
 	return Event{
 		Name:       EventSignup,
@@ -156,9 +148,8 @@ func Signup(userID, email, signupSource string) Event {
 	}
 }
 
-// WorkspaceCreated builds the workspace_created event. "Is this the user's
-// first workspace?" is deliberately not stamped here — it's derived in
-// PostHog by checking whether the user has a prior workspace_created event.
+// WorkspaceCreated 构造 workspace_created 事件。"是不是用户的第一个 workspace？"
+// 刻意不在此标注——由 PostHog 侧检查该用户此前是否有 workspace_created 事件来推导。
 func WorkspaceCreated(userID, workspaceID string) Event {
 	return Event{
 		Name:        EventWorkspaceCreated,
@@ -172,21 +163,18 @@ func WorkspaceCreated(userID, workspaceID string) Event {
 	}
 }
 
-// RuntimeRegistered fires on the first time a (workspace, daemon, provider)
-// triple is upserted. The handler uses a `xmax = 0` flag returned from the
-// upsert query to distinguish inserts from updates — heartbeats and repeat
-// registrations never emit this event.
+// RuntimeRegistered 在 (workspace, daemon, provider) 三元组首次被 upsert 时触发。
+// handler 用 upsert 查询返回的 `xmax = 0` 标志区分「插入」与「更新」——心跳和重复注册
+// 永远不会发这个事件。
 //
-// ownerID may be empty when the daemon authenticates via a daemon token
-// (no user context); downstream funnels that need per-user attribution
-// fall back to `workspace_id` as the grouping key.
+// daemon 用 daemon 令牌认证（无用户上下文）时 ownerID 可能为空；需要按用户归因的
+// 下游漏斗退回用 `workspace_id` 作为分组键。
 func RuntimeRegistered(ownerID, workspaceID, runtimeID, daemonID, provider, runtimeVersion, cliVersion string) Event {
 	distinct := ownerID
 	if distinct == "" {
-		// A per-workspace synthetic id keeps PostHog from merging unrelated
-		// daemon registrations across workspaces under a single "anonymous"
-		// person. It's stable within a workspace so repeat heartbeats (which
-		// don't emit anyway) would at least group correctly.
+		// 按 workspace 合成的 id 可防止 PostHog 把不同 workspace 里互不相关的 daemon
+		// 注册合并成同一个 "anonymous" person。它在 workspace 内稳定，重复心跳（反正也
+		// 不触发事件）至少能正确分组。
 		distinct = "workspace:" + workspaceID
 	}
 	return Event{
@@ -210,6 +198,7 @@ func RuntimeRegistered(ownerID, workspaceID, runtimeID, daemonID, provider, runt
 	}
 }
 
+// RuntimeReady 在运行时「就绪」时触发。
 func RuntimeReady(ownerID, workspaceID, runtimeID, daemonID, provider string, readyDurationMS int64) Event {
 	distinct := ownerID
 	if distinct == "" {
@@ -236,6 +225,7 @@ func RuntimeReady(ownerID, workspaceID, runtimeID, daemonID, provider string, re
 	}
 }
 
+// RuntimeFailed 在运行时启动失败时触发。
 func RuntimeFailed(ownerID, workspaceID, daemonID, provider, failureReason, errorType string, recoverable bool) Event {
 	distinct := ownerID
 	if distinct == "" && workspaceID != "" {
@@ -260,6 +250,7 @@ func RuntimeFailed(ownerID, workspaceID, daemonID, provider, failureReason, erro
 	}
 }
 
+// RuntimeOffline 在运行时离线时触发。
 func RuntimeOffline(ownerID, workspaceID, runtimeID, daemonID, provider string) Event {
 	distinct := ownerID
 	if distinct == "" {
@@ -282,15 +273,13 @@ func RuntimeOffline(ownerID, workspaceID, runtimeID, daemonID, provider string) 
 	}
 }
 
-// IssueExecuted fires at most once per issue lifetime — on the first task
-// completion that flips `issues.first_executed_at` from NULL via an atomic
-// UPDATE. Retries, re-assignments, and comment-triggered follow-ups never
-// re-emit, which is what keeps the ≥1/≥2/≥5/≥10 funnel buckets honest.
+// IssueExecuted 在每条 issue 生命周期内至多触发一次——发生在「第一次任务完成把
+// `issues.first_executed_at` 从 NULL 原子地翻转过来」时。重试、重新指派、评论触发的
+// 后续执行都绝不重发——这正是 ≥1/≥2/≥5/≥10 漏斗各桶保持诚实的原因。
 //
-// Deliberately not stamped here: the workspace's Nth-issue ordinal.
-// Computing it at emit time is not atomic (two concurrent first-completions
-// both read count=1, both emit n=1), and PostHog derives the same number
-// exactly at query time from the event stream.
+// 刻意不在此标注「该 workspace 的第 N 条 issue」：在触发时刻算它并不原子（两个并发
+// 的首次完成都读到 count=1、都发 n=1），而 PostHog 在查询时从事件流里能精确推出同一
+// 个数。
 func IssueExecuted(actorID, workspaceID, issueID, taskID, agentID, source, runtimeMode, provider string, taskDurationMS int64) Event {
 	return Event{
 		Name:        EventIssueExecuted,
@@ -315,6 +304,7 @@ func IssueExecuted(actorID, workspaceID, issueID, taskID, agentID, source, runti
 	}
 }
 
+// IssueCreated 在 issue 被创建时触发。
 func IssueCreated(actorID, workspaceID, issueID, agentID, taskID, autopilotRunID, source, platform string) Event {
 	props := map[string]any{}
 	if platform != "" {
@@ -336,6 +326,7 @@ func IssueCreated(actorID, workspaceID, issueID, agentID, taskID, autopilotRunID
 	}
 }
 
+// ChatMessageSent 在聊天消息发出时触发。
 func ChatMessageSent(userID, workspaceID, chatSessionID, taskID, agentID, runtimeMode, provider, platform string) Event {
 	props := map[string]any{}
 	if platform != "" {
@@ -358,27 +349,29 @@ func ChatMessageSent(userID, workspaceID, chatSessionID, taskID, agentID, runtim
 	}
 }
 
-// AutopilotAssignee describes the autopilot's configured target. agent_id is
-// always the agent that will actually execute the work (the squad leader for
-// squad autopilots) so funnels grouping by agent stay consistent. assignee_*
-// fields record the original configuration so reports can tell a solo-agent
-// autopilot apart from a squad one without joining back to the autopilot row.
+// AutopilotAssignee 描述 autopilot 配置的执行目标。agent_id 永远是「实际会执行工作」
+// 的那个 agent（squad autopilot 即其队长），保证按 agent 分组的漏斗一致。assignee_*
+// 字段记录原始配置，让报表不用 join 回 autopilot 行就能区分单人 agent autopilot 与
+// squad autopilot。
 type AutopilotAssignee struct {
-	AgentID      string // executing agent — leader for squad autopilots
-	AssigneeType string // "agent" or "squad"
-	SquadID      string // empty when AssigneeType != "squad"
+	AgentID      string // 执行 agent——squad autopilot 是队长
+	AssigneeType string // "agent" 或 "squad"
+	SquadID      string // AssigneeType != "squad" 时为空
 }
 
+// AutopilotRunStarted 在 autopilot 运行开始时触发。
 func AutopilotRunStarted(actorID, workspaceID, autopilotID, runID, cadence string, assignee AutopilotAssignee, triggerSource string) Event {
 	return autopilotRunEvent(EventAutopilotRunStarted, actorID, workspaceID, autopilotID, runID, cadence, assignee, triggerSource, nil)
 }
 
+// AutopilotRunCompleted 在 autopilot 运行成功完成时触发。
 func AutopilotRunCompleted(actorID, workspaceID, autopilotID, runID, cadence string, assignee AutopilotAssignee, triggerSource string, durationMS int64) Event {
 	return autopilotRunEvent(EventAutopilotRunCompleted, actorID, workspaceID, autopilotID, runID, cadence, assignee, triggerSource, map[string]any{
 		"duration_ms": durationMS,
 	})
 }
 
+// AutopilotRunFailed 在 autopilot 运行失败时触发。
 func AutopilotRunFailed(actorID, workspaceID, autopilotID, runID, cadence string, assignee AutopilotAssignee, triggerSource, failureReason, errorType string, willRetry bool, durationMS int64) Event {
 	return autopilotRunEvent(EventAutopilotRunFailed, actorID, workspaceID, autopilotID, runID, cadence, assignee, triggerSource, map[string]any{
 		"duration_ms":    durationMS,
@@ -388,9 +381,8 @@ func AutopilotRunFailed(actorID, workspaceID, autopilotID, runID, cadence string
 	})
 }
 
-// TeamInviteSent fires when a workspace admin creates an invitation.
-// inviteMethod is "email" for now; future non-email invite flows can pass
-// their own value to keep this stable.
+// TeamInviteSent 在 workspace 管理员创建邀请时触发。inviteMethod 目前只有 "email"；
+// 将来非邮箱邀请流程可传自己的值，让本事件保持稳定。
 func TeamInviteSent(inviterID, workspaceID, invitedEmail, inviteMethod string) Event {
 	return Event{
 		Name:        EventTeamInviteSent,
@@ -403,9 +395,8 @@ func TeamInviteSent(inviterID, workspaceID, invitedEmail, inviteMethod string) E
 	}
 }
 
-// TeamInviteAccepted fires when the invitee accepts and joins the workspace.
-// daysSinceInvite lets us segment fast-acceptance (warm) from long-tail
-// acceptance (someone dug through old email).
+// TeamInviteAccepted 在被邀请者接受并加入 workspace 时触发。daysSinceInvite 让我们能
+// 区分「快速接受（热）」与「长尾接受（翻出旧邮件的人）」。
 func TeamInviteAccepted(inviteeID, workspaceID string, daysSinceInvite int64) Event {
 	return Event{
 		Name:        EventTeamInviteAccepted,
@@ -417,39 +408,14 @@ func TeamInviteAccepted(inviteeID, workspaceID string, daysSinceInvite int64) Ev
 	}
 }
 
-// OnboardingQuestionnaireSubmitted fires the first time a user's
-// `user.onboarding_questionnaire` transitions from "at least one slot
-// unresolved" to "every slot has either an answer or a skip marker".
-// The handler drives this transition — we emit from PatchOnboarding so
-// the single emission site stays honest even if the frontend retries.
+// OnboardingStarted 在用户 onboarding 状态「从未被碰过（没有问卷载荷）第一次变成某个
+// 非空 patch」时由服务端触发。前端会在用户首次打开页面时发自己的 onboarding_started；
+// 服务端这次触发的意义是点亮 Prometheus 计数器，让 Grafana 可以不依赖 SDK 往返就能与
+// PostHog 漏斗交叉核对。
 //
-// `useCase` is multi-select (users can pick several); `source` is
-// single-select (primary acquisition channel) but kept as a slice
-// for back-compat with v2 multi-select rows — single-element in
-// current data. `role` stays single-select. Empty slice = no answer
-// (skip is captured separately via the *Skipped booleans).
-//
-// The three answers are also mirrored into person properties via $set
-// so cohorting by source / role / use_case works across every event
-// on the same user without re-joining back to the DB. PostHog accepts
-// array property values; breakdowns on a multi-value property treat
-// each element as a separate group.
-//
-// `*Skipped` booleans capture per-question skip intent. `*HasOther`
-// are presence booleans for the free-text "other" override; the
-// free-text content is kept in the DB for product research but not
-// broadcast via analytics (PII risk + low cardinality ask).
-// OnboardingStarted fires from the server side the first time a user's
-// onboarding state transitions from untouched (no questionnaire payload
-// recorded) to any non-empty patch. Frontends emit their own
-// onboarding_started on first page open; the server emission is what
-// lights up the Prometheus counter so Grafana can be cross-checked
-// against the PostHog funnel without depending on the SDK roundtrip.
-//
-// platform is the X-Client-Platform header value at the time of the
-// first onboarding interaction, fed into the
-// `multica_onboarding_started_total{platform=...}` label via the fixed
-// allow-list in metrics.NormalizePlatform.
+// platform 是首次 onboarding 交互时 X-Client-Platform 头的值，经
+// metrics.NormalizePlatform 的固定白名单进入 `multica_onboarding_started_total{platform=...}`
+// 标签。
 func OnboardingStarted(userID, platform string) Event {
 	props := map[string]any{}
 	if platform != "" {
@@ -465,9 +431,23 @@ func OnboardingStarted(userID, platform string) Event {
 	}
 }
 
+// OnboardingQuestionnaireSubmitted 在用户 `user.onboarding_questionnaire` 首次从
+// 「至少一个槽位没解决」变成「每个槽位都有答案或跳过标记」时触发。handler 驱动这次
+// 转变——从 PatchOnboarding 发，因此即使前端重试，发站点也只有一个、保持诚实。
+//
+// `useCase` 是多选（用户可多选）；`source` 是单选（主要获客渠道），但为了兼容 v2 的
+// 多选行仍以切片承载——当前数据里只有一个元素。`role` 保持单选。空切片表示没作答
+// （跳过由 *Skipped 布尔单独捕获）。
+//
+// 三个答案还会通过 $set 镜像成 person 属性，使按 source / role / use_case 分群
+// 能跨该用户的每条事件成立，而无须回头 join DB。PostHog 接受数组型属性值；对多值
+// 属性做分组时，每个元素被视为一个独立组。
+//
+// `*Skipped` 布尔捕获每题的「跳过」意图。`*HasOther` 是自由文本 "other" 选项的
+// 存在性布尔；自由文本内容留在 DB 供产品研究，不随分析广播（PII 风险 + 低基数诉求）。
 func OnboardingQuestionnaireSubmitted(userID string, source []string, role string, useCase []string, sourceSkipped, roleSkipped, useCaseSkipped, sourceHasOther, roleHasOther, useCaseHasOther bool) Event {
-	// Normalize nil slices to [] so PostHog property values are stable
-	// (avoids null vs [] mixing in property type inference).
+	// 把 nil 切片规整成 []，让 PostHog 属性值保持稳定（避免属性类型推断里 null 与
+	// [] 混用）。
 	if source == nil {
 		source = []string{}
 	}
@@ -499,31 +479,24 @@ func OnboardingQuestionnaireSubmitted(userID string, source []string, role strin
 	}
 }
 
-// OnboardingSourceSubmitted fires when the user's acquisition source
-// transitions from unresolved to resolved — answered or explicitly
-// declined. The source question is no longer part of the onboarding
-// flow (MUL-5159): it is asked by the workspace backfill prompt after
-// agents have completed work for the user, so this lands well after
-// `onboarding_questionnaire_submitted` (which now covers role +
-// use_case only). A dedicated event gives the backfill prompt its own
-// Grafana counter (answer/decline rate) without stalling the
-// questionnaire funnel step. Metrics-only like every server event
-// (MUL-4127); the per-user source value reaches analytics through the
-// client-side person-property mirror in saveQuestionnaire.
+// OnboardingSourceSubmitted 在用户获客来源从「未解决」变成「已解决」（作答或明确
+// 拒绝）时触发。source 问题已不属于 onboarding 流程（MUL-5159）：它由「agents 为用户
+// 干完活之后」的 workspace backfill 提示去问，因此这个事件远晚于
+// `onboarding_questionnaire_submitted`（后者现在只覆盖 role + use_case）。专门事件让
+// backfill 提示拥有自己的 Grafana 计数器（作答/拒绝率），而不拖住问卷漏斗这一步。
+// 与所有服务端事件一样是 metrics-only（MUL-4127）；每个用户的 source 值经
+// saveQuestionnaire 里客户端侧的 person 属性镜像到达分析。
 //
-// `source` stays a slice for the same v2 back-compat reason as the
-// questionnaire event; the client commits a one-element array. $set
-// is only attached when the user actually answered — moot while the
-// event stays metrics-only, but kept accurate should it ever ship.
+// `source` 保持切片形态，理由同问卷事件（v2 兼容）；客户端提交单元素数组。$set 只在
+// 用户真正作答时挂上——事件停留在 metrics-only 时这是无意义的，但万一将来上线，
+// 该准确的地方依然准确。
 func OnboardingSourceSubmitted(userID string, source []string, skipped, hasOther bool) Event {
 	if source == nil {
 		source = []string{}
 	}
-	// Property key is acquisition_source, not source — core properties
-	// stamp the event-source dimension into props["source"]
-	// (withCoreProperties), and the acquisition answer must not fight
-	// it for the slot. The $set person property below keeps the plain
-	// "source" name for cohort continuity with the client-side mirror.
+	// 属性键是 acquisition_source 而不是 source——核心属性会把「事件来源」维度打进
+	// props["source"]（withCoreProperties），获客答案不能跟它抢同一个槽位。下面的 $set
+	// person 属性保留朴素 "source" 名，是为了与客户端镜像的分群连续性。
 	ev := Event{
 		Name:       EventOnboardingSourceSubmit,
 		DistinctID: userID,
@@ -542,12 +515,10 @@ func OnboardingSourceSubmitted(userID string, source []string, skipped, hasOther
 	return ev
 }
 
-// AgentCreated fires whenever a new agent is added to a workspace — not
-// just inside onboarding. `isFirstAgentInWorkspace` lets the funnel
-// isolate the Step 4 signal from later agent additions.
+// AgentCreated 在「新 agent 加入 workspace」时触发——不只在 onboarding 内。
+// `isFirstAgentInWorkspace` 让漏斗能把 Step 4 的信号与后来的 agent 添加区分开。
 //
-// template is the creation-source attribution supplied by the caller (for
-// example, "agent_builder"); empty identifies a manually authored agent.
+// template 是调用方提供的创建来源归因（例如 "agent_builder"）；空表示手工编写的 agent。
 func AgentCreated(actorID, workspaceID, agentID, provider, runtimeMode, template string, isFirstAgentInWorkspace bool) Event {
 	return Event{
 		Name:        EventAgentCreated,
@@ -570,16 +541,13 @@ func AgentCreated(actorID, workspaceID, agentID, provider, runtimeMode, template
 	}
 }
 
-// OnboardingCompleted fires from CompleteOnboarding. `completionPath`
-// is derived server-side from the state the user arrived in (see the
-// OnboardingPath* constants above). `joinedCloudWaitlist` is true when
-// the user submitted the waitlist form at any point during the flow —
-// it's orthogonal to `completion_path`; a user may submit the form and
-// still pick CLI, so we keep both signals.
+// OnboardingCompleted 从 CompleteOnboarding 触发。`completionPath` 由服务端根据用户
+// 到达时的状态推导（见上面 OnboardingPath* 常量）。`joinedCloudWaitlist` 表示用户在流程
+// 中任一点提交过 waitlist 表单——它与 `completion_path` 正交：用户可能提交了表单却仍
+// 选 CLI，所以我们两个信号都保留。
 //
-// onboardedAt is an RFC3339 timestamp set $set_once on the person so
-// "onboarded before date X" cohorts are queryable directly from
-// person_properties without re-emitting per-event.
+// onboardedAt 是 RFC3339 时间戳，以 $set_once 打在 person 上，让「在某日期前完成
+// onboarding」的群组可以直接从 person_properties 查询，而无须每次重发事件。
 func OnboardingCompleted(userID, workspaceID, completionPath, onboardedAt string, joinedCloudWaitlist bool) Event {
 	return Event{
 		Name:        EventOnboardingCompleted,
@@ -599,9 +567,8 @@ func OnboardingCompleted(userID, workspaceID, completionPath, onboardedAt string
 	}
 }
 
-// CloudWaitlistJoined fires when a user submits the Step 3 cloud
-// waitlist form. `hasReason` is a presence bool — the free-text reason
-// stays in the DB for product research.
+// CloudWaitlistJoined 在用户提交 Step 3 云 waitlist 表单时触发。`hasReason` 是存在性
+// 布尔——自由文本原因留在 DB 供产品研究。
 func CloudWaitlistJoined(userID string, hasReason bool) Event {
 	return Event{
 		Name:       EventCloudWaitlistJoined,
@@ -615,11 +582,9 @@ func CloudWaitlistJoined(userID string, hasReason bool) Event {
 	}
 }
 
-// FeedbackSubmitted fires after a feedback row is successfully inserted.
-// The raw message is stored in the DB and never broadcast — we only emit a
-// coarse length bucket, an image-presence flag, the kind picker selection,
-// and the client platform / version so support can segment without leaking
-// content.
+// FeedbackSubmitted 在反馈行成功插入后触发。原始消息存在 DB、从不广播——我们只发
+// 一个粗粒度长度桶、是否带图、类型选择器、以及客户端平台/版本，让支持团队能分段，
+// 又不泄漏内容。
 func FeedbackSubmitted(userID, workspaceID, kind string, messageLen int, hasImages bool, platform, appVersion string) Event {
 	props := map[string]any{
 		"message_length_bucket": feedbackLengthBucket(messageLen),
@@ -646,17 +611,14 @@ func FeedbackSubmitted(userID, workspaceID, kind string, messageLen int, hasImag
 	}
 }
 
-// ContactSalesSubmitted fires after a contact-sales inquiry is recorded.
-// The form is public and unauthenticated, so DistinctID is empty (PostHog
-// will treat it as an anonymous event). We carry the coarse company size,
-// country, intended use case, and the form-location bucket (page /
-// onboarding / agents_page) so sales / marketing can split inbound volume
-// without having to query the operational DB.
+// ContactSalesSubmitted 在一次「联系销售」询价被记录后触发。表单是公开且未认证的，
+// 所以 DistinctID 为空（PostHog 会当作匿名事件）。我们带上粗粒度公司规模、国家/地区、
+// 意向用例、以及表单位置桶（page / onboarding / agents_page），让销售/市场无需查运维
+// DB 就能切分进线量。
 //
-// formSource is the page-context bucket; the CoreProperties Source stays
-// "marketing_contact_sales" so PostHog dashboards keep the funnel join
-// against other marketing events. The Prometheus side reads form_source
-// directly via the metrics.NormalizeContactSalesSource allow-list.
+// formSource 是页面上下文桶；CoreProperties 的 Source 保持 "marketing_contact_sales"，
+// 让 PostHog 仪表盘能与其他市场事件的漏斗 join。Prometheus 一侧经
+// metrics.NormalizeContactSalesSource 白名单直接读 form_source。
 func ContactSalesSubmitted(inquiryID, companySize, countryRegion, useCase, formSource string, hasGoals bool) Event {
 	props := map[string]any{
 		"inquiry_id":     inquiryID,
@@ -677,9 +639,8 @@ func ContactSalesSubmitted(inquiryID, companySize, countryRegion, useCase, formS
 	}
 }
 
-// SquadCreated fires when a workspace member or admin creates a new squad.
-// `memberCount` is the number of members the squad was seeded with at
-// creation time (frontend can pre-populate via the picker).
+// SquadCreated 在 workspace 成员或管理员创建新 squad 时触发。`memberCount` 是创建时
+// squad 预置的成员数（前端可通过选择器预填）。
 func SquadCreated(actorID, workspaceID, squadID string, memberCount int) Event {
 	return Event{
 		Name:        EventSquadCreated,
@@ -696,11 +657,10 @@ func SquadCreated(actorID, workspaceID, squadID string, memberCount int) Event {
 	}
 }
 
-// AutopilotCreated fires when a workspace member creates a new autopilot.
-// `cadence` matches the autopilot.cadence enum (hourly/daily/weekly/...
-// /webhook). triggerKind is the initial trigger type (schedule / webhook /
-// manual) — when both schedule and webhook triggers are seeded, we report
-// the dominant one (schedule wins).
+// AutopilotCreated 在 workspace 成员创建新 autopilot 时触发。`cadence` 对应
+// autopilot.cadence 枚举（hourly/daily/weekly/.../webhook）。triggerKind 是初始触发器
+// 类型（schedule / webhook / manual）——schedule 与 webhook 触发器同时播种时，报告
+// 主导那个（schedule 优先）。
 func AutopilotCreated(actorID, workspaceID, autopilotID, cadence, triggerKind string) Event {
 	return Event{
 		Name:        EventAutopilotCreated,
@@ -718,6 +678,8 @@ func AutopilotCreated(actorID, workspaceID, autopilotID, cadence, triggerKind st
 	}
 }
 
+// autopilotRunEvent 组装一次 autopilot 运行类事件（started/completed/failed）的公共
+// 部分：把 extra 属性与核心属性合在一起，再补 autopilot 的分配信息。
 func autopilotRunEvent(name, actorID, workspaceID, autopilotID, runID, cadence string, assignee AutopilotAssignee, triggerSource string, extra map[string]any) Event {
 	if extra == nil {
 		extra = map[string]any{}
@@ -749,6 +711,7 @@ func autopilotRunEvent(name, actorID, workspaceID, autopilotID, runID, cadence s
 	}
 }
 
+// withCoreProperties 把非空的共享核心字段合进事件属性，并总是打上 is_demo 标志。
 func withCoreProperties(props map[string]any, core CoreProperties) map[string]any {
 	if props == nil {
 		props = map[string]any{}
@@ -784,6 +747,8 @@ func withCoreProperties(props map[string]any, core CoreProperties) map[string]an
 	return props
 }
 
+// nonAgentUserID 在 distinct id 带 ":"（例如 "workspace:xxx" 或带角色后缀）时返回空，
+// 只把普通用户 id 原样传出。
 func nonAgentUserID(distinct string) string {
 	if distinct == "" || strings.Contains(distinct, ":") {
 		return ""
@@ -791,6 +756,7 @@ func nonAgentUserID(distinct string) string {
 	return distinct
 }
 
+// feedbackLengthBucket 把消息长度划成粗粒度桶。
 func feedbackLengthBucket(n int) string {
 	switch {
 	case n < 100:
@@ -804,6 +770,7 @@ func feedbackLengthBucket(n int) string {
 	}
 }
 
+// emailDomain 提取邮箱 @ 之后的小写域名部分；不是合法邮箱返回空串。
 func emailDomain(email string) string {
 	at := strings.LastIndex(email, "@")
 	if at < 0 || at == len(email)-1 {

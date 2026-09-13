@@ -1,31 +1,29 @@
 package featureflag
 
+// 本文件职责：确定性百分比分桶的实现——把 (开关 key, 标识符) 用 FNV-1a 哈希
+// 成 [0, 100) 的桶号，供百分比发布规则判断「这个用户这次算不算进实验组」。
+
 import "hash/fnv"
 
-// bucketFor returns a deterministic bucket in [0, 100) for the supplied
-// (key, identifier) pair using FNV-1a. The same pair always returns the
-// same bucket, which is the contract callers rely on for stable percent
-// rollouts: a user must not flip in and out of an experiment across
-// requests.
+// bucketFor 用 FNV-1a 为 (key, identifier) 对算出一个 [0, 100) 里的确定性
+// 桶号。同一对参数永远得到同一个桶——这正是稳定百分比发布所依赖的契约：
+// 一个用户不能在不同请求间反复进出某个实验。
 //
-// FNV-1a is used instead of crypto hashes because it is fast, dependency
-// free, and well-distributed enough for sub-100 bucketing. The hash is not
-// security sensitive; do not use it for anything beyond bucketing.
+// 选 FNV-1a 而不是加密哈希，是因为它快、零依赖，对「100 以内的分桶」分布
+// 也足够均匀。这个哈希不涉及安全，别拿它做除分桶外的任何用途。
 func bucketFor(key, identifier string) int {
 	h := fnv.New32a()
-	// Writing each component with a separator avoids a "key||identifier"
-	// collision pattern where ("ab", "c") and ("a", "bc") would hash to
-	// the same value.
+	// 两个组成部分之间写一个分隔符，避免 "key||identifier" 式的撞车——
+	// 否则 ("ab", "c") 与 ("a", "bc") 会哈希成同一个值。
 	_, _ = h.Write([]byte(key))
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write([]byte(identifier))
 	return int(h.Sum32() % 100)
 }
 
-// inPercent reports whether (key, identifier) falls within the first
-// percent buckets. A percent of 0 disables the rule for everyone; a
-// percent of 100 enables it for everyone. Values outside [0, 100] are
-// clamped.
+// inPercent 判断 (key, identifier) 是否落进前 percent 个桶。
+// percent 为 0 时对所有人关闭该规则；100 时对所有人开启。
+// [0, 100] 之外的值会被钳制处理。
 func inPercent(key, identifier string, percent int) bool {
 	switch {
 	case percent <= 0:

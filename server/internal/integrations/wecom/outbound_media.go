@@ -1,29 +1,22 @@
+// outbound_media.go —— 投递 agent 产出的文件。
+//
+// agent 那一侧早已存在、且跨平台通用：它跑 `multica attachment upload <path>`，
+// 文件落进对象存储，CompleteTask 把行绑到它刚写的那条 assistant 消息上。缺的是
+// 最后那一跳。绑定之后的下游统统假设「浏览器里有个会话窗口」，所以企微会话曾被
+// 告知「根本收不了文件」。
+//
+// 本文件的形态由三件事决定。
+//
+// 回答永远先走。一次上传是几兆字节、多次往返、还可能失败；agent 写的那句话不能
+// 排在它后面干等，也绝不能因它而丢。所以本路径在回复发出之后跑，用独立 goroutine
+// 和独立预算，它最坏的结局也就是多一行「有个文件没送到」。
+//
+// 文件是它自己的消息。长连接没有 msg_item，所以什么都嵌不进回复——「带附件的回
+// 答」必然是两条消息。
+//
+// 而且企微会拿字节对照 msgtype。一个声明成 image 的 .pptx 会被拒而不是被转换，
+// 每种类型还各有尺寸上限，所以「把这个文件叫什么」是一个决策、不是一次查表。
 package wecom
-
-// outbound_media.go — delivering the files an agent produced.
-//
-// The agent's side of this already exists and is platform-agnostic: it runs
-// `multica attachment upload <path>`, the file lands in object storage, and
-// CompleteTask binds the row to the assistant message it just wrote. What was
-// missing was the last hop. Everything downstream of that bind assumed a chat
-// window in a browser, so a WeCom conversation was told it could not take
-// files at all.
-//
-// Three things decide the shape here.
-//
-// The answer goes first, always. An upload is megabytes and round trips and it
-// can fail; the sentence the agent wrote cannot be made to wait behind one, and
-// must not be lost to one. So this runs after the reply is out, on its own
-// goroutine and its own budget, and its worst outcome is one extra line saying
-// a file did not make it.
-//
-// The file is its own message. The long connection has no msg_item, so nothing
-// can be embedded in a reply — "answer with an attachment" is necessarily two
-// messages.
-//
-// And WeCom validates bytes against the msgtype. A .pptx declared as an image
-// is refused rather than converted, and each kind has its own size ceiling, so
-// what to call a file is a decision and not a lookup.
 
 import (
 	"context"
@@ -43,74 +36,60 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// mediaObjectStore is the slice of storage.Storage this path needs: the
-// attachment row carries the object's URL, and these two turn it back into
-// bytes.
+// mediaObjectStore 是本路径需要的 storage.Storage 切片：附件行带着对象的 URL，
+// 这两个方法把它变回字节。
 type mediaObjectStore interface {
 	KeyFromURL(rawURL string) string
 	GetReader(ctx context.Context, key string) (io.ReadCloser, error)
 }
 
-// What the user is told, and there are three of these because there are three
-// things that can be true — telling them apart is the point (see deliveryState).
-// Hardcoded Chinese, like every other user-facing string this adapter sends
-// (replier.go) — WeCom deployments are China-only.
+// 告诉用户的话。有三条是因为有三件可能为真的事——把它们分开正是要点（见
+// deliveryState）。硬编码中文，和本适配器发出去的每个面向用户字符串一样
+// （replier.go）——企微部署只在中国。
 const (
-	// mediaSendFailedText — we know it did not arrive. Definite, because
-	// claiming a definite failure that later turns out to be a delivery is how
-	// a user ends up ignoring the notice.
+	// mediaSendFailedText —— 我们知道它没到。确凿的，因为把一个确凿的失败说成
+	// 「可能送达了」，正是让用户从此无视通知的做法。
 	mediaSendFailedText = "⚠️ 有文件没能发出来，我这边保留着，需要的话我再试一次。"
 
-	// mediaSendUnknownText — the frame went out and no verdict came back, so
-	// the file may be in the chat already. The wording has to survive both
-	// endings: it must not say "failed" to someone looking at the file, and it
-	// must not say "sent" to someone who never got it. It also explains why
-	// nothing is resent automatically, since that is the obvious next question
-	// and the answer is that a duplicate cannot be taken back.
+	// mediaSendUnknownText —— 帧已发出、裁定没回来，所以文件可能已在会话里。措
+	// 辞要能扛住两种结局：不能对正看着文件的人说「失败了」，也不能对始终没收到
+	// 的人说「已发送」。它还要解释为什么不自动重发——那是显而易见的下一步问题，
+	// 答案是「重了没法撤回」。
 	mediaSendUnknownText = "⚠️ 有文件我没收到企业微信的送达回执，可能已经发到了、也可能没有。我不会自动重发，免得发重了；你那边没看到的话说一声，我再发一次。"
 
-	// mediaLookupFailedText — the failure is on our side and before the
-	// question was even answered: we could not read what was attached to this
-	// reply, so we do not know whether there was a file. Saying nothing here is
-	// what leaves a user waiting for something that was never attempted.
+	// mediaLookupFailedText —— 失败在我们这一侧、而且发生在「问题都还没被回答」之
+	// 前：我们读不了绑在这条回答上的东西，所以根本不知道有没有文件。这里不说话，
+	// 正是让用户干等一件「从未被尝试过」的事的做法。
 	mediaLookupFailedText = "⚠️ 我这边没查到这条回答带没带文件，所以要是有，这次没发出来。需要的话我再试一次。"
 )
 
-// attachmentBudget bounds one answer's whole attachment delivery — reading
-// every object, uploading it, and sending it. Generous because a 20 MiB file
-// over forty acked chunks, two at a time, is not fast, and nothing is waiting
-// on it.
+// attachmentBudget 约束一条回答的整个附件投递——读每个对象、上传、发送。宽松是
+// 因为一个 20 MiB 文件按 40 片 ack、一次两片并不快，而没有任何人等着它。
 const attachmentBudget = 5 * time.Minute
 
-// deliveryState is what we actually know about one file after trying to send
-// it. Three values, because the two-valued version of this was wrong in both
-// directions at once: a send whose ack never came was reported to the user as a
-// definite failure even though the file may well be sitting in the chat, and
-// the local failures that never reached the socket at all were reported to
-// nobody.
+// deliveryState 是试发一个文件之后我们真正知道的事。三个值，因为两值版本在两个
+// 方向上同时是错的：ack 没回来的发送被当作确凿失败报给用户——尽管文件很可能正
+// 躺在会话里；而那些从未碰到 socket 的本地失败，却谁也没告诉。
 type deliveryState int
 
 const (
-	// deliveryDelivered — WeCom acknowledged the send. The only state that
-	// needs no message to the user; the file is what they see.
+	// deliveryDelivered —— 企微确认了这次发送。唯一一个不需要向用户说任何话的
+	// 状态；文件就是他们看到的东西。
 	deliveryDelivered deliveryState = iota
 
-	// deliveryDefinitelyFailed — nothing arrived and nothing can have. Either
-	// the file never became a media_id (the upload was refused, or the object
-	// could not be read), or the send itself came back refused. Safe to retry
-	// in principle, and safe to describe as a failure.
+	// deliveryDefinitelyFailed —— 什么都没到、也不可能到过。要么文件从未变成
+	// media_id（上传被拒、或对象读不出来），要么发送本身被拒。原则上可以放心重
+	// 试，也可以放心把它说成失败。
 	deliveryDefinitelyFailed
 
-	// deliveryUnknown — the send frame went out and no verdict came back. The
-	// message may be in the chat. This state must never be retried: the same
-	// media_id sent twice shows the person the file twice and there is nothing
-	// to undo it with.
+	// deliveryUnknown —— 发送帧已发出、裁定没回来。消息可能在会话里。这个状态
+	// 绝不能重试：同一个 media_id 发两遍，对方会把文件看两遍、且没有任何可撤销
+	// 的手段。
 	deliveryUnknown
 )
 
-// String names the states for the log, in the vocabulary the code reasons in,
-// so an operator reading a line can tell an unconfirmed send from a refused one
-// without knowing which errcode meant which.
+// String 用「代码思考所用的词」给日志点名状态，让读日志的运维不用知道哪个
+// errcode 指哪件事，就能把一次未确认的发送和一次被拒的分开。
 func (d deliveryState) String() string {
 	switch d {
 	case deliveryDelivered:
@@ -124,68 +103,61 @@ func (d deliveryState) String() string {
 	}
 }
 
-// The per-kind ceilings WeCom applies to uploaded material: 10MB for a photo,
-// 10MB for a video, 2MB for a voice note. Bytes past a kind's ceiling still
-// travel — as a file, which has the widest limit of the four — because a file
-// card the user can open beats a photo the server refused.
+// 企微对上传材料施加的分类型上限：照片 10MB、视频 10MB、语音 2MB。超出某类型上
+// 限的字节仍会上路——作为 file 走，它有四种里最宽的上限——因为「用户能打开的
+// 文件卡片」好过「被服务器拒绝的照片」。
 const (
 	maxOutboundImageBytes = 10 << 20
 	maxOutboundVoiceBytes = 2 << 20
 	maxOutboundVideoBytes = 10 << 20
 )
 
-// attachmentTarget is where one answer's files are going: the installation
-// whose socket carries them, and the conversation at the other end.
+// attachmentTarget 是一条回答的文件要去的地方：承载它们的 socket 所属安装，以及
+// 另一端的会话。
 type attachmentTarget struct {
 	InstallationID pgtype.UUID
 	ChatID         string
 	ChatType       int
-	// SessionID is carried only so a delivery that fails minutes later can
-	// still name the conversation it belonged to in the log and the counter.
+	// SessionID 只为了在「几分钟后失败」的投递里，仍能在日志与计数器上点出它属
+	// 于哪场会话。
 	SessionID string
 }
 
-// OutboundOption configures the chat-done subscriber at construction.
+// OutboundOption 在构造时配置会话完成订阅者。
 type OutboundOption func(*Outbound)
 
-// WithAttachments turns on file delivery. Without it — a deployment with no
-// object storage — an answer is delivered exactly as it was before, and the
-// agent is told as much in its brief.
+// WithAttachments 打开文件投递。没有它——不带对象存储的部署——回答与从前一模一
+// 样地送达，agent 也已在它的 brief 里被告知如此。
 func WithAttachments(objects mediaObjectStore) OutboundOption {
 	return func(o *Outbound) { o.objects = objects }
 }
 
-// mayCarryAttachments reports whether this turn is worth the lookups even
-// though the agent said nothing. Everything it checks is already in hand, so a
-// deployment with no storage — or an event naming no message — costs no query.
+// mayCarryAttachments 报告这一轮即使 agent 什么都没说、是否也值得跑那些查询。它
+// 查的每一样东西都已到手，所以没有存储的部署——或一条不指名消息的事件——不会花
+// 掉任何查询。
 func (o *Outbound) mayCarryAttachments(e events.Event) bool {
 	return o.objects != nil && e.WorkspaceID != "" && chatDoneMessageID(e.Payload) != ""
 }
 
-// deliverAttachments hands the answer's files to a goroutine of their own, if
-// there are any to hand over. It is called after the words are out, and
-// returns immediately.
-// carriesTheReply says the files ARE this reply's substance — the agent said
-// nothing and bound a file instead. When it is true nothing has recorded a
-// reply outcome yet and this path owes exactly one; when it is false the words
-// already landed and the reply's outcome is settled, so only the per-file
-// counters move here.
+// deliverAttachments 把回答的文件交给它们自己的 goroutine（若有可交的）。它在话
+// 说出口之后被调用，随即返回。
+// carriesTheReply 表示这些文件就是这条回复的实质——agent 什么都没说、只绑了个文
+// 件。为 true 时还没有任何人记录回复结局，本路径恰好欠一个；为 false 时话已落地、
+// 回复结局已定，所以这里只动逐文件的计数器。
 func (o *Outbound) deliverAttachments(e events.Event, to attachmentTarget, carriesTheReply bool) {
 	o.deliverAttachmentsByID(chatDoneMessageID(e.Payload), e.WorkspaceID, to, carriesTheReply)
 }
 
-// deliverAttachmentsByID is deliverAttachments for a caller holding ids rather
-// than the event — the relayed path, where the event was published on another
-// replica and only its identifiers crossed the wire. The files themselves are
-// read here, by the replica that will send them, rather than shipped through
-// Redis.
+// deliverAttachmentsByID 是给「手上有 id 而没有事件」的调用方用的 deliverAttachments
+// ——比如中继路径：事件在另一副本上发布，跨线过来的只有它的标识符。文件本身在这
+// 里读——由将要发送它们的那副本读——而不是经 Redis 运送。
 func (o *Outbound) deliverAttachmentsByID(rawMessageID, rawWorkspaceID string, to attachmentTarget, carriesTheReply bool) {
 	if o.objects == nil || o.senders == nil {
 		return
 	}
 	messageID, err := util.ParseUUID(rawMessageID)
 	if err != nil || !messageID.Valid {
-		return // a turn with no assistant message has nothing bound to it
+		return // 一条没有 assistant 消息的轮次，没有可绑的东西
 	}
 	workspaceID, err := util.ParseUUID(rawWorkspaceID)
 	if err != nil || !workspaceID.Valid {
@@ -194,26 +166,19 @@ func (o *Outbound) deliverAttachmentsByID(rawMessageID, rawWorkspaceID string, t
 	if !to.InstallationID.Valid || to.ChatID == "" {
 		return
 	}
-	// Admission is claimed here rather than inside the goroutine, because a
-	// goroutine that has already started is a goroutine this cap did not
-	// bound. The lookup it runs is on the far side of this gate too: under a
-	// slow database, unbounded lookups are the same failure as unbounded
-	// goroutines wearing a different hat.
+	// 准入在这里占位而不是在 goroutine 内部，因为一个已启动的 goroutine 已经
+	// 不是这个上限能约束的了。它要跑的查询也在本闸门的另一侧：数据库慢的时候，
+	// 无界的查询和无界的 goroutine 是同一个失败换了顶帽子。
 	//
-	// Nothing is known about this turn yet — whether a file is bound to it is
-	// exactly what the lookup would tell us — so a refusal here is logged and
-	// not spoken. Telling the user their file was dropped when the turn may
-	// have carried none is the false alarm the post-lookup gate exists to
-	// avoid.
+	// 此刻对这一轮还一无所知——有没有绑文件正是查询会告诉我们的——所以这里的拒
+	// 绝只记日志、不说出口。在一轮可能根本没带文件时告诉用户「你的文件被丢了」，
+	// 正是查询后那道闸门存在要避免的假警报。
 	if !o.admitAttachmentDelivery() {
-		// A scheduling refusal, counted under its own unit, and NOTHING else:
-		// the comment above is literal — this gate runs before the lookup, so
-		// it knows neither how many files the turn carries nor whether it
-		// carries any at all. A per-file counter fed from here fabricates
-		// cardinality, and a reply outcome asserted from here fabricates the
-		// reply: an empty completion with zero bound files would be counted
-		// as a dropped reply when the lookup would have classified it as
-		// nothing_to_say. What cannot be known here is not recorded here.
+		// 一次调度拒绝，按自己的单位计，其他什么都不计：上面注释是字面意义的——
+		// 本闸门在查询前跑，所以它既不知道这轮带几个文件、也不知道带没带。从这里
+		// 喂逐文件计数器是编造基数，从这里断言回复结局是编造回复本身：一条带零个
+		// 绑定文件的空完成会被计成一次被丢的回复，而查询本会把它归成 nothing_to_say。
+		// 这里不可知的事，就不在这里记。
 		o.attachmentShed()
 		o.logger.Warn("wecom outbound: attachment delivery not admitted, too many already running",
 			"installation_id", uuidStringPub(to.InstallationID),
@@ -228,23 +193,17 @@ func (o *Outbound) deliverAttachmentsByID(rawMessageID, rawWorkspaceID string, t
 	})
 }
 
-// sendAttachments delivers every file bound to one answer. Files are
-// independent: one that fails does not stop the rest, and what is known about
-// the ones that did not plainly arrive is said once at the end rather than once
-// each.
+// sendAttachments 投递绑在一条回答上的每个文件。文件彼此独立：一个失败不拖累其
+// 余，而那些「确实没到」的文件所知的全部，在末尾统一说一次而不是各说一次。
 //
-// The caller has already claimed admission, which is what bounds the number of
-// goroutines running this and the number of lookups below. What is rationed
-// here is different and deliberately after the lookup: a turn with no file
-// bound to it must not consume a pending slot, and — the reason this matters
-// to the user rather than to the scheduler — a delivery refused for want of
-// one can only be reported honestly by something that already knows a file was
-// waiting. Rationing this stage ahead of the lookup would either stay silent
-// about a file that was dropped or warn about a file that never existed.
+// 调用方已占过准入，那是约束「跑这个的 goroutine 数」和「下面查询数」的东西。这里
+// 限量的是另一样、且刻意放在查询之后：没绑文件的一轮绝不能占用 pending 槽，而
+// ——这正是它对用户而非对调度器要紧的原因——一次因缺槽被拒的投递，只能由「已经
+// 知道有个文件在等」的东西诚实地报出来。在查询前限量这个阶段，要么对「被丢的文
+// 件」保持沉默，要么对「从不存在的文件」报警。
 func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID pgtype.UUID, to attachmentTarget, carriesTheReply bool) {
-	// replyFailed records this reply's single outcome, but only when the files
-	// ARE the reply. When words already landed the reply is settled and only
-	// the per-file counters move.
+	// replyFailed 记录这条回复的唯一结局，但只在「文件就是回复」时。话已落地时
+	// 回复已定，只动逐文件计数器。
 	replyFailed := func(reason dropReason, err error) {
 		if carriesTheReply {
 			o.droppedFor(ctx, to.SessionID, "chat:done", reason, err)
@@ -262,23 +221,21 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 		return
 	}
 	if len(rows) == 0 {
-		// mayCarryAttachments said there might be one; there was not.
+		// mayCarryAttachments 说可能有一个；其实没有。
 		if carriesTheReply {
 			o.skippedFor(ctx, to.SessionID, skipNothingToSay)
 		}
 		return
 	}
-	// Past here a file is known to be waiting, so every way out of this
-	// function has to end in either a delivery or a sentence to the user.
+	// 过了这里，已知有文件在等，所以本函数每条出路都必须以「送达或对用户说一句
+	// 话」收尾。
 
-	// Shed when too many deliveries that found a file are already outstanding.
-	// The semaphore below bounds how many RUN at once; this bounds how many
-	// wait for it, and unlike admission it can name what was dropped, so the
-	// user hears about it.
+	// 当「已发现有文件的投递」积压太多时拒发。下面的信号量约束「同时 RUN」的个
+	// 数；这里约束「等它的个数」，而且不同于准入、它能说出丢的是什么，所以用户会
+	// 听到。
 	if !o.claimAttachmentSlot() {
-		// Unlike admission, the rows are known here, so the accounting can be
-		// exact: one drop per file that will not be sent, and — when the files
-		// were the reply — the reply's own outcome.
+		// 与准入不同，行是已知的，所以账可以记到精确：每个「不会被送出」的文件
+		// 一条——以及当文件就是回复时，回复自己的结局。
 		for range rows {
 			o.attachmentDropped(ctx, dropAttachmentNotAdmitted, nil)
 		}
@@ -292,35 +249,33 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 	}
 	defer o.releaseAttachmentSlot()
 
-	// Acquired here and never before the spawn. Bus.Publish is synchronous on
-	// the task-completion goroutine, so blocking out there would wedge the
-	// completion path for up to the attachment budget — which is the very thing
-	// the spawn exists to prevent.
+	// 在这里获取信号量，而不是在 spawn 之前。Bus.Publish 在任务完成 goroutine 上
+	// 是同步的，在外面阻塞会把完成路径楔住最多一个 attachmentBudget——这正是 spawn
+	// 的存在要防的。
 	select {
 	case attachmentSlots <- struct{}{}:
 		defer func() { <-attachmentSlots }()
 	case <-ctx.Done():
-		// The rows are known here, so every one of them settles: nothing was
-		// sent, which is the one case that is provably local.
+		// 行是已知的，所以它们每一件都能结算：什么都没发——这是唯一可证「失败在
+		// 本地」的情况。
 		for range rows {
 			o.attachmentDropped(ctx, dropTransport, ctx.Err())
 		}
 		o.logger.WarnContext(ctx, "wecom outbound: attachment delivery gave up waiting for a slot",
 			"installation_id", uuidStringPub(to.InstallationID), "attachments", len(rows))
-		// Deliberately on a fresh context: the one that expired is the reason
-		// we are here, and reusing it would drop the sentence too.
+		// 刻意用新 context：已经过期的那把正是我们到这里的理由，复用它连那句话
+		// 也一起丢了。
 		o.tellUser(context.WithoutCancel(ctx), to, mediaSendFailedText)
 		replyFailed(dropTransport, ctx.Err())
 		return
 	}
 
-	// Resolved here rather than carried in from the caller: the send that
-	// delivered the words may have been minutes ago on a socket since replaced,
-	// and the registry always holds the live one.
+	// 在这里解析而不是从调用方带进来：送达话的那次发送可能发生在几分钟前、那条
+	// socket 早已被换掉，而注册表里始终是活的那条。
 	sender := o.senders.get(to.InstallationID)
 	if sender == nil {
-		// Nothing to say it with — the socket that would carry the apology is
-		// the socket that is missing. The log is the only place this can go.
+		// 没有可说它的工具——本会承载道歉的那条 socket 正是缺的那条。日志是这事
+		// 唯一能去的地方。
 		o.logger.WarnContext(ctx, "wecom outbound: no live connection for attachment delivery",
 			"installation_id", uuidStringPub(to.InstallationID), "attachments", len(rows))
 		for range rows {
@@ -330,11 +285,9 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 		return
 	}
 	failed, unknown := 0, 0
-	// replyReason aggregates the DEFINITE per-file reasons for the reply's own
-	// outcome, under worseDropReason's precedence — so a single refused file
-	// surfaces as platform_refused on the reply too. Unknown outcomes stay out
-	// of it: a file that may have arrived must not turn the reply into a
-	// definite drop.
+	// replyReason 在 worseDropReason 的优先级下汇总各文件「确凿」的原因，作为回复
+	// 自己的结局——所以一个被拒的文件也会让回复浮出 platform_refused。未知结局不
+	// 进它：一个可能已到的文件不能把回复变成确凿的丢弃。
 	var replyReason dropReason
 	var replyUnconfirmed string
 	for _, row := range rows {
@@ -347,11 +300,11 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 			replyReason = worseDropReason(replyReason, r)
 		case deliveryUnknown:
 			unknown++
-			// Not a failure: the frame may well have arrived. Filed under its
-			// own counter so the drop rate stays a rate of definite drops.
+			// 不是失败：帧很可能已到。记在自己的计数器下面，好让丢弃率始终是「确
+			// 凿丢弃」的速率。
 			r := unconfirmedReason(err)
 			if r == "" {
-				r = "ack_timeout" // sendOutcome and unconfirmedReason share a set; belt and braces
+				r = "ack_timeout" // sendOutcome 与 unconfirmedReason 共用一套集合；双保险
 			}
 			o.attachmentUnconfirmed(ctx, r, err)
 			replyUnconfirmed = worseUnconfirmedReason(replyUnconfirmed, r)
@@ -359,8 +312,7 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 			o.attachmentDelivered()
 		}
 		if err != nil {
-			// The object's URL stays out of the log: it is an address that
-			// serves the file to whoever holds it.
+			// 对象的 URL 不进日志：它是「谁拿到就发给谁」的地址。
 			o.logger.WarnContext(ctx, "wecom outbound: attachment not confirmed delivered",
 				"error", err,
 				"delivery", state.String(),
@@ -371,11 +323,10 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 		}
 	}
 	if carriesTheReply {
-		// The files were the answer. Three honest endings: any file arrived —
-		// delivered; none arrived and at least one failure is definite — a
-		// drop under the worst definite reason; nothing definite either way —
-		// unconfirmed, because calling a maybe-delivered reply a drop points
-		// the operator at a resend the user may already have.
+		// 文件就是答案。三种诚实的结局：任何文件到了——送达；一个都没到、且至少
+		// 有一个确凿失败——按最重的确凿原因记一条丢弃；两头都没有确凿的——记未确
+		// 认，因为把一条可能已送达的回复叫成丢弃，会指引运维去重发一条用户可能已
+		// 经收到的消息。
 		switch {
 		case failed+unknown < len(rows):
 			o.delivered()
@@ -385,11 +336,9 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 			o.unconfirmedFor(ctx, to.SessionID, "chat:done", replyUnconfirmed, nil)
 		}
 	}
-	// The answer is already on the user's screen and it may well refer to a
-	// file. Saying nothing would leave them looking for one that never comes —
-	// but saying "it failed" about a file that did arrive is its own harm, so
-	// each group speaks for itself and an unconfirmed send never borrows the
-	// definite wording.
+	// 回答已经上了用户屏幕、而且很可能会提到某个文件。不说话会让他们去找一个从
+	// 不来的东西——但对一个确实到了的文件说「它失败了」同样有害，所以每组为自己
+	// 说话，未确认的发送绝不借用「确凿」的措辞。
 	var lines []string
 	if failed > 0 {
 		lines = append(lines, mediaSendFailedText)
@@ -402,9 +351,8 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 	}
 }
 
-// tellUser puts one sentence into the conversation, best effort. Every caller
-// is already on a path where something went wrong, so a failure here is logged
-// and dropped rather than propagated — there is nothing further to try.
+// tellUser 往会话里放一句话，尽力而为。每个调用方都已走在「有东西出错了」的路上，
+// 所以这里的失败只记日志就丢弃、不上抛——已经没有别的可试了。
 func (o *Outbound) tellUser(ctx context.Context, to attachmentTarget, text string) {
 	if o.senders == nil {
 		return
@@ -419,15 +367,12 @@ func (o *Outbound) tellUser(ctx context.Context, to attachmentTarget, text strin
 	}
 }
 
-// sendAttachment carries one file from object storage into the chat, and
-// reports what is known about where it ended up. The error is for the log; the
-// state is what the user is told.
+// sendAttachment 把一个文件从对象存储送进会话，并报告对它归宿的已知程度。错误是
+// 给日志的；状态是告诉用户的东西。
 func (o *Outbound) sendAttachment(ctx context.Context, sender *wsSender, row db.Attachment, to attachmentTarget) (deliveryState, error) {
-	// The recorded size is checked before a single byte is fetched. An
-	// oversize attachment is refused either way — readObject re-checks what it
-	// actually read, because the column is metadata and the object is the
-	// truth — but reading 40 MB out of storage to then refuse it is work
-	// nobody benefits from.
+	// 记录下来的尺寸在取任何字节之前先查。超大附件无论如何都会被拒——
+	// readObject 会复查实际读到的量，因为列是元数据、对象才是真相——但先把 40 MB
+	// 从存储里读出来再拒，是没有受益人的活。
 	if row.SizeBytes > maxMediaUploadBytes {
 		return deliveryDefinitelyFailed, fmt.Errorf("attachment is %d bytes: %w", row.SizeBytes, errMediaUploadTooLarge)
 	}
@@ -444,15 +389,12 @@ func (o *Outbound) sendAttachment(ctx context.Context, sender *wsSender, row db.
 		Data:     data,
 	})
 	if err != nil {
-		// A failed upload never produced a media_id, so no message was ever
-		// addressed to the chat — including when the failure was the finish
-		// step's own lost ack. The file is definitely not there.
+		// 一次失败的上传从未产出 media_id，所以从未有消息被寻址到会话——包括失败
+		// 是「finish 那步自己的 ack 丢了」的情况。文件确凿不在这里。
 		return deliveryDefinitelyFailed, fmt.Errorf("upload %s: %w", kind, err)
 	}
-	// Video is the only kind with fields beyond the media_id, and both are
-	// required. The file's own name is what there is to say about it — the
-	// attachment row carries no caption and the agent's words are already in
-	// the message above.
+	// 视频是唯一在 media_id 之外还带字段的类型，两个字段都必填。可说的只有文件自
+	// 己的名字——附件行不携带标题、agent 的话已经在上面的消息里了。
 	err = sender.sendMedia(ctx, to.ChatID, to.ChatType, mediaSend{
 		Kind:        kind,
 		MediaID:     mediaID,
@@ -462,26 +404,21 @@ func (o *Outbound) sendAttachment(ctx context.Context, sender *wsSender, row db.
 	return sendOutcome(err), err
 }
 
-// sendOutcome reads a media push's error for what it says about the message.
+// sendOutcome 读一次媒体推送的错误、看它对消息说了什么。
 //
-// The one distinction that matters: a refusal is WeCom answering, and a missing
-// answer is not an answer. errAckTimeout means the frame reached the socket and
-// the verdict never came, which leaves the message possibly delivered.
+// 唯一要紧的区分：被拒是企微在回答，而「没有回答」不是回答。errAckTimeout 表示
+// 帧到了 socket、裁定一直没来，这留下「消息可能已送达」的可能。
 //
-// A transport failure lands there too, and for the same reason rather than a
-// weaker one. errWriteAttempted marks an error raised once WriteMessage had
-// been entered; past that point the frame may already be at the peer, since a
-// half-closed connection reports "broken pipe" to the writer for bytes the
-// reader has. Only what fails before the write — a marshal error, a deadline
-// the connection refused — is provably undelivered.
+// 传输层失败也落在同一侧，理由相同、并不更弱。errWriteAttempted 标记的是「进入
+// WriteMessage 之后」报出的错误；过了那一点，帧可能已经到对端——半关连接会对写
+// 方报 "broken pipe"，而读者其实已有那些字节。只有写之前就失败的（marshal 错误、
+// 连接拒绝设 deadline）才可证未送达。
 //
-// A context error lands on the same side, and less precisely than one would
-// like. wsSender.request returns the same ctx.Err() whether the context ended
-// before the frame was written or while waiting for its verdict, so from out
-// here the two cannot be told apart. Reading all of these as unknown is the
-// direction that costs least: an unknown is never resent and is described in
-// words that hold either way, so a send that never happened is under-claimed
-// rather than a send that did happen being denied.
+// context 错误也落在同一侧，而且比希望的不那么精确。wsSender.request 无论 context
+// 是在帧写出之前结束、还是在等裁定期间结束，都返回同一个 ctx.Err()，所以从这里
+// 无法区分两者。把这一切都读成 unknown 是代价最小的方向：unknown 永不被重发、且
+// 用两头都成立的话来描述，所以一次「从未发生」的发送只是少认领了，而不是一次「确
+// 实发生」的发送被否认。
 func sendOutcome(err error) deliveryState {
 	switch {
 	case err == nil:
@@ -496,9 +433,8 @@ func sendOutcome(err error) deliveryState {
 	}
 }
 
-// readObject pulls the whole file into memory. It has to be whole: the upload
-// declares total_size and total_chunks before the first chunk goes out, so
-// there is no streaming this one.
+// readObject 把整个文件拉进内存。它必须是整份：上传在第一批分片发出之前就要声明
+// total_size 与 total_chunks，所以这个没法流式。
 func (o *Outbound) readObject(ctx context.Context, rawURL string) ([]byte, error) {
 	key := o.objects.KeyFromURL(rawURL)
 	if key == "" {
@@ -509,11 +445,9 @@ func (o *Outbound) readObject(ctx context.Context, rawURL string) ([]byte, error
 		return nil, fmt.Errorf("read attachment: %w", err)
 	}
 	defer rc.Close()
-	// One byte of headroom, so reading exactly the cap can be told from a file
-	// that has more to come. The cap is the platform's, not the framing's, so
-	// the read stops there rather than at the 50 MB the chunk protocol could
-	// have expressed — the extra 30 MB would only ever be resident long enough
-	// to be refused.
+	// 多一个字节的余量，好把「恰好读到上限」和「后面还有」区分开。上限是平台的、
+	// 不是组帧的，所以读到那里就停，而不是停在分片协议能表达的 50 MB——多出的
+	// 30 MB 只会在内存里待上「足够被拒」那么久。
 	data, err := io.ReadAll(io.LimitReader(rc, maxMediaUploadBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read attachment: %w", err)
@@ -524,12 +458,11 @@ func (o *Outbound) readObject(ctx context.Context, rawURL string) ([]byte, error
 	return data, nil
 }
 
-// wecomMediaKind decides what WeCom is told this file is.
+// wecomMediaKind 决定告诉企微「这个文件是什么」。
 //
-// The content type leads, because it is what the uploader declared. When it
-// says nothing useful — empty, or the octet-stream that means "bytes" — the
-// filename's extension is the better guess. A kind whose ceiling the file
-// exceeds is demoted to a file rather than sent and refused.
+// 内容类型打头，因为那是上传者声明的。当它说不出有用的东西——空、或代表「字节」
+// 的 octet-stream——时，文件名扩展名是更好的猜测。文件超过某类型上限时降级成
+// file 发，而不是发出去被拒。
 func wecomMediaKind(contentType, filename string, size int) mediaMsgType {
 	ct := baseContentType(contentType)
 	if ct == "" || ct == "application/octet-stream" {
@@ -540,8 +473,7 @@ func wecomMediaKind(contentType, filename string, size int) mediaMsgType {
 		return mediaTypeImage
 	case strings.HasPrefix(ct, "video/") && size <= maxOutboundVideoBytes:
 		return mediaTypeVideo
-	// Voice is AMR only. An mp3 sent as a voice note is refused, and as a file
-	// it is at least playable after a tap.
+	// 语音只收 AMR。mp3 当语音发会被拒，而当文件发至少点开还能放。
 	case ct == "audio/amr" && size <= maxOutboundVoiceBytes:
 		return mediaTypeVoice
 	default:
@@ -549,8 +481,8 @@ func wecomMediaKind(contentType, filename string, size int) mediaMsgType {
 	}
 }
 
-// baseContentType drops the parameters a content type may carry, so
-// "text/csv; charset=utf-8" compares as "text/csv".
+// baseContentType 丢掉内容类型可能带的参数，让 "text/csv; charset=utf-8" 以
+// "text/csv" 参与比较。
 func baseContentType(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if semi := strings.IndexByte(s, ';'); semi >= 0 {
@@ -559,10 +491,9 @@ func baseContentType(s string) string {
 	return s
 }
 
-// outboundMediaName is what the recipient sees on the file card. It is reduced
-// to a single path segment — the name reaches the wire and a stored filename is
-// not guaranteed to be one — and given an extension when it has none, since
-// that is the only hint WeCom gets about the format.
+// outboundMediaName 是接收方在文件卡片上看到的名字。它被收成单一路径段——名字
+// 要上线，而存下来的文件名不保证是一段——没有扩展名时补一个，因为那是企微判断格
+// 式的唯一线索。
 func outboundMediaName(filename, contentType string) string {
 	name := cleanMediaFilename(filename)
 	if name == "" {
@@ -576,9 +507,8 @@ func outboundMediaName(filename, contentType string) string {
 	return name
 }
 
-// chatDoneMessageID pulls the assistant message id out of a chat:done payload
-// (the typed payload, or its map form after a serialization round trip). It is
-// the key every attachment on this turn is bound to.
+// chatDoneMessageID 从 chat:done payload 里取出 assistant 消息 id（类型化
+// payload，或经序列化往返后的 map 形态）。这一轮上每个附件都绑在它上面。
 func chatDoneMessageID(payload any) string {
 	switch p := payload.(type) {
 	case protocol.ChatDonePayload:
@@ -591,47 +521,37 @@ func chatDoneMessageID(payload any) string {
 	return ""
 }
 
-// attachmentSlots caps how many attachment deliveries read an object at once.
+// attachmentSlots 限定同时读对象的附件投递数量。
 //
-// Process-wide, not per installation: the heap is process-wide, and a
-// per-installation cap on a deployment running several bots just multiplies.
-// Each delivery holds one object while it chunks it up the socket, so this is
-// the number that decides peak resident attachment bytes.
+// 进程级、不按安装：堆是进程级的，跑多个机器人的部署上按安装设上限只会相乘。每
+// 次投递在上传期间持有一个对象，所以这个数决定「峰值驻留附件字节」。
 var attachmentSlots = make(chan struct{}, maxConcurrentAttachmentDeliveries)
 
 const (
-	// maxConcurrentAttachmentDeliveries is how many objects may be in flight.
-	// Small on purpose: each one is up to the platform's file ceiling, and
-	// the socket they share is a single long connection per bot, so more
-	// concurrency buys queueing rather than throughput.
+	// maxConcurrentAttachmentDeliveries 是多少对象可以同时在飞。刻意取小：每个对
+	// 象最大可达平台文件上限，而它们共用的 socket 是每机器人一条长连接，更多并发
+	// 买来的是排队而不是吞吐。
 	maxConcurrentAttachmentDeliveries = 2
 
-	// maxPendingAttachmentDeliveries bounds the deliveries that have found a
-	// file and are waiting for a slot. Past it a delivery is shed and the
-	// user is told: the answer's text has already reached them, the
-	// attachment is still in object storage, and silence would leave them
-	// waiting for a file that is not coming.
+	// maxPendingAttachmentDeliveries 约束「已发现文件、正等槽位」的投递。超过它
+	// 投递被拒、用户被知会：回答的文本已经到他们手里、附件还在对象存储里，沉默
+	// 会让他们等一个不来的文件。
 	maxPendingAttachmentDeliveries = 32
 
-	// maxAdmittedAttachmentDeliveries bounds the goroutines themselves, and
-	// with them the attachment lookups they run before anything about the
-	// turn is known. Twice the pending cap as headroom, not as a derived
-	// quantity: a turn holds admission for its whole life but claims a pending
-	// slot only once its lookup has found a file, so a backlog of
-	// file-carrying turns meets the pending cap first — the ordering that
-	// keeps the user-facing shed on the path that can name a real file.
+	// maxAdmittedAttachmentDeliveries 约束 goroutine 本身、连带它们在「对轮次还一
+	// 无所知」时跑的附件查询。取 pending 上限的两倍是作为余量、不是推导量：一轮在
+	// 其整个生命周期里持有 admission、却只在查询发现文件后才占 pending 槽，所以一
+	// 批「带文件」的积压会先顶到 pending 上限——这个顺序让面向用户的拒发停留在那
+	// 条能点出真文件的路径上。
 	//
-	// So reaching THIS cap does not imply the pending one is full: turns still
-	// inside their lookup hold admission and no pending slot, and turns that
-	// find no file hold admission for their whole life and never claim one.
-	// TestDeliverAttachments_AdmissionBoundsTheLookupStage is the first of
-	// those — it parks every goroutine in the lookup and reaches the admitted
-	// cap with pending at zero.
+	// 所以顶到本上限并不表示 pending 满了：仍在查询中的轮次持有 admission、不占
+	// pending 槽；找不到文件的轮次终其一生持有 admission、从不认领 pending 槽。
+	// TestDeliverAttachments_AdmissionBoundsTheLookupStage 是其中的第一例——它把每
+	// 个 goroutine 停在查询里、以 pending 为零顶到 admitted 上限。
 	maxAdmittedAttachmentDeliveries = 2 * maxPendingAttachmentDeliveries
 )
 
-// claimAttachmentSlot reserves one of the pending slots, or reports that the
-// backlog is full.
+// claimAttachmentSlot 占下一个 pending 槽，或在积压已满时报告。
 func (o *Outbound) claimAttachmentSlot() bool {
 	o.pendingMu.Lock()
 	defer o.pendingMu.Unlock()
@@ -648,10 +568,9 @@ func (o *Outbound) releaseAttachmentSlot() {
 	o.pendingAttachments--
 }
 
-// admitAttachmentDelivery reserves the right to start one delivery goroutine,
-// or reports that too many are already running. Claimed before the spawn:
-// after it, the goroutine and its lookup are already past anything this could
-// bound.
+// admitAttachmentDelivery 保留启动一个投递 goroutine 的权利，或在「已在跑的大多」
+// 时报告。在 spawn 之前占：之后，goroutine 和它的查询已经越过任何它能约束的东西
+// 了。
 func (o *Outbound) admitAttachmentDelivery() bool {
 	o.pendingMu.Lock()
 	defer o.pendingMu.Unlock()

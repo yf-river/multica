@@ -1,3 +1,5 @@
+// cron.go —— 服务端 cron 解析与下一次/未来发生时刻计算（UTC 规范化）。
+// 调度决策一律基于 DB 时间，杜绝时钟歪斜的多个 app 实例产生分歧。
 package service
 
 import (
@@ -8,21 +10,17 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-// cronParser accepts standard 5-field cron expressions.
+// cronParser 接受标准 5 字段 cron 表达式。
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
-// NextOccurrenceAfterUTC parses cronExpr in the named IANA timezone and
-// returns the next activation strictly after `after`. The result is always
-// in UTC and represents the canonical fire time of the next occurrence.
+// NextOccurrenceAfterUTC 在指定 IANA 时区内解析 cronExpr，返回严格晚于 `after` 的下一次激活。结果始终为 UTC，
+// 代表下一次发生的规范触发时刻。
 //
-// `after` is interpreted as an absolute instant; callers should pass DB
-// time (e.g. `SELECT now()`) rather than `time.Now()` so that two
-// app instances with skewed clocks still produce the same answer.
+// `after` 按绝对时刻解释；调用方应传 DB 时间（如 `SELECT now()`）而非 `time.Now()`，使时钟歪斜的两个
+// 应用实例仍得出相同答案。
 //
-// This is the building block the new scheduler.AutopilotScheduleDispatchJob
-// uses to compute plan_times; the handler / UI write paths use it via
-// ComputeNextRunFromUTC to fill in the display-only
-// autopilot_trigger.next_run_at column.
+// 这是新 scheduler.AutopilotScheduleDispatchJob 计算 plan_times 的构件；handler/UI 写路径经
+// ComputeNextRunFromUTC 用它回填仅供展示的 autopilot_trigger.next_run_at 列。
 func NextOccurrenceAfterUTC(cronExpr, timezone string, after time.Time) (time.Time, error) {
 	sched, loc, err := parseCronSchedule(cronExpr, timezone)
 	if err != nil {
@@ -31,15 +29,11 @@ func NextOccurrenceAfterUTC(cronExpr, timezone string, after time.Time) (time.Ti
 	return sched.Next(after.In(loc)).UTC(), nil
 }
 
-// NextOccurrencesAfterUTC parses cronExpr in `timezone` once and returns the
-// next `count` activations strictly after `after`, ascending, in UTC. It stops
-// early — returning a shorter slice — when the expression has no further
-// occurrence within robfig's five-year search horizon (e.g. "0 0 30 2 *"), which
-// robfig reports as the zero time.
+// NextOccurrencesAfterUTC 在 `timezone` 中解析 cronExpr 一次，返回严格晚于 `after` 的下 `count` 次激活（升序、UTC）。
+// 表达式在 robfig 五年搜索范围内再无发生（如 "0 0 30 2 *"，robfig 报零时）时提前结束、返回更短切片。
 //
-// Unlike calling NextOccurrenceAfterUTC in a loop, the expression is parsed and
-// the location loaded exactly once. The schedule editor's preview endpoint asks
-// for this on every debounced keystroke, so the difference is not academic.
+// 与循环调用 NextOccurrenceAfterUTC 不同，表达式只解析一次、时区只加载一次。调度器编辑器的预览端点在每次
+// 防抖击键时都问它，这个差别不是学术性的。
 func NextOccurrencesAfterUTC(cronExpr, timezone string, after time.Time, count int) ([]time.Time, error) {
 	sched, loc, err := parseCronSchedule(cronExpr, timezone)
 	if err != nil {
@@ -58,16 +52,11 @@ func NextOccurrencesAfterUTC(cronExpr, timezone string, after time.Time, count i
 	return out, nil
 }
 
-// NextOccurrencesUTC parses cronExpr in `timezone` and returns every
-// activation in the half-open interval `(after, until]`, in canonical
-// UTC order (ascending). Used by the Autopilot schedule dispatch job to
-// enumerate every plan_time that became due between the last stored
-// occurrence and DB now().
+// NextOccurrencesUTC 在 `timezone` 中解析 cronExpr，返回半开区间 `(after, until]` 内的每次激活，按规范 UTC 升序。
+// Autopilot 调度派发任务用它枚举“自上次存储发生点以来到期”的每个 plan_time。
 //
-// The slice is capped at 1024 entries — a safety net against an
-// accidental "every second" cron over a multi-day catch-up window.
-// The scheduler manager additionally caps the returned slice at
-// JobSpec.MaxPlansPerTick.
+// 切片上限 1024 条——防止意外 “每秒一次” 的 cron 在多日补跑窗口上失控。调度器管理器还会把返回切片
+// 再截到 JobSpec.MaxPlansPerTick。
 func NextOccurrencesUTC(cronExpr, timezone string, after, until time.Time) ([]time.Time, error) {
 	sched, loc, err := parseCronSchedule(cronExpr, timezone)
 	if err != nil {
@@ -88,27 +77,21 @@ func NextOccurrencesUTC(cronExpr, timezone string, after, until time.Time) ([]ti
 	return out, nil
 }
 
-// ComputeNextRun evaluates the cron at the app's local now() and backs
-// the display-only autopilot_trigger.next_run_at column for the trigger
-// create/update handlers and the failure monitor. Using the local clock
-// for this display value is deliberate: app/DB clock skew under NTP is far
-// below the column's minute-level granularity, so threading DB time
-// through these UI write paths would buy no user-visible accuracy.
+// ComputeNextRun 用应用本地 now() 求值 cron，回填仅供展示的 autopilot_trigger.next_run_at 列（触发器创建/更新
+// handler 与失败监视器用）。展示值刻意用本地钟：NTP 下应用/DB 时钟偏差远低于该列分钟级粒度，为这些 UI 写路径
+// 穿透 DB 时间换不来用户可见的精度。
 //
-// The scheduler's post-dispatch advance keeps next_run_at on the same
-// local clock but calls NextOccurrenceAfterUTC anchored at
-// max(now, plan_time) rather than this helper, so a lagging app clock can
-// never re-point the column at the slot that just fired (see
-// scheduler.advancedNextRun / autopilotHandler, MUL-3749).
+// 调度器的派发后推进仍把 next_run_at 放在同一本地钟上，但以 max(now, plan_time) 为锚调 NextOccurrenceAfterUTC
+// 而非本助手，落后的应用钟绝不会把该列重新指向刚触发过的槽位（见 scheduler.advancedNextRun / autopilotHandler，
+// MUL-3749）。
 //
-// Scheduling decisions are a separate concern and MUST go through
-// NextOccurrencesUTC / NextOccurrenceAfterUTC against DB time instead:
-// dispatch correctness across clock-skewed app instances depends on it.
+// 调度决策是另一回事，必须走 NextOccurrencesUTC / NextOccurrenceAfterUTC 用 DB 时间：跨时钟歪斜实例的派发
+// 正确性依赖它。
 func ComputeNextRun(cronExpr, timezone string) (time.Time, error) {
 	return NextOccurrenceAfterUTC(cronExpr, timezone, time.Now())
 }
 
-// ValidateTimezone returns an error if the timezone string is not recognized.
+// ValidateTimezone 无法识别时区字符串时返回错误。
 func ValidateTimezone(timezone string) error {
 	_, err := time.LoadLocation(timezone)
 	if err != nil {
@@ -117,11 +100,10 @@ func ValidateTimezone(timezone string) error {
 	return nil
 }
 
+// parseCronSchedule 解析 cron 并加载时区；对 robfig 解析器会 panic 的形态先拒绝（见内联注释）。
 func parseCronSchedule(cronExpr, timezone string) (cron.Schedule, *time.Location, error) {
-	// robfig v3.0.1 reads an optional "TZ="/"CRON_TZ=" prefix up to the first
-	// space and panics (parser.go:99, slice[:-1]) when that space is missing.
-	// The preview endpoint feeds raw user text here, so reject the shape the
-	// parser cannot survive instead of turning a typo into a 500.
+	// robfig v3.0.1 会读取到首个空格为止的可选 "TZ="/"CRON_TZ=" 前缀，空格缺失时 panic（parser.go:99, slice[:-1]）。
+	// 预览端点把原始用户文本喂到这里，因此先拒绝解析器无法存活的形态，而不是把笔误变成 500。
 	if (strings.HasPrefix(cronExpr, "TZ=") || strings.HasPrefix(cronExpr, "CRON_TZ=")) &&
 		!strings.Contains(cronExpr, " ") {
 		return nil, nil, fmt.Errorf("parse cron: missing schedule after timezone prefix %q", cronExpr)

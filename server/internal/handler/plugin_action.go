@@ -1,3 +1,5 @@
+// 本文件：Plugin Action API（publicapi v1 契约）——插件 surface 通过宿主桥访问的端点，以及
+// hook 的插件自有服务器用 token 发起的调用。设计说明见下。
 package handler
 
 import (
@@ -21,51 +23,43 @@ import (
 	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
 
-// The Action API is what a plugin surface reaches through the host bridge.
+// Action API 是插件 surface 透过宿主桥够到的能力面。
 //
-// Every call passes three checks, in this order:
+// 每次调用依次过三道检查：
 //
-//  1. the installation exists in this workspace and is enabled;
-//  2. the installation was granted the scope this endpoint needs;
-//  3. the SIGNED-IN USER may touch the resource — enforced by the ordinary
-//     loaders, not by anything plugin-specific.
+//  1. 安装存在于本工作区且已启用；
+//  2. 安装已被授予本端点需要的 scope；
+//  3. 「登录中的用户」是否有权碰这个资源——由普通 loader 执行，不含任何插件特判。
 //
-// Three is the one that makes the whole model safe: a plugin can never let
-// someone do what they could not already do themselves. One and two are what
-// bound the plugin below that ceiling.
+// 第三道正是整套模型安全的原因：插件永远无法让人做他自己本来就做不到的事。第一、二道把
+// 插件压在这个天花板之下。
 //
-// A SURFACE still holds no credential. The iframe posts a message to the host
-// page, and the host re-issues the call on the user's own session, reading the
-// installation from a header the iframe cannot set for itself.
+// SURFACE 本身不持有任何凭据。iframe 向宿主页 postMessage，宿主在用户自己的会话里重发这次
+// 调用，从 iframe 自己设置不了的 header 里读安装（见 pluginInstallationHeader）。
 //
-// Hooks add a second kind of caller: a plugin's own server, which has no
-// session and never will. It presents a bearer token instead, and that changes
-// only WHO the call acts as — the three checks above are the same either way.
-// See pluginActor for how identity is decided.
+// Hook 追加第二种调用方：插件自己的服务器——它没有会话、将来也不会有。它出示 bearer token，
+// 这只改变「这次调用以谁的身份」，上面三道检查两种情形都一样。身份如何判定见 pluginActor。
 const pluginInstallationHeader = "X-Multica-Plugin-Installation"
 
-// pluginActor is who a call acts as, and it is decided by how the caller
-// authenticated rather than by anything the caller asks for.
+// pluginActor 是一次调用「以谁的身份」，由调用方怎么认证决定，而不是由调用方索要什么决定。
 //
-//	session, or a callback token from a ui/manual hook
-//	    -> the person. Writes are theirs, marked with via_plugin_id.
-//	install token, or a callback token from an event hook
-//	    -> the installation. Writes are the plugin's own.
+//	session，或来自 ui/manual hook 的回调 token
+//	    -> 那个人。写入记在他名下，带 via_plugin_id 标记。
+//	install token，或来自 event hook 的回调 token
+//	    -> 那次安装。写入是插件自己的。
 //
-// The second case is why author_type gained a 'plugin' value: an event hook has
-// no person behind it, and attributing its writes to the last member who
-// happened to touch the issue would be a lie that the audit trail cannot undo.
+// 第二种情形正是 author_type 增加 'plugin' 值的原因：event hook 背后没有人，把它的写入
+// 记到「最后碰过这个 issue 的成员」头上，是审计记录也无法挽回的谎言。
 type pluginActor struct {
 	Type string
-	// Member is present only when Type is "member". A plugin-actor call has no
-	// member row to check permissions against, which is exactly why the
-	// endpoints that need one refuse it.
+	// Member 只在 Type 为 "member" 时存在。插件身份的调用没有成员行可查权限——这正是不需要
+	// 成员的那些端点会拒绝它的原因。
 	Member db.Member
 }
 
 func (a pluginActor) isMember() bool { return a.Type == "member" }
 
-// requireMember refuses an endpoint that has no meaning without a person.
+// requireMember 拒绝那些「没有人在背后就没意义」的端点。
 func (a pluginActor) requireMember(w http.ResponseWriter, r *http.Request) bool {
 	if a.isMember() {
 		return true
@@ -82,9 +76,8 @@ func (h *Handler) requirePluginActionV1(w http.ResponseWriter, r *http.Request) 
 	return false
 }
 
-// writePluginActionError maps service-layer failures into the one stable
-// Public API problem contract. Management endpoints intentionally keep their
-// existing App API errors; only the versioned Action/bridge surface uses this.
+// writePluginActionError 把 service 层失败映射进唯一的、稳定的 Public API problem 契约。
+// 管理端点刻意保留它们现有的 App API 错误；只有带版本号的 Action/bridge 面用这里。
 func writePluginActionError(w http.ResponseWriter, r *http.Request, err error, fallback string) {
 	var pluginErr *service.PluginError
 	if !errors.As(err, &pluginErr) {
@@ -109,7 +102,8 @@ func writePluginActionError(w http.ResponseWriter, r *http.Request, err error, f
 	}
 }
 
-// pluginCaller runs checks 1 and 2 and returns the authorized caller.
+// pluginCaller 执行检查 1 和 2，返回已授权的调用方。按认证方式分流：插件自己的 bearer
+// token 走 pluginTokenCaller，否则当登录用户走 pluginSessionCaller。
 func (h *Handler) pluginCaller(w http.ResponseWriter, r *http.Request, scope string) (service.PluginActionCaller, pluginActor, bool) {
 	if !h.requirePluginActionV1(w, r) {
 		return service.PluginActionCaller{}, pluginActor{}, false
@@ -120,8 +114,8 @@ func (h *Handler) pluginCaller(w http.ResponseWriter, r *http.Request, scope str
 	return h.pluginSessionCaller(w, r, scope)
 }
 
-// pluginSessionCaller is the surface path, unchanged: a real signed-in user
-// whose own permissions bound everything the plugin can reach.
+// pluginSessionCaller 是 surface 路径，不变：一个真实登录用户，他自己的权限把所有插件能
+// 触到的东西都压住。
 func (h *Handler) pluginSessionCaller(w http.ResponseWriter, r *http.Request, scope string) (service.PluginActionCaller, pluginActor, bool) {
 	userID := strings.TrimSpace(r.Header.Get("X-User-ID"))
 	if userID == "" {
@@ -140,9 +134,8 @@ func (h *Handler) pluginSessionCaller(w http.ResponseWriter, r *http.Request, sc
 		return service.PluginActionCaller{}, pluginActor{}, false
 	}
 
-	// The workspace comes from the installation, never from a client header:
-	// otherwise a caller could aim an installation at a workspace it was never
-	// installed in. Membership is then checked against that workspace.
+	// 工作区来自安装记录，绝不来自客户端 header：否则调用方可以把一次安装指向它从未被
+	// 安装过的工作区。成员身份再对着那个工作区校验。
 	member, err := h.getWorkspaceMember(r.Context(), userID, uuidToString(caller.WorkspaceID))
 	if err != nil {
 		publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "workspace not found")
@@ -151,12 +144,11 @@ func (h *Handler) pluginSessionCaller(w http.ResponseWriter, r *http.Request, sc
 	return caller, pluginActor{Type: "member", Member: member}, true
 }
 
-// pluginTokenCaller is the hook path: a plugin's own server calling in.
+// pluginTokenCaller 是 hook 路径：插件自己的服务器调进来。
 //
-// A callback token is scoped to one INVOCATION, lives for minutes, and carries
-// the actor decided when the hook went out — so a ui-triggered hook writes back
-// as the person who pressed the button and cannot elect to write as anyone
-// else. An install token is standing access and always acts as the plugin.
+// 回调 token 限定到一次 INVOCATION、存活几分钟、并带着 hook 发出时定下的 actor——所以
+// ui 触发的 hook 以「按下按钮的那个人」的身份回写，且无法改选以别的身份写。install token
+// 是常驻访问，永远以插件身份行动。
 func (h *Handler) pluginTokenCaller(w http.ResponseWriter, r *http.Request, token, scope string) (service.PluginActionCaller, pluginActor, bool) {
 	var installationID pgtype.UUID
 	actor := pluginActor{Type: "plugin"}
@@ -194,13 +186,12 @@ func (h *Handler) pluginTokenCaller(w http.ResponseWriter, r *http.Request, toke
 		return service.PluginActionCaller{}, pluginActor{}, false
 	}
 
-	// The grant said which issue it was about. Carrying it here is what turns
-	// that from a comment into a check — see pluginIssueForUser.
+	// 授权时授予方说过这是针对哪个 issue 的。把它带到这里，才把「评论」变成「检查」——
+	// 见 pluginIssueForUser。
 	caller.IssueScope = issueScope
 
-	// A callback token that stands for a person is only as good as that
-	// person's membership TODAY. Re-checking here means revoking someone's
-	// access takes effect on a token already in flight.
+	// 代表某个人的回调 token，只在他「今天」仍是成员时才算数。在这里复查，意味着吊销某人
+	// 权限的效果会作用到一条已经在飞的 token 上。
 	if memberUserID.Valid {
 		member, err := h.getWorkspaceMember(r.Context(), uuidToString(memberUserID), uuidToString(caller.WorkspaceID))
 		if err != nil {
@@ -212,31 +203,27 @@ func (h *Handler) pluginTokenCaller(w http.ResponseWriter, r *http.Request, toke
 	return caller, actor, true
 }
 
-// pluginIssueForUser is check 3. The workspace comes from the installation, not
-// from a client header, and membership in that workspace was already verified
-// by pluginCaller — so "the issue is in this workspace" plus "the caller is a
-// member of it" is exactly the reach the user already has. An issue outside it
-// is a 404 for the same reason it is on the ordinary endpoint: a plugin must
-// not be able to confirm that an id it cannot read exists.
+// pluginIssueForUser 是第三道检查。工作区来自安装而非客户端 header，且 pluginCaller 已经
+// 验过该工作区的成员身份——所以「issue 在这工作区里」+「调用方是成员」正好等于该用户本就
+// 有的触达范围。工作区之外的 issue 回 404，与普通端点的理由相同：插件不能靠试探来确认一个
+// 它本就读不到的 id 是否存在。
 func (h *Handler) pluginIssueForUser(w http.ResponseWriter, r *http.Request, caller service.PluginActionCaller, issueID string) (db.Issue, bool) {
 	if issueID == "" {
 		publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
 		return db.Issue{}, false
 	}
-	// Resolve first, then compare ids: a caller may name an issue by identifier
-	// (PLUG-12) or by uuid, and comparing raw strings would let the same issue
-	// pass under one spelling and fail under the other.
+	// 先解析、再比较 id：调用方可能用标识符（PLUG-12）或 uuid 指同一个 issue，直接比原始
+	// 字符串会让同一个 issue 用其中一种写法通过、另一种写法失败。
 	issue, ok := h.resolvePluginIssue(r, caller, issueID)
 	if !ok {
 		publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
 		return db.Issue{}, false
 	}
-	// A callback grant issued about one issue reaches only that issue. Without
-	// this the grant is worth every issue in the workspace its actor can see,
-	// for the whole five minutes it lives.
+	// 针对某个 issue 签发的回调授权只能够到那个 issue。没有这层，这份授权在存活的五分钟里
+	// 等于工作区里其 actor 能看到的每一个 issue。
 	//
-	// 404 rather than 403: the caller may well be able to see this issue by
-	// other means, and "you are scoped elsewhere" would confirm the id exists.
+	// 回 404 而非 403：调用方也许能用别的途径看到这个 issue，「你被限定在别处」就等于确认
+	// 了这个 id 存在。
 	if caller.IssueScope.Valid && uuidToString(issue.ID) != uuidToString(caller.IssueScope) {
 		publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
 		return db.Issue{}, false
@@ -244,9 +231,8 @@ func (h *Handler) pluginIssueForUser(w http.ResponseWriter, r *http.Request, cal
 	return issue, true
 }
 
-// resolvePluginIssue finds an issue inside the caller's workspace, by
-// identifier or by uuid. Membership in that workspace was established by
-// pluginCaller, so this is exactly the reach the caller already has.
+// resolvePluginIssue 在调用方的工作区里按标识符或 uuid 找 issue。该工作区的成员身份已由
+// pluginCaller 确立，所以这正是调用方已有的触达范围。
 func (h *Handler) resolvePluginIssue(r *http.Request, caller service.PluginActionCaller, issueID string) (db.Issue, bool) {
 	workspaceID := uuidToString(caller.WorkspaceID)
 	if issue, ok := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); ok {
@@ -266,9 +252,9 @@ func (h *Handler) resolvePluginIssue(r *http.Request, caller service.PluginActio
 	return issue, true
 }
 
-// GetPluginContext — GET /v1/context
+// GetPluginContext 处理 GET /v1/context——返回插件页当前的上下文（工作区 + 可选用户/issue）。
 func (h *Handler) GetPluginContext(w http.ResponseWriter, r *http.Request) {
-	// No scope: this is the page the user is already looking at.
+	// 不需要 scope：这就是用户正在看的那一页。
 	caller, actor, ok := h.pluginCaller(w, r, "")
 	if !ok {
 		return
@@ -278,8 +264,8 @@ func (h *Handler) GetPluginContext(w http.ResponseWriter, r *http.Request) {
 		publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to load the workspace")
 		return
 	}
-	// A plugin-actor call has no user to describe, and the payload says so
-	// rather than presenting an empty one that a handler might read as real.
+	// 插件身份的调用没有可描述的用户，payload 就明说这一点，而不是交出一个可能被 handler
+	// 当成真人的空 user。
 	var user *db.User
 	if actor.isMember() {
 		loaded, err := h.Queries.GetUser(r.Context(), actor.Member.UserID)
@@ -302,6 +288,7 @@ func (h *Handler) GetPluginContext(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, publicPluginContext(h.PluginService.BuildPluginContext(caller, workspace, user, issue)))
 }
 
+// publicPluginContext 把内部 PluginContext 映射成 publicapi v1 的 Context DTO。
 func publicPluginContext(context service.PluginContext) publicapiv1.Context {
 	payload := publicapiv1.Context{
 		Workspace: publicapiv1.ContextWorkspace{
@@ -326,7 +313,8 @@ func publicPluginContext(context service.PluginContext) publicapiv1.Context {
 	return payload
 }
 
-// GetPluginIssue — GET /v1/issues/{issue_ref}
+// GetPluginIssue 处理 GET /v1/issues/{issue_ref}——按标识符/uuid 读一个 issue（需
+// issues:read scope；响应带 ETag 与稳定公共 DTO）。
 func (h *Handler) GetPluginIssue(w http.ResponseWriter, r *http.Request) {
 	caller, _, ok := h.pluginCaller(w, r, plugincontract.ScopeIssuesRead)
 	if !ok {
@@ -340,14 +328,11 @@ func (h *Handler) GetPluginIssue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.pluginIssuePayload(r, caller, issue))
 }
 
-// PatchPluginIssue — PATCH /v1/issues/{issue_ref}
+// PatchPluginIssue 处理 PATCH /v1/issues/{issue_ref}（需 issues:write scope）。
 //
-// Title and description only. Status, priority, assignee, parent, project and
-// stage each carry dispatch, catalog or hierarchy semantics — a status change
-// can start an agent run, and custom statuses resolve through a per-workspace
-// catalog — and duplicating those rules here would give a plugin a second,
-// drifting copy of them. Widening this set later is additive; getting the side
-// effects wrong now is not.
+// 只支持标题和描述。状态/优先级/负责人/父级/项目/阶段各自带着派发、目录或层级语义——改状态
+// 可能启动一次 Agent 运行，自定义状态要经工作区级目录解析——在这里复刻这些规则，等于给
+// 插件一份会各自漂移的第二套拷贝。将来放宽这个集合是纯增量；现在把副作用搞错可没法补救。
 func (h *Handler) PatchPluginIssue(w http.ResponseWriter, r *http.Request) {
 	caller, _, ok := h.pluginCaller(w, r, plugincontract.ScopeIssuesWrite)
 	if !ok {
@@ -410,10 +395,13 @@ func (h *Handler) PatchPluginIssue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.pluginIssuePayload(r, caller, updated))
 }
 
+// setPublicIssueETag 把 issue 版本号写成弱 ETag，供乐观并发控制（If-Match）使用。
 func setPublicIssueETag(w http.ResponseWriter, revision int64) {
 	w.Header().Set("ETag", fmt.Sprintf(`W/"%d"`, revision))
 }
 
+// publicIssueExpectedRevision 解析期望版本：body 里的 expected_revision 或 If-Match 头二选一
+// （都传则必须一致），返回期望值；两个来源都没有就返回 nil（不做乐观校验）。
 func publicIssueExpectedRevision(w http.ResponseWriter, r *http.Request, bodyRevision *int64) (*int64, bool) {
 	header := strings.TrimSpace(r.Header.Get("If-Match"))
 	if header == "" {
@@ -443,8 +431,8 @@ func writePublicIssueRevisionConflict(w http.ResponseWriter, r *http.Request) {
 	publicapiv1.WriteProblem(w, r, http.StatusConflict, "revision_conflict", "resource changed since it was loaded")
 }
 
-// pluginIssuePayload explicitly maps the App response into the stable Public
-// DTO. New App-only fields cannot leak into the public contract by accident.
+// pluginIssuePayload 把 App 响应显式映射成稳定的公共 DTO。新的仅 App 字段不会意外漏进公共
+// 契约。
 func (h *Handler) pluginIssuePayload(r *http.Request, caller service.PluginActionCaller, issue db.Issue) publicapiv1.Issue {
 	prefix := ""
 	if workspace, err := h.Queries.GetWorkspace(r.Context(), caller.WorkspaceID); err == nil {
@@ -480,7 +468,8 @@ func (h *Handler) pluginIssuePayload(r *http.Request, caller service.PluginActio
 	}
 }
 
-// ListPluginComments — GET /v1/issues/{issue_ref}/comments
+// ListPluginComments 处理 GET /v1/issues/{issue_ref}/comments（需 comments:read scope）——
+// 列出某 issue 最近的评论（数量上限见 maxPluginCommentsPerRead）。
 func (h *Handler) ListPluginComments(w http.ResponseWriter, r *http.Request) {
 	caller, _, ok := h.pluginCaller(w, r, plugincontract.ScopeCommentsRead)
 	if !ok {
@@ -506,6 +495,7 @@ func (h *Handler) ListPluginComments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, publicapiv1.CommentListResponse{Comments: payload})
 }
 
+// publicPluginComment 把内部 Comment 映射成公共 DTO。
 func publicPluginComment(comment db.Comment) publicapiv1.Comment {
 	return publicapiv1.Comment{
 		ID:         uuidToString(comment.ID),
@@ -518,16 +508,14 @@ func publicPluginComment(comment db.Comment) publicapiv1.Comment {
 	}
 }
 
-// CreatePluginComment — POST /v1/issues/{issue_ref}/comments
+// CreatePluginComment 处理 POST /v1/issues/{issue_ref}/comments（需 comments:write scope）。
 //
-// The comment is authored BY THE USER and marked with the plugin that produced
-// it, so the timeline can render "Jiayuan (via Hello Panel)".
+// 评论以用户身份署名、并用 via_plugin_id 标出是哪个插件产的，时间线因此能渲染出
+// "Jiayuan (via Hello Panel)"。
 //
-// It deliberately does not run the @mention trigger dispatch that the ordinary
-// comment endpoint does. A plugin that could post a mention could start agent
-// runs — and spend the workspace's budget — from a surface the user only meant
-// to click a button in. Plugins that want to start work will get an explicit
-// hook for it rather than inheriting it as a side effect of posting text.
+// 它刻意不跑普通评论端点会跑的 @mention 触发派发。能发 mention 的插件就等于能从用户只想
+// 点一下按钮的 surface 上启动 Agent 运行——并花掉工作区预算。想启动工作的插件会有专门的
+// hook，而不是把「发文本」的副作用继承过去。
 func (h *Handler) CreatePluginComment(w http.ResponseWriter, r *http.Request) {
 	caller, actor, ok := h.pluginCaller(w, r, plugincontract.ScopeCommentsWrite)
 	if !ok {
@@ -570,11 +558,9 @@ func (h *Handler) CreatePluginComment(w http.ResponseWriter, r *http.Request) {
 		rootComment = &parent
 	}
 
-	// Authorship follows the actor, and the actor was decided by how the caller
-	// authenticated — not by anything in this request body. A person behind the
-	// call keeps their own name on the comment (via_plugin_id records that a
-	// plugin produced it); an event hook writes as the installation, because
-	// there is nobody to attribute it to.
+	// 署名跟着 actor 走，而 actor 由「调用方怎么认证」决定，不由请求体里的任何东西决定。
+	// 人在调用后面时用自己的名字署名（via_plugin_id 记录是插件产的）；event hook 以安装身份
+	// 写，因为背后没有可归属的人。
 	authorType := "member"
 	authorID := actor.Member.UserID
 	if !actor.isMember() {
@@ -610,11 +596,9 @@ func (h *Handler) CreatePluginComment(w http.ResponseWriter, r *http.Request) {
 	}
 	comment := createdComment.Comment()
 
-	// The same two follow-ups every other comment path performs. Skipping them
-	// made a plugin-posted comment invisible until the next refetch, and left a
-	// reply into a resolved thread without re-opening it — a comment that lands
-	// as the user should behave like the user's, minus only what was refused on
-	// purpose (mention dispatch).
+	// 其它评论路径都会做的两件善后。跳掉它们会让插件发的评论要到下次刷新才可见，还会让
+	// 对已解决线程的回复不重新打开它——以用户身份落地的评论就该表现得像用户的评论，只少了
+	// 故意被拿掉的（mention 派发）。
 	commentResponse := commentToResponse(comment, nil, nil)
 	commentResponse.IssueRevision = createdComment.IssueRevision
 	createdEvent, err := eventoutbox.Enqueue(r.Context(), qtx, buildCommentCreatedEvent(issue, commentResponse, authorType, uuidToString(authorID)))
@@ -650,16 +634,18 @@ func (h *Handler) CreatePluginComment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, publicPluginComment(comment))
 }
 
-// maxPluginCommentBytes keeps a surface from using comments as bulk storage.
+// maxPluginCommentBytes 防止 surface 把评论当批量存储用。
 const maxPluginCommentBytes = 64 * 1024
 
-// maxPluginCommentsPerRead bounds one read. The query returns the NEWEST N in
-// chronological order, so a surface on a long thread sees the recent end rather
-// than a truncated beginning.
+// maxPluginCommentsPerRead 限制单次读取条数。查询返回「时间序里最新 N 条」，让长线程上的
+// surface 看到的是靠后那端，而不是被截断的开头。
 const maxPluginCommentsPerRead = 200
 
-// --- Storage ---
+// --- 存储 ---
 
+// pluginStorageScope 解析 /v1/storage/{scope} 的 scope 维度并做授权：检查安装被授予了对应
+// scope（workspace 或 user），user 维度的写入必须是「某个人」，然后把维度解析成确定的作用域
+// id（见 service.ResolveStorageScope）。
 func (h *Handler) pluginStorageScope(w http.ResponseWriter, r *http.Request, caller service.PluginActionCaller, actor pluginActor) (string, pgtype.UUID, bool) {
 	scopeType := chi.URLParam(r, "scope")
 	required := plugincontract.ScopeStorageWorkspace
@@ -670,9 +656,8 @@ func (h *Handler) pluginStorageScope(w http.ResponseWriter, r *http.Request, cal
 		publicapiv1.WriteProblem(w, r, http.StatusForbidden, "missing_scope", "this Plugin was not granted the "+required+" scope")
 		return "", pgtype.UUID{}, false
 	}
-	// storage:user is per-member state, so a caller with no member has no such
-	// scope to resolve. Falling through would key every plugin-actor write to
-	// the zero UUID — one shared bucket masquerading as somebody's private one.
+	// storage:user 是逐成员的状态，没有成员身份的调用方根本没有这个 scope 可解析。放它漏
+	// 过去会把每次插件身份的写入都键到零 UUID——一个伪装成某人私有桶的共享桶。
 	if scopeType == service.PluginStorageUser && !actor.requireMember(w, r) {
 		return "", pgtype.UUID{}, false
 	}
@@ -684,6 +669,7 @@ func (h *Handler) pluginStorageScope(w http.ResponseWriter, r *http.Request, cal
 	return scopeType, scopeID, true
 }
 
+// hasGrantedScope 判断授权 scope 列表里是否含 want。
 func hasGrantedScope(scopes []string, want string) bool {
 	for _, scope := range scopes {
 		if scope == want {
@@ -693,7 +679,7 @@ func hasGrantedScope(scopes []string, want string) bool {
 	return false
 }
 
-// ListPluginStorage — GET /v1/storage/{scope}
+// ListPluginStorage 处理 GET /v1/storage/{scope}——列出插件在该 scope 下存的 key 及元信息。
 func (h *Handler) ListPluginStorage(w http.ResponseWriter, r *http.Request) {
 	caller, actor, ok := h.pluginCaller(w, r, "")
 	if !ok {
@@ -717,7 +703,7 @@ func (h *Handler) ListPluginStorage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, publicapiv1.StorageKeyListResponse{Keys: payload})
 }
 
-// GetPluginStorage — GET /v1/storage/{scope}/{key}
+// GetPluginStorage 处理 GET /v1/storage/{scope}/{key}——读取一个键的值。
 func (h *Handler) GetPluginStorage(w http.ResponseWriter, r *http.Request) {
 	caller, actor, ok := h.pluginCaller(w, r, "")
 	if !ok {
@@ -735,7 +721,7 @@ func (h *Handler) GetPluginStorage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, publicapiv1.StorageValueResponse{Value: value})
 }
 
-// PutPluginStorage — PUT /v1/storage/{scope}/{key}
+// PutPluginStorage 处理 PUT /v1/storage/{scope}/{key}——写入一个键，成功返回 204。
 func (h *Handler) PutPluginStorage(w http.ResponseWriter, r *http.Request) {
 	caller, actor, ok := h.pluginCaller(w, r, "")
 	if !ok {
@@ -757,7 +743,7 @@ func (h *Handler) PutPluginStorage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// DeletePluginStorage — DELETE /v1/storage/{scope}/{key}
+// DeletePluginStorage 处理 DELETE /v1/storage/{scope}/{key}——删除一个键，成功返回 204。
 func (h *Handler) DeletePluginStorage(w http.ResponseWriter, r *http.Request) {
 	caller, actor, ok := h.pluginCaller(w, r, "")
 	if !ok {

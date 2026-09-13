@@ -9,19 +9,19 @@ import (
 	"github.com/google/uuid"
 )
 
+// ProblemContentType 是 RFC 9457 问题（problem）响应的媒体类型。
 const ProblemContentType = "application/problem+json"
 
-// FieldError describes one invalid request field. It is optional so endpoints
-// can adopt field-level validation without changing the top-level envelope.
+// FieldError 描述一个非法请求字段。它可选，端点可按需采用字段级校验而无需改动
+// 顶层信封结构。
 type FieldError struct {
 	Field   string `json:"field"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
-// Problem is the stable v1 error envelope. Error is the compatibility alias
-// consumed by existing Plugin clients; new clients should branch on Code and
-// render Detail.
+// Problem 是稳定的 v1 错误信封。Error 是兼容旧 Plugin 客户端的别名；新客户端应
+// 按 Code 分支并渲染 Detail。
 type Problem struct {
 	Type      string       `json:"type"`
 	Title     string       `json:"title"`
@@ -33,6 +33,8 @@ type Problem struct {
 	Error     string       `json:"error"`
 }
 
+// CodeForStatus 把 HTTP 状态码映射到 Multica 稳定的机器码；未知状态一律
+// internal_error。
 func CodeForStatus(status int) string {
 	switch status {
 	case http.StatusBadRequest:
@@ -62,6 +64,8 @@ func CodeForStatus(status int) string {
 	}
 }
 
+// requestID 从请求上下文或头里取请求 id；都没有则新造一个，保证响应总能带回
+// request_id。
 func requestID(r *http.Request) string {
 	if r != nil {
 		if id := strings.TrimSpace(chimw.GetReqID(r.Context())); id != "" {
@@ -74,9 +78,9 @@ func requestID(r *http.Request) string {
 	return uuid.NewString()
 }
 
-// WriteProblem writes an RFC 9457-style problem with Multica's stable code and
-// the legacy `error` alias. It is shared by auth middleware and handlers so a
-// failure before routing has the same contract as one inside a resource.
+// WriteProblem 写一个 RFC 9457 风格的问题响应，带 Multica 的稳定 code 与旧的
+// `error` 别名。auth 中间件与各 handler 共用它，保证"路由前失败"与"资源内失败"
+// 契约一致。
 func WriteProblem(w http.ResponseWriter, r *http.Request, status int, code, detail string) {
 	if code == "" {
 		code = CodeForStatus(status)

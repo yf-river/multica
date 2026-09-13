@@ -1,12 +1,15 @@
-// Backfill_codex_usage_cache corrects historical Codex task_usage rows
-// written before Codex cached input was normalized at ingestion time.
+// backfill_codex_usage_cache.go —— 修正历史 Codex 用量数据。
 //
-// This is a hosted-data repair tool, not a general migration:
-//   - dry-run is the default; pass --execute to mutate data
-//   - only provider='codex' rows with persisted cache_read_tokens are touched
-//   - --cutoff must be the actual hosted deployment time of the ingestion fix
-//   - rows updated after the cutoff are left alone to avoid double-subtracting
-//   - the hourly rollup is rebuilt explicitly from the updated_at window
+// 在"Codex 缓存输入在入库时被归一化"之前写入的 task_usage 行，把本不该计入
+// 的缓存读取 token 也算进了 input_tokens。本工具把这些历史行修正掉：
+//
+//   - 默认 dry-run（只打印汇总）；传 --execute 才真正改数据；
+//   - 只动 provider='codex' 且持久化了 cache_read_tokens 的行；
+//   - --cutoff 必须是"入库归一化修复"实际上线（hosted 部署）的时间；
+//   - cutoff 之后被更新过的行一律不碰，避免把已归一化的行重复扣减；
+//   - 修正完成后，显式按 updated_at 时间窗重建小时聚合（rollup）。
+//
+// 这是"托管数据修复"工具，不是通用迁移。
 package main
 
 import (
@@ -23,6 +26,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 )
 
+// rollupAdvisoryLockID 是重建小时聚合时用的咨询锁 ID（与小时回填命令一致），
+// 保证不会和正在跑的聚合任务抢着改同一批桶。
 const rollupAdvisoryLockID = 4246
 
 type config struct {
@@ -35,6 +40,8 @@ type config struct {
 	rebuildRollup       bool
 }
 
+// summaryRow 是 dry-run 汇总里的"一行"：按工作区 + UTC 日期分组统计待修正行、
+// 修正前后 token 数、多扣的量、以及被夹到 0 的行数。
 type summaryRow struct {
 	WorkspaceID   string
 	DateUTC       string
@@ -47,6 +54,7 @@ type summaryRow struct {
 	MaxCreatedUTC time.Time
 }
 
+// totals 是全部候选的累计值。
 type totals struct {
 	Rows        int64
 	InputBefore int64
@@ -96,6 +104,7 @@ func run() error {
 		return fmt.Errorf("ping database: %w", err)
 	}
 
+	// 第一步：先跑 dry-run 汇总，让人看清会改什么。
 	rows, total, err := loadDryRunSummary(ctx, pool, cfg)
 	if err != nil {
 		return err
@@ -110,6 +119,7 @@ func run() error {
 		return nil
 	}
 
+	// --execute：先拿咨询锁，防止和别的 rollup 实例打架。
 	lockConn, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire advisory-lock connection: %w", err)
@@ -122,6 +132,7 @@ func run() error {
 		_, _ = lockConn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, rollupAdvisoryLockID)
 	}()
 
+	// 记录数据库时钟，作为稍后重建 rollup 的时间窗起点。
 	updateStartedAt, err := databaseClock(ctx, pool)
 	if err != nil {
 		return err
@@ -136,6 +147,7 @@ func run() error {
 		return nil
 	}
 
+	// 用"开始-结束"的数据库时钟推算受影响的宽窗口并重建小时聚合。
 	updateFinishedAt, err := databaseClock(ctx, pool)
 	if err != nil {
 		return err
@@ -156,6 +168,8 @@ func run() error {
 	return nil
 }
 
+// parseAndValidate 校验命令行参数：--cutoff 必填、必须是过去的 RFC3339 时间
+// （拒绝未来值，因为那可能对已归一化的行重复扣减），batch 必须为正。
 func (cfg *config) parseAndValidate(now time.Time) error {
 	if cfg.cutoffRaw == "" {
 		return fmt.Errorf("--cutoff is required; use the hosted deployment time of the Codex usage normalization fix")
@@ -175,6 +189,10 @@ func (cfg *config) parseAndValidate(now time.Time) error {
 	return nil
 }
 
+// loadDryRunSummary 汇总候选行：按工作区/UTC 日期分组统计"会被修正的行数、
+// 修正前/后 input_tokens、多扣的量、被夹到 0 的行数"，并算出全量累计。
+// 筛选条件：codex 且 cache_read_tokens>0、input_tokens>0、更新时间早于
+// cutoff、可选的工作区过滤。
 func loadDryRunSummary(ctx context.Context, pool *pgxpool.Pool, cfg config) ([]summaryRow, totals, error) {
 	const query = `
 SELECT
@@ -233,6 +251,7 @@ ORDER BY a.workspace_id, date_utc`
 	return summaries, total, nil
 }
 
+// logSummary 把 dry-run 汇总打到日志（先全量、再逐组）。
 func logSummary(cfg config, rows []summaryRow, total totals) {
 	slog.Info("Codex usage cache backfill candidate total",
 		"execute", cfg.execute,
@@ -257,6 +276,9 @@ func logSummary(cfg config, rows []summaryRow, total totals) {
 	}
 }
 
+// executeBackfill 分批真正执行修正：每批选出 batchSize 条候选（FOR UPDATE
+// SKIP LOCKED 防止与其它写者互等），把 input_tokens 扣掉 cache_read_tokens
+// （夹到不小于 0）并把 updated_at 刷成 now()。返回累计更新行数与移除的 token 数。
 func executeBackfill(ctx context.Context, pool *pgxpool.Pool, cfg config) (int64, int64, error) {
 	const query = `
 WITH candidates AS (
@@ -308,6 +330,7 @@ SELECT COUNT(*)::bigint, COALESCE(SUM(removed_tokens), 0)::bigint FROM updated`
 	return totalRows, totalRemoved, nil
 }
 
+// databaseClock 读数据库时钟（clock_timestamp()，避免应用机器时间漂移）。
 func databaseClock(ctx context.Context, pool *pgxpool.Pool) (time.Time, error) {
 	var ts time.Time
 	if err := pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&ts); err != nil {
@@ -316,10 +339,12 @@ func databaseClock(ctx context.Context, pool *pgxpool.Pool) (time.Time, error) {
 	return ts.UTC(), nil
 }
 
+// rollupWindow 把"起止两个瞬间"向外各扩 1 秒，得到覆盖整段更新影响面的窗口。
 func rollupWindow(startedAt, finishedAt time.Time) (time.Time, time.Time) {
 	return startedAt.UTC().Add(-time.Second), finishedAt.UTC().Add(time.Second)
 }
 
+// correctedInputTokens 计算修正后的 input_tokens（扣掉缓存读取，不低于 0）。
 func correctedInputTokens(inputTokens, cacheReadTokens int64) int64 {
 	corrected := inputTokens - cacheReadTokens
 	if corrected < 0 {

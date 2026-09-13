@@ -1,5 +1,8 @@
 "use client";
 
+// 收件箱行的右键菜单：整张列表共享一个菜单（而不是每行一个 ContextMenu 根），
+// 行只把「点了哪行 + 光标位置」上报上来，由这个单例在光标处弹出菜单；同时
+// 把同一组操作回传给行内的紧凑菜单。
 import {
   Fragment,
   createContext,
@@ -22,20 +25,18 @@ import type { InboxView } from "./inbox-view";
 import { useInboxItemActions, type InboxRowActions } from "./inbox-item-actions";
 
 /**
- * Right-click actions for inbox rows.
+ * 收件箱行的右键操作菜单。
  *
- * One shared menu for the whole list rather than a Base UI ContextMenu root
- * per row — the same shape `IssueContextMenuProvider` uses, for the same two
- * reasons. Only one menu is ever open, so N roots is N times the machinery for
- * nothing; and the list is virtualized, so a per-row root would unmount (taking
- * its open menu with it) the moment the row scrolls out of the viewport.
+ * 整张列表共用一个菜单，而不是每行都挂一个 Base UI ContextMenu 根——这与
+ * `IssueContextMenuProvider` 的形状一致，理由也一样。任何时候只有一个菜单会打开，
+ * N 个根只是 N 倍的机制开销；而且列表是虚拟化的，行滚出视口时整行会被卸载，
+ * 每行一个根会连它打开的菜单一起被拆掉。
  *
- * Rows delegate: the row only reports (item, cursor position) up to this
- * singleton, which anchors the menu at the cursor via a virtual anchor element.
+ * 行是委派的：行只把 (item, 光标位置) 上报到这个单例，单例用虚拟锚点元素把
+ * 菜单定位在光标处。
  *
- * The provider also hands the same action set back down (`useInboxRowActions`)
- * so the row's own compact menu — the touch replacement for right-click and
- * hover — offers exactly these actions.
+ * Provider 还会把同一组操作经 `useInboxRowActions` 传回去，让行自己的紧凑菜单
+ * ——右键与悬停的触屏替代品——正好提供这些操作。
  */
 
 interface ActiveMenu {
@@ -52,6 +53,14 @@ interface InboxContextMenuValue {
 
 const InboxContextMenuContext = createContext<InboxContextMenuValue | null>(null);
 
+/**
+ * 收件箱行的共享右键菜单 Provider：把「打开菜单」的函数和行操作集放进 context，
+ * 并挂载唯一的菜单单例。
+ *
+ * @param view 当前列表视图
+ * @param actions 行级操作集
+ * @param children 行列表等子内容
+ */
 export function InboxContextMenuProvider({
   view,
   actions,
@@ -63,9 +72,8 @@ export function InboxContextMenuProvider({
 }) {
   const [active, setActive] = useState<ActiveMenu | null>(null);
   const [open, setOpen] = useState(false);
-  // The row the user right-clicked. Rows style their "menu is open for me"
-  // state off `data-popup-open`; setting it imperatively keeps that affordance
-  // without re-rendering every row on open/close.
+  // 用户右键的那行。行用 `data-popup-open` 来表达「菜单正为我开着」；这里用
+  // 命令式设置，避免每次开关都重渲染每一行。
   const triggerElRef = useRef<HTMLElement | null>(null);
 
   const openMenu = useCallback<OpenInboxContextMenu>((item, event) => {
@@ -94,8 +102,7 @@ export function InboxContextMenuProvider({
   return (
     <InboxContextMenuContext.Provider value={value}>
       {children}
-      {/* Mounted on first use, kept mounted after — the popup itself unmounts
-          while closed. */}
+      {/* 首次使用时才挂载，之后保持挂载——弹层本体在关闭时是自己卸载的。 */}
       {active && (
         <InboxContextMenuSingleton
           item={active.item}
@@ -111,17 +118,16 @@ export function InboxContextMenuProvider({
 }
 
 /**
- * Opens the list's shared context menu for a row. Returns `null` when no
- * provider is above — the row then simply has no right-click menu instead of
- * crashing, which keeps `InboxListItem` renderable on its own.
+ * 为某行打开列表共享的右键菜单。上面没有 Provider 时返回 `null`——该行因此
+ * 只是没有右键菜单、而不是崩溃，这让 `InboxListItem` 可以单独渲染。
  */
 export function useInboxContextMenu(): OpenInboxContextMenu | null {
   return useContext(InboxContextMenuContext)?.open ?? null;
 }
 
 /**
- * The list's row actions, for the row's own compact menu. `null` without a
- * provider, same graceful degradation as `useInboxContextMenu`.
+ * 列表的行操作集，供行自己的紧凑菜单使用。没有 Provider 时为 `null`，
+ * 与 `useInboxContextMenu` 同样优雅降级。
  */
 export function useInboxRowActions(): InboxRowActions | null {
   return useContext(InboxContextMenuContext)?.actions ?? null;
@@ -142,8 +148,7 @@ function InboxContextMenuSingleton({
 }) {
   const groups = useInboxItemActions(item, view, actions);
 
-  // Point-sized virtual anchor at the right-click position, so the menu opens
-  // at the cursor rather than at the row's top-left corner.
+  // 一个「零尺寸」的虚拟锚点，放在右键位置，让菜单开在光标处而不是行的左上角。
   const anchor = useMemo(
     () => ({
       getBoundingClientRect: () =>

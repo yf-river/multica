@@ -1,4 +1,7 @@
 "use client"
+// 本文件是右键菜单（ContextMenu）组件族（基于 Base UI 的 ContextMenu）：
+// 右键触发弹出的菜单，结构上与 DropdownMenu 一一对应（项/勾选项/单选组/
+// 子菜单/分隔线等），默认从鼠标位置弹出。
 
 import * as React from "react"
 import { ContextMenu as ContextMenuPrimitive } from "@base-ui/react/context-menu"
@@ -6,16 +9,19 @@ import { ContextMenu as ContextMenuPrimitive } from "@base-ui/react/context-menu
 import { cn } from "@multica/ui/lib/utils"
 import { ChevronRightIcon, CheckIcon } from "lucide-react"
 
+/** ContextMenu：右键菜单根组件 */
 function ContextMenu({ ...props }: ContextMenuPrimitive.Root.Props) {
   return <ContextMenuPrimitive.Root data-slot="context-menu" {...props} />
 }
 
+/** ContextMenuPortal：把菜单传送到 body 末端 */
 function ContextMenuPortal({ ...props }: ContextMenuPrimitive.Portal.Props) {
   return (
     <ContextMenuPrimitive.Portal data-slot="context-menu-portal" {...props} />
   )
 }
 
+/** ContextMenuTrigger：右键（长按）的目标区域 */
 function ContextMenuTrigger({
   className,
   ...props
@@ -29,6 +35,7 @@ function ContextMenuTrigger({
   )
 }
 
+/** ContextMenuContent：右键弹出的菜单面板，默认出现在鼠标附近（side=right） */
 function ContextMenuContent({
   className,
   align = "start",
@@ -62,12 +69,14 @@ function ContextMenuContent({
   )
 }
 
+/** ContextMenuGroup：菜单项分组容器 */
 function ContextMenuGroup({ ...props }: ContextMenuPrimitive.Group.Props) {
   return (
     <ContextMenuPrimitive.Group data-slot="context-menu-group" {...props} />
   )
 }
 
+/** ContextMenuLabel：组标题标签 */
 function ContextMenuLabel({
   className,
   inset,
@@ -88,6 +97,10 @@ function ContextMenuLabel({
   )
 }
 
+/**
+ * ContextMenuItem：菜单中的普通项。
+ * variant="destructive" 用于删除类危险操作。
+ */
 function ContextMenuItem({
   className,
   inset,
@@ -111,12 +124,14 @@ function ContextMenuItem({
   )
 }
 
+/** ContextMenuSub：多级子菜单根 */
 function ContextMenuSub({ ...props }: ContextMenuPrimitive.SubmenuRoot.Props) {
   return (
     <ContextMenuPrimitive.SubmenuRoot data-slot="context-menu-sub" {...props} />
   )
 }
 
+/** ContextMenuSubTrigger：子菜单展开项（右侧 › 箭头） */
 function ContextMenuSubTrigger({
   className,
   inset,
@@ -141,6 +156,7 @@ function ContextMenuSubTrigger({
   )
 }
 
+/** ContextMenuSubContent：子菜单弹出的面板，固定从右侧展开 */
 function ContextMenuSubContent({
   ...props
 }: React.ComponentProps<typeof ContextMenuContent>) {
@@ -153,6 +169,7 @@ function ContextMenuSubContent({
   )
 }
 
+/** ContextMenuCheckboxItem：带勾选状态的菜单项 */
 function ContextMenuCheckboxItem({
   className,
   children,
@@ -184,6 +201,7 @@ function ContextMenuCheckboxItem({
   )
 }
 
+/** ContextMenuRadioGroup：单选组容器 */
 function ContextMenuRadioGroup({
   ...props
 }: ContextMenuPrimitive.RadioGroup.Props) {
@@ -195,6 +213,7 @@ function ContextMenuRadioGroup({
   )
 }
 
+/** ContextMenuRadioItem：单选菜单项（右侧显示选中圆点） */
 function ContextMenuRadioItem({
   className,
   children,
@@ -224,6 +243,7 @@ function ContextMenuRadioItem({
   )
 }
 
+/** ContextMenuSeparator：分组间的分隔线 */
 function ContextMenuSeparator({
   className,
   ...props
@@ -237,6 +257,7 @@ function ContextMenuSeparator({
   )
 }
 
+/** ContextMenuShortcut：菜单项右侧快捷键提示 */
 function ContextMenuShortcut({
   className,
   ...props

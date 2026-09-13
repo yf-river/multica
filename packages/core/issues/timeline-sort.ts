@@ -1,15 +1,14 @@
+// 议题时间线（TimelineEntry[]）缓存的稳定升序排序。
 import type { TimelineEntry } from "@multica/core/types";
 
 /**
- * Stable-ascending sort for flat TimelineEntry[] caches.
+ * 对平铺的 TimelineEntry[] 缓存做稳定升序排序。
  *
- * All writers that append to an issue timeline cache MUST pass through
- * this helper so the display order stays `created_at` ASC (id tie-breaker)
- * even when WebSocket events and mutation onSuccess callbacks arrive
- * out of chronological order.
+ * 所有向议题时间线缓存追加内容的写入方，都必须经过这个辅助函数，
+ * 这样即使 WebSocket 事件和 mutation 的 onSuccess 回调乱序到达，
+ * 展示顺序仍然保持 `created_at` 升序（相同时间用 id 作打破平局的依据）。
  *
- * Observers that mutate in place (map / filter by id) don't need this —
- * they preserve the existing relative order.
+ * 原地改动的观察者（按 id 做 map / filter）不需要它——它们本就保留原有相对顺序。
  */
 export function sortTimelineEntriesAsc(entries: TimelineEntry[]): TimelineEntry[] {
   entries.sort((a, b) => {

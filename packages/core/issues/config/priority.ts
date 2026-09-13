@@ -1,10 +1,10 @@
+// 议题优先级的排序与展示配置。
 import type { IssuePriority } from "../../types";
 
 /**
- * Severity order, high to low. This is the **sort rank** — `sortIssues` turns
- * the array index into the comparison weight — so "none" must stay last.
- * Never reorder this to change how a menu reads; use
- * {@link PRIORITY_DISPLAY_ORDER} for that.
+ * 严重程度从高到低的顺序。这是**排序权重**——`sortIssues` 会把数组下标转成比较权重——
+ * 所以 "none" 必须留在最后。绝不要为了改变菜单的阅读顺序去调整它；那种需求用
+ * {@link PRIORITY_DISPLAY_ORDER}。
  */
 export const PRIORITY_ORDER: IssuePriority[] = [
   "urgent",
@@ -15,11 +15,10 @@ export const PRIORITY_ORDER: IssuePriority[] = [
 ];
 
 /**
- * Order every user-facing priority list renders in: the empty value first,
- * then severity descending. Leading with "No priority" follows the convention
- * every other picker in the app uses — the first row is always the empty
- * value (unassigned / no project / no stage), so the eye finds "clear this
- * field" in the same place regardless of which pill was opened.
+ * 所有面向用户的优先级列表的展示顺序：空值在前，随后按严重程度降序。
+ * 以“无优先级”开头，遵循应用里其它选择器的惯例——第一行永远是空值
+ * （未分配 / 无项目 / 无阶段），这样无论点开哪个胶囊，眼睛都能在同一位置
+ * 找到“清空该字段”。
  */
 export const PRIORITY_DISPLAY_ORDER: IssuePriority[] = [
   "none",
@@ -29,6 +28,7 @@ export const PRIORITY_DISPLAY_ORDER: IssuePriority[] = [
   "low",
 ];
 
+/** 每个优先级对应的展示配置：文案、条数、以及徽章的前景/背景色。 */
 export const PRIORITY_CONFIG: Record<
   IssuePriority,
   { label: string; bars: number; color: string; badgeBg: string; badgeText: string }

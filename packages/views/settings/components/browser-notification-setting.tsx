@@ -1,3 +1,7 @@
+// 本文件提供「浏览器通知权限」的设置行：针对 Web 端，让用户在页面里直接申请/查看
+// 浏览器通知授权。仅当浏览器支持 Notification API（且当前挂在 Web 环境）时才渲染，
+// 桌面端走系统原生通知，根本用不到这一段。
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -12,12 +16,12 @@ import { useT } from "../../i18n";
 import { SettingsCard, SettingsRow } from "./settings-layout";
 
 /**
- * Browser permission control for notification banners. It renders nothing
- * when the Notification API is unavailable (SSR, older browsers).
+ * 浏览器通知授权行。当浏览器不支持 Notification API（如 SSR 阶段、老浏览器）
+ * 时什么都不渲染。
  *
- * Capability and permission are read from `window`, so the first paint defers
- * to a post-mount effect to keep SSR and client markup identical (no hydration
- * mismatch).
+ * 能力和授权状态都要从 `window` 读取，因此首帧不能直接读——先挂载再用 effect
+ * 补读，保证服务端渲染与客户端首帧标记一致，避免 hydration 不匹配。
+ * @param props - 无入参；展示文案和交互全部由 i18n 与浏览器状态驱动。
  */
 export function BrowserNotificationSetting() {
   const { t } = useT("settings");
@@ -30,7 +34,7 @@ export function BrowserNotificationSetting() {
     setPermission(getWebNotificationPermission());
   }, []);
 
-  // Pre-mount or where the API is missing → nothing to manage.
+  // 尚未完成挂载，或当前环境根本没有 Notification API → 没有可管理的东西，直接不渲染。
   if (!mounted || !isWebNotificationSupported()) return null;
 
   const handleEnable = async () => {

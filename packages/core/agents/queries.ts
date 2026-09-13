@@ -1,3 +1,5 @@
+// Agent 相关查询：query key 工厂与 queryOptions。覆盖任务快照、工作中 Agent、
+// 近 30 天活动/运行计数、单 Agent 全部任务、以及未完成的 Agent 构建会话。
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 import type {
@@ -5,11 +7,13 @@ import type {
   WorkspaceWorkingAgentType,
 } from "../types";
 
+/** Agent 任务快照的缓存键工厂。 */
 export const agentTaskSnapshotKeys = {
   all: (wsId: string) => ["workspaces", wsId, "agent-task-snapshot"] as const,
   list: (wsId: string) => [...agentTaskSnapshotKeys.all(wsId), "list"] as const,
 };
 
+/** "工作中 Agent"摘要的缓存键工厂。 */
 export const workspaceWorkingAgentsKeys = {
   all: (wsId: string) => ["workspaces", wsId, "working-agents"] as const,
   list: (
@@ -22,6 +26,7 @@ export const workspaceWorkingAgentsKeys = {
       ...workspaceWorkingAgentsKeys.all(wsId),
       "list",
       type ?? "all",
+      // 收窄维度编码进 key：my 关系、特定父议题的子议题、或纯工作区级。
       mineRelation
         ? `mine:${mineRelation}`
         : parentIssueId
@@ -30,30 +35,29 @@ export const workspaceWorkingAgentsKeys = {
     ] as const,
 };
 
+/** Agent 日活数据的缓存键工厂。 */
 export const agentActivityKeys = {
   all: (wsId: string) => ["workspaces", wsId, "agent-activity"] as const,
   last30d: (wsId: string) => [...agentActivityKeys.all(wsId), "30d"] as const,
 };
 
+/** Agent 运行计数数据的缓存键工厂。 */
 export const agentRunCountsKeys = {
   all: (wsId: string) => ["workspaces", wsId, "agent-run-counts"] as const,
   last30d: (wsId: string) => [...agentRunCountsKeys.all(wsId), "30d"] as const,
 };
 
-// Workspace-scoped agent task snapshot — every active task plus each agent's
-// most recent terminal task. This is the single shared source of truth that
-// powers per-agent presence derivation across the app. One fetch per
-// workspace; all agent dots / hover cards / list rows derive presence from
-// this cache with zero additional network traffic.
+// 工作区级 Agent 任务快照——每个活跃任务 + 每个 Agent 最近一条终态任务。
+// 这是驱动全应用逐 Agent"呈现状态"推导的单一共享真相来源：每个工作区只拉一次，
+// 所有 Agent 圆点/悬停卡/列表行都从这份缓存推导呈现状态，零额外网络请求。
 //
-// Presence itself is derived from the active tasks only (see derive-presence.ts
-// and #1823). The one terminal row per agent is used solely for the Squad hover
-// card's "last activity" line; MUL-5436 tracks moving it to a dedicated lazy
-// endpoint so this hot query stops carrying history at all.
+// 呈现状态本身只从活跃任务推导（见 derive-presence.ts 和 #1823）。每个 Agent 的
+// 那一条终态行仅用于 Squad 悬停卡上的"最近活动"行；MUL-5436 打算把它挪到专门的
+// 懒加载接口，让这条热查询彻底不再携带历史。
 //
-// The 30s staleTime is a safety net only; the primary freshness signal is
-// WS task events, which invalidate this query immediately. Without WS,
-// presence still updates within 30s on focus / mount.
+// 30s 的 staleTime 只是安全网；主要的新鲜度信号是 WS 任务事件，它会立刻失效此查询。
+// 没有 WS 时，呈现状态在聚焦/挂载时仍会 30s 内更新。
+/** Agent 任务快照查询配置（工作区级一次拉取，全应用共享）。 */
 export function agentTaskSnapshotOptions(wsId: string) {
   return queryOptions({
     queryKey: agentTaskSnapshotKeys.list(wsId),
@@ -64,10 +68,9 @@ export function agentTaskSnapshotOptions(wsId: string) {
   });
 }
 
-// Working-agent summaries, optionally narrowed to a My Issues relation or to
-// one issue's direct children. Task lifecycle WebSocket events invalidate
-// every narrowing immediately; the short stale time is the reconnect /
-// missed-event safety net.
+// "工作中 Agent"摘要，可选收窄到某个 My Issues 关系、或某议题的直接子议题。
+// 任务生命周期 WS 事件会立即失效所有收窄；短 staleTime 是重连/漏事件的兜底。
+/** "工作中 Agent"摘要查询配置（可按类型/我的关系/父议题收窄）。 */
 export function workspaceWorkingAgentsOptions(
   wsId: string,
   type?: WorkspaceWorkingAgentType,
@@ -89,12 +92,11 @@ export function workspaceWorkingAgentsOptions(
   });
 }
 
-// Workspace-wide daily task activity for the last 30 days, anchored on
-// completed_at. One fetch backs both the Agents-list sparkline (which
-// only uses the trailing 7 buckets via `summarizeActivityWindow`) and
-// the agent detail "Last 30 days" panel. WS task lifecycle events
-// invalidate this query in useRealtimeSync; the staleTime is a
-// tab-focus safety net.
+// 工作区近 30 天、锚定在 completed_at 上的逐日任务活动。一次拉取同时支撑
+// Agents 列表的小火花图（经 `summarizeActivityWindow` 只用尾部 7 个桶）和
+// Agent 详情页的"近 30 天"面板。WS 任务生命周期事件在 useRealtimeSync 里失效
+// 该查询；staleTime 是切回标签页时的兜底。
+/** 近 30 天任务活动查询配置。 */
 export function agentActivity30dOptions(wsId: string) {
   return queryOptions({
     queryKey: agentActivityKeys.last30d(wsId),
@@ -105,8 +107,9 @@ export function agentActivity30dOptions(wsId: string) {
   });
 }
 
-// Workspace-wide 30-day run counts for the Agents-list RUNS column. Same
-// single-fetch / WS-invalidate pattern as activity24hOptions.
+// 工作区近 30 天运行计数，供 Agents 列表的 RUNS 列使用。与 activity24hOptions
+// 相同的"单次拉取 / WS 失效"模式。
+/** 近 30 天运行计数查询配置。 */
 export function agentRunCounts30dOptions(wsId: string) {
   return queryOptions({
     queryKey: agentRunCountsKeys.last30d(wsId),
@@ -117,16 +120,17 @@ export function agentRunCounts30dOptions(wsId: string) {
   });
 }
 
+/** 单 Agent 任务列表的缓存键工厂。 */
 export const agentTasksKeys = {
   all: (wsId: string) => ["workspaces", wsId, "agent-tasks"] as const,
   detail: (wsId: string, agentId: string) =>
     [...agentTasksKeys.all(wsId), agentId] as const,
 };
 
-// All tasks for a single agent (the agent detail page consumer). Powers both
-// the inspector's 7-day throughput stats and the Tasks tab list — shared so
-// they don't fetch twice. WS task events invalidate this via the existing
-// task-prefix invalidation in useRealtimeSync.
+// 单个 Agent 的全部任务（Agent 详情页消费方）。同时支撑检查器的 7 天吞吐统计和
+// Tasks 标签页列表——共享同一查询，避免拉两遍。WS 任务事件通过 useRealtimeSync
+// 里已有的 task 前缀失效逻辑来失效本查询。
+/** 单个 Agent 的全部任务查询配置。 */
 export function agentTasksOptions(wsId: string, agentId: string) {
   return queryOptions({
     queryKey: agentTasksKeys.detail(wsId, agentId),
@@ -137,22 +141,21 @@ export function agentTasksOptions(wsId: string, agentId: string) {
   });
 }
 
-/** Unfinished agent-creation conversations, scoped to the caller. */
+/** 未完成的 Agent 创建会话（按当前调用者作用域）的缓存键工厂。 */
 export const agentBuilderSessionKeys = {
   all: (wsId: string) => ["workspace", wsId, "agent-builder-sessions"] as const,
   list: (wsId: string) => [...agentBuilderSessionKeys.all(wsId), "list"] as const,
 };
 
+/** 未完成的 Agent 创建会话列表查询配置。 */
 export function agentBuilderSessionListOptions(wsId: string) {
   return queryOptions({
     queryKey: agentBuilderSessionKeys.list(wsId),
     queryFn: () => api.listAgentBuilderSessions(),
     enabled: wsId.length > 0,
-    // Overrides the client-wide `staleTime: Infinity`. This list changes
-    // through work done on another screen — starting a conversation, sending a
-    // turn, an agent finally being created — and the surfaces that render it
-    // mount on demand. Cached forever it would show the state of the first
-    // visit: a user who just held a conversation comes back to "no drafts".
+    // 覆盖客户端全局的 `staleTime: Infinity`。这份列表会随着另一个屏幕上的工作而
+    // 变化——发起对话、发一轮消息、Agent 终于被创建——而渲染它的界面是按需挂载的。
+    // 永远缓存会展示第一次访问的状态：刚聊过一场的用户回来只看到"没有草稿"。
     staleTime: 0,
   });
 }

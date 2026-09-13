@@ -1,3 +1,8 @@
+// outbox.go 实现 domain event 的持久化事务发件箱(outbox)：业务代码在自己的数据库
+// 事务里把领域事件一起落库（Enqueue），Dispatcher 后台轮询这张 outbox 表，按注册的
+// 消费方逐事件投递（每个投影一次事务），并在同一事务里记录投递回执与消费方派生的新
+// 事件。所有行以「认领 + 租约续期」的方式被分发，多副本不重复处理；失败进入指数退避
+// 重试，超过上限进入死信(dead-letter)。
 package eventoutbox
 
 import (
@@ -19,9 +24,8 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Enqueue persists a domain event through the caller's query handle. Passing a
-// transaction-scoped *db.Queries makes the event and the business mutation one
-// atomic commit.
+// Enqueue 通过调用方的查询句柄持久化一条领域事件。传「事务作用域」的 *db.Queries 时，
+// 事件与业务改动会作为一次原子提交一起落库。
 func Enqueue(ctx context.Context, queries *db.Queries, event events.Event) (events.Event, error) {
 	if queries == nil {
 		return event, errors.New("event outbox: queries are required")
@@ -33,8 +37,8 @@ func Enqueue(ctx context.Context, queries *db.Queries, event events.Event) (even
 	if err != nil {
 		return event, fmt.Errorf("event outbox: marshal %s payload: %w", event.Type, err)
 	}
-	// A nil payload is a valid event with no additional fields. Persist it as
-	// an empty object so the outbox contract stays object-shaped for consumers.
+	// nil payload 也是合法事件（只是没有额外字段）。持久化成空对象 {}，让 outbox 契约
+	// 对消费方保持「对象形状」。
 	if event.Payload == nil {
 		payload = []byte("{}")
 	}
@@ -42,11 +46,9 @@ func Enqueue(ctx context.Context, queries *db.Queries, event events.Event) (even
 	if err := json.Unmarshal(payload, &object); err != nil || object == nil {
 		return event, fmt.Errorf("event outbox: %s payload must be a JSON object", event.Type)
 	}
-	// The key is the identity of the logical occurrence, not the delivery
-	// attempt.  Producers that know a stable business id should provide it;
-	// older producers get a deterministic digest so a retry after a process
-	// restart cannot create a second row.  Including the envelope scope keeps
-	// equal payloads from unrelated streams independent.
+	// 幂等键标识的是「逻辑事件」，而不是某次投递尝试。知道稳定业务 id 的生产方应提供
+	// 它；老生产方会得到一个确定性摘要，这样进程重启后的重试也不会插出第二行。键里纳入
+	// 信封作用域字段，避免「不同流里负载相同」的事件互相撞键。
 	if strings.TrimSpace(event.IdempotencyKey) == "" {
 		if strings.TrimSpace(event.ID) != "" {
 			event.IdempotencyKey = event.ID
@@ -96,31 +98,32 @@ func Enqueue(ctx context.Context, queries *db.Queries, event events.Event) (even
 	return event, nil
 }
 
+// optionalText 把空串变成 pgtype.Text 的 NULL（空值语义：未设置而非空字符串）。
 func optionalText(value string) pgtype.Text {
 	return pgtype.Text{String: value, Valid: value != ""}
 }
 
+// TxStarter 抽象「开事务」的能力，便于测试注入替身。
 type TxStarter interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
-// Consumer applies one durable projection using a transaction-scoped query
-// handle. Returned events are recorded in the same projection transaction and
-// published only after that transaction commits.
+// Consumer 用一个事务作用域的查询句柄应用一次持久投影。返回的事件会记进同一次投影
+// 事务里，并且只在事务提交后才发布。
 type Consumer func(context.Context, *db.Queries, events.Event) ([]events.Event, error)
 
-// DeadLetterHandler projects a consumer's terminal failure into its domain
-// aggregate. It runs in the same transaction that marks the outbox row as
-// dead-lettered, so user-visible failure state cannot drift from the
-// operational retry state.
+// DeadLetterHandler 把某消费方的终态失败投影到它的领域聚合上。它在「把 outbox 行标记
+// 为死信」的同一事务里运行，保证「用户可见的失败状态」不会与「运维侧的重试状态」漂移。
 type DeadLetterHandler func(context.Context, *db.Queries, events.Event, error) error
 
+// registeredConsumer 是一个事件类型下注册的消费方。
 type registeredConsumer struct {
 	name       string
 	handler    Consumer
 	deadLetter DeadLetterHandler
 }
 
+// dispatcherConfig 是 Dispatcher 的计时/批量参数（零值由 withDefaults 补齐）。
 type dispatcherConfig struct {
 	BatchSize           int32
 	PollInterval        time.Duration
@@ -135,6 +138,7 @@ type dispatcherConfig struct {
 	Logger              *slog.Logger
 }
 
+// withDefaults 用生产默认值补齐零值字段。
 func (cfg dispatcherConfig) withDefaults() dispatcherConfig {
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = 50
@@ -172,17 +176,19 @@ func (cfg dispatcherConfig) withDefaults() dispatcherConfig {
 	return cfg
 }
 
+// Dispatcher 轮询 outbox 并把事件分发给已注册的消费方。
 type Dispatcher struct {
 	queries    *db.Queries
 	txStarter  TxStarter
 	bus        *events.Bus
-	leaseOwner string
+	leaseOwner string // 认领租约的进程标识
 	config     dispatcherConfig
 
 	mu        sync.RWMutex
-	consumers map[string][]registeredConsumer
+	consumers map[string][]registeredConsumer // 事件类型 -> 消费方列表
 }
 
+// NewDispatcher 构造 Dispatcher。queries、txStarter、bus、leaseOwner 都是必填。
 func NewDispatcher(queries *db.Queries, txStarter TxStarter, bus *events.Bus, leaseOwner string) (*Dispatcher, error) {
 	if queries == nil || txStarter == nil || bus == nil {
 		return nil, errors.New("event outbox: queries, transaction starter, and bus are required")
@@ -201,10 +207,12 @@ func NewDispatcher(queries *db.Queries, txStarter TxStarter, bus *events.Bus, le
 	}, nil
 }
 
+// Register 注册某事件类型的消费方（不带死信处理器）。
 func (d *Dispatcher) Register(eventType, name string, handler Consumer) error {
 	return d.RegisterWithDeadLetter(eventType, name, handler, nil)
 }
 
+// RegisterWithDeadLetter 注册某事件类型的消费方与（可选的）死信处理器。
 func (d *Dispatcher) RegisterWithDeadLetter(eventType, name string, handler Consumer, deadLetter DeadLetterHandler) error {
 	eventType = strings.TrimSpace(eventType)
 	name = strings.TrimSpace(name)
@@ -222,8 +230,8 @@ func (d *Dispatcher) RegisterWithDeadLetter(eventType, name string, handler Cons
 	return nil
 }
 
-// Run polls until ctx is cancelled. Transient claim/delivery errors are logged
-// and retried; they never terminate the worker silently.
+// Run 轮询直到 ctx 被取消。瞬时的认领/投递错误会被记录并重试；它们绝不会让 worker
+// 静默退出。
 func (d *Dispatcher) Run(ctx context.Context) {
 	pollTicker := time.NewTicker(d.config.PollInterval)
 	cleanupTicker := time.NewTicker(d.config.CleanupInterval)
@@ -245,6 +253,8 @@ func (d *Dispatcher) Run(ctx context.Context) {
 	}
 }
 
+// pruneExpired 删除超过保留期的已处理/死信事件，并清理没有归属 outbox 行的孤儿投递
+// 回执记录。
 func (d *Dispatcher) pruneExpired(ctx context.Context) (int64, error) {
 	now := time.Now()
 	deleted, err := d.queries.DeleteExpiredDomainEvents(ctx, db.DeleteExpiredDomainEventsParams{
@@ -264,6 +274,7 @@ func (d *Dispatcher) pruneExpired(ctx context.Context) (int64, error) {
 	return deleted, nil
 }
 
+// processBatch 认领一批到期事件并逐个处理。返回认领数与聚合的错误。
 func (d *Dispatcher) processBatch(ctx context.Context) (int, error) {
 	d.mu.RLock()
 	eventTypes := make([]string, 0, len(d.consumers))
@@ -293,6 +304,7 @@ func (d *Dispatcher) processBatch(ctx context.Context) (int, error) {
 	return len(rows), errors.Join(failures...)
 }
 
+// processEvent 处理一条认领到的事件：对该事件的所有消费方逐个投递；全程保持租约存活。
 func (d *Dispatcher) processEvent(ctx context.Context, row db.DomainEventOutbox) error {
 	event := eventFromRow(row)
 	d.mu.RLock()
@@ -302,11 +314,9 @@ func (d *Dispatcher) processEvent(ctx context.Context, row db.DomainEventOutbox)
 		return fmt.Errorf("event %s has no registered consumers", event.Type)
 	}
 
-	// A projection can involve more than one database round trip. Keep the
-	// claim alive while it runs so another dispatcher cannot start a concurrent
-	// delivery merely because the original lease elapsed. The synchronous
-	// renewal before/after every consumer also makes lease loss observable even
-	// when the handler does not honour context cancellation.
+	// 一次投影可能涉及多轮数据库往返。运行期间要持续续期认领，否则别的 dispatcher
+	// 可能只因为原租约到期就并发投递同一条事件。在每个消费方前后做同步续期，也让
+	// 「租约丢失」在 handler 不理会 context 取消时依然可被观察到。
 	leaseCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	leaseLost := make(chan error, 1)
@@ -348,6 +358,7 @@ func (d *Dispatcher) processEvent(ctx context.Context, row db.DomainEventOutbox)
 	return nil
 }
 
+// checkLease 同步续一次租约；行已不再归我们时返回错误。
 func (d *Dispatcher) checkLease(ctx context.Context, eventID pgtype.UUID) error {
 	updated, err := d.queries.RenewDomainEventLease(ctx, db.RenewDomainEventLeaseParams{
 		ID:            eventID,
@@ -363,6 +374,7 @@ func (d *Dispatcher) checkLease(ctx context.Context, eventID pgtype.UUID) error 
 	return nil
 }
 
+// renewLeaseLoop 在后台按租约的 1/3 周期持续续期；发现租约丢失就把错误推到 lost。
 func (d *Dispatcher) renewLeaseLoop(ctx context.Context, eventID pgtype.UUID, lost chan<- error, done chan<- struct{}) {
 	defer close(done)
 	intervalDuration := d.config.Lease / 3
@@ -387,6 +399,9 @@ func (d *Dispatcher) renewLeaseLoop(ctx context.Context, eventID pgtype.UUID, lo
 	}
 }
 
+// deliver 对某消费方执行一次投递：在事务里查重（已有回执就直接成功）、跑 handler、
+// 记录回执、持久化 handler 派生的事件，然后提交；提交成功后才把派生事件发布到进程内
+// bus。
 func (d *Dispatcher) deliver(ctx context.Context, eventID pgtype.UUID, event events.Event, consumer registeredConsumer) error {
 	tx, err := d.txStarter.Begin(ctx)
 	if err != nil {
@@ -432,6 +447,8 @@ func (d *Dispatcher) deliver(ctx context.Context, eventID pgtype.UUID, event eve
 	return nil
 }
 
+// retry 处理一次投递失败：超过最大尝试就死信；否则按指数退避（RetryBase 起步、
+// MaxRetry 封顶）安排重试。
 func (d *Dispatcher) retry(ctx context.Context, row db.DomainEventOutbox, event events.Event, consumer registeredConsumer, cause error) error {
 	message := cause.Error()
 	if len(message) > 2000 {
@@ -477,6 +494,8 @@ func (d *Dispatcher) retry(ctx context.Context, row db.DomainEventOutbox, event 
 	return nil
 }
 
+// deadLetter 把事件标记为死信。有死信处理器时，在同一事务里先跑投影再标记，保证两者
+// 原子。
 func (d *Dispatcher) deadLetter(
 	ctx context.Context,
 	eventID pgtype.UUID,
@@ -522,12 +541,13 @@ func (d *Dispatcher) deadLetter(
 	return updated, nil
 }
 
+// eventFromRow 把持久化行还原成进程内事件。payload 解析失败时保留原始 JSON 字节，
+// 让畸形历史行仍可被检查，而不是整条丢弃。
 func eventFromRow(row db.DomainEventOutbox) events.Event {
 	var payload any
 	if err := json.Unmarshal(row.Payload, &payload); err != nil || payload == nil {
-		// Payloads written by this package are object-shaped. Keep malformed
-		// historical rows inspectable instead of dropping the event entirely;
-		// consumers can reject them and route the failure to dead letter.
+		// 本包写出的 payload 都是对象形状。把畸形的历史行保留成可检查状态，而不是
+		// 直接丢弃整条事件；消费方可以拒绝它们并把失败路由到死信。
 		payload = json.RawMessage(row.Payload)
 	}
 	return events.Event{
@@ -544,14 +564,13 @@ func eventFromRow(row db.DomainEventOutbox) events.Event {
 	}
 }
 
-// EventFromRow converts a persisted envelope back to the in-process event
-// shape.  Callers that publish a post-commit notification must use the row
-// written by the transaction rather than rebuilding a second, non-durable
-// event from the business object.
+// EventFromRow 把持久化信封还原成进程内事件形态。要做「提交后通知」的调用方必须用
+// 事务真正写下的那行，而不是从业务对象再造一份不持久的事件。
 func EventFromRow(row db.DomainEventOutbox) events.Event {
 	return eventFromRow(row)
 }
 
+// interval 把 time.Duration 换算成 pgtype.Interval（仅微秒字段）。
 func interval(duration time.Duration) pgtype.Interval {
 	return pgtype.Interval{Microseconds: duration.Microseconds(), Valid: true}
 }

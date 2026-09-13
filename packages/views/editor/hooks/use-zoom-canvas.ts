@@ -1,17 +1,15 @@
 "use client";
 
 /**
- * Pan/zoom controller for content that cannot zoom itself — a Mermaid diagram
- * in an empty-sandbox iframe, or an image in the attachment preview.
+ * 给无法自我缩放的内容提供「平移/缩放」控制器——空沙箱 iframe 里的
+ * Mermaid 图，或附件预览里的图片。
  *
- * Every gesture is captured on the host viewport element and applied as a CSS
- * transform on the wrapper around the content. For the Mermaid case that
- * inversion is also what keeps Escape working: the iframe is `pointer-events:
- * none`, so it never takes focus, and key events always stay in the host
- * document where the Dialog can hear them.
+ * 所有手势都捕捉在宿主视口元素上，并以 CSS transform 作用在内容的包裹层。
+ * 对 Mermaid 场景，这种反转让 Escape 键仍然可用：iframe 设了
+ * `pointer-events: none` 所以永远拿不到焦点，键盘事件始终停留在宿主文档，
+ * 由 Dialog 正常监听到。
  *
- * Transform math lives in `../utils/zoom-transform`; this hook owns only
- * event plumbing and state.
+ * 变换数学都在 `../utils/zoom-transform`；本 Hook 只负责事件与状态。
  */
 
 import {
@@ -45,36 +43,36 @@ import {
 } from "../utils/zoom-transform";
 
 interface UseZoomCanvasOptions {
-  /** Natural (unscaled) size of the content, or null while it is unknown. */
+  /** 内容未缩放时的原始尺寸；未知时为 null。 */
   content: Size | null;
   /**
-   * Whether Left/Right pan the canvas. Set false when the surrounding viewer
-   * binds those keys itself — image-sequence prev/next (MUL-5752) — so the two
-   * handlers can't both fire on one press. Up/Down keep panning either way,
-   * and drag / wheel still pan horizontally.
+   * 是否允许 ←/→ 键平移画布。当外层查看器自己绑定了这两个键时设为 false
+   * （如图片序列的上一张/下一张，MUL-5752），避免一次按键两个处理器都触发。
+   * 无论该值如何，↑/↓ 键始终平移，拖拽和滚轮也始终能横向平移。
    */
   horizontalArrowPan?: boolean;
 }
 
+/**
+ * useZoomCanvas 暴露的整套画布控制 API。
+ */
 export interface ZoomCanvasApi {
   /**
-   * Callback ref for the viewport element. Deliberately not a RefObject: the
-   * canvas is portaled by the Dialog and attaches in a later commit than this
-   * hook's first layout effect, so an effect keyed on `[]` would find no
-   * element, skip measuring, and never observe a resize — leaving the canvas
-   * permanently unfitted and inert.
+   * 视口元素的回调 ref。刻意不用 RefObject：画布被 Dialog 以 portal 方式挂载，
+   * 挂载发生在本 Hook 第一个 layout effect 之后，如果 effect 依赖 `[]` 就找不到
+   * 元素、跳过测量、永远观察不到尺寸变化——画布会一直停留在未适配状态且毫无
+   * 响应。
    */
   setViewportNode: (node: HTMLDivElement | null) => void;
   transform: ZoomTransform;
-  /** Whole-percent zoom for the toolbar readout. */
+  /** 整数百分比，供工具栏读数显示。 */
   zoomPercent: number;
   canZoomIn: boolean;
   canZoomOut: boolean;
   isPanning: boolean;
   /**
-   * True when the last change came from a discrete control (button/keyboard)
-   * rather than direct manipulation, so the transform can be eased. Dragging
-   * and wheel/pinch must track the input 1:1 and are never animated.
+   * 为 true 表示最近一次变化来自离散控件（按钮/键盘）而非直接操作，此时
+   * transform 可以做缓动动画。拖拽与滚轮/捏合必须 1:1 跟随输入，永远不带动画。
    */
   isAnimated: boolean;
   zoomIn: () => void;
@@ -85,7 +83,7 @@ export interface ZoomCanvasApi {
   handlePointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   handlePointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   handleKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
-  /** Double-click / double-tap toggles between the default fit and 100%. */
+  /** 双击/双指双击在「默认适配」与「100%」之间切换。 */
   handleDoubleClick: (event: ReactMouseEvent<HTMLElement>) => void;
 }
 
@@ -96,6 +94,12 @@ function nearlyEqual(a: number, b: number): boolean {
   return Math.abs(a - b) < 0.5;
 }
 
+/**
+ * 画布平移/缩放控制 Hook：负责收集手势输入并驱动 transform 状态。
+ *
+ * @param options 见 UseZoomCanvasOptions。
+ * @returns 见 ZoomCanvasApi——把事件处理器绑定到视口元素上即可工作。
+ */
 export function useZoomCanvas({
   content,
   horizontalArrowPan = true,
@@ -106,8 +110,8 @@ export function useZoomCanvas({
   const [isPanning, setIsPanning] = useState(false);
   const [isAnimated, setIsAnimated] = useState(false);
 
-  // Fit is deferred until both sizes are known; until then any transform we
-  // computed would be against a 0x0 viewport and would have to be thrown away.
+  // 适配被推迟到两个尺寸都已知时：在此之前算出的任何 transform 都是对着
+  // 0x0 视口算的，必然要扔掉重来。
   const hasFittedRef = useRef(false);
   const activePointersRef = useRef(new Map<number, Point>());
   const panOriginRef = useRef<{ pointer: Point; transform: ZoomTransform } | null>(null);
@@ -118,8 +122,8 @@ export function useZoomCanvas({
   const hasViewport = viewport.width > 0 && viewport.height > 0;
   const ready = hasContent && hasViewport;
 
-  // Latest-value refs: the native wheel listener below is registered once with
-  // `{ passive: false }` and would otherwise close over stale state.
+  // 最新值 ref：下面的原生滚轮监听只注册一次（`{ passive: false }`），
+  // 若不借助 ref 会闭包住过期的 state。
   const stateRef = useRef({ transform, contentSize, viewport, ready });
   stateRef.current = { transform, contentSize, viewport, ready };
 
@@ -127,13 +131,11 @@ export function useZoomCanvas({
     const element = viewportNode;
     if (!element) return;
 
-    // offsetWidth/offsetHeight, NOT getBoundingClientRect: both viewers open
-    // inside a container that scales in (`zoom-in-95` on the shared Dialog,
-    // motion's scale(0.95) on the attachment modal). A client rect is
-    // transform-scaled, so measuring mid-animation would fit the content
-    // against a viewport a few percent too small — and because ResizeObserver
-    // reports the untransformed layout box, it never fires when the animation
-    // lands, leaving that mis-fit on screen for the whole session.
+    // 用 offsetWidth/offsetHeight 而不用 getBoundingClientRect：两个查看器都
+    // 打开在会缩小进入的容器里（共享 Dialog 的 `zoom-in-95`、附件弹窗动画的
+    // scale(0.95)）。client rect 是带 transform 缩放的，若在动画中途测量，
+    // 就会拿小了百分之几的视口去适配内容——而且 ResizeObserver 上报的是未
+    // 变换的布局盒，动画结束时它不会触发，这个错位的适配就会一直留在屏幕上。
     const measure = () => {
       const width = element.offsetWidth;
       const height = element.offsetHeight;
@@ -153,22 +155,19 @@ export function useZoomCanvas({
     return () => observer.disconnect();
   }, [viewportNode]);
 
-  // Fit once, on first open — a layout effect, so the first painted frame is
-  // already fitted. Deliberately not re-fitting on later viewport changes: a
-  // theme switch re-renders the content at the same size, and silently
-  // snapping the user's zoom back to fit would lose their place.
+  // 首次打开时只适配一次——用 layout effect 保证第一帧画面就已适配好。
+  // 刻意不在后续视口变化时重新适配：主题切换会让内容以同样尺寸重渲染，
+  // 若默默把用户的缩放拉回适配会丢失他们的阅读位置。
   useLayoutEffect(() => {
     if (!ready || hasFittedRef.current) return;
     hasFittedRef.current = true;
     setTransform(computeFitTransform(contentSize, viewport));
   }, [ready, contentSize, viewport]);
 
-  // Genuinely different content (new natural size) starts fresh. Also a
-  // layout effect, and never eased: swapping to another image (sequence
-  // navigation) is content replacement, not a camera move on the same
-  // content. The new frame must paint already fitted — a plain effect would
-  // paint it once under the previous image's pan/zoom, and a leftover
-  // `isAnimated` from the last discrete control would ease the correction.
+  // 内容确实变了（换了原始尺寸）就从全新状态开始。同样是 layout effect，且
+  // 从不做缓动：切到另一张图（序列导航）属于内容替换，不是同一内容上的镜头
+  // 移动。新帧必须一画出来就是适配好的——普通 effect 会先用上一张图的
+  // 平移/缩放把新图画一帧，而残留的 `isAnimated` 还可能把纠正过程做成动画。
   const contentKey = `${contentSize.width}x${contentSize.height}`;
   const previousContentKeyRef = useRef(contentKey);
   useLayoutEffect(() => {
@@ -179,7 +178,7 @@ export function useZoomCanvas({
     setTransform(computeFitTransform(contentSize, viewport));
   }, [contentKey, ready, contentSize, viewport]);
 
-  // Keep the content in view when the window/pane is resized under it.
+  // 窗口/面板在内容下方被改变大小时，把内容钳回视野内。
   useEffect(() => {
     if (!ready) return;
     setTransform((current) => clampTransform(current, contentSize, viewport));
@@ -209,9 +208,9 @@ export function useZoomCanvas({
   const zoomIn = useCallback(() => zoomBy(ZOOM_STEP), [zoomBy]);
   const zoomOut = useCallback(() => zoomBy(1 / ZOOM_STEP), [zoomBy]);
 
-  // Wheel must be a native non-passive listener: React routes `onWheel` through
-  // a passive root listener, where preventDefault is ignored and the page would
-  // scroll behind the dialog instead of the diagram zooming.
+  // 滚轮必须是带 `{ passive: false }` 的原生监听：React 的 onWheel 经由一个
+  // passive 根监听器分发，那里的 preventDefault 会被忽略，页面会在对话框
+  // 后面滚动，而不是图在缩放。
   useEffect(() => {
     const element = viewportNode;
     if (!element) return;
@@ -249,7 +248,7 @@ export function useZoomCanvas({
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
       if (!stateRef.current.ready) return;
-      // Ignore secondary mouse buttons so right-click never starts a pan.
+      // 忽略鼠标非主键，避免右键误触发平移。
       if (event.pointerType === "mouse" && event.button !== 0) return;
 
       setIsAnimated(false);
@@ -265,7 +264,7 @@ export function useZoomCanvas({
         return;
       }
       if (pointers.length === 2) {
-        // Second finger down: hand off from pan to pinch.
+        // 第二根手指落下：从平移切换为双指捏合。
         panOriginRef.current = null;
         pinchOriginRef.current = {
           distance: distanceBetween(pointers[0]!, pointers[1]!),
@@ -322,8 +321,8 @@ export function useZoomCanvas({
 
     const pointers = [...activePointersRef.current.values()];
     if (pointers.length === 1) {
-      // Lifting one finger out of a pinch: resume panning from the survivor
-      // rather than freezing until the user lifts and re-touches.
+      // 从捏合中抬起一根手指：用剩下的那根接着平移，而不是冻结到用户
+      // 抬起再重新按下。
       panOriginRef.current = {
         pointer: pointers[0]!,
         transform: stateRef.current.transform,
@@ -344,7 +343,7 @@ export function useZoomCanvas({
       const { contentSize: c, viewport: v, ready: r } = stateRef.current;
       if (!r) return;
 
-      // Escape is the Dialog's; never swallow it here.
+      // Escape 归 Dialog 管，这里绝不能吞掉。
       switch (event.key) {
         case "+":
         case "=":
@@ -362,10 +361,10 @@ export function useZoomCanvas({
           return;
         case "ArrowLeft":
         case "ArrowRight":
-          // Left to the viewer (image sequence prev/next) when it owns them.
-          // No preventDefault, so the event keeps bubbling to its handler.
+          // 外层查看器拥有这些键（如图片序列的上一张/下一张）时不处理。
+          // 不调 preventDefault，让事件继续冒泡到它的处理器。
           if (!horizontalArrowPan) return;
-        // fallthrough
+        // 有意不加 break：←/→ 在有水平平移权限时与 ↑/↓ 走同一套平移逻辑。
         case "ArrowUp":
         case "ArrowDown": {
           event.preventDefault();
@@ -384,9 +383,9 @@ export function useZoomCanvas({
     [zoomIn, zoomOut, fit, horizontalArrowPan],
   );
 
-  // Double-click toggles fit <-> 100%, anchored under the cursor on the way in.
-  // The universal image-viewer gesture (macOS Preview, browsers): one gesture
-  // gets from "the whole thing" to "readable detail" and back.
+  // 双击在「适配」与「100%」之间切换，放大过程锚定在光标下方。这是图片
+  // 查看器的通用手势（macOS 预览、各类浏览器）：一个手势就能在「看全貌」
+  // 和「看细节」之间来回。
   const handleDoubleClick = useCallback(
     (event: ReactMouseEvent<HTMLElement>) => {
       const { transform: t, contentSize: c, viewport: v, ready: r } = stateRef.current;
@@ -398,8 +397,8 @@ export function useZoomCanvas({
         setTransform(computeFitTransform(c, v));
         return;
       }
-      // Already fitted. Go to 100% — or to 200% when fit already is 100%, so a
-      // small image still has somewhere to go instead of ignoring the gesture.
+      // 当前已是适配态。跳到 100%——如果适配本身就是 100%（小图），就跳到
+      // 200%，让图仍然有放大空间而不是忽略这次手势。
       setTransform(zoomToAt(t, fitScale < 0.999 ? 1 : 2, localPoint(event), c, v));
     },
     [localPoint],
@@ -410,8 +409,8 @@ export function useZoomCanvas({
     transform,
     zoomPercent: Math.round(transform.scale * 100),
     canZoomIn: transform.scale < MAX_SCALE - 0.001,
-    // Against the dynamic floor, not MIN_SCALE: for content that only fits
-    // below 25% the button must stay live all the way down to that fit scale.
+    // 下限看动态最小值而非 MIN_SCALE：对只能在 25% 以下适配的内容，缩小
+    // 按钮必须一直可用到适配缩放为止。
     canZoomOut: transform.scale > computeMinScale(contentSize, viewport) + 0.001,
     isPanning,
     isAnimated,

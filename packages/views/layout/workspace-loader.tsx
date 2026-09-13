@@ -4,14 +4,15 @@ import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
 import { useT } from "../i18n";
 
 /**
- * Full-screen workspace loader. Renders IN PLACE OF the dashboard during:
- *  - initial dashboard mount (workspace resolving from URL slug + list cache)
- *  - workspace switch (refetching core workspace data with the new header)
+ * 布局模块：全屏的工作区加载占位组件。
+ * 在以下两种情况下替代整个仪表盘渲染：
+ *  - 仪表盘首次挂载（正在根据 URL slug 和工作区列表缓存解析当前工作区）
+ *  - 切换工作区（带着新的请求头重新拉取核心工作区数据）
  *
- * This is a GATE, not an overlay — sidebar/content do not render behind it.
- * The gate only opens once the current workspace id has been set on the
- * workspace-storage singleton AND all core queries for the target
- * workspace have been freshly fetched.
+ * 这是一个「闸门」而不是浮层——侧边栏和内容区不会在它背后渲染。
+ * 只有当当前工作区 id 写入工作区存储单例、并且目标工作区的所有核心
+ * 查询都重新拉取完成后，闸门才会打开。
+ * @param name 正在加载的工作区名称，用于在加载文案里显示。
  */
 export function WorkspaceLoader({ name }: { name?: string | null }) {
   const { t } = useT("layout");

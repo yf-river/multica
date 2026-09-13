@@ -1,3 +1,5 @@
+// 本文件是「偏好设置」标签页：主题、时区和固定评论栏等客户端偏好设置。
+
 "use client";
 
 import { useMemo } from "react";
@@ -23,6 +25,9 @@ import {
   SettingsTab,
 } from "./settings-layout";
 
+/**
+ * 「偏好设置」标签页：切换主题、选择时区、控制评论栏是否固定。
+ */
 export function PreferencesTab() {
   const { theme, setTheme } = useTheme();
   const { t } = useT("settings");
@@ -104,8 +109,8 @@ function StickyCommentBarRow() {
   );
 }
 
-// Base UI rejects "" as a SelectItem value, so route the "no preference"
-// state through this sentinel and translate at the wire boundary.
+// Base UI 不接受空字符串作为 SelectItem 的 value，所以用这个哨兵值表示「跟随浏览器时区」，
+// 并在真正提交到服务端时再把它翻译成空字符串。
 const BROWSER_TZ_VALUE = "__browser__";
 
 function TimezoneRow() {
@@ -116,9 +121,9 @@ function TimezoneRow() {
   const browser = browserTimezone();
   const value = stored ?? BROWSER_TZ_VALUE;
 
-  // Full IANA list (from timezoneOptions in common/timezone-select) so a
-  // user needing a non-curated zone isn't stuck with ~18 common ones.
-  // Memoized — timezoneOptions enumerates ~600 IANA zones per call.
+  // 使用完整 IANA 时区列表（来自 common/timezone-select 的 timezoneOptions），
+  // 这样需要冷门时区的用户不会被局限在约 18 个常用时区里。
+  // 用 useMemo 缓存——timezoneOptions 每次调用都要枚举约 600 个 IANA 时区。
   const options = useMemo(
     () => timezoneOptions(stored ?? browser),
     [stored, browser],

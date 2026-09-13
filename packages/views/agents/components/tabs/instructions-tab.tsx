@@ -1,5 +1,8 @@
 "use client";
 
+// 本文件是 Agent 详情页的“指令与开场白”标签页：编辑系统提示词（或系统 Agent 的
+// 工作区备注）与对话开场白，手动保存。含聊天空态“定制”入口的深链高亮逻辑。
+
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { useConfigStore } from "@multica/core/config";
@@ -13,9 +16,15 @@ import { useOptionalNavigation } from "../../../navigation";
 
 import { ConversationStartersEditor } from "../conversation-starters-editor";
 
-/** How long the deep-linked conversation-starters editor stays ringed. */
+/** 从深链进入开场白编辑器时，高亮光环保持多久。 */
 const FOCUS_FLASH_MS = 1600;
 
+/**
+ * 指令 / 开场白编辑标签页。
+ * @param agent 当前 Agent；字段变更后需等待父层 save 回写。
+ * @param onSave 保存回调，携带 instructions（可能还有 conversation_starters）。
+ * @param onDirtyChange 本地是否改动的通知（父层用它拦截切换 Tab）。
+ */
 export function InstructionsTab({
   agent,
   onSave,
@@ -29,9 +38,8 @@ export function InstructionsTab({
   onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useT("agents");
-  // Optional read: this tab is a leaf that tests mount in isolation, and its
-  // only navigation-dependent behaviour (the deep-link focus below) degrades
-  // to "no highlight" when there is no adapter.
+  // 可选读取：本标签是叶子，测试常单独挂载；它唯一的导航相关行为（下方深链聚焦）
+  // 在没有适配器时就退化成“不高亮”。
   const navigation = useOptionalNavigation();
   const conversationStartersSupported = useConfigStore(
     (state) => state.agentConversationStartersSupported,
@@ -72,24 +80,21 @@ export function InstructionsTab({
       (item) => item.label.trim() && item.prompt.trim(),
     );
 
-  // A system agent's prompt has two halves: the product half ships with the
-  // backend and updates on deploy, so it is shown read-only; the editable
-  // field below holds only this workspace's own notes, which no release
-  // overwrites. Ordinary agents have no system half and render unchanged.
+  // 系统 Agent 的提示词有两半：产品那一半随后端发布、部署即更新，所以只读展示；
+  // 下面可编辑的文本框只放本工作区自己的备注，任何版本发布都不会覆盖它。
+  // 普通 Agent 没有系统半，渲染与原来无异。
   const systemInstructions = agent.system_instructions?.trim() ?? "";
   const hasSystemLayer = systemInstructions.length > 0;
 
-  // Refetches replace nested arrays even when their contents are unchanged.
-  // Compare against the last persisted semantic snapshot so those refetches
-  // do not erase local edits. A real server change is adopted only when the
-  // local form was clean; switching agents always loads the selected agent.
+  // 重新拉取会把嵌套数组整体替换——哪怕内容没变。跟“上一次持久化”的语义快照比较，
+  // 让这些重拉不会抹掉本地编辑。真实的服务端变更只在本地表单干净时才采纳；
+  // 切换 Agent 则始终加载所选项。
   useEffect(() => {
     const previous = persistedRef.current;
     const switchingAgents = previous.agentId !== agent.id;
 
-    // The parent publishes these fields optimistically while a save is in
-    // flight. Neither that snapshot nor a later rollback is confirmed server
-    // state, so keep the submitted values available for retry on failure.
+    // 保存还在途时，父层会乐观发布这些字段。但那份快照和之后可能的回滚都不是
+    // 已确认的服务端状态，所以失败重试期间保留已提交的值，继续可编辑。
     if (!switchingAgents && saving) return;
 
     const local = localRef.current;
@@ -113,30 +118,27 @@ export function InstructionsTab({
     }
   }, [agent.id, agent.instructions, persistedConversationStartersKey, saving]);
 
-  // Arriving from "customize" in a chat's empty state: bring the starter
-  // prompts into view and flash them, so the deep link lands ON the setting
-  // rather than on a long page that happens to contain it. The param is
-  // consumed on arrival, so a refresh never replays an animation nobody asked
-  // for — but every fresh click must land, including a second one from a chat
-  // window still open beside this page, and one aimed at a different agent.
+  // 从聊天空态里的“定制”而来：把开场白编辑区滚进视野并闪一下光环，让深链落在
+  // “这个设置”上，而不是落在某条恰好包含它的长页面。参数到达即消费，所以刷新
+  // 不会重放没人要的动画——但每次点击必须生效：包括从仍开着的聊天窗口再点一次，
+  // 以及指向另一个 Agent 的深链。
   useEffect(() => {
     if (!navigation || !conversationStartersSupported) return;
 
     if (navigation.searchParams.get("focus") !== AGENT_FOCUS_CONVERSATION_STARTERS) {
-      // The param is gone: either this is an ordinary visit, or the `replace`
-      // below has landed. Re-arm so the next click focuses again.
+      // 参数已不在：要么是普通访问，要么下面的 `replace` 已生效。重新武装，
+      // 让下一次点击能再次聚焦。
       focusHandledForAgentRef.current = null;
       return;
     }
-    // Guard against re-running before the stripped URL arrives — the adapter
-    // object is not referentially stable, so this effect re-runs on renders
-    // the `replace` below itself causes. Keyed by agent so a deep link aimed
-    // at a DIFFERENT agent is never swallowed by this latch.
+    // 防止在“剥掉参数的 URL”落地前重复执行——适配器对象引用不稳定，下面的
+    // `replace` 自身引发的渲染会再次触发本 effect。按 Agent 做键，指向“另一个”
+    // Agent 的深链绝不会被这个闩锁吞掉。
     if (focusHandledForAgentRef.current === agent.id) return;
     focusHandledForAgentRef.current = agent.id;
 
-    // `block: "nearest"` deliberately: native scrollIntoView scrolls every
-    // scrollable ancestor, which on desktop drags the shell itself (#3929).
+    // 刻意用 `block: "nearest"`：原生 scrollIntoView 会滚动所有可滚祖先，
+    // 桌面端会把整个外壳都拖走（#3929）。
     conversationStartersRef.current?.scrollIntoView?.({ block: "nearest" });
     setConversationStartersFocused(true);
 
@@ -147,11 +149,9 @@ export function InstructionsTab({
       query ? `${navigation.pathname}?${query}` : navigation.pathname,
     );
 
-    // The timer is held in a ref, NOT returned as this effect's cleanup: the
-    // adapter object is unstable, so a cleanup would be invoked on the very
-    // next render and cancel the flash before it ever ended, leaving the ring
-    // on permanently. Unmount clears it below. A repeat focus restarts the
-    // window rather than inheriting the previous one's remaining time.
+    // 定时器存在 ref 里，而不是作为本 effect 的 cleanup 返回：适配器对象不稳定，
+    // 用 cleanup 会在下一次渲染就被调用，光环还没开始就被取消、永远亮着。
+    // 卸载时在下方清除。重复聚焦会重启计时，而不是继承上次剩余的时长。
     if (focusFlashTimerRef.current) clearTimeout(focusFlashTimerRef.current);
     focusFlashTimerRef.current = setTimeout(
       () => setConversationStartersFocused(false),
@@ -166,7 +166,7 @@ export function InstructionsTab({
     [],
   );
 
-  // Report dirty state up so the parent can guard tab switches.
+  // 向上汇报 dirty，让父层能拦截 Tab 切换。
   useEffect(() => {
     onDirtyChange?.(isDirty);
   }, [isDirty, onDirtyChange]);

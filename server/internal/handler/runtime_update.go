@@ -1,3 +1,7 @@
+// 本文件：CLI 更新请求的存储层与 HTTP 接口。流程与其他 runtime 请求一致——前端建
+// pending 请求，daemon 心跳认领并实际执行更新，回报 running/completed/failed，UI 轮询。
+// 本文件定义 UpdateStore 接口与单机内存实现（多节点用 runtime_update_redis_store.go 的
+// Redis 实现），以及三个 handler：发起更新、查询更新、daemon 回报结果。
 package handler
 
 import (
@@ -14,9 +18,10 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// CLI update request store
+// CLI 更新请求存储
 // ---------------------------------------------------------------------------
 
+// UpdateStatus 是一次 CLI 更新请求的状态。
 type UpdateStatus string
 
 const (
@@ -27,7 +32,8 @@ const (
 	UpdateTimeout   UpdateStatus = "timeout"
 )
 
-// UpdateRequest represents a pending or completed CLI update request.
+// UpdateRequest 表示一次 pending 或已完成的 CLI 更新请求。InitiatorUserID /
+// RunStartedAt 标 `json:"-"`，不外发给前端。
 type UpdateRequest struct {
 	ID              string       `json:"id"`
 	RuntimeID       string       `json:"runtime_id"`
@@ -47,6 +53,9 @@ const (
 	updateStoreRetention = 5 * time.Minute
 )
 
+// UpdateStore 跟踪 pending/running/completed 的 CLI 更新请求；服务器保持无状态，所有
+// 需要跨请求存活的状态都放共享存储（多节点部署用 Redis 实现）。方法语义与 model-list /
+// 本地技能两个 store 一致。
 type UpdateStore interface {
 	Create(ctx context.Context, runtimeID, targetVersion, initiatorUserID string) (*UpdateRequest, error)
 	Get(ctx context.Context, id string) (*UpdateRequest, error)
@@ -56,10 +65,12 @@ type UpdateStore interface {
 	Fail(ctx context.Context, id string, errMsg string) error
 }
 
+// updateRequestTerminal 判断更新状态是否为终态。
 func updateRequestTerminal(status UpdateStatus) bool {
 	return status == UpdateCompleted || status == UpdateFailed || status == UpdateTimeout
 }
 
+// applyUpdateTimeout 请求在 pending/running 超过阈值时置为 timeout，返回是否改动过。
 func applyUpdateTimeout(req *UpdateRequest, now time.Time) bool {
 	switch req.Status {
 	case UpdatePending:
@@ -80,9 +91,9 @@ func applyUpdateTimeout(req *UpdateRequest, now time.Time) bool {
 	return false
 }
 
-// InMemoryUpdateStore is the single-node implementation. Multi-node deploys
-// must use RedisUpdateStore so Web POST, daemon heartbeat, daemon report, and
-// UI polling agree on the same request lifecycle.
+// InMemoryUpdateStore 是单节点实现。多节点部署必须用 RedisUpdateStore，让 Web POST、
+// daemon 心跳、daemon 回报、UI 轮询对同一请求生命周期达成一致。方法体语义见
+// UpdateStore 接口注释。
 type InMemoryUpdateStore struct {
 	mu       sync.Mutex
 	requests map[string]*UpdateRequest // keyed by update ID
@@ -98,14 +109,14 @@ func (s *InMemoryUpdateStore) Create(_ context.Context, runtimeID, targetVersion
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Clean up old requests.
+	// 顺手清理过期的旧请求。
 	for id, req := range s.requests {
 		if time.Since(req.CreatedAt) > updateStoreRetention {
 			delete(s.requests, id)
 		}
 	}
 
-	// Reject if there is already a pending or running update for this runtime.
+	// 这台 runtime 已有 pending/running 的更新就拒绝再建。
 	for _, req := range s.requests {
 		if req.RuntimeID == runtimeID && (req.Status == UpdatePending || req.Status == UpdateRunning) {
 			return nil, errUpdateInProgress
@@ -125,8 +136,10 @@ func (s *InMemoryUpdateStore) Create(_ context.Context, runtimeID, targetVersion
 	return req, nil
 }
 
+// errUpdateInProgress 表示该 runtime 已有一条更新在进行中（pending/running），不能并发更新。
 var errUpdateInProgress = &updateError{msg: "an update is already in progress for this runtime"}
 
+// updateError 是带固定文案的错误，便于调用方用 errors.Is 精确匹配上面的 sentinel。
 type updateError struct{ msg string }
 
 func (e *updateError) Error() string { return e.msg }
@@ -157,7 +170,7 @@ func (s *InMemoryUpdateStore) HasPending(_ context.Context, runtimeID string) (b
 	return false, nil
 }
 
-// PopPending returns and marks as running the pending update for a runtime.
+// PopPending 取走某台 runtime 的 pending 更新请求并把它标为 running。
 func (s *InMemoryUpdateStore) PopPending(_ context.Context, runtimeID string) (*UpdateRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -206,10 +219,12 @@ func (s *InMemoryUpdateStore) Fail(_ context.Context, id string, errMsg string) 
 }
 
 // ---------------------------------------------------------------------------
-// Handlers
+// HTTP Handlers
 // ---------------------------------------------------------------------------
 
-// InitiateUpdate creates a new CLI update request (protected route, called by frontend).
+// InitiateUpdate 处理 POST /api/runtimes/:id/update——创建一个新的 CLI 更新请求
+// （受保护路由，前端调用）。需 runtime 读权限 + canEditRuntime（仅 owner / 工作区 admin
+// 可发起更新）；body 里 target_version 必填。若该 runtime 已有更新在进行中返回 409。
 func (h *Handler) InitiateUpdate(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
 	rt, member, ok := h.requireRuntimeReadAccess(w, r, obsmetrics.RuntimeLookupSourceRuntimeAPI, runtimeID)
@@ -240,13 +255,10 @@ func (h *Handler) InitiateUpdate(w http.ResponseWriter, r *http.Request) {
 		uuidToString(member.UserID),
 	)
 	if err != nil {
-		// Only the in-progress rejection is a conflict the caller can act on.
-		// Every other Create failure is infrastructure — the Redis store wraps
-		// connection failures as "reserve active update: ..." / "persist update
-		// request: ..." — and echoing it back would both leak internals and
-		// label an outage as a user-fixable conflict. That was survivable while
-		// the CLI hid 409 bodies; it no longer is, now that they are shown by
-		// default.
+		// 只有「已在更新中」这种拒绝是调用方能处理的冲突。Create 的其它失败都属于基础设施
+		// 故障（Redis store 把连接失败包装成 "reserve active update: ..."/"persist update
+		// request: ..."）——原样回给用户既泄露内部细节，又把一次宕机标成用户可修复的冲突。
+		// CLI 以前隐藏 409 响应体时还扛得住；现在默认展示响应体就不行了。
 		if errors.Is(err, errUpdateInProgress) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
@@ -259,7 +271,8 @@ func (h *Handler) InitiateUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, update)
 }
 
-// GetUpdate returns the status of an update request (protected route, called by frontend).
+// GetUpdate 处理 GET /api/runtimes/:id/update/:updateId——返回某个更新请求的状态
+// （受保护路由，前端轮询）。需 runtime 读权限；请求不存在或不属于该 runtime 回 404。
 func (h *Handler) GetUpdate(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
 	rt, member, ok := h.requireRuntimeReadAccess(w, r, obsmetrics.RuntimeLookupSourceRuntimeUpdatePoll, runtimeID)
@@ -277,9 +290,8 @@ func (h *Handler) GetUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "update not found")
 		return
 	}
-	// Keep an in-flight poll alive if an admin is downgraded after starting
-	// the update. This exception is scoped to the immutable request initiator;
-	// other plain members still cannot read another runtime's update status.
+	// 若发起更新后 admin 被降权，也别掐断他在轮询中的请求。这条例外只限定给发起更新时
+	// 记录下的不可变发起人；其它普通成员依然读不到别人 runtime 的更新状态。
 	if !canEditRuntime(member, rt) && update.InitiatorUserID != uuidToString(member.UserID) {
 		writeError(w, http.StatusForbidden, "only runtime owners, workspace admins, and the update initiator can view this update")
 		return
@@ -288,11 +300,12 @@ func (h *Handler) GetUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, update)
 }
 
-// ReportUpdateResult receives the update result from the daemon.
+// ReportUpdateResult 接收 daemon 回报的更新结果（running/completed/failed）。
+// 调用方必须是该 runtime 所属工作区的 daemon；请求已终态时忽略过期回报。
 func (h *Handler) ReportUpdateResult(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
 
-	// Verify the caller owns this runtime's workspace.
+	// 校验调用方拥有这台 runtime 的工作区（即 daemon 身份）。
 	if _, ok := h.requireDaemonRuntimeAccess(w, r, runtimeID); !ok {
 		return
 	}
@@ -338,9 +351,8 @@ func (h *Handler) ReportUpdateResult(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "running":
-		// No-op: status is already "running" from PopPending. This call is
-		// just a progress signal from the daemon to confirm it received the
-		// update command and is executing it.
+		// 空操作：状态在 PopPending 时就已是 "running"。这次调用只是 daemon 发来的进度
+		// 信号，确认它收到了更新命令、正在执行。
 	default:
 		writeError(w, http.StatusBadRequest, "invalid status: "+req.Status)
 		return

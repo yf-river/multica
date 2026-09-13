@@ -2,10 +2,17 @@
 
 import { useT } from "../../i18n";
 
-// Soft warn at 90 % of the cap, hard error past it. Shared between the
-// description editor (modal) and the create-agent dialog so both surfaces
-// read the same way. Renders a single inline line so it can sit under any
-// textarea / input without disturbing surrounding spacing.
+// 本文件提供一个字数计数器，用于在文本输入框下方显示已输入字数与上限的关系。
+
+/**
+ * 字数计数器：显示“当前字数 / 上限”，并在接近或超出上限时给出颜色提示。
+ * 超过 90% 时温和警告，超过上限时标红报错。被描述编辑器（弹窗）和创建 Agent
+ * 对话框共用，保证两处读法一致。只渲染成一行内联文本，可放在任意 textarea /
+ * input 下方而不打乱周边间距。
+ *
+ * @param length 当前已输入的字数
+ * @param max 允许的最大字数上限
+ */
 export function CharCounter({ length, max }: { length: number; max: number }) {
   const { t } = useT("agents");
   const over = length > max;

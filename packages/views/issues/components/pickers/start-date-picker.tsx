@@ -1,10 +1,16 @@
 "use client";
 
+// 本文件：StartDatePicker —— "开始日期"选择器。
+// 薄封装通用 DateOnlyPicker：改值即调 onUpdate({ start_date })。
+
 import { CalendarClock } from "lucide-react";
 import type { UpdateIssueRequest } from "@multica/core/types";
 import { DateOnlyPicker } from "../../../common/date-only-picker";
 import { useT } from "../../../i18n";
 
+/**
+ * 开始日期选择器：值变更 → `onUpdate({ start_date })`。
+ */
 export function StartDatePicker({
   startDate,
   onUpdate,
@@ -22,8 +28,7 @@ export function StartDatePicker({
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
   align?: "start" | "center" | "end";
-  /** Open the popover on first mount. Used by progressive-disclosure
-   *  sidebars so a newly-added field immediately enters edit state. */
+  /** 首次挂载即展开浮层。供"渐进式展示"的侧栏用——新加的字段立刻进入编辑态。 */
   defaultOpen?: boolean;
 }) {
   const { t } = useT("issues");

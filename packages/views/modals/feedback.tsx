@@ -1,3 +1,5 @@
+// 本文件职责：「发送反馈」弹窗——带富文本编辑器（支持拖拽/选择图片上传）与快捷键提交，
+// 把反馈内容连同当前页面地址一起发给服务端。
 "use client";
 
 import { useRef, useState } from "react";
@@ -34,6 +36,12 @@ const MAX_MESSAGE_LEN = 10000;
 
 const FEEDBACK_KIND_SET = new Set<FeedbackKind>(FEEDBACK_KINDS);
 
+/**
+ * 合并「草稿里已有的反馈正文」和「本次入口带进来的初始消息」。
+ *
+ * 规则：任何一方为空就直接用另一方；草稿已包含该初始消息则保持草稿不动（避免重复）；
+ * 否则用分隔线把初始消息接到草稿后面。既保留用户草稿，又不丢掉入口附带的上下文。
+ */
 function composeFeedbackInitialMessage(draftMessage: string, incomingInitialMessage: string) {
   const draft = draftMessage.trim();
   const incoming = incomingInitialMessage.trim();
@@ -47,6 +55,17 @@ function composeFeedbackInitialMessage(draftMessage: string, incomingInitialMess
 ${incomingInitialMessage}`;
 }
 
+/**
+ * 「发送反馈」弹窗。
+ *
+ * 富文本编辑反馈内容（含拖拽/上传图片），可附带来源入口（`data.kind` 区分反馈类型，
+ * `initialMessage`/`data.initialMessage` 预填正文），提交时自动带上当前可分享页面地址。
+ * 支持 ⌘/Ctrl+Enter 快捷键发送，成功后清空草稿并关闭。
+ *
+ * @param onClose        关闭弹窗的回调
+ * @param data           弹窗上下文，可携带 `kind`（反馈类型）与 `initialMessage`（初始正文）
+ * @param initialMessage 直接传入的初始正文，优先级高于 `data.initialMessage`
+ */
 export function FeedbackModal({
   onClose,
   data,
@@ -77,8 +96,8 @@ export function FeedbackModal({
     onDrop: (files) => files.forEach((f) => editorRef.current?.uploadFile(f)),
   });
   const { uploadWithToast } = useEditorUpload();
-  // The handler already refused to submit mid-upload, but the button stayed
-  // clickable — so the only feedback was a toast fired after the click.
+  // 上传中途提交会被上闸拦住，但按钮本身仍可点击——若只靠按钮禁用，点击后唯一的
+  // 反馈是那枚事后才冒出来的 toast，体验不明确。
   const uploadGate = useUploadGate(editorRef);
   const mutation = useCreateFeedback();
 
@@ -89,19 +108,18 @@ export function FeedbackModal({
     !uploadGate.uploading;
 
   const handleSubmit = async () => {
-    // The button can use debounced `message` state, but the keyboard shortcut
-    // must not: Command+Enter can arrive before ContentEditor's 150ms onUpdate
-    // fires. The editor ref below is the submit-time source of truth.
+    // 按钮能依赖带防抖的 `message` state，但快捷键不行：⌘+Enter 可能赶在
+    // ContentEditor 150ms 的 onUpdate 触发之前到达，所以下面用编辑器 ref
+    // 作为提交时刻的内容来源。
     if (mutation.isPending) return;
-    // Keep the toast on this path: the shortcut can fire while the button is
-    // disabled and off-screen, so a silent no-op would read as a dead ⌘+Enter.
+    // 保留这个 toast：快捷键可能在按钮被禁用且不可见时触发，如果静默忽略，
+    // 用户会以为 ⌘+Enter 失灵了。
     if (uploadGate.isBlocked()) {
       toast.info(t(($) => $.feedback.toast_uploading));
       return;
     }
-    // Read from the editor ref at submit time — `message` state lags 150ms
-    // behind keystrokes due to `debounceMs`, so ⌘+Enter fired immediately
-    // after typing would otherwise submit stale content.
+    // 提交时直接从编辑器 ref 读内容——`message` state 因 `debounceMs` 会比敲击
+    // 落后 150ms，紧跟输入立即按 ⌘+Enter 会提交到旧内容。
     const latest = editorRef.current?.getMarkdown()?.trim() ?? "";
     if (!latest) return;
     if (latest.length > MAX_MESSAGE_LEN) {

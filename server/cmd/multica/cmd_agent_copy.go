@@ -1,3 +1,8 @@
+// 文件职责：实现 `agent copy` 命令——把既有 agent 的可移植配置克隆成一个全新
+// agent（可换 runtime），源 agent 原样不动。它是网页端「Duplicate」动作的
+// CLI/无头等价物（MUL-5279）。命令是对既有端点的薄组合——GET 源 agent、再 POST
+// 一个 create——所以不需要专属 server API：`POST /api/agents` 本来就在与 agent
+// 行相同的 DB 事务里绑定 skill_ids，克隆永远不会以半配置状态出现在人前。
 package main
 
 import (
@@ -13,13 +18,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-// agentCopyCmd forks an existing agent's portable configuration into a brand-new
-// agent, optionally on a different runtime, leaving the source untouched. It is
-// the CLI/headless equivalent of the web "Duplicate" action (MUL-5279). The
-// command is a thin composition over existing endpoints — GET the source, then
-// POST a create — so it needs no dedicated server API: `POST /api/agents`
-// already binds skill_ids in the same DB transaction as the agent row, so the
-// copy never becomes visible in a partially configured state.
+// agentCopyCmd 是 `agent copy` 命令，复制语义详见其 Long 帮助文本
+// （哪些字段默认带、哪些可覆盖、哪些永不复制、跨 runtime 时的取舍）。
 var agentCopyCmd = &cobra.Command{
 	Use:   "copy <source-agent-id>",
 	Short: "Copy an existing agent into a new one (optionally on a different runtime)",
@@ -53,8 +53,8 @@ func init() {
 	registerAgentCopyFlags(agentCopyCmd)
 }
 
-// registerAgentCopyFlags registers every flag runAgentCopy reads. It is shared
-// between init() and the tests so both stay in lockstep.
+// registerAgentCopyFlags 注册 runAgentCopy 读取的全部 flag。init 与测试共用，
+// 保证两者永不走样。
 func registerAgentCopyFlags(cmd *cobra.Command) {
 	cmd.Flags().String("name", "", "Name for the new agent (default: \"<source name> (copy)\")")
 	cmd.Flags().String("runtime-id", "", "Target runtime ID (default: the source agent's runtime). A different value forks the agent onto that runtime.")
@@ -70,8 +70,8 @@ func registerAgentCopyFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("public-to-workspace", false, "public_to: allow every workspace member to invoke the copy.")
 	cmd.Flags().StringSlice("public-to-member", nil, "public_to: allow the given member user id(s) to invoke the copy. Repeatable.")
 	cmd.Flags().Bool("no-skills", false, "Do not copy the source agent's workspace skill assignments.")
-	// Secret / machine-local fields are never copied from the source; these
-	// flags provide fresh values for the copy, mirroring 'agent create'.
+	// 机密/本机专属字段永不从源复制；这些 flag 为克隆体提供新值，镜像
+	// 'agent create'。
 	cmd.Flags().String("custom-env", "", "Set custom_env on the copy as a JSON object (never copied from the source). Prefer --custom-env-stdin/--custom-env-file for secrets. Pass '{}' for an empty map.")
 	cmd.Flags().Bool("custom-env-stdin", false, "Read --custom-env from stdin. Mutually exclusive with --custom-env and --custom-env-file.")
 	cmd.Flags().String("custom-env-file", "", "Read --custom-env from a file path (suggested mode: 0600). Mutually exclusive with --custom-env and --custom-env-stdin.")
@@ -82,10 +82,9 @@ func registerAgentCopyFlags(cmd *cobra.Command) {
 	cmd.Flags().String("output", "json", "Output format: table or json")
 }
 
-// runAgentCopy reads the source agent and assembles a create request from its
-// portable fields, then POSTs it. custom_env, mcp_config and runtime_config are
-// never read back from the source — GET redacts / masks them anyway — and are
-// set only when supplied explicitly on the command line.
+// runAgentCopy 读源 agent 并把其可移植字段组装成 create 请求，再 POST 出去。
+// custom_env/mcp_config/runtime_config 从源读不回来（GET 本就脱敏/掩码），只有
+// 命令行显式提供时才设置。
 func runAgentCopy(cmd *cobra.Command, args []string) error {
 	var maxConcurrentTasksOverride *int32
 	if cmd.Flags().Changed("max-concurrent-tasks") {
@@ -111,8 +110,8 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 
 	srcRuntimeID := strVal(src, "runtime_id")
 
-	// Resolve the target runtime: default to the source's runtime, override
-	// with --runtime-id. A different value is a cross-runtime fork.
+	// 解析目标 runtime：默认跟随源 runtime，--runtime-id 覆盖；值不同即为
+	// 跨 runtime fork。
 	targetRuntimeID := srcRuntimeID
 	if cmd.Flags().Changed("runtime-id") {
 		v, _ := cmd.Flags().GetString("runtime-id")
@@ -126,7 +125,7 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 	}
 	sameRuntime := targetRuntimeID == srcRuntimeID
 
-	// Name: default "<source name> (copy)", override with --name.
+	// 名字：默认 "<源名> (copy)"，--name 覆盖。
 	name := strVal(src, "name") + " (copy)"
 	if cmd.Flags().Changed("name") {
 		v, _ := cmd.Flags().GetString("name")
@@ -141,7 +140,7 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 		"runtime_id": targetRuntimeID,
 	}
 
-	// Plain-text fields: copy from source, override with the matching flag.
+	// 纯文本字段：从源复制，用对应 flag 覆盖。
 	body["description"] = strVal(src, "description")
 	if cmd.Flags().Changed("description") {
 		v, _ := cmd.Flags().GetString("description")
@@ -156,13 +155,13 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 		body["conversation_starters"] = conversationStarters
 	}
 
-	// Avatar reference travels with the copy (both agents point at the same
-	// uploaded image URL), matching the web Duplicate flow.
+	// 头像引用跟着走（两个 agent 指向同一张已上传图片 URL），与网页端
+	// Duplicate 流程一致。
 	if av, ok := src["avatar_url"]; ok && av != nil {
 		body["avatar_url"] = av
 	}
 
-	// custom_args: copy when present, override with --custom-args.
+	// custom_args：有就复制，--custom-args 覆盖。
 	if ca, ok := src["custom_args"].([]any); ok && len(ca) > 0 {
 		body["custom_args"] = ca
 	}
@@ -175,21 +174,19 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 		body["custom_args"] = ca
 	}
 
-	// max_concurrent_tasks: a valid source value is portable. Historical rows
-	// may predate the 1-50 invariant; omit those values so create applies its
-	// default instead of turning Duplicate into a 400. An explicit flag is
-	// validated before any API request and remains authoritative.
+	// max_concurrent_tasks：合法的源值可移植。历史行可能早于 1-50 的不变量时代；
+	// 直接丢弃这些值，让 create 用默认值而不是把 Duplicate 变成一次 400。显式
+	// flag 在任何 API 请求前校验、保持权威。
 	if maxConcurrentTasksOverride != nil {
 		body["max_concurrent_tasks"] = *maxConcurrentTasksOverride
 	} else if v, ok := copiedAgentMaxConcurrentTasks(src["max_concurrent_tasks"]); ok {
 		body["max_concurrent_tasks"] = v
 	}
 
-	// Runtime-specific fields (model / thinking_level / service_tier) only make
-	// sense on the runtime they were chosen for. Copy them when staying on the
-	// same runtime; when forking to a different runtime, drop them and require
-	// an explicit --model (pass --model "" to accept the target default) —
-	// mirroring the web Duplicate clearing model on a runtime switch.
+	// runtime 专属字段（model / thinking_level / service_tier）只在它们被选定的
+	// runtime 上有意义。留在同 runtime 时照抄；fork 到别的 runtime 时丢弃并要求
+	// 显式 --model（传 "" 接受目标默认）——镜像网页端 Duplicate 在切换 runtime
+	// 时清空 model 的行为。
 	if sameRuntime {
 		if v := strVal(src, "model"); v != "" {
 			body["model"] = v
@@ -216,9 +213,8 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 		body["service_tier"] = v
 	}
 
-	// Invocation permission: copy the source's permission_mode + allow-list by
-	// default; any permission flag (or legacy --visibility) fully defines it
-	// instead, so the two never mix.
+	// 调用权限：默认照抄源 agent 的 permission_mode + allow-list；一旦给了任何
+	// 权限 flag（或旧版 --visibility）就改为完全由它定义——二者从不混用。
 	permOverride := cmd.Flags().Changed("permission-mode") ||
 		cmd.Flags().Changed("public-to-workspace") ||
 		cmd.Flags().Changed("public-to-member") ||
@@ -238,8 +234,7 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Workspace skills: copy the source's bindings so they attach in the same
-	// create transaction, unless --no-skills.
+	// 工作区技能：照抄源绑定，让它们在同一 create 事务里挂上；除非 --no-skills。
 	if noSkills, _ := cmd.Flags().GetBool("no-skills"); !noSkills {
 		if skills, ok := src["skills"].([]any); ok {
 			ids := make([]string, 0, len(skills))
@@ -258,9 +253,8 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Secret / machine-local fields are never copied from the source (they are
-	// redacted or masked on GET). Set them only when supplied explicitly, via
-	// the same secret-safe channels as 'agent create'.
+	// 机密/本机专属字段永不从源复制（GET 会脱敏/掩码）。仅当显式提供时才设置，
+	// 通道与 'agent create' 的 secret-safe 一致。
 	if ce, ok, err := resolveCustomEnv(cmd); err != nil {
 		return err
 	} else if ok {
@@ -294,6 +288,8 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// copiedAgentMaxConcurrentTasks 校验源 agent 的 max_concurrent_tasks 是否可移植
+// （整数且在 1-50 合法区间内，规避历史越界行），合法才返回 (值, true)。
 func copiedAgentMaxConcurrentTasks(value any) (int32, bool) {
 	number, ok := value.(float64)
 	if !ok || number != math.Trunc(number) ||

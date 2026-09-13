@@ -1,3 +1,5 @@
+// 每日运行时长柱状图：展示每天 agent 累计运行秒数，用于 runtime 用量页的
+// "运行时间"概览。
 import {
   BarChart,
   Bar,
@@ -12,9 +14,8 @@ import {
   type ChartConfig,
 } from "@multica/ui/components/ui/chart";
 
-// Single-series bar — total daily run time in seconds. The y-axis tick
-// formatter and tooltip both use the same `formatDuration` so the user
-// reads the same unit ladder (h / m / s) everywhere.
+// 单序列柱状图——每天累计运行秒数。y 轴刻度格式与 tooltip 用同一个
+// `formatDuration`，让用户在任何地方读到同一套单位阶梯（h / m / s）。
 const timeChartConfig = {
   totalSeconds: { label: "Run time", color: "var(--chart-1)" },
 } satisfies ChartConfig;
@@ -25,14 +26,20 @@ export interface DailyTimeData {
   totalSeconds: number;
 }
 
+/**
+ * 每日运行时长柱状图。
+ * @param data - 每天一条：日期、展示标签与累计秒数。
+ * @param formatY - y 轴刻度格式化函数。
+ * @param formatTooltip - tooltip 数值格式化函数。
+ */
 export function DailyTimeChart({
   data,
   formatY,
   formatTooltip,
 }: {
   data: DailyTimeData[];
-  // Caller passes a `formatDuration`-style fn so the chart stays UI-string
-  // agnostic (the "< 1m" fallback label is localized by the parent).
+  // 调用方传一个 `formatDuration` 风格的函数，让图表保持对 UI 文案无感
+  // （"< 1m" 这类兜底文案由父组件本地化）。
   formatY: (seconds: number) => string;
   formatTooltip: (seconds: number) => string;
 }) {

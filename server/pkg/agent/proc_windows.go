@@ -2,6 +2,18 @@
 
 package agent
 
+// 文件职责：Windows 平台下"以进程组方式拥有并清理 agent 子进程树"的实现。
+//
+// Unix 靠进程组 + 信号，Windows 没有对应物，改用 Job Object：进程以 CREATE_SUSPENDED
+// 挂起启动，赶在它执行任何一条指令前被塞进 Job Object（Windows 只把"创建晚于
+// 分配"的进程算作成员、绝不追溯），再恢复运行。这样整棵树共享 KILL_ON_JOB_CLOSE
+// 生命周期：清理时 TerminateJobObject 一次杀光，daemon 崩溃也不会让 agent 后代
+// 进程残留。startOwnedProcessTree 是本包启动运行时进程的唯一入口（有个测试专门
+// 守着它，防止新 backend 偷偷改回 cmd.Start 而复活 GH #7522）。
+//
+// 平台差异：SIGTERM/SIGKILL 语义在 Windows 上不存在，signalProcessGroup 因此忽略
+// 信号参数、直接终止 Job Object。本文件与 proc_other.go 互斥编译。
+
 import (
 	"fmt"
 	"log/slog"
@@ -14,26 +26,23 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// createNewConsole allocates a fresh console for the child process. Combined
-// with HideWindow=true (STARTF_USESHOWWINDOW + SW_HIDE) the console window
-// stays off-screen, and — critically — any grandchildren the agent spawns
-// (tool subprocesses like bash, cmd, netstat, findstr) inherit this hidden
-// console instead of each allocating their own visible one.
+// createNewConsole 给子进程分配一个全新的控制台。配合 HideWindow=true
+// （STARTF_USESHOWWINDOW + SW_HIDE）窗口不显示；关键的是 agent 再派生的孙进程
+// （bash、cmd、netstat、findstr 等工具子进程）会继承这个隐藏控制台，而不是各自
+// 再开一个看得见的窗口。
 //
-// Using CREATE_NO_WINDOW here instead would strip the console entirely,
-// which forces Windows to allocate a new visible console per grandchild
-// when the grandchild is a console-subsystem program that doesn't itself
-// pass CREATE_NO_WINDOW — the exact popup storm reported in #1521.
+// 这里不能用 CREATE_NO_WINDOW——那会把控制台整个去掉，结果凡是没有自带
+// CREATE_NO_WINDOW 的控制台子系统孙进程，Windows 都会强制给它们各自新开一个
+// 可见控制台——正是 #1521 报告的那场弹窗风暴。
 const createNewConsole = 0x00000010
 
-// createSuspended starts the child with its initial thread suspended, so it can
-// be placed in a Job Object before it executes a single instruction.
+// createSuspended 让子进程以"初始线程挂起"状态启动，从而可以在它执行任何一条
+// 指令之前放进 Job Object。
 const createSuspended = 0x00000004
 
-// hideAgentWindow configures cmd to suppress the console window on Windows
-// while still giving descendant processes a hidden console to inherit.
-// Stdio pipes set via cmd.StdoutPipe/StdinPipe keep working because
-// STARTF_USESTDHANDLES takes precedence over the new console's stdio.
+// hideAgentWindow 配置 cmd 在 Windows 上隐藏控制台窗口，同时仍给后代进程一个
+// 可继承的隐藏控制台。cmd.StdoutPipe/StdinPipe 设的 stdio 管道照常工作，因为
+// STARTF_USESTDHANDLES 优先于新控制台的 stdio。
 func hideAgentWindow(cmd *exec.Cmd) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -42,30 +51,27 @@ func hideAgentWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr.CreationFlags |= createNewConsole
 }
 
-// configureProcessGroup is a no-op on Windows: there is no Setpgid equivalent,
-// and job membership cannot be requested before the process exists. Ownership
-// is taken by startOwnedProcessTree instead, which every backend reaches
-// because it is the only way this package starts a runtime process.
+// configureProcessGroup 在 Windows 上是空操作：没有 Setpgid 的对应物，进程存在
+// 之前也无法请求加入 Job。拥有关系由 startOwnedProcessTree 承担——每个 backend
+// 都会走到它，因为它是本包启动运行时进程的唯一入口。
 func configureProcessGroup(cmd *exec.Cmd) {}
 
-// ownedProcessTree is the Windows equivalent of a Unix process group: a Job
-// Object the agent belongs to, which every process it goes on to create
-// inherits membership of.
+// ownedProcessTree 是 Unix 进程组在 Windows 上的对应物：一个 agent 所属的 Job
+// Object，它其后创建的每个进程都会继承成员身份。
 type ownedProcessTree struct {
 	job windows.Handle
 }
 
-// ownedProcessTrees is keyed by the *exec.Cmd of one launch, never by pid. A pid
-// is only unique while its process is alive, so a launch that outlived its
-// process could otherwise look up — and terminate — an unrelated task that
-// happened to inherit the number.
+// ownedProcessTrees 以一次启动的 *exec.Cmd 为键（绝不拿 pid 当键）。pid 只在
+// 进程存活期间唯一，拿"活过自己进程的一次启动"去按 pid 反查，可能查到并杀错
+// 一个恰好继承了该编号的无关任务。
 var (
 	ownedProcessTreesMu sync.Mutex
 	ownedProcessTrees   = map[*exec.Cmd]ownedProcessTree{}
 )
 
-// jobObjectBasicAccountingInformation mirrors JOBOBJECT_BASIC_ACCOUNTING_INFORMATION.
-// x/sys/windows exports the info class but not the struct.
+// jobObjectBasicAccountingInformation 镜像 JOBOBJECT_BASIC_ACCOUNTING_INFORMATION。
+// x/sys/windows 导出了该信息类编号，但没有对应的结构体。
 type jobObjectBasicAccountingInformation struct {
 	TotalUserTime             int64
 	TotalKernelTime           int64
@@ -77,26 +83,20 @@ type jobObjectBasicAccountingInformation struct {
 	TotalTerminatedProcesses  uint32
 }
 
-// startOwnedProcessTree starts cmd and takes ownership of every process it goes
-// on to create. It is the only way this package starts a runtime process;
-// TestOnlyOwnedProcessTreesAreStarted keeps a new backend from reaching for
-// cmd.Start and quietly reintroducing GH #7522.
+// startOwnedProcessTree 启动 cmd，并接管它其后创建的所有进程。它是本包启动
+// 运行时进程的唯一入口；TestOnlyOwnedProcessTreesAreStarted 守在这里，防止某个
+// 新 backend 改走 cmd.Start 而悄悄复活 GH #7522。
 //
-// The child is created suspended and assigned to a Job Object before it runs.
-// That ordering is the whole point: Windows grants membership only to processes
-// created *after* the assignment, and never retroactively. Assigning after a
-// plain Start leaves a window in which the direct child — usually a cmd.exe
-// wrapping a .cmd shim — has already spawned the real agent outside the job.
-// That is worse than owning nothing, because the job would then hold only a
-// wrapper that exits immediately: accounting would report the tree empty while
-// the escaped app-server is still running, and cleanup would be reported as
-// confirmed when it is not.
+// 子进程以挂起状态创建，先塞进 Job Object、再开始运行。这个顺序正是全部要点：
+// Windows 只把"分配之后才创建"的进程计入成员，绝不追溯。用普通 Start 之后再分配，
+// 会留出时间窗让直接子进程——通常是包着 .cmd shim 的 cmd.exe——在 job 之外就把
+// 真正的 agent 拉起来。那比"什么都不拥有"更糟：job 里只会有一个立刻退出的包装
+// 进程，记账系统会以为树是空的、而实际跑着的 app-server 还活着，清理也被误报为
+// 已确认。
 //
-// The child is never left suspended. If ownership cannot be taken it is resumed
-// anyway and runs unowned, exactly as it did before Job Objects, with the reason
-// logged. Only a failure to resume is unrecoverable: that child is killed and
-// the error returned, so the caller fails the launch instead of waiting forever
-// on a process that will never run.
+// 子进程绝不会一直挂着。拿不到拥有权就照样恢复运行、以无主状态跑（与引入 Job
+// Object 之前一样），并把原因写进日志。只有"恢复运行失败"不可挽救：把该子进程
+// 杀掉并返回错误，让调用方判启动失败，而不是对着一个永远不会跑的进程干等。
 func startOwnedProcessTree(cmd *exec.Cmd, logger *slog.Logger) error {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -108,21 +108,18 @@ func startOwnedProcessTree(cmd *exec.Cmd, logger *slog.Logger) error {
 	}
 
 	if err := ownProcessTree(cmd); err != nil && logger != nil {
-		// Deliberately fail open. Failing the launch instead would take a host
-		// down entirely rather than degrade it, and the realistic causes are
-		// environmental — an outer job that forbids assignment, or a hardened
-		// policy denying PROCESS_SET_QUOTA — not per-task. The consequence is
-		// named in the message because it is the only signal an operator gets
-		// that cancellation on this host is back to killing the leader alone.
+		// 刻意"失败即放行"。若因此判启动失败，等于让整台宿主陪葬而不是降级；
+		// 而且现实中的成因多半是环境性的——外层 job 禁止再分配、或安全策略拒绝
+		// PROCESS_SET_QUOTA——不是某个任务的问题。后果写进消息里，因为这是运维
+		// 能收到的唯一信号：本机上的取消又退化回"只杀直接子进程"了。
 		logger.Warn("could not take ownership of the agent process tree; cancelling or timing out this "+
 			"process will kill only the direct child and can leave its descendants running",
 			"error", err, "pid", cmd.Process.Pid, "executable", cmd.Path)
 	}
 
 	if err := resumeProcess(cmd.Process.Pid); err != nil {
-		// The child cannot run, so nothing downstream can succeed. Drop
-		// ownership first: closing the job terminates the suspended child, and
-		// Kill covers the case where ownership was never taken.
+		// 子进程跑不起来，后面干什么都不会成功。先丢拥有权：关掉 job 会终止那个
+		// 挂起的子进程；Kill 覆盖"从未拿到拥有权"的情况。
 		releaseProcessGroup(cmd)
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
@@ -131,17 +128,15 @@ func startOwnedProcessTree(cmd *exec.Cmd, logger *slog.Logger) error {
 	return nil
 }
 
-// ownProcessTree creates the Job Object and assigns the (still suspended) child
-// to it. The process handle is only needed for the assignment and is closed
-// straight after: termination and accounting both go through the job.
+// ownProcessTree 创建 Job Object 并把（仍挂起的）子进程分配进去。进程句柄只在
+// 分配时用得到，随即关闭：终止与记账都走 job。
 func ownProcessTree(cmd *exec.Cmd) error {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return fmt.Errorf("create job object: %w", err)
 	}
-	// KILL_ON_JOB_CLOSE makes the tree die with the last handle, so a daemon
-	// crash cannot strand agent descendants. It also means releaseProcessGroup
-	// must only run once the tree is finished with.
+	// KILL_ON_JOB_CLOSE 让整棵树随最后一个句柄一起死——daemon 崩溃不会抛下 agent
+	// 后代。代价是 releaseProcessGroup 必须等树用完才能跑。
 	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 	if _, err := windows.SetInformationJobObject(
@@ -174,9 +169,8 @@ func ownProcessTree(cmd *exec.Cmd) error {
 	return nil
 }
 
-// resumeProcess releases the initial thread of a CREATE_SUSPENDED child. A
-// freshly created process has exactly one thread; the snapshot is filtered by
-// owning pid so a concurrent enumeration cannot resume somebody else's.
+// resumeProcess 释放 CREATE_SUSPENDED 子进程的初始线程。新建进程恰好只有一个
+// 线程；快照按属主 pid 过滤，避免并发枚举时把别人的线程也恢复掉。
 func resumeProcess(pid int) error {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
 	if err != nil {
@@ -208,10 +202,9 @@ func resumeProcess(pid int) error {
 	return nil
 }
 
-// releaseProcessGroup drops ownership of a finished tree. Closing the job handle
-// is what kills anything still inside it, so this must run only after the caller
-// has reaped the process — never on a path that could still be serving a live
-// agent.
+// releaseProcessGroup 放弃一棵已结束进程树的拥有权。关掉 job 句柄就是杀掉仍在
+// 里面的任何进程，所以它必须只在调用方已收尸之后执行——绝不能走在可能仍在服务
+// 存活 agent 的路径上。
 func releaseProcessGroup(cmd *exec.Cmd) {
 	ownedProcessTreesMu.Lock()
 	tree, ok := ownedProcessTrees[cmd]
@@ -229,6 +222,7 @@ func lookupProcessTree(cmd *exec.Cmd) (ownedProcessTree, bool) {
 	return tree, ok
 }
 
+// activeProcesses 查询 job 里当前还活着的进程数（记账信息）。
 func (t ownedProcessTree) activeProcesses() (uint32, error) {
 	var info jobObjectBasicAccountingInformation
 	if err := windows.QueryInformationJobObject(
@@ -243,17 +237,14 @@ func (t ownedProcessTree) activeProcesses() (uint32, error) {
 	return info.ActiveProcesses, nil
 }
 
-// codexInitializeRetrySupported reports whether descendant termination can be
-// positively confirmed. Owning the tree in a Job Object is what makes that
-// possible; when ownership was not taken, waitProcessGroupGone returns false and
-// the caller's cleanup_confirmed gate suppresses the retry anyway.
+// codexInitializeRetrySupported 报告"后代进程是否已被终止"能否被确证。把树拥有在
+// Job Object 里就能确证；没拿到拥有权时 waitProcessGroupGone 返回 false，调用方的
+// cleanup_confirmed 门也会把重试按掉。
 func codexInitializeRetrySupported() bool { return true }
 
-// signalProcessGroup terminates the whole owned process tree. Windows has no
-// SIGTERM/SIGKILL distinction and no process-group signalling, so the signal is
-// ignored and the Job Object is terminated; the caller's grace window still
-// applies before this is invoked with SIGKILL. Without an owned tree this falls
-// back to killing the direct child alone.
+// signalProcessGroup 终止整棵被拥有的进程树。Windows 没有 SIGTERM/SIGKILL 之分、
+// 也没有进程组信号，所以忽略信号参数、改为终止 Job Object；调用方的宽限窗口仍然
+// 在（直到带 SIGKILL 调它之前都有效）。没有拥有树时退化为只杀直接子进程。
 func signalProcessGroup(cmd *exec.Cmd, _ syscall.Signal) {
 	if cmd == nil || cmd.Process == nil {
 		return
@@ -266,10 +257,9 @@ func signalProcessGroup(cmd *exec.Cmd, _ syscall.Signal) {
 	_ = cmd.Process.Kill()
 }
 
-// waitProcessGroupGone reports whether every process in the owned tree is gone,
-// polling the job's accounting information until the timeout. Without an owned
-// tree there is nothing to observe, so it reports false — callers treat that as
-// "cleanup could not be confirmed" rather than as success.
+// waitProcessGroupGone 报告被拥有的树是否已全部消失——轮询 job 的记账信息直到
+// 超时。没有拥有树就没什么可观察的，返回 false——调用方把它当"清理未能确证"，
+// 而不是成功。
 func waitProcessGroupGone(cmd *exec.Cmd, timeout time.Duration) bool {
 	if cmd == nil || cmd.Process == nil {
 		return false

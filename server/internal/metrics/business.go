@@ -1,3 +1,7 @@
+// 本文件承载「PR2 业务指标」的主干：agent 任务从入队到终态的生命周期计数与耗时、
+// LLM token/成本、runtime 清扫器（sweeper）/GC、entitlement（订阅权益）判定等。
+// 这是整个 multica_* 指标里维度最多的一组；指标定义与登记表（标签集）分离，
+// 后者在 labels.go。PR3 那批漏斗/商业事件在 business_events.go。
 package metrics
 
 import (
@@ -8,12 +12,19 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// taskDurationBuckets 是任务队列等待/运行/总耗时的直方图桶（秒），覆盖亚秒级到 2 小时。
 var taskDurationBuckets = []float64{1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1200, 3600, 7200}
 
+// chatClaimResumeQueryDurationBuckets 会话恢复查询的耗时桶（秒），毫秒级到秒级。
+// 这类查询（回读最近会话/历史）预期很快，桶取到 5s 是为了观察慢查询的尾巴。
 var chatClaimResumeQueryDurationBuckets = []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5}
 
+// runtimeSweepStageDurationBuckets runtime 维护清扫器各阶段的耗时桶（秒），
+// 单阶段预期在毫秒级，最长放到 60s 覆盖异常慢扫。
 var runtimeSweepStageDurationBuckets = []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15, 30, 60}
 
+// Runtime 清扫器把每次清扫拆成一系列有固定名字的阶段，分别上报耗时/候选行数/变更行数；
+// 下面是合法的阶段名常量（配合 normalizeRuntimeSweepStage 使用）：
 const (
 	RuntimeSweepStageLiveness                 = "runtime_liveness"
 	RuntimeSweepStageOfflineTasks             = "offline_runtime_tasks"
@@ -24,17 +35,25 @@ const (
 	RuntimeSweepStageDeferredChatFinalization = "deferred_chat_finalize"
 	RuntimeSweepStageGC                       = "runtime_gc"
 
+	// RuntimeGC 跳过候选时的原因常量（配合 normalizeRuntimeGCSkipReason）：
 	RuntimeGCSkipEligibilityChanged = "eligibility_changed"
 	RuntimeGCSkipNonTerminalTask    = "non_terminal_task"
 	RuntimeGCSkipWorkspaceMismatch  = "workspace_mismatch"
 )
 
+// activeTaskLabels 记录「还在执行中」的任务在 in_progress 指标上的标签。
+// 用于在任务真正结束时精确地给对应的 (source, runtime_mode) 组合做 -1。
 type activeTaskLabels struct {
 	source      string
 	runtimeMode string
 }
 
+// BusinessMetrics 是业务指标（PR2 + PR3 两批）的总句柄。它内部装着若干 CounterVec /
+// HistogramVec / GaugeVec，通过 Collectors() 一次注册；业务代码拿实例后调用下面的
+// Record* / Observe* 方法记数。绝大多数方法都容忍 nil 接收者，方便调用方在
+// 「指标未初始化」时安全跳过。
 type BusinessMetrics struct {
+	// --- agent 任务生命周期（agent_task 子系统） ---
 	taskEnqueued     *prometheus.CounterVec
 	taskDispatched   *prometheus.CounterVec
 	taskStarted      *prometheus.CounterVec
@@ -46,11 +65,13 @@ type BusinessMetrics struct {
 	taskInProgress   *prometheus.GaugeVec
 	taskIterations   *prometheus.HistogramVec
 
+	// --- LLM token 与成本（llm 子系统） ---
 	llmTokens         *prometheus.CounterVec
 	llmCostUSD        *prometheus.CounterVec
 	llmUnpricedTokens *prometheus.CounterVec
 	llmRequests       *prometheus.CounterVec
 
+	// --- 任务调度异常 / 聊天接管 / runtime 维护 ---
 	taskQueuedExpired              *prometheus.CounterVec
 	taskLeaseExpired               *prometheus.CounterVec
 	chatClaimSessionFallbackNeeded prometheus.Counter
@@ -62,28 +83,35 @@ type BusinessMetrics struct {
 	runtimeGCDeleted               prometheus.Counter
 	runtimeGCFailed                prometheus.Counter
 	runtimeGCSkipped               *prometheus.CounterVec
-	entitlementConfigError         prometheus.Counter
-	entitlementCache               *prometheus.CounterVec
-	entitlementRefresh             *prometheus.CounterVec
-	entitlementRefreshDuration     *prometheus.HistogramVec
-	entitlementDecision            *prometheus.CounterVec
-	entitlementVersionRegression   prometheus.Counter
-	autopilotQuotaDecision         *prometheus.CounterVec
 
-	// agentRuntimeLookup counts single-row agent_runtime reads by product
-	// source. Every source shares one SQL fingerprint, so this is the only
-	// place the split between daemon heartbeats, browser polling, and
-	// readiness gates is observable. See labels.go for the closed enum.
+	// --- entitlement（订阅权益）与 autopilot 配额 ---
+	entitlementConfigError       prometheus.Counter
+	entitlementCache             *prometheus.CounterVec
+	entitlementRefresh           *prometheus.CounterVec
+	entitlementRefreshDuration   *prometheus.HistogramVec
+	entitlementDecision          *prometheus.CounterVec
+	entitlementVersionRegression prometheus.Counter
+	autopilotQuotaDecision       *prometheus.CounterVec
+
+	// agentRuntimeLookup 统计按「产品来源」拆分的 agent_runtime 单行查询。所有来源共用
+	// 同一条 SQL 指纹，所以只有这里能区分 daemon 心跳、浏览器轮询、就绪门禁各占多少。
+	// 来源/结果的封闭枚举见 labels.go。
 	agentRuntimeLookup *prometheus.CounterVec
 
+	// activeMu 保护 activeTasks；activeTasks 是「已分发但未终态」的任务表，
+	// 用来让 in_progress Gauge 在任务结束时精确减掉对应标签的计数（而非笼统 -1）。
 	activeMu    sync.Mutex
 	activeTasks map[string]activeTaskLabels
 
-	// PR3 funnel / community / commercial counters. See business_events.go
-	// for the field-level docs and labels.
+	// PR3 漏斗/社区/商业计数器。字段级说明与标签见 business_events.go。
 	events *businessEventMetrics
 }
 
+// NewBusinessMetrics 创建业务指标全集（PR2 + PR3）。流程：
+//  1. 先跑标签自检 validateBusinessMetricLabels，把「指标挂了高基数标签」拦在启动时；
+//  2. 逐个构造计数器/直方图/Gauge，标签取自 labels.go 的登记表；
+//  3. 预热常见系列：失败原因全网格、runtime GC 跳过原因、agent_runtime 查询的
+//     「来源 × 结果」全网格，让没触发过的维度在图表上是 0 而不是查无此序列。
 func NewBusinessMetrics() *BusinessMetrics {
 	validateBusinessMetricLabels()
 	m := &BusinessMetrics{
@@ -282,10 +310,9 @@ func NewBusinessMetrics() *BusinessMetrics {
 	for _, reason := range []string{RuntimeGCSkipEligibilityChanged, RuntimeGCSkipNonTerminalTask, RuntimeGCSkipWorkspaceMismatch} {
 		m.runtimeGCSkipped.WithLabelValues(reason).Add(0)
 	}
-	// Prewarm the full source x result grid (45 series) so a source that has
-	// not fired since this process started reads as zero rather than as a
-	// missing series — rate() over an absent series returns nothing, which on
-	// a dashboard is indistinguishable from "we never instrumented that path".
+	// 预热「来源 × 结果」全网格（45 个序列），让本进程启动后尚未触发过的来源显示为 0
+	// 而不是缺一条序列——对不存在的序列做 rate() 什么也不返回，这在看板上与
+	// 「那条路径从来没埋点」无法区分。
 	for _, source := range AllRuntimeLookupSources() {
 		for _, result := range AllRuntimeLookupResults() {
 			m.agentRuntimeLookup.WithLabelValues(source, result).Add(0)
@@ -294,6 +321,7 @@ func NewBusinessMetrics() *BusinessMetrics {
 	return m
 }
 
+// Collectors 返回 PR2 主指标与 PR3 事件指标合并后的完整采集器列表，供一次性注册。
 func (m *BusinessMetrics) Collectors() []prometheus.Collector {
 	return append([]prometheus.Collector{
 		m.taskEnqueued,
@@ -332,18 +360,21 @@ func (m *BusinessMetrics) Collectors() []prometheus.Collector {
 	}, m.events.collectors()...)
 }
 
+// RecordEntitlementConfigError 记一次因 Multica Cloud URL 配置非法导致的启动失败。
 func (m *BusinessMetrics) RecordEntitlementConfigError() {
 	if m != nil {
 		m.entitlementConfigError.Inc()
 	}
 }
 
+// RecordEntitlementCache 按结果（hit/miss/stale…）记一次权益缓存访问结果。
 func (m *BusinessMetrics) RecordEntitlementCache(outcome string) {
 	if m != nil {
 		m.entitlementCache.WithLabelValues(outcome).Inc()
 	}
 }
 
+// RecordEntitlementRefresh 按结果记一次权益刷新：计数并记录本次刷新耗时 seconds。
 func (m *BusinessMetrics) RecordEntitlementRefresh(outcome string, seconds float64) {
 	if m == nil {
 		return
@@ -352,18 +383,19 @@ func (m *BusinessMetrics) RecordEntitlementRefresh(outcome string, seconds float
 	m.entitlementRefreshDuration.WithLabelValues(outcome).Observe(seconds)
 }
 
+// RecordEntitlementDecision 记一次权益判定，标签为闸门(gate)/动作(action)/原因(reason)。
+// 调用方需保证三个标签值都来自受控枚举，避免引入高基数。
 func (m *BusinessMetrics) RecordEntitlementDecision(gate, action, reason string) {
 	if m != nil {
 		m.entitlementDecision.WithLabelValues(gate, action, reason).Inc()
 	}
 }
 
-// RecordAgentRuntimeLookup counts one single-row agent_runtime read.
+// RecordAgentRuntimeLookup 记一次 agent_runtime 单行查询。
 //
-// Call it from service.RuntimeLookup and nowhere else: the point of the metric
-// is that every read is attributed, and a second entry point is how a call site
-// ends up counted twice or not at all. Both labels are normalized here, so a
-// typo at a call site degrades to "other"/"error" instead of minting a series.
+// 只在 service.RuntimeLookup 里调用、别无分号：该指标的意义就在于每一次读取都被归因，
+// 出现第二个入口点，某个调用点就会被数两次或漏数。两个标签都在这里归一化，调用点拼错
+// 只会退化成 "other"/"error"，不会凭空造出新的指标序列。
 func (m *BusinessMetrics) RecordAgentRuntimeLookup(source, result string) {
 	if m == nil {
 		return
@@ -374,12 +406,16 @@ func (m *BusinessMetrics) RecordAgentRuntimeLookup(source, result string) {
 	).Inc()
 }
 
+// RecordEntitlementVersionRegression 记一次被拒绝的权益订阅版本回退。
 func (m *BusinessMetrics) RecordEntitlementVersionRegression() {
 	if m != nil {
 		m.entitlementVersionRegression.Inc()
 	}
 }
 
+// RecordAutopilotQuotaDecision 记一次 autopilot 配额准入结果。source 这里接受
+// schedule/webhook/manual/api 四类，其余一律归一化为 "other"（配额判定时用户 ID 等
+// 高基数信息绝不能进标签）。
 func (m *BusinessMetrics) RecordAutopilotQuotaDecision(action, source, result string) {
 	if m == nil {
 		return
@@ -392,6 +428,7 @@ func (m *BusinessMetrics) RecordAutopilotQuotaDecision(action, source, result st
 	m.autopilotQuotaDecision.WithLabelValues(action, source, result).Inc()
 }
 
+// RecordRuntimeGCDeleted 记一次 runtime 垃圾回收安全删除了一个过期的离线 runtime。
 func (m *BusinessMetrics) RecordRuntimeGCDeleted() {
 	if m == nil {
 		return
@@ -399,6 +436,7 @@ func (m *BusinessMetrics) RecordRuntimeGCDeleted() {
 	m.runtimeGCDeleted.Inc()
 }
 
+// RecordRuntimeGCFailed 记一次失败的 runtime 垃圾回收操作。
 func (m *BusinessMetrics) RecordRuntimeGCFailed() {
 	if m == nil {
 		return
@@ -406,6 +444,8 @@ func (m *BusinessMetrics) RecordRuntimeGCFailed() {
 	m.runtimeGCFailed.Inc()
 }
 
+// RecordRuntimeGCSkipped 按原因记一次被安全跳过的 GC 候选。原因经
+// normalizeRuntimeGCSkipReason 收进白名单。
 func (m *BusinessMetrics) RecordRuntimeGCSkipped(reason string) {
 	if m == nil {
 		return
@@ -413,6 +453,7 @@ func (m *BusinessMetrics) RecordRuntimeGCSkipped(reason string) {
 	m.runtimeGCSkipped.WithLabelValues(normalizeRuntimeGCSkipReason(reason)).Inc()
 }
 
+// normalizeRuntimeGCSkipReason 把 GC 跳过原因收进白名单，不认识归 "unknown"。
 func normalizeRuntimeGCSkipReason(reason string) string {
 	switch reason {
 	case RuntimeGCSkipEligibilityChanged, RuntimeGCSkipNonTerminalTask, RuntimeGCSkipWorkspaceMismatch:
@@ -422,15 +463,15 @@ func normalizeRuntimeGCSkipReason(reason string) string {
 	}
 }
 
-// ObserveRuntimeSweepStage records one bounded-cardinality maintenance stage.
-// candidates is the number of rows returned to or examined by the application,
-// not PostgreSQL executor rows; changed is the subset whose persisted
-// maintenance state changed.
+// ObserveRuntimeSweepStage 记录一次有界基数的维护清扫阶段：耗时 + 候选行数 + 变更行数。
+// candidates 是「交回给应用或应用检查过的行数」，不是 PostgreSQL 执行器处理的行数；
+// changed 是其中「持久化维护状态真正发生变化」的行数。两者语义不同，分开上报。
 func (m *BusinessMetrics) ObserveRuntimeSweepStage(stage string, duration time.Duration, candidates, changed int) {
 	if m == nil {
 		return
 	}
 	stage = normalizeRuntimeSweepStage(stage)
+	// 防御负值：行数不可能为负，负数说明调用方口径有误，按 0 处理避免指标出现负数。
 	if candidates < 0 {
 		candidates = 0
 	}
@@ -442,6 +483,7 @@ func (m *BusinessMetrics) ObserveRuntimeSweepStage(stage string, duration time.D
 	m.runtimeSweepRowsChanged.WithLabelValues(stage).Add(float64(changed))
 }
 
+// normalizeRuntimeSweepStage 把清扫阶段名收进白名单，不认识归 "other"。
 func normalizeRuntimeSweepStage(stage string) string {
 	switch stage {
 	case RuntimeSweepStageLiveness,
@@ -458,6 +500,7 @@ func normalizeRuntimeSweepStage(stage string) string {
 	}
 }
 
+// RecordTaskEnqueued 记一个任务入队。source/runtimeMode 就地归一化。
 func (m *BusinessMetrics) RecordTaskEnqueued(source, runtimeMode string) {
 	if m == nil {
 		return
@@ -465,6 +508,8 @@ func (m *BusinessMetrics) RecordTaskEnqueued(source, runtimeMode string) {
 	m.taskEnqueued.WithLabelValues(NormalizeTaskSource(source), NormalizeRuntimeMode(runtimeMode)).Inc()
 }
 
+// RecordTaskDispatched 记一个任务分发到 runtime：计数、上报排队等待耗时（非负时），
+// 并把任务标记为 in-progress（供终态时精确扣减）。
 func (m *BusinessMetrics) RecordTaskDispatched(taskID, source, runtimeMode string, queueWaitSeconds float64) {
 	if m == nil {
 		return
@@ -478,6 +523,7 @@ func (m *BusinessMetrics) RecordTaskDispatched(taskID, source, runtimeMode strin
 	m.markTaskInProgress(taskID, source, runtimeMode)
 }
 
+// RecordTaskStarted 记一个任务进入 running 状态（按 provider 拆）。
 func (m *BusinessMetrics) RecordTaskStarted(source, runtimeMode, provider string) {
 	if m == nil {
 		return
@@ -489,6 +535,8 @@ func (m *BusinessMetrics) RecordTaskStarted(source, runtimeMode, provider string
 	).Inc()
 }
 
+// RecordTaskTerminal 记一个任务到达终态：终态计数 + 运行/总耗时（非负时）+ 重试轮数，
+// 并从 in-progress 表里移除该任务。
 func (m *BusinessMetrics) RecordTaskTerminal(taskID, source, runtimeMode, terminalStatus string, runSeconds, totalSeconds float64, attempt int32) {
 	if m == nil {
 		return
@@ -510,6 +558,7 @@ func (m *BusinessMetrics) RecordTaskTerminal(taskID, source, runtimeMode, termin
 	m.clearTaskInProgress(taskID)
 }
 
+// RecordTaskFailed 记一个失败的任务（按规范化的失败原因拆）。
 func (m *BusinessMetrics) RecordTaskFailed(source, runtimeMode, failureReason string) {
 	if m == nil {
 		return
@@ -521,6 +570,7 @@ func (m *BusinessMetrics) RecordTaskFailed(source, runtimeMode, failureReason st
 	).Inc()
 }
 
+// RecordTaskQueuedExpired 记一个排队任务被调度器判过期。
 func (m *BusinessMetrics) RecordTaskQueuedExpired(source, runtimeMode string) {
 	if m == nil {
 		return
@@ -528,6 +578,7 @@ func (m *BusinessMetrics) RecordTaskQueuedExpired(source, runtimeMode string) {
 	m.taskQueuedExpired.WithLabelValues(NormalizeTaskSource(source), NormalizeRuntimeMode(runtimeMode)).Inc()
 }
 
+// RecordTaskLeaseExpired 记一个已分发/运行中任务的租约被调度器判过期。
 func (m *BusinessMetrics) RecordTaskLeaseExpired(source string) {
 	if m == nil {
 		return
@@ -535,8 +586,8 @@ func (m *BusinessMetrics) RecordTaskLeaseExpired(source string) {
 	m.taskLeaseExpired.WithLabelValues(NormalizeTaskSource(source)).Inc()
 }
 
-// RecordChatClaimSessionFallbackNeeded counts a claim whose chat-session
-// pointer lacked either the provider session or the workdir.
+// RecordChatClaimSessionFallbackNeeded 记一次聊天接管（claim）：会话指针里缺
+// provider 会话或工作目录，需要走回退查询。
 func (m *BusinessMetrics) RecordChatClaimSessionFallbackNeeded() {
 	if m == nil {
 		return
@@ -544,18 +595,22 @@ func (m *BusinessMetrics) RecordChatClaimSessionFallbackNeeded() {
 	m.chatClaimSessionFallbackNeeded.Inc()
 }
 
+// RecordChatClaimSessionFallbackHit 记回退查询命中（找到可用会话）。
 func (m *BusinessMetrics) RecordChatClaimSessionFallbackHit() {
 	m.recordChatClaimSessionFallbackResult("hit")
 }
 
+// RecordChatClaimSessionFallbackMiss 记回退查询未命中（确实找不到可用会话）。
 func (m *BusinessMetrics) RecordChatClaimSessionFallbackMiss() {
 	m.recordChatClaimSessionFallbackResult("miss")
 }
 
+// RecordChatClaimSessionFallbackError 记回退查询出错。
 func (m *BusinessMetrics) RecordChatClaimSessionFallbackError() {
 	m.recordChatClaimSessionFallbackResult("error")
 }
 
+// recordChatClaimSessionFallbackResult 回退查询结果计数的共用入口。
 func (m *BusinessMetrics) recordChatClaimSessionFallbackResult(result string) {
 	if m == nil {
 		return
@@ -563,6 +618,8 @@ func (m *BusinessMetrics) recordChatClaimSessionFallbackResult(result string) {
 	m.chatClaimSessionFallbackResult.WithLabelValues(result).Inc()
 }
 
+// observeChatClaimResumeQuery 记录一次「恢复历史」查询的耗时；耗时非负才计，
+// 查询名 query 是固定枚举字符串。
 func (m *BusinessMetrics) observeChatClaimResumeQuery(query string, seconds float64) {
 	if m == nil || seconds < 0 {
 		return
@@ -570,18 +627,22 @@ func (m *BusinessMetrics) observeChatClaimResumeQuery(query string, seconds floa
 	m.chatClaimResumeQueryDuration.WithLabelValues(query).Observe(seconds)
 }
 
+// ObserveChatClaimLastSessionQuery 记录「读最近一次会话」回退查询的耗时。
 func (m *BusinessMetrics) ObserveChatClaimLastSessionQuery(seconds float64) {
 	m.observeChatClaimResumeQuery("last_session", seconds)
 }
 
+// ObserveChatClaimRolloutMissingQuery 记录「会话缺失时按回滚(rollout)查找」回退查询的耗时。
 func (m *BusinessMetrics) ObserveChatClaimRolloutMissingQuery(seconds float64) {
 	m.observeChatClaimResumeQuery("rollout_missing", seconds)
 }
 
-// costUSDTicks is the provider's own price for this usage in 1e-10 USD, or 0
-// when it reported none. When present it wins over the rate table: the table
-// cannot express request-level rules such as xAI's 2x surcharge above a 200K
-// prompt, so for those providers the local estimate is structurally low.
+// RecordLLMUsage 记录一轮 LLM 用量与成本。
+//
+// costUSDTicks 是该 provider 对本次用量自报的价格（单位 1e-10 美元），没报时为 0。
+// 只要报了，就以此为准、压过价目表：价目表表达不了请求级规则（例如 xAI 对超过 20 万
+// token 的 prompt 加收 2 倍），对这些 provider 本地估算在结构上偏低。
+// 价目表命中走 recordPricedTokens 分 token 类型计；没命中走 recordUnpricedTokens。
 func (m *BusinessMetrics) RecordLLMUsage(source, runtimeMode, rawProvider, modelAlias string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUSDTicks int64) {
 	if m == nil {
 		return
@@ -596,13 +657,10 @@ func (m *BusinessMetrics) RecordLLMUsage(source, runtimeMode, rawProvider, model
 		m.recordUnpricedTokens(provider, alias, "output", outputTokens)
 		m.recordUnpricedTokens(provider, alias, "cache_read", cacheReadTokens)
 		m.recordUnpricedTokens(provider, alias, "cache_write", cacheWriteTokens)
-		// Having no rate row does not mean having no cost: the provider may
-		// have priced the turn itself (`grok-composer-*` is in the Grok Build
-		// catalog but absent from xAI's price sheet). Dropping the charge here
-		// would under-report real spend purely for lack of a rate we no longer
-		// need. Without rates there is nothing to split the total by, so it
-		// lands whole in the `input` bucket — the same fallback
-		// distributeAuthoritativeCost uses when it has no shape to scale.
+		// 价目表缺行不代表没有成本：provider 可能自己给这一轮定了价（`grok-composer-*`
+		// 在 Grok Build 目录里，但 xAI 价格表上没有）。只因缺一个其实已不再需要的费率就
+		// 丢掉这笔费用，会低估真实开销。没有费率就没有可拆分总额的依据，所以整笔落到
+		// `input` 桶——这与 distributeAuthoritativeCost 在没有可缩放形状时用的回退一致。
 		if costUSDTicks > 0 {
 			m.llmCostUSD.
 				WithLabelValues(provider, alias, NormalizeTokenType("input"), runtimeMode, source).
@@ -629,17 +687,13 @@ func (m *BusinessMetrics) RecordLLMUsage(source, runtimeMode, rawProvider, model
 	m.llmRequests.WithLabelValues(price.Provider, price.Model, runtimeMode).Inc()
 }
 
-// distributeAuthoritativeCost rescales the per-token-type estimates so they
-// sum to the provider's actual charge. `llm_cost_usd` is broken down by
-// token_type and the provider reports one number for the whole turn, so the
-// split has to come from somewhere; the rate table's own proportions are the
-// best available guess and keep the total exact. Only the total is
-// authoritative — the per-type split remains an estimate, which is why this
-// scales rather than inventing a new label value.
+// distributeAuthoritativeCost 把按 token 类型拆的估算成本按比例缩放，使合计等于
+// provider 的实际扣费。llm_cost_usd 是按 token_type 拆的，而 provider 给的是整轮
+// 一个总价，拆分比例只能自己定——价目表自身的比例是最好的可用猜测，且保证总额精确。
+// 只有总额是权威的，按类型拆出的份额仍是估算，所以这里只做缩放、不发明新的标签值。
 //
-// A zero estimate (unknown rates, or a turn recorded with no tokens) has no
-// proportions to scale, so the charge lands on `input` to avoid dropping real
-// spend from the total.
+// 当估算总额为零（无费率，或这轮根本没记 token）时没有比例可缩放，整笔费用落到
+// `input` 上，避免真实开销从总额里蒸发。
 func distributeAuthoritativeCost(actual float64, estimated [4]float64) [4]float64 {
 	total := estimated[0] + estimated[1] + estimated[2] + estimated[3]
 	if total <= 0 {
@@ -652,6 +706,8 @@ func distributeAuthoritativeCost(actual float64, estimated [4]float64) [4]float6
 	return estimated
 }
 
+// recordPricedTokens 记有单价的一类 token：只在该类型 token 数 > 0 才产生样本，
+// 成本 > 0 时一并记入成本计数。
 func (m *BusinessMetrics) recordPricedTokens(provider, model, tokenType, runtimeMode, source string, tokens int64, cost float64) {
 	if tokens <= 0 {
 		return
@@ -663,6 +719,8 @@ func (m *BusinessMetrics) recordPricedTokens(provider, model, tokenType, runtime
 	}
 }
 
+// recordUnpricedTokens 记「价目表外」模型别名的一类 token（只进 unpriced 计数，不产生
+// 成本——没有费率就没有成本可估）。tokens 非正不产生样本。
 func (m *BusinessMetrics) recordUnpricedTokens(provider, modelAlias, tokenType string, tokens int64) {
 	if tokens <= 0 {
 		return
@@ -670,6 +728,9 @@ func (m *BusinessMetrics) recordUnpricedTokens(provider, modelAlias, tokenType s
 	m.llmUnpricedTokens.WithLabelValues(provider, modelAlias, NormalizeTokenType(tokenType)).Add(float64(tokens))
 }
 
+// markTaskInProgress 把任务登记为「进行中」。taskID 为空时（调用方没有任务 ID）无法
+// 精确去重/移除，就直接对 in_progress 加一；有 ID 时先查 activeTasks——已经登记过的
+// 任务不重复计数（防止同任务重复入队分发把 Gauge 加过头）。
 func (m *BusinessMetrics) markTaskInProgress(taskID, source, runtimeMode string) {
 	if taskID == "" {
 		m.taskInProgress.WithLabelValues(source, runtimeMode).Inc()
@@ -684,6 +745,9 @@ func (m *BusinessMetrics) markTaskInProgress(taskID, source, runtimeMode string)
 	m.taskInProgress.WithLabelValues(source, runtimeMode).Inc()
 }
 
+// clearTaskInProgress 任务到终态时把它从 activeTasks 移除，并对当初登记时的
+// (source, runtimeMode) 标签组合做 -1，保证 Gauge 与真实在途数一致。
+// 找不到登记（可能因空 ID 从未登记、或重复终态上报）就静默跳过。
 func (m *BusinessMetrics) clearTaskInProgress(taskID string) {
 	if taskID == "" {
 		return
@@ -699,6 +763,8 @@ func (m *BusinessMetrics) clearTaskInProgress(taskID string) {
 	}
 }
 
+// prewarmFailureReasons 预热 taskFailed 的「来源 × 运行模式 × 全部失败原因」网格，
+// 使未发生过的失败组合显示为可见的 0（避免图表上把「没有失败」误读成「没埋点」）。
 func (m *BusinessMetrics) prewarmFailureReasons() {
 	for _, source := range []string{"issue", "chat", "autopilot", "autopilot_issue", "quick_create", "other"} {
 		for _, runtimeMode := range []string{"local", "cloud", "unknown"} {

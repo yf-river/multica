@@ -1,3 +1,8 @@
+// Package handler 是整个 HTTP API 的处理器集合。
+//
+// 本文件（life_defaults.go）负责在用户首次配置 companion 时初始化一组
+// "人生"默认数据：初始身份版本（人格底色/关系契约/成长画像/表达画像）与
+// 默认开启的主动关怀策略。默认人格文案即产品对"主搭子"关系的设定。
 package handler
 
 import (
@@ -11,10 +16,15 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// ensureCompanionLifeDefaults 是给外部（如注册流程）用的入口，
+// 委托给带查询器参数的实现。
 func (h *Handler) ensureCompanionLifeDefaults(ctx context.Context, scope lifeRequestScope) error {
 	return ensureCompanionLifeDefaultsWithQueries(ctx, h.Queries, scope)
 }
 
+// ensureCompanionLifeDefaultsWithQueries 用给定查询器初始化 companion 默认：
+// 无活动身份版本则创建初始版（带内置的人格/关系契约等文案并立即确认）；
+// 然后把 companion 的当前身份指向它，再 upsert 一个默认开启的主动关怀策略。
 func ensureCompanionLifeDefaultsWithQueries(ctx context.Context, q *db.Queries, scope lifeRequestScope) error {
 	identity, err := q.GetActiveLifeIdentity(ctx, db.GetActiveLifeIdentityParams{
 		WorkspaceID: scope.workspaceID, UserID: scope.userID,
@@ -61,6 +71,8 @@ func ensureCompanionLifeDefaultsWithQueries(ctx context.Context, q *db.Queries, 
 	return err
 }
 
+// mustLifeJSON 把值序列化成 JSON；这里都是编译期写死的默认文案，
+// 不可能序列化失败，故失败直接 panic。
 func mustLifeJSON(value any) []byte {
 	raw, err := json.Marshal(value)
 	if err != nil {

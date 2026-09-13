@@ -1,23 +1,33 @@
-// Color math behind the shared color picker (see color-picker.tsx).
+// 通用颜色选择器背后的颜色数学（见 color-picker.tsx）。
 //
-// Values travel as `#rrggbb` hex strings (what the API stores); the picker
-// edits in HSV because saturation/value map directly onto its 2D area.
+// 值以 `#rrggbb` hex 字符串传输（API 存储的格式）；选择器内部用 HSV 编辑，
+// 因为饱和度/明度正好对应它的二维区域。
 
+/** HSV 颜色模型，色相 0–360、饱和度与明度均为 0–1。 */
 export interface Hsv {
-  /** Hue in degrees, 0–360. */
+  /** 色相，0–360 度。 */
   h: number;
-  /** Saturation 0–1. */
+  /** 饱和度 0–1。 */
   s: number;
-  /** Value (brightness) 0–1. */
+  /** 明度（亮度）0–1。 */
   v: number;
 }
 
-/** Normalizes to lowercase `#rrggbb`, or null when not a 6-digit hex color. */
+/**
+ * 规范化颜色输入：统一成小写 `#rrggbb`；当不是 6 位 hex 颜色时返回 null。
+ * @param input 用户输入的颜色字符串。
+ * @returns 规范化后的 hex 或 null。
+ */
 export function normalizeHex(input: string): string | null {
   const match = /^#?([0-9a-f]{6})$/i.exec(input.trim());
   return match ? `#${match[1]?.toLowerCase()}` : null;
 }
 
+/**
+ * 把 hex 颜色转成 HSV。
+ * @param hex hex 颜色字符串。
+ * @returns HSV 对象，非法输入返回 null。
+ */
 export function hexToHsv(hex: string): Hsv | null {
   const normalized = normalizeHex(hex);
   if (!normalized) return null;
@@ -36,6 +46,11 @@ export function hexToHsv(hex: string): Hsv | null {
   return { h, s: max === 0 ? 0 : delta / max, v: max };
 }
 
+/**
+ * 把 HSV 颜色转成 `#rrggbb` hex 字符串。
+ * @param param0 HSV 颜色（h/s/v）。
+ * @returns hex 字符串。
+ */
 export function hsvToHex({ h, s, v }: Hsv): string {
   const channel = (n: number): string => {
     const k = (n + h / 60) % 6;
@@ -47,11 +62,9 @@ export function hsvToHex({ h, s, v }: Hsv): string {
   return `#${channel(5)}${channel(3)}${channel(1)}`;
 }
 
-// Random picks are sampled in HSL and constrained to the vivid band the
-// preset palette lives in, so a random color never lands on near-white,
-// near-black, or a washed-out gray. When the current color is passed as
-// `avoid`, the new hue keeps a minimum circular distance from it so every
-// click produces a visibly different color.
+// 随机颜色在 HSL 空间采样，并限制在预设调色板所在的鲜亮色带内，这样随机结果
+// 永远不会落到近白、近黑或褪色灰上。当把当前颜色作为 `avoid` 传入时，新色相会
+// 与它保持最小圆周距离，让每次点击都产生明显不同的颜色。
 
 const MIN_HUE_DISTANCE = 40;
 const SATURATION_RANGE: readonly [number, number] = [0.62, 0.9];
@@ -74,8 +87,10 @@ function hslToHex(hue: number, saturation: number, lightness: number): string {
 }
 
 /**
- * Returns a random vivid color as `#rrggbb`. Pass the current color via
- * `avoid` to guarantee the result reads as a different color.
+ * 返回一个随机的鲜亮颜色（`#rrggbb`）。通过 `avoid` 传入当前颜色，
+ * 可保证结果看起来是另一个不同的颜色。
+ * @param avoid 要避开的当前颜色（可选）。
+ * @returns 随机生成的 hex 颜色。
  */
 export function randomOptionColor(avoid?: string): string {
   const avoidHsv = avoid ? hexToHsv(avoid) : null;

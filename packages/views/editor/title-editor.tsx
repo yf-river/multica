@@ -1,5 +1,14 @@
 "use client";
 
+/**
+ * TitleEditor——单行标题编辑器（issue 标题等）。
+ *
+ * 极简 Tiptap 配置：文档只允许一个段落，因此 Enter 不会换行（回车=提交、
+ * Esc=失焦，见下方 keymap）。支持把提交快捷键（配置的 send 组合键）接到
+ * 显式发送路径、外部 defaultValue 同步（含「聚焦后脏状态保护」），并以
+ * `immediatelyRender: false` 把创建推迟到首帧之后，供只读优先宿主使用。
+ */
+
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import { Extension } from "@tiptap/core";
@@ -18,7 +27,7 @@ import { createSubmitShortcutExtension } from "./extensions/submit-shortcut";
 import "./title-editor.css";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
 interface TitleEditorProps {
@@ -28,23 +37,21 @@ interface TitleEditorProps {
   autoFocus?: boolean;
   onSubmit?: () => void;
   /**
-   * Fires on the configured `send` chord, independent of `onSubmit`'s plain
-   * Enter path. Hosts that submit on plain Enter pass `onSubmit`; hosts that
-   * want an explicit chord (create-issue, MUL-4931) pass this instead.
+   * 在配置的 `send` 组合键上触发，与 `onSubmit` 的纯 Enter 路径相互独立。
+   * 纯 Enter 提交的宿主传 `onSubmit`；想要显式组合键的宿主（create-issue，
+   * MUL-4931）改传它。
    *
-   * Plain Enter is deliberately never a trigger here even when `send` is
-   * configured as plain Enter: the keymap below already owns that key for
-   * "finish editing", and this single-line editor has no newline to trade it
-   * against. Shadowing it would silently create from a half-typed title —
-   * exactly what #5532 removed.
+   * 纯 Enter 刻意永不在标题里作为触发键，即使 `send` 被配置成纯 Enter：
+   * 下面的 keymap 已拥有那个键（「结束编辑」），而这个单行编辑器没有换行
+   * 可做交换。遮蔽它会在标题只打了一半时就静默创建——正是 #5532 干掉
+   * 的误触发。
    */
   onSubmitShortcut?: () => void;
   onBlur?: (value: string) => void;
   onChange?: (value: string) => void;
   /**
-   * Called once when the Tiptap instance exists and its DOM is attached
-   * (creation is deferred past first paint by `immediatelyRender: false`).
-   * Same contract as ContentEditorProps.onReady.
+   * Tiptap 实例存在且其 DOM 已挂接时调用一次（`immediatelyRender: false`
+   * 把创建推迟到首帧之后）。契约同 ContentEditorProps.onReady。
    */
   onReady?: () => void;
 }
@@ -53,16 +60,16 @@ interface TitleEditorRef {
   getText: () => string;
   focus: () => void;
   /**
-   * Focus and place the caret at the document position under the given
-   * viewport coordinates — same contract as ContentEditorRef.focusAtCoords,
-   * so readonly-first hosts (useLazyEditor) can treat both editors alike.
-   * Must be called while the editor element is laid out (not display: none).
+   * 聚焦并把光标放到给定视口坐标下的文档位置——与
+   * ContentEditorRef.focusAtCoords 同一契约，让只读优先宿主（useLazyEditor）
+   * 能一视同仁地对待两种编辑器。必须在编辑器元素已布局（非 display:none）
+   * 时调用。
    */
   focusAtCoords: (coords: { x: number; y: number }) => void;
 }
 
 // ---------------------------------------------------------------------------
-// Single-paragraph document — prevents Enter from creating new lines
+// 单段落文档——阻止 Enter 产生新行
 // ---------------------------------------------------------------------------
 
 const SingleLineDocument = Document.extend({
@@ -70,18 +77,17 @@ const SingleLineDocument = Document.extend({
 });
 
 // ---------------------------------------------------------------------------
-// Keyboard shortcuts: Enter → submit, Escape → blur
+// 快捷键：Enter → 提交，Escape → 失焦
 // ---------------------------------------------------------------------------
 
 /**
- * Whether `onSubmitShortcut` may fire for the configured `send` chord.
+ * `onSubmitShortcut` 是否可以为配置的 `send` 组合键触发。
  *
- * Plain Enter is excluded on purpose. The keymap below already owns that key
- * ("finish editing"), and unlike a prose editor a single-line title has no
- * newline to trade it against — so a `send` configured as plain Enter would
- * turn every Enter into a create from a half-typed title. That is exactly the
- * misfire #5532 removed, so the title keeps plain Enter inert and only honors
- * an explicit chord. Hosts wanting plain-Enter submit still pass `onSubmit`.
+ * 纯 Enter 刻意被排除。下面的 keymap 已经拥有那个键（「结束编辑」），而
+ * 与散文编辑器不同，单行标题没有可与之交换的换行——所以把 `send` 配成纯
+ * Enter 会把每次回车都变成「从半截标题创建」。那正是 #5532 移除的走火，
+ * 因此标题保持纯 Enter 惰性，只认显式组合键。想要纯 Enter 提交的宿主仍传
+ * `onSubmit`。
  */
 export function titleShortcutSubmitAllowed(
   sendShortcut: ShortcutChord | null,
@@ -90,6 +96,7 @@ export function titleShortcutSubmitAllowed(
   return !isPlainShortcut(sendShortcut, "Enter");
 }
 
+/** 标题专用 keymap 扩展（提交/吞换行/失焦）。 */
 function createTitleKeymap(opts: {
   onSubmitRef: React.RefObject<(() => void) | undefined>;
 }) {
@@ -102,7 +109,7 @@ function createTitleKeymap(opts: {
           editor.commands.blur();
           return true;
         },
-        "Shift-Enter": () => true, // swallow — no line breaks
+        "Shift-Enter": () => true, // 吞掉——不允许换行
         Escape: ({ editor }) => {
           editor.commands.blur();
           return true;
@@ -113,9 +120,12 @@ function createTitleKeymap(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Component
+// 组件
 // ---------------------------------------------------------------------------
 
+/**
+ * TitleEditor——单行标题输入框组件（forwardRef 暴露命令式句柄）。
+ */
 const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
   function TitleEditor(
     {
@@ -144,9 +154,9 @@ const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
     onChangeRef.current = onChange;
     onReadyRef.current = onReady;
 
-    // `useEditor` reads `extensions` once at mount and no host toggles this
-    // prop over its lifetime, so pin the mount-time answer rather than let the
-    // extension list depend on whichever render happened to create the editor.
+    // `useEditor` 只在挂载时读一次 `extensions`，且没有宿主要求在生命周期内
+    // 切换该 prop，所以钉住挂载时刻的答案，而不是让扩展列表依赖「碰巧创建
+    // 了编辑器的那次渲染」。
     const shortcutSubmitEnabled = useRef(onSubmitShortcut !== undefined).current;
 
     const editor = useEditor({
@@ -163,10 +173,9 @@ const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
           showOnlyCurrent: false,
         }),
         createTitleKeymap({ onSubmitRef }),
-        // Added last so its ProseMirror plugin sits ahead of the keymap above
-        // — same placement the ContentEditor extension list relies on. It
-        // brings the configured `send` chord, the IME guards, and key-repeat
-        // protection with it, none of which a hand-rolled keydown would have.
+        // 放最后一个，让它上面的 keymap ProseMirror 插件排在更前面——与
+        // ContentEditor 扩展列表相同的布位。它一并带来配置的 `send` 组合键、
+        // IME 守卫与连发保护，这些都是手写 keydown 不会有的。
         ...(shortcutSubmitEnabled
           ? [
               createSubmitShortcutExtension(() => {
@@ -195,9 +204,8 @@ const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
       },
     });
 
-    // Signal readonly-first hosts that the deferred editor now exists. Fired
-    // from a passive effect so it runs after the commit that attached the
-    // editor DOM — same pattern as ContentEditor.
+    // 通知只读优先宿主：延迟创建的编辑器现已存在。从被动 effect 触发，让它
+    // 跑在「编辑器 DOM 已挂接」的 commit 之后——与 ContentEditor 同一模式。
     const readyFiredRef = useRef(false);
     useEffect(() => {
       if (!editor || readyFiredRef.current) return;
@@ -205,7 +213,7 @@ const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
       onReadyRef.current?.();
     }, [editor]);
 
-    // Auto-focus after mount — delay to wait for Dialog open animation
+    // 挂载后自动聚焦——延迟以等待 Dialog 打开动画
     useEffect(() => {
       if (autoFocus && editor) {
         const timer = setTimeout(() => {
@@ -216,29 +224,25 @@ const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
       return undefined;
     }, [autoFocus, editor]);
 
-    // Track the last `defaultValue` we've reconciled against, so we can tell
-    // "focused + dirty" (user typed something that diverges from external)
-    // apart from "focused + clean" (user just clicked in without typing).
+    // 记录最后一次已对账的 `defaultValue`，好区分「聚焦 + 脏」（用户敲了
+    // 与外部值不同的内容）与「聚焦 + 干净」（用户只是点进来没输入）。
     const lastDefaultValueRef = useRef(defaultValue);
 
-    // Sync external `defaultValue` changes into the editor.
-    // Tiptap `useEditor` consumes `content` only at mount, so a WS-driven
-    // title update would otherwise leave the editor showing stale text — and
-    // the next blur would silently roll the external change back via onBlur's
-    // value-vs-issue.title compare.
+    // 把外部 `defaultValue` 变化同步进编辑器。
+    // Tiptap `useEditor` 只在挂载时消费 `content`，不然 WS 驱动的标题更新会
+    // 让编辑器一直显示过期文本——而下一次 blur 会借 onBlur 的「值与 issue.title
+    // 比较」静默把外部变化滚回去。
     useEffect(() => {
       if (!editor || editor.isDestroyed) return;
       const prevDefaultValue = lastDefaultValueRef.current;
       lastDefaultValueRef.current = defaultValue;
 
-      // Already in sync — nothing to do.
+      // 已经同步——无事可做。
       if (editor.getText() === defaultValue) return;
 
-      // Focused + dirty: editor text diverges from the previous external
-      // value, meaning the user has typed in this session. Preserve input.
-      // Focused + clean (text still equals prev defaultValue) falls through
-      // so we accept the new external value instead of letting the next blur
-      // roll it back.
+      // 聚焦 + 脏：编辑器文本偏离上一个外部值，说明用户本会话敲过字。
+      // 保留输入。聚焦 + 干净（文本仍等于上一个 defaultValue）则继续往下走，
+      // 接受新外部值，而不是让下一次 blur 把它滚回去。
       if (editor.isFocused && editor.getText() !== prevDefaultValue) return;
 
       editor.commands.setContent(
@@ -273,4 +277,5 @@ const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
   },
 );
 
+/** 导出 TitleEditor 及其类型。 */
 export { TitleEditor, type TitleEditorProps, type TitleEditorRef };

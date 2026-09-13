@@ -1,3 +1,4 @@
+// plugin_event_bridge.go —— 把内部事件总线翻译成插件可订阅的七种事件（两套词汇、一处映射）。
 package service
 
 import (
@@ -9,39 +10,31 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// Translating the internal event bus into the seven events a plugin may
-// subscribe to.
+// 把内部事件总线翻译成插件可订阅的七种事件。
 //
-// Two vocabularies on purpose. The internal names are realtime transport
-// concerns and change when the frontend needs them to; the plugin names are a
-// published contract. Mapping in one place means a rename on our side is a
-// change to this file rather than a break in every installed plugin.
+// 刻意两套词汇：内部名字是实时传输的关注点，前端需要时可改动；插件名字是已发布的契约。单点映射意味着我方
+// 改名只动本文件，而不是打破每个已安装插件。
 
-// EventSink is the half of the dispatcher the bridge needs.
+// EventSink 是桥接所需的派发器半边。
 //
-// An interface so the vocabulary mapping can be tested without a network: what
-// this file decides is WHICH plugin event an internal one becomes, and that is
-// worth asserting on its own rather than through a live endpoint.
+// 用接口是为了无需网络即可测试词汇映射：本文件决定的是“内部事件变成哪个插件事件”，这值得单独断言，
+// 而非经一个活端点间接验证。
 type EventSink interface {
 	Dispatch(eventType, workspaceID string, payload any)
 }
 
-// SubscribePluginEvents wires the dispatcher onto the bus.
+// SubscribePluginEvents 把派发器接到总线上。
 //
-// Bus.Publish calls its listeners INLINE, on the goroutine of the request that
-// published — so everything these closures do must be cheap and non-blocking.
-// They extract an id and hand off; the network call happens on a worker.
+// Bus.Publish 是【内联】调用监听者的——跑在发布请求的 goroutine 上——因此这些闭包所做的一切必须廉价
+// 且不阻塞：它们抽取一个 id 后移交，网络调用发生在 worker 上。
 func SubscribePluginEvents(bus *events.Bus, dispatcher EventSink) {
 	if bus == nil || dispatcher == nil {
 		return
 	}
 
-	// The listener does the least it possibly can: hand over the payload
-	// unexamined. Extracting the issue id here would put a JSON round-trip of a
-	// full issue body on the publishing request's goroutine, for every one of
-	// these events, in every workspace — including deployments where plugins are
-	// switched off entirely. It happens on a worker instead, after the flag
-	// check, where it costs nothing anyone is waiting for.
+	// 监听者做尽可能少的事：不加检视地把载荷移交。在这里抽取 issue id，会在每个工作区、对每个此类事件，把完整
+	// issue 体的 JSON 往返压到发布请求的 goroutine 上——包括完全关掉插件的部署。该工作在 worker 上、在开关检查
+	// 之后才发生，那里没有任何人等它。
 	forward := func(pluginEvent string) events.Handler {
 		return func(e events.Event) {
 			dispatcher.Dispatch(pluginEvent, e.WorkspaceID, e.Payload)
@@ -54,23 +47,19 @@ func SubscribePluginEvents(bus *events.Bus, dispatcher EventSink) {
 	bus.Subscribe(protocol.EventTaskCompleted, forward(plugincontract.EventTaskCompleted))
 	bus.Subscribe(protocol.EventTaskFailed, forward(plugincontract.EventTaskFailed))
 
-	// issue.status_changed has no event of its own internally: a status change
-	// is an issue:updated carrying status_changed=true. Deriving it here rather
-	// than adding a second publish keeps one write producing one internal
-	// event, and lets a plugin subscribe to the specific thing it cares about
-	// instead of filtering every field change itself.
+	// issue.status_changed 内部没有独立事件：状态变更是一条带 status_changed=true 的 issue:updated。在这里派生它
+	// 而非二次发布，让一次写入只产出一条内部事件，并让插件订阅它关心的具体东西、而不是自己过滤每个字段变化。
 	bus.Subscribe(protocol.EventIssueUpdated, func(e events.Event) {
 		dispatcher.Dispatch(plugincontract.EventIssueUpdated, e.WorkspaceID, e.Payload)
-		// A map lookup, not a parse: cheap enough for the request goroutine.
+		// 只是一次 map 查找，不是解析：足够廉价，可放请求 goroutine。
 		if payloadFlag(e.Payload, "status_changed") {
 			dispatcher.Dispatch(plugincontract.EventIssueStatusChanged, e.WorkspaceID, e.Payload)
 		}
 	})
 }
 
-// issueIDFromPayload finds the issue an event is about, so the callback token
-// issued for the hook can be narrowed to it. A payload with no issue yields the
-// zero UUID, which simply means the grant is not issue-scoped.
+// issueIDFromPayload 找到事件所属的 issue，以便把为 hook 签发的回调 token 收窄到该 issue。无 issue 的载荷
+// 产生零 UUID——表示该授权不按 issue 收敛。
 func issueIDFromPayload(payload any) pgtype.UUID {
 	encoded, err := json.Marshal(payload)
 	if err != nil {

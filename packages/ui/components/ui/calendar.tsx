@@ -1,4 +1,7 @@
 "use client"
+// 本文件是日历组件（基于 react-day-picker 的二次封装）：把其内部结构按项目
+// 视觉语言重新铺样式，并提供与项目一致的按钮/图标；支持单选、范围选择、
+// 多选、月份下拉等原生能力。
 
 import * as React from "react"
 import {
@@ -12,6 +15,13 @@ import { cn } from "@multica/ui/lib/utils"
 import { Button, buttonVariants } from "@multica/ui/components/ui/button"
 import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from "lucide-react"
 
+/**
+ * Calendar：整体日历。
+ *
+ * @param props 支持 react-day-picker 的 DayPicker 全部 props；额外：
+ * @param props.buttonVariant 切换月份按钮的 Button 变体（默认 ghost）
+ * @returns 渲染好的日历
+ */
 function Calendar({
   className,
   classNames,
@@ -180,6 +190,11 @@ function Calendar({
   )
 }
 
+/**
+ * CalendarDayButton：单个日期格子按钮。把 react-day-picker 的语义修饰符
+ * （选中/范围起止/今天等）翻译成 data-* 属性，方便纯 CSS 控制高亮样式，
+ * 并用项目 Button 打底保证交互一致性。
+ */
 function CalendarDayButton({
   className,
   day,
@@ -190,6 +205,7 @@ function CalendarDayButton({
   const defaultClassNames = getDefaultClassNames()
 
   const ref = React.useRef<HTMLButtonElement>(null)
+  // 键盘导航时该格需要获得焦点，focused 修饰符变化即聚焦对应按钮
   React.useEffect(() => {
     if (modifiers.focused) ref.current?.focus()
   }, [modifiers.focused])

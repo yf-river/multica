@@ -1,3 +1,5 @@
+// 本文件：mcp 传输方式 hook 的管理端点——admin 对插件 MCP server 暴露的工具做「发现 +
+// 审批」，以及 daemon 在连接时按需解析插件 MCP 的凭据。
 package handler
 
 import (
@@ -10,25 +12,23 @@ import (
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
 
-// Admin approval for an mcp-transport hook.
+// mcp 传输 hook 的管理员审批。
 //
-// Discovery is read-only and adopts nothing. Approval is the grant, and it pins
-// the tools by schema digest — because an MCP server, unlike an http endpoint,
-// decides its own tool list at runtime and can change it after the
-// administrator read the manifest.
+// 发现是只读的、不采纳任何东西。审批才是授权，并且按 schema 摘要钉住工具——因为 MCP
+// server 与 http 端点不同，它在运行时自己决定工具清单，管理员读完 manifest 之后它可能变。
 
 type pluginMCPToolResponse struct {
 	Name         string `json:"name"`
 	Description  string `json:"description"`
 	SchemaDigest string `json:"schema_digest"`
 	Approved     bool   `json:"approved"`
-	// Drifted marks a tool that IS approved but whose schema no longer matches.
-	// Surfaced rather than silently re-approved: the administrator approved a
-	// specific shape, and a changed one is a new decision.
+	// Drifted 标记「已批准但 schema 已与批准时不再一致」的工具。要亮出来而不是悄悄重新批准：
+	// 管理员批准的是一份特定形状，变了就该重新决策。
 	Drifted bool `json:"drifted,omitempty"`
 }
 
-// ListPluginMCPTools — GET /api/workspaces/{id}/plugins/{installationId}/mcp/{hookKey}/tools
+// ListPluginMCPTools 处理 GET /api/workspaces/{id}/plugins/{installationId}/mcp/{hookKey}/tools——
+// 发现该 MCP hook 当前暴露的工具，并标注每个工具是否已批准/是否漂移。
 func (h *Handler) ListPluginMCPTools(w http.ResponseWriter, r *http.Request) {
 	installation, ok := h.pluginInstallationFromURL(w, r)
 	if !ok {
@@ -58,13 +58,13 @@ func (h *Handler) ListPluginMCPTools(w http.ResponseWriter, r *http.Request) {
 }
 
 type approvePluginMCPToolsRequest struct {
-	// Tools is the complete approved set, not a delta. An administrator
-	// removing one is the same request shape as adding one, so there is no way
-	// to think you revoked something and have it stay.
+	// Tools 是完整的已批准集合，不是增量。管理员移除一个工具与新增一个工具请求形状相同，
+	// 所以不可能出现「你以为吊销了、结果它还在」。
 	Tools []string `json:"tools"`
 }
 
-// ApprovePluginMCPTools — PUT /api/workspaces/{id}/plugins/{installationId}/mcp/{hookKey}/tools
+// ApprovePluginMCPTools 处理 PUT /api/workspaces/{id}/plugins/{installationId}/mcp/{hookKey}/tools——
+// 用完整集合覆盖批准（记操作者 user id），并返回更新后的安装记录。
 func (h *Handler) ApprovePluginMCPTools(w http.ResponseWriter, r *http.Request) {
 	installation, ok := h.pluginInstallationFromURL(w, r)
 	if !ok {
@@ -99,16 +99,13 @@ func (h *Handler) ApprovePluginMCPTools(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, payload)
 }
 
-// splitPluginContributionID reads back the
-// "plugin:<installation uuid>:<hook key>" id AgentMCPConnections built.
+// splitPluginContributionID 解析回 AgentMCPConnections 拼出的
+// "plugin:<installation uuid>:<hook key>" 形式的贡献 id。
 //
-// The prefix is required, not tolerated: it is what distinguishes a Plugin
-// contribution from a workspace's own Remote MCP connection, and those resolve
-// their credentials from entirely different places. Both halves after it must
-// be present too — a bare installation id would otherwise resolve to an empty
-// hook key, and an empty installation id to whatever the workspace lookup makes
-// of "", so a daemon holding one contribution's id could name another by
-// trimming the string.
+// 前缀是强制的、不是可容忍的：它正是「插件贡献」与「工作区自己的 Remote MCP 连接」的
+// 区分点，两者从完全不同的地方解析凭据。前缀之后的两半也必须齐全——只有裸的安装 id 会
+// 解析成空 hook key，空的安装 id 会变成工作区查找对 "" 的处理，于是持有一条贡献 id 的
+// daemon 靠裁剪字符串就能指到另一条。
 func splitPluginContributionID(contribution string) (string, string, bool) {
 	trimmed, hasPrefix := strings.CutPrefix(contribution, remotemcp.PluginContributionPrefix)
 	if !hasPrefix {
@@ -121,12 +118,10 @@ func splitPluginContributionID(contribution string) (string, string, bool) {
 	return installationID, hookKey, true
 }
 
-// ResolvePluginMCPCredential — GET /api/daemon/tasks/{id}/plugin-mcp/{contributionId}/credential
+// ResolvePluginMCPCredential 处理 GET /api/daemon/tasks/{id}/plugin-mcp/{contributionId}/credential。
 //
-// The daemon's broker asks for the credential at connection time rather than
-// receiving it in the claim payload, so a secret never sits in a task record.
-// Authenticated as the daemon and scoped to a claimed task, like every other
-// /api/daemon route.
+// daemon 的 broker 在连接时才来要凭据，而不是在认领 payload 里收到——这样机密从不落进
+// 任务记录。与其它 /api/daemon 路由一样：以 daemon 身份认证、限定到一条已认领的任务。
 func (h *Handler) ResolvePluginMCPCredential(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePluginsV1(w, r) {
 		return

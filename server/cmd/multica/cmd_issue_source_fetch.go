@@ -1,3 +1,9 @@
+// 文件职责：定义 `issue source-fetch` 命令（runIssueSourceFetch，命令对象在
+// cmd_issue.go 中声明）以及两个被该命令用到的通用小工具：
+// newResolvedAPIClientContext（建 client+ctx 并顺带解析一个 ID）与
+// wantsJSONOutput（判断 --output 是否为 json）。source-fetch 用于在任务/issue 与
+// 外部系统（tapd / gongfeng）之间同步「外部来源」元数据——agent 从外部平台把
+// 需求抓到本地 issue 后，调用它记录抓取结果。
 package main
 
 import (
@@ -11,6 +17,10 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// newResolvedAPIClientContext 是「建 HTTP client + 带超时 ctx + 用 resolver 把用户
+// 输入解析成规范 ID」的一次性封装，避免每个 RunE 里重复这三行样板。任何一步失败
+// 都会先 cancel 掉 ctx 再返回错误。value 是要解析的原始输入（id 或 key），resolver
+// 是具体实体（issue/project/...）对应的解析函数。
 func newResolvedAPIClientContext(
 	cmd *cobra.Command,
 	value string,
@@ -30,11 +40,16 @@ func newResolvedAPIClientContext(
 	return client, ctx, cancel, resolved, nil
 }
 
+// wantsJSONOutput 判断当前命令是否要求 JSON 输出（--output json）。
 func wantsJSONOutput(cmd *cobra.Command) bool {
 	value, _ := cmd.Flags().GetString("output")
 	return value == "json"
 }
 
+// runIssueSourceFetch 执行 `issue source-fetch <issue-id>`：把一次外部来源抓取
+// 的结果记录到 issue 上（POST /api/issues/{id}/source-fetch）。--status 记录抓取
+// 成败（fetched/fetch_failed），或改用 --auto-fetch 让 server 用已配置的账号凭据
+// 代为抓取。请求带随机幂等键，重试不会产生重复记录；返回的 metadata 以表格展示。
 func runIssueSourceFetch(cmd *cobra.Command, args []string) error {
 	status, _ := cmd.Flags().GetString("status")
 	autoFetch, _ := cmd.Flags().GetBool("auto-fetch")

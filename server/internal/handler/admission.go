@@ -1,3 +1,7 @@
+// 本文件定义「同步入队（执行准入）」的统一契约（MUL-4525）：每个同步触发入口都必须用
+// 同一形态回答「这次运行最终是 queued / coalesced / deferred / blocked」。包含跨层对齐的
+// 准入状态与原因码（原因码别名自 dispatch 包，服务与 handler 不会漂移）、对调用方可见的
+// 目标与结果结构，以及把「被拒绝」写回成结构化 403/409 响应和通用回退文案的辅助函数。
 package handler
 
 import (
@@ -6,47 +10,40 @@ import (
 	"github.com/multica-ai/multica/server/internal/dispatch"
 )
 
-// Unified execution-admission contract (MUL-4525).
+// 统一「执行准入」契约（MUL-4525）。
 //
-// Every synchronous enqueue entry point (comment mention, autopilot manual
-// "run now", issue assign / promotion / batch, manual rerun, direct chat) needs
-// to answer the SAME question in the SAME shape: given a user who explicitly
-// named an execution target, did the run get `queued`, `coalesced` onto an
-// existing task, `deferred`, or `blocked`? A silent no-op is never acceptable.
+// 每个同步入队入口（评论 @ 提及、autopilot 手动"立即运行"、issue 指派/升级/批量、手动
+// 重跑、直接聊天）都要以同样的形态回答同一个问题：面对一个显式点名了执行目标的用户，
+// 这次运行是被 `queued`（入队）、`coalesced`（合并进已有任务）、`deferred`（暂缓）还是
+// `blocked`（被拒）了？静默无动作永远不可接受。
 //
-// Two invariants this contract exists to protect:
+// 该契约要守护两条不变量：
 //
-//  1. Whether the business object was written (comment saved, issue updated)
-//     and whether the agent was actually triggered are DIFFERENT facts. A
-//     comment can persist while one of its mentions is blocked — callers must
-//     be able to express partial success.
-//  2. The reason a target was blocked is exposed ONLY as a stable, localizable,
-//     enumeration-safe code. It must never leak whether a private agent exists,
-//     its name, or its owner to a caller who cannot see the target. The precise
-//     cause goes to restricted server logs, not the wire.
+//  1. 「业务对象是否已写入（评论已保存、issue 已更新）」与「agent 是否真的被触发」是两件
+//     独立的事实。评论可以在某个 @ 提及被拒的同时照样持久化——调用方必须能表达部分成功。
+//  2. 目标被拒的原因只以稳定、可本地化、可枚举的 code 对外暴露。绝不能向看不到该目标的
+//     调用方泄露「是否存在某个私有 agent、它叫什么、owner 是谁」。确切原因只进受限服务端
+//     日志，不上网络。
 
-// DispatchStatus is the domain-level outcome of one admission/enqueue attempt.
+// DispatchStatus 是单次准入/入队尝试的领域层结果。
 type DispatchStatus string
 
 const (
-	// DispatchQueued: a new run was enqueued.
+	// DispatchQueued：新运行已入队。
 	DispatchQueued DispatchStatus = "queued"
-	// DispatchCoalesced: the trigger merged into an already-pending task for
-	// the same target instead of creating a duplicate run.
+	// DispatchCoalesced：该触发合并进了同一目标已经 pending 的任务，而不是新建一个重复运行。
 	DispatchCoalesced DispatchStatus = "coalesced"
-	// DispatchDeferred: admitted but intentionally not started yet (e.g. a
-	// backlog issue parked until promotion, or suppress_run).
+	// DispatchDeferred：被接纳但刻意暂不启动（例如停在 backlog 直到升级的 issue，或
+	// suppress_run）。
 	DispatchDeferred DispatchStatus = "deferred"
-	// DispatchBlocked: the run was refused. ReasonCode carries why.
+	// DispatchBlocked：运行被拒绝。ReasonCode 说明原因。
 	DispatchBlocked DispatchStatus = "blocked"
 )
 
-// DispatchReasonCode is the wire-facing admission reason. It aliases the
-// canonical, cross-layer enum in the dispatch package so the service (which
-// decides the reason at its source) and the handler (which serializes it) can
-// never drift. New codes may be added; clients must treat an unknown code as a
-// generic failure (they switch with a default branch). A code NEVER encodes the
-// existence, name, or owner of a target the caller is not allowed to see.
+// DispatchReasonCode 是对外（wire）的准入原因码。它别名自 dispatch 包里权威的跨层枚举，
+// 让「源头定因的服务」与「序列化它的 handler」永不漂移。可以新增码；客户端必须把未知码当
+// 通用失败处理（它们用 default 分支兜底）。任何码都绝不编码调用者无权看到的目标的存在性、
+// 名字或 owner。
 type DispatchReasonCode = dispatch.ReasonCode
 
 const (
@@ -64,19 +61,17 @@ const (
 	ReasonInternalError         = dispatch.ReasonInternalError
 )
 
-// DispatchTarget is the caller-visible reference to an execution target. Name
-// is populated ONLY when the caller is allowed to see the target; a blocked
-// private-agent invoke returns Type/ID (already known to the caller from their
-// own request) but never a Name they were not otherwise entitled to.
+// DispatchTarget 是调用方可读的执行目标引用。只有当调用方被允许看到目标时才填 Name——
+// 被拒的私有 agent 调用只回 Type/ID（本就来自调用方自己的请求），绝不回调用方本无权
+// 知道的名字。
 type DispatchTarget struct {
 	Type string `json:"type"` // "agent" | "squad"
 	ID   string `json:"id"`
 	Name string `json:"name,omitempty"`
 }
 
-// DispatchOutcome is the unified per-target result returned by every sync
-// enqueue entry point. It is additive on the wire: old clients that ignore it
-// keep working. TaskID / RunID are set when a run/task was produced.
+// DispatchOutcome 是每个同步入队入口返回的统一「按目标」结果。它在线路上是追加式的：
+// 忽略它的旧客户端照常工作。产出了运行/任务时 TaskID / RunID 才会被设置。
 type DispatchOutcome struct {
 	Status     DispatchStatus     `json:"status"`
 	ReasonCode DispatchReasonCode `json:"reason_code"`
@@ -85,20 +80,17 @@ type DispatchOutcome struct {
 	RunID      *string            `json:"run_id,omitempty"`
 }
 
-// dispatchBlockedResponse is the structured body of a blocked synchronous
-// enqueue (403/409). `error` is a generic, non-enumerating English fallback for
-// old clients that only read the legacy field; `reason_code` is the stable
-// machine-readable code new clients localize. Neither field leaks private
-// target details.
+// dispatchBlockedResponse 是被拒的同步入队（403/409）的结构化响应体。`error` 是给只读
+// legacy 字段的旧客户端用的通用英文回退文案；`reason_code` 是新客户端做本地化的稳定机器
+// 可读码。两者都不泄露私有目标细节。
 type dispatchBlockedResponse struct {
 	Error      string             `json:"error"`
 	ReasonCode DispatchReasonCode `json:"reason_code"`
 }
 
-// writeDispatchBlocked writes a structured blocked-admission error. The HTTP
-// status conveys the class (403 permission, 409 conflict); reason_code conveys
-// the stable cause. Use this for any sync trigger the caller explicitly asked
-// for that is refused before mutation.
+// writeDispatchBlocked 写出结构化的「准入被拒」错误。HTTP 状态码表达大类（403 权限、
+// 409 冲突）；reason_code 表达稳定原因。任何调用方显式请求、且在写入前被拒的同步触发都
+// 用它。
 func (h *Handler) writeDispatchBlocked(w http.ResponseWriter, status int, code DispatchReasonCode) {
 	writeJSON(w, status, dispatchBlockedResponse{
 		Error:      dispatchBlockedFallbackMessage(code),
@@ -106,9 +98,8 @@ func (h *Handler) writeDispatchBlocked(w http.ResponseWriter, status int, code D
 	})
 }
 
-// dispatchBlockedFallbackMessage is the legacy `error` string paired with a
-// reason code. It is intentionally generic and non-enumerating: it must be safe
-// to show to a caller who is not allowed to know whether the target exists.
+// dispatchBlockedFallbackMessage 是与原因码配对的 legacy `error` 文案。刻意通用且不点
+// 名：它必须能安全地展示给「无权知道目标是否存在」的调用方。
 func dispatchBlockedFallbackMessage(code DispatchReasonCode) string {
 	switch code {
 	case ReasonInvocationNotAllowed:

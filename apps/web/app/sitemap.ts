@@ -1,5 +1,10 @@
 import type { MetadataRoute } from "next";
 
+/**
+ * 生成 sitemap.xml 内容：列出需要被搜索引擎收录的公开页面及其更新频率/优先级。
+ *
+ * @returns 站点地图条目数组。
+ */
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = "https://www.multica.ai";
 

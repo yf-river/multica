@@ -1,12 +1,11 @@
 "use client";
 
 /**
- * Inline media re-sign (MUL-3254).
+ * 内联媒体的重新签名（MUL-3254）。
  *
- * Extracted from editor/attachment.tsx so the preview modal can run the same
- * upgrade: gallery navigation (MUL-5752) hands the modal an attachment the
- * user never clicked, so the modal can no longer rely on the inline renderer
- * having already resolved a loadable URL for it.
+ * 从 editor/attachment.tsx 抽出，让预览弹窗也能做同样的升级：画廊导航
+ * （MUL-5752）会直接把用户没点过的附件交给弹窗，弹窗不能再指望内联渲染器
+ * 已经替它解析出了可加载的 URL。
  */
 
 import { useEffect, useState } from "react";
@@ -14,27 +13,28 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { attachmentIdFromDownloadURL } from "@multica/core/types/attachment-url";
 
-// Keep refetches well inside the server's signed-URL TTL (30 min default,
-// server/internal/handler/file.go) so a re-render never serves an expired
-// signature from the query cache.
+// 让重取保持在服务端签名 URL 的有效期（默认 30 分钟，
+// server/internal/handler/file.go）之内，避免一次重渲染把已过期签名
+// 从查询缓存里喂给用户。
 const RESIGN_STALE_MS = 20 * 60 * 1000;
 
-// How long fetched image bytes stay in the query cache after the last <img>
-// using them unmounts. The bytes themselves never go stale (an attachment id
-// maps to an immutable storage object), so the blob query uses
-// `staleTime: Infinity`; this bound exists purely to keep a long scroll
-// through an image-heavy thread from pinning every decoded screenshot in
-// renderer memory forever.
+// 拉到的图片字节在最后一个使用它的 <img> 卸载后，还能在查询缓存里存活
+// 多久。字节本身永不过期（一个附件 id 对应一个不可变存储对象），所以 blob
+// 查询用 `staleTime: Infinity`；这个上限纯粹是为了避免在图片很多的长线程
+// 里滚动时，把每一张解码后的截图永远钉在渲染进程内存中。
 export const INLINE_BLOB_GC_MS = 5 * 60 * 1000;
 
-// Module-level cache for blob: URLs keyed by attachment id. Without this,
-// useObjectURL creates a new object URL on every mount (state "" -> effect
-// creates URL), so a cached blob still flashes the fallback pickedUrl for one
-// frame on re-entry — the flicker reported in #7741 for image-heavy issues.
+// 按附件 id 缓存的 blob: URL（模块级）。没有它，useObjectURL 会在每次挂载
+// 都新建一个对象 URL（state "" -> effect 创建 URL），导致已缓存的 blob
+// 在重进时仍会闪烁一帧 fallback 的 pickedUrl —— 也就是 #7741 里图片很多
+// 的工单所报告的那个闪烁。
 const blobUrlCache = new Map<string, string>();
 const blobUrlRefCount = new Map<string, number>();
 const blobUrlGCTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/**
+ * 仅供测试使用：清空模块级的 blob URL 缓存、引用计数与待执行 GC 定时器。
+ */
 export function __resetInlineMediaBlobCacheForTests(): void {
   for (const t of blobUrlGCTimers.values()) clearTimeout(t);
   blobUrlGCTimers.clear();
@@ -42,37 +42,38 @@ export function __resetInlineMediaBlobCacheForTests(): void {
   blobUrlCache.clear();
 }
 
-// useResignedInlineMediaURL upgrades an auth-gated media URL to a freshly
-// signed one for clients that cannot load `/api/attachments/<id>/download`
-// natively.
-//
-// The picked inline URL can end up being the stable per-attachment API
-// endpoint (e.g. a reopened issue draft, whose persisted record deliberately
-// strips the short-lived signed `download_url`). That endpoint needs
-// credentials: web loads it because the session cookie rides on the <img>
-// request when it is genuinely same-origin. Desktop's file:// renderer, the
-// mobile webview, and split-origin web deployments cannot rely on that: no
-// cookie is attached and the Bearer token cannot be put on a native resource
-// fetch, so the image 401s. Desktop/mobile expose a non-empty
-// `api.getBaseUrl()`; web can also hit this path when the server emits an
-// absolute markdown URL whose origin differs from the current page.
-//
-// For them, fetch fresh attachment metadata through the authenticated API —
-// the same re-sign the click-time download path already does — and swap in
-// the response's signed `download_url`.
-//
-// The server only has a signed URL to offer under CloudFront signing or
-// presign mode. In **proxy** download mode `GetAttachmentByID` hands back the
-// auth-gated API path again, and before MUL-5445 the renderer simply kept the
-// original URL — the image stayed broken and the metadata request was pure
-// overhead. Proxy is not an exotic setting: the default `auto` mode forces it
-// whenever the storage URL points at an internal host, which is exactly the
-// docker-compose MinIO (`http://minio:9000`) self-host shape. So when the
-// refreshed metadata confirms there is no signed URL, fall back to pulling the
-// bytes through the authenticated client and rendering them from an object
-// URL. `blobFallback` gates that on the caller actually rendering a native
-// `<img>`: a file card only needs a link, and downloading a 100 MB archive
-// into renderer memory to draw a chip would be a bad trade.
+/**
+ * useResignedInlineMediaURL 负责把受鉴权保护的媒体 URL 升级成一份新签名的
+ * URL，供那些无法原生加载 `/api/attachments/<id>/download` 的客户端使用。
+ *
+ * 渲染器选中的内联 URL 有时会落到「按附件稳定的 API 地址」上（例如重开的
+ * 工单草稿，落库记录会刻意剥掉短时效的签名 download_url）。该地址需要
+ * 凭据才能访问：Web 端之所以能显示，是因为真正同源时会话 cookie 会随
+ * <img> 请求一起带上。而 Desktop 的 file:// 渲染器、移动端 webview、以及
+ * 跨源部署的 Web 都无法依赖这点：cookie 不会附上、Bearer token 也不能挂到
+ * 原生资源请求上，于是图片 401。Desktop/移动端会暴露非空的
+ * `api.getBaseUrl()`；Web 端在服务端返回的 markdown 绝对 URL 与当前页面
+ * 不同源时也会走到这条路径。
+ *
+ * 对这类客户端：走带鉴权的 API 重新拉一次附件元数据——和点击下载时做的
+ * 重签名一致——再用返回的签名 `download_url` 替换原 URL。
+ *
+ * 服务端只有在 CloudFront 签名或 presign 模式下才有签名 URL 可给。在
+ * **proxy** 下载模式下 GetAttachmentByID 返回的还是受鉴权的 API 路径；
+ * MUL-5445 之前渲染器会保留原始 URL，图片一直是坏的，元数据请求成了纯
+ * 开销。proxy 并不冷门：默认 `auto` 模式只要存储 URL 指向内网主机（正是
+ * docker-compose MinIO `http://minio:9000` 这种自托管形态）就会强制走
+ * proxy。所以当刷新后的元数据确认没有签名 URL 时，退而求其次：用带鉴权
+ * 的客户端把字节拉下来，再以对象 URL 渲染。`blobFallback` 把该方案限定在
+ * 调用方确实在渲染原生 `<img>` 的场景——文件卡片只需要一个链接，为画一个
+ * 小图标就把 100MB 压缩包下载进渲染进程内存，是笔亏本买卖。
+ *
+ * @param attachmentId 附件 id；可为空，此时尝试从 pickedUrl 反推。
+ * @param pickedUrl    当前渲染器选中的内联 URL。
+ * @param blobFallback 是否允许退回「下载字节 + blob URL」方案（只在真正
+ *                     渲染 <img> 时才应传 true）。
+ * @returns 可直接加载的图片 URL：原 URL / 新签名 URL / blob URL 之一。
+ */
 export function useResignedInlineMediaURL(
   attachmentId: string | undefined,
   pickedUrl: string,
@@ -106,17 +107,15 @@ export function useResignedInlineMediaURL(
   });
 
   const dl = fresh?.download_url ?? "";
-  // Accept the fresh URL only when it is an actual upgrade — absolute and no
-  // longer the auth-gated API shape (i.e. a signed storage URL the renderer
-  // can load natively).
+  // 只有确认是真正的升级才采用新 URL——要求绝对地址、且不再是受鉴权的
+  // API 形态（即渲染器能原生加载的签名存储 URL）。
   const signedUrl =
     /^https?:\/\//i.test(dl) && attachmentIdFromDownloadURL(dl) === undefined
       ? dl
       : "";
 
-  // Only after `fresh` has landed do we know this deployment has nothing
-  // signed to give — firing the byte fetch earlier would double-download on
-  // every CloudFront / presign client.
+  // 要等 `fresh` 落地后才知道该部署确实没有签名可给——提前发起字节下载
+  // 会让每个 CloudFront / presign 客户端重复下载两次。
   const { data: blob } = useQuery({
     queryKey: ["attachment-inline-blob", resignAttachmentId],
     queryFn: () => api.getAttachmentBlob(resignAttachmentId as string),
@@ -129,11 +128,10 @@ export function useResignedInlineMediaURL(
 
   if (!needsResign) return pickedUrl;
   if (signedUrl) return signedUrl;
-  // Only return the cached blob URL when it belongs to the current id and
-  // the current QueryClient has authenticated metadata for it. This keeps
-  // the 5-min re-entry cache for the same session but prevents a logged-out
-  // or account-switched QueryClient (fresh pending/rejected) from reusing a
-  // previous account's private blob: URL without coupling to logout code.
+  // 只有 blob URL 属于当前附件 id、且当前 QueryClient 已持有它的鉴权元数据
+  // 时才返回缓存值。这样既保留同一会话内 5 分钟的重进缓存，又防止登出或
+  // 切换账号后的 QueryClient（fresh pending/rejected）在没耦合登出代码的
+  // 情况下复用上一个账号的私有 blob: URL。
   if (
     blobUrl &&
     resignAttachmentId &&
@@ -146,11 +144,12 @@ export function useResignedInlineMediaURL(
   return pickedUrl;
 }
 
-// useObjectURL turns a Blob into a `blob:` URL. The module cache keeps the
-// URL stable across remounts so a re-entry with a cached blob does not flash
-// the fallback pickedUrl for one frame (see #7741). Refcount + delayed GC
-// ensures bytes are released 5 min after last unmount (matching
-// INLINE_BLOB_GC_MS) without leaking until renderer exit.
+/**
+ * useObjectURL 把 Blob 转成 `blob:` URL。模块缓存让同一份 URL 在重挂载间
+ * 保持稳定，这样 blob 已缓存时重进不会闪现一帧 fallback 的 pickedUrl（见
+ * #7741）。引用计数 + 延迟 GC 保证最后一次卸载 5 分钟后字节被释放（与
+ * INLINE_BLOB_GC_MS 一致），又不会在渲染进程退出前泄漏。
+ */
 function useObjectURL(
   id: string | undefined,
   blob: Blob | undefined,
@@ -158,11 +157,10 @@ function useObjectURL(
 ): string {
   const [, bump] = useState(0);
 
-  // Refcount: cancel pending GC on re-enter, schedule revoke+delete after
-  // INLINE_BLOB_GC_MS when last consumer unmounts. Only participate when the
-  // current QueryClient has authenticated metadata — otherwise a logged-out
-  // client would cancel the previous account's GC and extend the lifetime of
-  // private bytes.
+  // 引用计数：重新进入时取消待执行的 GC，最后一个使用者卸载后再等
+  // INLINE_BLOB_GC_MS 才 revoke + 删除。只有当前 QueryClient 持有鉴权元数据
+  // 时才参与计数——否则一个登出的客户端会取消上个账号的 GC，变相延长
+  // 私有字节的存活时间。
   useEffect(() => {
     if (!id || !isAuthenticated) return;
     const pending = blobUrlGCTimers.get(id);
@@ -213,8 +211,10 @@ function useObjectURL(
   return "";
 }
 
-// isObjectURL flags a src that only resolves inside this renderer session —
-// safe to paint, wrong to expose through Copy Link or persist anywhere.
+/**
+ * isObjectURL 判断一个 src 是否只在本渲染进程会话内有效——可以安全显示，
+ * 但不能通过「复制链接」暴露或持久化到任何地方。
+ */
 export function isObjectURL(rawUrl: string): boolean {
   return /^blob:/i.test(rawUrl);
 }

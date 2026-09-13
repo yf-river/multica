@@ -74,20 +74,26 @@ import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { HighlightText } from "./highlight-text";
 import { useSearchStore } from "./search-store";
 
-// The palette's Pages group is generated from WORKSPACE_PAGES, the same
-// registry the sidebar nav and the desktop tab bar read. It used to be a
-// hand-written list, which silently went stale every time a page was added:
-// Chat, Autopilot, Squads and Analytics shipped in the sidebar but were
-// unreachable from the palette (MUL-6272). Deriving the list means a new
-// workspace page is in the palette the moment it is in the registry.
-//
-// Page keys double as WorkspacePaths method names, so `p[key]()` resolves the
-// destination against the current workspace slug at render time. Every
-// WorkspacePageKey must therefore stay a parameterless path builder.
+/**
+ * search 模块：全局搜索命令面板（Command Palette）。
+ * 由侧边栏搜索框或快捷键唤起的模态弹窗，可在同一处搜索并跳转到：
+ *   - 页面（侧边栏注册的每个工作区页）
+ *   - 快捷命令（新建 issue / 项目、复制当前 issue 链接、切换主题等）
+ *   - 成员（按名称 / 邮箱 / 角色 / 拼音匹配）
+ *   - issue 与项目（后端聚合搜索，按状态降级排序后分组展示）
+ * 空查询时展示最近访问的 issue。
+ */
 
-// Extra query aliases per page, on top of the localized label. Declared as a
-// total Record so adding a workspace page is a compile error until its
-// keywords are filled in.
+// 调色板的「页面」分组由 WORKSPACE_PAGES 生成——侧边栏导航与桌面端标签栏
+// 读的也是同一个注册表。它以前是手写列表，每新增一个页面就会悄悄过期：
+// Chat、Autopilot、Squads、Analytics 已经上线侧边栏却无法从调色板打开
+// （MUL-6272）。改为从注册表推导后，新工作区页一进注册表就会出现在调色板里。
+//
+// 页面 key 同时充当 WorkspacePaths 的方法名，所以 `p[key]()` 在渲染时按当前
+// 工作区 slug 解析目标地址。因此每个 WorkspacePageKey 都必须是零参数路径构造器。
+
+// 每个页面在本地化标签之外的额外查询别名。声明成完整的 Record，这样新增
+// 一个工作区页时若没填关键词就会直接编译报错。
 const PAGE_KEYWORDS: Record<WorkspacePageKey, string[]> = {
   inbox: ["inbox", "notifications", "收件箱", "通知"],
   chat: ["chat", "messages", "conversation", "聊天", "消息", "对话"],
@@ -107,9 +113,8 @@ const PAGE_KEYWORDS: Record<WorkspacePageKey, string[]> = {
 
 const NAV_PAGE_KEYS = Object.keys(WORKSPACE_PAGES) as WorkspacePageKey[];
 
-// No `icon` field: like the sidebar nav, a page's icon is derived from its
-// destination path via routeIconForPath, so all navigation surfaces show the
-// same icon for the same route.
+// 刻意没有 `icon` 字段：与侧边栏导航一样，页面图标由 routeIconForPath 从
+// 目标路径推导，保证所有导航界面对同一路由显示同一个图标。
 interface NavPage {
   key: WorkspacePageKey;
   label: string;
@@ -118,6 +123,7 @@ interface NavPage {
 
 type ThemeValue = "light" | "dark" | "system";
 
+/** 取成员名称首字母的缩写，用于无头像时的占位。 */
 function memberInitials(name: string) {
   return name
     .split(" ")
@@ -127,16 +133,14 @@ function memberInitials(name: string) {
     .slice(0, 2);
 }
 
-// Row matcher shared by the Pages and Commands groups.
+// 页面与命令分组共用的行匹配器。
 //
-// Keywords match by prefix, not substring. They are invisible synonyms, so a
-// substring hit reads as a bug from the outside: "s" used to surface Inbox
-// (via "notifications") and "i" surfaced nearly every page. The visible label
-// still matches anywhere, because there the user can see what they hit.
+// 关键词按前缀而非子串匹配。它们是不可见的同义词，子串命中从外部看像 bug：
+// 输 "s" 曾带出 Inbox（经 "notifications"），输 "i" 几乎带出所有页面。
+// 可见标签仍然允许任意位置命中，因为那里用户能看见自己命中的是什么。
 //
-// Pinyin is included for the same reason member search has it: under a Chinese
-// UI the localized label is the only thing the user can aim at, so typing
-// "renwu" has to reach "任务".
+// 支持拼音的原因与成员搜索相同：中文界面下本地化标签是用户唯一能瞄准的
+// 东西，所以输入 "renwu" 必须能命中「任务」。
 function matchesRow(label: string, keywords: string[], query: string) {
   return (
     label.toLowerCase().includes(query) ||
@@ -145,6 +149,7 @@ function matchesRow(label: string, keywords: string[], query: string) {
   );
 }
 
+/** 成员匹配：名称 / 邮箱任意位置命中，角色前缀命中，名称支持拼音。 */
 function matchesMember(member: MemberWithUser, query: string) {
   return (
     member.name.toLowerCase().includes(query) ||
@@ -154,6 +159,7 @@ function matchesMember(member: MemberWithUser, query: string) {
   );
 }
 
+/** 结果行左侧的 issue 指派人头像；没有指派人不渲染。 */
 function IssueAssigneeAvatar({
   assigneeType,
   assigneeId,
@@ -173,9 +179,8 @@ function IssueAssigneeAvatar({
   );
 }
 
-// Project / issue rows are rendered from three groups (Projects, Issues,
-// Cancelled — see the partition note on the results list), so the row markup
-// lives in one component each instead of being duplicated per group.
+// 项目 / issue 结果行由三组渲染（项目、issues、已取消——见结果列表的分组
+// 说明），所以行标记各自收在一个组件里，避免在每组里重复。
 function ProjectResultRow({
   project,
   query,
@@ -220,6 +225,7 @@ function ProjectResultRow({
   );
 }
 
+/** 搜索结果里的单个 issue 行：状态图标 + 编号 + 标题 + 命中片段。 */
 function IssueResultRow({
   issue,
   query,
@@ -279,6 +285,7 @@ function IssueResultRow({
   );
 }
 
+/** 命令面板里一条可执行的快捷命令。 */
 interface CommandItem {
   key: string;
   label: string;
@@ -288,12 +295,13 @@ interface CommandItem {
   onSelect: () => void;
 }
 
+/** 一次搜索的结果集合（按展示时的查询快照存储）。 */
 interface SearchResults {
   /**
-   * The trimmed query these rows answer. Rows outlive the query that fetched
-   * them — they stay painted while the next request is in flight — so every
-   * result set carries the question it is the answer to, and anything that can
-   * act on a row checks that it still matches what the user typed.
+   * 这些结果所回答的（已去掉首尾空格的）查询。结果行会比触发它们的查询
+   * 活得更久——下一次请求在途时它们仍留在界面上——所以每份结果都带上它
+   * 所回答的问题，凡是可以对某行执行动作的地方，都会先确认它仍匹配用户
+   * 当前输入的内容。
    */
   query: string;
   issues: SearchIssueResult[];
@@ -302,18 +310,22 @@ interface SearchResults {
 
 const NO_RESULTS: SearchResults = { query: "", issues: [], projects: [] };
 
-// One heading treatment for every group. Headings go through cmdk's `heading`
-// prop rather than a hand-rolled div: cmdk renders it into a
-// [cmdk-group-heading] node and points the group's aria-labelledby at it, so a
-// screen reader announces which group a row belongs to.
+// 所有分组共用的标题样式。标题走 cmdk 的 `heading` prop 而非自绘 div：
+// cmdk 会把它渲染成 [cmdk-group-heading] 节点并把分组的 aria-labelledby
+// 指向它，这样读屏软件能读出某行属于哪个分组。
 const GROUP_CLASS =
   "p-2 [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-caption [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground";
 
+/**
+ * 全局搜索命令面板（主体组件）。
+ * 渲染一个覆盖层 Dialog：输入即搜索，结果按「页面 / 命令 / 成员 / 项目 /
+ * issues / 已取消 / 最近」分组展示，选中后用记录的点击意图（cmd/ctrl 是否
+ * 按下）在当前页或新标签页导航。
+ */
 export function SearchCommand() {
   const { t } = useT("search");
-  // Page names come from the sidebar's own namespace rather than a private
-  // copy under `search.pages`: one translated string per page, so the palette
-  // can never disagree with the sidebar about what a page is called.
+  // 页面名取自侧边栏自己的命名空间，而不是 `search.pages` 下的私有副本：
+  // 每个页面只有一条翻译，调色板永远不会跟侧边栏在页面叫法上打架。
   const { t: tNav } = useT("layout");
   const navPages = useMemo<NavPage[]>(
     () =>
@@ -329,10 +341,9 @@ export function SearchCommand() {
   const open = useSearchStore((s) => s.open);
   const setOpen = useSearchStore((s) => s.setOpen);
 
-  // cmdk's onSelect carries no event, so the activating gesture's modifiers
-  // are recorded on the capture phase (click on a result, Enter in the input)
-  // and consumed by the select handlers below: cmd+click / cmd+Enter opens a
-  // result in a new tab instead of navigating in place.
+  // cmdk 的 onSelect 不携带事件，所以触发手势的修饰键在捕获阶段被记下来
+  // （点结果行、输入框里按 Enter），再由下面的选择处理器消费：cmd/ctrl+
+  // 点击或 Enter 会在新标签页打开结果，而不是原地跳转。
   const pendingIntentRef = useRef<LinkClickIntent>("push");
   const recordIntent = useCallback(
     (e: Pick<MouseEvent, "button" | "metaKey" | "ctrlKey" | "shiftKey">) => {
@@ -354,15 +365,13 @@ export function SearchCommand() {
     enabled: open && !!wsId,
   });
 
-  // Resolve each recent issue via its cached detail entry. Recent items are
-  // typically already in the detail cache because the user has opened them;
-  // if not, this triggers a lookup per id so Recent never depends on whether
-  // the issue falls inside the paginated list cache.
+  // 每个「最近访问」issue 都通过它的详情缓存解析。最近项通常已在详情缓存里
+  // （因为用户打开过它们）；如果不在，就按 id 各发一次详情请求，让 Recent
+  // 不依赖 issue 是否落在分页列表缓存内。
   //
-  // Gated on `open`: the palette is mounted for the whole session, and the
-  // store keeps up to 20 recent ids, so an ungated list fired up to 20 issue
-  // detail requests on every cold app load for a surface the user may never
-  // open.
+  // 用 `open` 门控：调色板在整个会话期间一直挂载，store 最多存 20 个最近
+  // id，所以不加门控的话，每次冷启动应用都会为一块用户可能根本不打开的面
+  // 触发最多 20 个 issue 详情请求。
   const recentDetailQueries = useQueries({
     queries: open ? recentItems.map((item) => issueDetailOptions(wsId, item.id)) : [],
   });
@@ -384,8 +393,8 @@ export function SearchCommand() {
     return navPages.filter((page) => matchesRow(page.label, page.keywords, q));
   }, [navPages, query]);
 
-  // Detect if current route is an issue detail page — /{slug}/issues/{id}.
-  // Falls back to null on any other route; used to gate issue-specific commands.
+  // 判断当前路由是不是 issue 详情页——/{slug}/issues/{id}。
+  // 其它路由返回 null，用于决定要不要展示 issue 专属命令。
   const currentIssueId = useMemo(() => {
     const match = pathname.match(/\/issues\/([^/]+)$/);
     const raw = match?.[1];
@@ -462,10 +471,9 @@ export function SearchCommand() {
           icon: ListChevronsDownUp,
           keywords: ["fold", "collapse", "comments", "收起", "折叠", "评论"],
           onSelect: () => {
-            // The timeline is already cached whenever the issue page has
-            // rendered; ensureQueryData only fetches on a cold cache. If it
-            // still can't load, no comments are on screen — dropping the
-            // action matches the visible state.
+            // 只要 issue 页渲染过，时间线就已进缓存；ensureQueryData 只会在
+            // 冷缓存时发请求。若仍加载不出来，说明屏幕上本就没有评论——
+            // 隐藏该动作与可见状态一致。
             void queryClient
               .ensureQueryData(issueTimelineOptions(currentIssueId))
               .then((entries) => {
@@ -540,9 +548,8 @@ export function SearchCommand() {
 
   const filteredCommands = useMemo(() => {
     const q = query.trim().toLowerCase();
-    // No query: only surface the primary creation action. Other commands
-    // (theme switches, copy actions, New Project) are revealed as the user
-    // types, leaving the empty-state space to Recent.
+    // 无查询时只露出主创建动作。其它命令（切主题、复制、New Project）随用户
+    // 输入逐渐浮现，空态空间留给 Recent。
     if (!q) return commands.filter((c) => c.key === "new-issue");
     return commands.filter((c) => matchesRow(c.label, c.keywords, q));
   }, [commands, query]);
@@ -566,29 +573,26 @@ export function SearchCommand() {
     results.projects.length > 0 ||
     filteredMembers.length > 0;
 
-  // Rows answering an earlier query are still painted while the next request
-  // is in flight — that is what keeps the list from strobing on every
-  // keystroke — but they must not be actionable: cmdk re-selects the first
-  // valid item whenever the input changes, so a live stale row turns the next
-  // Enter into a jump to a result the user has already typed past.
+  // 回答上一次查询的行在下一次请求在途时仍被渲染——这正是列表不会每敲一个
+  // 字符就闪烁的原因——但它们必须不可操作：输入一变 cmdk 就会重选第一个合法
+  // 项，一条仍在屏的过期行会把下一次 Enter 变成跳去用户已经敲过去的旧结果。
   const resultsAreStale = results.query !== query.trim();
 
-  // Cross-type cancelled demotion (MUL-5824). The two searches are ranked
-  // independently server-side, so the partition has to happen here, where they
-  // are aggregated for display. See the render note on the results list.
+  // 跨类型的「已取消」降级（MUL-5824）。两次搜索各自在服务端独立排序，所以
+  // 分区只能在这里（聚合展示时）做。见结果列表上的渲染说明。
   const partitionedResults = useMemo(
     () =>
       partitionAggregatedSearchResults({
         issues: results.issues,
         projects: results.projects,
-        // The partition describes these rows, so it keys off the query they
-        // answer — not what the user has typed since.
+        // 分区描述的是这些行，所以以它们所回答的查询为 key——而不是用户
+        // 后来又输入了什么。
         query: results.query,
       }),
     [results],
   );
 
-  // Close on single ESC — capture phase fires before base-ui Dialog's handlers
+  // 单次 ESC 关闭——捕获阶段会先于 base-ui Dialog 自己的处理器触发
   useEffect(() => {
     if (!open) return;
     const handleEsc = (e: KeyboardEvent) => {
@@ -602,7 +606,7 @@ export function SearchCommand() {
     return () => document.removeEventListener("keydown", handleEsc, true);
   }, [open, setOpen]);
 
-  // Cleanup debounce/abort on unmount
+  // 卸载时清理防抖定时器与进行中的请求
   useEffect(() => {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -610,7 +614,7 @@ export function SearchCommand() {
     };
   }, []);
 
-  // Reset state when dialog closes
+  // 弹窗关闭时重置内部状态
   useEffect(() => {
     if (!open) {
       setQuery("");
@@ -658,9 +662,8 @@ export function SearchCommand() {
         }
       } catch {
         if (!controller.signal.aborted) {
-          // Drop the previous query's rows rather than leaving them on screen
-          // permanently greyed out: the request that would have replaced them
-          // is never coming. The list falls through to the empty state.
+          // 丢弃上一次查询留下的行，而不是让它们永久灰着留在屏幕上：
+          // 原本要替换它们的请求永远不会来了。列表直接落到空态。
           setResults({ query: q.trim(), issues: [], projects: [] });
           setIsLoading(false);
         }
@@ -680,7 +683,7 @@ export function SearchCommand() {
     (value: string) => {
       setOpen(false);
       const href = value.startsWith("project:")
-        ? // value is "project:<id>" — slice off the 8-char prefix to extract the id.
+        ? // value 形如 "project:<id>"——去掉前 8 个字符取出 id。
           p.projectDetail(value.slice(8))
         : p.issueDetail(value);
       intentNavigate(href, consumeIntent());
@@ -733,7 +736,7 @@ export function SearchCommand() {
           }}
           className="flex size-full flex-col overflow-hidden rounded-xl bg-popover text-popover-foreground"
         >
-          {/* Search input */}
+          {/* 搜索输入框 */}
           <div className="flex items-center gap-3 border-b px-4 py-3">
             <SearchIcon className="size-5 shrink-0 text-muted-foreground" />
             <CommandPrimitive.Input
@@ -741,8 +744,8 @@ export function SearchCommand() {
               value={query}
               onValueChange={handleValueChange}
               onKeyDown={(e) => {
-                // cmdk's root handler intercepts Home/End for list navigation;
-                // stop propagation so the browser moves the text caret instead.
+                // cmdk 的根处理器会拦截 Home/End 做列表导航；这里阻止冒泡，
+                // 让浏览器把光标移动到文本开头/结尾。
                 if (e.key === "Home" || e.key === "End") {
                   e.stopPropagation();
                 }
@@ -755,9 +758,9 @@ export function SearchCommand() {
             />
           </div>
 
-          {/* Results list */}
+          {/* 结果列表 */}
           <CommandPrimitive.List className="max-h-[min(400px,50vh)] overflow-y-auto overflow-x-hidden">
-            {/* Pages section — only shown when query matches */}
+            {/* 页面分组——仅在查询命中时展示 */}
             {filteredPages.length > 0 && (
               <CommandPrimitive.Group
                 heading={t(($) => $.groups.pages)}
@@ -782,7 +785,7 @@ export function SearchCommand() {
               </CommandPrimitive.Group>
             )}
 
-            {/* Commands section — New Issue / New Project / Copy link / Theme, only shown when query matches */}
+            {/* 命令分组——New Issue / New Project / 复制链接 / 主题，仅在查询命中时展示 */}
             {filteredCommands.length > 0 && (
               <CommandPrimitive.Group
                 heading={t(($) => $.groups.commands)}
@@ -837,12 +840,10 @@ export function SearchCommand() {
             )}
 
             {/*
-              Spinner only while there is nothing to look at. isLoading flips
-              on the keystroke, before the 300ms debounce even fires, so
-              swapping the whole result list for a spinner on every character
-              made the list strobe while typing. Keeping the previous query's
-              rows until the next response lands is the standard trade: they
-              are one keystroke stale for a moment, instead of gone.
+              只在没有任何东西可看时显示 spinner。isLoading 在按键瞬间就翻
+              转（300ms 防抖还没触发），所以每敲一个字符就把整个结果列表换成
+              spinner，会让输入过程反复闪烁。保留上一次查询的行直到下个响应
+              落地，是惯用取舍：它们短暂地晚一拍，而不是直接消失。
             */}
             {isLoading && !hasResults && (
               <div className="flex items-center justify-center py-10">
@@ -861,16 +862,14 @@ export function SearchCommand() {
               )}
 
             {/*
-              Render order is the cross-type cancelled partition (MUL-5824):
-              live projects → live issues → one trailing Cancelled section
-              holding cancelled projects then cancelled issues. Projects and
-              issues arrive as two independently ranked responses, so per-type
-              ordering is not enough — the whole Projects group used to render
-              above the whole Issues group, letting one cancelled project be the
-              first row of the list. Keeping cancelled rows in a single trailing
-              section is the only arrangement where no cancelled row of either
-              type can precede a live row of the other. Direct hits stay in
-              their live section (see partitionAggregatedSearchResults).
+              渲染顺序是跨类型的「已取消」分区（MUL-5824）：进行中的项目 →
+              进行中的 issues → 一个收尾的 Cancelled 分组依次容纳已取消的
+              项目再是已取消的 issues。项目与 issues 是两次各自独立排序的
+              响应，所以仅按类型排序还不够——过去整个项目组会整块排在 issues
+              组上方，导致一个已取消的项目成了列表第一行。把已取消的行集中到
+              一个收尾分组，是唯一能让任一种类的已取消行都不会排在另一种类的
+              进行中行前面的排布。直接命中仍留在各自的进行中分组
+              （见 partitionAggregatedSearchResults）。
             */}
             {partitionedResults.liveProjects.length > 0 && (
               <CommandPrimitive.Group

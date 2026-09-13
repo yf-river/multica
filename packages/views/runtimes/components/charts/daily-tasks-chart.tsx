@@ -1,3 +1,12 @@
+// ============================================================================
+// 每日任务数三段堆叠图（runtime 用量页「任务」概览）
+//
+// 角色定位：把每天「完成 / 取消 / 失败」三种终态的任务计数画成一根纵向堆叠
+// 柱。三段叠在同一根柱上，用户不必另开一张图就能看出失败率的天天走势。
+//
+// 数据流：DailyTasksData（每天一条：日期/标签 + 三种终态计数）→ 三段 Bar 按
+// stackId="tasks" 堆叠，配色由 tasksChartConfig 决定。
+// ============================================================================
 import {
   BarChart,
   Bar,
@@ -13,16 +22,16 @@ import {
 } from "@multica/ui/components/ui/chart";
 import { useLocale, useT } from "../../../i18n";
 
-// Three-segment stack — completed runs at the bottom (chart-1, primary
-// brand), then cancelled (chart-3, muted: a manual stop is an outcome, not
-// an error), failed on top (chart-5 for distinct emphasis). Lets the user
-// see day-over-day failure-rate trend without a separate chart.
+// 三段堆叠——完成在底部（chart-1，品牌主色），取消在中间（chart-3，弱化：
+// 手动中止是一种「结局」而不是「错误」），失败在最顶（chart-5，突出强调）。
+// 这样用户无需单独的图就能看到失败率逐日走势。
 const tasksChartConfig = {
   completed: { label: "Completed", color: "var(--chart-1)" },
   cancelled: { label: "Cancelled", color: "var(--chart-3)" },
   failed: { label: "Failed", color: "var(--chart-5)" },
 } satisfies ChartConfig;
 
+// 一天的任务数据：日期/展示标签 + 完成/失败/取消三种终态任务数。
 export interface DailyTasksData {
   date: string;
   label: string;
@@ -31,6 +40,10 @@ export interface DailyTasksData {
   cancelled: number;
 }
 
+/**
+ * 每日任务数堆叠柱状图（完成/取消/失败）。
+ * 悬浮提示底部额外汇总三段的当日总数。
+ */
 export function DailyTasksChart({ data }: { data: DailyTasksData[] }) {
   const { t } = useT("runtimes");
   const locale = useLocale();

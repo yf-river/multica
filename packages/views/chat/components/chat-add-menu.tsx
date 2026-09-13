@@ -1,3 +1,4 @@
+// 聊天“+”附加菜单：位于输入框左下角，提供文件上传和项目上下文选择等附加操作。
 "use client";
 
 import { useRef } from "react";
@@ -17,25 +18,24 @@ import type { Project } from "@multica/core/types";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
 
+/** ChatAddMenu 组件的 props。 */
 interface ChatAddMenuProps {
-  /** Called with each selected file — the caller routes it through the
-   *  editor's upload extension, same path as paste / drag-drop. */
+  /** 每个被选中的文件都会回调一次——调用方会把它经由编辑器的上传扩展处理，
+   *  与粘贴 / 拖拽走同一条路径。 */
   onSelectFile?: (file: File) => void;
   projects?: Project[];
   projectId?: string | null;
   onSelectProject?: (projectId: string | null) => void;
-  /** Soft warning: the active agent's daemon is too old to receive the
-   *  project description. Selection stays enabled; the submenu only appends
-   *  an explanatory hint so the user knows before choosing. */
+  /** 软警告：活动 agent 的 daemon 太旧，无法接收项目描述。选中仍保持可用；
+   *  子菜单只是追加一段解释提示，让用户在选择前就知情。 */
   projectContextUnsupported?: boolean;
   disabled?: boolean;
 }
 
 /**
- * The "+" affordance at the bottom-left of the chat composer. Replaces the
- * standalone paperclip button: file upload now lives here as a submenu entry,
- * leaving room for future add-actions (agents, skills, tools) under one entry
- * point without crowding the input bar.
+ * 聊天输入框左下角的“+”入口。它取代了独立的回形针按钮：文件上传现在作为
+ * 子菜单项放在这里，为将来的更多附加操作（agents、skills、tools）留出空间，
+ * 让它们共用一个入口而不挤占输入栏。
  */
 export function ChatAddMenu({
   onSelectFile,

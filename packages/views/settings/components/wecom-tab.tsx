@@ -1,3 +1,7 @@
+// 本文件包含两块：① 设置页「集成」里的企业微信（WeCom）频道面板（WecomTab），
+// 列出已接入的智能机器人并支持管理员断开；② 供 agent 详情页复用的「接入企业微信
+// 机器人」按钮及其已连接态展示（WecomAgentBindButton 及两个配套小组件）。
+
 "use client";
 
 import { useState } from "react";
@@ -38,15 +42,15 @@ import type { WecomInstallation } from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 
-// WecomTab is the workspace settings panel for WeCom smart-bot
-// installations. Listing is member-visible; the disconnect action is
-// admin-only (the backend enforces it; the UI hides the button for non-
-// admins to match).
-//
-// Adding a new installation flows through the Agent detail page: the install
-// path is per-agent (each Multica agent gets exactly one bot — the
-// (workspace_id, agent_id, channel_type) UNIQUE in channel_installation), so
-// asking the user to pick an agent here would re-create that page's picker.
+/**
+ * 企业微信频道设置面板：列出已接入的智能机器人。列表对所有成员可见；断开仅限
+ * 管理员（后端强制，前端对非管理员隐藏按钮以对齐）。
+ *
+ * 新装机器人的入口不在本页、而在 agent 详情页：接入是按 agent 走的（每个 Multica
+ * agent 恰好一个机器人——(workspace_id, agent_id, channel_type) 在
+ * channel_installation 表里构成唯一约束），若在这里让用户挑 agent，等于把那边
+ * 的选人器重复造一遍。
+ */
 export function WecomTab() {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -179,6 +183,8 @@ export function WecomTab() {
   );
 }
 
+/** 单个已接入机器人的行：agent 头像 + 名称（可带「已撤销」角标）与机器人 bot_id；
+ *  仅对「活跃且当前有管理权」的行显示断开按钮。 */
 function InstallationRow({
   installation,
   canManage,
@@ -226,15 +232,14 @@ function InstallationRow({
   );
 }
 
-// WecomAgentBindButton is the per-agent CTA exposed from the agent detail
-// page. Wecom smart-bot uses the bring-your-own-bot model: the button opens
-// a dialog where the admin pastes the bot's stable identifier (bot_id) and
-// its long-connection secret from the WeCom admin console.
-// Visibility:
-//   1. Non-owner/admin viewers see nothing (the backend gates install/revoke).
-//   2. If this agent already has an active installation, show the connected
-//      badge.
-//   3. Otherwise the Connect CTA shows whenever install is available.
+/**
+ * agent 详情页上的「接入企业微信机器人」按钮（供 agent 页复用）。
+ * 企业微信智能机器人走「自备机器人」模型：点开弹窗，管理员粘入从企微管理后台拿到的
+ * 机器人稳定标识（bot_id）与长连接密钥。可见性：
+ *   1. 非 owner/admin 什么也不显示（后端负责门控安装/撤销）；
+ *   2. 该 agent 已有活跃安装时，显示已连接角标；
+ *   3. 否则只要安装可用就显示连接按钮。
+ */
 export function WecomAgentBindButton({
   agentId,
   agentName,
@@ -315,10 +320,8 @@ export function WecomAgentBindButton({
       setSecret("");
       setBotName("");
     } catch (e) {
-      // The server sends a stable `code` alongside the English sentence, so
-      // the admin reads the failure in their own language. The sentence is
-      // still the fallback: an older server, or a failure that has not been
-      // given a code, sends none.
+      // 服务端除英文描述外还会带一个稳定的 `code`，据此把失败原因翻成本地语言给管理员。
+      // 英文描述仍作兜底：旧服务端或还没分配 code 的失败不会带 code。
       let localized: string | undefined;
       switch (errorCode(e)) {
         case "wecom_bot_owned_by_same_workspace":
@@ -333,9 +336,8 @@ export function WecomAgentBindButton({
         case "wecom_install_rejected":
           localized = t(($) => $.wecom.byo_rejected);
           break;
-        // Distinct from the two above on purpose: "you left a field out",
-        // "WeCom said no" and "we couldn't ask WeCom" are three different
-        // things for the admin to do, so they get three different sentences.
+        // 刻意与上面几种区分开：「有字段漏填」、「企微拒绝了」与「我们连不上企微」
+        // 是管理员要做的三件不同的事，所以给三句不同的话。
         case "wecom_credentials_rejected":
           localized = t(($) => $.wecom.byo_credentials_rejected);
           break;
@@ -468,6 +470,8 @@ export function WecomAgentBindButton({
   );
 }
 
+// WecomAgentBotStatusRow 是 agent 检查器渲染的紧凑只读「已连接」入口（onShowConnectedDetails
+// 存在时使用），点击跳到集成设置页统一管理。
 function WecomAgentBotStatusRow({
   onClick,
   className,
@@ -493,6 +497,8 @@ function WecomAgentBotStatusRow({
   );
 }
 
+// WecomAgentBotConnectedBadge 是「已连接」的完整展示：状态（含 bot_id）+ 断开按钮，
+// 仅 owner/admin 会到达此组件。
 function WecomAgentBotConnectedBadge({
   installation,
   className,

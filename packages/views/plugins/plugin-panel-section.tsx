@@ -10,12 +10,11 @@ import { useT } from "../i18n";
 import { PluginSurfaceFrame } from "./plugin-surface-frame";
 
 /**
- * Renders every enabled `issue_panel` surface on an issue.
+ * plugins 模块：在一个 issue 上渲染所有已启用的 `issue_panel` 类型 surface。
  *
- * Disabled installations are filtered here AND refused by the Action API — the
- * client filter is presentation, the server check is the control. A surface
- * left open in a stale tab stops working even though this component never
- * re-rendered.
+ * 被禁用的安装在这里过滤、同时也会被 Action API 拒绝——客户端的过滤只是
+ * 展示，服务端校验才是控制。即使这个组件从未重渲染，一个留在过期标签页里
+ * 的 surface 也会随之停止工作。
  */
 export function PluginPanelSection({ issueId }: { issueId: string }) {
   const { t } = useT("issues");
@@ -33,8 +32,8 @@ export function PluginPanelSection({ issueId }: { issueId: string }) {
       .flatMap((installation) =>
         installation.surfaces
           .filter((surface) => surface.type === "issue_panel")
-          // An empty list means "anywhere"; a declared list is a filter, not a
-          // An empty list means "anywhere"; a declared list is a filter.
+          // 空的 platforms 列表表示「任何平台」；声明的列表是过滤器，而不是
+          // 允许集合。
           .filter((surface) => (surface.platforms ?? []).length === 0 || (surface.platforms ?? []).includes(platform))
           .map((surface) => ({ installation, surface })),
       );

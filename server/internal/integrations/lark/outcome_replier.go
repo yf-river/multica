@@ -1,3 +1,5 @@
+// outcome_replier.go：按 dispatcher/引擎给出的“判定结果”回贴对应的飞书侧
+// 回复卡片。
 package lark
 
 import (
@@ -13,43 +15,38 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// OutcomeReplier reacts to the Dispatcher's verdict by posting the
-// appropriate Lark-side reply card. This is the outbound half of the
-// `EventEmitter` contract in hub.go: NeedsBinding sends the binding
-// prompt to the sender's open_id, AgentOffline / AgentArchived send
-// a status notice into the chat, and FreshPending / IssueUsage send
-// command guidance. OutcomeIngested is owned by the Patcher (task
-// lifecycle); OutcomeDropped is silent.
+// OutcomeReplier 对 Dispatcher 的判定作出反应，回贴适当的飞书侧回复卡片。
+// 这是 hub.go 里 `EventEmitter` 契约的出站半边：NeedsBinding 向发送者的
+// open_id 发绑定引导；AgentOffline / AgentArchived 往聊天里推状态通知；
+// FreshPending / IssueUsage 推指令引导。OutcomeIngested 由 Patcher 负责
+// （任务生命周期）；OutcomeDropped 保持静默。
 //
-// Reply is best-effort by design: a transient Lark outage MUST NOT
-// fail the inbound pipeline. Any command state or chat message is already
-// durable by the time we get here, so a reply failure cannot roll it back.
-// Errors are logged and swallowed.
+// Reply 按设计是 best-effort：一次飞书瞬时故障绝不能弄挂入站管线。任何命令
+// 状态或聊天消息在到达这里时已经持久化，回复失败也不可能回滚它们。错误只记
+// 日志并被吞掉。
 type OutcomeReplier interface {
 	Reply(ctx context.Context, inst Installation, msg InboundMessage, res DispatchResult)
 }
 
-// OutcomeReplierQueries is the narrow subset of *db.Queries the
-// replier needs. Pinned via an interface so tests substitute a fake.
+// OutcomeReplierQueries 是 replier 需要的 *db.Queries 的窄子集。用接口钉住，
+// 方便测试注入 fake。
 type OutcomeReplierQueries interface {
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 }
 
-// BindingTokenMinter is the narrow dependency the outcome replier needs from
-// BindingTokenService. Keeping this as an interface lets tests pin the Lark
-// binding URL without constructing a database-backed token service.
+// BindingTokenMinter 是 outcome replier 从 BindingTokenService 需要的窄依赖。
+// 保持接口形态，测试就能在不构造 DB 支撑的令牌服务的情况下钉住飞书绑定 URL。
 type BindingTokenMinter interface {
 	Mint(ctx context.Context, workspaceID, installationID pgtype.UUID, openID OpenID) (BindingToken, error)
 }
 
-// noopReplier is the safe default when Lark is wired without an
-// outbound APIClient (stub) or without a BindingTokenService. It
-// logs each outcome that would have produced a reply so an operator
-// can see the gap in production logs.
+// noopReplier 是“Lark 没接出站 APIClient（stub）或没接 BindingTokenService”
+// 时的安全默认。它会记录每个本该产生回复的结果，让操作者在生产日志里看到缺口。
 type noopReplier struct {
 	log *slog.Logger
 }
 
+// Reply 实现 OutcomeReplier：把本应回复但没接线的结果记成警告日志。
 func (n *noopReplier) Reply(ctx context.Context, inst Installation, msg InboundMessage, res DispatchResult) {
 	switch res.Outcome {
 	case OutcomeNeedsBinding, OutcomeAgentOffline, OutcomeAgentArchived, OutcomeFreshPending, OutcomeChatStarted, OutcomeIssueUsage:
@@ -62,9 +59,8 @@ func (n *noopReplier) Reply(ctx context.Context, inst Installation, msg InboundM
 	}
 }
 
-// NewNoopOutcomeReplier returns the no-op replier. Used as the
-// fallback when the production wiring is incomplete (e.g. stub
-// APIClient, no binding token service).
+// NewNoopOutcomeReplier 返回 no-op replier。当生产接线不完整（如 stub
+// APIClient、无绑定令牌服务）时作为兜底。
 func NewNoopOutcomeReplier(log *slog.Logger) OutcomeReplier {
 	if log == nil {
 		log = slog.Default()
@@ -72,37 +68,33 @@ func NewNoopOutcomeReplier(log *slog.Logger) OutcomeReplier {
 	return &noopReplier{log: log}
 }
 
-// LarkOutcomeReplier is the production OutcomeReplier. It composes:
+// LarkOutcomeReplier 是生产环境的 OutcomeReplier。它组合了：
 //
-//   - APIClient — to send the binding prompt card (open_id-targeted)
-//     and the offline/archived notice cards (chat_id-targeted).
-//   - BindingTokenService — to mint a one-shot binding token for the
-//     NeedsBinding flow.
-//   - CredentialsResolver — to decrypt app_secret per call (the
-//     plaintext secret never lives on the in-memory installation row).
-//   - OutcomeReplierQueries — for the agent name shown on cards.
+//   - APIClient —— 发送绑定引导卡片（面向 open_id）和离线/归档通知卡片
+//     （面向 chat_id）。
+//   - BindingTokenService —— 为 NeedsBinding 流程铸造一次性绑定令牌。
+//   - CredentialsResolver —— 每次调用解密 app_secret（明文 secret 绝不驻留在
+//     内存里的安装行上）。
+//   - OutcomeReplierQueries —— 取卡片上展示的 agent 名。
 //
-// The replier is constructed once at boot and shared across the Hub's
-// supervisor goroutines; all dependencies must be goroutine-safe
-// (the standard implementations are).
+// replier 在启动时构造一次，被 Hub 的所有 supervisor goroutine 共享；所有
+// 依赖必须 goroutine 安全（标准实现都是）。
 type LarkOutcomeReplier struct {
 	client       APIClient
 	bindingSvc   BindingTokenMinter
 	credentials  CredentialsResolver
 	queries      OutcomeReplierQueries
-	appURL       string // e.g. https://multica.example, trailing slash trimmed
-	bindingPath  string // path component of the binding URL, default "/lark/bind"
-	noticeHeader string // header text used by the offline/archived cards
+	appURL       string // 例如 https://multica.example，末尾斜杠已去掉
+	bindingPath  string // 绑定 URL 的路径部分，默认 "/lark/bind"
+	noticeHeader string // 离线/归档卡片用的 header 文案
 	log          *slog.Logger
 }
 
-// OutcomeReplierConfig wires the production replier. AppURL is the Multica web
-// app host the user clicks into to redeem the binding token or open an issue
-// (e.g. https://multica.example). It comes from MULTICA_APP_URL and is
-// intentionally separate from MULTICA_PUBLIC_URL, which is the backend/API
-// public URL used for webhook and daemon-facing endpoints. Empty means the
-// binding flow can only log the open_id, not produce a clickable card. The
-// other fields default at construction.
+// OutcomeReplierConfig 装配生产 replier。AppURL 是用户点击兑换绑定令牌或打开
+// issue 的 Multica Web 应用主机（如 https://multica.example），来自
+// MULTICA_APP_URL，刻意与 MULTICA_PUBLIC_URL 分开——后者是给 webhook 与
+// daemon 端点用的后端/API 公网 URL。AppURL 为空意味着绑定流程只能记录
+// open_id，无法产出可点击卡片。其余字段在构造时兜底。
 type OutcomeReplierConfig struct {
 	APIClient   APIClient
 	BindingSvc  BindingTokenMinter
@@ -113,9 +105,8 @@ type OutcomeReplierConfig struct {
 	Logger      *slog.Logger
 }
 
-// NewLarkOutcomeReplier validates the configuration and returns the
-// production replier. Missing dependencies fall back to noop so the
-// boot path stays robust on partially-configured deployments.
+// NewLarkOutcomeReplier 校验配置并返回生产 replier。缺失依赖时退回 noop，
+// 让部分配置的部署也能稳健启动。
 func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) OutcomeReplier {
 	log := cfg.Logger
 	if log == nil {
@@ -150,9 +141,8 @@ func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) OutcomeReplier {
 	}
 }
 
-// Reply implements OutcomeReplier. Reads carefully — the switch is
-// the SOURCE OF TRUTH for which outcomes generate a reply, and a
-// missing branch silently drops the user-visible side effect.
+// Reply 实现 OutcomeReplier。仔细读——switch 是“哪些结果会产出回复”的真相
+// 来源，漏掉一个分支就静默丢掉用户可见的副作用。
 func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst Installation, msg InboundMessage, res DispatchResult) {
 	switch res.Outcome {
 	case OutcomeNeedsBinding:
@@ -204,10 +194,9 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst Installation, msg I
 			)
 		}
 	case OutcomeIngested:
-		// The agent's chat reply itself goes through the Patcher. An /issue
-		// command gets an immediate product result: either the newly created
-		// issue or the active duplicate that blocked it. Gate on IssueID.Valid
-		// so a plain chat message stays silent here.
+		// agent 的聊天回复本身走 Patcher。/issue 命令会有即时的产品结果：要么
+		// 是新建的 issue，要么是拦住它的活跃重复 issue。以 IssueID.Valid 为门，
+		// 普通聊天消息在这里保持安静。
 		if res.IssueID.Valid {
 			if err := r.sendIssueOutcome(ctx, inst, msg, res); err != nil {
 				r.log.Warn("lark outcome replier: issue outcome reply failed",
@@ -219,10 +208,11 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst Installation, msg I
 			}
 		}
 	case OutcomeDropped:
-		// OutcomeDropped is informational; no user-visible reply.
+		// OutcomeDropped 只是信息性的，没有用户可见回复。
 	}
 }
 
+// sendBindingPrompt 铸造绑定令牌并发绑定引导卡片给发送者。
 func (r *LarkOutcomeReplier) sendBindingPrompt(ctx context.Context, inst Installation, res DispatchResult) error {
 	if res.SenderOpenID == "" {
 		return errors.New("missing sender open_id")
@@ -246,8 +236,8 @@ func (r *LarkOutcomeReplier) sendBindingPrompt(ctx context.Context, inst Install
 	})
 }
 
-// sendIssueOutcome posts either the created confirmation or active-duplicate
-// conflict as plain text, with a link to the relevant issue when configured.
+// sendIssueOutcome 把“创建成功确认”或“命中活跃重复冲突”以纯文本发出，配置了
+// AppURL 时带相关 issue 链接。
 func (r *LarkOutcomeReplier) sendIssueOutcome(ctx context.Context, inst Installation, msg InboundMessage, res DispatchResult) error {
 	if msg.ChatID == "" {
 		return errors.New("missing chat_id")
@@ -260,11 +250,9 @@ func (r *LarkOutcomeReplier) sendIssueOutcome(ctx context.Context, inst Installa
 	if res.IssueDuplicate {
 		text = issueDuplicateText(res, r.appURL)
 	}
-	// Share the Patcher's classified fallback: a thread reply that
-	// fails because the topic cannot receive it (recalled trigger,
-	// topics disabled, aggregated message) falls back to a chat-level
-	// send so the product result is not lost; transport/5xx/rate-limit
-	// failures stay failures rather than leaking into the group chat.
+	// 与 Patcher 共用同一套“分类后退”逻辑：只有当“话题回帖”因话题收不了
+	// 消息（触发消息被撤回、话题被禁用、消息被聚合）而失败时才退回群聊级发送，
+	// 让产品结果不丢；transport/5xx/限流失败保持失败，而不是漏进群聊。
 	return sendWithThreadFallback(r.log, "send issue outcome text", inboundReplyTarget(msg), func(t ReplyTarget) error {
 		_, err := r.client.SendTextMessage(ctx, SendTextParams{
 			InstallationID: creds,
@@ -276,12 +264,10 @@ func (r *LarkOutcomeReplier) sendIssueOutcome(ctx context.Context, inst Installa
 	})
 }
 
-// inboundReplyTarget threads an outbound reply off the inbound trigger
-// message when that message lived inside a Lark topic (话题). It mirrors
-// threadReplyTarget (used by the event-driven Patcher) but reads the
-// live InboundMessage the replier already holds, so it needs no DB
-// round-trip. An empty thread_id yields the zero ReplyTarget — a
-// chat-level send, i.e. the unchanged behavior for non-thread messages.
+// inboundReplyTarget 当入站触发消息在飞书话题（话题）里时，让出站回复贴回该
+// 话题。它镜像 threadReplyTarget（事件驱动 Patcher 用的），但读的是 replier
+// 手上已有的实时 InboundMessage，因此不需要 DB 往返。thread_id 为空时返回零值
+// ReplyTarget——群聊级发送，即非话题消息的原有行为。
 func inboundReplyTarget(msg InboundMessage) ReplyTarget {
 	if msg.ThreadID != "" && msg.MessageID != "" {
 		return ReplyTarget{MessageID: msg.MessageID, InThread: true}
@@ -289,11 +275,10 @@ func inboundReplyTarget(msg InboundMessage) ReplyTarget {
 	return ReplyTarget{}
 }
 
-// issueCreatedText composes the user-facing confirmation. Identifier
-// always wins over a bare number — DispatchResult.IssueIdentifier
-// already encodes the workspace prefix when available. AppURL is optional:
-// when empty (self-host operators who haven't configured MULTICA_APP_URL) the
-// message still confirms the issue, just without a deep link the user can tap.
+// issueCreatedText 拼用户可见的创建确认文案。有可用的标识符时优先于裸数字——
+// DispatchResult.IssueIdentifier 在可用时已经编码了 workspace 前缀。AppURL
+// 可选：为空（自托管操作者没配 MULTICA_APP_URL）时消息仍确认 issue，只是少了
+// 可点击的深链。
 func issueCreatedText(res DispatchResult, appURL string) string {
 	identifier := res.IssueIdentifier
 	if identifier == "" {
@@ -312,6 +297,7 @@ func issueCreatedText(res DispatchResult, appURL string) string {
 	return line + "\n" + strings.TrimRight(appURL, "/") + "/issues/" + identifier
 }
 
+// issueDuplicateText 拼“未创建，命中活跃 issue”的用户可见冲突文案。
 func issueDuplicateText(res DispatchResult, appURL string) string {
 	identifier := res.IssueIdentifier
 	if identifier == "" {
@@ -330,6 +316,7 @@ func issueDuplicateText(res DispatchResult, appURL string) string {
 	return line + "\n" + strings.TrimRight(appURL, "/") + "/issues/" + identifier
 }
 
+// sendChatNotice 向群里发一条带 header/body 的通知卡片（离线/归档等结果用）。
 func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst Installation, msg InboundMessage, body string) error {
 	if msg.ChatID == "" {
 		return errors.New("missing chat_id")
@@ -346,9 +333,8 @@ func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst Installati
 	if err != nil {
 		return fmt.Errorf("render notice card: %w", err)
 	}
-	// Same classified fallback as sendIssueOutcome: only thread-reply
-	// failures that mean the topic cannot receive the message fall back
-	// to a chat-level send; ambiguous/transport failures stay failures.
+	// 与 sendIssueOutcome 相同的分类后退：只有“话题收不了消息”导致的话题回帖
+	// 失败才退回群聊级发送；模棱两可的/transport 失败保持失败。
 	return sendWithThreadFallback(r.log, "send notice card", inboundReplyTarget(msg), func(t ReplyTarget) error {
 		_, err := r.client.SendInteractiveCard(ctx, SendCardParams{
 			InstallationID: creds,
@@ -360,6 +346,7 @@ func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst Installati
 	})
 }
 
+// installationCredentials 解密安装行的 app_secret 并组装飞书 API 凭据。
 func (r *LarkOutcomeReplier) installationCredentials(inst Installation) (InstallationCredentials, error) {
 	secret, err := r.credentials.DecryptAppSecret(inst)
 	if err != nil {
@@ -376,12 +363,10 @@ func (r *LarkOutcomeReplier) installationCredentials(inst Installation) (Install
 	return creds, nil
 }
 
-// renderNoticeCard produces a minimal text-only interactive card for
-// the offline / archived dispatch outcomes. Lark requires
-// update_multi=true on every card we may patch later; these notice
-// cards are one-shot, so update_multi is left false (the card stays
-// as-is). Header / body match the Chinese voice used elsewhere in
-// the integration.
+// renderNoticeCard 为离线/归档等结果生成一张最小纯文本交互卡片。飞书要求每个
+// 我们后续可能 patch 的卡片都带 update_multi=true；这些通知卡片是一次性的，
+// 所以 update_multi 留 false（卡片保持原样）。header / body 与本集成其它地方
+// 的中文语气一致。
 func renderNoticeCard(header, body string) (string, error) {
 	doc := map[string]any{
 		"config": map[string]any{"wide_screen_mode": true},
@@ -406,10 +391,9 @@ func renderNoticeCard(header, body string) (string, error) {
 	return string(raw), nil
 }
 
-// agentOfflineCopy and agentArchivedCopy are the user-visible Chinese
-// strings for the two daemon/agent unavailability outcomes. They
-// match the §4.6 design: an offline agent will run when the daemon
-// comes back; an archived agent needs operator action.
+// agentOfflineCopy 与 agentArchivedCopy 等是“daemon/agent 不可用”两种结果的
+// 用户可见中文文案，与 §4.6 设计一致：离线 agent 在 daemon 回来后会自动继续；
+// 归档 agent 需要操作者介入。
 const (
 	agentOfflineCopy        = "Agent 当前离线，消息已记录。下次 daemon 上线后会自动继续处理。"
 	agentArchivedCopy       = "这个 Agent 已被归档，无法继续处理消息。请联系工作区管理员恢复或重新绑定。"

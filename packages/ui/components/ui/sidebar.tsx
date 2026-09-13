@@ -1,4 +1,8 @@
 "use client"
+// 本文件是应用侧边栏（Sidebar）组件族（shadcn 风格，基于 Base UI）：
+// 桌面端是常驻侧栏（可折叠为纯图标、可拖宽、可浮出/嵌入内容区），
+// 窄屏时退化为从侧边滑出的抽屉（Sheet）。内部按「菜单组 → 菜单项 → 子菜单」
+// 的结构拼装导航。
 
 import * as React from "react"
 import { mergeProps } from "@base-ui/react/merge-props"
@@ -26,38 +30,45 @@ import {
 } from "@multica/ui/components/ui/tooltip"
 import { PanelLeftIcon } from "lucide-react"
 
+/** 侧栏默认宽度（px） */
 const SIDEBAR_WIDTH_DEFAULT = 256
+/** 侧栏可拖出的最小宽度 */
 const SIDEBAR_WIDTH_MIN = 200
+/** 侧栏可拖出的最大宽度 */
 const SIDEBAR_WIDTH_MAX = 360
+/** 拖宽结果存 localStorage 用的键名 */
 const SIDEBAR_WIDTH_STORAGE_KEY = "sidebar_width"
+/** 移动端抽屉里侧栏占用的宽度 */
 const SIDEBAR_WIDTH_MOBILE = "18rem"
+/** 纯图标（折叠）模式下的宽度 */
 const SIDEBAR_WIDTH_ICON = "3rem"
+/** 指针位移超过该值才算一次拖宽（避免点一下也改变宽度） */
 const SIDEBAR_DRAG_THRESHOLD = 2
-// Tailwind `lg`–`xl`: wide enough to keep a two-pane list/detail surface, too
-// narrow to also spend 256px on the nav. The nav starts collapsed here and the
-// header's trigger brings it back.
+// Tailwind 的 `lg`–`xl` 段：宽到能做「列表 + 详情」双栏，但没宽到值得再花
+// 256px 放导航。这段宽度里导航默认折叠，靠顶栏的触发器重新展开。
 const SIDEBAR_AUTO_COLLAPSE_QUERY = "(min-width: 1024px) and (max-width: 1279px)"
 
 /**
- * Paints an element with whatever the sidebar wrapper is currently filled with.
+ * 让后代元素用「侧栏包装层当前实际填充的颜色」来上色。
  *
- * A descendant that has to lay down an opaque layer over the wrapper — rather
- * than over its own parent — must match the wrapper's fill exactly, and that
- * fill is conditional: `bg-sidebar` while an inset-variant sidebar is mounted,
- * the consumer's own background otherwise. Naming a token at the descendant
- * reproduces that condition in a second place, which then drifts (#6874). Use
- * this class instead: the wrapper publishes its fill as `--sidebar-wrapper-fill`
- * under the same `:has()` condition that paints it, so the two cannot disagree.
+ * 某个后代如果要盖一层不透明底在包装层上——而不是盖在自己父级上——就必须
+ * 与包装层的填充色完全一致，而这个填充是条件性的：嵌中式（inset）侧栏挂载时
+ * 是 `bg-sidebar`，否则是消费者自己的背景。在后代里直接点名某个 token，
+ * 等于把那个条件复制到了第二处，两处迟早分叉（#6874）。改用这个 class：
+ * 包装层在同一个 `:has()` 条件（既负责上色也负责发布）下把填充发布为
+ * `--sidebar-wrapper-fill`，两者永远不会不一致。
  *
- * Consumers that give the wrapper a background must declare the matching
- * non-inset half, e.g. `bg-app-shell [--sidebar-wrapper-fill:var(--app-shell)]`.
+ * 给包装层自定义背景的消费者必须声明对应的非 inset 半段，
+ * 例如 `bg-app-shell [--sidebar-wrapper-fill:var(--app-shell)]`。
  */
 const SIDEBAR_WRAPPER_FILL_CLASS = "bg-(--sidebar-wrapper-fill)"
 
+/** 把宽度夹到 [min, max] 区间 */
 function clampSidebarWidth(width: number) {
   return Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, width))
 }
 
+/** Sidebar 上下文提供的内容 */
 type SidebarContextProps = {
   state: "expanded" | "collapsed"
   open: boolean
@@ -65,34 +76,34 @@ type SidebarContextProps = {
   openMobile: boolean
   setOpenMobile: (open: boolean) => void
   /**
-   * The sidebar is an overlay sheet rather than a column in the main flow.
-   * True below the compact breakpoint, which covers tablets and folded inner
-   * screens as well as phones, not phones alone.
+   * 当前是否处于「紧凑」形态——侧栏是覆盖式抽屉，而不是页面流里的一列。
+   * 紧凑断点以下为 true：它覆盖平板和可折叠内屏，不只是手机。
    */
   isCompact: boolean
   toggleSidebar: () => void
   /**
-   * The app shell keeps a `SidebarTrigger` of its own on screen, outside the
-   * page chrome — the desktop window toolbar does, beside the traffic lights.
+   * 外壳（app shell）是否在页面 chrome 之外自带一个永远够得着的
+   * `SidebarTrigger`——桌面窗口工具栏就有，在红绿灯按钮旁边。
    *
-   * Surfaces that would otherwise supply a fallback trigger read this and
-   * supply nothing: the shell's own is always reachable, so a second one is
-   * duplicate chrome rather than a way back to a nav that had none (MUL-6218).
-   * It describes the shell, not the current viewport, so it does not track
-   * whether that trigger happens to be mounted this render.
+   * 那些本来要提供兜底触发器的界面读到这个标记后就什么也不提供：外壳自己的
+   * 触发器永远可用，再造一个只是重复的 chrome，而不是「给没有导航入口的导航
+   * 一个入口」（MUL-6218）。它描述的是外壳，不是当前视口，所以不随那个触发器
+   * 本次是否真的挂载而变化。
    */
   hasExternalTrigger: boolean
 }
 
+/** 侧栏拖宽上下文的内容 */
 type SidebarResizeContextProps = {
   commitWidth: (width: number) => void
 }
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null)
-// Width previews are written directly to the two layout shells during drag.
-// This context only exposes the one committed state transition on pointer-up.
+// 拖宽过程中宽度预览是直接写到两个布局壳上的；这个 context 只在松手时暴露
+// 那一次「提交」状态变更。
 const SidebarResizeContext = React.createContext<SidebarResizeContextProps | null>(null)
 
+/** 读取 Sidebar 上下文；不在 <SidebarProvider> 内使用会报错 */
 function useSidebar() {
   const context = React.use(SidebarContext)
   if (!context) {
@@ -102,10 +113,12 @@ function useSidebar() {
   return context
 }
 
+/** 读取 Sidebar 上下文的安全版本：不在 Provider 内时返回 null 而不是抛错 */
 function useSidebarSafe() {
   return React.use(SidebarContext)
 }
 
+/** 读取侧栏拖宽上下文；不在 Provider 内使用会报错 */
 function useSidebarResize() {
   const context = React.use(SidebarResizeContext)
   if (!context) {
@@ -115,6 +128,10 @@ function useSidebarResize() {
   return context
 }
 
+/**
+ * SidebarProvider：侧栏的根 Provider。管理开/合状态、移动端抽屉开关、
+ * 自动折叠区间的进出、以及宽度（默认/持久化/拖宽提交）。
+ */
 function SidebarProvider({
   defaultOpen = true,
   open: openProp,
@@ -129,12 +146,11 @@ function SidebarProvider({
   open?: boolean
   onOpenChange?: (open: boolean) => void
   /**
-   * Declare that this shell keeps its own always-reachable `SidebarTrigger`
-   * outside the page chrome. See `SidebarContextProps.hasExternalTrigger`.
+   * 声明外壳在页面 chrome 之外自带一个永远够得着的 `SidebarTrigger`。
+   * 见 SidebarContextProps.hasExternalTrigger。
    *
-   * Defaults to false, and the default is the safe one: a shell that forgets
-   * to opt out shows one redundant icon, while a shell that has to opt in and
-   * forgets leaves a collapsed nav with no way back.
+   * 默认 false 是安全的选择：忘了退出可选标记的外壳，最多多显示一个图标；
+   * 而需要显式开启却忘了的外壳，会让折叠后的导航没有返回入口。
    */
   hasExternalTrigger?: boolean
 }) {
@@ -157,17 +173,14 @@ function SidebarProvider({
     localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clamped))
   }, [])
 
-  // This is the internal state of the sidebar.
-  // We use openProp and setOpenProp for control from outside the component.
+  // 这是侧栏的内部开关状态。openProp / setOpenProp 用于外部受控。
   //
-  // Deliberately not persisted. Upstream shadcn writes a `sidebar_state` cookie
-  // here and seeds `defaultOpen` from it on the server; we dropped the write
-  // because nothing ever read it, and restoring the pair would be a bug rather
-  // than a feature: the auto-collapse below drives `setOpen(false)` from the
-  // viewport, so persisting its result would carry a collapse the user never
-  // asked for out of the `lg`–`xl` band and into their next session on a wider
-  // display. Persisting this needs a source that distinguishes a user toggle
-  // from an automated one — not a cookie on this callback.
+  // 刻意不做持久化。上游 shadcn 在这里写一个 `sidebar_state` cookie 并在
+  // 服务端用它对 defaultOpen 播种；我们删掉了写入，因为没有东西会读它，
+  // 而且恢复这个对反而会是 bug 而非特性：下面的自动折叠会在进入 lg–xl 区间
+  // 时驱动 setOpen(false)，把它的结果持久化，等于把用户没要求的折叠带出这个
+  // 区间、带进下一次更宽屏幕上的会话。要持久化就需要能区分「用户手动开合」
+  // 与「自动开合」的数据来源——这不是这个回调上一个 cookie 能解决的。
   const [_open, _setOpen] = React.useState(defaultOpen)
   const open = openProp ?? _open
   const setOpen = React.useCallback(
@@ -182,15 +195,13 @@ function SidebarProvider({
     [setOpenProp, open]
   )
 
-  // Auto-collapse across the `lg`–`xl` band. Only the two crossings are
-  // automated: entering it parks the state we came in with and closes the nav,
-  // leaving it restores that state. Anything the user does in between — most
-  // of all re-opening the nav — is left alone until the next crossing.
+  // 在 lg–xl 宽度区间里自动折叠。只有两次「跨界」是自动的：进入时把我们
+  // 带来的状态暂存并收起导航，离开时恢复暂存的状态。中间用户做的任何事——
+  // 尤其是重新展开导航——都会被保留，直到下一次跨界。
   //
-  // `setOpen`'s identity changes with `open`, so the listener reads both
-  // through a ref instead of resubscribing on every toggle. The ref is seeded
-  // at first render and refreshed after each commit — declared above the
-  // listener so on mount it is already current when that effect first runs.
+  // `setOpen` 的身份随 `open` 变化，所以监听器把两者都放进 ref 里读取，
+  // 而不在每次开关时重订阅。ref 在首次渲染时播种、每次提交后刷新——声明在
+  // 监听器上方，保证该 effect 首次运行时它已经是最新的。
   const latest = React.useRef({ open, setOpen })
   React.useEffect(() => {
     latest.current = { open, setOpen }
@@ -214,13 +225,13 @@ function SidebarProvider({
     return () => mql.removeEventListener("change", onChange)
   }, [])
 
-  // Helper to toggle the sidebar.
+  // 开/合切换：紧凑形态切移动端抽屉，桌面形态切常驻侧栏
   const toggleSidebar = React.useCallback(() => {
     return isCompact ? setOpenMobile((open) => !open) : setOpen((open) => !open)
   }, [isCompact, setOpen, setOpenMobile])
 
-  // We add a state so that we can do data-state="expanded" or "collapsed".
-  // This makes it easier to style the sidebar with Tailwind classes.
+  // 这个 state 用来输出 data-state="expanded" / "collapsed"，
+  // 方便直接用 Tailwind 类给侧栏不同形态写样式。
   const state = open ? "expanded" : "collapsed"
 
   const contextValue = React.useMemo<SidebarContextProps>(
@@ -266,12 +277,10 @@ function SidebarProvider({
           }
           className={cn(
             "group/sidebar-wrapper flex min-h-svh w-full",
-            // Both halves of the inset branch carry the identical :has()
-            // condition, so SIDEBAR_WRAPPER_FILL_CLASS can never name a colour
-            // this element is not actually painted with. The non-inset fill is
-            // the consumer's (this component paints nothing then), so the
-            // consumer declares that half of the variable next to its own
-            // background class.
+            // 嵌中式分支的两半共用同一个 :has() 条件，所以
+            // SIDEBAR_WRAPPER_FILL_CLASS 永远不可能点到这个元素实际没在用的
+            // 颜色。非 inset 的那半填充属于消费者（此时本组件不上任何色），
+            // 所以消费者要在自己的背景类旁边声明那一半变量。
             "has-data-[variant=inset]:bg-sidebar has-data-[variant=inset]:[--sidebar-wrapper-fill:var(--sidebar)]",
             className
           )}
@@ -284,6 +293,11 @@ function SidebarProvider({
   )
 }
 
+/**
+ * Sidebar：侧栏本体。三种 variant：sidebar 常规贴边 / floating 悬浮 / inset
+ * 嵌入主区；collapsible 控制折叠方式（offcanvas 收起后完全移出 / icon 收起为
+ * 图标条 / none 不可折叠）。窄屏（isCompact）时渲染成从侧边滑出的 Sheet。
+ */
 function Sidebar({
   side = "left",
   variant = "sidebar",
@@ -340,10 +354,9 @@ function Sidebar({
     )
   }
 
-  // `lg`, not `md`: this CSS gate has to agree with the `useIsCompact()` gate
-  // that chose the in-flow branch over the sheet above. While they disagreed,
-  // every load between the two breakpoints painted a 256px sidebar for one
-  // frame before the hook resolved and collapsed it into a sheet.
+  // 用 `lg` 而不是 `md`：这条 CSS 门槛必须和上方选「常驻栏」还是「抽屉」的
+  // useIsCompact() 门槛保持一致。当初两者不一致时，位于两个断点之间的每次
+  // 加载都会先画一帧 256px 侧栏，等 hook 解析完才把它收成抽屉。
   return (
     <div
       className="group peer hidden text-sidebar-foreground lg:block"
@@ -353,7 +366,7 @@ function Sidebar({
       data-side={side}
       data-slot="sidebar"
     >
-      {/* This is what handles the sidebar gap on desktop */}
+      {/* 这个元素负责在桌面端占住侧栏让出的空隙 */}
       <div
         data-slot="sidebar-gap"
         className={cn(
@@ -371,7 +384,7 @@ function Sidebar({
         className={cn(
           "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-out motion-reduce:transition-none lg:flex",
           "data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
-          // Adjust the padding for floating and inset variants.
+          // 浮出式/嵌中式需要额外留一圈内边距
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
@@ -391,6 +404,7 @@ function Sidebar({
   )
 }
 
+/** SidebarTrigger：顶栏/页面上切换侧栏开合的按钮（面板图标） */
 function SidebarTrigger({
   className,
   onClick,
@@ -418,6 +432,11 @@ function SidebarTrigger({
   )
 }
 
+/**
+ * SidebarRail：侧栏右边沿的细拖拽条。可以拖它调整侧栏宽度（松手提交并持久化）；
+ * 点一下（未拖动）则切换开合。拖动期间直接写两个布局壳的行内宽度，让浏览器
+ * 在绘制时合并布局，避免每次指针移动都触发一次 React 提交。
+ */
 function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
   const { toggleSidebar } = useSidebar()
   const { commitWidth } = useSidebarResize()
@@ -514,9 +533,8 @@ function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
         if (nextWidth === drag.latestWidth) return
 
         drag.latestWidth = nextWidth
-        // Only the two layout shells depend on the live width. Direct writes
-        // let the browser coalesce layout at paint time without a React commit
-        // or an inherited custom-property invalidation on the whole app tree.
+        // 只有两个布局壳依赖实时宽度。直接写样式让浏览器在绘制时合并布局，
+        // 不用走一次 React 提交、也不会让自定义属性失效波及整棵应用树。
         drag.gapEl.style.width = `${nextWidth}px`
         drag.containerEl.style.width = `${nextWidth}px`
       }
@@ -568,6 +586,7 @@ function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
   )
 }
 
+/** SidebarInset：与 Sidebar 并排的主内容区（main）；variant=inset 时自动让出侧栏空隙并加卡片式外观 */
 function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
@@ -581,6 +600,7 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   )
 }
 
+/** SidebarInput：侧栏内的搜索/过滤输入框 */
 function SidebarInput({
   className,
   ...props
@@ -595,6 +615,7 @@ function SidebarInput({
   )
 }
 
+/** SidebarHeader：侧栏顶部区块 */
 function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -606,6 +627,7 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** SidebarFooter：侧栏底部区块（通常放用户菜单、设置入口） */
 function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -617,6 +639,7 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** SidebarSeparator：侧栏里的分隔线 */
 function SidebarSeparator({
   className,
   ...props
@@ -631,6 +654,7 @@ function SidebarSeparator({
   )
 }
 
+/** SidebarContent：侧栏中部可滚动的导航内容区（菜单都放这里） */
 function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -645,6 +669,7 @@ function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** SidebarGroup：一组相关菜单的容器 */
 function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -656,6 +681,7 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** SidebarGroupLabel：菜单组的标题；图标折叠态下会被隐藏 */
 function SidebarGroupLabel({
   className,
   render,
@@ -680,6 +706,7 @@ function SidebarGroupLabel({
   })
 }
 
+/** SidebarGroupAction：钉在组标题右侧的操作按钮（如「新建」）；折叠态隐藏 */
 function SidebarGroupAction({
   className,
   render,
@@ -704,6 +731,7 @@ function SidebarGroupAction({
   })
 }
 
+/** SidebarGroupContent：菜单组正文容器 */
 function SidebarGroupContent({
   className,
   ...props
@@ -718,6 +746,7 @@ function SidebarGroupContent({
   )
 }
 
+/** SidebarMenu：菜单的 ul 容器 */
 function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
   return (
     <ul
@@ -729,6 +758,7 @@ function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
   )
 }
 
+/** SidebarMenuItem：单个菜单项的 li 容器 */
 function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
   return (
     <li
@@ -740,6 +770,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
   )
 }
 
+/** 菜单按钮的视觉变体与尺寸（cva），折叠为图标条时自动方形成方形按钮 */
 const sidebarMenuButtonVariants = cva(
   "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-body ring-sidebar-ring outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground data-active:hover:bg-sidebar-accent [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate",
   {
@@ -762,6 +793,11 @@ const sidebarMenuButtonVariants = cva(
   }
 )
 
+/**
+ * SidebarMenuButton：菜单项按钮（导航链接通常用 render 换成 <a>/<AppLink>）。
+ * isActive 表示当前项处于激活态；折叠为纯图标时若给了 tooltip，
+ * 会包一层 Tooltip 在右侧显示说明。
+ */
 function SidebarMenuButton({
   render,
   isActive = false,
@@ -816,6 +852,7 @@ function SidebarMenuButton({
   )
 }
 
+/** SidebarMenuAction：钉在菜单行右侧的操作按钮；showOnHover 时悬停该行才显示 */
 function SidebarMenuAction({
   className,
   render,
@@ -846,6 +883,7 @@ function SidebarMenuAction({
   })
 }
 
+/** SidebarMenuBadge：钉在菜单行右侧的角标（未读数等） */
 function SidebarMenuBadge({
   className,
   ...props
@@ -863,6 +901,7 @@ function SidebarMenuBadge({
   )
 }
 
+/** SidebarMenuSkeleton：菜单项加载占位（宽度随机 50%-90%）；showIcon 时前面加一个图标位 */
 function SidebarMenuSkeleton({
   className,
   showIcon = false,
@@ -870,7 +909,7 @@ function SidebarMenuSkeleton({
 }: React.ComponentProps<"div"> & {
   showIcon?: boolean
 }) {
-  // Random width between 50 to 90%.
+  // 文字条宽度在 50%–90% 之间随机
   const [width] = React.useState(() => {
     return `${Math.floor(Math.random() * 40) + 50}%`
   })
@@ -901,6 +940,7 @@ function SidebarMenuSkeleton({
   )
 }
 
+/** SidebarMenuSub：子菜单容器（缩进 + 左侧引导线）；折叠态隐藏 */
 function SidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
   return (
     <ul
@@ -915,6 +955,7 @@ function SidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
   )
 }
 
+/** SidebarMenuSubItem：子菜单项的 li 容器 */
 function SidebarMenuSubItem({
   className,
   ...props
@@ -929,6 +970,7 @@ function SidebarMenuSubItem({
   )
 }
 
+/** SidebarMenuSubButton：子菜单项的链接/按钮 */
 function SidebarMenuSubButton({
   render,
   size = "md",

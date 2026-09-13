@@ -1,5 +1,8 @@
 "use client";
 
+// 运行复盘页主体：左侧是任务（issue）运行列表，右侧是选中任务的复盘详情——
+// 概览指标、横向时间线图、按 Agent 聚合的节点表（含产物与导出）、以及原始
+// 交互事件的搜索/分组浏览。运行中通过 WebSocket 事件实时刷新。
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ChevronRight, Download, HelpCircle, Loader2, RotateCcw, WifiOff } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -82,6 +85,10 @@ import {
   type TimelineNodeRow,
 } from "./run-review-timeline";
 
+/**
+ * 运行复盘页：展示工作区里各任务（issue）的运行历史与单次运行的复盘。
+ * 左侧选任务，右侧看详情。通过 query 参数 `issue` 指定当前选中任务。
+ */
 export function RunReviewsPage() {
   const { t } = useT("run-reviews");
   const wsId = useWorkspaceId();
@@ -155,6 +162,7 @@ export function RunReviewsPage() {
     </div>
   );
 }
+/** 左侧列表里的一个任务行：标题 + 项目/状态/子任务进度 + 运行中/排队徽标。 */
 function IssueRunRow({ issue, active, href }: { issue: Issue; active: boolean; href: string }) {
   const { t } = useT("run-reviews");
   const meta = issueRunRowMeta(issue);
@@ -198,6 +206,7 @@ function IssueRunRow({ issue, active, href }: { issue: Issue; active: boolean; h
   );
 }
 
+/** 提取任务行的元信息：项目名、状态、子任务进度（无子任务则为 null）。 */
 function issueRunRowMeta(issue: Pick<Issue, "project" | "status" | "child_progress">) {
   const childTotal = issue.child_progress?.total ?? 0;
   return {
@@ -209,6 +218,7 @@ function issueRunRowMeta(issue: Pick<Issue, "project" | "status" | "child_progre
   };
 }
 
+/** 从任务的 agent_activity 里取出要展示的活动徽标：有运行中 → running，否则有排队 → queued。 */
 function issueRunRowActivity(
   issue: Pick<Issue, "agent_activity">,
 ): { count: number; tone: "running" | "queued" } | null {
@@ -219,6 +229,10 @@ function issueRunRowActivity(
   return null;
 }
 
+/**
+ * 复盘详情的实时同步：订阅任务生命周期/消息的 WebSocket 事件，任务事件立即刷新，
+ * 消息事件做节流合并刷新，WS 断开重连时也整体刷新一次。
+ */
 function useRunReviewRealtimeSync(issueId: string, wsId: string) {
   const queryClient = useQueryClient();
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -274,6 +288,10 @@ function useRunReviewRealtimeSync(issueId: string, wsId: string) {
   useWSEvent("task:message", handleTaskMessage);
 }
 
+/**
+ * 单条任务（issue）的复盘详情主体：头部任务卡（含失败重试横幅）、三个指标
+ * 卡、时间线图、节点表格（可导出）、交互事件列表（可搜索/导出/看原始 JSON）。
+ */
 function RunReviewDetail({
   issue,
   tree,
@@ -564,6 +582,7 @@ function RunReviewDetail({
     </div>
   );
 }
+/** 一组可折叠的交互事件（同一次 Agent 交互的多条事件），头部有色条与结果徽标。 */
 function RunReviewEventGroup({
   group,
   colorClassName,
@@ -636,6 +655,7 @@ function RunReviewEventGroup({
   );
 }
 
+/** 单条交互事件卡片：类型/结果/标题 + 摘要 + 来源/对象/耗时等元信息，可点开原始 JSON。 */
 function RunReviewEventRow({
   event,
   colorClassName,
@@ -702,6 +722,7 @@ function RunReviewEventRow({
   );
 }
 
+/** 查看某条事件原始内容的大弹窗：摘要/详情/元数据/原始 JSON 分段展示。 */
 function RunReviewEventRawDialog({
   event,
   onOpenChange,
@@ -805,11 +826,13 @@ function eventGroupOutcomeClass(group: RunReviewEventGroupData): string {
   return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
 }
 
+/** 用 fnv1a32 哈希给文本派生一个稳定的调色板颜色类（供时间线/事件分色）。 */
 function timelinePaletteClass(key: string) {
   const colors = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-teal-600", "bg-indigo-600", "bg-cyan-700"];
   return colors[fnv1a32(key) % colors.length] ?? "bg-slate-600";
 }
 
+/** 最近一次运行以失败/取消收尾时，在任务卡里展示的失败横幅 + 重试按钮。 */
 function RunFailureBanner({
   task,
   retrying,
@@ -960,6 +983,7 @@ function ArtifactLinks({ artifacts }: { artifacts: AgentTaskArtifact[] }) {
   );
 }
 
+/** 时间线横条图：把各阶段/子任务/人工确认按时间排成一行行的彩色横条。 */
 function TimelineLaneChart({
   stageRows,
   childLanes,
@@ -1110,6 +1134,7 @@ function NodeTokenTooltip({ node }: { node: IssueTimelineNode | undefined }) {
     />
   );
 }
+/** 把复盘表打包下载成 xlsx（运行时才懒加载 xlsx 库，缩小首屏体积）。 */
 async function downloadXlsx(filename: string, sheets: XlsxSheetSpec[]) {
   if (typeof window === "undefined" || typeof document === "undefined") return;
   const { downloadRunReviewXlsx } = await import("./run-review-xlsx");

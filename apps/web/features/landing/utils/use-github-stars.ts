@@ -3,27 +3,24 @@
 import { useEffect, useState } from "react";
 
 /**
- * Live GitHub star count for the landing header's "GitHub" button.
+ * 供官网头部「GitHub」按钮展示实时 Star 数的 hook。
  *
- * Fetched client-side on purpose: the badge lives in the shared
- * {@link LandingHeader}, which renders on every marketing page, so a single
- * client fetch covers them all without threading a server value through eight
- * render sites. Each visitor calls the GitHub API from their own IP, which
- * sidesteps the shared-outbound-IP rate limit that the server-side
- * `github-release.ts` fetcher has to work around with a PAT.
+ * 刻意放在客户端请求：徽标所在的 LandingHeader 会在每个营销页渲染，一次客户端请求
+ * 就覆盖所有页面，不必把服务端数值穿过七八处渲染位置。每个访客用自己的 IP 调 GitHub
+ * API，也绕开了服务端 `github-release.ts` 取数时需要靠 PAT 解决的共享出口 IP 限流。
  *
- * The result is memoized at module scope (plus an in-flight promise) so
- * client-side navigation between landing pages reuses the first fetch instead
- * of hitting the API again. A failed fetch caches `null` so we don't retry in
- * a loop; the button just degrades to its plain "GitHub" label.
+ * 结果按「模块级」缓存（连同进行中的 Promise）：落地页之间客户端跳转时直接复用第一次
+ * 的结果，不会重复请求。失败则缓存 `null` 避免进入重试循环——按钮退化为普通
+ * 「GitHub」文案即可。
  */
 
 const REPO = "multica-ai/multica";
 
-// `undefined` = never fetched; `number` = resolved count; `null` = fetch failed.
+// `undefined` = 从未请求；`number` = 已取到数量；`null` = 请求失败。
 let cachedStars: number | null | undefined;
 let inFlight: Promise<number | null> | null = null;
 
+/** 读取 Star 数：命中缓存直接返回，否则发起一次请求并缓存结果。 */
 async function loadStars(): Promise<number | null> {
   if (cachedStars !== undefined) return cachedStars;
   if (inFlight) return inFlight;
@@ -52,6 +49,11 @@ async function loadStars(): Promise<number | null> {
   return inFlight;
 }
 
+/**
+ * 读取 GitHub Star 数（供头部徽标用）。未取到或失败时返回 null。
+ *
+ * @returns 当前仓库的 Star 数，或 null（加载中/失败）。
+ */
 export function useGithubStars(): number | null {
   const [stars, setStars] = useState<number | null>(cachedStars ?? null);
 
@@ -69,10 +71,12 @@ export function useGithubStars(): number | null {
 }
 
 /**
- * Compact star count matching GitHub's own repo-header style: one decimal
- * thousands/millions with the trailing ".0" trimmed ("1k", "37.6k", "1.2m").
- * Counts below 1,000 render exactly. Mirrors GitHub's `toFixed(1)` rounding so
- * our badge reads the same as the figure on the repo page.
+ * 紧凑的 Star 数格式，对齐 GitHub 仓库头部样式：千/百万只留一位小数并去掉尾部的
+ * ".0"（如 "1k"、"37.6k"、"1.2m"），低于 1000 原样输出。舍入方式与 GitHub 的
+ * `toFixed(1)` 一致，保证徽标和仓库页显示一致。
+ *
+ * @param n - 原始 Star 数。
+ * @returns 紧凑展示文本。
  */
 export function formatStarCount(n: number): string {
   if (n >= 1_000_000) {

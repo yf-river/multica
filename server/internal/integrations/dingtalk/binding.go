@@ -1,3 +1,11 @@
+// binding.go：钉钉用户「绑定令牌」的铸造与兑换——把钉钉用户 id 绑定到 Multica
+// 账号，是「你还没绑定，点这里关联」流程的后端。
+//
+// 流程：未绑定的钉钉用户给 bot 发消息，会收到一条引导「关联你的账号」（令牌在
+// 这里铸造、由 OutboundReplier 送达），点开站内兑换页完成兑换后，他的钉钉 staff
+// id 就与 Multica 账号绑定了。整体镜像 slack.BindingTokenService，只是跑在
+// channel_type='dingtalk' 的通用 channel_* 查询上；兑换时还会额外校验令牌确属
+// 钉钉渠道（见 validateBindingTokenChannel）。
 package dingtalk
 
 import (
@@ -17,61 +25,52 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// This file is the DingTalk user-binding token flow: an unbound DingTalk user
-// who messages the bot gets a "link your account" prompt (minted here, delivered
-// by the OutboundReplier), clicks through to the in-product redeem page, and
-// their DingTalk staff id is bound to their Multica account. It mirrors
-// slack.BindingTokenService but runs on the generic channel_* queries with
-// channel_type='dingtalk'.
-
-// BindingTokenTTL bounds a token's life. The channel_binding_token CHECK
-// enforces the same 15-minute cap so a misconfigured caller cannot mint longer.
+// BindingTokenTTL 限制令牌的有效期。channel_binding_token 表上的 CHECK 约束同步
+// 了这同一个 15 分钟上限——即便调用方配置失误，也造不出更长命的令牌。
 const BindingTokenTTL = 15 * time.Minute
 
 var (
-	// ErrBindingTokenInvalid: token unknown / already consumed / expired. One
-	// opaque error for all three avoids a replay timing oracle.
+	// ErrBindingTokenInvalid：令牌不存在 / 已被消费 / 已过期。三种失败统一用这
+	// 一个不透明的错误，避免暴露「到底是哪种」给攻击者当重放试探的时间差探针
+	// （防时序 oracle）。
 	ErrBindingTokenInvalid = errors.New("dingtalk: binding token invalid or expired")
-	// ErrBindingAlreadyAssigned: this DingTalk user id is already bound to a
-	// different Multica user (account transfer must go through explicit unbind).
+	// ErrBindingAlreadyAssigned：这个钉钉用户 id 已绑给别的 Multica 用户（账号
+	// 过户必须走显式解绑）。
 	ErrBindingAlreadyAssigned = errors.New("dingtalk: user id is already bound to a different user")
-	// ErrBindingNotWorkspaceMember: the redeemer is not a member of the token's
-	// workspace. Translated to 403 at the HTTP boundary.
+	// ErrBindingNotWorkspaceMember：兑换者不是该令牌所属工作区的成员。在 HTTP
+	// 边界会被翻译成 403。
 	ErrBindingNotWorkspaceMember = errors.New("dingtalk: redeemer is not a workspace member")
 )
 
-// BindingToken is a freshly minted token. The raw value is returned exactly
-// once (embedded in the binding URL); only its hash is persisted.
+// BindingToken 是一枚刚铸造出来的令牌。原始值只返回一次（嵌在绑定 URL 里），
+// 库里只落它的哈希。
 type BindingToken struct {
 	Raw       string
 	ExpiresAt time.Time
 }
 
-// RedeemedBindingToken is returned after a successful redemption.
+// RedeemedBindingToken 是兑换成功后的结果。
 type RedeemedBindingToken struct {
 	WorkspaceID    pgtype.UUID
 	InstallationID pgtype.UUID
 	DingTalkUserID string
 }
 
-// BindingTokenService mints and redeems DingTalk binding tokens. Redemption is
-// transactional: consuming the token and inserting the channel_user_binding row
-// commit together, so a failed bind never burns a token.
+// BindingTokenService 负责铸造与兑换钉钉绑定令牌。兑换是事务性的：消费令牌和
+// 插入 channel_user_binding 行要么一起成功要么一起回滚，绑定失败绝不烧令牌。
 type BindingTokenService struct {
 	q   *db.Queries
 	tx  engine.TxStarter
 	now func() time.Time
 }
 
-// NewBindingTokenService constructs the service. tx (a *pgxpool.Pool) is needed
-// for the transactional redeem path.
+// NewBindingTokenService 构造服务。tx（*pgxpool.Pool）供事务性兑换路径使用。
 func NewBindingTokenService(q *db.Queries, tx engine.TxStarter) *BindingTokenService {
 	return &BindingTokenService{q: q, tx: tx, now: time.Now}
 }
 
-// Mint creates a single-use binding token for (installation, dingtalkUserID) and
-// returns the raw secret + expiry. The raw value must be delivered over DingTalk
-// (encrypted in transit by the platform) and never logged.
+// Mint 为 (installation, dingtalkUserID) 铸造一枚一次性绑定令牌，返回原始密钥与
+// 过期时间。原始值必须经钉钉送达用户（传输全程被平台加密），且绝不可写日志。
 func (s *BindingTokenService) Mint(ctx context.Context, workspaceID, installationID pgtype.UUID, dingtalkUserID string) (BindingToken, error) {
 	raw, err := randomBindingToken(32)
 	if err != nil {
@@ -91,9 +90,9 @@ func (s *BindingTokenService) Mint(ctx context.Context, workspaceID, installatio
 	return BindingToken{Raw: raw, ExpiresAt: expiresAt}, nil
 }
 
-// RedeemAndBind atomically consumes a raw token and binds the DingTalk user id
-// to multicaUserID (taken from the session, never from the token). Returns
-// ErrBindingTokenInvalid / ErrBindingAlreadyAssigned / ErrBindingNotWorkspaceMember.
+// RedeemAndBind 原子地消费一枚原始令牌，并把钉钉用户 id 绑定到 multicaUserID
+// （该 id 取自当前会话，绝不取自令牌）。可能返回 ErrBindingTokenInvalid /
+// ErrBindingAlreadyAssigned / ErrBindingNotWorkspaceMember。
 func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, multicaUserID pgtype.UUID) (RedeemedBindingToken, error) {
 	if s.tx == nil {
 		return RedeemedBindingToken{}, errors.New("dingtalk: BindingTokenService missing TxStarter")
@@ -113,14 +112,13 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 		return RedeemedBindingToken{}, fmt.Errorf("consume token: %w", err)
 	}
 	if err := validateBindingTokenChannel(row); err != nil {
-		// Consume and bind share this transaction, so returning here rolls the
-		// consume back. A token from another adapter must never create a DingTalk
-		// binding against that adapter's installation.
+		// 消费与绑定共享同一事务，这里 return 会把「消费令牌」一并回滚。其它适配
+		// 器铸的令牌绝不能拿它来建一条指向该适配器安装的钉钉绑定。
 		return RedeemedBindingToken{}, err
 	}
 
-	// Explicit membership gate (no member FK): returning before Commit rolls the
-	// consume back, so a non-member's attempt does not burn the token.
+	// 显式的工作区成员校验（没有成员外键可用）：在 Commit 之前 return 会顺带把
+	// 「消费令牌」一起回滚，非成员的兑换尝试不会浪费掉这枚令牌。
 	if _, err := qtx.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 		UserID:      multicaUserID,
 		WorkspaceID: row.WorkspaceID,
@@ -139,8 +137,9 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 		ChannelUserID:  row.ChannelUserID,
 		Config:         []byte(`{}`),
 	}); err != nil {
-		// pgx.ErrNoRows means the existing binding points at a different user —
-		// the ON CONFLICT DO UPDATE WHERE multica_user_id=… gating rejected it.
+		// pgx.ErrNoRows 表示该 ChannelUserID 已有绑定、且指向的是另一个用户——
+		// 是 SQL 里 ON CONFLICT DO UPDATE WHERE multica_user_id=… 的门槛在拒绝
+		// 我们覆盖别人的绑定，按「已被占用」处理。
 		if errors.Is(err, pgx.ErrNoRows) {
 			return RedeemedBindingToken{}, ErrBindingAlreadyAssigned
 		}
@@ -157,6 +156,8 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 	}, nil
 }
 
+// validateBindingTokenChannel 拒绝拿非钉钉渠道铸的令牌来钉钉兑换：channel_binding_token
+// 表是多适配器共用的，跨适配器的令牌绝不能变成一条钉钉绑定。
 func validateBindingTokenChannel(row db.ChannelBindingToken) error {
 	if row.ChannelType != string(TypeDingTalk) {
 		return ErrBindingTokenInvalid
@@ -164,6 +165,8 @@ func validateBindingTokenChannel(row db.ChannelBindingToken) error {
 	return nil
 }
 
+// randomBindingToken 用密码学安全随机数生成 n 字节，再以 URL 安全的 base64（无
+// 填充）编码——令牌会进绑定 URL，不能带 +/ 或 = 这类跟 URL 语法打架的字符。
 func randomBindingToken(n int) (string, error) {
 	buf := make([]byte, n)
 	if _, err := rand.Read(buf); err != nil {
@@ -172,6 +175,8 @@ func randomBindingToken(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
+// hashBindingToken 对原始令牌做 SHA-256 并返回十六进制串。库里只存哈希：万一库
+// 被拖走，攻击者也拿不到能直接兑换的令牌原文。
 func hashBindingToken(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])

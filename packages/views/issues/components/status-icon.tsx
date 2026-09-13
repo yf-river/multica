@@ -1,9 +1,14 @@
+// 本文件：StatusIcon —— 状态图标（SVG 图形集）。
+// 一套图标按"状态类别"渲染：积压（环形点阵）、待办（空环）、进行中/评审中
+// （饼形填充半程/四分之三）、已完成（实心圆 + 对勾）、阻塞（空环 + 禁止斜杠）、
+// 已取消（空环 + 叉）。自定义状态使用其所属类别的图形并允许自定义颜色。
+
 import { statusCategoryOfKey } from "@multica/core/issues";
 import type { IssueStatus, IssueStatusCategory } from "@multica/core/types";
 import { STATUS_CONFIG } from "@multica/core/issues/config";
 
 // ---------------------------------------------------------------------------
-// Geometry constants (viewBox 0 0 14 14, center 7,7)
+// 几何常量（viewBox 0 0 14 14，圆心 7,7）
 // ---------------------------------------------------------------------------
 
 const CX = 7;
@@ -12,10 +17,10 @@ const OUTER_R = 6;
 const FILL_R = 3.5;
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
-/** Build a pie-wedge SVG path from 12 o'clock, clockwise */
+/** 从 12 点方向起、顺时针构造一块扇形饼图 SVG 路径 */
 function piePath(cx: number, cy: number, r: number, progress: number): string {
   const angle = 2 * Math.PI * progress;
   const endX = cx + r * Math.sin(angle);
@@ -25,7 +30,7 @@ function piePath(cx: number, cy: number, r: number, progress: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Base component — dashed outer ring + pie fill + optional center icon
+// 基础组件——虚线外环 + 饼形填充 + 可选中心图形
 // ---------------------------------------------------------------------------
 
 function ProgressCircle({
@@ -37,7 +42,7 @@ function ProgressCircle({
 }) {
   return (
     <>
-      {/* Outer dashed ring */}
+      {/* 外圈虚线环 */}
       <circle
         cx={CX}
         cy={CY}
@@ -48,7 +53,7 @@ function ProgressCircle({
         strokeDasharray="3.14 0"
         strokeDashoffset={-0.7}
       />
-      {/* Progress fill */}
+      {/* 进度填充 */}
       {progress === 1 ? (
         <circle cx={CX} cy={CY} r={OUTER_R} fill="currentColor" />
       ) : progress > 0 ? (
@@ -60,10 +65,10 @@ function ProgressCircle({
 }
 
 // ---------------------------------------------------------------------------
-// Per-status renderers
+// 各状态渲染器
 // ---------------------------------------------------------------------------
 
-/** 16 small dots arranged in a ring */
+/** 16 个小点排成一圈（积压） */
 function BacklogIcon() {
   const count = 16;
   const dotR = 0.55;
@@ -109,7 +114,7 @@ function DoneIcon() {
   );
 }
 
-/** Outer ring + prohibition slash (🚫 style) */
+/** 外环 + 禁止斜杠（🚫 风格） */
 function BlockedIcon() {
   return (
     <ProgressCircle progress={0}>
@@ -141,7 +146,7 @@ function CancelledIcon() {
 }
 
 // ---------------------------------------------------------------------------
-// Renderer map
+// 渲染器映射表
 // ---------------------------------------------------------------------------
 
 const STATUS_RENDERERS: Record<IssueStatusCategory, () => React.ReactNode> = {
@@ -155,9 +160,16 @@ const STATUS_RENDERERS: Record<IssueStatusCategory, () => React.ReactNode> = {
 };
 
 // ---------------------------------------------------------------------------
-// Public component
+// 对外组件
 // ---------------------------------------------------------------------------
 
+/**
+ * 状态图标。按状态类别渲染固定图形集：
+ * - `category`：已解析的类别，给持有工作区目录的调用方用；缺省时按 key 自行
+ *   解析（对 7 个内置状态是精确的，自定义 key 在没有目录的本组件里回退为 todo）；
+ * - `color`：自定义状态的 `#rrggbb`。内置状态保留各自的语义 token 色；
+ * - `inheritColor`：为 true 时强制继承父级文字色（选中行/深色 chip 等场景）。
+ */
 export function StatusIcon({
   status,
   category: categoryProp,
@@ -167,23 +179,22 @@ export function StatusIcon({
 }: {
   status: IssueStatus | string;
   /**
-   * Resolved category, for callers that hold the workspace catalog. Without it
-   * the key resolves on its own, which is exact for the 7 built-ins and falls
-   * back to `todo` for a custom key this render has no catalog for.
+   * 已解析的类别，给持有工作区目录的调用方。不传则按 key 自行解析——
+   * 对 7 个内置状态是精确的；对目录外自定义 key 会回退到 `todo`。
    */
   category?: IssueStatusCategory;
-  /** A custom status's `#rrggbb`. Built-ins keep their semantic token color. */
+  /** 自定义状态的 `#rrggbb` 色值。内置状态保留各自的语义 token 色。 */
   color?: string | null;
   className?: string;
   inheritColor?: boolean;
 }) {
-  // The glyph set is per CATEGORY: a custom status renders with its category's
-  // icon, which is what makes it read as "the same kind of thing". (MUL-6243)
+  // 图形集按"类别"划分：自定义状态以其类别的图标渲染，
+  // 这正是让它读起来像"同一类东西"的原因。（MUL-6243）
   const category = categoryProp ?? statusCategoryOfKey(status);
   const cfg = STATUS_CONFIG[category];
   const Renderer = STATUS_RENDERERS[category] ?? TodoIcon;
-  // A custom color wins over the category's token, but only when the caller
-  // isn't already forcing the glyph to inherit (selected rows, dark chips).
+  // 自定义颜色优先于类别 token，但仅当调用方没有让图形强制继承文字色时
+  //（选中行、深色 chip 等场景）。
   const useCustomColor = !inheritColor && Boolean(color);
 
   return (

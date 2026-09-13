@@ -1,3 +1,6 @@
+// 本文件提供工作区「目录型」查询的 React Hook：工作区列表、成员/agent/squad
+// 名单，以及把「类型 + id」解析成可展示的名字/头像的工具。
+
 "use client";
 
 import { useCallback, useMemo } from "react";
@@ -15,21 +18,20 @@ import { useFeatureEnabled } from "../config";
 import { PLUGINS_V1_FLAG } from "../feature-flags";
 import { pluginInstallationsOptions } from "../plugins";
 
-// Stable empties for the still-loading directory queries. A fresh `= []`
-// default allocates a new array on every render while `data` is undefined,
-// which makes `useMemo(..., [members, agents, squads])` recompute
-// `getActorName` on every render during cold load. Consumers that list
-// `getActorName` in their own memo deps (BoardView's `groups`, SwimLaneView's
-// `laneGroups`) then churn a fresh value each render, and the board/list
-// column resync `useEffect(setColumns, [groups])` re-fires without end — an
-// infinite re-render that react-virtuoso turns into "Maximum update depth
-// exceeded" on the Issues route (MUL-4985). Sharing one reference keeps the
-// loading snapshot referentially stable.
+// 仍处于加载中的目录查询要用「稳定的空数组」。若用 `= []` 这种每次渲染新建的
+// 默认值，`data` 为 undefined 期间每一帧都会分配一个新数组，导致
+// `useMemo(..., [members, agents, squads])` 在冷加载期每帧都重算
+// `getActorName`。把 `getActorName` 放进自己 memo 依赖的消费方（BoardView 的
+// `groups`、SwimLaneView 的 `laneGroups`）于是每帧都换新值，看板/列表列的
+// resync `useEffect(setColumns, [groups])` 就会无限触发——react-virtuoso 把这种
+// 死循环报成 Issues 路由上的 "Maximum update depth exceeded"（MUL-4985）。
+// 共享同一引用，让加载中的快照在引用上保持稳定。
 const EMPTY_MEMBERS: MemberWithUser[] = [];
 const EMPTY_AGENTS: Agent[] = [];
 const EMPTY_SQUADS: Squad[] = [];
 const EMPTY_WORKSPACES: Workspace[] = [];
 
+/** 名字解析需要拉取哪些目录的开关。 */
 type ActorNameQueryScope = {
   members?: boolean;
   agents?: boolean;
@@ -45,13 +47,14 @@ const DEFAULT_ACTOR_NAME_QUERY_SCOPE: Required<ActorNameQueryScope> = {
 };
 
 /**
- * Shared authoritative-state contract for the workspace list.
+ * 工作区列表的「权威状态已就绪」契约。
  *
- * TanStack Query's `isFetched` also becomes true after an initial failure, so
- * it cannot distinguish "the account has no workspaces" from "the first
- * request failed before any list arrived". Data presence can: a successful
- * empty response is `[]`, while an initial failure remains `undefined`.
- * Background failures retain cached data and therefore remain ready.
+ * TanStack Query 的 `isFetched` 在初次失败后也会变 true，所以它区分不了
+ * 「账号没有任何工作区」和「第一个请求在列表到达前就失败了」。数据是否在场
+ * 能区分：成功空响应是 `[]`，初次失败则保持 `undefined`。后台失败保留着缓存
+ * 数据，因此仍视为就绪。
+ *
+ * @param options - 可选 enabled 开关
  */
 export function useWorkspaceList({ enabled = true }: { enabled?: boolean } = {}) {
   const query = useQuery({
@@ -70,20 +73,22 @@ export function useWorkspaceList({ enabled = true }: { enabled?: boolean } = {})
 }
 
 /**
- * Pure actor-name resolution over explicit directory snapshots. Async flows
- * (e.g. CSV export) must resolve names from directories they have awaited
- * themselves — a hook-bound getActorName closes over whatever the queries
- * held at render time, silently naming everyone "Unknown*" while the
- * directories are still loading.
+ * 基于显式目录快照的纯「操作者名字解析」。
+ *
+ * 异步流程（例如 CSV 导出）必须用自己 await 过的目录来解析名字——绑定在 hook
+ * 上的 getActorName 闭包捕捉的是渲染时刻查询里有什么，目录还在加载时会静默地
+ * 把所有人叫成 "Unknown*"。
+ *
+ * @param directories - 成员/agent/squad/插件目录快照
+ * @returns (type, id) => 名字 的解析函数
  */
 export function buildActorNameResolver(directories: {
   members: readonly { user_id: string; name: string }[];
   agents: readonly { id: string; name: string }[];
   squads: readonly { id: string; name: string }[];
   /**
-   * Installed plugins. Optional because most callers have no reason to load
-   * them, and an event-written row then falls back to a generic "Plugin" —
-   * vague, but not wrong the way "System" would be.
+   * 已安装的插件。可省，因为大多数调用方没有理由加载它们；事件写入的行于是
+   * 回退成泛泛的 "Plugin"——模糊，但不像 "System" 那样是错的。
    */
   plugins?: readonly { id: string; name: string }[];
 }) {
@@ -95,16 +100,21 @@ export function buildActorNameResolver(directories: {
     if (type === "member") return memberNames.get(id) ?? "Unknown";
     if (type === "agent") return agentNames.get(id) ?? "Unknown Agent";
     if (type === "squad") return squadNames.get(id) ?? "Unknown Squad";
-    // An event-triggered hook writes as the installation itself: there is no
-    // person behind it, and borrowing the last member who touched the issue
-    // would be a lie the audit trail cannot undo. An id that no longer
-    // resolves means the plugin was uninstalled — the row stays readable.
+    // 事件触发的 hook 以「安装本身」的身份写入：背后没有具体的人，借用最后
+    // 碰过这个 issue 的成员做署名是审计日志无法撤销的谎言。id 解析不到意味着
+    // 插件已被卸载——行仍应保持可读。
     if (type === "plugin") return pluginNames.get(id) ?? "Plugin";
     if (type === "system") return "Multica";
     return "System";
   };
 }
 
+/**
+ * 当前工作区的操作者名解析 hook：按需拉取成员/agent/squad（及插件）目录，
+ * 返回稳定的取名/取头像方法集合。
+ *
+ * @param scope - 要拉取的目录开关
+ */
 export function useActorName(
   scope: ActorNameQueryScope = DEFAULT_ACTOR_NAME_QUERY_SCOPE,
 ) {
@@ -121,8 +131,8 @@ export function useActorName(
     ...squadListOptions(wsId),
     enabled: !!wsId && scope.squads !== false,
   });
-  // Only for naming a plugin-authored row. Gated on the flag so a workspace
-  // without plugins does not fetch a list it can never render an author from.
+  // 只为给插件署名的行取名。受特性开关约束，避免没有插件的工作区拉一份它
+  // 永远渲染不出作者的列表。
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
   const { data: pluginData } = useQuery({
     ...pluginInstallationsOptions(wsId),

@@ -1,3 +1,11 @@
+// install.go：Slack 安装管理的后端（MUL-3666）——令牌的静态加密、共用的
+// persistInstall 事务，以及安装的 list / get / revoke 管理面。
+//
+// Slack 走 BYO（自带应用）模型：工作区管理员自建 Slack 应用、装进自己的 Slack
+// 工作区，再把 bot 令牌（xoxb-）和应用级令牌（xapp-）贴进 Multica（粘贴校验
+// 的路径在 byo_install.go）。InstallService 负责这些令牌的静态加密——任何调用
+// 方都不可能写出带明文令牌的 channel_installation——外加共用的 persistInstall
+// 事务与 list/get/revoke 管理操作。
 package slack
 
 import (
@@ -16,37 +24,26 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// This file is the Slack install backend (MUL-3666). Slack uses the
-// bring-your-own-app (BYO) model: the workspace admin creates their own Slack
-// app, installs it to their Slack workspace, and pastes its bot token (xoxb-) +
-// app-level token (xapp-) into Multica (the paste path lives in byo_install.go).
-// The InstallService owns the at-rest encryption of those tokens — so no caller
-// can write a channel_installation with a plaintext token — plus the shared
-// persistInstall transaction and the list / get / revoke management surface.
-
 var (
-	// ErrInstallationNotFound surfaces "no row matches in this workspace".
+	// ErrInstallationNotFound：本工作区里查不到匹配的安装行。
 	ErrInstallationNotFound = errors.New("slack installation not found")
-	// ErrTeamOwnedByAnotherWorkspace is returned when the pasted Slack app is
-	// already connected to a live owner in a DIFFERENT Multica workspace — it
-	// would collide with the (channel_type, app_id) routing index. A Slack app is
-	// one bot identity and maps to one agent; reusing it here requires
-	// disconnecting it in the other workspace first.
+	// ErrTeamOwnedByAnotherWorkspace：贴来的 Slack 应用已被【另一个】 Multica
+	// 工作区里一个在线的 owner 连着——那会撞上 (channel_type, app_id) 路由索引。
+	// 一个 Slack 应用就是一个 bot 身份、映射一个 agent；想在这里复用它，得先
+	// 在另一个工作区把它断开。
 	ErrTeamOwnedByAnotherWorkspace = errors.New("slack: this Slack app is already connected to a different Multica workspace")
-	// ErrTeamOwnedBySameWorkspace is returned when the app is already connected to
-	// a DIFFERENT (live, non-archived) agent in the SAME workspace. The old
-	// catch-all wrongly blamed "another workspace"; naming the same-workspace case
-	// points the user at the Disconnect they can actually reach (#4810).
+	// ErrTeamOwnedBySameWorkspace：应用已连到【同一个】工作区里另一个（在线的、
+	// 未归档的）agent。早先那个笼统的错误一律赖「别的 workspace」，报得不准；
+	// 单独点名同工作区的情况，用户才知道该去点哪个可操作的 Disconnect（#4810）。
 	ErrTeamOwnedBySameWorkspace = errors.New("slack: this Slack app is already connected to another agent in this workspace")
-	// ErrTeamOwnedByArchivedAgent is returned when the app's owning agent is
-	// archived (and so still holds the bot, since archiving is reversible). The
-	// user recovers by restoring that agent or disconnecting its bot.
+	// ErrTeamOwnedByArchivedAgent：应用还挂在某个已归档的 agent 名下（归档可逆，
+	// 所以 bot 仍归它）。用户通过恢复那个 agent 或断开它的 bot 来解套。
 	ErrTeamOwnedByArchivedAgent = errors.New("slack: this Slack app is connected to an archived agent in this workspace")
 )
 
-// installQueries is the slice of generated queries InstallService needs. WithTx
-// returns the same interface bound to a transaction so persistInstall runs its
-// upsert atomically (and so tests can inject a fake without a real DB).
+// installQueries 是 InstallService 需要的生成查询子集。WithTx 返回绑到同一事务
+// 的同一接口，让 persistInstall 的 upsert 原子执行（也让测试无需真库就能注入
+// 假实现）。
 type installQueries interface {
 	WithTx(tx pgx.Tx) installQueries
 	UpsertChannelInstallation(ctx context.Context, arg db.UpsertChannelInstallationParams) (db.ChannelInstallation, error)
@@ -57,19 +54,18 @@ type installQueries interface {
 	SetChannelInstallationStatus(ctx context.Context, arg db.SetChannelInstallationStatusParams) error
 }
 
-// dbInstallQueries adapts *db.Queries to installQueries — the generated WithTx
-// returns *db.Queries, so we wrap it to return the interface (the same adapter
-// pattern engine.ChatSession uses).
+// dbInstallQueries 把 *db.Queries 适配成 installQueries——生成的 WithTx 返回的
+// 是 *db.Queries，这里包一层让它返回接口（与 engine.ChatSession 用的适配器
+// 同款模式）。
 type dbInstallQueries struct{ *db.Queries }
 
 func (q dbInstallQueries) WithTx(tx pgx.Tx) installQueries {
 	return dbInstallQueries{q.Queries.WithTx(tx)}
 }
 
-// InstallService owns the at-rest encryption of the bot + app tokens (so no
-// caller can write a channel_installation with a plaintext token) and the shared
-// install transaction. The box MUST be non-nil (we refuse plaintext storage even
-// in dev).
+// InstallService 负责 bot + app 令牌的静态加密（任何调用方都写不出带明文令牌
+// 的 channel_installation）与共用的安装事务。box 必须非 nil——连开发环境也拒绝
+// 明文存储。
 type InstallService struct {
 	box        *secretbox.Box
 	q          installQueries
@@ -77,14 +73,13 @@ type InstallService struct {
 	httpClient *http.Client
 	logger     *slog.Logger
 
-	// apiURL overrides the Slack API base for the BYO auth.test call (tests point
-	// it at an httptest server). Empty uses the real Slack API.
+	// apiURL 覆盖 Slack API 的 base 地址，仅供 BYO 的 auth.test 调用使用（测试
+	// 指向 httptest server）。留空则走真实 Slack API。
 	apiURL string
 }
 
-// NewInstallService binds the service to queries, a tx starter (*pgxpool.Pool),
-// and an encryption box. Listing / revoking and BYO register all require only
-// the box (the at-rest key); there is no hosted OAuth credential.
+// NewInstallService 把服务绑到查询集、事务启动器（*pgxpool.Pool）与加密盒上。
+// 列出/吊销与 BYO 注册都只需要 box（静态加密密钥）；这里没有托管 OAuth 凭据。
 func NewInstallService(q *db.Queries, tx engine.TxStarter, box *secretbox.Box, logger *slog.Logger) (*InstallService, error) {
 	if q == nil {
 		return nil, errors.New("slack: InstallService requires queries")
@@ -92,8 +87,8 @@ func NewInstallService(q *db.Queries, tx engine.TxStarter, box *secretbox.Box, l
 	return newInstallService(dbInstallQueries{q}, tx, box, logger)
 }
 
-// newInstallService is the testable core: it takes the installQueries interface
-// so tests can inject a fake (with a fake TxStarter) without a real DB.
+// newInstallService 是可测的核心：它收 installQueries 接口，测试无需真库即可
+// 注入假实现（外加假的 TxStarter）。
 func newInstallService(q installQueries, tx engine.TxStarter, box *secretbox.Box, logger *slog.Logger) (*InstallService, error) {
 	if box == nil {
 		return nil, errors.New("slack: InstallService requires a non-nil secretbox.Box")
@@ -116,39 +111,36 @@ func newInstallService(q installQueries, tx engine.TxStarter, box *secretbox.Box
 	}, nil
 }
 
-// installPersist carries the resolved fields persistInstall writes. appIDKey is
-// the value stored at config->>'app_id' — the real Slack app id — and MUST equal
-// the app_id inside configJSON; it is the lookup / ON CONFLICT key. installerSlackID
-// is the installer's Slack user id to auto-bind, or "" to skip (a BYO paste
-// carries no authed_user, so the installer binds via the normal token flow on
-// first message).
+// installPersist 携带 persistInstall 落行所需的解析后字段。appIDKey 是存在
+// config->>'app_id' 里的值——真实 Slack app id——必须与 configJSON 里的 app_id
+// 一致；它是查询/ON CONFLICT 的键。installerSlackID 是要自动绑定的安装者
+// Slack 用户 id，传 "" 表示跳过（BYO 粘贴不携带 authed_user，安装者走的是首次
+// 消息触发的常规绑定令牌流程）。
 type installPersist struct {
 	wsID        pgtype.UUID
 	agentID     pgtype.UUID
 	installerID pgtype.UUID
-	// appIDKey is the Slack app id stored at config->>'app_id'; it MUST equal the
-	// app_id inside configJSON. It keys the dead-owner reclaim and the live-owner
-	// lookup that drives the accurate conflict message.
+	// appIDKey 是存在 config->>'app_id' 的 Slack app id，必须与 configJSON 里的
+	// app_id 一致。它用于「已死 owner 的回收」和「定位仍在线的 owner」两类查询，
+	// 后者支撑起准确的冲突文案。
 	appIDKey string
-	// configJSON holds the Slack app id (config->>'app_id') used for inbound
-	// routing; the ROW itself is keyed by (workspace, agent) — one bot per agent.
+	// configJSON 携带供入站路由用的 Slack app id（config->>'app_id'）；而行本身
+	// 以 (workspace, agent) 为主键——每个 agent 一个 bot。
 	configJSON []byte
 }
 
-// pgUniqueViolation is the Postgres SQLSTATE for a unique-constraint violation.
+// pgUniqueViolation 是 Postgres 唯一约束冲突的 SQLSTATE。
 const pgUniqueViolation = "23505"
 
-// persistInstall upserts the installation keyed by (workspace_id, agent_id,
-// channel_type): ONE Slack bot per agent. Re-connecting an agent — including
-// swapping it to a NEW Slack app after a disconnect — UPDATES that agent's row
-// in place instead of colliding with the (workspace, agent, channel) unique.
+// persistInstall 以 (workspace_id, agent_id, channel_type) 为主键 upsert 安装行：
+// 每个 agent 恰好一个 Slack bot。重连 agent——包括断开后换绑一个【新的】 Slack
+// 应用——是原地更新那行，不会撞 (workspace, agent, channel) 唯一键。
 //
-// The (channel_type, app_id) routing index is the only OTHER unique constraint,
-// and it is NOT this upsert's conflict target, so a unique violation here means
-// the pasted Slack app is already connected to a DIFFERENT agent or Multica
-// workspace — refuse it (ErrTeamOwnedByAnotherWorkspace) rather than steal it.
-// No chat-session retire is needed: a row's agent_id never changes (it is part
-// of the key), so existing sessions stay valid for the same agent.
+// (channel_type, app_id) 路由索引是另一个唯一约束，但不是本次 upsert 的冲突
+// 目标，所以这里一旦出现唯一冲突，说明贴来的 Slack 应用已连到【别的】agent 或
+// 别的 Multica 工作区——直接拒绝（ErrTeamOwnedByAnotherWorkspace）而不是夺走
+// 它。无需退役聊天会话：一行的 agent_id 永不变（它是键的一部分），既有会话对
+// 同一 agent 仍然有效。
 func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (db.ChannelInstallation, error) {
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
@@ -157,18 +149,18 @@ func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.q.WithTx(tx)
 
-	// Free the (slack, app_id) routing slot from any DEAD prior owner — a revoked
-	// placeholder, or an orphan whose owning workspace/agent was deleted (#4810) —
-	// before the upsert, so a bot whose old owner is gone can be rebound. A live
-	// owner (active agent, including an archived one) is left in place and trips
-	// the unique index below, which we turn into an accurate conflict.
+	// 在 upsert 之前，先把 (slack, app_id) 路由槽从任何【已死】的旧 owner 手里
+	// 腾出来——包括已被吊销的占位行，或所属工作区/agent 已删除的孤儿行
+	// （#4810）——这样 bot 旧主已消失时能被重新绑定。仍在线的 owner（active 或
+	// archived 的 agent）保持原样，让它撞下面的唯一索引，我们再把它翻成一句准确
+	// 的冲突提示。
 	if _, err := qtx.ReclaimDeadChannelInstallationByAppID(ctx, db.ReclaimDeadChannelInstallationByAppIDParams{
 		ChannelType: string(TypeSlack),
 		AppID:       p.appIDKey,
 		WorkspaceID: p.wsID,
 		AgentID:     p.agentID,
 	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		// pgx.ErrNoRows just means nothing was dead — a no-op, not a failure.
+		// pgx.ErrNoRows 只表示没有「已死」的行可回收——是空操作，不是失败。
 		return db.ChannelInstallation{}, fmt.Errorf("reclaim dead slack installation: %w", err)
 	}
 
@@ -192,13 +184,11 @@ func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (
 	return inst, nil
 }
 
-// liveOwnerConflictErr classifies who holds the (slack, app_id) routing slot
-// after the dead-owner reclaim ran, so persistInstall returns a sentinel the
-// handler renders as an accurate message rather than the old catch-all that
-// always blamed "another workspace" (#4810). Read on the base pool (s.q), since
-// the failed upsert has aborted the tx. A now-free slot (concurrent disconnect)
-// or lookup error falls back to the generic cross-workspace sentinel — a retry
-// then succeeds.
+// liveOwnerConflictErr 在「回收已死 owner」跑完后，查清现在到底是谁占着
+// (slack, app_id) 路由槽，让 persistInstall 返回准确的哨兵错误，而不是以前那个
+// 一律赖「别的 workspace」的笼统提示（#4810）。注意要用基池（s.q）读：失败
+// 的 upsert 已经作废了当前事务。若槽现在空出来了（并发断开）或查询出错，就回退
+// 到通用的跨工作区哨兵——此时重试即可成功。
 func (s *InstallService) liveOwnerConflictErr(ctx context.Context, requestingWorkspaceID pgtype.UUID, appID string) error {
 	owner, err := s.q.GetChannelInstallationOwnerByAppID(ctx, db.GetChannelInstallationOwnerByAppIDParams{
 		ChannelType: string(TypeSlack),
@@ -217,8 +207,8 @@ func (s *InstallService) liveOwnerConflictErr(ctx context.Context, requestingWor
 	}
 }
 
-// ListByWorkspace returns every Slack installation in the workspace (active and
-// revoked), for the management surface.
+// ListByWorkspace 返回工作区里全部 Slack 安装（含 active 与 revoked），供管理
+// 界面展示。
 func (s *InstallService) ListByWorkspace(ctx context.Context, wsID pgtype.UUID) ([]db.ChannelInstallation, error) {
 	return s.q.ListChannelInstallationsByWorkspace(ctx, db.ListChannelInstallationsByWorkspaceParams{
 		WorkspaceID: wsID,
@@ -226,8 +216,8 @@ func (s *InstallService) ListByWorkspace(ctx context.Context, wsID pgtype.UUID) 
 	})
 }
 
-// GetInWorkspace is the workspace-scoped lookup so a forged installation id from
-// another workspace returns NotFound instead of leaking existence.
+// GetInWorkspace 是限定工作区的查询：拿别的工作区伪造的安装 id 来查，返回
+// NotFound 而不是泄露「这个 id 存在」。
 func (s *InstallService) GetInWorkspace(ctx context.Context, id, wsID pgtype.UUID) (db.ChannelInstallation, error) {
 	inst, err := s.q.GetChannelInstallationInWorkspace(ctx, db.GetChannelInstallationInWorkspaceParams{
 		ID:          id,
@@ -243,10 +233,9 @@ func (s *InstallService) GetInWorkspace(ctx context.Context, id, wsID pgtype.UUI
 	return inst, nil
 }
 
-// Revoke flips status to 'revoked'. The row is preserved for audit; a re-install
-// flips it back to 'active'. The Supervisor stops supervising the installation
-// (ListActiveInstallations filters to active), so its Socket Mode connection
-// winds down, and outbound drops too.
+// Revoke 把安装状态翻成 'revoked'。行保留用于审计；重新安装会把它翻回
+// 'active'。Supervisor 随即停止监管该安装（ListActiveInstallations 只筛 active），
+// 它的 Socket Mode 连接随之收尾，出站投递也不再走它。
 func (s *InstallService) Revoke(ctx context.Context, id pgtype.UUID) error {
 	return s.q.SetChannelInstallationStatus(ctx, db.SetChannelInstallationStatusParams{
 		ID:     id,

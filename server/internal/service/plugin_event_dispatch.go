@@ -1,3 +1,6 @@
+// plugin_event_dispatch.go —— 事件触发的插件 hook 分发器：
+// 把领域事件扇出（fan-out）给订阅了它的 hook，负责背压、熔断/重试/限流的记录表
+// 维护、以及把“宿主被插件拖住”这类问题从结构上排除。
 package service
 
 import (
@@ -12,37 +15,31 @@ import (
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
 )
 
-// Event-triggered hooks.
+// 事件触发式 hook。
 //
-// The rule this file exists to keep: an event hook NEVER blocks the host. The
-// event bus is synchronous — Bus.Publish runs its listeners inline, on the
-// goroutine of whatever request produced the event — so a listener that dialled
-// a third-party endpoint would put an outside server on the critical path of
-// creating an issue. Everything here therefore hands off to a bounded worker
-// pool and returns immediately.
+// 这个文件存在的意义就是守住一条规则：事件 hook 绝不阻塞宿主。事件总线是同步的——
+// Bus.Publish 在“产生该事件的请求”所在的 goroutine 上、内联地跑它的监听器——所以
+// 一个去拨第三方端点的监听器，就等于把一个外部服务器放进了“建 issue”的关键路径。
+// 因此这里的一切都交给有界的 worker 池处理、立刻返回。
 //
-// The same reasoning is why the agent execution path has no hook at all: a hook
-// that must run before or after every agent turn is a third party holding the
-// product's main loop open. Agents reach hooks in PR 4 by choosing to call one
-// as a tool, which is a call they can decline.
+// 同样的道理也解释了 agent 执行路径上为何完全没有 hook：任何必须在 agent 每轮前后
+// 运行的 hook，都等于第三方握着产品主循环不撒手。agent 在 PR 4 里是通过“把调用
+// hook 当作一个工具”来触达它们的，而工具调用是可以拒绝的。
 
 const (
-	// Queue depth. Full means events are arriving faster than endpoints can
-	// answer; the overflow is dropped and counted rather than queued forever,
-	// because an unbounded queue turns a slow plugin into a memory leak.
+	// 队列深度。满了说明事件来得比端点应答快；溢出部分直接丢弃并计数，而不是无限
+	// 排队——无界队列会把一个慢插件变成内存泄漏。
 	dispatchQueueDepth = 512
 	dispatchWorkers    = 4
 
-	// How long a hook call stays on record. This table is operational telemetry,
-	// not history: it answers "why is this endpoint failing right now", and the
-	// circuit breaker and rate limiter only ever look minutes back. Keeping it
-	// forever would grow an append-only table at the rate of the per-hook limit
-	// — 120/minute/hook — for no reader.
+	// hook 调用记录保留多久。这张表是运维遥测，不是历史归档：它回答的是“这个端点
+	// 现在为什么在失败”，熔断器和限流器也只往回看几分钟。永久保留只会让一张只追加
+	// 的表按“每个 hook 每分钟 120 次”的速度无限长大，还没有任何读者。
 	invocationRetention  = 7 * 24 * time.Hour
 	invocationSweepEvery = time.Hour
 )
 
-// PluginEventDispatcher fans domain events out to the hooks that asked for them.
+// PluginEventDispatcher 把领域事件扇出给订阅了它们的 hook。
 type PluginEventDispatcher struct {
 	service *PluginService
 	queue   chan dispatchJob
@@ -50,11 +47,12 @@ type PluginEventDispatcher struct {
 	stop    chan struct{}
 	once    sync.Once
 
-	// dropped counts events shed under backpressure, surfaced for triage.
+	// dropped 统计在背压下被丢弃的事件数，供排查时看。
 	mu      sync.Mutex
 	dropped int
 }
 
+// dispatchJob 是排队的最小工作单元：一次“把某个事件投给某个 hook”的投递任务。
 type dispatchJob struct {
 	installation db.PluginInstallation
 	hook         plugincontract.Hook
@@ -63,6 +61,8 @@ type dispatchJob struct {
 	payload      any
 }
 
+// NewPluginEventDispatcher 建好队列与 worker：dispatchWorkers 个投递 worker 负责
+// 处理事件，外加一个清扫 goroutine 定期清理过期的调用记录。
 func NewPluginEventDispatcher(service *PluginService) *PluginEventDispatcher {
 	dispatcher := &PluginEventDispatcher{
 		service: service,
@@ -78,22 +78,19 @@ func NewPluginEventDispatcher(service *PluginService) *PluginEventDispatcher {
 	return dispatcher
 }
 
-// sweepInvocations makes the table's "TTL-swept" description true.
+// sweepInvocations 让“这张表会按 TTL 清扫”的说法成真。
 //
-// Nothing reads a row older than the breaker and rate-limit windows, both of
-// which look minutes back, so without this the table only grows — at up to the
-// per-hook limit of 120 rows a minute, per hook, forever.
+// 没有任何读者会去看比熔断窗口和限流窗口还老的行——两者都只往回看几分钟——所以
+// 不清扫的话，这张表只会按每个 hook 每分钟最多 120 行的速度永远长下去。
 //
-// Runs on the dispatcher's own lifecycle because it is the same concern:
-// bounded resources for something a third party's behaviour drives.
+// 清扫挂在分发器自己的生命周期上，因为它们是同一件事：给“由第三方行为驱动”的东西
+// 配上有界资源。
 //
-// The first sweep waits for the first tick rather than firing at construction.
-// An earlier version swept immediately, on the theory that a deployment down for
-// a week should not wait an hour — and it panicked in cmd/server's router test,
-// where the dispatcher is built over a Queries whose pool was never opened. The
-// benefit was one hour of retention on a cold start against a 7-day TTL; the
-// cost was a goroutine touching the database before the process is known to have
-// one.
+// 第一趟清扫等第一次 tick 而不是构造时就跑。早期版本确实在构造后立刻清一次，理由是
+// “下线一周的部署不该再等一小时”——结果在 cmd/server 的 router 测试里 panic 了：
+// 那里分发器是架在一个连接池从未打开的 Queries 上构建的。当时换来的好处只是冷启动
+// 时少保留一小时（对照 7 天 TTL），代价却是一个 goroutine 在“进程是否真有数据库”
+// 还没底的时候就去摸库。
 func (d *PluginEventDispatcher) sweepInvocations() {
 	defer d.wg.Done()
 	ticker := time.NewTicker(invocationSweepEvery)
@@ -108,15 +105,13 @@ func (d *PluginEventDispatcher) sweepInvocations() {
 	}
 }
 
-// sweepOnce deletes what has aged out.
+// sweepOnce 删除已过期的记录。
 //
-// Panics are contained for the same reason runGuarded exists: this runs on a
-// bare goroutine, where an unrecovered panic is not a failed sweep but a dead
-// process. A nil check on Queries is NOT enough to prevent one — sqlc's Queries
-// wraps an executor, so a non-nil Queries over an unopened pool passes every
-// check available here and then dereferences inside pgxpool. That is exactly how
-// this took down cmd/server's test, and it is why the guard is a recover rather
-// than one more nil comparison.
+// panic 必须就地兜住，理由和 runGuarded 一样：这跑在裸 goroutine 上，未捕获的
+// panic 不是“一次失败的清扫”，而是“进程死掉”。这里只判 Queries 是否为 nil 根本
+// 挡不住——sqlc 的 Queries 包着一个执行器，所以一个“架在未打开连接池上”的非 nil
+// Queries 能通过此处所有检查，然后在 pgxpool 内部解引用时炸掉。cmd/server 的测试
+// 正是这么被拖垮的，这也是为什么用 recover 兜底而不是再多一个 nil 判断。
 func (d *PluginEventDispatcher) sweepOnce() {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -139,12 +134,11 @@ func (d *PluginEventDispatcher) sweepOnce() {
 	}
 }
 
-// Dispatch is what the bus listener calls. It must return promptly: the caller
-// is a live request that has already done its real work.
+// Dispatch 是总线监听器要调用的入口。它必须尽快返回：调用方是一个还活着的请求，
+// 正事已经干完了。
 //
-// Note it takes no context from that request. Tying an outbound hook to the
-// request that triggered it would cancel the hook the moment the browser got
-// its response, which is exactly when the hook is only just starting.
+// 注意它不从这个请求拿 context。若把外发的 hook 绑在触发它的请求上，浏览器一拿到
+// 响应 hook 就被取消——而那一刻恰恰是 hook 才刚刚开始的时候。
 func (d *PluginEventDispatcher) Dispatch(eventType, workspaceID string, payload any) {
 	if d == nil || d.service == nil || workspaceID == "" {
 		return
@@ -154,10 +148,9 @@ func (d *PluginEventDispatcher) Dispatch(eventType, workspaceID string, payload 
 		return
 	}
 
-	// Nothing is inspected here. The installation lookup is a database read and
-	// finding the issue id is a JSON round-trip; both belong on a worker, and
-	// both sit behind the feature-flag check so a deployment with plugins off
-	// pays for neither.
+	// 这里什么实际工作都不做。查安装是数据库读、找 issue id 是 JSON 往返，两件都
+	// 该放在 worker 上；而且都排在 feature flag 检查之后，插件关掉的部署这两件事
+	// 一件都不用付。
 	select {
 	case d.queue <- dispatchJob{
 		installation: db.PluginInstallation{WorkspaceID: parsedWorkspace},
@@ -173,7 +166,7 @@ func (d *PluginEventDispatcher) Dispatch(eventType, workspaceID string, payload 
 	}
 }
 
-// Dropped reports how many events were shed under backpressure.
+// Dropped 返回在背压下被丢弃了多少事件。
 func (d *PluginEventDispatcher) Dropped() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -192,13 +185,12 @@ func (d *PluginEventDispatcher) work() {
 	}
 }
 
-// runGuarded contains a panic to the delivery that caused it.
+// runGuarded 把 panic 限制在引发它的那一次投递内。
 //
-// Bus.Publish recovers panics in its listeners so one bad handler cannot take
-// down the request that published. Moving delivery onto a worker goroutine
-// steps outside that protection, and a panic on a bare goroutine is not a
-// failed hook but a dead process. Restoring the guarantee is the cost of the
-// hand-off, not an optional extra.
+// Bus.Publish 会 recover 它监听器里的 panic，好让一个坏 handler 拖不垮发布事件的
+// 那个请求。把投递搬到 worker goroutine 上就脱离了这层保护，而裸 goroutine 上的
+// panic 不是“一次失败的 hook”，是“进程死掉”。把保护找回来，是这次“搬离”该付的
+// 代价，不是可选项。
 func (d *PluginEventDispatcher) runGuarded(job dispatchJob) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -209,7 +201,7 @@ func (d *PluginEventDispatcher) runGuarded(job dispatchJob) {
 	d.run(job)
 }
 
-// run resolves which hooks want this event and calls each one.
+// run 解析出哪些 hook 想要这个事件，然后逐个调用。
 func (d *PluginEventDispatcher) run(job dispatchJob) {
 	if d.service.Queries == nil {
 		return
@@ -218,21 +210,17 @@ func (d *PluginEventDispatcher) run(job dispatchJob) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// The flag gates this path too, and checking it HERE rather than at
-	// subscription is the point: a deployment that turns plugins off after
-	// something was installed must stop the outbound calls, not just hide the
-	// UI. Reading it per delivery means the flip takes effect immediately
-	// instead of at the next restart.
+	// flag 也把这条路径卡住，而且“在投递这一刻检查”而非“订阅时检查”才是重点：
+	// 一个装了插件之后才把插件关掉的部署，必须立刻停掉对外调用，而不是只藏起 UI。
+	// 每次投递都读一次，意味着开关立即生效，不用等下次重启。
 	//
-	// It also keeps the flag-off cost at zero. Without this every dispatched
-	// event ran a ListWorkspacePluginInstallations query to discover there was
-	// nothing to call.
+	// 它还让“flag 关着”时的成本归零。没有这一层，每个被分发的事件都得先跑一遍
+	// ListWorkspacePluginInstallations 查询、才发现根本没东西可调。
 	if !featureflags.PluginsV1Enabled(ctx, d.service.FeatureFlags) {
 		return
 	}
 
-	// Only now, past the flag: the id is needed to narrow the callback grant,
-	// and finding it means parsing the payload.
+	// 过了 flag 才做：issue id 是用来收窄回调授权的，而拿到它需要解析 payload。
 	job.issueID = issueIDFromPayload(job.payload)
 
 	installations, err := d.service.Queries.ListWorkspacePluginInstallations(ctx, job.installation.WorkspaceID)
@@ -257,6 +245,7 @@ func (d *PluginEventDispatcher) run(job dispatchJob) {
 	}
 }
 
+// hookWantsEvent 判断该 hook 声明监听的事件里是否包含 eventType。
 func hookWantsEvent(hook plugincontract.Hook, eventType string) bool {
 	for _, declared := range hook.Events {
 		if declared == eventType {
@@ -266,11 +255,10 @@ func hookWantsEvent(hook plugincontract.Hook, eventType string) bool {
 	return false
 }
 
-// deliver runs one hook with the event retry schedule.
+// deliver 按事件重试节奏跑一次 hook。
 func (d *PluginEventDispatcher) deliver(ctx context.Context, installation db.PluginInstallation, hook plugincontract.Hook, job dispatchJob) {
-	// A hook whose endpoint has been failing is not retried on every event.
-	// Without this, an endpoint that has been down for an hour receives one
-	// doomed request per workspace event, forever.
+	// 端点一直失败的 hook 不会每个事件都重试。没有这层保护，一个宕了一小时的端点
+	// 会为工作区里的每个事件都收到一次注定失败的通告，永无止境。
 	if d.service.HookBreakerOpen(ctx, installation.ID, hook.Key) {
 		slog.Info("plugins: hook circuit open, skipping event", "hook", hook.Key, "event_type", job.eventType)
 		return
@@ -281,8 +269,7 @@ func (d *PluginEventDispatcher) deliver(ctx context.Context, installation db.Plu
 		Hook:         hook,
 		Trigger:      plugincontract.TriggerEvent,
 		EventType:    job.eventType,
-		// An event has no person behind it. Writes it produces are the
-		// plugin's own, attributed to the installation.
+		// 事件背后没有具体的人。它产生的写入都是插件自己的行为，归到安装头上。
 		Actor:   HookActor{Type: "plugin", ID: installation.ID},
 		IssueID: job.issueID,
 		Input:   job.payload,
@@ -293,8 +280,8 @@ func (d *PluginEventDispatcher) deliver(ctx context.Context, installation db.Plu
 		if err == nil {
 			return
 		}
-		// A refusal is a decision, not an outage: retrying a hook that is
-		// disabled, out of scope or rate limited just burns the budget.
+		// 被拒是一种“决定”而不是“故障”：对一个被禁用、越权或限流的 hook 重试，
+		// 只是白烧预算。
 		if hookFailureStatus(err) == "refused" {
 			slog.Info("plugins: event hook refused", "hook", hook.Key, "error", redactHookError(err))
 			return
@@ -311,7 +298,7 @@ func (d *PluginEventDispatcher) deliver(ctx context.Context, installation db.Plu
 	}
 }
 
-// Close stops the workers. Safe to call more than once.
+// Close 停掉 worker。可安全地多次调用。
 func (d *PluginEventDispatcher) Close() {
 	if d == nil {
 		return

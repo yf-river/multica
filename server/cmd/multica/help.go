@@ -1,3 +1,6 @@
+// 文件职责：CLI 帮助系统的定制——仿 gh 风格的分组帮助输出。定义命令分组常量、
+// errSilent 哨兵错误、exactArgs 位置参数校验器，注册帮助模板使用的两个模板函数
+// （formatCommandList / commandsInGroup），并提供根/子/叶子三种 help 模板字符串。
 package main
 
 import (
@@ -8,18 +11,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Command group IDs used across the CLI.
+// 全 CLI 共用的命令分组 ID（rootCmd 帮助输出按组排列）。
 const (
 	groupCore       = "core"
 	groupRuntime    = "runtime"
 	groupAdditional = "additional"
 )
 
-// errSilent is returned when the error message has already been printed.
+// errSilent 表示错误消息已经打印过（调用方不再重复打印）。
 var errSilent = fmt.Errorf("")
 
-// exactArgs returns a cobra.PositionalArgs that validates the arg count
-// and prints help on failure, so users see usage context with the error.
+// exactArgs 返回校验位置参数个数的 cobra.PositionalArgs：个数不符时打印错误行并
+// 展示帮助，让用户看到用法上下文——然后返回 errSilent，避免错误消息被重复打两遍。
 func exactArgs(n int) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if len(args) != n {
@@ -35,7 +38,8 @@ func exactArgs(n int) cobra.PositionalArgs {
 	}
 }
 
-// initHelp configures the root command to use gh-style help output.
+// initHelp 把根命令配置成 gh 风格帮助：套 help/usage 模板、隐藏默认 completion
+// 命令、注册三个分组，并递归下发到所有子命令。
 func initHelp(root *cobra.Command) {
 	root.SetHelpTemplate(rootHelpTemplate)
 	root.SetUsageTemplate(rootHelpTemplate)
@@ -47,10 +51,12 @@ func initHelp(root *cobra.Command) {
 		&cobra.Group{ID: groupAdditional, Title: "ADDITIONAL COMMANDS"},
 	)
 
-	// Apply gh-style templates to all commands recursively.
+	// 递归应用 gh 风格模板：有子命令的用 subHelpTemplate，叶子用 leafHelpTemplate。
 	applyTemplates(root)
 }
 
+// applyTemplates 递归给命令树套模板：含子命令者用「分组/子命令」样式，叶子命令
+// 用「单命令」样式。
 func applyTemplates(cmd *cobra.Command) {
 	for _, c := range cmd.Commands() {
 		if c.HasSubCommands() {
@@ -64,8 +70,8 @@ func applyTemplates(cmd *cobra.Command) {
 	}
 }
 
-// formatCommandList formats a list of commands in "name:  description" style
-// with automatic alignment, matching gh's output.
+// formatCommandList 按 "name:  description" 样式格式化命令清单（自动对齐、跳过
+// 不可用命令），对齐 gh 的输出。
 func formatCommandList(cmds []*cobra.Command) string {
 	if len(cmds) == 0 {
 		return ""
@@ -89,7 +95,7 @@ func formatCommandList(cmds []*cobra.Command) string {
 	return b.String()
 }
 
-// commandsInGroup returns commands that belong to a specific group.
+// commandsInGroup 从命令列表里筛出属于指定分组、且当前可用的命令。
 func commandsInGroup(cmds []*cobra.Command, groupID string) []*cobra.Command {
 	var result []*cobra.Command
 	for _, c := range cmds {
@@ -101,6 +107,7 @@ func commandsInGroup(cmds []*cobra.Command, groupID string) []*cobra.Command {
 }
 
 func init() {
+	// 把两个模板函数注册进 cobra 的模板函数表，help 模板里即可直接引用。
 	cobra.AddTemplateFuncs(template.FuncMap{
 		"formatCommandList": formatCommandList,
 		"commandsInGroup":   commandsInGroup,

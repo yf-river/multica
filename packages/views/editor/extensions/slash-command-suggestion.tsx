@@ -1,5 +1,16 @@
 "use client";
 
+/**
+ * 斜杠命令（`/`）建议弹层：两种菜单共用一套列表与键盘交互——
+ *
+ * 1. 技能选择器（聊天场景）：列出当前选中的 agent 启用的技能，按相关性
+ *    排序后插入一个 slashCommand 富节点；
+ * 2. 内建命令菜单（issue 评论）：固定的一组命令 + 调用方配置的快捷动作，
+ *    选中后把命令文本（如 `/note `）以纯文本插入。
+ *
+ * 弹层定位/生命周期复用 suggestion-popup.tsx。
+ */
+
 import {
   forwardRef,
   useCallback,
@@ -30,18 +41,19 @@ import { isTriggerArmedAt } from "./suggestion-trigger-arming";
 
 const MAX_ITEMS = 20;
 
-/** Known built-in command ids — the keys under editor `slash_command.commands`. */
+/** 已知的内建命令 id——编辑器 `slash_command.commands` 下的 key。 */
 export type BuiltinCommandKey = "note";
 
+/** 一条可被 `/` 选中的命令/技能条目。 */
 export interface SlashCommandItem {
   id: string;
   label: string;
-  /** Raw description (skill picker). Built-in commands use descriptionKey. */
+  /** 原始描述（技能选择器用）。内建命令改走 descriptionKey。 */
   description?: string;
   /**
-   * For built-in commands: the i18n key under editor `slash_command.commands`.
-   * When set, the menu renders the translated copy instead of `description`,
-   * so the visible string stays localized (the typed `/label` does not).
+   * 内建命令专用：editor `slash_command.commands` 下的 i18n key。设置了它
+   * 时，菜单渲染翻译文案而不是 `description`，保证可见字符串保持本地化
+   * （敲出来的 `/label` 则不是）。
    */
   descriptionKey?: BuiltinCommandKey;
 }
@@ -51,19 +63,22 @@ interface SlashCommandListProps {
   query: string;
   command: (item: SlashCommandItem) => void;
   /**
-   * When true, render nothing instead of an empty-state box when there are no
-   * matching items. Used by the built-in command menu in issue comments, where
-   * `/` is common in prose (paths, dates) and a popup on every slash would be
-   * noise. The chat skill picker leaves this false so it can still explain
-   * "no skills configured".
+   * 为 true 时，没有匹配条目就什么都不渲染，而不是画一个空状态框。
+   * issue 评论里的内建命令菜单用它：`/` 在散文中很常见（路径、日期），
+   * 每个斜杠都弹窗会变成噪音。聊天技能选择器保持 false，以便仍能解释
+   * 「没有配置技能」。
    */
   hideOnEmpty?: boolean;
 }
 
+/** 列表组件通过 ref 暴露的键盘处理句柄。 */
 export interface SlashCommandListRef {
   onKeyDown: (props: { event: KeyboardEvent }) => boolean;
 }
 
+/**
+ * SlashCommandList——`/` 弹层里的条目列表组件（技能与内建命令共用）。
+ */
 export const SlashCommandList = forwardRef<
   SlashCommandListRef,
   SlashCommandListProps
@@ -92,8 +107,8 @@ export const SlashCommandList = forwardRef<
   useImperativeHandle(ref, () => ({
     onKeyDown: ({ event }) => {
       if (isImeComposing(event)) return false;
-      // Arrow keys plus the Ctrl+N/J/P/K aliases the command bar accepts —
-      // see pickerNavigationDirection.
+      // 方向键加 Ctrl+N/J/P/K 别名，即命令栏接受的组合——见
+      // pickerNavigationDirection。
       const direction = pickerNavigationDirection(event);
       if (direction !== null) {
         if (items.length === 0) return false;
@@ -101,8 +116,8 @@ export const SlashCommandList = forwardRef<
         setSelectedIndex((i) => (i + delta) % items.length);
         return true;
       }
-      // Enter is the canonical accept; plain Tab is an additive alias (see
-      // isPickerAcceptKey). Shift/modifier+Tab fall through to focus nav.
+      // Enter 是规范确认键；纯 Tab 是附加别名（见 isPickerAcceptKey）。
+      // Shift/修饰键 + Tab 落进焦点导航。
       if (isPickerAcceptKey(event)) {
         if (items.length === 0) return false;
         selectItem(selectedIndex);
@@ -125,18 +140,17 @@ export const SlashCommandList = forwardRef<
     );
   }
 
-  // Built-in commands carry an i18n key so the visible description stays
-  // localized; skills carry a raw description string from their config.
+  // 内建命令带 i18n key，让可见描述保持本地化；技能携带来自其配置的原始
+  // 描述字符串。
   const describe = (item: SlashCommandItem): string | undefined =>
     item.descriptionKey === "note"
       ? t(($) => $.slash_command.commands.note)
       : item.description;
 
   return (
-    // Height budget clamps to min(design max, viewport-aware
-    // `--suggestion-available-height` from suggestion-popup.tsx's size
-    // middleware), falling back to the design max when rendered standalone.
-    // Single height authority — mirrors MentionList.
+    // 高度预算钳到 min(设计最大值, suggestion-popup.tsx 的 size middleware
+    // 发布的视口感知 `--suggestion-available-height`)，独立渲染时回退到设计
+    // 最大值。唯一高度权威——与 MentionList 一致。
     <div className="rounded-md border bg-popover py-1 shadow-md w-72 max-h-[min(300px,var(--suggestion-available-height,300px))] overflow-y-auto">
       {items.map((item, index) => {
         const description = describe(item);
@@ -166,7 +180,7 @@ export const SlashCommandList = forwardRef<
 
 const NO_MATCH = 4;
 
-/** Returns the match tier: exact name, prefix, substring, then description. */
+/** 返回匹配层级：精确名称、前缀、子串，再到描述。 */
 function skillMatchRank(
   skill: { name: string; description?: string },
   q: string,
@@ -179,7 +193,7 @@ function skillMatchRank(
   return NO_MATCH;
 }
 
-/** Ranks matches by relevance while preserving configured order within each tier. */
+/** 按相关性排序匹配结果，同一层级内保持配置顺序。 */
 function rankSkillMatches<T extends { name: string; description?: string }>(
   skills: T[],
   q: string,
@@ -199,8 +213,8 @@ function buildItems(qc: QueryClient, query: string): SlashCommandItem[] {
   const agents: Agent[] = qc.getQueryData(workspaceKeys.agents(wsId)) ?? [];
   const members: MemberWithUser[] =
     qc.getQueryData(workspaceKeys.members(wsId)) ?? [];
-  // Tiptap calls suggestion items outside React render, so direct store reads
-  // are intentional here.
+  // Tiptap 会在 React 渲染之外调用 suggestion items，所以这里刻意直接读
+  // store。
   const { selectedAgentId } = useChatStore.getState();
   const userId = useAuthStore.getState().user?.id ?? null;
   const memberRole = members.find((m) => m.user_id === userId)?.role ?? null;
@@ -221,6 +235,10 @@ function buildItems(qc: QueryClient, query: string): SlashCommandItem[] {
     .map((s) => ({ id: s.id, label: s.name, description: s.description ?? "" }));
 }
 
+/**
+ * 创建聊天场景的 `/` 技能选择器 Suggestion 配置。
+ * @param qc React Query 客户端，用于读 agent 及其技能。
+ */
 export function createSlashCommandSuggestion(qc: QueryClient): Omit<
   SuggestionOptions<SlashCommandItem>,
   "editor"
@@ -230,8 +248,8 @@ export function createSlashCommandSuggestion(qc: QueryClient): Omit<
   return {
     char: "/",
     pluginKey,
-    // Only open over a `/` the user actually typed, so a pasted path
-    // (`/usr/local/bin`) never opens the skill picker (MUL-5429).
+    // 只对用户真正敲下的 `/` 打开，粘贴来的路径（`/usr/local/bin`）绝不会
+    // 打开技能选择器（MUL-5429）。
     shouldShow: ({ editor, range }) => isTriggerArmedAt(editor, range.from),
     items: ({ query }) => buildItems(qc, query),
     command: ({ editor, range, props }) => {
@@ -273,41 +291,41 @@ export function createSlashCommandSuggestion(qc: QueryClient): Omit<
 }
 
 // ---------------------------------------------------------------------------
-// Built-in command menu (issue comments)
+// 内建命令菜单（issue 评论）
 // ---------------------------------------------------------------------------
 
 /**
- * Built-in slash commands offered in the issue comment composer. Unlike the
- * chat `/` picker (which lists the active agent's skills), these are a fixed,
- * hand-curated set. Currently only `/note`, which marks a comment as a
- * human-only note that won't trigger the assigned agent — mirrors the backend
- * `noteCommentPrefix` in server/internal/handler/comment.go.
+ * issue 评论 composer 里提供的内建斜杠命令。与聊天的 `/` 选择器（列出当前
+ * agent 的技能）不同，这是一组固定、人工挑选的命令。目前只有 `/note`：
+ * 把评论标记为仅人工的 note、不会触发被指派的 agent——镜像服务端
+ * `noteCommentPrefix`（server/internal/handler/comment.go）。
  */
 export const BUILTIN_COMMANDS: SlashCommandItem[] = [
   { id: "note", label: "note", descriptionKey: "note" },
 ];
 
-/** Marks a menu entry as a configured quick action rather than a built-in. */
+/** 把某个菜单项标记为「配置的快捷动作」而非内建命令。 */
 export const QUICK_ACTION_ITEM_PREFIX = "quick-action:";
 
+/** 该条目是否来自快捷动作。 */
 export function isQuickActionItem(item: SlashCommandItem): boolean {
   return item.id.startsWith(QUICK_ACTION_ITEM_PREFIX);
 }
 
+/** 从快捷动作条目里取出原始动作 id。 */
 export function quickActionIdFromItem(item: SlashCommandItem): string {
   return item.id.slice(QUICK_ACTION_ITEM_PREFIX.length);
 }
 
-// Match on the command label as a prefix only — the description is for display,
-// not search. With a single command this keeps the menu predictable (typing
-// `/no` surfaces `note`; an unrelated `/deploy` shows nothing).
+// 只按命令标签做前缀匹配——描述只用于展示、不参与搜索。单条命令下这让
+// 菜单行为可预期（敲 `/no` 会露出 `note`；无关的 `/deploy` 什么都不显示）。
 export function buildBuiltinCommandItems(
   query: string,
   quickActions: { id: string; name: string; description?: string }[] = [],
 ): SlashCommandItem[] {
   const q = query.toLowerCase();
-  // Quick actions lead: on an issue they are the reason a user reaches for
-  // `/`, and `/note` is a rarely-used escape hatch.
+  // 快捷动作排前面：在 issue 上它们才是用户伸手去敲 `/` 的原因，而 `/note`
+  // 是很少用到的逃生口。
   const actionItems: SlashCommandItem[] = quickActions.map((a) => ({
     id: `${QUICK_ACTION_ITEM_PREFIX}${a.id}`,
     label: a.name,
@@ -320,26 +338,28 @@ export function buildBuiltinCommandItems(
 
 export interface BuiltinCommandSuggestionOptions {
   /**
-   * Configured quick actions offered alongside the built-ins. Read lazily on
-   * every keystroke so a newly created action shows up without remounting the
-   * editor.
+   * 与内建命令并排提供的已配置快捷动作。每次击键惰性读取，让新建的动作
+   * 无需重挂编辑器即可出现。
    */
   getQuickActions?: () => { id: string; name: string; description?: string }[];
   /**
-   * Resolves a quick action to the text it would post. Server-rendered, so the
-   * inserted body is byte-identical to what clicking the sidebar button sends.
-   * Returning "" (or throwing) must leave the composer untouched rather than
-   * inserting a half-rendered prompt.
+   * 把快捷动作解析成它将发布的文本。服务端渲染，所以插入的正文与点击侧栏
+   * 按钮发送的内容逐字节一致。返回 ""（或抛错）时不得改动 composer，而不是
+   * 插入一段半渲染的提示词。
    */
   renderQuickAction?: (quickActionId: string) => Promise<string>;
   /**
-   * Called when renderQuickAction rejects. The extension cannot show UI of its
-   * own — a ProseMirror command runs outside React's tree — so the host turns
-   * this into a toast. Without it a failed pick is completely silent.
+   * renderQuickAction 拒绝时调用。扩展自身无法展示 UI——ProseMirror 命令
+   * 运行在 React 树之外——所以宿主把它变成 toast。没有它，失败的选取会
+   * 完全无声。
    */
   onRenderError?: (error: unknown) => void;
 }
 
+/**
+ * 创建 issue 评论场景的内建 `/` 命令菜单 Suggestion 配置。
+ * @param options 见 BuiltinCommandSuggestionOptions。
+ */
 export function createBuiltinCommandSuggestion(
   options: BuiltinCommandSuggestionOptions = {},
 ): Omit<SuggestionOptions<SlashCommandItem>, "editor"> {
@@ -348,8 +368,8 @@ export function createBuiltinCommandSuggestion(
   return {
     char: "/",
     pluginKey,
-    // Only open over a `/` the user actually typed, so a pasted path
-    // (`/usr/local/bin`) never opens the command menu (MUL-5429).
+    // 只对用户真正敲下的 `/` 打开，粘贴来的路径（`/usr/local/bin`）绝不会
+    // 打开命令菜单（MUL-5429）。
     shouldShow: ({ editor, range }) => isTriggerArmedAt(editor, range.from),
     items: ({ query }) => buildBuiltinCommandItems(query, options.getQuickActions?.() ?? []),
     command: ({ editor, range, props }) => {
@@ -358,15 +378,13 @@ export function createBuiltinCommandSuggestion(
         if (!render) return;
         const id = quickActionIdFromItem(props);
 
-        // The "/query" text is deliberately left in place while the request
-        // is in flight. Deleting first meant a failed or slow render destroyed
-        // what the user typed with nothing to show for it, and the insert then
-        // landed wherever the caret happened to be by the time it resolved.
+        // 请求在途时刻意保留 "/query" 文本。先删除的话，一次失败或缓慢的
+        // 渲染会毁掉用户输入的内容却无所得；而且等到解析完成时插入还会
+        // 落在光标恰好所在的位置。
         //
-        // Snapshot the EXACT text under the range, not just its shape. A
-        // prefix check ("does it still start with /") passes when the user
-        // rewrote `/review` into `/fix` mid-request, and the stale response
-        // would then overwrite the new command.
+        // 快照的是该区间下的**精确**文本而不只是形态。前缀检查（「是否仍
+        // 以 / 开头」）在用户于请求中途把 `/review` 改成 `/fix` 时也会通过，
+        // 过期的响应就会覆盖新命令。
         const originalText = editor.state.doc.textBetween(range.from, range.to);
 
         void render(id)
@@ -376,20 +394,18 @@ export function createBuiltinCommandSuggestion(
             const unchanged =
               withinDoc && editor.state.doc.textBetween(range.from, range.to) === originalText;
             if (!unchanged) {
-              // The command was edited, moved, or removed while the request
-              // was outstanding. Inserting anywhere now would either clobber
-              // the user's newer text or drop the body in an unrelated spot,
-              // so this pick is simply abandoned.
+              // 请求未决期间命令被编辑、移动或删除。现在插到任何地方要么
+              // 覆盖用户更新的文本、要么把正文丢进无关位置，所以干脆放弃
+              // 这次选取。
               return;
             }
             editor
               .chain()
               .focus()
-              // contentType: "markdown" is load-bearing. Without it Tiptap
-              // inserts the string as literal TEXT, so the server-rendered
-              // `[@Name](mention://agent/…)` never becomes a mention node —
-              // it serialises back out with the brackets escaped
-              // (`\[@Name\](…)`) and renders as raw markup in the thread.
+              // contentType: "markdown" 至关重要。没有它 Tiptap 会把字符串当
+              // 字面 TEXT 插入，于是服务端渲染的 `[@Name](mention://agent/…)`
+              // 永远不会变成 mention 节点——它会以方括号被转义
+              // （`\[@Name\](…)`）的形式序列化回去，在线程里渲染成原始标记。
               .insertContentAt({ from: range.from, to: range.to }, content, {
                 contentType: "markdown",
               })
@@ -397,17 +413,16 @@ export function createBuiltinCommandSuggestion(
             window.getSelection()?.collapseToEnd();
           })
           .catch((error: unknown) => {
-            // The command text is still there, so the user can retry or edit
-            // it by hand; the host surfaces why nothing was inserted.
+            // 命令文本还在，用户可以重试或手改；宿主负责把「为何什么都没
+            // 插入」提示出来。
             options.onRenderError?.(error);
           });
         return;
       }
 
-      // Insert the plain-text prefix (e.g. "/note ") rather than a rich node,
-      // so a menu selection and a hand-typed command are byte-identical and the
-      // backend can detect the marker with a simple prefix match. The trailing
-      // space terminates the suggestion match so the menu does not re-open.
+      // 插入纯文本前缀（如 "/note "）而非富节点，让菜单选取与手敲的命令
+      // 逐字节一致，后端用简单前缀匹配就能认出标记。末尾空格终结 suggestion
+      // 匹配，菜单不会再次打开。
       editor
         .chain()
         .focus()

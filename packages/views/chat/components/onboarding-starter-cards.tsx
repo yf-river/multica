@@ -1,3 +1,4 @@
+// 新手引导开场卡片：在 Mika 的欢迎语下展示三个固定的入门方式卡片。
 "use client";
 
 import { useState } from "react";
@@ -12,15 +13,15 @@ import type { ChatQuickAction } from "@multica/core/types";
 import { useT } from "../../i18n";
 
 /**
- * Product-fixed starter cards rendered under Mika's onboarding opening (the
- * first assistant reply after the hidden `onboarding_kickoff`). They replace
- * that one message's LLM quick-action chips with three concrete ways to start,
- * so a new member never faces a blank canvas (MUL-5765).
+ * 产品固定的开场卡片，渲染在 Mika 的新手引导开场白（隐藏的 `onboarding_kickoff`
+ * 之后的第一条助手回复）下面。它们用三种具体的开始方式取代那一条消息的
+ * LLM 快捷操作 chips，让新成员永远不会面对一张白纸（MUL-5765）。
  *
- * Clicking a card goes through the same path as a quick-action chip: the
- * card's prompt is sent as a visible member message and Mika starts working.
- * The cards stay in the session history and remain clickable; while any task
- * is running they follow the chips' disabled rule via `disabled`.
+ * 点击卡片走的是和快捷操作 chip 相同的路径：卡片的提示词作为一条可见的成员消息
+ * 发送，然后 Mika 开始工作。卡片保留在会话历史里并保持可点击；当有任务在运行时，
+ * 它们通过 `disabled` 遵循 chips 的禁用规则。
+ * @param onPick - 点击卡片后的回调，接收一个快捷操作。
+ * @param disabled - 是否禁用（有任务运行时应禁用）。
  */
 export function OnboardingStarterCards({
   onPick,
@@ -63,8 +64,7 @@ export function OnboardingStarterCards({
     try {
       await onPick({ label: card.title, prompt: card.prompt });
     } catch {
-      // The send path owns user-facing error feedback; re-enable so a
-      // transient failure can be retried.
+      // 发送路径负责面向用户的错误反馈；这里重新启用，让临时失败可以被重试。
     } finally {
       setSubmitting(false);
     }
@@ -76,8 +76,8 @@ export function OnboardingStarterCards({
       aria-label={t(($) => $.onboarding_cards.aria_label)}
     >
       {cards.map((card) => (
-        // Same learn-then-commit contract as the quick-action chips: the whole
-        // card previews the exact message it will send in the member's name.
+        // 和快捷操作 chips 一样的“先看后提交”契约：整张卡片预览它将以成员名义
+        // 发送的确切消息。
         <Tooltip key={card.key}>
           <TooltipTrigger
             render={
@@ -117,12 +117,13 @@ export function OnboardingStarterCards({
   );
 }
 
-// ─── Vignettes ───────────────────────────────────────────────────────────
+// ─── 小插画（Vignettes）──────────────────────────────────────────────────
 //
-// Token-drawn product miniatures, not bitmaps: they inherit the theme, so the
-// same markup holds in light and dark. Decorative throughout (aria-hidden);
-// no text except the digest schedule badge, which is real localized copy.
+// 用 token 绘制的产品缩略图，而非位图：它们继承主题，所以同样的标记在
+// 浅色和深色下都成立。整体都是装饰性的（aria-hidden）；
+// 除了 digest 计划徽章之外没有任何文字，而那个徽章是真实的多语言文案。
 
+/** 一条细长的横条，用作卡片内容占位。 */
 function Bar({ className }: { className?: string }) {
   return (
     <div
@@ -131,6 +132,7 @@ function Bar({ className }: { className?: string }) {
   );
 }
 
+/** 迷你卡片容器，用于小插画内部的一块块内容。 */
 function MiniCard({
   className,
   children,
@@ -150,7 +152,7 @@ function MiniCard({
   );
 }
 
-// Three tiny kanban columns; the middle card carries Mika and a brand accent.
+// 三列微缩看板；中间那列卡片带有 Mika 和品牌强调色。
 function BoardVignette() {
   return (
     <div aria-hidden="true" className="flex w-49 gap-1.5">
@@ -189,7 +191,7 @@ function BoardVignette() {
   );
 }
 
-// A task running under Mika, and a delivered result beneath it.
+// 一个在 Mika 下运行的任务，以及它下面已交付的结果。
 function DelegateVignette() {
   return (
     <div aria-hidden="true" className="flex w-45 flex-col gap-1.5">
@@ -214,7 +216,7 @@ function DelegateVignette() {
   );
 }
 
-// An inbox digest: schedule badge plus three summary rows.
+// 一个收件箱摘要：计划徽章加三行摘要。
 function DigestVignette() {
   const { t } = useT("chat");
   return (

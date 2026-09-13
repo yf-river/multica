@@ -22,23 +22,26 @@ import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { ArrowLeft, LogOut, Users, Check, X } from "lucide-react";
 
+/**
+ * invite 模块：接受/拒绝工作区邀请的全页外壳。
+ * Web（Next.js 路由 `/invite/[id]`）与桌面（窗口浮层）共用。返回与退出登录
+ * 的顶部操作放在这里，让两个平台拿到一致的体验。平台 chrome（窗口拖拽区、
+ * 沉浸模式）由桌面端浮层叠加上去；web 直接渲染本页。
+ */
+
+/** 邀请页组件的属性。 */
 export interface InvitePageProps {
   invitationId: string;
   /**
-   * Optional "go back" handler. Caller passes it only when there's a
-   * sensible destination (user has at least one workspace, or arrived
-   * from an in-app flow). Omitted on first-invite/zero-workspace paths
-   * where Back would have nowhere to go — Log out is then the only exit.
+   * 可选的「返回」处理器。调用方只在存在合理目的地时传它（用户至少有一个
+   * 工作区，或从应用内流程进来）。首次邀请 / 零工作区的路径上省略——那种
+   * 情况下 Back 无处可去，退出登录成了唯一出口。
    */
   onBack?: () => void;
 }
 
 /**
- * Full-page shell for the "accept invitation" transition. Shared between
- * web (Next.js route `/invite/[id]`) and desktop (window-overlay).
- * Top-bar affordances (Back, Log out) live here so both platforms get
- * identical UX. Platform chrome (window drag region, immersive mode) is
- * layered on by the desktop overlay; web just renders the page directly.
+ * 邀请页主体：拉取邀请详情并处理接受/拒绝；根据状态渲染对应界面。
  */
 export function InvitePage({ invitationId, onBack }: InvitePageProps) {
   const { t } = useT("invite");
@@ -54,8 +57,8 @@ export function InvitePage({ invitationId, onBack }: InvitePageProps) {
     queryFn: () => api.getInvitation(invitationId),
   });
 
-  // Workspace list for the fallback "Go to dashboard" destinations. The invite
-  // page is a pre-workspace global route so we can't rely on WorkspaceSlugProvider.
+  // 兜底「前往仪表盘」目的地用的工作区列表。邀请页是工作区之前的前台全局
+  // 路由，不能依赖 WorkspaceSlugProvider。
   const { data: wsList = [] } = useQuery(workspaceListOptions());
   const hasOnboarded = useHasOnboarded();
   const fallbackDest = resolvePostAuthDestination(wsList, hasOnboarded);
@@ -65,25 +68,24 @@ export function InvitePage({ invitationId, onBack }: InvitePageProps) {
     setError(null);
     try {
       await api.acceptInvitation(invitationId);
-      // Belt to the backend's braces: AcceptInvitation already sets
-      // onboarded_at inside the same transaction, but explicitly calling
-      // markOnboardingComplete + refreshMe here keeps local user state in
-      // sync immediately so downstream guards don't see stale `null`.
+      // 双保险：后端 AcceptInvitation 已在同一事务里设置 onboarded_at，但这里
+      // 显式调用 markOnboardingComplete + refreshMe，让本地用户状态立即同步，
+      // 下游守卫不会读到过期的 `null`。
       await api.markOnboardingComplete({
         completion_path: "invite_accept",
         workspace_id: invitation?.workspace_id,
       });
       await useAuthStore.getState().refreshMe();
       setDone("accepted");
-      // Fetch the refreshed workspace list so we know the joined workspace's slug.
+      // 重新拉取工作区列表，好知道刚加入的工作区的 slug。
       const nextList = await qc.fetchQuery({
         ...workspaceListOptions(),
         staleTime: 0,
       });
       const joined = nextList.find((w) => w.id === invitation?.workspace_id);
       qc.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
-      // Navigate into the joined workspace. The [workspaceSlug]/layout will
-      // sync api client, stores, and the last_workspace_slug cookie from the URL.
+      // 跳进刚加入的工作区。[workspaceSlug]/layout 会从 URL 同步 api client、
+      // stores 与 last_workspace_slug cookie。
       const dest = joined
         ? paths.workspace(joined.slug).issues()
         : fallbackDest;
@@ -254,9 +256,8 @@ export function InvitePage({ invitationId, onBack }: InvitePageProps) {
 }
 
 /**
- * Shared chrome for every InvitePage render state (loading, error,
- * default, accepted, declined). Keeps Back + Log out buttons in a
- * consistent position across all branches and across platforms.
+ * InvitePage 所有渲染状态（加载 / 错误 / 默认 / 已接受 / 已拒绝）共用的外壳。
+ * 把「返回」和「退出登录」按钮在所有分支与所有平台上都放在同一位置。
  */
 function InviteShell({
   onBack,

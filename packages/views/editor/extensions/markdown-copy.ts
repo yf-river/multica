@@ -1,27 +1,29 @@
 /**
- * Markdown copy extension — make the clipboard's text/plain channel carry
- * Markdown source instead of plain textContent.
+ * Markdown 复制扩展——让剪贴板的 text/plain 通道携带 Markdown 源码，
+ * 而不是纯文本 textContent。
  *
- * Symmetric to markdown-paste.ts:
- *   paste:  text/plain  →  editor.markdown.parse  →  doc
- *   copy:   slice       →  editor.markdown.serialize  →  text/plain
+ * 与 markdown-paste.ts 对称：
+ *   粘贴:  text/plain  →  editor.markdown.parse  →  doc
+ *   复制:  slice       →  editor.markdown.serialize  →  text/plain
  *
- * Why: ProseMirror's default clipboardTextSerializer calls Slice.textBetween,
- * which flattens every node to its inner text. Headings, lists, code blocks,
- * mentions, file cards — all lose their Markdown markers. Pasting into VS
- * Code, terminals, or messaging apps then sees only naked text.
+ * 为什么：ProseMirror 默认的 clipboardTextSerializer 会调 Slice.textBetween，
+ * 把所有节点压平成内部文本。标题、列表、代码块、mention、文件卡片——全都
+ * 丢掉各自的 Markdown 标记。粘贴进 VS Code、终端或聊天软件时就只剩裸文本。
  *
- * The text/html channel is left at ProseMirror's default so pasting back
- * into another ProseMirror editor still preserves exact node structure via
- * data-pm-slice.
+ * text/html 通道保持 ProseMirror 默认，这样贴回另一个 ProseMirror 编辑器
+ * 时仍能借 data-pm-slice 精确还原节点结构。
  */
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { Slice } from "@tiptap/pm/model";
 
-// Blob URLs (blob:http://…) are process-local; never let them leave the page.
+// blob URL（blob:http://…）是进程级的；绝不能让它们流出页面。
 const BLOB_IMAGE_RE = /!\[[^\]]*\]\(blob:[^)]*\)\n?/g;
 
+/**
+ * 创建「复制时输出 Markdown」的扩展。
+ * @returns 一个 Tiptap 扩展，覆盖剪贴板的 text/plain 序列化器。
+ */
 export function createMarkdownCopyExtension() {
   return Extension.create({
     name: "markdownCopy",
@@ -38,9 +40,9 @@ export function createMarkdownCopyExtension() {
             clipboardTextSerializer(slice: Slice) {
               if (!editor.markdown) return fallback(slice);
               try {
-                // Wrap slice content in a temp doc so the serializer walks
-                // it like a real document. Inline-only slices auto-wrap
-                // into doc → paragraph; block slices pass through.
+                // 把 slice 内容包进一个临时 doc，让序列化器像处理真实文档
+                // 一样遍历它。纯行内 slice 会自动包成 doc → paragraph；
+                // 块级 slice 原样通过。
                 const doc = editor.schema.topNodeType.create(
                   null,
                   slice.content,
@@ -48,9 +50,8 @@ export function createMarkdownCopyExtension() {
                 const md = editor.markdown.serialize(doc.toJSON());
                 return md.replace(BLOB_IMAGE_RE, "").replace(/\n+$/, "");
               } catch {
-                // Special selections (e.g. table cellSelection) may fail
-                // schema validation when wrapped in a doc node. Fall back
-                // so copy never breaks.
+                // 特殊选区（如表格 cellSelection）包进 doc 节点可能过不了
+                // schema 校验。回退兜底，复制永远不能坏。
                 return fallback(slice);
               }
             },

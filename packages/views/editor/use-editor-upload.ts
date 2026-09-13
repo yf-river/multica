@@ -7,16 +7,15 @@ import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { useT } from "../i18n";
 
 /**
- * `useFileUpload` wired to the failure toast the upload gate depends on.
+ * 把 `useFileUpload` 接上上传门禁依赖的失败 toast。
  *
- * The gate's failure fallback is "drop the placeholder, say so, let them
- * submit again". Dropping the placeholder is handled in the upload extension,
- * but without the toast the file just vanishes mid-upload with no explanation
- * — which is what every composer did, since `uploadWithToast` only toasts if
- * the caller supplies `onError` and no caller ever did (MUL-4808).
+ * 门禁的失败兜底是「丢占位符、说明原因、让用户再传一次」。丢占位符由上传
+ * 扩展处理，但没有 toast 的话文件会在上传中途无解释地消失——这正是所有
+ * composer 之前的状况：`uploadWithToast` 只在调用方提供 `onError` 时才弹
+ * toast，而从没调用方提供过（MUL-4808）。
  *
- * `useFileUpload` lives in `@multica/core`, which may not import a UI library,
- * so the toast is supplied here — once, rather than per composer.
+ * `useFileUpload` 住在 `@multica/core`，它不能 import UI 库，所以 toast 在
+ * 这里喂给它——一次，而不是每个 composer 各一份。
  */
 function useEditorUpload() {
   const { t } = useT("editor");
@@ -31,4 +30,5 @@ function useEditorUpload() {
   return useFileUpload(api, onError);
 }
 
+/** 编辑器上传 hook：失败自动弹 toast 提示。 */
 export { useEditorUpload };

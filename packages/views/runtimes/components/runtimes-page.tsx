@@ -1,3 +1,18 @@
+// ============================================================================
+// Runtimes 页面（RuntimesPage）——工作区里所有运行时间 / 机器的总览页
+//
+// 角色定位：Web 端 runtimes 集合页。上半部分由 Header 条 + 可选「Mika 设置」
+// 卡组成；主体把 runtime 快照按机器（本机 daemon / 云 worker）分组为机器
+// 列表，没有机器时列出「未分配的自定义 profile」。空态提供「连接远程机器」
+// 入口；Header 的 Cloud Runtime 入口（仅 SaaS）打开云 runtime 对话框。
+//
+// 数据流：同时挂载 runtimes / runtime profiles / agents / 任务快照 / 聊天会话
+// 等查询，用 buildRuntimeMachines 按机器分组、buildWorkloadIndex 聚负载；监听
+// `daemon:register` 事件使 runtime 缓存失效（daemon 上线即刷新列表）。
+//
+// 入口：runtimeRow 详情 / 机器详情 由 MachineRow 跳转；「连接远程」与
+// 「Cloud Runtime」分别打开 ConnectRemoteDialog / CloudRuntimeDialog。
+// ============================================================================
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -56,10 +71,12 @@ import { useT, useTimeAgo } from "../../i18n";
 import { daemonRuntimesDocsHref } from "./runtime-docs";
 
 export interface RuntimesPageProps {
-  /** Web SaaS-only Cloud Runtime entrypoint. */
+  /** Web SaaS 专属的 Cloud Runtime 入口开关。 */
   cloudRuntimeEnabled?: boolean;
 }
 
+// 每 30 秒心跳：让派生出的「机器健康」能跨过按时间划分的阈值（如
+// recently_lost → offline）推进，即使没有新查询数据到达。
 function useNowTick(intervalMs = 30_000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -69,6 +86,10 @@ function useNowTick(intervalMs = 30_000): number {
   return now;
 }
 
+/**
+ * Runtimes 集合页。
+ * @param cloudRuntimeEnabled - 是否展示 Cloud Runtime（SaaS）创建入口。
+ */
 export function RuntimesPage({
   cloudRuntimeEnabled = false,
 }: RuntimesPageProps = {}) {
@@ -89,9 +110,8 @@ export function RuntimesPage({
     agentListOptions(wsId),
   );
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  // The Mika entrypoint is per member, not per workspace: the agent alone does
-  // not say whether *this* member's conversation was ever opened and kicked
-  // off. See memberNeedsMikaSetup.
+  // Mika 的「待设置」判定是按成员、而非按工作区的：仅有 agent 并不能说明
+  // 「*这个*成员的会话是否打开并跑起来过」。见 memberNeedsMikaSetup。
   const { data: chatSessions = [], isLoading: chatSessionsLoading } = useQuery(
     chatSessionsOptions(wsId),
   );
@@ -184,16 +204,14 @@ export function RuntimesPage({
 }
 
 /**
- * Entry point for creating Mika once a runtime exists.
+ * 一旦有 runtime 存在，创建 Mika（首席参谋 agent）的入口卡。
  *
- * The action opens a picker rather than provisioning straight away. It used to
- * take `runtimes.find(online) ?? runtimes[0]` and create Mika on it silently —
- * but one machine commonly exposes every agent CLI it has installed (nine, on
- * the box this was reported from), so "the first online one" is arbitrary and
- * could well be a CLI the member never intended to run their Chief of Staff
- * on. Onboarding already makes this an explicit choice; this is the same
- * decision reached from a different entry point, so it asks the same way and
- * reuses the same two controls.
+ * 这个操作打开一个选择器而不是直接开建。它以前会取 `runtimes.find(online) ??
+ * runtimes[0]` 并静默地在那台上创建 Mika——但一台机器通常会暴露它装好的
+ * 全部 agent CLI（在报告此问题的机器上是九个），所以「第一台在线的」是随意
+ * 的，很可能是一台成员根本没打算在上面跑自己参谋官的 CLI。Onboarding 已经
+ * 把这事做成显式选择；这里是从另一个入口走到同一个决定，所以用同样的方式
+ * 询问，并复用同一套控件。
  */
 function MikaSetupCard({
   workspaceId,
@@ -213,8 +231,8 @@ function MikaSetupCard({
   const bootstrapMika = useBootstrapMika(workspaceId);
 
   const [open, setOpen] = useState(false);
-  // Seeded with the old heuristic so the dialog opens on a sensible default;
-  // the point is that it is now visible and changeable, not that it is unset.
+  // 用旧的启发式给默认值「种」上一个合理选择；关键在于它是可见、可改的，
+  // 而不是留空。
   const defaultRuntimeId =
     runtimes.find((runtime) => runtime.status === "online")?.id ??
     runtimes[0]?.id ??

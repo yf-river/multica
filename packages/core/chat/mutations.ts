@@ -1,3 +1,6 @@
+// Chat 会话管理的全部 mutation hook：消费草稿恢复、钉/取消钉 Agent、创建/改名/
+// 设项目/设钉/归档/硬删会话、标记已读、重生成快捷操作。多数做乐观更新 + 出错回滚，
+// 用 chat:session_updated 等 WS 事件同步其它标签页/设备。
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useWorkspaceId } from "../hooks";
@@ -13,16 +16,15 @@ import type {
 const logger = createLogger("chat.mut");
 
 /**
- * Consume a deferred-cancellation draft restore (#5219) after the composer has
- * applied it. The endpoint is idempotent, so consuming twice — or consuming a
- * row a previous attempt already deleted — is safe, which is what lets this
- * retry at all (mutations are `retry: false` app-wide).
+ * 输入框应用过一份"延迟取消草稿恢复"（#5219）之后消费掉它。
+ * 接口幂等，所以消费两次——或消费一条上次尝试已删掉的行——是安全的，
+ * 这也正是这个 mutation 能重试的原因（应用层全局 `retry: false`）。
  *
- * A lost consume must never re-restore a prompt the user has since sent, so the
- * "applied" decision is not carried by this request: the caller records it in
- * the persisted ledger (`markDraftRestoreApplied`) before firing, and reconciles
- * any row that outlives its ledger entry by consuming it again. This mutation
- * only has to make that reconciliation converge quickly.
+ * 一次丢失的消费绝不能把一条用户已发过的提示词重新恢复出来，所以"已应用"的判定
+ * 不由本次请求携带：调用方在发出请求前把它记进持久化的账本
+ * （`markDraftRestoreApplied`），任何活得比账本条目久的行通过再次消费来对账。
+ * 本 mutation 只需要让那次对账快速收敛。
+ * @returns React Query mutation 对象（消费一条恢复记录）。
  */
 export function useConsumeChatDraftRestore() {
   const qc = useQueryClient();
@@ -33,6 +35,7 @@ export function useConsumeChatDraftRestore() {
     retry: 3,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
     onMutate: ({ sessionId, restoreId }) => {
+      // 乐观：先从缓存里拿掉该恢复条目，避免再次被弹出。
       qc.setQueryData<ChatDraftRestoresResponse>(
         chatKeys.draftRestores(sessionId),
         (old) =>
@@ -42,14 +45,14 @@ export function useConsumeChatDraftRestore() {
       );
     },
     onError: (err, { sessionId, restoreId }) => {
-      // Exhausted the retries. The draft is safe (it is in the composer) and the
-      // ledger keeps the row from being re-offered; the next mount reconciles it.
+      // 重试耗尽。草稿是安全的（已在输入框里），账本也让该行不会被再次弹出；
+      // 下一次挂载会做对账。
       logger.warn("consumeChatDraftRestore.error", { sessionId, restoreId, err });
     },
   });
 }
 
-/** Pin an agent to the quick-agent bar (optimistic append). */
+/** 把 Agent 钉到快捷 Agent 栏（乐观追加到末尾）。 */
 export function usePinChatAgent() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -59,6 +62,7 @@ export function usePinChatAgent() {
     onMutate: async (agentId) => {
       await qc.cancelQueries({ queryKey: chatKeys.pinnedAgents(wsId) });
       const prev = qc.getQueryData<ChatPinnedAgent[]>(chatKeys.pinnedAgents(wsId));
+      // 已钉过则原样保留；否则以当前最大 position + 1 追加在末尾。
       qc.setQueryData<ChatPinnedAgent[]>(chatKeys.pinnedAgents(wsId), (old) => {
         if (old?.some((p) => p.agent_id === agentId)) return old;
         const maxPos = old?.reduce((m, p) => Math.max(m, p.position), 0) ?? 0;
@@ -76,7 +80,7 @@ export function usePinChatAgent() {
   });
 }
 
-/** Unpin an agent from the quick-agent bar (optimistic removal). */
+/** 把 Agent 从快捷 Agent 栏取消钉住（乐观移除）。 */
 export function useUnpinChatAgent() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -101,6 +105,7 @@ export function useUnpinChatAgent() {
   });
 }
 
+/** 创建一个新的 chat 会话（指定 Agent，可带标题与项目上下文）。 */
 export function useCreateChatSession() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -127,10 +132,8 @@ export function useCreateChatSession() {
 }
 
 /**
- * Clears the session's unread state server-side. Optimistically flips
- * has_unread to false in the cached list so the FAB badge drops
- * immediately. The server broadcasts chat:session_read so other devices
- * also sync.
+ * 在服务端清掉会话的未读状态。乐观地把缓存列表里该会话的 has_unread 翻成 false，
+ * 让 FAB 徽标立刻掉落。服务端会广播 chat:session_read，其它设备也跟着同步。
  */
 export function useMarkChatSessionRead() {
   const qc = useQueryClient();
@@ -163,10 +166,9 @@ export function useMarkChatSessionRead() {
 }
 
 /**
- * Renames a chat session. Optimistically swaps the title in the cached
- * list so the dropdown reflects the new label immediately; rolls back on
- * error. The matching `chat:session_updated` WS event keeps other
- * tabs/devices in sync — see use-realtime-sync.ts.
+ * 重命名一个 chat 会话。乐观地在缓存列表里换掉标题，让下拉立刻显示新标签；
+ * 出错回滚。配对的 `chat:session_updated` WS 事件让其它标签页/设备同步——
+ * 见 use-realtime-sync.ts。
  */
 export function useUpdateChatSession() {
   const qc = useQueryClient();
@@ -202,9 +204,8 @@ export function useUpdateChatSession() {
 }
 
 /**
- * Changes the project context of an existing chat without replacing the
- * session. The optimistic patch keeps the context chip in place while the
- * server validates the soft project reference; failures restore the old row.
+ * 改变既有 chat 的项目上下文（不重建会话）。乐观补丁让上下文胶囊在服务端校验
+ * 软项目引用期间保持原位；失败则恢复旧行。
  */
 export function useSetChatSessionProject() {
   const qc = useQueryClient();
@@ -241,10 +242,9 @@ export function useSetChatSessionProject() {
 }
 
 /**
- * Pins or unpins a chat. Optimistically flips `pinned` and re-sorts the cached
- * list (pinned first, then by activity) so the row jumps to / from the top
- * instantly; rolls back on error. The matching `chat:session_updated` WS event
- * carries the new pin state to other tabs/devices — see use-realtime-sync.ts.
+ * 钉住或取消钉住一个 chat。乐观翻转 `pinned` 并重排缓存列表（钉住优先、再按活动度）
+ * 让该行立刻跳到/离开顶部；出错回滚。配对的 `chat:session_updated` WS 事件把新钉住
+ * 状态带给其它标签页/设备——见 use-realtime-sync.ts。
  */
 export function useSetChatSessionPinned() {
   const qc = useQueryClient();
@@ -278,20 +278,16 @@ export function useSetChatSessionPinned() {
 }
 
 /**
- * Archives or unarchives a chat session. Optimistically flips `status` in the
- * cached list so the row moves between the active list and the "Archived" view
- * instantly (both filter on status locally); rolls back on error. Bumps
- * `updated_at` so the row re-sorts by activity in whichever view it lands.
- * The matching `chat:session_updated` WS event carries the new status to other
- * tabs/devices — see use-realtime-sync.ts.
+ * 归档或取消归档一个 chat 会话。乐观翻转缓存列表里的 `status`，让该行立刻在活跃
+ * 列表与 "Archived" 视图之间移动（两者都在本地按 status 过滤）；出错回滚。同时抬升
+ * `updated_at`，让该行落到哪个视图都会按活动度重新排序。配对的 `chat:session_updated`
+ * WS 事件把新状态带给其它标签页/设备——见 use-realtime-sync.ts。
  *
- * Archiving also zeroes the row's unread locally so every badge (FAB, sidebar
- * Chat tab, chat-window header) drops it in the same frame the row moves to the
- * Archived view. The backend already forces unread to 0 for archived rows (see
- * ListAllChatSessionsByCreator / MUL-4360); this is the optimistic half so there
- * is no window where the header/sidebar still count a just-archived session
- * before the refetch lands. Unarchive does NOT restore a count here — the true
- * unread state comes back from the server refetch (last_read_at is untouched).
+ * 归档还会在本地把该行未读清零，让每个徽标（FAB、侧边栏 Chat 标签、聊天窗头部）
+ * 在该行移入 Archived 视图的同一帧内把它去掉。后端本来就强制已归档行的未读为 0
+ * （见 ListAllChatSessionsByCreator / MUL-4360）；这是乐观的一半，避免重取落地前
+ * 头/边栏还在计一个刚归档的会话的窗口。取消归档这里不恢复计数——真实未读状态随
+ * 服务端重取回来（last_read_at 未动）。
  */
 export function useSetChatSessionArchived() {
   const qc = useQueryClient();
@@ -337,10 +333,8 @@ export function useSetChatSessionArchived() {
 }
 
 /**
- * Hard-deletes a chat session. Optimistically removes the row from the
- * sessions list so the dropdown updates instantly; rolls back on error.
- * The matching `chat:session_deleted` WS event keeps other tabs/devices
- * in sync — see use-realtime-sync.ts.
+ * 硬删除一个 chat 会话。乐观从会话列表移除该行，让下拉立刻更新；出错回滚。
+ * 配对的 `chat:session_deleted` WS 事件让其它标签页/设备同步——见 use-realtime-sync.ts。
  */
 export function useDeleteChatSession() {
   const qc = useQueryClient();
@@ -374,12 +368,10 @@ export function useDeleteChatSession() {
 }
 
 /**
- * Refresh the quick-action suggestions for a session's latest assistant turn
- * (MUL-5149). Optimistically raises the pending marker for that turn — its pills
- * go inert and the refresh icon spins — and rolls it back on failure. The
- * refreshed pills arrive over the chat:quick_actions realtime event, which
- * clears the marker (applyChatQuickActionsToCache). Never retried: a refresh is
- * an explicit, quota-spending user action.
+ * 为某会话最新一条助手消息刷新快捷操作建议（MUL-5149）。乐观地升起该轮的 pending
+ * 标记——药丸转惰、刷新图标转起来——失败时回滚。刷新后的药丸经 chat:quick_actions
+ * realtime 事件到达，事件会清除标记（applyChatQuickActionsToCache）。从不重试：
+ * 刷新是显式、消耗配额的用户动作。
  */
 export function useRegenerateChatQuickActions() {
   const qc = useQueryClient();
@@ -391,11 +383,9 @@ export function useRegenerateChatQuickActions() {
       const previous = qc.getQueryData<ChatQuickActionsPendingState | null>(
         chatKeys.quickActionsPending(sessionId),
       );
-      // The server confirms messageId IS the latest turn (else 409 → onError
-      // rollback), so the marker's message_id is guaranteed to match the
-      // chat:quick_actions that resolves it — no ack reconciliation needed.
-      // task_id is unknown here and unused for resolution (applyChatQuickActionsToCache
-      // matches on message_id).
+      // 服务端确认 messageId 确实是最新一轮（否则 409 → onError 回滚），因此标记的
+      // message_id 保证与之后解决它的 chat:quick_actions 匹配——无需 ack 对账。
+      // task_id 在这里未知、也不参与解决（applyChatQuickActionsToCache 按 message_id 匹配）。
       qc.setQueryData<ChatQuickActionsPendingState | null>(
         chatKeys.quickActionsPending(sessionId),
         {
@@ -409,6 +399,7 @@ export function useRegenerateChatQuickActions() {
     onError: (error, _vars, ctx) => {
       logger.error("regenerateChatQuickActions.error", { error });
       if (ctx) {
+        // 失败：恢复之前的标记状态（原为 null 则清掉）。
         qc.setQueryData<ChatQuickActionsPendingState | null>(
           chatKeys.quickActionsPending(ctx.sessionId),
           ctx.previous ?? null,

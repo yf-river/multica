@@ -9,42 +9,34 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Cols is one fixture row: column name to value. Values are bound as query
-// parameters unless they are Raw.
+// Cols 是一行夹具数据：列名到值。除非值是 Raw，否则都作为查询参数绑定。
 type Cols map[string]any
 
-// Raw is a SQL expression inlined into the statement instead of being bound as
-// a parameter, for the defaults a fixture cannot express as a Go value —
-// `now() - interval '2 hours'`, or the next issue number in a workspace.
+// Raw 是被内联进 SQL 语句而不是作为参数绑定的表达式，用于夹具无法用 Go 值表达的
+// 默认值——`now() - interval '2 hours'`，或某工作区里下一个 issue 号。
 //
-// It is inlined verbatim. Never build one out of anything but literals and
-// ids the fixture itself produced.
+// 它原样内联。只允许用字面量与夹具自己产生的 id 构造它。
 type Raw string
 
-// Fixture inserts rows for one test workspace and removes them again when the
-// test that asked for them finishes.
+// Fixture 为一个测试工作区插入若干行，并在索要它们的测试结束前再删除。
 //
-// The zero value is not usable; call New. WorkspaceID and UserID are the
-// defaults every builder falls back to, so a test that only cares about one
-// column names only that column.
+// 零值不可用，需要 New。WorkspaceID 与 UserID 是所有 builder 回退的默认值，
+// 因此只关心某一列的测试可以只点名那一列。
 type Fixture struct {
 	Pool        *pgxpool.Pool
 	WorkspaceID string
 	UserID      string
 }
 
-// New returns a Fixture bound to the workspace and user a test suite set up in
-// its TestMain.
+// New 返回绑定到"测试套件在 TestMain 里搭好的工作区与用户"的 Fixture。
 func New(pool *pgxpool.Pool, workspaceID, userID string) *Fixture {
 	return &Fixture{Pool: pool, WorkspaceID: workspaceID, UserID: userID}
 }
 
-// Insert writes one row into table, registers its deletion with t.Cleanup and
-// returns the new row's id.
+// Insert 往 table 写入一行，把删除注册给 t.Cleanup，并返回新行的 id。
 //
-// Cleanup runs in reverse creation order, so a row inserted after the row it
-// references is deleted before it and foreign keys hold without the test
-// spelling out a teardown order.
+// Cleanup 按"创建顺序的逆序"执行，因此后插入的、引用了先插入行的行会先被删除，
+// 外键保持成立，测试无需拼写拆卸顺序。
 func (f *Fixture) Insert(t TB, table string, cols Cols) string {
 	t.Helper()
 
@@ -60,10 +52,8 @@ func (f *Fixture) Insert(t TB, table string, cols Cols) string {
 	return id
 }
 
-// InsertNoID writes one row into a table that has no id column — a join table,
-// typically — and deletes it again with the WHERE clause the caller gives.
-// where is appended to `DELETE FROM <table> WHERE `, and its parameters are
-// numbered from $1.
+// InsertNoID 往"没有 id 列"的表（通常是关联表）写入一行，并用调用方给的 WHERE
+// 条件删除。where 会拼到 `DELETE FROM <table> WHERE ` 之后，其参数从 $1 编号。
 func (f *Fixture) InsertNoID(t TB, table string, cols Cols, where string, whereArgs ...any) {
 	t.Helper()
 
@@ -80,7 +70,7 @@ func (f *Fixture) InsertNoID(t TB, table string, cols Cols, where string, whereA
 	})
 }
 
-// Exec runs a statement and fails the test if it errors.
+// Exec 执行一条语句，出错则让测试失败。
 func (f *Fixture) Exec(t TB, sql string, args ...any) {
 	t.Helper()
 	if _, err := f.Pool.Exec(context.Background(), sql, args...); err != nil {
@@ -88,10 +78,8 @@ func (f *Fixture) Exec(t TB, sql string, args ...any) {
 	}
 }
 
-// Cleanup runs a statement when the test finishes, ignoring its error the way
-// teardown always should: a failing test has usually already left the row in a
-// state teardown cannot reach, and reporting that on top of the real failure
-// buries it.
+// Cleanup 在测试结束时执行一条语句，并按拆卸一贯该有的方式忽略其错误：失败的测试
+// 通常已把行留在拆卸够不着的状态，把那个错误叠在真正的失败之上只会掩盖它。
 func (f *Fixture) Cleanup(t TB, sql string, args ...any) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -99,7 +87,7 @@ func (f *Fixture) Cleanup(t TB, sql string, args ...any) {
 	})
 }
 
-// Row is a pending single-row query.
+// Row 是一条待执行的单行查询。
 type Row struct {
 	f    *Fixture
 	t    TB
@@ -107,14 +95,13 @@ type Row struct {
 	args []any
 }
 
-// QueryRow prepares a single-row query whose Scan fails the test on error.
+// QueryRow 准备一条单行查询，其 Scan 出错时会让测试失败。
 func (f *Fixture) QueryRow(t TB, sql string, args ...any) *Row {
 	t.Helper()
 	return &Row{f: f, t: t, sql: sql, args: args}
 }
 
-// Scan reads the row into dest, failing the test if the query errors or
-// matched nothing.
+// Scan 把行读到 dest，查询出错或没匹配到任何行时让测试失败。
 func (r *Row) Scan(dest ...any) {
 	r.t.Helper()
 	if err := r.f.Pool.QueryRow(context.Background(), r.sql, r.args...).Scan(dest...); err != nil {
@@ -122,7 +109,7 @@ func (r *Row) Scan(dest ...any) {
 	}
 }
 
-// Count returns the count a `SELECT count(*) ...` query produced.
+// Count 返回 `SELECT count(*) ...` 查询产出的计数。
 func (f *Fixture) Count(t TB, sql string, args ...any) int {
 	t.Helper()
 	var n int
@@ -130,13 +117,12 @@ func (f *Fixture) Count(t TB, sql string, args ...any) int {
 	return n
 }
 
-// ---- typed builders -------------------------------------------------------
+// ---- 类型化 builder ----------------------------------------------
 //
-// Each one fills the columns a row cannot be inserted without, and takes
-// optional overrides for the column the test is actually about. Defaults are
-// deliberately boring: a test that depends on one must name it.
+// 每个都填好一行"没有就无法插入"的列，并接受测试真正关心的列作为可选覆盖。
+// 默认值刻意朴素：依赖某个默认值的测试必须自己点名它。
 
-// User inserts a user row.
+// User 插入一个用户行。
 func (f *Fixture) User(t TB, name, email string, over ...Cols) string {
 	t.Helper()
 	return f.Insert(t, "user", merge(Cols{
@@ -145,7 +131,7 @@ func (f *Fixture) User(t TB, name, email string, over ...Cols) string {
 	}, over))
 }
 
-// Workspace inserts a workspace row.
+// Workspace 插入一个工作区行。
 func (f *Fixture) Workspace(t TB, name, slug string, over ...Cols) string {
 	t.Helper()
 	return f.Insert(t, "workspace", merge(Cols{
@@ -156,7 +142,7 @@ func (f *Fixture) Workspace(t TB, name, slug string, over ...Cols) string {
 	}, over))
 }
 
-// Member joins a user to a workspace.
+// Member 把用户加入工作区。
 func (f *Fixture) Member(t TB, workspaceID, userID, role string, over ...Cols) string {
 	t.Helper()
 	return f.Insert(t, "member", merge(Cols{
@@ -166,11 +152,10 @@ func (f *Fixture) Member(t TB, workspaceID, userID, role string, over ...Cols) s
 	}, over))
 }
 
-// Issue inserts an issue owned by the fixture's workspace and user.
+// Issue 插入一条属于夹具工作区与用户的 issue。
 //
-// number is derived from the workspace's existing issues rather than fixed, so
-// two issues built by the same test do not collide on the workspace's issue
-// numbering.
+// number 从该工作区已有 issue 推导而不是写死，让同一测试建的两条 issue 不会在
+// 工作区的 issue 编号上冲突。
 func (f *Fixture) Issue(t TB, title string, over ...Cols) string {
 	t.Helper()
 	cols := merge(Cols{
@@ -191,7 +176,7 @@ func (f *Fixture) Issue(t TB, title string, over ...Cols) string {
 	return f.Insert(t, "issue", cols)
 }
 
-// Comment inserts a comment on issueID.
+// Comment 在 issueID 下插入一条评论。
 func (f *Fixture) Comment(t TB, issueID, content string, over ...Cols) string {
 	t.Helper()
 	return f.Insert(t, "comment", merge(Cols{
@@ -204,7 +189,7 @@ func (f *Fixture) Comment(t TB, issueID, content string, over ...Cols) string {
 	}, over))
 }
 
-// Runtime inserts an online cloud runtime.
+// Runtime 插入一个在线的云 runtime。
 func (f *Fixture) Runtime(t TB, name string, over ...Cols) string {
 	t.Helper()
 	return f.Insert(t, "agent_runtime", merge(Cols{
@@ -222,8 +207,7 @@ func (f *Fixture) Runtime(t TB, name string, over ...Cols) string {
 	}, over))
 }
 
-// Agent inserts an agent bound to runtimeID. Pass an empty runtimeID for an
-// agent with no runtime.
+// Agent 插入一个绑定 runtimeID 的 agent；传空 runtimeID 表示没有 runtime 的 agent。
 func (f *Fixture) Agent(t TB, name, runtimeID string, over ...Cols) string {
 	t.Helper()
 	cols := merge(Cols{
@@ -243,7 +227,7 @@ func (f *Fixture) Agent(t TB, name, runtimeID string, over ...Cols) string {
 	return f.Insert(t, "agent", cols)
 }
 
-// Task queues a task for agentID.
+// Task 为 agentID 排入一条任务。
 func (f *Fixture) Task(t TB, agentID string, over ...Cols) string {
 	t.Helper()
 	return f.Insert(t, "agent_task_queue", merge(Cols{
@@ -253,7 +237,7 @@ func (f *Fixture) Task(t TB, agentID string, over ...Cols) string {
 	}, over))
 }
 
-// Squad inserts a squad led by leaderID.
+// Squad 插入一个由 leaderID 带领的 squad。
 func (f *Fixture) Squad(t TB, name, leaderID string, over ...Cols) string {
 	t.Helper()
 	return f.Insert(t, "squad", merge(Cols{
@@ -265,7 +249,7 @@ func (f *Fixture) Squad(t TB, name, leaderID string, over ...Cols) string {
 	}, over))
 }
 
-// SquadMember adds an agent or member to a squad.
+// SquadMember 把 agent 或 member 加入 squad。
 func (f *Fixture) SquadMember(t TB, squadID, memberType, memberID string, over ...Cols) string {
 	t.Helper()
 	return f.Insert(t, "squad_member", merge(Cols{
@@ -275,7 +259,7 @@ func (f *Fixture) SquadMember(t TB, squadID, memberType, memberID string, over .
 	}, over))
 }
 
-// Project inserts a project.
+// Project 插入一个项目。
 func (f *Fixture) Project(t TB, title string, over ...Cols) string {
 	t.Helper()
 	return f.Insert(t, "project", merge(Cols{
@@ -286,7 +270,7 @@ func (f *Fixture) Project(t TB, title string, over ...Cols) string {
 	}, over))
 }
 
-// ChatSession inserts a chat session with agentID.
+// ChatSession 插入一个带 agentID 的聊天会话。
 func (f *Fixture) ChatSession(t TB, agentID string, over ...Cols) string {
 	t.Helper()
 	return f.Insert(t, "chat_session", merge(Cols{
@@ -298,8 +282,9 @@ func (f *Fixture) ChatSession(t TB, agentID string, over ...Cols) string {
 	}, over))
 }
 
-// ---- internals ------------------------------------------------------------
+// ---- 内部实现 ------------------------------------------------------------
 
+// deleteOnCleanup 给带 id 的行注册按 id 删除的清理。
 func (f *Fixture) deleteOnCleanup(t TB, table, id string) {
 	t.Cleanup(func() {
 		_, _ = f.Pool.Exec(context.Background(),
@@ -307,9 +292,8 @@ func (f *Fixture) deleteOnCleanup(t TB, table, id string) {
 	})
 }
 
-// compile turns a column map into column names, value placeholders and bound
-// arguments. Columns are sorted so the generated SQL is stable, which keeps a
-// failing statement readable and diffable between runs.
+// compile 把列映射转成列名、值占位符与绑定参数。列排序使生成的 SQL 稳定，失败的
+// 语句更易读、更易在两次运行间做 diff。
 func compile(cols Cols) (names []string, placeholders []string, args []any) {
 	names = make([]string, 0, len(cols))
 	for name := range cols {
@@ -333,6 +317,7 @@ func compile(cols Cols) (names []string, placeholders []string, args []any) {
 	return names, placeholders, args
 }
 
+// merge 把覆盖列叠加到基础列上（后者胜出）。
 func merge(base Cols, over []Cols) Cols {
 	out := make(Cols, len(base))
 	for k, v := range base {
@@ -346,12 +331,12 @@ func merge(base Cols, over []Cols) Cols {
 	return out
 }
 
-// quoteIdent double-quotes an identifier so reserved words — `user`, the
-// table, is one — survive as table and column names.
+// quoteIdent 给标识符加双引号，让保留字——`user` 这个表名就是——也能用作表/列名。
 func quoteIdent(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
+// quoteLiteral 给字符串字面量加单引号并转义其中的单引号。
 func quoteLiteral(s string) string {
 	return `'` + strings.ReplaceAll(s, `'`, `''`) + `'`
 }

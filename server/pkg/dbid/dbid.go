@@ -1,35 +1,25 @@
-// Package dbid mints primary keys for rows the application inserts.
+// Package dbid 为应用插入的行铸造主键。
 //
-// Every id produced here is a UUIDv7 (RFC 9562): a 48-bit big-endian
-// millisecond timestamp followed by random bits. Consecutive inserts therefore
-// cluster in a narrow contiguous key range instead of scattering across the
-// primary-key B-tree the way random v4 keys do. On tables that already contain
-// v4 ids, that range is not necessarily the tree's right edge.
+// 这里产出的每个 id 都是 UUIDv7（RFC 9562）：48 位大端毫秒时间戳后跟随机位。
+// 因此连续插入会聚集在窄的连续键区间里，而不是像随机 v4 键那样散落在主键 B 树上。
+// 对已含 v4 id 的表来说，该区间未必是树的右缘。
 //
-// Scope and rules of use:
+// 适用范围与使用规则：
 //
-//   - Only for identity columns of rows we insert and keep — task queue entries,
-//     messages, comments, activity and audit rows. NOT for lease/claim tokens,
-//     idempotency keys, or anything used as a secret: those want
-//     unpredictability and no embedded timestamp, so they stay on
-//     gen_random_uuid()/v4.
-//   - The DB-side `DEFAULT gen_random_uuid()` on these columns stays in place,
-//     and every query that takes an id from here wraps it in
-//     `COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())`. A table therefore
-//     holds a mix of v4 and v7 ids forever, which Postgres's uuid type and every
-//     parser in this repo accept, and an unset id degrades to today's behaviour
-//     instead of violating NOT NULL.
-//   - The database fallback makes NewV7 suitable only when the id is used solely
-//     as the inserted row's identity. If the application must also use the id as
-//     an object key, filename, correlation id, or any other external reference,
-//     call uuid.NewV7 directly and handle its error instead; otherwise the
-//     database may mint a different id after entropy generation fails.
-//   - A v7 embeds its creation time only to millisecond precision and is only
-//     approximately ordered across writers. It is not a substitute for
-//     created_at and must not be used to derive ordering guarantees.
-//   - On an INSERT ... ON CONFLICT, an id passed in is used only if the row is
-//     actually inserted; the conflicting row keeps its own id. Callers must read
-//     the id back from RETURNING rather than assume the value they minted won.
+//   - 只用于"我们插入并保留的行"的标识列——任务队列条目、消息、评论、活动与审计行。
+//     不用于 lease/claim 令牌、幂等键或任何当机密用的东西：那些需要不可预测性且不能
+//     内嵌时间戳，所以继续用 gen_random_uuid()/v4。
+//   - 这些列上的库端 `DEFAULT gen_random_uuid()` 保留不变，每个从这里取 id 的查询
+//     都用 `COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())` 包一层。因此表里
+//     永远混着 v4 与 v7 id——Postgres 的 uuid 类型与本仓库所有解析器都接受——未设的
+//     id 退化为今天的行为而不是违反 NOT NULL。
+//   - 库端兜底决定了 NewV7 只适合"id 仅用作插入行的身份"的场景。如果应用还必须把
+//     id 当对象键、文件名、关联 id 或任何外部引用，请直接调 uuid.NewV7 并处理其错误；
+//     否则随机源失败后数据库可能铸造出不同的 id。
+//   - v7 内嵌的创建时间只有毫秒精度，且跨写者只是近似有序。它不能替代 created_at，
+//     也不得用于推导排序保证。
+//   - 在 INSERT ... ON CONFLICT 里，传入的 id 只在行真的被插入时生效；冲突的行保留
+//     自己的 id。调用方必须从 RETURNING 读回 id，而不是假定自己铸造的值赢了。
 package dbid
 
 import (
@@ -39,15 +29,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// NewV7 returns a fresh UUIDv7 wrapped as a pgtype.UUID, ready to assign to a
-// sqlc-generated parameter struct's ID field.
+// NewV7 返回一个新的 UUIDv7，包装成 pgtype.UUID，可直接赋给 sqlc 生成参数结构体
+// 的 ID 字段。
 //
-// It deliberately has no error return. uuid.NewV7 only fails when the OS
-// entropy source does, which does not happen on a healthy host; if it ever
-// does, this returns the zero (NULL) pgtype.UUID and the query's
-// COALESCE(..., gen_random_uuid()) fallback lets Postgres mint the id instead.
-// That keeps the insert working rather than failing a user request over an id
-// flavour, and keeps ~60 call sites free of an error path that would never run.
+// 刻意没有 error 返回。uuid.NewV7 只会在系统熵源出问题时失败，健康主机不会出现；
+// 万一真的失败，这里返回零值（NULL）pgtype.UUID，查询的
+// COALESCE(..., gen_random_uuid()) 兜底会让 Postgres 代为铸造 id。这让插入继续工作，
+// 而不是为一个 id 风格问题拒绝用户请求，也让约 60 处调用点省掉一条永远不会走的
+// 错误路径。
 func NewV7() pgtype.UUID {
 	id, err := uuid.NewV7()
 	if err != nil {

@@ -1,3 +1,32 @@
+// registration.go：Lark PersonalAgent 注册的设备流 client——对 accounts.feishu.cn
+// （大陆） / accounts.larksuite.com（国际版）的 RFC 8628 实现。
+//
+// Lark PersonalAgent 注册是对 RFC 8628（OAuth 2.0 Device Authorization Grant）
+// 的 1:1 实现，面向 accounts.feishu.cn（大陆）/ accounts.larksuite.com（国际版）。
+// 协议只有两阶段：
+//
+//  1. begin —— POST <domain>/oauth/v1/app/registration，带 action=begin 与
+//     （archetype=PersonalAgent / auth_method=client_secret /
+//     request_user_info=open_id）。Lark 返回 device_code、
+//     verification_uri_complete（二维码目标）、轮询间隔和有效期。Multica 渲染
+//     二维码，用户在 Lark App 里扫码、走“给该账号创建 PersonalAgent”流程并授权。
+//
+//  2. poll —— 对同一 URL POST action=poll 和 device_code。服务器回以下之一：
+//     - {error: "authorization_pending"} —— 继续轮询。
+//     - {error: "slow_down"}             —— 间隔 +5s 后再轮询。
+//     - {user_info: {tenant_brand: "lark"}}
+//     —— 用户用国际版 tenant 授权；我们把
+//     轮询主机切到 accounts.larksuite.com
+//     继续。
+//     - {client_id, client_secret, user_info: {open_id}}
+//     —— 终态成功。
+//     - {error: "expired_token"|"access_denied"}
+//     —— 终态失败。
+//
+// 我们刻意内联这个 client（而不是依赖
+// github.com/larksuite/oapi-sdk-go/scene/registration），让注册表面与 lark 包
+// 其余部分保持相同的 go.mod 占用面——~270 行单文件 client 刚好是自己该拥有的
+// 规模，替代方案是为一个端点拖进整个 SDK 及其传递依赖。
 package lark
 
 import (
@@ -12,111 +41,64 @@ import (
 	"time"
 )
 
-// Lark PersonalAgent registration is a 1:1 implementation of RFC 8628
-// (OAuth 2.0 Device Authorization Grant) against accounts.feishu.cn
-// (mainland) / accounts.larksuite.com (international). The protocol
-// has only two phases:
-//
-//  1. begin — POST <domain>/oauth/v1/app/registration with
-//     action=begin and (archetype=PersonalAgent / auth_method=client_secret
-//     / request_user_info=open_id). Lark returns a device_code, a
-//     verification_uri_complete (the QR target), a polling interval,
-//     and an expiry. Multica renders the QR, the user scans it in the
-//     Lark app, walks the "create a PersonalAgent for this account"
-//     flow, and authorizes.
-//
-//  2. poll — POST the same URL with action=poll and the device_code.
-//     The server replies with one of:
-//       - {error: "authorization_pending"} — keep polling.
-//       - {error: "slow_down"}             — bump the interval +5s, then poll.
-//       - {user_info: {tenant_brand: "lark"}}
-//                                          — user authorized via the
-//                                            international tenant; we
-//                                            switch the polling host to
-//                                            accounts.larksuite.com and
-//                                            keep going.
-//       - {client_id, client_secret, user_info: {open_id}}
-//                                          — terminal success.
-//       - {error: "expired_token"|"access_denied"}
-//                                          — terminal failure.
-//
-// We deliberately inline this client (rather than depend on
-// github.com/larksuite/oapi-sdk-go/scene/registration) so the registration
-// surface ships with the same go.mod footprint as the rest of the lark
-// package — a ~270-line single-file client is the right size to own
-// when the alternative is dragging a full SDK + its transitive deps
-// for one endpoint.
-
 const (
 	registrationDefaultFeishuDomain = "https://accounts.feishu.cn"
 	registrationDefaultLarkDomain   = "https://accounts.larksuite.com"
 
 	registrationEndpoint = "/oauth/v1/app/registration"
 
-	// Default polling cadence Lark uses when the server omits `interval`.
-	// 5s matches the Lark SDK; smaller would risk slow_down responses
-	// without buying any latency improvement.
+	// registrationDefaultPollSeconds 是服务器省略 `interval` 时 Lark 用的默认
+	// 轮询节奏。5 秒与 Lark SDK 一致；更小只会招来 slow_down 而换不到任何延迟
+	// 收益。
 	registrationDefaultPollSeconds = 5
 
-	// Default registration window (10 minutes) — long enough for a user
-	// to scan, switch apps, walk the create-bot flow, and authorize on
-	// their phone, short enough that an abandoned session does not pin
-	// resources for hours.
+	// registrationDefaultExpireSeconds 是默认注册窗口（10 分钟）——够用户扫码、
+	// 切 App、走完创建 Bot 流程并在手机上授权，又短到被放弃的会话不会占着资源
+	// 数小时。
 	registrationDefaultExpireSeconds = 600
 
-	// Internal-tenant brand label Lark uses to flag "you scanned with a
-	// Lark (international) account, not a Feishu (mainland) one". When
-	// we see this we re-aim polling at accounts.larksuite.com and
-	// re-issue the very next poll WITHOUT first waiting for the polling
-	// interval — the upstream SDK shows that Lark's server emits the
-	// tenant_brand hint exactly once during the polling stream and the
-	// subsequent poll must reach the new domain to learn the credentials.
+	// registrationTenantBrandLark 是 Lark 用来标记“你用 Lark（国际版）账号扫的，
+	// 不是飞书（大陆版）”的内部 tenant 品牌标签。看到它时我们把轮询重新指向
+	// accounts.larksuite.com，并【不】等轮询间隔就立刻重发下一次 poll——上游
+	// SDK 表明 Lark 服务器在轮询流中恰好发一次 tenant_brand 提示，随后的 poll
+	// 必须落在新域名上才能拿到凭据。
 	registrationTenantBrandLark = "lark"
 
-	// Mirror brand label for the reverse direction: a user who picked
-	// the "Bind to Lark" CTA but actually authorized with a mainland
-	// Feishu account. The split-CTA UX (MUL-3083) rendered a QR against
-	// accounts.larksuite.com, but Lark's poll stream surfaces
-	// tenant_brand="feishu" once authorization completes on the wrong
-	// cloud, and we honor that signal symmetrically — re-aim polling
-	// at accounts.feishu.cn and let the next poll fetch the credentials
-	// from the right host. Without this, "wrong entry" was a hard
-	// install failure for the lark→feishu direction even though the
-	// feishu→lark direction recovered automatically.
+	// registrationTenantBrandFeishu 是反方向的镜像品牌标签：用户点了“绑定到
+	// Lark”的 CTA，实际却用大陆飞书账号授权。分流 CTA（MUL-3083）对
+	// accounts.larksuite.com 渲染二维码，但 Lark 的 poll 流在授权落到错误云上
+	// 完成时同样会浮出 tenant_brand="feishu"，我们对称地尊重它——把轮询改指向
+	// accounts.feishu.cn，让下一次 poll 从正确的主机取凭据。没有它，“进错门”
+	// 在 lark→feishu 方向上就成了硬安装失败，尽管 feishu→lark 方向本来能自动
+	// 恢复。
 	registrationTenantBrandFeishu = "feishu"
 )
 
-// RegistrationConfig configures the device-flow client. All fields are
-// optional; the zero value targets accounts.feishu.cn over the standard
-// http.Client (with a 30s per-call timeout so a stalled poll cannot
-// silently pin a session goroutine for the entire expiry window).
+// RegistrationConfig 配置设备流 client。所有字段可选；零值指向标准
+// http.Client 上的 accounts.feishu.cn（每次调用 30 秒超时，卡死的 poll 不会在
+// 整个有效期内悄悄钉住会话 goroutine）。
 type RegistrationConfig struct {
-	// Domain is the initial polling host. Default
-	// "https://accounts.feishu.cn"; staging deployments can point this
-	// at a mock or at the Lark beta endpoint.
+	// Domain 是初始轮询主机。默认 "https://accounts.feishu.cn"；staging 部署可
+	// 指向 mock 或 Lark beta 端点。
 	Domain string
 
-	// LarkDomain is the international-tenant polling host the client
-	// switches to when Lark's poll response surfaces
-	// user_info.tenant_brand="lark". Default
-	// "https://accounts.larksuite.com".
+	// LarkDomain 是 Lark 的 poll 响应浮出 user_info.tenant_brand="lark" 时 client
+	// 切换到的国际版租户轮询主机。默认 "https://accounts.larksuite.com"。
 	LarkDomain string
 
-	// HTTPClient is the transport for every request the client makes.
-	// Empty defaults to a fresh *http.Client with a 30s timeout — the
-	// device-flow endpoint is normally a sub-second call but we add
-	// headroom for cross-region paths.
+	// HTTPClient 是 client 每个请求用的传输。空值默认新的 *http.Client 带 30 秒
+	// 超时——设备流端点通常亚秒级返回，但我们为跨地域路径留点余量。
 	HTTPClient *http.Client
 
-	// Source labels the QR-code URL's `source` query param so Lark's
-	// telemetry can attribute installs back to Multica. Empty defaults
-	// to "multica".
+	// Source 标记二维码 URL 的 `source` 查询参数，让 Lark 的遥测能把安装归因回
+	// Multica。空值默认 "multica"。
 	Source string
 
-	// Now is overridable for deterministic expiry-bound tests.
+	// Now 可覆盖，用于做确定性的过期边界测试。
 	Now func() time.Time
 }
 
+// withDefaults 把未设置的配置项填成默认值。
 func (c RegistrationConfig) withDefaults() RegistrationConfig {
 	if c.Domain == "" {
 		c.Domain = registrationDefaultFeishuDomain
@@ -136,89 +118,75 @@ func (c RegistrationConfig) withDefaults() RegistrationConfig {
 	return c
 }
 
-// RegistrationClient runs the device-flow protocol but does NOT own
-// session state or installation provisioning — RegistrationService
-// composes the client with the session store and the DB write path.
-// Splitting these lets the protocol client be deterministic and easy
-// to test against an httptest fake without involving the database.
+// RegistrationClient 跑设备流协议，但【不】持有会话状态或安装供给——
+// RegistrationService 把 client 与会话存储、DB 写入路径组合起来。拆开能让协议
+// client 变得确定、易用 httptest fake 测试，无需牵扯数据库。
 type RegistrationClient struct {
 	cfg RegistrationConfig
 }
 
-// NewRegistrationClient constructs the device-flow client.
+// NewRegistrationClient 构建设备流 client。
 func NewRegistrationClient(cfg RegistrationConfig) *RegistrationClient {
 	return &RegistrationClient{cfg: cfg.withDefaults()}
 }
 
-// BeginResult is what Begin returns to RegistrationService.
+// BeginResult 是 Begin 返回给 RegistrationService 的结果。
 type BeginResult struct {
 	DeviceCode string
-	// QRCodeURL is the verification_uri_complete with Multica's `source`
-	// telemetry params appended; render this as a QR image client-side.
+	// QRCodeURL 是带 Multica `source` 遥测参数的 verification_uri_complete；
+	// 客户端侧把它渲染成二维码图片。
 	QRCodeURL string
-	// Domain is the polling host this session opened against. The
-	// service must pass it back to Poll so the international-tenant
-	// switch (StatusDomainSwitched) can re-aim subsequent polls.
+	// Domain 是本会话开启时用的轮询主机。service 必须把它传回 Poll，国际版
+	// tenant 切换（StatusDomainSwitched）才能重新指向后续轮询。
 	Domain string
-	// Interval is Lark's suggested polling cadence. Slow_down responses
-	// add 5s; the service is responsible for honoring the updated
-	// cadence.
+	// Interval 是 Lark 建议的轮询节奏。slow_down 响应再加 5s；遵守更新后的节奏
+	// 是 service 的责任。
 	Interval time.Duration
-	// ExpiresIn is the absolute lifetime of the device_code. A poll
-	// after this window returns expired_token; the session goroutine
-	// uses this to size its context.WithTimeout.
+	// ExpiresIn 是 device_code 的绝对寿命。窗口之后的 poll 返回 expired_token；
+	// 会话 goroutine 用它来决定 context.WithTimeout 的大小。
 	ExpiresIn time.Duration
 }
 
-// PollResult is the discriminated union of every terminal and
-// non-terminal poll outcome. The caller branches on the populated
-// fields:
-//   - Success         (ClientID + ClientSecret + OpenID) → install
-//   - SwitchedDomain  (new domain string)               → swap host, re-poll immediately
-//   - Status          ("authorization_pending" / "slow_down") → wait, poll again
-//   - Err             (terminal error)                  → abort the session
+// PollResult 是所有“终态/非终态”轮询结果的判别并集。调用方按已填充字段分支：
+//   - Success         （ClientID + ClientSecret + OpenID）→ 安装
+//   - SwitchedDomain  （新 domain 字符串）               → 换主机，立即重 poll
+//   - Status          （"authorization_pending" / "slow_down"）→ 等一会再 poll
+//   - Err             （终态错误）                       → 中止会话
 type PollResult struct {
 	ClientID     string
 	ClientSecret string
 	OpenID       OpenID
 
-	// SwitchedDomain is non-empty when Lark told us "this is the wrong
-	// cloud, re-poll over there." It is paired with SwitchedRegion so
-	// the caller can update both the polling host AND the per-install
-	// region in one step. Originally this only fired in the
-	// Feishu→Lark direction (Lark international users authorizing on
-	// a Feishu-first begin); after MUL-3083 follow-up it is symmetric,
-	// so a user who picked the "wrong" Bind CTA also recovers — the
-	// service must update the session's stored domain AND region and
-	// re-poll WITHOUT honoring the interval (the SDK does the same —
-	// the upstream behaviour is that the very next poll lands on the
-	// new domain and returns the actual credentials).
+	// SwitchedDomain 在 Lark 告诉我们“这是错误的云，去那边重 poll”时非空。它与
+	// SwitchedRegion 成对出现，调用方能一步同时更新轮询主机和每安装地域。
+	// 最初只在 Feishu→Lark 方向触发（Lark 国际版用户在飞书优先的 begin 上授权）；
+	// MUL-3083 跟进后它是对称的，所以点了“错误”绑定 CTA 的用户也能恢复——
+	// service 必须更新会话里存储的 domain 与 region，并且【不】遵守间隔就重 poll
+	// （SDK 也一样——上游行为是紧接着的下一次 poll 落在新域名上并返回真正的
+	// 凭据）。
 	SwitchedDomain string
-	// SwitchedRegion is the region the new domain belongs to. Set in
-	// lockstep with SwitchedDomain; ignored when SwitchedDomain is
-	// empty. Carrying the region here keeps the caller from having to
-	// re-derive it from the domain string at session-update time.
+	// SwitchedRegion 是新域名所属的地域。与 SwitchedDomain 同步设置；
+	// SwitchedDomain 为空时忽略。在这里携带 region，省得调用方在更新会话时再从
+	// domain 字符串反推。
 	SwitchedRegion Region
 
-	// Status carries non-terminal protocol signals — typically
-	// "authorization_pending" or "slow_down". The service uses these
-	// to decide whether to bump the polling interval.
+	// Status 携带非终态协议信号——通常是 "authorization_pending" 或 "slow_down"。
+	// service 用它们决定是否把轮询间隔往上加。
 	Status string
 
-	// Err is the terminal error code (e.g. "access_denied",
-	// "expired_token", or a free-form Lark code we did not anticipate).
-	// On a non-terminal result this is nil.
+	// Err 是终态错误码（例如 "access_denied"、"expired_token"，或我们没有预料到
+	// 的 Lark 自由格式错误码）。非终态结果时为 nil。
 	Err *RegistrationError
 }
 
-// RegistrationError is the typed Lark protocol error. The handler
-// pipeline maps `Code` to a stable user-facing reason so the UI can
-// render the right copy without parsing prose.
+// RegistrationError 是类型化的 Lark 协议错误。handler 管线把 `Code` 映射成稳定
+// 的用户可见原因，UI 不用解析措辞就能渲染正确的文案。
 type RegistrationError struct {
 	Code        string
 	Description string
 }
 
+// Error 实现 error 接口。
 func (e *RegistrationError) Error() string {
 	if e == nil {
 		return ""
@@ -229,30 +197,21 @@ func (e *RegistrationError) Error() string {
 	return fmt.Sprintf("registration: %s: %s", e.Code, e.Description)
 }
 
-// Begin opens a new device-flow session against the open-platform host
-// for the requested region. Region is normally chosen explicitly by the
-// caller (the user picked "Feishu" or "Lark" in the UI) so the QR
-// renders against the same cloud the user expects to scan from; an
-// empty value falls back to Feishu (mainland) for back-compat with
-// callers that pre-date region-aware install. Lark may STILL surface a
-// Lark-international tenant on a subsequent poll even when the begin
-// host was Feishu — the SwitchedDomain branch in RegistrationService
-// keeps that auto-detect path alive as a fallback for users who pick
-// the wrong entry, so explicit region selection is a routing
-// optimization (saves one round-trip and renders the right cloud's QR
-// up front), not a constraint on what the device flow can recover from.
+// Begin 对请求地域的开放平台主机开启新的设备流会话。地域通常由调用方显式选择
+// （用户在 UI 里选了“飞书”或“Lark”），二维码因此对着用户预期扫码的同一朵云
+// 渲染；空值退回飞书（大陆版），与地域感知安装出现前的调用方兼容。即使用户在
+// 飞书主机上 begin，Lark 仍可能在后续 poll 浮出国际版 tenant——RegistrationService
+// 里的 SwitchedDomain 分支为“进错门”的用户保住了这条自动探测兜底，所以显式选
+// 地域只是路由优化（省一次往返、一开始就渲染对的那朵云的二维码），而不是对
+// 设备流可恢复范围的限制。
 //
-// namePreset pre-fills the bot/app name on Lark's "create a
-// PersonalAgent" form so the installed bot defaults to e.g.
-// "<agent> - Multica" instead of Lark's auto-generated
-// "{用户姓名}的智能助手". It is a user-editable default (the user can
-// still change it on the form), and it rides on the QR URL — not the
-// begin POST body, which has no name field. Empty omits the pre-fill.
+// namePreset 会预填 Lark “创建 PersonalAgent”表单上的 bot/app 名，让装出来的
+// bot 默认叫如 "<agent> - Multica"，而不是 Lark 自动生成的“{用户姓名}的智能
+// 助手”。它是用户可编辑的默认值（用户仍可在表单上改），并搭载在二维码 URL
+// 上——不是 begin POST 体上（那里没有 name 字段）。空值省略预填。
 func (c *RegistrationClient) Begin(ctx context.Context, namePreset string, region Region) (*BeginResult, error) {
-	// Pick the begin domain off the requested region. Empty / unknown
-	// regions degrade to Feishu (mainland) — same back-compat invariant
-	// as RegionOrDefault, so callers that pre-date this signature
-	// (passing "") keep working.
+	// 按请求地域挑 begin 域名。空/未知地域退回飞书（大陆）——与
+	// RegionOrDefault 相同的向后兼容不变量，早于本签名的调用方（传 ""）仍可用。
 	domain := c.cfg.Domain
 	if region == RegionLark {
 		domain = c.cfg.LarkDomain
@@ -306,11 +265,9 @@ func (c *RegistrationClient) Begin(ctx context.Context, namePreset string, regio
 	}, nil
 }
 
-// Poll runs a single poll round-trip against the supplied domain (which
-// the caller may have updated mid-session via SwitchedDomain from a
-// prior PollResult). Domain selection lives outside the client so the
-// session state machine in RegistrationService is the single source of
-// truth for which host the next call must hit.
+// Poll 对给定 domain（调用方可能已通过上次 PollResult 的 SwitchedDomain 在会话
+// 中途更新过它）跑一次单轮 poll 往返。域名选择放在 client 之外，让
+// RegistrationService 里的会话状态机成为“下一次该打哪个主机”的唯一事实来源。
 func (c *RegistrationClient) Poll(ctx context.Context, domain, deviceCode string) (*PollResult, error) {
 	if deviceCode == "" {
 		return nil, &RegistrationError{Code: "invalid_argument", Description: "device_code is required"}
@@ -336,24 +293,17 @@ func (c *RegistrationClient) Poll(ctx context.Context, domain, deviceCode string
 		return nil, err
 	}
 
-	// Tenant-brand-driven domain swap. Lark emits this exactly once on
-	// the transition poll when the authorized account does not match
-	// the cloud the begin call hit; the next poll must reach the
-	// matching open-platform host to learn the credentials. We surface
-	// the swap (domain + region) as a typed signal so the service does
-	// not have to know the brand string OR re-derive the region from
-	// the host.
+	// tenant-brand 驱动的域名切换。当被授权的账号与 begin 打到的云不匹配时，
+	// Lark 会在转换轮次上恰好发一次这个信号；下一次 poll 必须落在匹配的开放平台
+	// 主机上才能拿到凭据。我们把切换（domain + region）作为类型化信号浮出来，
+	// service 既不用知道品牌字符串、也不用从主机反推地域。
 	//
-	// Both directions are honored: feishu→lark for users who scanned a
-	// Feishu QR with a Lark-international account, AND lark→feishu for
-	// users who picked the new "Bind to Lark" CTA but actually
-	// authorized with a mainland Feishu account. Symmetry matters
-	// because the split-CTA UI (MUL-3083) also begins on
-	// accounts.larksuite.com directly — without the reverse swap, a
-	// "wrong entry" install on that side would carry RegionLark all
-	// the way through finishSuccess and fail (or commit a wrong-region
-	// row) at GetBotInfo. The check is gated on the current domain so
-	// we do not loop on the same brand we already match.
+	// 两个方向都处理：feishu→lark（用户拿 Lark 国际版账号扫飞书二维码），以及
+	// lark→feishu（用户点了新的“绑定到 Lark”CTA，实际却用大陆飞书账号授权）。
+	// 对称性很重要，因为分流 CTA UI（MUL-3083）也可能直接在 accounts.larksuite.com
+	// 上 begin——没有反向切换，“进错门”那侧的安装会一路带着 RegionLark 走到
+	// finishSuccess，并在 GetBotInfo 失败（或提交错误地域的行）。检查以当前域名
+	// 为门，避免在已匹配的品牌上打转。
 	if resp.UserInfo != nil {
 		switch resp.UserInfo.TenantBrand {
 		case registrationTenantBrandLark:
@@ -373,10 +323,8 @@ func (c *RegistrationClient) Poll(ctx context.Context, domain, deviceCode string
 		}
 	}
 
-	// Success: both client_id AND client_secret AND the installer
-	// open_id must be present. Partial responses are treated as a
-	// protocol error so RegistrationService never writes a
-	// half-populated lark_installation row.
+	// 成功：client_id 与 client_secret 与安装者 open_id 必须都在。残缺响应按协议
+	// 错误处理，RegistrationService 就绝不会写下半条 lark_installation 行。
 	if resp.ClientID != "" && resp.ClientSecret != "" {
 		if resp.UserInfo == nil || resp.UserInfo.OpenID == "" {
 			return nil, &RegistrationError{
@@ -399,10 +347,8 @@ func (c *RegistrationClient) Poll(ctx context.Context, domain, deviceCode string
 			Err: &RegistrationError{Code: resp.Error, Description: resp.ErrorDescription},
 		}, nil
 	case "":
-		// Empty error AND empty credentials = keep polling; this
-		// matches the upstream SDK's tolerant handling for the case
-		// where the server briefly returns an empty body during the
-		// authorize-redirect window.
+		// 空 error 且空凭据 = 继续轮询；这与上游 SDK 对“服务器在 authorize-redirect
+		// 窗口内短暂返回空体”的宽容处理一致。
 		return &PollResult{Status: "authorization_pending"}, nil
 	default:
 		return &PollResult{
@@ -411,6 +357,7 @@ func (c *RegistrationClient) Poll(ctx context.Context, domain, deviceCode string
 	}
 }
 
+// doForm 对注册端点做一次 form 编码 POST 并把 JSON 响应解码进 out。
 func (c *RegistrationClient) doForm(ctx context.Context, domain string, form url.Values, out any) error {
 	endpoint := strings.TrimRight(domain, "/") + registrationEndpoint
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
@@ -433,35 +380,30 @@ func (c *RegistrationClient) doForm(ctx context.Context, domain string, form url
 			Description: "empty body",
 		}
 	}
-	// RFC 8628 device-flow servers return non-2xx with a JSON body whose
-	// `error` field is the actual signal — `authorization_pending` and
-	// `slow_down` arrive as HTTP 400, NOT 2xx. Decoding the body first
-	// and letting the caller route on `resp.Error` is what the upstream
-	// Go SDK does; treating any non-2xx as a hard protocol error (the
-	// previous behaviour) killed every session on the first poll because
-	// the user hasn't scanned the QR yet at that point.
+	// RFC 8628 设备流服务器对非 2xx 会带一个 JSON 体，其 `error` 字段才是真正的
+	// 信号——`authorization_pending` 和 `slow_down` 以 HTTP 400 到达，而不是
+	// 2xx。先解码 body、让调用方按 `resp.Error` 路由，正是上游 Go SDK 的做法；
+	// 把一切非 2xx 当作硬协议错误（以前的行为）会让每个会话在第一次 poll 就死，
+	// 因为那时用户还没扫二维码。
 	if jsonErr := json.Unmarshal(body, out); jsonErr == nil {
 		return nil
 	}
-	// Body didn't parse — surface the raw status + payload tail so ops
-	// can tell a Lark outage / proxy interception apart from a schema
-	// drift. Caller treats this as a terminal protocol error.
+	// body 解析不了——把原始状态码 + 负载尾部浮出来，让 ops 能区分 Lark 故障/
+	// 代理劫持与 schema 漂移。调用方把它当终态协议错误。
 	return &RegistrationError{
 		Code:        fmt.Sprintf("http_%d", resp.StatusCode),
 		Description: truncate(string(body), 256),
 	}
 }
 
-// decorateQRCodeURL appends the SDK-style telemetry params Lark expects
-// on the QR-image URL. Without `from=sdk&tp=sdk&source=<src>` the
-// scanner UI on the user's phone shows a less polished prompt and Lark
-// cannot attribute installs back to Multica in their analytics.
+// decorateQRCodeURL 给二维码图片 URL 追加 Lark 期望的 SDK 风格遥测参数。
+// 没有 `from=sdk&tp=sdk&source=<src>`，用户手机上的扫码 UI 会显示较粗糙的
+// 提示，Lark 的 analytics 也无法把安装归因回 Multica。
 //
-// namePreset, when non-empty, is appended as `name=<...>` to pre-fill
-// the bot/app name on Lark's "create a PersonalAgent" form. This
-// mirrors the upstream SDK's AppPreset.Name: Lark reads it from the
-// verification/QR URL (the begin POST body carries no name field) and
-// treats it as a user-editable default, not a locked final name.
+// namePreset 非空时作为 `name=<...>` 追加，预填 Lark “创建 PersonalAgent”表单
+// 上的 bot/app 名。这镜像上游 SDK 的 AppPreset.Name：Lark 从 verification/QR
+// URL 读它（begin POST 体没有 name 字段），并把它当作用户可编辑的默认值，而非
+// 锁定的最终名字。
 func decorateQRCodeURL(raw, source, namePreset string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -478,13 +420,12 @@ func decorateQRCodeURL(raw, source, namePreset string) (string, error) {
 	return u.String(), nil
 }
 
-// ErrRegistrationAccessDenied is returned by RegistrationService when
-// the user explicitly denied the install in the Lark UI. Distinct from
-// other terminal failures so the UI can render "you cancelled the
-// install" instead of a generic error.
+// ErrRegistrationAccessDenied 是用户在 Lark UI 里显式拒绝安装时
+// RegistrationService 返回的错误。与其它终态失败区分，UI 才能渲染“你取消了
+// 安装”而不是笼统的错误。
 var ErrRegistrationAccessDenied = errors.New("lark registration: access denied by user")
 
-// ErrRegistrationExpired is returned by RegistrationService when the
-// device_code's expiry window elapsed without the user authorizing.
-// Distinct so the UI can prompt "scan again — the previous QR expired".
+// ErrRegistrationExpired 是 device_code 有效期在用户授权前耗尽时
+// RegistrationService 返回的错误。区分出来，UI 才能提示“重新扫码——上一个
+// 二维码已过期”。
 var ErrRegistrationExpired = errors.New("lark registration: expired")

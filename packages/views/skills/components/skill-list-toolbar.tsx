@@ -1,3 +1,5 @@
+// 本文件职责：技能列表页的工具栏——名称搜索、多维筛选（使用情况/来源/被哪些 agent 使用/
+// 创建人）、排序字段与方向、列显隐，全部以「未过滤全集」推导选项和计数。
 "use client";
 
 import {
@@ -50,8 +52,10 @@ import { useT } from "../../i18n";
 import type { SkillRow } from "./skills-page";
 import { PAGE_TOOLBAR } from "../../layout/page-header";
 
+/** 技能来源类型（与核心 store 里的类型一致，此处的便捷别名）。 */
 export type OriginType = SkillOriginType;
 
+/** 可隐藏/显示的表格列（固定顺序）。 */
 const COLUMN_KEYS: SkillColumnKey[] = [
   "usedBy",
   "source",
@@ -60,8 +64,10 @@ const COLUMN_KEYS: SkillColumnKey[] = [
   "created",
 ];
 
+/** 可排序的字段（固定顺序）。 */
 const SORT_FIELDS: SkillSortField[] = ["name", "usedBy", "updated", "created"];
 
+/** 统计当前有几个筛选维度生效（每个非空维度计 1）。 */
 export function countActiveFilterDimensions(
   filters: SkillListFilters,
 ): number {
@@ -73,6 +79,7 @@ export function countActiveFilterDimensions(
   return count;
 }
 
+/** 「来源」筛选里出现的全部类型（固定顺序）。 */
 const ORIGIN_TYPES: OriginType[] = [
   "manual",
   "runtime_local",
@@ -81,12 +88,20 @@ const ORIGIN_TYPES: OriginType[] = [
   "github",
 ];
 
+/** 按来源类型挑一个小图标：手动创建用笔、本地 runtime 用硬盘、其余托管源用下载。 */
 function originIcon(type: OriginType) {
   if (type === "manual") return <Pencil className="size-3.5" />;
   if (type === "runtime_local") return <HardDrive className="size-3.5" />;
   return <Download className="size-3.5" />;
 }
 
+/**
+ * 技能列表页工具栏。
+ *
+ * 包含：名称搜索框（含「可见数/总数」角标）、「筛选」下拉（使用情况/来源/使用方 agent/
+ * 创建人四组勾选项，各自带计数）、「显示设置」弹层（排序列 + 方向切换 + 列显隐开关）。
+ * 排序/列显隐与列表头的操作共用同一份状态。
+ */
 export function SkillListToolbar({
   search,
   onSearchChange,
@@ -113,9 +128,9 @@ export function SkillListToolbar({
   onSortDirectionChange: (direction: SkillSortDirection) => void;
   hiddenColumns: SkillColumnKey[];
   onToggleColumn: (key: SkillColumnKey) => void;
-  /** Unfiltered rows — option lists and counts derive from the full set. */
+  /** 未经过滤的全部行——选项列表与计数都从全集推导。 */
   allRows: SkillRow[];
-  /** Rows surviving search + filters — shown as "n / total" when narrowed. */
+  /** 经搜索 + 筛选后存活的行数——收窄时显示为「n / total」。 */
   visibleCount: number;
 }) {
   const { t } = useT("skills");
@@ -123,8 +138,8 @@ export function SkillListToolbar({
   const activeCount = countActiveFilterDimensions(filters);
   const hasActiveFilters = activeCount > 0;
 
-  // Option lists with counts, derived from the unfiltered rows so toggling
-  // one dimension doesn't make the others' options vanish.
+  // 带计数的选项列表，从「未过滤行」推导——这样切换某一维筛选时，其它维度的选项不会
+  // 跟着消失。
   const usedCount = allRows.filter((r) => r.agents.length > 0).length;
   const unusedCount = allRows.length - usedCount;
 
@@ -178,11 +193,9 @@ export function SkillListToolbar({
 
   return (
     <div className={PAGE_TOOLBAR}>
-      {/* Left: name search + result count. The count only appears while
-          search/filters narrow the list — in the idle state it would just
-          duplicate the total already shown in the page header. Below md the
-          search (and its count) disappear entirely, following the issues
-          header's small-screen treatment. */}
+      {/* 左侧：名称搜索 + 结果计数。计数只在搜索/筛选收窄列表时出现——空闲态下它
+          只会重复页面头部已显示的总数。md 以下整个搜索框（及其计数）消失，沿用
+          issues 头部的窄屏处理。 */}
       <div className="flex min-w-0 items-center gap-2">
         <div className="relative hidden md:block">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -205,7 +218,7 @@ export function SkillListToolbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-        {/* Filter */}
+        {/* 筛选 */}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -255,7 +268,7 @@ export function SkillListToolbar({
             }
           />
           <DropdownMenuContent align="end" className="w-auto">
-            {/* Usage */}
+            {/* 使用情况（已使用/未使用） */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">
@@ -285,7 +298,7 @@ export function SkillListToolbar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Source */}
+            {/* 来源 */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">{t(($) => $.table.source)}</span>
@@ -314,7 +327,7 @@ export function SkillListToolbar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Used by */}
+            {/* 被哪些 agent 使用 */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">{t(($) => $.table.used_by)}</span>
@@ -347,7 +360,7 @@ export function SkillListToolbar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Creator */}
+            {/* 创建人 */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">{t(($) => $.table.created_by)}</span>
@@ -385,11 +398,9 @@ export function SkillListToolbar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Display settings — same paradigm as the issues header: Popover
-            with bordered sections, trigger shows the active sort (direction
-            arrow + field label), sort row is a nested select + a direction
-            toggle button, columns are label+Switch rows. Mutates the same
-            sort state pair the list header buttons use. */}
+        {/* 显示设置——与 issues 头部同一范式：Popover 内用边框分区，触发器展示当前
+            排序（方向箭头 + 字段名），排序行是「嵌套选择器 + 方向切换按钮」，列开关为
+            label + Switch 行。改动的是列表头按钮共用的同一对排序状态。 */}
         <Popover>
           <Tooltip>
             <PopoverTrigger

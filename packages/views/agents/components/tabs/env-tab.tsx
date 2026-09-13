@@ -1,5 +1,10 @@
 "use client";
 
+// 本文件是 Agent 的环境变量（env）编辑标签页。MUL-2600 之后 agent 资源不再携带
+// custom_env 值，只有专用的 `/env` 端点能读，且该端点每次调用都写审计日志——
+// 因此本组件绝不自动拉取：显示“配置了几个键”的计数，用户点“查看并编辑”才显值。
+// 支持逐行编辑与“整段粘贴/整段编辑”两种模式（共用同一个解析器）。
+
 import { useCallback, useEffect, useState } from "react";
 import type { ClipboardEvent } from "react";
 import {
@@ -28,14 +33,13 @@ import {
   parseEnvFileResult,
 } from "./env-file";
 
-// Env values never reach this component until the user clicks
-// "Reveal & edit" — the agent resource feed no longer carries
-// custom_env at all after MUL-2600. Until then we display only the
-// configured-key count from `agent.custom_env_key_count`, which is
-// safe because it's not the values themselves.
+// env 值在用户点“查看并编辑”之前绝不会到达本组件——MUL-2600 后 agent 资源
+// feed 已完全不携带 custom_env。此前我们只展示 `agent.custom_env_key_count`
+// 的键数，它安全，因为不是值本身。
 
 let nextEnvId = 0;
 
+/** 单条 env 的本地形态：id 稳定供 key 使用，visible 控制值明文/掩码。 */
 interface EnvEntry {
   id: number;
   key: string;
@@ -43,6 +47,7 @@ interface EnvEntry {
   visible: boolean;
 }
 
+/** 把后端环境变量映射为本地条目；空 map 给一行空模板。 */
 function envMapToEntries(env: Record<string, string>): EnvEntry[] {
   const entries = Object.entries(env).map(([key, value]) => ({
     id: nextEnvId++,
@@ -56,8 +61,8 @@ function envMapToEntries(env: Record<string, string>): EnvEntry[] {
     : [{ id: nextEnvId++, key: "", value: "", visible: true }];
 }
 
-// Bulk mode round-trips through the same parser the paste path uses, so the
-// two entry points can never disagree about what a line means.
+// 批量模式与粘贴路径走同一个解析器，两个入口永远不可能对“一行是什么意思”
+// 产生分歧。
 function entriesToBulkText(entries: EnvEntry[]) {
   return formatEnvFile(
     entries
@@ -66,6 +71,7 @@ function entriesToBulkText(entries: EnvEntry[]) {
   );
 }
 
+/** 把条目列表折回普通 map（去掉空 key）。 */
 function entriesToEnvMap(entries: EnvEntry[]): Record<string, string> {
   const map = Object.create(null) as Record<string, string>;
   for (const entry of entries) {
@@ -77,6 +83,13 @@ function entriesToEnvMap(entries: EnvEntry[]): Record<string, string> {
   return map;
 }
 
+/**
+ * 环境变量编辑标签页。
+ * @param agent 当前 Agent（只读 custom_env_key_count，不读值）。
+ * @param onDirtyChange 本地是否有未保存内容的通知。
+ * @param onSaved 保存成功后的通知——父页面拥有整个页面要读的 `Agent` 对象
+ *  （name、has_custom_env 等），需要它来刷新缓存。可空，简化无失效逻辑的调用点。
+ */
 export function EnvTab({
   agent,
   onDirtyChange,
@@ -92,23 +105,18 @@ export function EnvTab({
 }) {
   const { t } = useT("agents");
 
-  // revealed === null means "haven't fetched yet"; revealed === [] is
-  // a legitimate empty map after a successful reveal. We do NOT
-  // pre-populate from `agent` here because the agent resource shape
-  // no longer carries values — only the dedicated `/env` endpoint
-  // does, and that endpoint writes an audit row per call so we never
-  // fetch implicitly on mount.
+  // revealed === null 表示“还没拉过”；revealed === [] 是拉取成功后合法的空 map。
+  // 这里刻意不从 `agent` 预填——agent 资源形态已不带值，只有专用的 `/env` 端点带，
+  // 而该端点每次调用都会写审计行，所以绝不在挂载时隐式拉取。
   const [revealed, setRevealed] = useState<EnvEntry[] | null>(null);
   const [originalMap, setOriginalMap] = useState<Record<string, string>>({});
   const [revealing, setRevealing] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Bulk mode is a second editor over the same `revealed` state rather than a
-  // staging buffer: every keystroke that parses is written straight through,
-  // so dirty tracking and Save behave identically in both modes. A keystroke
-  // that does not parse leaves `revealed` on its last good value and raises
-  // `bulkError`, which disables Save so the user can never ship the stale
-  // state that is no longer on screen.
+  // 批量模式是架在同一份 `revealed` 状态之上的第二个编辑器，而不是独立暂存区：
+  // 每个能解析的键击都直接写透，因此脏检测与保存两种模式行为一致。解析不了的键击
+  // 让 `revealed` 保持在上一个合法值，同时置 `bulkError` 并禁用保存——用户永远
+  // 不可能把屏幕上已经看不见的过期状态保存出去。
   const [bulkEditing, setBulkEditing] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkError, setBulkError] = useState<EnvParseError | null>(null);
@@ -120,9 +128,8 @@ export function EnvTab({
     revealed !== null &&
     JSON.stringify(currentEnvMap) !== JSON.stringify(originalMap);
 
-  // Bulk text that does not parse never reaches `revealed`, so `dirty` alone
-  // would report a clean tab while the textarea still holds the user's work —
-  // and the parent's discard guard would let a tab switch drop it silently.
+  // 解析不了的批量文本进不了 `revealed`，所以单看 `dirty` 会误报“页面干净”——
+  // 而文本域里明明还留着用户的工作；父层的丢弃拦截也会放走一个悄悄丢数据的切页。
   const hasUnsavedWork = dirty || (bulkEditing && bulkError !== null);
 
   useEffect(() => {
@@ -224,8 +231,8 @@ export function EnvTab({
   const enterBulkEditing = () => {
     const formatted = entriesToBulkText(revealed ?? []);
     if (!formatted.ok) {
-      // Refuse rather than hand back text that cannot be read again — the
-      // user would edit an unrelated line and silently truncate this one.
+      // 宁可拒绝也不回吐一份“读不回去”的文本——否则用户可能去改另一行，
+      // 而这一行被静默截断。
       toast.error(
         formatted.reason === "duplicate"
           ? t(($) => $.tab_body.env.duplicate_keys_toast)
@@ -294,10 +301,9 @@ export function EnvTab({
       const savedEntries = envMapToEntries(env);
       setOriginalMap(env);
       setRevealed(savedEntries);
-      // Keep the textarea in step with what the server accepted rather than
-      // dropping the user out of bulk mode on every save. If the server hands
-      // back something bulk text cannot express, fall back to rows — the data
-      // is already saved, so the only wrong move would be showing lossy text.
+      // 让文本域与服务端真正接受的保持一致，而不是每次保存都把用户踢出批量模式。
+      // 服务端回吐的内容若批量文本表达不了，就退回行编辑——数据已保存，
+      // 唯一会错的动作是展示一份有损的文本。
       if (bulkEditing) {
         const formatted = entriesToBulkText(savedEntries);
         if (formatted.ok) {
@@ -319,9 +325,8 @@ export function EnvTab({
     }
   };
 
-  // Pre-reveal state: show count + Reveal button. We never auto-fetch
-  // on mount so a member just navigating between tabs doesn't trigger
-  // an audit-log entry; the reveal must be intentional.
+  // 未揭示态：显示键数 + “查看并编辑”按钮。绝不挂载即拉取——用户只是在标签间
+  // 来回切换不该产生一条审计日志；揭示必须是用户主动行为。
   if (revealed === null) {
     return (
       <div className="space-y-4">
@@ -448,9 +453,8 @@ export function EnvTab({
                   onChange={(e) =>
                     updateEnvEntry(index, "value", e.target.value)
                   }
-                  // Deliberately no paste interception here: a value is
-                  // arbitrary text, and `foo=bar` pasted as a value is a value,
-                  // not an assignment. Bulk edit is the entry point for files.
+                  // 值输入框刻意不拦截粘贴：值是任意文本，把 `foo=bar` 粘进值框
+                  // 它就是“值”，不是赋值。要粘贴整份文件请用批量编辑。
                   placeholder={t(($) => $.tab_body.env.value_placeholder)}
                   className="pr-8 font-mono text-caption"
                 />

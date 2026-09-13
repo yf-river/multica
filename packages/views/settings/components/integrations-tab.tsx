@@ -1,3 +1,8 @@
+// 本文件是「集成」设置标签页：第三方平台连接的总入口。GitHub 有自己的一级标签页
+// （见 github-tab.tsx），其余平台——目前有飞书、Composio、Slack、Telegram、自托管
+// Git 服务（Forgejo/Gitea/GitLab）与企业微信智能机器人，Linear 等后续接入——都
+// 在这里各占一个分区。每个集成的标题和接入流程由各自组件自持，本页只做「宿主」。
+
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
@@ -16,13 +21,13 @@ import { useT } from "../../i18n";
 import { SettingsSection, SettingsTab } from "./settings-layout";
 import { IntegrationChannelIcon } from "./integration-channel-icon";
 
-// Integrations is the umbrella tab for third-party platform connections.
-// GitHub has its own top-level tab (see github-tab.tsx); everything else
-// — currently Lark, Composio, Slack, Telegram, the self-hosted Git providers
-// (Forgejo / Gitea / GitLab), and WeCom smart-bot, with Linear etc. to follow —
-// lives in here under its own section heading so additional integrations slot
-// in without changing the IA. IntegrationsTab is just the host; each
-// integration owns its own description and install flow.
+// 状态判定说明：新增集成时给每个平台加一个分区即可，无需改动本文件的导航结构——
+// 各分区标题自带品牌图标与 i18n 文案，分区内部完全自治。
+/**
+ * 「集成」标签页：按顺序渲染各第三方平台的分区（飞书 / Composio / Slack /
+ * 钉钉 / 自托管 Git / 企业微信 / Telegram）。Composio 分区只在功能开关打开、
+ * 且该实例确已配置 Composio 时出现；自托管 Git 分区只对自托管部署开放。
+ */
 export function IntegrationsTab() {
   const { t } = useT("settings");
 
@@ -31,12 +36,13 @@ export function IntegrationsTab() {
     ...composioToolkitsOptions(),
     enabled: composioEnabled,
   });
+  // 503 表示服务端还没配好 Composio 的密钥等；此时隐藏整个分区，而不是给
+  // 一个「运营商未配置」的报错面板。
   const composioUnconfigured =
     composioToolkits.error instanceof ApiError && composioToolkits.error.status === 503;
 
-  // Self-host-only integration: the managed cloud reports this false (field
-  // omitted from /api/config), so the whole section — header included — is
-  // hidden there rather than showing an operator-only "missing key" message.
+  // 自托管专属集成：托管云把该字段从 /api/config 里省略、上报为 false，于是整段
+  // 分区（含标题）在托管云隐藏，而不是对普通用户展示一条「缺运营商配置」的提示。
   const vcsAvailable = useConfigStore((s) => s.vcsIntegrationAvailable);
 
   return (

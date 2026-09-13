@@ -1,3 +1,4 @@
+// 详情页标题下的描述行：默认折叠为两行，仅当确实有内容被折叠时才出现展开/收起开关。
 "use client";
 
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
@@ -5,21 +6,19 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../i18n";
 
 /**
- * The description line under a detail page's title. Clamped to two lines, with
- * a toggle that appears only when there is something clamped to reveal.
+ * 详情页标题下方的描述行。默认夹为两行，只在确有内容被折叠待揭示时才显示
+ * 展开开关。
  *
- * Left unclamped, a long description pushes the meta row and the tab strip
- * down the page, so how far the content starts depends on how much prose
- * someone wrote. Two lines is where the agent and skill headers already sit
- * visually; the toggle is what makes clamping safe, since without it the rest
- * of the text has nowhere to be — this IS the detail page, so expanding in
- * place is the only move that does not send the reader somewhere else to read
- * one paragraph.
+ * 若不折叠，长描述会把元信息行和标签条往下挤，内容起点取决于别人写了多长的
+ * 文字。两行是智能体和技能头部视觉上原本所在的位置；开关让折叠变得安全，
+ * 因为没它的话其余文字无处可去——这里就是详情页，就地展开是唯一不会把读者
+ * 打发到别处去读一段话的做法。
  *
- * The toggle is deliberately quiet — muted until hovered, matching the
- * "show more" control on the agent activity tab. Brand colour is reserved for
- * primary actions and live state; this page's Save and Add-to-agent buttons
- * are what should be drawing the eye, not a text expander.
+ * 开关刻意保持低调——悬停前是弱化的，与智能体动态页的"显示更多"控件一致。
+ * 品牌色保留给主要操作和实时状态；本页的"保存"和"加入智能体"按钮才该吸引
+ * 眼球，而不是一个文本展开器。
+ * @param children 描述文本内容。
+ * @param className 附加样式。
  */
 export function ExpandableDescription({
   children,
@@ -33,13 +32,11 @@ export function ExpandableDescription({
   const [clamped, setClamped] = useState(false);
   const textRef = useRef<HTMLParagraphElement | null>(null);
 
-  // Measured rather than guessed from character count: whether two lines are
-  // enough depends on the container's width and the script being rendered.
+  // 靠测量而不是数字符数猜：两行够不够取决于容器宽度和被渲染的字体。
   const measure = useCallback(() => {
     const element = textRef.current;
     if (!element) return;
-    // Read while clamped, or an already-expanded element reports no overflow
-    // and the toggle would vanish mid-read.
+    // 在折叠状态下读取，否则已展开的元素会报告无溢出，开关会在阅读途中消失。
     if (expanded) return;
     setClamped(element.scrollHeight > element.clientHeight + 1);
   }, [expanded]);

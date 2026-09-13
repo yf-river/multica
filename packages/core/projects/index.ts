@@ -1,3 +1,5 @@
+// 本文件是 projects（项目）模块的对外出口（barrel）。
+
 export { projectKeys, projectListOptions, projectDetailOptions } from "./queries";
 export { useCreateProject, useUpdateProject, useDeleteProject } from "./mutations";
 export { useProjectDraftStore } from "./draft-store";

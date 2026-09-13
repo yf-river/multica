@@ -1,5 +1,7 @@
 "use client";
 
+// 引导第 2 步「创建工作区」：选择「继续用早前会话建好的工作区」或当场命名新建，
+// 页脚统一一个 CTA。新建字段里内联了 slug 自动填充、任务编号前缀预览等。
 import { type ReactNode, useRef, useEffect, useState } from "react";
 import { Dices, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -34,42 +36,13 @@ import {
 } from "../../workspace/slug";
 import { isReservedSlug } from "@multica/core/paths";
 
-/**
- * Step 2 — create your first workspace, or continue with one set up in
- * an earlier session.
- *
- * Single full-width column, like every other step: a 3-region app shell
- * (header / scrolling middle / footer) with the form centred in it. One
- * **unified footer CTA** handles both paths — `Open X` when the user picks
- * an existing
- * workspace, `Create X` when they name a new one. The name / slug
- * fields are inlined here (not via the shared `CreateWorkspaceForm`)
- * because the footer-driven interaction needs externalized submit; the
- * shared form's own button would fight the footer CTA.
- *
- * The create-fields block doubles as a pedagogical preview: the URL is
- * rendered as a `<host>/[slug]` pill (host derived from the deployment's
- * app URL so self-hosted instances show their own domain), and a live
- * `Issues will look
- * like ACME-123` line shows the user what their issue IDs will read
- * like before they've created anything. The issue prefix behind that line
- * is an editable field pre-filled from the slug (MUL-6050) — it used to be
- * read-only, which left every non-ASCII-named workspace stuck on the
- * server's old `WS` fallback with no in-flow way out.
- *
- * Resume path ships two picker cards (existing + create-new) and the
- * user toggles between them. No-existing path just shows the create
- * fields directly.
- */
-
+/** 从工作区 slug 派生任务编号前缀的小工具（被 StepWorkspace 使用）。 */
 function issuePrefix(slug: string): string {
-  // Mirrors the server's default prefix derivation
-  // (handler.defaultIssuePrefixFromSlug) — alphanumerics of the slug, first
-  // 4 chars, uppercased. Lowercase first because the server lowercases the
-  // slug before deriving, so a user who types "ACME" here sees the same
-  // "ACME" the server would produce rather than an empty strip. Returns ""
-  // for a slug with nothing to derive from; that slug can't be submitted, so
-  // only the preview has to cope with it.
+  // 与服务端默认前缀派生逻辑一致（handler.defaultIssuePrefixFromSlug）——取 slug
+  // 里的字母数字、前 4 位、转大写。这里先小写再取，是因为服务端派生前也会先小写
+  // slug：用户在这输入「ACME」会得到服务端同样会产出的「ACME」，而不是空串。
+  // slug 中无可派生的字符时返回 ""——这种 slug 本来就无法提交，只有预览需要
+  // 面对空串。
   return slug
     .trim()
     .toLowerCase()
@@ -78,13 +51,35 @@ function issuePrefix(slug: string): string {
     .toUpperCase();
 }
 
-// Letters + digits only, uppercase, capped at 10 — the same guardrail the
-// settings tab applies, and the same shape the server now validates
-// (`^[A-Z0-9]{1,10}$`).
+// 只保留字母数字、全大写、最长 10 位——与设置页的同款护栏一致，也是服务端现在
+// 校验的形状（`^[A-Z0-9]{1,10}$`）。
 function normalizePrefix(raw: string): string {
   return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
 }
 
+/**
+ * 第 2 步——创建你的第一个工作区，或继续用更早会话建好的那个。
+ *
+ * 和其它步骤一样是单列通栏：一个三段式应用外壳（头部 / 可滚动中部 / 页脚），
+ * 表单居中。**页脚只有一个统一的 CTA** 同时覆盖两条路径——用户选了已有工作区时
+ * 显示「打开 X」，命名新工作区时显示「创建 X」。名字 / slug 字段内联在这里
+ * （不走共享的 `CreateWorkspaceForm`），因为这种由页脚驱动的交互需要外部化的
+ * 提交；共享表单自带的按钮会和页脚 CTA 打架。
+ *
+ * 创建字段块顺带充当教学预览：URL 渲染成 `<host>/[slug]` 的药丸（host 取自当前
+ * 部署的 app URL，自托管实例会显示自己的域名），还有一行实时预览「Issues will
+ * look like ACME-123」，让用户在还没创建任何东西前就知道任务编号长什么样。预览
+ * 背后是「任务编号前缀」——一个从 slug 预填、且可编辑的字段（MUL-6050）：它
+ * 以前是只读的，导致所有非 ASCII 名字的工作区只能困在服务端旧的 `WS` 兜底上，
+ * 流程里没有任何办法改。
+ *
+ * 「继续用已有」路径展示两张选择卡（已有 + 新建），用户在两者间切换；
+ * 「没有已有工作区」的路径则直接展示创建字段。
+ *
+ * @param existing 早前会话建好的工作区（可为 null / 缺省）
+ * @param onCreated 工作区确定后的回调（打开已有或新建都会走到）
+ * @param onBusyChange 把创建请求的进行中状态上报给外壳（用于锁「返回」和进度栏）
+ */
 export function StepWorkspace({
   existing,
   onCreated,
@@ -92,29 +87,24 @@ export function StepWorkspace({
 }: {
   existing?: Workspace | null;
   onCreated: (workspace: Workspace) => void | Promise<void>;
-  /** Reports the create request's in-flight state to the flow, which owns
-   *  the shell: Back and the rail have to lock while a workspace is being
-   *  created, and only this step knows when that is. */
+  /** 把创建请求的进行中状态上报给流程（它持有外壳）：创建工作区期间必须锁住
+   *  「返回」和进度栏，而只有这一步知道何时处于创建中。 */
   onBusyChange?: (busy: boolean) => void;
 }) {
   const { t } = useT("onboarding");
   const workspaceCreationDisabled = useConfigStore((s) => s.workspaceCreationDisabled);
   const urlHost = workspaceUrlHost(useConfigStore((s) => s.daemonAppUrl));
-  // Single source of truth for "can the user reach the create path on this
-  // instance?" — drives the resume-mode picker, the eyebrow/headline/lede
-  // copy and the footer CTA so the disabled state can't
-  // leak a clickable create affordance even if /api/config arrives late
-  // (#3433 review feedback).
+  // 「这个实例允不允许用户走创建路径」的唯一真源——它驱动续用模式的选择卡、
+  // 眉题/标题/引导语文案和页脚 CTA，这样即使 /api/config 姗姗来迟，禁用状态也
+  // 不会漏出一个可点的创建入口（#3433 评审反馈）。
   const workspaceCreationAllowed = !workspaceCreationDisabled;
   const logout = useLogout();
 
   const reusing = existing ?? null;
-  // Resume path only: user picks which card. `null` = neither yet, so
-  // the footer CTA stays disabled. Clicking either card toggles — a
-  // second click on the same card deselects it. No-existing path
-  // ignores this state entirely. When workspace creation is disabled
-  // and a workspace already exists, default to "existing" so the user
-  // can press the CTA immediately — the only valid action.
+  // 仅「续用」路径使用：用户选哪张卡。`null` = 都还没选，此时页脚 CTA 保持禁用。
+  // 点卡片是切换——再点同一张会取消选中。「没有已有工作区」的路径完全无视这个
+  // 状态。当创建被禁用、且已有工作区存在时，默认选中「已有」，让用户能立刻按 CTA
+  // ——那是唯一有效的动作。
   const [mode, setMode] = useState<"existing" | "create" | null>(() =>
     !workspaceCreationAllowed && existing ? "existing" : null,
   );
@@ -123,18 +113,16 @@ export function StepWorkspace({
   const pickCreate = () =>
     setMode((m) => (m === "create" ? null : "create"));
 
-  // Form state for the create path. Mirrors CreateWorkspaceForm's
-  // internals: slug auto-fills from name until the user manually edits
-  // it; server-side slug conflicts show inline. Kept at this level so
-  // the footer CTA can read `canCreate` and trigger `handleCreate`.
+  // 创建路径的表单状态，镜像 CreateWorkspaceForm 的内部行为：slug 在用户手动
+  // 改之前跟随 name 自动填充；服务端 slug 冲突以内联错误展示。状态放这层，是为了
+  // 让页脚 CTA 能读到 `canCreate` 并触发 `handleCreate`。
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugServerError, setSlugServerError] = useState<string | null>(null);
   const slugTouched = useRef(false);
-  // Prefix follows the slug the same way the slug follows the name, and stops
-  // following the moment the user edits it (MUL-6050). Editable here because
-  // settings was the only place to change it, and a user who never noticed the
-  // default would never go looking.
+  // 前缀跟随 slug，就像 slug 跟随 name 一样；一旦用户改了它，就不再跟随
+  // （MUL-6050）。这里做成可编辑，是因为设置页是唯一能改它的地方，而从没注意到
+  // 这个默认值的用户绝不会专门去找设置。
   const [prefix, setPrefix] = useState("");
   const prefixTouched = useRef(false);
 
@@ -150,17 +138,14 @@ export function StepWorkspace({
   const canCreate =
     name.trim().length > 0 && slug.trim().length > 0 && !slugError;
 
-  // What the workspace will actually be created with. Clearing the prefix
-  // input reverts to the slug-derived default rather than blocking the CTA —
-  // the placeholder shows that default, so an empty field is never a
-  // surprise. Empty only while the slug is (a name that romanizes to nothing
-  // derives none), which is also exactly when `canCreate` is false, so submit
-  // always carries a real prefix.
+  // 工作区真正会用的前缀。清空前缀输入会回退到 slug 派生的默认值，而不是拦住
+  // CTA——placeholder 里就展示着那个默认值，所以空字段从不是意外。只有在 slug
+  // 也为空时这里才为空（名字罗马化后没有任何字符就派生不出 slug），而那恰是
+  // `canCreate` 为 false 的时候，所以提交时永远带着真实前缀。
   const derivedPrefix = issuePrefix(slug);
   const effectivePrefix = prefix || derivedPrefix;
 
-  // Every slug write goes through here so the untouched prefix can't drift
-  // out of sync with the slug it is derived from.
+  // 所有 slug 写入都经过这里，保证「没被用户动过」的前缀不会跟它派生的 slug 脱节。
   const applySlug = (value: string) => {
     setSlug(value);
     setSlugServerError(null);
@@ -199,10 +184,9 @@ export function StepWorkspace({
       {
         name: name.trim(),
         slug: slug.trim(),
-        // Send what the user was shown. The server derives the same value
-        // from the slug when the field is omitted, so the preview and the
-        // created workspace agree either way — but submitting it explicitly
-        // is what makes an edited prefix stick.
+        // 提交用户看到的那个值。字段缺省时服务端也会从 slug 派生出同样的值，
+        // 所以预览和建出来的工作区无论如何都一致——但显式提交正是让「改过的
+        // 前缀」生效的方式。
         issue_prefix: effectivePrefix,
       },
       {
@@ -223,18 +207,14 @@ export function StepWorkspace({
     );
   };
 
-  // Compute the footer CTA from whichever path the user is on. `null`
-  // is only reachable in the resume path; `existing` is only valid
-  // when we actually have a `reusing` workspace; everything else
-  // (including the no-existing path) funnels through `create` — except
-  // when this instance has DISABLE_WORKSPACE_CREATION=true, in which
-  // case the create path is unreachable and a no-reusing user falls
-  // through to the disabled notice (rendered separately below).
+  // 按用户所在路径算出页脚 CTA。`null` 只在续用路径里可达；`existing` 只有确实
+  // 有 `reusing` 工作区时有效；其余所有情况（包括没有已有工作区的路径）都归到
+  // `create`——除非本实例开了 DISABLE_WORKSPACE_CREATION=true，此时创建路径
+  // 不可达，没有可续用工作区的用户会落到下面的禁用提示上。
   const isCreating = createWorkspace.isPending;
   useEffect(() => {
     onBusyChange?.(isCreating);
-    // Clear on unmount: a successful create advances the flow immediately, so
-    // without this the shell would stay locked on the next step.
+    // 卸载时清掉：创建成功后流程立刻前进一步，不清的话外壳会在下一步仍然锁着。
     return () => onBusyChange?.(false);
   }, [isCreating, onBusyChange]);
   const creatingActive =
@@ -277,11 +257,10 @@ export function StepWorkspace({
     onContinue = () => {};
   }
 
-  // Built on the Field primitives rather than hand-rolled label/hint/error
-  // markup: three `flex flex-col gap-1.5` stacks with their own label sizing
-  // is exactly what Field/FieldLabel/FieldError standardise, and the manual
-  // version had already drifted — the labels were caption-sized and muted
-  // while every other form in the product labels at body weight.
+  // 用 Field 基础组件而不是手搓的 label/hint/error 标记：三个各自带字号间距的
+  // `flex flex-col gap-1.5` 堆叠，正是 Field/FieldLabel/FieldError 标准化的东西，
+  // 而且手搓版本已经走样——label 是 caption 大小、还带灰，而产品里其它表单的
+  // label 都是正文字重。
   const createFields = (
     <FieldGroup>
       <Field>
@@ -337,16 +316,13 @@ export function StepWorkspace({
         </div>
         {slugError ? <FieldError>{slugError}</FieldError> : null}
       </Field>
-      {/* Editable, pre-filled from the slug. Narrow input — the value is
-          capped at 10 chars, so a full-width field would read as a mistake.
+      {/* 可编辑、从 slug 预填。输入框做得窄——值上限 10 字符，通栏输入框反而
+          像是个错误。
 
-          Nothing is invented while the slug is empty: a name that romanizes
-          to nothing — kana, Hangul, emoji — derives no slug (see
-          nameToWorkspaceSlug), and the placeholder used to fill that gap with
-          "WS", telling the user they were getting the exact prefix this whole
-          change exists to eliminate. Empty field plus a hint is the honest
-          state; the user is picking a URL next anyway, and the prefix appears
-          the moment they do. */}
+          slug 为空时不臆造任何东西：罗马化不出字符的名字——日文假名、韩文、
+          emoji——派生不出 slug（见 nameToWorkspaceSlug），旧版会用 "WS" 占位
+          补这个空，等于告诉用户「你会拿到这次改动想消灭的默认前缀」。空字段 +
+          一行提示才是诚实的形态；反正用户下一步就要填 URL，填了前缀立刻出现。 */}
       <Field>
         <FieldLabel htmlFor="ws-issue-prefix">
           {t(($) => $.step_workspace.issue_prefix_label)}
@@ -387,10 +363,9 @@ export function StepWorkspace({
   return (
     <>
       <div className="flex flex-col gap-8 pt-2 sm:pt-6">
-        {/* The eyebrow is gone with the rest of them, but its disabled-state
-            wording is not: "Workspace creation is disabled" was the only
-            thing on this screen that said so before the notice below, so
-            that variant is folded into the heading's own copy. */}
+        {/* 眉题和别的眉题一起删了，但它在禁用状态下的措辞没丢：「工作区创建已被
+            禁用」是下面禁用提示出现前、本屏唯一说明这件事的地方，所以把这个变体
+            折进了标题自己的文案里。 */}
         <StepHeading
           title={
             reusing
@@ -420,10 +395,9 @@ export function StepWorkspace({
                 selected={mode === "existing"}
                 onSelect={pickExisting}
               />
-              {/* Hide the create-new card entirely when the self-host
-                  gate (DISABLE_WORKSPACE_CREATION) is on (#3433) — the
-                  backend would 403 the POST and the user would be stuck
-                  with a useless form. */}
+              {/* 自托管闸门（DISABLE_WORKSPACE_CREATION）开启时整张「新建」卡都
+                  不渲染（#3433）——否则后端会对 POST 回 403，用户只会对着一张
+                  没用的表单干瞪眼。 */}
               {!workspaceCreationDisabled && (
                 <CreateNewWorkspaceCard
                   selected={mode === "create"}
@@ -458,11 +432,10 @@ export function StepWorkspace({
 }
 
 /**
- * Onboarding-step notice rendered when the operator has set
- * DISABLE_WORKSPACE_CREATION=true (#3433) AND the user has no existing
- * workspace yet. The headline / lede above this block already carry the
- * messaging; this component only provides the logout escape so a user who
- * landed here without an invitation is not trapped.
+ * 操作者把 DISABLE_WORKSPACE_CREATION 设为 true（#3433）、且用户还没有任何
+ * 已有工作区时，在引导步骤里显示的提示。上方标题/引导语已经承担了说明文案，
+ * 这个组件只提供「退出登录」这条逃生通道，让没拿到邀请就落在这里的用户不至于
+ * 被困住。
  */
 function CreationDisabledNotice({ onLogout }: { onLogout: () => void }) {
   const { t } = useT("onboarding");
@@ -475,6 +448,7 @@ function CreationDisabledNotice({ onLogout }: { onLogout: () => void }) {
   );
 }
 
+/** 已有工作区选择卡（续用路径）：单选行，展示头像、名字和完整 URL。 */
 function ExistingWorkspaceCard({
   workspace,
   selected,
@@ -513,11 +487,9 @@ function ExistingWorkspaceCard({
 }
 
 /**
- * Collapsible "Create a new workspace" radio card — shown in the resume
- * path alongside the existing-workspace card. Clicking the header
- * toggles selection; selected state expands to reveal the name / slug
- * fields (passed in as children by the caller). Submission is driven
- * by the parent's footer CTA, not a button inside this card.
+ * 可折叠的「创建新工作区」单选卡——在续用路径里和「已有工作区」卡并排展示。
+ * 点头部切换选中；选中时展开露出 name / slug 字段（由调用方以 children 传入）。
+ * 提交由父组件的页脚 CTA 驱动，而不是卡内的按钮。
  */
 function CreateNewWorkspaceCard({
   selected,

@@ -1,3 +1,6 @@
+// 本文件封装工作区相关的各类变更：创建工作区、离开工作区、删除工作区，以及
+// 工作区/agent 的 MCP 服务器增删改。
+
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Workspace } from "../types";
 import { api } from "../api";
@@ -9,6 +12,7 @@ import {
   unmarkWorkspaceDeletePending,
 } from "./pending-delete";
 
+/** 创建工作区，成功后把新工作区写进列表缓存（供随后的跳转立即按 slug 查到）。 */
 export function useCreateWorkspace() {
   const qc = useQueryClient();
   return useMutation({
@@ -16,30 +20,28 @@ export function useCreateWorkspace() {
       name: string;
       slug: string;
       description?: string;
-      /** Omit to let the server derive it from the slug. */
+      /** 省略时让服务端从 slug 推导。 */
       issue_prefix?: string;
     }) => api.createWorkspace(data),
-    // Seed the workspace list cache BEFORE callers navigate to /{newWs.slug}/issues.
-    // The destination [workspaceSlug]/layout queries by slug from this cache;
-    // without seeding, it would briefly show "loading" before the background
-    // invalidation completes. TanStack Query guarantees this onSuccess runs
-    // before mutateAsync's resolver / before any callback-style onSuccess
-    // passed to mutate(), so any caller that navigates after the mutation
-    // resolves will see the seeded data synchronously. Switching workspaces
-    // is pure navigation now — no imperative store writes needed.
+    // 在调用方导航到 /{newWs.slug}/issues 之前就把新工作区种进列表缓存。
+    // 目标 [workspaceSlug]/layout 从这份缓存按 slug 查询；不种的话，它会在
+    // 后台失效完成前短暂显示「加载中」。TanStack Query 保证本 onSuccess 先于
+    // mutateAsync 的 resolver / 任何传给 mutate() 的回调式 onSuccess 执行，
+    // 所以任何在 mutation resolve 后导航的调用方都能同步看到种好的数据。
+    // 切换工作区现在纯粹是导航——不需要任何命令式 store 写入。
     onSuccess: (newWs) => {
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] = []) => [...old, newWs]);
     },
-    // A failed create should not have changed server state, but invalidate the
-    // list once to reconcile ambiguous transport failures where the server may
-    // have committed before the client lost the response. Keep this off the
-    // success path so the canonical response seeded above is not fetched again.
+    // 创建失败不应改变服务端状态，但还是要失效一次列表，去对账「服务端可能
+    // 已提交、客户端却丢了响应」这类模糊的传输失败。别放在成功路径上，免得
+    // 上面种下的规范响应又被重新拉一次。
     onError: () => {
       qc.invalidateQueries({ queryKey: workspaceKeys.list() });
     },
   });
 }
 
+/** 离开某个工作区，成功后失效工作区列表缓存。 */
 export function useLeaveWorkspace() {
   const qc = useQueryClient();
   return useMutation({
@@ -50,35 +52,33 @@ export function useLeaveWorkspace() {
   });
 }
 
+/** 删除工作区：删除成功后清理该工作区的本地存储命名空间。 */
 export function useDeleteWorkspace() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (workspaceId: string) => api.deleteWorkspace(workspaceId),
-    // No optimistic removal: the delete flow awaits this mutation with the
-    // confirm dialog in a loading state and only navigates on success, so
-    // the cache staying truthful (server still has the row until commit)
-    // is correct, and a failed DELETE needs no rollback.
+    // 不做乐观移除：删除流程会带着确认对话框的加载态 await 本次 mutation，
+    // 只在成功时导航，所以缓存保持如实（提交前服务端仍有这行）是对的，
+    // DELETE 失败也不需要回滚。
     onMutate: (workspaceId) => {
-      // Mark the delete as self-initiated so the realtime `workspace:deleted`
-      // handler no-ops instead of racing this flow's navigation with its own
-      // full-page relocate. See pending-delete.ts for lifetime rules.
+      // 把删除标记为「本客户端发起」，让实时 `workspace:deleted` 处理器空跑，
+      // 别用它的整页跳转和本流程的导航赛跑。生命周期规则见 pending-delete.ts。
       markWorkspaceDeletePending(workspaceId);
-      // Capture the slug for onSuccess's storage cleanup — cheap here, and
-      // the row is guaranteed to still be in the list pre-mutation.
+      // 顺带在 onMutate 里捕获 slug 供 onSuccess 做存储清理——此刻零成本，
+      // 且 mutation 前该行保证仍在列表里。
       const slug = qc
         .getQueryData<Workspace[]>(workspaceKeys.list())
         ?.find((w) => w.id === workspaceId)?.slug;
       return { slug };
     },
-    // Success is the only path that clears the deleted workspace's persisted
-    // `${key}:${slug}` namespace — a failed DELETE means the workspace still
-    // exists and its drafts/view state must survive. The realtime handler
-    // skips self-initiated deletes, so cleanup has to happen here.
+    // 只有成功路径会清掉被删工作区持久化的 `${key}:${slug}` 命名空间——失败的
+    // DELETE 意味着工作区还在，它的草稿/视图状态必须存活。实时处理器会跳过
+    // 本客户端发起的删除，所以清理只能在这里做。
     onSuccess: (_data, _workspaceId, ctx) => {
       if (ctx?.slug) clearWorkspaceStorage(defaultStorage, ctx.slug);
     },
-    // The workspace still exists after a failed DELETE, so a later external
-    // delete of the same ID must be handled by the realtime handler again.
+    // DELETE 失败后工作区仍存在，所以之后同 id 被外部删除必须重新交给实时
+    // 处理器正常处理。
     onError: (_err, workspaceId) => {
       unmarkWorkspaceDeletePending(workspaceId);
     },
@@ -89,8 +89,8 @@ export function useDeleteWorkspace() {
 }
 
 /**
- * Adds a server to the workspace library. It is assigned to no agent: an
- * agent owner gives it to their agent separately.
+ * 往工作区库加一台 MCP 服务器。它不指派给任何 agent——agent 的所有者会单独
+ * 把它配给自己的 agent。
  */
 export function useCreateWorkspaceMcpServer(wsId: string) {
   const queryClient = useQueryClient();
@@ -102,6 +102,7 @@ export function useCreateWorkspaceMcpServer(wsId: string) {
   });
 }
 
+/** 更新工作区库里的一台 MCP 服务器。 */
 export function useUpdateWorkspaceMcpServer(wsId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -115,22 +116,23 @@ export function useUpdateWorkspaceMcpServer(wsId: string) {
   });
 }
 
+/** 删除工作区库里的一台 MCP 服务器。 */
 export function useDeleteWorkspaceMcpServer(wsId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (serverId: string) => api.deleteWorkspaceMcpServer(wsId, serverId),
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: workspaceKeys.mcpServers(wsId) });
-      // Deleting a library entry drops it from every agent that had it, so
-      // no agent's assignment list can be trusted afterwards.
+      // 删除库条目会把它从每个配过它的 agent 上摘掉，之后任何 agent 的指派
+      // 列表都不再可信。
       queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
   });
 }
 
 /**
- * Assignment writes all return the agent's resulting list, so the cache is
- * updated from the server's answer rather than a guess.
+ * agent MCP 指派变更的公共骨架。指派类写入都会返回该 agent 的最终列表，
+ * 所以这里总是让缓存用服务端的答案更新，而不是用猜测。
  */
 function useAgentMcpMutation<TVariables>(
   agentId: string,
@@ -144,16 +146,19 @@ function useAgentMcpMutation<TVariables>(
   });
 }
 
+/** 给 agent 加一台 MCP 服务器。 */
 export function useAddAgentMcpServer(agentId: string) {
   return useAgentMcpMutation(agentId, (serverId: string) =>
     api.addAgentMcpServer(agentId, serverId));
 }
 
+/** 启停 agent 上的一台 MCP 服务器。 */
 export function useSetAgentMcpServerEnabled(agentId: string) {
   return useAgentMcpMutation(agentId, ({ serverId, enabled }: { serverId: string; enabled: boolean }) =>
     api.setAgentMcpServerEnabled(agentId, serverId, enabled));
 }
 
+/** 从 agent 上移除一台 MCP 服务器。 */
 export function useRemoveAgentMcpServer(agentId: string) {
   return useAgentMcpMutation(agentId, (serverId: string) =>
     api.removeAgentMcpServer(agentId, serverId));

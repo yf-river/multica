@@ -1,3 +1,6 @@
+// 本文件：插件发布端点。作者上传一个制品 bundle，Multica 存储它。不再有「按 URL 安装」，
+// 插件代码也没有第二条路能进读者浏览器：设置页从这里发布，安装时指定的是这个端点创建的
+// 某个版本。
 package handler
 
 import (
@@ -17,7 +20,8 @@ import (
 // browser: the settings page publishes here, and installing names a version this
 // endpoint created.
 
-// ListPluginPackages — GET /api/workspaces/{id}/plugins/packages
+// ListPluginPackages 处理 GET /api/workspaces/{id}/plugins/packages——列出工作区发布过的
+// 插件包（功能开关关闭时 503）。
 func (h *Handler) ListPluginPackages(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePluginsV1(w, r) {
 		return
@@ -34,11 +38,10 @@ func (h *Handler) ListPluginPackages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"packages": packages})
 }
 
-// PublishPluginPackage — POST /api/workspaces/{id}/plugins/packages
+// PublishPluginPackage 处理 POST /api/workspaces/{id}/plugins/packages。
 //
-// multipart/form-data with a `bundle` file: a zip holding the manifest and every
-// file it names. Validated in full before anything is stored, so a surface whose
-// entry is missing fails here rather than in a reader's browser weeks later.
+// multipart/form-data，带一个 `bundle` 文件：一个装着 manifest 和它提到的每个文件的 zip。
+// 入库前做完整校验——缺某个 surface 入口的包在这里就失败，而不是几周后在读者浏览器里炸。
 func (h *Handler) PublishPluginPackage(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePluginsV1(w, r) {
 		return
@@ -53,8 +56,8 @@ func (h *Handler) PublishPluginPackage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bounded before the multipart reader sees it: ParseMultipartForm would
-	// otherwise spool an unbounded upload to a temp file first.
+	// 先限流再让 multipart 读取器看到：否则 ParseMultipartForm 会先把一个不限大小的上传
+	// 吐盘成临时文件。
 	r.Body = http.MaxBytesReader(w, r.Body, plugincontract.MaxBundleSize+multipartOverheadBytes)
 	if err := r.ParseMultipartForm(plugincontract.MaxBundleSize + multipartOverheadBytes); err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, "the Plugin package upload is too large or malformed")
@@ -91,23 +94,20 @@ func (h *Handler) PublishPluginPackage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, published)
 }
 
-// multipartOverheadBytes is headroom for the form's own boundaries and headers,
-// so a bundle at exactly the size limit is not rejected by the envelope around
-// it.
+// multipartOverheadBytes 是给表单自身边界与头留的余量，让恰好等于大小上限的 bundle 不会
+// 因为外面套着的信封而被误拒。
 const multipartOverheadBytes = 64 * 1024
 
 type publishLocalPluginRequest struct {
-	// Name is a directory under MULTICA_PLUGIN_DIR.
+	// Name 是 MULTICA_PLUGIN_DIR 下的一个目录。
 	Name string `json:"name"`
 }
 
-// PublishLocalPluginPackage — POST /api/workspaces/{id}/plugins/packages/local
+// PublishLocalPluginPackage 处理 POST /api/workspaces/{id}/plugins/packages/local。
 //
-// The development channel: publish straight from a directory the operator
-// already hosts, so iterating on a surface does not mean zipping and uploading
-// after every edit. It produces an ordinary immutable version — there is no
-// live-reload path that would make "is this code frozen?" depend on how the
-// plugin was installed.
+// 开发通道：直接从 operator 已经托管的一个目录发布，改 surface 不必每次改完都打 zip 上传。
+// 它产出的仍是普通不可变版本——不存在会让「这份代码是不是冻结的」取决于插件怎么装的
+// 热加载路径。
 func (h *Handler) PublishLocalPluginPackage(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePluginsV1(w, r) {
 		return
@@ -134,7 +134,8 @@ func (h *Handler) PublishLocalPluginPackage(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusCreated, published)
 }
 
-// DeletePluginPackage — DELETE /api/workspaces/{id}/plugins/packages/{packageId}
+// DeletePluginPackage 处理 DELETE /api/workspaces/{id}/plugins/packages/{packageId}——
+// 删除已发布的插件包，成功返回 204。
 func (h *Handler) DeletePluginPackage(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePluginsV1(w, r) {
 		return

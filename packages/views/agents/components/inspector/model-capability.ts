@@ -1,10 +1,18 @@
+// 本文件提供一组辅助函数：把 Agent 存的“原始模型串”规整成查能力目录用的 id，
+// 再去目录里找对应的能力条目。持久化、发送给运行环境的始终是原始模型串，
+// 这里被归一化的只是“查表用的身份”。
+
 import type { RuntimeModel } from "@multica/core/types";
 
-// Claude Code appends a context-window modifier to some runtime-native model
-// IDs (for example, claude-opus-5[1m]). Restrict inheritance to a numeric
-// context size so arbitrary bracketed variants remain fail-closed.
+// Claude Code 会给部分运行时原生模型 id 追加“上下文窗口”修饰符
+//（例如 claude-opus-5[1m]）。只剥“数字上下文”这种形态，
+// 其他带方括号的变体保持原样，宁可漏剥也不误伤。
 const CLAUDE_CONTEXT_WINDOW_TAG = /\[[1-9]\d*[km]\]$/;
 
+/**
+ * 规整出用于查能力目录的模型 id：claude 系模型剥掉 `[1m]` 这类上下文窗口修饰符，
+ * 其他 provider 原样返回。
+ */
 export function modelIdForCapabilityLookup(
   provider: string,
   model: string,
@@ -15,9 +23,8 @@ export function modelIdForCapabilityLookup(
 }
 
 /**
- * Resolves the catalog entry used for capability display and cleanup. The raw
- * model remains the value persisted and sent to the runtime; only this lookup
- * identity is normalized.
+ * 解析用于“能力展示与清理”的目录条目。原始模型仍作为持久化和下发运行时的值，
+ * 只有这里的查表身份做了归一化（见上）。
  */
 export function findModelCapabilityEntry(
   models: readonly RuntimeModel[],

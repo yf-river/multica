@@ -1,3 +1,18 @@
+// ============================================================================
+// Runtime 详情页（RuntimeDetailPage）——单台「机器」维度的详情路由
+//
+// 角色定位：路由 /runtimes/[runtimeId] 对应的页面，展示一台机器（本机 daemon
+// 或云端 worker）的总览：头部是机器信息（名称 / 健康 / 负载 / CLI 操作 + 重命名），
+// 主体是这台机器上的 runtime 列表。列表行点击后进入该 runtime 的设置页。
+//
+// 地址兼容性：路由参数既可能是新链路的「机器 id（daemon id）」，也可能是旧版
+// 遗留的「runtime id」——findMachine 负责把两种 id 都定位到所在机器。
+//
+// 数据流：同时挂载 runtimes / agents / 任务快照 / members / runtime profiles
+// 等查询，经 buildRuntimeMachines 聚成机器；本机 daemon 会再把「已绑定机器的
+// profile」并进 runtime 列表（pendingRuntimesForProfiles）。监听 daemon:register
+// 事件让缓存失效（daemon 上线即刷新）。
+// ============================================================================
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -30,10 +45,12 @@ import { HealthIcon, useHealthLabel } from "./shared";
 import { useT, useTimeAgo } from "../../i18n";
 
 export interface RuntimeDetailPageProps {
-  /** A machine id, or a legacy runtime id that locates its machine. */
+  /** 机器 id（daemon id）；也兼容旧的 runtime id，会先定位到其所在机器。 */
   runtimeId: string;
 }
 
+// 每 30 秒跳一次的心跳时钟：让派生出的机器健康能跨过按时间划分的阈值
+// （如 recently_lost → offline），即使没有新查询数据到达也能推进。
 function useNowTick(intervalMs = 30_000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -43,6 +60,8 @@ function useNowTick(intervalMs = 30_000): number {
   return now;
 }
 
+// daemon/machine 的 id 可能含 URL 特殊字符，路由进来时被编码过；先解码，
+// 解码失败（畸形编码串）就原样返回，避免抛异常。
 function decodeRouteParam(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -51,6 +70,8 @@ function decodeRouteParam(value: string): string {
   }
 }
 
+// 在机器列表里定位目标：路由参数既可能是机器 id，也可能是这台机器上某个
+// runtime 的 id（旧链接遗留形态）。两样都查不到才认为机器不存在。
 function findMachine(
   machines: ReturnType<typeof buildRuntimeMachines>,
   locator: string,
@@ -65,9 +86,14 @@ function findMachine(
 }
 
 /**
- * Machine-level detail route. New links use the daemon-level machine id;
- * legacy links that still carry a runtime id remain valid and are expanded
- * to their containing machine before child runtime settings are exposed.
+ * 机器级详情页：展示一台机器（本机 daemon / 云 worker）及其上的 runtime 列表。
+ *
+ * @param runtimeId - 机器 id（daemon 级）。新链接都用机器 id；旧的 runtime id
+ *   链接仍然有效，会先展开定位到其所在机器，再展示下属 runtime 的设置入口。
+ *
+ * 页面行为与权限有关：管理员（owner/admin）对本机 daemon（有 daemonId）可添加
+ * 自定义 profile runtime、可对机器下任意 runtime 发起重命名；普通成员只能对
+ * 自己拥有的 runtime 重命名。
  */
 export function RuntimeDetailPage({
   runtimeId,
@@ -136,8 +162,12 @@ export function RuntimeDetailPage({
     : null;
   const isAdmin =
     currentMember?.role === "owner" || currentMember?.role === "admin";
+  // 「添加自定义 profile runtime」只在管理员且目标为本机 daemon（带 daemonId）
+  // 时开放；云 worker 与普通成员都不满足。
   const canAddRuntime =
     isAdmin && machine?.mode === "local" && !!machine.daemonId;
+  // 重命名入口基于机器上的某条 runtime 发起请求：管理员取第一条即可，普通成员
+  // 取自己拥有的那条；两者都拿不到（无 runtime / 非本人）就不显示重命名按钮。
   const renameTarget = useMemo(() => {
     if (!machine || machine.runtimes.length === 0) return null;
     const editable = isAdmin
@@ -331,6 +361,7 @@ export function RuntimeDetailPage({
   );
 }
 
+// 机器详情骨架屏：数据加载完成前占位，布局与真实页面对齐，减少跳动感。
 function MachineDetailSkeleton() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">

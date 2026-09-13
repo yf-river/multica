@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * 下载页「CLI」区块（客户端组件）：面向服务器 / 远程开发机 / 无头环境等场景，
+ * 展示安装与初始化两条可一键复制的命令。
+ */
 import { useState } from "react";
 import { Check, Copy, Terminal } from "lucide-react";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -10,9 +14,10 @@ const INSTALL_CMD =
 const SETUP_CMD = "multica setup";
 
 /**
- * Scenario-first CLI section. Copy leans into servers / remote dev
- * boxes / headless setups rather than positioning CLI as a
- * lightweight Desktop. Two copy-and-paste command blocks.
+ * CLI 下载区块组件：主推服务器/远程开发机/无头环境场景（而非把 CLI 说成
+ * 轻量版桌面端），提供两条复制即用的命令块。
+ *
+ * @returns CLI 安装命令区块。
  */
 export function CliSection() {
   const { t } = useLocale();
@@ -49,6 +54,7 @@ export function CliSection() {
   );
 }
 
+/** 单条命令展示块：终端图标 + 命令文本 + 复制按钮（复制成功后短暂显示「已复制」）。 */
 function CommandBlock({
   label,
   cmd,

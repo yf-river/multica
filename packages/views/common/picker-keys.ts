@@ -1,28 +1,26 @@
 // ---------------------------------------------------------------------------
-// Picker key policy — one answer to "what moves the highlight" and "what
-// accepts", shared by every list-with-a-highlight in the product.
+// 选择器按键策略——回答"什么键移动高亮"和"什么键确认"，由产品里所有带高亮的
+// 列表共享。
 // ---------------------------------------------------------------------------
 //
-// Lives here rather than next to the editor's suggestion popups because the
-// consumers are no longer only editor pickers: the issue detail's thread
-// navigator uses the same navigation policy, and importing a Tiptap extension
-// module to reach a pure keyboard predicate would drag the whole editor
-// dependency graph into a header popover.
+// 放在这里而不是挨着编辑器的建议弹层，是因为使用者已不只有编辑器选择器：
+// Issue 详情的线程导航器也用了同一套导航策略，而为了一个纯键盘判断去 import
+// Tiptap 扩展模块，会把整个编辑器依赖图拖进头部弹层。
 
 /**
- * Keys that accept the currently highlighted suggestion row.
+ * 判断哪些键"确认"当前高亮的建议行。
  *
- * `Enter` is the canonical accept (WAI-ARIA combobox guidance). Plain `Tab` is
- * an additive convenience that matches terminal / CLI / editor completion
- * muscle memory (MUL-3685). `Shift+Tab` and any `Ctrl/Cmd/Alt + Tab` are
- * deliberately NOT accept keys: they stay reverse focus navigation / OS window
- * switching, so standard keyboard accessibility is preserved.
+ * `Enter` 是标准确认键（WAI-ARIA combobox 指南）。普通 `Tab` 是额外便利键，
+ * 契合终端 / CLI / 编辑器补全的肌肉记忆（MUL-3685）。`Shift+Tab` 以及任何
+ * `Ctrl/Cmd/Alt + Tab` 刻意不作为确认键：它们保留反向焦点导航 / 系统窗口切换
+ * 语义，以维持标准键盘可访问性。
  *
- * Centralizing the rule here keeps every picker built on
- * `createSuggestionPopupRender` (mention, slash-skill, builtin command, and any
- * future suggestion list) consistent instead of each list re-deciding what
- * counts as "accept". Callers use it in place of a bare `event.key === "Enter"`
- * check, so `Tab` becomes a strict alias of `Enter` inside their accept branch.
+ * 把规则集中在这里，能让所有基于 `createSuggestionPopupRender` 构建的选择器
+ * （mention、slash-skill、内置命令、以及未来任何建议列表）保持一致，而不是
+ * 每个列表各自重新决定什么算"确认"。调用方用它替代裸的 `event.key === "Enter"`
+ * 判断，于是 `Tab` 在它们的确认分支里成为 `Enter` 的严格别名。
+ * @param event 键盘事件。
+ * @returns 是否为确认键。
  */
 export function isPickerAcceptKey(event: KeyboardEvent): boolean {
   if (event.key === "Enter") return true;
@@ -35,33 +33,29 @@ export function isPickerAcceptKey(event: KeyboardEvent): boolean {
   );
 }
 
-/** Which way a key press moves the highlight in a suggestion list. */
+/** 按键在建议列表中移动高亮的方向。 */
 export type PickerNavigationDirection = "next" | "prev";
 
 /**
- * Resolves a key press to a suggestion-list move, or `null` when the key is not
- * navigation.
+ * 把一次按键解析为建议列表的移动方向，不是导航键时返回 `null`。
  *
- * Arrow keys are the canonical bindings. `Ctrl+N`/`Ctrl+J` (down) and
- * `Ctrl+P`/`Ctrl+K` (up) are additive Emacs/readline aliases that the command
- * bar already accepts for free: it is built on cmdk, whose `vimBindings` option
- * (on by default) maps exactly this set. Mirroring it here means the pickers
- * stop being the one place in the product where that muscle memory dies
- * (MUL-5495).
+ * 方向键是标准绑定。`Ctrl+N`/`Ctrl+J`（向下）和 `Ctrl+P`/`Ctrl+K`（向上）是
+ * 额外的 Emacs/readline 别名，命令栏本就免费支持：它基于 cmdk，其 `vimBindings`
+ * 选项（默认开启）恰好映射这一组。这里对齐后，选择器就不再是产品里唯一一处
+ * 该肌肉记忆失效的地方（MUL-5495）。
  *
- * `Cmd`-based aliases are deliberately absent. cmdk does not bind them either,
- * so the command bar never supported them, and `Cmd+P`/`Cmd+N` are browser and
- * OS accelerators (print, new window) that a web page cannot own — the same
- * rule `isReservedShortcut` in `@multica/core/shortcuts` already encodes.
+ * 基于 `Cmd` 的别名被刻意排除。cmdk 也不绑定它们，所以命令栏从不支持，且
+ * `Cmd+P`/`Cmd+N` 是浏览器和系统的快捷键（打印、新窗口），网页无法占用——
+ * 与 `@multica/core/shortcuts` 里 `isReservedShortcut` 的规则一致。
  *
- * The letter aliases require Ctrl *alone*. With another modifier the chord
- * belongs to the browser or OS (`Ctrl+Shift+N` opens an incognito window), so
- * those fall through untouched. Arrow keys stay modifier-agnostic, exactly as
- * before.
+ * 字母别名要求单独按 `Ctrl`。搭配其他修饰键时该组合属于浏览器或系统
+ * （`Ctrl+Shift+N` 打开无痕窗口），所以要原样放行。方向键保持与修饰键无关，
+ * 和以前完全一样。
  *
- * Centralizing this next to `isPickerAcceptKey` keeps every picker built on
- * `createSuggestionPopupRender` navigating identically instead of each list
- * re-deciding what counts as "move down".
+ * 集中到 `isPickerAcceptKey` 旁边，能让所有基于 `createSuggestionPopupRender`
+ * 构建的选择器以相同方式导航，而不是每个列表各自重新决定什么算"向下移动"。
+ * @param event 键盘事件。
+ * @returns 移动方向，或 null（非导航键）。
  */
 export function pickerNavigationDirection(
   event: KeyboardEvent,
@@ -71,7 +65,7 @@ export function pickerNavigationDirection(
   if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {
     return null;
   }
-  // Lowercase because Caps Lock reports "N" without setting shiftKey.
+  // 转小写，因为 Caps Lock 开启时上报的是 "N" 而非设置 shiftKey。
   switch (event.key.toLowerCase()) {
     case "n":
     case "j":

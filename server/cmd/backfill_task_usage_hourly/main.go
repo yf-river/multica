@@ -1,42 +1,32 @@
-// Backfill_task_usage_hourly seeds the unified hourly rollup table
-// (`task_usage_hourly`) from historical `task_usage`
-// rows. Run once after the hourly-pipeline migrations ship, BEFORE registering
-// the pg_cron job for rollup_task_usage_hourly().
+// backfill_task_usage_hourly —— 用历史 task_usage 行给统一小时聚合表
+// （task_usage_hourly）播种。在小时流水线迁移上线之后、注册
+// rollup_task_usage_hourly() 的 pg_cron job 之前，跑一次本命令。
 //
-// SELF-HOST UPGRADE ORDER — migrations 100–104 are one group, but they
-// must NOT be applied in a single `make migrate-up`:
+// # 自托管升级顺序 —— 迁移 100–104 是一组，但绝不能一次 `make migrate-up` 全上
 //
-//  1. Apply 101+102 (creates task_usage_hourly + installs the triggers).
-//  2. Run THIS backfill to seed historical buckets.
-//  3. Apply 103+104 (drops the legacy daily rollups + runtime.timezone)
-//     and register the pg_cron job.
+//  1. 先应用 101+102（建 task_usage_hourly + 装触发器）；
+//  2. 再跑本回填，把历史桶播种好；
+//  3. 然后才应用 103+104（删遗留的日汇总 + runtime.timezone），并注册 pg_cron。
 //
-// If you run `migrate-up` straight through to 103/104 before this
-// backfill, the legacy daily pipelines are gone while task_usage_hourly
-// only holds buckets the triggers wrote since 102 — dashboards will show
-// empty history until backfill + cron catch up (tens to hundreds of
-// ticks on a DB with years of data, given the per-tick 1-day cap).
+// 若在回填之前一口气 `migrate-up` 到 103/104：遗留的日流水线没了，而
+// task_usage_hourly 里只有 102 之后触发器写出来的桶——仪表盘会一直显示空历史，
+// 直到回填 + cron 追上（考虑到每 tick 1 天的上限，在有数年数据的库上要几十到
+// 几百个 tick）。
 //
-// Mirrors backfill_task_usage_dashboard_daily: walk task_usage's time
-// range in monthly slices and call the same idempotent window
-// primitive the cron path uses. Then stamp the rollup-state watermark
-// so the first cron tick after backfill does not reprocess history.
+// 与 backfill_task_usage_dashboard_daily 的思路一致：按月切片走 task_usage 的
+// 时间范围，调用 cron 路径用的同一个幂等窗口原语；然后盖上 rollup-state 水位，
+// 让回填后的第一个 cron tick 不会把历史再处理一遍。
 //
-// Re-running is safe — rollup_task_usage_hourly_window is idempotent
-// (recomputes each dirty key from raw and REPLACES the bucket), so a
-// partially completed backfill can be resumed without TRUNCATEing
-// task_usage_hourly first.
+// 重复运行是安全的——rollup_task_usage_hourly_window 幂等（对每个脏键从原始数据
+// 重算并 REPLACE 那个桶），因此没跑完的回填可以直接续跑，无需先 TRUNCATE 掉
+// task_usage_hourly。
 //
-// Read pressure: each slice scans task_usage / agent_task_queue / agent
-// / issue. On a database with years of history that is sustained heavy
-// load. Use --sleep-between-slices to throttle on a busy production DB,
-// and coordinate a maintenance window with the DB team before a
-// full-history run.
+// 读压力：每片会扫 task_usage / agent_task_queue / agent / issue。在有数年历史的
+// 库上是持续的高负载。在忙碌的生产库上用 --sleep-between-slices 限速，跑全量历史
+// 前要和 DBA 协调维护窗口。
 //
-// Operator note: this command does NOT call prune_task_usage_hourly_dirty.
-// The dirty queue starts empty during backfill (triggers fire only on
-// future writes), so there is nothing to prune until the rollup worker
-// has been running for a while.
+// 运维提示：本命令不调用 prune_task_usage_hourly_dirty。回填期间脏队列是空的
+// （触发器只对未来的写入生效），所以在 rollup worker 跑一段时间之前没什么可清。
 package main
 
 import (
@@ -76,10 +66,9 @@ func run() error {
 		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
 	}
 
-	// SIGINT/SIGTERM cancels ctx so an in-flight slice stops cleanly —
-	// each slice runs in its own transaction (the window function), so
-	// Postgres rolls back the interrupted one and the idempotent design
-	// lets a later run resume from where this one stopped.
+	// SIGINT/SIGTERM 取消 ctx，让正在跑的切片干净停掉——每个切片都在自己的事务里
+	//（窗口函数），Postgres 会把被打断的那个回滚，幂等设计让之后的运行能接着停下的
+	// 位置续跑。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -93,12 +82,10 @@ func run() error {
 		return fmt.Errorf("ping database: %w", err)
 	}
 
-	// Serialise against the cron rollup and any other backfill run via
-	// advisory lock 4246 — the same id the cron entry checks with
-	// pg_try_advisory_lock. While this backfill holds it, the cron tick
-	// no-ops instead of racing on task_usage_hourly row locks; a second
-	// concurrent backfill blocks here until this one finishes. The lock
-	// is held on a dedicated session connection for the whole run.
+	// 用咨询锁 4246 与 cron 回填及其它回填运行串行化——cron 条目也是拿同一把锁
+	// 做 pg_try_advisory_lock。本回填持有锁期间，cron tick 会空转而不是在
+	// task_usage_hourly 的行锁上赛跑；第二个并发回填会在这里阻塞直到本回填结束。
+	// 锁在整个运行期间由一条专用会话连接持有。
 	lockConn, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire advisory-lock connection: %w", err)
@@ -108,9 +95,8 @@ func run() error {
 		return fmt.Errorf("acquire advisory lock 4246: %w", err)
 	}
 	defer func() {
-		// Unlock on a fresh context so a cancelled ctx (SIGINT) does not
-		// skip the release. Releasing the connection afterwards would end
-		// the session anyway, but an explicit unlock frees it immediately.
+		// 用全新的 context 解锁，避免被取消的 ctx（SIGINT）跳过释放。释放连接本
+		// 来也会结束会话，但显式解锁能立刻释放锁。
 		_, _ = lockConn.Exec(context.Background(), `SELECT pg_advisory_unlock(4246)`)
 	}()
 
@@ -131,10 +117,9 @@ func run() error {
 
 	if *monthsBack > 0 {
 		cutoff := monthFloor(time.Now().UTC()).AddDate(0, -(*monthsBack), 0)
-		// A partial backfill still stamps the watermark at now()-5min, so
-		// buckets older than the cutoff are abandoned permanently: the cron
-		// worker will never look back that far. That data loss must be an
-		// explicit operator decision — require --force-partial to proceed.
+		// 局部回填仍会把水位盖在 now()-5min，早于 cutoff 的桶等于被永久放弃：
+		// cron worker 永远不会回头看那么远。这份数据丢失必须是运维的显式决定——
+		// 因此要求带 --force-partial 才放行。
 		if cutoff.After(from) {
 			if !*forcePartial {
 				return fmt.Errorf("--months-back=%d would skip buckets before %s (oldest available %s) and the watermark would still advance past them; re-run with --force-partial to accept this, or omit --months-back for a full backfill",
@@ -183,9 +168,8 @@ func run() error {
 		slog.Info("dry-run complete; watermark left untouched")
 		return nil
 	}
-	// Stamp on a fresh context so a SIGINT arriving after the slices
-	// complete cannot skip the watermark UPDATE — losing it would force the
-	// next run to restart from epoch. Mirrors the deferred advisory-unlock.
+	// 用全新 context 盖章：若 SIGINT 在切片完成后到达，不能跳过水位 UPDATE——
+	// 丢了它会让下一次运行从 epoch 重新开始。与 deferred 的咨询锁解锁同理。
 	if err := stampWatermark(context.Background(), pool); err != nil {
 		return err
 	}
@@ -193,10 +177,8 @@ func run() error {
 	return nil
 }
 
-// stampWatermark moves the hourly rollup state's watermark to
-// `now() - 5 min`, mirroring the cron entry's upper bound. The next
-// scheduled tick therefore picks up only events newer than the
-// backfill horizon and does not redo work the backfill already did.
+// stampWatermark 把小时聚合状态的水位推到 `now() - 5 min`，与 cron 条目的上界
+// 一致。下一个定时 tick 因此只会捡回填范围之后的新事件，不会重做回填已做完的活。
 func stampWatermark(ctx context.Context, pool *pgxpool.Pool) error {
 	tag, err := pool.Exec(ctx, `
 		UPDATE task_usage_hourly_rollup_state
@@ -214,6 +196,7 @@ func stampWatermark(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
+// monthFloor 返回某时间所在月的第一天 0 点（UTC），用于按月切片。
 func monthFloor(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
 }

@@ -1,5 +1,8 @@
 "use client";
 
+// 项目详情页：左侧为任务看板（Issues 各种视图），右侧是项目属性侧栏（图标、
+// 标题、状态/优先级/负责人/起止日期、进度、描述、资源列表），支持桌面端可调
+// 宽度与移动端抽屉两种形态。
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { Check, ChevronRight, Link2, MoreHorizontal, PanelRight, Pin, PinOff, Trash2, UserMinus } from "lucide-react";
@@ -75,9 +78,10 @@ import { useProjectStatusLabels, useProjectPriorityLabels } from "./labels";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
 // ---------------------------------------------------------------------------
-// Property row — sidebar property display
+// 属性行 — 侧栏里的单个属性行（左标签右内容）
 // ---------------------------------------------------------------------------
 
+/** 侧栏属性的通用行容器：固定宽度标签 + 自适应内容。 */
 function PropRow({
   label,
   children,
@@ -96,9 +100,15 @@ function PropRow({
 }
 
 // ---------------------------------------------------------------------------
-// ProjectDetail
+// ProjectDetail（项目详情页主组件）
 // ---------------------------------------------------------------------------
 
+/**
+ * 项目详情页：整体布局（任务区 + 属性侧栏）、数据拉取与字段修改入口。
+ * 侧栏与任务区通过可调宽度面板组合，移动端降级为右侧抽屉。
+ *
+ * @param projectId 目标项目 id
+ */
 export function ProjectDetail({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const statusLabels = useProjectStatusLabels();
@@ -151,7 +161,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const [progressOpen, setProgressOpen] = useState(true);
   const [descriptionOpen, setDescriptionOpen] = useState(true);
 
-  // Sidebar panel
+  // 侧栏面板（桌面端）
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: "multica_project_detail_layout",
   });
@@ -161,10 +171,9 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     true,
     defaultLayout,
   );
-  // Desktop and mobile sidebar state must be separate. A single state defaulting
-  // to `true` made the mobile <Sheet> mount in the open position on first render
-  // (after `useIsMobile()` flipped from false→true), briefly covering the page
-  // with its modal backdrop and locking scroll — leaving the page unresponsive.
+  // 桌面端与移动端的侧栏状态必须分开：若共用同一个默认 true 的状态，移动端
+  // <Sheet> 会在首帧（`useIsMobile()` 从 false 翻成 true 之后）以打开姿态挂载，
+  // 瞬间用模态遮罩盖住整页并锁死滚动——页面直接失去响应。
   const {
     open: desktopSidebarOpen,
     visualOpen: desktopSidebarVisualOpen,
@@ -199,7 +208,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
 
   useRightSidebarShortcut(rightSidebarShortcutTargetRef, handleToggleSidebar);
 
-  // Lead popover
+  // 负责人选择弹层
   const [leadOpen, setLeadOpen] = useState(false);
   const [leadFilter, setLeadFilter] = useState("");
   const leadQuery = leadFilter.toLowerCase();
@@ -244,7 +253,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
 
   const sidebarContent = (
     <div className="space-y-5">
-      {/* Icon + Title */}
+      {/* 图标 + 标题 */}
       <div>
         <Popover open={iconPickerOpen} onOpenChange={setIconPickerOpen}>
           <PopoverTrigger
@@ -279,7 +288,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         />
       </div>
 
-      {/* Properties */}
+      {/* 属性（可折叠） */}
       <div>
         <button
           type="button"
@@ -415,7 +424,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         </div>}
       </div>
 
-      {/* Progress */}
+      {/* 完成进度（可折叠），只在有任务时渲染 */}
       {issueMetrics.totalCount > 0 && (() => {
         const pct = Math.round((issueMetrics.completedCount / issueMetrics.totalCount) * 100);
         return (
@@ -443,7 +452,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         );
       })()}
 
-      {/* Description */}
+      {/* 项目描述（可折叠，富文本编辑） */}
       <div>
         <button
           type="button"
@@ -468,7 +477,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         </div>}
       </div>
 
-      {/* Resources */}
+      {/* 资源列表（仓库/本地目录等） */}
       <ProjectResourcesSection projectId={projectId} />
     </div>
   );
@@ -582,7 +591,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         )}
       </ResizablePanelGroup>
 
-      {/* Delete confirmation */}
+      {/* 删除确认（仅工作区管理员） */}
       {isWorkspaceAdmin && (
         <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <AlertDialogContent>

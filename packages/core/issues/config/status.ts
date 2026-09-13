@@ -1,12 +1,12 @@
+// 议题状态分类的排序与展示配置。
 import type { IssueStatusCategory } from "../../types";
 
-// These three are keyed on CATEGORY, not on status key. A workspace can define
-// any number of custom statuses, but every one of them belongs to exactly one
-// of the 7 categories below — so board columns, the presentation config and the
-// paginated fetch all keep a fixed shape. Resolve a status KEY to its category
-// with the workspace catalog (`useIssueStatuses`) before indexing these.
-// (MUL-6243)
+// 下面这三个都是按“分类”而不是“状态 key”建索引的。一个工作区可以定义任意数量的
+// 自定义状态，但每一个都恰好属于下面 7 个分类之一——于是看板列、展示配置、分页拉取
+// 都保持固定形状。要先用工作区目录（`useIssueStatuses`）把状态 KEY 解析成它的分类，
+// 再来索引这些配置。（MUL-6243）
 
+/** 状态分类在列/列表中的固定展示顺序。 */
 export const STATUS_ORDER: IssueStatusCategory[] = [
   "backlog",
   "todo",
@@ -17,6 +17,7 @@ export const STATUS_ORDER: IssueStatusCategory[] = [
   "cancelled",
 ];
 
+/** 所有状态分类的完整集合（顺序同 STATUS_ORDER）。 */
 export const ALL_STATUSES: IssueStatusCategory[] = [
   "backlog",
   "todo",
@@ -27,6 +28,7 @@ export const ALL_STATUSES: IssueStatusCategory[] = [
   "cancelled",
 ];
 
+/** 每个状态分类对应的展示配置：文案、图标/悬停/分隔线/列背景色。 */
 export const STATUS_CONFIG: Record<
   IssueStatusCategory,
   {

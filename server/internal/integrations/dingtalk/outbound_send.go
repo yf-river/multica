@@ -1,3 +1,8 @@
+// outbound_send.go：出站发送的共享路径——EventChatDone 订阅器（outbound.go）
+// 与 OutboundReplier（replier.go）都用它。
+//
+// 它把一段回复正文变成一条或多条钉钉 sampleMarkdown 消息，用该安装的
+// access_token 发出，并按 1:1 / 群聊选择正确的机器人端点。
 package dingtalk
 
 import (
@@ -7,31 +12,25 @@ import (
 	"fmt"
 )
 
-// This file is the OUTBOUND send path shared by the EventChatDone subscriber
-// (outbound.go) and the OutboundReplier (replier.go). It turns a reply body into
-// one or more DingTalk sampleMarkdown messages and posts them with the
-// installation's access_token, routing 1:1 vs group to the right robot endpoint.
-
 const (
-	// msgKeyMarkdown renders a {title, text} sampleMarkdown card.
+	// msgKeyMarkdown 渲染一张 {title, text} 的 sampleMarkdown 卡片。
 	msgKeyMarkdown = "sampleMarkdown"
 
-	// p2p (1:1) proactive send; group send.
+	// 下面是机器人发消息的两个端点：p2p（1:1 主动推送）与群聊发送。
 	pathSendP2P   = "/v1.0/robot/oToMessages/batchSend"
 	pathSendGroup = "/v1.0/robot/groupMessages/send"
 )
 
-// sendTarget is the resolved DingTalk destination for a reply. ConversationType
-// selects the endpoint; StaffID is the recipient for a 1:1 send; ConversationID
-// is the group's openConversationId for a group send.
+// sendTarget 是回复解析后的钉钉投递目标。ConversationType 决定走哪个端点；
+// StaffID 是 1:1 发送的接收人；ConversationID 是群发要用的群 openConversationId。
 type sendTarget struct {
 	ConversationType string
 	ConversationID   string
 	StaffID          string
 }
 
-// sender posts replies for one installation. The robotCode + credentials come
-// from the installation; the shared Client owns the token cache and transport.
+// sender 为某个安装发回复。robotCode + 凭据来自安装；共享的 Client 持有令牌缓存
+// 与传输层。
 type sender struct {
 	client    *Client
 	robotCode string
@@ -39,16 +38,15 @@ type sender struct {
 	appSecret string
 }
 
-// markdownParam is the msgParam payload for a sampleMarkdown message.
+// markdownParam 是 sampleMarkdown 消息的 msgParam 负载。
 type markdownParam struct {
 	Title string `json:"title"`
 	Text  string `json:"text"`
 }
 
-// send delivers text to target as one or more sampleMarkdown messages (chunked
-// under DingTalk's per-message byte cap). It returns the last message's send
-// key. A 401 triggers one token refresh + retry, covering a server-side token
-// revocation between cache fill and use.
+// send 把 text 以一条或多条 sampleMarkdown 消息发给 target（按钉钉单条字节上限
+// 分片），返回最后一条消息的发送 key。遇到 401 会做一次令牌刷新 + 重试，覆盖
+// 「缓存填好之后、使用之前服务端把令牌吊销了」的窗口。
 func (s *sender) send(ctx context.Context, target sendTarget, text string) (string, error) {
 	if text == "" {
 		return "", nil
@@ -69,7 +67,7 @@ func (s *sender) send(ctx context.Context, target sendTarget, text string) (stri
 	return lastKey, nil
 }
 
-// sendOne posts a single rendered message, refreshing the token once on 401.
+// sendOne 发单条已渲染的消息，401 时刷新一次令牌重试。
 func (s *sender) sendOne(ctx context.Context, target sendTarget, msgParam string) (string, error) {
 	path, body, err := s.request(target, msgParam)
 	if err != nil {
@@ -96,8 +94,8 @@ func (s *sender) sendOne(ctx context.Context, target sendTarget, msgParam string
 	return "", errUnauthorized
 }
 
-// request builds the endpoint + body for a target. A 1:1 send needs a recipient
-// staff id; a group send needs the group's openConversationId.
+// request 按目标类型拼出端点与请求体。1:1 发送要接收人的 staff id；群发送要群的
+// openConversationId。
 func (s *sender) request(target sendTarget, msgParam string) (string, map[string]any, error) {
 	if target.ConversationType == convTypeP2P {
 		if target.StaffID == "" {

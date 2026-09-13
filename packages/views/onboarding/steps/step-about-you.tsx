@@ -1,5 +1,7 @@
 "use client";
 
+// 引导第 1 步「关于你」：同一屏上问「你的角色」（单选）和「主要用途」（多选）。
+// 两组都可跳过，答案用于产品个性化与引导统计，与 Agent 创建相互独立。
 import {
   Brain,
   Briefcase,
@@ -31,25 +33,23 @@ import {
 import { useT } from "../../i18n";
 
 /**
- * Step 1 — "About you": role (single-select) and use case
- * (multi-select) on ONE screen. They were separate steps once, but
- * they share the same eyebrow and neither deserves a full screen of
- * its own — merging them cut the onboarding progress bar from five
- * steps to three. The answers remain useful for product personalization
- * and onboarding analytics, independent of agent creation.
+ * 第 1 步——「关于你」：角色（单选）和用途（多选）放在同一屏。它们曾经是两步，
+ * 但共用一个眉题、又各自撑不起一整屏，合并后引导进度条从五步缩成三步。答案
+ * 对产品个性化与引导统计仍然有用，和 Agent 的创建无关。
  *
- * Answering is optional per group:
- *   - Continue is enabled as soon as EITHER group has a committed
- *     answer (an "Other" pick only counts once its free-text is
- *     non-empty). On Continue, any group left unanswered gets its
- *     `*_skipped` marker — the user saw the question and moved on,
- *     which is exactly what the skip marker means downstream
- *     (analytics + never re-prompting).
- *   - Skip declines both groups at once.
+ * 两组都允许不答：
+ *   - 只要任一组给出了有效答案，「继续」就可用（选「其他」必须等它的自由文本
+ *     非空才算）。点继续时，没答的那组会被盖上 `*_skipped` 标记——用户看过这道
+ *     题然后继续走，这正是下游跳过标记的含义（统计 + 不再追问）。
+ *   - Skip 一次拒绝两组。
  *
- * Every selection change PATCHes through `onChange` immediately (the
- * flow's `applyAnswers` fire-and-forgets persistence), so re-entry
- * pre-fills both groups.
+ * 每次选择变化都会立刻通过 `onChange` 发出 PATCH（由外层 `applyAnswers` 负责
+ * 不等待的持久化），所以再次进入时会预填这两组。
+ *
+ * @param answers 当前问卷答案
+ * @param onChange 局部答案变更回调（立即持久化）
+ * @param onAdvance 继续到下一步的回调
+ * @param onSkip 跳过本步的回调
  */
 export function StepAboutYou({
   answers,
@@ -88,8 +88,7 @@ export function StepAboutYou({
     { slug: "other", icon: <MoreHorizontal className="h-4 w-4" />, label: t(($) => $.questions.use_case.other), isOther: true },
   ];
 
-  // Role stays single-select — downstream personalization wants one
-  // primary identity, not a blend.
+  // 角色保持单选——下游个性化要的是一个「主身份」，而不是混合体。
   const roleSelected: readonly string[] = answers.role ? [answers.role] : [];
   const roleOtherFilled = (answers.role_other ?? "").trim().length > 0;
   const roleAnswered =
@@ -99,8 +98,7 @@ export function StepAboutYou({
   const useCaseOtherFilled =
     (answers.use_case_other ?? "").trim().length > 0;
   const useCaseHasNonOther = useCaseSlugs.some((s) => s !== "other");
-  // Mirrors the old per-step rule: a lone "Other" pick only counts as
-  // an answer once its free-text has content.
+  // 沿用旧版逐步规则：孤零零一个「其他」要等它的自由文本有内容才算有效答案。
   const useCaseAnswered =
     useCaseSlugs.length > 0 && (useCaseHasNonOther || useCaseOtherFilled);
 
@@ -136,10 +134,9 @@ export function StepAboutYou({
 
   const confirmAdvance = () => {
     if (!canContinue) return;
-    // A group the user looked at but left unanswered is a decline —
-    // stamp its skip marker so analytics see the decision and the
-    // slot isn't treated as "never reached". Also clears a dangling
-    // empty-text "Other" role pick.
+    // 用户看过但没作答的那组视为「放弃作答」——盖上跳过标记，让统计能看到这个
+    // 决定，而不是把该槽位当成「从没到过」。顺便清掉悬空的、没有文字的
+    // 「其他」角色选择。
     const patch: Partial<QuestionnaireAnswers> = {};
     if (!roleAnswered) {
       patch.role = null;
@@ -216,9 +213,8 @@ export function StepAboutYou({
 StepAboutYou.displayName = "StepAboutYou";
 
 /**
- * One question group: sub-question label + a single column of option cards.
- * Selection semantics live in the parent's handlers; this stays a layout
- * shell so both groups render identically.
+ * 一道问卷题的一个分组：小题目标签 + 一排选项卡片。选择语义都在父组件的
+ * handler 里，这里只做布局壳，让两个分组渲染得一模一样。
  */
 function QuestionGroup({
   question,
@@ -238,7 +234,7 @@ function QuestionGroup({
   onOtherChange: (value: string) => void;
   otherPlaceholder: string;
   onAnswer: (slug: string) => void;
-  /** Enter inside the "Other" input — parent decides if it advances. */
+  /** 在「其他」输入框里按 Enter——是否继续由父组件决定。 */
   onConfirm: () => void;
   multiSelect?: boolean;
 }) {

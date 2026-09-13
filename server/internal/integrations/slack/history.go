@@ -1,3 +1,14 @@
+// history.go：按需拉读 Slack 会话历史的读取器——统一命令 `multica chat history`
+// （频道总览）与 `multica chat thread [id]`（单条线程）的拉取半边（MUL-3871）。
+//
+// 两条命令都锁死在该会话【自己】的频道上：频道由服务端按绑定解析、绝不采纳
+// agent 传进来的频道，线程 id 只是「频道内定位器」。没有 Slack 绑定的会话返回
+// ErrNoSlackSession，让命令在非 Slack 会话上优雅地给空结果而不是报错。
+//
+// 拉回来的原始 Slack 消息还要过三道净化关：只保留本代路由归属内的 bot 消息
+// （filterRouteGeneration / filterContextGeneration，防止跨代上下文串台），把
+// 富文本/附件/卡片正文拍平成纯文本（flattenSlackText 一族），再统一排序并补全
+// 发送者昵称（normalizePage / resolveUserNames）。
 package slack
 
 import (
@@ -20,21 +31,20 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// ErrNoSlackSession reports that the chat session has no Slack channel binding —
-// it is a Feishu or web-only session. Callers surface it as an empty (not
-// failed) read so the unified `multica chat history` / `multica chat thread`
-// commands answer gracefully on a non-Slack conversation.
+// ErrNoSlackSession 表示该聊天会话没有 Slack 频道绑定——它是飞书或纯 Web 的
+// 会话。调用方把它当成「空结果」而不是失败来展示，让 `multica chat history` /
+// `multica chat thread` 命令在非 Slack 会话上也能答得优雅。
 var ErrNoSlackSession = errors.New("slack: session has no slack channel binding")
 
 const (
-	// defaultHistoryLimit is the page size used when the caller asks for none.
+	// defaultHistoryLimit 是调用方不指定分页大小时的默认页大小。
 	defaultHistoryLimit = 20
-	// maxHistoryLimit caps a single page so a pull can't dump an unbounded
-	// transcript into the agent's context.
+	// maxHistoryLimit 封顶单页大小，避免一次拉取把无界的完整聊天记录灌进 agent
+	// 的上下文。
 	maxHistoryLimit = 50
 )
 
-// historyQueries is the slice of generated queries the reader needs.
+// historyQueries 是读取器需要的生成查询子集。
 type historyQueries interface {
 	GetChannelChatSessionBindingBySession(ctx context.Context, arg db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error)
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
@@ -42,20 +52,19 @@ type historyQueries interface {
 	ListChannelOutboundMessagesByIDs(ctx context.Context, arg db.ListChannelOutboundMessagesByIDsParams) ([]db.ChannelOutboundMessage, error)
 }
 
-// historyClient is the slice of the slack-go Web API the reader calls. The real
-// *slack.Client satisfies it; tests inject a fake.
+// historyClient 是读取器要调的那一小块 slack-go Web API。真 *slack.Client 满足
+// 它；测试注入假实现。
 type historyClient interface {
 	GetConversationHistoryContext(ctx context.Context, params *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error)
 	GetConversationRepliesContext(ctx context.Context, params *slack.GetConversationRepliesParameters) ([]slack.Message, bool, string, error)
 	GetUsersInfoContext(ctx context.Context, users ...string) (*[]slack.User, error)
 }
 
-// History reads a Slack conversation on demand — the pull side of the unified
-// `multica chat history` (channel overview) and `multica chat thread [id]`
-// (one thread) commands (MUL-3871). Both are scoped to the session's OWN
-// channel: the channel is resolved server-side from the binding and never taken
-// from the agent, so a thread id is only a within-channel locator. Sessions with
-// no Slack binding return ErrNoSlackSession.
+// History 按需读取 Slack 会话——统一 `multica chat history`（频道总览）与
+// `multica chat thread [id]`（单条线程）命令的拉取侧（MUL-3871）。两条命令都
+// 只在该会话【自己】的频道内工作：频道是服务端按绑定解析出来的、从不采用 agent
+// 给的频道，所以线程 id 充其量只是「频道内定位器」。没有 Slack 绑定的会话返回
+// ErrNoSlackSession。
 type History struct {
 	q         historyQueries
 	decrypt   Decrypter
@@ -63,39 +72,38 @@ type History struct {
 	newClient func(botToken string) historyClient
 }
 
-// NewHistory builds the reader over the generated queries and the bot-token
-// decrypter (box.Open at wiring time).
+// NewHistory 基于生成查询与 bot 令牌解密器构造读取器（接线时解密器由 box.Open
+// 提供）。
 func NewHistory(q historyQueries, decrypt Decrypter, logger *slog.Logger) *History {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	h := &History{q: q, decrypt: decrypt, logger: logger}
 	h.newClient = func(botToken string) historyClient {
-		// Only the bot token is needed to read; the app-level token is for the
-		// inbound Socket Mode connection (slack_channel.go).
+		// 读历史只需要 bot 令牌；应用级令牌是给入站 Socket Mode 连接用的
+		// （slack_channel.go）。
 		return slack.New(botToken)
 	}
 	return h
 }
 
-// slackTarget is the resolved per-session read context: a bot-token client plus
-// the session's pinned channel and its own thread root.
+// slackTarget 是解析出的、按会话维度的读取上下文：一个 bot 令牌客户端，外加
+// 该会话钉住的频道和它自己的线程根。
 type slackTarget struct {
 	client          historyClient
 	installationID  pgtype.UUID
 	bindingID       pgtype.UUID
 	channelID       string
-	threadRoot      string // the session's own thread (empty for a DM)
+	threadRoot      string // 会话自己的线程根（私聊为空）
 	botUserID       string
 	historyStart    string
 	historyEnd      string
 	boundaryPending bool
 }
 
-// resolve maps a chat_session to its Slack channel + bot client. The channel is
-// server-derived here and never accepted from the caller — that is the security
-// boundary for `multica chat thread <id>` (the agent supplies only a
-// within-channel thread locator).
+// resolve 把 chat_session 映射到它的 Slack 频道 + bot 客户端。频道在这里由服务
+// 端推导、绝不接受调用方传入——这正是 `multica chat thread <id>` 的安全边界
+// （agent 只提供一个频道内的线程定位符）。
 func (h *History) resolve(ctx context.Context, chatSessionID pgtype.UUID) (slackTarget, error) {
 	binding, err := h.q.GetChannelChatSessionBindingBySession(ctx, db.GetChannelChatSessionBindingBySessionParams{
 		ChatSessionID: chatSessionID,
@@ -115,7 +123,7 @@ func (h *History) resolve(ctx context.Context, chatSessionID pgtype.UUID) (slack
 		return slackTarget{}, fmt.Errorf("load slack installation: %w", err)
 	}
 	if inst.Status != "active" {
-		return slackTarget{}, ErrNoSlackSession // revoked install: nothing to read
+		return slackTarget{}, ErrNoSlackSession // 安装已被吊销：没有可读的东西
 	}
 	creds, err := decodeCredentials(inst.Config, h.decrypt)
 	if err != nil {
@@ -135,10 +143,9 @@ func (h *History) resolve(ctx context.Context, chatSessionID pgtype.UUID) (slack
 	}, nil
 }
 
-// ChannelOverview returns the channel's recent top-level messages (oldest-first),
-// each thread tagged with its id + reply count. It does NOT expand thread
-// contents — it is the table of contents the agent reads to find a thread, then
-// drills into with `multica chat thread <id>`. Backs `multica chat history`.
+// ChannelOverview 返回频道最近的顶层消息（从旧到新），每条开线程的消息都标上
+// 线程 id + 回复数。它【不】展开线程内容——这是 agent 用来「找线程」的目录，找到
+// 后用 `multica chat thread <id>` 钻进去。支撑 `multica chat history` 命令。
 func (h *History) ChannelOverview(ctx context.Context, chatSessionID pgtype.UUID, opts channel.HistoryOptions) (channel.HistoryPage, error) {
 	t, err := h.resolve(ctx, chatSessionID)
 	if err != nil {
@@ -177,10 +184,9 @@ func (h *History) ChannelOverview(ctx context.Context, chatSessionID pgtype.UUID
 	return page, nil
 }
 
-// Thread returns one thread's messages (oldest-first). threadID empty reads the
-// thread the session is in (the agent's own thread); a non-empty id reads that
-// specific thread — but always within the session's pinned channel. A DM (no
-// threads) reads its linear conversation. Backs `multica chat thread [id]`.
+// Thread 返回一条线程的消息（从旧到新）。threadID 为空读「会话所在的线程」
+// （agent 自己的那条）；非空则读指定线程——但永远限定在会话钉住的频道内。私聊
+// 没有线程，直接读线性的私聊记录。支撑 `multica chat thread [id]` 命令。
 func (h *History) Thread(ctx context.Context, chatSessionID pgtype.UUID, threadID string, opts channel.HistoryOptions) (channel.HistoryPage, error) {
 	t, err := h.resolve(ctx, chatSessionID)
 	if err != nil {
@@ -189,7 +195,7 @@ func (h *History) Thread(ctx context.Context, chatSessionID pgtype.UUID, threadI
 	limit := clampHistoryLimit(opts.Limit)
 	ts := threadID
 	if ts == "" {
-		ts = t.threadRoot // the session's own thread
+		ts = t.threadRoot // 读会话自己的线程根
 	}
 	start, end := historyBounds(opts, t)
 	if opts.BoundaryPending || t.boundaryPending {
@@ -198,8 +204,8 @@ func (h *History) Thread(ctx context.Context, chatSessionID pgtype.UUID, threadI
 
 	var raw []slack.Message
 	if ts == "" {
-		// No thread to read (a DM, or a group whose root could not be recovered):
-		// fall back to the channel's linear conversation.
+		// 没有线程可读（私聊，或群会话的线程根已无法恢复）：退化为读频道的线性
+		// 对话。
 		if historyCursorReachedStart(opts.Before, start) {
 			return channel.HistoryPage{ChannelType: string(TypeSlack), ThreadID: ts}, nil
 		}
@@ -252,6 +258,8 @@ func (h *History) Thread(ctx context.Context, chatSessionID pgtype.UUID, threadI
 	return page, nil
 }
 
+// historyBounds 把调用方要的时间窗与绑定上记录的会话史界（history_start/end）
+// 收窄成交集：只读两者都允许的范围，避免把清空/新建边界之外的老消息捞回来。
 func historyBounds(opts channel.HistoryOptions, target slackTarget) (start, end string) {
 	start = opts.After
 	if target.historyStart != "" && (start == "" || slackTSLess(start, target.historyStart)) {
@@ -264,6 +272,9 @@ func historyBounds(opts channel.HistoryOptions, target slackTarget) (start, end 
 	return start, end
 }
 
+// historyWindow 把 before/start/end 换算成 Slack 拉取接口的 Latest/Oldest/
+// Inclusive 参数。end（会话史末端）比 before 更早时以 end 为 Latest，保证不越过
+// 会话边界。
 func historyWindow(before, start, end string) (latest, oldest string, inclusive bool) {
 	latest = before
 	if end != "" && (latest == "" || slackTSLess(end, latest)) {
@@ -275,10 +286,14 @@ func historyWindow(before, start, end string) (latest, oldest string, inclusive 
 	return latest, "", false
 }
 
+// historyCursorReachedStart 判断「向前翻页已经翻到底」：before 游标已不早于会话
+// 史界起点时，后面没有更老的消息可拉了。
 func historyCursorReachedStart(before, start string) bool {
 	return before != "" && start != "" && !slackTSLess(start, before)
 }
 
+// historyNextCursor 从本次拉到的消息里挑出最老一条作为下一页游标；没拉满一页、
+// 或最老消息已经顶到会话史界时返回空（没有下一页）。
 func historyNextCursor(raw []slack.Message, limit int, historyStart string) string {
 	if len(raw) < limit || len(raw) == 0 {
 		return ""
@@ -295,6 +310,10 @@ func historyNextCursor(raw []slack.Message, limit int, historyStart string) stri
 	return oldest
 }
 
+// filterRouteGeneration 把原始消息裁成只属于【当前路由代】的部分：剔掉时间窗之
+// 外的、剔掉带着 metadata 的 control_ack 或别的绑定的 bot 消息（用出站台账与
+// 消息自带 metadata 双重核对）。此外，若窗口起点正是会话开始那条首消息，且它是
+// 一条「/new 起新会话」命令，正文为空的直接扔掉、非空的剥成后续正文。
 func (h *History) filterRouteGeneration(ctx context.Context, target slackTarget, raw []slack.Message, start, end string) ([]slack.Message, error) {
 	window := raw[:0]
 	ids := make([]string, 0, len(raw))
@@ -349,6 +368,9 @@ func (h *History) filterRouteGeneration(ctx context.Context, target slackTarget,
 	return result, nil
 }
 
+// allowedBotMessages 只在 ContextRevision > 1（即存在多代上下文）时生效：它从
+// 出站台账里查出「本代会话确实持久化过的 bot 消息 id」，返回这个白名单，供
+// filterContextGeneration 决定哪些 bot 消息可以进 agent 上下文。
 func (h *History) allowedBotMessages(ctx context.Context, chatSessionID pgtype.UUID, target slackTarget, opts channel.HistoryOptions, raw []slack.Message) (map[string]struct{}, error) {
 	if opts.ContextRevision <= 1 {
 		return nil, nil
@@ -389,12 +411,11 @@ func filterContextGeneration(raw []slack.Message, opts channel.HistoryOptions, s
 		if end != "" && !slackTSLess(message.Timestamp, end) {
 			continue
 		}
-		// Slack timestamps alone are not a causal boundary: a reply from an old
-		// task may be posted after /clear. From generation 2 onward, trust an
-		// assistant message only when its provider id was persisted on a task in
-		// this exact generation. Human and third-party bot messages still follow
-		// the provider time window. Unknown own-bot output fails closed for agent
-		// context but remains visible to people in Slack.
+		// 光看 Slack 时间戳当不了因果边界：旧任务回的某条消息可能迟于 /clear 才
+		// 落下来。从第 2 代上下文起，只有「provider id 落在这个确切代的任务上」
+		// 的 assistant 消息才被信任。人类与第三方 bot 消息仍按时间窗放行。来历
+		// 不明的自家 bot 输出对 agent 上下文关门失败，但对 Slack 里的人类依旧
+		// 可见。
 		if opts.ContextRevision > 1 && message.User == botUserID {
 			if _, ok := allowedBotMessages[message.Timestamp]; !ok {
 				continue
@@ -414,6 +435,7 @@ func filterContextGeneration(raw []slack.Message, opts channel.HistoryOptions, s
 	return out
 }
 
+// clampHistoryLimit 把请求的分页大小夹进 [defaultHistoryLimit, maxHistoryLimit]。
 func clampHistoryLimit(n int) int {
 	if n <= 0 {
 		return defaultHistoryLimit
@@ -424,11 +446,10 @@ func clampHistoryLimit(n int) int {
 	return n
 }
 
-// historyTarget recovers the real channel id and the session's own thread root
-// from the binding. The channel_chat_id may be a composite "channel:threadRoot"
-// isolation key, so the real channel id is read from the binding config
-// (slackBindingConfig). The thread root is the recorded reply thread
-// (last_thread_id), falling back to the composite-key suffix; empty for a DM.
+// historyTarget 从绑定里找回真实频道 id 与会话自己的线程根。channel_chat_id 可能
+// 是 "channel:threadRoot" 这种复合隔离键，所以真实频道 id 从绑定 config
+// （slackBindingConfig）读；线程根取记录的回复线程（last_thread_id），找不到再回
+// 退用复合键的后缀；私聊则为空。
 func historyTarget(b db.ChannelChatSessionBinding) (channelID, threadRoot string) {
 	channelID = b.ChannelChatID
 	if len(b.Config) > 0 {
@@ -445,11 +466,10 @@ func historyTarget(b db.ChannelChatSessionBinding) (channelID, threadRoot string
 	return channelID, threadRoot
 }
 
-// normalizePage turns raw Slack messages into a normalized, oldest-first page:
-// it resolves display names in one batch, labels senders, maps roles, and
-// computes the back-paging cursor. When overview is true, a message that heads a
-// thread (reply_count > 0) is tagged with its thread id + reply count so the
-// agent can drill in with `multica chat thread <id>`.
+// normalizePage 把原始 Slack 消息归一化成一页「从旧到新」的消息：一次批量解析
+// 展示名、给发送者打标、映射角色、并算出向前翻页的游标。overview 为 true 时，
+// 顶着一条线程的消息（reply_count > 0）会被标上线程 id + 回复数，agent 才能用
+// `multica chat thread <id>` 钻进去。
 func normalizePage(ctx context.Context, client historyClient, logger *slog.Logger, raw []slack.Message, botUserID string, limit int, overview bool) channel.HistoryPage {
 	sort.SliceStable(raw, func(i, j int) bool { return slackTSLess(raw[i].Timestamp, raw[j].Timestamp) })
 
@@ -461,7 +481,7 @@ func normalizePage(ctx context.Context, client historyClient, logger *slog.Logge
 		m := raw[i]
 		text := flattenSlackText(m)
 		if text == "" {
-			continue // genuine join/system/edit marker: no readable body
+			continue // 真正的入群/系统/编辑标记：没有可读正文
 		}
 		own := m.User != "" && m.User == botUserID
 		role := channel.HistoryRoleUser
@@ -487,20 +507,16 @@ func normalizePage(ctx context.Context, client historyClient, logger *slog.Logge
 	return channel.HistoryPage{Messages: out}
 }
 
-// maxDerivedTextLen caps text recovered from attachments/blocks so a verbose
-// alert card cannot flood the agent's context. It applies only to the fallback
-// path; a normal top-level message body is passed through untouched.
+// maxDerivedTextLen 封顶从附件/blocks 里提炼出的正文长度，避免一条啰嗦的告警
+// 卡片把 agent 的上下文灌爆。只作用于兜底路径；正常的顶层消息正文原样直通。
 const maxDerivedTextLen = 4000
 
-// flattenSlackText renders a Slack message to the plain-text body the history
-// contract promises (channel.HistoryMessage.Text). Alerting/webhook bots
-// (Grafana cards, incoming webhooks) carry their whole body in attachments or
-// Block Kit blocks and leave the top-level Text empty; without this fallback
-// such a message is indistinguishable from a join/system marker and gets
-// dropped (MUL-3931 / #4803). Order: top-level text, then each attachment's
-// rendered text/fields, then last-resort fallback text, then a best-effort
-// blocks flatten. Returns "" only when nothing renderable exists — a real
-// system marker.
+// flattenSlackText 把一条 Slack 消息渲染成历史契约承诺的纯文本正文
+// （channel.HistoryMessage.Text）。告警/webhook bot（Grafana 卡片、incoming
+// webhook）把整段正文放在附件或 Block Kit 块里、顶层 Text 是空的；没有这个兜底
+// 的话，这类消息会跟入群/系统标记长得一模一样而被丢掉（MUL-3931 / #4803）。
+// 取值顺序：顶层 text → 各附件的渲染 text/fields → 最后兜底的附件 fallback →
+// blocks 尽力拍平。只有真没有任何可渲染内容（纯系统标记）时才返回 ""。
 func flattenSlackText(m slack.Message) string {
 	if t := strings.TrimSpace(m.Text); t != "" {
 		return t
@@ -519,10 +535,9 @@ func flattenSlackText(m slack.Message) string {
 	return truncateRunes(strings.TrimSpace(strings.Join(parts, "\n")), maxDerivedTextLen)
 }
 
-// attachmentText summarizes one attachment. Attachment fallback is only a
-// last-resort summary for clients that cannot render attachments; Grafana-style
-// alerts often put the useful alert body in Text/Fields while Fallback repeats
-// the short title.
+// attachmentText 把一条附件浓缩成纯文本。附件的 Fallback 只是给「渲染不了附件
+// 的客户端」用的最后兜底摘要；Grafana 式告警往往把真正的告警正文放在 Text/Fields，
+// Fallback 反而是重复的短标题，所以 Fallback 排到最后。
 func attachmentText(a slack.Attachment) string {
 	parts := make([]string, 0, 3+len(a.Fields))
 	for _, s := range []string{a.Pretext, a.Title, a.Text} {
@@ -544,9 +559,8 @@ func attachmentText(a slack.Attachment) string {
 	return flattenBlocks(a.Blocks)
 }
 
-// flattenBlocks renders Block Kit blocks to plain text, best-effort: it walks
-// the common text-bearing blocks (section, header, context, markdown, and
-// rich_text) and skips interactive/media blocks.
+// flattenBlocks 把 Block Kit 块尽力拍平成纯文本：遍历常见带文字的块（section、
+// header、context、markdown、rich_text），跳过交互/媒体块。
 func flattenBlocks(blocks slack.Blocks) string {
 	parts := make([]string, 0, len(blocks.BlockSet))
 	add := func(s string) {
@@ -584,13 +598,10 @@ func flattenBlocks(blocks slack.Blocks) string {
 	return strings.Join(parts, "\n")
 }
 
-// richTextBlockText flattens a rich_text block to plain text, best-effort: it
-// walks sections, lists, quotes, and preformatted runs and concatenates their
-// text and link runs (one line per section). Mentions, emoji, and other inline
-// decorations are skipped — this is the plain body an agent needs, not a
-// faithful re-render. A rich_text-only body is the standard shape for messages
-// composed in Slack's own rich text input, so a bot that posts one with an
-// empty top-level Text would otherwise be dropped.
+// richTextBlockText 把 rich_text 块尽力拍平成纯文本：遍历 section、list、quote、
+// preformatted，把文字与链接串接起来（每节一行）。提及、emoji 等行内装饰跳过——
+// agent 要的是纯正文，不是逐像素还原。纯 rich_text 正文是 Slack 自家富文本输入
+// 框产出的标准形态：顶层 Text 为空、只靠它承载的 bot 消息，不做这层兜底就会丢。
 func richTextBlockText(b *slack.RichTextBlock) string {
 	var lines []string
 	var writeElement func(el slack.RichTextElement)
@@ -632,7 +643,7 @@ func richTextBlockText(b *slack.RichTextBlock) string {
 	return strings.Join(lines, "\n")
 }
 
-// truncateRunes trims s to at most max runes, appending an ellipsis when cut.
+// truncateRunes 把 s 截断到最多 max 个字符，截断处补省略号。
 func truncateRunes(s string, max int) string {
 	r := []rune(s)
 	if len(r) <= max {
@@ -641,9 +652,9 @@ func truncateRunes(s string, max int) string {
 	return string(r[:max]) + "…"
 }
 
-// resolveUserNames batch-resolves human senders' display names, best-effort. A
-// failure (missing users:read scope, transport error) yields a nil map so the
-// labeler falls back to positional "User N" rather than blocking the read.
+// resolveUserNames 批量解析人类发送者的展示名，尽力而为。失败（缺 users:read
+// scope、传输错误）时返回 nil map，让打标器退化成位置编号的 "User N"，而不是
+// 卡住整次读取。
 func resolveUserNames(ctx context.Context, client historyClient, logger *slog.Logger, msgs []slack.Message, botUserID string) map[string]string {
 	seen := make(map[string]bool)
 	ids := make([]string, 0, len(msgs))
@@ -674,7 +685,7 @@ func resolveUserNames(ctx context.Context, client historyClient, logger *slog.Lo
 	return names
 }
 
-// slackDisplayName picks the friendliest available name for a Slack user.
+// slackDisplayName 从 Slack 用户对象里挑最友好可用的名字。
 func slackDisplayName(u slack.User) string {
 	switch {
 	case u.Profile.DisplayName != "":
@@ -686,9 +697,9 @@ func slackDisplayName(u slack.User) string {
 	}
 }
 
-// historyLabeler assigns stable, human-readable labels within one page: this bot
-// is "Bot"; a resolved human gets their real name; an unresolved human falls
-// back to positional "User N"; a third-party bot uses its posted username.
+// historyLabeler 在一页内分配稳定、可读的发送者标签：本 bot 标 "Bot"；解析到真名
+// 的人类用真名；解析不到的人类回退成按位置编号的 "User N"；第三方 bot 用它发消息
+// 时的用户名。
 type historyLabeler struct {
 	names map[string]string
 	seen  map[string]string
@@ -699,6 +710,7 @@ func newHistoryLabeler(names map[string]string) *historyLabeler {
 	return &historyLabeler{names: names, seen: make(map[string]string)}
 }
 
+// label 给一条消息的作者打标签；同页内同一个作者始终同标。
 func (l *historyLabeler) label(m slack.Message, own bool) string {
 	if own {
 		return "Bot"
@@ -726,11 +738,13 @@ func (l *historyLabeler) label(m slack.Message, own bool) string {
 	return lbl
 }
 
-// slackTSLess orders two Slack timestamps ("secs.micros") chronologically.
+// slackTSLess 按时间先后比较两个 Slack 时间戳（"秒.微秒"）。
 func slackTSLess(a, b string) bool {
 	return parseSlackTS(a) < parseSlackTS(b)
 }
 
+// parseSlackTS 把 Slack ts 文本解析成浮点秒数；解析失败返回 0（比较退化为相等/
+// 纯数值语义，够用即可）。
 func parseSlackTS(ts string) float64 {
 	f, _ := strconv.ParseFloat(ts, 64)
 	return f

@@ -1,5 +1,9 @@
 //go:build windows
 
+// 进程树控制器（Windows 实现）：用 Job Object（作业对象）托管 helper，
+// 设置 KILL_ON_JOB_CLOSE 并支持按整个作业强杀。这样无论 helper 派生出
+// 多少子孙进程，都能在取消/收尾时一次性全部终止。
+
 package execenv
 
 import (
@@ -11,13 +15,15 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// preparationProcessController 持有唯一的 job 句柄；所有进程都塞进这个作业。
 type preparationProcessController struct {
 	job windows.Handle
 }
 
-// jobObjectBasicAccountingInformation mirrors JOBOBJECT_BASIC_ACCOUNTING_INFORMATION.
-// x/sys exposes QueryInformationJobObject and the information-class constant,
-// but not this result struct.
+// jobObjectBasicAccountingInformation 镜像 Windows 的
+// JOBOBJECT_BASIC_ACCOUNTING_INFORMATION 结构。x/sys 提供了
+// QueryInformationJobObject 与信息类常量，但没有这个结果结构体，
+// 所以这里自行声明（字段布局必须与内核定义严格一致）。
 type jobObjectBasicAccountingInformation struct {
 	TotalUserTime             int64
 	TotalKernelTime           int64
@@ -29,6 +35,10 @@ type jobObjectBasicAccountingInformation struct {
 	TotalTerminatedProcesses  uint32
 }
 
+// newPreparationProcessController 创建一个 Job Object，并设置
+// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE：当最后一个作业句柄关闭时，内核会
+// 自动杀死作业内所有仍在运行的进程——这保证了即使漏了显式终止，进程也不会
+// 泄漏成孤儿。
 func newPreparationProcessController(_ *exec.Cmd) (*preparationProcessController, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -48,6 +58,8 @@ func newPreparationProcessController(_ *exec.Cmd) (*preparationProcessController
 	return &preparationProcessController{job: job}, nil
 }
 
+// attach 把已启动的 helper 进程指派进 job（Windows 无法像 Unix 那样在
+// 启动前用标志位完成，只能启动后按 PID 打开并 Assign）。
 func (c *preparationProcessController) attach(cmd *exec.Cmd) error {
 	process, err := windows.OpenProcess(
 		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE,
@@ -64,6 +76,8 @@ func (c *preparationProcessController) attach(cmd *exec.Cmd) error {
 	return nil
 }
 
+// stop 终止整个作业（含所有后代进程）。若 Terminate 报错但作业里其实已经
+// 没有活动进程，则视为已停止。
 func (c *preparationProcessController) stop(_ *exec.Cmd) error {
 	if err := windows.TerminateJobObject(c.job, 1); err != nil {
 		active, queryErr := c.activeProcesses()
@@ -75,9 +89,9 @@ func (c *preparationProcessController) stop(_ *exec.Cmd) error {
 	return nil
 }
 
-// finish is called only after the direct helper has exited. Terminate any
-// descendant it left behind, then wait until the Job Object reports no active
-// members before the daemon may release directory ownership and retry.
+// finish 仅在直接 helper 已退出后被调用：先把它遗留的后代进程终止掉，
+// 然后一直轮询到 Job Object 报告没有活动成员，daemon 才可以释放目录
+// 归属并安全地重试。
 func (c *preparationProcessController) finish() error {
 	active, err := c.activeProcesses()
 	if err != nil {
@@ -100,6 +114,7 @@ func (c *preparationProcessController) finish() error {
 	}
 }
 
+// activeProcesses 查询作业当前"仍活动的进程数"。
 func (c *preparationProcessController) activeProcesses() (uint32, error) {
 	var info jobObjectBasicAccountingInformation
 	if err := windows.QueryInformationJobObject(
@@ -114,6 +129,8 @@ func (c *preparationProcessController) activeProcesses() (uint32, error) {
 	return info.ActiveProcesses, nil
 }
 
+// close 关闭 job 句柄。由于设了 KILL_ON_JOB_CLOSE，此刻若作业内还有
+// 存活进程，内核会顺带把它们全部终止。
 func (c *preparationProcessController) close() {
 	if c.job == 0 {
 		return

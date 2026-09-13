@@ -1,3 +1,14 @@
+// inbound.go：把钉钉 Stream 回调（botCallbackData）翻译成引擎归一化的
+// channel.InboundMessage。
+//
+// 角色：这条 Stream 连接属于某一份安装，翻译时把【本安装】的 AppKey 一并盖进
+// 信封（dingtalkRawEvent），让 Router 能把事件反查回它的安装——钉钉回调本身不
+// 带 robotCode，全靠这一下盖章。
+//
+// 覆盖的消息类型：文本直接进正文；图片 picture 与富文本 richText 的下载码会转成
+// dingtalkRawEvent.Media 资源表留给媒体解析器；音频/视频/文件/未知类型降级成带
+// [占位] 的文本。@ 机器人的提及（群里按 isInAtList + 机器人全名判定）会在正文里
+// 剥掉，只留用户真正要说的话。
 package dingtalk
 
 import (
@@ -10,17 +21,9 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 )
 
-// This file holds the translation from a DingTalk Stream callback
-// (botCallbackData) to the engine's normalized channel.InboundMessage. The
-// per-installation connection (dingtalk_channel.go) threads in its OWN
-// installation's AppKey so the resolver can route the event back to its
-// installation — DingTalk's callback payload does not carry the robot code
-// itself.
-
-// botCallbackData is the DingTalk bot-message callback payload — the JSON carried
-// in a CALLBACK frame's data field. It holds only the fields the translation
-// reads; DingTalk sends more, which we ignore. Replaces the vendor SDK's
-// chatbot.BotCallbackDataModel.
+// botCallbackData 是钉钉机器人消息回调的载荷——CALLBACK 帧 data 字段里装的 JSON。
+// 这里只保留翻译层要读的字段；钉钉实际还发更多，直接忽略。替代厂商 SDK 的
+// chatbot.BotCallbackDataModel。
 type botCallbackData struct {
 	ConversationId    string              `json:"conversationId"`
 	ConversationTitle string              `json:"conversationTitle"`
@@ -32,9 +35,9 @@ type botCallbackData struct {
 	Msgtype           string              `json:"msgtype"`
 	IsInAtList        bool                `json:"isInAtList"`
 	Text              botCallbackText     `json:"text"`
-	// Content is the msgtype-discriminated payload of non-text messages
-	// (picture / richText). Decoded lazily per msgtype; absent on over-quota
-	// callbacks (errorCode 20001 strips text/content entirely).
+	// Content 是非文本消息（picture / richText）按 msgtype 区分的负载，惰性按
+	// msgtype 解码；超配额回调（errorCode 20001 会把 text/content 整个剥掉）里
+	// 它缺省为空。
 	Content json.RawMessage `json:"content"`
 }
 
@@ -47,17 +50,16 @@ type botCallbackText struct {
 	Content string `json:"content"`
 }
 
-// pictureContent is the content shape of msgtype=picture. Real payloads carry
-// both codes (developerpedia); either resolves through messageFiles/download.
+// pictureContent 是 msgtype=picture 的 content 结构。真实载荷两个 code 都会给
+// （developerpedia 文档），任一都能经 messageFiles/download 下载。
 type pictureContent struct {
 	DownloadCode        string `json:"downloadCode"`
 	PictureDownloadCode string `json:"pictureDownloadCode"`
 }
 
-// richTextContent is the content shape of msgtype=richText: an ORDERED array
-// of heterogeneous items — text runs {"text":…} interleaved with picture items
-// {"type":"picture","downloadCode":…} in send order. Item kinds beyond
-// text/picture are undocumented today and skipped.
+// richTextContent 是 msgtype=richText 的 content 结构：一个【保序】的异构元素
+// 数组——text 段 {"text":…} 与 picture 段 {"type":"picture","downloadCode":…}
+// 按发送顺序交错。今天文档未定义的其它元素种类一律跳过。
 type richTextContent struct {
 	RichText []richTextItem `json:"richText"`
 }
@@ -69,8 +71,8 @@ type richTextItem struct {
 	PictureDownloadCode string `json:"pictureDownloadCode"`
 }
 
-// refAlt orders a picture item's two download codes into (primary, fallback),
-// promoting the secondary code when the primary is missing.
+// refAlt 把一个图片元素的两种下载码排成 (主引用, 备用)：主码缺省时把次码提拔成
+// 主引用、备用留空。
 func refAlt(downloadCode, pictureDownloadCode string) (ref, alt string) {
 	if downloadCode != "" {
 		return downloadCode, pictureDownloadCode
@@ -78,9 +80,8 @@ func refAlt(downloadCode, pictureDownloadCode string) (ref, alt string) {
 	return pictureDownloadCode, ""
 }
 
-// dingtalkRawEvent carries the DingTalk-specific fields the cross-platform
-// envelope does not. AppID is stamped by the receiving connection (it is the
-// installation's routing key) and read back only inside the resolvers.
+// dingtalkRawEvent 存放跨平台信封（channel.InboundMessage.Raw）装不下的钉钉特有
+// 字段。AppID 由接收连接盖章（它就是安装的路由键），只在各 resolver 里读回。
 type dingtalkRawEvent struct {
 	AppID             string                  `json:"app_id"`
 	ConversationTitle string                  `json:"conversation_title,omitempty"`
@@ -90,8 +91,8 @@ type dingtalkRawEvent struct {
 type dingtalkMediaResource struct {
 	Ref string `json:"ref"`
 	Alt string `json:"alt,omitempty"`
-	// InlineIndex is the occurrence of the adapter-generated marker in the
-	// visible body, including identical user-authored text.
+	// InlineIndex 是适配器生成的占位符在可见正文里的第几次出现（含用户自己写的
+	// 相同文本），媒体解析器据此把图插回原位置。
 	InlineIndex int `json:"inline_index,omitempty"`
 }
 
@@ -99,31 +100,26 @@ func dingtalkMediaResourceAt(ref, alt string, inlineIndex int) dingtalkMediaReso
 	return dingtalkMediaResource{Ref: ref, Alt: alt, InlineIndex: inlineIndex}
 }
 
-// conversation type discriminators DingTalk sends in conversationType.
+// 钉钉在 conversationType 里发的会话类型判别值。
 const (
 	convTypeP2P              = "1"
 	convTypeGroup            = "2"
 	dingtalkImagePlaceholder = "[Image]"
 )
 
-// inboundFromCallback normalizes a DingTalk bot callback. It returns ok=false
-// only for events that must not reach the core at all: messages with no sender
-// staff id (system / bot-authored). Text, picture and richText become
-// ingestable messages; a malformed/over-quota media payload (the 20001 shape
-// strips content) still reaches the core as an explicit unavailable-image
-// placeholder rather than the adapter dropping it silently;
-// audio/video/file/unknown kinds likewise pass through as text placeholders.
-// A direct (1:1) message is always addressed to the bot; a group
-// message reaches the bot only when it carries an @-mention of it, which
-// DingTalk reports via isInAtList.
+// inboundFromCallback 把一条钉钉 bot 回调归一化。ok=false 只用于【绝不能进核心】
+// 的事件：没有发送者 staff id 的消息（系统/机器人自发的）。text/picture/richText
+// 变可摄取消息；畸形或超配额的媒体负载（errorCode 20001 会剥掉 content）仍以显式
+// 的「图片不可用」占位符进核心，而不是被适配器悄悄丢弃；audio/video/file/未知类型
+// 同样以文本占位符透传。私聊（1:1）消息永远算「@ 到了机器人」；群消息只有在真的
+// @ 到它时（钉钉经 isInAtList 上报）才算数。
 func inboundFromCallback(data *botCallbackData, appID string) (channel.InboundMessage, bool) {
 	return inboundFromCallbackWithBotName(data, appID, "")
 }
 
-// inboundFromCallbackWithBotName translates one callback using only a Bot name
-// verified for this installation through DingTalk's group Bot list API. An
-// empty name is deliberately fail-closed: the adapter preserves every visible
-// mention rather than guessing its span from whitespace.
+// inboundFromCallbackWithBotName 用【仅对这份安装经钉钉群机器人列表接口验证过】的
+// 机器人名字翻译一条回调。空名字刻意「失败即保守」：适配器保留所有可见的 @ 提及，
+// 绝不靠空白猜它的起止位置。
 func inboundFromCallbackWithBotName(data *botCallbackData, appID, botName string) (channel.InboundMessage, bool) {
 	if data == nil {
 		return channel.InboundMessage{}, false
@@ -159,9 +155,8 @@ func inboundFromCallbackWithBotName(data *botCallbackData, appID, botName string
 	case "picture":
 		var pc pictureContent
 		if len(data.Content) == 0 || json.Unmarshal(data.Content, &pc) != nil {
-			// Over-quota (errorCode 20001 strips content) or malformed payload:
-			// the sender is a real user who sent an image the bot cannot read.
-			// Route it into the engine so it gets identity-gated feedback.
+			// 超配额（errorCode 20001 剥掉 content）或畸形负载：发送者是真用户、发了
+			// 一张机器人读不懂的图。把它送进引擎，好走身份门槛拿到一句反馈。
 			return mediaUnreadableMsg(msg, rawEvent), true
 		}
 		ref, alt := refAlt(pc.DownloadCode, pc.PictureDownloadCode)
@@ -177,8 +172,7 @@ func inboundFromCallbackWithBotName(data *botCallbackData, appID, botName string
 	case "richText":
 		var rc richTextContent
 		if len(data.Content) == 0 || json.Unmarshal(data.Content, &rc) != nil {
-			// Over-quota / malformed richText: surface it to the engine for
-			// identity-gated feedback rather than a silent adapter drop.
+			// 超配额 / 畸形 richText：同样交给引擎做身份门槛反馈，而不是适配器静默丢弃。
 			return mediaUnreadableMsg(msg, rawEvent), true
 		}
 		normalizeDingTalkRichTextBotMention(data, rc.RichText, botName)
@@ -188,10 +182,9 @@ func inboundFromCallbackWithBotName(data *botCallbackData, appID, botName string
 			inlinePlaceholderCount int
 		)
 		for _, item := range rc.RichText {
-			// A single item may in principle carry BOTH a text run and a picture
-			// code; handle each independently (not a switch) so neither is
-			// silently dropped. Text first, then image, matching send order.
-			// Items with neither (undocumented kinds) contribute nothing.
+			// 单个元素原则上可能同时带 text 段和图片 code；两者各自独立处理（不用
+			// switch），避免任一被悄悄丢掉。先文本后图片，与发送顺序一致。两样都没有
+			// 的（未文档化种类）不产出任何东西。
 			if item.Text != "" {
 				text.WriteString(item.Text)
 				commandText.WriteString(item.Text)
@@ -200,7 +193,7 @@ func inboundFromCallbackWithBotName(data *botCallbackData, appID, botName string
 			if item.Type == "picture" || item.DownloadCode != "" || item.PictureDownloadCode != "" {
 				ref, alt := refAlt(item.DownloadCode, item.PictureDownloadCode)
 				if ref == "" {
-					continue // a picture item with no usable code
+					continue // 图片元素却没有可用下载码
 				}
 				appendImagePlaceholder(&text)
 				rawEvent.Media = append(rawEvent.Media, dingtalkMediaResourceAt(ref, alt, inlinePlaceholderCount))
@@ -234,17 +227,18 @@ func inboundFromCallbackWithBotName(data *botCallbackData, appID, botName string
 	return withDingTalkRaw(msg, rawEvent), true
 }
 
-// normalizeDingTalkRichTextControlLayout strips either session-control
-// directive from the visible rich-text body before the shared Router handles
-// it, preserving interleaved image placeholders that Router cannot reconstruct
-// from CommandText. The original command source remains available to Router;
-// the adapter never applies /new route rotation or reclassifies a remainder.
+// normalizeDingTalkRichTextControlLayout 在共享 Router 处理前，从可见富文本正文里
+// 剥掉两条会话控制指令（/new、/clear）之一，同时保留交错的图片占位符——Router 靠
+// CommandText 无法重建这些占位符。原命令来源对 Router 仍然可见；适配器自己绝不改
+// /new 的会话轮换，也不对剩余内容重新分类。
 func normalizeDingTalkRichTextControlLayout(msg *channel.InboundMessage, items []richTextItem, hasMedia bool) {
 	control, ok := engine.ParseControlCommand(msg.CommandText)
 	if !ok || (control.Body == "" && !hasMedia) {
 		return
 	}
 
+	// 只在【首个非空 text 段】能解析出同款指令时才动手：若指令实际落在更后面的段，
+	// firstControl 与 control 对不上，函数原样返回，绝不去别处乱剥。
 	firstText := -1
 	for i := range items {
 		if strings.TrimSpace(items[i].Text) != "" {
@@ -276,15 +270,14 @@ func normalizeDingTalkRichTextControlLayout(msg *channel.InboundMessage, items [
 	}
 	msg.Text = strings.TrimSpace(visible.String())
 	if control.Kind == engine.ControlCommandFreshSession && control.Body == "" {
-		// A media-bearing `/clear` is a real turn, not the shared bare-command
-		// sentinel. ForceFresh carries the already-consumed directive.
+		// 带媒体的裸 /clear 是「真实的一轮」，不是共享引擎里那个裸命令哨兵。指令
+		// 已被消费，用 ForceFresh 把信号带下去。
 		msg.CommandText = msg.Text
 	}
 }
 
-// normalizeDingTalkRichTextBotMention removes the bot-addressing envelope from
-// whichever text run contains it. DingTalk can place that run before or after
-// media and independently from the run containing a control command.
+// normalizeDingTalkRichTextBotMention 从富文本里含 @ 提及的那个 text 段剥掉寻址
+// 外壳。钉钉可能把那段放在媒体前或媒体后，且与控制指令所在的段相互独立。
 func normalizeDingTalkRichTextBotMention(data *botCallbackData, items []richTextItem, botName string) {
 	runs := make([]string, len(items))
 	for i := range items {
@@ -296,8 +289,8 @@ func normalizeDingTalkRichTextBotMention(data *botCallbackData, items []richText
 	}
 }
 
-// normalizeDingTalkBotMention removes the bot-addressing token wherever it
-// appears in a plain-text message.
+// normalizeDingTalkBotMention 从纯文本消息里剥掉 @ 机器人的寻址 token（无论出现
+// 在哪个位置）。
 func normalizeDingTalkBotMention(data *botCallbackData, text, botName string) string {
 	runs := []string{text}
 	removeDingTalkBotMention(data, runs, botName)
@@ -309,6 +302,10 @@ type dingTalkMentionSpan struct {
 	start, end int
 }
 
+// removeDingTalkBotMention 只在「群聊 + 确被 @ + 持有验证过的 bot 名」时动手：
+// 把 runs 里每个「@名字」剥掉。名前或名后整段空白时，连边界空白一起吞掉，避免正
+// 文留下悬挂空格；两侧都有实词时去掉名后紧跟的水平空白（保留换行等垂直分隔），
+// 免得 @ 与下一词之间残留空格把词断成两截。
 func removeDingTalkBotMention(data *botCallbackData, runs []string, botName string) {
 	botName = strings.TrimSpace(botName)
 	if data == nil || data.ConversationType != convTypeGroup || !data.IsInAtList || botName == "" {
@@ -333,6 +330,9 @@ func removeDingTalkBotMention(data *botCallbackData, runs []string, botName stri
 	}
 }
 
+// exactDingTalkBotMentionSpans 逐段找字面量 "@botName"，只接受前后边界都是空白或
+// 字符串边界的位置（防止把 "mybot" 这类嵌在词里的误伤）。返回的 span 按段内偏移
+// 记录。
 func exactDingTalkBotMentionSpans(runs []string, botName string) []dingTalkMentionSpan {
 	literal := "@" + botName
 	var spans []dingTalkMentionSpan
@@ -366,9 +366,8 @@ func dingTalkMentionRightBoundary(suffix string) bool {
 		return true
 	}
 	r, _ := utf8.DecodeRuneInString(suffix)
-	// DingTalk supplies no mention span. Only whitespace/end can prove that the
-	// verified full name ended here; punctuation may itself extend another
-	// display name (for example "Bot-DEV"), so fail closed on it.
+	// 钉钉不提供提及的起止区间，只有空白/结尾能证明「验证过的全名」真的到此为止；
+	// 标点也可能是另一个显示名的延续（例如 "Bot-DEV"），所以这里保守地拒绝。
 	return unicode.IsSpace(r)
 }
 
@@ -380,14 +379,14 @@ func trimRightHorizontalSpace(value string) string {
 	return strings.TrimRight(value, " \t\u3000")
 }
 
+// withDingTalkRaw 把钉钉特有信封序列化进消息的 Raw 字段。
 func withDingTalkRaw(msg channel.InboundMessage, rawEvent dingtalkRawEvent) channel.InboundMessage {
 	msg.Raw, _ = json.Marshal(rawEvent)
 	return msg
 }
 
-// mediaUnreadableMsg turns media the adapter cannot resolve into an explicit
-// placeholder. With no downloadable reference, the shared media resolver stays
-// out of the path and the normal channel turn carries the degradation signal.
+// mediaUnreadableMsg 把适配器解析不了的媒体转成显式占位符。没有可下载的引用时，
+// 共享媒体解析器就不进路径了，由普通聊天轮次携带这层「图读不了」的信号。
 func mediaUnreadableMsg(msg channel.InboundMessage, rawEvent dingtalkRawEvent) channel.InboundMessage {
 	msg.Type = channel.MsgTypeImage
 	msg.Text = "[Image unavailable]"
@@ -395,6 +394,7 @@ func mediaUnreadableMsg(msg channel.InboundMessage, rawEvent dingtalkRawEvent) c
 	return withDingTalkRaw(msg, rawEvent)
 }
 
+// appendImagePlaceholder 往 builder 里补一段换行分隔的图片占位行。
 func appendImagePlaceholder(b *strings.Builder) {
 	if b.Len() > 0 {
 		b.WriteByte('\n')
@@ -402,9 +402,8 @@ func appendImagePlaceholder(b *strings.Builder) {
 	b.WriteString(dingtalkImagePlaceholder + "\n")
 }
 
-// dingtalkChatType maps DingTalk's conversationType to the normalized ChatType.
-// "1" is a 1:1 direct chat; everything else (group "2") is a group, which routes
-// through the engine's "must address the bot" filter.
+// dingtalkChatType 把钉钉的 conversationType 映射成归一化 ChatType。"1" 是 1:1
+// 私聊；其它一切（群聊 "2"）都算群，走引擎的「必须 @ 到机器人」过滤。
 func dingtalkChatType(conversationType string) channel.ChatType {
 	if conversationType == convTypeP2P {
 		return channel.ChatTypeP2P

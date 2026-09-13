@@ -1,5 +1,31 @@
 package agent
 
+// 文件职责：本文件实现 Backend 接口中的「ZeroClaw」后端。ZeroClaw 是一个 Rust 编写、
+// 单二进制的通用 agent 运行时（见 multica-ai/multica#1543），本后端拉起 `zeroclaw acp`
+// 子进程，通过标准 ACP（Agent Client Protocol）JSON-RPC 2.0 走 stdin/stdout 与它通信。
+//
+// 它的 ACP 服务表面与 Hermes/Kimi/Reasonix/Dim/Traecli/Grok/QwenPaw/MCode 一致，所以
+// 本文件直接复用共享的 hermesClient ACP 传输——差异只集中在：可执行文件名、会话引导
+// 流程、工具名抽取、以及下面的非标准握手细节。真实 ZeroClaw 0.8.4 二进制经 stdio 驱动
+// 验证过，握手并非「教科书式 ACP」，要点：
+//
+//   - 分发表只有 initialize 和 session/{new,load,resume,close,prompt,stop,cancel,
+//     event|update}，没有 session/set_model（会回 -32601），也没有 handler 读 model
+//     参数；模型归属 ZeroClaw 的 agent 配置档（agents.<alias>.model_provider →
+//     providers.models.<type>.<alias> 里的 model），无法按会话指定，所以 ModelSelection
+//     能力对 ZeroClaw 关闭。initialize 返回的 defaultModel 是全进程级的，不用于归因。
+//   - session/new 只回 {sessionId, workspaceDir}：无模型目录、无 currentModelId。
+//   - session/new 要求 agentAlias（除非只配了一个 agent 或设了 default_agent），
+//     处理见 takeZeroclawAgentAlias。
+//   - 续跑走 session/resume 而不是 session/load：load 会把整段留存 transcript 以
+//     session/update 通知重放回来，把历史回合当成这次回合的输出再发一遍。
+//   - 没有 handler 读 params.mcpServers：MCP 只能在 ZeroClaw 自己的配置目录里配。
+//   - 它的 SESSION_NOT_FOUND 是自定义的 -32000，见 isACPSessionNotFound。
+//
+// 版本要求 MinVersions 规定 ZeroClaw 0.8.0+（第一个带持久 ACP 会话与 session/resume 的
+// 稳定版）。无需注入 permission preset 或单独的 authenticate 步骤：initialize 返回空的
+// authMethods，握手不再要求其它东西。
+
 import (
 	"context"
 	"encoding/json"
@@ -13,19 +39,16 @@ import (
 	"time"
 )
 
-// zeroclawBlockedArgs are flags hardcoded by the daemon that must not be
-// overridden by user-configured custom_args. `acp` is the protocol
-// subcommand that drives the ACP JSON-RPC transport; overriding it would
-// break the daemon↔ZeroClaw communication contract. `--help`/`-h` and the
-// login/auth flags would switch the CLI into a mode that never starts the
-// ACP server.
+// zeroclawBlockedArgs 是 daemon 写死的参数清单，用户配置的 custom_args 不得覆盖它们。
+// `acp` 是驱动 ACP JSON-RPC 传输的协议子命令，覆盖它会破坏 daemon↔ZeroClaw 的通信
+// 契约。`--help`/`-h` 与 login/auth 类参数会把 CLI 切进一个「永远不会启动 ACP 服务」的
+// 模式。
 //
-// `--agent` / `--agent-alias` are blocked because `zeroclaw acp` has no such
-// flag — clap aborts the process with `error: unexpected argument '--agent'
-// found`. takeZeroclawAgentAlias consumes them out of custom_args before this
-// filter runs and forwards the value as the session/new `agentAlias` param
-// instead; these entries stop a copy arriving through any other path (a
-// runtime launch prefix) from reaching argv.
+// `--agent` / `--agent-alias` 被拦是因为 `zeroclaw acp` 根本没有这个 flag——clap 会以
+// `error: unexpected argument '--agent' found` 直接终止进程。takeZeroclawAgentAlias 会
+// 在本次过滤运行之前先把它从 custom_args 里消费掉，并把值转成 session/new 的
+// agentAlias 参数；这些条目防止同一份副本经任何其它路径（比如运行时启动前缀）到达
+// argv。
 var zeroclawBlockedArgs = map[string]blockedArgMode{
 	"acp":           blockedStandalone,
 	"--help":        blockedStandalone,
@@ -38,21 +61,17 @@ var zeroclawBlockedArgs = map[string]blockedArgMode{
 	"--agent-alias": blockedWithValue,
 }
 
-// takeZeroclawAgentAlias consumes the ZeroClaw agent alias from custom_args
-// and returns it with the remaining arguments.
+// takeZeroclawAgentAlias 从 custom_args 里取出 ZeroClaw 的 agent 别名，返回别名与剩余
+// 参数。
 //
-// ZeroClaw binds every ACP session to an agent alias, resolved in this order:
-// the session/new `agentAlias` param, `[acp].default_agent`, then auto-select
-// when the config holds exactly one `[agents.<alias>]` entry. With none of
-// those, session/new fails with -32602. The alias cannot travel on argv (see
-// zeroclawBlockedArgs), so custom_args is the only operator-facing channel and
-// the value is lifted out here.
+// ZeroClaw 把每个 ACP 会话都绑到一个 agent 别名上，解析顺序是：session/new 的
+// agentAlias 参数 → `[acp].default_agent` → 当配置里恰好只有一条 `[agents.<alias>]` 时
+// 自动选择。三者都没有时 session/new 会以 -32602 失败。这个别名无法走 argv 传递（见
+// zeroclawBlockedArgs），所以 custom_args 是唯一面向操作员的通道，值在这里被取出。
 //
-// Both `--agent x` and `--agent=x` are accepted, `--agent-alias` is the long
-// spelling, and the last occurrence wins so a per-agent entry can override a
-// runtime-wide one. An empty or whitespace-only value counts as unset:
-// ZeroClaw trims and drops empty aliases the same way, and sending one would
-// forfeit its auto-select.
+// `--agent x` 与 `--agent=x` 两种写法都接受，`--agent-alias` 是全拼；最后一次出现胜出，
+// 这样按 agent 的条目可以覆盖运行时全局的一条。空白值视为未设置：ZeroClaw 同样会
+// trim 并丢弃空别名，传一个空的过去反而会丧失它的自动选择。
 func takeZeroclawAgentAlias(args []string) (string, []string) {
 	if len(args) == 0 {
 		return "", args
@@ -82,9 +101,8 @@ func takeZeroclawAgentAlias(args []string) (string, []string) {
 	return alias, rest
 }
 
-// zeroclawResumeSupported reads the capability ZeroClaw derives from whether
-// its persistent session store opened successfully. A read-only or unwritable
-// config directory leaves resume absent even on a new-enough binary.
+// zeroclawResumeSupported 读取 ZeroClaw 派生出的能力：其持久会话存储是否成功打开。
+// 配置目录只读或不可写时，即使二进制版本够新也不会有 resume 能力。
 func zeroclawResumeSupported(result json.RawMessage) bool {
 	var r struct {
 		AgentCapabilities struct {
@@ -96,14 +114,11 @@ func zeroclawResumeSupported(result json.RawMessage) bool {
 	return json.Unmarshal(result, &r) == nil && r.AgentCapabilities.SessionCapabilities.Resume != nil
 }
 
-// selectZeroclawPermissionOption keeps ordinary single-use tool approvals on
-// the shared ACP policy, but fails closed for ZeroClaw's legacy structured
-// question bridge. That bridge labels every answer `choice-N` with
-// allow_once, so generic auto-approval would silently answer every question
-// with the first choice. Returning ok=false makes the shared transport send a
-// protocol error: even the option marked reject_once is still mapped back to
-// a real answer by ZeroClaw, so selecting it would silently choose the last
-// answer rather than reject the question.
+// selectZeroclawPermissionOption 让普通的一次性工具批准走共享 ACP 策略，但对 ZeroClaw
+// 遗留的结构化提问桥 fail-closed：那个桥把每个答案都标成 `choice-N` 且 allow_once，
+// 若走通用自动批准，会静默地把每个问题都选成第一个选项。返回 ok=false 会让共享传输发
+// 一条协议错误；即便选那个标着 reject_once 的选项，ZeroClaw 仍会把它映射成真实答案，
+// 所以「选择」它等于静默选最后一个答案，而不是拒绝问题。
 func selectZeroclawPermissionOption(params json.RawMessage) (optionID string, grant bool, ok bool) {
 	var p struct {
 		Options []acpPermissionOption `json:"options"`
@@ -125,13 +140,12 @@ func selectZeroclawPermissionOption(params json.RawMessage) (optionID string, gr
 	return "", false, false
 }
 
-// zeroclawSessionNewErrorMessage turns ZeroClaw's agent-selection failure into
-// something an operator can act on.
+// zeroclawSessionNewErrorMessage 把 ZeroClaw 的「选 agent 失败」翻译成操作员能照着办的
+// 提示。
 //
-// session/new demands `agentAlias` whenever the config does not hold exactly
-// one agent — including the zero-agent case, where it asks for the alias of an
-// entry that does not exist yet — and no CLI flag can supply one, so the bare
-// RPC error leaves no route forward.
+// 当配置里不是恰好一个 agent 时（包括零个 agent 的场合——此时它要一个根本不存在的条目
+// 的别名），session/new 就强制要求 `agentAlias`，而没有任何 CLI flag 能补这个参数，所以
+// 光秃秃的 RPC 错误没有给出任何前进路线。
 func zeroclawSessionNewErrorMessage(err error) string {
 	base := fmt.Sprintf("zeroclaw session/new failed: %v", err)
 	var rpcErr *acpRPCError
@@ -143,44 +157,14 @@ func zeroclawSessionNewErrorMessage(err error) string {
 		" or set `[acp].default_agent` in ZeroClaw's config."
 }
 
-// zeroclawBackend implements Backend by spawning `zeroclaw acp` and
-// communicating via the standard ACP (Agent Client Protocol) JSON-RPC 2.0
-// transport over stdin/stdout.
+// zeroclawBackend 实现 Backend 接口：拉起 `zeroclaw acp` 子进程，用标准 ACP
+// JSON-RPC 2.0（stdin/stdout）与它通信。
 //
-// ZeroClaw is a Rust-based, single-binary generic agent runtime (see
-// multica-ai/multica#1543). Its ACP server exposes the same protocol
-// surface that Hermes/Kimi/Reasonix/Dim/Traecli/Grok/QwenPaw/MCode use, so
-// the backend reuses the shared hermesClient ACP transport — only the
-// binary, the session bootstrap, and the tool-name extraction differ.
-//
-// Verified against a real ZeroClaw 0.8.4 binary driven over stdio. That
-// handshake is not vanilla ACP, and the departures below are what this file
-// is shaped around:
-//
-//   - The dispatch table is initialize and session/{new,load,resume,close,
-//     prompt,stop,cancel,event|update}. There is no `session/set_model` — it
-//     answers -32601 — and no handler reads a model param at all. The model
-//     belongs to the ZeroClaw agent profile (`agents.<alias>.model_provider`
-//     → `[providers.models.<type>.<alias>].model`) and cannot be selected per
-//     session, so ModelSelectionSupported opts ZeroClaw out. The
-//     `initialize._meta.zeroclaw.defaultModel` value is process-global (the
-//     first configured provider model), not the model for the alias later
-//     selected by session/new, so it is not used for usage attribution.
-//   - session/new returns exactly {sessionId, workspaceDir}: no model
-//     catalog, no currentModelId, so there is nothing to discover.
-//   - session/new requires `agentAlias` unless exactly one agent is
-//     configured or `[acp].default_agent` is set. See takeZeroclawAgentAlias.
-//   - Resume goes through session/resume, not session/load: load replays the
-//     whole retained transcript back as session/update notifications, which
-//     would re-emit prior turns as this turn's output.
-//   - No handler reads `params.mcpServers`. MCP is operator-side only,
-//     configured in ZeroClaw's own config-dir.
-//   - Its SESSION_NOT_FOUND is a custom -32000; see isACPSessionNotFound.
-//
-// MinVersions requires ZeroClaw 0.8.0+, the first stable release with
-// persistent ACP sessions and session/resume. No permission-preset injection
-// or separate authenticate step is needed: initialize returns an empty
-// `authMethods` and the handshake asks for nothing further.
+// ZeroClaw 是 Rust 写的单二进制通用 agent 运行时（见 multica-ai/multica#1543）。其 ACP
+// 服务表面与 Hermes/Kimi/Reasonix/Dim/Traecli/Grok/QwenPaw/MCode 一致，因此直接复用
+// 共享的 hermesClient ACP 传输——差异仅在二进制名、会话引导与工具名抽取。已用真实
+// ZeroClaw 0.8.4 二进制（stdio 驱动）验证，握手并非教科书式 ACP，本文件就围绕那些
+// 偏离点构建，细节清单见文件顶部导读。
 type zeroclawBackend struct {
 	cfg Config
 }
@@ -190,18 +174,20 @@ var (
 	zeroclawNotificationQuietTime = 250 * time.Millisecond
 )
 
-// zeroclawMessageStream serializes sends and the final close so a late
-// stdout reader cannot send on a closed channel. Mirrors dim/grok/traecli.
+// zeroclawMessageStream 给消息发送与最终关闭上锁串行化，避免迟到的 stdout 读取者往
+// 已关闭的 channel 上发送。与 dim/grok/traecli 的做法一致。
 type zeroclawMessageStream struct {
 	ch     chan Message
 	mu     sync.Mutex
 	closed bool
 }
 
+// newZeroclawMessageStream 创建一个容量为 size 的消息流。
 func newZeroclawMessageStream(size int) *zeroclawMessageStream {
 	return &zeroclawMessageStream{ch: make(chan Message, size)}
 }
 
+// send 非阻塞地把一条消息投进 channel；流已关闭则直接丢弃。
 func (s *zeroclawMessageStream) send(msg Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -211,6 +197,7 @@ func (s *zeroclawMessageStream) send(msg Message) {
 	trySend(s.ch, msg)
 }
 
+// close 关闭消息流；重复调用安全（第二次直接返回）。
 func (s *zeroclawMessageStream) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -221,6 +208,17 @@ func (s *zeroclawMessageStream) close() {
 	close(s.ch)
 }
 
+// Execute 是 Backend 接口的入口：拿一条用户 prompt，起一个 zeroclaw acp 进程，
+// 完成一次 ACP 会话并跑完这一轮对话。
+//
+// 流程：确认可执行文件存在 → 从 custom_args 里取出 agent 别名 → 起子进程并接管三路
+// IO → initialize 握手（顺带探测 resume 能力）→ 建立会话：续跑走 session/resume、
+// 新建走 session/new（按需带 agentAlias）→ session/prompt 进入对话回合，期间把 ACP
+// 通知翻译成 Message 流式发出，并用 streamingCurrentTurn 闸门挡住本回合之外的杂音 →
+// 回合结束后有界等待尾部通知（drain），再依据 stderr / 文本流里的上游 LLM 终态失败
+// 信号决定是否把 completed 降级为 failed → 汇总 Result 交给调用方。
+//
+// ZeroClaw 忽略 Multica 侧传入的 MCP 服务器（见下面警告），只认它自己配置目录里的。
 func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
@@ -230,13 +228,12 @@ func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		return nil, fmt.Errorf("zeroclaw executable not found at %q: %w", execPath, err)
 	}
 
-	// ZeroClaw discards client-supplied MCP servers: none of its session/new,
-	// session/load or session/resume handlers reads `params.mcpServers`, and
-	// enabling `agents.<alias>.acp_enable_mcp` initialises that agent's OWN
-	// `mcp_bundles`, not ours. MCP therefore lives entirely in ZeroClaw's
-	// config-dir. providerSupportsMcpConfig hides the MCP tab for this
-	// runtime, so reaching here means a value saved before that — warn and
-	// continue rather than bricking the task over config we cannot honour.
+	// ZeroClaw 丢弃客户端提供的 MCP 服务器：它的 session/new、session/load、
+	// session/resume 都不读 `params.mcpServers`，而开启 `agents.<alias>.acp_enable_mcp`
+	// 初始化的是那个 agent 自己的 `mcp_bundles`，不是我们的。所以 MCP 完全活在
+	// ZeroClaw 的配置目录里。providerSupportsMcpConfig 为本运行时隐藏了 MCP 标签页，
+	// 因此能走到这里说明是更早存下的值——只警告并继续，别为一个兑现不了的配置把任务
+	// 卡死。
 	if len(opts.McpConfig) > 0 {
 		b.cfg.Logger.Warn("zeroclaw ignores MCP servers supplied by Multica; its ACP server reads MCP only from its own config-dir ([[mcp.servers]] + [mcp_bundles.*] + agents.<alias>.mcp_bundles with acp_enable_mcp = true)",
 			"backend", "zeroclaw",
@@ -267,9 +264,8 @@ func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		cancel()
 		return nil, fmt.Errorf("zeroclaw stdin pipe: %w", err)
 	}
-	// StderrPipe + an explicit copier give us a join point (`stderrDone`) that
-	// fires before the failure-promotion decision; see hermes.go for why the
-	// io.MultiWriter form races with stopReason=end_turn under load.
+	// StderrPipe + 显式 copier 提供了先于「失败升级决策」的汇合点（stderrDone）；
+	// 为什么 io.MultiWriter 形式会在高负载下与 stopReason=end_turn 竞争，见 hermes.go。
 	providerErr := newACPProviderErrorSniffer("zeroclaw")
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -294,17 +290,14 @@ func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	msgStream := newZeroclawMessageStream(256)
 	resCh := make(chan Result, 1)
 
-	// ZeroClaw streams interim narration and the final answer as the same
-	// agent_message_chunk type; the tracker keeps only the post-tool-call
-	// block for Result.Output while retaining the full text for error
-	// detection.
+	// ZeroClaw 把中途叙述与最终答案都用同一种 agent_message_chunk 类型流式送出；该
+	// tracker 只为 Result.Output 保留「最后一次工具调用之后的文本块」，同时保留全文供
+	// 错误检测用。
 	var deliverable acpDeliverableTracker
-	// streamingCurrentTurn gates every session update so that anything the
-	// runtime pushes outside our turn is dropped instead of landing in the
-	// deliverable. It must default to false: ZeroClaw flushes the frames that
-	// matter here — session/load's transcript replay — before it answers the
-	// request that triggered them, so the gate has to be closed from process
-	// start. Flipped to true only just before session/prompt is sent.
+	// streamingCurrentTurn 是每一份 session 更新的闸门：运行方在我们回合之外推来的任何
+	// 东西都被丢弃，不落进 deliverable。它必须默认 false——ZeroClaw 会在回答触发它的
+	// 请求之前，先把这里要紧的帧（比如 session/load 的 transcript 重放）刷出来，所以
+	// 闸门从进程一开始就得关着；只在临发 session/prompt 前才翻成 true。
 	var streamingCurrentTurn atomic.Bool
 
 	promptDone := make(chan hermesPromptResult, 1)
@@ -330,8 +323,8 @@ func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 				return
 			}
 			if msg.Type == MessageToolUse {
-				// Re-normalise tool titles the same way kimi/traecli/grok/dim
-				// do so the UI sees consistent snake_case names.
+				// 工具标题与 kimi/traecli/grok/dim 一样再归一化一次，让 UI 看到统一的
+				// snake_case 名。
 				msg.Tool = kimiToolNameFromTitle(msg.Tool)
 			}
 			deliverable.observe(msg)
@@ -376,15 +369,13 @@ func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		finalStatus := "completed"
 		var finalError string
 		var sessionID string
-		// Set when the ACP runtime refuses the session we asked to
-		// resume. Only that is curable by starting a fresh session, so
-		// handshake/network failures below must leave it false.
+		// 仅在「ACP 运行时不认我们请求续跑的那个会话」时置位。只有这种情况可通过另起
+		// 全新会话挽回，所以下面的握手/网络类失败都必须保持它为 false。
 		var resumeRejected bool
 		var effectiveModel string
 
-		// Keep elicitation absent: this headless client cannot collect a user's
-		// form response. ZeroClaw's legacy structured-choice bridge is handled
-		// fail-closed by selectZeroclawPermissionOption instead.
+		// 刻意不带 elicitation 能力：这个无头客户端没法收集用户的表单应答。ZeroClaw
+		// 遗留的结构化选择题桥由 selectZeroclawPermissionOption 以 fail-closed 兜底。
 		initResult, err := c.request(runCtx, "initialize", map[string]any{
 			"protocolVersion": 1,
 			"clientInfo": map[string]any{
@@ -421,11 +412,9 @@ func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		}
 
 		if opts.ResumeSessionID != "" {
-			// session/resume, not session/load. Both restore the transcript
-			// into the agent and both answer a bare `{}`, but load also
-			// replays every retained message back to us as session/update
-			// notifications, so a resumed turn would re-emit the previous
-			// answer as its own output.
+			// 用 session/resume 而不是 session/load。两者都会把 transcript 恢复进 agent、
+			// 都回一个裸 `{}`；但 load 还会把每条留存的消息以 session/update 通知重放给
+			// 我们，于是续跑回合会把上一轮的回答当成自己的输出再发一遍。
 			result, err := c.request(runCtx, "session/resume", map[string]any{
 				"sessionId": opts.ResumeSessionID,
 			})
@@ -454,10 +443,9 @@ func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 				)
 			}
 		} else {
-			// mcpServers stays empty on purpose: ZeroClaw never reads it.
-			// agentAlias is omitted unless the operator named one — sending a
-			// guess would forfeit ZeroClaw's sole-agent auto-select and turn a
-			// working single-agent install into `Unknown agent`.
+			// mcpServers 有意留空：ZeroClaw 从不读它。
+			// agentAlias 只有操作员点名时才带上——发一个猜的值会丢掉 ZeroClaw 的
+			// 「单 agent 自动选择」，把本来能用的单 agent 安装变成 `Unknown agent`。
 			params := map[string]any{
 				"cwd":        cwd,
 				"mcpServers": []any{},
@@ -490,7 +478,7 @@ func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		}
 
 		c.sessionID = sessionID
-		// Early session pin so a cancelled run still preserves resume pointer.
+		// 尽早把会话 id 作为 MessageStatus 发出去，这样即使运行被取消，续跑指针也已保存。
 		msgStream.send(Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 		b.cfg.Logger.Info("zeroclaw session ready", "session_id", sessionID)
 
@@ -536,11 +524,10 @@ func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 				c.mergeUsage(pr.usage)
 			default:
 			}
-			// Give the stdout reader a bounded chance to consume notifications
-			// zeroclaw may emit just after session/prompt returns
-			// (agent_message_chunk, usage updates). Closing stdin at the
-			// response boundary otherwise races the reader and truncates the
-			// final text — the same race fixed for hermes/dim/grok.
+			// 给 stdout 读取者一个有界的时机去消费 zeroclaw 可能在 session/prompt 返回
+			// 之后紧接着发出的通知（agent_message_chunk、用量更新）。否则在响应边界处关闭
+			// stdin 会与读取者竞争，截断最终文本——这正是 hermes/dim/grok 修过的同一个
+			// 竞态。
 			waitForACPNotificationQuiescence(runCtx, activity, readerDone, zeroclawNotificationQuietTime, zeroclawReaderDrainGrace)
 		}
 
@@ -550,8 +537,8 @@ func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		stdin.Close()
 		cancel()
 
-		// ZeroClaw's ACP server may keep the process — and the stdout/stderr
-		// pipes — open briefly after session/prompt returns. Bound the drain.
+		// ZeroClaw 的 ACP 服务在 session/prompt 返回后可能还会让进程——连带 stdout/stderr
+		// 管道——多开一小会儿。给排空设个上界。
 		drainCtx, drainCancel := context.WithTimeout(context.Background(), zeroclawReaderDrainGrace)
 		select {
 		case <-readerDone:
@@ -566,19 +553,17 @@ func (b *zeroclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 
 		finalOutput, providerErrorOutput := deliverable.result()
 
-		// Promote completed→failed when stderr or the agent text stream show a
-		// terminal upstream-LLM failure (auth / rate-limit / HTTP 4xx). It reads
-		// the full text stream, not the deliverable, so a give-up turn that
-		// lands before a tool call stays visible.
+		// 当 stderr 或 agent 文本流出现上游 LLM 的终态失败（鉴权 / 限流 / HTTP 4xx）时，
+		// 把 completed 升级为 failed。这里读全文流而不是 deliverable，所以发生在工具调用
+		// 之前、直接放弃的回合也仍然可见。
 		finalStatus, finalError = promoteACPResultOnProviderError(finalStatus, finalError, providerErrorOutput, providerErr)
 
 		u := c.accumulatedUsage()
 
-		// ZeroClaw 0.8.4 reports no token counts over ACP — its prompt result
-		// is {sessionId, stopReason, content} — so usageMap stays nil today. If
-		// a later response reports usage without a per-turn model id, keep it
-		// under "unknown": initialize.defaultModel is process-global and can
-		// belong to a different agent alias.
+		// ZeroClaw 0.8.4 在 ACP 上不报 token 计数——它的 prompt 结果只有 {sessionId,
+		// stopReason, content}——所以今天 usageMap 保持 nil。若将来的响应报了用量却没有
+		// 每回合模型 id，就记到 "unknown" 名下：initialize.defaultModel 是全进程级的，
+		// 可能属于另一个 agent 别名，不可靠。
 		var usageMap map[string]TokenUsage
 		if acpUsagePresent(u) {
 			model := effectiveModel

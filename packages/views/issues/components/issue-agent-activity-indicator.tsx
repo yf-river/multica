@@ -19,72 +19,61 @@ import { useT } from "../../i18n";
 
 const EMPTY_GROUPS: IssueTaskGroups = { running: [], queued: [] };
 
-// Dwell threshold before the activity card opens (MUL-5189).
+// 活动卡打开前的驻留阈值（MUL-5189）。
 //
-// This badge is a passive cue riding on the right edge of dense scrolling
-// lists (inbox rows, issue rows, board cards), and it appears on every issue
-// an agent currently touches. Base UI's 600ms default is tuned for a hover
-// target the user aims at; here the pointer crosses the badge constantly on
-// its way to the row, the archive button, or the next row, so 600ms fires on
-// travel rather than on intent and a 288px card lands over the rows below.
+// 这个徽标是骑在密集滚动列表右缘（收件箱行、问题行、看板卡）的被动提示，
+// 且在每个 agent 正碰过的问题上都会出现。Base UI 600ms 默认值是针对
+// "用户瞄准的悬停目标"调的；这里指针前往行、归档按钮或下一行时总是会
+// 穿过徽标，600ms 会在"路过"而非"意图"时触发，288px 的卡片会盖住
+// 下面的行。
 //
-// 900ms sits past casual travel but still inside a deliberate "what is it
-// doing?" pause. The header chip (issue-agent-header-chip) keeps its 150ms
-// on purpose: it is one large chip the user aims at, not a per-row cue.
+// 900ms 落在随意路过之后、却又在一个有意的"它在干嘛？"停顿之内。头部
+// chip（issue-agent-header-chip）刻意保留 150ms：它是用户瞄准的一个大
+// chip，不是逐行提示。
 //
-// The card body is read-only — no links, no buttons — so there is no hover
-// bridge to protect and the close delay only needs to absorb pointer wobble
-// across the 4px gap.
+// 卡片正文只读——无链接、无按钮——所以没有悬停桥要保护，
+// 关闭延迟只需吸收越过 4px 缝隙的指针抖动。
 const OPEN_DELAY_MS = 900;
 const CLOSE_DELAY_MS = 150;
 
 interface IssueAgentActivityIndicatorProps {
   issueId: string;
-  // Avatar tier. Kept very small — this is a corner-of-card cue, not a
-  // primary control. Default xs (16 px) reads as a dot at typical board
-  // densities while still showing the agent's face on hover-zoom.
+  // 头像档位。保持很小——这是卡片角落的提示，不是主控件。
+  // 默认 xs（16px）在典型看板密度下读起来像个点，
+  // 但悬停放大时仍能看清 agent 的脸。
   size?: AvatarSize;
-  // Whether hovering opens the activity card. Opt OUT where the card's only
-  // incremental information is not worth a popup (Inbox — see below).
+  // 是否悬停打开活动卡。当卡片唯一增量信息不值得一个弹层时选择关闭
+  //（收件箱——见下）。
   hoverCard?: boolean;
 }
 
 /**
- * Small "is there an agent working on this issue right now" badge shown
- * in the top-right of board cards and right after the identifier in list
- * rows. Derives state from the workspace-wide agent task snapshot:
+ * 展示在看板卡右上角、列表行标识符正后方的小徽标："此刻有没有 agent 在这
+ * 条问题上干活"。状态派生自全工作区 agent 任务快照：
  *
- *   - has ≥1 running task  → tiny avatar stack + shimmering "Working"
- *   - 0 running, ≥1 queued → half-opacity stack + muted "Queued"
- *   - nothing               → return null (no chrome, no placeholder)
+ *   - 有 ≥1 运行中任务  → 小型头像堆叠 + 微光"Working"
+ *   - 0 运行、≥1 排队   → 半透明堆叠 + 弱化"Queued"
+ *   - 什么都没有          → 返回 null（无任何 UI 装饰或占位）
  *
- * The shimmer reuses chat's `animate-chat-text-shimmer` utility (defined
- * in packages/ui/styles/base.css). Earlier iterations layered a brand
- * ring + opacity pulse around the avatars; both read as nervous on a
- * dense board. Moving the "alive" signal onto the label keeps the
- * avatars themselves still and lets the cue ride a piece of text the
- * user can already read.
+ * 微光复用聊天的 `animate-chat-text-shimmer` 工具类（定义在
+ * packages/ui/styles/base.css）。早期版本在头像周围叠了品牌描边环 +
+ * 透明度脉冲；两者在密集看板上都读作焦躁。把"活着"信号挪到标签上，
+ * 让头像本身保持静止、让提示骑在一段用户本来就看得懂的文字上。
  *
- * Hover opens AgentActivityHoverContent which lists every active task
- * with status dot + duration. No link rows — the card itself is the
- * navigation target for issue detail.
+ * 悬停打开 AgentActivityHoverContent，列出每个活跃任务（状态点 + 时长）。
+ * 没有链接行——卡片本身就是跳转 issue detail 的导航目标。
  *
- * Surfaces that only need the cue can pass `hoverCard={false}` and get the
- * badge alone. Inbox does (MUL-5189): the badge already shows who is running
- * and whether they are working or queued, so on a triage surface the card's
- * only incremental fact is elapsed time — which never changes the one
- * decision an inbox row exists to support ("do I open this?"). Issue lists
- * and board cards keep it: monitoring work in flight is what those views are
- * for, and elapsed time is load-bearing there.
+ * 只需要提示的表面可传 `hoverCard={false}` 单拿徽标。收件箱就这么做
+ *（MUL-5189）：徽标已经显示谁在跑、在工作还是排队，所以对分诊表面而言
+ * 卡片的唯一增量信息是已耗时——而它从不会改变收件箱行存在的那个决策
+ *（"我要不要打开它？"）。问题列表与看板卡保留它：盯着在途工作正是那些
+ * 视图的用途，已耗时在那里承重。
  *
- * Subscribes to the one shared workspace snapshot query but narrows it to
- * this issue's tasks with a `select`. React Query's structural sharing keeps
- * that selected value referentially stable when this issue's tasks are
- * unchanged, so a snapshot invalidation (WS task:* events, driven by
- * use-realtime-sync) only re-renders the rows whose own tasks actually moved
- * — not the whole list. This is the de-amplification that keeps large issue
- * lists cheap when agents are busy (MUL-4474). 30s staleTime is the offline
- * fallback only.
+ * 订阅唯一一份共享工作区快照查询，但用 `select` 收窄到本问题的任务。
+ * React Query 的结构共享让该选中值在本问题任务未变时引用稳定——因此一次
+ * 快照失效（WS task:* 事件，由 use-realtime-sync 驱动）只会重渲染那些
+ * 自身任务真有动静的行，而不是整张列表。这正是 agent 繁忙时大问题列表
+ * 仍便宜的降幅机制（MUL-4474）。30s staleTime 只是离线兜底。
  */
 export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndicator({
   issueId,
@@ -103,9 +92,9 @@ export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndic
   });
 
   const { agentIds, opacity } = useMemo(() => {
-    // Stack heads: prefer running. If 0 running, fall back to queued.
-    // Each case is visually distinct (running gets shimmer, queued gets
-    // muted text) so the indicator always offers a face to hover.
+    // 头像堆叠取主角：优先 running；0 个 running 时退回 queued。
+    // 每种情形视觉都不同（running 带微光、queued 弱化文字），
+    // 所以指示器总能提供一张脸来悬停。
     const primary = groups.running.length > 0 ? groups.running : groups.queued;
     const uniqueAgents = [...new Set(primary.map((t) => t.agent_id))];
     return {
@@ -125,9 +114,8 @@ export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndic
         opacity={opacity}
         max={3}
       />
-      {/* No leading-none: the shimmer paints glyphs via background-clip:
-          text, and the background only covers the line box — a squeezed
-          line box leaves descenders transparent. */}
+      {/* 不要 leading-none：微光用 background-clip: text 给字形上色，
+          而背景只覆盖行盒——被压扁的行盒会让下伸部变透明。 */}
       <span
         className={cn(
           "text-micro",

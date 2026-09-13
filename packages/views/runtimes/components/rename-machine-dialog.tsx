@@ -1,3 +1,17 @@
+// ============================================================================
+// 机器重命名对话框（RenameMachineDialog）——给「整台机器」改名或清除名字
+//
+// 角色定位：机器详情页「重命名」按钮打开的 AlertDialog。一台 daemon 机器上每个
+// 厂商各跑一条 runtime，所以「改机器名」实际是把名字盖到这台 daemon 的全部
+// runtime 上（apply_to_machine），而不是只改其中一条——这正是第一版实现最让
+// 人困惑的地方，现在统一成机器级语义。
+//
+// 语义约定：
+//  - 输入留空 = 清除自定义名、回到设备默认名（成功 toast 文案与「改名」不同）。
+//  - 发请求用的 runtimeId 是「当前用户有权编辑的任意一条 runtime」；服务端负责
+//    把名字平铺到整台 daemon（云 worker 没有 daemon_id，就只改它自己——它自己
+//    就是一台机器）。
+// ============================================================================
 "use client";
 
 import { useEffect, useState } from "react";
@@ -11,23 +25,27 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { useT } from "../../i18n";
 
-// RenameMachineDialog names a whole machine (MUL-4217). A machine hosts one
-// runtime per provider, so the name is applied to every runtime on the daemon
-// (apply_to_machine) rather than to a single runtime — that was the confusing
-// part of the first cut. Clearing reverts to the device's default name.
-//
-// `runtimeId` is any runtime on the machine the current user is allowed to
-// edit; the server fans the name out across the daemon (or, for a cloud worker
-// with no daemon_id, just renames that one worker, which is its own machine).
 export interface RenameMachineDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   wsId: string;
   runtimeId: string;
-  /** The machine's current custom name, or "" when it still uses the default. */
+  /** 机器当前的自定义名；还没设过（用的是默认名）时为空串。 */
   currentName: string;
 }
 
+/**
+ * 机器重命名对话框：编辑整台机器在列表 / 详情里的显示名。
+ *
+ * @param open - 是否展示。
+ * @param onOpenChange - 开关回调（提交中会被忽略，防止中途关掉）。
+ * @param wsId - 工作区 id。
+ * @param runtimeId - 这台机器上任一当前用户可编辑的 runtime id（改名的载体）。
+ * @param currentName - 当前的机器自定义名，作为输入框初值。
+ *
+ * 提交即把 custom_name 以 apply_to_machine=true 写上去（机器级铺开）；输入清空
+ * 则清除自定义名、回到默认。
+ */
 export function RenameMachineDialog({
   open,
   onOpenChange,
@@ -41,8 +59,7 @@ export function RenameMachineDialog({
   const [value, setValue] = useState(currentName);
   const submitting = updateRuntime.isPending;
 
-  // Reset the form each time the dialog opens so a cancelled edit doesn't leak
-  // into the next one.
+  // 每次打开都重置成当前名字：取消编辑后残留的半截输入不会漏进下一次。
   useEffect(() => {
     if (open) setValue(currentName);
   }, [open, currentName]);
@@ -57,8 +74,8 @@ export function RenameMachineDialog({
     updateRuntime.mutate(
       {
         runtimeId,
-        // Empty string clears the name (reverts to the default); the machine
-        // fan-out is always on — this dialog only ever names the machine.
+        // 空串 = 清除名字（回到默认）；apply_to_machine 恒为 true——这个对话框
+        // 只会「改机器」，不存在只改单条 runtime 的路径。
         patch: { custom_name: trimmed, apply_to_machine: true },
       },
       {

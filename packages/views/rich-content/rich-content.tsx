@@ -1,28 +1,25 @@
 "use client";
 
 /**
- * RichContent — the ONE product-level readonly content renderer (MUL-4922).
+ * 富文本模块：RichContent——产品级唯一的只读内容渲染器（MUL-4922）。
  *
- * Chat (user message, live assistant, persisted assistant, timeline text),
- * Issue descriptions and Comments all render through this component. There is
- * no second product Markdown renderer: `packages/ui/markdown` stays a generic
- * primitive for terminal/raw output and must not grow product concerns
- * (Mention, Attachment, Mermaid, HTML preview) again.
+ * Chat（用户消息、live assistant、persisted assistant、时间线文本）、issue
+ * 描述和评论都通过这个组件渲染。产品里没有第二个 Markdown 渲染器：
+ * `packages/ui/markdown` 仍然是一个面向终端/原始输出的通用原语，绝不能
+ * 再长回产品关注点（Mention、Attachment、Mermaid、HTML 预览）。
  *
- * Surfaces differ only in the shell they wrap around this component:
- *   - Comment / Issue: edit, reply, menu, thread chrome — outside.
- *   - Chat: timeline, thinking, tool, failure, copy chrome — outside.
+ * 界面之间的差异只在于它们包在这个组件外面的外壳：
+ *   - 评论 / issue：编辑、回复、菜单、串线 chrome——都在外面。
+ *   - Chat：时间线、思考、工具、失败、复制 chrome——都在外面。
  *
- * The public API is deliberately narrow. There is no `surface` prop, no
- * `renderMention` override and no custom code-renderer escape hatch: each of
- * those is a door through which a per-surface fork walks back in. Link,
- * mention and attachment behaviour is decided here, once.
+ * 公共 API 刻意收窄。没有 `surface` prop、没有 `renderMention` 覆盖、没有
+ * 自定义代码渲染器的逃生门：每一个都是一扇让「按界面分叉」走回来的门。
+ * 链接、提及和附件行为只在这里决定一次。
  *
- *   density — CSS only. Never switches parser, plugins, components map or the
- *             semantic DOM; `compact` and `document` produce the same blocks.
- *   phase   — lifecycle only. Does NOT decide whether a fence upgrades; that is
- *             the fence's real closed state (see streaming-fence.ts), so a
- *             settled-but-malformed fence still renders as source.
+ *   density——仅 CSS。从不切换解析器、插件、组件映射或语义 DOM；`compact`
+ *             和 `document` 产出相同的块。
+ *   phase——仅生命周期。不决定围栏是否升级；那取决于围栏真实的闭合状态
+ *           （见 streaming-fence.ts），所以一个已了结但畸形的围栏仍渲染为源码。
  */
 
 import { createContext, isValidElement, memo, useContext, useMemo, useRef } from "react";
@@ -80,37 +77,38 @@ import "katex/dist/katex.min.css";
 import "../editor/styles/index.css";
 import "./rich-content.css";
 
+/** 内容渲染密度：紧凑 / 文档。 */
 export type RichContentDensity = "compact" | "document";
+/** 内容生命周期阶段：流式传输中 / 已稳定。 */
 export type RichContentPhase = "streaming" | "settled";
 
 // ---------------------------------------------------------------------------
-// Fence gate context
+// 围栏闸门 context
 // ---------------------------------------------------------------------------
 //
-// The closed-fence offsets travel by context rather than by rebuilding the
-// components map. The map must stay referentially stable: react-markdown
-// re-runs the whole subtree when `components` changes identity, which rewrites
-// every highlighted <code>'s innerHTML and collapses an active text selection
-// inside a code block (MUL-3621).
+// 已闭合围栏的偏移量通过 context 传递，而不是重建 components 映射。映射必须
+// 保持引用稳定：`components` 身份变化时 react-markdown 会重跑整个子树，
+// 那会重写每个高亮 `<code>` 的 innerHTML，并折叠代码块里激活的文本选区
+// （MUL-3621）。
 
 const ClosedFenceContext = createContext<ReadonlySet<number>>(new Set<number>());
 
+/** 判断某个源偏移量对应的围栏是否已闭合。 */
 function useIsFenceClosed(offset: number | undefined): boolean {
   const closed = useContext(ClosedFenceContext);
-  // An offset-less node cannot be matched to a source fence; refusing to
-  // upgrade is the safe direction (source instead of a possibly partial block).
+  // 没有偏移量的节点无法匹配到源码围栏；拒绝升级是安全方向（展示源码
+  // 而不是可能残缺的块）。
   return offset != null && closed.has(offset);
 }
 
 // ---------------------------------------------------------------------------
-// Mention / link renderers
+// Mention / 链接渲染器
 // ---------------------------------------------------------------------------
 
 /**
- * Issue mention chip. Navigation — plain click, modifier click, and the
- * "open issue links in new tab" preference — is owned by the AppLink inside
- * IssueMentionCard; the wrapper only shields surrounding click handlers
- * (e.g. collapsed-comment expanders) from mention clicks.
+ * Issue 提及小卡片。导航——普通点击、修饰键点击、以及「在新标签页打开
+ * issue 链接」偏好——由 IssueMentionCard 内部的 AppLink 负责；这个包装层
+ * 只是把周边点击处理器（比如折叠评论的展开器）与提及点击隔离开。
  */
 function IssueMentionLink({ issueId, label }: { issueId: string; label?: string }) {
   return (
@@ -121,20 +119,17 @@ function IssueMentionLink({ issueId, label }: { issueId: string; label?: string 
 }
 
 /**
- * An issue addressed by identifier (e.g. `MUL-123`) rather than by UUID.
- * Resolves it against the current workspace and renders a navigable mention on
- * a hit.
+ * 用标识符（如 `MUL-123`）而非 UUID 寻址的 issue。对它相对当前工作区解析，
+ * 命中时渲染一个可导航的提及。
  *
- * Two entry points reach this, and they need DIFFERENT misses, which is why the
- * fallback is a prop rather than baked in:
- *   - the autolink preprocessor, which routes bare prose through
- *     `mention://issue/<identifier>` — a miss must go back to being the plain
- *     text the author typed;
- *   - a bare in-app issue URL, whose miss must stay the original anchor. The
- *     author wrote a link; degrading it to text would strip a working link off
- *     an issue this workspace simply cannot see.
+ * 有两条入口到达这里，它们需要*不同*的未命中行为，所以兜底做成 prop 而不是
+ * 写死：
+ *   - 自动链接预处理器，把裸文本路由成 `mention://issue/<identifier>`——
+ *     未命中必须退回作者输入的纯文本；
+ *   - 裸的应用内 issue URL，未命中必须保留原始锚点。作者写的是链接；把它
+ *     降级成文本，会从一个本工作区看不见的 issue 上剥掉一个能用的链接。
  *
- * A miss covers not-found, still-loading, and cross-workspace alike.
+ * 未命中统一覆盖「未找到、仍在加载、跨工作区」三种情况。
  */
 function IdentifierIssueMentionLink({
   identifier,
@@ -149,10 +144,9 @@ function IdentifierIssueMentionLink({
 }
 
 /**
- * Project mention chip. Navigation and accessibility are owned by the AppLink
- * inside ProjectMentionCard; the wrapper only shields surrounding click
- * handlers (e.g. collapsed-comment expanders) from mention clicks — the same
- * shape as IssueMentionLink above.
+ * 项目提及小卡片。导航和无障碍由 ProjectMentionCard 内部的 AppLink 负责；
+ * 这个包装层只是把周边点击处理器（比如折叠评论的展开器）与提及点击隔离开
+ * ——形状和上面的 IssueMentionLink 一样。
  */
 function ProjectMentionLink({ projectId, label }: { projectId: string; label?: string }) {
   return (
@@ -169,25 +163,23 @@ function childrenToLabel(children: ReactNode): string | undefined {
 }
 
 /**
- * Decide whether a link should render as an entity chip instead of a raw URL.
+ * 判断一个链接是否应渲染成实体小卡片而不是裸 URL。
  *
- * Pasting a link copied out of the app is how people reference a project:
- * projects carry only a UUID and a free-text title, so unlike an issue they have
- * no `MUL-123` shorthand for the autolink preprocessor to detect — the URL IS
- * the reference. Rendering it as the same chip the `mention://project/<uuid>`
- * form produces closes that gap without inventing a new text form. Issue URLs
- * go through the same path for symmetry.
+ * 粘贴从应用里复制出来的链接，是人们引用一个项目的方式：项目只带 UUID 和
+ * 自由文本标题，所以不像 issue 那样有 `MUL-123` 缩写供自动链接预处理器
+ * 检测——URL 本身就是引用。把它渲染成与 `mention://project/<uuid>` 形式
+ * 相同的小卡片，就能弥合这个缺口而不必发明新的文本形式。issue URL 也走
+ * 同一路径以保持对称。
  *
- * Three conditions, each load-bearing:
- *   - BARE: the visible text is the URL itself, which is what the linkify
- *     preprocessor emits for a pasted URL. `[路线图](…/projects/<id>)` carries a
- *     label the author chose, and replacing it with a chip would discard it.
- *   - SAME WORKSPACE: a chip resolves its title against the CURRENT workspace,
- *     so unfurling a link into another workspace would turn a working link into
- *     a permanently empty chip. A slug-less path is current-workspace already.
- *   - Whatever `parseWorkspaceEntityLink` enforces: an exact entity route, an id
- *     that addresses one entity (a UUID, or an issue identifier), and no query
- *     string or fragment.
+ * 三个条件，每个都承重：
+ *   - BARE（裸）：可见文本就是 URL 本身，这正是 linkify 预处理器对粘贴 URL
+ *     的产物。`[路线图](…/projects/<id>)` 带的是作者选的标签，用小卡片替换
+ *     它会丢掉它。
+ *   - SAME WORKSPACE（同工作区）：小卡片相对*当前*工作区解析标题，所以把
+ *     链接展开到另一个工作区，会把能用的链接变成永久空的小卡片。无 slug
+ *     的路径本身就已经是当前工作区。
+ *   - `parseWorkspaceEntityLink` 强制的约束：精确的实体路由、只寻址一个
+ *     实体的 id（UUID 或 issue 标识符）、且没有查询串或片段。
  */
 function unfurlableEntityLink(
   href: string,
@@ -212,8 +204,8 @@ function RichLink({ href, children }: { href?: string; children?: ReactNode }) {
   if (isMentionHref(href)) {
     const match = href.match(/^mention:\/\/(member|agent|issue|project|all)\/(.+)$/);
     if (match?.[1] === "issue" && match[2]) {
-      // A bare identifier (from the autolink preprocessor) is carried as the id
-      // segment; a real mention carries a UUID. Dispatch on the id shape.
+      // 裸标识符（来自自动链接预处理器）以 id 段的形式携带；真正的提及
+      // 携带 UUID。根据 id 形状分发。
       if (isIssueIdentifier(match[2])) {
         return (
           <IdentifierIssueMentionLink
@@ -227,14 +219,12 @@ function RichLink({ href, children }: { href?: string; children?: ReactNode }) {
     if (match?.[1] === "project" && match[2]) {
       return <ProjectMentionLink projectId={match[2]} label={childrenToLabel(children)} />;
     }
-    // Member / agent / all mentions
+    // Member / agent / all 提及
     return <span className="mention">{children}</span>;
   }
 
-  // Regular link — open directly on click. A URL pointing back at this
-  // deployment routes in-app rather than out to the browser. Built first
-  // because it is also what an unfurl falls back to when the entity behind the
-  // URL cannot be resolved.
+  // 普通链接——点击直接打开。指向本部署的 URL 在应用内路由，而不是跳到
+  // 浏览器。先构建它，是因为当 URL 背后的实体解析不出时，展开也回退到它。
   const plainLink = (
     <a
       href={href}
@@ -252,13 +242,13 @@ function RichLink({ href, children }: { href?: string; children?: ReactNode }) {
     </a>
   );
 
-  // A bare in-app entity URL renders as the chip its mention form would.
+  // 裸的应用内实体 URL 渲染成它的提及形式会有的小卡片。
   const entity = href
     ? unfurlableEntityLink(href, children, slug, appOrigin)
     : null;
   if (entity?.kind === "issue") {
-    // `MUL-123` is the shape "Copy link" produces, so it is the shape most
-    // pasted issue URLs carry; it needs a lookup, and keeps the link on a miss.
+    // `MUL-123` 是「复制链接」产出的形状，所以大多数粘贴的 issue URL 都带
+    // 它；它需要一次查找，未命中时保留链接。
     return isIssueIdentifier(entity.id) ? (
       <IdentifierIssueMentionLink identifier={entity.id} fallback={plainLink} />
     ) : (
@@ -286,43 +276,41 @@ function getTextContent(node: ReactNode): string {
   return "";
 }
 
-// Props react-markdown actually passes to a component override: the intrinsic
-// element's own props plus the source hast node (`ExtraProps`). Deriving them
-// keeps the renderers checked against react-markdown's real contract instead of
-// a hand-written approximation that a cast would have to silence.
+// react-markdown 实际传给组件覆盖的 props：内置元素自身的 props 加上源码
+// hast 节点（`ExtraProps`）。从它们推导能让渲染器对照 react-markdown 的
+// 真实契约检查，而不是手写一个近似、再用强转去掩盖。
 type RichCodeProps = ComponentPropsWithoutRef<"code"> & ExtraProps;
 type RichPreProps = ComponentPropsWithoutRef<"pre"> & ExtraProps;
 
 /**
- * Source offset of a hast node, narrowed in one place. Offsets are how a
- * rendered block is matched back to its fence in the processed Markdown (see
- * streaming-fence.ts); a node without position cannot be matched.
+ * 取一个 hast 节点的源码偏移量，集中在这里收窄。偏移量是把渲染出的块匹配
+ * 回处理后 Markdown 里对应围栏的方式（见 streaming-fence.ts）；没有 position
+ * 的节点无法匹配。
  */
 function nodeStartOffset(node: ExtraProps["node"]): number | undefined {
   return node?.position?.start.offset;
 }
 
 /**
- * Reads a hast element property as a string. hast property values are a union
- * (string | number | boolean | array | null), so this narrows at runtime rather
- * than asserting — a `data-*` attribute that is not a string yields "" instead
- * of a value that lies about its type.
+ * 把 hast 元素属性读成字符串。hast 属性值是联合类型（string | number |
+ * boolean | array | null），所以这里在运行时收窄而不是断言——非字符串的
+ * `data-*` 属性返回 ""，而不是一个谎报类型的值。
  */
 function stringProperty(node: ExtraProps["node"], key: string): string {
   const value = node?.properties?.[key];
   return typeof value === "string" ? value : "";
 }
 
+/** 判断节点是否跨多行。 */
 function isMultiLineNode(node: ExtraProps["node"]): boolean {
   const position = node?.position;
   return position != null && position.start.line !== position.end.line;
 }
 
 /**
- * `code` renderer. Returns the rich leaf directly for an upgraded fence and
- * relies on the `pre` renderer below to unwrap it — react-markdown otherwise
- * wraps `code` children in a `<pre>` whose monospace/overflow styles clamp a
- * diagram or preview iframe.
+ * `code` 渲染器。对升级围栏直接返回富叶子，并依赖下面的 `pre` 渲染器把它
+ * 解包——否则 react-markdown 会把 `code` 子内容包进一个 `<pre>`，其等宽/
+ * 溢出样式会夹住图表或预览 iframe。
  */
 function RichCode({ className, children, node, ...props }: RichCodeProps) {
   const language = /language-(\w+)/.exec(className || "")?.[1];
@@ -330,15 +318,15 @@ function RichCode({ className, children, node, ...props }: RichCodeProps) {
   const isFenceClosed = useIsFenceClosed(nodeStartOffset(node));
 
   if (isBlock && shouldUpgradeFence(language, isFenceClosed)) {
-    // isRichFenceLanguage is re-checked for the type narrow; shouldUpgradeFence
-    // already required it.
+    // 再次检查 isRichFenceLanguage 是为了类型收窄；shouldUpgradeFence 已经
+    // 要求过它了。
     if (isRichFenceLanguage(language)) {
       return <RichFenceBlock language={language} body={String(children).replace(/\n$/, "")} />;
     }
   }
 
   if (!isBlock && !language) {
-    // Inline code — CSS handles styling via .rich-text-editor code
+    // 行内代码——样式交给 .rich-text-editor code 处理。
     return <code {...props}>{children}</code>;
   }
 
@@ -346,9 +334,9 @@ function RichCode({ className, children, node, ...props }: RichCodeProps) {
 }
 
 /**
- * Reads the language token and source offset from the `<code>` element that
- * react-markdown hands to a `pre` override. `isValidElement`'s type parameter
- * narrows the child's props, so no cast is needed to reach `node`.
+ * 从 react-markdown 交给 `pre` 覆盖的 `<code>` 元素里读出语言 token 和源码
+ * 偏移量。`isValidElement` 的类型参数收窄了子元素的 props，所以无需强转
+ * 就能拿到 `node`。
  */
 function readFencedCodeChild(children: ReactNode): {
   language?: string;
@@ -357,26 +345,24 @@ function readFencedCodeChild(children: ReactNode): {
   const child = Array.isArray(children) ? children[0] : children;
   if (!isValidElement<{ className?: string } & ExtraProps>(child)) return {};
   return {
-    // Whole class token only: `language-htmlbars` must not read as `html`.
+    // 只匹配完整 class token：`language-htmlbars` 不能被读成 `html`。
     language: /(?:^|\s)language-(\w+)(?:\s|$)/.exec(child.props.className ?? "")?.[1],
     offset: nodeStartOffset(child.props.node),
   };
 }
 
 /**
- * `pre` renderer. react-markdown calls this BEFORE invoking the `code`
- * renderer, so `children` is the unrendered `<code>` element from the AST: the
- * decision to unwrap is made from that child's own hast node (class token +
- * source offset), not by checking `children.type === MermaidDiagram`, which
- * never matches.
+ * `pre` 渲染器。react-markdown 在调用 `code` 渲染器*之前*调用它，所以
+ * `children` 是 AST 里尚未渲染的 `<code>` 元素：解包决策由那个子元素自己的
+ * hast 节点（class token + 源码偏移量）做出，而不是检查
+ * `children.type === MermaidDiagram`——那个永远不匹配。
  */
 function RichPre({ children }: RichPreProps) {
   const { language, offset } = readFencedCodeChild(children);
   const isFenceClosed = useIsFenceClosed(offset);
 
-  // Upgraded fences escape the <pre><code> envelope entirely. An OPEN
-  // mermaid/html fence deliberately falls through to the normal code shell, so
-  // a half-streamed diagram reads as ordinary source with copy chrome.
+  // 升级围栏完全逃出 <pre><code> 外壳。未闭合的 mermaid/html 围栏刻意
+  // 落到普通代码外壳，这样流式传输到一半的图显示为带复制 chrome 的普通源码。
   if (shouldUpgradeFence(language, isFenceClosed)) {
     return <>{children}</>;
   }
@@ -391,18 +377,15 @@ function RichPre({ children }: RichPreProps) {
   );
 }
 
-// The components map is module-level and static: it never depends on density,
-// phase or the fence gate, so its identity is stable for the lifetime of the
-// app and react-markdown can bail out of unchanged subtrees.
+// components 映射是模块级且静态的：它从不依赖 density、phase 或围栏闸门，
+// 所以它的身份在应用整个生命周期里稳定，react-markdown 能跳过未变化的子树。
 const COMPONENTS: Partial<Components> = {
   a: RichLink,
 
-  // Images — unified through <Attachment>. The resolver context provided by
-  // AttachmentDownloadProvider turns a CDN URL into a full record when
-  // possible; external URLs render as plain images with lightbox-via-preview
-  // -modal. forceKind is mandatory: markdown `![]()` carries no content-type
-  // and alt is commonly empty, so without it images fall through to file-card
-  // chrome.
+  // 图片——统一通过 <Attachment>。AttachmentDownloadProvider 提供的解析
+  // context 会尽可能把 CDN URL 转成完整记录；外部 URL 渲染为普通图片，带
+  // 预览弹窗的 lightbox。forceKind 是必须的：markdown `![]()` 不带内容类型，
+  // alt 通常也是空的，没有它图片会落到文件卡片的 chrome 上。
   img: ({ src, alt }) => (
     <AttachmentRenderer
       attachment={{
@@ -414,7 +397,7 @@ const COMPONENTS: Partial<Components> = {
     />
   ),
 
-  // FileCard — intercept <div data-type="fileCard"> from preprocessMarkdown
+  // FileCard——拦截 preprocessMarkdown 产出的 <div data-type="fileCard">。
   div: ({ node, children, ...props }) => {
     if (stringProperty(node, "dataType") === "fileCard") {
       const rawHref = stringProperty(node, "dataHref");
@@ -432,7 +415,7 @@ const COMPONENTS: Partial<Components> = {
     return <div {...props}>{children}</div>;
   },
 
-  // Tables — wrap in tableWrapper div for border/radius/scroll (matches Tiptap)
+  // 表格——包进 tableWrapper div 以获得边框/圆角/滚动（与 Tiptap 一致）。
   table: ({ children }) => (
     <div className="tableWrapper">
       <table>{children}</table>
@@ -443,9 +426,8 @@ const COMPONENTS: Partial<Components> = {
   pre: RichPre,
 };
 
-// `satisfies` rather than a cast: the plugin lists are still checked against
-// react-markdown's own option types, so a bad plugin tuple fails here instead of
-// being silenced.
+// 用 `satisfies` 而不是强转：插件列表仍对照 react-markdown 自身的选项类型
+// 检查，所以错误的插件元组会在这里失败，而不是被掩盖掉。
 const REMARK_PLUGINS = [
   [remarkMath, { singleDollarTextMath: false }],
   remarkBreaks,
@@ -464,28 +446,28 @@ const REHYPE_PLUGINS = [
 // Component
 // ---------------------------------------------------------------------------
 
+/** RichContent 组件的属性。 */
 export interface RichContentProps {
   content: string;
   /**
-   * Attachments associated with the surrounding entity (comment / issue body /
-   * chat message). Inline `<img>` and file-card URLs matching one of these get
-   * their download URL re-signed at click time instead of using the possibly
-   * stale link embedded in the markdown.
+   * 与周边实体（评论 / issue 正文 / 聊天消息）关联的附件。与其中某个匹配的
+   * 行内 `<img>` 和文件卡片 URL，会在点击时重新签名下载 URL，而不是用可能
+   * 已过期的、内嵌在 markdown 里的链接。
    *
-   * Callers SHOULD pass a stable reference; a fresh array on every parent
-   * render busts the memo.
+   * 调用方应传稳定引用；每次父级渲染都新建数组会破坏 memo。
    */
   attachments?: Attachment[];
-  /** CSS density only — never changes the semantic DOM. */
+  /** 仅 CSS 密度——从不改变语义 DOM。 */
   density?: RichContentDensity;
   /**
-   * Streaming lifecycle. Does not gate fence upgrades (closedness does); it
-   * exists so surfaces can express that content is still arriving.
+   * 流式生命周期。不门控围栏升级（由闭合状态负责）；它存在是为了让界面能
+   * 表达「内容仍在到达」。
    */
   phase?: RichContentPhase;
   className?: string;
 }
 
+/** 产品级只读内容渲染器组件，用 memo 包裹避免无关重渲染。 */
 export const RichContent = memo(function RichContent({
   content,
   attachments,
@@ -493,12 +475,10 @@ export const RichContent = memo(function RichContent({
   phase = "settled",
   className,
 }: RichContentProps) {
-  // Subscribed, not read once. The CDN config is fetched asynchronously after
-  // auth, so content that renders first would otherwise keep its legacy CDN
-  // links as plain anchors permanently — the preprocess step that turns them
-  // into file cards had already run against an empty domain and nothing would
-  // re-run it. Subscribing puts the value in the memo dependencies below, so a
-  // late config arrival reprocesses exactly once.
+  // 订阅而不是读一次。CDN 配置在认证后异步拉取，所以先渲染的内容否则会
+  // 把它的旧 CDN 链接永久保留为普通锚点——把它们转成文件卡片的 preprocess
+  // 步骤已经对着空域名跑过了，再没有东西会重跑它。订阅把值放进下面 memo
+  // 的依赖里，这样配置迟到时正好重处理一次。
   const cdnDomain = useConfigStore((s) => s.cdnDomain);
 
   const processed = useMemo(
@@ -509,21 +489,20 @@ export const RichContent = memo(function RichContent({
     [content, cdnDomain],
   );
 
-  // Derived from the SAME string handed to ReactMarkdown, so offsets line up
-  // with the hast node positions the `code`/`pre` renderers observe. Computing
-  // it from the raw pre-preprocess text would mis-match every rewritten node.
+  // 从交给 ReactMarkdown 的*同一个*字符串推导，这样偏移量与 `code`/`pre`
+  // 渲染器观察到的 hast 节点位置对齐。若从 pre-preprocess 原始文本计算，
+  // 会与每个被改写的节点错位。
   const closedFences = useMemo(() => computeClosedFenceOffsets(processed), [processed]);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const hover = useLinkHover(wrapperRef);
 
-  // Memoize the react-markdown subtree on its only real inputs. Unrelated
-  // parent re-renders (a sibling agent task streaming over WebSocket fires one
-  // every ~100ms) would otherwise re-run react-markdown, which hands `<code>` a
-  // fresh `dangerouslySetInnerHTML` object each time; React then rewrites the
-  // highlighted innerHTML even though the string is byte-identical, tearing
-  // down every hljs <span> and collapsing any active text selection inside a
-  // code block (MUL-3621). A stable element reference lets React bail out.
+  // 只在真正输入变化时 memo 化 react-markdown 子树。无关的父级重渲染（兄弟
+  // agent 任务通过 WebSocket 流式传输，约每 100ms 触发一次）否则会重跑
+  // react-markdown，每次都交给 `<code>` 一个全新的 `dangerouslySetInnerHTML`
+  // 对象；React 于是重写高亮 innerHTML，哪怕字符串逐字节相同，从而拆掉每个
+  // hljs <span> 并折叠代码块里激活的文本选区（MUL-3621）。稳定的元素引用
+  // 让 React 能跳过。
   const markdown = useMemo(
     () => (
       <ClosedFenceContext.Provider value={closedFences}>

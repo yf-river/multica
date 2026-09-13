@@ -1,9 +1,7 @@
+// markdown.go —— 防止「成员写的话」变成「机器人像亲手写的」那种 markdown。
+// 收件箱卡片（inbox_message.go）和 /issue 确认（replier.go）共用本文件，两者都
+// 会把别人的话拼进一条以机器人名义发出的消息里。
 package wecom
-
-// markdown.go — keeping member-authored text from becoming markdown the bot
-// appears to have written. Shared by the inbox card (inbox_message.go) and the
-// /issue confirmation (replier.go), both of which splice someone else's words
-// into a message that goes out under the bot's name.
 
 import (
 	"strings"
@@ -12,148 +10,118 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 )
 
-// breakMemberLinks is what every caller splicing member-authored text into a
-// bot-signed message runs it through. Both breaks below are needed and they
-// close different constructs, so they live behind one entry point: a call site
-// cannot take one and forget the other.
+// breakMemberLinks 是每个「把成员文本拼进机器人署名消息」的调用方都要过的一道
+// 工序。下面两种打断都需要、各自关掉不同的构造，所以收拢在同一个入口后面：调用
+// 点没法只取其一、忘了另一个。
 //
-// Both are pure insertions of a single space, so the two orders agree and the
-// pair is idempotent: neither can produce the pattern the other looks for.
+// 两者都只是插入一个空格，所以两个顺序结果一致、且这对操作幂等：谁都不会再产
+// 生对方要找的那种模式。
 func breakMemberLinks(s string) string {
 	return breakLinkReferenceDefinitions(breakLinkAdjacency(s))
 }
 
-// breakLinkAdjacency stops member-authored text from forming a markdown link
-// in a message the bot signs. An issue titled
-// "[click here](http://evil.example)" otherwise arrives as a working link
-// inside a card the recipient has every reason to trust: it is delivered by
-// the bot, and nothing in it marks which parts are quoted from a user.
+// breakLinkAdjacency 阻止成员文本在机器人署名的消息里拼成一条 markdown 链接。
+// 名为 "[click here](http://evil.example)" 的任务，否则就会以「可点击链接」的形
+// 态出现在一张接收方完全有理由信任的卡片里：卡片由机器人投递，而里面没有任何
+// 东西标出哪些部分是从某个用户引用的。
 //
-// It separates rather than escapes. A link is only formed when "]" and "(" are
-// adjacent — CommonMark requires the link text to be followed *immediately* by
-// "(", and the naive `\[([^\]]+)\]\(([^)]+)\)` rewriters that stand in for a
-// real parser require it too. Image syntax "![x](u)" needs the same adjacency,
-// so it is covered by the same rule. One plain space between them is enough,
-// and it is the only edit made: text that does not contain "](" comes back
-// byte-identical, so the common "[Bug] 登录失败" title is untouched.
+// 它做「拆开」而不是「转义」。链接只在 "]" 与 "(" 相邻时成形——CommonMark 要求
+// 链接文字后面必须*立刻*接 "("，而那种用 `\[([^\]]+)\]\(([^)]+)\)` 正则冒充真
+// 解析器的改写器同样有这个要求。图片语法 "![x](u)" 需要同样的相邻，所以被同一
+// 条规则覆盖。二者之间插入一个普通空格就够，而且这是唯一做的改动：不含 "]("
+// 的文本原样返回（逐字节一致），所以常见的 "[Bug] 登录失败" 这类标题不被碰。
 //
-// The space is confirmed on the real renderer, not inferred: sent on its own,
-// "[重置密码] (https://evil.example)" came back as plain black text with both
-// brackets intact and the parenthesised URL not consumed as a destination.
+// 空格效果是在真实渲染器上确认的，不是推断出来的：单独发 "[重置密码]
+// (https://evil.example)" 回来是纯黑文本，两个方括号都还在，括号里的 URL 也没
+// 被当作目标地址消费掉。
 //
-// Backslash escaping was tried first and is unusable here. On a live tenant
-// "\[Bug\]" came back as an italic serif "Bug" with the brackets gone, which
-// is how a display-math block renders — the mechanism is inferred from the
-// rendering, no WeCom doc describes it — and the conversation-list preview,
-// which renders no markdown at all, showed the backslashes raw. So this
-// function must never emit a backslash: it would either be visible or pull
-// member text into a math block, and an unpaired "[" in a title would open one
-// that never closes.
+// 反斜杠转义是第一个试的方案，在这里没法用。真租户上 "\[Bug\]" 回来变成了无衬
+// 线斜体 "Bug"、括号没了——那是数学展示块（display-math）的渲染方式；这个机制
+// 是从渲染结果反推出来的，没有任何企微文档描述它——而会话列表预览根本不渲染
+// markdown，把反斜杠原样露了出来。所以本函数绝不能吐反斜杠：它要么被看见，要
+// 么把成员文本拽进数学块；而标题里一个不成对的 "[" 会开出一个永不闭合的块。
 //
-// Two properties the callers rely on:
+// 调用方依赖的两条性质：
 //
-//   - The inserted space can never begin a line. A "]" always precedes it on
-//     the same line, so it cannot open an indented code block or turn into a
-//     trailing hard-break.
-//   - It adds one rune per occurrence, so callers that budget a length cap
-//     must call it before measuring, not after.
+//   - 插入的空格永远不会成为行首。它前面同一行总有 "]" 顶着，所以不会开启缩进
+//     代码块、也不会变成行尾硬换行。
+//   - 每出现一次就多一个 rune，所以做长度预算的调用方必须先调它再量长度，不能
+//     倒过来。
 //
-// What it does not cover. A bare URL is still auto-linkified by the client —
-// observed, and out of scope: a bare URL displays its own destination, and the
-// attack being closed is a label claiming to go somewhere it does not. Inline
-// HTML is inert here, also observed: `<a href="https://evil.example">重置密码</a>`
-// arrived as plain black text. The one construct that does reach a working
-// link without "](" is a CommonMark link reference definition, and this
-// renderer resolves those — see breakLinkReferenceDefinitions.
+// 它不覆盖的：裸 URL 仍会被客户端自动链接化——实测如此，且不在范围内：裸 URL
+// 展示的就是它自己的目的地，而本要堵的攻击是「一个声称去哪、实际不去的标签」。
+// 内联 HTML 在这里是惰性的，也实测过：`<a href="https://evil.example">重置密
+// 码</a>` 到达时是纯黑文本。唯一不带 "](" 也能变成真链接的构造是 CommonMark 的
+// 链接引用定义——而这个渲染器会解析它们——见 breakLinkReferenceDefinitions。
 func breakLinkAdjacency(s string) string {
 	return channel.BreakMarkdownLinkAdjacency(s)
 }
 
-// breakLinkReferenceDefinitions stops member-authored text from *defining* a
-// link the bot's card then resolves. Pushed through a live tenant, a comment
-// body containing
+// breakLinkReferenceDefinitions 阻止成员文本去*定义*一个随后由机器人卡片解析的
+// 链接。经真租户实测，一段包含
 //
 //	[重置密码]: https://evil.example
 //	[重置密码]
 //
-// came back with the first line gone — swallowed as a definition — and the
-// second rendered as a blue underlined link to evil.example. Nothing in it is
-// adjacent, so breakLinkAdjacency passes the whole attack through untouched.
-// Killing the definition kills the shortcut "[label]", the collapsed
-// "[label][]" and the full "[text][label]" alike: all three resolve through
-// the same map, and with no definition in the message none of them can.
+// 的评论正文回来时第一行消失了——被当作定义吞掉——第二行渲染成指向
+// evil.example 的蓝色下划线链接。里面没有任何相邻的字符，所以 breakLinkAdjacency
+// 会把整个攻击原样放行。杀掉定义就同时杀掉了快捷写法 "[label]"、折叠写法
+// "[label][]" 和完整写法 "[text][label]"：三者都经同一张表解析，消息里没有定义，
+// 它们谁都解析不出来。
 //
-// # The rule
+// # 规则
 //
-// A "]" is separated from the ":" that follows it when all three hold:
+// 以下三条同时成立时，把 "]" 和紧随其后的 ":" 拆开：
 //
-//  1. Only block scaffolding precedes the opening "[" on its line —
-//     indentation, ">" blockquote markers, list bullets. Necessary, not
-//     decorative: a definition inside a blockquote or a list item still
-//     populates the whole document's reference map and resolves outside it.
-//  2. The brackets form a CommonMark link label: closed by the first
-//     unescaped "]", no unescaped "[" inside, at least one non-whitespace
-//     character, at most 999. The label may span lines and still resolve, so
-//     the scan does too.
-//  3. What follows the colon is plausibly a link *destination* — see
-//     looksLikeLinkDestination.
+//  1. 该行 "[" 之前只有块脚手架——缩进、">" 引用标记、列表符号。必要而非装饰：
+//     引用块或列表项里的定义照样会填满整篇文档的引用表、并在外面被解析。
+//  2. 方括号构成一个 CommonMark 链接标签：由第一个未转义的 "]" 闭合，内部无未转
+//     义的 "["，至少一个非空白字符，至多 999。标签可以跨行仍能解析，所以扫描也
+//     跟着跨行。
+//  3. 冒号后面接的东西看起来像链接*目的地*——见 looksLikeLinkDestination。
 //
-// Conditions 1 and 3 are halves of one question and are kept honest by one
-// answer: containerPrefixBefore reports the block containers holding the
-// label, and looksLikeLinkDestination is handed that same containerPrefix so
-// it can step back into them when the destination sits on the next line.
-// Teaching one half about a container and not the other is what leaves a
-// definition intact — see the comment on containerPrefix.
+// 条件 1 与 3 是同一个问题的两半，靠同一个答案保持一致：containerPrefixBefore
+// 报告持有标签的块容器，looksLikeLinkDestination 拿到同一个 containerPrefix，好
+// 在目的地位于下一行时能回退进那些容器。只教一半关于容器的事、另一半不教，就会
+// 让一条定义完整漏网——见 containerPrefix 上的说明。
 //
-// Condition 3 is the whole design. Breaking every "]:" would be simpler and is
-// the wrong trade: "[Bug]: 登录失败" is a form real people write, and it comes
-// back from here byte-identical because 登录失败 names no host — as a
-// destination it is relative, so it resolves against whatever base the client
-// itself is on and cannot aim the reader at someone else's server. That is the
-// line the rule draws: a destination that leaves for another host is broken, a
-// destination that cannot is left alone.
+// 条件 3 是整套设计的核心。见 "]" ":" 就拆会更简单，但那是错误的取舍：
+// "[Bug]: 登录失败" 是真人会写的格式，而它从这里出去时逐字节原样——因为 登录失败
+// 指名不了任何主机：作为目的地它是相对的，只会对着客户端自己所在的 base 解析，
+// 没法把读者指向别人的服务器。规则画的正是这条线：会「离开去往另一台主机」的目
+// 的地要被拆，去不了的放行。
 //
-// # What it deliberately lets through
+// # 刻意放行的
 //
-//   - Relative destinations. "[文件]: report.pdf", "[页面]: /inbox",
-//     "[Owner]: R&D", "[Regex]: \d+" and "[Bug]: 登录失败" all still define a
-//     reference, and the label can still come out as a link — but pointing at
-//     the client's own base, not at an attacker. Paid knowingly to keep the
-//     human form intact.
-//   - "[foo]:(https://evil.example)". CommonMark keeps the parens inside the
-//     href, so it is not a URL anyone navigates to. A leading "(" is skipped
-//     anyway before the destination is examined, in case this renderer is
-//     looser, because skipping one costs nothing.
+//   - 相对目的地。"[文件]: report.pdf"、"[页面]: /inbox"、"[Owner]: R&D"、
+//     "[Regex]: \d+" 和 "[Bug]: 登录失败" 都仍会定义一条引用，标签仍可能以链接
+//     出现——但指向的是客户端自己的 base，不是攻击者。为保住人的书写习惯而明知
+//     地付出这个代价。
+//   - "[foo]:(https://evil.example)"。CommonMark 把括号留在 href 内部，所以没有
+//     人会把它们导航过去。无论如何，目的地被检查前会先跳过一个前导 "("，以防本
+//     渲染器更宽松——因为跳一个零成本。
 //
-// # Where it over-fires, and why that is the safe side
+// # 哪里会过度触发，以及为什么那是安全的一侧
 //
-// It models block containers only as a count of ">" markers, so it fires on a
-// "[x]: https://…" line that CommonMark would fold into the preceding
-// paragraph or read as indented code, and on a next-line destination whose
-// blockquote nesting is shallower than the definition's. It does not check the
-// spec's "nothing may follow the destination" rule either, so
-// "[x]: https://evil.example 请点击" is broken too though CommonMark would
-// leave it as prose. Every one of those costs a single space on a line that
-// already carries a URL. Under-firing costs a working link under the bot's
-// name, so the approximation runs this way round on purpose — the more so
-// because this renderer is demonstrably not CommonMark-exact (it reads
-// "\[ … \]" as a display-math delimiter).
+// 它只用 ">" 标记的计数来建模块容器，所以会对一条 CommonMark 会折进前一段落、
+// 或读作缩进代码的 "[x]: https://…" 行触发，也会对「目的地换行、且引用嵌套比定
+// 义行更浅」触发。它也不检查规范里「目的地之后不得跟任何东西」的规则，所以
+// "[x]: https://evil.example 请点击" 也会被拆，尽管 CommonMark 会把它当正文留
+// 下。上述每种情况付出的都只是「一行本来已带 URL 的行里多一个空格」。而漏拆付
+// 出的是一条「机器人署名下的活链接」，所以近似故意朝这个方向偏——更因为这渲染
+// 器已被证明并非严格 CommonMark（它把 "\[ … \]" 读成数学展示块的分隔符）。
 //
-// # Where the break goes
+// # 拆在哪里
 //
-// Between the "]" and the ":". CommonMark requires the colon to follow the
-// label immediately, so one space ends the definition; verified against a
-// CommonMark parser in markdown_test.go, including inside a blockquote and
-// with the destination on the next line. It cannot go inside the label —
-// reference labels are matched on whitespace-collapsed, case-folded text, so
-// "[ 重置密码]" would still match "[重置密码]" and the definition would live.
-// It cannot be a backslash for the reason above. And it cannot go before the
-// "[": there is no character that pushes a line out of block position without
-// either showing up as content or, four spaces on, opening a code block.
+// 在 "]" 与 ":" 之间。CommonMark 要求冒号必须紧贴标签，所以一个空格就终结定义；
+// 已在 markdown_test.go 里对照 CommonMark 解析器验证过，包括引用块内、目的地换
+// 行的情况。不能拆在标签内部——引用标签按「空白折叠、大小写折叠」后的文本匹配，
+// 所以 "[ 重置密码]" 仍会匹配 "[重置密码]"，定义照样活着。不能用反斜杠，原因见
+// 上。也不能放在 "[" 之前：没有任何字符能在不显形为内容、或（四个空格后）开启
+// 代码块的情况下，把一行推出块位置。
 //
-// Like breakLinkAdjacency this adds one rune per occurrence, so callers that
-// budget a length cap must call it before measuring; and its output holds no
-// "]:" it would fire on again, so a second pass is a no-op.
+// 和 breakLinkAdjacency 一样每次出现多一个 rune，所以做长度预算的调用方必须先调
+// 它再量；它的输出不再含有它会再次触发的 "]:"，所以第二遍跑是空操作。
 func breakLinkReferenceDefinitions(s string) string {
 	if !strings.Contains(s, "]:") {
 		return s
@@ -172,8 +140,8 @@ func breakLinkReferenceDefinitions(s string) string {
 		if !ok {
 			continue
 		}
-		// A label holds no unescaped "[", so nothing inside it can open
-		// another one — resume past it either way.
+		// 标签内不含未转义的 "["，所以它里面不会有另一个能开标签——无论哪种情况
+		// 都从它后面继续。
 		i = end
 		if end+1 >= len(s) || s[end+1] != ':' {
 			continue
@@ -192,31 +160,25 @@ func breakLinkReferenceDefinitions(s string) string {
 	return out.String()
 }
 
-// containerPrefix is what a line's block scaffolding opens: the blockquote
-// nesting the line sits inside. It is the one notion of a container the rule
-// has, and both halves of the rule work from it — the half that decides what
-// may precede the label produces one, the half that scans past the colon
-// replays it. Neither can be taught about a container the other has not,
-// which is the whole reason it exists as a value rather than as a bool.
+// containerPrefix 是「一行开头的块脚手架开出的东西」：这一行所处的引用嵌套深度。
+// 这是规则拥有的唯一「容器」概念，规则的两半都从它出发——决定标签前可以是什么的
+// 那半会产出一个它，扫过冒号的那半会重放它。任何一半都不能知道另一半不知道的容
+// 器，这正是它要作为一个「值」而非 bool 存在的全部原因。
 //
-// Only ">" markers are counted. Indentation and list bullets are scaffolding
-// too, and they need no replay: CommonMark continues a list item with plain
-// indentation, which the destination scan already steps over as whitespace.
-// A blockquote is different — it repeats its marker on every line it holds,
-// so a destination on the next line arrives as "> https://…", and a scan that
-// does not expect the marker reads it as the destination.
+// 只数 ">" 标记。缩进和列表符号也是脚手架，但它们不需要重放：CommonMark 用普通
+// 缩进续行列表项，目的地扫描本来就会把它们当空白跨过。引用块不一样——它持有几
+// 行就在每行重复一次标记——所以下一行的目的地到达时是 "> https://…"，一个没料到
+// 会有标记的扫描会把标记本身读成目的地。
 type containerPrefix struct {
 	quotes int
 }
 
-// containerPrefixBefore reports the containers holding the "[" at s[i], and
-// whether everything between the start of its line and i is block scaffolding
-// at all: indentation, ">" markers and list bullets. Anything else — a word, a
-// "**" — means the "[" is inside a paragraph, where no definition can begin.
+// containerPrefixBefore 报告持有 s[i] 处 "[" 的容器，以及「它所在行的行首到 i」
+// 是否全是块脚手架：缩进、">" 标记、列表符号。任何别的东西——一个词、一个
+// "**"——都说明这个 "[" 在一段正文里，而正文里开不出定义。
 //
-// It walks back only as far as the first byte that cannot be scaffolding, so a
-// "[" in the middle of prose is settled by reading one byte rather than the
-// whole line, and a body full of them stays linear.
+// 它只往回走到第一个不可能是脚手架的字节为止，所以一段散文中间的 "[" 只需读一
+// 个字节就能定案，而不是读完整行——正文里满是 "[" 也保持线性复杂度。
 func containerPrefixBefore(s string, i int) (containerPrefix, bool) {
 	start := i
 	for start > 0 && isBlockScaffoldByte(s[start-1]) {
@@ -228,9 +190,8 @@ func containerPrefixBefore(s string, i int) (containerPrefix, bool) {
 	return parseContainerPrefix(s[start:i])
 }
 
-// parseContainerPrefix reads p as a whole run of block scaffolding and reports
-// the containers it opens. ok is false when p holds anything that is not
-// scaffolding.
+// parseContainerPrefix 把 p 当作一整段块脚手架读，报告它开出的容器。p 里混有任
+// 何不是脚手架的东西时 ok 为 false。
 func parseContainerPrefix(p string) (prefix containerPrefix, ok bool) {
 	for len(p) > 0 {
 		switch {
@@ -242,8 +203,7 @@ func parseContainerPrefix(p string) (prefix containerPrefix, ok bool) {
 		case (p[0] == '-' || p[0] == '+' || p[0] == '*') && len(p) > 1 && (p[1] == ' ' || p[1] == '\t'):
 			p = p[2:]
 		default:
-			// An ordered list marker: up to 9 digits, then "." or ")",
-			// then a space.
+			// 有序列表标记：至多 9 位数字，然后 "." 或 ")"，再一个空格。
 			n := 0
 			for n < len(p) && n < 9 && p[n] >= '0' && p[n] <= '9' {
 				n++
@@ -257,16 +217,13 @@ func parseContainerPrefix(p string) (prefix containerPrefix, ok bool) {
 	return prefix, true
 }
 
-// skipContinuationPrefix steps over the markers of the containers in prefix at
-// the start of a continuation line, and returns where the line's content
-// begins. It is the replay half of containerPrefixBefore.
+// skipContinuationPrefix 在一行续行的行首跳过 prefix 里那些容器的标记，返回这行
+// 内容从哪里开始。它是 containerPrefixBefore 的「重放」那一半。
 //
-// It consumes at most prefix.quotes markers and never more. Fewer is allowed
-// because a blockquote takes lazy continuation lines: "> [x]:" followed by a
-// bare "https://…" with no marker still defines the reference. More is not a
-// continuation of this definition at all — a line deeper than the block it
-// continues opens a new one — so the scan stops and lets the leftover ">"
-// speak for itself, which is to say it is not a destination.
+// 它最多消费 prefix.quotes 个标记、绝不多吃。允许更少，因为引用块接受惰性续行：
+// "> [x]:" 后跟一行不带标记的裸 "https://…"，照样定义这条引用。更多则根本不是
+// 这条定义的续行——比所续块更深的一行会开一个新块——所以扫描停住，让剩下的 ">"
+// 自己说话，也就是「它不是目的地」。
 func skipContinuationPrefix(s string, i int, prefix containerPrefix) int {
 	i = skipSpacesTabs(s, i)
 	for n := 0; n < prefix.quotes; n++ {
@@ -278,10 +235,9 @@ func skipContinuationPrefix(s string, i int, prefix containerPrefix) int {
 	return i
 }
 
-// isBlockScaffoldByte is the character set a scaffolding prefix can draw on —
-// a superset of the markers parseContainerPrefix then parses exactly. It only
-// decides how far back to walk; whether the run really is scaffolding is
-// parseContainerPrefix's answer.
+// isBlockScaffoldByte 是脚手架前缀能取材的字符集——是 parseContainerPrefix 随后
+// 精确解析的标记的超集。它只决定往回走多远；这段东西到底是不是脚手架，由
+// parseContainerPrefix 作答。
 func isBlockScaffoldByte(c byte) bool {
 	switch {
 	case c == ' ', c == '\t', c == '>':
@@ -294,11 +250,9 @@ func isBlockScaffoldByte(c byte) bool {
 	return false
 }
 
-// linkLabelEnd returns the byte offset of the "]" closing the link label that
-// opens at s[open], and whether what it encloses is a label at all. Follows
-// CommonMark: the first unescaped "]" closes it, an unescaped "[" disqualifies
-// it, it must hold at least one non-whitespace character and at most 999, and
-// it may run across line endings.
+// linkLabelEnd 返回闭合「开在 s[open] 处的链接标签」那个 "]" 的字节偏移，以及它
+// 包住的到底是不是标签。遵循 CommonMark：第一个未转义的 "]" 闭合它；未转义的
+// "[" 让它出局；它至少要有 1 个非空白字符、至多 999 个；可以跨行。
 func linkLabelEnd(s string, open int) (int, bool) {
 	const maxLabelRunes = 999
 	runes, content := 0, false
@@ -314,8 +268,7 @@ func linkLabelEnd(s string, open int) (int, bool) {
 			return 0, false
 		}
 		if r == '\\' && i+size < len(s) {
-			// The backslash escapes what follows, so "\]" does not close
-			// the label and "\[" does not disqualify it.
+			// 反斜杠转义了后面的字符，所以 "\]" 不闭合标签、"\[" 也不让它出局。
 			_, n := utf8.DecodeRuneInString(s[i+size:])
 			i += size + n
 			runes++
@@ -330,26 +283,21 @@ func linkLabelEnd(s string, open int) (int, bool) {
 	return 0, false
 }
 
-// looksLikeLinkDestination reports whether rest — everything after a
-// "[label]:" — opens a link destination that could send the reader to another
-// host. This is the test that keeps "[Bug]: 登录失败" whole.
+// looksLikeLinkDestination 报告 rest——"[label]:" 之后的所有内容——是否开启一个
+// 可能把读者引到另一台主机的链接目的地。正是这个测试保住了 "[Bug]: 登录失败" 不
+// 被拆。
 //
-// A destination qualifies when it carries a scheme ("https:", and equally
-// "javascript:" or "data:"), or is scheme-relative ("//host/path"), or uses
-// the escape machinery that spells either of those after decoding.
+// 目的地携带 scheme（"https:"，同样算 "javascript:" 或 "data:"）、或是相对 scheme
+// 的（"//host/path"）、或使用了「解码后拼出以上二者之一」的转义机制时，即够格。
 //
-// prefix is the containers the definition's own line sits inside, and it is a
-// parameter rather than something rediscovered here for the reason given on
-// containerPrefix: when the destination is on the next line it arrives behind
-// the same markers, and a scan that walks past the colon without them reads
-// the marker as the destination and clears a definition that resolves.
+// prefix 是定义行自身所在的容器；它做成参数而不是在这里重新发现，理由见
+// containerPrefix：目的地换到下一行时会顶着同样的标记到达，一个走出冒号却不带这
+// 些标记的扫描，会把标记本身读成目的地，从而拆掉一条本可解析的定义。
 func looksLikeLinkDestination(rest string, prefix containerPrefix) bool {
 	i := skipSpacesTabs(rest, 0)
-	// CommonMark allows up to one line ending between the colon and the
-	// destination, so the definition can span two lines. A second line
-	// ending ends the block and there is no definition — falling through
-	// with the newline still in place takes care of that, since a line
-	// ending never begins a destination.
+	// CommonMark 允许冒号与目的地之间至多一个行结束符，所以定义可以跨两行。第二
+	// 个行结束符会终结块、定义不复存在——带着换行原样掉下去就处理了这一点，因为
+	// 行结束符永远不会是目的地的开头。
 	if i < len(rest) && rest[i] == '\r' {
 		i++
 	}
@@ -357,8 +305,8 @@ func looksLikeLinkDestination(rest string, prefix containerPrefix) bool {
 		i = skipContinuationPrefix(rest, i+1, prefix)
 	}
 	if i < len(rest) && (rest[i] == '<' || rest[i] == '(') {
-		// "<…>" is the spec's bracketed destination form, and it may hold
-		// leading spaces that a client strips back off the URL.
+		// "<…>" 是规范里带括号的目的地形式，里面可能带前导空格，客户端会把它们
+		// 从 URL 上剥掉。
 		i = skipSpacesTabs(rest, i+1)
 	}
 	dest := rest[i:]
@@ -371,22 +319,19 @@ func looksLikeLinkDestination(rest string, prefix containerPrefix) bool {
 	if strings.HasPrefix(dest, "//") || hasURIScheme(dest) {
 		return true
 	}
-	// Backslash escapes and character references are recognised inside a
-	// destination, and all of "https\://evil.example", "\/\/evil.example"
-	// and "&#x68;ttps://evil.example" resolve to a working off-host URL —
-	// checked against a CommonMark parser, all three. Rather than decode
-	// them, take any use of that machinery as a destination.
+	// 目的地内部认可反斜杠转义和字符引用，而 "https\://evil.example"、
+	// "\/\/evil.example" 和 "&#x68;ttps://evil.example" 三者在解码后都会解析成可
+	// 用的离站 URL——已对照 CommonMark 解析器全部验证。与其逐个解码，不如把对该
+	// 机制的任何使用都当作目的地。
 	//
-	// The machinery, not the characters. A lone "\" or "&" spells nothing:
-	// "R&D", "\d+", "docs\setup" and "foo&bar" are all relative destinations,
-	// which this function promises to leave whole, and they carry no escape a
-	// parser would act on.
+	// 说的是「机制」，不是「字符」。孤零零的 "\" 或 "&" 拼不出任何东西：
+	// "R&D"、"\d+"、"docs\setup"、"foo&bar" 全是相对目的地——本函数承诺放行——
+	// 而且它们不带任何解析器会执行的转义。
 	return hasBackslashEscape(dest) || hasCharacterReference(dest)
 }
 
-// hasBackslashEscape reports whether s uses a CommonMark backslash escape — a
-// "\" before ASCII punctuation, which is the only place the backslash means
-// anything. In "\d+" and "docs\setup" it stays literal text.
+// hasBackslashEscape 报告 s 是否使用了 CommonMark 反斜杠转义——ASCII 标点前的
+// "\"，这是反斜杠唯一有意义的地方。在 "\d+" 和 "docs\setup" 里它保持字面文本。
 func hasBackslashEscape(s string) bool {
 	for i := 0; i+1 < len(s); i++ {
 		if s[i] == '\\' && isASCIIPunct(s[i+1]) {
@@ -396,8 +341,8 @@ func hasBackslashEscape(s string) bool {
 	return false
 }
 
-// isASCIIPunct is CommonMark's ASCII punctuation set — every ASCII character
-// that is neither a letter, a digit, nor a space.
+// isASCIIPunct 是 CommonMark 的 ASCII 标点集——所有「既非字母、又非数字、也非
+// 空格」的 ASCII 字符。
 func isASCIIPunct(c byte) bool {
 	switch {
 	case c >= '!' && c <= '/', c >= ':' && c <= '@', c >= '[' && c <= '`', c >= '{' && c <= '~':
@@ -406,13 +351,12 @@ func isASCIIPunct(c byte) bool {
 	return false
 }
 
-// hasCharacterReference reports whether s holds a character reference — "&",
-// a name or a "#"-led numeric body, then ";". "R&D" and "foo&bar" have no ";"
-// to close one, so nothing in them decodes.
+// hasCharacterReference 报告 s 是否含字符引用——"&"、一个名字或 "#" 开头的数字
+// 主体、然后 ";"。"R&D" 和 "foo&bar" 没有能闭合的 ";"，所以里面没有会解码的东
+// 西。
 //
-// It does not check the name against HTML5's table: an unknown name decodes to
-// nothing and breaking it costs one space, which is the side of this call the
-// rest of the file already runs on.
+// 它不拿名字对 HTML5 的表校验：未知名字解码为空，拆它只花一个空格——本文件其余
+// 部分本来就跑在「宁可多拆」这一侧。
 func hasCharacterReference(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] != '&' {
@@ -431,8 +375,8 @@ func hasCharacterReference(s string) bool {
 	return false
 }
 
-// hasURIScheme reports whether s begins with a URI scheme followed by ":" —
-// a letter, then letters, digits, "+", "-" or "." (RFC 3986).
+// hasURIScheme 报告 s 是否以「URI scheme + ":"」开头——一个字母，然后字母、数
+// 字、"+ "、"-" 或 "."（RFC 3986）。
 func hasURIScheme(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]

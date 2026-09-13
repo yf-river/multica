@@ -1,5 +1,11 @@
 "use client";
 
+// 本文件：board-card —— 看板视图的卡片与拖拽包装。
+// BoardCardContent 渲染问题卡内容（状态/优先级/负责人/日期/子进度等，各行
+// 依显示选项按需出现）；DraggableBoardCard 用 dnd-kit 让它可拖拽排序、
+// 可点进详情、可右键弹出动作菜单。优先级/负责人/日期在可编辑面上直接以
+// picker 形式内联编辑。
+
 import { useCallback, memo } from "react";
 import { AppLink } from "../../navigation";
 import { useSortable, defaultAnimateLayoutChanges } from "@dnd-kit/sortable";
@@ -34,7 +40,7 @@ function formatDate(date: string, locale: string): string {
   return formatDateOnly(date, { month: "short", day: "numeric" }, locale);
 }
 
-/** Stops event from bubbling to Link/drag handlers */
+/** 阻止事件冒泡到链接/拖拽处理器（picker 内部点击不该触发卡片导航或拖拽）。 */
 function PickerWrapper({ children, className }: { children: React.ReactNode; className?: string }) {
   const stop = (e: React.SyntheticEvent) => {
     e.stopPropagation();
@@ -47,6 +53,12 @@ function PickerWrapper({ children, className }: { children: React.ReactNode; cla
   );
 }
 
+/**
+ * 看板问题卡的内容面（职责见文件头）。
+ *
+ * `issue` 是要渲染的问题；`editable` 打开内联编辑（各 picker 走 surface
+ * actions 更新）；`childProgress` / `project` 有值时按显示选项补对应行。
+ */
 export const BoardCardContent = memo(function BoardCardContent({
   issue,
   editable = false,
@@ -65,8 +77,7 @@ export const BoardCardContent = memo(function BoardCardContent({
   const cardPropertyIds = useViewStore((s) => s.cardPropertyIds);
   const cardWsId = useWorkspaceId();
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(cardWsId));
-  // Custom properties toggled on in Display options, in toggle order, only
-  // when this issue actually carries a value.
+  // 显示选项里打开的自定义属性，按开关顺序排列，且只保留本问题确实带值的。
   const cardCustomProperties = cardPropertyIds
     .map((id) => workspaceProperties.find((p) => p.id === id))
     .filter((p): p is IssueProperty => !!p && issue.properties?.[p.id] !== undefined);
@@ -92,8 +103,8 @@ export const BoardCardContent = memo(function BoardCardContent({
   const showProject = storeProperties.project && project;
   const showChildProgress = storeProperties.childProgress && childProgress;
   const showLabels = storeProperties.labels && labels.length > 0;
-  // Keeps the chip row from rendering an empty flex container when the status
-  // chip is the only thing in it and it decides to render nothing.
+  // 状态 chip 行只有状态 chip 一个成员、而它又决定不渲染时，这里避免渲染出
+  // 一个空的 flex 容器。
   const showCustomStatus = useIsCustomStatus(issue.status);
 
   const showAssigneeName = showAssigneeSection && hasAssignee && !showStartDate && !showDueDate;
@@ -132,8 +143,8 @@ export const BoardCardContent = memo(function BoardCardContent({
     )
   ) : null;
 
-  // The parent row gives this container the leftover space; min-w-0 and
-  // max-w-full make the nested picker trigger respect that limit.
+  // 父行给这个容器留下剩余空间；min-w-0 与 max-w-full 让内嵌 picker 触发器
+  // 遵守该上限。
   const assigneeContainerClass = assigneeName
     ? "flex min-w-0 max-w-full items-center"
     : "inline-flex items-center";
@@ -176,7 +187,7 @@ export const BoardCardContent = memo(function BoardCardContent({
 
   return (
     <div className="rounded-lg border-[0.5px] border-surface-border bg-surface py-3 px-2.5 shadow-[var(--surface-shadow)] transition-colors group-hover/card:border-foreground/15 group-hover/card:bg-surface-hover group-data-[popup-open]/card:border-foreground/15 group-data-[popup-open]/card:bg-surface-hover">
-      {/* Row 1: priority + identifier (left), agent activity + assignee (right) */}
+      {/* 第 1 行：优先级 + 标识符（左），agent 活动 + 负责人（右） */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
           {priorityIconNode}
@@ -185,7 +196,7 @@ export const BoardCardContent = memo(function BoardCardContent({
         <IssueAgentActivityIndicator issueId={issue.id} />
       </div>
 
-      {/* Row 2: Title */}
+      {/* 第 2 行：标题 */}
       <p className="mt-1 text-body font-medium leading-snug line-clamp-2">
         {issue.title}
         <TAPDSourceBadge issue={issue} variant="inline" />
@@ -201,9 +212,8 @@ export const BoardCardContent = memo(function BoardCardContent({
         );
       })()}
 
-      {/* Chip row: status + project + labels + custom property values.
-          The status chip renders only for a CUSTOM status — the column header
-          already names the category. (MUL-6243) */}
+      {/* Chip 行：状态 + 项目 + 标签 + 自定义属性值。
+          状态 chip 只为 CUSTOM 状态渲染——列头已经点明了状态类别。（MUL-6243） */}
       {(showCustomStatus || showProject || showLabels || cardCustomProperties.length > 0) && (
         <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
           <CustomStatusChip status={issue.status} />
@@ -228,7 +238,7 @@ export const BoardCardContent = memo(function BoardCardContent({
         </div>
       )}
 
-      {/* Meta row: assignee (left), start date, due date, child progress (right) */}
+      {/* Meta 行：负责人（左），开始日期、截止日期、子进度（右） */}
       {showMetaRow && (
         <div className="mt-2 flex items-center justify-between gap-2">
           {showAssigneeSection && (
@@ -313,12 +323,20 @@ export const BoardCardContent = memo(function BoardCardContent({
   );
 });
 
+// 拖拽时关掉 dnd-kit 的默认布局动画：排序/拖动中不做位移动画，
+// 只在放下后做常规布局过渡（避免把"正在拖"和"已放下"搅在一起）。
 const animateLayoutChanges: AnimateLayoutChanges = (args) => {
   const { isSorting, wasDragging } = args;
   if (isSorting || wasDragging) return false;
   return defaultAnimateLayoutChanges(args);
 };
 
+/**
+ * 可拖拽看板卡（职责见文件头）。
+ *
+ * `disableSorting` 为 true 时禁掉排序落点（仍可拖、不可与别的卡换位）；
+ * 其余 props 原样透传给 BoardCardContent。
+ */
 export const DraggableBoardCard = memo(function DraggableBoardCard({
   issue,
   childProgress,

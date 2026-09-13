@@ -1,5 +1,7 @@
 "use client";
 
+// 本文件提供 Agent 活动悬浮卡的内容：展示这些 Agent“现在在忙什么”，每行一个任务。
+
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
@@ -13,17 +15,14 @@ import { workloadConfig } from "../presence";
 import { useT } from "../../i18n";
 
 interface AgentActivityHoverContentProps {
-  // Active tasks (running / queued / dispatched) to render — caller filters
-  // by issue id or by workspace scope. Order is preserved; we render every
-  // task as its own row.
+  // 要渲染的活动任务（running / queued / dispatched）——由调用方按 issue id
+  // 或工作区范围筛选。保持传入顺序；每个任务各渲染成一行。
   tasks: readonly AgentTask[];
 }
 
 /**
- * Tick `now` once per second so duration labels update live while a hover
- * card is open. setInterval only runs while the card is mounted (Base UI
- * portals the content but tears it down on close), so this costs nothing
- * when the card is closed.
+ * 每秒刷新一次 `now`，让悬浮卡打开期间时长标签实时更新。setInterval 只在卡片
+ * 挂载时运行（Base UI 会在关闭时卸载弹层内容），所以卡片关闭时零开销。
  */
 function useActivityNow(): number {
   const [now, setNow] = useState(() => Date.now());
@@ -35,8 +34,8 @@ function useActivityNow(): number {
 }
 
 /**
- * O(1) agent + runtime lookups so each task row resolves without an N×M
- * scan. Cheap — agents/runtimes count in tens at most.
+ * 用 Map 做 O(1) 的 agent + runtime 查找，让每行任务无需 N×M 扫描就能解析。
+ * 开销很低——agent/runtime 数量最多也就几十个。
  */
 function useActivityLookups() {
   const wsId = useWorkspaceId();
@@ -50,14 +49,14 @@ function useActivityLookups() {
 type ActivityLookups = ReturnType<typeof useActivityLookups>;
 
 /**
- * One task row: agent avatar, name, status dot, status label, duration.
+ * 单个任务行：Agent 头像、名字、状态圆点、状态标签、时长。
  *
- * Status colour follows the workspace's existing composition rule:
- *   - running                       → brand (text-brand)
- *   - queued, runtime online        → muted gray (transient race)
- *   - queued, runtime offline/etc.  → warning amber (genuine stuck)
- * — same rule as agent-presence-indicator.tsx so users see a single,
- * consistent language for "agent is in trouble" vs "just enqueued".
+ * 状态颜色遵循工作区已有的组合规则：
+ *   - running                       → brand（text-brand）
+ *   - queued、运行时在线             → muted 灰（短暂竞态）
+ *   - queued、运行时离线等           → warning 琥珀（真正卡住）
+ * 与 agent-presence-indicator.tsx 规则一致，让用户看到同一套
+ * “Agent 出问题了” vs “刚入队”的表述。
  */
 function AgentActivityTaskRow({
   task,
@@ -75,13 +74,12 @@ function AgentActivityTaskRow({
   const runtime = runtimeFrom(agent?.runtime_id, runtimeById);
   const availability = deriveAgentAvailability(runtime, now);
   const isRunning = task.status === "running";
-  // queued/dispatched both read as "queued" in the user-facing copy —
-  // `dispatched` is the daemon-acked sub-state of queued and not
-  // user-meaningful here.
+  // queued/dispatched 在面向用户的文案里都读作 “queued”——`dispatched` 是
+  // queued 中被 daemon 确认的子状态，在这里对用户没有区分意义。
   const wl = isRunning ? workloadConfig.working : workloadConfig.queued;
-  // queued + online → muted gray (transient race, no warning);
-  // queued + offline/unstable → keep warning amber from workloadConfig.
-  // Mirrors agent-presence-indicator.tsx.
+  // queued + online → 用 muted 灰（短暂竞态，不告警）；
+  // queued + offline/unstable → 保留 workloadConfig 的琥珀色。与
+  // agent-presence-indicator.tsx 保持一致。
   const dotClass = isRunning
     ? "bg-brand"
     : availability === "online"
@@ -124,11 +122,11 @@ function AgentActivityTaskRow({
 }
 
 /**
- * Shared hover-card body for "what are these agents doing right now?" — used
- * by IssueAgentActivityIndicator (per-issue). One row per task.
+ * 共用的悬浮卡主体，回答“这些 Agent 现在在忙什么？”——被 IssueAgentActivityIndicator
+ * （按 issue）使用。每个任务一行。
  *
- * The workspace-wide chip uses WorkspaceAgentActivityHoverContent below,
- * which groups the same rows by issue.
+ * 工作区级的 chip 用的是下方的 WorkspaceAgentActivityHoverContent，它把同样的
+ * 行按 issue 分组展示。
  */
 export function AgentActivityHoverContent({
   tasks,
@@ -142,9 +140,8 @@ export function AgentActivityHoverContent({
   return (
     <div className="flex flex-col gap-2">
       <div className="text-caption font-medium text-muted-foreground">
-        {/* One row per task, so count tasks — not agents. A single agent can
-            run several tasks at once, so an agent-worded header here would
-            disagree with the row count below. */}
+        {/* 每行对应一个任务，所以这里统计的是任务数而非 Agent 数。一个 Agent
+            可以同时跑多个任务，若用“Agent”措辞的标题会和下面的行数对不上。 */}
         {t(($) => $.agent_activity.hover_header_tasks, { count: tasks.length })}
       </div>
       <div className="flex flex-col gap-1.5">
@@ -163,30 +160,27 @@ export function AgentActivityHoverContent({
 }
 
 interface WorkspaceAgentActivityHoverContentProps {
-  /** Issues the working filter leaves on screen, in list order. Each has at
-   *  least one running task. */
+  /** 工作筛选后仍留在屏幕上的 issue，按列表顺序。每个至少有一个正在运行的任务。 */
   issues: readonly Issue[];
-  /** Running tasks for those issues, keyed by issue id. */
+  /** 这些 issue 对应的运行中任务，按 issue id 建立映射。 */
   tasksByIssueId: ReadonlyMap<string, readonly AgentTask[]>;
-  /** Total running tasks across `issues` — the second header figure. */
+  /** `issues` 范围内运行中任务的总数——标题里的第二个数字。 */
   taskCount: number;
 }
 
 /**
- * Hover-card body for the workspace working chip (MUL-4884).
+ * 工作区 working chip（MUL-4884）的悬浮卡主体。
  *
- * The chip says WHO is working ("N agents working"); this card says WHERE.
- * The header carries the two figures the chip does not — how many issues
- * that work lands on, and how many tasks it takes — and the rows group by
- * issue, mirroring what clicking the chip does to the list.
+ * chip 回答“谁在工作”（"N agents working"）；这张卡片回答“在哪工作”。
+ * 标题带上 chip 没有的两个数字——这些工作落在多少个 issue 上、需要多少个任务——
+ * 而行按 issue 分组，与点击 chip 后对列表做的筛选一致。
  *
- * It says nothing about work it excludes. Chat/autopilot runs have no
- * linked issue and leave no trace anywhere on this page: no row, no head,
- * no indicator. A footnote about them would explain an absence the user
- * never perceived — inventing a discrepancy rather than resolving one.
- * Same for tasks on issues the current filters or the loaded page exclude.
+ * 它不解释被排除在外的工作。Chat/autopilot 的运行没有关联 issue，也不会在
+ * 本页留下任何痕迹：没有行、没有头像、没有指示器。为它们加脚注，只会解释
+ * 一个用户从未察觉到的“缺失”——凭空制造差异，而不是解决差异。被当前筛选或
+ * 当前页排除掉的 issue 上的任务同理。
  *
- * Deliberately not a dashboard: two figures and grouped rows.
+ * 刻意不做成仪表盘：只有两个数字 + 分组的行。
  */
 export function WorkspaceAgentActivityHoverContent({
   issues,
@@ -247,13 +241,12 @@ function runtimeFrom<T extends { id: string }>(
   return byId.get(id) ?? null;
 }
 
-// Compact `2m 14s` / `45s` / `1h 03m` duration since the given ISO string.
-// Capped at hours — anything over a day for a running task is a sign of a
-// stuck runtime, but the hover card is not the place to relitigate that;
-// the row will read as `26h 12m` and the user can act.
+// 把给定 ISO 时间到当前时刻的时长格式化成紧凑的 `2m 14s` / `45s` / `1h 03m`。
+// 最大只到小时——一个运行中的任务超过一天，通常是运行时卡住的信号，但悬浮卡
+// 不是争论这个的地方；行会读作 `26h 12m`，用户自会处理。
 //
-// Exported so the issue-detail header live chip formats its collapsed
-// single-agent elapsed with the same `2m 14s` / `1h 03m` rule used here.
+// 导出是为了让 issue 详情头部的 live chip 用同样的 `2m 14s` / `1h 03m` 规则
+// 格式化它折叠的单 Agent 耗时。
 export function formatDuration(fromIso: string, nowMs: number): string {
   const start = new Date(fromIso).getTime();
   if (!Number.isFinite(start)) return "";

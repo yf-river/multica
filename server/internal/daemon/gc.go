@@ -17,13 +17,11 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 )
 
-// reposDirName is the bare-repo cache directory inside the workspaces root.
-// It is a sibling of the per-workspace task directories rather than one of
-// them, so every walk over the root has to decide explicitly what to do with it.
+// reposDirName 是 workspaces 根目录里的裸仓库缓存目录。它是各 workspace 任务目录的
+// “兄弟”而不是其中之一，因此每一次对根的遍历都必须显式决定拿它怎么办。
 const reposDirName = ".repos"
 
-// gcLoop periodically scans local workspace directories and applies the
-// configured retention policies.
+// gcLoop 周期扫描本地 workspace 目录并按配置的保留策略执行清理。
 func (d *Daemon) gcLoop(ctx context.Context) {
 	if !d.cfg.GCEnabled {
 		d.logger.Info("gc: disabled")
@@ -41,7 +39,7 @@ func (d *Daemon) gcLoop(ctx context.Context) {
 		"managed_artifact_subpaths", execenv.ManagedReclaimableArtifactSubpaths(),
 	)
 
-	// Run once at startup after a short delay (let the daemon finish initializing).
+	// 启动后短延迟先跑一次（让 daemon 完成初始化）。
 	if err := sleepWithContext(ctx, 30*time.Second); err != nil {
 		return
 	}
@@ -60,27 +58,26 @@ func (d *Daemon) gcLoop(ctx context.Context) {
 	}
 }
 
-// gcStats accumulates byte counts and per-pattern hit counts for one GC cycle.
+// gcStats 累计一个 GC 周期的字节数与按模式的命中数。
 type gcStats struct {
-	cleaned         int // whole task dirs removed by a parent-lifecycle or completed-task policy
-	orphaned        int // whole task dirs removed (no meta / unreachable issue)
-	skipped         int // task dirs left untouched
-	artifactDirs    int // task dirs that had at least one artifact reclaimed
-	artifactRemoved int // count of removed artifact subdirs
-	storesReclaimed int // per-conversation Codex session stores reclaimed past their TTL
-	// hermesMemoryStoresReclaimed is counted separately from storesReclaimed:
-	// the two stores hold different things on different TTLs, so folding them
-	// into one number would make either figure unreadable for an operator.
-	hermesMemoryStoresReclaimed   int            // per-agent Hermes memory stores reclaimed past their TTL
-	hermesSessionStoresReclaimed  int            // per-conversation Hermes session stores reclaimed past their TTL
-	repoCachesReclaimed           int            // bare repo caches under .repos evicted past their TTL
-	taskTempDirsReclaimed         int            // per-task temp dirs under the temp base reclaimed after their owning execution ended
-	taskRootIndexEntriesReclaimed int            // abandoned stable-root records and unpublished entries reclaimed past the orphan TTL
-	bytesReclaimed                int64          // total bytes freed in this cycle
-	byPattern                     map[string]int // configured basename or managed path label -> reclaim count
+	cleaned         int // 由“父生命周期或完成任务”策略整目录删除的任务目录数
+	orphaned        int // 整目录删除的任务目录数（无 meta / issue 不可达）
+	skipped         int // 原样保留的任务目录数
+	artifactDirs    int // 至少回收了一个 artifact 的任务目录数
+	artifactRemoved int // 删除的 artifact 子目录数
+	storesReclaimed int // 超过 TTL 被回收的“每会话”Codex session store 数
+	// hermesMemoryStoresReclaimed 与 storesReclaimed 分开计数：两类 store 装着不同的
+	// 东西、走不同的 TTL，揉成一个数字会让运维两边都看不清楚。
+	hermesMemoryStoresReclaimed   int            // 超过 TTL 被回收的“每 agent”Hermes memory store 数
+	hermesSessionStoresReclaimed  int            // 超过 TTL 被回收的“每会话”Hermes session store 数
+	repoCachesReclaimed           int            // .repos 下超过 TTL 被驱逐的裸仓库缓存数
+	taskTempDirsReclaimed         int            // 属主执行结束后被回收的 temp 基下“每任务”临时目录数
+	taskRootIndexEntriesReclaimed int            // 超过 orphan TTL 被回收的“被放弃的稳定根记录”与未发布条目数
+	bytesReclaimed                int64          // 本周期释放的总字节数
+	byPattern                     map[string]int // 配置的 basename 或受管路径标签 -> 回收计数
 }
 
-// runGC performs a single GC scan across all workspace directories.
+// runGC 对所有 workspace 目录执行一次 GC 扫描。
 func (d *Daemon) runGC(ctx context.Context) {
 	root := d.cfg.WorkspacesRoot
 	entries, err := os.ReadDir(root)
@@ -94,13 +91,11 @@ func (d *Daemon) runGC(ctx context.Context) {
 
 	stats := &gcStats{byPattern: map[string]int{}}
 	for _, wsEntry := range entries {
-		// Skip every daemon-internal dot directory, not just .repos. A
-		// workspace directory is always a UUID, so a dot-prefixed entry is one
-		// of our own caches. Walking .skill-cache as if it were a workspace
-		// made its `v1` directory look like a task dir with no .gc_meta.json,
-		// so the orphan path would delete the entire bundle cache once its
-		// mtime went 72h without a new bundle. That reclaimed a few hundred KB
-		// and cost a full re-download.
+		// 跳过每个 daemon 内部的点开头目录，而不只是 .repos。workspace 目录永远是
+		// UUID，所以点前缀的条目必是我们自己的缓存。把 .skill-cache 当 workspace 走，
+		// 会让它的 `v1` 目录看起来像一个没有 .gc_meta.json 的任务目录，于是 orphan 路径
+		// 一旦它的 mtime 超过 72h 没进新包，就会删掉整份技能包缓存。那回收了几百 KB，
+		// 代价却是整包重新下载。
 		if !wsEntry.IsDir() || strings.HasPrefix(wsEntry.Name(), ".") {
 			continue
 		}
@@ -108,11 +103,9 @@ func (d *Daemon) runGC(ctx context.Context) {
 		d.gcWorkspace(ctx, wsDir, stats)
 	}
 
-	// Stable-root records are published before the physical env root so a
-	// re-dispatch cannot choose a different readable path. If preparation never
-	// reaches ClaimEnvRoot, no task directory exists for the normal GC walk to
-	// reclaim. Bound those records separately, but only after the orphan grace
-	// period and an authoritative terminal/not-found task check.
+	// 稳定根记录在物理 env root 之前发布，这样重派发不会选到另一个可读路径。如果准备
+	// 阶段从未走到 ClaimEnvRoot，常规 GC 遍历就没有任务目录可回收。单独约束这些记录，
+	// 且只在孤儿宽限期与“权威的终态/未找到任务检查”之后。
 	rootRecordsRemoved, rootRecordsErr := execenv.PruneTaskRootIndex(root, d.cfg.GCOrphanTTL, time.Now(), func(_ string, taskID string) bool {
 		if ctx.Err() != nil || d.client == nil {
 			return false
@@ -128,44 +121,39 @@ func (d *Daemon) runGC(ctx context.Context) {
 	}
 	stats.taskRootIndexEntriesReclaimed += rootRecordsRemoved
 
-	// Prune stale worktree references from all bare repo caches, then evict the
-	// caches nothing needs anymore. These live outside any workspace directory
-	// and are never reclaimed by the task walk above.
+	// 先修剪所有裸仓库缓存里过期的 worktree 引用，再驱逐没人再需要的缓存。这些位于
+	// 任何 workspace 目录之外，上面的任务遍历永远不会回收它们。
 	d.pruneRepoWorktreesContext(ctx, root, stats)
 
-	// Reclaim per-issue Codex session stores idle past their TTL. These live
-	// under the shared ~/.codex home (outside WorkspacesRoot) so resume survives
-	// the task GC, which means they need their own bounded lifecycle (MUL-4424).
+	// 回收闲置超过 TTL 的“每 issue”Codex session store。它们位于共享的 ~/.codex home
+	// 之下（WorkspacesRoot 之外），让续接能跨过任务 GC 幸存——这意味着它们需要自己的
+	// 有界生命周期（MUL-4424）。
 	if storesRemoved, storeBytes := execenv.PruneCodexSessionStores(d.cfg.Profile, d.cfg.GCCodexSessionTTL, time.Now(), d.reserveStoreForDeletion, d.logger); storesRemoved > 0 {
 		stats.storesReclaimed += storesRemoved
 		stats.bytesReclaimed += storeBytes
 	}
 
-	// Same for per-agent Hermes memory stores: they outlive the task by design
-	// (that is what fixes #6638), so a deleted agent's memory needs its own
-	// bounded lifecycle. Retention is much longer than the Codex one — these are
-	// a few markdown files, and reclaiming them is user-visible amnesia.
+	// “每 agent”Hermes memory store 同理：它们按设计活得比任务长（这正是修 #6638 的
+	// 办法），所以被删 agent 的记忆需要自己的有界生命周期。保留期比 Codex 的长得多——
+	// 这只是几个 markdown 文件，回收它们对用户是可见的失忆。
 	if storesRemoved, storeBytes := execenv.PruneHermesMemoryStores(d.cfg.Profile, d.cfg.GCHermesMemoryTTL, time.Now(), d.reserveStoreForDeletion, d.logger); storesRemoved > 0 {
 		stats.hermesMemoryStoresReclaimed += storesRemoved
 		stats.bytesReclaimed += storeBytes
 	}
 
-	// And per-conversation Hermes session stores, which outlive the task for the
-	// same reason (that is what fixes #6806) but hold transcripts rather than
-	// notes — so they get the shorter, Codex-like retention.
+	// 以及“每会话”Hermes session store——它们因同一理由活得比任务长（这正是修
+	// #6806 的办法），但装的是 transcript 而不是笔记——所以用更短、类似 Codex 的保留
+	// 期。
 	if storesRemoved, storeBytes := execenv.PruneHermesSessionStores(d.cfg.Profile, d.cfg.GCHermesSessionTTL, time.Now(), d.reserveStoreForDeletion, d.logger); storesRemoved > 0 {
 		stats.hermesSessionStoresReclaimed += storesRemoved
 		stats.bytesReclaimed += storeBytes
 	}
 
-	// Reclaim per-task temp dirs whose owning execution is gone. These are the
-	// agent process's TMPDIR and live under the system temp base, not under
-	// WorkspacesRoot, so the task walk above has never seen them and the only
-	// other thing that removes them is the RemoveAll runTask defers — which
-	// does not run at all when the daemon is killed, and does not succeed when
-	// a file inside is still open (#7364). Unlike every other pruner here this
-	// one asks the kernel, not the clock: it removes a directory only once it
-	// has acquired the .task_lock the owner would still be holding.
+	// 回收“属主执行已结束”的每任务临时目录。这些是 agent 进程的 TMPDIR，位于系统
+	// temp 基下而非 WorkspacesRoot，因此上面的任务遍历从未见过它们，唯一能删它们的是
+	// runTask 里的 RemoveAll defer——daemon 被杀时它根本不会跑，里面有文件仍被打开时
+	// 它也会失败（#7364）。与这里其它修剪器不同，这个问的是内核而非时钟：它只在拿到
+	// 属主仍会持有的 .task_lock 之后才删目录。
 	if base, _, err := taskTempBaseDir(); err == nil {
 		if tempRemoved, tempBytes := execenv.PruneTaskTempDirs(base, d.cfg.GCTaskTempLegacyTTL, time.Now(), d.logger); tempRemoved > 0 {
 			stats.taskTempDirsReclaimed += tempRemoved
@@ -192,7 +180,7 @@ func (d *Daemon) runGC(ctx context.Context) {
 	}
 }
 
-// gcWorkspace scans task directories inside a single workspace directory.
+// gcWorkspace 扫描单个 workspace 目录里的任务目录。
 func (d *Daemon) gcWorkspace(ctx context.Context, wsDir string, stats *gcStats) {
 	taskEntries, err := os.ReadDir(wsDir)
 	if err != nil {
@@ -236,7 +224,7 @@ func (d *Daemon) gcWorkspace(ctx context.Context, wsDir string, stats *gcStats) 
 		cleanedHere += d.gcWorkspaceIssues(ctx, workspaceID, issueCandidatesByWorkspace[workspaceID], stats)
 	}
 
-	// Remove the workspace directory itself if it's now empty.
+	// workspace 目录若已空则把它自己也删掉。
 	if cleanedHere > 0 {
 		remaining, _ := os.ReadDir(wsDir)
 		if len(remaining) == 0 {
@@ -247,15 +235,15 @@ func (d *Daemon) gcWorkspace(ctx context.Context, wsDir string, stats *gcStats) 
 
 const issueGCBatchSize = 500
 
+// issueGCCandidate 是待批处理对账的一个“由 issue 背书”的任务目录及其 GC 元数据。
 type issueGCCandidate struct {
 	taskDir string
 	meta    *execenv.GCMeta
 }
 
-// gcWorkspaceIssues resolves all issue-backed task dirs with a bounded number
-// of workspace-level requests. Multiple task dirs for the same issue share one
-// result. The client transparently falls back to the legacy per-issue endpoint
-// when it is connected to an older server.
+// gcWorkspaceIssues 用有界次数的 workspace 级请求对账所有 issue 背书的任务目录。
+// 同一 issue 的多个任务目录共享一个结果。连到老服务器时客户端会透明地回退到旧式
+// per-issue 端点。
 func (d *Daemon) gcWorkspaceIssues(ctx context.Context, workspaceID string, candidates []issueGCCandidate, stats *gcStats) int {
 	if len(candidates) == 0 {
 		return 0
@@ -301,9 +289,8 @@ func (d *Daemon) gcWorkspaceIssues(ctx context.Context, workspaceID string, cand
 		issueID := strings.TrimSpace(candidate.meta.IssueID)
 		result, ok := results[issueID]
 		if !ok || result.Err != nil {
-			// No usable answer about the parent issue this cycle, so the task
-			// data stays. The regenerable Codex cache is still fair game —
-			// see applyManagedArtifactFallback.
+			// 本轮拿不到关于父 issue 的可用答案，任务数据先留着。可再生的 Codex 缓存
+			// 仍是可回收对象——见 applyManagedArtifactFallback。
 			action := d.applyManagedArtifactFallback(candidate.taskDir, candidate.meta, gcActionSkip)
 			cleaned += d.applyGCAction(candidate.taskDir, action, stats)
 			continue
@@ -316,9 +303,8 @@ func (d *Daemon) gcWorkspaceIssues(ctx context.Context, workspaceID string, cand
 	return cleaned
 }
 
-// applyGCAction performs one decision and updates cycle stats. Each mutation
-// atomically reserves the env root because a task can start while the server
-// reconciliation request is in flight.
+// applyGCAction 执行一个决策并更新周期统计。每次变更都会原子地预留 env root，因为
+// 服务器对账请求在途期间可能有一个任务开始。
 func (d *Daemon) applyGCAction(taskDir string, action gcAction, stats *gcStats) int {
 	if action != gcActionSkip {
 		if _, err := d.gcTaskDirOwner(taskDir); err != nil {
@@ -332,8 +318,7 @@ func (d *Daemon) applyGCAction(taskDir string, action gcAction, stats *gcStats) 
 			return 0
 		}
 		defer release()
-		// Re-read provenance after taking the exclusion lock so a concurrent
-		// reset cannot change ownership between validation and mutation.
+		// 拿到排它锁后重读属主信息：并发的 reset 不能在“校验”与“变更”之间改掉归属。
 		if _, err := d.gcTaskDirOwner(taskDir); err != nil {
 			d.logger.Warn("gc: refusing to mutate task directory after ownership changed", "dir", taskDir, "error", err)
 			stats.skipped++
@@ -362,11 +347,11 @@ func (d *Daemon) applyGCAction(taskDir string, action gcAction, stats *gcStats) 
 	case gcActionCleanArtifacts:
 		removed, bytes, perPattern := d.cleanTaskArtifacts(taskDir, d.cfg.GCArtifactPatterns)
 		recordArtifactCleanup(stats, removed, bytes, perPattern)
-		stats.skipped++ // task dir itself preserved
+		stats.skipped++ // 任务目录本身保留
 	case gcActionCleanManagedArtifacts:
 		removed, bytes, perPattern := d.cleanManagedTaskArtifacts(taskDir)
 		recordArtifactCleanup(stats, removed, bytes, perPattern)
-		stats.skipped++ // task dir itself preserved
+		stats.skipped++ // 任务目录本身保留
 	default:
 		stats.skipped++
 	}
@@ -392,22 +377,19 @@ type gcAction int
 
 const (
 	gcActionSkip                  gcAction = iota
-	gcActionClean                          // a parent-lifecycle or completed-task policy selected full cleanup
-	gcActionOrphan                         // no meta or unknown issue and dir is old
-	gcActionCleanArtifacts                 // task completed long enough ago; drop regenerable artifacts only
-	gcActionCleanManagedArtifacts          // preserve the task and drop exact daemon-managed artifacts only
+	gcActionClean                          // 父生命周期或完成任务策略选中了整目录清理
+	gcActionOrphan                         // 无 meta 或 issue 未知且目录够老
+	gcActionCleanArtifacts                 // 任务完成得够久；只丢弃可再生的 artifact
+	gcActionCleanManagedArtifacts          // 保留任务，只丢弃确切的 daemon 受管 artifact
 )
 
-// shouldCleanTaskDir decides whether a task directory should be removed.
-// Dispatches on meta.Kind so chat / autopilot / quick-create tasks each
-// follow the parent record that actually governs their lifecycle.
+// shouldCleanTaskDir 决定是否应删除一个任务目录。按 meta.Kind 分派，让 chat /
+// autopilot / quick-create 任务各自跟随真正管辖其生命周期的父记录。
 func (d *Daemon) shouldCleanTaskDir(ctx context.Context, taskDir string) gcAction {
-	// A task currently running on this env root must never be reclaimed —
-	// not even on the done/cancelled or orphan-404 paths. A re-dispatched or
-	// still-running task can reuse the prior workdir of an already-done issue
-	// whose updated_at is older than the TTL (a task re-claim doesn't advance
-	// updated_at), so the regular TTL check alone wouldn't notice the resumed
-	// activity.
+	// 当前正跑在这个 env root 上的任务绝不回收——连 done/cancelled 或 orphan-404 路径
+	// 也不行。一个重派发或仍在运行的任务可能复用一个“已完成、且 updated_at 比 TTL 还
+	// 老”的 issue 的旧 workdir（任务重新认领不推进 updated_at），所以光靠常规 TTL 检查
+	// 注意不到恢复的活动。
 	if d.isActiveEnvRoot(taskDir) {
 		return gcActionSkip
 	}
@@ -426,43 +408,36 @@ func (d *Daemon) shouldCleanTaskDir(ctx context.Context, taskDir string) gcActio
 	return d.applyManagedArtifactFallback(taskDir, meta, action)
 }
 
-// applyManagedArtifactFallback upgrades a skip into managed-artifact cleanup
-// once the task's own regenerable Codex cache is past GCArtifactTTL.
+// applyManagedArtifactFallback 当任务自己的可再生 Codex 缓存超过 GCArtifactTTL 时，
+// 把一次 skip 升级成“受管 artifact 清理”。
 //
-// Whether a task's *data* may be removed is a per-kind question: it depends on
-// the parent record, and shouldCleanTaskDirForKind is what answers it. Whether
-// the daemon's *own regenerable cache* may be reclaimed is not a per-kind
-// question at all — codex-home/.sandbox-bin is a ~285 MiB copy of the Codex
-// binary that the next run re-provisions on demand, whoever the parent is.
-// Wiring that reclaim into the issue path alone (#5654) left every other kind
-// holding the cache indefinitely; for chat that is genuinely unbounded, since a
-// session stays "active" with no time limit and Desktop's chat is the main
-// interactive surface (#6782).
+// 任务的*数据*能否删除是按 kind 的问题：取决于父记录，由 shouldCleanTaskDirForKind
+// 回答。daemon 自己的*可再生缓存*能否回收则根本不是按 kind 的问题——codex-home/
+// .sandbox-bin 是一份约 285 MiB 的 Codex 二进制副本，无论父记录是谁，下次运行都会按
+// 需重新供给。只把这条回收接进 issue 路径（#5654），会让其它每种 kind 无限期抱着缓存；
+// 对 chat 那是真正无界的，因为会话“active”没有时限，而 Desktop 的 chat 是主要交互
+// 界面（#6782）。
 //
-// Deliberately a one-way upgrade from gcActionSkip. Clean and Orphan already
-// remove strictly more than this, and applyLocalDirectoryGCOverride owns the
-// demotions in the other direction — so this can only ever widen what a cycle
-// reclaims, never narrow it.
+// 刻意是从 gcActionSkip 出发的单向升级。Clean 与 Orphan 本来就比它删得多，
+// applyLocalDirectoryGCOverride 掌握反方向的降级——所以它只会拓宽、绝不会收窄一个
+// 周期回收的范围。
 //
-// Note this also fires when the GC check API call itself failed (a transient
-// network error resolves to gcActionSkip). That is intended: the cache is
-// regenerable, so it does not need a confirmed parent record the way deleting
-// task data does. The isActiveEnvRoot short-circuit above and the env-root
-// reservation in applyGCAction still keep a running task's cache intact.
+// 注意它在 GC 检查 API 调用本身失败时也会触发（一次瞬时网络错误归结为
+// gcActionSkip）。这是有意为之：缓存可再生，不需要删除任务数据所需的“父记录确认”。
+// 上面的 isActiveEnvRoot 短路与 applyGCAction 里的 env-root 预留仍会保住运行中任务的
+// 缓存。
 func (d *Daemon) applyManagedArtifactFallback(taskDir string, meta *execenv.GCMeta, action gcAction) gcAction {
 	if action != gcActionSkip || d.cfg.GCArtifactTTL <= 0 {
 		return action
 	}
-	// A zero CompletedAt means the task never reported completion through
-	// WriteGCMeta. Leave those to the per-kind legacy handling rather than
-	// guessing from an unrelated clock.
+	// CompletedAt 为零表示该任务从未经 WriteGCMeta 上报过完成。把这些留给按 kind 的
+	// 旧式处理，而不是从一个无关时钟去猜。
 	if meta.CompletedAt.IsZero() || time.Since(meta.CompletedAt) <= d.cfg.GCArtifactTTL {
 		return action
 	}
-	// completed_at never moves again for a task that stays non-terminal, so
-	// without this the decision stays "reclaim" forever and every cycle pays
-	// for a reservation and a removal pass that finds nothing. Racing a
-	// re-provision here is harmless: the next cycle picks it up.
+	// 对保持非终态的任务，completed_at 再也不会动，所以没有下面这行的话决策会永远停在
+	// "reclaim"，每周期都付一次预留与一次“什么也删不到”的删除扫描。与再供给竞态无害：
+	// 下一周期会捡起来。
 	if !hasManagedArtifact(taskDir) {
 		return action
 	}
@@ -474,26 +449,24 @@ func (d *Daemon) applyManagedArtifactFallback(taskDir string, meta *execenv.GCMe
 	return gcActionCleanManagedArtifacts
 }
 
+// applyLocalDirectoryGCOverride 对 local_directory 任务把“整目录删除”降级为更窄的
+// 清理，保住用户自己的审计痕迹。
 func (d *Daemon) applyLocalDirectoryGCOverride(meta *execenv.GCMeta, action gcAction) gcAction {
 	if !meta.LocalDirectory {
 		return action
 	}
-	// local_directory tasks keep their envRoot indefinitely so the user
-	// can inspect output/ and logs/ for forensic context. The WorkDir is
-	// the user's own path and lives outside taskDir. The envRoot contains
-	// the daemon's durable logbook plus regenerable tool caches, so keep the
-	// former while allowing narrowly scoped cleanup of the latter.
+	// local_directory 任务的 envRoot 无限期保留，用户才能翻 output/ 与 logs/ 做取证。
+	// WorkDir 是用户自己的路径、位于 taskDir 之外。envRoot 装着 daemon 的持久日志账本
+	// 加可再生的工具缓存，所以前者保留、后者允许做窄范围清理。
 	//
-	//   gcActionClean   → demote to artifact-pattern cleanup so envRoot
-	//                     (and especially the logbook) survives.
-	//   gcActionOrphan  → exact managed-artifact cleanup only; we don't ever
-	//                     wipe a local_directory envRoot via the mtime path,
-	//                     since the parent issue / chat record going away
-	//                     should not collateral-delete the user's audit trail.
+	//   gcActionClean   → 降级成 artifact 模式清理，让 envRoot（尤其是日志账本）存活。
+	//   gcActionOrphan  → 只做确切的受管 artifact 清理；我们绝不经 mtime 路径抹掉一个
+	//                     local_directory 的 envRoot——父 issue / chat 记录消失不应
+	//                     殃及删除用户的审计痕迹。
 	//
-	// Artifact cleanup remains disabled when GCArtifactTTL is explicitly zero.
-	// gcActionCleanArtifacts, gcActionCleanManagedArtifacts, and gcActionSkip obey the
-	// "no full envRoot RemoveAll" rule.
+	// GCArtifactTTL 显式为零时 artifact 清理保持禁用。
+	// gcActionCleanArtifacts、gcActionCleanManagedArtifacts 与 gcActionSkip 都遵守
+	// “绝不整目录 RemoveAll envRoot”的规矩。
 	if d.cfg.GCArtifactTTL <= 0 {
 		return gcActionSkip
 	}
@@ -507,9 +480,8 @@ func (d *Daemon) applyLocalDirectoryGCOverride(meta *execenv.GCMeta, action gcAc
 	}
 }
 
-// shouldCleanTaskDirForKind runs the per-Kind dispatch without applying the
-// local_directory override. Split out so shouldCleanTaskDir can intercept
-// the result.
+// shouldCleanTaskDirForKind 跑按 Kind 的分派但不套 local_directory 覆盖。拆出来让
+// shouldCleanTaskDir 能拦截结果。
 func (d *Daemon) shouldCleanTaskDirForKind(ctx context.Context, taskDir string, meta *execenv.GCMeta) gcAction {
 	switch meta.Kind {
 	case execenv.GCKindIssue:
@@ -521,15 +493,14 @@ func (d *Daemon) shouldCleanTaskDirForKind(ctx context.Context, taskDir string, 
 	case execenv.GCKindQuickCreate:
 		return d.gcDecisionQuickCreate(ctx, taskDir, meta)
 	default:
-		// Unknown kind: fall back to mtime-based orphan cleanup so a future
-		// daemon writing a kind we don't recognize doesn't get insta-wiped.
+		// 未知 kind：回退到按 mtime 的 orphan 清理，未来某 daemon 写下一个我们不认识
+		// 的 kind 也不至于被瞬间抹掉。
 		return d.orphanByMTime(taskDir, "unknown kind")
 	}
 }
 
-// orphanByMTime returns gcActionOrphan if the directory is older than
-// GCOrphanTTL, gcActionSkip otherwise. Centralizes the "we have no parent
-// record signal so just look at the disk" fallback used by every kind.
+// orphanByMTime 目录老于 GCOrphanTTL 时返回 gcActionOrphan，否则 gcActionSkip。它集中
+// 了每种 kind 都在用的“没有父记录信号，只能看磁盘”的兜底。
 func (d *Daemon) orphanByMTime(taskDir, reason string) gcAction {
 	info, err := os.Stat(taskDir)
 	if err != nil {
@@ -542,10 +513,9 @@ func (d *Daemon) orphanByMTime(taskDir, reason string) gcAction {
 	return gcActionSkip
 }
 
-// isAccessNotFound detects the 404 returned by gc-check endpoints. The same
-// status covers "row deleted" and "daemon token can't see this workspace"
-// (the requireDaemonWorkspaceAccess anti-enumeration shape), so callers
-// can't tell the two apart from the response alone.
+// isAccessNotFound 检测 gc-check 端点返回的 404。同一个状态码同时覆盖“行已删除”与
+// “daemon token 看不见这个 workspace”（requireDaemonWorkspaceAccess 防枚举形态），
+// 因此调用方单看响应无法区分两者。
 func isAccessNotFound(err error) bool {
 	var reqErr *requestError
 	return errors.As(err, &reqErr) && reqErr.StatusCode == http.StatusNotFound
@@ -559,10 +529,9 @@ func (d *Daemon) gcDecisionIssue(ctx context.Context, taskDir string, meta *exec
 	status, err := d.client.GetIssueGCCheck(ctx, meta.IssueID)
 	if err != nil {
 		if isAccessNotFound(err) {
-			// 404 is ambiguous: server returns it for both "issue deleted"
-			// and "daemon token has no access to the workspace". Fall back
-			// to the mtime-gated orphan cleanup so a scoped-down token
-			// can't instantly wipe dirs whose issues are still live.
+			// 404 有歧义：服务器对“issue 已删除”与“daemon token 无权访问该 workspace”
+			// 都返回它。回退到按 mtime 把关的 orphan 清理，让被缩小权限的 token 无法
+			// 瞬间抹掉 issue 仍然在线的目录。
 			return d.orphanByMTime(taskDir, "issue not accessible")
 		}
 		return gcActionSkip
@@ -581,9 +550,8 @@ func (d *Daemon) gcDecisionIssueResult(taskDir string, meta *execenv.GCMeta, res
 		return d.orphanByMTime(taskDir, "issue not accessible")
 	}
 
-	// result.Status is a CATEGORY, normalized server-side, so this literal
-	// comparison covers custom statuses too — an issue on a `done`-category
-	// custom status is terminal here. (MUL-6243)
+	// result.Status 是服务端归一化过的 CATEGORY，所以这里的字面比较也覆盖自定义状态
+	// ——停在 `done`-category 自定义状态上的 issue 在这里是终态。（MUL-6243）
 	if (result.Status == "done" || result.Status == "cancelled") &&
 		time.Since(result.UpdatedAt) > d.cfg.GCTTL {
 		d.logger.Info("gc: eligible for cleanup",
@@ -596,14 +564,11 @@ func (d *Daemon) gcDecisionIssueResult(taskDir string, meta *execenv.GCMeta, res
 		return gcActionClean
 	}
 
-	// Operators may opt into a hard retention bound for completed issue-task
-	// environments even while the parent issue stays open. A successful parent
-	// lookup with a recognized status is intentionally required: transient
-	// network/auth failures and response drift keep data rather than turning an
-	// unavailable or malformed status into a deletion signal.
-	// The active-root guard and reservation protect concurrent reuse. User-owned
-	// local_directory envs stay on the existing artifact-only policy so a shorter
-	// completed-task TTL cannot make artifact cleanup happen early.
+	// 运维可对“已完成的 issue 任务环境”选择硬保留上限，即使父 issue 仍开着。刻意要求
+	// “父查找成功且状态可识别”：瞬时网络/鉴权失败与响应漂移宁可保留数据，也不把“不可
+	// 用或畸形状态”变成删除信号。
+	// 活动根守卫与预留保护并发复用。用户自有的 local_directory env 维持现有“仅
+	// artifact”策略，更短的 completed-task TTL 不会让 artifact 清理提前发生。
 	if d.cfg.GCCompletedTaskTTL > 0 &&
 		!meta.LocalDirectory &&
 		!meta.CompletedAt.IsZero() &&
@@ -631,11 +596,10 @@ func (d *Daemon) gcDecisionIssueResult(taskDir string, meta *execenv.GCMeta, res
 		return gcActionCleanArtifacts
 	}
 
-	// Old metadata may not have completed_at. Keep that case conservative:
-	// after the metadata file itself has been idle for the longer orphan TTL,
-	// reclaim only the exact daemon-managed cache. WriteGCMeta replaces this
-	// file after every completed task, so a recent reuse refreshes the signal
-	// even when activity below taskDir leaves the root directory mtime stale.
+	// 旧元数据可能没有 completed_at。这个案例保守处理：元数据文件自身闲置超过更长的
+	// orphan TTL 后，只回收确切的 daemon 受管缓存。WriteGCMeta 会在每个完成的任务之后
+	// 替换这个文件，所以哪怕 taskDir 下的活动让根目录 mtime 变旧，一次近期的复用也会
+	// 刷新该信号。
 	if d.cfg.GCArtifactTTL > 0 && meta.CompletedAt.IsZero() {
 		if age, ok := gcMetaFileAge(taskDir); ok && age > d.cfg.GCOrphanTTL {
 			d.logger.Info("gc: legacy task eligible for managed artifact cleanup",
@@ -652,17 +616,14 @@ func (d *Daemon) gcDecisionIssueResult(taskDir string, meta *execenv.GCMeta, res
 	return gcActionSkip
 }
 
-// isKnownIssueStatus mirrors the issue status constraint enforced by the
-// server. Full task cleanup must fail closed when an older daemon receives a
-// future status or a malformed response from the GC check endpoint.
+// isKnownIssueStatus 镜像服务器强制的 issue 状态约束。整目录清理必须“闭合失败”：老
+// daemon 收到未来状态或 GC 检查端点的畸形响应时，不应据此删除。
 //
-// The 7 names below stay correct after custom statuses (MUL-6243) because the
-// gc-check endpoints answer with the status's CATEGORY, not the stored key —
-// see BatchIssueGCCheck / GetIssueGCCheck, which resolve through
-// issuestatus.Effective. Do not teach this function about custom statuses: an
-// installed daemon has no catalog to resolve them against, and daemons
-// predating the feature must keep making correct decisions against an upgraded
-// server. Pinned by TestIssueGCChecksReportCategoryNotRawCustomStatus.
+// 下面 7 个名字在自定义状态（MUL-6243）之后仍然正确，因为 gc-check 端点返回的是状态
+// 的 CATEGORY 而非存储的 key——见 BatchIssueGCCheck / GetIssueGCCheck，它们经
+// issuestatus.Effective 解析。不要教这个函数认识自定义状态：已装 daemon 没有可解析它们
+// 的目录，而早于该特性的 daemon 必须继续对升级后的服务器做正确决策。由
+// TestIssueGCChecksReportCategoryNotRawCustomStatus 钉住。
 func isKnownIssueStatus(status string) bool {
 	switch status {
 	case "backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled":
@@ -672,6 +633,8 @@ func isKnownIssueStatus(status string) bool {
 	}
 }
 
+// gcMetaFileAge 返回 .gc_meta.json 文件自身的 mtime 年龄（自上次写入起），供没有
+// completed_at 的旧元数据做保守回收判断。
 func gcMetaFileAge(taskDir string) (time.Duration, bool) {
 	info, err := os.Stat(filepath.Join(taskDir, ".gc_meta.json"))
 	if err != nil {
@@ -688,15 +651,12 @@ func (d *Daemon) gcDecisionChat(ctx context.Context, taskDir string, meta *exece
 	status, err := d.client.GetChatSessionGCCheck(ctx, meta.ChatSessionID)
 	if err != nil {
 		if isAccessNotFound(err) {
-			// 404 means the chat_session row is gone — DeleteChatSession is
-			// a real DELETE, so a hard delete propagates here as soon as
-			// the user clicks the button. This is the strongest reclaim
-			// signal we get and it's exactly acceptance criterion #3:
-			// reclaim within one GC cycle (≤ GCInterval), not 72h.
+			// 404 表示 chat_session 行没了——DeleteChatSession 是真 DELETE，所以用户
+			// 一点按钮，硬删立刻传导到这里。这是我们拿到的最强回收信号，恰好就是验收
+			// 标准 #3：一个 GC 周期（≤ GCInterval）内回收，而不是 72 小时。
 			//
-			// We don't gate on mtime: every chat_session_id in a meta file
-			// was written by this daemon under its current token, so there
-			// is no cross-workspace probe to defend against.
+			// 我们不按 mtime 把关：meta 文件里的每个 chat_session_id 都是本 daemon 在
+			// 当前 token 下写的，因此不存在需要防御的跨 workspace 探测。
 			d.logger.Info("gc: eligible for cleanup",
 				"dir", filepath.Base(taskDir),
 				"kind", "chat",
@@ -710,18 +670,14 @@ func (d *Daemon) gcDecisionChat(ctx context.Context, taskDir string, meta *exece
 
 	switch status.Status {
 	case "active":
-		// An active chat session's directory must never be reclaimed by mtime
-		// — that would silently kill a user's idle session and break
-		// "PriorWorkDir" resume on their next message.
+		// 活动 chat 会话的目录绝不按 mtime 回收——那会悄悄杀掉用户的闲置会话、破坏
+		// 他们下一条消息的 "PriorWorkDir" 续接。
 		//
-		// This protects the session's own data, not the daemon's regenerable
-		// caches. shouldCleanTaskDir layers applyManagedArtifactFallback on top
-		// of this skip, so a session idle past GCArtifactTTL gives back
-		// codex-home/.sandbox-bin and the next message re-provisions it. That
-		// costs a ~285 MiB Codex bootstrap on resume and is the same trade-off
-		// gcDecisionIssueResult already makes for a completed task whose issue
-		// is still open — without it an active session pins the cache forever
-		// (#6782).
+		// 这保护的是会话自己的数据，不是 daemon 的可再生缓存。shouldCleanTaskDir 会在
+		// 这次 skip 之上叠加 applyManagedArtifactFallback，因此闲置超过 GCArtifactTTL
+		// 的会话会交还 codex-home/.sandbox-bin，下一条消息再重新供给。续接时那要付一次
+		// 约 285 MiB 的 Codex 引导，是 gcDecisionIssueResult 对“issue 仍开的已完成
+		// 任务”已经做过的同一笔交易——没有它，活动会话会把缓存永远钉住（#6782）。
 		return gcActionSkip
 	case "archived":
 		if time.Since(status.UpdatedAt) > d.cfg.GCTTL {
@@ -751,23 +707,19 @@ func (d *Daemon) gcDecisionAutopilotRun(ctx context.Context, taskDir string, met
 		return gcActionSkip
 	}
 
-	// Terminal states per the autopilot_run CHECK constraint:
-	//   completed, failed, skipped — the run finished its own work.
-	//   issue_created            — the run produced an issue task that owns
-	//                              its own workdir; this run's workdir is
-	//                              dead weight from here on.
-	// Non-terminal: pending, running. Skip until they reach a terminal state
-	// rather than trying to bound them by mtime — long autopilots are real.
+	// autopilot_run CHECK 约束里的终态：
+	//   completed, failed, skipped — run 做完了自己的事。
+	//   issue_created            — run 产出了一个拥有自己 workdir 的 issue 任务；
+	//                              从此这个 run 的 workdir 就是死重。
+	// 非终态：pending, running。一直跳到它们进入终态，而不是按 mtime 去约束——长时间
+	// 运行的 autopilot 是真实存在的。
 	//
-	// An autopilot run's workdir is never reused: unlike issue/chat tasks there
-	// is no PriorWorkDir path that hands a later run the same directory, so every
-	// run gets a fresh one. Whatever the run produced already lives server-side
-	// (and an issue_created run handed its work to an issue task that owns its own
-	// envRoot). So the moment the run reaches a terminal state the directory is
-	// dead weight and we reclaim it immediately, without waiting out GCTTL — the
-	// same reasoning gcDecisionQuickCreate applies to quick-create dirs. The
-	// active-env-root short-circuit in shouldCleanTaskDir still protects a run
-	// that is mid-flight, so this can't pull the rug from under live work.
+	// autopilot run 的 workdir 从不复用：与 issue/chat 任务不同，没有 PriorWorkDir 把
+	// 同一目录交给后来的 run，所以每个 run 都拿全新的。run 产出的东西已全部在服务端
+	// （issue_created 的 run 把活交给了拥有自己 envRoot 的 issue 任务）。因此 run 一到
+	// 终态，目录就是死重、立即回收，不用等 GCTTL——与 gcDecisionQuickCreate 对
+	// quick-create 目录的理由一致。shouldCleanTaskDir 里的活动 env root 短路仍保护飞行
+	// 中的 run，所以这不会抽掉活产出的地毯。
 	if isAutopilotRunTerminal(status.Status) {
 		d.logger.Info("gc: eligible for cleanup",
 			"dir", filepath.Base(taskDir),
@@ -780,10 +732,9 @@ func (d *Daemon) gcDecisionAutopilotRun(ctx context.Context, taskDir string, met
 	return gcActionSkip
 }
 
-// isAutopilotRunTerminal mirrors the run.status CHECK in
-// migrations/042_autopilot.up.sql. Non-terminal states are pending/running;
-// every other value the schema allows is a final resting state from the
-// daemon's POV (the run is no longer producing work in this workdir).
+// isAutopilotRunTerminal 镜像 migrations/042_autopilot.up.sql 里的 run.status CHECK。
+// 非终态是 pending/running；schema 允许的其它每个值，从 daemon 视角都是最终静息状态
+// （run 不再在这个 workdir 里产出工作）。
 func isAutopilotRunTerminal(status string) bool {
 	switch status {
 	case "completed", "failed", "skipped", "issue_created":
@@ -801,20 +752,16 @@ func (d *Daemon) gcDecisionQuickCreate(ctx context.Context, taskDir string, meta
 	status, err := d.client.GetTaskGCCheck(ctx, meta.TaskID)
 	if err != nil {
 		if isAccessNotFound(err) {
-			// Task row was hard-deleted, or token can't see it. Either way,
-			// fall back to mtime-gated orphan to stay safe across scoped
-			// tokens — same reasoning as the issue path.
+			// 任务行被硬删，或 token 看不见它。无论哪种都回退到按 mtime 把关的 orphan，
+			// 对缩小权限的 token 保持安全——与 issue 路径同理。
 			return d.orphanByMTime(taskDir, "task not accessible")
 		}
 		return gcActionSkip
 	}
 
-	// Quick-create workdirs are not reused by the issue task that
-	// LinkTaskToIssue eventually attaches — that issue gets its own
-	// envRoot. So as soon as the quick-create task itself reaches a
-	// terminal state we can reclaim the directory immediately, without
-	// waiting for GCTTL. If the user wants to revisit, the linked issue
-	// has the agent's output already.
+	// quick-create workdir 不会被 LinkTaskToIssue 最终挂接的 issue 任务复用——那个
+	// issue 会拿自己的 envRoot。所以 quick-create 任务一到终态就能立即回收目录，不用
+	// 等 GCTTL。用户想回看时，挂接的 issue 里已有 agent 的输出。
 	if isAgentTaskTerminal(status.Status) {
 		d.logger.Info("gc: eligible for cleanup",
 			"dir", filepath.Base(taskDir),
@@ -827,9 +774,8 @@ func (d *Daemon) gcDecisionQuickCreate(ctx context.Context, taskDir string, meta
 	return gcActionSkip
 }
 
-// isAgentTaskTerminal reports whether a value of agent_task_queue.status
-// represents a final state. Mirrors the status enum used across the
-// task service — see service/task.go for the canonical list.
+// isAgentTaskTerminal 报告 agent_task_queue.status 的某个值是否代表终态。镜像任务服务
+// 各处使用的状态枚举——规范清单见 service/task.go。
 func isAgentTaskTerminal(status string) bool {
 	switch status {
 	case "completed", "failed", "cancelled":
@@ -839,10 +785,9 @@ func isAgentTaskTerminal(status string) bool {
 	}
 }
 
-// gcTaskDirOwner returns authoritative provenance only when both the marker
-// and its position under WorkspacesRoot agree. Missing GC metadata is not
-// ownership proof: partially prepared roots have .task_owner, while arbitrary
-// user directories do not.
+// gcTaskDirOwner 只有当“标记本身”与“它位于 WorkspacesRoot 之下的位置”都一致时才
+// 返回权威属主信息。GC 元数据缺失不构成归属证明：部分准备好的根有 .task_owner，而
+// 任意用户目录没有。
 func (d *Daemon) gcTaskDirOwner(taskDir string) (*execenv.EnvRootOwner, error) {
 	owner, err := execenv.ReadEnvRootOwner(taskDir)
 	if err != nil {
@@ -853,9 +798,8 @@ func (d *Daemon) gcTaskDirOwner(taskDir string) (*execenv.EnvRootOwner, error) {
 	}
 	validated := *owner
 	if validated.WorkspaceID == "" && validated.TaskID != "" {
-		// Legacy owner markers contain only the task ID. Completion metadata can
-		// supply the missing workspace identity without weakening the hard
-		// requirement that a Prepare-time owner marker exists.
+		// 旧版属主标记只含任务 ID。完成元数据能补上缺失的 workspace 身份，且不削弱
+		// “Prepare 时必须存在属主标记”这一硬要求。
 		meta, metaErr := execenv.ReadGCMeta(taskDir)
 		if metaErr != nil || strings.TrimSpace(meta.WorkspaceID) == "" {
 			return nil, errors.New("legacy task owner has no workspace identity or valid GC metadata")
@@ -868,15 +812,12 @@ func (d *Daemon) gcTaskDirOwner(taskDir string) (*execenv.EnvRootOwner, error) {
 	return &validated, nil
 }
 
-// cleanTaskDir removes a proven daemon-owned task directory, logs the
-// reclaimed bytes, and returns that count for the cycle summary. A failed or
-// refused removal reports removed=false.
+// cleanTaskDir 删除一个“已被证明 daemon 所有”的任务目录、记日志并返回回收字节数供
+// 周期汇总。删除失败或被拒时返回 removed=false。
 func (d *Daemon) cleanTaskDir(taskDir string) (bytes int64, removed bool) {
-	// Measure first, prove ownership second. dirSize walks the entire tree,
-	// which on a large task directory takes long enough for the validated
-	// directory to be replaced underneath us — checking before that walk would
-	// hand RemoveAll a path last proven ours tens of seconds earlier. This is
-	// the defense-in-depth check, so it sits immediately before the removal.
+	// 先量大小、后证归属。dirSize 会遍历整棵树，在大任务目录上耗时足以让“已校验的
+	// 目录”在我们脚下被替换——在校验前做遍历，会把 RemoveAll 交到一个几十秒前才证明
+	// 归我们、此刻未必仍是我们的路径。这是纵深防御检查，所以它紧挨着删除。
 	bytes = dirSize(taskDir)
 	owner, ownerErr := d.gcTaskDirOwner(taskDir)
 	if ownerErr != nil {
@@ -895,47 +836,37 @@ func (d *Daemon) cleanTaskDir(taskDir string) (bytes int64, removed bool) {
 	return bytes, true
 }
 
-// linkedDirModes are the mode bits that mark a directory entry as a link to
-// content the task does not own. Every task-directory walk that deletes or
-// measures must refuse to descend through them: the per-task codex-home links
-// the user's real skills, Codex session store and plugin cache into itself, so
-// descending would put the GC inside the user's home.
+// linkedDirModes 是标志“该目录条目是指向任务并不拥有的内容的链接”的模式位。每个
+// “删除或测量”的任务目录遍历都必须拒绝下钻它们：每任务 codex-home 会把用户的真实
+// 技能、Codex session store 与插件缓存链接进自己，下钻等于把 GC 放进用户家目录。
 //
-// ModeSymlink alone is not enough on Windows. createDirLink falls back to a
-// directory junction (mklink /J) when os.Symlink is denied — no Developer Mode
-// — and since Go 1.23 os.Lstat reports a junction as ModeDir|ModeIrregular
-// with no ModeSymlink bit, while its DirEntry still answers IsDir() == true.
-// A ModeSymlink-only check therefore lets filepath.WalkDir walk straight into
-// the link target.
+// Windows 上单看 ModeSymlink 不够。createDirLink 在 os.Symlink 被拒（无开发者模式）
+// 时回退到目录 junction（mklink /J）；而自 Go 1.23 起 os.Lstat 把 junction 报成
+// ModeDir|ModeIrregular、没有 ModeSymlink 位，同时它的 DirEntry 仍答 IsDir() ==
+// true。因此只检查 ModeSymlink 会让 filepath.WalkDir 径直走进链接目标。
 const linkedDirModes = os.ModeSymlink | os.ModeIrregular
 
-// cleanTaskArtifacts walks taskDir and deletes every directory whose basename
-// matches one of patterns, plus exact daemon-managed artifact paths. Returns
-// (removedCount, bytesReclaimed, perPattern).
+// cleanTaskArtifacts 遍历 taskDir 删除每个“basename 命中某模式”的目录，外加确切的
+// daemon 受管 artifact 路径。返回 (removedCount, bytesReclaimed, perPattern)。
 //
-// Safety contract:
-//   - patterns are basename-only; entries with a path separator are dropped.
-//   - .git subtrees are never descended into, so the agent's git history stays
-//     intact even if a pattern would otherwise match.
-//   - linked directories are skipped entirely — neither the link nor its
-//     target is touched, so a malicious or stale link can't redirect the GC
-//     outside the workdir. See linkedDirModes for what counts as a link.
-//   - every removal target is verified to live inside taskDir, so a tampered
-//     .gc_meta.json can't trick the daemon into deleting outside its sandbox.
+// 安全契约：
+//   - 模式只看 basename；带路径分隔符的条目被丢弃。
+//   - 绝不下钻 .git 子树，即使某模式会命中，agent 的 git 历史也保持完好。
+//   - 链接目录整体跳过——链接本身与目标都不碰，恶意或过期链接无法把 GC 引到 workdir
+//     之外。见 linkedDirModes 什么算链接。
+//   - 每个删除目标都验证在 taskDir 内，被篡改的 .gc_meta.json 骗不了 daemon 删到
+//     sandbox 之外。
 func (d *Daemon) cleanTaskArtifacts(taskDir string, patterns []string) (removed int, bytes int64, perPattern map[string]int) {
 	return d.cleanTaskArtifactsMatching(taskDir, newArtifactMatcher(patterns, execenv.ManagedReclaimableArtifactSubpaths()))
 }
 
-// cleanManagedTaskArtifacts removes the exact daemon-managed artifact subpaths
-// under taskDir.
+// cleanManagedTaskArtifacts 删除 taskDir 下确切的 daemon 受管 artifact 子路径。
 //
-// The managed set is a list of exact relative paths, so these are addressed
-// directly rather than searched for. Walking the whole task tree to find a
-// directory whose location is already known costs a full repo checkout's worth
-// of stat calls, and a task that stays non-terminal — an active chat session —
-// pays it on every GC cycle for as long as it lives, long after the cache is
-// gone. cleanTaskArtifacts still walks, because its basename patterns can match
-// at any depth; this one has nothing to search for.
+// 受管集合是一列精确的相对路径，所以是“直接寻址”而不是“搜寻”。为找一个位置已知的
+// 目录去遍历整棵任务树，要付一整个仓库检出那么多次 stat；而保持非终态的任务——活动
+// chat 会话——在其存活期内每个 GC 周期都要付这笔钱，哪怕缓存早已不在了。
+// cleanTaskArtifacts 仍要遍历，因为它的 basename 模式可能命中任意深度；这里则没什么
+// 可找的。
 func (d *Daemon) cleanManagedTaskArtifacts(taskDir string) (removed int, bytes int64, perPattern map[string]int) {
 	perPattern = map[string]int{}
 	if taskDir == "" {
@@ -967,28 +898,23 @@ func (d *Daemon) cleanManagedTaskArtifacts(taskDir string) (removed int, bytes i
 	return
 }
 
-// managedArtifactTarget resolves one managed relative subpath under absRoot to
-// an absolute path that is safe to remove, reporting false when there is
-// nothing to reclaim.
+// managedArtifactTarget 把 absRoot 下的一条受管相对子路径解析成“可安全删除”的绝对
+// 路径；没有可回收对象时返回 false。
 //
-// The tree walk this replaces refused to descend through symlinks and Windows
-// junctions: the per-task codex-home links the user's real skills, Codex
-// session store and plugin cache into itself, so following one would put
-// RemoveAll inside the user's home. Addressing the path directly means every
-// component between absRoot and the leaf has to be re-checked, not just the
-// leaf. See linkedDirModes.
+// 它取代的树遍历曾拒绝下钻符号链接与 Windows junction：每任务 codex-home 把用户的
+// 真实技能、Codex session store 与插件缓存链接进自己，跟随一个就等于把 RemoveAll 放进
+// 用户家目录。直接寻址意味着 absRoot 到叶子之间每个组件都要复查，而不只是叶子。见
+// linkedDirModes。
 //
-// Containment needs no separate check: safeRelativePath has already rejected
-// absolute paths and anything that escapes upward, and filepath.Clean leaves no
-// interior "..", so joining the components one at a time cannot leave absRoot.
+// 包含性无需单独检查：safeRelativePath 已拒绝绝对路径与任何向上逃逸，filepath.Clean
+// 不留内部 ".."，因此逐组件 join 不可能离开 absRoot。
 func managedArtifactTarget(absRoot, rel string) (string, bool) {
 	current := absRoot
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		current = filepath.Join(current, part)
 		info, err := os.Lstat(current)
 		if err != nil {
-			// Already reclaimed, never created, or unreadable — all three mean
-			// "nothing for this cycle to do".
+			// 已被回收、从未创建、或不可读——三者都意味着“本周期无事可做”。
 			return "", false
 		}
 		if info.Mode()&linkedDirModes != 0 || !info.IsDir() {
@@ -998,10 +924,9 @@ func managedArtifactTarget(absRoot, rel string) (string, bool) {
 	return current, true
 }
 
-// hasManagedArtifact reports whether any managed subpath is actually present.
-// Without this the decision layer keeps returning gcActionCleanManagedArtifacts
-// for a long-lived task whose completed_at never moves again, so every cycle
-// takes an env-root reservation and logs a reclaim that removes nothing.
+// hasManagedArtifact 报告是否有任何受管子路径真实存在。没有它，决策层会对一个
+// completed_at 不再前进的长命任务反复返回 gcActionCleanManagedArtifacts，每个周期都
+// 做一次 env-root 预留、记一条“删了个寂寞”的日志。
 func hasManagedArtifact(taskDir string) bool {
 	absRoot, err := filepath.Abs(taskDir)
 	if err != nil {
@@ -1032,7 +957,7 @@ func (d *Daemon) cleanTaskArtifactsMatching(taskDir string, matcher artifactMatc
 
 	walkErr := filepath.WalkDir(absRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
-			return nil // best-effort — keep walking
+			return nil // 尽力而为——继续走
 		}
 		if path == absRoot {
 			return nil
@@ -1040,13 +965,11 @@ func (d *Daemon) cleanTaskArtifactsMatching(taskDir string, matcher artifactMatc
 		if !entry.IsDir() {
 			return nil
 		}
-		// Never descend into .git — preserves agent commits even if a pattern
-		// like "objects" would otherwise match.
+		// 绝不下钻 .git——即使某模式（如 "objects"）会命中，agent 提交也得以保留。
 		if entry.Name() == ".git" {
 			return filepath.SkipDir
 		}
-		// Refuse to follow linked directories. WalkDir reports them as type
-		// Dir on some platforms; lstat to be sure.
+		// 拒绝跟随链接目录。WalkDir 在某些平台把它们报成 Dir 类型；用 lstat 确认。
 		info, statErr := os.Lstat(path)
 		if statErr != nil {
 			return nil
@@ -1067,7 +990,7 @@ func (d *Daemon) cleanTaskArtifactsMatching(taskDir string, matcher artifactMatc
 		bytes += size
 		perPattern[pattern]++
 		d.logger.Info("gc: artifact removed", "path", path, "bytes", size)
-		// Don't descend into the now-deleted subtree.
+		// 不要下钻进这个已删除的子树。
 		return filepath.SkipDir
 	})
 	if walkErr != nil {
@@ -1076,16 +999,15 @@ func (d *Daemon) cleanTaskArtifactsMatching(taskDir string, matcher artifactMatc
 	return
 }
 
-// dirSize returns the total size of all regular files under root, in bytes.
-// Linked content is not counted: os.RemoveAll would drop the link and leave
-// the target, so counting it would overstate what a removal reclaims.
-// Non-fatal: errors during the walk are ignored so callers can report a
-// best-effort byte count without aborting the whole GC cycle.
+// dirSize 返回 root 下所有常规文件的总字节数。链接内容不计入：os.RemoveAll 会丢掉
+// 链接而留下目标，数了它会让“一次删除回收的量”虚高。非致命：遍历中的错误被忽略，
+// 调用方可以报一个尽力而为的字节数而不必中止整个 GC 周期。
 func dirSize(root string) int64 {
 	total, _ := dirSizeContext(context.Background(), root)
 	return total
 }
 
+// dirSizeContext 是支持取消的 dirSize。
 func dirSizeContext(ctx context.Context, root string) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(root, func(_ string, entry os.DirEntry, err error) error {
@@ -1122,8 +1044,8 @@ const (
 	repoMaintenanceMarker = ".multica-maintenance-pending"
 )
 
-// pruneRepoWorktrees runs `git worktree prune` on all bare repos in the cache,
-// then evicts the ones nothing needs anymore.
+// pruneRepoWorktrees 对所有缓存里的裸仓库跑 `git worktree prune`，再驱逐没人再需要的
+// 那些。
 func (d *Daemon) pruneRepoWorktrees(workspacesRoot string, stats *gcStats) {
 	d.pruneRepoWorktreesContext(context.Background(), workspacesRoot, stats)
 }
@@ -1160,7 +1082,7 @@ func (d *Daemon) pruneRepoWorktreesContext(ctx context.Context, workspacesRoot s
 			}
 			d.maintainRepoCache(ctx, barePath, stats)
 		}
-		// Drop the per-workspace directory once its last repo is gone.
+		// 最后一个仓库也没了之后，删掉该 workspace 目录。
 		if remaining, err := os.ReadDir(wsRepoDir); err == nil && len(remaining) == 0 {
 			os.Remove(wsRepoDir)
 		}
@@ -1176,21 +1098,20 @@ func (d *Daemon) maintainRepoCache(ctx context.Context, barePath string, stats *
 	})
 }
 
-// pruneWorktree runs only the maintenance half — prune stale worktrees and
-// agent branches — without considering eviction.
+// pruneWorktree 只跑维护那半——修剪过期 worktree 与 agent 分支——不考虑驱逐。
 func (d *Daemon) pruneWorktree(barePath string) {
 	d.withRepoMaintenance(context.Background(), barePath, func(ctx context.Context) {
 		d.pruneWorktreeLocked(ctx, barePath)
 	})
 }
 
+// repoMaintenanceBackend 是 repoCache 可选实现的“前台优先维护门”接口。
 type repoMaintenanceBackend interface {
 	WithRepoMaintenance(context.Context, string, func(context.Context) error) (bool, error)
 }
 
-// withRepoMaintenance uses the cache's foreground-priority gate when
-// available. The fallback preserves test/degraded backends that predate the
-// optional interface without changing the repoCacheBackend contract.
+// withRepoMaintenance 可用时走缓存的“前台优先”门。回退保留早于该可选接口的
+// 测试/降级后端，且不改变 repoCacheBackend 契约。
 func (d *Daemon) withRepoMaintenance(ctx context.Context, barePath string, fn func(context.Context)) {
 	if cache, ok := d.repoCache.(repoMaintenanceBackend); ok {
 		ran, err := cache.WithRepoMaintenance(ctx, barePath, func(maintenanceCtx context.Context) error {
@@ -1208,9 +1129,8 @@ func (d *Daemon) withRepoMaintenance(ctx context.Context, barePath string, fn fu
 	d.withRepoLock(barePath, func() { fn(ctx) })
 }
 
-// withRepoLock serializes a mutation against Sync / CreateWorktree on the same
-// bare repo. A daemon built without a repo cache (tests, degraded startup) has
-// no lock to take and runs the work directly.
+// withRepoLock 让一次变更与同一裸仓库上的 Sync / CreateWorktree 串行。没有 repo cache
+// 的 daemon（测试、降级启动）无锁可取，直接执行该工作。
 func (d *Daemon) withRepoLock(barePath string, fn func()) {
 	if d.repoCache == nil {
 		fn()
@@ -1224,40 +1144,33 @@ func (d *Daemon) withRepoLock(barePath string, fn func()) {
 	}
 }
 
-// evictRepoCacheLocked removes a bare repo cache that nothing needs anymore.
-// The caller must hold the repo lock, so this cannot race a Sync or a
-// CreateWorktree on the same repo.
+// evictRepoCacheLocked 删除没人再需要的裸仓库缓存。调用方必须持有仓库锁，因此它不会
+// 与同一仓库上的 Sync 或 CreateWorktree 竞态。
 //
-// All four conditions are required:
+// 四个条件缺一不可：
 //
-//  1. GCRepoTTL > 0 — eviction is opt-out.
+//  1. GCRepoTTL > 0 ——驱逐是可退出的。
 //
-//  2. No watched workspace still claims the repo. This is a RETAIN predicate,
-//     not a delete predicate, and the direction matters: Sync re-clones every
-//     listed repo that is missing whenever a workspace registers, which happens
-//     on every daemon start. Evicting a still-attached repo therefore just buys
-//     a full re-clone on the next restart — that is not reclaiming space, it is
-//     moving it. Because the set only ever *prevents* deletion, a stale or
-//     empty one cannot widen what we delete; it can only drop a layer of
-//     protection that conditions 3 and 4 still enforce.
+//  2. 没有受管 workspace 仍声称要这个仓库。这是 RETAIN（保留）谓词而非删除谓词，方向
+//     很关键：Sync 会在 workspace 注册时（每次 daemon 启动都会发生）重克隆每个“在列但
+//     缺失”的仓库。驱逐仍被挂接的仓库只换来下次重启时整仓重克隆——那不是回收空间，
+//     是搬移空间。由于该集合只*阻止*删除，陈旧或空的集合不可能扩大删除范围；它只能撤
+//     掉一层防护，而第 3、4 条仍兜着。
 //
-//  3. No worktrees are left, checked after `git worktree prune` has dropped the
-//     entries whose task dirs the GC already removed. A live worktree's .git
-//     points into this directory, so removing it would break that checkout.
+//  3. 没有任何 worktree 剩下——在 `git worktree prune` 已删掉“任务目录已被 GC 移除”
+//     的条目之后检查。活动 worktree 的 .git 指向这个目录，删它等于弄坏那份检出。
 //
-//  4. No task has created a worktree from it within GCRepoTTL. An unknown
-//     stamp is stamped and skipped, never treated as ancient — see
-//     repocache.LastUsed.
+//  4. GCRepoTTL 内没有任务从它创建过 worktree。未知的时间戳会被打上戳并跳过，绝不
+//     当作远古——见 repocache.LastUsed。
 //
-// Evicting wrongly costs time, not correctness: the next task that needs the
-// repo takes the cache-miss path in ensureRepoReady, which re-syncs and
-// re-clones on demand.
+// 误驱逐只费时间、不失正确性：下一个需要该仓库的任务走 ensureRepoReady 的缓存未命
+// 中路径，按需重新同步与克隆。
 func (d *Daemon) evictRepoCacheLocked(ctx context.Context, barePath string, stats *gcStats) {
 	if d.cfg.GCRepoTTL <= 0 {
 		return
 	}
-	// Cheap early-out so an attached repo — the common case — never pays for
-	// the git and filesystem work below.
+	// 便宜的提前返回，让仍被挂接的仓库——常见情形——永远不用付下面 git 与文件系统
+	// 的工作。
 	if d.repoBarePathIsLive(barePath) {
 		return
 	}
@@ -1276,9 +1189,8 @@ func (d *Daemon) evictRepoCacheLocked(ctx context.Context, barePath string, stat
 
 	lastUsed, ok := repocache.LastUsed(barePath)
 	if !ok {
-		// A cache created before the stamp existed. Start its clock now; the
-		// alternative reading of "unknown" would evict every pre-upgrade cache
-		// on the machine in the first cycle after an upgrade.
+		// 该缓存创建于“打时间戳”功能之前。现在开始给它计时；把 "unknown" 读成远古，
+		// 会在升级后第一个周期就把机器上每个升级前缓存全驱逐掉。
 		repocache.MarkUsed(barePath, d.logger)
 		return
 	}
@@ -1287,19 +1199,17 @@ func (d *Daemon) evictRepoCacheLocked(ctx context.Context, barePath string, stat
 		return
 	}
 
-	// Measure before the final check, not after. dirSize walks every file in
-	// the repo, which on a multi-GiB cache takes long enough for a workspace to
-	// re-attach underneath us — putting it between the check and the delete
-	// would reopen most of the window this check exists to close.
+	// 在最终检查之前量大小，而不是之后。dirSize 走遍仓库每个文件，在多 GiB 缓存上
+	// 耗时足以让某个 workspace 在我们脚下重新挂接——把它放在检查与删除之间，等于把本
+	// 检查要关闭的窗口重新打开大半。
 	bytes, err := dirSizeContext(ctx, barePath)
 	if err != nil {
 		return
 	}
 
-	// Ask again immediately before deleting. The checks above run git and walk
-	// the filesystem, and a workspace can re-attach this repo while they do;
-	// re-reading in-memory state costs one mutex and no network, and shrinks
-	// the window from "the whole .repos walk" to these two adjacent statements.
+	// 删除前立刻再问一次。上面的检查跑过 git 与文件系统，期间 workspace 可能重新挂接
+	// 该仓库；重读内存状态只花一次互斥、不花网络，还能把窗口从“整轮 .repos 遍历”
+	// 缩小到这两条相邻语句。
 	if d.repoBarePathIsLive(barePath) {
 		return
 	}
@@ -1319,10 +1229,9 @@ func (d *Daemon) evictRepoCacheLocked(ctx context.Context, barePath string, stat
 	)
 }
 
-// linkedWorktreeCount returns how many linked worktrees a bare repo still has.
-// `git worktree list --porcelain` emits one blank-line-separated block per
-// worktree and marks the bare repo's own block with a `bare` line; only the
-// linked blocks represent checkouts that would break if the repo went away.
+// linkedWorktreeCount 返回某个裸仓库还有多少条链接 worktree。`git worktree list
+// --porcelain` 每个 worktree 输出一个空行分隔的块，并用 `bare` 行标记裸仓库自己的
+// 块；只有链接块代表“仓库没了会坏掉的检出”。
 func linkedWorktreeCount(barePath string) (int, error) {
 	return linkedWorktreeCountContext(context.Background(), barePath)
 }
@@ -1425,19 +1334,16 @@ func (d *Daemon) pruneWorktreeLocked(ctx context.Context, barePath string) {
 		d.logger.Debug("gc: heavy repo maintenance disabled", "repo", barePath)
 		return
 	}
-	// Agent CLIs can mutate linked-worktree refs directly, outside the daemon's
-	// in-process repository gate. Do not start heavy maintenance while any task
-	// is active; a new task or checkout that arrives after this check preempts
-	// through the maintenance context below.
+	// agent CLI 会直接在 daemon 进程内仓库闸门之外改链接 worktree 的引用。有活动任务
+	// 时不要启动重维护；本检查之后到达的新任务或检出会经下面的维护 context 抢占。
 	if d.activeTasks.Load() > 0 {
 		d.logger.Debug("gc: heavy repo maintenance deferred while tasks are active", "repo", barePath)
 		return
 	}
 
-	// Heavier maintenance only runs when we actually removed refs, so we don't
-	// turn every GC tick into a full `git gc --prune` on every cached repo. The
-	// prune step gets its own longer timeout because it can take minutes on a
-	// real bare cache; under the shared 30s budget it would be killed mid-run.
+	// 只在真的删过引用时才做更重的维护，这样不会把每个 GC tick 都变成对每个缓存仓库
+	// 的一次完整 `git gc --prune`。prune 那步有自己更长的超时，因为它在真实裸缓存上
+	// 可能要跑几分钟；放在共享 30s 预算下会在中途被杀。
 	maintenance := []struct {
 		args    []string
 		timeout time.Duration
@@ -1478,10 +1384,12 @@ func (d *Daemon) pruneWorktreeLocked(ctx context.Context, barePath string) {
 	}
 }
 
+// runGitGCCommand 以默认超时在某裸仓库上跑一个 GC 用 git 命令。
 func runGitGCCommand(barePath string, args ...string) (string, error) {
 	return runGitGCCommandContext(context.Background(), barePath, args...)
 }
 
+// runGitCommand 以给定超时在某裸仓库上跑任意 git 命令。
 func runGitCommand(barePath string, timeout time.Duration, args ...string) (string, error) {
 	return runGitCommandContext(context.Background(), barePath, timeout, args...)
 }
@@ -1500,13 +1408,12 @@ func runGitCommandContext(parent context.Context, barePath string, timeout time.
 	return strings.TrimSpace(string(out)), err
 }
 
+// repoMaintenanceLockSnapshot 是一次维护前的锁文件快照。
 type repoMaintenanceLockSnapshot map[string]struct{}
 
-// snapshotRepoMaintenanceLocks records only lock paths known to be produced by
-// the maintenance commands below. Cleanup later removes a path only if it did
-// not exist in this snapshot and the process tree is confirmed gone. Checkout
-// waits on the same repo gate, and task dispatch waits for CancelMaintenance's
-// barrier, so no agent Git work can create a competing lock before cleanup.
+// snapshotRepoMaintenanceLocks 只记录已知由下面的维护命令产生的锁路径。随后的清理只
+// 在“该路径快照里没有、且进程树已确认消失”时删除它。检出在同一个仓库门上等待，任务
+// 派发等 CancelMaintenance 的屏障，因此在清理前不会有 agent git 工作造出竞争的锁。
 func snapshotRepoMaintenanceLocks(barePath string) repoMaintenanceLockSnapshot {
 	locks := make(repoMaintenanceLockSnapshot)
 	for _, path := range repoMaintenanceLockPaths(barePath) {
@@ -1515,6 +1422,8 @@ func snapshotRepoMaintenanceLocks(barePath string) repoMaintenanceLockSnapshot {
 	return locks
 }
 
+// repoMaintenanceLockPaths 枚举一次被抢占的维护可能留下的锁文件（gc.pid、
+// packed-refs.lock 以及 refs/objects 等目录下的 *.lock）。
 func repoMaintenanceLockPaths(barePath string) []string {
 	var locks []string
 	for _, name := range []string{"gc.pid", "packed-refs.lock"} {
@@ -1548,6 +1457,8 @@ func repoMaintenanceLockPaths(barePath string) []string {
 	return locks
 }
 
+// cleanupNewRepoMaintenanceLocks 删除一次被抢占的维护相对快照新增、且进程树已确认的
+// 锁文件。
 func (d *Daemon) cleanupNewRepoMaintenanceLocks(barePath string, before repoMaintenanceLockSnapshot) {
 	for _, path := range repoMaintenanceLockPaths(barePath) {
 		if _, existed := before[path]; existed {
@@ -1566,6 +1477,7 @@ func (d *Daemon) cleanupNewRepoMaintenanceLocks(barePath string, before repoMain
 	}
 }
 
+// agentWorktreeBranches 返回某裸仓库“当前仍被 worktree 使用”的 agent/ 分支集合。
 func agentWorktreeBranches(barePath string) (map[string]struct{}, error) {
 	return agentWorktreeBranchesContext(context.Background(), barePath)
 }
@@ -1590,14 +1502,14 @@ func agentWorktreeBranchesContext(ctx context.Context, barePath string) (map[str
 	return branches, nil
 }
 
+// listAgentBranches 返回某裸仓库里 agent/ 命名空间下所有分支。
 func listAgentBranches(barePath string) ([]string, error) {
 	return listAgentBranchesContext(context.Background(), barePath)
 }
 
 func listAgentBranchesContext(ctx context.Context, barePath string) ([]string, error) {
-	// Trailing slash narrows the pattern to the `agent/` namespace only. Without
-	// it, `for-each-ref` would also return a branch literally named `agent`,
-	// which `agentWorktreeBranches` ignores — that branch would then be deleted.
+	// 尾斜杠把模式收窄到 `agent/` 命名空间。没有它，`for-each-ref` 还会返回一个字面
+	// 名叫 `agent` 的分支——agentWorktreeBranches 会忽略它——那个分支于是会被删掉。
 	out, err := runGitGCCommandContext(ctx, barePath, "for-each-ref", "--format=%(refname:short)", "refs/heads/agent/")
 	if err != nil {
 		return nil, err
@@ -1617,7 +1529,7 @@ func listAgentBranchesContext(ctx context.Context, barePath string) ([]string, e
 	return branches, nil
 }
 
-// isBareRepo checks if a path looks like a bare git repository.
+// isBareRepo 检查一个路径看起来是不是裸 git 仓库。
 func isBareRepo(path string) bool {
 	if _, err := os.Stat(filepath.Join(path, "HEAD")); err != nil {
 		return false

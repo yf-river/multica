@@ -1,3 +1,6 @@
+// 本文件实现落地页「联系销售（Contact Sales）」表单的公开提交端点（POST /api/contact-sales）：
+// 校验公司邮箱、公司规模/用途白名单、各自由文本长度，做「同邮箱每小时限次 + 路由层按 IP
+// 限流」两道防垃圾措施后落库并上报埋点。文件末尾是若干入参清洗辅助函数。
 package handler
 
 import (
@@ -16,16 +19,13 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Public, unauthenticated endpoint for the landing-page "Contact Sales"
-// form. Spam is mitigated by:
-//   - business-email validation (free providers blocked at the handler).
-//   - a per-email hourly cap so a successful submission can't be replayed
-//     into a flood from the same address.
-//   - per-IP rate limiting applied at the router (RATE_LIMIT_CONTACT_SALES).
+// 落地页「Contact Sales」表单的公开、无认证端点。垃圾提交靠三道防线缓解：
+//   - 公司邮箱校验（handler 层挡掉免费邮箱服务商）。
+//   - 每邮箱每小时限次，让一次合法提交不能被同地址重放成洪泛。
+//   - 路由层按 IP 限流（RATE_LIMIT_CONTACT_SALES）。
 //
-// Free-text fields are length-capped before they reach the DB, and the
-// request body itself is bounded so an attacker can't POST megabytes of
-// junk into the JSONB-free TEXT columns.
+// 自由文本字段在进库前都限长，请求体本身也设上限——攻击者没法把 MB 级垃圾 POST 进
+// 无 JSONB 保护的 TEXT 列。
 const (
 	contactSalesMaxFirstName   = 80
 	contactSalesMaxLastName    = 80
@@ -36,8 +36,8 @@ const (
 	contactSalesBodyLimit      = 16 * 1024
 )
 
-// contactSalesAllowedCompanySize is the closed enum the frontend dropdown
-// emits. Keep this in sync with `apps/web/features/landing/i18n/types.ts`.
+// contactSalesAllowedCompanySize 是前端下拉框会提交的闭值枚举。保持与
+// `apps/web/features/landing/i18n/types.ts` 同步。
 var contactSalesAllowedCompanySize = []string{
 	"1-10",
 	"11-50",
@@ -47,8 +47,7 @@ var contactSalesAllowedCompanySize = []string{
 	"1000+",
 }
 
-// contactSalesAllowedUseCase mirrors the "How do you plan to use or
-// collaborate with Multica?" dropdown.
+// contactSalesAllowedUseCase 镜像「你打算怎么用/怎么和 Multica 协作？」下拉框的取值。
 var contactSalesAllowedUseCase = []string{
 	"evaluate",
 	"adopt_team",
@@ -58,9 +57,8 @@ var contactSalesAllowedUseCase = []string{
 	"other",
 }
 
-// freeEmailDomains are the personal-mail domains we reject up front. The
-// frontend shows the same warning copy, but server-side enforcement is the
-// authority — a hand-rolled curl request mustn't be able to bypass it.
+// freeEmailDomains 是我们前置拒绝的个人邮箱域名。前端会展示同样文案的警告，但服务端
+// 强制才是权威——手搓的 curl 请求不该能绕过它。
 var freeEmailDomains = map[string]struct{}{
 	"gmail.com":      {},
 	"googlemail.com": {},
@@ -92,6 +90,7 @@ var freeEmailDomains = map[string]struct{}{
 	"foxmail.com":    {},
 }
 
+// CreateContactSalesRequest 是「联系销售」表单提交的请求体。
 type CreateContactSalesRequest struct {
 	FirstName     string `json:"first_name"`
 	LastName      string `json:"last_name"`
@@ -101,23 +100,22 @@ type CreateContactSalesRequest struct {
 	CountryRegion string `json:"country_region"`
 	UseCase       string `json:"use_case"`
 	Goals         string `json:"goals"`
-	// Source identifies where the form was opened from. Frontend
-	// enumerates {page, onboarding, agents_page}; the metric label
-	// `multica_contact_sales_submitted_total{source=...}` reads it
-	// via the metrics.NormalizeContactSalesSource allow-list, anything
-	// else collapses to "other". Empty falls back to "page" so legacy
-	// clients that don't send the field don't blackhole the metric.
+	// Source 标识表单是从哪里打开的。前端枚举 {page, onboarding, agents_page}；埋点标签
+	// `multica_contact_sales_submitted_total{source=...}` 经 metrics.NormalizeContactSalesSource
+	// 白名单读取，其余一律归为 "other"。空值退回 "page"，保证不发该字段的老客户端不会让
+	// 这条指标凭空消失。
 	Source          string `json:"source"`
 	ConsentOutreach bool   `json:"consent_outreach"`
 	ConsentUpdates  bool   `json:"consent_updates"`
 }
 
+// ContactSalesResponse 是提交成功后的回执：库里新行的 id 与创建时间。
 type ContactSalesResponse struct {
 	ID        string `json:"id"`
 	CreatedAt string `json:"created_at"`
 }
 
-// CreateContactSales is the public POST /api/contact-sales endpoint.
+// CreateContactSales 是公开的 POST /api/contact-sales 端点。
 func (h *Handler) CreateContactSales(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, contactSalesBodyLimit)
 	var req CreateContactSalesRequest
@@ -164,9 +162,8 @@ func (h *Handler) CreateContactSales(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "country_region is required")
 		return
 	}
-	// Bound the dropdown value at a generous length — we accept any string
-	// the frontend submits (country list is large) but cap it so an
-	// attacker can't stuff the column.
+	// 给下拉框值一个宽松的长度上限——前端提交什么我们都收（国家列表很大），但封顶以免
+	// 攻击者灌爆该列。
 	if len(countryRegion) > 80 {
 		writeError(w, http.StatusBadRequest, "country_region is too long")
 		return
@@ -184,9 +181,8 @@ func (h *Handler) CreateContactSales(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-email hourly cap: keeps a single business address from being
-	// used as a re-submit channel after one valid pass. DB-backed so it
-	// works across replicas and survives a restart.
+	// 每邮箱每小时限次：防止同一公司邮箱在通过一次校验后被当成重复提交通道。基于数据库，
+	// 跨副本有效、重启不丢。
 	count, err := h.Queries.CountRecentContactSalesByEmail(r.Context(), email)
 	if err != nil {
 		slog.Warn("count recent contact sales failed", append(logger.RequestAttrs(r), "error", err)...)
@@ -247,6 +243,7 @@ func (h *Handler) CreateContactSales(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// requireTrimmedField 去首尾空白后校验必填与长度上限；不合法时写好 400 并返回 ok=false。
 func requireTrimmedField(w http.ResponseWriter, raw, field string, max int) (string, bool) {
 	v := strings.TrimSpace(raw)
 	if v == "" {
@@ -260,6 +257,7 @@ func requireTrimmedField(w http.ResponseWriter, raw, field string, max int) (str
 	return v, true
 }
 
+// truncateString 把超长字符串截到 max 字节（用于 User-Agent 等不重要的审计字段）。
 func truncateString(s string, max int) string {
 	if len(s) <= max {
 		return s
@@ -267,12 +265,10 @@ func truncateString(s string, max int) string {
 	return s[:max]
 }
 
-// canonicalBusinessEmail parses raw user input with net/mail and returns the
-// canonical "local@domain" form (lower-cased, no display name, no surrounding
-// whitespace). It is the only safe input to isBusinessEmailDomain — checking
-// the raw string allows `Ada <ada@gmail.com>` to slip past the free-email
-// block list because the parsed RFC 5322 address would have domain `gmail.com`
-// while the raw "@" suffix would be `gmail.com>`.
+// canonicalBusinessEmail 用 net/mail 解析用户原始输入，返回规范的「local@domain」形态
+// （小写、无显示名、无首尾空白）。这是 isBusinessEmailDomain 唯一安全的入参——直接检查原始
+// 字符串会让 `Ada <ada@gmail.com>` 溜过免费邮箱黑名单：按 RFC 5322 解析后域名是 gmail.com，
+// 而原始串里 "@" 之后是 `gmail.com>`。
 func canonicalBusinessEmail(raw string) (string, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -283,9 +279,8 @@ func canonicalBusinessEmail(raw string) (string, bool) {
 		return "", false
 	}
 	email := strings.ToLower(strings.TrimSpace(addr.Address))
-	// mail.ParseAddress also accepts forms like `<ada@example.com>` and
-	// addresses with comments; addr.Address strips both. Require the
-	// canonical local@domain shape with non-empty pieces on either side.
+	// mail.ParseAddress 也接受 `<ada@example.com>` 这类带尖括号与注释的写法；addr.Address
+	// 会剥掉两者。这里要求规范的 local@domain 形态且 @ 两侧都非空。
 	at := strings.LastIndex(email, "@")
 	if at <= 0 || at == len(email)-1 {
 		return "", false
@@ -293,6 +288,7 @@ func canonicalBusinessEmail(raw string) (string, bool) {
 	return email, true
 }
 
+// isBusinessEmailDomain 判断邮箱的域名是否在免费邮箱黑名单里。
 func isBusinessEmailDomain(email string) bool {
 	at := strings.LastIndex(email, "@")
 	if at < 0 || at == len(email)-1 {
@@ -305,11 +301,9 @@ func isBusinessEmailDomain(email string) bool {
 	return true
 }
 
-// submitterIP captures the raw connection IP so we can correlate abuse
-// after the fact. We deliberately ignore X-Forwarded-For here — the
-// router's rate-limit middleware already vets trusted-proxy headers; for
-// the audit record we want the actual TCP peer, which is the conservative
-// signal under deployments that don't enforce XFF stripping.
+// submitterIP 抓取原始连接 IP 以便事后追溯滥用。这里刻意忽略 X-Forwarded-For——路由层的
+// 限流中间件已经核过可信代理头；审计记录要的是真实 TCP 对端，这在「未强制剥 XFF」的部署上
+// 是更保守的信号。
 func submitterIP(r *http.Request) *netip.Addr {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

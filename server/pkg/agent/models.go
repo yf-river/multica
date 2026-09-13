@@ -1,5 +1,27 @@
 package agent
 
+// 文件职责：本文件是 agent 运行时“模型目录”（model catalog）的发现与归一化层，回答一个贯穿
+// 全系统的问题：对某个 agent 提供方（claude / codex / cursor / copilot / pi / kimi / hermes /
+// reasonix / kiro / qoder / traecli / codebuddy / grok / dim / antigravity 等），UI 下拉框里
+// 应该列出哪些模型、每款模型支持哪些“思考强度/effort”档位、哪款是该运行时自己认定的默认模型。
+// 结果统一收敛成 Catalog 结构体交给上层（daemon / 前端）。
+//
+// 与外部工具/CLI 的交互，数据来源分两类：
+//  1. 静态内置表（claudeStaticModels、copilotStaticModels、grokStaticModels 等）：人工维护、
+//     长期有效的 ID 清单，通常作为“无需网络/未登录”时的兜底；
+//  2. 动态发现：拉起目标 CLI 的子进程（如 `codex debug models`、`pi --list-models`、
+//     `cursor-agent --list-models`、`agy models`、`omp models --json`、`kimi provider list`），
+//     或对 ACP 系 CLI 跑一遍 initialize→(authenticate)→session/new 握手，再解析响应里的
+//     `models.availableModels` / `configOptions` 等结构得到模型与 effort 档位。
+//
+// 关键约定：动态发现结果做 60s 短 TTL 记忆化（modelCache）；空结果与 Fallback（静态替身）目录
+// 一律不进缓存，让“瞬时故障恢复后下一次请求就能立刻重试”；Fallback 目录绝不代表运行时真实能力，
+// 尤其禁止写进服务端日级模型目录缓存（MUL-5549）。另一约定：各发现器对超时非常敏感——多数
+// 15s 上限，hermes 因其失败路径要 40s（详见各常量注释）。
+//
+// 内部组织：开头是结果/状态类型（Model、ModelThinking、Catalog 等）与面向调用方的查询函数
+// （ListModels、QualifyModelID、ModelSelectionSupported…）；中段按“静态目录 → 各提供方动态
+// 发现器/解析器 → ACP 共享握手助手”排布；文件末尾是 CodeBuddy 专属的发现逻辑。
 import (
 	"bufio"
 	"context"
@@ -19,16 +41,13 @@ import (
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
-// Model describes a single LLM model exposed by an agent provider.
-// The dropdown groups by Provider when the ID uses the
-// `provider/model` form (e.g. "openai/gpt-4o" from opencode).
-// Default is a *display* hint: the UI badges the entry the
-// runtime advertises as its preferred pick (e.g. Claude Code's
-// shipped default, or hermes' currentModelId). It has no effect
-// at execution time — when agent.model is empty the daemon passes
-// "" to the backend so each provider's own CLI resolves its own
-// default, which is always closer to what the user's account /
-// environment actually supports than a static guess here.
+// Model 描述某个 agent 提供方向用户暴露的单个 LLM 模型。
+// 当下拉框里的 ID 形如 `provider/model`（例如 opencode 的 "openai/gpt-4o"）时，前端会按
+// Provider 分组展示。
+// Default 只是*展示*提示：UI 会为运行时自己宣称为默认的那一项打徽标（例如 Claude Code 出厂
+// 默认，或 hermes 的 currentModelId）。它在执行期没有任何作用——当 agent.model 为空时 daemon
+// 会把 "" 传给后端，由各提供方自己的 CLI 去解析它真正的默认模型，这总是比这里写死的猜测更
+// 贴合用户账号/环境的实际能力。
 type Model struct {
 	ID                                  string             `json:"id"`
 	Label                               string             `json:"label"`
@@ -36,115 +55,96 @@ type Model struct {
 	Default                             bool               `json:"default,omitempty"`
 	ServiceTiers                        []ModelServiceTier `json:"service_tiers,omitempty"`
 	SupportsExplicitStandardServiceTier bool               `json:"supports_explicit_standard_service_tier,omitempty"`
-	// Thinking advertises the runtime's reasoning/effort catalog for this
-	// model. nil means the runtime/model has no thinking-level control
-	// (or the daemon couldn't discover one); the UI hides its picker. The
-	// catalog is per-model because Codex's `codex debug models` is itself
-	// per-model and Claude's `--effort` superset has known per-model gaps
-	// (`xhigh` is Opus-only, `max` is session-only). See MUL-2339.
+	// Thinking 上报该运行时为这款模型准备的 reasoning/effort 档位目录。nil 表示运行时/模型没有
+	// thinking 档位控制（或 daemon 没发现到），UI 会隐藏对应选择器。目录按模型区分，是因为
+	// Codex 的 `codex debug models` 本身就是按模型的，而 Claude 的 `--effort` 档位集存在已知的
+	// 按模型缺口（`xhigh` 仅 Opus 可用，`max` 仅会话内可用）。见 MUL-2339。
 	Thinking *ModelThinking `json:"thinking,omitempty"`
 }
 
-// ModelServiceTier is one runtime-native execution tier advertised for a
-// model. ID is sent back to the provider protocol unchanged; Name and
-// Description are display copy owned by the runtime catalog.
+// ModelServiceTier 是某运行时为模型宣传的一种“原生执行档位”（对应前端的速度/speed 选择器）。
+// ID 会原样送回提供方协议；Name/Description 是该运行时目录自带的展示文案。
 type ModelServiceTier struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 }
 
-// ModelThinking carries the per-model reasoning/effort catalog
-// surfaced by an agent runtime. Values are runtime-native — Codex can emit
-// "none|minimal|low|medium|high|xhigh|max|ultra"; Claude emits
-// "low|medium|high|xhigh|max"; Pi emits
-// "off|minimal|low|medium|high|xhigh|max". The frontend renders
-// SupportedLevels as-is so what users see matches each CLI's own UI.
+// ModelThinking 承载某 agent 运行时暴露的、按模型区分的思考/effort 档位目录。值都是运行时
+// 原生 token：Codex 会发 "none|minimal|low|medium|high|xhigh|max|ultra"；Claude 发
+// "low|medium|high|xhigh|max"；Pi 发 "off|minimal|low|medium|high|xhigh|max"。前端原样
+// 渲染 SupportedLevels，让用户看到的名字与每个 CLI 自己的界面一致。
 type ModelThinking struct {
 	SupportedLevels []ThinkingLevel `json:"supported_levels"`
-	// DefaultLevel is the value the runtime picks when no override is
-	// provided. Empty means "the runtime picks, we don't know" — the
-	// UI shows "Default" as a generic option.
+	// DefaultLevel 是未指定覆盖项时运行时自己会选用的档位。空串表示“由运行时自己选，我们
+	// 不知道”——此时 UI 只展示一个笼统的 "Default" 选项。
 	DefaultLevel string `json:"default_level,omitempty"`
 }
 
-// ThinkingLevel is one entry in a ModelThinking.SupportedLevels list.
-// Value is the literal token passed to the CLI (Claude `--effort <value>`
-// or Codex `model_reasoning_effort=<value>`); Label is a display string;
-// Description is optional helper copy lifted from the upstream catalog
-// when available (Codex's `description` field).
+// ThinkingLevel 是 ModelThinking.SupportedLevels 列表里的一项。
+// Value 是真正传给 CLI 的字面 token（Claude `--effort <value>` 或 Codex
+// `model_reasoning_effort=<value>`）；Label 是展示文字；Description 是可选说明，上游目录里有就
+// 摘过来（如 Codex 的 `description` 字段）。
 type ThinkingLevel struct {
 	Value       string `json:"value"`
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
 }
 
-// Catalog is the outcome of one model-discovery round: the models to show,
-// plus whether they were actually discovered.
+// Catalog 是一轮模型发现的结果：要展示的模型列表，以及它们是否真的是动态发现到的。
 type Catalog struct {
 	Models []Model
-	// Fallback reports that discovery did not succeed and Models is a static
-	// stand-in rather than the runtime's real catalog.
+	// Fallback 表示这次发现并未成功，Models 只是静态替身，不是运行时的真实目录。
 	//
-	// Several providers (codebuddy, copilot, cursor, grok) answer a failed
-	// discovery with a baked-in list so the picker still has something to
-	// show. That is a reasonable UI affordance and a terrible thing to
-	// persist: it is not what the runtime actually supports, and for
-	// codebuddy the static IDs and the real ones do not overlap at all, so
-	// every pick is an ID the CLI rejects. Callers must therefore never
-	// treat a fallback catalog as authoritative — in particular it must not
-	// enter the server's day-scale model-catalog cache, which would pin one
-	// transient failure as the answer for 24h (MUL-5549).
+	// 背景：若干提供方（codebuddy、copilot、cursor、grok）在发现失败时会退一份内置列表，好让
+	// 下拉框仍有内容可展示。作为 UI 兜底说得通，但拿去持久化就是灾难：它不是运行时真正支持的
+	// 东西；对 codebuddy 而言静态 ID 与真实 ID 完全无交集，用户每选一次都是一个被 CLI 拒绝的
+	// ID。因此调用方绝不能把 fallback 目录当权威——尤其不能让它进入服务端按天粒度的模型目录
+	// 缓存，那会把一次瞬时失败固化成 24 小时的答案（MUL-5549）。
 	Fallback bool
 }
 
-// discovered adapts a plain `([]Model, error)` discovery function to Catalog
-// for providers that have no static fallback — for them a failure is already
-// reported as an empty list or an error, which downstream guards handle.
+// discovered 把朴素的 `([]Model, error)` 发现函数适配成 Catalog——供那些没有静态兜底的提供方
+// 使用。对它们而言，失败本身就已体现为“空列表”或“错误”，下游的守卫逻辑负责处理这两种情况。
 func discovered(models []Model, err error) (Catalog, error) {
 	return Catalog{Models: models}, err
 }
 
-// modelCache memoizes dynamic discovery calls so repeated UI loads
-// don't re-shell the agent CLI. Entries expire after cacheTTL.
+// modelCacheEntry 是 modelCache 里的一条记忆化记录：本次发现到的模型列表 + 过期时间。
+// 见 ListModels 文件导读里“短 TTL 缓存”约定。
 type modelCacheEntry struct {
 	models    []Model
 	expiresAt time.Time
 }
 
+// modelCacheMu 保护下面的 modelCache 全局 map（ListModels 可能被并发请求同时调用）。
+// modelCache 是动态发现的记忆化缓存：provider(+启动路径) → 最近一次发现结果。
 var (
 	modelCacheMu sync.Mutex
 	modelCache   = map[string]modelCacheEntry{}
 )
 
+// modelCacheTTL 是动态发现缓存的存活时长。取 60s：UI 打开模型下拉框是高频操作，不能每次都
+// 重新拉起一个 CLI 子进程；同时模型列表几个月都不会变，60s 足够“新鲜”。
 const modelCacheTTL = 60 * time.Second
 
-// ListModels returns the models supported by the given agent provider.
-// For providers with a known static catalog it returns the baked-in
-// list; for providers with a CLI discovery mechanism (codex, opencode,
-// pi, openclaw) it shells out with caching and falls back where the
-// provider has a safe static catalog.
+// ListModels 返回给定 agent 提供方支持的模型。
+// 对有已知静态目录的提供方直接返回内置列表；对有 CLI 发现机制的提供方（codex、opencode、pi、
+// openclaw 等）会带缓存地拉起子进程去查，并在提供方存在安全静态目录时失败兜底。
 //
-// For claude, codex, opencode, pi, and kimi, the catalog is augmented with
-// per-model thinking-level options discovered from the local CLI. Codex
-// discovery failures fall back to a model + thinking snapshot; providers
-// without a safe fallback leave Thinking nil, which makes the UI hide the
-// thinking picker.
+// 对 claude、codex、opencode、pi、kimi，返回的目录还会附上从本地 CLI 发现的、按模型区分的
+// thinking 档位。Codex 发现失败会退回一份“模型+thinking 快照”；没有安全兜底的提供方则把
+// Thinking 留成 nil，UI 据此隐藏 thinking 选择器。
 //
-// runtimeCmd lets the caller point at a non-default binary; pass the zero
-// Command to use the provider's default name on PATH. Its launch prefix — a
-// custom runtime profile's fixed_args — is carried into every discovery
-// subprocess, so a wrapper that only reaches the real CLI through a
-// subcommand (`ccms start q36`) is enumerated as the CLI it actually runs
-// rather than as the wrapper (GH #7046).
+// runtimeCmd 让调用方指向非默认的可执行文件；想用提供方在 PATH 上的默认名字就传零值
+// Command。它的启动前缀——自定义运行时 profile 的 fixed_args——会带进每个发现子进程，因此
+// 只有经由子命令才能真正触达真实 CLI 的包装器（`ccms start q36`）会按它实际运行的 CLI 被枚举，
+// 而不是按包装器本身的名字（GH #7046）。
 func ListModels(ctx context.Context, providerType string, runtimeCmd Command) (Catalog, error) {
-	// Built-in runtime identities (e.g. "omp") declare their model discovery
-	// strategy in the descriptor. Resolve generically before the protocol-
-	// family switch so no runtime-specific case is needed below. When the
-	// descriptor has no ModelDiscovery strategy, return an empty catalog
-	// (not the family's default) — running a semantically incompatible
-	// discovery command (e.g. omp rejecting --list-models) is worse than
-	// degrading to manual entry.
+	// 内置运行时身份（如 "omp"）会在描述符里声明自己的模型发现策略。在按“协议族”的 switch 之前
+	// 先统一处理它们，这样下面就不需要为某个运行时写专门分支。描述符没有 ModelDiscovery 策略时
+	// 返回空目录（而不是走该协议族默认）：跑一条语义上不兼容的发现命令（例如 omp 拒绝
+	// --list-models）比退化成手工录入更糟。
 	if desc, ok := BuiltinRuntimeByID(providerType); ok {
 		if desc.ModelDiscovery != nil {
 			return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
@@ -157,24 +157,22 @@ func ListModels(ctx context.Context, providerType string, runtimeCmd Command) (C
 	case "claude":
 		models := claudeStaticModels()
 		annotateClaudeThinking(ctx, models, runtimeCmd)
-		// Claude's catalog is static by design, not by failure: there is no
-		// discovery step to fall back from, so this is authoritative.
+		// Claude 的目录是“设计上就是静态”，而非“发现失败退回静态”：根本没有发现步骤可回退，
+		// 所以这里的结果是权威的。
 		return Catalog{Models: models}, nil
 	case "codex":
 		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
 			return discovered(discoverCodexModels(ctx, runtimeCmd), nil)
 		})
 	case "antigravity":
-		// agy 1.0.6 added a `--model` flag plus an `agy models` catalog
-		// command (MUL-3125). Enumerate it on demand like the other
-		// dynamic-discovery backends.
+		// agy 1.0.6 起新增了 `--model` 参数和 `agy models` 目录命令（MUL-3125）。和其余
+		// 动态发现后端一样按需枚举。
 		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
 			return discovered(discoverAntigravityModels(ctx, runtimeCmd))
 		})
 	case "traecli":
-		// Official TRAE CLI is ACP-native: it returns its model catalog from
-		// session/new. Enumerate it on demand like the other ACP backends
-		// (requires a logged-in traecli; falls back to manual entry on error).
+		// 官方 TRAE CLI 原生走 ACP：它的模型目录由 session/new 返回。与其余 ACP 后端一样按需
+		// 枚举（要求 traecli 已登录；出错时退回手工录入）。
 		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
 			return discovered(discoverTraecliModels(ctx, runtimeCmd))
 		})
@@ -227,76 +225,62 @@ func ListModels(ctx context.Context, providerType string, runtimeCmd Command) (C
 			return discovered(discoverPiModels(ctx, runtimeCmd))
 		})
 	case "codebuddy":
-		// discoverCodebuddyModels owns the thinking annotation too, so the one
-		// `--help` capture feeds both catalogs. Annotating out here would run
-		// the command a second time (MUL-5549).
+		// thinking 标注也在 discoverCodebuddyModels 内部一并完成，同一次 ACP 握手就能同时
+		// 喂饱模型目录与 effort 目录；若拆到这里单独标注，会再跑一遍命令（MUL-5549）。
 		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
 			return discoverCodebuddyModels(ctx, runtimeCmd)
 		})
 	case "qwen":
-		// Qwen Code has no account-independent headless model catalog. An
-		// empty list keeps the runtime default and manual model entry available
-		// without advertising a Token-Plan-specific model to other accounts.
+		// Qwen Code 没有一个“与账号无关、可无头运行”的模型目录。返回空列表既能保住运行时默认
+		// 与手工录入，又不会把某个 Token-Plan 专属的模型推荐给其他账号。
 		return Catalog{Models: []Model{}}, nil
 	case "qwenpaw":
-		// QwenPaw's model selection is unsupported (session/set_model
-		// persists to agent scope, not session scope), so there is no
-		// consumer for a discovered catalog. Return an empty list to
-		// avoid spawning an ACP subprocess that has no effect. If upstream
-		// makes model selection session-scoped, restore a discovery helper
-		// here modelled on discoverTraecliModels.
+		// QwenPaw 不支持模型选择（session/set_model 持久化到的是 agent 作用域而不是会话作用域），
+		// 所以就算发现了目录也没有消费方。返回空列表，避免起一个白费功夫的 ACP 子进程。如果上游
+		// 把模型选择改成会话作用域，再仿照 discoverTraecliModels 在这里恢复一个发现助手。
 		return Catalog{Models: []Model{}}, nil
 	case "mcode":
-		// MCode's ACP server does not expose session-scoped model selection or
-		// a model catalog. The configured MCode runtime owns the model choice.
+		// MCode 的 ACP server 既不暴露会话作用域的模型选择，也没有模型目录。模型由已配置的
+		// MCode 运行时自己决定。
 		return Catalog{Models: []Model{}}, nil
 	case "grok":
-		// xAI Grok Build is ACP-native (`grok agent stdio`); model catalog
-		// comes from session/new. Falls back to a small static list so the
-		// UI picker stays usable offline / unauthenticated.
+		// xAI Grok Build 原生走 ACP（`grok agent stdio`）；模型目录来自 session/new。失败时退回
+		// 一份很小的静态列表，保证离线/未登录时 UI 选择器仍可用。
 		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
 			return discoverGrokModels(ctx, runtimeCmd)
 		})
 	case "dim":
-		// Dim (dimcode) is ACP-native (`dim acp`); its model catalog is
-		// advertised by session/new under models.availableModels. Enumeration
-		// requires a logged-in dim (OAuth); on any failure fall back to an
-		// empty catalog so the UI keeps manual entry available.
+		// Dim (dimcode) 原生走 ACP（`dim acp`）；其模型目录由 session/new 在
+		// models.availableModels 里宣传。枚举要求 dim 已登录（OAuth）；任何失败都退回空目录，
+		// 让 UI 保留手工录入入口。
 		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
 			return discoverDimModels(ctx, runtimeCmd)
 		})
 	case "zeroclaw":
-		// ZeroClaw's ACP server advertises no catalog: session/new answers
-		// exactly {sessionId, workspaceDir} (verified against 0.8.4), and it
-		// has no session-scoped model selection to consume one anyway — see
-		// ModelSelectionSupported. Return an empty list rather than spawning
-		// an ACP subprocess that can only ever come back empty.
+		// ZeroClaw 的 ACP server 不宣传任何目录：session/new 只精确回答 {sessionId,
+		// workspaceDir}（已对 0.8.4 验证），而且它也没有会话作用域的模型选择可消费——见
+		// ModelSelectionSupported。返回空列表而不是起一个注定空手而归的 ACP 子进程。
 		return Catalog{Models: []Model{}}, nil
 	default:
 		return Catalog{}, fmt.Errorf("unknown agent type: %q", providerType)
 	}
 }
 
-// ModelSelectorMustBeProviderQualified reports whether a runtime's CLI
-// refuses a model id that does not carry its `<provider>/` prefix.
+// ModelSelectorMustBeProviderQualified 报告某运行时的 CLI 是否拒绝“不携带 `<provider>/` 前缀”
+// 的裸模型 ID。
 //
-// This is an execution contract, not a statement about catalog shape. It
-// decides one thing: whether the daemon has to read the runtime catalog before
-// launching a task that pins a model. That read costs a CLI subprocess with a
-// 15-30s ceiling which cachedDiscovery deliberately does not memoize when it
-// comes back empty or as a fallback (#3729, MUL-5549), so a logged-out runtime
-// pays the ceiling on every read — worth spending only where the launch
-// genuinely fails without it (MUL-6471 review).
+// 这是执行契约，与目录长什么样无关。它只决定一件事：daemon 在启动一个钉死了模型的 task 之前，
+// 是否必须先读一遍运行时目录。那次读取要起一个 CLI 子进程、耗时上限 15–30s；而 cachedDiscovery
+// 对空结果或 fallback 结果刻意不做记忆化（#3729、MUL-5549），所以一个未登录的运行时每次读取都
+// 要付这个上限——只有“没有它启动真的会失败”时才值得花（MUL-6471 review）。
 //
-// opencode's `run --model` and the DevEco fork of it resolve strictly through
-// `provider/model` and reject anything else — verified against opencode
-// 1.18.14, which answers a bare id with `UnknownError` before any provider
-// call. pi is deliberately absent: its resolver accepts a canonical selector,
-// a bare id, AND an id containing a slash (see buildPiArgs), so a pi task
-// launches correctly without the daemon qualifying anything first.
+// opencode 的 `run --model` 及其 DevEco 分支只认 `provider/model`，其余一律拒绝——已对 opencode
+// 1.18.14 验证：裸 ID 会在任何 provider 调用之前被 `UnknownError` 打回。pi 刻意缺席：它的解析器
+// 既接受规范 selector，也接受裸 ID 和含 `/` 的 ID（见 buildPiArgs），所以 pi task 不需要 daemon
+// 预先补前缀也能正常启动。
 //
-// Built-in runtime identities resolve through their protocol family, so a fork
-// inherits the contract from its descriptor entry rather than a name here.
+// 内置运行时身份按自己的协议族解析，因此某个 fork 会从描述符条目继承契约，而不是吃这个函数名
+// 里的硬编码清单。
 func ModelSelectorMustBeProviderQualified(providerType string) bool {
 	if desc, ok := BuiltinRuntimeByID(providerType); ok {
 		providerType = desc.ProtocolFamily
@@ -309,32 +293,23 @@ func ModelSelectorMustBeProviderQualified(providerType string) bool {
 	}
 }
 
-// QualifyModelID resolves a persisted model string to the canonical ID the
-// runtime's own catalog advertises, and reports whether it rewrote anything.
-// catalog is the runtime's discovered catalog; callers already holding one
-// (the daemon reads it for the thinking-level and service-tier checks) pay
-// nothing extra.
+// QualifyModelID 把持久化下来的模型字符串解析成运行时自己目录宣传的那个规范 ID，并报告是否
+// 改写过。catalog 是运行时的发现结果；调用方手上通常已经持有它（daemon 本来就要为 thinking 档位
+// 和服务档位检查读它），所以这里不额外花成本。
 //
-// Runtimes that namespace their catalog (opencode's `provider/model`, pi's
-// `provider/id` selector) want the qualified form, but `agent.model` holds
-// whatever was persisted — and for gateway-style providers the bare model id
-// is itself slash-shaped (`claude/claude-opus-5` under provider
-// `multica-anthropic`). The slash is therefore not a provider boundary and
-// cannot be guessed at: the catalog is the only thing that knows which
-// provider owns an id. Callers get the qualified id when exactly one provider
-// claims the value, and the input untouched otherwise.
+// 把自己的目录按命名空间划分的运行时（opencode 的 `provider/model`、pi 的 `provider/id`
+// selector）要的是带前缀形式，但 `agent.model` 里存的是当初随便持久化的值——而 gateway 类提供方
+// 的裸模型 ID 本身就是斜杠形状的（provider `multica-anthropic` 下的
+// `claude/claude-opus-5`）。因此斜杠不是 provider 边界，不能靠猜：只有目录知道某个 ID 归属哪个
+// provider。当恰好只有一个 provider 声称拥有该值时，调用方拿到限定后的 ID；其他情况原样返回。
 //
-// Untouched is the deliberate answer for every uncertain case — the catalog is
-// a static fallback rather than the runtime's real list, the value already
-// matches a catalog ID, or two providers expose the same bare id. Manual model
-// entry is supported everywhere, so a value this function cannot confidently
-// place must still reach the CLI verbatim; the CLI's own resolver is a better
-// judge than a guess here would be.
+// 所有不确定的情形都“刻意原样返回”——目录是静态兜底而非运行时真实列表、值已与某目录 ID 完全
+// 相等、或两个 provider 暴露了同一个裸 ID，都是如此。到处都支持手工录入模型，所以这个函数没
+// 把握定位的值必须逐字到达 CLI；CLI 自己的解析器比这里的猜测判断得更准。
 func QualifyModelID(catalog Catalog, model string) (string, bool) {
 	model = strings.TrimSpace(model)
-	// A fallback catalog is a static stand-in, not what the runtime actually
-	// supports (see Catalog.Fallback) — qualifying against it would rewrite a
-	// working id into one the CLI never advertised.
+	// fallback 目录是静态替身，不是运行时真正支持的列表（见 Catalog.Fallback）——拿它做限定
+	// 会把一个能正常工作的 ID 改写成 CLI 从未宣传过的值。
 	if model == "" || catalog.Fallback {
 		return model, false
 	}
@@ -349,8 +324,8 @@ func QualifyModelID(catalog Catalog, model string) (string, bool) {
 			continue
 		}
 		if qualified != "" && qualified != m.ID {
-			// Two providers expose this same bare id. Picking one would be a
-			// coin flip that silently routes the task to the wrong gateway.
+			// 两个 provider 暴露了同一个裸 ID。二选一等于抛硬币，会悄悄把 task 路由到错误的
+			// gateway，所以原样返回、不做改写。
 			return model, false
 		}
 		qualified = m.ID
@@ -361,45 +336,35 @@ func QualifyModelID(catalog Catalog, model string) (string, bool) {
 	return qualified, true
 }
 
-// ModelSelectionSupported reports whether setting `agent.model` has
-// any effect for the given provider. Every built-in provider now honours
-// `opts.Model` end-to-end — Hermes routes it through the ACP
-// `session/set_model` RPC before each prompt; Claude / Codex / Cursor /
-// Gemini / Copilot / Kimi / Reasonix / Kiro / OpenCode / OpenClaw / Pi / Antigravity
-// pass it via flag or session config (Antigravity gained `--model` in agy
-// 1.0.6 — MUL-3125).
+// ModelSelectionSupported 报告对给定 provider 设置 `agent.model` 是否真的起作用。现在每个
+// 内置 provider 都会端到端遵守 `opts.Model`——Hermes 在每次 prompt 前通过 ACP
+// `session/set_model` RPC 路由它；Claude / Codex / Cursor / Gemini / Copilot / Kimi / Reasonix /
+// Kiro / OpenCode / OpenClaw / Pi / Antigravity 则通过 flag 或会话配置传递（Antigravity 在
+// agy 1.0.6 才支持 `--model`——MUL-3125）。
 //
-// The hook is retained — rather than inlining `true` at the call sites — so
-// a model-less runtime can opt out in one place, which makes the UI
-// render a disabled "Managed by runtime" picker instead of an empty
-// dropdown plus a silently-ignored manual-entry field.
+// 这里保留成一个钩子（而不是在调用点直接内联 `true`），是为了让“没有模型概念的运行时”能在
+// 一处统一退出，从而让 UI 渲染一个禁用的 "Managed by runtime" 选择器，而不是一个空下拉框外加
+// 一个被悄悄忽略的手工录入框。
 func ModelSelectionSupported(providerType string) bool {
 	switch providerType {
 	case "qwenpaw", "mcode", "zeroclaw":
-		// QwenPaw's `session/set_model` persists to agent.json at the agent
-		// scope, not the session scope. Calling it would mutate the user's
-		// shared, persistent agent config. Model override is therefore
-		// unsupported — the runtime uses whatever model is configured in
-		// the agent profile. If QwenPaw makes model selection session-scoped
-		// upstream, this can be reverted to `true`. MCode similarly exposes no
-		// model option through ACP, so its runtime configuration remains the
-		// source of truth. ZeroClaw goes further: `session/set_model` is not in
-		// its ACP dispatch table at all (0.8.4 answers -32601) and no handler
-		// reads a model param, so the model comes from the ZeroClaw agent
-		// profile (`agents.<alias>.model_provider`) and nothing Multica sends
-		// can change it.
+		// QwenPaw 的 `session/set_model` 持久化到的是 agent.json 的 agent 作用域，不是会话作用域。
+		// 调用它等于改动用户共享且持久的 agent 配置，因此不支持模型覆盖——运行时用 agent profile
+		// 里配好的模型。如果上游把 QwenPaw 的模型选择改成会话作用域，这里可以改回 `true`。
+		// MCode 同样不通过 ACP 暴露任何模型选项，其运行时配置才是唯一真源。ZeroClaw 更彻底：
+		// 它的 ACP 分发表里根本没有 `session/set_model`（0.8.4 会回 -32601），也没有任何 handler
+		// 读 model 参数，所以模型来自 ZeroClaw agent profile（`agents.<alias>.model_provider`），
+		// Multica 发什么过去都改不了。
 		return false
 	default:
 		return true
 	}
 }
 
-// ModelKnownIncompatibleWithProvider reports whether a saved model is a known
-// mismatch for a target runtime provider. For first-party providers with
-// maintained static catalogs, compatibility is exact: the model must be one of
-// the IDs that runtime advertises. Unknown/custom model strings still return
-// false because the UI and CLI allow manual entries and the server should not
-// erase values it cannot confidently classify.
+// ModelKnownIncompatibleWithProvider 报告某个已保存的模型是否与目标运行时 provider 存在“已知”
+// 不匹配。对拥有维护中静态目录的第一方 provider 来说，兼容性是精确判断：模型必须是该运行时
+// 宣传的 ID 之一。未知/自定义模型字符串一律返回 false——UI 和 CLI 都允许手工录入，服务端不应
+// 抹掉它无法放心分类的值。
 func ModelKnownIncompatibleWithProvider(providerType, model string) bool {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -416,17 +381,14 @@ func ModelKnownIncompatibleWithProvider(providerType, model string) bool {
 	return isRuntimeSpecificModelID(model)
 }
 
-// claudeContextWindowTagRe recognises Claude Code's trailing context-window
-// model modifier (for example, claude-opus-5[1m]). Keep this narrower than a
-// generic bracket suffix: capability lookup may inherit the base model's
-// effort catalog only when the modifier is syntactically a context size.
+// claudeContextWindowTagRe 识别 Claude Code 尾部那种“上下文窗口”模型修饰符（例如
+// claude-opus-5[1m]）。刻意比通用的“方括号后缀”匹配得更窄：只有当修饰符语法上是一个上下文
+// 大小时，能力查询才允许继承基础模型（base model）的 effort 目录。
 var claudeContextWindowTagRe = regexp.MustCompile(`\[[1-9][0-9]*[km]\]$`)
 
-// modelIDForCapabilityLookup returns the catalog identity for a runtime-native
-// model string. It never changes the value persisted on the agent or passed to
-// the provider CLI. Claude context-window variants share their base model's
-// capabilities; every other provider and malformed/unknown modifier retains
-// exact-match behavior.
+// modelIDForCapabilityLookup 返回“运行时原生模型字符串”对应的目录身份。它绝不改动持久化在
+// agent 上或传给 provider CLI 的值。Claude 的上下文窗口变体继承其基础模型的能力；其他所有
+// provider 以及格式错误/未知的修饰符都保持“精确匹配”行为。
 func modelIDForCapabilityLookup(providerType, model string) string {
 	if providerType != "claude" {
 		return model
@@ -434,6 +396,9 @@ func modelIDForCapabilityLookup(providerType, model string) string {
 	return claudeContextWindowTagRe.ReplaceAllString(model, "")
 }
 
+// acceptedModelIDsForProvider 返回该 provider“静态目录里可接受的模型 ID”集合；第二个返回值
+// 表示该 provider 是否在“已知兼容性精确判断”的名单里（目前只有 claude/codex 有维护中的静态
+// 目录，其余 provider 一律 ok=false）。
 func acceptedModelIDsForProvider(providerType string) (map[string]bool, bool) {
 	switch {
 	case providerType == "claude":
@@ -445,6 +410,7 @@ func acceptedModelIDsForProvider(providerType string) (map[string]bool, bool) {
 	}
 }
 
+// modelIDSet 把模型列表压成一个以 ID 为键的集合，方便 O(1) 查成员。
 func modelIDSet(models []Model) map[string]bool {
 	out := make(map[string]bool, len(models))
 	for _, m := range models {
@@ -453,6 +419,9 @@ func modelIDSet(models []Model) map[string]bool {
 	return out
 }
 
+// isRuntimeSpecificModelID 判断一个模型 ID 是否明显属于“某个运行时专属 ID”而不是用户自定义
+// 自由文本：带 `/`（provider 限定）、命中已知前缀（claude-/gpt-/gemini-…）或正好落在
+// claude/codex 静态目录里都算。
 func isRuntimeSpecificModelID(model string) bool {
 	if strings.Contains(model, "/") {
 		return true
@@ -462,6 +431,8 @@ func isRuntimeSpecificModelID(model string) bool {
 		modelIDSet(codexStaticModels())[model]
 }
 
+// modelHasKnownPrefix 判断 ID 是否命中已知的模型厂商前缀。命中即认为“眼熟”，用于区分用户随手
+// 敲的自定义字符串与来自真实目录的 ID。
 func modelHasKnownPrefix(model string) bool {
 	return strings.HasPrefix(model, "claude-") ||
 		strings.HasPrefix(model, "gpt-") ||
@@ -470,10 +441,8 @@ func modelHasKnownPrefix(model string) bool {
 		isOpenAIReasoningSeriesID(model)
 }
 
-// cachedDiscovery invokes fn and caches the result for modelCacheTTL.
-// Callers build the key with discoveryCacheKey so two runtimes of the same
-// protocol family never share one memo entry when they enumerate different
-// binaries.
+// cachedDiscovery 调用 fn 并把结果缓存 modelCacheTTL 时长。调用方用 discoveryCacheKey 拼 key，
+// 保证同一协议族下两台枚举不同可执行文件的运行时永远不会共享一条记忆条目。
 func cachedDiscovery(key string, fn func() (Catalog, error)) (Catalog, error) {
 	modelCacheMu.Lock()
 	if entry, ok := modelCache[key]; ok && time.Now().Before(entry.expiresAt) {
@@ -488,17 +457,13 @@ func cachedDiscovery(key string, fn func() (Catalog, error)) (Catalog, error) {
 		return Catalog{}, err
 	}
 
-	// Don't cache an empty result. Zero models is almost always a transient
-	// failure (discovery CLI timeout, not-logged-in, network blip) rather than
-	// a runtime that genuinely has no models; caching it would keep the picker
-	// blank for the full TTL even after the cause clears. Skipping the cache
-	// lets the next request retry immediately. See #3729.
+	// 空结果不缓存。零模型几乎总是瞬时故障（发现 CLI 超时、未登录、网络抖动），而不是运行时
+	// 真的没有模型；缓存了它，即使故障原因已消失，下拉框也会在整个 TTL 期间保持空白。跳过缓存
+	// 让下一次请求能立刻重试。见 #3729。
 	//
-	// A fallback catalog is the same situation wearing a disguise: non-empty,
-	// but only because discovery failed and the provider substituted a static
-	// list. Caching it would hold the stand-in for the full TTL and stop the
-	// next request from retrying, which is exactly the recovery path we want
-	// to keep open (MUL-5549).
+	// fallback 目录是同一情形披了件马甲：非空，但只是因为发现失败、provider 用静态列表顶上。
+	// 缓存它会把替身钉住整个 TTL，并挡住下一次请求的重试——那正是我们想保留的恢复路径
+	// （MUL-5549）。
 	if len(catalog.Models) == 0 || catalog.Fallback {
 		return catalog, nil
 	}
@@ -509,17 +474,14 @@ func cachedDiscovery(key string, fn func() (Catalog, error)) (Catalog, error) {
 	return catalog, nil
 }
 
-// discoveryCacheKey scopes a discovery memo to the binary it enumerated.
-// A custom runtime profile (MUL-3284) runs a different executable under a
-// built-in protocol family, so a provider-only key would let a built-in
-// runtime and a same-family profile runtime on one host serve each other's
-// catalog for the TTL — the same mismatch the daemon's path resolution
-// fixes, reintroduced at the cache layer (MUL-5789). An empty path keeps
-// the bare provider key, which is what a built-in on PATH resolves to.
+// discoveryCacheKey 把一条发现记忆记录限定到“被枚举的那个可执行文件”。自定义运行时 profile
+// （MUL-3284）在内置协议族下跑的是另一个可执行文件，所以如果只按 provider 拼 key，一台机器上
+// 的内置运行时与同族 profile 运行时就会在 TTL 内互相投喂目录——这等于把 daemon 路径解析修好的
+// 问题在缓存层重新引入（MUL-5789）。路径为空时保留裸 provider key——这正是 PATH 上的内置运行
+// 时解析到的样子。
 //
-// The key spans the launch prefix too, not just the path: two profiles can
-// wrap one binary with different fixed_args — `ccms start q36` and `ccms
-// start opus` — and enumerate genuinely different catalogs out of it.
+// key 还覆盖启动前缀而不只是路径：两个 profile 可能用不同 fixed_args 包同一个二进制——
+// `ccms start q36` 和 `ccms start opus`——从中枚举出的目录确实不同。
 func discoveryCacheKey(providerType string, runtimeCmd Command) string {
 	if runtimeCmd.Path == "" && len(runtimeCmd.Prefix) == 0 {
 		return providerType
@@ -527,12 +489,10 @@ func discoveryCacheKey(providerType string, runtimeCmd Command) string {
 	return providerType + ":" + runtimeCmd.cacheKey()
 }
 
-// ── Static catalogs ──
+// ── 静态目录 ──
 
-// claudeStaticModels reflects the Claude Code CLI's accepted --model
-// values. Keep this list short and current; stale entries here
-// mislead users more than they help. Default = Sonnet because it's
-// the everyday workhorse (Opus is reserved for advisor-style flows).
+// claudeStaticModels 反映 Claude Code CLI 实际接受的 --model 取值。保持这份清单又短又新；过期
+// 条目误导用户远大于帮助。默认选 Sonnet，因为它是日常主力（Opus 留给 advisor 类流程）。
 func claudeStaticModels() []Model {
 	return []Model{
 		{ID: "claude-sonnet-5", Label: "Claude Sonnet 5", Provider: "anthropic"},
@@ -547,25 +507,18 @@ func claudeStaticModels() []Model {
 	}
 }
 
-// codexStaticModels is the fallback for Codex versions older than 0.122.0
-// and for failed/malformed `codex debug models --bundled` calls. Keep it in
-// sync with the visible entries in the newest locally verified bundled
-// catalog, plus still-common models from older Codex releases. Each entry
-// carries its own reasoning catalog so old/offline CLIs retain the same model
-// + thinking picker contract as dynamic discovery. Service tiers are
-// intentionally NOT guessed here: they are runtime/version/account-sensitive,
-// so a discovery failure hides the speed picker and fails the override closed.
+// codexStaticModels 是两处场景的兜底：Codex 版本旧于 0.122.0，或 `codex debug models
+// --bundled` 调用失败/输出畸形。它要与“本机最新验证过的 bundled 目录里的可见条目”保持一致，
+// 另外收进一些旧 Codex 版本仍常见的模型。每个条目自带 reasoning 目录，让旧/离线 CLI 也能维持
+// 与动态发现一致的“模型 + thinking 选择器”契约。service tier（速度档位）刻意不在这里猜：它们
+// 对运行时/版本/账号敏感，所以发现失败时应隐藏速度选择器、把覆盖请求按关闭处理。
 func codexStaticModels() []Model {
-	// `Default` here is NOT a user-facing "default model" badge — the picker
-	// stopped rendering that (Multica follows the CLI config when the model is
-	// unset). It only marks the current flagship for the "default must track
-	// the latest release" catalog guard
-	// (TestCodexStaticModelsMatchVerifiedFallbackCatalog,
-	// multica#2009). It is deliberately NOT used to validate effort for an
-	// empty (follow-CLI-config) model: that config can resolve to any model,
-	// so ValidateThinkingLevel fails an empty codex model closed rather than
-	// borrowing this entry's catalog (which alone advertises `ultra`) — see
-	// ValidateThinkingLevel and MUL-4347. Keep exactly one entry flagged.
+	// 这里的 `Default` 不是用户可见的“默认模型”徽标——那个徽标已经不再渲染（模型未设置时
+	// Multica 跟随 CLI 配置）。它只用来标记当前旗舰，供“默认必须跟随最新发布”的目录守卫测试
+	// （TestCodexStaticModelsMatchVerifiedFallbackCatalog、multica#2009）使用。它也刻意不被
+	// 用来校验“空模型（跟随 CLI 配置）”的 effort：那份配置可能解析到任何模型，所以
+	// ValidateThinkingLevel 对空的 codex 模型按“关闭”处理，而不是借用这条目录（只有它会宣传
+	// `ultra`）——见 ValidateThinkingLevel 与 MUL-4347。保证恰好只有一条目带这个标记。
 	standardThinking := func(defaultLevel string, includeMax, includeUltra bool) *ModelThinking {
 		levels := []ThinkingLevel{
 			{Value: "low", Label: "Low", Description: "Fast responses with lighter reasoning"},
@@ -604,10 +557,9 @@ func codexStaticModels() []Model {
 	}
 }
 
-// discoverTraecliModels spins up a throwaway `traecli acp serve --yolo` process
-// and parses the model catalog traecli returns from session/new (same shape as
-// Kiro/Qoder). The official TRAE CLI must be logged in for the catalog to be
-// non-empty; on any failure the caller falls back to the manual-entry field.
+// discoverTraecliModels 起一个一次性 `traecli acp serve --yolo` 进程，解析 traecli 在
+// session/new 里返回的模型目录（形状与 Kiro/Qoder 相同）。官方 TRAE CLI 必须已登录目录才非空；
+// 任何失败都由调用方退回手工录入框。
 func discoverTraecliModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
 	return discoverACPModels(ctx, runtimeCmd, acpDiscoveryProvider{
 		defaultBin:   "traecli",
@@ -617,28 +569,21 @@ func discoverTraecliModels(ctx context.Context, runtimeCmd Command) ([]Model, er
 	})
 }
 
-// cursorStaticModels is a minimal fallback used when
-// `cursor-agent --list-models` isn't available (binary missing,
-// offline, etc). The real catalog is fetched dynamically because
-// Cursor's model IDs shift (e.g. `composer-2-fast`,
-// `claude-4.6-sonnet-medium`, `gemini-3.1-pro`) and any static
-// list we ship goes stale fast.
+// cursorStaticModels 是 `cursor-agent --list-models` 不可用（二进制缺失、离线等）时的最小兜底。
+// 真实目录走动态抓取，因为 Cursor 的模型 ID 变得很快（例如 `composer-2-fast`、
+// `claude-4.6-sonnet-medium`、`gemini-3.1-pro`），我们内置的任何静态清单都会迅速过时。
 func cursorStaticModels() []Model {
 	return []Model{
 		{ID: "auto", Label: "Auto", Provider: "cursor", Default: true},
 	}
 }
 
-// copilotStaticModels — fallback used when GitHub Copilot CLI is
-// missing on PATH or the user hasn't logged in. Normal operation
-// goes through discoverCopilotModels(), which speaks ACP to the
-// CLI and gets the live catalog (including which IDs the user's
-// account actually has access to). This list is just a safety net
-// so the UI dropdown still has reasonable options when the live
-// query fails.
+// copilotStaticModels——GitHub Copilot CLI 不在 PATH 上或用户未登录时的兜底。正常运行走
+// discoverCopilotModels()：对 CLI 讲 ACP，拿实时目录（包括用户账号真正能访问哪些 ID）。这份
+// 列表只是安全网，保证实时查询失败时 UI 下拉框仍有合理选项。
 //
-// Source: https://docs.github.com/en/copilot/reference/ai-models/supported-models
-// IDs use the dotted form `copilot --model <id>` actually accepts.
+// 来源：https://docs.github.com/en/copilot/reference/ai-models/supported-models
+// ID 使用 `copilot --model <id>` 真正接受的加点形式。
 func copilotStaticModels() []Model {
 	return []Model{
 		// OpenAI
@@ -658,16 +603,12 @@ func copilotStaticModels() []Model {
 	}
 }
 
-// inferCopilotProvider tags Copilot model IDs with a vendor name so
-// the UI can group them. The Copilot CLI's ACP `availableModels`
-// payload exposes only `modelId`/`name`; the vendor is implicit in
-// the prefix. Returning "" leaves the entry ungrouped, which
-// matches what other ACP discovery paths (hermes/kimi) do for
-// non-prefixed IDs.
+// inferCopilotProvider 给 Copilot 模型 ID 打上厂商名，方便 UI 分组。Copilot CLI 的 ACP
+// `availableModels` 载荷只暴露 `modelId`/`name`，厂商隐含在前缀里。返回 "" 则条目不分组——
+// 与其他 ACP 发现路径（hermes/kimi）对无前缀 ID 的做法一致。
 //
-// The OpenAI reasoning series (`o1`, `o3`, `o3-mini`, `o4-mini`,
-// future `o5`/`o6`/…) is matched by the generic `o<digit>…`
-// pattern so we don't have to chase every new generation.
+// OpenAI 推理系列（`o1`、`o3`、`o3-mini`、`o4-mini`、未来的 `o5`/`o6`/…）用通用的
+// `o<数字>…` 模式匹配，这样就不用每次追新发布的代际。
 func inferCopilotProvider(modelID string) string {
 	switch {
 	case strings.HasPrefix(modelID, "gpt-") || isOpenAIReasoningSeriesID(modelID):
@@ -683,11 +624,9 @@ func inferCopilotProvider(modelID string) string {
 	}
 }
 
-// isOpenAIReasoningSeriesID matches IDs in OpenAI's `o`-prefixed
-// reasoning family: lowercase `o` followed by at least one digit
-// and then either end-of-string or a `-` separator (e.g. `o3`,
-// `o3-mini`, `o4-mini-high`). Avoids false positives like
-// `opus-…` or random IDs that happen to start with `o`.
+// isOpenAIReasoningSeriesID 匹配 OpenAI `o` 前缀推理家族：小写 `o` 后跟至少一位数字，之后要么
+// 到字符串结尾、要么是 `-` 分隔符（例如 `o3`、`o3-mini`、`o4-mini-high`）。它避免了像
+// `opus-…` 或恰好以 `o` 开头的随机 ID 这样的误报。
 func isOpenAIReasoningSeriesID(id string) bool {
 	if len(id) < 2 || id[0] != 'o' {
 		return false
@@ -702,16 +641,13 @@ func isOpenAIReasoningSeriesID(id string) bool {
 	return i == len(id) || id[i] == '-'
 }
 
-// ── Dynamic discovery ──
+// ── 动态发现 ──
 
-// discoverOpenCodeModels runs `opencode models --verbose` and parses its
-// output. The CLI prints `provider/model` rows, followed by JSON metadata
-// when verbose mode is enabled; we emit IDs verbatim so what the user sees
-// matches what `--model` accepts, and project any model `variants` into the
-// thinking-level picker because OpenCode's `run --variant` flag is its
-// provider-specific reasoning-effort surface.
-// On any failure (CLI missing, parse error, timeout) we fall back to
-// an empty list so the creatable UI still works.
+// discoverOpenCodeModels 运行 `opencode models --verbose` 并解析其输出。CLI 先打印
+// `provider/model` 行，verbose 模式下每行后跟一段 JSON 元数据；ID 我们原样透出，保证用户看到
+// 的与 `--model` 实际接受的完全一致。模型 JSON 里的 `variants` 会映射进 thinking 档位选择器，
+// 因为 OpenCode 的 `run --variant` flag 就是它“按 provider 暴露 reasoning effort”的界面。
+// 任何失败（CLI 缺失、解析错误、超时）都退回空列表，保证创建 UI 仍可用。
 func discoverOpenCodeModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
 	if runtimeCmd.Path == "" {
 		runtimeCmd.Path = "opencode"
@@ -719,23 +655,20 @@ func discoverOpenCodeModels(ctx context.Context, runtimeCmd Command) ([]Model, e
 	if _, err := exec.LookPath(runtimeCmd.Path); err != nil {
 		return []Model{}, nil
 	}
-	// Newer opencode (1.15+) syncs its hosted free-model catalog over the
-	// network on `opencode models`, which can take ~6s; the previous 5s cap
-	// timed out and returned an empty list, so the runtime showed online but
-	// the model picker was empty. See multica-ai/multica#3627.
+	// 新版 opencode（1.15+）执行 `opencode models` 时会在网络上同步它托管的免费模型目录，可能
+	// 要 ~6s；此前 5s 的上限会超时并返回空列表，于是运行时显示在线、模型下拉框却是空的。见
+	// multica-ai/multica#3627。
 	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	cmd := runtimeCmd.exec(runCtx, "models", "--verbose")
 	hideAgentWindow(cmd)
-	// Parse whatever the verbose command printed, even on a non-zero exit — a
-	// stale config entry can make `opencode models` exit non-zero while still
-	// listing the resolvable catalog (mirrors the pi path; see #3729/#3627).
+	// 即使退出码非零也照常解析 verbose 输出——一条过期的配置项可能让 `opencode models` 非零
+	// 退出、却仍列出可解析的目录（与 pi 路径一致；见 #3729/#3627）。
 	out, _ := outputOwned(cmd, runtimeCmd.logger)
 	models := parseOpenCodeModels(string(out))
 	if len(models) == 0 {
-		// Verbose yielded nothing usable (unsupported flag, error text, or an
-		// empty list). Retry the plain command, which omits the per-model JSON
-		// but still prints the IDs.
+		// verbose 没给出可用内容（flag 不支持、错误文本或空列表）。退回裸命令再试一次——
+		// 它省掉逐模型的 JSON，但仍会打印 ID。
 		cmd = runtimeCmd.exec(runCtx, "models")
 		hideAgentWindow(cmd)
 		out, _ = outputOwned(cmd, runtimeCmd.logger)
@@ -747,11 +680,9 @@ func discoverOpenCodeModels(ctx context.Context, runtimeCmd Command) ([]Model, e
 	return models, nil
 }
 
-// parseOpenCodeModels accepts the `opencode models` text output and
-// extracts IDs. Non-verbose output is one `provider/model` row per line.
-// Verbose output appends a pretty-printed JSON object after each ID; when
-// that object contains `variants`, each enabled variant becomes a thinking
-// level that the backend later passes through `opencode run --variant`.
+// parseOpenCodeModels 接受 `opencode models` 的文本输出并抽取 ID。非 verbose 输出是每行一个
+// `provider/model`。verbose 输出在每个 ID 后追加一段美化打印的 JSON；当该 JSON 含 `variants`
+// 时，每个启用的 variant 会变成一个 thinking 档位，后端稍后用 `opencode run --variant` 传递。
 func parseOpenCodeModels(output string) []Model {
 	lines := strings.Split(output, "\n")
 	var models []Model
@@ -792,6 +723,8 @@ func parseOpenCodeModels(output string) []Model {
 	return models
 }
 
+// parseOpenCodeModelIDLine 从一行输出里抽出候选模型 ID：取第一个空白分隔的字段，要求它形如
+// `provider/model` 且不是 JSON 片段、不是全大写的表头行（如 PROVIDER/MODEL）。
 func parseOpenCodeModelIDLine(line string) string {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
@@ -811,6 +744,8 @@ func parseOpenCodeModelIDLine(line string) string {
 	return id
 }
 
+// collectOpenCodeModelJSON 从第 start 行开始把多行 JSON（美化打印的对象）攒成一个 []byte；
+// 一旦拼出的内容构成合法 JSON 或遇到下一个模型行就停。返回 (JSON 字节, 消费到的下一行下标)。
 func collectOpenCodeModelJSON(lines []string, start int) ([]byte, int) {
 	var b strings.Builder
 	for i := start; i < len(lines); i++ {
@@ -829,17 +764,23 @@ func collectOpenCodeModelJSON(lines []string, start int) ([]byte, int) {
 	return []byte(b.String()), len(lines)
 }
 
+// opencodeModelMetadata 对应 verbose 输出里挂在每个模型名后面的 JSON 元数据：它是否支持
+// reasoning，以及有哪些 reasoning variant（每个 variant 是一个 effort 档位）。
 type opencodeModelMetadata struct {
 	Reasoning bool                            `json:"reasoning"`
 	Variants  map[string]opencodeModelVariant `json:"variants"`
 }
 
+// opencodeModelVariant 描述 opencode 模型的一个 reasoning variant：disabled 表示该档位被上游
+// 关掉；ReasoningEffort 是新版 CLI 上报档位强度的字段；Thinking 保留原样，暂未使用。
 type opencodeModelVariant struct {
 	Disabled        bool            `json:"disabled"`
 	ReasoningEffort string          `json:"reasoningEffort"`
 	Thinking        json.RawMessage `json:"thinking"`
 }
 
+// opencodeVariantLabel 把 opencode 上报的 effort token 映射成 UI 展示文案，与 opencode 自己
+// 界面里的措辞保持一致。
 var opencodeVariantLabel = map[string]string{
 	"none":    "None",
 	"minimal": "Minimal",
@@ -850,6 +791,7 @@ var opencodeVariantLabel = map[string]string{
 	"max":     "Max",
 }
 
+// opencodeVariantOrder 给出各档位的排序权重，让档位列表按强度升序展示而不是按 map 随机序。
 var opencodeVariantOrder = map[string]int{
 	"none":    0,
 	"minimal": 1,
@@ -860,6 +802,9 @@ var opencodeVariantOrder = map[string]int{
 	"max":     6,
 }
 
+// annotateOpenCodeModelMetadata 把 opencode verbose 元数据里能用的部分写回 Model.Thinking。
+// 只有当模型明确支持 reasoning（或 variants 里有像 reasoning 的档位）才标注，避免给不支持的
+// 模型画出无用的选择器。
 func annotateOpenCodeModelMetadata(model *Model, raw []byte) {
 	var meta opencodeModelMetadata
 	if err := json.Unmarshal(raw, &meta); err != nil {
@@ -875,6 +820,9 @@ func annotateOpenCodeModelMetadata(model *Model, raw []byte) {
 	model.Thinking = &ModelThinking{SupportedLevels: levels}
 }
 
+// openCodeVariantsLookReasoning 粗略判断 variants 集合是否表现出“与 reasoning 相关”：档位名
+// 命中已知表、或任一 variant 带 reasoning 字段都算。用于过滤掉那些名字碰巧叫 variant 但并非
+// effort 档位的情况。
 func openCodeVariantsLookReasoning(variants map[string]opencodeModelVariant) bool {
 	for name, variant := range variants {
 		if _, known := opencodeVariantOrder[name]; known {
@@ -887,6 +835,8 @@ func openCodeVariantsLookReasoning(variants map[string]opencodeModelVariant) boo
 	return false
 }
 
+// openCodeThinkingLevelsFromVariants 把启用的 variant 排成 ThinkingLevel 列表：去掉空名与被
+// disabled 的档位，按强度升序（opencodeVariantOrder），未知档位名放在已知档位之后再按字典序。
 func openCodeThinkingLevelsFromVariants(variants map[string]opencodeModelVariant) []ThinkingLevel {
 	if len(variants) == 0 {
 		return nil
@@ -920,6 +870,7 @@ func openCodeThinkingLevelsFromVariants(variants map[string]opencodeModelVariant
 	return levels
 }
 
+// piThinkingLevelLabels 把 Pi 上报的 thinking token 映射成 UI 文案。
 var piThinkingLevelLabels = map[string]string{
 	"off":     "Off",
 	"minimal": "Minimal",
@@ -930,15 +881,17 @@ var piThinkingLevelLabels = map[string]string{
 	"max":     "Max",
 }
 
+// piThinkingLevelOrder 是 Pi 支持档位的官方顺序，保证列表按强度升序展示。
 var piThinkingLevelOrder = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
 
-// Keep Pi discovery within the established 15-second window while reserving a
-// real opportunity for the compatibility fallback when RPC hangs.
+// Pi 发现预算要控在既有的 15 秒窗口内，同时给“RPC 挂起”情况下的兼容性兜底留出真正机会。
 const (
 	piRPCDiscoveryTimeout   = 7 * time.Second
 	piTableDiscoveryTimeout = 8 * time.Second
 )
 
+// piRPCModel 是 Pi RPC get_available_models 返回的单个模型记录；ThinkingLevelMap 把档位名
+// 映射到 *string（值为 null 表示该档位对该模型显式禁用）。
 type piRPCModel struct {
 	ID               string             `json:"id"`
 	Name             string             `json:"name"`
@@ -947,11 +900,14 @@ type piRPCModel struct {
 	ThinkingLevelMap map[string]*string `json:"thinkingLevelMap"`
 }
 
+// piRPCState 是 Pi RPC get_state 返回的当前会话状态；Multica 用它识别“不传 --model 时 Pi 会
+// 选哪个模型、该模型的 thinking 档位默认值是什么”。
 type piRPCState struct {
 	Model         *piRPCModel `json:"model"`
 	ThinkingLevel string      `json:"thinkingLevel"`
 }
 
+// piRPCResponse 是 Pi RPC 对单条请求的响应外壳：Data 里才是各方法真正的载荷。
 type piRPCResponse struct {
 	ID      string          `json:"id"`
 	Type    string          `json:"type"`
@@ -960,15 +916,15 @@ type piRPCResponse struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-// discoverPiModels asks Pi's RPC API for its machine-readable model catalog.
-// The RPC model objects carry the exact per-model reasoning metadata that the
-// human-readable `--list-models` table reduces to a yes/no column. Older Pi
-// versions and pi-family forks may not implement RPC, so discovery falls back
-// to the existing table parser without advertising a guessed thinking catalog.
+// discoverPiModels 通过 Pi 的 RPC API 拿它机器可读的模型目录。RPC 模型对象携带逐模型精确的
+// reasoning 元数据，而人类可读的 `--list-models` 表格只给一列 yes/no。旧版 Pi 与 pi 家族 fork
+// 可能没实现 RPC，所以发现会退回旧的表格解析器，且不虚报猜出来的 thinking 目录。
 func discoverPiModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
 	return discoverPiModelsWithin(ctx, runtimeCmd, piRPCDiscoveryTimeout, piTableDiscoveryTimeout)
 }
 
+// discoverPiModelsWithin 把 15 秒发现预算拆成两段：先试 RPC，再退到表格。两个超时参数化是
+// 为了测试能注入不同取值。
 func discoverPiModelsWithin(ctx context.Context, runtimeCmd Command, rpcTimeout, tableTimeout time.Duration) ([]Model, error) {
 	if runtimeCmd.Path == "" {
 		runtimeCmd.Path = "pi"
@@ -977,9 +933,8 @@ func discoverPiModelsWithin(ctx context.Context, runtimeCmd Command, rpcTimeout,
 	if err != nil {
 		return []Model{}, nil
 	}
-	// Split the established 15-second discovery budget so an RPC surface that
-	// accepts the mode but never answers cannot starve the compatibility table
-	// fallback. Both phase contexts still inherit caller cancellation.
+	// 把 15 秒发现预算拆开：即使 RPC 接口“接受模式但永不回话”，也不会饿死后面的表格兜底。
+	// 两段上下文都继承调用方的取消信号。
 	rpcCtx, rpcCancel := context.WithTimeout(ctx, rpcTimeout)
 	models, ok := discoverPiModelsRPC(rpcCtx, runtimeCmd, lookedUp)
 	rpcCancel()
@@ -992,17 +947,14 @@ func discoverPiModelsWithin(ctx context.Context, runtimeCmd Command, rpcTimeout,
 	return discoverPiModelsTable(tableCtx, runtimeCmd)
 }
 
-// discoverPiModelsRPC starts a short-lived Pi RPC session and requests both
-// the available models and current state. The state identifies the model Pi
-// will choose when Multica omits --model; its thinking level is the runtime's
-// effective default for that selected model.
+// discoverPiModelsRPC 起一个短命 Pi RPC 会话，同时请求可用模型与当前状态。状态能指出“Multica
+// 不传 --model 时 Pi 会选哪个模型”；它的 thinking 档位就是该运行时对该模型的生效默认值。
 func discoverPiModelsRPC(ctx context.Context, runtimeCmd Command, lookedUp string) ([]Model, bool) {
 	args := []string{
 		"--mode", "rpc",
 		"--no-session",
-		// Extensions stay enabled because Pi extensions can register providers
-		// and models; disabling them would make RPC discovery disagree with the
-		// catalog used by real task execution.
+		// 扩展保持启用，因为 Pi 扩展可以注册 provider 和模型；关掉会让 RPC 发现与真实任务执行
+		// 所用的目录不一致。
 		"--no-skills",
 		"--no-prompt-templates",
 		"--no-context-files",
@@ -1074,9 +1026,8 @@ func discoverPiModelsRPC(ctx context.Context, runtimeCmd Command, lookedUp strin
 		}
 	}
 
-	// Pi's RPC loop waits for more commands while stdin remains open. EOF ends
-	// the throwaway session cleanly; the context remains a safety net for an
-	// older/forked CLI that ignores EOF or never completes both responses.
+	// Pi 的 RPC 循环在 stdin 仍开着时会继续等更多命令。EOF 能干净地结束这次一次性会话；context
+	// 仍是安全网——用于对付那些忽略 EOF 或始终不完成两条响应的旧版/fork CLI。
 	_ = stdin.Close()
 	_, _ = io.Copy(io.Discard, stdout)
 	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
@@ -1088,6 +1039,9 @@ func discoverPiModelsRPC(ctx context.Context, runtimeCmd Command, lookedUp strin
 	return piModelsFromRPC(rawModels, state), true
 }
 
+// piModelsFromRPC 把 RPC 返回的原始模型记录组装成 Model 列表。Pi 的模型 ID 用
+// `provider/id` 形式；当前会话模型（state.Model）被打成 Default=true，且如果它的 thinking
+// 档位集合确实支持会话当前档位，就把该档位作为默认档位写回去。
 func piModelsFromRPC(rawModels []piRPCModel, state piRPCState) []Model {
 	defaultID := ""
 	if state.Model != nil && state.Model.Provider != "" && state.Model.ID != "" {
@@ -1123,10 +1077,9 @@ func piModelsFromRPC(rawModels []piRPCModel, state piRPCState) []Model {
 	return models
 }
 
-// piThinkingFromRPCModel follows Pi's getSupportedThinkingLevels(model) for
-// reasoning-capable models: off..high are available unless explicitly mapped
-// to null; xhigh/max require an explicit non-null mapping. Pi reports only
-// "off" for reasoning=false; Multica intentionally hides that no-op picker.
+// piThinkingFromRPCModel 复刻 Pi 的 getSupportedThinkingLevels(model) 对支持 reasoning 的
+// 模型的行为：off..high 默认可用，除非被显式映射成 null；xhigh/max 必须有非空显式映射才出现。
+// Pi 对 reasoning=false 只报 "off"，Multica 刻意不展示那个无意义的开关。
 func piThinkingFromRPCModel(model piRPCModel) *ModelThinking {
 	if !model.Reasoning {
 		return nil
@@ -1148,6 +1101,7 @@ func piThinkingFromRPCModel(model piRPCModel) *ModelThinking {
 	return &ModelThinking{SupportedLevels: levels}
 }
 
+// piThinkingSupports 判断给定 thinking 目录里是否包含 value 这个档位。
 func piThinkingSupports(thinking *ModelThinking, value string) bool {
 	if thinking == nil || value == "" {
 		return false
@@ -1160,17 +1114,13 @@ func piThinkingSupports(thinking *ModelThinking, value string) bool {
 	return false
 }
 
-// discoverPiModelsTable runs the legacy human-readable catalog command.
-// Older pi versions print the list to stderr; newer versions use stdout. We
-// capture both and parse whichever is non-empty. The fallback intentionally
-// leaves Thinking nil because the table exposes only a yes/no capability bit.
+// discoverPiModelsTable 跑旧的人类可读目录命令。旧版 pi 把列表打到 stderr，新版本用 stdout；
+// 这里两个都抓，解析非空的那边。该兜底刻意把 Thinking 留空，因为表格只暴露一个 yes/no 能力位。
 func discoverPiModelsTable(ctx context.Context, runtimeCmd Command) ([]Model, error) {
-	// Newer pi fetches its catalog from each configured provider over the
-	// network, so discovery time scales with provider count — a multi-provider
-	// setup measured ~4.6-4.8s, right at the old 5s cap. When jitter pushed it
-	// over, the daemon killed the command before it printed anything and the
-	// model picker came back empty while the runtime stayed online. 15s matches
-	// the opencode discovery cap (see #3729, same class as #3627).
+	// 新版 pi 会通过网络从每个已配置 provider 抓目录，所以发现耗时随 provider 数量增长——多
+	// provider 配置实测 ~4.6–4.8s，正好卡在旧 5s 上限。抖动一旦推过线，daemon 会在 CLI 打印任何
+	// 内容前就把它杀掉，模型下拉框空着而运行时却在线。15s 与 opencode 发现上限一致（见 #3729，
+	// 与 #3627 同类）。
 	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	cmd := runtimeCmd.exec(runCtx, "--list-models")
@@ -1188,11 +1138,9 @@ func discoverPiModelsTable(ctx context.Context, runtimeCmd Command) ([]Model, er
 	return parsePiModels(text), nil
 }
 
-// parsePiModels accepts the `pi --list-models` output. Pi historically
-// emitted `provider:model` per line and now emits a multi-column table
-// (`provider  model  context …`); both shapes are normalized to
-// `provider/model` to match opencode/UI conventions. The case-insensitive
-// `provider` token in column 0 is treated as the table header and skipped.
+// parsePiModels 接受 `pi --list-models` 的输出。Pi 历史上每行输出 `provider:model`，现在改
+// 成多列表格（`provider  model  context …`）；两种形状都被归一化成 `provider/model`，与
+// opencode/UI 的惯例对齐。第 0 列是大小写不敏感的 `provider` 时视为表头行并跳过。
 func parsePiModels(output string) []Model {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -1203,11 +1151,10 @@ func parsePiModels(output string) []Model {
 		if line == "" {
 			continue
 		}
-		// pi interleaves human-readable diagnostics with the catalog when an
-		// agent config references stale patterns — e.g.
+		// agent 配置引用了过期 pattern 时，pi 会把人类可读的诊断信息与目录行混打，例如
 		//   Warning: No models match pattern "opencode-go/mimo-v2-omni"
-		// Skip them before field-splitting; otherwise prose tokens are coined
-		// into bogus models like `No/models` or `Warning/`. See #3729.
+		// 要先跳过它们再做字段切分；否则散文句子会被切出 `No/models`、`Warning/` 这种假模型。
+		// 见 #3729。
 		if isPiDiscoveryNoise(line) {
 			continue
 		}
@@ -1221,18 +1168,16 @@ func parsePiModels(output string) []Model {
 		}
 		var id string
 		if strings.ContainsAny(first, ":/") {
-			// Legacy `provider:model` format — normalize colon to slash.
-			// Restricted to this branch so a model name with a `:` in
-			// the table format's column 1 is not silently rewritten.
+			// 旧 `provider:model` 格式——把冒号归一化成斜杠。只在这个分支里改，免得把表格格式
+			// 第 1 列里恰好含 `:` 的模型名也悄悄改掉。
 			id = strings.Replace(first, ":", "/", 1)
 		} else if len(fields) >= 2 {
 			id = first + "/" + fields[1]
 		} else {
 			continue
 		}
-		// A real id has a non-empty provider and model on both sides of the
-		// slash. Drop anything that doesn't (e.g. a stray `something:` token),
-		// a cheap structural backstop on top of the diagnostic filter above.
+		// 真正的 ID 在斜杠两侧各有非空的 provider 和 model。丢掉不满足的（例如游离的
+		// `something:` token）——这是在上述诊断过滤器之外再加的一层廉价结构兜底。
 		if slash := strings.Index(id, "/"); slash <= 0 || slash == len(id)-1 {
 			continue
 		}
@@ -1249,31 +1194,26 @@ func parsePiModels(output string) []Model {
 	return models
 }
 
-// isPiDiscoveryNoise reports whether a `pi --list-models` line is a diagnostic
-// message rather than a catalog row. pi prints these alongside the table when
-// an agent config references stale provider/model patterns, e.g.
+// isPiDiscoveryNoise 判断 `pi --list-models` 的一行是诊断消息而不是目录行。当 agent 配置引用
+// 过期的 provider/model pattern 时，pi 会把这些消息打印在表格旁边，例如：
 //
 //	Warning: No models match pattern "opencode-go/mimo-v2-omni"
 //
-// The `Warning:` prefix is not guaranteed across versions, so the unmatched-
-// pattern message is also matched on its own. These are prose, not
-// `provider model` rows; without skipping them the field splitter coins bogus
-// models like `No/models`. See #3729.
+// `Warning:` 前缀并非所有版本都保证存在，所以“没有 pattern 命中”这条消息本身也要单独匹配。
+// 这些是散文，不是 `provider model` 行；不跳过的话字段切分会造出 `No/models` 这类假模型。见
+// #3729。
 //
-// A pi-family custom runtime profile (MUL-3284) can point at a fork that has
-// no `--list-models` at all. Those exit non-zero printing usage text —
+// pi 家族的自定义运行时 profile（MUL-3284）可能指向一个压根没有 `--list-models` 的 fork。
+// 它们非零退出并打印用法文本——
 //
 //	Error: unknown flag: --list-models
 //	Run `omp --help` for available flags.
 //
-// — and the second line has no diagnostic prefix, so it used to be coined into
-// a `Run/`omp` model. Usage hints are matched on their own markers (backtick-
-// quoted commands, `--help`, `usage:`, unknown flag/command) so the picker
-// comes back empty and the UI falls back to manual entry instead of offering
-// garbage IDs. Deliberately narrow: catalog rows are `provider/model` or
-// `provider model …` tokens, none of which carry these markers. The parse-on-
-// non-zero-exit behaviour from #3729 is untouched — older pi really does print
-// its catalog to stderr while exiting non-zero. See #4482.
+// ——第二行没有任何诊断前缀，过去会被切成一个 `Run/`omp` 假模型。用法提示按其自身特征匹配
+// （反引号引用的命令、`--help`、`usage:`、unknown flag/command），让选择器空手而归、UI 退回
+// 手工录入，而不是给出垃圾 ID。这里刻意保持狭窄：目录行是 `provider/model` 或
+// `provider model …` 的 token，都不会携带这些特征。“非零退出也照常解析”的 #3729 行为不受
+// 影响——旧版 pi 确实会非零退出、同时把目录打到 stderr。见 #4482。
 func isPiDiscoveryNoise(line string) bool {
 	lower := strings.ToLower(line)
 	if strings.Contains(lower, "no models match pattern") {
@@ -1291,13 +1231,11 @@ func isPiDiscoveryNoise(line string) bool {
 		strings.Contains(lower, "unknown command")
 }
 
-// discoverOmpModels runs `omp models --json` and parses the JSON catalog.
-// omp (oh-my-pi) rejects `--list-models` — a pi flag it never adopted, and it
-// exits non-zero on it — so its native discovery is `omp models --json`, which
-// prints a `{"models":[...]}` object; parseOmpModels documents the entry shape.
-// An empty catalog (an omp with no provider credentials configured prints
-// `{"models":[]}`) or a non-zero exit (binary missing, omp too old) falls back
-// to an empty list so the UI degrades to manual entry instead of erroring.
+// discoverOmpModels 运行 `omp models --json` 并解析 JSON 目录。omp（oh-my-pi）拒绝
+// `--list-models`——那是它从未采纳的 pi flag，遇到会非零退出——所以它的原生发现命令是
+// `omp models --json`，打印一个 `{"models":[...]}` 对象；条目形状见 parseOmpModels。
+// 空目录（未配置任何 provider 凭据的 omp 会打印 `{"models":[]}`）或非零退出（二进制缺失、
+// omp 太旧）都退回空列表，让 UI 退化成手工录入而不是报错。
 func discoverOmpModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
 	if runtimeCmd.Path == "" {
 		runtimeCmd.Path = "omp"
@@ -1316,16 +1254,14 @@ func discoverOmpModels(ctx context.Context, runtimeCmd Command) ([]Model, error)
 	return parseOmpModels(stdout)
 }
 
-// parseOmpModels parses the JSON output from `omp models --json`. omp emits
-// an object wrapper with a `models` array — NOT a bare top-level array:
+// parseOmpModels 解析 `omp models --json` 的 JSON 输出。omp 输出的是带 `models` 数组的对象
+// 包裹——不是裸的顶层数组：
 //
 //	{"models":[{"provider":"anthropic","id":"claude-sonnet-5","selector":"anthropic/claude-sonnet-5","name":"Claude Sonnet 5",...}]}
 //
-// The persistable Model.ID is the selector (provider/id), matching the
-// convention parsePiModels uses: buildPiArgs hands Model.ID to --model whole.
-// Using the bare id would let omp's internal provider priority ranking pick a
-// different backend for the same model id. Provider is kept for UI grouping.
-// The dedup key is the selector when present, falling back to provider/id.
+// 可持久化的 Model.ID 取 selector（provider/id），与 parsePiModels 的惯例一致：buildPiArgs 会把
+// Model.ID 整个交给 --model。若用裸 id，omp 内部的 provider 优先级排序可能为同一个模型 id 选到
+// 另一个后端。Provider 留给 UI 分组。去重键优先用 selector，缺省再退回 provider/id。
 func parseOmpModels(data []byte) ([]Model, error) {
 	var wrapper struct {
 		Models []struct {
@@ -1346,10 +1282,8 @@ func parseOmpModels(data []byte) ([]Model, error) {
 			continue
 		}
 		provider := strings.TrimSpace(e.Provider)
-		// Model.ID is the qualified selector (provider/id) so buildPiArgs
-		// forwards a selector omp can resolve unambiguously. When selector is
-		// absent, fall back to provider/id; when provider is also absent, the
-		// bare id is the only form available.
+		// Model.ID 取限定后的 selector（provider/id），这样 buildPiArgs 交给 omp 的是一个它能
+		// 无歧义解析的 selector。selector 缺省时退回 provider/id；provider 也缺省时只能用裸 id。
 		selector := strings.TrimSpace(e.Selector)
 		if selector == "" {
 			if provider != "" {
@@ -1371,25 +1305,18 @@ func parseOmpModels(data []byte) ([]Model, error) {
 	return models, nil
 }
 
-// discoverHermesModels spins up a throwaway `hermes acp` process,
-// drives just enough of the protocol to receive the model list
-// advertised in the `session/new` response, and shuts it down. The
-// list and the `current` flag both come from hermes' own
-// `_build_model_state` so whatever ~/.hermes/config.yaml resolves
-// to at runtime is exactly what the UI shows.
+// discoverHermesModels 起一个一次性 `hermes acp` 进程，只驱动协议中“收 session/new 响应里
+// 宣传的模型列表”所需的部分，然后关掉它。列表和 `current` 标记都来自 hermes 自己的
+// `_build_model_state`，所以 ~/.hermes/config.yaml 在运行时解析出什么，UI 就显示什么。
 //
-// Failures propagate. Hermes has no static catalog to degrade to, so the
-// empty-list behaviour the other legacy providers keep would report a
-// successful discovery that found nothing — and the picker renders that as an
-// authoritative empty dropdown with no error and no hint, which is the one
-// outcome packages/core/runtimes/models.ts explicitly refuses to produce
-// (MUL-6606). An error instead puts the picker in its discovery-failed state,
-// which still offers the creatable manual-entry input, and carries the reason
-// Hermes gave for why it found nothing.
+// 失败会原样向上抛。Hermes 没有可退的静态目录：其他老牌 provider 那种“失败返回空列表”的写法
+// 在这里会变成“一次成功的发现、结果是啥也没有”——选择器会把空下拉框渲染成权威结果，既无错误
+// 也无提示，而这正是 packages/core/runtimes/models.ts 明确拒绝产出的唯一结局（MUL-6606）。
+// 改抛错误则让选择器进入“发现失败”状态，仍然提供可创建的手工录入框，并带上 Hermes 给出的
+// “为何没发现任何东西”的原因。
 //
-// Contrast grok (strictErrors with a static fallback) and codebuddy: those
-// substitute a baked-in list and only slog.Debug the reason, because a
-// stand-in catalog is better than nothing there. Here there is no stand-in.
+// 对照 grok（strictErrors + 静态兜底）和 codebuddy：它们用内置清单顶上，只 slog.Debug 记原因，
+// 因为在那边“有替身目录”好过没有。这里根本没有替身。
 func discoverHermesModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
 	models, err := discoverACPModels(ctx, runtimeCmd, acpDiscoveryProvider{
 		defaultBin:   "hermes",
@@ -1398,11 +1325,9 @@ func discoverHermesModels(ctx context.Context, runtimeCmd Command) ([]Model, err
 		tmpdirPrefix: "multica-hermes-discovery-",
 		strictErrors: true,
 		timeout:      hermesDiscoveryTimeout,
-		// The same handshake carries an effort selector on jcode and carries
-		// none on Hermes Agent, so annotate is what tells the two apart —
-		// Hermes Agent models come back with a nil Thinking and show no
-		// picker. Only the session's current model is annotated; see
-		// annotateACPThinkingForSessionModel.
+		// 同一次握手在 jcode 上会带 effort selector，在 Hermes Agent 上则不带，所以 annotate
+		// 正好用来区分二者——Hermes Agent 的模型返回 nil Thinking、不显示选择器。只有会话的
+		// 当前模型会被标注；见 annotateACPThinkingForSessionModel。
 		annotate: annotateACPThinkingForSessionModel,
 	})
 	if err != nil {
@@ -1411,29 +1336,22 @@ func discoverHermesModels(ctx context.Context, runtimeCmd Command) ([]Model, err
 	return models, nil
 }
 
-// hermesDiscoveryUnconfiguredHint explains a "no LLM provider configured"
-// failure raised by MODEL DISCOVERY, which is a different story from the same
-// message raised by a task.
+// hermesDiscoveryUnconfiguredHint 解释由 MODEL DISCOVERY 抛出的“未配置任何 LLM provider”失败
+// ——它和任务场景抛同样文案的故事完全不同。
 //
-// Hermes' own remedy ("run `hermes model`") assumes the shell the user is
-// standing in. Discovery does not run there: it is a `hermes acp` child of the
-// daemon, and the daemon is frequently GUI-launched, in which case its
-// environment never saw the user's shell rc. agents_probe.go's login-shell
-// fallback does not close that gap — it resolves the binary's PATH and nothing
-// else — so a provider whose credentials live in an exported variable or in
-// gcloud/ADC state (GH: Vertex AI) resolves for the user and not for the
-// daemon.
+// Hermes 自己的解决办法（“运行 `hermes model`”）假设用户站在自己的 shell 里。但发现并不在
+// shell 里跑：它是 daemon 的 `hermes acp` 子进程，而 daemon 常常由 GUI 拉起，此时它的环境从未
+// 见过用户 shell 的 rc 文件。agents_probe.go 的 login-shell 兜底也补不上这个缺口——它只解析
+// 了二进制的 PATH、别的什么都不管——所以凭据放在某个导出变量或 gcloud/ADC 状态（GH: Vertex
+// AI）里的 provider，在用户侧能解析、在 daemon 侧却不行。
 //
-// Deliberately NOT the task path's hint (annotateHermesProviderUnconfigured in
-// the daemon): that one is about a per-task HERMES_HOME overlay, and discovery
-// builds no overlay. Sending someone to set HERMES_HOME in an agent's
-// custom_env would be actively wrong here — discovery is per-runtime and never
-// reads any agent's custom_env, so that edit cannot put a single model in this
-// picker.
+// 刻意不用任务路径的提示（daemon 里的 annotateHermesProviderUnconfigured）：那条讲的是按任务
+// 隔离的 HERMES_HOME overlay，而发现不构造任何 overlay。在这里叫用户去 agent 的 custom_env 里
+// 设 HERMES_HOME 反而有害——发现是按运行时来的、从不读任何 agent 的 custom_env，所以那个改动
+// 无法让这个下拉框多出任何一个模型。
 //
-// Fixed prose, no interpolation, for the same reason the task hint is: this
-// text is error copy, and nothing user-controlled belongs in a string other
-// code may match on.
+// 固定文案、无插值，理由与任务提示相同：这是错误文案，任何用户可控的内容都不该进到别的代码
+// 可能拿去匹配的字符串里。
 const hermesDiscoveryUnconfiguredHint = " [multica] this is what hermes reported to the daemon, " +
 	"which runs `hermes acp` with its OWN environment — not your login shell. " +
 	"Credentials exported only from a shell rc file are invisible to it. " +
@@ -1442,11 +1360,9 @@ const hermesDiscoveryUnconfiguredHint = " [multica] this is what hermes reported
 	"Setting HERMES_HOME or custom_env on an agent will not populate this picker — " +
 	"model discovery is per-runtime and reads neither."
 
-// annotateHermesDiscoveryUnconfigured appends the hint above when, and only
-// when, the discovery failure is Hermes resolving no provider at all. Every
-// other failure (binary missing, handshake timeout, a rejected credential)
-// passes through untouched — the environment story would misdirect there, and
-// a rejected credential in particular means the config WAS found.
+// annotateHermesDiscoveryUnconfigured 仅当“发现失败的原因是 hermes 一个 provider 都解析不到”
+// 时，把上面那段提示接到错误后面。其余失败（二进制缺失、握手超时、凭据被拒）原样放行——那种
+// 场景讲环境故事会误导人，而且“凭据被拒”恰恰说明配置是被找到的。
 func annotateHermesDiscoveryUnconfigured(err error) error {
 	if err == nil || !taskfailure.ProviderUnconfigured(err.Error()) {
 		return err
@@ -1454,43 +1370,30 @@ func annotateHermesDiscoveryUnconfigured(err error) error {
 	return fmt.Errorf("%w%s", err, hermesDiscoveryUnconfiguredHint)
 }
 
-// discoverKimiModels combines Kimi's ACP model catalog with the structured
-// per-model effort data from `kimi provider list --json`. The provider catalog
-// is the only authoritative source for per-model supportEfforts/defaultEffort,
-// because a session/new response only ever describes the single model that
-// session was created with.
+// discoverKimiModels 把 Kimi 的 ACP 模型目录与 `kimi provider list --json` 的结构化逐模型
+// effort 数据合并起来。provider 目录是逐模型 supportEfforts/defaultEffort 唯一权威来源，因为
+// session/new 的响应永远只描述“创建该会话用的那一个模型”。
 //
-// Reading the effort catalog out of the session instead does not work, even
-// though Kimi (0.33.0) does refresh the thinking option after
-// session/set_model. The refreshed option arrives as a `session/update`
-// notification (`sessionUpdate: "config_option_update"`), and the requestACP
-// helper this file shares matches responses by id and drops notifications.
-// Consuming that notification would not be enough either: the option list Kimi
-// sends after switching to a low/high/max model still carries the previous
-// model's currentValue as a trailing entry (`[low, high, max, on]`), so using
-// it as a catalog would render a phantom level. supportEfforts has no such
-// residue.
+// 从会话里读 effort 目录行不通，尽管 Kimi（0.33.0）在 session/set_model 后确实会刷新 thinking
+// 选项。刷新的选项以 `session/update` 通知到达（`sessionUpdate: "config_option_update"`），而本
+// 文件共用的 requestACP 助手按 id 匹配响应、丢弃通知。就算消费那条通知也不够：Kimi 切到
+// low/high/max 模型后发的选项列表仍会带上一款模型的 currentValue 作为尾项（`[low, high, max,
+// on]`），拿它当目录会渲染出一个幽灵档位。supportEfforts 没有这种残留。
 //
-// The ACP side is unchanged: Kimi ≤0.28 returns a `models` block
-// (`availableModels`/`currentModelId`) and 0.29 moved the same catalog into
-// `configOptions` (MUL-5239); the shared parser still accepts both, so the
-// discovery path stays identical. See parseACPConfigOptionModels.
+// ACP 侧不变：Kimi ≤0.28 返回 `models` 块（`availableModels`/`currentModelId`），0.29 把同一
+// 目录挪进了 `configOptions`（MUL-5239）；共享解析器两种都认，所以发现路径保持不变。见
+// parseACPConfigOptionModels。
 //
-// Effort selection is gated on the CLI build, because provider-list alone
-// cannot tell whether the runtime can act on what it advertises. Verified
-// against real binaries: 0.28.1 reports supportEfforts [low high max] for K3
-// exactly like 0.33.0 does, but its ACP only implements the on/off toggle, so
-// set_config_option("max") returns success while confirming "on". Gating on the
-// session's `thinking` config id cannot separate the two — 0.28.1 advertises
-// that id too. The version is the only honest signal, and the initialize
-// response already carries it, so this costs no extra process.
+// effort 选择还要看 CLI 版本，因为光凭 provider-list 无法判断运行时能不能真正执行它宣传的
+// 档位。用真实二进制验证过：0.28.1 对 K3 报的 supportEfforts [low high max] 和 0.33.0 完全
+// 一样，但它的 ACP 只实现 on/off 开关——set_config_option("max") 返回成功、实际却停留在
+// "on"。用会话的 `thinking` 配置 id 做门控也无法区分二者——0.28.1 也宣传那个 id。版本号是
+// 唯一诚实的信号，而 initialize 响应本来就带着它，因此不用额外起进程。
 //
-// Above that, support is decided per model and nothing else: a model that
-// provider-list does not list, or lists without efforts, keeps Thinking nil,
-// which hides the control for that model alone.
+// 再往上，支持与否只按模型判定，别的不看：provider-list 没列出的模型、或列了但没有 efforts 的
+// 模型，其 Thinking 保持 nil，只对该模型隐藏控件。
 //
-// Failure modes (kimi missing, not logged in, config error) return an empty
-// list so the UI falls back to manual entry.
+// 失败模式（kimi 缺失、未登录、配置错误）返回空列表，让 UI 退回手工录入。
 func discoverKimiModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
 	var acpVersion string
 	models, err := discoverACPModels(ctx, runtimeCmd, acpDiscoveryProvider{
@@ -1505,9 +1408,8 @@ func discoverKimiModels(ctx context.Context, runtimeCmd Command) ([]Model, error
 		return models, err
 	}
 	if !kimiSupportsThinkingEfforts(acpVersion) {
-		// Not an error and not worth a Warn: an older CLI still lists models and
-		// runs tasks, it just cannot be told which effort to use. Model discovery
-		// re-runs on every cache miss, so a Warn here would repeat forever.
+		// 不是错误、也不值得 Warn：旧版 CLI 照样能列模型、跑任务，只是没法告诉它用哪档 effort。
+		// 模型发现每次缓存未命中都会重跑，所以在这里 Warn 会永远重复下去。
 		slog.Debug("kimi CLI predates ACP effort selection; hiding thinking controls",
 			"detected_version", acpVersion,
 			"required_version", kimiMinThinkingEffortVersion,
@@ -1517,10 +1419,9 @@ func discoverKimiModels(ctx context.Context, runtimeCmd Command) ([]Model, error
 
 	perModel, err := discoverKimiProviderThinking(ctx, runtimeCmd)
 	if err != nil {
-		// Do not include err or command output here: provider JSON can contain
-		// credentials. The fixed reason explains why thinking controls are hidden
-		// without leaking host or account data. Debug, not Warn: model discovery
-		// re-runs on every cache miss, so an older CLI would log this forever.
+		// 不要把 err 或命令输出带进来：provider JSON 可能含凭据。用固定原因解释为什么隐藏
+		// thinking 控件，不泄漏主机或账号数据。用 Debug 而非 Warn：模型发现每次缓存未命中都会
+		// 重跑，旧版 CLI 会因此没完没了地记日志。
 		slog.Debug("kimi per-model thinking discovery unavailable; hiding thinking controls",
 			"reason", "provider_list_unavailable",
 		)
@@ -1534,18 +1435,15 @@ func discoverKimiModels(ctx context.Context, runtimeCmd Command) ([]Model, error
 	return models, nil
 }
 
-// kimiMinThinkingEffortVersion is the first Kimi Code CLI whose ACP surface
-// applies an effort level instead of a plain on/off toggle (upstream 0.29.0,
-// released 2026-07-22). Below it, `session/set_config_option` accepts
-// "low"/"high"/"max" without error and leaves the session on "on", so
-// advertising those levels would promise something the runtime cannot deliver.
+// kimiMinThinkingEffortVersion 是第一个让 ACP 真正应用 effort 档位（而非简单 on/off 开关）的
+// Kimi Code CLI 版本（上游 0.29.0，2026-07-22 发布）。低于它时，`session/set_config_option`
+// 会无报错地接受 "low"/"high"/"max"，却把会话留在 "on"——宣传这些档位等于承诺运行时根本
+// 做不到的事。
 const kimiMinThinkingEffortVersion = "0.29.0"
 
-// kimiSupportsThinkingEfforts reports whether an ACP-reported Kimi version can
-// act on an effort level. An empty or unparsable version answers no: a build we
-// cannot identify (a fork, a wrapper, a future format) is not one we can
-// promise effort selection for, and hiding the picker only costs that build a
-// control it may not honour anyway. Tasks still run either way.
+// kimiSupportsThinkingEfforts 报告 ACP 上报的 Kimi 版本能否真正执行 effort 档位。空或无法解析
+// 的版本一律回答 no：认不出身份的构建（fork、包装器、未来格式）不值得我们为它承诺 effort
+// 选择——隐藏选择器最多让那个构建少一个它可能本来就不遵守的控件。无论哪种情况任务照常能跑。
 func kimiSupportsThinkingEfforts(version string) bool {
 	detected, err := parseSemver(strings.TrimSpace(version))
 	if err != nil {
@@ -1558,10 +1456,9 @@ func kimiSupportsThinkingEfforts(version string) bool {
 	return !detected.lessThan(minimum)
 }
 
-// acpAgentInfoVersion pulls `agentInfo.version` out of an ACP initialize
-// result. ACP agents report their own build here (Kimi sends
-// {"name":"Kimi Code CLI","version":"0.33.0"}); an agent that omits it yields
-// "", which every caller must treat as "unknown", never as "new enough".
+// acpAgentInfoVersion 从 ACP initialize 结果里取 `agentInfo.version`。ACP agent 在这里上报自己
+// 的构建号（Kimi 发 {"name":"Kimi Code CLI","version":"0.33.0"}）；漏报的 agent 得到 ""，所有
+// 调用方都必须把 "" 当“未知”处理，绝不能当“够新”。
 func acpAgentInfoVersion(raw json.RawMessage) string {
 	var response struct {
 		AgentInfo struct {
@@ -1580,6 +1477,8 @@ func acpAgentInfoVersion(raw json.RawMessage) string {
 	return strings.TrimSpace(response.AgentInfoSnake.Version)
 }
 
+// discoverKimiProviderThinking 跑 `kimi provider list --json`，取每个模型的 effort 档位目录。
+// 这是独立于 ACP 握手的一次子进程调用，失败时由调用方决定如何处理。
 func discoverKimiProviderThinking(ctx context.Context, runtimeCmd Command) (map[string]*ModelThinking, error) {
 	if runtimeCmd.Path == "" {
 		runtimeCmd.Path = "kimi"
@@ -1597,6 +1496,8 @@ func discoverKimiProviderThinking(ctx context.Context, runtimeCmd Command) (map[
 	return parseKimiProviderThinking(raw)
 }
 
+// kimiProviderModel 是 `kimi provider list --json` 里单个模型记录的 effort 部分。JSON 字段
+// 同时兼容驼峰与下划线两种拼写（不同版本 CLI 输出不同）。
 type kimiProviderModel struct {
 	SupportEfforts      []string `json:"supportEfforts"`
 	SupportEffortsSnake []string `json:"support_efforts"`
@@ -1604,6 +1505,8 @@ type kimiProviderModel struct {
 	DefaultEffortSnake  string   `json:"default_effort"`
 }
 
+// parseKimiProviderThinking 解析 provider 目录：把每款模型的支持档位转成 ThinkingLevel 列表，
+// 只保留合法的 effort 值并去重；默认档位必须是列表成员，否则留空（表示“CLI 自己选”）。
 func parseKimiProviderThinking(raw []byte) (map[string]*ModelThinking, error) {
 	var response struct {
 		Models map[string]kimiProviderModel `json:"models"`
@@ -1657,6 +1560,7 @@ func parseKimiProviderThinking(raw []byte) (map[string]*ModelThinking, error) {
 	return result, nil
 }
 
+// kimiThinkingLabel 把 kimi provider 目录里的档位值翻译成 UI 文案；未知值退回 title-case 拼写。
 func kimiThinkingLabel(value string) string {
 	switch value {
 	case "low":
@@ -1672,17 +1576,17 @@ func kimiThinkingLabel(value string) string {
 	}
 }
 
+// acpConfigOptionState 是 ACP configOptions 列表里“单条配置项”的状态快照：ID 是该配置的协议
+// 标识，CurrentValue 是当前取值。
 type acpConfigOptionState struct {
 	ID                string `json:"id"`
 	CurrentValue      string `json:"currentValue"`
 	CurrentValueSnake string `json:"current_value"`
 }
 
-// findACPConfigOption returns one exact config-id match from an ACP response.
-// Config ids are protocol identifiers, not display labels: category-only or
-// case-insensitive matches would advertise a control that execution cannot set.
-// Both camelCase and snake_case field spellings are accepted because ACP agents
-// in the wild emit both.
+// findACPConfigOption 在 ACP 响应里找一个精确命中 config-id 的配置项。配置 id 是协议标识，不是
+// 展示标签：只按分类（category）或大小写不敏感去匹配，会宣传出一个执行层根本设不了的控件。
+// 驼峰与下划线两种字段拼写都接受，因为现实中的 ACP agent 两种都发。
 func findACPConfigOption(raw json.RawMessage, configID string) (acpConfigOptionState, bool) {
 	var response struct {
 		ConfigOptions      []acpConfigOptionState `json:"configOptions"`
@@ -1700,6 +1604,7 @@ func findACPConfigOption(raw json.RawMessage, configID string) (acpConfigOptionS
 	return acpConfigOptionState{}, false
 }
 
+// acpConfigOptionCurrentValue 取某配置项的当前值；字段缺失或值为空都返回 not-ok。
 func acpConfigOptionCurrentValue(raw json.RawMessage, configID string) (string, bool) {
 	option, ok := findACPConfigOption(raw, configID)
 	if !ok {
@@ -1712,19 +1617,16 @@ func acpConfigOptionCurrentValue(raw json.RawMessage, configID string) (string, 
 	return value, value != ""
 }
 
-// discoverReasonixModels drives a short Reasonix ACP session and parses the
-// model configOptions advertised by session/new. Authentication and provider
-// configuration remain owned by `reasonix setup`; discovery failure therefore
-// falls back to manual model entry like the other ACP runtimes.
+// discoverReasonixModels 驱动一次短命 Reasonix ACP 会话，解析 session/new 宣传的模型
+// configOptions。认证与 provider 配置仍由 `reasonix setup` 负责；因此发现失败与其余 ACP
+// 运行时一样退回手工录入模型。
 //
-// The same handshake carries the effort selector, so annotate picks it up for
-// free — no second process and no reasonix-specific parser.
+// 同一次握手也会带 effort selector，所以 annotate 顺手就把它收下——不用第二个进程，也不需要
+// 任何 reasonix 专属解析器。
 //
-// Only the session's current model gets a catalog: reasonix derives the effort
-// vocabulary from the current model's provider entry, so the advertised list
-// describes that model alone. Every other model keeps a nil Thinking and shows
-// no picker until per-model probing exists. See
-// annotateACPThinkingForSessionModel.
+// 只有会话的当前模型能拿到目录：reasonix 的 effort 词表是从当前模型所属 provider 条目推导的，
+// 宣传出来的列表只描述那一款模型。其余模型 Thinking 保持 nil、不显示选择器，直到有逐模型探测
+// 为止。见 annotateACPThinkingForSessionModel。
 func discoverReasonixModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
 	return discoverACPModels(ctx, runtimeCmd, acpDiscoveryProvider{
 		defaultBin:       "reasonix",
@@ -1736,8 +1638,8 @@ func discoverReasonixModels(ctx context.Context, runtimeCmd Command) ([]Model, e
 	})
 }
 
-// discoverKiroModels spins up a throwaway `kiro-cli acp` process and parses
-// the models block Kiro returns from session/new.
+// discoverKiroModels 起一个一次性 `kiro-cli acp` 进程，解析 Kiro 在 session/new 返回的 models
+// 块。
 func discoverKiroModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
 	return discoverACPModels(ctx, runtimeCmd, acpDiscoveryProvider{
 		defaultBin:   "kiro-cli",
@@ -1746,25 +1648,18 @@ func discoverKiroModels(ctx context.Context, runtimeCmd Command) ([]Model, error
 	})
 }
 
-// discoverCopilotModels spins up `copilot --acp` and reads the
-// `availableModels` block from session/new. The catalog is keyed
-// off the user's GitHub account, so this is the only way to know
-// which IDs they actually have access to (Pro vs Pro+ vs
-// Enterprise vs evaluation models).
+// discoverCopilotModels 起 `copilot --acp` 并从 session/new 读 `availableModels` 块。目录是按
+// 用户的 GitHub 账号归类的，所以这是唯一能知道用户实际能访问哪些 ID（Pro vs Pro+ vs
+// Enterprise vs 评估模型）的办法。
 //
-// Falls back to copilotStaticModels() when the binary is missing
-// or when the ACP handshake fails (auth missing, network down,
-// etc.) so the UI dropdown always has something to show.
+// 二进制缺失或 ACP 握手失败（认证缺失、网络断、…）时退回 copilotStaticModels()，保证 UI
+// 下拉框总有内容可展示。
 //
-// We also tag each entry with a vendor in the Provider field —
-// the Copilot ACP payload doesn't include one, but the UI groups
-// by Provider, so deriving it from the ID prefix keeps OpenAI /
-// Anthropic / Gemini sections distinct.
+// 还会给每条目在 Provider 字段打上厂商——Copilot ACP 载荷不带这个字段，但 UI 按 Provider
+// 分组，所以从 ID 前缀推导出来能把 OpenAI / Anthropic / Gemini 分区区分开。
 //
-// No extra env or permission flags are needed: discovery only
-// drives `initialize` + `session/new`, neither of which triggers
-// a tool-permission prompt — the model catalog is part of the
-// session/new response itself.
+// 不需要额外的 env 或权限 flag：发现只驱动 `initialize` + `session/new`，两者都不会触发工具
+// 权限弹窗——模型目录本身就是 session/new 响应的一部分。
 func discoverCopilotModels(ctx context.Context, runtimeCmd Command) (Catalog, error) {
 	models, err := discoverACPModels(ctx, runtimeCmd, acpDiscoveryProvider{
 		defaultBin:   "copilot",
@@ -1783,8 +1678,8 @@ func discoverCopilotModels(ctx context.Context, runtimeCmd Command) (Catalog, er
 	return Catalog{Models: models}, nil
 }
 
-// discoverQoderModels spins up a Qoder CLI binary with `--yolo --acp` and
-// parses models from session/new.
+// discoverQoderModels 以 `--yolo --acp` 起一个 Qoder CLI 二进制，从 session/new 解析模型。
+// defaultBin 参数让 qoder 与 qoderclicn 两个 provider 名指向各自的可执行文件。
 func discoverQoderModels(ctx context.Context, runtimeCmd Command, defaultBin string) ([]Model, error) {
 	return discoverACPModels(ctx, runtimeCmd, acpDiscoveryProvider{
 		defaultBin:   defaultBin,
@@ -1794,80 +1689,61 @@ func discoverQoderModels(ctx context.Context, runtimeCmd Command, defaultBin str
 	})
 }
 
-// acpDiscoveryDefaultTimeout bounds an ACP discovery handshake unless the
-// provider overrides it. Discovery is a foreground UI request, so the ceiling
-// is what a user will wait for a picker to populate, not what a CLI might
-// eventually manage.
+// acpDiscoveryDefaultTimeout 是 ACP 发现握手的总预算上限，除非 provider 单独覆盖。发现是一次
+// 前台 UI 请求，所以上限按“用户愿意为一个下拉框等多久”来定，而不是按 CLI 最终能磨出什么来定。
 const acpDiscoveryDefaultTimeout = 15 * time.Second
 
-// hermesDiscoveryTimeout is sized to hermes' failure path, not its success
-// path. See acpDiscoveryProvider.timeout: a configured hermes returns its
-// catalog in ~2s, but one that cannot resolve its provider — the case that
-// actually needs to be reported — spends ~25s getting there. At the default 15s
-// the user would be told "context deadline exceeded" instead of the exact
-// command hermes wants them to run.
+// hermesDiscoveryTimeout 是按 hermes 的*失败*路径而非成功路径定的。见
+// acpDiscoveryProvider.timeout：配置好的 hermes ~2s 就能返回目录，但解析不到 provider 的那种
+// （真正需要上报的情形）要花 ~25s 才走完。用默认 15s 的话，用户看到的是 "context deadline
+// exceeded"，而不是 hermes 想让他跑的那条精确命令。
 //
-// Kept well below the server's 60s modelListRunningTimeout so discovery leaves
-// time for report delivery and retry backoffs before the request closes.
+// 刻意远低于服务端 60s 的 modelListRunningTimeout，让发现请求在关闭前留出报告投递与重试退避
+// 的时间。
 const hermesDiscoveryTimeout = 40 * time.Second
 
-// acpDiscoveryProvider configures how discoverACPModels launches an
-// ACP-speaking agent CLI. The shared helper drives every CLI in
-// the same way (initialize → optional authenticate → session/new → parse
-// models block) — the
-// per-provider differences are which binary to spawn, which env
-// vars suppress interactive prompts during init, what argv puts
-// the binary into ACP server mode (most use `acp`, Copilot uses
-// `--acp`), and what to label temporary work directories so they're
-// easy to identify in logs.
+// acpDiscoveryProvider 配置 discoverACPModels 如何启动一个讲 ACP 的 agent CLI。共享助手对所有
+// CLI 用同一条路驱动（initialize → 可选 authenticate → session/new → 解析 models 块）；各
+// provider 的差异只在：spawn 哪个二进制、哪些 env 变量用来压住 init 期间交互式弹窗、什么 argv
+// 能让二进制进入 ACP server 模式（多数用 `acp`，Copilot 用 `--acp`）、以及临时工作目录用什么
+// 前缀命名以便日志里好认。
 type acpDiscoveryProvider struct {
 	defaultBin       string
 	clientName       string
 	extraEnv         []string
 	tmpdirPrefix     string
 	isolatedStateEnv string
-	// acpArgs is the argv passed to the binary to start it in ACP
-	// server mode. Defaults to []string{"acp"} when nil/empty.
+	// acpArgs 是让二进制进入 ACP server 模式的 argv。为 nil/空时默认 []string{"acp"}。
 	acpArgs []string
-	// selectAuthMethod inspects the initialize response and child environment
-	// after initialize succeeds. A non-nil selector must return one advertised
-	// method id; its error aborts discovery before any session operation.
+	// selectAuthMethod 在 initialize 成功之后检查初始化响应与子进程环境。非空选择器必须返回
+	// 一个被宣传的方法 id；它返回的错误会在任何会话操作之前中止发现。
 	selectAuthMethod func(json.RawMessage, []string) (string, error)
-	// strictErrors surfaces stage-specific handshake errors to the caller.
-	// Legacy discovery providers keep their empty-list behavior; Grok enables
-	// this so it can log the actual fallback reason.
+	// strictErrors 把各阶段握手错误原样抛给调用方。老牌发现 provider 保留“返回空列表”的行为；
+	// Grok 打开它，以便能记下真正的兜底原因。
 	strictErrors bool
-	// annotate receives the parsed catalog plus the raw session/new result so a
-	// provider can enrich models from parts of the response the shared parser
-	// ignores. CodeBuddy uses it to read its effort catalog out of the same
-	// handshake, which is why it needs no separate discovery call at all.
+	// annotate 收到“解析出的目录 + 原始 session/new 结果”，供 provider 从共享解析器忽略的
+	// 响应部分里进一步丰富模型。CodeBuddy 用它从同一次握手读出 effort 目录，这也是它完全不再
+	// 需要单独一次发现调用的原因。
 	annotate func([]Model, json.RawMessage)
-	// timeout bounds the whole handshake — spawn, initialize, session/new.
-	// Zero means acpDiscoveryDefaultTimeout.
+	// timeout 约束整个握手——spawn、initialize、session/new。零值表示
+	// acpDiscoveryDefaultTimeout。
 	//
-	// It is per-provider because a CLI's UNHAPPY path is what has to fit, and
-	// that is the path with no shared shape: hermes answers a healthy
-	// session/new in ~2s but takes ~25s to conclude it cannot resolve a
-	// provider, because it re-probes before giving up (measured against hermes
-	// 0.20.0 — MUL-6606). A budget sized for the happy path turns every such
-	// diagnosis into "context deadline exceeded", which is the one failure text
-	// that tells the user nothing.
+	// 它按 provider 单独设，是因为要装下的正是 CLI 的“不快乐路径”，而那条路径没有通用形状：
+	// hermes 对一个健康的 session/new ~2s 就回答，但要花 ~25s 才能断定自己解析不到 provider
+	//（放弃前它会反复探测；对照 hermes 0.20.0 实测——MUL-6606）。按快乐路径配的预算会把这类
+	// 诊断全部变成 "context deadline exceeded"，而那恰恰是对用户零信息量的失败文案。
 	timeout time.Duration
-	// inspectInit receives the raw initialize result before any session is
-	// created. It is for reading capability facts the handshake already
-	// carries — Kimi reads `agentInfo.version` to gate a feature on the CLI
-	// build — so a provider does not have to spend a second process asking the
-	// binary what it is. It cannot fail discovery: a provider that learns
-	// nothing useful here must degrade, not abort.
+	// inspectInit 在任何会话创建前收到原始 initialize 结果。它用于读取握手本来就会带的能力
+	// 事实——Kimi 读 `agentInfo.version` 以按 CLI 构建做功能门控——这样 provider 不必再花第二
+	// 个进程问二进制“你是谁”。它不能使发现失败：provider 在这里没学到有用信息时只能降级，
+	// 不能中止。
 	inspectInit func(json.RawMessage)
 }
 
-// discoverACPModels runs the ACP handshake for any agent CLI that
-// implements the standard `initialize` + `session/new` flow and
-// advertises its model catalog in the response under
-// `models.availableModels` / `models.currentModelId`, or under the
-// newer `configOptions` list. Provider-specific `launchArgs` select
-// ACP mode (e.g. `acp` vs `--acp`).
+// discoverACPModels 对任何实现了标准 `initialize` + `session/new` 流程、并在响应里以
+// `models.availableModels` / `models.currentModelId`（或更新的 `configOptions` 列表）宣传模型
+// 目录的 agent CLI 跑 ACP 握手。provider 专属的启动参数负责选择 ACP 模式（例如 `acp` vs
+// `--acp`）。
 func discoverACPModels(ctx context.Context, runtimeCmd Command, p acpDiscoveryProvider) ([]Model, error) {
 	fail := func(stage string, err error) ([]Model, error) {
 		if p.strictErrors {
@@ -1905,6 +1781,8 @@ func discoverACPModels(ctx context.Context, runtimeCmd Command, p acpDiscoveryPr
 	hideAgentWindow(cmd)
 	childEnv := append(os.Environ(), p.extraEnv...)
 	if isolatedStateDir != "" {
+		// 把可能指向用户真实配置目录的状态 env 重定向到一次性临时目录，避免发现进程读到/改到
+		// 用户的持久化 agent 状态。
 		childEnv = replaceEnvValue(childEnv, p.isolatedStateEnv, isolatedStateDir)
 	}
 	cmd.Env = childEnv
@@ -1917,15 +1795,13 @@ func discoverACPModels(ctx context.Context, runtimeCmd Command, p acpDiscoveryPr
 		stdin.Close()
 		return fail("stdout setup", err)
 	}
-	// Discard stderr; noisy logs here don't help us and we don't
-	// want them bleeding into the daemon log every 60s.
+	// 丢弃 stderr；这里的噪声日志帮不上忙，也不该每 60s 就漏进 daemon 日志。
 	cmd.Stderr = io.Discard
 	if err := startOwnedProcessTree(cmd, runtimeCmd.logger); err != nil {
 		return fail("process start", err)
 	}
-	// Ensure the child process and everything it spawned are always reaped.
-	// This probe runs on a discovery schedule, so a leaked ACP server here
-	// accumulates rather than showing up once.
+	// 保证子进程及它派生的一切都被回收。这个探测按发现调度跑，泄漏一个 ACP server 会累积，
+	// 而不是只出现一次。
 	defer func() {
 		_ = stdin.Close()
 		signalProcessGroup(cmd, syscall.SIGKILL)
@@ -1936,6 +1812,8 @@ func discoverACPModels(ctx context.Context, runtimeCmd Command, p acpDiscoveryPr
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 4*1024*1024)
 	nextID := 1
+	// requestACP 向子进程发出一帧 JSON-RPC 请求，然后阻塞读 stdout，直到收到与自己 id 匹配的
+	// 响应帧；通知（无 id 或 id 不匹配的帧）一律跳过。
 	requestACP := func(method string, params map[string]any) (json.RawMessage, error) {
 		id := nextID
 		nextID++
@@ -1996,8 +1874,8 @@ func discoverACPModels(ctx context.Context, runtimeCmd Command, p acpDiscoveryPr
 		return nil, io.ErrUnexpectedEOF
 	}
 
-	// Each stage is response-driven. In particular, do not guess Grok's auth
-	// method or enqueue session/new before initialize/authenticate succeeds.
+	// 每个阶段都由响应驱动。特别是：不要猜 Grok 的认证方法，也不要在 initialize/authenticate
+	// 成功前就排队 session/new。
 	initResult, err := requestACP("initialize", map[string]any{
 		"protocolVersion":    1,
 		"clientInfo":         map[string]any{"name": p.clientName, "version": "0.1.0"},
@@ -2010,9 +1888,8 @@ func discoverACPModels(ctx context.Context, runtimeCmd Command, p acpDiscoveryPr
 		p.inspectInit(initResult)
 	}
 
-	// session/new requires a valid cwd — use a temp directory we
-	// clean up afterwards, not the daemon's workdir (which might
-	// be in the middle of another task's worktree).
+	// session/new 要求一个合法的 cwd——用事后清理的临时目录，而不是 daemon 的工作目录（那里
+	// 可能正处在另一个 task 的 worktree 中）。
 	tmp, err := os.MkdirTemp("", p.tmpdirPrefix)
 	if err != nil {
 		return fail("temporary cwd", err)
@@ -2041,12 +1918,10 @@ func discoverACPModels(ctx context.Context, runtimeCmd Command, p acpDiscoveryPr
 	}
 	models := parseACPSessionNewModels(sessionResult)
 	if len(models) == 0 {
-		// session/new succeeded but carried no catalog we recognise. This
-		// is what upstream schema drift looks like from here (MUL-5239:
-		// kimi 0.29 moved the catalog from `models` to `configOptions`),
-		// and without this line it is indistinguishable from "the CLI
-		// really has no models". Log the top-level keys only — never the
-		// response body, which carries session ids and account-shaped data.
+		// session/new 成功了却没带任何我们认识的目录。站在这里看，这就是上游 schema 漂移的样子
+		// （MUL-5239：kimi 0.29 把目录从 `models` 挪到了 `configOptions`）；没有这行日志，它和
+		// “CLI 真没有模型”就无从区分。只记顶层键——绝不记响应体，那里面是会话 id 和账号形态的
+		// 数据。
 		slog.Debug("ACP model discovery found no models in session/new response",
 			"binary", runtimeCmd.Path,
 			"result_keys", strings.Join(acpResultTopLevelKeys(sessionResult), ","),
@@ -2064,6 +1939,8 @@ func discoverACPModels(ctx context.Context, runtimeCmd Command, p acpDiscoveryPr
 	return models, nil
 }
 
+// replaceEnvValue 返回一份 env 切片，其中 key 对应的条目被替换成新值（大小写不敏感匹配）。
+// key 不存在时直接追加；空 key 的校验由调用方保证。
 func replaceEnvValue(env []string, key, value string) []string {
 	out := make([]string, 0, len(env)+1)
 	for _, entry := range env {
@@ -2076,9 +1953,8 @@ func replaceEnvValue(env []string, key, value string) []string {
 	return append(out, key+"="+value)
 }
 
-// parseACPSessionNewModels extracts the model catalog from an ACP
-// `session/new` response. Hermes and older Kimi (and any other ACP
-// agent that follows that schema) emit:
+// parseACPSessionNewModels 从 ACP `session/new` 响应里抽取模型目录。Hermes 与旧版 Kimi
+// （以及任何遵循该 schema 的 ACP agent）返回：
 //
 //	{
 //	  "sessionId": "...",
@@ -2090,15 +1966,12 @@ func replaceEnvValue(env []string, key, value string) []string {
 //	  }
 //	}
 //
-// Newer agents advertise the same catalog through the ACP
-// `configOptions` list instead — see parseACPConfigOptionModels. Both
-// shapes are accepted: the `models` block wins when present, and
-// `configOptions` is consulted only when it yields nothing, so no
-// existing provider changes behaviour.
+// 新版 agent 改走 ACP `configOptions` 列表宣传同一目录——见 parseACPConfigOptionModels。两种
+// 形状都接受：`models` 块存在时优先，只有它一无所获时才去查 `configOptions`，这样现有 provider
+// 的行为都不变。
 //
-// Returns nil (not an empty slice) when the payload is missing so
-// the caller can distinguish "parsed with no models" (valid but
-// empty catalog) from "couldn't find the structure at all".
+// 载荷缺失时返回 nil（而不是空切片），让调用方能够区分“解析出零模型”（合法空目录）与
+// “压根找不到该结构”。
 func parseACPSessionNewModels(raw json.RawMessage) []Model {
 	type acpModelInfo struct {
 		ModelID      string `json:"modelId"`
@@ -2117,6 +1990,7 @@ func parseACPSessionNewModels(raw json.RawMessage) []Model {
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil
 	}
+	// 驼峰与下划线字段兼容：先认驼峰，为空再退回下划线。
 	availableModels := resp.Models.AvailableModels
 	if len(availableModels) == 0 && resp.Models.AvailableModelsSnake != nil {
 		availableModels = resp.Models.AvailableModelsSnake
@@ -2141,15 +2015,15 @@ func parseACPSessionNewModels(raw json.RawMessage) []Model {
 	if len(models) > 0 {
 		return models
 	}
+	// `models` 块没有任何成果，退回从 configOptions 解析（kimi ≥0.29 等新版 agent 的形状）。
 	if fromConfig := parseACPConfigOptionModels(raw); len(fromConfig) > 0 {
 		return fromConfig
 	}
 	return models
 }
 
-// parseACPConfigOptionModels extracts the model catalog from the ACP
-// `configOptions` list returned by `session/new`. Kimi Code 0.29 dropped
-// the top-level `models` block in favour of this shape (MUL-5239):
+// parseACPConfigOptionModels 从 `session/new` 返回的 ACP `configOptions` 列表里抽取模型目录。
+// Kimi Code 0.29 弃用了顶层 `models` 块、改用这种形状（MUL-5239）：
 //
 //	{
 //	  "sessionId": "...",
@@ -2166,14 +2040,11 @@ func parseACPSessionNewModels(raw json.RawMessage) []Model {
 //	  ]
 //	}
 //
-// A config option counts as the model picker when its `id` or `category`
-// is "model" (case-insensitive). Every other option — thinking level in
-// particular — is deliberately ignored: those are separate product
-// surfaces, and mapping them into the model dropdown would offer values
-// `session/set_model` cannot honour. `currentValue` marks the default.
+// 当某条配置项的 `id` 或 `category` 是 "model"（大小写不敏感）时，它才算模型选择器。其余选项——
+// 尤其是 thinking 档位——被刻意忽略：那是独立的产品面，把它们映射进模型下拉框会给出
+// `session/set_model` 无法兑现的值。`currentValue` 标记默认模型。
 //
-// Returns nil when no model option is present, so the caller can keep
-// whatever the `models` block produced.
+// 没有 model 选项时返回 nil，让调用方保留 `models` 块产出的结果。
 func parseACPConfigOptionModels(raw json.RawMessage) []Model {
 	type acpConfigChoice struct {
 		Value string `json:"value"`
@@ -2223,10 +2094,9 @@ func parseACPConfigOptionModels(raw json.RawMessage) []Model {
 	return nil
 }
 
-// acpModelEntry builds one dropdown entry from an ACP-advertised model id
-// and its display name. Provider is derived from the `provider:model` form
-// only — ids like kimi's `kimi-code/k3` carry no colon and stay ungrouped,
-// which matches how the UI renders a flat catalog.
+// acpModelEntry 用 ACP 宣传的模型 id 与其展示名构造一条下拉框条目。Provider 只从
+// `provider:model` 形式推导——像 kimi 的 `kimi-code/k3` 这种不带冒号的 id 保持不分组，与 UI
+// 渲染扁平目录时的做法一致。
 func acpModelEntry(modelID, name, currentModelID string) Model {
 	provider := ""
 	if idx := strings.Index(modelID, ":"); idx > 0 {
@@ -2240,10 +2110,9 @@ func acpModelEntry(modelID, name, currentModelID string) Model {
 	}
 }
 
-// acpResultTopLevelKeys returns the sorted top-level object keys of an ACP
-// result. Keys only, never values: enough to tell `configOptions` drift from
-// a genuinely empty catalog in daemon.log without logging session ids or any
-// other content from the upstream response.
+// acpResultTopLevelKeys 返回 ACP 结果的顶层对象键（已排序）。只取键、绝不取值：足够在
+// daemon.log 里把 `configOptions` 漂移与“目录真的为空”区分开，又不会记下 session id 或上游
+// 响应里的任何其他内容。
 func acpResultTopLevelKeys(raw json.RawMessage) []string {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -2257,6 +2126,7 @@ func acpResultTopLevelKeys(raw json.RawMessage) []string {
 	return keys
 }
 
+// acpModelLabel 挑一个能展示的模型名：name 为空或等于 "unknown"（上游常用来占位）时退回 id。
 func acpModelLabel(name, modelID string) string {
 	label := strings.TrimSpace(name)
 	if label == "" || strings.EqualFold(label, "unknown") {
@@ -2265,18 +2135,14 @@ func acpModelLabel(name, modelID string) string {
 	return label
 }
 
-// discoverAntigravityModels runs `agy models` and returns the catalog the
-// installed Antigravity CLI advertises (one model record per line).
+// discoverAntigravityModels 运行 `agy models`，返回已安装 Antigravity CLI 宣传的目录（每行一条
+// 模型记录）。
 //
-// Unlike cursor / pi / opencode there is deliberately NO static fallback.
-// agy's `--model` takes the exact identifier advertised by the installed CLI
-// and silently no-ops on any value it doesn't recognise — empty output, exit
-// 0 — so a guessed static list would risk
-// offering a model the installed CLI can't honour, turning a typo into a
-// "successful" empty run. On any discovery failure we return an empty
-// catalog instead; agent.model stays unset and agy resolves its own
-// default. cachedDiscovery never caches empty results, so this retries on
-// the next request once the cause clears.
+// 与 cursor / pi / opencode 不同，这里刻意没有静态兜底。agy 的 `--model` 只接受已安装 CLI
+// 宣传的精确标识符，对任何它不认识的取值会静默 no-op——空输出、退出码 0——所以一份猜出来的
+// 静态清单有可能推荐一个已装 CLI 根本兑现不了的模型，把一次手误变成一次“成功”的空跑。任何
+// 发现失败都返回空目录；agent.model 保持未设置，由 agy 自行解析默认。cachedDiscovery 从不缓存
+// 空结果，所以原因清除后下一次请求就会重试。
 func discoverAntigravityModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
 	if runtimeCmd.Path == "" {
 		runtimeCmd.Path = "agy"
@@ -2284,8 +2150,7 @@ func discoverAntigravityModels(ctx context.Context, runtimeCmd Command) ([]Model
 	if _, err := exec.LookPath(runtimeCmd.Path); err != nil {
 		return nil, nil
 	}
-	// `agy models` is a local enumeration (no network round-trip), so a
-	// short cap is plenty; keep it generous enough to absorb cold starts.
+	// `agy models` 是本地枚举（无网络往返），短上限足够；但也留到能吸收冷启动的余量。
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	cmd := runtimeCmd.exec(runCtx, "models")
@@ -2297,10 +2162,8 @@ func discoverAntigravityModels(ctx context.Context, runtimeCmd Command) ([]Model
 	return parseAntigravityModels(string(out)), nil
 }
 
-// parseAntigravityModels turns `agy models` output into Model entries. agy
-// 1.1.11 emits "id<TAB>display label" while older versions emit one value per
-// line. For legacy output the value remains both ID and Label. Blank lines and
-// duplicate IDs are skipped.
+// parseAntigravityModels 把 `agy models` 输出变成 Model 条目。agy 1.1.11 输出 "id<TAB>显示
+// 标签"；旧版本每行只输出一个值。对旧格式，该值同时充当 ID 与 Label。空行与重复 ID 跳过。
 func parseAntigravityModels(output string) []Model {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -2331,13 +2194,11 @@ func parseAntigravityModels(output string) []Model {
 	return models
 }
 
-// discoverGrokModels spins up `grok agent --always-approve stdio` and parses
-// the model catalog from session/new (same shape as Kiro/Qoder/Trae). Requires
-// an authenticated Grok CLI; on any failure falls back to grokStaticModels.
+// discoverGrokModels 起 `grok agent --always-approve stdio` 并从 session/new 解析模型目录
+// （与 Kiro/Qoder/Trae 同形）。要求 Grok CLI 已认证；任何失败退回 grokStaticModels。
 func discoverGrokModels(ctx context.Context, runtimeCmd Command) (Catalog, error) {
-	// Match the daemon's runtime launch: `--no-auto-update` (global) so a
-	// background update check can't stall discovery. Auth is selected only
-	// after initialize returns the methods this installed CLI actually offers.
+	// 与 daemon 启动运行时一致：加 `--no-auto-update`（全局 flag），免得后台更新检查卡住发现。
+	// 认证方法只有在 initialize 返回了“这个已装 CLI 实际提供哪些方法”之后才会被选中。
 	models, err := discoverACPModels(ctx, runtimeCmd, acpDiscoveryProvider{
 		defaultBin:   "grok",
 		clientName:   "multica-model-discovery",
@@ -2363,9 +2224,8 @@ func discoverGrokModels(ctx context.Context, runtimeCmd Command) (Catalog, error
 	return Catalog{Models: models}, nil
 }
 
-// grokStaticModels is the offline fallback catalog for the Grok Build CLI.
-// IDs match a typical signed-in `session/new` / `grok models` listing.
-// Grok 4.6 is the current Grok Build default (xAI, 2026-08-12).
+// grokStaticModels 是 Grok Build CLI 的离线兜底目录。ID 与一个典型的已登录 `session/new` /
+// `grok models` 列表一致。Grok 4.6 是当前 Grok Build 默认（xAI，2026-08-12）。
 func grokStaticModels() []Model {
 	models := []Model{
 		{ID: "grok-4.6", Label: "Grok 4.6", Provider: "xai", Default: true},
@@ -2376,16 +2236,13 @@ func grokStaticModels() []Model {
 	return models
 }
 
-// annotateGrokThinking attaches only capabilities confirmed by xAI's
-// per-model reasoning documentation and Grok Build's `--effort` flag.
-// Unknown and composer models deliberately keep Thinking nil instead of
-// exposing values that may fail at runtime. Successful discovery replaces
-// these fallback catalogs with the installed CLI's advertised values.
+// annotateGrokThinking 只挂载 xAI 逐模型 reasoning 文档与 Grok Build `--effort` flag 都确认过
+// 的能力。未知模型与 composer 模型刻意保持 Thinking nil，而不是暴露可能运行失败的值。成功的
+// 发现会用已装 CLI 宣传的值替换这些兜底目录。
 //
-// grok-4.6 documents and accepts `xhigh` (docs.x.ai/developers/grok-4-6,
-// grok 1.0.5 `--effort`). grok-4.5 does not; the server's dynamic literal
-// gate lets the token through and ValidateThinkingLevel still fails it closed
-// for 4.5 using the per-model catalog.
+// grok-4.6 有文档且接受 `xhigh`（docs.x.ai/developers/grok-4-6、grok 1.0.5 `--effort`）。
+// grok-4.5 不接受；服务端的动态字面量门控会让 token 通过，而 ValidateThinkingLevel 仍会用
+// 逐模型目录把 4.5 的 xhigh 按关闭处理。
 func annotateGrokThinking(models []Model) {
 	for i := range models {
 		switch models[i].ID {
@@ -2397,6 +2254,7 @@ func annotateGrokThinking(models []Model) {
 	}
 }
 
+// grokThinkingCatalog 构造 Grok 的 thinking 目录；includeXHigh 只对支持它的模型打开 `xhigh`。
 func grokThinkingCatalog(includeXHigh bool) *ModelThinking {
 	levels := []ThinkingLevel{
 		{Value: "low", Label: "Low"},
@@ -2409,15 +2267,14 @@ func grokThinkingCatalog(includeXHigh bool) *ModelThinking {
 	return &ModelThinking{SupportedLevels: levels}
 }
 
-// annotateGrokThinkingFromACP fills in each model's effort catalog from the
-// xAI vendor `_meta` block on its `session/new` entry:
+// annotateGrokThinkingFromACP 从 xAI 厂商在 `session/new` 条目的 `_meta` 块里填每个模型的
+// effort 目录：
 //
 //	{"modelId": "grok-4.6", "_meta": {"supportsReasoningEffort": true,
 //	  "reasoningEfforts": [{"value": "high", "label": "High Effort", "default": true}, ...]}}
 //
-// This extension is outside the core ACP schema, so the parse stays narrow:
-// models whose entry does not advertise it keep Thinking nil, which hides the
-// picker instead of offering levels the CLI may reject.
+// 该扩展在核心 ACP schema 之外，所以解析保持窄：条目不宣传它的模型 Thinking 保持 nil——隐藏
+// 选择器，而不是给出 CLI 可能拒绝的档位。
 func annotateGrokThinkingFromACP(models []Model, sessionResult json.RawMessage) {
 	var resp struct {
 		Models struct {
@@ -2468,12 +2325,9 @@ func annotateGrokThinkingFromACP(models []Model, sessionResult json.RawMessage) 
 	}
 }
 
-// discoverCursorModels runs `cursor-agent --list-models` and parses
-// the `id - Label` rows. Cursor's catalog changes often and ships
-// many variants of the same base model (thinking / fast / max
-// suffixes) — static baking would be obsolete within weeks. On any
-// failure we fall back to the minimal static catalog so the UI
-// stays usable when cursor-agent isn't installed on the daemon host.
+// discoverCursorModels 运行 `cursor-agent --list-models` 并解析 `id - Label` 行。Cursor 的目录
+// 变得很频繁，同一基础模型带很多变体（thinking / fast / max 后缀）——静态内置几周就会过时。
+// 任何失败都退回最小静态目录，保证 daemon 宿主机上没装 cursor-agent 时 UI 仍可用。
 func discoverCursorModels(ctx context.Context, runtimeCmd Command) (Catalog, error) {
 	if runtimeCmd.Path == "" {
 		runtimeCmd.Path = "cursor-agent"
@@ -2481,9 +2335,8 @@ func discoverCursorModels(ctx context.Context, runtimeCmd Command) (Catalog, err
 	if _, err := exec.LookPath(runtimeCmd.Path); err != nil {
 		return Catalog{Models: cursorStaticModels(), Fallback: true}, nil
 	}
-	// 15s to match the other network-backed discovery paths (pi/opencode/ACP);
-	// cursor-agent fetches its frequently-changing catalog, so a tight cap can
-	// time out and fall back to the minimal static list. See #3729.
+	// 15s 与其他网络型发现路径对齐（pi/opencode/ACP）；cursor-agent 要抓取它频繁变化的目录，
+	// 所以紧上限会超时并退到最小静态清单。见 #3729。
 	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	cmd := runtimeCmd.exec(runCtx, "--list-models")
@@ -2499,8 +2352,8 @@ func discoverCursorModels(ctx context.Context, runtimeCmd Command) (Catalog, err
 	return Catalog{Models: models}, nil
 }
 
-// parseCursorModels extracts model IDs from `cursor-agent --list-models`.
-// Output format (as of cursor-agent 2026.04):
+// parseCursorModels 从 `cursor-agent --list-models` 抽取模型 ID。输出格式（截至 cursor-agent
+// 2026.04）：
 //
 //	Available models
 //	<blank>
@@ -2509,9 +2362,8 @@ func discoverCursorModels(ctx context.Context, runtimeCmd Command) (Catalog, err
 //	composer-2 - Composer 2
 //	…
 //
-// The model tagged `(default)` is surfaced as Default=true so the
-// UI badge points at cursor's own recommendation rather than a
-// hard-coded guess from our catalog.
+// 带 `(default)` 标记的模型被置为 Default=true，让 UI 徽标指向 cursor 自己的推荐而不是我们目录
+// 里的硬编码猜测。
 func parseCursorModels(output string) []Model {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -2522,7 +2374,7 @@ func parseCursorModels(output string) []Model {
 		if line == "" {
 			continue
 		}
-		// Row format: "<id> - <label>". Skip the "Available models" header.
+		// 行格式："<id> - <label>"。跳过 "Available models" 表头。
 		idx := strings.Index(line, " - ")
 		if idx <= 0 {
 			continue
@@ -2530,8 +2382,7 @@ func parseCursorModels(output string) []Model {
 		id := strings.TrimSpace(line[:idx])
 		label := strings.TrimSpace(line[idx+3:])
 		if !isModelIdentifier(id) {
-			// Cursor IDs use a compact identifier character set; malformed
-			// lines are ignored.
+			// Cursor ID 用紧凑的标识符字符集；畸形行直接忽略。
 			continue
 		}
 		if seen[id] {
@@ -2539,8 +2390,7 @@ func parseCursorModels(output string) []Model {
 		}
 		seen[id] = true
 		isDefault := strings.Contains(label, "default")
-		// Strip the "(current, default)" suffix from the display
-		// label since we surface that through the Default flag.
+		// 把 "(current, default)" 后缀从展示标签里剥掉——这个信息已经通过 Default 标记表达了。
 		if paren := strings.Index(label, "("); paren > 0 {
 			label = strings.TrimSpace(label[:paren])
 		}
@@ -2557,7 +2407,8 @@ func parseCursorModels(output string) []Model {
 	return models
 }
 
-// isModelIdentifier reports whether s looks like a valid model id token.
+// isModelIdentifier 判断 s 看起来像个合法模型 ID token（字母开头，只含字母/数字/`-_./`，
+// 不以冒号结尾）。
 func isModelIdentifier(s string) bool {
 	if s == "" || strings.HasSuffix(s, ":") {
 		return false
@@ -2579,27 +2430,21 @@ func isModelIdentifier(s string) bool {
 	return true
 }
 
-// ── CodeBuddy model discovery ──
+// ── CodeBuddy 模型发现 ──
 
-// discoverCodebuddyModels asks CodeBuddy for its catalog over ACP
-// (`codebuddy --acp`), the same handshake Copilot / Kimi / Reasonix / Kiro / Qoder / Grok /
-// TRAE already use. `session/new` answers with a structured catalog under
-// `models.availableModels` plus a `currentModelId`, which is what the shared
-// parseACPSessionNewModels reads.
+// discoverCodebuddyModels 通过 ACP 向 CodeBuddy 要目录（`codebuddy --acp`），与 Copilot / Kimi
+// / Reasonix / Kiro / Qoder / Grok / TRAE 共用同一条握手。`session/new` 在
+// `models.availableModels` 下带结构化目录、外加一个 `currentModelId`，共享解析器
+// parseACPSessionNewModels 读的就是它。
 //
-// This replaces scraping the `--model` line out of `codebuddy --help` (MUL-5549).
-// The help text carried IDs and nothing else, so labels had to be guessed from
-// the ID and produced names CodeBuddy does not use ("Kimi K3 1" for what the CLI
-// calls Kimi-K3, "Deepseek V3 2 Volc" for DeepSeek-V3.2), the default model was
-// a "first entry wins" guess rather than the advertised currentModelId, and the
-// effort catalog needed a second regex over the same output. Measured against
-// CodeBuddy 2.130.0 the handshake is also markedly faster than --help — which
-// matters because that command is slow enough to have been the prime suspect for
-// the timeouts behind #6180.
+// 这取代了过去从 `codebuddy --help` 里抠 `--model` 行的做法（MUL-5549）。help 文本只带 ID、
+// 别无其他，于是标签只能从 ID 猜，猜出 CodeBuddy 根本不用的名字（把 CLI 叫 Kimi-K3 的写成
+// "Kimi K3 1"、DeepSeek-V3.2 写成 "Deepseek V3 2 Volc"）；默认模型靠“首个条目胜出”的猜测而非
+// 宣传的 currentModelId；effort 目录还得在同一段输出上再做一次正则。对照 CodeBuddy 2.130.0
+// 实测，握手也比 --help 明显更快——这点很关键，因为那条命令慢到曾是 #6180 超时的主要嫌疑。
 //
-// Falls back to the static catalog (marked Fallback, so it can never be cached
-// as authoritative) when the handshake fails — including the not-logged-in case,
-// where session/new may legitimately refuse.
+// 握手失败时退回静态目录（标 Fallback，永远不能被当作权威缓存），包括未登录的情况——那时
+// session/new 可能合理地拒绝。
 func discoverCodebuddyModels(ctx context.Context, runtimeCmd Command) (Catalog, error) {
 	models, err := discoverACPModels(ctx, runtimeCmd, acpDiscoveryProvider{
 		defaultBin:   "codebuddy",
@@ -2615,11 +2460,9 @@ func discoverCodebuddyModels(ctx context.Context, runtimeCmd Command) (Catalog, 
 		}
 		return codebuddyFallbackCatalog(), nil
 	}
-	// Same post-pass Copilot runs: the ACP payload carries no vendor, and
-	// acpModelEntry can only recover one from a `vendor:model` id. CodeBuddy's
-	// ids are bare (`glm-5.2`, `kimi-k3-1`), so without this every model lands
-	// in one unlabelled group instead of the Zhipu / Kimi / DeepSeek sections
-	// the picker renders from Provider.
+	// 与 Copilot 相同的后处理：ACP 载荷不带厂商，acpModelEntry 也只能从 `vendor:model` id 里
+	// 恢复一个。CodeBuddy 的 id 是裸的（`glm-5.2`、`kimi-k3-1`），所以不做这步的话每个模型都会
+	// 落进同一个无标签分组，而不是选择器按 Provider 渲染出的 Zhipu / Kimi / DeepSeek 分区。
 	for i := range models {
 		if models[i].Provider == "" {
 			models[i].Provider = codebuddyModelProvider(models[i].ID)
@@ -2628,10 +2471,8 @@ func discoverCodebuddyModels(ctx context.Context, runtimeCmd Command) (Catalog, 
 	return Catalog{Models: models}, nil
 }
 
-// codebuddyModelProvider infers a vendor from a CodeBuddy model ID prefix.
-// CodeBuddy aggregates several vendors under its own account, and neither the
-// ACP catalog nor the static fallback carries a vendor field, so the ID prefix
-// is the only signal available for grouping the picker.
+// codebuddyModelProvider 从 CodeBuddy 模型 ID 前缀推断厂商。CodeBuddy 在自己账号下聚合多家
+// 厂商，而 ACP 目录和静态兜底都不带厂商字段，所以 ID 前缀是给选择器分组的唯一可用信号。
 func codebuddyModelProvider(id string) string {
 	switch {
 	case strings.HasPrefix(id, "claude-"):
@@ -2655,23 +2496,18 @@ func codebuddyModelProvider(id string) string {
 	}
 }
 
-// codebuddyFallbackCatalog is the static stand-in for a failed discovery. It
-// applies the static effort levels locally rather than probing again: whatever
-// broke the ACP handshake (binary missing, CLI not logged in, timeout) would
-// break a second attempt too.
+// codebuddyFallbackCatalog 是发现失败时的静态替身。它就地套用静态 effort 档位而不是再去探测
+// 一遍：能打断 ACP 握手的原因（二进制缺失、CLI 未登录、超时）同样会打断第二次尝试。
 func codebuddyFallbackCatalog() Catalog {
 	models := codebuddyStaticModels()
 	applyCodebuddyStaticThinking(models)
 	return Catalog{Models: models, Fallback: true}
 }
 
-// codebuddyStaticModels is the fallback catalog when ACP discovery fails
-// (binary missing, CLI not logged in, handshake timeout).
+// codebuddyStaticModels 是 ACP 发现失败（二进制缺失、CLI 未登录、握手超时）时的兜底目录。
 //
-// These IDs do not overlap CodeBuddy's real catalog at all, so this list is a
-// last-resort affordance to keep the picker usable, never an answer. It is
-// always returned marked Fallback so it cannot be cached as authoritative
-// (MUL-5549).
+// 这些 ID 与 CodeBuddy 的真实目录完全无交集，所以这份清单只是“让选择器还能用”的最后一招，
+// 永远不是答案。它总是以标着 Fallback 的形式返回，因此不可能被当作权威缓存（MUL-5549）。
 func codebuddyStaticModels() []Model {
 	return []Model{
 		{ID: "claude-sonnet-4.6", Label: "Claude Sonnet 4.6", Provider: "anthropic", Default: true},
@@ -2682,10 +2518,8 @@ func codebuddyStaticModels() []Model {
 	}
 }
 
-// discoverDimModels enumerates the model catalog from a Dim ACP session/new
-// handshake. Dim (dimcode) advertises models.availableModels; enumeration
-// requires a logged-in dim (OAuth). On any failure the caller falls back to
-// the manual-entry field.
+// discoverDimModels 从 Dim 的 ACP session/new 握手枚举模型目录。Dim (dimcode) 宣传
+// models.availableModels；枚举要求已登录的 dim（OAuth）。任何失败都由调用方退回手工录入框。
 func discoverDimModels(ctx context.Context, runtimeCmd Command) (Catalog, error) {
 	models, err := discoverACPModels(ctx, runtimeCmd, acpDiscoveryProvider{
 		defaultBin:   "dim",

@@ -1,15 +1,18 @@
+// 对话开场白（conversation starter）的解析与能力判断：决定新对话展示什么开场白、
+// 当前查看者能否从空状态入口编辑它。
 import type { Agent, AgentConversationStarter } from "../types";
 
 /**
- * Resolve what a new chat with this agent actually shows.
+ * 解析"与这个 Agent 开始新对话时实际展示什么开场白"。
  *
- * A configured suggestion only counts once BOTH halves carry text: the editor
- * lets an author add a row and save is blocked while it is half-filled, but a
- * malformed payload from an older client must not render a blank button.
+ * 一条已配置的建议只有"标题和正文都有内容"才算数：编辑器允许作者加一行，
+ * 半填状态会拦下保存，但旧客户端发来的畸形载荷绝不能渲染出一个空白按钮。
  *
- * When nothing complete survives, the caller's localized fallbacks are used
- * and `isFallback` says so — the settings preview needs to tell an author
- * "these are the defaults" rather than implying they configured them.
+ * 没有一条完整建议存活时，用调用方的本地化兜底文案，且 `isFallback` 会如实说明——
+ * 设置预览需要告诉作者"这些是默认项"，而不是暗示这些是他们配的。
+ * @param configured Agent 已保存的开场白配置。
+ * @param fallback 无有效配置时使用的默认开场白。
+ * @returns 实际展示的开场白，以及是否在用兜底。
  */
 export function selectConversationStarters(
   configured: AgentConversationStarter[] | undefined | null,
@@ -24,19 +27,17 @@ export function selectConversationStarters(
 }
 
 /**
- * Whether this viewer should be offered a way to edit the agent's conversation
- * starters from the chat empty state they render in.
+ * 这个查看者是否应该在聊天空状态里被提供一个"编辑开场白"的入口。
  *
- * Three independent reasons to stay silent, each of which would otherwise
- * produce a link that lies:
+ * 三种保持沉默的独立理由，任一种都会产生一条撒谎的链接：
  *
- *  - no agent, or an archived one: its conversations are read-only, so
- *    editing its starters changes nothing anyone will see,
- *  - a backend that does not persist conversation starters: the Instructions tab
- *    renders no editor there, so the link lands somewhere that cannot honour
- *    it,
- *  - a viewer who cannot edit the agent: a reader would arrive at a page they
- *    have no write access to.
+ *  - 没有 Agent，或它已归档：它的对话只读，编辑开场白不会改变任何人看到的东西，
+ *  - 后端不持久化开场白：Instructions 页在该环境不渲染编辑器，链接会落到无法兑现
+ *    它的地方，
+ *  - 查看者没有编辑该 Agent 的权限：读者会到达一个他没有写权限的页面。
+ * @param agent 目标 Agent（可能为空）。
+ * @param opts 后端是否支持开场白 + 当前查看者能否编辑该 Agent。
+ * @returns 是否应展示"自定义开场白"入口。
  */
 export function canCustomizeConversationStarters(
   agent: Pick<Agent, "archived_at"> | null,

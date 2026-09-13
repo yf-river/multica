@@ -1,13 +1,22 @@
 import { type RefObject, type CSSProperties, useEffect, useState, useCallback } from "react";
 
+// 本文件提供「滚动渐隐」hook：当容器内容溢出并可滚动时，返回一个 maskImage
+// 渐变，让内容在接近滚动边界处淡出，暗示「还能继续滚」。
+
+/** 滚动渐隐的方向 */
 export type ScrollFadeAxis = "vertical" | "horizontal";
 
 /**
- * Returns a dynamic maskImage style based on scroll position.
- * - At start → fade end only
- * - At end → fade start only
- * - In middle → fade both
- * - No overflow → undefined (no mask)
+ * 根据滚动位置返回动态的 maskImage 样式：
+ * - 停在开头 → 只淡出结尾
+ * - 停在结尾 → 只淡出开头
+ * - 停在中间 → 两端都淡出
+ * - 没有溢出 → 返回 undefined（不加遮罩）
+ *
+ * @param ref 要监听的滚动容器 ref
+ * @param fadeSize 渐隐带宽度/高度（px），默认 32
+ * @param axis 滚动方向：'vertical'（默认）/ 'horizontal'
+ * @returns 应用到容器上的 mask 样式；无需遮罩时返回 undefined
  */
 export function useScrollFade(
   ref: RefObject<HTMLElement | null>,
@@ -25,6 +34,7 @@ export function useScrollFade(
     const clientSize = axis === "horizontal" ? el.clientWidth : el.clientHeight;
     const scrollable = scrollSize - clientSize;
 
+    // 没有溢出就不需要遮罩
     if (scrollable <= 0) {
       setFade("none");
       return;
@@ -43,15 +53,16 @@ export function useScrollFade(
     const el = ref.current;
     if (!el) return;
 
+    // 下一帧先同步一次，避免初次进入时遮罩缺位
     const frame = requestAnimationFrame(update);
 
     el.addEventListener("scroll", update, { passive: true });
     const ro = new ResizeObserver(update);
     ro.observe(el);
-    // ResizeObserver only fires on the container's own box. When children
-    // grow inside a flex/auto-sized parent, the scroll extent can change while
-    // the viewport does not — the mask would stay "none" until the user scrolls.
-    // MutationObserver on childList catches those content insertions.
+    // ResizeObserver 只在容器自身尺寸变化时触发。当子内容在 flex / 自适应
+    // 高度的父级里变高时，滚动范围会变大但视口不变——遮罩会一直是 "none"
+    // 直到用户滚动一下。MutationObserver 监听 childList 可以捕获这类内容
+    // 插入。
     const mo = new MutationObserver(update);
     mo.observe(el, { childList: true, subtree: true });
 

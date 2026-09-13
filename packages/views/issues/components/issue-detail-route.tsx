@@ -1,5 +1,12 @@
 "use client";
 
+// 本文件：IssueDetailRoute —— `/{ws}/issues/{id}` 路由层对 IssueDetail 的包装。
+// 承担两件"嵌在面板里的 IssueDetail 绝不该做"的差事：
+//   - 渲染前把标识符段解析成问题 UUID，让下面所有缓存键保持 UUID 键控、
+//     实时更新能落地（见 `useCanonicalIssue`）；
+//   - 把地址栏改写为规范标识符 URL。这属于路由、只属于路由——收件箱在侧栏
+//     面板里渲染 IssueDetail，若在那里替换 URL 会把用户导航出收件箱。
+
 import { useEffect, useRef, useState } from "react";
 import { useCanonicalIssue } from "@multica/core/issues/canonical-id";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -9,20 +16,19 @@ import { IssueDetail, IssueDetailSkeleton, IssueNotFound } from "./issue-detail"
 
 interface IssueDetailRouteProps {
   /**
-   * Raw `/{ws}/issues/{segment}` parameter. Either a UUID (older links, and
-   * anything the app itself linked before the issue row was in hand) or a
-   * human-readable identifier such as `MUL-123`.
+   * 原始的 `/{ws}/issues/{segment}` 参数。可能是 UUID（旧链接，以及拿到
+   * 问题行之前应用自己连的任何东西），也可能是人类可读的标识符如 `MUL-123`。
    */
   routeId: string;
   onDelete?: () => void;
 }
 
 /**
- * Rewrite `/{ws}/issues/{uuid}` to `/{ws}/issues/{identifier}` once the issue
- * is known, so the address bar and any copied URL read as `MUL-123`.
+ * 问题一旦已知，把 `/{ws}/issues/{uuid}` 改写为 `/{ws}/issues/{identifier}`，
+ * 让地址栏和任何复制出的 URL 读作 `MUL-123`。
  *
- * A replace, not a push: the UUID URL is the same page, and a history entry
- * for it would make Back bounce the user between two spellings of one issue.
+ * 用 replace 而非 push：UUID URL 是同一个页面，若为它留一条历史记录，
+ * 返回键会在同一问题的两种拼写之间来回弹跳用户。
  */
 export function useCanonicalIssueUrl(
   routeId: string,
@@ -32,9 +38,8 @@ export function useCanonicalIssueUrl(
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const canonicalHref = identifier ? `${paths.issueDetail(identifier)}${hash}` : null;
-  // `useWorkspacePaths()` and the navigation adapter are both rebuilt on
-  // render, so this ref — not the dependency array — is what guarantees the
-  // replace runs once per target instead of on every commit.
+  // `useWorkspacePaths()` 与导航适配器每次渲染都会重建，所以由这个 ref——
+  // 而不是依赖数组——来保证 replace 每个目标只跑一次，而非每次 commit 都跑。
   const replacedRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -50,6 +55,9 @@ export function parseCommentHighlightHash(hash: string): string | undefined {
   return match?.[1];
 }
 
+/**
+ * 订阅 location.hash 变化，把 `#comment-<id>` 解析成 commentId 供高亮。
+ */
 function useCommentHighlightHash(): { hash: string; commentId?: string } {
   const read = () => typeof window === "undefined" ? "" : window.location.hash;
   const [hash, setHash] = useState(read);
@@ -64,15 +72,7 @@ function useCommentHighlightHash(): { hash: string; commentId?: string } {
 }
 
 /**
- * Route-level wrapper around `IssueDetail` for `/{ws}/issues/{id}`.
- *
- * Two jobs the panel-embedded `IssueDetail` must not do:
- *  - resolve an identifier segment to the issue's UUID before rendering, so
- *    every cache key below stays UUID-keyed and realtime updates land (see
- *    `useCanonicalIssue`);
- *  - rewrite the address bar to the canonical identifier URL. That belongs to
- *    the route and only the route — the inbox renders `IssueDetail` in a side
- *    panel, where replacing the URL would navigate the user out of the inbox.
+ * `/{ws}/issues/{id}` 的路由层组件（职责见文件头）。
  */
 export function IssueDetailRoute({ routeId, onDelete }: IssueDetailRouteProps) {
   const wsId = useWorkspaceId();

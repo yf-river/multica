@@ -20,42 +20,41 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// This file is the Telegram install backend, mirroring slack/install.go +
-// byo_install.go: the workspace admin creates a bot via @BotFather and pastes
-// its token into Multica. The InstallService owns the at-rest encryption of
-// the token — no caller can write a channel_installation with a plaintext
-// token — plus the shared persist transaction and the list / get / revoke
-// management surface.
+// 角色定位：Telegram 安装（install）的后端逻辑，对齐 slack/install.go + byo_install.go。
+// 场景：工作区管理员在 @BotFather 创建机器人后把 token 粘进 Multica，本文件负责校验 token、
+// 加密存储、落库与管理查询。InstallService 独占 token 的静态加密——没有任何调用方能写入
+// 一条带明文 token 的 channel_installation 记录——并封装共享的持久化事务与
+// list / get / revoke 管理接口。
+//
+// 为什么校验必须"在线"：光看 token 形状只能排除明显拼错；只有真的调用一次 Telegram 的
+// getMe 才能确认 token 有效、拿到 bot 用户名（@提及识别要用），同时 getWebhookInfo 检查
+// bot 是否已被 webhook 托管（长轮询与 webhook 互斥）。
 
 var (
-	// ErrInstallationNotFound surfaces "no row matches in this workspace".
+	// ErrInstallationNotFound 表示"该工作区内没有匹配行"。
 	ErrInstallationNotFound = errors.New("telegram installation not found")
-	// ErrInvalidBotToken is returned when the pasted token is malformed
-	// ("<numeric id>:<secret>") — mapped to 400 by the handler.
+	// ErrInvalidBotToken 表示粘进来的 token 格式不对（应为 "<数字id>:<密钥>"），
+	// 由 handler 映射成 400。
 	ErrInvalidBotToken = errors.New("telegram: bot token must look like 123456:ABC-DEF…")
-	// ErrCredentialsRejected means Telegram itself rejected the token. Keep it
-	// distinct from an unreachable API so users are never told to rotate a
-	// valid credential because the deployment's proxy or network is down.
+	// ErrCredentialsRejected 表示 Telegram 亲自拒绝了 token。刻意与"网络不通"区分开——
+	// 不能因为部署环境代理/网络挂了，就让用户去轮换一条本来有效的凭据。
 	ErrCredentialsRejected = errors.New("telegram: Telegram rejected this bot token")
-	// ErrCredentialsUnverifiable means Multica could not complete the live
-	// Telegram check. The token has not been persisted or changed.
+	// ErrCredentialsUnverifiable 表示 Multica 无法完成这次在线 Telegram 校验
+	// （网络/超时等，拿不到 Telegram 的明确裁决）。此时 token 尚未落库或修改。
 	ErrCredentialsUnverifiable = errors.New("telegram: could not reach Telegram to verify this bot")
-	// ErrBotOwnedByAnotherWorkspace: the pasted bot is already connected to a
-	// live owner in a DIFFERENT Multica workspace.
+	// ErrBotOwnedByAnotherWorkspace：粘的 bot 已经接在**另一个** Multica 工作区的活跃拥有者上。
 	ErrBotOwnedByAnotherWorkspace = errors.New("telegram: this bot is already connected to a different Multica workspace")
-	// ErrBotOwnedBySameWorkspace: the bot is already connected to a different
-	// live agent in the SAME workspace.
+	// ErrBotOwnedBySameWorkspace：bot 已经接在**同一个**工作区的另一个活跃 agent 上。
 	ErrBotOwnedBySameWorkspace = errors.New("telegram: this bot is already connected to another agent in this workspace")
-	// ErrBotOwnedByArchivedAgent: the bot's owning agent is archived.
+	// ErrBotOwnedByArchivedAgent：拥有这个 bot 的 agent 已被归档。
 	ErrBotOwnedByArchivedAgent = errors.New("telegram: this bot is connected to an archived agent in this workspace")
-	// ErrWebhookConfigured means the bot is currently managed by an outgoing
-	// webhook. Long polling and webhooks are mutually exclusive, so do not
-	// silently delete another integration's webhook during installation.
+	// ErrWebhookConfigured：这个 bot 正被一个外发 webhook 托管。长轮询和 webhook 互斥，
+	// 安装时绝不能悄悄删掉另一个集成的 webhook。
 	ErrWebhookConfigured = errors.New("telegram: bot has an outgoing webhook configured")
 )
 
-// installQueries is the slice of generated queries InstallService needs,
-// interface-shaped so tests inject a fake (same adapter pattern as Slack).
+// installQueries 是 InstallService 需要的若干生成查询的切片，抽成接口是为了测试注入假实现
+// （与 Slack 适配器同款模式）。
 type installQueries interface {
 	WithTx(tx pgx.Tx) installQueries
 	UpsertChannelInstallation(ctx context.Context, arg db.UpsertChannelInstallationParams) (db.ChannelInstallation, error)
@@ -66,15 +65,15 @@ type installQueries interface {
 	SetChannelInstallationStatus(ctx context.Context, arg db.SetChannelInstallationStatusParams) error
 }
 
+// dbInstallQueries 是 installQueries 接口的真实实现：内嵌 *db.Queries，转发所有方法。
 type dbInstallQueries struct{ *db.Queries }
 
 func (q dbInstallQueries) WithTx(tx pgx.Tx) installQueries {
 	return dbInstallQueries{q.Queries.WithTx(tx)}
 }
 
-// InstallService owns the at-rest encryption of the bot token and the install
-// transaction. The box MUST be non-nil (we refuse plaintext storage even in
-// dev).
+// InstallService 负责 bot token 的静态加密与安装事务。box 必须非 nil——即使开发环境
+// 也拒绝明文存储 token。
 type InstallService struct {
 	box        *secretbox.Box
 	q          installQueries
@@ -82,13 +81,12 @@ type InstallService struct {
 	httpClient *http.Client
 	logger     *slog.Logger
 
-	// apiBase overrides the Bot API host for the getMe validation call (tests
-	// point it at an httptest server). Empty uses the real API.
+	// apiBase 为 getMe 校验调用覆盖 Bot API 域名（测试指向 httptest server）。
+	// 空值用真实 API。
 	apiBase string
 }
 
-// NewInstallService binds the service to queries, a tx starter, and an
-// encryption box.
+// NewInstallService 把服务绑定到查询、事务启动器和加密盒上。
 func NewInstallService(q *db.Queries, tx engine.TxStarter, box *secretbox.Box, logger *slog.Logger) (*InstallService, error) {
 	if q == nil {
 		return nil, errors.New("telegram: InstallService requires queries")
@@ -96,6 +94,8 @@ func NewInstallService(q *db.Queries, tx engine.TxStarter, box *secretbox.Box, l
 	return newInstallService(dbInstallQueries{q}, tx, box, logger)
 }
 
+// newInstallService 做依赖非 nil 校验后组装服务。入口参数全查一遍而不是靠运行时 panic，
+// 是为了把"装配错误"提前到进程启动阶段暴露。
 func newInstallService(q installQueries, tx engine.TxStarter, box *secretbox.Box, logger *slog.Logger) (*InstallService, error) {
 	if box == nil {
 		return nil, errors.New("telegram: InstallService requires a non-nil secretbox.Box")
@@ -118,8 +118,8 @@ func newInstallService(q installQueries, tx engine.TxStarter, box *secretbox.Box
 	}, nil
 }
 
-// RegisterParams are the inputs for a bot install: the agent this bot
-// represents, who is installing, and the pasted BotFather token.
+// RegisterParams 是一次 bot 安装的入参：这个 bot 代表哪个 agent、谁在安装、粘进来的
+// BotFather token。
 type RegisterParams struct {
 	WorkspaceID pgtype.UUID
 	AgentID     pgtype.UUID
@@ -127,10 +127,9 @@ type RegisterParams struct {
 	BotToken    string
 }
 
-// Register installs a user-supplied Telegram bot for an agent: validate the
-// token live via getMe (which also yields the bot's username for @-mention
-// detection), encrypt the token at rest, and persist the installation keyed
-// by (workspace, agent) with the bot id in the routing slot.
+// Register 为一个 agent 安装用户自带的 Telegram bot：先用 getMe 在线校验 token
+// （顺带拿到 bot 用户名用于 @提及识别），静态加密 token，再以 (workspace, agent) 为键、
+// bot id 占路由槽位的方式持久化安装。
 func (s *InstallService) Register(ctx context.Context, p RegisterParams) (db.ChannelInstallation, error) {
 	token := strings.TrimSpace(p.BotToken)
 	botID, err := parseBotID(token)
@@ -142,6 +141,7 @@ func (s *InstallService) Register(ctx context.Context, p RegisterParams) (db.Cha
 	if err != nil {
 		return db.ChannelInstallation{}, fmt.Errorf("telegram getMe: %w", classifyCredentialVerificationError(err))
 	}
+	// getMe 成功只说明"这个 token 能登录"，还要确认对端确实是个带用户名的 bot。
 	if !me.IsBot || me.Username == "" {
 		return db.ChannelInstallation{}, fmt.Errorf("%w: response is not a bot with a username", ErrCredentialsRejected)
 	}
@@ -149,6 +149,7 @@ func (s *InstallService) Register(ctx context.Context, p RegisterParams) (db.Cha
 	if err != nil {
 		return db.ChannelInstallation{}, fmt.Errorf("telegram getWebhookInfo: %w", classifyCredentialVerificationError(err))
 	}
+	// bot 已被 webhook 托管时 getUpdates 不工作；要装长轮询必须先处理 webhook。
 	if webhook.URL != "" {
 		return db.ChannelInstallation{}, ErrWebhookConfigured
 	}
@@ -174,10 +175,9 @@ func (s *InstallService) Register(ctx context.Context, p RegisterParams) (db.Cha
 	})
 }
 
-// classifyCredentialVerificationError separates Telegram's authoritative
-// credential rejection from failures where no verdict was obtained. getMe and
-// getWebhookInfo use the same classifier so a proxy outage at either step has
-// the same user-facing next action.
+// classifyCredentialVerificationError 区分两种情况：Telegram 明确拒绝凭据（401），
+// 还是根本没拿到裁决（网络不通/超时）。getMe 与 getWebhookInfo 共用同一个分类器，
+// 这样任一步骤遇代理故障时，给用户的下一步行动提示都一样。
 func classifyCredentialVerificationError(err error) error {
 	var apiErr *apiError
 	if errors.As(err, &apiErr) && apiErr.Code == http.StatusUnauthorized {
@@ -186,7 +186,7 @@ func classifyCredentialVerificationError(err error) error {
 	return fmt.Errorf("%w: %v", ErrCredentialsUnverifiable, err)
 }
 
-// installPersist carries the resolved fields persistInstall writes.
+// installPersist 携带 persistInstall 要落库的已解析字段。
 type installPersist struct {
 	wsID        pgtype.UUID
 	agentID     pgtype.UUID
@@ -195,6 +195,7 @@ type installPersist struct {
 	configJSON  []byte
 }
 
+// pgUniqueViolation 是 PostgreSQL 唯一约束冲突的 SQLSTATE 错误码。
 const pgUniqueViolation = "23505"
 
 const credentialVerificationTimeout = 15 * time.Second
@@ -203,11 +204,10 @@ func newCredentialVerificationClient() *http.Client {
 	return &http.Client{Timeout: credentialVerificationTimeout}
 }
 
-// persistInstall upserts the installation keyed by (workspace_id, agent_id,
-// channel_type): ONE Telegram bot per agent. A unique violation on the
-// (channel_type, app_id) routing index means the pasted bot is already
-// connected to a different live agent or workspace — refuse rather than
-// steal, with the accurate conflict message (same policy as Slack #4810).
+// persistInstall 以 (workspace_id, agent_id, channel_type) 为键 upsert 安装：
+// 一个 agent 只允许一个 Telegram bot。若 (channel_type, app_id) 路由索引唯一冲突，
+// 说明粘的 bot 已被**另一个活跃的** agent 或工作区占用——拒绝而不是抢占，并给出精确的
+// 冲突说明（与 Slack #4810 同策略）。
 func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (db.ChannelInstallation, error) {
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
@@ -216,7 +216,8 @@ func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.q.WithTx(tx)
 
-	// Free the routing slot from any DEAD prior owner before the upsert.
+	// upsert 之前，先从路由槽位上清掉任何"已死的"旧占有者（比如所属 agent 已删除、
+	// 状态不是 active 的安装），否则槽位被死记录占着，重装同一 bot 会被误判成冲突。
 	if _, err := qtx.ReclaimDeadChannelInstallationByAppID(ctx, db.ReclaimDeadChannelInstallationByAppIDParams{
 		ChannelType: string(TypeTelegram),
 		AppID:       p.appIDKey,
@@ -235,6 +236,7 @@ func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
+		// 路由槽位撞了"活着"的占有者：查一下是谁，好让 handler 给出准确文案。
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
 			return db.ChannelInstallation{}, s.liveOwnerConflictErr(ctx, p.wsID, p.appIDKey)
 		}
@@ -246,14 +248,15 @@ func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (
 	return inst, nil
 }
 
-// liveOwnerConflictErr classifies who holds the routing slot so the handler
-// renders an accurate message.
+// liveOwnerConflictErr 查清路由槽位当前被谁占着，按占用者分类返回冲突错误，供 handler
+// 渲染准确提示（另一工作区 / 同工作区另一 agent / 被归档的 agent）。
 func (s *InstallService) liveOwnerConflictErr(ctx context.Context, requestingWorkspaceID pgtype.UUID, appID string) error {
 	owner, err := s.q.GetChannelInstallationOwnerByAppID(ctx, db.GetChannelInstallationOwnerByAppIDParams{
 		ChannelType: string(TypeTelegram),
 		AppID:       appID,
 	})
 	if err != nil {
+		// 查不到占用者属于异常状态（冲突确实发生了），按最保守的"他区占用"报错。
 		return ErrBotOwnedByAnotherWorkspace
 	}
 	switch {
@@ -266,8 +269,7 @@ func (s *InstallService) liveOwnerConflictErr(ctx context.Context, requestingWor
 	}
 }
 
-// ListByWorkspace returns every Telegram installation in the workspace, for
-// the management surface.
+// ListByWorkspace 返回工作区内全部 Telegram 安装，供管理界面用。
 func (s *InstallService) ListByWorkspace(ctx context.Context, wsID pgtype.UUID) ([]db.ChannelInstallation, error) {
 	return s.q.ListChannelInstallationsByWorkspace(ctx, db.ListChannelInstallationsByWorkspaceParams{
 		WorkspaceID: wsID,
@@ -275,8 +277,8 @@ func (s *InstallService) ListByWorkspace(ctx context.Context, wsID pgtype.UUID) 
 	})
 }
 
-// GetInWorkspace is the workspace-scoped lookup so a forged installation id
-// from another workspace returns NotFound instead of leaking existence.
+// GetInWorkspace 是限定工作区的查询：别的 workspace 伪造一个安装 id 来查，只会得到
+// NotFound，不会泄露"这条记录是否存在"。
 func (s *InstallService) GetInWorkspace(ctx context.Context, id, wsID pgtype.UUID) (db.ChannelInstallation, error) {
 	inst, err := s.q.GetChannelInstallationInWorkspace(ctx, db.GetChannelInstallationInWorkspaceParams{
 		ID:          id,
@@ -292,9 +294,8 @@ func (s *InstallService) GetInWorkspace(ctx context.Context, id, wsID pgtype.UUI
 	return inst, nil
 }
 
-// Revoke flips status to 'revoked'. The row is preserved for audit; existing
-// chat sessions stay in Multica. The Supervisor stops supervising the
-// installation, so its polling loop winds down and outbound drops too.
+// Revoke 把安装状态翻转为 'revoked'。行保留用于审计，已有的聊天会话留在 Multica 不删；
+// Supervisor 会停止监督这条安装，于是它的轮询循环自然收尾、出站消息也随之停发。
 func (s *InstallService) Revoke(ctx context.Context, id pgtype.UUID) error {
 	return s.q.SetChannelInstallationStatus(ctx, db.SetChannelInstallationStatusParams{
 		ID:     id,

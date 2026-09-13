@@ -1,3 +1,7 @@
+// 文件职责：实现 `multica skill` 命令组——工作区技能（SKILL.md 包）的
+// list/get/create/update/delete、从 URL/本地归档导入（import）与按源刷新
+// （refresh）、可安装技能搜索（search），以及技能内文件管理（files list/upsert/
+// delete）。大载荷场景用抗卡顿 client（newSkillAPIClient）。
 package main
 
 import (
@@ -19,11 +23,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+// skillCmd 是 `multica skill` 父命令。
 var skillCmd = &cobra.Command{
 	Use:   "skill",
 	Short: "Work with skills",
 }
 
+// skillListCmd 列出工作区技能。
 var skillListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List skills in the workspace",
@@ -77,8 +83,7 @@ var skillSearchCmd = &cobra.Command{
 	RunE:  runSkillSearch,
 }
 
-// Skill file subcommands.
-
+// skillFilesCmd 是 `skill files` 分组命令。
 var skillFilesCmd = &cobra.Command{
 	Use:   "files",
 	Short: "Work with skill files",
@@ -173,19 +178,17 @@ func init() {
 }
 
 // ---------------------------------------------------------------------------
-// Skill commands
+// skill 主命令（run* 实现）
 // ---------------------------------------------------------------------------
 
-// newSkillAPIClient is newAPIClient with the transport swapped for the
-// stall-aware one (see internal/cli/stall.go). Skill payloads are the largest
-// responses the CLI reads, so they are where a total-elapsed deadline breaks
-// first — a 599KB skill could not be fetched at all over a link that was
-// delivering it perfectly well, just not within 30s (GH #7498).
+// newSkillAPIClient 是 newAPIClient 把 transport 换成「抗卡顿」版（见
+// internal/cli/stall.go）的变体。skill payload 是 CLI 读的最大响应，最容易先撞上
+// 总耗时 deadline——599KB 的技能在一条明明传得很顺、只是 30s 内传不完的链路上
+// 之前完全拉不下来（GH #7498）。
 //
-// It reuses newAPIClient rather than duplicating credential and header
-// resolution: this is a pilot of which commands adopt the mechanism, not a
-// second CLI client. Graduating it means moving the transport into
-// cli.NewAPIClient and deleting this function.
+// 它复用 newAPIClient 而不是重复凭据与头解析：这是「哪些命令采用这套机制」的
+// pilot，不是第二个 CLI client。转正意味着把 transport 挪进 cli.NewAPIClient、
+// 删掉本函数。
 func newSkillAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -195,12 +198,11 @@ func newSkillAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 	return client, nil
 }
 
-// skillFileSizeCell renders the `size` field of a file-metadata response.
+// skillFileSizeCell 渲染文件元数据响应的 size 字段。
 //
-// It cannot go through strVal: JSON numbers decode as float64, and strVal's
-// %v prints a 1.2MB file as "1.234567e+06" — unreadable exactly when the file
-// is big enough to be the one you are looking for. formatBytes is the same
-// renderer the daemon table uses.
+// 不能走 strVal：JSON 数字解成 float64，strVal 的 %v 会把 1.2MB 文件打成
+// "1.234567e+06"——恰恰在文件大到值得找的时候不可读。formatBytes 与 daemon 表格
+// 用同一个渲染器。
 func skillFileSizeCell(m map[string]any) string {
 	size, ok := m["size"].(float64)
 	if !ok {
@@ -209,11 +211,9 @@ func skillFileSizeCell(m map[string]any) string {
 	return formatBytes(int64(size))
 }
 
-// skillIncludeQuery renders the ?include= parameter the skill endpoints take.
-// The CLI asks for metadata by default: `skill get`'s table view prints four
-// columns, and `skill files list` prints none of the file bodies, so pulling
-// every byte of content to render them was pure cost — and, past a few hundred
-// KB, the reason neither command completed.
+// skillIncludeQuery 渲染 skill 端点收的 ?include= 参数。CLI 默认只要元数据：
+// `skill get` 的表格视图打四列、`skill files list` 一个正文都不要，把内容字节全
+// 拉下来纯属浪费——过了几百 KB 还是命令跑不完的元凶。
 func skillIncludeQuery(cmd *cobra.Command) string {
 	if withContent, _ := cmd.Flags().GetBool("with-content"); withContent {
 		return "?include=content"
@@ -221,10 +221,9 @@ func skillIncludeQuery(cmd *cobra.Command) string {
 	return "?include=metadata"
 }
 
-// resolveSkillContentFlag intentionally stays separate from resolveTextFlag.
-// Skill bodies are Markdown documents where byte-level preservation matters:
-// inline --content is not backslash-unescaped, and stdin/file input is not
-// trimmed, so agents can round-trip generated SKILL.md content exactly.
+// resolveSkillContentFlag 有意与 resolveTextFlag 分开。skill 正文是 Markdown
+// 文档，字节级保真很重要：行内 --content 不做反斜杠反转义、stdin/文件输入不做
+// trim——agent 才能把生成的 SKILL.md 内容原样往返。
 func resolveSkillContentFlag(cmd *cobra.Command) (string, bool, error) {
 	useStdin, _ := cmd.Flags().GetBool("content-stdin")
 	inline, _ := cmd.Flags().GetString("content")
@@ -265,6 +264,7 @@ func resolveSkillContentFlag(cmd *cobra.Command) (string, bool, error) {
 	return "", false, nil
 }
 
+// skillContentBytesToString 校验正文非空且是合法 UTF-8，再转字符串返回。
 func skillContentBytesToString(data []byte, label string) (string, bool, error) {
 	if len(data) == 0 {
 		return "", false, fmt.Errorf("%s is empty", label)
@@ -275,6 +275,7 @@ func skillContentBytesToString(data []byte, label string) (string, bool, error) 
 	return string(data), true, nil
 }
 
+// runSkillList 执行 `skill list`：列出工作区技能。
 func runSkillList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -308,6 +309,8 @@ func runSkillList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runSkillGet 执行 `skill get <id>`：取技能详情与文件列表；--with-content 时才
+// 带各文件正文（走抗卡顿 client）。
 func runSkillGet(cmd *cobra.Command, args []string) error {
 	client, err := newSkillAPIClient(cmd)
 	if err != nil {
@@ -338,6 +341,8 @@ func runSkillGet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runSkillCreate 执行 `skill create`：--name 必填，正文三种输入源互斥
+// （--content/--content-stdin/--content-file），config 以 JSON 提供。
 func runSkillCreate(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -388,6 +393,7 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runSkillUpdate 执行 `skill update <id>`：只更新显式 Changed 的字段。
 func runSkillUpdate(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -440,6 +446,7 @@ func runSkillUpdate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runSkillDelete 执行 `skill delete <id>`：--yes 跳过确认。
 func runSkillDelete(cmd *cobra.Command, args []string) error {
 	yes, _ := cmd.Flags().GetBool("yes")
 	if !yes {
@@ -469,14 +476,16 @@ func runSkillDelete(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runSkillRefresh 执行 `skill refresh <id>`：让 server 从导入来源重新拉取技能包
+// （保留 id 与 agent 指派）。server 会先回源抓包再应答，超时预算给到与 import 相同
+// （server 端上限 45s）。
 func runSkillRefresh(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
 		return err
 	}
 
-	// The server re-fetches the bundle from the upstream source before
-	// answering; give it the same budget as an import (server-side cap: 45s).
+	// server 会先回源重抓包再应答；给它与 import 相同的预算（server 端上限 45s）。
 	ctx, cancel := context.WithTimeout(context.Background(), cli.AtLeastAPITimeout(60*time.Second))
 	defer cancel()
 
@@ -494,6 +503,9 @@ func runSkillRefresh(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runSkillImport 执行 `skill import`：--url/--file 二选一、--on-conflict 指定
+// 同名冲突策略（fail/overwrite/rename/skip）。错误先经 handleSkillImportError
+// 尝试渲染成结构化冲突结果，再回退到普通包装。
 func runSkillImport(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -545,6 +557,7 @@ func runSkillImport(cmd *cobra.Command, _ []string) error {
 	return printSkillImportResult(cmd, result)
 }
 
+// validSkillImportConflictStrategy 校验 --on-conflict 取值。
 func validSkillImportConflictStrategy(strategy string) bool {
 	switch strategy {
 	case "fail", "overwrite", "rename", "skip":
@@ -553,6 +566,9 @@ func validSkillImportConflictStrategy(strategy string) bool {
 	return false
 }
 
+// handleSkillImportError 把 import 的 HTTP 错误尝试解成结构化的「冲突/失败」结果
+// 打印，返回可显示的 reason 错误；响应体不是可识别形态时返回 nil，让调用方走普通
+// 错误包装。
 func handleSkillImportError(cmd *cobra.Command, err error) error {
 	var httpErr *cli.HTTPError
 	if !errors.As(err, &httpErr) || strings.TrimSpace(httpErr.Body) == "" {
@@ -583,6 +599,8 @@ func handleSkillImportError(cmd *cobra.Command, err error) error {
 	return errors.New(reason)
 }
 
+// normalizeLegacySkillImportConflict 把旧版 server「只带 existing_skill、没带
+// status」的冲突响应补成新版冲突形态，并附上 --on-conflict 的修复提示。
 func normalizeLegacySkillImportConflict(body map[string]any) map[string]any {
 	reason := strVal(body, "error")
 	if reason == "" {
@@ -596,6 +614,8 @@ func normalizeLegacySkillImportConflict(body map[string]any) map[string]any {
 	}
 }
 
+// printSkillImportResult 渲染 import 的最终结果：created/updated/skipped/conflict
+// 各给对应的人类可读输出（skill 与 existing_skill 用嵌套 map 取值）。
 func printSkillImportResult(cmd *cobra.Command, result map[string]any) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
@@ -631,6 +651,7 @@ func printSkillImportResult(cmd *cobra.Command, result map[string]any) error {
 	return nil
 }
 
+// nestedMap 取响应里的嵌套对象字段（缺失或非对象返回 nil）。
 func nestedMap(m map[string]any, key string) map[string]any {
 	nested, _ := m[key].(map[string]any)
 	if nested == nil {
@@ -639,6 +660,7 @@ func nestedMap(m map[string]any, key string) map[string]any {
 	return nested
 }
 
+// runSkillSearch 执行 `skill search <query>`：搜索可安装的技能（外部队列）。
 func runSkillSearch(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -680,9 +702,11 @@ func runSkillSearch(cmd *cobra.Command, args []string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Skill file subcommands
+// skill files 子命令
 // ---------------------------------------------------------------------------
 
+// runSkillFilesList 执行 `skill files list <skill-id>`：列出技能文件（默认只列
+// 元数据，--with-content 才带正文）。
 func runSkillFilesList(cmd *cobra.Command, args []string) error {
 	client, err := newSkillAPIClient(cmd)
 	if err != nil {
@@ -702,10 +726,9 @@ func runSkillFilesList(cmd *cobra.Command, args []string) error {
 		return cli.PrintJSON(os.Stdout, files)
 	}
 
-	// SIZE is what makes an oversized skill diagnosable: it names the file to
-	// look at without downloading any of them. The content shape carries no
-	// size field, so the column is dropped under --with-content rather than
-	// rendered empty.
+	// SIZE 正是让「技能过大」可诊断的那一列：它点名要看哪个文件，而不用把文件
+	// 全下载下来。content 形态不带 size 字段，所以 --with-content 模式下这列被
+	// 直接去掉，而不是渲染成一列空值。
 	withContent, _ := cmd.Flags().GetBool("with-content")
 	headers := []string{"ID", "PATH", "SIZE", "CREATED_AT", "UPDATED_AT"}
 	if withContent {
@@ -724,6 +747,8 @@ func runSkillFilesList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runSkillFilesUpsert 执行 `skill files upsert <skill-id>`：按 --path 创建或更新
+// 技能内的一个文件。
 func runSkillFilesUpsert(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -764,6 +789,8 @@ func runSkillFilesUpsert(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runSkillFilesDelete 执行 `skill files delete <skill-id> <file-id>`：删除技能里的
+// 一个文件。
 func runSkillFilesDelete(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {

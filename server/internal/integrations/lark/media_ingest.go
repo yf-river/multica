@@ -1,3 +1,5 @@
+// media_ingest.go：飞书消息媒体（图片/视频/文件/音频）的解析与入库——下载飞书
+// 资源、上传到对象存储、挂成聊天附件。
 package lark
 
 import (
@@ -19,22 +21,26 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 )
 
+// mediaStorage 是媒体对象存储的窄接口（整体上传）。
 type mediaStorage interface {
 	Upload(ctx context.Context, key string, data []byte, contentType string, filename string) (string, error)
-	// ObjectURL is the URL a successful upload of key returns — a pure
-	// function of configuration, so the intent ledger can persist it BEFORE
-	// the PUT.
+	// ObjectURL 是 key 上传成功后返回的 URL——纯粹是配置的函数，所以意图账本能
+	// 在 PUT 之前就持久化它。
 	ObjectURL(key string) string
 }
 
+// mediaStreamStorage 是支持流式上传的对象存储（S3 PutObject 等）。
 type mediaStreamStorage interface {
 	UploadStream(ctx context.Context, key string, data io.Reader, sizeBytes int64, contentType string, filename string) (string, error)
 }
 
+// messageResourceStreamer 是支持流式下载飞书消息资源的 APIClient 进阶接口。
 type messageResourceStreamer interface {
 	DownloadMessageResourceStream(ctx context.Context, creds InstallationCredentials, p DownloadResourceParams) (DownloadedResourceStream, error)
 }
 
+// feishuMediaResolver 实现 engine.MediaResolver：从飞书拉取消息媒体并上传到
+// 对象存储，产出供会话/issue 绑定的 MediaRef。
 type feishuMediaResolver struct {
 	api     APIClient
 	creds   CredentialsResolver
@@ -43,6 +49,7 @@ type feishuMediaResolver struct {
 	logger  *slog.Logger
 }
 
+// NewFeishuMediaResolver 构造飞书媒体解析器。
 func NewFeishuMediaResolver(api APIClient, creds CredentialsResolver, storage mediaStorage, ledger engine.MediaIntentLedger, logger *slog.Logger) engine.MediaResolver {
 	if logger == nil {
 		logger = slog.Default()
@@ -50,10 +57,9 @@ func NewFeishuMediaResolver(api APIClient, creds CredentialsResolver, storage me
 	return &feishuMediaResolver{api: api, creds: creds, storage: storage, ledger: ledger, logger: logger}
 }
 
-// HasMedia reports whether the message carries downloadable Feishu resources
-// (standalone image/video/file/audio or post-embedded img/media spans). Pure
-// in-memory decode of the already-received payload — it runs on the connector
-// ACK path.
+// HasMedia 报告消息是否携带可下载的飞书资源（独立 image/video/file/audio，
+// 或 post 内嵌的 img/media span）。纯内存解码已收到的负载——它跑在 connector
+// 的 ACK 路径上。
 func (r *feishuMediaResolver) HasMedia(msg channel.InboundMessage) bool {
 	lm, err := larkMsgFromRaw(msg)
 	if err != nil {
@@ -62,6 +68,8 @@ func (r *feishuMediaResolver) HasMedia(msg channel.InboundMessage) bool {
 	return len(mediaResourcesFromMessage(lm)) > 0
 }
 
+// ResolveMedia 实现 engine.MediaResolver：解析消息里的全部媒体资源，逐个下载
+// 并上传，把得到的引用追加到 msg.MediaRefs。
 func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.ResolvedInstallation, _ engine.ResolvedIdentity, _ pgtype.UUID, chatMessageID pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage {
 	lm, err := larkMsgFromRaw(msg)
 	if err != nil {
@@ -89,10 +97,9 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 	for resIndex, res := range resources {
 		key := mediaObjectKey(inst, chatMessageID, res)
 		link := r.storage.ObjectURL(key)
-		// Persist the upload intent BEFORE any write can happen. Every
-		// failure from here on — download error, upload error (even one the
-		// store may still be processing), resolve deadline, crash — simply
-		// leaves this row for the reconciler; nothing is ever deleted inline.
+		// 在任何写入可能发生之前先持久化“上传意图”。此后的每个失败——下载错、
+		// 上传错（即使 store 可能仍在处理中）、解析超时、崩溃——都只是把这行留给
+		// reconciler；绝不在内联路径删除任何东西。
 		ok, err := r.ledger.RecordPendingMediaObject(ctx, engine.RecordPendingMediaObjectParams{
 			StorageKey:     key,
 			WorkspaceID:    inst.WorkspaceID,
@@ -101,12 +108,12 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 			InstallationID: inst.ID,
 		})
 		if err != nil {
-			// No durable intent, no upload — fail-safe direction.
+			// 没有持久化意图就不上传——失败安全的方向。
 			r.logMediaWarn("lark media ingest skipped: intent record failed", lm, err)
 			continue
 		}
 		if !ok {
-			// The reconciler owns this key ('deleting'); never resurrect it.
+			// reconciler 正持有这个键（'deleting'）——绝不复活它。
 			r.logMediaWarn("lark media ingest skipped: key owned by reconciler", lm, nil)
 			continue
 		}
@@ -123,9 +130,8 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 		filename := mediaFilename(lm, res, got, contentType, resIndex)
 		uploadedBytes, err := r.uploadResource(ctx, key, got.Body, got.SizeBytes, contentType, filename)
 		if err != nil {
-			// The store may still be processing the PUT — deleting here
-			// could reorder with it. The intent row (written above) covers
-			// the object either way; the reconciler settles it.
+			// store 可能仍在处理 PUT——在这里删除可能跟它乱序。上面写的意图行
+			// 无论哪种情况都罩着这个对象；由 reconciler 了结。
 			r.logMediaWarn("lark media upload failed", lm, err)
 			continue
 		}
@@ -145,15 +151,12 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 	return msg
 }
 
-// mediaObjectKey derives the object key from the CHAT message the object will
-// be attached to, not from the platform message alone: a platform message can
-// be ingested twice (the inbound dedup row is reclaimable once its claim is 60s
-// stale, and vacuumed after 24h), and a shared key would run the second ingest
-// into the first one's ledger row. That row may be a tombstone — the intent
-// upsert refuses anything that has left 'pending', so the second ingest would
-// silently drop its media for as long as the re-delete schedule runs. A key
-// per chat message keeps the ingests independent; nothing leaks, because each
-// one's objects are covered by its own ledger row.
+// mediaObjectKey 从对象要挂靠的【CHAT 消息】推导对象键，而不是仅凭平台消息：
+// 平台消息可能被摄入两次（去重行的认领在 60 秒过期后即可回收、24 小时后被
+// 清理），共享键会让第二次摄入撞上第一次的账本行；那行可能是墓碑——意图
+// upsert 拒绝任何已离开 'pending' 的键，第二次摄入的媒体会在重删调度跑完之前
+// 被静默丢弃。按聊天消息取键让两次摄入彼此独立；不会泄漏，因为每次的对象都有
+// 自己的账本行罩着。
 func mediaObjectKey(inst engine.ResolvedInstallation, chatMessageID pgtype.UUID, res larkMediaResource) string {
 	sum := sha256.Sum256([]byte(uuidString(chatMessageID) + "\x00" + res.messageID + "\x00" + res.fetchType + "\x00" + res.key))
 	return path.Join(
@@ -165,6 +168,7 @@ func mediaObjectKey(inst engine.ResolvedInstallation, chatMessageID pgtype.UUID,
 	)
 }
 
+// downloadResource 优先走流式下载接口；没有则退回整体下载后包装成流。
 func (r *feishuMediaResolver) downloadResource(ctx context.Context, creds InstallationCredentials, p DownloadResourceParams) (DownloadedResourceStream, error) {
 	if streamer, ok := r.api.(messageResourceStreamer); ok {
 		return streamer.DownloadMessageResourceStream(ctx, creds, p)
@@ -181,6 +185,8 @@ func (r *feishuMediaResolver) downloadResource(ctx context.Context, creds Instal
 	}, nil
 }
 
+// uploadResource 把下载到的资源上传到对象存储：优先流式（带字节计数），长度
+// 未知时退回整体缓冲后走可寻址的 Upload 路径。
 func (r *feishuMediaResolver) uploadResource(ctx context.Context, key string, body io.ReadCloser, sizeBytes int64, contentType string, filename string) (int64, error) {
 	defer body.Close()
 	counter := &countingReader{r: body}
@@ -188,9 +194,8 @@ func (r *feishuMediaResolver) uploadResource(ctx context.Context, key string, bo
 		_, err := streamStorage.UploadStream(ctx, key, counter, sizeBytes, contentType, filename)
 		return counter.n, err
 	}
-	// Unknown-length HTTP bodies cannot be sent through S3 PutObject as a
-	// non-seekable stream. The transport already enforces the 100 MiB resource
-	// cap, so buffer this uncommon fallback and use the seekable Upload path.
+	// 长度未知的 HTTP 体不能以不可寻址的流喂给 S3 PutObject。传输层已强制
+	// 100 MiB 资源上限，所以把这个不常见的兜底缓冲起来，走可寻址的 Upload 路径。
 	data, err := io.ReadAll(counter)
 	if err != nil {
 		return counter.n, err
@@ -199,17 +204,20 @@ func (r *feishuMediaResolver) uploadResource(ctx context.Context, key string, bo
 	return int64(len(data)), err
 }
 
+// countingReader 包一层 reader，顺带统计读过的字节数。
 type countingReader struct {
 	r io.Reader
 	n int64
 }
 
+// Read 实现 io.Reader 并累计计数。
 func (r *countingReader) Read(p []byte) (int, error) {
 	n, err := r.r.Read(p)
 	r.n += int64(n)
 	return n, err
 }
 
+// logMediaWarn 以统一字段记录媒体相关告警。
 func (r *feishuMediaResolver) logMediaWarn(msg string, lm InboundMessage, err error) {
 	if r.logger == nil {
 		return
@@ -221,6 +229,8 @@ func (r *feishuMediaResolver) logMediaWarn(msg string, lm InboundMessage, err er
 	r.logger.Warn(msg, args...)
 }
 
+// larkMediaResource 描述消息里一个待摄取媒体：它在飞书侧的 key、下载类型，
+// 以及落库后的元数据。
 type larkMediaResource struct {
 	key       string
 	kind      channel.MsgType
@@ -231,6 +241,8 @@ type larkMediaResource struct {
 	messageID string
 }
 
+// mediaResourcesFromMessage 按 msg_type 从飞书消息的原始 content JSON 里列出
+// 需要下载的媒体资源。
 func mediaResourcesFromMessage(lm InboundMessage) []larkMediaResource {
 	var payload struct {
 		ImageKey    string `json:"image_key"`
@@ -302,6 +314,7 @@ func mediaResourcesFromMessage(lm InboundMessage) []larkMediaResource {
 	}
 }
 
+// mediaResourcesFromPost 从富文本 post 内容的 img/media span 里列出媒体资源。
 func mediaResourcesFromPost(lm InboundMessage) []larkMediaResource {
 	if lm.Content == "" {
 		return nil
@@ -311,12 +324,10 @@ func mediaResourcesFromPost(lm InboundMessage) []larkMediaResource {
 		return nil
 	}
 	var out []larkMediaResource
-	// A post may reference the same image_key/file_key in more than one span.
-	// The object key is derived from (message, type, key), so duplicates would
-	// upload to the SAME key twice: a later failed attempt could destroy the
-	// object an earlier success already produced (dangling attachment), and a
-	// later success would yield two attachment rows for one object. Collapse
-	// them here, before any upload.
+	// 一条 post 可能在不止一个 span 里引用同一个 image_key/file_key。对象键由
+	// (message, type, key) 推导，重复会上传到同一个键两次：后面失败的尝试可能
+	// 毁掉前面成功已产出的对象（悬挂附件），后面的成功又会产生同一对象的两行
+	// 附件。在任意上传之前就在这里去重。
 	seen := make(map[string]bool)
 	for _, para := range doc.Content {
 		for _, span := range para {
@@ -353,10 +364,9 @@ func mediaResourcesFromPost(lm InboundMessage) []larkMediaResource {
 	return out
 }
 
-// mediaFilename picks a name for the stored object. index disambiguates the
-// generated form: every resource on one message shares a MessageID, so three
-// photos in one send used to produce three objects all named
-// "feishu-image-<msg>.jpg".
+// mediaFilename 为存储对象挑一个名字。index 消除自动生成形态的重名：同一条
+// 消息上的所有资源共享一个 MessageID，所以一次发送里的三张照片以前会产出三个
+// 都叫 "feishu-image-<msg>.jpg" 的对象。
 func mediaFilename(lm InboundMessage, res larkMediaResource, got DownloadedResourceStream, contentType string, index int) string {
 	for _, candidate := range []string{got.Filename, res.filename} {
 		if name := cleanFilename(candidate); name != "" {
@@ -379,15 +389,17 @@ func mediaFilename(lm InboundMessage, res larkMediaResource, got DownloadedResou
 	return name + mediaExtension(contentType)
 }
 
+// mediaContentType 决定存储对象应使用的 Content-Type：优先下载响应里的类型，
+// 音频消息再兜底为协议级格式（飞书音频是 Opus）。
 func mediaContentType(res larkMediaResource, got DownloadedResourceStream) string {
 	contentType := strings.TrimSpace(got.ContentType)
 	if res.kind == channel.MsgTypeAudio && isGenericBinaryContentType(contentType) {
 		if hinted := strings.TrimSpace(res.mimeType); !isGenericBinaryContentType(hinted) {
 			return hinted
 		}
-		// Feishu audio messages are Opus. Its resource endpoint can return an
-		// extensionless Content-Disposition filename together with the generic
-		// audio/octet-stream type, so preserve the protocol-level format here.
+		// 飞书音频消息是 Opus。它的资源端点可能返回无扩展名的 Content-Disposition
+		// 文件名，同时配一个笼统的 audio/octet-stream 类型，所以在这里保留协议级
+		// 格式。
 		return "audio/opus"
 	}
 	if contentType == "" {
@@ -399,6 +411,8 @@ func mediaContentType(res larkMediaResource, got DownloadedResourceStream) strin
 	return contentType
 }
 
+// isGenericBinaryContentType 判断 content type 是否属于“笼统二进制”（空、
+// application/octet-stream、audio/octet-stream）。
 func isGenericBinaryContentType(contentType string) bool {
 	if semi := strings.IndexByte(contentType, ';'); semi >= 0 {
 		contentType = contentType[:semi]
@@ -411,6 +425,8 @@ func isGenericBinaryContentType(contentType string) bool {
 	}
 }
 
+// ensureAudioFilenameExtension 给缺少扩展名的音频文件名补上按内容类型推导的
+// 扩展名。
 func ensureAudioFilenameExtension(name string, kind channel.MsgType, contentType string) string {
 	if kind != channel.MsgTypeAudio || path.Ext(name) != "" {
 		return name
@@ -418,22 +434,25 @@ func ensureAudioFilenameExtension(name string, kind channel.MsgType, contentType
 	return name + mediaExtension(contentType)
 }
 
+// cleanFilename 把不可信的候选文件名清理成可用于展示/存储的相对名；清不干净
+// 就返回空串，让调用方落到自动生成的名字上。
 func cleanFilename(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return ""
 	}
 	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
-	// path.Base resolves a path, but it hands back ".." and "..." unchanged.
-	// A name made only of dots is not a filename; letting one through means
-	// the object's display name is ".." wherever it is later rendered or
-	// re-saved. Fall through to the generated name instead.
+	// path.Base 能解析路径，但它会把 ".." 与 "..." 原样还回来。纯点号构成的
+	// 名字不是文件名；放行意味着对象的显示名在之后任何渲染或另存的地方都会是
+	// ".."。落到自动生成的名字上去。
 	if strings.Trim(name, ".") == "" || name == "/" {
 		return ""
 	}
 	return name
 }
 
+// mediaExtension 按 content type 推导常用文件扩展名；个别常见类型手工钉死，
+// 其余交给 mime.ExtensionsByType。
 func mediaExtension(contentType string) string {
 	if semi := strings.IndexByte(contentType, ';'); semi >= 0 {
 		contentType = strings.TrimSpace(contentType[:semi])
@@ -458,10 +477,9 @@ func mediaExtension(contentType string) string {
 	case "audio/mpeg":
 		return ".mp3"
 	case "application/pdf":
-		// mime.ExtensionsByType returns ExtensionsByType(".pdf") on most
-		// systems, but it reads /etc/mime.types — which a slim container
-		// image does not ship — so the common document type is pinned here
-		// rather than left to the host.
+		// mime.ExtensionsByType 在多数系统上返回 ExtensionsByType(".pdf")，
+		// 但它读的是 /etc/mime.types——精简容器镜像不带这个文件——所以常见
+		// 文档类型在这里钉死，而不是交给宿主机。
 		return ".pdf"
 	}
 	if exts, err := mime.ExtensionsByType(contentType); err == nil && len(exts) > 0 {
@@ -470,6 +488,7 @@ func mediaExtension(contentType string) string {
 	return ""
 }
 
+// safePathSegment 把任意字符串清洗成能安全用作 URL/路径段的形态。
 func safePathSegment(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -491,6 +510,7 @@ func safePathSegment(s string) string {
 	return out
 }
 
+// firstNonEmpty 返回第一个非空白字符串。
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if strings.TrimSpace(v) != "" {

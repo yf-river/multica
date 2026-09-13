@@ -1,9 +1,7 @@
-/**
- * Public surface for @multica/core/feature-flags.
- *
- * Keep this list minimal — every new export becomes a contract we have to
- * preserve across the monorepo. Add to it only when a real caller appears.
- */
+// 本文件是 @multica/core/feature-flags 模块的对外出口（barrel）。
+//
+// 保持清单最小化——每新增一个导出，就多一份要在整个 monorepo 里维持的契约。
+// 只有当真实调用方出现时才往里加。
 
 export type {
   Decision,
@@ -29,7 +27,6 @@ export {
   useVariant,
 } from "./context";
 
-// Hash helpers are exported for tests and for callers that want to share
-// the bucketing logic without going through a Provider (rare; usually a
-// red flag that the caller should be using the Service instead).
+// 哈希辅助函数也对外导出，供测试以及想绕过 Provider 直接复用分桶逻辑的调用方
+// （这种情况很少；出现通常意味着该调用方应该改用 Service）。
 export { bucketFor, inPercent } from "./hash";

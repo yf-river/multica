@@ -1,3 +1,7 @@
+// hub.go 是 realtime 包的单机版核心：Hub 把每个 WebSocket 连接按「作用域
+// (scope)」收进不同的房间，负责连接的注册/注销、订阅/退订、把消息扇给房间里
+// 的所有连接、剔除写入太慢的「慢客户端」；文件后半还包含 WebSocket 握手鉴权
+// （Cookie 或首帧令牌）与每条连接各自的读泵/写泵（readPump/writePump）。
 package realtime
 
 import (
@@ -20,28 +24,32 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 )
 
-// MembershipChecker verifies a user belongs to a workspace.
+// MembershipChecker 校验「某用户是否属于某 workspace」。WS 连上后必须先过这一关，
+// 防止把别的空间的事件推给无权接收的人。
 type MembershipChecker interface {
 	IsMember(ctx context.Context, userID, workspaceID string) bool
 }
 
-// SlugResolver translates a workspace slug to its UUID.
+// SlugResolver 把 workspace 的短名(slug)翻译成它的 UUID。连接时如果只给了
+// workspace_slug 而没给 workspace_id，就用它查。
 type SlugResolver func(ctx context.Context, slug string) (workspaceID string, err error)
 
-// PATResolver resolves a Personal Access Token to a user ID.
+// PATResolver 把一个 Personal Access Token（个人访问令牌，形如 mul_xxx）还原成
+// 用户 ID。返回的 ok 表示令牌是否有效。
 type PATResolver interface {
 	ResolveToken(ctx context.Context, token string) (userID string, ok bool)
 }
 
-// ScopeAuthorizer decides whether a connection (identified by userID +
-// workspaceID) is allowed to subscribe to a given scope. Implementations
-// typically perform a DB lookup on the underlying resource (task / chat
-// session) and verify it belongs to workspaceID. Implementations should
-// cache positive results to avoid hot-path DB load.
+// ScopeAuthorizer 决定某条连接（用 userID+workspaceID 标识）是否有权订阅某个
+// 作用域。实现方通常要去数据库里查一下底层资源（task / chat 会话），确认它确实
+// 属于 workspaceID。实现方应缓存查询成功的结论，避免高频热路径每次都打数据库。
 type ScopeAuthorizer interface {
 	AuthorizeScope(ctx context.Context, userID, workspaceID, scopeType, scopeID string) (bool, error)
 }
 
+// 下面两组「全局配置」用 atomic.Value 保存，这样任何时刻读到的都是一份完整的切片，
+// 不会出现一边被改写一边读到半个数组的问题。进程启动时先从环境变量读一份默认值，
+// 服务器启动后若显式配置过，会用 Set* 覆盖成同一份配置。
 var allowedWSOrigins atomic.Value // holds []string
 var trustedProxies atomic.Value   // holds []netip.Prefix
 
@@ -50,6 +58,10 @@ func init() {
 	trustedProxies.Store(loadTrustedProxies())
 }
 
+// loadAllowedOrigins 从环境变量里读「允许跨域连 WebSocket 的 Origin 白名单」，
+// 依次尝试 ALLOWED_ORIGINS、CORS_ALLOWED_ORIGINS、FRONTEND_ORIGIN 三个变量（按
+// 出现的先后，取第一个非空的）。都没有时就退回只允许本地开发地址
+// http://localhost:3000。列表用逗号分隔，逗号周围允许留空格。
 func loadAllowedOrigins() []string {
 	raw := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS"))
 	if raw == "" {
@@ -75,12 +87,11 @@ func loadAllowedOrigins() []string {
 	return origins
 }
 
-// loadTrustedProxies reads the same MULTICA_TRUSTED_PROXIES env var the rest of
-// the server uses (see cmd/server/router.go and handler.Config.TrustedProxies),
-// parsing it as a comma-separated list of CIDR prefixes. Invalid entries are
-// dropped with a warn-line rather than crashing. Empty input returns nil, which
-// means "trust no proxy" — X-Forwarded-Host is then never honored. The router
-// overrides this at startup via SetTrustedProxies so both share one config.
+// loadTrustedProxies 读取整个 server 共用的 MULTICA_TRUSTED_PROXIES 环境变量
+// （其它地方的使用见 cmd/server/router.go 与 handler.Config.TrustedProxies），
+// 把它按逗号拆成一串 CIDR 网段。条目非法就丢掉并打一条 warn，而不是让整个进程
+// 崩溃。空输入返回 nil，含义是「不信任任何代理」——此时 X-Forwarded-Host 一律不采信。
+// 路由器在启动时用 SetTrustedProxies 覆盖本函数的结果，保证 HTTP 与 WS 共用一份配置。
 func loadTrustedProxies() []netip.Prefix {
 	raw := strings.TrimSpace(os.Getenv("MULTICA_TRUSTED_PROXIES"))
 	if raw == "" {
@@ -102,19 +113,19 @@ func loadTrustedProxies() []netip.Prefix {
 	return prefixes
 }
 
-// SetAllowedOrigins overrides the WebSocket origin whitelist.
+// SetAllowedOrigins 覆盖 WebSocket 的 Origin 白名单（整块原子替换，不是逐条改）。
 func SetAllowedOrigins(origins []string) {
 	allowedWSOrigins.Store(origins)
 }
 
-// SetTrustedProxies overrides the trusted proxy CIDR list. The server wires the
-// shared MULTICA_TRUSTED_PROXIES value in here at startup.
+// SetTrustedProxies 覆盖受信任代理的 CIDR 网段列表。服务器启动时会把共用的
+// MULTICA_TRUSTED_PROXIES 值填进来，保证 WS 与 HTTP 判断一致。
 func SetTrustedProxies(proxies []netip.Prefix) {
 	trustedProxies.Store(proxies)
 }
 
-// isTrustedProxy reports whether the request's remote address falls within one
-// of the configured trusted proxy CIDRs.
+// isTrustedProxy 判断请求的远端地址是否落在某个受信任代理网段内。只有来源可信时，
+// 后续才允许它提供的 X-Forwarded-* 头参与鉴权判断。
 func isTrustedProxy(remoteAddr string) bool {
 	proxies := trustedProxies.Load().([]netip.Prefix)
 	if len(proxies) == 0 {
@@ -133,10 +144,9 @@ func isTrustedProxy(remoteAddr string) bool {
 	return false
 }
 
-// remoteHost extracts the host/IP from an http.Request.RemoteAddr, which is
-// normally "host:port". It handles bracketed IPv6 ("[::1]:443") via
-// net.SplitHostPort and falls back to the raw value (sans brackets) when no
-// port is present.
+// remoteHost 从 http.Request.RemoteAddr 里剥出主机/IP。RemoteAddr 通常是
+// "host:port"，带中括号的 IPv6（"[::1]:443"）交给 net.SplitHostPort 处理；万一
+// 没有端口号，就退回用原值去中括号后返回。
 func remoteHost(remoteAddr string) string {
 	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
 		return host
@@ -144,9 +154,9 @@ func remoteHost(remoteAddr string) string {
 	return strings.Trim(remoteAddr, "[]")
 }
 
-// firstForwardedHost returns the first host from a (possibly comma-separated)
-// X-Forwarded-Host header. Proxy chains append values left-to-right, so the
-// first entry is the original client-facing host we compare against Origin.
+// firstForwardedHost 返回 X-Forwarded-Host 里的第一个主机名。代理链是从左到右
+// 追加值的，所以第一项是客户端真正访问的公网主机名——也就是要拿来和 Origin
+// 比对的那个。
 func firstForwardedHost(h string) string {
 	if i := strings.IndexByte(h, ','); i >= 0 {
 		h = h[:i]
@@ -154,26 +164,24 @@ func firstForwardedHost(h string) string {
 	return strings.TrimSpace(h)
 }
 
+// checkOrigin 是 WebSocket 升级前的「跨域来源」安全检查：请求带 Origin 头时，只放行
+// 同源或白名单内来源；不带 Origin（非浏览器客户端）直接放行。
 func checkOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true
 	}
-	// Same-origin: native clients (mobile, CLI) have no real page host, so
-	// their WebSocket library fills Origin with the connection target —
-	// which equals the server's own Host. They authenticate via bearer
-	// token, not auto-attached cookies, so CSRF (the attack the explicit
-	// allowlist below defends against) does not apply. This matches the
-	// gorilla/websocket default CheckOrigin behavior; the allowlist exists
-	// in addition to support cross-origin browser clients (web/desktop).
+	// 同源判定：原生客户端（移动端、CLI）没有真正的页面域名，其 WebSocket 库会把
+	// Origin 填成连接目标——恰好等于服务器自己的 Host。它们用 bearer 令牌而不是
+	// 自动携带的 Cookie 鉴权，所以下面白名单要防的 CSRF（浏览器代发）攻击对它们
+	// 不成立。这与 gorilla/websocket 默认 CheckOrigin 行为一致；白名单是在此之外
+	// 额外支持跨域浏览器客户端（web/desktop）。
 	if u, err := url.Parse(origin); err == nil && strings.EqualFold(u.Host, r.Host) {
 		return true
 	}
-	// Reverse-proxy support: when sitting behind a proxy the Host header
-	// contains the internal address. X-Forwarded-Host carries the original
-	// public host seen by the client, so we treat a matching origin as
-	// same-origin in that case too. SECURITY: Only trust X-Forwarded-Host
-	// if the request comes from a trusted proxy to prevent header spoofing.
+	// 反代场景：服务器藏在代理后面时，Host 头是内网地址，X-Forwarded-Host 才带着
+	// 客户端看到的公网主机名，所以它和 Origin 一致也算同源。安全前提：只有当请求
+	// 确实来自受信任代理时才采信 X-Forwarded-Host，否则任何人都能伪造它绕过白名单。
 	if fwdHost := firstForwardedHost(r.Header.Get("X-Forwarded-Host")); fwdHost != "" && isTrustedProxy(r.RemoteAddr) {
 		if u, err := url.Parse(origin); err == nil && strings.EqualFold(u.Host, fwdHost) {
 			return true
@@ -189,18 +197,20 @@ func checkOrigin(r *http.Request) bool {
 	return false
 }
 
+// WebSocket 心跳与限流的计时参数。gorilla/websocket 的惯例：服务端定期发 ping
+// （pingPeriod），客户端要在 pongWait 内回 pong，否则判死。writeWait 是每次写操作
+// 允许阻塞的最长时间，超过就放弃这条连接，避免某个读不到数据的死客户端一直占着
+// 写线程。
 const (
 	writeWait  = 10 * time.Second
 	pongWait   = 60 * time.Second
 	pingPeriod = (pongWait * 9) / 10
 
-	// inboundReadLimit caps a single inbound message. Every frame a client
-	// legitimately sends is tiny — the largest is the token auth frame, well
-	// under 1 KiB — but gorilla buffers a whole message in memory before
-	// handing it over, and a fragmented message keeps the read deadline alive
-	// through interleaved pongs. Without a limit one connection can therefore
-	// grow that buffer without bound and OOM the process. Matches the daemon
-	// hub limit so both WebSocket surfaces answer this question the same way.
+	// inboundReadLimit 限制单条入站消息的大小。客户端合法发的每条帧都很小——最大
+	// 的令牌鉴权帧也不到 1 KiB——但 gorilla 会把一整条消息先全读进内存才交给应用，
+	// 而且分片消息会在穿插 pong 的过程中一直续着读超时。不设上限的话，一条连接就能
+	// 把这个缓冲区无限撑大，把进程 OOM。取值与 daemon 的 hub 一致，保证两套
+	// WebSocket 面对「一条消息能多大」这个问题给出相同答案。
 	inboundReadLimit = 64 * 1024
 )
 
@@ -208,7 +218,8 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: checkOrigin,
 }
 
-// scopeKey is the composite key used to look up a "room" of subscribers.
+// scopeKey 是查「订阅某房间的一批连接」时用的复合键。Type 是作用域种类
+// (workspace/user/task/chat…)，ID 是具体对象的 id。
 type scopeKey struct {
 	Type string
 	ID   string
@@ -216,8 +227,7 @@ type scopeKey struct {
 
 func sk(t, id string) scopeKey { return scopeKey{Type: t, ID: id} }
 
-// Client represents a single WebSocket connection with identity and the set
-// of scopes it is currently subscribed to.
+// Client 代表一条 WebSocket 连接，携带身份信息以及它当前订阅的所有作用域。
 type Client struct {
 	hub         *Hub
 	conn        *websocket.Conn
@@ -225,25 +235,23 @@ type Client struct {
 	userID      string
 	workspaceID string
 
-	// subscriptions is guarded by hub.mu. Tracks the scopes this client is
-	// currently in. Used to clean up rooms on disconnect.
+	// subscriptions 记录该连接当前在哪些房间，受 hub.mu 保护。断线清理房间时要靠它
+	// 知道该把连接从哪些房间里摘出去。
 	subscriptions map[scopeKey]bool
 
-	// lastSeenEventIDs is used by the dual-write broadcaster (and any
-	// future deliverer) to dedup messages that arrived first via the local
-	// fast path and are then re-played from Redis. Bounded LRU semantics
-	// are not required because event IDs are ULIDs and we only keep the
-	// last few.
+	// 去重缓冲（seenIDs + seenList）：双写广播（先走本机快路径，再从 Redis 重放一遍）
+	// 以及其它未来的投递方会靠 eventID 去重，保证同一条消息即使两条路都到也不会推两遍。
+	// 因为 eventID 是 ULID、只需要记住最近几条，所以用有界 LRU 语义就够了。
 	dedupMu  sync.Mutex
 	seenIDs  map[string]struct{}
 	seenList []string
 }
 
+// dedupCapacity 是每个连接最多记住的最近已投递 eventID 数量，超出就从最老的开始丢。
 const dedupCapacity = 128
 
-// markSeen records eventID as already delivered to this client. Returns true
-// if it was the first time we saw this id (caller should deliver), false if
-// it's a duplicate (caller should drop).
+// markSeen 把 eventID 记成「已投递给这条连接」。返回 true 表示第一次见到这个 id
+// （调用方应该投递），false 表示重复（调用方应丢弃）。eventID 为空时永远视为新事件。
 func (c *Client) markSeen(eventID string) bool {
 	if eventID == "" {
 		return true
@@ -266,15 +274,19 @@ func (c *Client) markSeen(eventID string) bool {
 	return true
 }
 
-// SubscriptionCallback fires when a scope's local subscriber count crosses
-// 0↔1 boundaries. Used by the Redis relay to start/stop XREADGROUP loops on
-// demand.
+// SubscriptionCallback 在某作用域的本地订阅人数跨过 0↔1 边界时触发。Redis relay 靠它
+// 按需启动/停止某个作用域对应的 XREADGROUP 消费循环：没人订阅就停下别占资源，
+// 有人来了再启动。
 type SubscriptionCallback func(scopeType, scopeID string)
 
-// Hub manages WebSocket connections organized into scope-based rooms.
+// Hub 把 WebSocket 连接按作用域组织成房间，提供注册/注销、订阅/退订和广播能力。
+//
+// 并发模型：所有房间/连接集合的读写都集中在少量方法里用 mu 保护；broadcast、
+// register、unregister 三个 channel 由 Run 里的单一事件循环消费，实现「改状态走锁、
+// 大扇出走锁+非阻塞入队」的折中。
 type Hub struct {
 	rooms      map[scopeKey]map[*Client]bool
-	clients    map[*Client]bool // every connected client (used by global Broadcast and snapshots)
+	clients    map[*Client]bool // 所有已连接的客户端（全局广播与快照都要用）
 	broadcast  chan []byte
 	register   chan *Client
 	unregister chan *Client
@@ -282,12 +294,12 @@ type Hub struct {
 
 	authorizer ScopeAuthorizer
 
-	// Subscription lifecycle hooks. Both can be nil.
+	// 订阅生命周期钩子。两者都可以是 nil。
 	onFirstSubscriber SubscriptionCallback
 	onLastSubscriber  SubscriptionCallback
 }
 
-// NewHub creates a new Hub instance.
+// NewHub 创建一个新的 Hub 实例。
 func NewHub() *Hub {
 	return &Hub{
 		rooms:      make(map[scopeKey]map[*Client]bool),
@@ -298,16 +310,15 @@ func NewHub() *Hub {
 	}
 }
 
-// SetAuthorizer wires a ScopeAuthorizer into the hub. Safe to call before Run.
+// SetAuthorizer 把 ScopeAuthorizer 装进 hub。在 Run 之前调用是安全的。
 func (h *Hub) SetAuthorizer(a ScopeAuthorizer) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.authorizer = a
 }
 
-// SetSubscriptionCallbacks registers callbacks fired when a scope on this
-// node transitions from 0→1 subscribers (onFirst) or 1→0 (onLast). The
-// Redis relay uses these to start/stop a per-scope consumer loop.
+// SetSubscriptionCallbacks 注册两个回调：本节点某个作用域从 0→1 个订阅者时触发
+// onFirst，从 1→0 时触发 onLast。Redis relay 用它们来按作用域启动/停止消费循环。
 func (h *Hub) SetSubscriptionCallbacks(onFirst, onLast SubscriptionCallback) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -315,7 +326,8 @@ func (h *Hub) SetSubscriptionCallbacks(onFirst, onLast SubscriptionCallback) {
 	h.onLastSubscriber = onLast
 }
 
-// Run starts the hub event loop.
+// Run 启动 hub 的事件循环，处理注册、注销与全局广播三类事件。
+// 这是一个永不返回的死循环，通常用独立 goroutine 跑。
 func (h *Hub) Run() {
 	for {
 		select {
@@ -326,7 +338,8 @@ func (h *Hub) Run() {
 			h.mu.Unlock()
 			M.ConnectsTotal.Add(1)
 			M.ActiveConnections.Add(1)
-			// Auto-subscribe to the workspace and user scopes.
+			// 连接一进来就自动订阅它所属的 workspace 与 user 两个作用域，之后这两类
+			// 事件无需显式订阅也能收到。
 			h.subscribe(client, ScopeWorkspace, client.workspaceID)
 			if client.userID != "" {
 				h.subscribe(client, ScopeUser, client.userID)
@@ -342,7 +355,8 @@ func (h *Hub) Run() {
 	}
 }
 
-// removeClient drops a client from all rooms and the global set.
+// removeClient 把一条连接从所有房间和全局集合里移除（断线或慢客户端被踢共用此路）。
+// 房间被清空时顺手触发 onLastSubscriber 回调并计数。
 func (h *Hub) removeClient(client *Client) {
 	h.mu.Lock()
 	if !h.clients[client] {
@@ -380,9 +394,8 @@ func (h *Hub) removeClient(client *Client) {
 	slog.Info("ws client disconnected", "workspace_id", client.workspaceID, "user_id", client.userID, "total_clients", total)
 }
 
-// subscribe adds client to scope (scopeType, scopeID) and fires the
-// onFirstSubscriber callback if the room transitioned from empty to non-empty.
-// Returns true if the subscription was newly added.
+// subscribe 把 client 加入 (scopeType, scopeID) 房间。如果房间因此从空变成非空，
+// 触发 onFirstSubscriber 回调。返回 true 表示这次是真正新增订阅（此前没订阅过）。
 func (h *Hub) subscribe(client *Client, scopeType, scopeID string) bool {
 	if scopeType == "" || scopeID == "" {
 		return false
@@ -423,8 +436,8 @@ func (h *Hub) subscribe(client *Client, scopeType, scopeID string) bool {
 	return true
 }
 
-// unsubscribe removes client from a scope room and fires onLastSubscriber if
-// the room is now empty.
+// unsubscribe 把 client 从某个作用域房间移除。如果房间因此空了，触发
+// onLastSubscriber 回调。返回 true 表示确实退掉了一个订阅。
 func (h *Hub) unsubscribe(client *Client, scopeType, scopeID string) bool {
 	if scopeType == "" || scopeID == "" {
 		return false
@@ -462,9 +475,8 @@ func (h *Hub) unsubscribe(client *Client, scopeType, scopeID string) bool {
 	return true
 }
 
-// HasLocalSubscribers reports whether at least one local client is subscribed
-// to (scopeType, scopeID). Used by the Redis relay to decide whether to keep
-// a per-scope consumer running.
+// HasLocalSubscribers 报告本机是否至少有一个客户端订阅了 (scopeType, scopeID)。
+// Redis relay 靠它决定要不要继续跑某个作用域的消费循环。
 func (h *Hub) HasLocalSubscribers(scopeType, scopeID string) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -472,8 +484,8 @@ func (h *Hub) HasLocalSubscribers(scopeType, scopeID string) bool {
 	return ok
 }
 
-// LocalScopes returns the set of scopes currently active on this node.
-// Snapshot only — callers must not assume thread-stability.
+// LocalScopes 返回本节点当前活跃的所有作用域。只是快照，调用方不能假设它在多次
+// 调用间保持稳定（其它 goroutine 随时可能增删房间）。
 func (h *Hub) LocalScopes() []scopeKey {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -484,15 +496,14 @@ func (h *Hub) LocalScopes() []scopeKey {
 	return out
 }
 
-// BroadcastToScope sends a message to every client subscribed to
-// (scopeType, scopeID). Slow clients are evicted under write lock.
+// BroadcastToScope 把一条消息发给 (scopeType, scopeID) 房间里的每个客户端。
+// 对于发不进去的慢客户端，会在持写锁之外统一走 evictSlow 剔除。
 func (h *Hub) BroadcastToScope(scopeType, scopeID string, message []byte) {
 	h.BroadcastToScopeDedup(scopeType, scopeID, message, "")
 }
 
-// BroadcastToScopeDedup is the same as BroadcastToScope but skips delivery
-// to clients that have already seen eventID (used by the Redis relay to
-// deduplicate the local fast path of DualWriteBroadcaster).
+// BroadcastToScopeDedup 与 BroadcastToScope 相同，但会跳过那些已经见过 eventID 的
+// 客户端（Redis relay 用它去掉 DualWriteBroadcaster 本地快路径造成的重复投递）。
 func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, eventID string) {
 	if scopeType == "" || scopeID == "" {
 		return
@@ -524,10 +535,9 @@ func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, e
 	}
 }
 
-// fanoutAll delivers message to every connected client. If excludeWorkspace
-// is non-empty, clients whose workspaceID matches are skipped (used by the
-// member:added dedup semantics carried over from SendToUser). eventID is the
-// dedup key (empty disables dedup).
+// fanoutAll 把 message 发给每个已连接客户端。excludeWorkspace 非空时，跳过那些
+// workspaceID 与它相同的连接（这是从 SendToUser 继承来的 member:added 去重语义）。
+// eventID 是去重键（为空表示不去重）。
 func (h *Hub) fanoutAll(message []byte, excludeWorkspace string) {
 	h.fanoutAllDedup(message, excludeWorkspace, "")
 }
@@ -560,13 +570,14 @@ func (h *Hub) fanoutAllDedup(message []byte, excludeWorkspace, eventID string) {
 	}
 }
 
-// BroadcastToWorkspace is a back-compat shortcut.
+// BroadcastToWorkspace 是 BroadcastToScope(ScopeWorkspace, workspaceID, message)
+// 的向后兼容简写。
 func (h *Hub) BroadcastToWorkspace(workspaceID string, message []byte) {
 	h.BroadcastToScope(ScopeWorkspace, workspaceID, message)
 }
 
-// SendToUser delivers a message to every connection belonging to userID,
-// skipping any connections whose workspaceID matches excludeWorkspace.
+// SendToUser 把一条消息发给属于 userID 的每条连接，并跳过 workspaceID 命中
+// excludeWorkspace 的连接。
 func (h *Hub) SendToUser(userID string, message []byte, excludeWorkspace ...string) {
 	exclude := ""
 	if len(excludeWorkspace) > 0 {
@@ -575,13 +586,13 @@ func (h *Hub) SendToUser(userID string, message []byte, excludeWorkspace ...stri
 	h.fanoutUser(userID, message, exclude, "")
 }
 
-// Broadcast sends a message to every connected client (daemon events).
+// Broadcast 把消息发给所有已连接客户端（用于没有 workspace 概念的 daemon 事件）。
 func (h *Hub) Broadcast(message []byte) {
 	h.broadcast <- message
 }
 
-// fanoutUser delivers a message to all clients in the user scope, optionally
-// excluding clients in excludeWorkspace and deduping against eventID.
+// fanoutUser 把消息发给 user 作用域房间里的所有客户端，可排除指定 workspace 的
+// 连接，并可基于 eventID 去重。
 func (h *Hub) fanoutUser(userID string, message []byte, excludeWorkspace, eventID string) {
 	key := sk(ScopeUser, userID)
 	h.mu.RLock()
@@ -611,9 +622,9 @@ func (h *Hub) fanoutUser(userID string, message []byte, excludeWorkspace, eventI
 	}
 }
 
-// evictSlow removes clients whose send channel was full. Mirrors the
-// pre-phase-1 behavior: closes the send channel, decrements counters, fires
-// onLastSubscriber for any rooms drained as a side effect.
+// evictSlow 处理发送队列已满的「慢客户端」：把它们的 send channel 关掉、递减计数，
+// 并顺带对被抽空（清零）的房间触发 onLastSubscriber 回调。行为与改造前一致——
+// 慢即断线，宁可丢掉一个人也不让一条消息把整个广播卡死。
 func (h *Hub) evictSlow(slow []*Client) {
 	M.MessagesDroppedTotal.Add(int64(len(slow)))
 	M.SlowEvictionsTotal.Add(int64(len(slow)))
@@ -659,7 +670,8 @@ func (h *Hub) evictSlow(slow []*Client) {
 	}
 }
 
-// Snapshot returns a JSON-friendly summary of the hub state.
+// Snapshot 返回一份便于转成 JSON 的 hub 状态概要（连接数与各类型房间数），
+// 用于健康检查或调试接口。
 func (h *Hub) Snapshot() map[string]any {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -673,8 +685,12 @@ func (h *Hub) Snapshot() map[string]any {
 	}
 }
 
-// authenticateToken validates a JWT or PAT string and returns the user ID.
+// authenticateToken 校验一段 JWT 或 PAT 令牌，返回其中的用户 ID。
+//
+// 返回两个值：非空的 uid 表示鉴权通过；否则返回空 uid 和一个已经格式化好的 JSON
+// 错误体（供调用方直接写回给客户端）。
 func authenticateToken(tokenStr string, pr PATResolver, ctx context.Context) (string, string) {
+	// PAT 形如 mul_xxx：本地查库解析，不依赖 JWT 密钥。
 	if strings.HasPrefix(tokenStr, "mul_") {
 		if pr == nil {
 			return "", `{"error":"invalid token"}`
@@ -689,6 +705,7 @@ func authenticateToken(tokenStr string, pr PATResolver, ctx context.Context) (st
 		return uid, ""
 	}
 
+	// 其余按 JWT 解析：必须用 HMAC 签名（防止 alg=none 之类降级攻击），密钥来自服务端配置。
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, jwt.ErrSignatureInvalid
@@ -704,10 +721,12 @@ func authenticateToken(tokenStr string, pr PATResolver, ctx context.Context) (st
 		return "", `{"error":"invalid claims"}`
 	}
 
+	// sub（subject）声明即用户 ID，必须有值。
 	uid, ok := claims["sub"].(string)
 	if !ok || strings.TrimSpace(uid) == "" {
 		return "", `{"error":"invalid claims"}`
 	}
+	// email 缺失时 IsTemporarilyDisabledUser 只按 uid 判断临时封禁。
 	email, _ := claims["email"].(string)
 	if auth.IsTemporarilyDisabledUser(uid, email) {
 		return "", `{"error":"account disabled"}`
@@ -715,20 +734,21 @@ func authenticateToken(tokenStr string, pr PATResolver, ctx context.Context) (st
 	return uid, ""
 }
 
-// firstMessageAuth reads the first WebSocket message expecting an auth payload.
-// A non-empty errMsg is for the caller to write back before closing the
-// connection. closed=true means the connection is already torn down and the
-// caller must return without writing anything further.
+// firstMessageAuth 读取 WebSocket 的第一条消息，期望它是鉴权载荷。
+//
+// 返回值约定：token 非空表示鉴权通过；errMsg 非空表示出错，调用方应把它写回给
+// 客户端后关闭连接；closed=true 表示连接已经被拆除（比如超限关闭），调用方必须
+// 直接返回、不要再写任何东西。
 func firstMessageAuth(conn *websocket.Conn) (token, errMsg string, closed bool) {
+	// 给首条消息 10 秒超时：迟迟不发鉴权帧的客户端直接判超时，避免空连接占用资源。
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	defer conn.SetReadDeadline(time.Time{})
 
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
 		if errors.Is(err, websocket.ErrReadLimit) {
-			// gorilla has already replied CloseMessageTooBig (1009), so an
-			// auth_error frame here would be data sent after a close frame.
-			// Counted separately to keep the breach out of ordinary churn.
+			// gorilla 已经回过了 CloseMessageTooBig(1009)，这时再回一帧 auth_error 属于
+			// 在 close 帧之后继续发数据。单独计数，让这种「越界」不混进普通连接抖动里。
 			M.InboundTooLargeTotal.Add(1)
 			slog.Warn("ws: pre-auth frame exceeded read limit", "limit_bytes", inboundReadLimit)
 			conn.Close()
@@ -750,10 +770,12 @@ func firstMessageAuth(conn *websocket.Conn) (token, errMsg string, closed bool) 
 	return msg.Payload.Token, "", false
 }
 
+// wsMessageWriter 是 writePump 依赖的最小写接口，方便测试注入替身。
 type wsMessageWriter interface {
 	WriteMessage(messageType int, data []byte) error
 }
 
+// writeWSAuthFrame 尝试向连接写一帧文本消息。写失败就记一条 warn 并返回 false。
 func writeWSAuthFrame(conn wsMessageWriter, payload []byte, frame string, attrs ...any) bool {
 	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
 		logAttrs := append([]any{"frame", frame, "error", err}, attrs...)
@@ -763,13 +785,17 @@ func writeWSAuthFrame(conn wsMessageWriter, payload []byte, frame string, attrs 
 	return true
 }
 
+// writeWSAuthErrorAndClose 给客户端回一帧鉴权失败消息（auth_error）然后关闭连接。
 func writeWSAuthErrorAndClose(conn *websocket.Conn, payload []byte, attrs ...any) {
 	writeWSAuthFrame(conn, payload, "auth_error", attrs...)
 	conn.Close()
 }
 
-// HandleWebSocket upgrades an HTTP connection to WebSocket with cookie or
-// first-message auth.
+// HandleWebSocket 把一次 HTTP 请求升级成 WebSocket，并完成鉴权与入房。
+//
+// 鉴权路径有两条：优先看 Cookie（浏览器自动携带）；没有 Cookie 就用首条消息里的
+// 令牌（移动端/CLI 等无法带 Cookie 的客户端）。两条路最终都要求该用户确实属于
+// 目标 workspace，否则拒绝握手。
 func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug SlugResolver, w http.ResponseWriter, r *http.Request) {
 	workspaceID := r.URL.Query().Get("workspace_id")
 	if workspaceID == "" {
@@ -811,9 +837,8 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 		return
 	}
 
-	// Bound inbound messages here rather than in readPump: the token auth
-	// path below reads its first frame before the caller is authenticated, so
-	// a limit installed any later leaves that read unbounded.
+	// 入站消息上限要在这里设、而不是等 readPump 里再设：下面的令牌鉴权路径要在身份
+	// 认证完成前就读取首条帧，晚一步加限制，这次读取就没有任何大小保护了。
 	conn.SetReadLimit(inboundReadLimit)
 
 	if userID == "" {
@@ -853,10 +878,8 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 		}
 	}
 
-	// Capture client metadata from query params (browsers cannot set custom
-	// headers on WebSocket upgrades, so the WSClient passes them via the URL).
-	// Logged with every connect so the same observability dimensions exist
-	// for WS as for HTTP.
+	// 客户端元数据从 query 参数里取（浏览器在 WebSocket 升级请求里设不了自定义头，
+	// WSClient 只能把它们拼进 URL）。每次连接都记一条，让 WS 和 HTTP 拥有同样的可观测维度。
 	clientPlatform := r.URL.Query().Get("client_platform")
 	clientVersion := r.URL.Query().Get("client_version")
 	clientOS := r.URL.Query().Get("client_os")
@@ -881,18 +904,21 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 	go client.readPump()
 }
 
-// inboundFrame describes the subset of inbound JSON messages the server
-// understands today.
+// inboundFrame 描述当前服务器能理解的入站 JSON 消息结构：type 标种类，
+// payload 留成原始字节、等知道具体类型后再二次解析。
 type inboundFrame struct {
 	Type    string          `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }
 
+// subPayload 是 subscribe / unsubscribe 消息的 payload 结构。
 type subPayload struct {
 	Scope string `json:"scope"`
 	ID    string `json:"id"`
 }
 
+// readPump 是这条连接的「读循环」：持续读入站帧交给 handleFrame 处理。任何读错误
+// （对端关闭、超时、超限）都会跳出循环，随后把连接注销并关闭底层连接。
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
@@ -910,8 +936,7 @@ func (c *Client) readPump() {
 		if err != nil {
 			switch {
 			case errors.Is(err, websocket.ErrReadLimit):
-				// Counted separately so an over-limit close stays visible
-				// instead of blending into ordinary connection churn.
+				// 单独计数，让「单帧超限被关」保持可见，而不是混进普通连接的正常断连里。
 				M.InboundTooLargeTotal.Add(1)
 				slog.Warn("ws: inbound frame exceeded read limit",
 					"limit_bytes", inboundReadLimit,
@@ -927,6 +952,8 @@ func (c *Client) readPump() {
 	}
 }
 
+// handleFrame 解析一条入站 JSON 帧并按其 type 分发：subscribe/unsubscribe 处理
+// 订阅变更，ping 回 pong，未知 type 静默忽略（给未来的客户端协议留兼容余地）。
 func (c *Client) handleFrame(raw []byte) {
 	var f inboundFrame
 	if err := json.Unmarshal(raw, &f); err != nil {
@@ -955,15 +982,17 @@ func (c *Client) handleFrame(raw []byte) {
 	case "ping":
 		c.sendJSON(map[string]string{"type": "pong"})
 	default:
-		// Unknown frame — ignore silently for forward compat.
+		// 未知帧类型——为前向兼容静默忽略（打 debug 日志，不报错不计数）。
 		slog.Debug("ws inbound: unknown frame", "type", f.Type, "user_id", c.userID)
 	}
 }
 
+// handleSubscribe 处理一次订阅请求：按作用域类型分流做不同等级的校验。
 func (c *Client) handleSubscribe(scope, id string) {
 	switch scope {
 	case ScopeWorkspace, ScopeUser:
-		// Implicit scopes — only allowed if it matches the connection identity.
+		// 这两个是「隐性作用域」：只允许订阅与自己连接身份一致的那个，防止偷听别人
+		// 的 workspace/user 房间。
 		if (scope == ScopeWorkspace && id != c.workspaceID) || (scope == ScopeUser && id != c.userID) {
 			M.SubscribeDeniedTotal(scope).Add(1)
 			c.sendJSON(map[string]any{
@@ -976,7 +1005,7 @@ func (c *Client) handleSubscribe(scope, id string) {
 			})
 			return
 		}
-		// Already auto-subscribed at connect time; reply ack idempotently.
+		// 连接建立时已经自动订阅过这两个作用域；这里再调 subscribe 幂等，只回 ack。
 		c.hub.subscribe(c, scope, id)
 	case ScopeTask, ScopeChat:
 		auth := c.hub.authorizer
@@ -1018,6 +1047,7 @@ func (c *Client) handleSubscribe(scope, id string) {
 	})
 }
 
+// handleUnsubscribe 处理一次退订请求：把它从目标房间摘掉，回一个 unsubscribe_ack。
 func (c *Client) handleUnsubscribe(scope, id string) {
 	c.hub.unsubscribe(c, scope, id)
 	c.sendJSON(map[string]any{
@@ -1026,9 +1056,8 @@ func (c *Client) handleUnsubscribe(scope, id string) {
 	})
 }
 
-// sendJSON best-effort encodes v and pushes it to the client's send channel.
-// Drops the message if the channel is full (the writePump will be evicted by
-// the next BroadcastToScope cycle).
+// sendJSON 尽力把 v 编码成 JSON 并塞进该客户端的发送队列。队列已满时直接丢弃这条
+// 消息（下一步广播循环会把写不动的连接当成慢客户端剔除）。
 func (c *Client) sendJSON(v any) {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -1040,6 +1069,8 @@ func (c *Client) sendJSON(v any) {
 	}
 }
 
+// writePump 是这条连接的「写循环」：串行消费发送队列里的消息写到 socket 上，并
+// 周期性发送 ping 保活。写失败或发送队列被关（连接被剔除）就关闭底层连接收尾。
 func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {

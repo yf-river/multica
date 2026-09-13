@@ -1,3 +1,10 @@
+// 本文件实现个人访问令牌（PAT，multica CLI/daemon 用来以用户身份调 API 的凭据）的
+// CRUD 端点：创建（明文 token 仅此一次返回）、列表、撤销，以及 daemon 轮询的「原地
+// 续期」端点 RenewCurrentPersonalAccessToken。
+//
+// 设计要点：库中只存 token 的哈希与 12 字符前缀，明文绝不落库、也绝不再次回传。
+// 续期采用 CAS（把续期窗口当谓词）——并发续期只有一个赢家，其余拿到 ErrNoRows 后
+// 重读当前行即可，保证「成功返回后 expires_at 新鲜到能撑到下一次轮询」。
 package handler
 
 import (
@@ -14,19 +21,18 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// PATRenewThreshold is the remaining-lifetime window at which a PAT becomes
-// eligible for an in-place renewal. The daemon polls every ~3 days, so a 7-day
-// threshold guarantees at least one renewal attempt while the token still has
-// ≥ 4 days of validity left — enough margin to absorb a transient network
-// failure before the user actually has to re-run `multica login`.
+// PATRenewThreshold 是 PAT 进入「可原地续期」窗口的剩余有效期。daemon 大约每 3 天
+// 轮询一次，7 天阈值保证在 token 还剩 ≥4 天有效时至少有一次续期机会——足够吸收一次
+// 瞬时网络故障，用户不至于被迫重跑 `multica login`。
 const PATRenewThreshold = 7 * 24 * time.Hour
 
-// PATRenewExtension is how far into the future a renewed PAT's expires_at is
-// pushed. Matches the initial issuance window in CreatePersonalAccessToken
-// (90 days) so renewed tokens converge on the same lifetime as freshly minted
-// ones — no second-class renewed tokens.
+// PATRenewExtension 是续期后 expires_at 往后推的时长。与 CreatePersonalAccessToken
+// 的初始签发窗口（90 天）一致，让续期后的 token 与新建 token 拥有相同的生命周期——
+// 不搞二等公民。
 const PATRenewExtension = 90 * 24 * time.Hour
 
+// PersonalAccessTokenResponse 是单条 PAT 的对外结构（含 token_prefix 便于用户辨认，
+// 不含明文）。
 type PersonalAccessTokenResponse struct {
 	ID         string  `json:"id"`
 	Name       string  `json:"name"`
@@ -36,11 +42,13 @@ type PersonalAccessTokenResponse struct {
 	CreatedAt  string  `json:"created_at"`
 }
 
+// CreatePATResponse 在 PAT 基础上多带一条仅创建时可见的明文 token。
 type CreatePATResponse struct {
 	PersonalAccessTokenResponse
 	Token string `json:"token"`
 }
 
+// patToResponse 把 PAT 行转成对外结构。
 func patToResponse(pat db.PersonalAccessToken) PersonalAccessTokenResponse {
 	return PersonalAccessTokenResponse{
 		ID:         uuidToString(pat.ID),
@@ -52,11 +60,15 @@ func patToResponse(pat db.PersonalAccessToken) PersonalAccessTokenResponse {
 	}
 }
 
+// CreatePATRequest 是创建 PAT 的请求体：名字必填，ExpiresInDays 可选（不传/非正数
+// 表示永不过期）。
 type CreatePATRequest struct {
 	Name          string `json:"name"`
 	ExpiresInDays *int   `json:"expires_in_days"`
 }
 
+// CreatePersonalAccessToken 创建一条 PAT：生成原始 token，落库只存哈希 + 前缀，
+// 明文 token 仅在本次响应的 CreatePATResponse.Token 里返回。
 func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -110,6 +122,7 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// ListPersonalAccessTokens 列出当前用户的全部 PAT（不含明文）。
 func (h *Handler) ListPersonalAccessTokens(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -129,42 +142,35 @@ func (h *Handler) ListPersonalAccessTokens(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RenewPATResponse is the body returned by RenewCurrentPersonalAccessToken.
+// RenewPATResponse 是 RenewCurrentPersonalAccessToken 的返回体。
 //
-// Renewed=false is a no-op, not an error — it just means the caller polled
-// before the token entered the renewal window. Callers should always read
-// ExpiresAt for the authoritative expiry rather than assuming the old value
-// is still current.
+// Renewed=false 不是错误，只是说明调用方在 token 进入续期窗口之前就来轮询了。
+// 调用方应始终读 ExpiresAt 作为权威过期时间，而不是假定旧值仍然有效。
 type RenewPATResponse struct {
 	ExpiresAt string `json:"expires_at"`
 	Renewed   bool   `json:"renewed"`
 }
 
-// RenewCurrentPersonalAccessToken extends the expires_at of the PAT used to
-// authenticate this request, in-place, when it is inside the renewal window.
+// RenewCurrentPersonalAccessToken 在「本次请求所用的 PAT」进入续期窗口时，原地把它的
+// expires_at 往后推。
 //
-// The endpoint deliberately does NOT mint a new token — that would require
-// either rotating the raw secret (breaks the CLI/daemon multi-process model,
-// where a single PAT is shared by every process started from the same CLI
-// config) or returning the raw token over the wire on every poll (a needless
-// exposure since the daemon already holds it). Instead we extend the row's
-// expires_at atomically; the cached PAT entry's TTL is short enough
-// (auth.AuthCacheTTL ≤ 10m) that the cache catches up to the new expiry on
-// the next cache miss without an explicit invalidation.
+// 本端点刻意不铸新 token——那要么得轮换明文（会破坏 CLI/daemon 的多进程模型：同一份
+// CLI 配置启动的所有进程共享同一条 PAT），要么每次轮询都得把明文 token 在线上回传
+// 一遍（无谓的暴露，daemon 本来就拿着它）。取而代之是原子地把行的 expires_at 后移；
+// 缓存里 PAT 条目的 TTL 足够短（auth.AuthCacheTTL ≤ 10m），下次缓存未命中就会追上新
+// 过期时间，无需显式失效。
 //
-// Only mul_ PATs may be renewed: a cookie/JWT session has no PAT row to
-// extend, and an mat_ task token is single-purpose and short-lived. mcn_
-// cloud-node PATs are owned by Multica Cloud Fleet, not us — we don't even
-// see the expiry locally.
+// 只有 mul_ 前缀的 PAT 可续期：cookie/JWT 会话没有可续的 PAT 行；mat_ 任务 token 是
+// 单次用途且短命。mcn_ 云端节点 PAT 归 Multica Cloud Fleet 所有——我们本地连它的
+// 过期时间都看不到。
 func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
 
-	// Re-read the raw token from the Authorization header — the upstream Auth
-	// middleware resolves it to a userID but doesn't pass the hash forward,
-	// and we need the row, not just the user.
+	// 从 Authorization 头重读原始 token——上游 Auth 中间件把它解析成 userID，但不把
+	// 哈希传下来，而我们要的是行而不只是用户。
 	authHeader := r.Header.Get("Authorization")
 	rawToken := strings.TrimPrefix(authHeader, "Bearer ")
 	if rawToken == "" || rawToken == authHeader || !strings.HasPrefix(rawToken, "mul_") {
@@ -175,11 +181,9 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 	hash := auth.HashToken(rawToken)
 	pat, err := h.Queries.GetPersonalAccessTokenByHash(r.Context(), hash)
 	if err != nil {
-		// The Auth middleware already validated the token, so reaching here
-		// with no row means the PAT was revoked or expired in the gap between
-		// the middleware's cache hit and this DB read. Surface a 401 so the
-		// daemon's 401 branch fires the same "please re-login" message it
-		// would for any other auth failure, instead of a generic 500.
+		// Auth 中间件已校验过 token，所以走到这里却没有行，说明 PAT 是在「中间件缓存
+		// 命中」与「这次 DB 读」之间的空隙里被撤销或过期的。返回 401，让 daemon 的
+		// 401 分支像其它鉴权失败一样触发「请重新登录」提示，而不是一个泛泛的 500。
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusUnauthorized, "token is no longer valid")
 			return
@@ -188,18 +192,15 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Defense in depth: the middleware already set X-User-ID from the same
-	// PAT row, so this mismatch should be impossible. If it ever fires, it
-	// means a header was forged past the middleware and we MUST refuse to
-	// renew on someone else's behalf — fail loudly.
+	// 纵深防御：中间件已按同一条 PAT 行设了 X-User-ID，因此这个不匹配本不该发生。
+	// 一旦发生，说明有头绕过了中间件伪造——绝不能在别人名下续期，必须大声失败。
 	if uuidToString(pat.UserID) != userID {
 		writeError(w, http.StatusUnauthorized, "token does not belong to caller")
 		return
 	}
 
-	// PATs minted before this code existed may have a NULL expires_at (the
-	// "never expires" case). There is nothing to extend — return the current
-	// (absent) expiry and let the caller treat this as a permanent token.
+	// 这段代码出现前铸造的 PAT 可能带着 NULL expires_at（「永不过期」情形）。没有
+	// 可后推的东西——返回当前（缺省）过期时间，让调用方当它是永久 token。
 	if !pat.ExpiresAt.Valid {
 		writeJSON(w, http.StatusOK, RenewPATResponse{ExpiresAt: "", Renewed: false})
 		return
@@ -216,10 +217,9 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 	}
 
 	newExpiresAt := pgtype.Timestamptz{Time: now.Add(PATRenewExtension), Valid: true}
-	// Pass the renewal threshold as the CAS predicate: only update if the
-	// row's existing expires_at is still inside this window. After the
-	// first writer succeeds the row sits at now+90d, which is well past
-	// now+7d, so any concurrent renewer hits the WHERE and sees ErrNoRows.
+	// 把续期阈值当作 CAS 谓词：仅当行的现有 expires_at 仍在窗口内才更新。第一个写入者
+	// 成功后行落在 now+90d，远在 now+7d 之外，所以并发续期者会撞上 WHERE 条件得到
+	// ErrNoRows。
 	renewThreshold := pgtype.Timestamptz{Time: now.Add(PATRenewThreshold), Valid: true}
 	updated, err := h.Queries.ExtendPersonalAccessTokenExpiry(r.Context(), db.ExtendPersonalAccessTokenExpiryParams{
 		ID:               pat.ID,
@@ -233,11 +233,9 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 			Renewed:   true,
 		})
 	case errors.Is(err, pgx.ErrNoRows):
-		// A concurrent renew (or revoke) won the race. Re-read the current
-		// row and report what's there now — the daemon's only correctness
-		// guarantee is "after a successful call, expires_at is fresh enough
-		// to last until the next poll", and a parallel writer already
-		// satisfied that, so this is success from the caller's POV.
+		// 并发的续期（或撤销）赢了竞态。重读当前行并如实报告——daemon 唯一的正确性
+		// 保证是「成功返回后 expires_at 新鲜到能撑到下一次轮询」，而并行写入者已经满足
+		// 了它，所以在调用方看来这就是成功。
 		current, getErr := h.Queries.GetPersonalAccessTokenByHash(r.Context(), hash)
 		if getErr != nil {
 			writeError(w, http.StatusUnauthorized, "token is no longer valid")
@@ -252,6 +250,8 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 	}
 }
 
+// RevokePersonalAccessToken 撤销一条 PAT（仅本人）。成功时立即清缓存条目，让撤销在
+// TTL 自然过期前就生效。
 func (h *Handler) RevokePersonalAccessToken(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -269,12 +269,10 @@ func (h *Handler) RevokePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 	})
 	switch {
 	case err == nil:
-		// Drop the cache entry immediately so the revocation takes effect
-		// before the TTL would otherwise expire the cached lookup.
+		// 立即清缓存条目，让撤销在 TTL 把缓存查询弄过期之前就生效。
 		h.PATCache.Invalidate(r.Context(), hash)
 	case errors.Is(err, pgx.ErrNoRows):
-		// Token doesn't exist or doesn't belong to this user. Preserve the
-		// pre-existing idempotent 204 behavior — no cache entry to clear.
+		// token 不存在或不属于该用户。保持既有的幂等 204 行为——没有缓存条目可清。
 	default:
 		writeError(w, http.StatusInternalServerError, "failed to revoke token")
 		return

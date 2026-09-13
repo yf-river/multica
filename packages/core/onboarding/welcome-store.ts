@@ -1,66 +1,61 @@
+// 本文件实现「welcome 信号」store：用户跳过 runtime 连接后，把这份瞬时意图
+// 从引导页带给随后登场的工作区外壳。
+
 import { create } from "zustand";
 
 /**
- * Welcome signal — written by the runtime step only when the user skips
- * connecting a runtime, then consumed exactly once by the
- * `<WelcomeAfterOnboarding />` component in the workspace shell.
+ * Welcome 信号——仅在用户跳过连接 runtime 时由 runtime 步骤写入，然后被工作区
+ * 外壳里的 `<WelcomeAfterOnboarding />` 组件恰好消费一次。
  *
- * The signal is the bridge between the onboarding screen and the workspace
- * shell that succeeds it. `onboarded_at` is already true by the time we
- * land in the workspace — this carries the transient no-runtime intent
- * without persisting it on the user
- * row (the v2 design persisted it as fields and leaked complexity
- * everywhere).
+ * 这个信号是「引导屏」和「接替它的工作区外壳」之间的桥梁。我们进入工作区时
+ * `onboarded_at` 已经为 true——它承载的是那份瞬时的「无 runtime」意图，而不
+ * 把这份意图持久化到用户行上（v2 设计把它持久化成字段，结果复杂度漏得到处
+ * 都是）。
  *
- * The signal is only needed when the user explicitly skips runtime setup.
- * The workspace welcome hook seeds one install-runtime guide and shows it in
- * a modal. Once a runtime appears, the Runtimes page offers the same Mika
- * bootstrap used by the connected onboarding path. Runtime-connected
- * onboarding creates Mika before reaching the workspace and does not use
- * this signal.
+ * 信号只在用户显式跳过 runtime 设置时需要。工作区 welcome hook 会种一条
+ * 「安装 runtime」的引导 issue 并在弹窗里展示。一旦出现 runtime，Runtimes 页
+ * 就提供与「已连接引导路径」相同的 Mika bootstrap。连了 runtime 的引导在到达
+ * 工作区之前就已创建 Mika，不走这个信号。
  */
 export interface WelcomeSignal {
   workspaceId: string;
   choice: "skip";
 }
 
+/** welcome store 的状态结构。 */
 interface WelcomeStoreState {
   signal: WelcomeSignal | null;
   /**
-   * True after the user has explicitly engaged with the Welcome surface —
-   * opened the runtime guide or closed the Skip modal.
-   * Components MUST treat `signal && !dismissed` as the render condition;
-   * `dismiss()` is what removes the modal from view.
+   * 用户显式与 Welcome 界面交互过之后为 true——打开了 runtime 引导或关掉了
+   * Skip 弹窗。组件 MUST 以 `signal && !dismissed` 作为渲染条件；`dismiss()`
+   * 才是把弹窗从视图上拿掉的动作。
    */
   dismissed: boolean;
+  /** 写入一份 welcome 信号（同时重置 dismissed）。 */
   set: (signal: WelcomeSignal) => void;
   /**
-   * Mark the Welcome surface as engaged-with. Idempotent. Keeps the
-   * signal in the store as a record but components will stop rendering.
-   * We don't fully clear the store on dismiss so a debug peek (or a
-   * future analytics hook) can still see which path the user took.
+   * 把 Welcome 界面标记为「已交互」。幂等。信号仍留在 store 里作记录，但组件
+   * 不再渲染它。dismiss 时不清空整个 store，这样调试窥视（或未来某个分析
+   * hook）仍能看到用户走的是哪条路。
    */
   dismiss: () => void;
   /**
-   * Full reset — clear signal AND dismissed. Used by tests and by the
-   * user logout flow (so a different user logging into the same browser
-   * doesn't inherit a stale signal).
+   * 完全重置——同时清掉 signal 和 dismissed。供测试以及用户登出流程使用
+   * （避免另一个用户在同一浏览器登录时继承一份过期的信号）。
    */
   reset: () => void;
 }
 
 /**
- * Zustand store, deliberately NOT persisted. Reloading the page drops the
- * signal — that's the correct behavior: the user already finished
- * onboarding (onboarded_at is set), and Welcome was a one-shot UI. We
- * never want a refresh to re-trigger setup-guide creation.
+ * Zustand store，刻意不持久化。刷新页面即丢信号——这是正确行为：用户已经
+ * 完成引导（onboarded_at 已设置），Welcome 是一次性 UI。绝不想让一次刷新
+ * 重新触发 setup-guide 的创建。
  *
- * Why subscription model instead of read-once-consume: React 18+ StrictMode
- * dev mode mounts components twice (mount → unmount → mount). If the
- * component consumed the store in a `useState` initializer, the second
- * mount would see an already-empty store and render null — Welcome would
- * never appear in dev. Subscribing to a stable store + tracking dismissal
- * in the store sidesteps both mounts seeing the same state.
+ * 为什么用订阅模型而不是「读一次即消费」：React 18+ 的 StrictMode 开发模式
+ * 会把组件挂载两次（mount → unmount → mount）。若组件在 `useState` 初始化器
+ * 里消费 store，第二次挂载看到的是已被清空的 store，会渲染 null——Welcome
+ * 在开发模式下永远不出现。订阅一个稳定的 store 并把 dismissed 记在 store 里，
+ * 能让两次挂载看到同一份状态。
  */
 export const useWelcomeStore = create<WelcomeStoreState>((set) => ({
   signal: null,

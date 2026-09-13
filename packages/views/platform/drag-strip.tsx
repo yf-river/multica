@@ -1,23 +1,20 @@
 import type { CSSProperties } from "react";
 
 /**
- * 48px-tall transparent strip that claims `-webkit-app-region: drag` so
- * macOS users can grab the window by its top edge — under (and making
- * room for) the native traffic lights.
+ * platform 模块：48px 高的透明条，声明 `-webkit-app-region: drag`，让 macOS
+ * 用户能抓住窗口顶边拖动——就在原生红绿灯的下方（并为其让出空间）。
  *
- * Place as the first flex child of any full-window, non-dashboard view
- * (onboarding, new-workspace, invite, no-access, etc.). The strip has
- * no background of its own; the parent's bg fills through it so the
- * page reads as "edge-to-edge" while the top 48px remains draggable.
+ * 把它作为任何全窗口、非仪表盘视图（onboarding、新建工作区、邀请、无权限等）
+ * 的第一个 flex 子元素。本条自身没有背景，父级背景透过它铺满，页面读起来是
+ * 「真正的全出血」，而顶部 48px 仍可拖动。
  *
- * Cross-platform: `-webkit-app-region` is a Chromium-only CSS extension;
- * regular browsers silently ignore it and the element becomes plain
- * 48px of top breathing room. That makes it safe to keep in shared
- * `packages/views/` without platform branching.
+ * 跨平台：`-webkit-app-region` 是 Chromium 专属 CSS 扩展；普通浏览器会静默
+ * 忽略它，元素退化成普通 48px 顶部留白。这让它可以安全地留在共享的
+ * `packages/views/` 里而无需按平台分叉。
  *
- * Flex child, **not** absolute overlay: `-webkit-app-region` hit-testing
- * with z-index stacking has been empirically unreliable in this codebase
- * (see CLAUDE.md "Drag region" note).
+ * 必须是 flex 子元素，而不是绝对定位浮层：本代码库经验表明
+ * `-webkit-app-region` 的命中测试与 z-index 层级叠加并不可靠
+ * （见 CLAUDE.md「Drag region」说明）。
  */
 export function DragStrip() {
   return (

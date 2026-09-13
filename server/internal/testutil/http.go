@@ -13,12 +13,10 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// JSONRequest builds a request whose body is body encoded as JSON.
+// JSONRequest 构造一个 body 为"把 body 按 JSON 编码后"的请求。
 //
-// body is passed through unencoded when it is already a string, []byte or
-// io.Reader, so a test can post a malformed payload — the malformed-response
-// tests the endpoint checklist asks for would otherwise have to bypass this
-// helper and rebuild the headers by hand.
+// 当 body 本身已是 string、[]byte 或 io.Reader 时原样透传，这样测试可以 POST 畸形
+// 载荷——端点检查清单要求的畸形响应测试否则得绕过本辅助手动重建请求头。
 func JSONRequest(method, path string, body any) *http.Request {
 	var reader io.Reader
 	switch v := body.(type) {
@@ -33,9 +31,8 @@ func JSONRequest(method, path string, body any) *http.Request {
 	default:
 		var buf bytes.Buffer
 		if err := json.NewEncoder(&buf).Encode(v); err != nil {
-			// Encoding a literal built inside a test can only fail on a value
-			// no test means to send (a channel, a NaN); panicking here reports
-			// it at the call site instead of as a confusing empty body later.
+			// 在测试里构造的字面量只有值本身无法编码（channel、NaN）时才会失败；
+			// 这里 panic 能把它报告在调用点，而不是稍后变成让人困惑的空 body。
 			panic(fmt.Sprintf("testutil: encode request body for %s %s: %v", method, path, err))
 		}
 		reader = &buf
@@ -45,7 +42,7 @@ func JSONRequest(method, path string, body any) *http.Request {
 	return req
 }
 
-// WithHeaders sets alternating key/value header pairs and returns req.
+// WithHeaders 以 key/value 交替形式设置请求头并返回 req。
 func WithHeaders(req *http.Request, kv ...string) *http.Request {
 	if len(kv)%2 != 0 {
 		panic("testutil: WithHeaders needs an even number of key/value arguments")
@@ -56,8 +53,8 @@ func WithHeaders(req *http.Request, kv ...string) *http.Request {
 	return req
 }
 
-// WithURLParams attaches alternating chi URL param key/value pairs, which is
-// how a handler called directly — without its router — reads path segments.
+// WithURLParams 以 key/value 交替形式附加 chi 的 URL 参数。绕过 router 直接调
+// handler 时，路径段就是这样读取的。
 func WithURLParams(req *http.Request, kv ...string) *http.Request {
 	if len(kv)%2 != 0 {
 		panic("testutil: WithURLParams needs an even number of key/value arguments")
@@ -69,19 +66,17 @@ func WithURLParams(req *http.Request, kv ...string) *http.Request {
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
-// TB is the part of *testing.T these helpers use. Taking the interface rather
-// than the concrete type is what lets this package assert on its own failure
-// messages — the messages are the reason a shared assertion is worth having,
-// so they need a test of their own.
+// TB 是本包辅助用到的 *testing.T 的那部分能力。取接口而非具体类型，正是为了让本包
+// 能对自己的失败消息做断言——消息本身就是共享断言值得存在的原因，所以它们需要
+// 属于自己的测试。
 type TB interface {
 	Helper()
 	Fatalf(format string, args ...any)
 	Cleanup(func())
 }
 
-// Response is the recorded result of one handler call. Its assertions are
-// fatal: a test that misread the status has already misread everything it
-// would decode out of the body.
+// Response 是某次 handler 调用的记录结果。其断言是致命的：读错状态的测试，随后
+// 从 body 解码出来的一切也都读错了。
 type Response struct {
 	*httptest.ResponseRecorder
 
@@ -89,7 +84,7 @@ type Response struct {
 	req *http.Request
 }
 
-// Call runs h against req and records what it wrote.
+// Call 用 req 驱动 h 并记录它写出的内容。
 func Call(t TB, h http.HandlerFunc, req *http.Request) *Response {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -97,9 +92,8 @@ func Call(t TB, h http.HandlerFunc, req *http.Request) *Response {
 	return &Response{ResponseRecorder: rec, t: t, req: req}
 }
 
-// Want fails the test unless the handler wrote status code want. The failure
-// message carries the request line and the response body, because the body is
-// where a handler says which of its several rejections fired.
+// Want 在 handler 写出的状态码不是 want 时让测试失败。失败消息带请求行与响应体，
+// 因为 handler 是靠 body 表达它触发了哪一路拒绝的。
 func (r *Response) Want(want int) *Response {
 	r.t.Helper()
 	if r.Code != want {
@@ -109,9 +103,8 @@ func (r *Response) Want(want int) *Response {
 	return r
 }
 
-// WantOneOf fails the test unless the status is one of want. Use it only where
-// more than one status is genuinely correct; asserting a set to dodge a flake
-// hides the flake.
+// WantOneOf 在状态码不属于 want 集合中的任何一个时让测试失败。仅在确实可能有多个
+// 正确状态码时使用；用"断言一个集合"来规避 flake 反而会掩盖 flake。
 func (r *Response) WantOneOf(want ...int) *Response {
 	r.t.Helper()
 	for _, code := range want {
@@ -124,7 +117,7 @@ func (r *Response) WantOneOf(want ...int) *Response {
 	return r
 }
 
-// JSON decodes the response body into dest.
+// JSON 把响应体解码到 dest。
 func (r *Response) JSON(dest any) *Response {
 	r.t.Helper()
 	if err := json.Unmarshal(r.Body.Bytes(), dest); err != nil {
@@ -134,8 +127,7 @@ func (r *Response) JSON(dest any) *Response {
 	return r
 }
 
-// Map decodes the body into a generic object, for assertions that only touch
-// one or two fields and do not earn a named struct.
+// Map 把响应体解码成通用对象，适合只断言一两个字段、不值得建命名结构体的场景。
 func (r *Response) Map() map[string]any {
 	r.t.Helper()
 	out := map[string]any{}
@@ -143,12 +135,11 @@ func (r *Response) Map() map[string]any {
 	return out
 }
 
-// Text returns the raw response body.
+// Text 返回原始响应体。
 func (r *Response) Text() string { return r.Body.String() }
 
-// Decode runs the handler, asserts the status and decodes the body in one
-// expression, for the common case where the caller wants a typed payload and
-// has no other use for the response.
+// Decode 在一个表达式里完成"跑 handler、断言状态、解码 body"，适合调用方想要
+// 类型化载荷、对响应别无他用的情况。
 func Decode[T any](t TB, h http.HandlerFunc, req *http.Request, want int) T {
 	t.Helper()
 	var out T

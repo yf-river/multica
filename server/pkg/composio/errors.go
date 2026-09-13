@@ -6,10 +6,9 @@ import (
 	"net/http"
 )
 
-// APIError is the canonical error returned by the SDK when Composio responds
-// with a non-2xx HTTP status.
+// APIError 是 Composio 返回非 2xx 状态时，SDK 对外抛出的统一错误类型。
 //
-// The Composio error envelope as of v3.1 looks like:
+// Composio v3.1 的错误包络（envelope）形如：
 //
 //	{
 //	  "error": {
@@ -23,9 +22,9 @@ import (
 //	  }
 //	}
 //
-// HTTPStatus is the transport status as observed locally; the rest mirrors
-// the body if Composio returned one. RawBody is preserved verbatim so
-// callers can log the full upstream response for debugging.
+// HTTPStatus 是本机观察到的传输层状态码；其余字段是上游响应体的镜像
+// （前提是 Composio 确实返回了 body）。RawBody 原样保留完整响应，
+// 方便调用方排查问题时把上游全文打进日志。
 type APIError struct {
 	HTTPStatus   int      `json:"-"`
 	Message      string   `json:"message,omitempty"`
@@ -38,7 +37,7 @@ type APIError struct {
 	RawBody      []byte   `json:"-"`
 }
 
-// Error implements error. It surfaces the upstream status, slug, and message.
+// Error 让 APIError 实现 error 接口。输出时把上游的状态码、slug 和消息拼成一行。
 func (e *APIError) Error() string {
 	if e == nil {
 		return ""
@@ -53,23 +52,22 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("composio: %d %s", e.HTTPStatus, msg)
 }
 
-// IsNotFound reports whether the error is an HTTP 404 — useful for idempotent
-// delete/revoke flows.
+// IsNotFound 判断该错误是否为 HTTP 404 —— 常用于「删除/撤销要幂等」的流程。
 func (e *APIError) IsNotFound() bool { return e != nil && e.HTTPStatus == http.StatusNotFound }
 
-// IsUnauthorized reports whether the error is an HTTP 401.
+// IsUnauthorized 判断该错误是否为 HTTP 401（凭证无效）。
 func (e *APIError) IsUnauthorized() bool {
 	return e != nil && e.HTTPStatus == http.StatusUnauthorized
 }
 
-// IsRateLimited reports whether the error is an HTTP 429.
+// IsRateLimited 判断该错误是否为 HTTP 429（被上游限流）。
 func (e *APIError) IsRateLimited() bool {
 	return e != nil && e.HTTPStatus == http.StatusTooManyRequests
 }
 
-// parseAPIError decodes Composio's `{"error": {...}}` envelope. If the body
-// is not the expected shape it returns an APIError carrying just HTTPStatus
-// and RawBody so callers still see something useful.
+// parseAPIError 解析 Composio 形如 {"error": {...}} 的错误包络。
+// 如果 body 不是预期形状，就返回一个只带 HTTPStatus 和 RawBody 的 APIError，
+// 保证调用方至少还能拿到点有用的信息。
 func parseAPIError(status int, body []byte) *APIError {
 	out := &APIError{HTTPStatus: status, RawBody: body}
 	if len(body) == 0 {
@@ -79,7 +77,7 @@ func parseAPIError(status int, body []byte) *APIError {
 		Error APIError `json:"error"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
-		// Body is not the expected envelope — leave RawBody set, message empty.
+		// body 不是预期的错误包络——保留 RawBody、message 留空即可。
 		return out
 	}
 	wire.Error.HTTPStatus = status

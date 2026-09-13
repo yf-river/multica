@@ -1,3 +1,6 @@
+// client.go 实现 entitlement 的 Client：从 Multica Cloud 内部端点拉取某个 workspace
+// 的策略并缓存。每个 workspace 同一时刻至多一个在途刷新（singleflight 合并并发请求）。
+// Client 没有 goroutine、没有后台生命周期——所有刷新都是请求路径上同步完成的。
 package entitlement
 
 import (
@@ -30,8 +33,8 @@ var (
 	ErrInvalidPolicy = errors.New("entitlement: invalid policy response")
 )
 
-// Config has no environment-loading side effects. A zero Config is disabled;
-// setting BaseURL connects the client to the internal Cloud policy endpoint.
+// Config 没有任何「加载环境变量」的副作用。零值 Config 表示禁用；设置 BaseURL 会把
+// 客户端连到内部 Cloud 策略端点。
 type Config struct {
 	BaseURL    string
 	HTTPClient *http.Client
@@ -39,8 +42,8 @@ type Config struct {
 	Logger     *slog.Logger
 }
 
-// Client implements Provider with a bounded workspace cache and one in-flight
-// refresh per workspace. It has no goroutines or background lifecycle.
+// Client 实现 Provider：带一个「有界 workspace 缓存」与「每 workspace 至多一个在途
+// 刷新」。它没有 goroutine 或后台生命周期。
 type Client struct {
 	enabled    bool
 	baseURL    *url.URL
@@ -54,8 +57,11 @@ type Client struct {
 	refreshes  singleflight.Group
 }
 
+// 编译期断言：*Client 实现 Provider。
 var _ Provider = (*Client)(nil)
 
+// New 构造 Client。BaseURL 为空则返回禁用实例（仅保留 observer/时钟）。BaseURL 必须
+// 是「无凭证、无 query、无 fragment」的绝对 http(s) URL。
 func New(cfg Config) (*Client, error) {
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return &Client{observer: cfg.Observer, now: time.Now}, nil
@@ -72,7 +78,7 @@ func New(cfg Config) (*Client, error) {
 		clone := *cfg.HTTPClient
 		httpClient = &clone
 	}
-	// Internal Cloud calls must not follow a redirect to another origin.
+	// 内部 Cloud 调用绝不能跟随重定向跳到别的源站。
 	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	logger := cfg.Logger
 	if logger == nil {
@@ -92,8 +98,11 @@ func New(cfg Config) (*Client, error) {
 	}, nil
 }
 
+// Enabled 报告该客户端是否启用（nil 或未配置 BaseURL 都为 false）。
 func (c *Client) Enabled() bool { return c != nil && c.enabled }
 
+// Gate 返回某 workspace 上某个门当前应怎么做的判词。缓存/刷新决策都在这里完成；
+// 一切降级路径都以 ActionOff 或「陈旧快照降级为 observe」的形式返回，绝不抛错。
 func (c *Client) Gate(ctx context.Context, workspaceID uuid.UUID, name GateName) Decision {
 	if !c.Enabled() {
 		return c.recordDecision(name, offDecision(ReasonDisabled))
@@ -111,6 +120,7 @@ func (c *Client) Gate(ctx context.Context, workspaceID uuid.UUID, name GateName)
 		c.recordCache("hit")
 		return c.recordDecision(name, decisionFromEntry(cached, name, ReasonCacheFresh, false))
 	}
+	// 上次刷新刚失败、还在退避期内：尽量用缓存；没有可用缓存则直接判 off。
 	if cachedOK && now.Before(cached.retryAfter) {
 		c.recordCache("retry_suppressed")
 		if cached.hasPolicy && now.Before(cached.staleUntil) {
@@ -133,9 +143,8 @@ func (c *Client) Gate(ctx context.Context, workspaceID uuid.UUID, name GateName)
 		return c.recordDecision(name, decisionFromEntry(entry, name, reason, false))
 	}
 
-	// A stale policy is safe only after enforcement is downgraded to observe.
-	// Re-read the cache because another caller may have refreshed it while this
-	// call was waiting in singleflight.
+	// 陈旧策略只在「执行等级已降为 observe」之后才安全。重新读缓存，因为等待
+	// singleflight 期间别的调用方可能已经刷新过了。
 	now = c.now()
 	if cached, ok := c.cache.get(workspaceID); ok && cached.hasPolicy && now.Before(cached.staleUntil) {
 		return c.recordDecision(name, decisionFromEntry(cached, name, ReasonStale, true))
@@ -150,15 +159,16 @@ func (c *Client) Gate(ctx context.Context, workspaceID uuid.UUID, name GateName)
 	return c.recordDecision(name, offDecision(reason))
 }
 
+// refreshResult 是一次刷新的结果：refreshed=false 表示没有真正发请求（缓存仍新鲜）。
 type refreshResult struct {
 	entry     cacheEntry
 	refreshed bool
 }
 
+// refresh 为该 workspace 刷新策略（同一 workspace 的所有调用方共享一次在途刷新）。
 func (c *Client) refresh(ctx context.Context, workspaceID uuid.UUID) (cacheEntry, bool, error) {
-	// A refresh is shared by all callers for this workspace, so its lifetime
-	// cannot belong to whichever request happens to enter singleflight first.
-	// Keep request-scoped values, but let the independent fetch timeout bound it.
+	// 一次刷新被该 workspace 的所有调用方共享，所以它的生命周期不能属于「恰好先进入
+	// singleflight 的那个请求」。保留请求作用域的值，但用独立的 fetch 超时来约束它。
 	refreshCtx := context.WithoutCancel(ctx)
 	value, err, _ := c.refreshes.Do(workspaceID.String(), func() (any, error) {
 		now := c.now()
@@ -209,6 +219,7 @@ func (c *Client) refresh(ctx context.Context, workspaceID uuid.UUID) (cacheEntry
 	return result.entry, result.refreshed, nil
 }
 
+// wirePolicy 是 Cloud 策略端点的线上 JSON 结构（schema 见 SchemaVersion）。
 type wirePolicy struct {
 	SchemaVersion       int                 `json:"schema_version"`
 	PolicyRevision      int64               `json:"policy_revision"`
@@ -218,6 +229,7 @@ type wirePolicy struct {
 	Gates               map[string]wireGate `json:"gates"`
 }
 
+// wireGate 是单个门的线上 JSON 形态。
 type wireGate struct {
 	Action      string     `json:"action"`
 	Limit       *int       `json:"limit"`
@@ -226,11 +238,13 @@ type wireGate struct {
 	ResetAt     *time.Time `json:"reset_at"`
 }
 
+// fetchedPolicy 是一次成功拉取的结果：快照 + 有效秒数。
 type fetchedPolicy struct {
 	snapshot        policySnapshot
 	validForSeconds int64
 }
 
+// fetch 真正向 Cloud 策略端点发一次 GET。
 func (c *Client) fetch(ctx context.Context, workspaceID uuid.UUID) (fetchedPolicy, error) {
 	u := *c.baseURL
 	u.Path = strings.TrimRight(c.baseURL.Path, "/") + "/api/v1/internal/entitlement-policies/" + workspaceID.String()
@@ -256,6 +270,7 @@ func (c *Client) fetch(ctx context.Context, workspaceID uuid.UUID) (fetchedPolic
 	if resp.StatusCode != http.StatusOK {
 		return fetchedPolicy{}, &fetchError{outcome: statusOutcome(resp.StatusCode)}
 	}
+	// 限定响应体大小（+1 是为了能判断是否超限）。
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize+1))
 	if err != nil {
 		return fetchedPolicy{}, &fetchError{outcome: "read"}
@@ -270,6 +285,8 @@ func (c *Client) fetch(ctx context.Context, workspaceID uuid.UUID) (fetchedPolic
 	return normalizePolicy(wire)
 }
 
+// normalizePolicy 把线上结构校验并归一化成内部快照。schema 版本不符、修订号/有效期
+// 缺失、TTL 非法等一律判 ErrInvalidPolicy。
 func normalizePolicy(wire wirePolicy) (fetchedPolicy, error) {
 	if wire.SchemaVersion != SchemaVersion || wire.PolicyRevision <= 0 || wire.SubscriptionVersion < 0 ||
 		wire.ValidUntil.IsZero() || wire.ValidForSeconds <= 0 || wire.ValidForSeconds > int64(maxPolicyTTL/time.Second) {
@@ -298,6 +315,8 @@ func normalizePolicy(wire wirePolicy) (fetchedPolicy, error) {
 	}, nil
 }
 
+// normalizeGate 校验并归一化单个门：off 不带额度；enforce 必须有非负额度；周期字段
+// 要么全给、要么全不给；autopilot_runs 门强制要求完整周期。
 func normalizeGate(name GateName, wire wireGate) (Gate, error) {
 	action := Action(wire.Action)
 	switch action {
@@ -334,6 +353,8 @@ func normalizeGate(name GateName, wire wireGate) (Gate, error) {
 	return gate, nil
 }
 
+// decisionFromEntry 从缓存条目构造一条决策。stale=true 且原动作是 enforce 时降级为
+// observe——陈旧数据不能再用来拦人。
 func decisionFromEntry(entry cacheEntry, name GateName, reason Reason, stale bool) Decision {
 	gate := cloneGate(entry.policy.gates[name])
 	if stale && gate.Action == ActionEnforce {
@@ -348,12 +369,14 @@ func decisionFromEntry(entry cacheEntry, name GateName, reason Reason, stale boo
 	}
 }
 
+// fetchError 是一次拉取失败的细分原因（供观测/日志，不暴露给调用方）。
 type fetchError struct {
 	outcome string
 }
 
 func (e *fetchError) Error() string { return "entitlement policy fetch failed: " + e.outcome }
 
+// statusOutcome 把 HTTP 状态码归类成简短结果词。
 func statusOutcome(status int) string {
 	switch {
 	case status == http.StatusUnauthorized:
@@ -369,6 +392,7 @@ func statusOutcome(status int) string {
 	}
 }
 
+// refreshOutcome 把刷新错误归类成观测用的结果词。
 func refreshOutcome(err error) string {
 	var fetchErr *fetchError
 	if errors.As(err, &fetchErr) {

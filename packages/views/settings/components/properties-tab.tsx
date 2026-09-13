@@ -1,3 +1,7 @@
+// 本文件是「问题自定义属性」设置标签页：以表格形式列出工作区的 issue 自定义字段，
+// 支持搜索、切换显示已归档、新建 / 编辑属性（select 类需维护选项及其颜色）、归档与恢复；
+// 属性达到 20 个活跃上限后「新建」按钮禁用。
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -79,14 +83,17 @@ import {
 import { useLocale, useT } from "../../i18n";
 import { SettingsTab } from "./settings-layout";
 
+// 单个工作区允许的"活跃（未归档）自定义属性"上限，超出后不能再新建。
 const MAX_ACTIVE_PROPERTIES = 20;
 
+/** 属性中单个选项的草稿：编辑已有选项时带 id，新选项留空即可。 */
 interface OptionDraft {
   id?: string;
   name: string;
   color: string;
 }
 
+/** 新建 / 编辑属性的表单草稿：名称、类型、描述、图标，以及（select 类才有的）选项列表。 */
 interface PropertyDraft {
   name: string;
   type: IssuePropertyType;
@@ -95,6 +102,7 @@ interface PropertyDraft {
   options: OptionDraft[];
 }
 
+// 空白草稿：默认建一个 select 属性，并预置一个待填写的空选项（默认色取预设第 7 个）。
 const EMPTY_DRAFT: PropertyDraft = {
   name: "",
   type: "select",
@@ -103,10 +111,15 @@ const EMPTY_DRAFT: PropertyDraft = {
   options: [{ name: "", color: COLOR_PICKER_PRESETS[6] }],
 };
 
+/** 判断属性类型是否需要维护"选项列表"：只有单选与多选需要。 */
 function typeHasOptions(type: string): boolean {
   return type === "select" || type === "multi_select";
 }
 
+/**
+ * 「问题自定义属性」设置标签页：列出属性（名称/类型/选项/使用量/更新时间），
+ * 支持搜索与「显示已归档」开关；管理员可新建、编辑、归档与恢复属性。
+ */
 export function PropertiesTab() {
   const { t } = useT("settings");
   const locale = useLocale();
@@ -330,6 +343,7 @@ export function PropertiesTab() {
   );
 }
 
+/** 把属性类型名渲染成当前语言下的类型标签；列表中「类型」列与新建弹窗的类型下拉共用。 */
 export function PropertyTypeLabel({ type }: { type: string }) {
   const { t } = useT("settings");
   switch (type) {
@@ -352,11 +366,15 @@ export function PropertyTypeLabel({ type }: { type: string }) {
     case "multi_actor":
       return <>{t(($) => $.properties.types.multi_actor)}</>;
     default:
-      // Forward compat: newer servers may ship types this build doesn't know.
+      // 向前兼容：新版服务端可能下发这个前端版本还不认识的新类型，那就原样展示类型名兜底。
       return <>{type}</>;
   }
 }
 
+/**
+ * 新建 / 编辑属性的共用弹窗：传入 property 走编辑（类型锁定不可改），否则新建。
+ * select / multi_select 类型可在此维护选项名与颜色；每次打开都会重置表单。
+ */
 function PropertyEditorDialog({
   open,
   onOpenChange,
@@ -653,6 +671,7 @@ function PropertyEditorDialog({
   );
 }
 
+/** 归档确认弹窗：把属性标记为归档（不再用于新 issue，但旧数据保留、可随时恢复）。 */
 function ArchivePropertyDialog({
   property,
   onClose,

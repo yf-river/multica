@@ -1,3 +1,8 @@
+// 侧车清单（sidecar manifest）：Prepare 会把在 agent WorkDir（含用户自己
+// 的 local_directory 仓库）里创建的每个文件与中间目录记录成磁盘清单；
+// Cleanup 依它把这些写入精确回滚。清单一侧"绝不覆盖已存在路径"的约束，
+// 让清理永远是"删除我们创建的路径"，而不是"恢复被覆盖的内容"。
+
 package execenv
 
 import (
@@ -9,75 +14,59 @@ import (
 	"path/filepath"
 )
 
-// sidecarManifestFile is the on-disk JSON Prepare writes into envRoot to
-// record every file and intermediate directory it created inside WorkDir.
-// CleanupSidecars reads it back to roll the workdir to its pre-Prepare
-// state. The file lives in envRoot (daemon scratch), never in WorkDir,
-// so a local_directory run does not litter the user's repo with the
-// bookkeeping file used to undo the litter.
+// sidecarManifestFile 是 Prepare 写进 envRoot 的磁盘 JSON 文件名，记录它在
+// WorkDir 内创建的每一个文件与中间目录。CleanupSidecars 读回它，把工作目录
+// 回滚到 Prepare 之前的状态。该文件住在 envRoot（daemon 暂存区），绝不住在
+// WorkDir——否则 local_directory 运行会把"用来撤销垃圾的记账文件"本身留在
+// 用户仓库里。
 const sidecarManifestFile = ".multica_sidecar_manifest.json"
 
-// errPathPreExists is the sentinel recordWriteFile returns when the
-// target path already exists. The manifest contract is that we never
-// mutate paths we don't own: a pre-existing file belongs to the user
-// (or to stale state from a crashed prior run we cannot safely
-// distinguish from intentional user content) and the write must be
-// refused so cleanup can be a pure deletion of paths we created.
+// errPathPreExists 是 recordWriteFile 在目标路径已存在时返回的哨兵错误。
+// 清单契约是：我们绝不改动不归我们所有的路径——一个已存在的文件要么属于
+// 用户，要么是某次崩溃运行的陈旧残留（我们无法安全地与有意为之的用户内容
+// 区分），因此写入必须被拒绝，使清理能够成为对我们所建路径的纯删除。
 //
-// Callers handle this in one of two ways:
+// 调用方用两种方式处理它：
 //
-//   - For per-skill directories the caller allocates a collision-free
-//     alternative slug (see allocateCollisionFreeSkillDir) and retries
-//     so the agent still discovers the Multica skill, just under a
-//     different directory name.
-//   - For Multica-only namespaces (.agent_context/issue_context.md,
-//     .multica/project/resources.json) the caller swallows the error
-//     and proceeds — the agent's runtime brief already carries every
-//     fact that would have appeared in those files, so missing-from-
-//     disk is degraded behavior, not failure.
+//   - 对按技能建目录的场景，调用方分配一个无冲突的备选 slug
+//     （见 allocateCollisionFreeSkillDir）并重试，让 agent 仍能发现 Multica
+//     技能，只是目录名不同。
+//   - 对 Multica 专属命名空间（.agent_context/issue_context.md、
+//     .multica/project/resources.json），调用方吞掉错误继续——agent 的运行时
+//     brief 已携带本会出现在这些文件里的全部事实，所以"磁盘上没有"只是降级
+//     行为，而非失败。
 var errPathPreExists = errors.New("execenv: refuse to overwrite pre-existing path")
 
-// sidecarManifest records the filesystem mutations writeContextFiles and
-// its callees make inside the agent's WorkDir for a single task. The
-// manifest is the second half of the contract that makes local_directory
-// runs byte-exactly reversible:
+// sidecarManifest 记录 writeContextFiles 及其调用方为单次任务在 agent WorkDir
+// 内做的文件系统改动。该清单是"让 local_directory 运行可按字节精确撤销"契约
+// 的后半段：
 //
-//   - Files lists absolute paths of regular files we created. Files are
-//     recorded only after recordWriteFile has verified the target did
-//     NOT pre-exist; recordWriteFile refuses to overwrite a pre-existing
-//     path, so the manifest's existence rule and the write side's
-//     refuse-to-clobber rule are the same invariant viewed from two
-//     sides.
-//   - Dirs lists absolute paths of directories we created, in root-first
-//     creation order. Cleanup walks the list in reverse so deepest dirs
-//     get tried first; rmdir of a directory the user has populated since
-//     (e.g. .claude/skills/my-own-skill alongside our .claude/skills/
-//     issue-review) fails ENOTEMPTY and is skipped silently — the
-//     user's content is preserved without any per-dir bookkeeping. A
-//     directory is recorded only when it did NOT pre-exist for the same
-//     reason files are conditional.
+//   - Files 列出我们创建的常规文件的绝对路径。只有在 recordWriteFile 验证过
+//     目标"原本不存在"之后文件才会被记录；recordWriteFile 拒绝覆盖已存在
+//     路径，因此"清单的存在性规则"与"写入侧拒绝覆盖规则"是同一个不变量从
+//     两个方向看。
+//   - Dirs 列出我们创建的目录的绝对路径，按"根在前"的创建顺序。Cleanup 逆序
+//     遍历，先尝试最深的目录；对"用户此后又放入了内容"的目录（例如我们的
+//     .claude/skills/issue-review 旁边出现了用户的 .claude/skills/my-own-skill）
+//     rmdir 会报 ENOTEMPTY，此时静默跳过——用户内容被保留，且无需任何逐目录
+//     记账。与文件同理，目录只在其"原本不存在"时才被记录。
 //
-// The manifest is intentionally minimal: it carries the paths needed to
-// reverse our writes and nothing else. It is not a log of every operation
-// and is not a substitute for the runtime config marker block, which has
-// its own dedicated round-trip mechanism in runtime_config.go (the brief
-// is appended to user-owned content rather than written into a new sidecar
-// directory).
+// 清单刻意保持最小：只携带撤销我们的写入所需的路径，别无其他。它不是每次
+// 操作的操作日志，也不能替代运行时配置标记区块——后者在 runtime_config.go
+// 里有自己专门的往返机制（brief 是追加到用户已有的内容里，而非写进一个新的
+// 侧车目录）。
 type sidecarManifest struct {
 	Files []string `json:"files,omitempty"`
 	Dirs  []string `json:"dirs,omitempty"`
 }
 
-// recordMkdirAll behaves like os.MkdirAll(path, perm) but additionally
-// records every parent directory it had to create (skipping any that
-// already existed) into m so CleanupSidecars can rmdir them later. The
-// recorded paths are appended in root-first order; Cleanup iterates in
-// reverse so the deepest directory is removed first.
+// recordMkdirAll 行为与 os.MkdirAll(path, perm) 相同，但额外把它不得不创建
+// 的每个父目录（跳过任何已存在的）记录进 m，供 CleanupSidecars 日后 rmdir。
+// 记录的路径按"根在前"追加；Cleanup 逆序迭代，因此最深的目录先被删除。
 //
-// When m is nil this is identical to os.MkdirAll — the Reuse path uses
-// the nil mode because Reuse runs on cloud workdirs that the GC loop
-// wipes wholesale, so per-file cleanup is irrelevant and tracking the
-// dirs would just leave stale manifest bytes around.
+// 当 m 为 nil 时它与 os.MkdirAll 完全一致——Reuse 路径使用 nil 模式，因为
+// Reuse 跑在由 GC 整棵抹掉的云端工作目录上，逐文件清理无关紧要，跟踪这些
+// 目录只会留下陈旧的清单字节。
 func recordMkdirAll(path string, perm os.FileMode, m *sidecarManifest) error {
 	if path == "" {
 		return os.MkdirAll(path, perm)
@@ -85,10 +74,9 @@ func recordMkdirAll(path string, perm os.FileMode, m *sidecarManifest) error {
 	if m == nil {
 		return os.MkdirAll(path, perm)
 	}
-	// Walk leaf-first, collecting ancestors that don't currently exist.
-	// We stop at the first existing ancestor (or the filesystem root) so
-	// pre-existing user directories are never recorded — Cleanup must
-	// not rmdir a path the user owned before this task started.
+	// 从叶子向上走，收集当前不存在的各级祖先。在第一个已存在的祖先（或文件
+	// 系统根）处停下，于是用户原有的目录永远不会被记录——Cleanup 绝不能
+	// rmdir 一条本任务开始前就归用户所有的路径。
 	var toCreate []string
 	cur := filepath.Clean(path)
 	for {
@@ -107,8 +95,7 @@ func recordMkdirAll(path string, perm os.FileMode, m *sidecarManifest) error {
 	if err := os.MkdirAll(path, perm); err != nil {
 		return err
 	}
-	// Reverse leaf-first → root-first so Cleanup can reverse-iterate
-	// to peel directories from the leaves upward.
+	// 反转为"根在前"顺序，让 Cleanup 能逆序迭代、从叶子向上逐层剥目录。
 	for i, j := 0, len(toCreate)-1; i < j; i, j = i+1, j-1 {
 		toCreate[i], toCreate[j] = toCreate[j], toCreate[i]
 	}
@@ -116,32 +103,25 @@ func recordMkdirAll(path string, perm os.FileMode, m *sidecarManifest) error {
 	return nil
 }
 
-// recordWriteFile writes data to path with perm and records the path in
-// m for later cleanup, but ONLY when path does not already exist. When
-// path is occupied — by a regular file, a symlink, a directory, or any
-// other filesystem entry — the function returns errPathPreExists
-// without touching the path. The user's bytes (or pre-existing entry
-// type) are preserved exactly.
+// recordWriteFile 以 perm 把 data 写入 path，并把该路径记进 m 供日后清理——
+// 但仅当 path 尚不存在时。当 path 已被占用——不管是常规文件、符号链接、
+// 目录还是其他任何文件系统条目——函数不改动该路径，直接返回 errPathPreExists。
+// 用户的字节（或原有条目类型）被原样保留。
 //
-// This is the invariant the manifest design rests on: cleanup is a
-// pure deletion of paths we created, never a restore. Overwriting a
-// pre-existing path and then refusing to delete it on cleanup (the
-// pre-fix behavior) destroys user data twice — once at write time and
-// once by leaving the corrupted bytes in place at exit. Refusing to
-// overwrite removes both halves of that failure mode.
+// 这是清单设计所依赖的不变量：清理是"对我们创建路径的纯删除"，绝不是
+// "恢复"。覆盖一个已存在路径、又在清理时拒绝删除它（修复前的行为）等于两次
+// 摧毁用户数据——一次发生在写入时，一次发生在退出时把被污染字节留在原处。
+// 拒绝覆盖把该失败模式的两半一并消除。
 //
-// When m is nil this collapses to a plain os.WriteFile — the Reuse
-// path uses the nil mode because Reuse runs on cloud workdirs that
-// the GC loop wipes wholesale, so per-file collision avoidance is
-// irrelevant.
+// 当 m 为 nil 时退化为普通 os.WriteFile——Reuse 路径使用 nil 模式，因为 Reuse
+// 跑在 GC 整棵抹掉的云端工作目录上，逐文件避免冲突无关紧要。
 func recordWriteFile(path string, data []byte, perm os.FileMode, m *sidecarManifest) error {
 	if m == nil {
 		return os.WriteFile(path, data, perm)
 	}
 	_, statErr := os.Lstat(path)
 	if statErr == nil {
-		// Any existing entry — regular file, symlink, directory —
-		// is a collision. Refuse to touch it.
+		// 任何已存在的条目——常规文件、符号链接、目录——都是冲突。拒绝碰它。
 		return fmt.Errorf("%w: %s", errPathPreExists, path)
 	}
 	if !errors.Is(statErr, fs.ErrNotExist) {
@@ -154,25 +134,18 @@ func recordWriteFile(path string, data []byte, perm os.FileMode, m *sidecarManif
 	return nil
 }
 
-// allocateCollisionFreeSkillDir picks a directory under skillsParent
-// whose path does NOT currently exist, so writeSkillFiles can lay
-// down a Multica skill without colliding with a user-installed skill
-// of the same slug. The first attempt is always the natural baseSlug
-// — that's the path provider-native discovery already knows. On
-// collision we append `-multica`, then `-multica-2`, `-multica-3`,
-// … until a free slot is found. The chosen slug is returned alongside
-// the absolute path so callers can use it in frontmatter and brief
-// listings.
+// allocateCollisionFreeSkillDir 在 skillsParent 下挑一个当前"不存在"的目录，
+// 使 writeSkillFiles 能放下一个 Multica 技能而不与"用户已安装的同 slug 技能"
+// 撞车。第一次尝试总是自然的 baseSlug——那是 provider 原生发现本来就知道的
+// 路径。撞车后依次追加 `-multica`、`-multica-2`、`-multica-3`…直到找到空位。
+// 选定的 slug 与绝对路径一起返回，调用方可在 frontmatter 与 brief 清单里用它。
 //
-// The collision-free fallback name is still a sibling under the same
-// skillsParent, so provider-native discovery still picks the skill up
-// (each subdir under .claude/skills/ etc. is scanned independently).
-// The user's directory at baseSlug is left bit-for-bit intact.
+// 这个无冲突的备选名仍是同一 skillsParent 下的兄弟目录，所以 provider 原生
+// 发现照样能捡到该技能（.claude/skills/ 等之下的每个子目录都是独立扫描的）。
+// baseSlug 处的用户目录保持逐位原样。
 //
-// The probe is bounded to a small ceiling — a user with thousands of
-// collisions on the same slug indicates an upstream bug, not a
-// realistic state. Returning an error in that case forces the caller
-// to surface the problem instead of looping forever.
+// 探测设了一个很小的上限——用户在同一 slug 上有上千次冲突说明是上游 bug，
+// 而非现实状态。此时返回错误能迫使调用方把问题摆上台面，而不是无限循环。
 func allocateCollisionFreeSkillDir(skillsParent, baseSlug string) (slug, dir string, err error) {
 	const maxAttempts = 64
 	for i := 0; i < maxAttempts; i++ {
@@ -188,13 +161,12 @@ func allocateCollisionFreeSkillDir(skillsParent, baseSlug string) (slug, dir str
 	return "", "", fmt.Errorf("allocate collision-free skill dir under %s: exhausted %d attempts for base %q", skillsParent, maxAttempts, baseSlug)
 }
 
-// skillSlugCandidate is the nth name to try for a skill whose natural slug is
-// baseSlug: the bare slug first, then `-multica`, then numbered variants.
+// skillSlugCandidate 是对自然 slug 为 baseSlug 的技能尝试的第 n 个名字：
+// 先是裸 slug，再是 `-multica`，然后带编号的变体。
 //
-// Two callers must agree on this sequence — allocateCollisionFreeSkillDir,
-// which probes the filesystem, and resolveSkillSlugs, which deduplicates a
-// batch in memory before anything is written. If they disagreed, a skill would
-// be listed under one name and written under another.
+// 两个调用方必须就这一序列达成一致——allocateCollisionFreeSkillDir（探测
+// 文件系统）与 resolveSkillSlugs（写入前在内存里给整批去重）。若它们不一致，
+// 一个技能就会在清单里叫一个名字、落到磁盘上又叫另一个名字。
 func skillSlugCandidate(baseSlug string, attempt int) string {
 	switch {
 	case attempt <= 0:
@@ -206,17 +178,14 @@ func skillSlugCandidate(baseSlug string, attempt int) string {
 	}
 }
 
-// writeSidecarManifest persists m to {envRoot}/{sidecarManifestFile}.
-// Empty manifests are still written so a later Cleanup that finds the
-// file knows tracking was attempted (vs. an old build that predates this
-// mechanism, where the file is absent and Cleanup must no-op).
+// writeSidecarManifest 把 m 持久化到 {envRoot}/{sidecarManifestFile}。
+// 空的清单也会被写，这样后来的 Cleanup 若找到文件就知道"这次确实尝试过
+// 记账"（而早于本机制的老构建没有该文件，Cleanup 必须无操作）。
 //
-// Failures are returned to the caller, and how much they matter depends on
-// where the sidecars landed. For a cloud envRoot the manifest is a convenience
-// the GC can do without, so Prepare logs and continues. For an in-place
-// local_directory run it is the only record of what was written into the user's
-// own repository, so Prepare treats the failure as fatal and rolls back while
-// it still holds the in-memory manifest (MUL-6132).
+// 失败会返回给调用方，其严重程度取决于侧车落在哪里。对云端 envRoot，
+// 清单只是 GC 可有可无的便利，因此 Prepare 记日志后继续。对就地 local_directory
+// 运行，它是"往用户自己仓库里写了什么"的唯一记录，因此 Prepare 把失败视为
+// 致命并在仍持有内存清单时回滚（MUL-6132）。
 func writeSidecarManifest(envRoot string, m *sidecarManifest) error {
 	if envRoot == "" {
 		return nil
@@ -231,47 +200,37 @@ func writeSidecarManifest(envRoot string, m *sidecarManifest) error {
 	return os.WriteFile(filepath.Join(envRoot, sidecarManifestFile), data, 0o644)
 }
 
-// CleanupSidecars rolls the user's workdir back to its pre-Prepare
-// state by removing every file the manifest at envRoot records and
-// then rmdir-ing every directory it records, deepest first.
+// CleanupSidecars 删除 envRoot 处清单记录的所有文件、再对记录的所有目录做
+// rmdir（最深者优先），把用户的工作目录回滚到 Prepare 之前的状态。
 //
-// Two failure modes the function deliberately swallows:
+// 两种失败模式是本函数刻意吞掉的：
 //
-//   - ENOENT on a recorded path. The file or directory was already
-//     gone — either the user removed it during the task, or a prior
-//     Cleanup run on the same envRoot already cleared it. Either
-//     way there is nothing left for this call to do.
-//   - Non-empty directory on rmdir. The user has populated a
-//     directory we created (added a sibling file under .claude/
-//     skills/, for example) and rmdir-ing would destroy that
-//     content. We detect this by re-reading the directory after
-//     rmdir fails: a non-empty listing means "user owns this — stop
-//     here." This is the must-fix from PR #3444 review — the
-//     previous version swallowed ANY non-ENOENT rmdir error as
-//     "non-empty," which silently dropped real I/O failures
-//     (EACCES, EPERM, EBUSY) and made cleanup look successful when
-//     it wasn't.
+//   - 记录的路径返回 ENOENT。该文件或目录已经不在了——要么用户在任务期间
+//     删了它，要么同一 envRoot 上先前某次 Cleanup 已把它清掉。无论哪种，
+//     本次调用都无事可做。
+//   - rmdir 遇上非空目录。用户在我们创建的目录里放了内容（例如在
+//     .claude/skills/ 下加了个兄弟文件），rmdir 会毁掉那些内容。我们通过
+//     rmdir 失败后重读目录来识别它：非空清单意味着"这里归用户——到此为止"。
+//     这是 PR #3444 review 里必须修的问题——此前版本把"任何非 ENOENT 的
+//     rmdir 错误"都当作"非空"吞掉，会静默丢弃真实的 I/O 失败（EACCES、
+//     EPERM、EBUSY），让本未成功的清理看起来成功了。
 //
-// All other errors — ReadFile failure, JSON parse failure, real
-// EACCES/EPERM/EIO during file deletion, real EACCES/EPERM/EIO
-// during dir removal — are captured into firstErr and surfaced to
-// the caller. Cleanup still continues for the remaining manifest
-// entries so a single bad path does not strand the rest of the
-// rollback.
+// 其余所有错误——ReadFile 失败、JSON 解析失败、删除文件时的真实
+// EACCES/EPERM/EIO、删目录时的真实 EACCES/EPERM/EIO——都被收进 firstErr
+// 并抛给调用方。Cleanup 仍会继续处理清单里剩下的条目，避免一个坏路径拖住
+// 其余的回滚。
 //
-// The function is a no-op when:
-//   - envRoot is empty (no daemon scratch for this task),
-//   - the manifest file is missing (older build, or Prepare did not run).
+// 以下情况本函数为无操作：
+//   - envRoot 为空（本任务没有 daemon 暂存区），
+//   - 清单文件缺失（更老构建，或 Prepare 根本没跑）。
 //
-// Pair this with CleanupRuntimeConfig on the local_directory cleanup
-// path: that function handles the runtime brief inside CLAUDE.md /
-// AGENTS.md, this one handles the sidecar tree
-// (.agent_context/, .multica/, .claude/skills/, .github/skills/,
-// .opencode/skills/, .codeartsdoer/skills/, skills/, .pi/skills/,
-// .omp/mcp.json, .omp/skills/, .cursor/skills/,
-// .kimi/skills/, .reasonix/skills/, .kiro/skills/, .agents/skills/, fallback
-// .agent_context/skills/). The two together restore the workdir to
-// byte-exact pre-task state.
+// 在 local_directory 清理路径上把它与 CleanupRuntimeConfig 配对：那个函数
+// 处理 CLAUDE.md / AGENTS.md 里的运行时 brief，这个处理侧车目录树
+// （.agent_context/、.multica/、.claude/skills/、.github/skills/、
+// .opencode/skills/、.codeartsdoer/skills/、skills/、.pi/skills/、
+// .omp/mcp.json、.omp/skills/、.cursor/skills/、
+// .kimi/skills/、.reasonix/skills/、.kiro/skills/、.agents/skills/、兜底
+// .agent_context/skills/）。两者合起来把工作目录恢复到任务前的逐字节状态。
 func CleanupSidecars(envRoot string) error {
 	if envRoot == "" {
 		return nil
@@ -292,16 +251,14 @@ func CleanupSidecars(envRoot string) error {
 	return rollBackManifest(m, manifestPath)
 }
 
-// rollBackManifest removes everything m records, then removes manifestPath
-// itself when it is non-empty. It is the shared body of CleanupSidecars (which
-// reads m back from disk after the task ran) and rollBackPreparedSidecars
-// (which passes the in-memory manifest of a Prepare that never finished, and
-// has no manifest file to delete because Prepare failed before writing one).
+// rollBackManifest 删除 m 记录的一切，然后当 manifestPath 非空时删除
+// manifestPath 本身。它是 CleanupSidecars（任务跑完后从磁盘读回 m）与
+// rollBackPreparedSidecars（传入一个从未完成的 Prepare 的内存清单，且没有
+// 清单文件可删——因为 Prepare 在写它之前就失败了）的共享主体。
 //
-// Splitting it this way is what lets the failed-Prepare path reuse the exact
-// deletion semantics documented on CleanupSidecars — ENOENT and non-empty
-// directories tolerated, real I/O errors surfaced — instead of growing a second,
-// subtly different rollback that would drift from it.
+// 这样拆分让"失败 Prepare 路径"能复用文档记载在 CleanupSidecars 上的同一套
+// 删除语义——容忍 ENOENT 与非空目录、上报真实 I/O 错误——而不必再长出一套
+// 与它细微不同、迟早漂移的回滚。
 func rollBackManifest(m sidecarManifest, manifestPath string) error {
 	var firstErr error
 	captureErr := func(err error) {
@@ -316,10 +273,9 @@ func rollBackManifest(m sidecarManifest, manifestPath string) error {
 		}
 	}
 
-	// Reverse iterate so the deepest directory is tried first. When
-	// rmdir fails we re-read the directory to tell ENOTEMPTY (user
-	// content present — skip silently) apart from real I/O errors
-	// (permission denied, busy, etc. — capture and surface).
+	// 逆序迭代，先尝试最深的目录。rmdir 失败时重读目录，把 ENOTEMPTY
+	// （有用户内容——静默跳过）与真实 I/O 错误（权限拒绝、忙等——捕获上报）
+	// 区分开。
 	for i := len(m.Dirs) - 1; i >= 0; i-- {
 		d := m.Dirs[i]
 		err := os.Remove(d)
@@ -329,26 +285,20 @@ func rollBackManifest(m sidecarManifest, manifestPath string) error {
 		hasEntries, ok := dirHasEntries(d)
 		switch {
 		case !ok:
-			// ReadDir also failed — we can't tell ENOTEMPTY apart
-			// from a real I/O error. Surface the ORIGINAL rmdir
-			// error (not the ReadDir failure) so the operator sees
-			// the actual cleanup blocker; the ReadDir branch is
-			// just diagnostic plumbing and would distract from the
-			// root cause. Silently skipping here was the v1 bug:
-			// it hid EACCES on locked directories behind a phantom
-			// "directory non-empty" assumption.
+			// ReadDir 也失败了——无法区分 ENOTEMPTY 与真实 I/O 错误。上报
+			// "原始 rmdir 错误"（而非 ReadDir 失败），让运维看到真正的清理
+			// 阻碍；ReadDir 分支只是诊断管道，会分散对根因的注意。v1 在这里
+			// 静默跳过，是 bug：它用一个幻影般的"目录非空"假设掩盖了加锁
+			// 目录上的 EACCES。
 			captureErr(fmt.Errorf("rmdir %s: %w", d, err))
 		case hasEntries:
-			// User has populated this dir since Prepare ran. Leave
-			// it in place without surfacing the rmdir error — the
-			// whole point of the manifest design is to preserve
-			// user content under directories we created.
+			// 用户在此目录于 Prepare 运行后放入了内容。保留它且不上报 rmdir
+			// 错误——清单设计的全部意义就在于保留"我们创建的目录之下"的
+			// 用户内容。
 		default:
-			// Empty directory but rmdir still failed → real I/O
-			// error (EACCES, EPERM, EBUSY, EIO, or a directory we
-			// mistakenly recorded that we don't actually own).
-			// Surface it so the caller can log a warning and an
-			// operator can investigate.
+			// 目录为空但 rmdir 仍失败 → 真实 I/O 错误（EACCES、EPERM、EBUSY、
+			// EIO，或一个被误记录、其实不归我们的目录）。上报，让调用方记
+			// 警告、让运维去查。
 			captureErr(fmt.Errorf("rmdir %s: %w", d, err))
 		}
 	}
@@ -362,52 +312,42 @@ func rollBackManifest(m sidecarManifest, manifestPath string) error {
 	return firstErr
 }
 
-// rollBackPreparedSidecars undoes the sidecar writes of a Prepare that failed
-// before it could persist the manifest, using the in-memory manifest Prepare
-// was still filling in.
+// rollBackPreparedSidecars 用一个尚未落盘清单的失败 Prepare 仍在填充的内存
+// 清单，撤销该 Prepare 已做的侧车写入。
 //
-// This is the only rollback available on that path. Prepare writes the daemon
-// task marker and the rest of the sidecar tree into the workdir early, but only
-// persists the manifest at the very end; every error return in between leaves
-// that tree on disk with no on-disk record of it, and the caller never receives
-// an Environment, so no teardown defer downstream knows there is anything to
-// clean (MUL-6132). For a local_directory task the workdir is the user's own
-// repository, so "left on disk" means a marker that disables every multica
-// command in that directory tree until someone deletes it by hand.
+// 这是那条路径上唯一的回滚手段。Prepare 很早就会把 daemon 任务标记与其余
+// 侧车树写进工作目录，但只在最后才持久化清单；其间的每个错误返回都会把那
+// 棵树留在磁盘上、却没有任何磁盘记录，而调用方也收不到 Environment，于是
+// 下游没有任何 teardown defer 知道有东西要清理（MUL-6132）。对 local_directory
+// 任务，工作目录就是用户自己的仓库，所以"留在磁盘上"意味着一个会禁用它所在
+// 目录树内每条 multica 命令的标记，直到有人手动删除为止。
 //
-// There is no manifest file to remove, so manifestPath is empty.
+// 没有清单文件要删，因此 manifestPath 为空。
 func rollBackPreparedSidecars(m sidecarManifest) error {
 	return rollBackManifest(m, "")
 }
 
-// removeReusedManagedSkillDirs force-removes the skill directories the prior
-// dispatch recorded under skillsParent in its sidecar manifest at envRoot,
-// even when they are now non-empty. It is the reuse-path companion to
-// CleanupSidecars and runs just before it.
+// removeReusedManagedSkillDirs 强制删除上一次分发记录在 envRoot 侧车清单里、
+// 位于 skillsParent 之下的技能目录，即使它们现在非空。它是 reuse 路径上
+// CleanupSidecars 的搭档，紧挨着后者运行。
 //
-// CleanupSidecars deliberately preserves a recorded directory once it has
-// become non-empty — the agent may have dropped a file inside a dir we
-// created, and on the local_directory teardown path that content must
-// survive. But that same preservation reopens #3684 on the reuse path: if a
-// prior-run agent wrote into .claude/skills/issue-review/, CleanupSidecars
-// deletes the recorded SKILL.md yet keeps the directory, so the canonical
-// slug stays occupied and the refreshed skill dodges to
-// issue-review-multica. A managed skill directory is platform-owned — the
-// manifest is proof we created it — so on reuse we reclaim the whole
-// directory (dropping any scratch the agent left inside it, exactly as the
-// Codex path's os.RemoveAll(skillsDir) already does) and let the refresh
-// re-create it at its natural slug.
+// CleanupSidecars 刻意保留一个一旦非空的已记录目录——agent 可能在我们创建
+// 的目录里放了文件，而在 local_directory 拆除路径上那些内容必须存活。但同一
+// 份保留逻辑在 reuse 路径上会重开 #3684：若某次先前的 agent 往
+// .claude/skills/issue-review/ 里写过东西，CleanupSidecars 会删掉已记录的
+// SKILL.md 却保留目录，于是规范的 slug 仍然被占，刷新后的技能只能躲到
+// issue-review-multica。受管技能目录归平台所有——清单就是"我们创建了它"的
+// 证明——所以 reuse 时我们回收整个目录（丢弃 agent 留在里面的临时文件，正如
+// Codex 路径的 os.RemoveAll(skillsDir) 已经在做的），让刷新后的技能以自然
+// slug 重建。
 //
-// Only directories whose immediate parent is skillsParent are removed, so
-// the blast radius is exactly the platform's own skill roots: sibling skills
-// the agent installed under the same parent, checked-out repos, and the rest
-// of the workdir are untouched. The reuse path only ever runs on cloud
-// workdirs (the daemon skips Reuse for local_directory tasks), so there is no
-// user-owned skills tree to protect here in the first place.
+// 只有"直接父目录就是 skillsParent"的目录会被删除，因此爆炸半径恰好是平台
+// 自己的技能根：agent 在同一父目录下装的兄弟技能、检出的仓库与工作目录其余
+// 部分都不受影响。reuse 路径只跑在云端工作目录（daemon 对 local_directory
+// 任务跳过 Reuse），所以这里本来就没有"用户自有的技能树"要保护。
 //
-// envRoot or skillsParent empty, a missing manifest, or a parse failure are
-// all no-ops — the refresh simply proceeds. The manifest file is left in
-// place; CleanupSidecars, which runs next, owns deleting it.
+// envRoot 或 skillsParent 为空、清单缺失或解析失败都是无操作——刷新照常
+// 进行。清单文件留在原地；紧接着运行的 CleanupSidecars 负责删除它。
 func removeReusedManagedSkillDirs(envRoot, skillsParent string) error {
 	if envRoot == "" || skillsParent == "" {
 		return nil
@@ -437,27 +377,20 @@ func removeReusedManagedSkillDirs(envRoot, skillsParent string) error {
 	return firstErr
 }
 
-// dirHasEntries inspects dir and reports whether it currently contains
-// any entries. The second return value distinguishes three states
-// CleanupSidecars must handle separately:
+// dirHasEntries 检查 dir 当前是否含任何条目。第二个返回值区分 CleanupSidecars
+// 必须分别处理的三种状态：
 //
-//   - (false, true) — dir exists and is empty, OR dir disappeared
-//     between the failed rmdir and our readdir (the race collapses
-//     into "empty" so cleanup keeps moving). When paired with a
-//     non-ENOENT rmdir failure in CleanupSidecars this is the
-//     "empty + rmdir refused" branch — a real I/O error that gets
-//     surfaced.
-//   - (true, true) — dir has user content. When paired with a rmdir
-//     failure this is the intended ENOTEMPTY branch — skip silently
-//     so the user's content is preserved.
-//   - (_, false) — readdir failed with a real I/O error (EACCES on a
-//     chmod'd dir, ENOTDIR on a recorded path that isn't actually a
-//     dir, EIO on a hardware fault, etc.). The caller cannot tell
-//     ENOTEMPTY from a real failure and MUST surface the original
-//     rmdir error instead of silently skipping. The v1 of this
-//     helper returned `true` here, which made CleanupSidecars treat
-//     every readdir failure as "user content present" and hid the
-//     underlying rmdir error.
+//   - (false, true) —— dir 存在且为空，或 dir 在"rmdir 失败"到"我们 readdir"
+//     之间消失了（该竞争塌缩成"空"，清理得以继续）。与 CleanupSidecars 里
+//     一次非 ENOENT 的 rmdir 失败配对时，这对应"空目录却拒绝 rmdir"分支——
+//     一个会被上报的真实 I/O 错误。
+//   - (true, true) —— dir 有用户内容。与 rmdir 失败配对时正是预期的
+//     ENOTEMPTY 分支——静默跳过，保住用户内容。
+//   - (_, false) —— readdir 以真实 I/O 错误失败（被 chmod 过的目录上的
+//     EACCES、对"其实不是目录"的已记录路径的 ENOTDIR、硬件故障的 EIO 等）。
+//     调用方无法区分 ENOTEMPTY 与真实失败，必须上报"原始 rmdir 错误"而非
+//     静默跳过。本 helper 的 v1 在这里返回 `true`，使 CleanupSidecars 把每次
+//     readdir 失败都当成"有用户内容"，掩盖了底层的 rmdir 错误。
 func dirHasEntries(dir string) (hasEntries bool, ok bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

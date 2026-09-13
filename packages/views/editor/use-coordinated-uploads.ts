@@ -1,33 +1,26 @@
 "use client";
 
 /**
- * The coordinated-upload engine shared by every composer surface (MUL-5181, L2).
+ * 每个 composer 界面共享的「协调上传」引擎（MUL-5181, L2）。
  *
- * Ownership inversion: an upload is owned by the module-level upload
- * coordinator (`@multica/core/drafts`), not by the React component that
- * started it. On file pick the engine writes a persisted placeholder into the
- * surface's draft IMMEDIATELY (through the {@link UploadDraftBinding}), then
- * hands the file to the coordinator. Closing or scrolling the composer away no
- * longer aborts the upload; logout aborts every tracked request; a placeholder
- * still `uploading` at load time is DROPPED by the store — the bytes were never
- * persisted, so it can neither resume nor be retried.
+ * 归属反转：一次上传归属于模块级上传协调器（`@multica/core/drafts`），
+ * 而不是发起它的 React 组件。选择文件时引擎通过
+ * {@link UploadDraftBinding} 立刻把持久化占位符写进界面的草稿，再把文件
+ * 交给协调器。关掉或滚走 composer 不再中止上传；登出会中止所有被追踪的
+ * 请求；加载时仍 `uploading` 的占位符会被 store 丢掉——字节从未持久化，
+ * 既不能恢复也不能重试。
  *
- * `onSettled` is generation-guarded: it re-reads the draft and only writes if
- * the placeholder is still tracked (the draft may have been submitted or
- * cleared while the request was in flight). The coordinator never calls
- * `onSettled` on abort, so logout — abort first, then clear drafts — cannot
- * resurrect a placeholder into a wiped draft.
+ * `onSettled` 有代际守卫：它重读草稿，只有占位符仍被追踪才写入（请求在途
+ * 时草稿可能已被提交或清空）。协调器在中止时绝不调用 `onSettled`，所以
+ * 登出——先中止、后清草稿——不可能把占位符复活进一份被清空的草稿。
  *
- * The SOURCE OF TRUTH for what a submit binds is the draft BODY
- * (reference-filtered): an upload that settles after its mount died gets its
- * markdown link delivered back into the body — into the reopened composer's
- * live editor when one exists (confirmed, with retry while the Tiptap instance
- * is still warming up), else appended to the persisted draft — so the file is
- * visible, deletable, and deleting it really unbinds it.
+ * 提交绑定的「事实来源」是草稿正文（引用过滤后）：一次在挂载死后才落定的
+ * 上传，会把它的 markdown 链接送回到正文里——有重开的 composer 且其 Tiptap
+ * 实例仍在预热时送进实时编辑器（确认 + 重试），否则追加到持久化草稿——文件
+ * 因此可见、可删，删除它也确实解绑它。
  *
- * A surface plugs in with a {@link UploadDraftBinding}: imperative, store-backed
- * accessors that must remain callable after the component unmounts. Bindings
- * MUST be referentially stable per target (memoize on the draft key).
+ * 界面用 {@link UploadDraftBinding} 接入：命令式、store 支撑的访问器，必须
+ * 在组件卸载后仍可调用。绑定必须对每个目标引用稳定（按草稿 key memo）。
  */
 
 import {
@@ -64,16 +57,15 @@ import { pastedTextSource } from "./extensions/file-upload";
 const EMPTY_ATTACHMENTS: Attachment[] = [];
 
 /**
- * Store-backed accessors for one composer target's uploads and body. Every
- * method must go through the store's `getState()` (never captured React
- * state): settle handlers call them after the owning component is gone.
+ * 一个 composer 目标的上传与正文的 store 支撑访问器。每个方法都必须走
+ * store 的 `getState()`（绝不捕获 React state）：settle 处理器会在属主组件
+ * 消失后调用它们。
  */
 export interface UploadDraftBinding {
   /**
-   * Identity for the live-editor registry — unique per composer target
-   * (e.g. `comment:new:{issueId}`, `issue-create:manual`). A reopened
-   * composer for the same target registers its editor under the same key,
-   * which is how a settle handler finds it.
+   * 实时编辑器注册表的身份标识——每个 composer 目标唯一（如
+   * `comment:new:{issueId}`、`issue-create:manual`）。同一目标的重开
+   * composer 会把它的编辑器注册在同一个 key 下，settle 处理器据此找到它。
    */
   registryKey: string;
   getUploads: () => DraftUpload[];
@@ -81,26 +73,25 @@ export interface UploadDraftBinding {
   settleUpload: (clientUploadId: string, attachment: Attachment) => void;
   failUpload: (clientUploadId: string, error?: string) => void;
   removeUpload: (clientUploadId: string) => void;
-  /** The draft body reference-filtering binds against at submit time. */
+  /** 提交时刻引用过滤所绑定的草稿正文。 */
   getBody: () => string;
-  /** Append a markdown fragment to the persisted body. */
+  /** 把一个 markdown 片段追加到持久化正文。 */
   appendToBody: (markdown: string) => void;
 }
 
-// The editor currently showing each registry key. Lets a settle handler whose
-// own mount is gone (the upload outlived the composer) hand the finished link
-// to the editor a REOPENED composer mounted for the same target.
+// 每个注册 key 当前展示的编辑器。让一个自己的挂载已消失的 settle 处理器
+// （上传活过了 composer）把完成的链接交给「为同一目标重开」的编辑器。
 const liveEditors = new Map<string, RefObject<ContentEditorRef | null>>();
 
-/** Test-only: registry keys currently registered. Lets timing tests assert
- *  registration is part of the COMMIT (layout), not a passive task later. */
+/** 仅测试用：当前已注册的 key。让时序测试断言注册发生在 COMMIT（layout）
+ *  阶段，而不是稍后的被动任务。 */
 export function __liveEditorRegistryKeysForTest(): string[] {
   return [...liveEditors.keys()];
 }
 
-/** Markdown for a finished upload. Mirrors the shape the in-editor swap
- *  produces (`extensions/file-upload.ts`: image node for images, fileCard link
- *  for everything else) — keep the two in sync. */
+/** 一次已完成上传的 markdown。镜像编辑器内替换产生的形态
+ *  （`extensions/file-upload.ts`：图片走 image 节点、其余走 fileCard 链接）——
+ *  两者必须保持同步。 */
 export function attachmentMarkdown(att: Attachment): string {
   const link = toUploadResult(att).markdownLink;
   return (att.content_type ?? "").startsWith("image/")
@@ -109,25 +100,23 @@ export function attachmentMarkdown(att: Attachment): string {
 }
 
 const DELIVER_RETRY_MS = 50;
-const DELIVER_MAX_TRIES = 100; // ~5s — editor init is a passive effect away
+const DELIVER_MAX_TRIES = 100; // 约 5s——编辑器初始化是被动 effect，离这个很远
 
 /**
- * Land a finished upload's markdown link in the draft BODY after the mount
- * that owned the upload died. Delivery must be CONFIRMED, not assumed:
+ * 在拥有上传的挂载死后，把已完成上传的 markdown 链接送进草稿正文。
+ * 投递必须被**确认**而不能想当然：
  *
- *  - live editor for the key, insert landed → also persist the same body via
- *    `appendToBody` as insurance — the editor's debounced emit is dropped on a
- *    quick unmount, and it converges to identical content anyway.
- *  - no composer mounted for the key → append to the persisted draft; the next
- *    mount reads it as `defaultValue`.
- *  - composer mounted but its Tiptap instance not created yet (the handle
- *    exists from first commit; the instance arrives in a passive effect) →
- *    RETRY. Appending to the store here would be erased by the mounted
- *    editor's first emit, which snapshots a body without the link.
+ *  - 该 key 有实时编辑器且插入成功 → 也经 `appendToBody` 持久化同一正文
+ *    作为保险——编辑器防抖 emit 会在快速卸载时丢帧，而且两条写入反正会
+ *    收敛到相同内容。
+ *  - 没有 composer 挂载该 key → 追加到持久化草稿；下次挂载把它当
+ *    `defaultValue` 读到。
+ *  - composer 挂载了但 Tiptap 实例还没建（首次 commit 即有句柄；实例在
+ *    被动 effect 里到）→ 重试。这里直接写 store 会被已挂载编辑器的首次
+ *    emit 抹掉——那个 emit 快照的正文还没有这条链接。
  *
- * Every attempt re-checks the generation guard (draft may be cleared or
- * submitted while waiting) and the body (the link may have landed some other
- * way) before writing.
+ * 每次尝试都会在写入前重查代际守卫（等待期间草稿可能被清空或提交）与正文
+ * （链接可能已用别的方式落了地）。
  */
 function deliverFinishedUpload(
   binding: UploadDraftBinding,
@@ -140,9 +129,8 @@ function deliverFinishedUpload(
 
   const md = attachmentMarkdown(attachment);
   const live = liveEditors.get(binding.registryKey);
-  // A composer showing this target rebuilt the placeholder on mount, so the
-  // finished attachment REPLACES it where the user last saw it instead of
-  // being appended a second time at the end.
+  // 展示该目标的 composer 挂载时重建了占位符，所以完成的附件在用户上次
+  // 看到它的位置**原位替换**，而不是在末尾再追加一次。
   if (live?.current?.settleUploadPlaceholder(clientUploadId, toUploadResult(attachment)) === true) {
     binding.appendToBody(md);
     return;
@@ -156,7 +144,7 @@ function deliverFinishedUpload(
     return;
   }
   if (tries >= DELIVER_MAX_TRIES) {
-    // Editor never initialized — persist to the store as the least-bad option.
+    // 编辑器始终没初始化——写入 store 是次优选项里最好的。
     binding.appendToBody(md);
     return;
   }
@@ -167,20 +155,17 @@ function deliverFinishedUpload(
 }
 
 /**
- * Put a failed paste-as-file's source text back where the user can see it.
+ * 把失败的「粘贴成文件」的源文本放回用户能看到的地方。
  *
- * The mirror image of {@link deliverFinishedUpload}, and it exists for the
- * same reason: the upload outlives the mount, so the composer that swallowed
- * the paste may be gone by the time the failure lands. Unlike a dropped file,
- * this content has no other copy — it was never written into the document and
- * the tab it came from may be closed — so "the editor is gone, drop it" would
- * be silent data loss.
+ * 这是 {@link deliverFinishedUpload} 的镜像，存在理由相同：上传活过挂载，
+ * 失败落地时吞掉那次粘贴的 composer 可能已经没了。与拖放的文件不同，这份
+ * 内容没有其它副本——它从未写进文档、来源页签可能已关——所以「编辑器没了
+ * 就丢掉」会是静默的数据丢失。
  *
- * Restored as markdown, not literal text: had the paste never been converted,
- * `markdown-paste` is exactly what would have handled it, so this reproduces
- * what the user would have gotten. Live editor first (it lands at the end of
- * the document, never mid-sentence at a caret the user has since moved), the
- * persisted body otherwise.
+ * 以 markdown 而非字面文本恢复：若那次粘贴从未被转成文件，处理它的恰好会
+ * 是 `markdown-paste`，因此这复现了用户本来会得到的东西。优先实时编辑器
+ * （落点在文档末尾，绝不会插进用户后来移开的光标所在的句子中间），否则
+ * 写持久化正文。
  */
 function deliverPastedTextBack(
   binding: UploadDraftBinding | undefined,
@@ -188,55 +173,52 @@ function deliverPastedTextBack(
   text: string,
 ): void {
   if (!binding) {
-    // No persistence context (a reply composer opened without a draft key):
-    // the live editor is the only place left to put it.
+    // 没有持久化上下文（没有草稿 key 打开的回复 composer）：实时编辑器
+    // 是唯一还能放的地方。
     editorRef.current?.insertMarkdownAtEnd(text);
     return;
   }
-  // Same insurance as deliverFinishedUpload: a landed editor insert can still
-  // lose its debounced emit to a quick unmount, and both writes converge on
-  // identical content.
+  // 与 deliverFinishedUpload 相同的保险：一次落地的编辑器插入仍可能因快速
+  // 卸载丢掉防抖 emit，而两条写入都会收敛到相同内容。
   liveEditors.get(binding.registryKey)?.current?.insertMarkdownAtEnd(text);
   binding.appendToBody(text);
 }
 
 export interface CoordinatedUploads {
-  /** Every upload for this composer, placeholders included. */
+  /** 本 composer 的全部上传，含占位符。 */
   uploads: DraftUpload[];
-  /** Completed attachment rows — the editor preview set; submit binds the
-   *  subset whose link the body still references. */
+  /** 已完成的附件行——编辑器的预览集合；提交绑定的是正文仍引用其链接的
+   *  那个子集。 */
   attachments: Attachment[];
   /**
-   * Wire to `<ContentEditor onUploadFile={...} />`.
+   * 接 `<ContentEditor onUploadFile={...} />`。
    *
-   * The editor mints `uploadId` when it draws the placeholder node and hands it
-   * in here, so the document node and the draft record share ONE id — that is
-   * what lets a settle reaching a mount which did not start the upload find the
-   * node again. Keep this second parameter in the type: a mock or a hand-rolled
-   * caller that drops it silently mints a second id and breaks that link.
-   * Optional only for a caller with no editor placeholder to match.
+   * 编辑器画占位节点时铸造 `uploadId` 并传进来，让文档节点与草稿记录共
+   * 用一个 id——这正是抵达「并非它发起的挂载」的 settle 能再次找到节点的
+   * 原因。这个第二参数要留在类型里：一个静默丢弃它的 mock 或手写调用方
+   * 会铸造第二个 id 从而切断那条链路。仅对「没有编辑器占位符可配」的
+   * 调用方是可选的。
    */
   handleUpload: (file: File, uploadId?: string) => Promise<UploadResult | null>;
-  /** Drop a placeholder (dismiss a failure / interrupted). */
+  /** 移除一个占位符（解除失败/中断）。 */
   removeUpload: (clientUploadId: string) => void;
   /**
-   * The submit gate for this composer. Combines the editor gate (this mount's
-   * in-document uploads) with the coordinator-owned placeholders in the draft:
-   * a composer reopened while a previous mount's upload is still in flight has
-   * a clean editor document, so the editor gate alone would let a send clear
-   * the draft out from under the settling upload — silently dropping the file
-   * whose "uploading" chip is on screen.
+   * 本 composer 的提交门禁。把编辑器门禁（本次挂载的文档内上传）与草稿里
+   * 协调器持有的占位符组合起来：在前一挂载的上传仍在途时重开的 composer
+   * 文档是干净的，所以单靠编辑器门禁会让一次发送清空「上传中」小徽标还亮
+   * 着的草稿——静默丢掉那个文件。
    */
   gate: UploadGate;
 }
 
 /**
- * @param binding       Store-backed accessors for the persisted target. When
- *                      absent (a composer with no persistence context) uploads
- *                      fall back to component-local state and die with the
- *                      mount, matching pre-L2 behavior.
- * @param boundUploads  The binding's uploads as a REACTIVE value (the caller's
- *                      store subscription). Ignored when `binding` is absent.
+ * 协调上传 hook。
+ *
+ * @param binding      持久化目标的 store 支撑访问器。缺省时（无持久化上下文
+ *                    的 composer）上传退回组件本地状态、随挂载消亡，与 L2
+ *                     之前行为一致。
+ * @param boundUploads 绑定方上传的响应式版本（调用方的 store 订阅）。binding
+ *                     缺省时忽略。
  */
 export function useCoordinatedUploads(
   binding: UploadDraftBinding | undefined,
@@ -246,35 +228,31 @@ export function useCoordinatedUploads(
   editorRef: RefObject<ContentEditorRef | null>,
   opts?: {
     /**
-     * Resolve the binding a NEW upload should target, snapshotted at pick
-     * time. For composers whose single editor instance can hold a DIFFERENT
-     * draft than the selected one (chat pins the document while an upload is
-     * in flight): the file lands in the document the editor is HOLDING, so
-     * its placeholder/settle/write-back must follow that draft, not whatever
-     * is selected by the time the request finishes. Defaults to `binding`.
+     * 解析一次「新上传」应指向的绑定，在选择文件那一刻快照。用于单个编辑器
+     * 实例可持有与当前选中不同的草稿的 composer（聊天在上传在途时把文档钉在
+     * 某条会话上）：文件落进编辑器**正持有**的文档，所以它的占位/落定/回写
+     * 必须跟着那份草稿，而不是请求完成时恰好选中的那份。默认就是 `binding`。
      */
     resolveUploadTarget?: () => UploadDraftBinding;
     /**
-     * Registry key to register this mount's editor under, when it differs
-     * from `binding.registryKey`. Same divergence as above: a write-back must
-     * insert into the editor only if its DOCUMENT belongs to the settling
-     * draft, so composers with a pinnable editor register the LOADED key.
+     * 注册本次挂载编辑器所用的注册表 key，当它不同于 `binding.registryKey`
+     * 时。与上面同源的分叉：一次回写只在「该编辑器文档属于正在落定的草稿」
+     * 时才应插入，所以带可钉住编辑器的 composer 注册**已加载**的 key。
      */
     liveRegistryKey?: string;
   },
 ): CoordinatedUploads {
   const { t } = useT("editor");
   const [localUploads, setLocalUploads] = useState<DraftUpload[]>([]);
-  // Latest-value ref: handleUpload snapshots the target at invocation time.
+  // 最新值 ref：handleUpload 在调用时刻快照目标。
   const resolveUploadTargetRef = useRef(opts?.resolveUploadTarget);
   resolveUploadTargetRef.current = opts?.resolveUploadTarget;
 
-  // Liveness of THIS mount, read by settle closures it created: while true,
-  // the editor that started the upload will do the inline swap itself; once
-  // false, the write-back is the only path that lands the link. Layout effect
-  // on purpose: React nulls the child editor's ref during the unmount commit,
-  // but a passive cleanup flips this a task later — a settle landing in that
-  // gap would see "mounted" with no editor left to swap.
+  // 本次挂载的存活态，由它创建的 settle 闭包读取：true 时发起上传的编辑器
+  // 自己会做内联替换；false 后回写是唯一能落地链接的路径。刻意用 layout
+  // effect：React 会在卸载 commit 时把子编辑器 ref 置空，但被动 cleanup 要
+  // 再晚一个任务才翻转——落在那段间隙里的 settle 会看到「已挂载」却没有
+  // 可替换的编辑器。
   const mountedRef = useRef(true);
   useLayoutEffect(() => {
     mountedRef.current = true;
@@ -283,13 +261,12 @@ export function useCoordinatedUploads(
     };
   }, []);
 
-  // Registration only exists for a persisted target; a liveRegistryKey with
-  // no binding would register an editor nothing can ever look up.
+  // 注册只对持久化目标存在；没有 binding 的 liveRegistryKey 会注册一个永远
+  // 没人能查到的编辑器。
   const registryKey = binding ? (opts?.liveRegistryKey ?? binding.registryKey) : undefined;
-  // Layout effect for the same reason as mountedRef: chat's adopt swaps the
-  // editor's document (and its loaded key) synchronously during commit, and a
-  // passive re-registration one task later leaves a settle window where the
-  // old key still maps to an editor now holding another draft's document.
+  // 用 layout effect 与 mountedRef 同理：chat 的 adopt 会在 commit 期间同步
+  // 替换编辑器文档（与已加载 key），若晚一个任务的被动重注册，会让旧 key 在
+  // 某段 settle 窗口里仍映射着一个已持有另一草稿文档的编辑器。
   useLayoutEffect(() => {
     if (!registryKey) return;
     liveEditors.set(registryKey, editorRef);
@@ -307,29 +284,24 @@ export function useCoordinatedUploads(
     return done.length === 0 ? EMPTY_ATTACHMENTS : done;
   }, [uploads]);
 
-  // Rebuild placeholders for uploads this document is not showing.
+  // 为「本文档没在展示的上传」重建占位符。
   //
-  // An upload outlives the mount that started it, but its placeholder node
-  // does not — placeholders are never serialised into the draft body, so a
-  // reopened composer starts with no trace of one that is still running. The
-  // draft still holds the record, which is enough to draw it again, and the
-  // settle then replaces it in place (see deliverFinishedUpload). Without this
-  // the composer looks idle while `gate` quietly blocks the send.
+  // 上传会活过发起它的挂载，但占位节点不会——占位符从不序列化进草稿正文，
+  // 所以重开的 composer 开始时对仍在跑的上传毫无痕迹。草稿仍持有记录，足以
+  // 重画它；settle 随后原位替换它（见 deliverFinishedUpload）。没有这一步，
+  // composer 看起来空闲，而 `gate` 却在安静地挡着发送。
   //
-  // ONCE per id per mount, tracked here rather than by scanning the document:
-  // a user who deletes the placeholder mid-upload means it, and MUL-5181's
-  // rule that a deleted placeholder stays deleted would be undone by the next
-  // store write re-drawing it.
+  // 每个 id 每次挂载只重建一次，用这里（而非扫文档）跟踪：用户中途删掉
+  // 占位符是认真的，MUL-5181 那条「删过的占位符保持删除」的规则不该被下次
+  // store 写入重画出来抵消。
   //
-  // Retried while it cannot land, because the imperative handle exists from
-  // the first commit while the Tiptap instance arrives a passive effect later
-  // — the same window deliverFinishedUpload retries through.
+  // 落不了地就重试，因为命令式句柄首次 commit 就有、而 Tiptap 实例晚一个
+  // 被动 effect 才到——deliverFinishedUpload 也在重试同一段窗口。
   const rebuiltUploadIdsRef = useRef<Set<string>>(new Set());
-  // Chat pins its document to the draft an in-flight upload started while the
-  // user browses another session, so `uploads` (the SELECTED draft) can name a
-  // different target than the document holds. Drawing then would put one
-  // draft's placeholder into another draft's document. The registry key is
-  // already the signal for exactly this divergence.
+  // chat 会把文档钉在「在途上传开始的草稿」上，而用户同时在浏览另一会话，
+  // 所以 `uploads`（被选中的草稿）能指向与文档持有者不同的目标。那时再画
+  // 会把一份草稿的占位符画进另一份草稿的文档。注册表 key 正是这个分叉的
+  // 信号。
   const editorHoldsThisTarget = !binding || registryKey === binding.registryKey;
   useEffect(() => {
     if (!editorHoldsThisTarget) return;
@@ -366,21 +338,18 @@ export function useCoordinatedUploads(
 
   const handleUpload = useCallback(
     (file: File, uploadId?: string): Promise<UploadResult | null> => {
-      // Adopt the editor's id rather than minting a second one: the document
-      // node and this draft record are the same upload, and a settle that
-      // reaches a mount which did not start it can only find the node by id.
-      // The fallback covers a caller with no editor placeholder to match.
+      // 采纳编辑器铸造的 id 而不是再造一个：文档节点与这条草稿记录是同一
+      // 次上传，抵达「并非它发起的挂载」的 settle 只能按 id 找到节点。
+      // 兜底覆盖没有编辑器占位符可配的调用方。
       const clientUploadId = uploadId ?? createSafeId();
-      // An id handed in by the editor means it ALREADY drew the node, so this
-      // upload counts as rebuilt from here on. Registering it now rather than
-      // letting the effect discover the node closes the gap between the two:
-      // in that window the effect would see no node (the user could have
-      // deleted it) and draw a second one, resurrecting a placeholder the
-      // user removed. The window is sub-frame, but the rule reads better as
-      // "whoever drew it registers it" than as a race nobody can hit.
+      // 编辑器交进来的 id 意味着它**已经**画了节点，所以该上传从此刻起算
+      // 已重建。现在注册而不是让 effect 去发现节点，能堵上两者之间的空档：
+      // 那段窗口里 effect 会看不到节点（用户可能已删了它）而再画一个，复活
+      // 一个用户已移除的占位符。窗口虽然不足一帧，但「谁画的谁注册」读起来
+      // 比一个没人能撞上的竞态更顺。
       if (uploadId) rebuiltUploadIdsRef.current.add(uploadId);
-      // Snapshot the target NOW: settle handlers must keep addressing the
-      // draft the file landed in, no matter what is selected when they fire.
+      // 现在立刻快照目标：settle 处理器必须始终寻址文件落进去的那份草稿，
+      // 无论它们触发时选中的是哪个。
       const target = binding ? (resolveUploadTargetRef.current?.() ?? binding) : undefined;
       const placeholder: DraftUpload = {
         clientUploadId,
@@ -393,12 +362,12 @@ export function useCoordinatedUploads(
       const pastedText = pastedTextSource(file);
 
       if (file.size > MAX_FILE_SIZE) {
-        // Never enters the coordinator, and never enters the draft either —
-        // see the settle handler below for why a failure leaves no placeholder.
+        // 既不进协调器也不进草稿——为什么失败不留占位符见下面的 settle
+        // 处理器。
         const reason = "File exceeds 100 MB limit";
         if (pastedText !== undefined) {
-          // A paste has no on-disk copy to re-attach from, so the text goes
-          // back into the composer instead of being lost with the upload.
+          // 粘贴没有磁盘副本可重新挂载，所以文本回进 composer，而不是随
+          // 上传一起丢失。
           deliverPastedTextBack(target, editorRef, pastedText);
         }
         toast.error(t(($) => $.upload.failed, { filename: file.name, reason }));
@@ -420,16 +389,14 @@ export function useCoordinatedUploads(
           onSettled: (outcome) => {
             if (outcome.status === "uploaded") {
               if (target) {
-                // Generation guard: only write if the draft still tracks it.
+                // 代际守卫：草稿仍追踪它才写入。
                 if (target.getUploads().some((u) => u.clientUploadId === clientUploadId)) {
                   target.settleUpload(clientUploadId, outcome.attachment);
-                  // Write-back (MUL-5181): the mount that started this upload
-                  // is gone, so no editor swap will put the finished link into
-                  // the document — deliver it into the BODY instead (that is
-                  // what submit binds, reference-filtered). Skipped while this
-                  // mount is alive: resolving the promise below drives the
-                  // normal inline blob→URL swap, and a placeholder the user
-                  // deleted mid-upload must stay deleted.
+                  // 回写（MUL-5181）：发起这次上传的挂载已消失，没有编辑器
+                  // 替换会把完成链接放进文档——改投进正文（提交绑定的是它，
+                  // 引用过滤）。本次挂载还活着时跳过：下面 resolve promise
+                  // 驱动正常的内联 blob→URL 替换，而用户中途删掉的占位符
+                  // 必须保持已删。
                   if (!mountedRef.current) {
                     deliverFinishedUpload(target, clientUploadId, outcome.attachment);
                   }
@@ -446,22 +413,18 @@ export function useCoordinatedUploads(
               resolve(toUploadResult(outcome.attachment));
             } else {
               const reason = outcome.error.message;
-              // A failure leaves NOTHING behind. The toast below has already
-              // said it, at the moment it happened, and the file is still on
-              // disk — a chip adds no information and cannot retry (the bytes
-              // were never persisted). Keeping one costs more than it gives:
-              // it survives reload and reopen until dismissed by hand, and
-              // `isMeaningful` counts it, so a single flaky request keeps an
-              // otherwise-empty draft alive for the full 30-day TTL.
+              // 一次失败什么都不留。下面的 toast 在发生那一刻已经说过了，
+              // 且文件仍在磁盘上——小徽标不增加信息也无法重试（字节从未
+              // 持久化）。留着它得不偿失：它跨刷新/重开存活直到手动消除，
+              // 且 `isMeaningful` 会计入它，一次偶发抖动就能让一份本已空
+              // 的草稿在 30 天 TTL 内一直活着。
               //
-              // Legacy `interrupted` records still get a chip for the reason
-              // this one does not: they are discovered a session later, when
-              // the user no longer remembers attaching anything.
+              // 旧 `interrupted` 记录仍然有小徽标，理由恰是这条没有的：
+              // 它们在会话之后才被发现，用户早忘了附过什么。
               if (target) {
                 if (target.getUploads().some((u) => u.clientUploadId === clientUploadId)) {
                   target.removeUpload(clientUploadId);
-                  // Paste-as-file has no on-disk copy to re-attach from, so
-                  // its text goes back into the composer.
+                  // 粘贴成文件没有磁盘副本可重新挂载，所以文本回进 composer。
                   if (pastedText !== undefined) {
                     deliverPastedTextBack(target, editorRef, pastedText);
                   }
@@ -486,11 +449,10 @@ export function useCoordinatedUploads(
 
   const removeUpload = useCallback(
     (clientUploadId: string) => {
-      // Defensive cancel for a placeholder removed while still in flight: its
-      // request has no destination left, so don't let it run to completion.
-      // Today's chips expose ✕ only for failed/interrupted entries, so this
-      // fires only if a future caller removes an `uploading` one. Guarded on
-      // OUR tracking so a stray id can never abort another surface's upload.
+      // 为「还在途时被移除」的占位符做防御性取消：它的请求已经没有目的地，
+      // 别让它跑完。今天的小徽标只对失败/中断项暴露 ✕，所以只有未来的调用方
+      // 移除 `uploading` 项才会触发它。以**我们的**追踪为守卫，乱传的 id 绝不
+      // 会中止别人界面的上传。
       const tracked = binding ? binding.getUploads() : localUploadsRef.current;
       if (tracked.some((u) => u.clientUploadId === clientUploadId && u.status === "uploading")) {
         abortUpload(clientUploadId);
@@ -501,15 +463,14 @@ export function useCoordinatedUploads(
     [binding],
   );
 
-  // Submit-time truth for the local (non-persisted) path: a deliberate
-  // latest-value ref written during render, because `isBlocked` must read the
-  // value at invocation time, not at the render the callback captured. The
-  // persisted path reads the store through the binding.
+  // 本地（非持久化）路径在提交时刻的事实：刻意在渲染时写的最新值 ref，
+  // 因为 `isBlocked` 必须在调用时刻读值，而不是读回调捕获的那个渲染的值。
+  // 持久化路径经绑定读 store。
   const localUploadsRef = useRef(localUploads);
   localUploadsRef.current = localUploads;
 
-  // Rebuilt every render on purpose (editorGate itself is a fresh object per
-  // render): consumers read it through refs/props, never by identity.
+  // 刻意每次渲染都重建（editorGate 本身就是每渲染一个新对象）：使用者经
+  // ref/props 读它，从不按身份比较。
   const gate: UploadGate = {
     uploading: editorGate.uploading || hasUploadingDraft(uploads),
     onUploadingChange: editorGate.onUploadingChange,

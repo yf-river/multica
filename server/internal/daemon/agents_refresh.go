@@ -7,59 +7,44 @@ import (
 	"time"
 )
 
-// agentDiscoveryInterval is how often a running daemon re-checks which agent
-// CLIs are installed. A round is a handful of exec.LookPath calls — the
-// login-shell fallback is separately rate-limited by the much longer
-// shellResolveTTL — so this can be short enough that installing a CLI feels
-// immediate. Overridable for tests.
+// agentDiscoveryInterval 是运行中的 daemon 重新检查“装了哪些 agent CLI”的频率。一轮
+// 只是几次 exec.LookPath 调用——登录 shell 兜底由长得多的 shellResolveTTL 单独限速——
+// 因此它可以短到“装个 CLI 立刻就有感觉”。测试可覆盖。
 var agentDiscoveryInterval = 2 * time.Minute
 
-// agentConvergeMaxBackoff caps the retry delay for a discovered provider that
-// keeps failing to register (permanently below the minimum supported version, a
-// CLI whose --version never succeeds, a server that keeps rejecting the
-// register). Discovery itself stays on agentDiscoveryInterval; only the
-// expensive half — version probes plus one register call per workspace — backs
-// off, so a stuck provider cannot turn into a busy loop. Overridable for tests.
+// agentConvergeMaxBackoff 给“某个发现的 provider 一直注册失败”（永久低于最低支持
+// 版本、--version 永远不成功的 CLI、服务器一直拒绝注册）的重试延迟封顶。发现本身保持
+// agentDiscoveryInterval；只有贵的那半——版本探测加每个 workspace 一次注册——做退避，
+// 于是卡住的 provider 不会变成忙循环。测试可覆盖。
 var agentConvergeMaxBackoff = 30 * time.Minute
 
-// agentVersionRefreshInterval is how often a running daemon re-probes the
-// version of every agent CLI it already has registered, so an in-place upgrade
-// of codex/claude is picked up without a restart. A round is one `--version`
-// fork per installed CLI, fanned out and machine-level — it does not scale with
-// workspace count or runtime count. Overridable for tests.
+// agentVersionRefreshInterval 是运行中的 daemon 重新探测“每个已注册 agent CLI 的
+// 版本”的频率，让 codex/claude 的原地升级不用重启就能被感知。一轮是每装一个 CLI 就
+// fork 一次 `--version`，扇出且是机器级——不随 workspace 数或 runtime 数扩展。测试可
+// 覆盖。
 //
-// This is the one local probe whose cost grows with the host (one fork per
-// installed CLI) and which executes third-party binaries, some of whose
-// wrappers have visible side effects when run — so it is the one worth
-// lengthening if background probing needs to get cheaper.
+// 这是唯一“成本随宿主机增长”的本地探测（每装一个 CLI 一次 fork），而且执行的是第三
+// 方二进制——其中一些包装器运行时有可见副作用——所以如果要压低后台探测成本，值得拉长
+// 的就是它。
 //
-// It is not lengthened further than selfReloadCheckInterval, though, because
-// the round does more than refresh a displayed version string: it also keys
-// version-sensitive launch policy, and it is what confirms a CLI has dropped
-// below its minimum supported version and must stop being given work. The
-// interval is therefore also the window in which an unsupported CLI keeps
-// claiming tasks, which is why this tracks the reload check rather than being
-// pushed out on cost grounds alone.
+// 但它没有比 selfReloadCheckInterval 拉得更长：这一轮做的远不止刷新展示用的版本串——
+// 它还驱动“版本敏感”的启动策略，并且正是它确认某个 CLI 已跌破最低支持版本、必须停止
+// 派活。因此这个间隔同时也是“一个不支持的 CLI 还在认领任务”的窗口——这就是为什么它
+// 跟着重载检查走，而不是单凭成本理由被推得更远。
 var agentVersionRefreshInterval = 10 * time.Minute
 
-// agentDiscoveryLoop keeps the registered runtime set converged on the agent
-// CLIs actually installed on this machine, so a CLI installed while the daemon
-// is running comes online without a restart (MUL-5439).
+// agentDiscoveryLoop 让已注册的 runtime 集合收敛到“这台机器实际装的 agent CLI”，
+// 这样 daemon 运行期间新装的 CLI 不用重启就能上线（MUL-5439）。
 //
-// Each tick does the cheap half unconditionally: re-probe availability and
-// publish anything new. The expensive half (version probes + registration) runs
-// only when some discovered provider is not yet registered for every tracked
-// workspace — which is derived from live state, not remembered from the round
-// that discovered it. That is what makes a failed first attempt retry: a
-// provider whose version probe timed out, or whose register call failed, is
-// still "missing" on the next tick and gets tried again. It also means a
-// provider rejected for being below the minimum version recovers on its own
-// after an in-place upgrade.
+// 每个 tick 无条件做便宜的那半：重探可用性并发布任何新增。贵的那半（版本探测 + 注册）
+// 只在“某个发现的 provider 还没有为每个受管 workspace 都注册上 runtime”时跑——它由
+// 实时状态推导，而不是记着上一轮发现的结果。这正是“首次尝试失败会重试”的原因：版本
+// 探测超时、或注册调用失败的 provider，下一 tick 仍是“缺失”，会再试一次。这也意味着
+// “因低于最低版本而被拒”的 provider 在原地升级后能自行恢复。
 //
-// A second, slower ticker keeps the versions of already-registered providers
-// fresh (refreshAgentVersions) — the converge half only ever looks at providers
-// that are *missing* a runtime, so without it an in-place CLI upgrade would stay
-// invisible until the daemon restarted.
+// 第二个更慢的 ticker 保持已注册 provider 的版本新鲜（refreshAgentVersions）——收敛
+// 那半只盯着*runtime 缺失*的 provider，没有它，一次原地 CLI 升级会一直不可见直到
+// daemon 重启。
 func (d *Daemon) agentDiscoveryLoop(ctx context.Context) {
 	ticker := time.NewTicker(agentDiscoveryInterval)
 	defer ticker.Stop()
@@ -83,8 +68,7 @@ func (d *Daemon) agentDiscoveryLoop(ctx context.Context) {
 				backoff = 0
 				continue
 			}
-			// A newly discovered provider always gets an immediate attempt;
-			// otherwise honor the backoff earned by previous failures.
+			// 新发现的 provider 总是立刻试一次；否则尊重之前失败挣来的退避。
 			if len(gained) == 0 && now.Before(nextRetry) {
 				continue
 			}
@@ -100,8 +84,8 @@ func (d *Daemon) agentDiscoveryLoop(ctx context.Context) {
 	}
 }
 
-// nextConvergeBackoff doubles the retry delay, starting at one discovery
-// interval and capped at agentConvergeMaxBackoff.
+// nextConvergeBackoff 让重试延迟翻倍，从“一个发现间隔”起步、以
+// agentConvergeMaxBackoff 封顶。
 func nextConvergeBackoff(current time.Duration) time.Duration {
 	if current <= 0 {
 		return agentDiscoveryInterval
@@ -113,35 +97,32 @@ func nextConvergeBackoff(current time.Duration) time.Duration {
 	return next
 }
 
-// agents returns the current built-in agent availability set.
+// agents 返回当前内置 agent 的可用集合。
 //
-// The returned map is shared and MUST NOT be mutated: refreshAgentAvailability
-// publishes a whole new map rather than editing this one, which is what makes
-// unlocked reads from task-execution paths safe.
+// 返回的 map 是共享的，*严禁*修改：refreshAgentAvailability 发布的是整张新 map，而
+// 不是就地编辑这张——这正是任务执行路径可以不加锁读它的原因。
 func (d *Daemon) agents() map[string]AgentEntry {
 	if m := d.agentsAvailable.Load(); m != nil {
 		return *m
 	}
-	// Zero-value Daemon (tests construct one directly): fall back to the
-	// startup config so behavior matches the pre-refresh code path.
+	// 零值 Daemon（测试直接构造的）：回退到启动配置，让行为与引入 refresh 之前的代码
+	// 路径一致。
 	return d.cfg.Agents
 }
 
-// setSkippedAgents replaces the diagnostic "discovered but not registered" set
-// reported on /health. Called at the end of every registration round with the
-// providers that round dropped.
+// setSkippedAgents 替换 /health 上报的“发现但未注册”诊断集合。每轮注册结束时，用
+// 该轮丢弃的 provider 调用。
 //
-// Purely diagnostic, and deliberately so: it is last-writer-wins across every
-// goroutine that probes, so nothing may steer behavior off it. A caller that
-// needs to act on a verdict takes it from detectBuiltinRuntimes' return value,
-// which describes its own round.
+// 纯诊断，且刻意如此：它在所有做探测的 goroutine 之间是“最后写入者胜”，因此任何行为
+// 都不得以它为准。需要就结论采取行动的调用方，应取 detectBuiltinRuntimes 的返回值——
+// 那描述的是它自己那一轮。
 func (d *Daemon) setSkippedAgents(skipped map[string]string) {
 	d.skippedAgentsMu.Lock()
 	defer d.skippedAgentsMu.Unlock()
 	d.skippedAgents = skipped
 }
 
-// skippedAgentsSnapshot copies the current skip reasons for the health handler.
+// skippedAgentsSnapshot 为健康处理器拷贝当前跳过原因。
 func (d *Daemon) skippedAgentsSnapshot() map[string]string {
 	d.skippedAgentsMu.RLock()
 	defer d.skippedAgentsMu.RUnlock()
@@ -155,18 +136,15 @@ func (d *Daemon) skippedAgentsSnapshot() map[string]string {
 	return out
 }
 
-// refreshAgentAvailability re-runs CLI discovery and publishes providers that
-// appeared since the last probe. It performs no registration — that is
-// convergeRuntimeRegistrations, driven by live state so a failure retries.
+// refreshAgentAvailability 重跑 CLI 发现，并发布上次探测以来新出现的 provider。它不
+// 做注册——那是 convergeRuntimeRegistrations 的事，由实时状态驱动使失败可重试。
 //
-// Deliberately one-directional: only providers GAINED are acted on. A provider
-// that stops resolving is kept, because a transient environment difference (a
-// daemon restarted from a narrower PATH, a version manager mid-upgrade) would
-// otherwise tear down a runtime that is working — and possibly executing a
-// task. Removal stays the job of an explicit restart, where the user chose the
-// environment.
+// 刻意单向：只对“新增的”provider 行动。一个“停止解析成功”的 provider 会被保留——
+// 否则一次瞬态环境差异（daemon 从更窄的 PATH 重启、版本管理器升级到一半）就会拆掉
+// 一个正在工作、甚至可能正在执行任务的 runtime。移除仍是“显式重启”的职责——那时用户
+// 自己选了环境。
 //
-// Returns the providers that were added, for logging and tests.
+// 返回被新增的 provider，供日志与测试使用。
 func (d *Daemon) refreshAgentAvailability() []string {
 	current := d.agents()
 	probed := probeAgentCLIs()
@@ -182,9 +160,8 @@ func (d *Daemon) refreshAgentAvailability() []string {
 	}
 	sort.Strings(gained)
 
-	// Copy-on-write: build the union, then publish. Entries for providers we
-	// already knew about are preserved as-is so this never fights the pinned
-	// path / self-heal bookkeeping (resolvedPaths) for a running provider.
+	// 写时复制：先并出并集，再发布。已认识的 provider 的条目原样保留，这样本函数
+	// 永远不会和运行中 provider 的“固定路径/自愈簿记”（resolvedPaths）打架。
 	merged := make(map[string]AgentEntry, len(current)+len(gained))
 	for name, entry := range current {
 		merged[name] = entry
@@ -197,87 +174,66 @@ func (d *Daemon) refreshAgentAvailability() []string {
 	return gained
 }
 
-// refreshAgentVersions re-probes every installed agent CLI and re-registers the
-// built-in runtimes whenever the server has not been told a version this daemon
-// has already detected, so what the server reports matches what is on disk.
+// refreshAgentVersions 重新探测每个已装 agent CLI，并且在“服务器还没被告知本 daemon
+// 已探测到的某个版本”时重注册内置 runtime，让服务器显示的内容与磁盘一致。
 //
-// This is the agent-CLI counterpart to trySelfReload, and it deliberately does
-// NOT restart. What a user needs when codex or claude upgrades is that
-// subsequent tasks run the new CLI under the new version's rules — not that
-// Multica's availability tracks a third party's release cadence. An in-place
-// POSIX upgrade changes the binary behind the pinned path; a Windows installer
-// upgrade retargets the stable junction resolved by resolveAgentEntry. The two
-// things left stale are the cached version (which keys version-sensitive policy
-// such as the Codex sandbox) and the version the server displays. Both are
-// refreshed here with running tasks untouched.
+// 这是 trySelfReload 在 agent CLI 侧的对应物，而且刻意*不*重启。codex 或 claude
+// 升级后用户要的是：后续任务跑新 CLI、受新版本规则约束——而不是 Multica 的可用性跟着
+// 第三方发版节奏走。POSIX 的原地升级会换掉固定路径背后的二进制；Windows 安装器升级
+// 会重定向 resolveAgentEntry 解析出的稳定 junction。剩下来变旧的两样是：缓存的版本
+// （驱动版本敏感策略，如 Codex sandbox）与服务器展示的版本。两者都在这里刷新，且不
+// 碰运行中的任务。
 //
-// detectBuiltinRuntimes does the probing, which buys three properties for free:
-// probes fan out, a fast failure is retried (runtimeVersionProbeAttempts), and
-// the minimum-version gate still applies. A provider whose probe fails this
-// round keeps its previous version and is retried next round — a failed probe
-// never looks like a version change.
+// 探测由 detectBuiltinRuntimes 做，白得三个性质：探测扇出、快速失败可重试
+// （runtimeVersionProbeAttempts）、最低版本门槛依然生效。本轮探测失败的 provider 保留
+// 上一版本、下轮再试——失败的探测绝不会看起来像“版本变了”。
 //
-// What to send is decided per WORKSPACE, from workspaceState.builtinVersions —
-// the versions the last register call the server accepted for that workspace
-// actually carried — never from a before/after diff of the shared version
-// cache. The cache is written by every path that probes, so a diff only sees a
-// change when this round happens to be the first writer: a converge round, a
-// new workspace registering, or a self-heal at task launch will all move it
-// first and leave this round seeing nothing to do — while the workspaces those
-// paths did not touch keep the old version indefinitely.
+// “发什么”按*每个 workspace* 从 workspaceState.builtinVersions 决定——那是该
+// workspace 上次被服务器接受的注册调用实际携带的版本——绝不从共享版本缓存的
+// before/after 差值推断。缓存会被每条做探测的路径写入，因此差值只有在“本轮恰好是
+// 第一个写入者”时才看得到变化：一轮 converge、新 workspace 注册、或任务启动时的
+// 自愈都会先动它，让本轮看着没事可做——而那些路径没碰过的 workspace 则无限期停在旧
+// 版本上。
 //
-// The acknowledgement is per-workspace rather than a global pending set for
-// the same reason in reverse: registration entry points are not serialized, so
-// a register that probed BEFORE an upgrade can land AFTER a refresh round has
-// updated every workspace it could see. A global "done" flag cleared at that
-// moment would strand the late workspace on the old version forever. Scoped to
-// the workspace, the late-landing call simply records what it sent, the record
-// disagrees with the next probe round, and that round re-registers exactly the
-// workspace that fell behind.
+// 确认是 per-workspace 而不是全局 pending 集合，反过来也是同一道理：注册入口不串行，
+// 因此“升级前探测”的注册可能落在“刷新轮已更新它能看到的每个 workspace”之后。此刻清
+// 掉一个全局 "done" 标志，会把迟到的 workspace 永远搁在旧版本。范围缩到 workspace，
+// 迟到的调用只是记下自己发过什么，记录与下一轮探测不一致，那一轮就精确重注册掉队的
+// 那个 workspace。
 //
-// Re-registration carries the whole built-in set because that is the shape the
-// register endpoint upserts, so one provider's upgrade re-sends its neighbours
-// too. That is safe rather than disruptive: the unchanged entries upsert
-// identically, and mergeBuiltinRegisterResponse swaps a server-side ID rotation
-// in place instead of accumulating a duplicate — the workspace still holds
-// exactly one runtime per provider, and no running task is touched.
-// This runs unconditionally rather than yielding when the converge half has
-// work to do, even though the two occasionally probe in the same window. A
-// provider that is permanently below the minimum supported version never leaves
-// providersMissingRuntimes — that is by design, so it recovers on its own after
-// an upgrade — so yielding to it would let one stuck CLI silently disable version
-// refresh for every healthy provider on the machine, forever.
+// 重注册携带整个内置集合，因为那是注册端点 upsert 的形状，所以一个 provider 升级会
+// 顺带重发邻居。这安全而无害：未变条目 upsert 结果相同，mergeBuiltinRegisterResponse
+// 会把服务端 ID 轮换就地换掉而不是累积出重复——每个 workspace 每 provider 仍恰好一
+// 个 runtime，没有任何运行中任务被碰。
+// 本函数无条件运行，即使收敛那半有活干也不让路——尽管两者偶尔会在同一窗口探测。
+// 一个永久低于最低支持版本的 provider 永远不会离开 providersMissingRuntimes——这是
+// 有意的，让它升级后自行恢复——因此向它让路会让一个卡住的 CLI 永久悄悄禁掉机器上每
+// 个健康 provider 的版本刷新。
 func (d *Daemon) refreshAgentVersions(ctx context.Context) {
-	// Nothing has ever been version-detected: the daemon is still starting up,
-	// and initial registration is the sync path's job.
+	// 还从未做过任何版本探测：daemon 仍在启动，初次注册是同步路径的职责。
 	if !d.hasDetectedAgentVersions() {
 		return
 	}
 
 	builtins, demotable, _ := d.detectBuiltinRuntimes(ctx)
-	// Runs before the early return below: a condemned provider drops out of
-	// builtins entirely, so there is no version change left to detect and the
-	// machine could otherwise look idle while an unusable CLI keeps taking work.
+	// 在下面的提前返回之前执行：被“判死刑”的 provider 会整个掉出 builtins，于是没有
+	// 版本变化可探测——否则机器可能看似空闲，而一个不可用的 CLI 还在持续接活。
 	if len(demotable) > 0 {
 		d.demoteUnusableRuntimes(ctx, demotable)
 	}
 	if len(builtins) == 0 {
 		return
 	}
-	// What this round's payload actually carries, per provider. A provider whose
-	// probe failed is absent — and only carried providers are compared below,
-	// which is what stops an uninstalled CLI from triggering registrations. It
-	// is never dropped from the availability set (refreshAgentAvailability is
-	// deliberately one-directional), so it keeps failing its probe and never
-	// reappears in the payload; comparing records against a payload that cannot
-	// mention it would otherwise turn into one register call per workspace
-	// every few minutes, forever.
+	// 本轮载荷实际携带的东西，按 provider 记。探测失败的 provider 缺席——只有携带了
+	// 的 provider 才会被下面比较，这正阻止“已卸载的 CLI 触发注册”。它从不被移出可用
+	// 集合（refreshAgentAvailability 刻意单向），于是它持续探测失败、永不重现于载荷；
+	// 否则拿记录去对一份无法提及它的载荷，会变成“每个 workspace 每几分钟一次注册
+	// 调用”，永无止境。
 	carried := builtinVersionsFromPayload(builtins)
 
-	// A workspace is behind when some carried provider's last accepted register
-	// call for it carried a different version. A provider with no record for a
-	// workspace is skipped: it has never registered there, so bringing it
-	// online is the converge path's job, not a version change.
+	// 当“某携带 provider 上次为该 workspace 被接受的注册调用”携带了不同版本时，该
+	// workspace 落后。对某 workspace 没有记录的 provider 直接跳过：它从没在那注册过，
+	// 把它带上线是 converge 路径的职责，不是版本变化。
 	d.mu.Lock()
 	var behind []string
 	transitions := make(map[string]struct{})
@@ -312,12 +268,11 @@ func (d *Daemon) refreshAgentVersions(ctx context.Context) {
 	d.logger.Info("agent CLI version not yet on the server; refreshing registration without a restart",
 		"versions", advancing, "workspace_ids", behind)
 
-	// Register only the workspaces that are behind. A failure records nothing,
-	// so that workspace stays behind and the next round retries it.
+	// 只注册落后的 workspace。失败不记录任何东西，所以该 workspace 保持落后、下轮
+	// 重试。
 	var changed bool
 	for _, id := range behind {
-		// Send, merge and clean up as one ordered step — see
-		// workspaceRegisterLock.
+		// 发送、合并、清理作为单个有序步骤——见 workspaceRegisterLock。
 		_ = d.withWorkspaceRegisterLock(id, func() error {
 			resp, err := d.registerBuiltinRuntimesForWorkspaceLocked(ctx, id, builtins)
 			if err != nil {
@@ -341,50 +296,37 @@ func (d *Daemon) refreshAgentVersions(ctx context.Context) {
 	}
 }
 
-// demoteUnusableRuntimes takes offline the built-in runtimes of providers whose
-// re-probe reached a confirmed verdict about the binary on disk: a version below
-// the minimum supported one, or a file the OS refuses to execute at all.
+// demoteUnusableRuntimes 把“其复探对磁盘二进制得出确认结论”的 provider 的内置
+// runtime 拉下线：版本低于最低支持版本，或文件本身被 OS 拒绝执行。
 //
-// Without this, an in-place DOWNGRADE is the one machine change nothing reacts
-// to. probeBuiltinRuntime drops the provider from the registration payload, so
-// refreshAgentVersions sees no version to compare; the runtime row survives
-// because the built-in merge is additive; and the provider is absent from
-// providersMissingRuntimes precisely because it still holds a runtime — so
-// converge ignores it too. The daemon keeps routing tasks to a binary it has
-// already verified it cannot run correctly, under the previously cached
-// version's policy.
+// 没有它，原地*降级*就是唯一“什么都不会反应”的机器变化。probeBuiltinRuntime 会把该
+// provider 从注册载荷里剔除，于是 refreshAgentVersions 看不到可比对的版本；runtime 行
+// 因内置合并是加法式而幸存；而该 provider 恰恰因还持有一个 runtime 而缺席
+// providersMissingRuntimes——所以 converge 也忽略它。daemon 于是一边继续把任务路由给
+// 它已证实跑不对的二进制，一边还按先前缓存的版本策略行事。
 //
-// A CLI that cannot exec reaches the same dead end by a different road
-// (MUL-6164): an npm placeholder stub passes every "is it installed" check the
-// daemon makes, so the runtime stays online and every task it claims dies at
-// fork/exec. Treating that as transient meant the user saw the same failure once
-// per task instead of once, and had no signal the runtime was the problem.
+// 无法 exec 的 CLI 经另一条路也撞进同一死胡同（MUL-6164）：npm 占位 stub 能通过
+// daemon 做的每一项“装没装”检查，因此 runtime 保持在线、它认领的每个任务都死在
+// fork/exec。把它当瞬时故障，用户就会每任务看到一次同样的失败，而不是看到一次，且
+// 毫无“是这个 runtime 的问题”的信号。
 //
-// Deregistering is the narrowest honest response. It stops the server routing
-// work there, the reason is already visible in skipped_agents, and recovery
-// needs no new machinery: once the provider is upgraded it has no runtime, which
-// puts it back in providersMissingRuntimes and lets the converge path register
-// it again. The alternative — keeping the runtime and refusing the launch — puts
-// a check on the hot path and leaves the UI advertising a runtime that rejects
-// everything.
+// 注销是最窄而诚实的回应。它阻止服务器往那里派活，原因已可见于 skipped_agents，
+// 恢复也不需要新机制：provider 一旦升级好就没了 runtime，于是回到
+// providersMissingRuntimes、让 converge 路径再注册它。另一种做法——保留 runtime 但
+// 拒绝启动——把检查塞进热路径，还让 UI 宣传一个拒收一切任务的 runtime。
 //
-// Only ever acts on a confirmed verdict, never on a probe that merely failed:
-// an unreadable version is transient, and tearing down a working runtime over
-// one is exactly the mistake refreshAgentAvailability's one-directional rule
-// exists to avoid. detectBuiltinRuntimes owns that distinction, including the
-// confirmation window a not-executable verdict must clear first.
+// 只对“确认的结论”行动，绝不对“仅仅失败的探测”行动：版本读不出来是瞬态的，为一个
+// 就拆掉能工作的 runtime，正是 refreshAgentAvailability 单向规则存在的理由。
+// detectBuiltinRuntimes 掌握这个区分，包括“不可执行”结论必须先清掉的确认窗口。
 //
-// causes maps each condemned provider to the evidence against it, which is
-// already user-visible in skipped_agents and is what the log below reports.
+// causes 把每个被“判死刑”的 provider 映射到它的罪证——已在 skipped_agents 里对用户
+// 可见，下面日志报的也是它。
 func (d *Daemon) demoteUnusableRuntimes(ctx context.Context, causes map[string]runtimeVerdict) {
-	// Serialize with task claiming the way the restart paths do: the barrier
-	// only sets when no claim is in flight and no task is running, so a
-	// runtime is never deregistered under a task that is still executing —
-	// the server's sweep would fail-and-retry that task while the local
-	// process keeps going, and an upgrade-back would revive the runtime ID
-	// into a genuine duplicate execution. A busy daemon defers to the next
-	// refresh tick; the too-old CLI keeps its runtimes a little longer, which
-	// is the pre-demotion status quo, not a new exposure.
+	// 像重启路径那样与任务认领串行：屏障只在“没有在途 claim、没有运行中任务”时才置
+	// 位，因此 runtime 绝不会在仍有任务执行时被注销——否则服务器那边的清理会对该任务
+	// 失败重试而本地进程照跑，一次“升级回头”还会把 runtime ID 复活成一次真正的重复
+	// 执行。繁忙 daemon 顺延到下一刷新 tick；过老的 CLI 多撑一会儿 runtime，这是降级前
+	// 的现状，不是新的暴露面。
 	if !d.trySetClaimBarrier() {
 		d.logger.Info("defer runtime demotion: task or claim in flight",
 			"providers", causes)
@@ -394,16 +336,15 @@ func (d *Daemon) demoteUnusableRuntimes(ctx context.Context, causes map[string]r
 
 	d.mu.Lock()
 	var demoted []string
-	// Grouped per workspace because the cleanup below has to run under each
-	// workspace's register lock — see deregisterDroppedRuntimes.
+	// 按 workspace 分组，因为下面的清理必须在每个 workspace 的注册锁下进行——见
+	// deregisterDroppedRuntimes。
 	demotedByWorkspace := make(map[string][]string)
 	demotedProviders := make(map[string]string)
 	offlineReasons := make(map[string]RuntimeOfflineReason)
 	for workspaceID, ws := range d.workspaces {
-		// A fresh array, not ws.runtimeIDs[:0]: the health handler copies this
-		// slice header under d.mu and serializes it after releasing the lock
-		// (removeStaleRuntime keeps the same rule), so filtering in place would
-		// write into a slice another goroutine is reading.
+		// 用新数组而不是 ws.runtimeIDs[:0]：健康处理器会在 d.mu 下拷贝这个切片头、
+		// 释放锁后再序列化它（removeStaleRuntime 守同一条规矩），原地过滤等于写进另一
+		// 个 goroutine 正在读的切片。
 		kept := ws.runtimeIDs[:0:0]
 		for _, rid := range ws.runtimeIDs {
 			rt, ok := d.runtimeIndex[rid]
@@ -420,24 +361,19 @@ func (d *Daemon) demoteUnusableRuntimes(ctx context.Context, causes map[string]r
 			demoted = append(demoted, rid)
 			demotedByWorkspace[workspaceID] = append(demotedByWorkspace[workspaceID], rid)
 			demotedProviders[rt.Provider] = cause.reason
-			// Carried to the server per runtime row: a client asking "why is my
-			// agent offline" reads it from there, and only this side knows both
-			// the verdict and the repair command (MUL-6164).
+			// 逐 runtime 行带给服务器：问“我的 agent 为什么离线”的客户端从那里读，
+			// 而只有这一侧同时知道结论与修复命令（MUL-6164）。
 			if cause.offline != nil {
 				offlineReasons[rid] = *cause.offline
 			}
-			// The runtime is gone, so the record of what was registered for it
-			// goes too. When the provider recovers, converge re-registers it and
-			// the record is re-seeded — first sighting is converge's job, not a
-			// version change for the refresh round to chase.
+			// runtime 已不在，为它登记的记录也一起删。provider 恢复时，converge 重注册
+			// 并重新播种记录——首次现身归 converge，不是让刷新轮去追的版本变化。
 			delete(ws.builtinVersions, rt.Provider)
 		}
 		ws.runtimeIDs = kept
 	}
-	// Remember the verdict before releasing d.mu. Removing the rows is not
-	// enough: a register sent before this demotion is still in flight, and its
-	// response would re-index the provider the moment it lands. The apply paths
-	// consult this under the same lock, so the two are totally ordered.
+	// 在释放 d.mu 前记住结论。删行不够：本降级之前发出的注册仍在途，其响应落地瞬间就
+	// 会把该 provider 重新索引。apply 路径在同一把锁下查这份记录，所以两者全序。
 	d.markProvidersDemotedLocked(causes)
 	d.mu.Unlock()
 
@@ -447,11 +383,9 @@ func (d *Daemon) demoteUnusableRuntimes(ctx context.Context, causes map[string]r
 	d.logger.Warn("agent CLI is no longer usable on this machine; taking its runtimes offline",
 		"providers", demotedProviders, "runtime_ids", demoted)
 
-	// One workspace at a time, each under its own register lock: the rows were
-	// dropped under d.mu but the requests go out without it, so an upgrade that
-	// recovered the provider in between must not be undone by this older
-	// cleanup. Sorted so the log order is deterministic; never two locks at
-	// once, so there is no ordering to deadlock on.
+	// 一次一个 workspace，各自在自己的注册锁下：行已在 d.mu 下删掉，但请求是在无锁
+	// 情况下发出的，因此“中间升级恢复了 provider”绝不能被我这份更旧的清理撤销。排好
+	// 序让日志顺序确定；绝不同时持两把锁，就没有可死锁的顺序。
 	workspaceIDs := make([]string, 0, len(demotedByWorkspace))
 	for workspaceID := range demotedByWorkspace {
 		workspaceIDs = append(workspaceIDs, workspaceID)
@@ -467,54 +401,44 @@ func (d *Daemon) demoteUnusableRuntimes(ctx context.Context, causes map[string]r
 	d.notifyRuntimeSetChanged()
 }
 
-// deregisterRevivedRuntimes takes offline the rows a register response brought
-// back for a provider that was demoted while that register was in flight.
+// deregisterRevivedRuntimes 把“某次注册响应、为一个在注册在途期间已被降级的 provider
+// 带回来的行”拉下线。
 //
-// The local apply already refused them, so without this the server would be the
-// only side still believing the runtime is online: it would keep the row in the
-// runtime list and route work to a daemon that no longer tracks it, and those
-// tasks would sit unclaimed until the stale-heartbeat sweep. Best-effort for the
-// same reason every other deregistration path is — the sweep is the backstop.
+// 本地 apply 已经拒收它们，因此没有本函数，服务器就会是唯一还相信该 runtime 在线的
+// 一侧：它会保留行、把活路由给一个已不再跟踪它的 daemon，那些任务会一直没人认领直到
+// 过期心跳清理。与其它每条注销路径一样尽力而为——清理是兜底。
 //
-// The caller must hold the workspace's register lock (workspaceRegisterLock).
+// 调用方必须持有该 workspace 的注册锁（workspaceRegisterLock）。
 func (d *Daemon) deregisterRevivedRuntimes(ctx context.Context, workspaceID string, revived revivedRuntimes) {
 	runtimeIDs := revived.ids
-	// Re-check tracking first: the rejection happened under d.mu but this call
-	// runs without it, and a legitimate recovery register landing in that gap
-	// re-creates the same row — usually under the same ID. Deregistering then
-	// would take the recovered runtime offline on the strength of an older
-	// decision. Anything the daemon tracks now is newer than this cleanup, and
-	// the register lock is what stops a recovery slipping in between this check
-	// and the request below.
+	// 先复查跟踪：拒绝发生在 d.mu 下，但本调用在无锁下跑，那段缝隙里一次合法的恢复
+	// 注册会重建同一行——通常还是同一个 ID。这时注销等于拿一个更旧的裁决把恢复好的
+	// runtime 拉下线。daemon 现在仍跟踪的任何东西都比这份清理新，而注册锁能阻止恢复
+	// 在本复查与下面请求之间溜进来。
 	runtimeIDs = d.untrackedRuntimeIDs(runtimeIDs)
 	if len(runtimeIDs) == 0 {
 		return
 	}
 	d.logger.Warn("register response revived a demoted runtime; taking it offline again",
 		"workspace_id", workspaceID, "runtime_ids", runtimeIDs)
-	// Re-send the cause: that register's upsert overwrote the runtime row's
-	// metadata, so the reason the demotion stored is gone and the server would
-	// otherwise be left with a bare "offline" — which reads as "wait for the
-	// machine" on every admission path (MUL-6164).
+	// 重发原因：那次注册的 upsert 覆盖了 runtime 行的元数据，降级时存的原因没了，否则
+	// 服务器会留下一个光秃秃的 "offline"——在每条准入路径上都读作“等这台机器”
+	// （MUL-6164）。
 	if err := d.client.Deregister(ctx, runtimeIDs, revived.reasonsFor(runtimeIDs)); err != nil {
 		d.logger.Warn("deregister of revived demoted runtimes failed",
 			"workspace_id", workspaceID, "runtime_ids", runtimeIDs, "error", err)
 	}
 }
 
-// deregisterDroppedRuntimes takes offline the server-side rows a convergence
-// decided this workspace should no longer host — a provider removed from the
-// daemon's config, a disabled custom profile, a workspace converging to zero.
+// deregisterDroppedRuntimes 把“一次收敛决定该 workspace 不应再托管”的服务端行拉下
+// 线——从 daemon 配置里移除的 provider、被禁用的自定义 profile、收敛到零的 workspace。
 //
-// Same contract as deregisterRevivedRuntimes: the caller must hold the
-// workspace's register lock, so the tracking re-check and the request are one
-// ordered step against every other registration for this workspace. Without the
-// lock this is a TOCTOU — a recovery register completing between the two puts
-// the row back and this older cleanup knocks it out, leaving the daemon tracking
-// a runtime the server has offline.
+// 与 deregisterRevivedRuntimes 同一条契约：调用方必须持有该 workspace 的注册锁，让
+// “跟踪复查”与“请求”成为该 workspace 对其它一切注册的一个有序步骤。没有锁这就是
+// TOCTOU——两步之间完成的一次恢复注册把行放回去，而这份更旧的清理又把它打掉，留下
+// daemon 跟踪着服务器已离线的 runtime。
 //
-// Best-effort: the daemon has already stopped heartbeating these rows, so the
-// server's stale-heartbeat sweep is the backstop if the call fails.
+// 尽力而为：daemon 已停止对这些行发心跳，调用失败时服务器的过期心跳清理是兜底。
 func (d *Daemon) deregisterDroppedRuntimes(ctx context.Context, workspaceID string, runtimeIDs []string, reason string, offlineReasons map[string]RuntimeOfflineReason) {
 	runtimeIDs = d.untrackedRuntimeIDs(runtimeIDs)
 	if len(runtimeIDs) == 0 {
@@ -526,18 +450,15 @@ func (d *Daemon) deregisterDroppedRuntimes(ctx context.Context, workspaceID stri
 	}
 }
 
-// providersMissingRuntimes returns the discovered providers that do not have a
-// built-in runtime registered for every tracked workspace.
+// providersMissingRuntimes 返回“没有为每个受管 workspace 都注册内置 runtime”的已
+// 发现 provider。
 //
-// This is the retry signal for the discovery loop, and it is derived from live
-// state rather than remembered: a provider only leaves this set once the daemon
-// actually holds a runtime row for it in every workspace it watches. Custom
-// profile runtimes (ProfileID set) are ignored — they register from a
-// workspace's profile list, not from CLI discovery, and a profile that happens
-// to share a protocol_family with a built-in must not mask the built-in.
+// 这是发现循环的重试信号，且由实时状态推导而不是记住：provider 只有等 daemon 真在它
+// 看的每个 workspace 里持有一行 runtime 才会离开本集合。自定义 profile runtime
+// （ProfileID 已设）被忽略——它们从 workspace 的 profile 列表注册，不是从 CLI 发现
+// 注册，而恰好与某个内置共享 protocol_family 的 profile 绝不能掩盖内置。
 //
-// Returns nothing when no workspace is tracked yet: there is nothing to
-// register against, and the initial registration will carry the full set.
+// 还没有任何 workspace 被跟踪时返回空：没有可注册的对象，初次注册会携带完整集合。
 func (d *Daemon) providersMissingRuntimes() []string {
 	available := d.agents()
 	if len(available) == 0 {
@@ -576,26 +497,22 @@ func (d *Daemon) providersMissingRuntimes() []string {
 	return out
 }
 
-// convergeRuntimeRegistrations registers the current built-in set for every
-// tracked workspace that is missing one of them.
+// convergeRuntimeRegistrations 为每个“缺少某个已发现内置 runtime”的受管 workspace
+// 注册当前内置集合。
 //
-// One version-probe round serves every workspace (built-in CLIs are per
-// machine, not per workspace). Failures are logged and left for the next
-// discovery tick — nothing here records "already handled", so a partial
-// failure across workspaces retries only the workspaces that still need it.
+// 一轮版本探测服务所有 workspace（内置 CLI 是机器级，不是 workspace 级）。失败记日志、
+// 留给下一发现 tick——这里什么都不记 “already handled”，因此跨 workspace 的部分失败
+// 只会重试仍需要它的那些 workspace。
 //
-// Strictly built-ins: this path never fetches, sends, or observes custom runtime
-// profiles. Custom profile add/edit/disable remains owned by the drift path
-// (refreshWorkspaceRuntimeProfiles), which is the only place allowed to cache a
-// profile-set signature.
+// 严格内置：本路径绝不抓取、发送或观察自定义 runtime profile。自定义 profile 的增/改/
+// 禁用仍归 drift 路径（refreshWorkspaceRuntimeProfiles）——它是唯一允许缓存
+// profile-set 签名的位置。
 //
-// RecoverOrphans is deliberately NOT called: unlike the runtime_gone recovery
-// path, the surviving runtime IDs may still be executing tasks for the user,
-// and failing those as orphans would kill live work (MUL-3332).
+// 刻意不调用 RecoverOrphans：与 runtime_gone 恢复路径不同，幸存的 runtime ID 可能
+// 仍在为用户执行任务，把它们当孤儿失败会杀死活的产出（MUL-3332）。
 func (d *Daemon) convergeRuntimeRegistrations(ctx context.Context) {
-	// detectBuiltinRuntimes version-gates the availability set and publishes
-	// this round's drops for /health, so a provider that cannot register still
-	// gets a visible reason even though registration is skipped.
+	// detectBuiltinRuntimes 给可用集合做版本门槛并发布本轮丢弃项给 /health，因此一个
+	// 无法注册的 provider 即使注册被跳过也能得到可见的原因。
 	builtins, _, _ := d.detectBuiltinRuntimes(ctx)
 	if len(builtins) == 0 {
 		return
@@ -639,12 +556,11 @@ func (d *Daemon) convergeRuntimeRegistrations(ctx context.Context) {
 
 	var changed bool
 	for _, t := range targets {
-		// Send, merge and clean up as one ordered step — see
-		// workspaceRegisterLock.
+		// 发送、合并、清理作为单个有序步骤——见 workspaceRegisterLock。
 		_ = d.withWorkspaceRegisterLock(t.id, func() error {
 			resp, err := d.registerBuiltinRuntimesForWorkspaceLocked(ctx, t.id, builtins)
 			if err != nil {
-				// Left in the missing set on purpose: the next tick retries.
+				// 有意留在缺失集合里：下一 tick 会重试。
 				d.logger.Warn("register newly available runtimes failed; will retry",
 					"workspace_id", t.id, "providers", t.missing, "error", err)
 				return nil

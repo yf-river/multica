@@ -1,3 +1,7 @@
+// 准备 QwenPaw 智能体的"每任务工作区"：把绑定到该任务的技能展开成
+// QwenPaw 能原生识别的目录布局。daemon 随后会把 --workspace <dir> 传给
+// `qwenpaw acp`，让 QwenPaw agent 通过自身的工作区技能发现机制加载这些技能。
+
 package execenv
 
 import (
@@ -9,32 +13,28 @@ import (
 	"time"
 )
 
-// prepareQwenpawWorkspace creates a per-task QwenPaw workspace directory and
-// populates it with the bound skills. The daemon passes --workspace <dir> to
-// `qwenpaw acp` so the QwenPaw agent discovers the skills natively through
-// QwenPaw's workspace skill discovery mechanism.
+// prepareQwenpawWorkspace 为单次任务创建 QwenPaw 工作区目录，并把绑定的技能
+// 写入其中。daemon 会把 --workspace <dir> 传给 `qwenpaw acp`，使 QwenPaw
+// agent 能通过自身的工作区技能发现机制原生加载这些技能。
 //
-// Skills are written into <workspace>/skills/<slug>/SKILL.md and a
-// pre-populated skill.json manifest is created with enabled: true for each
-// bound skill, so QwenPaw's reconcile_workspace_manifest (registry.py) resolves
-// them as effective without the user having to enable them manually.
+// 技能被写成 <workspace>/skills/<slug>/SKILL.md，同时预生成一份 skill.json
+// 清单，对每个绑定技能标记 enabled: true——这样 QwenPaw 的
+// reconcile_workspace_manifest（registry.py）会把它们判定为已生效，
+// 用户无需手动启用。
 //
-// The function is idempotent: it always removes the existing skills dir and
-// manifest before rebuilding, so an added/removed/edited skill is reflected
-// without accumulating stale state. This includes the empty-skills case — when
-// all skills are unbound, any previously written files are cleaned up, matching
-// the user's expectation that unbinding a skill revokes it.
+// 函数是幂等的：重建前总是先删除旧的 skills 目录和清单，因此新增/移除/修改
+// 技能都能生效而不会累积陈旧状态。这也覆盖"空技能"情形——当所有技能都被
+// 解绑时，之前写过的文件会被清干净，符合用户"解绑即撤销"的预期。
 //
-// This mirrors the pattern used by writeHermesBoundSkills (hermes_home.go:738).
+// 此模式与 writeHermesBoundSkills（hermes_home.go:738）的做法一致。
 func prepareQwenpawWorkspace(qwenpawWorkspace string, workspaceSkills []SkillContextForEnv, logger *slog.Logger) error {
-	// Create the workspace directory.
+	// 创建工作区根目录。
 	if err := os.MkdirAll(qwenpawWorkspace, 0o700); err != nil {
 		return fmt.Errorf("create qwenpaw workspace dir: %w", err)
 	}
 
-	// Remove existing skills dir and manifest so an added/removed/edited
-	// skill is reflected without accumulating stale state. This mirrors the
-	// pattern used by writeHermesBoundSkills (hermes_home.go:738).
+	// 先删掉旧的 skills 目录与清单，避免增量写入累积陈旧状态
+	// （与 writeHermesBoundSkills 的做法一致，hermes_home.go:738）。
 	skillsDir := filepath.Join(qwenpawWorkspace, "skills")
 	if err := os.RemoveAll(skillsDir); err != nil {
 		return fmt.Errorf("remove existing skills dir: %w", err)
@@ -45,14 +45,14 @@ func prepareQwenpawWorkspace(qwenpawWorkspace string, workspaceSkills []SkillCon
 	}
 
 	if len(workspaceSkills) == 0 {
-		// No skills to write. Existing files have been cleaned up above,
-		// so unbinding every skill properly revokes them.
+		// 没有技能可写。上面的清理已经把旧文件清掉，
+		// 于是解绑全部技能就等于正确撤销了它们。
 		return nil
 	}
 
-	// Write skills into <workspace>/skills/.
-	// QwenPaw's store.py reads workspace skills from the "skills" directory
-	// via get_workspace_skills_dir(); see qwenpaw/agents/skill_system/store.py.
+	// 把技能写进 <workspace>/skills/。QwenPaw 的 store.py 通过
+	// get_workspace_skills_dir() 从 "skills" 目录读取工作区技能；
+	// 见 qwenpaw/agents/skill_system/store.py。
 	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
 		return fmt.Errorf("create qwenpaw skills dir: %w", err)
 	}
@@ -72,7 +72,7 @@ func prepareQwenpawWorkspace(qwenpawWorkspace string, workspaceSkills []SkillCon
 			return fmt.Errorf("write SKILL.md for %q: %w", skill.Name, err)
 		}
 
-		// Write supporting files.
+		// 写入附属文件（技能引用的脚本/资源等）。
 		for _, f := range skill.Files {
 			fpath := filepath.Join(skillDir, f.Path)
 			if err := os.MkdirAll(filepath.Dir(fpath), 0o755); err != nil {
@@ -86,11 +86,10 @@ func prepareQwenpawWorkspace(qwenpawWorkspace string, workspaceSkills []SkillCon
 		skillNames = append(skillNames, slug)
 	}
 
-	// Write the skill.json manifest with enabled: true for every bound skill.
-	// This matches the format QwenPaw's reconcile_workspace_manifest expects
-	// (see store.py get_workspace_skill_manifest_path / registry.py
-	// resolve_effective_skills), so the skills are immediately effective
-	// without requiring the user to enable them via the UI or CLI.
+	// 写 skill.json 清单，对每个绑定技能标记 enabled: true。
+	// 该格式正是 QwenPaw 的 reconcile_workspace_manifest 所期待的
+	// （见 store.py get_workspace_skill_manifest_path / registry.py
+	// resolve_effective_skills），因此技能立即生效，用户无需经 UI 或 CLI 启用。
 	now := time.Now().UTC().Format(time.RFC3339)
 	skills := make(map[string]any, len(skillNames))
 	for _, slug := range skillNames {

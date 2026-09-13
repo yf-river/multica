@@ -1,3 +1,6 @@
+// 本文件：UpdateStore（CLI 更新请求）的 Redis 实现。CLI 更新与模型清单、本地技能请求共用
+// 同一套 pending 请求形态：前端建请求 → daemon 心跳认领 → daemon 回报终态 → UI 按请求 id
+// 轮询。多节点部署下这四次调用可能落在不同的 API 副本上，所以生命周期必须放共享存储。
 package handler
 
 import (
@@ -10,12 +13,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Redis-backed implementation of UpdateStore. CLI updates have the same
-// pending-request shape as model-list and runtime-local-skill requests:
-// frontend creates the request, daemon claims it on heartbeat, daemon reports
-// a terminal result, and the UI polls by request ID. In multi-node deploys all
-// four calls can hit different API replicas, so the lifecycle must live in
-// shared storage.
+// 设计说明：CLI 更新与模型清单、本地技能请求共用同一套 pending 请求形态——前端建请求、
+// daemon 心跳认领、daemon 回报终态、UI 按请求 id 轮询。多节点部署下四次调用可能落在不同
+// API 副本，所以生命周期必须放共享存储。
 
 const (
 	updateKeyPrefix          = "mul:" + runtimePendingRedisHashTag + ":update:req:"
@@ -28,6 +28,8 @@ func updateKey(id string) string               { return updateKeyPrefix + id }
 func updatePendingKey(runtimeID string) string { return updatePendingPrefix + runtimeID }
 func updateActiveKey(runtimeID string) string  { return updateActivePrefix + runtimeID }
 
+// deleteIfValueScript 仅当 key 的当前值等于给定值时删除它——用于释放「active 占用标记」，
+// 避免误删后来者新写入的占用（值不匹配则不动）。
 var deleteIfValueScript = redis.NewScript(`
 if redis.call('GET', KEYS[1]) == ARGV[1] then
     return redis.call('DEL', KEYS[1])
@@ -35,6 +37,8 @@ end
 return 0
 `)
 
+// RedisUpdateStore 把 CLI 更新请求存进 Redis，所有节点共享同一份生命周期状态。
+// 各方法语义见 UpdateStore 接口注释。
 type RedisUpdateStore struct {
 	rdb *redis.Client
 }
@@ -68,11 +72,9 @@ func (s *RedisUpdateStore) Create(ctx context.Context, runtimeID, targetVersion,
 		return nil, errUpdateInProgress
 	}
 
-	// The active reservation above provides the concurrency guarantee this
-	// write needs. Use a plain pipeline so managed Redis deployments that allow
-	// SET/ZADD but deny MULTI can still create update requests. Exec failures
-	// remain safe because the compensation below removes every partially
-	// written key and releases the reservation.
+	// 上面的 active 占用标记已经提供了本次写需要的并发保证。这里用纯 pipeline，让允许
+	// SET/ZADD 却拒绝 MULTI 的托管 Redis 也能创建更新请求。Exec 失败也安全——下面这段
+	// 补偿会清掉每个半写入的 key 并释放占用标记。
 	pipe := s.rdb.Pipeline()
 	pipe.Set(ctx, updateKey(req.ID), data, updateStoreRetention)
 	pipe.ZAdd(ctx, updatePendingKey(runtimeID), redis.Z{
@@ -128,6 +130,8 @@ func (s *RedisUpdateStore) persistRequest(ctx context.Context, req *UpdateReques
 	return nil
 }
 
+// redisUpdateEnvelope 与 model/list 两个 store 的信封同理：把 UpdateRequest 里标成
+// `json:"-"` 的内部字段（RunStartedAt、InitiatorUserID）在落盘时重新提升出来。
 type redisUpdateEnvelope struct {
 	Public          *UpdateRequest `json:"r"`
 	RunStartedAt    *time.Time     `json:"s,omitempty"`

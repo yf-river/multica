@@ -1,3 +1,7 @@
+// 本文件实现附件的「下载能力（capability）」签名与赎回：为代理下载模式下的私有附件铸造
+// 一条短时、单附件、签名的 URL，让原生/跨站下载请求无需 cookie/Authorization 也能拿到文件。
+// 包含签名的铸造（HMAC、密钥派生、载荷形态、意图绑定）、校验（fail-closed），以及把
+// 「合法下载能力」兑现成代理流式下载的公开路由。背景与不变量详见文件内下节导读。
 package handler
 
 import (
@@ -13,59 +17,45 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 )
 
-// Attachment download capabilities — MUL-5292.
+// 附件下载能力（capability）—— MUL-5292。
 //
-// A native download is a browser-level request. A cross-site webview request
-// carries neither the client's Authorization header nor a session cookie, so
-// the authenticated /api/attachments/{id}/download endpoint answers 401 and
-// the user never gets a file.
+// 「原生下载」是浏览器级请求。跨站 webview 的请求既不带客户端的 Authorization 头、也没有
+// 会话 cookie，所以需要认证的 /api/attachments/{id}/download 端点会回 401，用户永远拿不到
+// 文件。
 //
-// CloudFront and presign deployments already sidestep this — the
-// authenticated GetAttachmentByID hands those clients a signed storage URL
-// that needs no credentials of ours. Proxy mode (local disk, private object
-// host) had no equivalent and kept returning the auth-gated API path, which
-// is the entirety of the bug: one unfinished branch of an otherwise correct
-// design.
+// CloudFront 与 presign 部署早已绕开这点——已认证的 GetAttachmentByID 会给那些客户端一条
+// 不再需要本站凭据的签名存储 URL。代理模式（本地磁盘、私有对象主机）没有对应物，一直回着
+// 需要认证的 API 路径——这正是 bug 的全部：一个本可正确的设计里，有一条没做完的分支。
 //
-// A capability closes that branch the same way the other two modes do. The
-// ALREADY-AUTHENTICATED GetAttachmentByID mints a short-lived signature
-// granting read on exactly one attachment; a separate public route accepts
-// it. Membership is verified when the capability is minted and never at
-// redemption — the signature is the proof that the check happened.
+// capability 用与另外两种模式相同的方式合上这条分支：已经过了认证的 GetAttachmentByID 铸
+// 一条短时签名，只授予「读这一个附件」的权限；一条独立的公开路由接受它。成员身份在铸造
+// 时校验、赎回时绝不重查——签名本身就是「当时校验过」的证明。
 //
-// Deliberately NOT a general-purpose credential:
-//   - bound to a single attachment id, so it cannot be replayed against another
-//   - 60-second TTL, because the download it feeds starts immediately
-//   - signed with a key domain-separated from the JWT secret, so it can be
-//     neither forged from nor used to forge a session token
-//   - never persisted, and never emitted into list responses
+// 刻意不做成通用凭据：
+//   - 绑死单个附件 id，不能重放到别的附件上；
+//   - 60 秒 TTL，因为喂给它的下载会立刻开始；
+//   - 用一把与 JWT 密钥域分离的密钥签名，既不能被伪造，也不能拿去伪造会话 token；
+//   - 从不持久化，也绝不进入列表响应。
 
 const (
-	// attachmentCapabilityVersion is part of the signed message so the
-	// message format can change later without a v1 signature verifying
-	// against a v2 verifier.
+	// attachmentCapabilityVersion 参与签名消息，让消息格式日后可演进：v1 签名绝不会被 v2
+	// 校验器验过。
 	attachmentCapabilityVersion = "v1"
 
-	// attachmentCapabilityTTL is short by design. The client mints a
-	// capability and hands it to the native downloader in the same tick;
-	// anything longer only widens the window in which a leaked URL is
-	// still redeemable.
+	// attachmentCapabilityTTL 刻意设得很短。客户端铸出 capability 后在同一拍内就交给原生
+	// 下载器；再长只会加宽「泄露的 URL 仍可赎回」的时间窗。
 	attachmentCapabilityTTL = 60 * time.Second
 
-	// attachmentCapabilityKeyDomain separates this signing domain from
-	// every other HMAC the deployment derives from the same root secret.
+	// attachmentCapabilityKeyDomain 把这个签名域与部署从同一根密钥派生的所有其他 HMAC
+	// 隔离开。
 	attachmentCapabilityKeyDomain = "attachment-download-capability:"
 
-	// attachmentCapabilityDownloadIntent is folded into a forced-attachment
-	// ("download button") capability's signed message. This is deliberate
-	// headroom, not a fix for a current threat: today the load-intent and
-	// download-intent links are minted in the same response, and flipping a load
-	// link into a forced download only makes it *less* dangerous (inline is the
-	// risky disposition), so binding the intent stops nothing an attacker could
-	// exploit now. It is kept so that if a later intent ever grants more than the
-	// load link, the signature is already intent-bound and a lower-privilege link
-	// cannot be replayed as it. It rides the URL as dl=1; the empty (load) intent
-	// signs the historical three-field message, byte-identical.
+	// attachmentCapabilityDownloadIntent 会折进「强制下载（下载按钮）」型 capability 的签名
+	// 消息。这是刻意的冗余空间，不是为当下威胁打的补丁：目前加载意图与下载意图的链接在同
+	// 一次响应里铸造，把加载链接改成强制下载只会让它更「不危险」（inline 才是危险姿态），
+	// 所以绑定意图挡不住攻击者当下能利用的任何东西。留着它，是防备将来某天某种意图比加载
+	// 链接授予更多——届时签名已经绑定了意图，低权限链接不能重放成它。它随 URL 走 dl=1；
+	// 空的（加载）意图签的是历史的三字段消息，逐字节一致。
 	attachmentCapabilityDownloadIntent = "attachment"
 )
 
@@ -74,12 +64,10 @@ var (
 	attachmentCapabilityKey     []byte
 )
 
-// attachmentCapabilitySigningKey derives the capability key from the
-// deployment's JWT secret via SHA-256, mirroring composioStateSecret in
-// server/cmd/server/router.go. Deriving rather than reusing means a
-// capability signature can never collide with a JWT signature; rotating
-// JWT_SECRET additionally invalidates outstanding capabilities, which is the
-// behaviour an operator would expect from a rotation.
+// attachmentCapabilitySigningKey 经 SHA-256 从部署的 JWT 密钥派生出 capability 专用密钥，
+// 手法与 server/cmd/server/router.go 里的 composioStateSecret 一致。派生而非复用意味着
+// capability 签名永远不可能与 JWT 签名撞车；轮换 JWT_SECRET 还会顺带作废所有未兑现的
+// capability——这正是运维对轮换的预期行为。
 func attachmentCapabilitySigningKey() []byte {
 	attachmentCapabilityKeyOnce.Do(func() {
 		sum := sha256.Sum256(append([]byte(attachmentCapabilityKeyDomain), auth.JWTSecret()...))
@@ -88,24 +76,19 @@ func attachmentCapabilitySigningKey() []byte {
 	return attachmentCapabilityKey
 }
 
-// signAttachmentCapability returns the hex HMAC over the capability's fields.
+// signAttachmentCapability 返回对 capability 字段做的 HMAC（hex 编码）。
 //
-// The fields are joined with a separator that cannot occur inside a UUID or a
-// decimal timestamp, so no pair of (id, exp) values can be re-split into a
-// different pair that produces the same signed message.
+// 各字段用「UUID 或十进制时间戳里都不会出现」的分隔符拼接，所以任何 (id, exp) 组合都不
+// 能被重新切分成另一对、产生同样的签名消息。
 func signAttachmentCapability(attachmentID string, exp int64) string {
 	return signAttachmentCapabilityIntent(attachmentID, exp, "")
 }
 
-// signAttachmentCapabilityIntent signs the capability over (version, id, exp)
-// and, for a non-empty intent, an extra domain-separation term. The load-intent
-// capability (intent "") signs exactly the historical three-field message, so
-// its signatures stay byte-identical to before; the download-intent capability
-// (attachmentCapabilityDownloadIntent) appends "|attachment". Binding the intent
-// is forward-looking headroom, not a current mitigation — flipping today's two
-// intents is not itself exploitable (see attachmentCapabilityDownloadIntent) —
-// but it keeps the signature honest if a future intent is ever more privileged
-// than the load link.
+// signAttachmentCapabilityIntent 对 (version, id, exp) 签名；intent 非空时再追加一个额外的
+// 域分离项。加载意图（intent ""）签的恰是历史的三字段消息，签名与之前逐字节一致；下载
+// 意图（attachmentCapabilityDownloadIntent）追加 "|attachment"。绑定意图是前瞻性冗余，不是
+// 当下缓解——今天这两类意图互换本身不可利用（见 attachmentCapabilityDownloadIntent）——
+// 但若将来某个意图比加载链接权限更高，它能让签名保持诚实。
 func signAttachmentCapabilityIntent(attachmentID string, exp int64, intent string) string {
 	mac := hmac.New(sha256.New, attachmentCapabilitySigningKey())
 	mac.Write([]byte(attachmentCapabilityVersion))
@@ -120,15 +103,12 @@ func signAttachmentCapabilityIntent(attachmentID string, exp int64, intent strin
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// attachmentCapabilityPath builds the site-relative capability URL handed back
-// as `download_url`.
+// attachmentCapabilityPath 拼出作为 `download_url` 交还的站内相对 capability URL。
 //
-// Site-relative on purpose. Clients already resolve `download_url` against the
-// configured API base, and keeping the shape relative leaves the inline-media
-// re-sign path in packages/views/editor/attachment.tsx untouched: that hook
-// only upgrades to ABSOLUTE URLs, so it keeps ignoring proxy-mode responses
-// exactly as it does today instead of pinning a 60-second URL into an <img>
-// it caches for 20 minutes.
+// 刻意用站内相对形态。客户端已经会拿配置的 API base 去解析 `download_url`，保持相对形态让
+// packages/views/editor/attachment.tsx 里的「inline 媒体重签」路径原样不动：那个 hook 只把
+// 绝对 URL 升级成已签名形式，所以它会像今天一样继续无视代理模式的响应——而不会把一条
+// 60 秒的 URL 钉进它会缓存 20 分钟的 <img> 里。
 func attachmentCapabilityPath(attachmentID string, now time.Time) string {
 	exp := now.Add(attachmentCapabilityTTL).Unix()
 	return "/api/attachments/" + attachmentID + "/signed-download" +
@@ -136,13 +116,11 @@ func attachmentCapabilityPath(attachmentID string, now time.Time) string {
 		"&sig=" + signAttachmentCapability(attachmentID, exp)
 }
 
-// attachmentDownloadCapabilityPath builds the site-relative capability URL for a
-// forced-attachment ("download button") intent. Same short-lived, single-id
-// shape as attachmentCapabilityPath, plus dl=1 — which the redemption route
-// turns into a Content-Disposition: attachment. Kept separate, and separately
-// signed, so the load-intent link the preview path consumes keeps serving media
-// inline. Site-relative for the same reason: the inline-media re-sign hook only
-// upgrades absolute URLs, so it keeps ignoring this one.
+// attachmentDownloadCapabilityPath 拼出「强制下载（下载按钮）」意图的站内相对 capability
+// URL。与 attachmentCapabilityPath 同样短时、单 id，另加 dl=1——赎回路由把它变成
+// Content-Disposition: attachment。独立铸造、独立签名，这样预览路径消费的加载意图链接可以
+// 继续把媒体以 inline 伺服。用站内相对出于同样的原因：inline 媒体重签 hook 只升级绝对 URL，
+// 所以它会继续无视这一条。
 func attachmentDownloadCapabilityPath(attachmentID string, now time.Time) string {
 	exp := now.Add(attachmentCapabilityTTL).Unix()
 	return "/api/attachments/" + attachmentID + "/signed-download" +
@@ -151,12 +129,10 @@ func attachmentDownloadCapabilityPath(attachmentID string, now time.Time) string
 		"&dl=1"
 }
 
-// verifyAttachmentCapability fails closed on every path: a missing field, an
-// unparseable expiry, an elapsed expiry, a malformed signature, and a
-// signature minted for a different attachment all return false.
+// verifyAttachmentCapability 在每条路径上都 fail closed：字段缺失、exp 解析不了、已经过期、
+// 签名畸形、或签名是为另一个附件铸的——一律返回 false。
 //
-// The signature covers the claimed expiry, so extending `exp` invalidates the
-// signature rather than extending the capability.
+// 签名覆盖声明的过期时间，所以把 `exp` 改大只会作废签名，而不是延长 capability。
 func verifyAttachmentCapability(attachmentID, rawExp, rawSig, intent string, now time.Time) bool {
 	if attachmentID == "" || rawExp == "" || rawSig == "" {
 		return false
@@ -183,31 +159,25 @@ func verifyAttachmentCapability(attachmentID, rawExp, rawSig, intent string, now
 // DownloadAttachmentWithCapability — GET /api/attachments/{id}/signed-download
 // ---------------------------------------------------------------------------
 //
-// Registered as a PUBLIC route. The capability in the query IS the credential,
-// and a native download request has nothing for middleware.Auth to read, so
-// putting this behind Auth would defeat its only purpose. The authenticated
-// /api/attachments/{id}/download endpoint is left exactly as it was — this
-// route is additive, so clients that predate it keep working unchanged and
-// there is no second copy of the header/cookie/PAT/task-token resolution that
-// middleware.Auth owns.
+// 注册为公开路由。查询串里的 capability 本身就是凭据，而原生下载请求没有可供
+// middleware.Auth 读取的东西——把它放进 Auth 组只会让它失去存在的意义。已认证的
+// /api/attachments/{id}/download 端点保持原样——本路由是追加式的，先于它的客户端照常
+// 工作，也不存在 middleware.Auth 那套 header/cookie/PAT/任务令牌解析的第二份拷贝。
 //
-// Always proxy-streams. Capabilities are only minted in proxy mode, and
-// streaming means this route never emits a cross-origin redirect, so the
-// signed query cannot leak to a CDN in a Referer.
+// 一律走代理流式。capability 只在代理模式下铸造，而流式意味着本路由绝不发出跨域跳转，
+// 签名后的查询串不会经 Referer 漏给 CDN。
 func (h *Handler) DownloadAttachmentWithCapability(w http.ResponseWriter, r *http.Request) {
 	attachmentID := chi.URLParam(r, "id")
 	query := r.URL.Query()
-	// dl=1 is the forced-attachment ("download button") intent. It is covered by
-	// a distinct signature, so a load-intent link cannot flip itself to a
-	// download by appending dl=1 — the verification below would fail.
+	// dl=1 是「强制下载（下载按钮）」意图。它由另一份签名覆盖，所以加载意图链接没法靠
+	// 追尾 dl=1 把自己翻转成下载——下面的校验会失败。
 	intent := ""
 	if query.Get("dl") == "1" {
 		intent = attachmentCapabilityDownloadIntent
 	}
 	if !verifyAttachmentCapability(attachmentID, query.Get("exp"), query.Get("sig"), intent, time.Now()) {
-		// One generic rejection for every reason, so a caller cannot
-		// distinguish "expired" from "forged" from "wrong attachment"
-		// and use the difference to probe the signer.
+		// 所有失败原因共用同一条拒绝文案，调用方无法区分「过期 / 伪造 / 附件不符」，
+		// 也就没法拿差异去试探签名者。
 		writeError(w, http.StatusForbidden, "invalid or expired download link")
 		return
 	}
@@ -227,9 +197,8 @@ func (h *Handler) DownloadAttachmentWithCapability(w http.ResponseWriter, r *htt
 	}
 
 	h.setAttachmentPreviewSecurityHeaders(w)
-	// The signature travels in the query string. If the streamed body is
-	// itself a document that loads subresources, no-referrer keeps that
-	// query out of the outbound Referer.
+	// 签名随查询串走。若流式返回的 body 本身是加载子资源的文档，no-referrer 能防止该查询串
+	// 漏进出站 Referer。
 	w.Header().Set("Referrer-Policy", "no-referrer")
 
 	h.proxyAttachmentDownload(w, r, att, h.Storage.KeyFromURL(att.Url), intent == attachmentCapabilityDownloadIntent)

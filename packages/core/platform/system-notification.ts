@@ -1,26 +1,25 @@
+// 本文件是 Web 应用的「浏览器通知」桥。
+//
+// `handleInboxNew`（实时同步）是唯一决策点——它已按焦点与来源工作区的静音
+// 偏好做了闸门——然后调用 `showWebNotification` 渲染横幅。
+//
+// 放在 `packages/core`（而不是 `packages/views`），因为调用方（`handleInboxNew`）
+// 在 core，而 core 不能 import views（依赖方向是 views → core）。需要应用路由
+// 的「点击路由」决策由宿主应用经 `registerSystemNotificationClickHandler` 注入
+// ——core 保持无头。
+
 "use client";
 
-// Browser notification bridge for the web app.
-//
-// `handleInboxNew` (realtime sync) is the single decision point — it already
-// gates on focus and the source workspace's mute preference — and calls
-// `showWebNotification` to render the banner.
-//
-// Lives in `packages/core` (not `packages/views`) because the caller
-// (`handleInboxNew`) lives in core and `views` cannot be imported from core
-// (dependency direction is views → core). The click-routing decision, which
-// needs the app router, is injected by the host app via
-// `registerSystemNotificationClickHandler` instead — core stays headless.
-
+/** 一条系统通知的载荷。 */
 export interface SystemNotificationPayload {
   /**
-   * Source workspace slug. Empty when it couldn't be resolved — the click is
-   * then a no-op rather than routing to the wrong workspace (#3766).
+   * 来源工作区 slug。解析不到时为空串——点击随之变为空操作，而不是路由到
+   * 错误的工作区（#3766）。
    */
   slug: string;
-  /** Inbox row id — lets the click mark the item read. */
+  /** 收件箱行 id——让点击可以把它标记已读。 */
   itemId: string;
-  /** `?issue=<…>` selector for the inbox page (issue id, else the item id). */
+  /** 收件箱页的 `?issue=<…>` 选择器（issue id，否则用条目 id）。 */
   issueKey: string;
   title: string;
   body: string;
@@ -28,15 +27,13 @@ export interface SystemNotificationPayload {
 
 type ClickHandler = (payload: SystemNotificationPayload) => void;
 
-// Module-level singleton — mirrors how the desktop preload registers its
-// behavior once at boot. The web shell registers a router-aware handler; while
-// unregistered (SSR, tests, pre-mount) a click is a silent no-op.
+// 模块级单例——镜像桌面端 preload 在启动时注册一次行为的方式。Web 外壳注册
+// 一个认得路由的处理器；未注册时（SSR、测试、挂载前）点击是静默空操作。
 let clickHandler: ClickHandler | null = null;
 
 /**
- * Register how a clicked notification routes (focus and navigate to the source
- * workspace's inbox, focused on the item). Called once by the web app shell;
- * pass `null` to unregister.
+ * 注册点击通知后的路由方式（聚焦并跳到来源工作区的收件箱、聚焦到该条目）。
+ * 由 Web 应用外壳调用一次；传 `null` 可注销。
  */
 export function registerSystemNotificationClickHandler(
   handler: ClickHandler | null,
@@ -44,32 +41,31 @@ export function registerSystemNotificationClickHandler(
   clickHandler = handler;
 }
 
-// Read the Notification constructor off `window` (rather than the bare global)
-// so it's both SSR-safe and injectable from the core Node test environment,
-// where `window`/`Notification` don't exist by default.
+// 从 `window`（而不是裸全局）读 Notification 构造器——既 SSR 安全，也能从
+// core 的 Node 测试环境注入（那里默认没有 `window` / `Notification`）。
 function getNotificationCtor(): typeof Notification | null {
   if (typeof window === "undefined") return null;
   const ctor = (window as { Notification?: typeof Notification }).Notification;
   return typeof ctor === "function" ? ctor : null;
 }
 
-/** True when the browser exposes the Notification API (false on SSR / old engines). */
+/** 浏览器是否暴露 Notification API（SSR / 老引擎为 false）。 */
 export function isWebNotificationSupported(): boolean {
   return getNotificationCtor() !== null;
 }
 
 export type WebNotificationPermission = NotificationPermission | "unsupported";
 
-/** Current permission, or "unsupported" when the API is unavailable. */
+/** 当前权限；API 不可用时为 "unsupported"。 */
 export function getWebNotificationPermission(): WebNotificationPermission {
   const ctor = getNotificationCtor();
   return ctor ? ctor.permission : "unsupported";
 }
 
 /**
- * Prompt for notification permission. Resolves to the resulting permission, or
- * "unsupported". Only "default" triggers the browser prompt — an
- * already-decided permission (granted/denied) is returned as-is.
+ * 请求通知权限。解析为最终的权限，或 "unsupported"。
+ * 只有 "default" 才会触发浏览器弹窗——已经决定过的权限（granted/denied）
+ * 原样返回。
  */
 export async function requestWebNotificationPermission(): Promise<WebNotificationPermission> {
   const ctor = getNotificationCtor();
@@ -78,17 +74,16 @@ export async function requestWebNotificationPermission(): Promise<WebNotificatio
   try {
     return await ctor.requestPermission();
   } catch {
-    // Older Safari used a callback signature and can reject the promise form.
+    // 老 Safari 用回调签名，可能拒绝 promise 形态。
     return ctor.permission;
   }
 }
 
 /**
- * Show a native browser notification for a new inbox item. No-op unless the
- * Notification API is supported AND permission is "granted" — the caller
- * (`handleInboxNew`) owns the WHETHER (focus + mute gating); this owns only the
- * rendering. Clicking the banner focuses the tab and routes via the registered
- * click handler.
+ * 为一条新收件箱条目弹原生浏览器通知。除非「Notification API 受支持且权限
+ * 为 granted」否则是空操作——「要不要弹」（焦点 + 静音闸门）由调用方
+ * (`handleInboxNew`) 负责；这里只管渲染。点击横幅会聚焦标签页，并经已注册的
+ * 点击处理器路由。
  */
 export function showWebNotification(payload: SystemNotificationPayload): void {
   const ctor = getNotificationCtor();
@@ -97,21 +92,20 @@ export function showWebNotification(payload: SystemNotificationPayload): void {
   try {
     notification = new ctor(payload.title, {
       body: payload.body,
-      // Collapse repeat banners for the same inbox row (e.g. a reconnect
-      // replays the `inbox:new` event).
+      // 同一收件箱行的重复横幅折叠成一条（例如重连会重放 `inbox:new` 事件）。
       tag: payload.itemId,
     });
   } catch {
-    // Some engines require an active ServiceWorkerRegistration to construct a
-    // Notification (notably Chrome on Android). Degrade silently — the in-app
-    // inbox and unread badge still surface the new item.
+    // 有些引擎需要活动的 ServiceWorkerRegistration 才能构造 Notification
+    // （特别是 Chrome on Android）。静默降级——应用内收件箱与未读角标仍会
+    // 呈现新条目。
     return;
   }
   notification.onclick = () => {
     try {
       window.focus();
     } catch {
-      // Best-effort; some browsers disallow programmatic focus.
+      // 尽力而为；有些浏览器禁止程序化聚焦。
     }
     notification.close();
     clickHandler?.(payload);

@@ -4,14 +4,15 @@ import { useEffect, useState } from "react";
 
 import { useIsNavigating } from "../navigation";
 
-// 2px top-of-content progress bar shown while a transition-wrapped
-// push/replace is mid-flight. Indeterminate by design — we don't know
-// when the next route will commit, just that it's coming.
-//
-// The container stays mounted so it can fade out over 200ms instead of
-// vanishing in one frame. The inner sweep is mounted only while navigating
-// (plus the fade-out tail); leaving its `infinite` keyframe animation
-// running while hidden would burn paints on every dashboard view.
+/**
+ * 布局模块：页面顶部 2px 的路由切换进度条。
+ * 在 transition 包裹的 push/replace 进行中显示。刻意做成不确定进度——
+ * 因为我们不知道下一条路由何时提交，只知道它快来了。
+ *
+ * 容器始终保持挂载，好让它用 200ms 淡出而不是一帧消失。内部的扫动条
+ * 只在导航期间（加上淡出尾巴）挂载；若隐藏时仍让它的 `infinite` 关键帧
+ * 动画继续跑，会在每个仪表盘视图上白白烧掉绘制。
+ */
 export function NavigationProgress() {
   const isNavigating = useIsNavigating();
   const [renderSweep, setRenderSweep] = useState(false);

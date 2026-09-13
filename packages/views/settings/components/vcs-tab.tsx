@@ -1,3 +1,7 @@
+// 本文件是「自托管 Git（VCS）」集成面板：让管理员连接自托管的 Forgejo / Gitea /
+// GitLab 实例（仓库镜像的代码托管端），连接成功后展示 Webhook 地址与密钥，
+// 支持重新生成（轮换）Webhook 密钥与断开连接。
+
 "use client";
 
 import { useState } from "react";
@@ -31,18 +35,29 @@ import { api } from "@multica/core/api";
 import type { ConnectVCSResponse, VCSProvider } from "@multica/core/types";
 import { useT } from "../../i18n";
 
+/** 支持的自托管 Git 平台。 */
 const PROVIDERS: VCSProvider[] = ["forgejo", "gitea", "gitlab"];
+/** 平台英文名，仅用于界面直显（暂无 i18n 条目，故不翻译）。 */
 const PROVIDER_LABELS: Record<VCSProvider, string> = {
   forgejo: "Forgejo",
   gitea: "Gitea",
   gitlab: "GitLab",
 };
+/** 下拉框用的「值 + 文案」条目。 */
 const PROVIDER_OPTIONS = PROVIDERS.map((p) => ({
   value: p,
   label: PROVIDER_LABELS[p],
 }));
 
-
+/**
+ * 自托管 Git 集成面板：
+ * - 已连接的实例：逐张卡片展示（提供商 + 地址、登录账号），有管理权限时可
+ *   「重新生成 Webhook 密钥」或「断开」；刚连接 / 刚轮换后会展示需要填到实例里的
+ *   Webhook URL 和密钥（含复制按钮与「密钥仅此一次可见」的警示）。
+ * - 连接表单：仅对管理员（can_manage）显示；若部署方没配 MULTICA_VCS_SECRET_KEY，
+ *   则提示先让运维配置而不是给表单。
+ * - 只读成员且尚无连接时，提示联系管理员。
+ */
 export function VCSTab() {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -323,6 +338,10 @@ export function VCSTab() {
   );
 }
 
+/**
+ * 只读展示 + 复制的字段行：把 Webhook URL / 密钥这类一次性值显示在只读输入框里，
+ * 旁边放一个复制按钮。
+ */
 function CopyField({
   label,
   value,

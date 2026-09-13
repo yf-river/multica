@@ -1,3 +1,13 @@
+// replier.go：Slack 出站回复器（engine.OutboundReplier 的 Slack 实现）——引擎
+// 判定完一条入站消息的「结局」后，把对应的用户可见回复投回 Slack（MUL-3666
+// 收尾，接上 stage-3 里 Replier=nil 的空尾巴）。它复用与 EventChatDone 出站
+// 订阅器相同的 bot 令牌 Send 路径，不需要新的传输通道。
+//
+// 覆盖的结局：
+//   - NeedsBinding：发送者还没绑定。铸造一枚一次性绑定令牌，回一条指向站内
+//     兑换页的「先关联你的账号」引导；绑定完成后他的下一条消息就能触达 agent。
+//   - AgentOffline / AgentArchived：发状态提示，别让用户干等不知道为什么没反应。
+//   - Ingested 且借 /issue 建了 issue：对新 issue 的确认回复。
 package slack
 
 import (
@@ -17,19 +27,9 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// This file is the Slack OutboundReplier — the engine seam that delivers a
-// verdict-driven reply back to the user (MUL-3666, completing the stage-3
-// Replier=nil tail). It posts through the same bot-token Send path as the
-// EventChatDone outbound subscriber, so it needs no new transport.
-//
-// Outcomes handled:
-//   - NeedsBinding: the sender is unbound. Mint a single-use binding token and
-//     reply with a "link your account" prompt pointing at the in-product redeem
-//     page. After they bind, their next message reaches the agent.
-//   - AgentOffline / AgentArchived: a status notice so the user is not left
-//     wondering why nothing happened.
-//   - Ingested with an /issue created: a confirmation of the new issue.
-
+// 以下文本是发给用户的可见回复内容（agent 离线/归档提示、新聊天开启确认、
+// /issue 用法提示等）。它们直接以 Slack 消息形式展示，因此保留英文原文；发送
+// 场景见 Reply 里各 Outcome 分支的引用。
 const (
 	agentOfflineText  = "⚠️ The agent is offline right now. Your message was received and will be handled once it's back online."
 	agentArchivedText = "⚠️ This agent has been archived and can't respond. Please contact your workspace admin."
@@ -38,17 +38,18 @@ const (
 	issueUsageText    = "Please include an issue title. Use:\n\n`/issue <title>`\n`[description]` (optional)"
 )
 
-// bindingMinter is the binding-token surface the replier needs.
-// *BindingTokenService satisfies it.
+// bindingMinter 是回复器需要的绑定令牌能力面。*BindingTokenService 满足它。
 type bindingMinter interface {
 	Mint(ctx context.Context, workspaceID, installationID pgtype.UUID, slackUserID string) (BindingToken, error)
 }
 
+// controlAckLedger 是控制类回复（绑定引导、issue 确认等）落「已发出」记录的
+// 数据面。*db.Queries 满足它。
 type controlAckLedger interface {
 	RecordChannelOutboundMessage(ctx context.Context, arg db.RecordChannelOutboundMessageParams) error
 }
 
-// OutboundReplier implements engine.OutboundReplier for Slack.
+// OutboundReplier 是 engine.OutboundReplier 的 Slack 实现。
 type OutboundReplier struct {
 	binding     bindingMinter
 	decrypt     Decrypter
@@ -59,29 +60,26 @@ type OutboundReplier struct {
 	ledger      controlAckLedger
 }
 
-// OutboundReplierConfig configures the replier. Binding + AppURL are required
-// for the NeedsBinding prompt to work; without them the prompt is skipped (the
-// offline/archived/issue notices still fire).
+// OutboundReplierConfig 配置回复器。Binding + AppURL 是 NeedsBinding 引导可用
+// 的前提；缺了它们就跳过绑定引导（离线/归档/issue 通知照常发）。
 type OutboundReplierConfig struct {
 	Binding bindingMinter
 	Decrypt Decrypter
-	// AppURL is the Multica web app host the user clicks into to redeem the
-	// binding token (e.g. https://multica.example). It comes from MULTICA_APP_URL
-	// (falling back to FRONTEND_ORIGIN) and is intentionally separate from
-	// MULTICA_PUBLIC_URL, which is the backend/API public URL used for webhook and
-	// daemon-facing endpoints — the bind page (/slack/bind) is served by the web
-	// app, so the link must point at the app host, not the API host. Mirrors the
-	// Lark replier's AppURL.
+	// AppURL 是用户点进去兑换绑定令牌的 Multica Web 应用主机（例如
+	// https://multica.example），来自 MULTICA_APP_URL（缺省回退到
+	// FRONTEND_ORIGIN）。它刻意与 MULTICA_PUBLIC_URL 分开——后者是给 webhook
+	// 与 daemon 类端点用的后端/API 公网地址；而绑定页（/slack/bind）由 Web 应用
+	// 服务，链接必须指到应用主机而不是 API 主机。与 Lark 回复器的 AppURL 一致。
 	AppURL      string
-	BindingPath string // default "/slack/bind"
+	BindingPath string // 绑定页路径，默认 "/slack/bind"
 	Logger      *slog.Logger
 	Queries     *db.Queries
 }
 
 var _ engine.OutboundReplier = (*OutboundReplier)(nil)
 
-// NewOutboundReplier builds the replier. The sender factory mirrors the outbound
-// subscriber: only the bot token is needed to post.
+// NewOutboundReplier 构造回复器。发送器工厂与出站订阅器一致：发消息只需要
+// bot 令牌。
 func NewOutboundReplier(cfg OutboundReplierConfig) *OutboundReplier {
 	logger := cfg.Logger
 	if logger == nil {
@@ -108,8 +106,8 @@ func NewOutboundReplier(cfg OutboundReplierConfig) *OutboundReplier {
 	return r
 }
 
-// Reply routes each outcome to its user-visible message. Errors are logged, not
-// propagated: the replier runs detached from the inbound ACK path.
+// Reply 按结局分派要发给用户的消息。错误只记日志不向上抛：回复器脱离入站
+// ACK 路径运行，它的失败不应拖累消息确认。
 func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, res engine.Result) {
 	switch res.Outcome {
 	case engine.OutcomeNeedsBinding:
@@ -142,8 +140,8 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeIngested:
-		// Only an /issue product result warrants an immediate reply; a plain
-		// chat message stays silent (the agent's own reply lands via ChatDone).
+		// 只有借 /issue 建出 issue 的产品化结局才值得立刻回复；普通聊天保持沉默
+		// （agent 自己的回复稍后经 ChatDone 通道落回）。
 		if res.IssueID.Valid {
 			text := issueCreatedText(res)
 			if res.IssueDuplicate {
@@ -157,6 +155,9 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 	}
 }
 
+// postResult 是统一的投递落点：把一段文本回复发到消息来源会话，并在有绑定
+// 信息时把「已发出」记录落进 outbound 台账（kind 区分 control_ack 与
+// issue_ack）。ledger 或绑定缺失时不落账——那只是少了审计痕迹，回复本身已发出。
 func (r *OutboundReplier) postResult(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, res engine.Result, text string) error {
 	row, ok := inst.Platform.(db.ChannelInstallation)
 	if !ok {
@@ -195,6 +196,8 @@ func (r *OutboundReplier) postResult(ctx context.Context, inst engine.ResolvedIn
 	return nil
 }
 
+// sendBindingPrompt 铸造一枚绑定令牌并把「关联账号」引导发到 Slack：令牌嵌在
+// 指向站内兑换页的 URL 里，用户点开后把 Slack 账号与 Multica 账号绑定。
 func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, res engine.Result) error {
 	sender := res.Sender
 	if sender == "" {
@@ -214,14 +217,15 @@ func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.Res
 		return fmt.Errorf("mint binding token: %w", err)
 	}
 	bindURL := r.appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
-	// Wrap the URL as an explicit Slack link <url|label>: formatMrkdwn protects
-	// these from its markdown passes, so the base64url token's `_`/`-` chars are
-	// not mangled into italics.
+	// 把 URL 包成显式的 Slack 链接 <url|label>：formatMrkdwn 会保护这类既有实体、
+	// 不做 Markdown 变换，否则 base64url 令牌里的 `_`/`-` 字符会被误当成斜体
+	// 标记吃掉。
 	text := "👋 To start chatting with me, link your Slack account to Multica: <" +
 		bindURL + "|link your account>\n(This link expires in 15 minutes.)"
 	return r.postResult(ctx, inst, msg, res, text)
 }
 
+// issueCreatedText 拼一条「issue 已创建」的确认文案。
 func issueCreatedText(res engine.Result) string {
 	id := issueResultIdentifier(res)
 	title := memberIssueTitle(strings.TrimSpace(res.IssueTitle))
@@ -231,6 +235,8 @@ func issueCreatedText(res engine.Result) string {
 	return "✅ Created " + id + " — " + title
 }
 
+// issueDuplicateText 拼一条「重复 issue 未创建」的提示文案（引用已存在的活跃
+// issue，避免用户误以为丢了）。
 func issueDuplicateText(res engine.Result) string {
 	id := issueResultIdentifier(res)
 	title := memberIssueTitle(strings.TrimSpace(res.IssueTitle))
@@ -240,14 +246,18 @@ func issueDuplicateText(res engine.Result) string {
 	return "⚠️ Not created — active issue " + id + " already exists: " + title
 }
 
+// memberIssueTitle 净化成员写的标题再放进文案：打断 markdown 链接与相邻文字
+// 粘连，并把 `<` 换成 `&lt;`。
 func memberIssueTitle(title string) string {
 	title = channel.BreakMarkdownLinkAdjacency(title)
-	// formatMrkdwn deliberately preserves existing Slack entities such as
-	// <url|label> and <@user>. Encode their opening delimiter before that pass
-	// so member-authored links and mentions are handled as visible text.
+	// formatMrkdwn 有意保留既有的 Slack 实体（如 <url|label>、<@user>）。先在这
+	// 一步把成员写下的 `<` 转义掉，让标题里的链接/提及按可见文本处理，而不是被
+	// Slack 渲染成可点的实体。
 	return strings.ReplaceAll(title, "<", "&lt;")
 }
 
+// issueResultIdentifier 产出 issue 的展示标识：有项目内编号（identifier）用它，
+// 否则回退成 #数字（issue number）。
 func issueResultIdentifier(res engine.Result) string {
 	if res.IssueIdentifier != "" {
 		return res.IssueIdentifier

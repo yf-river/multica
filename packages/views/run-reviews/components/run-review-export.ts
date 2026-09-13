@@ -1,3 +1,6 @@
+// 运行复盘的「导出 Excel」逻辑：把节点数据、产物链接、RAW 交互信息整理成
+// xlsx 用的表结构（值矩阵 + 超链接坐标）。
+
 import { api } from "@multica/core/api";
 import { resolvePublicFileUrlWithBase } from "@multica/core/workspace/avatar-url";
 import type { AgentTaskArtifact, Issue, IssueExecutionTreeResponse } from "@multica/core/types";
@@ -29,12 +32,19 @@ interface XlsxHyperlink {
   target: string;
   tooltip?: string;
 }
+
+/** 一张 Excel 工作表的描述：表名 + 值矩阵，可选超链接列表与列宽。 */
 export interface XlsxSheetSpec {
   name: string;
   rows: XlsxCellValue[][];
   hyperlinks?: XlsxHyperlink[];
   columnWidths?: number[];
 }
+
+/**
+ * 拼出产物（artifact）的下载链接：有 id 走附件下载接口，否则退回它的
+ * download_url / markdown_url，并解析成可公开访问的绝对/相对地址。
+ */
 export function artifactDownloadHref(artifact: AgentTaskArtifact, baseUrl?: string) {
   const endpoint = artifact.id
     ? `/api/attachments/${encodeURIComponent(artifact.id)}/download`
@@ -43,11 +53,13 @@ export function artifactDownloadHref(artifact: AgentTaskArtifact, baseUrl?: stri
   return resolvePublicFileUrlWithBase(endpoint, resolvedBaseUrl) ?? endpoint;
 }
 
+/** 产物在工作表超链接里要用的绝对地址（导出文件需要绝对 URL 才能点）。 */
 function artifactXlsxHyperlinkHref(artifact: AgentTaskArtifact, baseUrl?: string) {
   const resolvedBaseUrl = baseUrl ?? defaultXlsxHyperlinkBaseUrl();
   return toAbsoluteHyperlink(artifactDownloadHref(artifact, resolvedBaseUrl), resolvedBaseUrl);
 }
 
+/** 超链接兜底基准地址：优先 API 地址，其次当前页面 origin。 */
 function defaultXlsxHyperlinkBaseUrl() {
   const apiBaseUrl = typeof api.getBaseUrl === "function" ? api.getBaseUrl() : "";
   if (isAbsoluteUrl(apiBaseUrl)) return apiBaseUrl;
@@ -55,6 +67,7 @@ function defaultXlsxHyperlinkBaseUrl() {
   return apiBaseUrl;
 }
 
+/** 把相对地址拼成绝对地址；本就是绝对地址或拼不了则原样返回。 */
 function toAbsoluteHyperlink(href: string | null | undefined, baseUrl: string) {
   if (!href) return "";
   if (isAbsoluteUrl(href)) return href;
@@ -66,9 +79,20 @@ function toAbsoluteHyperlink(href: string | null | undefined, baseUrl: string) {
   }
 }
 
+/** 判断字符串是否已是绝对 URL（带 scheme，如 http:）。 */
 function isAbsoluteUrl(value: string | null | undefined) {
   return !!value && /^[a-z][a-z\d+.-]*:/i.test(value);
 }
+/**
+ * 生成复盘 Excel 的「节点数据」与「产物链接」两张表：汇总本次执行的关键耗时与
+ * Token 指标，并把每个执行节点的产物整理成带下载链接的清单。
+ *
+ * @param _issue 任务本身（当前未被使用，保留作签名约定）
+ * @param summary 本次执行的摘要（耗时 / Token / 轮次等）
+ * @param agentRows 按 Agent 节点聚合出的行数据
+ * @param _childLanes 子泳道数据（当前未被使用）
+ * @returns 可直接交给 xlsx 导出器的表描述列表
+ */
 export function buildRunReviewNodeXlsxSheets(
   _issue: Issue,
   summary: IssueExecutionTreeResponse["issue_summary"] | undefined,
@@ -200,6 +224,13 @@ export function buildRunReviewNodeXlsxSheets(
   }];
 }
 
+/**
+ * 生成复盘 Excel 的「RAW 交互信息」表：把事件流逐条展开成一行（含类型、耗时、
+ * Token、摘要、详情与原始 JSON）。
+ *
+ * @param eventRows 已排版好的复盘事件行数据
+ * @returns 可直接交给 xlsx 导出器的表描述列表
+ */
 export function buildRunReviewRawEventsXlsxSheets(eventRows: RunReviewEventRowData[]): XlsxSheetSpec[] {
   const headers = [
     "id",

@@ -1,3 +1,4 @@
+// 演员（成员/智能体）名下任务列表面板：按"分配给我的 / 我创建的"两种关系展示该演员的 Issue，含搜索框、范围切换和 Issue 列表。
 "use client";
 
 import { useMemo, useState } from "react";
@@ -23,6 +24,7 @@ import { FilterChipsBar } from "../issues/components/filter-chips-bar";
 import { IssueSurface } from "../issues/surface/issue-surface";
 import { useT } from "../i18n";
 
+/** 任务演员类型：成员或智能体（小队不在此面板范围内）。 */
 export type TaskActorType = "member" | "agent";
 
 const SCOPE_VALUES: ActorIssuesScope[] = ["assigned", "created"];
@@ -105,6 +107,12 @@ function ActorIssuesHeader({
   );
 }
 
+/**
+ * 演员任务列表面板。展示某个成员或智能体相关的 Issue，按"分配/创建"关系过滤，
+ * 并支持本地搜索。
+ * @param actorType 演员类型（member / agent）。
+ * @param actorId 演员 ID。
+ */
 export function ActorIssuesPanel({
   actorType,
   actorId,

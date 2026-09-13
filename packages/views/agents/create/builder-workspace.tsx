@@ -1,5 +1,9 @@
 "use client";
 
+// 本文件是“一条创建会话”的工作区：左侧聊天列、右侧实时草稿配置，可拖拽分栏。
+// 页面以 key={sessionId} 挂载它，切会话即整树重挂载——这里的每份状态（草稿、已
+// 应用消息标记、输入框）都属于一条会话，重挂载是唯一不会漏掉任何字段的重置。
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useDefaultLayout } from "react-resizable-panels";
@@ -41,14 +45,11 @@ import { useCreateAgentSubmit } from "./use-create-agent-submit";
 import { useT } from "../../i18n";
 
 /**
- * One creation conversation: the chat on the left, its live configuration on
- * the right.
+ * 一条创建会话的工作区：左聊天、右实时配置。
  *
- * Mounted with `key={sessionId}` by the page, so switching conversations tears
- * this down and builds it again. That is deliberate — every piece of state here
- * (the draft, which assistant message has been applied, the composer) belongs
- * to one conversation, and a remount is the only reset that cannot forget a
- * field.
+ * 页面以 `key={sessionId}` 挂载它，切换会话即拆掉重建。这是刻意的——这里的每份
+ * 状态（草稿、哪条助手消息已被应用、输入框）都属于一条会话，而重挂载是唯一不会
+ * 漏掉任何字段的“重置”。
  */
 export function BuilderWorkspace({
   sessionId,
@@ -61,17 +62,16 @@ export function BuilderWorkspace({
 }: {
   sessionId: string;
   squadId: string | null;
-  /** This conversation's row from the list, once it has arrived. */
+  /** 这条会话在列表里对应的行（到达后才有）。 */
   session: AgentBuilderSessionSummary | undefined;
-  /** The list query answered — either data or an error. */
+  /** 列表查询已应答——无论数据还是错误。 */
   sessionSettled: boolean;
-  /** Runtime this conversation was just started on. A conversation only joins
-   *  the list once it has a message, so for the first turn this is the only
-   *  truthful answer to "where does it run". */
+  /** 这条会话刚启动时的运行环境。会话要有一条消息才入列，所以第一轮对话时，
+   *  这是“它跑在哪”的唯一真实答案。 */
   fallbackRuntimeId: string;
-  /** The conversation no longer exists; the page decides where to go. */
+  /** 会话已不存在；去哪由页面决定。 */
   onDiscarded: () => void;
-  /** Reports the runtime this conversation settled on, for the shell's chip. */
+  /** 把这条会话落定的运行环境报给外壳的徽章。 */
   onRuntimeLabel: (label: string | null) => void;
 }) {
   const { t } = useT("agents");
@@ -79,10 +79,8 @@ export function BuilderWorkspace({
     id: "multica_agent_builder_layout",
   });
 
-  // Resuming: the conversation already runs somewhere, and only the server
-  // knows where. Until it answers, the form seeds no runtime at all — falling
-  // back to the first usable one would put the picker on a runtime that
-  // executes nothing (MUL-5163).
+  // 恢复中：会话已跑在某处，只有服务端知道在哪。它应答之前，表单不播种任何运行
+  // 环境——回退到第一台可用者会让选择器停在“什么都不执行”的机器上（MUL-5163）。
   const runtimeSeed = useMemo(
     () => ({
       ready: sessionSettled,
@@ -107,9 +105,8 @@ export function BuilderWorkspace({
       selectedRuntime?.status === "online" ? selectedRuntime.id : null,
     ),
   );
-  // `null` means discovery is not available yet (or failed), while `[]` is
-  // an authoritative catalog with no selectable models. In both cases the
-  // builder may preserve the user's current value but cannot invent one.
+  // `null` 表示发现尚不可用（或失败）；`[]` 是权威目录但无可选模型。两种情况
+  // 下 builder 都可以保留用户当前值，但不能凭空发明一个。
   const builderModelCatalog = useMemo(
     () =>
       builderModelsQuery.isSuccess
@@ -127,8 +124,7 @@ export function BuilderWorkspace({
     [builderModelCatalog],
   );
 
-  // Read through a ref so the encoder handed to the session hook stays current
-  // without making the hook depend on every catalog query.
+  // 经 ref 读取，让交给会话 hook 的编码器保持最新，又不必让 hook 依赖每次目录查询。
   const encodeContext = useRef({
     draft,
     workspaceSkills: form.workspaceSkills,
@@ -164,8 +160,7 @@ export function BuilderWorkspace({
     runtimeId: selectedRuntime?.id ?? null,
     squadId,
     template: "agent_builder",
-    // The agent is already committed here, so builder cleanup must never turn
-    // a successful create into a retryable create error.
+    // 此处 Agent 已提交，builder 的收尾绝不能把成功创建变成可重试的创建错误。
     onCreated: () => builder.archiveAfterCreate(),
   });
 
@@ -178,9 +173,8 @@ export function BuilderWorkspace({
     [form.members],
   );
 
-  // Realtime chat updates can mutate the cached messages array in place. Use
-  // the latest structured message's scalar identity/content as effect inputs
-  // so a draft is still applied when the array reference itself is unchanged.
+  // 实时聊天更新可能原地改动缓存的 messages 数组。取最新一条结构化消息的
+  // 标量身份/内容作 effect 输入——即使数组引用本身没变，草稿仍会被正确应用。
   const latestDraftMessage = [...builder.messages]
     .reverse()
     .find(
@@ -195,9 +189,8 @@ export function BuilderWorkspace({
   appliedRef.current = draftSync.appliedMessageId;
 
   useEffect(() => {
-    // Gated on the restore: merging a reply into the form before the stored
-    // configuration lands would be overwritten a tick later, and the merge
-    // would have been computed against an empty draft.
+    // 门槛设在恢复上：已存配置落地前把回复合并进表单，会在下一拍被覆盖——而且
+    // 那次合并还是拿空草稿算出来的。
     if (!restored) return;
     if (
       !latestDraftMessageId ||
@@ -241,12 +234,10 @@ export function BuilderWorkspace({
     [builder.messages],
   );
 
-  // True once the draft's runtime is known to match the carrier's. Until then
-  // no selection may reach the server: RuntimePicker seeds an empty selection by
-  // calling onSelect itself, and in this pane onSelect rebinds the live
-  // conversation — so honouring that seed would move the conversation to
-  // whatever runtime sorts first, silently when idle and as "stop the current
-  // reply before switching runtime" when not.
+  // 草稿的运行环境确知与 carrier 一致之前为 false。在那之前，任何选择都不得发到
+  // 服务端：RuntimePicker 自己会通过 onSelect 播种空选择，而本面板的 onSelect 会去
+  // 重绑实时会话——听从那个种子，等于把会话挪到“排序第一”的机器上：空闲时无声
+  // 发生，不空闲时表现为“换运行环境前先打断当前回复”。
   const runtimeKnown = sessionSettled && draft.runtimeId.length > 0;
 
   useEffect(() => {
@@ -258,9 +249,8 @@ export function BuilderWorkspace({
     if (!runtimeId || runtimeId === draft.runtimeId) return;
     const bound = await builder.switchRuntime(runtimeId);
     if (!bound) return;
-    // Model ids are per-runtime; clear it — with the per-model thinking /
-    // speed overrides — so the new runtime resolves its own defaults instead
-    // of keeping values it may not serve.
+    // 模型 id 按运行环境区分，一并清掉按模型绑定的推理/档位覆盖——让新运行环境
+    // 解析自己的默认，而不是保留一些它可能根本服务不了的值。
     setDraft((current) => applyDraftRuntimeChange(current, bound));
   };
 
@@ -270,13 +260,11 @@ export function BuilderWorkspace({
     !submit.creating &&
     !builder.pending;
 
-  // No beforeunload guard here on purpose: the conversation lives on the server
-  // and the configuration autosaves, so there is nothing a reload can lose. The
-  // manual route still warns because its form has no server-side home.
-
+  // 这里刻意不加 beforeunload 守卫：会话活在服务端、配置自动保存，刷新什么都不会
+  // 丢。手动流程仍会警告，因为它的表单在服务端没有家。
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
-  // A conversation that no longer exists cannot be shown, edited or resumed;
-  // leave rather than render an editable shell over nothing.
+  // 已不存在的会话没法展示、编辑或恢复；与其在一堆“无”上渲染可编辑外壳，
+  // 不如离开。
   const { missing } = builder;
   useEffect(() => {
     if (missing) onDiscarded();
@@ -290,11 +278,9 @@ export function BuilderWorkspace({
 
   return (
     <>
-      {/* The group lives here, not on the route, so its two panels are its
-          only children — the same shape the chat page uses. A group whose
-          children alternate between one and two panels (setup vs conversation)
-          cannot keep a single persisted layout straight, and a panel arriving
-          through a child component's fragment is not a child it can measure. */}
+      {/* 面板组放在这里而不放在路由上，因此它的两个孩子就是这两个面板——与聊天页
+          同构。一个子元素在一/两面板间交替的面板组（setup vs conversation）没法
+          维持单一持久布局；经子组件 fragment 传入的面板也不是它能测量的子元素。 */}
       <ResizablePanelGroup
         orientation="horizontal"
         className="min-h-0 flex-1"
@@ -350,8 +336,8 @@ export function BuilderWorkspace({
                     void handleRuntimeSelect(runtimeId);
                   }}
                   runtimeSwitchPending={builder.pending}
-                  // Also locked while the carrier's runtime is unknown, so the
-                  // picker cannot offer a switch it would refuse to perform.
+                  // carrier 运行环境未知期间也锁定，选择器就不会给出一个它拒绝
+                  // 执行的切换入口。
                   runtimeSwitchInFlight={
                     builder.switchingRuntime || !runtimeKnown
                   }
@@ -392,8 +378,8 @@ export function BuilderWorkspace({
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={(event) => {
-                // Keep the dialog up while the delete is in flight; it closes
-                // from `discard` only once the server has actually accepted.
+                // 删除在途时保持弹窗打开；只有服务端真正接受后，`discard` 才会
+                // 关闭它。
                 event.preventDefault();
                 void discard();
               }}

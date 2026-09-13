@@ -1,10 +1,17 @@
 "use client"
+// 本文件是标签页（Tabs）组件族（基于 Base UI 的 Tabs）：
+// 一组标签切换不同内容面板，支持水平/垂直布局，以及「白底胶囊」与
+// 「下划线」两种视觉变体。
 
 import { Tabs as TabsPrimitive } from "@base-ui/react/tabs"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@multica/ui/lib/utils"
 
+/**
+ * Tabs：标签页根组件。
+ * @param props.orientation 排列方向：'horizontal'（默认，标签在上）/ 'vertical'（标签在左）
+ */
 function Tabs({
   className,
   orientation = "horizontal",
@@ -23,6 +30,7 @@ function Tabs({
   )
 }
 
+/** 标签栏的样式变体：'default' 灰底胶囊 / 'line' 透明底 + 下划线高亮 */
 const tabsListVariants = cva(
   "group/tabs-list inline-flex w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-8 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
   {
@@ -38,6 +46,7 @@ const tabsListVariants = cva(
   }
 )
 
+/** TabsList：标签栏容器（灰底或透明底，由 variant 决定） */
 function TabsList({
   className,
   variant = "default",
@@ -53,6 +62,7 @@ function TabsList({
   )
 }
 
+/** TabsTrigger：单个标签按钮；激活态用 data-active 高亮（line 变体再画一条下划线） */
 function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
   return (
     <TabsPrimitive.Tab
@@ -69,6 +79,7 @@ function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
   )
 }
 
+/** TabsContent：某个标签对应的内容面板 */
 function TabsContent({ className, ...props }: TabsPrimitive.Panel.Props) {
   return (
     <TabsPrimitive.Panel

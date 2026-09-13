@@ -1,3 +1,7 @@
+// 本文件是「成员」设置标签页：展示并管理工作区成员（改角色 / 移除，含"最后一个 owner"
+// 的保护逻辑）、邮箱邀请（座席已满时走"购座 + 自动补发邀请"流程）以及分享链接的
+// 创建 / 复制 / 吊销。
+
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -86,8 +90,14 @@ import {
   seatPurchaseMatchesPreview,
 } from "./seat-invite-purchase";
 
+// 等待"购座激活 + 自动补发邀请"的总超时：webhook 生效是异步的，超时后不再干等，直接提示失败。
 const SEAT_PURCHASE_CONFIRM_TIMEOUT_MS = 2 * 60_000;
 
+/**
+ * "邀请新成员但座位已满"时的联动购座状态机：
+ * review（报价确认）→ purchasing（付款中）→ waiting（等座位激活）→ inviting（自动补发邀请）
+ * → 成功清空 / error（可重试时允许回到购座重试）。
+ */
 type InviteSeatPurchase = {
   workspaceId: string;
   email: string;
@@ -100,6 +110,7 @@ type InviteSeatPurchase = {
   retryable?: boolean;
 };
 
+/** 生成"邀请购座"的幂等键：同一封邀请反复重试也只会扣一次钱，键最长截断到 200 字符。 */
 function createSeatPurchaseKey(workspaceId: string): string {
   const suffix =
     globalThis.crypto?.randomUUID?.() ??
@@ -107,15 +118,15 @@ function createSeatPurchaseKey(workspaceId: string): string {
   return `invite-seat-${workspaceId}-${suffix}`.slice(0, 200);
 }
 
+// 各角色在列表里展示用的小图标：owner 皇冠、admin 盾牌、member 人形。
 const ROLE_ICONS: Record<MemberRole, typeof Crown> = {
   owner: Crown,
   admin: Shield,
   member: User,
 };
 
-// Builds the shareable URL for a share-link invite. Prefers the navigation
-// adapter's getShareableUrl (works on desktop where window.location.origin is
-// not the public web origin), falling back to the browser origin on web.
+// 拼出分享链接邀请的完整可分享 URL：优先用导航适配器暴露的 getShareableUrl
+// （桌面端 window.location.origin 并不是公网 web 的 origin，必须走它），Web 端退回浏览器 origin。
 function buildShareLinkUrl(
   navigation: ReturnType<typeof useOptionalNavigation>,
   code: string,
@@ -127,6 +138,7 @@ function buildShareLinkUrl(
   return `${typeof window !== "undefined" ? window.location.origin : ""}${joinPath}`;
 }
 
+/** 读取当前语言下三种角色的展示配置（名称/描述/图标），供成员行与各选择器复用。 */
 function useRoleLabels() {
   const { t } = useT("settings");
   return {
@@ -148,6 +160,7 @@ function useRoleLabels() {
   } as const;
 }
 
+/** 单个成员行：头像、名字/邮箱、角色徽标；有管理权时行尾菜单可改角色或移除。 */
 function MemberRow({
   member,
   canManage,
@@ -161,8 +174,7 @@ function MemberRow({
   member: MemberWithUser;
   canManage: boolean;
   canManageOwners: boolean;
-  /** Total number of owners in this workspace — needed to gate demoting the
-   *  last owner per `workspace.go:497-507`. */
+  /** 工作区当前 owner 总数——用于拦住"降级最后一个 owner"的操作（见 workspace.go:497-507）。 */
   ownerCount: number;
   isSelf: boolean;
   busy: boolean;
@@ -258,6 +270,7 @@ function MemberRow({
   );
 }
 
+/** 单条"待接受邀请"行：邮箱 + 待处理时间图标 + 角色徽标；管理员可撤销该邀请。 */
 function InvitationRow({
   invitation,
   canManage,
@@ -303,6 +316,7 @@ function InvitationRow({
   );
 }
 
+/** 单条分享链接行：使用次数与过期时间、链接本身（可整行复制），以及复制 / 吊销按钮。 */
 function ShareLinkRow({
   link,
   onRevoke,
@@ -362,6 +376,10 @@ function ShareLinkRow({
   );
 }
 
+/**
+ * 「成员」设置标签页：成员增删改角色、邮箱邀请、分享链接邀请的管理面板；
+ * 邀请在座位不足时会联动触发"购买座位并在激活后自动补发邀请"的流程。
+ */
 export function MembersTab() {
   const { t } = useT("settings");
   const { t: billingT } = useT("billing");
@@ -386,7 +404,7 @@ export function MembersTab() {
   const [shareLinkActionId, setShareLinkActionId] = useState<string | null>(null);
   const [shareLinkLoading, setShareLinkLoading] = useState(false);
   const [shareLinkRole, setShareLinkRole] = useState<MemberRole>("member");
-  const [shareLinkExpiry, setShareLinkExpiry] = useState<string>("168"); // default 7 days
+  const [shareLinkExpiry, setShareLinkExpiry] = useState<string>("168"); // 分享链接有效期，默认 7 天
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
     description: string;
@@ -409,8 +427,8 @@ export function MembersTab() {
   const canManageWorkspace = currentMember?.role === "owner" || currentMember?.role === "admin";
   const isOwner = currentMember?.role === "owner";
   const ownerCount = members.filter((m) => m.role === "owner").length;
-  // Only owners/admins may list share links; skip the request for plain
-  // members (the server would 403) once the current member's role is known.
+  // 分享链接只有 owner/admin 才允许拉取：一旦确定当前成员不是管理员，
+  // 就直接跳过该请求（普通成员发过去服务端也会返回 403）。
   const { data: shareLinks = [] } = useQuery(shareLinkListOptions(wsId, canManageWorkspace));
 
   const sendInvitation = useCallback(
@@ -451,10 +469,9 @@ export function MembersTab() {
                   description: billingT(
                     ($) => $.workspace.seats.occupancy_over_capacity_description,
                     {
-                      // Cloud refuses on used + reserved, so pending
-                      // invitations have to appear here: the most common
-                      // trigger is a first ledger snapshot whose member count
-                      // alone still fits inside the purchased seats.
+                      // 云端是拿"已占用(used) + 预留(reserved)"来拒绝的，所以待接受的邀请
+                      // 必须一起算进去：最常见的触发场景是第一次账本快照里，光看成员数
+                      // 明明还塞得进已购座席，结果仍然超限。
                       occupied: capacity.used + capacity.reserved,
                       purchased: capacity.purchased,
                       members: capacity.used,
@@ -527,9 +544,8 @@ export function MembersTab() {
       setInviteSeatPurchase(null);
       return;
     }
-    // A transient failure may happen after the purchase succeeded and the
-    // first invitation dispatch ran. Reusing the same idempotency key is safe,
-    // but the dispatch guard must be reopened for the retried invitation.
+    // 可能遇到"购买其实已成功、第一封邀请也已发出，只是响应阶段抛了个瞬时错误"的情况。
+    // 复用同一个幂等键是安全的，但重试补发邀请前，必须把下面的"只补发一次"闸门重新打开。
     dispatchedInvitePurchaseKey.current = null;
     setInviteSeatPurchase({
       ...current,
@@ -594,6 +610,8 @@ export function MembersTab() {
     );
   }, [wsId]);
 
+  // 座位在 Stripe 侧激活（webhook 已把 capacity 落到摘要里）后，自动把邀请补发出去；
+  // 用幂等键记录"已派发过"，保证整个流程只会补发一次。
   useEffect(() => {
     const purchase = inviteSeatPurchase;
     if (
@@ -651,6 +669,8 @@ export function MembersTab() {
     wsId,
   ]);
 
+  // 给"等待座位激活"设一个总超时：超过 2 分钟仍未激活就转成错误态提示用户，
+  // 避免 webhook 丢失时让弹窗一直转圈干等。
   useEffect(() => {
     if (
       inviteSeatPurchase?.phase !== "waiting" ||

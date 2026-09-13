@@ -1,3 +1,7 @@
+// 文件职责：实现 `multica repo` 命令组——维护「工作区级仓库注册表」（list/add/
+// remove）以及 `repo checkout`（在 agent 任务里把 daemon 的 bare 克隆检出成 git
+// worktree 到当前工作目录）。注册表是工作区级概念，与项目级资源（project
+// resource）相互独立。
 package main
 
 import (
@@ -16,11 +20,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// repoCmd 是 `multica repo` 父命令，挂 list/add/remove/checkout 四个子命令。
 var repoCmd = &cobra.Command{
 	Use:   "repo",
 	Short: "Work with repositories",
 }
 
+// repoListCmd 列出当前工作区的仓库注册表。
 var repoListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List workspace repositories",
@@ -55,6 +61,8 @@ var repoCheckoutCmd = &cobra.Command{
 	RunE:  runRepoCheckout,
 }
 
+// repoCheckoutRef 是 repo checkout 的 --ref 包级 flag 变量（cobra StringVar 直接
+// 绑定到它），缺省检 remote 默认分支。
 var repoCheckoutRef string
 
 func init() {
@@ -75,11 +83,13 @@ func init() {
 	repoCmd.AddCommand(repoCheckoutCmd)
 }
 
+// workspaceRepo 是工作区注册表里一条仓库记录。
 type workspaceRepo struct {
 	URL         string `json:"url"`
 	Description string `json:"description,omitempty"`
 }
 
+// repoWorkspaceResponse 是工作区响应（含其 repos 注册表）。
 type repoWorkspaceResponse struct {
 	ID    string          `json:"id"`
 	Name  string          `json:"name"`
@@ -87,6 +97,8 @@ type repoWorkspaceResponse struct {
 	Repos []workspaceRepo `json:"repos"`
 }
 
+// repoMutationResult 是 add/remove 这类变更命令的返回结构，区分新增/更新/移除，
+// 并总是携带变更后的完整注册表。
 type repoMutationResult struct {
 	WorkspaceID string          `json:"workspace_id"`
 	Added       []workspaceRepo `json:"added,omitempty"`
@@ -95,6 +107,8 @@ type repoMutationResult struct {
 	Repos       []workspaceRepo `json:"repos"`
 }
 
+// repoURLsFromArgsAndFlags 把位置参数与 --url flag 里的仓库 URL 合并、trim 并去重。
+// 两者都为空时报错。
 func repoURLsFromArgsAndFlags(cmd *cobra.Command, args []string) ([]string, error) {
 	flagURLs, _ := cmd.Flags().GetStringArray("url")
 	raw := append([]string{}, flagURLs...)
@@ -119,6 +133,8 @@ func repoURLsFromArgsAndFlags(cmd *cobra.Command, args []string) ([]string, erro
 	return urls, nil
 }
 
+// fetchRepoWorkspace 拉取工作区及其仓库注册表；Repos 为空时归一成空切片，方便
+// 后续直接 append 而不必判 nil。
 func fetchRepoWorkspace(ctx context.Context, client *cli.APIClient, workspaceID string) (repoWorkspaceResponse, error) {
 	var ws repoWorkspaceResponse
 	if err := client.GetJSON(ctx, "/api/workspaces/"+workspaceID, &ws); err != nil {
@@ -130,6 +146,8 @@ func fetchRepoWorkspace(ctx context.Context, client *cli.APIClient, workspaceID 
 	return ws, nil
 }
 
+// patchWorkspaceRepos 用 PATCH /api/workspaces/{id} 把整份新注册表写回（server 端
+// 整体替换语义），并返回刷新后的工作区。
 func patchWorkspaceRepos(ctx context.Context, client *cli.APIClient, workspaceID string, repos []workspaceRepo) (repoWorkspaceResponse, error) {
 	var ws repoWorkspaceResponse
 	if err := client.PatchJSON(ctx, "/api/workspaces/"+workspaceID, map[string]any{"repos": repos}, &ws); err != nil {
@@ -141,6 +159,8 @@ func patchWorkspaceRepos(ctx context.Context, client *cli.APIClient, workspaceID
 	return ws, nil
 }
 
+// repoCommandClient 是 repo 系命令公共的前置：先确定工作区 ID（repo 全挂在
+// workspace 级，必须有工作区），再建 API client。
 func repoCommandClient(cmd *cobra.Command) (*cli.APIClient, string, error) {
 	workspaceID, err := requireWorkspaceID(cmd)
 	if err != nil {
@@ -153,6 +173,8 @@ func repoCommandClient(cmd *cobra.Command) (*cli.APIClient, string, error) {
 	return client, workspaceID, nil
 }
 
+// runRepoList 执行 `repo list`：取回工作区注册表，按 --output 打 JSON 或表格；
+// 空注册表时在 stderr 提示「没有仓库」而非打空表。
 func runRepoList(cmd *cobra.Command, _ []string) error {
 	client, workspaceID, err := repoCommandClient(cmd)
 	if err != nil {
@@ -183,6 +205,9 @@ func runRepoList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runRepoAdd 执行 `repo add [url]...`：把 URL 合并去重后逐条比对现有注册表——
+// 已存在的默认跳过，只有带 --description 时才顺带更新其描述；新增的条目如果同时
+// 给了 --description（仅单 URL 时允许）则一起带上。有实际增/改才写盘。
 func runRepoAdd(cmd *cobra.Command, args []string) error {
 	urls, err := repoURLsFromArgsAndFlags(cmd, args)
 	if err != nil {
@@ -266,6 +291,8 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runRepoRemove 执行 `repo remove [url]...`：从注册表里按 URL 整条移除；任何一条
+// URL 都不在注册表里时报错且不写盘，避免半删状态。
 func runRepoRemove(cmd *cobra.Command, args []string) error {
 	urls, err := repoURLsFromArgsAndFlags(cmd, args)
 	if err != nil {
@@ -332,6 +359,10 @@ func runRepoRemove(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runRepoCheckout 执行 `repo checkout <url>`：这是 agent 任务内部用的命令——从
+// 环境变量取 daemon 端口与任务凭据，POST 到 daemon 的 /repo/checkout，让 daemon
+// 从 bare 克隆缓存里长出 git worktree 到当前工作目录。遇「仓库忙」
+// （503 + X-Multica-Retryable: repo-busy）按 Retry-After 退避重试，最长等 5 分钟。
 func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	repoURL := args[0]
 
@@ -348,7 +379,7 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("MULTICA_TOKEN not set (repo checkout requires the active task credential)")
 	}
 
-	// Use current working directory as the checkout target.
+	// 检出目标就是当前工作目录（daemon 会把 worktree 落在这里）。
 	workDir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
@@ -429,6 +460,8 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// repoCheckoutRetryDelay 把 daemon 给的 Retry-After 头解析成重试等待时长：优先当
+// 秒数，其次当 HTTP 时间（与 now 相减），都解析不了则退回 1 秒；结果封顶 30 秒。
 func repoCheckoutRetryDelay(value string, now time.Time) time.Duration {
 	const (
 		defaultDelay = time.Second

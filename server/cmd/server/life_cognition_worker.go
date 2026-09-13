@@ -1,3 +1,13 @@
+// life_cognition_worker.go
+//
+// 职责：调度并派发"人生认知（Life）"后台任务。
+// Life 是陪伴型 AI（companion agent）对用户长期记忆/材料做加工的能力集：
+// 主动检查、主动复盘、记忆回顾、想法深化、承诺回访、关系回访、实验检查、
+// 观察者运行（observer）与编年史（chronicle）生成等。本 worker 每 15 秒
+// 转一圈：先把到点该跑的 Life job 建出来（每个 job 都带去重键，防止重复），
+// 再把"过期/完成但没产出"的 job 对账收尾，然后批量认领（fenced）到期 job，
+// 把入参（含从库里取回的材料/证据）装成 Agent 任务上下文入队。整套写入都用
+// 事务 + 栅栏（claim token/context version）保证并发多实例下不重复执行。
 package main
 
 import (
@@ -16,16 +26,25 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// lifeTxStarter 抽象"开事务"，让调度/入队/恢复都能在独立事务里原子完成。
 type lifeTxStarter interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
 const (
-	lifeCognitionPollInterval   = 15 * time.Second
-	lifeCognitionClaimLimit     = 10
+	// lifeCognitionPollInterval 巡检周期：每 15 秒看一次有没有到点的 job。
+	lifeCognitionPollInterval = 15 * time.Second
+	// lifeCognitionClaimLimit 每轮最多认领的 job 数（防止一轮压垮数据库/队列）。
+	lifeCognitionClaimLimit = 10
+	// lifeCognitionContextVersion 是塞给 Agent 的上下文描述串（每次改提示结构
+	// 应升版本号，历史任务据此识别自己是哪代语境）。
 	lifeCognitionContextVersion = "life-context-v6"
 )
 
+// lifeCognitionTaskContext 是塞给 Agent 任务的"上下文信封"：标明这是 life_cognition
+// 类型的任务、归属哪个 job、工作区与用户是谁，以及携带认领用的 claim token 和
+// 输入负载。Agent 侧用 ClaimToken/ContextVersion 回写结果，保证只有当前持有
+// 租约的那次执行能提交。
 type lifeCognitionTaskContext struct {
 	Type           string          `json:"type"`
 	JobID          string          `json:"job_id"`
@@ -37,6 +56,8 @@ type lifeCognitionTaskContext struct {
 	Input          json.RawMessage `json:"input"`
 }
 
+// lifeCognitionJobInput 是 job 原始入参的解析形状：描述这次要"吃"哪些材料
+// （按 ID、按某次对话、按来源修订、或按时间段），以及时间段参数等。
 type lifeCognitionJobInput struct {
 	MaterialID       string   `json:"material_id"`
 	MaterialIDs      []string `json:"material_ids"`
@@ -52,6 +73,8 @@ type lifeCognitionJobInput struct {
 	ProcessingCursor string   `json:"processing_cursor"`
 }
 
+// runLifeCognitionWorker 启动人生认知调度循环：先立刻跑一轮，再每 15 秒跑一轮，
+// ctx 取消即退出。
 func runLifeCognitionWorker(ctx context.Context, queries *db.Queries, starters ...lifeTxStarter) {
 	tickLifeCognitionJobs(ctx, queries, starters...)
 	ticker := time.NewTicker(lifeCognitionPollInterval)
@@ -66,6 +89,9 @@ func runLifeCognitionWorker(ctx context.Context, queries *db.Queries, starters .
 	}
 }
 
+// tickLifeCognitionJobs 执行一轮：过期提案先清掉 → 调度各种到点的 job →
+// 把"任务完成却没产出/失败"的 job 对账掉 → 收回过期 job → 认领到期 job 并
+// 逐个入队成 Agent 任务。
 func tickLifeCognitionJobs(ctx context.Context, queries *db.Queries, starters ...lifeTxStarter) {
 	var starter lifeTxStarter
 	if len(starters) > 0 {
@@ -87,6 +113,8 @@ func tickLifeCognitionJobs(ctx context.Context, queries *db.Queries, starters ..
 		return
 	}
 	for _, job := range jobs {
+		// 认领应带栅栏数据（claim token 与 context version），缺失说明认领
+		// 协议被破坏，直接判失败。
 		if !job.ClaimToken.Valid || job.ClaimToken.String == "" || job.ContextVersion <= 0 {
 			failLifeCognitionJob(ctx, queries, job.ID, fmt.Errorf("life cognition claim did not receive fencing data"), job.ClaimToken, job.ContextVersion)
 			continue
@@ -96,6 +124,8 @@ func tickLifeCognitionJobs(ctx context.Context, queries *db.Queries, starters ..
 			failLifeCognitionJob(ctx, queries, job.ID, fmt.Errorf("companion agent unavailable: %v", err), job.ClaimToken, job.ContextVersion)
 			continue
 		}
+		// 把"按需解析的输入"扩成完整上下文：先把 job 原始输入拷出来（避免改到
+		// 原切片），再按 job 类型把对应的材料/证据/子编年史附加进去。
 		input := append(json.RawMessage(nil), job.Input...)
 		var inputObject map[string]any
 		if json.Unmarshal(input, &inputObject) != nil || inputObject == nil {
@@ -131,10 +161,9 @@ func tickLifeCognitionJobs(ctx context.Context, queries *db.Queries, starters ..
 	}
 }
 
-// recoverExpiredLifeCognitionJobs settles the queue row and cognition job in
-// one transaction.  Recording the cancellation event in that same transaction
-// prevents a crash from leaving a terminal task that the durable stream never
-// observes.
+// recoverExpiredLifeCognitionJobs 在一个事务里同时收尾"队列行 + job"：job 的
+// 租约过期、其配套 Agent 任务仍挂着时，把它判取消并回写终态事件。取消事件也
+// 记在同一事务里，能防止崩溃留下"终态任务但可靠流永远看不见"的不一致。
 func recoverExpiredLifeCognitionJobs(ctx context.Context, queries *db.Queries, starter lifeTxStarter) (int, error) {
 	if starter == nil {
 		return 0, errors.New("life cognition transaction starter is required for recovery")
@@ -171,6 +200,7 @@ func recoverExpiredLifeCognitionJobs(ctx context.Context, queries *db.Queries, s
 			return recovered, fmt.Errorf("recover expired life cognition job: %w", err)
 		}
 		if task.ID.Valid {
+			// 任务行真实存在：给它补一个"取消"终态事件，让可靠事件流也知道。
 			if _, err := service.RecordTaskTerminalEventTx(ctx, qtx, protocol.EventTaskCancelled, task,
 				map[string]any{"failure_reason": "runtime_recovery", "error": "life cognition lease expired and was reclaimed"}); err != nil {
 				_ = tx.Rollback(ctx)
@@ -185,10 +215,9 @@ func recoverExpiredLifeCognitionJobs(ctx context.Context, queries *db.Queries, s
 	return recovered, nil
 }
 
-// enqueueLifeCognitionTaskAtomically keeps the claimed cognition job, its
-// bounded input snapshot, and the queue row in one commit. A process crash
-// between any two of those writes otherwise leaves either a running job with
-// no task or an unowned queued task that can never be reconciled.
+// enqueueLifeCognitionTaskAtomically 把"已认领的 job、它的有界输入快照、队列行"
+// 放进同一个事务提交。否则任两步写入之间进程一崩，就会留下"job 在跑却没有任务"
+// 或"无人认领、永远无法对账的排队任务"。
 func enqueueLifeCognitionTaskAtomically(
 	ctx context.Context,
 	queries *db.Queries,
@@ -206,6 +235,8 @@ func enqueueLifeCognitionTaskAtomically(
 	}
 	defer tx.Rollback(ctx)
 	qtx := queries.WithTx(tx)
+	// 入队前先带栅栏更新 job 输入：claim token 必须仍是自己的，否则说明租约
+	// 已被别人抢走（另一个实例/恢复流程），立即中止。
 	updated, err := qtx.UpdateRunningLifeCognitionJobInputFenced(ctx, db.UpdateRunningLifeCognitionJobInputFencedParams{
 		ID: job.ID, Input: input, ClaimToken: job.ClaimToken, ContextVersion: job.ContextVersion,
 	})
@@ -226,6 +257,7 @@ func enqueueLifeCognitionTaskAtomically(
 	if _, err := service.RecordTaskQueuedEventTx(ctx, qtx, util.UUIDToString(job.WorkspaceID), task); err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("record life cognition task queued event: %w", err)
 	}
+	// 任务建好后把 job 指向它；同样是带栅栏的，防止租约在窗口内易主。
 	attached, err := qtx.AttachLifeCognitionJobTaskFenced(ctx, db.AttachLifeCognitionJobTaskFencedParams{
 		ID: job.ID, TaskID: task.ID, ClaimToken: job.ClaimToken, ContextVersion: job.ContextVersion,
 	})
@@ -241,6 +273,10 @@ func enqueueLifeCognitionTaskAtomically(
 	return task, nil
 }
 
+// attachLifeJobSources 按 job 类型把"要加工的源材料"附加进送 Agent 的输入：
+// understand_materials 按指定材料解析；observer_run 按时间段取材料；编年史
+// 生成（chronicle_generate）则走 attachChronicleJobSources（除了材料还要带
+// 已有子编年史作参照）。
 func attachLifeJobSources(ctx context.Context, queries *db.Queries, job db.LifeCognitionJob, inputObject map[string]any) error {
 	var spec lifeCognitionJobInput
 	if err := json.Unmarshal(job.Input, &spec); err != nil {
@@ -268,6 +304,10 @@ func attachLifeJobSources(ctx context.Context, queries *db.Queries, job db.LifeC
 	return nil
 }
 
+// resolveLifeJobMaterials 解析 understand_materials 到底要读哪些材料：优先按
+// 显式 MaterialIDs/MaterialID，其次按"某次对话到某条消息为止"，再次按来源
+// 修订（source_type+source_key+source_revision）；都没给就直接报错（精确源
+// 缺失，不该猜）。
 func resolveLifeJobMaterials(ctx context.Context, queries *db.Queries, job db.LifeCognitionJob, spec lifeCognitionJobInput) ([]db.LifeMaterial, error) {
 	if len(spec.MaterialIDs) > 0 || spec.MaterialID != "" {
 		rawIDs := append([]string(nil), spec.MaterialIDs...)
@@ -305,6 +345,8 @@ func resolveLifeJobMaterials(ctx context.Context, queries *db.Queries, job db.Li
 	return nil, fmt.Errorf("understand_materials job has no exact material source")
 }
 
+// listLifeMaterialsForPeriod 返回某时间段内的全部人生材料（时间段两端按
+// RFC3339 校验）。
 func listLifeMaterialsForPeriod(ctx context.Context, queries *db.Queries, job db.LifeCognitionJob, startRaw, endRaw string) ([]db.LifeMaterial, error) {
 	start, err := time.Parse(time.RFC3339, startRaw)
 	if err != nil {
@@ -321,6 +363,9 @@ func listLifeMaterialsForPeriod(ctx context.Context, queries *db.Queries, job db
 	})
 }
 
+// attachChronicleJobSources 组装编年史生成任务的输入：日编年史只带"新材料 +
+// 证据引用"；月/年编年史还要带上该段内已有的子编年史条目（含各自的事实/感受/
+// 领悟/行动与证据）作为输入，让模型在上层概括时有据可依。
 func attachChronicleJobSources(ctx context.Context, queries *db.Queries, job db.LifeCognitionJob, spec lifeCognitionJobInput, inputObject map[string]any) error {
 	materials, err := listLifeMaterialsForPeriod(ctx, queries, job, spec.PeriodStart, spec.PeriodEnd)
 	if err != nil {
@@ -366,6 +411,9 @@ func attachChronicleJobSources(ctx context.Context, queries *db.Queries, job db.
 	return nil
 }
 
+// lifeMaterialItems 把材料行转成给模型的 map 列表。includeContent=false 时
+// 只放"摘录"（控制 token 体积），需要完整内容时（如日编年史）由调用方另行
+// 读取。
 func lifeMaterialItems(materials []db.LifeMaterial, includeContent bool) []map[string]any {
 	items := make([]map[string]any, 0, len(materials))
 	for _, material := range materials {
@@ -385,6 +433,8 @@ func lifeMaterialItems(materials []db.LifeMaterial, includeContent bool) []map[s
 	return items
 }
 
+// lifeMaterialReferences 生成一段"证据引用"列表（source_type=material），供
+// 下游写编年史时引用材料原始出处。
 func lifeMaterialReferences(materials []db.LifeMaterial) []map[string]string {
 	refs := make([]map[string]string, 0, len(materials))
 	for _, material := range materials {
@@ -398,6 +448,8 @@ func lifeMaterialReferences(materials []db.LifeMaterial) []map[string]string {
 	return refs
 }
 
+// lifeTextExcerpt 按 rune（而非字节）截取文本前 maxRunes 个字符做摘要，超长
+// 加省略号，避免切在 UTF-8 字符中间。
 func lifeTextExcerpt(value string, maxRunes int) string {
 	runes := []rune(value)
 	if len(runes) <= maxRunes {
@@ -406,6 +458,7 @@ func lifeTextExcerpt(value string, maxRunes int) string {
 	return string(runes[:maxRunes]) + "…"
 }
 
+// scheduleLifeCognitionJobs 汇总所有类型的调度入口，挨个把到点的 job 建出来。
 func scheduleLifeCognitionJobs(ctx context.Context, queries *db.Queries, starter lifeTxStarter, now time.Time) {
 	scheduleLifeProactiveChecks(ctx, queries, starter, now)
 	scheduleLifeProactiveReviews(ctx, queries, starter, now)
@@ -418,6 +471,7 @@ func scheduleLifeCognitionJobs(ctx context.Context, queries *db.Queries, starter
 	scheduleLifeChronicles(ctx, queries, starter, now)
 }
 
+// scheduleLifeProactiveReviews 把"待办的主动复盘"排成 job。
 func scheduleLifeProactiveReviews(ctx context.Context, queries *db.Queries, starter lifeTxStarter, now time.Time) {
 	rows, err := queries.ListPendingLifeProactiveReviews(ctx, 100)
 	if err != nil {
@@ -436,6 +490,8 @@ func scheduleLifeProactiveReviews(ctx context.Context, queries *db.Queries, star
 	}
 }
 
+// scheduleLifeThoughtDevelopment 把"到点该深化的内部想法"排成 job，并当场把
+// 想法标记为已排期（marker），防止下一轮重复排。
 func scheduleLifeThoughtDevelopment(ctx context.Context, queries *db.Queries, starter lifeTxStarter, now time.Time) {
 	rows, err := queries.ListDueLifeInternalThoughts(ctx, 100)
 	if err != nil {
@@ -455,10 +511,15 @@ func scheduleLifeThoughtDevelopment(ctx context.Context, queries *db.Queries, st
 	}
 }
 
+// createScheduledLifeJob 是 createScheduledLifeJobWithMarker 的不带 marker
+// 便捷版。
 func createScheduledLifeJob(ctx context.Context, queries *db.Queries, starter lifeTxStarter, workspaceID, userID, agentID pgtype.UUID, jobType, dedupeKey string, input any, scheduledAt time.Time) error {
 	return createScheduledLifeJobWithMarker(ctx, queries, starter, workspaceID, userID, agentID, jobType, dedupeKey, input, scheduledAt, nil)
 }
 
+// createScheduledLifeJobWithMarker 在事务里"建 job + 可选地推进源头状态
+// （marker）"。job 用 dedupeKey 去重（唯一约束），因此重复调度只会静默命中
+// 已有行。marker 与建 job 同事务提交，保证两者不会只成一个。
 func createScheduledLifeJobWithMarker(ctx context.Context, queries *db.Queries, starter lifeTxStarter, workspaceID, userID, agentID pgtype.UUID, jobType, dedupeKey string, input any, scheduledAt time.Time, marker func(context.Context, *db.Queries) error) error {
 	if starter == nil {
 		return errors.New("life cognition transaction starter is required for scheduling")
@@ -492,6 +553,9 @@ func createScheduledLifeJobWithMarker(ctx context.Context, queries *db.Queries, 
 	return nil
 }
 
+// scheduleLifeProactiveChecks 处理"定期主动检查策略"（用户设了想被定期问候/
+// 追问的事）：到点就把该用户的一次 proactive_check 排成 job，并把策略的下次
+// 检查时间推进到 next。
 func scheduleLifeProactiveChecks(ctx context.Context, queries *db.Queries, starter lifeTxStarter, now time.Time) {
 	rows, err := queries.ListDueLifeProactivePolicies(ctx, 100)
 	if err != nil {
@@ -517,6 +581,8 @@ func scheduleLifeProactiveChecks(ctx context.Context, queries *db.Queries, start
 	}
 }
 
+// scheduleLifeMemoryReviews 把"到点该复看的记忆"排成 job，并把下次复看时间推
+// 到 30 天后。
 func scheduleLifeMemoryReviews(ctx context.Context, queries *db.Queries, starter lifeTxStarter, now time.Time) {
 	rows, err := queries.ListDueLifeMemoryReviews(ctx, 100)
 	if err != nil {
@@ -538,6 +604,8 @@ func scheduleLifeMemoryReviews(ctx context.Context, queries *db.Queries, starter
 	}
 }
 
+// scheduleLifeCommitmentReviews 到点提醒用户回看已确认的承诺，并推进下次回看
+// 时间到 24 小时后。若找不到该用户的陪伴档案则跳过（没有可派发的 agent）。
 func scheduleLifeCommitmentReviews(ctx context.Context, queries *db.Queries, starter lifeTxStarter, now time.Time) {
 	rows, err := queries.ListDueLifeCommitments(ctx, 100)
 	if err != nil {
@@ -567,6 +635,8 @@ func scheduleLifeCommitmentReviews(ctx context.Context, queries *db.Queries, sta
 	}
 }
 
+// scheduleLifeRelationshipReviews 到点安排"关系事件回访"（比如认识纪念日这类
+// 值得主动提起的事），下次回访推进到 7 天后。
 func scheduleLifeRelationshipReviews(ctx context.Context, queries *db.Queries, starter lifeTxStarter, now time.Time) {
 	rows, err := queries.ListDueLifeRelationshipEvents(ctx, 100)
 	if err != nil {
@@ -588,6 +658,8 @@ func scheduleLifeRelationshipReviews(ctx context.Context, queries *db.Queries, s
 	}
 }
 
+// scheduleLifeExperimentChecks 给正在运行的"人生实验"轮次排每日检查（按天去重，
+// 一天一轮）。
 func scheduleLifeExperimentChecks(ctx context.Context, queries *db.Queries, starter lifeTxStarter, now time.Time) {
 	rows, err := queries.ListRunningLifeExperimentRoundsForChecks(ctx, 100)
 	if err != nil {
@@ -609,6 +681,8 @@ func scheduleLifeExperimentChecks(ctx context.Context, queries *db.Queries, star
 	}
 }
 
+// scheduleLifeObserverRuns 到点排"观察者运行"：观察区间从上次运行（没有就往前
+// 30 天）到当前，并推进下次运行时间（按最小间隔，缺省兜底 24 小时）。
 func scheduleLifeObserverRuns(ctx context.Context, queries *db.Queries, starter lifeTxStarter, now time.Time) {
 	rows, err := queries.ListDueLifeObservers(ctx, 100)
 	if err != nil {
@@ -636,6 +710,10 @@ func scheduleLifeObserverRuns(ctx context.Context, queries *db.Queries, starter 
 	}
 }
 
+// scheduleLifeChronicles 给每个开了 Life 的用户补生成缺失的编年史时段。注意：
+// 它"建 job"但绝不在排期时推进查询游标——游标是"成功产出"的确认，不是预约
+// （推进太早会丢掉时段）。推进发生在产出事务里（写入条目与证据后）；排队任务
+// 未完成期间靠去重键防重复。
 func scheduleLifeChronicles(ctx context.Context, queries *db.Queries, starter lifeTxStarter, now time.Time) {
 	profiles, err := queries.ListLifeProfilesForScheduling(ctx)
 	if err != nil {
@@ -661,16 +739,13 @@ func scheduleLifeChronicles(ctx context.Context, queries *db.Queries, starter li
 					"period_kind", period.PeriodKind, "period_start", period.PeriodStart.Time)
 				continue
 			}
-			// The cursor is an acknowledgement of a successfully generated
-			// entry, not a reservation.  Advancing it here would lose a period
-			// if the queued task or the process died before producing output.
-			// The output transaction advances it after the entry and evidence
-			// links have committed; the dedupe key prevents duplicate jobs while
-			// that task is pending.
+			// 见函数头注释：此处刻意不推进游标。
 		}
 	}
 }
 
+// pgIntervalDuration 把 PostgreSQL interval 换算成 time.Duration（月按 30 天
+// 粗算）；非法/非正时回退 fallback。
 func pgIntervalDuration(interval pgtype.Interval, fallback time.Duration) time.Duration {
 	if !interval.Valid {
 		return fallback
@@ -682,6 +757,7 @@ func pgIntervalDuration(interval pgtype.Interval, fallback time.Duration) time.D
 	return d
 }
 
+// timestampValue 把可空时间戳序列化成适合 JSON 的值（空则 nil，前端好处理）。
 func timestampValue(value pgtype.Timestamptz) any {
 	if !value.Valid {
 		return nil
@@ -689,6 +765,10 @@ func timestampValue(value pgtype.Timestamptz) any {
 	return value.Time.Format(time.RFC3339Nano)
 }
 
+// reconcileLifeCognitionJobs 对账：找出"已挂 Agent 任务、但任务已终态"的
+// running job。任务 completed 却没提交受约束的结构化产出，或者任务 failed/
+// cancelled，都意味着 job 白跑了——把它判失败，让对应用户侧可见（AI 需主动
+// 告知）。
 func reconcileLifeCognitionJobs(ctx context.Context, queries *db.Queries) {
 	rows, err := queries.ListRunningLifeCognitionJobsWithTask(ctx, 100)
 	if err != nil {
@@ -709,6 +789,9 @@ func reconcileLifeCognitionJobs(ctx context.Context, queries *db.Queries) {
 	}
 }
 
+// failLifeCognitionJob 把 job 标记为失败。带栅栏数据时走 Fenced 版本（防止把
+// 已被新执行持有的 job 误标失败）；没带则直接按 ID 更新。更新失败只记日志——
+// 下轮对账/恢复还会再试。
 func failLifeCognitionJob(ctx context.Context, queries *db.Queries, id pgtype.UUID, err error, token pgtype.Text, contextVersion int64) {
 	var updateErr error
 	if token.Valid && token.String != "" {

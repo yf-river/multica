@@ -1,3 +1,5 @@
+// 悬浮聊天窗口的尺寸/展开逻辑：负责监听容器边界、计算渲染尺寸、
+// 处理"最大化 ↔ 还原"切换与三个方向的拖拽调大小。
 "use client";
 
 import React, { useRef, useCallback, useState, useEffect } from "react";
@@ -13,6 +15,11 @@ function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
 }
 
+/**
+ * 悬浮聊天窗口的尺寸管理 hook：窗口可被拖拽调宽高（左右边缘、上边缘、左上角），
+ * 也可一键在"最大化"与"最小尺寸"间切换。最大尺寸始终按容器的 90% 计算，
+ * 边界测量前先用一组兜底值。
+ */
 export function useChatResize(
   windowRef: React.RefObject<HTMLDivElement | null>,
 ) {
@@ -22,7 +29,7 @@ export function useChatResize(
   const setChatSize = useChatStore((s) => s.setChatSize);
   const setExpanded = useChatStore((s) => s.setExpanded);
 
-  // ── Container bounds via ResizeObserver ────────────────────────────────
+  // ── 通过 ResizeObserver 测量容器边界 ─────────────────────────────────
   const boundsRef = useRef({ maxW: FALLBACK_MAX_W, maxH: FALLBACK_MAX_H });
   const [boundsReady, setBoundsReady] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -36,18 +43,17 @@ export function useChatResize(
     const update = () => {
       const maxW = Math.floor(parent.clientWidth * MAX_RATIO);
       const maxH = Math.floor(parent.clientHeight * MAX_RATIO);
-      setBoundsReady(true); // idempotent once true
-      // Only trigger a re-render if the bounds actually changed. Without this
-      // guard, any spurious ResizeObserver notification (including sub-pixel
-      // layout jitter during mount) schedules a setState that feeds back into
-      // the observer, producing "Maximum update depth exceeded".
+      setBoundsReady(true); // 一旦置 true 就幂等
+      // 边界真的变了才触发重渲染。没有这道守卫，任何多余的 ResizeObserver 通知
+      // （包括挂载期间的亚像素抖动）都会调度 setState，再反馈给 observer，
+      // 造成 "Maximum update depth exceeded"。
       const prev = boundsRef.current;
       if (prev.maxW === maxW && prev.maxH === maxH) return;
       boundsRef.current = { maxW, maxH };
       setRevision((r) => r + 1);
     };
 
-    // Measure immediately (parent is already in DOM at this point)
+    // 立即测一次（此刻 parent 已在 DOM 里）
     update();
 
     const ro = new ResizeObserver(update);
@@ -55,13 +61,13 @@ export function useChatResize(
     return () => ro.disconnect();
   }, [windowRef]);
 
-  // ── Derive rendered size ──────────────────────────────────────────────
+  // ── 推导实际渲染的尺寸 ────────────────────────────────────────────────
   const { maxW, maxH } = boundsRef.current;
 
   const renderWidth = isExpanded ? maxW : clamp(chatWidth, CHAT_MIN_W, maxW);
   const renderHeight = isExpanded ? maxH : clamp(chatHeight, CHAT_MIN_H, maxH);
 
-  // ── Expand / Restore ──────────────────────────────────────────────────
+  // ── 最大化 / 还原 ─────────────────────────────────────────────────────
   const isAtMax = renderWidth >= maxW && renderHeight >= maxH;
 
   const toggleExpand = useCallback(() => {
@@ -72,7 +78,7 @@ export function useChatResize(
     }
   }, [isExpanded, isAtMax, setChatSize, setExpanded]);
 
-  // ── Drag ──────────────────────────────────────────────────────────────
+  // ── 拖拽调大小 ────────────────────────────────────────────────────────
   const dragRef = useRef<{
     startX: number;
     startY: number;

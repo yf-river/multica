@@ -1,3 +1,7 @@
+// 本文件是「删除工作区」的确认对话框：要求用户逐字输入工作区名来解锁删除按钮。
+// 工作区一旦删除会级联清掉其下所有 issue、agent、技能与运行记录，且服务端没有
+// 回收站，所以确认门槛刻意设得很高。
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -16,20 +20,19 @@ import { isImeComposing } from "@multica/core/utils";
 import { useT } from "../../i18n";
 
 /**
- * Typed-confirmation dialog for workspace deletion — GitHub's repo-delete
- * pattern. The destructive button stays disabled until the user types
- * the workspace name exactly (case-sensitive, no trimming). The friction
- * is deliberate: deleting a workspace cascades into every issue, agent,
- * skill, and run under it, and the backend has no soft-delete.
+ * 删除工作区的「输入确认」对话框——GitHub 删除仓库时那种要求逐字输入的防误删弹窗。
+ * 在用户输入与工作区名完全一致之前，红色删除按钮始终禁用。
  *
- * Case-sensitive match matches GitHub's pattern and catches the "I
- * remember the gist of the name but not the casing" misfire. No trim —
- * leading/trailing whitespace indicates a typo, and silently accepting
- * it would weaken the whole point of the gate.
+ * 比对规则与 GitHub 一致、刻意严格：区分大小写（能拦住「只记得大概拼写、记不清
+ * 大小写」的误操作）；不去除首尾空格（带多余空格说明是手误，悄悄接受会削弱这道
+ * 闸门的意义）。
  *
- * Input value resets whenever the dialog closes so reopening doesn't
- * leak the previous attempt (which might have been for a different
- * workspace after a swap).
+ * 输入内容在对话框关闭时清空：防止下次打开（可能换了个工作区）还残留上一次的输入。
+ * @param props.workspaceName - 要删除的工作区名，作为比对基准与占位提示。
+ * @param props.loading - 删除请求进行中；期间禁用输入和按钮。
+ * @param props.open - 对话框是否打开。
+ * @param props.onOpenChange - 外部控制开合的回调。
+ * @param props.onConfirm - 输入校验通过后点击删除时触发。
  */
 export function DeleteWorkspaceDialog({
   workspaceName,
@@ -48,10 +51,9 @@ export function DeleteWorkspaceDialog({
   const [typed, setTyped] = useState("");
   const matched = typed === workspaceName;
 
-  // Reset on close (so reopening for a different workspace doesn't leak
-  // the prior attempt) AND on workspaceName change (if another owner
-  // renames the workspace while the dialog is open, the already-typed
-  // string stops matching and there'd be no feedback explaining why).
+  // 在「对话框关闭」和「工作区名变化」两种情况下都清空输入：前者避免再次打开时
+  // 泄漏上一次尝试（可能针对的是另一个工作区）；后者是因为对话框打开期间若别的
+  // 负责人改动了工作区名，已输入的内容会静默失配，且没有任何反馈说明为什么。
   useEffect(() => {
     setTyped("");
   }, [open, workspaceName]);

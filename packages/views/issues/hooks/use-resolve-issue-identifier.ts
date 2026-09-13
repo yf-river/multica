@@ -1,5 +1,7 @@
 "use client";
 
+// 问题标识符解析 hook：把一条裸的问题标识符（如 "MUL-123"）解析成当前工作区里真实
+// 的问题，解析不到返回 null。支撑类似 Linear 风格的自动链接渲染路径。
 import { useQuery } from "@tanstack/react-query";
 import { issueIdentifierOptions } from "@multica/core/issues/queries";
 import { useCurrentWorkspace } from "@multica/core/paths";
@@ -7,19 +9,19 @@ import { isIssueIdentifier } from "@multica/ui/markdown";
 import type { Issue } from "@multica/core/types";
 
 /**
- * Resolve a bare issue identifier ("MUL-123") to a real issue in the current
- * workspace, or `null`. Backs the Linear-style autolink render path.
+ * 把裸的问题标识符（"MUL-123"）解析为当前工作区中的真实问题，否则返回 null。
+ * 供自动链接渲染路径使用。
  *
- * Server state → TanStack Query (key includes wsId + identifier, so identical
- * identifiers across many comments/messages share one request).
+ * 服务端状态 → TanStack Query（key 含 wsId + 标识符，所以多条评论/消息里相同的
+ * 标识符会共享同一次请求）。
  *
- * The query is short-circuited (no network) when:
- *   - there is no current workspace, or
- *   - the token is not identifier-shaped, or
- *   - the identifier's prefix cannot match the workspace's `issue_prefix`.
+ * 以下情况直接短路（不发网络请求）：
+ *   - 当前没有工作区，或
+ *   - token 长得不像标识符，或
+ *   - 标识符前缀不可能是本工作区 `issue_prefix` 的前缀。
  *
- * When the prefix is unknown (workspace list still loading) we fall through to
- * the query and let the exact-match filter in `issueIdentifierOptions` decide.
+ * 前缀未知时（工作区列表还没加载完）就放行到查询，由 `issueIdentifierOptions` 里的
+ * 精确匹配过滤来决定。
  */
 export function useResolveIssueIdentifier(identifier: string): Issue | null {
   const workspace = useCurrentWorkspace();

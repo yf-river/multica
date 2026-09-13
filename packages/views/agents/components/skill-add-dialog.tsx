@@ -1,5 +1,8 @@
 "use client";
 
+// 本文件是“给 Agent 挂工作区技能”的添加弹窗：多选 + 明确点“确认”才生效。
+// 早期版本是点一行就立即挂上，用户既没法一次勾好几个，也没机会复核就把弹窗关了。
+
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -23,15 +26,10 @@ import { useT } from "../../i18n";
 import { SkillPickerList } from "./skill-picker-list";
 
 /**
- * "Attach workspace skills to this agent." Multi-select with explicit
- * Confirm — earlier iterations attached on a single row click, which
- * meant the user couldn't tick several skills at once and the dialog
- * closed before they could review their choice.
+ * “给 Agent 添加工作区技能”的弹窗。多选 + 明确点确认才提交。
  *
- * Already-attached skills are filtered out of the list entirely (vs.
- * showing them disabled). When there are no remaining workspace skills
- * to attach, the empty-state copy explains why, and the Confirm button
- * is naturally disabled because nothing can be selected.
+ * 已挂在 Agent 上的技能会被整体从列表里剔除（而不是置灰显示）。当工作区里已没有
+ * 可挂的新技能时，空态文案会解释原因，且确认按钮因无从可选而天然处于禁用态。
  */
 export function SkillAddDialog({
   agent,
@@ -53,9 +51,8 @@ export function SkillAddDialog({
     () => new Set(agent.skills.map((s) => s.id)),
     [agent.skills],
   );
-  // Hide attached skills outright — the dialog is for adding new ones.
-  // If a user wants to see what's already on the agent, the SkillsTab
-  // list above shows it.
+  // 已挂上的技能直接从列表里剔除——这个弹窗只负责“加新的”。
+  // 想回看 Agent 已有技能，看上面 SkillsTab 的列表即可。
   const availableSkills = useMemo(
     () => workspaceSkills.filter((s) => !attachedIds.has(s.id)),
     [workspaceSkills, attachedIds],

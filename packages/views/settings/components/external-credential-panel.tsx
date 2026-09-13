@@ -1,3 +1,7 @@
+// 本文件是「外部研发账号」凭据面板：在令牌设置页里为 TAPD、工蜂（腾讯 Git 平台）等
+// 外部系统各维护一条「账号 + 令牌」凭据。令牌加密保存、只会以掩码占位形式回显，
+// 支持保存、在线校验连接与删除。
+
 "use client";
 
 import { useState } from "react";
@@ -18,8 +22,13 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { useT } from "../../i18n";
 
+/** 面板支持的外部系统；将来每加一个系统就补一个元素。 */
 const PROVIDERS: ExternalCredentialProvider[] = ["tapd", "gongfeng"];
 
+/**
+ * 外部研发账号面板：为每个外部系统渲染一张凭据卡片（ProviderCard）。
+ * 每个系统在同一时刻只维护一条有效凭据（取列表第一条）。
+ */
 export function ExternalCredentialPanel() {
   return (
     <div className="space-y-4">
@@ -28,6 +37,14 @@ export function ExternalCredentialPanel() {
   );
 }
 
+/**
+ * 单个外部系统的凭据卡片：展示已存凭据的校验状态，提供「名称 / 令牌」输入框
+ * 以及保存、测试、删除操作。
+ *
+ * 说明：令牌输入框留空表示「沿用已保存的令牌」——保存时只有确实填了新令牌才会上传；
+ * 测试同理，未填新令牌时走「用已存令牌重测」的分支。每次保存/更新后都会把令牌状态
+ * 重置为 unverified，等用户点「测试」真正连通后才会变成 verified。
+ */
 function ProviderCard({ provider }: { provider: ExternalCredentialProvider }) {
   const { t } = useT("settings");
   const title = provider === "tapd"
@@ -46,6 +63,7 @@ function ProviderCard({ provider }: { provider: ExternalCredentialProvider }) {
   const [token, setToken] = useState("");
 
   const busy = createProfile.isPending || updateProfile.isPending || testProfile.isPending;
+  // 保存：完全没有已存凭据时，令牌是必填的；已有凭据则允许只改名称/只换令牌。
   const save = async () => {
     if (!token.trim() && !profile) {
       toast.error(t(($) => $.external_credentials.token_required));
@@ -76,6 +94,8 @@ function ProviderCard({ provider }: { provider: ExternalCredentialProvider }) {
     }
   };
 
+  // 测试连接：输入框里有新令牌就按新令牌测；没有则回退到「让服务端用已存令牌重测」；
+  // 两者都不可行（从没存过凭据、也没填令牌）就不做任何事。
   const test = async () => {
     try {
       const result = token.trim()
@@ -135,8 +155,10 @@ function ProviderCard({ provider }: { provider: ExternalCredentialProvider }) {
   );
 }
 
+/** 取 useT 的翻译函数类型，供下方 statusLabel 这类独立函数复用。 */
 type Translator = ReturnType<typeof useT<"settings">>["t"];
 
+/** 把凭据校验状态映射成对应翻译文案（已通过 / 失败 / 已禁用 / 未校验）。 */
 function statusLabel(status: string, t: Translator) {
   switch (status) {
     case "verified": return t(($) => $.external_credentials.status_verified);

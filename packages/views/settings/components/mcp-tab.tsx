@@ -1,3 +1,6 @@
+// 本文件是「MCP 服务器库」工作区设置标签页（需求单 GH #6062）：管理工作区级
+// MCP 服务器的增删改——即把「地址/命令/头信息/环境变量」等连接配置保存下来复用。
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -31,19 +34,16 @@ import { useT } from "../../i18n";
 import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
 
 /**
- * The workspace MCP server library (GH #6062).
+ * 工作区 MCP 服务器库（需求单 GH #6062）。
  *
- * Two things shape this screen and are worth stating up front:
+ * 这个页面的两个关键设定，先说明白：
  *
- *  - A server added here is given to NO agent. It is a library entry, exactly
- *    like a workspace skill: an agent owner assigns it on the agent's own MCP
- *    tab, where it also gets a per-agent on/off toggle. Nothing here reaches an
- *    agent implicitly.
- *  - The stored configuration is WRITE-ONLY. The API returns names and
- *    transports, never urls / commands / headers / env, so there is no
- *    "current value" to prefill and editing a server means supplying its
- *    configuration again. The UI says so rather than pretending the empty form
- *    is the saved state.
+ *  - 在这里添加的服务器不会隐式交给任何 agent。它只是库里的一个条目，作用类似
+ *    「工作区技能」：由 agent 的拥有者在 agent 自己的 MCP 页里选定使用，并在那里
+ *    获得每个 agent 一个开关。本页的操作不会暗地里触达任何 agent。
+ *  - 保存的配置是「只写」的。接口只会返回名称和传输方式，绝不返回 url / 命令 /
+ *    头信息 / 环境变量，所以编辑时没有「当前值」可以回填——改一个服务器就意味着
+ *    要重新填一遍它的配置。界面如实说明了这一点，而不是把空表单伪装成已保存的状态。
  */
 export function McpTab() {
   const { t } = useT("settings");
@@ -72,18 +72,16 @@ export function McpTab() {
     null,
   );
 
-  // The dialog is shared with the agent MCP tab, which hands it the saved
-  // entry to prefill. Here there is nothing to prefill — an edit always
-  // starts from an empty form and REPLACES the entry. The transport still
-  // comes from the safe summary so the form opens on the right one.
+  // 编辑弹窗与 agent 的 MCP 页共用（那边会传入已保存的条目来回填表单）。这里没有
+  // 可回填的内容——编辑总是从空表单开始、保存时整体替换原条目。传输方式仍取自
+  // 服务端返回的安全摘要，让表单一开始就停在正确的传输类型上。
   const dialogServer: ManagedMcpServer | null = editingServer
     ? {
         name: editingServer.name,
         config: {},
         container: "mcpServers",
         transport: editingServer.transport,
-        // The library has no per-agent toggle; this field only feeds the
-        // dialog's shape.
+        // 服务器库没有「每 agent 开关」，这个字段只是为了满足弹窗的数据结构。
         enabled: true,
       }
     : null;
@@ -94,8 +92,7 @@ export function McpTab() {
   ) => {
     try {
       if (editingServer) {
-        // Renaming is safe here: assignments key off the server id, so an
-        // agent that uses this server keeps using it.
+        // 这里改名是安全的：各 agent 的引用挂的是服务器 id，改名后仍指向同一个服务器。
         await updateServer.mutateAsync({ serverId: editingServer.id, name, config });
       } else {
         await createServer.mutateAsync({ name, config });
@@ -236,6 +233,10 @@ export function McpTab() {
   );
 }
 
+/**
+ * 单个 MCP 服务器在列表里的一行：左边显示名称（可带「已禁用」角标）与传输方式，
+ * 有管理权限时右侧提供编辑 / 删除按钮。
+ */
 function McpServerRow({
   server,
   canManage,
@@ -286,8 +287,9 @@ function McpServerRow({
 }
 
 /**
- * `transport` is a server-driven string, so an unknown value from a newer
- * backend renders as itself instead of disappearing.
+ * `transport` 是服务端下发的字符串，这里做一层展示归一：认识的类型给一个更
+ * 标准的写法（stdio 原样、http→HTTP、sse→SSE）；遇到更新的后端发来不认识的值时，
+ * 原样渲染而不是让它消失，避免新类型在旧前端上无迹可寻。
  */
 function transportLabel(transport: string): string {
   switch (transport) {

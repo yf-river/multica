@@ -1,19 +1,17 @@
 "use client";
 
 /**
- * HtmlBlockPreview — readonly rendering of fenced ```html code blocks.
+ * HtmlBlockPreview——围栏 ```html 代码块的只读渲染。
  *
- * Default view is "preview" (iframe) per the V2 plan; user can flip to
- * "source" to see the highlighted markup and Copy it. Maximize opens the
- * same iframe in a full-screen Dialog.
+ * 默认视图是「预览」（iframe），符合 V2 计划；用户可切到「源码」看高亮
+ * 标记并复制。最大化在全屏 Dialog 里打开同一个 iframe。
  *
- * Mounted by ReadonlyContent's `code` renderer for `lang === "html"`. The
- * `pre` renderer in ReadonlyContent recognizes this component by reference
- * and unwraps it from the default `<pre>` envelope, matching the same
- * two-layer trick already used for MermaidDiagram.
+ * 由 ReadonlyContent 的 `code` 渲染器在 `lang === "html"` 时挂载。ReadonlyContent
+ * 的 `pre` 渲染器按引用识别本组件，把它从默认 `<pre>` 包裹层里解包出来——
+ * 与 MermaidDiagram 已有的两层技巧一致。
  *
- * NOT used in the editable Tiptap NodeView — that path must keep
- * `<NodeViewContent as="code" />` so the user can continue typing.
+ * 可编辑的 Tiptap NodeView **不用**它——那条路径必须保留
+ * `<NodeViewContent as="code" />` 供用户继续输入。
  */
 
 import { useState } from "react";
@@ -37,15 +35,14 @@ import { HtmlPreviewBody } from "./html-preview-body";
 const CODE_BLOCK_IFRAME_HEIGHT = "h-[480px]";
 
 /**
- * Pixel twin of CODE_BLOCK_IFRAME_HEIGHT. The preview iframe is a fixed height,
- * so the near-viewport lazy shell (rich-content/lazy-rich-block.tsx) can
- * reserve exactly the space this component will occupy and mount with zero
- * layout shift. Keep the two in sync.
+ * CODE_BLOCK_IFRAME_HEIGHT 的像素孪生。预览 iframe 是固定高度，近视口惰性
+ * 外壳（rich-content/lazy-rich-block.tsx）才能精确预留本组件将要占用的空间、
+ * 零布局位移地挂载。两者要保持同步。
  */
 export const HTML_BLOCK_PREVIEW_HEIGHT_PX = 480;
 
-// Label shown in the code-block header. Not a translatable string — it's a
-// language identifier (matches the `lang === "html"` token below).
+// 代码块头部显示的语言标签。不是可翻译字符串——它是语言标识符（匹配下面
+// 的 `lang === "html"` token）。
 const HTML_LANGUAGE_LABEL = "html";
 
 interface HtmlBlockPreviewProps {
@@ -53,6 +50,9 @@ interface HtmlBlockPreviewProps {
   className?: string;
 }
 
+/**
+ * 只读 HTML 代码块：默认 iframe 预览，可切源码/复制/全屏。
+ */
 export function HtmlBlockPreview({ html, className }: HtmlBlockPreviewProps) {
   const { t } = useT("editor");
   const [view, setView] = useState<"preview" | "source">("preview");

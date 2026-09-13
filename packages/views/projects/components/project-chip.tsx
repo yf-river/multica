@@ -1,5 +1,7 @@
 "use client";
 
+// 项目纯展示小徽标：`<emoji> <项目名>`，带边框、超宽截断，用于任务行、提及等
+// 需要内嵌引用项目的地方。内部自行按 id 查项目，调用方只需给一个 id。
 import { useQuery } from "@tanstack/react-query";
 import { projectListOptions, projectDetailOptions } from "@multica/core/projects/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -7,26 +9,32 @@ import { ProjectIcon } from "./project-icon";
 import { useT } from "../../i18n";
 
 /**
- * Compact presentational representation of a project —
- * `<emoji> <title>`, bordered, truncating once it hits its width cap. Mirror of
- * IssueChip, including the `min(18rem, 100%)` cap — see that file for why the
- * content limit and the container limit are both needed. The two chips share
- * one rendering contract and must not drift.
+ * 项目的紧凑展示表示——`<emoji> <标题>`、带边框、到宽度上限后截断。是
+ * IssueChip 的镜像版，包括同一个 `min(18rem, 100%)` 上限——为什么内容和容器
+ * 两层上限都要，见 issue-chip 那个文件的说明。两个 chip 共用同一套渲染契约，
+ * 绝不能各自漂移。
  *
- * Not a link / button: callers wrap it in whatever interactive shell they
- * need. Pure UI — data is queried internally so callers can pass just an id.
+ * 不是链接也不是按钮：调用方想包成什么交互外壳自己包。纯 UI——数据在内部按
+ * id 查询，所以调用方只需传一个项目 id。
  */
 export interface ProjectChipProps {
   projectId: string;
-  /** Shown when the project can't be resolved. */
+  /** 项目解析不出来时显示的兜底文案。 */
   fallbackLabel?: string;
-  /** Extra classes — callers layer interaction hints here. */
+  /** 追加的样式类——调用方把交互提示效果叠在这里。 */
   className?: string;
 }
 
 const BASE_CLASS =
   "project-chip inline-flex min-w-0 max-w-[min(18rem,100%)] items-center gap-1.5 rounded-md border mx-0.5 px-2 py-0.5 text-caption";
 
+/**
+ * 渲染一个项目徽标：先在工作区项目列表里找，找不到再按 id 单独拉详情。
+ *
+ * @param projectId 目标项目 id
+ * @param fallbackLabel 解析失败时的兜底文案
+ * @param className 追加样式类
+ */
 export function ProjectChip({
   projectId,
   fallbackLabel,

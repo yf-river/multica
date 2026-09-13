@@ -1,3 +1,5 @@
+// client.go：本包对 Lark 开放平台 HTTP API 的窄接口定义，以及默认的 stub
+// 实现。
 package lark
 
 import (
@@ -7,177 +9,136 @@ import (
 	"log/slog"
 )
 
-// APIClient is the narrow surface this package needs from the Lark Open
-// Platform HTTP API. It is intentionally defined here (rather than
-// taken from a vendor SDK) so the rest of the package can be built and
-// unit-tested without dragging Lark's transport into every test, and
-// so we can swap implementations (real SDK, stub, fake) without
-// touching call sites.
+// APIClient 是本包从 Lark 开放平台 HTTP API 需要的窄接口。刻意在这里定义
+// （而不是取自已 vendored SDK），让包其余部分可以在不把 Lark 传输层拖进每个
+// 测试的前提下编译与单测，也让我们能随意替换实现（真实 SDK、stub、fake）而
+// 不动调用点。
 //
-// All methods are scoped to a single installation — the caller has
-// already authenticated the installation row and decrypted its
-// app_secret. The client never reads `lark_installation` itself.
+// 所有方法都限定在单条安装内——调用方已经鉴权过安装行并解密了它的
+// app_secret。client 从不自己读 `lark_installation`。
 type APIClient interface {
-	// IsConfigured reports whether this APIClient can reach Lark over
-	// the network. It is the "HTTP outbound is wired" signal: the stub
-	// returns false; the real Lark HTTP client returns true once
-	// instantiated. Handlers consult this when deciding whether to
-	// surface install / management UI that needs to talk to Lark.
+	// IsConfigured 报告该 APIClient 能否通过网络访问 Lark。这是“HTTP 出站已
+	// 接线”的信号：stub 返回 false；真实 Lark HTTP client 一旦实例化就返回
+	// true。handler 在决定是否暴露需要与 Lark 通信的安装/管理 UI 时会询问它。
 	IsConfigured() bool
 
-	// SendInteractiveCard posts an interactive card into a Lark chat
-	// and returns Lark's message_id for the card. The patcher persists
-	// this id in lark_outbound_card_message so subsequent patches can
-	// target the same card.
+	// SendInteractiveCard 向飞书聊天里发一张交互卡片，返回 Lark 给的
+	// message_id。patcher 会把它持久化到 lark_outbound_card_message，后续 patch
+	// 用同一 id 定位卡片。
 	SendInteractiveCard(ctx context.Context, p SendCardParams) (string, error)
 
-	// PatchInteractiveCard replaces the body of a previously-sent card.
-	// The throttling decision belongs to the caller; this method just
-	// performs the network call.
+	// PatchInteractiveCard 替换先前发出的卡片内容。节流判断归调用方；本方法
+	// 只做网络调用。
 	PatchInteractiveCard(ctx context.Context, p PatchCardParams) error
 
-	// SendTextMessage posts a plain text message into a Lark chat.
-	// Used for the agent's chat reply when the body has no markdown
-	// syntax — short prose / acknowledgments / pings. A plain text
-	// bubble feels like a normal IM message; we deliberately keep
-	// this path even after adding the markdown card variant because
-	// wrapping a one-liner "Hello!" inside a card just adds visual
-	// chrome the user doesn't want.
+	// SendTextMessage 向飞书聊天发一条纯文本消息。agent 的聊天回复在正文不含
+	// markdown 语法（短句/确认/招呼）时走这里——纯文本气泡更像普通 IM 消息；
+	// 即便加了 markdown 卡片变体也刻意保留此路径，因为把一句 "Hello!" 包进
+	// 卡片只是加上用户不想要的视觉装饰。
 	SendTextMessage(ctx context.Context, p SendTextParams) (string, error)
 
-	// SendMarkdownCard posts the agent's reply as a Lark interactive
-	// card (schema 2.0) with a single `tag: "markdown"` body element.
-	// This is the path the chat-reply router takes when the body
-	// contains markdown syntax (fenced code blocks, headings, lists,
-	// tables, etc.) — Lark renders the markdown into formatted text
-	// rather than leaving raw `**bold**` / `# heading` characters in
-	// the user's transcript. Returns the card's message_id.
+	// SendMarkdownCard 把 agent 回复以飞书交互卡片（schema 2.0）发出，卡片里是
+	// 一个 `tag: "markdown"` 的正文元素。聊天回复路由器在正文含 markdown 语法
+	// （围栏代码块、标题、列表、表格等）时走这条路——Lark 会把 markdown 渲染成
+	// 格式化文本，而不是把裸的 `**bold**` / `# heading` 留给用户。返回卡片的
+	// message_id。
 	SendMarkdownCard(ctx context.Context, p SendMarkdownCardParams) (string, error)
 
-	// SendBindingPromptCard is the dedicated "you need to bind"
-	// outbound. Kept separate from SendInteractiveCard so the
-	// abstraction stays stable when the production card template
-	// changes — call sites in identity check don't have to know about
-	// Lark's card schema.
+	// SendBindingPromptCard 是专门的“你需要绑定”出站。与 SendInteractiveCard
+	// 分开，让生产卡片模板变化时抽象保持稳定——身份检查处的调用点无需知道
+	// Lark 的卡片 schema。
 	SendBindingPromptCard(ctx context.Context, p BindingPromptParams) error
 
-	// GetBotInfo returns the Bot's per-installation `open_id` (the
-	// `bot_open_id` we persist on lark_installation). RegistrationService
-	// is the only caller — after the device-flow registration returns
-	// fresh `client_id` / `client_secret`, the service mints a
-	// tenant_access_token with those creds and calls
-	// /open-apis/bot/v3/info to learn the Bot's identity. The result
-	// is then frozen into lark_installation alongside the app_id /
-	// app_secret in the same transaction as the installer-bind.
+	// GetBotInfo 返回 Bot 在该安装下的 `open_id`（即我们持久化在
+	// lark_installation 上的 `bot_open_id`）。唯一调用方是 RegistrationService——
+	// 设备流注册返回新的 `client_id` / `client_secret` 后，服务用这些凭据铸
+	// tenant_access_token 再调 /open-apis/bot/v3/info 拿 Bot 身份，结果与
+	// app_id / app_secret 在同一事务里随安装者绑定一起冻结进 lark_installation。
 	GetBotInfo(ctx context.Context, creds InstallationCredentials) (BotInfo, error)
 
-	// GetMessage fetches a message by id via
-	// GET /open-apis/im/v1/messages/{message_id}. Lark always returns an
-	// ARRAY (data.items[]): for a normal message exactly one element;
-	// for a `merge_forward` message the first element is the forward
-	// sentinel and the remaining elements are the bundled child messages
-	// (each a normal typed message linked back by upper_message_id). The
-	// inbound enricher relies on both shapes: items[0] for a quoted-reply
-	// parent, items[1:] for a forwarded transcript. Returning the raw
-	// slice keeps this method a thin transport adapter — flattening and
-	// block assembly are the enricher's job.
+	// GetMessage 按 id 经 GET /open-apis/im/v1/messages/{message_id} 拉一条消息。
+	// Lark 恒返回数组（data.items[]）：普通消息正好一个元素；`merge_forward`
+	// 消息的第一个元素是转发哨兵，其余是被打包的子消息（每个都是普通类型化
+	// 消息，用 upper_message_id 回指）。入站 enricher 两种形态都用：items[0]
+	// 取引用回复的父消息，items[1:] 取转发记录。返回原始切片让本方法保持轻薄
+	// 的传输适配器——压平与块组装是 enricher 的活。
 	GetMessage(ctx context.Context, creds InstallationCredentials, messageID string) ([]LarkMessage, error)
 
-	// ListChatMessages fetches the most recent messages in a single chat
-	// via GET /open-apis/im/v1/messages. It powers the group-context
-	// prefetch: when a user @-mentions the Bot in a busy group, the
-	// enricher pulls a bounded window of surrounding messages so the agent
-	// sees the conversation, not just the one @-ed line.
+	// ListChatMessages 经 GET /open-apis/im/v1/messages 拉取单个聊天里最近的
+	// 消息。它为群聊上下文预取供能：用户在繁忙群里 @ Bot 时，enricher 拉一个
+	// 有界的周边消息窗口，让 agent 看到整段对话而不只是被 @ 的那一行。
 	//
-	// When p.ThreadID is set the request is scoped to a single Lark topic
-	// (话题) via container_id_type=thread, so a @-mention inside a topic
-	// only ever sees that topic's messages — sibling topics in the same
-	// chat share one chat_id but must stay isolated (#5835). Empty ThreadID
-	// keeps the chat-level container_id_type=chat window.
+	// p.ThreadID 非空时请求经 container_id_type=thread 限定到单个飞书话题
+	// （话题），所以话题内的 @ 只会看到该话题的消息——同群里的兄弟话题共享一个
+	// chat_id 但必须互相隔离（#5835）。ThreadID 为空则保持聊天级
+	// container_id_type=chat 窗口。
 	//
-	// Results come back newest-first (sort_type=ByCreateTimeDesc), capped
-	// at p.PageSize (Lark hard-caps a page at 50); the caller orders and
-	// trims for rendering. Only a single page is fetched — pagination is
-	// deliberately not exposed so the inbound ACK path's HTTP fan-out
-	// stays a single round-trip. Like GetMessage, this is a thin transport
-	// adapter: flattening and block assembly are the enricher's job.
+	// 结果按最新在前返回（sort_type=ByCreateTimeDesc），最多 p.PageSize 条
+	// （Lark 硬顶每页 50）；顺序与截断由调用方处理。只拉一页——刻意不暴露分页，
+	// 让入站 ACK 路径的 HTTP 扇出保持单次往返。与 GetMessage 一样，本方法是
+	// 轻薄传输适配器：压平与块组装归 enricher。
 	ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error)
 
-	// DownloadMessageResource downloads one binary resource attached to a
-	// message via GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}.
-	// Type is the Open Platform resource class ("image" for image_key,
-	// "file" for file_key-backed video/file/audio).
+	// DownloadMessageResource 经 GET /open-apis/im/v1/messages/{message_id}/
+	// resources/{file_key} 下载消息附带的一个二进制资源。Type 是开放平台资源
+	// 类别（image_key 用 "image"；file_key 支撑的视频/文件/音频用 "file"）。
 	DownloadMessageResource(ctx context.Context, creds InstallationCredentials, p DownloadResourceParams) (DownloadedResource, error)
 
-	// BatchGetUsers resolves a set of user open_ids to their display names
-	// via GET /open-apis/contact/v3/users/batch. The enricher uses it to
-	// label recent-context / quoted / forwarded speakers (and the sender
-	// who @-mentioned the Bot) with real names instead of positional
-	// "User 1 / User 2". Returns an open_id -> name map; ids the API does
-	// not return (restricted contact scope, deactivated user, …) are
-	// simply absent from the map, and the caller falls back to a
-	// positional label. openIDs beyond Lark's 50-per-call cap are dropped
-	// by the client.
+	// BatchGetUsers 经 GET /open-apis/contact/v3/users/batch 把一组用户 open_id
+	// 解析成显示名。enricher 用它给近期上下文/引用/转发的说话者（以及 @ Bot 的
+	// 发送者）贴真实名字，而不是 "User 1 / User 2" 的位置标签。返回 open_id ->
+	// name 映射；API 没返回的 id（联系人范围受限、已停用用户等）干脆不在映射里，
+	// 调用方退回位置标签。超过 Lark 单次 50 上限的 openIDs 由 client 丢弃。
 	BatchGetUsers(ctx context.Context, creds InstallationCredentials, openIDs []string) (map[string]string, error)
 
-	// AddMessageReaction adds an emoji reaction to an existing message.
-	// The standard use-case is the "Typing" indicator that signals the
-	// Bot is processing the user's message. Returns the reaction_id Lark
-	// assigns so it can be removed later.
+	// AddMessageReaction 给既有消息加一个 emoji 反应。标准用途是“Typing”指示，
+	// 表示 Bot 正在处理用户消息。返回 Lark 分配的 reaction_id 以便稍后移除。
 	AddMessageReaction(ctx context.Context, p AddReactionParams) (string, error)
 
-	// DeleteMessageReaction removes a previously-added reaction from a
-	// message. This is the cleanup half of the typing-indicator lifecycle.
+	// DeleteMessageReaction 移除先前加在消息上的反应。这是 typing indicator
+	// 生命周期的清理半边。
 	DeleteMessageReaction(ctx context.Context, p DeleteReactionParams) error
 }
 
-// TokenCacheInvalidator is implemented by an APIClient that caches
-// tenant_access_token in-process, so credential rotation can tell it to
-// forget what it holds. Rotation is invisible otherwise: re-registering
-// a Bot issues a new app_secret under the SAME app_id, Lark revokes
-// every token minted from the old one, and the cache key does not
-// change.
+// TokenCacheInvalidator 由“进程内缓存 tenant_access_token”的 APIClient 实现，
+// 让凭据轮换能叫它忘掉持有的缓存。否则轮换对它不可见：重注册一个 Bot 会在
+// 相同 app_id 下发新 app_secret，Lark 会撤销所有旧 secret 铸造的 token，而缓存
+// 键不变。
 //
-// It is deliberately separate from APIClient rather than a method on it:
-// only the real HTTP client holds a cache, and the stub / fakes have
-// nothing to forget. Callers type-assert and skip when it is absent.
+// 刻意与 APIClient 分开而不是做成它的方法：只有真实 HTTP client 才有缓存，
+// stub / fake 没什么可忘的。调用方做类型断言，缺失时跳过。
 type TokenCacheInvalidator interface {
 	InvalidateTokenCache(appID string)
 }
 
-// ListMessagesParams selects a bounded, recent window of messages in a
-// single Lark chat for the group-context prefetch. Only the fields the
-// enricher needs today are exposed (ChatID, ThreadID, PageSize, EndTime);
-// start_time and page_token are intentionally omitted until a caller
-// needs them.
+// ListMessagesParams 为群聊上下文预选取一个有界、最近的单聊消息窗口。只暴露
+// enricher 今天需要的字段（ChatID、ThreadID、PageSize、EndTime）；start_time
+// 与 page_token 在出现需要它们的调用方之前刻意省略。
 type ListMessagesParams struct {
 	ChatID ChatID
-	// ThreadID, when non-empty, scopes the list to a single Lark topic
-	// (话题): the client sends container_id_type=thread with the thread id
-	// as container_id instead of the chat container. This keeps a
-	// @-mention inside a topic from ever seeing sibling topics' messages
-	// (#5835). Lark's thread container does NOT accept end_time, so EndTime
-	// is ignored on this path — the caller anchors the window client-side.
-	// Empty keeps the chat-level container.
+	// ThreadID 非空时把列表限定到单个飞书话题（话题）：client 发
+	// container_id_type=thread，以 thread id 作 container_id 而非聊天容器。这样
+	// 话题内的 @ 永远不会看到兄弟话题的消息（#5835）。飞书线程容器不接收
+	// end_time，所以此路径下 EndTime 被忽略——调用方在客户端侧锚定窗口。空值
+	// 保持聊天级容器。
 	ThreadID string
-	// PageSize is how many of the most-recent messages to fetch. The
-	// client clamps it into Lark's valid 1..50 range.
+	// PageSize 是要拉多少条最近消息。client 会把它夹进 Lark 合法的 1..50 区间。
 	PageSize int
-	// EndTime, when > 0, caps the window to messages created at or before
-	// this Unix timestamp in SECONDS (Lark's end_time is second-, not
-	// millisecond-, granularity). The enricher sets it to the trigger
-	// message's time so the prefetch is anchored to the @-mention moment
-	// rather than whatever is newest by the time the fetch runs. Ignored
-	// when ThreadID is set (the thread container rejects end_time).
+	// EndTime 大于 0 时，把窗口上限卡在“创建时间不晚于此 Unix 秒数”的消息上
+	// （Lark 的 end_time 是秒级而非毫秒级）。enricher 把它设为触发消息的时间，
+	// 让预取锚定在被 @ 的那一刻，而不是拉取执行时的最新。ThreadID 已设置时忽略
+	// （线程容器拒绝 end_time）。
 	EndTime int64
 }
 
+// DownloadResourceParams 是一次资源下载所需的参数。
 type DownloadResourceParams struct {
 	MessageID string
 	FileKey   string
 	Type      string
 }
 
+// DownloadedResource 是一次已完成的资源下载结果。
 type DownloadedResource struct {
 	Data        []byte
 	ContentType string
@@ -185,6 +146,7 @@ type DownloadedResource struct {
 	SizeBytes   int64
 }
 
+// DownloadedResourceStream 是一次流式资源下载结果（Body 需由调用方关闭）。
 type DownloadedResourceStream struct {
 	Body        io.ReadCloser
 	ContentType string
@@ -192,205 +154,172 @@ type DownloadedResourceStream struct {
 	SizeBytes   int64
 }
 
-// LarkMessage is the normalized slice of an IM v1 message item the
-// enricher needs. Body.content is passed through raw (still the
-// JSON-encoded, msg_type-specific string Lark double-encodes) so the
-// flattener — not the transport client — owns content interpretation.
+// LarkMessage 是 enricher 需要的 IM v1 消息条目的规范化切片。Body.content 原样
+// 透传（仍是飞书二次 JSON 编码、msg_type 特异的字符串），由压平器而非传输
+// client 负责内容解释。
 type LarkMessage struct {
 	MessageID      string
-	MessageType    string // Lark `msg_type`: text / post / image / merge_forward / …
-	Content        string // raw body.content (a JSON-encoded string)
-	SenderID       string // sender.id (open_id for users, app_id for apps)
-	SenderType     string // sender.sender_type: user / app / anonymous / …
-	CreateTime     string // epoch milliseconds, as Lark returns it (a string)
+	MessageType    string // Lark `msg_type`：text / post / image / merge_forward / …
+	Content        string // 原始 body.content（一条 JSON 编码字符串）
+	SenderID       string // sender.id（用户为 open_id，应用为 app_id）
+	SenderType     string // sender.sender_type：user / app / anonymous / …
+	CreateTime     string // epoch 毫秒，按 Lark 返回的原样字符串
 	ParentID       string
 	RootID         string
-	ThreadID       string // Lark topic (话题) id; empty for messages outside a thread
-	UpperMessageID string // the merge_forward parent a child hangs under
+	ThreadID       string // Lark 话题（话题）id；话题外的消息为空
+	UpperMessageID string // 子消息挂在哪个 merge_forward 父转发之下
 	Deleted        bool
 	Mentions       []LarkMessageMention
 }
 
-// LarkMessageMention mirrors a mentions[] entry on the IM REST item
-// shape. Note this differs from the WS receive event's mention shape:
-// here `id` is a bare open_id string, not a nested {open_id, union_id,
-// user_id} object.
+// LarkMessageMention 镜像 IM REST item 形态里 mentions[] 的一项。注意这与 WS
+// receive 事件的 mention 形态不同：这里的 `id` 是裸 open_id 字符串，而不是
+// 嵌套的 {open_id, union_id, user_id} 对象。
 type LarkMessageMention struct {
-	Key  string // e.g. "@_user_1"
+	Key  string // 例如 "@_user_1"
 	ID   string // open_id
-	Name string // display name (may be empty)
+	Name string // 显示名（可能为空）
 }
 
-// BotInfo is the slice of /open-apis/bot/v3/info (+ a follow-up
-// /open-apis/contact/v3/users lookup for the union_id) we care about:
-// the Bot's per-installation `open_id` and its stable `union_id`.
+// BotInfo 是我们关心的 /open-apis/bot/v3/info（外加一次取 union_id 的
+// /open-apis/contact/v3/users 查询）切片：Bot 的安装级 `open_id` 与其稳定的
+// `union_id`。
 //
-// Both identifiers are persisted on lark_installation:
+// 两个标识都持久化在 lark_installation 上：
 //
-//   - `open_id` is the per-app Lark identifier; it is what /bot/v3/info
-//     returns and what the OUTBOUND send paths use to address a user.
+//   - `open_id` 是 per-app 的 Lark 标识；/bot/v3/info 返回它，出站发送路径用它
+//     给用户寻址。
 //
-//   - `union_id` is the cross-app stable identifier scoped to the Lark
-//     tenant. It is the only field that is consistent across the two
-//     WS perspectives in a multi-bot group chat — see MUL-2671 group-
-//     @-mention triage. The decoder matches inbound `mentions[].id`
-//     against `union_id` so the right bot's supervisor handles the
-//     event when several bots are bound to the same group.
+//   - `union_id` 是限定在 Lark tenant 内的跨 app 稳定标识。它是多 Bot 群聊里
+//     两个 WS 视角唯一一致的字段——见 MUL-2671 群聊 @ 分流。decoder 拿入站
+//     `mentions[].id` 与 `union_id` 比对，好让群里有多个 Bot 绑定同一个群时，
+//     正确那个 Bot 的 supervisor 处理事件。
 //
-// Everything else /bot/v3/info returns (display name, avatar,
-// activate_status, ip_white_list) is intentionally dropped — those
-// can be re-fetched downstream from the bot_open_id if a UI needs
-// them, and freezing them in our schema would create a drift surface
-// every time the operator edits the Bot on Lark's side.
+// /bot/v3/info 返回的其它一切（显示名、头像、activate_status、ip_white_list）
+// 都被刻意丢弃——下游可在需要时凭 bot_open_id 重取，把它们冻结进我们的
+// schema 会在操作者每次改 Bot 时制造一处漂移面。
 type BotInfo struct {
 	OpenID  OpenID
 	UnionID string
 }
 
-// SendCardParams is the input shape for posting a fresh card.
+// SendCardParams 是发一张全新卡片的输入形态。
 type SendCardParams struct {
 	InstallationID InstallationCredentials
 	ChatID         ChatID
-	// CardJSON is the raw Lark interactive card JSON body. We pass it
-	// through opaque so the card-template package can evolve without
-	// dragging this transport interface along.
+	// CardJSON 是原始飞书交互卡片 JSON 体。原样透传，让卡片模板包可以不拖着
+	// 这个传输接口演进。
 	CardJSON string
-	// ReplyTarget, when set, routes the send through Lark's reply
-	// endpoint (POST /im/v1/messages/{id}/reply) instead of the
-	// chat-level send endpoint, so the card lands inside the originating
-	// 话题 (thread). Empty ReplyTarget keeps the legacy chat-level send.
+	// ReplyTarget 设置后，发送走 Lark 的回复接口（POST /im/v1/messages/{id}/
+	// reply）而非聊天级发送接口，卡片因此落在原始 话题（线程）里。空
+	// ReplyTarget 保持旧的聊天级发送。
 	ReplyTarget ReplyTarget
 }
 
-// ReplyTarget describes how an outbound message should be threaded back
-// to an inbound message. When MessageID is non-empty the transport uses
-// Lark's reply endpoint targeting that message; InThread maps to the
-// reply_in_thread flag so the reply stays inside the message's topic.
-// The zero value (empty MessageID) means "send at the chat level" — the
-// historical behavior — so callers that don't care about threading just
-// leave it unset.
+// ReplyTarget 描述出站消息应如何贴回一条入站消息。MessageID 非空时传输层走
+// Lark 指向该消息的回复接口；InThread 映射到 reply_in_thread 标志，让回复留在
+// 该消息的话题内。零值（空 MessageID）表示“在聊天级发送”——历史行为——所以
+// 不在乎话题的调用方直接不设即可。
 type ReplyTarget struct {
 	MessageID string
 	InThread  bool
 }
 
-// IsSet reports whether this target should route through the reply
-// endpoint. A reply needs a parent message_id; without one there is
-// nothing to reply to and the caller falls back to a chat-level send.
+// IsSet 报告该目标是否应走回复接口。回复需要父 message_id；没有它就没有可回
+// 复的对象，调用方退回聊天级发送。
 func (r ReplyTarget) IsSet() bool { return r.MessageID != "" }
 
-// PatchCardParams is the input shape for updating an existing card.
+// PatchCardParams 是更新既有卡片的输入形态。
 type PatchCardParams struct {
 	InstallationID    InstallationCredentials
 	LarkCardMessageID string
 	CardJSON          string
 }
 
-// SendTextParams is the input shape for posting a plain text message.
-// Text is sent verbatim to Lark; the client handles JSON encoding of
-// the `{"text": "..."}` content envelope Lark requires.
+// SendTextParams 是发一条纯文本消息的输入形态。Text 原样发给 Lark；client 负责
+// 拼出 Lark 要求的 `{"text": "..."}` 内容信封并做 JSON 编码。
 type SendTextParams struct {
 	InstallationID InstallationCredentials
 	ChatID         ChatID
 	Text           string
-	// ReplyTarget threads the text reply back into a Lark topic; see
-	// ReplyTarget. Empty keeps the chat-level send.
+	// ReplyTarget 把文本回复贴回飞书话题；见 ReplyTarget。空值保持聊天级发送。
 	ReplyTarget ReplyTarget
 }
 
-// SendMarkdownCardParams is the input shape for posting an agent
-// reply as a Lark interactive card with a markdown body element.
-// Markdown is forwarded to Lark verbatim; the client builds the
-// schema-2.0 card envelope around it.
+// SendMarkdownCardParams 是“把 agent 回复发成带 markdown 正文元素的飞书交互
+// 卡片”的输入形态。Markdown 原样交给 Lark；client 在它外面套 schema-2.0 卡片
+// 信封。
 type SendMarkdownCardParams struct {
 	InstallationID InstallationCredentials
 	ChatID         ChatID
-	// Markdown is the body. Lark schema-2.0 markdown supports GFM-ish:
-	// **bold**, *italic*, `inline code`, fenced code blocks, headings,
-	// ordered + unordered lists, links, tables, blockquotes, separators.
+	// Markdown 是正文。Lark schema-2.0 markdown 支持类 GFM：**加粗**、*斜体*、
+	// `行内代码`、围栏代码块、标题、有序+无序列表、链接、表格、引用块、分隔线。
 	Markdown string
-	// Summary, when non-empty, is rendered as the single-line preview
-	// Lark shows in the chat list / desktop notification. Empty falls
-	// back to whatever Lark derives from the body.
+	// Summary 非空时作为 Lark 在聊天列表/桌面通知里显示的单行预览。空值退回
+	// Lark 从正文自行推导的内容。
 	Summary string
-	// ReplyTarget threads the card reply back into a Lark topic; see
-	// ReplyTarget. Empty keeps the chat-level send.
+	// ReplyTarget 把卡片回复贴回飞书话题；见 ReplyTarget。空值保持聊天级发送。
 	ReplyTarget ReplyTarget
 }
 
-// BindingPromptParams carries the data needed to render and send the
-// member-binding prompt card (single CTA: open the binding URL).
+// BindingPromptParams 携带渲染并发送成员绑定引导卡片（单个 CTA：打开绑定
+// URL）所需的数据。
 type BindingPromptParams struct {
 	InstallationID InstallationCredentials
 	OpenID         OpenID
-	// BindURL is the absolute URL the user clicks. The token is
-	// embedded in the URL by the caller; the client never sees it.
+	// BindURL 是用户点击的绝对 URL。令牌由调用方嵌进 URL；client 从不看到它。
 	BindURL string
 }
 
-// AddReactionParams is the input shape for adding an emoji reaction to
-// a message.
+// AddReactionParams 是给消息加 emoji 反应的输入形态。
 type AddReactionParams struct {
 	InstallationID InstallationCredentials
 	MessageID      string
 	EmojiType      string
 }
 
-// DeleteReactionParams is the input shape for removing a previously-added
-// reaction from a message.
+// DeleteReactionParams 是移除先前加在消息上的反应的输入形态。
 type DeleteReactionParams struct {
 	InstallationID InstallationCredentials
 	MessageID      string
 	ReactionID     string
 }
 
-// InstallationCredentials is the per-installation transport context the
-// client needs to authenticate against Lark on behalf of a workspace's
-// bot. Passing these explicitly to each call (rather than constructing
-// per-installation clients) keeps lifecycle simple: the hub decrypts
-// app_secret once and reuses the struct for every outbound call.
+// InstallationCredentials 是 client 代表某 workspace 的 bot 向 Lark 鉴权所需
+// 的安装级传输上下文。把这些显式传给每次调用（而不是为每个安装构造 client）
+// 让生命周期简单：hub 解密一次 app_secret，之后所有出站调用复用该结构体。
 //
-// The plaintext app_secret lives inside this struct exactly while a
-// call is in flight; callers MUST NOT log or persist it.
+// 明文 app_secret 只在一次调用在途时存在于该结构体内；调用方绝不能记录或
+// 持久化它。
 type InstallationCredentials struct {
 	AppID     string
 	AppSecret string
 	TenantKey string
-	// Region selects the Lark open-platform host (Feishu mainland vs
-	// Lark international) for every call made with these credentials.
-	// Empty defaults to Feishu. Credential-build sites copy it from
-	// lark_installation.region; the device-flow installer sets it from
-	// the auto-detected tenant. This is what lets one deployment serve
-	// both clouds — see http_client.go resolveBaseURL and
-	// ws_endpoint.go Endpoint.
+	// Region 为用这些凭据的每次调用选择 Lark 开放平台主机（飞书大陆版 vs
+	// Lark 国际版）。空默认飞书。凭据构建点从 lark_installation.region 复制它；
+	// 设备流安装者从自动探测的 tenant 设置它。这正是让一个部署同时服务两朵云
+	// 的东西——见 http_client.go resolveBaseURL 与 ws_endpoint.go Endpoint。
 	Region Region
 }
 
-// ErrAPIClientNotConfigured is returned by the stub client to signal
-// that a real Lark client has not been wired in yet. Call sites SHOULD
-// treat this as an expected condition on self-host deployments without
-// a Lark app — log a warning, fall back to "Lark integration not
-// configured", and continue serving other workspace functionality.
+// ErrAPIClientNotConfigured 由 stub client 返回，表示还没接上真实 Lark client。
+// 调用点应把这种情况当作自托管部署（无 Lark app）的预期条件——记警告、退回
+// “Lark 集成未配置”，并继续服务其它 workspace 功能。
 var ErrAPIClientNotConfigured = errors.New("lark: API client not configured")
 
-// stubAPIClient is the default APIClient used when no production client
-// has been registered. It refuses every transport call with
-// ErrAPIClientNotConfigured so a misconfigured deployment fails loudly
-// instead of silently dropping cards or device-flow registration
-// responses.
+// stubAPIClient 是未注册生产 client 时的默认 APIClient。它用
+// ErrAPIClientNotConfigured 拒绝一切传输调用，让配错的环境大声失败，而不是
+// 悄悄丢掉卡片或设备流注册响应。
 //
-// We deliberately do NOT silently succeed: a stub that returned ""
-// message IDs would let the inbound dispatcher record bogus
-// lark_outbound_card_message rows pointing at nothing.
+// 刻意不静默成功：返回 "" message id 的 stub 会让入站 dispatcher 记下一堆指向
+// 虚无的 lark_outbound_card_message 行。
 type stubAPIClient struct {
 	log *slog.Logger
 }
 
-// NewStubAPIClient returns the default no-op APIClient. The hub
-// constructs one of these when no real implementation has been
-// supplied, so subsystems that depend on APIClient (outbound patcher,
-// device-flow registration) can still wire up; their first call
-// surfaces a clear error.
+// NewStubAPIClient 返回默认的 no-op APIClient。未提供真实实现时 hub 会构造
+// 一个，使依赖 APIClient 的子系统（出站 patcher、设备流注册）仍可接线；它们的
+// 第一次调用会冒出清晰错误。
 func NewStubAPIClient(log *slog.Logger) APIClient {
 	if log == nil {
 		log = slog.Default()
@@ -398,63 +327,76 @@ func NewStubAPIClient(log *slog.Logger) APIClient {
 	return &stubAPIClient{log: log}
 }
 
+// IsConfigured 实现 APIClient：stub 恒为 false。
 func (s *stubAPIClient) IsConfigured() bool { return false }
 
+// SendInteractiveCard 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParams) (string, error) {
 	s.log.Warn("lark stub client: SendInteractiveCard called", "chat_id", string(p.ChatID))
 	return "", ErrAPIClientNotConfigured
 }
 
+// PatchInteractiveCard 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) PatchInteractiveCard(ctx context.Context, p PatchCardParams) error {
 	s.log.Warn("lark stub client: PatchInteractiveCard called", "card_message_id", p.LarkCardMessageID)
 	return ErrAPIClientNotConfigured
 }
 
+// SendTextMessage 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (string, error) {
 	s.log.Warn("lark stub client: SendTextMessage called", "chat_id", string(p.ChatID))
 	return "", ErrAPIClientNotConfigured
 }
 
+// SendMarkdownCard 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCardParams) (string, error) {
 	s.log.Warn("lark stub client: SendMarkdownCard called", "chat_id", string(p.ChatID))
 	return "", ErrAPIClientNotConfigured
 }
 
+// SendBindingPromptCard 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) SendBindingPromptCard(ctx context.Context, p BindingPromptParams) error {
 	s.log.Warn("lark stub client: SendBindingPromptCard called", "open_id", string(p.OpenID))
 	return ErrAPIClientNotConfigured
 }
 
+// GetBotInfo 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) GetBotInfo(ctx context.Context, creds InstallationCredentials) (BotInfo, error) {
 	s.log.Warn("lark stub client: GetBotInfo called", "app_id", creds.AppID)
 	return BotInfo{}, ErrAPIClientNotConfigured
 }
 
+// GetMessage 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) GetMessage(ctx context.Context, creds InstallationCredentials, messageID string) ([]LarkMessage, error) {
 	s.log.Warn("lark stub client: GetMessage called", "message_id", messageID)
 	return nil, ErrAPIClientNotConfigured
 }
 
+// ListChatMessages 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error) {
 	s.log.Warn("lark stub client: ListChatMessages called", "chat_id", string(p.ChatID))
 	return nil, ErrAPIClientNotConfigured
 }
 
+// DownloadMessageResource 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) DownloadMessageResource(ctx context.Context, creds InstallationCredentials, p DownloadResourceParams) (DownloadedResource, error) {
 	s.log.Warn("lark stub client: DownloadMessageResource called", "message_id", p.MessageID)
 	return DownloadedResource{}, ErrAPIClientNotConfigured
 }
 
+// BatchGetUsers 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) BatchGetUsers(ctx context.Context, creds InstallationCredentials, openIDs []string) (map[string]string, error) {
 	s.log.Warn("lark stub client: BatchGetUsers called", "count", len(openIDs))
 	return nil, ErrAPIClientNotConfigured
 }
 
+// AddMessageReaction 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) AddMessageReaction(ctx context.Context, p AddReactionParams) (string, error) {
 	s.log.Warn("lark stub client: AddMessageReaction called", "message_id", p.MessageID, "emoji_type", p.EmojiType)
 	return "", ErrAPIClientNotConfigured
 }
 
+// DeleteMessageReaction 实现 APIClient（stub 恒报未配置）。
 func (s *stubAPIClient) DeleteMessageReaction(ctx context.Context, p DeleteReactionParams) error {
 	s.log.Warn("lark stub client: DeleteMessageReaction called", "message_id", p.MessageID, "reaction_id", p.ReactionID)
 	return ErrAPIClientNotConfigured

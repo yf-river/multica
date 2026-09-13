@@ -1,3 +1,7 @@
+// 本文件实现评论「表情回应」（reaction）的增删端点。回应按 (comment, actor,
+// emoji) 唯一，由 sqlc 的 AddReaction / RemoveReaction（返回是否真的发生变化）驱动，
+// 并在同一事务里把 reaction:added / reaction:removed 事件入 outbox（携带评论 revision，
+// 供实时客户端做乐观并发校正）。列表/详情场景经 groupReactions 按评论聚合。
 package handler
 
 import (
@@ -15,6 +19,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// ReactionResponse 是一条表情回应的对外结构。CommentRevision 为写操作回显的评论
+// 版本号（供客户端并发处理）；列表/详情路径不带它。
 type ReactionResponse struct {
 	ID              string `json:"id"`
 	CommentID       string `json:"comment_id"`
@@ -25,6 +31,7 @@ type ReactionResponse struct {
 	CommentRevision *int64 `json:"comment_revision,omitempty"`
 }
 
+// reactionToResponse 把回应行转成对外结构。
 func reactionToResponse(r db.CommentReaction) ReactionResponse {
 	return ReactionResponse{
 		ID:        uuidToString(r.ID),
@@ -36,6 +43,8 @@ func reactionToResponse(r db.CommentReaction) ReactionResponse {
 	}
 }
 
+// addedReactionToResponse 把「添加成功」的返回行转成对外结构，额外回显评论修订号
+// （>0 时才有值）。
 func addedReactionToResponse(r db.AddReactionRow) ReactionResponse {
 	response := ReactionResponse{
 		ID:        uuidToString(r.ID),
@@ -51,6 +60,8 @@ func addedReactionToResponse(r db.AddReactionRow) ReactionResponse {
 	return response
 }
 
+// AddReaction 给某条评论添加一个 emoji 回应（POST /api/comments/{commentId}/reactions）。
+// 评论修订号变化时才会广播事件；重复添加由数据库唯一约束兜底。
 func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 	commentId := chi.URLParam(r, "commentId")
 
@@ -114,7 +125,7 @@ func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 
 	resp := addedReactionToResponse(reaction)
 
-	// Load notification context in the same transaction as the mutation.
+	// 在与变更同一事务里装载通知上下文（issue 标题/状态、评论作者等），供事件负载用。
 	issueID := uuidToString(comment.IssueID)
 	issue, err := qtx.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
 		ID: comment.IssueID, WorkspaceID: wsUUID,
@@ -163,6 +174,8 @@ func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+// RemoveReaction 移除本人对某评论的一个 emoji 回应。removed.Changed 为 true 表示确实
+// 删掉了（幂等重试不会重复发事件）。
 func (h *Handler) RemoveReaction(w http.ResponseWriter, r *http.Request) {
 	commentId := chi.URLParam(r, "commentId")
 
@@ -259,7 +272,8 @@ func (h *Handler) RemoveReaction(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// groupReactions fetches reactions for the given comment IDs and groups them by comment_id.
+// groupReactions 批量拉取给定评论的回应并按 comment_id 分组。用于列表/详情渲染；
+// 查询失败返回 nil（回应当前评论为空）而不让整页失败。
 func (h *Handler) groupReactions(r *http.Request, commentIDs []pgtype.UUID) map[string][]ReactionResponse {
 	if len(commentIDs) == 0 {
 		return nil

@@ -1,5 +1,17 @@
 "use client";
 
+/**
+ * dingtalk（钉钉）集成模块：绑定凭据兑换落地页。
+ * 机器人的「关联你的账号」提示会指向这里。用户落地时可能已登录也可能未登录；
+ * 兑换前必须登录，因为兑换者的 Multica 身份取自会话（token 本身从来证明不了
+ * 是谁在绑定）。
+ *
+ * token 经 `?token=<raw>` 传入。把它 POST 给 /api/dingtalk/binding/redeem；后端
+ * 返回 410（无效/过期）、409（已绑到别的用户）、403（不是工作区成员）或 200
+ * 及已绑定的安装。每种结果经 common.json 里的 dingtalk_bind 文案映射成不同
+ * 的提示。
+ */
+
 import { useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -15,16 +27,7 @@ type RedeemState =
   | { kind: "needs-auth" }
   | { kind: "error"; reason: string };
 
-// DingTalkBindPage is the destination the bot's "link your account" prompt
-// points at. The user lands here logged out OR logged in; we require auth
-// before redeeming because the redeemer's Multica identity is taken from the
-// session (the token alone never proves who is binding).
-//
-// The token comes in via `?token=<raw>`. We POST it to
-// /api/dingtalk/binding/redeem; the backend returns 410 (invalid/expired),
-// 409 (already bound to another user), 403 (not a workspace member) or 200 with
-// the bound installation. Each maps to distinct copy via dingtalk_bind in
-// common.json.
+/** 钉钉绑定页主体：兑换 token 并按结果展示相应状态。 */
 export function DingTalkBindPage({ token }: { token: string | null }) {
   const { t } = useT("common");
   const user = useAuthStore((s) => s.user);
@@ -126,10 +129,9 @@ export function DingTalkBindPage({ token }: { token: string | null }) {
   );
 }
 
-// Classify a redeem failure by the server's HTTP status, not the error text:
-// the backend returns 410 (invalid/expired), 409 (already bound to another
-// user) or 403 (not a workspace member). Matching ApiError.status keeps the
-// branch copy decoupled from the exact server wording.
+// 按服务端 HTTP 状态码而不是错误文本来归类兑换失败：后端返回 410
+// （无效/过期）、409（已绑到别的用户）或 403（不是工作区成员）。用
+// ApiError.status 匹配，让文案分支与服务端的具体措辞解耦。
 function redemptionFailureReason(err: unknown): string {
   if (!(err instanceof ApiError)) return "unknown";
   switch (err.status) {

@@ -1,5 +1,8 @@
 "use client";
 
+// 本文件提供创建 Agent 表单里的“技能多选”控件：默认折叠成一行按钮，展开后变成
+// 一个可勾选/取消的技能列表。视觉层复用 SkillPickerList，保证它和技能弹窗两处长得一致。
+
 import { useState } from "react";
 import { ChevronDown, Plus, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -11,20 +14,18 @@ import { useT } from "../../i18n";
 import { SkillPickerList } from "./skill-picker-list";
 
 interface SkillMultiSelectProps {
-  /** Currently-selected skill IDs (controlled). */
+  /** 当前选中的技能 id 集合（受控），来自表单状态。 */
   selectedIds: ReadonlySet<string>;
-  /** Replaces the selection on every toggle. */
+  /** 每次勾选/取消后，把全新的选中集合交回给调用方。 */
   onChange: (next: Set<string>) => void;
 }
 
 /**
- * Multi-select wrapper for the create-agent form. Collapsed by default;
- * expands into a SkillPickerList configured for toggle behaviour
- * (click adds to / removes from the local selection set).
+ * 创建 Agent 表单用的技能多选包装。默认折叠；展开后渲染成一个“勾选即增减”的
+ * SkillPickerList（点击就在本地选中集合里加/减）。
  *
- * Shares its visual surface with SkillAddDialog via SkillPickerList —
- * one component owns search + row rendering + indicators, so a tweak
- * to either appears identically in both flows.
+ * 通过 SkillPickerList 与技能弹窗共用同一套“搜索 + 行渲染 + 状态提示”的逻辑——
+ * 搜索、行样式、选中提示都只有一份实现，任何一处的调整两边同时生效。
  */
 export function SkillMultiSelect({
   selectedIds,

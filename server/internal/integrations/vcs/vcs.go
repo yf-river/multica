@@ -1,14 +1,11 @@
-// Package vcs is the provider abstraction for token-based Git providers that
-// Multica mirrors pull requests and CI status from: Forgejo, Gitea (Forgejo's
-// upstream, wire-identical), and GitLab. GitHub is intentionally NOT a vcs
-// provider — its App/installation model and check_suite CI differ enough that
-// it keeps its own handler (server/internal/handler/github.go).
+// Package vcs 是基于 token 的 Git 提供方抽象层——Multica 从这些提供方镜像 PR 与 CI
+// 状态：Forgejo、Gitea（Forgejo 的上游，线上格式完全一致）与 GitLab。GitHub 刻意不是
+// vcs 提供方——它的 App/installation 模型与 check_suite 形态的 CI 差异太大，因此有自己
+// 的 handler（server/internal/handler/github.go）。
 //
-// Each provider only contributes the parts that actually differ between
-// providers: how a webhook is authenticated, how its event/payload shapes map to
-// the normalized PR/CI structs below, and how a token is validated. The shared
-// storage, issue auto-link / auto-close, and broadcast logic live once in the
-// handler layer and consume the normalized types.
+// 每个提供方只贡献真正「因提供方而异」的部分：webhook 如何鉴权、它的事件/载荷形状如何
+// 映射到下面的归一化 PR/CI 结构、token 如何校验。共享的存储、issue 自动关联/自动关闭
+// 与广播逻辑只在 handler 层写一份，消费这些归一化类型。
 package vcs
 
 import (
@@ -17,8 +14,7 @@ import (
 	"net/http"
 )
 
-// Kind identifies a provider. The string values are persisted on
-// vcs_connection.provider and used as the registry key.
+// Kind 标识一个提供方。字符串值持久化在 vcs_connection.provider 上，也用作注册表键。
 type Kind string
 
 const (
@@ -27,7 +23,7 @@ const (
 	KindGitLab  Kind = "gitlab"
 )
 
-// Valid reports whether k is a known provider kind.
+// Valid 报告 k 是否为已知提供方。
 func (k Kind) Valid() bool {
 	switch k {
 	case KindForgejo, KindGitea, KindGitLab:
@@ -36,13 +32,12 @@ func (k Kind) Valid() bool {
 	return false
 }
 
-// ErrUnauthorized is returned by ValidateToken when the instance rejects the
-// token (HTTP 401/403). Callers surface it as a connect-time validation
-// failure distinct from transport/instance errors.
+// ErrUnauthorized 由 ValidateToken 在实例拒绝该 token（HTTP 401/403）时返回。调用方把
+// 它当作一种「连接期校验失败」，与传输/实例错误区分开。
 var ErrUnauthorized = errors.New("vcs: token unauthorized")
 
-// EventKind is the normalized webhook event category. Anything a provider does
-// not model maps to EventOther and is acknowledged but ignored.
+// EventKind 是归一化后的 webhook 事件类别。提供方没有建模的任何东西都归到 EventOther，
+// 会被确认接收但直接忽略。
 type EventKind int
 
 const (
@@ -51,13 +46,12 @@ const (
 	EventCIStatus
 )
 
-// PullRequestEvent is the provider-agnostic shape of a pull/merge request
-// webhook. State is already normalized to one of open/closed/merged/draft, so
-// the handler never re-derives it. GitLab "merge requests" map onto the same
-// struct.
+// PullRequestEvent 是「与提供方无关」的 PR/MR webhook 形状。State 已归一化为
+// open/closed/merged/draft 之一，handler 无需再推断。GitLab 的 "merge request" 映射到
+// 同一个结构体。
 type PullRequestEvent struct {
-	// Action is the raw provider action (e.g. "opened", "closed", "merge").
-	// The handler only needs to know whether it is terminal; see Terminal.
+	// Action 是提供方的原始动作（如 "opened"、"closed"、"merge"）。handler 只关心它
+	// 是否为终态动作；见 Terminal。
 	Action          string
 	RepoOwner       string
 	RepoName        string
@@ -73,16 +67,15 @@ type PullRequestEvent struct {
 	Additions       int32
 	Deletions       int32
 	ChangedFiles    int32
-	MergedAt        string // RFC3339 or empty
+	MergedAt        string // RFC3339 或空
 	ClosedAt        string
 	CreatedAt       string
 	UpdatedAt       string
 }
 
-// Terminal reports whether this event is the PR's merge/close event, after
-// which the close-intent decision must be frozen. Providers spell the terminal
-// action differently (Forgejo "closed"/"merged", GitLab "merge"/"close"), so
-// the set is matched here rather than in the handler.
+// Terminal 报告本事件是否是该 PR 的 merge/close 终态事件——此后「close-intent」决策必须
+// 冻结。各提供方对终态动作的拼写不同（Forgejo 用 "closed"/"merged"，GitLab 用
+// "merge"/"close"），所以匹配集合收敛在这里而不是 handler 层。
 func (e PullRequestEvent) Terminal() bool {
 	switch e.Action {
 	case "closed", "merged", "merge", "close":
@@ -91,53 +84,50 @@ func (e PullRequestEvent) Terminal() bool {
 	return false
 }
 
-// CIStatusEvent is the provider-agnostic shape of a commit-status / pipeline
-// webhook. State is normalized to passed/failed/pending so the aggregation
-// query is provider-independent.
+// CIStatusEvent 是「与提供方无关」的 commit-status / pipeline webhook 形状。State 已
+// 归一化为 passed/failed/pending，聚合查询因此与提供方无关。
 type CIStatusEvent struct {
 	SHA         string
-	Context     string // status check / pipeline name; "" is allowed
+	Context     string // status check / pipeline 名称；允许 ""
 	State       string // passed | failed | pending
 	TargetURL   string
 	Description string
-	// UpdatedAt is the provider's own event timestamp (RFC3339 or empty). It
-	// feeds the commit-status monotonic guard so an out-of-order redelivery
-	// can't regress a status; empty means "unknown", and the handler falls back
-	// to ingestion time.
+	// UpdatedAt 是提供方自己的事件时间戳（RFC3339 或空）。它喂给 commit-status 的
+	// 单调守卫，让乱序重投不能把状态回退；空表示"未知"，handler 退回到摄取时间。
 	UpdatedAt string
 }
 
-// Account is the minimal identity returned by ValidateToken.
+// Account 是 ValidateToken 返回的最小身份信息。
 type Account struct {
 	Login string
 }
 
-// Provider is the per-provider adapter. Implementations are stateless and cheap
-// to construct; the registry holds one instance per kind.
+// Provider 是「每个提供方一份」的适配器。实现是无状态、构造便宜的；注册表按 Kind 各持
+// 一个实例。
 type Provider interface {
 	Kind() Kind
-	// EventKind classifies an inbound webhook from its headers.
+	// EventKind 从请求头把一条入站 webhook 归类。
 	EventKind(h http.Header) EventKind
-	// VerifySignature authenticates the raw body against the connection's
-	// stored secret. Forgejo/Gitea use HMAC-SHA256 (X-Gitea-Signature);
-	// GitLab uses a plaintext token compare (X-Gitlab-Token).
+	// VerifySignature 用连接的存储 secret 校验原始 body。Forgejo/Gitea 用
+	// HMAC-SHA256（X-Gitea-Signature）；GitLab 用明文 token 比对（X-Gitlab-Token）。
 	VerifySignature(secret string, h http.Header, body []byte) bool
-	// ParsePullRequest decodes a pull/merge request webhook body.
+	// ParsePullRequest 解码一条 pull/merge request webhook body。
 	ParsePullRequest(body []byte) (PullRequestEvent, error)
-	// ParseCIStatus decodes a commit-status / pipeline webhook body.
+	// ParseCIStatus 解码一条 commit-status / pipeline webhook body。
 	ParseCIStatus(body []byte) (CIStatusEvent, error)
-	// ValidateToken confirms the token works against instanceURL and returns
-	// the authenticated account. Maps a 401/403 to ErrUnauthorized.
+	// ValidateToken 确认 token 对 instanceURL 有效，并返回已认证的账户。401/403 映射成
+	// ErrUnauthorized。
 	ValidateToken(ctx context.Context, instanceURL, token string) (Account, error)
 }
 
-// registry maps a Kind to its Provider. Populated by package init in the
-// adapter files (forgejo.go, gitlab.go).
+// registry 把 Kind 映射到其 Provider。由各适配文件（forgejo.go、gitlab.go）的包 init
+// 填充。
 var registry = map[Kind]Provider{}
 
+// register 把一个 Provider 按其 Kind 登记进注册表。
 func register(p Provider) { registry[p.Kind()] = p }
 
-// For returns the provider for kind, or (nil, false) if unknown.
+// For 返回 kind 对应的 Provider；未知时返回 (nil, false)。
 func For(kind string) (Provider, bool) {
 	p, ok := registry[Kind(kind)]
 	return p, ok

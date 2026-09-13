@@ -1,42 +1,36 @@
-// Client freeze watchdog for the Web application.
+// 本文件负责 Web 端「页面卡死」监控（freeze watchdog）。
 //
-// Installs a long-task observer in the main thread. A "long task" is any
-// stretch where the thread didn't return to the event loop; the browser
-// already tracks them and delivers each entry once the thread unblocks, so
-// even a multi-second freeze reports its duration after the fact. We only
-// emit for blocks at or above FREEZE_THRESHOLD_MS to keep this to genuine
-// "almost froze" events, not the normal 50–600ms render cost.
+// 它在主线程里安装一个长任务（long task）观察器。「长任务」指主线程长时间
+// 没有回到事件循环的时间段；浏览器本身就会跟踪它们，并在线程恢复后将每条记录
+// 逐个回调，所以哪怕卡了好几秒，事后也能报出真实时长。这里只对达到
+// FREEZE_THRESHOLD_MS 的阻塞才上报，避免把常规 50–600ms 的渲染开销误报成
+// 「几乎卡死」。
 //
-// This is the in-thread, recoverable tier: it catches freezes the thread
-// survives. A true non-recoverable hang (the thread never unblocks) cannot be
-// observed from the same browser thread.
+// 这是「线程内、可恢复」的那一层：它只能抓到线程挺过来的卡顿。真正不可恢复
+// 的死循环（线程永远不回来）无法在同一个浏览器线程里被观察到。
 //
-// The emitted `client_unresponsive` event carries `client_type` automatically.
+// 上报的 `client_unresponsive` 事件会自动带上 `client_type`。
 
 import { captureEvent } from "../analytics";
 import { bucketDiagnosticPath } from "./diagnostic-context";
 
-// 2s is well above the normal switch/render cost (measured 50–600ms) and just
-// below a browser renderer hang, so an event here means "the user
-// felt a real stall" without flooding on routine heavy renders.
+// 2 秒远高于常规切换/渲染开销（实测 50–600ms），又低于浏览器渲染进程卡死的
+// 级别——达到这个值上报意味着「用户真的感觉到了停顿」，又不会在重型渲染时刷屏。
 const FREEZE_THRESHOLD_MS = 2000;
 
-// A single sustained freeze is delivered by the browser as several separate
-// long-task entries, so emitting per entry makes client_unresponsive volume
-// grow without bound with the freeze length (MUL-3331). A global cooldown caps
-// it to at most one event per window. Module-level (page-lifetime) state is the
-// right scope here — it matches the `installed` singleton and resets on a full
-// reload, which is rare and itself a distinct signal. No route bucketing: a
-// global window is the most direct cap on volume.
+// 一次持续的卡死会被浏览器拆成多条长任务记录逐条回调，若每条都上报，
+// client_unresponsive 的量会随卡死时长无界增长（MUL-3331）。用全局冷却把
+// 上报压到每个时间窗最多一条。状态放在模块级（整个页面生命周期）最合适——
+// 和下面的 `installed` 单例一致，整页刷新（本身就少见、本身就是一个独立信号）
+// 时会重置。不做路由分桶：全局窗口是控制上报量最直接的封顶办法。
 const COOLDOWN_MS = 60_000;
 let lastEmitMs = 0;
 
 let installed = false;
 
 /**
- * Install the long-task observer. Safe to call multiple times (idempotent) and
- * safe on the server (no-op when `window` / `PerformanceObserver` is absent).
- * Call once from a client-only effect.
+ * 安装长任务观察器。可重复调用（幂等），在服务端调用也安全（没有 `window` /
+ * `PerformanceObserver` 时直接空跑）。请在一个仅客户端执行的效果里调用一次。
  */
 export function installFreezeWatchdog(): void {
   if (installed) return;
@@ -48,8 +42,7 @@ export function installFreezeWatchdog(): void {
     const observer = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
         if (entry.duration < FREEZE_THRESHOLD_MS) continue;
-        // Cooldown is checked only against qualifying freezes, so sub-threshold
-        // long tasks neither emit nor reset the window.
+        // 冷却只对「够格上报」的卡死起作用，低于阈值的任务既不上报也不重置窗口。
         const now = Date.now();
         if (now - lastEmitMs < COOLDOWN_MS) continue;
         lastEmitMs = now;
@@ -60,15 +53,19 @@ export function installFreezeWatchdog(): void {
         });
       }
     });
-    // No `buffered: true` — we only want freezes from now on. Replaying tasks
-    // buffered before install would mislabel slow startup as a runtime freeze.
+    // 不开 `buffered: true`——只要安装之后的卡死。回放安装前缓冲的任务会把
+    // 「启动慢」误标成「运行时卡死」。
     observer.observe({ type: "longtask" });
   } catch {
-    // longtask entry type unsupported on this engine — nothing else to do.
+    // 当前引擎不支持 longtask 入口类型——没有别的可做。
   }
 }
 
-/** Which page the freeze happened on, without sending user-owned ids. */
+/**
+ * 解析卡死发生时所在的页面路径（不带任何用户 ID），用于上报定位。
+ *
+ * @returns 去标识化后的路径模板；拿不到 location 时返回 undefined
+ */
 function resolveDiagnosticPath(): string | undefined {
   return typeof location !== "undefined"
     ? bucketDiagnosticPath(location.pathname)

@@ -1,29 +1,24 @@
 /**
- * IssueIdentifierAutolink — Linear-style live autolinking of bare issue
- * identifiers (e.g. `MUL-123`) in the editable editor.
+ * IssueIdentifierAutolink——在可编辑编辑器里对裸 issue 标识符（如 `MUL-123`）
+ * 做 Linear 风格的实时自动链接。
  *
- * When the user finishes a bare identifier by typing a boundary character
- * (space / punctuation) after it, or pastes text containing identifiers, the
- * completed token is resolved against the workspace and — on an exact match —
- * replaced with a real `issue` mention node. On save the mention serialises to
- * the canonical `[MUL-123](mention://issue/<uuid>)`.
+ * 用户打完一个裸标识符、后面敲下边界字符（空格/标点），或粘贴的文本里
+ * 含有标识符时，已完成的 token 会被拿去工作区解析——精确命中时——替换成
+ * 真正的 `issue` mention 节点。保存时该 mention 序列化为规范形态
+ * `[MUL-123](mention://issue/<uuid>)`。
  *
- * Resolution is async, so this is NOT a synchronous Tiptap InputRule/PasteRule.
- * A ProseMirror plugin captures the SPECIFIC candidate range(s) introduced by a
- * user transaction — the token before the caret when typing, or the tokens
- * inside the pasted slice — into plugin state, mapping each range forward on
- * every subsequent transaction so it stays current across the async gap. A
- * plugin `view` resolves the captured identifiers and replaces ONLY those
- * mapped ranges (after re-verifying the range still holds exactly that
- * identifier, with intact boundaries and no code/link mark). It never rescans
- * the document by identifier, so a pre-existing or out-of-paste occurrence of
- * the same identifier that the user did not touch is left untouched. Misses and
- * errors are cached so a token is resolved at most once per editing session.
+ * 解析是异步的，所以这不是同步的 Tiptap InputRule/PasteRule。一个
+ * ProseMirror 插件把用户事务引入的**具体候选区间**——输入时是光标前那个
+ * token，粘贴时是粘贴片里的 tokens——捕获进插件 state，并在后续每个事务
+ * 上向前映射这些区间，让它们在异步间隙里保持最新。插件的 `view` 解析
+ * 捕获到的标识符，只替换那些映射后的区间（替换前会复核该区间仍恰好是
+ * 这个标识符、边界完好、且没有 code/link mark）。它绝不按标识符全文档
+ * 重扫，所以用户没碰过的同一标识符的既有或非粘贴来源出现不会被动到。
+ * 解析失败与错误会缓存，保证一个 token 在每个编辑会话中最多解析一次。
  *
- * Only genuine user edits seed candidates (never programmatic setContent), so
- * merely opening existing content does not rewrite it. The resolver is injected
- * (a ref) from the editor setup layer, which owns React Query + workspace
- * context; this extension never touches React hooks.
+ * 只有真正的用户编辑才会种下候选（绝不含程序化的 setContent），所以仅仅
+ * 打开既有内容不会重写它。解析器由编辑器装配层注入（一个 ref），装配层
+ * 拥有 React Query 与工作区上下文；本扩展绝不碰 React hooks。
  */
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
@@ -32,45 +27,54 @@ import type { EditorView } from "@tiptap/pm/view";
 import type { Mark, Node as PMNode, NodeType } from "@tiptap/pm/model";
 import type { RefObject } from "react";
 
+/** 一次成功解析返回的引用：issue 的稳定身份（UUID）与规范展示标识。 */
 export interface ResolvedIssueRef {
-  /** Issue UUID. */
+  /** issue 的 UUID。 */
   id: string;
-  /** Canonical identifier as returned by the server, e.g. "MUL-123". */
+  /** 服务端返回的规范标识符，如 "MUL-123"。 */
   identifier: string;
 }
 
+/**
+ * 把一个裸标识符解析成真实 issue 引用的异步函数；查无此 issue 时
+ * resolve 为 null。
+ */
 export type IssueIdentifierResolver = (
   identifier: string,
 ) => Promise<ResolvedIssueRef | null>;
 
+/** createIssueIdentifierAutolinkExtension 的配置选项。 */
 export interface IssueIdentifierAutolinkOptions {
   /**
-   * Ref to the resolver. A ref (not a bare function) so the editor is created
-   * once while the resolver always reads the latest workspace context.
+   * 解析器的 ref。用 ref（而非裸函数）是为了编辑器只创建一次，
+   * 而解析器总能读到最新的工作区上下文。
    */
   resolveRef: RefObject<IssueIdentifierResolver | undefined>;
 }
 
-// Boundary-delimited, case-sensitive identifier — same shape as the readonly
-// detector in @multica/ui/markdown.
+// 带边界限定、区分大小写的标识符——与 @multica/ui/markdown 里的只读
+// 探测器同形。
 const IDENTIFIER_RE = /(?<![A-Za-z0-9_-])([A-Z][A-Z0-9]*-\d+)(?![A-Za-z0-9_-])/g;
 const BOUNDARY_RE = /[A-Za-z0-9_-]/;
 
-// Set on our own replacement transactions with the list of pending keys they
-// consume, so `apply` drops them and never treats the replacement as user input.
+// 标在我们自己替换事务上的元数据，值为这批事务消费掉的待处理 key 列表，
+// 让 `apply` 能丢掉它们、并且绝不会把这次替换当作用户输入。
 const META_REMOVE = "issueIdentifierAutolinkRemove";
 
+/** 候选：文档里一处完整的裸标识符及其区间。 */
 interface Candidate {
   identifier: string;
   from: number;
   to: number;
 }
 
+/** 带唯一 key 的候选，把「捕获 → 异步解析 → 替换」三个阶段关联起来。 */
 interface PendingCandidate extends Candidate {
-  /** Unique per-plugin key correlating capture → async resolve → replace. */
+  /** 每个插件内唯一的 key。 */
   key: number;
 }
 
+/** 插件 state：待处理候选列表 + 发号器。 */
 interface AutolinkPluginState {
   pending: PendingCandidate[];
   seq: number;
@@ -78,7 +82,7 @@ interface AutolinkPluginState {
 
 const pluginKey = new PluginKey<AutolinkPluginState>("issueIdentifierAutolink");
 
-/** Text nodes that must never be autolinked (code and explicit-link contexts). */
+/** 绝不能自动链接的文本节点（代码与显式链接语境）。 */
 function isSkippedTextNode(
   marks: readonly Mark[],
   parent: PMNode | null,
@@ -91,9 +95,9 @@ function isSkippedTextNode(
 }
 
 /**
- * Complete, standalone identifier tokens whose range intersects
- * [rangeFrom, rangeTo). "Complete" means a trailing boundary char exists within
- * the same text node — a token still being typed at the very end is skipped.
+ * 完整的、独立的标识符 token——其区间与 [rangeFrom, rangeTo) 相交。
+ * 「完整」意味着同一文本节点内已存在结尾边界字符——还正在输入、没有收尾
+ * 的 token 会被跳过。
  */
 function collectCandidates(
   state: EditorState,
@@ -111,17 +115,17 @@ function collectCandidates(
       const identifier = m[1];
       if (!identifier) continue;
       const localEnd = m.index + identifier.length;
-      if (localEnd >= text.length) continue; // no trailing boundary in-node
+      if (localEnd >= text.length) continue; // 节点内没有收尾边界字符
       const from = pos + m.index;
       const to = pos + localEnd;
-      if (to <= rangeFrom || from >= rangeTo) continue; // outside window
+      if (to <= rangeFrom || from >= rangeTo) continue; // 在窗口之外
       out.push({ identifier, from, to });
     }
   });
   return out;
 }
 
-/** Absolute [from,to) range spanned by a transaction's changes, or null. */
+/** 一次事务的改动所覆盖的绝对 [from,to) 区间；没有改动返回 null。 */
 function changedRange(tr: Transaction): { from: number; to: number } | null {
   let from = Number.POSITIVE_INFINITY;
   let to = -1;
@@ -136,10 +140,10 @@ function changedRange(tr: Transaction): { from: number; to: number } | null {
 }
 
 /**
- * Candidates introduced by a single user transaction:
- *   - paste: every complete identifier INSIDE the pasted range only
- *   - typing: the token immediately before the cursor, i.e. the "previous
- *     token" completed by the boundary char that was just typed
+ * 单个用户事务引入的候选：
+ *   - 粘贴：只取粘贴区间**内部**的每个完整标识符
+ *   - 输入：光标前紧邻的那个 token，即刚被敲下的边界字符补全的「前一个
+ *     token」
  */
 function candidatesFromUserTransaction(
   tr: Transaction,
@@ -160,8 +164,8 @@ function candidatesFromUserTransaction(
 }
 
 /**
- * Verify a mapped candidate range still holds exactly `identifier` as plain
- * text with intact boundaries — the async safety net before replacing.
+ * 校验映射后的候选区间是否仍恰好是 `identifier` 的纯文本、且边界完好——
+ * 这是替换前的异步安全网。
  */
 function rangeStillPlainIdentifier(
   state: EditorState,
@@ -186,6 +190,12 @@ function rangeStillPlainIdentifier(
   return true;
 }
 
+/**
+ * 创建裸 issue 标识符自动链接扩展。
+ *
+ * @param options 见 IssueIdentifierAutolinkOptions。
+ * @returns 一个 Tiptap 扩展；schema 没有 mention 节点时该扩展不做任何事。
+ */
 export function createIssueIdentifierAutolinkExtension(
   options: IssueIdentifierAutolinkOptions,
 ): Extension {
@@ -195,8 +205,8 @@ export function createIssueIdentifierAutolinkExtension(
     addProseMirrorPlugins() {
       const maybeMentionType = this.editor.schema.nodes.mention;
       if (!maybeMentionType) return [];
-      // Alias to a definitely-defined const so the narrowing survives into the
-      // nested plugin `view`/`applyReady` closures.
+      // 赋给一个确定有值的常量，让收窄在嵌套的插件 `view`/`applyReady`
+      // 闭包里也能成立。
       const mentionType: NodeType = maybeMentionType;
       const resolveRef = options.resolveRef;
 
@@ -209,8 +219,8 @@ export function createIssueIdentifierAutolinkExtension(
               let pending = value.pending;
               let seq = value.seq;
 
-              // 1. Keep captured ranges current across every doc change, and
-              //    drop ranges the edit invalidated (collapsed to empty).
+              // 1. 让捕获的区间在每次文档变化后保持最新，并丢掉被本次编辑
+              //    弄失效的区间（折叠为空）。
               if (tr.docChanged && pending.length > 0) {
                 pending = pending
                   .map((c) => ({
@@ -221,15 +231,15 @@ export function createIssueIdentifierAutolinkExtension(
                   .filter((c) => c.from < c.to);
               }
 
-              // 2. Drop candidates consumed by our own replacement transaction.
+              // 2. 丢掉被我们自己替换事务消费掉的候选。
               const remove = tr.getMeta(META_REMOVE) as number[] | undefined;
               if (remove && remove.length > 0) {
                 const rm = new Set(remove);
                 pending = pending.filter((c) => !rm.has(c.key));
               }
 
-              // 3. Capture new candidates from a genuine user edit only (never
-              //    programmatic setContent or our own replacement).
+              // 3. 只从真正的用户编辑里捕获新候选（绝不来自程序化 setContent
+              //    或我们自己的替换）。
               const isUserEdit =
                 tr.docChanged && !tr.getMeta("preventUpdate") && !remove;
               if (isUserEdit) {
@@ -246,14 +256,14 @@ export function createIssueIdentifierAutolinkExtension(
             },
           },
           view(view) {
-            // identifier → resolved ref (null = miss); resolved at most once.
+            // identifier → 解析出的引用（null = 未命中）；每个会话至多解析一次。
             const resultCache = new Map<string, ResolvedIssueRef | null>();
             const inFlight = new Set<string>();
             let destroyed = false;
             let scheduled = false;
 
-            // Apply all ready (resolved) pending candidates on a microtask, so
-            // we never dispatch synchronously from inside `update`.
+            // 在一个微任务里统一应用所有已就绪（解析完成）的候选，保证
+            // 我们绝不在 `update` 内部同步 dispatch。
             function scheduleApply(): void {
               if (scheduled || destroyed) return;
               scheduled = true;
@@ -277,7 +287,7 @@ export function createIssueIdentifierAutolinkExtension(
               for (const c of st.pending) {
                 if (!resultCache.has(c.identifier)) continue;
                 const ref = resultCache.get(c.identifier);
-                removeKeys.push(c.key); // processed either way
+                removeKeys.push(c.key); // 无论成败都处理掉
                 if (
                   ref &&
                   rangeStillPlainIdentifier(v.state, c.from, c.to, c.identifier)
@@ -288,7 +298,7 @@ export function createIssueIdentifierAutolinkExtension(
               if (removeKeys.length === 0) return;
 
               const { tr } = v.state;
-              // Right-to-left so earlier ranges stay valid as later ones change.
+              // 从右到左替换，保证靠前的区间在后来的改动里仍然有效。
               replacements.sort((a, b) => b.from - a.from);
               for (const r of replacements) {
                 tr.replaceWith(
@@ -328,7 +338,7 @@ export function createIssueIdentifierAutolinkExtension(
                       scheduleApply();
                     })
                     .catch(() => {
-                      // Treat resolve failures as a miss so we don't spin.
+                      // 解析失败按未命中处理，避免无限重试空转。
                       resultCache.set(c.identifier, null);
                       inFlight.delete(c.identifier);
                       scheduleApply();

@@ -1,3 +1,4 @@
+// 开场建议列表：展示聊天空状态下的推荐提问按钮，并提供默认（兜底）建议。
 "use client";
 
 import type { AgentConversationStarter } from "@multica/core/types";
@@ -5,10 +6,10 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
 /**
- * The generic suggestions a new chat shows for an agent whose owner
- * configured none. This is the ONLY definition of them: the settings preview
- * renders the same hook, so an author configuring an agent sees exactly what
- * a real new chat will show rather than a hand-maintained mock of it.
+ * 当 agent 的所有者没有配置开场建议时，新聊天展示的通用建议。这是它们的唯一
+ * 定义：设置预览也渲染同一个 hook，所以配置 agent 的作者看到的就是真实新聊天
+ * 会显示的内容，而不是一份手工维护的仿制品。
+ * @returns 默认的开场建议数组。
  */
 export function useFallbackConversationStarters(): AgentConversationStarter[] {
   const { t } = useT("chat");
@@ -32,11 +33,14 @@ const ROW_CLASS =
   "w-full rounded-lg border border-border bg-card px-3 py-2.5 text-left text-body text-foreground";
 
 /**
- * The stack of starter buttons in a chat's empty state.
+ * 聊天空状态下的一叠开场建议按钮。
  *
- * Omit `onPick` to render the same rows as inert presentation — that is the
- * settings preview, which must look like the real thing without offering a
- * second, non-functional way to "send" a prompt from a settings page.
+ * 省略 `onPick` 时，把同样的行渲染成无交互的展示——那就是设置预览，
+ * 它必须看起来和真的一样，但又不能提供一个从设置页“发送”提示词的
+ * 第二个、且无实际功能的入口。
+ * @param starters - 开场建议列表。
+ * @param onPick - 点击建议后的回调（可选，省略则为纯展示）。
+ * @param className - 额外的样式类。
  */
 export function ConversationStarterList({
   starters,

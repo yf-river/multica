@@ -1,45 +1,31 @@
-// Package channel is the platform-agnostic foundation for Multica's
-// inbound IM integrations (Feishu/Lark, Slack, WeCom, …). It owns the
-// contract every integration implements so the core never learns what a
-// given platform's event JSON looks like — design tracked in MUL-3506,
-// phase-1 foundation in MUL-3515.
+// Package channel 是 Multica 各入站 IM 集成（飞书/Lark、Slack、企微…）共享的"平台无关
+// 地基"。它拥有每个集成都要实现的那份契约，核心因此永远不需要知道某个平台的事件 JSON
+// 长什么样——设计见 MUL-3506，第一阶段地基见 MUL-3515。
 //
-// The contract has four pieces:
+// 契约由四块组成：
 //
-//  1. Channel — the per-integration interface
-//     (Type / Connect / Disconnect / Send / Capabilities). An adapter
-//     translates platform payloads in both directions and owns its own
-//     connection mode (outbound WebSocket long-conn, inbound HTTP, …);
-//     the core only calls these five methods.
+//  1. Channel —— 每集成一实现的那个接口
+//     （Type / Connect / Disconnect / Send / Capabilities）。适配器双向翻译平台载荷、
+//     自持连接形态（出站 WebSocket 长连接、入站 HTTP…）；核心只调用这五个方法。
 //
-//  2. InboundMessage / OutboundMessage — the normalized message
-//     envelopes. Every platform's inbound payload is translated by its
-//     adapter into one InboundMessage; the core routes, dedups, and
-//     persists only this struct. Outbound is the minimal text reply
-//     (ChatID + Text + optional thread / reply target) — rich cards,
-//     media, and outbound webhooks are deliberately out of scope here
-//     and stay inside the adapter that supports them.
+//  2. InboundMessage / OutboundMessage —— 规范化消息信封。每个平台收到的入站载荷都由
+//     其适配器翻译成一条 InboundMessage；核心只对这个结构体做路由、去重与持久化。
+//     Outbound 是最小文本回复（ChatID + Text + 可选的线程/回复目标）——富卡片、媒体、
+//     出站 webhook 刻意不在本包范围内，留在支持它们的适配器里。
 //
-//  3. Capability — a bitmask each Channel uses to DECLARE what it can
-//     do (rich cards, threads, attachments, …). This package only
-//     models the declaration; it intentionally contains no degrade
-//     logic. Callers that want to degrade (rich card → plain text)
-//     read the bitmask and decide for themselves, so adding a platform
-//     never forces an if/else into the core.
+//  3. Capability —— 每个 Channel 用来**声明**自己能力（富卡片、线程、附件…）的位掩码。
+//     本包只建模"声明"，刻意不含降级逻辑。想降级的调用方（富卡片 → 纯文本）自己读
+//     位掩码做决定，所以新增平台永远不会逼核心长出 if/else。
 //
-//  4. Registry — a Type→Factory map with last-writer-wins semantics.
-//     Adding a platform is "register a factory", not "edit the core".
+//  4. Registry —— Type→Factory 映射，语义为"后写者胜"。新增平台就是"注册一个
+//     factory"，而不是"改核心"。
 //
-// Boundary rule (MUL-3515 decision §2): the envelope holds ONLY fields
-// that are true across every platform — Text, a normalized message-type
-// enum, media references, the reply/thread anchors, the routing Source,
-// and the event/message ids used for dedup. Anything platform-specific
-// (a Lark raw msg_type, parent_id, root_id, …) lives in Raw and is read
-// ONLY by the adapter that produced it. The core never reads Raw.
+// 边界规则（MUL-3515 决策 §2）：信封**只**放每个平台都为真的字段——Text、规范化消息
+// 类型枚举、媒体引用、回复/线程锚点、路由 Source、供去重的事件/消息 id。任何平台特有
+// 的东西（飞书原生 msg_type、parent_id、root_id…）都在 Raw 里，且只由产生它的适配器
+// 读取。核心从不读 Raw。
 //
-// This package is pure: it has no database, network, or platform
-// dependencies, and nothing in it imports another integration package.
-// The concrete Feishu/Lark adapter, the DB-backed installation/identity/
-// session resolvers, and the supervisor that drives Connect/Disconnect
-// are wired in the follow-up cutover (see MUL-3515).
+// 本包是"纯"的：不依赖数据库、网络或任何平台，也从不 import 其它集成包。具体的
+// 飞书/Lark 适配器、DB-backed 的安装/身份/会话 resolver、以及驱动 Connect/Disconnect
+// 的 supervisor，在后续割接中接线（见 MUL-3515）。
 package channel

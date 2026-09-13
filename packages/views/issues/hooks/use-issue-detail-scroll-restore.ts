@@ -1,3 +1,4 @@
+// 问题详情滚动位置恢复 hook：离开时记住滚动位置，返回时恢复到原处（含虚拟化时间线初始化后的重试）。
 import { useLayoutEffect, useRef } from "react";
 
 type UseIssueDetailScrollRestoreArgs = {
@@ -6,14 +7,11 @@ type UseIssueDetailScrollRestoreArgs = {
   ready: boolean;
   disabled?: boolean;
   /**
-   * Authoritative restore target from the platform's tab memento, when one
-   * is being served (MUL-4741). It wins over this hook's module-level map:
-   * the memento is captured from the live DOM at the moment the view is
-   * left, while the map only hears scroll *events* — content-driven
-   * position shifts (scroll anchoring, streaming blocks collapsing) move
-   * scrollTop without one, leaving the map holding an older visit. Without
-   * this, the two restores race and the retry loop below overwrites the
-   * memento's fresher offset with the stale one.
+   * 来自平台标签备忘（tab memento）的权威恢复目标，当平台正在提供它时使用（MUL-4741）。
+   * 它优先于本 hook 的模块级 Map：备忘是在离开视图那一刻从实时 DOM 抓取的，
+   * 而 Map 只能听到滚动*事件*——内容驱动的位移（滚动锚定、流式块折叠）会在没有事件的情况下
+   * 移动 scrollTop，导致 Map 里留着的是更早一次访问的位置。没有这个字段，两处恢复会互相竞争，
+   * 下面的重试循环会用过期值覆盖备忘里更新的偏移量。
    */
   overrideTop?: number;
 };
@@ -21,6 +19,14 @@ type UseIssueDetailScrollRestoreArgs = {
 const scrollPositions = new Map<string, number>();
 const SCROLL_POSITION_CACHE_MAX_SIZE = 100;
 
+/**
+ * 记住并恢复问题详情页的滚动位置。
+ * @param options.restoreKey - 唯一标识这次访问的 key。
+ * @param options.scrollContainerEl - 滚动容器元素。
+ * @param options.ready - 内容是否已就绪，就绪后才开始保存/恢复。
+ * @param options.disabled - 为 true 时跳过恢复。
+ * @param options.overrideTop - 平台提供的权威恢复目标（优先于本地缓存）。
+ */
 export function useIssueDetailScrollRestore({
   restoreKey,
   scrollContainerEl,
@@ -103,9 +109,8 @@ function restoreScrollTopWithRetry(el: HTMLElement, target: number) {
       el.scrollTop = target;
     }
 
-    // A virtualized timeline initializes after the parent's layout effect and
-    // may reset a synchronous scroll write. Requiring stability across frames
-    // keeps the restore alive long enough to outlast that initialization.
+    // 虚拟化时间线在父级 layout effect 之后才初始化，可能会重置同步的滚动写入。
+    // 要求跨帧稳定，能让恢复多撑一会儿、熬过那次初始化。
     if (stableFrames >= requiredStableFrames || attempts >= maxAttempts) {
       return;
     }

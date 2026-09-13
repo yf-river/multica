@@ -1,5 +1,8 @@
 "use client";
 
+// 本文件是 Agent 详情页的主工作台：围绕用户意图（概览/工作/能力/设置）组织内容，
+// 管理顶栏与侧栏 Tab、URL 同步、脏状态拦截。
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
@@ -42,8 +45,10 @@ import { ActorIssuesPanel } from "../../common/actor-issues-panel";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
 
+/** 顶层分区：概览 / 工作 / 能力 / 设置。 */
 type DetailSection = "overview" | "work" | "capabilities" | "settings";
 
+/** 详情页所有可切换的视图 id，既包含顶层分区，也包含能力与设置下的二级子 Tab。 */
 export type DetailTab =
   | "overview"
   | "work"
@@ -129,11 +134,20 @@ interface AgentOverviewPaneProps {
 }
 
 /**
- * Agent workbench organised around user intent instead of backend fields.
- * Overview answers "what is happening now?", Work owns the issue surface,
- * Capabilities describes what the agent can do, and Settings describes how
- * it runs. The lower-level editors stay intact so the reorganisation does not
- * alter persistence or permission semantics.
+ * Agent 工作台，围绕用户意图而非后端字段组织。概览回答“现在正在发生什么”，
+ * 工作承载 issue 界面，能力描述这个 Agent 能做什么，设置描述它如何运行。
+ * 底层的编辑器保持原样，因此这次重组不会改变持久化或权限语义。
+ *
+ * @param agent 当前 Agent
+ * @param runtime 该 Agent 绑定的运行时（可能为空）
+ * @param owner 拥有者成员信息
+ * @param runtimes 工作区所有可用运行时列表
+ * @param members 工作区成员列表
+ * @param onUpdate 提交字段更新的回调
+ * @param currentUserId 当前用户 id
+ * @param canEdit 当前用户是否有编辑权限
+ * @param navIntent 外部导航意图（例如从别处跳转到某个子 Tab）
+ * @param onNavIntentHandled 导航意图处理完毕后的回调
  */
 export function AgentOverviewPane({
   agent,
@@ -216,11 +230,10 @@ export function AgentOverviewPane({
   const visibleSettingsTabs = useMemo(
     () =>
       SETTINGS_TABS.filter((tab) => {
-        // Env is the only settings tab backed by a secret-bearing endpoint.
-        // GET/PUT /api/agents/{id}/env admits the agent owner or a workspace
-        // owner/admin (MUL-5438) — the same rule `canEdit` encodes — so
-        // showing the tab to anyone else guarantees a 403 on "Reveal & edit".
-        // The server stays the boundary; this only removes a dead entry point.
+        // Env 是唯一一个有“涉密”端点的设置 Tab。GET/PUT /api/agents/{id}/env
+        // 只允许 Agent 拥有者或工作区拥有者/管理员访问（MUL-5438）——这正是
+        // `canEdit` 编码的规则，所以对其他任何人显示这个 Tab 都会在
+        // “Reveal & edit” 时必然 403。服务器仍是边界；这里只是移除一个死入口。
         if (tab.id === "env") return canEdit;
         return true;
       }),
@@ -347,9 +360,8 @@ export function AgentOverviewPane({
         </div>
       </div>
 
-      {/* Overview/Work scroll as one page. Sidebar views split scrolling on
-          md+ (nav rail pinned, content pane scrolls) like settings-page.tsx;
-          below md the rail is a horizontal strip and the page scrolls whole. */}
+      {/* Overview/Work 作为整页滚动。带侧栏的视图在 md+ 拆开滚动（导航栏固定、
+          内容区滚动），同 settings-page.tsx；md 以下侧栏变成横向条、整页滚动。 */}
       <div
         className={cn(
           "min-h-0 flex-1 overflow-y-auto",
@@ -377,8 +389,8 @@ export function AgentOverviewPane({
 
         {secondaryTabs.length > 0 && activeSecondaryTab && (
           <div className="flex min-h-full flex-col md:h-full md:flex-row">
-            {/* Content-surface color, no shell tint — same rule as the settings
-                nav: in-card panels must not break the desktop tab merge (MUL-4439). */}
+            {/* 内容面颜色，不加外壳染色——与 settings 导航同规则：卡片内面板
+                不能破坏桌面端 Tab 的合并效果（MUL-4439）。 */}
             <aside className="shrink-0 overflow-x-auto border-b border-surface-border p-2 md:w-52 md:overflow-y-auto md:border-b-0 md:border-r md:p-4">
               <div
                 className="flex w-max min-w-full items-center gap-1 md:w-full md:flex-col md:items-stretch"

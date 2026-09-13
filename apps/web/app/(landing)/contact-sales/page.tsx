@@ -1,6 +1,8 @@
+/** 官网「联系销售」路由（服务端渲染壳，内容交给 ContactSalesPageClient）。 */
 import type { Metadata } from "next";
 import { ContactSalesPageClient } from "@/features/landing/components/contact-sales-page-client";
 
+/** 联系销售页 SEO 元信息。 */
 export const metadata: Metadata = {
   title: "Contact Sales",
   description:
@@ -16,6 +18,11 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * 联系销售页默认导出。
+ *
+ * @returns 联系销售整页。
+ */
 export default function ContactSalesPage() {
   return <ContactSalesPageClient />;
 }

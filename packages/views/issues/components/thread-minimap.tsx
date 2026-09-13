@@ -6,63 +6,53 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
 // ---------------------------------------------------------------------------
-// ThreadMinimap — Linear-style quick-jump rail for comment threads
+// 本文件：ThreadMinimap —— Linear 风格的评论线程快捷跳转轨道
 // ---------------------------------------------------------------------------
 //
-// A vertical column of tick marks overlaid on the right edge of the issue
-// detail scroll area, just inside the scrollbar, one tick per top-level
-// comment thread (folded resolved bars included — they are jump targets too).
-// Ticks whose thread is currently inside the scroll viewport render darker, so
-// the rail doubles as a "you are here" minimap. Hovering magnifies ticks in a
-// Dock-style wave around the cursor (the hovered tick peaks, neighbours taper
-// off) and shows a preview card (bold first line + muted body excerpt, plus a
-// "Resolved" badge when the thread carries a resolution — the rail is the one
-// place a folded resolved thread is otherwise indistinguishable from an open
-// one); clicking jumps the timeline to that thread.
+// 垂直一列刻度线，叠在问题详情滚动区右缘（贴滚动条内侧），每个顶层评论线程
+// 一颗刻度（折叠的已解决评论条也算——它们同样是跳转目标）。线程当前位于
+// 滚动视口内的刻度渲染得更深，让轨道兼任"你在哪"的缩略图。悬停会以
+// Dock 式波浪放大刻度（悬停的刻度最高、邻居渐弱），并显示一张预览卡
+// （加粗首行 + 弱化的正文摘要；线程带解决标记时还会加一枚"已解决"徽章——
+// 折叠的已解决线程在别处与打开线程无法区分，这里能）。点击即跳到该线程。
 //
-// It rides the scrollbar side on purpose: it looks and behaves like a scroll
-// affordance, and every precedent for that (the scrollbar itself, editor
-// minimaps, floating outlines) lives on the right — so the pointer is already
-// there, and the travel from scrolling to jumping is short (MUL-4522).
+// 特意骑在滚动条一侧：它看起来、用起来都像滚动类控件，而此类先例
+// （滚动条本身、编辑器缩略图、浮动的章节大纲）全都待在右侧——指针本就在那，
+// 从滚动到跳转的路程很短（MUL-4522）。
 //
-// The preview is ONE card owned by the rail, not a popover per tick: the
-// open-intent delay is paid once when the pointer enters the rail, and while
-// the pointer glides across ticks the card swaps content instantly and
-// slides to the hovered tick. Per-tick popovers re-paid the open delay and
-// exit/enter animations on every tick crossed, which read as lag when
-// scanning the rail continuously.
+// 预览卡是轨道自持的唯一一张卡，不是每颗刻度的 popover：悬停意图延迟在
+// 指针进入轨道时只付一次，之后指针在刻度间滑过时卡片即时换内容、滑向被
+// 悬停刻度。若按刻度各挂 popover，每跨一颗都要重付打开延迟和出入场动画，
+// 连续扫轨道时读起来就是卡顿。
 //
-// The rail deliberately skips activity groups: they are timeline noise, not
-// navigation destinations.
+// 轨道刻意跳过活动分组：它们是时间线上的噪音，不是导航目的地。
 
-/** Minimum number of threads before the rail is worth its pixels. */
+/** 线程数达到这个下限轨道才配占这些像素。 */
 const MIN_THREADS = 2;
 
-/** Intent delay before the card first appears; gliding afterwards is instant. */
+/** 卡片首次出现的意图延迟；之后的滑过是即时的。 */
 const PREVIEW_OPEN_DELAY_MS = 150;
-/** Grace period on leave — long enough to travel from rail onto the card. */
+/** 离开时的宽限期——足够从轨道走到卡片上。 */
 const PREVIEW_CLOSE_DELAY_MS = 150;
 
 // ---------------------------------------------------------------------------
-// Hover wave — Dock-style proximity magnification
+// 悬停波浪 —— Dock 式邻近放大
 // ---------------------------------------------------------------------------
 //
-// While the pointer travels along the rail, every tick scales with a cosine
-// falloff of its distance to the cursor, so the hovered tick peaks and its
-// neighbours taper off like a wave. Driven per-pointermove with direct style
-// writes (no React re-render), batched read-then-write inside one rAF, on the
-// compositor-friendly native `scale` property; the 100ms ease-out transition
-// on the tick smooths between pointer samples and settles the collapse on
-// leave. Only the hovered tick darkens — neighbours grow but keep their color.
+// 指针沿轨道移动时，每颗刻度按与指针距离的余弦衰减缩放：悬停的刻度登顶、
+// 邻居像波浪一样渐弱。每次 pointermove 用直接样式写入驱动（不触发 React
+// 重渲染），在一次 rAF 内批量"先读后写"，作用于对合成器友好的原生 `scale`
+// 属性；刻度上 100ms 的 ease-out 过渡既平滑了指针采样间的跳变，也在离开时
+// 收拢回落。只有被悬停的刻度变深——邻居放大但保持自己的颜色。
 
-/** Distance (px) at which a tick stops feeling the wave — ~4 tick pitches. */
+/** 刻度在此距离（px）外不再感受到波浪——约 4 个刻度间距。 */
 const WAVE_RADIUS_PX = 56;
-/** Peak horizontal scale of the hovered tick (12px base → ~20px). */
+/** 被悬停刻度的峰值水平缩放（12px 基础 → 约 20px）。 */
 const WAVE_MAX_SCALE = 1.7;
 
 /**
- * Horizontal scale for a tick whose center is `distancePx` from the pointer.
- * Cosine-squared bell: smooth at the peak and at the radius edge (no kinks).
+ * 圆心与指针相距 `distancePx` 时某刻度的水平缩放。
+ * 余弦平方钟形：在峰值与半径边缘都平滑（无折点）。
  */
 export function waveScale(distancePx: number): number {
   const d = Math.abs(distancePx);
@@ -72,20 +62,18 @@ export function waveScale(distancePx: number): number {
 }
 
 /**
- * Caps applied by `commentPreview`. The preview card clamps visually
- * (`truncate` / `line-clamp-3`), but agent comments can be tens of KB of
- * markdown — capping here keeps the flattened strings (and the aria-labels
- * derived from them) small instead of shipping the whole comment into the DOM.
+ * `commentPreview` 应用的截断上限。预览卡视觉上有截断（`truncate` /
+ * `line-clamp-3`），但 agent 评论动辄几十 KB 的 markdown——在这里封顶，
+ * 让扁平化后的字符串（以及由此派生的 aria-label）保持小巧，
+ * 而不是把整篇评论塞进 DOM。
  */
 const PREVIEW_TITLE_MAX = 200;
 const PREVIEW_BODY_MAX = 300;
 
 /**
- * Flatten comment markdown into a plain-text preview: `title` is the first
- * non-empty line (bold in the card), `body` is the remaining lines joined
- * into one muted excerpt. Mirrors the chat list's `toPreview` flattening
- * (fences dropped, md tokens stripped) but keeps the first-line/body split
- * the minimap card renders.
+ * 把评论 markdown 扁平化为纯文本预览：`title` 是首个非空行（卡片中加粗），
+ * `body` 是其余行合并成的一段弱化摘要。镜像聊天列表 `toPreview` 的扁平化
+ * （丢弃代码围栏、剥掉 md 记号），但保留 minimap 卡片要渲染的首行/正文拆分。
  */
 export function commentPreview(markdown: string): { title: string; body: string } {
   const lines = markdown
@@ -108,47 +96,43 @@ export function commentPreview(markdown: string): { title: string; body: string 
 }
 
 export interface ThreadMinimapThread {
-  /** Root comment id — also the `comment-${id}` DOM anchor of the rendered row. */
+  /** 根评论 id —— 也是渲染行的 `comment-${id}` DOM 锚点。 */
   id: string;
-  /** The thread's root comment entry (preview text + author fallback). */
+  /** 线程的根评论条目（预览文本 + 作者兜底）。 */
   entry: TimelineEntry;
   /**
-   * Whether the thread carries a resolution — derived by the caller with
-   * `deriveThreadResolution`, so it covers both "Resolve thread" (root) and
-   * "Resolve thread with comment" (reply), and stays true while the user has
-   * a folded resolved thread expanded.
+   * 线程是否带解决标记——由调用方用 `deriveThreadResolution` 派生，
+   * 因此同时覆盖"解决线程"（根评论）与"带评论解决线程"（回复），
+   * 并且在用户展开某条已折叠已解决线程期间仍保持 true。
    */
   resolved: boolean;
 }
 
 interface ThreadMinimapProps {
   threads: ThreadMinimapThread[];
-  /** The issue detail scroll container; null until its callback ref populates. */
+  /** 问题详情滚动容器；在其回调 ref 填充前为 null。 */
   scrollContainerEl: HTMLElement | null;
   onJump: (threadId: string) => void;
   /**
-   * Thread the header panel's pointer is currently resting on. The rail lights
-   * that tick in the brand colour so the two navigators read as one coordinate
-   * system rather than two competing lists (MUL-5755).
+   * 头部面板指针此刻停留的线程。轨道会把该刻度点亮为品牌色，让两个导航器
+   * 读起来是同一套坐标，而不是两套竞争列表（MUL-5755）。
    */
   highlightedThreadId?: string | null;
-  /** Positioning within the page (e.g. `absolute right-3 top-12 bottom-0`) — owned by the caller, like FindBar. */
+  /** 在页面内的定位（如 `absolute right-3 top-12 bottom-0`）——由调用方持有，同 FindBar。 */
   className?: string;
 }
 
 // ---------------------------------------------------------------------------
-// useVisibleThreadIds — "which comment threads are on screen right now"
+// useVisibleThreadIds —— "当前有哪些评论线程在屏幕上"
 // ---------------------------------------------------------------------------
 //
-// Which threads intersect the scroll viewport, so the rail can darken their
-// ticks. Deliberately the rail's alone: "on screen" is a set, not a point, and
-// only a column of ticks can show a span honestly — the header panel tried to
-// render the same set as list rows and it read as a broken multi-select.
+// 哪些线程与滚动视口相交，好让轨道加深它们的刻度。这刻意只归轨道所有：
+// "在屏幕上"是一个集合而不是一个点，只有一列刻度能诚实地展示区段——
+// 头部面板曾试着把同一集合渲染成列表行，结果读起来像坏掉的多选。
 //
-// Computed from DOM rects on scroll/resize instead of an IntersectionObserver
-// because Virtuoso mounts/unmounts rows while scrolling — an observer would
-// lose its targets. Unmounted rows are by definition outside the (overscanned)
-// viewport, so "no element" correctly counts as not visible.
+// 在 scroll/resize 时用 DOM rect 计算而不是 IntersectionObserver：
+// Virtuoso 滚动时会挂载/卸载行——观察器会丢掉自己的目标。被卸载的行按定义
+// 就在（过扫描的）视口之外，所以"没有元素"正确地计为不可见。
 
 function sameIdSet(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false;
@@ -185,8 +169,8 @@ function useVisibleThreadIds(
 
     compute();
     container.addEventListener("scroll", schedule, { passive: true });
-    // Content height changes without scroll events: Virtuoso mounting rows
-    // after first paint, streamed agent replies growing, window resizes.
+    // 内容高度在没有滚动事件时也会变：Virtuoso 首帧后挂载行、
+    // agent 流式回复变长、窗口缩放。
     const ro = new ResizeObserver(schedule);
     ro.observe(container);
     if (container.firstElementChild) ro.observe(container.firstElementChild);
@@ -200,12 +184,15 @@ function useVisibleThreadIds(
   return visibleIds;
 }
 
-/** The rail-owned preview card's target: which tick, anchored at which shim-relative Y. */
+/** 轨道自持预览卡的目标：哪颗刻度、锚在相对 shim 的哪个 Y。 */
 interface PreviewAnchor {
   index: number;
   y: number;
 }
 
+/**
+ * 单颗刻度按钮。
+ */
 function MinimapTick({
   label,
   inViewport,
@@ -215,9 +202,9 @@ function MinimapTick({
 }: {
   label: string;
   inViewport: boolean;
-  /** This tick's preview is the open card — hold the grown state even when the pointer is on the card. */
+  /** 这颗刻度的预览就是当前打开的卡——即使指针在卡上，也保持放大态。 */
   isPreviewOpen: boolean;
-  /** The header panel is hovering this thread's row. */
+  /** 头部面板正在悬停本线程的行。 */
   isHighlighted: boolean;
   onClick: () => void;
 }) {
@@ -226,33 +213,26 @@ function MinimapTick({
       type="button"
       aria-label={label}
       onClick={onClick}
-      // 20px wide, tick flushed to the right end: with the rail inset 12px
-      // (see the caller's className) the strip spans 12–32px from the panel
-      // edge, which clears a classic scrollbar's ~11px gutter on one side and
-      // stops exactly at the content column's 32px padding on the other — so
-      // it never sits on the scrollbar nor on body text, in either scrollbar
-      // mode.
+      // 宽 20px，刻度齐右端：配合轨道内侧 12px 内边距（见调用方 className），
+      // 细条从面板边缘起跨 12–32px——一侧清出经典滚动条约 11px 的槽，
+      // 另一侧正好停在正文列 32px 内边距前——于是无论滚动条哪种形态，
+      // 它都不压滚动条、也不压正文。
       className="group/tick flex min-h-[5px] w-5 flex-[0_1_0.875rem] cursor-pointer items-center justify-end focus-visible:outline-none"
     >
       <span
         className={cn(
-          // Enlargement is a right-anchored `scale` (compositor-friendly, and
-          // what the JS wave writes inline), so ticks grow inward, away from
-          // the scrollbar. The 100ms ease-out doubles as smoothing between
-          // pointer samples and as the settle on leave.
+          // 放大是右锚定的 `scale`（对合成器友好，也正是 JS 波浪行内写入的
+          // 属性），所以刻度向内生长、远离滚动条。100ms ease-out 同时充当
+          // 指针采样间的平滑与离开时的回落。
           "h-0.5 w-3 origin-right rounded-full transition-[scale,background-color] duration-100 ease-out",
           inViewport ? "bg-foreground/70" : "bg-muted-foreground/30",
           "group-hover/tick:bg-foreground",
-          // CSS floor states for when no inline wave value is present:
-          // the open card's tick stays grown while the pointer rests on the
-          // card, keyboard focus grows without a pointer, and reduced-motion
-          // swaps the wave for a plain hover grow.
+          // 无行内波浪值时的 CSS 地板态：指针停在卡上时开卡的刻度保持放大、
+          // 键盘焦点无指针也能放大、reduced-motion 把波浪换成朴素的悬停放大。
           isPreviewOpen && "scale-x-[1.7] bg-foreground",
-          // Panel-driven highlight. Brand colour, not foreground: it marks
-          // "the panel is pointing here", which is a different statement from
-          // the rail's own hover/viewport greys and must stay distinguishable
-          // from both. Wins over `inViewport` because it is the more specific,
-          // user-driven state.
+          // 面板驱动的点亮。用品牌色而非前景色：它表达"面板正指向这里"，
+          // 与轨道自身的悬停/视口灰是不同的陈述，必须与两者都能区分。
+          // 胜过 `inViewport`，因为它是更具体、用户驱动的状态。
           isHighlighted && "scale-x-[1.7] bg-brand",
           "group-focus-visible/tick:scale-x-[1.7] group-focus-visible/tick:bg-foreground",
           "motion-reduce:group-hover/tick:scale-x-[1.7]",
@@ -262,6 +242,9 @@ function MinimapTick({
   );
 }
 
+/**
+ * 线程缩略轨道（职责见文件头）。
+ */
 export function ThreadMinimap({
   threads,
   scrollContainerEl,
@@ -274,8 +257,8 @@ export function ThreadMinimap({
   const threadIds = useMemo(() => threads.map((th) => th.id), [threads]);
   const visibleIds = useVisibleThreadIds(threadIds, scrollContainerEl);
 
-  // Flattened previews, cached per thread by content so an unrelated timeline
-  // update (reaction, new reply elsewhere) doesn't re-flatten every comment.
+  // 扁平化预览按内容逐线程缓存，让无关的时间线更新（加了表情、别处有新
+  // 回复）不至于把每条评论重新扁平化一遍。
   const prevPreviewsRef = useRef<Map<string, { content: string | undefined; preview: { title: string; body: string } }>>(new Map());
   const previews = useMemo(() => {
     const next = new Map<string, { content: string | undefined; preview: { title: string; body: string } }>();
@@ -296,11 +279,10 @@ export function ThreadMinimap({
   const navRef = useRef<HTMLElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
 
-  // Hover wave + preview targeting. Pointer position lives in refs and ticks
-  // are scaled with direct style writes so pointermove never re-renders the
-  // component; the rAF guard coalesces bursts to one batched read-then-write
-  // per frame. The same rect pass derives which tick the card should anchor
-  // to, so the card and the wave can never disagree about the hovered tick.
+  // 悬停波浪 + 预览卡定位。指针位置存在 ref、刻度用直接样式写入缩放，
+  // 让 pointermove 从不触发组件重渲染；rAF 守卫把脉冲合流为每帧一次
+  // "先读后写"的批量操作。同一趟 rect 计算也派生卡片应锚定哪颗刻度，
+  // 于是卡片与波浪对"被悬停的刻度"永不失和。
   const waveRafRef = useRef(0);
   const pointerYRef = useRef<number | null>(null);
   const reducedMotionRef = useRef(false);
@@ -352,7 +334,7 @@ export function ThreadMinimap({
     if (!nav || !shim) return;
     const y = pointerYRef.current;
     const buttons = nav.querySelectorAll<HTMLButtonElement>("button");
-    // Read pass, then write pass — never interleaved, one reflow at most.
+    // 先读后写，绝不交错——至多一次 reflow。
     const shimTop = shim.getBoundingClientRect().top;
     const shimHeight = shim.clientHeight;
     const cardHalf = (cardRef.current?.offsetHeight ?? 96) / 2;
@@ -374,14 +356,14 @@ export function ThreadMinimap({
       const tick = b.firstElementChild as HTMLElement | null;
       if (!tick) return;
       const s = scales[i]!;
-      // Clearing the inline value hands control back to the CSS floor states
-      // (open-card tick / focus-visible / reduced-motion hover).
+      // 清掉行内值 = 把控制权交还给 CSS 地板态
+      //（开卡的刻度 / focus-visible / reduced-motion 悬停）。
       if (s) tick.style.setProperty("scale", s);
       else tick.style.removeProperty("scale");
     });
 
-    // Preview targeting from the same pass. Clamp the anchor so the card
-    // never sticks out of the rail's column at the extremes.
+    // 预览卡定位复用同一趟计算。钳制锚点，让卡片在两端的极限处
+    // 也不会探出轨道那一列。
     if (y === null || !nearest) return;
     const { index, centerY } = nearest as { index: number; centerY: number };
     const anchor: PreviewAnchor = {
@@ -390,7 +372,7 @@ export function ThreadMinimap({
     };
     pendingAnchorRef.current = anchor;
     if (previewRef.current) {
-      // Already open: gliding retargets the card instantly — no re-delay.
+      // 已开着：滑过时卡片即时重定向——不再重计延迟。
       showPreview(anchor);
     } else if (openTimerRef.current === null) {
       openTimerRef.current = window.setTimeout(() => {
@@ -416,8 +398,8 @@ export function ThreadMinimap({
     scheduleClose();
   }, [scheduleWave, scheduleClose]);
 
-  // Keyboard parity: focusing a tick anchors the card to it immediately —
-  // there is no pointer, so there is no accidental-hover to debounce.
+  // 键盘对齐：聚焦某颗刻度时立即把卡片锚过去——没有指针，
+  // 也就没有需要防抖的"误悬停"。
   const handleFocus = useCallback(
     (e: React.FocusEvent) => {
       const nav = navRef.current;
@@ -449,8 +431,7 @@ export function ThreadMinimap({
     : undefined;
 
   return (
-    // Positioning shim; only the nav and the card take pointer events so the
-    // strip never blocks content clicks.
+    // 定位垫片；只有 nav 和卡片接收指针事件，细条永不挡内容点击。
     <div ref={shimRef} className={cn("pointer-events-none z-10 flex flex-col justify-center py-6", className)}>
       <nav
         ref={navRef}
@@ -459,8 +440,8 @@ export function ThreadMinimap({
         onPointerLeave={handleWaveLeave}
         onFocusCapture={handleFocus}
         onBlurCapture={scheduleClose}
-        // Bounded height + shrinkable ticks: when threads outgrow the rail,
-        // flex compresses the spacing (down to min-h) instead of overflowing.
+        // 高度受限 + 刻度可收缩：线程数超过轨道高度时，flex 压缩间距
+        //（直到 min-h）而不是溢出。
         className="pointer-events-auto flex max-h-full flex-col overflow-hidden"
       >
         {threads.map((thread, i) => {
@@ -470,9 +451,8 @@ export function ThreadMinimap({
           return (
             <MinimapTick
               key={thread.id}
-              // The card is the visual channel for the resolved state, but a
-              // screen reader never sees it — the tick's name is the only
-              // thing announced on focus, so it carries the state too.
+              // 卡片是已解决状态的可视通道，但读屏器看不到它——刻度自身的名字
+              // 是聚焦时唯一会被播报的东西，所以状态也由它承载。
               label={
                 thread.resolved
                   ? t(($) => $.detail.thread_nav_resolved_label, { title })
@@ -487,15 +467,12 @@ export function ThreadMinimap({
         })}
       </nav>
 
-      {/* The rail's single preview card. Mounted without an enter animation
-          (the open-intent delay already gates accidental flashes; once the
-          user waited, showing content instantly is the responsive choice)
-          and slid between ticks with a short transform transition. Hovering
-          the card keeps it open so its text stays selectable. It opens
-          inward (leftward, over the content) — the only direction with room
-          next to the scrollbar. The resolved badge leads so the state is read
-          before the content, in the same `text-success` CommentCard uses for
-          its Resolution badge. */}
+      {/* 轨道唯一的预览卡。挂载时不带入场动画（悬停意图延迟已挡住误触闪现；
+          用户既然等了，立刻出内容才是响应性的选择），刻度间用短 transform
+          过渡滑动。悬停卡片保持其打开，好让卡片文字可被选中。它向内
+          （向左、朝内容方向）打开——这是滚动条旁边唯一有空间的方向。
+          已解决徽章前置，让状态先于内容被读到，配色沿用 CommentCard
+          的 Resolution 徽章同款 `text-success`。 */}
       {preview && activeThread && activePreview && (
         <div
           ref={cardRef}

@@ -1,5 +1,7 @@
 "use client";
 
+// 收件箱的分面筛选菜单：可按「来自谁 / 状态 / 优先级 / 只看未读」过滤，每个
+// 选项旁带计数；能力随后端是否支持优先级过滤而裁剪。
 import { useEffect, useMemo } from "react";
 import { CircleDot, Filter, Mail, RotateCcw, SignalHigh, UserRound } from "lucide-react";
 import { PRIORITY_DISPLAY_ORDER } from "@multica/core/issues/config";
@@ -34,6 +36,7 @@ import { StatusIcon } from "../../issues/components/status-icon";
 import { useStatusOptions } from "../../issues/utils/status-options";
 import { useT } from "../../i18n";
 
+/** 统计各状态下未去重列表里的条数（无状态则跳过）。 */
 function statusCounts(items: InboxItem[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const item of items) {
@@ -43,6 +46,7 @@ function statusCounts(items: InboxItem[]): Map<string, number> {
   return counts;
 }
 
+/** 统计各优先级条数。 */
 function priorityCounts(items: InboxItem[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const item of items) {
@@ -55,6 +59,7 @@ function priorityCounts(items: InboxItem[]): Map<string, number> {
   return counts;
 }
 
+/** 统计各来源（actor）条数。 */
 function actorCounts(items: InboxItem[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const item of items) {
@@ -65,7 +70,7 @@ function actorCounts(items: InboxItem[]): Map<string, number> {
   return counts;
 }
 
-/** Faceted filters for the deduplicated list currently on screen. */
+/** 对当前去重后的列表做分面筛选的菜单组件。 */
 export function InboxFilterMenu({
   wsId,
   items,
@@ -109,10 +114,9 @@ export function InboxFilterMenu({
   const activeCount = inboxFilterCount(effectiveFilters);
   const priorityFilteringSupported = priorityFilterSupport === "supported";
 
-  // A workspace can retain filters while its backend changes (Desktop server
-  // switch, self-hosted downgrade, or rolling deployment). Remove a priority
-  // selection only once incompatibility is confirmed; "unknown" simply keeps
-  // it dormant while an empty list gives us no capability evidence.
+  // 一个工作区可能在后端变化后仍留着旧筛选（切了桌面服务端、自托管降级、或滚动
+  // 发布中）。只在兼容性被确认后才清除优先级选择；「unknown」就让筛选保持休眠，
+  // 因为空列表给不出任何能力证据。
   useEffect(() => {
     if (
       priorityFilterSupport === "unsupported" &&
@@ -127,9 +131,8 @@ export function InboxFilterMenu({
     wsId,
   ]);
 
-  // Counts are faceted: every count respects the other active dimensions while
-  // ignoring its own, so each number says how many rows selecting that value
-  // can actually reveal.
+  // 计数是分面的：每个计数尊重其它已启用维度、忽略自己的维度，这样每个数字说的
+  // 都是「选中该值后实际能翻出多少行」。
   const statusFacetItems = useMemo(
     () => filterInboxItems(items, { ...effectiveFilters, statuses: [] }),
     [items, effectiveFilters],
@@ -161,10 +164,8 @@ export function InboxFilterMenu({
     () => actorCounts(actorFacetItems),
     [actorFacetItems],
   );
-  // The universe of actors comes from every row in the view rather than the
-  // faceted subset: picking one actor must not remove the others from the menu
-  // that offers them. Sorted by name so the list does not reshuffle as counts
-  // change under other selections.
+  // 来源候选项来自视图里的「每一行」，而不是分面子集：选中一个来源时，不能让
+  // 菜单里其它来源消失。按名字排序，这样列表不会随着其它选择下的计数变化而重排。
   const actorOptions = useMemo(() => {
     const keys = new Set<string>();
     for (const item of items) {

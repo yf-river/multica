@@ -1,5 +1,10 @@
 "use client";
 
+// 本文件：PriorityPicker —— 优先级选择器（下拉菜单）。
+// 无受控状态的调用方若自带触发器内容（看板卡片、列表行），会拿到一枚
+// "延迟挂载"的仿冒触发器——浮层机制首次交互才挂载（原因见 DeferredPopup）。
+// 选项列表按 PRIORITY_DISPLAY_ORDER 排序，其中"无优先级"排在最前。
+
 import { useState } from "react";
 import type { IssuePriority, UpdateIssueRequest } from "@multica/core/types";
 import { PRIORITY_DISPLAY_ORDER, PRIORITY_CONFIG } from "@multica/core/issues/config";
@@ -10,10 +15,9 @@ import { useT } from "../../../i18n";
 
 interface PriorityPickerProps {
   /**
-   * The currently-selected priority, used to check the matching row. `null`
-   * means "no single current value" (e.g. a batch selection spanning several
-   * priorities) — no row is checked. Single-issue callers always pass a
-   * concrete priority.
+   * 当前选中的优先级，用于勾选对应行。`null` 表示"没有一个单一当前值"
+   *（例如横跨多个优先级的批量选择）——此时不勾任何行。单问题调用方
+   * 总是传具体优先级。
    */
   priority: IssuePriority | null;
   onUpdate: (updates: Partial<UpdateIssueRequest>) => void;
@@ -22,15 +26,13 @@ interface PriorityPickerProps {
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
   align?: "start" | "center" | "end";
-  /** Open the picker on first mount. Used by progressive-disclosure
-   *  sidebars so a newly-added field immediately enters edit state. */
+  /** 首次挂载即展开。供"渐进式展示"的侧栏用——新加的字段立刻进入编辑态。 */
   defaultOpen?: boolean;
 }
 
 /**
- * Uncontrolled callers that bring their own trigger content (board cards,
- * list rows) get a deferred lookalike trigger; the popover machinery mounts
- * on first interaction. See `DeferredPopup` for why.
+ * 自带触发器内容、且不受控的调用方（看板卡片、列表行）会得到一枚延迟
+ * 挂载的仿冒触发器；浮层机制在首次交互时才挂载。原因见 `DeferredPopup`。
  */
 export function PriorityPicker(props: PriorityPickerProps) {
   const hasDeferredTriggerContent =
@@ -88,7 +90,7 @@ function PriorityPickerImpl({
         ) : null)
       }
     >
-      {/* "No priority" leads — see PRIORITY_DISPLAY_ORDER. */}
+      {/* "无优先级"排最前——见 PRIORITY_DISPLAY_ORDER。 */}
       {PRIORITY_DISPLAY_ORDER.map((p) => {
         const c = PRIORITY_CONFIG[p];
         return (

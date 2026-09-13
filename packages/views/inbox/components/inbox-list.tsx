@@ -1,5 +1,7 @@
 "use client";
 
+// 可滚动、虚拟化的收件箱通知列表（react-virtuoso）。同时服务桌面端与移动端布局，
+// 滚动容器只有一个；支持方向键选择、归档入口与滚动位置还原。
 import {
   useCallback,
   useMemo,
@@ -19,32 +21,35 @@ import { VirtuosoSeed, VIRTUOSO_SEED_COUNT } from "../../common/virtuoso-seed";
 import { useRestoredScrollOffset, useRestoredScrollRef } from "../../platform";
 import { useT } from "../../i18n";
 
-// Sizing only (like the board's card estimate): the seed's trailing spacer
-// and Virtuoso's defaultItemHeight share this value so the scroller's height
-// is truthful from the first frame and a restored offset sticks. A row is
-// two text lines (body + caption) plus py-2.5.
+// 只用于测量（类似看板的卡片估算）：seed 的尾部占位与 Virtuoso 的
+// defaultItemHeight 共用这个值，保证滚动容器首帧高度就是真实高度、还原的偏移
+// 能停住。一行是两行文本（正文 + caption）再加 py-2.5。
 const INBOX_ROW_ESTIMATED_HEIGHT = 58;
 
 /**
- * Scrollable, virtualized inbox notification list.
+ * 可滚动、虚拟化的收件箱通知列表。
  *
- * Owns the scroll container so both the mobile and desktop layouts render an
- * identical scroller. Rows are virtualized via react-virtuoso so only the
- * visible window (plus a small overscan) is mounted — the notification list
- * can grow long and every row otherwise carries an avatar + hover card, so
- * mounting all of them inflates the tab-switch commit (MUL-4474).
+ * 滚动容器归本组件所有，因此移动端与桌面端布局渲染的是同一个滚动手感。行用
+ * react-virtuoso 虚拟化，只挂载可视窗口（加一点 overscan）——通知列表可能很长，
+ * 每行还带着头像 + 悬停卡，全量挂载会让切标签页的那次提交明显膨胀（MUL-4474）。
  *
- * Virtualization changes exactly one thing: whether an off-screen row is in
- * the DOM. Selection, hover, archive, and scroll semantics are unchanged —
- * the row component and the callbacks are the same as the non-virtualized
- * list. `customScrollParent` keeps Virtuoso reading/writing the existing
- * `overflow-y-auto` element (same pattern as the issue-detail timeline), so
- * scroll position behaves exactly as before.
+ * 虚拟化只改变一件事：屏幕外的行在不在 DOM 里。选中、悬停、归档、滚动语义都
+ * 不变——行组件与回调和非虚拟化列表完全一致。`customScrollParent` 让 Virtuoso
+ * 读写既有的 `overflow-y-auto` 元素（与任务详情时间线同款做法），滚动位置行为
+ * 与之前一致。
  *
- * Known virtualization tradeoff: keyboard Tab only reaches currently-mounted
- * rows; a keyboard-only user must scroll to bring off-screen rows into the
- * tab order. Arrow-key navigation (below) covers off-screen rows, because it
- * walks the data rather than the DOM.
+ * 已知的虚拟化取舍：键盘 Tab 只能到达当前已挂载的行；纯键盘用户需要滚动才能把
+ * 屏外行带进 Tab 序列。下面的方向键导航覆盖屏外行，因为它走的是数据而不是 DOM。
+ *
+ * @param items 收件箱条目（已去重/已过滤）
+ * @param view 当前列表视图
+ * @param selectedKey 当前选中的条目 key
+ * @param archivedCount 归档入口要展示的去重条数（主视图读）
+ * @param onSelect 选中条目回调
+ * @param onAction 归档/取消归档回调
+ * @param onOpenArchived 点归档入口的回调
+ * @param emptyLabel 空列表文案
+ * @param emptyAction 空列表时的可选操作
  */
 export function InboxList({
   items,
@@ -60,8 +65,8 @@ export function InboxList({
   items: InboxItem[];
   view: InboxView;
   selectedKey: string;
-  // Deduplicated archived-issue count. Only read in the main view, to label the
-  // entry into the archive; the entry hides at zero.
+  // 去重后的归档条目数。只有主视图读它，用来给「进归档」的入口配数字；
+  // 数字为零时入口隐藏。
   archivedCount: number;
   onSelect: (item: InboxItem) => void;
   onAction: (id: string) => void;
@@ -70,14 +75,12 @@ export function InboxList({
   emptyAction?: ReactNode;
 }) {
   const { t } = useT("inbox");
-  // Virtuoso's `customScrollParent` wants the actual HTMLElement, not a ref.
-  // A callback ref into state hands the element over once it mounts and
-  // triggers the re-render that lets Virtuoso attach to it.
+  // Virtuoso 的 `customScrollParent` 要的是真实 HTMLElement，不是 ref 对象。
+  // 用回调 ref 写进 state：元素挂载后交过来、触发重渲染，让 Virtuoso 能挂上去。
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
-  // Pull-based scroll restoration (MUL-4741): assign the saved offset at
-  // ref-attach (the seed's estimate spacer gives the container a truthful
-  // height on the first commit, so the assignment sticks pre-paint) and feed
-  // the same offset into the Virtuoso as its initial position.
+  // 拉取式滚动还原（MUL-4741）：ref 一挂载就把存的偏移赋上去（seed 的估算占位
+  // 让容器首帧高度真实，赋值能在绘制前落定），同时把这个偏移喂给 Virtuoso 当
+  // 初始位置。
   const restoredScrollTop = useRestoredScrollOffset("list");
   const restoreScrollRef = useRestoredScrollRef("list");
   const attachScrollEl = useCallback(
@@ -90,41 +93,35 @@ export function InboxList({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const isArchivedView = view === "archived";
 
-  // Keyboard focus for the list lives on the scroll container, not on a row:
-  // virtualization unmounts the row the user clicked as soon as it scrolls
-  // out, and focus falling back to <body> would silently stop the next arrow
-  // key from reaching this handler. `preventScroll` because focusing a box
-  // scrolls every scrollable ancestor to reveal it, which on desktop shoves
-  // the shell around (#3929).
+  // 列表的键盘焦点放在滚动容器上而不是行上：虚拟化会在用户点的那行滚出屏幕的
+  // 瞬间卸载它，焦点回落到 <body> 会静默吞掉下一次方向键。`preventScroll` 是因为
+  // 聚焦一个盒子会把所有可滚动祖先都滚到能露出它，桌面端这样会把外壳顶得到处跑
+  // (#3929)。
   const focusList = useCallback(() => {
     scrollEl?.focus({ preventScroll: true });
   }, [scrollEl]);
 
   const selectItem = useCallback(
     (item: InboxItem) => {
-      // Safari does not focus a clicked row control, so the container has to
-      // be focused explicitly or the arrow keys would stay dead after a click.
+      // Safari 不会聚焦被点击的行控件，所以必须显式聚焦容器，否则点完行方向键
+      // 会一直是死的。
       focusList();
       onSelect(item);
     },
     [focusList, onSelect],
   );
 
-  // Arrow keys move the selection instead of scrolling the container — what
-  // every mail-style list does (MUL-5622). Bound to the scroll container
-  // rather than the document so it only fires while focus is inside the list:
-  // pressing Down while reading the issue detail must not swap the row out
-  // from under the reader.
+  // 方向键用来移动选中而不是滚动容器——所有邮件风列表都这样（MUL-5622）。
+  // 绑定在滚动容器而非 document 上，保证只有焦点在列表内时才触发：在任务详情
+  // 里按 Down 不应该把读者脚下的行悄悄换掉。
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    // A menu, editor, or text field that already acted on the arrow key owns
-    // it; so does an IME candidate list mid-composition.
+    // 已经消费过方向键的菜单/编辑器/文本框拥有它；IME 候选列表组词中也是。
     if (event.defaultPrevented || isImeComposing(event)) return;
     if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
     if (isEditableShortcutTarget(event.target)) return;
 
-    // Claim the key even at the ends of the list: falling through to the
-    // native scroll there would move the viewport away from the selected row.
+    // 即使停在列表两端也要吞掉这个键：落到原生滚动会把视口从选中行移走。
     event.preventDefault();
     focusList();
 
@@ -132,7 +129,7 @@ export function InboxList({
       (item) => (item.issue_id ?? item.id) === selectedKey,
     );
     const step = event.key === "ArrowDown" ? 1 : -1;
-    // Nothing selected yet: Down enters the list at the top, Up at the bottom.
+    // 还没选中：Down 从顶部进入列表，Up 从底部进入。
     const nextIndex =
       current < 0
         ? step === 1
@@ -143,19 +140,17 @@ export function InboxList({
     const nextItem = items[nextIndex];
     if (!nextItem) return;
 
-    // Virtuoso's own scrollIntoView, never the DOM element's: the target row
-    // may not be mounted, and the native call scrolls ancestors too. It is a
-    // no-op while the row is already fully visible, so a selection moving
-    // inside the viewport does not scroll the list.
+    // 用 Virtuoso 自己的 scrollIntoView，绝不用 DOM 元素的：目标行可能根本没挂载，
+    // 而原生调用还会连滚动祖先一起滚。目标行已完全可见时它是 no-op，所以在视口
+    // 内移动选中不会滚动列表。
     virtuosoRef.current?.scrollIntoView({ index: nextIndex });
     onSelect(nextItem);
   };
 
-  // The entry into the archive sits below the last row and scrolls with the
-  // list (same placement as chat's). Virtuoso mounts it via `components.Footer`,
-  // and swaps the component whenever that prop's identity changes — so both the
-  // element and the Footer wrapping it are memoized. Without that the entry
-  // remounts on every parent render and drops hover/focus mid-click.
+  // 进归档的入口放在最后一行下面、随列表一起滚（和聊天的入口同一位置）。
+  // Virtuoso 通过 `components.Footer` 挂载它，并在该 prop 身份变化时替换组件——
+  // 所以元素和包它的 Footer 都要 memo。否则父组件每次渲染都会重挂载入口，
+  // 点击中途 hover/focus 会掉。
   const archivedEntry = useMemo(
     () =>
       !isArchivedView && archivedCount > 0 ? (
@@ -194,8 +189,7 @@ export function InboxList({
           </p>
           {emptyAction && <div className="mt-3">{emptyAction}</div>}
         </div>
-        {/* Still offer the archive when the main list is empty — that is
-            exactly when a user goes looking for what they filed away. */}
+        {/* 主列表为空时仍给归档入口——人恰恰是在这时候来找自己收起来的东西。 */}
         {archivedEntry && <div className="px-2">{archivedEntry}</div>}
       </div>
     );
@@ -212,16 +206,14 @@ export function InboxList({
     />
   );
 
-  // While the callback ref hasn't handed the scroll element over yet (the first
-  // render after a remount), seed a bounded slice of real rows so the list
-  // never paints blank; once it's set, mount the Virtuoso with a matching
-  // `initialItemCount` so the measurement frame keeps those rows (MUL-4750).
+  // 回调 ref 还没把滚动元素交过来时（重挂载后的首帧），先用种子行渲染一段有界
+  // 的真实行，避免列表白屏；一旦就绪就挂 Virtuoso 并配一致的 `initialItemCount`，
+  // 让测量帧保住这些行（MUL-4750）。
   return (
     <div
       ref={attachScrollEl}
       data-tab-scroll-root="list"
-      // Programmatically focusable only: the rows already carry their own tab
-      // stops, so a tabbable container would just add a redundant one.
+      // 只允许程序化聚焦：行自己已经带 Tab 停靠点，容器再可 Tab 就是多一个冗余。
       tabIndex={-1}
       onKeyDown={handleKeyDown}
       className="flex-1 min-h-0 overflow-y-auto outline-none"
@@ -248,9 +240,8 @@ export function InboxList({
               computeItemKey={computeItemKey}
               estimatedItemHeight={INBOX_ROW_ESTIMATED_HEIGHT}
             />
-            {/* The seed frame renders a bounded slice, so the entry would be
-                mid-list rather than after the last row — only show it once the
-                seed IS the whole list. */}
+            {/* 种子帧只渲染有界的一段，所以归档入口会落到列表中间而不是最后一行
+                之后——只有种子已经是整份列表时才展示它。 */}
             {items.length <= VIRTUOSO_SEED_COUNT && archivedEntry}
           </>
         )}

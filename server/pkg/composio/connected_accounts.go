@@ -8,35 +8,33 @@ import (
 	"strconv"
 )
 
-// --- Create link --------------------------------------------------------
+// --- 创建连接链接 --------------------------------------------------------
 
-// CreateLinkRequest is the body of POST /connected_accounts/link.
+// CreateLinkRequest 是 POST /connected_accounts/link 的请求体。
 //
 // Spec: https://docs.composio.dev/reference/api-reference/connected-accounts/postConnectedAccountsLink
 type CreateLinkRequest struct {
-	// AuthConfigID is the `ac_…` id of an auth config registered in your
-	// Composio project (one per toolkit / OAuth client variant).
+	// AuthConfigID 是你在 Composio 项目里注册的某个 auth config 的 `ac_…` id
+	// （每个 toolkit / 每种 OAuth client 变体各一个）。
 	AuthConfigID string `json:"auth_config_id"`
 
-	// UserID is your own user identifier — Composio scopes the resulting
-	// connected account by it.
+	// UserID 是你自己的用户标识——Composio 用它给「生成的已连接账号」划定归属。
 	UserID string `json:"user_id"`
 
-	// CallbackURL is where Composio sends the user after they finish the
-	// hosted auth flow. Optional; Composio has a default landing page.
+	// CallbackURL 是用户完成托管授权流程后被 Composio 重定向回的位置。
+	// 可选；不填 Composio 有默认落地页。
 	CallbackURL string `json:"callback_url,omitempty"`
 
-	// Alias is a human-readable label for the connection. Optional but useful
-	// when the same user connects multiple accounts of the same toolkit.
+	// Alias 是这条连接的给人看的名字。同一个用户给同一 toolkit 连多个账号时，
+	// 用它区分很实用。可选。
 	Alias string `json:"alias,omitempty"`
 
-	// ConnectionData lets the caller pre-fill connection fields with default
-	// values (per the Composio docs). Free-form to avoid coupling to the
-	// scheme-specific child schemas.
+	// ConnectionData 允许调用方按 Composio 文档给连接字段预填默认值。
+	// 保持自由结构，避免和不同授权方案各自的子结构耦合。
 	ConnectionData map[string]any `json:"connection_data,omitempty"`
 }
 
-// CreateLinkResponse is the body returned by POST /connected_accounts/link.
+// CreateLinkResponse 是 POST /connected_accounts/link 返回的响应体。
 type CreateLinkResponse struct {
 	LinkToken          string `json:"link_token"`
 	RedirectURL        string `json:"redirect_url"`
@@ -44,9 +42,9 @@ type CreateLinkResponse struct {
 	ConnectedAccountID string `json:"connected_account_id"`
 }
 
-// CreateLink starts a hosted Composio Connect Link session. The redirect URL
-// is what the caller should send the user to (popup, redirect, or
-// SFSafariViewController).
+// CreateLink 开启一次托管的 Composio Connect Link 授权会话。
+// 返回的 RedirectURL 就是调用方该让用户去的地方
+// （弹窗、整页跳转或 SFSafariViewController 都行）。
 func (c *Client) CreateLink(ctx context.Context, req CreateLinkRequest) (*CreateLinkResponse, error) {
 	if req.AuthConfigID == "" {
 		return nil, errors.New("composio: CreateLink: AuthConfigID is required")
@@ -61,14 +59,14 @@ func (c *Client) CreateLink(ctx context.Context, req CreateLinkRequest) (*Create
 	return &out, nil
 }
 
-// --- List ---------------------------------------------------------------
+// --- 列表 --------------------------------------------------------------
 
-// ListConnectedAccountsRequest collects the optional filters supported by
-// GET /connected_accounts. Zero values are omitted from the query string.
+// ListConnectedAccountsRequest 汇总 GET /connected_accounts 支持的可选过滤参数。
+// 零值不会拼进查询串。
 //
-// Per the Composio v3.1 spec all filters are plural array params: the SDK
-// sends one query entry per slice element (`user_ids=u1&user_ids=u2`).
-// Pass a single-element slice for the common "list by one user" case.
+// 按 Composio v3.1 规范，这些过滤器都是复数形式的数组参数：SDK 对每个切片元素
+// 单独发一个同名查询项（`user_ids=u1&user_ids=u2`）。最常见的「查某个用户的
+// 全部账号」就传单元素切片。
 //
 // Spec: https://docs.composio.dev/reference/api-reference/connected-accounts/getConnectedAccounts
 type ListConnectedAccountsRequest struct {
@@ -76,17 +74,16 @@ type ListConnectedAccountsRequest struct {
 	ToolkitSlugs        []string
 	AuthConfigIDs       []string
 	ConnectedAccountIDs []string
-	Statuses            []string // ACTIVE, EXPIRED, INACTIVE, …
-	OrderBy             string   // "created_at" (default) | "updated_at"
-	OrderDirection      string   // "asc" | "desc" (default)
-	AccountType         string   // experimental: PRIVATE | SHARED | ALL
-	Limit               int      // 0 = use upstream default
+	Statuses            []string // ACTIVE、EXPIRED、INACTIVE……
+	OrderBy             string   // "created_at"（默认）| "updated_at"
+	OrderDirection      string   // "asc" | "desc"（默认）
+	AccountType         string   // 实验性：PRIVATE | SHARED | ALL
+	Limit               int      // 0 = 用上游默认值
 	Cursor              string
 }
 
-// ConnectedAccount mirrors a subset of the Composio response shape. Only the
-// fields actually consumed by the MVP are typed; extras live in Extra so
-// callers can read them without an SDK update.
+// ConnectedAccount 是 Composio 返回结构的一个子集镜像。只把 MVP 真正消费的
+// 字段类型化了；多余字段放在 Extra 里，调用方不用等 SDK 更新就能读到。
 type ConnectedAccount struct {
 	ID           string         `json:"id"`
 	UserID       string         `json:"user_id"`
@@ -101,8 +98,8 @@ type ConnectedAccount struct {
 	Extra        map[string]any `json:"-"`
 }
 
-// AuthConfigRef is the nested auth_config object Composio returns on connected
-// accounts. Some responses also include the older top-level auth_config_id.
+// AuthConfigRef 是已连接账号里嵌套的 auth_config 对象。部分响应还会带老的
+// 顶层 auth_config_id 字段。
 type AuthConfigRef struct {
 	ID                string `json:"id"`
 	AuthScheme        string `json:"auth_scheme,omitempty"`
@@ -110,14 +107,14 @@ type AuthConfigRef struct {
 	IsDisabled        bool   `json:"is_disabled,omitempty"`
 }
 
-// ListConnectedAccountsResponse is the typed paginated response.
+// ListConnectedAccountsResponse 是分页响应的类型化表示。
 type ListConnectedAccountsResponse struct {
 	Items      []ConnectedAccount `json:"items"`
 	NextCursor string             `json:"next_cursor,omitempty"`
 	TotalItems int                `json:"total_items,omitempty"`
 }
 
-// ListConnectedAccounts returns the connections matching the supplied filters.
+// ListConnectedAccounts 返回与所给过滤条件匹配的连接。
 func (c *Client) ListConnectedAccounts(ctx context.Context, req ListConnectedAccountsRequest) (*ListConnectedAccountsResponse, error) {
 	q := url.Values{}
 	for _, v := range req.UserIDs {
@@ -173,11 +170,10 @@ func (c *Client) ListConnectedAccounts(ctx context.Context, req ListConnectedAcc
 	return &out, nil
 }
 
-// --- Revoke / Delete ----------------------------------------------------
+// --- 撤销 / 删除 ----------------------------------------------------------
 
-// RevokeConnection revokes the OAuth grant at the upstream provider but
-// keeps the Composio record. Use this when the user disconnects and you
-// want the provider-side tokens invalidated immediately.
+// RevokeConnection 撤销上游提供方那边的 OAuth 授权，但保留 Composio 里的记录。
+// 用户在应用里「断开连接」时用它，可以立刻让提供方侧的 token 失效。
 func (c *Client) RevokeConnection(ctx context.Context, connectedAccountID string) error {
 	if connectedAccountID == "" {
 		return errors.New("composio: RevokeConnection: connectedAccountID is required")
@@ -186,11 +182,10 @@ func (c *Client) RevokeConnection(ctx context.Context, connectedAccountID string
 		http.MethodPost, "/connected_accounts/"+url.PathEscape(connectedAccountID)+"/revoke", nil)
 }
 
-// DeleteConnectedAccount removes the connection record from Composio. The
-// provider tokens are NOT revoked by this call — call [Client.RevokeConnection]
-// first if you need them invalidated upstream.
+// DeleteConnectedAccount 从 Composio 移除这条连接的记录。这个调用不会撤销
+// 提供方侧的 token——需要上游一并失效的话，先调 [Client.RevokeConnection]。
 //
-// Returns nil for 404 so callers can treat the operation as idempotent.
+// 对 404 返回 nil，这样调用方可以把删除当成幂等操作处理。
 func (c *Client) DeleteConnectedAccount(ctx context.Context, connectedAccountID string) error {
 	if connectedAccountID == "" {
 		return errors.New("composio: DeleteConnectedAccount: connectedAccountID is required")

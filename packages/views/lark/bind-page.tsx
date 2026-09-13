@@ -1,5 +1,16 @@
 "use client";
 
+/**
+ * lark（飞书）集成模块：绑定凭据兑换落地页。
+ * 用户在飞书里点击机器人回复卡片里的「需要绑定」后到达这里。用户落地时可能
+ * 已登录也可能未登录；兑换前必须登录，因为兑换者的 Multica 身份取自会话
+ * （token 本身从来证明不了是谁在绑定——见 lark.BindingTokenService.RedeemAndBind）。
+ *
+ * token 经 `?token=<raw>` 传入。把它 POST 给 /api/lark/binding/redeem；后端返回
+ * 410（无效/过期）、409（已绑到别的用户）、403（不是工作区成员）或 200 及已
+ * 绑定的安装。每种结果经 common.json 里的 lark_bind 文案映射成不同的提示。
+ */
+
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -15,17 +26,7 @@ type RedeemState =
   | { kind: "needs-auth" }
   | { kind: "error"; reason: string };
 
-// LarkBindPage is the destination the Bot's "you need to bind" reply
-// card points at. The user lands here logged out OR logged in; we
-// require auth before redeeming because the redeemer's Multica
-// identity is taken from the session (the token alone never proves
-// who is binding — see lark.BindingTokenService.RedeemAndBind).
-//
-// The token comes in via `?token=<raw>`. We POST it to
-// /api/lark/binding/redeem; the backend returns 410 (invalid/expired),
-// 409 (already bound to another user), 403 (not a workspace member)
-// or 200 with the bound installation. Each maps to distinct user-
-// facing copy via lark_bind in common.json.
+/** 飞书绑定页主体：兑换 token 并按结果展示相应状态。 */
 export function LarkBindPage({ token }: { token: string | null }) {
   const { t } = useT("common");
   const user = useAuthStore((s) => s.user);
@@ -124,6 +125,7 @@ export function LarkBindPage({ token }: { token: string | null }) {
   );
 }
 
+/** 把兑换失败异常归类成一个稳定的原因字符串，供文案分支使用。 */
 function redemptionFailureReason(err: unknown): string {
   const msg = err instanceof Error ? err.message : "";
   const lower = msg.toLowerCase();

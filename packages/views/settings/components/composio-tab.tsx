@@ -1,3 +1,6 @@
+// 本文件是「Composio」集成面板：展示可接入的 Composio 工具包（toolkit，例如各种
+// 外部 App 的能力）目录，让用户为 agent 连接 / 断开这些 App。
+
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -28,13 +31,13 @@ import { ComposioToolkitLogo } from "../../common/composio-toolkit-logo";
 import { useT, useTimeAgo } from "../../i18n";
 import { useNavigation } from "../../navigation";
 
-// ComposioTab renders the connectable Composio toolkit catalog and lets the
-// user connect / disconnect the apps their agents can act on.
-//
-// Key UX rule (MUL-4009): the backend only returns toolkits with an enabled
-// auth config in the Composio project, so every card here is connectable —
-// toolkits with no auth config are filtered out server-side rather than shown
-// with a dead "not configured" hint.
+/**
+ * Composio 集成面板：渲染可连接的工具包目录，并支持连接 / 断开 agent 可操作的 App。
+ *
+ * 关键产品规则（MUL-4009）：服务端只会返回「在 Composio 项目里已配好鉴权配置」的
+ * 工具包，所以这里的每张卡片都一定可连接——没有鉴权配置的工具包在服务端就被过滤掉
+ * 了，不会出现一张死掉的「未配置」卡片。
+ */
 export function ComposioTab() {
   const { t } = useT("settings");
   const qc = useQueryClient();
@@ -51,21 +54,17 @@ export function ComposioTab() {
   } | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
 
-  // The hosted Composio consent flow is a full-page redirect that lands back
-  // on the settings page carrying either `?connected=<slug>` (success) or
-  // `?error=composio_connect_failed` (any backend-side failure — see
-  // Service.CallbackRedirect, MUL-3720). Consume it exactly once: fire a toast,
-  // refresh the connections list so the freshly-linked card flips to Connected
-  // without a manual reload, then strip the one-shot params via `replace` so a
-  // browser refresh doesn't re-toast.
+  // Composio 的托管授权流程是一次整页跳转，授权完会带 `?connected=<slug>`（成功）
+  // 或 `?error=composio_connect_failed`（任何服务端侧失败，见 Service.CallbackRedirect，
+  // MUL-3720）回到设置页。这里把回调参数消费恰好一次：弹一个 toast、刷新连接列表
+  // 让刚连上的卡片立刻翻成「已连接」（无需手动刷新），然后用 `replace` 清掉这一次性
+  // 参数——否则用户刷新浏览器会重复弹 toast。
   const connectedParam = navigation.searchParams.get("connected");
   const errorParam = navigation.searchParams.get("error");
-  // React Strict Mode (dev / Next) double-invokes mount effects as
-  // mount → cleanup → mount. On the second invoke the `replace` from the first
-  // hasn't committed yet, so the closure still sees the same params and would
-  // toast + invalidate twice. Guard with a ref keyed on the callback we already
-  // consumed; a genuinely new callback (different slug, or the redirect being a
-  // full page load that resets this ref) still fires.
+  // React 严格模式（开发 / Next）下挂载 effect 会以「挂载 → 清理 → 再挂载」执行两次：
+  // 第二次执行时第一次的 `replace` 还没提交，闭包看到的仍是同一批参数，会把 toast
+  // 和列表刷新各做两遍。这里用一个记录「已消费回调」的 ref 来挡重；真正的新回调
+  // （不同 slug，或跳转本身就是会重置该 ref 的整页加载）仍会照常触发。
   const consumedCallbackKey = useRef<string | null>(null);
   useEffect(() => {
     const callbackKey = connectedParam
@@ -82,8 +81,8 @@ export function ComposioTab() {
     } else {
       toast.error(t(($) => $.composio.toast_connect_failed));
     }
-    // Drop only the Composio one-shot params; keep everything else (notably
-    // ?tab=integrations) so the user stays on this tab.
+    // 只清掉 Composio 的一次性回调参数，保留其它参数（尤其是 ?tab=integrations），
+    // 让用户停留在当前标签页。
     const params = new URLSearchParams(navigation.searchParams);
     params.delete("connected");
     params.delete("error");
@@ -92,8 +91,7 @@ export function ComposioTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectedParam, errorParam]);
 
-  // Map active connections by toolkit slug so each card knows whether it is
-  // already connected (and which connection id to disconnect).
+  // 按工具包 slug 归集有效连接，让每张卡片知道自己是「已连接」（以及该断开哪个连接）。
   const connectionBySlug = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of connectionsQuery.data ?? []) {
@@ -102,9 +100,9 @@ export function ComposioTab() {
     return m;
   }, [connectionsQuery.data]);
 
-  // Toolkits whose latest connection is expired render a Reconnect affordance
-  // instead of Connected/Connect. Backend only emits `expired` once Stage 4
-  // (MUL-3719) lands, but the branch is wired up now so it lights up for free.
+  // 最近一次连接已过期的工具包，卡片上会显示「重新连接」而不是「已连接 / 连接」。
+  // 服务端要等第 4 阶段（MUL-3719）落地后才会真的下发 `expired`，但这个分支现在
+  // 就接好了，届时自动生效。
   const expiredBySlug = useMemo(() => {
     const m = new Set<string>();
     for (const c of connectionsQuery.data ?? []) {
@@ -113,10 +111,9 @@ export function ComposioTab() {
     return m;
   }, [connectionsQuery.data]);
 
-  // Last-used timestamp per active connection, for the "Last used …" line on a
-  // connected card. Backend leaves this null until tool-call dispatch starts
-  // stamping it (Stage 3, MUL-3721); the card shows a "never used" placeholder
-  // until then.
+  // 每个有效连接的「最近使用」时间，用于已连接卡片上的「上次使用 …」行。服务端要等
+  // 工具调用分发开始打时间戳（第 3 阶段，MUL-3721）才有值；在那之前卡片显示「从未
+  // 使用」占位。
   const lastUsedBySlug = useMemo(() => {
     const m = new Map<string, string | null>();
     for (const c of connectionsQuery.data ?? []) {
@@ -137,18 +134,16 @@ export function ComposioTab() {
     );
   }, [toolkits, query]);
 
-  // 503 handling lives in the parent IntegrationsTab, which hides the whole
-  // Composio section when COMPOSIO_API_KEY is unset — this component only
-  // mounts when the integration is configured, so it deals with the loaded /
-  // error / empty / list states below.
+  // 503 的处理在父级 IntegrationsTab：COMPOSIO_API_KEY 没配置时整个 Composio 分区被
+  // 隐藏——也就是说本组件只有在集成已配置时才会被挂载，所以这里只需面对「加载中 /
+  // 出错 / 空列表 / 列表」几种展示状态。
 
   async function handleConnect(tk: ComposioToolkit) {
     if (connectingSlug) return;
     setConnectingSlug(tk.slug);
     try {
       const { redirect_url } = await api.beginComposioConnect(tk.slug);
-      // Hand the browser to Composio's hosted consent flow; it redirects back
-      // to /api/integrations/composio/callback when done.
+      // 把浏览器交给 Composio 的托管授权流程；完成后会跳回 /api/integrations/composio/callback。
       window.location.href = redirect_url;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t(($) => $.composio.connect_failed));
@@ -205,10 +200,9 @@ export function ComposioTab() {
             className="max-w-xs"
           />
           {connectionsQuery.isError && (
-            // Don't silently treat a failed connections fetch as "nothing
-            // connected" — that would hide real connections and offer Connect
-            // on something already linked. Surface it so the user knows the
-            // connected state may be incomplete; the catalog still renders.
+            // 不要默默把「连接列表拉取失败」当成「没连任何东西」——那会掩盖真实已存在的
+            // 连接，并在某个其实已连过的应用上给出「连接」按钮。把错误摆出来，让用户知道
+            // 已连接状态可能不完整；目录本身照常渲染。
             <p className="text-caption text-destructive">
               {t(($) => $.composio.connections_load_failed)}
             </p>
@@ -262,6 +256,11 @@ export function ComposioTab() {
   );
 }
 
+/**
+ * 单个工具包卡片：左边 logo + 名称（下方显示分类或最近使用时间），右侧按连接状态
+ * 给出三种动作——已连接则显示绿色「已连接」+ 断开按钮；连接过期则黄色警示 + 一键
+ * 重新连接；未连接则给出「连接」按钮。
+ */
 function ToolkitCard({
   toolkit,
   connectionId,
@@ -296,9 +295,8 @@ function ToolkitCard({
         <div className="min-w-0 flex-1">
           <p className="truncate text-body font-medium">{toolkit.name || toolkit.slug}</p>
           {isConnected ? (
-            // Last-used line. Backend leaves last_used_at null until Stage 3
-            // dispatch stamps it, so show a localized "never used" placeholder
-            // rather than hiding the line entirely.
+            // 最近使用行。服务端要等第 3 阶段分发打时间戳后才会有 last_used_at；
+            // 在它出现之前显示本地化的「从未使用」占位，而不是整行消失。
             <p className="truncate text-micro text-muted-foreground">
               {lastUsedAt
                 ? t(($) => $.composio.last_used, { when: timeAgo(lastUsedAt) })
@@ -327,8 +325,7 @@ function ToolkitCard({
             </Button>
           </div>
         ) : expired ? (
-          // Token-expired connection: surface the failure and let the user
-          // re-run the same connect flow in one click (no disconnect step).
+          // 令牌已过期的连接：把失败摆出来，让用户一步重走同样的连接流程（无需先断开）。
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1 text-caption text-amber-600">
               <AlertTriangle className="h-3 w-3" />

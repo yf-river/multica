@@ -1,5 +1,15 @@
 "use client";
 
+/**
+ * mention 建议弹层：`@` 下拉列表的数据装配、分组、筛选与键盘交互。
+ *
+ * 职责：从 React Query 缓存读成员/agent/squad 与已缓存 issue，按最近提及
+ * 排序合并；查询时再叠加服务端搜索结果；把「已取消（cancelled）」的条目
+ * 降权、把直接命中的条目钉在前面；并把整份列表交给通用弹层渲染
+ * （suggestion-popup.tsx）。选中（Enter / Tab / 点击）后会记录一次
+ * mention 使用时间，供下次排序用。
+ */
+
 import {
   forwardRef,
   useCallback,
@@ -64,31 +74,31 @@ import { isTriggerArmedAt } from "./suggestion-trigger-arming";
 import { blockedReasonLabel } from "../../issues/blocked-trigger-copy";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型定义
 // ---------------------------------------------------------------------------
 
+/** 一条可被 @ 选中的候选对象。 */
 export interface MentionItem {
   id: string;
   label: string;
   type: "member" | "agent" | "squad" | "issue" | "project" | "all";
-  /** Optional grouping hint for injected context items. */
+  /** 注入式上下文条目的可选分组提示。 */
   group?: "current" | "recent" | "search";
-  /** Secondary text shown beside the label (e.g. issue title) */
+  /** 标签旁展示的次要文本（如 issue 标题）。 */
   description?: string;
-  /** Issue status for StatusIcon rendering */
+  /** 供 StatusIcon 渲染的 issue 状态。 */
   status?: IssueStatus;
   /**
-   * The category that status behaves as, carried from the issue payload so the
-   * list never has to resolve a custom key itself. Both the glyph and the
-   * "closed / demoted" rules read this — comparing the raw key left a custom
-   * done status looking and ranking like active work. (MUL-6243)
+   * 该状态实际归属的类别，随 issue 载荷带下来，让列表自身不必去解析自定义
+   * key。图标与「关闭/降权」规则都读它——直接比原始 key 会把自定义的
+   * done 状态画得、排得像进行中的活一样。（MUL-6243）
    */
   statusCategory?: IssueStatusCategory;
-  /** Project emoji/icon snapshot for ProjectIcon rendering */
+  /** 供 ProjectIcon 渲染的项目 emoji/图标快照。 */
   icon?: string | null;
-  /** Project status snapshot for recent/current project rendering */
+  /** 最近/当前项目渲染用的项目状态快照。 */
   projectStatus?: ProjectStatus;
-  /** Present when the target should remain discoverable but cannot be selected. */
+  /** 出现时表示该目标保持可见但不可选中。 */
   disabledReason?: "agent_runtime_required";
 }
 
@@ -99,14 +109,16 @@ interface MentionListProps {
   includeProjectSearch?: boolean;
 }
 
+/** MentionList 通过 ref 暴露的键盘处理句柄。 */
 export interface MentionListRef {
   onKeyDown: (props: { event: KeyboardEvent }) => boolean;
 }
 
 // ---------------------------------------------------------------------------
-// Group items by section
+// 按分区给条目分组
 // ---------------------------------------------------------------------------
 
+/** 一个可视化分组：组名 + 条目列表。 */
 interface MentionGroup {
   label: string;
   items: MentionItem[];
@@ -142,13 +154,13 @@ function groupItems(items: MentionItem[], query: string): MentionGroup[] {
   if (search.length > 0) groups.push({ label: "Search", items: search });
   if (users.length > 0) groups.push({ label: "Users", items: users });
   if (issues.length > 0) groups.push({ label: "Issues", items: issues });
-  // Always last: no cancelled row of any type may precede a live one.
+  // 取消组永远排最后：任何已取消的条目都不得排在活条目前面。
   if (cancelled.length > 0) groups.push({ label: "Cancelled", items: cancelled });
   return groups;
 }
 
 // ---------------------------------------------------------------------------
-// MentionList — the popup rendered inside the editor
+// MentionList——编辑器内渲染的弹层列表
 // ---------------------------------------------------------------------------
 
 const MAX_ITEMS = 20;
@@ -156,10 +168,12 @@ const SERVER_ISSUE_SEARCH_LIMIT = 20;
 const SERVER_CONTEXT_SEARCH_LIMIT = 8;
 const SERVER_SEARCH_DEBOUNCE_MS = 150;
 
+/** 同一类型同一 id 的条目对应同一个 key。 */
 function mentionItemKey(item: MentionItem): string {
   return `${item.type}:${item.id}`;
 }
 
+/** 合并多组条目并按键去重（先到先得）。 */
 function mergeMentionItems(
   ...itemGroups: MentionItem[][]
 ): MentionItem[] {
@@ -177,28 +191,25 @@ function mergeMentionItems(
 }
 
 /**
- * Cancelled work is abandoned work: keep it reachable, but never ahead of a
- * live match and never at the cost of a live match's slot.
+ * 已取消的工作是被放弃的工作：保持可触达，但绝不排在活匹配之前、也绝不
+ * 占用活匹配的名额。
  *
- * Two independent reasons the picker needs this even though the search API
- * already ranks cancelled results last:
+ * 即使搜索 API 已把取消结果排最后，弹层仍需要这条规则的独立理由有两个：
  *
- * 1. Cached rows are merged BEFORE the server rows and the list is only then
- *    truncated to MAX_ITEMS, so a locally cached cancelled issue outranks every
- *    backend-ranked result and can push active work out of the window.
- * 2. Context mentions aggregate two independently ranked responses — issues
- *    then projects, both tagged `search` — so a cancelled project still lands
- *    above a live issue. Per-type ranking cannot fix a cross-type list.
+ * 1. 缓存行在服务端行**之前**合并，随后整份列表才截断到 MAX_ITEMS，所以
+ *    一条本地缓存的已取消 issue 会越过所有后端排名的结果，把活跃工作挤出
+ *    窗口。
+ * 2. 上下文 mention 聚合了两个独立排序的响应——issue 然后是 project，都标
+ *    `search`——所以已取消的 project 仍会排在活 issue 上方。按类型排序无法
+ *    修复跨类型列表。
  *
- * Exempt, matching the server and the other search surfaces:
+ * 豁免项（与服务端及其它搜索界面一致）：
  *
- * - Direct hits. An exact identifier, a bare number, or a full title means the
- *   user is targeting that one record; demoting it hides exactly what they
- *   asked for. Shared with the backend rule via isIssueDirectHit /
- *   isProjectDirectHit so the three surfaces cannot drift.
- * - The curated `current` / `recent` groups. They are explicit context rather
- *   than relevance hits, and "Current" has to survive the truncation even when
- *   the issue being viewed is itself cancelled.
+ * - 直接命中。精确标识符、裸数字或完整标题意味着用户瞄准的就是那一条
+ *   记录；降权它等于藏起用户要找的东西。通过 isIssueDirectHit /
+ *   isProjectDirectHit 与后端规则共享，三个界面不会漂移。
+ * - 精选的 `current` / `recent` 组。它们是有意的上下文而非相关度命中，
+ *   "Current" 即使在看的 issue 本身已取消也必须扛过截断存活。
  */
 function isDemotedCancelled(item: MentionItem, query: string): boolean {
   if (isPinnedAboveTruncation(item, query)) return false;
@@ -208,15 +219,13 @@ function isDemotedCancelled(item: MentionItem, query: string): boolean {
 }
 
 /**
- * Rows that must survive the MAX_ITEMS truncation: curated context and direct
- * hits. Exempting a direct hit from the demotion is not enough on its own —
- * `slice(0, MAX_ITEMS)` runs on the merged list, so a direct hit sitting behind
- * 20 cached candidates would still be cut. Pinning it to the front is what
- * actually keeps the record the user typed in full reachable, and it mirrors the
- * server, which already ranks direct hits first.
+ * 必须扛过 MAX_ITEMS 截断的行：精选上下文与直接命中。把直接命中从降权中
+ * 豁免还不够——`slice(0, MAX_ITEMS)` 作用在合并后的列表上，一条落在 20 个
+ * 缓存候选之后的直接命中仍会被切掉。把它钉到最前才是真正保证用户输入的
+ * 记录完整可触达的方式，这也镜像了服务端——它本就把直接命中排第一。
  *
- * Issue mention rows carry the identifier in `label` and the title in
- * `description`; project rows carry the title in `label`.
+ * issue mention 行把标识符放在 `label`、标题放在 `description`；project 行
+ * 把标题放在 `label`。
  */
 function isPinnedAboveTruncation(item: MentionItem, query: string): boolean {
   if (item.group === "current" || item.group === "recent") return true;
@@ -234,14 +243,13 @@ function isPinnedAboveTruncation(item: MentionItem, query: string): boolean {
 }
 
 /**
- * Stable three-tier partition applied BEFORE the MAX_ITEMS truncation, so
- * cancelled rows give up their slot rather than merely their position:
+ * 在 MAX_ITEMS 截断**之前**应用的稳定三层分区，让已取消行让出的是名额
+ * 而不只是位置：
  *
- *   pinned (curated context + direct hits) → live → cancelled
+ *   钉置（精选上下文 + 直接命中）→ 活跃 → 已取消
  *
- * Relative order within each tier is untouched, leaving the backend ranking in
- * charge of everything else. groupItems() then renders the cancelled tier as the
- * trailing section.
+ * 每层内部相对顺序不动，其余排序交给后端排名负责。groupItems() 随后把
+ * 已取消层渲染成收尾的小节。
  */
 function demoteCancelledItems(items: MentionItem[], query: string): MentionItem[] {
   const pinned: MentionItem[] = [];
@@ -262,13 +270,11 @@ function demoteCancelledItems(items: MentionItem[], query: string): MentionItem[
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
   function MentionList({ items, query, command, includeProjectSearch = false }, ref) {
     const { t } = useT("editor");
-    // Selection is tracked by item identity, NOT by a positional index. The
-    // list is re-bucketed by groupItems() and grows asynchronously (server
-    // search results), so a slot index is not a stable target — the row under
-    // index N changes as the list reorders. selectedKey pins the highlight to
-    // a specific item; the numeric index is derived from it against the SAME
-    // order the popup renders (orderedItems). null means "no explicit pick yet"
-    // → the first rendered row is highlighted by default.
+    // 选中态按条目身份跟踪，而不是位置下标。列表会被 groupItems() 反复
+    // 重分桶、还会异步增长（服务端搜索结果），所以下标不是稳定目标——
+    // 下标 N 下的那一行会随列表重排而变化。selectedKey 把高亮钉在具体条目
+    // 上；数值下标只是相对弹层实际渲染的同一份顺序（orderedItems）推导
+    // 出来的。null 表示「还没显式选中」→ 默认高亮第一行。
     const [selectedKey, setSelectedKey] = useState<string | null>(null);
     const [serverItems, setServerItems] = useState<MentionItem[]>([]);
     const [isSearching, setIsSearching] = useState(false);
@@ -333,7 +339,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
               }
             }
           } catch {
-            // Aborted or network error: keep the synchronous cache results.
+            // 请求被中断或网络出错：保留同步读到的缓存结果即可，不影响已有列表。
           } finally {
             if (!cancelled && !controller.signal.aborted) {
               setSearchedQuery(q);
@@ -358,21 +364,19 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       ).slice(0, MAX_ITEMS);
     }, [items, normalizedQuery, searchedQuery, serverItems]);
 
-    // The single index space for selection. groupItems() re-buckets displayItems
-    // (current → recent → search → users → issues); orderedItems is exactly what
-    // the popup renders, top to bottom. Keyboard nav, Enter, clicks, highlight,
-    // and scroll all index THIS, so the highlighted row always equals the
-    // committed item — there is no second "data order" to drift against.
+    // 选中用的统一下标空间。groupItems() 会把 displayItems 重分桶
+    // （current → recent → search → users → issues）；orderedItems 就是弹层
+    // 自上而下渲染的原样。键盘导航、Enter、点击、高亮与滚动都索引它，
+    // 所以高亮行永远等于确认项——不存在第二份「数据顺序」可以漂移。
     const groups = useMemo(
       () => groupItems(displayItems, normalizedQuery),
       [displayItems, normalizedQuery],
     );
     const orderedItems = useMemo(() => groups.flatMap((g) => g.items), [groups]);
 
-    // Derive the numeric index from the pinned identity. If the selected item
-    // is no longer in the list (query narrowed it away) or nothing is picked
-    // yet, fall back to the first row. This self-heals across reorders and
-    // async result arrival without ever force-resetting an active selection.
+    // 从钉住的身份推导数值下标。若选中的条目已不在列表里（查询把它滤掉
+    // 了）或尚未选中任何项，就回退到第一行。这在重排与异步结果到达时能
+    // 自愈，又从不强杀一个活跃中的选中。
     const selectedIndex = useMemo(() => {
       const firstSelectable = orderedItems.findIndex((item) => !item.disabledReason);
       if (selectedKey === null) return firstSelectable;
@@ -400,11 +404,11 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }) => {
-        // IME is composing — don't intercept Enter/Arrow as picker actions;
-        // those keys belong to the IME (Enter commits composition, etc).
+        // 输入法正在组合——不要把 Enter/方向键当弹层动作拦截；
+        // 那些键归输入法所有（Enter 提交组合等）。
         if (isImeComposing(event)) return false;
-        // Arrow keys plus the Ctrl+N/J/P/K aliases the command bar accepts —
-        // see pickerNavigationDirection.
+        // 方向键加 Ctrl+N/J/P/K 别名，即命令栏接受的组合——见
+        // pickerNavigationDirection。
         const direction = pickerNavigationDirection(event);
         if (direction !== null) {
           const selectableIndexes = orderedItems.flatMap((item, index) =>
@@ -422,8 +426,8 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
           setSelectedKey(mentionItemKey(orderedItems[next]!));
           return true;
         }
-        // Enter is the canonical accept; plain Tab is an additive alias (see
-        // isPickerAcceptKey). Shift/modifier+Tab fall through to focus nav.
+        // Enter 是规范确认键；纯 Tab 是附加别名（见 isPickerAcceptKey）。
+        // Shift/修饰键 + Tab 落进焦点导航。
         if (isPickerAcceptKey(event)) {
           if (selectedIndex < 0) return true;
           selectItem(orderedItems[selectedIndex]);
@@ -459,7 +463,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       return label;
     };
 
-    // Build a flat index mapping: globalIndex → item
+    // 建立扁平索引映射：globalIndex → item
     let globalIndex = 0;
 
     const renderRows = (group: MentionGroup): ReactNode =>
@@ -476,23 +480,20 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         );
       });
 
-    // One scroll container for every group. Previously the context layout made
-    // only the "Recent" group scrollable while the rest were `shrink-0`, so a
-    // query that mixed context items with search results squeezed Recent toward
-    // zero height and its un-clipped rows painted over the groups below it. With
-    // a single `overflow-y-auto` flex column the groups simply stack and the
-    // whole popup scrolls — no group can collapse onto another. The context
-    // variant only differs in width / max-height / chrome.
+    // 所有分组共用一个滚动容器。过去上下文布局只让 "Recent" 组可滚动，
+    // 其余都是 `shrink-0`，于是混了上下文与搜索结果的查询会把 Recent 压向
+    // 零高度，其未被裁剪的行就画到下面各组之上。改成单个 `overflow-y-auto`
+    // 弹性列后各组只是堆叠、整份弹层滚动——没有组能塌到另一组上。上下文
+    // 变体只在宽度 / max-height / 外框上有差异。
     return (
       <div
         className={cn(
           "flex flex-col overflow-y-auto overscroll-contain border bg-popover py-1",
-          // Height budget: clamp to whichever is smaller — the design max or the
-          // viewport-aware `--suggestion-available-height` published by the
-          // floating-ui `size` middleware (suggestion-popup.tsx). The var falls
-          // back to the design max when the popup renders outside that
-          // controller. This is the single height authority; do not add a second
-          // fixed max-height above it or the list can overflow the viewport.
+          // 高度预算：钳到两者中较小的——设计最大值，或 floating-ui `size`
+          // middleware 发布的视口感知 `--suggestion-available-height`
+          // （见 suggestion-popup.tsx）。在弹层不受该控制器渲染时，变量回退
+          // 到设计最大值。这是唯一的高度权威；不要在它之上再加第二个固定
+          // max-height，否则列表可能溢出视口。
           contextLayout
             ? "max-h-[min(420px,var(--suggestion-available-height,420px))] w-96 rounded-lg shadow-xl"
             : "max-h-[min(300px,var(--suggestion-available-height,300px))] w-72 rounded-md shadow-md",
@@ -512,7 +513,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 );
 
 // ---------------------------------------------------------------------------
-// MentionRow — single item in the list
+// MentionRow——列表里的单个条目
 // ---------------------------------------------------------------------------
 
 function MentionRow({
@@ -529,8 +530,8 @@ function MentionRow({
   const { t } = useT("editor");
   const { t: issuesT } = useT("issues");
   if (item.type === "issue") {
-    // Visually dim closed issues (done/cancelled) so they're distinguishable
-    // from active ones in the suggestion list — they're still selectable.
+    // 视觉上变暗已关闭（done/cancelled）的 issue，让它们和建议列表里的
+    // 活跃项可区分——它们仍可选中。
     const isClosed =
       item.statusCategory === "done" || item.statusCategory === "cancelled";
     return (
@@ -649,9 +650,10 @@ function MentionRow({
 }
 
 // ---------------------------------------------------------------------------
-// Suggestion config factory
+// Suggestion 配置工厂
 // ---------------------------------------------------------------------------
 
+/** 把 issue 数据转成 mention 候选。 */
 function issueToMention(
   i: Pick<Issue, "id" | "identifier" | "title" | "status"> & Partial<Pick<Issue, "status_category">>,
 ): MentionItem {
@@ -665,6 +667,7 @@ function issueToMention(
   };
 }
 
+/** 把 project 数据转成 mention 候选。 */
 function projectToMention(p: { id: string; title: string; description?: string | null; icon?: string | null; status?: ProjectStatus }): MentionItem {
   return {
     id: p.id,
@@ -676,6 +679,7 @@ function projectToMention(p: { id: string; title: string; description?: string |
   };
 }
 
+/** 候选是否命中当前查询（子串 + 拼音匹配，label 与 description 都查）。 */
 function matchesMentionQuery(item: MentionItem, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -687,11 +691,19 @@ function matchesMentionQuery(item: MentionItem, query: string): boolean {
   );
 }
 
+/** createMentionSuggestion 的选项。 */
 interface MentionSuggestionOptions {
   mode?: "default" | "context";
   getContextItems?: () => MentionItem[];
 }
 
+/**
+ * 装配 `@` mention 的 Tiptap Suggestion 配置。
+ *
+ * @param qc React Query 客户端，用于同步读成员/agent/squad 与缓存 issue。
+ * @param options 见 MentionSuggestionOptions；"context" 模式会注入调用方
+ *   提供的上下文条目并启用项目搜索。
+ */
 export function createMentionSuggestion(
   qc: QueryClient,
   options: MentionSuggestionOptions = {},
@@ -699,14 +711,13 @@ export function createMentionSuggestion(
   SuggestionOptions<MentionItem>,
   "editor"
 > {
-  // The explicit key is passed into Tiptap Suggestion and reused by the
-  // shared popup controller when it dispatches exitSuggestion(view, pluginKey).
+  // 显式 key 传给 Tiptap Suggestion，并由共享弹层控制器派发
+  // exitSuggestion(view, pluginKey) 时复用。
   const pluginKey = new PluginKey("mentionSuggestion");
 
   function buildSyncItems(query: string): MentionItem[] {
-    // Read workspace id imperatively because this runs in TipTap factory scope
-    // (outside React render). getCurrentWsId() is the non-React singleton set
-    // by the URL-driven workspace layout.
+    // 命令式读工作区 id，因为这里跑在 TipTap 工厂作用域（React 渲染之外）。
+    // getCurrentWsId() 是由 URL 驱动的工作区布局设置的非 React 单例。
     const wsId = getCurrentWsId();
     if (!wsId) return [];
 
@@ -717,11 +728,10 @@ export function createMentionSuggestion(
     const cachedResponse = listQueries[0]?.[1];
     const cachedIssues: Issue[] = cachedResponse ? flattenIssueBuckets(cachedResponse) : [];
 
-    // Read current user identity imperatively — this factory runs outside
-    // React render so we can't useAuthStore() as a hook here. The Proxy in
-    // packages/core/auth/index.ts forwards `.getState()` to the registered
-    // store. Used to gate personal agents in the @mention list so members
-    // don't see (or auto-complete) agents they couldn't assign anyway.
+    // 命令式读当前用户身份——本工厂运行在 React 渲染之外，不能在这里以
+    // hook 方式调 useAuthStore()。packages/core/auth/index.ts 里的 Proxy 会
+    // 把 `.getState()` 转发给已注册的 store。用于在 @mention 列表里拦截
+    // 个人 agent：成员不应看到（或自动补全）本就没法指派给自己的 agent。
     const userId = useAuthStore.getState().user?.id ?? null;
     const myRole =
       members.find((m) => m.user_id === userId)?.role ?? null;
@@ -778,17 +788,16 @@ export function createMentionSuggestion(
             : undefined,
       }));
 
-    // Members and agents share a single ranked list — recently mentioned
-    // targets come first regardless of type, with an alphabetical fallback
-    // for everyone the user hasn't mentioned yet on this device.
+    // 成员与 agent 共享一个已排序列表——最近提及的排在前面、不论类型，
+    // 本设备上用户还没提过的按字母序兜底。
     const recency = getRecencyMap(wsId);
     const userItems = sortUserItemsByRecency(
       [...memberItems, ...agentItems, ...squadItems],
       recency,
     );
 
-    // Cached issues give an instant first paint; MentionList adds server
-    // matches for done/cancelled and any other issues not in this cache.
+    // 缓存 issue 提供即时首屏；MentionList 会叠加服务端匹配结果，补齐
+    // done/cancelled 及其它不在本缓存里的 issue。
     const issueItems: MentionItem[] = cachedIssues
       .filter(
         (i) =>
@@ -803,9 +812,8 @@ export function createMentionSuggestion(
   return {
     pluginKey,
     allowSpaces: true,
-    // Only open over an `@` the user actually typed. Tiptap matches on document
-    // content alone, so without this a pasted, dropped, undone or server-loaded
-    // `@` opens the picker just as readily (MUL-5429).
+    // 只对用户真正敲下的 `@` 打开。Tiptap 只看文档内容匹配，没有这条的话，
+    // 粘贴、拖放、撤销或服务端加载的 `@` 也会一样打开弹层（MUL-5429）。
     shouldShow: ({ editor, range }) => isTriggerArmedAt(editor, range.from),
     items: ({ query }) => {
       if (options.mode === "context") {

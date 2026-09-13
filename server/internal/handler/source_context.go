@@ -1,3 +1,17 @@
+// 本文件实现「来源上下文」（source context）的 HTTP 层：把某条评论所在环境的
+// 「源议题 + 评论串」整体抓成一张快照，供用户基于它手动创建子事项（manual），或
+// 快速派发给 agent（agent / quick-create）。
+//
+// 本文件承担两类脏活：
+//   - 计算「捕获时的快照 vs 现在的真实状态」的差异（标题/描述/描述附件/评论线程），
+//     供详情接口回答「相比你看到的那一刻，源内容已经变了什么」；
+//   - 把来源附件克隆到 workspace 自己的 source-context 存储目录，并登记对象意图
+//     （object intent），保证后续源议题被编辑或删除都不影响已抓取的上下文。
+//
+// 顶层流程：PreviewCommentSubIssue 先让用户看到「将要捕获什么」（不落库）；真正
+// 创建时 CreateCommentSubIssue 校验 capture token 未被过期内容顶掉，再按 manual /
+// agent 两种模式分别建子事项或派发任务。所有失败经 writeSourceContextError 统一
+// 映射成带 code 的 JSON 错误。
 package handler
 
 import (
@@ -25,17 +39,30 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// sourceContextStreamUploader 是存储适配器可选实现的流式上传能力：
+// cloneSourceContext 需要「读旧对象 → 写新对象」的整体克隆，若存储连流式上传都
+// 不支持，就说明克隆功能不可用。
 type sourceContextStreamUploader interface {
 	UploadStream(ctx context.Context, key string, reader io.Reader, sizeBytes int64, contentType string, filename string) (string, error)
 }
 
+// errSourceContextResponseWritten 是内部哨兵：表示“错误/成功响应已经写回客户端”，
+// 上层拿到它时不要再重复回写。
 var errSourceContextResponseWritten = errors.New("source context response already written")
+
+// errSourceContextBadRequest 是内部哨兵：表示请求参数错误，最终由
+// writeSourceContextError 映射成 400 + code=invalid_request。
 var errSourceContextBadRequest = errors.New("source context bad request")
 
+// sourceContextBadRequest 包装一个请求参数错误，使其可被 errors.Is 识别为
+// errSourceContextBadRequest。
 func sourceContextBadRequest(message string) error {
 	return fmt.Errorf("%w: %s", errSourceContextBadRequest, message)
 }
 
+// sourceContextPreviewResponse 是预览接口的响应：SourceIssue / CommentThread 是准备
+// 捕获的源快照，AnchorCommentID 是锚点评论，CaptureToken 是真正创建时必须原样回传
+// 的防过期令牌，Limits 是本次构建用到的用量（供配额相关展示）。
 type sourceContextPreviewResponse struct {
 	SourceIssue     service.SourceContextIssueSnapshot     `json:"source_issue"`
 	CommentThread   []service.SourceContextCommentSnapshot `json:"comment_thread"`
@@ -44,6 +71,9 @@ type sourceContextPreviewResponse struct {
 	Limits          service.SourceContextLimitUsage        `json:"limits"`
 }
 
+// sourceContextAuthorState 描述快照里一位评论作者（member 或 agent）现在的状态：
+// CapturedName 是捕获时的名字，CurrentName 是现在库里查到的名字（改名时才有值），
+// State 告诉 UI 该展示「未变 / 已改名 / 已归档 / 已删除 / 已离开 workspace」中哪种。
 type sourceContextAuthorState struct {
 	Type         string  `json:"type"`
 	ID           string  `json:"id"`
@@ -52,12 +82,19 @@ type sourceContextAuthorState struct {
 	State        string  `json:"state"`
 }
 
+// sourceContextCurrentSource 描述「源议题现在的位置」：IssueID 是锚点评论当前所在
+// 的议题（若被搬运过则指向新议题），AnchorCommentID 是锚点评论，Identifier 是当前
+// 议题的编号。
 type sourceContextCurrentSource struct {
 	IssueID         string `json:"issue_id"`
 	AnchorCommentID string `json:"anchor_comment_id"`
 	Identifier      string `json:"identifier"`
 }
 
+// sourceContextDetailResponse 是详情接口的响应结构，回答三个问题：捕获的内容是什么
+// （Snapshot）、相对捕获那一刻源现在变了什么（ChangeReasons / ChangeDetails）、还能
+// 不能打开当前源（CurrentSource / CanOpenCurrentSource）。DisplayState 是把各子状态
+// 聚合后的展示结论（unchanged / changed / deleted / unavailable）。
 type sourceContextDetailResponse struct {
 	ID                   string                        `json:"id"`
 	Version              int16                         `json:"version"`
@@ -75,6 +112,9 @@ type sourceContextDetailResponse struct {
 	SourceAuthorState    []sourceContextAuthorState    `json:"source_author_state"`
 }
 
+// sourceContextChangeDetails 具体列出变化明细：ChangedCommentIDs 是内容/结构变过的
+// 评论；AddedComments / RemovedCommentIDs 是增删的评论；DescriptionAttachmentChanges
+// 是描述附件的变化（增/删/改名）。
 type sourceContextChangeDetails struct {
 	ChangedCommentIDs            []string                                   `json:"changed_comment_ids"`
 	AddedComments                []service.SourceContextCommentSnapshot     `json:"added_comments,omitempty"`
@@ -82,6 +122,9 @@ type sourceContextChangeDetails struct {
 	DescriptionAttachmentChanges []sourceContextDescriptionAttachmentChange `json:"description_attachment_changes"`
 }
 
+// sourceContextDescriptionAttachmentChange 描述一条描述附件的变更：Kind 区分
+// added / removed / renamed，AttachmentID 是附件 ID，Filename 是当前文件名，
+// PreviousFilename 仅改名时有值。
 type sourceContextDescriptionAttachmentChange struct {
 	Kind             string `json:"kind"`
 	AttachmentID     string `json:"attachment_id"`
@@ -89,6 +132,8 @@ type sourceContextDescriptionAttachmentChange struct {
 	PreviousFilename string `json:"previous_filename,omitempty"`
 }
 
+// 详情接口暴露给前端的「变化原因」常量，分别表示：议题标题变了、议题描述变了、
+// 描述附件变了、评论线程变了。前端据此决定展示哪类提示文案。
 const (
 	sourceContextChangeIssueTitle                  = "issue_title"
 	sourceContextChangeIssueDescription            = "issue_description"
@@ -96,6 +141,8 @@ const (
 	sourceContextChangeCommentThread               = "comment_thread"
 )
 
+// sourceContextComparableAttachment 是附件参与 diff 时的可比投影（去掉与内容无关的
+// 字段）。ID 优先取 SourceAttachmentID——它是跨来源稳定的附件标识。
 type sourceContextComparableAttachment struct {
 	ID          string
 	Filename    string
@@ -103,12 +150,16 @@ type sourceContextComparableAttachment struct {
 	SizeBytes   int64
 }
 
+// sourceContextComparableThreadNode 是评论线程节点的可比投影：只看 ID、父评论与
+// 类型，用于判断线程「结构」是否变了。
 type sourceContextComparableThreadNode struct {
 	ID       string
 	ParentID *string
 	Type     string
 }
 
+// comparableSourceContextAttachments 把附件列表投影成可比结构，只保留判断内容是否
+// 变化真正需要的字段。
 func comparableSourceContextAttachments(items []service.SourceContextAttachment) []sourceContextComparableAttachment {
 	result := make([]sourceContextComparableAttachment, 0, len(items))
 	for _, item := range items {
@@ -123,17 +174,24 @@ func comparableSourceContextAttachments(items []service.SourceContextAttachment)
 	return result
 }
 
+// jsonEqual 通过比较两个值序列化后的 JSON 字节串来判断是否相等，用于附件等
+// 结构体的等价性比较。
 func jsonEqual(a, b any) bool {
 	left, leftErr := json.Marshal(a)
 	right, rightErr := json.Marshal(b)
 	return leftErr == nil && rightErr == nil && string(left) == string(right)
 }
 
+// sourceContextIssueChanges 汇总「源议题侧」的变化：Reasons 是变化原因列表，
+// DescriptionAttachmentChanges 是描述附件的变化明细。
 type sourceContextIssueChanges struct {
 	Reasons                      []string
 	DescriptionAttachmentChanges []sourceContextDescriptionAttachmentChange
 }
 
+// sourceContextIssueChangeDetails 比较捕获时的议题与现在的议题，得出变化原因。
+// 描述正文用 sourceContextDescriptionProjection 把附件引用渲染成占位文本后再比较，
+// 避免附件内容变化这类无关差异造成误报。
 func sourceContextIssueChangeDetails(captured, current service.SourceContextIssueSnapshot) sourceContextIssueChanges {
 	reasons := make([]string, 0, 3)
 	if captured.Title != current.Title {
@@ -151,10 +209,14 @@ func sourceContextIssueChangeDetails(captured, current service.SourceContextIssu
 	return sourceContextIssueChanges{Reasons: reasons, DescriptionAttachmentChanges: attachmentChanges}
 }
 
+// sourceContextIssueChangeReasons 是 sourceContextIssueChangeDetails 的精简封装：
+// 只返回变化原因列表。
 func sourceContextIssueChangeReasons(captured, current service.SourceContextIssueSnapshot) []string {
 	return sourceContextIssueChangeDetails(captured, current).Reasons
 }
 
+// sourceContextThreadChanges 汇总「评论线程侧」的变化：Reasons 是变化原因，
+// ChangedCommentIDs / AddedComments / RemovedCommentIDs 是被改/增/删的评论明细。
 type sourceContextThreadChanges struct {
 	Reasons           []string
 	ChangedCommentIDs []string
@@ -162,6 +224,9 @@ type sourceContextThreadChanges struct {
 	RemovedCommentIDs []string
 }
 
+// sourceContextThreadChangeDetails 比较捕获时的评论线程与现在的评论线程：线程结构
+// 或锚点是否变化、每条评论的内容（同样经投影比较）、附件、类型、父子关系是否变化，
+// 都会计入结果，并给出被改/增/删的具体评论。
 func sourceContextThreadChangeDetails(captured, current service.SourceContextSnapshot) sourceContextThreadChanges {
 	capturedThread := make([]sourceContextComparableThreadNode, 0, len(captured.CommentThread))
 	currentThread := make([]sourceContextComparableThreadNode, 0, len(current.CommentThread))
@@ -223,10 +288,16 @@ func sourceContextThreadChangeDetails(captured, current service.SourceContextSna
 	}
 }
 
+// sourceContextThreadChangeReasons 是 sourceContextThreadChangeDetails 的精简封装：
+// 只返回变化原因列表。
 func sourceContextThreadChangeReasons(captured, current service.SourceContextSnapshot) []string {
 	return sourceContextThreadChangeDetails(captured, current).Reasons
 }
 
+// issueSourceContextDetail 组装某议题来源上下文的详情响应：读出捕获行与快照，尝试
+// 定位锚点评论（决定能否打开当前源），再重建「现在的」议题与评论线程，与快照对比
+// 得出各项子状态与变化原因。任何一步重建失败都会降级成对应的 deleted / unavailable
+// 状态，而不是让整个详情接口报错。
 func (h *Handler) issueSourceContextDetail(ctx context.Context, issue db.Issue) (*sourceContextDetailResponse, error) {
 	row, err := h.Queries.GetIssueSourceContextByIssue(ctx, db.GetIssueSourceContextByIssueParams{WorkspaceID: issue.WorkspaceID, IssueID: issue.ID})
 	if err != nil {
@@ -333,6 +404,8 @@ func (h *Handler) issueSourceContextDetail(ctx context.Context, issue db.Issue) 
 	return response, nil
 }
 
+// resolveSourceContextAuthors 逐个解析快照里评论作者（member / agent）的现状，供 UI
+// 提示「此人改名了 / 被删了 / 已离开 workspace / 已归档」等。按 (type, id) 去重。
 func (h *Handler) resolveSourceContextAuthors(ctx context.Context, workspaceID pgtype.UUID, comments []service.SourceContextCommentSnapshot) []sourceContextAuthorState {
 	seen := make(map[string]struct{})
 	states := make([]sourceContextAuthorState, 0)
@@ -386,6 +459,8 @@ func (h *Handler) resolveSourceContextAuthors(ctx context.Context, workspaceID p
 	return states
 }
 
+// PreviewCommentSubIssue 处理「预览」：把锚点评论所在的源上下文（源议题 + 评论串 +
+// 用量限制）构建出来返回给前端，让用户先确认「从这条评论创建会带走什么」。只读不落库。
 func (h *Handler) PreviewCommentSubIssue(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -410,6 +485,9 @@ func (h *Handler) PreviewCommentSubIssue(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// createCommentSubIssueRequest 是「从评论创建」请求体：Mode 取 manual（用户填表单
+// 建子事项）或 agent（快速派发给 agent）；CaptureToken 是预览时下发的防过期令牌；
+// Issue / QuickCreate 二选一携带具体内容。
 type createCommentSubIssueRequest struct {
 	Mode         string                   `json:"mode"`
 	CaptureToken string                   `json:"capture_token"`
@@ -417,6 +495,9 @@ type createCommentSubIssueRequest struct {
 	QuickCreate  *QuickCreateIssueRequest `json:"quick_create,omitempty"`
 }
 
+// CreateCommentSubIssue 处理「从评论创建」：重新构建源上下文并核对 capture token
+// 与当前内容一致（防预览过期或被改），再按 mode 分别走 manual（建子议题）或 agent
+// （派发带上下文的 quick-create 任务）。创建前先做一次不占配额的容量预检。
 func (h *Handler) CreateCommentSubIssue(w http.ResponseWriter, r *http.Request) {
 	var req createCommentSubIssueRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -493,10 +574,9 @@ func (h *Handler) CreateCommentSubIssue(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "mode must be manual or agent")
 		return
 	}
-	// Reject a full workspace before cloning source attachments. This early
-	// check avoids expensive work; the TaskService enqueue preflight and final
-	// transactional issue admission remain necessary because this is not a
-	// capacity reservation.
+	// 在克隆来源附件之前先拒绝「已满额」的 workspace。提前做这次免费的容量预检，
+	// 能避开昂贵的附件克隆；但 TaskService 入队前的预检与最终事务内的正式入队判定
+	// 仍然必要——这里的预检不是配额预留。
 	if err := service.CheckIssueCreateCapacity(r.Context(), h.Queries, h.Entitlements, wsUUID); err != nil {
 		if !writeIssueLimitReached(w, err) {
 			slog.Warn("source context issue-capacity preflight failed", append(logger.RequestAttrs(r), "error", err)...)
@@ -525,9 +605,8 @@ func (h *Handler) CreateCommentSubIssue(w http.ResponseWriter, r *http.Request) 
 		case errors.Is(lookupErr, pgx.ErrNoRows):
 			cleanup()
 		case lookupErr != nil:
-			// A commit error can be ambiguous. Never delete an object while DB
-			// ownership is also uncertain; the durable intent reconciler performs
-			// the same reference check before deleting it.
+			// 提交失败的原因可能含糊不清：归属也拿不准时，绝不删除任何对象——持久
+			// 意图协调器删除对象前也会做同样的引用核对，让补偿留到那边处理更安全。
 			slog.Warn("source context compensation deferred after ownership lookup failed", append(sourceContextAuditAttrs(r, capture.ID, capture.Snapshot.SourceIssue.ID, capture.Snapshot.AnchorCommentID, userUUID, req.Mode, build.Limits, "deferred_cleanup"), "error", lookupErr)...)
 		}
 	}
@@ -552,6 +631,9 @@ func (h *Handler) CreateCommentSubIssue(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// sourceContextAuditAttrs 组装 source context 的审计字段（追加在 http 请求属性
+// 之后），供各成功/失败路径统一打日志，含来源上下文 ID、源议题、捕获者、模式、
+// 用量与结果。
 func sourceContextAuditAttrs(r *http.Request, contextID pgtype.UUID, sourceIssueID, anchorCommentID string, capturedBy pgtype.UUID, mode string, limits service.SourceContextLimitUsage, result string) []any {
 	return append(logger.RequestAttrs(r),
 		"source_context_id", util.UUIDToString(contextID),
@@ -567,6 +649,10 @@ func sourceContextAuditAttrs(r *http.Request, contextID pgtype.UUID, sourceIssue
 	)
 }
 
+// cloneSourceContext 把来源附件克隆到本 workspace 的 source-context 目录，返回可以
+// 入库的 capture 与本次克隆出的对象 key 列表。克隆前先为每个新 key 登记对象意图
+// （RecordSourceContextObjectIntent），确保随后 DB 归属不确定时，回收任务能核对引用
+// 而不误删。没有附件时直接返回不含克隆的 capture。
 func (h *Handler) cloneSourceContext(ctx context.Context, workspaceID, userID, contextID pgtype.UUID, build service.SourceContextBuild) (service.SourceContextCapture, []string, error) {
 	if len(build.Rows) == 0 {
 		capture, err := service.PrepareSourceContextCapture(build, contextID, workspaceID, userID, time.Now(), nil)
@@ -620,6 +706,10 @@ func (h *Handler) cloneSourceContext(ctx context.Context, workspaceID, userID, c
 	return capture, keys, nil
 }
 
+// createManualCommentSubIssue 处理 manual 模式：把表单字段清洗、补默认值并逐项校验
+// 后，作为源议题的子事项（ParentIssueID 取捕获的源议题）创建，capture 作为
+// SourceContext 一并写库。参数错误在此直接回写响应，并返回 errSourceContextResponseWritten
+// 让上层不再重复处理。
 func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Request, workspaceID, userID pgtype.UUID, input CreateIssueRequest, capture service.SourceContextCapture, limits service.SourceContextLimitUsage) error {
 	title := strings.TrimSpace(input.Title)
 	if title == "" {
@@ -726,6 +816,8 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 	return nil
 }
 
+// preparedAgentCommentSubIssue 是一次 agent 模式派发所需的全部参数（已经过所有校验），
+// 由 prepareAgentCommentSubIssue 产出，交给 createAgentCommentSubIssue 真正入队。
 type preparedAgentCommentSubIssue struct {
 	agentID, squadID, runtimeID pgtype.UUID
 	prompt, priority, dueDate   string
@@ -733,6 +825,9 @@ type preparedAgentCommentSubIssue struct {
 	attachmentIDs               []pgtype.UUID
 }
 
+// prepareAgentCommentSubIssue 校验 agent 模式的请求（prompt 必填；agent_id 与 squad_id
+// 必须且只能给一个；squad 需存在且未归档；priority 需在合法集合内），再核对 agent 就绪、
+// daemon 版本支持带上下文的 quick-create，最后返回打包好的派发参数。
 func (h *Handler) prepareAgentCommentSubIssue(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, input QuickCreateIssueRequest) (*preparedAgentCommentSubIssue, error) {
 	prompt := strings.TrimSpace(input.Prompt)
 	if prompt == "" {
@@ -827,9 +922,12 @@ func (h *Handler) prepareAgentCommentSubIssue(w http.ResponseWriter, r *http.Req
 	}, nil
 }
 
+// createAgentCommentSubIssue 处理 agent 模式：入队前再次核对 daemon 能力（此时可能
+// 已经过漫长的流式拷贝），随后把带捕获上下文的 quick-create 任务交给 TaskService 入队，
+// 成功返回 202 + task_id。
 func (h *Handler) createAgentCommentSubIssue(w http.ResponseWriter, r *http.Request, workspaceID, userID pgtype.UUID, prepared preparedAgentCommentSubIssue, capture service.SourceContextCapture, limits service.SourceContextLimitUsage) error {
-	// Recheck the capability after potentially long streaming copies. A runtime
-	// can re-register during the copy; the final enqueue must still fail closed.
+	// 拷贝可能耗时较长，之后再复核一次能力：runtime 可能在拷贝期间重新注册，最终
+	// 入队前仍须失败关闭（fail closed）。
 	runtime, err := h.getAgentRuntime(r.Context(), obsmetrics.RuntimeLookupSourceSourceContext, prepared.runtimeID)
 	if err != nil || !runtimeHasCapability(runtime.Metadata, protocol.DaemonCapabilitySourceContextQuickCreateV1) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"code": "source_context_quick_create_unsupported", "error": "selected agent runtime must be updated before using captured context"})
@@ -844,6 +942,9 @@ func (h *Handler) createAgentCommentSubIssue(w http.ResponseWriter, r *http.Requ
 	return nil
 }
 
+// writeSourceContextError 把 service 层返回的错误统一映射成带 code 的 JSON 错误响应。
+// 配额类错误先交给 writeIssueLimitReached 处理（它会写出 429/403）；其余按哨兵错误
+// 类型选择 400/409/422/500 及对应 code。
 func (h *Handler) writeSourceContextError(w http.ResponseWriter, err error, limits service.SourceContextLimitUsage) {
 	if writeIssueLimitReached(w, err) {
 		return

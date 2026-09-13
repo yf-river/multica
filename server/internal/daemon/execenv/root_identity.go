@@ -1,3 +1,8 @@
+// 任务环境根目录的"稳定身份"管理：把 (workspace, task) 两个稳定 id 与磁盘上
+// 某个物理路径的对应关系记录进一个索引（.task_roots），确保任务无论换多少次
+// 可读显示名，都始终解析到同一个物理根目录。也负责 GC 前的路径归属校验与
+// 陈旧记录的清理。
+
 package execenv
 
 import (
@@ -15,22 +20,23 @@ import (
 const (
 	taskRootIndexDir   = ".task_roots"
 	taskRootRecordFile = "root.json"
-	// taskRootPendingPrefix names the staging directory installTaskRootRecord
-	// renames into place. A directory still carrying it never became
-	// authoritative for any task.
+	// taskRootPendingPrefix 标识 installTaskRootRecord 用改名（rename）落定前
+	// 的暂存目录。仍带着此前缀的目录从未成为任何任务的权威记录。
 	taskRootPendingPrefix    = ".pending-"
 	taskRootIndexMinPruneAge = time.Hour
 )
 
+// taskRootRecord 是单条稳定索引：记录某 workspace 下某 task 认领的物理根
+// 目录的相对路径。磁盘记录比可读路径活得久，是唯一权威来源。
 type taskRootRecord struct {
 	WorkspaceID  string `json:"workspace_id"`
 	TaskID       string `json:"task_id"`
 	RelativePath string `json:"relative_path"`
 }
 
-// ResolveRootDir returns the one physical env root assigned to a task. The
-// first caller freezes the readable path in an index keyed only by stable IDs;
-// later claims keep that path even when display labels are added or renamed.
+// ResolveRootDir 返回分配给某任务的那一个物理环境根目录。第一个调用方会
+// 把可读路径冻结在一个只以稳定 id 为键的索引里；之后即便可读标签被改名或
+// 新增，后续认领仍保持该路径不变。
 func ResolveRootDir(params RootDirParams) (string, error) {
 	proposed := PredictRootDir(params)
 	if proposed == "" {
@@ -46,6 +52,7 @@ func ResolveRootDir(params RootDirParams) (string, error) {
 		return "", err
 	}
 
+	// 索引不存在：要么是新任务，要么是稳定索引引入前就存在的旧根目录。
 	candidate, err := findOwnedTaskRoot(params)
 	if err != nil {
 		return "", err
@@ -66,9 +73,8 @@ func ResolveRootDir(params RootDirParams) (string, error) {
 		return "", err
 	}
 
-	// Another claimant may have won the atomic install with different readable
-	// labels. Always re-read the authoritative record instead of returning our
-	// proposal.
+	// 别的认领者可能带着不同的可读标签抢先完成了原子安装。因此总是重新
+	// 读权威记录，而不是直接返回我们自己的提议值。
 	record, err = readTaskRootRecord(recordDir)
 	if err != nil {
 		return "", err
@@ -76,6 +82,8 @@ func ResolveRootDir(params RootDirParams) (string, error) {
 	return validateTaskRootRecord(params, recordDir, record)
 }
 
+// taskRootRecordDir 返回某任务稳定索引记录的存放目录。键只由稳定 id 派生，
+// 不含任何可读标签。
 func taskRootRecordDir(params RootDirParams) string {
 	return filepath.Join(
 		params.WorkspacesRoot,
@@ -84,11 +92,14 @@ func taskRootRecordDir(params RootDirParams) string {
 	)
 }
 
+// stableIdentityKey 把任意身份串哈希成固定长度的十六进制键（取前 16 字节），
+// 用作不泄露原串的目录名。
 func stableIdentityKey(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:16])
 }
 
+// readTaskRootRecord 读取并解码一条稳定索引记录。
 func readTaskRootRecord(recordDir string) (taskRootRecord, error) {
 	recordPath := filepath.Join(recordDir, taskRootRecordFile)
 	data, err := os.ReadFile(recordPath)
@@ -102,6 +113,8 @@ func readTaskRootRecord(recordDir string) (taskRootRecord, error) {
 	return record, nil
 }
 
+// installTaskRootRecord 原子地写入一条索引记录：先在父目录下建临时目录、
+// 写 root.json，再整体 rename 到最终目录名，避免读到半成品。
 func installTaskRootRecord(recordDir string, record taskRootRecord) error {
 	parent := filepath.Dir(recordDir)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
@@ -120,8 +133,8 @@ func installTaskRootRecord(recordDir string, record taskRootRecord) error {
 		return fmt.Errorf("execenv: write task root record: %w", err)
 	}
 	if err := os.Rename(tmpDir, recordDir); err != nil {
-		// A complete non-empty directory is installed atomically. If it exists,
-		// another claimant won and its record is authoritative.
+		// 一个完整且非空的目录才算原子安装成功。若目标目录已存在，说明另一
+		// 认领者赢了，它的记录才是权威。
 		if _, readErr := readTaskRootRecord(recordDir); readErr == nil {
 			return nil
 		}
@@ -130,11 +143,10 @@ func installTaskRootRecord(recordDir string, record taskRootRecord) error {
 	return nil
 }
 
-// validateTaskRootRecord fails closed on anything it cannot vouch for: a task
-// that cannot prove which root is its own must not fall back to proposing a
-// fresh one, because the original may still hold live work. That refusal is
-// permanent until an operator intervenes, so every error names recordDir —
-// the one path they need to inspect or remove.
+// validateTaskRootRecord 对任何它无法担保的东西一律"失败关闭"：一个无法证明
+// 哪个根目录属于自己的任务，绝不能退回去"提议一个新根"，因为原目录可能还
+// 存活着工作。这种拒绝会一直持续到人工介入，所以每条错误都点名 recordDir——
+// 那是唯一需要检查或删除的路径。
 func validateTaskRootRecord(params RootDirParams, recordDir string, record taskRootRecord) (string, error) {
 	if record.WorkspaceID != params.WorkspaceID || record.TaskID != params.TaskID {
 		return "", fmt.Errorf("execenv: task root record %s belongs to workspace %s task %s, not workspace %s task %s",
@@ -154,6 +166,8 @@ func validateTaskRootRecord(params RootDirParams, recordDir string, record taskR
 	return filepath.Join(params.WorkspacesRoot, relative), nil
 }
 
+// validTaskRootSegment 校验路径段是否属于给定 id：workspace 段允许等于完整
+// id，task 段允许等于 taskKey 短键，两者都允许"可读前缀-taskKey"后缀形式。
 func validTaskRootSegment(segment, id string, workspace bool) bool {
 	segment = strings.ToLower(segment)
 	id = strings.ToLower(id)
@@ -167,11 +181,10 @@ func validTaskRootSegment(segment, id string, workspace bool) bool {
 	return strings.HasSuffix(segment, "-"+key)
 }
 
-// ValidateEnvRootOwnerPath proves that envRoot is the two-level task root
-// named by owner under workspacesRoot. GC callers use this before every
-// mutation: configuration may point WorkspacesRoot at an arbitrary user-owned
-// tree, and a directory's age or missing metadata is not proof that the daemon
-// created it.
+// ValidateEnvRootOwnerPath 证明 envRoot 是 workspacesRoot 下、由 owner 命名
+// 的那个"两级任务根目录"。GC 调用方在每次改动前都调用它：配置可能把
+// WorkspacesRoot 指向任意用户拥有的目录树，而"目录很旧"或"缺元数据"并不能
+// 证明它是 daemon 建的。
 func ValidateEnvRootOwnerPath(workspacesRoot, envRoot string, owner EnvRootOwner) error {
 	if strings.TrimSpace(workspacesRoot) == "" || strings.TrimSpace(envRoot) == "" {
 		return errors.New("execenv: workspaces root and env root are required")
@@ -201,9 +214,8 @@ func ValidateEnvRootOwnerPath(workspacesRoot, envRoot string, owner EnvRootOwner
 	return nil
 }
 
-// RemoveRootDirRecord removes the stable index after GC has reclaimed a
-// terminal task root. It verifies that the record still points at envRoot so a
-// stale cleanup can never remove another task's identity.
+// RemoveRootDirRecord 在 GC 已回收一个终态任务根后，删除其稳定索引。它先
+// 验证记录仍指向 envRoot，确保一次过期的清理永远不会删掉别的任务的身份。
 func RemoveRootDirRecord(workspacesRoot, envRoot string, owner EnvRootOwner) error {
 	if workspacesRoot == "" || envRoot == "" || owner.WorkspaceID == "" || owner.TaskID == "" {
 		return nil
@@ -231,21 +243,19 @@ func RemoveRootDirRecord(workspacesRoot, envRoot string, owner EnvRootOwner) err
 	if err := os.RemoveAll(recordDir); err != nil {
 		return fmt.Errorf("execenv: remove task root record: %w", err)
 	}
-	// The index directory itself is deliberately left in place. Removing it
-	// when the last record goes would race installTaskRootRecord, which does
-	// MkdirAll(parent) and then MkdirTemp(parent, ...): a removal landing
-	// between those two calls hands the claim an ENOENT and fails the task,
-	// which is a poor trade for one empty directory.
+	// 索引目录本身刻意保留。若最后一条记录消失时删掉它，会与
+	// installTaskRootRecord 竞争——后者先 MkdirAll(parent) 再
+	// MkdirTemp(parent, ...)：若删除恰好落在两步之间，认领会吃到 ENOENT
+	// 而使任务失败，为了一个空目录做这种交换不划算。
 	return nil
 }
 
-// PruneTaskRootIndex removes abandoned unpublished directories and stable
-// records whose physical env root never materialized. Complete records are
-// removed only when eligible confirms the task is terminal or inaccessible;
-// a live/non-terminal task keeps its frozen path even when the root is absent.
+// PruneTaskRootIndex 清理两类残留：被弃置、从未发布的暂存目录，以及"物理
+// 环境根从未出现"的稳定记录。完整记录只有在 eligible 确认任务已终态或
+// 不可达时才删除；仍在运行/非终态的任务即使根目录缺失，也保留其冻结路径。
 //
-// A minimum grace period protects the tiny publication window even when the
-// operator configures the general orphan TTL as zero.
+// 最小宽限期保护了发布前那短短的时间窗，即使运维把通用孤儿 TTL 配成 0 也
+// 不会误删。
 func PruneTaskRootIndex(workspacesRoot string, retention time.Duration, now time.Time, eligible func(workspaceID, taskID string) bool) (removed int, err error) {
 	indexDir := filepath.Join(workspacesRoot, taskRootIndexDir)
 	entries, readErr := os.ReadDir(indexDir)
@@ -321,8 +331,8 @@ func PruneTaskRootIndex(workspacesRoot string, retention time.Duration, now time
 	return removed, errors.Join(errs...)
 }
 
-// findOwnedTaskRoot adopts roots created before the stable index existed. The
-// owner marker is authoritative; readable suffixes only narrow the scan.
+// findOwnedTaskRoot 收养在稳定索引存在之前创建的旧根目录：owner 标记才是
+// 权威依据，可读后缀只用来收窄扫描范围。
 func findOwnedTaskRoot(params RootDirParams) (string, error) {
 	workspaceEntries, err := os.ReadDir(params.WorkspacesRoot)
 	if errors.Is(err, os.ErrNotExist) {
@@ -361,6 +371,7 @@ func findOwnedTaskRoot(params RootDirParams) (string, error) {
 				return "", fmt.Errorf("execenv: read candidate env root owner for %s: %w", candidate, readErr)
 			}
 			if owner.TaskID == "" {
+				// 目录没有 owner 标记：只有确认它空无一物才可能属于某个旧任务。
 				hasWork, inspectErr := envRootHoldsWork(candidate)
 				if inspectErr != nil {
 					return "", fmt.Errorf("execenv: inspect candidate env root %s: %w", candidate, inspectErr)
@@ -383,10 +394,9 @@ func findOwnedTaskRoot(params RootDirParams) (string, error) {
 	return found, nil
 }
 
-// taskRootRecordAge dates a record by its file, which is written once inside a
-// staging directory and never rewritten, so its mtime is the install time. A
-// staging directory that died before the write has no file; fall back to the
-// directory itself so those are still reclaimable.
+// taskRootRecordAge 用记录里的文件来给记录计时：root.json 在暂存目录内只写
+// 一次、永不被重写，所以其 mtime 就是安装时间。若暂存目录在写入前就死了、
+// 没有文件，则回退到目录本身，让这类残留仍可被回收。
 func taskRootRecordAge(recordDir string, now time.Time) (time.Duration, bool) {
 	if info, err := os.Stat(filepath.Join(recordDir, taskRootRecordFile)); err == nil {
 		return now.Sub(info.ModTime()), true

@@ -1,3 +1,20 @@
+// 同一仓库上的 git 管理操作串行化 —— 这是一个"跨进程"问题。
+//
+// daemon 从不把任务准备跑在自己的进程里：PrepareIsolated 把准备工作放到
+// 一个短命的 helper 进程执行（见 isolation.go），因此同一 local_directory
+// 上并发的 N 个任务就是 N 个独立进程，全都在对"同一个仓库"发 git 命令。
+// worktree 模式刻意跳过了按路径加的任务互斥锁——让兄弟任务并发本就是该
+// 模式的意义——所以本层之上没有任何东西替它们串行化。
+//
+// 因此进程内 sync.Mutex 在生产环境中保护不了任何东西：每个 helper 持有的是
+// 自己那份锁，彼此之间永远不会争抢。`git stash create`（需要仓库的索引锁）
+// 过去频繁在这场竞争里落败，而 git 对这种失败只给一个裸的退出码 1、stderr
+// 完全为空，于是任务失败后毫无线索可查。
+//
+// 互斥锁仍保留给进程内调用方——Finalize 和 Discard 跑在 daemon 父进程里；
+// 而仓库"公共 git 目录"里的一把建议性文件锁，则把同样的互斥扩展到所有
+// 触碰该仓库的进程，包括两个资源指向它的两个链接 worktree 的情况。
+
 package execenv
 
 import (
@@ -10,82 +27,56 @@ import (
 	"time"
 )
 
-// Serialising git admin work on one repository is a CROSS-PROCESS problem.
-//
-// A daemon never prepares a task in its own process: PrepareIsolated runs the
-// preparation in a short-lived helper (see isolation.go), so N concurrent
-// tasks on one local_directory are N separate processes, all issuing git
-// commands against the SAME repository. Worktree mode deliberately skips the
-// per-path task mutex — sibling tasks running concurrently is the whole point
-// of the mode — so nothing above this layer serialises them either.
-//
-// An in-process sync.Mutex therefore protected nothing in production: each
-// helper held its own copy and none of them ever contended. `git stash create`
-// (which needs the repository's index lock) lost that race routinely, and git
-// reports the loss as a bare exit status 1 with no stderr at all, so the task
-// failed with nothing to diagnose it by.
-//
-// The mutex is kept for the in-process callers — Finalize and Discard run in
-// the daemon parent — and an advisory file lock in the repository's common git
-// dir extends the same exclusion across every process that touches the repo,
-// including two resources bound to two linked worktrees of it.
-
 const (
-	// gitRootLockFileName lives in the repository's COMMON git dir, which is
-	// what makes one lock cover one repository.
+	// gitRootLockFileName 放在仓库的"公共 git 目录"（common git dir）里——
+	// 正是这一点让一把锁能覆盖一整个仓库。
 	//
-	// The section it guards spans both scopes a repo has: `git stash create`
-	// contends for the per-working-tree index.lock, while `worktree add` /
-	// `prune` / `remove` and `branch -D` write refs and worktrees/ in the
-	// common dir, which every linked worktree shares. Keying on the
-	// per-worktree git dir would hand two resources pointing at two linked
-	// worktrees of one repo two different locks while they still raced on that
-	// shared state; the common dir is the coarser key that covers both.
+	// 它守护的临界区横跨仓库的两种作用域：`git stash create` 会争抢
+	// 单工作树自己的 index.lock，而 `worktree add` / `prune` / `remove` 与
+	// `branch -D` 会写公共目录里的 refs 与 worktrees/，这些是每个链接
+	// worktree 共享的状态。若按"每个 worktree 各自的 git 目录"加锁，那么
+	// 指向同一仓库两个链接 worktree 的两个资源会拿到两把不同的锁，却仍会在
+	// 那份共享状态上竞争；公共目录是更粗粒度、能同时覆盖两者的键。
 	//
-	// Git ignores files it does not know about under $GIT_DIR, and nothing
-	// here is visible from a working tree — `git status` never sees it, and
-	// `git ls-files --others` cannot list it.
+	// git 会忽略 $GIT_DIR 下它不认识的文件，而这里的东西也不会出现在工作树
+	// 里——`git status` 永远看不见它，`git ls-files --others` 也列不出它。
 	gitRootLockFileName = "multica-worktree.lock"
 
-	// gitRootLockPoll is the retry interval while waiting. flock has no
-	// portable timed variant, so the wait is a poll over the non-blocking
-	// primitive shared with the env-root claim (envlock_unix.go /
-	// envlock_windows.go).
+	// gitRootLockPoll 是等待时的重试间隔。flock 没有可移植的"带超时等待"
+	// 变体，所以这里的等待是对"非阻塞加锁原语"（与 env-root 占用的实现共用，
+	// 见 envlock_unix.go / envlock_windows.go）做轮询。
 	gitRootLockPoll = 25 * time.Millisecond
 )
 
-// errGitRootLockBusy reports that another process held the repository lock for
-// longer than gitRootLockWait. Distinct from a setup failure: busy means the
-// exclusion worked and we chose not to wait any longer, so the caller must
-// fail rather than proceed unprotected.
+// errGitRootLockBusy 表示另一进程持有仓库锁的时长超过了 gitRootLockWait。
+// 它与"准备工作失败"不同：busy 意味着互斥机制生效了、而我们选择不再等下去，
+// 因此调用方必须失败返回，而不是在无保护的情况下继续。
 var errGitRootLockBusy = errors.New("execenv: git repository lock is held by another task")
 
-// gitRootLockWait bounds the wait for a sibling's git section. That section is
-// a handful of local git commands plus the bounded untracked-file replay, so a
-// wait this long means the holder is wedged rather than busy: failing with a
-// message that says who to wait for beats occupying a daemon slot forever.
+// gitRootLockWait 限定了等待"兄弟任务"的 git 临界区的时长。那段临界区不过是
+// 几条本地 git 命令加上有界的未跟踪文件重放，所以等这么久仍拿不到锁，说明
+// 持有者已经卡死而非繁忙：用一条"该等谁"的报错信息让任务失败，好过永远占着
+// 一个 daemon 槽位。
 //
-// A var only so tests can shrink it; nothing at runtime writes it.
+// 声明为 var 只是为了测试时能改小；运行期没有任何地方写它。
 var gitRootLockWait = 3 * time.Minute
 
-// gitRootLocks serialises git admin operations per repository within one
-// process. Concurrent `git worktree add` / `remove` / `prune` on one repo race
-// on the same lockfiles (worktrees/, packed-refs.lock, config.lock), and
-// unlike a fetch these are fast, so a plain mutex costs nothing. Keyed by the
-// repo root so tasks on different repos never wait on each other.
+// gitRootLocks 在单进程内按仓库串行化 git 管理操作。同一仓库上的并发
+// `git worktree add` / `remove` / `prune` 会竞争同一批锁文件（worktrees/、
+// packed-refs.lock、config.lock）；与 fetch 不同，这些操作很快，一把普通
+// 互斥锁几乎零成本。键为仓库根路径，因此不同仓库上的任务互不等待。
 var gitRootLocks sync.Map // gitRoot -> *sync.Mutex
 
-// gitDirCache memoises the git dir per repo root. Resolving it costs a git
-// invocation and the answer cannot change for the life of a process: a repo
-// root's git dir is fixed once the repo exists.
+// gitDirCache 按仓库根路径记忆其 git 目录。解析它要花一次 git 调用，而且
+// 结果在进程生命周期内不会变：仓库一旦存在，其 git 目录就固定了。
 var gitDirCache sync.Map // gitRoot -> string
 
-// gitDirFor returns the absolute git dir backing gitRoot's working tree.
+// gitDirFor 返回支撑 gitRoot 工作树的那个 git 目录的绝对路径。
 //
-// Not filepath.Join(gitRoot, ".git"): in a linked worktree .git is a FILE
-// pointing at $COMMON/.git/worktrees/<name>, and that directory — not the
-// common one — is where this working tree's index and index.lock live. Asking
-// git keeps the lock in the same place as the contention in both layouts.
+// 不能写成 filepath.Join(gitRoot, ".git")：在链接 worktree 里 .git 是一个
+// 指向 $COMMON/.git/worktrees/<name> 的"文件"，而这个目录（不是公共目录）
+// 才装着该工作树的 index 和 index.lock。让 git 自己回答，能保证锁文件与
+// 真正的竞争发生在同一个位置，无论哪种布局都成立。
 func gitDirFor(gitRoot string) (string, error) {
 	if v, ok := gitDirCache.Load(gitRoot); ok {
 		return v.(string), nil
@@ -97,22 +88,20 @@ func gitDirFor(gitRoot string) (string, error) {
 	if dir == "" {
 		return "", fmt.Errorf("execenv: resolve git dir for %q: empty result", gitRoot)
 	}
-	// git reports paths with forward slashes on every platform, including
-	// Windows. Normalise before this becomes a filesystem path, so the lock
-	// file and every path derived from it are native.
+	// git 在所有平台（含 Windows）上报的都是正斜杠路径。在它变成文件系统
+	// 路径前先规范化，保证锁文件及其派生出的路径都是平台原生的。
 	dir = filepath.Clean(filepath.FromSlash(dir))
 	gitDirCache.Store(gitRoot, dir)
 	return dir, nil
 }
 
-// gitCommonDirCache memoises the common git dir per repo root, for the same
-// reason gitDirCache does: one git invocation, an answer that cannot change.
+// gitCommonDirCache 按仓库根路径记忆其公共 git 目录，理由与 gitDirCache 相同：
+// 一次 git 调用，得到一个不会变化的结果。
 var gitCommonDirCache sync.Map // gitRoot -> string
 
-// gitCommonDirFor returns the git dir shared by every working tree of the
-// repository behind gitRoot. For a main worktree that is its own git dir; for
-// a linked one it is the main repo's, where the refs and worktrees/ admin
-// state they both write actually live.
+// gitCommonDirFor 返回 gitRoot 背后那个仓库被"每个工作树共享"的 git 目录。
+// 对主工作树而言就是它自己的 git 目录；对链接工作树则是主仓库的那个——
+// 两者都要写的 refs 和 worktrees/ 管理状态才真正存在那里。
 func gitCommonDirFor(gitRoot string) (string, error) {
 	if v, ok := gitCommonDirCache.Load(gitRoot); ok {
 		return v.(string), nil
@@ -125,10 +114,9 @@ func gitCommonDirFor(gitRoot string) (string, error) {
 		return "", fmt.Errorf("execenv: resolve common git dir for %q: empty result", gitRoot)
 	}
 	dir = filepath.FromSlash(dir)
-	// git answers this one relative to the cwd it ran in when the working tree
-	// IS the main one (plain ".git"), and absolute from a linked worktree.
-	// --path-format=absolute would settle it but only exists since git 2.31,
-	// and resolving it here costs nothing.
+	// 当工作树就是主工作树时，git 会返回相对于运行 cwd 的相对路径（裸的
+	// ".git"）；从链接 worktree 回答时则是绝对路径。--path-format=absolute
+	// 本可一劳永逸，但它要 git 2.31 才有；而且在这里手动拼一下几乎零成本。
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(gitRoot, dir)
 	}
@@ -137,7 +125,7 @@ func gitCommonDirFor(gitRoot string) (string, error) {
 	return dir, nil
 }
 
-// gitRootLockPath is where the advisory lock for gitRoot's repository lives.
+// gitRootLockPath 返回 gitRoot 仓库的建议锁文件所在路径。
 func gitRootLockPath(gitRoot string) (string, error) {
 	commonDir, err := gitCommonDirFor(gitRoot)
 	if err != nil {
@@ -146,8 +134,8 @@ func gitRootLockPath(gitRoot string) (string, error) {
 	return filepath.Join(commonDir, gitRootLockFileName), nil
 }
 
-// acquireGitRootFileLock takes the cross-process lock for gitRoot, waiting up
-// to gitRootLockWait for a current holder to finish.
+// acquireGitRootFileLock 取得 gitRoot 的跨进程锁，至多等 gitRootLockWait
+// 让当前持有者用完释放。
 func acquireGitRootFileLock(gitRoot string, logger *slog.Logger) (*os.File, error) {
 	path, err := gitRootLockPath(gitRoot)
 	if err != nil {
@@ -178,13 +166,11 @@ func acquireGitRootFileLock(gitRoot string, logger *slog.Logger) (*os.File, erro
 		}
 		if time.Now().After(deadline) {
 			f.Close()
-			// Deliberately NOT "delete the lock file if nothing is running".
-			// The lock binds to an open file description, not to a path:
-			// unlinking it leaves the holder locking the old inode while the
-			// next task creates and locks a NEW file at the same name, and
-			// both then believe they hold it — the exact overlap this lock
-			// exists to prevent. The kernel already releases it when the
-			// holding process exits, so an idle lock file is never stale.
+			// 故意不写"没人在跑就删掉锁文件"。这把锁绑定在"打开的
+			// 文件描述"上，而不是路径上：若删掉它，持有者仍锁着旧 inode，
+			// 而下个任务会在同名路径上创建并锁定一个"新"文件，于是两者都
+			// 以为自己持锁——这正是本锁要杜绝的重叠。内核会在持有进程退出时
+			// 自动释放它，所以闲置的锁文件永远不会是"陈旧"的。
 			return nil, fmt.Errorf("%w: %q was still locked after %s by another Multica task (%s) — "+
 				"wait for that task to finish or stop it, then retry; the lock is released "+
 				"automatically when the holding process exits, so the file itself is never stale "+
@@ -195,26 +181,24 @@ func acquireGitRootFileLock(gitRoot string, logger *slog.Logger) (*os.File, erro
 	}
 }
 
-// lockGitRoot takes exclusive ownership of gitRoot's git admin state for this
-// task, across processes, and returns the release func.
+// lockGitRoot 为当前任务取得 gitRoot 的 git 管理状态在"跨进程"范围内的独占
+// 所有权，并返回释放函数。
 //
-// Setup failures are NOT fatal. A repo whose git dir cannot hold a lock file
-// (read-only mount, an exotic filesystem) still gets the in-process mutex,
-// which is exactly the protection this code had before — a task that refuses
-// to start is worse than one that races on a millisecond window it can also
-// retry out of. A BUSY lock is different: the exclusion worked, we waited, and
-// proceeding anyway would defeat it, so that one is returned to the caller.
+// "准备失败"并不致命。一个 git 目录放不下锁文件的仓库（只读挂载、某种怪异的
+// 文件系统）至少还能拿到进程内互斥锁——这正是这段代码以前就有的保护：一个
+// 拒绝启动的任务，比一个在毫秒级窗口里竞争、且还能靠重试绕开它的任务更糟。
+// 而"锁正忙"则不同：互斥生效了、我们也等了，再继续硬闯只会让互斥形同虚设，
+// 所以这种情况要原样抛回给调用方。
 func lockGitRoot(gitRoot string, logger *slog.Logger) (func(), error) {
-	// The file lock comes FIRST, before the mutex. Waiting on it while holding
-	// the mutex would serialise the waits themselves: three queued goroutines
-	// would each start their own gitRootLockWait only after the one ahead gave
-	// up, so the last of them could block for three times the bound it was
-	// promised. Waiting on the file lock directly lets them all wait at once,
-	// each bounded by gitRootLockWait.
+	// 文件锁必须"先于"互斥锁取得。若反过来——拿着互斥锁去等文件锁——
+	// 等待本身会被串行化：三个排队中的 goroutine 会各自等前面那个放弃之后
+	// 才开始自己那轮 gitRootLockWait，于是最后那个可能被阻塞到承诺上限的
+	// 三倍时长。直接去等文件锁，则它们能同时等待，各自都受 gitRootLockWait
+	// 约束。
 	//
-	// Both platforms' primitives already exclude within a process — flock
-	// treats separate open file descriptions independently, and so does
-	// LockFileEx with separate handles — so this ordering loses nothing.
+	// 两个平台的原语本来就在进程内互斥——flock 把各自打开的独立文件描述
+	// 分开对待，LockFileEx 对独立句柄也一样——所以这个先后顺序不会丢失任何
+	// 保护。
 	f, err := acquireGitRootFileLock(gitRoot, logger)
 	if err != nil {
 		if errors.Is(err, errGitRootLockBusy) {
@@ -227,9 +211,9 @@ func lockGitRoot(gitRoot string, logger *slog.Logger) (func(), error) {
 		return lockGitRootInProcess(gitRoot), nil
 	}
 
-	// The mutex is redundant while the file lock holds and is what protects
-	// this repo if the file lock ever falls back mid-flight. Uncontended in
-	// the normal case, since no sibling goroutine can be past the file lock.
+	// 文件锁在手时这把互斥锁是冗余的，但它是文件锁中途退化时保护本仓库的
+	// 兜底。正常路径下不会争抢——既然能越过文件锁，就不可能有别的兄弟
+	// goroutine 也越过它。
 	unlockLocal := lockGitRootInProcess(gitRoot)
 	return func() {
 		unlockLocal()
@@ -240,7 +224,7 @@ func lockGitRoot(gitRoot string, logger *slog.Logger) (func(), error) {
 	}, nil
 }
 
-// lockGitRootInProcess takes the per-repo mutex and returns its release func.
+// lockGitRootInProcess 取得按仓库划分的进程内互斥锁并返回释放函数。
 func lockGitRootInProcess(gitRoot string) func() {
 	v, _ := gitRootLocks.LoadOrStore(gitRoot, &sync.Mutex{})
 	mu := v.(*sync.Mutex)

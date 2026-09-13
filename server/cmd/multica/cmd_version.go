@@ -1,3 +1,5 @@
+// 文件职责：实现 `multica version` 命令——打印版本/commit/构建日期/Go 与平台信息，
+// 支持 --output text|json。
 package main
 
 import (
@@ -13,12 +15,15 @@ func init() {
 	versionCmd.Flags().String("output", "text", "Output format: text or json")
 }
 
+// versionCmd 是 `multica version` 命令。
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	RunE:  runVersion,
 }
 
+// runVersion 执行 `version`：--output json 输出结构化信息（便于脚本判断），
+// 默认打人类可读文本。
 func runVersion(cmd *cobra.Command, _ []string) error {
 	output, _ := cmd.Flags().GetString("output")
 

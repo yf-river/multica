@@ -1,5 +1,20 @@
 "use client";
 
+// 本文件：LabelPicker —— 问题标签多选选择器。
+// 触发器上以行内 chips 展示当前已选标签，弹出层可切换工作区内任意标签。
+//
+// 两种模式：
+//   - 挂载模式（传 `issueId`）：attach/detach 走乐观请求，UI 先于服务端确认更新。
+//   - 草稿模式（省略 `issueId`）：选择集由调用方经 `selectedIds` /
+//     `onSelectedIdsChange` 持有，在调用方自行挂载前不落库。创建问题弹窗用。
+//
+// 搜索无匹配时支持行内创建：输入新名字按 Enter（或点"创建 X"行）即用哈希
+// 派生的颜色创建标签并一步选中。两种模式下创建的标签都是真实的工作区标签，
+// 只有"挂载"这一步不同。
+//
+// 底部"管理标签"项跳到工作区 Labels 设置页——问题/Agent/技能标签目录
+// 的唯一管理入口。
+
 import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Tag, Plus, Settings2 } from "lucide-react";
@@ -25,34 +40,29 @@ import { useT } from "../../../i18n";
 
 interface LabelPickerProps {
   /**
-   * The issue whose labels are edited. Omit for **draft mode** (e.g. the
-   * create-issue dialog, where the issue doesn't exist yet): pass
-   * `selectedIds` + `onSelectedIdsChange` instead and attach the labels to the
-   * issue once it's created.
+   * 要编辑标签的问题。**草稿模式**（创建问题弹窗这类问题还不存在时）请省略：
+   * 改传 `selectedIds` + `onSelectedIdsChange`，等问题创建后再把标签挂上去。
    */
   issueId?: string;
-  /** Draft-mode selection. Ignored when `issueId` is set. */
+  /** 草稿模式的选择集。设置了 `issueId` 时被忽略。 */
   selectedIds?: string[];
-  /** Draft-mode change handler. Ignored when `issueId` is set. */
+  /** 草稿模式的变更处理器。设置了 `issueId` 时被忽略。 */
   onSelectedIdsChange?: (ids: string[]) => void;
-  /** Optional controlled open state (for tests / cmd+k integration). */
+  /** 可选受控 open 状态（测试 / cmd+k 集成用）。 */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   align?: "start" | "center" | "end";
-  /** Open the picker on first mount. Used by progressive-disclosure
-   *  sidebars so a newly-added field immediately enters edit state. */
+  /** 首次挂载即打开选择器。渐进披露侧栏用，让新加字段立刻进入编辑态。 */
   defaultOpen?: boolean;
-  /** Custom trigger element (e.g. a `PillButton` for the create toolbar).
-   *  When set, the attached-label chips render inside it without their own
-   *  × affordance — a remove <button> can't nest inside a trigger <button>,
-   *  so removal happens by toggling the label off in the open picker. */
+  /** 自定义触发器元素（如创建工具条的 `PillButton`）。设置后已选标签 chips
+   *  在它内部渲染、且不带各自的 × 按钮——移除 <button> 不能嵌在触发器
+   *  <button> 内，所以移除通过在打开的弹层里关掉该标签完成。 */
   triggerRender?: React.ReactElement;
 }
 
 /**
- * Palette of colors used when creating a label inline from the picker.
- * We cycle by hash(name) so the same name always gets the same color,
- * and a color can still be changed afterwards from the Manage dialog.
+ * 从选择器内联创建标签时使用的调色板。按 hash(name) 轮转，
+ * 同名标签永远得到同色；之后仍可从"管理"弹窗改颜色。
  */
 const INLINE_COLORS = [
   "#ef4444", "#f97316", "#eab308", "#22c55e", "#14b8a6",
@@ -68,24 +78,20 @@ function pickInlineColor(name: string): string {
 }
 
 /**
- * Multi-select label picker. Shows currently-selected labels as inline chips
- * on the trigger and lets the user toggle any label in the workspace.
+ * 标签多选选择器。触发器用行内 chips 展示已选标签，可在弹出层切换任意标签。
  *
- * Two modes:
- * - **Attached mode** (`issueId` set): attach/detach hit the server
- *   optimistically — the UI updates before the server confirms.
- * - **Draft mode** (`issueId` omitted): selection is held by the caller via
- *   `selectedIds` / `onSelectedIdsChange`; nothing is persisted until the
- *   caller attaches the labels itself. Used by the create-issue dialog.
+ * 两种模式：
+ * - **挂载模式**（传 `issueId`）：attach/detach 走乐观请求——UI 在服务端
+ *   确认前就更新。
+ * - **草稿模式**（省略 `issueId`）：选择集由调用方经 `selectedIds` /
+ *   `onSelectedIdsChange` 持有，在调用方自行挂载前不持久化。创建问题弹窗用。
  *
- * When the search term has no matches, offers inline creation: typing a
- * new name and pressing Enter (or clicking the "Create X" row) creates the
- * label with a hash-derived color and selects it in one motion. The created
- * label is a real workspace label in both modes; only the attach step differs.
+ * 搜索词无匹配时提供行内创建：输入新名字按 Enter（或点"创建 X"行）会用
+ * 哈希派生的颜色创建标签并一步选中。两种模式下创建的标签都是真实的工作区
+ * 标签，只是挂载这一步不同。
  *
- * A "Manage labels" item at the bottom opens the workspace Labels settings
- * page, which is the single management surface for issue, agent, and skill
- * label catalogs.
+ * 底部"管理标签"项打开工作区 Labels 设置页——问题/Agent/技能标签目录的
+ * 唯一管理界面。
  */
 export function LabelPicker({
   issueId,
@@ -105,32 +111,31 @@ export function LabelPicker({
   const navigation = useNavigation();
   const paths = useWorkspacePaths();
 
-  // Synchronous lock to prevent double-submit on rapid Enter / click. React
-  // state (create.isPending, filter) isn't visible until the next render, so
-  // two events within the same tick can both pass the canCreate guard and
-  // fire two create.mutate calls — the second hits 409 and shows a red toast
-  // for an error the user didn't cause. A ref closes the window cleanly.
+  // 同步锁：防止快速连续 Enter / 点击导致的重复提交。React state
+  // （create.isPending、filter）要到下一次渲染才可见，所以同一 tick 内
+  // 的两个事件都可能通过 canCreate 守卫、各发一次 create.mutate——
+  // 第二个会撞 409 并弹出一个用户没造成错误却出现的红色 toast。
+  // 用 ref 干净地关上这段窗口期。
   const creatingRef = useRef(false);
 
-  // Draft mode when no issue exists yet: hold selection in the caller instead
-  // of hitting the attach/detach endpoints.
+  // 问题还不存在时即草稿模式：选择集放在调用方手里，而不是打 attach/detach
+  // 接口。
   const isDraft = issueId === undefined;
 
   const wsId = useWorkspaceId();
   const { data: allLabels = [] } = useQuery(labelListOptions(wsId));
-  // `issueLabelsOptions` disables itself for an empty id, so the draft path
-  // never fires the by-issue read.
+  // `issueLabelsOptions` 对空 id 会自我禁用，所以草稿路径永远不会发出
+  // 按问题读标签的请求。
   const { data: attachedLabels = [] } = useQuery(issueLabelsOptions(wsId, issueId ?? ""));
 
-  // Hooks must run unconditionally; in draft mode the empty id is never used
-  // because toggle/create route through onSelectedIdsChange instead.
+  // Hooks 必须无条件调用；草稿模式下空 id 永不会被用到，因为 toggle/create
+  // 都走 onSelectedIdsChange。
   const attach = useAttachLabel(issueId ?? "");
   const detach = useDetachLabel(issueId ?? "");
   const create = useCreateLabel();
 
-  // The selected set drives both the trigger chips and the list checkmarks.
-  // Draft mode resolves ids against the workspace list (dropping any id whose
-  // label was deleted meanwhile) and preserves the user's selection order.
+  // 已选集同时驱动触发器 chips 与列表勾选。草稿模式按工作区列表解析 id
+  // （丢弃期间已被删除的标签）并保留用户的选择顺序。
   const selectedLabels = useMemo<Label[]>(() => {
     if (!isDraft) return attachedLabels;
     return selectedIds
@@ -203,9 +208,8 @@ export function LabelPicker({
 
   const hasLabels = selectedLabels.length > 0;
 
-  // In a custom trigger (PillButton) the trigger is itself a button, so the
-  // chips can't carry their own remove button. Otherwise fall back to the
-  // chip-wrap div used by the issue-detail sidebar.
+  // 在自定义触发器（PillButton）里，触发器本身是按钮，chips 不能再自带
+  // 移除按钮。否则退回到 issue-detail 侧栏用的 chip 包裹 div。
   const resolvedTriggerRender =
     triggerRender ??
     (hasLabels ? (
@@ -245,8 +249,8 @@ export function LabelPicker({
           )
         }
         footer={
-          // Rendered outside the arrow-key listbox so keyboard nav doesn't
-          // treat "Manage labels…" as another label option.
+          // 渲染在方向键可导航的 listbox 之外，键盘导航不会把
+          // "管理标签…"当成又一个标签选项。
           <button
             type="button"
             onClick={openManage}

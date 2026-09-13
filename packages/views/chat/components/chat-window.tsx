@@ -1,3 +1,6 @@
+// 悬浮聊天窗口：右下角可拖拽/缩放/展开/最小化的完整聊天面板。与聊天标签页共用
+// 同一套会话逻辑（发送/停止/取消、草稿恢复、消息分页等），并自带会话历史下拉、
+// agent 切换下拉、软键盘避让等窗口特有的交互。
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -95,7 +98,11 @@ const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
 const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 
-
+/**
+ * 悬浮聊天窗口：挂在 dashboard 布局里的可调整大小的浮动面板。关闭时保持挂载
+ * （只是隐藏），所以要在查询与草稿恢复等所有副作用上以 `isOpen` + 应用前台把关。
+ * 结构与聊天标签页的对话面板一致（复用同一批子组件）。
+ */
 export function ChatWindow() {
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
@@ -105,10 +112,10 @@ export function ChatWindow() {
     ...chatQuickActionsPendingOptions(activeSessionId ?? ""),
     enabled: isOpen && !!activeSessionId,
   });
-  // Drop a stuck pending marker (dead daemon / failed supplement) so the pill
-  // spinner stops and a later refresh starts clean (MUL-5149).
+  // 丢弃卡住的"待处理"标记（daemon 挂了 / 补充生成失败），让 pill 的转圈停下、
+  // 之后刷新从干净状态开始（MUL-5149）。
   useQuickActionsPendingTimeout(activeSessionId ?? null, quickActionsPending);
-  // Toast when an accepted refresh later fails in the daemon (async half).
+  // 一次被接受的刷新后来在 daemon 里失败时弹 toast（异步的那一半）。
   useQuickActionsFailureToast(activeSessionId ?? null);
   const regenerateQuickActions = useRegenerateChatQuickActions();
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
@@ -126,8 +133,7 @@ export function ChatWindow() {
     ...memberListOptions(wsId),
     enabled: isOpen,
   });
-  // Single sessions cache — eliminates the separate active/all queries
-  // that used to drift during the WS-invalidate window.
+  // 单一会话缓存——去掉了过去在 WS 失效窗口里会互相漂移的"活动/全部"两套查询。
   const { data: sessions = [], isSuccess: sessionsLoaded } = useQuery({
     ...chatSessionsOptions(wsId),
     enabled: isOpen,
@@ -146,22 +152,18 @@ export function ChatWindow() {
     ...chatMessagesPageOptions(activeSessionId ?? ""),
     enabled: isOpen && !!activeSessionId,
   });
-  // When no active session, always show empty — don't use stale cache.
-  // Page 0 contains the latest chronological window; later cursor pages are
-  // older chronological windows. Reverse pages so older fetched pages render
-  // above the initial latest page. The Virtuoso firstItemIndex is client-owned:
-  // it starts from a large stable base and only subtracts the count of loaded
-  // prepended rows, so concurrent server inserts cannot drift the scroll anchor.
+  // 没有活动会话时永远显示空——不用过期缓存。第 0 页是最新的时间窗，之后的游标
+  // 页是更早的时间窗。反转页面顺序，让后拉取的旧页渲染在最新页之上。Virtuoso 的
+  // firstItemIndex 是客户端持有的：从一个大而稳定的基数开始，只减去已加载的
+  // 前插行数，这样并发的服务端插入不会漂移滚动锚点。
   const messagePages = activeSessionId ? rawMessagePages?.pages ?? [] : [];
   const allMessages = [...messagePages].reverse().flatMap((page) => page.messages);
-  // Skeleton only shows for an un-cached session fetch. Cached switches
-  // return data synchronously — no flash. `enabled: false` (new chat)
-  // keeps isLoading false so the conversation starters aren't hidden.
-  // Server-authoritative pending task. Survives refresh / reopen / session
-  // switch because it's keyed on sessionId in the Query cache; WS events
-  // (chat:message / chat:done / task:*) keep it invalidated in real time.
+  // 骨架屏只对"未缓存的会话拉取"显示。缓存内的切换会同步返回数据——不闪屏。
+  // `enabled: false`（新聊天）保持 isLoading 为 false，开场建议不被藏起来。
+  // 服务端权威的 pending 任务。按 sessionId 键进 Query 缓存，所以刷新 / 重开 /
+  // 切会话都存活；WS 事件（chat:message / chat:done / task:*）实时使它失效。
   //
-  // This is the SOLE source for pendingTaskId — no mirror in the store.
+  // 它是 pendingTaskId 的唯一来源——store 里没有镜像。
   const { data: pendingTask, isLoading: pendingTaskLoading } = useQuery({
     ...pendingChatTaskOptions(activeSessionId ?? ""),
     enabled: isOpen && !!activeSessionId,
@@ -178,17 +180,14 @@ export function ChatWindow() {
     : 0;
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
-  // Durable deferred-cancellation draft restores (#5219). Same hook as the chat
-  // page controller — the skip/apply/consume/reconcile state machine must not
-  // diverge between the two composers.
+  // 持久化的"推迟取消"草稿恢复（#5219）。与聊天页控制器同一只 hook——
+  // 跳过/采纳/消费/对账的状态机不能在两个输入框之间漂移。
   //
-  // Gated on isOpen AND app foreground: this window stays MOUNTED when closed
-  // (it is only hidden, see isVisible below), and isOpen alone is also true for a
-  // backgrounded browser tab. Its ChatInput would otherwise adopt and consume a
-  // restore with nobody looking at it — stealing the prompt from the composer the
-  // user is actually waiting on, possibly on another device. Only a composer the
-  // user can actually see claims; a re-foregrounded window recovers on its next
-  // fetch. (appForeground also gates auto mark-read below.)
+  // 以 isOpen AND 应用前台 双重把关：这个窗口关闭时仍保持 MOUNTED（只是隐藏，
+  // 见下方 isVisible），而退到后台的浏览器标签页里 isOpen 也照样是 true。否则它的
+  // ChatInput 会在没人看着的情况下采纳并消费一条恢复——从用户真正在等的那台设备
+  // 的输入框里把提示词偷走。只有用户看得见的输入框才认领；重新回到前台的窗口在
+  // 下一次拉取时恢复。（appForeground 同样把关下方的自动已读。）
   const appForeground = useAppForeground();
   const { restoreDraftRequest, enqueueLocalRestore, handleRestoreDraftApplied } =
     useChatDraftRestore(activeSessionId, isOpen && appForeground);
@@ -199,8 +198,8 @@ export function ChatWindow() {
     handleClearQueuedTasks,
     handleSendQueuedTaskNow,
   } = useChatTaskActions(activeSessionId, enqueueLocalRestore);
-  // Nonce handed to ChatInput to pull focus into the compose box: when a new
-  // chat starts (⊕ or switching agent), and whenever the window itself opens.
+  // 交给 ChatInput 的聚焦 nonce：新建聊天时（⊕ 或切换 agent）、以及窗口每次
+  // 打开时把键盘焦点拉进输入框。
   const { focusRequest, requestInputFocus } = useChatInputFocus(isOpen);
   const [conversationStarterRequest, setConversationStarterRequest] = useState<{
     id: number;
@@ -222,10 +221,9 @@ export function ChatWindow() {
     [],
   );
 
-  // Legacy archived sessions (the old soft-archive feature was removed but
-  // pre-existing rows with status='archived' may still exist) are excluded
-  // from the history dropdown. If one is still the active session, ChatInput
-  // is disabled and the server still rejects POST /messages for it.
+  // 旧的软归档特性已移除，但历史遗留的 status='archived' 行可能还在——把它们
+  // 排除出历史下拉。如果其中一条仍是活动会话，ChatInput 会被禁用，服务端也会
+  // 拒绝它的 POST /messages。
   const currentSession = activeSessionId
     ? sessions.find((s) => s.id === activeSessionId)
     : null;
@@ -255,19 +253,17 @@ export function ChatWindow() {
     (a) => !a.archived_at && canAssignAgent(a, user?.id, memberRole),
   );
 
-  // The agent bound to the OPEN session, resolved from the full agent list
-  // (archived included). An archived agent is filtered out of availableAgents,
-  // so resolving only from that list would make an archived-agent session
-  // render some *other* available agent — wrong avatar/name and a send that
-  // targets the wrong agent. Binding to the session's real agent keeps it
-  // honest; the archived state then makes the conversation read-only.
+  // 当前打开会话绑定的 agent，从完整 agent 列表解析（含已归档）。已归档的 agent
+  // 会被过滤出 availableAgents，如果只从那个列表解析，已归档会话会渲染成某个
+  // *别的*可用 agent——头像/名字全错、发送还对准错 agent。绑定会话真正的 agent
+  // 才诚实；归档状态随后把对话变成只读。
   const sessionAgent = currentSession
     ? agents.find((a) => a.id === currentSession.agent_id) ?? null
     : null;
   const isAgentArchived = !!sessionAgent?.archived_at;
 
-  // Resolve selected agent: open session's agent → stored preference → first
-  // available. New chats have no session, so they fall through to the picker.
+  // 解析选中 agent：会话的 agent → 存储的偏好 → 第一个可用。新聊天没有会话，
+  // 所以落到选择器。
   const activeAgent =
     sessionAgent ??
     availableAgents.find((a) => a.id === selectedAgentId) ??
@@ -276,17 +272,14 @@ export function ChatWindow() {
   const activeAgentRuntimeBound =
     !!activeAgent && isAgentRuntimeBound(activeAgent);
 
-  // A session outlives the permission that created it: the agent can be flipped
-  // to personal, change owner, or drop this member from its allow-list, and the
-  // server then refuses every send with `invocation_not_allowed` while still
-  // serving the transcript (MUL-4525). Judge the SESSION's agent, not just the
-  // picker list, so the composer goes read-only up front rather than after the
-  // user types (MUL-6380). Mirrors use-chat-controller.ts.
+  // 会话可以活过创造它的权限：agent 可能被改成 personal、换所有者、或把这个成员
+  // 移出允许列表，服务端随后拒绝每次发送（invocation_not_allowed）、但仍正常提供
+  // transcript（MUL-4525）。判断基于*会话的* agent，而不只是选择器列表，让输入框
+  // 提前只读、而不是等用户打完字（MUL-6380）。镜像 use-chat-controller.ts。
   const isAgentAccessRevoked =
     !!activeAgent && !canAssignAgent(activeAgent, user?.id, memberRole);
 
-  // "Customize" under the starter buttons — the only place the empty state
-  // admits that those buttons are configuration at all.
+  // 开场建议按钮下的"自定义"——空状态里唯一承认这些按钮是配置的地方。
   const customizeConversationStartersHref = useCustomizeConversationStartersHref(
     activeAgent,
     wsId,
@@ -298,24 +291,21 @@ export function ChatWindow() {
     isOpen,
   );
 
-  // Three-state availability — "loading" stays neutral (no banner, no
-  // disable) so the input doesn't flash a fake "no agent" state in the
-  // few hundred ms before the agent list query resolves. Only `"none"`
-  // (server confirmed: zero usable agents) drives the disabled UI.
+  // 三态在线状态——"loading"保持中性（不显示横幅、不禁用），避免输入框在 agent
+  // 列表查询落定的几百毫秒里闪一个假的"无 agent"。只有 `"none"`（服务端确认：
+  // 零个可用 agent）才驱动禁用 UI。
   const agentAvailability = useWorkspaceAgentAvailability(isOpen);
   const noAgent = agentAvailability === "none";
 
-  // Presence drives both the avatar status dot (via ActorAvatar) and the
-  // OfflineBanner / TaskStatusPill availability copy. `useAgentPresenceDetail`
-  // returns "loading" while queries are still resolving — pass `undefined`
-  // downstream so banners and pill copy stay silent during loading rather
-  // than flash speculative offline text.
+  // 在线状态同时驱动头像状态点（经 ActorAvatar）与 OfflineBanner / TaskStatusPill
+  // 的文案。`useAgentPresenceDetail` 在查询解析期间返回 "loading"——往下传
+  // `undefined`，让横幅和 pill 文案在加载期间保持沉默，而不是闪出猜测性的离线文案。
   const presenceDetail = useAgentPresenceDetail(wsId, activeAgent?.id, isOpen);
   const availability =
     presenceDetail === "loading" ? undefined : presenceDetail.availability;
 
-  // Mount / unmount logging. ChatWindow lives in DashboardLayout, so this
-  // fires on layout mount (login / workspace switch / fresh page load).
+  // 挂载 / 卸载日志。ChatWindow 住在 DashboardLayout 里，所以在布局挂载时触发
+  // （登录 / 切换工作区 / 全新页面加载）。
   useEffect(() => {
     uiLogger.info("ChatWindow mount", {
       isOpen,
@@ -330,20 +320,17 @@ export function ChatWindow() {
         pendingTaskId,
       });
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在挂载时跑一次
   }, []);
 
-  // Self-heal a dangling `activeSessionId` (persisted / restored from storage)
-  // that points at a session which was deleted or lost access: once the
-  // sessions list has loaded and doesn't contain it — with no in-flight
-  // pending task exempting a just-created session — clear it so the
-  // floating window shows the new-chat state instead of an editable empty chat
-  // whose send would POST into a nonexistent session. Same fix the shared
-  // controller applies for the tab (kept in sync via `hasInFlightPendingTask`).
-  // The earlier "no self-heal" note was about a naive version keyed on stale
-  // `allSessions`; the in-flight-pending-task signal here exempts the
-  // freshly-created session (handleSend seeds its pending task from the send
-  // response BEFORE setActiveSession), so it is never mistaken for stale.
+  // 自愈悬空的 `activeSessionId`（从存储持久化/恢复而来、指向一个被删除或已无
+  // 权限的会话）：一旦会话列表加载完、里面没有它——且没有在途的 pending 任务
+  // 豁免一个刚创建的会话——就清掉它，让悬浮窗口显示新聊天状态，而不是渲染一个
+  // 发送会 POST 进不存在会话的可编辑空聊天。聊天标签页由共享控制器做同样的修复
+  // （用 `hasInFlightPendingTask` 保持同步）。早先"No self-heal"的注释讲的是
+  // 一个基于过期 `allSessions` 的朴素版本；这里的在途 pending 信号豁免新创建的
+  // 会话（handleSend 在 setActiveSession 之前就把它从发送响应种进 pending 任务），
+  // 所以它永远不会被误当成过期。
   useEffect(() => {
     if (!activeSessionId || !sessionsLoaded) return;
     if (sessions.some((s) => s.id === activeSessionId)) return;
@@ -352,17 +339,15 @@ export function ChatWindow() {
     setActiveSession(null);
   }, [activeSessionId, sessionsLoaded, sessions, qc, setActiveSession]);
 
-  // WS events are handled globally in useRealtimeSync — the query cache
-  // stays current even when this window is closed. See packages/core/realtime/.
+  // WS 事件在 useRealtimeSync 里全局处理——即使窗口关闭，查询缓存也保持最新。
+  // 见 packages/core/realtime/。
 
-  // Auto mark-as-read whenever the user is looking at a session with unread
-  // state: window open + app in the foreground + a session active + has_unread
-  // → PATCH. has_unread comes from the list query; WS handlers invalidate it on
-  // chat:done so a reply arriving while the user watches triggers this effect
-  // again and is instantly cleared. `appForeground` gates the "is looking"
-  // assumption: a reply landing while the window is open but the app is
-  // backgrounded must stay unread so the sidebar badges it (MUL-4485), then
-  // clears when the user refocuses and this effect re-runs.
+  // 每当用户正盯着一个有未读的会话就自动标记已读：窗口开着 + 应用在前台 +
+  // 有活动会话 + has_unread → PATCH。has_unread 来自列表查询；WS 处理器在
+  // chat:done 时使它失效，所以用户盯着时落地的回复会再次触发这个 effect 并立刻
+  // 被清掉。`appForeground` 把关"正在看"的假设：回复落在窗口开着但应用退到
+  // 后台时，必须保持未读让侧栏能打徽标（MUL-4485），用户重新聚焦、effect 重跑
+  // 时再清掉。
   const currentHasUnread =
     sessions.find((s) => s.id === activeSessionId)?.has_unread ?? false;
   useEffect(() => {
@@ -370,40 +355,35 @@ export function ChatWindow() {
     if (!currentHasUnread) return;
     uiLogger.info("auto markRead", { sessionId: activeSessionId });
     markRead.mutate(activeSessionId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- markRead ref stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- markRead 引用稳定，不入依赖
   }, [isOpen, appForeground, activeSessionId, currentHasUnread]);
 
-  // Lazy-creates a chat_session the first time the user needs an id —
-  // either to send a message or to attach an uploaded file. Pulled out of
-  // handleSend so the upload path (which fires before any text exists) can
-  // get a session_id to hang the attachment on. Returns null when no agent
-  // is available; callers must early-return in that case.
+  // 用户第一次需要一个会话 id 时懒创建 chat_session——无论是为了发消息还是给
+  // 上传的文件挂靠。从 handleSend 里拆出来，让上传路径（在任何文本出现之前就会
+  // 触发）也能拿到一个 session_id 挂附件。没有可用 agent 时返回 null；调用方
+  // 这种情况必须提前返回。
   //
-  // Concurrent callers (e.g. user drops a file → handleUploadFile, then
-  // quickly clicks send → handleSend) would each observe activeSessionId
-  // === null and fire a separate createSession.mutateAsync, creating two
-  // sessions and orphaning the attachment on the wrong one. The in-flight
-  // promise ref dedupes those races: the first caller starts the create,
-  // every subsequent caller awaits the same promise until it settles.
+  // 并发调用方（例如用户先拖入文件 → handleUploadFile，随即快速点发送 →
+  // handleSend）各自都会看到 activeSessionId === null 并各自发一次
+  // createSession.mutateAsync，从而建出两个会话、把附件挂到错的会话上。
+  // 在途 promise ref 给这些竞态去重：第一个调用方开始创建，之后的每个调用方
+  // 都等同一个 promise 直到它落定。
   //
-  // titleSeed is the first 50 chars of the user's message when called from
-  // send; the upload path passes "" and we leave the title empty so the
-  // session-dropdown's existing localized `window.untitled` fallback kicks
-  // in. A follow-up task may back-fill the real title from the first user
-  // message — until then this keeps the session list scannable across locales.
+  // titleSeed 从 send 调用进来时是用户消息的前 50 个字符；上传路径传 ""，
+  // 我们让标题保持空，让会话下拉里已有的本地化 `window.untitled` 兜底生效。
+  // 后续任务可能用第一条用户消息回填真实标题——在那之前，这能让会话列表
+  // 跨语言仍可扫读。
   //
-  // NOTE: ensureSession does NOT flip `activeSessionId` itself. Callers must
-  // seed `chatKeys.messages(sessionId)` in the Query cache BEFORE calling
-  // `setActiveSession(sessionId)`, otherwise the first useQuery subscription
-  // for the new key reports `isLoading: true` and renders ChatMessageSkeleton
-  // for one frame (the "new-chat first-message" white flash).
+  // 注意：ensureSession 自己不翻转 `activeSessionId`。调用方必须在调
+  // `setActiveSession(sessionId)` 之前，先把 `chatKeys.messages(sessionId)` 种进
+  // Query 缓存，否则新 key 的第一次 useQuery 订阅会报告 `isLoading: true`、
+  // 渲染一帧 ChatMessageSkeleton（"新建聊天首条消息"的白屏闪烁）。
   const sessionPromiseRef = useRef<Promise<string | null> | null>(null);
   const ensureSession = useCallback(
     async (titleSeed: string): Promise<string | null> => {
-      // Trust the current id only when it's real: in the loaded list, or a
-      // just-created one still awaiting the refetch (has an optimistic write).
-      // A dangling id (deleted / no access) must not be treated as an existing
-      // session — fall through and create a fresh one instead of POSTing 404.
+      // 只有真实存在的 id 才信：在已加载列表里，或是一个刚创建、还在等重拉取的
+      // （有乐观写入）。悬空 id（已删除 / 无权限）绝不能当作已有会话——落下去
+      // 新建一个，而不是往 404 里 POST。
       if (
         activeSessionId &&
         (!sessionsLoaded ||
@@ -441,10 +421,9 @@ export function ChatWindow() {
     ],
   );
 
-  // Upload transport moved into the coordinated-upload engine inside ChatInput
-  // (MUL-5181 L2); the host only says whether the affordance exists. Uploads
-  // remain workspace-scoped drafts — sending is still the point where a
-  // session is created (if needed) and attachment_ids bind to the message.
+  // 上传传输已并入 ChatInput 内部的协调式上传引擎（MUL-5181 L2）；宿主只声明
+  // 有没有这个入口。上传仍是工作区级的草稿——发送才是（如需要）创建会话、
+  // 让 attachment_ids 绑定到消息的时点。
 
   const handleSend = useCallback(
     async (
@@ -457,9 +436,8 @@ export function ChatWindow() {
         apiLogger.warn("sendChatMessage skipped: no active agent");
         return false;
       }
-      // Read-only conversation: the agent is retired and can no longer pick up
-      // work, so refuse to enqueue a task that would sit orphaned forever. The
-      // input is disabled in this state; this is the belt-and-braces guard.
+      // 只读会话：agent 已退役、无法再接活，拒绝入队一条会永远搁置的任务。
+      // 输入框在这个状态已禁用；这里是双保险。
       if (isAgentArchived) {
         apiLogger.warn("sendChatMessage skipped: agent is archived", {
           sessionId: activeSessionId,
@@ -467,9 +445,8 @@ export function ChatWindow() {
         });
         return false;
       }
-      // Invoke permission was revoked while this session was open — the server
-      // would refuse before persisting anything. Keep the draft, skip the
-      // roundtrip. The input is disabled here; belt-and-braces guard.
+      // 会话开着时 invoke 权限被撤销了——服务端会在持久化任何东西之前拒绝。
+      // 保住草稿、跳过这次往返。输入框在这里已禁用；双保险守卫。
       if (isAgentAccessRevoked) {
         apiLogger.warn("sendChatMessage skipped: invoke permission revoked", {
           sessionId: activeSessionId,
@@ -520,12 +497,10 @@ export function ChatWindow() {
         return false;
       }
 
-      // Await-then-render: the composer keeps the user's text and attachments
-      // in place (editor locked, button spinning via `submitting`) until the
-      // server accepts the send. Nothing is written into the caches, and the
-      // draft is never cleared, before the roundtrip settles — a slow send never
-      // reads as "posted but the box is still full", and a rejected one keeps
-      // the draft for retry (ChatInput never cleared it).
+      // 等待-再渲染：在服务端接受发送之前，输入框保持用户文本与附件不动
+      // （编辑器锁定、按钮通过 `submitting` 转圈）。往返落定前不往缓存写任何
+      // 东西、也绝不清草稿——慢发送不会读成"已发出但框还是满的"，
+      // 被拒的发送则保住草稿供重试（ChatInput 从未清它）。
       let result;
       try {
         result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
@@ -547,16 +522,13 @@ export function ChatWindow() {
         taskId: result.task_id,
       });
 
-      // Render the accepted message from the server response. Seed the message
-      // caches BEFORE flipping activeSessionId: if we set the active session
-      // first, useQuery's first subscription to the new key sees no cached data
-      // and renders ChatMessageSkeleton for one frame — the "new-chat
-      // first-message" white flash. Priming the cache first means the very first
-      // read after activeSessionId flips hits data synchronously and
-      // ChatMessageList mounts directly. Seed the pending-task from the server's
-      // real id + created_at so the StatusPill mounts anchored to the true clock
-      // (no local-clock drift, no backwards snap) and the stale-session self-heal
-      // exempts this just-created session until the sessions-list refetch lands.
+      // 用服务端响应渲染这条已被接受的消息。在翻转 activeSessionId 之前先把
+      // 消息缓存种好：如果先设活动会话，useQuery 对新 key 的第一次订阅看不到
+      // 缓存数据、会渲染一帧 ChatMessageSkeleton——"新建聊天首条消息"的白屏
+      // 闪烁。先喂缓存，activeSessionId 翻转后的第一次读取就会同步命中数据、
+      // ChatMessageList 直接挂载。再种下带服务端真实 id + created_at 的
+      // pending 任务，让 StatusPill 以真实时钟为锚（无本地时钟漂移、无回跳），
+      // 也让过期会话自愈在会话列表重拉取落定前豁免这个刚创建的会话。
       const sent: ChatMessage = {
         id: result.message_id,
         chat_session_id: sessionId,
@@ -566,10 +538,9 @@ export function ChatWindow() {
         created_at: result.created_at,
         attachments: draftAttachments,
       };
-      // Single door into the message caches (MUL-5711): idempotent by id, so
-      // this row and the chat:message echo of the same send converge in either
-      // arrival order, and this richer row (it carries the draft attachments)
-      // is never downgraded by the echo, which has no attachments field.
+      // 进入消息缓存的唯一入口（MUL-5711）：按 id 幂等，所以这行和同一次发送的
+      // chat:message 回显无论谁先到都会收敛；而更丰富的这行（带草稿附件）绝不会
+      // 被没有附件字段的回显降级。
       upsertChatMessageToCaches(qc, sessionId, sent, { seedIfMissing: true });
       seedAcceptedPendingTask(qc, sessionId, {
         task_id: result.task_id,
@@ -579,12 +550,10 @@ export function ChatWindow() {
         supports_queue: result.supports_queue,
         queued: result.queued,
       });
-      // Cache primed → publish the new active session, but only if the user
-      // hasn't navigated away mid-send. Compare the live store against the
-      // closure-captured target; see isStillOnComposeTarget for the rule, which
-      // this floating window shares with the chat tab's controller. commitInput
-      // clears the sent draft, and scrubs the shared editor only when the user
-      // is still on the session they sent from.
+      // 缓存喂饱 → 发布新的活动会话，但只在用户发送中途没有导航走掉时。拿实时
+      // store 对比闭包捕获的目标；规则见 isStillOnComposeTarget，悬浮窗口与聊天
+      // 标签页控制器共享。commitInput 清掉已发送的草稿，并且只在用户仍在发出时
+      // 的那个会话上时清扫共享编辑器。
       const live = useChatStore.getState();
       const stillOnSourceSession = isStillOnComposeTarget(live.activeSessionId, activeSessionId);
       if (stillOnSourceSession) {
@@ -600,10 +569,9 @@ export function ChatWindow() {
         });
         return false;
       }
-      // The server reports which attachment ids it actually bound. Diff
-      // against what we requested so a silent bind failure surfaces to the
-      // user — no extra fetch. Skip the check on servers that predate the
-      // field (attachment_ids undefined) rather than false-alarm.
+      // 服务端上报它实际绑定了哪些附件 id。和我们请求的对一下，让静默的绑定失败
+      // 浮现给用户——不用额外拉取。对没有该字段的旧版服务端（attachment_ids
+      // undefined）跳过检查，避免误报。
       if (attachmentIds && attachmentIds.length > 0 && result.attachment_ids) {
         const boundIds = new Set(result.attachment_ids);
         const missing = attachmentIds.filter((id) => !boundIds.has(id));
@@ -657,10 +625,9 @@ export function ChatWindow() {
 
   const handleSelectAgent = useCallback(
     (agent: Agent) => {
-      // No-op when clicking the already-active agent — don't clobber the
-      // current session just because the user closed the menu this way.
-      // Compare against activeAgent (what the UI shows), not selectedAgentId
-      // (which may be null / point to an archived agent on first load).
+      // 点已经在用的 agent 时空操作——不能因为用户这样关掉了菜单，就把当前
+      // 会话清掉。对比 activeAgent（UI 显示的），而不是 selectedAgentId
+      // （首次加载时可能是 null 或指向已归档 agent）。
       if (activeAgent && agent.id === activeAgent.id) return;
       uiLogger.info("selectAgent", {
         from: selectedAgentId,
@@ -668,11 +635,10 @@ export function ChatWindow() {
         previousSessionId: activeSessionId,
       });
       setSelectedAgentId(agent.id);
-      // Preserve an explicitly chosen project while composing an unsent chat,
-      // but never inherit project context from the historical session being
-      // left behind.
+      // 在写一条还没发出的聊天时保留显式选中的项目，但绝不继承那条正要离开的
+      // 历史会话的项目上下文。
       setSelectedProjectId(currentSession ? null : activeProjectId);
-      // Reset session when switching agent
+      // 切换 agent 时重置会话
       setActiveSession(null);
       requestInputFocus();
     },
@@ -707,8 +673,8 @@ export function ChatWindow() {
 
   const handleSelectSession = useCallback(
     (session: ChatSession) => {
-      // Sessions are bound 1:1 to an agent — picking a session from a
-      // different agent implicitly switches the agent too.
+      // 会话与 agent 一一绑定——从一个别的 agent 的会话里选一个会话，
+      // 会隐式地把 agent 一起切过去。
       if (activeAgent && session.agent_id !== activeAgent.id) {
         uiLogger.info("selectSession (cross-agent)", {
           from: activeAgent.id,
@@ -776,65 +742,56 @@ export function ChatWindow() {
   const windowRef = useRef<HTMLDivElement>(null);
   const { renderWidth, renderHeight, isAtMax, boundsReady, isDragging, toggleExpand, startDrag } = useChatResize(windowRef);
 
-  // Show the list (vs empty state) as soon as there's anything to display —
-  // a real message, or a pending task whose timeline will stream in.
+  // 有东西可显示就立刻显示列表（而不是空状态）——一条真实消息，或一条会有
+  // timeline 流进来的 pending 任务。
   const hasMessages = messages.length > 0 || !!pendingTaskId;
 
   const isVisible = isOpen && (isExpanded || boundsReady);
 
-  // Small screens drop the floating-card form entirely — a 90%-of-375px
-  // "window" is all chrome and no content, so the panel goes full-screen
-  // (Lark/IM-style) and the resize/expand affordances disappear with it.
+  // 小屏完全放弃悬浮卡片形态——375px 的 90% 宽"窗口"全是外壳没有内容，所以
+  // 面板改全屏（类 Lark/IM），缩放/展开入口随之消失。
   const isMobile = useIsMobile();
 
-  // `@container`: the window is user-resizable from 360px to 90% of the
-  // viewport, so the chat body's gutter (CHAT_GUTTER) has to key off the
-  // window's own width, not the page behind it.
+  // `@container`：窗口可从 360px 拖到视口的 90%，所以聊天正文的 gutter
+  // （CHAT_GUTTER）必须跟随窗口自身宽度，而不是背后的页面。
   const containerClass = cn(
     "absolute z-50 flex flex-col overflow-hidden bg-surface-raised @container",
     isMobile
       ? "inset-x-0"
       : "right-2 rounded-xl shadow-[var(--floating-shadow)] ring-1 ring-surface-border",
   );
-  // Soft keyboards shrink only the *visual* viewport — the layout viewport
-  // (and this panel's bottom-anchored parent) keeps its full height, so
-  // without correction the panel's lower half, composer included, sits
-  // behind the keyboard while iOS pans the page and chops the panel's top
-  // instead. While the keyboard is up, pin the panel to the visual
-  // viewport: bottom glued to its bottom edge (occludedBottom tracks any
-  // pan), height/maxHeight bounded by the visible strip, so the composer
-  // rides the keyboard's top edge.
+  // 软键盘只收缩 *visual* viewport——layout viewport（以及本面板贴底的父容器）
+  // 保持完整高度，所以不纠正的话，面板下半部（含输入框）会躲在键盘后面，
+  // 而 iOS 平移页面、砍掉的是面板的顶部。键盘弹起期间把面板钉在 visual
+  // viewport 上：底边贴住它的底边（occludedBottom 追踪任何平移），高度/
+  // maxHeight 受可见条带约束，让输入框骑在键盘顶边上。
   //
-  // Every branch writes the SAME style keys with explicit values: motion.div
-  // applies styles imperatively and never unsets a key that merely
-  // disappears from the style prop, so a conditional spread here would
-  // leave the keyboard geometry stuck on the DOM after the keyboard closes.
+  // 每个分支都用显式值写同一批 style 键：motion.div 命令式地应用样式，从不
+  // 清除一个只是从 style prop 里消失的键，所以这里做条件展开会把键盘几何
+  // 在键盘收起后卡在 DOM 上。
   const keyboard = useVisualViewportKeyboard();
   const containerStyle: React.CSSProperties = {
     transformOrigin: "bottom right",
     pointerEvents: isOpen ? "auto" : "none",
     ...(isMobile
       ? {
-          // Full-screen panel anchored to the visible bottom edge;
-          // width/height live in the motion animate below.
+          // 全屏面板贴住可见底边；宽高活在下面的 motion animate 里。
           top: "auto",
           bottom: keyboard ? keyboard.occludedBottom : 0,
           maxHeight: "none",
         }
       : {
-          // Floating card; only the anchor and the height cap live here.
+          // 悬浮卡片；只有锚点与高度上限住在这里。
           top: "auto",
           bottom: keyboard ? keyboard.occludedBottom + 8 : 8,
           maxHeight: keyboard ? keyboard.viewportHeight - 16 : "none",
         }),
   };
 
-  // Width/height are ALWAYS owned by motion, in both modes: useIsMobile
-  // resolves after the first client render, and a key that merely vanishes
-  // from `animate` keeps its last DOM value — a phone's first frame would
-  // otherwise leave the desktop card's inline width stuck on the
-  // full-screen panel. Mixed units (px <-> "100%") skip interpolation and
-  // jump, which is the behavior we want for keyboard snaps anyway.
+  // 宽高在两种模式下都始终由 motion 持有：useIsMobile 在首次客户端渲染后才
+  // 解析，而一个只是从 `animate` 消失的键会保留它的上一个 DOM 值——否则手机
+  // 的第一帧会把桌面卡片的行内宽度卡在全屏面板上。混合单位（px ↔ "100%"）
+  // 会跳过插值直接跳变，这正是键盘吸合时想要的行为。
   const motionSize = isMobile
     ? {
         width: "100%",
@@ -864,7 +821,7 @@ export function ChatWindow() {
       }}
     >
       {!isMobile && <ChatResizeHandles onDragStart={startDrag} />}
-      {/* Header — ⊕ new + session dropdown | window tools */}
+      {/* 头部——⊕ 新聊天 + 会话下拉 | 窗口工具 */}
       <div className="flex items-center justify-between border-b px-4 py-2.5 gap-2">
         <div className="flex items-center gap-1 min-w-0">
           <Tooltip>
@@ -885,8 +842,7 @@ export function ChatWindow() {
           <SessionDropdown
             enabled={isOpen}
             sessions={sessions}
-            // Use the full agent list (incl. archived) so historical
-            // sessions can still resolve their avatar.
+            // 用完整 agent 列表（含已归档），历史会话才能解析出它们的头像。
             agents={agents}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
@@ -930,7 +886,7 @@ export function ChatWindow() {
         </div>
       </div>
 
-      {/* Messages / skeleton / empty state */}
+      {/* 消息 / 骨架屏 / 空状态 */}
       {showSkeleton ? (
         <ChatMessageSkeleton />
       ) : hasMessages ? (
@@ -971,15 +927,13 @@ export function ChatWindow() {
         />
       )}
 
-      {/* Status banner above the input — single mutually-exclusive slot.
-       *  Priority: no-agent > offline / unstable. Agent presence is the
-       *  hard prerequisite (you can't send anything without one), so it
-       *  always wins over a presence hint. Recent issue/project navigation
-       *  lives in the input action row; it is not message/session state.
+      {/* 输入框上方的状态横幅——互斥的单槽位。
+       *  优先级：无 agent > 访问被撤销 > agent 已归档 > 需要 runtime > 离线 / 不稳定。
+       *  agent 是硬前提（没有它什么都发不了），所以它永远压过在线提示。
+       *  最近看过的 issue/项目在输入动作行里，不属于消息/会话状态。
        *
-       *  We key off `noAgent` (the resolved-empty state) rather than
-       *  `!activeAgent`, so the loading window between mount and the
-       *  first agent-list response stays banner-free. */}
+       *  我们按 `noAgent`（解析后的空状态）而不是 `!activeAgent` 判断，
+       *  让挂载到首次 agent 列表响应之间的加载窗口不显示横幅。 */}
       {noAgent ? (
         <NoAgentBanner />
       ) : isAgentAccessRevoked ? (
@@ -1005,9 +959,8 @@ export function ChatWindow() {
         onClear={handleClearQueuedTasks}
       />
 
-      {/* Input — disabled for legacy archived sessions and for sessions whose
-       *  agent has been archived (read-only); locked out entirely when there's
-       *  no agent (the EmptyState above carries the CTA). */}
+      {/* 输入框——旧的已归档会话、以及 agent 已归档（只读）的会话禁用；
+       *  完全没有 agent 时彻底锁死（上面的空状态带着 CTA）。 */}
       <ChatInput
         onSend={handleSend}
         restoreDraftRequest={restoreDraftRequest}
@@ -1052,9 +1005,8 @@ export function ChatWindow() {
 }
 
 /**
- * Agent dropdown: avatar trigger, lists all available agents. Selecting a
- * different agent = switch agent + start a fresh chat (session=null).
- * The current agent is marked with a check and not clickable.
+ * Agent 下拉：头像触发，列出所有可用 agent。选一个不同的 agent = 切换 agent +
+ * 开始新聊天（session=null）。当前 agent 带勾选标记且不可点。
  */
 export function AgentDropdown({
   agents,
@@ -1070,8 +1022,7 @@ export function AgentDropdown({
   const { t } = useT("chat");
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
-  // Split into the user's own agents and everyone else so the menu groups
-  // them — matches the old AgentSelector layout.
+  // 拆成用户自己的 agent 和别人，让菜单分组——匹配旧的 AgentSelector 布局。
   const { mine, others } = useMemo(() => {
     const mine: Agent[] = [];
     const others: Agent[] = [];
@@ -1199,16 +1150,14 @@ function AgentPickerItem({
 }
 
 interface SessionRowAction extends RowActionItem {
-  /** Extra visible text in the hover strip (the stop button reads "Stop"). */
+  /** 悬停条里的额外可见文字（停止按钮要读作 "Stop"）。 */
   stripText?: string;
 }
 
 /**
- * Session dropdown: a flat "Chat history" list of all non-archived
- * sessions. Selecting a session from a different agent implicitly
- * switches the agent too
- * (sessions are bound 1:1 to an agent). "New chat" lives in the header's
- * ⊕ button, not inside this dropdown.
+ * 会话下拉：所有未归档会话的扁平"聊天历史"列表。从别的 agent 的会话里选一个
+ * 会话会隐式切换 agent（会话与 agent 一一绑定）。"新建聊天"在头部 ⊕ 按钮里，
+ * 不在这个下拉里。
  */
 function SessionDropdown({
   enabled,
@@ -1230,8 +1179,7 @@ function SessionDropdown({
   const title = activeSession?.title?.trim() || t(($) => $.window.untitled);
   const triggerAgent = activeSession ? agentById.get(activeSession.agent_id) ?? null : null;
 
-  // The old soft-archive feature was removed. Pre-existing rows with
-  // status='archived' are legacy dead data and are excluded from history.
+  // 旧的软归档特性已移除。status='archived' 的历史遗留行是死数据，排除出历史。
   const historySessions = useMemo(
     () => sessions.filter((s) => s.status !== "archived"),
     [sessions],
@@ -1243,9 +1191,8 @@ function SessionDropdown({
   const [completedFlashIds, setCompletedFlashIds] = useState<Set<string>>(() => new Set());
   const previousInFlightRef = useRef<Set<string>>(new Set());
   const completedFlashTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  // Inline rename: only one row can be in edit mode at a time. We track the
-  // session id (not the full session) so a stale closure can't overwrite a
-  // newer rename pulled in via WS.
+  // 行内重命名：同一时刻只有一行处于编辑态。只记会话 id（不记整个会话），
+  // 这样过期的闭包不会覆盖通过 WS 拉进来的新重命名。
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const setArchived = useSetChatSessionArchived();
   const updateSession = useUpdateChatSession();
@@ -1253,9 +1200,8 @@ function SessionDropdown({
   const queryClient = useQueryClient();
   const formatTimeAgo = useFormatTimeAgo();
 
-  // Aggregate "which sessions have an in-flight task right now". Reuses
-  // the same workspace-scoped query the FAB consumes, so toggling the chat
-  // window doesn't fire a second request — TanStack dedupes by key.
+  // 聚合"哪些会话当前有在途任务"。复用 FAB 用的同一条工作区级查询，所以开合
+  // 聊天窗口不会多发一个请求——TanStack 按 key 去重。
   const { data: pending } = useQuery({
     ...pendingChatTasksOptions(wsId),
     enabled,
@@ -1312,9 +1258,9 @@ function SessionDropdown({
     setConfirmingStopId(null);
   }, [confirmingStopId, pendingTaskBySessionId]);
 
-  // Header state split:
-  // - inside the trigger: the current chat's own live state
-  // - beside the trigger: aggregate activity from other chats
+  // 头部状态拆分：
+  // - 触发器内部：当前聊天自己的实时状态
+  // - 触发器旁边：来自其他聊天的聚合活跃度
   const currentSessionRunning = activeSessionId ? inFlightSessionIds.has(activeSessionId) : false;
   const otherRunningCount = sessions.filter(
     (s) => s.id !== activeSessionId && inFlightSessionIds.has(s.id),
@@ -1323,18 +1269,16 @@ function SessionDropdown({
     (s) => s.id !== activeSessionId && s.has_unread,
   ).length;
 
-  // Archive (not hard-delete) is the reversible, one-click default here — the
-  // same safety model as ChatThreadList. The floating window offers NO
-  // hard-delete: unarchive / delete live only in the full Chat page's Archived
-  // view (reachable via the expand button), so a stale floating dropdown can't
-  // bypass the "archive first, delete only from Archived" semantics.
+  // 归档（而不是硬删除）在这里是可逆的一键默认——与 ChatThreadList 同一套
+  // 安全模型。悬浮窗口不提供硬删除：取消归档/删除只存在于完整聊天页的归档视图
+  // （通过展开按钮可达），所以一个过期的悬浮下拉没法绕过"先归档、只能从归档里删"
+  // 的语义。
   const handleArchive = (session: ChatSession) => {
     if (activeSessionId === session.id) {
-      // Archiving the session in view: advance to the next chat (fall back to
-      // the previous, clear only when none remain) instead of stranding the
-      // composer on a now read-only session — mirrors the Chat tab and the
-      // Inbox list. Routing the non-null advance through onSelectSession keeps
-      // selectedAgentId in sync when the next chat belongs to another agent.
+      // 归档正在看的会话：推进到下一个聊天（没有就回退到上一个，都没了才清空），
+      // 而不是把输入框晾在一个现在只读的会话上——镜像聊天标签页与 Inbox 列表。
+      // 非空推进走 onSelectSession，当下一个聊天属于别的 agent 时保持
+      // selectedAgentId 同步。
       const idx = historySessions.findIndex((s) => s.id === session.id);
       const next = historySessions[idx + 1] ?? historySessions[idx - 1] ?? null;
       if (next) onSelectSession(next);
@@ -1347,9 +1291,8 @@ function SessionDropdown({
     const trimmed = raw.trim();
     const current = sessions.find((s) => s.id === sessionId);
     setRenamingId(null);
-    // No-op submits (unchanged or blank) skip the network round-trip — the
-    // server would reject a blank title anyway, and an unchanged title would
-    // just bump updated_at for no user-visible reason.
+    // 空提交（没改或空标题）跳过网络往返——空标题服务端本来就会拒，没改的标题
+    // 只会平白 bump updated_at、对用户毫无可见意义。
     if (!trimmed || trimmed === current?.title) return;
     updateSession.mutate({ sessionId, title: trimmed });
   };
@@ -1365,9 +1308,8 @@ function SessionDropdown({
       [...previousInFlightRef.current].filter((sessionId) => sessionId !== session.id),
     );
 
-    // Same optimistic behavior as the active chat Stop button: remove the
-    // running affordance immediately, then let task:cancelled / refetches
-    // converge every open surface on the server truth.
+    // 与活动聊天的 Stop 按钮同样的乐观行为：立刻去掉"运行中"入口，然后让
+    // task:cancelled / 重拉取把所有打开的界面收敛到服务端真相。
     queryClient.setQueryData<PendingChatTasksResponse>(chatKeys.pendingTasks(wsId), (current) => {
       if (!current) return current;
       return {
@@ -1420,8 +1362,8 @@ function SessionDropdown({
           ? t(($) => $.session_history.row_subtitle.new_reply)
           : formatTimeAgo(session.updated_at);
 
-    // One list drives both action surfaces — the compact menu without hover
-    // and the hover strip with it — so they cannot drift.
+    // 一份动作列表同时驱动两个操作面——无悬停的紧凑菜单与带悬停的悬停条——
+    // 所以它们不会漂移。
     const rowActions: SessionRowAction[] = isRunning
       ? [
           {
@@ -1554,8 +1496,8 @@ function SessionDropdown({
                 )}
                 <span className={cn("truncate", (showUnread || showCompleted || isRunning) && "font-medium text-foreground")}>{trailingStatus}</span>
               </div>
-              {/* Touch has no hover: without it the status above stays put and
-                  these same actions move into the row's compact menu. */}
+              {/* 触屏没有悬停：没有它时，上面的状态保持原位，
+                  这些动作挪进行的紧凑菜单。 */}
               <RowActionsMenu
                 label={t(($) => $.session_history.row_actions_aria)}
                 groups={[rowActions]}

@@ -1,5 +1,6 @@
 "use client";
 
+// 项目行内可直接改的「状态/优先级」徽标：点击弹出下拉菜单修改并写回后端。
 import { Check } from "lucide-react";
 import {
   PROJECT_STATUS_CONFIG,
@@ -18,6 +19,7 @@ import type { Project, ProjectStatus, ProjectPriority, UpdateProjectRequest } fr
 import { PriorityIcon } from "../../issues/components/priority-icon";
 import { useProjectStatusLabels, useProjectPriorityLabels } from "./labels";
 
+/** 项目状态徽标：显示当前状态，点开下拉即可切换到其它状态并写回。 */
 export function ProjectStatusBadge({ project, handleUpdate, triggerClassName, align = "end" }: { project: Project; handleUpdate: (data: UpdateProjectRequest) => void; triggerClassName?: string; align?: "start" | "end" | "center" }) {
   const statusLabels = useProjectStatusLabels();
   const statusCfg = PROJECT_STATUS_CONFIG[project.status];
@@ -48,6 +50,7 @@ export function ProjectStatusBadge({ project, handleUpdate, triggerClassName, al
   );
 }
 
+/** 项目优先级徽标：显示当前优先级，点开下拉即可切换并写回。 */
 export function ProjectPriorityBadge({ project, handleUpdate, triggerClassName, align = "end" }: { project: Project; handleUpdate: (data: UpdateProjectRequest) => void; triggerClassName?: string; align?: "start" | "end" | "center" }) {
   const priorityLabels = useProjectPriorityLabels();
   const priorityCfg = PROJECT_PRIORITY_CONFIG[project.priority];

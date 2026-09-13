@@ -14,20 +14,26 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { useT } from "../../i18n";
 
-// ModelDropdown renders a searchable, creatable model picker for an agent.
-// It fetches the supported-model catalog from the selected runtime — the
-// daemon enumerates models on demand via heartbeat piggyback. Providers
-// whose runtime ignores per-agent model selection return supported=false,
-// and the dropdown renders disabled with an explanation instead of silently
-// accepting a value the backend would ignore. Today that is qwenpaw and mcode
-// (agent.ModelSelectionSupported is the single source of truth for the set);
-// Antigravity left it when agy 1.0.6 added `--model`.
+// 本文件是 Agent 的“模型选择下拉框”（可搜索、可手动输入自定义值）。模型目录从
+// 当前选中的运行环境拉取——daemon 会借心跳机会按需枚举模型。若某个运行环境不支持
+// “按 Agent 指定模型”（supported=false），下拉框就渲染成禁用并附解释，而不是默默
+// 接受一个后端会忽略的值。目前是 qwenpaw 和 mcode 两种（集合以
+// agent.ModelSelectionSupported 为唯一口径）；Antigravity 在 agy 1.0.6 支持
+// `--model` 后已从中移除。
 //
-// supported=false is a different state from discovery failing, and the two must
-// not be conflated. A failed discovery throws out of resolveRuntimeModels, so
-// modelsQuery.isError renders the discovery-failed notice and keeps the
-// creatable manual-entry input below — which is exactly the fallback a user
-// needs when their runtime could not enumerate anything (MUL-6606).
+// supported=false 与“模型发现失败”是两种不同的状态，不能混为一谈：发现失败会让
+// resolveRuntimeModels 抛错，此时 modelsQuery.isError 渲染“发现失败”提示，并保留
+// 下方可手输的自定义入口——这正是运行环境一个模型都枚举不出来时（MUL-6606）
+// 用户需要的兜底。
+
+/**
+ * 模型选择下拉框。模型来自所给运行环境的目录；找不到模型时给出可手输的自定义入口。
+ * @param runtimeId 选中的运行环境 id；为空则不做发现。
+ * @param runtimeOnline 运行环境是否在线（离线时不请求发现）。
+ * @param value 当前模型 id（空串 = 不覆盖，用运行时默认）。
+ * @param onChange 选中新模型时回调（空串 = 清除覆盖）。
+ * @param disabled 只读态。
+ */
 export function ModelDropdown({
   runtimeId,
   runtimeOnline,
@@ -50,24 +56,22 @@ export function ModelDropdown({
   );
 
   const supported = modelsQuery.data?.supported ?? true;
-  // Stable reference for the model list — `?? []` would mint a fresh
-  // array each render and force every downstream useMemo to invalidate.
+  // 给模型列表一个稳定引用——直接写 `?? []` 会在每次渲染都新建数组，
+  // 让下游所有 useMemo 跟着失效重算。
   const models = useMemo(
     () => modelsQuery.data?.models ?? [],
     [modelsQuery.data],
   );
   const grouped = useMemo(() => groupByProvider(models), [models]);
-  // resolveRuntimeModels throws the daemon's reported error text, so this is
-  // the runtime's own message (plus any hint the daemon appended). It is only
-  // ever read while isError is true.
+  // resolveRuntimeModels 会原样抛 daemon 返回的错误文本，所以这里拿到的是
+  // 运行环境自己的话（外加 daemon 附加的提示）。只有 isError 为 true 时才读它。
   const discoveryError =
     modelsQuery.error instanceof Error
       ? modelsQuery.error.message.trim() || null
       : null;
 
-  // When the selected runtime reports it doesn't support per-agent
-  // model selection, clear any previously-saved value so we don't
-  // persist a ghost configuration that never takes effect.
+  // 当所选运行环境报告“不支持按 Agent 选模型”时，清掉以前存过的值——
+  // 免得残留一份永远不会生效的“幽灵配置”。
   useEffect(() => {
     if (!supported && value !== "") {
       onChange("");
@@ -148,9 +152,8 @@ export function ModelDropdown({
         >
           <Cpu className="h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
-            {/* Wrapped in flex to mirror RuntimePicker's trigger DOM. The
-                two pickers sit side-by-side; inline-in-flex vs block-line-
-                box height calc would otherwise leave them ~1px misaligned. */}
+            {/* 这层 flex 是为了跟 RuntimePicker 触发器的 DOM 保持一致——两个下拉常
+                并排出现，若不套 flex，行内/块级盒子高度算法会留下约 1px 的对不齐。 */}
             <div className="flex items-center gap-2">
               <span className="truncate font-medium">{triggerLabel}</span>
             </div>
@@ -218,12 +221,10 @@ export function ModelDropdown({
                 </div>
               ))}
 
-            {/* A failed discovery reports WHY here rather than in the label
-                row's caption, which has no room for a sentence. The runtime's
-                own words are the actionable part — hermes, for one, names the
-                exact command to run — so they are rendered verbatim and left
-                selectable. Paired with the manual-entry prompt, because a
-                reason with no way forward is just a nicer dead end. */}
+            {/* 发现失败的原因在这里说明（标签行的注释文字区放不下一整句话）。
+                运行环境自己的原话才是有可操作性的部分——比如 hermes 会直接告诉你该跑
+                哪条命令——所以原样渲染、允许选中。旁边配上手动输入提示：因为光有原因
+                没有出路，只是更漂亮的死胡同。 */}
             {!modelsQuery.isLoading && modelsQuery.isError && (
               <div className="px-3 py-4 text-body text-muted-foreground">
                 <div className="flex items-start gap-2">
@@ -283,6 +284,7 @@ export function ModelDropdown({
   );
 }
 
+/** 把模型列表按 provider 分组（provider 为空的分到 “” 组，列表顶端无标题处）。 */
 function groupByProvider(models: RuntimeModel[]): Record<string, RuntimeModel[]> {
   const out: Record<string, RuntimeModel[]> = {};
   for (const m of models) {
@@ -293,6 +295,7 @@ function groupByProvider(models: RuntimeModel[]): Record<string, RuntimeModel[]>
   return out;
 }
 
+/** 触发器副标题：根据选中 id 反查目录，给出它的归属 provider；查不到就是手动输入的 “custom”。 */
 function modelLabel(models: RuntimeModel[], id: string): string {
   const found = models.find((m) => m.id === id);
   if (!found) return "custom";

@@ -1,3 +1,21 @@
+// ============================================================================
+// Runtime 详情页（RuntimeDetail）
+//
+// 角色定位：单台 runtime 的详情视图。顶部面包屑（可含机器层级）；主体左侧
+// 是 Hero 卡（标识行 + 归属/设备/运行时事实 + 可折叠的技术 ID）与用量区块
+// （UsageSection）；右侧栏是「服务中的 agent」列表与诊断卡（可见性
+// public/private 切换 + 删除入口）。
+//
+// 数据流：父组件传入 runtime 快照；本组件再拉取工作区成员/agent/profile 与
+// 在线状态，本地算出健康、归属、可编辑/删除/读取权限后渲染。删除分为两种：
+// 自定义 profile runtime 删「配置」，其余删 runtime 本体。
+//
+// 权限约定：归属者或工作区 owner/admin 可改名/删除；只有 runtime 归属者可
+// 编辑可见性（MUL-6126，工作区 admin 也看不到编辑开关）。
+//
+// 关键 UI 决定：Hero 卡放在滚动容器内而非钉在顶栏下，让滚动条从页面边界
+// 开始而不是从内容中部开始；顶栏因属于「导航」而独立吸顶。
+// ============================================================================
 "use client";
 
 import { useEffect, useState } from "react";
@@ -49,6 +67,7 @@ import { DeleteRuntimeProfileDialog } from "./delete-runtime-profile-dialog";
 import { runtimeRowLabel } from "./runtime-machines";
 import { useT, useTimeAgo } from "../../i18n";
 
+// 从 metadata 里取 daemon CLI 版本号（仅本机 runtime 上报；云 runtime 无）。
 function getCliVersion(metadata: Record<string, unknown>): string | null {
   if (
     metadata &&
@@ -60,17 +79,18 @@ function getCliVersion(metadata: Record<string, unknown>): string | null {
   return null;
 }
 
+// 把完整 daemon id 缩短成可展示的短码（如 ab12cd··ef），太长时取头 6 位与
+// 尾 2 位。
 function shortDaemonId(id: string | null): string | null {
   if (!id) return null;
   if (id.length <= 10) return id;
   return `${id.slice(0, 6)}··${id.slice(-2)}`;
 }
 
-// 30s tick keeps derived runtime health honest as time-based windows
-// (recently_lost → offline → long_offline) cross thresholds without any new
-// query data arriving. Agent presence has no time windows anymore, so it
-// doesn't need this — but useWorkspacePresenceMap is the dependency we
-// already mounted on this page, and that's wired to query data, not `now`.
+// 每 30 秒一次心跳，驱动健康状态随时间窗口（recently_lost → offline →
+// long_offline）推进——即便没有任何新查询数据到达。agent 在线状态已经没有
+// 时间窗口，本不需要它；但 useWorkspacePresenceMap 是此页面已挂载的依赖，
+// 它绑定的是查询数据而不是 `now`。
 function useNowTick(intervalMs = 30_000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -80,6 +100,14 @@ function useNowTick(intervalMs = 30_000): number {
   return now;
 }
 
+/**
+ * Runtime 详情页。
+ *
+ * @param runtime - 要展示的 runtime。
+ * @param machineHref/machineLabel - 当页面挂在机器详情下时，面包屑中的机器
+ *   层级链接与名称。
+ * @param afterDeleteHref - 删除完成后的跳转地址；缺省回退到 runtimes 列表。
+ */
 export function RuntimeDetail({
   runtime,
   machineHref,
@@ -178,11 +206,9 @@ export function RuntimeDetail({
         }
       />
 
-      {/* Body — single scroll container that owns the Hero card AND the
-          analytic blocks below. Putting Hero inside the scroll (instead of
-          pinning it under the topbar) means the scroll bar starts at the
-          page boundary rather than mid-content; the topbar stays sticky on
-          its own because it's navigation, not data. */}
+      {/* 主体——单个滚动容器同时承载 Hero 卡与下方的分析区块。把 Hero 放进
+          滚动区（而不是钉在顶栏下）能让滚动条从页面边界开始、而不是从内容
+          中部开始；顶栏本身吸顶是因为它属于导航而非数据。 */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="grid grid-cols-1 gap-4 p-6 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="min-w-0 space-y-5">
@@ -198,7 +224,7 @@ export function RuntimeDetail({
             {canReadRuntime && <UsageSection runtime={runtime} />}
           </div>
 
-          {/* Right rail: serving agents + diagnostics */}
+          {/* 右侧栏：服务中的 agent + 诊断 */}
           <div className="space-y-4">
             <ServingAgentsCard
               agents={servingAgents}
@@ -236,11 +262,10 @@ export function RuntimeDetail({
   );
 }
 
-// `device_info` arrives as a single composite string the daemon assembles
-// (e.g. "host.local · 2.1.121 (Claude Code)"). Splitting on the first
-// " · " gives us a hostname half + a runtime-version half so each can be
-// labelled separately in the Hero card. Older runtimes that report just a
-// hostname still work — `runtime` is undefined in that case.
+// `device_info` 以 daemon 拼装的一条复合字符串到达
+// （如 "host.local · 2.1.121 (Claude Code)"）。按第一个 " · " 拆开得到
+// 「主机名一半 + 运行时版本一半」，Hero 卡里就能分别打标签。只上报主机名的
+// 老 runtime 也能正常工作——此时 `runtime` 为空。
 function parseDeviceInfo(raw: string): { hostname: string; runtime?: string } {
   const idx = raw.indexOf(" · ");
   if (idx < 0) return { hostname: raw };
@@ -250,6 +275,8 @@ function parseDeviceInfo(raw: string): { hostname: string; runtime?: string } {
   };
 }
 
+// Hero 卡：名称行（提供商 logo、名称、健康徽标、最后在线时间）+ 归属/设备/
+// 运行时三条事实 + 折叠的「技术详情」（daemon CLI 版本、daemon UUID 短码）。
 function HeroCard({
   runtime,
   runtimeName,
@@ -274,7 +301,7 @@ function HeroCard({
 
   return (
     <div className="rounded-lg border bg-card">
-      {/* Identity row — provider logo, name, status badge, last seen. */}
+      {/* 标识行——提供商 logo、名称、状态徽标、最后在线时间。 */}
       <div className="flex items-start gap-3 border-b p-4">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-card">
           <ProviderLogo provider={runtime.provider} className="h-5 w-5" />
@@ -292,9 +319,9 @@ function HeroCard({
         </div>
       </div>
 
-      {/* User-visible facts — Owner / Device / Runtime, each labelled.
-          Replaces the older dense `·`-separated meta strip that mixed
-          everything (including dev-only IDs) at the same visual weight. */}
+      {/* 面向用户的事实——归属 / 设备 / 运行时，各带标签。取代了旧的 `·`
+          分隔的密集元信息条（它把一切——包括仅供开发的 ID——都混在同一
+          视觉层级上）。 */}
       <dl className="grid grid-cols-1 divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         <Fact label={t(($) => $.detail.fact_owner)}>
           {ownerMember ? (
@@ -336,9 +363,8 @@ function HeroCard({
         </Fact>
       </dl>
 
-      {/* Diagnostic IDs — multica CLI git hash + truncated daemon UUID.
-          Only useful when filing an issue or reading logs; folded by
-          default so they don't compete with the user-visible facts above. */}
+      {/* 诊断 ID——multica CLI 的 git 哈希 + 截断的 daemon UUID。只在提 bug
+          或读日志时有用；默认折叠，免得跟上面的用户可见事实抢注意力。 */}
       {hasTechDetails && (
         <div className="border-t">
           <button
@@ -394,6 +420,8 @@ function Fact({
   );
 }
 
+// 服务中的 agent 卡：列出绑定在本 runtime 上、未归档的 agent，每行显示
+// 在线状态 + 工作负载 + 运行/排队计数。行本身可点，跳 agent 详情。
 function ServingAgentsCard({
   agents,
   presenceMap,
@@ -474,6 +502,7 @@ function ServingAgentsCard({
   );
 }
 
+// 诊断卡：可见性（归属者可编辑，其他人只读）+ 删除按钮（有权限才显示）。
 function DiagnosticsCard({
   runtime,
   canEditVisibility,
@@ -482,10 +511,9 @@ function DiagnosticsCard({
 }: {
   runtime: AgentRuntime;
   /**
-   * Runtime owner only — narrower than the card's other affordances on
-   * purpose (MUL-6126). Sharing a machine with the workspace is the owner's
-   * call, so a workspace admin sees the read-only chip here even though they
-   * may still rename or delete the runtime.
+   * 仅 runtime 归属者为 true——刻意比卡片上其它操作更窄（MUL-6126）。
+   * 是否把机器共享给工作区是归属者的决定，所以工作区 admin 在这里看到的是
+   * 只读小标，尽管他们仍可能重命名或删除该 runtime。
    */
   canEditVisibility: boolean;
   canDelete: boolean;
@@ -509,12 +537,10 @@ function DiagnosticsCard({
           )}
         </div>
         {canDelete && (
-          // The button stays clickable even when the runtime is a live
-          // local daemon (self-healing). The owner explicitly asked for
-          // it (MUL-3352) — disabling here left them looking at a button
-          // they had every permission to click but couldn't. The dialog
-          // raises a self-heal banner so the user sees the trade-off
-          // before confirming.
+          // 即使 runtime 是仍在线的本机 daemon（会自愈），按钮也保持可点。
+          // 归属者明确要求如此（MUL-3352）——之前在这里禁用按钮，等于让他们
+          // 看着一个有权限点却点不了的按钮。对话框会弹出自愈横幅，让用户在
+          // 确认前看到取舍。
           <div className="border-t pt-3">
             <Button
               variant="ghost"
@@ -532,13 +558,11 @@ function DiagnosticsCard({
   );
 }
 
-// VisibilityReadout renders a static "Private" / "Public" pill for everyone
-// who is not the runtime owner — workspace admins included (MUL-6126). Its
-// tooltip is phrased in the third person for that reason; the editor's own
-// hints stay in the second person. The description used to sit under the
-// chip; it now lives in the hover tooltip so the Diagnostics column stays
-// compact and matches the surrounding sections. Older backends that omit the
-// field render as "Private" to match the strict default.
+// VisibilityReadout 为所有非归属者渲染一个静态的「Private / Public」小标
+// （工作区 admin 也包含在内，MUL-6126）。因此它的悬浮提示用第三人称措辞；
+// 编辑器自己的提示保持第二人称。描述原先放在小标下方，现在移到悬停提示里，
+// 让诊断列保持紧凑并与周边区块一致。不返回该字段的旧后端按严格的默认值
+// 渲染成「Private」。
 function VisibilityReadout({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   const visibility = runtime.visibility === "public" ? "public" : "private";
@@ -562,11 +586,10 @@ function VisibilityReadout({ runtime }: { runtime: AgentRuntime }) {
   );
 }
 
-// VisibilityEditor lets the runtime owner flip public↔private. Owner only —
-// the PATCH endpoint refuses a workspace admin here (canSetRuntimeVisibility);
-// this is a UI gate, not a security boundary. Per-choice description text lives in the hover
-// tooltip so the two buttons stay a tight icon+label pair instead of the
-// previous two-line block that competed with the surrounding cards.
+// VisibilityEditor 让 runtime 归属者在 public↔private 间切换。仅归属者可
+// 用——PATCH 端点会拒绝工作区 admin 的此类修改（canSetRuntimeVisibility）；
+// 这只是 UI 门槛，不是安全边界。每个选项的说明文字放在悬停提示里，让两个
+// 按钮保持紧凑的图标+标签组合，而不是以前那种与周边卡片抢眼的两行大块。
 function VisibilityEditor({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();

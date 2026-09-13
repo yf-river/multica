@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * 官网页脚（客户端组件）：左侧为 logo、slogan、社交链接与按登录态区分的 CTA，
+ * 右侧为按文案字典渲染的链接列；底部是大号的水印品牌字。
+ */
 import Link from "next/link";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
 import { useAuthStore } from "@multica/core/auth";
@@ -14,6 +18,11 @@ import {
 import { useLocale } from "../i18n";
 import { useDashboardCtaHref } from "../utils/use-dashboard-cta";
 
+/**
+ * 官网页脚。
+ *
+ * @returns 深色页脚整块内容。
+ */
 export function LandingFooter() {
   const { t } = useLocale();
   const user = useAuthStore((s) => s.user);
@@ -23,9 +32,9 @@ export function LandingFooter() {
   return (
     <footer className="bg-[#0a0d12] text-white">
       <div className="mx-auto max-w-[1320px] px-4 sm:px-6 lg:px-8">
-        {/* Top: CTA + link columns */}
+        {/* 上半区：左侧品牌/CTA + 右侧链接列 */}
         <div className="flex flex-col gap-12 border-b border-white/10 py-16 sm:py-20 lg:flex-row lg:gap-20">
-          {/* Left — newsletter / CTA */}
+          {/* 左侧 —— 品牌、简介、社交链接、CTA */}
           <div className="lg:w-[340px] lg:shrink-0">
             <Link href="#product" className="flex items-center gap-3">
               <MulticaIcon className="size-5 text-white" noSpin />
@@ -73,7 +82,7 @@ export function LandingFooter() {
             </div>
           </div>
 
-          {/* Right — link columns */}
+          {/* 右侧 —— 按组排列的链接列 */}
           <div className="grid flex-1 grid-cols-2 gap-8 sm:grid-cols-4">
             {groups.map((group) => (
               <div key={group.label}>
@@ -100,7 +109,7 @@ export function LandingFooter() {
           </div>
         </div>
 
-        {/* Bottom: copyright */}
+        {/* 底栏：版权信息 */}
         <div className="flex items-center justify-between py-6">
           <p className="text-label text-white/36">
             {t.footer.copyright.replace(
@@ -110,7 +119,7 @@ export function LandingFooter() {
           </p>
         </div>
 
-        {/* Giant logo */}
+        {/* 巨型水印 logo */}
         <div className="relative overflow-hidden pb-4">
           <div className="flex items-end gap-6 sm:gap-8">
             <MulticaIcon

@@ -1,23 +1,15 @@
-/**
- * Image sequence — the ordered list of images one surface exposes to the
- * preview viewer's prev / next navigation (MUL-5752).
- *
- * Scope is deliberately narrow: ONLY images. PDFs, video, audio, markdown,
- * HTML and text attachments never enter this sequence — mixing kinds would
- * mean defining per-kind load/keyboard/state semantics for a "next" that can
- * land on a PDF page or a playing video. A non-image attachment simply keeps
- * opening its own single-file preview.
- *
- * The sequence is built from DATA, not from the DOM: both the issue timeline
- * and the chat message list are virtualized, so a registry of mounted <img>
- * nodes would silently drop every image scrolled out of the window. Feeding it
- * the same `{ content, attachments }` blocks the renderers consume keeps the
- * order identical to what the reader sees without depending on what is
- * currently painted.
- *
- * Pure — no React, no DOM, no platform APIs. Mobile shares it (see
- * apps/mobile/CLAUDE.md: pure functions from @multica/core are importable).
- */
+// 本文件实现「图片序列」——某个界面上按顺序提供给预览查看器上/下翻页浏览的图片列表。
+
+// 范围刻意收窄：只处理图片。PDF、视频、音频、markdown、HTML 和文本附件永远不会进入
+// 这个序列——混合不同类型就意味着要为一颗可能落到 PDF 页或正在播放的视频上的「下一张」
+// 定义每种类型的加载/键盘/状态语义。非图片附件继续各自打开自己的单文件预览。
+//
+// 序列是从数据构建的，而不是从 DOM：issue 时间线和聊天消息列表都是虚拟化的，所以一个
+// 记录已挂载 <img> 节点的注册表会静默丢掉所有滚出窗口的图片。喂给它渲染器消费的同一份
+// `{ content, attachments }` 块，就能让顺序和读者看到的完全一致，而不依赖当前画面上画了什么。
+//
+// 纯函数——无 React、无 DOM、无平台 API。移动端共享它（见 apps/mobile/CLAUDE.md：
+// 来自 @multica/core 的纯函数可被导入）。
 
 import type { Attachment } from "../types/attachment";
 import {
@@ -25,10 +17,8 @@ import {
   contentReferencesAttachment,
 } from "../types/attachment-url";
 
-// Extension fallback for the image test. Mirrors IMAGE_EXTS in
-// packages/views/editor/utils/preview.ts, which now delegates here so the
-// "is this an image?" answer cannot drift between the preview dispatch table
-// and the sequence builder.
+// 图片测试的扩展名兜底。镜像 packages/views/editor/utils/preview.ts 里的 IMAGE_EXTS，
+// 后者现在委托到这里，让「这是图片吗？」的答案不会在预览派发表和序列构建器之间漂移。
 const IMAGE_EXTENSIONS = new Set<string>([
   "png",
   "jpg",
@@ -56,13 +46,16 @@ function normalizeContentType(contentType: string): string {
 }
 
 /**
- * True when the file renders as an image. Content-type wins; the extension is
- * the fallback for URL-only sources that carry no server metadata.
+ * 判断文件是否以图片形式渲染。content-type 优先；对于不带服务端元数据的纯 URL 来源，
+ * 扩展名作为兜底。
  *
- * NOTE for callers implementing a full kind dispatch: this is only the image
- * branch. `application/pdf`, `video/*` and `audio/*` must be tested BEFORE
- * this (an `.svg` is text-like XML, a `.pdf` named `chart.pdf.png` is not a
- * real case) — see `getPreviewKind`.
+ * 给实现完整类型派发的调用方的提示：这只是图片分支。`application/pdf`、`video/*` 和
+ * `audio/*` 必须先于本判断测试（`.svg` 是文本类 XML，名为 `chart.pdf.png` 的 `.pdf`
+ * 不是真实场景）——见 `getPreviewKind`。
+ *
+ * @param contentType - 文件的 content-type
+ * @param filename - 文件名
+ * @returns 是否为图片附件
  */
 export function isImageAttachment(
   contentType: string,
@@ -74,7 +67,7 @@ export function isImageAttachment(
 }
 
 // ---------------------------------------------------------------------------
-// URL → attachment matching
+// URL → 附件匹配
 // ---------------------------------------------------------------------------
 
 function stripQueryAndFragment(url: string): string {
@@ -93,17 +86,19 @@ function matchesAttachmentURL(
 }
 
 /**
- * Resolve a URL embedded in a markdown body back to its attachment record.
+ * 把 markdown 正文里嵌入的 URL 解析回对应的附件记录。
  *
- * Two fallbacks, in order — the same pair `AttachmentDownloadProvider` uses
- * (and now shares with this module so a URL can never resolve to one record
- * for the download click and another for the sequence):
+ * 两个兜底按顺序——和 `AttachmentDownloadProvider` 用的是同一对（现在与本模块共享，
+ * 这样同一个 URL 绝不会出现「下载点击解析到一条记录、序列解析到另一条」）：
  *
- *   1. id extracted from the stable `/api/attachments/<id>/download` shape
- *      that every post-MUL-3130 body persists. Survives a host swap and any
- *      incidental query / fragment.
- *   2. full-URL equality against `url` / `download_url` / `markdown_url`, for
- *      legacy bodies and CDN markdown that never got the stable shape.
+ *   1. 从稳定的 `/api/attachments/<id>/download` 形状里提取 id——所有 MUL-3130 之后的
+ *      正文都持久化成这种形状。换 host、以及任何附带的 query / fragment 都不影响。
+ *   2. 与 `url` / `download_url` / `markdown_url` 做完整 URL 相等比较，用于旧正文和
+ *      从未拿到稳定形状的 CDN markdown。
+ *
+ * @param url - 正文中嵌入的 URL
+ * @param attachments - 附件列表（可为空）
+ * @returns 匹配到的附件记录，未匹配则返回 undefined
  */
 export function matchAttachmentByURL(
   url: string,
@@ -124,12 +119,14 @@ export function matchAttachmentByURL(
 }
 
 /**
- * The attachments a surface renders as cards BELOW the body — i.e. the ones
- * the markdown does not already reference inline.
+ * 返回界面在正文下方以卡片形式渲染的附件——即 markdown 没有在行内引用的那些。
  *
- * Also drops a re-upload of a file that is already inline under a different
- * attachment row (same name + type + size): the reader sees one image, so the
- * sequence must count one.
+ * 同时丢弃「同一文件已在行内、但以另一条附件行重新上传」的情况（同名 + 同类型 + 同大小）：
+ * 读者只看到一张图，所以序列也必须只算一张。
+ *
+ * @param content - markdown 正文内容（可为空）
+ * @param attachments - 附件列表（可为空）
+ * @returns 正文未引用的独立附件列表
  */
 export function selectStandaloneAttachments(
   content: string | null | undefined,
@@ -152,24 +149,22 @@ export function selectStandaloneAttachments(
 }
 
 // ---------------------------------------------------------------------------
-// Inline image references
+// 行内图片引用
 // ---------------------------------------------------------------------------
 
 function blankOut(text: string): string {
-  // Newlines survive so line-anchored patterns below keep their line numbers.
+  // 换行符保留，这样下面按行锚定的模式能保住行号。
   return text.replace(/[^\n]/g, " ");
 }
 
 /**
- * Blank every code span and fenced block, preserving offsets and line breaks.
+ * 把每个行内代码和围栏代码块都置空，同时保留偏移量和换行。
  *
- * Without this, an `![shot](url)` shown as an EXAMPLE inside a fenced block —
- * common in agent replies explaining markdown — would be counted as a real
- * image and the reader would page onto something that was never rendered.
+ * 不这样做的话，一个在围栏代码块里作为示例展示的 `![shot](url)`——在 agent 解释
+ * markdown 的回复里很常见——会被当成真实图片计数，读者就会翻到从未被渲染的内容上。
  *
- * Line scanner rather than one multiline regex: a backreferenced
- * `(`{3,})[\s\S]*?\1` over agent output is a ReDoS shape, and this runs on
- * every issue/chat render.
+ * 用逐行扫描而非一个多行正则：在 agent 输出上反向引用的 `(`{3,})[\s\S]*?\1` 是
+ * ReDoS 形状，而且这段代码每次 issue/chat 渲染都要跑。
  */
 function maskCode(content: string): string {
   const lines = content.split("\n");
@@ -199,31 +194,28 @@ function maskCode(content: string): string {
 interface InlineImageRef {
   index: number;
   url: string;
-  /** Best filename hint available at the reference site. */
+  /** 引用点处可用的最佳文件名提示。 */
   filename: string;
   /**
-   * Whether the reference still has to pass the image test. Markdown `![]()`
-   * and `<img>` are images by construction (the renderers pass
-   * `forceKind: "image"`); a `!file[name](url)` card only renders as an image
-   * when its name/type says so.
+   * 该引用是否仍需通过图片测试。markdown 的 `![]()` 和 `<img>` 从构造上就是图片
+   * （渲染器传 `forceKind: "image"`）；而 `!file[name](url)` 卡片只有在其名称/类型
+   * 表明是图片时才以图片渲染。
    */
   requiresImageCheck: boolean;
 }
 
-// `![alt](url "title")`. The URL char class stops at whitespace and `)` so a
-// title never leaks into it; the optional <> wrapper is CommonMark's escape
-// for URLs containing spaces.
+// `![alt](url "title")`。URL 字符类在空白和 `)` 处停止，这样 title 才不会漏进去；
+// 可选的 <> 包裹是 CommonMark 为含空格的 URL 提供的转义写法。
 const MARKDOWN_IMAGE_RE =
   /!\[([^\]\n]*)\]\(\s*<([^>\n]*)>[^)]*\)|!\[([^\]\n]*)\]\(\s*([^)\s]+)[^)]*\)/g;
 
-// Raw `<img src=...>` — reachable because the readonly renderer runs
-// rehypeRaw + rehypeSanitize, and the sanitize schema keeps img.
+// 原始 `<img src=...>`——可达，因为只读渲染器运行 rehypeRaw + rehypeSanitize，
+// 而 sanitize schema 保留了 img。
 const HTML_IMAGE_RE =
   /<img\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s">']+))[^>]*>/gi;
 
-// `!file[name](url)` on its own line — `preprocessFileCards` turns it into a
-// fileCard div, which the renderer hands to <Attachment>; an image filename
-// there renders as an inline image, not a card.
+// 独占一行的 `!file[name](url)`——`preprocessFileCards` 会把它变成 fileCard div，
+// 渲染器再交给 <Attachment>；那里的图片文件名会渲染成行内图片，而不是卡片。
 const FILE_CARD_LINE_RE = /^[ \t]*!file\[((?:\\.|[^\]\\\n])*)\]\(([^)\s]+)\)[ \t]*$/gm;
 
 function unescapeLabel(label: string): string {
@@ -236,7 +228,7 @@ function extractInlineImageRefs(rawContent: string): InlineImageRef[] {
   const refs: InlineImageRef[] = [];
 
   for (const m of content.matchAll(MARKDOWN_IMAGE_RE)) {
-    // Two alternations: `<...>`-wrapped URL (groups 1/2) or bare (groups 3/4).
+    // 两个分支：`<...>` 包裹的 URL（组 1/2）或裸 URL（组 3/4）。
     const alt = m[1] ?? m[3] ?? "";
     const url = (m[2] ?? m[4] ?? "").trim();
     if (!url) continue;
@@ -274,37 +266,38 @@ function extractInlineImageRefs(rawContent: string): InlineImageRef[] {
 }
 
 // ---------------------------------------------------------------------------
-// Sequence
+// 序列
 // ---------------------------------------------------------------------------
 
-/** One image the viewer can page to. */
+/** 查看器可以翻到的一张图片。 */
 export interface ImageSequenceItem {
   /**
-   * Identity used to open the sequence at the clicked image. The attachment id
-   * when the reference resolves to a record, otherwise the URL as written in
-   * the body — matching what the renderer knows at click time.
+   * 用于在点击的图片处打开序列的标识。当引用能解析到记录时为附件 id，
+   * 否则为正文中写出的 URL——与渲染器在点击时刻所知的一致。
    */
   key: string;
-  /** Best-known URL. Callers holding `attachment` should prefer re-resolving. */
+  /** 已知的最佳 URL。持有 `attachment` 的调用方应优先重新解析。 */
   url: string;
   filename: string;
-  /** Present when the reference resolved to a workspace attachment record. */
+  /** 当引用解析到工作区附件记录时存在。 */
   attachment?: Attachment;
 }
 
-/** One renderable unit: an issue description, a comment, a chat message. */
+/** 一个可渲染单元：一条 issue 描述、一条评论、一条聊天消息。 */
 export interface ImageSequenceBlock {
   content?: string | null;
   attachments?: ReadonlyArray<Attachment> | null;
 }
 
 /**
- * Flatten blocks into the ordered image sequence a viewer walks.
+ * 把若干块展平成查看器按序遍历的有序图片序列。
  *
- * Order is render order: for each block, images inline in the body in text
- * order, then the standalone attachment cards rendered under it. Repeats of
- * the same image collapse to their first position, so the counter matches the
- * number of distinct images rather than the number of references.
+ * 顺序即渲染顺序：对每个块，先是正文中按文本顺序的行内图片，再是它下面渲染的
+ * 独立附件卡片。同一张图片的重复引用坍缩到第一次出现的位置，这样计数匹配的是
+ * 「不同图片的数量」而非「引用的数量」。
+ *
+ * @param blocks - 有序的渲染块列表（元素可为空）
+ * @returns 有序图片序列
  */
 export function collectImageSequence(
   blocks: ReadonlyArray<ImageSequenceBlock | null | undefined>,
@@ -360,7 +353,13 @@ export function collectImageSequence(
   return items;
 }
 
-/** Index of `key` in the sequence, or -1 when it is not part of it. */
+/**
+ * 返回 `key` 在序列中的下标，不在序列中时返回 -1。
+ *
+ * @param items - 图片序列
+ * @param key - 要查找的图片标识
+ * @returns 下标或 -1
+ */
 export function indexOfImageKey(
   items: ReadonlyArray<ImageSequenceItem>,
   key: string,

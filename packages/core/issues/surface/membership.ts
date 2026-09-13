@@ -1,22 +1,23 @@
+// 判断某个议题是否还属于某个带过滤的列表缓存（看板/列表/泳道等视图）。
+// 这是"确定 → 精确修补、不确定 → 失效重取"规则在列表成员关系上的落点：
+// 能确定的就同步缓存，客户端判断不了的（谓词在服务端）就退回到失效。
 import type { Issue, UpdateIssueRequest } from "../../types";
 import type { MyIssuesFilter } from "../queries";
 
 /**
- * Whether an issue belongs to a filtered list cache.
+ * 议题是否属于某个带过滤的列表缓存的判定结果。
  *
- * `"unknown"` means the client cannot decide from the entity alone — the
- * filter's predicate lives server-side (agent-ownership graph behind
- * `involves_user_id`, the my:all relation union) or the entity is missing the
- * field the filter keys on. Callers patch on `true`, remove on `false`, and
- * patch + invalidate on `"unknown"` — the "certain → patch, uncertain →
- * invalidate" rule applied to list membership.
+ * `"unknown"`（不确定）意味着光靠实体本身客户端无法下结论——过滤条件里有一部分
+ * 谓词活在服务端（`involves_user_id` 背后的 agent 归属关系图、my:all 的关系并集），
+ * 或者实体缺少过滤所依据的字段。调用方在 `true` 时精确修补、`false` 时移除，
+ * `"unknown"` 时修补 + 失效重取。
  */
 export type IssueMembership = true | false | "unknown";
 
 /**
- * The field groups a write can touch that move an issue in or out of a
- * filtered list (assignee / project) or shift per-status bucket totals
- * (status). Creator is not here: it is immutable after create.
+ * 一次写操作能触碰、且会让议题进出某个过滤列表（assignee / project）
+ * 或改变各状态桶计数（status）的字段分组。创建者（creator）不在其中：
+ * 议题创建后 creator 不可变。
  */
 export interface IssueChangedDims {
   assignee: boolean;
@@ -25,11 +26,12 @@ export interface IssueChangedDims {
 }
 
 /**
- * Derive the changed dimensions from a mutation patch. `base` (the freshest
- * cached pre-write entity, usually the detail cache) sharpens the answer:
- * writing the same value an issue already has changes nothing. Without a
- * base, any written membership field counts as changed — conservative, at
- * worst one extra list refetch on settle.
+ * 从变更补丁里推导"变了哪些维度"。`base`（写入前最新缓存的实体，通常是详情缓存）
+ * 让结论更精确：给议题写入一个它本来就是这个值的字段等于没变。没有 `base` 时，
+ * 任何被写入的成员字段都算作变化——偏保守，最坏情况只是结算时多一次列表重取。
+ * @param patch 待应用的变更补丁。
+ * @param base 写入前的基线实体（可选），用于判断值是否真的变了。
+ * @returns 各维度是否发生变化。
  */
 export function issueChangedDims(
   patch: Partial<Issue> | UpdateIssueRequest,
@@ -48,19 +50,21 @@ export function issueChangedDims(
 }
 
 /**
- * Does this list's server contract depend on any of the changed dimensions?
- * `scope` is the myList scope segment from the query key (`undefined` for the
- * unfiltered workspace list). When this returns false the write cannot move
- * the issue in or out of the list, so a plain field patch is a complete
- * reconcile.
+ * 这个列表的服务端契约是否依赖被改动的那些维度？
+ * `scope` 是 query key 里 myList 的作用域段（不带过滤的工作区列表是 `undefined`）。
+ * 返回 false 说明这次写入不可能把议题挪进/挪出该列表，此时做纯字段修补就是完整对账。
+ * @param scope myList 作用域段，`undefined` 表示工作区全量列表。
+ * @param filter 该视图当前启用的过滤条件。
+ * @param changed 本次变更涉及的维度。
+ * @returns true 表示该列表可能受这次写入影响。
  */
 export function listFilterDependsOn(
   scope: string | undefined,
   filter: MyIssuesFilter,
   changed: IssueChangedDims,
 ): boolean {
-  // my:all is the union of assigned / created / involved — the assigned and
-  // involved legs key on the assignee.
+  // my:all 是 assigned / created / involved 的并集——其中 assigned 和
+  // involved 两条腿都按负责人（assignee）过滤，所以负责人一变列表就会动。
   if (scope === "all") return changed.assignee;
   if (
     changed.assignee &&
@@ -72,23 +76,26 @@ export function listFilterDependsOn(
     return true;
   }
   if (changed.project && filter.project_id !== undefined) return true;
-  // creator_id filters never react to updates — creator is immutable.
+  // creator_id 过滤永不响应更新——creator 创建后不可变。
   return false;
 }
 
 /**
- * Judge an issue against a list's server contract. AND semantics across
- * filter fields: any definitive miss is `false`; a predicate the client
- * cannot evaluate (or a field the partial entity is missing) degrades the
- * answer to `"unknown"` instead of guessing.
+ * 拿一个议题去对照某列表的服务端契约做成员判定。各过滤字段之间是 AND 语义：
+ * 任一字段明确不匹配即返回 `false`；客户端无法求值的谓词（或部分实体缺字段）
+ * 会把答案降级成 `"unknown"`，而不是瞎猜。
+ * @param issue 待判定的议题（可以是部分字段）。
+ * @param scope myList 作用域段，`undefined` 表示工作区全量列表。
+ * @param filter 该视图当前启用的过滤条件。
+ * @returns true=在列表里 / false=不在 / "unknown"=无法判定。
  */
 export function issueMatchesListFilter(
   issue: Partial<Issue>,
   scope: string | undefined,
   filter: MyIssuesFilter,
 ): IssueMembership {
-  // my:all — union across relations; the involved leg needs the server's
-  // agent-ownership graph, so membership is never decidable client-side.
+  // my:all 是多个关系上的并集；其中 involved 这条腿依赖服务端的 agent 归属图，
+  // 所以成员关系永远无法在客户端独立判定。
   if (scope === "all") return "unknown";
 
   let unknown = false;
@@ -124,7 +131,7 @@ export function issueMatchesListFilter(
     else if (issue.project_id !== filter.project_id) return false;
   }
   if (filter.involves_user_id !== undefined) {
-    // Indirect-assignee predicate (owned agents / squads) — server-only.
+    // 间接负责人谓词（议题归属的 agents / squads）——只有服务端能算。
     unknown = true;
   }
 

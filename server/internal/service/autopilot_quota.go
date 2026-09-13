@@ -1,3 +1,8 @@
+// autopilot_quota.go —— Autopilot 运行的配额（quota）准入与结算。
+// 职责：① 从 Entitlements 解析云端的运行配额策略（observe/enforce），② 在同一事务里「建 run +
+// 预留配额」并保证幂等（同一幂等键不二次占额），③ run 收尾时把预留结算为「消费」（completed）或
+// 「释放」（failed/skipped/孤儿），④ 暴露使用量、被拒统计与恢复扫描。配额表只在 quota 启用且有事务
+// 起点时才会被触碰，self-hosted 部署永远走旧的直插路径。
 package service
 
 import (
@@ -18,15 +23,13 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// AutopilotQuotaMetrics deliberately accepts only bounded labels. Workspace
-// identifiers and policy values must never be metric labels.
+// AutopilotQuotaMetrics 刻意只接收有界的标签。工作区标识与策略值绝不能当指标标签。
 type AutopilotQuotaMetrics interface {
 	RecordAutopilotQuotaDecision(action, source, result string)
 }
 
-// AutopilotQuotaExceededError is returned only for an enforce decision whose
-// Cloud-provided interval is full. HTTP callers can serialize the facts without
-// embedding commercial copy or plan names in OSS.
+// AutopilotQuotaExceededError 只在「enforce 决策且云端给的区间已满」时返回。HTTP 调用方能序列化
+// 这些事实，而不用在 OSS 里嵌入商业文案或套餐名。
 type AutopilotQuotaExceededError struct {
 	Used     int64
 	Reserved int64
@@ -34,12 +37,13 @@ type AutopilotQuotaExceededError struct {
 	ResetAt  time.Time
 }
 
+// Error 返回通用文案（具体用量由字段携带）。
 func (e *AutopilotQuotaExceededError) Error() string {
 	return "autopilot run quota exceeded"
 }
 
-// AutopilotQuotaUsage is the workspace-scoped, policy-neutral API model.
-// A disabled/malformed decision returns Enabled=false and leaves all facts nil.
+// AutopilotQuotaUsage 是按工作区、策略无关的 API 模型。策略关闭/格式错误时返回 Enabled=false 且
+// 各事实字段全为 nil。
 type AutopilotQuotaUsage struct {
 	Enabled  bool
 	Action   string
@@ -47,7 +51,7 @@ type AutopilotQuotaUsage struct {
 	Reserved *int64
 	Total    *int64
 	Limit    *int64
-	// Reached is nil while observing because observe never rejects a run.
+	// Reached 只在 enforce 时非 nil；observe 永不拒绝 run，所以观察时无此概念。
 	Reached       *bool
 	PeriodStart   *time.Time
 	PeriodEnd     *time.Time
@@ -55,6 +59,7 @@ type AutopilotQuotaUsage struct {
 	BlockedCounts map[string]int64
 }
 
+// autopilotQuotaPolicy 是解析自 Entitlements 的生效配额策略快照（含政策/订阅版本，随预留落库用于审计）。
 type autopilotQuotaPolicy struct {
 	action              entitlement.Action
 	limit               int64
@@ -65,12 +70,13 @@ type autopilotQuotaPolicy struct {
 	subscriptionVersion int64
 }
 
+// newAutopilotIdempotencyKey 生成随机幂等键。
 func newAutopilotIdempotencyKey() string { return uuid.NewString() }
 
-// NewRequestIdempotencyKey is used only when an HTTP caller omitted its key;
-// the generated value scopes idempotency to that single request.
+// NewRequestIdempotencyKey 只在 HTTP 调用方漏带幂等键时使用；生成值把幂等范围限定到那单个请求。
 func NewRequestIdempotencyKey() string { return newAutopilotIdempotencyKey() }
 
+// validAutopilotExecutionSource 校验触发来源是否在受支持集合内。
 func validAutopilotExecutionSource(source string) bool {
 	switch source {
 	case "schedule", "manual", "webhook", "api":
@@ -80,6 +86,8 @@ func validAutopilotExecutionSource(source string) bool {
 	}
 }
 
+// quotaPolicy 解析工作区的生效配额策略。Entitlements/workspace 缺失、动作非 observe/enforce、或
+// 政策字段畸形时返回 enabled=false。
 func (s *AutopilotService) quotaPolicy(ctx context.Context, workspaceID pgtype.UUID) (autopilotQuotaPolicy, bool) {
 	if s.Entitlements == nil || !workspaceID.Valid {
 		return autopilotQuotaPolicy{}, false
@@ -92,8 +100,7 @@ func (s *AutopilotService) quotaPolicy(ctx context.Context, workspaceID pgtype.U
 	if (gate.Action != entitlement.ActionObserve && gate.Action != entitlement.ActionEnforce) ||
 		gate.Limit == nil || *gate.Limit < 0 || gate.PeriodStart == nil || gate.PeriodEnd == nil ||
 		gate.ResetAt == nil || !gate.PeriodStart.Before(*gate.PeriodEnd) {
-		// A malformed policy is fail-open and, critically, performs no quota-table
-		// access. Cloud remains the sole authority over interval construction.
+		// 畸形政策 fail-open，而且关键是绝不访问配额表。区间如何构造只由 Cloud 说了算。
 		return autopilotQuotaPolicy{}, false
 	}
 	return autopilotQuotaPolicy{
@@ -107,9 +114,8 @@ func (s *AutopilotService) quotaPolicy(ctx context.Context, workspaceID pgtype.U
 	}, true
 }
 
-// createAutopilotRunWithQuota reserves and links a run in one transaction.
-// When policy is off, it intentionally uses the legacy direct INSERT so a
-// self-hosted deployment never touches the quota tables.
+// createAutopilotRunWithQuota 在单事务里预留配额并建 run。策略关闭时，刻意走旧版直插 INSERT——
+// self-hosted 部署因此永远不碰配额表。
 func (s *AutopilotService) createAutopilotRunWithQuota(
 	ctx context.Context,
 	workspaceID pgtype.UUID,
@@ -120,12 +126,9 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 		return db.AutopilotRun{}, false, fmt.Errorf("invalid autopilot execution source %q", source)
 	}
 	policy, enabled := s.quotaPolicy(ctx, workspaceID)
-	// A run-start event describes the admission itself.  It must be recorded in
-	// the same transaction as the run row; otherwise a crash immediately after
-	// INSERT leaves an execution that cannot be replayed or audited.  The
-	// transaction starter is present in every server wiring.  A nil starter is
-	// retained only for small in-process test/embedding fixtures, where the
-	// historical synchronous bus behavior is the only available delivery path.
+	// run-start 事件描述准入本身，必须与 run 行在同一事务里落库；否则 INSERT 后立刻崩溃会留下
+	// 一条无法重放也无法审计的执行。每种 server 装配都有事务起点；nil starter 只为小型进程内
+	// 测试/嵌入夹具保留——那里历史同步总线是唯一可用的投递路径。
 	if !enabled && s.TxStarter == nil {
 		run, err := s.Queries.CreateAutopilotRun(ctx, params)
 		if err != nil {
@@ -185,14 +188,13 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 	if err == nil {
 		run, runErr := qtx.GetAutopilotRunByQuotaReservation(ctx, existing.ID)
 		if errors.Is(runErr, pgx.ErrNoRows) && existing.State == "reserved" {
-			// The reservation/run insert normally commits atomically. Recover a
-			// manually removed or otherwise orphaned reserved row so the stable
-			// idempotency key does not wedge every retry for the whole period.
+			// 预留/run 插入正常是原子提交的。这里恢复一条被手动删除或成了孤儿的 reserved 行——
+			// 免得这条稳定的幂等键把整个周期的所有重试都楔死。
 			if _, releaseErr := settleAutopilotQuota(ctx, qtx, existing.ID, false); releaseErr != nil {
 				return db.AutopilotRun{}, false, fmt.Errorf("release orphaned idempotency reservation: %w", releaseErr)
 			}
 			period.ReservedCount--
-			err = pgx.ErrNoRows // continue through the normal fresh-reservation path
+			err = pgx.ErrNoRows // 继续走下方正常的新预留路径
 		} else if runErr != nil {
 			return db.AutopilotRun{}, false, fmt.Errorf("load idempotent quota run: %w", runErr)
 		} else {
@@ -224,8 +226,8 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 			Limit: policy.limit, ResetAt: policy.resetAt,
 		}
 	}
-	// Observe-only would-blocks stay in the bounded decision metric. Durable
-	// blocked counts back the usage API only for decisions that reject work.
+	// observe 模式下的「本会拦截」只进有界决策指标。持久的被拒计数只为真正拒绝工作的决策服务，
+	// 供 usage API 读取。
 	reservation, err := qtx.CreateAutopilotQuotaReservation(ctx, db.CreateAutopilotQuotaReservationParams{
 		WorkspaceID: workspaceID, PeriodStart: periodArgs.PeriodStart, PeriodEnd: periodArgs.PeriodEnd,
 		PolicyRevision: policy.policyRevision, SubscriptionVersion: policy.subscriptionVersion,
@@ -260,6 +262,7 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 	return run, false, nil
 }
 
+// autopilotRunStartEvent 构造「run 已开始」的持久化事件信封（幂等键以 run id 计，重放不会重复）。
 func autopilotRunStartEvent(workspaceID pgtype.UUID, source string, run db.AutopilotRun) events.Event {
 	return events.Event{
 		Type:           protocol.EventAutopilotRunStart,
@@ -281,17 +284,19 @@ func (s *AutopilotService) publishAutopilotRunStart(ctx context.Context, workspa
 		return
 	}
 	event := autopilotRunStartEvent(workspaceID, source, run)
-	// This branch is intentionally limited to non-transactional fixtures.  A
-	// production service always takes the durable path above.
+	// 该分支刻意只服务于非事务夹具。生产服务永远走上面的事务持久化路径。
 	s.Bus.Publish(event)
 }
 
+// recordAutopilotQuotaDecision 上报一次配额决策指标（QuotaMetrics 可为 nil，静默跳过）。
 func (s *AutopilotService) recordAutopilotQuotaDecision(action entitlement.Action, source, result string) {
 	if s.QuotaMetrics != nil {
 		s.QuotaMetrics.RecordAutopilotQuotaDecision(string(action), source, result)
 	}
 }
 
+// settleAutopilotQuota 结算一条配额预留：consume=true 记消费（completed），否则释放（failed/skipped/
+// 孤儿）。基于 CAS 的状态翻转幂等；返回 changed=false 表示该预留已被终态重放处理过。
 func settleAutopilotQuota(ctx context.Context, q *db.Queries, reservationID pgtype.UUID, consume bool) (bool, error) {
 	if !reservationID.Valid {
 		return false, nil
@@ -303,11 +308,12 @@ func settleAutopilotQuota(ctx context.Context, q *db.Queries, reservationID pgty
 		_, err = q.ReleaseAutopilotQuotaReservation(ctx, reservationID)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil // terminal replay: reservation already finalized
+		return false, nil // 终态重放：该预留早已结算
 	}
 	return err == nil, err
 }
 
+// completeAutopilotRun 非事务地把 run 置为 completed 并消费配额（供无 TxStarter 的降级路径）。
 func (s *AutopilotService) completeAutopilotRun(ctx context.Context, params db.UpdateAutopilotRunCompletedParams) (db.AutopilotRun, error) {
 	row, err := s.Queries.UpdateAutopilotRunTerminalWithQuota(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
 		TerminalStatus: "completed",
@@ -318,6 +324,7 @@ func (s *AutopilotService) completeAutopilotRun(ctx context.Context, params db.U
 	return autopilotRunFromTerminalRow(row), err
 }
 
+// failAutopilotRun 非事务地把 run 置为 failed 并释放配额。
 func (s *AutopilotService) failAutopilotRun(ctx context.Context, params db.UpdateAutopilotRunFailedParams) (db.AutopilotRun, error) {
 	row, err := s.Queries.UpdateAutopilotRunTerminalWithQuota(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
 		TerminalStatus: "failed",
@@ -328,6 +335,7 @@ func (s *AutopilotService) failAutopilotRun(ctx context.Context, params db.Updat
 	return autopilotRunFromTerminalRow(row), err
 }
 
+// skipAutopilotRun 非事务地把 run 置为 skipped 并释放配额。
 func (s *AutopilotService) skipAutopilotRun(ctx context.Context, params db.UpdateAutopilotRunSkippedParams) (db.AutopilotRun, error) {
 	row, err := s.Queries.UpdateAutopilotRunTerminalWithQuota(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
 		TerminalStatus: "skipped",
@@ -338,6 +346,7 @@ func (s *AutopilotService) skipAutopilotRun(ctx context.Context, params db.Updat
 	return autopilotRunFromTerminalRow(row), err
 }
 
+// autopilotRunFromTerminalRow 把终态更新的返回行还原成 db.AutopilotRun。
 func autopilotRunFromTerminalRow(row db.UpdateAutopilotRunTerminalWithQuotaRow) db.AutopilotRun {
 	return db.AutopilotRun{
 		ID: row.ID, AutopilotID: row.AutopilotID, TriggerID: row.TriggerID,
@@ -350,9 +359,8 @@ func autopilotRunFromTerminalRow(row db.UpdateAutopilotRunTerminalWithQuotaRow) 
 	}
 }
 
-// settleAutopilotRunDurably performs a terminal run transition and records its
-// run_done envelope under the same database commit. It is used by dispatch
-// error/skip paths that are outside the durable task/issue projection worker.
+// settleAutopilotRunDurably 执行一次 run 终态切换，并把 run_done 信封与它在同一数据库提交里落库。
+// 供持久化 task/issue 投影 worker 之外的派发错误/skip 路径使用。
 func (s *AutopilotService) settleAutopilotRunDurably(
 	ctx context.Context,
 	runID pgtype.UUID,
@@ -406,13 +414,15 @@ func (s *AutopilotService) settleAutopilotRunDurably(
 	return run, event, nil
 }
 
+// recoverPartialAutopilotRun 把「建了 run 却未建下游资源」的半成品标记为失败（DB 侧 SQL 完成），
+// 释放其 planned_at 部分唯一槽位。返回是否有行被恢复。
 func (s *AutopilotService) recoverPartialAutopilotRun(ctx context.Context, run db.AutopilotRun) (bool, error) {
 	rows, err := s.Queries.RecoverPartialAutopilotRun(ctx, run.ID)
 	return rows > 0, err
 }
 
-// FailAutopilotRunsByIssue keeps create_issue consumption immutable while
-// releasing any still-reserved run_only slots before deletion clears issue_id.
+// FailAutopilotRunsByIssue 在删除清掉 issue_id 之前，让 create_issue 的消费保持不可变、同时释放
+// 仍被预留的 run_only 槽位。
 func (s *AutopilotService) FailAutopilotRunsByIssue(ctx context.Context, issueID pgtype.UUID) error {
 	if s.TxStarter == nil {
 		_, err := s.Queries.FailAutopilotRunsByIssue(ctx, issueID)
@@ -462,6 +472,7 @@ func autopilotRunFromFailedByIssueRow(row db.FailAutopilotRunsByIssueRow) db.Aut
 	}
 }
 
+// AutopilotQuotaUsage 查询当前周期配额用量。政策关闭时返回 Enabled=false。
 func (s *AutopilotService) AutopilotQuotaUsage(ctx context.Context, workspaceID pgtype.UUID) (AutopilotQuotaUsage, error) {
 	policy, enabled := s.quotaPolicy(ctx, workspaceID)
 	if !enabled {
@@ -502,12 +513,11 @@ func (s *AutopilotService) AutopilotQuotaUsage(ctx context.Context, workspaceID 
 	}, nil
 }
 
+// QuotaEnabled 报告本部署是否配置了配额提供方。
 func (s *AutopilotService) QuotaEnabled() bool { return s.Entitlements != nil }
 
-// ReconcileAutopilotQuotaReservations repairs crash windows left after a
-// reservation/run transaction but before the downstream side effect or normal
-// finalizer. The reservation transition remains CAS-based, so replicas may run
-// this concurrently without double-adjusting counters.
+// ReconcileAutopilotQuotaReservations 修复「预留/run 事务之后、下游副作用或正常 finalizer 之前」崩溃
+// 留下的窗口。预留翻转保持 CAS 语义，副本可并发跑本函数而不把计数翻倍。
 func (s *AutopilotService) ReconcileAutopilotQuotaReservations(
 	ctx context.Context,
 	terminalCreatedBefore time.Time,
@@ -566,8 +576,7 @@ func (s *AutopilotService) ReconcileAutopilotQuotaReservations(
 				continue
 			}
 		default:
-			// Schedule and webhook retries own their partial-state recovery. The
-			// query excludes them so this branch is only a defensive guard.
+			// 计划与 webhook 重试自管其半成品恢复；查询已把它们排除，此分支只是防御性兜底。
 			continue
 		}
 		settled++

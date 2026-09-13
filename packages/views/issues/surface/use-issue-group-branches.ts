@@ -1,5 +1,8 @@
 "use client";
 
+// 分组分支数据 hook：给非状态分组的看板（按指派人/项目/父问题/自定义属性）以及复合
+// 泳道提供服务端游标分页数据。`/groups` 拥有完整的分组目录和精确计数；每个分组
+// （或 泳道×状态 复合格）拥有各自独立的 `/rows` 游标链。
 import {
   useCallback,
   useEffect,
@@ -27,6 +30,7 @@ import type {
   IssueTableRowsResponse,
 } from "@multica/core/types";
 
+/** 单个分组分支的分页状态与控制方法。 */
 export interface IssueGroupPageState {
   total: number;
   loaded: number;
@@ -38,6 +42,7 @@ export interface IssueGroupPageState {
   retry: () => void;
 }
 
+/** useIssueGroupBranches 返回的分组分支数据。 */
 export interface IssueGroupBranches {
   enabled: boolean;
   descriptors: IssueTableGroupDescriptor[];
@@ -93,11 +98,9 @@ function issueMatchesDescriptor(
   descriptor: IssueTableGroupDescriptor,
   primary: IssueTableGroupDescriptor | undefined,
   /**
-   * Whether the secondary axis is the CATEGORY a status behaves as rather than
-   * the status key itself. A category cell holds every custom status in it, so
-   * matching on the raw key would drop exactly the cards the category contract
-   * exists to deliver — `qa !== "in_review"` threw the QA card away after the
-   * server correctly returned it. (MUL-6243)
+   * 次轴是否是「状态表现为的分类」而不是状态 key 本身。一个分类格子装着落在它名下
+   * 的所有自定义状态，所以拿原始 key 去比，会恰恰丢掉分类约定要交付的那些卡片——
+   * `qa !== "in_review"` 会把服务端正确返回的 QA 卡片给扔了。（MUL-6243）
    */
   secondaryIsCategory: boolean,
 ) {
@@ -133,9 +136,17 @@ function issueMatchesDescriptor(
 }
 
 /**
- * Cursor-paged server branches shared by non-status Board and Swimlane.
- * `/groups` owns the complete group catalog and exact counts; every group (or
- * compound lane×status cell) owns an independent `/rows` cursor chain.
+ * 非状态分组的看板与泳道共享的游标分页数据 hook。`/groups` 拥有完整的分组目录和
+ * 精确计数；每个分组（或 泳道×状态 复合格）拥有各自独立的 `/rows` 游标链。
+ * @param options.wsId - 工作区 id。
+ * @param options.query - 表格查询规格。
+ * @param options.group - 分组类型。
+ * @param options.secondaryValues - 复合格分组：保留精确的泳道描述/计数，但只为当前
+ *   可见的次级分桶观察行。
+ * @param options.observeEmptyBranches - 复合格与「含空值」属性响应会携带零计数的 key。
+ *   当它们的挂载哨兵变得可见时激活这些分支，让拖拽目标有活的首屏数据。
+ * @param options.enabled - 是否启用查询。
+ * @returns 分组目录、展开的问题列表与各分组分页状态。
  */
 export function useIssueGroupBranches({
   wsId,
@@ -148,12 +159,10 @@ export function useIssueGroupBranches({
   wsId: string;
   query: IssueTableQuerySpec;
   group: IssueTableGroupsRequest["group"];
-  /** For compound groups, keep exact lane descriptors/counts while observing
-   * rows only for the currently visible secondary buckets. */
+  /** 复合格分组：保留精确的泳道描述/计数，但只为当前可见的次级分桶观察行。 */
   secondaryValues?: readonly string[];
-  /** Compound and include-empty property responses carry zero-count keys.
-   * Activate those when their mounted sentinel becomes visible so drag
-   * targets have live heads. */
+  /** 复合格与「含空值」属性响应会携带零计数的 key。
+   *  当它们的挂载哨兵变得可见时激活这些分支，让拖拽目标有活的首屏数据。 */
   observeEmptyBranches?: boolean;
   enabled: boolean;
 }): IssueGroupBranches {
@@ -382,10 +391,8 @@ export function useIssueGroupBranches({
       setCursorState((previous) => {
         if (previous.identity !== identity) return previous;
         const current = previous.cursors[key] ?? [];
-        // A descriptor does not install a row observer by itself. The first
-        // visible sentinel activates the head; subsequent calls append the
-        // server cursor. This bounds Swimlane's first paint to mounted lanes
-        // instead of lanes × statuses across the complete catalog.
+        // 一个描述符不会自己装行观察器。第一个可见哨兵激活头部，后续调用追加服务端
+        // 游标。这让泳道的首屏限定在已挂载的泳道上，而不是整个目录的 泳道×状态。
         if (current.length === 0) {
           return {
             ...previous,
@@ -487,9 +494,8 @@ export function useIssueGroupBranches({
     descriptors,
     issues,
     pagination,
-    // `/groups` owns the exact query-wide visible total. Deriving it from
-    // loaded descriptors made a hidden-only first group page look globally
-    // empty even when a later page contained visible cards.
+    // `/groups` 拥有跨查询的精确可见总数。从已加载的描述符推导总数，会让一个
+    // 「只含隐藏内容」的首个分组页在后面的页明明有可见卡片时，被看成全局为空。
     total: groupsQuery.data?.pages[0]?.total ?? issues.length,
     isLoading: enabled && groupsQuery.isPending,
     isRefreshing:

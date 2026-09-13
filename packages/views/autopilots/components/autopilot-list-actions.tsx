@@ -1,3 +1,6 @@
+// autopilot 列表的行操作与批量操作：行级 kebab（新标签打开/暂停/恢复/删除）、
+// 批量工具栏（暂停/恢复/删除多个）、以及两者共用的删除确认对话框。
+
 "use client";
 
 import { useState } from "react";
@@ -37,9 +40,16 @@ import { useT } from "../../i18n";
 import { useIntentNavigate } from "../../navigation";
 
 // ---------------------------------------------------------------------------
-// Delete dialog — single row (kebab) and batch share one implementation.
+// 删除对话框——单行（kebab）与批量共用一份实现。
 // ---------------------------------------------------------------------------
 
+/**
+ * 删除 autopilot 的确认对话框。单行删除与批量删除共用：传入 `rows` 列表逐条删除。
+ * @param rows 要删除的 autopilot 列表。
+ * @param open 是否打开。
+ * @param onOpenChange 开关回调。
+ * @param onDeleted 全部删除成功后回调（批量工具栏用来清空选择）。
+ */
 export function DeleteAutopilotsDialog({
   rows,
   open,
@@ -55,6 +65,7 @@ export function DeleteAutopilotsDialog({
   const deleteAutopilot = useDeleteAutopilot();
   const [deleting, setDeleting] = useState(false);
 
+  // 逐条删除；任一条失败即中断并 toast 报错，避免"部分删除"被当成功。
   const handleDelete = async () => {
     setDeleting(true);
     try {
@@ -120,9 +131,10 @@ export function DeleteAutopilotsDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Status helpers shared by kebab and batch toolbar.
+// kebab 与批量工具栏共用的状态助手。
 // ---------------------------------------------------------------------------
 
+// 批量设置状态（active/paused）：跳过已是目标状态的行，其余逐个更新。
 function useSetStatus() {
   const updateAutopilot = useUpdateAutopilot();
   return async (rows: Autopilot[], status: "active" | "paused") => {
@@ -138,12 +150,17 @@ function useSetStatus() {
 }
 
 // ---------------------------------------------------------------------------
-// Row kebab — the row is a plain `<div>` whose whole-row navigation is a mouse
-// `onClick` (see `useRowLink`), not an ancestor `<a>`. The wrapper span stops
-// click propagation so opening this menu never navigates the row — just
-// stopPropagation, no preventDefault (same pattern as the skills list).
+// 行 kebab——行是普通 `<div>`，整行导航是鼠标 `onClick`（见 `useRowLink`），
+// 不是祖先 `<a>`。外层 span 阻止点击冒泡，使打开本菜单绝不会导航到该行——只做
+// stopPropagation，不做 preventDefault（与技能列表同款模式）。
 // ---------------------------------------------------------------------------
 
+/**
+ * 单行 kebab 菜单。除"新标签打开"外只有写操作（暂停/恢复/删除），所以对无写权限
+ * 的成员整体隐藏——他们仍可通过"带修饰键的行点击"到达新标签。can_write 缺失
+ * （旧服务器）时保持菜单可见、让后端继续把关。
+ * @param row 该行对应的 autopilot。
+ */
 export function AutopilotRowActions({ row }: { row: Autopilot }) {
   const { t } = useT("autopilots");
   const { t: tCommon } = useT("common");
@@ -152,11 +169,9 @@ export function AutopilotRowActions({ row }: { row: Autopilot }) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const setStatus = useSetStatus();
 
-  // Apart from the navigation entry the kebab only holds write actions
-  // (pause/resume/delete), so hide it entirely for members without write
-  // access — they still reach a new tab through a modified row click. An
-  // absent can_write (older server) keeps the menu visible and lets the
-  // backend remain the gate.
+  // 除导航入口外 kebab 只放写操作（暂停/恢复/删除），所以对没有写访问的成员整
+  // 个隐藏——他们仍能通过修饰键行点击到达新标签页。can_write 缺失（旧服务器）时
+  // 保持菜单可见、让后端继续把关。
   if (row.can_write === false) return null;
 
   return (
@@ -221,9 +236,15 @@ export function AutopilotRowActions({ row }: { row: Autopilot }) {
 }
 
 // ---------------------------------------------------------------------------
-// Batch toolbar
+// 批量工具栏
 // ---------------------------------------------------------------------------
 
+/**
+ * 批量操作工具栏：勾选了多行时浮在页面底部居中，提供暂停/恢复/删除与清除选择。
+ * 无选中行时不渲染。删除成功后自动清空选择。
+ * @param rows 已选中的 autopilot 列表。
+ * @param onClear 清除选择回调。
+ */
 export function AutopilotBatchToolbar({
   rows,
   onClear,
@@ -242,8 +263,7 @@ export function AutopilotBatchToolbar({
 
   return (
     <>
-      {/* Anchored to the page root (relative), NOT the viewport — see the
-          skills batch toolbar for the rationale. */}
+      {/* 锚定到页面根（relative），不是视口——理由见技能批量工具栏。 */}
       <div className="absolute bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg max-md:above-chat-launcher">
         <div className="mr-1 flex items-center gap-1.5 border-r pl-1 pr-2">
           <span className="text-body font-medium">

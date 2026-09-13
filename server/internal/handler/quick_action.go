@@ -1,3 +1,19 @@
+// 本文件实现「快捷动作」（Quick Action，MUL-5465）：workspace 级的预设
+// 「@ 谁 + 说什么」。用户把一个 agent/squad、一段 prompt 和可见范围存成一条
+// 快捷动作，之后对任意 issue 点一下就能触发。
+//
+// 最核心的约定：运行一条快捷动作【不是】一条新的派发路径。它只负责把 prompt
+// 渲染成一条带目标 mention 标记的普通评论（quick_action_id 标记来源），然后交给
+// 既有的评论触发链路 triggerTasksForComment 处理——权限、归属、squad 路由、
+// 执行日志、pending 任务合并全部沿用评论路径。这样避免再次出现 MUL-3375 里
+// 「同一套触发决策被复制四份、各改各的」的教训。
+//
+// 权限模型：可见性（public/private）只是作者声明的意图；真正能否触发由运行时
+// 唯一的权限闸门 RunQuickAction 裁决（public 动作绑定的目标构造上就保证人人可触发，
+// 但目标之后变私有会怎样，由闸门说了算）。
+//
+// 正文语义：prompt 原样发出，不做任何插值；{{...}} 模板语法与会@到其他人的
+// mention 在写入时就拒绝。
 package handler
 
 import (
@@ -18,35 +34,25 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-// Issue Quick Actions (MUL-5465): workspace-level presets for "who to call and
-// what to say" on an existing issue.
+// 议题快捷动作（MUL-5465）：workspace 级预设的「对谁、说什么」。
 //
-// Contract highlights:
-//   - Running one is NOT a new dispatch path. It renders the prompt, posts an
-//     ordinary comment carrying the target's mention markup (marked with
-//     quick_action_id), and hands off to triggerTasksForComment. Permission, attribution, squad routing,
-//     the execution log, and pending-task coalescing are inherited from the
-//     comment path rather than reimplemented — the MUL-3375 lesson about four
-//     drifting copies of one trigger decision.
-//   - PERMISSION IS CHECKED IN EXACTLY ONE PLACE: RunQuickAction. The list
-//     endpoint does no permission work and hides nothing beyond `private`
-//     ownership. Filtering the sidebar by invoke permission was tried and
-//     removed: it made two people looking at one issue see different sidebars
-//     with no explanation, which is harder to debug than a button that says
-//     why it refused.
-//   - `visibility` is the author's stated intent, not an authorization
-//     decision. A `public` action must bind a target every member can invoke,
-//     so it is runnable by construction; the run-time gate still has the final
-//     say, so a target that goes private later fails loudly at click time
-//     rather than silently granting anything.
-//   - The prompt is sent VERBATIM. There is no interpolation and no runtime
-//     input: every variable considered ({{issue.title}}, {{issue.identifier}},
-//     {{issue.url}}, {{user.name}}, {{date}}) named something the agent
-//     already has from the issue context and the comment's own author, and the
-//     `/` slash command covers "same action, one detail different" by dropping
-//     the rendered body into the composer to edit. Write-time validation still
-//     REJECTS any `{{...}}` so a habitual template token cannot land literally
-//     in an agent's instructions.
+// 契约要点：
+//   - 运行一条动作不是新的派发路径。它把 prompt 渲染好、作为一条普通评论发出
+//     （携带目标的 mention 标记并标注 quick_action_id），然后交给 triggerTasksForComment。
+//     权限、归属、squad 路由、执行日志与 pending 任务合并都从评论路径继承，
+//     而不是重新实现——这正是 MUL-3375 的教训：同一份触发决策被复制成四份、各改各的。
+//   - 权限只在唯一一处检查：RunQuickAction。列表端点不做任何权限工作，除了
+//     `private` 归属外什么都不隐藏。曾试过按触发权限过滤侧边栏，后来移除了：
+//     那样会让看同一 issue 的两个人看到不同的侧边栏且毫无解释，比一个会说明
+//     拒绝原因的按钮更难排查。
+//   - `visibility` 是作者的意图声明，不是鉴权决定。`public` 动作必须绑定所有
+//     成员都能触发的目标，所以构造上就能跑；运行时闸门仍有最终决定权——目标
+//     事后变私有，会在点击时大声失败，而不是静默地放行任何东西。
+//   - prompt 原样发送，不做插值、没有运行时输入：凡是被考虑过的变量
+//     （{{issue.title}}、{{issue.identifier}}、{{issue.url}}、{{user.name}}、{{date}}）
+//     都是 agent 从 issue 上下文和评论作者身上已经拿得到的；「同一动作、改一处细节」
+//     由 `/` 斜杠命令覆盖——它把渲染好的正文放进输入框让用户编辑。写入时仍会
+//     拒绝任何 `{{...}}`，免得习惯性模板 token 被逐字送进 agent 的指令里。
 const (
 	maxActiveQuickActionsPerWorkspace = 30
 	maxQuickActionNameLen             = 32
@@ -54,38 +60,36 @@ const (
 	maxQuickActionPromptLen           = 4000
 )
 
-// quickActionTemplateTokenRe catches any `{{...}}` in a prompt.
+// quickActionTemplateTokenRe 匹配 prompt 里任何 `{{...}}`。
 //
-// Templating is deliberately unsupported, but silence is not the same as
-// safety: someone carrying the habit over from autopilot's issue-title
-// template would otherwise have `{{issue.title}}` rendered literally into an
-// agent's instructions and never notice. Rejecting at write time is a fraction
-// of the cost of the interpolation engine it replaces, and it keeps the door
-// open to enabling variables later without touching stored data.
+// 模板语法是刻意不支持的，但「不解释」不等于「安全」：从 autopilot 议题标题模板
+// 带着习惯过来的人，可能把 {{issue.title}} 原样写进 agent 的指令里还不自知。
+// 写入时拒绝它，代价只是插值引擎的零头，还保留了以后开放变量而不动存量数据的
+// 可能性。
 var quickActionTemplateTokenRe = regexp.MustCompile(`\{\{[^}]*\}\}`)
 
-// quickActionSideEffectMentionRe catches mention markup that reaches somebody.
+// quickActionSideEffectMentionRe 匹配会「@ 到人」的 mention 标记。
 //
-// The prompt is appended verbatim to a comment that then runs through the
-// normal mention pipeline, so a mention inside it acts on every click:
+// prompt 会被原样拼进一条随后走正常 mention 管线的评论，所以 prompt 里的 mention
+// 会在每次点击时生效：
 //
-//   - agent / squad / all -> enqueues a SECOND target beside the configured
-//     one, breaking the invariant the permission model rests on (a public
-//     action runs exactly the target it was validated against). The sidebar
-//     reports only the first outcome, so the extra run is invisible.
-//   - member -> notification_listeners.go adds them to the mention recipients
-//     and creates an inbox item, so a saved prompt pings that person on every
-//     single click. This one was initially allowed on the reasoning that it
-//     "only renders a link"; that was wrong.
+//   - agent / squad / all -> 会在配置的目标之外再入队第二个目标，破坏权限模型依赖
+//     的不变量（public 动作只运行它校验过的那个目标）。侧边栏只上报第一个结果，
+//     多跑的那次完全不可见。
+//   - member -> notification_listeners.go 会把他加进 mention 收件人并建 inbox 项，
+//     于是一条保存的 prompt 每次点击都会 @ 到这个人。最初以「只是渲染一个链接」
+//     为由放行过 member，那是错的。
 //
-// `mention://issue/...` is the sole exception: it renders as a link and
-// reaches nobody, so a prompt may legitimately point at related work.
+// `mention://issue/...` 是唯一例外：它只渲染成链接、不触达任何人，所以 prompt 里
+// 合法地指向相关工作。
 var quickActionSideEffectMentionRe = regexp.MustCompile(`mention://(agent|squad|member|all)/`)
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型定义
 // ---------------------------------------------------------------------------
 
+// QuickActionResponse 是快捷动作接口返回的 JSON 结构，除了存储列之外，还带上
+// 解析出的目标展示信息（TargetName / TargetPublic / TargetMissing）。
 type QuickActionResponse struct {
 	ID           string  `json:"id"`
 	WorkspaceID  string  `json:"workspace_id"`
@@ -102,20 +106,19 @@ type QuickActionResponse struct {
 	CreatedAt    string  `json:"created_at"`
 	UpdatedAt    string  `json:"updated_at"`
 
-	// Target identity, for display. Always populated when the target resolves:
-	// a `public` action binds a publicly-invocable agent whose name everyone
-	// can already see, and a `private` action is only ever returned to its
-	// creator — so there is nothing left to redact.
+	// TargetName 是绑定的执行目标名字，供展示用。目标能解析到时一定带值：
+	// `public` 动作绑的是人人可见可触发的公开 agent；`private` 动作只会返回给
+	// 创建者本人——所以没有需要打码的内容。
 	TargetName string `json:"target_name,omitempty"`
-	// TargetPublic reports whether the bound target is currently invocable by
-	// every workspace member. Plain metadata, not a verdict: settings renders
-	// it beside the binding so a `public` action pointing at a now-private
-	// agent is visibly wrong without a bespoke "broken" state.
+	// TargetPublic 表示绑定的目标当前是否所有成员都能触发。这只是普通元数据，
+	// 不是鉴权结论：设置页把它展示在绑定旁边，让「public 动作指向了一个现在
+	// 已经私有化的 agent」一眼可见，而不必再造一个专门的「坏了」状态。
 	TargetPublic bool `json:"target_public"`
-	// TargetMissing marks an archived or deleted target.
+	// TargetMissing 标记目标已被归档或删除。
 	TargetMissing bool `json:"target_missing"`
 }
 
+// CreateQuickActionRequest 是创建快捷动作的请求体。
 type CreateQuickActionRequest struct {
 	Name         string `json:"name"`
 	Description  string `json:"description"`
@@ -125,6 +128,8 @@ type CreateQuickActionRequest struct {
 	Visibility   string `json:"visibility"`
 }
 
+// UpdateQuickActionRequest 是更新快捷动作的请求体。指针字段区分「未传（保持原值）」
+// 与「显式传零值/空串」。
 type UpdateQuickActionRequest struct {
 	Name         *string `json:"name"`
 	Description  *string `json:"description"`
@@ -135,14 +140,17 @@ type UpdateQuickActionRequest struct {
 	Status       *string `json:"status"`
 }
 
+// ListQuickActionsResponse 是列表接口的响应。
 type ListQuickActionsResponse struct {
 	QuickActions []QuickActionResponse `json:"quick_actions"`
 }
 
 // ---------------------------------------------------------------------------
-// Validation
+// 校验
 // ---------------------------------------------------------------------------
 
+// validateQuickActionName 校验并规范化动作名：必填、去首尾空白、长度（按字符计）
+// 不超过上限。
 func validateQuickActionName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" {
@@ -154,8 +162,9 @@ func validateQuickActionName(raw string) (string, error) {
 	return name, nil
 }
 
-// validateQuickActionPrompt trims, bounds, and refuses template syntax. See
-// quickActionTemplateTokenRe for why the rejection outlives the feature.
+// validateQuickActionPrompt 对 prompt 做去空白、长度限制，并拒绝模板语法与
+// 会@到旁人的 mention。模板语法为何即使暂无此功能也要拒绝，见
+// quickActionTemplateTokenRe。
 func validateQuickActionPrompt(raw string) (string, error) {
 	prompt := strings.TrimSpace(raw)
 	if prompt == "" {
@@ -173,6 +182,8 @@ func validateQuickActionPrompt(raw string) (string, error) {
 	return prompt, nil
 }
 
+// validateQuickActionAssignee 校验目标类型与目标 ID：类型只能是 agent 或 squad，
+// ID 必填。
 func validateQuickActionAssignee(assigneeType, assigneeID string) error {
 	if assigneeType != "agent" && assigneeType != "squad" {
 		return fmt.Errorf("assignee_type must be \"agent\" or \"squad\"")
@@ -183,6 +194,8 @@ func validateQuickActionAssignee(assigneeType, assigneeID string) error {
 	return nil
 }
 
+// normalizeQuickActionVisibility 规范化可见性：缺省视为 public，只接受
+// public / private 两个值。
 func normalizeQuickActionVisibility(raw string) (string, error) {
 	v := strings.TrimSpace(raw)
 	if v == "" {
@@ -195,29 +208,27 @@ func normalizeQuickActionVisibility(raw string) (string, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Target resolution
+// 目标解析
 // ---------------------------------------------------------------------------
 
-// quickActionTarget is the resolved execution target of an action: the agent
-// that will actually run, plus the display identity the client should show.
-// For a squad binding, Agent is the squad leader and Name is the SQUAD's name,
-// because the squad is what the user bound and what the mention will address.
+// quickActionTarget 是一条动作解析后的执行目标：实际会跑的 agent，加上客户端
+// 该展示的身份。squad 绑定时 Agent 取的是 squad 队长、Name 取的是 SQUAD 的名字，
+// 因为用户绑定并 @ 的对象是 squad 本身。
 type quickActionTarget struct {
 	Agent     db.Agent
 	Name      string
 	AvatarURL string
-	// MentionType is the mention:// scheme the rendered comment must use so
-	// the existing trigger path routes it exactly as a hand-typed mention.
+	// MentionType 是渲染出的评论必须使用的 mention:// 协议类型，让既有触发链路
+	// 把它精确路由成手打 mention。
 	MentionType string
-	// MentionID is the id inside the mention link: the agent id, or the SQUAD
-	// id for a squad binding (the trigger path resolves the leader itself).
+	// MentionID 是 mention 链接里的 id：agent 绑定时是 agent id；squad 绑定时是
+	// SQUAD id（触发链路会自行解析出队长）。
 	MentionID string
 	Found     bool
 }
 
-// resolveQuickActionTarget loads the execution target. A missing/archived
-// agent, or a missing/archived squad, resolves to Found=false — the caller
-// renders that as an unavailable target rather than failing the whole list.
+// resolveQuickActionTarget 加载执行目标。目标 agent 或 squad 缺失/被归档时解析为
+// Found=false——调用方把它渲染成「目标不可用」，而不是让整个列表请求失败。
 func (h *Handler) resolveQuickActionTarget(ctx context.Context, qa db.QuickAction) quickActionTarget {
 	switch qa.AssigneeType {
 	case "squad":
@@ -264,12 +275,11 @@ func (h *Handler) resolveQuickActionTarget(ctx context.Context, qa db.QuickActio
 	}
 }
 
-// agentInvocableByEveryone reports whether every workspace member may invoke
-// this agent — `public_to` carrying a `workspace` target.
+// agentInvocableByEveryone 判断该 agent 是否每个 workspace 成员都能触发——
+// 即 permission_mode=public_to 且 public_to 的名单里有 workspace 目标。
 //
-// A `public_to` agent whose allow-list names specific members does NOT count:
-// binding one to a public quick action would make the "everyone" promise false
-// for the members left out. Fails closed on a lookup error.
+// public_to 名单里只点名了部分成员的 agent 不算数：把它绑到 public 快捷动作上，
+// 会让被排除在外的成员的「人人可用」承诺落空。查询出错时失败关闭（返回 false）。
 func (h *Handler) agentInvocableByEveryone(ctx context.Context, agent db.Agent) bool {
 	if agent.PermissionMode != "public_to" {
 		return false
@@ -286,21 +296,22 @@ func (h *Handler) agentInvocableByEveryone(ctx context.Context, agent db.Agent) 
 	return false
 }
 
-// quickActionCatalog is a batched resolver for the list endpoint.
+// quickActionCatalog 是列表端点用的批量解析器。
 //
-// The single-row path issues a GetAgent (plus GetSquad) AND a
-// ListAgentInvocationTargets per action. At the 30-action cap that is 60-90
-// sequential round-trips on every sidebar and settings load. This loads the
-// workspace's agents, squads, and invocation targets in THREE queries and
-// answers from memory. Workspaces are small-team scale, so listing all agents
-// costs less than thirty point lookups.
+// 单行路径对每条动作都要发一次 GetAgent（加 GetSquad）和一次
+// ListAgentInvocationTargets。按 30 条动作上限算，每次侧边栏与设置页加载要串行
+// 打 60~90 次库。这里改成三条查询把 workspace 的 agents、squads、invocation
+// targets 全部读进内存再作答。workspace 是小团队规模，全量列 agent 比三十次
+// 点查便宜得多。
 type quickActionCatalog struct {
 	agents map[string]db.Agent
 	squads map[string]db.Squad
-	// publicAgents holds agent ids every workspace member may invoke.
+	// publicAgents 记录「每个 workspace 成员都能触发」的 agent id。
 	publicAgents map[string]bool
 }
 
+// loadQuickActionCatalog 用三条查询把 workspace 的 agents、squads 与「公开可触发」
+// 目标集合装载进内存。
 func (h *Handler) loadQuickActionCatalog(ctx context.Context, workspaceID pgtype.UUID) quickActionCatalog {
 	cat := quickActionCatalog{
 		agents:       map[string]db.Agent{},
@@ -310,9 +321,8 @@ func (h *Handler) loadQuickActionCatalog(ctx context.Context, workspaceID pgtype
 
 	agents, err := h.Queries.ListAgents(ctx, workspaceID)
 	if err != nil {
-		// Degrade to "target unresolved" rather than failing the whole list:
-		// the catalog is display metadata, and the run path re-checks
-		// everything that matters anyway.
+		// 降级成「目标解析不出来」，而不是让整个列表失败：目录只是展示用元数据，
+		// 运行路径反正会重新校验一切真正要紧的东西。
 		return cat
 	}
 	agentIDs := make([]pgtype.UUID, 0, len(agents))
@@ -340,9 +350,9 @@ func (h *Handler) loadQuickActionCatalog(ctx context.Context, workspaceID pgtype
 	return cat
 }
 
-// resolve mirrors resolveQuickActionTarget + agentInvocableByEveryone, but
-// entirely from the pre-loaded maps. The two must agree; the shared shape of
-// quickActionTarget is what keeps them honest.
+// resolve 镜像 resolveQuickActionTarget + agentInvocableByEveryone 的判断，但完全
+// 从预加载的 map 作答。两条路径必须结论一致；共用 quickActionTarget 这个形状就是
+// 防止它们跑偏的约束。
 func (c quickActionCatalog) resolve(qa db.QuickAction) (quickActionTarget, bool) {
 	if qa.AssigneeType == "squad" {
 		squad, ok := c.squads[uuidToString(qa.AssigneeID)]
@@ -365,7 +375,7 @@ func (c quickActionCatalog) resolve(qa db.QuickAction) (quickActionTarget, bool)
 		c.publicAgents[uuidToString(agent.ID)] && agent.PermissionMode == "public_to"
 }
 
-// quickActionToResponseFrom builds a row's response off the batched catalog.
+// quickActionToResponseFrom 基于批量目录组装一行的响应。
 func quickActionToResponseFrom(qa db.QuickAction, cat quickActionCatalog) QuickActionResponse {
 	resp := baseQuickActionResponse(qa)
 	target, targetPublic := cat.resolve(qa)
@@ -377,8 +387,8 @@ func quickActionToResponseFrom(qa db.QuickAction, cat quickActionCatalog) QuickA
 	return resp
 }
 
-// baseQuickActionResponse maps the stored columns. Target metadata is layered
-// on by whichever resolver the caller used.
+// baseQuickActionResponse 直接映射存储列。目标元数据（Target* 字段）由调用方所用
+// 的解析器另行叠加上去。
 func baseQuickActionResponse(qa db.QuickAction) QuickActionResponse {
 	return QuickActionResponse{
 		ID:           uuidToString(qa.ID),
@@ -398,9 +408,8 @@ func baseQuickActionResponse(qa db.QuickAction) QuickActionResponse {
 	}
 }
 
-// quickActionToResponse is the single-row path, used by create/update where
-// exactly one action is being returned and a batch would be pointless. The
-// list endpoint uses quickActionToResponseFrom instead.
+// quickActionToResponse 是单行路径，供 create/update 使用——它们只返回恰好一条
+// 动作，批量目录反而浪费。列表端点改用 quickActionToResponseFrom。
 func (h *Handler) quickActionToResponse(ctx context.Context, qa db.QuickAction) QuickActionResponse {
 	resp := baseQuickActionResponse(qa)
 	target := h.resolveQuickActionTarget(ctx, qa)
@@ -413,16 +422,16 @@ func (h *Handler) quickActionToResponse(ctx context.Context, qa db.QuickAction) 
 }
 
 // ---------------------------------------------------------------------------
-// Management gate
+// 管理闸门
 // ---------------------------------------------------------------------------
 
-// requireQuickActionActor resolves the acting member. Agents are rejected: an
-// agent inherits its runtime owner's credentials, and without this an admin's
-// agent could mass-produce actions that then appear in everyone's sidebar.
+// requireQuickActionActor 解析出「操作人」。agent 被拒绝：agent 继承其 runtime
+// 所有者的凭据，没有这道闸，管理员的 agent 就能批量制造动作、再出现在所有人的
+// 侧边栏里。
 //
-// The role check is deliberately NOT here — it depends on the visibility being
-// written. A `public` action is workspace furniture and needs owner/admin; a
-// `private` one is personal and any member may create it.
+// 角色检查刻意不放在这里——它取决于将要写入的 visibility：`public` 动作是
+// workspace 的公共设施，需要 owner/admin；`private` 动作是私人物品，任何成员都
+// 可以创建。
 func (h *Handler) requireQuickActionActor(w http.ResponseWriter, r *http.Request) (workspaceID, userID string, ok bool) {
 	workspaceID = h.resolveWorkspaceID(r)
 	userID, ok = requireUserID(w, r)
@@ -439,18 +448,16 @@ func (h *Handler) requireQuickActionActor(w http.ResponseWriter, r *http.Request
 	return workspaceID, userID, true
 }
 
-// loadReachableQuickAction fetches an action and enforces the ONE rule that
-// governs who may touch a private one: it belongs to its creator and nobody
-// else, whatever they know its id.
+// loadReachableQuickAction 取一条动作并执行「谁能碰 private 动作」的唯一规则：它只
+// 属于创建者，无论别人怎么打听到它的 id 都不行。
 //
-// This exists because the check used to be inline and only in RunQuickAction.
-// Update and Render reached rows by (id, workspace) alone, so any member who
-// learned a UUID — an action-created comment carries one — could rewrite or
-// read back another member's private prompt. Centralizing it means a new
-// endpoint cannot forget the rule by omission.
+// 之所以单独抽出来，是因为这条检查以前内联在 RunQuickAction 里。Update 和 Render
+// 只按 (id, workspace) 取行，于是任何成员只要拿到 UUID——一条动作创建的评论就携带
+// 一个——就能改写或读回别人的 private prompt。集中到这里后，新端点不可能因为
+// 「忘了加」而漏掉这条规则。
 //
-// A private action the caller does not own reports 404, not 403: whether a
-// given UUID exists is itself not the caller's business.
+// 非本人访问 private 动作时报 404 而非 403：某个 UUID 是否存在，本身就不该是调用方
+// 有权知道的事。
 func (h *Handler) loadReachableQuickAction(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -469,21 +476,20 @@ func (h *Handler) loadReachableQuickAction(
 	return qa, true
 }
 
-// requirePublicQuickActionRole gates writes that leave an action `public`.
-// Returns false having already written the error response.
+// requirePublicQuickActionRole 给会把动作写成 `public` 的写操作把关，要求 owner 或
+// admin 角色。返回 false 时错误响应已写出。
 func (h *Handler) requirePublicQuickActionRole(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
 	_, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin")
 	return ok
 }
 
 // ---------------------------------------------------------------------------
-// Handlers
+// 端点
 // ---------------------------------------------------------------------------
 
-// ListQuickActions returns the workspace catalog. It performs NO permission
-// work: `private` rows are scoped to their creator by the query (that is what
-// the field means, not a permission check), and every other row is returned to
-// everyone. Whether the caller may RUN one is answered by RunQuickAction.
+// ListQuickActions 返回 workspace 的快捷动作目录。它不做任何权限过滤：`private`
+// 行由查询限定到创建者本人（这就是该字段的含义，不是权限检查），其余行对所有人
+// 可见。能不能「运行」某条由 RunQuickAction 回答。
 func (h *Handler) ListQuickActions(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
@@ -519,6 +525,9 @@ func (h *Handler) ListQuickActions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ListQuickActionsResponse{QuickActions: out})
 }
 
+// CreateQuickAction 创建一条快捷动作：先解析操作人与可见性（public 需要角色），
+// 逐项校验名称/目标/prompt/描述，再校验绑定（public 动作必须绑人人可触发的目标），
+// 最后检查 workspace 内 active 动作数量上限后落库。
 func (h *Handler) CreateQuickAction(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.requireQuickActionActor(w, r)
 	if !ok {
@@ -593,6 +602,9 @@ func (h *Handler) CreateQuickAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, h.quickActionToResponse(r.Context(), qa))
 }
 
+// UpdateQuickAction 更新一条快捷动作。目标类型与目标 ID 成对替换（不会出现换了
+// 类型却残留旧 id），绑定按「更新后的可见性」重新校验；涉及 public 的写操作需要
+// owner/admin 角色。
 func (h *Handler) UpdateQuickAction(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.requireQuickActionActor(w, r)
 	if !ok {
@@ -617,9 +629,8 @@ func (h *Handler) UpdateQuickAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The resulting visibility decides the role needed, so resolve it first.
-	// Editing an already-public action also requires the role, otherwise a
-	// member could rewrite the prompt behind a workspace-wide button.
+	// 需要什么角色由「更新后的可见性」决定，所以先定它。编辑一条已经是 public 的
+	// 动作同样要角色——否则任何成员都能改 workspace 级按钮背后的 prompt。
 	visibility := existing.Visibility
 	if req.Visibility != nil {
 		normalized, err := normalizeQuickActionVisibility(*req.Visibility)
@@ -654,10 +665,9 @@ func (h *Handler) UpdateQuickAction(w http.ResponseWriter, r *http.Request) {
 		params.Description = pgtype.Text{String: description, Valid: true}
 	}
 
-	// assignee_type and assignee_id move together so a type swap can never
-	// land with a mismatched id (the same rule autopilot enforces). The
-	// binding is re-validated against the RESULTING visibility, so flipping an
-	// action to public with a private agent still bound is caught here.
+	// assignee_type 与 assignee_id 必须成对更新，绝不能让类型切换带着不匹配的旧 id
+	// 落库（autopilot 执行同一条规则）。绑定按「更新后的可见性」重新校验：把一条
+	// 动作改成 public 却仍绑着私有 agent，在这里就会被拦下。
 	newType := existing.AssigneeType
 	newID := uuidToString(existing.AssigneeID)
 	if req.AssigneeType != nil {
@@ -714,6 +724,8 @@ func (h *Handler) UpdateQuickAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.quickActionToResponse(r.Context(), qa))
 }
 
+// DeleteQuickAction 删除一条快捷动作。public 动作是 workspace 公共设施（需要角色），
+// private 动作只属于创建者、别人无权删除。
 func (h *Handler) DeleteQuickAction(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.requireQuickActionActor(w, r)
 	if !ok {
@@ -731,8 +743,7 @@ func (h *Handler) DeleteQuickAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// A public action is workspace furniture; a private one belongs to its
-	// creator and nobody else may remove it.
+	// public 动作是 workspace 的公共设施；private 动作只属于创建者，别人无权删除。
 	if existing.Visibility == "public" {
 		if !h.requirePublicQuickActionRole(w, r, workspaceID) {
 			return
@@ -750,8 +761,8 @@ func (h *Handler) DeleteQuickAction(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// trimmedWithinLimit trims a free-text field and enforces its rune ceiling,
-// writing the 400 itself so callers stay linear.
+// trimmedWithinLimit 对自由文本字段去首尾空白并施加字符数上限，超过时自己写好
+// 400 响应并返回 false，让调用方保持线性流程。
 func trimmedWithinLimit(w http.ResponseWriter, raw string, limit int, field string) (string, bool) {
 	v := strings.TrimSpace(raw)
 	if utf8.RuneCountInString(v) > limit {
@@ -761,9 +772,8 @@ func trimmedWithinLimit(w http.ResponseWriter, raw string, limit int, field stri
 	return v, true
 }
 
-// validateQuickActionBinding checks that the target exists in this workspace
-// and, for a `public` action, that every member can invoke it. Writes the 400
-// itself and returns false when the binding is rejected.
+// validateQuickActionBinding 校验目标存在于本 workspace，且——对 public 动作——
+// 每个成员都能触发它。被拒时自行写好 400 并返回 false。
 func (h *Handler) validateQuickActionBinding(w http.ResponseWriter, r *http.Request, assigneeType string, id, workspaceID pgtype.UUID, visibility string) bool {
 	qa := db.QuickAction{AssigneeType: assigneeType, AssigneeID: id, WorkspaceID: workspaceID}
 	target := h.resolveQuickActionTarget(r.Context(), qa)
@@ -771,9 +781,8 @@ func (h *Handler) validateQuickActionBinding(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "assignee not found in this workspace")
 		return false
 	}
-	// A public action promises "everyone can run this". Binding a target the
-	// team cannot invoke would make that promise false on the first click, so
-	// it is refused at write time instead.
+	// public 动作承诺「人人可跑」。绑一个团队触发不了的目标，第一次点击就会让
+	// 承诺落空，所以要在写入时拒绝而不是等跑的时候。
 	if visibility == "public" && !h.agentInvocableByEveryone(r.Context(), target.Agent) {
 		writeError(w, http.StatusBadRequest, "a public quick action must use an agent every workspace member can trigger; make the agent public or set this action to private")
 		return false
@@ -781,13 +790,11 @@ func (h *Handler) validateQuickActionBinding(w http.ResponseWriter, r *http.Requ
 	return true
 }
 
-// RenderQuickAction returns what the action WOULD post, without posting it.
+// RenderQuickAction 返回该动作「将要发布的内容」，但不真正发布。
 //
-// This backs the composer hand-off (the `/` slash command): the user gets the
-// fully rendered text in the comment box to edit before sending. Rendering
-// stays on the server even for this read-only path so there is exactly one
-// interpolation implementation — a client-side copy would drift from the run
-// path and quietly send something different from the preview.
+// 它支撑输入框交接（`/` 斜杠命令）：用户在评论框里拿到完整渲染好的文本，编辑完
+// 再发送。即便这是只读路径，渲染仍留在服务器端——这样插值实现只有一份，客户端
+// 再抄一份会与运行路径漂移，悄悄发出与预览不同的内容。
 func (h *Handler) RenderQuickAction(w http.ResponseWriter, r *http.Request) {
 	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
@@ -813,8 +820,8 @@ func (h *Handler) RenderQuickAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	// Same gate as the run path: the preview would otherwise hand a user the
-	// exact text needed to trigger an agent they may not invoke.
+	// 与运行路径同一条闸门：不然预览会把触发某 agent 所需的原文直接递给一个
+	// 无权触发它的人。
 	if !h.canInvokeAgent(r.Context(), target.Agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID) {
 		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
 		return
@@ -825,27 +832,23 @@ func (h *Handler) RenderQuickAction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// buildQuickActionBody prepends the mention line that actually triggers the
-// run. It is parsed by the same ParseMentions the composer's output goes
-// through, so a quick action is indistinguishable from a hand-typed @mention
-// downstream. The prompt itself is passed through untouched — see the file
-// header for why there is no interpolation step.
+// buildQuickActionBody 把真正触发运行的 @ 行放在正文前面。该行与输入框产物走同
+// 一份 ParseMentions，所以下游看一条快捷动作和手打的 @mention 没有任何区别。
+// prompt 本身原样透传——为什么没有插值步骤见文件头部说明。
 func buildQuickActionBody(qa db.QuickAction, target quickActionTarget) string {
 	return fmt.Sprintf("[@%s](mention://%s/%s)\n\n%s", target.Name, target.MentionType, target.MentionID, qa.Prompt)
 }
 
-// RunQuickAction renders the action and posts it as a quick_action comment,
-// then hands off to the standard comment trigger path.
+// RunQuickAction 渲染动作内容并以一条 quick_action 评论发布，然后交给标准评论
+// 触发链路。
 //
-// This is the ONLY place invoke permission is checked. The list endpoint hides
-// nothing beyond `private` ownership, so a member may well click an action
-// they cannot run; that returns a structured 403 the client renders as a
-// dialog, which is more informative than a button that silently was not there.
+// 这是唯一检查触发权限的地方。列表端点除 `private` 归属外什么都不隐藏，所以成员
+// 完全可能点一条自己无权运行的动作；此时返回结构化 403，客户端渲染成对话框，
+// 比一个静默消失的按钮更有信息量。
 //
-// The success response is a CommentResponse carrying trigger_outcomes,
-// identical in shape to POST /comments — so the client reuses one result
-// handler and gets `coalesced` (merged into the target's pending task),
-// `deferred` (runtime offline), and `blocked` for free.
+// 成功响应是一条携带 trigger_outcomes 的 CommentResponse，与 POST /comments 的
+// 形状一致——客户端因此能复用同一套结果处理，白拿 `coalesced`（并入目标 pending
+// 任务）、`deferred`（runtime 离线）、`blocked` 这些结果。
 func (h *Handler) RunQuickAction(w http.ResponseWriter, r *http.Request) {
 	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
@@ -877,8 +880,7 @@ func (h *Handler) RunQuickAction(w http.ResponseWriter, r *http.Request) {
 
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	originatorUserID := h.invokeOriginatorFromRequest(r, actorType, actorID)
-	// The single permission gate. Issue visibility never implies the right to
-	// trigger someone's private agent.
+	// 唯一的权限闸门。能看到这个 issue 绝不等于有权去触发别人的私有 agent。
 	if !h.canInvokeAgent(r.Context(), target.Agent, actorType, actorID, originatorUserID, workspaceID) {
 		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
 		return
@@ -905,10 +907,9 @@ func (h *Handler) RunQuickAction(w http.ResponseWriter, r *http.Request) {
 		AuthorType:  actorType,
 		AuthorID:    parseUUID(actorID),
 		Content:     body,
-		// Deliberately an ordinary comment. The collapsed card is driven by
-		// quick_action_id, which no client can set — `type` is client-supplied
-		// on the generic comment endpoint, so a dedicated type value would be
-		// forgeable and would also have cost a CHECK rebuild on a hot table.
+		// 刻意存成普通评论。折叠卡片由 quick_action_id 驱动，而它没有任何客户端
+		// 能伪造——通用评论端点的 `type` 是客户端可传的，若这里用专用 type 值就
+		// 可被伪造，还会让热表上的 CHECK 重建一次。
 		Type:          "comment",
 		QuickActionID: qa.ID,
 	})
@@ -937,8 +938,8 @@ func (h *Handler) RunQuickAction(w http.ResponseWriter, r *http.Request) {
 	delegationAuthority := h.autopilotDelegationAuthorityFromRequest(r, issue, actorType, actorID)
 	resp.TriggerOutcomes = h.triggerTasksForComment(r.Context(), issue, comment, nil, actorType, actorID, originatorUserID, delegationAuthority, nil)
 
-	// Usage telemetry is best-effort and deliberately outside the run's
-	// success path: a failed counter must never cost the user the run.
+	// 用量上报是尽力而为、刻意放在运行成功路径之外：一次计数失败绝不能反过来
+	// 让用户的运行泡汤。
 	if err := h.Queries.TouchQuickActionUsage(r.Context(), db.TouchQuickActionUsageParams{ID: qa.ID, WorkspaceID: issue.WorkspaceID}); err != nil {
 		slog.Debug("quick action usage touch failed", "quick_action_id", uuidToString(qa.ID), "error", err)
 	}

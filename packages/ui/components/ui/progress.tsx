@@ -1,9 +1,15 @@
 "use client"
+// 本文件是进度条（Progress）组件族（基于 Base UI 的 Progress）：
+// 展示任务完成进度，可带标题（Label）与数值（Value），进度条 + 可选子内容。
 
 import { Progress as ProgressPrimitive } from "@base-ui/react/progress"
 
 import { cn } from "@multica/ui/lib/utils"
 
+/**
+ * Progress：进度条根组件。children 会渲染在进度条上方（如标签行），
+ * 轨道与指示条由内部自动拼装。
+ */
 function Progress({
   className,
   children,
@@ -25,6 +31,7 @@ function Progress({
   )
 }
 
+/** ProgressTrack：进度条底槽（灰色背景轨道） */
 function ProgressTrack({ className, ...props }: ProgressPrimitive.Track.Props) {
   return (
     <ProgressPrimitive.Track
@@ -38,6 +45,7 @@ function ProgressTrack({ className, ...props }: ProgressPrimitive.Track.Props) {
   )
 }
 
+/** ProgressIndicator：填充进度的彩色指示条，宽度由 Base UI 按 value 计算 */
 function ProgressIndicator({
   className,
   ...props
@@ -51,6 +59,7 @@ function ProgressIndicator({
   )
 }
 
+/** ProgressLabel：进度条标题（如「正在上传附件」） */
 function ProgressLabel({ className, ...props }: ProgressPrimitive.Label.Props) {
   return (
     <ProgressPrimitive.Label
@@ -61,6 +70,7 @@ function ProgressLabel({ className, ...props }: ProgressPrimitive.Label.Props) {
   )
 }
 
+/** ProgressValue：当前进度数值文本（右对齐，等宽数字） */
 function ProgressValue({ className, ...props }: ProgressPrimitive.Value.Props) {
   return (
     <ProgressPrimitive.Value

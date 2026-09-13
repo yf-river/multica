@@ -1,3 +1,5 @@
+// 本文件职责：「从来源重新拉取该 skill」的确认弹窗——展示将覆盖哪些内容并给出警告，
+// 确认后调用刷新接口、更新相关缓存。
 "use client";
 
 import { useState } from "react";
@@ -28,7 +30,7 @@ import { midTruncate } from "../../common/github-url";
 import { useT } from "../../i18n";
 import { originSourceUrl, type OriginInfo } from "../lib/origin";
 
-/** Human name of the hosted source a refresh re-downloads from. */
+/** 刷新时「要从哪个托管源重新下载」的人类可读名称（GitHub / Skills.sh / ClawHub）。 */
 export function useRefreshSourceLabel(origin: OriginInfo | null): string {
   const { t } = useT("skills");
   if (origin?.type === "clawhub") return t(($) => $.detail.refresh.source_clawhub);
@@ -37,10 +39,9 @@ export function useRefreshSourceLabel(origin: OriginInfo | null): string {
 }
 
 /**
- * Confirm-and-run dialog for `POST /api/skills/:id/refresh`. The server
- * replaces name, description, SKILL.md, and the full file set with the fresh
- * upstream state while preserving the skill id — so agent assignments,
- * labels, and the creator survive. Local edits do not, hence the confirm.
+ * 对应 `POST /api/skills/:id/refresh` 的「确认并执行」弹窗。服务端会用上游的最新状态
+ * 替换 name、description、SKILL.md 与全部文件，同时保留 skill id——因此 agent 的
+ * 挂载、标签与创建人都不会丢。本地改动不保留，所以需要先确认。
  */
 export function RefreshSkillDialog({
   skill,
@@ -55,15 +56,15 @@ export function RefreshSkillDialog({
   wsId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Fired after caches are updated; the detail page adopts the version here. */
+  /** 缓存更新后触发；详情页用这版数据接管展示。 */
   onRefreshed?: (updated: Skill) => void;
 }) {
   const { t } = useT("skills");
   const qc = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const source = useRefreshSourceLabel(origin);
-  // Only a validated URL becomes a link; an injected or mismatched
-  // source_url renders nothing rather than a live anchor in a confirm dialog.
+  // 只有「通过校验的 URL」才能变成链接；被注入或与来源类型不符的 source_url 在确认
+  // 弹窗里就渲染成空，而不是一个活锚点。
   const sourceUrl = originSourceUrl(origin);
 
   const handleConfirm = async () => {
@@ -73,8 +74,7 @@ export function RefreshSkillDialog({
       if (updated.id === skill.id) {
         qc.setQueryData(skillDetailOptions(wsId, skill.id).queryKey, updated);
       } else {
-        // Schema fallback (malformed response): drop the stale cache instead
-        // of seeding it with the empty placeholder.
+        // schema 兜底（畸形响应）：直接丢弃过期缓存，而不是用空占位去种它。
         qc.invalidateQueries({
           queryKey: skillDetailOptions(wsId, skill.id).queryKey,
         });

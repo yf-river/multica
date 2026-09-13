@@ -1,3 +1,5 @@
+// installation.go：飞书安装（Installation）的增删改查服务——负责 app_secret
+// 的落库加密与 workspace 范围查询。
 package lark
 
 import (
@@ -11,38 +13,32 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// InstallationParams is the input shape RegistrationService assembles
-// after a successful device-flow scan-to-install. The credentials are
-// supplied here as plaintext — encryption happens inside
-// InstallationService.Upsert via the supplied *secretbox.Box, so
-// callers never see (and therefore cannot leak) the ciphertext that
-// lands in the DB.
+// InstallationParams 是 RegistrationService 在设备流扫码安装成功后拼装出来的
+// 输入形态。凭据在这里以明文提供——加密发生在 InstallationService.Upsert
+// 内部，通过注入的 *secretbox.Box 完成，调用方永远看不到（也因此不会泄漏）
+// 最终落进 DB 的密文。
 type InstallationParams struct {
 	WorkspaceID     pgtype.UUID
 	AgentID         pgtype.UUID
 	AppID           string
-	AppSecret       string // plaintext; encrypted at the service boundary
-	TenantKey       string // optional, "" treated as NULL
+	AppSecret       string // 明文；在服务边界加密
+	TenantKey       string // 可选，"" 视为 NULL
 	BotOpenID       string
 	InstallerUserID pgtype.UUID
-	Region          Region // which cloud (feishu/lark); empty defaults to feishu
+	Region          Region // 哪朵云（feishu/lark）；空默认 feishu
 }
 
-// InstallationService creates, refreshes and revokes per-agent Lark
-// installations. It owns the at-rest encryption of `app_secret` so
-// that no caller (and no test fixture) can accidentally insert a row
-// with plaintext credentials — the only path to writing
-// lark_installation goes through here.
+// InstallationService 创建、刷新与撤销每个 agent 的飞书安装。它独占 app_secret
+// 的落库静态加密，使任何调用方（包括测试 fixture）都不会误插入明文凭据——写
+// lark_installation 的唯一入口就是这里。
 type InstallationService struct {
 	queries *ChannelStore
 	box     *secretbox.Box
 }
 
-// NewInstallationService binds the service to a queries handle and a
-// secretbox keyed for at-rest encryption. The box MUST be non-nil; we
-// refuse to fall back to plaintext storage even in test or dev
-// configurations because that is exactly the regression the §4.4
-// requirement guards against.
+// NewInstallationService 把服务绑定到 queries 句柄和一把用于静态加密的
+// secretbox 上。box 必须非 nil；即使测试或 dev 配置也拒绝退回明文存储——那
+// 正是 §4.4 要求要防的回归。
 func NewInstallationService(queries *db.Queries, box *secretbox.Box) (*InstallationService, error) {
 	if box == nil {
 		return nil, errors.New("lark: InstallationService requires a non-nil secretbox.Box")
@@ -50,12 +46,10 @@ func NewInstallationService(queries *db.Queries, box *secretbox.Box) (*Installat
 	return &InstallationService{queries: NewChannelStore(queries), box: box}, nil
 }
 
-// Upsert creates a new installation or refreshes an existing one in
-// place (matching on the (workspace_id, agent_id) UNIQUE). Re-install
-// resets status to 'active' but does NOT touch the WS lease — that is
-// the hub's concern, not ours. The returned row is the post-write
-// state; the encrypted secret column is included for completeness but
-// callers SHOULD NOT log or persist it elsewhere.
+// Upsert 新建安装，或就地刷新已有安装（按 (workspace_id, agent_id) UNIQUE
+// 匹配）。重装会把状态重置回 'active'，但【不】碰 WS 租约——那是 hub 的事，
+// 不是我们的。返回的行是写后状态；加密 secret 列仅为完整性而带，调用方不应
+// 再把它记日志或另存。
 func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) (Installation, error) {
 	if err := validateInstallationParams(p); err != nil {
 		return Installation{}, err
@@ -76,11 +70,9 @@ func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) 
 	})
 }
 
-// Revoke flips status to 'revoked' so the WS hub tears the connection
-// down on its next sweep and the dispatcher drops any in-flight
-// events. The row is preserved (no DELETE) so audit history remains
-// queryable; a subsequent re-install via Upsert flips status back to
-// 'active' atomically.
+// Revoke 把状态翻成 'revoked'，让 WS hub 在下次清扫时拆掉连接，dispatcher 也
+// 会丢弃任何在途事件。行被保留（不做 DELETE）以维持可查询的审计历史；之后经
+// Upsert 重装会把状态原子地翻回 'active'。
 func (s *InstallationService) Revoke(ctx context.Context, id pgtype.UUID) error {
 	return s.queries.SetLarkInstallationStatus(ctx, SetInstallationStatusParams{
 		ID:     id,
@@ -88,11 +80,9 @@ func (s *InstallationService) Revoke(ctx context.Context, id pgtype.UUID) error 
 	})
 }
 
-// DecryptAppSecret returns the plaintext app_secret for the supplied
-// installation row. Used by the WebSocket hub when it needs to
-// authenticate against the Lark API on behalf of an installation; do
-// NOT use this for read-only display surfaces. The plaintext value
-// must never round-trip through an HTTP response.
+// DecryptAppSecret 返回给定安装行的明文 app_secret。WS hub 需要代表某个安装
+// 向 Lark API 鉴权时使用；不要用在做只读展示的路径上。明文绝不能经任何 HTTP
+// 响应往返出去。
 func (s *InstallationService) DecryptAppSecret(inst Installation) (string, error) {
 	plain, err := s.box.Open(inst.AppSecretEncrypted)
 	if err != nil {
@@ -101,12 +91,10 @@ func (s *InstallationService) DecryptAppSecret(inst Installation) (string, error
 	return string(plain), nil
 }
 
-// GetInWorkspace is the workspace-scoped lookup helper. Internal
-// callers (Dispatcher) use GetLarkInstallationByAppID directly because
-// the event payload only carries app_id; HTTP-side callers always
-// know the workspace and should use this so a forged installation_id
-// from a different workspace returns NotFound instead of leaking
-// existence.
+// GetInWorkspace 是限定 workspace 范围的查询辅助。内部调用方（Dispatcher）因为
+// 事件负载只带 app_id，直接走 GetLarkInstallationByAppID；HTTP 侧调用方总是
+// 知道 workspace，应使用本方法——这样伪造的、属于别的 workspace 的
+// installation_id 会返回 NotFound，而不是泄漏存在性。
 func (s *InstallationService) GetInWorkspace(ctx context.Context, id, workspaceID pgtype.UUID) (Installation, error) {
 	row, err := s.queries.GetLarkInstallationInWorkspace(ctx, GetInstallationInWorkspaceParams{
 		ID:          id,
@@ -121,18 +109,17 @@ func (s *InstallationService) GetInWorkspace(ctx context.Context, id, workspaceI
 	return row, nil
 }
 
-// ListByWorkspace returns every installation rooted at the workspace,
-// active and revoked, oldest first. The status column lets the UI
-// distinguish "wired up" from "torn down but kept for audit".
+// ListByWorkspace 返回该 workspace 下全部安装（active 与 revoked 都有），旧的
+// 在前。状态列让 UI 能区分“已接线”和“已拆除但留档审计”。
 func (s *InstallationService) ListByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]Installation, error) {
 	return s.queries.ListLarkInstallationsByWorkspace(ctx, workspaceID)
 }
 
-// ErrInstallationNotFound surfaces "no row matches in this workspace"
-// — used by the HTTP layer to return 404. Distinct from a plain
-// pgx.ErrNoRows so handlers do not need to import pgx.
+// ErrInstallationNotFound 表示“该 workspace 内没有匹配的行”——HTTP 层据此
+// 返回 404。与裸 pgx.ErrNoRows 区分，让 handler 不必 import pgx。
 var ErrInstallationNotFound = errors.New("lark installation not found")
 
+// validateInstallationParams 校验安装参数必填项是否齐全。
 func validateInstallationParams(p InstallationParams) error {
 	switch {
 	case !p.WorkspaceID.Valid:
@@ -151,6 +138,7 @@ func validateInstallationParams(p InstallationParams) error {
 	return nil
 }
 
+// textOrNull 把空字符串映射成 NULL pgtype.Text，非空则返回 Valid 值。
 func textOrNull(s string) pgtype.Text {
 	if s == "" {
 		return pgtype.Text{}

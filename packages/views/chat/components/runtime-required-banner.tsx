@@ -1,3 +1,4 @@
+// 需要绑定 Runtime 提示条：当 agent 尚未绑定运行时，提示用户先去配置并跳转到 agent 详情。
 "use client";
 
 import { Server } from "lucide-react";
@@ -8,6 +9,11 @@ import { AppLink } from "../../navigation";
 import { useT } from "../../i18n";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 
+/**
+ * 需要绑定 Runtime 提示条：agent 尚未绑定运行时时显示，并提供跳转入口。
+ * @param agentId - agent 的 ID，用于构造跳转链接。
+ * @param agentName - agent 的显示名称（可选）。
+ */
 export function RuntimeRequiredBanner({
   agentId,
   agentName,

@@ -1,3 +1,6 @@
+// 聊天输入框：项目聊天里最核心的编辑器卡片。含草稿按会话隔离持久化、附件上传
+// （协调式上传引擎）、@提及上下文、项目上下文 chip、开场建议/草稿恢复接管，
+// 以及"等待-再渲染"的发送契约（先等服务端接受再清空输入框）。
 "use client";
 
 import type { ReactNode } from "react";
@@ -32,7 +35,7 @@ import { useT } from "../../i18n";
 
 const logger = createLogger("chat.ui");
 const EMPTY_UPLOADS: DraftUpload[] = [];
-/** Editor identity for the chat composer — see the editorKey note below. */
+/** 聊天输入框的编辑器身份——见下方 editorKey 的说明。 */
 const CHAT_COMPOSER_EDITOR_KEY = "chat-composer";
 
 function attachmentReferenceUrls(attachment: Attachment): string[] {
@@ -66,86 +69,80 @@ interface ChatInputProps {
     content: string;
     attachments?: Attachment[];
     /**
-     * Draft slot this restore targets. When set, the restore only fires while
-     * the user is viewing that session — a fire-and-forget send that later
-     * fails restores into the session it was sent from, not whatever the user
-     * navigated to. Omit to restore into the current draft (legacy behavior).
+     * 这条恢复要落进的草稿槽位。设置后，恢复只在用户正看着那个会话时触发——
+     * 一次"发完即走"的发送若之后失败，内容会恢复到它发出时的那个会话，
+     * 而不是用户后来导航到的会话。省略则恢复到当前草稿（旧行为）。
      */
     sessionId?: string;
   } | null;
-  /** Explicit replacement requested by a conversation-starter button. Unlike a
-   * synchronized draft write, this may intentionally replace dirty editor
-   * content, so ChatInput adopts it after cancelling any pending debounce. */
+  /** 开场建议按钮请求的显式替换。与同步的草稿写入不同，它可以有意覆盖脏编辑器
+   * 内容，所以 ChatInput 会先取消任何待执行的防抖、再采纳它。 */
   conversationStarterRequest?: {
     id: number;
     content: string;
   } | null;
-  /** Fired after the request has replaced both the stored and live draft. */
+  /** 在请求既替换了存储草稿也替换了实时草稿之后触发。 */
   onConversationStarterApplied?: () => void;
   /**
-   * Fired when — and only when — the restore's content/attachments were written
-   * into the draft. A restore the composer cannot apply yet (the user has work
-   * in progress) is NOT reported: it stays pending and lands as soon as the
-   * draft is clear. Owners holding a durable server-side restore (#5219) can
-   * therefore treat this as the single terminal transition and consume the row.
+   * 仅当恢复的内容/附件真正被写进草稿时触发。输入框此刻还采纳不了的恢复
+   * （用户正写到一半）不会被上报：它保持 pending，等草稿一清空就落地。
+   * 持有持久化服务端恢复（#5219）的调用方因此可以把它当作唯一的终点转换，
+   * 进而消费那行记录。
    */
   onRestoreDraftApplied?: () => void;
-  /** True when uploads are available for this composer (an agent is selected).
-   *  The transport itself is the coordinated-upload engine (MUL-5181 L2) —
-   *  the owner only says whether the affordance exists. When false,
-   *  paste/drag/button still type into the editor but no upload fires. */
+  /** 该输入框是否可用上传（已选中 agent）。传输本身是协调式上传引擎
+   *  （MUL-5181 L2）——调用方只声明有没有这个入口。为 false 时，粘贴 / 拖拽 /
+   *  按钮仍会往编辑器里敲字，但不触发任何上传。 */
   uploadEnabled?: boolean;
   onStop?: () => void;
   isRunning?: boolean;
-  /** Enabled only after the server explicitly advertises follow-up queues. */
+  /** 只有服务端明确宣告支持后续排队时才允许运行中提交。 */
   allowSubmitWhileRunning?: boolean;
   disabled?: boolean;
-  /** True when the user has no agent available — disables the editor and
-   *  surfaces a distinct placeholder. Kept separate from `disabled` so
-   *  archived-session copy stays untouched. */
+  /** 用户没有任何可用 agent 时为 true——禁用编辑器并显示不同的占位文案。
+   *  与 `disabled` 分开，避免改动归档会话的文案。 */
   noAgent?: boolean;
-  /** True when `disabled` is because the bound agent was archived (retired),
-   *  as opposed to the session itself being archived — swaps the placeholder
-   *  copy so the read-only reason reads accurately. */
+  /** 当 `disabled` 是因为绑定的 agent 被归档（退役）、而不是会话本身被归档时为
+   *  true——更换占位文案，让只读原因读起来准确。 */
   agentArchived?: boolean;
-  /** True when `disabled` is because the caller may no longer INVOKE the bound
-   *  agent (flipped to personal, ownership moved, dropped from the allow-list).
-   *  Distinct from `noAgent`: an agent IS bound and its transcript is readable,
-   *  the caller just cannot run it (MUL-6380). Takes precedence over `noAgent`
-   *  in the placeholder — when the only agent in the workspace is the revoked
-   *  one, both are true and "create an agent" would be the wrong instruction. */
+  /** 当 `disabled` 是因为调用方已不能再 *调用* 绑定的 agent（被改成 personal、
+   *  所有权转移、被移出允许列表）时为 true。与 `noAgent` 不同：agent 确实绑定了、
+   *  transcript 也可读，只是跑不了它（MUL-6380）。在占位文案里优先于 `noAgent`——
+   *  当工作区里唯一的 agent 就是那个被撤销的时，两者都为 true，"创建 agent"
+   *  就成了错误的指引。 */
   agentAccessRevoked?: boolean;
   agentRuntimeRequired?: boolean;
-  /** Name of the currently selected agent, used in the placeholder. */
+  /** 当前选中 agent 的名字，用于占位文案。 */
   agentName?: string;
-  /** Rendered at the bottom-left of the input bar — typically the agent picker. */
+  /** 渲染在输入栏左下角的附加元素——通常是 agent 选择器。 */
   leftAdornment?: ReactNode;
-  /** Chat @ suggestions: current/recent issue/project entries. */
+  /** 聊天 @ 建议：当前/最近的 issue 与项目条目。 */
   contextItems?: MentionItem[];
-  /** Optional project context for the draft or current chat session. */
+  /** 供草稿或当前会话选择的可选项目上下文。 */
   projects?: Project[];
   projectId?: string | null;
   onProjectChange?: (projectId: string | null) => void;
   isProjectUpdating?: boolean;
-  /** True when the active agent's daemon is too old to inject the project
-   *  description into the run brief. Soft signal: selection stays enabled,
-   *  the composer only surfaces a warning next to the chip and in the
-   *  project submenu. */
+  /** 活动 agent 的 daemon 是否旧到无法把项目描述注入运行简报。软信号：选择仍可用，
+   *  输入框只在 chip 旁和项目子菜单里展示一条警告。 */
   projectContextUnsupported?: boolean;
-  /** Monotonic nonce bumped by the owner whenever the compose box should grab
-   *  keyboard focus — currently on "new chat" so the user can type right away.
-   *  0 (the initial value) is inert, so a plain deep-link open never steals
-   *  focus; only an explicit bump does. */
+  /** 所有者每次想抢回输入框键盘焦点时加一的单调 nonce——目前发生在"新建聊天"时，
+   *  让用户能立刻打字。0（初始值）是惰性的，所以普通深链接打开永不抢焦点；
+   *  只有显式加一才会。 */
   focusRequest?: number;
   /**
-   * Optional storage/identity isolation for embedded chat surfaces that use
-   * the shared composer without participating in the global chat selection
-   * store (for example Agent Builder).
+   * 内嵌聊天界面（不参与全局聊天选中 store 却共用输入框，例如 Agent Builder）
+   * 的存储 / 身份隔离覆盖。
    */
   draftKeyOverride?: string;
   editorKeyOverride?: string;
 }
 
+/**
+ * 聊天输入框：底部编辑器卡片。职责包括——按会话隔离并持久化草稿、协调上传引擎、
+ * 开场建议与草稿恢复的接管、发送键的"等待-再渲染"契约、项目上下文 chip 等。
+ * 详见 ChatInputProps 各字段说明。
+ */
 export function ChatInput({
   onSend,
   restoreDraftRequest,
@@ -179,36 +176,27 @@ export function ChatInput({
   const editorRef = useRef<ContentEditorRef>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
-  // Two keys with deliberately different concerns:
+  // 两个 key，各自关心完全不同的事：
   //
-  // `draftKey` — zustand storage key. Scopes the in-progress draft per session
-  // so different sessions don't bleed text into each other. An uncreated chat
-  // uses ONE slot per workspace, deliberately NOT keyed by agent: the composer
-  // is "the chat I have not created yet", and `selectedAgentId` only decides
-  // where the first send goes (MUL-4864). This is a STORAGE key, not a React
-  // identity.
+  // `draftKey` — zustand 存储键。把进行中的草稿按会话隔开，避免不同会话互相串文本。
+  // 未创建的聊天整个工作区只用一个槽，刻意 NOT 按 agent 键：输入框就是
+  // "我还没创建的那个聊天"，`selectedAgentId` 只决定第一次发送去哪（MUL-4864）。
+  // 这是存储键，不是 React 身份。
   //
-  // `editorKey` — React `key` on the ContentEditor, i.e. editor identity. It is
-  // constant for the chat composer, because nothing about switching what you
-  // are composing to should throw away the instance you are typing in:
-  //   - Agent switch: same draft slot now, so a remount would only serve to
-  //     drop the last <100ms of typing the draft debounce has not persisted.
-  //   - Placeholder: ContentEditor's placeholder-sync effect refreshes it live,
-  //     so it never needed a remount.
-  //   - Draft restore (a cancelled run, a failed send): writes into
-  //     `inputDraft`, and the editor's synchronized-value effect pushes it into
-  //     the live instance. There is no second copy to drift or resurface.
-  //   - Session switch / lazy create: sending from a brand-new chat flips
-  //     `activeSessionId` from null → uuid while an upload's blob preview may
-  //     still be in the document. A session-keyed editor would unmount right
-  //     then, dropping the image node before file-upload.ts could swap in the
-  //     CDN URL — the user would watch the image flash on and vanish. Stable
-  //     identity is what makes first-upload-creates-session behave like every
-  //     later upload.
-  // Embedded surfaces (Agent Builder) still pass `editorKeyOverride` to isolate
-  // their own composer.
+  // `editorKey` — ContentEditor 上的 React `key`，即编辑器身份。它对聊天输入框
+  // 恒定不变，因为"你在输入什么"的切换没有任何理由扔掉你现在正在打的实例：
+  //   - 切换 agent：草稿槽没变，重挂载只会丢掉草稿防抖还没持久化的最近 <100ms。
+  //   - 占位文案：ContentEditor 的占位同步 effect 会实时刷新它，从不需要重挂载。
+  //   - 草稿恢复（一次被取消的运行、一次失败的发送）：写进 `inputDraft`，
+  //     编辑器的同步值 effect 会把它推入实时实例。不存在第二份拷贝需要漂移或复现。
+  //   - 切换会话 / 懒创建：从一个全新聊天发送会把 `activeSessionId` 从 null 变成
+  //     uuid，而此时某次上传的 blob 预览可能还在文档里。按会话键的编辑器会在
+  //     那一刻卸载，在 file-upload.ts 换入 CDN URL 之前丢掉图片节点——用户会看着
+  //     图片闪一下然后消失。稳定的身份正是让"首次上传创建会话"表现得跟之后每次
+  //     上传一样的原因。
+  // 内嵌界面（Agent Builder）仍会传 `editorKeyOverride` 隔离自己的输入框。
   const draftKey = draftKeyOverride ?? activeSessionId ?? DRAFT_NEW_SESSION;
-  // Select a primitive — empty-string fallback keeps referential stability.
+  // 选基础值——空字符串兜底保持引用稳定。
   const inputDraft = useChatStore((s) => s.inputDrafts[draftKey] ?? "");
   const storeUploads = useChatStore(
     (s) => s.inputDraftAttachments[draftKey] ?? EMPTY_UPLOADS,
@@ -217,51 +205,44 @@ export function ChatInput({
   const setInputDraftAttachments = useChatStore((s) => s.setInputDraftAttachments);
   const clearInputDraft = useChatStore((s) => s.clearInputDraft);
   const [isEmpty, setIsEmpty] = useState(!inputDraft.trim());
-  // `isEmpty` tracks the LIVE editor, which the persisted draft lags by a
-  // debounce, so the send affordance cannot be derived from `inputDraft` alone.
-  // But `isEmpty` is never re-derived when the composer switches draft slots
-  // either: ChatInput does not remount on a session switch, and ContentEditor's
-  // synchronized-value effect pushes the incoming draft in with `emitUpdate: false`, so
-  // no onUpdate fires. Read BOTH signals — a draft `isEmpty` has not seen yet (a
-  // restored or parked one, or any persisted draft the user typed in another
-  // session) still enables the button. A false enable costs nothing: handleSend
-  // reads the live editor and bails when it is empty.
+  // `isEmpty` 追踪的是 LIVE 编辑器，而持久化草稿落后它一拍防抖，所以发送可用性
+  // 不能只从 `inputDraft` 推导。但 `isEmpty` 也不会在输入框切换草稿槽时重新推导：
+  // ChatInput 在切换会话时不会重挂载，ContentEditor 的同步值 effect 用
+  // `emitUpdate: false` 把进来的草稿推进去，不触发 onUpdate。所以要同时读两个信号——
+  // 一个 `isEmpty` 还没见过的草稿（恢复的或搁置的，或任何用户在别的会话里敲过的
+  // 持久化草稿）仍能让按钮可用。误启用没有代价：handleSend 读实时编辑器，
+  // 空内容会直接退出。
   const hasNothingToSend = isEmpty && !inputDraft.trim();
   const appliedRestoreIdRef = useRef<string | null>(null);
   const appliedConversationStarterIdRef = useRef<number | null>(null);
   const editorKey = editorKeyOverride ?? CHAT_COMPOSER_EDITOR_KEY;
 
-  // The draft whose document the editor instance is currently HOLDING.
+  // 编辑器实例当前"握着"的文档所属的草稿。
   //
-  // Normally identical to `draftKey`. The two diverge only while an in-flight
-  // upload pins the instance to the source document: ContentEditor's Guard 0
-  // refuses to `setContent` over an `uploading` node, because wiping that node
-  // strands the upload's finalize and the file silently disappears. Until the
-  // upload settles the composer still shows — and still edits — the source
-  // draft, so every byte the instance produces belongs to THIS key, not to
-  // wherever the user has since navigated.
+  // 正常时和 `draftKey` 相同。两者只在一次在途上传把实例钉在来源文档上时分离：
+  // ContentEditor 的 Guard 0 拒绝在 `uploading` 节点上 `setContent`，因为清掉那个
+  // 节点会让上传的收尾工作搁浅、文件悄悄消失。在上传落定前，输入框仍显示——也在
+  // 编辑——来源草稿，所以实例产生的每一个字节都属于这个 key，而不是用户之后
+  // 导航到的任何地方。
   //
-  // `draftKey` answers "what is selected"; this answers "what is loaded". Every
-  // write the editor drives must use the latter.
+  // `draftKey` 回答"选中了什么"；这个回答"加载了什么"。编辑器驱动的每一次写入
+  // 都必须用后者。
   const editorDraftKeyRef = useRef(draftKey);
 
-  // Write a document into a draft slot: text, plus a prune of the attachments
-  // its body no longer references (deleting an image's markdown drops the
-  // staged upload with it). Shared by the live `onUpdate` and the draft-switch
-  // flush below, so a document can never be filed under one rule by one path
-  // and a different rule by the other. Attachments are read live for `key`
-  // rather than passed in — during a divergence the rendered `draftAttachments`
-  // belongs to the selected draft, not the loaded one.
+  // 往一个草稿槽里写文档：文本 + 清理正文不再引用的附件（删掉图片的 markdown
+  // 也会连同丢掉暂存的上传）。实时 onUpdate 和下面的草稿切换冲刷共用这一个函数，
+  // 一条路径永远不会按一条规则、另一条路径按另一条规则来归档文档。附件在写入时
+  // 实时读取 `key` 而不是当参数传入——发生分离时，渲染出的 `draftAttachments`
+  // 属于"选中的草稿"，而不是"加载中的草稿"。
   const commitDraft = useCallback(
     (key: string, markdown: string) => {
       setInputDraft(key, markdown);
       const uploads =
         useChatStore.getState().inputDraftAttachments[key] ?? EMPTY_UPLOADS;
       if (uploads.length === 0) return;
-      // Prune only COMPLETED uploads the body no longer references — deleting
-      // an image's markdown drops the staged upload with it. Placeholders
-      // (uploading / failed / interrupted) have no body reference yet; the
-      // status chips are their only UI, so they must survive every keystroke.
+      // 只清理"已完成"且正文不再引用的上传——删掉图片的 markdown 会连同丢掉
+      // 暂存的上传。占位状态（上传中 / 失败 / 中断）还没有正文引用；状态 chip
+      // 是它们唯一的 UI，所以它们必须活过每一次按键。
       const referenced = uploads.filter(
         (u) => u.status !== "uploaded" || isAttachmentReferenced(markdown, u.attachment),
       );
@@ -271,24 +252,20 @@ export function ChatInput({
     },
     [setInputDraft, setInputDraftAttachments],
   );
-  // Submit gate. `uploading` disables the SubmitButton the instant an upload
-  // starts; `isBlocked()` is re-read inside handleSend for the paths that skip
-  // the button entirely (Mod+Enter mid-paste, drag-drop racing the keyboard).
-  // Both read the editor document, which is the actual upload queue — this
-  // used to be a local in-flight counter that a manual delete of the pending
-  // image would leave stuck (MUL-4808).
+  // 提交闸门。`uploading` 在上传一开始就让 SubmitButton 失效；`isBlocked()` 在
+  // handleSend 内部会被重读，覆盖那些完全绕过按钮的路径（粘贴中按 Mod+Enter、
+  // 拖拽与键盘赛跑）。两者都读编辑器文档——它才是真正的上传队列；过去这里是个
+  // 本地在途计数器，手动删除 pending 图片会让它卡死（MUL-4808）。
   const uploadGate = useUploadGate(editorRef);
 
-  // Reactive mirror of `editorDraftKeyRef` for the live-editor registry: a
-  // write-back may insert into this editor only while its DOCUMENT belongs to
-  // the settling draft, and a ref advance alone re-runs no effect. Updated by
-  // the adopt layout effect below, alongside the ref.
+  // `editorDraftKeyRef` 的反应式镜像，供实时编辑器注册表使用：回写只能在文档
+  // 属于"正在落定的草稿"时插入这个编辑器，而仅推进 ref 不会重跑任何 effect。
+  // 由下面的 adopt layout effect 连同 ref 一起更新。
   const [loadedDraftKey, setLoadedDraftKey] = useState(draftKey);
 
-  // Store-backed accessors for one draft slot, buildable for ANY key: the
-  // engine snapshots `resolveUploadTarget()` at pick time so an upload lands
-  // in — and settles against — the draft the editor was HOLDING, even if the
-  // user has since switched sessions.
+  // 针对"一个"草稿槽的 store 访问器，可为任意 key 构建：引擎在选取时刻快照
+  // `resolveUploadTarget()`，所以上传会落进——并针对——编辑器当时"握着"的草稿
+  // 结算，即使之后用户切换了会话。
   const makeUploadBinding = useCallback((key: string): UploadDraftBinding => ({
     registryKey: `chat:${key}`,
     getUploads: () => useChatStore.getState().inputDraftAttachments[key] ?? EMPTY_UPLOADS,
@@ -303,10 +280,9 @@ export function ChatInput({
     () => makeUploadBinding(draftKey),
     [makeUploadBinding, draftKey],
   );
-  // Coordinator-owned uploads (MUL-5181 L2): survive window close, abort on
-  // logout, are dropped after a reload. `gate` widens the editor gate
-  // with the draft's placeholders so a REOPENED composer over a still-running
-  // upload cannot send past it.
+  // 协调器持有的上传（MUL-5181 L2）：能扛过窗口关闭、登出时中止、重载后丢弃。
+  // `gate` 把编辑器闸门加上草稿的占位状态一起加宽，让一个重新打开、而上传仍在
+  // 运行的输入框无法越过它发送。
   const {
     uploads: draftUploads,
     attachments: draftAttachments,
@@ -317,35 +293,31 @@ export function ChatInput({
     liveRegistryKey: `chat:${loadedDraftKey}`,
   });
 
-  // Move the editor from the draft it holds to the draft that is selected.
+  // 把编辑器从它"握着的"草稿挪到"选中的"草稿。
   //
-  // Two hazards make this more than "let the value sync handle it":
+  // 两个陷阱让它不止是"让值同步 effect 去处理"：
   //
-  // 1. Unflushed keystrokes. `onUpdate` is debounced, and by the time a
-  //    debounce armed under draft A fires, `onUpdate` resolves to the latest
-  //    render's closure — it would file A's document under B. Flushing takes
-  //    those bytes back and commits them to the key they were typed in.
-  // 2. An in-flight upload. Guard 0 pins the document (see editorDraftKeyRef),
-  //    so the switch cannot happen yet at all: we leave BOTH the document and
-  //    its writes on the source key and retry when the gate clears
-  //    (`uploadGate.uploading` is a dep). Blocking navigation instead would be
-  //    a worse trade — the user waits on a network round-trip to change tabs.
+  // 1. 未冲刷的按键。`onUpdate` 有防抖，当一支在草稿 A 下武装好的防抖开火时，
+  //    `onUpdate` 已解析到最新一次渲染的闭包——它会把 A 的文档记到 B 名下。
+  //    冲刷把那几个字节拿回来，提交回它们实际输入的那个 key。
+  // 2. 一次在途的上传。Guard 0 钉住文档（见 editorDraftKeyRef），所以切换此刻
+  //    根本无法发生：我们让文档和它的写入都留在来源 key 上，等闸门放行后再重试
+  //    （`uploadGate.uploading` 是依赖）。反过来阻塞导航更糟——用户会为了换个
+  //    标签页去等一次网络往返。
   //
-  // Case 2 also has to force the adopt afterwards: ContentEditor's sync effect
-  // CONSUMED the value change while Guard 0 was up (lastSyncedValueRef
-  // advances before the guard), so it will never re-run for that value and the
-  // target draft would never load on its own.
+  // 情况 2 之后还必须强制 adopt：ContentEditor 的同步 effect 在 Guard 0 升起时
+  // 已经"消费"了这次值变化（lastSyncedValueRef 在守卫之前就前进了），所以它
+  // 再也不会为该值重跑，目标草稿永远不会自己加载。
   //
-  // useLayoutEffect, not useEffect, for two ordering reasons: passive effects
-  // run child-first, so a passive flush here would land AFTER ContentEditor's
-  // sync effect had already skipped on a dirty editor; and a layout effect is
-  // part of the commit, so no pending debounce timer can fire ahead of it.
+  // 用 useLayoutEffect 而非 useEffect，两个排序原因：被动 effect 按子先父后运行，
+  // 这里的被动冲刷会落在 ContentEditor 同步 effect 已在脏编辑器上跳过之后；
+  // 而 layout effect 属于 commit 的一部分，所以没有待执行的防抖计时器能抢在它前头。
   const deferredAdoptRef = useRef(false);
   useLayoutEffect(() => {
     const loadedKey = editorDraftKeyRef.current;
     if (loadedKey === draftKey) return;
     if (editorRef.current?.hasActiveUploads() === true) {
-      // Pinned. Stay bound to the source draft until the upload settles.
+      // 被钉住了。在上传落定前保持绑定来源草稿。
       deferredAdoptRef.current = true;
       logger.debug("input.draft switch deferred by in-flight upload", {
         from: loadedKey,
@@ -368,21 +340,18 @@ export function ChatInput({
     setIsEmpty(!incoming.trim());
   }, [draftKey, uploadGate.uploading, commitDraft]);
 
-  // Grab keyboard focus when the owner bumps `focusRequest` (a new chat was
-  // started) so the user can type immediately. The editor's `focus()` latches
-  // through to `onCreate` when it isn't mounted yet, so this works even on the
-  // first render of a freshly-mounted compose box. `0` is inert on purpose.
+  // 所有者加一 `focusRequest` 时抢回键盘焦点（新建了一个聊天），让用户能立刻打字。
+  // 编辑器的 `focus()` 在未挂载时会锁存到 `onCreate`，所以即使输入框首次渲染
+  // 也能生效。`0` 刻意惰性。
   useEffect(() => {
     if (!focusRequest) return;
     editorRef.current?.focus();
   }, [focusRequest]);
 
-  // A conversation-starter click is an explicit replacement, not an ordinary
-  // external store sync. ContentEditor deliberately rejects external values
-  // while it has dirty local text, so adopting here prevents the old text's
-  // pending debounce from winning the race and overwriting the chosen prompt.
-  // Wait out active uploads: adopting content while an upload node is present
-  // would strand its completion callback.
+  // 开场建议的点击是一次显式替换，不是普通的外部 store 同步。ContentEditor
+  // 在有脏的本地文本时会刻意拒绝外部值，所以在这里 adopt 能防止旧文本待执行的
+  // 防抖赢得竞态、覆盖掉选中的提示词。还要等上传结束：在有上传节点时 adopt
+  // 内容会搁浅它的完成回调。
   useLayoutEffect(() => {
     if (!conversationStarterRequest) return;
     if (appliedConversationStarterIdRef.current === conversationStarterRequest.id) return;
@@ -409,20 +378,16 @@ export function ChatInput({
       return;
     }
     if (appliedRestoreIdRef.current === restoreDraftRequest.id) return;
-    // Session-scoped restore: if this draft belongs to a specific session,
-    // wait until the user is actually viewing it. A fire-and-forget send that
-    // failed after the user navigated away must not dump its content into the
-    // session they're now looking at — the request stays pending until they
-    // return to the source session (draftKey then matches).
+    // 会话级恢复：如果这条草稿属于某个具体会话，就等用户真的在看他时再动。
+    // 一次"发完即走"的发送在用户导航走后失败，绝不能把内容倒进用户此刻正看的
+    // 会话——请求保持 pending，直到用户回到来源会话（那时 draftKey 就匹配了）。
     if (restoreDraftRequest.sessionId && restoreDraftRequest.sessionId !== draftKey) {
       return;
     }
-    // A draft with text OR staged attachments is user work in progress — never
-    // overwrite either with a restore (the attachment write below replaces the
-    // whole staged list). This is a WAIT, not a decision: the request stays
-    // pending and this effect re-runs on every draft change, so the restore
-    // lands as soon as the user sends or clears what they were typing. Marking
-    // it done here would strand it for the rest of this composer's life.
+    // 草稿里有文本或暂存附件 = 用户写到一半的活——绝不能用恢复去覆盖两者中的
+    // 任何一个（下面的附件写入会整份替换暂存列表）。这是 WAIT，不是决定：
+    // 请求保持 pending，这个 effect 会随每次草稿变化重跑，所以用户一发送或清掉
+    // 正在输入的内容，恢复就会落地。在这里把它标记完成会让它在输入框余生里搁浅。
     if (inputDraft.trim() || draftUploads.length > 0) {
       logger.debug("input.restore waiting: draft has content", {
         draftKey,
@@ -432,7 +397,7 @@ export function ChatInput({
     }
     appliedRestoreIdRef.current = restoreDraftRequest.id;
     setInputDraft(draftKey, restoreDraftRequest.content);
-    // Restores carry completed server rows — stage them as uploaded entries.
+    // 恢复携带的是已完成的服务器行——把它们按"已上传"条目暂存。
     setInputDraftAttachments(
       draftKey,
       (restoreDraftRequest.attachments ?? []).map(attachmentToDraftUpload),
@@ -449,38 +414,34 @@ export function ChatInput({
     setInputDraftAttachments,
   ]);
 
-  // Drop zone wraps the rounded card so a drop anywhere on the input
-  // surface routes the file through the editor's upload extension (same
-  // handler as the in-editor paste path).
+  // 拖拽区包住圆角卡片，让拖到输入面任何地方的文件都走编辑器的上传扩展
+  // （与编辑器内粘贴同一条处理器）。
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: (files) => files.forEach((f) => editorRef.current?.uploadFile(f)),
   });
 
-  // The unified await-then-render send contract (MUL-5181). `useComposerSubmit`
-  // owns the six-step pessimistic submit — empty-guard, synchronous single-flight
-  // (a ref, so a double Mod+Enter in one tick cannot slip past a render-behind
-  // state boolean and double-send), the submit-time upload re-check, and the
-  // `submitting` lock/spinner. The chat-specific work — the loaded-draft guard,
-  // attachment-id resolution, and the owner-driven `commitInput` handoff — stays
-  // here in `onSubmit`, which receives the already-normalized content.
-  // Set by `commitInput` when it actually scrubbed the visible document; read
-  // back by `afterAccepted` a moment later to decide whether the caret may
-  // return. Reset at the top of every submit so a rejected send cannot leave a
-  // stale `true` behind for the next one.
+  // 统一的"等待-再渲染"发送契约（MUL-5181）。`useComposerSubmit` 负责六步
+  // 悲观提交——空内容守卫、同步单飞（用 ref，同一 tick 里的双击 Mod+Enter
+  // 不会钻过落后一拍的 state 布尔值而重复发送）、提交时重新检查上传、
+  // 以及 `submitting` 锁 / 转圈。聊天特有的工作——已加载草稿守卫、附件 id 解析、
+  // 由调用方驱动的 `commitInput` 交接——留在这里的 `onSubmit`，它收到的
+  // 是已经归一化的内容。
+  // 当 `commitInput` 真的清扫了可见文档时置位；`afterAccepted` 稍后读回它，
+  // 决定光标是否可以返回。每次提交开头重置，让一次被拒的发送不会给下一次
+  // 留下过期的 `true`。
   const editorScrubbedRef = useRef(false);
 
   const { submitting, submit } = useComposerSubmit({
     editorRef,
     uploadGate: gate,
     containerRef: composerRef,
-    // Chat keeps the caret in the box after a send (the next turn is typed in
-    // the same place), except when the commit left the editor alone — see
-    // `editorScrubbedRef`.
+    // 聊天在发送后把光标留在框里（下一轮还在同一个地方输入），除非 commit
+    // 根本没动编辑器——见 `editorScrubbedRef`。
     afterAccepted: () => (editorScrubbedRef.current ? "refocus" : "none"),
     onSubmit: async (content: string): Promise<boolean> => {
       editorScrubbedRef.current = false;
-      // These states disable the SubmitButton, but Mod+Enter bypasses it — so a
-      // read-only or busy composer must still refuse the keyboard path.
+      // 这些状态禁用了 SubmitButton，但 Mod+Enter 会绕过它——所以只读或忙碌的
+      // 输入框仍必须拒绝键盘路径。
       if (disabled || noAgent || (isRunning && !allowSubmitWhileRunning)) {
         logger.debug("input.send skipped", {
           disabled,
@@ -489,14 +450,11 @@ export function ChatInput({
         });
         return false;
       }
-      // The editor is still holding a DIFFERENT draft's document than the one
-      // selected — an upload pinned it and the adopt below has not run yet. The
-      // upload gate (re-checked inside useComposerSubmit) covers most of that
-      // window, but not the sliver between the upload's final dispatch (node
-      // gone) and the re-render that adopts: React flushes that state update on a
-      // scheduler task, so a submit can land first. Sending here would post the
-      // source draft's text into the selected session and then clear the wrong
-      // draft.
+      // 编辑器握着的还是*另一个*草稿的文档、而不是选中的那个——一次上传钉住了它，
+      // 下面的 adopt 还没跑。上传闸门（useComposerSubmit 内部会复查）覆盖了
+      // 那个窗口的大部分，但盖不住"上传最终派发（节点消失）到 adopt 的重渲染"
+      // 之间的缝隙：React 会在一个调度任务里刷新那次状态更新，所以一次提交可能
+      // 先到。在这里发送会把来源草稿的文本发进选中的会话，然后清错草稿。
       if (editorDraftKeyRef.current !== draftKey) {
         logger.debug("input.send skipped: composer still holds another draft", {
           loaded: editorDraftKeyRef.current,
@@ -504,22 +462,19 @@ export function ChatInput({
         });
         return false;
       }
-      // Only send attachment IDs for uploads still present in the content.
-      // Edits / deletions that remove the markdown URL also drop the binding.
+      // 只发送仍存在于内容里的附件 id。删掉 / 改掉 markdown URL 的同时也解除绑定。
       const activeIds: string[] = [];
       for (const attachment of draftAttachments) {
         if (isAttachmentReferenced(content, attachment)) activeIds.push(attachment.id);
       }
       const uniqueActiveIds = Array.from(new Set(activeIds));
-      // Capture draft key BEFORE onSend — creating a new session mutates
-      // activeSessionId synchronously, so reading it after onSend would point
-      // at the new session and leave the old draft orphaned.
+      // 在 onSend 之前捕获草稿 key——创建新会话会同步改动 activeSessionId，
+      // 在 onSend 之后再读就会指向新会话、把旧草稿晾在一边。
       const keyAtSend = draftKey;
-      // Stale-submit guard (MUL-5181 P0): snapshot the sent draft's persisted
-      // value, flushing the editor's pending debounce first so pre-submit
-      // typing is inside the snapshot. A late success may only clear what it
-      // actually sent — text typed DURING the send (or by a reopened composer
-      // after this one unmounted) survives in both the editor and the store.
+      // 过期提交守卫（MUL-5181 P0）：快照这条已发草稿的持久化值，先冲刷编辑器
+      // 待执行的防抖，让提交前的输入也进快照。一次迟到的成功只能清掉它真正
+      // 发送的内容——发送*期间*敲的字（或这个输入框卸载后被重新打开敲的字）
+      // 会同时活在编辑器与 store 里。
       const pendingFlush = editorRef.current?.flushPendingUpdate?.();
       if (pendingFlush != null) commitDraft(editorDraftKeyRef.current, pendingFlush);
       const draftValueAtSend = useChatStore.getState().inputDrafts[keyAtSend];
@@ -527,32 +482,27 @@ export function ChatInput({
       const commitInput = (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => {
         if (committed) return;
         committed = true;
-        // `clearEditor === false` means the owner sent fire-and-forget while the
-        // user had already navigated to another session. The editor instance is
-        // shared across sessions, so it now shows (and the user may be typing
-        // into) a DIFFERENT draft — clearing it or blurring would wipe that
-        // visible input. Only scrub the editor when the user is still on the
-        // session they sent from.
-        // Flush typing still inside the debounce window before judging: it
-        // belongs to the LOADED document and must count as a mid-flight edit.
+        // `clearEditor === false` 表示调用方在用户已经导航到别的会话后"发完即走"。
+        // 编辑器实例跨会话共享，所以它此刻显示着（用户可能正在敲的）一份*别的*
+        // 草稿——清掉它或让它失焦会抹掉那份可见的输入。只有当用户仍在发出时的
+        // 那个会话上，才去清扫编辑器。
+        // 先冲刷仍躺在防抖窗口里的输入再下判断：它属于"加载中的文档"，
+        // 必须算作一次中途编辑。
         const lateMd = editorRef.current?.flushPendingUpdate?.();
         if (lateMd != null) commitDraft(editorDraftKeyRef.current, lateMd);
         const liveDraft = useChatStore.getState().inputDrafts[keyAtSend];
         const untouched = liveDraft === undefined || liveDraft === draftValueAtSend;
         if (options?.clearEditor !== false && untouched) {
           editorRef.current?.clearContent();
-          // Scrubbed the document the user was looking at, so the caret belongs
-          // back here: chat is a conversation and the next turn is typed in the
-          // same box. `useComposerSubmit` reads this flag to decide, because the
-          // other branches must NOT grab focus — a fire-and-forget send from
-          // another session (`clearEditor: false`) leaves this shared editor
-          // showing a DIFFERENT draft the user may be typing into.
+          // 清掉了用户正看着的文档，光标就该回到这里：聊天是一来一回的对话，
+          // 下一轮在同一格输入。`useComposerSubmit` 读这个标记来决定，因为其它
+          // 分支绝不能抢焦点——从另一个会话"发完即走"（`clearEditor: false`）
+          // 会让这个共享编辑器显示一份用户可能正在输入的*别的*草稿。
           editorScrubbedRef.current = true;
           setIsEmpty(true);
         }
-        // The sent draft's data is cleared only when untouched — the message
-        // is on its way, but a draft replaced since the snapshot is NEWER work
-        // and must not resurface as collateral.
+        // 只有未被改动时才清掉已发草稿的数据——消息确实在路上了，但快照之后
+        // 被替换的草稿是更新的活，不能作为附带损失浮现出来。
         if (untouched) clearInputDraft(keyAtSend);
         for (const key of options?.extraDraftKeys ?? []) {
           if (key !== keyAtSend) clearInputDraft(key);
@@ -569,9 +519,8 @@ export function ChatInput({
         commitInput,
         draftAttachments.filter((attachment) => uniqueActiveIds.includes(attachment.id)),
       );
-      // Owner rejected the send (or threw, which useComposerSubmit also treats
-      // as a rejection): the draft was never committed, so it stays put for
-      // retry. Only a commit — here or by the owner — clears it.
+      // 调用方拒绝了发送（或抛错，useComposerSubmit 同样当作拒绝）：草稿从未
+      // 被提交，所以它留在原地供重试。只有一次 commit——这里或调用方——会清掉它。
       if (accepted === false) return false;
       if (!committed) commitInput();
       return true;
@@ -593,9 +542,8 @@ export function ChatInput({
         : t(($) => $.input.placeholder_default);
 
   const uploadEnabled = !!uploadAllowed && !disabled && !noAgent;
-  // Lock only while the send request itself is creating/resolving the target
-  // session. Once accepted, its project can still be detached while agent work
-  // continues: changing session metadata does not cancel or move that task.
+  // 只在发送请求本身正创建/解析目标会话时锁定。一旦被接受，agent 干活时仍可把
+  // 它的项目摘掉：改会话元数据不会取消或移动那个任务。
   const projectSelectionEnabled =
     !!onProjectChange &&
     !disabled &&
@@ -608,24 +556,19 @@ export function ChatInput({
     <div
       ref={composerRef}
       className={cn(
-        // The composer grows with the draft up to half the surface it sits on
-        // — a fixed 160px cap made long drafts unreadable in a five-line
-        // porthole (MUL-5196). `max-h-[50%]` resolves against the chat
-        // surface (floating window, chat tab, agent builder), all of which
-        // give this wrapper a definite height, so the cap scales when the
-        // user resizes or expands the window. The wrapper must be a flex
-        // column for the card below to shrink into that cap instead of
-        // spilling out of it.
+        // 输入框随草稿长高，最多到它所在界面的一半——固定 160px 的上限会让
+        // 长草稿在一个五行小窗口里没法读（MUL-5196）。`max-h-[50%]` 相对聊天界面
+        // （悬浮窗 / 聊天标签页 / agent 构建器）解析，它们都给这个容器一个确定
+        // 高度，所以用户缩放 / 展开窗口时上限会跟着变。容器必须是 flex 列，
+        // 下面的卡片才能缩进这个上限里、而不是溢出。
         "flex max-h-[50%] min-h-0 flex-col pb-3 pt-0",
         CHAT_GUTTER,
-        // Static elevation, NOT queue-conditional: ChatQueue tucks its bottom
-        // edge under this surface (z-0 + negative margin on its side), and the
-        // composer simply always paints on top. Its own chrome never varies.
+        // 固定的抬高，与队列无关：ChatQueue 把底边缩到这块表面下面（它那侧的
+        // z-0 + 负外边距），输入框只是永远画在上面。它自己的外观从不变化。
         "relative z-10",
-        // Outer wrapper carries the disabled cursor. Inner card sets
-        // pointer-events-none, which suppresses hover (and therefore
-        // any cursor of its own) — splitting the two layers lets hover
-        // bubble back here so the browser actually reads cursor.
+        // 外层容器扛"禁用光标"。内层卡片设 pointer-events-none，抑制悬停
+        // （从而也抑制它自己的光标）——把两层拆开让悬停冒泡回这里，
+        // 浏览器才真的读到光标。
         noAgent && "cursor-not-allowed",
       )}
     >
@@ -633,19 +576,16 @@ export function ChatInput({
         data-slot="chat-input-surface"
         {...(uploadEnabled ? dropZoneProps : {})}
         className={cn(
-          // max-h-96 is the absolute ceiling on top of the wrapper's 50%: on a
-          // tall surface half the height is more composer than anyone reads at
-          // once, and it keeps the cap finite if a future host ever mounts the
-          // composer without a definite height (percentage max-height would
-          // then resolve to none).
+          // max-h-96 是叠加在容器 50% 之上的绝对上限：在很高的界面上，
+          // 一半高度比任何人一次能读的输入框都长，而且如果未来某个宿主在
+          // 没有确定高度的地方挂载输入框（百分比 max-height 会解析成 none），
+          // 它仍能保证上限有限。
           CHAT_COLUMN,
           "relative flex min-h-16 max-h-96 flex-col rounded-lg border border-surface-border bg-surface pb-9 transition-[border-color,box-shadow] focus-within:border-brand focus-within:ring-2 focus-within:ring-ring/20",
-          // Visual + interaction lock when there's no agent. We don't
-          // toggle ContentEditor's editable mode (Tiptap can't switch
-          // cleanly post-mount, and the prop has been removed); instead
-          // we drop pointer events at the wrapper level so clicks miss
-          // the editor entirely, and dim the surface so it reads as
-          // "disabled" rather than "broken".
+          // 没有 agent 时的视觉 + 交互锁。我们不去切换 ContentEditor 的可编辑
+          // 模式（Tiptap 挂载后无法干净切换，而且该 prop 已被移除）；而是在
+          // 容器层把指针事件去掉，让点击根本够不到编辑器，并压暗表面，让它
+          // 读起来是"禁用"而不是"坏了"。
           noAgent && "pointer-events-none opacity-60",
         )}
         aria-disabled={noAgent || undefined}
@@ -684,17 +624,16 @@ export function ChatInput({
         )}
         <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
           <ContentEditor
-            // See the editorKey / draftKey split note above — editor identity
-            // intentionally tracks neither the session nor the agent.
+            // 见上方 editorKey / draftKey 的拆分说明——编辑器身份刻意既不跟随
+            // 会话、也不跟随 agent。
             key={editorKey}
             ref={editorRef}
             value={inputDraft}
             placeholder={placeholder}
             onUpdate={(md) => {
               setIsEmpty(!md.trim());
-              // The LOADED key, not the selected one: while an upload pins the
-              // document this fires for the source draft's body — including the
-              // upload's own completion dispatch.
+              // 用"加载中的 key"，而不是选中的 key：上传钉住文档期间，这里
+              // 触发的是来源草稿正文的写入——包括上传自己的完成派发。
               commitDraft(editorDraftKeyRef.current, md);
             }}
             onSubmit={submit}
@@ -706,12 +645,10 @@ export function ChatInput({
             mentionMode={contextItems ? "context" : "default"}
             mentionContextItems={contextItems}
             enableSlashCommands
-            // The bubble menu carries the only affordance that can strip
-            // formatting — "Normal text" (setParagraph) plus the mark/list
-            // toggles. Once a `# ` input rule or a Markdown/HTML paste turns a
-            // line into a heading, chat has no other way to remove it, so
-            // without the bubble menu formatting can be created but never
-            // undone (MUL-5106).
+            // 气泡菜单带着唯一能剥掉格式的入口——"普通文本"（setParagraph）
+            // 加上加粗 / 列表这些开关。一旦 `# ` 输入规则或一次 Markdown/HTML
+            // 粘贴把一行变成标题，聊天就没有别的办法去掉它了，所以没有气泡
+            // 菜单，格式只能造、不能撤销（MUL-5106）。
             showBubbleMenu
           />
         </div>
@@ -737,12 +674,10 @@ export function ChatInput({
             disabled={hasNothingToSend || submitting || !!disabled || !!noAgent}
             loading={submitting}
             busy={gate.uploading}
-            // Queue-capable runs reuse this one action slot: an empty composer
-            // offers Stop, while live content swaps it to Queue Send. Older
-            // servers cannot accept follow-ups, so they remain stop-only. An
-            // upload blocks submit, so it also falls back to Stop rather than
-            // removing chat's only cancellation path; the attachment node
-            // remains the visible upload-progress surface in the editor.
+            // 支持排队的运行复用一个动作槽：输入框为空时显示 Stop，
+            // 有实时内容时换成"排队发送"。旧服务端不接受后续消息，所以它们仍只有
+            // Stop。上传会阻塞提交，因此此时也回退到 Stop，而不是删掉聊天唯一的
+            // 取消路径；附件节点仍是编辑器里可见的上传进度表面。
             running={
               !!isRunning &&
               (!allowSubmitWhileRunning || hasNothingToSend || gate.uploading)

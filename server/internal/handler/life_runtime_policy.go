@@ -1,3 +1,10 @@
+// Package handler 是整个 HTTP API 的处理器集合。
+//
+// 本文件（life_runtime_policy.go）定义 Life 系统允许绑定 agent 的"运行时+
+// 模型"白名单策略：只允许主（codebuddy/deepseek-v4-pro-ioa）与兜底
+// （codex/gpt-5.6-luna）两对组合。Life 的 agent 要么绑定到这两对之一，
+// 要么干脆不参与 Life——拒绝绑定比悄悄跑不同模型更安全，否则后续关系证据
+// 会失去可比性。
 package handler
 
 import (
@@ -13,6 +20,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// 主/兜底两对受支持的（provider, model）组合常量。
 const (
 	lifePrimaryRuntimeProvider  = "codebuddy"
 	lifePrimaryModel            = "deepseek-v4-pro-ioa"
@@ -20,20 +28,23 @@ const (
 	lifeFallbackModel           = "gpt-5.6-luna"
 )
 
-// lifeAgentModelSelection describes the only two model pairs that the Life
-// system may bind.  A Life agent without one of these pairs is not partially
-// configured: refusing the binding is safer than silently running a different
-// model and making later relationship evidence incomparable.
+// lifeAgentModelSelection 描述 Life 系统允许绑定的仅有两对模型组合。
+// Life agent 若不满足其中一对，就是"未完全配置"：拒绝绑定比静默换模型更
+// 安全——换模型会让后续关系证据失去可比性。
 type lifeAgentModelSelection struct {
 	Provider string
 	Model    string
 	SetModel bool
 }
 
+// lifeAgentSelection 用默认查询器委托给带查询器参数的实现。
 func (h *Handler) lifeAgentSelection(ctx context.Context, agent db.Agent, workspaceID pgtype.UUID) (lifeAgentModelSelection, error) {
 	return h.lifeAgentSelectionWithQueries(ctx, h.Queries, agent, workspaceID)
 }
 
+// lifeAgentSelectionWithQueries 校验 agent 的运行时 provider/模型是否命中
+// 白名单：主 provider 且模型为空时允许"回填默认主模型"（SetModel=true）；
+// 其他任何组合不匹配都返回错误，绝不静默放行。
 func (h *Handler) lifeAgentSelectionWithQueries(ctx context.Context, queries *db.Queries, agent db.Agent, workspaceID pgtype.UUID) (lifeAgentModelSelection, error) {
 	if agent.RuntimeID == (pgtype.UUID{}) || !agent.RuntimeID.Valid {
 		return lifeAgentModelSelection{}, fmt.Errorf("life agent must be bound to a runtime")
@@ -67,9 +78,8 @@ func (h *Handler) lifeAgentSelectionWithQueries(ctx context.Context, queries *db
 	return lifeAgentModelSelection{Provider: provider, Model: model}, nil
 }
 
-// enforceLifeAgentSelection validates a bound agent and fills the primary
-// model when the runtime itself was selected but its model was left empty.
-// It intentionally changes only agents already participating in Life.
+// enforceLifeAgentSelection 校验已绑定的 agent：当只选了运行时、模型留空时
+// 回填主模型。它刻意只改动已参与 Life 的 agent。
 func (h *Handler) enforceLifeAgentSelection(ctx context.Context, agent db.Agent, workspaceID pgtype.UUID) (db.Agent, error) {
 	selection, err := h.lifeAgentSelection(ctx, agent, workspaceID)
 	if err != nil {
@@ -92,9 +102,9 @@ func (h *Handler) enforceLifeAgentSelection(ctx context.Context, agent db.Agent,
 	return agent, nil
 }
 
-// applyLifeAgentSelections validates every participating Life agent before it
-// writes any model. Binding a companion is one relationship change: a bad
-// observer must not leave the companion silently rewritten to another model.
+// applyLifeAgentSelections 在写任何模型之前先逐个校验参与 Life 的 agent。
+// 绑定 companion 是一次关系变更：不能让某个坏观察者把 companion 悄悄改写
+// 成别的模型。
 func (h *Handler) applyLifeAgentSelections(ctx context.Context, q *db.Queries, workspaceID pgtype.UUID, agentIDs []pgtype.UUID) (map[string]db.Agent, error) {
 	unique := make(map[string]pgtype.UUID, len(agentIDs))
 	for _, id := range agentIDs {

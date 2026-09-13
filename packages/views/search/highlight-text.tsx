@@ -1,7 +1,17 @@
 "use client";
 
+/**
+ * search 模块：把命中查询词的部分用 <mark> 高亮渲染。
+ * 用于搜索面板结果中突出显示匹配片段；同一文本其他部分原样输出。
+ */
+
 import { useMemo } from "react";
 
+/**
+ * 高亮文本组件。
+ * @param text 原始文本。
+ * @param query 查询串；空白分割出多个词时，整串与每个词都会作为高亮模式。
+ */
 export function HighlightText({ text, query }: { text: string; query: string }) {
   const parts = useMemo(() => {
     if (!query.trim()) return [{ text, highlight: false }];

@@ -1,3 +1,10 @@
+// 本文件实现用户的 onboarding（新用户引导）相关端点：标记完成引导、补记问卷答案、
+// 以及「加入云端等待名单」。这些端点的共同点是把用户表上的 onboarding 字段翻转，
+// 并沿「未完成 → 完成 / 未提交 → 已提交」的边界只发一次漏斗事件。
+//
+// 关键事件约定：onboarding_completed 与 onboarding_questionnaire_submitted 每个用户
+// 只发一次（漏斗统计的是用户，不是编辑次数）；服务端补发 onboarding_started 作为
+// 前端页面打开事件的对账信号。
 package handler
 
 import (
@@ -16,35 +23,31 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Upper bound on free-text fields. `cloudWaitlistReasonMaxLen` is a
-// product cap ("we don't need an essay for a waitlist"); the body-size
-// cap further down is defense in depth against arbitrary storage
-// abuse via the JSON body.
+// 自由文本字段的上限。cloudWaitlistReasonMaxLen 是产品层面的封顶（「等待名单不需要
+// 一篇论文」）；下面还有一层 body 体积上限，作为对「拿 JSON body 任意占存储」的
+// 纵深防御。
 const (
 	cloudWaitlistReasonMaxLen = 500
 
-	// PatchOnboarding body is a tiny JSON with at most a 3-question
-	// questionnaire. 16 KiB is ~10x the realistic ceiling — it's the
-	// minimum that keeps the door open for future fields without
-	// letting a malicious user stuff the JSONB column.
+	// PatchOnboarding 的 body 是很小的 JSON，至多承载一份 3 问问卷。
+	// 16 KiB 约是现实体积的 10 倍——这是既能给未来字段留余地、又不让恶意用户
+	// 把 JSONB 列当仓库塞的最低值。
 	patchOnboardingBodyLimit = 16 * 1024
 )
 
-// completeOnboardingRequest carries the client's view of which exit the
-// user took from the flow. Used purely as an analytics dimension — server
-// state (onboarded_at) flips the same way regardless. Unknown / missing
-// → OnboardingPathUnknown so legacy clients still complete cleanly, just
-// without a funnel-ready label.
+// completeOnboardingRequest 携带客户端对「用户从引导流程哪条出口离开」的判断。
+// 纯粹作为分析维度使用——服务端状态（onboarded_at）无论路径如何都以同样方式翻转。
+// 未知 / 缺失 → OnboardingPathUnknown，让老客户端照样干净完成，只是没有漏斗标签。
 //
-// `workspace_id` is retained for analytics enrichment. The handler itself
-// does not create agents; current runtime-connected clients create their
-// Mika onboarding chat before calling this endpoint. The explicit no-runtime
-// path still seeds one setup guide from the frontend.
+// workspace_id 保留给分析增强用。handler 本身不创建 agent：当前与 runtime 连接的
+// 客户端会先创建他们的 Mika onboarding 聊天再调本端点；显式无 runtime 的路径仍由
+// 前端先种下一份 setup guide。
 type completeOnboardingRequest struct {
 	CompletionPath string `json:"completion_path,omitempty"`
 	WorkspaceID    string `json:"workspace_id,omitempty"`
 }
 
+// validCompletionPaths 是合法的完成路径集合，用于把乱填的路径归一成 Unknown。
 var validCompletionPaths = map[string]struct{}{
 	analytics.OnboardingPathFull:           {},
 	analytics.OnboardingPathRuntimeSkipped: {},
@@ -53,26 +56,23 @@ var validCompletionPaths = map[string]struct{}{
 	analytics.OnboardingPathInviteAccept:   {},
 }
 
-// CompleteOnboarding marks the authenticated user as having completed
-// onboarding. Idempotent: the underlying query uses COALESCE so the
-// original timestamp is preserved if called more than once.
+// CompleteOnboarding 把已认证用户标记为完成 onboarding。幂等：底层查询用 COALESCE，
+// 多次调用保留最初的时间戳。
 //
-// Emits `onboarding_completed` exactly once — the first call that
-// actually flips `onboarded_at` from NULL. Subsequent calls are still
-// 200 OK (for client-side retries) but skip the event so the funnel
-// counts honest first-completion.
+// onboarding_completed 事件只在首次真正把 onboarded_at 从 NULL 翻成非空的那次调用
+// 发出。后续调用仍返回 200 OK（供客户端重试），但不再发事件，让漏斗数的是真实的
+// 首次完成。
 //
-// Current clients have no in-handler agent-creation side effect. The
-// runtime-connected flow creates Mika and starts its onboarding chat first,
-// while the explicit no-runtime path may create a setup-guide issue after
-// navigation. This handler itself does one thing: flip the field.
+// 现客户端在此 handler 里没有创建 agent 的副作用。runtime 连接流程会先创建 Mika 并
+// 启动它的 onboarding 聊天；显式无 runtime 路径可能导航后在别处创建 setup-guide 议题。
+// 本 handler 自己只做一件事：翻转字段。
 func (h *Handler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
 
-	// Body is optional — an empty body is a legal legacy call.
+	// body 可选——空 body 是合法的老客户端调用。
 	var req completeOnboardingRequest
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
@@ -81,9 +81,8 @@ func (h *Handler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate workspace_id if supplied; we don't write with it, but a
-	// malformed value should fail fast rather than silently land in
-	// PostHog as a junk dimension.
+	// 若传了 workspace_id 就校验它：我们不用它写库，但畸形值应快速失败，而不是
+	// 作为垃圾维度静默落进 PostHog。
 	if req.WorkspaceID != "" {
 		wsUUID, ok := parseUUIDOrBadRequest(w, req.WorkspaceID, "workspace_id")
 		if !ok {
@@ -127,36 +126,32 @@ func (h *Handler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.userToResponse(user))
 }
 
+// patchOnboardingRequest 是 PATCH 的请求体，questionnaire 字段可选。
 type patchOnboardingRequest struct {
 	Questionnaire *json.RawMessage `json:"questionnaire,omitempty"`
 }
 
-// questionnaireAnswers mirrors the frontend's `QuestionnaireAnswers`
-// shape. `use_case` is multi-select (Step 3 allows picking several);
-// `source` is single-select (primary acquisition channel) but kept
-// as `stringOrSlice` for back-compat with v2 multi-select rows — the
-// client now always commits a one-element array. `role` stays
-// single-select.
+// questionnaireAnswers 镜像前端 QuestionnaireAnswers 的结构。use_case 是多选（第 3 步
+// 允许选多个）；source 是单选（主要获取渠道），但保留成 stringOrSlice 以兼容 v2 的
+// 多选老行——客户端现在总是提交单元素数组。role 仍是单选。
 //
-// stringOrSlice also tolerates pre-array rows that wrote a bare
-// string into the JSONB column — `json.Unmarshal` would otherwise
-// fail on type mismatch when reading those back.
+// stringOrSlice 也容忍该列还只存裸字符串的老行——否则 json.Unmarshal 读到类型不匹配
+// 会直接失败。
 type stringOrSlice []string
 
 func (s *stringOrSlice) UnmarshalJSON(data []byte) error {
-	// Empty / null both decode to nil slice.
+	// 空 / null 都解成 nil 切片。
 	if len(data) == 0 || string(data) == "null" {
 		*s = nil
 		return nil
 	}
-	// Try array first (current shape).
+	// 先试数组（当前形态）。
 	var arr []string
 	if err := json.Unmarshal(data, &arr); err == nil {
 		*s = arr
 		return nil
 	}
-	// Fall back to single string (pre-array shape from before this
-	// column held a slice). Empty string means "unanswered" — keep nil.
+	// 退回单个字符串（该列改存切片之前的旧形态）。空串表示「未作答」——保持 nil。
 	var single string
 	if err := json.Unmarshal(data, &single); err != nil {
 		return err
@@ -169,6 +164,7 @@ func (s *stringOrSlice) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// questionnaireAnswers 是一次问卷答案的落库结构。
 type questionnaireAnswers struct {
 	Source         stringOrSlice `json:"source"`
 	SourceOther    string        `json:"source_other"`
@@ -182,6 +178,7 @@ type questionnaireAnswers struct {
 	Version        int           `json:"version"`
 }
 
+// 下面三个 *Resolved 判断「这一题是否已经作答或明确跳过」，用于探测状态转换。
 func (q questionnaireAnswers) sourceResolved() bool {
 	return len(q.Source) > 0 || q.SourceSkipped
 }
@@ -192,18 +189,14 @@ func (q questionnaireAnswers) useCaseResolved() bool {
 	return len(q.UseCase) > 0 || q.UseCaseSkipped
 }
 
-// questionnaireSchemaVersion is the schema this handler understands.
-// `complete()` and the funnel events are scoped to this version so a
-// future v3 row can't be silently mis-counted against v2 semantics.
+// questionnaireSchemaVersion 是本 handler 认识的问卷 schema 版本。complete() 与漏斗
+// 事件都限定在该版本上，避免未来的 v3 行被悄悄按 v2 语义误统计。
 const questionnaireSchemaVersion = 2
 
-// complete covers the IN-FLOW questionnaire only: role + use_case.
-// Source moved out of the onboarding flow (MUL-5159) — it is collected
-// later by the workspace backfill prompt, and its resolution is
-// tracked by the separate `onboarding_source_submitted` emission in
-// PatchOnboarding. Requiring source here would stall the funnel's
-// "questionnaire submitted" step for days (or forever, for users who
-// never see the backfill prompt).
+// complete 只覆盖「流程内问卷」：role + use_case。source 已移出引导流程（MUL-5159）
+// ——改由 workspace backfill prompt 事后收集，其完成与否由 PatchOnboarding 里单独的
+// onboarding_source_submitted 事件追踪。这里若还要求 source，会让漏斗的「问卷已提交」
+// 步骤卡上好几天（甚至永远卡住——对压根没见过 backfill prompt 的用户）。
 func (q questionnaireAnswers) complete() bool {
 	if q.Version != questionnaireSchemaVersion {
 		return false
@@ -211,26 +204,20 @@ func (q questionnaireAnswers) complete() bool {
 	return q.roleResolved() && q.useCaseResolved()
 }
 
-// PatchOnboarding persists the user's questionnaire answers. The
-// field is optional; an omitted questionnaire is preserved. Which
-// step the user is on is deliberately not persisted — every
-// onboarding entry starts at Welcome.
+// PatchOnboarding 持久化用户的问卷答案。字段可选；未传则保留原问卷。用户在哪个
+// 步骤故意不落库——每次进入引导都从 Welcome 开始。
 //
-// Emits `onboarding_questionnaire_submitted` exactly once per user:
-// the first PATCH that transitions role + use_case from "at least one
-// slot empty" to "both resolved". Emits `onboarding_source_submitted`
-// exactly once on the source slot's own unresolved → resolved
-// transition, which normally happens later via the workspace backfill
-// prompt. Revisions past those points don't re-emit — the funnel
-// counts users, not edits.
+// 每个用户只发一次 onboarding_questionnaire_submitted：首次 PATCH 把 role + use_case
+// 从「至少一个槽空着」推进到「两者都已作答」时触发。onboarding_source_submitted 在
+// source 槽自己的「未作答 → 已作答」转换时恰好发一次——这通常更晚，走的是 workspace
+// backfill prompt。越过这些点的再编辑不再重发——漏斗统计的是用户，不是编辑次数。
 func (h *Handler) PatchOnboarding(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
-	// Bound the body so the JSONB column can't be weaponized as bulk
-	// storage — otherwise every subsequent `/api/me` read would have
-	// to return the bloat.
+	// 给 body 封顶，防止 JSONB 列被当成批量仓库——否则每次 /api/me 读取都要回传
+	// 这份膨胀。
 	r.Body = http.MaxBytesReader(w, r.Body, patchOnboardingBodyLimit)
 	var req patchOnboardingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -238,19 +225,16 @@ func (h *Handler) PatchOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read prior answers so we can detect the NULL/partial → complete
-	// transition after the update. An errored decode on the prior row
-	// is treated as "incomplete" — worst case we emit once more than
-	// we should, never twice for the same transition.
+	// 先读旧答案，才能在更新后探测 NULL/部分 → 完成 的转换。旧行解不出错按
+	// 「未完成」处理——最坏也就是比该发的多发一次，绝不会对同一次转换发两次。
 	var before questionnaireAnswers
 	beforeRaw := []byte("{}")
 	if beforeUser, err := h.Queries.GetUser(r.Context(), parseUUID(userID)); err == nil {
 		beforeRaw = beforeUser.OnboardingQuestionnaire
 		_ = json.Unmarshal(beforeRaw, &before)
 	}
-	// firstTouch is true when the user has never written any
-	// onboarding state on the server before this PATCH. Used to fire
-	// onboarding_started exactly once per user from the server side.
+	// firstTouch 表示这次 PATCH 之前，用户从未在服务端写过任何 onboarding 状态。
+	// 用来让服务端每个用户只发一次 onboarding_started。
 	firstTouch := len(beforeRaw) == 0 || string(beforeRaw) == "null" || string(beforeRaw) == "{}"
 
 	params := db.PatchUserOnboardingParams{ID: parseUUID(userID)}
@@ -264,10 +248,9 @@ func (h *Handler) PatchOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Server-side onboarding_started: fire on the first PATCH that
-	// actually carries a questionnaire payload. The frontend also
-	// emits its own onboarding_started on page open; the two together
-	// let Grafana cross-check the funnel against PostHog.
+	// 服务端补发的 onboarding_started：在首个真正携带问卷载荷的 PATCH 时触发。
+	// 前端打开页面时也会发自己的 onboarding_started；两者配合，让 Grafana 能对
+	// PostHog 交叉核对漏斗。
 	if firstTouch && req.Questionnaire != nil && len(*req.Questionnaire) > 0 && string(*req.Questionnaire) != "{}" {
 		platform, _, _ := middleware.ClientMetadataFromContext(r.Context())
 		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.OnboardingStarted(userID, platform))
@@ -290,12 +273,10 @@ func (h *Handler) PatchOnboarding(w http.ResponseWriter, r *http.Request) {
 		))
 	}
 
-	// Source resolves on its own timeline — typically days after the
-	// in-flow questionnaire, via the workspace backfill prompt (it can
-	// no longer resolve in-flow). Emit on the unresolved → resolved
-	// transition so the backfill prompt's answer/decline rate shows up
-	// in Grafana; the transition check keeps the emission
-	// once-per-user, mirroring the questionnaire event above.
+	// source 在它自己的时间线上完成——通常比流程内问卷晚好几天，经 workspace
+	// backfill prompt（它已不能再在流程内完成）。在「未作答 → 已作答」转换时发事件，
+	// 让 backfill prompt 的回答/拒绝率呈现在 Grafana 上；转换检查保证每人只发一次，
+	// 与上面的问卷事件同理。
 	if after.Version == questionnaireSchemaVersion &&
 		after.sourceResolved() && !before.sourceResolved() {
 		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.OnboardingSourceSubmitted(
@@ -309,15 +290,15 @@ func (h *Handler) PatchOnboarding(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.userToResponse(user))
 }
 
+// joinCloudWaitlistRequest 是加入云端等待名单的请求体。
 type joinCloudWaitlistRequest struct {
 	Email  string `json:"email"`
 	Reason string `json:"reason"`
 }
 
-// JoinCloudWaitlist records a user's interest in cloud runtimes.
-// Pure side effect — does NOT complete onboarding. The user still
-// has to pick a real Step 3 path (CLI with a detected runtime) or
-// Skip to move on. Repeating the call overwrites email + reason.
+// JoinCloudWaitlist 记录用户对云 runtime 的兴趣。纯副作用——不会完成 onboarding。
+// 用户仍须选真实的第 3 步路径（带检测到 runtime 的 CLI）或跳过才能继续。重复调用会
+// 覆盖 email + reason。
 func (h *Handler) JoinCloudWaitlist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -329,8 +310,8 @@ func (h *Handler) JoinCloudWaitlist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// RFC 5321 caps email at 254 chars; the column is VARCHAR(254) and
-	// the format check below rejects anything net/mail can't parse.
+	// RFC 5321 把邮箱上限定为 254 字符；列类型是 VARCHAR(254)，下面的格式检查也会
+	// 拒绝任何 net/mail 解析不了的值。
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	if email == "" {
 		writeError(w, http.StatusBadRequest, "email is required")

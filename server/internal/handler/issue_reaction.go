@@ -1,3 +1,5 @@
+// 职责定位：issue 表情回应（reaction）的添加/移除 HTTP 处理器：校验后在同一事务里写入并
+// 入队相应事件，成功后广播给实时客户端。
 package handler
 
 import (
@@ -14,6 +16,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// IssueReactionResponse 是单条 issue 表情回应的响应体。
 type IssueReactionResponse struct {
 	ID            string `json:"id"`
 	IssueID       string `json:"issue_id"`
@@ -24,6 +27,7 @@ type IssueReactionResponse struct {
 	IssueRevision *int64 `json:"issue_revision,omitempty"`
 }
 
+// issueReactionToResponse 把数据库行转成响应体。
 func issueReactionToResponse(r db.IssueReaction) IssueReactionResponse {
 	return IssueReactionResponse{
 		ID:        uuidToString(r.ID),
@@ -35,6 +39,7 @@ func issueReactionToResponse(r db.IssueReaction) IssueReactionResponse {
 	}
 }
 
+// addedIssueReactionToResponse 是添加路径的响应转换（额外带回 bumped 的 issue_revision）。
 func addedIssueReactionToResponse(r db.AddIssueReactionRow) IssueReactionResponse {
 	response := IssueReactionResponse{
 		ID:        uuidToString(r.ID),
@@ -50,6 +55,8 @@ func addedIssueReactionToResponse(r db.AddIssueReactionRow) IssueReactionRespons
 	return response
 }
 
+// AddIssueReaction 处理 POST /api/issues/:id/reactions：给 issue 添加一个表情回应。
+// 权限：issue 可见（loadIssueForUser）即可；重复添加由 DB 幂等处理。成功返回 201 + 新回应。
 func (h *Handler) AddIssueReaction(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -136,6 +143,8 @@ func (h *Handler) AddIssueReaction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+// RemoveIssueReaction 处理 DELETE /api/issues/:id/reactions：移除调用者自己的某个表情回应。
+// 实际有删除时广播移除事件；无操作（本来就没有）静默返回 204。
 func (h *Handler) RemoveIssueReaction(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)

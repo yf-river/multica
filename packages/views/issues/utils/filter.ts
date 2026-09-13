@@ -1,41 +1,43 @@
+// 客户端问题筛选工具：定义筛选模型（IssueFilters / IssueFilterState）以及统一的应用
+// 逻辑 applyIssueFilters——按正向选择模型过滤（空数组 = 不过滤）。与自定义属性筛选、
+// 服务端算子（contains/gt/…）保持一致。纯函数，供各类问题界面与历史遗留调用复用。
 import type { Issue, IssueStatus, IssuePriority, IssueAssigneeGroup, PropertyFilterValue, PropertyOperatorFilter } from "@multica/core/types";
 import type { ActorFilterValue } from "@multica/core/issues/stores/view-store";
 import type { IssueActivityState } from "../surface/activity";
 
+/** 面向调用方的筛选描述（供本地过滤使用）。 */
 export interface IssueFilters {
   statusFilters: IssueStatus[];
   priorityFilters: IssuePriority[];
   assigneeFilters: ActorFilterValue[];
   includeNoAssignee: boolean;
-  /** Keeps an explicitly active assignee predicate distinct from the normal
-   *  empty-array = no-filter state. When true with no selected assignees and
-   *  includeNoAssignee=false, the predicate intentionally matches nothing. */
+  /** 把「显式激活的指派人筛选」与常规的「空数组 = 无筛选」状态区分开。当它为 true、
+   *  未选任何指派人且 includeNoAssignee=false 时，筛选有意地一条都不匹配。 */
   assigneeFilterActive?: boolean;
   creatorFilters: ActorFilterValue[];
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
-  /** Custom-property filters: definition id → selected values (OR within
-   *  a definition, AND across definitions; checkbox uses "true"/"false"). */
+  /** 自定义属性筛选：定义 id → 选中的值（同一定义内 OR，定义之间 AND；checkbox 用
+   *  "true"/"false"）。 */
   propertyFilters?: Record<string, PropertyFilterValue[]>;
-  // When `agentRunningFilter` is true, only keep issues whose id is in
-  // `runningIssueIds`. The surface derives this set from the independent
-  // `/api/working-agents` projection so filter.ts stays free of fetching.
+  // 当 `agentRunningFilter` 为 true 时，只保留 id 在 `runningIssueIds` 里的问题。
+  // surface 从独立的 `/api/working-agents` 投影推导这个集合，让 filter.ts 保持零拉取。
   agentRunningFilter?: boolean;
   runningIssueIds?: ReadonlySet<string>;
-  // "Show sub-issues" display toggle. When explicitly `false`, hide issues
-  // that have a parent so only top-level issues remain. Undefined / true keeps
-  // the default behaviour of showing everything, so existing callers that omit
-  // it (and mobile's positional variant) are unaffected.
+  // 「显示子问题」显示开关。显式 `false` 时隐藏有父问题的问题、只留顶层。
+  // undefined / true 保持显示一切的默认行为，所以省略它（以及移动端的位置变体）的
+  // 既有调用方不受影响。
   showSubIssues?: boolean;
 }
 
+/** 传入 applyIssueFilters 的完整筛选状态（已把 showSubIssues 规整为显式形态）。 */
 export interface IssueFilterState {
   statusFilters: IssueStatus[];
   priorityFilters: IssuePriority[];
   assigneeFilters: ActorFilterValue[];
   includeNoAssignee: boolean;
-  /** See IssueFilters.assigneeFilterActive. */
+  /** 见 IssueFilters.assigneeFilterActive。 */
   assigneeFilterActive?: boolean;
   creatorFilters: ActorFilterValue[];
   projectFilters: string[];
@@ -43,40 +45,36 @@ export interface IssueFilterState {
   labelFilters: string[];
   propertyFilters?: Record<string, PropertyFilterValue[]>;
   workingOnly: boolean;
-  /** See IssueFilters.showSubIssues — only an explicit `false` hides. */
+  /** 见 IssueFilters.showSubIssues——只有显式 `false` 才隐藏。 */
   showSubIssues?: boolean;
 }
 
+/** 过滤器在判定「是否正在工作中」时需要的上下文。 */
 export interface IssueFilterContext {
   activityByIssueId?: ReadonlyMap<string, IssueActivityState>;
   runningIssueIds?: ReadonlySet<string>;
 }
 
 /**
- * Filter value that selects issues where a custom property is UNSET ("No
- * value"). Mirrors the backend sentinel in `parsePropertiesFilterParam`
- * (`server/internal/handler/property.go`); cannot collide with a real option id
- * (select options are UUIDs, checkbox uses "true"/"false").
+ * 选中「自定义属性无值」的哨兵值。镜像后端 `parsePropertiesFilterParam` 里的哨兵
+ * （`server/internal/handler/property.go`）；不会与真实选项 id 冲突（select 选项是
+ * UUID，checkbox 用 "true"/"false"）。
  */
 export const NO_PROPERTY_VALUE = "__none__";
 
 /**
- * Match one stored value against one operator filter member. Mirrors the
- * server-side operator predicates in `parsePropertiesFilterParam`
- * (`server/internal/handler/property.go`):
+ * 判断一个存下来的属性值是否命中某个操作符筛选成员。镜像服务端
+ * `parsePropertiesFilterParam`（`server/internal/handler/property.go`）里的操作符谓词：
  *
- * - `contains` is a case-insensitive substring test over stored strings only
- *   (the server's guarded `ILIKE '%…%'`), so "Foo" and "foo" agree.
- * - `gt`/`gte`/`lt`/`lte` only match numeric stored values — the server
- *   guards with `jsonb_typeof(...) = 'number'`, so a text value is a miss
- *   here too.
- * - `before`/`after` only match string values and compare lexicographically,
- *   which is chronological for the "YYYY-MM-DD" date-only strings the server
- *   stores and filters on.
+ * - `contains` 只对存下来的字符串做大小写不敏感的子串测试（服务端受守卫的
+ *   `ILIKE '%…%'`），所以 "Foo" 与 "foo" 一致。
+ * - `gt`/`gte`/`lt`/`lte` 只匹配数值类型的存值——服务端用
+ *   `jsonb_typeof(...) = 'number'` 守卫，文本值在这里同样是未命中。
+ * - `before`/`after` 只匹配字符串值并按字典序比较；对服务端存和筛的 "YYYY-MM-DD"
+ *   纯日期字符串，字典序恰好是时间序。
  *
- * A missing key never matches an operator (the server's `->>` yields NULL,
- * which no operator predicate satisfies) — handled by the caller before this
- * runs.
+ * 缺失的 key 永不命中操作符（服务端 `->>` 得到 NULL，任何操作符谓词都不满足）——
+ * 由本函数运行前的调用方处理。
  */
 export function issueValueMatchesOperator(
   value: NonNullable<Issue["properties"]>[string],
@@ -85,15 +83,13 @@ export function issueValueMatchesOperator(
   switch (filter.op) {
     case "contains": {
       const needle = filter.value.toLowerCase();
-      // An empty needle would substring-match every value ("".includes("") is
-      // true); the server rejects an empty operator value outright, so the
-      // matcher must refuse it too rather than match-all on hand-edited
-      // saved-view blobs.
+      // 空 needle 会让任何值都子串命中（"".includes("") 为 true）；服务端直接拒绝
+      // 空的算子值，所以这里的匹配也必须拒绝它，而不是对手工改过的已保存视图 blob
+      // 全量放行。
       if (needle === "") return false;
       if (typeof value === "string") return value.toLowerCase().includes(needle);
-      // Numbers, booleans, and arrays never match. Although jsonb ->> can
-      // serialize them, contains is deliberately a text/url operator on both
-      // the server and the client.
+      // 数字、布尔和数组永不命中。虽然 jsonb ->> 能序列化它们，但 contains 在服务端
+      // 和客户端都刻意只作文本/URL 算子。
       return false;
     }
     case "gt":
@@ -119,14 +115,11 @@ export function issueValueMatchesOperator(
 }
 
 /**
- * Match one issue against the property filters. Select values are single
- * option-id strings, multi_select values are option-id arrays, checkbox
- * values are booleans compared against the "true"/"false" pseudo-options,
- * and scalar definitions accept operator members (`PropertyOperatorFilter`)
- * alongside plain equality strings. Within one definition any member
- * matching is enough (OR); every definition must match (AND). An issue with
- * no value for a filtered definition matches only when the "No value"
- * (NO_PROPERTY_VALUE) pseudo-option is selected for it.
+ * 判断一个问题是否命中属性筛选。select 值是单个选项 id 字符串，multi_select 值是
+ * 选项 id 数组，checkbox 值是布尔（与 "true"/"false" 伪选项比较），标量定义除普通
+ * 等值字符串外还接受操作符成员（`PropertyOperatorFilter`）。同一定义内任一成员命中
+ * 即可（OR）；每个定义都必须命中（AND）。一个对被筛定义没有值的问题，只在选中
+ * 「无值」（NO_PROPERTY_VALUE）伪选项时命中。
  */
 export function issueMatchesPropertyFilters(
   issue: Issue,
@@ -142,16 +135,14 @@ export function issueMatchesPropertyFilters(
     }
     const matched = selected.some((member) => {
       if (member === NO_PROPERTY_VALUE) {
-        // The sentinel never matches a SET value: a literal "__none__" text
-        // value is a real value (the server's key-absence predicate excludes
-        // it from a No-value filter), and this path must agree with the
-        // server.
+        // 哨兵永不命中一个「有值」的值：字面的 "__none__" 文本是真实的值
+        // （服务端的 key 缺失谓词会把它排除在「无值」筛选之外），这条路径必须与
+        // 服务端一致。
         return false;
       }
       if (typeof member === "string") {
         if (typeof value === "string") return member === value;
-        // Compare numerically so "3.50" and 3.5 agree with the server's
-        // jsonb number containment.
+        // 按数值比较，让 "3.50" 和 3.5 与服务端的 jsonb 数字包含一致。
         if (typeof value === "number") return Number(member) === value;
         if (Array.isArray(value)) return value.includes(member);
         if (typeof value === "boolean") return member === String(value);
@@ -172,13 +163,12 @@ function issueIsWorking(issueId: string, context: IssueFilterContext) {
 }
 
 /**
- * Filter issues using positive selection model.
- * Empty arrays = no filter (show all). Non-empty = show only matching.
+ * 用正向选择模型过滤问题。空数组 = 不过滤（全显示）；非空 = 只显示匹配的。
  *
- * Assignee has a special "No assignee" toggle (includeNoAssignee):
- * - When only includeNoAssignee is true → show only unassigned issues
- * - When assigneeFilters has items → show only those assignees' issues
- * - When both → show matching assignees + unassigned
+ * 指派人有个特殊的「无指派人」开关（includeNoAssignee）：
+ * - 只有 includeNoAssignee 为 true → 只显示未指派的问题
+ * - assigneeFilters 里有值 → 只显示这些指派人的问题
+ * - 两者都开 → 显示匹配的指派人 + 未指派
  */
 export function applyIssueFilters(
   issues: Issue[],
@@ -191,9 +181,8 @@ export function applyIssueFilters(
     assigneeFilters.length > 0 ||
     includeNoAssignee;
   const hasProjectFilter = projectFilters.length > 0 || includeNoProject;
-  // Empty set passed without `agentRunningFilter` is a no-op. When the
-  // filter is on but the set is missing/empty, hide everything — the
-  // user opted into "only running" and there is nothing running.
+  // 未开 `agentRunningFilter` 时空集合是空操作。筛选开着但集合缺失/为空时全隐藏——
+  // 用户选了「只看运行中」而眼下没有东西在运行。
   const applyWorkingOnly = workingOnly === true;
   const hideSubIssues = filters.showSubIssues === false;
 
@@ -211,15 +200,15 @@ export function applyIssueFilters(
 
     if (hasAssigneeFilter) {
       if (!issue.assignee_id) {
-        // Unassigned issue — show only if "No assignee" is checked
+        // 未指派的问题——只有勾了「无指派人」才显示
         if (!includeNoAssignee) return false;
       } else if (assigneeFilters.length > 0) {
-        // Assigned issue — show only if assignee is in the filter list
+        // 已指派的问题——只有指派人落在筛选列表里才显示
         if (!assigneeFilters.some(
           (f) => f.type === issue.assignee_type && f.id === issue.assignee_id,
         )) return false;
       } else {
-        // Only "No assignee" is checked, no specific assignees → hide assigned issues
+        // 只勾了「无指派人」、没选具体指派人 → 隐藏已指派的问题
         return false;
       }
     }
@@ -239,14 +228,13 @@ export function applyIssueFilters(
       } else if (projectFilters.length > 0) {
         if (!projectFilters.includes(issue.project_id)) return false;
       } else {
-        // Only "No project" is checked → hide issues that have a project
+        // 只勾了「无项目」→ 隐藏有项目的问题
         return false;
       }
     }
 
     if (labelFilters.length > 0) {
-      // OR semantics within the filter: keep issues that carry any of the
-      // selected labels. Matches existing priority / project multi-select.
+      // 标签筛选内是 OR 语义：保留携带任一选中标签的问题。与既有的优先级/项目多选一致。
       const issueLabels = issue.labels;
       if (!issueLabels || issueLabels.length === 0) return false;
       if (!issueLabels.some((l) => labelFilters.includes(l.id))) return false;
@@ -258,6 +246,7 @@ export function applyIssueFilters(
   });
 }
 
+/** 以调用方友好的 IssueFilters 为入参的过滤便捷封装（内部规整成 IssueFilterState）。 */
 export function filterIssues(issues: Issue[], filters: IssueFilters): Issue[] {
   return applyIssueFilters(
     issues,
@@ -280,12 +269,10 @@ export function filterIssues(issues: Issue[], filters: IssueFilters): Issue[] {
 }
 
 /**
- * Re-apply the client-only display filters to a server-grouped response.
- * The assignee-grouped board renders straight from `groups`, bypassing the
- * flat `applyIssueFilters` output, so the "Show sub-issues" toggle and the
- * agents-working quick filter must be applied per group here. Recomputes
- * each group's total and drops emptied groups. Returns the input by
- * reference when no client filter is active.
+ * 把仅客户端生效的显示筛选重新套用到「服务端已分组」的响应上。
+ * 按指派人分组的看板直接渲染 `groups`、绕过了平铺的 `applyIssueFilters` 输出，
+ * 所以「显示子问题」开关和 agents-working 快捷筛选必须在这里逐组应用。
+ * 会重算每组的总数并丢弃被清空的组。没有客户端筛选激活时按引用返回原输入。
  */
 export function filterAssigneeGroups(
   groups: IssueAssigneeGroup[] | undefined,

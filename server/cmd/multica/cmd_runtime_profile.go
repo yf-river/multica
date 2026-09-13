@@ -1,3 +1,5 @@
+// 文件职责：实现 `multica runtime profile ...`——自定义 runtime profile 管理
+// （MUL-3284）。命令对象挂在 cmd_runtime.go 的 `runtime` 命令下。
 package main
 
 import (
@@ -17,21 +19,17 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// `multica runtime profile ...` — custom runtime profiles (MUL-3284)
+// 背景：runtime profile 让工作区声明一套「自定义 agent runtime」——底层路由到某
+// 个受支持的协议族（routing backend），但用站点自定义的 command_name 启动（例如
+// 一个注入凭据的包装脚本）。profile 存服务端、按工作区隔离；daemon 在本机 PATH
+// 上解析 command_name。
 //
-// A runtime profile lets a workspace declare a custom agent runtime built on
-// top of a supported protocol family (the routing backend) but launched via a
-// site-specific command_name (e.g. a wrapper that injects credentials). The
-// profile lives server-side and is workspace-scoped; the daemon resolves the
-// command_name on each host's PATH at registration time.
-//
-// `set-path` / `unset-path` are the per-machine escape hatch: they record a
-// profile_id -> absolute executable path mapping in this machine's local CLI
-// config so the daemon can launch a profile whose command isn't on PATH (or
-// pick a specific install among several). That mapping never leaves the
-// machine — it is not sent to the server.
+// `set-path` / `unset-path` 是本机专属的逃生门：把 profile_id → 可执行文件绝对
+// 路径的映射记进本机 CLI 配置，使 daemon 能启动不在 PATH 上的 profile（或在多个
+// 安装中挑特定那个）。该映射永不离开本机——不会发给 server。
 // ---------------------------------------------------------------------------
 
+// runtimeProfileCmd 是 `runtime profile` 分组命令（挂在 runtime 命令下）。
 var runtimeProfileCmd = &cobra.Command{
 	Use:   "profile",
 	Short: "Manage custom runtime profiles",
@@ -43,12 +41,14 @@ var runtimeProfileListCmd = &cobra.Command{
 	RunE:  runRuntimeProfileList,
 }
 
+// runtimeProfileCreateCmd 创建工作区级自定义 profile。
 var runtimeProfileCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a custom runtime profile",
 	RunE:  runRuntimeProfileCreate,
 }
 
+// runtimeProfileUpdateCmd 更新 profile 的可变字段（protocol family 不可改）。
 var runtimeProfileUpdateCmd = &cobra.Command{
 	Use:   "update <profile-id>",
 	Short: "Update a custom runtime profile (protocol family is immutable)",
@@ -56,6 +56,7 @@ var runtimeProfileUpdateCmd = &cobra.Command{
 	RunE:  runRuntimeProfileUpdate,
 }
 
+// runtimeProfileDeleteCmd 删除 profile。
 var runtimeProfileDeleteCmd = &cobra.Command{
 	Use:   "delete <profile-id>",
 	Short: "Delete a custom runtime profile",
@@ -63,6 +64,7 @@ var runtimeProfileDeleteCmd = &cobra.Command{
 	RunE:  runRuntimeProfileDelete,
 }
 
+// runtimeProfileSetPathCmd 为本机钉住某个 profile 的可执行文件绝对路径（本地配置）。
 var runtimeProfileSetPathCmd = &cobra.Command{
 	Use:   "set-path <profile-id>",
 	Short: "Pin a per-machine executable path for a runtime profile (local only)",
@@ -70,6 +72,7 @@ var runtimeProfileSetPathCmd = &cobra.Command{
 	RunE:  runRuntimeProfileSetPath,
 }
 
+// runtimeProfileUnsetPathCmd 移除本机对该 profile 的路径覆盖。
 var runtimeProfileUnsetPathCmd = &cobra.Command{
 	Use:   "unset-path <profile-id>",
 	Short: "Remove a per-machine executable path override for a runtime profile",
@@ -100,10 +103,9 @@ func init() {
 	runtimeProfileUpdateCmd.Flags().String("display-name", "", "New display name")
 	runtimeProfileUpdateCmd.Flags().String("command-name", "", "New command name")
 	runtimeProfileUpdateCmd.Flags().String("description", "", "New description")
-	// NOTE: --fixed-arg remains out of the CLI create/update surface for now:
-	// the product path parses command + args in the UI and stores them as
-	// command_name + fixed_args. Keep this CLI shape narrow until we add an
-	// argv-aware command-line parser here too.
+	// NOTE: --fixed-arg 暂不进入 CLI 的 create/update 表面：产品路径在 UI 里解析
+	// 命令+参数并以 command_name + fixed_args 存储。在我们给这里也加上能感知 argv
+	// 的命令行解析器之前，保持 CLI 形态狭窄。
 	runtimeProfileUpdateCmd.Flags().Bool("enabled", true, "Enable or disable the profile")
 	runtimeProfileUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
@@ -111,14 +113,13 @@ func init() {
 	runtimeProfileSetPathCmd.Flags().String("path", "", "Absolute path to the executable on this machine (required)")
 }
 
-// runtimeProfilesPath builds the workspace-scoped collection path.
+// runtimeProfilesPath 拼出工作区级 runtime profile 集合的端点路径。
 func runtimeProfilesPath(workspaceID string) string {
 	return fmt.Sprintf("/api/workspaces/%s/runtime-profiles", workspaceID)
 }
 
-// validateProtocolFamily checks a protocol family against the canonical agent
-// whitelist client-side so an obvious typo fails fast with a helpful list
-// instead of an opaque server 400.
+// validateProtocolFamily 在客户端先用 agent 侧权威白名单校验协议族，明显的拼写
+// 错误会带一份可选项清单立刻失败，而不是撞上不可读的 server 400。
 func validateProtocolFamily(family string) error {
 	if !agent.IsSupportedType(family) {
 		return fmt.Errorf("invalid --protocol-family %q: must be one of %s",
@@ -127,11 +128,11 @@ func validateProtocolFamily(family string) error {
 	return nil
 }
 
-// NOTE: a --visibility flag is intentionally NOT exposed in v1. The server
-// forces every profile to 'workspace' because the read paths do not yet
-// enforce 'private' (exposing it would leak "private" profiles). Re-add once
-// creator-visibility filtering exists. Follow-up: MUL-3308.
+// NOTE: v1 故意不暴露 --visibility flag。server 强制每个 profile 都是 'workspace'，
+// 因为读路径还没有落实 'private'（暴露它会让「私有」profile 泄漏）。等
+// creator-visibility 过滤就位再重新加上。跟进：MUL-3308。
 
+// runRuntimeProfileList 执行 `runtime profile list`：列出工作区内全部自定义 profile。
 func runRuntimeProfileList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -160,6 +161,8 @@ func runRuntimeProfileList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runRuntimeProfileCreate 执行 `runtime profile create`：必填 --protocol-family /
+// --command-name / --display-name，本地先校验 protocol family 合法再 POST 创建。
 func runRuntimeProfileCreate(cmd *cobra.Command, _ []string) error {
 	family, _ := cmd.Flags().GetString("protocol-family")
 	commandName, _ := cmd.Flags().GetString("command-name")
@@ -207,6 +210,8 @@ func runRuntimeProfileCreate(cmd *cobra.Command, _ []string) error {
 	return outputRuntimeProfile(cmd, profile)
 }
 
+// runRuntimeProfileUpdate 执行 `runtime profile update <profile-id>`：只把显式
+// Changed 的字段（display-name/command-name/description/enabled）PATCH 上去。
 func runRuntimeProfileUpdate(cmd *cobra.Command, args []string) error {
 	profileID := args[0]
 
@@ -252,6 +257,9 @@ func runRuntimeProfileUpdate(cmd *cobra.Command, args []string) error {
 	return outputRuntimeProfile(cmd, profile)
 }
 
+// runRuntimeProfileDelete 执行 `runtime profile delete <profile-id>`：删除 profile。
+// 若 server 因仍绑定着活跃 agent 而拒绝（409），原样透出它的说明，让用户知道该
+// 解绑什么——而不是给一句通用的 HTTP 包装错误。
 func runRuntimeProfileDelete(cmd *cobra.Command, args []string) error {
 	profileID := args[0]
 
@@ -269,9 +277,8 @@ func runRuntimeProfileDelete(cmd *cobra.Command, args []string) error {
 
 	path := runtimeProfilesPath(workspaceID) + "/" + profileID
 	if err := client.DeleteJSON(ctx, path); err != nil {
-		// 409 means the server refused because active agents are still bound
-		// to this profile. Surface the server's explanation verbatim rather
-		// than the generic HTTP wrapper so the user sees what to unbind.
+		// 409 = server 拒绝：仍有活跃 agent 绑定在此 profile 上。原样透出 server
+		// 的解释而不是泛化 HTTP 包装，用户才知道要去解绑什么。
 		var httpErr *cli.HTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
 			msg := strings.TrimSpace(httpErr.Body)
@@ -286,6 +293,9 @@ func runRuntimeProfileDelete(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runRuntimeProfileSetPath 执行 `runtime profile set-path <profile-id> --path <abs>`：
+// 把本机 profile_id → 可执行文件绝对路径的覆盖写进本地 CLI 配置（仅本机，不上传
+// server）。要求 --path 是绝对路径。
 func runRuntimeProfileSetPath(cmd *cobra.Command, args []string) error {
 	if err := requireHumanLocalCommand("runtime profile set-path"); err != nil {
 		return err
@@ -317,6 +327,8 @@ func runRuntimeProfileSetPath(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runRuntimeProfileUnsetPath 执行 `runtime profile unset-path <profile-id>`：删掉
+// 本机对该 profile 的路径覆盖；没设置过就提示并直接返回。
 func runRuntimeProfileUnsetPath(cmd *cobra.Command, args []string) error {
 	if err := requireHumanLocalCommand("runtime profile unset-path"); err != nil {
 		return err
@@ -334,7 +346,7 @@ func runRuntimeProfileUnsetPath(cmd *cobra.Command, args []string) error {
 	}
 	delete(cfg.ProfileCommandOverrides, profileID)
 	if len(cfg.ProfileCommandOverrides) == 0 {
-		// Normalize back to nil so the key drops out of the saved JSON.
+		// 归一化回 nil，让该 key 从保存的 JSON 里消失。
 		cfg.ProfileCommandOverrides = nil
 	}
 	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
@@ -345,7 +357,7 @@ func runRuntimeProfileUnsetPath(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// outputRuntimeProfile renders a single profile honoring --output.
+// outputRuntimeProfile 按 --output 渲染单个 profile 结果。
 func outputRuntimeProfile(cmd *cobra.Command, profile map[string]any) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
@@ -355,7 +367,7 @@ func outputRuntimeProfile(cmd *cobra.Command, profile map[string]any) error {
 	return nil
 }
 
-// printRuntimeProfileTable renders profiles as a stable, sorted table.
+// printRuntimeProfileTable 以稳定排序的表格渲染 profile 列表（按 display name 排）。
 func printRuntimeProfileTable(profiles []map[string]any) {
 	headers := []string{"ID", "DISPLAY_NAME", "PROTOCOL_FAMILY", "COMMAND_NAME", "ENABLED"}
 	rows := make([][]string, 0, len(profiles))

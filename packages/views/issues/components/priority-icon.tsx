@@ -1,13 +1,16 @@
+// 本文件：PriorityIcon —— 优先级图形（SVG）。
+// 刻意分成两族：低/中/高共用同一"三档柱"骨架（亮 1/2/3 根、其余淡出），
+// 让严重程度像"液位"一样一眼可读；紧急（urgent）跳出该刻度——一枚实心徽章
+// 加感叹号，因为它是"打断"，不是"再高一档"；无优先级则是安静的一根短横线。
+
 import type { IssuePriority } from "@multica/core/types";
 import { PRIORITY_CONFIG } from "@multica/core/issues/config";
 
 /**
- * Priority glyphs, two families on purpose:
- * - low / medium / high share one three-bar frame (1 / 2 / 3 bars filled,
- *   the rest faint) so severity reads as a fill level at a glance;
- * - urgent breaks out of the scale entirely — a filled badge with an
- *   exclamation mark — because it is an interrupt, not "even higher".
- * - none stays a quiet dash.
+ * 优先级图形，刻意分两族：
+ * - 低/中/高共用三档柱骨架（亮 1/2/3 根、其余变淡），严重程度像液位一眼可读；
+ * - 紧急（urgent）彻底跳出刻度——实心徽章 + 感叹号，因为它是"打断"而非"更高一档"；
+ * - 无优先级保持安静的短横线。
  */
 export function PriorityIcon({
   priority,
@@ -20,7 +23,7 @@ export function PriorityIcon({
 }) {
   const cfg = priority in PRIORITY_CONFIG ? PRIORITY_CONFIG[priority as IssuePriority] : null;
 
-  // "none" — simple horizontal dash
+  // "无优先级"——一根简单横线
   if (!cfg || priority === "none") {
     return (
       <svg
@@ -58,7 +61,7 @@ export function PriorityIcon({
     );
   }
 
-  // low / medium / high — a constant three-bar frame; severity = fill count.
+  // 低/中/高——固定三根柱的骨架；严重程度 = 亮起根数。
   const filled = Math.min(cfg.bars, 3);
   const BAR_HEIGHTS = [6, 9, 12];
   return (

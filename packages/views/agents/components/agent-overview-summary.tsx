@@ -1,5 +1,8 @@
 "use client";
 
+// 本文件提供 Agent 工作台“概览”页的只读信息侧栏：集中展示身份信息（拥有者、可见性、
+// 运行环境、模型、并发上限）、技能清单和近期性能概览。纯浏览、不可编辑——编辑都放“设置”页。
+
 import { Bot, Server } from "lucide-react";
 import type {
   Agent,
@@ -13,15 +16,17 @@ import { VisibilityBadge } from "./visibility-badge";
 import { AgentPerformanceSummary } from "./tabs/activity-tab";
 
 interface AgentOverviewSummaryProps {
+  /** 要展示信息的 Agent。 */
   agent: Agent;
+  /** Agent 绑定的运行环境；为 null 表示还没绑定（如刚创建完）。 */
   runtime: AgentRuntime | null;
+  /** Agent 的拥有者成员；为 null 表示暂无归属信息。 */
   owner: MemberWithUser | null;
 }
 
 /**
- * Read-only context for the workbench Overview. Editing lives under Settings;
- * keeping this surface non-interactive lets users scan identity, execution,
- * and capability context without mistaking every value for a control.
+ * 概览页的只读信息侧栏。编辑一律放在“设置”下，这里刻意做成不可交互，
+ * 让用户能快速扫一眼“身份 + 运行 + 能力”的上下文，而不会把每个值误当成可点的控件。
  */
 export function AgentOverviewSummary({
   agent,
@@ -117,6 +122,7 @@ export function AgentOverviewSummary({
   );
 }
 
+/** 信息栏里的单行条目：左侧固定宽度放标签（dt），右侧内容区自适应宽度放值（dd）。 */
 function SummaryRow({
   label,
   children,

@@ -1,3 +1,18 @@
+// 本文件实现「项目」（project）的 CRUD 与项目搜索。
+//
+// 项目是 workspace 内把一批议题组织起来的容器（类似文件夹），带负责人、起止日期、
+// 图标等元数据，还能通过 project_resource（见 project_resource.go）挂接仓库 / 本地
+// 目录资源。本文件提供：
+//   - ListProjects / GetProject：列表与详情，额外附上议题统计（总量/已完成数）和
+//     资源数量；
+//   - CreateProject：创建项目时可一并打包创建资源（bundled-create），项目与资源、
+//     领域事件在同一事务里提交；
+//   - UpdateProject：所有可选字段支持「显式清空」——靠原始 map 区分字段没传与
+//     传了 null；
+//   - DeleteProject：需要 owner/admin，同一事务里清理 chat 会话的项目绑定与
+//     项目级保存视图；
+//   - SearchProjects / buildProjectSearchQuery：动态拼 SQL 的项目搜索，标题命中
+//     优先、取消的项目降级排序。
 package handler
 
 import (
@@ -23,6 +38,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// ProjectResponse 是项目接口对外返回的 JSON 结构。
 type ProjectResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
@@ -33,21 +49,22 @@ type ProjectResponse struct {
 	Priority    string  `json:"priority"`
 	LeadType    *string `json:"lead_type"`
 	LeadID      *string `json:"lead_id"`
-	// StartDate / DueDate are calendar days ("YYYY-MM-DD"), no time-of-day or
-	// timezone — same contract as issue.start_date / issue.due_date.
+	// StartDate / DueDate 是日历日（"YYYY-MM-DD"），不含时刻或时区——与
+	// issue.start_date / issue.due_date 同一契约。
 	StartDate  *string `json:"start_date"`
 	DueDate    *string `json:"due_date"`
 	CreatedAt  string  `json:"created_at"`
 	UpdatedAt  string  `json:"updated_at"`
 	IssueCount int64   `json:"issue_count"`
 	DoneCount  int64   `json:"done_count"`
-	// ResourceCount is a breadcrumb pointing at the sub-collection at
-	// /api/projects/{id}/resources. Resources themselves stay out of this
-	// payload to keep parent metadata and child collections separate; clients
-	// that need the list call ListProjectResources directly.
+	// ResourceCount 是通向子集合 /api/projects/{id}/resources 的面包屑数字。
+	// 资源本体刻意不进这个载荷，让父元数据与子集合保持分离；需要完整列表的
+	// 客户端直接调 ListProjectResources。
 	ResourceCount int64 `json:"resource_count"`
 }
 
+// projectToResponse 把数据库行 db.Project 转成对外 JSON 结构（不含统计字段，
+// 统计由各调用方另行填充）。
 func projectToResponse(p db.Project) ProjectResponse {
 	return ProjectResponse{
 		ID:          uuidToString(p.ID),
@@ -66,6 +83,8 @@ func projectToResponse(p db.Project) ProjectResponse {
 	}
 }
 
+// loadProjectIssueStats 加载单个项目的议题统计（总数与已完成数）。失败时返回 0,0
+// ——统计是展示性信息，不值得让整个项目接口失败。
 func (h *Handler) loadProjectIssueStats(ctx context.Context, workspaceID, projectID pgtype.UUID) (int64, int64) {
 	terminalStatusKeys := h.projectTerminalIssueStatusKeys(ctx, workspaceID)
 	stats, err := h.Queries.GetProjectIssueStats(ctx, db.GetProjectIssueStatsParams{
@@ -79,9 +98,8 @@ func (h *Handler) loadProjectIssueStats(ctx context.Context, workspaceID, projec
 	return stats[0].TotalCount, stats[0].DoneCount
 }
 
-// projectTerminalIssueStatusKeys keeps project responses useful if the custom
-// status catalog cannot be read. Canonical terminal keys are less complete
-// than the workspace catalog, but they avoid rendering every project as 0/0.
+// projectTerminalIssueStatusKeys 在自定义状态目录读取失败时，仍然让项目响应保持
+// 有用。标准终态键没有 workspace 目录那么全，但能避免把每个项目都渲染成 0/0。
 func (h *Handler) projectTerminalIssueStatusKeys(ctx context.Context, workspaceID pgtype.UUID) []string {
 	keys, err := h.terminalIssueStatusKeys(ctx, workspaceID)
 	if err == nil {
@@ -92,6 +110,7 @@ func (h *Handler) projectTerminalIssueStatusKeys(ctx context.Context, workspaceI
 	return []string{issuestatus.Done, issuestatus.Cancelled}
 }
 
+// loadProjectResourceCount 加载项目的资源数量。失败时返回 0（展示性信息）。
 func (h *Handler) loadProjectResourceCount(ctx context.Context, projectID pgtype.UUID) int64 {
 	rows, err := h.Queries.GetProjectResourceCounts(ctx, []pgtype.UUID{projectID})
 	if err != nil || len(rows) == 0 {
@@ -100,6 +119,8 @@ func (h *Handler) loadProjectResourceCount(ctx context.Context, projectID pgtype
 	return rows[0].ResourceCount
 }
 
+// CreateProjectRequest 是创建项目请求体。Resources 允许在创建项目时一并打包附加
+// 资源（bundled-create）。
 type CreateProjectRequest struct {
 	Title       string                                `json:"title"`
 	Description *string                               `json:"description"`
@@ -113,9 +134,9 @@ type CreateProjectRequest struct {
 	Resources   []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
 }
 
-// CreateProjectResourceRequestPayload mirrors CreateProjectResourceRequest but
-// is embedded inside the project create payload. Kept as a separate type so a
-// future change to the standalone request can't silently break this surface.
+// CreateProjectResourceRequestPayload 与 CreateProjectResourceRequest 字段一致，
+// 但嵌在「创建项目」的载荷里。单独拆一个类型，是为了将来改动独立端点时不会
+// 静默破坏这个内嵌表面。
 type CreateProjectResourceRequestPayload struct {
 	ResourceType string          `json:"resource_type"`
 	ResourceRef  json.RawMessage `json:"resource_ref"`
@@ -123,6 +144,8 @@ type CreateProjectResourceRequestPayload struct {
 	Position     *int32          `json:"position"`
 }
 
+// UpdateProjectRequest 是更新项目请求体。指针字段用于区分「没传（保持原值）」
+// 与「显式传 null / 空值（清空）」。
 type UpdateProjectRequest struct {
 	Title       *string `json:"title"`
 	Description *string `json:"description"`
@@ -135,6 +158,8 @@ type UpdateProjectRequest struct {
 	DueDate     *string `json:"due_date"`
 }
 
+// ListProjects 返回 workspace 下的项目列表（GET /api/projects），支持按
+// status / priority 过滤，并批量附带议题统计与资源数量。
 func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -159,7 +184,7 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Batch-fetch issue stats and resource counts for all projects
+	// 一次性批量拉取所有项目的议题统计与资源数量，避免 N+1 查询。
 	statsMap := make(map[string]db.GetProjectIssueStatsRow)
 	resourceCountMap := make(map[string]int64)
 	if len(projects) > 0 {
@@ -198,6 +223,7 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"projects": resp, "total": len(resp)})
 }
 
+// GetProject 返回单个项目详情（GET /api/projects/{id}），含议题统计与资源数量。
 func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
@@ -222,16 +248,15 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// validProjectStatuses / validProjectPriorities mirror the CHECK constraints on
-// the project table (migrations 034, 035). CreateProject / UpdateProject
-// pre-validate against these so an unknown enum value returns a clean 400 with
-// the allowed list instead of surfacing the DB CHECK violation as a 500 — the
-// exact mismatch reported in #3925 (`--status active`).
+// validProjectStatuses / validProjectPriorities 与 project 表上的 CHECK 约束一致
+// （migrations 034、035）。CreateProject / UpdateProject 先按它们预校验，让非法枚举
+// 值返回带合法清单的干净 400，而不是把 DB 的 CHECK 违例暴露成 500——这正是 #3925
+// 里 `--status active` 的教训。
 var validProjectStatuses = []string{"planned", "in_progress", "paused", "completed", "cancelled"}
 var validProjectPriorities = []string{"urgent", "high", "medium", "low", "none"}
 
-// validateProjectEnum writes a 400 and returns false when value is not in
-// allowed; the caller returns immediately on false.
+// validateProjectEnum 在 value 不在 allowed 清单内时写出 400 并返回 false；调用方
+// 拿到 false 应立刻 return。
 func validateProjectEnum(w http.ResponseWriter, field, value string, allowed []string) bool {
 	for _, a := range allowed {
 		if value == a {
@@ -242,12 +267,10 @@ func validateProjectEnum(w http.ResponseWriter, field, value string, allowed []s
 	return false
 }
 
-// writeProjectWriteError maps a failed project INSERT/UPDATE to an HTTP
-// response. A CHECK constraint violation is a client error (400) — pre-validation
-// already covers status/priority, so this backstops any other constrained column
-// (e.g. lead_type). Anything else is a genuine server fault: log the underlying
-// error so transient DB failures are diagnosable (#3925 had no server-side
-// signal) and return 500.
+// writeProjectWriteError 把失败的 project INSERT/UPDATE 映射成 HTTP 响应。CHECK
+// 约束违例是客户端错误（400）——status/priority 已有预校验兜底，这里再兜住其它受
+// 约束的列（如 lead_type）。其余都是真正的服务器故障：记下底层错误，让瞬时 DB
+// 故障可诊断（#3925 当时没有任何服务端信号），并返回 500。
 func (h *Handler) writeProjectWriteError(w http.ResponseWriter, r *http.Request, err error, action string) {
 	if isCheckViolation(err) {
 		writeError(w, http.StatusBadRequest, "project "+action+" rejected: a field value failed a database constraint")
@@ -257,6 +280,9 @@ func (h *Handler) writeProjectWriteError(w http.ResponseWriter, r *http.Request,
 	writeError(w, http.StatusInternalServerError, "failed to "+action+" project")
 }
 
+// CreateProject 创建项目（POST）。先校验标题/枚举/负责人/日期与每个内嵌资源
+// （bundled-create 在开事务前就校验并规范化），再在单个事务里写入项目、所有资源
+// 及其领域事件。带资源创建时回显父级字段 + 刚创建的资源列表。
 func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var req CreateProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -303,8 +329,8 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// start_date / due_date are optional calendar days; an absent or empty
-	// value leaves the column NULL. Mirrors CreateIssue's date handling.
+	// start_date / due_date 是可选的日历日；字段缺省或为空则列留 NULL。
+	// 与 CreateIssue 的日期处理保持一致。
 	var startDate pgtype.Date
 	if req.StartDate != nil && *req.StartDate != "" {
 		d, err := util.ParseCalendarDate(*req.StartDate)
@@ -324,14 +350,11 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		dueDate = d
 	}
 
-	// Pre-validate every resource payload before opening a transaction so an
-	// invalid ref produces a clean 400 with no DB work. For local_directory we
-	// also enforce one row per daemon_id within the batch — the daemon-side
-	// resolver picks the first match by daemon_id, so two rows on the same
-	// daemon would silently route the agent into whichever sorts first.
-	// The standalone POST/PUT paths run the same check via
-	// findLocalDirectoryConflict; this loop just covers the bundled-create
-	// surface, where there is no existing row to compare against yet.
+	// 在开事务前就预校验每个资源载荷，让非法 ref 以干净的 400 返回、不做任何 DB
+	// 工作。local_directory 还要在批次内保证每个 daemon_id 只有一行——daemon 端
+	// 解析器按 daemon_id 取第一个匹配，同一 daemon 挂两行会让 agent 静默写进排序
+	// 靠前的那行。独立 POST/PUT 路径经 findLocalDirectoryConflict 跑同一检查；
+	// 这个循环只覆盖 bundled-create 表面——它还没有既有行可比对。
 	normalizedRefs := make([]json.RawMessage, len(req.Resources))
 	localDirSeen := map[string]int{}
 	for i, res := range req.Resources {
@@ -357,12 +380,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			localDirSeen[ld.DaemonID] = i
-			// Same worktree gate the standalone POST/PUT paths run. This
-			// bundled-create surface skipped it, so a project created with a
-			// worktree local_directory could store a mode the machine cannot
-			// run — caught only later, by the claim gate cancelling the task.
-			// It writes its own 422; it runs before the transaction, so a
-			// rejection leaves nothing behind.
+			// 独立 POST/PUT 路径会跑的同一个 worktree 闸门。bundled-create 曾经漏掉
+			// 它，于是用 worktree local_directory 建出来的项目可能存着机器跑不了的
+			// 模式——要到后来认领闸取消任务才暴露。它自己写出 422；在事务之前执行，
+			// 拒绝时不留下任何脏数据。
 			if !h.requireWorktreeCapableDaemon(w, r, wsUUID, res.ResourceType, ref) {
 				return
 			}
@@ -382,9 +403,8 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		DueDate:     dueDate,
 	}
 
-	// Project and any bundled resources are committed together with their
-	// durable envelopes. A failed event insert therefore rolls the business
-	// mutation back instead of leaving an unobservable project.
+	// 项目与任何打包资源连同各自的持久化事件信封一起提交。事件插入一旦失败，
+	// 业务写入一并回滚，不会留下一个无人观察得到的项目。
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
@@ -466,9 +486,8 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
-	// One-shot create echo: the parent ProjectResponse fields plus the just-
-	// created resources. This is a transient creation echo, not a contract for
-	// reads — GET /projects/{id} stays metadata-only with resource_count.
+	// 一次性创建回显：父级 ProjectResponse 字段 + 刚创建的资源。这是「创建瞬间」
+	// 的临时回显，不是读接口的契约——GET /projects/{id} 仍然只返回元数据 + 资源数。
 	writeJSON(w, http.StatusCreated, struct {
 		ProjectResponse
 		Resources []ProjectResourceResponse `json:"resources"`
@@ -478,6 +497,8 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// UpdateProject 更新项目（PUT /api/projects/{id}）。所有可选字段支持「显式清空」：
+// 用 body 的原始 map 区分字段没传（保持原值）与显式传 null/空（置 NULL/清日期）。
 func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
@@ -569,8 +590,7 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 			params.LeadID = pgtype.UUID{Valid: false}
 		}
 	}
-	// Dates follow the issue contract: a present key with an empty/null value
-	// clears the date; an absent key leaves the prior value untouched.
+	// 日期遵循 issue 契约：键存在但值为空/null 即清空日期；键不存在则保留原值。
 	if _, ok := rawFields["start_date"]; ok {
 		if req.StartDate != nil && *req.StartDate != "" {
 			d, err := util.ParseCalendarDate(*req.StartDate)
@@ -580,7 +600,7 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 			}
 			params.StartDate = d
 		} else {
-			params.StartDate = pgtype.Date{Valid: false} // explicit null = clear date
+			params.StartDate = pgtype.Date{Valid: false} // 显式 null = 清空日期
 		}
 	}
 	if _, ok := rawFields["due_date"]; ok {
@@ -592,7 +612,7 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 			}
 			params.DueDate = d
 		} else {
-			params.DueDate = pgtype.Date{Valid: false} // explicit null = clear date
+			params.DueDate = pgtype.Date{Valid: false} // 显式 null = 清空日期
 		}
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -625,6 +645,9 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// DeleteProject 删除项目（DELETE /api/projects/{id}），要求 owner/admin。同一
+// 事务里：给项目行加锁防止并发删除、清理 chat 会话指向该项目的绑定、删除项目级
+// 保存视图，最后删项目行并记录事件，成功返回 204。
 func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
@@ -674,8 +697,8 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to clear project chat context")
 		return
 	}
-	// Project-scoped saved views live on the project page; once the project
-	// is gone they are unreachable, so they go in the same transaction.
+	// 项目级保存视图挂在项目页上；项目没了它们就永远访问不到，所以放进同一个
+	// 事务一起删。
 	if err := qtx.DeleteIssueViewsByProjectScope(r.Context(), db.DeleteIssueViewsByProjectScopeParams{
 		WorkspaceID: project.WorkspaceID,
 		ScopeID:     project.ID,
@@ -705,14 +728,17 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SearchProjectResponse extends ProjectResponse with search metadata.
+// SearchProjectResponse 在 ProjectResponse 基础上扩展搜索元数据：MatchSource 表明
+// 命中在标题还是描述，MatchedSnippet 是描述命中时截取的上下文片段。
 type SearchProjectResponse struct {
 	ProjectResponse
 	MatchSource    string  `json:"match_source"`
 	MatchedSnippet *string `json:"matched_snippet,omitempty"`
 }
 
-// buildProjectSearchQuery builds a dynamic SQL query for project search.
+// buildProjectSearchQuery 为项目搜索拼一条动态 SQL：同一关键词同时匹配标题与描述，
+// 多个词要求逐词 AND 命中；排序上标题精确命中 > 标题前缀 > 标题包含 > 标题全词 >
+// 描述包含，取消的项目额外降级。参数统一用 $n 占位并由调用方填充。
 func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) (string, []any) {
 	phrase = strings.ToLower(phrase)
 	for i, t := range terms {
@@ -743,17 +769,17 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 		}
 	}
 
-	// --- WHERE clause ---
+	// --- WHERE 子句 ---
 	var whereParts []string
 
-	// Full phrase match: title or description
+	// 短语整体匹配：标题或描述
 	phraseMatch := fmt.Sprintf(
 		"(LOWER(p.title) LIKE %s OR LOWER(COALESCE(p.description, '')) LIKE %s)",
 		phraseContains, phraseContains,
 	)
 	whereParts = append(whereParts, phraseMatch)
 
-	// Multi-word AND match
+	// 多词 AND 匹配（每个词都要在某处命中）
 	if len(termParams) > 1 {
 		var termConditions []string
 		for _, tp := range termParams {
@@ -772,19 +798,19 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 		whereClause += " AND p.status NOT IN ('completed', 'cancelled')"
 	}
 
-	// --- ORDER BY ranking ---
+	// --- ORDER BY 排序 ---
 	var rankCases []string
 
-	// Tier 0: Exact title match
+	// 第 0 档：标题精确等于短语
 	rankCases = append(rankCases, fmt.Sprintf("WHEN LOWER(p.title) = %s THEN 0", phraseParam))
 
-	// Tier 1: Title starts with phrase
+	// 第 1 档：标题以短语开头
 	rankCases = append(rankCases, fmt.Sprintf("WHEN LOWER(p.title) LIKE %s THEN 1", phraseStartsWith))
 
-	// Tier 2: Title contains phrase
+	// 第 2 档：标题包含短语
 	rankCases = append(rankCases, fmt.Sprintf("WHEN LOWER(p.title) LIKE %s THEN 2", phraseContains))
 
-	// Tier 3: Title matches all words (multi-word only)
+	// 第 3 档：标题包含全部词（仅多词查询）
 	if len(termParams) > 1 {
 		var titleTerms []string
 		for _, tp := range termParams {
@@ -793,23 +819,21 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 		rankCases = append(rankCases, fmt.Sprintf("WHEN (%s) THEN 3", strings.Join(titleTerms, " AND ")))
 	}
 
-	// Tier 4: Description contains phrase
+	// 第 4 档：描述包含短语
 	rankCases = append(rankCases, fmt.Sprintf("WHEN LOWER(COALESCE(p.description, '')) LIKE %s THEN 4", phraseContains))
 
 	rankExpr := "CASE " + strings.Join(rankCases, " ") + " ELSE 5 END"
 
-	// Cancelled projects are abandoned work. Project search has no other status
-	// ranking, and the command palette renders projects above issues, so
-	// without this a cancelled project can be the very first row of the result
-	// list. Demote ahead of rankExpr, with the same direct-hit exception as
-	// issue search (see buildSearchQuery): an exact title means the user is
-	// targeting that one project.
+	// 取消的项目是搁置的工作。项目搜索没有别的状态排序，而命令面板把项目渲染在
+	// 议题之上，不加处理的话，一个取消的项目会出现在结果列表的第一行。放在
+	// rankExpr 之前降级；与议题搜索（见 buildSearchQuery）一样保留「精确命中标题」
+	// 例外：标题完全一致说明用户就是在找那个项目。
 	cancelledRank := fmt.Sprintf(
 		"CASE WHEN p.status = 'cancelled' AND LOWER(p.title) <> %s THEN 1 ELSE 0 END",
 		phraseParam,
 	)
 
-	// --- match_source expression ---
+	// --- match_source 表达式 ---
 	matchSourceExpr := fmt.Sprintf(`CASE
 		WHEN LOWER(p.title) LIKE %s THEN 'title'
 		ELSE 'description'
@@ -854,6 +878,9 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	return query, args
 }
 
+// SearchProjects 处理项目搜索（GET /api/projects/search）：解析 q / limit / offset /
+// include_closed 参数，执行动态 SQL，并为结果批量补上议题统计与资源数量。语句超时
+// 映射为 503。
 func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	workspaceID := h.resolveWorkspaceID(r)
@@ -927,8 +954,8 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 		return rows.Err()
 	})
 	if err != nil {
-		// Statement-timeout surfaces as SQLSTATE 57014 — same
-		// fail-fast contract as SearchIssues (see runSearchQuery).
+		// 语句超时表现为 SQLSTATE 57014——与 SearchIssues 相同的快速失败契约
+		// （见 runSearchQuery）。
 		if isSearchStatementTimeout(err) {
 			slog.Warn("search projects timed out",
 				"workspace_id", workspaceID,
@@ -947,7 +974,7 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 		total = results[0].totalCount
 	}
 
-	// Batch-fetch issue stats and resource counts
+	// 批量拉取命中项目的议题统计与资源数量，避免逐条查询。
 	statsMap := make(map[string]db.GetProjectIssueStatsRow)
 	resourceCountMap := make(map[string]int64)
 	if len(results) > 0 {

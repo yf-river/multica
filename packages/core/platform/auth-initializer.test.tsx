@@ -286,4 +286,27 @@ describe("AuthInitializer recovery", () => {
     expect(storage.snapshot().multica_token).toBeUndefined();
     expect(onLogout).toHaveBeenCalledOnce();
   });
+
+  it("rejects a session whose authenticated user no longer exists", async () => {
+    const getMe = vi.fn().mockRejectedValue(
+      new ApiError("user not found", 404, "Not Found", {
+        error: "user not found",
+      }),
+    );
+    const api = makeApi({ getMe });
+    const { onLogout } = renderInitializer({
+      api,
+      cookieAuth: true,
+      storage: makeStorage(),
+    });
+
+    await waitFor(() => {
+      expect(useAuthStore.getState().status).toBe("unauthenticated");
+    });
+    act(() => window.dispatchEvent(new Event("online")));
+
+    expect(getMe).toHaveBeenCalledOnce();
+    expect(onLogout).toHaveBeenCalledOnce();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
 });

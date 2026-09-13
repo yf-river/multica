@@ -1,3 +1,9 @@
+// 本文件：useDragSettle —— 问题看板三处拖拽面（看板/列表/泳道）共用的
+// "拖拽-落定"状态机。核心思路：两次拖拽之间，本地列状态镜像 TanStack Query
+// 缓存；拖拽中或落定中（移动 mutation 在途）冻结镜像，防止乐观移动被中途落地的
+// 缓存更新冲掉；落定后解锁并 bump settleVersion，强制按已对账的缓存重新同步一次。
+// 无内容的 setColumns 写入（等值判断）会被跳过，避免触发冷加载更新死循环。
+
 import {
   useCallback,
   useEffect,
@@ -8,9 +14,8 @@ import {
 } from "react";
 
 /**
- * Content equality for the column map (`columnId -> ordered issue ids`). Two
- * maps are equal when they have the same column keys and each column's id list
- * matches element-for-element. Used to skip no-op `setColumns` writes.
+ * 列映射（`columnId -> 有序 issue id 数组`）的内容等值比较：两图具有相同的
+ * 列键、且每列的 id 列表逐元素相等即视为相等。用于跳过无效果的 `setColumns` 写入。
  */
 function columnsEqual(
   a: Record<string, string[]>,
@@ -33,32 +38,28 @@ function columnsEqual(
 }
 
 /**
- * Shared drag/settle state machine for the issue boards (board-view, list-view).
+ * 问题看板（board-view / list-view）共用的拖拽/落定状态机。
  *
- * All three drag surfaces (board, list, swimlane) follow the same contract:
+ * 三处拖拽面（看板、列表、泳道）遵循同一契约：
  *
- *   - Local column state mirrors the TanStack Query cache *between* drags.
- *   - While dragging, or while a drop is *settling* (the move mutation is
- *     in flight), that mirror is frozen so an optimistic move isn't clobbered
- *     by a cache change that lands mid-flight.
- *   - On settle the lock releases and `settleVersion` bumps, forcing one resync
- *     from the now-reconciled cache.
+ *   - 本地列状态在两次拖拽之间镜像 TanStack Query 缓存。
+ *   - 拖拽中、或一次落下仍在"落定"（移动 mutation 在途）时，镜像被冻结，
+ *     避免乐观移动被恰好中途落地的缓存变化冲掉。
+ *   - 落定后解锁并 bump `settleVersion`，触发一次按已对账缓存的重新同步。
  *
- * This hook owns that primitive so the surfaces can't drift apart (list-view
- * once silently lost the optimistic-move half of it). The resync `useEffect`
- * itself stays in each caller because its dependency list is data-source
- * specific (workspace board vs. status-only list), but it reads `settleVersion`
- * and the refs from here.
+ * 本 hook 独享这份原语，防止各视图逐渐跑偏（list-view 曾悄悄丢掉乐观移动那半）。
+ * 触发同步的 `useEffect` 仍留在各调用方，因为其依赖列表随数据源而异
+ *（工作区看板 vs 纯状态列表），但它从这里读 `settleVersion` 与各 ref。
  *
- * `initialColumns` is only read once (useState initializer); callers drive
- * subsequent updates through their own resync effect + `setColumns`.
+ * `initialColumns` 只在初始化时读一次（useState initializer）；
+ * 调用方通过自己的 resync effect + `setColumns` 驱动后续更新。
  */
 export function useDragSettle(
   initialColumns: () => Record<string, string[]>,
 ) {
   const isDraggingRef = useRef(false);
   const isSettlingRef = useRef(false);
-  // Throttles onDragOver: set true after a local move, cleared one frame later.
+  // 限流 onDragOver：本地移动后置 true，一帧之后清除。
   const recentlyMovedRef = useRef(false);
   const [settleVersion, setSettleVersion] = useState(0);
 
@@ -68,14 +69,11 @@ export function useDragSettle(
   const columnsRef = useRef(columns);
   columnsRef.current = columns;
 
-  // Equality-guarded column setter. When a resync (or a no-op drag) produces a
-  // column map whose contents match the current one, return the SAME reference
-  // so React bails out of the re-render. Second line of defense against the
-  // cold-load update loop (MUL-4985): even if some input to `buildColumns`
-  // regains a per-render-unstable identity, a content-equal rebuild no longer
-  // forces a new state object and cannot spin the resync effect. It never
-  // changes the resulting value — only skips redundant writes — so drag/settle
-  // semantics are unchanged.
+  // 带等值保护的列 setter。当一次重同步（或一次空拖拽）算出的列映射内容与当前
+  // 相同，就返回同一个引用，让 React 跳过这次重渲染。这是对"冷加载更新循环"
+  // 的第二道防线（MUL-4985）：即使某个 `buildColumns` 输入恢复了每次渲染
+  // 都不稳定的身份，内容相等的重建也不会再产生新状态对象，无从驱动 resync
+  // effect 空转。它从不改变最终值——只是跳过冗余写入——因此拖拽/落定语义不变。
   const setColumns = useCallback<
     Dispatch<SetStateAction<Record<string, string[]>>>
   >((update) => {
@@ -98,8 +96,8 @@ export function useDragSettle(
   }, [columns]);
 
   /**
-   * Engage the settle lock and return the `onSettled` callback to hand to the
-   * move mutation. The callback releases the lock and triggers a single resync.
+   * 锁上"落定中"并返回要交给移动 mutation 的 `onSettled` 回调。
+   * 该回调负责解锁并触发一次重同步。
    */
   const beginSettle = useCallback(() => {
     isSettlingRef.current = true;
