@@ -1,3 +1,5 @@
+import { HealthOverviewSchema, HealthReportsSchema, HealthRevisionsSchema, HealthReportSchema, HealthReceiptSchema, EMPTY_HEALTH, observationWire, type HealthOverview, type HealthReport, type HealthProfile, type HealthObservation, type HealthRevision } from "../health/schema";
+import { HealthReportHistorySchema, type HealthExtraction } from "../health/schema";
 // 本文件是核心 HTTP API 客户端：封装一个针对后端的 fetch 层。
 // 统一处理鉴权头（token / workspace / CSRF / 客户端身份）、请求 ID、401 未授权回调、
 // 结构化错误（ApiError）解析与日志；业务方法拿到响应后大多用 zod schema 校验，
@@ -3480,6 +3482,51 @@ export class ApiClient {
   }
 
   // Life companion（生活伴侣区）
+  async healthOverview(): Promise<HealthOverview> {
+    const endpoint = "/api/health/overview";
+    return parseWithFallback(await this.fetch<unknown>(endpoint), HealthOverviewSchema, EMPTY_HEALTH, { endpoint, sensitive: true });
+  }
+  async healthReports(): Promise<{ items: HealthReport[] }> {
+    const endpoint = "/api/health/reports";
+    const parsed = parseWithFallback(await this.fetch<unknown>(endpoint), HealthReportsSchema, null as { items: HealthReport[] } | null, { endpoint, sensitive: true });
+    if (!parsed) throw new Error("体检报告响应无效");
+    return parsed;
+  }
+  async healthRevisions(): Promise<{ items: HealthRevision[] }> {
+    const endpoint = "/api/health/revisions";
+    const parsed = parseWithFallback(await this.fetch<unknown>(endpoint), HealthRevisionsSchema, null as { items: HealthRevision[] } | null, { endpoint, sensitive: true });
+    if (!parsed) throw new Error("历史版本响应无效");
+    return parsed;
+  }
+  async healthReportHistory(id: string): Promise<{ items: HealthExtraction[] }> {
+    const endpoint = `/api/health/reports/${encodeURIComponent(id)}/results`;
+    const result = parseWithFallback(await this.fetch<unknown>(endpoint), HealthReportHistorySchema, null as { items: HealthExtraction[] } | null, { endpoint, sensitive: true });
+    if (!result) throw new Error("报告历史响应无效"); return result;
+  }
+  private async healthReceipt(endpoint: string, body: unknown, method = "POST") {
+    const parsed = parseWithFallback(await this.fetch<unknown>(endpoint, { method, body: JSON.stringify(body) }), HealthReceiptSchema, null as { revision: number } | null, { endpoint, sensitive: true });
+    if (!parsed) throw new Error("身体数据保存回执无效");
+    return parsed;
+  }
+  saveHealthProfile(profile: HealthProfile, revision: number) { return this.healthReceipt("/api/health/profile", { profile: { name: profile.name, sex: profile.sex, birth_date: profile.birthDate }, revision }, "PATCH"); }
+  saveHealthObservation(value: Partial<HealthObservation>, revision: number) { return this.healthReceipt("/api/health/observations", { observation: observationWire(value), revision }); }
+  saveHealthObservations(values: Partial<HealthObservation>[], revision: number) { return this.healthReceipt("/api/health/observations", { observations: values.map(observationWire), revision }); }
+  restoreHealthRevision(target: number, revision: number) { return this.healthReceipt("/api/health/revisions/restore", { target, revision }); }
+  applyHealthReport(id: string, revision: number) { return this.healthReceipt(`/api/health/reports/${encodeURIComponent(id)}/apply`, { revision }); }
+  async uploadHealthReport(file: File): Promise<HealthReport> {
+    const endpoint = "/api/health/reports";
+    const form = new FormData(); form.append("file", file);
+    const response = await this.fetchRaw(endpoint, { method: "POST", body: form });
+    const parsed = parseWithFallback(await response.json(), HealthReportSchema, null as HealthReport | null, { endpoint, sensitive: true });
+    if (!parsed?.id) throw new Error("体检报告上传回执无效");
+    return parsed;
+  }
+  async processHealthReport(id: string, agentId: string, reprocess: boolean): Promise<HealthReport> {
+    const endpoint = `/api/health/reports/${encodeURIComponent(id)}/process`;
+    const parsed = parseWithFallback(await this.fetch<unknown>(endpoint, { method: "POST", body: JSON.stringify({ agent_id: agentId, reprocess }) }), HealthReportSchema, null as HealthReport | null, { endpoint, sensitive: true });
+    if (!parsed?.id) throw new Error("报告任务回执无效");
+    return parsed;
+  }
   /** 读取当前用户的伴侣（companion）档案。 */
   async getCompanionProfile(): Promise<CompanionProfileEnvelope> {
     const raw = await this.fetch<unknown>("/api/life/companion");
@@ -3740,11 +3787,14 @@ export class ApiClient {
     sessionId: string,
     content: string,
     attachmentIds?: string[],
+    healthReportIds?: string[],
   ): Promise<SendChatMessageResponse> {
     const body: {
       content: string;
       attachment_ids?: string[];
+      health_report_ids?: string[];
     } = { content };
+    if (healthReportIds?.length) body.health_report_ids = healthReportIds;
     if (attachmentIds && attachmentIds.length > 0) {
       body.attachment_ids = attachmentIds;
     }

@@ -75,7 +75,14 @@ func (a *dbScopeAuthorizer) AuthorizeScope(ctx context.Context, userID, workspac
 			if err != nil {
 				return scopeLookupErr(err)
 			}
+			if issue.OriginType.Valid && issue.OriginType.String == "health_report" {
+				uid, err := util.ParseUUID(userID)
+				if err != nil || issue.CreatorType != "member" || issue.CreatorID != uid {
+					return false, nil
+				}
+			}
 			return issue.WorkspaceID == wsUUID, nil
+
 		}
 		// Chat 类任务：只有会话创建者本人能订阅，镜像 HTTP 层对 chat 资源
 		// 的"仅创建者可访问"限制。

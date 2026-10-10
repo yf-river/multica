@@ -13,6 +13,8 @@ export function setSchemaLogger(logger: Logger): void {
 
 /** parseWithFallback / parseOrThrow 的选项。 */
 export interface ParseOptions {
+  /** 个人报告等响应校验失败时，只记录错误路径，不记录字段值及完整响应。 */
+  sensitive?: boolean;
   /** 端点标识，写进告警日志，方便在生产遥测里按端点检索是哪个契约漂移了。 */
   endpoint: string;
 }
@@ -48,8 +50,8 @@ export function parseWithFallback<T>(
     `API response failed schema validation: ${opts.endpoint}`,
     {
       endpoint: opts.endpoint,
-      issues: result.error.issues,
-      received: data,
+      issues: opts.sensitive ? result.error.issues.map((issue) => ({ code: issue.code, path: issue.path })) : result.error.issues,
+      received: opts.sensitive ? "[redacted]" : data,
     },
   );
   return fallback;

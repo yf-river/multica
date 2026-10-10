@@ -871,8 +871,9 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 
 // SendChatMessageRequest 是发送聊天消息的请求体：纯文本内容 + 要绑定的附件 id。
 type SendChatMessageRequest struct {
-	Content       string   `json:"content"`
-	AttachmentIDs []string `json:"attachment_ids"`
+	HealthReportIDs []string `json:"health_report_ids"`
+	Content         string   `json:"content"`
+	AttachmentIDs   []string `json:"attachment_ids"`
 }
 
 // SendChatMessageResponse 是发送消息的响应：MessageID/TaskID 供客户端挂载，
@@ -998,7 +999,18 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// 后被告知。Web 聊天中发送方即已鉴权请求用户（会话只归创建者），因此他们是
 	// 任务发起者——以 `## Task Initiator` 暴露给 agent。actorType/actorID 已在上方
 	// 为 invoke 门控解析。
-	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID))
+	healthReportIDs, valid := parseUUIDSliceOrBadRequest(w, req.HealthReportIDs, "health_report_ids")
+	if !valid {
+		return
+	}
+	for _, id := range healthReportIDs {
+		var owned bool
+		if err := h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM health_report WHERE id=$1 AND workspace_id=$2 AND user_id=$3)`, id, workspaceID, userID).Scan(&owned); err != nil || !owned {
+			writeError(w, 404, "体检报告不存在")
+			return
+		}
+	}
+	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), healthReportIDs)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrChatSessionArchived):

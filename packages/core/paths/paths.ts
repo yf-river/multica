@@ -67,6 +67,8 @@ function workspaceScoped(slug: string) {
     runtimeSettings: (machineId: string, runtimeId: string) =>
       `${ws}/runtimes/${encode(machineId)}/runtime/${encode(runtimeId)}`,
     skills: () => `${ws}/skills`,
+    health: () => `${ws}/health`,
+    healthReport: (id: string) => `${ws}/health?report=${encode(id)}`,
     life: () => `${ws}/life`,
     companion: () => `${ws}/companion`,
     lifeTab: (tab: LifeTab) => `${ws}/life?tab=${encode(tab)}`,

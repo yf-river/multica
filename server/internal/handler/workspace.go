@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -1378,6 +1380,7 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			name: "delete issue roots",
 			run:  func() error { return qtx.DeleteWorkspaceIssueRoots(ctx, requester.WorkspaceID) },
 		},
+		{name: "delete private body data", run: func() error { return qtx.DeleteWorkspaceHealth(ctx, requester.WorkspaceID) }},
 		{
 			// issue_status 按项目规则不带外键，所以显式清扫它的行。放在 issue
 			// 删除之后，保证不会有 issue 行活得比它的状态键要解析的状态目录久。
@@ -1452,6 +1455,9 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.deleteS3Objects(r.Context(), append(sourceContextAttachmentURLs, sourceContextIntentURLs...))
+	if err := os.RemoveAll(filepath.Join(healthPrivateRoot(), uuidToString(requester.WorkspaceID))); err != nil {
+		slog.Error("清理工作区体检文件失败", "workspace_id", workspaceID)
+	}
 
 	slog.Info("workspace deleted", append(logger.RequestAttrs(r), "workspace_id", workspaceID)...)
 	h.publishEvent(workspaceDeletedEvent)

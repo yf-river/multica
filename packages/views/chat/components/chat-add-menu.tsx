@@ -23,6 +23,7 @@ interface ChatAddMenuProps {
   /** 每个被选中的文件都会回调一次——调用方会把它经由编辑器的上传扩展处理，
    *  与粘贴 / 拖拽走同一条路径。 */
   onSelectFile?: (file: File) => void;
+  onSelectHealthReport?: (file: File) => void;
   projects?: Project[];
   projectId?: string | null;
   onSelectProject?: (projectId: string | null) => void;
@@ -39,6 +40,7 @@ interface ChatAddMenuProps {
  */
 export function ChatAddMenu({
   onSelectFile,
+  onSelectHealthReport,
   projects = [],
   projectId,
   onSelectProject,
@@ -46,6 +48,8 @@ export function ChatAddMenu({
   disabled,
 }: ChatAddMenuProps) {
   const { t } = useT("chat");
+  const { t: healthT } = useT("health");
+  const healthInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -74,6 +78,7 @@ export function ChatAddMenu({
           }
         />
         <DropdownMenuContent align="start" side="top" sideOffset={6}>
+          {onSelectHealthReport && <DropdownMenuItem onClick={() => healthInputRef.current?.click()}><ImageIcon />{healthT(($) => $.assistant.upload)}</DropdownMenuItem>}
           {onSelectFile && (
             <DropdownMenuItem onClick={() => inputRef.current?.click()}>
               <ImageIcon />
@@ -122,6 +127,7 @@ export function ChatAddMenu({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      {onSelectHealthReport && <input ref={healthInputRef} type="file" accept="application/pdf,.pdf" aria-label={healthT(($) => $.assistant.upload)} className="hidden" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onSelectHealthReport(file); }} />}
       {onSelectFile && (
         <input
           ref={inputRef}

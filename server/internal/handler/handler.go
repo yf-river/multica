@@ -975,6 +975,10 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	// 先试标识符格式（如 "JIA-42"）。resolveIssueByIdentifier 对非标识符
 	// 字符串静默返回 false，落到下面的 UUID 路径。
 	if issue, ok := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); ok {
+		if !healthIssueVisible(issue, requestUserID(r)) {
+			writeError(w, 404, "issue not found")
+			return db.Issue{}, false
+		}
 		return issue, true
 	}
 
@@ -996,6 +1000,10 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "issue not found")
+		return db.Issue{}, false
+	}
+	if !healthIssueVisible(issue, requestUserID(r)) {
+		writeError(w, 404, "issue not found")
 		return db.Issue{}, false
 	}
 	return issue, true

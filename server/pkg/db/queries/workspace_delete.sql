@@ -904,3 +904,9 @@ deleted_share_links AS (
 )
 DELETE FROM workspace_invitation
 WHERE workspace_invitation.workspace_id = $1;
+-- name: DeleteWorkspaceHealth :exec
+WITH results AS (DELETE FROM health_report_result WHERE health_report_result.workspace_id=$1),
+observations AS (DELETE FROM health_observation WHERE health_observation.workspace_id=$1),
+revisions AS (DELETE FROM health_revision WHERE health_revision.workspace_id=$1),
+reports AS (DELETE FROM health_report WHERE health_report.workspace_id=$1)
+DELETE FROM health_state WHERE health_state.workspace_id=$1;

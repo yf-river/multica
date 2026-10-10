@@ -2188,6 +2188,7 @@ func (s *TaskService) SendDirectChatMessage(
 	attachmentIDs []pgtype.UUID,
 	uploaderType string,
 	uploaderID pgtype.UUID,
+	healthReportIDs ...[]pgtype.UUID,
 ) (*DirectChatSendResult, error) {
 	// 在事务【之前】构建 per-task Composio overlay——它可能做网络 I/O，不能在持有 DB 事务时执行。
 	overlay := s.buildRuntimeMCPOverlay(ctx, initiatorUserID, agent)
@@ -2298,6 +2299,11 @@ func (s *TaskService) SendDirectChatMessage(
 			return fmt.Errorf("create user chat message: %w", err)
 		}
 		out.Message = msg
+		if len(healthReportIDs) > 0 && len(healthReportIDs[0]) > 0 {
+			if err := qtx.LinkChatMessageHealthReports(ctx, db.LinkChatMessageHealthReportsParams{ID: msg.ID, HealthReportIds: healthReportIDs[0]}); err != nil {
+				return fmt.Errorf("link private health reports: %w", err)
+			}
+		}
 
 		if len(attachmentIDs) > 0 {
 			bound, err := qtx.LinkAttachmentsToChatMessage(ctx, db.LinkAttachmentsToChatMessageParams{

@@ -264,6 +264,19 @@ func (q *Queries) DeleteWorkspaceDomainEvents(ctx context.Context, workspaceID p
 	return err
 }
 
+const deleteWorkspaceHealth = `-- name: DeleteWorkspaceHealth :exec
+WITH results AS (DELETE FROM health_report_result WHERE health_report_result.workspace_id=$1),
+observations AS (DELETE FROM health_observation WHERE health_observation.workspace_id=$1),
+revisions AS (DELETE FROM health_revision WHERE health_revision.workspace_id=$1),
+reports AS (DELETE FROM health_report WHERE health_report.workspace_id=$1)
+DELETE FROM health_state WHERE health_state.workspace_id=$1
+`
+
+func (q *Queries) DeleteWorkspaceHealth(ctx context.Context, workspaceID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteWorkspaceHealth, workspaceID)
+	return err
+}
+
 const deleteWorkspaceIssueRoots = `-- name: DeleteWorkspaceIssueRoots :exec
 WITH
 deleted_issues AS (

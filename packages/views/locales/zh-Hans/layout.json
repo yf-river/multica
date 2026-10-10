@@ -12,12 +12,14 @@
     "run_reviews": "运行复盘",
     "runtimes": "运行时",
     "skills": "技能",
-    "settings": "设置"
-    ,"life": "人生",
+    "settings": "设置",
+    "life": "人生",
+    "living": "生活",
     "memory": "记忆",
     "experiment": "实验",
     "observers": "观察席",
-    "chronicle": "编年史"
+    "chronicle": "编年史",
+    "health": "身体数据"
   },
   "tab": {
     "issue": "任务",

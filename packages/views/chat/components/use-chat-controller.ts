@@ -470,6 +470,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       attachmentIds?: string[],
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
+      healthReportIds: string[] = [],
     ): Promise<boolean> => {
       if (!activeAgent) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
@@ -544,7 +545,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       // 一次被拒的发送则保住草稿供重试（ChatInput 从未清它）。
       let result;
       try {
-        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
+        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds, healthReportIds);
       } catch (err) {
         apiLogger.error("sendChatMessage.error", { sessionId, err });
         // invoke 权限可能在会话中途被撤销；发送会在持久化前被结构化 403 拒绝

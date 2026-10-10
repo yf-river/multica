@@ -171,7 +171,7 @@ func (h *Handler) GetIssueExecutionTree(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
-	root, err := h.buildIssueExecutionNode(r.Context(), issue, prefix, 0)
+	root, err := h.buildIssueExecutionNode(r.Context(), issue, prefix, 0, requestUserID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build issue execution tree")
 		return
@@ -191,7 +191,11 @@ const issueExecutionTreeMaxDepth = 2
 
 // buildIssueExecutionNode 递归构建单条 issue 的执行证据节点：加载其任务、评论、trace、产物、
 // 活动日志并按角色分桶，深度未达上限时继续展开子 issue。所有数据都来自查询，无持久化副作用。
-func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, prefix string, depth int) (issueExecutionNodeResponse, error) {
+func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, prefix string, depth int, viewers ...string) (issueExecutionNodeResponse, error) {
+	viewer := ""
+	if len(viewers) > 0 {
+		viewer = viewers[0]
+	}
 	tasks, err := h.Queries.ListTasksByIssue(ctx, issue.ID)
 	if err != nil {
 		return issueExecutionNodeResponse{}, err
@@ -322,7 +326,10 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		}
 		childrenResp = make([]issueExecutionNodeResponse, 0, len(children))
 		for _, child := range children {
-			childNode, err := h.buildIssueExecutionNode(ctx, child, prefix, depth+1)
+			if !healthIssueVisible(child, viewer) {
+				continue
+			}
+			childNode, err := h.buildIssueExecutionNode(ctx, child, prefix, depth+1, viewer)
 			if err != nil {
 				return issueExecutionNodeResponse{}, err
 			}

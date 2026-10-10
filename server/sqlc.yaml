@@ -2,7 +2,10 @@ version: "2"
 sql:
   - engine: "postgresql"
     queries: "pkg/db/queries/"
-    schema: "migrations/000_initial_schema.up.sql"
+    schema:
+      - "migrations/000_initial_schema.up.sql"
+      - "migrations/501_health_data.up.sql"
+      - "migrations/508_chat_health_reports.up.sql"
     gen:
       go:
         package: "db"

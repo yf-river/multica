@@ -119,6 +119,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     usage: () => "/acme/usage",
     runReviews: () => "/acme/run-reviews",
     life: () => "/acme/life",
+    health: () => "/acme/health",
     runtimes: () => "/acme/runtimes",
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",

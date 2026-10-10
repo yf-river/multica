@@ -463,6 +463,7 @@ type ChatMessage struct {
 	ChannelOutboundInstallationID pgtype.UUID        `json:"channel_outbound_installation_id"`
 	ChannelOutboundChatID         pgtype.Text        `json:"channel_outbound_chat_id"`
 	ChannelOutboundMessageIds     []string           `json:"channel_outbound_message_ids"`
+	HealthReportIds               []pgtype.UUID      `json:"health_report_ids"`
 }
 
 type ChatPinnedAgent struct {
@@ -764,6 +765,59 @@ type GithubPullRequestCheckSuite struct {
 	Conclusion pgtype.Text        `json:"conclusion"`
 	Status     string             `json:"status"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type HealthObservation struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Data        []byte             `json:"data"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type HealthReport struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	UserID           pgtype.UUID        `json:"user_id"`
+	Filename         string             `json:"filename"`
+	Sha256           string             `json:"sha256"`
+	SizeBytes        int64              `json:"size_bytes"`
+	PageCount        int32              `json:"page_count"`
+	IssueID          pgtype.UUID        `json:"issue_id"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	Attempt          int32              `json:"attempt"`
+	Epoch            int64              `json:"epoch"`
+	AttemptStartedAt pgtype.Timestamptz `json:"attempt_started_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type HealthReportResult struct {
+	ID          pgtype.UUID        `json:"id"`
+	ReportID    pgtype.UUID        `json:"report_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Attempt     int32              `json:"attempt"`
+	Revision    int64              `json:"revision"`
+	Data        []byte             `json:"data"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type HealthRevision struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Revision    int64              `json:"revision"`
+	Data        []byte             `json:"data"`
+	Reason      string             `json:"reason"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type HealthState struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Revision    int64              `json:"revision"`
+	Epoch       int64              `json:"epoch"`
+	Data        []byte             `json:"data"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type InboxItem struct {

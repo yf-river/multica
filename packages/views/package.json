@@ -54,6 +54,7 @@
     "./squads/squad-detail-page": "./squads/components/squad-detail-page.tsx",
     "./squads/components": "./squads/components/index.ts",
     "./life": "./life/index.ts",
+    "./health": "./health/health-page.tsx",
     "./life/life-page": "./life/components/life-page.tsx",
     "./life/companion-page": "./life/components/companion-page.tsx",
     "./run-reviews": "./run-reviews/index.ts",

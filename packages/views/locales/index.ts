@@ -11,6 +11,7 @@ import invite from "./zh-Hans/invite.json";
 import issues from "./zh-Hans/issues.json";
 import labels from "./zh-Hans/labels.json";
 import layout from "./zh-Hans/layout.json";
+import health from "./zh-Hans/health.json";
 import life from "./zh-Hans/life.json";
 import members from "./zh-Hans/members.json";
 import modals from "./zh-Hans/modals.json";
@@ -42,6 +43,7 @@ export const RESOURCES: Record<"zh-Hans", LocaleResources> = {
     labels: labels,
     layout: layout,
     life: life,
+    health: health,
     members: members,
     modals: modals,
     "my-issues": myIssues,

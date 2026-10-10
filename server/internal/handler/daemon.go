@@ -5091,6 +5091,13 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
+	if task.IssueID.Valid {
+		issue, err := h.Queries.GetIssue(r.Context(), task.IssueID)
+		if err != nil || !healthIssueVisible(issue, requestUserID(r)) {
+			writeError(w, 404, "task not found")
+			return
+		}
+	}
 
 	var (
 		messages []db.TaskMessage

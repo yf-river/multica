@@ -3,6 +3,7 @@ import "i18next";
 // packages/ui/types/i18next.ts. Side-effect import is required for views'
 // typecheck program to see ui's contribution to `I18nResources`.
 import "@multica/ui/i18n-types";
+import type health from "../locales/zh-Hans/health.json";
 import type common from "../locales/zh-Hans/common.json";
 import type auth from "../locales/zh-Hans/auth.json";
 import type settings from "../locales/zh-Hans/settings.json";
@@ -73,6 +74,7 @@ declare global {
     squads: typeof squads;
     billing: typeof billing;
     life: typeof life;
+    health: typeof health;
     "run-reviews": typeof runReviews;
   }
 }

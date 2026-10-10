@@ -93,6 +93,8 @@ type IssueCreateParams struct {
 
 // IssueCreateOpts 聚合 IssueService.Create 的可选旋钮。多数调用方留零值即可。
 type IssueCreateOpts struct {
+	// RelatedRecord 在同一事务内登记业务来源，确保任务出现前其受控数据已可定位。
+	RelatedRecord func(context.Context, pgx.Tx, db.Issue) error
 	// BroadcastPayload 非 nil 时，在 issue 行创建、附件绑定后被调用，其返回值作为 EventIssueCreated
 	// 的 payload 经事件总线发出。HTTP handler 用这个钩子注入自己的 IssueResponse，本包就不用依赖
 	// handler 层类型。为 nil 时服务发一个极简 `{"issue_id": <uuid>}` payload——足够缓存失效，但期望
@@ -450,6 +452,11 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		return IssueCreateResult{}, fmt.Errorf("record issue-created event: %w", err)
 	}
 
+	if opts.RelatedRecord != nil {
+		if err := opts.RelatedRecord(ctx, tx, issue); err != nil {
+			return IssueCreateResult{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
 	}

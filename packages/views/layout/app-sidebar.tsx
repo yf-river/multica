@@ -171,6 +171,8 @@ const lifeNav = [
   { tab: "chronicle", labelKey: "chronicle" },
 ] as const;
 
+const livingNav = ["health"] as const;
+
 function DraftDot() {
   const hasDraft = useIssueDraftStore((s) => s.hasDraft());
   if (!hasDraft) return null;
@@ -835,6 +837,27 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                       >
                         <Icon />
                         <span>{t(($) => $.nav[item.labelKey])}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarGroup>
+            <SidebarGroupLabel>{t(($) => $.nav.living)}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-0.5">
+                {livingNav.map((key) => {
+                  const href = p[key]();
+                  const Icon = routeIconForPath(href);
+                  const isActive = isNavActive(pathname, href)
+                  return (
+                    <SidebarMenuItem key={key}>
+                      <SidebarMenuButton isActive={isActive} render={<AppLink href={href} />}>
+                        <Icon />
+                        <span>{t(($) => $.nav[key])}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   );

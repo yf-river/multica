@@ -12,6 +12,7 @@ import issues from "../locales-test/en/issues.json";
 import labels from "../locales-test/en/labels.json";
 import layout from "../locales-test/en/layout.json";
 import life from "../locales-test/en/life.json";
+import health from "../locales/zh-Hans/health.json";
 import members from "../locales-test/en/members.json";
 import modals from "../locales-test/en/modals.json";
 import myIssues from "../locales-test/en/my-issues.json";
@@ -42,6 +43,7 @@ export const TEST_EN_RESOURCES: Record<"en", LocaleResources> = {
     labels,
     layout,
     life,
+    health,
     members,
     modals,
     "my-issues": myIssues,
