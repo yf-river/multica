@@ -5,28 +5,34 @@ import process from "node:process";
 import pg from "pg";
 
 import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
-import { readGoalTestEnvFile } from "./lib/goal-test-audit-env.mjs";
+import { readGoalTestEnvFile, loadGoalTestEnv } from "./lib/goal-test-audit-env.mjs";
 import { launchGoalTestBrowser } from "./lib/goal-test-browser-audit.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const runEnv = readGoalTestEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env"));
-const deploymentPath = path.join(repoRoot, ".run/deployments/goal-test-int.json");
+if (process.env.MULTICA_LOCAL_DEV !== '1' || !process.env.MULTICA_TEST_ENV_FILE || !process.env.MULTICA_TEST_DEPLOYMENT_PATH) {
+  throw Error('数据库故障实验仅支持明确指定的临时隔离环境：MULTICA_LOCAL_DEV=1、MULTICA_TEST_ENV_FILE、MULTICA_TEST_DEPLOYMENT_PATH');
+}
+const runEnv = readGoalTestEnvFile(process.env.MULTICA_TEST_ENV_FILE);
+const deploymentPath = process.env.MULTICA_TEST_DEPLOYMENT_PATH;
 const deployment = JSON.parse(readFileSync(deploymentPath, "utf8"));
 const deploymentCommit = String(deployment.commit || deployment.build_version || "").trim();
-const apiBase = runEnv.REMOTE_API_URL || "http://127.0.0.1:18762";
-const browserURL = runEnv.LOCAL_FRONTEND_URL || "http://127.0.0.1:13682";
+const apiBase = deployment.backend_url;
+const browserURL = deployment.frontend_url;
 const databaseURL = runEnv.DATABASE_URL;
-const account = process.env.GOAL_TEST_ACCOUNT || "develop";
-const password = process.env.GOAL_TEST_PASSWORD || "Develop123!";
-const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
+const account = process.env.GOAL_TEST_ACCOUNT;
+const password = process.env.GOAL_TEST_PASSWORD;
+const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG;
+if (!account || !password || !workspaceSlug) throw Error('显式提供临时环境已有账号和工作区，不初始化测试身份');
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 const outputDir = acceptanceDir(repoRoot);
 
-if (!databaseURL) throw new Error("missing integration DATABASE_URL");
+if (!databaseURL) throw new Error("missing isolated DATABASE_URL");
 if (!deploymentCommit) throw new Error("deployment metadata is missing commit");
-if (runEnv.GOAL_TEST_ENV !== "int" || new URL(databaseURL).pathname !== "/multica_goal_test_int") {
-  throw new Error("refusing life resilience run outside the canonical integration database");
+const production = loadGoalTestEnv();
+const dbTarget = value => { const u = new URL(value); return `${u.hostname.replace('localhost','127.0.0.1')}:${u.port || '5432'}${u.pathname}`; };
+if (runEnv.MULTICA_ENV_ID === 'prod' || dbTarget(databaseURL) === dbTarget(production.DATABASE_URL) || apiBase === production.REMOTE_API_URL) {
+  throw new Error("refusing database fault experiments against production");
 }
 
 mkdirSync(outputDir, { recursive: true });

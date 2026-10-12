@@ -73,8 +73,24 @@ endef
 
 ##@ Help
 
+.PHONY: release-build release-request release-status release-verify release-logs release-rollback release-backup
+release-build: ## Build an immutable production release package
+	@node scripts/goal-test-environments.mjs build
+release-request: ## Queue an external publisher (RELEASE=<id>)
+	@node scripts/goal-test-environments.mjs request $(RELEASE)
+release-status: ## Inspect production or a publish request (REQUEST=<id>)
+	@node scripts/goal-test-environments.mjs $(if $(REQUEST),request-status $(REQUEST),status)
+release-verify: ## Verify the production instance
+	@node scripts/goal-test-environments.mjs verify
+release-logs: ## Check current production release logs
+	@node scripts/goal-test-environments.mjs verify-logs
+release-rollback: ## Restore the previous program release and verify it
+	@node scripts/goal-test-environments.mjs rollback
+release-backup: ## Back up the existing production database
+	@node scripts/goal-test-environments.mjs backup
+
 help: ## Show available make targets and common local workflows
-	@awk 'BEGIN {FS = ":.*## "; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nDefault delivery: existing int (docs/operations/environment-releases.md)\nLocal startup requires an explicit request and MULTICA_LOCAL_DEV=1.\n\nCommands:\n  \033[36mMULTICA_LOCAL_DEV=1 make up\033[0m           Start this checkout'"'"'s environment (C=api,web,daemon)\n  \033[36mmake status\033[0m       Show what is running, and prove it is yours\n  \033[36mmake down\033[0m         Stop it again, keeping the database\n  \033[36mmake check\033[0m        Run the full local verification pipeline\n\nCheckout modes:\n  Main checkout uses \033[36m.env\033[0m\n  Worktrees use \033[36m.env.worktree\033[0m (generate with \033[36mmake worktree-env\033[0m)\n\n"} \
+	@awk 'BEGIN {FS = ":.*## "; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nDefault delivery: existing production instance (docs/operations/environment-releases.md)\nLocal startup requires an explicit request and MULTICA_LOCAL_DEV=1.\n\nCommands:\n  \033[36mMULTICA_LOCAL_DEV=1 make up\033[0m           Start this checkout'"'"'s environment (C=api,web,daemon)\n  \033[36mmake status\033[0m       Show what is running, and prove it is yours\n  \033[36mmake down\033[0m         Stop it again, keeping the database\n  \033[36mmake check\033[0m        Run the full local verification pipeline\n\nCheckout modes:\n  Main checkout uses \033[36m.env\033[0m\n  Worktrees use \033[36m.env.worktree\033[0m (generate with \033[36mmake worktree-env\033[0m)\n\n"} \
 		/^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5); next} \
 		/^[a-zA-Z0-9_.-]+:.*## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 

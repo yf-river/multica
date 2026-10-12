@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """固定版本发布：配置与数据属于环境，发布包只包含代码和构建产物。"""
-import argparse, contextlib, fcntl, hashlib, json, os, re, shutil, signal, subprocess, sys, time, urllib.request, urllib.error
+import argparse, contextlib, fcntl, hashlib, json, os, re, shutil, signal, subprocess, sys, time, urllib.request, urllib.error, urllib.parse
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(os.environ.get('MULTICA_RELEASE_ROOT', Path(__file__).resolve().parent.parent)).resolve()
 RUN = ROOT / '.run'
-ENVS = ('int', 'prod')
+ENVS = ('prod',)
+
+def require_production(env):
+    if env != 'prod': raise RuntimeError('int 已停用；不会创建环境或转发到生产')
 
 def run(args, **kw):
     return subprocess.run([str(a) for a in args], check=True, **kw)
@@ -46,10 +49,10 @@ def ready(url, timeout=90):
     raise RuntimeError('服务启动失败: ' + url)
 
 @contextlib.contextmanager
-def lock(env):
+def lock(env,wait=False):
     p = RUN / 'locks' / f'release-{env}.lock'; p.parent.mkdir(parents=True, exist_ok=True)
     with p.open('a') as f:
-        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(f, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         yield
 
 def copy_tree(src, dst, excludes=()):
@@ -139,33 +142,10 @@ def build():
         os.rename(pending, artifact)
         print('发布包:', release_id)
 
-def initialize(env):
-    """一次性导入当前运行配置，不重建用户或工作区。"""
-    with lock(env):
-        if config_path(env).exists(): raise RuntimeError('环境已初始化；发布不会覆盖配置')
-        m=read(meta_path(env)); services={role:process_env(m['pids'][role]) for role in ('server','web','daemon')}
-        write(RUN/'env'/f'{env}-previous-server.json',services['server'],True)
-        services['server']['JWT_SECRET']=os.urandom(32).hex()
-        state = RUN/'state'/env; state.mkdir(parents=True,exist_ok=True)
-        for role in services:
-            tmp=state/'tmp'/role; tmp.mkdir(parents=True,exist_ok=True)
-            services[role].update(MULTICA_ENV_ID=env,TMPDIR=str(tmp))
-        services['daemon'].update(MULTICA_DAEMON_AUTO_UPDATE='false', MULTICA_DAEMON_AUTO_RELOAD='false')
-        services['web'].pop('__NEXT_PRIVATE_STANDALONE_CONFIG',None)
-        services['web'].update(PORT=str(m['frontend_port']),HOSTNAME='0.0.0.0')
-        # CodeBuddy 的全局配置与会话各自可写，授权初次复制后独立持久保存。
-        cb=state/'codebuddy'; cb.mkdir(exist_ok=True,mode=0o700)
-        source=Path.home()/'.codebuddy'
-        for name in ('.codebuddy.json','.credentials.json','settings.json','settings.local.json','.mcp.json','mcp.json','user-state.json','CODEBUDDY.md'):
-            if (source/name).is_file(): shutil.copy2(source/name,cb/name); (cb/name).chmod(0o600)
-        for name in ('skills','plugins','hooks'):
-            if (source/name).is_dir(): copy_tree(source/name,cb/name)
-        services['daemon']['CODEBUDDY_CONFIG_DIR']=str(cb)
-        services['daemon']['MULTICA_ENV_WRITABLE_ROOT']=m['daemon_workspaces_root']
-        write(config_path(env),services,True)
-        print(env, '运行配置已独立持久保存；数据库未修改')
-
-def health_url(env): return 'http://127.0.0.1:' + ('19803' if env=='int' else '19909')
+def health_url(env):
+    profile=read(meta_path(env))['daemon_profile']
+    port=19514 if not profile else 19515 + sum(profile.encode()) % 1000
+    return f'http://127.0.0.1:{port}'
 
 def check_process_ownership(env, metadata):
     release = Path(metadata.get('release_dir', ROOT)).resolve()
@@ -213,20 +193,21 @@ def start(cmd,cwd,env,log):
         p=subprocess.Popen([str(x) for x in cmd],cwd=cwd,env=env,stdin=subprocess.DEVNULL,stdout=f,stderr=f,start_new_session=True)
     return p.pid
 
-def drain(env,m):
+def drain(env,m,timeout=900):
     h=http(health_url(env)+'/health')
     if h['profile'] != m['daemon_profile'] or h['pid'] != m['pids']['daemon']: raise RuntimeError('Daemon 所属环境不匹配')
-    try: http(health_url(env)+'/drain','POST')
-    except urllib.error.HTTPError as e:
-        if e.code!=404: raise
-        return False
-    deadline=time.monotonic()+900
-    while time.monotonic()<deadline:
-        s=http(health_url(env)+'/drain')
-        if s['ready_to_stop']: return True
-        print(env,'等待任务完成',s,flush=True);time.sleep(5)
-    http(health_url(env)+'/drain','DELETE')
-    raise RuntimeError('等待已有任务完成超时，已恢复接单')
+    try:
+        http(health_url(env)+'/drain','POST')
+        deadline=time.monotonic()+timeout
+        while time.monotonic()<deadline:
+            s=http(health_url(env)+'/drain')
+            if s['ready_to_stop']: return True
+            print(env,'等待任务完成',s,flush=True);time.sleep(min(2,max(0,deadline-time.monotonic())))
+        raise RuntimeError('等待已有任务完成超时')
+    except BaseException:
+        http(health_url(env)+'/drain','DELETE')
+        print('已恢复接单',flush=True)
+        raise
 
 def launch(env, release, cfg, m):
     result={}
@@ -242,6 +223,7 @@ def launch(env, release, cfg, m):
     run([release/'server/bin/multica','--profile',m['daemon_profile'],'daemon','start','--no-auto-update','--no-auto-reload'],cwd=release,env=cfg['daemon'],stdout=subprocess.DEVNULL)
     h=ready(health_url(env)+'/health')
     if h['profile']!=m['daemon_profile']: raise RuntimeError('Daemon profile 不匹配')
+    result['daemon']=h['pid']
     deadline=time.monotonic()+60
     while h.get('status')!='running' and time.monotonic()<deadline:
         time.sleep(.5); h=http(health_url(env)+'/health')
@@ -249,7 +231,9 @@ def launch(env, release, cfg, m):
     result['daemon']=h['pid']
     return result
 
-def deploy(env,release_id):
+def deploy(env,release_id,timeout=900):
+    require_production(env)
+    if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('任务内请使用 request，不能同步等待自身结束')
     if not re.fullmatch(r'[a-zA-Z0-9_-]+',release_id): raise RuntimeError('非法版本')
     with lock(env):
         artifact=RUN/'artifacts'/release_id
@@ -257,9 +241,11 @@ def deploy(env,release_id):
         if checksums(artifact)!=manifest['files']: raise RuntimeError('发布包内容被修改')
         cfg=read(config_path(env)); m=read(meta_path(env))
         check_process_ownership(env,m)
-        if env=='prod' and release_id not in [read(meta_path('int')).get('release_id'),read(meta_path('int')).get('previous_release_id'),m.get('release_id'),m.get('previous_release_id')]:
-            raise RuntimeError('生产只接受联调当前或上一版本，以及生产已部署过的版本')
         isolation_check(config_only=True)
+        if m.get('release_id')==release_id:
+            isolation_check()
+            print(env,'版本已运行，无需重启',release_id)
+            return
         release=RUN/'releases'/env/release_id
         if release.exists():
             # 发布目录中的 .next/cache 为环境独立的可变缓存；只核验包内文件。
@@ -269,21 +255,8 @@ def deploy(env,release_id):
         prior=json.loads(json.dumps(m)); oldcfg={r:process_env(pid) for r,pid in m['pids'].items()}
         write(RUN/'env'/f'{env}-before-deploy.json',oldcfg,True)
         old_cwds={r:str(Path(f'/proc/{pid}/cwd').resolve()) for r,pid in m['pids'].items()}
-        drained=drain(env,m)
-        if not drained:
-            # 首次升级的旧 daemon 没有 drain API。先检查空闲，再关闭 API 入口，
-            # 等待在途认领收敛后复查；忙碌时恢复旧 API，不取消用户任务。
-            deadline=time.monotonic()+900
-            while http(health_url(env)+'/health')['active_task_count']:
-                if time.monotonic()>deadline: raise RuntimeError('旧版 Daemon 仍忙，未停止任何服务')
-                print(env,'等待旧版 Daemon 自然空闲',flush=True);time.sleep(5)
-            owned_stop(m['pids']['server'],'server',old_cwds['server'])
-            time.sleep(6)
-            if http(health_url(env)+'/health')['active_task_count']:
-                oldserver=oldcfg['server']
-                m['pids']['server']=start([Path(old_cwds['server'])/'server/bin/server'],old_cwds['server'],oldserver,m['log_paths']['server'])
-                write(meta_path(env),m)
-                raise RuntimeError('旧版认领尚未完成，已恢复 API，未停止 Daemon')
+        drain(env,m,timeout)
+        offsets={role:Path(log).stat().st_size if Path(log).exists() else 0 for role,log in m['log_paths'].items()}
         try:
             http(health_url(env)+'/shutdown','POST')
             deadline=time.monotonic()+60
@@ -292,7 +265,7 @@ def deploy(env,release_id):
             owned_stop(m['pids']['web'],'web',old_cwds['web'])
             owned_stop(m['pids']['server'],'server',old_cwds['server'])
             m['pids']=launch(env,release,cfg,m)
-        except Exception:
+        except Exception as failure:
             # 启动失败时只回收本次创建的进程，并恢复切换前的程序与运行配置。
             for role,pid in list(m['pids'].items()):
                 if pid not in prior['pids'].values() and exists(pid):
@@ -305,11 +278,13 @@ def deploy(env,release_id):
                 for role in ('web','server'):
                     if exists(prior['pids'][role]): owned_stop(prior['pids'][role],role,old_cwds[role])
                 prior['pids']=launch(env,oldrelease,oldcfg,prior)
-                write(meta_path(env),prior)
+            write(meta_path(env),prior)
+            isolation_check()
             print('发布失败，已恢复切换前版本；配置与数据未重置。',file=sys.stderr)
             raise
         m.update(release_id=release_id,release_dir=str(release),previous_release_id=prior.get('release_id') if prior.get('release_id')!=release_id else prior.get('previous_release_id'),commit=manifest['source_commit'],source_digest=manifest['source_digest'],deployed_at=time.strftime('%FT%TZ',time.gmtime()))
         m.update(build_version=release_id,frontend_mode='standalone',runtime_config_file=str(config_path(env)),binary_versions={'multica':output([release/'server/bin/multica','version'])})
+        m['log_offsets']=offsets
         m.pop('role_release_dirs', None)
         write(RUN/'deployments'/f'{env}-previous.json',prior)
         write(meta_path(env),m)
@@ -326,13 +301,11 @@ def deploy(env,release_id):
 
 def isolation_check(config_only=False):
     cfg={e:read(config_path(e)) for e in ENVS if config_path(e).exists()}
-    if len(cfg)!=2: raise RuntimeError('请先初始化 int 和 prod 的运行配置')
+    if 'prod' not in cfg: raise RuntimeError('缺少现有生产配置；禁止自动初始化')
     checks={}
     for e,c in cfg.items():
         checks[e+'_environment']=all(x.get('MULTICA_ENV_ID')==e for x in c.values())
         checks[e+'_upstream']=c['web']['REMOTE_API_URL'].rstrip('/')=='http://127.0.0.1:'+c['server']['PORT']
-        for k in ('REDIS_URL','REALTIME_RELAY_REDIS_URL','CHANNEL_WS_LEASE_REDIS_URL','S3_BUCKET'):
-            if c['server'].get(k): raise RuntimeError(k+' 已启用，须先配置并验证独立资源')
         if not config_only:
             m=read(meta_path(e)); check_process_ownership(e,m); checks[e+'_api']=http(m['frontend_url']+'/api/config').get('environment_id')==e
             for role,keys in {'server':['MULTICA_ENV_ID','JWT_SECRET','DATABASE_URL','LOCAL_UPLOAD_DIR','PORT','PPROF_PORT'],'web':['MULTICA_ENV_ID','REMOTE_API_URL','PORT'],'daemon':['MULTICA_ENV_ID','CODEBUDDY_CONFIG_DIR','MULTICA_ENV_WRITABLE_ROOT','TMPDIR']}.items():
@@ -340,30 +313,140 @@ def isolation_check(config_only=False):
             h=http(health_url(e)+'/health'); p=read(m['daemon_profile_path'])
             checks[e+'_daemon']=h['profile']==m['daemon_profile'] and h['server_url'].rstrip('/')==m['backend_url'] and p['workspaces_root']==m['daemon_workspaces_root']
             checks[e+'_release']=all(str(Path(f'/proc/{pid}/cwd').resolve()).startswith(m['release_dir']+'/') or str(Path(f'/proc/{pid}/cwd').resolve())==m['release_dir'] for pid in m['pids'].values())
-    for k in ('JWT_SECRET','DATABASE_URL','PORT','PPROF_PORT','LOCAL_UPLOAD_DIR'):
-        checks[k+'_distinct']=cfg['int']['server'].get(k)!=cfg['prod']['server'].get(k)
-    for role,k in [('daemon','CODEBUDDY_CONFIG_DIR'),('daemon','TMPDIR'),('daemon','MULTICA_ENV_WRITABLE_ROOT'),('server','LOCAL_UPLOAD_DIR')]:
-        a=Path(cfg['int'][role][k]).resolve();b=Path(cfg['prod'][role][k]).resolve()
-        checks[k+'_separate']=a!=b and a not in b.parents and b not in a.parents
     ports=[c[r][k] for c in cfg.values() for r,k in [('server','PORT'),('server','PPROF_PORT'),('web','PORT')]]
     checks['ports_distinct']=len(set(ports))==len(ports)
     print(json.dumps(checks,ensure_ascii=False))
-    if not all(checks.values()): raise RuntimeError('环境隔离检查失败')
+    if not all(checks.values()): raise RuntimeError('生产运行检查失败')
 
-if __name__=='__main__':
+def rollback(timeout=900):
+    version=read(meta_path('prod')).get('previous_release_id')
+    if not version or not (RUN/'artifacts'/version).exists(): raise RuntimeError('没有可回滚的发布包')
+    deploy('prod',version,timeout)
+
+def verify_browser():
+    run(['node',ROOT/'scripts/verify-release-browser.mjs'],cwd=ROOT)
+
+def publish(version,timeout=900):
+    prior=read(meta_path('prod'))['release_id']
+    deploy('prod',version,timeout)
+    try:
+        verify_browser()
+    except Exception:
+        if prior!=version:
+            deploy('prod',prior,timeout)
+            verify_browser()
+        raise RuntimeError('业务验收失败；已恢复并复查切换前程序，数据库未回滚')
+
+def request_path(request_id):
+    if not re.fullmatch(r'[a-zA-Z0-9_-]+',request_id): raise RuntimeError('非法请求编号')
+    return RUN/'publish-requests'/f'{request_id}.json'
+
+def request_release(version,timeout=900,retry=False):
+    if not re.fullmatch(r'[a-zA-Z0-9_-]+',version): raise RuntimeError('非法版本')
+    manifest=read(RUN/'artifacts'/version/'release.json')
+    if checksums(RUN/'artifacts'/version)!=manifest['files']: raise RuntimeError('发布包校验失败')
+    with lock('publish-request'):
+        request_id=version
+        target=request_path(request_id)
+        if target.exists():
+            existing=read(target)
+            if not retry or existing['status'] not in ('failed','rolled_back'):
+                print(json.dumps(existing,ensure_ascii=False));return existing
+        code=Path(__file__).read_bytes()
+        runner=RUN/'publisher'/hashlib.sha256(code).hexdigest()/'release.py'
+        runner.parent.mkdir(parents=True,exist_ok=True)
+        if not runner.exists(): runner.write_bytes(code);runner.chmod(0o700)
+        unit='multica-publish-'+request_id+'-'+str(time.time_ns())
+        record=dict(id=request_id,release_id=version,status='queued',unit=unit,requested_at=time.strftime('%FT%TZ',time.gmtime()),requested_by_task=os.environ.get('MULTICA_TASK_ID',''),timeout=timeout)
+        write(target,record,True)
+        try:
+            # systemd owns the publisher independently of the task's process group and cgroup.
+            run(['systemd-run','--quiet','--collect','--unit',unit,'--property=Type=exec','--property=KillMode=process',
+                 '--working-directory',ROOT,'--setenv=MULTICA_RELEASE_ROOT='+str(ROOT),
+                 sys.executable,runner,'worker',request_id])
+        except Exception:
+            record.update(status='failed',error='外部发布进程未启动');write(target,record,True);raise
+        print(json.dumps(record,ensure_ascii=False));return record
+
+def worker(request_id):
+    if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('任务内只能 request；worker 必须由外部进程启动')
+    target=request_path(request_id);record=read(target)
+    log=target.with_suffix('.log')
+    with log.open('a') as stream,contextlib.redirect_stdout(stream),contextlib.redirect_stderr(stream):
+        try:
+            with lock('publisher',wait=True):
+                prior=read(meta_path('prod'))['release_id']
+                record.update(status='running',previous_release_id=prior,publisher_pid=os.getpid())
+                write(target,record,True)
+                publish(record['release_id'],record['timeout'])
+                record.update(status='succeeded',result='生产发布及浏览器验收通过')
+        except Exception as error:
+            current=read(meta_path('prod'))['release_id']
+            record.update(status='rolled_back' if '业务验收失败；已恢复' in str(error) else 'failed',error=str(error),current_release_id=current)
+        record['finished_at']=time.strftime('%FT%TZ',time.gmtime());write(target,record,True)
+
+def request_status(request_id):
+    target=request_path(request_id);record=read(target)
+    if record['status'] in ('queued','running'):
+        active=subprocess.run(['systemctl','is-active','--quiet',record['unit']]).returncode==0
+        if not active:
+            record.update(status='failed',error='外部发布进程已退出且没有最终结果；检查请求日志后显式重试')
+            write(target,record,True)
+    print(json.dumps(record,ensure_ascii=False))
+
+def verify_logs():
+    m=read(meta_path('prod'));results={}
+    for role,path in m['log_paths'].items():
+        p=Path(path)
+        with p.open('rb') as f:
+            f.seek(m.get('log_offsets',{}).get(role,0));data=f.read().decode(errors='replace')
+        errors=[line for line in data.splitlines() if re.search(r'panic:|fatal error:|UnhandledPromiseRejection|EADDRINUSE|Cannot find module',line)]
+        results[role]={'exists':True,'fatal_errors':len(errors)}
+    ok=all(not v['fatal_errors'] for v in results.values())
+    print(json.dumps(dict(environment='prod',release_id=m['release_id'],services=results,ok=ok)))
+    if not ok: raise RuntimeError('发布日志存在致命错误；请在私有日志中查看')
+
+def backup():
+    cfg=read(config_path('prod'));url=urllib.parse.urlparse(cfg['server']['DATABASE_URL'])
+    database=url.path.lstrip('/')
+    destination=RUN/'backups'/('prod-'+time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'.dump')
+    destination.parent.mkdir(parents=True,exist_ok=True)
+    env=os.environ.copy();env['PGPASSWORD']=urllib.parse.unquote(url.password or '')
+    args=['pg_dump','--format=custom','--host',url.hostname,'--port',url.port or '5432','--username',urllib.parse.unquote(url.username or ''),database]
+    if not shutil.which('pg_dump'):
+        containers=json.loads(output(['docker','inspect',*output(['docker','ps','-q']).splitlines()]))
+        matches=[c for c in containers if url.hostname in ('localhost','127.0.0.1') and any(b['HostPort']==str(url.port or 5432) and b['HostIp'] in ('127.0.0.1','0.0.0.0','') for b in (c['NetworkSettings']['Ports'].get('5432/tcp') or []))]
+        if len(matches)!=1: raise RuntimeError('缺少 pg_dump，无法唯一识别目标 PostgreSQL 容器')
+        args=['docker','exec','-e','PGPASSWORD',matches[0]['Id'],'pg_dump','--format=custom','--host','127.0.0.1','--username',urllib.parse.unquote(url.username or ''),database]
+    with destination.open('xb') as stream:
+        destination.chmod(0o600)
+        run(args,env=env,stdout=stream)
+    print(json.dumps(dict(database=database,backup=str(destination),bytes=destination.stat().st_size)))
+
+def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['build','initialize','deploy','rollback','verify'])
-    parser.add_argument('environment',nargs='?',choices=ENVS)
-    parser.add_argument('release',nargs='?')
+    parser.add_argument('command',choices=['build','deploy','request','request-status','worker','rollback','verify','status','verify-logs','backup','initialize'])
+    parser.add_argument('target',nargs='?')
+    parser.add_argument('legacy_release',nargs='?')
+    parser.add_argument('--timeout',type=float,default=900)
+    parser.add_argument('--retry',action='store_true')
     a=parser.parse_args()
-    if a.command in ('initialize','deploy','rollback') and not a.environment: parser.error('必须显式指定 int 或 prod')
+    if a.target=='int': raise RuntimeError('int 已停用；命令不会映射到生产')
+    if a.timeout<=0: parser.error('timeout 必须大于 0')
+    if a.command=='initialize': raise RuntimeError('现有生产禁止重新初始化')
+    target=a.legacy_release if a.target=='prod' else a.target
     if a.command=='build': build()
-    elif a.command=='initialize': initialize(a.environment)
     elif a.command=='verify': isolation_check()
-    elif a.command=='deploy':
-        if not a.release: parser.error('deploy 必须指定发布包版本')
-        deploy(a.environment,a.release)
-    elif a.command=='rollback':
-        version=read(meta_path(a.environment)).get('previous_release_id')
-        if not version or not (RUN/'artifacts'/version).exists(): raise RuntimeError('没有可回滚的隔离发布包')
-        deploy(a.environment,version)
+    elif a.command=='status':
+        isolation_check();m=read(meta_path('prod'));print(json.dumps({k:m[k] for k in ('release_id','previous_release_id','frontend_url','backend_url','pids','deployed_at')},ensure_ascii=False))
+    elif a.command=='verify-logs': verify_logs()
+    elif a.command=='backup': backup()
+    elif a.command=='rollback': rollback(a.timeout);verify_browser()
+    elif a.command in ('deploy','request'):
+        if not target: parser.error('必须指定发布包版本')
+        if a.command=='request': request_release(target,a.timeout,a.retry)
+        else: publish(target,a.timeout)
+    elif a.command=='worker': worker(target)
+    elif a.command=='request-status': request_status(target)
+
+if __name__=='__main__': main()

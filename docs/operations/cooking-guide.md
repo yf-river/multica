@@ -24,13 +24,13 @@ python3 scripts/cooking/validate.py
 
 收藏按登录用户保存，跨工作区共享。工作区成员关系仍在 API 入口校验。查询缓存包含用户 ID，登录切换后不能复用他人的结果；重新进入或窗口恢复焦点时重新获取。
 
-497 创建收藏表，498 单独并发创建唯一索引。现有联调数据库由 schema 快照初始化，没有完整历史迁移台账，不能直接重放全部迁移，也不能伪造历史迁移已完成。使用以下入口，限定本次迁移集，仍由既有 migrate 工具负责锁、并发索引恢复和台账；该入口校验配置与运行 API 均为 int。
+497 创建收藏表，498 单独并发创建唯一索引。先核对生产真实台账与兼容性并备份，只执行经审核的缺失迁移，不重放历史迁移。以下入口限定 497、498，由既有 migrate 工具负责锁、并发索引恢复和台账；入口校验生产配置、API 身份及备份文件。
 
 ```bash
-python3 scripts/cooking/migrate-integration.py --release /path/to/release --config /path/to/int-services.json
+python3 scripts/cooking/migrate-integration.py --release /path/to/release --config /path/to/prod-services.json --backup /path/to/prod.dump --reviewed
 ```
 
-执行顺序为构建、上述迁移、`deploy int <release-id>`、业务验收。每步成功后才能继续。发布包包含迁移目录。新增收藏表对旧版本兼容，回滚程序不删除收藏数据。
+执行顺序为构建、审核缺失迁移与备份、按需迁移、请求生产发布、业务验收。每步成功后才能继续。发布包包含迁移目录。新增收藏表对旧版本兼容，回滚程序不删除收藏数据。
 
 当前平台没有用户账号硬删除入口，移除工作区成员不等于删除账号，不清空个人收藏。未来实现账号硬删除时，必须在删除用户的同一事务中执行 `DELETE FROM cooking_favorite WHERE user_id = $1`；不依赖外键或级联。
 

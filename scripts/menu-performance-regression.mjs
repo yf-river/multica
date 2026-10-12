@@ -1,13 +1,12 @@
 import fs from "node:fs";
 import { expect } from "@playwright/test";
 import { loadGoalTestBrowserAudit, loginGoalTest, launchGoalTestBrowser } from "./lib/goal-test-browser-audit.mjs";
+import { repoRoot } from './lib/goal-test-audit-env.mjs';
+import path from 'node:path';
 
-const cfg=loadGoalTestBrowserAudit();
-const deploymentPath=".run/deployments/goal-test-int.json";
+const cfg=await loadGoalTestBrowserAudit();
+const deploymentPath=path.join(repoRoot,'.run/deployments/goal-test-prod.json');
 const releaseId=JSON.parse(fs.readFileSync(deploymentPath,"utf8")).release_id;
-cfg.account=process.env.MULTICA_TEST_ACCOUNT;
-cfg.password=process.env.MULTICA_TEST_PASSWORD;
-if(!cfg.account||!cfg.password)throw Error("Set MULTICA_TEST_ACCOUNT and MULTICA_TEST_PASSWORD");
 const token=await loginGoalTest(cfg);
 const {browser,context}=await launchGoalTestBrowser(cfg.browserURL,token);
 const results=[];

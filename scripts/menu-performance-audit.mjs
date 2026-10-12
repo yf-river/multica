@@ -1,14 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadGoalTestBrowserAudit, loginGoalTest, launchGoalTestBrowser } from "./lib/goal-test-browser-audit.mjs";
+import { repoRoot } from './lib/goal-test-audit-env.mjs';
 
 // 计时从浏览器真实点击开始；请求正文、账号密码和页面内容不写入证据。
 const phase = process.argv[2] || "before";
-const cfg = loadGoalTestBrowserAudit();
-cfg.account = process.env.MULTICA_TEST_ACCOUNT;
-cfg.password = process.env.MULTICA_TEST_PASSWORD;
-if (!cfg.account || !cfg.password) throw new Error("Set MULTICA_TEST_ACCOUNT and MULTICA_TEST_PASSWORD");
-const metadataPath = path.resolve(process.env.MENU_METADATA_PATH || ".run/deployments/goal-test-int.json");
+const cfg = await loadGoalTestBrowserAudit();
+const metadataPath = path.resolve(process.env.MENU_METADATA_PATH || path.join(repoRoot, '.run/deployments/goal-test-prod.json'));
 const deployment = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
 const coldRuns = Number(process.env.MENU_COLD_RUNS || 3);
 const warmRuns = Number(process.env.MENU_WARM_RUNS || 10);
@@ -26,7 +24,7 @@ let slug;
 
 function checkVersion() {
   if (JSON.parse(fs.readFileSync(deployment.primary_metadata_path || metadataPath, "utf8")).release_id !== (deployment.primary_release_id || deployment.release_id)) {
-    throw new Error("Integration release changed during measurement; discard this run");
+    throw new Error("Deployment release changed during measurement; discard this run");
   }
 }
 

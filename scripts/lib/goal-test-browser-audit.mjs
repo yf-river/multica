@@ -1,20 +1,31 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from 'node:fs';
 import { createHmac, randomBytes } from "node:crypto";
 import { chromium } from "@playwright/test";
 import process from "node:process";
 import { acceptanceDir } from "./acceptance-artifacts.mjs";
-import { loadGoalTestIntEnv, repoRoot, resolveGoalTestAuditUrls } from "./goal-test-audit-env.mjs";
+import { loadGoalTestEnv, loadProductionDeployment, repoRoot, resolveGoalTestAuditUrls } from "./goal-test-audit-env.mjs";
 
-export function loadGoalTestBrowserAudit() {
-  const env = loadGoalTestIntEnv();
+export async function loadGoalTestBrowserAudit() {
+  const env = loadGoalTestEnv();
   const urls = resolveGoalTestAuditUrls(env);
   const generatedAt = new Date().toISOString();
+  const deployment = loadProductionDeployment();
+  const profile = JSON.parse(readFileSync(deployment.daemon_profile_path, 'utf8'));
+  const response = await fetch(urls.backendURL + '/api/workspaces', { headers: { Authorization: `Bearer ${profile.token}` } });
+  if (!response.ok) throw Error(`existing workspaces: ${response.status}`);
+  const workspaces = await response.json();
+  const workspace = process.env.GOAL_TEST_WORKSPACE_SLUG
+    ? workspaces.find(item => item.slug === process.env.GOAL_TEST_WORKSPACE_SLUG)
+    : workspaces.find(item => item.id === profile.workspace_id) || workspaces[0];
+  if (!workspace) throw Error('没有可访问的现有工作区');
   return {
     env,
     ...urls,
-    workspaceSlug: process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio",
-    account: process.env.GOAL_TEST_ACCOUNT || "develop",
-    password: process.env.GOAL_TEST_PASSWORD || "develop123",
+    workspaceSlug: workspace.slug,
+    token: profile.token,
+    account: process.env.MULTICA_TEST_ACCOUNT || process.env.GOAL_TEST_ACCOUNT,
+    password: process.env.MULTICA_TEST_PASSWORD || process.env.GOAL_TEST_PASSWORD,
     artifactRoot: acceptanceDir(repoRoot),
     generatedAt,
     stamp: generatedAt.replace(/[:.]/g, "-"),
@@ -39,7 +50,13 @@ export function loadLocalBrowserAudit() {
   };
 }
 
-export async function loginGoalTest({ backendURL, account, password }) {
+export async function loginGoalTest({ backendURL, account, password, token }) {
+  if (!account && !password && token) {
+    const response = await fetch(backendURL + '/api/me', { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) throw Error(`existing identity: ${response.status}`);
+    return token;
+  }
+  if (!account || !password) throw Error('请显式提供已有账号凭证；验收不会创建或重置账号');
   const response = await fetch(`${backendURL}/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -80,7 +97,7 @@ export async function launchGoalTestBrowser(browserURL, token) {
 }
 
 export function verifyGoalTestDeploymentLogs(env) {
-  const target = env.GOAL_TEST_ENV || "int";
+  const target = env.GOAL_TEST_ENV || "prod";
   const result = spawnSync("node", ["scripts/goal-test-environments.mjs", "verify-logs", target], {
     cwd: repoRoot,
     encoding: "utf8",

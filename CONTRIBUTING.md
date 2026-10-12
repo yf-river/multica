@@ -111,7 +111,7 @@ MULTICA_LOCAL_DEV=1 FORCE=1 make worktree-env
 
 ## Environments
 
-Ordinary feature delivery uses the existing `int` environment, including focused checks, integration deployment and real browser acceptance. Read [the environment release workflow](docs/operations/environment-releases.md) and current deployment records before starting services. Commit, push and production deployment require separate authorization.
+Ordinary feature delivery uses the existing `prod` instance, including focused checks, authorized production deployment and real browser acceptance. Read [the environment release workflow](docs/operations/environment-releases.md) and current deployment records before starting services. Commit, push and production deployment require separate authorization.
 
 The independent local workflows below require an explicit request and `MULTICA_LOCAL_DEV=1` on startup/setup commands. Do not persist this opt-in in environment files. Inspection, tests and stopping existing services do not require it.
 

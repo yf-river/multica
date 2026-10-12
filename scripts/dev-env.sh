@@ -76,7 +76,7 @@ die()  { printf '\n%s✗ %s%s\n' "$C_RED" "$1" "$C_OFF" >&2; exit 1; }
 
 # 独立开发入口共用此检查，拒绝时不创建环境或清理已有资源。
 require_local_development() {
-  [ "${MULTICA_LOCAL_DEV:-}" = 1 ] || die "本项目默认交付到现有 int 联调环境，请阅读 docs/operations/environment-releases.md。
+  [ "${MULTICA_LOCAL_DEV:-}" = 1 ] || die "本项目仅使用现有 prod 常驻生产环境，请阅读 docs/operations/environment-releases.md。
 仅在用户明确要求独立本地环境时，使用 MULTICA_LOCAL_DEV=1 执行开发启动命令。"
 }
 
@@ -1072,7 +1072,7 @@ resolve_env_for_read() {
   local name="${1:-}"
   if [ -z "$name" ]; then
     name="$(env_name_for_dir "$REPO_ROOT" || true)"
-    [ -n "$name" ] || die "No local environment registered for $REPO_ROOT. Default delivery uses existing int; see docs/operations/environment-releases.md. Explicit local startup: MULTICA_LOCAL_DEV=1 make up."
+    [ -n "$name" ] || die "No local environment registered for $REPO_ROOT. Default delivery uses the existing production instance; see docs/operations/environment-releases.md. Explicit local startup: MULTICA_LOCAL_DEV=1 make up."
   fi
   require_env_name "$name"
   load_manifest "$name" || die "Unknown environment '$name'. Run 'make list' to see what exists."
@@ -1512,7 +1512,7 @@ usage() {
 Local development environments: named, listable, deletable.
 
 Independent local startup requires MULTICA_LOCAL_DEV=1.
-Default delivery uses existing int; see docs/operations/environment-releases.md.
+Default delivery uses the existing production instance; see docs/operations/environment-releases.md.
 
   dev-env.sh up      [--components api,web,daemon,desktop] [--all]
                      [--name N] [--ephemeral] [--ttl HOURS]

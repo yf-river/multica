@@ -15,11 +15,11 @@ import {
 } from "./lib/goal-test-browser-audit.mjs";
 
 const {
-  env, frontendURL, browserURL, backendURL, workspaceSlug, account, password,
+  env, frontendURL, browserURL, backendURL, workspaceSlug, account, password, token: existingToken,
   artifactRoot, generatedAt, stamp,
 } = process.env.MULTICA_NAV_AUDIT_LOCAL === "1"
   ? loadLocalBrowserAudit()
-  : loadGoalTestBrowserAudit();
+  : await loadGoalTestBrowserAudit();
 const { isAuditedRequest, countByPath } = createBrowserRequestTools(
   [frontendURL, browserURL, backendURL],
   requestPath,
@@ -50,7 +50,7 @@ const dashboardClicks = [
   { id: "settings", label: "设置", link: "设置", path: `/${workspaceSlug}/settings`, ready: { heading: "设置" } },
 ];
 
-const token = await loginGoalTest({ backendURL, account, password });
+const token = await loginGoalTest({ backendURL, account, password, token: existingToken });
 const { browser, context } = await launchGoalTestBrowser(browserURL, token);
 
 let setup;

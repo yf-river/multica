@@ -55,6 +55,7 @@ export class TestApiClient {
   private seededLifeMemoryIds: string[] = [];
 
   async login(account: string, name: string, password = "E2ePass1!") {
+      if (process.env.MULTICA_ENV_ID === 'prod') throw new Error('通用造数 E2E 使用明确授权的临时隔离环境；生产验收运行 pnpm verify:release');
       const res = await fetch(`${API_BASE}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account, password }) });
       if (!res.ok) throw new Error(`login failed: ${res.status}`);
       const data = await res.json();

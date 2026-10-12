@@ -1,71 +1,65 @@
-# 联调与生产发布
+# 单套生产环境发布
 
-同一份发布包先在联调验证，再发布生产。环境配置、数据库、账号、上传文件、Daemon profile 和 CodeBuddy 会话留在各自环境中。
-
-## 默认开发交付
-
-普通功能请求包含实现、相关验证、发布现有 `int` 和真实浏览器验收。用户明确要求只分析、只修改本地或不部署时，按该范围执行。commit、push、生产发布及删除数据库分别授权。
-
-接手时先核对 Git、已有改动、部署记录及服务实际身份。地址和配置以 `.run/deployments/goal-test-int.json`、`.run/env/int-services.json` 为准，不从 `.env` 或 `.env.worktree` 推断联调目标。缺失联调配置时报告阻塞，不初始化另一个环境替代。
-
-开发期间运行受影响范围的检查；完成一个可验收的功能单元后再集中构建和发布。构建会收集未提交修改及新文件，必须核对快照范围；需要隔离时，以当前联调源码快照为基线叠加本次修改。同环境正在发布时等待现有发布锁，不另开预览。
-
-只有用户明确要求独立本地环境时，才使用 `MULTICA_LOCAL_DEV=1 make up C=api,web` 或 `MULTICA_LOCAL_DEV=1 make dev`。该变量只用于本次命令，不写入环境文件。独立环境的数据库、账号和地址不能作为联调交付结果。
-
-验收使用联调已有身份，验证页面入口、刷新、页面错误及受影响的数据行为；交付联调地址、发布版本和实际验收结果。普通发布不初始化账号、不更换密钥、不重置数据库，也不直接编辑正在运行的发布目录。
+现有 prod 是唯一常驻实例。地址、进程、版本从 `.run/deployments/goal-test-prod.json` 读取，私有配置真源为 `.run/env/prod-services.json`。数据库、账号、密钥、上传文件、Daemon profile 和会话属于生产，发布不复制其他环境的数据，不初始化账号，不修改已安装版本。历史路径和 `prod` Cookie 标识无需迁移。
 
 ## 日常操作
 
-在仓库根目录运行：
-
 ```bash
-node scripts/goal-test-environments.mjs build
-node scripts/goal-test-environments.mjs deploy int <release-id>
-# 完成同浏览器登录、API/WS、上传和真实 Agent 任务验收后：
-node scripts/goal-test-environments.mjs deploy prod <同一个release-id>
-node scripts/goal-test-environments.mjs verify
+pnpm release build
+pnpm release request <release-id>
+pnpm release request-status <request-id>
+pnpm release status
+pnpm release verify
+pnpm release verify-logs
+pnpm verify:release
+pnpm release rollback
+pnpm release backup
 ```
 
-`build` 复制包括已跟踪修改及未忽略新文件的源码快照；快照期间源码发生变化会失败。版本由 Git SHA 和源码内容摘要共同标识。环境文件不进入发布包。Go 程序与 Next standalone 在独立构建目录生成，不使用服务正在运行的构建目录。
+Makefile 提供对应的 `release-build`、`release-request RELEASE=<id>`、`release-status REQUEST=<id>`、`release-verify`、`release-logs`、`release-rollback` 和 `release-backup`。
 
-`deploy` 校验发布包文件摘要、隔离配置和进程归属，暂停 Daemon 新认领，等待任务完成，再切换 API、Web 与 Daemon。相同环境同时只能运行一个发布操作；失败会尝试恢复切换前版本。生产接受联调当前或上一版本、当前生产版本或生产上一版本；发布前仍须完成对应版本的业务验收。
+普通开发先完成相关检查；生产发布、提交和推送按用户授权执行。单机实例发布与公开 CLI 发版独立，不要求 main 合并、公开 tag 或 Homebrew 发布。int 操作明确报错，不创建环境、不转发生产。
 
-```bash
-node scripts/goal-test-environments.mjs rollback int
-node scripts/goal-test-environments.mjs rollback prod
-```
+## 构建、切换与自更新
 
-回滚只切换程序，不重置配置和数据库。至少安装两个隔离版本后才有上一发布包可回滚。旧版接管基线另存于生产 baseline 目录，不能作为常规隔离版本回滚。本次没有数据库迁移；以后包含迁移的发布必须先审核其向前、向后兼容性，迁移程序包含在包内但发布命令不会自动运行迁移。
+- 构建收集已跟踪修改及未忽略文件，需先检查快照范围。源码快照放在 `.run/build/<id>`，包放在 `.run/artifacts/<id>`；版本同时记录 Git SHA 和源码摘要，包内文件有校验摘要。构建期间服务继续使用安装目录。
+- `request` 持久化到 `.run/publish-requests/<id>.json`，通过 systemd 启动独立的发布进程，执行代码复制到 `.run/publisher/`。请求立即返回，Multica 内的任务应随后正常结束，不同步轮询等自己发布完成。
+- 请求状态为 queued、running、succeeded、failed 或 rolled_back；结果跨应用重启保存。相同版本重复请求复用原请求，不并行重启。失败后显式使用 `request <id> --retry`；失去最终结果的外部进程由状态检查标为失败，不声称成功。
+- 外部发布进程使用发布锁，暂停新认领，等待已有任务与在途认领全部结束，再切换 Web、Server 和 Daemon。默认等待 900 秒，可用 `--timeout <seconds>` 指定；超时恢复接单，任务不被取消。排队任务在更新后继续处理。
+- 任务外可以执行 `pnpm release deploy <id>`，同步完成切换及浏览器验收；任务内只允许 request。已运行同版本不重启，但仍验收。
+- 启动失败尝试恢复旧程序与运行配置。启动成功而浏览器验收失败时，发布进程切回发布前版本并再次验收；恢复失败会明确报错。回滚依赖生产当前/上一版本及对应不可变包，不能删除这些包。
+- 安装目录为 `.run/releases/prod/<id>`。现有配置、上传、状态、任务目录和 Daemon profile 沿用部署记录，不随发布替换。新版本不会改动孤儿任务恢复、重试和工作目录接续规则。
 
-## 配置与文件归属
+## 数据库与备份
 
-| 路径 | 内容 |
-|---|---|
-| `.run/artifacts/<release-id>/` | 发布包与 `release.json` 文件摘要；不在此启动服务 |
-| `.run/releases/<int或prod>/<release-id>/` | 各自安装的程序、静态资源和 Next 缓存 |
-| `.run/env/<int或prod>-services.json` | Server、Web、Daemon 的私有运行配置真源，权限 0600 |
-| `.run/env/goal-test-<int或prod>.env` | 为旧审计工具生成的配置副本，不手工编辑 |
-| `.run/state/<int或prod>/` | 独立的 CodeBuddy 配置、会话和各进程临时目录 |
-| `.run/uploads/goal-test-<int或prod>/` | 本环境上传文件 |
-| `.run/workspaces/goal-test-<int或prod>/` | 本环境任务工作副本及允许原地写入的资源根 |
-| `~/.multica/profiles/goal-test-<int或prod>/` | Daemon 身份、现有 PAT、工作区绑定及日志 |
-| `.run/deployments/goal-test-<int或prod>.json` | 当前实际版本、安装目录与进程记录 |
+发布命令不执行数据库迁移。迁移须核对真实台账差异、向前/向后兼容性并先备份，不能重放未经审核的历史迁移。程序回滚不撤销数据库变更。
 
-`initialize int` / `initialize prod` 仅用于一次性接管已运行的旧环境，导入其实际配置并生成独立 JWT 密钥；环境已初始化时会拒绝覆盖。普通发布不调用账号初始化、演示数据填充或凭证重新绑定。
+`backup` 将生产数据库导出为 `.run/backups/prod-<UTC>.dump`，权限 0600，使用本机 pg_dump 或按实际端口唯一识别的 PostgreSQL 容器。备份和凭证不提交 Git。重要文件同时备份部署记录所指向的上传目录；数据库备份不包含原始文件。
 
-`MULTICA_ENV_ID` 在同一环境内长期固定，Web 与 Server 必须一致。所有应用 Cookie 按该标识命名，包括身份、CSRF、登录标记、最近工作区和注册来源。第一次迁移需重新登录一次；普通升级不更换 JWT 密钥。未指定标识的其他自托管实例继续使用原 Cookie 名称。
+恢复时暂停生产认领并等任务结束，停止应用，确认目标服务器和数据库，使用与备份兼容的 pg_restore 将备份恢复到明确指定的空恢复数据库，核对内容后再进行经授权的数据切换；不要直接对运行中的生产执行 `pg_restore --clean`。数据库、上传原件和应用版本应相互匹配。恢复属于独立的高风险操作，不由日常发布自动执行。
 
-`MULTICA_ENV_WRITABLE_ROOT` 限制原地任务的写入目录；指向外部仓库的资源需选择 worktree 模式。路径校验解析符号链接。它是任务执行路径规则，不是操作系统沙箱。
+## 验收与临时测试
 
-CodeBuddy 使用相同个人账号，各环境分别复制初始配置并通过 `CODEBUDDY_CONFIG_DIR` 运行。后续授权更新在相应环境配置中维护，发布不覆盖它们。个人默认配置目录不被发布过程修改。机器资源和账号配额仍然共用。
+`verify` 检查实际进程归属、配置、API 身份及 Daemon 绑定；`verify-logs` 检查本次发布日志的致命错误。浏览器验收使用现有 profile 身份，或者明确提供 `MULTICA_TEST_ACCOUNT`、`MULTICA_TEST_PASSWORD`，检查刷新、主要入口、已有聊天与报告原件、CSRF 和 390px 侧栏；缺少既有聊天、Mika 或报告的场景单独报告证据缺口，不制造用户数据来冒充覆盖。
 
-## 验收
+独立测试环境须明确授权并在启动命令上设置 `MULTICA_LOCAL_DEV=1`，不写入环境文件。数据库故障实验另外要求 `MULTICA_TEST_ENV_FILE` 和 `MULTICA_TEST_DEPLOYMENT_PATH`，拒绝生产数据库。临时环境不是发布前置条件，结束后只清理本次创建的明确资源。
 
-- 设置 `MULTICA_TEST_ACCOUNT`、`MULTICA_TEST_PASSWORD` 后运行 `node scripts/verify-release-browser.mjs`；在一个浏览器上下文中同时登录两边，交替刷新、退出与重新登录；另一边会话应继续可用。
-- 验证正确环境的 CSRF 写请求与 WebSocket，跨环境 JWT 必须拒绝；最近工作区跳转只能使用本环境 Cookie。
-- 上传后下载核对内容；新建真实 CodeBuddy 小任务并检查终态、工作目录、产物和回调，不能以 runtime 在线代替执行成功。
-- 构建、发布及回滚联调期间持续探测生产登录、页面和静态文件。
-- 重复发布同版本，比较账号、工作区、密钥和 Daemon 绑定；只清理验收创建的数据。
-- `verify` 核对实际进程配置、路径、端口、API 身份和 Daemon 绑定，输出中不包含密钥。
+通用 Playwright 造数测试使用明确授权的临时环境，不通过测试登录重写生产姓名或创建测试账号；生产日常浏览器验收使用 `pnpm verify:release`。性能工具从生产部署记录读取地址、版本和现有身份，故障实验须显式隔离。
 
-联调和生产当前端口分别为 Web 13682 / 13680、API 18762 / 18760；具体运行配置以私有配置文件为准。生产与联调数据库互相独立，不随发布复制。
+## int 清理
+
+一次性迁移工具 `node scripts/retire-integration.mjs` 先核对资源并输出精确清单，`--execute` 在生产验收已有证据后执行。它等待 int 任务结束，验证进程归属，删除 int 专属数据库、配置、上传、状态、干净任务目录、安装目录及自动启动服务；共享数据库角色、生产当前/上一版本包及共享构建快照保留。任务目录存在未提交工作或归属不清则拒绝清理。该工具没有初始化或重建 int 的能力，完成后不会成为发布依赖。
+
+## 受影响入口对账
+
+| 真源 | 消费者与职责 |
+| --- | --- |
+| `scripts/release-environments.py` | Node 操作入口、pnpm release、Makefile release-*；构建、发布请求、切换、回滚、备份、状态及日志 |
+| `scripts/lib/goal-test-audit-env.mjs` | 浏览器认证辅助、菜单性能测量与回归、工作台点击审计；读取现有生产记录，无 int 默认值 |
+| `scripts/verify-release-browser.mjs` | 外部发布进程及人工验收入口；真实浏览器、已有身份、主要页面与窄屏 |
+| 开发启动保护与 E2E 环境入口 | Makefile、Web dev、dev.sh、通用 TestApiClient；明确选择临时环境，防止测试登录修改生产资料 |
+| 故障与专项工具 | 生活数据故障测试、四象限浏览器测试、烹饪限定迁移；生产归属或显式隔离及审核 |
+| 仓库与开发者说明 | AGENTS、CLAUDE、README、CONTRIBUTING、开发者中文文档及生活模块运维说明；单实例交付与公开发版分离 |
+| int 一次性清理 | 实际数据库、路径、进程及 systemd 开机入口；共享资源不删，完成后无日常消费者 |
+
+性能报告中旧测量的联调版本、隔离实验和样本说明属于历史证据，不能改成生产实测；新测量工具使用当前部署记录。

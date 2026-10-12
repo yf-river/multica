@@ -1,104 +1,93 @@
-// 同一个浏览器上下文交替使用两个部署，验证 Cookie 与工作区状态互不覆盖。
-import { createRequire } from "node:module";
-import fs from "node:fs";
+import fs from 'node:fs';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { loadProductionDeployment, repoRoot } from './lib/goal-test-audit-env.mjs';
+import { launchGoalTestBrowser, loginGoalTest } from './lib/goal-test-browser-audit.mjs';
 
-const require = createRequire(process.cwd() + "/package.json");
-const { chromium } = require("@playwright/test");
-const account = process.env.MULTICA_TEST_ACCOUNT;
-const password = process.env.MULTICA_TEST_PASSWORD;
-if (!account || !password) {
-  throw new Error("Set MULTICA_TEST_ACCOUNT and MULTICA_TEST_PASSWORD");
-}
-const urls = Object.fromEntries(["int", "prod"].map((env) => [
-  env, JSON.parse(fs.readFileSync(`.run/deployments/goal-test-${env}.json`)).frontend_url,
-]));
-const directory = process.cwd() + "/.run/evidence/environment-isolation";
-fs.mkdirSync(directory, { recursive: true });
-const browser = await chromium.launch({ headless: true, args: ["--no-proxy-server"] });
-const context = await browser.newContext();
-await context.addInitScript(() => localStorage.setItem("multica:chat:isOpen", "false"));
-const pages = {};
-const results = [];
-const insideApplication = (url) => !["/login", "/"].includes(url.pathname);
-
-async function getConfig(env) {
-  const response = await context.request.get(urls[env] + "/api/config");
-  if (!response.ok()) throw new Error(`${env} config: ${response.status()}`);
+const deployment = loadProductionDeployment();
+const profile = JSON.parse(fs.readFileSync(deployment.daemon_profile_path));
+const token = process.env.MULTICA_TEST_ACCOUNT && process.env.MULTICA_TEST_PASSWORD
+  ? await loginGoalTest({ backendURL: deployment.backend_url, account: process.env.MULTICA_TEST_ACCOUNT, password: process.env.MULTICA_TEST_PASSWORD })
+  : profile.token;
+const base = deployment.frontend_url;
+const { browser, context } = await launchGoalTestBrowser(base, token);
+const errors = [];
+const failures = [];
+const checks = [];
+const unavailable = [];
+const read = async (url, workspace) => {
+  const response = await context.request.get(base + url, { headers: workspace ? { 'X-Workspace-ID': workspace } : {} });
+  if (!response.ok()) throw Error(`${url}: ${response.status()}`);
   return response.json();
-}
-
-async function csrfToken(env, config) {
-  const name = "multica_csrf" + (config.environment_id ? "_" + config.environment_id : "");
-  return (await context.cookies(urls[env])).find((cookie) => cookie.name === name)?.value || "";
-}
-
-async function login(env) {
-  const page = pages[env] ??= await context.newPage();
-  await page.goto(urls[env] + "/login");
-  await Promise.race([
-    page.waitForURL(insideApplication, { timeout: 30_000 }),
-    page.locator("#login-account").waitFor({ state: "visible", timeout: 30_000 }),
-  ]);
-  if (await page.locator("#login-account").isVisible()) {
-    await page.locator("#login-account").fill(account);
-    await page.locator("#login-password").fill(password);
-    await page.locator("#login-form").evaluate((form) => form.requestSubmit());
-  }
-  await page.waitForURL(insideApplication, { timeout: 30_000 });
-  const response = await context.request.get(urls[env] + "/api/workspaces");
-  const body = await response.json();
-  const workspaces = Array.isArray(body) ? body : body.items;
-  if (!workspaces?.length) throw new Error(`${env} requires an existing workspace`);
-  await page.goto(`${urls[env]}/${workspaces[0].slug}/issues`);
-}
-
-async function check(step, env) {
-  const page = pages[env];
-  await page.reload();
-  await page.waitForURL(insideApplication, { timeout: 30_000 });
-  const me = await context.request.get(urls[env] + "/api/me");
-  if (me.status() !== 200) throw new Error(`${step} ${env}: ${me.status()}`);
-  const config = await getConfig(env);
-  await page.getByText(config.environment_name + "环境", { exact: true }).first()
-    .waitFor({ state: "visible", timeout: 30_000 });
-  await page.waitForFunction((label) => document.title.includes(label), config.environment_name);
-  const user = await me.json();
-  // 使用原名称验证受 CSRF 保护的写请求，不改变用户资料内容。
-  const write = await context.request.patch(urls[env] + "/api/me", {
-    headers: { "X-CSRF-Token": await csrfToken(env, config) },
-    data: { name: user.name },
-  });
-  if (write.status() !== 200) throw new Error(`${env} CSRF write: ${write.status()}`);
-  results.push({ step, env, me: me.status(), csrfWrite: write.status(),
-    title: await page.title(), environment: config.environment_id || "legacy" });
-}
-
+};
 try {
-  await login("int");
-  await login("prod");
-  await check("both logged in", "int");
-  await check("both logged in", "prod");
-  for (const env of ["int", "prod"]) {
-    const config = await getConfig(env);
-    const logout = await context.request.post(urls[env] + "/auth/logout", {
-      headers: { "X-CSRF-Token": await csrfToken(env, config) },
-    });
-    if (logout.status() !== 200) throw new Error(`${env} logout: ${logout.status()}`);
-    await check(env + " logout does not affect peer", env === "int" ? "prod" : "int");
-    await login(env);
-    await check(env + " relogin", env);
+  const config = await read('/api/config');
+  if (config.environment_id !== 'prod') throw Error('wrong environment identity');
+  const me = await read('/api/me');
+  const workspaces = await read('/api/workspaces');
+  if (!workspaces.length) throw Error('requires existing production workspace');
+  const page = await context.newPage();
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('response', response => { if (response.status() >= 400 && new URL(response.url()).origin === new URL(base).origin) failures.push({ path: new URL(response.url()).pathname, status: response.status() }); });
+  for (const workspace of workspaces) {
+    for (const route of ['inbox', 'issues', 'agents', 'chat', 'health', 'meals', 'cooking', 'goals']) {
+      const response = await page.goto(`${base}/${workspace.slug}/${route}`, { waitUntil: 'networkidle' });
+      if (!response?.ok()) throw Error(`${route}: ${response?.status()}`);
+      await expect(page.locator('[data-slot="sidebar-inset"]')).toBeVisible();
+      await expect(page.getByText('联调环境', { exact: true })).toHaveCount(0);
+    }
+    await page.reload({ waitUntil: 'networkidle' });
+    if ((await read('/api/me')).id !== me.id) throw Error('identity changed after refresh');
+    const sessions = await read('/api/chat/sessions?status=all', workspace.id);
+    const existing = sessions.find(item => item.status === 'active');
+    if (existing) {
+      await read(`/api/chat/sessions/${existing.id}/messages`, workspace.id);
+      await page.goto(`${base}/${workspace.slug}/chat?session=${existing.id}`, { waitUntil: 'networkidle' });
+      await expect(page).toHaveURL(new RegExp(`session=${existing.id}`));
+      checks.push('existing chat route and history requests');
+    } else unavailable.push('no existing chat session in workspace');
+    const reports = await read('/api/health/reports', workspace.id);
+    if (reports.length) {
+      const response = await context.request.get(`${base}/api/health/reports/${reports[0].id}/file?workspace_id=${workspace.id}`);
+      if (!response.ok() || !(await response.body()).length) throw Error('report original unavailable');
+      checks.push('private report original accessible');
+    } else unavailable.push('no production health report to verify original');
+    const agents = await read(`/api/agents?workspace_id=${workspace.id}`, workspace.id);
+    const mika = agents.find(item => item.system_key === 'mika' && !item.archived_at);
+    if (mika) {
+      const entry = page.locator('[data-slot="sidebar"]').getByRole('button', { name: mika.name, exact: true });
+      await expect(entry).toBeVisible();
+      const session = sessions.find(item => item.agent_id === mika.id && item.status === 'active');
+      if (session) { await entry.click(); await expect(page).toHaveURL(new RegExp(`session=${session.id}`)); }
+      else unavailable.push('Mika has no existing session; acceptance does not create user chat');
+    } else unavailable.push('Mika not created in production workspace');
+    const websocket = await page.evaluate(slug => new Promise(resolve => {
+      const url = new URL('/ws', location.href);url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';url.searchParams.set('workspace_slug', slug);
+      const socket = new WebSocket(url);
+      const timer = setTimeout(() => { socket.close(); resolve(false); }, 5000);
+      socket.onopen = () => { clearTimeout(timer); socket.close(); resolve(true); };
+      socket.onerror = () => { clearTimeout(timer); resolve(false); };
+    }), workspace.slug);
+    if (!websocket) throw Error('authenticated WebSocket upgrade failed');
+    checks.push('workspace main routes, refresh and authenticated WebSocket');
   }
-  for (const env of ["int", "prod"]) {
-    await pages[env].screenshot({ path: `${directory}/${env}-isolated.png` });
-  }
-  const cookies = (await context.cookies()).map(({ name, domain, path }) => ({ name, domain, path }));
-  fs.writeFileSync(`${directory}/browser.json`, JSON.stringify({ results, cookies }, null, 2));
-  console.log(JSON.stringify(results));
-} catch (error) {
-  for (const [env, page] of Object.entries(pages)) {
-    await page.screenshot({ path: `${directory}/${env}-failure.png` });
-  }
-  throw error;
-} finally {
-  await browser.close();
-}
+  const workspace = workspaces[0];
+  const cookies = await context.cookies(base);
+  const csrf = cookies.find(item => item.name === 'multica_csrf_prod')?.value;
+  const patch = await context.request.patch(base + '/api/me', { headers: { 'X-CSRF-Token': csrf }, data: { name: me.name } });
+  if (!patch.ok()) throw Error(`CSRF authenticated write: ${patch.status()}`);
+  checks.push('production cookie authentication and CSRF');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${base}/${workspace.slug}/health`, { waitUntil: 'networkidle' });
+  if (!await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)) throw Error('390px overflow');
+  await page.locator('[data-slot="sidebar-trigger"]').first().click();
+  await expect(page.getByRole('link', { name: '饮食', exact: true })).toBeVisible();
+  checks.push('390px health and sidebar');
+  if (errors.length || failures.length) throw Error(JSON.stringify({ page_errors: errors.length, failed_requests: failures }));
+  const directory = path.join(repoRoot, '.run/evidence/production-release', deployment.release_id);
+  fs.mkdirSync(directory, { recursive: true });
+  const evidence = { release_id: deployment.release_id, environment: 'prod', checks, unavailable, page_errors: 0, failed_requests: 0 };
+  fs.writeFileSync(path.join(directory, 'browser.json'), JSON.stringify(evidence, null, 2), { mode: 0o600 });
+  console.log(JSON.stringify(evidence));
+} finally { await browser.close(); }

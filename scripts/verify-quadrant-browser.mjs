@@ -1,16 +1,24 @@
 import fs from 'node:fs';
-import { chromium } from 'playwright';
+import { loadProductionDeployment } from './lib/goal-test-audit-env.mjs';
+import { launchGoalTestBrowser } from './lib/goal-test-browser-audit.mjs';
 
-const base = process.env.QUADRANT_URL || 'http://127.0.0.1:13682';
-const profile = JSON.parse(fs.readFileSync('/root/.multica/profiles/goal-test-int/config.json'));
+const deployment = loadProductionDeployment();
+const base = deployment.frontend_url;
+const profile = JSON.parse(fs.readFileSync(deployment.daemon_profile_path));
+const workspaceResponse = await fetch(base + '/api/workspaces', { headers: { Authorization: `Bearer ${profile.token}` } });
+if (!workspaceResponse.ok) throw Error('existing production workspaces unavailable');
+const workspaces = await workspaceResponse.json();
+const workspace = workspaces.find(item => item.id === profile.workspace_id) || workspaces[0];
+if (!workspace) throw Error('no existing workspace');
+profile.workspace_id = workspace.id;
 const headers = { Authorization: `Bearer ${profile.token}`, 'Content-Type': 'application/json', 'X-Workspace-ID': profile.workspace_id };
 async function api(path, method = 'GET', body, workspace = profile.workspace_id) {
   const r = await fetch(base + path, { method, headers: { ...headers, 'X-Workspace-ID': workspace }, body: body ? JSON.stringify(body) : undefined });
   if (!r.ok) throw new Error(`${method} ${path}: ${r.status} ${await r.text()}`);
   return r.status === 204 ? null : r.json();
 }
-const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext({ viewport: { width: 1600, height: 1200 } });
+const { browser, context } = await launchGoalTestBrowser(base, profile.token);
+await context.setExtraHTTPHeaders({});
 await context.addInitScript(token => {
   localStorage.setItem('multica_token', token);
   localStorage.setItem('multica:chat:isOpen', 'false');
@@ -53,12 +61,12 @@ try {
   const me = await api('/api/me');
   const issue = await api('/api/issues', 'POST', { title: '四象限验收-' + Date.now(), status: 'backlog', priority: priorities[0], assignee_type: 'member', assignee_id: me.id });
   created.push(issue.id);
-  await page.goto(base + '/yf/issues');
+  await page.goto(`${base}/${workspace.slug}/issues`);
   const card = page.locator('[data-board-card]').filter({ hasText: issue.title });
   await card.waitFor();
   const myPage = await context.newPage();
   myPage.on('pageerror', e => errors.push(e.message));
-  await myPage.goto(base + '/yf/my-issues');
+  await myPage.goto(`${base}/${workspace.slug}/my-issues`);
   await myPage.getByText(issue.title, { exact: true }).waitFor();
   for (let n = 1; n < 4; n++) {
     await check('拖入' + labels[n] + '并持久化', async () => {
@@ -83,7 +91,7 @@ try {
   });
   await check('我的任务展示已更新任务', async () => {
     await page.getByRole('link', { name: '我的任务', exact: true }).click();
-    await page.waitForURL(base + '/yf/my-issues');
+    await page.waitForURL(`${base}/${workspace.slug}/my-issues`);
     await page.getByRole('heading', { name: '我的任务', exact: true }).waitFor();
     await page.locator('section').filter({ has: page.getByText(labels[3], { exact: true }) }).getByText(issue.title, { exact: true }).waitFor();
   });
@@ -91,7 +99,7 @@ try {
   await api('/api/issue-statuses', 'POST', { key: 'quadrant_check_stage', name: '象限验收状态', category: 'backlog', color: '#808080' }, extraWorkspace.id);
   const other = await api('/api/issues', 'POST', { title: '跨工作区验收-' + Date.now(), status: 'quadrant_check_stage', priority: priorities[1], assignee_type: 'member', assignee_id: me.id }, extraWorkspace.id);
   await check('我的任务跨工作区聚合', async () => {
-    await page.goto(base + '/yf/my-issues');
+    await page.goto(`${base}/${workspace.slug}/my-issues`);
     await page.getByRole('heading', { name: '我的任务', exact: true }).waitFor();
     await page.getByText(other.title, { exact: true }).waitFor();
     await page.getByText(issue.title, { exact: true }).waitFor();
@@ -128,12 +136,12 @@ try {
     await page.waitForURL(url => url.pathname.startsWith('/' + extraWorkspace.slug + '/issues/'));
     await page.getByText(other.title, { exact: true }).first().waitFor();
     if (!page.url().includes('/' + extraWorkspace.slug + '/issues/')) throw new Error('Wrong detail route');
-    await page.goto(base + '/yf/my-issues');
+    await page.goto(`${base}/${workspace.slug}/my-issues`);
   });
   await check('非成员工作区的个人任务不可聚合或读取', async () => {
     const { createRequire } = await import('node:module');
     const { Client } = createRequire(import.meta.url)('pg');
-    const services = JSON.parse(fs.readFileSync('.run/env/int-services.json'));
+    const services = JSON.parse(fs.readFileSync(deployment.runtime_config_file));
     const db = new Client({ connectionString: services.server.DATABASE_URL });
     await db.connect();
     let removed;
