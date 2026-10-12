@@ -63,10 +63,7 @@ import type {
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import {
-  SettingsCard,
   SettingsSaveState,
-  SettingsSection,
-  SettingsTab,
 } from "./settings-layout";
 import { GitHubMark } from "./github-mark";
 
@@ -114,6 +111,17 @@ export function repositoryStatus(repository: WorkspaceRepo): "connected" | "fail
   if (values.some((value) => value === "failed" || value === "error" || value === "disconnected")) return "failed";
   if (values.some((value) => value === "connected" || value === "success" || value === "ready")) return "connected";
   return "pending";
+}
+
+function repositoryDisplayPath(repository: WorkspaceRepo): string {
+  if (repository.project_path) return repository.project_path;
+  const identity = repositoryIdentity(repository.url);
+  return identity?.split("/").slice(1).join("/") || repository.url;
+}
+
+function repositoryDisplayName(repository: WorkspaceRepo): string {
+  const path = repositoryDisplayPath(repository).replace(/\/$/, "");
+  return path.split("/").at(-1) || path;
 }
 
 /**
@@ -429,8 +437,25 @@ export function RepositoriesTab() {
 
   if (!workspace) return null;
 
+  const repositoryStats = [
+    { key: "all", label: "全部仓库", value: repositories.length },
+    { key: "github", label: "GitHub", value: repositories.filter((r) => normalizeWorkspaceRepoProvider(r.provider) === "github").length },
+    { key: "gongfeng", label: "工蜂", value: repositories.filter((r) => normalizeWorkspaceRepoProvider(r.provider) === "gongfeng").length },
+    { key: "error", label: "连接异常", value: repositories.filter((r) => repositoryStatus(r) === "failed").length },
+  ] as const;
+
   return (
-    <SettingsTab title={t(($) => $.page.tabs.repositories)} description="与该工作区关联的 Git 仓库。智能体会从这里 clone 代码并完成工作。">
+    <>
+    <div className="space-y-8">
+      <header className="flex items-start justify-between gap-5">
+        <div className="min-w-0">
+          <div className="text-caption font-semibold uppercase tracking-[0.14em] text-muted-foreground">Code repositories</div>
+          <h2 className="mt-1 text-title-lg font-semibold tracking-tight">代码仓库</h2>
+          <p className="mt-1 max-w-2xl text-body leading-6 text-muted-foreground">把代码来源连接起来，让智能体在各个运行环境中开始工作。</p>
+        </div>
+        {canManageWorkspace ? <Button size="sm" className="mt-1 shrink-0" disabled={connectingGitHub} onClick={() => setAddRepositoryOpen(true)}><Plus className="size-3.5" />添加仓库</Button> : null}
+      </header>
+
       <div className="grid gap-3 md:grid-cols-2">
         {[
           { provider: "github", label: "GitHub", connected: githubConnectConfigured, caption: githubConnectConfigured ? `GitHub App · ${githubInstallations.length} 个安装` : "连接后可读取私有仓库与分支" },
@@ -444,20 +469,15 @@ export function RepositoriesTab() {
           </div>
         ))}
       </div>
-      <SettingsSection
-        action={
-          <SettingsSaveState
-            status={saveStatus}
-            savingLabel={t(($) => $.auto_save.saving)}
-            savedLabel={t(($) => $.auto_save.saved)}
-            errorLabel={t(($) => $.auto_save.failed)}
-          />
-        }
-      >
-        <SettingsCard>
-          <div className="grid grid-cols-2 gap-2 border-b px-4 py-3 sm:grid-cols-4">
-            {(["总数", repositories.length, "GitHub", repositories.filter((r) => normalizeWorkspaceRepoProvider(r.provider) === "github").length, "工蜂", repositories.filter((r) => normalizeWorkspaceRepoProvider(r.provider) === "gongfeng").length, "连接异常", repositories.filter((r) => repositoryStatus(r) === "failed").length] as const).map((item, index) => typeof item === "number" ? <div key={index} className="text-title font-semibold">{item}</div> : <div key={index} className="text-caption text-muted-foreground">{item}</div>)}
-          </div>
+
+      <div className="flex flex-wrap items-center gap-1 pb-1">
+        {repositoryStats.map((stat) => {
+          const active = stat.key === "error" ? statusFilter === "failed" : stat.key === "all" ? providerFilter === "all" && statusFilter === "all" : providerFilter === stat.key && statusFilter === "all";
+          return <button key={stat.key} type="button" className={`inline-flex min-h-8 items-center gap-2 rounded-md border-0 px-2.5 text-caption transition-colors hover:bg-surface-hover ${active ? "bg-surface-selected font-semibold text-surface-selected-foreground" : "text-muted-foreground"}`} onClick={() => { if (stat.key === "error") { setProviderFilter("all"); setStatusFilter("failed"); } else { setProviderFilter(stat.key === "all" ? "all" : stat.key); setStatusFilter("all"); } }}><span>{stat.label}</span><span className="min-w-6 rounded border border-surface-border bg-surface-raised px-1.5 text-center tabular-nums text-foreground">{stat.value}</span></button>;
+        })}
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-surface-border bg-surface-raised shadow-none">
           <div className="flex flex-wrap gap-2 border-b px-4 py-3">
             <div className="relative min-w-[min(100%,18rem)] flex-1">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -466,25 +486,20 @@ export function RepositoriesTab() {
             <Select value={providerFilter} onValueChange={(value) => setProviderFilter((value ?? "all") as typeof providerFilter)} items={[{ value: "all", label: "全部来源" }, { value: "github", label: "GitHub" }, { value: "gongfeng", label: "工蜂" }, { value: "unknown", label: "其他 Git" }]}><SelectTrigger className="w-32" aria-label="来源筛选"><SelectValue /></SelectTrigger><SelectContent /></Select>
             <Select value={statusFilter} onValueChange={(value) => setStatusFilter((value ?? "all") as typeof statusFilter)} items={[{ value: "all", label: "全部状态" }, { value: "connected", label: "已连接" }, { value: "failed", label: "连接异常" }, { value: "pending", label: "待验证" }]}><SelectTrigger className="w-32" aria-label="状态筛选"><SelectValue /></SelectTrigger><SelectContent /></Select>
           </div>
-          <div className="flex flex-wrap gap-2 border-b px-4 py-3 text-caption">
-            <Badge variant={githubConnectConfigured ? "secondary" : "outline"}>GitHub {githubConnectConfigured ? "已连接" : "未配置"}</Badge>
-            <Badge variant="outline">工蜂 {gongfengProbe ? "API 已连接" : "凭据状态待验证"}</Badge>
-          </div>
-          <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-            <div><p className="text-body font-medium">代码来源</p><p className="text-caption text-muted-foreground">远程仓库负责代码来源，runtime 决定执行位置。</p></div>
-            {canManageWorkspace ? <Button size="sm" disabled={connectingGitHub} onClick={() => setAddRepositoryOpen(true)}><Plus className="size-3.5" />添加仓库</Button> : null}
-          </div>
+
+          <div className="hidden grid-cols-[minmax(0,1fr)_9rem_9rem_7rem_2.5rem] gap-4 border-b border-surface-border bg-surface-sunken px-5 py-2.5 text-caption text-muted-foreground lg:grid"><span>仓库</span><span>默认分支</span><span>连接状态</span><span>绑定项目</span><span /></div>
           {centerPending ? (
             <div className="flex items-center justify-center gap-2 px-4 py-12 text-caption text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />正在读取仓库</div>
           ) : centerError ? (
             <div className="flex flex-col items-center gap-3 px-4 py-12 text-center text-caption text-muted-foreground"><p>暂时无法读取仓库详情</p><Button variant="outline" size="sm" onClick={() => void refetchCenter()}>重新加载</Button></div>
           ) : repositories.length === 0 ? (
-            <div className="px-4 py-8 text-center text-caption text-muted-foreground">
-              {t(($) => $.repositories.empty)}
+            <div className="flex flex-col items-center px-5 py-14 text-center">
+              <FolderGit2 className="mb-4 size-8 text-muted-foreground" />
+              <h3 className="text-body font-semibold">连接你的第一份代码</h3>
+              <p className="mt-2 max-w-md text-caption leading-5 text-muted-foreground">添加 GitHub 或工蜂仓库，智能体就能在运行环境中按需拉取代码、创建 worktree，并以分支交付成果。</p>
+              {canManageWorkspace ? <div className="mt-5 flex flex-wrap justify-center gap-2"><Button variant="outline" size="sm" onClick={() => void handleGitHubAction()}><GitHubMark className="size-4" />从 GitHub 选择</Button><Button variant="outline" size="sm" onClick={() => setGongfengPickerOpen(true)}><GitBranch className="size-4" />添加工蜂仓库</Button></div> : null}
             </div>
           ) : null}
-
-          {visibleRepositories.length > 0 ? <div className="hidden grid-cols-[minmax(0,1fr)_9rem_9rem_7rem_2.5rem] gap-4 border-y border-surface-border bg-surface-sunken px-5 py-2.5 text-caption text-muted-foreground lg:grid"><span>仓库</span><span>默认分支</span><span>连接状态</span><span>绑定项目</span><span /></div> : null}
 
           {visibleRepositories.map((repository) => {
             const index = repositories.indexOf(repository);
@@ -496,12 +511,11 @@ export function RepositoriesTab() {
               className="grid gap-2 border-b border-surface-border px-4 py-4 lg:grid-cols-[minmax(0,1fr)_9rem_9rem_7rem_2.5rem] lg:items-center lg:gap-4 lg:px-5"
             >
               <div className="flex min-w-0 items-center gap-2">
-                <Badge variant="outline">{provider === "github" ? "GitHub" : provider === "gongfeng" ? "工蜂" : "Git"}</Badge>
-                <button type="button" className="min-w-0 truncate text-left text-body font-medium hover:underline" onClick={() => setDetailIndex(index)}>{repository.project_path || repository.url}</button>
-                <Badge variant={status === "connected" ? "secondary" : status === "failed" ? "destructive" : "outline"}>{status === "connected" ? "已连接" : status === "failed" ? "连接异常" : "待验证"}</Badge>
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-surface-border bg-surface-hover text-muted-foreground">{provider === "github" ? <GitHubMark className="size-4" /> : <GitBranch className="size-4" />}</span>
+                <button type="button" className="min-w-0 text-left" onClick={() => setDetailIndex(index)}><span className="flex flex-wrap items-center gap-2 text-body font-medium"><span className="truncate">{repositoryDisplayName(repository)}</span>{repository.archived ? <Badge variant="outline">已归档</Badge> : null}</span><span className="block truncate text-caption text-muted-foreground">{repositoryDisplayPath(repository)} · {provider === "github" ? "GitHub" : provider === "gongfeng" ? "工蜂" : "Git"}</span></button>
               </div>
               <div className="min-w-0 lg:row-start-1 lg:col-start-2"><p className="flex items-center gap-1 truncate text-caption"><GitBranch className="size-3.5 text-muted-foreground" />{repository.default_branch || "未验证"}</p></div>
-              <div className="min-w-0 lg:row-start-1 lg:col-start-3"><p className="text-caption">{status === "connected" ? "连接正常" : status === "failed" ? "连接失败" : "待验证"}</p><p className="truncate text-caption text-muted-foreground">{repository.last_tested_at || "尚未验证"}</p></div>
+              <div className="min-w-0 lg:row-start-1 lg:col-start-3"><p className={`flex items-center gap-1.5 text-caption ${status === "connected" ? "text-success" : status === "failed" ? "text-destructive" : "text-warning"}`}><span className="size-1.5 rounded-full bg-current" />{status === "connected" ? "连接正常" : status === "failed" ? "连接失败" : "待验证"}</p><p className="truncate text-caption text-muted-foreground">{repository.last_tested_at || "尚未验证"}</p></div>
               <div className="min-w-0 text-caption text-muted-foreground lg:row-start-1 lg:col-start-4">{bindingCount(repository) ? `${bindingCount(repository)} 个项目` : "尚未绑定"}</div>
               <div className="min-w-0 lg:col-span-1 lg:row-start-2 lg:col-start-1"><p className="truncate font-mono text-caption text-muted-foreground">{repository.url}</p><p className="truncate text-caption">{repository.description || "未填写仓库说明"}</p></div>
               {canManageWorkspace ? (
@@ -515,28 +529,23 @@ export function RepositoriesTab() {
                   <Trash2 className="size-3.5" />
                 </Button>
               ) : null}
-              <Button type="button" variant="ghost" size="icon-sm" aria-label={`查看${repository.project_path || repository.url}详情`} className="lg:row-start-1 lg:col-start-5" onClick={() => setDetailIndex(index)}><ExternalLink className="size-3.5" /></Button>
+              <Button type="button" variant="ghost" size="icon-sm" aria-label={`查看${repositoryDisplayName(repository)}详情`} className="lg:row-start-1 lg:col-start-5" onClick={() => setDetailIndex(index)}><ExternalLink className="size-3.5" /></Button>
             </div>
             );
           })}
           {repositories.length > 0 && visibleRepositories.length === 0 ? <div className="px-4 py-8 text-center text-caption text-muted-foreground">没有匹配的仓库</div> : null}
 
-          {canManageWorkspace ? (
-            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
-              {saveStatus === "error" ? <span className="text-caption text-destructive">保存失败，请重试</span> : null}
-            </div>
-          ) : (
-            <div className="px-4 py-3 text-caption text-muted-foreground">
-              {t(($) => $.repositories.manage_hint)}
-            </div>
-          )}
-        </SettingsCard>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 text-caption text-muted-foreground"><span>{visibleRepositories.length} 个仓库{!canManageWorkspace ? " · 当前为只读权限" : ""}</span><span className="flex items-center gap-1.5"><SettingsSaveState status={saveStatus} savingLabel={t(($) => $.auto_save.saving)} savedLabel={t(($) => $.auto_save.saved)} errorLabel={t(($) => $.auto_save.failed)} /></span></div>
+      </div>
+
+      {saveStatus === "error" ? <p className="-mt-5 text-caption text-destructive">保存失败，请重试。</p> : null}
+
         <div className="flex items-start gap-3 rounded-lg bg-surface-sunken p-4 text-caption">
           <FolderGit2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0"><p className="font-medium">仓库决定代码来源，运行环境决定在哪里执行。</p><p className="mt-1 text-muted-foreground">远程任务按需拉取代码并创建独立 worktree；已有服务器目录可在项目中单独关联。</p></div>
           {canManageWorkspace ? <Button variant="ghost" size="sm" className="ml-auto shrink-0" onClick={() => toast.info("请从项目资源入口关联本地目录")}>关联本地目录 <ExternalLink className="size-3.5" /></Button> : null}
         </div>
-      </SettingsSection>
+    </div>
 
       <Dialog
         open={githubPickerOpen}
@@ -855,6 +864,6 @@ export function RepositoriesTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </SettingsTab>
+    </>
   );
 }
