@@ -430,6 +430,7 @@ import {
   WorkspaceMcpServerListSchema,
   WorkspaceMcpServerSchema,
   WorkspaceRepoSchema,
+  WorkspaceRepositoryCenterSchema,
   WorkspaceRepoProbeResponseSchema,
   ShareLinkSchema,
   ShareLinkListResponseSchema,
@@ -2485,6 +2486,11 @@ export class ApiClient {
       method: "PATCH",
       body: JSON.stringify(data),
     });
+  }
+
+  async getWorkspaceRepositoryCenter(workspaceId: string): Promise<import('../types/workspace').WorkspaceRepositoryCenter | null> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos/details`);
+    return parseWithFallback(raw, WorkspaceRepositoryCenterSchema, null, {endpoint:"GET /api/workspaces/:id/repos/details"});
   }
 
   /** 探测一个 git 仓库 URL：检查可达性、协议等，返回探测结果。 */

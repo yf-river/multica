@@ -533,6 +533,37 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	if req.Repos != nil {
+		var current []byte
+		if err := tx.QueryRow(r.Context(), "SELECT repos FROM workspace WHERE id=$1 FOR UPDATE", idUUID).Scan(&current); err != nil {
+			writeError(w, 500, "读取仓库失败")
+			return
+		}
+		projects, err := qtx.ListProjects(r.Context(), db.ListProjectsParams{WorkspaceID: idUUID})
+		if err != nil {
+			writeError(w, 500, "读取项目失败")
+			return
+		}
+		ids := make([]pgtype.UUID, len(projects))
+		for i, p := range projects {
+			ids[i] = p.ID
+		}
+		resources, err := qtx.ListProjectResourcesForProjects(r.Context(), ids)
+		if err != nil {
+			writeError(w, 500, "读取项目绑定失败")
+			return
+		}
+		scoped := resources[:0]
+		for _, res := range resources {
+			if res.WorkspaceID == idUUID {
+				scoped = append(scoped, res)
+			}
+		}
+		if checkRemovedRepositoryBindings(current, params.Repos, scoped) {
+			writeError(w, 409, "仓库仍有项目绑定，请先解绑")
+			return
+		}
+	}
 	ws, err := qtx.UpdateWorkspace(r.Context(), params)
 	if err != nil {
 		slog.Warn("update workspace failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", id)...)

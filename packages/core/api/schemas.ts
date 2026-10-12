@@ -3187,3 +3187,15 @@ export const EMPTY_JOIN_SHARE_LINK_RESPONSE: {
 };
 
 export * from "./schemas-life";
+
+export const WorkspaceRepositoryCenterSchema = z.object({
+ repos: z.array(WorkspaceRepoSchema),
+ projects: z.array(z.object({id:z.string().min(1),title:z.string(),resources:z.array(z.object({
+  id:z.string(), project_id:z.string(), workspace_id:z.string(), resource_type:z.string(), resource_ref:z.record(z.string(),z.unknown()),
+  label:z.string().nullable(), position:z.number(), created_at:z.string(), created_by:z.string().nullable(),
+ }))})),
+ locations: z.array(z.object({
+ project_id:z.string(),task_id:z.string(),runtime_id:z.string(),daemon_id:z.string(),runtime_name:z.string(),provider:z.string(),
+ work_dir:z.string(),branch:z.string(),status:z.string(),started_at:z.string().nullable(),completed_at:z.string().nullable(),
+ })),
+});

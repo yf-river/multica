@@ -231,6 +231,10 @@ func (h *Handler) ProbeWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
 	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
+	if strings.HasPrefix(repositoryIdentity(req.URL), "github.com/") {
+		h.readGitHubRepository(w, r, req, false)
+		return
+	}
 	projectPath, err := parseGongfengRepositoryURL(req.URL)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -266,6 +270,10 @@ func (h *Handler) ResolveWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
 	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
+	if strings.HasPrefix(repositoryIdentity(req.URL), "github.com/") {
+		h.readGitHubRepository(w, r, req, true)
+		return
+	}
 	projectPath, err := parseGongfengRepositoryURL(req.URL)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -297,6 +305,6 @@ func (h *Handler) ResolveWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, workspaceRepoRef{
 		URL: strings.TrimSpace(req.URL), Provider: "gongfeng", ProjectPath: projectPath,
 		DefaultBranch: branch, Ref: branch, HeadCommit: head, ConnectionStatus: "credential_backed",
-		SyncStatus: "synced", TestStatus: "passed", LastTestedAt: now, LastSyncedAt: now,
+		SyncStatus: "metadata_read", TestStatus: "passed", LastTestedAt: now,
 	})
 }

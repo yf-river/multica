@@ -578,6 +578,13 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	// Serialize remote binding creation with workspace repository removal.
+	if req.ResourceType == "github_repo" || req.ResourceType == "gongfeng_repo" {
+		if _, err := tx.Exec(r.Context(), "SELECT id FROM workspace WHERE id=$1 FOR UPDATE", project.WorkspaceID); err != nil {
+			writeError(w, 500, "锁定工作区失败")
+			return
+		}
+	}
 	resource, err := qtx.CreateProjectResource(r.Context(), db.CreateProjectResourceParams{
 		ProjectID:    project.ID,
 		WorkspaceID:  project.WorkspaceID,

@@ -169,3 +169,14 @@ export interface ShareLinkInfo {
   creator_name?: string;
   role: MemberRole;
 }
+
+/** 工作区仓库中心读取已确认的项目资源和运行目录。 */
+export interface WorkspaceRepositoryCenter {
+  repos: WorkspaceRepo[];
+  projects: Array<{ id: string; title: string; resources: import('./project').ProjectResource[] }>;
+  locations: Array<{
+    project_id: string; task_id: string; runtime_id: string; daemon_id: string;
+    runtime_name: string; provider: string; work_dir: string; branch: string; status: string;
+    started_at: string | null; completed_at: string | null;
+  }>;
+}

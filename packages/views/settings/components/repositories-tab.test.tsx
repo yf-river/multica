@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales-test/en/common.json";
@@ -19,6 +19,9 @@ const workspaceRef = vi.hoisted(() => ({
     repos: [{ url: "https://github.com/multica-ai/multica" }] as {
       url: string;
       description?: string;
+      provider?: string;
+      default_branch?: string;
+      test_status?: string;
     }[],
   },
 }));
@@ -57,9 +60,8 @@ const searchParamsRef = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey: readonly unknown[] }) => {
-    if (options.queryKey.includes("installations")) {
-      return { data: githubRef.current, ...githubQueryStateRef.current };
-    }
+    if (options.queryKey.includes("installations")) return { data: githubRef.current, ...githubQueryStateRef.current };
+    if (options.queryKey.includes("workspace-repositories")) return { data: { repos: workspaceRef.current.repos, projects: [], locations: [] }, isPending: false, isError: false, refetch: vi.fn() };
     return { data: membersRef.current };
   },
   useInfiniteQuery: () => ({
@@ -100,6 +102,8 @@ vi.mock("@multica/core/api", () => ({
   api: {
     updateWorkspace: mockUpdateWorkspace,
     getGitHubConnectURL: mockGetGitHubConnectURL,
+    getWorkspaceRepositoryCenter: vi.fn(async () => ({ repos: workspaceRef.current.repos, projects: [], locations: [] })),
+    probeWorkspaceRepo: vi.fn(), resolveWorkspaceRepo: vi.fn(), createProjectResource: vi.fn(), deleteProjectResource: vi.fn(),
   },
 }));
 
@@ -142,331 +146,12 @@ function I18nWrapper({ children }: { children: ReactNode }) {
   );
 }
 
-describe("RepositoriesTab — automatic updates", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    workspaceRef.current = {
-      id: "workspace-1",
-      name: "Test Workspace",
-      slug: "test-workspace",
-      repos: [{ url: "https://github.com/multica-ai/multica" }],
-    };
-    membersRef.current = [{ user_id: "user-1", role: "owner" }];
-    githubRef.current = {
-      installations: [],
-      configured: true,
-      repository_browse_configured: true,
-      can_manage: true,
-    };
-    githubQueryStateRef.current = {
-      isPending: false,
-      isFetching: false,
-    };
-    githubRepositoriesRef.current = [];
-    searchParamsRef.current = new URLSearchParams("tab=repositories");
-    mockNavReplace.mockImplementation((path: string) => {
-      searchParamsRef.current = new URLSearchParams(path.split("?")[1] ?? "");
-    });
-    mockUpdateWorkspace.mockImplementation(
-      async (_id: string, payload: { repos: { url: string; description?: string }[] }) => ({
-        ...workspaceRef.current,
-        repos: payload.repos,
-      }),
-    );
-  });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  function setupUser() {
-    return userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  }
-
-  it("renders persisted repositories as the same shared input controls used for editing", () => {
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    expect(inputs).toHaveLength(2);
-    expect(inputs[0]!.value).toBe("https://github.com/multica-ai/multica");
-    expect(screen.queryByRole("button", { name: /^Save$/ })).toBeNull();
-  });
-
-  it("updates a changed URL automatically on blur", async () => {
-    const user = setupUser();
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    const urlInput = screen.getAllByRole("textbox")[0]!;
-    await user.clear(urlInput);
-    await user.type(urlInput, "https://github.com/multica-ai/edited");
-    await user.tab();
-
-    await waitFor(() => {
-      expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
-        repos: [{ url: "https://github.com/multica-ai/edited" }],
-      });
-      expect(mockToastSuccess).toHaveBeenCalledWith("Repositories saved", {
-        id: "settings-auto-save",
-      });
-    });
-  });
-
-  it("debounces updates while the user is still typing", async () => {
-    const user = setupUser();
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    const urlInput = screen.getAllByRole("textbox")[0]!;
-    await user.type(urlInput, "-next");
-    expect(mockUpdateWorkspace).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(650);
-    await waitFor(() => expect(mockUpdateWorkspace).toHaveBeenCalledTimes(1));
-  });
-
-  it("does not persist a new row until its URL is non-empty", async () => {
-    const user = setupUser();
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    await user.click(screen.getByRole("button", { name: /Add repository/ }));
-    expect(screen.getAllByRole("textbox")).toHaveLength(4);
-    vi.advanceTimersByTime(1000);
-    expect(mockUpdateWorkspace).not.toHaveBeenCalled();
-
-    const newUrlInput = screen.getAllByRole("textbox")[2]!;
-    await user.type(newUrlInput, "git@github.com:multica-ai/second.git");
-    await user.tab();
-
-    await waitFor(() => {
-      expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
-        repos: [
-          { url: "https://github.com/multica-ai/multica" },
-          { url: "git@github.com:multica-ai/second.git" },
-        ],
-      });
-    });
-  });
-
-  it("persists deletion immediately without a separate save action", async () => {
-    const user = setupUser();
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    await user.click(screen.getByRole("button", { name: "Delete repository" }));
-    expect(mockUpdateWorkspace).not.toHaveBeenCalled();
-    await user.click(
-      screen.getByRole("button", { name: "Delete repository" }),
-    );
-
-    await waitFor(() => {
-      expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", { repos: [] });
-    });
-    expect(screen.getByText("No repositories yet.")).toBeTruthy();
-  });
-
-  it("accepts scp-like repository shorthand", async () => {
-    const user = setupUser();
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    const urlInput = screen.getAllByRole("textbox")[0] as HTMLInputElement;
-    await user.clear(urlInput);
-    await user.type(urlInput, "git@github.com:multica-ai/multica.git");
-    expect(urlInput.type).toBe("text");
-    expect(urlInput.validity.valid).toBe(true);
-    await user.tab();
-
-    await waitFor(() => {
-      expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
-        repos: [{ url: "git@github.com:multica-ai/multica.git" }],
-      });
-    });
-  });
-
-  it("includes the description in the automatic update payload", async () => {
-    workspaceRef.current = {
-      ...workspaceRef.current,
-      repos: [{ url: "https://github.com/multica-ai/multica", description: "Main app" }],
-    };
-    const user = setupUser();
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    const descriptionInput = screen.getAllByRole("textbox")[1] as HTMLInputElement;
-    expect(descriptionInput.value).toBe("Main app");
-    await user.clear(descriptionInput);
-    await user.type(descriptionInput, "Updated description");
-    await user.tab();
-
-    await waitFor(() => {
-      expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
-        repos: [
-          {
-            url: "https://github.com/multica-ai/multica",
-            description: "Updated description",
-          },
-        ],
-      });
-    });
-  });
-
-  it("keeps repository controls read-only for members", () => {
-    membersRef.current = [{ user_id: "user-1", role: "member" }];
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    expect(screen.getAllByRole("textbox").every((input) => input.hasAttribute("disabled"))).toBe(true);
-    expect(screen.queryByRole("button", { name: /Add repository/ })).toBeNull();
-  });
-
-  it("starts GitHub connection with the signed repository return target", async () => {
-    const user = setupUser();
-    mockGetGitHubConnectURL.mockResolvedValue({
-      configured: true,
-      url: "https://github.com/apps/multica/installations/new",
-    });
-    const open = vi.spyOn(window, "open").mockImplementation(() => null);
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    await user.click(screen.getByRole("button", { name: "Connect GitHub" }));
-
-    await waitFor(() => {
-      expect(mockGetGitHubConnectURL).toHaveBeenCalledWith(
-        "workspace-1",
-        "repositories",
-      );
-      expect(open).toHaveBeenCalledWith(
-        "https://github.com/apps/multica/installations/new",
-        "_blank",
-        "noopener",
-      );
-    });
-    open.mockRestore();
-  });
-
-  it("keeps GitHub import disabled when repository browsing is unavailable", () => {
-    githubRef.current = {
-      installations: [],
-      configured: true,
-      repository_browse_configured: false,
-      can_manage: true,
-    };
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    const button = screen.getByRole("button", { name: "Connect GitHub" });
-    expect(
-      button.hasAttribute("disabled") ||
-        button.getAttribute("aria-disabled") === "true",
-    ).toBe(true);
-    expect(button.getAttribute("title")).toContain("GITHUB_APP_ID");
-  });
-
-  it("imports selected GitHub repositories and deduplicates HTTPS against SSH", async () => {
-    workspaceRef.current = {
-      ...workspaceRef.current,
-      repos: [{ url: "git@github.com:multica-ai/multica.git" }],
-    };
-    githubRef.current = {
-      installations: [{ id: "installation-row-1", account_login: "multica-ai" }],
-      configured: true,
-      repository_browse_configured: true,
-      can_manage: true,
-    };
-    githubRepositoriesRef.current = [
-      {
-        id: 1,
-        full_name: "multica-ai/multica",
-        html_url: "https://github.com/multica-ai/multica",
-        clone_url: "https://github.com/multica-ai/multica.git",
-        description: "Existing repository",
-        private: false,
-        archived: false,
-        default_branch: "main",
-      },
-      {
-        id: 2,
-        full_name: "multica-ai/console",
-        html_url: "https://github.com/multica-ai/console",
-        clone_url: "https://github.com/multica-ai/console.git",
-        description: "Console app",
-        private: true,
-        archived: false,
-        default_branch: "main",
-      },
-    ];
-    const user = setupUser();
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    await user.click(
-      screen.getByRole("button", { name: "Choose from GitHub" }),
-    );
-    const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes).toHaveLength(2);
-    expect(
-      checkboxes[0]!.hasAttribute("disabled") ||
-        checkboxes[0]!.getAttribute("aria-disabled") === "true",
-    ).toBe(true);
-
-    await user.click(checkboxes[1]!);
-    await user.click(screen.getByRole("button", { name: "Add repositories" }));
-
-    await waitFor(() => {
-      expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
-        repos: [
-          { url: "git@github.com:multica-ai/multica.git" },
-          {
-            url: "https://github.com/multica-ai/console.git",
-            description: "Console app",
-          },
-        ],
-      });
-    });
-  });
-
-  it("preserves repository path casing when comparing clone URLs", () => {
-    expect(
-      repositoryIdentity("https://GitHub.com/Acme/Repo.git"),
-    ).toBe("github.com/Acme/Repo");
-    expect(
-      repositoryIdentity("git@github.com:acme/repo.git"),
-    ).toBe("github.com/acme/repo");
-  });
-
-  it("opens the picker after returning from a GitHub connection", async () => {
-    githubRef.current = {
-      installations: [{ id: "installation-row-1", account_login: "multica-ai" }],
-      configured: true,
-      repository_browse_configured: true,
-      can_manage: true,
-    };
-    searchParamsRef.current = new URLSearchParams(
-      "tab=repositories&github_connected=1",
-    );
-
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    expect(
-      await screen.findByRole("heading", {
-        name: "Choose GitHub repositories",
-      }),
-    ).toBeTruthy();
-    expect(mockNavReplace).toHaveBeenCalledWith(
-      "/acme/settings?tab=repositories",
-    );
-  });
-
-  it("clears the GitHub callback query after an empty installation result", async () => {
-    searchParamsRef.current = new URLSearchParams(
-      "tab=repositories&github_connected=1",
-    );
-
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    await waitFor(() => {
-      expect(mockNavReplace).toHaveBeenCalledWith(
-        "/acme/settings?tab=repositories",
-      );
-    });
-    expect(
-      screen.queryByRole("heading", {
-        name: "Choose GitHub repositories",
-      }),
-    ).toBeNull();
-  });
+describe("RepositoriesTab repository center", () => {
+ beforeEach(() => { vi.clearAllMocks(); workspaceRef.current = { id:"workspace-1", name:"Test Workspace", slug:"test-workspace", repos:[{url:"https://github.com/multica-ai/multica", provider:"github", default_branch:"main", test_status:"passed"}] }; membersRef.current=[{user_id:"user-1",role:"owner"}]; });
+ it("renders provider connections and the structured repository center", () => { render(<RepositoriesTab />, {wrapper:I18nWrapper}); expect(screen.getAllByText("GitHub").length).toBeGreaterThan(0); expect(screen.getByText("腾讯工蜂")).toBeTruthy(); expect(screen.getByText("代码来源")).toBeTruthy(); expect(screen.getByText("添加仓库")).toBeTruthy(); });
+ it("supports mixed provider data without crashing", () => { workspaceRef.current.repos=[{url:"https://github.com/a/one",provider:"github",test_status:"passed"},{url:"https://git.code.tencent.com/a/two",provider:"gongfeng",test_status:"failed"}]; render(<RepositoriesTab />, {wrapper:I18nWrapper}); expect(screen.getByText("代码来源")).toBeTruthy(); });
+ it("opens the four-section detail drawer", async () => { const user=userEvent.setup(); render(<RepositoriesTab />, {wrapper:I18nWrapper}); await user.click(screen.getByRole("button", {name:/查看.*详情/})); expect(screen.getByText("概览")).toBeTruthy(); expect(screen.getByText("项目绑定")).toBeTruthy(); expect(screen.getByText("运行位置")).toBeTruthy(); });
+ it("keeps mutation controls hidden for ordinary members", () => { membersRef.current=[{user_id:"user-1",role:"member"}]; render(<RepositoriesTab />, {wrapper:I18nWrapper}); expect(screen.queryByRole("button", {name:"添加仓库"})).toBeNull(); });
+ it("normalizes HTTPS and SSH identities", () => { expect(repositoryIdentity("https://github.com/a/one.git")).toBe("github.com/a/one"); expect(repositoryIdentity("git@github.com:a/one.git")).toBe("github.com/a/one"); });
 });

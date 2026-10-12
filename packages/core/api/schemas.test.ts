@@ -21,6 +21,7 @@ import {
   TestExternalCredentialProfileResponseSchema,
   WorkspaceRepoProbeResponseSchema,
   WorkspaceRepoSchema,
+  WorkspaceRepositoryCenterSchema,
   AutopilotRunSchema,
   FALLBACK_AUTOPILOT_RUN,
   CommentTriggerPreviewSchema,
@@ -148,6 +149,12 @@ describe("workspace Gongfeng repository schemas", () => {
         project_path: "team/project",
       }),
     ).toThrow();
+  });
+});
+
+describe("workspace repository center schema", () => {
+  it("rejects malformed aggregate responses instead of inventing bindings", () => {
+    expect(WorkspaceRepositoryCenterSchema.safeParse({ repos: [], projects: "bad", locations: [] }).success).toBe(false);
   });
 });
 

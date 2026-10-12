@@ -1393,6 +1393,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// 空白；handler 剥掉管理句柄并加一个 can_manage 提示，UI 据此把关
 					// connect/disconnect。
 					r.Get("/github/installations", h.ListGitHubInstallations)
+					r.Get("/repos/details", h.GetWorkspaceRepositoryCenter)
 					// VCS 连接（Forgejo / Gitea / GitLab）——与 GitHub 安装同理对成员可见；
 					// connect/disconnect 由下面管理组把关。
 					r.Get("/vcs/connections", h.ListVCSConnections)

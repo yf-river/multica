@@ -3,3 +3,5 @@
 export * from "./queries";
 export * from "./mutations";
 export * from "./hooks";
+export * from './repository-queries';
+export * from './repository-identity';

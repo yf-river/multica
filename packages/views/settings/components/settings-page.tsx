@@ -21,7 +21,6 @@ import {
   Blocks,
   Server,
 } from "lucide-react";
-import { GitHubMark } from "./github-mark";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { useCurrentWorkspace } from "@multica/core/paths";
@@ -40,7 +39,6 @@ const TokensTab = lazy(() => import("./tokens-tab").then((module) => ({ default:
 const WorkspaceTab = lazy(() => import("./workspace-tab").then((module) => ({ default: module.WorkspaceTab })));
 const MembersTab = lazy(() => import("./members-tab").then((module) => ({ default: module.MembersTab })));
 const RepositoriesTab = lazy(() => import("./repositories-tab").then((module) => ({ default: module.RepositoriesTab })));
-const GitHubTab = lazy(() => import("./github-tab").then((module) => ({ default: module.GitHubTab })));
 const IntegrationsTab = lazy(() => import("./integrations-tab").then((module) => ({ default: module.IntegrationsTab })));
 const NotificationsTab = lazy(() => import("./notifications-tab").then((module) => ({ default: module.NotificationsTab })));
 const LabelsTab = lazy(() => import("./labels-tab").then((module) => ({ default: module.LabelsTab })));
@@ -71,7 +69,7 @@ function ActiveSettingsTab({ tab }: { tab: string }) {
     case "tokens": return <TokensTab />;
     case "workspace": return <WorkspaceTab />;
     case "repositories": return <RepositoriesTab />;
-    case "github": return <GitHubTab />;
+    case "github": return <RepositoriesTab />;
     case "integrations": return <IntegrationsTab />;
     case "members": return <MembersTab />;
     case "labels": return <LabelsTab />;
@@ -98,7 +96,6 @@ const ACCOUNT_TAB_ICONS = {
 const WORKSPACE_TAB_KEYS = [
   "general",
   "repositories",
-  "github",
   "integrations",
   "members",
   "labels",
@@ -111,7 +108,6 @@ const WORKSPACE_TAB_KEYS = [
 const WORKSPACE_TAB_VALUES = {
   general: "workspace",
   repositories: "repositories",
-  github: "github",
   integrations: "integrations",
   members: "members",
   labels: "labels",
@@ -124,7 +120,6 @@ const WORKSPACE_TAB_VALUES = {
 const WORKSPACE_TAB_ICONS = {
   general: Building2,
   repositories: FolderGit2,
-  github: GitHubMark,
   integrations: Plug,
   members: Users,
   labels: Tags,
@@ -143,6 +138,7 @@ const TAB_QUERY_KEY = "tab";
 // 现在并入「集成」里了。
 const LEGACY_WORKSPACE_TAB_REDIRECTS: Record<string, string> = {
   lark: "integrations",
+  github: "repositories",
 };
 
 const SETTINGS_TAB_TRIGGER_CLASS =
@@ -257,8 +253,8 @@ export function SettingsPage() {
 
       {/* 右侧内容区 */}
       <div className="min-w-0 flex-1 md:overflow-y-auto">
-        <div className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${activeTab === "labels" || activeTab === "issue-statuses" || activeTab === "properties" || activeTab === "quick-actions"
-              ? "max-w-5xl"
+        <div className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${activeTab === "repositories" || activeTab === "labels" || activeTab === "issue-statuses" || activeTab === "properties" || activeTab === "quick-actions"
+              ? activeTab === "repositories" ? "max-w-[1340px]" : "max-w-5xl"
               : "max-w-3xl"}`}>
           <Suspense fallback={<SettingsTabFallback />}>
             <TabsContent value={activeTab}>
