@@ -3,11 +3,21 @@
 /** 成员在 workspace 里的角色。 */
 export type MemberRole = "owner" | "admin" | "member";
 
+/** 远程仓库的已知来源；服务端新增来源时前端按 unknown 展示。 */
+export type WorkspaceRepoProvider = "github" | "gongfeng" | "unknown";
+
+export function normalizeWorkspaceRepoProvider(provider?: string): WorkspaceRepoProvider {
+  const value = provider?.trim().toLowerCase();
+  if (value === "github" || value === "gongfeng") return value;
+  return "unknown";
+}
+
 /** workspace 关联的一个 git 仓库的元信息。 */
 export interface WorkspaceRepo {
   url: string;
   description?: string;
-  provider?: string;
+  /** API 可能返回未来值，读取时用 normalizeWorkspaceRepoProvider 收敛。 */
+  provider?: WorkspaceRepoProvider | string;
   project_path?: string;
   default_branch?: string;
   ref?: string;

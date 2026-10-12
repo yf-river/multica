@@ -119,7 +119,8 @@ export type {
   MikaBootstrapResponse,
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
-export type { Workspace, WorkspaceRepo, WorkspaceRepoProbeResponse, WorkspaceMcpServer, Member, MemberRole, User, MemberWithUser, Invitation, ShareLink, ShareLinkInfo } from "./workspace";
+export { normalizeWorkspaceRepoProvider } from "./workspace";
+export type { Workspace, WorkspaceRepo, WorkspaceRepoProvider, WorkspaceRepoProbeResponse, WorkspaceMcpServer, Member, MemberRole, User, MemberWithUser, Invitation, ShareLink, ShareLinkInfo } from "./workspace";
 export type {
   PluginInstallation,
   PluginConfigField,

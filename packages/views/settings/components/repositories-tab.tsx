@@ -5,7 +5,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { GitBranch, LoaderCircle, Plus, Search, Trash2 } from "lucide-react";
+import { GitBranch, LoaderCircle, Plus, Search, Trash2, ExternalLink, FolderGit2 } from "lucide-react";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@multica/ui/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
 import { Input } from "@multica/ui/components/ui/input";
 import { Button } from "@multica/ui/components/ui/button";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -50,6 +52,7 @@ import {
   githubInstallationsOptions,
 } from "@multica/core/github";
 import { api } from "@multica/core/api";
+import { normalizeWorkspaceRepoProvider } from "@multica/core/types";
 import type {
   GitHubRepository,
   Workspace,
@@ -119,6 +122,14 @@ export function repositoryIdentity(rawURL: string): string | null {
   return `${host.toLowerCase()}/${normalizedPath}`;
 }
 
+export function repositoryStatus(repository: WorkspaceRepo): "connected" | "failed" | "pending" {
+  const values = [repository.connection_status, repository.test_status, repository.sync_status]
+    .map((value) => value?.toLowerCase());
+  if (values.some((value) => value === "failed" || value === "error" || value === "disconnected")) return "failed";
+  if (values.some((value) => value === "connected" || value === "success" || value === "ready")) return "connected";
+  return "pending";
+}
+
 /**
  * 「代码仓库」设置标签页：展示并编辑当前工作区的仓库列表，支持手动添加/删除、
  * 从已安装的 GitHub App 中搜索勾选批量导入、以及探活后导入工蜂仓库；改动自动保存。
@@ -147,6 +158,12 @@ export function RepositoriesTab() {
   const [gongfengProbe, setGongfengProbe] = useState<WorkspaceRepoProbeResponse | null>(null);
   const [gongfengBranch, setGongfengBranch] = useState("");
   const [gongfengPending, setGongfengPending] = useState(false);
+  const [listSearch, setListSearch] = useState("");
+  const [providerFilter, setProviderFilter] = useState<"all" | "github" | "gongfeng" | "unknown">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "connected" | "failed" | "pending">("all");
+  const [detailIndex, setDetailIndex] = useState<number | null>(null);
+  const [detailTab, setDetailTab] = useState("overview");
+  const [addRepositoryOpen, setAddRepositoryOpen] = useState(false);
 
   const currentMember = members.find((member) => member.user_id === user?.id) ?? null;
   const canManageWorkspace =
@@ -270,6 +287,14 @@ export function RepositoriesTab() {
     [queryClient, workspace],
   );
   const allUrlsValid = repositories.every((repo) => repo.url.trim().length > 0);
+  const visibleRepositories = useMemo(() => repositories.filter((repo) => {
+    const provider = normalizeWorkspaceRepoProvider(repo.provider);
+    const status = repositoryStatus(repo);
+    const query = listSearch.trim().toLowerCase();
+    return (providerFilter === "all" || provider === providerFilter) &&
+      (statusFilter === "all" || status === statusFilter) &&
+      (!query || `${repo.url} ${repo.project_path ?? ""} ${repo.description ?? ""}`.toLowerCase().includes(query));
+  }), [repositories, listSearch, providerFilter, statusFilter]);
   const autoSave = useAutoSave({
     value: draft,
     savedValue: savedRepositories,
@@ -334,22 +359,6 @@ export function RepositoriesTab() {
     } finally {
       setGongfengPending(false);
     }
-  };
-
-  const updateRepository = (
-    index: number,
-    field: keyof WorkspaceRepo,
-    value: string,
-  ) => {
-    setRepositories((current) =>
-      current.map((repo, repoIndex) =>
-        repoIndex === index ? { ...repo, [field]: value } : repo,
-      ),
-    );
-  };
-
-  const addRepository = () => {
-    setRepositories((current) => [...current, { url: "" }]);
   };
 
   const openGitHubPicker = () => {
@@ -453,46 +462,46 @@ export function RepositoriesTab() {
         }
       >
         <SettingsCard>
+          <div className="grid grid-cols-2 gap-2 border-b px-4 py-3 sm:grid-cols-4">
+            {(["总数", repositories.length, "GitHub", repositories.filter((r) => normalizeWorkspaceRepoProvider(r.provider) === "github").length, "工蜂", repositories.filter((r) => normalizeWorkspaceRepoProvider(r.provider) === "gongfeng").length, "连接异常", repositories.filter((r) => repositoryStatus(r) === "failed").length] as const).map((item, index) => typeof item === "number" ? <div key={index} className="text-title font-semibold">{item}</div> : <div key={index} className="text-caption text-muted-foreground">{item}</div>)}
+          </div>
+          <div className="flex flex-wrap gap-2 border-b px-4 py-3">
+            <div className="relative min-w-[min(100%,18rem)] flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={listSearch} onChange={(event) => setListSearch(event.target.value)} placeholder="搜索仓库、组织或路径" aria-label="搜索仓库" className="pl-8" />
+            </div>
+            <Select value={providerFilter} onValueChange={(value) => setProviderFilter((value ?? "all") as typeof providerFilter)} items={[{ value: "all", label: "全部来源" }, { value: "github", label: "GitHub" }, { value: "gongfeng", label: "工蜂" }, { value: "unknown", label: "其他 Git" }]}><SelectTrigger className="w-32" aria-label="来源筛选"><SelectValue /></SelectTrigger><SelectContent /></Select>
+            <Select value={statusFilter} onValueChange={(value) => setStatusFilter((value ?? "all") as typeof statusFilter)} items={[{ value: "all", label: "全部状态" }, { value: "connected", label: "已连接" }, { value: "failed", label: "连接异常" }, { value: "pending", label: "待验证" }]}><SelectTrigger className="w-32" aria-label="状态筛选"><SelectValue /></SelectTrigger><SelectContent /></Select>
+          </div>
+          <div className="flex flex-wrap gap-2 border-b px-4 py-3 text-caption">
+            <Badge variant={githubConnectConfigured ? "secondary" : "outline"}>GitHub {githubConnectConfigured ? "已连接" : "未配置"}</Badge>
+            <Badge variant="outline">工蜂 {gongfengProbe ? "API 已连接" : "凭据状态待验证"}</Badge>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+            <div><p className="text-body font-medium">代码来源</p><p className="text-caption text-muted-foreground">远程仓库负责代码来源，runtime 决定执行位置。</p></div>
+            {canManageWorkspace ? <Button size="sm" disabled={connectingGitHub} onClick={() => setAddRepositoryOpen(true)}><Plus className="size-3.5" />添加仓库</Button> : null}
+          </div>
           {repositories.length === 0 ? (
             <div className="px-4 py-8 text-center text-caption text-muted-foreground">
               {t(($) => $.repositories.empty)}
             </div>
           ) : null}
 
-          {repositories.map((repository, index) => (
+          {visibleRepositories.map((repository) => {
+            const index = repositories.indexOf(repository);
+            const provider = normalizeWorkspaceRepoProvider(repository.provider);
+            const status = repositoryStatus(repository);
+            return (
             <div
               key={index}
               className="grid gap-2 px-4 py-3.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_auto] sm:items-center"
             >
-              <Input
-                type="text"
-                name={`repository-${index}-url`}
-                autoComplete="off"
-                spellCheck={false}
-                aria-label={t(($) => $.repositories.url_placeholder)}
-                value={repository.url}
-                onChange={(event) =>
-                  updateRepository(index, "url", event.target.value)
-                }
-                onBlur={autoSave.flush}
-                disabled={!canManageWorkspace}
-                aria-invalid={!repository.url.trim()}
-                placeholder={t(($) => $.repositories.url_placeholder)}
-                className="font-mono text-caption"
-              />
-              <Input
-                type="text"
-                name={`repository-${index}-description`}
-                autoComplete="off"
-                aria-label={t(($) => $.repositories.description_placeholder)}
-                value={repository.description ?? ""}
-                onChange={(event) =>
-                  updateRepository(index, "description", event.target.value)
-                }
-                onBlur={autoSave.flush}
-                disabled={!canManageWorkspace}
-                placeholder={t(($) => $.repositories.description_placeholder)}
-              />
+              <div className="flex min-w-0 items-center gap-2">
+                <Badge variant="outline">{provider === "github" ? "GitHub" : provider === "gongfeng" ? "工蜂" : "Git"}</Badge>
+                <button type="button" className="min-w-0 truncate text-left text-body font-medium hover:underline" onClick={() => setDetailIndex(index)}>{repository.project_path || repository.url}</button>
+                <Badge variant={status === "connected" ? "secondary" : status === "failed" ? "destructive" : "outline"}>{status === "connected" ? "已连接" : status === "failed" ? "连接异常" : "待验证"}</Badge>
+              </div>
+              <div className="min-w-0"><p className="truncate font-mono text-caption text-muted-foreground">{repository.url}</p><p className="truncate text-caption">{repository.description || "未填写仓库说明"}</p></div>
               {canManageWorkspace ? (
                 <Button
                   variant="ghost"
@@ -504,49 +513,14 @@ export function RepositoriesTab() {
                   <Trash2 className="size-3.5" />
                 </Button>
               ) : null}
+              <Button type="button" variant="ghost" size="sm" onClick={() => setDetailIndex(index)}><ExternalLink className="size-3.5" />详情</Button>
             </div>
-          ))}
+            );
+          })}
+          {repositories.length > 0 && visibleRepositories.length === 0 ? <div className="px-4 py-8 text-center text-caption text-muted-foreground">没有匹配的仓库</div> : null}
 
           {canManageWorkspace ? (
             <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button variant="outline" size="sm" onClick={addRepository}>
-                  <Plus className="size-3.5" />
-                  {t(($) => $.repositories.add)}
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={handleGitHubAction}
-                  disabled={
-                    connectingGitHub ||
-                    !githubBrowseConfigured ||
-                    (!githubConnectConfigured &&
-                      githubInstallations.length === 0)
-                  }
-                  title={
-                    !githubBrowseConfigured
-                      ? t(($) => $.repositories.github_browse_not_configured)
-                      : undefined
-                  }
-                >
-                  {connectingGitHub ? (
-                    <LoaderCircle className="size-3.5 animate-spin" />
-                  ) : (
-                    <GitHubMark className="size-3.5" />
-                  )}
-                  {githubInstallations.length > 0
-                    ? t(($) => $.repositories.choose_from_github)
-                    : t(($) => $.repositories.connect_github)}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setGongfengPickerOpen(true)}
-                >
-                  <GitBranch className="size-3.5" />
-                  {t(($) => $.repositories.gongfeng_add)}
-                </Button>
-              </div>
               {!allUrlsValid ? (
                 <span className="text-caption text-muted-foreground">
                   {t(($) => $.repositories.url_empty)}
@@ -828,6 +802,22 @@ export function RepositoriesTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Sheet open={detailIndex !== null} onOpenChange={(open) => { if (!open) setDetailIndex(null); }}>
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+          {detailIndex !== null && repositories[detailIndex] ? (() => { const repo = repositories[detailIndex]!; return <>
+            <SheetHeader><SheetTitle className="pr-8">{repo.project_path || repo.url}</SheetTitle><SheetDescription className="break-all">{repo.url}</SheetDescription></SheetHeader>
+            <div className="px-4 pb-6"><Tabs value={detailTab} onValueChange={setDetailTab}><TabsList variant="line" className="w-full justify-start"><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="branches">分支</TabsTrigger><TabsTrigger value="projects">项目绑定</TabsTrigger><TabsTrigger value="runtime">运行位置</TabsTrigger></TabsList>
+              <TabsContent value="overview" className="space-y-4 pt-5"><div className="flex flex-wrap gap-2"><Badge variant="outline">{normalizeWorkspaceRepoProvider(repo.provider)}</Badge><Badge variant={repositoryStatus(repo) === "failed" ? "destructive" : "secondary"}>{repositoryStatus(repo) === "connected" ? "连接成功" : repositoryStatus(repo) === "failed" ? "连接失败" : "待验证"}</Badge></div><dl className="grid gap-3 text-caption sm:grid-cols-2"><div><dt className="text-muted-foreground">默认分支</dt><dd>{repo.default_branch || "未验证"}</dd></div><div><dt className="text-muted-foreground">Head commit</dt><dd className="font-mono">{repo.head_commit || "未读取"}</dd></div><div><dt className="text-muted-foreground">最近验证</dt><dd>{repo.last_tested_at || "尚未验证"}</dd></div><div><dt className="text-muted-foreground">同步状态</dt><dd>{repo.sync_status || "尚未拉取"}</dd></div></dl></TabsContent>
+              <TabsContent value="branches" className="space-y-3 pt-5"><p className="text-caption text-muted-foreground">默认分支</p><p className="font-medium">{repo.default_branch || "未验证"}</p><p className="text-caption text-muted-foreground">分支读取由 provider 连接流程完成；runtime 拉取状态独立显示。</p></TabsContent>
+              <TabsContent value="projects" className="space-y-3 pt-5"><p className="text-caption text-muted-foreground">当前工作区可确认信息</p><p>{repo.project_path ? `项目路径：${repo.project_path}` : "暂无项目绑定聚合数据"}</p></TabsContent>
+              <TabsContent value="runtime" className="space-y-3 pt-5"><p className="flex items-center gap-2"><FolderGit2 className="size-4" />运行位置由项目资源配置</p><p className="text-caption text-muted-foreground">远程仓库不会写入本地目录；没有本地目录时，runtime 会按需创建 worktree。</p></TabsContent>
+            </Tabs></div>
+          </>; })() : null}
+        </SheetContent>
+      </Sheet>
+
+      <Dialog open={addRepositoryOpen} onOpenChange={setAddRepositoryOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>添加代码仓库</DialogTitle><DialogDescription>选择代码来源。GitHub 和工蜂仓库保存为远程身份，本地目录由项目资源管理。</DialogDescription></DialogHeader><div className="grid gap-3"><Button variant="outline" className="h-auto justify-start p-4" onClick={() => { setAddRepositoryOpen(false); void handleGitHubAction(); }}><GitHubMark className="size-5" /><span><strong className="block text-left">GitHub</strong><span className="text-caption text-muted-foreground">从已安装的 GitHub App 选择仓库</span></span></Button><Button variant="outline" className="h-auto justify-start p-4" onClick={() => { setAddRepositoryOpen(false); setGongfengPickerOpen(true); }}><GitBranch className="size-5" /><span><strong className="block text-left">工蜂</strong><span className="text-caption text-muted-foreground">连接仓库并读取默认分支</span></span></Button><Button variant="outline" className="h-auto justify-start p-4" onClick={() => { setAddRepositoryOpen(false); toast.info("本地目录请从项目资源入口关联"); }}><FolderGit2 className="size-5" /><span><strong className="block text-left">本地目录</strong><span className="text-caption text-muted-foreground">通过项目资源关联 runtime 目录</span></span></Button></div></DialogContent></Dialog>
 
       <AlertDialog
         open={pendingRemovalIndex !== null}
