@@ -208,10 +208,14 @@ Multica 不自带模型。它驱动的是你本来就装好、登录好的那些
 
 想参与贡献，先看[贡献指南](CONTRIBUTING.md)。
 
+本项目的日常功能交付使用现有 `int` 联调环境，默认包含相关验证、联调发布和浏览器验收；环境记录和流程见[联调与生产发布](docs/operations/environment-releases.md)。提交、推送和生产发布分别授权。
+
+下面的独立本地开发入口只在明确需要本地环境时使用，通过 `MULTICA_LOCAL_DEV=1` 显式选择。
+
 **环境要求：**[Node.js](https://nodejs.org/) 22、[pnpm](https://pnpm.io/) 10.28.2、[Go](https://go.dev/) 1.26.6、[Docker](https://www.docker.com/)
 
 ```bash
-make dev
+MULTICA_LOCAL_DEV=1 make dev
 ```
 
 `make dev` 会自己认出你在主 checkout 还是 worktree 里，然后创建 env 文件、装依赖、初始化数据库、

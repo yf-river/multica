@@ -83,7 +83,7 @@ FRONTEND_PORT=3000
 Generate `.env.worktree` from inside the worktree:
 
 ```bash
-make worktree-env
+MULTICA_LOCAL_DEV=1 make worktree-env
 ```
 
 That generates values like:
@@ -106,17 +106,21 @@ Notes:
 To regenerate a worktree env file:
 
 ```bash
-FORCE=1 make worktree-env
+MULTICA_LOCAL_DEV=1 FORCE=1 make worktree-env
 ```
 
 ## Environments
+
+Ordinary feature delivery uses the existing `int` environment, including focused checks, integration deployment and real browser acceptance. Read [the environment release workflow](docs/operations/environment-releases.md) and current deployment records before starting services. Commit, push and production deployment require separate authorization.
+
+The independent local workflows below require an explicit request and `MULTICA_LOCAL_DEV=1` on startup/setup commands. Do not persist this opt-in in environment files. Inspection, tests and stopping existing services do not require it.
 
 An environment is the database, ports, CLI profile and processes that belong to
 one checkout. It is a named object: it can be listed, inspected and deleted.
 
 ```bash
-make up                      # start this checkout's environment (api + web)
-make up C=api,web,daemon     # choose the components
+MULTICA_LOCAL_DEV=1 make up                      # start this checkout's environment (api + web)
+MULTICA_LOCAL_DEV=1 make up C=api,web,daemon     # choose the components
 make status                  # what is running, and whether it is yours
 make list                    # every environment on this machine
 make down                    # stop the processes, keep the data
@@ -146,7 +150,7 @@ Three properties are worth knowing because the old flow lacked them:
   `destroy` consumes the database, profile, daemon task workspaces and slot. If
   any deletion fails, it keeps the manifest and exits
   non-zero so cleanup can be retried instead of losing the deletion recipe.
-- **Temporary environments have a best-effort fallback.** `make up
+- **Temporary environments have a best-effort fallback.** `MULTICA_LOCAL_DEV=1 make up
   ARGS=--ephemeral` records a 24-hour TTL. The next `make up` automatically
   collects expired and directory-less environments; `make gc` runs the same
   collection explicitly.
@@ -167,7 +171,7 @@ terminal, which is the right thing when you want Ctrl-C to stop everything.
 From any checkout (main or worktree):
 
 ```bash
-make dev
+MULTICA_LOCAL_DEV=1 make dev
 ```
 
 This single command:
@@ -189,8 +193,8 @@ If you prefer separate control over setup and startup:
 
 ```bash
 cp .env.example .env
-make setup-main
-make start-main
+MULTICA_LOCAL_DEV=1 make setup-main
+MULTICA_LOCAL_DEV=1 make start-main
 ```
 
 Stop:
@@ -202,9 +206,9 @@ make stop-main
 #### Worktree
 
 ```bash
-make worktree-env
-make setup-worktree
-make start-worktree
+MULTICA_LOCAL_DEV=1 make worktree-env
+MULTICA_LOCAL_DEV=1 make setup-worktree
+MULTICA_LOCAL_DEV=1 make start-worktree
 ```
 
 Stop:
@@ -220,7 +224,7 @@ make stop-worktree
 Use the main checkout when you want a stable local environment for `main`.
 
 ```bash
-make start-main
+MULTICA_LOCAL_DEV=1 make start-main
 make stop-main
 make check-main
 ```
@@ -232,13 +236,13 @@ Use a worktree when you want isolated data and separate app ports.
 ```bash
 git worktree add ../multica-feature -b feat/my-change main
 cd ../multica-feature
-make dev
+MULTICA_LOCAL_DEV=1 make dev
 ```
 
 After that, day-to-day commands are:
 
 ```bash
-make dev              # start (re-runs setup if needed, idempotent)
+MULTICA_LOCAL_DEV=1 make dev              # start (re-runs setup if needed, idempotent)
 make stop-worktree    # stop
 make check-worktree   # verify
 ```
@@ -310,8 +314,8 @@ Important:
 Main checkout:
 
 ```bash
-make setup-main
-make start-main
+MULTICA_LOCAL_DEV=1 make setup-main
+MULTICA_LOCAL_DEV=1 make start-main
 make stop-main
 make check-main
 ```
@@ -319,9 +323,9 @@ make check-main
 Worktree:
 
 ```bash
-make worktree-env
-make setup-worktree
-make start-worktree
+MULTICA_LOCAL_DEV=1 make worktree-env
+MULTICA_LOCAL_DEV=1 make setup-worktree
+MULTICA_LOCAL_DEV=1 make start-worktree
 make stop-worktree
 make check-worktree
 ```
@@ -329,11 +333,11 @@ make check-worktree
 Generic targets for the current checkout:
 
 ```bash
-make setup
-make start
+MULTICA_LOCAL_DEV=1 make setup
+MULTICA_LOCAL_DEV=1 make start
 make stop
 make check
-make dev
+MULTICA_LOCAL_DEV=1 make dev
 make test
 make migrate-up
 make migrate-down
@@ -389,7 +393,7 @@ Notes:
 Run the local daemon:
 
 ```bash
-make daemon
+MULTICA_LOCAL_DEV=1 make daemon
 ```
 
 The daemon authenticates using the CLI's stored token (`multica login`).
@@ -401,7 +405,7 @@ Running the complete stack — backend, frontend and daemon — from source, wit
 its own database and CLI profile, is one command:
 
 ```bash
-make up C=api,web,daemon
+MULTICA_LOCAL_DEV=1 make up C=api,web,daemon
 ```
 
 It creates the environment if needed, provisions the local development account,
@@ -419,7 +423,7 @@ Two constraints are enforced rather than documented:
   every task with `fork/exec …/go-build…/exe/multica: no such file or directory`.
 - **`daemon start` is refused under a daemon-managed task.** A checkout below a
   `.multica/daemon_task_context.json` marker cannot start a second daemon
-  competing for its own work, so `make up C=daemon` stops with that explanation
+  competing for its own work, so `MULTICA_LOCAL_DEV=1 make up C=daemon` stops with that explanation
   before spending a login on it. Use `C=api,web` there.
 
 ### Isolation Guarantee
@@ -465,7 +469,7 @@ cp .env.example .env
 Worktree:
 
 ```bash
-make worktree-env
+MULTICA_LOCAL_DEV=1 make worktree-env
 ```
 
 ### Check Which Database a Checkout Uses
@@ -499,9 +503,9 @@ It should not.
 The safe worktree setup is:
 
 ```bash
-make worktree-env
-make setup-worktree
-make start-worktree
+MULTICA_LOCAL_DEV=1 make worktree-env
+MULTICA_LOCAL_DEV=1 make setup-worktree
+MULTICA_LOCAL_DEV=1 make start-worktree
 ```
 
 ### App Stops but PostgreSQL Keeps Running
@@ -534,7 +538,7 @@ database named in `POSTGRES_DB`, recreates it, and runs all migrations):
 ```bash
 make stop        # stop backend/frontend first
 make db-reset
-make start
+MULTICA_LOCAL_DEV=1 make start
 ```
 
 - only affects the current env's database; other worktree databases are untouched
@@ -571,7 +575,7 @@ Warning:
 ### Stable Main Environment
 
 ```bash
-make dev
+MULTICA_LOCAL_DEV=1 make dev
 ```
 
 ### Feature Worktree
@@ -579,14 +583,14 @@ make dev
 ```bash
 git worktree add ../multica-feature -b feat/my-change main
 cd ../multica-feature
-make dev
+MULTICA_LOCAL_DEV=1 make dev
 ```
 
 ### Return to a Previously Configured Worktree
 
 ```bash
 cd ../multica-feature
-make start-worktree
+MULTICA_LOCAL_DEV=1 make start-worktree
 ```
 
 ### Validate Before Pushing

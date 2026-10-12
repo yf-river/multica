@@ -10,6 +10,12 @@ This file provides guidance to AI agents when working with code in this reposito
 
 ## Quick Reference
 
+### Default Development Delivery
+
+Ordinary feature requests include implementation, focused checks, deployment to the existing **int** environment, and real browser acceptance. Read `CLAUDE.md` and `docs/operations/environment-releases.md` before choosing an environment or starting services. Read addresses and identity from current deployment records and private runtime configuration; do not create another preview by default.
+
+Independent local environments require an explicit user request and `MULTICA_LOCAL_DEV=1` for that command. Commit, push, production deployment, and database deletion remain separately authorized actions. Explicit requests for analysis only, local changes only, or no deployment override the default delivery scope.
+
 ### Architecture
 
 Go backend + monorepo frontend (pnpm workspaces + Turborepo) with shared packages.
@@ -48,7 +54,7 @@ Current delivery scope is Web + Server + Daemon + PostgreSQL + Agent Runtime. De
 ### Commands
 
 ```bash
-make dev              # Auto-setup + start everything
+node scripts/goal-test-environments.mjs verify  # Inspect existing int/prod
 pnpm typecheck        # TypeScript check
 pnpm test             # TS unit tests (Vitest)
 make test             # Go tests
@@ -58,3 +64,5 @@ pnpm verify:clients   # Explicit frozen-client verification
 ```
 
 See CLAUDE.md for the authoritative rules and common commands.
+
+For explicitly requested independent local development: `MULTICA_LOCAL_DEV=1 make up C=api,web` or `MULTICA_LOCAL_DEV=1 make dev`.

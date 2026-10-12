@@ -34,8 +34,17 @@ The active product is Web, Server, Daemon, PostgreSQL, and Agent Runtime.
 - `apps/desktop/` and `apps/mobile/` are frozen source trees. Keep their source, build, routing, and release files, but do not implement Web feature parity or run and repair their checks unless the user explicitly reactivates that client.
 - Frozen-client compatibility is not a delivery constraint for Web changes. Shared code may evolve for the active Web product even when a frozen client no longer compiles.
 - Root `build`, `typecheck`, `test`, and `lint` commands validate `@multica/web` and its shared dependencies. Use `verify:desktop`, `verify:mobile`, or `verify:clients` only for explicit client reactivation or release work.
-- During development, verify the affected Web, Go, page, or runtime path. Full Web/backend verification and deployment are milestone actions requested explicitly by the user.
+- During development, verify the affected Web, Go, page, or runtime path. Ordinary feature requests include integration delivery and browser acceptance; broader verification is proportional to risk.
 - A task stops when its declared user flow passes. Unrelated historical failures are tracked separately unless they block login, companion chat, tasks, Agent execution, run reviews, memory governance, data safety, authorization, or recovery.
+
+## Development Delivery
+
+- Ordinary feature requests include implementation, focused verification, deployment to existing `int`, and real browser acceptance. Explicit requests for analysis only, local changes only, or no deployment override this default.
+- Read `docs/operations/environment-releases.md` before choosing an environment or starting services. Current addresses and identity belong to deployment records and private runtime configuration. Missing integration configuration is a blocker, not permission to initialize another environment.
+- Only an explicit user request for independent local development permits `MULTICA_LOCAL_DEV=1` on the relevant command. Do not persist this opt-in in environment files.
+- Verify incrementally, then build and deploy one reviewable feature unit, not each small edit. Exclude unrelated dirty work from the source snapshot; use the current integration source baseline when isolation is necessary.
+- Use existing release locks, Daemon drain and rollback. Wait for concurrent integration releases rather than opening another preview. Do not initialize existing accounts, rotate secrets, reset databases or edit installed releases.
+- Commit, push, production deployment and database deletion require separate authorization.
 
 ## State Rules
 
@@ -84,22 +93,23 @@ Mobile is independent. It may import types and pure functions from `@multica/cor
 Use the repo scripts as the source of truth. Common commands:
 
 ```bash
-make up               # start this checkout's environment (C=api,web,daemon)
+node scripts/goal-test-environments.mjs verify  # inspect existing int/prod
+MULTICA_LOCAL_DEV=1 make up C=api,web  # explicitly requested independent local environment
 make status           # what is running, with pid/commit proof it is yours
 make list             # every development environment on this machine
 make down             # stop the processes, keep the database
 make destroy          # stop, then drop the database and free the slot
-make dev              # auto-setup and start the app in the foreground
-make start            # start backend + frontend
+MULTICA_LOCAL_DEV=1 make dev    # prepare and start independent local services
+MULTICA_LOCAL_DEV=1 make start  # start independent local backend + frontend
 make stop             # stop app processes for this checkout
 make db-drop          # permanently drop this checkout's local database
 make remove-worktree WORKTREE=../path  # drop a linked worktree DB, then remove it
-make server           # run Go server only
-make daemon           # run local daemon
+MULTICA_LOCAL_DEV=1 make server # run independent local Go server
+MULTICA_LOCAL_DEV=1 make daemon # run local daemon
 make test             # Go tests
 make sqlc             # regenerate sqlc code after SQL changes
 pnpm install
-pnpm dev:web
+MULTICA_LOCAL_DEV=1 pnpm dev:web
 pnpm build
 pnpm typecheck
 pnpm lint
@@ -114,7 +124,7 @@ pnpm ui:add badge     # shadcn/Base UI component into packages/ui
 
 `make up` records each environment in `~/.multica/dev/`, allocates its API and Web ports plus database name under a lock instead of recomputing them from the path, and verifies the database through `DATABASE_URL` rather than `docker exec` — a `docker exec` create lands in the wrong server whenever a native PostgreSQL owns 5432. It reuses an API only when `/health` proves its listener pid, process group and commit belong to this checkout. `make down` keeps the data; `make destroy` consumes the database, profile, daemon workspaces and registry entry. Agent-owned TTL environments are collected best-effort on the next `make up`, or explicitly with `make gc`.
 
-Worktrees share one PostgreSQL container and get isolated DB names/ports via `.env.worktree`. `make dev` auto-detects this. For manual setup use `make worktree-env`, `make setup-worktree`, and `make start-worktree`.
+Explicitly requested local worktrees share one PostgreSQL container and use `.env.worktree`. Use `MULTICA_LOCAL_DEV=1` for `make worktree-env`, `make setup-worktree`, and `make start-worktree`; `make dev` auto-detects the checkout type.
 
 CI runs Node 22, the latest Go 1.26 patch, and a `pgvector/pgvector:pg17` PostgreSQL service.
 

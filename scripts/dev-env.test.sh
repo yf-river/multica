@@ -87,6 +87,63 @@ EOF
 
 out="$tmp_dir/out"
 
+# 默认拒绝独立启动，且在自动清理、配置创建和数据库操作之前退出。
+unset MULTICA_LOCAL_DEV
+for value in unset 0 true; do
+  status=0
+  if [ "$value" = unset ]; then
+    dev_env require-local > "$out" 2>&1 || status=$?
+  else
+    MULTICA_LOCAL_DEV="$value" dev_env require-local > "$out" 2>&1 || status=$?
+  fi
+  [ "$status" -ne 0 ] || fail "local guard accepted $value"
+  require_contains "$out" "MULTICA_LOCAL_DEV=1"
+done
+MULTICA_LOCAL_DEV=1 dev_env require-local > "$out" 2>&1 || fail "explicit local opt-in was rejected"
+
+status=0
+bash -c 'source "$1"; marker="$2/side-effect"; cmd_gc() { touch "$marker"; exit 43; }; main up' _ \
+  "$root_dir/scripts/dev-env.sh" "$tmp_dir" > "$out" 2>&1 || status=$?
+[ "$status" -ne 0 ] || fail "up without opt-in succeeded"
+require_contains "$out" "MULTICA_LOCAL_DEV=1"
+[ ! -e "$tmp_dir/side-effect" ] || fail "rejected up ran automatic cleanup"
+[ ! -e "$MULTICA_DEV_HOME" ] || fail "rejected up created a registry"
+
+# 显式选择后进入原启动流程；在第一个副作用入口截断，不启动真实服务。
+status=0
+MULTICA_LOCAL_DEV=1 bash -c 'source "$1"; cmd_gc() { exit 42; }; main up' _ \
+  "$root_dir/scripts/dev-env.sh" > "$out" 2>&1 || status=$?
+[ "$status" -eq 42 ] || fail "explicit up did not reach the existing startup flow"
+
+for target in up dev start setup setup-main start-main setup-worktree start-worktree worktree-env server daemon api-dev web-dev; do
+  status=0
+  make -s -C "$root_dir" "$target" ENV_FILE="$tmp_dir/missing.env" > "$out" 2>&1 || status=$?
+  [ "$status" -ne 0 ] || fail "make $target bypassed local guard"
+  require_contains "$out" "MULTICA_LOCAL_DEV=1"
+done
+status=0
+bash "$root_dir/scripts/dev.sh" > "$out" 2>&1 || status=$?
+[ "$status" -ne 0 ] || fail "direct dev.sh bypassed local guard"
+require_contains "$out" "MULTICA_LOCAL_DEV=1"
+
+# Web 包的 dev 命令也在 Next.js 启动前检查；不依赖 pnpm 安装或真实端口。
+web_dev="$(node -p 'require(process.argv[1]).scripts.dev' "$root_dir/apps/web/package.json")"
+status=0
+(cd "$root_dir/apps/web" && sh -c "$web_dev") > "$out" 2>&1 || status=$?
+[ "$status" -ne 0 ] || fail "Web dev bypassed local guard"
+require_contains "$out" "MULTICA_LOCAL_DEV=1"
+[ ! -e "$tmp_dir/missing.env" ] || fail "rejected startup created an env file"
+
+# 用测试创建的 Next 替身验证显式选择后仍收到原来的启动参数。
+cat > "$fake_bin/next" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*"
+EOF
+chmod +x "$fake_bin/next"
+(cd "$root_dir/apps/web" && MULTICA_LOCAL_DEV=1 FRONTEND_PORT=13999 sh -c "$web_dev") > "$out" 2>&1 \
+  || fail "explicit Web dev was rejected"
+require_contains "$out" "dev --webpack --port 13999"
+
 # ---------------------------------------------------------------------------
 # An empty registry is a normal state, not an error.
 # ---------------------------------------------------------------------------

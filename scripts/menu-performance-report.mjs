@@ -7,6 +7,9 @@ const beforeLocal = read("before-local");
 const beforeLatency = read("before-latency");
 const afterLocal = read("after-local");
 const afterLatency = read("after-latency");
+const regression = read("regression");
+const currentCooking = { local:read("current-local-cooking"), latency:read("current-latency-cooking") };
+if(regression.results.length!==8 || regression.errors.length || regression.results.some(x=>x.ok!==true))throw new Error("Regression checks incomplete");
 // 烹饪页面的加载提示需要等到菜谱显示；使用补测的完整内容可用条件。
 for (const [dataset, suffix] of [[beforeLocal, "local"], [beforeLatency, "latency"]]) {
   const correction = read(`before-${suffix}-cooking`);
@@ -46,10 +49,16 @@ const rows=beforeLocal.menus.map(item=> {
 });
 const report={before_release:beforeLocal.release_id,after_release:afterLocal.release_id,menu_count:rows.length,
   measured_clicks:[beforeLocal,beforeLatency,afterLocal,afterLatency].reduce((n,d)=>n+d.samples.length,0),
-  profiles:{local:{latency_ms:0},latency:{latency_ms:100}},rows};
+  current_release:regression.release_id, regression,
+  current_cooking:Object.fromEntries(Object.entries(currentCooking).map(([profile,d])=>{
+    if(d.release_id!==regression.release_id)throw new Error("Current release mismatch");
+    const href=d.samples[0].href;
+    return [profile,{cold:stats(d,href,"cold"),warm:stats(d,href,"warm")}];
+  })), profiles:{local:{latency_ms:0},latency:{latency_ms:100}},rows};
 fs.writeFileSync(path.join(directory,"comparison.json"),JSON.stringify(report,null,2));
 const ms=n=>String(Math.round(n));
 const sections=["# 菜单切换性能对比", "", `修复前版本：\`${report.before_release}\`；修复后版本：\`${report.after_release}\`。`, "",
+  `当前联调版本：\`${report.current_release}\`。后续并行发布只修改了烹饪页面与文案，其余菜单应用源码与全量复测版本一致；当前版本通过 8 项功能回归，并补测烹饪页面。`, "",
   `真实联调 API、同一测试账号与工作区、Chromium 1440×900，共 ${rows.length} 个菜单、${report.measured_clicks} 次计时。每菜单首次进入 3 次，重复切换 10 次。`, "",
   "计时从真实点击事件到目标正文或空态可见且加载占位结束；标题出现和 networkidle 不作为完成标准。首次进入使用独立浏览器上下文，重复切换使用已访问页面。", "",
   "本次性能修复只设置 Next.js 客户端页面路由复用 30 秒，业务数据缓存、WebSocket 和权限逻辑未修改。并行发布的新联调版本已包含该配置，同时包含独立的烹饪功能修改；下表为联调版本的实测对比，烹饪页的全部变化不能单独归因于性能配置。", "",
@@ -70,11 +79,19 @@ for (const profile of ["local","latency"]) {
   if(!isolated.complete || isolated.errors.length)throw new Error("Isolated verification failed");
   const baseline=profile==="local"?beforeLocal:beforeLatency;
   sections.push(`## 隔离构建核对：${profile==="local"?"本机直连":"固定 100ms 延迟"}`,"",
-    "应用源码基于旧联调快照，只有路由缓存配置不同；独立 Web 端口连接真实联调 API。用于核对页面路由请求减少的原因。", "",
+    "应用源码基于旧联调快照，只有路由缓存配置不同。浏览器使用原联调地址，页面资源转发到独立 Web 端口，API 与实时连接走真实联调；此组用于核对路由请求减少的原因，不用于判断首次加载速度。", "",
     "| 菜单 | 重复前 | 隔离修复后 | 路由请求前/后 |", "|---|---:|---:|---:|");
   for(const href of new Set(isolated.samples.map(x=>x.href))){const b=stats(baseline,href,"warm"),a=stats(isolated,href,"warm");const label=isolated.menus.find(x=>x.href===href).label;
     sections.push(`| ${label} | ${ms(b.median_ms)} | ${ms(a.median_ms)} | ${b.route_requests}/${a.route_requests} |`);}
   sections.push("");
 }
+sections.push("## 最新烹饪页面补测", "", "| 条件 | 首次中位数 | 重复中位数 | 重复 P90 | 重复路由请求 |", "|---|---:|---:|---:|---:|");
+for(const [profile,label] of [["local","本机直连"],["latency","固定 100ms 延迟"]]) {
+  const s=report.current_cooking[profile];
+  sections.push(`| ${label} | ${ms(s.cold.median_ms)} | ${ms(s.warm.median_ms)} | ${ms(s.warm.p90_ms)} | ${s.warm.route_requests} |`);
+}
+sections.push("", "## 功能验证", "", "隔离生产构建及 TypeScript 检查通过，25 个现有导航测试通过，配置 ESLint 检查通过，联调/生产隔离与运行身份核验通过。", "",
+  ...regression.results.map(r=>`- ${r.scenario}：通过。`), "",
+  "本次未执行 commit、push 或生产发布。性能配置已由并行联调发布包含，复测确认生效。临时隔离 Web 服务在测试完成后停止。", "");
 fs.writeFileSync(path.join(directory,"comparison.md"),sections.join("\n"));
 console.log(JSON.stringify({report:path.join(directory,"comparison.md"),menus:rows.length,clicks:report.measured_clicks,regressions:rows.filter(r=>r.local.regression||r.latency.regression).map(r=>r.label)},null,2));

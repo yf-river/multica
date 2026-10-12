@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Local development environments as named, listable, deletable objects.
 #
-#   make up                      # start this checkout's environment (api + web)
-#   make up C=api,web,daemon     # pick the components
+#   MULTICA_LOCAL_DEV=1 make up                  # 独立本地 API + Web
+#   MULTICA_LOCAL_DEV=1 make up C=api,web,daemon  # 选择独立环境组件
 #   make status                  # what is running, and is it mine
 #   make list                    # every environment on this machine
 #   make down                    # stop the processes, keep the data
@@ -73,6 +73,12 @@ info() { printf '    %s\n' "$1"; }
 ok()   { printf '    %s✓%s %s\n' "$C_GREEN" "$C_OFF" "$1"; }
 warn() { printf '    %s!%s %s\n' "$C_RED" "$C_OFF" "$1"; }
 die()  { printf '\n%s✗ %s%s\n' "$C_RED" "$1" "$C_OFF" >&2; exit 1; }
+
+# 独立开发入口共用此检查，拒绝时不创建环境或清理已有资源。
+require_local_development() {
+  [ "${MULTICA_LOCAL_DEV:-}" = 1 ] || die "本项目默认交付到现有 int 联调环境，请阅读 docs/operations/environment-releases.md。
+仅在用户明确要求独立本地环境时，使用 MULTICA_LOCAL_DEV=1 执行开发启动命令。"
+}
 
 json_escape() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g'
@@ -1054,6 +1060,7 @@ ${C_GREEN}✓ Environment ready.${C_OFF}
   Environment ${NAME}$( [ "${TTL_HOURS:-0}" != 0 ] && printf ' (expires %s)' "$EXPIRES_AT" )
 
   Inspect     make status
+  Restart     MULTICA_LOCAL_DEV=1 make up
   Stop        make down            (keeps the database, restarts in seconds)
   Delete      make destroy         (drops the database and frees the slot)
 EOF
@@ -1065,7 +1072,7 @@ resolve_env_for_read() {
   local name="${1:-}"
   if [ -z "$name" ]; then
     name="$(env_name_for_dir "$REPO_ROOT" || true)"
-    [ -n "$name" ] || die "No environment registered for $REPO_ROOT. Run 'make up' first."
+    [ -n "$name" ] || die "No local environment registered for $REPO_ROOT. Default delivery uses existing int; see docs/operations/environment-releases.md. Explicit local startup: MULTICA_LOCAL_DEV=1 make up."
   fi
   require_env_name "$name"
   load_manifest "$name" || die "Unknown environment '$name'. Run 'make list' to see what exists."
@@ -1137,6 +1144,8 @@ cmd_up() {
   case " $requested " in *" api "*) ;; *) requested="api $requested" ;; esac
   COMPONENTS="$requested"
 
+  require_local_development
+
   # No resident cleanup service is required: every future environment start is
   # a safe opportunity to collect expired or directory-less environments.
   cmd_gc --auto
@@ -1163,7 +1172,7 @@ cmd_up() {
     [ -z "$marker" ] || die "The daemon component cannot start under a daemon-managed task.
 This checkout sits below $marker, and the CLI refuses 'daemon start' there so a
 task cannot spawn a second daemon competing for its own work.
-Start the rest with 'make up C=api,web', or run 'make up C=daemon' from your own shell."
+Start the rest with 'MULTICA_LOCAL_DEV=1 make up C=api,web', or run 'MULTICA_LOCAL_DEV=1 make up C=daemon' from your own shell."
   fi
 
   step "Environment"
@@ -1502,6 +1511,9 @@ usage() {
   cat <<'EOF'
 Local development environments: named, listable, deletable.
 
+Independent local startup requires MULTICA_LOCAL_DEV=1.
+Default delivery uses existing int; see docs/operations/environment-releases.md.
+
   dev-env.sh up      [--components api,web,daemon,desktop] [--all]
                      [--name N] [--ephemeral] [--ttl HOURS]
   dev-env.sh status  [name] [--json]
@@ -1510,6 +1522,7 @@ Local development environments: named, listable, deletable.
   dev-env.sh destroy [name] [--yes]
   dev-env.sh gc      [--dry-run]
   dev-env.sh exec    [name] -- <command> [args...]
+  dev-env.sh require-local  Check local opt-in without side effects
 
 Components: api (Go backend), web (Next.js), daemon (agent daemon),
 desktop (Electron). Anything selected implies api.
@@ -1523,6 +1536,7 @@ main() {
   local verb="${1:-}"
   [ $# -gt 0 ] && shift || true
   case "$verb" in
+    require-local) require_local_development ;;
     up) cmd_up "$@" ;;
     down) cmd_down "$@" ;;
     status) cmd_status "$@" ;;

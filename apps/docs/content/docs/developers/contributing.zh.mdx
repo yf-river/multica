@@ -5,7 +5,9 @@ description: 配置 Multica 本地开发环境，运行测试，并按仓库约�
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Multica 是 Go backend 与 pnpm monorepo。最简单的本地启动方式是 `make dev`；它会为当前 checkout 准备环境、数据库和 migration，再启动 Web 与 API。
+Multica 是 Go backend 与 pnpm monorepo。日常功能默认完成相关验证、发布现有 `int` 并进行浏览器验收；开始前阅读仓库中的 `docs/operations/environment-releases.md`，核对环境记录。提交、推送和生产发布分别授权。
+
+以下独立本地流程仅在明确需要时使用，通过 `MULTICA_LOCAL_DEV=1` 显式选择；不要把该变量写入环境文件。
 
 ## 环境要求
 
@@ -22,7 +24,7 @@ Multica 是 Go backend 与 pnpm monorepo。最简单的本地启动方式是 `ma
 ```bash
 git clone https://github.com/multica-ai/multica.git
 cd multica
-make dev
+MULTICA_LOCAL_DEV=1 make dev
 ```
 
 主 checkout 会使用 `.env`。文件不存在时，`make dev` 会从 `.env.example` 创建；然后启动共享 PostgreSQL、安装依赖、执行 migration，并运行 API 与 Web。
@@ -43,14 +45,14 @@ API: http://localhost:8080
 ```bash
 git worktree add ../multica-feature -b feat/my-change main
 cd ../multica-feature
-make setup-worktree
-make start-worktree
+MULTICA_LOCAL_DEV=1 make setup-worktree
+MULTICA_LOCAL_DEV=1 make start-worktree
 ```
 
 `make setup-worktree` 会生成 `.env.worktree`，数据库名和端口根据路径确定。再次启动：
 
 ```bash
-make start-worktree
+MULTICA_LOCAL_DEV=1 make start-worktree
 ```
 
 停止当前 worktree 的 Web 与 API：
@@ -59,7 +61,7 @@ make start-worktree
 make stop-worktree
 ```
 
-也可以直接运行 `make dev`，脚本会通过 `.git` 文件识别 worktree 并选择 `.env.worktree`。
+也可以运行 `MULTICA_LOCAL_DEV=1 make dev`，脚本会通过 `.git` 文件识别 worktree 并选择 `.env.worktree`。
 
 <Callout type="info">
 不同 worktree 共用 PostgreSQL 容器，不共用数据库。不要为每个 worktree 启动新的 Compose project；先检查 `.env.worktree` 中的 `POSTGRES_DB`、`PORT` 和 `FRONTEND_PORT`。
@@ -70,8 +72,8 @@ make stop-worktree
 ### 整体流程
 
 ```bash
-make dev # 准备并启动当前 checkout
-make start # 使用已有环境启动 API 与 Web
+MULTICA_LOCAL_DEV=1 make dev # 准备并启动当前 checkout
+MULTICA_LOCAL_DEV=1 make start # 使用已有环境启动 API 与 Web
 make stop # 停止当前 checkout 的进程
 make check # 完整本地验证流程
 make build # 构建 server、CLI 和 migrate 二进制
@@ -81,7 +83,7 @@ make build # 构建 server、CLI 和 migrate 二进制
 
 ```bash
 pnpm install
-pnpm dev:web
+MULTICA_LOCAL_DEV=1 pnpm dev:web
 pnpm build
 pnpm typecheck
 pnpm lint
@@ -93,8 +95,8 @@ pnpm test
 ### Backend
 
 ```bash
-make server
-make daemon
+MULTICA_LOCAL_DEV=1 make server
+MULTICA_LOCAL_DEV=1 make daemon
 make test
 make migrate-up
 make migrate-down
@@ -178,7 +180,7 @@ make check
 ```bash
 make stop
 make db-reset
-make start
+MULTICA_LOCAL_DEV=1 make start
 ```
 
 `make db-reset` 会删除并重建当前 `POSTGRES_DB`，且会拒绝连接远程数据库。操作前检查 `.env` 或 `.env.worktree`，确认目标数据库正确。

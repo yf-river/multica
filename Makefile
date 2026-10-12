@@ -40,6 +40,10 @@ define REQUIRE_ENV
 	fi
 endef
 
+define REQUIRE_LOCAL_DEV
+	@bash scripts/dev-env.sh require-local
+endef
+
 # Self-hosting requires the Docker Compose CLI plugin (`docker compose`).
 # The self-host compose files use compose-spec syntax (top-level `name:`, no
 # `version:`) that the legacy v1 `docker-compose` standalone cannot parse, so we
@@ -70,7 +74,7 @@ endef
 ##@ Help
 
 help: ## Show available make targets and common local workflows
-	@awk 'BEGIN {FS = ":.*## "; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nQuick start:\n  \033[36mmake up\033[0m           Start this checkout'"'"'s environment (C=api,web,daemon)\n  \033[36mmake status\033[0m       Show what is running, and prove it is yours\n  \033[36mmake down\033[0m         Stop it again, keeping the database\n  \033[36mmake check\033[0m        Run the full local verification pipeline\n\nCheckout modes:\n  Main checkout uses \033[36m.env\033[0m\n  Worktrees use \033[36m.env.worktree\033[0m (generate with \033[36mmake worktree-env\033[0m)\n\n"} \
+	@awk 'BEGIN {FS = ":.*## "; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nDefault delivery: existing int (docs/operations/environment-releases.md)\nLocal startup requires an explicit request and MULTICA_LOCAL_DEV=1.\n\nCommands:\n  \033[36mMULTICA_LOCAL_DEV=1 make up\033[0m           Start this checkout'"'"'s environment (C=api,web,daemon)\n  \033[36mmake status\033[0m       Show what is running, and prove it is yours\n  \033[36mmake down\033[0m         Stop it again, keeping the database\n  \033[36mmake check\033[0m        Run the full local verification pipeline\n\nCheckout modes:\n  Main checkout uses \033[36m.env\033[0m\n  Worktrees use \033[36m.env.worktree\033[0m (generate with \033[36mmake worktree-env\033[0m)\n\n"} \
 		/^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5); next} \
 		/^[a-zA-Z0-9_.-]+:.*## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
@@ -152,9 +156,9 @@ selfhost-stop: ## Stop the self-hosted Docker Compose stack
 # One verb per lifecycle step, shared by humans and agents. C= picks the
 # components; ARGS= forwards anything else to the script.
 #
-#   make up                     api + web
-#   make up C=api,web,daemon    add the agent daemon
-#   make up ARGS=--ephemeral    agent-owned, expires, collected by `make gc`
+#   MULTICA_LOCAL_DEV=1 make up                  独立本地 api + web
+#   MULTICA_LOCAL_DEV=1 make up C=api,web,daemon  选择组件
+#   MULTICA_LOCAL_DEV=1 make up ARGS=--ephemeral 临时独立环境
 
 up: ## Start this checkout's environment (C=api,web,daemon; default api,web)
 	@bash scripts/dev-env.sh up $(if $(C),--components $(C)) $(ARGS)
@@ -183,15 +187,18 @@ env-exec: ## Run a command with this environment's variables
 # The commit ldflag is what makes /health's identity useful: without it every
 # environment reports "unknown" and cannot prove which revision it is serving.
 api-dev: ## Run only the Go backend for the current env file
+	$(REQUIRE_LOCAL_DEV)
 	cd server && go run -ldflags "-X main.commit=$(COMMIT)" ./cmd/server
 
 web-dev: ## Run only the Next.js dev server for the current env file
+	$(REQUIRE_LOCAL_DEV)
 	pnpm dev:web
 
 # ---------- One-click commands ----------
 ##@ One-click
 
 setup: ## Prepare the current checkout from its env file: install deps, ensure DB, run migrations
+	$(REQUIRE_LOCAL_DEV)
 	$(REQUIRE_ENV)
 	@echo "==> Using env file: $(ENV_FILE)"
 	@echo "==> Installing dependencies..."
@@ -203,6 +210,7 @@ setup: ## Prepare the current checkout from its env file: install deps, ensure D
 	@echo "✓ Setup complete! Run 'make start' to launch the app."
 
 start: ## Start backend and frontend for the current checkout and run migrations first
+	$(REQUIRE_LOCAL_DEV)
 	$(REQUIRE_ENV)
 	@echo "Using env file: $(ENV_FILE)"
 	@echo "Backend: http://localhost:$(PORT)"
@@ -265,6 +273,7 @@ db-reset: ## Drop and recreate the current env's database, then re-run all migra
 	@echo "✓ Database '$(POSTGRES_DB)' reset. Run 'make start' to launch the app."
 
 worktree-env: ## Generate .env.worktree with a unique DB name and app ports for this worktree
+	$(REQUIRE_LOCAL_DEV)
 	@bash scripts/init-worktree-env.sh .env.worktree
 
 setup-main: ## Prepare the main checkout using .env
@@ -280,6 +289,7 @@ check-main: ## Run the full verification pipeline for the main checkout
 	@ENV_FILE=$(MAIN_ENV_FILE) bash scripts/check.sh
 
 setup-worktree: ## Ensure .env.worktree exists, then prepare this worktree
+	$(REQUIRE_LOCAL_DEV)
 	@if [ ! -f "$(WORKTREE_ENV_FILE)" ]; then \
 		echo "==> Generating $(WORKTREE_ENV_FILE) with unique ports..."; \
 		bash scripts/init-worktree-env.sh $(WORKTREE_ENV_FILE); \
@@ -307,11 +317,13 @@ dev: ## Bootstrap this checkout end-to-end: create env if needed, ensure DB, mig
 	@bash scripts/dev.sh
 
 server: ## Run only the Go server for the current checkout
+	$(REQUIRE_LOCAL_DEV)
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
 	cd server && go run ./cmd/server
 
 daemon: ## Restart the local agent daemon using the CLI's stored auth/session
+	$(REQUIRE_LOCAL_DEV)
 	@$(MAKE) multica MULTICA_ARGS="daemon restart --profile local"
 
 cli: ## Run the multica CLI with ARGS or MULTICA_ARGS from source
