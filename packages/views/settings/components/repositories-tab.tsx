@@ -124,6 +124,10 @@ function repositoryDisplayName(repository: WorkspaceRepo): string {
   return path.split("/").at(-1) || path;
 }
 
+function repositoryIsArchived(repository: WorkspaceRepo): boolean {
+  return (repository as WorkspaceRepo & { archived?: boolean }).archived === true;
+}
+
 /**
  * 「代码仓库」设置标签页：展示并编辑当前工作区的仓库列表，支持手动添加/删除、
  * 从已安装的 GitHub App 中搜索勾选批量导入、以及探活后导入工蜂仓库；改动自动保存。
@@ -512,7 +516,7 @@ export function RepositoriesTab() {
             >
               <div className="flex min-w-0 items-center gap-2">
                 <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-surface-border bg-surface-hover text-muted-foreground">{provider === "github" ? <GitHubMark className="size-4" /> : <GitBranch className="size-4" />}</span>
-                <button type="button" className="min-w-0 text-left" onClick={() => setDetailIndex(index)}><span className="flex flex-wrap items-center gap-2 text-body font-medium"><span className="truncate">{repositoryDisplayName(repository)}</span>{repository.archived ? <Badge variant="outline">已归档</Badge> : null}</span><span className="block truncate text-caption text-muted-foreground">{repositoryDisplayPath(repository)} · {provider === "github" ? "GitHub" : provider === "gongfeng" ? "工蜂" : "Git"}</span></button>
+                <button type="button" className="min-w-0 text-left" onClick={() => setDetailIndex(index)}><span className="flex flex-wrap items-center gap-2 text-body font-medium"><span className="truncate">{repositoryDisplayName(repository)}</span>{repositoryIsArchived(repository) ? <Badge variant="outline">已归档</Badge> : null}</span><span className="block truncate text-caption text-muted-foreground">{repositoryDisplayPath(repository)} · {provider === "github" ? "GitHub" : provider === "gongfeng" ? "工蜂" : "Git"}</span></button>
               </div>
               <div className="min-w-0 lg:row-start-1 lg:col-start-2"><p className="flex items-center gap-1 truncate text-caption"><GitBranch className="size-3.5 text-muted-foreground" />{repository.default_branch || "未验证"}</p></div>
               <div className="min-w-0 lg:row-start-1 lg:col-start-3"><p className={`flex items-center gap-1.5 text-caption ${status === "connected" ? "text-success" : status === "failed" ? "text-destructive" : "text-warning"}`}><span className="size-1.5 rounded-full bg-current" />{status === "connected" ? "连接正常" : status === "failed" ? "连接失败" : "待验证"}</p><p className="truncate text-caption text-muted-foreground">{repository.last_tested_at || "尚未验证"}</p></div>
