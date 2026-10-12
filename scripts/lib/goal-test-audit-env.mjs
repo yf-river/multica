@@ -5,13 +5,15 @@ import process from 'node:process';
 export const repoRoot = path.resolve(process.env.MULTICA_RELEASE_ROOT || path.join(import.meta.dirname, '../..'));
 
 export function loadProductionDeployment() {
-  return JSON.parse(readFileSync(path.join(repoRoot, '.run/deployments/goal-test-prod.json'), 'utf8'));
+  const environment = process.env.GOAL_TEST_ENV === 'int' ? 'int' : 'prod';
+  return JSON.parse(readFileSync(path.join(repoRoot, `.run/deployments/goal-test-${environment}.json`), 'utf8'));
 }
 
 export function loadGoalTestEnv() {
   const deployment = loadProductionDeployment();
   const config = JSON.parse(readFileSync(deployment.runtime_config_file || path.join(repoRoot, '.run/env/prod-services.json'), 'utf8'));
-  return { ...process.env, ...config.server, ...config.web, GOAL_TEST_ENV: 'prod',
+  const environment = process.env.GOAL_TEST_ENV === 'int' ? 'int' : 'prod';
+  return { ...process.env, ...config.server, ...config.web, GOAL_TEST_ENV: environment,
     FRONTEND_ORIGIN: deployment.frontend_url, FRONTEND_PORT: deployment.frontend_port,
     REMOTE_API_URL: deployment.backend_url };
 }

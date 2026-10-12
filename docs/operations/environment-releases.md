@@ -1,65 +1,50 @@
-# 单套生产环境发布
+# 联调验收与生产自动晋级
 
-现有 prod 是唯一常驻实例。地址、进程、版本从 `.run/deployments/goal-test-prod.json` 读取，私有配置真源为 `.run/env/prod-services.json`。数据库、账号、密钥、上传文件、Daemon profile 和会话属于生产，发布不复制其他环境的数据，不初始化账号，不修改已安装版本。历史路径和 `prod` Cookie 标识无需迁移。
+`int` 是小队代码交付的固定联调环境，`prod` 是真实生产环境。两套环境使用独立数据库、账号、Cookie、上传目录、Daemon profile、工作目录和端口。小队任务只能提交发布请求；外部 publisher 等待任务自然完成后，先部署 int，完成完整证据验收，再自动把同一个不可变 release 提升到 prod。
 
-## 日常操作
+## 日常流程
 
 ```bash
 pnpm release build
 pnpm release request <release-id>
-pnpm release request-status <request-id>
-pnpm release status
+pnpm release request-status <release-id>
 pnpm release verify
-pnpm release verify-logs
-pnpm verify:release
-pnpm release rollback
-pnpm release backup
+pnpm release verify-logs --env int
+pnpm release verify-logs --env prod
 ```
 
-Makefile 提供对应的 `release-build`、`release-request RELEASE=<id>`、`release-status REQUEST=<id>`、`release-verify`、`release-logs`、`release-rollback` 和 `release-backup`。
+发布状态会持久保存。`request` 立即返回，任务不能同步等待自身发布。publisher 的顺序固定为：等待任务自然完成、部署 int、浏览器/API/WebSocket/真实任务验收、写入完整 int 证据、部署 prod、生产验收、观察窗口。int 失败不会触碰 prod；prod 启动或验收失败会切回上一份已验收包。
 
-普通开发先完成相关检查；生产发布、提交和推送按用户授权执行。单机实例发布与公开 CLI 发版独立，不要求 main 合并、公开 tag 或 Homebrew 发布。int 操作明确报错，不创建环境、不转发生产。
+## 生产晋级证据
 
-## 构建、切换与自更新
+晋级必须同时具备同一 `release_id` 和 `source_digest` 的：任务自然完成记录、部署身份与进程归属、API 和 WebSocket、认证与 CSRF、主要页面和 390px 页面、真实 Agent 任务终态、工作目录与产物、零致命日志、数据库隔离和浏览器证据。健康接口 200、代码修改完成或发布请求已提交都不能单独触发晋级。
 
-- 构建收集已跟踪修改及未忽略文件，需先检查快照范围。源码快照放在 `.run/build/<id>`，包放在 `.run/artifacts/<id>`；版本同时记录 Git SHA 和源码摘要，包内文件有校验摘要。构建期间服务继续使用安装目录。
-- `request` 持久化到 `.run/publish-requests/<id>.json`，通过 systemd 启动独立的发布进程，执行代码复制到 `.run/publisher/`。请求立即返回，Multica 内的任务应随后正常结束，不同步轮询等自己发布完成。
-- 请求状态为 queued、running、succeeded、failed 或 rolled_back；结果跨应用重启保存。相同版本重复请求复用原请求，不并行重启。失败后显式使用 `request <id> --retry`；失去最终结果的外部进程由状态检查标为失败，不声称成功。
-- 外部发布进程使用发布锁，暂停新认领，等待已有任务与在途认领全部结束，再切换 Web、Server 和 Daemon。默认等待 900 秒，可用 `--timeout <seconds>` 指定；超时恢复接单，任务不被取消。排队任务在更新后继续处理。
-- 任务外可以执行 `pnpm release deploy <id>`，同步完成切换及浏览器验收；任务内只允许 request。已运行同版本不重启，但仍验收。
-- 启动失败尝试恢复旧程序与运行配置。启动成功而浏览器验收失败时，发布进程切回发布前版本并再次验收；恢复失败会明确报错。回滚依赖生产当前/上一版本及对应不可变包，不能删除这些包。
-- 安装目录为 `.run/releases/prod/<id>`。现有配置、上传、状态、任务目录和 Daemon profile 沿用部署记录，不随发布替换。新版本不会改动孤儿任务恢复、重试和工作目录接续规则。
+证据写入 `.run/evidence/int-release/<release-id>/`，publisher 校验后写入 `promotion.json`。证据缺字段、对应错误版本、任务取消/超时、环境串线或浏览器失败请求都会停止流程。
 
-## 数据库与备份
+## int 数据与重置
 
-发布命令不执行数据库迁移。迁移须核对真实台账差异、向前/向后兼容性并先备份，不能重放未经审核的历史迁移。程序回滚不撤销数据库变更。
+int 使用固定测试账号、工作区、Agent、Squad 和任务种子。需要恢复干净状态时运行：
 
-`backup` 将生产数据库导出为 `.run/backups/prod-<UTC>.dump`，权限 0600，使用本机 pg_dump 或按实际端口唯一识别的 PostgreSQL 容器。备份和凭证不提交 Git。重要文件同时备份部署记录所指向的上传目录；数据库备份不包含原始文件。
+```bash
+pnpm release reset --env int
+```
 
-恢复时暂停生产认领并等任务结束，停止应用，确认目标服务器和数据库，使用与备份兼容的 pg_restore 将备份恢复到明确指定的空恢复数据库，核对内容后再进行经授权的数据切换；不要直接对运行中的生产执行 `pg_restore --clean`。数据库、上传原件和应用版本应相互匹配。恢复属于独立的高风险操作，不由日常发布自动执行。
+reset 只允许操作 int 数据库，执行迁移、写入固定种子并重新验证环境身份；不得复制生产用户数据或上传原件。验收创建的临时记录由验收脚本清理。
 
-## 验收与临时测试
+## 故障恢复
 
-`verify` 检查实际进程归属、配置、API 身份及 Daemon 绑定；`verify-logs` 检查本次发布日志的致命错误。浏览器验收使用现有 profile 身份，或者明确提供 `MULTICA_TEST_ACCOUNT`、`MULTICA_TEST_PASSWORD`，检查刷新、主要入口、已有聊天与报告原件、CSRF 和 390px 侧栏；缺少既有聊天、Mika 或报告的场景单独报告证据缺口，不制造用户数据来冒充覆盖。
+发布器使用环境锁、Daemon drain、不可变安装目录和上一版本包。启动失败、浏览器验收失败或观察窗口失败时自动回滚并保存证据。独立 systemd watchdog 定期检查 prod 进程、健康接口和 release 身份，发现发布后崩溃时直接暂停认领并执行回滚，不依赖 Multica API 或任务入口。
 
-独立测试环境须明确授权并在启动命令上设置 `MULTICA_LOCAL_DEV=1`，不写入环境文件。数据库故障实验另外要求 `MULTICA_TEST_ENV_FILE` 和 `MULTICA_TEST_DEPLOYMENT_PATH`，拒绝生产数据库。临时环境不是发布前置条件，结束后只清理本次创建的明确资源。
+数据库迁移发布前自动备份并先在 int 执行。程序回滚不撤销数据库结构和已经写入的数据；迁移失败或数据影响需要根据保存的备份和台账人工补救。
 
-通用 Playwright 造数测试使用明确授权的临时环境，不通过测试登录重写生产姓名或创建测试账号；生产日常浏览器验收使用 `pnpm verify:release`。性能工具从生产部署记录读取地址、版本和现有身份，故障实验须显式隔离。
+## 关键入口
 
-## int 清理
-
-一次性迁移工具 `node scripts/retire-integration.mjs` 先核对资源并输出精确清单，`--execute` 在生产验收已有证据后执行。它等待 int 任务结束，验证进程归属，删除 int 专属数据库、配置、上传、状态、干净任务目录、安装目录及自动启动服务；共享数据库角色、生产当前/上一版本包及共享构建快照保留。任务目录存在未提交工作或归属不清则拒绝清理。该工具没有初始化或重建 int 的能力，完成后不会成为发布依赖。
-
-## 受影响入口对账
-
-| 真源 | 消费者与职责 |
+| 真源 | 职责 |
 | --- | --- |
-| `scripts/release-environments.py` | Node 操作入口、pnpm release、Makefile release-*；构建、发布请求、切换、回滚、备份、状态及日志 |
-| `scripts/lib/goal-test-audit-env.mjs` | 浏览器认证辅助、菜单性能测量与回归、工作台点击审计；读取现有生产记录，无 int 默认值 |
-| `scripts/verify-release-browser.mjs` | 外部发布进程及人工验收入口；真实浏览器、已有身份、主要页面与窄屏 |
-| 开发启动保护与 E2E 环境入口 | Makefile、Web dev、dev.sh、通用 TestApiClient；明确选择临时环境，防止测试登录修改生产资料 |
-| 故障与专项工具 | 生活数据故障测试、四象限浏览器测试、烹饪限定迁移；生产归属或显式隔离及审核 |
-| 仓库与开发者说明 | AGENTS、CLAUDE、README、CONTRIBUTING、开发者中文文档及生活模块运维说明；单实例交付与公开发版分离 |
-| int 一次性清理 | 实际数据库、路径、进程及 systemd 开机入口；共享资源不删，完成后无日常消费者 |
+| `scripts/release-environments.py` | 构建、双环境部署、发布请求、证据门禁、回滚、备份 |
+| `scripts/verify-integration-release.mjs` | 校验 int 任务完成、浏览器证据、日志和晋级资格 |
+| `scripts/verify-release-browser.mjs` | 按 `GOAL_TEST_ENV=int|prod` 验收真实浏览器 |
+| `scripts/release-watchdog.mjs` | 独立检查 prod 并自动回滚 |
+| `ops/multica-release-watchdog.*` | watchdog 的 systemd service/timer 模板 |
 
-性能报告中旧测量的联调版本、隔离实验和样本说明属于历史证据，不能改成生产实测；新测量工具使用当前部署记录。
+缺少 int 配置时停止并报告阻塞，不把 prod 当联调环境，也不创建第三套预览环境。

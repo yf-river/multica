@@ -22,7 +22,8 @@ const read = async (url, workspace) => {
 };
 try {
   const config = await read('/api/config');
-  if (config.environment_id !== 'prod') throw Error('wrong environment identity');
+  const environment = process.env.GOAL_TEST_ENV === 'int' ? 'int' : 'prod';
+  if (config.environment_id !== environment) throw Error('wrong environment identity');
   const me = await read('/api/me');
   const workspaces = await read('/api/workspaces');
   if (!workspaces.length) throw Error('requires existing production workspace');
@@ -35,7 +36,7 @@ try {
       const response = await page.goto(`${base}/${workspace.slug}/${route}`, { waitUntil: 'networkidle' });
       if (!response?.ok()) throw Error(`${route}: ${response?.status()}`);
       await expect(page.locator('[data-slot="sidebar-inset"]')).toBeVisible();
-      await expect(page.getByText('联调环境', { exact: true })).toHaveCount(0);
+      if (process.env.GOAL_TEST_ENV !== 'int') await expect(page.getByText('联调环境', { exact: true })).toHaveCount(0);
     }
     await page.reload({ waitUntil: 'networkidle' });
     if ((await read('/api/me')).id !== me.id) throw Error('identity changed after refresh');
@@ -74,10 +75,10 @@ try {
   }
   const workspace = workspaces[0];
   const cookies = await context.cookies(base);
-  const csrf = cookies.find(item => item.name === 'multica_csrf_prod')?.value;
+  const csrf = cookies.find(item => item.name === `multica_csrf_${environment}`)?.value;
   const patch = await context.request.patch(base + '/api/me', { headers: { 'X-CSRF-Token': csrf }, data: { name: me.name } });
   if (!patch.ok()) throw Error(`CSRF authenticated write: ${patch.status()}`);
-  checks.push('production cookie authentication and CSRF');
+  checks.push(`${environment} cookie authentication and CSRF`);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${base}/${workspace.slug}/health`, { waitUntil: 'networkidle' });
   if (!await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)) throw Error('390px overflow');
@@ -85,9 +86,9 @@ try {
   await expect(page.getByRole('link', { name: '饮食', exact: true })).toBeVisible();
   checks.push('390px health and sidebar');
   if (errors.length || failures.length) throw Error(JSON.stringify({ page_errors: errors.length, failed_requests: failures }));
-  const directory = path.join(repoRoot, '.run/evidence/production-release', deployment.release_id);
+  const directory = path.join(repoRoot, `.run/evidence/${environment}-release`, deployment.release_id);
   fs.mkdirSync(directory, { recursive: true });
-  const evidence = { release_id: deployment.release_id, environment: 'prod', checks, unavailable, page_errors: 0, failed_requests: 0 };
+  const evidence = { release_id: deployment.release_id, environment, checks, unavailable, page_errors: 0, failed_requests: 0 };
   fs.writeFileSync(path.join(directory, 'browser.json'), JSON.stringify(evidence, null, 2), { mode: 0o600 });
   console.log(JSON.stringify(evidence));
 } finally { await browser.close(); }

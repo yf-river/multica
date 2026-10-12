@@ -58,7 +58,8 @@ CLEAN_ENV=(env
   -u MULTICA_DAEMON_PORT -u MULTICA_AGENT_ID -u MULTICA_AGENT_NAME
   -u MULTICA_TASK_ID -u MULTICA_TASK_SLOT
   -u MULTICA_TASK_CONFIG_ROOT -u MULTICA_TASK_WORKSPACES_ROOT
-  -u MULTICA_WORKSPACES_ROOT)
+  -u MULTICA_WORKSPACES_ROOT
+  MULTICA_LOCAL_DEV=1)
 
 # ---------------------------------------------------------------- output ----
 
@@ -641,7 +642,7 @@ start_web() {
       die "Port $FRONTEND_PORT is busy: $(describe_port_owner "$FRONTEND_PORT"). Run 'make down' here first."
     fi
   else
-    launch_detached web make -C "$REPO_ROOT" -s web-dev ENV_FILE="$ENV_FILE"
+    launch_detached web env MULTICA_LOCAL_DEV=1 make -C "$REPO_ROOT" -s web-dev ENV_FILE="$ENV_FILE"
     info "web launching (pid $(cat "$(pid_file web)")), log: $(log_file web)"
   fi
 

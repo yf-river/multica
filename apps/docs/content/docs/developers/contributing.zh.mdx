@@ -5,7 +5,7 @@ description: 配置 Multica 本地开发环境，运行测试，并按仓库约�
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Multica 是 Go backend 与 pnpm monorepo。日常功能默认完成相关验证、在获得发布授权后升级现有 `prod` 并进行浏览器验收；开始前阅读仓库中的 `docs/operations/environment-releases.md`，核对环境记录。提交、推送和生产发布分别授权。
+Multica 是 Go backend 与 pnpm monorepo。日常功能先在独立 `int` 联调环境完成相关验证和浏览器验收，证据完整后由外部 publisher 自动提升同一版本到 `prod`；开始前阅读仓库中的 `docs/operations/environment-releases.md`，核对环境记录。任务内只提交发布请求，不同步等待发布结果。
 
 以下独立本地流程仅在明确需要时使用，通过 `MULTICA_LOCAL_DEV=1` 显式选择；不要把该变量写入环境文件。
 

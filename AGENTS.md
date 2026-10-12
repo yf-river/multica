@@ -12,11 +12,13 @@ This file provides guidance to AI agents when working with code in this reposito
 
 ### Default Development Delivery
 
-Ordinary feature requests include implementation, focused checks, deployment to the existing **prod** environment when authorized, and real browser acceptance. Read `CLAUDE.md` and `docs/operations/environment-releases.md` before choosing an environment or starting services. Read addresses and identity from current deployment records and private runtime configuration; do not create another preview by default.
+Ordinary feature requests include implementation, focused checks, deployment to the existing **int** environment, complete evidence, automatic promotion of the same release to **prod**, and real browser acceptance. Read `CLAUDE.md` and `docs/operations/environment-releases.md` before choosing an environment or starting services. Read addresses and identity from current deployment records and private runtime configuration; do not create another preview by default.
 
 Independent local environments require an explicit user request and `MULTICA_LOCAL_DEV=1` for that command. Commit, push, production deployment, and database deletion remain separately authorized actions. Explicit requests for analysis only, local changes only, or no deployment override the default delivery scope.
 
 When an authorized deployment originates inside a Multica task, use `pnpm release request <release-id>` and finish the task normally. The independent publisher waits for tasks to finish; never synchronously wait for the publication from that same task. Inspect its persistent result with `pnpm release request-status <request-id>` outside the initiating task.
+
+The publisher deploys the requested release to int first. Production promotion requires the task to have completed naturally and the persisted int evidence to include deployment identity, browser/API/WebSocket checks, real task completion, artifacts, workspace handoff, and zero fatal logs. A task completion or health response alone is not production evidence.
 
 ### Architecture
 
@@ -56,7 +58,7 @@ Current delivery scope is Web + Server + Daemon + PostgreSQL + Agent Runtime. De
 ### Commands
 
 ```bash
-node scripts/goal-test-environments.mjs verify  # Inspect the existing production instance
+node scripts/goal-test-environments.mjs verify  # Inspect isolated int and production
 pnpm typecheck        # TypeScript check
 pnpm test             # TS unit tests (Vitest)
 make test             # Go tests

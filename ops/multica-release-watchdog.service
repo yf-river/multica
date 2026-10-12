@@ -1,0 +1,8 @@
+[Unit]
+Description=Multica production release watchdog
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/data/ida/multica
+ExecStart=/usr/bin/node /data/ida/multica/scripts/release-watchdog.mjs

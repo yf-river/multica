@@ -18,7 +18,7 @@ class ReleaseTests(unittest.TestCase):
             r.relocate_dependency_links(stage,source)
             self.assertEqual(link.resolve(),stage/'packages/core')
 
-    def test_production_configuration_is_verified_without_int(self):
+    def test_both_environments_are_required_for_isolation(self):
         original=r.RUN
         with tempfile.TemporaryDirectory() as d:
             r.RUN=Path(d)
@@ -28,7 +28,8 @@ class ReleaseTests(unittest.TestCase):
                     'web':{'MULTICA_ENV_ID':'prod','PORT':'43','REMOTE_API_URL':'http://127.0.0.1:42'},
                     'daemon':{'MULTICA_ENV_ID':'prod'}},True)
                 before=config.read_bytes()
-                r.isolation_check(config_only=True)
+                with self.assertRaisesRegex(RuntimeError, '缺少 int'):
+                    r.isolation_check(config_only=True)
                 self.assertEqual(config.read_bytes(),before)
                 self.assertEqual(config.stat().st_mode&0o777,0o600)
             finally:r.RUN=original
@@ -58,8 +59,8 @@ class ReleaseTests(unittest.TestCase):
                     with r.lock('prod'):pass
             finally:r.RUN=original
 
-    def test_disabled_int_and_task_synchronous_deploy_are_rejected(self):
-        with self.assertRaisesRegex(RuntimeError,'int 已停用'): r.deploy('int','version')
+    def test_int_is_supported_and_task_synchronous_deploy_is_rejected(self):
+        with self.assertRaises(FileNotFoundError): r.deploy('int','version')
         with patch.dict(r.os.environ,{'MULTICA_TASK_ID':'task'}):
             with self.assertRaisesRegex(RuntimeError,'request'): r.deploy('prod','version')
 
@@ -110,7 +111,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_business_failure_restores_exact_previous_program(self):
         with patch.object(r,'read',return_value={'release_id':'old'}),patch.object(r,'deploy') as deploy,patch.object(r,'verify_browser',side_effect=[RuntimeError('bad page'),None]):
-            with self.assertRaisesRegex(RuntimeError,'数据库未回滚'):r.publish('new')
+            with self.assertRaisesRegex(RuntimeError,'数据库未回滚'):r.publish('prod','new')
             self.assertEqual(deploy.call_args_list[0].args,('prod','new',900))
             self.assertEqual(deploy.call_args_list[1].args,('prod','old',900))
 

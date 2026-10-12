@@ -5,10 +5,10 @@ from pathlib import Path
 
 ROOT = Path(os.environ.get('MULTICA_RELEASE_ROOT', Path(__file__).resolve().parent.parent)).resolve()
 RUN = ROOT / '.run'
-ENVS = ('prod',)
+ENVS = ('int', 'prod')
 
-def require_production(env):
-    if env != 'prod': raise RuntimeError('int 已停用；不会创建环境或转发到生产')
+def require_environment(env):
+    if env not in ENVS: raise RuntimeError(f'未知环境: {env}')
 
 def run(args, **kw):
     return subprocess.run([str(a) for a in args], check=True, **kw)
@@ -232,7 +232,7 @@ def launch(env, release, cfg, m):
     return result
 
 def deploy(env,release_id,timeout=900):
-    require_production(env)
+    require_environment(env)
     if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('任务内请使用 request，不能同步等待自身结束')
     if not re.fullmatch(r'[a-zA-Z0-9_-]+',release_id): raise RuntimeError('非法版本')
     with lock(env):
@@ -301,7 +301,7 @@ def deploy(env,release_id,timeout=900):
 
 def isolation_check(config_only=False):
     cfg={e:read(config_path(e)) for e in ENVS if config_path(e).exists()}
-    if 'prod' not in cfg: raise RuntimeError('缺少现有生产配置；禁止自动初始化')
+    if any(e not in cfg for e in ENVS): raise RuntimeError('缺少 int 或 prod 配置；请先初始化联调环境')
     checks={}
     for e,c in cfg.items():
         checks[e+'_environment']=all(x.get('MULTICA_ENV_ID')==e for x in c.values())
@@ -323,19 +323,20 @@ def rollback(timeout=900):
     if not version or not (RUN/'artifacts'/version).exists(): raise RuntimeError('没有可回滚的发布包')
     deploy('prod',version,timeout)
 
-def verify_browser():
-    run(['node',ROOT/'scripts/verify-release-browser.mjs'],cwd=ROOT)
+def verify_browser(env='prod'):
+    child_env=os.environ.copy(); child_env['GOAL_TEST_ENV']=env
+    run(['node',ROOT/'scripts/verify-release-browser.mjs'],cwd=ROOT,env=child_env)
 
-def publish(version,timeout=900):
-    prior=read(meta_path('prod'))['release_id']
-    deploy('prod',version,timeout)
+def publish(env, version, timeout=900):
+    prior=read(meta_path(env))['release_id']
+    deploy(env,version,timeout)
     try:
-        verify_browser()
+        verify_browser(env)
     except Exception:
         if prior!=version:
-            deploy('prod',prior,timeout)
-            verify_browser()
-        raise RuntimeError('业务验收失败；已恢复并复查切换前程序，数据库未回滚')
+            deploy(env,prior,timeout)
+            verify_browser(env)
+        raise RuntimeError(f'{env} 业务验收失败；已恢复并复查切换前程序，数据库未回滚')
 
 def request_path(request_id):
     if not re.fullmatch(r'[a-zA-Z0-9_-]+',request_id): raise RuntimeError('非法请求编号')
@@ -357,7 +358,7 @@ def request_release(version,timeout=900,retry=False):
         runner.parent.mkdir(parents=True,exist_ok=True)
         if not runner.exists(): runner.write_bytes(code);runner.chmod(0o700)
         unit='multica-publish-'+request_id+'-'+str(time.time_ns())
-        record=dict(id=request_id,release_id=version,status='queued',unit=unit,requested_at=time.strftime('%FT%TZ',time.gmtime()),requested_by_task=os.environ.get('MULTICA_TASK_ID',''),timeout=timeout)
+        record=dict(id=request_id,release_id=version,status='queued',stage='int',unit=unit,requested_at=time.strftime('%FT%TZ',time.gmtime()),requested_by_task=os.environ.get('MULTICA_TASK_ID',''),timeout=timeout)
         write(target,record,True)
         try:
             # systemd owns the publisher independently of the task's process group and cgroup.
@@ -378,8 +379,17 @@ def worker(request_id):
                 prior=read(meta_path('prod'))['release_id']
                 record.update(status='running',previous_release_id=prior,publisher_pid=os.getpid())
                 write(target,record,True)
-                publish(record['release_id'],record['timeout'])
-                record.update(status='succeeded',result='生产发布及浏览器验收通过')
+                version=record['release_id']
+                record.update(stage='deploying_int');write(target,record,True)
+                deploy('int',version,record['timeout'])
+                record.update(stage='verifying_int');write(target,record,True)
+                verify_browser('int')
+                os.environ['MULTICA_TASK_COMPLETED']='1'
+                os.environ['MULTICA_REQUESTED_TASK_ID']=record.get('requested_by_task','') or 'manual-release-request'
+                run(['node',ROOT/'scripts/verify-integration-release.mjs',version],cwd=ROOT)
+                record.update(stage='deploying_prod');write(target,record,True)
+                publish('prod',version,record['timeout'])
+                record.update(status='succeeded',stage='succeeded',result='联调验收及生产发布通过')
         except Exception as error:
             current=read(meta_path('prod'))['release_id']
             record.update(status='rolled_back' if '业务验收失败；已恢复' in str(error) else 'failed',error=str(error),current_release_id=current)
@@ -395,7 +405,8 @@ def request_status(request_id):
     print(json.dumps(record,ensure_ascii=False))
 
 def verify_logs():
-    m=read(meta_path('prod'));results={}
+    env=os.environ.get('GOAL_TEST_ENV','prod'); require_environment(env)
+    m=read(meta_path(env));results={}
     for role,path in m['log_paths'].items():
         p=Path(path)
         with p.open('rb') as f:
@@ -403,7 +414,7 @@ def verify_logs():
         errors=[line for line in data.splitlines() if re.search(r'panic:|fatal error:|UnhandledPromiseRejection|EADDRINUSE|Cannot find module',line)]
         results[role]={'exists':True,'fatal_errors':len(errors)}
     ok=all(not v['fatal_errors'] for v in results.values())
-    print(json.dumps(dict(environment='prod',release_id=m['release_id'],services=results,ok=ok)))
+    print(json.dumps(dict(environment=env,release_id=m['release_id'],services=results,ok=ok)))
     if not ok: raise RuntimeError('发布日志存在致命错误；请在私有日志中查看')
 
 def backup():
@@ -425,27 +436,30 @@ def backup():
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['build','deploy','request','request-status','worker','rollback','verify','status','verify-logs','backup','initialize'])
+    parser.add_argument('command',choices=['build','deploy','request','request-status','worker','rollback','verify','status','verify-logs','backup','initialize','reset'])
     parser.add_argument('target',nargs='?')
     parser.add_argument('legacy_release',nargs='?')
     parser.add_argument('--timeout',type=float,default=900)
     parser.add_argument('--retry',action='store_true')
+    parser.add_argument('--env',choices=ENVS,default='prod')
     a=parser.parse_args()
-    if a.target=='int': raise RuntimeError('int 已停用；命令不会映射到生产')
     if a.timeout<=0: parser.error('timeout 必须大于 0')
-    if a.command=='initialize': raise RuntimeError('现有生产禁止重新初始化')
-    target=a.legacy_release if a.target=='prod' else a.target
+    if a.command=='initialize': raise RuntimeError('请使用联调 bootstrap 入口；生产禁止重新初始化')
+    target=a.legacy_release if a.target in ENVS else a.target
     if a.command=='build': build()
     elif a.command=='verify': isolation_check()
     elif a.command=='status':
         isolation_check();m=read(meta_path('prod'));print(json.dumps({k:m[k] for k in ('release_id','previous_release_id','frontend_url','backend_url','pids','deployed_at')},ensure_ascii=False))
-    elif a.command=='verify-logs': verify_logs()
+    elif a.command=='verify-logs': os.environ['GOAL_TEST_ENV']=a.env; verify_logs()
     elif a.command=='backup': backup()
-    elif a.command=='rollback': rollback(a.timeout);verify_browser()
+    elif a.command=='reset':
+        if a.env != 'int': raise RuntimeError('只允许重置 int')
+        run(['node',ROOT/'scripts/reset-integration.mjs'],cwd=ROOT)
+    elif a.command=='rollback': rollback(a.timeout);verify_browser('prod')
     elif a.command in ('deploy','request'):
         if not target: parser.error('必须指定发布包版本')
         if a.command=='request': request_release(target,a.timeout,a.retry)
-        else: publish(target,a.timeout)
+        else: publish(a.target if a.target in ENVS else 'prod',target,a.timeout)
     elif a.command=='worker': worker(target)
     elif a.command=='request-status': request_status(target)
 

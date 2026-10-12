@@ -34,16 +34,16 @@ The active product is Web, Server, Daemon, PostgreSQL, and Agent Runtime.
 - `apps/desktop/` and `apps/mobile/` are frozen source trees. Keep their source, build, routing, and release files, but do not implement Web feature parity or run and repair their checks unless the user explicitly reactivates that client.
 - Frozen-client compatibility is not a delivery constraint for Web changes. Shared code may evolve for the active Web product even when a frozen client no longer compiles.
 - Root `build`, `typecheck`, `test`, and `lint` commands validate `@multica/web` and its shared dependencies. Use `verify:desktop`, `verify:mobile`, or `verify:clients` only for explicit client reactivation or release work.
-- During development, verify the affected Web, Go, page, or runtime path. Ordinary feature requests include production release when authorized and browser acceptance; broader verification is proportional to risk.
+- During development, verify the affected Web, Go, page, or runtime path. Ordinary feature requests include int integration delivery, complete evidence, automatic promotion to prod, and browser acceptance; broader verification is proportional to risk.
 - A task stops when its declared user flow passes. Unrelated historical failures are tracked separately unless they block login, companion chat, tasks, Agent execution, run reviews, memory governance, data safety, authorization, or recovery.
 
 ## Development Delivery
 
-- Ordinary feature requests include implementation, focused verification, deployment to existing `prod` when authorized, and real browser acceptance. Explicit requests for analysis only, local changes only, or no deployment override this default.
-- Read `docs/operations/environment-releases.md` before choosing an environment or starting services. Current addresses and identity belong to deployment records and private runtime configuration. Missing production configuration is a blocker, not permission to initialize another environment.
+- Ordinary feature requests include implementation, focused verification, deployment to existing `int`, complete evidence, automatic promotion of the same release to `prod`, and real browser acceptance. Explicit requests for analysis only, local changes only, or no deployment override this default.
+- Read `docs/operations/environment-releases.md` before choosing an environment or starting services. Current addresses and identity belong to deployment records and private runtime configuration. Missing int configuration is a blocker, not permission to use prod as a test environment.
 - Only an explicit user request for independent local development permits `MULTICA_LOCAL_DEV=1` on the relevant command. Do not persist this opt-in in environment files.
 - Verify incrementally, then build and deploy one reviewable feature unit, not each small edit. Exclude unrelated dirty work from the source snapshot; use the current production source baseline when isolation is necessary.
-- Use existing release locks, Daemon drain and rollback. Wait for concurrent production releases rather than opening another preview. Do not initialize existing accounts, rotate secrets, reset databases or edit installed releases.
+- Use existing int/prod release locks, Daemon drain and rollback. Wait for concurrent releases rather than opening another preview. Do not use production accounts or data for integration verification, rotate secrets, or edit installed releases.
 - Commit, push, production deployment and database deletion require separate authorization.
 
 ## State Rules
@@ -93,7 +93,7 @@ Mobile is independent. It may import types and pure functions from `@multica/cor
 Use the repo scripts as the source of truth. Common commands:
 
 ```bash
-node scripts/goal-test-environments.mjs verify  # inspect the existing production instance
+node scripts/goal-test-environments.mjs verify  # inspect isolated int and production
 MULTICA_LOCAL_DEV=1 make up C=api,web  # explicitly requested independent local environment
 make status           # what is running, with pid/commit proof it is yours
 make list             # every development environment on this machine

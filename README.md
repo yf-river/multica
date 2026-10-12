@@ -208,7 +208,7 @@ Multica 不自带模型。它驱动的是你本来就装好、登录好的那些
 
 想参与贡献，先看[贡献指南](CONTRIBUTING.md)。
 
-本项目的日常功能交付使用现有 `prod` 单套生产环境，包含相关检查、获授权后的版本发布和浏览器验收；环境记录和流程见[单环境版本发布](docs/operations/environment-releases.md)。提交、推送和生产发布分别授权。
+本项目的日常功能交付先使用独立 `int` 联调环境完成任务和完整证据验收，再由外部 publisher 自动把同一版本提升到 `prod`；环境记录和流程见[联调验收与生产自动晋级](docs/operations/environment-releases.md)。提交、推送和发布请求分别记录，任务内不等待外部发布结果。
 
 下面的独立本地开发入口只在明确需要本地环境时使用，通过 `MULTICA_LOCAL_DEV=1` 显式选择。
 
