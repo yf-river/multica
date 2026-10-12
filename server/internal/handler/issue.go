@@ -108,7 +108,7 @@ type IssueResponse struct {
 
 // validIssuePriorities 与 issue 表上的 CHECK 约束保持一致。写路径先在这里预校验，
 // 让调用方拿到带合法取值列表的 400，而不是让数据库 CHECK 违约以 500 的形式冒上来。
-var validIssuePriorities = []string{"urgent", "high", "medium", "low", "none"}
+var validIssuePriorities = []string{"important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"}
 
 // validIssueStatuses is the 7 BUILT-IN status keys. Since MUL-6243 it is no
 // longer the set of writable statuses — write paths validate against the
@@ -1242,7 +1242,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			sortCol = "CASE i.status WHEN 'backlog' THEN 0 WHEN 'todo' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'in_review' THEN 3 WHEN 'done' THEN 4 WHEN 'blocked' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END"
 			sortIsExpr = true
 		case "priority":
-			sortCol = "CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
+			sortCol = "CASE i.priority WHEN 'important_urgent' THEN 0 WHEN 'important_not_urgent' THEN 1 WHEN 'not_important_urgent' THEN 2 WHEN 'not_important_not_urgent' THEN 3 ELSE 4 END"
 			sortIsExpr = true
 		default:
 			// property:<definitionId> 按自定义属性值（类型化表达式）排序；
@@ -2027,7 +2027,7 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 			sortCol = "CASE i.status WHEN 'backlog' THEN 0 WHEN 'todo' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'in_review' THEN 3 WHEN 'done' THEN 4 WHEN 'blocked' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END"
 			sortIsExpr = true
 		case "priority":
-			sortCol = "CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
+			sortCol = "CASE i.priority WHEN 'important_urgent' THEN 0 WHEN 'important_not_urgent' THEN 1 WHEN 'not_important_urgent' THEN 2 WHEN 'not_important_not_urgent' THEN 3 ELSE 4 END"
 			sortIsExpr = true
 		default:
 			// property:<definitionId> 按自定义属性值（类型化表达式）排序；
@@ -2479,8 +2479,8 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	priority := strings.ToLower(strings.TrimSpace(req.Priority))
-	if priority != "" && priority != "urgent" && priority != "high" && priority != "medium" && priority != "low" {
-		writeError(w, http.StatusBadRequest, "priority must be one of: urgent, high, medium, low")
+	if priority != "" && priority != "important_urgent" && priority != "important_not_urgent" && priority != "not_important_urgent" && priority != "not_important_not_urgent" {
+		writeError(w, http.StatusBadRequest, "priority must be one of: important_urgent, important_not_urgent, not_important_urgent, not_important_not_urgent")
 		return
 	}
 	dueDate := strings.TrimSpace(req.DueDate)
@@ -2645,9 +2645,6 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 
 	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, priority, dueDate, projectUUID, parentIssueUUID, attachmentIDs)
 	if err != nil {
-		if writeIssueLimitReached(w, err) {
-			return
-		}
 		slog.Warn("quick-create enqueue failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to enqueue quick-create task")
 		return
@@ -2812,7 +2809,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	priority := req.Priority
 	if priority == "" {
-		priority = "none"
+		priority = "not_important_not_urgent"
 	}
 	status, ok = h.resolveIssueStatusKey(w, r, wsUUID, status)
 	if !ok {
@@ -3055,9 +3052,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, service.ErrIssueStatusUnavailable) {
 		writeError(w, http.StatusConflict,
 			"the target status was archived while this request was in flight; reload the status list and retry")
-		return
-	}
-	if writeIssueLimitReached(w, err) {
 		return
 	}
 	if err != nil {

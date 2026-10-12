@@ -77,7 +77,7 @@ type PrepareParams struct {
 	CodexVersion string // 探测到的 Codex CLI 版本（仅 Provider == "codex" 时使用）
 	// McpConfig 是 agent 保存的 `mcp_config` JSON。当某个 provider 通过 per-task
 	// 配置文件把 MCP 落地时，这份 JSON 会被转发给对应 provider 的配置准备逻辑。
-	// Cursor、OpenClaw、OMP 在这里消费它；其余 provider 的 MCP 由 agent 后端的
+	// Cursor、OMP 在这里消费它；其余 provider 的 MCP 由 agent 后端的
 	// ExecOptions.McpConfig 接线，不经过这里。
 	McpConfig json.RawMessage
 	// CursorMcpAuthSource 是显式指向 Cursor mcp-auth.json 的路径（或包含该文件
@@ -222,9 +222,9 @@ type TaskContextForEnv struct {
 	InitiatorName  string
 	InitiatorEmail string
 	// Life 字段标识受治理的后台认知任务及其边界上下文。
-	LifeContext string
-	LifeJobID string
-	LifeJobType string
+	LifeContext  string
+	LifeJobID    string
+	LifeJobType  string
 	LifeJobInput string
 }
 

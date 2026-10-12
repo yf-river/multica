@@ -21,7 +21,7 @@ import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
 import { CalendarClock, CalendarDays } from "lucide-react";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PropertyIcon } from "../../common/property-icon";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useIssuePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useLocale, useT, useTimeAgo } from "../../i18n";
 import { ProjectIcon } from "../../projects/components/project-icon";
@@ -348,7 +348,7 @@ export const DraggableBoardCard = memo(function DraggableBoardCard({
   project?: Project;
   disableSorting?: boolean;
 }) {
-  const p = useWorkspacePaths();
+  const p = useIssuePaths(issue);
   const {
     attributes,
     listeners,

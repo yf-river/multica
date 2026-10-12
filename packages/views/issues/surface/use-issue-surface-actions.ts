@@ -4,7 +4,7 @@
 // 等全部封装好，组装成供 actions-context 注入的整组动作，并对失败统一提示。
 import { useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import type { UpdateIssueRequest } from "@multica/core/types";
+import type { Issue, UpdateIssueRequest } from "@multica/core/types";
 import {
   useBatchDeleteIssues,
   useBatchUpdateIssues,
@@ -23,6 +23,7 @@ import { useT } from "../../i18n";
 export type MoveIssueUpdates = Pick<
   UpdateIssueRequest,
   | "status"
+  | "priority"
   | "assignee_type"
   | "assignee_id"
   | "position"
@@ -52,8 +53,10 @@ export interface IssueSurfaceActionController {
  */
 export function useIssueSurfaceActions({
   createDefaults,
+  issues,
 }: {
   createDefaults: IssueCreateDefaults;
+  issues: Issue[];
 }): IssueSurfaceActionController {
   const { t } = useT("projects");
   const { t: tIssues } = useT("issues");
@@ -96,11 +99,14 @@ export function useIssueSurfaceActions({
       onSettled?: () => void,
     ) => {
       const { before_id, after_id, ...optimisticUpdates } = updates;
+      const source = issues.find(issue => issue.id === issueId);
+      const localAnchor = (id: string | null) =>
+        id && issues.find(issue => issue.id === id)?.workspace_id === source?.workspace_id ? id : null;
       updateIssueMutation.mutate(
         {
           id: issueId,
           ...optimisticUpdates,
-          move_intent: { before_id, after_id },
+          move_intent: { before_id: localAnchor(before_id), after_id: localAnchor(after_id) },
         },
         {
           onError: (err) => {
@@ -116,7 +122,7 @@ export function useIssueSurfaceActions({
         },
       );
     },
-    [t, tIssues, updateIssueMutation],
+    [t, tIssues, updateIssueMutation, issues],
   );
 
   const openCreateIssue = useCallback(

@@ -60,7 +60,7 @@ const ISSUE = {
   title: "Ship the thing",
   description: "",
   status: "todo",
-  priority: "medium",
+  priority: "not_important_urgent",
   workspace_id: "workspace-1",
   project_id: null,
   parent_issue_id: null,

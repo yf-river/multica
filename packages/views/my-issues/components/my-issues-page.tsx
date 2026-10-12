@@ -6,6 +6,12 @@
  * 复用 issues 模块的 IssueSurface（board/list/table/swimlane 多种视图）。
  */
 
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { workspaceKeys, workspaceListOptions } from "@multica/core/workspace/queries";
+import { useWorkspaceId } from "@multica/core/hooks";
+import { issueKeys } from "@multica/core/issues/queries";
+import { useWS } from "@multica/core/realtime";
 import { useStore } from "zustand";
 import { ListTodo } from "lucide-react";
 import { useAuthStore } from "@multica/core/auth";
@@ -21,6 +27,25 @@ import { MyIssuesHeader } from "./my-issues-header";
 /** 我的 issue 页主体：把当前用户 + 范围喂给通用的 IssueSurface。 */
 export function MyIssuesPage() {
   const { t } = useT("my-issues");
+  const wsId = useWorkspaceId();
+  const qc = useQueryClient();
+  const { subscribeWorkspace } = useWS();
+  const { data: workspaces = [] } = useQuery(workspaceListOptions());
+  useEffect(() => {
+    const cleanups = workspaces.filter(w => w.id !== wsId).map(w =>
+      subscribeWorkspace(w.slug, message => {
+        if (message.type === "member:removed" || message.type === "workspace:deleted") {
+          qc.invalidateQueries({ queryKey: workspaceKeys.list() });
+          qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
+        }
+        if (message.type.startsWith("issue:") || message.type.startsWith("issue_")) {
+          qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
+        }
+      }),
+    );
+    return () => cleanups.forEach(cleanup => cleanup());
+  }, [workspaces, wsId, qc, subscribeWorkspace]);
+
   const user = useAuthStore((s) => s.user);
   const scope = useStore(myIssuesViewStore, (s) => s.scope);
   const setScope = useStore(myIssuesViewStore, (s) => s.setScope);

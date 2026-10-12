@@ -86,7 +86,6 @@ import { FileUploadButton } from "@multica/ui/components/common/file-upload-butt
 import { useT } from "../i18n";
 import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
-import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
 
 // ActorSelection —— 本次创建的「执行者」：要么是某个 agent，要么是某个小队。
 type ActorSelection =
@@ -139,7 +138,6 @@ export function AgentCreatePanel({
     : undefined;
   const onSourceContextExpandedChange = data?.source_context_on_expanded_change as ((expanded: boolean) => void) | undefined;
   const sourceContextFailureMessage = useSourceContextFailureMessage();
-  const showIssueLimitUpgradePrompt = useIssueLimitUpgradePrompt();
   const userId = useAuthStore((s) => s.user?.id);
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
@@ -336,7 +334,7 @@ export function AgentCreatePanel({
     () => checkQuickCreateFieldsCliVersion(runtimeCliVersion),
     [runtimeCliVersion],
   );
-  const usesExplicitFields = priority !== "none" || dueDate !== null;
+  const usesExplicitFields = priority !== "not_important_not_urgent" || dueDate !== null;
   const versionCheck = usesExplicitFields ? fieldVersionCheck : baseVersionCheck;
   const versionBlocked =
     baseVersionCheck.state !== "ok" ||
@@ -411,7 +409,7 @@ export function AgentCreatePanel({
                 : { squad_id: actor.id }),
               prompt: md,
               project_id: projectId ?? undefined,
-              ...(priority !== "none" ? { priority } : {}),
+              ...(priority !== "not_important_not_urgent" ? { priority } : {}),
               ...(dueDate ? { due_date: dueDate } : {}),
               ...(activeAttachmentIds.length > 0 ? { attachment_ids: activeAttachmentIds } : {}),
             },
@@ -423,7 +421,7 @@ export function AgentCreatePanel({
               : { squad_id: actor.id }),
             prompt: md,
             project_id: projectId ?? undefined,
-            ...(priority !== "none" ? { priority } : {}),
+            ...(priority !== "not_important_not_urgent" ? { priority } : {}),
             ...(dueDate ? { due_date: dueDate } : {}),
             parent_issue_id: parentIssueId,
             ...(activeAttachmentIds.length > 0 ? { attachment_ids: activeAttachmentIds } : {}),
@@ -445,10 +443,6 @@ export function AgentCreatePanel({
             current_version?: string;
             min_version?: string;
           };
-          if (body.code === "issue_limit_reached") {
-            showIssueLimitUpgradePrompt();
-            return false;
-          }
           if (body.code === "agent_unavailable") {
             setError(body.reason || t(($) => $.create_issue.agent.error_agent_unavailable_fallback));
             return false;
@@ -703,7 +697,7 @@ export function AgentCreatePanel({
             />
           )}
           {(visibleFields.includes("priority") ||
-            priority !== "none" ||
+            priority !== "not_important_not_urgent" ||
             fieldPickerOpen === "priority") && (
             <PriorityPicker
               priority={priority}
@@ -753,9 +747,9 @@ export function AgentCreatePanel({
                   {t(($) => $.create_issue.agent.set_project)}
                 </DropdownMenuItem>
               )}
-              {!visibleFields.includes("priority") && priority === "none" && (
+              {!visibleFields.includes("priority") && priority === "not_important_not_urgent" && (
                 <DropdownMenuItem onClick={() => setFieldPickerOpen("priority")}>
-                  <PriorityIcon priority="none" className="size-3.5" />
+                  <PriorityIcon priority="not_important_not_urgent" className="size-3.5" />
                   {t(($) => $.create_issue.agent.set_priority)}
                 </DropdownMenuItem>
               )}

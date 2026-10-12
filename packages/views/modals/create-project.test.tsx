@@ -27,7 +27,7 @@ vi.mock("@multica/core/projects", () => ({
         title: "",
         description: "",
         status: "planned",
-        priority: "medium",
+        priority: "not_important_urgent",
         leadType: undefined,
         leadId: undefined,
         icon: undefined,

@@ -58,6 +58,14 @@ export const HealthObservationSchema = z
     supersedes: o.supersedes,
     measurementGroupId: o.measurement_group_id,
   }));
+export const ComputedBMISchema = z.object({
+  value: z.number().finite().positive(),
+  unit: z.string(),
+  height: HealthObservationSchema,
+  weight: HealthObservationSchema,
+});
+export type ComputedBMI = z.infer<typeof ComputedBMISchema>;
+
 export const HealthOverviewSchema = z
   .object({
     profile: HealthProfileSchema,
@@ -66,8 +74,9 @@ export const HealthOverviewSchema = z
     age: z.number().nullable(),
     observations: z.array(HealthObservationSchema),
     current: z.array(HealthObservationSchema),
+    computed_bmi: ComputedBMISchema.nullable().catch(null).default(null),
   })
-  .transform((p) => ({ ...p, available: true }));
+  .transform(({ computed_bmi, ...p }) => ({ ...p, computedBMI: computed_bmi, available: true }));
 export const HealthResultSchema = z
   .object({
     exam_date: z.string().default(""),
@@ -199,6 +208,7 @@ export const EMPTY_HEALTH: HealthOverview = {
   age: null,
   observations: [],
   current: [],
+  computedBMI: null,
 };
 export function observationWire(o: Partial<HealthObservation>) {
   return {

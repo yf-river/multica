@@ -156,7 +156,7 @@ func runOwned(cmd *exec.Cmd, logger *slog.Logger) error {
 	// 不设上界的话，它会永远等自己的清理、永不返回：继承了输出管道的后代进程在组长退出
 	// 后仍握着管道，cmd.Wait 会一直等到拷贝 goroutine 看到 EOF；而能关掉这些管道的，正
 	// 是 Wait 之后才跑的 release。WaitDelay 天生就是为这个场景定义的——「子进程退出了却
-	// 不关 I/O 管道」——取消也帮不上忙，因为 checkOpenclawVersion 这类探测跑在调用方的
+	// 不关 I/O 管道」——取消也帮不上忙，因为 checkforking CLIVersion 这类探测跑在调用方的
 	// context 上，任何任务超时都还没建立。
 	//
 	// 调用方自己设了上界就保留；detectCLIVersion 自 MUL-3812 起就为这个形状设了。

@@ -35,6 +35,7 @@ function initCore(
   onLogout?: () => void,
   cookieAuth?: boolean,
   identity?: ClientIdentity,
+  environmentId = "",
 ) {
   if (initialized) return;
 
@@ -52,6 +53,7 @@ function initCore(
       storage.removeItem("multica_token");
     },
     identity,
+    environmentId,
   });
   setApiInstance(api);
   setSchemaLogger(createLogger("api-schema"));
@@ -78,6 +80,7 @@ function initCore(
 export function CoreProvider({
   children,
   apiBaseUrl = "",
+  environmentId = "",
   wsUrl = "ws://localhost:8080/ws",
   storage = defaultStorage,
   cookieAuth,
@@ -90,7 +93,7 @@ export function CoreProvider({
   // 只在首次渲染时初始化单例。依赖只读一次：apiBaseUrl、storage 与回调在应用
   // 启动时设定，运行期不变。
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useMemo(() => initCore(apiBaseUrl, storage, onLogin, onLogout, cookieAuth, identity), []);
+  useMemo(() => initCore(apiBaseUrl, storage, onLogin, onLogout, cookieAuth, identity, environmentId), []);
 
   // 仅客户端运行的卡死看门狗。服务端空操作、幂等。
   useEffect(() => {
@@ -107,6 +110,7 @@ export function CoreProvider({
         storage={storage}
         cookieAuth={cookieAuth}
         identity={identity}
+        environmentId={environmentId}
       >
         <ClientUsageReporter storage={storage} identity={identity} />
         <WSProvider

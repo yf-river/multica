@@ -275,7 +275,7 @@ func buildQuickCreatePrompt(task Task) string {
 	if task.QuickCreatePriority != "" {
 		fmt.Fprintf(&b, "- **priority**: required for this run. Pass `--priority %s`; the quick-create selection is authoritative.\n\n", task.QuickCreatePriority)
 	} else {
-		b.WriteString("- **priority**: one of `urgent`, `high`, `medium`, `low`, or omit. Map P0/P1 → urgent/high; \"asap\" → urgent. If unspecified, omit.\n\n")
+		b.WriteString("- **priority**: one of `important_urgent`, `important_not_urgent`, `not_important_urgent`, `not_important_not_urgent`, or omit. Map urgent and important requests to the matching quadrant. If unspecified, omit.\n\n")
 	}
 
 	// assignee

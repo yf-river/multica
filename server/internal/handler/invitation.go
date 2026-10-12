@@ -8,8 +8,8 @@
 // 所以过期的 pending 必须先主动翻成 expired，否则会挡住新邀请。接受邀请与建成员在一个事务
 // 里原子完成，并顺带把被邀请人标记为已完成 onboarding。
 //
-// 容量（seat capacity）联动：创建/撤销/拒绝邀请会预占/释放席位，所有相关操作都要做容量意图
-// 补偿，这里只在 seatCapacityEnabled 时启用。
+// 容量（capacity）联动：创建/撤销/拒绝邀请会预占/释放席位，所有相关操作都要做容量意图
+// 补偿，这里只在 capacityEnabled 时启用。
 package handler
 
 import (
@@ -26,7 +26,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
-	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -122,22 +121,13 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 	// 先把同邮箱已过期的 pending 邀请翻成 'expired'。部分唯一索引
 	// idx_invitation_unique_pending 只按 status='pending' 过滤，过期残留行会把下面的
 	// CreateInvitation 卡死——见 issue #2055。
-	expiredInvitations, err := h.Queries.ExpireStalePendingInvitations(r.Context(), db.ExpireStalePendingInvitationsParams{
+	_, err = h.Queries.ExpireStalePendingInvitations(r.Context(), db.ExpireStalePendingInvitationsParams{
 		WorkspaceID: requester.WorkspaceID, InviteeEmail: email,
 	})
 	if err != nil {
 		slog.Warn("expire stale invitations failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID, "email", email)...)
 		writeError(w, http.StatusInternalServerError, "failed to create invitation")
 		return
-	}
-	if h.seatCapacityEnabled() {
-		for _, expired := range expiredInvitations {
-			if err := enqueueCapacityRelease(r.Context(), h.Queries, uuid.UUID(expired.WorkspaceID.Bytes), uuid.UUID(expired.ID.Bytes)); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to release expired invitation capacity")
-				return
-			}
-			h.compensateCapacityIntent(r.Context(), uuid.UUID(expired.ID.Bytes))
-		}
 	}
 
 	// 再确认现在没有在途的 live pending 邀请（刚清掉的过期行不算）。
@@ -168,23 +158,13 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 
 	invitationID := uuid.New()
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	if err := h.reserveInvitationCapacity(r.Context(), uuid.UUID(requester.WorkspaceID.Bytes), invitationID, expiresAt); err != nil {
-		if isPersistentSeatCapacityAdmissionRejection(err) {
-			// 席位满且「已过度承诺」的 workspace 在持久容量事实变化前都无法再进人。把这类
-			// 反复尝试记到「发起人」的滥用预算上，避免这个端点把容量服务打爆；同时保留
-			// workspace 与被邀请邮箱的预算，等未来有一条有效邀请时还能正常发起。
-			h.consumeInvitationActorAdmission(r, admission)
-		}
-		writeSeatCapacityError(w, err)
-		return
-	}
 
 	// 非消耗性的滥用检查先做；只有 Cloud 把容量锁定了才花各预算。持久性容量拒绝只在上面的
 	// 分支里消耗发起人预算；瞬时失败不消耗任何预算。
 	h.consumeInvitationAdmission(r, admission)
 
 	createParams := db.CreateInvitationParams{
-		ID: uuidToPG(invitationID), WorkspaceID: requester.WorkspaceID, InviterID: requester.UserID,
+		ID: parseUUID(invitationID.String()), WorkspaceID: requester.WorkspaceID, InviterID: requester.UserID,
 		InviteeEmail: email, InviteeUserID: inviteeUserID, Role: role,
 		ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
 	}
@@ -192,7 +172,6 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 	var createdEvent events.Event
 	tx, txErr := h.TxStarter.Begin(r.Context())
 	if txErr != nil {
-		h.compensateCapacityIntent(r.Context(), invitationID)
 		writeError(w, http.StatusInternalServerError, "failed to create invitation")
 		return
 	}
@@ -201,11 +180,6 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 	// 事务里一次做完：建邀请行 → 清掉这次创建对应的容量意图（同一事务内，防止行建好了意图
 	// 却残留）→ 记 EventInvitationCreated 事件 → 提交。
 	inv, err = qtx.CreateInvitation(r.Context(), createParams)
-	if err == nil && h.seatCapacityEnabled() {
-		err = qtx.DeleteSeatCapacityIntentForAction(r.Context(), db.DeleteSeatCapacityIntentForActionParams{
-			OperationToken: uuidToPG(invitationID), Action: seatcapacity.ActionReserveInvitation,
-		})
-	}
 	if err == nil {
 		createdEvent, err = service.RecordDurableEventTx(r.Context(), qtx, buildInvitationDomainEvent(protocol.EventInvitationCreated, inv, "member", uuidToString(requester.UserID), "created", nil))
 	}
@@ -217,7 +191,6 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 		_ = tx.Rollback(r.Context())
 	}
 	if err != nil {
-		h.compensateCapacityIntent(r.Context(), invitationID)
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "invitation already pending for this email")
 			return
@@ -351,12 +324,6 @@ func (h *Handler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "invitation not found")
 		return
 	}
-	if h.seatCapacityEnabled() {
-		if err := enqueueCapacityRelease(r.Context(), qtx, uuid.UUID(inv.WorkspaceID.Bytes), uuid.UUID(inv.ID.Bytes)); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to revoke invitation")
-			return
-		}
-	}
 	revokedEvent, err = service.RecordDurableEventTx(r.Context(), qtx, buildInvitationDomainEvent(
 		protocol.EventInvitationRevoked, inv, "member", requestUserID(r), "revoked", nil,
 	))
@@ -367,9 +334,6 @@ func (h *Handler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to revoke invitation")
 		return
-	}
-	if h.seatCapacityEnabled() {
-		h.compensateCapacityIntent(r.Context(), uuid.UUID(inv.ID.Bytes))
 	}
 
 	slog.Info("invitation revoked", "invitation_id", invitationID, "workspace_id", workspaceID)
@@ -526,11 +490,6 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 先把预占的席位容量意图置为「消费中」，防止接受期间别的操作抢走座位。
-	capacityActive, err := h.beginCapacityConsume(r.Context(), uuid.UUID(inv.WorkspaceID.Bytes), uuid.UUID(inv.ID.Bytes), uuid.UUID(inv.ID.Bytes), uuid.UUID(user.ID.Bytes))
-	if err != nil {
-		writeSeatCapacityError(w, err)
-		return
-	}
 
 	// 用同一个事务：标记邀请 accepted + 创建成员，二者必须原子。
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -574,13 +533,6 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to mark user onboarded")
 		return
 	}
-	if capacityActive {
-		// 容量意图转「已确认」：接受成功意味着这个座位真的被占用了。
-		if err := transitionCapacityIntentToConfirm(r.Context(), qtx, uuid.UUID(inv.ID.Bytes), uuid.UUID(member.ID.Bytes), seatcapacity.ActionConsumeInvitation); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to accept invitation")
-			return
-		}
-	}
 	memberResp := h.memberWithUserResponse(member, user)
 	memberEvent, eventErr := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
 		Type:           protocol.EventMemberAdded,
@@ -606,9 +558,6 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to accept invitation")
 		return
-	}
-	if capacityActive {
-		h.confirmCapacityIntent(r.Context(), uuid.UUID(accepted.WorkspaceID.Bytes), uuid.UUID(accepted.ID.Bytes), uuid.UUID(member.ID.Bytes))
 	}
 
 	slog.Info("invitation accepted", "invitation_id", invitationID, "user_id", userID, "workspace_id", uuidToString(accepted.WorkspaceID))
@@ -702,12 +651,6 @@ func (h *Handler) DeclineInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to decline invitation")
 		return
 	}
-	if h.seatCapacityEnabled() {
-		if err := enqueueCapacityRelease(r.Context(), qtx, uuid.UUID(inv.WorkspaceID.Bytes), uuid.UUID(inv.ID.Bytes)); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to decline invitation")
-			return
-		}
-	}
 	declinedEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildInvitationDomainEvent(
 		protocol.EventInvitationDeclined, declined, "member", userID, "declined", nil,
 	))
@@ -718,9 +661,6 @@ func (h *Handler) DeclineInvitation(w http.ResponseWriter, r *http.Request) {
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to decline invitation")
 		return
-	}
-	if h.seatCapacityEnabled() {
-		h.compensateCapacityIntent(r.Context(), uuid.UUID(inv.ID.Bytes))
 	}
 
 	slog.Info("invitation declined", "invitation_id", invitationID, "user_id", userID)

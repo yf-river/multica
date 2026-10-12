@@ -49,8 +49,8 @@ function clipTitle(title: string): string {
  * @param pageTitle - 页面名。
  * @returns 完整文档标题。
  */
-export function formatDocumentTitle(pageTitle: string | null | undefined): string {
+export function formatDocumentTitle(pageTitle: string | null | undefined, environmentName = ""): string {
   const trimmed = pageTitle?.trim();
-  if (!trimmed) return SITE_TITLE;
-  return `${clipTitle(trimmed)}${TITLE_SUFFIX}`;
+  const title = trimmed ? `${clipTitle(trimmed)}${TITLE_SUFFIX}` : SITE_TITLE;
+  return environmentName ? `[${environmentName}] ${title}` : title;
 }

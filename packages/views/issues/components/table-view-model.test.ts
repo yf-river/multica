@@ -18,7 +18,7 @@ function makeIssue(id: string, overrides: Partial<Issue> = {}): Issue {
     title: `Issue ${id}`,
     description: null,
     status: "todo",
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",

@@ -16,7 +16,7 @@
 //   - attachment / attachment-url：附件及下载地址工具函数
 //   - plugin / github / vcs / lark / slack / dingtalk / wecom / telegram /
 //     composio / external-credential：插件与外部集成
-//   - storage：存储适配器接口；life / billing：计费与额度
+//   - storage：存储适配器接口；life：生活助手
 //
 // 维护约定：每新增一个源文件，记得在这里补一行 re-export，并保持导出名
 // 大写字母开头（type）与常量函数的区分；纯类型用 `export type`，运行时可
@@ -296,7 +296,6 @@ export type {
   AutopilotRun,
   AutopilotRunStatus,
   AutopilotRunSource,
-  AutopilotQuotaUsage,
   WebhookEventFilter,
   CreateAutopilotRequest,
   UpdateAutopilotRequest,
@@ -329,40 +328,4 @@ export type {
   SquadMemberStatus,
   SquadMemberStatusListResponse,
 } from "./squad";
-export type {
-  BillingBalance,
-  BillingTransaction,
-  BillingTransactionsPage,
-  BillingTxType,
-  BillingTxSource,
-  BillingBatch,
-  BillingBatchesPage,
-  BillingBatchSourceType,
-  BillingTopup,
-  BillingTopupsPage,
-  BillingTopupStatus,
-  BillingPriceTier,
-  CreateBillingCheckoutSessionRequest,
-  CreateBillingCheckoutSessionResponse,
-  BillingCheckoutSessionStatus,
-  CreateBillingPortalSessionResponse,
-  WorkspaceSubscriptionInterval,
-  WorkspaceEntitlementLimitMode,
-  WorkspaceEntitlementLimit,
-  WorkspaceSubscriptionEntitlements,
-  WorkspaceSubscriptionSummary,
-  IssueLimitUsage,
-  WorkspaceSeatCapacity,
-  WorkspaceSeatPurchaseSummary,
-  WorkspaceSubscriptionPrice,
-  WorkspaceSubscriptionPrices,
-  CreateWorkspaceSubscriptionCheckoutRequest,
-  CreateWorkspaceSubscriptionCheckoutResponse,
-  PreviewWorkspaceSeatPurchaseRequest,
-  WorkspaceSeatPurchasePreview,
-  PurchaseWorkspaceSeatsRequest,
-  PurchaseWorkspaceSeatsResponse,
-  WorkspaceSubscriptionSeatReconcileResult,
-  CreateWorkspaceSubscriptionPortalResponse,
-} from "./billing";
 export type { ExternalCredentialProvider, ExternalCredentialProfile, CreateExternalCredentialProfileRequest, UpdateExternalCredentialProfileRequest, TestExternalCredentialProfileRequest, TestExternalCredentialProfileResponse } from "./external-credential";

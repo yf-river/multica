@@ -11,7 +11,6 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -208,14 +207,6 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		return empty, err
 	}
 
-	// 成员行删除放在同一事务里：成功的撤销绝不会跟在一次失败的删成员后面
-	// （那会留下"用户还是成员但 runtime 已死"的状态），失败的撤销也绝不会留下
-	// "用户已不在 workspace 但 runtime 仍在线"的状态。
-	if h.seatCapacityEnabled() {
-		if err := enqueueMemberCapacityRelease(ctx, qtx, uuid.UUID(workspaceID.Bytes), uuid.UUID(memberID.Bytes)); err != nil {
-			return empty, err
-		}
-	}
 	if err := qtx.DeleteMember(ctx, memberID); err != nil {
 		return empty, err
 	}

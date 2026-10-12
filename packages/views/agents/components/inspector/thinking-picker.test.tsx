@@ -16,9 +16,9 @@ const TEST_RESOURCES = {
 
 const CODEX_LEVELS: RuntimeModelThinkingLevel[] = [
   { value: "minimal", label: "Minimal", description: "Fast, light reasoning" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
+  { value: "not_important_not_urgent", label: "Low" },
+  { value: "not_important_urgent", label: "Medium" },
+  { value: "important_not_urgent", label: "High" },
 ];
 
 function renderPicker(props: Partial<React.ComponentProps<typeof ThinkingPicker>> = {}) {
@@ -54,7 +54,7 @@ describe("ThinkingPicker", () => {
   });
 
   it("renders the matching level label when value is set", () => {
-    renderPicker({ value: "high" });
+    renderPicker({ value: "important_not_urgent" });
     expect(screen.getAllByText("High").length).toBeGreaterThan(0);
   });
 
@@ -67,18 +67,18 @@ describe("ThinkingPicker", () => {
   });
 
   it("renders a static read-only display when canEdit=false and exposes no popover trigger", () => {
-    renderPicker({ value: "low", canEdit: false });
+    renderPicker({ value: "not_important_not_urgent", canEdit: false });
     expect(screen.getByText("Low")).toBeInTheDocument();
     expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("calls onChange with the picked value and skips when the user re-picks the current value", () => {
-    const { onChange } = renderPicker({ value: "low" });
+    const { onChange } = renderPicker({ value: "not_important_not_urgent" });
     fireEvent.click(screen.getByRole("button"));
 
     // Picking a new level fires onChange with the runtime-native value.
     fireEvent.click(screen.getByText("High"));
-    expect(onChange).toHaveBeenCalledWith("high");
+    expect(onChange).toHaveBeenCalledWith("important_not_urgent");
 
     // Re-opening and clicking the already-selected value is a no-op so we
     // don't enqueue a redundant PATCH. The trigger also reads "Low", so
@@ -95,7 +95,7 @@ describe("ThinkingPicker", () => {
   });
 
   it("clears to empty string via the footer button when a value is set", () => {
-    const { onChange } = renderPicker({ value: "high" });
+    const { onChange } = renderPicker({ value: "important_not_urgent" });
     fireEvent.click(screen.getByRole("button"));
     // Footer copy resolves through i18n — match a substring so we don't
     // pin to the exact translated wording.

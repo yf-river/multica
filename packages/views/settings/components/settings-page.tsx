@@ -7,10 +7,9 @@ import {
   User,
   SlidersHorizontal,
   Key,
-  Settings,
+  Building2,
   Users,
   FolderGit2,
-  FlaskConical,
   Bell,
   Plug,
   MessageCircle,
@@ -20,18 +19,14 @@ import {
   ListTodo,
   Zap,
   Blocks,
-  CreditCard,
   Server,
 } from "lucide-react";
 import { GitHubMark } from "./github-mark";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { useCurrentWorkspace } from "@multica/core/paths";
+import { PLUGINS_V1_FLAG } from "@multica/core/feature-flags";
 import { useFeatureEnabled } from "@multica/core/config";
-import {
-  BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG,
-  PLUGINS_V1_FLAG,
-} from "@multica/core/feature-flags";
 import { useNavigation } from "../../navigation";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { CollapsedNavTrigger } from "../../layout/page-header";
@@ -47,7 +42,6 @@ const MembersTab = lazy(() => import("./members-tab").then((module) => ({ defaul
 const RepositoriesTab = lazy(() => import("./repositories-tab").then((module) => ({ default: module.RepositoriesTab })));
 const GitHubTab = lazy(() => import("./github-tab").then((module) => ({ default: module.GitHubTab })));
 const IntegrationsTab = lazy(() => import("./integrations-tab").then((module) => ({ default: module.IntegrationsTab })));
-const LabsTab = lazy(() => import("./labs-tab").then((module) => ({ default: module.LabsTab })));
 const NotificationsTab = lazy(() => import("./notifications-tab").then((module) => ({ default: module.NotificationsTab })));
 const LabelsTab = lazy(() => import("./labels-tab").then((module) => ({ default: module.LabelsTab })));
 const IssueStatusesTab = lazy(() => import("./issue-statuses-tab").then((module) => ({ default: module.IssueStatusesTab })));
@@ -56,7 +50,6 @@ const QuickActionsTab = lazy(() => import("./quick-actions-tab").then((module) =
 const KeyboardShortcutsTab = lazy(() => import("./keyboard-shortcuts-tab").then((module) => ({ default: module.KeyboardShortcutsTab })));
 const PluginsTab = lazy(() => import("./plugins-tab").then((module) => ({ default: module.PluginsTab })));
 const McpTab = lazy(() => import("./mcp-tab").then((module) => ({ default: module.McpTab })));
-const BillingTab = lazy(() => import("./billing-tab").then((module) => ({ default: module.BillingTab })));
 
 function SettingsTabFallback() {
   return (
@@ -80,9 +73,7 @@ function ActiveSettingsTab({ tab }: { tab: string }) {
     case "repositories": return <RepositoriesTab />;
     case "github": return <GitHubTab />;
     case "integrations": return <IntegrationsTab />;
-    case "labs": return <LabsTab />;
     case "members": return <MembersTab />;
-    case "billing": return <BillingTab />;
     case "labels": return <LabelsTab />;
     case "issue-statuses": return <IssueStatusesTab />;
     case "properties": return <PropertiesTab />;
@@ -109,9 +100,7 @@ const WORKSPACE_TAB_KEYS = [
   "repositories",
   "github",
   "integrations",
-  "labs",
   "members",
-  "billing",
   "labels",
   "issue_statuses",
   "properties",
@@ -124,9 +113,7 @@ const WORKSPACE_TAB_VALUES = {
   repositories: "repositories",
   github: "github",
   integrations: "integrations",
-  labs: "labs",
   members: "members",
-  billing: "billing",
   labels: "labels",
   issue_statuses: "issue-statuses",
   properties: "properties",
@@ -135,13 +122,11 @@ const WORKSPACE_TAB_VALUES = {
   plugins: "plugins",
 } as const;
 const WORKSPACE_TAB_ICONS = {
-  general: Settings,
+  general: Building2,
   repositories: FolderGit2,
   github: GitHubMark,
   integrations: Plug,
-  labs: FlaskConical,
   members: Users,
-  billing: CreditCard,
   labels: Tags,
   issue_statuses: CircleDot,
   properties: SlidersHorizontal,
@@ -165,7 +150,7 @@ const SETTINGS_TAB_TRIGGER_CLASS =
 
 /**
  * 设置页顶层组件。左侧是「我的账户」和「工作区」两组标签导航，右侧渲染当前标签内容；
- * plugins、billing 等标签是否显示由 feature flag 决定。
+ * plugins 标签是否显示由 feature flag 决定。
  */
 export function SettingsPage() {
   const { t } = useT("settings");
@@ -173,20 +158,15 @@ export function SettingsPage() {
   const navigation = useNavigation();
   const isMobile = useIsMobile();
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
-  const billingEnabled = useFeatureEnabled(
-    BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG,
-    false,
-  );
 
-  // 只保留被 feature flag 打开的标签；plugins 和 billing 默认隐藏。
+  // 只保留被 feature flag 打开的标签；plugins 默认隐藏。
   const visibleWorkspaceTabKeys = React.useMemo(
     () =>
       WORKSPACE_TAB_KEYS.filter(
         (key) =>
-          (key !== "plugins" || pluginsEnabled) &&
-          (key !== "billing" || billingEnabled),
+          key !== "plugins" || pluginsEnabled,
       ),
-    [billingEnabled, pluginsEnabled],
+    [pluginsEnabled],
   );
 
   // 有效标签值的白名单；未知的 ?tab=… 值会静默回退到默认标签。
@@ -201,11 +181,8 @@ export function SettingsPage() {
   );
 
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
-  // billing 未开启时，若 URL 里还带着 billing 就退回 workspace 标签。
   const candidateTab = tabFromUrl
-    ? tabFromUrl === "billing" && !billingEnabled
-      ? "workspace"
-      : LEGACY_WORKSPACE_TAB_REDIRECTS[tabFromUrl] ?? tabFromUrl
+    ? LEGACY_WORKSPACE_TAB_REDIRECTS[tabFromUrl] ?? tabFromUrl
     : null;
   const activeTab =
     candidateTab && validTabs.has(candidateTab) ? candidateTab : DEFAULT_TAB;

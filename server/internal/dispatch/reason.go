@@ -47,11 +47,6 @@ const (
 	// 而其最新任务已处于终端状态。这不是权限阻断，但也不算成功：没有新东西运行。
 	//（命名避免暗示新评论已被处理。）
 	ReasonSelfTriggerSuppressed ReasonCode = "self_trigger_suppressed"
-	// ReasonQuotaExceeded 是对已耗尽的 Cloud 提供的 autopilot 间隔所作的中性拒绝。
-	ReasonQuotaExceeded ReasonCode = "quota_exceeded"
-	// ReasonIssueLimitReached 表示 create_issue 的 Autopilot 被准入执行，但 Cloud
-	// 的有效工作区 issue 数量上限拦下了该 issue。
-	ReasonIssueLimitReached ReasonCode = "issue_limit_reached"
 	// ReasonInternalError：意外的服务端错误导致无法给出干净的决定。
 	ReasonInternalError ReasonCode = "internal_error"
 )

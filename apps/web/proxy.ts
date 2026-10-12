@@ -1,3 +1,4 @@
+import { environmentCookieName } from "@multica/core/platform/environment";
 /**
  * Next.js 运行时 proxy（中间件）：请求进入时做三件事——
  * 1) 按 runtime-urls 把后端路径（/api、/uploads、/ws、/docs 等）改写到真实上游；
@@ -43,8 +44,8 @@ export function proxy(req: NextRequest) {
     return NextResponse.rewrite(url);
   }
 
-  const hasSession = req.cookies.has("multica_logged_in");
-  const lastSlug = req.cookies.get("last_workspace_slug")?.value;
+  const hasSession = req.cookies.has(environmentCookieName("multica_logged_in", process.env.MULTICA_ENV_ID));
+  const lastSlug = req.cookies.get(environmentCookieName("last_workspace_slug", process.env.MULTICA_ENV_ID))?.value;
 
   // --- 旧 URL 重定向：/issues/... → /{slug}/issues/... ---
   // 迁移到 slug 体系之前打进来的旧书签/客户端，由于路由挪到了 [workspaceSlug] 之下，

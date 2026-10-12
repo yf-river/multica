@@ -144,7 +144,7 @@ const allAssignees: Assignee[] = [
 ];
 
 const statusCycle: IssueStatusCategory[] = ["backlog", "todo", "in_progress", "in_review", "done"];
-const priorityCycle: IssuePriority[] = ["none", "low", "medium", "high", "urgent"];
+const priorityCycle: IssuePriority[] = ["important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"];
 const statusLabels: Record<IssueStatusCategory, string> = {
   backlog: "待整理",
   todo: "待办",
@@ -155,16 +155,15 @@ const statusLabels: Record<IssueStatusCategory, string> = {
   cancelled: "已取消",
 };
 const priorityLabels: Record<IssuePriority, string> = {
-  none: "无",
-  low: "低",
-  medium: "中",
-  high: "高",
-  urgent: "紧急",
+  important_urgent: "重要且紧急",
+  important_not_urgent: "重要不紧急",
+  not_important_urgent: "不重要但紧急",
+  not_important_not_urgent: "不重要且不紧急",
 };
 
 function TeammatesVisual() {
   const [status, setStatus] = useState<IssueStatusCategory>("in_progress");
-  const [priority, setPriority] = useState<IssuePriority>("medium");
+  const [priority, setPriority] = useState<IssuePriority>("important_not_urgent");
   const [assignee, setAssignee] = useState<Assignee>(allAssignees[3]!); // Claude
   const [pickerOpen, setPickerOpen] = useState(true);
   const [statusOpen, setStatusOpen] = useState(false);

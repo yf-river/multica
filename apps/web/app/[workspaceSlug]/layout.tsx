@@ -5,6 +5,8 @@
  * 按 slug 解析 workspace、把「当前工作区」同步给全局单例与 `last_workspace_slug`
  * cookie，并把子页面包进 WorkspaceSlugProvider。
  */
+import { useEnvironmentId } from "@/platform/environment";
+import { environmentCookieName } from "@multica/core/platform/environment";
 import { use, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, usePathname } from "next/navigation";
@@ -40,6 +42,7 @@ export default function WorkspaceLayout({
 
   // 工作区路由要求已登录。未登录时（首次访问无会话、token 过期、另一个标签页登出等）
   // 一律弹回 /login。否则本布局渲染 null，用户会卡在 /{slug}/... 上的空白页。
+  const environmentId = useEnvironmentId();
   useEffect(() => {
     if (!isAuthLoading && !user) router.replace(paths.login());
   }, [isAuthLoading, user, router]);
@@ -89,7 +92,7 @@ export default function WorkspaceLayout({
     if (!workspace || typeof document === "undefined") return;
     const oneYear = 60 * 60 * 24 * 365;
     const secure = location.protocol === "https:" ? "; Secure" : "";
-    document.cookie = `last_workspace_slug=${encodeURIComponent(workspaceSlug)}; path=/; max-age=${oneYear}; SameSite=Lax${secure}`;
+    document.cookie = `${environmentCookieName("last_workspace_slug", environmentId)}=${encodeURIComponent(workspaceSlug)}; path=/; max-age=${oneYear}; SameSite=Lax${secure}`;
   }, [workspace, workspaceSlug]);
 
   // 记住本会话中这个 slug 是否已成功解析过。用于避免「当前 workspace 被移除」

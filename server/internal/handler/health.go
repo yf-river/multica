@@ -257,7 +257,8 @@ func (h *Handler) GetHealth(w http.ResponseWriter, r *http.Request) {
 		healthFailure(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"profile": state.Profile, "revision": revision, "epoch": epoch, "age": health.Age(state.Profile.BirthDate, time.Now()), "observations": observations, "current": health.Selected(observations, state.CurrentObservationIDs)})
+	current := health.Selected(observations, state.CurrentObservationIDs)
+	writeJSON(w, 200, map[string]any{"profile": state.Profile, "revision": revision, "epoch": epoch, "age": health.Age(state.Profile.BirthDate, time.Now()), "observations": observations, "current": current, "computed_bmi": health.CalculateBMI(current)})
 }
 
 func (h *Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {

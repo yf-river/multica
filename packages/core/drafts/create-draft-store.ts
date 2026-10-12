@@ -46,7 +46,7 @@ export interface DraftStore<TData> {
  * 创建单例草稿 store。
  *
  * 在它出现之前，每个简单草稿 store（`projects/draft-store`、
- * `feedback/draft-store`，结构上还有 issue 草稿 store）都手抄同一套形状：
+ * `projects/draft-store`，结构上还有 issue 草稿 store）都手抄同一套形状：
  * 一个 `draft` 对象、`setDraft(patch)`、`clearDraft()`、`hasDraft()`、
  * 接好 `createWorkspaceAwareStorage` 的 `persist` 配置，以及一次
  * `registerForWorkspaceRehydration` 调用。各 store 唯一的差异只是数据形状、

@@ -6,12 +6,6 @@ import type {
   AgentBuilderSessionSummary,
   Attachment,
   AutopilotRun,
-  BillingBalance,
-  BillingBatchesPage,
-  BillingCheckoutSessionStatus,
-  BillingPriceTier,
-  BillingTopupsPage,
-  BillingTransactionsPage,
   CancelTaskResponse,
   ChatMessage,
   ChatDraftRestoresResponse,
@@ -21,18 +15,6 @@ import type {
   SendChatMessageResponse,
   StartMikaOnboardingResponse,
   Comment,
-  CreateBillingCheckoutSessionResponse,
-  CreateBillingPortalSessionResponse,
-  WorkspaceSubscriptionEntitlements,
-  WorkspaceSubscriptionSummary,
-  IssueLimitUsage,
-  WorkspaceSubscriptionPrice,
-  WorkspaceSubscriptionPrices,
-  CreateWorkspaceSubscriptionCheckoutResponse,
-  WorkspaceSubscriptionSeatReconcileResult,
-  WorkspaceSeatPurchasePreview,
-  PurchaseWorkspaceSeatsResponse,
-  CreateWorkspaceSubscriptionPortalResponse,
   CronPreviewResponse,
   DingTalkInstallation,
   ListDingTalkInstallationsResponse,
@@ -91,7 +73,6 @@ import type {
   WorkspaceMcpServer,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
-import type { CreateFeedbackResponse } from "../feedback/types";
 
 /** 校验插件配置字段定义（key / type / label / 是否必填 / 枚举选项等）。 */
 export const PluginConfigFieldSchema = z.object({
@@ -808,6 +789,8 @@ export interface AppConfigResponse {
    * 忽略未知字段，所以字段缺失必须当作 false。 */
   agent_conversation_starters_supported?: boolean;
   server_version?: string;
+  environment_name?: string;
+  environment_id?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1004,6 +987,8 @@ export const AppConfigSchema = z.object({
   local_worktree_supported: BooleanWithDefaultSchema(false),
   agent_conversation_starters_supported: BooleanWithDefaultSchema(false),
   server_version: OptionalStringSchema,
+  environment_name: OptionalStringSchema,
+  environment_id: OptionalStringSchema,
 }).loose();
 
 /** 应用级配置的空值兜底。 */
@@ -1034,18 +1019,6 @@ export const NotificationPreferenceResponseSchema = z.object({
 export const EMPTY_NOTIFICATION_PREFERENCE_RESPONSE: NotificationPreferenceResponse = {
   workspace_id: "",
   preferences: {},
-};
-
-/** 校验「提交反馈」响应的形状（返回新反馈的 id 与创建时间）。 */
-export const CreateFeedbackResponseSchema = z.object({
-  id: z.string(),
-  created_at: z.string(),
-}).loose();
-
-/** 提交反馈响应的空值兜底。 */
-export const EMPTY_CREATE_FEEDBACK_RESPONSE: CreateFeedbackResponse = {
-  id: "",
-  created_at: "",
 };
 
 /** 校验一条评论：作者、正文、类型、父评论、回复/附件/修订号等。 */
@@ -1277,7 +1250,7 @@ export const IssueSchema = z.object({
   // 与上方 source_context、labels 同样处理。没有代码读它做决策（useStatusLabel 从
   // 目录解析标签），所以丢弃它只是退回用 key。(MUL-6749)
   status_name: z.string().optional().catch(undefined),
-  priority: z.string(),
+  priority: z.enum(["important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"]),
   assignee_type: z.string().nullable(),
   assignee_id: z.string().nullable(),
   creator_type: z.string(),
@@ -2054,7 +2027,7 @@ export const EMPTY_ISSUE_EXECUTION_TREE_RESPONSE = {
       title: "",
       description: null,
       status: "cancelled",
-      priority: "none",
+      priority: "not_important_not_urgent",
       assignee_type: null,
       assignee_id: null,
       creator_type: "member",
@@ -2579,20 +2552,6 @@ export const AutopilotRunSchema = z.object({
   created_at: z.string().default(""),
 }).loose();
 
-/** 校验 Autopilot 配额用量响应：模式、已用/预留/总量/上限与重置时间。 */
-export const AutopilotQuotaUsageSchema = z.object({
-  action: z.enum(["off", "observe", "enforce"]).default("off"),
-  used: z.number().nullable().default(null),
-  reserved: z.number().nullable().default(null),
-  total: z.number().nullable().default(null),
-  limit: z.number().nullable().default(null),
-  reached: z.boolean().nullable().default(null),
-  period_start: z.string().nullable().default(null),
-  period_end: z.string().nullable().default(null),
-  reset_at: z.string().nullable().default(null),
-  blocked_counts: z.record(z.string(), z.number().int().nonnegative()).nullable().catch(null).default(null),
-}).loose();
-
 /** Autopilot run 的空值兜底。 */
 export const FALLBACK_AUTOPILOT_RUN: AutopilotRun = {
   id: "",
@@ -2742,488 +2701,6 @@ export const InboxItemListSchema = z.array(
 export const EMPTY_INBOX_ITEMS: InboxItem[] = [];
 
 // ---------------------------------------------------------------------------
-// Billing schema（cloud-billing 代理面）
-//
-// 收到的 billing JSON 全部原样来自 multica-cloud——我们只代理字节，不做重塑。这些
-// schema 用 `loose()`，云端未来不破坏兼容的字段追加不会弄崩我们；必填字段仍严格校验。
-// EMPTY_* 常量作为上游响应畸形/不可解析时 parseWithFallback 使用的兜底。
-// ---------------------------------------------------------------------------
-
-/** 校验账单余额。 */
-export const BillingBalanceSchema = z.object({
-  owner_id: z.string(),
-  balance_micro: z.number(),
-  balance_credit: z.number(),
-  updated_at: z.string(),
-}).loose();
-
-/** 账单余额的空值兜底。 */
-export const EMPTY_BILLING_BALANCE: BillingBalance = {
-  owner_id: "",
-  balance_micro: 0,
-  balance_credit: 0,
-  updated_at: "",
-};
-
-// `tx_type` 与 `source` 这里保持普通字符串：云端文档列了权威取值，但前端展示能优雅
-// 容忍未知值。钉死枚举会在未来新增（如新的 `topup` source 类型）时让页面崩溃。
-export const BillingTransactionSchema = z.object({
-  id: z.string(),
-  owner_id: z.string(),
-  idempotency_key: z.string().default(""),
-  tx_type: z.string(),
-  source: z.string(),
-  amount_micro: z.number(),
-  balance_after: z.number(),
-  reference_id: z.string().default(""),
-  description: z.string().default(""),
-  metadata: z.record(z.string(), z.unknown()).default({}),
-  created_at: z.string(),
-}).loose();
-
-/** 校验账单流水分页。 */
-export const BillingTransactionsPageSchema = z.object({
-  items: z.array(BillingTransactionSchema).default([]),
-  total: z.number().default(0),
-  page: z.number().default(1),
-  page_size: z.number().default(20),
-}).loose();
-
-/** 账单流水分页的空值兜底。 */
-export const EMPTY_BILLING_TRANSACTIONS_PAGE: BillingTransactionsPage = {
-  items: [],
-  total: 0,
-  page: 1,
-  page_size: 20,
-};
-
-/** 校验一个账单批次（充值余额包）。 */
-export const BillingBatchSchema = z.object({
-  id: z.string(),
-  owner_id: z.string(),
-  source_tx_id: z.string().default(""),
-  source_type: z.string(),
-  total_micro: z.number(),
-  remaining_micro: z.number(),
-  // 云端要么省略该键（永不过期），要么发字符串时间戳。空值也容忍，因为有些序列化器
-  // 对缺失的时间戳显式输出 null。
-  expires_at: z.string().nullable().optional(),
-  created_at: z.string(),
-  updated_at: z.string(),
-}).loose();
-
-/** 校验账单批次分页。 */
-export const BillingBatchesPageSchema = z.object({
-  items: z.array(BillingBatchSchema).default([]),
-  total: z.number().default(0),
-  page: z.number().default(1),
-  page_size: z.number().default(20),
-}).loose();
-
-/** 账单批次分页的空值兜底。 */
-export const EMPTY_BILLING_BATCHES_PAGE: BillingBatchesPage = {
-  items: [],
-  total: 0,
-  page: 1,
-  page_size: 20,
-};
-
-/** 校验一次充值（topup）记录。 */
-export const BillingTopupSchema = z.object({
-  id: z.string(),
-  owner_id: z.string(),
-  amount_cents: z.number(),
-  currency: z.string().default("usd"),
-  credits: z.number(),
-  bonus_credits: z.number().default(0),
-  status: z.string(),
-  tier_id: z.string().default(""),
-  stripe_checkout_id: z.string().default(""),
-  // 仅当状态到 `credited` 后才设置——保持可选而不是强转 ""，UI 才能按存在性分支。
-  purchase_batch_id: z.string().optional(),
-  created_at: z.string(),
-  updated_at: z.string(),
-}).loose();
-
-/** 校验充值分页。 */
-export const BillingTopupsPageSchema = z.object({
-  items: z.array(BillingTopupSchema).default([]),
-  total: z.number().default(0),
-  page: z.number().default(1),
-  page_size: z.number().default(20),
-}).loose();
-
-/** 充值分页的空值兜底。 */
-export const EMPTY_BILLING_TOPUPS_PAGE: BillingTopupsPage = {
-  items: [],
-  total: 0,
-  page: 1,
-  page_size: 20,
-};
-
-/** 校验一个价格档（tier）。 */
-export const BillingPriceTierSchema = z.object({
-  id: z.string(),
-  // 云端文档说 display_name 缺省回退到 id；空串同样容忍。
-  display_name: z.string().default(""),
-  amount_cents: z.number(),
-  credits: z.number(),
-  bonus_credits: z.number().optional(),
-  bonus_expires_in: z.string().optional(),
-}).loose();
-
-/** 校验价格档列表（直接是数组）。 */
-export const BillingPriceTierListSchema = z.array(BillingPriceTierSchema);
-
-/** 价格档列表的空值兜底。 */
-export const EMPTY_BILLING_PRICE_TIER_LIST: BillingPriceTier[] = [];
-
-/** 校验创建 billing Checkout 会话的响应。 */
-export const CreateBillingCheckoutSessionResponseSchema = z.object({
-  order_id: z.string(),
-  session_id: z.string(),
-  url: z.string(),
-}).loose();
-
-/** 创建 Checkout 会话响应的空值兜底。 */
-export const EMPTY_CREATE_BILLING_CHECKOUT_SESSION_RESPONSE: CreateBillingCheckoutSessionResponse = {
-  order_id: "",
-  session_id: "",
-  url: "",
-};
-
-/** 校验 Checkout 会话状态轮询响应。 */
-export const BillingCheckoutSessionStatusSchema = z.object({
-  order_id: z.string(),
-  status: z.string(),
-  amount_cents: z.number(),
-  credits: z.number(),
-  bonus_credits: z.number().default(0),
-  currency: z.string().default("usd"),
-  tier_id: z.string().default(""),
-}).loose();
-
-/** Checkout 会话状态的空值兜底。 */
-export const EMPTY_BILLING_CHECKOUT_SESSION_STATUS: BillingCheckoutSessionStatus = {
-  order_id: "",
-  status: "pending",
-  amount_cents: 0,
-  credits: 0,
-  bonus_credits: 0,
-  currency: "usd",
-  tier_id: "",
-};
-
-/** 校验创建 billing Portal 会话的响应。 */
-export const CreateBillingPortalSessionResponseSchema = z.object({
-  url: z.string(),
-}).loose();
-
-/** 创建 Portal 会话响应的空值兜底。 */
-export const EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE: CreateBillingPortalSessionResponse = {
-  url: "",
-};
-
-// ---------------------------------------------------------------------------
-// Workspace 订阅（/api/cloud-subscriptions/*）
-//
-// 这些 schema 是与 multica-cloud 的兼容边界。它们共同遵循三条规则：
-//
-//  1. 没有兜底值。任何解析失败调用方都得到 `null`，必须渲染「不可用」——绝不伪造一个
-//     Free 计划，因为那会把上游故障或旧云静默降级成付费 workspace 的降档。
-//  2. `.loose()` 保留未知键，云端加字段不会弄坏旧客户端。
-//  3. `plan` 和 `status` 保持开放字符串。新计划或新 Stripe 状态必须作为未知浮现，
-//     而不是被强转成已知值。
-// ---------------------------------------------------------------------------
-
-/** 订阅结算周期：月或年。 */
-const WorkspaceSubscriptionIntervalSchema = z.enum(["month", "year"]);
-
-// Stripe 托管 Checkout 和 Portal，所以这些 URL 会离开应用。光有 `z.string().url()`
-// 不够——`new URL("javascript:...")` 也能解析通过——而调用方把这个值交给
-// location.assign，所以在这里钉死协议头。
-const StripeHostedURLSchema = z.string().url().refine(
-  (value) => value.startsWith("https://"),
-  { message: "Stripe hosted URL must use HTTPS" },
-);
-
-// 某一类限制额度：有限数量，或无限。
-const WorkspaceEntitlementLimitSchema = z
-  .discriminatedUnion("mode", [
-    z
-      .object({
-        mode: z.literal("limited"),
-        limit: z.number().int().positive(),
-      })
-      .loose(),
-    z.object({ mode: z.literal("unlimited") }).loose(),
-  ])
-  .transform(
-    (value): WorkspaceSubscriptionEntitlements["limits"]["issueCount"] =>
-      value.mode === "limited"
-        ? { mode: "limited", limit: value.limit }
-        : { mode: "unlimited", limit: null },
-  );
-
-/** 校验 workspace 订阅权益：计划、状态、席位与各类限制。 */
-export const WorkspaceSubscriptionEntitlementsSchema = z
-  .object({
-    workspace_id: z.string(),
-    plan: z.string(),
-    status: z.string(),
-    // 云端文档写 seats >= 1，但接受 0 无代价，还能让「瞬时没有人形成员」的 workspace
-    // 保持可读，而不是把整个快照判死。
-    seats: z.number().int().nonnegative(),
-    limits: z
-      .object({
-        issue_count: WorkspaceEntitlementLimitSchema,
-        autopilot_runs: WorkspaceEntitlementLimitSchema,
-      })
-      .loose(),
-    current_period_end: z.string().nullable().optional(),
-    snapshot_expires_at: z.string().nullable().optional(),
-    version: z.number().int().nonnegative(),
-  })
-  .loose()
-  .transform(
-    (value): WorkspaceSubscriptionEntitlements => ({
-      workspaceId: value.workspace_id,
-      plan: value.plan,
-      status: value.status,
-      seats: value.seats,
-      limits: {
-        issueCount: value.limits.issue_count,
-        autopilotRuns: value.limits.autopilot_runs,
-      },
-      currentPeriodEnd: value.current_period_end ?? null,
-      snapshotExpiresAt: value.snapshot_expires_at ?? null,
-      version: value.version,
-    }),
-  );
-
-/** 校验 workspace 订阅汇总：权益 + 结算周期 + 席位容量 + 可用动作等。 */
-export const WorkspaceSubscriptionSummarySchema = z
-  .object({
-    entitlement: WorkspaceSubscriptionEntitlementsSchema,
-    billing_interval: WorkspaceSubscriptionIntervalSchema.nullable(),
-    human_members: z.number().int().nonnegative(),
-    seat_capacity: z
-      .object({
-        purchased: z.number().int().positive(),
-        used: z.number().int().nonnegative(),
-        reserved: z.number().int().nonnegative(),
-        available: z.number().int().nonnegative(),
-        overcommitted: z.boolean(),
-        version: z.number().int().positive(),
-        pending_quantity: z.number().int().positive().nullable(),
-        active_purchase: z
-          .object({
-            request_id: z.string(),
-            target_seats: z.number().int().positive(),
-            status: z.enum(["pending", "processing", "submitted"]),
-            expires_at: z.string().min(1).optional(),
-          })
-          .loose()
-          .optional(),
-      })
-      .loose()
-      .nullable(),
-    cancel_at_period_end: z.boolean(),
-    grace_until: z.string().nullable(),
-    has_stripe_customer: z.boolean(),
-    available_actions: z.object({
-      checkout: z.boolean(),
-      portal: z.boolean(),
-      purchase_seats: z.boolean(),
-    }).loose(),
-  })
-  .loose()
-  .transform(
-    (value): WorkspaceSubscriptionSummary => ({
-      entitlement: value.entitlement,
-      billingInterval: value.billing_interval,
-      humanMembers: value.human_members,
-      seatCapacity: value.seat_capacity
-        ? {
-            purchased: value.seat_capacity.purchased,
-            used: value.seat_capacity.used,
-            reserved: value.seat_capacity.reserved,
-            available: value.seat_capacity.available,
-            overcommitted: value.seat_capacity.overcommitted,
-            version: value.seat_capacity.version,
-            pendingQuantity: value.seat_capacity.pending_quantity,
-            activePurchase: value.seat_capacity.active_purchase
-              ? {
-                  requestId:
-                    value.seat_capacity.active_purchase.request_id,
-                  targetSeats:
-                    value.seat_capacity.active_purchase.target_seats,
-                  status: value.seat_capacity.active_purchase.status,
-                  expiresAt:
-                    value.seat_capacity.active_purchase.expires_at ?? null,
-                }
-              : null,
-          }
-        : null,
-      cancelAtPeriodEnd: value.cancel_at_period_end,
-      graceUntil: value.grace_until,
-      hasStripeCustomer: value.has_stripe_customer,
-      availableActions: {
-        checkout: value.available_actions.checkout,
-        portal: value.available_actions.portal,
-        purchaseSeats: value.available_actions.purchase_seats,
-      },
-    }),
-  );
-
-/** 校验 issue 数量限制用量：已用 + 上限。 */
-export const IssueLimitUsageSchema = z
-  .object({
-    used: z.number().int().nonnegative(),
-    limit: z.number().int().positive(),
-  })
-  .loose()
-  .transform(
-    (value): IssueLimitUsage => ({
-      used: value.used,
-      limit: value.limit,
-    }),
-  );
-
-// 单个周期的订阅价格（月或年）。构造器入参固定期望的周期。
-const WorkspaceSubscriptionPriceSchema = (
-  expected: "month" | "year",
-) =>
-  z
-    .object({
-      currency: z.string().min(1),
-      // 拒绝 0 和负数：免费或畸形的 Price 必须读作「价格不可用」，而不是当作购买按钮
-      // 旁的真实金额。
-      unit_amount: z.number().int().positive(),
-      // 钉死到它所在的槽位。云端也校验这点，但 schema 若允许在 `month` 下收年度价格，
-      // 就会让 UI 把年费报成月费——schema 是独立边界，所以自己检查对应关系。
-      interval: z.literal(expected),
-      interval_count: z.literal(1),
-    })
-    .loose()
-    .transform(
-      (value): WorkspaceSubscriptionPrice => ({
-        currency: value.currency,
-        unitAmount: value.unit_amount,
-        interval: value.interval,
-        intervalCount: value.interval_count,
-      }),
-    );
-
-/** 校验月/年两档订阅价格。 */
-export const WorkspaceSubscriptionPricesSchema = z
-  .object({
-    month: WorkspaceSubscriptionPriceSchema("month"),
-    year: WorkspaceSubscriptionPriceSchema("year"),
-  })
-  .loose()
-  .transform(
-    (value): WorkspaceSubscriptionPrices => ({
-      month: value.month,
-      year: value.year,
-    }),
-  );
-
-/** 校验创建订阅 Checkout 会话的响应。 */
-export const CreateWorkspaceSubscriptionCheckoutResponseSchema = z
-  .object({
-    request_id: z.string(),
-    session_id: z.string(),
-    url: StripeHostedURLSchema,
-  })
-  .loose()
-  .transform(
-    (value): CreateWorkspaceSubscriptionCheckoutResponse => ({
-      requestId: value.request_id,
-      sessionId: value.session_id,
-      url: value.url,
-    }),
-  );
-
-/** 校验席位对账结果：动作 + 版本号。 */
-export const WorkspaceSubscriptionSeatReconcileResultSchema = z
-  .object({
-    workspace_id: z.string(),
-    action: z.string(),
-    version: z.number().int().nonnegative(),
-  })
-  .loose()
-  .transform(
-    (value): WorkspaceSubscriptionSeatReconcileResult => ({
-      workspaceId: value.workspace_id,
-      action: value.action,
-      version: value.version,
-    }),
-  );
-
-/** 校验「增购席位前的报价预览」。 */
-export const WorkspaceSeatPurchasePreviewSchema = z
-  .object({
-    current_seats: z.number().int().positive(),
-    additional_seats: z.number().int().positive(),
-    resulting_seats: z.number().int().positive(),
-    purchase_version: z.number().int().positive(),
-    currency: z.string().regex(/^[a-z]{3}$/),
-    proration_amount: z.number().int().nonnegative(),
-    next_invoice_amount: z.number().int().nonnegative(),
-    quoted_at: z.string().min(1),
-  })
-  .loose()
-  .transform(
-    (value): WorkspaceSeatPurchasePreview => ({
-      currentSeats: value.current_seats,
-      additionalSeats: value.additional_seats,
-      resultingSeats: value.resulting_seats,
-      purchaseVersion: value.purchase_version,
-      currency: value.currency,
-      prorationAmount: value.proration_amount,
-      nextInvoiceAmount: value.next_invoice_amount,
-      quotedAt: value.quoted_at,
-    }),
-  );
-
-/** 校验「购买席位」提交响应的形状。 */
-export const PurchaseWorkspaceSeatsResponseSchema = z
-  .object({
-    request_id: z.string(),
-    current_seats: z.number().int().positive(),
-    additional_seats: z.number().int().positive(),
-    resulting_seats: z.number().int().positive(),
-    currency: z.string().regex(/^[a-z]{3}$/),
-    proration_amount: z.number().int().nonnegative(),
-    next_invoice_amount: z.number().int().nonnegative(),
-    status: z.enum(["pending", "submitted", "confirmed"]),
-  })
-  .loose()
-  .transform(
-    (value): PurchaseWorkspaceSeatsResponse => ({
-      requestId: value.request_id,
-      currentSeats: value.current_seats,
-      additionalSeats: value.additional_seats,
-      resultingSeats: value.resulting_seats,
-      currency: value.currency,
-      prorationAmount: value.proration_amount,
-      nextInvoiceAmount: value.next_invoice_amount,
-      status: value.status,
-    }),
-  );
-
-/** 校验创建订阅 Portal 会话的响应。 */
-export const CreateWorkspaceSubscriptionPortalResponseSchema = z
-  .object({
-    url: StripeHostedURLSchema,
-  })
-  .loose()
-  .transform(
-    (value): CreateWorkspaceSubscriptionPortalResponse => ({
-      url: value.url,
-    }),
-  );
 
 // ---------------------------------------------------------------------------
 // Runtime 模型发现（POST /api/runtimes/:id/models、

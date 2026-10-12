@@ -527,3 +527,24 @@ func (l *LocalPathLocker) releaser(realPath string, entry *pathLockEntry) func()
 		})
 	}
 }
+
+// 部署实例仅能原地写入自己的资源根；外部仓库使用独立 worktree。
+func validateEnvironmentWritePath(absPath string) error {
+	root := strings.TrimSpace(os.Getenv("MULTICA_ENV_WRITABLE_ROOT"))
+	if root == "" {
+		return nil
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("environment writable root: %w", err)
+	}
+	realPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(realRoot, realPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("local_directory: in_place execution must be under this environment's writable root %q; use worktree mode for an external repository", root)
+	}
+	return nil
+}

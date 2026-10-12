@@ -15,20 +15,20 @@ function issueWith(id: string, value?: number | string, position = 0): Issue {
 describe("sortIssues property sorts", () => {
   it("sorts number values numerically, missing values last", () => {
     const sorted = sortIssues(
-      [issueWith("big", 10), issueWith("none"), issueWith("small", 2)],
+      [issueWith("big", 10), issueWith("not_important_not_urgent"), issueWith("small", 2)],
       `property:${propertyId}`,
       "asc",
     );
-    expect(sorted.map((i) => i.id)).toEqual(["small", "big", "none"]);
+    expect(sorted.map((i) => i.id)).toEqual(["small", "big", "not_important_not_urgent"]);
   });
 
   it("desc reverses values but keeps missing values last", () => {
     const sorted = sortIssues(
-      [issueWith("none"), issueWith("small", 2), issueWith("big", 10)],
+      [issueWith("not_important_not_urgent"), issueWith("small", 2), issueWith("big", 10)],
       `property:${propertyId}`,
       "desc",
     );
-    expect(sorted.map((i) => i.id)).toEqual(["big", "small", "none"]);
+    expect(sorted.map((i) => i.id)).toEqual(["big", "small", "not_important_not_urgent"]);
   });
 
   it("sorts date-only strings chronologically via lexical compare", () => {

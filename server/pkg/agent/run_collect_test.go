@@ -20,8 +20,8 @@ import (
 // These tests reproduce the shape behind MUL-5467: invoking a CLI that forks a
 // long-lived helper which inherits stdout/stderr.
 //
-// Observed on an OpenClaw host — `openclaw --version` returns promptly but
-// leaves an `openclaw-config` helper holding the pipe's write end. With a bare
+// Observed on an forking CLI host — `forking-cli --version` returns promptly but
+// leaves an `forking-cli-config` helper holding the pipe's write end. With a bare
 // cmd.Output() the call never returns (os/exec waits for pipe EOF, and killing
 // the direct child on ctx cancellation does not unblock that), and the helper
 // is reparented to init. A daemon probing on a timer therefore accumulated one
@@ -167,7 +167,7 @@ func TestRunCollectSurfacesStderrAndExitStatus(t *testing.T) {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
 		t.Fatalf("err = %T (%v), want *exec.ExitError — callers such as "+
-			"openclawShimDiagnostic type-switch on it", err, err)
+			"forking-cliShimDiagnostic type-switch on it", err, err)
 	}
 	if exitErr.ExitCode() != 7 {
 		t.Errorf("exit code = %d, want 7", exitErr.ExitCode())
@@ -185,7 +185,7 @@ func TestRunCollectSurfacesStderrAndExitStatus(t *testing.T) {
 //
 // The race cannot be forced from a stub — it lives inside one syscall — so the
 // missed pass is injected here instead. Same var-for-tests pattern as
-// detectVersionTimeout and openclawExec.
+// detectVersionTimeout and forking-cliExec.
 func TestRunCollectRetriesTheTreeKill(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "helper.pid")
 	cli := writeForkingCLI(t, pidFile)
@@ -260,7 +260,7 @@ func TestRunCollectCmdHonorsContextWithoutACommandContext(t *testing.T) {
 
 // TestDetectCLIVersionReapsForkedHelper covers the real caller: version
 // detection runs inside the daemon's blocking preflight for every registered
-// provider, and it was one of the paths leaking `openclaw-config`.
+// provider, and it was one of the paths leaking `forking-cli-config`.
 func TestDetectCLIVersionReapsForkedHelper(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "helper.pid")
 	cli := writeForkingCLI(t, pidFile)

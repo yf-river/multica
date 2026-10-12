@@ -36,7 +36,7 @@ import (
 const windowsCollectJSON = `{"agents":[{"id":"main"}]}`
 
 // writeWindowsPrintThenHangShim creates a batch shim that prints payload and then
-// stays alive, mirroring `openclaw config file` on the affected build. `ping` is
+// stays alive, mirroring `forking-cli config file` on the affected build. `ping` is
 // used as the sleep because it is present on every Windows image and its own
 // output is redirected away so it cannot pollute the captured stdout.
 func writeWindowsPrintThenHangShim(t *testing.T, payload string) string {

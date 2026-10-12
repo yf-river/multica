@@ -9,10 +9,6 @@ import (
 )
 
 const (
-	// BillingWorkspaceSubscriptions 控制"工作区维度计费、Stripe Checkout、席位对账
-	// 与 Billing Portal 代理"这套表面能力。默认刻意关闭，让主仓库先于托管云开启
-	// 对应 billing.subscriptions 能力发货。
-	BillingWorkspaceSubscriptions = "billing_workspace_subscriptions"
 	// ComposioMCPApps 控制 Composio 应用管理 UI，以及——连同它依赖的 MUL-3963
 	// permission_mode / invocation_targets 访问模型——agent 创建流程里对齐后的
 	// Private / Public-to 选择器。该访问模型的存在是为了给 Composio 共享把关，
@@ -26,14 +22,8 @@ const (
 
 // frontendPublicFlags 是需要暴露给前端求值的公开开关键集合。
 var frontendPublicFlags = []string{
-	BillingWorkspaceSubscriptions,
 	ComposioMCPApps,
 	PluginsV1,
-}
-
-// BillingWorkspaceSubscriptionsEnabled 快捷判断"工作区计费订阅"开关是否开启。
-func BillingWorkspaceSubscriptionsEnabled(ctx context.Context, flags *featureflag.Service) bool {
-	return flags.IsEnabled(ctx, BillingWorkspaceSubscriptions, false)
 }
 
 // ComposioMCPAppsEnabled 快捷判断"Composio MCP 应用"开关是否开启。

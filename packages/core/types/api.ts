@@ -118,6 +118,7 @@ export interface MoveIssueRequest
   extends Pick<
     UpdateIssueRequest,
     | "status"
+    | "priority"
     | "assignee_type"
     | "assignee_id"
     | "parent_issue_id"

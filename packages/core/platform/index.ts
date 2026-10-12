@@ -16,3 +16,5 @@ export {
   type SystemNotificationPayload,
   type WebNotificationPermission,
 } from "./system-notification";
+
+export { environmentCookieName } from "./environment";

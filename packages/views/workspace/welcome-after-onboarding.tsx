@@ -122,7 +122,7 @@ function SkipWelcome({ workspaceId, onDismiss }: SkipWelcomeProps) {
             title: INSTALL_RUNTIME_ISSUE_TITLE,
             description: INSTALL_RUNTIME_ISSUE_BODY,
             status: "in_progress",
-            priority: "high",
+            priority: "important_urgent",
             assignee_type: "member",
             assignee_id: me.id,
           },

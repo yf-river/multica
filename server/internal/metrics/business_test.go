@@ -163,7 +163,6 @@ func TestBusinessMetricsRegistryExposesAllFamilies(t *testing.T) {
 	exerciseEvent(m, analytics.EventAutopilotRunStarted, map[string]any{"cadence": "manual", "trigger_kind": "manual"})
 	exerciseEvent(m, analytics.EventAutopilotRunCompleted, map[string]any{"cadence": "manual", "trigger_kind": "manual"})
 	exerciseEvent(m, analytics.EventAutopilotRunFailed, map[string]any{"cadence": "manual", "trigger_kind": "manual"})
-	exerciseEvent(m, analytics.EventFeedbackSubmitted, map[string]any{"kind": "general", "platform": "web"})
 	exerciseEvent(m, analytics.EventContactSalesSubmitted, map[string]any{"form_source": "page"})
 
 	// Direct Record* helpers (no PostHog event source).
@@ -177,12 +176,6 @@ func TestBusinessMetricsRegistryExposesAllFamilies(t *testing.T) {
 	m.RecordCloudRuntimeRequest("provision", "ok", 0.5)
 	m.RecordDaemonWSMessageReceived("heartbeat")
 	m.RecordChatOutputLocalPath("file_url")
-	m.RecordEntitlementConfigError()
-	m.RecordEntitlementCache("hit")
-	m.RecordEntitlementRefresh("success", 0.01)
-	m.RecordEntitlementDecision("autopilot_runs", "observe", "cache_fresh")
-	m.RecordEntitlementVersionRegression()
-	m.RecordAutopilotQuotaDecision("observe", "manual", "admitted")
 	m.ObserveRuntimeSweepStage(RuntimeSweepStageLiveness, time.Second, 2, 1)
 
 	families, err := registry.Gather()
@@ -197,9 +190,6 @@ func TestBusinessMetricsRegistryExposesAllFamilies(t *testing.T) {
 		if !seen[metric] {
 			t.Fatalf("registry did not expose metric family %s", metric)
 		}
-	}
-	if !seen["multica_entitlement_config_error_total"] {
-		t.Fatal("registry did not expose metric family multica_entitlement_config_error_total")
 	}
 }
 

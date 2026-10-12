@@ -20,18 +20,6 @@
     "toast_deleted": "已删除任务",
     "toast_delete_failed": "删除任务失败"
   },
-  "feedback": {
-    "title": "反馈",
-    "placeholder": "聊聊你的体验、遇到的 bug，或想看到的功能...",
-    "toast_uploading": "请等待上传完成...",
-    "toast_too_long": "内容过长",
-    "toast_sent": "感谢反馈！",
-    "toast_failed": "发送反馈失败",
-    "send": "发送反馈",
-    "sending": "发送中...",
-    "github_hint_prefix": "想被更快处理、参与讨论？请去 ",
-    "github_hint_link": "GitHub"
-  },
   "issue_picker": {
     "search_placeholder": "搜索任务...",
     "searching": "搜索中...",
@@ -157,19 +145,7 @@
     "toast_failed": "创建任务失败",
     "toast_duplicate_title": "已存在同名任务",
     "toast_duplicate_view": "查看已有任务",
-    "issue_limit": {
-      "title": "该工作区的任务总数已达到上限",
-      "checking_description": "正在查询该工作区可用的账单操作…",
-      "upgrade_description": "升级到专业版后可继续创建任务。",
-      "portal_description": "打开账单门户管理该工作区的订阅，以恢复任务创建。",
-      "contact_description": "请联系工作区所有者或管理员升级到专业版。",
-      "billing_description": "请前往账单设置查看该工作区可用的升级选项。",
-      "billing_unavailable_description": "暂时无法加载账单操作，请前往账单设置重试。",
-      "billing_disabled_description": "请删除已有任务以释放名额，或联系工作区管理员。",
-      "upgrade_action": "升级到专业版",
-      "portal_action": "打开账单门户",
-      "billing_action": "查看账单"
-    },
+
     "toast_link_subissues_all_failed": "关联子任务失败",
     "toast_link_subissues_partial": "{{total}} 个子任务中有 {{failed}} 个关联失败",
     "toast_link_labels_failed": "关联标签失败",

@@ -77,6 +77,7 @@ type issueTableGroupsResponse struct {
 // 是用于 SQL 的分组与排序表达式，property 分组额外携带属性选项表，compound 分组持有 primary 子
 // 规格与次级轴信息。status_category 分组则带类别映射（见 statusCategoryExpr）。
 type resolvedIssueTableGroup struct {
+	crossWorkspace    bool
 	kind              string
 	propertyID        string
 	propertyType      string
@@ -171,11 +172,12 @@ func issueTableGroupIdentity(group issueTableGroupSpec) string {
 // resolveIssueTableGroup 校验并解析一次分组请求，产出可用的 resolvedIssueTableGroup。它会按
 // kind 补 SQL 表达式、为 status_category / compound 读类别映射、为 property 读属性定义与选项
 // 表。allowNone 允许解析「不分组」（组头端点禁止）。非法请求写 4xx/422 并返回 ok=false。
-func (h *Handler) resolveIssueTableGroup(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, group issueTableGroupSpec, allowNone bool) (resolvedIssueTableGroup, bool) {
+func (h *Handler) resolveIssueTableGroup(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, group issueTableGroupSpec, allowNone bool, crossWorkspace ...bool) (resolvedIssueTableGroup, bool) {
 	if group.Kind != "compound" && group.SecondaryValues != nil {
 		writeError(w, http.StatusBadRequest, "group.secondary_values requires group.kind=compound")
 		return resolvedIssueTableGroup{}, false
 	}
+	across := len(crossWorkspace) > 0 && crossWorkspace[0]
 	switch group.Kind {
 	case "none":
 		if !allowNone {
@@ -186,6 +188,9 @@ func (h *Handler) resolveIssueTableGroup(w http.ResponseWriter, r *http.Request,
 	case "status":
 		return resolvedIssueTableGroup{kind: "status", groupExpr: "i.status"}, true
 	case "status_category":
+		if across {
+			return resolvedIssueTableGroup{kind: "status_category", crossWorkspace: true}, true
+		}
 		// 看板 / 列表 / 泳道列是按「类别」分的：自定义状态归到「它表现为哪个类别」的那一列，
 		// 而不是给它单开一列——这样列数上限才钉在 7。（MUL-6243）
 		customKeys, categoryKeys, err := h.resolveStatusCategoryMaps(r.Context(), workspaceID)
@@ -222,8 +227,9 @@ END, ''))`,
 		}, true
 	case "parent":
 		return resolvedIssueTableGroup{
-			kind:      "parent",
-			groupExpr: "COALESCE(i.parent_issue_id::text, '__no_parent__')",
+			kind:           "parent",
+			crossWorkspace: across,
+			groupExpr:      "COALESCE(i.parent_issue_id::text, '__no_parent__')",
 			groupSortExpr: `CASE WHEN group_value = '__no_parent__' THEN '' ELSE LOWER(COALESCE(
   (SELECT p.title FROM issue p WHERE p.workspace_id = $1 AND p.id = group_value::uuid),
   ''
@@ -251,7 +257,7 @@ END, ''))`,
 			}
 			seenSecondaryValues[value] = struct{}{}
 		}
-		primary, ok := h.resolveIssueTableGroup(w, r, workspaceID, issueTableGroupSpec{Kind: group.Primary}, false)
+		primary, ok := h.resolveIssueTableGroup(w, r, workspaceID, issueTableGroupSpec{Kind: group.Primary}, false, across)
 		if !ok {
 			return resolvedIssueTableGroup{}, false
 		}
@@ -261,8 +267,9 @@ END, ''))`,
 			secondaryValues:   append([]string(nil), group.SecondaryValues...),
 			secondaryFiltered: group.SecondaryValues != nil,
 			secondaryCategory: secondaryCategory,
+			crossWorkspace:    across,
 		}
-		if secondaryCategory {
+		if secondaryCategory && !across {
 			customKeys, categoryKeys, err := h.resolveStatusCategoryMaps(r.Context(), workspaceID)
 			if err != nil {
 				slog.Warn("resolve compound status category group failed", append(logger.RequestAttrs(r), "error", err)...)
@@ -352,7 +359,7 @@ func (group resolvedIssueTableGroup) expression(addArg func(any) string) string 
 		return group.primary.expression(addArg)
 	}
 	if group.kind == "status_category" {
-		return statusCategoryExpr(group.statusCustomKeys, addArg)
+		return group.categoryExpression(addArg)
 	}
 	if group.kind == "property" && group.propertyType == "select" {
 		active := make([]string, 0, len(group.activeOptions))
@@ -362,6 +369,16 @@ func (group resolvedIssueTableGroup) expression(addArg func(any) string) string 
 		return fmt.Sprintf(group.groupExpr, addArg(active))
 	}
 	return group.groupExpr
+}
+
+// 跨工作区目录中的同名状态可以属于不同类别，按任务所属工作区解析。
+const issueStatusCategorySQL = "COALESCE((SELECT st.category FROM issue_status st WHERE st.workspace_id = i.workspace_id AND st.key = i.status), i.status)"
+
+func (group resolvedIssueTableGroup) categoryExpression(addArg func(any) string) string {
+	if group.crossWorkspace {
+		return issueStatusCategorySQL
+	}
+	return statusCategoryExpr(group.statusCustomKeys, addArg)
 }
 
 // sortExpression 返回组间排序的 SQL 表达式（排序在归并成组之后执行，可用别名 group_value）；
@@ -410,6 +427,9 @@ func (group resolvedIssueTableGroup) contextExpression(addArg func(any) string, 
 	}
 	if group.kind != "parent" {
 		return "'{}'::jsonb"
+	}
+	if group.crossWorkspace {
+		return "CASE WHEN group_value = '__no_parent__' THEN '{}'::jsonb ELSE COALESCE((SELECT jsonb_build_object('parent', jsonb_build_object('id', p.id::text, 'number', p.number, 'identifier', w.issue_prefix || '-' || p.number::text, 'title', p.title, 'status', p.status)) FROM issue p JOIN workspace w ON w.id = p.workspace_id WHERE p.id = group_value::uuid ), '{}'::jsonb) END"
 	}
 	prefixRef := addArg(issuePrefix)
 	return fmt.Sprintf(`CASE WHEN group_value = '__no_parent__' THEN '{}'::jsonb ELSE COALESCE((
@@ -622,6 +642,9 @@ func (group resolvedIssueTableGroup) predicate(w http.ResponseWriter, key string
 			return "", false
 		}
 		if group.secondaryCategory {
+			if group.crossWorkspace {
+				return fmt.Sprintf("(%s) AND (%s) = %s::text", primaryPredicate, group.categoryExpression(addArg), addArg(status)), true
+			}
 			return fmt.Sprintf("(%s) AND i.status = ANY(%s::text[])", primaryPredicate, addArg(group.categoryKeysFor(status))), true
 		}
 		return fmt.Sprintf("(%s) AND i.status = %s::text", primaryPredicate, addArg(status)), true
@@ -648,6 +671,9 @@ func (group resolvedIssueTableGroup) predicate(w http.ResponseWriter, key string
 		if !ok {
 			writeError(w, http.StatusBadRequest, "invalid group_key")
 			return "", false
+		}
+		if group.crossWorkspace {
+			return fmt.Sprintf("(%s) = %s::text", group.categoryExpression(addArg), addArg(category)), true
 		}
 		// 展开成具体 key 而不是把列包进类别函数：`status = ANY(...)` 能继续用 (workspace_id,
 		// status) 索引，函数包裹会退化成全工作区扫描。
@@ -793,7 +819,7 @@ func (h *Handler) ListIssueTableGroups(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	group, ok := h.resolveIssueTableGroup(w, r, compiled.workspaceID, request.Group, false)
+	group, ok := h.resolveIssueTableGroup(w, r, compiled.workspaceID, request.Group, false, compiled.crossWorkspace)
 	if !ok {
 		return
 	}
@@ -867,7 +893,7 @@ func (h *Handler) ListIssueTableGroups(w http.ResponseWriter, r *http.Request) {
 		// 渲染所在列的那个 cell，绝不会单开一格。（MUL-6243）
 		secondaryExpr := "i.status"
 		if group.secondaryCategory {
-			secondaryExpr = statusCategoryExpr(group.statusCustomKeys, addArg)
+			secondaryExpr = group.categoryExpression(addArg)
 		}
 		groupedCTE = fmt.Sprintf(`cells AS (
   SELECT %s AS group_value, %s AS secondary_value, COUNT(*)::bigint AS cell_count

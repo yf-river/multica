@@ -199,7 +199,7 @@ describe("WorkingAgentsHoverContent", () => {
 describe("chipActivity", () => {
   it("keeps unresolved, resolved-empty and non-empty strictly apart", () => {
     expect(chipActivity(undefined)).toBe("unknown");
-    expect(chipActivity([])).toBe("none");
+    expect(chipActivity([])).toBe("not_important_not_urgent");
     expect(chipActivity([makeAgent("a1")])).toBe("some");
   });
 });

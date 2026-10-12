@@ -43,9 +43,10 @@ const chatSessionTitleMaxLen = 200
 
 // CreateChatSessionRequest 是创建聊天会话的请求体。
 type CreateChatSessionRequest struct {
-	AgentID   string  `json:"agent_id"`
-	Title     string  `json:"title"`
-	ProjectID *string `json:"project_id"`
+	AgentID       string  `json:"agent_id"`
+	Title         string  `json:"title"`
+	ProjectID     *string `json:"project_id"`
+	ReuseExisting bool    `json:"reuse_existing"`
 }
 
 // CreateChatSession 处理 POST /api/chat/sessions。权限要点：须在工作区内能
@@ -102,6 +103,19 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	if !h.canInvokeAgent(r.Context(), agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		return
+	}
+	if req.ReuseExisting {
+		if agent.SystemKey.String != service.MikaSystemKey || projectID.Valid || actorType != "member" {
+			writeError(w, http.StatusBadRequest, "conversation reuse is only supported for a member's Mika chat")
+			return
+		}
+		session, err := h.getOrCreateMikaSession(r.Context(), agent, workspaceID, userID, req.Title)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to open the Mika conversation")
+			return
+		}
+		writeJSON(w, http.StatusOK, chatSessionToResponse(session))
 		return
 	}
 

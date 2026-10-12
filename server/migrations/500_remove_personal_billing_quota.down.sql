@@ -1,0 +1,1 @@
+-- Commercial billing/quota data is intentionally not recreated after removal.

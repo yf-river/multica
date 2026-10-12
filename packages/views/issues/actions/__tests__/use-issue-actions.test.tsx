@@ -119,7 +119,7 @@ const mockIssue: Issue = {
   title: "Example",
   description: null,
   status: "todo",
-  priority: "medium",
+  priority: "not_important_urgent",
   assignee_type: null,
   assignee_id: null,
   creator_type: "member",

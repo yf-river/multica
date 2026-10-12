@@ -40,7 +40,7 @@ describe("deferred picker triggers", () => {
     renderWithI18n(
       <>
         <PriorityPicker
-          priority="none"
+          priority="not_important_not_urgent"
           onUpdate={() => {}}
           triggerRender={<PillButton />}
         />

@@ -33,7 +33,7 @@ const SOURCE = {
   invocation_targets: [],
   max_concurrent_tasks: 6,
   model: "gpt-5.6-sol",
-  thinking_level: "high",
+  thinking_level: "important_not_urgent",
   service_tier: "priority",
   skills: [],
 } as unknown as Agent;
@@ -76,7 +76,7 @@ describe("useDuplicateDraftSeed", () => {
     expect(draft).toMatchObject({
       runtimeId: "runtime-1",
       model: "gpt-5.6-sol",
-      thinkingLevel: "high",
+      thinkingLevel: "important_not_urgent",
       serviceTier: "priority",
     });
     expect(runtimeReset).toBe(false);

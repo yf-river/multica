@@ -11,7 +11,7 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     title: "Issue 1",
     description: null,
     status: "todo",
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",
@@ -41,10 +41,10 @@ describe("commonIssueFields", () => {
 
   it("reflects a single issue's own fields", () => {
     const common = commonIssueFields([
-      makeIssue({ status: "in_progress", priority: "high", assignee_type: "member", assignee_id: "u-1" }),
+      makeIssue({ status: "in_progress", priority: "important_not_urgent", assignee_type: "member", assignee_id: "u-1" }),
     ]);
     expect(common.status).toBe("in_progress");
-    expect(common.priority).toBe("high");
+    expect(common.priority).toBe("important_not_urgent");
     expect(common.assignee).toEqual({ type: "member", id: "u-1" });
   });
 
@@ -68,8 +68,8 @@ describe("commonIssueFields", () => {
 
   it("derives each field independently — shared status, mixed priority", () => {
     const common = commonIssueFields([
-      makeIssue({ id: "a", status: "blocked", priority: "urgent" }),
-      makeIssue({ id: "b", status: "blocked", priority: "low" }),
+      makeIssue({ id: "a", status: "blocked", priority: "important_urgent" }),
+      makeIssue({ id: "b", status: "blocked", priority: "not_important_not_urgent" }),
     ]);
     expect(common.status).toBe("blocked");
     expect(common.priority).toBeNull();

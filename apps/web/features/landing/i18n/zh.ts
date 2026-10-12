@@ -2,7 +2,7 @@
  * 官网 landing 的 zh-Hans 文案字典（纯数据，无逻辑）。
  * 含 header / hero / 各功能区块 / FAQ / 页脚 / 关于 / 更新日志 / 下载 / 联系销售 等全部文案。
  */
-import { githubUrl, discordUrl } from "../components/shared";
+import { githubUrl } from "../components/shared";
 import type { LandingDict } from "./types";
 
 /**
@@ -255,7 +255,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           { label: "\u6587\u6863", href: "/docs/zh" },
           { label: "API", href: githubUrl },
           { label: "X (Twitter)", href: "https://x.com/MulticaAI" },
-          { label: "Discord", href: discordUrl },
         ],
       },
       company: {
@@ -874,7 +873,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
           "过长的项目名或标签名不再让属性标签占满一整行。",
           "清空属性的入口，现在统一位于选择弹层的第一行。",
           "Autopilot 的 Runbook 过宽时，不再把设置面板挤出弹窗。",
-          "中文侧栏中的 Discord 入口不再显示不全。",
           "把任务指派给小队不再出错。",
         ],
       },
@@ -1722,7 +1720,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
         features: [
           "Lark 里的话题消息现在会回到原话题中，团队讨论更容易保持上下文",
           "小队负责人现在可以在成员列表里看到成员技能，分配任务时更容易选对人",
-          "Discord 入口已加入官网页脚、帮助菜单、README，以及可关闭的应用侧边栏卡片",
         ],
         improvements: [
           "任务顶部的智能体活动状态现在悬停即可展开，更方便快速查看当前进展",

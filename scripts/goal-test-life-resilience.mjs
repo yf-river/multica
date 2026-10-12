@@ -124,10 +124,12 @@ async function exerciseConcurrentConfirmation() {
 
 async function browserConfirm(page, proposalID) {
   return page.evaluate(async ({ id, workspaceID }) => {
+    const cfg = await (await fetch("/api/config")).json();
+    const prefix = "multica_csrf" + (cfg.environment_id ? "_" + cfg.environment_id : "") + "=";
     const csrf = document.cookie
       .split("; ")
-      .find((item) => item.startsWith("multica_csrf="))
-      ?.slice("multica_csrf=".length);
+      .find((item) => item.startsWith(prefix))
+      ?.slice(prefix.length);
     const response = await fetch(`/api/life/proposals/${id}/confirm`, {
       method: "POST",
       headers: {

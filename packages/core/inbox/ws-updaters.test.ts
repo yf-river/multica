@@ -161,27 +161,27 @@ describe("patchInboxIssueProjection", () => {
   it("patches priority in both active and archived issue rows", () => {
     const qc = new QueryClient();
     qc.setQueryData<InboxItem[]>(inboxKeys.list(wsId), [
-      makeItem("i1", "issue-a", { issue_priority: "low" }),
-      makeItem("i2", "issue-b", { issue_priority: "low" }),
+      makeItem("i1", "issue-a", { issue_priority: "not_important_not_urgent" }),
+      makeItem("i2", "issue-b", { issue_priority: "not_important_not_urgent" }),
     ]);
     qc.setQueryData<InboxItem[]>(inboxKeys.archived(wsId), [
       makeItem("a1", "issue-a", {
         archived: true,
-        issue_priority: "low",
+        issue_priority: "not_important_not_urgent",
       }),
     ]);
 
-    patchInboxIssueProjection(qc, wsId, "issue-a", { priority: "urgent" });
+    patchInboxIssueProjection(qc, wsId, "issue-a", { priority: "important_urgent" });
 
     expect(
       qc.getQueryData<InboxItem[]>(inboxKeys.list(wsId))?.map((item) =>
         item.issue_priority,
       ),
-    ).toEqual(["urgent", "low"]);
+    ).toEqual(["important_urgent", "not_important_not_urgent"]);
     expect(
       qc.getQueryData<InboxItem[]>(inboxKeys.archived(wsId))?.[0]
         ?.issue_priority,
-    ).toBe("urgent");
+    ).toBe("important_urgent");
   });
 
   it("does not manufacture priority capability for legacy Inbox rows", () => {
@@ -190,7 +190,7 @@ describe("patchInboxIssueProjection", () => {
       makeItem("legacy", "issue-a"),
     ]);
 
-    patchInboxIssueProjection(qc, wsId, "issue-a", { priority: "urgent" });
+    patchInboxIssueProjection(qc, wsId, "issue-a", { priority: "important_urgent" });
 
     expect(
       qc.getQueryData<InboxItem[]>(inboxKeys.list(wsId))?.[0],

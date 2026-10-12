@@ -6,6 +6,21 @@ import type { HealthObservation, HealthProfile } from "./schema";
 export const healthKeys = {
   all: (wsId: string, userId: string) => ["health", wsId, userId] as const,
 };
+
+const PROCESSING_REPORT_STATUSES = new Set([
+  "running",
+  "queued",
+  "claimed",
+  "deferred",
+]);
+
+function hasProcessingReport(data: unknown) {
+  if (!data || typeof data !== "object" || !("items" in data)) return false;
+  const items = (data as { items?: Array<{ taskStatus?: string }> }).items;
+  return items?.some((report) =>
+    PROCESSING_REPORT_STATUSES.has(report.taskStatus || ""),
+  ) ?? false;
+}
 export function useHealthReportHistory(wsId: string, id: string) {
   const userId = useAuthStore((s) => s.user?.id) ?? "";
   return useQuery({
@@ -23,27 +38,34 @@ export function useHealthReportUpload(wsId: string) {
       client.invalidateQueries({ queryKey: healthKeys.all(wsId, userId) }),
   });
 }
-export function useHealth(wsId: string) {
+export function useHealth(
+  wsId: string,
+  options: { revisionsEnabled?: boolean } = {},
+) {
   const userId = useAuthStore((s) => s.user?.id) ?? "";
   const key = healthKeys.all(wsId, userId);
+  const client = useQueryClient();
   const overview = useQuery({
     queryKey: [...key, "overview"],
     queryFn: () => api.healthOverview(),
     enabled: !!wsId && !!userId,
-    refetchInterval: 5000,
+    refetchInterval: () =>
+      hasProcessingReport(client.getQueryData([...key, "reports"]))
+        ? 5000
+        : false,
   });
   const reports = useQuery({
     queryKey: [...key, "reports"],
     queryFn: () => api.healthReports(),
     enabled: !!wsId && !!userId,
-    refetchInterval: 5000,
+    refetchInterval: (query) =>
+      hasProcessingReport(query.state.data) ? 5000 : false,
   });
   const revisions = useQuery({
     queryKey: [...key, "revisions"],
     queryFn: () => api.healthRevisions(),
-    enabled: !!wsId && !!userId,
+    enabled: !!wsId && !!userId && options.revisionsEnabled !== false,
   });
-  const client = useQueryClient();
   const invalidate = () => client.invalidateQueries({ queryKey: key });
   const profile = useMutation({
     mutationFn: ({

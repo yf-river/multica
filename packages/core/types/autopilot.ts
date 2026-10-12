@@ -138,20 +138,6 @@ export interface AutopilotRun {
   created_at: string;
 }
 
-/** autopilot 配额用量。 */
-export interface AutopilotQuotaUsage {
-  action: "off" | "observe" | "enforce";
-  used: number | null;
-  reserved: number | null;
-  total: number | null;
-  limit: number | null;
-  reached: boolean | null;
-  period_start: string | null;
-  period_end: string | null;
-  reset_at: string | null;
-  blocked_counts: Record<string, number> | null;
-}
-
 /** 新增订阅者的输入（不含服务端回填字段）。 */
 export interface AutopilotSubscriberInput {
   user_type: "member";

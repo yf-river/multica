@@ -269,3 +269,23 @@ describe("proxy root handling", () => {
   });
 
 });
+
+
+describe("environment-specific workspace redirects", () => {
+  it("uses only the selected environment's session and workspace", () => {
+    const previous = process.env.MULTICA_ENV_ID;
+    try {
+      process.env.MULTICA_ENV_ID = "int";
+      withoutRuntimeUpstreams(() => {
+        expect(redirectLocation("/issues", {
+          multica_logged_in: "1", last_workspace_slug: "legacy",
+          multica_logged_in_prod: "1", last_workspace_slug_prod: "production",
+        })).toContain("/login");
+        expect(redirectLocation("/issues", {
+          multica_logged_in_int: "1", last_workspace_slug_int: "integration",
+          multica_logged_in_prod: "1", last_workspace_slug_prod: "production",
+        })).toContain("/integration/issues");
+      });
+    } finally { restoreEnv("MULTICA_ENV_ID", previous); }
+  });
+});

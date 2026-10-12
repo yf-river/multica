@@ -176,7 +176,7 @@ func (h *Handler) issueTableOrderBy(w http.ResponseWriter, r *http.Request, work
 		resolved.expression = "CASE i.status WHEN 'backlog' THEN 0 WHEN 'todo' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'in_review' THEN 3 WHEN 'done' THEN 4 WHEN 'blocked' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END"
 		resolved.castType = "integer"
 	case "priority":
-		resolved.expression = "CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
+		resolved.expression = "CASE i.priority WHEN 'important_urgent' THEN 0 WHEN 'important_not_urgent' THEN 1 WHEN 'not_important_urgent' THEN 2 WHEN 'not_important_not_urgent' THEN 3 ELSE 4 END"
 		resolved.castType = "integer"
 	default:
 		expr, handled, err := h.propertySortExpr(r, workspaceID, sortField)
@@ -293,7 +293,7 @@ func (h *Handler) ListIssueTableRows(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	group, ok := h.resolveIssueTableGroup(w, r, compiled.workspaceID, request.Group, true)
+	group, ok := h.resolveIssueTableGroup(w, r, compiled.workspaceID, request.Group, true, compiled.crossWorkspace)
 	if !ok {
 		return
 	}
@@ -491,27 +491,30 @@ SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 	}
 	committed = true
 
-	prefix := baseHandler.getIssuePrefix(r.Context(), compiled.workspaceID)
-	issueIDs := make([]pgtype.UUID, len(scanned))
-	for index, row := range scanned {
-		issueIDs[index] = row.issue.ID
-	}
-	labelsByIssue := baseHandler.labelsByIssue(r.Context(), compiled.workspaceID, issueIDs)
-	// 整页共用一个 Resolver，见 newStatusCategoryFiller。（MUL-6243）
-	fillTableRow := baseHandler.newStatusCategoryFiller(r.Context(), compiled.workspaceID)
 	responseRows := make([]issueTableRowResponse, len(scanned))
+	byWorkspace := make(map[pgtype.UUID][]pgtype.UUID)
+	for _, row := range scanned {
+		byWorkspace[row.issue.WorkspaceID] = append(byWorkspace[row.issue.WorkspaceID], row.issue.ID)
+	}
+	prefixes := make(map[pgtype.UUID]string)
+	labelsByIssue := make(map[string][]LabelResponse)
+	fillers := make(map[pgtype.UUID]func(*IssueResponse))
+	for workspaceID, issueIDs := range byWorkspace {
+		prefixes[workspaceID] = baseHandler.getIssuePrefix(r.Context(), workspaceID)
+		for id, labels := range baseHandler.labelsByIssue(r.Context(), workspaceID, issueIDs) {
+			labelsByIssue[id] = labels
+		}
+		fillers[workspaceID] = baseHandler.newStatusCategoryFiller(r.Context(), workspaceID)
+	}
 	for index, row := range scanned {
-		issue := issueListRowToResponse(row.issue, prefix)
-		fillTableRow(&issue)
+		issue := issueListRowToResponse(row.issue, prefixes[row.issue.WorkspaceID])
+		fillers[row.issue.WorkspaceID](&issue)
 		labels := labelsByIssue[issue.ID]
 		if labels == nil {
 			labels = []LabelResponse{}
 		}
 		issue.Labels = &labels
-		responseRows[index] = issueTableRowResponse{
-			Issue:            issue,
-			DirectChildCount: row.childCount,
-		}
+		responseRows[index] = issueTableRowResponse{Issue: issue, DirectChildCount: row.childCount}
 	}
 
 	response := issueTableRowsResponse{

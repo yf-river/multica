@@ -1,0 +1,294 @@
+{
+  "original": {
+    "url": "https://github.com/Anduin2017/HowToCook",
+    "commit": "a2d45c6984dff9ee941da0e7c452f7965965d962"
+  },
+  "illustrated": {
+    "url": "https://github.com/king-jingxiang/HowToCook",
+    "commit": "5eacdadecac3708c3ec59aa2bcd32aaaa804e22e"
+  },
+  "mapping": {
+    "soup-陈皮排骨汤": "dishes/soup/陈皮排骨汤/陈皮排骨汤.md"
+  },
+  "stable_ids": {},
+  "mapping_notes": {
+    "soup-陈皮排骨汤": "图解为三星难度，原料用量及炖煮 1.5 小时与目录内三星图文版一致；同名四星文字版独立保留。"
+  },
+  "image_replacements": {
+    "https://img-s-msn-com.akamaized.net/tenant/amp/entityid/AA1yBdnK.img?w=768&h=512&m=6": {
+      "path": "scripts/cooking/assets/perfect-boiled-egg.png",
+      "sha256": "32b3df8589a97ef4acaf8b592405238750b22a2681bc914fa9247f34b880ccb7",
+      "source": "dishes/breakfast/完美水煮蛋.md",
+      "reason": "上游原图 HTTP 404；用户授权生成替代配图",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food photograph, landscape 3:2. Two peeled boiled egg halves and one whole peeled egg on an ivory ceramic plate. Fully set tender whites, creamy golden yolks holding shape, no raw liquid yolk or gray ring. Natural window light, neutral linen and warm wood, no garnish, text or watermark. Central composition suitable for a wide card crop."
+    }
+  },
+  "cover_replacements": {
+    "dishes/aquatic/响油鳝丝.md": {
+      "path": "scripts/cooking/assets/generated-b9a1d9770073562a25ba.png",
+      "sha256": "bb6c2212e7997ee8fcae560481c1acffdabbbcb9d493285128c6235f5033d9ff",
+      "name": "响油鳝丝",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 响油鳝丝, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/aquatic/响油鳝丝.md"
+    },
+    "dishes/breakfast/意式香肠北非蛋.md": {
+      "path": "scripts/cooking/assets/generated-e9b179096587074a0892.png",
+      "sha256": "f2ca444460ba825b8e9c5bda8d0c792bee358ad9d59bf0fcc794b1e352f64bfb",
+      "name": "意式香肠北非蛋",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 意式香肠北非蛋, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/breakfast/意式香肠北非蛋.md"
+    },
+    "dishes/breakfast/韩国麻药鸡蛋.md": {
+      "path": "scripts/cooking/assets/generated-fb61ba750320c4b8e0ab.png",
+      "sha256": "7fda12a24071773a788e7327a4e64a0e8fb3fa9cb593dba78dc8df386a262fe2",
+      "name": "韩国麻药鸡蛋",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 韩国麻药鸡蛋, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/breakfast/韩国麻药鸡蛋.md"
+    },
+    "dishes/dessert/胡萝卜甜糕.md": {
+      "path": "scripts/cooking/assets/generated-d23cfa9525fbb4e0b1d6.png",
+      "sha256": "34d603783b3e127c444fd30776008d1c6b1f1ac4d788136aa7c645d712eb0771",
+      "name": "胡萝卜甜糕",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 胡萝卜甜糕, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/dessert/胡萝卜甜糕.md"
+    },
+    "dishes/drink/印度奶茶.md": {
+      "path": "scripts/cooking/assets/generated-b48ca1e354ea639186bc.png",
+      "sha256": "7e77295d2289135626615d6e9deca38800c25e3a89c243e38cc3c6830ca895b5",
+      "name": "印度奶茶",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 印度奶茶, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/drink/印度奶茶.md"
+    },
+    "dishes/drink/牛油果拉西.md": {
+      "path": "scripts/cooking/assets/generated-3a181639cf9138dd900d.png",
+      "sha256": "a22c2afdf11ffb9ec04e0973cb77d82f8082b57de208d742347600ca39608ceb",
+      "name": "牛油果拉西",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 牛油果拉西, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/drink/牛油果拉西.md"
+    },
+    "dishes/meat_dish/冬瓜桑拿鸡.md": {
+      "path": "scripts/cooking/assets/generated-75dec508093166f9f9ed.png",
+      "sha256": "8815a5efdb836a3e2704a10a23336dc39c21b3f5fd587f23fc2353481e8c9b18",
+      "name": "冬瓜桑拿鸡",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 冬瓜桑拿鸡, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/meat_dish/冬瓜桑拿鸡.md"
+    },
+    "dishes/meat_dish/奥尔良风味烤鸡腿/奥尔良风味烤鸡腿.md": {
+      "path": "scripts/cooking/assets/generated-1f6cfac235de433a9e72.png",
+      "sha256": "e2184037ab622d3c50573f3bfb54abb3496c9f5533ce256114a89113e03abd5b",
+      "name": "奥尔良风味烤鸡腿",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 奥尔良风味烤鸡腿, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/meat_dish/奥尔良风味烤鸡腿/奥尔良风味烤鸡腿.md"
+    },
+    "dishes/meat_dish/小酥肉.md": {
+      "path": "scripts/cooking/assets/generated-2ed6cf0478f173fe47cb.png",
+      "sha256": "ffd445cc741ea0ac96fc305f3698854ac63d64a605d3d6633a9f636964de6266",
+      "name": "小酥肉",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 小酥肉, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/meat_dish/小酥肉.md"
+    },
+    "dishes/meat_dish/杀猪菜.md": {
+      "path": "scripts/cooking/assets/generated-c5fddf9813b2dc7a05f9.png",
+      "sha256": "ff4233ed2029be3833b7be6fd32f01d6edbbbae64de9ea8067385ced9c1dade8",
+      "name": "杀猪菜",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 杀猪菜, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/meat_dish/杀猪菜.md"
+    },
+    "dishes/meat_dish/空气炸锅脆皮现腌炸鸡/空气炸锅脆皮现腌炸鸡.md": {
+      "path": "scripts/cooking/assets/generated-77665869d6f51479d56a.png",
+      "sha256": "349b48f9795d4d0abb8971d8b48b1f3860701fdd805a9bc4ef24725200366fb9",
+      "name": "空气炸锅脆皮现腌炸鸡",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 空气炸锅脆皮现腌炸鸡, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/meat_dish/空气炸锅脆皮现腌炸鸡/空气炸锅脆皮现腌炸鸡.md"
+    },
+    "dishes/meat_dish/红烧肉/南派红烧肉.md": {
+      "path": "scripts/cooking/assets/generated-373d56f2f32aba5c1867.png",
+      "sha256": "a83916520124cfaee7b102cd73cab39ec89bb1e51dc46486a91903927f30a555",
+      "name": "南派红烧肉",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 南派红烧肉, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/meat_dish/红烧肉/南派红烧肉.md"
+    },
+    "dishes/meat_dish/葱烧鸡腿.md": {
+      "path": "scripts/cooking/assets/generated-aed4362137768ec13a5d.png",
+      "sha256": "42755718f814fccd38009d86ac2c8779bd08a68a8f27624a35cbdecec59516b3",
+      "name": "葱烧鸡腿",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 葱烧鸡腿, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/meat_dish/葱烧鸡腿.md"
+    },
+    "dishes/meat_dish/黄油鸡.md": {
+      "path": "scripts/cooking/assets/generated-636808171f3d3a8b109a.png",
+      "sha256": "2c46cc14528871199841858630171a69980b40c3977abe16a99a391c9a187c1c",
+      "name": "黄油鸡",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 黄油鸡, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/meat_dish/黄油鸡.md"
+    },
+    "dishes/soup/山药南瓜炖鸡汤.md": {
+      "path": "scripts/cooking/assets/generated-4c944fb35c21a8aa038f.png",
+      "sha256": "efa92e42e43aafeeef288492f4fafbeefffb8d3c4a2c9372b3931b5c87447613",
+      "name": "山药南瓜炖鸡汤",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 山药南瓜炖鸡汤, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/soup/山药南瓜炖鸡汤.md"
+    },
+    "dishes/soup/排骨山药玉米汤/排骨山药玉米汤.md": {
+      "path": "scripts/cooking/assets/generated-1afcd350dd6d285b7dae.png",
+      "sha256": "f9e65951ab03a9ca6310bdaa7121c7b43048363927bcd6f6478cc09243bf2bf0",
+      "name": "排骨山药玉米汤",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 排骨山药玉米汤, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/soup/排骨山药玉米汤/排骨山药玉米汤.md"
+    },
+    "dishes/soup/陈皮排骨汤/陈皮排骨汤.md": {
+      "path": "scripts/cooking/assets/generated-814045db735286f009a7.png",
+      "sha256": "22c7018cb2898d64fc826d94481c50a98eb2154996ec6f11b5de26e5e6a62dfa",
+      "name": "陈皮排骨汤",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 陈皮排骨汤, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/soup/陈皮排骨汤/陈皮排骨汤.md"
+    },
+    "dishes/staple/利提巧卡.md": {
+      "path": "scripts/cooking/assets/generated-1bda94c2a47924042347.png",
+      "sha256": "72d43fd9471f36ce990dfe65ce8b1c03e96db4b2febf1f623aad8e93b7a12f47",
+      "name": "利提巧卡",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 利提巧卡, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/staple/利提巧卡.md"
+    },
+    "dishes/staple/印度烤饼.md": {
+      "path": "scripts/cooking/assets/generated-c5aa148342a3c9c0f744.png",
+      "sha256": "6fadebcb6e30f9a147a2506b310c4be23ad197298065b3941b78727daa3deb97",
+      "name": "印度烤饼",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 印度烤饼, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/staple/印度烤饼.md"
+    },
+    "dishes/staple/印度焖饭.md": {
+      "path": "scripts/cooking/assets/generated-2a46b4b88f72e03b7ecb.png",
+      "sha256": "35b455963299301a3994829283b6563f780f14c62fbbd2070348ed715465db80",
+      "name": "印度焖饭",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 印度焖饭, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/staple/印度焖饭.md"
+    },
+    "dishes/staple/滕州菜煎饼.md": {
+      "path": "scripts/cooking/assets/generated-1d22844abab0cf6408d7.png",
+      "sha256": "322d9e11e59bd7e4d13e6c7781b8be56d8397faf4e85510c4349b029b2d3a6ca",
+      "name": "滕州菜煎饼",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 滕州菜煎饼, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/staple/滕州菜煎饼.md"
+    },
+    "dishes/staple/红芸豆拌饭.md": {
+      "path": "scripts/cooking/assets/generated-874ab7d67d2ecf47b43e.png",
+      "sha256": "46c339e6aef753500ee37ca80cf3638e625f1f415489ea09e240203bbb254a16",
+      "name": "红芸豆拌饭",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 红芸豆拌饭, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/staple/红芸豆拌饭.md"
+    },
+    "dishes/staple/鹰嘴豆炸饼.md": {
+      "path": "scripts/cooking/assets/generated-343910aaf7673e11a70f.png",
+      "sha256": "06a06eec1a6cd6a98a5a63f2f519955889b47f8e1d3272ed6a092c643b35058a",
+      "name": "鹰嘴豆炸饼",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 鹰嘴豆炸饼, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/staple/鹰嘴豆炸饼.md"
+    },
+    "dishes/vegetable_dish/印度土豆花菜.md": {
+      "path": "scripts/cooking/assets/generated-02e515d6befb2d792085.png",
+      "sha256": "7a299edb4c08b2deece8e852dc80b9b691d43b3527222156af3484d95d2c8a3f",
+      "name": "印度土豆花菜",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 印度土豆花菜, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/vegetable_dish/印度土豆花菜.md"
+    },
+    "dishes/vegetable_dish/印度葫芦丸子.md": {
+      "path": "scripts/cooking/assets/generated-1e38411f713685dd4b37.png",
+      "sha256": "6d9500c119ed5548a426b9847aed173def3ba79b924be824cae7531e17808968",
+      "name": "印度葫芦丸子",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 印度葫芦丸子, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/vegetable_dish/印度葫芦丸子.md"
+    },
+    "dishes/vegetable_dish/松仁玉米.md": {
+      "path": "scripts/cooking/assets/generated-b9ce9dd134001c2338a9.png",
+      "sha256": "ff30fa7e7c63dd43c2352ca439466cf63751bd47ee145c4477dbac9b64dafd91",
+      "name": "松仁玉米",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 松仁玉米, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/vegetable_dish/松仁玉米.md"
+    },
+    "dishes/vegetable_dish/炒土豆和胡萝卜蒸菜.md": {
+      "path": "scripts/cooking/assets/generated-822fa695f8afb97baeae.png",
+      "sha256": "e63a0b80dd9962a0e71e043fb986a34ac20913612c18aea66e74eff35bdee346",
+      "name": "炒土豆和胡萝卜蒸菜",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 炒土豆和胡萝卜蒸菜, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/vegetable_dish/炒土豆和胡萝卜蒸菜.md"
+    },
+    "dishes/vegetable_dish/炒茄子.md": {
+      "path": "scripts/cooking/assets/generated-51a4793a1e08410d5be5.png",
+      "sha256": "028ed271da6dbdfb68baeaad21d8a301fef1fa90cde6c95cf20144938545945a",
+      "name": "炒茄子",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 炒茄子, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/vegetable_dish/炒茄子.md"
+    },
+    "dishes/vegetable_dish/脆皮豆腐.md": {
+      "path": "scripts/cooking/assets/generated-9990afe9babe2653b10d.png",
+      "sha256": "a0d354281689f36a28ad8e27528ff6f2f513870b3d7efb0b9e1172510612a84c",
+      "name": "脆皮豆腐",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 脆皮豆腐, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/vegetable_dish/脆皮豆腐.md"
+    },
+    "dishes/vegetable_dish/韭菜炒蛋/韭菜炒蛋.md": {
+      "path": "scripts/cooking/assets/generated-cf76d9b00d1d4cfdf909.png",
+      "sha256": "6cfccca78bf98a2c2d1fb7964e5bc53c326528afaff5cc588b4a5953193fc029",
+      "name": "韭菜炒蛋",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 韭菜炒蛋, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/vegetable_dish/韭菜炒蛋/韭菜炒蛋.md"
+    },
+    "tips/learn/高压力锅.md": {
+      "path": "scripts/cooking/assets/generated-c170dc91731fb0032595.png",
+      "sha256": "08bc703ad30d5b89f19489e4997df235ce3b91d3526c31fc9c8ffd297a1cbdca",
+      "name": "高压力锅",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 高压力锅, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "tips/learn/高压力锅.md"
+    },
+    "tips/如何洗碗.md": {
+      "path": "scripts/cooking/assets/generated-7d7531c6f5cf632f5a82.png",
+      "sha256": "9ef84ddb386a227ee641f3cb1af9a49b6349a780de25583d22c3ffdbbe98a183",
+      "name": "如何洗碗",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 如何洗碗, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "tips/如何洗碗.md"
+    },
+    "dishes/soup/陈皮排骨汤.md": {
+      "path": "scripts/cooking/assets/generated-814045db735286f009a7.png",
+      "sha256": "22c7018cb2898d64fc826d94481c50a98eb2154996ec6f11b5de26e5e6a62dfa",
+      "name": "陈皮排骨汤",
+      "generator": "OpenAI built-in imagegen",
+      "prompt": "Realistic editorial food or instructional photograph for 陈皮排骨汤, landscape 3:2, authentic subject, warm natural light, neutral background, central composition for a 640x400 card crop, no text, no watermark.",
+      "source": "dishes/soup/陈皮排骨汤.md",
+      "reason": "同名文字版与图解版使用同一菜品配图"
+    }
+  }
+}

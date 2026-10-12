@@ -10,7 +10,7 @@ import { abortAll as abortAllUploads } from "./upload-coordinator";
  *
  * 旧模型要求每个新草稿 store 记得把它的 persist key 追加到另一个文件里的
  * 清单中；这份清单会漂移，导致 `multica_comment_drafts`、`multica_quick_create`、
- * `multica_project_draft`、`multica_feedback_draft` 以及 chat 草稿附件/恢复等
+ * `multica_project_draft` 以及 chat 草稿附件/恢复等
  * key 在登出和删除工作区时没被清掉（持久层泄漏）；而内存态的 Zustand 单例
  * 在纯客户端登出跳转后会保留上一个用户的草稿（内存层泄漏，共享配置下跨用户）。
  *

@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SidebarProvider, useSidebar } from "@multica/ui/components/ui/sidebar";
 import { configStore } from "@multica/core/config";
 import {
-  BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG,
   PLUGINS_V1_FLAG,
 } from "@multica/core/feature-flags";
 import { renderWithI18n } from "../../test/i18n";
@@ -24,14 +23,12 @@ vi.mock("./members-tab", stub("MembersTab"));
 vi.mock("./repositories-tab", stub("RepositoriesTab"));
 vi.mock("./github-tab", stub("GitHubTab"));
 vi.mock("./integrations-tab", stub("IntegrationsTab"));
-vi.mock("./labs-tab", stub("LabsTab"));
 vi.mock("./notifications-tab", stub("NotificationsTab"));
 vi.mock("./labels-tab", stub("LabelsTab"));
 vi.mock("./properties-tab", stub("PropertiesTab"));
 vi.mock("./quick-actions-tab", stub("QuickActionsTab"));
 vi.mock("./keyboard-shortcuts-tab", stub("KeyboardShortcutsTab"));
 vi.mock("./plugins-tab", stub("PluginsTab"));
-vi.mock("./billing-tab", stub("BillingTab"));
 
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ name: "Acme" }),
@@ -136,31 +133,5 @@ describe("SettingsPage Plugin feature flag", () => {
 
     expect(screen.getByRole("tab", { name: "Plugins" })).toBeInTheDocument();
     expect(await screen.findByText("PluginsTab")).toBeInTheDocument();
-  });
-});
-
-describe("SettingsPage workspace subscription feature flag", () => {
-  it("hides Billing and falls back to Workspace General from a direct URL", async () => {
-    navigationState.search = "tab=billing";
-
-    renderWithI18n(<SettingsPage />);
-
-    expect(
-      screen.queryByRole("tab", { name: "Billing" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("BillingTab")).not.toBeInTheDocument();
-    expect(await screen.findByText("WorkspaceTab")).toBeInTheDocument();
-  });
-
-  it("shows and mounts Billing only when explicitly enabled", async () => {
-    navigationState.search = "tab=billing";
-    configStore.getState().setFeatureFlags({
-      [BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG]: true,
-    });
-
-    renderWithI18n(<SettingsPage />);
-
-    expect(screen.getByRole("tab", { name: "Billing" })).toBeInTheDocument();
-    expect(await screen.findByText("BillingTab")).toBeInTheDocument();
   });
 });

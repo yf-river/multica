@@ -10,10 +10,8 @@ import { useAuthStore } from "@multica/core/auth";
 import {
   XMark,
   GitHubMark,
-  DiscordMark,
   githubUrl,
   twitterUrl,
-  discordUrl,
 } from "./shared";
 import { useLocale } from "../i18n";
 import { useDashboardCtaHref } from "../utils/use-dashboard-cta";
@@ -61,15 +59,6 @@ export function LandingFooter() {
                 className="text-white/40 transition-colors hover:text-white"
               >
                 <GitHubMark className="size-4" />
-              </Link>
-              <Link
-                href={discordUrl}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Discord"
-                className="text-white/40 transition-colors hover:text-white"
-              >
-                <DiscordMark className="size-4" />
               </Link>
             </div>
             <div className="mt-6">

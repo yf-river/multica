@@ -4,7 +4,7 @@ package agent
 // stdout/stderr 的排空与上限，供本包「跑一次命令取回答案」的调用方（如版本探测、
 // config get 等）使用。它解决 launch.go 的 runOwned/outputOwned/combinedOutputOwned
 // 办不到的一件事：当 os/exec 拥有排空权时，Wait 会一直阻塞到输出管道 EOF，而 EOF 要求
-// 每个写端都关闭——CLI 若 fork 出继承了 stdout 的助手进程（OpenClaw 会拉 openclaw-config），
+// 每个写端都关闭——CLI 若 fork 出继承了 stdout 的助手进程（forking CLI 会拉 forking CLI-config），
 // Wait 会被拖住到助手寿命结束。collector 自己拿 *os.File 管道，os/exec 完全不启动拷贝
 // goroutine，于是「直接子进程一退出 Wait 就返回」，何时算读完由本包决定。
 //
@@ -92,11 +92,11 @@ const collectStderrTail = probeStderrSampleBytes
 // 8 MiB 是推导出来而非拍脑袋的，因为这里落在哪是「产品兼容边界」而不只是内存边界：合法的
 // 配置若超了上限，任务会直接起不来。推导顺序（按它约束值的先后）：
 //
-//   - 实际要的是什么。在 OpenClaw 2026.7.1-2 上实测：`config validate --json` 回 715 字节、
+//   - 实际要的是什么。在 forking CLI 2026.7.1-2 上实测：`config validate --json` 回 715 字节、
 //     `config file` 回 2663。任何调用点要过的最大答案是完全解析后的配置（来自
 //     `config get --json`），其大小随用户的 agents 与 MCP 服务器数增长。
 //   - 上游对两者都没有天花板，所以最坏情形是构造出来的：1000 个 agent + 250 个 MCP
-//     服务器、带 OpenClaw 已解析配置含有的字段，序列化后 547,291 字节。真实部署只有个位数
+//     服务器、带 forking CLI 已解析配置含有的字段，序列化后 547,291 字节。真实部署只有个位数
 //     agent，那已是超出实际数量级的余量。这个上限在*那之上*再留 15x——TestCollectStdout
 //     LimitHasHeadroomOverTheLargestAnswer 就断言这一点；构造逻辑放在测试里，推导就不会
 //     静默偏离数值。
@@ -206,14 +206,14 @@ func (o *outputBuffer) idleFor() (time.Duration, bool) {
 //
 // 这个区别正是全部重点，也是 launch.go 的 runOwned/outputOwned/combinedOutputOwned 办不到
 // 的。os/exec 拥有排空权时，Wait 会阻塞到输出管道 EOF，而 EOF 要求每个写端都关闭——于是
-// 一个 fork 出继承 stdout 助手的 CLI（OpenClaw 会拉 `openclaw-config`）会让 Wait 一直开
+// 一个 fork 出继承 stdout 助手的 CLI（forking CLI 会拉 `forking CLI-config`）会让 Wait 一直开
 // 到助手寿命结束。取消 context 也没用：它只杀直接子进程，解不开 os/exec 的 io.Copy。
 // 改交给 os/exec 一个 *os.File 后，它完全不启动拷贝 goroutine，于是「直接子进程一退出
 // Wait 就返回」，何时算读完由本包决定。
 //
 // 那三个受管辅助函数改用 probeWaitDelay 封顶等待——对它们服务的探测是对的——但上限耗尽时
 // 会化成 exec.ErrWaitDelay，于是一个「答案已到、助手还赖着」的 CLI 会被报成调用失败。在
-// OpenClaw 路径上不可容忍：`--version` 失败会跳过运行时注册，`config file` 失败会让任务
+// forking CLI 路径上不可容忍：`--version` 失败会跳过运行时注册，`config file` 失败会让任务
 // 准备失败。RunCollectQuiet 说明买到了什么保证、给不了什么保证。
 //
 // 由此得到的推论是血的教训：本包决定何时读完，就必须决定得对。直接子进程的退出只证明直接
@@ -313,7 +313,7 @@ func startCollector(cmd *exec.Cmd, env []string) (*collector, error) {
 func (c *collector) finish() {
 	c.finishOnce.Do(func() {
 		// 收割 CLI fork 出来、留在组长组里的任何东西——成功路径也收：一次成功的
-		// `openclaw --version` 仍会留下助手，这正是「按定时器探测的主机」上孤儿积累的
+		// `forking CLI --version` 仍会留下助手，这正是「按定时器探测的主机」上孤儿积累的
 		// 方式。调过 setsid 的助手超出这里的能力范围——见 RunCollectQuiet 的保证 2——
 		// 但这一步也释放了最后一个写端、让下方读者能看到 EOF，这一点不依赖 kill 是否
 		// 命中。

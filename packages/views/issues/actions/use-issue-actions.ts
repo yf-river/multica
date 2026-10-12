@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useIssuePaths } from "@multica/core/paths";
 import { useModalStore } from "@multica/core/modals";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
@@ -56,7 +56,7 @@ export interface UseIssueActionsResult {
 export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
-  const paths = useWorkspacePaths();
+  const paths = useIssuePaths(issue);
   const navigation = useNavigation();
   const user = useAuthStore((s) => s.user);
   const userId = user?.id;

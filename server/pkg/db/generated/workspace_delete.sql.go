@@ -79,11 +79,6 @@ deleted_pins AS (
 deleted_daemon_tokens AS (
     DELETE FROM daemon_token WHERE daemon_token.workspace_id = $1
 ),
-detached_feedback AS (
-    UPDATE feedback
-    SET workspace_id = NULL
-    WHERE feedback.workspace_id = $1
-),
 detached_client_usage AS (
     UPDATE client_usage_daily
     SET workspace_id = NULL
@@ -125,26 +120,6 @@ WHERE autopilot_rule_version.workspace_id = $1
 
 func (q *Queries) DeleteWorkspaceAutopilotChildren(ctx context.Context, workspaceID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteWorkspaceAutopilotChildren, workspaceID)
-	return err
-}
-
-const deleteWorkspaceAutopilotQuotaPeriods = `-- name: DeleteWorkspaceAutopilotQuotaPeriods :exec
-DELETE FROM autopilot_quota_period
-WHERE autopilot_quota_period.workspace_id = $1
-`
-
-func (q *Queries) DeleteWorkspaceAutopilotQuotaPeriods(ctx context.Context, workspaceID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteWorkspaceAutopilotQuotaPeriods, workspaceID)
-	return err
-}
-
-const deleteWorkspaceAutopilotQuotaReservations = `-- name: DeleteWorkspaceAutopilotQuotaReservations :exec
-DELETE FROM autopilot_quota_reservation
-WHERE autopilot_quota_reservation.workspace_id = $1
-`
-
-func (q *Queries) DeleteWorkspaceAutopilotQuotaReservations(ctx context.Context, workspaceID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteWorkspaceAutopilotQuotaReservations, workspaceID)
 	return err
 }
 

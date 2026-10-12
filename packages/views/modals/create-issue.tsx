@@ -99,7 +99,6 @@ import {
 import { IssuePickerModal } from "./issue-picker-modal";
 import { useT } from "../i18n";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
-import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
 
 // ---------------------------------------------------------------------------
 // ManualCreatePanel —— 创建 issue 弹窗的手动模式面板主体。渲染 DialogContent 及
@@ -241,7 +240,6 @@ export function ManualCreatePanel({
     : undefined;
   const onSourceContextExpandedChange = data?.source_context_on_expanded_change as ((expanded: boolean) => void) | undefined;
   const sourceContextFailureMessage = useSourceContextFailureMessage();
-  const showIssueLimitUpgradePrompt = useIssueLimitUpgradePrompt();
 
   const draft = useIssueDraftStore((s) => s.draft);
   const setManual = useIssueDraftStore((s) => s.setManual);
@@ -399,7 +397,7 @@ export function ManualCreatePanel({
   // 溢出菜单打开（选择器 popover 需要内联胶囊作锚点）。
   const showField = {
     status: manualFields.includes("status") || status !== "todo" || fieldPickerOpen === "status",
-    priority: manualFields.includes("priority") || priority !== "none" || fieldPickerOpen === "priority",
+    priority: manualFields.includes("priority") || priority !== "not_important_not_urgent" || fieldPickerOpen === "priority",
     assignee: manualFields.includes("assignee") || assigneeId != null || fieldPickerOpen === "assignee",
     labels: manualFields.includes("labels") || labelIds.length > 0 || fieldPickerOpen === "labels",
     project: manualFields.includes("project") || projectId != null || fieldPickerOpen === "project",
@@ -415,7 +413,7 @@ export function ManualCreatePanel({
   const resetForNextIssue = () => {
     setTitle("");
     setStatus("todo");
-    setPriority("none");
+    setPriority("not_important_not_urgent");
     setStartDate(null);
     setDueDate(null);
     setLabelIds([]);
@@ -437,7 +435,7 @@ export function ManualCreatePanel({
       propertyValues: {},
     });
     setShared({
-      priority: "none",
+      priority: "not_important_not_urgent",
       projectId: undefined,
       dueDate: null,
       attachments: [],
@@ -659,10 +657,6 @@ export function ManualCreatePanel({
       }
       if (anchorCommentId && sourceCode === "source_context_too_large") {
         toast.error(sourceContextFailureMessage(err) ?? tIssues(($) => $.source_context.error_too_large));
-        return false;
-      }
-      if (sourceCode === "issue_limit_reached") {
-        showIssueLimitUpgradePrompt();
         return false;
       }
       // 重复 issue 是创建端点唯一返回的结构化 409。我们用 schema 守卫 body
@@ -1175,7 +1169,7 @@ export function ManualCreatePanel({
                   )}
                   {!showField.priority && (
                     <DropdownMenuItem onClick={() => setFieldPickerOpen("priority")}>
-                      <PriorityIcon priority="none" className="h-3.5 w-3.5" />
+                      <PriorityIcon priority="not_important_not_urgent" className="h-3.5 w-3.5" />
                       {t(($) => $.create_issue.set_priority)}
                     </DropdownMenuItem>
                   )}

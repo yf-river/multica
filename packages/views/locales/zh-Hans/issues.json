@@ -92,11 +92,10 @@
     "cancelled": "已取消"
   },
   "priority": {
-    "urgent": "紧急",
-    "high": "高",
-    "medium": "中",
-    "low": "低",
-    "none": "无优先级"
+    "important_urgent": "重要且紧急",
+    "important_not_urgent": "重要不紧急",
+    "not_important_urgent": "不重要但紧急",
+    "not_important_not_urgent": "不重要且不紧急"
   },
   "stage": {
     "none": "无阶段",

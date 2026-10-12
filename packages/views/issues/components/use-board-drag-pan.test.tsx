@@ -214,9 +214,9 @@ describe("useBoardDragPan", () => {
 
     down(getByTestId("blank"), 200);
     // Suppressed immediately on down — NOT deferred to the 5px threshold.
-    expect(el.style.userSelect).toBe("none");
+    expect(el.style.userSelect).toBe("not_important_not_urgent");
     move(el, 220); // activate
-    expect(el.style.userSelect).toBe("none");
+    expect(el.style.userSelect).toBe("not_important_not_urgent");
 
     up(el);
     expect(el.style.userSelect).toBe(""); // restored on release

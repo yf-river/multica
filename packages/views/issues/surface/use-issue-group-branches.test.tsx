@@ -24,7 +24,7 @@ function makeIssue(id: string, status: Issue["status"]): Issue {
     title: id,
     description: null,
     status,
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",

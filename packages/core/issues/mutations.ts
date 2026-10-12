@@ -1,6 +1,11 @@
 // 议题的所有写操作（mutation hook）：创建/更新/删除/批量操作/评论/订阅等。
 // 每个 hook 都通过 cache-coordinator 的"规则表"做乐观更新与回滚，
 // 让"自己改"与"别人改"（WS 路径）共用同一套缓存传播规则。
+import { useRef } from "react";
+import { workspaceKeys } from "../workspace/queries";
+import type { Workspace } from "../types/workspace";
+import { findIssueLocation } from "./cache-helpers";
+import type { QueryClient } from "@tanstack/react-query";
 import { normalizeStatusPatch } from "./status-category";
 import { hashKey, useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { api } from "../api";
@@ -50,6 +55,34 @@ import {
 // 共享的 mutation 变量类型——同时被 mutation hooks 和 useMutationState
 // 的使用方引用，保证那处类型断言始终同步。
 // ---------------------------------------------------------------------------
+
+// 聚合窗口中的任务仍需使用所属工作区的请求头。
+function issueMutationWorkspace(qc: QueryClient, wsId: string, id: string): string | undefined {
+  let workspaceId = qc.getQueryData<Issue>(issueKeys.detail(wsId, id))?.workspace_id;
+  if (!workspaceId) {
+    for (const [, data] of qc.getQueriesData<IssueTableRowCache>({ queryKey: issueKeys.tableAll(wsId) })) {
+      workspaceId = data?.rows?.find(row => row.issue.id === id)?.issue.workspace_id;
+      if (workspaceId) break;
+    }
+  }
+  if (!workspaceId) {
+    for (const [, data] of qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) })) {
+      if (!data) continue;
+      workspaceId = findIssueLocation(data, id)?.issue.workspace_id;
+      if (workspaceId) break;
+    }
+  }
+  return qc.getQueryData<Workspace[]>(workspaceKeys.list())?.find(w => w.id === (workspaceId ?? wsId))?.slug;
+}
+
+function issueMutationGroups(qc: QueryClient, wsId: string, ids: string[], sources?: Map<string, string | undefined>) {
+  const groups = new Map<string | undefined, string[]>();
+  for (const id of ids) {
+    const slug = sources ? sources.get(id) : issueMutationWorkspace(qc, wsId, id);
+    groups.set(slug, [...(groups.get(slug) ?? []), id]);
+  }
+  return [...groups];
+}
 
 /** 切换某条评论上的某个表情反应的入参。 */
 export type ToggleCommentReactionVars = {
@@ -143,13 +176,15 @@ export function useCreateCommentSubIssue() {
 export function useUpdateIssue() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
+  const sources = useRef(new Map<string, string | undefined>());
   return useMutation({
     mutationFn: ({ id, move_intent: moveIntent, ...data }: UpdateIssueMutationInput) => {
-      if (!moveIntent) return api.updateIssue(id, data);
+      if (!moveIntent) return api.updateIssue(id, data, sources.current.get(id));
       const { position: _optimisticPosition, ...target } = data;
-      return api.moveIssue(id, { ...target, ...moveIntent });
+      return api.moveIssue(id, { ...target, ...moveIntent }, sources.current.get(id));
     },
     onMutate: ({ id, move_intent: _moveIntent, ...data }) => {
+      sources.current.set(id, issueMutationWorkspace(qc, wsId, id));
       // suppress_run / handoff_note 是"写入时"的控制字段，不是议题列。
       // description_base 是合并元数据，而 description 由服务端基于该 base 解析，
       // 因此不能乐观预测。把权威的原始 description 留在缓存里，隐藏的频道媒体
@@ -286,6 +321,7 @@ export function useUpdateIssue() {
       invalidateStaleListKeys(qc, reconcile.staleKeys);
     },
     onSettled: (_data, _err, vars, ctx) => {
+      sources.current.delete(vars.id);
       // 议题自己的列表 + 详情缓存在 onSuccess / onError 里已做外科手术式对账，
       // 所以这里刻意不失效它们——settle 时整表重取正是拖拽闪烁的来源。只有无法从
       // 单个议题修补出来的聚合缓存需要刷新，外加协调器标记为漂移的特定列表 key
@@ -339,9 +375,11 @@ export function useUpdateIssue() {
 export function useDeleteIssue() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
+  const sources = useRef(new Map<string, string | undefined>());
   return useMutation({
-    mutationFn: (id: string) => api.deleteIssue(id),
+    mutationFn: (id: string) => api.deleteIssue(id, sources.current.get(id)),
     onMutate: async (id) => {
+      sources.current.set(id, issueMutationWorkspace(qc, wsId, id));
       await Promise.all([
         qc.cancelQueries({ queryKey: issueKeys.list(wsId) }),
         qc.cancelQueries({ queryKey: issueKeys.myAll(wsId) }),
@@ -416,6 +454,7 @@ export function useDeleteIssue() {
       cleanupDeletedIssueCaches(qc, wsId, id, ctx?.metadata);
     },
     onSettled: (_data, _err, _id, ctx) => {
+      sources.current.delete(_id);
       // 无法从单议题增量算出的聚合缓存统一失效重取。
       qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
@@ -437,6 +476,7 @@ export function useDeleteIssue() {
 export function useBatchUpdateIssues() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
+  const sources = useRef(new Map<string, string | undefined>());
   return useMutation({
     mutationFn: ({
       ids,
@@ -444,8 +484,9 @@ export function useBatchUpdateIssues() {
     }: {
       ids: string[];
       updates: UpdateIssueRequest;
-    }) => api.batchUpdateIssues(ids, updates),
+    }) => Promise.all(issueMutationGroups(qc, wsId, ids, sources.current).map(([slug, group]) => api.batchUpdateIssues(group, updates, slug))).then(results => ({ updated: results.reduce((sum, r) => sum + r.updated, 0) })),
     onMutate: async ({ ids, updates }) => {
+      for (const id of ids) sources.current.set(id, issueMutationWorkspace(qc, wsId, id));
       // 控制字段与描述合并字段不适合做乐观缓存修补。服务端会基于 description_base
       // 解析 description，因此在重取返回提交结果前，保留权威的原始 description
       // （含媒体标记）。
@@ -581,6 +622,7 @@ export function useBatchUpdateIssues() {
       }
     },
     onSettled: (_data, _err, _vars, ctx) => {
+      for (const id of _vars.ids) sources.current.delete(id);
       // 刻意不失效 issueKeys.list / myAll：上面 onMutate 的一轮已经是已加载分桶看板
       // 的完整外科对账，settle 时整板重取只会把单条更新刚消除的闪烁带回来。下面只刷新
       // 无法从单议题补丁重算的聚合/分组缓存，外加协调器标记为漂移的特定 key——
@@ -614,9 +656,11 @@ export function useBatchUpdateIssues() {
 export function useBatchDeleteIssues() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
+  const sources = useRef(new Map<string, string | undefined>());
   return useMutation({
-    mutationFn: (ids: string[]) => api.batchDeleteIssues(ids),
+    mutationFn: (ids: string[]) => Promise.all(issueMutationGroups(qc, wsId, ids, sources.current).map(([slug, group]) => api.batchDeleteIssues(group, slug))).then(results => ({ deleted: results.reduce((sum, r) => sum + r.deleted, 0) })),
     onMutate: async (ids) => {
+      for (const id of ids) sources.current.set(id, issueMutationWorkspace(qc, wsId, id));
       await Promise.all([
         qc.cancelQueries({ queryKey: issueKeys.list(wsId) }),
         qc.cancelQueries({ queryKey: issueKeys.myAll(wsId) }),
@@ -730,6 +774,7 @@ export function useBatchDeleteIssues() {
       invalidateDeletedIssueDependentCaches(qc, wsId);
     },
     onSettled: (_data, _err, _ids, ctx) => {
+      for (const id of _ids) sources.current.delete(id);
       qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });

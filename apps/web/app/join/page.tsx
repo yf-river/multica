@@ -92,14 +92,6 @@ function JoinInner() {
           return;
         }
         setJoining(false);
-        if (code === "seat_capacity_full") {
-          setJoinError("成员席位已全部使用，请联系工作区管理员增加席位后重试。");
-          return;
-        }
-        if (code === "seat_capacity_unavailable") {
-          setJoinError("无法验证成员容量，请重试。");
-          return;
-        }
         setJoinError(msg || "加入工作区失败，链接可能已过期。");
       });
   };

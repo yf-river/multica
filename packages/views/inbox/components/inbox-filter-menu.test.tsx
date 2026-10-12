@@ -78,8 +78,8 @@ function item(
 }
 
 const ITEMS = [
-  item("todo-high", "todo", "high"),
-  item("done-low", "done", "low"),
+  item("todo-high", "todo", "important_not_urgent"),
+  item("done-low", "done", "not_important_not_urgent"),
 ];
 
 function renderMenu({
@@ -151,20 +151,20 @@ describe("InboxFilterMenu", () => {
     renderMenu();
     await openSubmenu("Priority");
     const high = await screen.findByRole("menuitemcheckbox", {
-      name: /High.*1 notification/,
+      name: /Important, not urgent.*1 notification/,
     });
 
     fireEvent.click(high);
 
     expect(
       useInboxFilterStore.getState().filtersByWorkspace["ws-1"]?.priorities,
-    ).toEqual(["high"]);
+    ).toEqual(["important_not_urgent"]);
   });
 
   it("clears every active filter from the root menu", async () => {
     const store = useInboxFilterStore.getState();
     store.toggleStatusFilter("ws-1", "todo");
-    store.togglePriorityFilter("ws-1", "high");
+    store.togglePriorityFilter("ws-1", "important_not_urgent");
     renderMenu();
 
     fireEvent.click(screen.getByRole("button", { name: "2 active filters" }));
@@ -178,11 +178,11 @@ describe("InboxFilterMenu", () => {
   it("offers only the actors the visible rows carry", async () => {
     renderMenu({
       items: [
-        item("from-alice", "todo", "high", {
+        item("from-alice", "todo", "important_not_urgent", {
           actor_type: "member",
           actor_id: "alice",
         }),
-        item("from-bob", "done", "low", {
+        item("from-bob", "done", "not_important_not_urgent", {
           actor_type: "agent",
           actor_id: "bob",
         }),
@@ -215,8 +215,8 @@ describe("InboxFilterMenu", () => {
   it("toggles unread only and counts the unread rows behind it", async () => {
     renderMenu({
       items: [
-        item("unread", "todo", "high"),
-        item("read", "done", "low", { read: true }),
+        item("unread", "todo", "important_not_urgent"),
+        item("read", "done", "not_important_not_urgent", { read: true }),
       ],
     });
 
@@ -238,7 +238,7 @@ describe("InboxFilterMenu", () => {
   });
 
   it("hides priority and clears its filter for a legacy response", async () => {
-    useInboxFilterStore.getState().togglePriorityFilter("ws-1", "high");
+    useInboxFilterStore.getState().togglePriorityFilter("ws-1", "important_not_urgent");
     renderMenu({
       items: [item("legacy", "todo", undefined)],
       priorityFilterSupport: "unsupported",

@@ -768,14 +768,6 @@ WHERE autopilot_id IN (
     SELECT id FROM autopilot WHERE autopilot.workspace_id = $1
 );
 
--- name: DeleteWorkspaceAutopilotQuotaReservations :exec
-DELETE FROM autopilot_quota_reservation
-WHERE autopilot_quota_reservation.workspace_id = $1;
-
--- name: DeleteWorkspaceAutopilotQuotaPeriods :exec
-DELETE FROM autopilot_quota_period
-WHERE autopilot_quota_period.workspace_id = $1;
-
 -- name: DeleteWorkspaceAutopilotChildren :exec
 WITH
 deleted_triggers AS (
@@ -887,11 +879,6 @@ deleted_pins AS (
 ),
 deleted_daemon_tokens AS (
     DELETE FROM daemon_token WHERE daemon_token.workspace_id = $1
-),
-detached_feedback AS (
-    UPDATE feedback
-    SET workspace_id = NULL
-    WHERE feedback.workspace_id = $1
 ),
 detached_client_usage AS (
     UPDATE client_usage_daily

@@ -30,7 +30,7 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     title: "Test",
     description: null,
     status: "todo",
-    priority: "medium",
+    priority: "not_important_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",
@@ -50,10 +50,10 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
 }
 
 const issues: Issue[] = [
-  makeIssue({ id: "1", status: "todo", priority: "high", assignee_type: "member", assignee_id: "u-1", creator_type: "member", creator_id: "u-1", project_id: "p-1" }),
-  makeIssue({ id: "2", status: "in_progress", priority: "medium", assignee_type: "agent", assignee_id: "a-1", creator_type: "agent", creator_id: "a-1", project_id: "p-2" }),
-  makeIssue({ id: "3", status: "done", priority: "low", assignee_type: null, assignee_id: null, creator_type: "member", creator_id: "u-2", project_id: null }),
-  makeIssue({ id: "4", status: "todo", priority: "urgent", assignee_type: "member", assignee_id: "u-2", creator_type: "member", creator_id: "u-1", project_id: "p-1" }),
+  makeIssue({ id: "1", status: "todo", priority: "important_not_urgent", assignee_type: "member", assignee_id: "u-1", creator_type: "member", creator_id: "u-1", project_id: "p-1" }),
+  makeIssue({ id: "2", status: "in_progress", priority: "not_important_urgent", assignee_type: "agent", assignee_id: "a-1", creator_type: "agent", creator_id: "a-1", project_id: "p-2" }),
+  makeIssue({ id: "3", status: "done", priority: "not_important_not_urgent", assignee_type: null, assignee_id: null, creator_type: "member", creator_id: "u-2", project_id: null }),
+  makeIssue({ id: "4", status: "todo", priority: "important_urgent", assignee_type: "member", assignee_id: "u-2", creator_type: "member", creator_id: "u-1", project_id: "p-1" }),
 ];
 
 describe("filterIssues", () => {
@@ -69,7 +69,7 @@ describe("filterIssues", () => {
 
   // --- Priority ---
   it("filters by priority", () => {
-    const result = filterIssues(issues, { ...NO_FILTER, priorityFilters: ["high", "urgent"] });
+    const result = filterIssues(issues, { ...NO_FILTER, priorityFilters: ["important_not_urgent", "important_urgent"] });
     expect(result.map((i) => i.id)).toEqual(["1", "4"]);
   });
 
@@ -132,7 +132,7 @@ describe("filterIssues", () => {
     const result = filterIssues(issues, {
       ...NO_FILTER,
       statusFilters: ["todo"],
-      priorityFilters: ["urgent"],
+      priorityFilters: ["important_urgent"],
       creatorFilters: [{ type: "member", id: "u-1" }],
     });
     expect(result.map((i) => i.id)).toEqual(["4"]);
@@ -328,8 +328,8 @@ describe("filterIssues", () => {
 describe("filterAssigneeGroups", () => {
   const group = (id: string, groupIssues: Issue[]): IssueAssigneeGroup => ({
     id,
-    assignee_type: id === "none" ? null : "agent",
-    assignee_id: id === "none" ? null : id,
+    assignee_type: id === "not_important_not_urgent" ? null : "agent",
+    assignee_id: id === "not_important_not_urgent" ? null : id,
     issues: groupIssues,
     total: groupIssues.length,
   });
@@ -364,7 +364,7 @@ describe("filterAssigneeGroups", () => {
     const groups = [
       group("a1", [makeIssue({ id: "1" }), makeIssue({ id: "2" })]),
       group("a2", [makeIssue({ id: "3" })]),
-      group("none", [makeIssue({ id: "4" })]),
+      group("not_important_not_urgent", [makeIssue({ id: "4" })]),
     ];
     const result = filterAssigneeGroups(groups, {
       agentRunningFilter: true,
@@ -374,7 +374,7 @@ describe("filterAssigneeGroups", () => {
       result!.map((g) => ({ id: g.id, ids: g.issues.map((i) => i.id), total: g.total })),
     ).toEqual([
       { id: "a1", ids: ["2"], total: 1 },
-      { id: "none", ids: ["4"], total: 1 },
+      { id: "not_important_not_urgent", ids: ["4"], total: 1 },
     ]);
   });
 

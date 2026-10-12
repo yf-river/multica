@@ -3,7 +3,7 @@
 // 本文件：PriorityPicker —— 优先级选择器（下拉菜单）。
 // 无受控状态的调用方若自带触发器内容（看板卡片、列表行），会拿到一枚
 // "延迟挂载"的仿冒触发器——浮层机制首次交互才挂载（原因见 DeferredPopup）。
-// 选项列表按 PRIORITY_DISPLAY_ORDER 排序，其中"无优先级"排在最前。
+// 选项列表按 PRIORITY_DISPLAY_ORDER 排序，与任务安排四象限一致。
 
 import { useState } from "react";
 import type { IssuePriority, UpdateIssueRequest } from "@multica/core/types";
@@ -77,7 +77,7 @@ function PriorityPickerImpl({
     <PropertyPicker
       open={open}
       onOpenChange={setOpen}
-      width="w-44"
+      width="w-60"
       align={align}
       triggerRender={triggerRender}
       trigger={
@@ -90,7 +90,6 @@ function PriorityPickerImpl({
         ) : null)
       }
     >
-      {/* "无优先级"排最前——见 PRIORITY_DISPLAY_ORDER。 */}
       {PRIORITY_DISPLAY_ORDER.map((p) => {
         const c = PRIORITY_CONFIG[p];
         return (

@@ -84,15 +84,6 @@ type BusinessMetrics struct {
 	runtimeGCFailed                prometheus.Counter
 	runtimeGCSkipped               *prometheus.CounterVec
 
-	// --- entitlement（订阅权益）与 autopilot 配额 ---
-	entitlementConfigError       prometheus.Counter
-	entitlementCache             *prometheus.CounterVec
-	entitlementRefresh           *prometheus.CounterVec
-	entitlementRefreshDuration   *prometheus.HistogramVec
-	entitlementDecision          *prometheus.CounterVec
-	entitlementVersionRegression prometheus.Counter
-	autopilotQuotaDecision       *prometheus.CounterVec
-
 	// agentRuntimeLookup 统计按「产品来源」拆分的 agent_runtime 单行查询。所有来源共用
 	// 同一条 SQL 指纹，所以只有这里能区分 daemon 心跳、浏览器轮询、就绪门禁各占多少。
 	// 来源/结果的封闭枚举见 labels.go。
@@ -271,34 +262,6 @@ func NewBusinessMetrics() *BusinessMetrics {
 			Name:      "skipped_total",
 			Help:      "Total runtime garbage-collection candidates safely skipped by reason.",
 		}, metricLabels("multica_runtime_gc_skipped_total")),
-		entitlementConfigError: prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: "multica", Subsystem: "entitlement", Name: "config_error_total",
-			Help: "Total startup failures caused by a malformed Multica Cloud URL for entitlement policy.",
-		}),
-		entitlementCache: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: "multica", Subsystem: "entitlement", Name: "cache_total",
-			Help: "Total entitlement cache outcomes.",
-		}, metricLabels("multica_entitlement_cache_total")),
-		entitlementRefresh: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: "multica", Subsystem: "entitlement", Name: "refresh_total",
-			Help: "Total entitlement refresh outcomes.",
-		}, metricLabels("multica_entitlement_refresh_total")),
-		entitlementRefreshDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Namespace: "multica", Subsystem: "entitlement", Name: "refresh_duration_seconds",
-			Help: "Duration of entitlement refreshes.", Buckets: chatClaimResumeQueryDurationBuckets,
-		}, metricLabels("multica_entitlement_refresh_duration_seconds")),
-		entitlementDecision: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: "multica", Subsystem: "entitlement", Name: "decision_total",
-			Help: "Total entitlement decisions by bounded gate, action, and reason.",
-		}, metricLabels("multica_entitlement_decision_total")),
-		entitlementVersionRegression: prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: "multica", Subsystem: "entitlement", Name: "version_regression_total",
-			Help: "Total rejected entitlement subscription-version regressions.",
-		}),
-		autopilotQuotaDecision: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: "multica", Subsystem: "autopilot_quota", Name: "decision_total",
-			Help: "Total autopilot quota admission outcomes.",
-		}, metricLabels("multica_autopilot_quota_decision_total")),
 		agentRuntimeLookup: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "multica", Subsystem: "agent_runtime", Name: "lookup_total",
 			Help: "Total single-row agent_runtime reads by product source and outcome.",
@@ -349,46 +312,8 @@ func (m *BusinessMetrics) Collectors() []prometheus.Collector {
 		m.runtimeGCDeleted,
 		m.runtimeGCFailed,
 		m.runtimeGCSkipped,
-		m.entitlementConfigError,
-		m.entitlementCache,
-		m.entitlementRefresh,
-		m.entitlementRefreshDuration,
-		m.entitlementDecision,
-		m.entitlementVersionRegression,
-		m.autopilotQuotaDecision,
 		m.agentRuntimeLookup,
 	}, m.events.collectors()...)
-}
-
-// RecordEntitlementConfigError 记一次因 Multica Cloud URL 配置非法导致的启动失败。
-func (m *BusinessMetrics) RecordEntitlementConfigError() {
-	if m != nil {
-		m.entitlementConfigError.Inc()
-	}
-}
-
-// RecordEntitlementCache 按结果（hit/miss/stale…）记一次权益缓存访问结果。
-func (m *BusinessMetrics) RecordEntitlementCache(outcome string) {
-	if m != nil {
-		m.entitlementCache.WithLabelValues(outcome).Inc()
-	}
-}
-
-// RecordEntitlementRefresh 按结果记一次权益刷新：计数并记录本次刷新耗时 seconds。
-func (m *BusinessMetrics) RecordEntitlementRefresh(outcome string, seconds float64) {
-	if m == nil {
-		return
-	}
-	m.entitlementRefresh.WithLabelValues(outcome).Inc()
-	m.entitlementRefreshDuration.WithLabelValues(outcome).Observe(seconds)
-}
-
-// RecordEntitlementDecision 记一次权益判定，标签为闸门(gate)/动作(action)/原因(reason)。
-// 调用方需保证三个标签值都来自受控枚举，避免引入高基数。
-func (m *BusinessMetrics) RecordEntitlementDecision(gate, action, reason string) {
-	if m != nil {
-		m.entitlementDecision.WithLabelValues(gate, action, reason).Inc()
-	}
 }
 
 // RecordAgentRuntimeLookup 记一次 agent_runtime 单行查询。
@@ -404,28 +329,6 @@ func (m *BusinessMetrics) RecordAgentRuntimeLookup(source, result string) {
 		NormalizeAgentRuntimeLookupSource(source),
 		NormalizeAgentRuntimeLookupResult(result),
 	).Inc()
-}
-
-// RecordEntitlementVersionRegression 记一次被拒绝的权益订阅版本回退。
-func (m *BusinessMetrics) RecordEntitlementVersionRegression() {
-	if m != nil {
-		m.entitlementVersionRegression.Inc()
-	}
-}
-
-// RecordAutopilotQuotaDecision 记一次 autopilot 配额准入结果。source 这里接受
-// schedule/webhook/manual/api 四类，其余一律归一化为 "other"（配额判定时用户 ID 等
-// 高基数信息绝不能进标签）。
-func (m *BusinessMetrics) RecordAutopilotQuotaDecision(action, source, result string) {
-	if m == nil {
-		return
-	}
-	switch source {
-	case "schedule", "webhook", "manual", "api":
-	default:
-		source = "other"
-	}
-	m.autopilotQuotaDecision.WithLabelValues(action, source, result).Inc()
 }
 
 // RecordRuntimeGCDeleted 记一次 runtime 垃圾回收安全删除了一个过期的离线 runtime。

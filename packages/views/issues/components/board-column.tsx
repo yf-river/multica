@@ -14,6 +14,7 @@ import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import type {
   Issue,
   IssueAssigneeType,
+  IssuePriority,
   IssueStatusCategory,
   Project,
 } from "@multica/core/types";
@@ -33,11 +34,14 @@ import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { ProjectIcon } from "../../projects/components/project-icon";
+import { PriorityIcon } from "./priority-icon";
 import { useRestoredScrollOffset, useRestoredScrollRef } from "../../platform";
 import { DeferredPopup } from "../../common/deferred-popup";
 import { DeferredTooltip } from "../../common/deferred-tooltip";
 import { VirtuosoSeed } from "../../common/virtuoso-seed";
 import type { IssueCreateDefaults } from "../surface/types";
+import { PRIORITY_DISPLAY_ORDER } from "@multica/core/issues/config";
+import { quadrantGroupId } from "../utils/drag-utils";
 
 // 刻意不做"插入位置预测"。服务端 ORDER BY 用的是 PostgreSQL 的
 // en_US.utf8 排序规则（glibc），JavaScript（ICU/V8）无法忠实复刻。
@@ -103,6 +107,7 @@ export const BoardColumn = memo(function BoardColumn({
   projectId,
   onCreateIssue,
   sortLabel,
+  quadrants = false,
 }: {
   group: BoardColumnGroup;
   issueIds: string[];
@@ -115,6 +120,7 @@ export const BoardColumn = memo(function BoardColumn({
   projectId?: string;
   onCreateIssue?: (defaults: IssueCreateDefaults) => void;
   sortLabel?: string | null;
+  quadrants?: boolean;
 }) {
   const status = group.status;
   const cfg = status ? STATUS_CONFIG[status] : null;
@@ -266,7 +272,21 @@ export const BoardColumn = memo(function BoardColumn({
                 : ""
           }`}
         >
-          {resolvedIssues.length > 0 ? (
+          {quadrants ? (
+            <div className="space-y-3">
+              {PRIORITY_DISPLAY_ORDER.map((priority) => (
+                <QuadrantSection
+                  key={priority}
+                  groupId={group.id}
+                  priority={priority}
+                  issues={resolvedIssues.filter((issue) => issue.priority === priority)}
+                  childProgressMap={childProgressMap}
+                  projectMap={projectMap}
+                />
+              ))}
+              {footer}
+            </div>
+          ) : resolvedIssues.length > 0 ? (
             <SortableContext items={issueIds} strategy={verticalListSortingStrategy}>
               {resolvedIssues.length <= BOARD_VIRTUALIZE_THRESHOLD ? (
                 /* 小列：整列直出（复用同一个 itemContent，因此与虚拟化行
@@ -322,6 +342,47 @@ export const BoardColumn = memo(function BoardColumn({
     </div>
   );
 });
+
+function QuadrantSection({
+  groupId,
+  priority,
+  issues,
+  childProgressMap,
+  projectMap,
+}: {
+  groupId: string;
+  priority: IssuePriority;
+  issues: Issue[];
+  childProgressMap?: Map<string, ChildProgress>;
+  projectMap?: Map<string, Project>;
+}) {
+  const { t } = useT("issues");
+  const { setNodeRef, isOver } = useDroppable({ id: quadrantGroupId(groupId, priority) });
+  return (
+    <section ref={setNodeRef} className={`rounded-md border p-2 ${isOver ? "bg-accent/60 ring-2 ring-brand/25" : "bg-background/40"}`}>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-caption font-medium"><PriorityIcon priority={priority} />{t(($) => $.priority[priority])}</span>
+        <span className="text-micro text-muted-foreground">{issues.length}</span>
+      </div>
+      {issues.length > 0 ? (
+        <SortableContext items={issues.map((issue) => issue.id)} strategy={verticalListSortingStrategy}>
+          <div className="space-y-2">
+            {issues.map((issue) => (
+              <DraggableBoardCard
+                key={issue.id}
+                issue={issue}
+                childProgress={childProgressMap?.get(issue.id)}
+                project={issue.project_id ? projectMap?.get(issue.project_id) : undefined}
+              />
+            ))}
+          </div>
+        </SortableContext>
+      ) : (
+        <p className="py-3 text-center text-micro text-muted-foreground">{t(($) => $.board.empty_column)}</p>
+      )}
+    </section>
+  );
+}
 
 function BoardGroupHeading({
   group,

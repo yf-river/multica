@@ -6,7 +6,7 @@
 // 关键不变量：一个 workspace 同一时刻至多一条激活中的分享链接——创建新链接前先在同一
 // 事务里把旧的停用（partial unique index 兜底并发）。加入走「先认领后落库」：认领是
 // 一条条件 UPDATE（复检 active/未过期/未超 max_uses 并自增 use_count），天然防止并发
-// 超用；席位容量（seat capacity）开启时还须经容量编排。
+// 超用；席位容量（capacity）开启时还须经容量编排。
 package handler
 
 import (
@@ -22,12 +22,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
-	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -307,15 +305,6 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var capacityToken uuid.UUID
-	if h.seatCapacityEnabled() {
-		capacityToken, err = h.beginShareJoinCapacity(r.Context(), uuid.UUID(linkPreview.WorkspaceID.Bytes), uuid.UUID(linkPreview.ID.Bytes), uuid.UUID(user.ID.Bytes))
-		if err != nil {
-			writeSeatCapacityError(w, err)
-			return
-		}
-	}
-
 	// 先开事务，再在事务里原子认领链接。认领是一条条件 UPDATE：一条语句里复检
 	// active / 未过期 / 未超 max_uses 并自增 use_count，所以并发加入不可能超出
 	// max_uses，加入也不可能与撤销/过期赛跑。
@@ -351,7 +340,6 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
-			h.compensateCapacityIntent(r.Context(), capacityToken)
 			writeError(w, http.StatusConflict, "you are already a member of this workspace")
 			return
 		}
@@ -364,12 +352,6 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 	if _, err := qtx.MarkUserOnboarded(r.Context(), user.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to finalize onboarding")
 		return
-	}
-	if capacityToken != uuid.Nil {
-		if err := transitionCapacityIntentToConfirm(r.Context(), qtx, capacityToken, uuid.UUID(member.ID.Bytes), seatcapacity.ActionClaimShareJoin); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to join workspace")
-			return
-		}
 	}
 	memberEvent, err := service.RecordDurableEventTx(r.Context(), qtx, events.Event{
 		Type:           protocol.EventMemberAdded,
@@ -386,9 +368,6 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to join workspace")
 		return
-	}
-	if capacityToken != uuid.Nil {
-		h.confirmCapacityIntent(r.Context(), uuid.UUID(link.WorkspaceID.Bytes), capacityToken, uuid.UUID(member.ID.Bytes))
 	}
 
 	wsID := uuidToString(link.WorkspaceID)

@@ -64,6 +64,7 @@ import {
   insertIdByPosition,
   issueMatchesGroup,
   getMoveUpdates,
+  quadrantFromGroupId,
   propertyGroupId,
   projectGroupId,
 } from "../utils/drag-utils";
@@ -254,7 +255,9 @@ function BoardViewImpl({
   onCreateIssue,
   statusPagination,
   groupBranches,
+  backlogQuadrants = false,
 }: {
+  backlogQuadrants?: boolean;
   issues: Issue[];
   visibleStatuses: IssueStatusCategory[];
   hiddenStatuses: IssueStatusCategory[];
@@ -602,11 +605,14 @@ function BoardViewImpl({
       }
 
       const map = issueMapRef.current;
+      const overQuadrant = backlogQuadrants
+        ? quadrantFromGroupId(overId) ?? (map.get(overId)?.status_category === "backlog" || map.get(overId)?.status === "backlog" ? map.get(overId)?.priority : undefined)
+        : undefined;
 
       if (sortBy !== "position") {
         // 跨列移动：只更新所属分组字段（状态/负责人），保留卡片在组内的原有顺序。
         const currentIssue = map.get(activeId);
-        if (!currentIssue || issueMatchesGroup(currentIssue, finalGroup)) {
+        if (!currentIssue || (issueMatchesGroup(currentIssue, finalGroup) && (!overQuadrant || finalGroup.status !== "backlog" || currentIssue.priority === overQuadrant))) {
           resetColumns();
           return;
         }
@@ -629,6 +635,7 @@ function BoardViewImpl({
           activeId,
           {
             ...getMoveUpdates(finalGroup, currentIssue.position, currentIssue),
+            ...(finalGroup.status === "backlog" && overQuadrant && currentIssue.priority !== overQuadrant ? { priority: overQuadrant } : {}),
             ...getMoveAnchors(targetIds, activeId),
           },
           beginSettle(),
@@ -644,7 +651,8 @@ function BoardViewImpl({
       if (
         currentIssue &&
         issueMatchesGroup(currentIssue, finalGroup) &&
-        currentIssue.position === newPosition
+        currentIssue.position === newPosition &&
+        (!overQuadrant || finalGroup.status !== "backlog" || currentIssue.priority === overQuadrant)
       ) {
         return;
       }
@@ -657,13 +665,14 @@ function BoardViewImpl({
         activeId,
         {
           ...getMoveUpdates(finalGroup, newPosition, currentIssue),
+          ...(finalGroup.status === "backlog" && overQuadrant && currentIssue?.priority !== overQuadrant ? { priority: overQuadrant } : {}),
           ...getMoveAnchors(finalIds, activeId),
         },
         beginSettle(),
       );
       applyPropertyGroupValue(finalGroup, activeId);
     },
-    [groupedIssues, groups, grouping, groupingOptionIds, onMoveIssue, groupIds, groupMap, sortBy, beginSettle, columnsRef, isDraggingRef, setColumns, applyPropertyGroupValue],
+    [backlogQuadrants, groupedIssues, groups, grouping, groupingOptionIds, onMoveIssue, groupIds, groupMap, sortBy, beginSettle, columnsRef, isDraggingRef, setColumns, applyPropertyGroupValue],
   );
 
   // 一次拖拽被中止（pointercancel、窗口缩放、标签页隐藏、Escape）时，dnd-kit
@@ -722,6 +731,7 @@ function BoardViewImpl({
                 projectId={projectId}
                 onCreateIssue={onCreateIssue}
                 sortLabel={sortLabel}
+                quadrants={backlogQuadrants && group.status === "backlog"}
               />
             ) : (
               groupPagination?.[group.id] ? (
@@ -736,6 +746,7 @@ function BoardViewImpl({
                   projectId={projectId}
                   onCreateIssue={onCreateIssue}
                   sortLabel={sortLabel}
+                  quadrants={backlogQuadrants && group.status === "backlog"}
                 />
               ) : (
                 <BoardColumn
@@ -802,6 +813,7 @@ const ServerPaginatedBoardColumn = memo(function ServerPaginatedBoardColumn({
   projectId,
   onCreateIssue,
   sortLabel,
+  quadrants = false,
 }: {
   group: BoardColumnGroup;
   issueIds: string[];
@@ -812,6 +824,7 @@ const ServerPaginatedBoardColumn = memo(function ServerPaginatedBoardColumn({
   projectId?: string;
   onCreateIssue?: (defaults: IssueCreateDefaults) => void;
   sortLabel?: string | null;
+  quadrants?: boolean;
 }) {
   const footer = page ? (
     <ListLoadMoreFooter
@@ -834,6 +847,7 @@ const ServerPaginatedBoardColumn = memo(function ServerPaginatedBoardColumn({
       projectId={projectId}
       onCreateIssue={onCreateIssue}
       sortLabel={sortLabel}
+      quadrants={quadrants}
       footer={footer}
     />
   );

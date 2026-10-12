@@ -65,7 +65,6 @@ type businessEventMetrics struct {
 	githubPRMergeSeconds            prometheus.Histogram
 	cloudRuntimeRequest             *prometheus.CounterVec
 	cloudRuntimeRequestDurationSecs *prometheus.HistogramVec
-	feedbackSubmitted               *prometheus.CounterVec
 	contactSalesSubmitted           *prometheus.CounterVec
 	chatOutputLocalPath             *prometheus.CounterVec
 }
@@ -205,10 +204,6 @@ func newBusinessEventMetrics() *businessEventMetrics {
 			Help:    "Outbound cloud runtime request duration (seconds).",
 			Buckets: cloudRuntimeRequestBuckets,
 		}, metricLabels("multica_cloudruntime_request_duration_seconds")),
-		feedbackSubmitted: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_feedback_submitted_total",
-			Help: "Total in-app feedback submissions.",
-		}, metricLabels("multica_feedback_submitted_total")),
 		contactSalesSubmitted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "multica_contact_sales_submitted_total",
 			Help: "Total contact-sales inquiries submitted.",
@@ -258,7 +253,6 @@ func (e *businessEventMetrics) collectors() []prometheus.Collector {
 		e.githubPRMergeSeconds,
 		e.cloudRuntimeRequest,
 		e.cloudRuntimeRequestDurationSecs,
-		e.feedbackSubmitted,
 		e.contactSalesSubmitted,
 		e.chatOutputLocalPath,
 	}
@@ -368,11 +362,6 @@ func (m *BusinessMetrics) IncForEvent(ev analytics.Event) {
 			NormalizeAutopilotCadence(stringProp(ev.Properties, "cadence")),
 			NormalizeAutopilotTrigger(stringProp(ev.Properties, "trigger_kind")),
 			"failed",
-		).Inc()
-	case analytics.EventFeedbackSubmitted:
-		m.events.feedbackSubmitted.WithLabelValues(
-			NormalizeFeedbackKind(stringProp(ev.Properties, "kind")),
-			NormalizePlatform(stringProp(ev.Properties, "platform")),
 		).Inc()
 	case analytics.EventContactSalesSubmitted:
 		m.events.contactSalesSubmitted.WithLabelValues(NormalizeContactSalesSource(stringProp(ev.Properties, "form_source"))).Inc()

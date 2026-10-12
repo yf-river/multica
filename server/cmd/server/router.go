@@ -27,7 +27,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
-	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -42,7 +41,6 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
-	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -370,23 +368,6 @@ func strictPositiveDurationEnv(name string, fallback time.Duration) (time.Durati
 	return value, nil
 }
 
-// seatCapacityExecutor 构造订阅席位容量校验执行器，Cloud URL 正确时返回真执行器；
-// 配置损坏时返回 fail-closed 的 NewUnavailable 执行器（见函数体内注释）。
-func seatCapacityExecutor(cloudURL string) seatcapacity.Executor {
-	executor, err := seatcapacity.New(seatcapacity.Config{
-		BaseURL: cloudURL,
-	})
-	if err == nil {
-		return executor
-	}
-	// 连上 Cloud 却带着畸形连接设置的部署，绝不能悄悄恢复成「成员数不限」。
-	// 这个 fail-closed 执行器在运维修好 Cloud URL 之前一直返回 503；并且特意
-	// 不够格参加 recovery-worker 启动，好让排队的 intents 在配置损坏期间保住
-	// 各自的重试预算。
-	slog.Error("subscription seat capacity executor unavailable", "error", err)
-	return seatcapacity.NewUnavailable(err)
-}
-
 // NewRouterWithOptions 构建配置完整的 Chi 路由器，并返回构造它所用的
 // *handler.Handler。需要驱动 Handler 所挂服务的后台生命周期的调用方（例如在长运行
 // context 下启动 Lark 入站 Hub、在关停时 Wait）用返回的 handler；只需要 HTTP 处理
@@ -446,28 +427,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.TaskService.FeatureFlags = opts.FeatureFlags
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
-	entitlementClient, entitlementErr := entitlement.New(entitlement.Config{
-		BaseURL:  signupConfig.CloudURL,
-		Observer: opts.BusinessMetrics,
-	})
-	if entitlementErr != nil {
-		slog.Error("entitlement policy client disabled by malformed Multica Cloud URL", "error", entitlementErr)
-		opts.BusinessMetrics.RecordEntitlementConfigError()
-	} else if entitlementClient.Enabled() {
-		h.Entitlements = entitlementClient
-		h.TaskService.Entitlements = entitlementClient
-		h.IssueService.Entitlements = entitlementClient
-		h.AutopilotService.Entitlements = entitlementClient
-		h.AutopilotService.QuotaMetrics = opts.BusinessMetrics
-	}
-	// Cloud Runtime 与严格席位容量同属一个托管部署。复用同一个 base URL，好让
-	// Billing 可读的同时，邀请写入不会悄悄跳过 Cloud 的权威席位策略。
-	h.SeatCapacity = seatCapacityExecutor(signupConfig.CloudURL)
-	capacityLocker := seatcapacity.NewWorkspaceLocker(pool)
-	h.SeatCapacityLocker = capacityLocker
-	if seatcapacity.CanRunWorker(h.SeatCapacity) {
-		h.SeatCapacityWorker = seatcapacity.NewWorker(queries, h.SeatCapacity, capacityLocker, seatcapacity.WorkerConfig{})
-	}
+
 	if opts.BusinessMetrics != nil {
 		// 把 BusinessMetrics 接收器接进 cloud runtime 客户端，让每次出站 Fleet/
 		// Gateway 请求都计入 multica_cloudruntime_request_* 直方图。
@@ -1285,11 +1245,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// 认证——按连接用 provider 的签名方案鉴权；路径里的连接 id 选出工作区、provider
 	// 与解密密钥。
 	r.Post("/api/webhooks/vcs/{connectionId}", h.HandleVCSWebhook)
-	// Stripe webhook（无 Multica 认证——Stripe 用共享密钥对原始 body 签名，
-	// multica-cloud 上游负责校验。这里只转发字节与 Stripe-Signature 头；理由见
-	// HandleCloudBillingStripeWebhook）。
-	r.Post("/api/webhooks/stripe", h.HandleCloudBillingStripeWebhook)
-
 	// Composio OAuth 回调（MUL-3843）。有意不在 Auth 组之下：Composio 在 OAuth 流程
 	// 末尾把用户浏览器 302 重定向到这里，而 cookie 会话经常缺失（会话过期、SameSite=
 	// Strict / Safari ITP 剥离跨站 cookie、隐私窗口、不同子域上的自托管回调）。身份
@@ -1407,7 +1362,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// handler 在 server/internal/handler/onboarding_shim.go。
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
-		r.Post("/api/feedback", h.CreateFeedback)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
 
 		// 注（MUL-4309）：通用的 OpenAI 兼容直通端点（POST /api/llm/v1/chat/
@@ -1626,54 +1580,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Delete("/{id}", h.RevokePersonalAccessToken)
 		})
 
-		// Cloud Billing 代理。与 cloud-runtime 同一个上游服务/端口——multica-cloud 的
-		// Fleet 与 Billing 共享 :8080 和同一个 chi 路由器。这里所有路由都转发到
-		// /api/v1/billing/*，X-User-ID 从已认证上下文盖章。
-		//
-		// 用户作用域（账号级），非工作区作用域——放在 RequireWorkspaceMember 组之外，
-		// 让用户在没有选中活跃工作区时也能查看余额、充值、打开 Billing Portal。上游的
-		// owner 模型是单用户的；即便发过去 X-Workspace-ID 也会被忽略。Stripe webhook
-		// 是公开例外，落在整个 Auth 组之外（见上）。
-		//
-		// 重要——这里屏蔽 task-token 的 actor。Auth 中间件乐于把 mat_ 任务令牌变成普通
-		// 的 X-User-ID 盖章（这样 agent 能以 owner 身份评论、认领 issue 等），但计费是
-		// 账号级的，运行中的 agent 去读 owner 余额/开 checkout 会话，正是我们明确要防的
-		// 横向移动。handler.RequireHumanActor 检查权威的 server 端 X-Actor-Source 头，
-		// 对任何 task-token 请求回 403。完整理由见 actor_guards.go。
-		r.Route("/api/cloud-billing", func(r chi.Router) {
-			r.Use(handler.RequireHumanActor)
-
-			r.Get("/balance", h.GetCloudBillingBalance)
-			r.Get("/transactions", h.ListCloudBillingTransactions)
-			r.Get("/batches", h.ListCloudBillingBatches)
-			r.Get("/topups", h.ListCloudBillingTopups)
-			r.Get("/price-tiers", h.ListCloudBillingPriceTiers)
-			r.Post("/checkout-sessions", h.CreateCloudBillingCheckoutSession)
-			r.Get("/checkout-sessions/{sessionId}", h.GetCloudBillingCheckoutSession)
-			r.Post("/portal-sessions", h.CreateCloudBillingPortalSession)
-		})
-
-		// 工作区订阅与既有 owner 信用计费面共用同一 cloud 传输与 Stripe webhook，但每个
-		// 请求都是工作区作用域的。摘要与价格对成员可读。本地角色检查廉价地拒绝未授权
-		// 写操作；Cloud 仍是最终权威，在任何外部写入前校验每次变更。Handler 还强制
-		// billing_workspace_subscriptions，保证路由重构不会意外绕过滚动开关。
-		r.Route("/api/cloud-subscriptions", func(r chi.Router) {
-			r.Use(handler.RequireHumanActor)
-			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequireWorkspaceMember(queries))
-				r.Get("/summary", h.GetCloudWorkspaceSubscriptionSummary)
-				r.Get("/prices", h.GetCloudWorkspaceSubscriptionPrices)
-			})
-			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequireWorkspaceRole(queries, "owner", "admin"))
-				r.Post("/checkout-sessions", h.CreateCloudWorkspaceSubscriptionCheckout)
-				r.Post("/seats/purchase-preview", h.PreviewCloudWorkspaceSubscriptionSeatPurchase)
-				r.Post("/seats/purchases", h.PurchaseCloudWorkspaceSubscriptionSeats)
-				r.Post("/seats/reconcile", h.ReconcileCloudWorkspaceSubscriptionSeats)
-				r.Post("/portal-sessions", h.CreateCloudWorkspaceSubscriptionPortal)
-			})
-		})
-
 		// --- 工作区作用域路由（全部要求工作区成员资格） ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireWorkspaceMember(queries))
@@ -1683,7 +1589,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
-				r.Get("/limit-usage", h.GetIssueLimitUsage)
 				r.Post("/table/groups", h.ListIssueTableGroups)
 				r.Post("/table/rows", h.ListIssueTableRows)
 				r.Post("/table/facets", h.ListIssueTableFacets)
@@ -1828,7 +1733,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/", h.ListAutopilots)
 				r.Post("/", h.CreateAutopilot)
 				r.Get("/cron-preview", h.CronPreview)
-				r.Get("/usage", h.GetAutopilotQuotaUsage)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAutopilot)
 					r.Patch("/", h.UpdateAutopilot)
@@ -2063,6 +1967,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/chat/pending-tasks", h.ListPendingChatTasks)
 			r.Get("/api/chat/pending-tasks/has-any", h.HasPendingChatTasks)
 
+			r.Get("/api/meals", h.GetMeals)
+			r.Post("/api/meals/actions", h.MealAction)
+
+			r.Get("/api/cooking/categories", h.CookingCategories)
 			r.Get("/api/health/overview", h.GetHealth)
 			r.Get("/api/health/profile", h.GetHealth)
 			r.Get("/api/health/observations", h.GetHealth)
@@ -2081,6 +1989,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/health/reports/{reportId}/pages", h.HealthReportPages)
 			r.Post("/api/health/reports/{reportId}/submit", h.SubmitHealthReport)
 			r.Post("/api/health/reports/{reportId}/apply", h.ApplyHealthReport)
+			r.Get("/api/cooking/recipes", h.CookingList)
+			r.Get("/api/cooking/recipes/{id}", h.CookingDetail)
+			r.Get("/api/cooking/tips", h.CookingList)
+			r.Get("/api/cooking/tips/{id}", h.CookingDetail)
+			r.Get("/api/cooking/favorites", h.CookingList)
+			r.Put("/api/cooking/favorites/{id}", h.CookingFavorite)
+			r.Delete("/api/cooking/favorites/{id}", h.CookingFavorite)
+
 			// Life 陪伴
 			r.Route("/api/life", func(r chi.Router) {
 				r.Get("/companion", h.GetCompanionProfile)

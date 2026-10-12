@@ -17,6 +17,7 @@ import {
   CardContent,
   CardFooter,
 } from "@multica/ui/components/ui/card";
+import { EnvironmentBadge } from "../common/environment-badge";
 import { Input } from "@multica/ui/components/ui/input";
 import { Button } from "@multica/ui/components/ui/button";
 import { Label } from "@multica/ui/components/ui/label";
@@ -187,6 +188,7 @@ export function LoginPage({
       <div className="flex min-h-svh items-center justify-center">
         <Card className="w-full max-w-sm">
           <CardHeader className="text-center">
+          <div className="flex justify-center"><EnvironmentBadge /></div>
             {logo && <div className="mx-auto mb-4">{logo}</div>}
             <CardTitle className="text-display-sm">
               {t(($) => $.cli.title)}
@@ -226,6 +228,7 @@ export function LoginPage({
     <div className="flex min-h-svh items-center justify-center">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
+          <div className="flex justify-center"><EnvironmentBadge /></div>
           {logo && <div className="mx-auto mb-4">{logo}</div>}
           <CardTitle className="text-display-sm">
             {t(($) => $.signin.title)}
@@ -255,7 +258,6 @@ export function LoginPage({
                 placeholder={t(($) => $.common.password_placeholder)}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                minLength={8}
                 required
               />
             </div>

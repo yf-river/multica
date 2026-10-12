@@ -39,8 +39,8 @@ const FAST_MODEL: RuntimeModel = {
   label: "GPT-5.6 Sol",
   thinking: {
     supported_levels: [
-      { value: "medium", label: "Medium" },
-      { value: "high", label: "High" },
+      { value: "not_important_urgent", label: "Medium" },
+      { value: "important_not_urgent", label: "High" },
     ],
   },
   service_tiers: [{ id: "priority", name: "Fast", description: "1.5x speed" }],
@@ -141,7 +141,7 @@ describe("AgentExecutionOverrides", () => {
     fireEvent.click(await screen.findByText("High"));
 
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ thinkingLevel: "high" }),
+      expect.objectContaining({ thinkingLevel: "important_not_urgent" }),
     );
   });
 

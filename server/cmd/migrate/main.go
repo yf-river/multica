@@ -118,6 +118,7 @@ var commentContentBigramIndex = usableIndexRequirement{
 // 注册只花一次 to_regclass 查询，且只在它们仍 pending 的数据库上发生：全新自
 // 托管安装——这正是被打断的构建最容易留下"永久不可用索引"的地方。
 var concurrentIndexCleanups = map[string]string{
+	"498_cooking_favorite_unique":                                              "cooking_favorite_user_recipe_idx",
 	"457_domain_event_outbox_pending_index":                                    "domain_event_outbox_pending_idx",
 	"458_domain_event_outbox_stream_index":                                     "domain_event_outbox_stream_idx",
 	"461_domain_event_idempotency_index":                                       "domain_event_outbox_idempotency_idx",
@@ -263,12 +264,7 @@ var concurrentIndexCleanups = map[string]string{
 	"347_plugin_secret_installation_key_index":                                 "idx_plugin_secret_installation_key",
 	"349_agent_task_queue_chat_terminal_resume_index":                          "idx_agent_task_queue_chat_terminal_resume",
 	"350_agent_task_queue_chat_retired_session_index":                          "idx_agent_task_queue_chat_retired_session",
-	"353_autopilot_quota_period_scope_index":                                   "uq_autopilot_quota_period_scope",
-	"354_autopilot_quota_reservation_id_index":                                 "autopilot_quota_reservation_pkey_uidx",
-	"355_autopilot_quota_reservation_key_index":                                "uq_autopilot_quota_reservation_key",
-	"356_autopilot_run_quota_reservation_index":                                "uq_autopilot_run_quota_reservation",
 	"357_webhook_delivery_replay_idempotency_index":                            "uq_webhook_delivery_replay_idempotency",
-	"358_autopilot_quota_reservation_state_index":                              "idx_autopilot_quota_reservation_state",
 	"361_issue_last_activity_index":                                            "idx_issue_workspace_last_activity",
 	"363_plugin_invocation_installation_index":                                 "idx_plugin_invocation_installation_created",
 	"364_plugin_invocation_created_at_index":                                   "idx_plugin_invocation_created_at",
@@ -289,9 +285,6 @@ var concurrentIndexCleanups = map[string]string{
 	"412_issue_source_context_object_intent_key_index":                         "idx_issue_source_context_object_intent_key",
 	"413_issue_source_context_object_intent_due_index":                         "idx_issue_source_context_object_intent_due",
 	"414_issue_source_context_object_intent_context_index":                     "idx_issue_source_context_object_intent_context",
-	"416_seat_capacity_operation_token_index":                                  "idx_seat_capacity_outbox_operation_token",
-	"418_seat_capacity_due_index":                                              "idx_seat_capacity_outbox_due",
-	"419_seat_capacity_share_join_index":                                       "idx_seat_capacity_outbox_share_join",
 	"421_channel_chat_active_route_index":                                      "idx_channel_chat_session_binding_active_route",
 	"423_channel_task_delivery_pkey_index":                                     "channel_task_delivery_pkey",
 	"426_channel_outbound_message_id_index":                                    "idx_channel_outbound_message_id",
@@ -347,7 +340,6 @@ var preMigrationHooks = func() map[string]preMigrationHook {
 
 var transactionalMigrationHooks = map[string]transactionalMigrationHook{
 	"456_remove_retired_builtins": removeRetiredBuiltinsTx,
-	"488_remove_openclaw_runtime": removeOpenClawRuntimesWithTx,
 }
 
 var preRollbackHooks = func() map[string]preMigrationHook {

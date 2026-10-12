@@ -29,7 +29,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
-	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
@@ -43,7 +42,6 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
-	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -195,30 +193,22 @@ type Handler struct {
 	PluginService          *service.PluginService
 	IssueService           *service.IssueService
 	AutopilotService       *service.AutopilotService
-	// Entitlements 提供按 workspace 划分的商业能力开关。nil provider 保持
-	// 自托管行为，不做额外读取。
-	Entitlements entitlement.Provider
-	// SeatCapacity 执行 Cloud 侧"预购人类席位"协议。nil 或被禁用时保持
-	// 自托管行为。
-	SeatCapacity          seatcapacity.Executor
-	SeatCapacityLocker    seatcapacity.WorkspaceLocker
-	SeatCapacityWorker    *seatcapacity.Worker
-	EmailService          *service.EmailService
-	UpdateStore           UpdateStore
-	ModelListStore        ModelListStore
-	LocalSkillListStore   LocalSkillListStore
-	LocalSkillImportStore LocalSkillImportStore
-	FeatureFlags          *featureflag.Service
+	EmailService           *service.EmailService
+	UpdateStore            UpdateStore
+	ModelListStore         ModelListStore
+	LocalSkillListStore    LocalSkillListStore
+	LocalSkillImportStore  LocalSkillImportStore
+	FeatureFlags           *featureflag.Service
 	// IssueStatusCatalog 读取 workspace 的状态目录。默认是 Queries；
 	// 测试可换成计数包装器来断言一次请求到底做了多少次目录读取——这是区分
 	// 当前"一次读取推导"与其替换掉的 N+1 读取的唯一可观察性质（MUL-6243）。
-	IssueStatusCatalog issuestatus.Querier
-	LivenessStore      LivenessStore
-	HeartbeatScheduler HeartbeatScheduler
-	Storage            storage.Storage
+	IssueStatusCatalog    issuestatus.Querier
+	LivenessStore         LivenessStore
+	HeartbeatScheduler    HeartbeatScheduler
+	Storage               storage.Storage
 	ExternalCredentialBox *secretbox.Box
-	CFSigner           *auth.CloudFrontSigner
-	Analytics          analytics.Client
+	CFSigner              *auth.CloudFrontSigner
+	Analytics             analytics.Client
 	// DaemonPendingWork 给排队的心跳捎带请求推送"现在心跳"提示（MUL-5444）。
 	// 可选：为 nil 时 requestDaemonPendingWork 回退到本地 DaemonHub——
 	// 对单节点部署来说这正是正确的投递范围。

@@ -2810,11 +2810,10 @@ func TestValidateIssueStatus(t *testing.T) {
 
 func TestValidateIssuePriority(t *testing.T) {
 	expected := map[string]bool{
-		"urgent": true,
-		"high":   true,
-		"medium": true,
-		"low":    true,
-		"none":   true,
+		"important_urgent":         true,
+		"important_not_urgent":     true,
+		"not_important_urgent":     true,
+		"not_important_not_urgent": true,
 	}
 	for _, p := range validIssuePriorities {
 		if !expected[p] {
@@ -2831,7 +2830,7 @@ func TestValidateIssuePriority(t *testing.T) {
 	if err == nil {
 		t.Fatal("priority \"P1\" should be rejected")
 	}
-	if !strings.Contains(err.Error(), "urgent") {
+	if !strings.Contains(err.Error(), "important_urgent") {
 		t.Errorf("error should list valid priorities, got: %v", err)
 	}
 }

@@ -33,7 +33,7 @@ function makeIssue(
     identifier: "MUL-1",
     title: overrides.id,
     description: null,
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",
@@ -743,7 +743,7 @@ describe("useIssueSurfaceController", () => {
       const listIssueTableFacets = vi.fn().mockResolvedValue({
         query_fingerprint: "sha256:group-facets",
         total: 0,
-        facets: [{ kind: "priority", values: [{ key: "high", count: 37 }] }],
+        facets: [{ kind: "priority", values: [{ key: "important_not_urgent", count: 37 }] }],
       });
       const tableMethods = statusTableMethodsFromLegacy(listIssues);
       setApiInstance({
@@ -788,7 +788,7 @@ describe("useIssueSurfaceController", () => {
       );
       await waitFor(() =>
         expect(result.current.tableFacetCounts?.facets).toEqual([
-          { kind: "priority", values: [{ key: "high", count: 37 }] },
+          { kind: "priority", values: [{ key: "important_not_urgent", count: 37 }] },
         ]),
       );
 

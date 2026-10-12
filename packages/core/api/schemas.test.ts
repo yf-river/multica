@@ -21,7 +21,6 @@ import {
   TestExternalCredentialProfileResponseSchema,
   WorkspaceRepoProbeResponseSchema,
   WorkspaceRepoSchema,
-  AutopilotQuotaUsageSchema,
   AutopilotRunSchema,
   FALLBACK_AUTOPILOT_RUN,
   CommentTriggerPreviewSchema,
@@ -36,13 +35,11 @@ import {
   ChatSessionListSchema,
   ChatSessionSchema,
   PrioritizeQueuedChatTaskResponseSchema,
-  CreateFeedbackResponseSchema,
   DuplicateIssueErrorBodySchema,
   EMPTY_CHAT_DRAFT_RESTORES,
   EMPTY_CHAT_PENDING_TASK,
   EMPTY_CHAT_SESSION,
   EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
-  EMPTY_CREATE_FEEDBACK_RESPONSE,
   EMPTY_INBOX_ITEMS,
   EMPTY_INBOX_UNREAD_SUMMARY,
   EMPTY_SEARCH_PROJECTS_RESPONSE,
@@ -162,7 +159,7 @@ const baseIssue = {
   title: "Test",
   description: null,
   status: "todo",
-  priority: "medium",
+  priority: "not_important_urgent",
   assignee_type: null,
   assignee_id: null,
   creator_type: "member",
@@ -898,38 +895,6 @@ describe("PrioritizeQueuedChatTaskResponseSchema", () => {
   });
 });
 
-describe("CreateFeedbackResponseSchema", () => {
-  const ENDPOINT = { endpoint: "POST /api/feedback" };
-
-  it("parses a well-formed response and preserves extra fields", () => {
-    const parsed = parseWithFallback(
-      { id: "feedback-1", created_at: "2026-06-26T00:00:00Z", future_field: true },
-      CreateFeedbackResponseSchema,
-      EMPTY_CREATE_FEEDBACK_RESPONSE,
-      ENDPOINT,
-    );
-    expect(parsed).toMatchObject({
-      id: "feedback-1",
-      created_at: "2026-06-26T00:00:00Z",
-      future_field: true,
-    });
-  });
-
-  it("returns the empty fallback for malformed feedback responses", () => {
-    expect(
-      parseWithFallback(
-        { id: 123, created_at: "2026-06-26T00:00:00Z" },
-        CreateFeedbackResponseSchema,
-        EMPTY_CREATE_FEEDBACK_RESPONSE,
-        ENDPOINT,
-      ),
-    ).toBe(EMPTY_CREATE_FEEDBACK_RESPONSE);
-    expect(
-      parseWithFallback(null, CreateFeedbackResponseSchema, EMPTY_CREATE_FEEDBACK_RESPONSE, ENDPOINT),
-    ).toBe(EMPTY_CREATE_FEEDBACK_RESPONSE);
-  });
-});
-
 // The duplicate-issue branch in create-issue.tsx feeds ApiError.body
 // (typed as `unknown`) through this schema. Any future server drift that
 // loses the contract MUST fail the parse so the UI falls back to a normal
@@ -1282,6 +1247,12 @@ describe("AppConfigSchema cdn_signed drift", () => {
     expect(parsed.feature_flags).toEqual({});
   });
 
+  it("accepts an environment name and tolerates old or malformed responses", () => {
+    expect(AppConfigSchema.parse({ environment_name: "联调" }).environment_name).toBe("联调");
+    expect(AppConfigSchema.parse({}).environment_name).toBeUndefined();
+    expect(AppConfigSchema.parse({ environment_name: 123 }).environment_name).toBeUndefined();
+  });
+
   it("parses server_version and leaves it undefined when the server omits it", () => {
     expect(AppConfigSchema.parse({ server_version: "1.2.3" }).server_version).toBe("1.2.3");
     expect(AppConfigSchema.parse({}).server_version).toBeUndefined();
@@ -1351,7 +1322,7 @@ describe("InboxItemListSchema", () => {
     const parsed = parseWithFallback(
       [row({
         issue_status: "in_progress",
-        issue_priority: "high",
+        issue_priority: "important_not_urgent",
         details: { comment_id: "c-1" },
         future_field: 1,
       })],
@@ -1364,7 +1335,7 @@ describe("InboxItemListSchema", () => {
       id: "inbox-1",
       archived: true,
       issue_status: "in_progress",
-      issue_priority: "high",
+      issue_priority: "important_not_urgent",
     });
   });
 
@@ -1439,7 +1410,7 @@ describe("SearchProjectsResponseSchema date drift", () => {
     description: null,
     icon: null,
     status: "in_progress",
-    priority: "high",
+    priority: "important_not_urgent",
     lead_type: null,
     lead_id: null,
     created_at: "2026-01-01T00:00:00Z",
@@ -1522,39 +1493,6 @@ describe("AutopilotRunSchema", () => {
   });
 });
 
-describe("AutopilotQuotaUsageSchema", () => {
-  const baseUsage = {
-    action: "enforce",
-    used: 12,
-    reserved: 2,
-    limit: 100,
-    period_start: "2026-08-01T00:00:00Z",
-    period_end: "2026-09-01T00:00:00Z",
-    reset_at: "2026-09-01T00:00:00Z",
-  };
-
-  it("preserves durable blocked counts by execution source", () => {
-    const parsed = AutopilotQuotaUsageSchema.parse({
-      ...baseUsage,
-      blocked_counts: { schedule: 3, webhook: 7 },
-    });
-    expect(parsed.blocked_counts).toEqual({ schedule: 3, webhook: 7 });
-  });
-
-  it("defaults blocked_counts to null for an older server", () => {
-    expect(AutopilotQuotaUsageSchema.parse(baseUsage).blocked_counts).toBeNull();
-  });
-
-  it("isolates a malformed blocked_counts field", () => {
-    const parsed = AutopilotQuotaUsageSchema.parse({
-      ...baseUsage,
-      blocked_counts: { webhook: "many" },
-    });
-    expect(parsed.used).toBe(12);
-    expect(parsed.blocked_counts).toBeNull();
-  });
-});
-
 // The comment composer branches on preview.blocked to warn before sending
 // (MUL-4525 §2), so the additive field must parse and degrade gracefully.
 describe("CommentTriggerPreviewSchema.blocked", () => {
@@ -1613,8 +1551,8 @@ describe("RuntimeModelListRequestSchema", () => {
         provider: "openai",
         default: true,
         thinking: {
-          supported_levels: [{ value: "high", label: "High" }],
-          default_level: "low",
+          supported_levels: [{ value: "important_not_urgent", label: "High" }],
+          default_level: "not_important_not_urgent",
         },
         service_tiers: [{ id: "fast", name: "Fast" }],
         supports_explicit_standard_service_tier: true,
@@ -1633,7 +1571,7 @@ describe("RuntimeModelListRequestSchema", () => {
     expect(parsed.supported).toBe(true);
     expect(parsed.models?.[0]?.default).toBe(true);
     expect(parsed.models?.[0]?.thinking?.supported_levels).toEqual([
-      { value: "high", label: "High" },
+      { value: "important_not_urgent", label: "High" },
     ]);
     expect(parsed.models?.[0]?.service_tiers).toEqual([{ id: "fast", name: "Fast" }]);
     expect(

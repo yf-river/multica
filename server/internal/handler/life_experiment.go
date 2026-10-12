@@ -488,7 +488,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 			ID:          dbid.NewV7(),
 			WorkspaceID: scope.workspaceID, Title: strings.TrimSpace(payload.ActionTitle),
 			Description: pgtype.Text{String: strings.TrimSpace(payload.ActionInstructions), Valid: true},
-			Status:      "todo", Priority: "none", AssigneeType: pgtype.Text{String: "agent", Valid: true}, AssigneeID: proposal.CompanionAgentID,
+			Status:      "todo", Priority: "not_important_not_urgent", AssigneeType: pgtype.Text{String: "agent", Valid: true}, AssigneeID: proposal.CompanionAgentID,
 			CreatorType: "member", CreatorID: scope.userID, Position: position, Number: issueNumber,
 		})
 		if err != nil {
@@ -589,7 +589,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 			writeError(w, 500, "failed to position task")
 			return
 		}
-		issue, err := qtx.CreateIssueWithOrigin(r.Context(), db.CreateIssueWithOriginParams{ID: dbid.NewV7(), WorkspaceID: scope.workspaceID, Title: strings.TrimSpace(payload.IssueTitle), Description: pgtype.Text{String: strings.TrimSpace(payload.IssueDescription), Valid: strings.TrimSpace(payload.IssueDescription) != ""}, Status: "todo", Priority: "none", AssigneeType: pgtype.Text{String: "member", Valid: true}, AssigneeID: scope.userID, CreatorType: "member", CreatorID: scope.userID, Position: position, Number: issueNumber})
+		issue, err := qtx.CreateIssueWithOrigin(r.Context(), db.CreateIssueWithOriginParams{ID: dbid.NewV7(), WorkspaceID: scope.workspaceID, Title: strings.TrimSpace(payload.IssueTitle), Description: pgtype.Text{String: strings.TrimSpace(payload.IssueDescription), Valid: strings.TrimSpace(payload.IssueDescription) != ""}, Status: "todo", Priority: "not_important_not_urgent", AssigneeType: pgtype.Text{String: "member", Valid: true}, AssigneeID: scope.userID, CreatorType: "member", CreatorID: scope.userID, Position: position, Number: issueNumber})
 		if err != nil {
 			writeError(w, 500, "failed to create confirmed task")
 			return
@@ -666,7 +666,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 		WorkspaceID: scope.workspaceID,
 		Title:       issueTitle,
 		Description: pgtype.Text{String: strings.TrimSpace(payload.IssueDescription), Valid: strings.TrimSpace(payload.IssueDescription) != ""},
-		Status:      "todo", Priority: "none",
+		Status:      "todo", Priority: "not_important_not_urgent",
 		AssigneeType: pgtype.Text{String: "member", Valid: true}, AssigneeID: scope.userID,
 		CreatorType: "member", CreatorID: scope.userID,
 		ParentIssueID: pgtype.UUID{}, Position: position, StartDate: pgtype.Date{}, DueDate: pgtype.Date{},

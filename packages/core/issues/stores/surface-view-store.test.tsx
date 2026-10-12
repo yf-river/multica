@@ -66,7 +66,7 @@ describe("issue surface view store registry", () => {
     const projectB = getIssueSurfaceViewStore("project:b");
 
     projectA.getState().setViewMode("list");
-    projectA.getState().togglePriorityFilter("high");
+    projectA.getState().togglePriorityFilter("important_not_urgent");
 
     expect(projectA.getState().viewMode).toBe("list");
     expect(projectB.getState().viewMode).toBe("board");
@@ -77,7 +77,7 @@ describe("issue surface view store registry", () => {
     const parsed = JSON.parse(raw as string);
     expect(parsed.state.surfaces["project:a"].state.viewMode).toBe("list");
     expect(parsed.state.surfaces["project:a"].state.priorityFilters).toEqual([
-      "high",
+      "important_not_urgent",
     ]);
     expect(parsed.state.surfaces["project:b"]).toBeUndefined();
   });

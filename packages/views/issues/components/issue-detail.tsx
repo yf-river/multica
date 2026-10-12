@@ -390,7 +390,7 @@ function isOptionalPropSet(
 ): boolean {
   switch (key) {
     case "priority":
-      return issue.priority !== "none";
+      return !!issue.priority;
     case "stage":
       return issue.stage !== null && issue.stage !== undefined;
     case "start_date":
@@ -2360,7 +2360,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                       className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-caption text-foreground transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
                     >
                       {k === "priority" && (
-                        <PriorityIcon priority="medium" inheritColor className="text-muted-foreground" />
+                        <PriorityIcon priority="important_not_urgent" inheritColor className="text-muted-foreground" />
                       )}
                       {k === "stage" && (
                         <Milestone className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

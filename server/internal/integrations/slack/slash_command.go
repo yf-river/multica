@@ -34,7 +34,6 @@ import (
 	"github.com/slack-go/slack"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
-	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -48,7 +47,6 @@ const (
 	slashQueuedText           = "✅ On it — I'm turning that into an issue. You'll get a Multica notification when it's ready."
 	slashNotMemberText        = "You're not a member of this Multica workspace, so I can't file an issue for you."
 	slashLinkAccountFallback  = "Link your Slack account to Multica first, then try `/issue` again."
-	slashIssueLimitText       = "⚠️ This workspace has reached its issue limit. Open Multica to view the available recovery options."
 	slashInternalErrorText    = "⚠️ Something went wrong creating the issue. Please try again."
 	slashDisabledText         = "This Slack app isn't connected to Multica (or was disconnected). Ask a workspace admin to reconnect it."
 	slashNewStartedText       = "✅ Started a new Multica chat."
@@ -278,10 +276,6 @@ func (p *SlashCommandProcessor) process(ctx context.Context, cmd slack.SlashComm
 		pgtype.UUID{}, // 无父 issue
 		nil,           // 无附件
 	); err != nil {
-		var limitErr *service.IssueLimitReachedError
-		if errors.As(err, &limitErr) {
-			return slashIssueLimitText
-		}
 		p.logger.WarnContext(ctx, "slack slash command: enqueue quick-create failed",
 			"app_id", cmd.APIAppID, "error", err)
 		return slashInternalErrorText

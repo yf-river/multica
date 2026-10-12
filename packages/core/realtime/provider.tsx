@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { WSClient } from "../api/ws-client";
-import type { WSEventType, StorageAdapter } from "../types";
+import type { WSEventType, StorageAdapter, WSMessage } from "../types";
 import type { ClientIdentity } from "../platform/types";
 import type { StoreApi, UseBoundStore } from "zustand";
 import type { AuthState } from "../auth/store";
@@ -27,6 +27,7 @@ import { useRealtimeSync, type RealtimeSyncStores } from "./use-realtime-sync";
 type EventHandler = (payload: unknown, actorId?: string, actorType?: string) => void;
 
 interface WSContextValue {
+  subscribeWorkspace: (slug: string, handler: (message: WSMessage) => void) => () => void;
   subscribe: (event: WSEventType, handler: EventHandler) => () => void;
   onReconnect: (callback: () => void) => () => void;
 }
@@ -136,8 +137,19 @@ export function WSProvider({
     [wsClient],
   );
 
+  const subscribeWorkspace = useCallback((slug: string, handler: (message: WSMessage) => void) => {
+    const token = cookieAuth ? null : storage.getItem("multica_token");
+    if (!user || (!cookieAuth && !token)) return () => {};
+    const source = new WSClient(wsUrl, { cookieAuth });
+    source.setAuth(token, slug);
+    source.onAny(handler);
+    source.onReconnect(() => handler({ type: "issue:updated", payload: {} }));
+    source.connect();
+    return () => source.disconnect();
+  }, [cookieAuth, storage, user, wsUrl]);
+
   return (
-    <WSContext.Provider value={{ subscribe, onReconnect: onReconnectCb }}>
+    <WSContext.Provider value={{ subscribe, subscribeWorkspace, onReconnect: onReconnectCb }}>
       {children}
     </WSContext.Provider>
   );

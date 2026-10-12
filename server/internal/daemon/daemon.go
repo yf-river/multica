@@ -530,9 +530,10 @@ type Daemon struct {
 	// 而 tryAutoUpdate 在任一 poller 认领中途或任一任务处于 handleTask 时拒绝翻转
 	// pauseClaims。两者合起来关闭了"抓取发布元数据期间新任务溜进来、随后被
 	// triggerRestart 的 root-ctx 取消"这一取-再认领竞态。
-	claimMu        sync.Mutex
-	pauseClaims    bool // 为 true 时批量轮询器跳过认领
-	claimsInFlight int  // 已决定认领、但尚未把任务交给 handleTask 的轮询器数量
+	claimMu         sync.Mutex
+	deploymentDrain bool // 发布时暂停认领，已有任务继续完成
+	pauseClaims     bool // 为 true 时批量轮询器跳过认领
+	claimsInFlight  int  // 已决定认领、但尚未把任务交给 handleTask 的轮询器数量
 
 	activeEnvRootsMu   sync.Mutex
 	activeEnvRootsCond *sync.Cond      // 在途 env-root GC 变更结束时唤醒
@@ -4339,7 +4340,7 @@ func (d *Daemon) tryBeginServerUpdate(ctx context.Context) serverUpdateAcquireRe
 	}
 
 	d.claimMu.Lock()
-	if d.pauseClaims || d.activeTasks.Load() > 0 {
+	if d.pauseClaims || d.deploymentDrain || d.activeTasks.Load() > 0 {
 		d.claimMu.Unlock()
 		d.updating.Store(false)
 		return serverUpdateRuntimeBusy
@@ -4457,7 +4458,7 @@ func (d *Daemon) reportUpdateResultWithRetry(ctx context.Context, runtimeID, upd
 func (d *Daemon) tryEnterClaim() bool {
 	d.claimMu.Lock()
 	defer d.claimMu.Unlock()
-	if d.pauseClaims {
+	if d.pauseClaims || d.deploymentDrain {
 		return false
 	}
 	d.claimsInFlight++
@@ -4482,7 +4483,7 @@ func (d *Daemon) trySetClaimBarrier() bool {
 	// 屏障已持有时拒绝。没有这个检查，函数会静默地双重获取：两个持有者都以为
 	// 自己拥有它，先完成的那个会从另一个脚下把屏障放掉。tryBeginServerUpdate
 	// 出于同样原因也做同样的检查。
-	if d.pauseClaims || d.claimsInFlight > 0 || d.activeTasks.Load() > 0 {
+	if d.pauseClaims || d.deploymentDrain || d.claimsInFlight > 0 || d.activeTasks.Load() > 0 {
 		return false
 	}
 	d.pauseClaims = true
@@ -5178,7 +5179,14 @@ func (d *Daemon) acquireLocalDirectoryLockIfNeeded(ctx context.Context, task Tas
 		}
 		return nil, true
 	}
-	if err := validateLocalPath(assignment.AbsPath); err != nil {
+	var pathErr error
+	if !assignment.UsesWorktree() {
+		pathErr = validateEnvironmentWritePath(assignment.AbsPath)
+	}
+	if pathErr == nil {
+		pathErr = validateLocalPath(assignment.AbsPath)
+	}
+	if err := pathErr; err != nil {
 		taskLog.Error("local_directory: path validation failed", "error", err)
 		if failErr := d.reportTerminalTask(ctx, terminalTaskReport{
 			kind:          terminalTaskReportFail,

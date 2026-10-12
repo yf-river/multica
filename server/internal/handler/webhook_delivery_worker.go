@@ -20,7 +20,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/service"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -209,10 +208,6 @@ func (w *WebhookDeliveryWorker) ProcessNext(ctx context.Context) (bool, error) {
 		delivery.ID,
 	)
 	if dispatchErr != nil {
-		var quotaErr *service.AutopilotQuotaExceededError
-		if errors.As(dispatchErr, &quotaErr) {
-			return true, w.complete(ctx, delivery, deliveryStatusIgnored, pgtype.UUID{}, quotaErr.Error(), "quota_exceeded")
-		}
 		if run != nil {
 			return true, w.complete(ctx, delivery, deliveryStatusFailed, run.ID, dispatchErr.Error())
 		}

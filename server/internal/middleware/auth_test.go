@@ -395,11 +395,11 @@ func TestAuth_MCN_ValidTokenSetsUserID(t *testing.T) {
 	if gotUser != "01972f7e-7e8d-77ef-a13d-1b0ce3e9c001" {
 		t.Errorf("expected owner_id propagated as X-User-ID, got %q", gotUser)
 	}
-	// Pinned per the cloud-billing review: a successful mcn_ verify
+	// Pinned per the restricted endpoint review: a successful mcn_ verify
 	// MUST stamp X-Actor-Source so account-level guards (e.g.
-	// handler.RequireHumanActor on /api/cloud-billing/*) can tell a
+	// handler.RequireHumanActor on restricted account endpoints) can tell a
 	// machine credential apart from a human PAT/JWT. Dropping this
-	// stamp would silently let an mcn_ holder reach billing.
+	// stamp would silently let an mcn_ holder reach restricted endpoints.
 	if gotActorSource != "cloud_pat" {
 		t.Errorf("expected X-Actor-Source=cloud_pat, got %q", gotActorSource)
 	}

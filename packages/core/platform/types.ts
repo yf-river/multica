@@ -19,6 +19,7 @@ export interface CoreProviderProps {
   children: React.ReactNode;
   /** API 基地址。默认 ""（同源）。 */
   apiBaseUrl?: string;
+  environmentId?: string;
   /** WebSocket 地址。默认 "ws://localhost:8080/ws"。 */
   wsUrl?: string;
   /** 存储适配器。默认 SSR 安全的 localStorage 包装。 */

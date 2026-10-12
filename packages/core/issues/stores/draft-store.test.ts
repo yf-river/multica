@@ -31,7 +31,7 @@ const RESET_STATE = {
   draft: {
     shared: {
       projectId: undefined,
-      priority: "none" as const,
+      priority: "not_important_not_urgent" as const,
       dueDate: null,
       attachments: [],
     },
@@ -187,7 +187,7 @@ describe("issue draft store — mode switch preserves both sides", () => {
     const { setManual, setAgent, setShared } = useIssueDraftStore.getState();
 
     setManual({ title: "Manual title", description: "Manual body" });
-    setShared({ projectId: "project-1", priority: "high" });
+    setShared({ projectId: "project-1", priority: "important_not_urgent" });
     // Switching to agent seeds the agent slot but must not clear manual.
     setAgent({ prompt: "Agent prompt", actorType: "agent", actorId: "agent-1" });
 
@@ -198,7 +198,7 @@ describe("issue draft store — mode switch preserves both sides", () => {
     expect(draft.agent.actorId).toBe("agent-1");
     // Shared fields are visible to both sides.
     expect(draft.shared.projectId).toBe("project-1");
-    expect(draft.shared.priority).toBe("high");
+    expect(draft.shared.priority).toBe("important_not_urgent");
   });
 });
 
@@ -221,7 +221,7 @@ describe("issue draft store — legacy rehydrate", () => {
             title: "legacy",
             description: "body",
             status: "todo",
-            priority: "high",
+            priority: "important_not_urgent",
             projectId: "project-1",
             startDate: null,
             dueDate: "2026-08-01",
@@ -247,7 +247,7 @@ describe("issue draft store — legacy rehydrate", () => {
     expect(draft.manual.propertyValues).toEqual({ "property-1": "option-1" });
     // Shared fields land in the shared slot, with attachments backfilled.
     expect(draft.shared.projectId).toBe("project-1");
-    expect(draft.shared.priority).toBe("high");
+    expect(draft.shared.priority).toBe("important_not_urgent");
     expect(draft.shared.dueDate).toBe("2026-08-01");
     expect(draft.shared.attachments).toEqual([]);
     // A legacy draft had no agent prompt (it lived in a separate store).
@@ -262,7 +262,7 @@ describe("issue draft store — legacy rehydrate", () => {
         state: {
           draft: {
             // A build that shipped the nested shape but predated a later field.
-            shared: { projectId: "project-2", priority: "urgent" },
+            shared: { projectId: "project-2", priority: "important_urgent" },
             manual: { title: "kept" },
             agent: { prompt: "keep me" },
             activeMode: "agent",
@@ -278,7 +278,7 @@ describe("issue draft store — legacy rehydrate", () => {
 
     const { draft } = useIssueDraftStore.getState();
     expect(draft.shared.projectId).toBe("project-2");
-    expect(draft.shared.priority).toBe("urgent");
+    expect(draft.shared.priority).toBe("important_urgent");
     expect(draft.shared.dueDate).toBeNull();
     expect(draft.shared.attachments).toEqual([]);
     expect(draft.manual.title).toBe("kept");

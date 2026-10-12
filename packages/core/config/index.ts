@@ -32,6 +32,7 @@ interface ConfigState {
   // 正在运行的 API 构建版本，展示在「帮助」弹层里，方便自托管运维确认
   // 部署内容。开发构建或不支持该字段的老服务端为空字符串。
   serverVersion: string;
+  environmentName: string;
   // 连上的服务端是否会校验 local_directory 执行模式。默认 false，任何未
   // 声明的服务端都保持 false：危险的那类服务端只接受 worktree 模式、丢弃
   // 该字段、仍悄悄在用户工作副本里跑任务（#7113）。会校验但比该信号老的
@@ -54,6 +55,7 @@ interface ConfigState {
   }) => void;
   setFeatureFlags: (flags?: Record<string, boolean>) => void;
   setServerVersion: (version?: string) => void;
+  setEnvironmentName: (name?: string) => void;
   setLocalWorktreeSupported: (supported?: boolean) => void;
   setAgentConversationStartersSupported: (supported?: boolean) => void;
 }
@@ -70,6 +72,7 @@ export const configStore = createStore<ConfigState>((set) => ({
   vcsIntegrationAvailable: false,
   featureFlags: {},
   serverVersion: "",
+  environmentName: "",
   localWorktreeSupported: false,
   agentConversationStartersSupported: false,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
@@ -83,6 +86,7 @@ export const configStore = createStore<ConfigState>((set) => ({
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),
   setServerVersion: (version = "") => set({ serverVersion: version }),
+  setEnvironmentName: (name = "") => set({ environmentName: name }),
   setLocalWorktreeSupported: (supported = false) =>
     set({ localWorktreeSupported: supported === true }),
   setAgentConversationStartersSupported: (supported = false) =>

@@ -20,6 +20,7 @@ import (
 // issueMoveFields 是 MoveIssue 接受的字段白名单（其余字段直接拒绝，防止夹带）。
 var issueMoveFields = map[string]struct{}{
 	"status":            {},
+	"priority":          {},
 	"assignee_type":     {},
 	"assignee_id":       {},
 	"parent_issue_id":   {},

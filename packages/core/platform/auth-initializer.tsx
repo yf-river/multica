@@ -46,6 +46,7 @@ export function AuthInitializer({
   storage = defaultStorage,
   cookieAuth,
   identity,
+  environmentId = "",
 }: {
   children: ReactNode;
   onLogin?: () => void;
@@ -53,6 +54,7 @@ export function AuthInitializer({
   storage?: StorageAdapter;
   cookieAuth?: boolean;
   identity?: ClientIdentity;
+  environmentId?: string;
 }) {
   const qc = useQueryClient();
   const retryGeneration = useAuthStore((state) => state.retryGeneration);
@@ -91,6 +93,7 @@ export function AuthInitializer({
         });
         configStore.getState().setFeatureFlags(cfg.feature_flags);
         configStore.getState().setServerVersion(cfg.server_version);
+        configStore.getState().setEnvironmentName(cfg.environment_name);
         // 早于 worktree 保存闸门的服务端都缺这个字段——那正是客户端绝不能
         // 提供该模式的时刻（#7113）。
         configStore
@@ -125,7 +128,7 @@ export function AuthInitializer({
   useEffect(() => {
     // 最先盖 attribution 戳——注册事件（服务端侧）会读这个 cookie，所以它
     // 必须在用户点提交之前就位。
-    captureSignupSource();
+    captureSignupSource(environmentId);
 
     // 配置对启动是可选的，但离线启动一旦恢复联网仍须自愈。重试与 auth 相同、
     // 以 30 秒为上限的限速，并在 `online` 事件时加速。
@@ -195,7 +198,7 @@ export function AuthInitializer({
       window.removeEventListener("online", retryNow);
       if (retryTimer !== undefined) clearTimeout(retryTimer);
     };
-  }, [loadConfig]);
+  }, [loadConfig, environmentId]);
 
   useEffect(() => {
     const api = getApi();

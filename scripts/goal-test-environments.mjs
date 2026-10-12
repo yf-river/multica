@@ -61,6 +61,7 @@ const serviceEnvKeys = {
     "GOAL_TEST_ENV",
     "DATABASE_URL",
     "PORT",
+    "PPROF_PORT",
     "JWT_SECRET",
     "MULTICA_EXTERNAL_CREDENTIAL_KEY",
     "MULTICA_APP_URL",
@@ -186,6 +187,7 @@ const profiles = {
     label: "生产稳定环境",
     frontendPort: "13680",
     backendPort: "18760",
+    profilingPort: "6061",
     databaseName: "multica_goal_test_680",
     daemonProfile: "goal-test-prod",
     daemonID: "goal-test-codex-prod",
@@ -197,6 +199,7 @@ const profiles = {
     label: "联调开发环境",
     frontendPort: "13682",
     backendPort: "18762",
+    profilingPort: "6060",
     databaseName: "multica_goal_test_int",
     daemonProfile: "goal-test-int",
     daemonID: "goal-test-codex-int",
@@ -204,6 +207,20 @@ const profiles = {
     frontendMode: "next-dev",
   },
 };
+
+// 发布环境只能通过固定发布包升级，旧快捷命令不得改写运行目录。
+const requestedCommand = process.argv[2] || "verify";
+const releaseCommands = new Set(["build", "initialize", "deploy", "rollback", "verify"]);
+if (releaseCommands.has(requestedCommand)) {
+  const args = process.argv.slice(2);
+  if (!args.length) args.push("verify");
+  if (args[0] === "verify" && args[1] === "all") args.splice(1, 1);
+  const result = nodeSpawnSync("python3", [path.join(repoRoot, "scripts/release-environments.py"), ...args], { stdio: "inherit" });
+  process.exit(result.status ?? 1);
+}
+if (["ensure", "dev-ui", "dev-ui-start", "dev-server", "dev-daemon"].includes(requestedCommand)) {
+  throw new Error("此命令会覆盖共享环境。请使用 build，再 deploy <int|prod> <release-id>；环境初始化使用 initialize <int|prod>。");
+}
 
 const command = process.argv[2] || "verify";
 const profileName = process.argv[3] && !process.argv[3].startsWith("--") ? process.argv[3] : "prod";
@@ -274,6 +291,7 @@ function ensureEnvironment(item) {
     `DATABASE_URL=${databaseURL}`,
     `MULTICA_MIGRATION_BASELINE=true`,
     `PORT=${item.backendPort}`,
+    `PPROF_PORT=${item.profilingPort}`,
     `JWT_SECRET=${base.JWT_SECRET || "change-me-in-production"}`,
     `MULTICA_EXTERNAL_CREDENTIAL_KEY=${base.MULTICA_EXTERNAL_CREDENTIAL_KEY || ensureStableSecretKey(item, "external-credential")}`,
     `MULTICA_SERVER_URL=ws://127.0.0.1:${item.backendPort}/ws`,
@@ -657,7 +675,7 @@ async function prewarmDevWebRoutes(item) {
     `/${slug}/settings?tab=labs`,
   ];
   const routes = scope === "full" ? uniqueRoutes([...coreRoutes, ...fullRoutes]) : coreRoutes;
-  const cookie = `multica_logged_in=1; last_workspace_slug=${slug}`;
+  const cookie = `multica_logged_in_${item.name}=1; last_workspace_slug_${item.name}=${slug}`;
   const results = await runConcurrent(routes, concurrency, (route) =>
     prewarmDevWebRoute({ base, route, cookie, timeoutSec }),
   );

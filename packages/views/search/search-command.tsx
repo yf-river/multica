@@ -108,7 +108,10 @@ const PAGE_KEYWORDS: Record<WorkspacePageKey, string[]> = {
   runtimes: ["runtimes", "environments", "machines", "运行时"],
   skills: ["skills", "library", "技能"],
   settings: ["settings", "config", "preferences", "设置", "配置"],
+  cooking: ["cooking", "recipes", "烹饪", "菜谱", "做饭"],
   health: ["health", "身体", "健康", "身高", "体重", "指标"],
+  meals: ["meals", "饮食", "餐单", "备餐", "采购"],
+  goals: ["goals", "目标", "进度", "回顾"],
   life: ["life", "companion", "memory", "experiment", "人生", "搭子", "记忆", "实验"],
 };
 

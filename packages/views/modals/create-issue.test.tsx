@@ -46,7 +46,6 @@ const mockSetKeepOpen = vi.hoisted(() => vi.fn());
 const mockToastCustom = vi.hoisted(() => vi.fn());
 const mockToastDismiss = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
-const mockShowIssueLimitUpgradePrompt = vi.hoisted(() => vi.fn());
 // Uploads flow through the module-level coordinator, which calls
 // `api.uploadFile(file, ctx, signal)` (MUL-5181 L2). Tests drive uploads by
 // mocking that call; it resolves a plain server Attachment row.
@@ -120,7 +119,7 @@ type DraftUploadEntry = {
 const emptyIssueDraft = () => ({
   shared: {
     projectId: undefined as string | undefined,
-    priority: "none" as "none" | "low" | "medium" | "high" | "urgent",
+    priority: "not_important_not_urgent" as "not_important_not_urgent" | "not_important_not_urgent" | "not_important_urgent" | "important_not_urgent" | "important_urgent",
     dueDate: null as string | null,
     attachments: [] as DraftUploadEntry[],
   },
@@ -204,9 +203,7 @@ vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-test",
 }));
 
-vi.mock("./use-issue-limit-upgrade-prompt", () => ({
-  useIssueLimitUpgradePrompt: () => mockShowIssueLimitUpgradePrompt,
-}));
+
 
 vi.mock("@multica/core/issues/queries", () => ({
   issueDetailOptions: (wsId: string, id: string) => ({
@@ -492,10 +489,10 @@ vi.mock("../projects/components/project-picker", () => ({
     <button
       type="button"
       data-testid="project-picker"
-      data-project-id={projectId ?? "none"}
+      data-project-id={projectId ?? "not_important_not_urgent"}
       onClick={() => onUpdate({ project_id: "proj-1" })}
     >
-      Project {projectId ?? "none"}
+      Project {projectId ?? "not_important_not_urgent"}
     </button>
   ),
 }));
@@ -732,7 +729,7 @@ describe("CreateIssueModal", () => {
         title: "Ship create issue regression coverage",
         description: undefined,
         status: "todo",
-        priority: "none",
+        priority: "not_important_not_urgent",
         assignee_type: undefined,
         assignee_id: undefined,
         start_date: undefined,
@@ -844,7 +841,7 @@ describe("CreateIssueModal", () => {
         title: "First follow-up issue",
         description: "Description to clear",
         status: "todo",
-        priority: "none",
+        priority: "not_important_not_urgent",
         assignee_type: undefined,
         assignee_id: undefined,
         start_date: undefined,
@@ -869,7 +866,7 @@ describe("CreateIssueModal", () => {
       propertyValues: {},
     });
     expect(mockSetShared).toHaveBeenCalledWith({
-      priority: "none",
+      priority: "not_important_not_urgent",
       projectId: undefined,
       dueDate: null,
       attachments: [],
@@ -1150,29 +1147,6 @@ describe("CreateIssueModal", () => {
     expect(mockToastCustom).not.toHaveBeenCalled();
   });
 
-  it("offers the Cloud-authorized upgrade recovery when manual create reaches the issue limit", async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
-    mockCreateIssue.mockRejectedValue(
-      new ApiError("workspace has reached its issue limit", 402, "Payment Required", {
-        code: "issue_limit_reached",
-        limit: 1000,
-        policy_revision: 1,
-      }),
-    );
-
-    renderModal(<CreateIssueModal onClose={onClose} />);
-    await user.type(screen.getByPlaceholderText("Issue title"), "One more issue");
-    await user.click(screen.getByRole("button", { name: "Create Issue" }));
-
-    await waitFor(() => {
-      expect(mockShowIssueLimitUpgradePrompt).toHaveBeenCalledTimes(1);
-    });
-    expect(mockToastError).not.toHaveBeenCalled();
-    expect(mockClearDraft).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
   // Non-409 errors with a real message: surface the backend reason rather
   // than the generic i18n fallback. This is the whole point of the issue.
   it("surfaces err.message verbatim for non-duplicate errors", async () => {
@@ -1233,7 +1207,7 @@ describe("CreateIssueModal", () => {
     const user = userEvent.setup();
 
     const firstOpen = renderModal(<CreateIssueModal onClose={vi.fn()} />);
-    expect(screen.getByTestId("project-picker")).toHaveAttribute("data-project-id", "none");
+    expect(screen.getByTestId("project-picker")).toHaveAttribute("data-project-id", "not_important_not_urgent");
 
     await user.click(screen.getByTestId("project-picker"));
     expect(mockSetShared).toHaveBeenCalledWith({ projectId: "proj-1" });

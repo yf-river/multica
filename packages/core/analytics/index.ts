@@ -1,3 +1,4 @@
+import { environmentCookieName } from "../platform/environment";
 // 本文件是前端埋点的粘合层，对 posthog-js 做薄封装。
 
 // 事件目录的唯一事实来源是 `server/internal/analytics/events.go`。本模块只处理
@@ -355,9 +356,10 @@ function normalizeEnvironment(value: string | undefined): string {
  * 这个 cookie 就是后端注册事件里 `signup_source` 的读取来源；两个字段刻意用不透明的
  * JSON，这样 schema 演进时无需后端发版。
  */
-export function captureSignupSource(): void {
+export function captureSignupSource(environmentId = ""): void {
+  const cookieName = environmentCookieName(SIGNUP_SOURCE_COOKIE, environmentId);
   if (typeof window === "undefined" || typeof document === "undefined") return;
-  if (readCookie(SIGNUP_SOURCE_COOKIE)) return;
+  if (readCookie(cookieName)) return;
 
   const source: Record<string, string> = {};
   const cap = (v: string) =>
@@ -384,7 +386,7 @@ export function captureSignupSource(): void {
 
   // 30 天有效期覆盖典型的注册考虑窗口。Lax 是正确的默认——cookie 只被同源认证消费。
   const maxAge = 60 * 60 * 24 * 30;
-  document.cookie = `${SIGNUP_SOURCE_COOKIE}=${encodeURIComponent(payload)}; path=/; max-age=${maxAge}; samesite=lax`;
+  document.cookie = `${cookieName}=${encodeURIComponent(payload)}; path=/; max-age=${maxAge}; samesite=lax`;
 }
 
 function safeReferrerOrigin(referrer: string): string {

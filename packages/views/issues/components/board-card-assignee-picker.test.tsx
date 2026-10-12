@@ -120,7 +120,7 @@ function makeIssue(assigneeType: IssueAssigneeType): Issue {
     title: "Fix Board assignee interaction",
     description: null,
     status: "todo",
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: assigneeType,
     assignee_id: `${assigneeType}-1`,
     creator_type: "member",

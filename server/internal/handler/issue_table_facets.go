@@ -101,6 +101,9 @@ func issueTableFacetIdentity(facet issueTableFacetSpec) string {
 func issueTableBaseFacetExpression(query issueTableQuerySpec, facet issueTableFacetSpec) (string, bool) {
 	switch facet.Kind {
 	case "status":
+		if query.Scope.Kind == "my" {
+			return issueStatusCategorySQL, len(query.Filters.Statuses) == 0
+		}
 		return "i.status", len(query.Filters.Statuses) == 0
 	case "priority":
 		return "i.priority", len(query.Filters.Priorities) == 0
@@ -212,6 +215,10 @@ func (h *Handler) issueTableFacetQuery(w http.ResponseWriter, r *http.Request, r
 	query := ""
 	switch facet.Kind {
 	case "status":
+		if requestQuery.Scope.Kind == "my" {
+			query = fmt.Sprintf(`SELECT %s, COUNT(*)::bigint FROM issue i WHERE %s GROUP BY 1`, issueStatusCategorySQL, compiled.where)
+			break
+		}
 		query = fmt.Sprintf(`SELECT i.status, COUNT(*)::bigint FROM issue i WHERE %s GROUP BY i.status`, compiled.where)
 	case "priority":
 		query = fmt.Sprintf(`SELECT i.priority, COUNT(*)::bigint FROM issue i WHERE %s GROUP BY i.priority`, compiled.where)

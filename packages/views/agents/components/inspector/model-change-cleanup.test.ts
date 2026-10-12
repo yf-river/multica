@@ -9,8 +9,8 @@ const FAST_HIGH: RuntimeModel = {
   supports_explicit_standard_service_tier: true,
   thinking: {
     supported_levels: [
-      { value: "medium", label: "Medium" },
-      { value: "high", label: "High" },
+      { value: "not_important_urgent", label: "Medium" },
+      { value: "important_not_urgent", label: "High" },
     ],
   },
   service_tiers: [{ id: "priority", name: "Fast" }],
@@ -26,7 +26,7 @@ const MEDIUM_ONLY: RuntimeModel = {
   id: "gpt-5.5",
   label: "GPT-5.5",
   supports_explicit_standard_service_tier: true,
-  thinking: { supported_levels: [{ value: "medium", label: "Medium" }] },
+  thinking: { supported_levels: [{ value: "not_important_urgent", label: "Medium" }] },
   service_tiers: [{ id: "priority", name: "Fast" }],
 };
 
@@ -35,7 +35,7 @@ const CATALOG = [FAST_HIGH, PLAIN, MEDIUM_ONLY];
 const CLAUDE_MEDIUM_ONLY: RuntimeModel = {
   id: "claude-sonnet-4-6",
   label: "Claude Sonnet 4.6",
-  thinking: { supported_levels: [{ value: "medium", label: "Medium" }] },
+  thinking: { supported_levels: [{ value: "not_important_urgent", label: "Medium" }] },
 };
 
 describe("buildModelChangeUpdate (MUL-5390)", () => {
@@ -44,7 +44,7 @@ describe("buildModelChangeUpdate (MUL-5390)", () => {
       buildModelChangeUpdate({
         provider: "codex",
         model: "gpt-5.4-mini",
-        thinkingLevel: "high",
+        thinkingLevel: "important_not_urgent",
         serviceTier: "priority",
         catalog: CATALOG,
       }),
@@ -60,7 +60,7 @@ describe("buildModelChangeUpdate (MUL-5390)", () => {
       buildModelChangeUpdate({
         provider: "codex",
         model: "gpt-5.6-sol",
-        thinkingLevel: "high",
+        thinkingLevel: "important_not_urgent",
         serviceTier: "priority",
         catalog: CATALOG,
       }),
@@ -96,7 +96,7 @@ describe("buildModelChangeUpdate (MUL-5390)", () => {
       buildModelChangeUpdate({
         provider: "codex",
         model: "gpt-5.5",
-        thinkingLevel: "high",
+        thinkingLevel: "important_not_urgent",
         serviceTier: "priority",
         catalog: CATALOG,
       }),
@@ -111,7 +111,7 @@ describe("buildModelChangeUpdate (MUL-5390)", () => {
       buildModelChangeUpdate({
         provider: "codex",
         model: "gpt-5.4-mini",
-        thinkingLevel: "high",
+        thinkingLevel: "important_not_urgent",
         serviceTier: "priority",
         catalog: null,
       }),
@@ -123,7 +123,7 @@ describe("buildModelChangeUpdate (MUL-5390)", () => {
       buildModelChangeUpdate({
         provider: "codex",
         model: "",
-        thinkingLevel: "high",
+        thinkingLevel: "important_not_urgent",
         serviceTier: "priority",
         catalog: CATALOG,
       }),
@@ -135,7 +135,7 @@ describe("buildModelChangeUpdate (MUL-5390)", () => {
       buildModelChangeUpdate({
         provider: "codex",
         model: "custom-local-build",
-        thinkingLevel: "high",
+        thinkingLevel: "important_not_urgent",
         serviceTier: "priority",
         catalog: CATALOG,
       }),

@@ -12,7 +12,7 @@ func TestLastImportSelectsCurrentAndKeepsHistory(t *testing.T) {
 	old := State{ObservationIDs: []string{"a", "c"}, CurrentObservationIDs: []string{"a", "c"}}
 	next := Apply(old, []Observation{a, c}, []Observation{b})
 	values := Selected([]Observation{a, b, c}, next.CurrentObservationIDs)
-	if len(values) != 2 || values[0].ID != "c" || values[1].ID != "b" || len(next.ObservationIDs) != 3 {
+	if len(values) != 2 || values[0].ID != "b" || values[1].ID != "c" || len(next.ObservationIDs) != 3 {
 		t.Fatal("覆盖必须保留未涉及指标与旧测量记录")
 	}
 	if old.CurrentObservationIDs[0] != "a" {

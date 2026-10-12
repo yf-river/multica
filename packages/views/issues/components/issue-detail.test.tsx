@@ -346,8 +346,8 @@ vi.mock("@multica/core/issues/config", () => ({
     blocked: { label: "Blocked", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
     cancelled: { label: "Cancelled", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
   },
-  PRIORITY_ORDER: ["urgent", "high", "medium", "low", "none"],
-  PRIORITY_DISPLAY_ORDER: ["none", "urgent", "high", "medium", "low"],
+  PRIORITY_ORDER: ["important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent", "not_important_not_urgent"],
+  PRIORITY_DISPLAY_ORDER: ["not_important_not_urgent", "important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"],
   PRIORITY_CONFIG: {
     urgent: { label: "Urgent", bars: 4, color: "text-destructive", badgeBg: "bg-destructive/10", badgeText: "text-destructive" },
     high: { label: "High", bars: 3, color: "text-warning", badgeBg: "bg-warning/10", badgeText: "text-warning" },
@@ -547,7 +547,7 @@ const mockIssue: Issue = {
   title: "Implement authentication",
   description: "Add JWT auth to the backend",
   status: "in_progress",
-  priority: "high",
+  priority: "important_not_urgent",
   assignee_type: "member",
   assignee_id: "user-1",
   creator_type: "member",
@@ -1008,7 +1008,7 @@ describe("IssueDetail (shared)", () => {
       description: null,
       icon: "🚀",
       status: "in_progress",
-      priority: "none",
+      priority: "not_important_not_urgent",
       lead_type: null,
       lead_id: null,
       created_at: "2026-01-01T00:00:00Z",
@@ -1038,7 +1038,7 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByText("Assignee")).toBeInTheDocument();
     // "Project" appears twice (row label + picker stub), so disambiguate by id.
     expect(screen.getByTestId("project-picker")).toBeInTheDocument();
-    // priority="high" + due_date are set in the fixture, so both optional rows show.
+    // priority="important_not_urgent" + due_date are set in the fixture, so both optional rows show.
     expect(screen.getByText("Priority")).toBeInTheDocument();
     expect(screen.getByText("Due date")).toBeInTheDocument();
     // No labels are attached in the fixture — the Labels optional row
@@ -1056,7 +1056,7 @@ describe("IssueDetail (shared)", () => {
     // Override the default fixture: nothing optional set.
     mockApiObj.getIssue.mockResolvedValue({
       ...mockIssue,
-      priority: "none",
+      priority: "not_important_not_urgent",
       start_date: null,
       due_date: null,
     });
@@ -1423,7 +1423,7 @@ describe("IssueDetail (shared)", () => {
         actor_type: "member",
         actor_id: "user-1",
         action: "priority_changed",
-        details: { from: "low", to: "high" },
+        details: { from: "not_important_not_urgent", to: "important_not_urgent" },
         created_at: "2026-01-16T01:00:00Z",
       },
       {
@@ -1583,13 +1583,13 @@ describe("IssueDetail (shared)", () => {
     // with 10 distinct rows.
     const trailingBlock: TimelineEntry[] = [
       { type: "activity", id: "act-1", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "todo", to: "in_progress" }, created_at: "2026-01-18T00:00:00Z" },
-      { type: "activity", id: "act-2", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "low", to: "medium" }, created_at: "2026-01-18T00:01:00Z" },
+      { type: "activity", id: "act-2", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "not_important_not_urgent", to: "not_important_urgent" }, created_at: "2026-01-18T00:01:00Z" },
       { type: "activity", id: "act-3", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "in_progress", to: "in_review" }, created_at: "2026-01-18T00:02:00Z" },
-      { type: "activity", id: "act-4", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "medium", to: "high" }, created_at: "2026-01-18T00:03:00Z" },
+      { type: "activity", id: "act-4", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "not_important_urgent", to: "important_not_urgent" }, created_at: "2026-01-18T00:03:00Z" },
       { type: "activity", id: "act-5", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "in_review", to: "done" }, created_at: "2026-01-18T00:04:00Z" },
-      { type: "activity", id: "act-6", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "high", to: "urgent" }, created_at: "2026-01-18T00:05:00Z" },
+      { type: "activity", id: "act-6", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "important_not_urgent", to: "important_urgent" }, created_at: "2026-01-18T00:05:00Z" },
       { type: "activity", id: "act-7", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "done", to: "blocked" }, created_at: "2026-01-18T00:06:00Z" },
-      { type: "activity", id: "act-8", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "urgent", to: "low" }, created_at: "2026-01-18T00:07:00Z" },
+      { type: "activity", id: "act-8", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "important_urgent", to: "not_important_not_urgent" }, created_at: "2026-01-18T00:07:00Z" },
       { type: "activity", id: "act-9", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "blocked", to: "todo" }, created_at: "2026-01-18T00:08:00Z" },
       { type: "activity", id: "act-10", actor_type: "member", actor_id: "user-1", action: "due_date_changed", details: { to: "2026-02-01T00:00:00Z" }, created_at: "2026-01-18T00:09:00Z" },
     ] as TimelineEntry[];
@@ -1627,11 +1627,11 @@ describe("IssueDetail (shared)", () => {
   it("does not show the show-more toggle when the trailing block has 8 or fewer entries", async () => {
     const trailingBlock: TimelineEntry[] = [
       { type: "activity", id: "act-1", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "todo", to: "in_progress" }, created_at: "2026-01-18T00:00:00Z" },
-      { type: "activity", id: "act-2", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "low", to: "high" }, created_at: "2026-01-18T00:01:00Z" },
+      { type: "activity", id: "act-2", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "not_important_not_urgent", to: "important_not_urgent" }, created_at: "2026-01-18T00:01:00Z" },
       { type: "activity", id: "act-3", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "in_progress", to: "in_review" }, created_at: "2026-01-18T00:02:00Z" },
-      { type: "activity", id: "act-4", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "high", to: "urgent" }, created_at: "2026-01-18T00:03:00Z" },
+      { type: "activity", id: "act-4", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "important_not_urgent", to: "important_urgent" }, created_at: "2026-01-18T00:03:00Z" },
       { type: "activity", id: "act-5", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "in_review", to: "done" }, created_at: "2026-01-18T00:04:00Z" },
-      { type: "activity", id: "act-6", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "urgent", to: "low" }, created_at: "2026-01-18T00:05:00Z" },
+      { type: "activity", id: "act-6", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "important_urgent", to: "not_important_not_urgent" }, created_at: "2026-01-18T00:05:00Z" },
       { type: "activity", id: "act-7", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "done", to: "blocked" }, created_at: "2026-01-18T00:06:00Z" },
       { type: "activity", id: "act-8", actor_type: "member", actor_id: "user-1", action: "due_date_changed", details: { to: "2026-02-01T00:00:00Z" }, created_at: "2026-01-18T00:07:00Z" },
     ] as TimelineEntry[];
@@ -1661,15 +1661,15 @@ describe("IssueDetail (shared)", () => {
     // truncate-to-8 rule applies only to the trailing block.
     const timeline: TimelineEntry[] = [
       { type: "activity", id: "old-1", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "backlog", to: "todo" }, created_at: "2026-01-16T00:00:00Z" },
-      { type: "activity", id: "old-2", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "none", to: "low" }, created_at: "2026-01-16T00:01:00Z" },
+      { type: "activity", id: "old-2", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "not_important_not_urgent", to: "not_important_not_urgent" }, created_at: "2026-01-16T00:01:00Z" },
       { type: "activity", id: "old-3", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "todo", to: "in_progress" }, created_at: "2026-01-16T00:02:00Z" },
-      { type: "activity", id: "old-4", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "low", to: "medium" }, created_at: "2026-01-16T00:03:00Z" },
+      { type: "activity", id: "old-4", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "not_important_not_urgent", to: "not_important_urgent" }, created_at: "2026-01-16T00:03:00Z" },
       { type: "activity", id: "old-5", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "in_progress", to: "in_review" }, created_at: "2026-01-16T00:04:00Z" },
-      { type: "activity", id: "old-6", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "medium", to: "high" }, created_at: "2026-01-16T00:05:00Z" },
+      { type: "activity", id: "old-6", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "not_important_urgent", to: "important_not_urgent" }, created_at: "2026-01-16T00:05:00Z" },
       { type: "activity", id: "old-7", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "in_review", to: "done" }, created_at: "2026-01-16T00:06:00Z" },
-      { type: "activity", id: "old-8", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "high", to: "urgent" }, created_at: "2026-01-16T00:07:00Z" },
+      { type: "activity", id: "old-8", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "important_not_urgent", to: "important_urgent" }, created_at: "2026-01-16T00:07:00Z" },
       { type: "activity", id: "old-9", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "done", to: "blocked" }, created_at: "2026-01-16T00:08:00Z" },
-      { type: "activity", id: "old-10", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "urgent", to: "low" }, created_at: "2026-01-16T00:09:00Z" },
+      { type: "activity", id: "old-10", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "important_urgent", to: "not_important_not_urgent" }, created_at: "2026-01-16T00:09:00Z" },
       {
         type: "comment", id: "comment-mid", actor_type: "member", actor_id: "user-1",
         content: "Splitting the blocks", parent_id: null,
@@ -2178,7 +2178,7 @@ describe("IssueDetail (shared)", () => {
       assignee_type: null,
       assignee_id: null,
       due_date: null,
-      priority: "none",
+      priority: "not_important_not_urgent",
       ...overrides,
     });
 
@@ -2190,7 +2190,7 @@ describe("IssueDetail (shared)", () => {
             number: 11,
             identifier: "TES-11",
             title: "Fix login flow",
-            priority: "urgent",
+            priority: "important_urgent",
             labels: [label("l1", "backend"), label("l2", "auth")],
             // Past date-only value → overdue styling on an open issue.
             due_date: "2020-01-01",

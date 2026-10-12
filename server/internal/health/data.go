@@ -117,6 +117,12 @@ func Normalize(o *Observation) error {
 	} else if o.Code == "" {
 		o.Code = o.Name
 	}
+	if o.Source == "manual" && (o.Code == "weight" || o.Code == "height" || o.Code == "resting_heart_rate" || o.Code == "systolic_pressure" || o.Code == "diastolic_pressure") {
+		v, err := strconv.ParseFloat(o.Value, 64)
+		if err != nil || v <= 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("日常指标结果须为大于零的有效数值")
+		}
+	}
 	if o.Category == "" {
 		o.Category = "其他"
 	}
@@ -208,11 +214,6 @@ func Apply(state State, existing, incoming []Observation) State {
 		}
 	}
 	next.ObservationIDs = ids
-	for _, id := range state.CurrentObservationIDs {
-		if o, ok := byID[id]; ok && !keys[CurrentKey(o)] && !replaced[id] {
-			next.CurrentObservationIDs = append(next.CurrentObservationIDs, id)
-		}
-	}
 	last := map[string]int{}
 	for i, o := range incoming {
 		last[CurrentKey(o)] = i
@@ -221,6 +222,11 @@ func Apply(state State, existing, incoming []Observation) State {
 	for i, o := range incoming {
 		if last[CurrentKey(o)] == i {
 			next.CurrentObservationIDs = append(next.CurrentObservationIDs, o.ID)
+		}
+	}
+	for _, id := range state.CurrentObservationIDs {
+		if o, ok := byID[id]; ok && !keys[CurrentKey(o)] && !replaced[id] {
+			next.CurrentObservationIDs = append(next.CurrentObservationIDs, id)
 		}
 	}
 	return next

@@ -1,9 +1,11 @@
 "use client";
 import { useState, type FormEvent } from "react";
-import { useHealth, type HealthObservation, type HealthProfile } from "@multica/core/health";
+import { ArrowLeft, LoaderCircle } from "lucide-react";
+import { toast } from "sonner";
+import { calculateBMI, useHealth, type HealthObservation, type HealthProfile } from "@multica/core/health";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { useT } from "../i18n";
 type HealthQueries = ReturnType<typeof useHealth>;
 export function ProfileEditor({
@@ -31,6 +33,7 @@ export function ProfileEditor({
       },
       revision,
     });
+    toast.success(t(($) => $.profile.saved));
     onClose();
   };
   return (
@@ -40,7 +43,7 @@ export function ProfileEditor({
         if (!v) onClose();
       }}
     >
-      <DialogContent>
+      <DialogContent className="[&_[data-slot=dialog-close]]:size-11">
         <DialogHeader>
           <DialogTitle>{t(($) => $.profile.edit)}</DialogTitle>
         </DialogHeader>
@@ -50,12 +53,13 @@ export function ProfileEditor({
         >
           <label className="block text-body">
             {t(($) => $.profile.name)}
-            <Input name="name" defaultValue={value?.name} maxLength={100} />
+            <Input name="name" autoComplete="off" defaultValue={value?.name} maxLength={100} />
           </label>
           <label className="block text-body">
             {t(($) => $.profile.sex)}
             <select
               name="sex"
+              autoComplete="off"
               className="mt-1 w-full rounded-md border bg-background p-2"
               defaultValue={value?.sex}
             >
@@ -74,14 +78,16 @@ export function ProfileEditor({
             <Input
               name="birthDate"
               type="date"
+              autoComplete="off"
               defaultValue={value?.birthDate}
             />
           </label>
           <p className="text-caption text-muted-foreground">
             {t(($) => $.report.original_age)}
           </p>
-          <Button disabled={h.profile.isPending} type="submit">
-            {t(($) => $.profile.save)}
+          <Button className="min-h-11 sm:min-h-10" disabled={h.profile.isPending} type="submit">
+            {h.profile.isPending && <LoaderCircle className="animate-spin" aria-hidden="true" />}
+            {h.profile.isPending ? t(($) => $.profile.saving) : t(($) => $.profile.save)}
           </Button>
           <MutationError error={h.profile.error} />
         </form>
@@ -90,16 +96,11 @@ export function ProfileEditor({
   );
 }
 export function ObservationEditor({
-  value,
-  pairedValue,
-  preset,
-  mode,
-  onClose,
-  revision,
-  h,
+  value, pairedValue, recent, preset, mode, onClose, revision, h,
 }: {
   value: Partial<HealthObservation>;
   pairedValue?: Partial<HealthObservation>;
+  recent?: HealthObservation[];
   preset?: string | null;
   mode: "new" | "update" | "correct";
   onClose: () => void;
@@ -107,98 +108,66 @@ export function ObservationEditor({
   h: HealthQueries;
 }) {
   const { t } = useT("health");
-  const [selected, setSelected] = useState(preset || (mode === "new" ? "" : "custom"));
-  const presets = [
+  const [selected, setSelected] = useState(preset || (mode === "correct" ? "existing" : ""));
+  const [inputValue, setInputValue] = useState(mode === "correct" ? value.value || "" : "");
+  const specs = [
     { id: "weight", name: t(($) => $.overview.weight), code: "weight", unit: "kg" },
-    { id: "blood_pressure", name: t(($) => $.overview.pressure), code: "blood_pressure", unit: "mmHg" },
-    { id: "heart_rate", name: "心率", code: "resting_heart_rate", unit: "次/分" },
+    { id: "blood_pressure", name: t(($) => $.overview.pressure), code: "systolic_pressure", unit: "mmHg" },
+    { id: "heart_rate", name: t(($) => $.overview.heart_rate), code: "resting_heart_rate", unit: "次/分" },
     { id: "height", name: t(($) => $.overview.height), code: "height", unit: "cm" },
-    { id: "bmi", name: "BMI", code: "bmi", unit: "kg/m²" },
-  ] as const;
-  const spec = presets.find((item) => item.id === selected);
-  const isPressure = selected === "blood_pressure";
+  ];
+  const spec = specs.find((item) => item.id === selected);
+  const previous = value.value ? value : recent?.find((item) => item.code === spec?.code);
+  const pressure = selected === "blood_pressure";
+  const height = recent?.find((item) => item.code === "height");
+  const weight = recent?.find((item) => item.code === "weight");
+  const candidate = spec && { ...(selected === "height" ? height : weight), code: spec.code, value: inputValue, unit: spec.unit } as HealthObservation;
+  const preview = selected === "weight" ? calculateBMI(height, candidate) : selected === "height" ? calculateBMI(candidate, weight) : null;
   const today = new Date().toLocaleDateString("en-CA");
+  const pending = h.observation.isPending || h.observations.isPending;
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const get = (key: string) => String(form.get(key) ?? "");
-    const observedAt = get("observedAt");
     const extra = {
-      category: get("category") || value.category || "一般检查",
-      observedAt,
-      method: get("method"),
-      specimen: get("specimen"),
-      site: get("site"),
-      referenceRange: get("referenceRange"),
+      category: previous?.category || value.category || "一般检查",
+      observedAt: String(form.get("observedAt") || ""),
+      method: value.method || previous?.method || "",
+      specimen: value.specimen || previous?.specimen || "",
+      site: value.site || previous?.site || "",
+      referenceRange: mode === "correct" ? value.referenceRange || "" : "",
     };
-    if (isPressure) {
-      await h.observations.mutateAsync({
-        values: [
-          { ...extra, name: t(($) => $.record.systolic), code: value.code === "systolic_pressure" ? value.code : "systolic_pressure", value: get("systolic"), unit: "mmHg", supersedes: mode === "correct" ? value.id : undefined },
-          { ...extra, name: t(($) => $.record.diastolic), code: pairedValue?.code === "diastolic_pressure" ? pairedValue.code : "diastolic_pressure", value: get("diastolic"), unit: "mmHg", supersedes: mode === "correct" ? pairedValue?.id : undefined },
-        ],
-        revision,
-      });
+    if (pressure) {
+      await h.observations.mutateAsync({ values: [
+        { ...extra, name: t(($) => $.record.systolic), code: "systolic_pressure", value: String(form.get("systolic") || ""), unit: "mmHg", supersedes: mode === "correct" ? value.id : undefined },
+        { ...extra, name: t(($) => $.record.diastolic), code: "diastolic_pressure", value: String(form.get("diastolic") || ""), unit: "mmHg", supersedes: mode === "correct" ? pairedValue?.id : undefined },
+      ], revision });
     } else {
-      await h.observation.mutateAsync({
-        value: {
-          ...extra,
-          name: spec?.name || get("name"),
-          value: get("value"),
-          unit: spec?.unit || get("unit"),
-          code: mode === "update" ? value.code || spec?.code : mode === "correct" ? value.code : spec?.code,
-          supersedes: mode === "correct" ? value.id : undefined,
-        },
-        revision,
-      });
+      await h.observation.mutateAsync({ value: {
+        ...extra, name: mode === "correct" ? value.name : spec?.name,
+        code: mode === "correct" ? value.code : spec?.code,
+        value: inputValue, unit: mode === "correct" ? value.unit : spec?.unit,
+        supersedes: mode === "correct" ? value.id : undefined,
+      }, revision });
     }
+    toast.success(t(($) => $.record.saved));
     onClose();
   };
-  const defaultDate = mode === "correct" ? value.observedAt || today : today;
-  const pending = h.observation.isPending || h.observations.isPending;
-  return (
-    <Dialog
-      open
-      onOpenChange={(v) => {
-        if (!v) onClose();
-      }}
-    >
-      <DialogContent className="max-h-[85dvh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>
-            {mode === "correct" ? t(($) => $.record.edit) : spec ? t(($) => $.record.update_metric, { name: spec.name }) : t(($) => $.record.add)}
-          </DialogTitle>
-        </DialogHeader>
-        {value.uncertainty && (
-          <p className="text-body text-destructive">{value.uncertainty}</p>
-        )}
-        {!selected && <div><p className="mb-3 text-caption text-muted-foreground">{t(($) => $.record.presets)}</p><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{presets.map((item) => <Button key={item.id} type="button" variant="outline" className="min-h-11 justify-start" onClick={() => setSelected(item.id)}>{item.name}</Button>)}<Button type="button" variant="outline" className="min-h-11 justify-start" onClick={() => setSelected("custom")}>{t(($) => $.record.other)}</Button></div></div>}
-        {selected && <form className="space-y-4" onSubmit={(e) => void save(e).catch(() => {})}>
-          {mode !== "correct" && <p className="text-caption text-muted-foreground">{t(($) => $.record.quick_hint)}</p>}
-          {selected === "custom" && <div className="grid gap-4 sm:grid-cols-2"><label className="text-body">{t(($) => $.record.name)}<Input name="name" autoComplete="off" defaultValue={value.name ?? ""} required /></label><label className="text-body">{t(($) => $.record.unit)}<Input name="unit" autoComplete="off" defaultValue={value.unit ?? ""} /></label></div>}
-          {isPressure ? <div className="grid grid-cols-2 gap-4"><label className="text-body">{t(($) => $.record.systolic)}<div className="relative mt-1"><Input name="systolic" inputMode="decimal" autoComplete="off" className="pr-14 tabular-nums" defaultValue={value.value ?? ""} required /><span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-caption text-muted-foreground">{t(($) => $.overview.unit_mmhg)}</span></div></label><label className="text-body">{t(($) => $.record.diastolic)}<div className="relative mt-1"><Input name="diastolic" inputMode="decimal" autoComplete="off" className="pr-14 tabular-nums" defaultValue={pairedValue?.value ?? ""} required /><span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-caption text-muted-foreground">{t(($) => $.overview.unit_mmhg)}</span></div></label></div> : <label className="block text-body">{t(($) => $.record.value)}<div className="relative mt-1"><Input name="value" inputMode="decimal" autoComplete="off" className={spec?.unit ? "pr-16 tabular-nums" : "tabular-nums"} defaultValue={value.value ?? ""} required />{spec?.unit && <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-caption text-muted-foreground">{spec.unit}</span>}</div></label>}
-          <label className="block text-body">{t(($) => $.record.date)}<Input name="observedAt" type="date" autoComplete="off" defaultValue={defaultDate} required /></label>
-          <details className="rounded-md border px-3 py-2"><summary className="min-h-8 cursor-pointer text-body font-medium">{t(($) => $.record.more)}</summary><div className="mt-3 grid gap-4 sm:grid-cols-2"><label className="text-body">{t(($) => $.record.category)}<Input name="category" autoComplete="off" defaultValue={value.category || "一般检查"} /></label>{[["method", t(($) => $.record.method), value.method], ["specimen", t(($) => $.record.specimen), value.specimen], ["site", t(($) => $.record.site), value.site], ["referenceRange", t(($) => $.record.range), value.referenceRange]].map(([key,label,defaultValue]) => <label key={key} className="text-body">{label}<Input name={key} autoComplete="off" defaultValue={defaultValue ?? ""} /></label>)}</div></details>
-          {value.evidence && (
-            <p className="whitespace-pre-wrap break-words text-caption text-muted-foreground">
-              {value.evidence}
-            </p>
-          )}
-          <Button
-            className="w-full"
-            disabled={pending}
-            type="submit"
-          >
-            {t(($) => $.record.save)}
-          </Button>
-          <div aria-live="polite">
-            <MutationError error={h.observation.error} />
-            <MutationError error={h.observations.error} />
-          </div>
-        </form>}
-      </DialogContent>
-    </Dialog>
-  );
+  return <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+    <DialogContent className="max-h-[90dvh] overflow-y-auto overscroll-contain [&_[data-slot=dialog-close]]:size-11 max-sm:top-auto max-sm:bottom-0 max-sm:-translate-y-0 max-sm:rounded-b-none sm:max-h-[85dvh]">
+      <DialogHeader><DialogTitle>{mode === "correct" ? t(($) => $.record.edit) : spec ? t(($) => $.record.record_metric, { name: spec.name }) : t(($) => $.record.add)}</DialogTitle>
+        <DialogDescription>{mode === "correct" ? value.name : previous?.value ? t(($) => $.record.previous, { value: `${previous.value} ${previous.unit || ""}`.trim(), date: previous.observedAt || t(($) => $.page.unrecorded) }) : t(($) => $.record.choose_daily)}</DialogDescription>
+      </DialogHeader>
+      {!selected ? <div className="grid grid-cols-2 gap-3">{specs.map((item) => <Button key={item.id} variant="outline" className="min-h-12" onClick={() => { setSelected(item.id); setInputValue(""); }}>{item.name}</Button>)}</div> : <form className="space-y-4" onSubmit={(event) => void save(event).catch(() => {})}>
+        {!preset && mode === "new" && <Button variant="ghost" type="button" className="min-h-10 px-0" onClick={() => setSelected("")}><ArrowLeft aria-hidden="true" />{t(($) => $.record.change_metric)}</Button>}
+        {mode === "correct" && <dl className="rounded-lg bg-muted p-3 text-caption text-muted-foreground">{[value.category, value.method, value.specimen, value.site].filter(Boolean).join(" · ")}{value.unit && <p className="mt-1">{t(($) => $.record.unit)} · {value.unit}</p>}</dl>}
+        {pressure ? <div className="grid grid-cols-2 gap-3">{[["systolic", t(($) => $.record.systolic), value.value], ["diastolic", t(($) => $.record.diastolic), pairedValue?.value]].map(([name, label, oldValue]) => <label key={name} className="block text-body">{label}<div className="relative mt-1"><Input name={name} type="number" min="0.000001" step="any" inputMode="decimal" autoComplete="off" className="h-11 pr-14 text-title-sm tabular-nums" defaultValue={mode === "correct" ? oldValue || "" : ""} required /><span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-caption text-muted-foreground">{t(($) => $.overview.unit_mmhg)}</span></div></label>)}</div> : <label className="block text-body">{t(($) => $.record.value)}<div className="relative mt-1"><Input name="value" type={spec ? "number" : "text"} min={spec ? "0.000001" : undefined} step={spec ? "any" : undefined} inputMode={spec ? "decimal" : "text"} autoComplete="off" className="h-11 pr-16 text-title-sm tabular-nums" value={inputValue} onChange={(event) => setInputValue(event.target.value)} required /><span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-caption text-muted-foreground">{mode === "correct" ? value.unit : spec?.unit}</span></div></label>}
+        <label className="block text-body">{t(($) => $.record.date)}<Input name="observedAt" type="date" autoComplete="off" className="h-11" defaultValue={mode === "correct" ? value.observedAt || today : today} required /></label>
+        {(selected === "weight" || selected === "height") && mode !== "correct" && <div aria-live="polite" className="rounded-lg bg-muted px-3 py-3"><div className="flex items-baseline justify-between gap-3"><span className="text-caption text-muted-foreground">{t(($) => $.bmi.preview)}</span><span className="text-title-sm font-semibold tabular-nums">{preview ? preview.value.toFixed(1) : "—"}</span></div><p className="mt-1 text-caption text-muted-foreground">{preview ? t(($) => $.bmi.preview_hint) : selected === "weight" && !calculateBMI(height, { value: "1", unit: "kg" } as HealthObservation) ? t(($) => $.bmi.need_height) : selected === "height" && !calculateBMI({ value: "1", unit: "m" } as HealthObservation, weight) ? t(($) => $.bmi.need_weight) : t(($) => $.bmi.enter_value)}</p></div>}
+        <Button type="submit" className="min-h-11 w-full" disabled={pending}>{pending && <LoaderCircle aria-hidden="true" className="animate-spin" />}{pending ? t(($) => $.record.saving) : mode === "correct" ? t(($) => $.record.save_correction) : t(($) => $.record.save)}</Button>
+        <div aria-live="polite"><MutationError error={h.observation.error} /><MutationError error={h.observations.error} /></div>
+      </form>}
+    </DialogContent>
+  </Dialog>;
 }
 
 export function Trend({ observations }: { observations: HealthObservation[] }) {

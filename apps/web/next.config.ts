@@ -43,8 +43,13 @@ const allowedDevOrigins = process.env.CORS_ALLOWED_ORIGINS
   : undefined;
 
 const nextConfig: NextConfig = {
+  outputFileTracingRoot: resolve(__dirname, "../.."),
   ...(process.env.STANDALONE === "true" ? { output: "standalone" as const } : {}),
   transpilePackages: ["@multica/core", "@multica/ui", "@multica/views"],
+  experimental: {
+    // 工作区业务数据由 React Query 和 WebSocket 更新；短期复用页面路由避免菜单切换重复往返。
+    staleTimes: { dynamic: 30 },
+  },
   onDemandEntries: {
     maxInactiveAge: 10 * 60 * 1000,
     pagesBufferLength: 32,

@@ -2,7 +2,6 @@ import type { LocaleResources } from "@multica/core/i18n";
 import agents from "./zh-Hans/agents.json";
 import auth from "./zh-Hans/auth.json";
 import autopilots from "./zh-Hans/autopilots.json";
-import billing from "./zh-Hans/billing.json";
 import chat from "./zh-Hans/chat.json";
 import common from "./zh-Hans/common.json";
 import editor from "./zh-Hans/editor.json";
@@ -11,6 +10,8 @@ import invite from "./zh-Hans/invite.json";
 import issues from "./zh-Hans/issues.json";
 import labels from "./zh-Hans/labels.json";
 import layout from "./zh-Hans/layout.json";
+import cooking from "./zh-Hans/cooking.json";
+import meals from "./zh-Hans/meals.json";
 import health from "./zh-Hans/health.json";
 import life from "./zh-Hans/life.json";
 import members from "./zh-Hans/members.json";
@@ -33,7 +34,6 @@ export const RESOURCES: Record<"zh-Hans", LocaleResources> = {
     agents: agents,
     auth: auth,
     autopilots: autopilots,
-    billing: billing,
     chat: chat,
     common: common,
     editor: editor,
@@ -43,7 +43,9 @@ export const RESOURCES: Record<"zh-Hans", LocaleResources> = {
     labels: labels,
     layout: layout,
     life: life,
+    cooking: cooking,
     health: health,
+    meals: meals,
     members: members,
     modals: modals,
     "my-issues": myIssues,

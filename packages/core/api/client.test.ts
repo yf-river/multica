@@ -8,6 +8,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("ApiClient Mika conversation reuse", () => {
+  it("scopes the reuse request and parses malformed responses", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 123 }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await new ApiClient("https://api.example.test").createChatSession({ agent_id: "m", reuse_existing: true }, "one");
+    expect(result.id).toBe("");
+    const request = fetchMock.mock.calls[0]?.[1];
+    expect(new Headers(request.headers).get("X-Workspace-Slug")).toBe("one");
+    expect(JSON.parse(request.body)).toEqual({ agent_id: "m", reuse_existing: true });
+  });
+});
+
 describe("ApiClient workspace Gongfeng repositories", () => {
   it("probes and resolves through the workspace-scoped endpoints", async () => {
     const fetchMock = vi
@@ -183,7 +195,7 @@ describe("ApiClient edit guards", () => {
       title: "Legacy issue",
       description: null,
       status: "todo",
-      priority: "none",
+      priority: "not_important_not_urgent",
       assignee_type: null,
       assignee_id: null,
       creator_type: "member",
@@ -441,7 +453,7 @@ describe("ApiClient server Table query", () => {
     const client = new ApiClient("https://api.example.test");
     const query = {
       scope: { kind: "workspace" as const },
-      filters: { priorities: ["high" as const] },
+      filters: { priorities: ["important_not_urgent" as const] },
       sort: { field: "title" as const, direction: "asc" as const },
     };
 
@@ -1171,7 +1183,6 @@ describe("ApiClient", () => {
     await client.updateAutopilot("ap-1", { status: "paused", project_id: null });
     await client.deleteAutopilot("ap-1");
     await client.triggerAutopilot("ap-1");
-    await client.getAutopilotQuotaUsage();
     await client.listAutopilotRuns("ap-1", { limit: 10, offset: 20 });
     await client.createAutopilotTrigger("ap-1", {
       kind: "schedule",
@@ -1213,7 +1224,6 @@ describe("ApiClient", () => {
         method: "POST",
         idempotencyKey: expect.any(String),
       },
-      { url: "https://api.example.test/api/autopilots/usage", method: "GET" },
       { url: "https://api.example.test/api/autopilots/ap-1/runs?limit=10&offset=20", method: "GET" },
       {
         url: "https://api.example.test/api/autopilots/ap-1/triggers",
@@ -1273,59 +1283,6 @@ describe("ApiClient", () => {
     expect(headers["X-Client-Platform"]).toBeUndefined();
     expect(headers["X-Client-Version"]).toBeUndefined();
     expect(headers["X-Client-OS"]).toBeUndefined();
-  });
-
-  it("posts feedback kind and parses the response through the schema", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: "feedback-1", created_at: "2026-06-26T00:00:00Z" }), {
-        status: 201,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const client = new ApiClient("https://api.example.test");
-    const response = await client.createFeedback({
-      message: "The issue page needs a small improvement",
-      url: "https://app.example/acme/issues",
-      workspace_id: "ws-1",
-      kind: "bug",
-    });
-
-    expect(response).toEqual({
-      id: "feedback-1",
-      created_at: "2026-06-26T00:00:00Z",
-    });
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.example.test/api/feedback",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          message: "The issue page needs a small improvement",
-          url: "https://app.example/acme/issues",
-          workspace_id: "ws-1",
-          kind: "bug",
-        }),
-      }),
-    );
-  });
-
-  it("falls back to an empty feedback response when the server shape drifts", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ id: 42, created_at: "2026-06-26T00:00:00Z" }), {
-          status: 201,
-          headers: { "Content-Type": "application/json" },
-        }),
-      ),
-    );
-
-    const client = new ApiClient("https://api.example.test");
-    await expect(client.createFeedback({ message: "hello" })).resolves.toEqual({
-      id: "",
-      created_at: "",
-    });
   });
 
   it("uses the expected HTTP contract for comment trigger preview and suppress", async () => {

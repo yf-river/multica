@@ -102,6 +102,7 @@ vi.mock("@multica/core/paths", async () => {
     ...actual,
     useCurrentWorkspace: () => ({ id: "ws-1", name: "Test WS", slug: "test" }),
     useWorkspacePaths: () => actual.paths.workspace("test"),
+    useIssuePaths: () => actual.paths.workspace("test"),
   };
 });
 
@@ -114,7 +115,7 @@ function makeIssue(id: string, title: string, projectId: string): Issue {
     title,
     description: null,
     status: "todo",
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",

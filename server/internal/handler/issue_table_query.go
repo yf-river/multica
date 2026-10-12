@@ -204,10 +204,11 @@ type issueTableFacetsRequest struct {
 // issueTableSQL 是一次编译好的行查询：where 是可拼进 SQL 的 WHERE 片段，args 是它的参数，
 // fingerprint 是该查询的规范指纹，workspaceID 是已解析的当前工作区。三个端点共用此产物。
 type issueTableSQL struct {
-	where       string
-	args        []any
-	fingerprint string
-	workspaceID pgtype.UUID
+	where          string
+	args           []any
+	fingerprint    string
+	workspaceID    pgtype.UUID
+	crossWorkspace bool
 }
 
 // issueTableCursor 是行/组翻页游标的内容：先 JSON 序列化再 base64url 进 NextCursor，回传时
@@ -460,38 +461,38 @@ func parseIssueTableActor(w http.ResponseWriter, actor issueTableActorRef, field
 }
 
 // appendIssueTableInvolvedPredicate 追加「用户 involved」谓词，覆盖三类委托：该用户名下的
-// agent 直接受理、用户作为成员/组长或名下 agent 作为成员所在的 squad 受理。workspace 复用 $1，
+// agent 直接受理、用户作为成员/组长或名下 agent 作为成员所在的 squad 受理。按任务所属工作区解析，
 // 其余参数经 addArg 分配占位符。
 func appendIssueTableInvolvedPredicate(where []string, addArg func(any) string, userID pgtype.UUID) []string {
 	ref := addArg(userID)
 	return append(where, fmt.Sprintf(`(
     (i.assignee_type = 'agent' AND i.assignee_id IN (
        SELECT a.id FROM agent a
-        WHERE a.workspace_id = $1
+        WHERE a.workspace_id = i.workspace_id
           AND a.owner_id     = %[1]s::uuid
     ))
     OR (i.assignee_type = 'squad' AND i.assignee_id IN (
        SELECT sm.squad_id
          FROM squad_member sm
          JOIN squad s ON s.id = sm.squad_id
-        WHERE s.workspace_id = $1
+        WHERE s.workspace_id = i.workspace_id
           AND sm.member_type = 'member'
           AND sm.member_id   = %[1]s::uuid
        UNION
        SELECT s.id
          FROM squad s
          JOIN agent a ON a.id = s.leader_id
-        WHERE s.workspace_id = $1
-          AND a.workspace_id = $1
+        WHERE s.workspace_id = i.workspace_id
+          AND a.workspace_id = i.workspace_id
           AND a.owner_id     = %[1]s::uuid
        UNION
        SELECT sm.squad_id
          FROM squad_member sm
          JOIN squad s ON s.id = sm.squad_id
          JOIN agent a ON a.id = sm.member_id
-        WHERE s.workspace_id = $1
+        WHERE s.workspace_id = i.workspace_id
           AND sm.member_type = 'agent'
-          AND a.workspace_id = $1
+          AND a.workspace_id = i.workspace_id
           AND a.owner_id     = %[1]s::uuid
     ))
 )`, ref))
@@ -512,6 +513,7 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 		return issueTableSQL{}, false
 	}
 
+	crossWorkspace := spec.Scope.Kind == "my" && r.Header.Get("X-Actor-Source") != "task_token"
 	where := []string{"i.workspace_id = $1"}
 	args := []any{workspaceUUID}
 	addArg := func(value any) string {
@@ -530,7 +532,12 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 		}
 	}
 	if len(spec.Filters.Statuses) > 0 {
-		where = append(where, fmt.Sprintf("i.status = ANY(%s::text[])", addArg(sortedUniqueStrings(spec.Filters.Statuses))))
+		statusRef := addArg(sortedUniqueStrings(spec.Filters.Statuses))
+		if crossWorkspace {
+			where = append(where, fmt.Sprintf("(i.status = ANY(%s::text[]) OR (%s) = ANY(%s::text[]))", statusRef, issueStatusCategorySQL, statusRef))
+		} else {
+			where = append(where, fmt.Sprintf("i.status = ANY(%s::text[])", statusRef))
+		}
 	}
 	for _, priority := range spec.Filters.Priorities {
 		if !issueTableContainsString(validIssuePriorities, priority) {
@@ -600,6 +607,10 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return issueTableSQL{}, false
+		}
+		// 聚合范围由当前用户的工作区成员关系决定。
+		if crossWorkspace {
+			where[0] = fmt.Sprintf("i.workspace_id IN (SELECT m.workspace_id FROM member m WHERE m.user_id = %s::uuid) AND $1::uuid IS NOT NULL", addArg(userUUID))
 		}
 		relation := spec.Scope.Relation
 		if relation == "" {
@@ -738,9 +749,10 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 	where = appendIssueTableSearchFilter(where, addArg, spec.Search)
 
 	return issueTableSQL{
-		where:       strings.Join(where, " AND "),
-		args:        args,
-		fingerprint: fingerprint,
-		workspaceID: workspaceUUID,
+		where:          strings.Join(where, " AND "),
+		args:           args,
+		fingerprint:    fingerprint,
+		workspaceID:    workspaceUUID,
+		crossWorkspace: crossWorkspace,
 	}, true
 }

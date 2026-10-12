@@ -42,12 +42,12 @@ const CLAUDE_MODEL: RuntimeModel = {
   default: true,
   thinking: {
     supported_levels: [
-      { value: "none", label: "None" },
-      { value: "low", label: "Low" },
-      { value: "medium", label: "Medium" },
-      { value: "high", label: "High" },
+      { value: "not_important_not_urgent", label: "None" },
+      { value: "not_important_not_urgent", label: "Low" },
+      { value: "not_important_urgent", label: "Medium" },
+      { value: "important_not_urgent", label: "High" },
     ],
-    default_level: "medium",
+    default_level: "not_important_urgent",
   },
 };
 
@@ -69,13 +69,13 @@ const CODEX_DEFAULT_MODEL: RuntimeModel = {
   default: true,
   thinking: {
     supported_levels: [
-      { value: "low", label: "Low" },
-      { value: "medium", label: "Medium" },
-      { value: "high", label: "High" },
+      { value: "not_important_not_urgent", label: "Low" },
+      { value: "not_important_urgent", label: "Medium" },
+      { value: "important_not_urgent", label: "High" },
       { value: "max", label: "Max" },
       { value: "ultra", label: "Ultra" },
     ],
-    default_level: "high",
+    default_level: "important_not_urgent",
   },
 };
 
@@ -195,7 +195,7 @@ describe("ThinkingPropRow", () => {
   });
 
   it("renders the row with the matched label when the model still advertises the value", async () => {
-    renderRow({ value: "high" });
+    renderRow({ value: "important_not_urgent" });
 
     await screen.findByText("Thinking");
     // Both the chip and the tooltip carry "High".

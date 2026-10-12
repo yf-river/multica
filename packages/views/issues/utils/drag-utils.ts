@@ -5,7 +5,7 @@ import {
   closestCenter,
   type CollisionDetection,
 } from "@dnd-kit/core";
-import type { Issue, IssueAssigneeType, IssueStatus, UpdateIssueRequest } from "@multica/core/types";
+import type { Issue, IssueAssigneeType, IssuePriority, IssueStatus, UpdateIssueRequest } from "@multica/core/types";
 import type { IssueGrouping } from "@multica/core/issues/stores/view-store";
 import { propertyIdFromViewKey } from "@multica/core/issues/stores/view-store";
 import { issueColumnCategory } from "@multica/core/issues";
@@ -14,7 +14,7 @@ import type { BoardColumnGroup } from "../components/board-column";
 /** 拖拽移动目标列时要写的问题字段子集。 */
 export type DragMoveTargetUpdates = Pick<
   UpdateIssueRequest,
-  "status" | "assignee_type" | "assignee_id" | "project_id" | "position"
+  "status" | "assignee_type" | "assignee_id" | "project_id" | "priority" | "position"
 >;
 
 /** 一次拖拽移动的完整更新：目标字段 + 相对谁插入（before_id / after_id）。 */
@@ -64,6 +64,22 @@ export function assigneeGroupId(
  *  让「由描述符建的列」和「由卡片归的列」对上号。 */
 export function projectGroupId(projectId: string | null): string {
   return `project:${projectId ?? "none"}`;
+}
+
+export function quadrantGroupId(statusGroup: string, priority: IssuePriority): string {
+  return `${statusGroup}::quadrant:${priority}`;
+}
+
+export function quadrantFromGroupId(id: string): IssuePriority | null {
+  const marker = "::quadrant:";
+  if (!id.includes(marker)) return null;
+  const value = id.slice(id.indexOf(marker) + marker.length);
+  return value === "important_urgent" ||
+    value === "important_not_urgent" ||
+    value === "not_important_urgent" ||
+    value === "not_important_not_urgent"
+    ? value
+    : null;
 }
 
 /**
@@ -177,6 +193,9 @@ export function findColumn(
   columnIds: Set<string>,
 ): string | null {
   if (columnIds.has(id)) return id;
+  const quadrantMarker = "::quadrant:";
+  const baseId = id.includes(quadrantMarker) ? id.split(quadrantMarker, 1)[0] : null;
+  if (baseId && columnIds.has(baseId)) return baseId;
   for (const [columnId, ids] of Object.entries(columns)) {
     if (ids.includes(id)) return columnId;
   }

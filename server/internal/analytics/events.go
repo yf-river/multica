@@ -26,7 +26,6 @@ const (
 	EventAgentCreated                  = "agent_created"
 	EventOnboardingCompleted           = "onboarding_completed"
 	EventCloudWaitlistJoined           = "cloud_waitlist_joined"
-	EventFeedbackSubmitted             = "feedback_submitted"
 	EventContactSalesSubmitted         = "contact_sales_submitted"
 	EventSquadCreated                  = "squad_created"
 	EventAutopilotCreated              = "autopilot_created"
@@ -62,7 +61,6 @@ var metricsOnlyEvents = map[string]struct{}{
 	EventAgentCreated:                  {},
 	EventOnboardingCompleted:           {},
 	EventCloudWaitlistJoined:           {},
-	EventFeedbackSubmitted:             {},
 	EventContactSalesSubmitted:         {},
 	EventSquadCreated:                  {},
 	EventAutopilotCreated:              {},
@@ -582,35 +580,6 @@ func CloudWaitlistJoined(userID string, hasReason bool) Event {
 	}
 }
 
-// FeedbackSubmitted 在反馈行成功插入后触发。原始消息存在 DB、从不广播——我们只发
-// 一个粗粒度长度桶、是否带图、类型选择器、以及客户端平台/版本，让支持团队能分段，
-// 又不泄漏内容。
-func FeedbackSubmitted(userID, workspaceID, kind string, messageLen int, hasImages bool, platform, appVersion string) Event {
-	props := map[string]any{
-		"message_length_bucket": feedbackLengthBucket(messageLen),
-		"has_images":            hasImages,
-	}
-	if kind != "" {
-		props["kind"] = kind
-	}
-	if platform != "" {
-		props["platform"] = platform
-	}
-	if appVersion != "" {
-		props["app_version"] = appVersion
-	}
-	return Event{
-		Name:        EventFeedbackSubmitted,
-		DistinctID:  userID,
-		WorkspaceID: workspaceID,
-		Properties: withCoreProperties(props, CoreProperties{
-			UserID:      userID,
-			WorkspaceID: workspaceID,
-			Source:      "ops_feedback",
-		}),
-	}
-}
-
 // ContactSalesSubmitted 在一次「联系销售」询价被记录后触发。表单是公开且未认证的，
 // 所以 DistinctID 为空（PostHog 会当作匿名事件）。我们带上粗粒度公司规模、国家/地区、
 // 意向用例、以及表单位置桶（page / onboarding / agents_page），让销售/市场无需查运维
@@ -754,20 +723,6 @@ func nonAgentUserID(distinct string) string {
 		return ""
 	}
 	return distinct
-}
-
-// feedbackLengthBucket 把消息长度划成粗粒度桶。
-func feedbackLengthBucket(n int) string {
-	switch {
-	case n < 100:
-		return "0-100"
-	case n < 500:
-		return "100-500"
-	case n < 2000:
-		return "500-2000"
-	default:
-		return "2000+"
-	}
 }
 
 // emailDomain 提取邮箱 @ 之后的小写域名部分；不是合法邮箱返回空串。

@@ -97,7 +97,7 @@ const BASE_ISSUE: Issue = {
   identifier: "MUL-3405",
   title: "A very long issue title that the inline chip never shows",
   status: "todo",
-  priority: "none",
+  priority: "not_important_not_urgent",
 };
 
 const NOT_FOUND_TEXT = "This issue does not exist or has been deleted in this workspace.";
@@ -203,12 +203,12 @@ describe("IssueHoverCard", () => {
   });
 
   it("shows the priority glyph ahead of the status icon", async () => {
-    mockIssue({ ...BASE_ISSUE, priority: "high" });
+    mockIssue({ ...BASE_ISSUE, priority: "important_not_urgent" });
 
     await openCard();
 
     const priority = screen.getByTestId("priority-icon");
-    expect(priority).toHaveAttribute("data-priority", "high");
+    expect(priority).toHaveAttribute("data-priority", "important_not_urgent");
     // Ordering: priority leads the header, the status icon follows it. Both
     // glyphs sit inside their own naming wrapper, so compare the wrappers.
     expect(priority.parentElement?.nextElementSibling).toContainElement(
@@ -217,7 +217,7 @@ describe("IssueHoverCard", () => {
   });
 
   it("names the status and priority glyphs for assistive tech", async () => {
-    mockIssue({ ...BASE_ISSUE, status: "in_progress", priority: "high" });
+    mockIssue({ ...BASE_ISSUE, status: "in_progress", priority: "important_not_urgent" });
 
     await openCard();
 
@@ -232,7 +232,7 @@ describe("IssueHoverCard", () => {
   });
 
   it("omits the priority glyph when the issue has no priority", async () => {
-    mockIssue({ ...BASE_ISSUE, priority: "none" });
+    mockIssue({ ...BASE_ISSUE, priority: "not_important_not_urgent" });
 
     await openCard();
 

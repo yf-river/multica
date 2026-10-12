@@ -1,25 +1,7 @@
-import { useMemo } from "react";
 import { isRouteErrorResponse, useLocation, useRouteError } from "react-router-dom";
-import { AlertTriangle, Compass, RotateCw, Send, X } from "lucide-react";
+import { AlertTriangle, Compass, RotateCw, X } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
-import type { DesktopRouteErrorFeedbackContext } from "@multica/core/feedback";
-import { useModalStore } from "@multica/core/modals";
 import { useTabStore } from "@/stores/tab-store";
-
-export function createRouteErrorFeedbackContext({
-  error,
-  trigger,
-}: {
-  error: unknown;
-  trigger: string;
-}): DesktopRouteErrorFeedbackContext {
-  const normalized = normalizeError(error);
-  return {
-    kind: "desktop_route_error",
-    trigger,
-    error: normalized,
-  };
-}
 
 /**
  * Resolve the workspace the user is actually in, for a recovery entry point.
@@ -107,14 +89,6 @@ function DesktopNotFoundPage() {
 
 function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
   const recoveryRoute = useRecoveryRoute();
-  const feedbackContext = useMemo(
-    () =>
-      createRouteErrorFeedbackContext({
-        error,
-        trigger: "route-errorElement",
-      }),
-    [error],
-  );
   const message = normalizeError(error).message;
 
   return (
@@ -128,7 +102,7 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
       <div className="space-y-2">
         <h2 className="text-title font-semibold">此标签页出现错误</h2>
         <p className="max-w-lg text-body text-muted-foreground">
-          页面渲染发生错误。请重新加载此标签页；如果问题持续出现，请发送错误报告。
+          页面渲染发生错误。请重新加载此标签页。
         </p>
         <p className="max-w-lg truncate text-caption text-muted-foreground">{message}</p>
       </div>
@@ -163,18 +137,6 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
         >
           <X className="mr-2 h-4 w-4" aria-hidden="true" />
           关闭标签页
-        </Button>
-        <Button
-          type="button"
-          onClick={() =>
-            useModalStore.getState().open("feedback", {
-              kind: "bug",
-              context: feedbackContext,
-            })
-          }
-        >
-          <Send className="mr-2 h-4 w-4" aria-hidden="true" />
-          报告错误
         </Button>
       </div>
     </div>

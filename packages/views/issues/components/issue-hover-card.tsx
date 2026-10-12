@@ -162,7 +162,7 @@ function IssueHoverCardBody({
   // 看板卡片与列表行把优先级字形画进固定的网格槽，所以"无"的那根短横
   // 在那里占住一列。本卡片没有列要占——在这已很挤的弹层里，短横只是一枚
   // 不携带任何信息的记号。
-  const hasPriority = !!issue.priority && issue.priority !== "none";
+  const hasPriority = !!issue.priority;
 
   return (
     <div className="flex flex-col gap-1.5">

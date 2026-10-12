@@ -348,11 +348,37 @@ func (d *Daemon) shutdownHandler() http.HandlerFunc {
 	}
 }
 
+// 发布排空只停止新认领，轮询状态直到已有任务与在途认领全部结束。
+// DELETE 用于发布取消后的恢复；端点仅绑定本机回环地址。
+func (d *Daemon) drainHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		d.claimMu.Lock()
+		defer d.claimMu.Unlock()
+		switch r.Method {
+		case http.MethodPost:
+			d.deploymentDrain = true
+		case http.MethodDelete:
+			d.deploymentDrain = false
+		case http.MethodGet:
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"draining":      d.deploymentDrain,
+			"ready_to_stop": d.deploymentDrain && d.claimsInFlight == 0 && d.activeTasks.Load() == 0,
+			"active_tasks":  d.activeTasks.Load(), "claims_in_flight": d.claimsInFlight,
+		})
+	}
+}
+
 // serveHealth 在给定监听器上运行健康 HTTP server，阻塞直到 ctx 被取消。
 func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt time.Time) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", d.healthHandler(startedAt))
 	mux.HandleFunc("/shutdown", d.shutdownHandler())
+	mux.HandleFunc("/drain", d.drainHandler())
 	mux.HandleFunc("/repo/checkout", d.repoCheckoutHandler())
 
 	srv := &http.Server{Handler: mux}

@@ -113,8 +113,8 @@ vi.mock("@multica/core/issues/config", () => ({
     blocked: { label: "Blocked", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
     cancelled: { label: "Cancelled", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
   },
-  PRIORITY_ORDER: ["urgent", "high", "medium", "low", "none"],
-  PRIORITY_DISPLAY_ORDER: ["none", "urgent", "high", "medium", "low"],
+  PRIORITY_ORDER: ["important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent", "not_important_not_urgent"],
+  PRIORITY_DISPLAY_ORDER: ["not_important_not_urgent", "important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"],
   PRIORITY_CONFIG: {
     urgent: { label: "Urgent", bars: 4, color: "text-destructive" },
     high: { label: "High", bars: 3, color: "text-warning" },
@@ -264,7 +264,7 @@ const mockIssues: Issue[] = [
     title: "Parent Issue 1",
     description: "Parent description",
     status: "todo",
-    priority: "high",
+    priority: "important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",
@@ -288,7 +288,7 @@ const mockIssues: Issue[] = [
     title: "Child Issue 1",
     description: "Child description",
     status: "in_progress",
-    priority: "medium",
+    priority: "not_important_urgent",
     assignee_type: "member",
     assignee_id: "user-1",
     creator_type: "member",
@@ -312,7 +312,7 @@ const mockIssues: Issue[] = [
     title: "Orphan Issue 1",
     description: "No parent",
     status: "backlog",
-    priority: "low",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",
@@ -429,7 +429,7 @@ describe("SwimLaneView", () => {
     title: "Cancelled Orphan",
     description: "A cancelled orphan",
     status: "cancelled",
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",
@@ -601,7 +601,7 @@ describe("SwimLaneView", () => {
     title: "Lonely Child",
     description: null,
     status: "todo",
-    priority: "medium",
+    priority: "not_important_urgent",
     assignee_type: "member",
     assignee_id: "user-1",
     creator_type: "member",
@@ -1021,7 +1021,7 @@ describe("SwimLaneView", () => {
       title: "Parent A",
       description: null,
       status: "todo",
-      priority: "high",
+      priority: "important_not_urgent",
       assignee_type: null,
       assignee_id: null,
       creator_type: "member",
@@ -1045,7 +1045,7 @@ describe("SwimLaneView", () => {
       title: "Parent B",
       description: null,
       status: "todo",
-      priority: "high",
+      priority: "important_not_urgent",
       assignee_type: null,
       assignee_id: null,
       creator_type: "member",
@@ -1069,7 +1069,7 @@ describe("SwimLaneView", () => {
       title: "Child of A",
       description: null,
       status: "in_progress",
-      priority: "medium",
+      priority: "not_important_urgent",
       assignee_type: null,
       assignee_id: null,
       creator_type: "member",
@@ -1093,7 +1093,7 @@ describe("SwimLaneView", () => {
       title: "Child of B",
       description: null,
       status: "in_progress",
-      priority: "medium",
+      priority: "not_important_urgent",
       assignee_type: null,
       assignee_id: null,
       creator_type: "member",
@@ -1259,7 +1259,7 @@ describe("SwimLaneView", () => {
   it("collapses the 'No parent' lane when 'none' is in stored collapsedSwimlanes", () => {
     mockViewState.collapsedSwimlanes = {
       ...mockViewState.collapsedSwimlanes,
-      parent: ["none"],
+      parent: ["not_important_not_urgent"],
     };
 
     renderWithI18n(
@@ -1294,7 +1294,7 @@ describe("SwimLaneView", () => {
     expect(noParentHeader).toBeDefined();
     fireEvent.click(noParentHeader!);
 
-    expect(mockToggleSwimlaneCollapsed).toHaveBeenCalledWith("none");
+    expect(mockToggleSwimlaneCollapsed).toHaveBeenCalledWith("not_important_not_urgent");
   });
 
   // ------------------------------------------------------------------
@@ -1550,7 +1550,7 @@ describe("SwimLaneView", () => {
       title: "Grandparent",
       description: null,
       status: "todo",
-      priority: "none",
+      priority: "not_important_not_urgent",
       assignee_type: null,
       assignee_id: null,
       creator_type: "member",
@@ -1625,7 +1625,7 @@ describe("SwimLaneView", () => {
       title: "Standalone parent",
       description: null,
       status: "todo",
-      priority: "none",
+      priority: "not_important_not_urgent",
       assignee_type: null,
       assignee_id: null,
       creator_type: "member",
@@ -1707,7 +1707,7 @@ describe("SwimLaneView", () => {
       title: "Grandparent 2",
       description: null,
       status: "todo",
-      priority: "high",
+      priority: "important_not_urgent",
       assignee_type: null,
       assignee_id: null,
       creator_type: "member",
@@ -1739,7 +1739,7 @@ describe("SwimLaneView", () => {
       identifier: "PROJ-22",
       title: "Matching Child (High Priority)",
       status: "in_progress",
-      priority: "high",
+      priority: "important_not_urgent",
       parent_issue_id: "p-2",
       position: 12,
     };
@@ -1750,7 +1750,7 @@ describe("SwimLaneView", () => {
       identifier: "PROJ-23",
       title: "Non-matching Child (Low Priority)",
       status: "in_progress",
-      priority: "low",
+      priority: "not_important_not_urgent",
       parent_issue_id: "p-2",
       position: 13,
     };
@@ -1767,7 +1767,7 @@ describe("SwimLaneView", () => {
       <SwimLaneView
         issues={[grandparent, parent]}
         activeFilters={{
-          priorityFilters: ["high"],
+          priorityFilters: ["important_not_urgent"],
           assigneeFilters: [],
           includeNoAssignee: false,
           creatorFilters: [],
@@ -1801,7 +1801,7 @@ describe("SwimLaneView", () => {
       title: "Grandparent 3",
       description: null,
       status: "todo",
-      priority: "medium",
+      priority: "not_important_urgent",
       assignee_type: null,
       assignee_id: null,
       creator_type: "member",
@@ -1941,7 +1941,7 @@ describe("SwimLaneView", () => {
       title: "Grandparent 4",
       description: null,
       status: "todo",
-      priority: "medium",
+      priority: "not_important_urgent",
       assignee_type: null,
       assignee_id: null,
       creator_type: "member",

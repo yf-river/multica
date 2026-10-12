@@ -33,9 +33,8 @@ import (
 //   - 账单余额 / 交易 / 批次 / 充值列表是用户维度的。跑着的 agent 或云节点可以不经过
 //     owner 批准就读走 owner 的钱包状态。
 //
-//   - 创建 checkout / portal 会话能移动资金。一旦机器凭据失窃——prompt 注入、恶意的
-//     MCP 工具、草稿数据里逃逸的引号或节点逃逸——攻击者就能为受控邮箱开 checkout，
-//     或打开泄露订阅/支付方式状态的 Billing Portal 会话。
+//   - 创建 restricted action / restricted action 会话能移动资金。一旦机器凭据失窃——prompt 注入、恶意的
+//     MCP 工具、草稿数据里逃逸的引号或节点逃逸——攻击者就能为受控邮箱开 restricted action，
 //
 // `X-Actor-Source` 只由服务端设置。Auth 中间件会先删掉任何客户端提供的值
 // （见 auth.go 里的 `r.Header.Del("X-Actor-Source")`），然后只在 mat_ 与 mcn_ 分支重新

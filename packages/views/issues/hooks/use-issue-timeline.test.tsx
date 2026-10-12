@@ -380,7 +380,7 @@ describe("useIssueTimeline", () => {
     expect(cacheUpdates.invalidations).toBeGreaterThan(0);
   });
 
-  // The global useRealtimeSync handler now uses refetchType: "none" for
+  // The global useRealtimeSync handler now uses refetchType: "not_important_not_urgent" for
   // timeline events, which means useIssueTimeline must own the granular
   // cache update for every event that mutates the timeline — including
   // comment:resolved / comment:unresolved. Without these handlers the

@@ -6,7 +6,6 @@ import { api } from "../api";
 /** 自动驾驶相关查询的 key 工厂，统一维护以保证缓存键一致。 */
 export const autopilotKeys = {
   all: (wsId: string) => ["autopilots", wsId] as const,
-  usage: (wsId: string) => [...autopilotKeys.all(wsId), "usage"] as const,
   list: (wsId: string) => [...autopilotKeys.all(wsId), "list"] as const,
   detail: (wsId: string, id: string) =>
     [...autopilotKeys.all(wsId), "detail", id] as const,
@@ -21,19 +20,6 @@ export const autopilotKeys = {
   cronPreview: (wsId: string, expr: string, tz: string) =>
     [...autopilotKeys.all(wsId), "cron-preview", expr, tz] as const,
 };
-
-/**
- * 自动驾驶配额用量的查询配置。30 秒视为新鲜，窗口聚焦时重新请求。
- */
-export function autopilotQuotaUsageOptions(wsId: string) {
-  return queryOptions({
-    queryKey: autopilotKeys.usage(wsId),
-    queryFn: () => api.getAutopilotQuotaUsage(),
-    enabled: wsId.length > 0,
-    staleTime: 30_000,
-    refetchOnWindowFocus: true,
-  });
-}
 
 /** 自动驾驶列表的查询配置，select 只取列表里的 autopilots 数组。 */
 export function autopilotListOptions(wsId: string) {

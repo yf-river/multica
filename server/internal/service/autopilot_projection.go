@@ -132,14 +132,10 @@ func updateAutopilotRunFailed(ctx context.Context, queries *db.Queries, runID pg
 // updateAutopilotRunTerminalInProjection 用“带配额”的终态更新把 run 落到 completed/failed（completed 才消耗配额），
 // 并在无行变化时回退到空结果。
 func updateAutopilotRunTerminalInProjection(ctx context.Context, queries *db.Queries, runID pgtype.UUID, status string, result []byte, reason string) (db.AutopilotRun, error) {
-	row, err := queries.UpdateAutopilotRunTerminalWithQuota(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
-		TerminalStatus: status,
-		Result:         result,
-		FailureReason:  pgtype.Text{String: reason, Valid: reason != ""},
-		RunID:          runID,
-		Consume:        status == "completed",
-	})
-	return autopilotRunFromTerminalRow(row), err
+	if status == "completed" {
+		return queries.UpdateAutopilotRunCompleted(ctx, db.UpdateAutopilotRunCompletedParams{ID: runID, Result: result})
+	}
+	return queries.UpdateAutopilotRunFailed(ctx, db.UpdateAutopilotRunFailedParams{ID: runID, FailureReason: pgtype.Text{String: reason, Valid: reason != ""}})
 }
 
 // terminalAutopilotRunEvent 组装 autopilot:run_done 事件；ErrNoRows 时返回 nil（无事件）。

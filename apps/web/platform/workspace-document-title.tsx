@@ -1,10 +1,11 @@
 "use client";
 
+import { useConfigStore } from "@multica/core/config";
 import { useEffect, useMemo } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { parseTabSubject } from "@multica/core/paths";
 import { useTabPresentation } from "@multica/views/layout";
-import { SITE_TITLE, formatDocumentTitle } from "./document-title";
+import { formatDocumentTitle } from "./document-title";
 
 /**
  * 把浏览器标签页标题设成工作区路由当前打开的内容，例如 `MUL-123: Fix login | Multica`
@@ -20,6 +21,7 @@ import { SITE_TITLE, formatDocumentTitle } from "./document-title";
  * 让 resolveTabPresentation 认识它的 subject，而不是绕过本组件去直接写 document.title。
  */
 export function WorkspaceDocumentTitle() {
+  const environmentName = useConfigStore((state) => state.environmentName);
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -34,7 +36,7 @@ export function WorkspaceDocumentTitle() {
   // 未识别的 URL 落到站点标题，而不是标签条上需要的「未知页面」标签：
   // 浏览器标签页没有别的地方展示产品名。
   const documentTitle =
-    subject.kind === "unknown" ? SITE_TITLE : formatDocumentTitle(title);
+    formatDocumentTitle(subject.kind === "unknown" ? undefined : title, environmentName);
 
   // 虽然真正写入的是 documentTitle，但依赖里必须带 url：app router 在导航后会
   // 用目标路由的 metadata 重新渲染并重置 document.title 为根默认值，所以两次
@@ -47,9 +49,9 @@ export function WorkspaceDocumentTitle() {
   // 免得过期的 issue 名比页面活得更久。
   useEffect(() => {
     return () => {
-      document.title = SITE_TITLE;
+      document.title = formatDocumentTitle(undefined, environmentName);
     };
-  }, []);
+  }, [environmentName]);
 
   return null;
 }

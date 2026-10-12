@@ -112,9 +112,6 @@
     "./issue-views/use-active-view": "./issue-views/use-active-view.ts",
     "./issue-views/baseline": "./issue-views/baseline.ts",
     "./issue-views/preferences": "./issue-views/preferences.ts",
-    "./billing": "./billing/index.ts",
-    "./billing/queries": "./billing/queries.ts",
-    "./billing/mutations": "./billing/mutations.ts",
     "./github": "./github/index.ts",
     "./github/queries": "./github/queries.ts",
     "./vcs": "./vcs/index.ts",
@@ -131,8 +128,6 @@
     "./wecom/queries": "./wecom/queries.ts",
     "./telegram": "./telegram/index.ts",
     "./telegram/queries": "./telegram/queries.ts",
-    "./feedback": "./feedback/index.ts",
-    "./feedback/mutations": "./feedback/mutations.ts",
     "./realtime": "./realtime/index.ts",
     "./navigation": "./navigation/index.ts",
     "./modals": "./modals/index.ts",
@@ -146,6 +141,7 @@
     "./utils": "./utils.ts",
     "./constants/*": "./constants/*.ts",
     "./feature-flags": "./feature-flags/index.ts",
+    "./platform/environment": "./platform/environment.ts",
     "./platform": "./platform/index.ts",
     "./drafts": "./drafts/index.ts",
     "./drafts/*": "./drafts/*.ts",
@@ -160,7 +156,9 @@
     "./skills/pack-archive": "./skills/pack-archive.ts",
     "./skills/stores": "./skills/stores/index.ts",
     "./autopilots/stores": "./autopilots/stores/index.ts",
-    "./life": "./life/index.ts"
+    "./life": "./life/index.ts",
+    "./cooking": "./cooking/index.ts",
+    "./meals": "./meals/index.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "catalog:",

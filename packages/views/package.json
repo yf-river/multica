@@ -46,7 +46,6 @@
     "./runtimes/runtimes-page": "./runtimes/components/runtimes-page.tsx",
     "./runtimes/runtime-detail-page": "./runtimes/components/runtime-detail-page.tsx",
     "./runtimes/runtime-settings-page": "./runtimes/components/runtime-settings-page.tsx",
-    "./billing": "./billing/index.ts",
     "./dashboard": "./dashboard/index.ts",
     "./dashboard/dashboard-page": "./dashboard/components/dashboard-page.tsx",
     "./squads": "./squads/index.ts",
@@ -54,6 +53,7 @@
     "./squads/squad-detail-page": "./squads/components/squad-detail-page.tsx",
     "./squads/components": "./squads/components/index.ts",
     "./life": "./life/index.ts",
+    "./living": "./living/living-pages.tsx",
     "./health": "./health/health-page.tsx",
     "./life/life-page": "./life/components/life-page.tsx",
     "./life/companion-page": "./life/components/companion-page.tsx",
@@ -85,7 +85,9 @@
     "./i18n": "./i18n/index.ts",
     "./attachments": "./attachments/index.ts",
     "./locales": "./locales/index.ts",
-    "./locales/*": "./locales/*"
+    "./locales/*": "./locales/*",
+    "./cooking": "./cooking/cooking-page.tsx",
+    "./meals": "./meals/meals-page.tsx"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

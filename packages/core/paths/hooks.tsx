@@ -72,3 +72,11 @@ export function useWorkspacePaths(): WorkspacePaths {
   const slug = useRequiredWorkspaceSlug();
   return paths.workspace(slug);
 }
+
+/** 聚合任务的详情链接使用其所属工作区。 */
+export function useIssuePaths(issue: { workspace_id: string } | null | undefined): WorkspacePaths {
+  const current = useWorkspacePaths();
+  const { data: workspaces = [] } = useQuery(workspaceListOptions());
+  const source = workspaces.find(w => w.id === issue?.workspace_id);
+  return source ? paths.workspace(source.slug) : current;
+}

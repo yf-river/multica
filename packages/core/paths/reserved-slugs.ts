@@ -64,14 +64,6 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "download",
   "usecases",
 
-  // Account / billing (likely-future global routes in the avatar menu)
-  "profile",
-  "account",
-  "billing",
-  "notifications",
-  "search",
-  "members",
-
   // Workspace route segments
   // Reserving each segment name prevents `/{slug}/{view}` from being visually
   // ambiguous (e.g. a workspace named `issues` would make `/issues/abc` mean two

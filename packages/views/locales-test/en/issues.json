@@ -93,11 +93,10 @@
     "cancelled": "Cancelled"
   },
   "priority": {
-    "urgent": "Urgent",
-    "high": "High",
-    "medium": "Medium",
-    "low": "Low",
-    "none": "No priority"
+    "important_urgent": "Important and urgent",
+    "important_not_urgent": "Important, not urgent",
+    "not_important_urgent": "Not important, urgent",
+    "not_important_not_urgent": "Not important, not urgent"
   },
   "stage": {
     "none": "No stage",

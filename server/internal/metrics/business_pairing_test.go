@@ -370,8 +370,6 @@ func defaultPropsForEvent(name string) map[string]any {
 		return map[string]any{"runtime_mode": "local", "provider": "claude", "failure_reason": "unknown", "recoverable": false}
 	case analytics.EventAutopilotRunStarted, analytics.EventAutopilotRunCompleted, analytics.EventAutopilotRunFailed:
 		return map[string]any{"cadence": "manual", "trigger_kind": "manual"}
-	case analytics.EventFeedbackSubmitted:
-		return map[string]any{"kind": "general", "platform": "web"}
 	case analytics.EventContactSalesSubmitted:
 		return map[string]any{"form_source": "page"}
 	}

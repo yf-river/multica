@@ -198,7 +198,7 @@ export function useIssueStatusBranches({
 }): IssueStatusBranches {
   const queryClient = useQueryClient();
   const catalog = useIssueStatuses(wsId);
-  const { hasCustomStatuses } = catalog;
+  const hasCustomStatuses = catalog.hasCustomStatuses || query.scope.kind === "my";
   const group = hasCustomStatuses ? CATEGORY_GROUP : STATUS_GROUP;
   // 分组约定是游标身份的一部分，而不只是查询的一部分：目录一落定它就由 `status`
   // 翻成 `status_category`，而按旧约定铸出的游标对新约定毫无意义。没有这条，目录到达

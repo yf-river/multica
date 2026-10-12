@@ -623,7 +623,7 @@ export function useIssueSurfaceController({
         // 和 board/list 分支同一个上线开关：`status_category` 是本特性引入的约定，
         // 只有目录确认这个工作区确实有自定义状态后才发送——那只能在集群已跑这个版本
         // 时为真。否则泳道保留它过去发起的那个请求原样。（MUL-6243）
-        secondary: hasCustomStatuses ? "status_category" : "status",
+        secondary: hasCustomStatuses || scope.type === "my" ? "status_category" : "status",
         secondary_values: serverStatuses,
       };
     }
@@ -641,6 +641,7 @@ export function useIssueSurfaceController({
     effectiveGrouping,
     effectiveViewMode,
     hasCustomStatuses,
+    scope.type,
     serverStatuses,
     swimlaneGrouping,
   ]);
@@ -809,6 +810,7 @@ export function useIssueSurfaceController({
 
   const { actions, openCreateIssue, moveIssue } = useIssueSurfaceActions({
     createDefaults: resolvedCreateDefaults,
+    issues: data.surfaceIssues,
   });
 
   const { ganttWorkingScopeIssues: _ganttWorkingScope, ...surfaceData } = data;

@@ -333,6 +333,10 @@ func newMainHTTPServer(addr string, handler http.Handler) *http.Server {
 func main() {
 	logger.Init()
 	// 提醒缺配置：生产环境空/默认 JWT 密钥直接拒绝启动。
+	if err := auth.ValidateEnvironmentID(); err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
 	if err := jwtSecretBootError(os.Getenv("JWT_SECRET"), os.Getenv("APP_ENV")); err != nil {
 		slog.Error(
 			"refusing to start: "+err.Error()+
@@ -659,6 +663,15 @@ func main() {
 
 	srv := newMainHTTPServer(":"+port, r)
 	profilingServer := profiling.NewServer()
+	// 同机运行多个环境时分别指定诊断端口；监听地址始终限制在本机。
+	if raw := os.Getenv("PPROF_PORT"); raw != "" {
+		pprofPort, err := strconv.ParseUint(raw, 10, 16)
+		if err != nil || pprofPort == 0 {
+			slog.Error("PPROF_PORT must be an integer between 1 and 65535")
+			os.Exit(1)
+		}
+		profilingServer.Addr = fmt.Sprintf("127.0.0.1:%d", pprofPort)
+	}
 
 	// 启动后台 worker。
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
@@ -698,18 +711,12 @@ func main() {
 	go runSourceContextSweeper(sweepCtx, taskSvc)
 	go heartbeatScheduler.Run(sweepCtx)
 	go runAutopilotFailureMonitorDurable(autopilotCtx, queries, pool, bus, envFailureMonitorConfig())
-	if autopilotSvc.QuotaEnabled() {
-		go runAutopilotQuotaReconciler(autopilotCtx, autopilotSvc)
-	}
 	go runDBStatsLogger(sweepCtx, pool)
 	go eventDispatcher.Run(sweepCtx)
 	go runLifeExperimentSweeper(sweepCtx, queries)
 	go runLifeCognitionWorker(sweepCtx, queries, pool)
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
-	}
-	if h.SeatCapacityWorker != nil {
-		go h.SeatCapacityWorker.Run(sweepCtx)
 	}
 	if h.TelegramOutbound != nil {
 		h.TelegramOutbound.Start(sweepCtx)

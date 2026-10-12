@@ -4,11 +4,13 @@
  * Web 应用的全局 Provider 装配层：把 core 的能力（API/WS/认证/i18n/身份版本）
  * 与 Web 专属的导航、滚动恢复 Provider 组合成整棵树，供根布局引用。
  */
+import { EnvironmentContext } from "@/platform/environment";
 import { useMemo } from "react";
 import { CoreProvider } from "@multica/core/platform";
 import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import packageJson from "../package.json";
+import { EnvironmentDocumentTitle } from "@/platform/environment-document-title";
 import { WebNavigationProvider } from "@/platform/navigation";
 import { WebScrollRestorationProvider } from "@/platform/scroll-restoration";
 import {
@@ -58,12 +60,14 @@ export function WebProviders({
   locale,
   resources,
   apiBaseUrl,
+  environmentId = "",
   wsUrl,
 }: {
   children: React.ReactNode;
   locale: SupportedLocale;
   resources: Record<string, LocaleResources>;
   apiBaseUrl?: string;
+  environmentId?: string;
   wsUrl?: string;
 }) {
   const cookieAuth = !hasLegacyToken();
@@ -73,26 +77,30 @@ export function WebProviders({
     [],
   );
   return (
-    <CoreProvider
+    <EnvironmentContext.Provider value={environmentId}>
+      <CoreProvider
       apiBaseUrl={apiBaseUrl}
+      environmentId={environmentId}
       wsUrl={wsUrl || deriveWsUrl()}
       cookieAuth={cookieAuth}
-      onLogin={setLoggedInCookie}
+      onLogin={() => setLoggedInCookie(environmentId)}
       onLogout={() => {
         // welcome-store 里暂存着 onboarding 结束后的瞬态信号。登出时必须清掉，
         // 否则用同一浏览器登录的用户 B 会继承用户 A 的信号，导致
         // <WelcomeAfterOnboarding /> 对 B 根本不属于的 workspace 去
         // listAgents / createIssue。store 自身 docstring 承诺会重置；这里就是接线处。
         useWelcomeStore.getState().reset();
-        clearLoggedInCookie();
+        clearLoggedInCookie(environmentId);
       }}
       identity={identity}
       locale={locale}
       resources={resources}
     >
       <WebNavigationProvider>
+        <EnvironmentDocumentTitle />
         <WebScrollRestorationProvider>{children}</WebScrollRestorationProvider>
       </WebNavigationProvider>
-    </CoreProvider>
+      </CoreProvider>
+    </EnvironmentContext.Provider>
   );
 }

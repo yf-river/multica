@@ -3,7 +3,7 @@
 // 职责：清理"已退休的内置（built-in）"生成内容——历史上的 PM 系列与
 // "multica 编码小队"系列 squad、它们派生出的 agent、以及整张依赖图（任务、
 // Issue、聊天、autopilot 运行、Life 数据、渠道安装等），一次事务全部硬删除。
-// 之所以能硬删：这些模板是系统生成的，没有可恢复的源记录。文件还含 OpenClaw
+// 之所以能硬删：这些模板是系统生成的，没有可恢复的源记录。文件还含 forking CLI
 // （旧实现专用 runtime）退役的清理，以及供迁移 456/488 复用的事务版本。删除
 // 前会做多道护栏（仍在职的 squad leader、被 Life 系统收养的 agent 等），有
 // 歧义就中止，绝不误删。
@@ -72,7 +72,7 @@ func removeRetiredBuiltinsWithTx(ctx context.Context, tx pgx.Tx) error {
 }
 
 // removeRetiredGraphWithTx 内含共享的"按依赖序清理生成式 agent 图"逻辑。把
-// 种子查询独立出来，让一次性的 OpenClaw 退役能复用同一套验证过的清理流程，
+// 种子查询独立出来，让一次性的 forking CLI 退役能复用同一套验证过的清理流程，
 // 而不必给普通 PM 迁移再教一个新产品概念。
 func removeRetiredGraphWithTx(ctx context.Context, tx pgx.Tx, squadSeed, agentSeed, runtimeSeed string) error {
 
@@ -427,61 +427,6 @@ func removeRetiredGraphWithTx(ctx context.Context, tx pgx.Tx, squadSeed, agentSe
 		}
 	}
 
-	return nil
-}
-
-// removeOpenClawRuntimesWithTx 退役 runtime 行及其挂着的整棵生成式 agent 图。
-// OpenClaw 是实现专属的 runtime，不是用户创作的 Life 数据；若某 agent 被 Life
-// 绑定，视为"不安全的升级"，会在删除任何行之前中止，让用户显式重新绑定。
-func removeOpenClawRuntimesWithTx(ctx context.Context, tx pgx.Tx) error {
-	// 把"由 OpenClaw agent 带领的 squad"也纳入目标集：存活的 squad 不能留着一条
-	// 本迁移即将删除的 leader 行。
-	squadSeed := `INSERT INTO retired_builtin_squads (id)
-		 SELECT s.id FROM squad s
-		 LEFT JOIN agent a ON a.id = s.leader_id
-		 LEFT JOIN agent_runtime r ON r.id = a.runtime_id
-		 LEFT JOIN runtime_profile p ON p.id = r.profile_id
-		 WHERE lower(coalesce(r.provider, '')) = 'openclaw'
-		    OR lower(coalesce(p.protocol_family, '')) = 'openclaw'`
-	agentSeed := `INSERT INTO retired_builtin_agents (id)
-		 SELECT a.id
-		 FROM agent a
-		 JOIN agent_runtime r ON r.id = a.runtime_id
-		 LEFT JOIN runtime_profile p ON p.id = r.profile_id
-		 WHERE lower(coalesce(r.provider, '')) = 'openclaw'
-		    OR lower(coalesce(p.protocol_family, '')) = 'openclaw'`
-	runtimeSeed := `INSERT INTO retired_builtin_runtimes (id)
-		 SELECT r.id
-		 FROM agent_runtime r
-		 LEFT JOIN runtime_profile p ON p.id = r.profile_id
-		 WHERE lower(coalesce(r.provider, '')) = 'openclaw'
-		    OR lower(coalesce(p.protocol_family, '')) = 'openclaw'
-		 ON CONFLICT DO NOTHING`
-	if err := removeRetiredGraphWithTx(ctx, tx, squadSeed, agentSeed, runtimeSeed); err != nil {
-		return fmt.Errorf("remove OpenClaw agent graph: %w", err)
-	}
-	// 共享的图清理会删掉"目标 agent 拥有"的行。但这些 runtime/profile 引用也
-	// 可能被"本应已空"的行持有，所以要在删除 runtime 定义之前显式清一遍。
-	cleanup := []struct {
-		name string
-		sql  string
-	}{
-		{"surviving chat runtime references", `UPDATE chat_session SET runtime_id = NULL WHERE runtime_id IN (SELECT id FROM retired_builtin_runtimes)`},
-		// 部分升级后 runtime 可能比它的 agent 活得久。先把这些任务物化进同一张
-		// 图再删，让它们的消息、用量、渠道投递、可靠事件都按上面的依赖序被清掉，
-		// 而不是指望 runtime 外键级联。迁移在"runtime 行已被删但任务仍在"的数据库
-		// 上也必须安全。
-		{"orphan runtime task rows", `DELETE FROM agent_task_queue
-			WHERE runtime_id IN (SELECT id FROM retired_builtin_runtimes)
-			  AND id NOT IN (SELECT id FROM retired_builtin_tasks)`},
-		{"OpenClaw runtime profiles", `DELETE FROM runtime_profile WHERE lower(protocol_family) = 'openclaw'`},
-		{"OpenClaw runtime rows", `DELETE FROM agent_runtime WHERE lower(provider) = 'openclaw' OR id IN (SELECT id FROM retired_builtin_runtimes)`},
-	}
-	for _, item := range cleanup {
-		if err := execRetiredDelete(ctx, tx, item.name, item.sql, false); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

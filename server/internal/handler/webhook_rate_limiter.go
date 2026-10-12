@@ -60,7 +60,7 @@ func DefaultWebhookAbsoluteIPRateLimit() WebhookRateLimit {
 type SlidingWindowRateLimiter interface {
 	Allow(ctx context.Context, key string) bool
 	// 实现方也可以额外满足 slidingWindowRateLimiterInspector。基础契约只保留 Allow，
-	// 是为了兼容 billing 与测试里注入的单方法安全闸。
+	// 是为了兼容测试里注入的单方法安全闸。
 }
 
 // WebhookRateLimiter 保持 webhook 侧契约稳定。

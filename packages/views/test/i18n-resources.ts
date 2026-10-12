@@ -2,7 +2,6 @@ import type { LocaleResources } from "@multica/core/i18n";
 import agents from "../locales-test/en/agents.json";
 import auth from "../locales-test/en/auth.json";
 import autopilots from "../locales-test/en/autopilots.json";
-import billing from "../locales-test/en/billing.json";
 import chat from "../locales-test/en/chat.json";
 import common from "../locales-test/en/common.json";
 import editor from "../locales-test/en/editor.json";
@@ -33,7 +32,6 @@ export const TEST_EN_RESOURCES: Record<"en", LocaleResources> = {
     agents,
     auth,
     autopilots,
-    billing,
     chat,
     common,
     editor,

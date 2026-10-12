@@ -69,7 +69,7 @@ export interface IssueCreateDraft {
 /** 返回一份全空的共享段默认值。 */
 const emptyShared = (): IssueCreateShared => ({
   projectId: undefined,
-  priority: "none",
+  priority: "not_important_not_urgent",
   dueDate: null,
   attachments: [],
 });
@@ -143,7 +143,7 @@ function migrateDraft(raw: unknown): IssueCreateDraft {
       shared: {
         ...emptyShared(),
         projectId: d.projectId as string | undefined,
-        priority: (d.priority as IssuePriority) ?? "none",
+        priority: (d.priority as IssuePriority) ?? "not_important_not_urgent",
         dueDate: (d.dueDate as string | null) ?? null,
         // 旧版本持久化的是裸 Attachment 行；normalize 把它们包成 `uploaded`
         // 占位（同时丢弃过期的 `uploading` 占位）。

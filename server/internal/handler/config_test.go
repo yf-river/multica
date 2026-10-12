@@ -432,9 +432,7 @@ func TestGetConfigExposesFrontendFeatureFlags(t *testing.T) {
 	if cfg.FeatureFlags["composio_mcp_apps"] {
 		t.Fatalf("composio_mcp_apps: want false by default, got true")
 	}
-	if cfg.FeatureFlags["billing_workspace_subscriptions"] {
-		t.Fatalf("billing_workspace_subscriptions: want false by default, got true")
-	}
+
 	if cfg.FeatureFlags["plugins_v1"] {
 		t.Fatalf("plugins_v1: want false by default, got true")
 	}

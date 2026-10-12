@@ -112,7 +112,7 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     status: "idle" as const,
     max_concurrent_tasks: 1,
     model: "claude-opus-4-8",
-    thinking_level: "high",
+    thinking_level: "important_not_urgent",
     owner_id: null,
     skills: [],
     created_at: "2026-04-01T00:00:00Z",
@@ -141,11 +141,11 @@ beforeEach(() => {
 
 describe("AgentProfileCard — Model row", () => {
   it("shows the pinned model id and the effort badge", () => {
-    mockAgents.current = [makeAgent({ model: "claude-opus-4-8", thinking_level: "high" })];
+    mockAgents.current = [makeAgent({ model: "claude-opus-4-8", thinking_level: "important_not_urgent" })];
     renderCard();
 
     expect(screen.getByText("claude-opus-4-8")).toBeInTheDocument();
-    expect(screen.getByText("high")).toBeInTheDocument();
+    expect(screen.getByText("important_not_urgent")).toBeInTheDocument();
     expect(screen.queryByText(enAgents.profile_card.model_unset)).toBeNull();
   });
 
@@ -154,11 +154,11 @@ describe("AgentProfileCard — Model row", () => {
   // must render even though the model cell reads "Runtime default" — gating
   // it on `hasModel` hid legitimate runtime config.
   it("shows the effort badge even when the model is unset (Runtime default)", () => {
-    mockAgents.current = [makeAgent({ model: "", thinking_level: "high" })];
+    mockAgents.current = [makeAgent({ model: "", thinking_level: "important_not_urgent" })];
     renderCard();
 
     expect(screen.getByText(enAgents.profile_card.model_unset)).toBeInTheDocument();
-    expect(screen.getByText("high")).toBeInTheDocument();
+    expect(screen.getByText("important_not_urgent")).toBeInTheDocument();
   });
 
   it("renders no effort badge when thinking_level is empty", () => {
@@ -167,7 +167,7 @@ describe("AgentProfileCard — Model row", () => {
 
     expect(screen.getByText(enAgents.profile_card.model_unset)).toBeInTheDocument();
     // No effort token anywhere on the card.
-    expect(screen.queryByText("high")).toBeNull();
-    expect(screen.queryByText("medium")).toBeNull();
+    expect(screen.queryByText("important_not_urgent")).toBeNull();
+    expect(screen.queryByText("not_important_urgent")).toBeNull();
   });
 });

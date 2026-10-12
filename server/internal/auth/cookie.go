@@ -10,12 +10,14 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"math"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +29,24 @@ const (
 	CSRFCookieName      = "multica_csrf"
 	defaultAuthTokenTTL = 30 * 24 * time.Hour // 30 天
 )
+
+// EnvironmentID 标识部署实例，Cookie 名称只能包含稳定的安全字符。
+func EnvironmentID() string { return strings.TrimSpace(os.Getenv("MULTICA_ENV_ID")) }
+
+func ValidateEnvironmentID() error {
+	id := EnvironmentID()
+	if id != "" && !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`).MatchString(id) {
+		return fmt.Errorf("MULTICA_ENV_ID must contain 1-64 letters, digits, underscores or hyphens")
+	}
+	return nil
+}
+
+func CookieName(base string) string {
+	if id := EnvironmentID(); id != "" {
+		return base + "_" + id
+	}
+	return base
+}
 
 var (
 	ipCookieDomainWarnOnce sync.Once
@@ -154,7 +174,7 @@ func SetAuthCookies(w http.ResponseWriter, token string) error {
 	now := time.Now()
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     AuthCookieName,
+		Name:     CookieName(AuthCookieName),
 		Value:    token,
 		Path:     "/",
 		Domain:   domain,
@@ -171,7 +191,7 @@ func SetAuthCookies(w http.ResponseWriter, token string) error {
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     CSRFCookieName,
+		Name:     CookieName(CSRFCookieName),
 		Value:    csrfToken,
 		Path:     "/",
 		Domain:   domain,
@@ -191,7 +211,7 @@ func ClearAuthCookies(w http.ResponseWriter) {
 	secure := isSecureCookie()
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     AuthCookieName,
+		Name:     CookieName(AuthCookieName),
 		Value:    "",
 		Path:     "/",
 		Domain:   domain,
@@ -203,7 +223,7 @@ func ClearAuthCookies(w http.ResponseWriter) {
 	})
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     CSRFCookieName,
+		Name:     CookieName(CSRFCookieName),
 		Value:    "",
 		Path:     "/",
 		Domain:   domain,
@@ -229,7 +249,7 @@ func ValidateCSRF(r *http.Request) bool {
 		return false
 	}
 
-	authCookie, err := r.Cookie(AuthCookieName)
+	authCookie, err := r.Cookie(CookieName(AuthCookieName))
 	if err != nil || authCookie.Value == "" {
 		return false
 	}

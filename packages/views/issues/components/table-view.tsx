@@ -1,5 +1,7 @@
 "use client";
 
+import { workspaceListOptions } from "@multica/core/workspace/queries";
+
 // 本文件：TableView —— 问题列表的"表格视图"。
 // 负责渲染可排序/可拖拽调序/可显隐列的表格，支持服务端分组（按状态/负责人/项目/
 // 自定义属性）与父子层级、按分支无限分页 + 实时刷新去抖、单元内联编辑（选择器 /
@@ -97,7 +99,7 @@ import {
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import { propertyListOptions } from "@multica/core/properties";
 import { projectListOptions } from "@multica/core/projects/queries";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { paths as workspacePaths, useWorkspacePaths } from "@multica/core/paths";
 import { buildActorNameResolver, useActorName } from "@multica/core/workspace/hooks";
 import {
   agentListOptions,
@@ -2113,16 +2115,17 @@ export function TableView({
     [actions, entryOf, openModal],
   );
 
+  const { data: issueWorkspaces = [] } = useQuery(workspaceListOptions());
   const openIssue = useCallback(
     (issue: Issue, event?: React.MouseEvent) => {
       // 标准链接语义：普通点击就地导航；修饰键 / 中键点击开新标签页。
       // 没有 event 的回调（键盘可达性场景）按普通点击处理。
       intentNavigate(
-        paths.issueDetail(issue.id),
+        (issueWorkspaces.find(w => w.id === issue.workspace_id) ? workspacePaths.workspace(issueWorkspaces.find(w => w.id === issue.workspace_id)!.slug) : paths).issueDetail(issue.id),
         event ? resolveClickIntent(event) : "push",
       );
     },
-    [intentNavigate, paths],
+    [intentNavigate, paths, issueWorkspaces],
   );
 
   const createSubIssue = useCallback(

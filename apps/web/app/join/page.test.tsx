@@ -222,27 +222,5 @@ describe("JoinPage", () => {
     );
   });
 
-  it.each([
-    [
-      "seat_capacity_full",
-      "成员席位已全部使用，请联系工作区管理员增加席位后重试。",
-    ],
-    [
-      "seat_capacity_unavailable",
-      "无法验证成员容量，请重试。",
-    ],
-  ])("maps %s to a user-facing capacity message", async (code, message) => {
-    const user = userEvent.setup();
-    authStateRef.state.user = { id: "u1", email: "a@b.com" };
-    mockJoinByShareLink.mockRejectedValue(
-      new ApiError("server fallback", 409, "Conflict", { code }),
-    );
 
-    render(<JoinPage />, { wrapper: createWrapper() });
-
-    await user.click(
-      await screen.findByRole("button", { name: "加入工作区" }),
-    );
-    await waitFor(() => expect(screen.getByText(message)).toBeInTheDocument());
-  });
 });

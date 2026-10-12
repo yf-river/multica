@@ -18,7 +18,6 @@ const mockSetQuickCreateFieldVisible = vi.hoisted(() => vi.fn());
 const mockSetKeepOpen = vi.hoisted(() => vi.fn());
 const mockSetLastMode = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
-const mockShowIssueLimitUpgradePrompt = vi.hoisted(() => vi.fn());
 // Uploads flow through the module-level coordinator, which calls
 // `api.uploadFile(file, ctx, signal)` (MUL-5181 L2).
 const mockApiUploadFile = vi.hoisted(() => vi.fn());
@@ -63,7 +62,7 @@ const sourceContextPanelData = {
 const emptyIssueDraft = () => ({
   shared: {
     projectId: undefined as string | undefined,
-    priority: "none" as "none" | "low" | "medium" | "high" | "urgent",
+    priority: "not_important_not_urgent" as "not_important_not_urgent" | "not_important_not_urgent" | "not_important_urgent" | "important_not_urgent" | "important_urgent",
     dueDate: null as string | null,
     attachments: [] as Array<{ id: string }>,
   },
@@ -184,9 +183,7 @@ vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-test",
 }));
 
-vi.mock("./use-issue-limit-upgrade-prompt", () => ({
-  useIssueLimitUpgradePrompt: () => mockShowIssueLimitUpgradePrompt,
-}));
+
 
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ name: "Test Workspace" }),
@@ -262,13 +259,13 @@ vi.mock("../common/actor-avatar", () => ({
 vi.mock("../issues/components", () => ({
   PriorityIcon: ({ priority }: { priority: string }) => <span>{priority}</span>,
   PriorityPicker: ({ priority, onUpdate }: any) => (
-    <button type="button" data-testid="priority-picker" onClick={() => onUpdate({ priority: "high" })}>
+    <button type="button" data-testid="priority-picker" onClick={() => onUpdate({ priority: "important_not_urgent" })}>
       Priority {priority}
     </button>
   ),
   DueDatePicker: ({ dueDate, onUpdate }: any) => (
     <button type="button" data-testid="due-date-picker" onClick={() => onUpdate({ due_date: "2026-08-01" })}>
-      Due date {dueDate ?? "none"}
+      Due date {dueDate ?? "not_important_not_urgent"}
     </button>
   ),
 }));
@@ -277,7 +274,7 @@ vi.mock("../projects/components/project-picker", () => ({
   ProjectPicker: ({ projectId, onUpdate, triggerRender }: any) => (
     <>
       <button type="button" data-testid="project-picker" onClick={() => onUpdate({ project_id: "proj-1" })}>
-        Project {projectId ?? "none"}
+        Project {projectId ?? "not_important_not_urgent"}
       </button>
       {/* The caller's own trigger renders too — the pill carries the
           quick-clear ×, which belongs to this panel, not to the picker. */}
@@ -581,7 +578,7 @@ describe("AgentCreatePanel", () => {
     expect(mockIssueDraftStore.draft.shared).toEqual(
       expect.objectContaining({
         projectId: "proj-1",
-        priority: "high",
+        priority: "important_not_urgent",
         dueDate: "2026-08-01",
       }),
     );
@@ -629,28 +626,6 @@ describe("AgentCreatePanel", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("shows the upgrade recovery immediately when quick create is rejected by the issue preflight", async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
-    mockQuickCreateIssue.mockRejectedValue(
-      new ApiError("workspace has reached its issue limit", 402, "Payment Required", {
-        code: "issue_limit_reached",
-        limit: 1000,
-        policy_revision: 1,
-      }),
-    );
-
-    renderPanel({ onClose, isExpanded: false, setIsExpanded: vi.fn() });
-    await user.click(screen.getByRole("button", { name: /^Create$/i }));
-
-    await waitFor(() => {
-      expect(mockShowIssueLimitUpgradePrompt).toHaveBeenCalledTimes(1);
-    });
-    expect(mockToastSuccess).not.toHaveBeenCalled();
-    expect(mockClearDraft).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
   it("reveals optional fields from the overflow and submits their values", async () => {
     const user = userEvent.setup();
 
@@ -665,7 +640,7 @@ describe("AgentCreatePanel", () => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith(
         expect.objectContaining({
           agent_id: "agent-1",
-          priority: "high",
+          priority: "important_not_urgent",
         }),
       );
     });
@@ -705,7 +680,7 @@ describe("AgentCreatePanel", () => {
       onClose: vi.fn(),
       isExpanded: false,
       setIsExpanded: vi.fn(),
-      data: { priority: "urgent", due_date: "2026-08-01" },
+      data: { priority: "important_urgent", due_date: "2026-08-01" },
     });
 
     await user.click(screen.getByRole("button", { name: /^Create$/i }));
@@ -713,7 +688,7 @@ describe("AgentCreatePanel", () => {
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith(
         expect.objectContaining({
-          priority: "urgent",
+          priority: "important_urgent",
           due_date: "2026-08-01",
         }),
       );

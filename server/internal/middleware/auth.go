@@ -150,7 +150,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					return
 				}
 				r.Header.Set("X-User-ID", identity.OwnerID)
-				// 给鉴权路径打标，使账户级门禁（如 /api/cloud-billing/* 上的
+				// 给鉴权路径打标，使账户级门禁（如 restricted account endpoints 上的
 				// handler.RequireHumanActor）能区分云节点机器凭证与人类 PAT/JWT。
 				// 与 mat_ 分支盖的 "task_token" 同一套路——都是服务端设置、权威、
 				// 且在中间件顶部已剥掉任何客户端自带的同名值。理由同 MUL-2600：
@@ -261,7 +261,7 @@ func extractToken(r *http.Request) (token string, fromCookie bool) {
 		}
 	}
 
-	if cookie, err := r.Cookie(auth.AuthCookieName); err == nil && cookie.Value != "" {
+	if cookie, err := r.Cookie(auth.CookieName(auth.AuthCookieName)); err == nil && cookie.Value != "" {
 		return cookie.Value, true
 	}
 

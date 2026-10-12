@@ -574,16 +574,6 @@ func (h *Handler) CreateCommentSubIssue(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "mode must be manual or agent")
 		return
 	}
-	// 在克隆来源附件之前先拒绝「已满额」的 workspace。提前做这次免费的容量预检，
-	// 能避开昂贵的附件克隆；但 TaskService 入队前的预检与最终事务内的正式入队判定
-	// 仍然必要——这里的预检不是配额预留。
-	if err := service.CheckIssueCreateCapacity(r.Context(), h.Queries, h.Entitlements, wsUUID); err != nil {
-		if !writeIssueLimitReached(w, err) {
-			slog.Warn("source context issue-capacity preflight failed", append(logger.RequestAttrs(r), "error", err)...)
-			writeError(w, http.StatusInternalServerError, "failed to check issue capacity")
-		}
-		return
-	}
 
 	contextID := dbid.NewV7()
 	capture, objectKeys, err := h.cloneSourceContext(r.Context(), wsUUID, userUUID, contextID, build)
@@ -726,7 +716,7 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 	}
 	priority := strings.TrimSpace(input.Priority)
 	if priority == "" {
-		priority = "none"
+		priority = "not_important_not_urgent"
 	}
 	if !validateIssueEnum(w, "priority", priority, validIssuePriorities) {
 		return errSourceContextResponseWritten
@@ -839,7 +829,7 @@ func (h *Handler) prepareAgentCommentSubIssue(w http.ResponseWriter, r *http.Req
 		return nil, sourceContextBadRequest("exactly one of agent_id or squad_id is required")
 	}
 	priority := strings.ToLower(strings.TrimSpace(input.Priority))
-	if priority != "" && priority != "urgent" && priority != "high" && priority != "medium" && priority != "low" {
+	if priority != "" && priority != "important_urgent" && priority != "important_not_urgent" && priority != "not_important_urgent" && priority != "not_important_not_urgent" {
 		return nil, sourceContextBadRequest("invalid priority")
 	}
 	var agentID, squadID pgtype.UUID
@@ -943,12 +933,9 @@ func (h *Handler) createAgentCommentSubIssue(w http.ResponseWriter, r *http.Requ
 }
 
 // writeSourceContextError 把 service 层返回的错误统一映射成带 code 的 JSON 错误响应。
-// 配额类错误先交给 writeIssueLimitReached 处理（它会写出 429/403）；其余按哨兵错误
+// 按来源上下文哨兵错误类型选择响应
 // 类型选择 400/409/422/500 及对应 code。
 func (h *Handler) writeSourceContextError(w http.ResponseWriter, err error, limits service.SourceContextLimitUsage) {
-	if writeIssueLimitReached(w, err) {
-		return
-	}
 	status := http.StatusInternalServerError
 	code := "source_context_capture_failed"
 	message := "failed to capture source context"

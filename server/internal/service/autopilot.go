@@ -16,13 +16,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/dispatch"
-	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/issueposition"
@@ -50,12 +50,10 @@ type TxStarter interface {
 // 注意 TxStarter 可为 nil：此时所有「先写 run 再写下游资源」的两段式操作退化为非事务
 // 直连 s.Queries，代码里因此有大量 `if s.TxStarter != nil` 分叉。
 type AutopilotService struct {
-	Queries      *db.Queries
-	TxStarter    TxStarter
-	Bus          *events.Bus
-	TaskSvc      *TaskService
-	Entitlements entitlement.Provider
-	QuotaMetrics AutopilotQuotaMetrics
+	Queries   *db.Queries
+	TxStarter TxStarter
+	Bus       *events.Bus
+	TaskSvc   *TaskService
 }
 
 // DefaultAutopilotTriggerTimezone 是 Autopilot 触发的兜底时区：触发没有配置时区、
@@ -70,6 +68,11 @@ const autopilotRecentDuplicateWindow = 60 * time.Second
 // NewAutopilotService 组装 AutopilotService。tx 传 nil 即表示退化为非事务路径（测试等）。
 func NewAutopilotService(q *db.Queries, tx TxStarter, bus *events.Bus, taskSvc *TaskService) *AutopilotService {
 	return &AutopilotService{Queries: q, TxStarter: tx, Bus: bus, TaskSvc: taskSvc}
+}
+
+func (s *AutopilotService) createAutopilotRun(ctx context.Context, _ pgtype.UUID, _ string, _ string, params db.CreateAutopilotRunParams) (db.AutopilotRun, bool, error) {
+	run, err := s.Queries.CreateAutopilotRun(ctx, params)
+	return run, false, err
 }
 
 // autopilotRuleConfigSummary 是发布（publish）autopilot 时截取的「承担追责含义」的配置快照，
@@ -134,7 +137,7 @@ func (s *AutopilotService) DispatchAutopilot(
 	// 本入口没有 member actor（计划任务/webhook/API，或未解析出 member 的手动触发），所以
 	// 归属解析到 rule_owner。这些调用方不会向人展示单次 run 的原因码，故此处丢弃；也带不出
 	// webhookDeliveryID——持久化 webhook 投递走 AdmitAutopilotWebhookDelivery，不走本入口。
-	run, _, err := s.dispatchAutopilot(ctx, autopilot, triggerID, source, payload, pgtype.Timestamptz{}, pgtype.UUID{}, pgtype.UUID{}, source+":"+newAutopilotIdempotencyKey())
+	run, _, err := s.dispatchAutopilot(ctx, autopilot, triggerID, source, payload, pgtype.Timestamptz{}, pgtype.UUID{}, pgtype.UUID{}, source+":"+uuid.NewString())
 	return run, err
 }
 
@@ -149,7 +152,7 @@ func (s *AutopilotService) DispatchAutopilotManual(
 	payload []byte,
 	actorUserID pgtype.UUID,
 ) (*db.AutopilotRun, dispatch.ReasonCode, error) {
-	return s.DispatchAutopilotManualWithKey(ctx, autopilot, triggerID, payload, actorUserID, newAutopilotIdempotencyKey())
+	return s.DispatchAutopilotManualWithKey(ctx, autopilot, triggerID, payload, actorUserID, uuid.NewString())
 }
 
 // DispatchAutopilotManualWithKey 保留调用方自带的请求键做幂等：同一 HTTP 请求被重试时，
@@ -217,7 +220,7 @@ func (s *AutopilotService) AdmitAutopilotWebhookDelivery(
 	if autopilot.ExecutionMode == "run_only" {
 		initialStatus = "running"
 	}
-	run, _, err := s.createAutopilotRunWithQuota(ctx, autopilot.WorkspaceID, "webhook", "webhook:"+util.UUIDToString(deliveryID), db.CreateAutopilotRunParams{
+	run, _, err := s.createAutopilotRun(ctx, autopilot.WorkspaceID, "webhook", "webhook:"+util.UUIDToString(deliveryID), db.CreateAutopilotRunParams{
 		ID:                dbid.NewV7(),
 		AutopilotID:       autopilot.ID,
 		TriggerID:         triggerID,
@@ -504,7 +507,7 @@ func (s *AutopilotService) dispatchAutopilot(
 		initialStatus = "running"
 	}
 
-	run, reused, err := s.createAutopilotRunWithQuota(ctx, autopilot.WorkspaceID, source, idempotencyKey, db.CreateAutopilotRunParams{
+	run, reused, err := s.createAutopilotRun(ctx, autopilot.WorkspaceID, source, idempotencyKey, db.CreateAutopilotRunParams{
 		ID:                dbid.NewV7(),
 		AutopilotID:       autopilot.ID,
 		TriggerID:         triggerID,
@@ -516,11 +519,6 @@ func (s *AutopilotService) dispatchAutopilot(
 		WebhookDeliveryID: webhookDeliveryID,
 	})
 	if err != nil {
-		var quotaErr *AutopilotQuotaExceededError
-		if errors.As(err, &quotaErr) && source == "schedule" {
-			skipped, skipErr := s.recordSkippedRun(ctx, autopilot, triggerID, source, payload, plannedAt, webhookDeliveryID, quotaErr.Error(), dispatch.ReasonQuotaExceeded)
-			return skipped, dispatch.ReasonQuotaExceeded, skipErr
-		}
 		return nil, dispatch.ReasonInternalError, fmt.Errorf("create run: %w", err)
 	}
 	if reused {
@@ -595,7 +593,6 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	if err != nil {
 		return fmt.Errorf("resolve leader: %w", err)
 	}
-	issueCountPolicy := ResolveIssueCountPolicy(ctx, s.Entitlements, ap.WorkspaceID)
 	var createdEvent events.Event
 	var templateSubs []db.AutopilotSubscriber
 	var subscriberInboxEvents []events.Event
@@ -629,18 +626,7 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		return &errDispatchSkipped{reason: "recent duplicate autopilot issue: " + util.UUIDToString(duplicate.ID), code: dispatch.ReasonAlreadyActive}
 	}
 
-	issueNumber, err := AllocateIssueNumber(ctx, qtx, ap.WorkspaceID, issueCountPolicy)
-	if err != nil {
-		var limitErr *IssueLimitReachedError
-		if errors.As(err, &limitErr) {
-			return &errDispatchSkipped{
-				reason: "workspace has reached its issue limit",
-				code:   dispatch.ReasonIssueLimitReached,
-			}
-		}
-		return fmt.Errorf("allocate issue number: %w", err)
-	}
-
+	issueNumber, err := qtx.IncrementIssueCounter(ctx, ap.WorkspaceID)
 	newPosition, err := issueposition.NextTopPosition(ctx, tx, ap.WorkspaceID, "todo")
 	if err != nil {
 		return fmt.Errorf("get next issue position: %w", err)
@@ -652,7 +638,7 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		Title:        title,
 		Description:  description,
 		Status:       "todo",
-		Priority:     "none",
+		Priority:     "not_important_not_urgent",
 		AssigneeType: pgtype.Text{String: ap.AssigneeType, Valid: true},
 		AssigneeID:   ap.AssigneeID,
 		// autopilot 派发给的 agent 才是 issue 的 creator，而不是最初配置 autopilot 的人。
@@ -747,10 +733,6 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		return fmt.Errorf("link run to issue: %w", err)
 	}
 	*run = updatedRun
-	if _, err := settleAutopilotQuota(ctx, qtx, run.QuotaReservationID, true); err != nil {
-		return fmt.Errorf("consume quota reservation: %w", err)
-	}
-
 	workspace, err := qtx.GetWorkspace(ctx, ap.WorkspaceID)
 	if err != nil {
 		return fmt.Errorf("load workspace for issue event: %w", err)

@@ -3,11 +3,11 @@ package agent
 // 文件职责：给"一次性输出式"的短命令提供"安静收集"运行器——不等进程退出，而是
 // 一旦 stdout 已给出完整答案并安静了一阵就收工。
 //
-// 动机：openclaw 之类 CLI 的 config file / agents list 会"打印完答案就永不退出"
+// 动机：forking CLI 之类 CLI 的 config file / agents list 会"打印完答案就永不退出"
 // （实测 60s 挂着），死等退出会把两条好使的命令变成任务致命错误。完整的设计动机、
 // 为什么必须由调用方给"答案完整性"规则、以及调用方可依赖的五条保证，都写在
 // RunCollectQuiet 的文档里——那里是唯一详细展开的地方。被谁消费：Prepare →
-// prepareOpenclawConfig 等任务 setup 的一次性探测命令。
+// prepareforking CLIConfig 等任务 setup 的一次性探测命令。
 
 import (
 	"bytes"
@@ -25,7 +25,7 @@ import (
 // 按"CLI 已刷完答案"的场景定尺寸：这些命令打印一个路径或一段短 JSON，同一条逻辑
 // 响应的各次写入背靠背落地——真实主机实测间隔 0.012–0.033ms。400ms 比它大了几个
 // 量级，又短到让任务 setup 的这类调用在最坏情况下只多花约一秒，而不是每次都吃满
-// openclawCLITimeout。
+// forking CLICLITimeout。
 //
 // 这个尺寸*不*覆盖、而必须由调用方的 `complete` 规则覆盖的，是"输出里非答案的
 // 部分与答案本身之间的空档"。同一台主机上，一个会产 Doctor/plugin 警告的配置，
@@ -37,7 +37,7 @@ import (
 // 无法满足它"。本包唯一够格的规则是 JSONOutputComplete——文档必须整体可解析，且
 // 上游把零碎输出完全挡在 `--json` 的 stdout 之外。凭"长得像"去判断人读的输出不
 // 够格；曾经试过的 config file 规则被删掉而不是重调——见 internal/daemon/execenv
-// 里的 openclawOutputComplete。
+// 里的 forking CLIOutputComplete。
 //
 // 它同时是"迟到的失败"仍能被观察到的窗口：CLI 打印完整答案后以非零码退出，只要
 // 发生在宽限内，就会被如实报成失败。超过宽限，它与"打印完就永远挂着"无法区分——
@@ -70,14 +70,14 @@ func JSONOutputComplete(stdout []byte) bool {
 //
 // # 为什么"输出够了"优于"等退出"
 //
-// 实测自跑 openclaw 2026.5.27 的主机：
+// 实测自跑 forking CLI 2026.5.27 的主机：
 //
-//	openclaw --version    258ms  干净退出
-//	openclaw config file    60s  正确路径已打印，然后永不退出
-//	openclaw agents list    60s  正确列表已打印，然后永不退出
+//	forking CLI --version    258ms  干净退出
+//	forking CLI config file    60s  正确路径已打印，然后永不退出
+//	forking CLI agents list    60s  正确列表已打印，然后永不退出
 //
 // 死等退出会把两条好使的命令变成任务致命错误，而它们都卡在任务关键路径上
-// （Prepare → prepareOpenclawConfig）。这些命令的契约是"打印一个值"；值到了，
+// （Prepare → prepareforking CLIConfig）。这些命令的契约是"打印一个值"；值到了，
 // 进程有没有自我善后不是调用方该管的。
 //
 // 那也不是这批计时所来自的构建的怪癖。上游有显式的"打印完一次性答案就退出"
@@ -95,7 +95,7 @@ func JSONOutputComplete(stdout []byte) bool {
 // 现在有两个条件同时把守提前返回，单独哪个都不够：
 //
 //   - `complete` 接受该缓冲区。光安静不够——CLI 可能在横幅与真正答案之间停顿：
-//     `openclaw config file` 会先打印 Doctor 警告 UI（见 MUL-3136），在那里掐掉
+//     `forking CLI config file` 会先打印 Doctor 警告 UI（见 MUL-3136），在那里掐掉
 //     拿到的是横幅而不是路径。这条规则承担了全部区分工作：review 曾用"本身就是
 //     路径的警告行"打穿"按形状判断路径"的规则，所以规则必须是 CLI 答案前的输出
 //     根本无法满足的那种。
@@ -117,13 +117,13 @@ func JSONOutputComplete(stdout []byte) bool {
 //     collectReapWindow + collectSettleGrace"内返回。
 //  2. 返回前会向仍留在首进程进程组里的后代发信号，并且信号在 collectReapWindow
 //     内重复发送，让"恰好 fork 到一半"的后代逃不掉。已离开进程组的后代在 Unix 上
-//     就够不着了——OpenClaw 的 helper 实测有自己的 PGID 与 SID——所以保证 1 不
+//     就够不着了——forking CLI 的 helper 实测有自己的 PGID 与 SID——所以保证 1 不
 //     依赖这次 kill 打没打中。Windows 不同：Job Object 拥有整棵树，与组无关。
 //  3. 只要还有东西可能正在写输出，就不抛弃输出：直接子进程退出后，除非 `complete`
 //     说答案已在，否则继续等管道 EOF。仅"首进程退出"不算完成。
 //  4. 保留有界——答案按 collectStdoutLimit（溢出会上报而不是静默截断），诊断样本
 //     按 collectStderrTail 留尾部。
-//  5. 如实报告命令真实退出状态——openclawShimDiagnostic 依赖它（它做
+//  5. 如实报告命令真实退出状态——forking CLIShimDiagnostic 依赖它（它做
 //     *exec.ExitError 的类型分支）。
 //
 // 只把整个输出是短一次性响应的命令交给它。任何增量流式输出的东西（agent 执行）

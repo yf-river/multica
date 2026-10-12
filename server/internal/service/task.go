@@ -26,7 +26,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/chattitle"
-	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
@@ -44,7 +43,7 @@ import (
 )
 
 // TaskService 聚合任务队列全部业务操作（入队、认领、推进状态、取消、完成/失败收尾等）。
-// 依赖多为可选注入：Entitlements / SourceContextStorage / FeatureFlags / EmptyClaim / ReclaimCheck /
+// 依赖多为可选注入：SourceContextStorage / FeatureFlags / EmptyClaim / ReclaimCheck /
 // Composio / QuickActions 为 nil 时对应能力自动降级（见各字段说明），便于自托管与单测。
 type TaskService struct {
 	// Queries 生成代码的数据库查询句柄；普通路径直用，事务内改用事务句柄 qtx。
@@ -61,9 +60,8 @@ type TaskService struct {
 	Metrics *obsmetrics.BusinessMetrics
 	// Wakeup 通知守护进程“可能有可认领任务”；nil 表示不通知。
 	Wakeup TaskWakeupNotifier
-	// Entitlements 提供 Cloud 版按工作区限制 issue 数量的能力。
+	// restricted action 提供 Cloud 版按工作区限制 issue 数量的能力。
 	// nil 表示自托管与隔离测试服务不设上限。
-	Entitlements entitlement.Provider
 	// SourceContextStorage 仅用于对终态 quick-create 快照做有界 30 天清理。
 	// nil 表示没有存储、禁用该清理。
 	SourceContextStorage SourceContextObjectStore
@@ -1440,9 +1438,6 @@ func (s *TaskService) EnqueueQuickCreateTaskWithSourceContext(ctx context.Contex
 // JSONB；若带源上下文捕获，则在同一事务内锁定源 issue 与锚点评论、核对上下文指纹未变后再插任务并持久化
 // 捕获；否则直接插任务并记录 queued 事件。提交后发布事件并唤醒 daemon。
 func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, capture *SourceContextCapture) (db.AgentTaskQueue, error) {
-	if err := CheckIssueCreateCapacity(ctx, s.Queries, s.Entitlements, workspaceID); err != nil {
-		return db.AgentTaskQueue{}, fmt.Errorf("preflight quick-create issue capacity: %w", err)
-	}
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
@@ -1505,7 +1500,7 @@ func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, r
 		ID:                   taskID,
 		AgentID:              agentID,
 		RuntimeID:            agent.RuntimeID,
-		Priority:             priorityToInt("high"),
+		Priority:             3,
 		Context:              contextJSON,
 		OriginatorUserID:     requesterID,
 		AccountableUserID:    attr.AccountableUserID,
@@ -1608,9 +1603,6 @@ func (s *TaskService) RetrySourceContextQuickCreate(ctx context.Context, workspa
 	}
 	if canInvoke != nil && !canInvoke(agent) {
 		return nil, ErrRerunInvokeNotAllowed
-	}
-	if err := CheckIssueCreateCapacity(ctx, s.Queries, s.Entitlements, workspaceID); err != nil {
-		return nil, fmt.Errorf("preflight quick-create issue capacity: %w", err)
 	}
 	overlay := s.buildRuntimeMCPOverlay(ctx, requesterID, agent)
 
@@ -6734,16 +6726,16 @@ func computeChatElapsedMs(task db.AgentTaskQueue) pgtype.Int8 {
 	return pgtype.Int8{Int64: ms, Valid: true}
 }
 
-// priorityToInt 把字符串优先级映射为任务行整数值（urgent=4 … low=1，未知=0）。
+// priorityToInt 把 issue 的四象限映射为任务行整数值，保证紧急且重要的任务先执行。
 func priorityToInt(p string) int32 {
 	switch p {
-	case "urgent":
+	case "important_urgent":
 		return 4
-	case "high":
+	case "important_not_urgent":
 		return 3
-	case "medium":
+	case "not_important_urgent":
 		return 2
-	case "low":
+	case "not_important_not_urgent":
 		return 1
 	default:
 		return 0

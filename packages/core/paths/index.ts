@@ -43,5 +43,6 @@ export {
   useRequiredWorkspaceSlug,
   useCurrentWorkspace,
   useWorkspacePaths,
+  useIssuePaths,
 } from "./hooks";
 export { useWorkspaceId } from "../hooks";

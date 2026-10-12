@@ -85,20 +85,6 @@ type AutopilotResponse struct {
 	CanManageAccess *bool `json:"can_manage_access,omitempty"`
 }
 
-// AutopilotQuotaUsageResponse 是配额用量端点响应。
-type AutopilotQuotaUsageResponse struct {
-	Action        string           `json:"action"`
-	Used          *int64           `json:"used"`
-	Reserved      *int64           `json:"reserved"`
-	Total         *int64           `json:"total"`
-	Limit         *int64           `json:"limit"`
-	Reached       *bool            `json:"reached"`
-	PeriodStart   *string          `json:"period_start"`
-	PeriodEnd     *string          `json:"period_end"`
-	ResetAt       *string          `json:"reset_at"`
-	BlockedCounts map[string]int64 `json:"blocked_counts"`
-}
-
 // AutopilotCollaboratorEntry 是被显式授予某规则写权限的成员，出现在详情响应与
 // 协作者端点上。
 type AutopilotCollaboratorEntry struct {
@@ -2282,20 +2268,8 @@ func (h *Handler) TriggerAutopilot(w http.ResponseWriter, r *http.Request) {
 	}
 	run, reasonCode, err := h.AutopilotService.DispatchAutopilotManualWithKey(r.Context(), autopilot, pgtype.UUID{}, nil, memberActorUserID(actorType, actorID), idempotencyKey)
 	if err != nil {
-		var quotaErr *service.AutopilotQuotaExceededError
-		if errors.As(err, &quotaErr) {
-			retryAfter := int64(time.Until(quotaErr.ResetAt).Seconds())
-			if retryAfter < 1 {
-				retryAfter = 1
-			}
-			w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
-			writeJSON(w, http.StatusTooManyRequests, map[string]any{
-				"reason_code": "quota_exceeded", "used": quotaErr.Used,
-				"reserved": quotaErr.Reserved, "limit": quotaErr.Limit,
-				"reset_at": quotaErr.ResetAt.UTC().Format(time.RFC3339),
-			})
-			return
-		}
+		// 运行失败统一记录日志；错误链带着 pgx 约束/表名与内部 id。
+		// 任何工作区成员都能点「立即运行」，细节只进日志，响应固定为 5xx。
 		// 配额分支之后的都是未分类的内部失败，错误链带着 pgx 约束/表名与内部 id。
 		// 任何工作区成员都能点「立即运行」，所以细节只进日志，响应与文件其余部分
 		// 一样是固定的 5xx 字符串（MUL-6472）。
@@ -2313,42 +2287,6 @@ func (h *Handler) TriggerAutopilot(w http.ResponseWriter, r *http.Request) {
 	if reasonCode != "" {
 		c := string(reasonCode)
 		resp.ReasonCode = &c
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-// GetAutopilotQuotaUsage 暴露 Cloud 提供的区间事实（used/reserved/limit/周期）
-// 加上服务端持有的持久 blocked 计数。门控关闭或畸形时，service 在任何 quota
-// 表读取之前就返回。
-func (h *Handler) GetAutopilotQuotaUsage(w http.ResponseWriter, r *http.Request) {
-	workspaceID, err := util.ParseUUID(h.resolveWorkspaceID(r))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid workspace")
-		return
-	}
-	usage, err := h.AutopilotService.AutopilotQuotaUsage(r.Context(), workspaceID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load autopilot quota usage")
-		return
-	}
-	resp := AutopilotQuotaUsageResponse{Action: "off"}
-	if usage.Enabled {
-		resp.Action = usage.Action
-		resp.Used, resp.Reserved, resp.Total = usage.Used, usage.Reserved, usage.Total
-		resp.Limit, resp.Reached = usage.Limit, usage.Reached
-		resp.BlockedCounts = usage.BlockedCounts
-		if usage.PeriodStart != nil {
-			v := usage.PeriodStart.UTC().Format(time.RFC3339)
-			resp.PeriodStart = &v
-		}
-		if usage.PeriodEnd != nil {
-			v := usage.PeriodEnd.UTC().Format(time.RFC3339)
-			resp.PeriodEnd = &v
-		}
-		if usage.ResetAt != nil {
-			v := usage.ResetAt.UTC().Format(time.RFC3339)
-			resp.ResetAt = &v
-		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

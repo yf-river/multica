@@ -1,5 +1,8 @@
+import { MealsSchema, mealWire, type MealsData, type MealCommand } from "../meals/schema";
+import { CookingListSchema, CookingDetailSchema, CookingCategoriesSchema, type CookingList, type CookingDetail, type CookingCategory } from "../cooking/schema";
 import { HealthOverviewSchema, HealthReportsSchema, HealthRevisionsSchema, HealthReportSchema, HealthReceiptSchema, EMPTY_HEALTH, observationWire, type HealthOverview, type HealthReport, type HealthProfile, type HealthObservation, type HealthRevision } from "../health/schema";
 import { HealthReportHistorySchema, type HealthExtraction } from "../health/schema";
+import { environmentCookieName } from "../platform/environment";
 // 本文件是核心 HTTP API 客户端：封装一个针对后端的 fetch 层。
 // 统一处理鉴权头（token / workspace / CSRF / 客户端身份）、请求 ID、401 未授权回调、
 // 结构化错误（ApiError）解析与日志；业务方法拿到响应后大多用 zod schema 校验，
@@ -142,7 +145,6 @@ import type {
   Autopilot,
   AutopilotTrigger,
   AutopilotRun,
-  AutopilotQuotaUsage,
   CreateAutopilotRequest,
   UpdateAutopilotRequest,
   CreateAutopilotTriggerRequest,
@@ -204,26 +206,6 @@ import type {
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
-  BillingBalance,
-  BillingTransactionsPage,
-  BillingBatchesPage,
-  BillingTopupsPage,
-  BillingPriceTier,
-  CreateBillingCheckoutSessionRequest,
-  CreateBillingCheckoutSessionResponse,
-  BillingCheckoutSessionStatus,
-  CreateBillingPortalSessionResponse,
-  WorkspaceSubscriptionSummary,
-  IssueLimitUsage,
-  WorkspaceSubscriptionPrices,
-  CreateWorkspaceSubscriptionCheckoutRequest,
-  CreateWorkspaceSubscriptionCheckoutResponse,
-  WorkspaceSubscriptionSeatReconcileResult,
-  PreviewWorkspaceSeatPurchaseRequest,
-  WorkspaceSeatPurchasePreview,
-  PurchaseWorkspaceSeatsRequest,
-  PurchaseWorkspaceSeatsResponse,
-  CreateWorkspaceSubscriptionPortalResponse,
   SourceContextPreview,
   CreateCommentSubIssueManualRequest,
   CreateCommentSubIssueAgentRequest,
@@ -255,11 +237,6 @@ import type {
   LifeUpgradeEvaluationListResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
-import type {
-  CreateFeedbackResponse,
-  FeedbackContext,
-  FeedbackKind,
-} from "../feedback/types";
 import type {
   CloudRuntimeNode,
   CreateCloudRuntimeNodeRequest,
@@ -341,7 +318,6 @@ import {
   ListAutopilotsResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   AutopilotRunSchema,
-  AutopilotQuotaUsageSchema,
   FALLBACK_AUTOPILOT_RUN,
   CronPreviewResponseSchema,
   UNREADABLE_CRON_PREVIEW_RESPONSE,
@@ -365,22 +341,6 @@ import {
   TimelineEntriesSchema,
   UserSchema,
   WebhookDeliveryResponseSchema,
-  BillingBalanceSchema,
-  BillingTransactionsPageSchema,
-  BillingBatchesPageSchema,
-  BillingTopupsPageSchema,
-  BillingPriceTierListSchema,
-  CreateBillingCheckoutSessionResponseSchema,
-  BillingCheckoutSessionStatusSchema,
-  CreateBillingPortalSessionResponseSchema,
-  WorkspaceSubscriptionSummarySchema,
-  IssueLimitUsageSchema,
-  WorkspaceSubscriptionPricesSchema,
-  CreateWorkspaceSubscriptionCheckoutResponseSchema,
-  WorkspaceSubscriptionSeatReconcileResultSchema,
-  WorkspaceSeatPurchasePreviewSchema,
-  PurchaseWorkspaceSeatsResponseSchema,
-  CreateWorkspaceSubscriptionPortalResponseSchema,
   DingTalkInstallationSchema,
   ListDingTalkInstallationsResponseSchema,
   ListDingTalkGroupsResponseSchema,
@@ -401,18 +361,8 @@ import {
   EMPTY_TELEGRAM_INSTALLATION,
   EMPTY_LIST_TELEGRAM_INSTALLATIONS_RESPONSE,
   EMPTY_REDEEM_TELEGRAM_BINDING_TOKEN_RESPONSE,
-  EMPTY_BILLING_BALANCE,
-  EMPTY_BILLING_TRANSACTIONS_PAGE,
-  EMPTY_BILLING_BATCHES_PAGE,
-  EMPTY_BILLING_TOPUPS_PAGE,
-  EMPTY_BILLING_PRICE_TIER_LIST,
-  EMPTY_CREATE_BILLING_CHECKOUT_SESSION_RESPONSE,
-  EMPTY_BILLING_CHECKOUT_SESSION_STATUS,
-  EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE,
   EMPTY_CANCEL_TASK_RESPONSE,
   EMPTY_CHAT_DRAFT_RESTORES,
-  CreateFeedbackResponseSchema,
-  EMPTY_CREATE_FEEDBACK_RESPONSE,
   InboxUnreadSummarySchema,
   EMPTY_INBOX_UNREAD_SUMMARY,
   InboxItemListSchema,
@@ -548,6 +498,7 @@ export interface ApiClientIdentity {
 
 /** 创建 ApiClient 的可选配置。 */
 export interface ApiClientOptions {
+  environmentId?: string;
   logger?: Logger;
   onUnauthorized?: () => void;
   /** 标识客户端身份，会作为 X-Client-* 请求头发送。 */
@@ -784,7 +735,7 @@ export class ApiClient {
     if (typeof document === "undefined") return null;
     const match = document.cookie
       .split("; ")
-      .find((c) => c.startsWith("multica_csrf="));
+      .find((c) => c.startsWith(`${environmentCookieName("multica_csrf", this.options.environmentId)}=`));
     return match ? match.split("=")[1] ?? null : null;
   }
 
@@ -876,6 +827,34 @@ export class ApiClient {
   }
 
   // 类型化 GET/POST 便捷方法：默认带 JSON Content-Type；204 时返回 undefined。
+  async meals(): Promise<MealsData> {
+    const endpoint = "/api/meals";
+    const value = parseWithFallback(await this.fetch<unknown>(endpoint), MealsSchema, null as MealsData | null, { endpoint, sensitive: true });
+    if (!value) throw new Error("饮食响应无效，请重试");
+    return value;
+  }
+  async mealAction(command: MealCommand): Promise<MealsData> {
+    const endpoint = "/api/meals/actions";
+    const value = parseWithFallback(await this.fetch<unknown>(endpoint, { method: "POST", body: JSON.stringify(mealWire(command)) }), MealsSchema, null as MealsData | null, { endpoint, sensitive: true });
+    if (!value) throw new Error("饮食保存回执无效，请刷新后检查");
+    return value;
+  }
+  async cookingList(section: string, query: string): Promise<CookingList | null> {
+    const endpoint = `/api/cooking/${section}?${query}`;
+    return parseWithFallback(await this.fetch<unknown>(endpoint), CookingListSchema, null as CookingList | null, { endpoint });
+  }
+  async cookingDetail(kind: string, id: string): Promise<CookingDetail | null> {
+    const endpoint = `/api/cooking/${kind}/${encodeURIComponent(id)}`;
+    return parseWithFallback(await this.fetch<unknown>(endpoint), CookingDetailSchema, null as CookingDetail | null, { endpoint });
+  }
+  async cookingCategories(): Promise<CookingCategory[]> {
+    const endpoint = "/api/cooking/categories";
+    return parseWithFallback(await this.fetch<unknown>(endpoint), CookingCategoriesSchema, [] as CookingCategory[], { endpoint });
+  }
+  async cookingFavorite(id: string, favorite: boolean): Promise<void> {
+    await this.fetch<unknown>(`/api/cooking/favorites/${encodeURIComponent(id)}`, { method: favorite ? "PUT" : "DELETE" });
+  }
+
   private async fetch<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await this.fetchRaw(path, {
       ...init,
@@ -1297,23 +1276,6 @@ export class ApiClient {
     }
   }
 
-  /** 提交用户反馈。 */
-  async createFeedback(data: {
-    message: string;
-    url?: string;
-    workspace_id?: string;
-    kind?: FeedbackKind;
-    context?: FeedbackContext;
-  }): Promise<CreateFeedbackResponse> {
-    const raw = await this.fetch<unknown>("/api/feedback", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, CreateFeedbackResponseSchema, EMPTY_CREATE_FEEDBACK_RESPONSE, {
-      endpoint: "POST /api/feedback",
-    });
-  }
-
   /** 上报一次客户端使用情况（安装 id + 运行环境快照）。 */
   async upsertClientUsage(data: ClientUsageRequest): Promise<void> {
     await this.fetch("/api/client-usage", {
@@ -1323,16 +1285,18 @@ export class ApiClient {
   }
 
   /** 整体更新议题字段。 */
-  async updateIssue(id: string, data: UpdateIssueRequest): Promise<Issue> {
+  async updateIssue(id: string, data: UpdateIssueRequest, workspaceSlug?: string): Promise<Issue> {
     return this.fetch(`/api/issues/${id}`, {
+      headers: workspaceHeader(workspaceSlug),
       method: "PUT",
       body: JSON.stringify(data),
     });
   }
 
   /** 移动议题（改状态/列）。 */
-  async moveIssue(id: string, data: MoveIssueRequest): Promise<Issue> {
+  async moveIssue(id: string, data: MoveIssueRequest, workspaceSlug?: string): Promise<Issue> {
     return this.fetch(`/api/issues/${id}/move`, {
+      headers: workspaceHeader(workspaceSlug),
       method: "POST",
       body: JSON.stringify(data),
     });
@@ -1371,34 +1335,24 @@ export class ApiClient {
     );
   }
 
-  /** 查询当前 workspace 的议题数配额使用情况；无返回时给 null。 */
-  async getIssueLimitUsage(): Promise<IssueLimitUsage | null> {
-    const raw = await this.fetch<unknown>("/api/issues/limit-usage");
-    if (raw == null) return null;
-    return parseWithFallback<IssueLimitUsage | null>(
-      raw,
-      IssueLimitUsageSchema,
-      null,
-      { endpoint: "GET /api/issues/limit-usage" },
-    );
-  }
-
   /** 删除单个议题。 */
-  async deleteIssue(id: string): Promise<void> {
-    await this.fetch(`/api/issues/${id}`, { method: "DELETE" });
+  async deleteIssue(id: string, workspaceSlug?: string): Promise<void> {
+    await this.fetch(`/api/issues/${id}`, { method: "DELETE", headers: workspaceHeader(workspaceSlug) });
   }
 
   /** 批量更新多个议题（同一组字段变更）。 */
-  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<{ updated: number }> {
+  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest, workspaceSlug?: string): Promise<{ updated: number }> {
     return this.fetch("/api/issues/batch-update", {
+      headers: workspaceHeader(workspaceSlug),
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds, updates }),
     });
   }
 
   /** 批量删除多个议题。 */
-  async batchDeleteIssues(issueIds: string[]): Promise<{ deleted: number }> {
+  async batchDeleteIssues(issueIds: string[], workspaceSlug?: string): Promise<{ deleted: number }> {
     return this.fetch("/api/issues/batch-delete", {
+      headers: workspaceHeader(workspaceSlug),
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds }),
     });
@@ -1840,286 +1794,6 @@ export class ApiClient {
       body: JSON.stringify({ instance_id: instanceId }),
       extraHeaders: { "Content-Type": "application/json" },
     });
-  }
-
-  // ---------------------------------------------------------------------
-  // Cloud Billing — 代理到 multica-cloud 的 /api/v1/billing/*。由
-  // multica-api 服务器盖 X-User-ID 后转发字节；此处形状与上游一致。
-  // 响应字段说明见 packages/core/types/billing.ts。
-  // ---------------------------------------------------------------------
-
-  /** 查询云计费余额。 */
-  async getCloudBillingBalance(): Promise<BillingBalance> {
-    const raw = await this.fetch<unknown>("/api/cloud-billing/balance");
-    return parseWithFallback(raw, BillingBalanceSchema, EMPTY_BILLING_BALANCE, {
-      endpoint: "GET /api/cloud-billing/balance",
-    });
-  }
-
-  /** 分页查询云计费流水（transactions）。 */
-  async listCloudBillingTransactions(
-    params?: { page?: number; page_size?: number },
-  ): Promise<BillingTransactionsPage> {
-    const search = new URLSearchParams();
-    if (params?.page !== undefined) search.set("page", String(params.page));
-    if (params?.page_size !== undefined) search.set("page_size", String(params.page_size));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(
-      `/api/cloud-billing/transactions${query ? `?${query}` : ""}`,
-    );
-    return parseWithFallback(
-      raw,
-      BillingTransactionsPageSchema,
-      EMPTY_BILLING_TRANSACTIONS_PAGE,
-      { endpoint: "GET /api/cloud-billing/transactions" },
-    );
-  }
-
-  /** 分页查询云计费批次（batches）。 */
-  async listCloudBillingBatches(
-    params?: { page?: number; page_size?: number },
-  ): Promise<BillingBatchesPage> {
-    const search = new URLSearchParams();
-    if (params?.page !== undefined) search.set("page", String(params.page));
-    if (params?.page_size !== undefined) search.set("page_size", String(params.page_size));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(
-      `/api/cloud-billing/batches${query ? `?${query}` : ""}`,
-    );
-    return parseWithFallback(
-      raw,
-      BillingBatchesPageSchema,
-      EMPTY_BILLING_BATCHES_PAGE,
-      { endpoint: "GET /api/cloud-billing/batches" },
-    );
-  }
-
-  /** 分页查询云计费充值记录（topups）。 */
-  async listCloudBillingTopups(
-    params?: { page?: number; page_size?: number },
-  ): Promise<BillingTopupsPage> {
-    const search = new URLSearchParams();
-    if (params?.page !== undefined) search.set("page", String(params.page));
-    if (params?.page_size !== undefined) search.set("page_size", String(params.page_size));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(
-      `/api/cloud-billing/topups${query ? `?${query}` : ""}`,
-    );
-    return parseWithFallback(
-      raw,
-      BillingTopupsPageSchema,
-      EMPTY_BILLING_TOPUPS_PAGE,
-      { endpoint: "GET /api/cloud-billing/topups" },
-    );
-  }
-
-  /** 列出云计费价格档位（用于页面展示价目）。 */
-  async listCloudBillingPriceTiers(): Promise<BillingPriceTier[]> {
-    const raw = await this.fetch<unknown>("/api/cloud-billing/price-tiers");
-    return parseWithFallback(
-      raw,
-      BillingPriceTierListSchema,
-      EMPTY_BILLING_PRICE_TIER_LIST,
-      { endpoint: "GET /api/cloud-billing/price-tiers" },
-    );
-  }
-
-  /** 创建一次云计费 checkout 会话（引导用户去 Stripe 付款）。 */
-  async createCloudBillingCheckoutSession(
-    data: CreateBillingCheckoutSessionRequest,
-  ): Promise<CreateBillingCheckoutSessionResponse> {
-    const res = await this.fetchRaw("/api/cloud-billing/checkout-sessions", {
-      method: "POST",
-      body: JSON.stringify(data),
-      extraHeaders: { "Content-Type": "application/json" },
-    });
-    const raw = (await res.json()) as unknown;
-    return parseWithFallback(
-      raw,
-      CreateBillingCheckoutSessionResponseSchema,
-      EMPTY_CREATE_BILLING_CHECKOUT_SESSION_RESPONSE,
-      { endpoint: "POST /api/cloud-billing/checkout-sessions" },
-    );
-  }
-
-  /** 查询一次 cloud billing checkout 会话的最新状态。 */
-  async getCloudBillingCheckoutSession(
-    sessionId: string,
-  ): Promise<BillingCheckoutSessionStatus> {
-    // Stripe 会话 id 形如 `cs_<base62>`，天然 URL 安全；encodeURIComponent
-    // 只是防未来 Stripe 改格式引入非字母数字字符的防御。服务器端另有
-    // 对不安全 id 的允许列表拒绝逻辑。
-    const raw = await this.fetch<unknown>(
-      `/api/cloud-billing/checkout-sessions/${encodeURIComponent(sessionId)}`,
-    );
-    return parseWithFallback(
-      raw,
-      BillingCheckoutSessionStatusSchema,
-      EMPTY_BILLING_CHECKOUT_SESSION_STATUS,
-      { endpoint: "GET /api/cloud-billing/checkout-sessions/{sessionId}" },
-    );
-  }
-
-  /** 创建进入计费后台（billing portal）的会话。 */
-  async createCloudBillingPortalSession(): Promise<CreateBillingPortalSessionResponse> {
-    const res = await this.fetchRaw("/api/cloud-billing/portal-sessions", {
-      method: "POST",
-      // 故意不带 body——上游端点目前不要求任何负载。fetchRaw 无 body 时会
-      // 跳过默认的 Content-Type，这没问题，因为本来就没什么要声明的。
-    });
-    const raw = (await res.json()) as unknown;
-    return parseWithFallback(
-      raw,
-      CreateBillingPortalSessionResponseSchema,
-      EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE,
-      { endpoint: "POST /api/cloud-billing/portal-sessions" },
-    );
-  }
-
-  // ---------------------------------------------------------------------
-  // Workspace 订阅——服务器从已鉴权的请求上下文解析 workspace，因此调用方
-  // 不需要显式指定。
-  //
-  // 两种不同的失败路径，调用方都必须渲染为「不可用」，且两者都不能显示成
-  // Free（免费档）：
-  //
-  //   - 非 2xx（旧云没有该路由、403、503）会从 fetch 抛出 ApiError，
-  //     React Query 调用方据此看到 isError；
-  //   - 2xx 但响应体不符合契约时，此处返回 null。
-  // ---------------------------------------------------------------------
-
-  /** 查询 workspace 订阅概要；不可解析时返回 null（而非伪装的 Free）。 */
-  async getWorkspaceSubscriptionSummary(): Promise<WorkspaceSubscriptionSummary | null> {
-    const raw = await this.fetch<unknown>("/api/cloud-subscriptions/summary");
-    return parseWithFallback<WorkspaceSubscriptionSummary | null>(
-      raw,
-      WorkspaceSubscriptionSummarySchema,
-      null,
-      { endpoint: "GET /api/cloud-subscriptions/summary" },
-    );
-  }
-
-  /** 查询 workspace 订阅的各档价格；不可解析时返回 null。 */
-  async getWorkspaceSubscriptionPrices(): Promise<WorkspaceSubscriptionPrices | null> {
-    const raw = await this.fetch<unknown>("/api/cloud-subscriptions/prices");
-    return parseWithFallback<WorkspaceSubscriptionPrices | null>(
-      raw,
-      WorkspaceSubscriptionPricesSchema,
-      null,
-      { endpoint: "GET /api/cloud-subscriptions/prices" },
-    );
-  }
-
-  /** 为 workspace 订阅创建 checkout 会话；不可解析时返回 null。 */
-  async createWorkspaceSubscriptionCheckout(
-    data: CreateWorkspaceSubscriptionCheckoutRequest,
-  ): Promise<CreateWorkspaceSubscriptionCheckoutResponse | null> {
-    const res = await this.fetchRaw(
-      "/api/cloud-subscriptions/checkout-sessions",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          interval: data.interval,
-          idempotency_key: data.idempotencyKey,
-        }),
-        extraHeaders: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": data.idempotencyKey,
-        },
-      },
-    );
-    const raw = (await res.json()) as unknown;
-    return parseWithFallback<CreateWorkspaceSubscriptionCheckoutResponse | null>(
-      raw,
-      CreateWorkspaceSubscriptionCheckoutResponseSchema,
-      null,
-      { endpoint: "POST /api/cloud-subscriptions/checkout-sessions" },
-    );
-  }
-
-  /** 触发一次座位（seat）对账；不可解析时返回 null。 */
-  async reconcileWorkspaceSubscriptionSeats(): Promise<
-    WorkspaceSubscriptionSeatReconcileResult | null
-  > {
-    const res = await this.fetchRaw("/api/cloud-subscriptions/seats/reconcile", {
-      method: "POST",
-    });
-    const raw = (await res.json()) as unknown;
-    return parseWithFallback<WorkspaceSubscriptionSeatReconcileResult | null>(
-      raw,
-      WorkspaceSubscriptionSeatReconcileResultSchema,
-      null,
-      { endpoint: "POST /api/cloud-subscriptions/seats/reconcile" },
-    );
-  }
-
-  /** 预演一次额外座位购买：返回费用预估与需接受的按比例折算金额。 */
-  async previewWorkspaceSeatPurchase(
-    data: PreviewWorkspaceSeatPurchaseRequest,
-  ): Promise<WorkspaceSeatPurchasePreview | null> {
-    const res = await this.fetchRaw(
-      "/api/cloud-subscriptions/seats/purchase-preview",
-      {
-        method: "POST",
-        body: JSON.stringify({ additional_seats: data.additionalSeats }),
-        extraHeaders: { "Content-Type": "application/json" },
-      },
-    );
-    const raw = (await res.json()) as unknown;
-    return parseWithFallback<WorkspaceSeatPurchasePreview | null>(
-      raw,
-      WorkspaceSeatPurchasePreviewSchema,
-      null,
-      { endpoint: "POST /api/cloud-subscriptions/seats/purchase-preview" },
-    );
-  }
-
-  /** 实际购买额外座位（按预估结果提交，携带版本号与幂等键）。 */
-  async purchaseWorkspaceSeats(
-    data: PurchaseWorkspaceSeatsRequest,
-  ): Promise<PurchaseWorkspaceSeatsResponse | null> {
-    const res = await this.fetchRaw(
-      "/api/cloud-subscriptions/seats/purchases",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          additional_seats: data.additionalSeats,
-          expected_current_seats: data.expectedCurrentSeats,
-          expected_purchase_version: data.expectedPurchaseVersion,
-          accepted_proration_amount: data.acceptedProrationAmount,
-          currency: data.currency,
-          idempotency_key: data.idempotencyKey,
-        }),
-        extraHeaders: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": data.idempotencyKey,
-        },
-      },
-    );
-    const raw = (await res.json()) as unknown;
-    return parseWithFallback<PurchaseWorkspaceSeatsResponse | null>(
-      raw,
-      PurchaseWorkspaceSeatsResponseSchema,
-      null,
-      { endpoint: "POST /api/cloud-subscriptions/seats/purchases" },
-    );
-  }
-
-  /** 创建进入 workspace 订阅管理后台（portal）的会话。 */
-  async createWorkspaceSubscriptionPortal(
-    idempotencyKey: string,
-  ): Promise<CreateWorkspaceSubscriptionPortalResponse | null> {
-    const res = await this.fetchRaw("/api/cloud-subscriptions/portal-sessions", {
-      method: "POST",
-      extraHeaders: { "Idempotency-Key": idempotencyKey },
-    });
-    const raw = (await res.json()) as unknown;
-    return parseWithFallback<CreateWorkspaceSubscriptionPortalResponse | null>(
-      raw,
-      CreateWorkspaceSubscriptionPortalResponseSchema,
-      null,
-      { endpoint: "POST /api/cloud-subscriptions/portal-sessions" },
-    );
   }
 
   /** 直接删除 runtime；若上面还绑着活跃 agent，服务器会返回结构化 409。 */
@@ -3659,13 +3333,17 @@ export class ApiClient {
       agent_id: string;
       title?: string;
       project_id?: string | null;
+      reuse_existing?: boolean;
     },
     workspaceSlug?: string,
   ): Promise<ChatSession> {
-    return this.fetch("/api/chat/sessions", {
+    const raw: unknown = await this.fetch("/api/chat/sessions", {
       method: "POST",
       headers: workspaceHeader(workspaceSlug),
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, {
+      endpoint: "POST /api/chat/sessions",
     });
   }
 
@@ -4639,29 +4317,6 @@ export class ApiClient {
     });
   }
 
-  /** 查询 autopilot 的配额用量（本周期可运行次数等）。 */
-  async getAutopilotQuotaUsage(): Promise<AutopilotQuotaUsage> {
-    const raw = await this.fetch<unknown>("/api/autopilots/usage");
-    return parseWithFallback(
-      raw,
-      AutopilotQuotaUsageSchema,
-      {
-        action: "off",
-        used: null,
-        reserved: null,
-        total: null,
-        limit: null,
-        reached: null,
-        period_start: null,
-        period_end: null,
-        reset_at: null,
-        blocked_counts: null,
-      },
-      { endpoint: "GET /api/autopilots/usage" },
-    );
-  }
-
-  /** 分页列出某 autopilot 的历史运行记录（列表为精简字段）。 */
   async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<ListAutopilotRunsResponse> {
     const search = new URLSearchParams();
     if (params?.limit) search.set("limit", params.limit.toString());
@@ -4691,6 +4346,8 @@ export class ApiClient {
       body: JSON.stringify(data),
     });
   }
+
+  /** 删除 autopilot 触发器。 */
 
   /** 删除 autopilot 触发器。 */
   async deleteAutopilotTrigger(autopilotId: string, triggerId: string): Promise<void> {

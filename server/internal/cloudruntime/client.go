@@ -203,8 +203,6 @@ func inferCloudRuntimeOp(op, method, path string) string {
 		return op
 	}
 	switch {
-	case strings.Contains(path, "/billing"):
-		return "billing"
 	case strings.Contains(path, "/gateway") || strings.Contains(path, "/proxy"):
 		return "gateway"
 	case strings.Contains(path, "/exec"):

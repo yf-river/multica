@@ -130,7 +130,7 @@ const modelCacheTTL = 60 * time.Second
 
 // ListModels 返回给定 agent 提供方支持的模型。
 // 对有已知静态目录的提供方直接返回内置列表；对有 CLI 发现机制的提供方（codex、opencode、pi、
-// openclaw 等）会带缓存地拉起子进程去查，并在提供方存在安全静态目录时失败兜底。
+// forking CLI 等）会带缓存地拉起子进程去查，并在提供方存在安全静态目录时失败兜底。
 //
 // 对 claude、codex、opencode、pi、kimi，返回的目录还会附上从本地 CLI 发现的、按模型区分的
 // thinking 档位。Codex 发现失败会退回一份“模型+thinking 快照”；没有安全兜底的提供方则把
@@ -339,7 +339,7 @@ func QualifyModelID(catalog Catalog, model string) (string, bool) {
 // ModelSelectionSupported 报告对给定 provider 设置 `agent.model` 是否真的起作用。现在每个
 // 内置 provider 都会端到端遵守 `opts.Model`——Hermes 在每次 prompt 前通过 ACP
 // `session/set_model` RPC 路由它；Claude / Codex / Cursor / Gemini / Copilot / Kimi / Reasonix /
-// Kiro / OpenCode / OpenClaw / Pi / Antigravity 则通过 flag 或会话配置传递（Antigravity 在
+// Kiro / OpenCode / forking CLI / Pi / Antigravity 则通过 flag 或会话配置传递（Antigravity 在
 // agy 1.0.6 才支持 `--model`——MUL-3125）。
 //
 // 这里保留成一个钩子（而不是在调用点直接内联 `true`），是为了让“没有模型概念的运行时”能在

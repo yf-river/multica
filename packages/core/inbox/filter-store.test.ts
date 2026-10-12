@@ -41,9 +41,9 @@ function item(
 }
 
 const ITEMS = [
-  item("todo-high", "todo", "high"),
-  item("todo-low", "todo", "low"),
-  item("done-high", "done", "high"),
+  item("todo-high", "todo", "important_not_urgent"),
+  item("todo-low", "todo", "not_important_not_urgent"),
+  item("done-high", "done", "important_not_urgent"),
   item("system", null, null),
 ];
 
@@ -61,7 +61,7 @@ describe("filterInboxItems", () => {
       filterInboxItems(ITEMS, {
         ...EMPTY_INBOX_FILTERS,
         statuses: ["todo", "done"],
-        priorities: ["high"],
+        priorities: ["important_not_urgent"],
       }).map((candidate) => candidate.id),
     ).toEqual(["todo-high", "done-high"]);
   });
@@ -70,7 +70,7 @@ describe("filterInboxItems", () => {
     expect(
       filterInboxItems(ITEMS, {
         ...EMPTY_INBOX_FILTERS,
-        priorities: ["high"],
+        priorities: ["important_not_urgent"],
       }).map((candidate) => candidate.id),
     ).toEqual(["todo-high", "done-high"]);
   });
@@ -79,7 +79,7 @@ describe("filterInboxItems", () => {
     const filters = {
       ...EMPTY_INBOX_FILTERS,
       statuses: ["todo"],
-      priorities: ["high"],
+      priorities: ["important_not_urgent"],
       actors: ["member:alice"],
       unreadOnly: true,
     } as const;
@@ -104,21 +104,21 @@ describe("actor filtering", () => {
   const bob = { actor_type: "agent" as const, actor_id: "bob" };
 
   it("keys members and agents on their id and collapses system into one bucket", () => {
-    expect(inboxActorKey(item("a", "todo", "high", alice))).toBe("member:alice");
-    expect(inboxActorKey(item("b", "todo", "high", bob))).toBe("agent:bob");
+    expect(inboxActorKey(item("a", "todo", "important_not_urgent", alice))).toBe("member:alice");
+    expect(inboxActorKey(item("b", "todo", "important_not_urgent", bob))).toBe("agent:bob");
     expect(
       inboxActorKey(
-        item("c", "todo", "high", { actor_type: "system", actor_id: null }),
+        item("c", "todo", "important_not_urgent", { actor_type: "system", actor_id: null }),
       ),
     ).toBe("system");
-    expect(inboxActorKey(item("d", "todo", "high"))).toBeNull();
+    expect(inboxActorKey(item("d", "todo", "important_not_urgent"))).toBeNull();
   });
 
   it("matches the rendered row's actor, not one buried in its group", () => {
     // Alice commented, then Bob changed the status. Deduplication keeps Bob's
     // row, and that row shows Bob — so filtering by Alice must not return it,
     // or the list would answer "Alice" with Bob's avatar and Bob's wording.
-    const surviving = item("newest", "todo", "high", {
+    const surviving = item("newest", "todo", "important_not_urgent", {
       issue_id: "issue-1",
       ...bob,
     });
@@ -139,7 +139,7 @@ describe("actor filtering", () => {
 
   it("excludes a row that carries no attribution", () => {
     expect(
-      filterInboxItems([item("unattributed", "todo", "high")], {
+      filterInboxItems([item("unattributed", "todo", "important_not_urgent")], {
         ...EMPTY_INBOX_FILTERS,
         actors: ["member:alice"],
       }),
@@ -150,8 +150,8 @@ describe("actor filtering", () => {
 describe("unread filtering", () => {
   it("keeps unread rows and counts as one active filter", () => {
     const rows = [
-      item("unread", "todo", "high"),
-      item("read", "todo", "high", { read: true }),
+      item("unread", "todo", "important_not_urgent"),
+      item("read", "todo", "important_not_urgent", { read: true }),
     ];
     const filters = { ...EMPTY_INBOX_FILTERS, unreadOnly: true };
 
@@ -188,11 +188,11 @@ describe("useInboxFilterStore", () => {
   it("keeps filters isolated by workspace and clears one workspace only", () => {
     const store = useInboxFilterStore.getState();
     store.toggleStatusFilter("ws-1", "todo");
-    store.togglePriorityFilter("ws-2", "urgent");
+    store.togglePriorityFilter("ws-2", "important_urgent");
 
     expect(useInboxFilterStore.getState().filtersByWorkspace).toMatchObject({
       "ws-1": { statuses: ["todo"], priorities: [] },
-      "ws-2": { statuses: [], priorities: ["urgent"] },
+      "ws-2": { statuses: [], priorities: ["important_urgent"] },
     });
     expect(
       useInboxFilterStore.getState().filtersByWorkspace["ws-1"]?.unreadOnly,
@@ -209,7 +209,7 @@ describe("useInboxFilterStore", () => {
   it("clears only the unsupported priority dimension", () => {
     const store = useInboxFilterStore.getState();
     store.toggleStatusFilter("ws-1", "todo");
-    store.togglePriorityFilter("ws-1", "high");
+    store.togglePriorityFilter("ws-1", "important_not_urgent");
 
     useInboxFilterStore.getState().clearPriorityFilters("ws-1");
 
@@ -223,7 +223,7 @@ describe("useInboxFilterStore", () => {
     const store = useInboxFilterStore.getState();
     store.toggleActorFilter("ws-1", "member:alice");
     store.toggleUnreadOnly("ws-1");
-    store.togglePriorityFilter("ws-1", "high");
+    store.togglePriorityFilter("ws-1", "important_not_urgent");
 
     useInboxFilterStore.getState().clearPriorityFilters("ws-1");
 
@@ -235,7 +235,7 @@ describe("useInboxFilterStore", () => {
   });
 
   it("drops the workspace entry when clearing priority leaves nothing", () => {
-    useInboxFilterStore.getState().togglePriorityFilter("ws-1", "high");
+    useInboxFilterStore.getState().togglePriorityFilter("ws-1", "important_not_urgent");
 
     useInboxFilterStore.getState().clearPriorityFilters("ws-1");
 

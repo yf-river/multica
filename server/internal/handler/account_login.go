@@ -67,10 +67,10 @@ func accountPasswordValid(v string) bool {
 	return n >= 3
 }
 
-// accountPasswordLoginValid 仅校验登录时的密码长度（不查强度，避免
-// 历史弱密码账号无法登录）。
+// accountPasswordLoginValid 接受已有账号的非空密码，由存储的哈希验证身份。
+// 新账号的密码强度由 accountPasswordValid 单独校验。
 func accountPasswordLoginValid(v string) bool {
-	return len(v) >= 8 && len(v) <= 32
+	return len(v) > 0 && len(v) <= 32
 }
 
 // accountPasswordHash 用随机盐做 PBKDF2-SHA256，返回

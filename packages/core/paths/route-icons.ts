@@ -27,7 +27,9 @@ export type RouteIconName =
   | "Server"
   | "BookOpenText"
   | "Settings"
+  | "ChefHat"
   | "Activity"
+  | "Target"
   | "Heart"
   | "File"
   | "FileText"
@@ -53,7 +55,10 @@ export type NavLabelKey =
   | "runtimes"
   | "skills"
   | "settings"
+  | "cooking"
   | "health"
+  | "meals"
+  | "goals"
   | "life";
 
 /** 每个工作区导航页的稳定标识。 */
@@ -71,7 +76,10 @@ export type WorkspacePageKey =
   | "runtimes"
   | "skills"
   | "settings"
+  | "cooking"
   | "health"
+  | "meals"
+  | "goals"
   | "life";
 
 /** 一个工作区导航页的注册条目。 */
@@ -101,7 +109,10 @@ export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
   runtimes: { segment: "runtimes", icon: "Monitor", navKey: "runtimes" },
   skills: { segment: "skills", icon: "BookOpenText", navKey: "skills" },
   settings: { segment: "settings", icon: "Settings", navKey: "settings" },
+  cooking: { segment: "cooking", icon: "ChefHat", navKey: "cooking" },
   health: { segment: "health", icon: "Activity", navKey: "health" },
+  meals: { segment: "meals", icon: "ChefHat", navKey: "meals" },
+  goals: { segment: "goals", icon: "Target", navKey: "goals" },
   life: { segment: "life", icon: "Heart", navKey: "life" },
 };
 

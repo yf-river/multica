@@ -310,7 +310,8 @@ function IssueSurfaceContent({
           ) : (
             <IssueSurfaceSkeleton mode={controller.viewMode} />
           )
-        ) : controller.isEmpty || shouldShowClientEmpty ? (
+        ) : (controller.isEmpty || shouldShowClientEmpty) &&
+          !((scope.type === "workspace" || scope.type === "my") && controller.viewMode === "board") ? (
           // 被筛空的 surface 不等于空 surface。行数据其实存在、只是被筛选藏起来了时，
           // 声称「这里还没有问题」并推荐去创建一个是错的——而且这正是 agents 工作中的
           // chip 常把你丢进来的状态（MUL-5525）。这个分支刻意排在 `renderEmpty` 前面：
@@ -340,6 +341,7 @@ function IssueSurfaceContent({
             <Suspense fallback={<IssueSurfaceSkeleton mode={controller.viewMode} />}>
               {controller.viewMode === "board" && (
               <BoardView
+                backlogQuadrants={scope.type === "workspace" || scope.type === "my"}
                 issues={issues}
                 visibleStatuses={controller.visibleStatuses}
                 hiddenStatuses={controller.hiddenStatuses}

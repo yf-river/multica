@@ -30,8 +30,12 @@ export type IssueStatusCategory =
  */
 export type IssueStatus = IssueStatusCategory | (string & {});
 
-/** 议题优先级。 */
-export type IssuePriority = "urgent" | "high" | "medium" | "low" | "none";
+/** 议题安排四象限。字段名沿用 priority 以复用现有 API 和视图链路。 */
+export type IssuePriority =
+  | "important_urgent"
+  | "important_not_urgent"
+  | "not_important_urgent"
+  | "not_important_not_urgent";
 
 /** 议题经办人/创建者类型：成员、agent 或 squad。 */
 export type IssueAssigneeType = "member" | "agent" | "squad";

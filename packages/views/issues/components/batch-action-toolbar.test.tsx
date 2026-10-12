@@ -61,7 +61,7 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     title: "Issue 1",
     description: null,
     status: "todo",
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",
@@ -87,15 +87,15 @@ beforeEach(() => {
 describe("BatchActionToolbar picker wiring", () => {
   it("reflects the shared status / priority / assignee of the selected issues", () => {
     const issues = [
-      makeIssue({ id: "a", status: "in_progress", priority: "high", assignee_type: "member", assignee_id: "u-1" }),
-      makeIssue({ id: "b", status: "in_progress", priority: "high", assignee_type: "member", assignee_id: "u-1" }),
+      makeIssue({ id: "a", status: "in_progress", priority: "important_not_urgent", assignee_type: "member", assignee_id: "u-1" }),
+      makeIssue({ id: "b", status: "in_progress", priority: "important_not_urgent", assignee_type: "member", assignee_id: "u-1" }),
     ];
     selection.selectedIds = new Set(["a", "b"]);
 
     render(<BatchActionToolbar issues={issues} />);
 
     expect(screen.getByTestId("status-picker")).toHaveAttribute("data-status", "in_progress");
-    expect(screen.getByTestId("priority-picker")).toHaveAttribute("data-priority", "high");
+    expect(screen.getByTestId("priority-picker")).toHaveAttribute("data-priority", "important_not_urgent");
     const assignee = screen.getByTestId("assignee-picker");
     expect(assignee).toHaveAttribute("data-assignee-type", "member");
     expect(assignee).toHaveAttribute("data-assignee-id", "u-1");
@@ -104,8 +104,8 @@ describe("BatchActionToolbar picker wiring", () => {
 
   it("falls back to an empty (no-checkmark) state when the selection is mixed", () => {
     const issues = [
-      makeIssue({ id: "a", status: "todo", priority: "none", assignee_type: "member", assignee_id: "u-1" }),
-      makeIssue({ id: "b", status: "done", priority: "urgent", assignee_type: "agent", assignee_id: "ag-1" }),
+      makeIssue({ id: "a", status: "todo", priority: "not_important_not_urgent", assignee_type: "member", assignee_id: "u-1" }),
+      makeIssue({ id: "b", status: "done", priority: "important_urgent", assignee_type: "agent", assignee_id: "ag-1" }),
     ];
     selection.selectedIds = new Set(["a", "b"]);
 

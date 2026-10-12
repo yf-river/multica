@@ -104,15 +104,8 @@ var businessMetricLabels = map[string][]string{
 	"multica_github_pr_review_total":                   {labelResult},
 	"multica_cloudruntime_request_total":               {labelOp, labelStatus},
 	"multica_cloudruntime_request_duration_seconds":    {labelOp},
-	"multica_feedback_submitted_total":                 {labelKind, labelPlatform},
 	"multica_contact_sales_submitted_total":            {labelSource},
 	"multica_chat_output_local_path_total":             {labelKind},
-	"multica_entitlement_cache_total":                  {labelOutcome},
-	"multica_entitlement_refresh_total":                {labelOutcome},
-	"multica_entitlement_refresh_duration_seconds":     {labelOutcome},
-	"multica_entitlement_decision_total":               {labelGate, labelAction, labelReason},
-	"multica_entitlement_version_regression_total":     {},
-	"multica_autopilot_quota_decision_total":           {labelAction, labelSource, labelResult},
 }
 
 // forbiddenMetricLabels 是明令禁止用作指标标签的高基数字段。把 workspace_id、

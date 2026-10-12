@@ -36,3 +36,4 @@ export {
   memberNeedsMikaSetup,
   workspaceNeedsMika,
 } from "./mika";
+export { useMikaConversation } from "./use-mika-conversation";

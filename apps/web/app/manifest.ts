@@ -11,16 +11,10 @@ import type { MetadataRoute } from "next";
  * 未登录时同样落到 /login。这三种结果都在 manifest.test.ts 里做了断言，因为主屏幕图标没有地址栏，
  * 一旦跳错地方用户无法自行修正。
  *
- * /icons 下的图标是脚本生成的，不是手绘的。品牌变更后要重新生成时，编辑 public/icons/icon.svg，
- * 然后在 public/icons 目录下执行：
- *
- *   sips -s format png --resampleHeightWidth 512 512 icon.svg --out icon-maskable-512.png
- *   sips -s format png --resampleHeightWidth 180 180 icon.svg --out apple-touch-icon.png
- *   sips -s format png --resampleHeightWidth 512 512 icon.svg --out icon-512.png
- *   sips -s format png --resampleHeightWidth 192 192 icon.svg --out icon-192.png
- *
- * 所有启动图标都派生自同一个 SVG，保证浏览器安装的版本视觉一致；maskable 那张是满幅的，
- * 因为 Android 会按启动器形状对图标做裁剪。
+ * 图标原稿是 public/icons/icon-source.png。普通启动图标分别缩放到 192/512 像素；
+ * Apple 图标缩放到 180 像素并以 #ffcf3f 填充透明区域。maskable 图标把原稿缩放到
+ * 384 像素，居中放在同色的 512 像素不透明底板上，为启动器裁剪留出安全空间。
+ * favicon.svg 与 icons/icon.svg 分别内嵌原稿的 128/512 像素 PNG，沿用 SVG 引用地址。
  */
 
 /** PWA 的启动路径。导出是为了让 manifest.test.ts 能把它送进 proxy 做解析验证。 */

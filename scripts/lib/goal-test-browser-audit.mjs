@@ -62,12 +62,16 @@ export async function launchGoalTestBrowser(browserURL, token) {
     viewport: { width: 1440, height: 900 },
     ignoreHTTPSErrors: true,
   });
+  const cfgResponse = await fetch(`${browserURL}/api/config`);
+  if (!cfgResponse.ok) throw new Error(`config failed: ${cfgResponse.status}`);
+  const cfg = await cfgResponse.json();
+  const cookieName = (name) => cfg.environment_id ? `${name}_${cfg.environment_id}` : name;
   const csrfNonce = randomBytes(16);
   const csrfToken = `${csrfNonce.toString("hex")}.${createHmac("sha256", token).update(csrfNonce).digest("hex")}`;
   await context.addCookies([
-    { name: "multica_auth", value: token, url: browserURL, httpOnly: true, sameSite: "Strict" },
-    { name: "multica_csrf", value: csrfToken, url: browserURL, sameSite: "Strict" },
-    { name: "multica_logged_in", value: "1", url: browserURL, sameSite: "Lax" },
+    { name: cookieName("multica_auth"), value: token, url: browserURL, httpOnly: true, sameSite: "Strict" },
+    { name: cookieName("multica_csrf"), value: csrfToken, url: browserURL, sameSite: "Strict" },
+    { name: cookieName("multica_logged_in"), value: "1", url: browserURL, sameSite: "Lax" },
   ]);
   await context.addInitScript(() => {
     localStorage.setItem("multica:chat:isOpen", "false");

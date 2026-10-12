@@ -84,6 +84,9 @@ const sourceSerif = localFont({
  * 视口与主题配置：告诉浏览器按设备宽度渲染、初始缩放为 1，
  * 并根据系统明暗模式给出对应的状态栏/地址栏主题色。
  */
+// 环境身份必须在请求时读取，同一个发布包可部署到不同环境。
+export const dynamic = "force-dynamic";
+
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
@@ -185,6 +188,7 @@ export default async function RootLayout({
             locale={locale}
             resources={resources}
             apiBaseUrl={apiBaseUrl}
+            environmentId={process.env.MULTICA_ENV_ID || ""}
             wsUrl={wsUrl}
           >
             {children}

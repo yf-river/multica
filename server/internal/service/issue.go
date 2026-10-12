@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/dispatch"
-	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issueguard"
@@ -44,8 +43,7 @@ type IssueService struct {
 	// 所以不设置是安全的。
 	Metrics     *obsmetrics.BusinessMetrics
 	TaskService *TaskService
-	// Entitlements 提供 Cloud 的生效 issue 数量指令。nil 即 self-hosted 的无限路径。
-	Entitlements entitlement.Provider
+	// restricted action 提供 Cloud 的生效 issue 数量指令。nil 即 self-hosted 的无限路径。
 }
 
 // NewIssueService 组装 IssueService。
@@ -181,7 +179,6 @@ type IssueCreateResult struct {
 // 让每个创建入口——HTTP `POST /issues`、Lark `/issue`、未来 MCP/API-key 调用方——共享同一套工作区
 // 边界语义。调用方自留的校验只限传输层形状检查：标题必填、RFC3339 日期格式、assignee 组合合理性。
 func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts IssueCreateOpts) (IssueCreateResult, error) {
-	issueCountPolicy := ResolveIssueCountPolicy(ctx, s.Entitlements, p.WorkspaceID)
 	actorID := opts.ActorID
 	if actorID == "" {
 		actorID = util.UUIDToString(p.CreatorID)
@@ -280,7 +277,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		return IssueCreateResult{DuplicateIssue: &dup}, ErrActiveDuplicate
 	}
 
-	issueNumber, err := AllocateIssueNumber(ctx, qtx, p.WorkspaceID, issueCountPolicy)
+	issueNumber, err := qtx.IncrementIssueCounter(ctx, p.WorkspaceID)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("allocate issue number: %w", err)
 	}

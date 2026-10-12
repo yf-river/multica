@@ -129,7 +129,7 @@ describe("InboxDetailLabel localized values", () => {
   it("uses the translated priority label", () => {
     const { container } = render(
       <InboxDetailLabel
-        item={item({ type: "priority_changed", details: { to: "high" } })}
+        item={item({ type: "priority_changed", details: { to: "important_not_urgent" } })}
       />,
     );
 

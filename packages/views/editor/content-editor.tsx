@@ -191,7 +191,7 @@ interface ContentEditorBaseProps {
   attachments?: Attachment[];
   /**
    * 编辑器卸载时冲刷挂起的防抖 `onUpdate` 而不是丢弃。默认 false 是刻意的：
-   * 大多数 composer 先清草稿再卸载（评论编辑取消、create-issue / feedback
+   * 大多数 composer 先清草稿再卸载（评论编辑取消、create-issue
    * 提交），那里冲刷会把刚丢弃的内容立刻交回 `onUpdate`，复活被清掉的草稿。
    * 只在「关闭=保留用户最后所见」处选开——如 issue 详情描述编辑器，否则
    * 1500ms 防抖会丢掉恰好赶在弹窗关闭前的粘贴。

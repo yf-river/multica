@@ -7,19 +7,16 @@ import { useModalStore } from "@multica/core/modals";
 import { CreateIssueDialog } from "./create-issue-dialog";
 import { CreateProjectModal } from "./create-project";
 import { CreateSquadModal } from "./create-squad";
-import { FeedbackModal } from "./feedback";
 import { SetParentIssueModal } from "./set-parent-issue";
 import { AddChildIssueModal } from "./add-child-issue";
 import { DeleteIssueConfirmModal } from "./delete-issue-confirm";
 import { RunConfirmModal } from "./run-confirm";
-import { IssueLimitUpgradeDialog } from "./issue-limit-upgrade-dialog";
 
 /**
  * 全局弹窗注册表。
  *
  * 读取 modal store 里当前要展示的弹窗类型，用 switch 匹配到对应组件并挂载；
- * store 为空（modal 为 null）时不挂载任何弹窗。始终渲染 `<IssueLimitUpgradeDialog />`
- * （是否可见由它内部自行判断）。应用中所有通过 useModalStore 打开的弹窗都汇聚到这里。
+ * store 为空（modal 为 null）时不挂载任何弹窗。应用中所有通过 useModalStore 打开的弹窗都汇聚到这里。
  */
 export function ModalRegistry() {
   const modal = useModalStore((s) => s.modal);
@@ -55,9 +52,6 @@ export function ModalRegistry() {
     case "create-squad":
       activeModal = <CreateSquadModal onClose={close} />;
       break;
-    case "feedback":
-      activeModal = <FeedbackModal onClose={close} data={data} />;
-      break;
     case "issue-set-parent":
       activeModal = <SetParentIssueModal onClose={close} data={data} />;
       break;
@@ -75,7 +69,6 @@ export function ModalRegistry() {
   return (
     <>
       {activeModal}
-      <IssueLimitUpgradeDialog />
     </>
   );
 }

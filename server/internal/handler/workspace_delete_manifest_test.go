@@ -19,6 +19,7 @@ const (
 // teardown. Adding a table requires an explicit ownership decision here; the
 // handler deletion graph must then implement that decision before CI passes.
 var workspaceDeletionManifest = map[string]workspaceDeleteAction{
+ "meal_workspace":workspaceDelete,
  "health_state":workspaceDelete,
  "health_observation":workspaceDelete,
  "health_revision":workspaceDelete,
@@ -35,8 +36,6 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"attachment":                         workspaceDelete,
 	"autopilot":                          workspaceDelete,
 	"autopilot_collaborator":             workspaceDelete,
-	"autopilot_quota_period":             workspaceDelete,
-	"autopilot_quota_reservation":        workspaceDelete,
 	"autopilot_rule_version":             workspaceDelete,
 	"autopilot_run":                      workspaceDelete,
 	"autopilot_subscriber":               workspaceDelete,
@@ -69,7 +68,6 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"domain_event_delivery":              workspaceDelete,
 	"domain_event_outbox":                workspaceDelete,
 	"external_credential_profile":        workspaceDeleteKeep,
-	"feedback":                           workspaceDeleteDetach,
 	"github_installation":                workspaceDelete,
 	"github_pending_check_suite":         workspaceDelete,
 	"github_pending_installation":        workspaceDeleteKeep,
@@ -152,7 +150,6 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"quick_action":                       workspaceDelete,
 	"runtime_profile":                    workspaceDelete,
 	"schema_migrations":                  workspaceDeleteKeep,
-	"seat_capacity_outbox":               workspaceDeleteSettle,
 	"skill":                              workspaceDelete,
 	"skill_file":                         workspaceDelete,
 	"skill_to_label":                     workspaceDelete,

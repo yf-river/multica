@@ -68,7 +68,7 @@ function makeIssue(id: string, identifier: string, title: string): Issue {
     title,
     description: null,
     status: "in_progress",
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",

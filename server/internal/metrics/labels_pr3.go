@@ -211,15 +211,6 @@ var (
 		"other":         "other",
 	}
 
-	// knownFeedbackKinds 用户反馈类型枚举。
-	knownFeedbackKinds = map[string]string{
-		"bug":     "bug",
-		"feature": "feature",
-		"general": "general",
-		"praise":  "praise",
-		"other":   "other",
-	}
-
 	// knownChatOutputLocalPathKinds 是 multica_chat_output_local_path_total
 	// （MUL-4899）的证据类型白名单。封闭白名单的作用是把「出问题的路径」挡在
 	// Prometheus 之外：调用方传入的只是分类，永远不是回复内容的片段
@@ -442,11 +433,6 @@ func CloudRuntimeStatusForCode(code int) string {
 // NormalizeDaemonWSKind 归一化 daemon WebSocket 消息类型；认不出归 "other"。
 func NormalizeDaemonWSKind(value string) string {
 	return normalizeFromAllowList(value, knownDaemonWSKinds, "other")
-}
-
-// NormalizeFeedbackKind 归一化用户反馈类型；认不出归 "other"。
-func NormalizeFeedbackKind(value string) string {
-	return normalizeFromAllowList(value, knownFeedbackKinds, "other")
 }
 
 // NormalizeContactSalesSource 归一化「联系销售」入口来源；认不出归 "other"。

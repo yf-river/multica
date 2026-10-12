@@ -13,13 +13,13 @@ import (
 	"time"
 )
 
-// Reproduces the second OpenClaw failure mode behind MUL-5467: the CLI prints
-// the correct answer and then never exits. Measured on a host running openclaw
+// Reproduces the second forking CLI failure mode behind MUL-5467: the CLI prints
+// the correct answer and then never exits. Measured on a host running forking-cli
 // 2026.5.27:
 //
-//	openclaw --version    258ms  exits cleanly
-//	openclaw config file    60s  correct path printed, then killed by the caller
-//	openclaw agents list    60s  correct list printed, then killed by the caller
+//	forking-cli --version    258ms  exits cleanly
+//	forking-cli config file    60s  correct path printed, then killed by the caller
+//	forking-cli agents list    60s  correct list printed, then killed by the caller
 //
 // Waiting for exit turned working commands into task-fatal errors, so a host
 // with that CLI build could not prepare a single task's execution environment.
@@ -128,13 +128,13 @@ func TestRunCollectQuietDoesNotSalvagePartialOutputAtDeadline(t *testing.T) {
 
 // TestRunCollectQuietWaitsForTheAnswerAfterAPrompt is the second regression the
 // review asked for. Output arriving and then going quiet is NOT sufficient: the
-// CLI may be pausing between a banner and the real answer. `openclaw config file`
+// CLI may be pausing between a banner and the real answer. `forking-cli config file`
 // does exactly this — it prints Doctor warning UI first (MUL-3136) — and cutting
 // off there would return the banner as the answer.
 func TestRunCollectQuietWaitsForTheAnswerAfterAPrompt(t *testing.T) {
 	// Banner, a pause well past the idle grace, then the real answer, then hang.
 	cli := writeCLI(t, "#!/bin/sh\n"+
-		"echo 'warning: run openclaw doctor to inspect config'\n"+
+		"echo 'warning: run forking-cli doctor to inspect config'\n"+
 		"sleep 1\n"+
 		"printf '%s\\n' '"+quietTestJSON+"'\n"+
 		"sleep 300\n")
@@ -168,7 +168,7 @@ func TestRunCollectQuietWaitsForTheAnswerAfterAPrompt(t *testing.T) {
 // exactly what the grace is for. The stub exits at 150ms against a 400ms grace.
 func TestRunCollectQuietReportsLateNonZeroExit(t *testing.T) {
 	cli := writeCLI(t, "#!/bin/sh\nprintf '%s\\n' '"+quietTestJSON+"'\n"+
-		"echo 'openclaw doctor found a problem' >&2\nsleep 0.15\nexit 5\n")
+		"echo 'forking-cli doctor found a problem' >&2\nsleep 0.15\nexit 5\n")
 
 	out, stderr, quiet, err := RunCollectQuiet(context.Background(), nil, 0, JSONOutputComplete, cli)
 	if err == nil {
@@ -178,7 +178,7 @@ func TestRunCollectQuietReportsLateNonZeroExit(t *testing.T) {
 	if quiet {
 		t.Error("quiet = true, want false — this returned through the exit path")
 	}
-	if !strings.Contains(stderr, "openclaw doctor") {
+	if !strings.Contains(stderr, "forking-cli doctor") {
 		t.Errorf("stderr = %q, lost the CLI's diagnostics", stderr)
 	}
 }
@@ -263,23 +263,23 @@ func TestRunCollectQuietPrefersCleanExit(t *testing.T) {
 
 // TestRunCollectQuietPropagatesExitFailure pins that "output is enough" never
 // becomes "everything is fine": a genuinely broken CLI must still fail, with its
-// stderr intact for openclawShimDiagnostic and the daemon log.
+// stderr intact for forking-cliShimDiagnostic and the daemon log.
 func TestRunCollectQuietPropagatesExitFailure(t *testing.T) {
-	cli := writeCLI(t, "#!/bin/sh\necho 'run openclaw doctor' >&2\nexit 4\n")
+	cli := writeCLI(t, "#!/bin/sh\necho 'run forking-cli doctor' >&2\nexit 4\n")
 
 	_, stderr, _, err := RunCollectQuiet(context.Background(), nil, 0, JSONOutputComplete, cli)
 	if err == nil {
 		t.Fatal("expected an error for exit status 4 — a genuinely broken CLI " +
 			"must not be silently treated as success")
 	}
-	if !strings.Contains(stderr, "openclaw doctor") {
+	if !strings.Contains(stderr, "forking-cli doctor") {
 		t.Errorf("stderr = %q, lost the CLI's diagnostics", stderr)
 	}
 }
 
 // TestRunCollectQuietReapsHelperOnIdleReturn pins that the idle shortcut still
 // cleans up: this path runs per task, so a helper left behind each time is how a
-// host accumulates orphan `openclaw-config` processes.
+// host accumulates orphan `forking-cli-config` processes.
 func TestRunCollectQuietReapsHelperOnIdleReturn(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "helper.pid")
 	cli := writePrintThenHangCLI(t, quietTestJSON, pidFile)

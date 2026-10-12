@@ -23,7 +23,6 @@ func TestCORSAllowedHeaders_IncludeClientCapabilities(t *testing.T) {
 	}
 }
 
-// Workspace subscription checkout and portal requests use Idempotency-Key to
 // make retries safe. Browsers preflight that custom request header, so omitting
 // it from AllowedHeaders prevents the billing request from reaching the server.
 func TestCORSAllowedHeaders_IncludeIdempotencyKey(t *testing.T) {

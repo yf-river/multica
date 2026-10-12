@@ -1,5 +1,6 @@
 {
   "nav": {
+    "mika_open_failed": "Unable to open the conversation. Try again.",
     "inbox": "Inbox",
     "chat": "Chat",
     "my_issues": "My Issues",
@@ -14,7 +15,10 @@
     "skills": "Skills",
     "settings": "Settings",
     "life": "Life",
+    "cooking": "Cooking Guide",
     "health": "Body Data",
+    "meals": "Meals",
+    "goals": "Goals",
     "memory": "Memory",
     "experiment": "Experiments",
     "observers": "Observation seat",
@@ -34,14 +38,6 @@
     "create_agent": "Create Agent",
     "unknown": "Unknown page"
   },
-  "help": {
-    "trigger": "Help",
-    "docs": "Docs",
-    "changelog": "Change log",
-    "discord": "Discord",
-    "feedback": "Feedback",
-    "server_version": "Server version {{version}}"
-  },
   "workspace_loader": {
     "loading_workspace": "Loading workspace…",
     "loading_named_prefix": "Loading"
@@ -60,10 +56,6 @@
     "pinned_label": "Pinned",
     "workspace_group": "Workspace",
     "configure_group": "Configure",
-    "unread_overflow": "99+",
-    "discord_card": {
-      "title": "Join our Discord",
-      "dismiss": "Dismiss"
-    }
+    "unread_overflow": "99+"
   }
 }

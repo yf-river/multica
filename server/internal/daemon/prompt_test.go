@@ -216,11 +216,11 @@ func TestBuildQuickCreatePromptProjectPinning(t *testing.T) {
 func TestBuildQuickCreatePromptExplicitPriorityAndDueDate(t *testing.T) {
 	out := buildQuickCreatePrompt(Task{
 		QuickCreatePrompt:   "fix the login button color",
-		QuickCreatePriority: "urgent",
+		QuickCreatePriority: "important_urgent",
 		QuickCreateDueDate:  "2026-08-01",
 	})
 	for _, want := range []string{
-		"--priority urgent",
+		"--priority important_urgent",
 		"--due-date 2026-08-01",
 		"quick-create selection is authoritative",
 	} {

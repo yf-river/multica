@@ -32,7 +32,7 @@ function makeIssue(id: string, status: string, category: IssueStatusCategory): I
     description: null,
     status,
     status_category: category,
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",

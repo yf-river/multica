@@ -27,7 +27,7 @@ function makeIssue(id: string, status: string, category: IssueStatusCategory): I
     description: null,
     status,
     status_category: category,
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",
@@ -76,6 +76,24 @@ afterEach(() => {
 });
 
 describe("useIssueStatusBranches — category columns", () => {
+  it("loads foreign custom statuses when the current workspace has no custom catalog", async () => {
+    const foreign = { ...makeIssue("foreign", "planning", "backlog"), workspace_id: "ws-2" };
+    const listIssueTableRows = vi.fn(async (request: IssueTableRowsRequest) => ({
+      query_fingerprint: "test", group_key: request.group_key ?? null, parent_id: null,
+      total: 1, rows: [{ issue: foreign, direct_child_count: 0 }], branch_total: 1, next_cursor: null,
+    }));
+    setApiInstance({ listIssueTableRows, listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }) } as unknown as ApiClient);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderHook(() => useIssueStatusBranches({
+      wsId: "ws-1", query: { ...QUERY, scope: { kind: "my", relation: "assigned" } },
+      statuses: ["backlog"], facets: { query_fingerprint: "test", total: 1, facets: [{ kind: "status", values: [{ key: "backlog", count: 1 }] }] },
+      facetsPending: false, facetsFetching: false, enabled: true,
+    }), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(result.current.issues[0]?.id).toBe("foreign"));
+    expect(listIssueTableRows.mock.calls[0]?.[0].group).toEqual({ kind: "status_category" });
+    expect(result.current.pagination.backlog.total).toBe(1);
+  });
+
   it("pages each column by category and keeps custom-status rows in it", async () => {
     const requests: IssueTableRowsRequest[] = [];
     const listIssueTableRows = vi.fn(async (request: IssueTableRowsRequest) => {

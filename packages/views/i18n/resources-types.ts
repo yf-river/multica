@@ -3,6 +3,8 @@ import "i18next";
 // packages/ui/types/i18next.ts. Side-effect import is required for views'
 // typecheck program to see ui's contribution to `I18nResources`.
 import "@multica/ui/i18n-types";
+import type cooking from "../locales/zh-Hans/cooking.json";
+import type meals from "../locales/zh-Hans/meals.json";
 import type health from "../locales/zh-Hans/health.json";
 import type common from "../locales/zh-Hans/common.json";
 import type auth from "../locales/zh-Hans/auth.json";
@@ -27,7 +29,6 @@ import type runtimes from "../locales/zh-Hans/runtimes.json";
 import type layout from "../locales/zh-Hans/layout.json";
 import type usage from "../locales/zh-Hans/usage.json";
 import type squads from "../locales/zh-Hans/squads.json";
-import type billing from "../locales/zh-Hans/billing.json";
 import type life from "../locales/zh-Hans/life.json";
 import type runReviews from "../locales/zh-Hans/run-reviews.json";
 
@@ -72,9 +73,10 @@ declare global {
     layout: typeof layout;
     usage: typeof usage;
     squads: typeof squads;
-    billing: typeof billing;
     life: typeof life;
+    cooking: typeof cooking;
     health: typeof health;
+    meals: typeof meals;
     "run-reviews": typeof runReviews;
   }
 }

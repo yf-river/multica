@@ -21,7 +21,7 @@ const issue = {
   identifier: "TRS-134",
   title: "Example",
   status: "todo",
-  priority: "medium",
+  priority: "not_important_urgent",
 } as Issue;
 
 function createWrapper(qc: QueryClient) {

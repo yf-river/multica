@@ -1,5 +1,6 @@
 {
   "nav": {
+    "mika_open_failed": "无法打开对话，请重试。",
     "inbox": "收件箱",
     "chat": "聊天",
     "my_issues": "我的任务",
@@ -19,7 +20,52 @@
     "experiment": "实验",
     "observers": "观察席",
     "chronicle": "编年史",
-    "health": "身体数据"
+    "cooking": "烹饪指南",
+    "health": "身体数据",
+    "meals": "饮食",
+    "goals": "目标"
+  },
+  "living_pages": {
+    "health": {
+      "description": "集中查看身体基础资料、各项指标和变化记录。",
+      "profile": "基础资料",
+      "height": "身高",
+      "weight": "体重",
+      "age": "年龄",
+      "sex": "性别",
+      "metrics": "身体指标",
+      "body_fat": "体脂率",
+      "waist": "腰围",
+      "blood_pressure": "血压",
+      "heart_rate": "静息心率",
+      "history": "指标记录",
+      "history_empty": "还没有身体指标记录。",
+      "trend": "变化趋势",
+      "trend_empty": "记录身体指标后，在这里查看变化。"
+    },
+    "meals": {
+      "description": "安排每周吃什么、买什么，以及怎样集中备餐。",
+      "plan": "本周餐单",
+      "plan_empty": "还没有本周餐单。",
+      "shopping": "采购清单",
+      "shopping_empty": "还没有需要采购的食材。",
+      "batches": "备餐与库存",
+      "batches_empty": "还没有备餐批次和食材库存。",
+      "recipes": "烹饪指南",
+      "recipes_description": "浏览菜谱、烹饪技巧和收藏，找到想做的菜。",
+      "browse": "浏览菜谱",
+      "favorites": "我的收藏"
+    },
+    "goals": {
+      "description": "整理想达成的事情，查看进度并回顾结果。",
+      "active": "进行中的目标",
+      "active_empty": "还没有进行中的目标。",
+      "completed": "已完成的目标",
+      "completed_empty": "还没有已完成的目标。",
+      "review": "目标回顾",
+      "review_empty": "在这里回看目标进展与阶段收获。"
+    },
+    "unrecorded": "未记录"
   },
   "tab": {
     "issue": "任务",
@@ -34,14 +80,6 @@
     "attachment": "附件",
     "create_agent": "创建智能体",
     "unknown": "未知页面"
-  },
-  "help": {
-    "trigger": "帮助",
-    "docs": "文档",
-    "changelog": "更新日志",
-    "discord": "Discord",
-    "feedback": "反馈",
-    "server_version": "服务器版本 {{version}}"
   },
   "workspace_loader": {
     "loading_workspace": "正在加载工作区...",
@@ -61,10 +99,6 @@
     "pinned_label": "固定",
     "workspace_group": "工作区",
     "configure_group": "配置",
-    "unread_overflow": "99+",
-    "discord_card": {
-      "title": "加入 Discord",
-      "dismiss": "关闭"
-    }
+    "unread_overflow": "99+"
   }
 }

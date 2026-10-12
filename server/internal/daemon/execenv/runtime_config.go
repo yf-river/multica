@@ -155,7 +155,6 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 // OpenCode:   写 {workDir}/AGENTS.md（技能从 .opencode/skills/ 原生发现）
 // CodeArts:   写 {workDir}/AGENTS.md（技能从 .codeartsdoer/skills/ 原生发现）
 // DevEco Code:写 {workDir}/AGENTS.md（技能从 .deveco/skills/ 原生发现）
-// OpenClaw:   写 {workDir}/AGENTS.md（技能从 {workDir}/skills/ 原生发现——经每任务 openclaw-config.json 钉住 agents.defaults.workspace）
 // Hermes:     写 {workDir}/AGENTS.md（技能从 daemon 播种的每任务 HERMES_HOME/skills 原生发现；见 hermes_home.go）
 // Pi:         写 {workDir}/AGENTS.md（技能从 .pi/skills/ 原生发现）
 // Oh-My-Pi(omp): 写 {workDir}/AGENTS.md（omp 是 pi 的分支；技能从 .omp/skills/ 发现）

@@ -22,6 +22,7 @@ import {
   type IssueSortParam,
 } from "./queries";
 import { onIssueUpdated, onIssueAuxiliaryRevision } from "./ws-updaters";
+import { workspaceKeys } from "../workspace/queries";
 import { inboxKeys } from "../inbox/queries";
 import type {
   InboxItem,
@@ -45,7 +46,7 @@ function makeIssue(idx: number, overrides: Partial<Issue> = {}): Issue {
     title: `Issue ${idx}`,
     description: null,
     status: "todo",
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",
@@ -226,6 +227,16 @@ describe("useUpdateIssue — optimistic move keeps every bucketed board in sync"
     }
   });
 
+  it("routes a task from an aggregate table to its own workspace", async () => {
+    const foreign = makeIssue(10, { workspace_id: "ws-2" });
+    qc.setQueryData(workspaceKeys.list(), [{ id: WS_ID, slug: "first" }, { id: "ws-2", slug: "second" }]);
+    qc.setQueryData([...issueKeys.tableAll(WS_ID), "rows", "my"], { rows: [{ issue: foreign }] });
+    updateIssue.mockResolvedValue({ ...foreign, priority: "important_urgent" });
+    const { result } = renderHook(() => useUpdateIssue(), { wrapper: createWrapper(qc) });
+    await act(async () => { await result.current.mutateAsync({ id: foreign.id, priority: "important_urgent" }); });
+    expect(updateIssue).toHaveBeenCalledWith(foreign.id, { priority: "important_urgent" }, "second");
+  });
+
   it("does not couple a field update to the cached aggregate revision", async () => {
     qc.setQueryData(
       issueKeys.detail(WS_ID, "issue-1"),
@@ -242,7 +253,7 @@ describe("useUpdateIssue — optimistic move keeps every bucketed board in sync"
 
     expect(updateIssue).toHaveBeenCalledWith("issue-1", {
       title: "Renamed",
-    });
+    }, undefined);
   });
 
   it("does not let an older successful response overwrite a newer WS revision", async () => {
@@ -333,7 +344,7 @@ describe("useUpdateIssue — optimistic move keeps every bucketed board in sync"
       expect(updateIssue).toHaveBeenCalledWith("issue-1", {
         description: "local edit",
         description_base: "base",
-      });
+      }, undefined);
     });
     const optimistic = qc.getQueryData<Issue & { description_base?: string }>(detailKey);
     expect(optimistic?.description).toBe("base");
@@ -369,7 +380,7 @@ describe("useUpdateIssue — optimistic move keeps every bucketed board in sync"
       status: "in_progress",
       before_id: "issue-0",
       after_id: "issue-2",
-    });
+    }, undefined);
     expect(updateIssue).not.toHaveBeenCalled();
     expect(
       qc
@@ -716,7 +727,7 @@ describe("useBatchUpdateIssues — optimistic patch covers filtered boards too",
       expect(batchUpdateIssues).toHaveBeenCalledWith(["issue-1"], {
         description: "local edit",
         description_base: "base with marker",
-      });
+      }, undefined);
     });
     expect(qc.getQueryData<Issue>(detailKey)?.description).toBe(
       "base with marker",

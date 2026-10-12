@@ -391,9 +391,9 @@ var validIssueStatuses = []string{
 	"backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled",
 }
 
-// validIssuePriorities 是 issue 优先级枚举的合法取值列表（none 表示不设优先级）。
+// validIssuePriorities 是 issue 任务安排四象限的合法取值列表。
 var validIssuePriorities = []string{
-	"urgent", "high", "medium", "low", "none",
+	"important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent",
 }
 
 // validIssueSortColumns 是 `issue list --sort` 可接受的排序键，与 server 端

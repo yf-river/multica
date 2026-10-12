@@ -34,6 +34,10 @@ const WORKSPACE_ROUTE_SEGMENTS = new Set([
   "skills",
   "settings",
   "life",
+  "cooking",
+  "health",
+  "meals",
+  "goals",
   "companion",
 ]);
 

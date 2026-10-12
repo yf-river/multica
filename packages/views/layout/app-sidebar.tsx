@@ -5,8 +5,6 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { AppLink, useNavigation } from "../navigation";
-import { HelpLauncher } from "./help-launcher";
-import { JoinDiscordCard } from "./join-discord-card";
 import {
   DndContext,
   PointerSensor,
@@ -26,6 +24,7 @@ import { Layers,
   SquarePen,
   X,
 } from "lucide-react";
+import { EnvironmentBadge } from "../common/environment-badge";
 import { WorkspaceAvatar } from "../workspace/workspace-avatar";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
@@ -37,7 +36,6 @@ import { openCreateIssueWithPreference } from "@multica/core/issues/stores/creat
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -83,6 +81,7 @@ import {
   useShortcut,
 } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../common/shortcut-keycaps";
+import { MikaSidebarEntry } from "./mika-sidebar-entry";
 
 /**
  * 布局模块：应用主侧边栏。
@@ -171,7 +170,7 @@ const lifeNav = [
   { tab: "chronicle", labelKey: "chronicle" },
 ] as const;
 
-const livingNav = ["health"] as const;
+const livingNav = ["health", "meals", "goals"] as const;
 
 function DraftDot() {
   const hasDraft = useIssueDraftStore((s) => s.hasDraft());
@@ -575,6 +574,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
         {topSlot}
         {/* Workspace Switcher */}
         <SidebarHeader className={cn("py-3", headerClassName)} style={headerStyle}>
+          <EnvironmentBadge />
           <SidebarMenu>
             <SidebarMenuItem>
               <DropdownMenu>
@@ -799,6 +799,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarGroupLabel>{t(($) => $.sidebar.workspace_group)}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
+                {workspace && userId && <MikaSidebarEntry key={`${workspace.id}:${userId}`} workspaceId={workspace.id} workspaceSlug={workspace.slug} />}
                 {workspaceNav.map((item) => {
                   const href = p[item.key]();
                   const Icon = routeIconForPath(href);
@@ -852,7 +853,8 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                 {livingNav.map((key) => {
                   const href = p[key]();
                   const Icon = routeIconForPath(href);
-                  const isActive = isNavActive(pathname, href)
+                  const isActive = isNavActive(pathname, href) ||
+                    (key === "meals" && isNavActive(pathname, p.cooking()));
                   return (
                     <SidebarMenuItem key={key}>
                       <SidebarMenuButton isActive={isActive} render={<AppLink href={href} />}>
@@ -887,14 +889,6 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
           </SidebarGroup>
         </SidebarContent>
 
-        <SidebarFooter className="p-2">
-          {/* 一个工具条：Discord 链接占据帮助触发器原本空出的前导空间。
-              `justify-end` 保证 Discord 链接关闭后，触发器仍右对齐。 */}
-          <div className="flex items-center justify-end gap-1">
-            <JoinDiscordCard />
-            <HelpLauncher />
-          </div>
-        </SidebarFooter>
         <SidebarRail />
       </Sidebar>
   );

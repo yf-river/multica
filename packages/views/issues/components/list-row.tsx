@@ -18,7 +18,7 @@ import type { Issue, Project,
 import { formatDateOnly } from "@multica/core/issues/date";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PropertyIcon } from "../../common/property-icon";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useIssuePaths } from "@multica/core/paths";
 import { useQuery } from "@tanstack/react-query";
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -68,7 +68,7 @@ function ListRowContent({
   const selection = useIssueSurfaceSelection();
   const selected = selection.selectedIds.has(issue.id);
   const toggle = selection.toggle;
-  const p = useWorkspacePaths();
+  const p = useIssuePaths(issue);
   const storeProperties = useViewStore((s) => s.cardProperties);
   const cardPropertyIds = useViewStore((s) => s.cardPropertyIds);
   const rowWsId = useWorkspaceId();

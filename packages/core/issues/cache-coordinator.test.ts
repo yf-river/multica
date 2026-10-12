@@ -43,7 +43,7 @@ const flatTitleKey = issueKeys.flat(
 const flatFilteredKey = issueKeys.flat(
   WS_ID,
   "workspace:all",
-  { statuses: ["todo"], priorities: ["high"] },
+  { statuses: ["todo"], priorities: ["important_not_urgent"] },
   sort,
 );
 const flatUpdatedWindowKey = issueKeys.flat(
@@ -138,7 +138,7 @@ function makeIssue(idx: number, overrides: Partial<Issue> = {}): Issue {
     title: `Issue ${idx}`,
     description: null,
     status: "todo",
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: "member",
     assignee_id: "me",
     creator_type: "member",
@@ -318,7 +318,7 @@ describe("applyIssueChange", () => {
     qc.setQueryData<ListIssuesCache>(wsKey, bucketed([issue()]));
     qc.setQueryData<ListIssuesCache>(wsUpdatedKey, bucketed([issue()]));
 
-    const patch = { priority: "high" as const };
+    const patch = { priority: "important_not_urgent" as const };
     const result = applyIssueChange(qc, WS_ID, "issue-1", patch, {
       changed: issueChangedDims(patch, issue()),
       baseIssue: issue(),
@@ -451,7 +451,7 @@ describe("applyIssueChange", () => {
       title: "Inbox",
       body: null,
       issue_status: "todo" as const,
-      issue_priority: "low" as const,
+      issue_priority: "not_important_not_urgent" as const,
       read: false,
       archived: false,
       created_at: "2025-01-01T00:00:00Z",
@@ -469,9 +469,9 @@ describe("applyIssueChange", () => {
       qc,
       WS_ID,
       "issue-1",
-      { priority: "urgent" },
+      { priority: "important_urgent" },
       {
-        changed: issueChangedDims({ priority: "urgent" }, issue()),
+        changed: issueChangedDims({ priority: "important_urgent" }, issue()),
         baseIssue: issue(),
       },
     );
@@ -479,21 +479,21 @@ describe("applyIssueChange", () => {
     expect(
       qc.getQueryData<InboxItem[]>(inboxKeys.list(WS_ID))?.[0]
         ?.issue_priority,
-    ).toBe("urgent");
+    ).toBe("important_urgent");
     expect(
       qc.getQueryData<InboxItem[]>(inboxKeys.archived(WS_ID))?.[0]
         ?.issue_priority,
-    ).toBe("urgent");
+    ).toBe("important_urgent");
 
     rollbackIssueChange(qc, WS_ID, "issue-1", result);
     expect(
       qc.getQueryData<InboxItem[]>(inboxKeys.list(WS_ID))?.[0]
         ?.issue_priority,
-    ).toBe("low");
+    ).toBe("not_important_not_urgent");
     expect(
       qc.getQueryData<InboxItem[]>(inboxKeys.archived(WS_ID))?.[0]
         ?.issue_priority,
-    ).toBe("low");
+    ).toBe("not_important_not_urgent");
   });
 
   it("off-window leave: decrements the old status bucket total without a refetch", () => {
