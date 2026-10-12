@@ -1,5 +1,5 @@
-// 本文件是「代码仓库」设置标签页：维护当前工作区关联的仓库列表。
-// 支持手动填写 git 地址、从 GitHub 安装里批量勾选导入、以及探活后导入工蜂（腾讯 Git）仓库；
+// 本文件是「代码仓库」设置标签页：维护当前工作区关联的远程仓库列表。
+// GitHub 通过 App 安装批量导入，工蜂通过凭据探活后导入；本地目录继续由项目资源管理。
 // 列表增删改通过现有 workspace 更新接口保存到服务端。
 
 "use client";
@@ -48,6 +48,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import { repositoryCenterOptions } from "@multica/core/workspace/repository-queries";
+import { externalCredentialProfilesOptions } from "@multica/core/external-credentials";
 import {
   githubInstallationRepositoriesOptions,
   githubInstallationsOptions,
@@ -67,7 +68,7 @@ import {
 } from "./settings-layout";
 import { GitHubMark } from "./github-mark";
 
-// 空列表的默认值：复用同一个常量引用，方便自动保存时做引用级比较判断"有没有改动"。
+// 空列表的默认值：避免 workspace 尚未加载时在组件内创建新数组。
 const EMPTY_REPOSITORIES: WorkspaceRepo[] = [];
 
 /**
@@ -129,8 +130,8 @@ function repositoryIsArchived(repository: WorkspaceRepo): boolean {
 }
 
 /**
- * 「代码仓库」设置标签页：展示并编辑当前工作区的仓库列表，支持手动添加/删除、
- * 从已安装的 GitHub App 中搜索勾选批量导入、以及探活后导入工蜂仓库；改动自动保存。
+ * 「代码仓库」设置标签页：展示并编辑当前工作区的仓库列表，支持删除、
+ * 从已安装的 GitHub App 中搜索勾选批量导入，以及探活后导入工蜂仓库；改动即时保存。
  */
 export function RepositoriesTab() {
   const { t } = useT("settings");
@@ -141,6 +142,7 @@ export function RepositoriesTab() {
   const navigation = useNavigation();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: center, isPending: centerPending, isError: centerError, refetch: refetchCenter } = useQuery(repositoryCenterOptions(wsId));
+  const { data: gongfengCredentials = [], isPending: gongfengCredentialsPending } = useQuery(externalCredentialProfilesOptions("gongfeng"));
   const [repositories, setRepositories] = useState<WorkspaceRepo[]>(
     workspace?.repos ?? EMPTY_REPOSITORIES,
   );
@@ -164,6 +166,7 @@ export function RepositoriesTab() {
   const [detailTab, setDetailTab] = useState("overview");
   const [addRepositoryOpen, setAddRepositoryOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [retryRepositories, setRetryRepositories] = useState<WorkspaceRepo[] | null>(null);
 
   const currentMember = members.find((member) => member.user_id === user?.id) ?? null;
   const canManageWorkspace =
@@ -174,13 +177,16 @@ export function RepositoriesTab() {
     isFetching: githubInstallationsFetching,
   } = useQuery({
     ...githubInstallationsOptions(wsId),
-    enabled: !!wsId && canManageWorkspace,
+    enabled: !!wsId,
   });
   const githubInstallations = useMemo(
     () => githubData?.installations ?? [],
     [githubData?.installations],
   );
   const githubConnectConfigured = githubData?.configured === true;
+  const githubConnected = githubInstallations.length > 0;
+  const gongfengCredential = gongfengCredentials[0] ?? null;
+  const gongfengConnected = gongfengCredential?.secret_binding?.configured === true && gongfengCredential.status === "verified";
   const githubBrowseConfigured =
     githubData?.repository_browse_configured === true;
   const githubRepositoriesQuery = useInfiniteQuery({
@@ -288,10 +294,12 @@ export function RepositoriesTab() {
   const saveRepositories = useCallback(
     async (next: WorkspaceRepo[]) => {
       if (!workspace) return;
+      setRetryRepositories(next);
       setSaveStatus("saving");
       try {
         const updated = await api.updateWorkspace(workspace.id, { repos: next });
         queryClient.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) => old?.map((item) => item.id === updated.id ? updated : item));
+        setRetryRepositories(null);
         setSaveStatus("saved");
         toast.success(t(($) => $.repositories.toast_saved), { id: "repository-center-save" });
       } catch (error) {
@@ -309,6 +317,41 @@ export function RepositoriesTab() {
       (statusFilter === "all" || status === statusFilter) &&
       (!query || `${repo.url} ${repo.project_path ?? ""} ${repo.description ?? ""}`.toLowerCase().includes(query));
   }), [repositories, listSearch, providerFilter, statusFilter]);
+  const detailRepository = detailIndex !== null ? repositories[detailIndex] ?? null : null;
+  const detailProvider = detailRepository ? normalizeWorkspaceRepoProvider(detailRepository.provider) : "unknown";
+  const detailProviderConnected = detailProvider === "github" ? githubConnected : detailProvider === "gongfeng" ? gongfengConnected : false;
+  const detailBranchesQuery = useQuery({
+    queryKey: ["workspace-repository-branches", wsId, detailRepository?.url ?? ""],
+    queryFn: () => api.probeWorkspaceRepo(wsId, { url: detailRepository!.url }),
+    enabled: !!wsId && !!detailRepository && detailTab === "branches" && canManageWorkspace && detailProviderConnected,
+  });
+
+  const openRepositoryDetails = (index: number, tab = "overview") => {
+    setDetailTab(tab);
+    setDetailIndex(index);
+  };
+
+  const openProjectResources = () => {
+    if (!workspace) return;
+    navigation.push(`/${workspace.slug}/projects`);
+  };
+
+  const openCredentialSettings = () => {
+    const next = new URLSearchParams(navigation.searchParams);
+    next.set("tab", "tokens");
+    navigation.replace(`${navigation.pathname}?${next.toString()}`);
+  };
+
+  const openGongfengFlow = () => {
+    if (!gongfengConnected) {
+      openCredentialSettings();
+      return;
+    }
+    setGongfengPickerOpen(true);
+  };
+
+  const pendingRemovalRepository = pendingRemovalIndex !== null ? repositories[pendingRemovalIndex] ?? null : null;
+  const pendingRemovalBindingCount = pendingRemovalRepository ? (centerPending ? null : bindingCount(pendingRemovalRepository)) : 0;
 
   // 「连接」按钮：先让服务端探活这个工蜂仓库，拿到默认分支与分支列表，供用户确认后导入。
   const probeGongfengRepository = async () => {
@@ -428,9 +471,13 @@ export function RepositoriesTab() {
       return;
     }
     const next = [...repositories, ...additions];
-    await saveRepositories(next);
-    setRepositories(next);
-    closeGitHubPicker();
+    try {
+      await saveRepositories(next);
+      setRepositories(next);
+      closeGitHubPicker();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "GitHub 仓库保存失败");
+    }
   };
 
   const removeRepository = async (index: number) => {
@@ -462,14 +509,26 @@ export function RepositoriesTab() {
 
       <div className="grid gap-3 md:grid-cols-2">
         {[
-          { provider: "github", label: "GitHub", connected: githubConnectConfigured, caption: githubConnectConfigured ? `GitHub App · ${githubInstallations.length} 个安装` : "连接后可读取私有仓库与分支" },
-          { provider: "gongfeng", label: "腾讯工蜂", connected: gongfengProbe?.connection_status === "credential_backed", caption: gongfengProbe?.connection_status === "credential_backed" ? "访问令牌 · 已验证" : "凭据状态待验证" },
+          {
+            provider: "github",
+            label: "GitHub",
+            connected: githubConnected,
+            status: githubInstallationsPending ? "读取中" : githubConnected ? "已连接" : githubConnectConfigured ? "未连接" : "未配置",
+            caption: githubConnected ? `GitHub App · ${githubInstallations.length} 个安装` : githubConnectConfigured ? "连接 GitHub App 后读取仓库" : "GitHub App 尚未配置",
+          },
+          {
+            provider: "gongfeng",
+            label: "腾讯工蜂",
+            connected: gongfengConnected,
+            status: gongfengCredentialsPending ? "读取中" : gongfengConnected ? "已连接" : gongfengCredential?.status === "failed" ? "连接异常" : gongfengCredential ? "待验证" : "未配置",
+            caption: gongfengConnected ? "访问令牌 · 已验证" : gongfengCredential?.status === "failed" ? "访问令牌验证失败" : gongfengCredential ? "访问令牌 · 待验证" : "尚未配置访问令牌",
+          },
         ].map((connection) => (
           <div key={connection.provider} className="flex min-w-0 items-center gap-3 rounded-xl border border-surface-border bg-surface-raised p-4">
             <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-surface-border bg-surface-hover text-body font-semibold">{connection.provider === "github" ? <GitHubMark className="size-5" /> : <GitBranch className="size-5" />}</span>
             <div className="min-w-0 flex-1"><p className="font-medium">{connection.label}</p><p className="truncate text-caption text-muted-foreground">{connection.caption}</p></div>
-            <Badge variant={connection.connected ? "secondary" : "outline"}>{connection.connected ? "已连接" : "未连接"}</Badge>
-            <Button variant="ghost" size="icon-sm" aria-label={`管理${connection.label}`} onClick={() => { if (connection.provider === "github") void handleGitHubAction(); else setGongfengPickerOpen(true); }}><ExternalLink className="size-4" /></Button>
+            <Badge variant={connection.connected ? "secondary" : connection.status === "连接异常" ? "destructive" : "outline"}>{connection.status}</Badge>
+            <Button variant="ghost" size="icon-sm" aria-label={`管理${connection.label}`} disabled={!canManageWorkspace} onClick={() => { if (connection.provider === "github") void handleGitHubAction(); else openCredentialSettings(); }}><ExternalLink className="size-4" /></Button>
           </div>
         ))}
       </div>
@@ -501,7 +560,7 @@ export function RepositoriesTab() {
               <FolderGit2 className="mb-4 size-8 text-muted-foreground" />
               <h3 className="text-body font-semibold">连接你的第一份代码</h3>
               <p className="mt-2 max-w-md text-caption leading-5 text-muted-foreground">添加 GitHub 或工蜂仓库，智能体就能在运行环境中按需拉取代码、创建 worktree，并以分支交付成果。</p>
-              {canManageWorkspace ? <div className="mt-5 flex flex-wrap justify-center gap-2"><Button variant="outline" size="sm" onClick={() => void handleGitHubAction()}><GitHubMark className="size-4" />从 GitHub 选择</Button><Button variant="outline" size="sm" onClick={() => setGongfengPickerOpen(true)}><GitBranch className="size-4" />添加工蜂仓库</Button></div> : null}
+              {canManageWorkspace ? <div className="mt-5 flex flex-wrap justify-center gap-2"><Button variant="outline" size="sm" onClick={() => void handleGitHubAction()}><GitHubMark className="size-4" />从 GitHub 选择</Button><Button variant="outline" size="sm" onClick={openGongfengFlow}><GitBranch className="size-4" />添加工蜂仓库</Button></div> : null}
             </div>
           ) : null}
 
@@ -516,7 +575,7 @@ export function RepositoriesTab() {
             >
               <div className="flex min-w-0 items-center gap-2">
                 <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-surface-border bg-surface-hover text-muted-foreground">{provider === "github" ? <GitHubMark className="size-4" /> : <GitBranch className="size-4" />}</span>
-                <button type="button" className="min-w-0 text-left" onClick={() => setDetailIndex(index)}><span className="flex flex-wrap items-center gap-2 text-body font-medium"><span className="truncate">{repositoryDisplayName(repository)}</span>{repositoryIsArchived(repository) ? <Badge variant="outline">已归档</Badge> : null}</span><span className="block truncate text-caption text-muted-foreground">{repositoryDisplayPath(repository)} · {provider === "github" ? "GitHub" : provider === "gongfeng" ? "工蜂" : "Git"}</span></button>
+                <button type="button" className="min-w-0 text-left" onClick={() => openRepositoryDetails(index)}><span className="flex flex-wrap items-center gap-2 text-body font-medium"><span className="truncate">{repositoryDisplayName(repository)}</span>{repositoryIsArchived(repository) ? <Badge variant="outline">已归档</Badge> : null}</span><span className="block truncate text-caption text-muted-foreground">{repositoryDisplayPath(repository)} · {provider === "github" ? "GitHub" : provider === "gongfeng" ? "工蜂" : "Git"}</span></button>
               </div>
               <div className="min-w-0 lg:row-start-1 lg:col-start-2"><p className="flex items-center gap-1 truncate text-caption"><GitBranch className="size-3.5 text-muted-foreground" />{repository.default_branch || "未验证"}</p></div>
               <div className="min-w-0 lg:row-start-1 lg:col-start-3"><p className={`flex items-center gap-1.5 text-caption ${status === "connected" ? "text-success" : status === "failed" ? "text-destructive" : "text-warning"}`}><span className="size-1.5 rounded-full bg-current" />{status === "connected" ? "连接正常" : status === "failed" ? "连接失败" : "待验证"}</p><p className="truncate text-caption text-muted-foreground">{repository.last_tested_at || "尚未验证"}</p></div>
@@ -533,7 +592,7 @@ export function RepositoriesTab() {
                   <Trash2 className="size-3.5" />
                 </Button>
               ) : null}
-              <Button type="button" variant="ghost" size="icon-sm" aria-label={`查看${repositoryDisplayName(repository)}详情`} className="lg:row-start-1 lg:col-start-5" onClick={() => setDetailIndex(index)}><ExternalLink className="size-3.5" /></Button>
+              <Button type="button" variant="ghost" size="icon-sm" aria-label={`查看${repositoryDisplayName(repository)}详情`} className="lg:row-start-1 lg:col-start-5" onClick={() => openRepositoryDetails(index)}><ExternalLink className="size-3.5" /></Button>
             </div>
             );
           })}
@@ -542,12 +601,12 @@ export function RepositoriesTab() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 text-caption text-muted-foreground"><span>{visibleRepositories.length} 个仓库{!canManageWorkspace ? " · 当前为只读权限" : ""}</span><span className="flex items-center gap-1.5"><SettingsSaveState status={saveStatus} savingLabel={t(($) => $.auto_save.saving)} savedLabel={t(($) => $.auto_save.saved)} errorLabel={t(($) => $.auto_save.failed)} /></span></div>
       </div>
 
-      {saveStatus === "error" ? <p className="-mt-5 text-caption text-destructive">保存失败，请重试。</p> : null}
+      {saveStatus === "error" && retryRepositories ? <div className="-mt-5 flex items-center gap-3 text-caption text-destructive"><span>保存失败，请重试。</span><Button variant="outline" size="sm" onClick={() => void saveRepositories(retryRepositories).then(() => setRepositories(retryRepositories)).catch(() => undefined)}>重试保存</Button></div> : null}
 
         <div className="flex items-start gap-3 rounded-lg bg-surface-sunken p-4 text-caption">
           <FolderGit2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0"><p className="font-medium">仓库决定代码来源，运行环境决定在哪里执行。</p><p className="mt-1 text-muted-foreground">远程任务按需拉取代码并创建独立 worktree；已有服务器目录可在项目中单独关联。</p></div>
-          {canManageWorkspace ? <Button variant="ghost" size="sm" className="ml-auto shrink-0" onClick={() => toast.info("请从项目资源入口关联本地目录")}>关联本地目录 <ExternalLink className="size-3.5" /></Button> : null}
+          {canManageWorkspace ? <Button variant="ghost" size="sm" className="ml-auto shrink-0" onClick={openProjectResources}>关联本地目录 <ExternalLink className="size-3.5" /></Button> : null}
         </div>
     </div>
 
@@ -825,7 +884,7 @@ export function RepositoriesTab() {
             <SheetHeader><SheetTitle className="pr-8">{repo.project_path || repo.url}</SheetTitle><SheetDescription className="break-all">{repo.url}</SheetDescription></SheetHeader>
             <div className="px-4 pb-6"><Tabs value={detailTab} onValueChange={setDetailTab}><TabsList variant="line" className="w-full justify-start"><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="branches">分支</TabsTrigger><TabsTrigger value="projects">项目绑定</TabsTrigger><TabsTrigger value="runtime">运行位置</TabsTrigger></TabsList>
               <TabsContent value="overview" className="space-y-4 pt-5"><div className="flex flex-wrap gap-2"><Badge variant="outline">{normalizeWorkspaceRepoProvider(repo.provider)}</Badge><Badge variant={repositoryStatus(repo) === "failed" ? "destructive" : "secondary"}>{repositoryStatus(repo) === "connected" ? "连接成功" : repositoryStatus(repo) === "failed" ? "连接失败" : "待验证"}</Badge></div><dl className="grid gap-3 text-caption sm:grid-cols-2"><div><dt className="text-muted-foreground">默认分支</dt><dd>{repo.default_branch || "未验证"}</dd></div><div><dt className="text-muted-foreground">Head commit</dt><dd className="font-mono">{repo.head_commit || "未读取"}</dd></div><div><dt className="text-muted-foreground">最近验证</dt><dd>{repo.last_tested_at || "尚未验证"}</dd></div><div><dt className="text-muted-foreground">同步状态</dt><dd>{repo.sync_status || "尚未拉取"}</dd></div></dl></TabsContent>
-              <TabsContent value="branches" className="space-y-3 pt-5"><p className="text-caption text-muted-foreground">默认分支</p><p className="font-medium">{repo.default_branch || "未验证"}</p><p className="text-caption text-muted-foreground">分支读取由 provider 连接流程完成；runtime 拉取状态独立显示。</p></TabsContent>
+              <TabsContent value="branches" className="space-y-3 pt-5"><div className="flex items-center justify-between gap-3"><p className="text-caption text-muted-foreground">可用分支</p>{canManageWorkspace && detailProviderConnected ? <Button variant="outline" size="sm" onClick={() => void detailBranchesQuery.refetch()} disabled={detailBranchesQuery.isFetching}>{detailBranchesQuery.isFetching ? <LoaderCircle className="size-3.5 animate-spin" /> : null}刷新分支</Button> : null}</div>{!detailProviderConnected ? <div className="rounded-lg bg-surface-sunken p-3 text-caption text-muted-foreground">{canManageWorkspace ? "请先连接对应 provider，再读取完整分支列表。" : "当前账号没有读取分支的管理权限。"}</div> : detailBranchesQuery.isPending ? <div className="flex items-center gap-2 text-caption text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />正在读取分支</div> : detailBranchesQuery.isError ? <div className="rounded-lg bg-surface-sunken p-3 text-caption text-destructive">分支读取失败，请检查仓库访问权限和 provider 凭据。</div> : detailBranchesQuery.data?.branches?.length ? <div className="divide-y rounded-lg border border-surface-border">{detailBranchesQuery.data.branches.map((branch) => <div key={branch} className="flex items-center justify-between gap-3 px-3 py-2.5 text-caption"><span className="truncate">{branch}</span>{branch === (detailBranchesQuery.data.default_branch || repo.default_branch) ? <Badge variant="secondary">默认</Badge> : null}</div>)}</div> : <><p className="font-medium">{repo.default_branch || "未验证"}</p><p className="text-caption text-muted-foreground">当前只保存了默认分支；刷新后可从 provider 读取完整分支列表。</p></>}</TabsContent>
               <TabsContent value="projects" className="space-y-3 pt-5"><p className="text-caption text-muted-foreground">使用此仓库的项目</p>{center && Array.isArray(center.projects) ? center.projects.flatMap((project) => project.resources.filter((resource) => { const ref = resource.resource_ref as { url?: unknown }; return typeof ref.url === "string" && repositoryIdentity(ref.url) === repositoryIdentity(repo.url); }).map(() => <div key={project.id} className="rounded-lg border border-surface-border p-3"><p className="font-medium">{project.title}</p><p className="text-caption text-muted-foreground">远程仓库资源 · 执行方式由项目资源决定</p></div>)) : null}{bindingCount(repo) === 0 ? <p className="text-caption text-muted-foreground">尚未绑定项目。可以从项目资源选择此仓库。</p> : null}</TabsContent>
               <TabsContent value="runtime" className="space-y-3 pt-5"><p className="flex items-center gap-2"><FolderGit2 className="size-4" />运行位置</p>{center && Array.isArray(center.locations) && Array.isArray(center.projects) ? center.locations.filter((location) => location.project_id && center.projects.some((project) => project.id === location.project_id && project.resources.some((resource) => { const ref = resource.resource_ref as { url?: unknown }; return typeof ref.url === "string" && repositoryIdentity(ref.url) === repositoryIdentity(repo.url); }))).map((location) => <div key={location.task_id} className="rounded-lg border border-surface-border p-3"><p className="font-medium">{location.runtime_name || location.daemon_id || "runtime"}</p><p className="break-all font-mono text-caption text-muted-foreground">{location.work_dir || "按需创建 worktree"}</p><p className="text-caption text-muted-foreground">{location.status} · Git 拉取状态需以 runtime 记录为准</p></div>) : null}<p className="text-caption text-muted-foreground">远程仓库不会写入本地目录；没有本地目录时，runtime 会按需创建 worktree。</p></TabsContent>
             </Tabs></div>
@@ -833,7 +892,7 @@ export function RepositoriesTab() {
         </SheetContent>
       </Sheet>
 
-      <Dialog open={addRepositoryOpen} onOpenChange={setAddRepositoryOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>添加代码仓库</DialogTitle><DialogDescription>选择代码来源。GitHub 和工蜂仓库保存为远程身份，本地目录由项目资源管理。</DialogDescription></DialogHeader><div className="grid gap-3"><Button variant="outline" className="h-auto justify-start p-4" onClick={() => { setAddRepositoryOpen(false); void handleGitHubAction(); }}><GitHubMark className="size-5" /><span><strong className="block text-left">GitHub</strong><span className="text-caption text-muted-foreground">从已安装的 GitHub App 选择仓库</span></span></Button><Button variant="outline" className="h-auto justify-start p-4" onClick={() => { setAddRepositoryOpen(false); setGongfengPickerOpen(true); }}><GitBranch className="size-5" /><span><strong className="block text-left">工蜂</strong><span className="text-caption text-muted-foreground">连接仓库并读取默认分支</span></span></Button><Button variant="outline" className="h-auto justify-start p-4" onClick={() => { setAddRepositoryOpen(false); toast.info("本地目录请从项目资源入口关联"); }}><FolderGit2 className="size-5" /><span><strong className="block text-left">本地目录</strong><span className="text-caption text-muted-foreground">通过项目资源关联 runtime 目录</span></span></Button></div></DialogContent></Dialog>
+      <Dialog open={addRepositoryOpen} onOpenChange={setAddRepositoryOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>添加代码仓库</DialogTitle><DialogDescription>选择代码来源。GitHub 和工蜂仓库保存为远程身份，本地目录由项目资源管理。</DialogDescription></DialogHeader><div className="grid gap-3"><Button variant="outline" className="h-auto justify-start p-4" onClick={() => { setAddRepositoryOpen(false); void handleGitHubAction(); }}><GitHubMark className="size-5" /><span><strong className="block text-left">GitHub</strong><span className="text-caption text-muted-foreground">从已安装的 GitHub App 选择仓库</span></span></Button><Button variant="outline" className="h-auto justify-start p-4" onClick={() => { setAddRepositoryOpen(false); openGongfengFlow(); }}><GitBranch className="size-5" /><span><strong className="block text-left">工蜂</strong><span className="text-caption text-muted-foreground">连接仓库并读取默认分支</span></span></Button><Button variant="outline" className="h-auto justify-start p-4" onClick={() => { setAddRepositoryOpen(false); openProjectResources(); }}><FolderGit2 className="size-5" /><span><strong className="block text-left">本地目录</strong><span className="text-caption text-muted-foreground">通过项目资源关联 runtime 目录</span></span></Button></div></DialogContent></Dialog>
 
       <AlertDialog
         open={pendingRemovalIndex !== null}
@@ -844,10 +903,10 @@ export function RepositoriesTab() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {t(($) => $.repositories.delete_confirm_title)}
+              {pendingRemovalBindingCount && pendingRemovalBindingCount > 0 ? "暂不能移除仓库" : t(($) => $.repositories.delete_confirm_title)}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {t(($) => $.repositories.delete_confirm_description)}
+              {pendingRemovalBindingCount === null ? "正在检查项目绑定，请稍候。" : pendingRemovalBindingCount > 0 ? `这个仓库仍绑定 ${pendingRemovalBindingCount} 个项目。请先在项目资源中解除绑定。` : t(($) => $.repositories.delete_confirm_description)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -855,15 +914,22 @@ export function RepositoriesTab() {
               {t(($) => $.repositories.delete_confirm_cancel)}
             </AlertDialogCancel>
             <AlertDialogAction
-              variant="destructive"
+              variant={pendingRemovalBindingCount && pendingRemovalBindingCount > 0 ? "default" : "destructive"}
+              disabled={pendingRemovalBindingCount === null}
               onClick={() => {
                 if (pendingRemovalIndex !== null) {
+                  if (pendingRemovalBindingCount && pendingRemovalBindingCount > 0) {
+                    const index = pendingRemovalIndex;
+                    setPendingRemovalIndex(null);
+                    openRepositoryDetails(index, "projects");
+                    return;
+                  }
                   void removeRepository(pendingRemovalIndex).catch((error) => toast.error(error instanceof Error ? error.message : "移除仓库失败"));
                 }
                 setPendingRemovalIndex(null);
               }}
             >
-              {t(($) => $.repositories.delete_confirm_action)}
+              {pendingRemovalBindingCount && pendingRemovalBindingCount > 0 ? "查看项目绑定" : t(($) => $.repositories.delete_confirm_action)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
