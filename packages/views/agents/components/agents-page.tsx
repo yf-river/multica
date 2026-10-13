@@ -1172,6 +1172,8 @@ export function AgentsPage() {
       )}
 
       <AgentBatchToolbar
+        key={wsId}
+        runtimes={runtimes}
         rows={selectedRows}
         members={members}
         currentUserId={currentUser?.id ?? null}

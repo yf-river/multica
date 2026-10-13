@@ -33,15 +33,17 @@ export function ModelPicker({
   canEdit = true,
   variant = "chip",
   showLabel = true,
+  allowCustom = true,
   onChange,
 }: {
   runtimeId: string | null;
   runtimeOnline: boolean;
-  value: string;
+  value: string | null;
   /** false 时渲染静态只读展示，不弹层。 */
   canEdit?: boolean;
   variant?: "chip" | "field";
   showLabel?: boolean;
+  allowCustom?: boolean;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
@@ -72,9 +74,9 @@ export function ModelPicker({
   const exactMatch = models.some(
     (m) => m.id === trimmedSearch || m.label === trimmedSearch,
   );
-  const canCreate = trimmedSearch.length > 0 && !exactMatch;
+  const canCreate = allowCustom && trimmedSearch.length > 0 && !exactMatch;
 
-  const triggerLabel = value || t(($) => $.pickers.model_default);
+  const triggerLabel = value === null ? t(($) => $.batch_runtime.choose_model) : value || t(($) => $.pickers.model_default);
   const triggerTitle = t(($) => $.pickers.model_tooltip, { value: triggerLabel });
 
   const select = async (id: string) => {
@@ -253,7 +255,7 @@ export function ModelPicker({
         </PickerItem>
       )}
 
-      {value && (
+      {value !== "" && (
         <button
           type="button"
           onClick={() => void select("")}

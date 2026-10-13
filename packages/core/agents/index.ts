@@ -24,3 +24,4 @@ export * from "./runtime-binding";
 export function isActiveAgentTaskStatus(status: string): boolean {
   return status === "queued" || status === "dispatched" || status === "waiting_local_directory" || status === "running";
 }
+export * from "./batch-runtime";

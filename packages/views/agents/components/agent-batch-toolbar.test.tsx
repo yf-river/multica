@@ -128,7 +128,7 @@ describe("AgentBatchToolbar — action order", () => {
       .map((b) => b.textContent?.trim())
       .filter((text): text is string => !!text);
 
-    expect(actions).toEqual(["Restore", "Set access scope", "Archive"]);
+    expect(actions).toEqual(["Set runtime", "Restore", "Set access scope", "Archive"]);
   });
 });
 

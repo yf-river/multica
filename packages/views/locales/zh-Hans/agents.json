@@ -926,5 +926,24 @@
   "actions": {
     "selected_other": "已选 {{count}} 项",
     "clear_selection": "清除选择"
+  },
+  "batch_runtime": {
+    "title": "设置运行时",
+    "description": "统一设置所选智能体的运行时和模型。",
+    "targets": "已选 {{count}} 个智能体",
+    "choose_model": "请选择目标运行时中的模型",
+    "follow_default": "跟随默认",
+    "unsupported": "不支持",
+    "speed": "快速模式",
+    "catalog_error": "无法读取模型目录，请检查运行时是否在线后重试。",
+    "retry": "重试",
+    "loading": "正在加载模型…",
+    "blocked": "请先移除无管理权限或已归档的智能体：{{names}}",
+    "partial": "已成功 {{succeeded}} 个，失败 {{failed}} 个。",
+    "running_hint": "正在运行的任务不会被中断。",
+    "cancel": "关闭",
+    "progress": "正在应用 {{completed}}/{{total}}…",
+    "retry_failed": "重试失败项",
+    "apply": "应用到 {{count}} 个智能体"
   }
 }

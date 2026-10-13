@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { MemberWithUser } from "@multica/core/types";
+import type { AgentRuntime, MemberWithUser } from "@multica/core/types";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { workspaceKeys } from "@multica/core/workspace/queries";
@@ -26,6 +26,7 @@ import {
 import { Archive, ArchiveRestore, Loader2, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { AccessPicker, type AccessChange } from "./inspector/access-picker";
+import { AgentBatchRuntimeDialog } from "./agent-batch-runtime-dialog";
 import type { AgentListRow } from "./agents-page";
 
 /**
@@ -43,11 +44,13 @@ import type { AgentListRow } from "./agents-page";
  */
 export function AgentBatchToolbar({
   rows,
+  runtimes = [],
   members,
   currentUserId,
   onClear,
 }: {
   rows: AgentListRow[];
+  runtimes?: AgentRuntime[];
   members: MemberWithUser[];
   currentUserId: string | null;
   onClear: () => void;
@@ -56,6 +59,7 @@ export function AgentBatchToolbar({
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
   const shouldReduceMotion = useReducedMotion() ?? false;
+  const [runtimeTargets, setRuntimeTargets] = useState<AgentListRow[] | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [confirmAccess, setConfirmAccess] = useState(false);
   const [accessChange, setAccessChange] = useState<AccessChange | null>(null);
@@ -145,10 +149,10 @@ export function AgentBatchToolbar({
         {rows.length > 0 && (
           <div
             key="agent-batch-toolbar"
-            className="absolute bottom-6 left-1/2 z-50 -translate-x-1/2 max-md:above-chat-launcher"
+            className="absolute bottom-6 left-1/2 z-50 w-max max-w-[calc(100%-2rem)] -translate-x-1/2 max-md:above-chat-launcher"
           >
             <motion.div
-              className="flex items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg"
+              className="flex flex-wrap items-center justify-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg"
               initial={{
                 opacity: 0,
                 transform: shouldReduceMotion
@@ -189,6 +193,12 @@ export function AgentBatchToolbar({
             <X className="size-3.5 text-muted-foreground" />
           </button>
         </div>
+
+        {anyActive && (
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => setRuntimeTargets([...rows])}>
+            {t(($) => $.batch_runtime.title)}
+          </Button>
+        )}
 
         {anyArchived && (
           <Button
@@ -232,6 +242,16 @@ export function AgentBatchToolbar({
           </div>
         )}
       </AnimatePresence>
+
+      {runtimeTargets && <AgentBatchRuntimeDialog
+        key={wsId}
+        rows={runtimeTargets}
+        runtimes={runtimes}
+        members={members}
+        currentUserId={currentUserId}
+        onClose={() => setRuntimeTargets(null)}
+        onSuccess={() => { setRuntimeTargets(null); onClear(); }}
+      />}
 
       {/* 归档确认对话框 */}
       {rows.length > 0 && <Dialog open={confirmArchive} onOpenChange={setConfirmArchive}>

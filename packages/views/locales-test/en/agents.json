@@ -949,5 +949,24 @@
     "selected_other": "{{count}} selected",
     "clear_selection": "Clear selection",
     "selected_one": "{{count}} selected"
+  },
+  "batch_runtime": {
+    "title": "Set runtime",
+    "description": "Set the runtime and model for the selected agents.",
+    "targets": "{{count}} agents selected",
+    "choose_model": "Choose a model from the target runtime",
+    "follow_default": "Follow default",
+    "unsupported": "Not supported",
+    "speed": "Fast mode",
+    "catalog_error": "Cannot read the model catalog. Check that the runtime is online and retry.",
+    "retry": "Retry",
+    "loading": "Loading models…",
+    "blocked": "Remove agents without management access or archived agents: {{names}}",
+    "partial": "{{succeeded}} succeeded, {{failed}} failed.",
+    "running_hint": "Running tasks will not be interrupted.",
+    "cancel": "Close",
+    "progress": "Applying {{completed}}/{{total}}…",
+    "retry_failed": "Retry failed",
+    "apply": "Apply to {{count}} agents"
   }
 }
