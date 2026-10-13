@@ -13,13 +13,14 @@ export function repositoryIdentity(raw: string): string | null {
  } catch {return null;}
 }
 export function repositoryProvider(repo: WorkspaceRepo): WorkspaceRepoProvider {
- if(repo.provider) return repo.provider==='github'||repo.provider==='gongfeng'?repo.provider:'unknown';
+ if(repo.provider) { const provider = repo.provider.trim().toLowerCase(); return provider==='github'||provider==='gongfeng'?provider:'unknown'; }
  const host=repositoryIdentity(repo.url)?.split('/')[0];
  return host==='github.com'?'github':host==='git.code.tencent.com'?'gongfeng':'unknown';
 }
 export function repositoryStatus(repo: WorkspaceRepo): 'ok'|'error'|'pending' {
- if([repo.connection_status,repo.test_status].some(v=>['failed','error','disconnected'].includes(v ?? '')))return 'error';
- if(repo.test_status==='passed'||['credential_backed','connected'].includes(repo.connection_status ?? ''))return 'ok';
+ const values = [repo.connection_status, repo.test_status, repo.sync_status].map(value => value?.trim().toLowerCase());
+ if(values.some(value => ['failed', 'error', 'disconnected'].includes(value ?? ''))) return 'error';
+ if(values.some(value => ['passed', 'credential_backed', 'connected', 'success', 'ready'].includes(value ?? ''))) return 'ok';
  return 'pending';
 }
 export function repositoryPath(repo: WorkspaceRepo) { return repo.project_path || repositoryIdentity(repo.url)?.split('/').slice(1).join('/') || repo.url; }

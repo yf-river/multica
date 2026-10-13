@@ -242,7 +242,7 @@ func (h *Handler) CreateExternalCredentialProfile(w http.ResponseWriter, r *http
 	var lastVerified pgtype.Timestamptz
 	var lastError pgtype.Text
 	if req.VerifyNow {
-		status, lastVerified, lastError = verifyExternalCredentialProfile(provider, secretRef, encrypted)
+		status, lastVerified, lastError = h.verifyExternalCredentialConnection(r.Context(), provider, secretRef, encrypted)
 	}
 	// 用 Idempotency-Key 直接当主键：天然挡住并发下同一键的重复创建。
 	profile, err := h.Queries.CreateExternalCredentialProfile(r.Context(), db.CreateExternalCredentialProfileParams{
@@ -393,7 +393,7 @@ func (h *Handler) UpdateExternalCredentialProfile(w http.ResponseWriter, r *http
 			secretRef = params.SecretRef.String
 			encrypted = params.EncryptedSecret
 		}
-		status, lastVerified, lastError := verifyExternalCredentialProfile(current.Provider, secretRef, encrypted)
+		status, lastVerified, lastError := h.verifyExternalCredentialConnection(r.Context(), current.Provider, secretRef, encrypted)
 		params.Status = pgtype.Text{String: status, Valid: true}
 		params.LastVerifiedAt = lastVerified
 		params.LastError = lastError
@@ -440,22 +440,8 @@ func (h *Handler) TestExternalCredentialProfile(w http.ResponseWriter, r *http.R
 		writeError(w, statusCode, msg)
 		return
 	}
-	// 第一层：本地校验（格式、环境变量是否已配、能否解密）。
-	status, lastVerified, lastError := verifyExternalCredentialProfile(provider, secretRef, encrypted)
+	status, lastVerified, lastError := h.verifyExternalCredentialConnection(r.Context(), provider, secretRef, encrypted)
 	lastErrorString := lastError.String
-	// 目前「仅本地结构有效」时给一个更友好的文案，提示实时 API 校验尚未接入。
-	if status == "unverified" && strings.Contains(lastErrorString, "凭据绑定已保存") {
-		lastErrorString = "凭据绑定格式有效；实时工蜂/TAPD API 校验尚未接入。"
-	}
-	// 第二层：本地校验没判失败，就真正打一次外部 API。
-	if provider == externalCredentialProviderGongfeng && status != "failed" {
-		status, lastVerified, lastError = h.verifyGongfengCredentialConnection(r.Context(), secretRef, encrypted)
-		lastErrorString = lastError.String
-	}
-	if provider == externalCredentialProviderTAPD && status != "failed" {
-		status, lastVerified, lastError = h.verifyTAPDCredentialConnection(r.Context(), secretRef, encrypted)
-		lastErrorString = lastError.String
-	}
 	binding := map[string]any{
 		"configured": true,
 		"redacted":   true,
@@ -484,6 +470,22 @@ func newNoRedirectHTTPClient(timeout time.Duration) *http.Client {
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
+	}
+}
+
+// 凭据的创建、复测和临时测试共用同一次平台连接验证。
+func (h *Handler) verifyExternalCredentialConnection(ctx context.Context, provider, secretRef string, encrypted []byte) (string, pgtype.Timestamptz, pgtype.Text) {
+	status, lastVerified, lastError := verifyExternalCredentialProfile(provider, secretRef, encrypted)
+	if status == "failed" {
+		return status, lastVerified, lastError
+	}
+	switch provider {
+	case externalCredentialProviderGongfeng:
+		return h.verifyGongfengCredentialConnection(ctx, secretRef, encrypted)
+	case externalCredentialProviderTAPD:
+		return h.verifyTAPDCredentialConnection(ctx, secretRef, encrypted)
+	default:
+		return status, lastVerified, lastError
 	}
 }
 
@@ -729,7 +731,7 @@ func verifyExternalCredentialProfile(provider, secretRef string, encrypted []byt
 	if msg := externalCredentialSecretRefError(secretRef); msg != "" {
 		return "failed", now, pgtype.Text{String: msg, Valid: true}
 	}
-	return "unverified", now, pgtype.Text{String: "凭据绑定已保存；实时工蜂/TAPD API 校验尚未接入。", Valid: true}
+	return "unverified", now, pgtype.Text{String: "凭据绑定有效；平台连接尚未验证。", Valid: true}
 }
 
 // externalCredentialSecretRefError 检查 secret_ref 指向的「服务端侧秘密」现在是否可用：

@@ -95,7 +95,7 @@ func (h *Handler) GetWorkspaceRepositoryCenter(w http.ResponseWriter, r *http.Re
  FROM agent_task_queue t JOIN issue i ON i.id=t.issue_id AND i.workspace_id=$1
  JOIN project p ON p.id=i.project_id AND p.workspace_id=$1
  LEFT JOIN agent_runtime rt ON rt.id=t.runtime_id AND rt.workspace_id=$1
- WHERE COALESCE(t.work_dir,'')<>'' ORDER BY t.created_at DESC LIMIT 200`, id)
+ WHERE COALESCE(NULLIF(t.durable_work_dir,''),t.work_dir,'')<>'' ORDER BY t.created_at DESC LIMIT 200`, id)
 	if err != nil {
 		writeError(w, 500, "读取运行位置失败")
 		return
